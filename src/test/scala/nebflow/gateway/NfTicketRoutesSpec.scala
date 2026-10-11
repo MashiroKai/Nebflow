@@ -24,6 +24,11 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
 
   private val gatewayToken = "test-gateway-token"
 
+  // Phase 3b: the criterion is Ref-based + needs a session store (the session
+  // rail reads it; these specs exercise the legacy rails, so an empty store).
+  private val TokenRef = cats.effect.Ref.unsafe[IO, String](gatewayToken)
+  private val Sessions = GatewaySessionStore.unsafeCreate()
+
   /**
    * 隔离的 P1（dataRoot）/ P3（workspace）——临时目录，真测试里不碰真实家目录。
    *
@@ -53,14 +58,14 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
     def read(query: String) =
       val req = Request[IO](Method.GET, Uri.unsafeFromString(s"/api/nf-file?$query"))
       NfFileRoutes
-        .nfFileRoutes(gatewayToken, store, policy)(req)
+        .nfFileRoutes(store, policy)(req)
         .value
         .unsafeRunSync()
 
     def issue(body: Json) =
       val req = Request[IO](Method.POST, Uri.unsafeFromString(s"/api/nf-ticket?token=$gatewayToken"))
         .withEntity(body)
-      NfFileRoutes.nfTicketRoutes(gatewayToken, store, policy)(req).value.unsafeRunSync()
+      NfFileRoutes.nfTicketRoutes(TokenRef, store, policy, Sessions)(req).value.unsafeRunSync()
 
     /** Seed `dataRoot/projects/demo/reports/plot.svg` (allowlisted) + credential files. */
     def seed(): Unit =
@@ -141,7 +146,7 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
             Uri.unsafeFromString(s"/api/nf-file?path=${url(env.outside.resolve("x.json"))}&ticket=$token")
           )
           val resp = NfFileRoutes
-            .nfFileRoutes(gatewayToken, shortStore, env.policy)(req)
+            .nfFileRoutes(shortStore, env.policy)(req)
             .value
             .unsafeRunSync()
             .get
@@ -313,7 +318,7 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
         val req = Request[IO](Method.POST, Uri.unsafeFromString("/api/nf-ticket"))
           .withEntity(Json.obj("sessionId" -> Json.fromString("s"), "paths" -> Json.arr()))
         val resp = NfFileRoutes
-          .nfTicketRoutes(gatewayToken, env.store, env.policy)(req)
+          .nfTicketRoutes(TokenRef, env.store, env.policy, Sessions)(req)
           .value
           .unsafeRunSync()
           .get
@@ -328,7 +333,7 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
       IO {
         def probe(query: String) =
           val req = Request[IO](Method.GET, Uri.unsafeFromString(s"/api/nf-authcheck$query"))
-          NfFileRoutes.nfAuthcheckRoutes(gatewayToken)(req).value.unsafeRunSync().get
+          NfFileRoutes.nfAuthcheckRoutes(TokenRef, Sessions)(req).value.unsafeRunSync().get
         assertEquals(probe(s"?token=$gatewayToken").status, Status.NoContent)
         assertEquals(probe("").status, Status.Forbidden)
         assertEquals(probe("?token=wrong").status, Status.Forbidden)

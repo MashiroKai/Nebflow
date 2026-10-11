@@ -69,7 +69,7 @@ class SafetyModeRoutesSpec extends CatsEffectSuite:
   )
 
   private val routes = new RestApiRoutes(
-    token = TestToken,
+    tokenRef = cats.effect.Ref.unsafe[IO, String](TestToken),
     configRef = cats.effect.Ref.unsafe[IO, NebflowServiceConfig](
       NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))
     ),

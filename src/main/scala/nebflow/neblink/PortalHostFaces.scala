@@ -31,6 +31,8 @@ final class PortalHostFaces(val gatewayPort: Int):
 
   private val httpAppRef = new AtomicReference[Option[HttpApp[IO]]](None)
   private val tunnelGuardRef = new AtomicReference[Option[PortalHostFaces.TunnelGuard]](None)
+  private val consoleTicketFaceRef = new AtomicReference[Option[PortalHostFaces.ConsoleTicketFace]](None)
+  private val sessionRevocationRef = new AtomicReference[Option[IO[Int]]](None)
 
   /** Bind the lifted HTTP slice (GatewayMain, inside withHttpWebSocketApp). */
   def bindHttpApp(app: HttpApp[IO]): Unit =
@@ -40,11 +42,31 @@ final class PortalHostFaces(val gatewayPort: Int):
   def bindTunnelGuard(guard: PortalHostFaces.TunnelGuard): Unit =
     tunnelGuardRef.set(Some(guard))
 
+  /**
+   * Phase 3b: bind the console-ticket face (redemption + break-glass mint +
+   * unbound probe) and the session-revocation action. Both are bound by the
+   * relay tunnel's constructor (the tunnel owns the ticket store the face
+   * closes over), which is assembled BEFORE `connect()` fires — no late-
+   * binding window, unlike the HTTP slice below.
+   */
+  def bindConsoleTicketFace(face: PortalHostFaces.ConsoleTicketFace): Unit =
+    consoleTicketFaceRef.set(Some(face))
+
+  /** Bind the binding-revocation action: revoke every relay-mint gateway session. */
+  def bindSessionRevocation(revoke: IO[Int]): Unit =
+    sessionRevocationRef.set(Some(revoke))
+
   /** The lifted HTTP slice, once bound. */
   def httpApp: Option[HttpApp[IO]] = httpAppRef.get
 
   /** The conn-guard tunnel face, once bound. */
   def tunnelGuard: Option[PortalHostFaces.TunnelGuard] = tunnelGuardRef.get
+
+  /** The console-ticket face, once bound (consumed by the gateway's `/?ticket=` route). */
+  def consoleTicketFace: Option[PortalHostFaces.ConsoleTicketFace] = consoleTicketFaceRef.get
+
+  /** The session-revocation action, once bound (consumed by the two binding-dead signals). */
+  def sessionRevocation: Option[IO[Int]] = sessionRevocationRef.get
 
 end PortalHostFaces
 
@@ -63,17 +85,73 @@ object PortalHostFaces:
     check: String => IO[Option[String]]
   )
 
+  /**
+   * Phase 3b: the console-ticket face as a port (same shape discipline as
+   * TunnelGuard — function members only, no concrete classes, so the gateway
+   * consumes the face without a neblink→gateway type dependency):
+   *  - `isUnbound` — the binding-gate probe the redemption face applies to
+   *    relay-mint tickets (local-tickets are exempt: break-glass);
+   *  - `verifyAndConsume` — the atomic one-shot redemption;
+   *  - `mintLocalTicket` — the break-glass mint (origin=local-ticket,
+   *    binding gate EXEMPT, budget gate still enforced; 120s TTL).
+   */
+  final case class ConsoleTicketFace(
+    isUnbound: IO[Boolean],
+    verifyAndConsume: String => IO[Either[String, ConsoleTicket]],
+    mintLocalTicket: IO[Either[String, IssuedConsoleTicket]]
+  )
+
 end PortalHostFaces
 
 /**
  * Process-global dependencies of the portal bridge, owned by the relay
  * tunnel: the late-bound faces, the console ticket store, the binding state
- * machine, and the live device identity (evaluated per mint so enrollment
- * hot-swaps are picked up, mirroring the tokenGetter discipline).
+ * machine, the live device identity (evaluated per mint so enrollment
+ * hot-swaps are picked up, mirroring the tokenGetter discipline), and the
+ * gateway-side revocation port for nf path-read tickets (phase 3b; injected
+ * by GatewayMain from the SAME NfTicketStore the /api face holds — never a
+ * second instance).
  */
 private[neblink] final class PortalTunnelDeps(
   val faces: PortalHostFaces,
   val consoleTickets: ConsoleTicketStore,
   val bindingState: PortalBindingState,
-  val identity: IO[DeviceIdentity]
-)
+  val identity: IO[DeviceIdentity],
+  val revokeNfTickets: IO[Int]
+):
+
+  /**
+   * The SINGLE mint policy chain, shared by both mint points (plan §3.4):
+   * gate check -> budget consume -> identity -> issue. The gates are a
+   * PARAMETERIZED SUBSET, not two implementations:
+   *  - relay mint (`enforceBindingGate = true`): an unbound binding refuses
+   *    the mint (`unbound`), and the shared budget still applies;
+   *  - local break-glass mint (`enforceBindingGate = false`): the binding
+   *    gate is exempt — the escape face must work in the revoked state
+   *    (v3 :290) — but the SAME budget applies (no scripted minting either
+   *    way).
+   * `Left` carries the wire error enum (`unbound` / `rate_limited`).
+   */
+  def mintConsoleTicket(
+    accountSub: String,
+    origin: String,
+    enforceBindingGate: Boolean
+  ): IO[Either[String, IssuedConsoleTicket]] =
+    val gate: IO[Boolean] =
+      if enforceBindingGate then bindingState.isUnbound else IO.pure(false)
+    gate.flatMap { unbound =>
+      if unbound then IO.pure(Left("unbound"))
+      else
+        consoleTickets.tryConsumeMintBudget().flatMap {
+          case false => IO.pure(Left("rate_limited"))
+          case true =>
+            val ttl =
+              if origin == ConsoleTicketStore.OriginLocalTicket then ConsoleTicketStore.LocalTicketTtlSeconds
+              else ConsoleTicketStore.RelayMintTtlSeconds
+            identity.flatMap { id =>
+              consoleTickets.issue(accountSub, id.deviceId, origin, Some(ttl)).map(Right(_))
+            }
+        }
+    }
+
+end PortalTunnelDeps

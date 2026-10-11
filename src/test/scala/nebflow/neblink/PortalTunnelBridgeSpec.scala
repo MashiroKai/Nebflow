@@ -24,8 +24,9 @@ import scala.concurrent.duration.*
  * HttpApp — no network, no ember. Pins the judgment-relevant behaviors:
  *
  *  - http_request runs the lifted app in-process and answers
- *    http_response + body_frame with canonical proto:1 bytes (empty response
- *    body => ZERO body_frames, contract 2.4 "0..n");
+ *    http_response + body_frame with canonical proto:1 bytes (an empty
+ *    response body still ends the cycle with exactly one empty `more=false`
+ *    terminator — the ingress closes the browser stream on that frame alone);
  *  - the request body streams through the per-requestId channel (seq order,
  *    End semantics; POST echo round-trip; out-of-order seq drops the cycle);
  *  - the response body is sliced at the chunk constant with more=true on all
@@ -120,23 +121,29 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
   }
 
   private def mkDeps(faces: PortalHostFaces): PortalTunnelDeps =
+    mkDeps(faces, nfRevocations = new ConcurrentLinkedQueue[Integer]())
+
+  /** Phase 3b: the nf-ticket revocation port records each invocation (count assertions). */
+  private def mkDeps(faces: PortalHostFaces, nfRevocations: ConcurrentLinkedQueue[Integer]): PortalTunnelDeps =
     new PortalTunnelDeps(
       faces,
       ConsoleTicketStore.unsafeCreate(),
       PortalBindingState.unsafeCreate(),
-      IO.pure(DeviceIdentity("qa-device", "qa-host", "macos"))
+      IO.pure(DeviceIdentity("qa-device", "qa-host", "macos")),
+      IO(nfRevocations.add(1)).as(0)
     )
 
   private def withBridge[A](
       app: HttpApp[IO],
-      guard: Option[PortalHostFaces.TunnelGuard] = None
+      guard: Option[PortalHostFaces.TunnelGuard] = None,
+      nfRevocations: ConcurrentLinkedQueue[Integer] = new ConcurrentLinkedQueue[Integer]()
   )(body: (PortalTunnelBridge, FakeWebSocket, PortalTunnelDeps) => IO[A]): IO[A] =
     Dispatcher.parallel[IO].use { dispatcher =>
       for
         faces <- IO(new PortalHostFaces(gatewayPort = 1))
         _ = faces.bindHttpApp(app)
         _ = guard.foreach(faces.bindTunnelGuard)
-        deps = mkDeps(faces)
+        deps = mkDeps(faces, nfRevocations)
         fake = new FakeWebSocket
         bridge = new PortalTunnelBridge(deps, new RelayFrameSender(fake))
         fiber <- bridge.run.start
@@ -180,14 +187,18 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
       yield ()
     }
 
-  test("empty response body produces ZERO body_frames (contract 2.4: 0..n)"):
+  test("empty response body still terminates the cycle with one empty more=false body_frame"):
     withBridge(HttpApp[IO](_ => IO(Response[IO](status = Status.NoContent)))) { (bridge, fake, _) =>
       bridge.enqueueFrame(HttpRequest(Rid, "GET", "/api/none", Vector("x-forwarded-for" -> "203.0.113.9")))
       for
         ok <- waitUntil(5.seconds)(IO(httpCycles(fake).contains((Rid, 204))))
         _ = assert(ok, s"no http_response; sent=${sentTexts(fake)}")
-        _ <- IO.sleep(200.millis)
-        _ = assert(bodyFrames(fake, Rid).isEmpty, "204 must not be followed by any body_frame")
+        _ <- waitUntil(5.seconds)(IO(bodyFrames(fake, Rid).nonEmpty))
+        frames = bodyFrames(fake, Rid)
+        _ = assertEquals(frames.length, 1, s"expected exactly one terminator; got ${frames.length}")
+        _ = assert(!frames.head.more, "the lone frame must be the more=false terminator")
+        _ = assert(frames.head.data.isEmpty, "the terminator carries no bytes")
+        _ = assertEquals(frames.head.seq, 0)
       yield ()
     }
 
@@ -381,7 +392,9 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
         _ = assertEquals(result.requestId, Rid)
         _ = assertEquals(result.mintId, MintId)
         _ = assert(result.ticket.isDefined, s"ticket missing: $result")
-        _ = assertEquals(result.expiresInSec, Some(30))
+        // Phase 3b (plan §3.4): relay-mint TTL raised 30s -> 90s (the 20s
+        // server-side mint chain was eating the browser's remainder).
+        _ = assertEquals(result.expiresInSec, Some(90))
         _ = assert(result.error.isEmpty)
         consumed <- deps.consoleTickets.verifyAndConsume(result.ticket.get)
         _ = assert(consumed.isRight, s"first redemption must succeed: $consumed")
@@ -436,5 +449,69 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
         _ = assert(!unbound, "quiesce must not flip the binding state in 3a")
       yield ()
     }
+
+  // ── phase 3b: full-session revocation (plan §5) ────────────────────────
+
+  test("BindingControl revoked fires the sessionRevocation port AND the nf-ticket revocation port"):
+    val nfRevocations = new ConcurrentLinkedQueue[Integer]()
+    withBridge(echoApp, nfRevocations = nfRevocations) { (bridge, fake, deps) =>
+      val observed = new ConcurrentLinkedQueue[Integer]()
+      deps.faces.bindSessionRevocation(IO(observed.add(1)).as(2))
+      bridge.enqueueFrame(BindingControl("revoked", None, None))
+      for
+        ok <- waitUntil(5.seconds)(IO(observed.size() == 1 && nfRevocations.size() == 1))
+        _ = assert(ok, s"both revocation ports must fire; observed=$observed nf=$nfRevocations")
+      yield ()
+    }
+
+  test("revoked × real GatewaySessionStore: relay-mint sessions die, local-ticket survives (origin filter, criterion 9 in-repo half)"):
+    // The bridge and the REAL session store, wired the way GatewayMain wires
+    // them (faces.sessionRevocation = store.revokeRelayMinted) — no relay, no
+    // ember: enqueue the frame and observe the store.
+    Dispatcher.parallel[IO].use { dispatcher =>
+      for
+        store <- nebflow.gateway.GatewaySessionStore.create()
+        faces <- IO(new PortalHostFaces(gatewayPort = 1))
+        _ = faces.bindHttpApp(echoApp)
+        nfRevocations = new ConcurrentLinkedQueue[Integer]()
+        deps = mkDeps(faces, nfRevocations)
+        _ = faces.bindSessionRevocation(store.revokeRelayMinted())
+        fake = new FakeWebSocket
+        bridge = new PortalTunnelBridge(deps, new RelayFrameSender(fake))
+        fiber <- bridge.run.start
+        _ <- store.create("logto|user-42", "relay-mint", "net-1")
+        _ <- store.create("local", "local-ticket", "")
+        _ = bridge.enqueueFrame(BindingControl("revoked", None, None))
+        // The signal is terminal when BOTH faces settled: the console store is
+        // empty AND the session store holds only the local-ticket row.
+        ok <- waitUntil(5.seconds)((deps.consoleTickets.size, store.size).tupled.map { case (t, sess) =>
+          t == 0 && sess == 1
+        })
+        _ = assert(ok, "relay-mint sessions must be revoked; the local-ticket session survives")
+        relayGone <- store.list.map(_.forall(_.origin == "local-ticket"))
+        _ = assert(relayGone, "survivor must be exactly the local-ticket session")
+        _ <- bridge.teardown() *> fiber.cancel
+      yield ()
+    }
+
+
+  test("mintConsoleTicket gate split: the local break-glass mint is binding-gate EXEMPT in the revoked state while the relay mint stays gated (review pin T-8-1)"):
+    val faces = new PortalHostFaces(gatewayPort = 1)
+    val deps = mkDeps(faces)
+    for
+      _ <- deps.bindingState.markUnbound()
+      local <- deps.mintConsoleTicket(
+        ConsoleTicketStore.LocalAccountSub,
+        ConsoleTicketStore.OriginLocalTicket,
+        enforceBindingGate = false
+      )
+      relay <- deps.mintConsoleTicket(
+        "logto|u-1",
+        ConsoleTicketStore.OriginRelayMint,
+        enforceBindingGate = true
+      )
+    yield
+      assert(local.isRight, s"the escape face must mint in the revoked state, got $local")
+      assertEquals(relay, Left("unbound"))
 
 end PortalTunnelBridgeSpec

@@ -101,7 +101,7 @@ class AgentPanelConvergenceSpec extends CatsEffectSuite:
       friendService = None
     )
     new RestApiRoutes(
-      token = TestToken,
+      tokenRef = cats.effect.Ref.unsafe[IO, String](TestToken),
       configRef = cats.effect.Ref.unsafe[IO, NebflowServiceConfig](config),
       sharedResources = resources,
       sessionStore = null,

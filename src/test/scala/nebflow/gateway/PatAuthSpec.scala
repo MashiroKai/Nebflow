@@ -422,7 +422,7 @@ class PatAuthSpec extends CatsEffectSuite:
 
   private def routes: RestApiRoutes =
     new RestApiRoutes(
-      token = "machine-token-xyz",
+      tokenRef = cats.effect.Ref.unsafe[IO, String]("machine-token-xyz"),
       configRef = cats.effect.Ref.unsafe[IO, NebflowServiceConfig](
         NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))
       ),

@@ -437,6 +437,14 @@ object GatewayMain extends IOApp:
               )
             }
             Auth.loadOrCreateToken.flatMap { token =>
+              // Phase 3b (plan §6.1): the token becomes a LIVE Ref, not a boot
+              // snapshot — `token rotate` rewrites auth.json AND swaps this Ref,
+              // so the old value dies on the running gateway immediately
+              // (criterion 7). The five injection points below all read it live.
+              val tokenRef: Ref[IO, String] = Ref.unsafe(token)
+              // Phase 3b: the console session store behind the HttpOnly session
+              // cookie (plan §2) — in-memory by design (§2.6).
+              val gatewaySessions = GatewaySessionStore.unsafeCreate()
               // Global session state shared across all connections
               val sessionStore = new SessionStore(PathUtil.dataRoot / "sessions", PathUtil.dataRoot / "tasks")
               val sessionModelOverrides: Ref[IO, Map[String, ModelCandidate]] = Ref.unsafe(Map.empty)
@@ -467,7 +475,7 @@ object GatewayMain extends IOApp:
                       // follow the global fallback order from config.
                       sessionStore.clearAllSessionModels() *> McpManager.create.flatMap { mcpManager =>
                         // --- Fast path: only essential init before server start ---
-                        val chatRoutes = new ChatRoutes(handle, token)
+                        val chatRoutes = new ChatRoutes(handle, tokenRef, gatewaySessions)
                         val isConfigured = config.llm.providers.nonEmpty
                         // #339 D-c：contextWindow 改读默认 preset 链首个能解析到
                         // provider 模型表的 ref（preferred 优先逐个试 fallbacks；
@@ -500,7 +508,13 @@ object GatewayMain extends IOApp:
                                   (Defaults.ContextWindow, Some((pFile.defaultPreset, dp.preferred.getOrElse(""))))
                             catch case _: Exception => (Defaults.ContextWindow, None)
                         val baseUrl = s"http://localhost:${cfg.port}"
-                        val url = s"$baseUrl?token=$token"
+                        // Phase 3b (plan §6.5, stage B): the startup URL no longer
+                        // carries `?token=` — a portal-open lands on the portal, and
+                        // the local fallback opens the UNAUTHENTICATED page where the
+                        // session-cookie rail (or the break-glass ticket leg)
+                        // authenticates. baseUrl / sys.props below are unchanged
+                        // (consumed elsewhere as the local fallback value).
+                        val url = baseUrl
                         sys.props.update("nebflow.url", baseUrl)
 
                         // Initialize thinking config from nebflow.json (default enabled=true)
@@ -1153,7 +1167,14 @@ object GatewayMain extends IOApp:
                                           // a constructor-time closure kept returning a kicked session.
                                           () => tsDiscovery.currentClient.map(_.flatMap(_.currentSessionToken)),
                                           friendService = Some(friendService),
-                                          portalHost = Some(portalHostFaces)
+                                          portalHost = Some(portalHostFaces),
+                                          // Phase 3b (plan §3.1/§5): the revocation ports reach the
+                                          // tunnel constructor, which binds them onto the faces BEFORE
+                                          // connect() fires below — no window in which a binding-dead
+                                          // signal sees an unbound face. Same store instances the
+                                          // gateway face holds (never a second one).
+                                          sessionRevocation = Some(gatewaySessions.revokeRelayMinted()),
+                                          nfTicketRevocation = Some(nfTicketStore.revokeAll())
                                         )(dispatcher)
                                         neblinkService.setRelayTunnel(relayTunnel)
                                         dispatcher.unsafeRunAndForget(relayTunnel.connect())
@@ -1360,7 +1381,8 @@ object GatewayMain extends IOApp:
                                                           configService,
                                                           configRef,
                                                           rateLimiter,
-                                                          token,
+                                                          tokenRef,
+                                                          gatewaySessions,
                                                           fileTracker,
                                                           sessionStore,
                                                           wsHub,
@@ -1376,11 +1398,13 @@ object GatewayMain extends IOApp:
 
                                                         // REST API routes for CLI consumption
                                                         val restApiRoutes = new RestApiRoutes(
-                                                          token,
-                                                          configRef,
-                                                          sharedResourcesWithDaemon,
-                                                          sessionStore,
-                                                          wsRoutes,
+                                                          tokenRef = tokenRef,
+                                                          sessions = gatewaySessions,
+                                                          faces = portalHostFaces,
+                                                          configRef = configRef,
+                                                          sharedResources = sharedResourcesWithDaemon,
+                                                          sessionStore = sessionStore,
+                                                          wsRoutes = wsRoutes,
                                                           neblinkService = Some(neblinkService),
                                                           ttsService = ttsService,
                                                           neblinkDiscovery = Some(tsDiscovery),
@@ -1403,7 +1427,8 @@ object GatewayMain extends IOApp:
                                                           "/api" -> (chatRoutes.routes <+> restApiRoutes.routes <+> restApiRoutes
                                                             .presenceWsRoutes(wsb) <+> StaticRoutes
                                                             .pluginAssetsRoutes(
-                                                              token,
+                                                              tokenRef,
+                                                              gatewaySessions,
                                                               // canvas-media Wave1 (OD-2=V-C): the
                                                               // Trusted-only resolver feeding the
                                                               // tokenized plugin-asset route.
@@ -1421,7 +1446,21 @@ object GatewayMain extends IOApp:
                                                           "/auth" -> restApiRoutes.authCallbackRoutes,
                                                           // Static tree only — gzip must never wrap the
                                                           // "/api" tree (SSE stream, presence WS).
-                                                          "/" -> GzipMiddleware(wsRoutes.routes)
+                                                          // Phase 3b: the `/?ticket=` redemption face is
+                                                          // composed AHEAD of the gzipped static tree —
+                                                          // its match predicate ("query carries a non-empty
+                                                          // ticket") leaves every plain `GET /` falling
+                                                          // through to the unchanged static tree.
+                                                          "/" -> (ConsoleTicketRoutes.ticketRoutes(
+                                                            gatewaySessions,
+                                                            portalHostFaces,
+                                                            // live network-id read for the session's
+                                                            // boundNetworkId snapshot ("" when not enrolled)
+                                                            neblinkService.neblinkConfig.map(
+                                                              _.neblinkServer.map(_.networkId).getOrElse("")
+                                                            ),
+                                                            logger
+                                                          ) <+> GzipMiddleware(wsRoutes.routes))
                                                         ).orNotFound
                                                         portalHostFaces.bindHttpApp(gatewayApp)
                                                         portalHostFaces.bindTunnelGuard(

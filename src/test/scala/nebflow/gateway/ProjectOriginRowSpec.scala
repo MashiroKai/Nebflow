@@ -37,7 +37,7 @@ class ProjectOriginRowSpec extends CatsEffectSuite:
 
   private def run(req: Request[IO]): IO[(Status, Json)] =
     new RestApiRoutes(
-      token = Token,
+      tokenRef = cats.effect.Ref.unsafe[IO, String](Token),
       configRef = cats.effect.Ref.unsafe[IO, NebflowServiceConfig](
         NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))
       ),

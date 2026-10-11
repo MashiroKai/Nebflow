@@ -126,6 +126,16 @@ class NfTicketStore private (
     }
 
   /**
+   * Phase 3b (plan §5): invalidate every live ticket — the third leg of the
+   * binding-revocation action. Without it, a relay-mint session could have
+   * minted path-read tickets (up to the configured TTL, 1800s by default)
+   * that would keep reading `/api/nf-file` past the revocation. Same shape
+   * as the console ticket store's revokeAll.
+   */
+  def revokeAll(): IO[Int] =
+    ticketsRef.getAndSet(Map.empty).map(_.size)
+
+  /**
    * Single-transition verification (R5 = ticket-only).
    *
    * `Left(reason)` reasons — all rendered as 403 by the read endpoint:

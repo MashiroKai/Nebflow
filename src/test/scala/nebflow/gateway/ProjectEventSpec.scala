@@ -71,7 +71,7 @@ class ProjectEventSpec extends CatsEffectSuite:
 
   private def mkRoutes(hub: WsHub, projectRoot: os.Path): RestApiRoutes =
     new RestApiRoutes(
-      token = TestToken,
+      tokenRef = cats.effect.Ref.unsafe[IO, String](TestToken),
       configRef = Ref.unsafe[IO, NebflowServiceConfig](
         NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))
       ),

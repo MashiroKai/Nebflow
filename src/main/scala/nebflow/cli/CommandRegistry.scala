@@ -47,7 +47,14 @@ object CommandRegistry:
       WhoamiCommand,
       // phase 2 daemon 批（2026-10-10）：append-only 新增 restart（stop→start
       // 编排命令；stop 本体迁回 StopCommand 走既有注册）。
-      RestartCommand
+      RestartCommand,
+      // Phase 3b session-rail batch: append-only two lines — `token`
+      // (print/rotate: break-glass ticket + token rotation) and `sessions`
+      // (revoke: console sessions, deliberately distinct from the singular
+      // chat-domain `session` command). Existing entries untouched, unsorted,
+      // un-reformatted — add-only is the only accepted shape in this file.
+      TokenCommand,
+      SessionsCommand
     ).map(c => c.name -> c).toMap
 
   def get(name: String): Option[CliCommand] = commands.get(name)

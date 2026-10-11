@@ -498,8 +498,7 @@ private[gateway] object NeblinkRoutes:
       // 2026-10-10）: config.json 单一权威写面 + discovery 客户端热换 + 隧道复活
       // + 即时重发现 ⇒ **免重启上线**（旧实现手写 save 块，必须重启才生效）。
       case req @ POST -> Root / "neblink" / "enroll" =>
-        if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
-        else
+        gate(req):
           req.as[Json].flatMap { body =>
             val serverOpt = body.hcursor
               .downField("server")
@@ -581,8 +580,7 @@ private[gateway] object NeblinkRoutes:
       // neblink-server's /api/device/code. Both map onto the same frontend
       // contract {deviceCode, userCode, verificationUri, interval, expiresIn}.
       case req @ POST -> Root / "neblink" / "device-flow" / "start" =>
-        if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
-        else
+        gate(req):
           neblinkService match
             case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
             case Some(ms) =>
@@ -628,8 +626,7 @@ private[gateway] object NeblinkRoutes:
       // neblink-server's /api/device/token. Both success paths converge on the
       // same persist-credential + hot-swap completion.
       case req @ POST -> Root / "neblink" / "device-flow" / "poll" =>
-        if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
-        else
+        gate(req):
           req.as[Json].flatMap { body =>
             val deviceCode = body.hcursor.downField("deviceCode").as[String].getOrElse("")
             val serverUrl = body.hcursor
@@ -721,8 +718,7 @@ private[gateway] object NeblinkRoutes:
       // absent field) resolves to "" and the param is omitted, which is also
       // the byte-identical legacy behavior for old callers.
       case req @ POST -> Root / "neblink" / "auth" / "start" =>
-        if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
-        else
+        gate(req):
           neblinkService match
             case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
             case Some(ms) =>
@@ -760,8 +756,7 @@ private[gateway] object NeblinkRoutes:
       // Login-state poll for the frontend (pending while the hosted page is
       // open; success/error sticky until the next start).
       case req @ GET -> Root / "neblink" / "auth" / "state" =>
-        if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
-        else AuthRoutes.pkceLogin.statusJson.flatMap(Ok(_))
+        gate(req)(AuthRoutes.pkceLogin.statusJson.flatMap(Ok(_)))
 
       // Switch-account handoff readout (one-window switch, 2026-09-16). The app
       // window watches this after a switch gesture to tell the two cases apart:
@@ -777,8 +772,7 @@ private[gateway] object NeblinkRoutes:
       // arm since the 2026-09-20 closeout batch; the retired GET arm is a gated
       // 405 and touches no marker).
       case req @ GET -> Root / "neblink" / "auth" / "handoff" =>
-        if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
-        else AuthRoutes.switchHandoff.stateName.flatMap(s => Ok(Json.obj("state" -> s.asJson)))
+        gate(req)(AuthRoutes.switchHandoff.stateName.flatMap(s => Ok(Json.obj("state" -> s.asJson))))
 
       // Cloud session sync toggle — removed (session sync deleted)
 
@@ -1159,8 +1153,7 @@ private[gateway] object NeblinkRoutes:
   ): IO[Response[IO]] =
     import ctx.*
 
-    if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
-    else
+    gate(req):
       neblinkService match
         case Some(ms) => f(ms)
         case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))

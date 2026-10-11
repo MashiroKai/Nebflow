@@ -1,6 +1,6 @@
 package nebflow.gateway
 
-import cats.effect.IO
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
@@ -13,26 +13,46 @@ import org.http4s.dsl.io.*
 import org.http4s.headers.Authorization
 import org.http4s.{HttpRoutes, ServerSentEvent}
 
-class ChatRoutes(handle: LlmHandle[IO], token: String):
+class ChatRoutes(
+  handle: LlmHandle[IO],
+  /**
+   * Phase 3b: the LIVE file token (Ref, not a boot snapshot) — a rotation
+   * swaps it and the old Bearer dies on this running gateway immediately.
+   */
+  tokenRef: Ref[IO, String],
+  /** Phase 3b: the console session store (the new session rail). */
+  sessions: GatewaySessionStore = GatewaySessionStore.unsafeCreate()
+):
 
+  /**
+   * Phase 3b: the unified GatewayAuth criterion under `OpenAiCompat` —
+   * Bearer(file) + the NEW session rail; no param/legacy-cookie/PAT (no
+   * surface growth). The 401 semantics are UNCHANGED, including the
+   * body split: a request that presented an `Authorization: Bearer …`
+   * header gets "Invalid token"; anything else gets "Missing Authorization
+   * header" (the OpenAI-compat face's deliberate shape). The header-present
+   * probe keeps that split exact even though the criterion now also accepts
+   * session cookies.
+   */
   private def checkAuth(req: org.http4s.Request[IO]): IO[Either[org.http4s.Response[IO], Unit]] =
-    IO.delay {
-      req.headers.get[Authorization] match
-        case Some(Authorization(org.http4s.Credentials.Token(org.http4s.AuthScheme.Bearer, t))) =>
-          if Auth.validateToken(t, token) then Right(())
-          else
-            Left(
-              org.http4s
-                .Response[IO](status = org.http4s.Status.Unauthorized)
-                .withEntity(Json.obj("error" -> "Invalid token".asJson))
-            )
-        case _ =>
+    tokenRef.get
+      .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.OpenAiCompat))
+      .map {
+        case Some(_) => Right(())
+        case None =>
+          val presentedBearer = req.headers.get[Authorization].exists {
+            case Authorization(org.http4s.Credentials.Token(org.http4s.AuthScheme.Bearer, _)) => true
+            case _ => false
+          }
           Left(
             org.http4s
               .Response[IO](status = org.http4s.Status.Unauthorized)
-              .withEntity(Json.obj("error" -> "Missing Authorization header".asJson))
+              .withEntity(
+                if presentedBearer then Json.obj("error" -> "Invalid token".asJson)
+                else Json.obj("error" -> "Missing Authorization header".asJson)
+              )
           )
-    }
+      }
 
   def routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ POST -> Root / "v1" / "chat" =>

@@ -146,7 +146,7 @@ class PeerAvatarRouteSpec extends CatsEffectSuite:
 
   private def mkRoutes(fs: Option[FriendService], ms: Option[NeblinkService] = None): RestApiRoutes =
     new RestApiRoutes(
-      token = TestToken,
+      tokenRef = cats.effect.Ref.unsafe[IO, String](TestToken),
       configRef = cats.effect.Ref.unsafe[IO, NebflowServiceConfig](
         NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))
       ),

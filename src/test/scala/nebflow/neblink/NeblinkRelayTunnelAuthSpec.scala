@@ -299,4 +299,86 @@ class NeblinkRelayTunnelAuthSpec extends CatsEffectSuite:
     }
   }
 
+
+  // ── phase 3b review pin: terminal rejection fires all three revocation faces ──
+
+  test("terminal binding rejection (401 binding_revoked) parks AND revokes console tickets + relay-mint sessions + nf tickets (plan §5 row 2)") {
+    withFixture { fix =>
+      captureRelayLog { lines =>
+        val sessionRevocations = new ConcurrentLinkedQueue[Integer]()
+        val nfRevocations = new ConcurrentLinkedQueue[Integer]()
+        fix.relayMode = RelayAuthFixtureServer.RelayMode.TerminalBinding401
+        Dispatcher.parallel[IO].use { dispatcher =>
+          (for
+            ms <- NeblinkService.create(0, dispatcher)
+            client = mkClient(fix)
+            _ = ms.setRelayClient(Some(client))
+            _ <- client.login(Device, "qa-host", "macos", Nil)
+            _ <- ms.updateConfig(
+              _.copy(
+                enabled = true,
+                neblinkServer = Some(NeblinkServerConfig(url = fix.url, networkId = Net, secret = "qa-secret"))
+              )
+            )
+            tunnel = new NeblinkRelayTunnel(
+              ms,
+              () => IO(client.currentSessionToken),
+              portalHost = Some(new PortalHostFaces(gatewayPort = 1)),
+              sessionRevocation = Some(IO(sessionRevocations.add(1)).as(1)),
+              nfTicketRevocation = Some(IO(nfRevocations.add(1)).as(1))
+            )(dispatcher)
+            _ = ms.setRelayTunnel(tunnel)
+            fiber <- tunnel.connect().start
+            baseline <- waitUntil(5.seconds)(IO(fix.attemptCount(101) >= 1))
+            _ <- IO(assert(baseline, s"baseline: the live token must be accepted first (${fix.relayAttempts})"))
+            // The trigger (R1 choreography): kick the session + tear the live
+            // socket, so the next upgrade attempt hits the terminal 401.
+            _ <- IO { fix.kickSessionOf(Device, Net); () }
+            _ <- IO { fix.closeAllRelaySockets(); () }
+            parked <- waitUntil(12.seconds)(
+              tunnel.portalDeps.fold(IO.pure(false))(_.bindingState.isUnbound)
+            )
+            _ <- IO(
+              assert(
+                parked,
+                s"terminal rejection must park the binding state; authStatus=${tunnel.authStatus} logins=${fix.logins.get()} attempts=${fix.relayAttempts.toArray.toList}"
+              )
+            )
+            _ <- IO(
+              assert(
+                logText(lines).contains("TERMINAL binding rejection"),
+                s"the terminal branch must log its judgment row; log=${logText(lines)}"
+              )
+            )
+            _ <- IO(assertEquals(sessionRevocations.size(), 1, "sessionRevocation port must fire exactly once"))
+            _ <- IO(assertEquals(nfRevocations.size(), 1, "nf-ticket revocation port must fire exactly once"))
+            _ <- IO(
+              assertEquals(
+                fix.logins.get(),
+                2,
+                s"startup + the impersonator kick + ZERO self-heal re-logins (terminal parks); calls=${fix.loginCalls.toArray.toList}"
+              )
+            )
+            // Escape-face pin (same row): the local break-glass mint still
+            // mints in the revoked state; the relay mint arm stays gated.
+            deps = tunnel.portalDeps.get
+            localMint <- deps.mintConsoleTicket(
+              ConsoleTicketStore.LocalAccountSub,
+              ConsoleTicketStore.OriginLocalTicket,
+              enforceBindingGate = false
+            )
+            relayMint <- deps.mintConsoleTicket(
+              "logto|u-1",
+              ConsoleTicketStore.OriginRelayMint,
+              enforceBindingGate = true
+            )
+            _ <- IO(assert(localMint.isRight, s"break-glass mint must survive the revoked state, got $localMint"))
+            _ <- IO(assertEquals(relayMint, Left("unbound"), "relay mint stays gated in the revoked state"))
+            _ <- fiber.cancel *> tunnel.stop()
+          yield ())
+        }
+      }
+    }
+  }
+
 end NeblinkRelayTunnelAuthSpec

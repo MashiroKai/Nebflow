@@ -33,7 +33,17 @@ import org.typelevel.ci.CIString
  * 表达式按闸延迟求值。
  */
 final class RestApiCtx(
-  val token: String,
+  /**
+   * Phase 3b: the LIVE file token (`Ref`, not a boot snapshot) — a rotation
+   * (`POST /api/auth/token/rotate`) swaps it and the old value dies for this
+   * running gateway immediately, while live sessions keep working (criterion
+   * 7).
+   */
+  val tokenRef: Ref[IO, String],
+  /** Phase 3b: the console session store the ApiFull session rail consults. */
+  val sessions: GatewaySessionStore,
+  /** Phase 3b: the portal faces holder (AuthAdmin's break-glass mint port). */
+  val faces: PortalHostFaces,
   val configRef: Ref[IO, NebflowServiceConfig],
   val sharedResources: SharedResources,
   val sessionStore: SessionStore,
@@ -48,21 +58,28 @@ final class RestApiCtx(
 ):
 
   def withAuth(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =
-    if checkAuth(req) then f
-    else Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+    checkAuth(req).flatMap(ok => if ok then f else Forbidden(Json.obj("error" -> "Unauthorized".asJson)))
+
+  /**
+   * Boolean-verdict adapter for checkAuth's direct-call sites (the census
+   * arms that bypass withAuth): same verdict, same 403 body, gate-lazy
+   * by-name — the exact shape `withAuth` had before checkAuth became IO.
+   */
+  def gate(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =
+    checkAuth(req).flatMap(ok => if ok then f else Forbidden(Json.obj("error" -> "Unauthorized".asJson)))
 
   // 设备互联域(NeblinkRoutes,E 步)所需的鉴权判据:checkAuth 同时服务本处
   // withAuth 与 NeblinkRoutes 的免门控普查条目直调。
-  def checkAuth(req: Request[IO]): Boolean =
-    req.headers.get[Authorization].collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
-      t
-    } match
-      // 接受面双轨（patbackend 批，2026-09-20）：轨 1 = 本机文件令牌（Auth，逐字不变）；
-      // 轨 2 = Logto 签发的 PAT（自包含 JWT，用 JWKS 公钥**离线**验签；逻辑全在 PatAuth，
-      // 本行只做薄委调）。两轨皆否 ⇒ 同一个 Forbidden，对外不区分原因（防枚举）。
-      case Some(t) => Auth.validateToken(t, token) || PatAuth.accepts(t)
-      case None =>
-        req.params.get("token").exists(t => Auth.validateToken(t, token))
+  //
+  // Phase 3b: the verdict is the unified GatewayAuth criterion under
+  // `ApiFull` — session cookie added (this batch's point), Bearer(file/PAT)
+  // and `?token=` rails byte-identical, NO legacy-cookie rail (R1-2: the
+  // pre-3b face had no cookie leg, so a "legacy-cookie-only" request is
+  // refused before AND after this change). Rails fall through when presented
+  // but invalid, so "invalid Bearer + valid param" now authenticates via the
+  // param (strict monotonic relaxation; criterion 6).
+  def checkAuth(req: Request[IO]): IO[Boolean] =
+    tokenRef.get.flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.ApiFull)).map(_.isDefined)
 
   // ===== 好友域上游错误的单一判据（2026-09-11 boot 快照修复，R3(a)） =====
 

@@ -122,7 +122,7 @@ class NeblinkEnrollPairingRouteSpec extends CatsEffectSuite:
 
   private def mkRoutes(ms: NeblinkService, discovery: NeblinkDiscovery): RestApiRoutes =
     new RestApiRoutes(
-      token = TestToken,
+      tokenRef = cats.effect.Ref.unsafe[IO, String](TestToken),
       configRef = cats.effect.Ref.unsafe[IO, NebflowServiceConfig](
         NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))
       ),

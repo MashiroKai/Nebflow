@@ -78,7 +78,7 @@ class MachineTokenAnchorSpec extends CatsEffectSuite:
 
   private def routes: RestApiRoutes =
     new RestApiRoutes(
-      token = MachineToken,
+      tokenRef = cats.effect.Ref.unsafe[IO, String](MachineToken),
       configRef = cats.effect.Ref.unsafe[IO, NebflowServiceConfig](
         NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))
       ),

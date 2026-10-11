@@ -322,7 +322,7 @@ class FriendApiRoutesSpec extends CatsEffectSuite:
       llm = ServiceLlmConfig(providers = Map.empty) // #339：llm.model 已退役
     )
     new RestApiRoutes(
-      token = TestToken,
+      tokenRef = cats.effect.Ref.unsafe[IO, String](TestToken),
       configRef = cats.effect.Ref.unsafe[IO, NebflowServiceConfig](config),
       sharedResources = mkResources(fs),
       sessionStore = null,

@@ -84,6 +84,11 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
     deleteTree(cardsRootIsolation)
 
   private val gatewayToken = "probe-gateway-token"
+
+  // Phase 3b: the criterion is Ref-based + needs a session store (the session
+  // rail reads it; these specs exercise the legacy rails, so an empty store).
+  private val TokenRef = cats.effect.Ref.unsafe[IO, String](gatewayToken)
+  private val Sessions = GatewaySessionStore.unsafeCreate()
   private val store = NfTicketStore.unsafeCreate(1800)
 
   /**
@@ -103,8 +108,8 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
 
   private def server(policy: NfFilePolicy.NfPathPolicy): IO[(Int, IO[Unit])] =
     val app = Router(
-      "/" -> (NfFileRoutes.nfFileRoutes(gatewayToken, store, policy) <+>
-        NfFileRoutes.nfTicketRoutes(gatewayToken, store, policy) <+> echo)
+      "/" -> (NfFileRoutes.nfFileRoutes(store, policy) <+>
+        NfFileRoutes.nfTicketRoutes(TokenRef, store, policy, Sessions) <+> echo)
     ).orNotFound
     EmberServerBuilder
       .default[IO]

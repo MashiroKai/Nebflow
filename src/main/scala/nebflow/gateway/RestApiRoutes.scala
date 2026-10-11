@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.agent.SharedResources
 import nebflow.core.SessionStore
-import nebflow.neblink.NeblinkService
+import nebflow.neblink.{NeblinkService, PortalHostFaces}
 import nebflow.shared.{NebflowServiceConfig, PeerInfo}
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.{HttpRoutes, Request}
@@ -22,7 +22,15 @@ import org.http4s.{HttpRoutes, Request}
  * PresenceRoutes。
  */
 class RestApiRoutes(
-  token: String,
+  /**
+   * Phase 3b: LIVE file token (Ref, not a boot snapshot) — rotate swaps it
+   * and the old value dies on this running gateway immediately.
+   */
+  tokenRef: cats.effect.Ref[IO, String],
+  /** Phase 3b: the console session store (ApiFull session rail + AuthAdmin face). */
+  sessions: GatewaySessionStore = GatewaySessionStore.unsafeCreate(),
+  /** Phase 3b: the portal faces holder (AuthAdmin's break-glass mint port). */
+  faces: PortalHostFaces = new PortalHostFaces(8080),
   configRef: cats.effect.Ref[IO, NebflowServiceConfig],
   sharedResources: SharedResources,
   sessionStore: SessionStore,
@@ -48,7 +56,9 @@ class RestApiRoutes(
    */
   private val ctx: RestApiCtx =
     RestApiCtx(
-      token = token,
+      tokenRef = tokenRef,
+      sessions = sessions,
+      faces = faces,
       configRef = configRef,
       sharedResources = sharedResources,
       sessionStore = sessionStore,
@@ -69,7 +79,11 @@ class RestApiRoutes(
     HealthRoutes.routes(ctx) <+> SessionRoutes.routes(ctx) <+> AskUserCancelRoutes.routes(ctx) <+>
       ConfigRoutes.routes(ctx) <+>
       ProjectsRoutes.routes(ctx) <+> RegistryRoutes.routes(ctx) <+> NeblinkRoutes.routes(ctx) <+>
-      SocialRoutes.routes(ctx) <+> SecretsRoutes.routes(ctx)
+      SocialRoutes.routes(ctx) <+> SecretsRoutes.routes(ctx) <+>
+      // Phase 3b: the AuthAdmin face (break-glass ticket / token rotate /
+      // sessions list+revoke), file-token Bearer ONLY (R1-1) — appended last:
+      // its /api/auth/* paths are disjoint from every sibling above.
+      AuthAdminRoutes.routes(tokenRef, sessions, faces, logger)
 
   // ===== WebSocket Presence Server Endpoint =====
 

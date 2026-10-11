@@ -58,7 +58,7 @@ class DaemonPanelRoutesSpec extends FunSuite:
       // must be exercised against the same service the daemon section uses.
       val svc = new DaemonService(dispatcher, root / "daemon-pids.json")
       val inner = new RestApiRoutes(
-        token = token,
+        tokenRef = cats.effect.Ref.unsafe[IO, String](token),
         configRef = cats.effect.Ref.unsafe[IO, NebflowServiceConfig](cfg),
         sharedResources = SharedResources(
           llm = null,

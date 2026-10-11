@@ -4,6 +4,7 @@ import { isBgAgentId } from './utils.js';
 import { addNotification } from './notificationBanner.js';
 import { brand } from './brand.js';
 import { key } from './branding.js';
+import { t } from './i18n.js';
 
 // Auth token cookie name follows the brand namespace (branding.js copies the
 // legacy cookie across on rename day; the backend accepts both names during
@@ -386,6 +387,16 @@ let authParamFallback = false;
 let authProbePromise = null;
 let authProbeSettled = false;
 
+// Phase 3b stage B' (plan §6.6): once the HttpOnly session cookie has VERIFIED
+// (probe 204 + rail header `session`), the long-lived localStorage token and
+// the non-HttpOnly legacy cookie are copies that can be retired — this flag
+// records that the purge ran and suppresses every later re-write of them for
+// the rest of the page lifecycle (cookie rewrite + ?token= fallback).
+let longLivedPurged = false;
+// Stage B: the paste-ticket entry is shown at most once per page (a rejected
+// handshake then keeps reconnecting silently behind the modal).
+let ticketEntryShown = false;
+
 // Probe target: GET /api/nf-authcheck — authenticated via extractToken
 // (param → Authorization header → cookie), so a bare same-origin fetch
 // exercises exactly the cookie path the WS handshake relies on. Semantics
@@ -409,8 +420,117 @@ function probeCookieAuth() {
   }).then(resp => {
     if (resp.status === 403) {
       authParamFallback = true;
+    } else if (resp.status === 204 && !longLivedPurged) {
+      // Stage B' trigger (plan §6.6): the server answers the read-only rail
+      // header on every 204. ONLY `session` means the HttpOnly session cookie
+      // is verified working — the one moment retiring the long-lived copies
+      // cannot cut a live credential (same-origin fetch rides the session
+      // from here on). The other rail values (bearer/legacy/param) are
+      // diagnostic and deliberately not consumed.
+      if (resp.headers.get(`x-${brand.lowerName}-credential`) === 'session') {
+        purgeLongLivedCopies();
+      }
     }
   }).catch(() => { /* inconclusive - proceed cookie-first */ });
+}
+
+// Remove the long-lived credential copies (plan §6.6): the branded
+// localStorage key, the branded non-HttpOnly cookie (both attribute
+// variants — same-name-different-attrs are separate jar entries a plain
+// write cannot replace), and — on rebrand day — the hardcoded legacy
+// `nebflow_token` spelling, so the "no nebflow_token in the jar" assertion
+// holds under every brand. Never touches the HttpOnly session cookie, so
+// the WS handshake (session rail) has no empty-jar window.
+function purgeLongLivedCopies() {
+  const gone = '; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+  const purgeCookie = (name) => {
+    document.cookie = `${name}=; path=/${gone}`;
+    document.cookie = `${name}=; path=/; domain=${location.hostname}${gone}`;
+  };
+  try { localStorage.removeItem(key('token')); } catch (e) { /* storage unavailable */ }
+  purgeCookie(TOKEN_COOKIE);
+  if (TOKEN_COOKIE !== 'nebflow_token') {
+    purgeCookie('nebflow_token');
+    try { localStorage.removeItem('nebflow_token'); } catch (e) { /* storage unavailable */ }
+  }
+  longLivedPurged = true;
+}
+
+// Stage B (plan §6.5): the paste-ticket entry replaces the old "reopen with
+// the tokenized startup URL" fallback (that URL no longer exists — the
+// startup link carries no token). Both degraded shapes (no credential /
+// stale credential) land here: the user pastes a one-time console ticket
+// (`nebflow token`) and the redemption face (?ticket=) exchanges it for an
+// HttpOnly session cookie. Minimal card on purpose — the unified
+// signed-out-card redesign belongs to period 4.
+function showTicketEntry() {
+  if (ticketEntryShown) return;
+  ticketEntryShown = true;
+  injectTicketEntryStyles();
+  const overlay = document.createElement('div');
+  overlay.className = 'nb-ticket-overlay';
+  overlay.innerHTML = `
+    <div class="nb-ticket-modal">
+      <h3>${t('ws.ticketEntry.title')}</h3>
+      <p class="nb-ticket-hint">${t('ws.ticketEntry.hint')}</p>
+      <input type="text" class="nb-ticket-input" autocomplete="off" spellcheck="false"
+             placeholder="${t('ws.ticketEntry.placeholder')}">
+      <div class="nb-ticket-error" hidden></div>
+      <div class="nb-ticket-actions"><button class="cfg-btn cfg-btn-primary nb-ticket-go">${t('ws.ticketEntry.open')}</button></div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const input = /** @type {HTMLInputElement} */ (overlay.querySelector('.nb-ticket-input'));
+  const err = /** @type {HTMLElement} */ (overlay.querySelector('.nb-ticket-error'));
+  const go = () => {
+    const ticket = input.value.trim();
+    if (!ticket) {
+      err.textContent = t('ws.ticketEntry.needTicket');
+      err.hidden = false;
+      return;
+    }
+    // Redemption face: 303 + Set-Cookie back onto the clean root path —
+    // the ticket never enters history beyond this navigation.
+    location.href = `/?ticket=${encodeURIComponent(ticket)}`;
+  };
+  overlay.querySelector('.nb-ticket-go').addEventListener('click', go);
+  input.addEventListener('keydown', (/** @type {KeyboardEvent} */ e) => { if (e.key === 'Enter') go(); });
+  input.focus();
+}
+
+// Same Sapphire Glass tokens the login modal family uses (activityBar.js);
+// self-contained here so ws.js never depends on that module's injection.
+let ticketEntryStylesInjected = false;
+function injectTicketEntryStyles() {
+  if (ticketEntryStylesInjected) return;
+  ticketEntryStylesInjected = true;
+  const style = document.createElement('style');
+  style.textContent = `
+.nb-ticket-overlay {
+  position: fixed; inset: 0; z-index: 1000; display: flex;
+  align-items: center; justify-content: center;
+  background: rgba(8, 10, 16, 0.45);
+}
+.nb-ticket-modal {
+  width: 340px; padding: 20px;
+  background: var(--glass-bg, rgba(24, 28, 38, 0.68));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
+  border: 1px solid var(--glass-border, rgba(255,255,255,0.1));
+  border-radius: 16px;
+  box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.12);
+}
+.nb-ticket-modal h3 { font-size: 15px; margin: 0 0 10px; color: var(--color-text); font-weight: 600; }
+.nb-ticket-hint { font-size: 13px; color: var(--color-text-muted); margin: 0 0 12px; line-height: 1.55; }
+.nb-ticket-input {
+  width: 100%; box-sizing: border-box; padding: 8px 10px; font-size: 13px;
+  border-radius: 8px; border: 1px solid var(--glass-border, rgba(255,255,255,0.15));
+  background: var(--glass-bg, rgba(24, 28, 38, 0.5)); color: var(--color-text);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+.nb-ticket-error { font-size: 12px; color: var(--status-word, #e57373); margin-top: 8px; }
+.nb-ticket-actions { display: flex; justify-content: flex-end; margin-top: 14px; }
+`;
+  document.head.appendChild(style);
 }
 
 // ---------- Heartbeat tolerance (freezetimeout B2 · 施工图 §4.1 B 面) ----------
@@ -489,7 +609,9 @@ export function connect() {
   const storedToken = localStorage.getItem(key('token')) || token;
   // Set auth cookie so the WebSocket connection authenticates via cookie
   // instead of exposing the token in the URL (history/logs/Referer leakage).
-  if (storedToken) {
+  // After the B' purge ran, this page lifecycle never re-writes the
+  // long-lived copies (the session cookie is the live credential now).
+  if (storedToken && !longLivedPurged) {
     // Skip the rewrite when the cookie already holds the right value: every
     // document.cookie op is a separate async message to the network service,
     // so a purge+set immediately followed by new WebSocket() can race - the
@@ -524,7 +646,7 @@ export function connect() {
   }
   // Connect without token in URL - relies on cookie auth. After a rejected
   // handshake (likely cookie blocked), retry with the ?token= fallback.
-  const qs = (authParamFallback && storedToken) ? `?token=${encodeURIComponent(storedToken)}` : '';
+  const qs = (authParamFallback && storedToken && !longLivedPurged) ? `?token=${encodeURIComponent(storedToken)}` : '';
   const wsUrl = `${proto}//${location.host}/ws${qs}`;
   try {
     state.ws = new WebSocket(wsUrl);
@@ -581,15 +703,17 @@ export function connect() {
     if (state.heartbeat) { clearInterval(state.heartbeat); state.heartbeat = null; }
     if (!opened) {
       // Handshake rejected (e.g. 403) before the socket ever opened.
-      if (!authParamFallback && storedToken) {
+      if (!authParamFallback && storedToken && !longLivedPurged) {
         authParamFallback = true;
         console.info('[ws] handshake rejected - retrying with ?token= fallback (cookie may be blocked)');
       } else {
-        const hint = storedToken
-          ? 'token 无效或服务端已更换 token，请用启动日志中的带 token 地址重新打开'
-          : `页面缺少 token，请通过启动时打印的带 token 地址打开（token 在 ~/${brand.homeDirName ?? '.nebflow'}/auth.json）`;
-        console.warn('[ws] connect failed:', hint);
-        addNotification('conn', `无法连接 ${brand.lowerName}：${hint}`);
+        // Stage B (phase 3b): the tokenized startup URL is gone, so BOTH
+        // degraded shapes — no credential and stale credential — land on
+        // the paste-ticket entry (plan §6.5, T-8-7: one entry, no second
+        // copy path).
+        console.warn('[ws] connect failed - offering the console ticket entry');
+        addNotification('conn', t('ws.ticketEntry.notify'));
+        showTicketEntry();
       }
     }
     scheduleReconnect();

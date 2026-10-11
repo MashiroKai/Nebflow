@@ -25,6 +25,7 @@ import org.http4s.headers.{Authorization, `Content-Type`}
 class OpenAiChatShimSpec extends CatsEffectSuite:
 
   private val Token = "test-token-b2"
+  private val TokenRef = cats.effect.Ref.unsafe[IO, String](Token)
 
   private class ScriptedLlm(resp: LlmResponse) extends LlmHandle[IO]:
     val seen = cats.effect.Ref.unsafe[IO, List[LlmRequest]](Nil)
@@ -505,7 +506,7 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
   // ── 3. the alias route: same routes value, same auth gate ────────────────
 
   test("route: alias path requires auth exactly like the in-tree paths") {
-    val routes = new ChatRoutes(new ScriptedLlm(mkResponse()), Token).routes
+    val routes = new ChatRoutes(new ScriptedLlm(mkResponse()), TokenRef).routes
     val body =
       """{"model":"paid/paid-model","messages":[{"role":"user","content":"x"}],"session_id":"s","agent_id":"a"}"""
     List("/v1/chat", "/v1/chat/completions")
@@ -524,7 +525,7 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
 
   test("route: with a valid token the alias answers 200 in the OpenAI shape") {
     val llm = new ScriptedLlm(mkResponse(reply = "pong"))
-    val routes = new ChatRoutes(llm, Token).routes
+    val routes = new ChatRoutes(llm, TokenRef).routes
     val body =
       """{"model":"paid/paid-model","messages":[{"role":"user","content":"ping"}],"session_id":"s","agent_id":"a"}"""
     routes(req(body)).value.flatMap {
@@ -547,7 +548,7 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
     // 这条断言把「线上」那一读搬进 spec——handle 收到的 agentModel 必须随 wire 上的
     // `model` 变化，否则返工未落实。
     val llm = new ScriptedLlm(mkResponse(reply = "pong"))
-    val routes = new ChatRoutes(llm, Token).routes
+    val routes = new ChatRoutes(llm, TokenRef).routes
     def call(m: String) =
       routes(
         req(
@@ -572,7 +573,7 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
   }
 
   test("route: a refused body answers 400 with the OpenAI error envelope") {
-    val routes = new ChatRoutes(new ScriptedLlm(mkResponse()), Token).routes
+    val routes = new ChatRoutes(new ScriptedLlm(mkResponse()), TokenRef).routes
     val body = """{"model":"paid/paid-model","messages":[{"role":"user","content":"x"}]}"""
     routes(req(body)).value.flatMap {
       case None => fail("the alias route fell through")
@@ -587,7 +588,7 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
   }
 
   test("route: a non-JSON body answers 400 with the invalid_json envelope") {
-    val routes = new ChatRoutes(new ScriptedLlm(mkResponse()), Token).routes
+    val routes = new ChatRoutes(new ScriptedLlm(mkResponse()), TokenRef).routes
     routes(req("not json at all")).value.flatMap {
       case None => fail("the alias route fell through")
       case Some(resp) =>
@@ -599,7 +600,7 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
   }
 
   test("route: the in-tree path keeps its own semantics (no OpenAI keys added)") {
-    val routes = new ChatRoutes(new ScriptedLlm(mkResponse(reply = "pong")), Token).routes
+    val routes = new ChatRoutes(new ScriptedLlm(mkResponse(reply = "pong")), TokenRef).routes
     // Note the role of this body in the test: it exercises the IN-TREE decode
     // path (`req.as[LlmRequest]`), which requires `searchAllowed` to be present
     // on the wire (the derived decoder has no default for it — pre-existing
@@ -622,7 +623,7 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
   }
 
   test("route: an unknown path under /v1/chat is still a fall-through (404)") {
-    val routes = new ChatRoutes(new ScriptedLlm(mkResponse()), Token).routes
+    val routes = new ChatRoutes(new ScriptedLlm(mkResponse()), TokenRef).routes
     routes(req("{}").withUri(Uri.unsafeFromString("/v1/chat/other"))).value.map {
       case None => ()
       case Some(resp) => assertEquals(resp.status, Status.NotFound)

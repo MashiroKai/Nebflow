@@ -2284,4 +2284,15 @@ export default {
   'secrets.error.conflict': 'The secret already exists, or is still referenced. Resolve the reference before deleting.',
   'secrets.error.emptyValue': 'Enter a value first.',
   'secrets.error.io': 'Secrets request failed ({code}). Check the gateway connection and try again.',
+  // === Phase 3b session rail: paste-ticket entry (ws.js stage B) ===
+  // Shown when the WS handshake is rejected and no long-lived credential can
+  // rescue it (the tokenized startup URL no longer exists). The user pastes a
+  // one-time console ticket (CLI: `nebflow token`); the redemption face
+  // (?ticket=) exchanges it for an HttpOnly session cookie.
+  'ws.ticketEntry.title': 'Sign in to this console',
+  'ws.ticketEntry.hint': 'Paste a one-time console ticket to open a signed-in session. Mint one on this machine with: nebflow token',
+  'ws.ticketEntry.placeholder': 'Paste ticket here',
+  'ws.ticketEntry.open': 'Open console',
+  'ws.ticketEntry.needTicket': 'Paste a ticket first — mint one with: nebflow token',
+  'ws.ticketEntry.notify': 'Sign-in required — paste a console ticket to continue (mint one with: nebflow token)',
 };

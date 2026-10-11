@@ -19,6 +19,13 @@ trait CliCommand:
   /** One-line examples */
   def examples: List[String]
 
+  /**
+   * Subcommand run when the command is invoked WITHOUT one (phase 3b: bare
+   * `nebflow token` mints a break-glass ticket). None = a bare invocation
+   * prints the "needs a subcommand" error (the historic shape).
+   */
+  def defaultSubcommand: Option[String] = None
+
 trait CliSubcommand:
   /** Subcommand name, e.g. "list" */
   def name: String

@@ -178,7 +178,7 @@ class Mvp2DeviceRoutesSpec extends CatsEffectSuite:
   private def mkRoutes(fs: Option[FriendService]): RestApiRoutes =
     val config = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))
     new RestApiRoutes(
-      token = TestToken,
+      tokenRef = cats.effect.Ref.unsafe[IO, String](TestToken),
       configRef = cats.effect.Ref.unsafe[IO, NebflowServiceConfig](config),
       sharedResources = mkResources(fs),
       sessionStore = null,
