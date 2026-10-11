@@ -624,32 +624,28 @@ private[neblink] final class PortalTunnelBridge(
   // ────────────────────────── console ticket mint ──────────────────────────
 
   /**
-   * Policy checkpoints first (design 3.4): terminal binding => `unbound`;
-   * mint budget exhausted => `rate_limited`; (the `quiesced` enum value has
-   * no live path in 3a — the quiesce family is server-side phase 5 material;
-   * the response shape supports it.) Success => ticket + expiresInSec.
+   * Policy chain lifted to [[PortalTunnelDeps.mintConsoleTicket]] (phase 3b,
+   * plan §3.4 — single implementation, gate subset parameterized): the relay
+   * mint point enforces the binding gate (unbound => `unbound`) plus the
+   * shared budget (`rate_limited`); the local break-glass mint point shares
+   * the SAME chain with the binding gate exempted. Success => ticket +
+   * expiresInSec (90s TTL, plan §3.4).
    */
   private def handleConsoleTicketMint(frame: PortalWireCodec.ConsoleTicketMint): IO[Unit] =
     val result: IO[PortalWireCodec.ConsoleTicketResult] =
-      deps.bindingState.isUnbound.flatMap {
-        case true => IO.pure(mintError(frame, "unbound"))
-        case false =>
-          deps.consoleTickets.tryConsumeMintBudget().flatMap {
-            case false => IO.pure(mintError(frame, "rate_limited"))
-            case true =>
-              deps.identity.flatMap { id =>
-                deps.consoleTickets.issue(frame.accountSub, id.deviceId).map { issued =>
-                  PortalWireCodec.ConsoleTicketResult(
-                    requestId = frame.requestId,
-                    mintId = frame.mintId,
-                    ticket = Some(issued.token),
-                    expiresInSec = Some(issued.expiresInSec.toInt),
-                    error = None
-                  )
-                }
-              }
-          }
-      }
+      deps
+        .mintConsoleTicket(frame.accountSub, ConsoleTicketStore.OriginRelayMint, enforceBindingGate = true)
+        .map {
+          case Right(issued) =>
+            PortalWireCodec.ConsoleTicketResult(
+              requestId = frame.requestId,
+              mintId = frame.mintId,
+              ticket = Some(issued.token),
+              expiresInSec = Some(issued.expiresInSec.toInt),
+              error = None
+            )
+          case Left(err) => mintError(frame, err)
+        }
     // One-shot answer: spawned OFF the mailbox (the consumer never waits on
     // the relay socket; a single result frame has no ordering dependency).
     result.flatMap(r => sender.send(PortalWireCodec.encode(r))).start.void
@@ -669,19 +665,29 @@ private[neblink] final class PortalTunnelBridge(
    * `revoked` (judgment-table row 1): terminal state + persist, invalidate
    * every console ticket, stop serving the relay tool face (enforced at the
    * tunnel's handleRelayRequest), short-circuit session self-heal, probe the
-   * relay at low frequency until row 4 clears the state. Phase 3b extends
-   * this with full-session revocation.
+   * relay at low frequency until row 4 clears the state.
+   *
+   * Phase 3b (plan §5 row 1) fulfills the "full-session revocation" note:
+   * the SAME signal additionally revokes every relay-mint gateway session
+   * (via the bound faces port) and every nf path-read ticket (via the deps
+   * port). `local-ticket` sessions survive ON PURPOSE — the break-glass
+   * escape (v3 :290) — and cannot renew themselves (the AuthAdmin face is
+   * file-token Bearer only).
    */
   private def handleBindingControl(frame: PortalWireCodec.BindingControl): IO[Unit] =
     frame.kind match
       case "revoked" =>
         deps.bindingState.markUnbound().flatMap { transitioned =>
           deps.consoleTickets.revokeAll().flatMap { dropped =>
-            logger.warn(
-              "BindingControl revoked: host binding is TERMINAL — console tickets invalidated " +
-                s"(dropped=$dropped, transitioned=$transitioned); the relay tool face stops serving " +
-                "and no session self-heal/re-login will be attempted"
-            )
+            (deps.faces.sessionRevocation.getOrElse(IO.pure(0)), deps.revokeNfTickets)
+              .mapN((sessionsDropped, nfTicketsDropped) =>
+                logger.warn(
+                  "BindingControl revoked: host binding is TERMINAL — console tickets invalidated " +
+                    s"(dropped=$dropped, transitioned=$transitioned, sessionsDropped=$sessionsDropped, " +
+                    s"nfTicketsDropped=$nfTicketsDropped); the relay tool face stops serving " +
+                    "and no session self-heal/re-login will be attempted"
+                )
+              )
           }
         }
       case other =>

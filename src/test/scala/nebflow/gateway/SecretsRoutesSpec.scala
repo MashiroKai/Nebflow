@@ -50,7 +50,7 @@ class SecretsRoutesSpec extends FunSuite:
       PathUtil.setDataRoot(root)
       val cfg = NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))
       val inner = new RestApiRoutes(
-        token = token,
+        tokenRef = cats.effect.Ref.unsafe[IO, String](token),
         configRef = cats.effect.Ref.unsafe[IO, NebflowServiceConfig](cfg),
         sharedResources = SharedResources(
           llm = null,

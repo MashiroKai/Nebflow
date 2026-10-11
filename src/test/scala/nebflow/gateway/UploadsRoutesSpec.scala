@@ -21,6 +21,11 @@ class UploadsRoutesSpec extends CatsEffectSuite:
 
   private val gatewayToken = "test-gateway-token"
 
+  // Phase 3b: the criterion is Ref-based + needs a session store (the session
+  // rail reads it; these specs exercise the legacy rails, so an empty store).
+  private val TokenRef = cats.effect.Ref.unsafe[IO, String](gatewayToken)
+  private val Sessions = GatewaySessionStore.unsafeCreate()
+
   /** Isolated dataRoot with a seeded uploads/sess-1/shot.png; restored after. */
   private def withTempUploads[A](test: => IO[A]): A =
     val tmp = Files.createTempDirectory("nebflow-uploads-test")
@@ -49,7 +54,7 @@ class UploadsRoutesSpec extends CatsEffectSuite:
   private def get(path: String, cookie: Option[(String, String)] = None) =
     val base = Request[IO](Method.GET, Uri.unsafeFromString(path))
     val req = cookie.fold(base) { case (n, v) => base.addCookie(n, v) }
-    StaticRoutes.uploadsRoutes(gatewayToken)(req).value.unsafeRunSync()
+    StaticRoutes.uploadsRoutes(TokenRef, Sessions)(req).value.unsafeRunSync()
 
   test("rejects unauthenticated requests") {
     withTempUploads {

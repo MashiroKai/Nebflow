@@ -2222,4 +2222,11 @@ export default {
   'secrets.error.conflict': '密钥已存在，或仍被引用。请先解除引用再删除。',
   'secrets.error.emptyValue': '请先输入值。',
   'secrets.error.io': '密钥请求失败（{code}）。请检查网关连接后重试。',
+  // === Phase 3b session rail: paste-ticket entry (ws.js stage B) ===
+  'ws.ticketEntry.title': '登录此控制台',
+  'ws.ticketEntry.hint': '粘贴一次性控制台票据即可打开已登录会话。在本机执行 nebflow token 铸票。',
+  'ws.ticketEntry.placeholder': '在此粘贴票据',
+  'ws.ticketEntry.open': '打开控制台',
+  'ws.ticketEntry.needTicket': '请先粘贴票据 —— 可用 nebflow token 铸票',
+  'ws.ticketEntry.notify': '需要登录 —— 粘贴控制台票据以继续（可用 nebflow token 铸票）',
 };

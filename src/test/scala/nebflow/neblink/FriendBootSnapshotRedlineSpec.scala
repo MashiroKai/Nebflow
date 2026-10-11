@@ -137,7 +137,7 @@ class FriendBootSnapshotRedlineSpec extends CatsEffectSuite:
     discovery: NeblinkDiscovery
   ): RestApiRoutes =
     new RestApiRoutes(
-      token = TestToken,
+      tokenRef = cats.effect.Ref.unsafe[IO, String](TestToken),
       configRef = Ref.unsafe[IO, NebflowServiceConfig](
         NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))
       ),

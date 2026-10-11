@@ -66,7 +66,23 @@ final class NeblinkRelayTunnel(
    * consumption is not wired (tests / pre-assembly shapes) — downlink portal
    * frames then drop with an explicit WARN, never silently.
    */
-  portalHost: Option[PortalHostFaces] = None
+  portalHost: Option[PortalHostFaces] = None,
+  /**
+   * Phase 3b (plan §3.1/§5): the gateway-side revocation ports, injected by
+   * GatewayMain from the SAME stores the gateway face holds (never a second
+   * instance). Both are bound onto the faces INSIDE this constructor — the
+   * constructor completes before `connect()` fires, so there is no window in
+   * which a binding-dead signal observes an unbound face.
+   *  - `sessionRevocation` — revoke every relay-mint gateway session
+   *    (`GatewaySessionStore.revokeRelayMinted`);
+   *  - `nfTicketRevocation` — revoke every nf path-read ticket
+   *    (`NfTicketStore.revokeAll`; a session-revocation face that left those
+   *    tickets alive would keep a ≤TTL read window open past the revocation).
+   * Defaults keep every existing construction site (specs) compiling; the
+   * no-op default makes the absent port a counted zero, never a failure.
+   */
+  sessionRevocation: Option[IO[Int]] = None,
+  nfTicketRevocation: Option[IO[Int]] = None
 )(dispatcher: Dispatcher[IO])
     extends RelayTunnelPort: // 严格DAG第⑥步第二批裁定(2026-09-27,R3):原地混入 core 窄视图(isAlive,RemoteExecutor 选路读数)
   import NeblinkRelayTunnel.{AckOutcome, TunnelAuthStatus, shouldHealAuthFailure}
@@ -88,16 +104,35 @@ final class NeblinkRelayTunnel(
   /**
    * Phase 3a portal dependencies (process-global, owned by the tunnel):
    * late-bound faces + console ticket store + binding state machine +
-   * live identity. The binding state persists across restarts (unlike the
-   * kick park), so a revoked host stays terminal after a process restart.
+   * live identity + the gateway-side nf-ticket revocation port. The binding
+   * state persists across restarts (unlike the kick park), so a revoked host
+   * stays terminal after a process restart.
+   *
+   * Phase 3b (plan §3.1/§5): BOTH new faces are bound right here, in the
+   * constructor — `connect()` is fired by the assembler immediately after
+   * this constructor returns, so binding any later (e.g. inside the
+   * withHttpWebSocketApp late-binding segment) would let the binding-dead
+   * signals observe `None` and silently skip half the revocation.
    */
   private[neblink] val portalDeps: Option[PortalTunnelDeps] = portalHost.map { faces =>
-    new PortalTunnelDeps(
+    val deps = new PortalTunnelDeps(
       faces = faces,
       consoleTickets = ConsoleTicketStore.unsafeCreate(),
       bindingState = PortalBindingState.unsafeCreate(),
-      identity = neblinkService.identity
+      identity = neblinkService.identity,
+      revokeNfTickets = nfTicketRevocation.getOrElse(IO.pure(0))
     )
+    faces.bindConsoleTicketFace(
+      PortalHostFaces.ConsoleTicketFace(
+        isUnbound = deps.bindingState.isUnbound,
+        verifyAndConsume = token => deps.consoleTickets.verifyAndConsume(token),
+        // Break-glass mint: origin=local-ticket, binding gate EXEMPT (the
+        // escape face works in the revoked state), shared budget enforced.
+        mintLocalTicket = deps.mintConsoleTicket(ConsoleTicketStore.LocalAccountSub, ConsoleTicketStore.OriginLocalTicket, enforceBindingGate = false)
+      )
+    )
+    faces.bindSessionRevocation(sessionRevocation.getOrElse(IO.pure(0)))
+    deps
   }
 
   /** Judgment-table rows 1/2: the host binding is in the terminal (revoked) state. */
@@ -552,8 +587,18 @@ final class NeblinkRelayTunnel(
       // a re-login is meaningless (and would be a login storm against a state
       // only the portal can restore). Park in the terminal state (persisted)
       // and let the low-frequency probe leg carry the reconnects.
+      //
+      // Phase 3b (plan §5 row 2): the binding-dead signal now revokes the
+      // SAME three faces the bridge's BindingControl(revoked) row revokes —
+      // console tickets + relay-mint sessions + nf path-read tickets. Two
+      // entries, ONE semantics (v3 :184 "no 12h residual window").
       for
         _ <- portalDeps.fold(IO.unit)(_.bindingState.markUnbound().void)
+        dropped <- portalDeps.fold(IO.pure((0, 0, 0))) { deps =>
+          (deps.consoleTickets.revokeAll(), deps.faces.sessionRevocation.getOrElse(IO.pure(0)), deps.revokeNfTickets)
+            .mapN((tickets, sessions, nfTickets) => (tickets, sessions, nfTickets))
+        }
+        (ticketsDropped, sessionsDropped, nfTicketsDropped) = dropped
         _ <- IO {
           lastAuthRejection = Some(
             TunnelAuthStatus(
@@ -567,7 +612,8 @@ final class NeblinkRelayTunnel(
         }
         _ <- logger.warn(
           s"$head — TERMINAL binding rejection (binding_revoked): no session self-heal, " +
-            s"probing every ${NeblinkRelayTunnel.TerminalProbeNap.toSeconds}s until the binding is restored"
+            s"probing every ${NeblinkRelayTunnel.TerminalProbeNap.toSeconds}s until the binding is restored; " +
+            s"revoked consoleTickets=$ticketsDropped sessions=$sessionsDropped nfTickets=$nfTicketsDropped"
         )
         _ <- if running.get() then connectLoop(attempt + 1) else IO.unit
       yield ()

@@ -44,7 +44,7 @@ final case class IssuedConsoleTicket(token: String, expiresAt: Long, expiresInSe
 
 class ConsoleTicketStore private (
   ticketsRef: Ref[IO, Map[String, ConsoleTicket]],
-  ttlSeconds: Long,
+  defaultTtlSeconds: Long,
   budgetRef: Ref[IO, ConsoleTicketStore.BudgetWindow]
 ):
 
@@ -53,16 +53,33 @@ class ConsoleTicketStore private (
    * tickets first (single-transaction shape with the insert). The token is
    * 32 random bytes, base64url unpadded — 256 random bits, above the
    * contract's 128-bit floor.
+   *
+   * Phase 3b (plan §3.4): `origin` records who minted the ticket
+   * (`relay-mint` = portal-minted, `local-ticket` = break-glass); it rides
+   * into the redeemed session verbatim so binding-revocation can be
+   * origin-scoped. `ttlSeconds` overrides the store TTL per mint point —
+   * relay-mint uses 90s (covers the 20s server-side mint chain plus the
+   * delivery leg), local-ticket uses 120s (human paste cadence); both stay
+   * under the contract's 120s hard cap. The defaults keep every existing
+   * call site byte-identical.
    */
-  def issue(accountSub: String, boundHost: String): IO[IssuedConsoleTicket] =
+  def issue(
+    accountSub: String,
+    boundHost: String,
+    origin: String = ConsoleTicketStore.OriginRelayMint,
+    ttlSeconds: Option[Long] = None
+  ): IO[IssuedConsoleTicket] =
     IO.realTime.map(_.toMillis).flatMap { now =>
-      val effectiveTtl = math.min(ttlSeconds, ConsoleTicketStore.MaxTtlSeconds)
+      val effectiveTtl = ttlSeconds
+        .getOrElse(defaultTtlSeconds)
+        .max(1L)
+        .min(ConsoleTicketStore.MaxTtlSeconds)
       val expiresAt = now + effectiveTtl * 1000L
       val token = ConsoleTicketStore.newToken()
       val ticket = ConsoleTicket(
         boundHost = boundHost,
         accountSub = accountSub,
-        origin = "relay-mint",
+        origin = origin,
         scope = "console",
         expiresAt = expiresAt,
         remaining = 1
@@ -140,6 +157,27 @@ object ConsoleTicketStore:
 
   /** Contract 2.10: "TTL at most 120 s". */
   val MaxTtlSeconds: Long = 120L
+
+  /**
+   * Phase 3b (plan §3.4): per-mint-point TTLs and origins. Relay-mint gets
+   * 90s — the server-side mint chain holds the ticket for up to MINT_TIMEOUT
+   * (20s) plus the delivery leg, so 30s could hand the browser a ~10s
+   * remainder; 90s covers it with margin. Local break-glass tickets get 120s
+   * (human paste cadence), still at the contract hard cap.
+   */
+  val RelayMintTtlSeconds: Long = 90L
+  val LocalTicketTtlSeconds: Long = 120L
+
+  /** Ticket origins (carried verbatim into the redeemed session). */
+  val OriginRelayMint: String = "relay-mint"
+  val OriginLocalTicket: String = "local-ticket"
+
+  /**
+   * Account-sub sentinel for locally minted break-glass tickets: there is no
+   * Logto identity at the local face, and the redeemed session records this
+   * value verbatim (plan §2.2).
+   */
+  val LocalAccountSub: String = "local"
 
   /** Host-side mint budget (implementation constants, not contract values). */
   val MintBudgetWindowMs: Long = 60_000L

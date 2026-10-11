@@ -35,6 +35,11 @@ class PluginAssetsRoutesSpec extends CatsEffectSuite:
 
   private val gatewayToken = "test-gateway-token"
 
+  // Phase 3b: the criterion is Ref-based + needs a session store (the session
+  // rail reads it; these specs exercise the legacy rails, so an empty store).
+  private val TokenRef = cats.effect.Ref.unsafe[IO, String](gatewayToken)
+  private val Sessions = GatewaySessionStore.unsafeCreate()
+
   /** Fixture plugin tree: nested assets + a symlink-escape attempt inside it. */
   private def pluginFixture(tmp: os.Path): os.Path =
     val pluginDir = tmp / "plugins" / "demo-viewer"
@@ -72,7 +77,7 @@ class PluginAssetsRoutesSpec extends CatsEffectSuite:
   private def get(pluginDir: os.Path)(path: String, cookie: Option[(String, String)] = None) =
     val base = Request[IO](Method.GET, Uri.unsafeFromString(path))
     val req = cookie.fold(base) { case (n, v) => base.addCookie(n, v) }
-    StaticRoutes.pluginAssetsRoutes(gatewayToken, resolverFor(pluginDir))(req).value.unsafeRunSync()
+    StaticRoutes.pluginAssetsRoutes(TokenRef, Sessions, resolverFor(pluginDir))(req).value.unsafeRunSync()
 
   /**
    * The PRODUCTION composition (GatewayMain): the route as one arm of
@@ -84,7 +89,7 @@ class PluginAssetsRoutesSpec extends CatsEffectSuite:
    * showed up as a fall-through, never as an answer from this route).
    */
   private def mountedGet(pluginDir: os.Path)(path: String): Option[org.http4s.Response[IO]] =
-    val mounted = Router("/api" -> StaticRoutes.pluginAssetsRoutes(gatewayToken, resolverFor(pluginDir)))
+    val mounted = Router("/api" -> StaticRoutes.pluginAssetsRoutes(TokenRef, Sessions, resolverFor(pluginDir)))
     mounted.run(Request[IO](Method.GET, Uri.unsafeFromString(path))).value.unsafeRunSync()
 
   test("rejects unauthenticated requests") {

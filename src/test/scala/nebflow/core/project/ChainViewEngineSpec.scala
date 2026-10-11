@@ -411,7 +411,7 @@ class ChainViewEngineSpec extends CatsEffectSuite:
         wsFrames <- Ref.of[IO, Vector[Json]](Vector.empty)
         _ <- hub.registerListener(j => wsFrames.update(_ :+ j))
         routes = new RestApiRoutes(
-          token = token,
+          tokenRef = cats.effect.Ref.unsafe[IO, String](token),
           configRef = Ref.unsafe[IO, nebflow.shared.NebflowServiceConfig](
             nebflow.shared.NebflowServiceConfig(llm = nebflow.shared.ServiceLlmConfig(providers = Map.empty))
           ),

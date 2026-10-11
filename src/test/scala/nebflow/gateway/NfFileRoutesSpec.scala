@@ -101,7 +101,7 @@ class NfFileRoutesSpec extends CatsEffectSuite:
 
   private def get(path: String) =
     val req = Request[IO](Method.GET, Uri.unsafeFromString(path))
-    NfFileRoutes.nfFileRoutes(gatewayToken, store, policy)(req).value.unsafeRunSync()
+    NfFileRoutes.nfFileRoutes(store, policy)(req).value.unsafeRunSync()
 
   private def bodyOf(resp: org.http4s.Response[IO]): String =
     resp.bodyText.compile.string.unsafeRunSync()
@@ -392,7 +392,7 @@ class NfFileRoutesSpec extends CatsEffectSuite:
   private def getRange(path: String, range: String) =
     val req = Request[IO](Method.GET, Uri.unsafeFromString(path))
       .putHeaders(org.http4s.Header.Raw(org.typelevel.ci.CIString("Range"), range))
-    NfFileRoutes.nfFileRoutes(gatewayToken, store, policy)(req).value.unsafeRunSync()
+    NfFileRoutes.nfFileRoutes(store, policy)(req).value.unsafeRunSync()
 
   private def headerOf(resp: org.http4s.Response[IO], name: String): Option[String] =
     resp.headers.get(org.typelevel.ci.CIString(name)).map(_.head.value)

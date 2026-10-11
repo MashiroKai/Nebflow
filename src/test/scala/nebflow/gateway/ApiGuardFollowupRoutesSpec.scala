@@ -40,7 +40,7 @@ class ApiGuardFollowupRoutesSpec extends CatsEffectSuite:
    */
   private def mkRoutes(tts: Option[TtsService] = None): RestApiRoutes =
     new RestApiRoutes(
-      token = TestToken,
+      tokenRef = cats.effect.Ref.unsafe[IO, String](TestToken),
       configRef = cats.effect.Ref.unsafe[IO, NebflowServiceConfig](
         NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))
       ),

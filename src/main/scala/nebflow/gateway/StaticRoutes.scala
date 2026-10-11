@@ -168,62 +168,74 @@ object StaticRoutes:
    * uploads dir those images are unrenderable after a restart.
    *
    * Authenticated — unlike the voice-models route, uploads are user
-   * screenshots (sensitive). Cookie `nebflow_token` first + `?token=` query
-   * fallback (same dual-channel pattern as the /ws route): a malicious page
-   * cross-site <img>-probing the localhost gateway gets no SameSite cookie
-   * sent, while the same-origin frontend attaches it automatically. The
-   * query fallback covers cookie-less contexts (and a stale cookie, same
-   * rationale as /ws).
+   * screenshots (sensitive). Phase 3b: the unified GatewayAuth criterion
+   * under StaticAuth — session cookie first, then the legacy `nebflow_token`
+   * cookie, then the `?token=` fallback (the two pre-3b legs unchanged, the
+   * session rail on top; a presented-but-invalid rail falls through instead
+   * of rejecting). A malicious page cross-site <img>-probing the localhost
+   * gateway still gets no SameSite cookie sent, while the same-origin
+   * frontend attaches the session cookie automatically; the fallbacks cover
+   * cookie-less contexts exactly as before.
    *
    * Lives in the companion (composed ahead of the instance routes) because
    * it touches none of the class dependencies — testable with just a
    * gateway token.
    */
-  def uploadsRoutes(token: String): HttpRoutes[IO] = HttpRoutes.of[IO] {
-    case req @ GET -> _ if req.uri.path.renderString.startsWith("/uploads/") =>
-      val cookieToken = req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
-      val paramToken = req.params.get("token").getOrElse("")
-      if !(Auth.validateToken(cookieToken, token) || Auth.validateToken(paramToken, token)) then
-        Forbidden("Invalid token")
+  def uploadsRoutes(tokenRef: cats.effect.Ref[IO, String], sessions: GatewaySessionStore): HttpRoutes[IO] =
+    HttpRoutes.of[IO] {
+      case req @ GET -> _ if req.uri.path.renderString.startsWith("/uploads/") =>
+        tokenRef.get
+          .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.StaticAuth))
+          .flatMap {
+            case None => Forbidden("Invalid token")
+            case Some(_) =>
+              uploadsServe(req)
+          }
+    }
+
+  /**
+   * The serving leg of uploadsRoutes (verbatim from the pre-3b body): the
+   * percent-decode + traversal-guard + realpath-containment chain. Split out
+   * only so the criterion wrapper above stays readable — behavior is
+   * byte-identical.
+   */
+  private def uploadsServe(req: Request[IO]): IO[Response[IO]] =
+    // Percent-DECODE each segment before the lookup (refresh-image fix,
+    // 2026-10-09): the wire path is always percent-encoded (browsers encode
+    // <img src> per WHATWG; the frontend's attachmentImageUrl
+    // encodeURIComponent's each part) while the on-disk name is the decoded
+    // form. Matching on `encoded` looked up the literal `%E6…%20…` spelling
+    // and 404'd every upload whose name has non-ASCII characters or spaces —
+    // i.e. every macOS screenshot (「截屏2026-10-09 07.10.22.jpg」), which is
+    // exactly why restored history showed broken-image placeholders while the
+    // pre-refresh live row (inline data: preview) rendered fine.
+    // `Segment.decoded` defaults (bytecode-verified, 0.23.30): UTF-8,
+    // plusIsSpace=false (a literal `+` stays `+` on a path — query-string
+    // form semantics must NOT leak here), nothing skipped. Decoding happens
+    // BEFORE the guards below so a `%2E%2E` evasion decodes INTO them.
+    val segs = req.uri.path.segments.map(s => s.decoded()).toList
+    // Path shape is exactly <sid>/<filename> — two segments after "uploads".
+    if segs.sizeIs != 3 then NotFound()
+    else
+      val relParts = segs.drop(1) // drop "uploads"
+      // Block path traversal (same guard style as voice-models). Post-decode
+      // additions: a segment that DECODES to something carrying `/` (from
+      // %2F — no real POSIX filename contains one, and `../uploads/…` would
+      // re-enter the base through os.RelPath up-segments) or NUL (from %00 —
+      // java.nio would throw InvalidPathException → 500) can only be an
+      // evasion, so it gets the same uniform 404 the old literal lookup
+      // produced for both.
+      if relParts
+          .exists(s => s == ".." || s.contains("\\") || s.contains('/') || s.contains('\u0000'))
+      then NotFound()
       else
-        // Percent-DECODE each segment before the lookup (refresh-image fix,
-        // 2026-10-09): the wire path is always percent-encoded (browsers encode
-        // <img src> per WHATWG; the frontend's attachmentImageUrl
-        // encodeURIComponent's each part) while the on-disk name is the decoded
-        // form. Matching on `encoded` looked up the literal `%E6…%20…` spelling
-        // and 404'd every upload whose name has non-ASCII characters or spaces —
-        // i.e. every macOS screenshot (「截屏2026-10-09 07.10.22.jpg」), which is
-        // exactly why restored history showed broken-image placeholders while the
-        // pre-refresh live row (inline data: preview) rendered fine.
-        // `Segment.decoded` defaults (bytecode-verified, 0.23.30): UTF-8,
-        // plusIsSpace=false (a literal `+` stays `+` on a path — query-string
-        // form semantics must NOT leak here), nothing skipped. Decoding happens
-        // BEFORE the guards below so a `%2E%2E` evasion decodes INTO them.
-        val segs = req.uri.path.segments.map(s => s.decoded()).toList
-        // Path shape is exactly <sid>/<filename> — two segments after "uploads".
-        if segs.sizeIs != 3 then NotFound()
-        else
-          val relParts = segs.drop(1) // drop "uploads"
-          // Block path traversal (same guard style as voice-models). Post-decode
-          // additions: a segment that DECODES to something carrying `/` (from
-          // %2F — no real POSIX filename contains one, and `../uploads/…` would
-          // re-enter the base through os.RelPath up-segments) or NUL (from %00 —
-          // java.nio would throw InvalidPathException → 500) can only be an
-          // evasion, so it gets the same uniform 404 the old literal lookup
-          // produced for both.
-          if relParts
-              .exists(s => s == ".." || s.contains("\\") || s.contains('/') || s.contains('\u0000'))
-          then NotFound()
-          else
-            val uploadsBase = PathUtil.dataRoot / "uploads"
-            val filePath = uploadsBase / os.RelPath(relParts.mkString("/"))
-            // Final defense: the resolved path must stay under the base
-            if filePath.startsWith(uploadsBase) && os.exists(filePath) && os.isFile(filePath) then
-              StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
-            else NotFound()
-        end if
-      end if
-  }
+        val uploadsBase = PathUtil.dataRoot / "uploads"
+        val filePath = uploadsBase / os.RelPath(relParts.mkString("/"))
+        // Final defense: the resolved path must stay under the base
+        if filePath.startsWith(uploadsBase) && os.exists(filePath) && os.isFile(filePath) then
+          StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
+        else NotFound()
+    end if
 
   /**
    * canvas-media Wave1 (2026-10-05, OD-2=V-C): tokenized static route for
@@ -239,11 +251,11 @@ object StaticRoutes:
    *  - Trusted plugins ONLY. `trustedPluginDir` resolves the registry
    *    entry's directory; unknown or blocked names get the same uniform
    *    404 as a missing file (no existence oracle for blocked packages).
-   *  - Token REQUIRED: cookie `nebflow_token` first + `?token=` query
-   *    fallback — the same dual channel as uploadsRoutes (a cross-site
-   *    <img>-probe gets no SameSite cookie; the same-origin frontend
-   *    attaches the cookie automatically; the query fallback covers
-   *    cookie-less contexts).
+   *  - Token REQUIRED: the same StaticAuth rails as uploadsRoutes
+   *    (session cookie > legacy `nebflow_token` cookie > `?token=` fallback;
+   *    a cross-site <img>-probe gets no SameSite cookie; the same-origin
+   *    frontend attaches the session cookie automatically; the fallbacks
+   *    cover cookie-less contexts).
    *  - Manual segment parsing (http4s DSL matches single segments only):
    *    trailing slash rejected, `..` and backslash segments rejected in
    *    the plugin name and the relative parts, and the FINAL defense is
@@ -272,40 +284,49 @@ object StaticRoutes:
    * under the Router (production), bare when composed directly (specs).
    */
   def pluginAssetsRoutes(
-    token: String,
+    tokenRef: cats.effect.Ref[IO, String],
+    sessions: GatewaySessionStore,
     trustedPluginDir: String => IO[Option[os.Path]]
-  ): HttpRoutes[IO] = HttpRoutes.of[IO] {
-    case req @ GET -> _ if req.pathInfo.renderString.startsWith("/plugin-assets/") =>
-      val cookieToken = req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
-      val paramToken = req.params.get("token").getOrElse("")
-      if !(Auth.validateToken(cookieToken, token) || Auth.validateToken(paramToken, token)) then
-        Forbidden("Invalid token")
-      // Trailing slash = directory request — this route serves files only.
-      else if req.pathInfo.endsWithSlash then NotFound()
+  ): HttpRoutes[IO] =
+    HttpRoutes.of[IO] {
+      case req @ GET -> _ if req.pathInfo.renderString.startsWith("/plugin-assets/") =>
+        tokenRef.get
+          .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.StaticAuth))
+          .flatMap {
+            case None => Forbidden("Invalid token")
+            case Some(_) =>
+              // Trailing slash = directory request — this route serves files only.
+              if req.pathInfo.endsWithSlash then NotFound()
+              else pluginAssetsServe(req, trustedPluginDir)
+          }
+    }
+
+  /** The serving leg of pluginAssetsRoutes (verbatim from the pre-3b body). */
+  private def pluginAssetsServe(
+    req: Request[IO],
+    trustedPluginDir: String => IO[Option[os.Path]]
+  ): IO[Response[IO]] =
+    val segs = req.pathInfo.segments.map(_.encoded).toList
+    // Shape: /plugin-assets/<name>/<rel…> — at least one rel segment.
+    if segs.sizeIs < 3 || relPartsEmpty(segs.drop(2)) then NotFound()
+    else
+      val pname = segs(1)
+      val relParts = segs.drop(2)
+      // Block path traversal in the plugin name and the relative parts
+      if pname.contains("..") || pname.contains("\\") || relParts.exists(s => s == ".." || s.contains("\\"))
+      then NotFound()
       else
-        val segs = req.pathInfo.segments.map(_.encoded).toList
-        // Shape: /plugin-assets/<name>/<rel…> — at least one rel segment.
-        if segs.sizeIs < 3 || relPartsEmpty(segs.drop(2)) then NotFound()
-        else
-          val pname = segs(1)
-          val relParts = segs.drop(2)
-          // Block path traversal in the plugin name and the relative parts
-          if pname.contains("..") || pname.contains("\\") || relParts.exists(s => s == ".." || s.contains("\\"))
-          then NotFound()
-          else
-            trustedPluginDir(pname).flatMap {
-              case None => NotFound()
-              case Some(dir) =>
-                val filePath = dir / os.RelPath(relParts.mkString("/"))
-                // Final defense: realpath containment under the plugin dir
-                if nebflow.core.plugin.PluginRegistry.containedUnder(dir, filePath) && os.exists(filePath) && os
-                    .isFile(filePath)
-                then StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
-                else NotFound()
-            }
-        end if
-      end if
-  }
+        trustedPluginDir(pname).flatMap {
+          case None => NotFound()
+          case Some(dir) =>
+            val filePath = dir / os.RelPath(relParts.mkString("/"))
+            // Final defense: realpath containment under the plugin dir
+            if nebflow.core.plugin.PluginRegistry.containedUnder(dir, filePath) && os.exists(filePath) && os
+                .isFile(filePath)
+            then StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
+            else NotFound()
+        }
+    end if
 
   /** jsRoutes-style emptiness guard: no segments at all, or a trailing empty one. */
   private def relPartsEmpty(relParts: List[String]): Boolean =

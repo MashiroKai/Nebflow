@@ -68,25 +68,30 @@ object CliRouter:
   ): IO[ExitCode] =
     args match
       case Nil =>
-        // No subcommand — if single subcommand, use it as default; otherwise
-        // report the missing subcommand (V16: `nebflow chat` used to print the
-        // command help and exit 1, which is not a usable behaviour).
+        // No subcommand — if single subcommand, use it as default; if the
+        // command declares a default subcommand (phase 3b: bare `nebflow
+        // token` mints a break-glass ticket), run that; otherwise report the
+        // missing subcommand (V16: `nebflow chat` used to print the command
+        // help and exit 1, which is not a usable behaviour).
         cmd.subcommands match
           case single :: Nil =>
             executeSubcommand(cmd, single, Nil, jsonMode, quietMode)
           case subs =>
-            if jsonMode then
-              IO.println(
-                Json
-                  .obj(
-                    "error" -> s"'${cmd.name}' needs a subcommand".asJson,
-                    "subcommands" -> subs.map(_.name).asJson
-                  )
-                  .spaces2: String
-              ).as(ExitCode.Error)
-            else
-              IO.println(s"Error: '${cmd.name}' needs a subcommand — one of: ${subs.map(_.name).mkString(", ")}")
-                .as(ExitCode.Error)
+            cmd.defaultSubcommand.flatMap(n => cmd.subcommands.find(_.name == n)) match
+              case Some(dflt) => executeSubcommand(cmd, dflt, Nil, jsonMode, quietMode)
+              case None =>
+                if jsonMode then
+                  IO.println(
+                    Json
+                      .obj(
+                        "error" -> s"'${cmd.name}' needs a subcommand".asJson,
+                        "subcommands" -> subs.map(_.name).asJson
+                      )
+                      .spaces2: String
+                  ).as(ExitCode.Error)
+                else
+                  IO.println(s"Error: '${cmd.name}' needs a subcommand — one of: ${subs.map(_.name).mkString(", ")}")
+                    .as(ExitCode.Error)
       case subName :: rest =>
         cmd.subcommands.find(_.name == subName) match
           case Some(sub) =>
@@ -312,7 +317,13 @@ object CliRouter:
     // 配置坏掉的场景下校验器本身就不可达。沿用 T10 的同一分类机制（见
     // isOfflineCmd 注释），不新造第二套「可离线子命令」判据。
     ("config", "path"),
-    ("config", "validate")
+    ("config", "validate"),
+    // phase 3b (plan §6.4 / T-8-5): `token rotate` is a dual-form command —
+    // when the gateway is unreachable it rewrites auth.json locally (the
+    // same atomic write), so leak containment must not depend on a live
+    // gateway. `token print` / `sessions revoke` stay online (a live store
+    // is the minting/revoking object).
+    ("token", "rotate")
   )
 
   private[cli] def isOffline(cmdName: String, subName: String): Boolean =

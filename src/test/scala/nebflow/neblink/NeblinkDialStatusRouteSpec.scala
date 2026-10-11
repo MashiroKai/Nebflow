@@ -73,7 +73,7 @@ class NeblinkDialStatusRouteSpec extends CatsEffectSuite:
 
   private def mkRoutes(ms: NeblinkService, ps: NeblinkPresenceService): RestApiRoutes =
     new RestApiRoutes(
-      token = TestToken,
+      tokenRef = cats.effect.Ref.unsafe[IO, String](TestToken),
       configRef = cats.effect.Ref.unsafe[IO, NebflowServiceConfig](
         NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))
       ),

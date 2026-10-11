@@ -137,7 +137,6 @@ object NfFileRoutes:
    * (206/Content-Range/Accept-Ranges) — see the Range block comment above.
    */
   def nfFileRoutes(
-    token: String,
     store: NfTicketStore,
     policy: NfPathPolicy = NfPathPolicy.memoized()
   ): HttpRoutes[IO] = HttpRoutes.of[IO] { case req @ GET -> Root / "api" / "nf-file" =>
@@ -207,59 +206,70 @@ object NfFileRoutes:
    * rejections come back in `rejected[]` with their `reason` instead of
    * failing the whole batch (the frontend degrades per path — §4.3 F4).
    *
-   * Auth: the ordinary gateway token through `extractToken` (cookie first,
-   * Bearer second, `?token=` last). The frontend sends no explicit
-   * credential — the cookie rides along on the same-origin fetch.
+   * Auth (phase 3b): the unified GatewayAuth criterion under WsAuth —
+   * session cookie first, then Bearer (file token), then the legacy
+   * `nebflow_token` cookie, then `?token=`; a presented-but-invalid rail
+   * falls through to the next one. The frontend sends no explicit
+   * credential — the session cookie rides along on the same-origin fetch.
+   * (Historical note, kept for the record: the pre-3b text claimed
+   * "cookie first" but the implementation was param-first via
+   * `extractToken` — the comment now describes the actual, unified
+   * priority.)
    */
   def nfTicketRoutes(
-    token: String,
+    tokenRef: cats.effect.Ref[IO, String],
     store: NfTicketStore,
-    policy: NfPathPolicy = NfPathPolicy.memoized()
+    policy: NfPathPolicy = NfPathPolicy.memoized(),
+    sessions: GatewaySessionStore
   ): HttpRoutes[IO] = HttpRoutes.of[IO] { case req @ POST -> Root / "api" / "nf-ticket" =>
-    if !Auth.validateToken(WebSocketRoutes.extractToken(req), token) then Forbidden("Invalid token")
-    else
-      req.as[Json].attempt.flatMap {
-        case Left(e) =>
-          BadRequest(s"malformed ticket request body: ${e.getMessage}")
-        case Right(body) =>
-          val sessionId = body.hcursor.downField("sessionId").as[String].getOrElse("")
-          val paths = body.hcursor
-            .downField("paths")
-            .as[List[String]]
-            .getOrElse(Nil)
-            .filter(_.nonEmpty)
-            .distinct
-          // Re-read `nfFile.ticketTtlSeconds` (throttled + mtime-gated) so a
-          // config edit takes effect without a restart (R3).
-          store.refreshTtlFromConfig() *>
-            paths
-              .traverse { p =>
-                nfFileVerdictTolerant(p, policy).flatMap {
-                  case NfVerdict.Allowed(real, _) =>
-                    store.issue(sessionId, real.toString).map { issued =>
-                      Right(
-                        p,
-                        Json.obj(
-                          "t" -> issued.token.asJson,
-                          "exp" -> issued.expiresAt.asJson,
-                          "uses" -> issued.remaining.asJson
+    val authorized =
+      tokenRef.get.flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
+    authorized.flatMap {
+      case None => Forbidden("Invalid token")
+      case Some(_) =>
+        req.as[Json].attempt.flatMap {
+          case Left(e) =>
+            BadRequest(s"malformed ticket request body: ${e.getMessage}")
+          case Right(body) =>
+            val sessionId = body.hcursor.downField("sessionId").as[String].getOrElse("")
+            val paths = body.hcursor
+              .downField("paths")
+              .as[List[String]]
+              .getOrElse(Nil)
+              .filter(_.nonEmpty)
+              .distinct
+            // Re-read `nfFile.ticketTtlSeconds` (throttled + mtime-gated) so a
+            // config edit takes effect without a restart (R3).
+            store.refreshTtlFromConfig() *>
+              paths
+                .traverse { p =>
+                  nfFileVerdictTolerant(p, policy).flatMap {
+                    case NfVerdict.Allowed(real, _) =>
+                      store.issue(sessionId, real.toString).map { issued =>
+                        Right(
+                          p,
+                          Json.obj(
+                            "t" -> issued.token.asJson,
+                            "exp" -> issued.expiresAt.asJson,
+                            "uses" -> issued.remaining.asJson
+                          )
                         )
-                      )
-                    }
-                  case denied: NfVerdict.Denied =>
-                    IO.pure(Left(p, Json.obj("path" -> p.asJson, "reason" -> denied.reason.asJson)))
+                      }
+                    case denied: NfVerdict.Denied =>
+                      IO.pure(Left(p, Json.obj("path" -> p.asJson, "reason" -> denied.reason.asJson)))
+                  }
                 }
-              }
-              .map { results =>
-                val tickets = results.collect { case Right((p, j)) => p -> j }
-                val rejected = results.collect { case Left((_, j)) => j }
-                Json.obj(
-                  "tickets" -> Json.obj(tickets*),
-                  "rejected" -> Json.arr(rejected*)
-                )
-              }
-              .flatMap(Ok(_))
-      }
+                .map { results =>
+                  val tickets = results.collect { case Right((p, j)) => p -> j }
+                  val rejected = results.collect { case Left((_, j)) => j }
+                  Json.obj(
+                    "tickets" -> Json.obj(tickets*),
+                    "rejected" -> Json.arr(rejected*)
+                  )
+                }
+                .flatMap(Ok(_))
+        }
+    }
   }
 
   /**
@@ -269,13 +279,29 @@ object NfFileRoutes:
    * the ticket leg turns into 401 (a status that overlaps the genuine
    * failure case, so the old probe could no longer distinguish anything).
    * This route touches ZERO disk and has no other side effect: 204 when the
-   * presented credential validates (cookie / Bearer / `?token=` all through
-   * `extractToken`), 403 otherwise.
+   * presented credential validates, 403 otherwise.
+   *
+   * Phase 3b: validated through the unified GatewayAuth criterion (WsAuth —
+   * session cookie > Bearer > legacy cookie > `?token=`; the probe fetch
+   * sends none of the explicit forms, so it exercises exactly the cookie
+   * path). A success answer additionally carries the READ-ONLY response
+   * header `x-<brand>-credential` (GatewayAuth.CredentialHeader) whose value
+   * is the rail name that hit — the B' frontend purge hook consumes ONLY the
+   * `session` value ("the HttpOnly session cookie is verified working");
+   * the status-code contract is unchanged.
    */
-  def nfAuthcheckRoutes(token: String): HttpRoutes[IO] = HttpRoutes.of[IO] {
-    case req @ GET -> Root / "api" / "nf-authcheck" =>
-      if Auth.validateToken(WebSocketRoutes.extractToken(req), token) then NoContent()
-      else Forbidden("Invalid token")
-  }
+  def nfAuthcheckRoutes(tokenRef: cats.effect.Ref[IO, String], sessions: GatewaySessionStore): HttpRoutes[IO] =
+    HttpRoutes.of[IO] {
+      case req @ GET -> Root / "api" / "nf-authcheck" =>
+        tokenRef.get
+          .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
+          .flatMap {
+            case None => Forbidden("Invalid token")
+            case Some(cred) =>
+              NoContent().map(_.putHeaders(
+                Header.Raw(org.typelevel.ci.CIString(GatewayAuth.CredentialHeader), cred.railName)
+              ))
+          }
+    }
 
 end NfFileRoutes

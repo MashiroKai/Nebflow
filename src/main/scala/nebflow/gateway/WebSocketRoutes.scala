@@ -39,7 +39,14 @@ class WebSocketRoutes(
   configService: ConfigService.type,
   configRef: Ref[IO, NebflowServiceConfig],
   rateLimiter: RateLimiter,
-  token: String,
+  /**
+   * Phase 3b: the LIVE file token (Ref, not a boot snapshot) — a rotation
+   * swaps it and the old value dies on this running gateway immediately
+   * (criterion 7), while live sessions keep authenticating.
+   */
+  tokenRef: Ref[IO, String],
+  /** Phase 3b: the console session store (session rail on the WS-face routes). */
+  sessions: GatewaySessionStore,
   fileChangeTracker: FileChangeTracker,
   sessionStore: SessionStore,
   wsHub: WsHub,
@@ -874,200 +881,209 @@ class WebSocketRoutes(
 
   def routes: HttpRoutes[IO] =
     StaticRoutes.uploadsRoutes(
-      token
+      tokenRef,
+      sessions
     ) <+> StaticRoutes.jsRoutes <+> StaticRoutes.assetsRoutes <+> NfFileRoutes.nfFileRoutes(
-      token,
       nfTicketStore,
       nfPathPolicy
-    ) <+> NfFileRoutes.nfTicketRoutes(token, nfTicketStore, nfPathPolicy) <+> NfFileRoutes.nfAuthcheckRoutes(
-      token
-    ) <+> HttpRoutes.of[IO] {
+    ) <+> NfFileRoutes.nfTicketRoutes(tokenRef, nfTicketStore, nfPathPolicy, sessions) <+> NfFileRoutes
+      .nfAuthcheckRoutes(
+        tokenRef,
+        sessions
+      ) <+> HttpRoutes.of[IO] {
       case req @ GET -> Root / "ws" =>
-        // Cookie takes priority to avoid token leakage in browser history/logs/Referer.
-        // Query param kept as fallback for cross-origin or first-load scenarios.
-        val cookieToken = req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
-        val paramToken = req.params.get("token").getOrElse("")
-        // A stale cookie (e.g. written by an older build with Secure/domain
-        // attributes, so a fresh document.cookie write cannot replace it) must
-        // not lock the client out: if the cookie does not validate but a valid
-        // ?token= is presented, accept it.
-        if Auth.validateToken(cookieToken, token) || Auth.validateToken(paramToken, token) then
-          // R-1b conn-guard：升级受理即 per-IP 检查（拒 ⇒ 可见 429，不静默；
-          // 环回恒放行）。入账延后到 wsb.build 前（下方 acquireWs——中途失败
-          // 不留幽灵计数），回减挂流 finalizer（releaseWs 凭据配对）。
-          // 括号包裹 = 保持原 for 缩进不动（大段受理体零改排）。
-          val wsIp = ConnGuard.normalizeIp(req.remoteAddr)
-          connGuard.checkWs(wsIp).flatMap {
-            case Some(reason) =>
+        // Phase 3b: the unified GatewayAuth criterion under WsAuth — session
+        // cookie first, then Bearer (file token; a WsAuth registration note:
+        // browsers cannot send Authorization on a WS handshake, so this leg
+        // only ever fires for non-browser clients that previously used
+        // ?token=), then the legacy `nebflow_token` cookie, then `?token=`.
+        // A presented-but-invalid high rail falls through instead of
+        // rejecting (the stale-cookie tolerance below is now constructive).
+        tokenRef.get
+          .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
+          .flatMap {
+            case None =>
               logger.warn(
-                s"conn-guard: WS upgrade rejected ip=$wsIp reason=$reason caps=${connGuard.config.wsPerIpCap}/${connGuard.config.wsTotalCap}"
+                s"WebSocket auth failed from ${req.remoteAddr.getOrElse("unknown")}"
               ) *>
-                TooManyRequests(
-                  s"Connection guard: WebSocket limit reached ($reason); retry later or contact the operator"
-                )
-            case None => (
-              for
-                // ── A2 (perf-481): bounded outbound queue ────────────────────
-                // Was `Queue.unbounded`: a slow/stalled subscriber never
-                // applied backpressure, so its queue grew without bound while
-                // the event loop kept paying "serialize + offer" for it.
-                //
-                // Overflow policy (plan OD-1, per-frame class):
-                //  · streaming increment (textDelta/thinkingDelta/…): drop the
-                //    OLDEST frame and enqueue the new one. A stream increment is
-                //    superseded by later ones, so losing the middle of a stream
-                //    costs at most a few rendered characters — never final state.
-                //  · control/status frame: do NOT drop. A dropped control frame
-                //    is a silent lie (e.g. a lost `configUpdated` leaves the UI
-                //    showing "saved"); a throttled one delays it. So the
-                //    connection is torn down instead: the client reconnects and
-                //    re-syncs from scratch (ws.js owns the reconnect + onReconnect
-                //    resync leg), which is a visible, recoverable failure rather
-                //    than a silent one.
-                // The class is computed once per event inside WsHub (see there).
-                outbound <- Queue.bounded[IO, WebSocketFrame](OutboundQueueCapacity)
-                outboundOverflowClosed <- Deferred[IO, Unit]
+                Forbidden("Invalid token")
+            case Some(_) =>
+              // R-1b conn-guard：升级受理即 per-IP 检查（拒 ⇒ 可见 429，不静默；
+              // 环回恒放行）。入账延后到 wsb.build 前（下方 acquireWs——中途失败
+              // 不留幽灵计数），回减挂流 finalizer（releaseWs 凭据配对）。
+              // 括号包裹 = 保持原 for 缩进不动（大段受理体零改排）。
+              val wsIp = ConnGuard.normalizeIp(req.remoteAddr)
+              connGuard.checkWs(wsIp).flatMap {
+                case Some(reason) =>
+                  logger.warn(
+                    s"conn-guard: WS upgrade rejected ip=$wsIp reason=$reason caps=${connGuard.config.wsPerIpCap}/${connGuard.config.wsTotalCap}"
+                  ) *>
+                    TooManyRequests(
+                      s"Connection guard: WebSocket limit reached ($reason); retry later or contact the operator"
+                    )
+                case None => (
+                  for
+                    // ── A2 (perf-481): bounded outbound queue ────────────────────
+                    // Was `Queue.unbounded`: a slow/stalled subscriber never
+                    // applied backpressure, so its queue grew without bound while
+                    // the event loop kept paying "serialize + offer" for it.
+                    //
+                    // Overflow policy (plan OD-1, per-frame class):
+                    //  · streaming increment (textDelta/thinkingDelta/…): drop the
+                    //    OLDEST frame and enqueue the new one. A stream increment is
+                    //    superseded by later ones, so losing the middle of a stream
+                    //    costs at most a few rendered characters — never final state.
+                    //  · control/status frame: do NOT drop. A dropped control frame
+                    //    is a silent lie (e.g. a lost `configUpdated` leaves the UI
+                    //    showing "saved"); a throttled one delays it. So the
+                    //    connection is torn down instead: the client reconnects and
+                    //    re-syncs from scratch (ws.js owns the reconnect + onReconnect
+                    //    resync leg), which is a visible, recoverable failure rather
+                    //    than a silent one.
+                    // The class is computed once per event inside WsHub (see there).
+                    outbound <- Queue.bounded[IO, WebSocketFrame](OutboundQueueCapacity)
+                    outboundOverflowClosed <- Deferred[IO, Unit]
 
-                perConnWsSend = (text: String, isStream: Boolean) =>
-                  outbound
-                    .tryOffer(WebSocketFrame.Text(text))
-                    .flatMap {
-                      case true => IO.unit
-                      case false if isStream =>
-                        // Full queue + droppable frame ⇒ evict oldest, then take
-                        // the slot this frame just vacated. `tryTake` returning
-                        // None (a reader drained it concurrently) is fine — the
-                        // retry below either succeeds or is counted, never loops.
-                        outbound.tryTake *> outbound.tryOffer(WebSocketFrame.Text(text)).void *>
-                          IO(wsHub.noteOverflowDrop())
-                      case false =>
-                        // Full queue + control frame ⇒ tear this connection down.
-                        // The teardown rides the queue's own stream (see
-                        // `sendStream`), so there is no process-wide state and no
-                        // cross-connection leak.
-                        IO(wsHub.noteOverflowClose()) *>
-                          logger.warn(
-                            "WebSocket outbound queue full on a non-stream frame — closing " +
-                              s"this connection (capacity $OutboundQueueCapacity)"
-                          ) *>
-                          outboundOverflowClosed.complete(()).void
-                    }
-                hubConnId <- wsHub.register(perConnWsSend)
+                    perConnWsSend = (text: String, isStream: Boolean) =>
+                      outbound
+                        .tryOffer(WebSocketFrame.Text(text))
+                        .flatMap {
+                          case true => IO.unit
+                          case false if isStream =>
+                            // Full queue + droppable frame ⇒ evict oldest, then take
+                            // the slot this frame just vacated. `tryTake` returning
+                            // None (a reader drained it concurrently) is fine — the
+                            // retry below either succeeds or is counted, never loops.
+                            outbound.tryTake *> outbound.tryOffer(WebSocketFrame.Text(text)).void *>
+                              IO(wsHub.noteOverflowDrop())
+                          case false =>
+                            // Full queue + control frame ⇒ tear this connection down.
+                            // The teardown rides the queue's own stream (see
+                            // `sendStream`), so there is no process-wide state and no
+                            // cross-connection leak.
+                            IO(wsHub.noteOverflowClose()) *>
+                              logger.warn(
+                                "WebSocket outbound queue full on a non-stream frame — closing " +
+                                  s"this connection (capacity $OutboundQueueCapacity)"
+                              ) *>
+                              outboundOverflowClosed.complete(()).void
+                        }
+                    hubConnId <- wsHub.register(perConnWsSend)
 
-                // A1: the hub now hands connections pre-serialized text. The
-                // handlers below (message dispatch, session list, the explorer
-                // watch table) still reason in Json, so they get an adapter that
-                // serializes on the way in — the point of A1 is that the *fan-out*
-                // no longer re-serializes per connection, not that Json is banned.
-                perConnJsonSend = (json: io.circe.Json) => perConnWsSend(json.noSpaces, WsHub.isStreamFrame(json))
+                    // A1: the hub now hands connections pre-serialized text. The
+                    // handlers below (message dispatch, session list, the explorer
+                    // watch table) still reason in Json, so they get an adapter that
+                    // serializes on the way in — the point of A1 is that the *fan-out*
+                    // no longer re-serializes per connection, not that Json is banned.
+                    perConnJsonSend = (json: io.circe.Json) => perConnWsSend(json.noSpaces, WsHub.isStreamFrame(json))
 
-                // explorer-rt (chain-n-1981ce87): one watch-subscription table per
-                // connection. Chained into the finalizer below — a dropped
-                // connection releases every WatchService it registered.
-                watchSession = new ExplorerWatchSession(perConnJsonSend, logger)
+                    // explorer-rt (chain-n-1981ce87): one watch-subscription table per
+                    // connection. Chained into the finalizer below — a dropped
+                    // connection releases every WatchService it registered.
+                    watchSession = new ExplorerWatchSession(perConnJsonSend, logger)
 
-                receivePipe: Pipe[IO, WebSocketFrame, Unit] = _.evalMap {
-                  case WebSocketFrame.Text(text, _) =>
-                    handleMessage(text, perConnJsonSend, watchSession).handleErrorWith { e =>
-                      logger.error(s"WebSocket message handler error: ${e.getMessage}", e)
-                      IO.unit
-                    }
-                  case _ => IO.unit
-                }.onFinalize(
-                  wsHub.unregister(hubConnId) *> watchSession.close()
-                )
+                    receivePipe: Pipe[IO, WebSocketFrame, Unit] = _.evalMap {
+                      case WebSocketFrame.Text(text, _) =>
+                        handleMessage(text, perConnJsonSend, watchSession).handleErrorWith { e =>
+                          logger.error(s"WebSocket message handler error: ${e.getMessage}", e)
+                          IO.unit
+                        }
+                      case _ => IO.unit
+                    }.onFinalize(
+                      wsHub.unregister(hubConnId) *> watchSession.close()
+                    )
 
-                // sendStream: read from outbound queue, send via WebSocket.
-                // Client disconnects are expected (browser tab close, network change) and
-                // produce IOException during write. Catch and swallow gracefully.
-                //
-                // A2: the stream races the queue against the overflow signal, so a
-                // control frame hitting a full queue actually ENDS the stream
-                // (the socket closes and the client reconnects + resyncs) instead
-                // of the frame being silently discarded. `interruptWhen` cancels
-                // the queue side on completion, and the server's own WebSocket
-                // close handling runs the receive pipe's finalizer.
-                sendStream = Stream
-                  .fromQueueUnterminated(outbound)
-                  .interruptWhen(outboundOverflowClosed.get.attempt)
-                  .handleErrorWith { e =>
-                    Stream.eval(logger.debug(s"WebSocket send stream closed: ${e.getMessage}")).drain
-                  }
-                _ <- logger.info("WebSocket client connected")
-                thinkingCfg <- sharedResources.thinkingConfigRef.get
-                workScheduleCfg <- sharedResources.freezeScheduleRef.get
-                skipUntil <- sharedResources.freezeSkipUntilRef.get
-                sttSvc <- sttServiceRef.get
-                mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
-                  io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
-                })
-                _ <- outbound.offer(
-                  WebSocketFrame.Text(
-                    io.circe.Json
-                      .obj(
-                        "type" -> "serverConfig".asJson,
-                        "streamTimeoutMs" -> (Defaults.StreamTimeoutSec.toLong * 1000).asJson,
-                        "version" -> nebflow.Version.string.asJson,
-                        "thinking" -> thinkingCfg.asJson,
-                        "workSchedule" -> workScheduleCfg.asJson,
-                        // 现象 2 契约（2026-08-30）：连接初始态即携带全局冻结状态——
-                        // 页面加载时若已在冻结窗口（且无活跃 agent 产生 frozen 事件），
-                        // 前端输入栏禁用状态机必须能直接读到当前冻结态。
-                        "freezeState" -> nebflow.core.schedule.FreezeSchedule
-                          .freezeStateNode(
-                            workScheduleCfg,
-                            skipUntil,
-                            System.currentTimeMillis()
+                    // sendStream: read from outbound queue, send via WebSocket.
+                    // Client disconnects are expected (browser tab close, network change) and
+                    // produce IOException during write. Catch and swallow gracefully.
+                    //
+                    // A2: the stream races the queue against the overflow signal, so a
+                    // control frame hitting a full queue actually ENDS the stream
+                    // (the socket closes and the client reconnects + resyncs) instead
+                    // of the frame being silently discarded. `interruptWhen` cancels
+                    // the queue side on completion, and the server's own WebSocket
+                    // close handling runs the receive pipe's finalizer.
+                    sendStream = Stream
+                      .fromQueueUnterminated(outbound)
+                      .interruptWhen(outboundOverflowClosed.get.attempt)
+                      .handleErrorWith { e =>
+                        Stream.eval(logger.debug(s"WebSocket send stream closed: ${e.getMessage}")).drain
+                      }
+                    _ <- logger.info("WebSocket client connected")
+                    thinkingCfg <- sharedResources.thinkingConfigRef.get
+                    workScheduleCfg <- sharedResources.freezeScheduleRef.get
+                    skipUntil <- sharedResources.freezeSkipUntilRef.get
+                    sttSvc <- sttServiceRef.get
+                    mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
+                      io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
+                    })
+                    _ <- outbound.offer(
+                      WebSocketFrame.Text(
+                        io.circe.Json
+                          .obj(
+                            "type" -> "serverConfig".asJson,
+                            "streamTimeoutMs" -> (Defaults.StreamTimeoutSec.toLong * 1000).asJson,
+                            "version" -> nebflow.Version.string.asJson,
+                            "thinking" -> thinkingCfg.asJson,
+                            "workSchedule" -> workScheduleCfg.asJson,
+                            // 现象 2 契约（2026-08-30）：连接初始态即携带全局冻结状态——
+                            // 页面加载时若已在冻结窗口（且无活跃 agent 产生 frozen 事件），
+                            // 前端输入栏禁用状态机必须能直接读到当前冻结态。
+                            "freezeState" -> nebflow.core.schedule.FreezeSchedule
+                              .freezeStateNode(
+                                workScheduleCfg,
+                                skipUntil,
+                                System.currentTimeMillis()
+                              )
+                              .asJson,
+                            "stt" -> SttService.serverConfigNode(sttSvc),
+                            // A4: the tool list is served on demand (`getToolsList`),
+                            // not on every connect + config broadcast — see the note
+                            // above `toolsListJson`.
+                            "mcpServers" -> mcpServers.asJson
                           )
-                          .asJson,
-                        "stt" -> SttService.serverConfigNode(sttSvc),
-                        // A4: the tool list is served on demand (`getToolsList`),
-                        // not on every connect + config broadcast — see the note
-                        // above `toolsListJson`.
-                        "mcpServers" -> mcpServers.asJson
+                          .noSpaces
                       )
-                      .noSpaces
-                  )
+                    )
+                    activeMeta <- sessionStore.getActiveMeta
+                    agentName = activeMeta.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
+                    // ⑦ (2026-08-24): restore mounted teams right on WS connect — not
+                    // only on first user message. Team mount recovery lives in
+                    // FlowTreeActor startup (restoreTeams → TeamSessionRegistry), and
+                    // the actor is only created alongside the root agent. After a
+                    // restart, a client that connects but sends no message would leave
+                    // /api/teams/mounted empty → "No active teams" panel. ensureRootAgent
+                    // is idempotent (existing ref is returned) and chains initFlowTree
+                    // on first spawn, so a plain call covers both the cold start (new
+                    // agent → tree → restore) and the warm path (existing agent/tree →
+                    // no-op).
+                    _ <- activeMeta.traverse_(meta =>
+                      ensureRootAgent(meta.id).void.handleErrorWith(e =>
+                        logger.warn(s"WS-connect team restore failed for session ${meta.id}: ${e.getMessage}")
+                      )
+                    )
+                    _ <- sessionService.sendSessionList(perConnJsonSend, agentName)
+                    // R-1b：入账在 build 前（此处之后仅剩 build 本身，失败即自然不
+                    // build ⇒ 无幽灵计数）；回减挂流 finalizer（连接关闭必走）。
+                    guardHandle <- connGuard.acquireWs(wsIp)
+                    guardedPipe = receivePipe.andThen(_.onFinalize(connGuard.releaseWs(guardHandle)))
+                    ws <- wsb.build(sendStream, guardedPipe)
+                  yield ws
                 )
-                activeMeta <- sessionStore.getActiveMeta
-                agentName = activeMeta.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
-                // ⑦ (2026-08-24): restore mounted teams right on WS connect — not
-                // only on first user message. Team mount recovery lives in
-                // FlowTreeActor startup (restoreTeams → TeamSessionRegistry), and
-                // the actor is only created alongside the root agent. After a
-                // restart, a client that connects but sends no message would leave
-                // /api/teams/mounted empty → "No active teams" panel. ensureRootAgent
-                // is idempotent (existing ref is returned) and chains initFlowTree
-                // on first spawn, so a plain call covers both the cold start (new
-                // agent → tree → restore) and the warm path (existing agent/tree →
-                // no-op).
-                _ <- activeMeta.traverse_(meta =>
-                  ensureRootAgent(meta.id).void.handleErrorWith(e =>
-                    logger.warn(s"WS-connect team restore failed for session ${meta.id}: ${e.getMessage}")
-                  )
-                )
-                _ <- sessionService.sendSessionList(perConnJsonSend, agentName)
-                // R-1b：入账在 build 前（此处之后仅剩 build 本身，失败即自然不
-                // build ⇒ 无幽灵计数）；回减挂流 finalizer（连接关闭必走）。
-                guardHandle <- connGuard.acquireWs(wsIp)
-                guardedPipe = receivePipe.andThen(_.onFinalize(connGuard.releaseWs(guardHandle)))
-                ws <- wsb.build(sendStream, guardedPipe)
-              yield ws
-            )
+              }
           }
-        else
-          logger.warn(
-            s"WebSocket auth failed from ${req.remoteAddr.getOrElse("unknown")}"
-          ) *>
-            Forbidden("Invalid token")
-        end if
 
       // --- Callback endpoint (外→内) ---
-      // POST /api/callbacks/inject — agent-centric, authenticated via gateway token
+      // POST /api/callbacks/inject — agent-centric, authenticated through the
+      // unified GatewayAuth criterion (WsAuth: session cookie > Bearer >
+      // legacy cookie > ?token=).
       case req @ POST -> Root / "api" / "callbacks" / "inject" =>
-        val provided = extractToken(req)
-        if !Auth.validateToken(provided, token) then Forbidden("Invalid token")
-        else handleInject(req)
+        tokenRef.get
+          .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
+          .flatMap {
+            case None    => Forbidden("Invalid token")
+            case Some(_) => handleInject(req)
+          }
 
       // GET /api/nf-file — local file serving for card iframes moved to the
       // companion as nfFileRoutes(token) (standalone, unit-testable, same
@@ -2689,9 +2705,12 @@ class WebSocketRoutes(
   // ============================================================
 
   /**
-   * Extract token from query param (localStorage), Authorization header, or cookie.
-   * Logic lives on the companion (pure, shared with nfFileRoutes); this
-   * instance alias keeps every existing call site unchanged.
+   * Legacy credential extractor (param > Authorization header > cookie).
+   * RETAINED as the pre-3b extractor — the three consumers it served now go
+   * through the unified [[GatewayAuth]] criterion (WsAuth), so this is
+   * deliberately kept pure and unused-by-routes (plan §4.2#3: "keep the
+   * function, avoid a wide text rewrite"); removal belongs to the phase C/D
+   * narrowing batches.
    */
   private def extractToken(req: org.http4s.Request[IO]): String =
     WebSocketRoutes.extractToken(req)

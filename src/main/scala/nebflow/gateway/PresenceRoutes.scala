@@ -1274,7 +1274,9 @@ private[gateway] object PresenceRoutes:
         // weixin-inbound batch (2026-10-07): the gate gains its track-2 (the
         // shim token, route-local — see withIngressAuth); track 1 (admin) is
         // the same checkAuth verdict withAuth would have used, unchanged.
-        withIngressAuth(req, checkAuth(req)) {
+        // Phase 3b: checkAuth is IO now — the verdict binds before the
+        // by-name body, same evaluation order as before.
+        checkAuth(req).flatMap(v => withIngressAuth(req, v) {
           req.as[Json].attempt.flatMap {
             case Left(_) =>
               BadRequest(
@@ -1304,7 +1306,7 @@ private[gateway] object PresenceRoutes:
                       )
                   }
           }
-        }
+        })
 
       case req @ POST -> Root / "social" / "channels" / channelId =>
         withAuth(req) {
