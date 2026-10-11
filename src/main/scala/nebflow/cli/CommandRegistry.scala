@@ -54,7 +54,11 @@ object CommandRegistry:
       // chat-domain `session` command). Existing entries untouched, unsorted,
       // un-reformatted — add-only is the only accepted shape in this file.
       TokenCommand,
-      SessionsCommand
+      SessionsCommand,
+      // Phase 3c D6-guard batch: append-only one line — `bind` (confirm: the
+      // binding-transfer confirmation code minted on the OLD host; gateway
+      // and relay required, never offline-classified). Same add-only shape.
+      BindCommand
     ).map(c => c.name -> c).toMap
 
   def get(name: String): Option[CliCommand] = commands.get(name)

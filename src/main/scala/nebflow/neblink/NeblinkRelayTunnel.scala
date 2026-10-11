@@ -959,6 +959,65 @@ final class NeblinkRelayTunnel(
   end sendAck
 
   /**
+   * D6 binding-transfer confirmation report (phase 3c plan §8 component ①):
+   * push the freshly minted 6-digit confirm code up the relay control plane
+   * so the server hangs it as the pending confirmation (plan R-8 recommended
+   * flow — the portal compares against the server's copy). Frame shape has
+   * ONE definition point: [[NeblinkRelayTunnel.bindConfirmFrame]].
+   *
+   * Outcome semantics are the SAME three states as [[sendAck]] (read its F3
+   * note): `Sent` = the frame was handed to the registered socket with its
+   * output direction open — NOT "the server accepted it", and NOT "the code
+   * became pending" (no ack exists on this face). ANY server without the
+   * confirmation-staging face drops the unknown `bind_confirm` type with a
+   * warn log and keeps the tunnel (server `relay_legacy_text` returns true
+   * on the parse-error branch): a pre-D6 server, and equally the
+   * intermediate state where the D6 GUARD is live but the staging face is
+   * still deferred (portal wire contract v1.2 §3.3 → phase-5 freeze). The
+   * uplink is wire-safe in every such state, but in them the printed code
+   * can never match — the caller must treat `NoLiveSocket` / `SendFailed`
+   * as "the code never became pending" (never display it), and the CLI copy
+   * names the staging-face dependency instead of promising portal
+   * acceptance.
+   */
+  def sendBindConfirm(code: String, ttlSec: Long): IO[AckOutcome] =
+    val frame = NeblinkRelayTunnel.bindConfirmFrame(code, ttlSec)
+    wsRef match
+      case None =>
+        logger
+          .debug("bind-confirm-not-sent reason=no_live_socket: no registered relay socket")
+          .as(AckOutcome.NoLiveSocket)
+      case Some(w) if w.isOutputClosed() =>
+        logger
+          .debug("bind-confirm-not-sent reason=no_live_socket: relay socket output closed")
+          .as(AckOutcome.NoLiveSocket)
+      case Some(w) =>
+        IO.blocking {
+          try
+            val fut = w.sendText(frame.noSpaces, true)
+            fut.whenComplete { (_, err) =>
+              if err != null then
+                logger.debugSync(
+                  s"bind_confirm frame write reported async failure: ${NeblinkRelayTunnel.describeErr(err)}"
+                )
+            }
+            AckOutcome.Sent
+          catch
+            case e: Exception =>
+              val reason = NeblinkRelayTunnel.describeErr(e)
+              logger.debugSync(s"bind_confirm send failed: $reason")
+              AckOutcome.SendFailed(reason)
+        }.handleErrorWith(e =>
+          logger
+            .debug(s"bind_confirm send error: ${e.getMessage}")
+            .as(AckOutcome.SendFailed(NeblinkRelayTunnel.describeErr(e)))
+        )
+
+    end match
+
+  end sendBindConfirm
+
+  /**
    * presence v2 (C6): handle a server-pushed DeviceStatusUpdate frame.
    *
    * Wire schema (dual-field tolerant — fixes the interop mismatch where the
@@ -1134,6 +1193,39 @@ object NeblinkRelayTunnel:
   private[neblink] def ackFrame(eventId: String): Json =
     Json.obj("type" -> "ack".asJson, "eventId" -> eventId.asJson)
 
+  /**
+   * D6 confirm-code report frame — **the single shape definition point**
+   * (same discipline as [[ackFrame]]): `{"type":"bind_confirm","code":"<6
+   * digits>","ttlSec":900}`.
+   *
+   * Alignment target for the neblink-server implementer (no server-side
+   * definition exists yet — this frame rides the RELAY control plane, NOT
+   * the frozen 13-frame portal wire contract, so no contract/vector change
+   * is involved): a new `ClientToServer` enum variant in `src/relay.rs`,
+   * following that enum's exact conventions (serde `tag = "type"`,
+   * `rename_all = "snake_case"`, explicit camelCase field renames):
+   *
+   * ```rust
+   * BindConfirm {
+   *     #[serde(rename = "code")]
+   *     code: String, // exactly 6 ASCII digits — a STRING, never a number (leading zeros are real codes)
+   *     #[serde(rename = "ttlSec")]
+   *     ttl_sec: u32, // the host-side pending TTL in seconds (BindConfirmStore.DefaultTtlSec = 900)
+   * },
+   * ```
+   *
+   * The tunnel registration already identifies the device/account server
+   * side, so no identity field rides the frame. Until the server lands the
+   * variant it logs + drops the unknown type (`relay_legacy_text` warn
+   * branch) — the wire is otherwise untouched.
+   */
+  private[neblink] def bindConfirmFrame(code: String, ttlSec: Long): Json =
+    Json.obj(
+      "type" -> "bind_confirm".asJson,
+      "code" -> code.asJson,
+      "ttlSec" -> ttlSec.asJson
+    )
+
   private val logger = NebflowLogger.forName("nebflow.neblink.relay")
 
   /**
@@ -1178,6 +1270,20 @@ object NeblinkRelayTunnel:
       case None =>
         logger
           .debug(s"ack-not-sent reason=no_live_socket: relay tunnel not registered for $eventId")
+          .as(AckOutcome.NoLiveSocket)
+
+  /**
+   * The single bind-confirm send implementation point (same shape discipline
+   * as [[sendAckLive]]): the gateway route reads the tunnel LIVE at request
+   * time and an absent tunnel is an honest `NoLiveSocket`, never a swallowed
+   * success.
+   */
+  def sendBindConfirmLive(tunnelOpt: Option[NeblinkRelayTunnel], code: String, ttlSec: Long): IO[AckOutcome] =
+    tunnelOpt match
+      case Some(t) => t.sendBindConfirm(code, ttlSec)
+      case None =>
+        logger
+          .debug("bind-confirm-not-sent reason=no_live_socket: relay tunnel not registered")
           .as(AckOutcome.NoLiveSocket)
 
   /**
