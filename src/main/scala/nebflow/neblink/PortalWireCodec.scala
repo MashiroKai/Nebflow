@@ -7,11 +7,20 @@ import io.circe.syntax.*
 import java.util.Base64
 
 /**
- * Production codec for the portal wire contract v1 (phase 0.5 freeze,
- * 2026-10-10). Single source: `src/test/resources/neblink/portal-wire-contract-v1.md`
- * and its companion vector file `portal-wire-vectors-v1.json`; the
+ * Production codec for the portal wire contract v1.1 (phase 3c re-freeze,
+ * 2026-10-11). Single source: `src/test/resources/neblink/portal-wire-contract-v1.1.md`
+ * and its companion vector file `portal-wire-vectors-v1.1.json`; the
  * neblink-server repo holds byte-identical copies and runs its own Rust
  * conformance suite against the same vectors.
+ *
+ * v1.1 additions (zero breakage — every addition is an optional field): the
+ * `ws_open` face carries optional `headers` (the browser session cookie
+ * crosses the bridge verbatim) and the `http_response` face carries optional
+ * `setCookie` (array of strings, one element per Set-Cookie occurrence;
+ * comma-joining Set-Cookie into `headers` is prohibited). A frame that omits
+ * the new fields is exactly a v1 frame; a v1 reader silently drops the new
+ * fields (unknown extra keys). Senders gate the new fields on the peer's
+ * announced readiness — freeze first, then send (contract sections 2.4/2.6).
  *
  * Scope (phase 3a design section 3.1): the tunnel's outbound frames for the
  * NEW eleven contract frames are encoded here (canonical key order single
@@ -34,7 +43,9 @@ import java.util.Base64
  *  - UUID fields are lowercase hyphenated 8-4-4-4-12 with RFC 4122
  *    version/variant nibbles;
  *  - `ConsoleTicketResult` success and failure shapes are mutually exclusive
- *    (`field_conflict`).
+ *    (`field_conflict`); so are `http_response` frames carrying `set-cookie`
+ *    inside `headers` together with a `setCookie` array (a lone legacy
+ *    `set-cookie` entry in `headers` stays acceptable).
  *
  * Runtime rejection semantics (contract section 1): the nine codes are a
  * conformance vocabulary, NOT wire error frames — the caller drops the frame
@@ -83,12 +94,25 @@ object PortalWireCodec:
   final case class HttpRequest(requestId: String, method: String, path: String, headers: Headers)
       extends PortalFrame
 
-  final case class HttpResponse(requestId: String, status: Int, headers: Headers) extends PortalFrame
+  /**
+   * Contract 2.4 (v1.1 D8): `setCookie` carries one element per `Set-Cookie`
+   * occurrence, in first-seen order; an empty vector encodes as absence
+   * (optional field, omitted — never an empty array). `set-cookie` must never
+   * appear in `headers` on this model's outbound face.
+   */
+  final case class HttpResponse(requestId: String, status: Int, headers: Headers, setCookie: Vector[String])
+      extends PortalFrame
 
   final case class BodyFrame(requestId: String, seq: Int, more: Boolean, data: Array[Byte])
       extends PortalFrame
 
-  final case class WsOpen(requestId: String, path: String, subprotocol: Option[String]) extends PortalFrame
+  /** Contract 2.6 (v1.1 D9): optional bridge `headers`, cookie carried verbatim. */
+  final case class WsOpen(
+    requestId: String,
+    path: String,
+    subprotocol: Option[String],
+    headers: Option[Headers]
+  ) extends PortalFrame
 
   final case class WsOpenResult(requestId: String, accepted: Boolean, status: Int) extends PortalFrame
 
@@ -186,12 +210,28 @@ object PortalWireCodec:
           requestId <- reqUuid(o, "requestId")
           status <- reqInt(o, "status")
           headers <- req(o, "headers")(jsonHeaders(_, "headers"))
-        yield HttpResponse(requestId, status, headers)
+          setCookie <- opt(o, "setCookie")(jsonStringArray(_, "setCookie"))
+          // Contract 2.4 (D8): `set-cookie` must ride the setCookie array only;
+          // a frame carrying it in `headers` together with a `setCookie` array
+          // is a field_conflict. A v1-era frame with a LONE `set-cookie` entry
+          // in `headers` stays acceptable (legacy tolerance — single-value
+          // semantics are loss-free).
+          _ <- Either.cond(
+            !(headers.exists(_._1 == "set-cookie") && setCookie.nonEmpty),
+            (),
+            Rejection("field_conflict", fields = Some(List("headers", "setCookie")))
+          )
+        yield HttpResponse(requestId, status, headers, setCookie.getOrElse(Vector.empty))
 
       case "body_frame" =>
         for
           requestId <- reqUuid(o, "requestId")
           seq <- reqInt(o, "seq")
+          // Contract 2.5: `seq` is a 0-based in-cycle ordinal — a negative seq
+          // can never be in-cycle order and is rejected PER FRAME. In-cycle
+          // duplicates/regressions are the stream-level face: the bridge drops
+          // the whole cycle with a diagnostic (never a partial body).
+          _ <- Either.cond(seq >= 0, (), Rejection("invalid_format", field = Some("seq")))
           more <- reqBool(o, "more")
           data <- req(o, "data")(jsonBase64(_, "data"))
         yield BodyFrame(requestId, seq, more, data)
@@ -201,7 +241,8 @@ object PortalWireCodec:
           requestId <- reqUuid(o, "requestId")
           path <- req(o, "path")(jsonAbsolutePath(_, "path"))
           subprotocol <- optString(o, "subprotocol")
-        yield WsOpen(requestId, path, subprotocol)
+          headers <- opt(o, "headers")(jsonHeaders(_, "headers"))
+        yield WsOpen(requestId, path, subprotocol, headers)
 
       case "ws_open_result" =>
         for
@@ -336,7 +377,11 @@ object PortalWireCodec:
           "http_response",
           "requestId" -> Some(Json.fromString(fr.requestId)),
           "status" -> Some(Json.fromInt(fr.status)),
-          "headers" -> Some(headersJson(fr.headers))
+          "headers" -> Some(headersJson(fr.headers)),
+          // Optional, absent omitted (an empty vector is never emitted).
+          "setCookie" -> Option.when(fr.setCookie.nonEmpty)(
+            Json.fromValues(fr.setCookie.map(Json.fromString))
+          )
         )
       case fr: BodyFrame =>
         envelope(
@@ -351,7 +396,10 @@ object PortalWireCodec:
           "ws_open",
           "requestId" -> Some(Json.fromString(fr.requestId)),
           "path" -> Some(Json.fromString(fr.path)),
-          "subprotocol" -> fr.subprotocol.map(Json.fromString)
+          "subprotocol" -> fr.subprotocol.map(Json.fromString),
+          // Contract 2.6 (D9): schema order places `headers` after `subprotocol`;
+          // absent is encoded by omission (old frames keep their exact bytes).
+          "headers" -> fr.headers.map(headersJson)
         )
       case fr: WsOpenResult =>
         envelope(
@@ -504,5 +552,13 @@ object PortalWireCodec:
         acc.flatMap(vs => jsonString(kv._2, name).map(v => vs :+ (kv._1 -> v)))
       }
     }
+
+  /** Contract 2.4 (D8): `setCookie` is an array of strings, one per occurrence. */
+  private def jsonStringArray(j: Json, name: String): Either[Rejection, Vector[String]] =
+    j.asArray
+      .toRight(Rejection("type_mismatch", field = Some(name), expected = Some("array")))
+      .flatMap(_.foldLeft[Either[Rejection, Vector[String]]](Right(Vector.empty)) { (acc, el) =>
+        acc.flatMap(vs => jsonString(el, name).map(v => vs :+ v))
+      })
 
 end PortalWireCodec

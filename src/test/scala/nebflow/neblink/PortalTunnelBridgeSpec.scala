@@ -155,7 +155,7 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
     sentTexts(fake).flatMap(t => PortalWireCodec.decode(t).toOption)
 
   private def httpCycles(fake: FakeWebSocket): List[(String, Int)] =
-    decodeSent(fake).collect { case HttpResponse(rid, status, _) => (rid, status) }
+    decodeSent(fake).collect { case HttpResponse(rid, status, _, _) => (rid, status) }
 
   private def bodyFrames(fake: FakeWebSocket, requestId: String): List[BodyFrame] =
     decodeSent(fake).collect { case f: BodyFrame if f.requestId == requestId => f }
@@ -379,6 +379,193 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
         _ = assert(observedIps.contains("unknown"), s"observed=$observedIps")
       yield ()
     }
+
+  // ── phase 3c: contract v1.1 faces (setCookie relay + ws_open headers) ──
+
+  test("two Set-Cookie headers relay as two setCookie array elements — comma-join prohibited (v1.1 D8)"):
+    val cookieApp = HttpApp[IO] { _ =>
+      IO(
+        Response[IO](status = Status.Ok).withHeaders(
+          Headers(
+            Header.Raw(CIString("Set-Cookie"), "nebflow_session=s3cr3t; Max-Age=43200; Path=/; SameSite=Lax; Secure; HttpOnly"),
+            Header.Raw(CIString("Set-Cookie"), "theme=dark; Path=/"),
+            Header.Raw(CIString("X-Other"), "v1"),
+            Header.Raw(CIString("X-Other"), "v2")
+          )
+        )
+      )
+    }
+    withBridge(cookieApp) { (bridge, fake, _) =>
+      bridge.enqueueFrame(HttpRequest(Rid, "GET", "/api/login", Vector("x-forwarded-for" -> "203.0.113.9")))
+      for
+        ok <- waitUntil(5.seconds)(IO(httpCycles(fake).nonEmpty))
+        _ = assert(ok, s"no http_response; sent=${sentTexts(fake)}")
+        head = decodeSent(fake).collectFirst { case r: HttpResponse => r }.get
+        // Each occurrence rides its OWN array element, byte-exact, first-seen
+        // order (the redemption 303 face: a comma-joined Set-Cookie would
+        // forge one merged cookie and break the browser jar).
+        _ = assertEquals(
+              head.setCookie,
+              Vector(
+                "nebflow_session=s3cr3t; Max-Age=43200; Path=/; SameSite=Lax; Secure; HttpOnly",
+                "theme=dark; Path=/"
+              )
+            )
+        _ = assert(!head.headers.exists(_._1 == "set-cookie"), s"set-cookie must never ride headers: ${head.headers}")
+        // Non-Set-Cookie multi-valued headers keep the v1 conservative comma-join.
+        _ = assertEquals(head.headers.find(_._1 == "x-other").map(_._2), Some("v1, v2"))
+        // Wire face: setCookie sits after headers (schema order); the headers
+        // object carries no set-cookie key.
+        raw = sentTexts(fake).find(_.contains("http_response")).get
+        _ = assert(
+              raw.contains("\"headers\":{\"x-other\":\"v1, v2\"},\"setCookie\":["),
+              s"wire order/setCookie face drifted: $raw"
+            )
+      yield ()
+    }
+
+  /**
+   * Raw-socket WS-upgrade endpoint (the JDK HttpServer cannot answer a 101,
+   * the repo has no WS server library on the test classpath): captures the
+   * handshake request head verbatim, answers a REAL 101 (Sec-WebSocket-Accept
+   * per RFC 6455), then holds the socket until close(). Binds 127.0.0.1 on an
+   * ephemeral port only. The head is recorded BEFORE the 101 is written, so
+   * once the client's open future completes the capture is already readable.
+   */
+  private final class WsHandshakeCapture extends AutoCloseable:
+    val handshakes = new ConcurrentLinkedQueue[String]()
+    private val server = new java.net.ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"))
+    private val sockets = new ConcurrentLinkedQueue[java.net.Socket]()
+    @volatile private var stopped = false
+    private val acceptor = new Thread(() =>
+      while !stopped do
+        try
+          val sock = server.accept()
+          sockets.add(sock)
+          new Thread(() => serve(sock)).start()
+        catch case _: Exception => ()
+    )
+    acceptor.setDaemon(true)
+    acceptor.start()
+
+    def port: Int = server.getLocalPort
+
+    /** Values of one (lowercased) header name across the captured heads. */
+    def headerValues(name: String): List[String] =
+      val out = scala.collection.mutable.ListBuffer.empty[String]
+      handshakes.forEach { head =>
+        head.linesIterator.drop(1).foreach { l =>
+          val n = l.takeWhile(_ != ':').trim.toLowerCase(java.util.Locale.ROOT)
+          if n == name then out += l.dropWhile(_ != ':').drop(1).trim
+        }
+      }
+      out.toList
+
+    private def serve(sock: java.net.Socket): Unit =
+      try
+        val reader = new java.io.BufferedReader(new java.io.InputStreamReader(sock.getInputStream, UTF_8))
+        val head = scala.collection.mutable.ListBuffer.empty[String]
+        var line = reader.readLine()
+        while line != null && line.nonEmpty do
+          head += line
+          line = reader.readLine()
+        handshakes.add(head.mkString("\r\n"))
+        val key = head
+          .collectFirst { case l if l.toLowerCase(java.util.Locale.ROOT).startsWith("sec-websocket-key:") =>
+            l.dropWhile(_ != ':').drop(1).trim
+          }
+          .getOrElse("")
+        val accept = java.util.Base64.getEncoder.encodeToString(
+          java.security.MessageDigest
+            .getInstance("SHA-1")
+            .digest((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").getBytes(UTF_8))
+        )
+        val resp =
+          "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+            s"Sec-WebSocket-Accept: $accept\r\n\r\n"
+        sock.getOutputStream.write(resp.getBytes(UTF_8))
+        sock.getOutputStream.flush()
+      catch case _: Exception => ()
+
+
+    def close(): Unit =
+      stopped = true
+      try server.close()
+      catch case _: Exception => ()
+      sockets.forEach(s => try s.close() catch case _: Exception => ())
+  end WsHandshakeCapture
+
+  test("ws_open with headers injects the cookie into the loopback handshake verbatim (v1.1 D9)"):
+    val capture = new WsHandshakeCapture
+    // The capture's lifetime rides the returned IO (a Scala try/finally around
+    // an IO DESCRIPTION would run close() before munit ever runs the IO).
+    Dispatcher.parallel[IO]
+      .use { _ =>
+        val faces = new PortalHostFaces(gatewayPort = capture.port)
+        val deps = mkDeps(faces)
+        val fake = new FakeWebSocket
+        val bridge = new PortalTunnelBridge(deps, new RelayFrameSender(fake))
+        for
+          fiber <- bridge.run.start
+          _ = bridge.enqueueFrame(
+                WsOpen(
+                  Rid,
+                  "/ws",
+                  None,
+                  Some(
+                    Vector(
+                      "cookie" -> "nebflow_session=abc123; theme=dark",
+                      "x-portal-face" -> "console",
+                      // Hop-face / upgrade-owned heads must NOT be injected.
+                      "host" -> "evil.example",
+                      "upgrade" -> "websocket",
+                      "sec-websocket-protocol" -> "nebflow.chat"
+                    )
+                  )
+                )
+              )
+          ok <- waitUntil(5.seconds)(
+                  IO(decodeSent(fake).collectFirst { case r: WsOpenResult => r }.isDefined)
+                ).guarantee(fiber.cancel *> bridge.teardown())
+          _ = assert(ok, s"no ws_open_result; sent=${sentTexts(fake)}")
+          result = decodeSent(fake).collectFirst { case r: WsOpenResult => r }.get
+          _ = assertEquals((result.accepted, result.status), (true, 101), s"loopback upgrade failed; sent=${sentTexts(fake)}")
+          // The cookie head crosses VERBATIM (the GatewayAuth session-track
+          // face); the ordinary bridge head rides along.
+          _ = assertEquals(capture.headerValues("cookie"), List("nebflow_session=abc123; theme=dark"))
+          _ = assertEquals(capture.headerValues("x-portal-face"), List("console"))
+          // Upgrade-owned faces stay single-headed (the JDK's own): no second
+          // host/upgrade line, no injected subprotocol.
+          hosts = capture.headerValues("host")
+          _ = assertEquals(hosts.length, 1, s"host must stay the JDK's own loopback head: $hosts")
+          _ = assert(hosts.head.startsWith("127.0.0.1:"), s"host must be the loopback endpoint: $hosts")
+          _ = assertEquals(capture.headerValues("upgrade").length, 1)
+          _ = assertEquals(capture.headerValues("sec-websocket-protocol"), Nil)
+        yield ()
+      }
+      .guarantee(IO(capture.close()))
+
+  test("ws_open without headers keeps the v1 handshake shape (no cookie head injected)"):
+    val capture = new WsHandshakeCapture
+    Dispatcher.parallel[IO]
+      .use { _ =>
+        val faces = new PortalHostFaces(gatewayPort = capture.port)
+        val deps = mkDeps(faces)
+        val fake = new FakeWebSocket
+        val bridge = new PortalTunnelBridge(deps, new RelayFrameSender(fake))
+        for
+          fiber <- bridge.run.start
+          _ = bridge.enqueueFrame(WsOpen(Rid, "/ws", None, None))
+          ok <- waitUntil(5.seconds)(
+                  IO(decodeSent(fake).collectFirst { case r: WsOpenResult => r }.isDefined)
+                ).guarantee(fiber.cancel *> bridge.teardown())
+          _ = assert(ok, s"no ws_open_result; sent=${sentTexts(fake)}")
+          result = decodeSent(fake).collectFirst { case r: WsOpenResult => r }.get
+          _ = assertEquals((result.accepted, result.status), (true, 101), s"loopback upgrade failed; sent=${sentTexts(fake)}")
+          _ = assertEquals(capture.headerValues("cookie"), Nil, "a headers-less ws_open must not grow a cookie head")
+        yield ()
+      }
+      .guarantee(IO(capture.close()))
 
   // ── console ticket mint ────────────────────────────────────────────────
 
