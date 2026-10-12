@@ -11,21 +11,24 @@ import org.typelevel.ci.CIString
 /**
  * The unified GatewayAuth criterion (phase 3b, plan §4 / criterion 6):
  *
- *  - fixed priority session > Bearer > legacy cookie > ?token=;
+ *  - fixed priority session > Bearer;
  *  - presented-but-invalid rails FALL THROUGH (never short-circuit into a
  *    rejection) — pinned by "wrong param + right cookie authenticates";
  *  - per-face rail sets (ApiFull / WsAuth / StaticAuth / OpenAiCompat /
- *    BearerFileOnly) with the single-rail regression matrix (phase-A monotonic
- *    relaxation: legacy single-rail behavior is byte-identical);
+ *    BearerFileOnly) with the single-rail regression matrix;
+ *  - the stage D retirement pins: the `?token=` query rail and the legacy
+ *    `nebflow_token` cookie rail no longer authenticate from ANY origin
+ *    (tunnel / loopback / LAN / public, any mark value) — the stage C origin
+ *    matrix machinery is repurposed to pin that the retired rails are dead
+ *    from every arm;
  *  - the R1-1 pin: BearerFileOnly refuses a VALID session cookie;
  *  - the rotate linkage: a rotated file token kills the Bearer rail but not
  *    the session rail (criterion 7's unit face).
  *
- * Stage C origin gate: the param/legacy rails additionally require a direct
- * loopback connection — the origin matrix below pins the full
- * remote × mark × rail verdict table (only direct loopback + unmarked
- * accepts), the hybrid precedence pin (mark wins over the address), and the
- * origin-blindness of the session/Bearer rails.
+ * Stage C origin gate history: while the two file-token rails still existed
+ * they were direct-loopback-only (tunnel-refused); stage D removed the rails
+ * entirely, so the matrix below now expects refusal everywhere. The
+ * origin-blindness of the session/Bearer rails stays pinned.
  *
  * PAT positive-path (a real signed JWT against JWKS) is an integration face —
  * here an INVALID PAT is asserted to fall through, which is the phase-A
@@ -37,7 +40,7 @@ class GatewayAuthSpec extends CatsEffectSuite:
 
   private val sessions = GatewaySessionStore.unsafeCreate()
 
-  // Stage C: the mark matrix needs a live armed value; arm() is idempotent
+  // The origin matrix needs a live armed mark value; arm() is idempotent
   // and process-global, so every read below observes the same value.
   TunnelOriginMark.arm()
   private val TrueMark: String =
@@ -78,26 +81,32 @@ class GatewayAuthSpec extends CatsEffectSuite:
       sid <- liveSession()
       r = req(paramToken = Some("wrong-param-token"), cookies = (GatewaySessionStore.CookieName, sid))
       hit <- auth(r, GatewayAuth.Rails.ApiFull)
-      _ = assert(hit.isDefined, "checkAuth must accept: invalid param falls through to the session rail")
+      _ = assert(hit.isDefined, "checkAuth must accept: an invalid param never rejects a session-carrying request")
     yield ()
 
-  test("fall-through: invalid session cookie + valid ?token= => ViaParam"):
+  // ── stage D: the two file-token rails are retired ──────────────────────
+
+  test("a valid ?token= no longer authenticates (rail retired), even with a stale session cookie"):
     val r = req(paramToken = Some(FileToken), cookies = (GatewaySessionStore.CookieName, "stale-session-id"))
     for
       hit <- auth(r, GatewayAuth.Rails.WsAuth)
-      _ = assertEquals(hit, Some(Credential.ViaParam))
+      _ = assertEquals(hit, None, "the token query rail is retired (stage D); the stale session must not resurrect it")
     yield ()
 
-  test("fall-through: invalid Bearer + valid legacy cookie => ViaLegacyCookie (WsAuth)"):
+  test("a valid legacy nebflow_token cookie no longer authenticates (rail retired)"):
     val r = req(bearer = Some("not-a-valid-token"), cookies = ("nebflow_token", FileToken))
     for
       hit <- auth(r, GatewayAuth.Rails.WsAuth)
-      _ = assertEquals(hit, Some(Credential.ViaLegacyCookie))
+      _ = assertEquals(
+        hit,
+        None,
+        "the legacy cookie rail is retired (stage D); the invalid Bearer is not a rejection short-circuit either"
+      )
     yield ()
 
   // ── single-rail regression matrix (phase A: strictly monotonic relaxation) ──
 
-  test("only ?token= (valid): WsAuth/ApiFull/StaticAuth accept; OpenAiCompat/BearerFileOnly refuse"):
+  test("only ?token= (valid): every face refuses — the param rail is retired (stage D)"):
     val r = req(paramToken = Some(FileToken))
     for
       ws <- auth(r, GatewayAuth.Rails.WsAuth)
@@ -105,14 +114,14 @@ class GatewayAuthSpec extends CatsEffectSuite:
       static <- auth(r, GatewayAuth.Rails.StaticAuth)
       openai <- auth(r, GatewayAuth.Rails.OpenAiCompat)
       admin <- auth(r, GatewayAuth.Rails.BearerFileOnly)
-      _ = assertEquals(ws, Some(Credential.ViaParam))
-      _ = assertEquals(api, Some(Credential.ViaParam))
-      _ = assertEquals(static, Some(Credential.ViaParam))
+      _ = assertEquals(ws, None, "WsAuth retired the param rail (stage D)")
+      _ = assertEquals(api, None, "ApiFull retired the param rail (stage D)")
+      _ = assertEquals(static, None, "StaticAuth retired the param rail (stage D)")
       _ = assertEquals(openai, None, "OpenAiCompat never gained param")
       _ = assertEquals(admin, None, "BearerFileOnly never accepts param")
     yield ()
 
-  test("only legacy nebflow_token cookie (valid): WsAuth/StaticAuth accept; ApiFull/OpenAiCompat/BearerFileOnly refuse (R1-2)"):
+  test("only legacy nebflow_token cookie (valid): every face refuses — the legacy cookie rail is retired (stage D)"):
     val r = req(cookies = ("nebflow_token", FileToken))
     for
       ws <- auth(r, GatewayAuth.Rails.WsAuth)
@@ -120,9 +129,9 @@ class GatewayAuthSpec extends CatsEffectSuite:
       api <- auth(r, GatewayAuth.Rails.ApiFull)
       openai <- auth(r, GatewayAuth.Rails.OpenAiCompat)
       admin <- auth(r, GatewayAuth.Rails.BearerFileOnly)
-      _ = assertEquals(ws, Some(Credential.ViaLegacyCookie))
-      _ = assertEquals(static, Some(Credential.ViaLegacyCookie))
-      _ = assertEquals(api, None, "R1-2: the /api face never had a cookie leg; it must not gain one")
+      _ = assertEquals(ws, None, "WsAuth retired the legacy cookie rail (stage D)")
+      _ = assertEquals(static, None, "StaticAuth retired the legacy cookie rail (stage D)")
+      _ = assertEquals(api, None, "R1-2: the /api face never had a cookie leg")
       _ = assertEquals(openai, None)
       _ = assertEquals(admin, None)
     yield ()
@@ -167,17 +176,21 @@ class GatewayAuthSpec extends CatsEffectSuite:
     for
       api <- auth(r, GatewayAuth.Rails.ApiFull)
       ws <- auth(r, GatewayAuth.Rails.WsAuth)
-      // Neither request carries a param/cookie, so after the invalid Bearer
-      // falls through there is nothing left to accept it.
+      // Neither request carries any other credential, so after the invalid
+      // Bearer falls through there is nothing left to accept it.
       _ = assertEquals(api, None)
       _ = assertEquals(ws, None)
     yield ()
 
-  test("StaticAuth: an invalid Bearer falls through to a valid param (bearer rail off, next rail consulted)"):
+  test("StaticAuth: an invalid Bearer does not short-circuit, and the retired param rail stays dead"):
     val r = req(paramToken = Some(FileToken), bearer = Some("wrong-bearer"))
     for
       hit <- auth(r, GatewayAuth.Rails.StaticAuth)
-      _ = assertEquals(hit, Some(Credential.ViaParam))
+      _ = assertEquals(
+        hit,
+        None,
+        "StaticAuth has no Bearer leg and the param rail is retired (stage D) — nothing accepts this request"
+      )
     yield ()
 
   test("priority INSIDE the Bearer rail: a valid file token wins regardless of PAT validity, and vice versa"):
@@ -187,9 +200,9 @@ class GatewayAuthSpec extends CatsEffectSuite:
       _ = assertEquals(hit, Some(Credential.ViaBearer(isFileToken = true)))
     yield ()
 
-  // ── stage C origin matrix: param/legacy rails are direct-loopback-only ──
+  // ── stage D origin matrix: the retired rails are dead from EVERY arm ────
 
-  /** remote × mark arms of the matrix; the accept set is fixed by the gate. */
+  /** remote × mark arms of the matrix; the retired rails must refuse on all. */
   private val OriginRemotes = List(
     ("tunnel(None)", None),
     ("loopback-v4", Some(SpecRequests.LoopbackV4)),
@@ -204,7 +217,7 @@ class GatewayAuthSpec extends CatsEffectSuite:
     ("true-mark", Some(TrueMark))
   )
 
-  test("origin matrix (param rail): accept iff direct loopback AND not truly marked"):
+  test("origin matrix (param rail): refused from EVERY origin and mark (rail retired)"):
     val cases = OriginRemotes.flatMap { case (remoteName, remote) =>
       OriginMarks.map { case (markName, mark) =>
         (remoteName, markName, req(paramToken = Some(FileToken), remote = remote, mark = mark))
@@ -213,15 +226,12 @@ class GatewayAuthSpec extends CatsEffectSuite:
     cases.foldLeft(IO.unit) { case (acc, (remoteName, markName, r)) =>
       acc.flatMap { _ =>
         auth(r, GatewayAuth.Rails.WsAuth).map { hit =>
-          val expected =
-            if remoteName.startsWith("loopback") && markName != "true-mark" then Some(Credential.ViaParam)
-            else None
-          assertEquals(hit, expected, s"remote=$remoteName mark=$markName")
+          assertEquals(hit, None, s"remote=$remoteName mark=$markName")
         }
       }
     }
 
-  test("origin matrix (legacy rail): accept iff direct loopback AND not truly marked"):
+  test("origin matrix (legacy rail): refused from EVERY origin and mark (rail retired)"):
     val cases = OriginRemotes.flatMap { case (remoteName, remote) =>
       OriginMarks.map { case (markName, mark) =>
         (remoteName, markName, req(cookies = ("nebflow_token", FileToken), remote = remote, mark = mark))
@@ -230,21 +240,10 @@ class GatewayAuthSpec extends CatsEffectSuite:
     cases.foldLeft(IO.unit) { case (acc, (remoteName, markName, r)) =>
       acc.flatMap { _ =>
         auth(r, GatewayAuth.Rails.StaticAuth).map { hit =>
-          val expected =
-            if remoteName.startsWith("loopback") && markName != "true-mark" then Some(Credential.ViaLegacyCookie)
-            else None
-          assertEquals(hit, expected, s"remote=$remoteName mark=$markName")
+          assertEquals(hit, None, s"remote=$remoteName mark=$markName")
         }
       }
     }
-
-  test("hybrid precedence pin: remote=Some(loopback) AND true mark => tunnel wins, both rails refuse"):
-    for
-      param <- auth(req(paramToken = Some(FileToken), mark = Some(TrueMark)), GatewayAuth.Rails.WsAuth)
-      legacy <- auth(req(cookies = ("nebflow_token", FileToken), mark = Some(TrueMark)), GatewayAuth.Rails.StaticAuth)
-      _ = assertEquals(param, None, "the mark must outrank the loopback address")
-      _ = assertEquals(legacy, None)
-    yield ()
 
   test("tunnel origin still authenticates via session and Bearer rails (origin-blind by design)"):
     for
@@ -276,11 +275,9 @@ class GatewayAuthSpec extends CatsEffectSuite:
 
   // ── probe header contract ──────────────────────────────────────────────
 
-  test("rail names are exactly session/bearer/legacy/param; the header name is brand-derived"):
+  test("rail names are exactly session/bearer; the header name is brand-derived"):
     assertEquals(Credential.ViaSession(nullRecord).railName, "session")
     assertEquals(Credential.ViaBearer(isFileToken = true).railName, "bearer")
-    assertEquals(Credential.ViaLegacyCookie.railName, "legacy")
-    assertEquals(Credential.ViaParam.railName, "param")
     assertEquals(GatewayAuth.CredentialHeader, s"x-${nebflow.shared.Branding.lowerName}-credential")
     assertEquals(GatewayAuth.CredentialHeader, "x-nebflow-credential")
 

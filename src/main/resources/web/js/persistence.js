@@ -3,7 +3,6 @@
 // for optimistic display during streaming, and a fallback when backend is unreachable.
 
 import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY } from './state.js';
-import { key } from './branding.js';
 // ⑨ 淘汰顺序挂靠点（作者 2026-09-12 口径）：好友消息缓存是纯缓存且已硬封顶
 // （512 KB / 30 会话，见 fmMessageCache.js）——配额压力下**先丢它**，
 // session 缓存（用户主聊天）永远不是第一个牺牲品。单向依赖，无环。
@@ -421,10 +420,9 @@ export function findLastRealMessage(msgs) {
 
 /** Convert an absolute uploads path (ui.json records attachments as
  *  {name, type, path}) into a served URL for the backend's
- *  GET /uploads/<sid>/<file> route. Auth: same-origin cookie usually
- *  suffices; the ?token= query is the stale-cookie fallback (token from the
- *  frontend's existing store — localStorage key('token'), same one
- *  the WS connect uses). Returns null when the path isn't under an
+ *  GET /uploads/<sid>/<file> route. Auth: the same-origin fetch carries the
+ *  HttpOnly session cookie automatically (stage D removed the legacy
+ *  token-query fallback). Returns null when the path isn't under an
  *  uploads dir or is otherwise unusable. */
 export function attachmentImageUrl(path) {
   if (!path || typeof path !== 'string') return null;
@@ -434,8 +432,7 @@ export function attachmentImageUrl(path) {
   const rel = norm.slice(idx + '/uploads/'.length); // <sid>/<file>
   if (!rel || rel.includes('..')) return null;
   const encoded = rel.split('/').map(encodeURIComponent).join('/');
-  const tok = localStorage.getItem(key('token')) || '';
-  return `/uploads/${encoded}` + (tok ? `?token=${encodeURIComponent(tok)}` : '');
+  return `/uploads/${encoded}`;
 }
 
 /** Append ONE in-bubble attachment: the reference cards only (type ref /

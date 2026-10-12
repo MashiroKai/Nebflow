@@ -30,6 +30,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir, tmpdir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
+import WebSocket from 'ws';
 import { guardFixtureHome, safeRm } from './lib/delguard.mjs';
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -242,7 +243,12 @@ async function waitGateway(timeoutMs = 240000) {
 function wsConnect() {
   return new Promise((resolve, reject) => {
     const TOKEN = JSON.parse(readFileSync(join(HOME, 'auth.json'), 'utf8'));
-    const ws = new WebSocket(`${BASE.replace('http', 'ws')}/ws?token=${encodeURIComponent(TOKEN)}`);
+    // Stage D: the token query rail on the WS handshake is retired — the
+    // smoke authenticates through the surviving WsAuth Bearer rail (the `ws`
+    // package can carry the Authorization header on the upgrade request).
+    const ws = new WebSocket(`${BASE.replace('http', 'ws')}/ws`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
     const inbox = [];
     const waiters = [];
     ws.addEventListener('message', (ev) => {

@@ -7,7 +7,8 @@ import io.circe.parser.parse
 import munit.CatsEffectSuite
 import nebflow.shared.PathUtil
 import org.http4s.circe.CirceEntityCodec.*
-import org.http4s.{Method, Request, Status, Uri}
+import org.http4s.headers.Authorization
+import org.http4s.{AuthScheme, Credentials, Method, Request, Status, Uri}
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, Paths}
@@ -24,8 +25,9 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
 
   private val gatewayToken = "test-gateway-token"
 
-  // Phase 3b: the criterion is Ref-based + needs a session store (the session
-  // rail reads it; these specs exercise the legacy rails, so an empty store).
+  // Phase 3b: the criterion is Ref-based + needs a session store (the route
+  // constructors take one; stage D retired the token query rail, so the
+  // positive faces here authenticate via the file-token Bearer).
   private val TokenRef = cats.effect.Ref.unsafe[IO, String](gatewayToken)
   private val Sessions = GatewaySessionStore.unsafeCreate()
 
@@ -63,9 +65,16 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
         .unsafeRunSync()
 
     def issue(body: Json) =
-      // Stage C re-anchor: pin the pre-stage-C default — a direct loopback client.
+      // Stage D re-anchor: the token query rail is retired, so the mint
+      // request authenticates through the surviving WsAuth Bearer rail (the
+      // file token) — the same credential a non-browser caller uses today.
+      // Stage C pin kept: a direct loopback client.
       val req = SpecRequests
-        .withRemote(Request[IO](Method.POST, Uri.unsafeFromString(s"/api/nf-ticket?token=$gatewayToken")), Some(SpecRequests.LoopbackV4))
+        .withRemote(
+          Request[IO](Method.POST, Uri.unsafeFromString("/api/nf-ticket"))
+            .putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, gatewayToken))),
+          Some(SpecRequests.LoopbackV4)
+        )
         .withEntity(body)
       NfFileRoutes.nfTicketRoutes(TokenRef, store, policy, Sessions)(req).value.unsafeRunSync()
 
@@ -333,20 +342,28 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
   test("A15: GET /api/nf-authcheck is 204 with a valid credential, 403 otherwise, never touches disk") {
     withEnv { env =>
       IO {
-        def probe(query: String) =
+        def probe(query: String, bearer: Option[String] = None) =
           // Stage C re-anchor: pin the pre-stage-C default — a direct loopback client.
+          val base = Request[IO](Method.GET, Uri.unsafeFromString(s"/api/nf-authcheck$query"))
           val req = SpecRequests.withRemote(
-            Request[IO](Method.GET, Uri.unsafeFromString(s"/api/nf-authcheck$query")),
+            bearer.fold(base)(t => base.putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, t)))),
             Some(SpecRequests.LoopbackV4)
           )
           NfFileRoutes.nfAuthcheckRoutes(TokenRef, Sessions)(req).value.unsafeRunSync().get
-        assertEquals(probe(s"?token=$gatewayToken").status, Status.NoContent)
+        // Stage D: the valid credential is the file-token Bearer (the token
+        // query rail is retired and must refuse even the LIVE token).
+        assertEquals(probe("", bearer = Some(gatewayToken)).status, Status.NoContent)
         assertEquals(probe("").status, Status.Forbidden)
         assertEquals(probe("?token=wrong").status, Status.Forbidden)
+        assertEquals(
+          probe(s"?token=$gatewayToken").status,
+          Status.Forbidden,
+          "stage D: the token query rail is retired — the live token in the query no longer authenticates"
+        )
         // No disk involvement: a path that cannot exist is irrelevant — the
         // route never reads one (that is the whole point of R9 = O-A).
         assertEquals(
-          probe(s"?token=$gatewayToken&path=/nonexistent/definitely-missing.json").status,
+          probe("?path=/nonexistent/definitely-missing.json", bearer = Some(gatewayToken)).status,
           Status.NoContent
         )
       }

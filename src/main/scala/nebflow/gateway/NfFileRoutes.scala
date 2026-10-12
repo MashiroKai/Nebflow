@@ -207,14 +207,10 @@ object NfFileRoutes:
    * failing the whole batch (the frontend degrades per path — §4.3 F4).
    *
    * Auth (phase 3b): the unified GatewayAuth criterion under WsAuth —
-   * session cookie first, then Bearer (file token), then the legacy
-   * `nebflow_token` cookie, then `?token=`; a presented-but-invalid rail
-   * falls through to the next one. The frontend sends no explicit
-   * credential — the session cookie rides along on the same-origin fetch.
-   * (Historical note, kept for the record: the pre-3b text claimed
-   * "cookie first" but the implementation was param-first via
-   * `extractToken` — the comment now describes the actual, unified
-   * priority.)
+   * session cookie first, then Bearer (file token); a presented-but-invalid
+   * rail falls through to the next one. (Stage D retired the legacy cookie
+   * and token query rails.) The frontend sends no explicit credential —
+   * the session cookie rides along on the same-origin fetch.
    */
   def nfTicketRoutes(
     tokenRef: cats.effect.Ref[IO, String],
@@ -282,9 +278,9 @@ object NfFileRoutes:
    * presented credential validates, 403 otherwise.
    *
    * Phase 3b: validated through the unified GatewayAuth criterion (WsAuth —
-   * session cookie > Bearer > legacy cookie > `?token=`; the probe fetch
-   * sends none of the explicit forms, so it exercises exactly the cookie
-   * path). A success answer additionally carries the READ-ONLY response
+   * session cookie > Bearer; the probe fetch sends no explicit credential,
+   * so it exercises exactly the cookie path). A success answer additionally
+   * carries the READ-ONLY response
    * header `x-<brand>-credential` (GatewayAuth.CredentialHeader) whose value
    * is the rail name that hit — the B' frontend purge hook consumes ONLY the
    * `session` value ("the HttpOnly session cookie is verified working");

@@ -169,20 +169,17 @@ object StaticRoutes:
    *
    * Authenticated — unlike the voice-models route, uploads are user
    * screenshots (sensitive). Phase 3b: the unified GatewayAuth criterion
-   * under StaticAuth — session cookie first, then the legacy `nebflow_token`
-   * cookie, then the `?token=` fallback (the two pre-3b legs unchanged, the
-   * session rail on top; a presented-but-invalid rail falls through instead
-   * of rejecting). A malicious page cross-site <img>-probing the localhost
-   * gateway still gets no SameSite cookie sent, while the same-origin
-   * frontend attaches the session cookie automatically; the fallbacks cover
-   * cookie-less contexts exactly as before. Stage C: the two file-token
-   * fallbacks (legacy cookie + `?token=`) additionally require a direct
-   * loopback connection — tunnel-origin requests fall through both (see
-   * GatewayAuth.legacyRailsPermitted).
+   * under StaticAuth — session-cookie driven; a presented-but-invalid rail
+   * falls through instead of rejecting. A malicious page cross-site
+   * <img>-probing the localhost gateway gets no SameSite cookie sent, while
+   * the same-origin frontend attaches the session cookie automatically.
+   * Stage D retired the legacy file-token rails (legacy cookie + token
+   * query param) — the session cookie is the one credential this face
+   * accepts.
    *
    * Lives in the companion (composed ahead of the instance routes) because
    * it touches none of the class dependencies — testable with just a
-   * gateway token.
+   * session store.
    */
   def uploadsRoutes(tokenRef: cats.effect.Ref[IO, String], sessions: GatewaySessionStore): HttpRoutes[IO] =
     HttpRoutes.of[IO] {
@@ -254,11 +251,11 @@ object StaticRoutes:
    *  - Trusted plugins ONLY. `trustedPluginDir` resolves the registry
    *    entry's directory; unknown or blocked names get the same uniform
    *    404 as a missing file (no existence oracle for blocked packages).
-   *  - Token REQUIRED: the same StaticAuth rails as uploadsRoutes
-   *    (session cookie > legacy `nebflow_token` cookie > `?token=` fallback;
-   *    a cross-site <img>-probe gets no SameSite cookie; the same-origin
-   *    frontend attaches the session cookie automatically; the fallbacks
-   *    cover cookie-less contexts).
+   *  - Session REQUIRED: the same StaticAuth face as uploadsRoutes — the
+   *    HttpOnly session cookie is the one credential (stage D retired the
+   *    legacy file-token rails; a cross-site <img>-probe gets no SameSite
+   *    cookie, while the same-origin frontend attaches the session cookie
+   *    automatically).
    *  - Manual segment parsing (http4s DSL matches single segments only):
    *    trailing slash rejected, `..` and backslash segments rejected in
    *    the plugin name and the relative parts, and the FINAL defense is

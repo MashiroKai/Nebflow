@@ -14,11 +14,12 @@ import org.http4s.dsl.io.*
  * token rotation, and console session enumeration/revocation.
  *
  * Auth = `GatewayAuth.Rails.BearerFileOnly` — ONLY the file-token Bearer is
- * accepted (R1-1 renewal-chain fix). Session cookies, PATs, the legacy cookie
- * and the `?token=` param are ALL refused here, even when individually valid:
- * a relay-mint session must never reach a face that mints `local-ticket`s or
- * rotates the token, otherwise a revoked host could renew its own credentials
- * forever. Break-glass and CLI are local-machine semantics (v3 :165 is a CLI
+ * accepted (R1-1 renewal-chain fix). Session cookies and PATs are refused
+ * here even when individually valid: a relay-mint session must never reach a
+ * face that mints `local-ticket`s or rotates the token, otherwise a revoked
+ * host could renew its own credentials forever. (The legacy cookie and token
+ * query rails this face always refused were retired outright in stage D.)
+ * Break-glass and CLI are local-machine semantics (v3 :165 is a CLI
  * command); GatewayClient carries the Bearer header on every request, so the
  * CLI needs no changes.
  *

@@ -27,6 +27,7 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { establishSession } from './helpers/session-rail.mjs';
 
 const BASE_URL = process.env.BASE_URL ?? 'http://localhost:8300';
 const NEBFLOW_HOME = process.env.NEBFLOW_HOME ?? '/tmp/nb-ws-picker-home';
@@ -53,7 +54,9 @@ const DIR_PICK_ITEM = {
 };
 
 async function setup(page, item = DIR_PICK_ITEM, requestId = RID) {
-  await page.goto(`${BASE_URL}/?token=${TOKEN}`);
+  // Stage D: the URL token rail is retired — establish the session through
+  // the one-time console ticket chain (helpers/session-rail.mjs).
+  await establishSession(BASE_URL, TOKEN, page);
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(600);
 

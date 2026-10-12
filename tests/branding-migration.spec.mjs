@@ -7,8 +7,10 @@
 //      the scheme on every boot.
 //   2. Rename day (brand = neblink): every legacy nebflow_* localStorage key
 //      (including the nebflow_tasks_* family) is copied to the new namespace
-//      and removed; existing new-namespace data always wins; the token cookie
-//      is COPIED (never deleted); the index.html classic inline script reads
+//      and removed; existing new-namespace data always wins; branding.js
+//      touches ONLY localStorage — the stage D retirement removed the old
+//      token-cookie copy, and jar hygiene belongs to the B' purge (ws.js
+//      purgeLongLivedCopies); the index.html classic inline script reads
 //      the new key first and falls back to the legacy spelling (it runs
 //      before module migration, so the fallback must fire).
 //
@@ -184,9 +186,12 @@ test('rename day (brand=neblink): legacy data migrates, user notices nothing', a
   // (module init happens later), so the legacy fallback must have fired.
   await expect(page.locator('body')).toHaveClass(/sidebar-collapsed/);
 
-  // Token cookie copied to the new name, legacy cookie preserved.
+  // Stage D: branding.js no longer copies (or deletes) any token cookie on
+  // rename day — the localStorage namespace migration above is its whole
+  // surface. The legacy cookie planted before boot must therefore still be in
+  // the jar, untouched; jar-level rename/cleanup is the ws.js rewrite / B'
+  // purge machinery's job, not branding.js's.
   const cookies = await page.evaluate(() => document.cookie);
-  expect(cookies).toContain('neblink_token=legacy-token-123');
   expect(cookies).toContain('nebflow_token=legacy-token-123');
 
   // App booted under the new brand: key() serves the new namespace.

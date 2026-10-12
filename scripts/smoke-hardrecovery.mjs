@@ -26,6 +26,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import http from 'node:http';
+import WebSocket from 'ws';
 
 // 沙箱下 undici 对 `localhost` 的 WS 解析会挂死——强制 127.0.0.1。
 const URL_BASE = (process.env.NEBFLOW_URL || 'http://127.0.0.1:8095').replace('localhost', '127.0.0.1');
@@ -107,7 +108,12 @@ console.log(`mock LLM on 127.0.0.1:${MOCK_PORT} (mode=${mode})`);
 // ── WS 客户端（inbox/waiter + marker 模式：断言只认 marker 之后的新帧）────
 function wsConnect() {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`${URL_BASE.replace('http', 'ws')}/ws?token=${encodeURIComponent(TOKEN)}`);
+    // Stage D: the token query rail on the WS handshake is retired — the
+    // smoke authenticates through the surviving WsAuth Bearer rail (the `ws`
+    // package can carry the Authorization header on the upgrade request).
+    const ws = new WebSocket(`${URL_BASE.replace('http', 'ws')}/ws`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
     const inbox = [];
     const waiters = [];
     ws.addEventListener('message', (ev) => {

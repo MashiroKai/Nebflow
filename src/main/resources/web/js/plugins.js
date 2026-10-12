@@ -870,9 +870,9 @@ window.addEventListener('locale-changed', () => {
 
 // ── Plugin.md 入口（2026-10-07 条目式批）───────────────────────────────────
 // 在场判据 = 既有 /api/plugin-assets/<name>/Plugin.md 路由 200（StaticRoutes
-// .pluginAssetsRoutes；GET-only，鉴权 = cookie `nebflow_token` 或 `?token=` 参数
-// ——登录流不落 cookie ⇒ 照 persistence.js:432 / ws.js:519 的 `?token=` 同族
-// 先例显式携带）。🔴 引擎/scala 零改动红线：approvalManifest 契约无在场字段，
+// .pluginAssetsRoutes；GET-only；auth = the same-origin HttpOnly session
+// cookie — stage D removed the legacy token-carrying fallbacks）。
+// 🔴 引擎/scala 零改动红线：approvalManifest 契约无在场字段，
 // 探针是唯一零 scala 判据；一次/包/会话缓存（Promise<string|null>）。
 // 封禁包：服务端 fail-closed 404（「封禁包永不内联」同向）⇒ 入口永不在场。
 // 点击 = 点击时现取正文 → 既有 Canvas 通路（workspace-open-item → markdown
@@ -883,9 +883,7 @@ window.addEventListener('locale-changed', () => {
 const pluginMdDocs = new Map();
 
 function pluginMdUrl(name) {
-  const tok = localStorage.getItem(key('token')) || '';
-  return `/api/plugin-assets/${encodeURIComponent(name)}/Plugin.md`
-    + (tok ? `?token=${encodeURIComponent(tok)}` : '');
+  return `/api/plugin-assets/${encodeURIComponent(name)}/Plugin.md`;
 }
 
 function probePluginMd(name) {

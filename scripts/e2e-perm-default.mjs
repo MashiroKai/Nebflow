@@ -48,6 +48,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
+import WebSocket from 'ws';
 import { guardFixtureHome, safeRm } from './lib/delguard.mjs';
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -282,7 +283,12 @@ const frames = [];
 let ws = null;
 function connectWs() {
   return new Promise((resolve, reject) => {
-    const sock = new WebSocket(`ws://127.0.0.1:${GATEWAY_PORT}/ws?token=${encodeURIComponent(TOKEN)}`);
+    // Stage D: the token query rail on the WS handshake is retired — the
+    // smoke authenticates through the surviving WsAuth Bearer rail (the `ws`
+    // package can carry the Authorization header on the upgrade request).
+    const sock = new WebSocket(`ws://127.0.0.1:${GATEWAY_PORT}/ws`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
     sock.addEventListener('open', () => { ws = sock; resolve(sock); });
     sock.addEventListener('error', () => reject(new Error('ws connect failed')));
     sock.addEventListener('message', (ev) => {

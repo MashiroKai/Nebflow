@@ -6,9 +6,9 @@ import java.security.SecureRandom
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Process-self-signed tunnel-origin mark (stage C of the `?token=` retirement
- * route): lets the gateway tell "this request crossed the portal tunnel"
- * apart from "this request arrived from a direct client".
+ * Process-self-signed tunnel-origin mark (introduced in stage C of the token
+ * retirement route): lets the gateway tell "this request crossed the portal
+ * tunnel" apart from "this request arrived from a direct client".
  *
  * Why a mark is needed at all — the two tunnel transports look different:
  *  - HTTP: the tunnel bridge calls the lifted app IN PROCESS
@@ -28,9 +28,15 @@ import java.util.concurrent.atomic.AtomicReference
  * request-side value is either the bridge's own or a guess. A direct client
  * cannot know the in-process value, so a MATCHING header proves tunnel origin;
  * a garbage value simply reads as "not marked" (harmless — it only weakens
- * the sender's own request). The consumer is
- * [[nebflow.gateway.GatewayAuth]]: marked requests never authenticate via the
- * `?token=` param or the legacy `nebflow_token` cookie rails.
+ * the sender's own request).
+ *
+ * Consumer status (stage D): the sole consumer, the GatewayAuth origin gate
+ * over the token query / legacy cookie rails, left with those rails when
+ * stage D retired them. The arm + inject machinery is RETAINED UNREAD as the
+ * tunnel-hardening batch's keep-face: tunnel-origin discrimination is
+ * expected to return there (e.g. per-face tunnel policy), and until that
+ * ruling the mark asserts nothing — a request authenticates identically
+ * whether marked or not.
  */
 object TunnelOriginMark:
 

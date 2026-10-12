@@ -545,10 +545,13 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
         )
         .noSpaces
     val client = HttpClient.newHttpClient()
+    // Stage D re-anchor: the token query rail is retired, so the mint request
+    // authenticates through the surviving WsAuth Bearer rail (the file token).
     val mintResp = client.send(
       HttpRequest
-        .newBuilder(URI.create(s"http://127.0.0.1:$port/api/nf-ticket?token=$gatewayToken"))
+        .newBuilder(URI.create(s"http://127.0.0.1:$port/api/nf-ticket"))
         .header("Content-Type", "application/json")
+        .header("Authorization", s"Bearer $gatewayToken")
         .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
         .build(),
       HttpResponse.BodyHandlers.ofString()
