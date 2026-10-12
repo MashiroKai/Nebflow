@@ -8,14 +8,18 @@
 //
 // Run: npx playwright test tests/smoke.spec.mjs
 // Requires: a running Nebflow server. Defaults to localhost:8080; override
-// with BASE_URL. Token resolution: NEBFLOW_TOKEN env first, then the running
-// instance's own ~/.nebflow/auth.json — no hardcoded token (that hardcode is
-// what historically kept this suite out of CI).
+// with BASE_URL. Bootstrap credential resolution: NEBFLOW_TOKEN env first,
+// then the running instance's own ~/.nebflow/auth.json — no hardcoded token
+// (that hardcode is what historically kept this suite out of CI). The
+// bootstrap credential is only used to MINT one-time console tickets; the
+// pages themselves authenticate through the HttpOnly session cookie the
+// ticket landing sets (stage D retired the URL token rail).
 
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { establishSession } from './helpers/session-rail.mjs';
 
 const BASE = process.env.BASE_URL ?? 'http://localhost:8080';
 const TOKEN = process.env.NEBFLOW_TOKEN ?? (() => {
@@ -32,11 +36,13 @@ test.beforeEach(async ({ page }) => {
   page._pageErrors = [];
   // Benign-noise tracking: 403 responses from the ws.js auth probe
   // (GET /api/nf-authcheck, R9 = O-A). A cookie-blocked context gets 403 from
-  // it by design — that IS the "cookies are blocked, fall back to ?token="
-  // signal. (Other 403 baseline sources are matched by pathname directly in
-  // filterBenignErrors.) The old benign 400 came from a bare /api/nf-file
-  // GET; that endpoint is ticket-only now and answers 401, which carries no
-  // benign meaning, so the whitelist moved with the probe target.
+  // it by design — that IS the "no credential could ride this context" signal,
+  // and since stage D the designed landing for that shape is the paste-ticket
+  // entry, not a token fallback. (Other 403 baseline sources are matched by
+  // pathname directly in filterBenignErrors.) The old benign 400 came from a
+  // bare /api/nf-file GET; that endpoint is ticket-only now and answers 401,
+  // which carries no benign meaning, so the whitelist moved with the probe
+  // target.
   page._benign403Urls = new Set();
   // Whole-session asset watch: any /js/ or /vendor/ 404 at ANY point (not
   // just the networkidle window) means a static-route contract break — the
@@ -72,11 +78,15 @@ test.beforeEach(async ({ page }) => {
 
 /** Filter out console errors caused by known-baseline noise. Each error's
  *  status text is paired with its OWN resource URL (msg.location().url), so a
- *  403/400 from any other URL stays a real error — no page-wide swallowing:
+ *  403/404 from any other URL stays a real error — no page-wide swallowing:
  *  - 403 from /api/neblink/* (status probe fires unauthenticated by design)
  *    and the boot-time /api/canvas-tabs fetch (Bearer not yet in state).
  *  - 403 from the ws.js auth probe's GET /api/nf-authcheck (403 = "cookie
- *    blocked" by design — see the beforeEach benign-403 watcher). */
+ *    blocked" by design — see the beforeEach benign-403 watcher).
+ *  - 404 from the root-name probe's GET /agents/<root>/agent.json (rootName.js
+ *    initRootNameProbe): 404 = "never named" BY DESIGN on a fresh home, and
+ *    Chromium logs it as an unsuppressible network-layer console error — same
+ *    baseline-noise class as the authcheck 403. */
 function filterBenignErrors(page, errors) {
   const isBenign = (text, i) => {
     const url = page._consoleErrorUrls[i] ?? '';
@@ -85,6 +95,9 @@ function filterBenignErrors(page, errors) {
     try { path = new URL(url).pathname; } catch { return false; }
     if (text.includes('403')) {
       return path.startsWith('/api/neblink/') || path === '/api/canvas-tabs' || page._benign403Urls.has(url);
+    }
+    if (text.includes('404')) {
+      return /\/agents\/[^/]+\/agent\.json$/.test(path);
     }
     return false;
   };
@@ -114,7 +127,7 @@ async function dismissOnboarding(page) {
 test.describe('Smoke — page load', () => {
 
   test('loads without console errors', async ({ page }) => {
-    await page.goto(`${BASE}/?token=${TOKEN}`);
+    await establishSession(BASE, TOKEN, page);
     await page.waitForLoadState('networkidle');
     // Allow a moment for deferred scripts (Monaco preload, etc.)
     await page.waitForTimeout(2000);
@@ -135,7 +148,7 @@ test.describe('Smoke — page load', () => {
       }
     });
 
-    await page.goto(`${BASE}/?token=${TOKEN}`);
+    await establishSession(BASE, TOKEN, page);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1000);
 
@@ -146,7 +159,7 @@ test.describe('Smoke — page load', () => {
 test.describe('Smoke — Flow Canvas', () => {
 
   test('opens flow canvas and shows mounted flows', async ({ page }) => {
-    await page.goto(`${BASE}/?token=${TOKEN}`);
+    await establishSession(BASE, TOKEN, page);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1000);
     await dismissOnboarding(page);
@@ -164,7 +177,7 @@ test.describe('Smoke — Flow Canvas', () => {
   });
 
   test('Monaco editor loads without worker errors', async ({ page }) => {
-    await page.goto(`${BASE}/?token=${TOKEN}`);
+    await establishSession(BASE, TOKEN, page);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(3000);
 
@@ -231,12 +244,14 @@ test.describe('Smoke — WS auth probe-first', () => {
       if (u.pathname === '/api/nf-authcheck') probeStatuses.push(resp.status());
     });
 
-    await page.goto(`${BASE}/?token=${TOKEN}`);
+    await establishSession(BASE, TOKEN, page);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
 
     expect(wsUrls.length, 'expected at least one WebSocket connection').toBeGreaterThan(0);
-    // Probe said cookies work → token must stay out of the WS URL.
+    // The session cookie (set by the ticket landing) rides the handshake → the
+    // URL carries no credential — and since stage D the retired token rail can
+    // never re-enter it.
     expect(wsUrls[0], `first WS URL: ${wsUrls[0]}`).not.toContain('token=');
     // Two propositions, asserted separately and at equal strength to the old
     // single `toEqual([400])` (which compressed them into "exactly one 400"):
@@ -256,9 +271,14 @@ test.describe('Smoke — WS auth probe-first', () => {
     expect(wsErrors, `WS errors:\n${wsErrors.join('\n')}`).toEqual([]);
   });
 
-  test('cookie-blocked browser goes straight to ?token= on the FIRST attempt (zero rejected handshakes)', async ({ context, page }) => {
+  test('cookie-blocked browser lands on the paste-ticket entry (stage D: one degraded face, no token anywhere)', async ({ context, page }) => {
     // Simulate Safari "block all cookies": cookie writes are silently dropped
-    // and reads return "" — the probe fetch then rides with no cookie.
+    // and reads return "" — no credential can ride any request. Stage D
+    // removed the token fallback that used to rescue this shape, so the
+    // designed landing is the paste-ticket entry: the auth probe answers 403
+    // (whitelisted noise), the handshake is refused, and the card plus the
+    // notification keep the failure visible while the reconnect loop continues
+    // behind the modal.
     await context.addInitScript(() => {
       try {
         Object.defineProperty(document, 'cookie', {
@@ -266,34 +286,19 @@ test.describe('Smoke — WS auth probe-first', () => {
           set() { /* dropped — cookie blocked */ },
           configurable: true,
         });
-      } catch (_) { /* if override fails the test assertion below catches it */ }
+      } catch (_) { /* if override fails the assertions below catch it */ }
     });
 
     const wsUrls = [];
-    const wsFrames = [];
-    page.on('websocket', (ws) => {
-      wsUrls.push(ws.url());
-      ws.on('framereceived', (frame) => wsFrames.push(frame.payload));
-    });
+    page.on('websocket', (ws) => wsUrls.push(ws.url()));
 
-    await page.goto(`${BASE}/?token=${TOKEN}`);
-    // Wait until the WS actually opened and the server greeted us (serverConfig).
-    await expect.poll(() => wsFrames.some(p => typeof p === 'string' && p.includes('serverConfig')), {
-      timeout: 10000,
-      message: 'expected a serverConfig WS frame (connection established)',
-    }).toBe(true);
-
-    expect(wsUrls.length, 'expected at least one WebSocket connection').toBeGreaterThan(0);
-    // The very first handshake must already carry ?token= — no doomed cookie-only attempt.
-    expect(wsUrls[0], `first WS URL: ${wsUrls[0]}`).toContain('token=');
-
-    // No native WS failure line, no fallback-retry warning. (The probe fetch
-    // itself logs a benign "Failed to load resource: 403" — that's expected
-    // here, so we only assert on WS-specific errors.)
-    const wsErrors = page._consoleErrors.filter(e =>
-      /WebSocket connection .* failed/i.test(e) || /handshake rejected/i.test(e)
-    );
-    expect(wsErrors, `WS errors:\n${wsErrors.join('\n')}`).toEqual([]);
+    await page.goto(`${BASE}/`);
+    // The paste-ticket card is the one degraded-shape face (ws.js onclose).
+    await expect(page.locator('.nb-ticket-modal')).toBeVisible({ timeout: 15000 });
+    // The 403 signal fired: the probe rode with no cookie and was refused.
+    expect(page._benign403Urls.size, 'the blocked-cookie authcheck 403 must have fired').toBeGreaterThanOrEqual(1);
+    // The retired rail never re-enters the wire: no handshake may carry a token.
+    for (const u of wsUrls) expect(u, `WS URL must not carry a token: ${u}`).not.toContain('token=');
   });
 });
 
@@ -314,7 +319,7 @@ test.describe('Smoke — lazy-load paths (real backend)', () => {
       }
     });
 
-    await page.goto(`${BASE}/?token=${TOKEN}`);
+    await establishSession(BASE, TOKEN, page);
     await page.waitForLoadState('networkidle');
     // WS open = send button no longer marked disconnected
     await expect(page.locator('#send-btn')).not.toHaveClass(/disconnected/, { timeout: 10000 });
@@ -410,7 +415,7 @@ test.describe('Smoke — lazy-load paths (real backend)', () => {
   });
 
   test('settings modal opens and closes', async ({ page }) => {
-    await page.goto(`${BASE}/?token=${TOKEN}`);
+    await establishSession(BASE, TOKEN, page);
     await page.waitForLoadState('networkidle');
     await expect(page.locator('#send-btn')).not.toHaveClass(/disconnected/, { timeout: 10000 });
     await dismissOnboarding(page);
@@ -430,7 +435,7 @@ test.describe('Smoke — lazy-load paths (real backend)', () => {
 test.describe('Smoke — P1 bundle & compression', () => {
 
   test('static text assets are gzip-compressed (P0 backend middleware)', async ({ page }) => {
-    await page.goto(`${BASE}/?token=${TOKEN}`);
+    await establishSession(BASE, TOKEN, page);
     await page.waitForLoadState('networkidle');
     // Probe the module entry (mode-agnostic: /js/main.js or /assets/app-*.js)
     // with an explicit Accept-Encoding and inspect the network-stack numbers.
@@ -455,7 +460,7 @@ test.describe('Smoke — P1 bundle & compression', () => {
     // Highest-risk P1 item: the CSS bundle must keep sapphire.css LAST. This
     // assertion is computed-style based and mode-agnostic — it fails in BOTH
     // modes if the design-system override layer ever loses final say.
-    await page.goto(`${BASE}/?token=${TOKEN}`);
+    await establishSession(BASE, TOKEN, page);
     await page.waitForLoadState('networkidle');
     const r = await page.evaluate(() => {
       const b = document.createElement('button');

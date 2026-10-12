@@ -11,6 +11,7 @@
 // 用法：node tests/ws-picker-proto-smoke.mjs <baseURL> <token>
 
 import { chromium } from 'playwright';
+import { establishSession } from './helpers/session-rail.mjs';
 
 const BASE_URL = process.argv[2] ?? 'http://localhost:8300';
 const TOKEN = process.argv[3] ?? '';
@@ -18,12 +19,15 @@ const SUB = 'wsp-probe-sub-' + Date.now(); // 唯一名：可重复跑（os.make
 
 const browser = await chromium.launch();
 const page = await browser.newPage();
-await page.goto(`${BASE_URL}/?token=${TOKEN}`);
+// Stage D: the URL token rail is retired — the page authenticates through
+// the session cookie set by the one-time console ticket landing, and the
+// in-page WebSocket below rides that cookie with a bare /ws URL.
+await establishSession(BASE_URL, TOKEN, page);
 await page.waitForLoadState('networkidle');
 
 const result = await page.evaluate(async ({ token, base, SUB }) => {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}/ws?token=${token}`);
+  const ws = new WebSocket(`${proto}://${location.host}/ws`);
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('ws open failed')); setTimeout(() => rej(new Error('ws open timeout')), 8000); });
 
   const call = (frame, matchType, timeoutMs = 6000) => new Promise((resolve) => {

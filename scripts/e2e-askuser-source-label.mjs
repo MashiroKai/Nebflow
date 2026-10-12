@@ -431,8 +431,9 @@ const { page } = light;
 //      （2026-09-11 C 批 R9 = O-A 迁移）。旧条目是「裸 GET 本地文件端点的
 //      400 = cookie auth works」：票据腿批把那个端点改为票据-only 后，无票
 //      请求恒 401，那条 400 语义已不存在，故白名单条目随靶点一起改写。
-//      两种形态都要放行：403 **响应**（cookie 被禁 → 走 ?token= 回退，是
-//      设计信号）与 **请求被 abort**（probeCookieAuth 自带
+//      两种形态都要放行：403 **响应**（cookie 被禁 ⇒ 无凭据可随请求，是
+//      设计信号——stage D 删除令牌回退轨后，该形态的设计落点 = 贴票入口卡）
+//      与 **请求被 abort**（probeCookieAuth 自带
 //      `AbortSignal.timeout(3000)`，页面导航/超时即 ERR_ABORTED，同样 by
 //      design；本轮实跑抓到的就是后者）。
 //   ② GET /api/canvas-tabs 404 —— 契约形态：无存档 → NotFound by design

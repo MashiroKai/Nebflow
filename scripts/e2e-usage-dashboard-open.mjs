@@ -20,6 +20,7 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
+import { establishSession } from '../tests/helpers/session-rail.mjs';
 
 const args = process.argv.slice(2);
 const opt = (name, dflt) => {
@@ -58,7 +59,9 @@ const main = async () => {
   });
   page.on('pageerror', (e) => console.log(`  [pageerror] ${e.message}`));
 
-  await page.goto(`${BASE}/?token=${encodeURIComponent(token)}`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT_MS });
+  // Stage D: the URL token rail is retired — the page authenticates through
+  // the session cookie set by the one-time console ticket landing.
+  await establishSession(BASE, token, page, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#usage-btn', { timeout: TIMEOUT_MS });
   // Let module init + first WS snapshot settle (no dashboard work yet).
   await page.waitForTimeout(1500);

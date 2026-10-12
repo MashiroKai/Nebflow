@@ -213,10 +213,12 @@ async function token() {
   throw new Error('auth.json never appeared');
 }
 async function api(path, method = 'GET', body) {
+  // Stage D: the token query rail is retired — every API call authenticates
+  // through the surviving ApiFull Bearer rail (the file token from auth.json).
   const t = await token();
-  const r = await fetch(`${BASE}${path}${path.includes('?') ? '&' : '?'}token=${encodeURIComponent(t)}`, {
+  const r = await fetch(`${BASE}${path}`, {
     method,
-    headers: body ? { 'content-type': 'application/json' } : undefined,
+    headers: { authorization: `Bearer ${t}`, ...(body ? { 'content-type': 'application/json' } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: r.status, json: await r.json().catch(() => null) };

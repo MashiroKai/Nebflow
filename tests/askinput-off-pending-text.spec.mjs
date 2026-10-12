@@ -43,6 +43,7 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import WebSocket from 'ws';
 
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:8094';
 const TOKEN = process.env.TOKEN || '';
@@ -53,7 +54,10 @@ const ASK_PROMPT = process.env.ASK_PROMPT || 'ask me now';
 const OBS_MS = Number(process.env.OBS_MS || 15000);
 const ASK_WAIT_MS = Number(process.env.ASK_WAIT_MS || 90000);
 const CLICK_OPTION = 'alpha';
-const WS_URL = `${BASE.replace(/^http/, 'ws')}/ws?token=${encodeURIComponent(TOKEN)}`;
+// Stage D: the token query rail on the WS handshake is retired — the bare
+// client authenticates through the surviving WsAuth Bearer rail (`ws` carries
+// the Authorization header; node's global WebSocket cannot send headers).
+const WS_URL = `${BASE.replace(/^http/, 'ws')}/ws`;
 
 const results = [];
 function check(name, ok, extra = '') {
@@ -66,7 +70,7 @@ function check(name, ok, extra = '') {
 class WsClient {
   constructor(label) { this.label = label; this.frames = []; this.ws = null; }
   async connect(timeoutMs = 20000) {
-    this.ws = new WebSocket(WS_URL);
+    this.ws = new WebSocket(WS_URL, { headers: { Authorization: `Bearer ${TOKEN}` } });
     this.ws.onmessage = (e) => { try { this.frames.push(JSON.parse(e.data)); } catch { /* binary */ } };
     await new Promise((res, rej) => {
       const t = setTimeout(() => rej(new Error(`${this.label}: ws open timeout`)), timeoutMs);

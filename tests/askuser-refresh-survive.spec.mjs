@@ -30,6 +30,7 @@ import { mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { guardWrites } from '../scripts/lib/writeguard.mjs';
+import { establishSession } from './helpers/session-rail.mjs';
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const BASE = process.env.BASE_URL ?? 'http://127.0.0.1:18923';
@@ -160,7 +161,9 @@ test.describe('AskUser pending 刷新存活（作者验收）', () => {
   test('T1 发起 → 刷新 → hub 重发恢复卡片 → 点选项 → 工具返回 + 双主题截图', async ({ page }) => {
     test.setTimeout(240000);
     attachWsCapture(page);
-    await page.goto(`${BASE}/?token=${TOKEN}`, { waitUntil: 'domcontentloaded' });
+    // Stage D: the URL token rail is retired — session comes from the
+    // one-time console ticket chain (helpers/session-rail.mjs).
+    await establishSession(BASE, TOKEN, page, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => !!window.__nf_ws_ready, null, { timeout: 20000 });
 
     // —— 激活测试会话（服务端 switchSession → 重载后 sessionList.activeId 生效）——
@@ -229,7 +232,9 @@ test.describe('AskUser pending 刷新存活（作者验收）', () => {
   test('T2 输入框文本（直通退役后）：发起 → 刷新 → 重发恢复 → 文本按普通消息入流不吞 ∧ 卡片仍可答', async ({ page }) => {
     test.setTimeout(180000);
     attachWsCapture(page);
-    await page.goto(`${BASE}/?token=${TOKEN}`, { waitUntil: 'domcontentloaded' });
+    // Stage D: the URL token rail is retired — session comes from the
+    // one-time console ticket chain (helpers/session-rail.mjs).
+    await establishSession(BASE, TOKEN, page, { waitUntil: 'domcontentloaded' });
     await chatReady(page, sid);
 
     fireAsk();
@@ -342,7 +347,9 @@ test.describe('T3 AskUser 双卡（非阻塞提问 → 刷新）· chain-askuser
     // 独立会话（无 padding ⇒ askUser 条目落在首屏历史内 —— 历史恢复腿才会真的画卡）
     const meta = await api('/sessions', 'POST', { name: `e2e-dupcards-${ARM}-${Date.now()}`, agentName: 'Nebula' });
     const nsid = meta.id;
-    await page.goto(`${BASE}/?token=${TOKEN}`, { waitUntil: 'domcontentloaded' });
+    // Stage D: the URL token rail is retired — session comes from the
+    // one-time console ticket chain (helpers/session-rail.mjs).
+    await establishSession(BASE, TOKEN, page, { waitUntil: 'domcontentloaded' });
     await page.evaluate(async (s) => {
       await window.__nf_ws_ready;
       window.__nf_ws.send(JSON.stringify({ type: 'switchSession', sessionId: s }));

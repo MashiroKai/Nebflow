@@ -49,12 +49,12 @@ import java.util.concurrent.{ConcurrentHashMap, CompletionStage, TimeUnit}
  * body streams back as `body_frame`s sliced at [[BodyChunkBytes]].
  *
  * WS face (design 3.3): the local endpoint is reached over a real loopback
- * WebSocket (`ws://127.0.0.1:<gatewayPort><path>`; the path may carry a
- * query string — stage A passes `?token=<file token>`, consumed by the local
- * `/ws` handshake's token fallback). v1.1: a ws_open `headers` object is
- * injected into the loopback handshake (the browser session cookie crosses
- * the bridge; absent keeps the v1 shape). Frames pump both ways with kind/fin
- * mapped 1:1; `ws_close` propagates both ways.
+ * WebSocket (`ws://127.0.0.1:<gatewayPort><path>`; the path is forwarded
+ * verbatim, query string included — stage A historically passed a token in
+ * the query, a rail the stage D retirement removed). v1.1: a ws_open
+ * `headers` object is injected into the loopback handshake (the browser
+ * session cookie crosses the bridge; absent keeps the v1 shape). Frames pump
+ * both ways with kind/fin mapped 1:1; `ws_close` propagates both ways.
  */
 private[neblink] final class PortalTunnelBridge(
   deps: PortalTunnelDeps,
