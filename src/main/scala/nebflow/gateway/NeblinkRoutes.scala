@@ -7,7 +7,7 @@ import fs2.Stream
 import io.circe.syntax.*
 import io.circe.{Json, parser}
 import nebflow.neblink.*
-import nebflow.shared.{PathUtil, PeerInfo}
+import nebflow.shared.{Branding, PathUtil, PeerInfo}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
@@ -448,10 +448,21 @@ private[gateway] object NeblinkRoutes:
                     idToken = credentialRead.toOption.flatten.flatMap(_.logto).flatMap(_.idToken)
                     resp <- logto.flatMap(lc => lc.pkceClientId.map(_ => lc)) match
                       case Some(lc) =>
+                        // Logout landing fork: the switch-account handoff must
+                        // stay on the local face (its single-use marker is
+                        // consumed by the local landing page, which continues
+                        // into the re-login in the same window), while a plain
+                        // logout lands on the website's /logged-out page
+                        // (derived from the login URL's origin).
+                        val logoutLanding =
+                          if switchScenario then Some(s"http://127.0.0.1:$gatewayPort/auth/logged-out")
+                          else
+                            val origin = java.net.URI.create(Branding.loginUrl).resolve("/").toString.stripSuffix("/")
+                            Some(s"$origin/logged-out")
                         val target = LogtoAuthCode.endSessionUrl(
                           lc.endpoint,
                           idToken,
-                          Some(s"http://127.0.0.1:$gatewayPort/auth/logged-out")
+                          logoutLanding
                         )
                         for
                           _ <- AuthRoutes.performLocalLogout(ms)
