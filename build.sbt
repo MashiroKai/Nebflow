@@ -174,6 +174,11 @@ lazy val root = (project in file("."))
       // diverging the jar-seeded digest from the repo seed. seed/ has exactly
       // one source jar, so `first` is the faithful pass-through.
       case x if x.startsWith("seed/") => MergeStrategy.first
+      // web/ is likewise single-source (the project's own resources); the
+      // default rename-on-collision suffixed vendor doc files (LICENSE /
+      // README.md) with the assembly jar name, making them unreachable at
+      // their served paths and tripping verify-web-assets.
+      case x if x.startsWith("web/") => MergeStrategy.first
       case x =>
         val oldStrategy = (assembly / assemblyMergeStrategy).value
         oldStrategy(x)
