@@ -90,6 +90,15 @@ object Branding:
    */
   val profileUrl: String = env("PROFILE_URL").getOrElse(get("profileUrl"))
 
+  /**
+   * Login page URL — the sign-in entry and the base the logout landing page
+   * derives from (origin + /logged-out). Default = nebflow.space/login,
+   * overridable via `NEBFLOW_LOGIN_URL` (dual-prefix env read, same as
+   * profileUrl). Consumers must use this value, never build URLs from
+   * `domain`.
+   */
+  val loginUrl: String = env("LOGIN_URL").getOrElse(get("loginUrl"))
+
   /** Install script URL (current true value). */
   val installUrl: String = get("installUrl")
 

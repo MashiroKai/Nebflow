@@ -169,11 +169,10 @@ object LogtoAuthCode:
    * omit it entirely when none is stored (session-cookie logout still
    * works, one confirmation screen). Never synthesize a hint.
    *
-   * `postLogoutRedirectUri`: optional return target. The deployed provider
-   * IGNORES an unregistered uri (200 + default logged-out page, probed
-   * 2026-09-06 — no error), so passing it is always safe; it activates
-   * automatically once the uri is allow-listed on the Logto app (see the
-   * ops checklist in the RP-logout report).
+   * `postLogoutRedirectUri`: optional return target. The provider only
+   * redirects to a uri allow-listed on the Logto application's post-logout
+   * list; an unregistered uri is ignored (the provider shows its own
+   * logged-out page instead — no error), so passing a target is always safe.
    */
   def endSessionUrl(
     endpoint: String,

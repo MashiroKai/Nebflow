@@ -39,6 +39,7 @@ class BrandingSpec extends FunSuite:
     assertEquals(Branding.fullName, "Nebflow")
     assertEquals(Branding.domain, "nebflow.space") // 唯一真值（2026-09-07 命名边界裁定；可 env 覆盖）
     assertEquals(Branding.profileUrl, "https://nebflow.space/profile")
+    assertEquals(Branding.loginUrl, "https://nebflow.space/login")
     assertEquals(Branding.installUrl, "https://nebflow.space/install.sh")
     assertEquals(Branding.serverUrl, "https://neblink.nebflow.space")
     assertEquals(Branding.githubOrg, "MashiroKai")
