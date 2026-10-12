@@ -267,16 +267,34 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
         assertEquals(json.hcursor.downField("resolvedFrom").as[String], Right("seed"))
     }
 
-  test("PUT a settable name with no agent dir → 404; a non-settable name → 400 gate first"):
+  test("PUT a settable name with no agent dir → in-place sidecar + 200 (builtin-def); a non-settable name → 400 gate first"):
     withFixture { () =>
       for
-        missing <- putJson("/agents/project-dispatcher/model", io.circe.Json.obj("model" -> io.circe.Json.Null))
-        _ = assertEquals(missing.status, Status.NotFound)
+        fresh <- putJson("/agents/project-dispatcher/model", io.circe.Json.obj("model" -> io.circe.Json.Null))
+        json <- fresh.as[io.circe.Json]
         stranger <- putJson("/agents/Nobody/model", io.circe.Json.obj("model" -> io.circe.Json.Null))
-      yield assertEquals(
-        stranger.status,
-        Status.BadRequest,
-        "the write gate refuses non-role names before any existence check"
-      )
+      yield
+        // builtin-def batch: a settable role has no agent dir on a fresh home,
+        // so the route creates the minimal {"name": ...} sidecar in place and
+        // proceeds — a settable name can no longer 404 (the model chain is a
+        // user setting, writable on every home shape).
+        assertEquals(fresh.status, Status.Ok, "settable + no dir must end in an in-place sidecar write, not a 404")
+        assertEquals(json.hcursor.downField("updated").as[Boolean], Right(true))
+        assertEquals(json.hcursor.downField("mode").as[String], Right("follow"))
+        val sidecar = io.circe.parser
+          .parse(os.read(PathUtil.dataRoot / "agents" / "project-dispatcher" / "agent.json")) match
+          case Right(j) => j
+          case Left(e)  => fail(s"the created sidecar must be JSON: $e")
+        assertEquals(
+          sidecar.asObject.map(_.keys.toSet),
+          Some(Set("name")),
+          "a null chain leaves the sidecar bare: no model key may appear"
+        )
+        assertEquals(sidecar.hcursor.downField("name").as[String], Right("project-dispatcher"))
+        assertEquals(
+          stranger.status,
+          Status.BadRequest,
+          "the write gate refuses non-role names before any existence check"
+        )
     }
 end ModelChainRoutesSpec

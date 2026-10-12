@@ -243,7 +243,14 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
     }
     withFixture(dataRoot, "plots", own = false) { (_, plotsFile) =>
       withFixture(wsRoot.resolve(".nebflow"), "evidence/imgref-spec", own = false) { (_, evFile) =>
-        val secretDir = wsRoot.resolve(".nebflow/secrets/imgref-spec")
+        // Negative control lives under the DATA ROOT's secrets subtree — the
+        // one root-anchored credential seed the live policy refuses
+        // (nfCredentialIdentityLayer: dataRoot's auth.json / nebflow.json /
+        // secrets/**). The workspace `.nebflow` subtree left the deny set when
+        // the directory-reach branches retired (2026-10-07 askuser-attach-align):
+        // a workspace `.nebflow/secrets` file falls through to the pattern
+        // rules and SERVES, so it is no longer a refusal fixture.
+        val secretDir = dataRoot.resolve("secrets/imgref-spec")
         Files.createDirectories(secretDir)
         val secret = secretDir.resolve("negative.png")
         Files.write(secret, PngBytes)
@@ -435,10 +442,15 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
   // rejected reason 与工具警告**同码**，④ 无票取回必须 401，⑤ `proxied>0 ⇔ get==200`。
   // 逐条只增不减，无一处放宽（`endpointWithTicket` 就是「端点确为 403/400」那条读数）。
   //
-  // 两个用例各覆盖一条腿，判据是**等价性**：夹具上工具侧必须判红（`proxied=0` +
+  // 🔴 2026-10-07 askuser-attach-align 翻转后的形态：T11 的拒绝始前提（按 realpath
+  // 取扩展名判 400 file-type）随扩展名门**整体退役** ⇒ H 从「拒绝等价性」改钉
+  // **阳性等价性**（链接可服务 ⇒ 工具收编 ∧ 端点 200 + 字节 sha 相等）；拒绝腿的
+  // 等价性由 G（凭据 inode 硬链接，T10）独自承载。
+  //
+  // G 覆盖拒绝腿，判据是**等价性**：夹具上工具侧必须判红（`proxied=0` +
   // warnings 带可执行修法提示），真取回腿必须同判红 —— 真 `POST /api/nf-ticket` 的
   // rejected reason **与工具警告同码**，无票 `GET` ⇒ 401。阳性方向的同款等价性
-  // （工具判绿 ⇔ 真端点 200 + 字节 sha 相等）由 test D 承担。
+  // 由 test D 与 test H 共同承担。
 
   /**
    * 端点 R2 集是**进程启动时的一次扫描快照**：后造的 credential 文件不在里面，
@@ -656,7 +668,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
       assertEquals(proxied > 0, get == 200, s"$name: tool-side green and fetch-leg green must agree")
     }
 
-  test("G. equivalence (leg 1/2): a HARD LINK to a credential inode — tool gate and endpoint agree"):
+  test("G. equivalence (refusal leg): a HARD LINK to a credential inode — tool gate and endpoint agree"):
     val policy = NfFilePolicy.NfPathPolicy.memoized()
     val target = snapshotCredential(policy)
     val subtree = policy.dataRoot.resolve("plots/imgref-spec-r1-hardlink")
@@ -687,7 +699,14 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
       }.guarantee(stop).guarantee(cleanup)
     }
 
-  test("H. equivalence (leg 2/2): a symlink refused by its REAL extension — tool gate and endpoint agree"):
+  test("H. symlink leg post-flip: a symlink serves under its REAL path — tool face and endpoint agree"):
+    // The extension gate retired (2026-10-07 askuser-attach-align): a symlink
+    // named big.png pointing at a non-image extension is no longer refused by
+    // its realpath extension — the SERVED extension is read from the REAL path
+    // (C1-2, never the link name), and both faces must AGREE the link is
+    // servable: the rewrite takes the link and the endpoint serves the
+    // target's bytes. Refusal equivalence for an alias stays pinned by G (the
+    // credential-inode hard link).
     val policy = NfFilePolicy.NfPathPolicy.memoized()
     val subtree = policy.dataRoot.resolve("plots/imgref-spec-r1-symlink")
     val dir = subtree.resolve("space dir")
@@ -697,20 +716,30 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
         Files.createDirectories(dir)
         val realTarget = dir.resolve("target big.xyz")
         Files.write(realTarget, PngBytes)
-        assertLegRefused(
-          leg = "leg-realpath-ext",
-          names = List(
-            "img link big.png"
-          ), // pop-upgrade: the .json spelling is a file card (readFile route), not an nf-file reference
-          dir = dir,
-          build = (link, d) => Files.createSymbolicLink(link, d.resolve("target big.xyz")),
-          port = port,
-          policy = policy,
-          expectReason = "file-type",
-          expectHint = "give the file a real extension",
-          // the verifier's T11 reading, verbatim (verify-r1/ImgrefVerifyR1Spec.scala:407)
-          expectEndpointStatus = 400
+        val link = dir.resolve("img link big.png")
+        Files.deleteIfExists(link)
+        Files.createSymbolicLink(link, dir.resolve("target big.xyz"))
+        // tool face: the link is servable, so the rewrite TAKES it (proxied or
+        // inlined) with no not-servable warning — a stale gate would show up
+        // as a refusal warning here.
+        val (proxied, inlined, warnings) = toolFace(link.toString)
+        println(
+          s"PROBE[leg-realpath-ext][$link] realpath=${link.toRealPath()} " +
+            s"toolProxied=$proxied toolInlined=$inlined warnings=${warnings.map(_._1).mkString(",")}"
         )
+        assert(
+          !warnings.exists(_._1 == "not-servable"),
+          s"a servable link must not carry a not-servable warning, got: ${warnings.map(_._1).mkString(",")}"
+        )
+        assert(proxied + inlined >= 1, "the rewrite must take a servable link (proxied or inlined)")
+        // fetch leg: the endpoint serves the very same link with the target's
+        // bytes — the two faces agree (tool green ⇔ fetch green).
+        val (mint, reason, get, bytes) = mintAndFetch(port, link.toString)
+        assertEquals(mint, 200, "the mint must answer a servable link")
+        assertEquals(reason, "-", "a servable link must not carry a rejection reason")
+        assertEquals(get, 200)
+        assertEquals(sha256(bytes), FixtureSha, "the link serves the target's bytes")
+        assertEquals(proxied + inlined > 0, get == 200, "tool-side green and fetch-leg green must agree")
       }.guarantee(stop).guarantee(cleanup)
     }
 

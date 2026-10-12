@@ -44,7 +44,18 @@ class DeviceFaceHardeningRoutesSpec extends FunSuite:
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot)
 
+  // The GET /agents/:name/model live sibling reads the candidate/health faces
+  // (chain-face batch), so a null registry NPEs mid-request. Real instances
+  // with an EMPTY provider config: every chain resolves to nothing, the arm
+  // answers 200 with current = null — which is all the liveness pin needs
+  // (same shape as ModelChainRoutesSpec.mkResources).
+  private val NullBackend =
+    null.asInstanceOf[sttp.client4.StreamBackend[IO, sttp.capabilities.fs2.Fs2Streams[IO]]]
+
   private def mkResources: SharedResources =
+    val registryConfigRef = cats.effect.Ref.unsafe[IO, NebflowServiceConfig](
+      NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))
+    )
     SharedResources(
       llm = null,
       dispatcher = null,
@@ -59,8 +70,8 @@ class DeviceFaceHardeningRoutesSpec extends FunSuite:
       historyArchiver = HistoryArchiver.fileSystem(os.temp.dir() / "devface-spec-archives"),
       fileLockManager = FileLockManager.create.unsafeRunSync(),
       sessionModelOverrides = cats.effect.Ref.unsafe[IO, Map[String, ModelCandidate]](Map.empty),
-      providerRegistry = null,
-      healthMonitor = null,
+      providerRegistry = new nebflow.llm.ProviderRegistry(registryConfigRef, NullBackend),
+      healthMonitor = nebflow.llm.ProviderHealthMonitor(null),
       actorSystem = null,
       voiceMutedRef = cats.effect.Ref.unsafe[IO, Boolean](false),
       friendService = None
