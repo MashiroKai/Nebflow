@@ -72,16 +72,11 @@ final class RestApiCtx(
   // withAuth 与 NeblinkRoutes 的免门控普查条目直调。
   //
   // Phase 3b: the verdict is the unified GatewayAuth criterion under
-  // `ApiFull` — session cookie added (this batch's point), Bearer(file/PAT)
-  // and `?token=` rails byte-identical, NO legacy-cookie rail (R1-2: the
-  // pre-3b face had no cookie leg, so a "legacy-cookie-only" request is
-  // refused before AND after this change). Rails fall through when presented
-  // but invalid, so "invalid Bearer + valid param" now authenticates via the
-  // param (strict monotonic relaxation; criterion 6).
-  //
-  // Stage C origin gate: the `?token=` rail additionally requires a direct
-  // loopback connection — tunnel-origin requests fall through it (see
-  // GatewayAuth.legacyRailsPermitted); session/Bearer are origin-blind.
+  // `ApiFull` — session cookie, Bearer (file token / PAT). Rails fall
+  // through when presented but invalid (never short-circuit into a
+  // rejection; criterion 6). Stage D retired the token query rail (this
+  // face never had a legacy-cookie leg — R1-2); session/Bearer are
+  // origin-blind (tunnel and direct callers authenticate identically).
   def checkAuth(req: Request[IO]): IO[Boolean] =
     tokenRef.get.flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.ApiFull)).map(_.isDefined)
 

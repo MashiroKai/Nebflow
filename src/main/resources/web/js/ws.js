@@ -6,9 +6,9 @@ import { brand } from './brand.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
 
-// Auth token cookie name follows the brand namespace (branding.js copies the
-// legacy cookie across on rename day; the backend accepts both names during
-// the transition).
+// Long-lived token cookie name follows the brand namespace. This is one of
+// the legacy credential copies the B' hook retires (purgeLongLivedCopies
+// below) — the live credential is the HttpOnly session cookie.
 const TOKEN_COOKIE = key('token');
 
 // ── Exported protocol typedefs (P2-3 core contracts) ──────────────────────
@@ -370,20 +370,15 @@ export function sendWs(msg) {
 }
 
 // ---------- Connect ----------
-// Cookie auth is preferred (token stays out of URLs). But some setups block
-// cookies on localhost (Safari "block all cookies", restrictive private
-// modes) - the WS handshake then 403s forever even though the token is in
-// localStorage, and every rejected handshake logs an unsuppressible native
-// browser error line. So instead of blindly trying cookie-only first, probe
-// cookie reachability once with a cheap same-origin fetch before the first
-// WebSocket attempt:
-//   200      → cookie rides along → connect cookie-first (token out of URL)
-//   401/403  → cookie blocked → connect with ?token= on the FIRST attempt,
-//              so the doomed cookie-only handshake never happens
-//   fetch error (server restarting, network down) → inconclusive → fall
-//              through to cookie-first; the onclose fallback chain below
-//              stays as the last line of defense.
-let authParamFallback = false;
+// The WS handshake authenticates with the HttpOnly session cookie — the live
+// credential since phase 3b (stage D removed the legacy credential rails
+// server-side). One cheap same-origin authcheck fetch fires before the first
+// WebSocket attempt so the B' retirement hook runs the moment the session
+// cookie is VERIFIED working:
+//   204 + rail header `session` → purge the long-lived credential copies;
+//   anything else → inconclusive or diagnostic; the handshake itself is the
+//              authoritative probe, and a rejected one lands on the
+//              paste-ticket entry (see onclose).
 let authProbePromise = null;
 let authProbeSettled = false;
 
@@ -391,47 +386,41 @@ let authProbeSettled = false;
 // (probe 204 + rail header `session`), the long-lived localStorage token and
 // the non-HttpOnly legacy cookie are copies that can be retired — this flag
 // records that the purge ran and suppresses every later re-write of them for
-// the rest of the page lifecycle (cookie rewrite + ?token= fallback).
+// the rest of the page lifecycle (the cookie rewrite below).
 let longLivedPurged = false;
 // Stage B: the paste-ticket entry is shown at most once per page (a rejected
 // handshake then keeps reconnecting silently behind the modal).
 let ticketEntryShown = false;
 
-// Probe target: GET /api/nf-authcheck — authenticated via extractToken
-// (param → Authorization header → cookie), so a bare same-origin fetch
-// exercises exactly the cookie path the WS handshake relies on. Semantics
-// are now unambiguous: valid credential → 204, invalid → 403. The endpoint
-// touches zero disk and has no other side effect.
+// Probe target: GET /api/nf-authcheck — validated by the unified GatewayAuth
+// criterion (session cookie; Bearer for non-browser clients), so a bare
+// same-origin fetch exercises exactly the cookie path the WS handshake relies
+// on. Semantics are unambiguous: valid credential → 204, invalid → 403. The
+// endpoint touches zero disk and has no other side effect.
 //
-// 2026-09-11 (C batch, R9 = O-A): this used to point at a bare
-// GET /api/nf-file and read "400 = missing path ⇒ cookie works". The read
-// endpoint is now ticket-only, so a credential-less request answers 401 —
-// the SAME status a broken cookie produces — and the old probe could no
-// longer tell the two apart. The fallback trigger therefore moved to 403
-// (the only "your credential is wrong" signal left) while 401 stays
-// conclusive-but-harmless: it means "no ticket", which is exactly what this
-// unauthenticated probe expects to see from a healthy endpoint.
-// (曾用 /api/nf-tasks?limit=1 — 任务工具重做 2026-08-30 删除该路由后改此。)
+// (Historical: this used to point at a bare GET /api/nf-file and read
+// "400 = missing path ⇒ cookie works"; once the read endpoint went
+// ticket-only, a credential-less request answered 401 — the same status a
+// broken cookie produces — so the probe moved to the dedicated authcheck
+// endpoint.)
 function probeCookieAuth() {
   return fetch('/api/nf-authcheck', {
     credentials: 'same-origin',
     cache: 'no-store',
     signal: AbortSignal.timeout(3000),
   }).then(resp => {
-    if (resp.status === 403) {
-      authParamFallback = true;
-    } else if (resp.status === 204 && !longLivedPurged) {
+    if (resp.status === 204 && !longLivedPurged) {
       // Stage B' trigger (plan §6.6): the server answers the read-only rail
       // header on every 204. ONLY `session` means the HttpOnly session cookie
       // is verified working — the one moment retiring the long-lived copies
       // cannot cut a live credential (same-origin fetch rides the session
-      // from here on). The other rail values (bearer/legacy/param) are
-      // diagnostic and deliberately not consumed.
+      // from here on). The other rail value (bearer) is diagnostic and
+      // deliberately not consumed.
       if (resp.headers.get(`x-${brand.lowerName}-credential`) === 'session') {
         purgeLongLivedCopies();
       }
     }
-  }).catch(() => { /* inconclusive - proceed cookie-first */ });
+  }).catch(() => { /* inconclusive - proceed */ });
 }
 
 // Remove the long-lived credential copies (plan §6.6): the branded
@@ -601,12 +590,12 @@ function probeSocketAfterWake(maxMisses) {
 
 export function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const urlParams = new URLSearchParams(location.search);
-  const token = urlParams.get('token') || '';
-  if (token) {
-    localStorage.setItem(key('token'), token);
-  }
-  const storedToken = localStorage.getItem(key('token')) || token;
+  // Stage D: the URL credential ingestion is gone along with the server rail
+  // it fed — a stale bookmarked URL carrying a credential now lands on the
+  // paste-ticket entry via the normal rejected-handshake path. The only
+  // remaining source for the legacy copies below is pre-existing storage,
+  // which the B' purge clears once the session cookie verifies.
+  const storedToken = localStorage.getItem(key('token')) || '';
   // Set auth cookie so the WebSocket connection authenticates via cookie
   // instead of exposing the token in the URL (history/logs/Referer leakage).
   // After the B' purge ran, this page lifecycle never re-writes the
@@ -631,10 +620,10 @@ export function connect() {
       document.cookie = `${TOKEN_COOKIE}=${desired}; path=/; SameSite=Strict`;
     }
   }
-  // First connect: probe cookie reachability before opening the WebSocket so
-  // a cookie-blocked browser goes straight to ?token= (zero rejected
-  // handshakes, zero native browser error lines). Deferred connects while the
-  // probe is in flight simply wait for it to settle.
+  // First connect: run the authcheck probe once before opening the WebSocket
+  // so the B' purge fires the moment the session cookie is verified — before
+  // the legacy-copy rewrite below can recreate one. Deferred connects while
+  // the probe is in flight simply wait for it to settle.
   if (!authProbeSettled) {
     if (!authProbePromise) {
       authProbePromise = probeCookieAuth().finally(() => {
@@ -644,10 +633,9 @@ export function connect() {
     }
     return;
   }
-  // Connect without token in URL - relies on cookie auth. After a rejected
-  // handshake (likely cookie blocked), retry with the ?token= fallback.
-  const qs = (authParamFallback && storedToken && !longLivedPurged) ? `?token=${encodeURIComponent(storedToken)}` : '';
-  const wsUrl = `${proto}//${location.host}/ws${qs}`;
+  // Session-only connect: the handshake rides the HttpOnly session cookie
+  // (gateway WsAuth). A rejected handshake lands on the paste-ticket entry.
+  const wsUrl = `${proto}//${location.host}/ws`;
   try {
     state.ws = new WebSocket(wsUrl);
   } catch (e) {
@@ -702,19 +690,15 @@ export function connect() {
     disconnectCallbacks.forEach(cb => { try { cb(); } catch (e) { console.error('[ws] disconnect callback error:', e); } });
     if (state.heartbeat) { clearInterval(state.heartbeat); state.heartbeat = null; }
     if (!opened) {
-      // Handshake rejected (e.g. 403) before the socket ever opened.
-      if (!authParamFallback && storedToken && !longLivedPurged) {
-        authParamFallback = true;
-        console.info('[ws] handshake rejected - retrying with ?token= fallback (cookie may be blocked)');
-      } else {
-        // Stage B (phase 3b): the tokenized startup URL is gone, so BOTH
-        // degraded shapes — no credential and stale credential — land on
-        // the paste-ticket entry (plan §6.5, T-8-7: one entry, no second
-        // copy path).
-        console.warn('[ws] connect failed - offering the console ticket entry');
-        addNotification('conn', t('ws.ticketEntry.notify'));
-        showTicketEntry();
-      }
+      // Handshake rejected (e.g. 403) before the socket ever opened. Stage D
+      // removed the last non-session credential fallback, so EVERY degraded
+      // shape — no credential, stale credential, blocked cookies — lands on
+      // the paste-ticket entry (plan §6.5, T-8-7: one entry, no second copy
+      // path). The notification and the card keep the failure visible; the
+      // reconnect loop continues in the background behind the modal.
+      console.warn('[ws] connect failed - offering the console ticket entry');
+      addNotification('conn', t('ws.ticketEntry.notify'));
+      showTicketEntry();
     }
     scheduleReconnect();
   };

@@ -30,6 +30,7 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import WebSocket from 'ws';
 
 const URL_BASE = process.env.NEBFLOW_URL || 'http://localhost:8096';
 const HOME = process.env.NEBFLOW_HOME_DIR;
@@ -61,20 +62,26 @@ async function api(path, opts = {}) {
 
 function wsConnect() {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`${URL_BASE.replace('http', 'ws')}/ws?token=${encodeURIComponent(TOKEN)}`);
+    // Stage D: the token query rail on the WS handshake is retired. The smoke
+    // authenticates through the surviving WsAuth Bearer rail — the `ws`
+    // package can carry the Authorization header on the upgrade request (the
+    // browser-global WebSocket cannot send custom handshake headers).
+    const ws = new WebSocket(`${URL_BASE.replace('http', 'ws')}/ws`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
     const inbox = [];
     const waiters = [];
-    ws.addEventListener('message', (ev) => {
+    ws.on('message', (data) => {
       let msg;
-      try { msg = JSON.parse(ev.data); } catch { return; }
+      try { msg = JSON.parse(data.toString()); } catch { return; }
       inbox.push(msg);
       for (let i = waiters.length - 1; i >= 0; i--) {
         const w = waiters[i];
         if (w.pred(msg)) { waiters.splice(i, 1); w.resolve(msg); }
       }
     });
-    ws.addEventListener('open', () => resolve({ ws, inbox, waiters }));
-    ws.addEventListener('error', (e) => reject(new Error('WS connect failed: ' + (e.message || 'error'))));
+    ws.on('open', () => resolve({ ws, inbox, waiters }));
+    ws.on('error', (e) => reject(new Error('WS connect failed: ' + (e.message || 'error'))));
   });
 }
 

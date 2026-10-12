@@ -14,17 +14,25 @@ import scala.jdk.CollectionConverters.*
  * ~/.nebflow/uploads/<sid>/<file> so restored session history can render
  * image attachments.
  *
- * Covers the three contract points: auth (cookie-first, ?token= fallback,
- * reject otherwise), normal serving, and path-traversal rejection.
+ * Covers the three contract points: auth (the HttpOnly session cookie is the
+ * one credential — stage D retired the legacy file-token rails, and those
+ * refusals are pinned too), normal serving, and path-traversal rejection.
  */
 class UploadsRoutesSpec extends CatsEffectSuite:
 
   private val gatewayToken = "test-gateway-token"
 
-  // Phase 3b: the criterion is Ref-based + needs a session store (the session
-  // rail reads it; these specs exercise the legacy rails, so an empty store).
+  // Phase 3b: the criterion is Ref-based + needs a session store. Stage D
+  // retired the file-token rails, so the positive faces below authenticate
+  // through the session rail (the production shape for these routes).
   private val TokenRef = cats.effect.Ref.unsafe[IO, String](gatewayToken)
   private val Sessions = GatewaySessionStore.unsafeCreate()
+
+  /** A live session credential for the session rail. */
+  private def sessionCred: IO[(String, String)] =
+    Sessions
+      .create("uploads-spec", GatewaySessionStore.OriginRelayMint, "net-1")
+      .map(rec => (GatewaySessionStore.CookieName, rec.sessionId))
 
   /** Isolated dataRoot with a seeded uploads/sess-1/shot.png; restored after. */
   private def withTempUploads[A](test: => IO[A]): A =
@@ -69,7 +77,7 @@ class UploadsRoutesSpec extends CatsEffectSuite:
     }
   }
 
-  test("rejects a wrong token") {
+  test("rejects a token query param (the rail is retired — any token value)") {
     withTempUploads {
       IO {
         assertEquals(get("/uploads/sess-1/shot.png?token=wrong").get.status, Status.Forbidden)
@@ -77,50 +85,63 @@ class UploadsRoutesSpec extends CatsEffectSuite:
     }
   }
 
-  test("serves a file via ?token=") {
+  test("the retired token query rail is refused even with the LIVE file token (stage D)") {
     withTempUploads {
       IO {
-        val resp = get(s"/uploads/sess-1/shot.png?token=$gatewayToken").get
-        assertEquals(resp.status, Status.Ok)
-        val bytes = resp.body.compile.toVector.unsafeRunSync().toArray
-        assert(java.util.Arrays.equals(bytes, Array[Byte](1, 2, 3)))
+        assertEquals(get(s"/uploads/sess-1/shot.png?token=$gatewayToken").get.status, Status.Forbidden)
       }
     }
   }
 
-  test("serves a file via nebflow_token cookie") {
+  test("the retired legacy nebflow_token cookie rail is refused even with the LIVE file token (stage D)") {
     withTempUploads {
       IO {
-        val resp =
-          get("/uploads/sess-1/shot.png", cookie = Some(("nebflow_token", gatewayToken))).get
-        assertEquals(resp.status, Status.Ok)
+        assertEquals(
+          get("/uploads/sess-1/shot.png", cookie = Some(("nebflow_token", gatewayToken))).get.status,
+          Status.Forbidden
+        )
       }
+    }
+  }
+
+  test("serves a file via the session cookie") {
+    withTempUploads {
+      for
+        cred <- sessionCred
+        resp = get("/uploads/sess-1/shot.png", cookie = Some(cred)).get
+        _ = assertEquals(resp.status, Status.Ok)
+        bytes = resp.body.compile.toVector.unsafeRunSync().toArray
+        _ = assert(java.util.Arrays.equals(bytes, Array[Byte](1, 2, 3)))
+      yield ()
     }
   }
 
   test("rejects traversal segments") {
     withTempUploads {
-      IO {
+      for
+        cred <- sessionCred
         // Three segments — passes the shape check, must die on the ".." guard.
-        assertEquals(get(s"/uploads/../shot.png?token=$gatewayToken").get.status, Status.NotFound)
-      }
+        _ = assertEquals(get(s"/uploads/../shot.png", cookie = Some(cred)).get.status, Status.NotFound)
+      yield ()
     }
   }
 
   test("rejects wrong path shape") {
     withTempUploads {
-      IO {
-        assertEquals(get(s"/uploads/sess-1?token=$gatewayToken").get.status, Status.NotFound)
-        assertEquals(get(s"/uploads/a/b/c?token=$gatewayToken").get.status, Status.NotFound)
-      }
+      for
+        cred <- sessionCred
+        _ = assertEquals(get(s"/uploads/sess-1", cookie = Some(cred)).get.status, Status.NotFound)
+        _ = assertEquals(get(s"/uploads/a/b/c", cookie = Some(cred)).get.status, Status.NotFound)
+      yield ()
     }
   }
 
   test("404s for a missing file") {
     withTempUploads {
-      IO {
-        assertEquals(get(s"/uploads/sess-1/nope.png?token=$gatewayToken").get.status, Status.NotFound)
-      }
+      for
+        cred <- sessionCred
+        _ = assertEquals(get(s"/uploads/sess-1/nope.png", cookie = Some(cred)).get.status, Status.NotFound)
+      yield ()
     }
   }
 
@@ -157,55 +178,61 @@ class UploadsRoutesSpec extends CatsEffectSuite:
 
   test("serves a non-ASCII + space filename via its encoded wire form (the refresh regression)") {
     withTempUploads {
-      IO {
-        val name = "截屏2026-10-09 07.10.22.png"
-        os.write.over(
+      for
+        cred <- sessionCred
+        name = "截屏2026-10-09 07.10.22.png"
+        _ = os.write.over(
           PathUtil.dataRoot / "uploads" / "sess-1" / name,
           Array[Byte](9, 8, 7),
           createFolders = true
         )
-        val resp = get(s"/uploads/sess-1/${encodeURIComponent(name)}?token=$gatewayToken").get
-        assertEquals(resp.status, Status.Ok)
-        val bytes = resp.body.compile.toVector.unsafeRunSync().toArray
-        assert(java.util.Arrays.equals(bytes, Array[Byte](9, 8, 7)))
-      }
+        resp = get(s"/uploads/sess-1/${encodeURIComponent(name)}", cookie = Some(cred)).get
+        _ = assertEquals(resp.status, Status.Ok)
+        bytes = resp.body.compile.toVector.unsafeRunSync().toArray
+        _ = assert(java.util.Arrays.equals(bytes, Array[Byte](9, 8, 7)))
+      yield ()
     }
   }
 
   test("keeps a literal plus a plus on the path (no query-form semantics)") {
     withTempUploads {
-      IO {
-        val name = "a+b.png"
-        os.write.over(
+      for
+        cred <- sessionCred
+        name = "a+b.png"
+        _ = os.write.over(
           PathUtil.dataRoot / "uploads" / "sess-1" / name,
           Array[Byte](1),
           createFolders = true
         )
         // plusIsSpace=false is the path default: `a+b.png` must not be decoded
         // into `a b.png` (which would 404).
-        val resp = get(s"/uploads/sess-1/${encodeURIComponent(name)}?token=$gatewayToken").get
-        assertEquals(resp.status, Status.Ok)
-      }
+        resp = get(s"/uploads/sess-1/${encodeURIComponent(name)}", cookie = Some(cred)).get
+        _ = assertEquals(resp.status, Status.Ok)
+      yield ()
     }
   }
 
   test("404s an encoded traversal — the decode must land INSIDE the guards") {
     withTempUploads {
-      IO {
+      for
+        cred <- sessionCred
         // %2E%2E decodes to ".." before the guard sees it — same verdict as the
         // literal form.
-        assertEquals(get(s"/uploads/%2E%2E/shot.png?token=$gatewayToken").get.status, Status.NotFound)
+        _ = assertEquals(
+          get(s"/uploads/%2E%2E/shot.png", cookie = Some(cred)).get.status,
+          Status.NotFound
+        )
         // %2F-decoded `..` inside a segment would otherwise re-enter the base
         // through os.RelPath up-segments (sess-1/../uploads/shot.png resolves
         // back under uploads/): the decoded `/` clause is load-bearing.
-        assertEquals(
-          get(s"/uploads/sess-1/..%2Fuploads%2Fshot.png?token=$gatewayToken").get.status,
+        _ = assertEquals(
+          get(s"/uploads/sess-1/..%2Fuploads%2Fshot.png", cookie = Some(cred)).get.status,
           Status.NotFound
         )
         // %00 would make java.nio throw InvalidPathException (→ 500) — the
         // decoded-NUL clause keeps the old uniform 404.
-        assertEquals(get(s"/uploads/sess-1/x%00.png?token=$gatewayToken").get.status, Status.NotFound)
-      }
+        _ = assertEquals(get(s"/uploads/sess-1/x%00.png", cookie = Some(cred)).get.status, Status.NotFound)
+      yield ()
     }
   }
 end UploadsRoutesSpec

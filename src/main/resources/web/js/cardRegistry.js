@@ -274,8 +274,8 @@ window.addEventListener('message', (e) => {
  *   - resource `error` events do not bubble, so the listener is registered in
  *     the capture phase on window, from <head> (before any media is parsed);
  *   - the credential is stripped from the displayed src — a placeholder must
- *     never print `?token=…` or `?ticket=…`. The stripper is NOT reimplemented
- *     here: the one implementation lives in nfTicket.js
+ *     never print a token or ticket query parameter. The stripper is NOT
+ *     reimplemented here: the one implementation lives in nfTicket.js
  *     (`stripCredentialParams`) and is inlined by source into this injected
  *     script, because a srcdoc script cannot import a module. Same function
  *     the markdown image tooltip uses — one regex, no drift (C2-19);

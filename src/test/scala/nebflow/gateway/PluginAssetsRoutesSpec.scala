@@ -11,12 +11,13 @@ import scala.jdk.CollectionConverters.*
 
 /**
  * Route-level tests for StaticRoutes.pluginAssetsRoutes (canvas-media Wave1,
- * 2026-10-05, OD-2=V-C): the tokenized static face for plugin EXECUTOR
+ * 2026-10-05, OD-2=V-C): the session-cookie static face for plugin EXECUTOR
  * assets at `/api/plugin-assets/<name>/<rel…>`.
  *
  * Contract points under test:
- *  - token REQUIRED (cookie `nebflow_token` first, `?token=` fallback — the
- *    uploadsRoutes dual channel) — reject otherwise with 403;
+ *  - session REQUIRED (the HttpOnly session cookie — the one StaticAuth
+ *    credential since stage D retired the legacy file-token rails; the rail
+ *    refusals are pinned too) — reject otherwise with 403;
  *  - Trusted-only via the injected resolver: unknown/blocked names get the
  *    same uniform 404 as a missing file (no existence oracle);
  *  - manual segment parsing: trailing slash, `..` segments, empty rel parts
@@ -35,10 +36,17 @@ class PluginAssetsRoutesSpec extends CatsEffectSuite:
 
   private val gatewayToken = "test-gateway-token"
 
-  // Phase 3b: the criterion is Ref-based + needs a session store (the session
-  // rail reads it; these specs exercise the legacy rails, so an empty store).
+  // Phase 3b: the criterion is Ref-based + needs a session store. Stage D
+  // retired the file-token rails, so the positive faces below authenticate
+  // through the session rail (the production shape for these routes).
   private val TokenRef = cats.effect.Ref.unsafe[IO, String](gatewayToken)
   private val Sessions = GatewaySessionStore.unsafeCreate()
+
+  /** A live session credential for the session rail. */
+  private def sessionCred: IO[(String, String)] =
+    Sessions
+      .create("plugin-assets-spec", GatewaySessionStore.OriginRelayMint, "net-1")
+      .map(rec => (GatewaySessionStore.CookieName, rec.sessionId))
 
   /** Fixture plugin tree: nested assets + a symlink-escape attempt inside it. */
   private def pluginFixture(tmp: os.Path): os.Path =
@@ -92,13 +100,17 @@ class PluginAssetsRoutesSpec extends CatsEffectSuite:
    * = None — the seam pins below fail loudly on None (the pre-fix 404 seam
    * showed up as a fall-through, never as an answer from this route).
    */
-  private def mountedGet(pluginDir: os.Path)(path: String): Option[org.http4s.Response[IO]] =
+  private def mountedGet(
+    pluginDir: os.Path
+  )(path: String, cookie: Option[(String, String)] = None): Option[org.http4s.Response[IO]] =
     val mounted = Router("/api" -> StaticRoutes.pluginAssetsRoutes(TokenRef, Sessions, resolverFor(pluginDir)))
     // Stage C re-anchor: same direct-loopback pin as `get` above.
-    mounted
-      .run(SpecRequests.withRemote(Request[IO](Method.GET, Uri.unsafeFromString(path)), Some(SpecRequests.LoopbackV4)))
-      .value
-      .unsafeRunSync()
+    val base = SpecRequests.withRemote(
+      Request[IO](Method.GET, Uri.unsafeFromString(path)),
+      Some(SpecRequests.LoopbackV4)
+    )
+    val req = cookie.fold(base) { case (n, v) => base.addCookie(n, v) }
+    mounted.run(req).value.unsafeRunSync()
 
   test("rejects unauthenticated requests") {
     withTempPlugin { dir =>
@@ -108,7 +120,7 @@ class PluginAssetsRoutesSpec extends CatsEffectSuite:
     }
   }
 
-  test("rejects a wrong token") {
+  test("rejects a token query param (the rail is retired — any token value)") {
     withTempPlugin { dir =>
       IO {
         assertEquals(get(dir)("/plugin-assets/good/assets/renderer.js?token=wrong").get.status, Status.Forbidden)
@@ -116,103 +128,124 @@ class PluginAssetsRoutesSpec extends CatsEffectSuite:
     }
   }
 
-  test("serves a file via ?token=") {
+  test("the retired token query rail is refused even with the LIVE file token (stage D)") {
     withTempPlugin { dir =>
       IO {
-        val resp = get(dir)(s"/plugin-assets/good/assets/renderer.js?token=$gatewayToken").get
-        assertEquals(resp.status, Status.Ok)
-        val body = resp.bodyText.compile.string.unsafeRunSync()
-        assertEquals(body, "export const x = 1;")
+        assertEquals(
+          get(dir)(s"/plugin-assets/good/assets/renderer.js?token=$gatewayToken").get.status,
+          Status.Forbidden
+        )
       }
     }
   }
 
-  test("serves a file via nebflow_token cookie") {
+  test("the retired legacy nebflow_token cookie rail is refused even with the LIVE file token (stage D)") {
     withTempPlugin { dir =>
       IO {
-        val resp = get(dir)(
-          "/plugin-assets/good/assets/renderer.js",
-          cookie = Some(("nebflow_token", gatewayToken))
-        ).get
-        assertEquals(resp.status, Status.Ok)
+        assertEquals(
+          get(dir)("/plugin-assets/good/assets/renderer.js", cookie = Some(("nebflow_token", gatewayToken))).get.status,
+          Status.Forbidden
+        )
       }
+    }
+  }
+
+  test("serves a file via the session cookie") {
+    withTempPlugin { dir =>
+      for
+        cred <- sessionCred
+        resp = get(dir)("/plugin-assets/good/assets/renderer.js", cookie = Some(cred)).get
+        _ = assertEquals(resp.status, Status.Ok)
+        body = resp.bodyText.compile.string.unsafeRunSync()
+        _ = assertEquals(body, "export const x = 1;")
+      yield ()
     }
   }
 
   test("serves nested paths") {
     withTempPlugin { dir =>
-      IO {
-        val resp = get(dir)(s"/plugin-assets/good/assets/sub/deep.txt?token=$gatewayToken").get
-        assertEquals(resp.status, Status.Ok)
-        assertEquals(resp.bodyText.compile.string.unsafeRunSync(), "deep")
-      }
+      for
+        cred <- sessionCred
+        resp = get(dir)("/plugin-assets/good/assets/sub/deep.txt", cookie = Some(cred)).get
+        _ = assertEquals(resp.status, Status.Ok)
+        _ = assertEquals(resp.bodyText.compile.string.unsafeRunSync(), "deep")
+      yield ()
     }
   }
 
   test("uniform 404 for an unknown (or blocked) plugin — no existence oracle") {
     withTempPlugin { dir =>
-      IO {
-        assertEquals(
-          get(dir)(s"/plugin-assets/ghost/assets/renderer.js?token=$gatewayToken").get.status,
+      for
+        cred <- sessionCred
+        _ = assertEquals(
+          get(dir)("/plugin-assets/ghost/assets/renderer.js", cookie = Some(cred)).get.status,
           Status.NotFound
         )
-        assertEquals(
-          get(dir)(s"/plugin-assets/blocked/assets/renderer.js?token=$gatewayToken").get.status,
+        _ = assertEquals(
+          get(dir)("/plugin-assets/blocked/assets/renderer.js", cookie = Some(cred)).get.status,
           Status.NotFound
         )
-      }
+      yield ()
     }
   }
 
   test("404s for a missing file inside a known plugin") {
     withTempPlugin { dir =>
-      IO {
-        assertEquals(get(dir)(s"/plugin-assets/good/assets/nope.js?token=$gatewayToken").get.status, Status.NotFound)
-      }
+      for
+        cred <- sessionCred
+        _ = assertEquals(
+          get(dir)("/plugin-assets/good/assets/nope.js", cookie = Some(cred)).get.status,
+          Status.NotFound
+        )
+      yield ()
     }
   }
 
   test("rejects traversal segments") {
     withTempPlugin { dir =>
-      IO {
-        assertEquals(
-          get(dir)(s"/plugin-assets/good/assets/../../outside-secret.txt?token=$gatewayToken").get.status,
+      for
+        cred <- sessionCred
+        _ = assertEquals(
+          get(dir)("/plugin-assets/good/assets/../../outside-secret.txt", cookie = Some(cred)).get.status,
           Status.NotFound
         )
-        assertEquals(
-          get(dir)(s"/plugin-assets/../good/assets/renderer.js?token=$gatewayToken").get.status,
+        _ = assertEquals(
+          get(dir)("/plugin-assets/../good/assets/renderer.js", cookie = Some(cred)).get.status,
           Status.NotFound
         )
-      }
+      yield ()
     }
   }
 
   test("encoded-backslash attempts never reach the filesystem (segments stay encoded, like /agents/)") {
     withTempPlugin { dir =>
-      IO {
-        assertEquals(
-          get(dir)("/plugin-assets/good/assets/..%5C..%5Coutside-secret.txt?token=" + gatewayToken).get.status,
+      for
+        cred <- sessionCred
+        _ = assertEquals(
+          get(dir)("/plugin-assets/good/assets/..%5C..%5Coutside-secret.txt", cookie = Some(cred)).get.status,
           Status.NotFound
         )
-      }
+      yield ()
     }
   }
 
   test("rejects wrong path shape: no rel segment / trailing slash") {
     withTempPlugin { dir =>
-      IO {
-        assertEquals(get(dir)(s"/plugin-assets/good?token=$gatewayToken").get.status, Status.NotFound)
-        assertEquals(get(dir)(s"/plugin-assets/good/?token=$gatewayToken").get.status, Status.NotFound)
-        assertEquals(get(dir)(s"/plugin-assets/good/assets/?token=$gatewayToken").get.status, Status.NotFound)
-      }
+      for
+        cred <- sessionCred
+        _ = assertEquals(get(dir)("/plugin-assets/good", cookie = Some(cred)).get.status, Status.NotFound)
+        _ = assertEquals(get(dir)("/plugin-assets/good/", cookie = Some(cred)).get.status, Status.NotFound)
+        _ = assertEquals(get(dir)("/plugin-assets/good/assets/", cookie = Some(cred)).get.status, Status.NotFound)
+      yield ()
     }
   }
 
   test("symlink escape inside the package is refused (realpath containment final defense)") {
     withTempPlugin { dir =>
-      IO {
-        assertEquals(get(dir)(s"/plugin-assets/good/escape?token=$gatewayToken").get.status, Status.NotFound)
-      }
+      for
+        cred <- sessionCred
+        _ = assertEquals(get(dir)("/plugin-assets/good/escape", cookie = Some(cred)).get.status, Status.NotFound)
+      yield ()
     }
   }
 
@@ -220,29 +253,35 @@ class PluginAssetsRoutesSpec extends CatsEffectSuite:
 
   test("production mount: Router(\"/api\") serves the /api-prefixed frontend probe URL (404 seam pin)") {
     withTempPlugin { dir =>
-      IO {
-        // The exact URL shape web/js/plugins.js pluginMdUrl() fetches, through
-        // the exact GatewayMain composition: Router("/api" -> pluginAssetsRoutes).
-        val resp = mountedGet(dir)(s"/api/plugin-assets/good/assets/renderer.js?token=$gatewayToken").get
-        assertEquals(resp.status, Status.Ok)
-        assertEquals(resp.bodyText.compile.string.unsafeRunSync(), "export const x = 1;")
-      }
+      for
+        cred <- sessionCred
+        // The exact URL shape web/js/plugins.js pluginMdUrl() fetches (bare —
+        // stage D removed the credential query), through the exact GatewayMain
+        // composition: Router("/api" -> pluginAssetsRoutes).
+        resp = mountedGet(dir)("/api/plugin-assets/good/assets/renderer.js", cookie = Some(cred)).get
+        _ = assertEquals(resp.status, Status.Ok)
+        _ = assertEquals(resp.bodyText.compile.string.unsafeRunSync(), "export const x = 1;")
+      yield ()
     }
   }
 
   test("production mount对照: the bare (unprefixed) direct-call form still serves — neither leg may regress") {
     withTempPlugin { dir =>
-      IO {
+      for
+        cred <- sessionCred
         // Same fixture file, the OTHER mount form: unmounted route + bare path
         // (pathInfo == uri.path). The 404 seam fix must stay mount-form
         // agnostic — pinning both forms prevents an over-correction that
         // hard-couples the route to the /api prefix.
-        assertEquals(get(dir)(s"/plugin-assets/good/assets/renderer.js?token=$gatewayToken").get.status, Status.Ok)
-        assertEquals(
-          mountedGet(dir)(s"/api/plugin-assets/good/assets/renderer.js?token=$gatewayToken").get.status,
+        _ = assertEquals(
+          get(dir)("/plugin-assets/good/assets/renderer.js", cookie = Some(cred)).get.status,
           Status.Ok
         )
-      }
+        _ = assertEquals(
+          mountedGet(dir)("/api/plugin-assets/good/assets/renderer.js", cookie = Some(cred)).get.status,
+          Status.Ok
+        )
+      yield ()
     }
   }
 
@@ -250,24 +289,26 @@ class PluginAssetsRoutesSpec extends CatsEffectSuite:
     withTempPlugin { dir =>
       IO {
         // Before the seam fix a prefixed request never matched (404 whatever
-        // the token); now the route answers and its own auth face is visible.
+        // the credential); now the route answers and its own auth face is
+        // visible — including the stage-D retirement of the token rails.
         assertEquals(
           mountedGet(dir)(s"/api/plugin-assets/good/assets/renderer.js?token=wrong").get.status,
           Status.Forbidden
         )
-        assertEquals(mountedGet(dir)(s"/api/plugin-assets/good/assets/renderer.js").get.status, Status.Forbidden)
+        assertEquals(mountedGet(dir)("/api/plugin-assets/good/assets/renderer.js").get.status, Status.Forbidden)
       }
     }
   }
 
   test("production mount: unknown plugin keeps the uniform 404 (no existence oracle) on the prefixed form") {
     withTempPlugin { dir =>
-      IO {
-        assertEquals(
-          mountedGet(dir)(s"/api/plugin-assets/ghost/assets/renderer.js?token=$gatewayToken").get.status,
+      for
+        cred <- sessionCred
+        _ = assertEquals(
+          mountedGet(dir)("/api/plugin-assets/ghost/assets/renderer.js", cookie = Some(cred)).get.status,
           Status.NotFound
         )
-      }
+      yield ()
     }
   }
 

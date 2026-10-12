@@ -87,19 +87,5 @@ for (const [suffix, literal] of Object.entries(LEGACY_IRREGULAR)) {
   migrateKey(literal, key(suffix));
 }
 
-// 3. Token cookie: rename-day copy. Copy only, never delete - the backend
-//    still accepts the legacy cookie name during the transition, and cookie
-//    writes are asynchronous with respect to the network stack, so a
-//    delete-then-write sequence risks a handshake landing in the empty
-//    window (observed as intermittent WS 403).
-const LEGACY_TOKEN_COOKIE = 'nebflow_token';
-const tokenCookie = key('token');
-if (tokenCookie !== LEGACY_TOKEN_COOKIE) {
-  try {
-    const old = document.cookie.match(/(?:^|;\s*)nebflow_token=([^;]*)/);
-    const hasNew = document.cookie.match(new RegExp(`(?:^|;\\s*)${tokenCookie}=`));
-    if (old && !hasNew) {
-      document.cookie = `${tokenCookie}=${old[1]}; path=/; SameSite=Strict`;
-    }
-  } catch { /* cookie unavailable - never break boot */ }
-}
+// (Stage D: the old rename-day token-cookie copy lives only in the B' purge
+// — ws.js purgeLongLivedCopies removes every legacy spelling from the jar.)

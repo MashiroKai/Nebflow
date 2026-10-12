@@ -895,14 +895,11 @@ class WebSocketRoutes(
         // Phase 3b: the unified GatewayAuth criterion under WsAuth — session
         // cookie first, then Bearer (file token; a WsAuth registration note:
         // browsers cannot send Authorization on a WS handshake, so this leg
-        // only ever fires for non-browser clients that previously used
-        // ?token=), then the legacy `nebflow_token` cookie, then `?token=`.
-        // A presented-but-invalid high rail falls through instead of
-        // rejecting (the stale-cookie tolerance below is now constructive).
-        // Stage C origin gate: the two file-token rails (legacy cookie +
-        // `?token=`) additionally require a direct loopback connection — the
-        // tunnel bridge marks its loopback handshakes, so tunnel-origin
-        // handshakes fall through both rails (see GatewayAuth).
+        // only ever fires for non-browser clients such as CLI/script callers).
+        // Stage D retired the two file-token-in-request-target rails (the
+        // legacy `nebflow_token` cookie and the token query param) — the
+        // handshake is session-cookie driven; a presented-but-invalid high
+        // rail still falls through instead of rejecting (see GatewayAuth).
         tokenRef.get
           .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
           .flatMap {
@@ -1079,8 +1076,7 @@ class WebSocketRoutes(
 
       // --- Callback endpoint (外→内) ---
       // POST /api/callbacks/inject — agent-centric, authenticated through the
-      // unified GatewayAuth criterion (WsAuth: session cookie > Bearer >
-      // legacy cookie > ?token=).
+      // unified GatewayAuth criterion (WsAuth: session cookie > Bearer).
       case req @ POST -> Root / "api" / "callbacks" / "inject" =>
         tokenRef.get
           .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
@@ -2709,17 +2705,6 @@ class WebSocketRoutes(
   // ============================================================
 
   /**
-   * Legacy credential extractor (param > Authorization header > cookie).
-   * RETAINED as the pre-3b extractor — the three consumers it served now go
-   * through the unified [[GatewayAuth]] criterion (WsAuth), so this is
-   * deliberately kept pure and unused-by-routes (plan §4.2#3: "keep the
-   * function, avoid a wide text rewrite"); removal belongs to the phase C/D
-   * narrowing batches.
-   */
-  private def extractToken(req: org.http4s.Request[IO]): String =
-    WebSocketRoutes.extractToken(req)
-
-  /**
    * POST /api/callbacks/inject
    *
    * Body: { "agent": "Nebula", "session?": "abc123", "message": "text" }
@@ -2782,24 +2767,6 @@ class WebSocketRoutes(
 end WebSocketRoutes
 
 object WebSocketRoutes:
-
-  /**
-   * Extract token from query param (localStorage), Authorization header, or
-   * cookie. Pure — shared by every authenticated route through the
-   * class-side alias.
-   */
-  private[gateway] def extractToken(req: org.http4s.Request[IO]): String =
-    val fromParam = req.params.get("token").getOrElse("")
-    if fromParam.nonEmpty then fromParam
-    else
-      val fromHeader = req.headers
-        .get[org.http4s.headers.Authorization]
-        .collectFirst { case org.http4s.headers.Authorization(org.http4s.Credentials.Token(_, t)) =>
-          t
-        }
-        .getOrElse("")
-      if fromHeader.nonEmpty then fromHeader
-      else req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
 
   /**
    * Which AgentRegistry entries getActiveAgents should report as running.
