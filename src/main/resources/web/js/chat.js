@@ -197,9 +197,13 @@ const VoicePlayer = {
     if (this.queue.length > 0) this._processQueue();
   },
 
-  /** Play a single voice block. */
+  /** Play a single voice block. Actual playback (post-fetch, unmuted) is
+   *  announced on `window` as `voiceplayer:start` / `voiceplayer:end`
+   *  (detail { text } on start) — the voice-mode overlay listens to caption
+   *  the spoken line and hold its own sends while the agent talks. */
   async _playItem({ text, element }) {
     if (this.muted) return 'done';
+    let started = false;
     try {
       const url = await this._getAudioUrl(text);
       if (!url) return 'done';
@@ -207,6 +211,8 @@ const VoicePlayer = {
         const audio = new Audio(url);
         this._current = { audio, url, element, resolve };
         if (element) element.classList.add('playing');
+        window.dispatchEvent(new CustomEvent('voiceplayer:start', { detail: { text } }));
+        started = true;
         audio.onended = () => resolve('done');
         audio.onerror = () => resolve('done');
         audio.play().catch(() => resolve('done'));
@@ -217,6 +223,7 @@ const VoicePlayer = {
     } finally {
       if (element) element.classList.remove('playing');
       this._current = null;
+      if (started) window.dispatchEvent(new CustomEvent('voiceplayer:end'));
     }
   },
 
@@ -241,6 +248,13 @@ const VoicePlayer = {
     this.enqueue(element.textContent, element);
   },
 
+  /** User barge-in (voice-mode batch): cancel the current clip and the rest
+   *  of the queue so the user's captured speech flows on. The resolve ping
+   *  makes the queue loop stop; `_playItem`'s finally emits the end event. */
+  interrupt() {
+    this._cancel();
+  },
+
   /** Toggle mute. */
   toggleMute() {
     this.muted = !this.muted;
@@ -250,6 +264,11 @@ const VoicePlayer = {
     return this.muted;
   },
 };
+
+// Full-duplex voice mode: sustained mic input during playback barges in —
+// the overlay detects it and fires 'voicebargein' on `window`; the player
+// (owned here) answers by interrupting itself.
+window.addEventListener('voicebargein', () => VoicePlayer.interrupt());
 
 // SVG icons for the voice toggle button
 const VOICE_SVG_ON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>';

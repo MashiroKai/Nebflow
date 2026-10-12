@@ -27,10 +27,15 @@
     0px 2px 8px rgba(0, 0, 0, 0.04),
     0px 8px 24px rgba(0, 0, 0, 0.06);
   /* 2026-08-24 frozen-input spec §4: freeze/unfreeze material transition —
-     300ms Material standard easing on the three painted properties. */
+     300ms Material standard easing on the three painted properties.
+     voice-mode batch: opacity/transform join the set — the full-duplex voice
+     overlay collapses the bar (body.voice-mode-active, see css/voiceMode.css)
+     and must be able to animate it back on exit. */
   transition: border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
     background 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-    box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.24s ease,
+    transform 0.26s cubic-bezier(0.4, 0, 0.2, 1);
 }
 #input-bar::before {
   content: '';

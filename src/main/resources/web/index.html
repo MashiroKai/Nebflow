@@ -47,6 +47,7 @@
   <link rel="stylesheet" href="css/friends.css">
   <link rel="stylesheet" href="css/split.css">
   <link rel="stylesheet" href="css/voice.css">
+  <link rel="stylesheet" href="css/voiceMode.css">
   <link rel="stylesheet" href="css/lightbox.css">
   <link rel="stylesheet" href="css/usage.css">
   <!-- Social interface cards (socpanel batch, 2026-09-19): all widths, tokens
@@ -304,6 +305,9 @@
             <canvas class="orb-canvas" id="mic-canvas" aria-hidden="true"></canvas>
             <div class="css-orb orb" id="mic-css-orb" role="img" aria-label="Mic state"></div>
           </button>
+          <button class="mic-mode-btn" id="voice-mode-btn" type="button" title="Voice conversation" aria-label="Voice conversation">
+            <i data-lucide="audio-lines"></i>
+          </button>
         </div>
       <div id="input-wrap" style="position:relative;">
         <div id="attachment-preview"></div>
@@ -338,6 +342,27 @@
 
   <!-- Right edge bar — thin fixed strip anchoring the canvas panel's right boundary -->
   <div class="edge-bar edge-bar-right"></div>
+
+  <!-- Full-duplex voice mode overlay. BODY-LEVEL on purpose (same reasoning
+       as #daemon-config-overlay): must cover the viewport and escape any
+       overflow / backdrop-filter ancestor clipping. -->
+  <div id="voice-mode-overlay" role="dialog" aria-modal="false" aria-label="Voice conversation">
+    <div class="vmo-scrim"></div>
+    <div class="vmo-center">
+      <div class="mic-orb-wrap vmo-orb-wrap" id="vmo-orb-wrap">
+        <div class="micbubble vmo-bubble">
+          <canvas class="orb-canvas" id="vmo-canvas" aria-hidden="true"></canvas>
+          <div class="css-orb orb" id="vmo-css-orb" role="img" aria-label="Voice state"></div>
+        </div>
+      </div>
+      <div class="vmo-caption" id="vmo-caption" hidden></div>
+      <div class="vmo-transcript" id="vmo-transcript" hidden></div>
+      <div class="vmo-hint" id="vmo-hint"></div>
+    </div>
+    <button class="vmo-exit" id="vmo-exit" type="button" title="Exit voice conversation" aria-label="Exit voice conversation">
+      <i data-lucide="x"></i>
+    </button>
+  </div>
 
   <!-- Modals -->
   <div id="modal-overlay">

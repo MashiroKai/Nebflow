@@ -629,6 +629,8 @@ export default {
   'input.compactPlaceholder': 'Optional compaction instruction — press Enter to compact...',
   'input.voiceListening': 'Listening...',
   'input.voiceBtn': 'Voice input',
+  'voiceMode.hint': 'Just speak — messages send themselves, replies play aloud. Esc to exit.',
+  'voiceMode.sendFailed': 'Message not sent — connection is offline',
   'input.voiceHint': 'Release to send',
   'input.voiceError': 'Voice input not supported in this browser. Try Chrome.',
   'input.queued': 'Queued',

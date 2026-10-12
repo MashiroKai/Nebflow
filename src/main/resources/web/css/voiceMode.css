@@ -1,0 +1,207 @@
+/* ── Full-duplex voice mode (voice-mode batch) ────────────────────────────
+   Entry button under the mic orb + the centered-orb overlay. The overlay is
+   body-level (#voice-mode-overlay) so no ancestor can clip it; the input bar
+   collapse is driven by body.voice-mode-active and animates through the
+   opacity/transform pair added to #input-bar's base transition in input.css. */
+
+/* Entry button — sits in .mic-orb-wrap's column slot below the orb. */
+.mic-mode-btn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-frame-text-muted);
+  transition: color 0.15s, background 0.15s;
+}
+.mic-mode-btn:hover {
+  color: var(--color-frame-text);
+  background: var(--glass-control-bg-hover);
+}
+.mic-mode-btn svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2;
+}
+
+/* Input-bar collapse: scale down + sink + fade while the overlay's centered
+   orb scales up — reads as the bubble lifting out of the composer. */
+body.voice-mode-active #input-bar {
+  opacity: 0;
+  transform: translateY(16px) scale(0.94);
+  pointer-events: none;
+  visibility: hidden;
+  /* Keep visibility delayed until the fade has finished (exit flips it back
+     instantly so the restore animation is visible). */
+  transition: border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    background 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.24s ease,
+    transform 0.26s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0s linear 0.28s;
+}
+body.voice-mode-active #queue-bar {
+  display: none;
+}
+
+/* ── Overlay ─────────────────────────────────────────────────────────── */
+
+#voice-mode-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900; /* above chat content, below modals (#modal-overlay = 11000) */
+  /* Rendered but invisible while off — visibility keeps the box in the layout
+     tree so the scrim/center opacity transitions actually run on .on
+     (display:none would swallow them). */
+  visibility: hidden;
+  pointer-events: none;
+  transition: visibility 0s linear 0.32s;
+}
+#voice-mode-overlay.on {
+  visibility: visible;
+  pointer-events: auto;
+  transition: visibility 0s;
+}
+
+.vmo-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 10, 16, 0.42);
+  opacity: 0;
+  transition: opacity 0.28s ease;
+}
+#voice-mode-overlay.on .vmo-scrim {
+  opacity: 1;
+}
+
+.vmo-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  text-align: center;
+  padding: 0 24px;
+  pointer-events: none;
+  transform: scale(0.72);
+  opacity: 0;
+  transition: transform 0.32s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.26s ease;
+}
+#voice-mode-overlay.on .vmo-center {
+  transform: scale(1);
+  opacity: 1;
+}
+
+/* Centered bubble — same wrap/bubble anatomy as the input-bar orb, larger.
+   State classes land on .vmo-orb-wrap from micOrb.js (mirror registration). */
+.vmo-orb-wrap {
+  --orb-base: radial-gradient(120% 120% at 32% 28%, #b6cff5 0%, #8C7DD6 45%, #2f3d78 100%);
+}
+.vmo-bubble {
+  width: 132px;
+  height: 132px;
+}
+.vmo-bubble .orb-canvas,
+.vmo-bubble .css-orb {
+  width: 132px;
+  height: 132px;
+  display: block;
+  border-radius: 50%;
+}
+
+/* Soft halo while the agent speaks (caption carries the words; this carries
+   "sound is coming out" at a glance). Decorative only. */
+.vmo-bubble.speaking::after {
+  content: '';
+  position: absolute;
+  inset: -14px;
+  border-radius: 50%;
+  border: 2px solid var(--orb-dot, #78A0DC);
+  opacity: 0;
+  animation: vmo-speak-ring 1.6s ease-out infinite;
+  pointer-events: none;
+}
+@keyframes vmo-speak-ring {
+  0%   { transform: scale(0.92); opacity: 0.55; }
+  70%  { transform: scale(1.18); opacity: 0; }
+  100% { transform: scale(1.18); opacity: 0; }
+}
+
+.vmo-caption {
+  max-width: 62ch;
+  color: var(--color-text, #e8ecf4);
+  font-size: 16px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.vmo-transcript {
+  max-width: 62ch;
+  color: var(--color-text-muted, rgba(232, 236, 244, 0.65));
+  font-size: 14px;
+  line-height: 1.45;
+  font-style: italic;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* The explicit -webkit-box display above would defeat the `hidden` attribute
+   (voiceMode.js toggles it) — re-assert the attribute's display:none. */
+.vmo-caption[hidden],
+.vmo-transcript[hidden] {
+  display: none;
+}
+.vmo-hint {
+  color: var(--color-text-muted, rgba(232, 236, 244, 0.45));
+  font-size: 12px;
+}
+
+.vmo-exit {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.12));
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--color-text, #e8ecf4);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+  pointer-events: auto;
+}
+.vmo-exit:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+.vmo-exit svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Reduced motion: state changes land instantly (same policy as the orb's
+   reduced-motion mode — no lerp, no ring). */
+@media (prefers-reduced-motion: reduce) {
+  body.voice-mode-active #input-bar,
+  .vmo-scrim,
+  .vmo-center {
+    transition: none;
+  }
+  .vmo-bubble.speaking::after {
+    animation: none;
+    display: none;
+  }
+}

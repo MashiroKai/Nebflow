@@ -1227,6 +1227,34 @@ export function initInput(view) {
   }
   voiceBtn.addEventListener('click', onVoiceToggle);
 
+  // Voice-mode entry (voice-mode batch): the small button under the orb opens
+  // the full-duplex voice overlay. Primary bar only — the button exists only
+  // in #input-bar's orb wrap. Dynamic import keeps input.js ↔ voiceMode.js
+  // cycle-free at module-eval time (same pattern as micOrb → voiceEngine).
+  const voiceModeBtn = document.getElementById('voice-mode-btn');
+  if (voiceModeBtn && view.id === 'primary') {
+    voiceModeBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      setActiveView(view); // utterances must land in THIS session even if ws.js flips activeView later
+      import('./voiceMode.js').then((m) => {
+        m.enterVoiceMode({
+          // send() operates on the active view's input; the ws-closed path
+          // leaves the value uncleared — that's the failure signal.
+          sendText: (/** @type {string} */ text) => {
+            input.value = text;
+            send();
+            const ok = input.value !== text;
+            input.value = '';
+            input.style.height = 'auto';
+            return ok;
+          },
+          // Push-to-talk and voice mode share one mic session.
+          ensureDictationIdle: () => { if (voiceActive) stopVoice(); },
+        });
+      }).catch(() => {});
+    });
+  }
+
   // Escape key stops voice recording (only register once)
   if (view.id === 'primary') {
     document.addEventListener('keydown', (e) => {
