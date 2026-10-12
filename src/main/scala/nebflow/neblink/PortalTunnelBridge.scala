@@ -6,6 +6,7 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import fs2.{Chunk, Stream}
 import nebflow.shared.NebflowLogger
+import nebflow.shared.TunnelOriginMark
 import org.http4s.{Header, Headers, HttpApp, Method, Request, Response, Uri}
 import org.typelevel.ci.CIString
 
@@ -346,9 +347,17 @@ private[neblink] final class PortalTunnelBridge(
     }
 
   private def toRequestHeaders(headers: PortalWireCodec.Headers): List[Header.Raw] =
-    headers.toList.collect {
+    val client = headers.toList.collect {
       case (name, value) if !DropRequestHeaderNames.contains(name.toLowerCase(java.util.Locale.ROOT)) =>
         Header.Raw(CIString(name), value)
+    }
+    // Stage C belt-and-suspenders: the in-process request also carries the
+    // process-self-signed tunnel mark ([[nebflow.shared.TunnelOriginMark]]) as
+    // the SECOND origin signal next to remote = None. A client-supplied
+    // same-named header is dropped first, so the request-side value is always
+    // the bridge's own (or absent when the mark is not armed).
+    TunnelOriginMark.injectHeader.fold(client) { case (name, v) =>
+      client.filterNot(_.name.toString.equalsIgnoreCase(name)) :+ Header.Raw(CIString(name), v)
     }
 
   /**
@@ -468,6 +477,11 @@ private[neblink] final class PortalTunnelBridge(
       headers.foreach(h =>
         wsHandshakeHeaders(h).foreach { (name, value) => builder.header(name, value) }
       )
+      // Stage C: self-signed tunnel-origin mark on the loopback handshake —
+      // the WS face has no mechanical origin signal (the socket IS loopback),
+      // so this header is the tunnel discriminator GatewayAuth consumes. A
+      // client-supplied same-named header never survives wsHandshakeHeaders.
+      TunnelOriginMark.injectHeader.foreach { (name, v) => builder.header(name, v) }
       builder.buildAsync(URI.create(uri), new LocalWsListener(cycle))
     }.flatMap(cf => IO.fromCompletableFuture(IO(cf)))
 
@@ -840,9 +854,14 @@ private[neblink] object PortalTunnelBridge:
    * `subprotocol` field), and `host` / `content-length` / `origin` describe
    * the local loopback call, not the browser call being bridged. Everything
    * else — the `cookie` bridge head in particular — is forwarded verbatim.
+   *
+   * Stage C: the tunnel-mark header name is on the drop list too — a browser
+   * supplied same-named header is discarded here, then the bridge injects the
+   * genuine armed value after filtering (drop-then-inject keeps the mark
+   * unforgeable and duplicate-free).
    */
   private val DropWsHandshakeHeaderNames: Set[String] =
-    DropRequestHeaderNames ++ Set(
+    (DropRequestHeaderNames ++ Set(
       "host",
       "content-length",
       "origin",
@@ -852,7 +871,7 @@ private[neblink] object PortalTunnelBridge:
       "sec-websocket-permessage-deflate",
       "sec-websocket-protocol",
       "sec-websocket-version"
-    )
+    )) + TunnelOriginMark.headerName
 
   /** Filter a ws_open frame's headers down to the injectable handshake face. */
   private[neblink] def wsHandshakeHeaders(headers: PortalWireCodec.Headers): Vector[(String, String)] =

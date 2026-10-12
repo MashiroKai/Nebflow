@@ -1,6 +1,7 @@
 package nebflow.gateway
 
 import cats.effect.IO
+import nebflow.shared.TunnelOriginMark
 import org.http4s.headers.Authorization
 import org.http4s.{AuthScheme, Credentials, Request}
 
@@ -30,6 +31,11 @@ object Credential:
  * legacy `nebflow_token` cookie > `?token=` param — selected per call site
  * through a [[Rails]] switch set, so each face declares exactly which rails
  * it accepts.
+ *
+ * Stage C origin gate: the two file-token-in-request-target rails (`?token=`
+ * param / legacy `nebflow_token` cookie) additionally require a DIRECT
+ * LOOPBACK connection — a tunnel-origin request falls through both (see
+ * [[legacyRailsPermitted]]). The session/Bearer rails are origin-blind.
  *
  * Fall-through semantics (the load-bearing decision): a HIGHER rail that is
  * PRESENTED but INVALID does not short-circuit the request into a rejection —
@@ -94,6 +100,28 @@ object GatewayAuth:
   private val LegacyCookieName = "nebflow_token"
 
   /**
+   * Stage C origin gate for the two file-token-in-request-target rails
+   * (`?token=` param and the legacy `nebflow_token` cookie): accepted ONLY
+   * from a DIRECT LOOPBACK connection — never across the portal tunnel, never
+   * from a LAN/remote address. Tunnel origin reads through EITHER signal:
+   *  - the process-self-signed tunnel mark (the WS tunnel rides a real
+   *    loopback socket, so the mark is the only discriminator there — see
+   *    [[nebflow.shared.TunnelOriginMark]]);
+   *  - a missing remote address (the bridge's in-process HTTP calls have
+   *    remote = None; a server-accepted request always carries one).
+   * The mark wins over the address: "remote = Some(loopback) AND marked" is
+   * treated as tunnel (GatewayAuthSpec pins this hybrid precedence). The
+   * address check is pure loopback (127.0.0.1 / ::1 / the v4-mapped form) —
+   * a LAN-direct client authenticates via the session/Bearer rails like any
+   * other remote caller. Session and Bearer are NOT gated: tunnel traffic is
+   * session-cookie driven by design (portal mints a one-time ticket, the
+   * exchange sets the session), and Bearer stays a legitimate cross-tunnel
+   * shape for CLI/script callers.
+   */
+  private def legacyRailsPermitted(req: Request[IO]): Boolean =
+    !TunnelOriginMark.isMarked(req) && req.remote.exists(addr => addr.host.collapseMappedV4.isLoopback)
+
+  /**
    * Run the rails in priority order; the FIRST rail that validates wins.
    * `None` = no rail accepted the request (the caller renders its own
    * rejection — 403 on the gateway faces, 401 on the OpenAI face, unchanged).
@@ -130,14 +158,14 @@ object GatewayAuth:
             else IO.pure(None) // presented-but-invalid Bearer falls through (never short-circuits)
 
     def legacyLeg: IO[Option[Credential]] =
-      if !rails.legacyCookie then IO.pure(None)
+      if !rails.legacyCookie || !legacyRailsPermitted(req) then IO.pure(None)
       else
         req.cookies.find(_.name == LegacyCookieName).map(_.content).filter(_.nonEmpty) match
           case Some(v) if Auth.validateToken(v, fileToken) => IO.pure(Some(Credential.ViaLegacyCookie))
           case _ => IO.pure(None)
 
     def paramLeg: IO[Option[Credential]] =
-      if !rails.param then IO.pure(None)
+      if !rails.param || !legacyRailsPermitted(req) then IO.pure(None)
       else
         req.params.get("token").filter(_.nonEmpty) match
           case Some(v) if Auth.validateToken(v, fileToken) => IO.pure(Some(Credential.ViaParam))

@@ -115,6 +115,11 @@ final class NeblinkRelayTunnel(
    * signals observe `None` and silently skip half the revocation.
    */
   private[neblink] val portalDeps: Option[PortalTunnelDeps] = portalHost.map { faces =>
+    // Stage C: arm the tunnel-origin mark BEFORE any bridge can serve — this
+    // assembly segment runs at construction (before connect() and before any
+    // PortalTunnelBridge exists), so the bridge always injects a live value
+    // and GatewayAuth's origin gate never sees the unarmed state in prod.
+    nebflow.shared.TunnelOriginMark.arm()
     val deps = new PortalTunnelDeps(
       faces = faces,
       consoleTickets = ConsoleTicketStore.unsafeCreate(),

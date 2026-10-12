@@ -75,7 +75,11 @@ class PluginAssetsRoutesSpec extends CatsEffectSuite:
     if name == "good" then IO.some(pluginDir) else IO.none
 
   private def get(pluginDir: os.Path)(path: String, cookie: Option[(String, String)] = None) =
-    val base = Request[IO](Method.GET, Uri.unsafeFromString(path))
+    // Stage C re-anchor: pin the pre-stage-C default — a direct loopback client.
+    val base = SpecRequests.withRemote(
+      Request[IO](Method.GET, Uri.unsafeFromString(path)),
+      Some(SpecRequests.LoopbackV4)
+    )
     val req = cookie.fold(base) { case (n, v) => base.addCookie(n, v) }
     StaticRoutes.pluginAssetsRoutes(TokenRef, Sessions, resolverFor(pluginDir))(req).value.unsafeRunSync()
 
@@ -90,7 +94,11 @@ class PluginAssetsRoutesSpec extends CatsEffectSuite:
    */
   private def mountedGet(pluginDir: os.Path)(path: String): Option[org.http4s.Response[IO]] =
     val mounted = Router("/api" -> StaticRoutes.pluginAssetsRoutes(TokenRef, Sessions, resolverFor(pluginDir)))
-    mounted.run(Request[IO](Method.GET, Uri.unsafeFromString(path))).value.unsafeRunSync()
+    // Stage C re-anchor: same direct-loopback pin as `get` above.
+    mounted
+      .run(SpecRequests.withRemote(Request[IO](Method.GET, Uri.unsafeFromString(path)), Some(SpecRequests.LoopbackV4)))
+      .value
+      .unsafeRunSync()
 
   test("rejects unauthenticated requests") {
     withTempPlugin { dir =>

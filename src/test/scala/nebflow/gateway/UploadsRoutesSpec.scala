@@ -52,7 +52,12 @@ class UploadsRoutesSpec extends CatsEffectSuite:
   end withTempUploads
 
   private def get(path: String, cookie: Option[(String, String)] = None) =
-    val base = Request[IO](Method.GET, Uri.unsafeFromString(path))
+    // Stage C re-anchor: in-process requests carry no remote (= tunnel shape),
+    // so the builder pins the pre-stage-C default — a direct loopback client.
+    val base = SpecRequests.withRemote(
+      Request[IO](Method.GET, Uri.unsafeFromString(path)),
+      Some(SpecRequests.LoopbackV4)
+    )
     val req = cookie.fold(base) { case (n, v) => base.addCookie(n, v) }
     StaticRoutes.uploadsRoutes(TokenRef, Sessions)(req).value.unsafeRunSync()
 

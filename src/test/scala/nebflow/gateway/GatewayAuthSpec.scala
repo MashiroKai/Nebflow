@@ -1,9 +1,12 @@
 package nebflow.gateway
 
 import cats.effect.IO
+import com.comcast.ip4s.{IpAddress, SocketAddress}
 import munit.CatsEffectSuite
+import nebflow.shared.TunnelOriginMark
 import org.http4s.headers.Authorization
-import org.http4s.{AuthScheme, Credentials, Method, Request, Uri}
+import org.http4s.{AuthScheme, Credentials, Header, Method, Request, Uri}
+import org.typelevel.ci.CIString
 
 /**
  * The unified GatewayAuth criterion (phase 3b, plan §4 / criterion 6):
@@ -18,6 +21,12 @@ import org.http4s.{AuthScheme, Credentials, Method, Request, Uri}
  *  - the rotate linkage: a rotated file token kills the Bearer rail but not
  *    the session rail (criterion 7's unit face).
  *
+ * Stage C origin gate: the param/legacy rails additionally require a direct
+ * loopback connection — the origin matrix below pins the full
+ * remote × mark × rail verdict table (only direct loopback + unmarked
+ * accepts), the hybrid precedence pin (mark wins over the address), and the
+ * origin-blindness of the session/Bearer rails.
+ *
  * PAT positive-path (a real signed JWT against JWKS) is an integration face —
  * here an INVALID PAT is asserted to fall through, which is the phase-A
  * regression that matters.
@@ -28,16 +37,25 @@ class GatewayAuthSpec extends CatsEffectSuite:
 
   private val sessions = GatewaySessionStore.unsafeCreate()
 
+  // Stage C: the mark matrix needs a live armed value; arm() is idempotent
+  // and process-global, so every read below observes the same value.
+  TunnelOriginMark.arm()
+  private val TrueMark: String =
+    TunnelOriginMark.armedValue.getOrElse(sys.error("tunnel mark failed to arm"))
+
   private def req(
     path: String = "/x",
     paramToken: Option[String] = None,
     bearer: Option[String] = None,
+    remote: Option[SocketAddress[IpAddress]] = Some(SpecRequests.LoopbackV4),
+    mark: Option[String] = None,
     cookies: (String, String)*
   ): Request[IO] =
     val uri0 = Uri.unsafeFromString(paramToken.fold(path)(t => s"$path?token=$t"))
     val base = Request[IO](Method.GET, uri0)
     val withBearer = bearer.fold(base)(t => base.putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, t))))
-    cookies.foldLeft(withBearer)((r, c) => r.addCookie(c._1, c._2))
+    val marked = mark.fold(withBearer)(v => withBearer.putHeaders(Header.Raw(CIString(TunnelOriginMark.headerName), v)))
+    SpecRequests.withRemote(cookies.foldLeft(marked)((r, c) => r.addCookie(c._1, c._2)), remote)
 
   private def auth(r: Request[IO], rails: GatewayAuth.Rails, fileToken: String = FileToken): IO[Option[Credential]] =
     GatewayAuth.authenticate(r, fileToken, sessions, rails)
@@ -167,6 +185,77 @@ class GatewayAuthSpec extends CatsEffectSuite:
     for
       hit <- auth(fileReq, GatewayAuth.Rails.ApiFull)
       _ = assertEquals(hit, Some(Credential.ViaBearer(isFileToken = true)))
+    yield ()
+
+  // ── stage C origin matrix: param/legacy rails are direct-loopback-only ──
+
+  /** remote × mark arms of the matrix; the accept set is fixed by the gate. */
+  private val OriginRemotes = List(
+    ("tunnel(None)", None),
+    ("loopback-v4", Some(SpecRequests.LoopbackV4)),
+    ("loopback-v6", Some(SpecRequests.LoopbackV6)),
+    ("loopback-mapped", Some(SpecRequests.LoopbackMapped)),
+    ("lan-direct", Some(SpecRequests.Lan)),
+    ("public-direct", Some(SpecRequests.Public))
+  )
+  private val OriginMarks = List(
+    ("no-mark", None),
+    ("garbage-mark", Some("0123456789abcdef-not-the-real-value")),
+    ("true-mark", Some(TrueMark))
+  )
+
+  test("origin matrix (param rail): accept iff direct loopback AND not truly marked"):
+    val cases = OriginRemotes.flatMap { case (remoteName, remote) =>
+      OriginMarks.map { case (markName, mark) =>
+        (remoteName, markName, req(paramToken = Some(FileToken), remote = remote, mark = mark))
+      }
+    }
+    cases.foldLeft(IO.unit) { case (acc, (remoteName, markName, r)) =>
+      acc.flatMap { _ =>
+        auth(r, GatewayAuth.Rails.WsAuth).map { hit =>
+          val expected =
+            if remoteName.startsWith("loopback") && markName != "true-mark" then Some(Credential.ViaParam)
+            else None
+          assertEquals(hit, expected, s"remote=$remoteName mark=$markName")
+        }
+      }
+    }
+
+  test("origin matrix (legacy rail): accept iff direct loopback AND not truly marked"):
+    val cases = OriginRemotes.flatMap { case (remoteName, remote) =>
+      OriginMarks.map { case (markName, mark) =>
+        (remoteName, markName, req(cookies = ("nebflow_token", FileToken), remote = remote, mark = mark))
+      }
+    }
+    cases.foldLeft(IO.unit) { case (acc, (remoteName, markName, r)) =>
+      acc.flatMap { _ =>
+        auth(r, GatewayAuth.Rails.StaticAuth).map { hit =>
+          val expected =
+            if remoteName.startsWith("loopback") && markName != "true-mark" then Some(Credential.ViaLegacyCookie)
+            else None
+          assertEquals(hit, expected, s"remote=$remoteName mark=$markName")
+        }
+      }
+    }
+
+  test("hybrid precedence pin: remote=Some(loopback) AND true mark => tunnel wins, both rails refuse"):
+    for
+      param <- auth(req(paramToken = Some(FileToken), mark = Some(TrueMark)), GatewayAuth.Rails.WsAuth)
+      legacy <- auth(req(cookies = ("nebflow_token", FileToken), mark = Some(TrueMark)), GatewayAuth.Rails.StaticAuth)
+      _ = assertEquals(param, None, "the mark must outrank the loopback address")
+      _ = assertEquals(legacy, None)
+    yield ()
+
+  test("tunnel origin still authenticates via session and Bearer rails (origin-blind by design)"):
+    for
+      sid <- liveSession()
+      session <- auth(
+        req(cookies = (GatewaySessionStore.CookieName, sid), remote = None, mark = Some(TrueMark)),
+        GatewayAuth.Rails.WsAuth
+      )
+      bearer <- auth(req(bearer = Some(FileToken), remote = None, mark = Some(TrueMark)), GatewayAuth.Rails.ApiFull)
+      _ = assertEquals(session.map(_.railName), Some("session"), "session rail must survive the tunnel origin")
+      _ = assertEquals(bearer, Some(Credential.ViaBearer(isFileToken = true)), "Bearer stays cross-tunnel legal")
     yield ()
 
   // ── rotate linkage (criterion 7, unit face) ────────────────────────────

@@ -8,6 +8,7 @@ import fs2.Stream
 import munit.CatsEffectSuite
 import nebflow.neblink.PortalWireCodec.*
 import nebflow.shared.PathUtil
+import nebflow.shared.TunnelOriginMark
 import org.http4s.{Header, Headers, HttpApp, Request, Response, Status}
 import org.typelevel.ci.CIString
 
@@ -700,5 +701,44 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
     yield
       assert(local.isRight, s"the escape face must mint in the revoked state, got $local")
       assertEquals(relay, Left("unbound"))
+
+  // ── stage C: the tunnel-origin mark rides every bridged request ────────
+
+  test("stage C: the bridge injects the armed tunnel mark on in-process HTTP requests; a client-supplied same-named header is dropped first"):
+    TunnelOriginMark.arm()
+    val markName = TunnelOriginMark.headerName
+    val markValue = TunnelOriginMark.armedValue.getOrElse(sys.error("mark failed to arm"))
+    // Echo the value(s) of the mark header seen by the app into the body.
+    val markApp = HttpApp[IO] { (req: Request[IO]) =>
+      val values = req.headers.headers.collect { case h if h.name.toString.equalsIgnoreCase(markName) => h.value }
+      IO(Response[IO](status = Status.Ok).withBodyStream(Stream.emits(values.mkString(",").getBytes(UTF_8))))
+    }
+    withBridge(markApp) { (bridge, fake, _) =>
+      // The browser frame carries a same-named GARBAGE header under an
+      // uppercased name (headers are case-insensitive on the wire); drop-
+      // then-inject must leave exactly one mark header — the armed value.
+      bridge.enqueueFrame(HttpRequest(Rid, "GET", "/api/echo", Vector(markName.toUpperCase -> "client-supplied-garbage")))
+      for
+        ok <- waitUntil(5.seconds)(IO(bodyFrames(fake, Rid).nonEmpty))
+        _ = assert(ok, s"no complete answer; sent=${sentTexts(fake)}")
+        body = new String(assembledBody(fake, Rid), UTF_8)
+        _ = assertEquals(body, markValue, "the app must see exactly one mark header carrying the armed value")
+      yield ()
+    }
+
+  test("stage C: wsHandshakeHeaders drops the tunnel mark name (the bridge re-injects the armed value after filtering)"):
+    TunnelOriginMark.arm()
+    val filtered = PortalTunnelBridge.wsHandshakeHeaders(
+      Vector("cookie" -> "sid=1", TunnelOriginMark.headerName -> "client-garbage")
+    )
+    assert(filtered.exists(_._1 == "cookie"), "the cookie bridge head must survive the filter unchanged")
+    assert(
+      !filtered.exists(_._1.equalsIgnoreCase(TunnelOriginMark.headerName)),
+      "a client-supplied mark header must never survive the handshake filter"
+    )
+    assert(
+      TunnelOriginMark.injectHeader.isDefined,
+      "an armed mark must expose an injectable (name, value) pair for the loopback handshake"
+    )
 
 end PortalTunnelBridgeSpec

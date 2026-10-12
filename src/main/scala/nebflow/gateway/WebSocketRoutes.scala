@@ -899,6 +899,10 @@ class WebSocketRoutes(
         // ?token=), then the legacy `nebflow_token` cookie, then `?token=`.
         // A presented-but-invalid high rail falls through instead of
         // rejecting (the stale-cookie tolerance below is now constructive).
+        // Stage C origin gate: the two file-token rails (legacy cookie +
+        // `?token=`) additionally require a direct loopback connection — the
+        // tunnel bridge marks its loopback handshakes, so tunnel-origin
+        // handshakes fall through both rails (see GatewayAuth).
         tokenRef.get
           .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
           .flatMap {
