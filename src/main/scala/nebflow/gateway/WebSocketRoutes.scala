@@ -890,7 +890,7 @@ class WebSocketRoutes(
       .nfAuthcheckRoutes(
         tokenRef,
         sessions
-      ) <+> HttpRoutes.of[IO] {
+      ) <+> NfFileRoutes.nfReachRoutes <+> HttpRoutes.of[IO] {
       case req @ GET -> Root / "ws" =>
         // Phase 3b: the unified GatewayAuth criterion under WsAuth — session
         // cookie first, then Bearer (file token; a WsAuth registration note:
