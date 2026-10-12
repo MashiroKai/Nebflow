@@ -23,10 +23,12 @@ import { t } from './i18n.js';
 import { startDictation, stopDictation, setMicVolumeListener } from './voiceEngine.js';
 import { registerVoiceModeOrb, notifyVoiceState } from './micOrb.js';
 import { showToast } from './modal.js';
+import { speakText } from './chat.js';
 
 const BARGE_LEVEL = 0.22;    // mic level that counts as real speech during playback
 const BARGE_MS = 320;        // sustained speech that triggers the barge-in
 const SEND_RETRY_MS = 450;   // single retry when send() hits its debounce lock
+const CHUNK_MAX = 1800;      // TTS chunk target — long replies read as a sequence
 
 /** @typedef {(text: string) => boolean} SendTextFn */
 
@@ -35,10 +37,9 @@ let draining = false;        // exit started — the engine's tail flush still s
 let agentSpeaking = false;   // a VoicePlayer clip is on the speakers right now
 let heldText = '';           // utterance(s) captured while the agent speaks
 let bargeStart = 0;          // timestamp of the first sustained loud sample
+let modeSessionId = null;    // session the overlay was opened on — filters replies
 /** @type {SendTextFn | null} */
 let sendText = null;
-/** @type {(() => void) | null} */
-let ensureDictationIdle = null;
 /** @type {(() => void) | null} */
 let unregisterOrb = null;
 
@@ -91,6 +92,37 @@ function onPlaybackEnd() {
     heldText = '';
     sendUtterance(text);
   }
+}
+
+/** Split a (possibly long) reply into TTS-sized chunks at paragraph /
+ *  sentence seams so a full reply reads as one uninterrupted sequence. */
+function speakableChunks(/** @type {string} */ raw) {
+  const text = (raw || '').replace(/\u00a0/g, ' ').replace(/[ \t]+/g, ' ').trim();
+  if (!text) return [];
+  const chunks = [];
+  let rest = text;
+  while (rest.length > CHUNK_MAX) {
+    const win = rest.slice(0, CHUNK_MAX);
+    let cut = -1;
+    for (const seam of [win.lastIndexOf('\n'), win.lastIndexOf('。'), win.lastIndexOf('. '), win.lastIndexOf('，'), win.lastIndexOf(', '), win.lastIndexOf(' ')]) {
+      if (seam > CHUNK_MAX * 0.5) { cut = seam + 1; break; }
+    }
+    if (cut <= 0) cut = CHUNK_MAX;
+    chunks.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) chunks.push(rest);
+  return chunks;
+}
+
+/** Full-reply read (voice-mode batch): the finished AI message arrives here
+ *  from chat.js's final render and goes into the shared TTS queue whole —
+ *  no <voice> gating. Non-matching sessions are ignored. */
+function onAiReply(/** @type {Event} */ e) {
+  if (!active) return;
+  const detail = /** @type {CustomEvent} */ (e).detail || {};
+  if (modeSessionId && detail.sessionId && detail.sessionId !== modeSessionId) return;
+  for (const chunk of speakableChunks(detail.text)) speakText(chunk);
 }
 
 /** Mic level feed while the mode is open: sustained loudness during agent
@@ -150,7 +182,10 @@ function engineCallbacks() {
  *     detects send()'s ws-closed path by whether the value was cleared).
  *   - ensureDictationIdle(): stops push-to-talk dictation if it is live —
  *     the two modes share one mic/engine session.
- * @param {{ sendText: SendTextFn, ensureDictationIdle?: () => void }} depsIn
+ *   - getSessionId(): the session the overlay was opened on — agent replies
+ *     for other sessions are not read aloud.
+ * @param {{ sendText: SendTextFn, ensureDictationIdle?: () => void,
+ *           getSessionId?: () => string|null }} depsIn
  */
 export function enterVoiceMode(depsIn) {
   if (active) return;
@@ -166,7 +201,7 @@ export function enterVoiceMode(depsIn) {
   if (typeof depsIn.ensureDictationIdle === 'function') depsIn.ensureDictationIdle();
 
   sendText = depsIn.sendText;
-  ensureDictationIdle = depsIn.ensureDictationIdle || null;
+  modeSessionId = typeof depsIn.getSessionId === 'function' ? depsIn.getSessionId() : null;
   active = true;
   draining = false;
   agentSpeaking = false;
@@ -182,6 +217,7 @@ export function enterVoiceMode(depsIn) {
   unregisterOrb = registerVoiceModeOrb(el.orbWrap);
   window.addEventListener('voiceplayer:start', onPlaybackStart);
   window.addEventListener('voiceplayer:end', onPlaybackEnd);
+  window.addEventListener('aireply', onAiReply);
   setMicVolumeListener(onMicVolume);
   if (el.exit) el.exit.addEventListener('click', onExitClick);
   document.addEventListener('keydown', onKeydown);
@@ -218,6 +254,7 @@ export function exitVoiceMode() {
   if (el.overlay) el.overlay.classList.remove('on');
   window.removeEventListener('voiceplayer:start', onPlaybackStart);
   window.removeEventListener('voiceplayer:end', onPlaybackEnd);
+  window.removeEventListener('aireply', onAiReply);
   setMicVolumeListener(null);
   if (el.exit) el.exit.removeEventListener('click', onExitClick);
   document.removeEventListener('keydown', onKeydown);
@@ -227,6 +264,7 @@ export function exitVoiceMode() {
   showCaption('');
   agentSpeaking = false;
   bargeStart = 0;
+  modeSessionId = null;
 
   // Engine teardown flushes any captured tail through onUtterance; the
   // callbacks and deps stay attached so that flush still sends. `draining`

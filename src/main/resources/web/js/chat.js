@@ -265,6 +265,13 @@ const VoicePlayer = {
   },
 };
 
+/** Hand arbitrary text to the shared TTS queue — the voice-mode overlay's
+ *  full-reply read rides the exact same sequential pipeline as <voice>
+ *  blocks (element-less: no green-link playing state). */
+export function speakText(text) {
+  if (text) VoicePlayer.enqueue(text, null);
+}
+
 // Full-duplex voice mode: sustained mic input during playback barges in —
 // the overlay detects it and fires 'voicebargein' on `window`; the player
 // (owned here) answers by interrupting itself.
@@ -711,11 +718,20 @@ export function finishAi(durationMs, model) {
       if (aiRow) aiRow.appendChild(createMsgFooterBadge(ts, activeView.stream.aiText));
     }
     // Trigger voice TTS: enqueue all <voice> blocks for sequential playback,
-    // and attach click-to-replay handlers on the green text.
+    // and attach click-to-replay handlers on the green text. Full-duplex
+    // voice mode reads the WHOLE reply instead — the per-block queue is
+    // skipped and the rendered text is handed to the overlay via 'aireply'
+    // (voiceMode.js chunks it into the same TTS pipeline).
+    const voiceModeOn = document.body.classList.contains('voice-mode-active');
     bubble.querySelectorAll('.voice-block').forEach(el => {
       el.addEventListener('click', () => VoicePlayer.replay(el));
-      VoicePlayer.enqueue(el.textContent, el);
+      if (!voiceModeOn) VoicePlayer.enqueue(el.textContent, el);
     });
+    if (voiceModeOn) {
+      window.dispatchEvent(new CustomEvent('aireply', {
+        detail: { sessionId: activeView.sessionId, text: bubble.innerText },
+      }));
+    }
     // ── 跟随钉底（2026-10-08 修复：整泡渲染丢失跟随腿）─────────────────────
     // stream-ux（01bf2f88b, 2026-10-02）把 appendAiText 的每帧 rAF 渲染收成此处
     // 一次性 final render 时，旧调度腿自带的 rafScrollChat（snapped||near-bottom

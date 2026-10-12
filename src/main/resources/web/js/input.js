@@ -1250,6 +1250,8 @@ export function initInput(view) {
           },
           // Push-to-talk and voice mode share one mic session.
           ensureDictationIdle: () => { if (voiceActive) stopVoice(); },
+          // Replies for THIS session are read aloud; others are ignored.
+          getSessionId: () => view.sessionId,
         });
       }).catch(() => {});
     });
