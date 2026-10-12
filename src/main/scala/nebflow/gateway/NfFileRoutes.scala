@@ -322,6 +322,10 @@ object NfFileRoutes:
       Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Origin"), "*"),
       Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Methods"), "GET, OPTIONS"),
       Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Headers"), "content-type"),
+      // Without Expose-Headers the answer's status is readable but the brand
+      // header is filtered out of the page's view (T-3 chromium reading) — the
+      // shape check ("204 AND the self-evidence header") needs it exposed.
+      Header.Raw(org.typelevel.ci.CIString("Access-Control-Expose-Headers"), s"x-${nebflow.shared.Branding.lowerName}-gateway"),
       Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Private-Network"), "true"),
     )
     HttpRoutes.of[IO] {

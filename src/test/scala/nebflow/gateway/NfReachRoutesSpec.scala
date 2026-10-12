@@ -29,6 +29,13 @@ class NfReachRoutesSpec extends CatsEffectSuite:
         ),
         "allow-origin must be *"
       )
+      assert(
+        resp.headers.headers.exists(h =>
+          h.name.toString.equalsIgnoreCase("Access-Control-Expose-Headers") &&
+            h.value == s"x-${nebflow.shared.Branding.lowerName}-gateway"
+        ),
+        "the brand header must be EXPOSED (an unexposed header reads null cross-origin)"
+      )
     }
   }
 
