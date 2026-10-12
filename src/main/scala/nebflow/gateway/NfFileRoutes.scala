@@ -300,4 +300,37 @@ object NfFileRoutes:
           }
     }
 
+  /**
+   * `GET /api/nf-reach` — the unauthenticated reachability probe (phase 4 LAN
+   * leg, plan §4.2; the portal page's same-machine detector fetches it
+   * cross-origin from the portal domain, so the answer must be browser-readable).
+   *
+   * Always 204 + the brand self-evidence header `x-<brand>-gateway: 1`. Zero
+   * credentials, zero enumeration, zero session: the disclosure surface is
+   * exactly "a nebflow gateway listens on this port" — equivalent to what a
+   * refused WS handshake already discloses to anyone who can reach the port.
+   * CORS is open BY DESIGN here (a probe the browser cannot read is useless):
+   * any origin, GET/OPTIONS, and the PNA preflight header is answered so
+   * Chromium's private-network access check passes for loopback targets.
+   */
+  def nfReachRoutes: HttpRoutes[IO] =
+    val reachCorsHeaders: List[Header.ToRaw] = List(
+      Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Origin"), "*"),
+      Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Methods"), "GET, OPTIONS"),
+      Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Headers"), "content-type"),
+      // Without Expose-Headers the answer's status is readable but the brand
+      // header is filtered out of the page's view (T-3 chromium reading) — the
+      // shape check ("204 AND the self-evidence header") needs it exposed.
+      Header.Raw(org.typelevel.ci.CIString("Access-Control-Expose-Headers"), s"x-${nebflow.shared.Branding.lowerName}-gateway"),
+      Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Private-Network"), "true"),
+    )
+    HttpRoutes.of[IO] {
+      case OPTIONS -> Root / "api" / "nf-reach" =>
+        NoContent().map(_.putHeaders(reachCorsHeaders*))
+      case GET -> Root / "api" / "nf-reach" =>
+        NoContent().map(_.putHeaders(
+          (Header.Raw(org.typelevel.ci.CIString(s"x-${nebflow.shared.Branding.lowerName}-gateway"), "1") :: reachCorsHeaders)*
+        ))
+    }
+
 end NfFileRoutes
