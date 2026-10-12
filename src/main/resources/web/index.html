@@ -11,7 +11,7 @@
      refuses to boot. */
   if (window.self !== window.top) document.documentElement.dataset.nfEmbedded = '1';
   </script>
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <!-- Neutral initial title: js/brand.js sets the real one from window.__BRAND__. -->
   <title></title>
   <!-- Favicon: pixel logo v5 (website canonical bright variant), fixed regardless of theme.
@@ -67,10 +67,11 @@
        Its grouped glass-control rules must win equal-specificity ties
        against feature CSS hover/base states. -->
   <link rel="stylesheet" href="css/sapphire.css">
+  <link rel="stylesheet" href="css/mobile.css">
 </head>
 <body>
   <script>document.documentElement.classList.add('ui-init');</script>
-  <script>/* Classic script: cannot import branding.js. Read the brand-namespaced key first, fall back to the legacy nebflow_ spelling. */var __b=(window.__BRAND__&&window.__BRAND__.lowerName)||'nebflow';if(localStorage.getItem(__b+'_sidebar_collapsed')==='true'||localStorage.getItem('nebflow_sidebar_collapsed')==='true')document.body.classList.add('sidebar-collapsed');window.__sidebarRestore={collapsed:document.body.classList.contains('sidebar-collapsed'),panel:localStorage.getItem(__b+'_sidebar_active_panel')||localStorage.getItem('nebflow_sidebar_active_panel')||'files'};</script>
+  <script>/* Classic script: cannot import branding.js. Read the brand-namespaced key first, fall back to the legacy nebflow_ spelling. */var __b=(window.__BRAND__&&window.__BRAND__.lowerName)||'nebflow';if(localStorage.getItem(__b+'_sidebar_collapsed')==='true'||localStorage.getItem('nebflow_sidebar_collapsed')==='true'||window.matchMedia('(max-width: 768px)').matches)document.body.classList.add('sidebar-collapsed');window.__sidebarRestore={collapsed:document.body.classList.contains('sidebar-collapsed'),panel:localStorage.getItem(__b+'_sidebar_active_panel')||localStorage.getItem('nebflow_sidebar_active_panel')||'files'};</script>
   <!-- Activity Bar — vertical icon strip (independent glass card).
        Top: avatar (tap to log in to NebLink) + the two communication
        entries (Messages → Contacts). Gating is a single decision point in

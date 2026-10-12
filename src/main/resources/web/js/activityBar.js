@@ -68,6 +68,7 @@ export function initActivityBar() {
   bindSettingsButton();
   bindAvatar();
   bindSettingsAccountEntry();
+  initMobileDrawer();
 
   // Refresh NebLink state now and periodically (only while the page is visible)
   // so the avatar reflects logged-in / pairing state.
@@ -132,6 +133,42 @@ export function setSideBarCollapsed(collapsed) {
     localStorage.setItem(LS_PANEL, activePanelId);
   }
   syncPanelDom();
+  syncMobileScrim();
+}
+
+// ── Mobile drawer scrim (≤768px, css/mobile.css) ──────────────────────────
+// On phone-width viewports the open Side Bar is an overlay drawer; the scrim
+// is its tap-outside-to-close affordance. Driven by the SAME collapsed API
+// as every other toggle — no second state source. The element exists only
+// after initActivityBar; the sync is a no-op before that (and on desktop the
+// media query keeps the scrim permanently inert).
+const MOBILE_MQ = '(max-width: 768px)';
+
+function isMobileViewport() {
+  return window.matchMedia(MOBILE_MQ).matches;
+}
+
+function syncMobileScrim() {
+  const scrim = document.getElementById('mobile-scrim');
+  if (!scrim) return;
+  scrim.classList.toggle('show', !isSideBarCollapsed() && isMobileViewport());
+}
+
+function initMobileDrawer() {
+  if (document.getElementById('mobile-scrim')) return;
+  const scrim = document.createElement('div');
+  scrim.id = 'mobile-scrim';
+  scrim.addEventListener('click', () => setSideBarCollapsed(true));
+  document.body.appendChild(scrim);
+  syncMobileScrim();
+
+  // Crossing into the phone layout collapses the drawer (the pre-paint
+  // script in index.html already handles the load-time case; this covers a
+  // live window resize / rotation without a reload).
+  const mq = window.matchMedia(MOBILE_MQ);
+  const onChange = (e) => { if (e.matches) setSideBarCollapsed(true); };
+  if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onChange);
+  else if (typeof mq.addListener === 'function') mq.addListener(onChange);
 }
 
 /** ⌘B / header #sidebar-toggle entry point. */
