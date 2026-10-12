@@ -175,7 +175,10 @@ object StaticRoutes:
    * of rejecting). A malicious page cross-site <img>-probing the localhost
    * gateway still gets no SameSite cookie sent, while the same-origin
    * frontend attaches the session cookie automatically; the fallbacks cover
-   * cookie-less contexts exactly as before.
+   * cookie-less contexts exactly as before. Stage C: the two file-token
+   * fallbacks (legacy cookie + `?token=`) additionally require a direct
+   * loopback connection — tunnel-origin requests fall through both (see
+   * GatewayAuth.legacyRailsPermitted).
    *
    * Lives in the companion (composed ahead of the instance routes) because
    * it touches none of the class dependencies — testable with just a

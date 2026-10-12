@@ -63,7 +63,9 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
         .unsafeRunSync()
 
     def issue(body: Json) =
-      val req = Request[IO](Method.POST, Uri.unsafeFromString(s"/api/nf-ticket?token=$gatewayToken"))
+      // Stage C re-anchor: pin the pre-stage-C default — a direct loopback client.
+      val req = SpecRequests
+        .withRemote(Request[IO](Method.POST, Uri.unsafeFromString(s"/api/nf-ticket?token=$gatewayToken")), Some(SpecRequests.LoopbackV4))
         .withEntity(body)
       NfFileRoutes.nfTicketRoutes(TokenRef, store, policy, Sessions)(req).value.unsafeRunSync()
 
@@ -332,7 +334,11 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
     withEnv { env =>
       IO {
         def probe(query: String) =
-          val req = Request[IO](Method.GET, Uri.unsafeFromString(s"/api/nf-authcheck$query"))
+          // Stage C re-anchor: pin the pre-stage-C default — a direct loopback client.
+          val req = SpecRequests.withRemote(
+            Request[IO](Method.GET, Uri.unsafeFromString(s"/api/nf-authcheck$query")),
+            Some(SpecRequests.LoopbackV4)
+          )
           NfFileRoutes.nfAuthcheckRoutes(TokenRef, Sessions)(req).value.unsafeRunSync().get
         assertEquals(probe(s"?token=$gatewayToken").status, Status.NoContent)
         assertEquals(probe("").status, Status.Forbidden)

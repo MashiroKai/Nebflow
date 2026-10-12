@@ -25,11 +25,11 @@ import scala.concurrent.duration.*
  * 缺陷（取证报告 §C-2/§C-3 第 7 跳）：后端 205 类 WS 事件中 0 个 project 前缀 ⇒
  * 「无推送面」，创建项目后前端列表不更新。本批补两个身份事件，载荷逐字对齐报告 §D-2：
  *
- *   projectCreated  → { type, project, row{name,workspace,agentFile,description,createdAt}, mounted }
+ *   projectCreated  → { type, project, row{name,workspace,agentFile,description,createdAt,origin}, mounted }
  *   projectArchived → { type, project, archivedAt }
  *
  * 本 spec 钉死四条（报告 §G-1 交付要求）：
- *  1. 创建成功 → **emit 1 帧**，载荷五字段 + mounted=true 逐字齐备，经既有 wsHub 广播面到达连接；
+ *  1. 创建成功 → **emit 1 帧**，载荷六字段（含 additive `origin`）+ mounted=true 逐字齐备，经既有 wsHub 广播面到达连接；
  *  2. 幂等重挂（already exists）→ **emit 0 帧**（无视觉变化）；
  *  3. 无会话上下文（定义就绪、未挂载）→ 1 帧且 mounted=false；
  *  4. 归档成功 → **emit 1 帧** projectArchived（archivedAt = 响应体同值），走真实路由
@@ -138,10 +138,12 @@ class ProjectEventSpec extends CatsEffectSuite:
       assertEquals(row.downField("agentFile").as[String].toOption, Some((ws / "AGENTS.md").toString))
       assertEquals(row.downField("description").as[String].toOption, Some("realtime event contract"))
       assert(row.downField("createdAt").as[Long].toOption.exists(_ > 0L), "row.createdAt must be a positive epoch ms")
-      // 行字段集与 GET /api/projects 行同构（五字段，一个不多一个不少）
+      // Row field set stays isomorphic with the GET /api/projects row — six
+      // fields, no more, no less. `origin` is the additive ui-device-faces
+      // field (ProjectActor.projectCreatedFrame), null for a local project.
       assertEquals(
         row.keys.map(_.toSet).getOrElse(Set.empty),
-        Set("name", "workspace", "agentFile", "description", "createdAt")
+        Set("name", "workspace", "agentFile", "description", "createdAt", "origin")
       )
       assertEquals(frame.asObject.map(_.keys.toSet).getOrElse(Set.empty), Set("type", "project", "row", "mounted"))
     end for

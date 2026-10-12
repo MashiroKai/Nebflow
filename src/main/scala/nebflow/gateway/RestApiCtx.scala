@@ -78,6 +78,10 @@ final class RestApiCtx(
   // refused before AND after this change). Rails fall through when presented
   // but invalid, so "invalid Bearer + valid param" now authenticates via the
   // param (strict monotonic relaxation; criterion 6).
+  //
+  // Stage C origin gate: the `?token=` rail additionally requires a direct
+  // loopback connection — tunnel-origin requests fall through it (see
+  // GatewayAuth.legacyRailsPermitted); session/Bearer are origin-blind.
   def checkAuth(req: Request[IO]): IO[Boolean] =
     tokenRef.get.flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.ApiFull)).map(_.isDefined)
 
