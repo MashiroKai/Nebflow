@@ -689,9 +689,15 @@ object ChainLedger:
    * 路径（承继 = 不改；合并/拆分 = 显式改号 + 别名 + 留痕），不存在任何「按分量重算
    * 覆盖旧号」的分支。
    *
-   * @param chains 派生原型链（`FlowMapStore.topologicalChains` 的现读结果，判据单点）
+   * @param chains derived prototype chains (the `FlowMapStore.topologicalChains`
+   *   read, the single judgement source)
+   * @param activeIds active-zone id set (`Some` = birth gate ON: a component
+   *   with ZERO members in the active zone is not born — see the birth arm;
+   *   `None` = gate OFF, every candidate births as before. A component that
+   *   matches an existing hot entry takes an inheritance arm and is not
+   *   affected by the gate)
    */
-  def observe(st: State, chains: List[ChainInfo], now: Long): Observation =
+  def observe(st: State, chains: List[ChainInfo], now: Long, activeIds: Option[Set[String]] = None): Observation =
     val comps = chains.sortBy(_.id)
     val live = st.entries.values.toList
     // ① 命中：分量 ↔ 既有条目（载荷在热面比成员集；载荷已压缩比锚点）
@@ -746,17 +752,32 @@ object ChainLedger:
           // 刷新成员读数（成员集可生长/收缩；链号不动 = 「永不重归」的可执行判据）。
           nextEntries.update(cid, prev.copy(members = c.memberIds, memberCount = c.memberIds.size))
         case None =>
-          born += cid
-          nextEntries.update(
-            cid,
-            Entry(
-              chainId = cid,
-              anchor = c.memberIds.headOption.getOrElse(cid),
-              bornAt = now,
-              members = c.memberIds,
-              memberCount = c.memberIds.size
+          // Birth gate (active-zone awareness): when the caller supplies the
+          // active-zone id set, a component with ZERO members there is not
+          // born at all. Such a component was previously born, immediately
+          // flipped Archived by the caller's born-archived pass, and retired
+          // in the same tick — and because retire deletes the hot entry this
+          // function matches on, the same archive-only component re-birthed
+          // on every tick (one retire round per tick, growing the round
+          // files without bound). Skipping the birth ends that loop. The
+          // gate is narrow by design: a component with >= 1 active member
+          // births exactly as before, a component matching an existing hot
+          // entry takes an inheritance arm above (identity continuation, so
+          // rows kept alive by reference faces stay put), and a chain that
+          // fully returns to the active zone later intersects again and
+          // births fresh then.
+          if activeIds.forall(_.exists(c.memberIds.contains)) then
+            born += cid
+            nextEntries.update(
+              cid,
+              Entry(
+                chainId = cid,
+                anchor = c.memberIds.headOption.getOrElse(cid),
+                bornAt = now,
+                members = c.memberIds,
+                memberCount = c.memberIds.size
+              )
             )
-          )
       end match
     }
     val keptEntries = nextEntries.toMap

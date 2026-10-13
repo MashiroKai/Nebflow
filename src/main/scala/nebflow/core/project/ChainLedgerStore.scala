@@ -484,11 +484,22 @@ class ChainLedgerStore private (
     now: Long
   ): IO[Observation] =
     state.get.flatMap { st0 =>
-      val obs0 = ChainLedger.observe(st0, chains, now)
+      // Birth gate (active-zone awareness): a component whose members all sit
+      // outside the active zone is no longer born. The old path birthed it,
+      // flipped it Archived in the born-archived pass below, and retired it in
+      // the same tick — while the retire deleted exactly the hot entry observe
+      // matches on, so the next tick birthed it again: one fresh round file
+      // per tick, growing without bound. The gate closes the birth arm only;
+      // inheritance (matched hot entries) is untouched.
+      val obs0 = ChainLedger.observe(st0, chains, now, Some(activeIds))
       // 出生即归档面（轴 a）：本拍**新生**条目若其成员**全在活动区之外**（链已出库 ——
       // 存量归档数据首次 reconcile / 同一 30s 内出生又整链出库的短链），出生即刻翻
       // `Archived` + 记 `archivedAt`（归档刻 = 最早退役窗口）⇒「行不得早于所属链归档退役」
       // 对**任何**出生路径成立，不依赖 sweep 与 reconcile 的先后（禁留永不退役的活跃残行）。
+      // With the birth gate above ON, a born entry always has >= 1 active
+      // member, so this pass no longer fires on the wired path; it stays as
+      // the belt-and-braces form of the same invariant (born ⇒ never an
+      // un-archived row for an out-of-zone chain).
       val bornGone = obs0.born.filter(cid =>
         obs0.state.entries.get(cid).exists(e => e.members.nonEmpty && !e.members.exists(activeIds.contains))
       )
@@ -620,13 +631,23 @@ class ChainLedgerStore private (
 
   // ── 自检（启动期 / verify 位）────────────────────────
 
-  /** Cold-archive byte size (metadata only — file names and sizes, zero content reads). */
+  /**
+   * Cold-archive byte size, bounded by the open-time read budget: stat-ing
+   * stops as soon as the running sum crosses `coldReadBudgetBytes`. The only
+   * consumer is the over-budget comparison in [[selfCheck]], so the decision
+   * is unchanged (crossing the budget still skips the cold audit; staying
+   * under it still reports the exact total). On a large archive (tens of
+   * thousands of round files) this turns a full-directory stat walk into a
+   * bounded prefix — the returned value is a LOWER BOUND of the true size
+   * whenever the budget was crossed, which [[selfCheck]] words as "at least".
+   */
   private def coldArchiveBytes: Long =
     if !os.exists(archiveDir) then 0L
     else
-      os.list(archiveDir)
-        .filter(_.last.endsWith(".json"))
-        .foldLeft(0L)((acc, f) => acc + os.size(f))
+      val files = os.list(archiveDir).iterator.filter(_.last.endsWith(".json"))
+      var acc = 0L
+      while acc <= coldReadBudgetBytes && files.hasNext do acc += os.size(files.next())
+      acc
 
   /**
    * Mount-time self-check gate. The cold archive is append-only, so its size is
@@ -642,7 +663,7 @@ class ChainLedgerStore private (
       if coldBytes > coldReadBudgetBytes then
         IO(
           logger.infoSync(
-            s"chain-ledger[$project] self-check ($tag): cold archive $coldBytes bytes exceeds the " +
+            s"chain-ledger[$project] self-check ($tag): cold archive of at least $coldBytes bytes exceeds the " +
               s"$coldReadBudgetBytes-byte open-time read budget — skipping the cold-file audit " +
               s"(hot state loaded; run verify for the full conservation audit)"
           )
@@ -720,7 +741,12 @@ object ChainLedgerStore:
         logger,
         coldReadBudgetBytes,
         initialCommittedRounds = loaded._2,
-        initialPendingBytes = AtomicJson.noteBytes(ledgerPath),
+        // Pending fold bytes come from the records readAll already returned
+        // (each Note carries its on-disk frame size — the same definition
+        // noteBytes sums). Re-reading the journal file here doubled the open
+        // read for a value derived from data already in hand, and from a
+        // LATER snapshot than the one the state was loaded from.
+        initialPendingBytes = read.records.map(_.frameBytes).sum,
         rotateBytes = rotateBytes
       )
       _ <- store.selfCheck("open")
@@ -749,8 +775,12 @@ object ChainLedgerStore:
         )
         (ChainLedger.State(project = project), 0)
       case None =>
+        // Decode the ALREADY-PARSED checkpoint tree (`readAll` parses once for
+        // its validity verdict and hands the tree over) — re-parsing the 18MB
+        // text here doubled the open cost for the same value. A decode failure
+        // still degrades to an empty state exactly as before.
         val committed: Option[ChainLedger.State] =
-          read.checkpoint.flatMap(t => jsonParse(t).flatMap(_.as[ChainLedger.State]).toOption)
+          read.checkpointJson.flatMap(_.as[ChainLedger.State].toOption)
         val parsedNotes: List[ChainLedger.JournalRecord] =
           read.records.flatMap(n => jsonParse(n.note).flatMap(_.as[ChainLedger.JournalRecord]).toOption)
         val committedRounds = committed.map(_.rounds.size).getOrElse(0)

@@ -27,6 +27,10 @@ import scala.concurrent.duration.*
  * - T15 **open-time cold-archive audit budget**: an over-budget archive skips the
  *   cold read at store open (bounded startup memory); resolveDeep stays a lazy
  *   fallback with unchanged semantics; the explicit verify full audit is intact
+ * - T16 **reborn-loop regression**: an archive-only component (zero members in
+ *   the active zone) is not born at all, so repeated ticks write zero rounds
+ * - T17 the birth gate is narrow: a component with one active member still
+ *   births and retires through the standard lifecycle
  *
  * **红验语义**（逐条钉死「把判据改坏 ⇒ 本测试必红」的变异）：
  * 每处 `// 变异:` 注释点名该断言对应哪一处判据；变异 = 把该判据改成永远不成立
@@ -577,6 +581,78 @@ class ChainLedgerSpec extends CatsEffectSuite:
       assertEquals(resolved, Some("chain-a"), "old number reachable via the lazy cold scan")
       assertEquals(missing, None, "unresolvable ids stay unresolvable (no guessing)")
       assertEquals(check, Right(()): Either[String, Unit], "explicit verify still audits the full archive")
+    end for
+  }
+
+  // ── T16/T17 the birth gate (active-zone awareness) ─────────
+  //
+  // Retire removes the hot entry observe matches on, so an archive-only
+  // component used to re-birth every tick: birth -> born-archived flip ->
+  // retire, one fresh round file per project per tick, forever. The birth
+  // gate in `ChainLedger.observe` skips candidates with zero members in the
+  // active zone; these tests pin the loop shut and the gate's narrowness.
+
+  test("T16 archive-only component is never re-born: repeated ticks write zero rounds (reborn-loop regression)") {
+    val dir = os.temp.dir(prefix = "nb-chain-ledger-reborn-", deleteOnExit = false)
+    val path = dir / ChainLedger.FileName
+    val arch = dir / ChainLedger.ArchiveDirName
+    for
+      store <- ChainLedgerStore.open("ledger-reborn", path, arch)
+      // Birth with the members in the active zone, then archive-bind the chain
+      // (the sweep's same-tick write point) so the hot row reads Archived.
+      born <- store.reconcile(List(proto("chain-r", List("r1", "r2"))), Set("r1", "r2"), Map.empty, Set.empty, t0)
+      _ = assertEquals(born.born, List("chain-r"))
+      _ <- store.onChainsArchived(Set("chain-r"), Set("r1", "r2"), t0 + 10)
+      // Settling tick: the component is still on the combined map but the
+      // active zone is empty — the hot entry is matched (inheritance, not the
+      // birth arm), its refCount drops to 0, and the row retires exactly once.
+      settled <- store.reconcile(List(proto("chain-r", List("r1", "r2"))), Set.empty, Map.empty, Set.empty, t0 + 20)
+      roundsAfterSettle <- store.readRounds
+      stAfterSettle <- store.snapshot
+      // The two ticks that used to re-birth the chain (one fresh round file
+      // per tick before the gate): they must write nothing at all now.
+      tick3 <- store.reconcile(List(proto("chain-r", List("r1", "r2"))), Set.empty, Map.empty, Set.empty, t0 + 30)
+      tick4 <- store.reconcile(List(proto("chain-r", List("r1", "r2"))), Set.empty, Map.empty, Set.empty, t0 + 40)
+      roundsEnd <- store.readRounds
+      filesEnd <- IO.blocking(if os.exists(arch) then os.list(arch).toList else Nil)
+    yield
+      assertEquals(settled.retired, 1, "the settling tick drains the archived row with exactly one retire")
+      assertEquals(roundsAfterSettle.map(_.kind), List(ChainLedger.RoundRetire), "exactly one retire round at the settle")
+      assertEquals(stAfterSettle.entries.keySet, Set.empty[String], "the drained row has left the hot face")
+      assertEquals(tick3.born, Nil, "an archive-only component must not re-birth (the loop's birth arm)")
+      assertEquals(tick4.born, Nil, "and it stays unborn on every following tick")
+      assertEquals(roundsEnd, roundsAfterSettle, "repeated ticks write zero new rounds (the per-tick retire storm is gone)")
+      assertEquals(filesEnd.size, roundsAfterSettle.size, "zero new cold files on repeated ticks")
+    end for
+  }
+
+  test("T17 the birth gate is narrow: one active member still births and retires normally") {
+    val dir = os.temp.dir(prefix = "nb-chain-ledger-gate-narrow-", deleteOnExit = false)
+    val path = dir / ChainLedger.FileName
+    val arch = dir / ChainLedger.ArchiveDirName
+    for
+      store <- ChainLedgerStore.open("ledger-gate", path, arch)
+      // One member active, one already outside the zone: >= 1 active member
+      // births exactly as before, and the born-archived pass must NOT flip it.
+      mixed <- store.reconcile(List(proto("chain-m", List("m1", "m2"))), Set("m1"), Map.empty, Set.empty, t0)
+      stBorn <- store.snapshot
+      _ <- store.onChainsArchived(Set("chain-m"), Set("m1", "m2"), t0 + 10)
+      // The active zone empties: the hot entry is still matched (inheritance),
+      // so the fully-archived chain retires normally — exactly once.
+      drained <- store.reconcile(List(proto("chain-m", List("m1", "m2"))), Set.empty, Map.empty, Set.empty, t0 + 20)
+      roundsAfterDrain <- store.readRounds
+      // And the following tick stays silent (no rebirth, no round).
+      next <- store.reconcile(List(proto("chain-m", List("m1", "m2"))), Set.empty, Map.empty, Set.empty, t0 + 30)
+      roundsEnd <- store.readRounds
+      stEnd <- store.snapshot
+    yield
+      assertEquals(mixed.born, List("chain-m"), "a component with one active member births normally")
+      assertEquals(stBorn.entries("chain-m").status, ChainLedger.StatusActive, "a born entry with an active member is not flipped Archived")
+      assertEquals(drained.retired, 1, "the fully-archived chain retires through the standard lifecycle")
+      assertEquals(roundsAfterDrain.map(_.kind), List(ChainLedger.RoundRetire), "one retire round at the drain")
+      assertEquals(next.born, Nil, "after the drain the archive-only component stays unborn")
+      assertEquals(roundsEnd, roundsAfterDrain, "no round on the following tick")
+      assertEquals(stEnd.entries.keySet, Set.empty[String], "the hot face stays empty in steady state")
     end for
   }
 end ChainLedgerSpec
