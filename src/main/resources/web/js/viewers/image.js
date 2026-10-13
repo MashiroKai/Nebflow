@@ -45,9 +45,27 @@ async function viewImage(pane, { absPath, fileName, size, objectUrl }) {
       });
       return;
     }
-    let reason = 'File may be corrupted or not a valid image format.';
+    // The load can fail for reasons that have nothing to do with the file
+    // itself — a dropped host connection (relay tunnel flap) fails the
+    // /api/nf-file fetch exactly like a broken file does. Say both, and give
+    // a manual retry (the automatic re-mint above already ran once).
+    let reason = 'Could not load the image. The host connection may have dropped, or the file is not a valid image format.';
     if (size && size < 500) reason += ` (File is only ${size} bytes — likely an error page or placeholder, not a real image.)`;
     pane.innerHTML = `<div class="canvas-error">${reason}<br>Path: ${escapeHtml(absPath || fileName || '')}</div>`;
+    if (absPath) {
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.textContent = 'Retry';
+      retry.className = 'viewer-retry-btn';
+      retry.addEventListener('click', () => {
+        if (!pane.isConnected) return;
+        retried = false;
+        pane.innerHTML = '';
+        pane.classList.add('scrollable');
+        viewImage(pane, { absPath, fileName, size, objectUrl: undefined }).catch(() => {});
+      });
+      pane.appendChild(retry);
+    }
   };
   img.onload = () => {
     if (!pane.isConnected) return;  // tab closed while the image was loading
