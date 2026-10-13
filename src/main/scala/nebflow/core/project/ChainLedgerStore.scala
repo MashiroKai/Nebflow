@@ -720,7 +720,12 @@ object ChainLedgerStore:
         logger,
         coldReadBudgetBytes,
         initialCommittedRounds = loaded._2,
-        initialPendingBytes = AtomicJson.noteBytes(ledgerPath),
+        // Pending fold bytes come from the records readAll already returned
+        // (each Note carries its on-disk frame size — the same definition
+        // noteBytes sums). Re-reading the journal file here doubled the open
+        // read for a value derived from data already in hand, and from a
+        // LATER snapshot than the one the state was loaded from.
+        initialPendingBytes = read.records.map(_.frameBytes).sum,
         rotateBytes = rotateBytes
       )
       _ <- store.selfCheck("open")
