@@ -203,6 +203,33 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
       yield ()
     }
 
+  // T-10 R1b regression: BOTH frames enqueue before the consumer runs a
+  // single action. The pre-fix dispatch evaluated feedBodyFrame eagerly at
+  // enqueue time (WS reader thread) — the body cycle's lookup ran before the
+  // http_request's registration and the cycle was dropped, deterministically,
+  // whenever the frames arrived in one read batch. The dispatch must defer so
+  // the consumer runs register-then-feed in wire order.
+  test("body_frame enqueued back-to-back with its http_request is not dropped (deferred dispatch)"):
+    for
+      faces <- IO(new PortalHostFaces(gatewayPort = 1))
+      _ = faces.bindHttpApp(echoApp)
+      deps = mkDeps(faces)
+      fake = new FakeWebSocket
+      bridge = new PortalTunnelBridge(deps, new RelayFrameSender(fake))
+      // Enqueue everything BEFORE the consumer starts.
+      _ = bridge.enqueueFrame(
+            HttpRequest(Rid, "POST", "/api/echo", Vector("x-forwarded-for" -> "203.0.113.9", "content-type" -> "text/plain"))
+          )
+      _ = bridge.enqueueFrame(BodyFrame(Rid, 0, more = false, "hello".getBytes(UTF_8)))
+      fiber <- bridge.run.start
+      _ <- IO.sleep(1.seconds)
+      _ = assert(
+            new String(assembledBody(fake, Rid), UTF_8) == "hello",
+            s"the body must reach the app via its registered cycle; sent=${sentTexts(fake)}"
+          )
+      _ <- bridge.teardown() *> fiber.cancel
+    yield ()
+
   test("http_request POST: request body streams through the channel and echoes back byte-exactly"):
     withBridge(echoApp) { (bridge, fake, _) =>
       bridge.enqueueFrame(
