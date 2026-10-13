@@ -2227,6 +2227,7 @@ export default {
   'ws.ticketEntry.hint': '粘贴一次性控制台票据即可打开已登录会话。在本机执行 nebflow token 铸票。',
   'ws.ticketEntry.placeholder': '在此粘贴票据',
   'ws.ticketEntry.open': '打开控制台',
+  'ws.ticketEntry.website': '通过 nebflow 官网登录',
   'ws.ticketEntry.needTicket': '请先粘贴票据 —— 可用 nebflow token 铸票',
   'ws.ticketEntry.notify': '需要登录 —— 粘贴控制台票据以继续（可用 nebflow token 铸票）',
 };

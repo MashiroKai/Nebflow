@@ -2293,6 +2293,7 @@ export default {
   'ws.ticketEntry.hint': 'Paste a one-time console ticket to open a signed-in session. Mint one on this machine with: nebflow token',
   'ws.ticketEntry.placeholder': 'Paste ticket here',
   'ws.ticketEntry.open': 'Open console',
+  'ws.ticketEntry.website': 'Sign in via the nebflow website',
   'ws.ticketEntry.needTicket': 'Paste a ticket first — mint one with: nebflow token',
   'ws.ticketEntry.notify': 'Sign-in required — paste a console ticket to continue (mint one with: nebflow token)',
 };
