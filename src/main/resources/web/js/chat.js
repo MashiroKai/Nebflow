@@ -272,6 +272,15 @@ export function speakText(text) {
   if (text) VoicePlayer.enqueue(text, null);
 }
 
+/** Voice-mode entry guarantee: full-duplex voice exists to HEAR the agent,
+ *  so a leftover client mute (localStorage voiceMuted) must not silently
+ *  swallow every clip. Flips the mute off (and syncs the server flag via
+ *  the same toggle path) when set. Returns the audible state. */
+export function ensureVoiceAudible() {
+  if (VoicePlayer.muted) VoicePlayer.toggleMute();
+  return !VoicePlayer.muted;
+}
+
 // Full-duplex voice mode: sustained mic input during playback barges in —
 // the overlay detects it and fires 'voicebargein' on `window`; the player
 // (owned here) answers by interrupting itself.

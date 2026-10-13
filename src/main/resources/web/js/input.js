@@ -821,11 +821,23 @@ export function initInput(view) {
   // 旧观察器先断开，避免挂在已脱离文档的节点上。
   if (view.dom.attPreview && typeof MutationObserver !== 'undefined') {
     view.dom.refGateObserver?.disconnect?.();
-    const mo = new MutationObserver(() => syncRefOnlyGate(view));
+    const mo = new MutationObserver(() => { syncRefOnlyGate(view); updateInputPlaceholder(); });
     mo.observe(view.dom.attPreview, { childList: true, subtree: true });
     view.dom.refGateObserver = mo;
   }
   syncRefOnlyGate(view);
+  updateInputPlaceholder();
+
+  /** Contextual composer placeholder (mobile voice redesign): the pending
+   *  attachment count and the mic state replace the generic line —
+   *  attachments no longer claim their own row, the placeholder names them. */
+  function updateInputPlaceholder() {
+    if (voiceActive) { input.placeholder = t('input.ph.listening'); return; }
+    const n = pendingAttCount.value;
+    input.parentElement?.classList.toggle('has-attachments', n > 0);
+    if (n > 0) { input.placeholder = t('input.ph.attachments').replace('%n', String(n)); return; }
+    input.placeholder = t('input.placeholder');
+  }
 
   // Send button —— 入口①（点击）。纯引用帧在此不产帧（网关 4055 会静默丢弃它）。
   sendBtn.onclick = () => {
@@ -1178,6 +1190,7 @@ export function initInput(view) {
   }
 
   async function startVoice() {
+    input.placeholder = t('input.ph.listening');
     voiceActive = true;
     voiceAnchor = input.selectionStart ?? input.value.length;
     voiceInterimLen = 0;
@@ -1221,41 +1234,85 @@ export function initInput(view) {
   // again to stop — replaces the old push-and-hold). Also spec §3.3.
   function onVoiceToggle(e) {
     if (e) e.preventDefault();
+    // A drag that just entered voice mode must not also toggle dictation
+    // (the synthetic click fires after pointerup).
+    if (Date.now() < suppressVoiceClickUntil) return;
     setActiveView(view);
     if (voiceActive) stopVoice();
     else startVoice();
   }
   voiceBtn.addEventListener('click', onVoiceToggle);
 
-  // Voice-mode entry (voice-mode batch): the small button under the orb opens
-  // the full-duplex voice overlay. Primary bar only — the button exists only
-  // in #input-bar's orb wrap. Dynamic import keeps input.js ↔ voiceMode.js
+  // Full-duplex voice entry (voice-mode batch): the small button under the
+  // orb opens the overlay. Primary bar only — the button exists only in
+  // #input-bar's orb wrap. Dynamic import keeps input.js ↔ voiceMode.js
   // cycle-free at module-eval time (same pattern as micOrb → voiceEngine).
+  function enterVoiceModeNow() {
+    setActiveView(view); // utterances must land in THIS session even if ws.js flips activeView later
+    import('./voiceMode.js').then((m) => {
+      m.enterVoiceMode({
+        // send() operates on the active view's input; the ws-closed path
+        // leaves the value uncleared — that's the failure signal.
+        sendText: (/** @type {string} */ text) => {
+          input.value = text;
+          send();
+          const ok = input.value !== text;
+          input.value = '';
+          input.style.height = 'auto';
+          return ok;
+        },
+        // Push-to-talk and voice mode share one mic session.
+        ensureDictationIdle: () => { if (voiceActive) stopVoice(); },
+        // Replies for THIS session are read aloud; others are ignored.
+        getSessionId: () => view.sessionId,
+      });
+    }).catch(() => {});
+  }
   const voiceModeBtn = document.getElementById('voice-mode-btn');
   if (voiceModeBtn && view.id === 'primary') {
     voiceModeBtn.addEventListener('click', (e) => {
       e.preventDefault();
-      setActiveView(view); // utterances must land in THIS session even if ws.js flips activeView later
-      import('./voiceMode.js').then((m) => {
-        m.enterVoiceMode({
-          // send() operates on the active view's input; the ws-closed path
-          // leaves the value uncleared — that's the failure signal.
-          sendText: (/** @type {string} */ text) => {
-            input.value = text;
-            send();
-            const ok = input.value !== text;
-            input.value = '';
-            input.style.height = 'auto';
-            return ok;
-          },
-          // Push-to-talk and voice mode share one mic session.
-          ensureDictationIdle: () => { if (voiceActive) stopVoice(); },
-          // Replies for THIS session are read aloud; others are ignored.
-          getSessionId: () => view.sessionId,
-        });
-      }).catch(() => {});
+      enterVoiceModeNow();
     });
   }
+
+  // Drag-in gesture (mobile voice redesign): press the voice orb and swipe
+  // right past the threshold — full-duplex voice opens, and the synthetic
+  // click is suppressed so dictation does not also start. The gradient
+  // chevrons (.voice-drag-hint, css/input.css) advertise the affordance.
+  let voiceDrag = null;
+  let suppressVoiceClickUntil = 0;
+  // Scope-local placeholder refresh (the shared updateInputPlaceholder lives
+  // in the per-view setup scope and is not reachable here).
+  const refreshPlaceholder = () => {
+    if (voiceActive) { input.placeholder = t('input.ph.listening'); return; }
+    const n = pendingAttCount.value;
+    input.parentElement?.classList.toggle('has-attachments', n > 0);
+    input.placeholder = n > 0
+      ? t('input.ph.attachments').replace('%n', String(n))
+      : t('input.placeholder');
+  };
+  voiceBtn.addEventListener('pointerdown', (e) => {
+    voiceDrag = { x: e.clientX, y: e.clientY, fired: false };
+    input.placeholder = t('input.ph.drag');
+  });
+  voiceBtn.addEventListener('pointermove', (e) => {
+    if (!voiceDrag || voiceDrag.fired) return;
+    const dx = e.clientX - voiceDrag.x;
+    const dy = Math.abs(e.clientY - voiceDrag.y);
+    if (dx > 56 && dy < 44) {
+      voiceDrag.fired = true;
+      suppressVoiceClickUntil = Date.now() + 700;
+      refreshPlaceholder();
+      enterVoiceModeNow();
+    }
+  });
+  const endVoiceDrag = () => {
+    voiceDrag = null;
+    refreshPlaceholder();
+  };
+  voiceBtn.addEventListener('pointerup', endVoiceDrag);
+  voiceBtn.addEventListener('pointercancel', endVoiceDrag);
 
   // Escape key stops voice recording (only register once)
   if (view.id === 'primary') {

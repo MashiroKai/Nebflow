@@ -23,7 +23,7 @@ import { t } from './i18n.js';
 import { startDictation, stopDictation, setMicVolumeListener } from './voiceEngine.js';
 import { registerVoiceModeOrb, notifyVoiceState } from './micOrb.js';
 import { showToast } from './modal.js';
-import { speakText } from './chat.js';
+import { speakText, ensureVoiceAudible } from './chat.js';
 
 const BARGE_LEVEL = 0.22;    // mic level that counts as real speech during playback
 const BARGE_MS = 320;        // sustained speech that triggers the barge-in
@@ -209,6 +209,13 @@ export function enterVoiceMode(depsIn) {
   bargeStart = 0;
 
   document.body.classList.add('voice-mode-active');
+  // Compact in-composer form: the overlay lives INSIDE #input-area, so its
+  // absolute box is exactly the composer's (original size and position — the
+  // bar's own children fade under it; see css/voiceMode.css). Body-level
+  // remains the resting parent so nothing renders before the first entry.
+  const inputArea = byId('input-area');
+  if (inputArea && el.overlay.parentElement !== inputArea) inputArea.appendChild(el.overlay);
+  ensureVoiceAudible();
   el.overlay.classList.add('on');
   if (el.hint) el.hint.textContent = t('voiceMode.hint');
   showTranscript('');

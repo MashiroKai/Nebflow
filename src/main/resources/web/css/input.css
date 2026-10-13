@@ -5,7 +5,9 @@
   left: 0;
   right: 0;
   z-index: 20;
-  padding: 0 0 10px 0;
+  /* Safe area (viewport-fit=cover): keeps the composer above the browser's
+     own home-indicator / toolbar controls on phone viewports. */
+  padding: 0 0 max(10px, env(safe-area-inset-bottom)) 0;
   pointer-events: none;
 }
 
@@ -303,6 +305,26 @@
   margin-bottom: 4px;
   flex-wrap: wrap;
 }
+
+/* Mobile-first compact attachment strip (composer-inline): the pending-file
+   chips overlay the textarea's top edge instead of claiming their own block
+   row — the composer keeps ONE line, and the placeholder (updated by
+   input.js) names what is attached. The textarea grows top padding while
+   chips are present (#input-wrap.has-attachments). */
+#input-wrap { position: relative; }
+#input-wrap.has-attachments #input { padding-top: 26px; }
+#input-wrap #attachment-preview {
+  position: absolute;
+  top: 4px;
+  left: 6px;
+  right: 6px;
+  z-index: 3;
+  max-height: 30px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+#input-wrap #attachment-preview::-webkit-scrollbar { display: none; }
 .att-thumb {
   width: 50px; height: 50px;
   object-fit: cover;
