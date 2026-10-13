@@ -221,7 +221,13 @@ object AtomicJson:
   final case class JournalRead(
     checkpoint: Option[String] = None,
     records: List[Note] = Nil,
-    checkpointError: Option[String] = None
+    checkpointError: Option[String] = None,
+    /** The checkpoint's already-parsed tree — `Some` exactly when the parse
+      * below succeeded. Carrying it lets a caller that needs BOTH the validity
+      * verdict and the decoded value (the chain-ledger open path) pay for one
+      * parse instead of two on a multi-megabyte checkpoint.
+      */
+    checkpointJson: Option[io.circe.Json] = None
   ):
     /** True when neither face carries anything (fresh file; no WARN warranted). */
     def isEmpty: Boolean = checkpoint.isEmpty && records.isEmpty && checkpointError.isEmpty
@@ -249,7 +255,8 @@ object AtomicJson:
           // be accepted as valid and `checkpointError` would never be set — the
           // 「损坏绝不静默」guarantee silently lost. Match the `Either` directly.
           io.circe.parser.parse(text) match
-            case Right(_) => JournalRead(checkpoint = Some(text), records = records)
+            case Right(json) =>
+              JournalRead(checkpoint = Some(text), records = records, checkpointJson = Some(json))
             case Left(_) => JournalRead(records = records, checkpointError = Some(s"${path.last} corrupt"))
     end if
   end readAll

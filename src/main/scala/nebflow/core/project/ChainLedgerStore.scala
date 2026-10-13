@@ -749,8 +749,12 @@ object ChainLedgerStore:
         )
         (ChainLedger.State(project = project), 0)
       case None =>
+        // Decode the ALREADY-PARSED checkpoint tree (`readAll` parses once for
+        // its validity verdict and hands the tree over) — re-parsing the 18MB
+        // text here doubled the open cost for the same value. A decode failure
+        // still degrades to an empty state exactly as before.
         val committed: Option[ChainLedger.State] =
-          read.checkpoint.flatMap(t => jsonParse(t).flatMap(_.as[ChainLedger.State]).toOption)
+          read.checkpointJson.flatMap(_.as[ChainLedger.State].toOption)
         val parsedNotes: List[ChainLedger.JournalRecord] =
           read.records.flatMap(n => jsonParse(n.note).flatMap(_.as[ChainLedger.JournalRecord]).toOption)
         val committedRounds = committed.map(_.rounds.size).getOrElse(0)
