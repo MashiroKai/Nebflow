@@ -621,7 +621,11 @@ object DocIndexConsumer:
           skipped = desired.keys.filterNot(known.contains).toList.sorted
           _ <-
             if skipped.nonEmpty then
-              logger.info(s"doc-index: chain(s) with events but no index entry — skipped: ${skipped.mkString(", ")}")
+              // The id list routinely spans hundreds of historical chains —
+              // keep the INFO line to a count; the full list rides DEBUG for
+              // forensics only.
+              logger.info(s"doc-index: ${skipped.size} chain(s) with events but no index entry — skipped")
+              logger.debug(s"doc-index: skipped chains without index entry: ${skipped.mkString(", ")}")
             else IO.unit
           _ <-
             if !dryRun && results.exists(_.changed) then
