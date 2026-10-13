@@ -109,25 +109,36 @@ private[neblink] final class PortalTunnelBridge(
     }
 
   private def actionFor(frame: PortalWireCodec.PortalFrame): IO[Unit] =
-    frame match
-      case f: PortalWireCodec.HttpRequest        => handleHttpRequest(f)
-      case f: PortalWireCodec.BodyFrame          => feedBodyFrame(f)
-      case f: PortalWireCodec.WsOpen             => handleWsOpen(f)
-      case f: PortalWireCodec.WsFrame            => feedWsFrame(f)
-      case f: PortalWireCodec.WsClose            => handleWsClose(f)
-      case f: PortalWireCodec.ConsoleTicketMint  => handleConsoleTicketMint(f)
-      case f: PortalWireCodec.BindingControl     => handleBindingControl(f)
-      case f: PortalWireCodec.MigrationChunk =>
-        // Explicit not-implemented case (design 3.1): the migration relay face
-        // belongs to phase 5; the frame must not fall into the unknown-type
-        // branch (that would read as contract drift).
-        logger.warn("MigrationChunk frame dropped: migration relay face is not implemented in this phase")
-      case other =>
-        // Uplink frame types echoed back to the host (relay_response family:
-        // http_response / ws_open_result / ConsoleTicketResult / relay_*).
-        // Semantically no action; debug only so echoes stay distinguishable
-        // from unknown types.
-        logger.debug(s"portal frame of uplink type echoed back — ignored: ${other.getClass.getSimpleName}")
+    // The whole dispatch defers: several handlers perform their cycle-table
+    // lookups/mutations EAGERLY while building the returned IO (feedBodyFrame,
+    // feedWsFrame, handleWsClose). Evaluating them here — on the WS reader
+    // thread, before the consumer has run the PREVIOUS frame's action — lets a
+    // body_frame overtake its own http_request's registration whenever both
+    // arrive in one read batch (exactly what the T-10 R1b stall was: the
+    // server, post-R1, delivers http_request + body in the same millisecond).
+    // Deferring puts every side effect back on the mailbox consumer fiber, in
+    // wire order, which is the ordering the FIFO mailbox exists to provide.
+    IO.defer {
+      frame match
+        case f: PortalWireCodec.HttpRequest        => handleHttpRequest(f)
+        case f: PortalWireCodec.BodyFrame          => feedBodyFrame(f)
+        case f: PortalWireCodec.WsOpen             => handleWsOpen(f)
+        case f: PortalWireCodec.WsFrame            => feedWsFrame(f)
+        case f: PortalWireCodec.WsClose            => handleWsClose(f)
+        case f: PortalWireCodec.ConsoleTicketMint  => handleConsoleTicketMint(f)
+        case f: PortalWireCodec.BindingControl     => handleBindingControl(f)
+        case f: PortalWireCodec.MigrationChunk =>
+          // Explicit not-implemented case (design 3.1): the migration relay face
+          // belongs to phase 5; the frame must not fall into the unknown-type
+          // branch (that would read as contract drift).
+          logger.warn("MigrationChunk frame dropped: migration relay face is not implemented in this phase")
+        case other =>
+          // Uplink frame types echoed back to the host (relay_response family:
+          // http_response / ws_open_result / ConsoleTicketResult / relay_*).
+          // Semantically no action; debug only so echoes stay distinguishable
+          // from unknown types.
+          logger.debug(s"portal frame of uplink type echoed back — ignored: ${other.getClass.getSimpleName}")
+    }
 
   // ────────────────────────── HTTP face ──────────────────────────
 
