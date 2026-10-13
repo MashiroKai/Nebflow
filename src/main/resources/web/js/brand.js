@@ -83,6 +83,35 @@ export function getProfileUrl() {
 }
 
 /**
+ * Website sign-in URL for the console gate ("sign in via the website").
+ *
+ * The website session is the console's other front door: the site mints a
+ * one-time console ticket for the account's bound host and navigates back
+ * into the console (/portal route), so a fresh device never has to paste a
+ * ticket by hand. The link itself carries no credential — minting requires
+ * the website session, and a minted ticket is single-use.
+ *
+ * The origin is derived from the injected profile URL (same source the
+ * profile entry uses), never from `brand.domain` (which carries the
+ * brand.conf placeholder). The `from=client` hint is deliberately NOT set:
+ * that contract marks desktop-client profile entries, not console-gate
+ * returns; the `next=%2Fportal` target is what carries the user back.
+ */
+const WEBSITE_LOGIN_FALLBACK = 'https://nebflow.space/login?next=%2Fportal';
+
+export function getWebsiteLoginUrl() {
+  const raw = /** @type {Brand} */ (brand).profileUrl;
+  if (typeof raw === 'string' && raw.startsWith('https://')) {
+    try {
+      return `${new URL(raw).origin}/login?next=%2Fportal`;
+    } catch {
+      // fall through to the static fallback
+    }
+  }
+  return WEBSITE_LOGIN_FALLBACK;
+}
+
+/**
  * Apply branding to document chrome (the tab title). index.html ships a
  * neutral empty <title>; this sets the real one. There are no brand-bearing
  * meta tags (description/og:title) in index.html at this time.

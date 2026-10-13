@@ -2,7 +2,7 @@ import state from './state.js';
 import { findViewBySessionId, setActiveView, activeView, chatViews } from './chatView.js';
 import { isBgAgentId } from './utils.js';
 import { addNotification } from './notificationBanner.js';
-import { brand } from './brand.js';
+import { brand, getWebsiteLoginUrl } from './brand.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
 
@@ -466,6 +466,7 @@ function showTicketEntry() {
              placeholder="${t('ws.ticketEntry.placeholder')}">
       <div class="nb-ticket-error" hidden></div>
       <div class="nb-ticket-actions"><button class="cfg-btn cfg-btn-primary nb-ticket-go">${t('ws.ticketEntry.open')}</button></div>
+      <a class="nb-ticket-web" href="${getWebsiteLoginUrl()}">${t('ws.ticketEntry.website')}</a>
     </div>`;
   document.body.appendChild(overlay);
   const input = /** @type {HTMLInputElement} */ (overlay.querySelector('.nb-ticket-input'));
@@ -518,6 +519,12 @@ function injectTicketEntryStyles() {
 }
 .nb-ticket-error { font-size: 12px; color: var(--status-word, #e57373); margin-top: 8px; }
 .nb-ticket-actions { display: flex; justify-content: flex-end; margin-top: 14px; }
+.nb-ticket-web {
+  display: block; margin-top: 12px; text-align: center;
+  font-size: 12px; color: var(--text-muted, rgba(255,255,255,0.55));
+  text-decoration: none; border-bottom: 1px solid transparent;
+}
+.nb-ticket-web:hover { color: var(--text-normal, rgba(255,255,255,0.85)); border-bottom-color: currentColor; }
 `;
   document.head.appendChild(style);
 }
