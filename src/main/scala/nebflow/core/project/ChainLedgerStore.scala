@@ -620,13 +620,23 @@ class ChainLedgerStore private (
 
   // ── 自检（启动期 / verify 位）────────────────────────
 
-  /** Cold-archive byte size (metadata only — file names and sizes, zero content reads). */
+  /**
+   * Cold-archive byte size, bounded by the open-time read budget: stat-ing
+   * stops as soon as the running sum crosses `coldReadBudgetBytes`. The only
+   * consumer is the over-budget comparison in [[selfCheck]], so the decision
+   * is unchanged (crossing the budget still skips the cold audit; staying
+   * under it still reports the exact total). On a large archive (tens of
+   * thousands of round files) this turns a full-directory stat walk into a
+   * bounded prefix — the returned value is a LOWER BOUND of the true size
+   * whenever the budget was crossed, which [[selfCheck]] words as "at least".
+   */
   private def coldArchiveBytes: Long =
     if !os.exists(archiveDir) then 0L
     else
-      os.list(archiveDir)
-        .filter(_.last.endsWith(".json"))
-        .foldLeft(0L)((acc, f) => acc + os.size(f))
+      val files = os.list(archiveDir).iterator.filter(_.last.endsWith(".json"))
+      var acc = 0L
+      while acc <= coldReadBudgetBytes && files.hasNext do acc += os.size(files.next())
+      acc
 
   /**
    * Mount-time self-check gate. The cold archive is append-only, so its size is
@@ -642,7 +652,7 @@ class ChainLedgerStore private (
       if coldBytes > coldReadBudgetBytes then
         IO(
           logger.infoSync(
-            s"chain-ledger[$project] self-check ($tag): cold archive $coldBytes bytes exceeds the " +
+            s"chain-ledger[$project] self-check ($tag): cold archive of at least $coldBytes bytes exceeds the " +
               s"$coldReadBudgetBytes-byte open-time read budget — skipping the cold-file audit " +
               s"(hot state loaded; run verify for the full conservation audit)"
           )
