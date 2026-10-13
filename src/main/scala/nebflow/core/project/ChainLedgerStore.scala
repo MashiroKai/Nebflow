@@ -484,11 +484,22 @@ class ChainLedgerStore private (
     now: Long
   ): IO[Observation] =
     state.get.flatMap { st0 =>
-      val obs0 = ChainLedger.observe(st0, chains, now)
+      // Birth gate (active-zone awareness): a component whose members all sit
+      // outside the active zone is no longer born. The old path birthed it,
+      // flipped it Archived in the born-archived pass below, and retired it in
+      // the same tick — while the retire deleted exactly the hot entry observe
+      // matches on, so the next tick birthed it again: one fresh round file
+      // per tick, growing without bound. The gate closes the birth arm only;
+      // inheritance (matched hot entries) is untouched.
+      val obs0 = ChainLedger.observe(st0, chains, now, Some(activeIds))
       // 出生即归档面（轴 a）：本拍**新生**条目若其成员**全在活动区之外**（链已出库 ——
       // 存量归档数据首次 reconcile / 同一 30s 内出生又整链出库的短链），出生即刻翻
       // `Archived` + 记 `archivedAt`（归档刻 = 最早退役窗口）⇒「行不得早于所属链归档退役」
       // 对**任何**出生路径成立，不依赖 sweep 与 reconcile 的先后（禁留永不退役的活跃残行）。
+      // With the birth gate above ON, a born entry always has >= 1 active
+      // member, so this pass no longer fires on the wired path; it stays as
+      // the belt-and-braces form of the same invariant (born ⇒ never an
+      // un-archived row for an out-of-zone chain).
       val bornGone = obs0.born.filter(cid =>
         obs0.state.entries.get(cid).exists(e => e.members.nonEmpty && !e.members.exists(activeIds.contains))
       )
