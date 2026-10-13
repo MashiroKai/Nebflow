@@ -134,6 +134,15 @@ export function setSideBarCollapsed(collapsed) {
   }
   syncPanelDom();
   syncMobileScrim();
+  // Mobile drawer exclusivity (≤768px): the Side Bar drawer and the canvas
+  // drawer are both full overlays — the canvas drawer (z 240) would sit on
+  // top of the Side Bar drawer and hide it entirely, which reads as
+  // "the file browser shows nothing". Whoever expands second wins, so an
+  // expansion on a phone viewport is announced; canvas.js closes the canvas
+  // drawer on it (canvas.js owns that close path).
+  if (!collapsed && isMobileViewport()) {
+    document.dispatchEvent(new CustomEvent('nf:mobile-drawer-expanded'));
+  }
 }
 
 // ── Mobile drawer scrim (≤768px, css/mobile.css) ──────────────────────────
@@ -144,7 +153,7 @@ export function setSideBarCollapsed(collapsed) {
 // media query keeps the scrim permanently inert).
 const MOBILE_MQ = '(max-width: 768px)';
 
-function isMobileViewport() {
+export function isMobileViewport() {
   return window.matchMedia(MOBILE_MQ).matches;
 }
 

@@ -19,6 +19,7 @@ import { t } from './i18n.js';
 import { makeReference } from './reference.js';
 import { initCanvasDrop } from './canvasDrop.js';
 import { authHeaders } from './flowHelpers.js'; // Bearer token for REST withAuth (/api/canvas-tabs)
+import { setSideBarCollapsed, isMobileViewport } from './activityBar.js';
 
 const MIN_CANVAS_WIDTH = 320;
 const MAX_CANVAS_WIDTH = 1200;
@@ -373,7 +374,19 @@ export function openCanvas(title = '') {
   document.body.classList.add('canvas-open');
   applyCanvasLayoutMode();
   syncCanvasPanelButtons();
+  // Mobile drawer exclusivity (≤768px, css/mobile.css): both drawers are full
+  // overlays, so an opening canvas drawer collapses the Side Bar drawer —
+  // whoever expands second wins (the Side Bar announces its own expansion via
+  // the nf:mobile-drawer-expanded event, handled below).
+  if (isMobileViewport()) setSideBarCollapsed(true);
 }
+
+// The other half of the exclusivity pair: on a phone viewport the Side Bar
+// drawer expanding closes the canvas drawer, so the file explorer (and every
+// other Side Bar face) is never hidden under the canvas drawer.
+document.addEventListener('nf:mobile-drawer-expanded', () => {
+  if (document.body.classList.contains('canvas-open')) closeCanvas();
+});
 
 /** Close the canvas panel (hide visually — tabs are preserved).
  *
