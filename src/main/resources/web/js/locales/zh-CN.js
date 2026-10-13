@@ -1592,18 +1592,12 @@ export default {
   'neblink.reachDirect': 'P2P 直连已建立',
   'neblink.reachRelay': '可经服务器中继',
   'neblink.reachServerOnly': '在线——暂无直连通道',
-  'neblink.loggedOutHint': '未登录，设备互联不可用',
+  'neblink.loggedOutHint': '未登录 —— 点击上方头像登录 nebflow 账号，登录后自动入网',
   // 缺陷 A（2026-09-18）：未登录面板的两条读数 —— ①「清理并重登」入口（只在
   // 本地凭据文件类分类下渲染）；②状态面降级（`/status` 非 2xx 的可见读数，修前静默）。
   'neblink.cleanupRelogin': '清理并重登',
   'neblink.statusDegraded': '状态读取失败（HTTP {status}），下面显示的可能不是最新状态',
   // 配对码卡（门户 MVP E7, 2026-10-10）：6 位码 → POST /api/neblink/enroll。
-  'neblink.pairCodeHint': '有门户展示的 6 位配对码？输入即可绑定本机',
-  'neblink.pairCodePlaceholder': '6 位配对码',
-  'neblink.pairCodeSubmit': '绑定设备',
-  'neblink.pairCodeSubmitting': '绑定中…',
-  'neblink.pairCodeInvalid': '请输入 6 位数字配对码',
-  'neblink.pairCodeSuccess': '绑定成功，已入网',
   // 被踢下线被动提示（踢旧批案 B，2026-09-14）：**状态行级**——无横幅、无声音
   // （一期口径见 User.md 第 36 行；代码锚 messages.js「无横幅无提示音」）。
   'neblink.signedOutElsewhere': '已在别处登录',

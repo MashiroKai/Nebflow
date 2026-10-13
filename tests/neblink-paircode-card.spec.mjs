@@ -1,19 +1,25 @@
-// neblink-paircode-card.spec.mjs — 门户 MVP E7：设置面板「配对码入网」卡真渲染验收。
+// neblink-paircode-card.spec.mjs — the settings logged-out face AFTER the
+// pairing-code card removal (author ruling 2026-10-13, "no local pairing
+// code").
 //
-// 契约（方案 §3.2 E7 + 本批任务书）：
-//   · 未登录态区新增配对码卡：6 位码输入 + 提交钮 → POST /api/neblink/enroll
-//     `{pairCode}`（server 缺省 = 后端回落链，卡上不带 server 输入）；
-//   · 非 6 位输入 ⇒ 不发请求、卡内可见错误（输入不清空）；
-//   · 成功（200 {ok:true,...}）⇒ 刷新 status ⇒ 面板切到已登录视图；
-//   · 失败（4xx {error}）⇒ 卡内可见错误原文，无横幅无 toast。
+// Contract now:
+//   · The logged-out settings face renders NO pairing card (no input, no
+//     submit button, no card-local error row) — the ONLY enrollment path is
+//     the avatar account login (PKCE → /api/device/register; the server's
+//     get_or_create_default_network makes account = network, so signing in
+//     joins the network with zero extra steps);
+//   · the module no longer exports submitPairCode;
+//   · the logged-out hint names the avatar sign-in as the entry;
+//   · the degraded-status and credential-issue faces still render on the
+//     logged-out card; the logged-in face is unchanged (switch + logout).
 //
-// 渲染面 = 生产模块本身：生产 CSS（base.css + neblink.css）+ 生产 js/neblink.js 的
-// neblinkSettingsHTML() / bindNeblinkEvents() / fetchNeblinkStatus()。状态载荷全部
-// FIXTURE（page.route 注入，🔴 非生产实测）。
+// Render surface = the production modules themselves: production CSS
+// (base.css + neblink.css) + production js/neblink.js neblinkSettingsHTML() /
+// bindNeblinkEvents() / fetchNeblinkStatus(). All status payloads are
+// FIXTURES (page.route injection, never a live backend).
 //
-// 运行（cwd = 主仓）：
+// Run (cwd = main repo):
 //   node node_modules/@playwright/test/cli.js test --config <pw.config> neblink-paircode-card
-// 改动前对照（验红）：同一命令必红（改动前无该卡片）。
 
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
@@ -37,7 +43,7 @@ const STATUS_LOGGED_IN = {
 
 const HOST_PAGE = `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
-<title>paircode-card render harness</title>
+<title>logged-out face render harness</title>
 <link rel="stylesheet" href="/css/base.css">
 <link rel="stylesheet" href="/css/neblink.css">
 <style>body{display:block;padding:24px}#host{width:320px;background:var(--color-surface);padding:12px;border-radius:10px}</style>
@@ -74,68 +80,41 @@ async function bootPanel(page, status) {
   await page.waitForTimeout(120);
 }
 
-test.describe('设置面板配对码卡（门户 MVP E7）', () => {
-  test('卡片渲染：输入 + 提交钮 + 提示（未登录态）', async ({ page }) => {
+test.describe('设置面板未登录态（配对码卡移除后）', () => {
+  test('无配对码卡：无输入 / 无提交钮 / 无卡内错误行', async ({ page }) => {
     await bootPanel(page, STATUS_LOGGED_OUT);
-    await expect(page.locator('#neblink-paircode-input')).toHaveCount(1);
-    await expect(page.locator('#neblink-paircode-btn')).toHaveCount(1);
-    const input = page.locator('#neblink-paircode-input');
-    // 数字键盘语义 + 6 位上限
-    expect(await input.getAttribute('inputmode')).toBe('numeric');
-    expect(await input.getAttribute('maxlength')).toBe('6');
-    // 错误行存在且初始不可见
-    await expect(page.locator('#neblink-paircode-error')).toHaveCount(1);
-  });
-
-  test('非 6 位输入：不发请求，卡内可见错误，输入保留', async ({ page }) => {
-    let enrollCalls = 0;
-    await page.route('**/api/neblink/enroll', (route) => { enrollCalls += 1; return route.fulfill({ json: { ok: true } }); });
-    await bootPanel(page, STATUS_LOGGED_OUT);
-    await page.fill('#neblink-paircode-input', '12ab');
-    await page.click('#neblink-paircode-btn');
-    await page.waitForTimeout(150);
-    expect(enrollCalls).toBe(0);
-    const err = page.locator('#neblink-paircode-error');
-    await expect(err).toBeVisible();
-    expect((await err.textContent()) || '').not.toContain('undefined');
-    expect(await page.inputValue('#neblink-paircode-input')).toBe('12ab');
-  });
-
-  test('成功路径：POST {pairCode} → 200 ⇒ 刷新 status 切已登录视图', async ({ page }) => {
-    // 🔴 路由注册次序：Playwright 按 LIFO 匹配 —— 专属 mock 必须在 bootPanel 的
-    // `**/*` 兜底**之后**注册才会胜出（先注册会被兜底吞掉，假 200）。
-    await bootPanel(page, STATUS_LOGGED_OUT);
-    let statusCalls = 0;
-    const enrollBodies = [];
-    await page.route('**/api/neblink/status', (route) => {
-      statusCalls += 1;
-      return route.fulfill({ json: STATUS_LOGGED_IN });
-    });
-    await page.route('**/api/neblink/enroll', (route) => {
-      enrollBodies.push(route.request().postDataJSON());
-      return route.fulfill({ json: { ok: true, message: 'Enrolled. Connected.', networkId: 'n1' } });
-    });
-    await page.fill('#neblink-paircode-input', '654321');
-    await page.click('#neblink-paircode-btn');
-    // enroll 载荷 = 仅 pairCode（server 缺省走后端回落链）
-    await expect.poll(() => enrollBodies.length).toBe(1);
-    expect(enrollBodies[0]).toEqual({ pairCode: '654321' });
-    // 成功 ⇒ refreshNeblink()（status 重取 + 重渲到已登录视图）
-    await expect(page.locator('.neblink-logged-in')).toHaveCount(1);
     await expect(page.locator('#neblink-paircode-input')).toHaveCount(0);
-    expect(statusCalls).toBeGreaterThanOrEqual(1);
+    await expect(page.locator('#neblink-paircode-btn')).toHaveCount(0);
+    await expect(page.locator('#neblink-paircode-error')).toHaveCount(0);
+    await expect(page.locator('.neblink-paircode-card')).toHaveCount(0);
   });
 
-  test('失败路径：4xx {error} ⇒ 卡内可见错误原文，无横幅', async ({ page }) => {
+  test('submitPairCode 不再导出；提示指向头像登录', async ({ page }) => {
     await bootPanel(page, STATUS_LOGGED_OUT);
-    await page.route('**/api/neblink/enroll', (route) =>
-      route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'Enrollment failed: invalid pair code' }) }));
-    await page.fill('#neblink-paircode-input', '000000');
-    await page.click('#neblink-paircode-btn');
-    const err = page.locator('#neblink-paircode-error');
-    await expect(err).toBeVisible();
-    expect((await err.textContent()) || '').toContain('Enrollment failed');
-    // 未切换视图（仍在未登录卡片）
-    await expect(page.locator('#neblink-paircode-input')).toHaveCount(1);
+    const exported = await page.evaluate(async () => {
+      const nb = await import('/js/neblink.js');
+      return typeof nb.submitPairCode;
+    });
+    expect(exported).toBe('undefined');
+    const hint = await page.locator('.neblink-logged-out-hint').textContent();
+    // The hint names the avatar sign-in as the single path (zh locale fixture).
+    expect(hint || '').toContain('头像');
+    expect(hint || '').toContain('登录');
+  });
+
+  test('降级态与凭据问题面仍渲染（未登录卡）', async ({ page }) => {
+    await bootPanel(page, {
+      ...STATUS_LOGGED_OUT,
+      statusDegraded: { status: 503 },
+      credentialIssue: { code: 'credential-file-corrupt' },
+    });
+    await expect(page.locator('.neblink-error').first()).toBeVisible();
+  });
+
+  test('已登录视图不变：切换账号 + 退出登录两键', async ({ page }) => {
+    await bootPanel(page, STATUS_LOGGED_IN);
+    await expect(page.locator('.neblink-logged-in')).toHaveCount(1);
+    await expect(page.locator('#neblink-switch-btn')).toHaveCount(1);
+    await expect(page.locator('#neblink-logout-btn')).toHaveCount(1);
   });
 });
