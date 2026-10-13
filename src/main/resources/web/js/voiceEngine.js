@@ -65,14 +65,59 @@ const SILENCE_MS = 450;    // sustained silence that triggers an early cut
 const SILENCE_RMS = 0.01;  // chunk RMS below this counts as silence
 
 /* Mic volume hook for the orb (v8.2.2 spec §10.5): the listening state shakes
-   with mic loudness — the orb registers a listener receiving a normalized
-   volume [0,1] per audio chunk (RMS above the silence floor, ×10 gain). */
-let volumeListener = null;
+   with mic loudness — listeners receive a normalized volume [0,1] per audio
+   chunk (RMS above the silence floor, ×10 gain). A SET, not a slot: the orb
+   registers permanently at construction, and the voice-mode overlay adds its
+   own listener (barge-in detection) while it is open. */
+const volumeListeners = new Set();
 /** @param {((v: number) => void) | null} fn */
-export function setMicVolumeListener(fn) { volumeListener = typeof fn === 'function' ? fn : null; }
+export function setMicVolumeListener(fn) {
+  if (typeof fn === 'function') volumeListeners.add(fn);
+  else volumeListeners.delete(fn);
+}
+/** Fan a normalized mic level [0,1] out to every listener. Also the feed for
+ *  the Web Speech path: the orb's read-only VoiceTap calls this so level
+ *  consumers see one stream regardless of which STT path is live. */
+export function dispatchMicVolume(v) {
+  for (const fn of volumeListeners) {
+    try { fn(v); } catch (_) {} // one bad listener never starves the others
+  }
+}
 const NOISE_MIN_MS = 300;  // segments shorter than this AND low-energy = noise
 const NOISE_RMS = 0.012;
 const SEG_TIMEOUT_MS = 20000;
+
+// ── Conversation mode (voice-mode batch): full-duplex utterance assembly ──
+// startDictation(cb, { conversation: true }) switches the engine from
+// dictation (text lands in the input box on stop) to CONTINUOUS conversation:
+// the session never ends until stopDictation, and each settled UTTERANCE is
+// reported through cb.onUtterance(text) the moment it is complete. onText is
+// never fired in this mode (the overlay auto-sends utterances instead).
+const UTTER_SILENCE_MS = 1100; // cloud: session-level silence closing an utterance
+const WS_UTTER_IDLE_MS = 1200; // Web Speech: transcript inactivity closing an utterance
+let conversation = false;
+let utterSilentMs = 0;   // cloud path: silence accumulated since the last voiced chunk
+let wsUtterParts = [];   // Web Speech path: finals accumulated since the last emit
+let wsUtterTimer = null; // Web Speech path: inactivity timer
+
+function resetUtteranceState() {
+  utterSilentMs = 0;
+  wsUtterParts = [];
+  if (wsUtterTimer) { clearTimeout(wsUtterTimer); wsUtterTimer = null; }
+}
+
+/** Web Speech path: (re)arm the utterance-close timer on transcript activity. */
+function armWsUtterTimer() {
+  if (!conversation) return;
+  if (wsUtterTimer) clearTimeout(wsUtterTimer);
+  wsUtterTimer = setTimeout(() => {
+    wsUtterTimer = null;
+    if (!conversation || wsUtterParts.length === 0) return;
+    const text = joinParts(wsUtterParts);
+    wsUtterParts = [];
+    if (text) cb.onUtterance?.(text);
+  }, WS_UTTER_IDLE_MS);
+}
 
 // Streaming session state (reset on cloudStart).
 let segBuf = null;    // { samples: Float32Array[], len, startMs, silentMs, sumSq, n }
@@ -175,6 +220,7 @@ function resetStreaming() {
   segFinals = [];
   segInFlight = false;
   segStopping = false;
+  utterSilentMs = 0;
   if (segTimer) { clearTimeout(segTimer); segTimer = null; }
 }
 
@@ -189,7 +235,7 @@ function onMicChunk(ctx, chunk) {
   let sumSq = 0;
   for (let i = 0; i < chunk.length; i++) sumSq += chunk[i] * chunk[i];
   const rms = Math.sqrt(sumSq / Math.max(1, chunk.length));
-  if (volumeListener) volumeListener(Math.min(1, Math.max(0, (rms - SILENCE_RMS) * 10)));
+  dispatchMicVolume(Math.min(1, Math.max(0, (rms - SILENCE_RMS) * 10)));
   segBuf.samples.push(chunk);
   segBuf.len += chunk.length;
   segBuf.sumSq += sumSq;
@@ -199,6 +245,21 @@ function onMicChunk(ctx, chunk) {
   const dur = Date.now() - segBuf.startMs;
   if (dur >= SEG_MAX_MS || (dur >= SEG_MIN_MS && segBuf.silentMs >= SILENCE_MS)) {
     cutSegment(ctx);
+  }
+
+  // Conversation mode: a settled utterance = finals exist ∧ pipeline fully
+  // drained (the in-flight guard keeps an unanswered tail from being emitted
+  // before its text arrives — silence keeps growing and the next chunk emits)
+  // ∧ session-level silence ≥ UTTER_SILENCE_MS. Emitted finals reset so the
+  // next utterance starts clean; the recording session itself never ends.
+  if (conversation) {
+    utterSilentMs = rms < SILENCE_RMS ? utterSilentMs + chunkMs : 0;
+    if (!segStopping && utterSilentMs >= UTTER_SILENCE_MS
+      && segFinals.length > 0 && !segInFlight && segQueue.length === 0) {
+      const text = joinParts(segFinals);
+      segFinals = [];
+      if (text) cb.onUtterance?.(text);
+    }
   }
 }
 
@@ -267,13 +328,20 @@ function finishStreamingNoTail() {
   }
   const text = joinParts(segFinals);
   resetStreaming();
+  const wasConversation = conversation;
+  conversation = false; // stop path — the conversation session ends here
   if (recorded === 0) {
     // Mic opened but onaudioprocess never fired, or push-to-talk too short
     // (#stt-hotfix: surface instead of silently dropping to idle).
     cb.onState?.('error', t('stt.noAudio'));
     return;
   }
-  if (text) cb.onText?.(text);
+  // Conversation mode: already-emitted finals were cleared as they fired, so
+  // `text` is exactly the post-last-emit remainder — the exit tail.
+  if (text) {
+    if (wasConversation) cb.onUtterance?.(text);
+    else cb.onText?.(text);
+  }
   cb.onState?.('idle');
 }
 
@@ -422,8 +490,17 @@ function retireRecognition() {
   try { r.abort(); } catch (_) {}
 }
 
-export async function startDictation(callbacks = {}) {
+/**
+ * @param {object} callbacks
+ * @param {{ conversation?: boolean }} [opts]
+ *   `conversation: true` = continuous full-duplex mode: settled utterances
+ *   are reported via callbacks.onUtterance and the session runs until
+ *   stopDictation (see the conversation-mode block near the top).
+ */
+export async function startDictation(callbacks = {}, opts = {}) {
   Object.assign(cb, callbacks);
+  conversation = !!opts.conversation;
+  resetUtteranceState();
 
   // Cloud STT configured → record + proxy path.
   if (useCloud()) {
@@ -486,7 +563,10 @@ export async function startDictation(callbacks = {}) {
         if (text) {
           vs.finalIdx = i;
           vs.interim = '';
-          cb.onText?.(text);
+          // Conversation mode: finals accumulate into the pending utterance;
+          // dictation mode: each final commits straight into the input box.
+          if (conversation) wsUtterParts.push(text);
+          else cb.onText?.(text);
           if (dictating) cb.onState?.('listening');
         }
       }
@@ -502,6 +582,10 @@ export async function startDictation(callbacks = {}) {
     } else {
       vs.interim = '';
     }
+    // Conversation mode: transcript activity (final or interim) postpones the
+    // utterance-close timer — the utterance ends on inactivity, not on the
+    // first final (the speaker may keep going).
+    if (conversation && (interim || wsUtterParts.length)) armWsUtterTimer();
   };
 
   inst.onerror = (event) => {
@@ -547,20 +631,36 @@ export function stopDictation() {
   dictating = false;
   // Orb volume hook (v8.2.2): zero the shake amplitude on stop so the orb
   // does not freeze at the last loudness until the next listening session.
-  if (volumeListener) volumeListener(0);
+  dispatchMicVolume(0);
   // Cloud path: stop recording + send the captured WAV for transcription.
+  // The conversation flag stays up through the async drain — the finalized
+  // tail must land via onUtterance (finishStreamingNoTail clears the flag).
   if (cloudRec) {
     cloudStop();
     return;
   }
-  // Flush any pending interim text as final before stopping. input.js has
-  // already stripped the displayed interim slot synchronously in stopVoice —
-  // this re-inserts the final text exactly once at that slot.
+  const wasConversation = conversation;
+  conversation = false;
+  if (wsUtterTimer) { clearTimeout(wsUtterTimer); wsUtterTimer = null; }
   const vs = recognition?.__vs;
-  if (vs && vs.interim) {
-    const pending = vs.interim;
-    vs.interim = '';
-    cb.onText?.(pending.trim());
+  // Flush any pending interim text before stopping. input.js has already
+  // stripped the displayed interim slot synchronously in stopVoice — this
+  // re-inserts the final text exactly once at that slot. Conversation mode
+  // joins it into the tail utterance instead (the overlay auto-sends it).
+  const pendingInterim = vs && vs.interim ? vs.interim.trim() : '';
+  if (vs) vs.interim = '';
+  if (wasConversation) {
+    if (pendingInterim) wsUtterParts.push(pendingInterim);
+    if (wsUtterParts.length) {
+      const text = joinParts(wsUtterParts);
+      wsUtterParts = [];
+      if (text) cb.onUtterance?.(text);
+    }
+    retireRecognition();
+    return;
+  }
+  if (pendingInterim) {
+    cb.onText?.(pendingInterim);
   }
   retireRecognition();
 }

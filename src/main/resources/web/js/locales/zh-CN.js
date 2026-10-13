@@ -594,6 +594,8 @@ export default {
   'input.compactPlaceholder': '输入压缩指令（可选），直接回车开始压缩...',
   'input.voiceListening': '正在聆听...',
   'input.voiceBtn': '语音输入',
+  'voiceMode.hint': '直接说话即可——消息自动发送，回复自动朗读。按 Esc 退出。',
+  'voiceMode.sendFailed': '消息未发送——连接已断开',
   'input.voiceHint': '松开发送',
   'input.voiceError': '语音输入不可用，请使用 Chrome 浏览器',
   'input.queued': '排队中',
