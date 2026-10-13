@@ -32,19 +32,16 @@
 
 /* Input-bar collapse: scale down + sink + fade while the overlay's centered
    orb scales up — reads as the bubble lifting out of the composer. */
-body.voice-mode-active #input-bar {
+/* The bar keeps its box (the voice box IS the composer box now); only its
+   own children fade out under the voice overlay — the expand/collapse read. */
+body.voice-mode-active #input-wrap,
+body.voice-mode-active #input-bar .skip-freeze-btn,
+body.voice-mode-active #input-bar .icon-btn,
+body.voice-mode-active #input-bar #send-btn,
+body.voice-mode-active #input-bar #stop-btn {
   opacity: 0;
-  transform: translateY(16px) scale(0.94);
   pointer-events: none;
-  visibility: hidden;
-  /* Keep visibility delayed until the fade has finished (exit flips it back
-     instantly so the restore animation is visible). */
-  transition: border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-    background 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-    box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.24s ease,
-    transform 0.26s cubic-bezier(0.4, 0, 0.2, 1),
-    visibility 0s linear 0.28s;
+  transition: opacity 0.2s ease;
 }
 body.voice-mode-active #queue-bar {
   display: none;
@@ -52,32 +49,42 @@ body.voice-mode-active #queue-bar {
 
 /* ── Overlay ─────────────────────────────────────────────────────────── */
 
+/* Compact in-composer form (author redesign: voice mode lives in the input
+   bar's own box — original size, original position; no fullscreen takeover).
+   voiceMode.js moves the body-level overlay into #input-area on entry, so
+   `position:absolute; inset:0` is exactly the composer's box (safe-area
+   padding included). Enter/exit = the box scaling between 0.88 and 1 while
+   the bar's own children fade — the expand/collapse pair. */
 #voice-mode-overlay {
-  position: fixed;
+  position: absolute;
   inset: 0;
-  z-index: 900; /* above chat content, below modals (#modal-overlay = 11000) */
-  /* Rendered but invisible while off — visibility keeps the box in the layout
-     tree so the scrim/center opacity transitions actually run on .on
-     (display:none would swallow them). */
+  z-index: 260;
+  border-radius: 20px;
+  overflow: hidden;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
   visibility: hidden;
   pointer-events: none;
-  transition: visibility 0s linear 0.32s;
+  transform: scale(0.88);
+  opacity: 0;
+  transition: visibility 0s linear 0.32s,
+    transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 0.24s ease;
 }
 #voice-mode-overlay.on {
   visibility: visible;
   pointer-events: auto;
-  transition: visibility 0s;
+  transform: scale(1);
+  opacity: 1;
+  transition: visibility 0s,
+    transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 0.24s ease;
 }
 
 .vmo-scrim {
-  position: absolute;
-  inset: 0;
-  background: rgba(8, 10, 16, 0.42);
-  opacity: 0;
-  transition: opacity 0.28s ease;
-}
-#voice-mode-overlay.on .vmo-scrim {
-  opacity: 1;
+  display: none; /* the compact form has no viewport scrim */
 }
 
 .vmo-center {
@@ -87,11 +94,11 @@ body.voice-mode-active #queue-bar {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 18px;
+  gap: 6px;
   text-align: center;
-  padding: 0 24px;
+  padding: 22px 14px 8px;
   pointer-events: none;
-  transform: scale(0.72);
+  transform: scale(0.8);
   opacity: 0;
   transition: transform 0.32s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.26s ease;
 }
@@ -106,13 +113,13 @@ body.voice-mode-active #queue-bar {
   --orb-base: radial-gradient(120% 120% at 32% 28%, #b6cff5 0%, #8C7DD6 45%, #2f3d78 100%);
 }
 .vmo-bubble {
-  width: 132px;
-  height: 132px;
+  width: 72px;
+  height: 72px;
 }
 .vmo-bubble .orb-canvas,
 .vmo-bubble .css-orb {
-  width: 132px;
-  height: 132px;
+  width: 72px;
+  height: 72px;
   display: block;
   border-radius: 50%;
 }
@@ -136,25 +143,23 @@ body.voice-mode-active #queue-bar {
 }
 
 .vmo-caption {
-  max-width: 62ch;
+  max-width: 100%;
   color: var(--color-text, #e8ecf4);
-  font-size: 16px;
-  line-height: 1.5;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 .vmo-transcript {
-  max-width: 62ch;
+  max-width: 100%;
   color: var(--color-text-muted, rgba(232, 236, 244, 0.65));
-  font-size: 14px;
-  line-height: 1.45;
+  font-size: 12px;
+  line-height: 1.4;
   font-style: italic;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* The explicit -webkit-box display above would defeat the `hidden` attribute
    (voiceMode.js toggles it) — re-assert the attribute's display:none. */
@@ -169,10 +174,10 @@ body.voice-mode-active #queue-bar {
 
 .vmo-exit {
   position: absolute;
-  top: 18px;
-  right: 18px;
-  width: 36px;
-  height: 36px;
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.12));
   background: rgba(255, 255, 255, 0.06);
@@ -188,8 +193,8 @@ body.voice-mode-active #queue-bar {
   background: rgba(255, 255, 255, 0.14);
 }
 .vmo-exit svg {
-  width: 18px;
-  height: 18px;
+  width: 13px;
+  height: 13px;
 }
 
 /* Reduced motion: state changes land instantly (same policy as the orb's
@@ -204,4 +209,39 @@ body.voice-mode-active #queue-bar {
     animation: none;
     display: none;
   }
+}
+
+
+/* ── Voice drag-in hint (mobile): three gradient chevrons sweeping right —
+   the composer's voice bubble is a drag handle for full-duplex voice mode. */
+.voice-drag-hint {
+  display: none;
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 18px;
+  gap: 3px;
+  pointer-events: none;
+  z-index: 5;
+}
+@media (max-width: 768px) {
+  .voice-drag-hint { display: flex; }
+}
+.voice-drag-hint span {
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 7px solid var(--orb-dot, #78A0DC);
+  opacity: 0.2;
+  animation: vdh-arrow 1.5s ease-out infinite;
+}
+.voice-drag-hint span:nth-child(2) { animation-delay: 0.18s; }
+.voice-drag-hint span:nth-child(3) { animation-delay: 0.36s; }
+@keyframes vdh-arrow {
+  0%   { opacity: 0.12; transform: translateX(-4px); }
+  45%  { opacity: 0.9; }
+  100% { opacity: 0.08; transform: translateX(6px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-drag-hint span { animation: none; opacity: 0.45; }
 }

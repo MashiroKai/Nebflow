@@ -419,6 +419,24 @@ object DelegateTool extends Tool:
               IO.pure(Left(ToolError(s"Delegate: device dispatch failed — $err")))
             case Right(payload) =>
               val spawnId = payload.hcursor.downField("spawnId").as[String].getOrElse("")
+              // Host-side dispatch record (result-injection anchor): DeviceDelegate
+              // .handleResult resolves the delegate-result's live injection (parent
+              // -session ExternalEvent, task-ledger note, report slot) through
+              // DelegateRegistry.find(spawnId). Without this row the device's
+              // result arrives and is dropped with a log line only.
+              if spawnId.nonEmpty then
+                nebflow.core.delegate.DelegateRegistry.put(
+                  nebflow.core.delegate.DelegateRegistry.Record(
+                    id = spawnId,
+                    executor = s"device:${route.deviceName}",
+                    cwd = route.workspace,
+                    project = Some(route.project),
+                    taskId = taskId,
+                    parentSessionId = ctx.sessionId.getOrElse(""),
+                    title = description,
+                    createdAt = System.currentTimeMillis()
+                  )
+                )
               val ack =
                 s"""Delegate task dispatched to device '${route.deviceName}' (project '${route.project}', task ${taskId
                     .map(n => s"#$n")
