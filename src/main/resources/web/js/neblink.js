@@ -351,38 +351,9 @@ export async function refreshNeblink() {
 // 旧 `checkPairingRedirect`（nebflow.space/connect 重定向 → POST /api/neblink/pair）
 // 已随门户 MVP E7 批（2026-10-10）整体删除：后端从未有 /api/neblink/pair 路由
 // （死路径技术债，方案 §6 偏差 #12 顺手清），main.js 初始化流程亦早已摘除调用。
-// 配对码入网的新家 = 设置面板配对码卡（neblinkSettingsHTML 未登录态）+ submitPairCode。
-
-/**
- * 配对码入网（门户 MVP E7, 2026-10-10）：6 位码 → POST /api/neblink/enroll。
- * Body 只带 `pairCode`（可选 `server` 透传，本卡 UI 不出该输入——缺省走后端
- * 回落链）。成功（200 {ok:true}）后端已完成 persist 热换（免重启）；调用方
- * 跟一次 refreshNeblink() 即可切已登录视图。失败抛 Error(原始 error 文案)。
- */
-export async function submitPairCode(pairCode, server) {
-  const token = getAuthToken();
-  const body = { pairCode };
-  if (server) body.server = server;
-  const resp = await fetch('/api/neblink/enroll', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-    body: JSON.stringify(body)
-  });
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok || data.ok !== true) {
-    const msg = (data && data.error) || `HTTP ${resp.status}`;
-    throw new Error(msg);
-  }
-  return data; // {ok, message, networkId}
-}
-
-/** 卡内专用错误行（textContent 写入——错误文案是服务端原文，非信任串）。 */
-function showPairCodeError(message) {
-  const el = document.getElementById('neblink-paircode-error');
-  if (!el) return;
-  el.textContent = message;
-  el.hidden = !message;
-}
+// 配对码入网卡（E7 引入）已按作者令（2026-10-13「不需要本机配对码」）整体移除：
+// 唯一入网路径 = 头像点击的账号登录（PKCE → /api/device/register，服务端
+// get_or_create_default_network 即账号即网络——登录即入网，无码、无建网步骤）。
 
 // ---- Settings section HTML ----
 // ── 设备在线态徽章：**单一实现**（设备会话统一批 MVP-1/O10）──────────────
@@ -459,26 +430,10 @@ export function neblinkSettingsHTML() {
     // 本机凭据面读数（被动来源：坏件在**下一次登录尝试之前**就已经可判读，上游 §4 S4）。
     const issue = (!pairErr && neblinkState.credentialIssue)
       ? `<div class="neblink-error">${escapeHtml(loginFailureText(neblinkState.credentialIssue))}</div>` : '';
-    // 配对码卡（门户 MVP E7, 2026-10-10）：6 位码 → POST /api/neblink/enroll
-    // {pairCode}（server 缺省 = 后端回落链：显式 > live config > 生产缺省，E6 ①）。
-    // 成功后端已热换免重启 ⇒ 本卡只管刷新状态切已登录视图。错误行走卡内
-    // 专用行（#neblink-paircode-error，textContent 写入），**不复用** pairError
-    // 全局面——那会把输入框重渲掉，用户码丢失。
-    const pairCard = `
-      <div class="neblink-paircode-card">
-        <div class="neblink-login-hint">${t('neblink.pairCodeHint')}</div>
-        <div class="neblink-paircode-row">
-          <input class="neblink-paircode-input" id="neblink-paircode-input" type="text"
-            inputmode="numeric" autocomplete="one-time-code" maxlength="6"
-            placeholder="${t('neblink.pairCodePlaceholder')}" aria-label="${t('neblink.pairCodePlaceholder')}">
-          <button class="neblink-login-btn neblink-paircode-btn" id="neblink-paircode-btn"
-            type="button">${t('neblink.pairCodeSubmit')}</button>
-        </div>
-        <div class="neblink-error" id="neblink-paircode-error" role="alert" hidden></div>
-      </div>`;
+    // 登录入口 = 头像（本块上方由 avatar entry 渲染并持有登录点击）。配对码卡
+    // 已按作者令移除：账号登录即入网（/api/device/register 自动默认网络）。
     return `<div class="neblink-login-section">
       <div class="neblink-logged-out-hint">${t('neblink.loggedOutHint')}</div>
-      ${pairCard}
       ${degraded}
       ${pairErr}
       ${issue}
@@ -972,40 +927,8 @@ export function bindNeblinkEvents(rerender) {
     });
   }
 
-  // 配对码卡提交（门户 MVP E7, 2026-10-10）：6 位数字校验（本地，不发请求）→
-  // submitPairCode → 成功刷新状态切已登录视图；失败错误行卡内可见（输入保留，
-  // 按钮恢复）。错误行走 #neblink-paircode-error（textContent），不走全局
-  // pairError 通道——那会触发重渲把输入框清掉。
-  const pairBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('neblink-paircode-btn'));
-  const pairInput = /** @type {HTMLInputElement|null} */ (document.getElementById('neblink-paircode-input'));
-  if (pairBtn && pairInput) {
-    pairBtn.addEventListener('click', async () => {
-      const code = (pairInput.value || '').trim();
-      if (!/^\d{6}$/.test(code)) {
-        showPairCodeError(t('neblink.pairCodeInvalid'));
-        return;
-      }
-      pairBtn.disabled = true;
-      pairBtn.textContent = t('neblink.pairCodeSubmitting');
-      showPairCodeError('');
-      try {
-        await submitPairCode(code);
-        showLoginSuccessBanner(t('neblink.pairCodeSuccess'));
-        await refreshNeblink(); // 后端 persist 热换已完成 ⇒ 重取 status 即切已登录视图
-      } catch (e) {
-        showPairCodeError((e && e.message) || t('neblink.pairCodeInvalid'));
-        // 重渲可能已替换 DOM（如状态拍并发落地）——仅当按钮仍在时恢复。
-        if (pairBtn.isConnected) {
-          pairBtn.disabled = false;
-          pairBtn.textContent = t('neblink.pairCodeSubmit');
-        }
-      }
-    });
-    // 回车提交（输入框单字段卡的既有手感惯例）
-    pairInput.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter') { ev.preventDefault(); pairBtn.click(); }
-    });
-  }
+  // 配对码卡提交绑定已随卡片移除（作者令 2026-10-13「不需要本机配对码」）——
+  // 唯一入网路径 = 头像账号登录。
 
   // NL 号入口已移除（09-05 裁定）——原 edit/cancel/input/save 绑定随区块删除。
 

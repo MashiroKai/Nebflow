@@ -1650,19 +1650,13 @@ export default {
   'neblink.reachDirect': 'Direct P2P connection established',
   'neblink.reachRelay': 'Reachable via server relay',
   'neblink.reachServerOnly': 'Online — no direct data path',
-  'neblink.loggedOutHint': 'Not signed in — Device Link is unavailable.',
+  'neblink.loggedOutHint': 'Not signed in — click the avatar above to sign in with your nebflow account; signing in joins the network automatically.',
   // Defect A (2026-09-18): two readings of the signed-out panel — (1) the
   // "clean up and sign in again" entry (local credential-file class only);
   // (2) the status-face degradation line (a non-2xx `/status` used to be silent).
   'neblink.cleanupRelogin': 'Clean up and sign in again',
   'neblink.statusDegraded': 'Status read failed (HTTP {status}) — what you see below may be stale',
   // Pairing-code card (portal MVP E7, 2026-10-10): 6-digit code → POST /api/neblink/enroll.
-  'neblink.pairCodeHint': 'Have a 6-digit pairing code from the portal? Enter it to link this device.',
-  'neblink.pairCodePlaceholder': '6-digit code',
-  'neblink.pairCodeSubmit': 'Link device',
-  'neblink.pairCodeSubmitting': 'Linking…',
-  'neblink.pairCodeInvalid': 'Enter the 6-digit code',
-  'neblink.pairCodeSuccess': 'Device linked',
   // Kicked-offline passive notice (kickold batch, case B, 2026-09-14): STATUS-LINE
   // level only — no banner, no sound (一期口径, User.md:36).
   'neblink.signedOutElsewhere': 'Signed in elsewhere',
