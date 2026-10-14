@@ -1243,10 +1243,10 @@ export function initInput(view) {
   }
   voiceBtn.addEventListener('click', onVoiceToggle);
 
-  // Full-duplex voice entry (voice-mode batch): the small button under the
-  // orb opens the overlay. Primary bar only — the button exists only in
-  // #input-bar's orb wrap. Dynamic import keeps input.js ↔ voiceMode.js
-  // cycle-free at module-eval time (same pattern as micOrb → voiceEngine).
+  // Full-duplex voice entry (voice-mode batch): dragging the voice bubble
+  // right (gesture below) is the only way in. Dynamic import keeps
+  // input.js ↔ voiceMode.js cycle-free at module-eval time (same pattern as
+  // micOrb → voiceEngine).
   function enterVoiceModeNow() {
     setActiveView(view); // utterances must land in THIS session even if ws.js flips activeView later
     import('./voiceMode.js').then((m) => {
@@ -1268,20 +1268,17 @@ export function initInput(view) {
       });
     }).catch(() => {});
   }
-  const voiceModeBtn = document.getElementById('voice-mode-btn');
-  if (voiceModeBtn && view.id === 'primary') {
-    voiceModeBtn.addEventListener('click', (e) => {
-      e.preventDefault();
-      enterVoiceModeNow();
-    });
-  }
 
-  // Drag-in gesture (mobile voice redesign): press the voice orb and swipe
-  // right past the threshold — full-duplex voice opens, and the synthetic
-  // click is suppressed so dictation does not also start. The gradient
-  // chevrons (.voice-drag-hint, css/input.css) advertise the affordance.
+  // Drag-in gesture (voice redesign): press the voice bubble and swipe right
+  // past the threshold — full-duplex voice opens, and the synthetic click is
+  // suppressed so dictation does not also start. The bubble tracks the
+  // pointer horizontally while dragging (the wrap transition is disabled by
+  // .dragging, so tracking is 1:1 and the snap-back animates on release);
+  // the gradient chevrons (.voice-drag-hint, css/voiceMode.css) float above
+  // the bubble inside the same wrap, shown on hover and while dragging.
   let voiceDrag = null;
   let suppressVoiceClickUntil = 0;
+  const micOrbWrap = voiceBtn.closest('.mic-orb-wrap');
   // Scope-local placeholder refresh (the shared updateInputPlaceholder lives
   // in the per-view setup scope and is not reachable here).
   const refreshPlaceholder = () => {
@@ -1298,21 +1295,29 @@ export function initInput(view) {
     // whatever element is under the cursor — the gesture never fires.
     try { voiceBtn.setPointerCapture(e.pointerId); } catch (_) {}
     voiceDrag = { x: e.clientX, y: e.clientY, fired: false };
+    micOrbWrap?.classList.add('dragging');
     input.placeholder = t('input.ph.drag');
   });
   voiceBtn.addEventListener('pointermove', (e) => {
     if (!voiceDrag || voiceDrag.fired) return;
     const dx = e.clientX - voiceDrag.x;
     const dy = Math.abs(e.clientY - voiceDrag.y);
+    // Rightward tracking only, with a little overshoot past the fire
+    // threshold so the bubble keeps following the finger after the point
+    // where voice mode would open.
+    if (micOrbWrap) micOrbWrap.style.transform = `translateX(${Math.min(Math.max(dx, 0), 84)}px)`;
     if (dx > 56 && dy < 44) {
       voiceDrag.fired = true;
       suppressVoiceClickUntil = Date.now() + 700;
+      if (micOrbWrap) { micOrbWrap.classList.remove('dragging'); micOrbWrap.style.transform = ''; }
       refreshPlaceholder();
       enterVoiceModeNow();
     }
   });
   const endVoiceDrag = () => {
+    if (!voiceDrag) return;
     voiceDrag = null;
+    if (micOrbWrap) { micOrbWrap.classList.remove('dragging'); micOrbWrap.style.transform = ''; }
     refreshPlaceholder();
   };
   voiceBtn.addEventListener('pointerup', endVoiceDrag);

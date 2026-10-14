@@ -1,34 +1,9 @@
 /* ── Full-duplex voice mode (voice-mode batch) ────────────────────────────
-   Entry button under the mic orb + the centered-orb overlay. The overlay is
-   body-level (#voice-mode-overlay) so no ancestor can clip it; the input bar
-   collapse is driven by body.voice-mode-active and animates through the
-   opacity/transform pair added to #input-bar's base transition in input.css. */
-
-/* Entry button — sits in .mic-orb-wrap's column slot below the orb. */
-.mic-mode-btn {
-  width: 20px;
-  height: 20px;
-  border: none;
-  background: none;
-  padding: 0;
-  cursor: pointer;
-  border-radius: 50%;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-frame-text-muted);
-  transition: color 0.15s, background 0.15s;
-}
-.mic-mode-btn:hover {
-  color: var(--color-frame-text);
-  background: var(--glass-control-bg-hover);
-}
-.mic-mode-btn svg {
-  width: 13px;
-  height: 13px;
-  stroke-width: 2;
-}
+   Entry = dragging the composer's voice bubble right (input.js gesture);
+   there is no click button. The overlay is body-level (#voice-mode-overlay)
+   so no ancestor can clip it; the input bar collapse is driven by
+   body.voice-mode-active and animates through the opacity/transform pair
+   added to #input-bar's base transition in input.css. */
 
 /* Input-bar collapse: scale down + sink + fade while the overlay's centered
    orb scales up — reads as the bubble lifting out of the composer. */
@@ -212,20 +187,25 @@ body.voice-mode-active #queue-bar {
 }
 
 
-/* ── Voice drag-in hint (mobile): three gradient chevrons sweeping right —
-   the composer's voice bubble is a drag handle for full-duplex voice mode. */
+/* ── Voice drag-in hint: three gradient chevrons sweeping right, floating
+   just above the composer's voice bubble. Drag is the only way into
+   full-duplex voice mode, so the chevrons surface at the moment of contact:
+   on hover (pointer devices) and while the bubble is being dragged
+   (.dragging lands with pointerdown in input.js). The hint is absolutely
+   positioned inside .mic-orb-wrap, so it rides along as the bubble tracks
+   the pointer during the drag. */
 .voice-drag-hint {
   display: none;
   position: absolute;
-  left: calc(100% + 8px);
-  top: 18px;
+  left: 50%;
+  top: -16px;
+  transform: translateX(-50%);
   gap: 3px;
   pointer-events: none;
   z-index: 5;
 }
-@media (max-width: 768px) {
-  .voice-drag-hint { display: flex; }
-}
+.mic-orb-wrap:hover .voice-drag-hint,
+.mic-orb-wrap.dragging .voice-drag-hint { display: flex; }
 .voice-drag-hint span {
   width: 0;
   height: 0;
