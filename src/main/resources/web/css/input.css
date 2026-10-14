@@ -719,6 +719,7 @@
    above remain untouched — they still serve the friend/group windows.
    ============================================================================ */
 .mic-orb-wrap {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -726,7 +727,11 @@
   flex-shrink: 0;
   /* Orb base gradient (dark default); light theme overrides below. */
   --orb-base: radial-gradient(120% 120% at 32% 28%, #b6cff5 0%, #8C7DD6 45%, #2f3d78 100%);
+  /* Drag tracking (input.js): the bubble follows the pointer 1:1 while
+     .dragging is held (transition suppressed), then snaps back on release. */
+  transition: transform 0.25s ease;
 }
+.mic-orb-wrap.dragging { transition: none; }
 .micbubble {
   position: relative;
   width: 64px;
@@ -740,6 +745,9 @@
   cursor: pointer;
   flex-shrink: 0;
   border-radius: 50%;
+  /* Keep the pointer stream flowing through the drag gesture — without this
+     a touch drag is claimed by scrolling and pointermove stops firing. */
+  touch-action: none;
 }
 .micbubble:focus-visible {
   outline: 2px solid rgb(var(--sapphire) / 0.6);
