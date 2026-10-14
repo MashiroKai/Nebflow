@@ -70,7 +70,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
         // 直接触发 kernel 并返回 kernel:<id> 续聊地址（取代 promptgov 批 2026-09-17
         // 的退役令之授能面部分——史实 −1 ⇒ 12 归档）
         "Delegate",
-        "TaskList", // 任务编排（2026-09-06 TaskList 批：快变状态出记忆）
+        "Task", // 任务编排（taskunify 合一批 2026-09-24：TaskList+TaskBoard 合一为 Task 一件；PR48 重建族曾静默回退，2026-10-14 redfix 批恢复）
         // TaskSearch（task-rag 批 #1227 / §Batch 7）：任务语义检索（Nebula 面只读件）
         "TaskSearch",
         "SendMessage",
@@ -110,8 +110,8 @@ class Phase2dToolRefactorSpec extends FunSuite:
     // 史实 16→16 净 0；史实 13（搜索件摘除后）与 12（−Delegate 后）；当前 = 17）；
     // 旧「Mail 不在 Nebula 面」的反向断言就此反转——本集改为断言**已删净退役**件缺席。
     // #145 附件腿批（2026-09-14）：+ "TransferFile"（退役，能力并入 SendMessage 设备附件腿）。
-    Set("Task", "NodeMessage", "FlowTrigger", "FlowExecute", "TransferFile").foreach { t =>
-      assert(!fixed.contains(t), s"已退役/维持退役件不得在 Nebula 面（R2 2026-09-12 / #145 2026-09-14）: $t")
+    Set("TaskList", "TaskBoard", "NodeMessage", "FlowTrigger", "FlowExecute", "TransferFile").foreach { t =>
+      assert(!fixed.contains(t), s"已退役/维持退役件不得在 Nebula 面（taskunify 2026-09-24 / R2 2026-09-12 / #145 2026-09-14）: $t")
     }
     assertEquals(
       fixed.size,
@@ -222,11 +222,15 @@ class Phase2dToolRefactorSpec extends FunSuite:
     )
     // 双保险（§1d-4）：非 project 会话 flag=false 恒不挂——声明（含 "*"）不授能
     // （nebulaFiltered 先剥、末段不挂），工具面 + 工具内身份判定两层独立。
+    // 2026-10-14 redfix 重锚（taskunify 合同恢复，报告 #11 邻件）：防声明逃逸通道
+    // 的活名成员已由 TaskBoard 改为 TaskInfo（RootExclusiveTools 随 taskunify 改名）——
+    // 剥离钉随之改打 TaskInfo；TaskBoard 本体已退役（未注册 + RetiredToolGuides
+    // 指路，注册表墙保证其声明在执行面不授能，DeletedToolGuardSpec 钉退役面）。
     assert(
-      !CoreProbe.allowed(mkDef("sneaky", List("TaskBoard"))).contains("TaskBoard"),
-      "非 project 会话显式声明 TaskBoard 不授能（防声明逃逸通道，RootExclusiveTools）"
+      !CoreProbe.allowed(mkDef("sneaky", List("TaskInfo"))).contains("TaskInfo"),
+      "非 project 会话显式声明 TaskInfo 不授能（防声明逃逸通道，RootExclusiveTools）"
     )
-    assert(!CoreProbe.allowed(mkDef("omni", List("*"))).contains("TaskBoard"), "wildcard 声明同样不授能")
+    assert(!CoreProbe.allowed(mkDef("omni", List("*"))).contains("TaskInfo"), "wildcard 声明同样不授能")
     assert(
       !CoreProbe.allowed(mkDef("general"), isFlowNode = true).contains("TaskBoard"),
       "双轨 flow 会话 flag=false 恒不挂（任务板批 2 前行为零变化）"
