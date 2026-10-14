@@ -18,6 +18,16 @@ class PluginAllocatorPortSpec extends CatsEffectSuite:
 
   private val catalog = List(CatalogEntry("p1", "fixture package"))
 
+  // 🔴 夹具修复（2026-10-14 redfix 批，报告 #13）：「no face installed」前提原本
+  // 只靠 afterEach 清场——但 face 是**进程级单例**，同 JVM 内任何先跑的套件只要
+  // 构造过 `SharedResources`（生产 boot 装配行会 install 生产分配机 face）且未清，
+  // 本套件首例看到的就是**别人的 face**（其执行体在夹具语境下 NPE ⇒ fail-open
+  // `FellBack(Failure, allocator defect: NullPointerException)`——22 套件合跑实测）。
+  // solo 跑无先行构造 ⇒ green——紅仅合跑形态出现。修法 = beforeEach 也清（前提
+  // 「未注册」在任意 JVM 历史下成立），断言零改动；afterEach 清场保持（不向
+  // 后续套件泄漏）。
+  override def beforeEach(context: munit.BeforeEach): Unit = PluginAllocator.clear()
+
   override def afterEach(context: munit.AfterEach): Unit = PluginAllocator.clear()
 
   test("no face installed → Off fallback (allocation absent, dispatch never blocked)") {
