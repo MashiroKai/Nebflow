@@ -87,3 +87,89 @@ companion markdown documents in the vault.
   plain path string is not.
 - Do not rename documents that are already cited; fix the citing links in the
   same change instead.
+
+## Frontmatter (scenario metadata)
+
+Every vault document starts with a tiny frontmatter block — the graph reads it
+for its type/status filters:
+
+```
+---
+type: research-log
+status: open
+---
+```
+
+- `type` names the document's role in the scenario pack (below).
+- `status` tracks where it stands. Statuses that mark finished work
+  (`solved` / `done` / `accepted` / `mastered` / `published`) get a ✓ ring in
+  the graph, so "what is already resolved" reads at a glance.
+
+## Scenario packs
+
+Pick the pack that matches the engagement; do not invent a new one when these
+fit.
+
+### Research (科研)
+
+A research engagement is a line of work, not a pile of files. Four document
+roles carry the line:
+
+- `research-log` (`status: open` while active): dated entries. Each entry links
+  what it produced that day — experiments, notes, decisions — with wikilinks,
+  so the log is the spine of the graph.
+- `problem` documents: one open question each (`status: open`). When it is
+  resolved, flip to `status: solved` and link the evidence (result document,
+  experiment, literature note) at the resolution point. A solved problem that
+  cites nothing is not closed.
+- `literature-note`: one per paper (title = paper short title). **Download the
+  original PDF into `attachments/`** (use the `paper-download` skill of
+  browser-use; filename convention `firstauthor-year-shorttitle.pdf`) and link
+  it from the note — `![[firstauthor-year-shorttitle.pdf]]` — so the reader
+  opens the original in canvas from the note. Remote-only links (URLs without
+  a local copy) are a defect: literature research must produce the original
+  file. Cite claims as `[[literature-note#^claim-id]]` block references.
+- `conclusion` documents: one settled finding each, citing the problem
+  documents and literature notes that support it.
+
+Progress readout = the graph filtered by status: open problems, solved
+problems (✓), conclusions.
+
+### Learning (学习)
+
+- `learning-map`: the index document — one section per knowledge area, each
+  knowledge point a wikilink to its own document. The map is the spine.
+- Knowledge-point documents: one concept each; link prerequisite points
+  (`Prerequisites: [[point-a]], [[point-b]]`) so the graph shows the
+  dependency structure.
+- Study materials (course PDFs, slides, screenshots) go to `attachments/` and
+  are cited from the point they belong to — same download-and-link discipline
+  as research literature.
+- Progress = `status` on each point: `to-learn` / `learning` / `mastered`.
+
+### Engineering (工程决策)
+
+- `adr` (architecture decision record): one decision each,
+  `status: proposed | accepted | superseded`; a superseded ADR links its
+  successor. Incident/postmortem documents cite the ADRs they constrain.
+- Experiment/verification records cite the ADR or problem that motivated them.
+
+### Writing (写作)
+
+- `manuscript` (draft chapters), `source-note` (one per source, original
+  downloaded to `attachments/` where licensable), `outline`. Sources cite
+  claims with block references; the manuscript cites its sources.
+
+### Team knowledge base (团队知识库)
+
+- `runbook` (operational procedures, kept current — stale runbooks get
+  `status: superseded` with a link to the replacement), `faq` (one question
+  per document), `onboarding` (index linking the reading path).
+
+## Attachments are first-class references
+
+The graph indexes every canvas-openable attachment (PDF, Office, image,
+media) as a node, and a wikilink or embed pointing at it
+(`[[paper.pdf]]`, `![[figure.png]]`) opens it directly in canvas. Cite the
+attachment, never a bare path string: the link IS the edge that puts the
+literature on the graph.

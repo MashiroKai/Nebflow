@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "visual-report",
-  "version": "1.4.0",
-  "description": "可视化报告包——节点可分场景出图与人读报告。用于出图、图表、架构图、流程图、数据可视化、汇报、验收/调研/复盘报告。内含 skills：visual-report（体例）、core（规范）、academic-research（论文）、tech-architecture（架构）、engineering（工程）、office（办公）、education（讲义）、eda（电路）、timing（时序）、biology（分子）、chemistry（化学）、architecture（建筑）、mathematics（数学）、art（艺术）、music（音乐）、geo-map（地图）、astronomy（天文）、finance（行情）、network（网络）、motion-toolkit（动效）。另含 wiki-docs（项目文档库体例：docs/ vault、attachments/ 附件、Obsidian wikilink 互引、概念首现必释）。不适用于 Office 文档成稿与幻灯片制作。组件面：无mcp.json、无工具扩展。",
+  "version": "1.5.0",
+  "description": "可视化报告包——节点可分场景出图与人读报告。用于出图、图表、架构图、流程图、数据可视化、汇报、验收/调研/复盘报告。内含 skills：visual-report（体例）、core（规范）、academic-research（论文）、tech-architecture（架构）、engineering（工程）、office（办公）、education（讲义）、eda（电路）、timing（时序）、biology（分子）、chemistry（化学）、architecture（建筑）、mathematics（数学）、art（艺术）、music（音乐）、geo-map（地图）、astronomy（天文）、finance（行情）、network（网络）、motion-toolkit（动效）。另含 wiki-docs（项目文档库体例：docs/ vault、attachments/ 附件、Obsidian wikilink 互引、概念首现必释、frontmatter 场景元数据与科研/学习/工程/写作/团队五套编排包、文献必下载原件）。不适用于 Office 文档成稿与幻灯片制作。组件面：无mcp.json、无工具扩展。",
   "author": {
     "name": "Nebflow"
   }
