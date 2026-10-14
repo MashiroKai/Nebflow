@@ -90,13 +90,20 @@ class RemoteableDeviceParamSpec extends FunSuite:
     assert(!props(augmented).contains("device"), s"Delegate schema must carry no device, got: ${props(augmented)}")
 
   test("负控：漏斗面 Delegate 的 device 零命中 —— 摘除面读数"):
+    // 🔴 重锚（2026-10-14 redfix 批，报告 #23）：external-executors 批 #1225
+    // （`37a5b37d8`，2026-10-06）给 Delegate 的 LLM 面新增 `executor` 选择参数
+    // （schema:90；call 面 :288 `ExecutorRegistry.resolveRequested`）——执行器
+    // 选择是已合并的意图行为，「恰两参数」钉过时。期望集随更 = task/project/
+    // executor；并把 executor 一并纳入「禁 device 注入面」负控对照。
     val schema = funnelSchema("Delegate")
     assertEquals(
       props(schema),
-      Set("task", "project"),
-      "unified-delegate 后 Delegate 的 LLM 面 schema 恰两参数（required 同）"
+      Set("task", "project", "executor"),
+      "external-executors 后 Delegate 的 LLM 面 schema 恰三参数（required 同）"
     )
     assert(deviceProp(schema).isEmpty, "Delegate must have NO device property in the LLM-facing schema")
+    // （executor 增参的注入面负控由上一用例承载：remoteableTools 不含 Delegate ∧
+    // augmentSchema 对 Delegate 逐字原样 ⇒ device 注入面不因 executor 增参回涨。）
 
   // ══════════ 3. 边界：禁「注入多了」 ══════════
 

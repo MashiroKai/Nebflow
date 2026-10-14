@@ -246,7 +246,12 @@ class SenderOutPathLedgerSpec extends CatsEffectSuite:
         )
       yield
         assertEquals(row.deviceOutPath, "", "浏览器腿无本机真实路径 ⇒ 恒空串（禁拼接/禁预测）")
-        assertEquals(row.productElementNames.size, 16, "台账行键数 = 16（新键在编码面必在场）")
+        // 🔴 重锚（2026-10-14 redfix 批，报告 #24）：行键 16 → 18——`savedPath` 等
+        // 新键经 PR48 重建/absorb 批（7adc7c8a4 09-27 / ee1c8058c 09-28）入行
+        // （本批实测读数 `[READING SELFATTACH-B2] … keys=18`）。「新键在编码面必
+        // 在场」意图不变，计数钉随行键面演化更 18。主断言（B′ 恒空串）不受影响
+        // （本批合跑读数 `browserLegDeviceOutPath=''` ✓）。
+        assertEquals(row.productElementNames.size, 18, "台账行键数 = 18（新键在编码面必在场）")
     }
 
 end SenderOutPathLedgerSpec

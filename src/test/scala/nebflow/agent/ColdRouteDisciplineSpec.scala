@@ -149,8 +149,10 @@ class ColdRouteDisciplineSpec extends munit.FunSuite:
         body.contains("""Mail(address="project:<name>", message=<task>)"""),
         "② 已有项目 ⇒ Mail 未落地"
       )
-      // ③ 没有 ⇒ ProjectCreate 再转发
-      assert(body.contains("`ProjectCreate` and then that Mail"), "③ 无项目 ⇒ ProjectCreate 后 Mail 未落地")
+      // ③ 没有 ⇒ Project（原 ProjectCreate，b33f179b8 2026-10-07 更名）再转发
+      // 🔴 重锚（2026-10-14 redfix 批，报告 #18）：纯更名滞后——spec 字面未随
+      // ProjectCreateTool → Project 更名（PromptSections:305 现文）。
+      assert(body.contains("`Project` and then that Mail"), "③ 无项目 ⇒ Project 后 Mail 未落地")
       // ④ Read 的用途 = 读回项目返回结果
       assert(body.contains("`Read` reads back results only"), "④ Read 用途 未落地")
       // ⑤ 缺信息 ⇒ 派给项目让项目感知（根不亲自探文件系统）

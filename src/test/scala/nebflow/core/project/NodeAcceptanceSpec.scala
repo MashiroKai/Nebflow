@@ -86,6 +86,22 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       actorSystem = Some(system)
     )
 
+  /**
+   * Root（Nebula）发送者 ctx。🔴 重锚（2026-10-14 redfix 批，报告 #14-16）：
+   * `project:` 腿已收为 **Root 独占**（mailmodel 批 `a170bb841`，2026-10-10
+   * 「Mail project: leg root-only」——MailTool.scala 注释明示「documented address
+   * faces grant it to Nebula only」）。Task①②③ 的 harness sender 原为无 agentDef
+   * 的 Teamish 角色 ⇒ `outside your address face` 假红（合同 4 天后测试未同步）。
+   * 按 Root-only 合同把这三处的发送者换 Root 角色；断言语义零改动（Task② 的
+   * 「not mounted」文案在过面闸之后原样可达）。
+   */
+  private def mkRootCtx(res: SharedResources, system: ActorSystem, ws: String, sid: String): ToolContext =
+    mkCtx(res, system, ws).copy(
+      sessionId = Some(sid),
+      agentDef =
+        Some(nebflow.actor.AgentDef(name = "Nebula", description = "acceptance root sender", systemPrompt = ""))
+    )
+
   private def nodeEdit(input: Json, ctx: ToolContext): IO[Either[String, String]] =
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
@@ -1246,7 +1262,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
           anchorTaskTerminal = Some(false)
         )
         _ <- ProjectRuntimeRegistry.register(rt0.copy(actorRef = Some(ref)))
-        ctx = mkCtx(res, system, ws.toString)
+        ctx = mkRootCtx(res, system, ws.toString, sid = "root-acc-task1")
         r <- MailTool.call(
           Json
             .obj("address" -> Json.fromString("project:acc-task1"), "message" -> Json.fromString("调研 X"))
@@ -1330,7 +1346,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     val system = ActorSystem(s"acc-task2-${scala.util.Random.nextInt(100000)}")
     for
       res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
-      ctx = mkCtx(res, system, tempRoot.toString)
+      ctx = mkRootCtx(res, system, tempRoot.toString, sid = "root-acc-task2")
       r <- MailTool.call(
         Json.obj("address" -> Json.fromString("project:no-such"), "message" -> Json.fromString("x")).asObject.get,
         ctx
@@ -1359,7 +1375,12 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       ref <- spawnProjectActor(rt0, system, res, "proj-slide")
       _ <- ProjectRuntimeRegistry.register(rt0.copy(actorRef = Some(ref)))
       _ <- TeamSessionRegistry.registerSession("slideblocks", "boss", "boss-sid")
-      rootCtx = mkCtx(res, system, ws.toString).copy(sessionId = Some("root-sid"))
+      // 🔴 重锚（报告 #14-16，Root-only 合同 a170bb841）：腿① project: 触发改用
+      // Root 发送者（Teamish 已被面闸拒）；腿② Mail→team 的合法发送者仍是
+      // Teamish（团队名不在 Root 面——rootFace 只有 project:/裸项目名与 node:），
+      // 保持原 mkCtx 形态 ⇒ 两腿各用其合同内合法角色，渠道区分断言原样成立。
+      rootCtx = mkRootCtx(res, system, ws.toString, sid = "root-sid")
+      teamCtx = mkCtx(res, system, ws.toString).copy(sessionId = Some("root-sid"))
       // Mail(address="project:slideblocks") → project dispatcher（新渠道；旧 Task 工具已删净退役）
       rTask <- MailTool.call(
         Json
@@ -1371,7 +1392,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       // Mail(→slideblocks) → team（Mail 保持团队优先不翻转——immediate 全链）
       rMail <- MailTool.call(
         Json.obj("address" -> Json.fromString("slideblocks"), "message" -> Json.fromString("hi")).asObject.get,
-        rootCtx
+        teamCtx
       )
       leadSid <- TeamSessionRegistry.findTeamAgent("slideblocks", "boss")
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)

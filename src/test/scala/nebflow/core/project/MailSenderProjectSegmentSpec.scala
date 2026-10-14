@@ -204,11 +204,18 @@ class MailSenderProjectSegmentSpec extends CatsEffectSuite:
   end runLeg1
 
   test("T1 双向钉 (a)：腿① 发送方**自带项目** ⇒ 气泡第二段 = 其实际项目域"):
-    runLeg1("t1", Some("PROJ-P6-SRC"), "worker-a").map { (out, h) =>
-      assert(out.startsWith("RIGHT:"), s"生产构造点必须放行（非 dispatcher 自带的项目会话可发 project: 腿）：$out")
+    // 🔴 重锚（2026-10-14 redfix 批，报告 #17）：原 T1 发送者 = 项目域 worker-a
+    // （category=team）——`project:` 腿收为 **Root 独占**（mailmodel 批 `a170bb841`，
+    // 2026-10-10）后该形态在地址面闸即被拒（`LEFT: … outside your address face`），
+    // 60s waitUntil 只是症状。按「测试侧改 Root sender 携项目上下文」重锚：
+    // (a) 侧语义（发送方项目域 ≠ 根域 ⇒ 第二段 = 实际项目域）由 **Root 发送者
+    // 携 projectName** 承载；第三段随角色 = NEBULA。🔴 产品语义裁定（项目域
+    // sender 直邮 project: 是否恢复）**不改合同**，留作者裁（triage 报告待裁 #5）。
+    runLeg1("t1", Some("PROJ-P6-SRC"), "Nebula").map { (out, h) =>
+      assert(out.startsWith("RIGHT:"), s"Root 发送者必须放行 project: 腿（Root-only 合同合法面）：$out")
       assertEquals(
         h,
-        Some("MAIL · PROJ-P6-SRC · WORKER-A · INFO"),
+        Some("MAIL · PROJ-P6-SRC · NEBULA · INFO"),
         "发送方项目未取到 ⇒ PROJECT 段落到根域 NEBULA（R-A 缺陷形态）"
       )
     }
