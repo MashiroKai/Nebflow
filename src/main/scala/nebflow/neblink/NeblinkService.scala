@@ -488,9 +488,18 @@ class NeblinkService private (
 
   /** Forward an incoming WS data message to all registered handlers. */
   private[nebflow] def handleDataMessage(payload: Json): IO[Unit] =
-    dataHandlers.get.flatMap(
-      _.traverse_(_.apply(payload).handleErrorWith(e => logger.debug(s"Data handler error: ${e.getMessage}")))
-    )
+    IO.blocking(logger.debug(s"Data frame received: channel=${payload.hcursor.downField("channel").as[String].getOrElse("?")} bytes=${payload.noSpaces.length}")) *>
+      dataHandlers.get.flatMap { handlers =>
+        if handlers.isEmpty then
+          // A data frame with NO registered handler is an integration fault
+          // (the sender believed the channel live) — never silently dropped.
+          logger.warn(
+            s"Data frame DROPPED: no data handler registered (channel=${payload.hcursor.downField("channel").as[String].getOrElse("?")})"
+          )
+          IO.unit
+        else
+          handlers.traverse_(_.apply(payload).handleErrorWith(e => logger.debug(s"Data handler error: ${e.getMessage}")))
+      }
 
   /**
    * Send function for outgoing WS data messages. Set by GatewayMain after
