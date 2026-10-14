@@ -1293,6 +1293,10 @@ export function initInput(view) {
       : t('input.placeholder');
   };
   voiceBtn.addEventListener('pointerdown', (e) => {
+    // Capture the pointer to THIS element: mouse/pen drags leave the 44px
+    // button immediately, and without capture the pointermove events go to
+    // whatever element is under the cursor — the gesture never fires.
+    try { voiceBtn.setPointerCapture(e.pointerId); } catch (_) {}
     voiceDrag = { x: e.clientX, y: e.clientY, fired: false };
     input.placeholder = t('input.ph.drag');
   });

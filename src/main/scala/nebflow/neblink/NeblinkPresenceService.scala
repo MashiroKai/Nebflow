@@ -984,8 +984,12 @@ final class NeblinkPresenceService(
     if conn != null then conn.lastPong.set(System.currentTimeMillis())
 
   /** Called by the WS listener when a data message arrives from a peer. */
-  private[neblink] def onDataReceived(payload: Json): Unit =
+  private[neblink] def onDataReceived(payload: Json): Unit = {
+    logger.info(
+      s"presence data frame from ws: channel=${payload.hcursor.downField("channel").as[String].toOption.getOrElse("?")} bytes=${payload.noSpaces.length}"
+    )
     dispatcher.unsafeRunAndForget(neblinkService.handleDataMessage(payload))
+  }
 
   /** Check if a direct WS connection exists to the given device. */
   def isConnected(deviceId: String): Boolean =
@@ -998,6 +1002,7 @@ final class NeblinkPresenceService(
    */
   def sendData(deviceId: String, channel: String, payload: Json): IO[Boolean] =
     IO.blocking {
+      logger.info(s"presence sendData: device=$deviceId channel=$channel connectionsHasKey=${connections.containsKey(deviceId)}")
       val conn = connections.get(deviceId)
       if conn != null then
         val msg = Json.obj(

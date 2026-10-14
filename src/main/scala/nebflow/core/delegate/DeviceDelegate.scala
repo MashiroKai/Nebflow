@@ -248,6 +248,9 @@ object DeviceDelegate:
     val parentSessionId = hc.downField("parentSessionId").as[String].getOrElse("")
     val rootSessionId = hc.downField("rootSessionId").as[String].getOrElse("")
     val taskId = hc.downField("taskId").as[Option[String]].toOption.flatten
+    logger.info(
+      s"[device-delegate] delegate-spawn RECEIVED (from=$fromDeviceId, project=$projectName, spawnId=$spawnId) — verifying pairing/HMAC"
+    )
 
     def reject(reason: String): IO[Unit] =
       logger.warn(
