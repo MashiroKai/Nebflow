@@ -107,6 +107,7 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     "subagent-G" -> "root-1", // 命中（subagent- 族，builtin-merge 批新增）
     "workflow-H" -> "root-1", // 命中（workflow- 族，builtin-merge 批新增）
     "dispatcher-E" -> "root-1", // 命中（dispatcher- 族）
+    "external-kai-9" -> "root-1", // 命中（external- 族，#1225/37a5b37d8 前端单侧扩面，2026-10-14 redfix 后端补齐）
     "delegate-C" -> "root-2", // 反例：别的 root 的子代理 ⇒ 不入选
     "node-F" -> "", // 反例：无 root 归属 ⇒ 不入选
     "7f0d0e3a-1111-2222-3333-444455556666" -> "root-1", // 反例：非子代理族前缀（team 成员等）
@@ -114,7 +115,7 @@ class SubAgentInboxMirrorSpec extends FunSuite:
   )
 
   private val hitSet =
-    List("delegate-A", "dispatcher-E", "node-B", "subtask-D", "subagent-G", "workflow-H")
+    List("delegate-A", "dispatcher-E", "node-B", "subtask-D", "subagent-G", "workflow-H", "external-kai-9")
 
   test("① -1 白名单族（mail / mail-queue）逐族命中：目标集 = parent 链 π 子代理族前缀，去重且稳定") {
     assertEquals(InjectedInboxMirror.targets("root-1", "mail", candidates), gated(hitSet.sorted, Nil))
@@ -123,7 +124,9 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     assertEquals(InjectedInboxMirror.MirrorSources, Set("mail", "mail-queue"))
     assertEquals(
       InjectedInboxMirror.SubAgentIdPrefixes,
-      List("delegate-", "subtask-", "subagent-", "workflow-", "node-", "dispatcher-")
+      // external-（2026-10-14 redfix，报告 #8）：37a5b37d8 前端单侧扩面后端的
+      // 同源补齐——与 ③-1 前端逐值同源钉同一张表（夹具命中族同步扩，P1-3 先例）。
+      List("delegate-", "subtask-", "subagent-", "workflow-", "node-", "dispatcher-", "external-")
     )
     // 开关定名 pin（读法 = system property → 环境变量）
     assertEquals(InjectedInboxMirror.SwitchProp, "nebflow.subinbox.mirror")
