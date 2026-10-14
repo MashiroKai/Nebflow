@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "docs-prompt",
+  "version": "1.0.1",
+  "description": "Nebflow 文档与提示词工程域知识包——节点获得中英双语同步写作、文档一致性联动与系统提示词/工具描述的编辑纪律。适用于写或更新文档、维护 README/CODEBASE/文档导航、改系统提示词、优化工具描述、agent 定义体检等任务。内含 skills：nebflow-docs（写作规范/双语同步/一致性联动/产出路径纪律）、nebflow-prompt-engineering（六核心原则/提示词解剖/编辑纪律与反模式/工具描述写法/agent 体检）。不适用于代码实现与交付验证（另配 nebflow-backend-dev、nebflow-qa 插件）。组件面：无 mcp.json、无工具扩展。",
+  "author": {
+    "name": "Nebflow"
+  }
+}
