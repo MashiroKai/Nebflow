@@ -1086,6 +1086,17 @@ export async function openWorkspaceItem(item) {
     // a jump into a source-mode tab does not fire later as a stale jump.
     const stash = absPath ? pendingRefAnchors.get(absPath) : undefined;
     if (absPath) pendingRefAnchors.delete(absPath);
+    // Jump into a tab that is ALREADY open: this branch switched to it without
+    // any re-render, so the anchor must be applied to the LIVE viewer here —
+    // the markdown viewer keeps its analysis on the pane (nf-jump-anchor).
+    const jumpIntent = anchor || stash;
+    if (jumpIntent && !item.background) {
+      if (entry.type === 'markdown' && entry.paneEl.dataset.sourceMode !== '1') {
+        entry.paneEl.dispatchEvent(new CustomEvent('nf-jump-anchor', { detail: jumpIntent }));
+      }
+      const pgExisting = jumpIntent.pageStart;
+      if (Number.isFinite(pgExisting)) /** @type {any} */ (entry.paneEl)._scrollToPage?.(pgExisting);
+    }
     if (content && !isTabDirty(entry) && entry.paneEl.dataset.sourceMode !== '1') {
       // Skip the re-render when the live editor already shows this content —
       // remounting Monaco on every refresh would steal the cursor/scroll for

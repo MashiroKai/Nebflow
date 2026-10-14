@@ -367,9 +367,14 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
   // there and the re-render must proceed. A jump anchor still applies to the
   // existing DOM (re-clicking a reference in an open doc must jump again).
   const scroller = pane.querySelector('.canvas-md-scroll');
+  // Source analysis BEFORE the guard: the unchanged-content early-return
+  // below still applies jump anchors (re-clicking a reference in an open
+  // doc must jump), and a block anchor needs this document's ^id → line
+  // map. The content is identical on that path, so one analysis serves both.
+  const analysis = absPath ? analyzeSource(content || '') : { html: content || '', blockStarts: [], blockIds: new Map() };
   if (scroller && /** @type {any} */ (pane)._renderedMdContent === content) {
     const existingViewer = pane.querySelector('.canvas-md-viewer');
-    if (existingViewer && jumpAnchor) applyJumpAnchor(existingViewer, jumpAnchor);
+    if (existingViewer && jumpAnchor) applyJumpAnchor(existingViewer, jumpAnchor, analysis.blockIds);
     return;
   }
 
@@ -378,10 +383,6 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
   // but never jumps to the top. The scrollTop setter auto-clamps when the
   // new content is shorter than the old scroll offset.
   const prevScrollTop = scroller ? scroller.scrollTop : 0;
-
-  // Source analysis BEFORE rendering: strip `^block-id` markers from the
-  // rendered string and keep the block→line map for reference jumps.
-  const analysis = absPath ? analyzeSource(content || '') : { html: content || '', blockStarts: [], blockIds: new Map() };
 
   const { renderMarkdownWithMath } = await import('../utils.js');
   let html = renderMarkdownWithMath(analysis.html, false);
@@ -461,6 +462,18 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
   pane.classList.remove('scrollable');
   pane.innerHTML = `<div class="canvas-md-scroll"><div class="canvas-md-viewer">${html}</div></div>`;
   /** @type {any} */ (pane)._renderedMdContent = content;
+  // Jump face: the live analysis stays on the pane so a reference click into
+  // an ALREADY-OPEN tab (canvas.js switches without re-rendering) can still
+  // resolve block anchors — it dispatches nf-jump-anchor on the pane.
+  /** @type {any} */ (pane)._mdAnalysis = analysis;
+  if (!/** @type {any} */ (pane)._mdJumpBound) {
+    /** @type {any} */ (pane)._mdJumpBound = true;
+    pane.addEventListener('nf-jump-anchor', (/** @type {CustomEvent} */ e) => {
+      const viewer = pane.querySelector('.canvas-md-viewer');
+      const blockIds = /** @type {any} */ (pane)._mdAnalysis?.blockIds;
+      if (viewer && e.detail) applyJumpAnchor(viewer, e.detail, blockIds);
+    });
+  }
 
   // Restore the reader's position after a content-changed rebuild. Clamped
   // automatically if the new document is shorter (scrollTop setter).
