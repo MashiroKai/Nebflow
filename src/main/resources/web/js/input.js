@@ -825,6 +825,12 @@ export function initInput(view) {
     mo.observe(view.dom.attPreview, { childList: true, subtree: true });
     view.dom.refGateObserver = mo;
   }
+  // voiceActive lives ABOVE its first read: updateInputPlaceholder (a hoisted
+  // function declaration, called here during init) reads it — declaring it at
+  // the voice-dictation section below put the read in the TDZ and killed the
+  // whole boot (initInput throws, everything after main.js's initInput never
+  // runs).
+  let voiceActive = false;
   syncRefOnlyGate(view);
   updateInputPlaceholder();
 
@@ -1068,7 +1074,6 @@ export function initInput(view) {
   // Voice dictation — uses browser Web Speech API (free, no API key needed)
   // Push-and-hold the mic button to start; release to stop.
   // Interim text streams directly into the input box — no overlay.
-  let voiceActive = false;
   let voiceAnchor = 0;       // position where current voice segment starts
   let voiceInterimLen = 0;   // length of interim text currently displayed
   // Snapshot of input.value at the last voice write / user edit. The diff
