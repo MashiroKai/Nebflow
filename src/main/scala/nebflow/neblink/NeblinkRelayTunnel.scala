@@ -842,6 +842,23 @@ final class NeblinkRelayTunnel(
           }
         case "Notify" =>
           val payload = params("payload").getOrElse(Json.Null)
+          // P6 诊断探针（delegate 断点追查，腿3 定案后）②分发层：relay_request 的
+          // Notify 载荷若为 delegate-spawn，本行是「隧道收帧 → DeviceDelegate.handleSpawn」
+          // 链上隧道侧的唯一分发口（下一跳 = neblinkService.handleDataMessage，再下跳即
+          // spawn handler 真正入口，其既有 INFO「delegate-spawn RECEIVED」与本行对照）。
+          // 选址在 DeviceDelegate.scala 之外（作者 WIP 红线）的等价调用点。DEBUG 级、
+          // 只读载荷摘要（spawnId/from/task 截断 80 字符防刷屏），分发语义零改动。
+          if payload.hcursor.downField("kind").as[String].getOrElse("") ==
+              nebflow.core.delegate.DeviceDelegate.KindSpawn
+          then
+            logger.debug(
+              s"P6 probe: spawn dispatched " +
+                s"handler=DeviceDelegate.handleSpawn via=NeblinkService.handleDataMessage " +
+                s"request_id=$requestId " +
+                s"spawnId=${payload.hcursor.downField("spawnId").as[String].getOrElse("<none>")} " +
+                s"from=${payload.hcursor.downField("fromDeviceId").as[String].getOrElse("<none>")} " +
+                s"taskHead=${payload.hcursor.downField("task").as[String].getOrElse("").take(80)}"
+            )
           neblinkService.handleDataMessage(payload).as(("notified", ""))
         case "RemoteUpdate" =>
           val beta = params("beta").flatMap(_.asBoolean).getOrElse(false)
@@ -1579,6 +1596,17 @@ private final class RelayWsListener(
         case Right(json) =>
           json.hcursor.downField("type").as[String].getOrElse("") match
             case "relay_request" =>
+              // P6 诊断探针（delegate 断点追查，腿3 定案后）①隧道层收帧入口：
+              // 服务端已证帧投递到 B 且 531ms 内回包 200（request_id=e64239ec），
+              // 本行与分发层探针②「spawn dispatched」对照，把断点钉到
+              // 「隧道收帧 → spawn 分发」之间的具体段。DEBUG 级、只读帧摘要
+              // （requestId/action/帧长），分发语义零改动。
+              logger.debugSync(
+                s"P6 probe: relay_request received " +
+                  s"request_id=${json.hcursor.downField("requestId").as[String].getOrElse("<none>")} " +
+                  s"action=${json.hcursor.downField("action").as[String].getOrElse("<none>")} " +
+                  s"frameChars=${text.length}"
+              )
               dispatcher.unsafeRunAndForget(tunnel.handleRelayRequest(json, ws))
             case "ping" =>
               try ws.sendText("""{"type":"pong"}""", true)

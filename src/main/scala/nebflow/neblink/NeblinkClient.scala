@@ -1284,6 +1284,16 @@ class NeblinkClient(
       dispatchRequest("POST", s"${config.url}/api/relay/$targetDeviceId/exec", body, Some(token), timeout)
     ).flatMap {
       case Right(respBody) =>
+        // P6 诊断探针（delegate 断点追查，腿3 定案后）③A 侧 relay 响应 body 不再丢弃：
+        // 200 回包的原始 body（{output,error}）是服务端 D3 盲区（服务端不记 body）在
+        // 客户端的唯一读数——下次复现直接读出 B 回了 output 还是 error。relayNotify
+        // 响应 body 同经本路径（relayNotify → relayExec），无需第二桩。DEBUG 级 +
+        // 512B 截断防刷屏；下方 decode/output/error 提取语义零改动。
+        // ⚠ 冲突面：本桩位于作者 WIP 文件（NeblinkClient.scala），合并时将与其 WIP 冲突。
+        logger.debug(
+          s"P6 probe: relay exec response http=OK target=$targetDeviceId action=$action " +
+            s"body=${respBody.take(512)}"
+        )
         decode[Json](respBody) match
           case Right(json) =>
             val output = json.hcursor.downField("output").as[String].getOrElse("")
