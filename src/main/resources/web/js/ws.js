@@ -458,33 +458,16 @@ function showTicketEntry() {
   injectTicketEntryStyles();
   const overlay = document.createElement('div');
   overlay.className = 'nb-ticket-overlay';
+  // Single action: reuse the website's own login (next=%2Fportal re-enters
+  // this console automatically after the website session is established).
+  // No paste-ticket field — ticket redemption stays a URL/CLI face only.
   overlay.innerHTML = `
     <div class="nb-ticket-modal">
       <h3>${t('ws.ticketEntry.title')}</h3>
       <p class="nb-ticket-hint">${t('ws.ticketEntry.hint')}</p>
-      <input type="text" class="nb-ticket-input" autocomplete="off" spellcheck="false"
-             placeholder="${t('ws.ticketEntry.placeholder')}">
-      <div class="nb-ticket-error" hidden></div>
-      <div class="nb-ticket-actions"><button class="cfg-btn cfg-btn-primary nb-ticket-go">${t('ws.ticketEntry.open')}</button></div>
-      <a class="nb-ticket-web" href="${getWebsiteLoginUrl()}">${t('ws.ticketEntry.website')}</a>
+      <div class="nb-ticket-actions"><a class="cfg-btn cfg-btn-primary nb-ticket-web" href="${getWebsiteLoginUrl()}">${t('ws.ticketEntry.login')}</a></div>
     </div>`;
   document.body.appendChild(overlay);
-  const input = /** @type {HTMLInputElement} */ (overlay.querySelector('.nb-ticket-input'));
-  const err = /** @type {HTMLElement} */ (overlay.querySelector('.nb-ticket-error'));
-  const go = () => {
-    const ticket = input.value.trim();
-    if (!ticket) {
-      err.textContent = t('ws.ticketEntry.needTicket');
-      err.hidden = false;
-      return;
-    }
-    // Redemption face: 303 + Set-Cookie back onto the clean root path —
-    // the ticket never enters history beyond this navigation.
-    location.href = `/?ticket=${encodeURIComponent(ticket)}`;
-  };
-  overlay.querySelector('.nb-ticket-go').addEventListener('click', go);
-  input.addEventListener('keydown', (/** @type {KeyboardEvent} */ e) => { if (e.key === 'Enter') go(); });
-  input.focus();
 }
 
 // Same Sapphire Glass tokens the login modal family uses (activityBar.js);
@@ -511,14 +494,8 @@ function injectTicketEntryStyles() {
 }
 .nb-ticket-modal h3 { font-size: 15px; margin: 0 0 10px; color: var(--color-text); font-weight: 600; }
 .nb-ticket-hint { font-size: 13px; color: var(--color-text-muted); margin: 0 0 12px; line-height: 1.55; }
-.nb-ticket-input {
-  width: 100%; box-sizing: border-box; padding: 8px 10px; font-size: 13px;
-  border-radius: 8px; border: 1px solid var(--glass-border, rgba(255,255,255,0.15));
-  background: var(--glass-bg, rgba(24, 28, 38, 0.5)); color: var(--color-text);
-  font-family: 'SF Mono', 'Fira Code', monospace;
-}
-.nb-ticket-error { font-size: 12px; color: var(--status-word, #e57373); margin-top: 8px; }
-.nb-ticket-actions { display: flex; justify-content: flex-end; margin-top: 14px; }
+.nb-ticket-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+.nb-ticket-actions .cfg-btn-primary { width: 100%; padding: 10px 14px; font-size: 14px; }
 .nb-ticket-web {
   display: block; margin-top: 12px; text-align: center;
   font-size: 12px; color: var(--text-muted, rgba(255,255,255,0.55));
