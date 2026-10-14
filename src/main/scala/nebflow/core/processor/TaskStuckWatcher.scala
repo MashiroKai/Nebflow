@@ -1191,13 +1191,19 @@ object TaskStuckWatcher:
             else
               attempts match
                 case 1 =>
-                  // L1 软恢复：halt 在飞 LLM——turn 若卡死在 LLM 流上，StuckAbort 浮出
-                  // → 有界重试 / turn-end 注入接管。action=halt（真实动作，P7 诚实帧）。
+                  // L1 **已退役**（killruling 批 2026-09-23 作者裁定 #28「删」，98b3e3b2c）：
+                  // 原动作 = `halt 在飞 LLM`（`hardCancel()`/`cancelInflightFor` 原语），
+                  // 删因 = 假阳性 **95.4%**（E 面 16 227 : 785）。🔴 占位不重编号：
+                  // `case 1 =>` 与 `recordFire("L1", …)` 保留（StuckJudgementOrderSpec
+                  // 「L1→L3 逐拍升」零改动）；`action="halt"` 逐字不变、**动作零**
+                  // （sensor-only tick，下一拍升 L2）。`hardCancel()` 原语保留——
+                  // L2 `transportAbort()` 与回滚形态（`if !hard`）仍消费。
+                  // （本段曾被 PR48 head tree 重建 7adc7c8a4 静默带回，2026-10-14
+                  // redfix 批按裁定语义摘除复活段。）
                   logger.warn(
-                    s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L1) — halting in-flight LLM"
-                  ) *> recordFire("L1", attempts) *> act(broadcastStuck(wsHub, rec, idleSecs, "halt", reason)) *> act(
-                    hardCancel()
-                  )
+                    s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L1) — retired: the flow-branch " +
+                      "LLM-halt action was removed (killruling ruling #28, false-positive rate 95.4%); sensor-only tick"
+                  ) *> recordFire("L1", attempts) *> act(broadcastStuck(wsHub, rec, idleSecs, "halt", reason))
                 case 2 =>
                   // L2 硬中断（action=hard-abort）：transport abort + reclaimSession（见
                   // transportAbort 的 evidence #5 护栏——非 LLM 楔死形态收回进程 kill）。
@@ -1426,16 +1432,19 @@ object TaskStuckWatcher:
               .flatMap { attempts =>
                 val (action, io) = attempts match
                   case 1 =>
+                    // L1 **已退役**（killruling 批 2026-09-23 作者裁定 #28「删」，98b3e3b2c）：
+                    // 原动作 = `halt 在飞 LLM`（`cancelInflightFor`），删因 = 假阳性
+                    // **95.4%**（E 面 16 227 : 785）。占位不重编号：`case 1 =>` 保留；
+                    // `action="halt"` 逐字不变、**动作零**（sensor-only tick，下一拍升 L2）。
+                    // （本段曾被 PR48 重建族 7adc7c8a4/ee1c8058c 静默带回，2026-10-14
+                    // redfix 批按裁定语义摘除复活段。）
                     (
                       "halt",
                       logger.warn(
-                        s"TaskStuckWatcher: root agent ${rec.sessionId} stuck for ${idleSecs}s — L1: halting in-flight LLM"
-                      ) *> LlmRuntimePort
-                        .cancelInflightFor(rec.sessionId)
-                        .void
-                        .handleErrorWith(e =>
-                          logger.warn(s"TaskStuckWatcher: L1 halt for ${rec.sessionId} failed: ${e.getMessage}")
-                        )
+                        s"TaskStuckWatcher: root agent ${rec.sessionId} still stuck for ${idleSecs}s — L1 retired: " +
+                          "the LLM-halt action was removed (killruling ruling #28, false-positive rate 95.4%); " +
+                          "sensor-only tick, upgrading to L2 on the next scan"
+                      )
                     )
                   case 2 =>
                     (
