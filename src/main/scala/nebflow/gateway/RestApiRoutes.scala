@@ -78,7 +78,8 @@ class RestApiRoutes(
   def routes: HttpRoutes[IO] =
     HealthRoutes.routes(ctx) <+> SessionRoutes.routes(ctx) <+> AskUserCancelRoutes.routes(ctx) <+>
       ConfigRoutes.routes(ctx) <+>
-      ProjectsRoutes.routes(ctx) <+> RegistryRoutes.routes(ctx) <+> NeblinkRoutes.routes(ctx) <+>
+      ProjectsRoutes.routes(ctx) <+> WikiRoutes.routes(ctx) <+> RegistryRoutes.routes(ctx) <+>
+      NeblinkRoutes.routes(ctx) <+>
       SocialRoutes.routes(ctx) <+> SecretsRoutes.routes(ctx) <+>
       // Phase 3b: the AuthAdmin face (break-glass ticket / token rotate /
       // sessions list+revoke), file-token Bearer ONLY (R1-1) — appended last:

@@ -1481,3 +1481,160 @@ body.col-resizing #canvas-panel { transition: none; }
   }
   .explorer-pickup-bar { animation-duration: 0.01s; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Wiki document graph + in-file find (wiki-graph batch, 2026-10-14)
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Floating glass toggles — same material family as .canvas-source-toggle;
+   each stacked button keeps a 48px slot (source 16 · ref-select 64 ·
+   find 64/112 · graph 112). */
+.canvas-find-toggle,
+.canvas-graph-toggle {
+  position: absolute; bottom: 16px;
+  width: 40px; height: 40px; border-radius: 50%;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow: inset 0 1px 0 var(--glass-control-highlight),
+              inset 0 -1px 0 var(--glass-control-underedge);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; z-index: 10; color: var(--color-text);
+  transition: all .2s ease; opacity: .6;
+}
+.canvas-find-toggle:hover,
+.canvas-graph-toggle:hover {
+  background: var(--glass-control-bg-hover); opacity: 1; transform: scale(1.05);
+}
+
+/* ── Glass find bar (fileSearch.js) ─────────────────────────────── */
+.nf-findbar {
+  position: absolute; top: 10px; right: 14px; z-index: 30;
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow: inset 0 1px 0 var(--glass-control-highlight),
+              inset 0 -1px 0 var(--glass-control-underedge),
+              0 4px 16px rgba(0, 0, 0, 0.10);
+  animation: nfFindbarIn .16s ease;
+}
+@keyframes nfFindbarIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.nf-findbar-input {
+  width: 200px; border: none; outline: none; background: transparent;
+  color: var(--color-text); font-size: 13px;
+  font-family: inherit;
+}
+.nf-findbar-input::placeholder { color: var(--color-text-muted); opacity: .7; }
+.nf-findbar-count {
+  min-width: 44px; text-align: center;
+  font-size: 11px; color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.nf-findbar-btn {
+  width: 24px; height: 24px; border-radius: 7px;
+  border: none; background: transparent; color: var(--color-text-muted);
+  cursor: pointer; font-size: 13px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .15s ease, color .15s ease;
+}
+.nf-findbar-btn:hover { background: var(--glass-control-bg-hover); color: var(--color-text); }
+
+/* Find hit marks (both the app-document face and the iframe face). */
+mark.nf-find-hit { background: rgba(255, 213, 0, 0.45); color: inherit; border-radius: 2px; }
+mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border-radius: 2px; }
+
+/* ── Wikilinks (rendered markdown) ──────────────────────────────── */
+.canvas-md-viewer a.nf-wikilink {
+  color: var(--color-primary, #07c160);
+  text-decoration: none;
+  border-bottom: 1px dashed currentColor;
+  cursor: pointer;
+}
+.canvas-md-viewer a.nf-wikilink:hover { filter: brightness(1.1); }
+.canvas-md-viewer a.nf-wikilink-unresolved {
+  color: var(--color-text-muted, #8b8e96);
+  border-bottom-style: dotted;
+  opacity: .85;
+}
+.canvas-md-viewer a.nf-wikilink-self { font-style: italic; }
+
+/* Reference-jump flash: the target paragraph glows once (~1.8s) then settles. */
+.canvas-md-viewer .nf-jump-flash {
+  animation: nfJumpFlash 1.8s ease;
+  border-radius: 6px;
+}
+@keyframes nfJumpFlash {
+  0%   { background: rgba(94, 106, 210, 0.30); box-shadow: 0 0 0 6px rgba(94, 106, 210, 0.12); }
+  60%  { background: rgba(94, 106, 210, 0.18); }
+  100% { background: transparent; box-shadow: none; }
+}
+
+/* ── Wiki graph tab ─────────────────────────────────────────────── */
+.wiki-graph-pane { display: flex; flex-direction: column; overflow: hidden; }
+.wiki-toolbar {
+  flex: none;
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px 6px;
+}
+.wiki-toolbar-search {
+  flex: 0 1 240px; min-width: 120px;
+  height: 30px; padding: 0 12px;
+  border-radius: 10px; border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  color: var(--color-text); font-size: 13px; outline: none;
+}
+.wiki-toolbar-search::placeholder { color: var(--color-text-muted); opacity: .7; }
+.wiki-toolbar-btn {
+  flex: none; height: 30px; padding: 0 12px;
+  border-radius: 10px; font-size: 12px; color: var(--color-text);
+  cursor: pointer;
+}
+.wiki-toolbar-btn.busy { opacity: .5; pointer-events: none; }
+.wiki-toolbar-status {
+  flex: 1; text-align: right;
+  font-size: 11px; color: var(--color-text-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.wiki-canvas { flex: 1 1 auto; min-height: 0; width: 100%; cursor: grab; background: transparent; }
+
+/* Hover tooltip (shared document-level element, glass material). */
+.wiki-tip {
+  position: fixed; z-index: 1200; max-width: 250px;
+  padding: 8px 11px; border-radius: 10px;
+  border: 1px solid var(--glass-border, rgba(255,255,255,0.35));
+  background: var(--glass-bg, rgba(24, 28, 38, 0.68));
+  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  font-size: 12px; color: var(--color-text);
+  pointer-events: none; opacity: 0; transition: opacity .12s ease;
+}
+.wiki-tip.show { opacity: 1; }
+.wiki-tip-title { font-weight: 600; margin-bottom: 2px; word-break: break-all; }
+.wiki-tip-path {
+  font-family: var(--font-mono, monospace); font-size: 10.5px;
+  color: var(--color-text-muted); word-break: break-all;
+}
+.wiki-tip-device { margin-top: 3px; font-size: 11px; color: var(--sapphire-refraction, #5e6ad2); }
+
+@media (prefers-reduced-motion: reduce) {
+  .nf-findbar { animation: none; }
+  .canvas-md-viewer .nf-jump-flash { animation: none; background: rgba(94, 106, 210, 0.18); }
+}
+
+/* ── Scenario facets + metadata tooltip (wiki-graph v2) ──────────── */
+.wiki-facets { display: flex; align-items: center; gap: 8px; padding: 0 14px 8px; flex: none; }
+.wiki-facet {
+  height: 26px; padding: 0 8px;
+  border-radius: 9px; border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  color: var(--color-text); font-size: 12px; outline: none; cursor: pointer;
+  max-width: 170px;
+}
+.wiki-tip-meta { font-size: 11px; color: var(--sapphire-refraction, #5e6ad2); margin-bottom: 2px; }

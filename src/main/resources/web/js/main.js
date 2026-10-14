@@ -86,6 +86,7 @@ import { openProjectsTab } from './projectTab.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
 import { initDaemons } from './daemons.js';
 import { initChatSearch } from './chatSearch.js';
+import { initFileSearch } from './fileSearch.js';
 import { initUsageDashboard } from './usageDashboard.js';
 import { initExplorer, refreshExplorer } from './explorer.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
@@ -3488,6 +3489,15 @@ initCanvas();
 initColResizers();
 // #27: Project 标签页按钮（取代 Team/Flow 主导位置）——打开发布 projects 标签页
 registerCanvasPanelButton('projects', 'projects-btn', () => openProjectsTab());
+// wiki-graph batch (2026-10-14): star button opens the wiki document graph
+// tab — same 4-state panel-button machine as Projects (dynamic import keeps
+// the boot path free of one more eager module).
+import('./wikiGraph.js').then(({ openWikiGraphTab }) => {
+  registerCanvasPanelButton('wiki-graph', 'wiki-btn', () => openWikiGraphTab());
+}).catch(() => { /* module unavailable — the button stays inert */ });
+// In-file Ctrl/Cmd+F routing (file content first, chat search as fallback —
+// the fallback itself lives in chatSearch.js's own binding).
+initFileSearch();
 
 // Remove UI initialization lock — all layout setup is done.
 // Double-rAF ensures the browser has painted at least one frame with

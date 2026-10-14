@@ -194,6 +194,25 @@ plt.savefig('<ws>/chart.svg', format='svg')
 
 **过程件不是 HTML 报告的触发对象**：设计方案、评审结论、取证记录、台账等过程件走 `<ws>/.nebflow/` 或本项目既有阶段文档路径，需要配图时按本 skill 出图。不为汇报而汇报。
 
+## Project wiki documents (vault delivery)
+
+A markdown/HTML report that belongs to a project's knowledge base (project
+review, investigation record, design note) MUST be delivered into the
+project's document vault: `<workspace>/docs/`, attachments under
+`<workspace>/docs/attachments/`, written in the Obsidian-compatible style
+carried by the `wiki-docs` skill of this plugin. Concretely:
+
+- Title = first H1; the document cites the documents it builds on with
+  wikilinks (`[[doc]]`, `[[doc#Heading]]`, `[[glossary#^concept-id]]`).
+- Every new concept is explained at first mention, or referenced to the
+  document/section that explains it — the reference is the graph edge.
+- These vault documents are indexed by the wiki graph view; links between
+  them are the relationship map, so a report with zero links to its sources
+  is an incomplete deliverable.
+
+Full conventions (vault layout, citation discipline, glossary block ids):
+`skills/wiki-docs/SKILL.md` in this plugin.
+
 ## SVG 的暗色模式适配
 
 生成的 SVG 文件本身要能在亮/暗主题下都可读（HTML 外壳的 CSS 变量规范见 Plugin Catalog 的 `design-cards` 插件的 `card-design`，此处只管 SVG 内容层）：

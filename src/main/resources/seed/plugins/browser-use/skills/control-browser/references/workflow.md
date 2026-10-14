@@ -6,7 +6,7 @@
 
 ```bash
 node -e "console.log('playwright', require('playwright/package.json').version)"
-ls ~/Library/Caches/ms-playwright 2>/dev/null  # macOS 宿主面默认缓存路径；他平台路径不同，以实际环境为准
+ls ~/Library/Caches/ms-playwright 2>/dev/null
 ```
 
 缺失 ⇒ 停手报确切错误。**不要**改用别的手段假装完成了页面工作。

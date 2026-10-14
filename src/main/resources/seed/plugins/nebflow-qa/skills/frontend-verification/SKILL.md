@@ -73,7 +73,7 @@ JS+CSS+i18n+WS 跨层改动按层验证，每层抓不同失败类，防 E2E 调
 
 ## 8. 确定性真实 fallback 夹具
 
-配置 bogus primary（127.0.0.1:9 必挂）→ 真实 fallback 模型接管，每 turn 必走 modelChanged 切换路径——mock 无法覆盖真实 WS 帧时序与 fallback 后 label 切换；老后端兼容用 wire 级 strip 模拟。
+配置 bogus primary（127.0.0.1:9 必挂）→ 真实免费模型 fallback，每 turn 必走 modelChanged 切换路径——mock 无法覆盖真实 WS 帧时序与 fallback 后 label 切换；老后端兼容用 wire 级 strip 模拟。
 
 ## 9. 契约未落地的 mock-frame 交验模式
 

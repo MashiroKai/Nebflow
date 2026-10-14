@@ -1,0 +1,7 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "design-cards",
+  "version": "1.0.1",
+  "description": "卡片与社交图设计制作包——节点获得 HTML 卡片视觉规范执行（颜色/字体/圆角/SVG 嵌入/暗色模式）与社交媒体图集生成能力。适用于做 HTML 卡片、做小红书图文、做公众号封面、社交图配图、卡片视觉规范落地等任务。内含 skills：card-design（Card/Pop 工具 HTML 输出视觉规范）、guizang-social-card-skill（小红书图文/公众号封面图集：杂志风与瑞士国际主义排版，含 references 版式库与校验脚本）。设计规格书另配 design-spec 插件、图表可视化另配 visual-report 插件。组件面：无 mcp.json、无工具扩展。",
+  "author": {"name": "Nebflow"}
+}

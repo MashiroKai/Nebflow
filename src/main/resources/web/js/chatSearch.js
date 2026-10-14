@@ -191,12 +191,18 @@ export function initChatSearch() {
   document.addEventListener('keydown', onModalKeydown, true);
 
   // Cmd/Ctrl+F opens the modal (Slack mode). Yield to Monaco's own find
-  // when a canvas editor has focus.
+  // when a canvas editor has focus, and to the in-file search when a
+  // canvas FILE tab is active (code/md/html content search, 2026-10-14) —
+  // the chat history search stays the fallback for non-file states.
   document.addEventListener('keydown', (e) => {
     if (!(e.metaKey || e.ctrlKey) || (e.key !== 'f' && e.key !== 'F')) return;
     if (e.target instanceof Element && e.target.closest('.monaco-editor')) return;
+    import('./fileSearch.js').then(({ findInActiveTab }) => {
+      findInActiveTab().then((handled) => {
+        if (!handled) openSearchModal();
+      }).catch(() => openSearchModal());
+    }).catch(() => openSearchModal());
     e.preventDefault();
-    openSearchModal();
   });
 
   const resultsEl = document.getElementById('search-results');

@@ -109,6 +109,11 @@
          Projects 按钮沿用 Team/Flow 让出的槽位。 -->
     <button id="files-btn" class="activity-btn active" data-panel-btn="files" title="Files" aria-pressed="true"><i data-lucide="files"></i></button>
     <button id="projects-btn" class="activity-btn" title="Projects"><i data-lucide="folder-kanban"></i></button>
+    <!-- Wiki document graph (wiki-graph batch, 2026-10-14): star icon opening
+         the Obsidian-compatible cross-project document graph as a Canvas tab.
+         Same 4-state panel-button contract as Projects (canvas.js
+         registerCanvasPanelButton, wired from main.js). -->
+    <button id="wiki-btn" class="activity-btn" title="Wiki Graph"><i data-lucide="sparkles"></i></button>
     <!-- 2026-09-04 件 B：原「智能体」独立面板入口移除，按钮改挂「插件」页
          （plugins.js 接管注册，id/按下态机制不变；i18n 标题走 activity.plugins）。
          2026-09-05 重排规格：语义顺序 文件→项目→插件→token→设置。 -->

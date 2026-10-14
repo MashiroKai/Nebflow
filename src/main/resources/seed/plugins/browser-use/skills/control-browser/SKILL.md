@@ -103,7 +103,7 @@ status: active
 ```bash
 # 1. Playwright 与浏览器是否在位（缺失 ⇒ 停手报确切错误，不要降级）
 node -e "console.log('playwright', require('playwright/package.json').version)"
-ls ~/Library/Caches/ms-playwright 2>/dev/null  # macOS 宿主面默认缓存路径；他平台路径不同，以实际环境为准
+ls ~/Library/Caches/ms-playwright 2>/dev/null
 
 # 2. 起一个**自有端口 + 自有目录**的被测服务（禁碰宿主的 :8080），经包装器起
 <进程组包装器> roster --node <nodeId> --tag httpd -- \
