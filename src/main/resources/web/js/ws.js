@@ -455,62 +455,13 @@ function purgeLongLivedCopies() {
 function showTicketEntry() {
   if (ticketEntryShown) return;
   ticketEntryShown = true;
-  injectTicketEntryStyles();
-  const overlay = document.createElement('div');
-  overlay.className = 'nb-ticket-overlay';
-  // Single action: reuse the website's own login (next=%2Fportal re-enters
-  // this console automatically after the website session is established).
-  // No paste-ticket field — ticket redemption stays a URL/CLI face only.
-  overlay.innerHTML = `
-    <div class="nb-ticket-modal">
-      <h3>${t('ws.ticketEntry.title')}</h3>
-      <p class="nb-ticket-hint">${t('ws.ticketEntry.hint')}</p>
-      <div class="nb-ticket-actions"><a class="cfg-btn cfg-btn-primary nb-ticket-web" href="${getWebsiteLoginUrl()}">${t('ws.ticketEntry.login')}</a></div>
-    </div>`;
-  document.body.appendChild(overlay);
+  // 直接复用设置头像的统一账号登录（PKCE 直连本网关 Logto——与官网同一账号
+  // 体系）。登录成功 = 网关会话建立 ⇒ WS 重连即通，onopen 收口登录门。
+  // 动态 import 保持 ws.js ↔ activityBar.js 无模块环（同 micOrb 模式）。
+  import('./activityBar.js').then((m) => m.activateAccountEntry()).catch(() => {});
 }
 
-// Same Sapphire Glass tokens the login modal family uses (activityBar.js);
-// self-contained here so ws.js never depends on that module's injection.
-let ticketEntryStylesInjected = false;
-function injectTicketEntryStyles() {
-  if (ticketEntryStylesInjected) return;
-  ticketEntryStylesInjected = true;
-  const style = document.createElement('style');
-  style.textContent = `
-.nb-ticket-overlay {
-  position: fixed; inset: 0; z-index: 1000; display: flex;
-  align-items: center; justify-content: center;
-  background: rgba(8, 10, 16, 0.45);
-}
-.nb-ticket-modal {
-  width: 340px; padding: 20px;
-  background: var(--glass-bg, rgba(24, 28, 38, 0.68));
-  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
-  border: 1px solid var(--glass-border, rgba(255,255,255,0.1));
-  border-radius: 16px;
-  box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.12);
-}
-.nb-ticket-modal h3 { font-size: 15px; margin: 0 0 10px; color: var(--color-text); font-weight: 600; }
-.nb-ticket-hint { font-size: 13px; color: var(--color-text-muted); margin: 0 0 12px; line-height: 1.55; }
-.nb-ticket-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
-.nb-ticket-actions .cfg-btn-primary { width: 100%; padding: 10px 14px; font-size: 14px; }
-.nb-ticket-web {
-  display: block; margin-top: 12px; text-align: center;
-  font-size: 12px; color: var(--text-muted, rgba(255,255,255,0.55));
-  text-decoration: none; border-bottom: 1px solid transparent;
-}
-.nb-ticket-web:hover { color: var(--text-normal, rgba(255,255,255,0.85)); border-bottom-color: currentColor; }
-`;
-  document.head.appendChild(style);
-}
 
-// ---------- Heartbeat tolerance (freezetimeout B2 · 施工图 §4.1 B 面) ----------
-// 缺陷：原实现「平 5s、单次 miss 即 close()」。承压期（换页）后端 pong 越过 5s 是常态
-// ⇒ 一个健康 socket 被判死 ⇒ onclose 清心跳 + 退避重连，重连期的静默又全部计入 busy
-// 看门预算（诊断 §2(c)）。改法三条：① 连续 N 次 miss 才判死；② 宽限随实测 RTT 自适应；
-// ③ 页面 hidden / 冻结期暂停计时（此刻的排空/迟到不是对端死亡）。
 const HB_INTERVAL_MS = 30000;
 const HB_PONG_GRACE_MIN_MS = 5000;
 const HB_PONG_GRACE_MAX_MS = 30000;

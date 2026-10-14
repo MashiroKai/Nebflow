@@ -2288,8 +2288,5 @@ export default {
   // rescue it (the tokenized startup URL no longer exists). The user pastes a
   // one-time console ticket (CLI: `nebflow token`); the redemption face
   // (?ticket=) exchanges it for an HttpOnly session cookie.
-  'ws.ticketEntry.title': 'Sign in to nebflow',
-  'ws.ticketEntry.hint': 'This console connection requires your nebflow account. Click below to sign in on the website — you will return to the console automatically.',
-  'ws.ticketEntry.login': 'Sign in with your nebflow account',
   'ws.ticketEntry.notify': 'Sign-in required — click the sign-in button to continue with your nebflow account',
 };
