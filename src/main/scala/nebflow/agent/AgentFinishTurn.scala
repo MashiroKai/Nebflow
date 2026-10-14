@@ -261,7 +261,14 @@ private[agent] object AgentFinishTurn:
       (state.pingpong.sReadyPending, state.sessionId) match
         case (Some(ready), Some(sid)) =>
           AgentPingpong
-            .executeSwap(agentDef, resources, depth, state, sid, ready)
+            // redfix A3（2026-10-14，报告 #9）：换入 Δ 必须含**本轮** assistant
+            // 产出——finishTurn 的 assistant 消息只进 newMessages、从不回写
+            // state.messages（本文件 :176）；以原 state 喂 executeSwap ⇒ Δ 缺
+            // 本轮产出，且 landed 跳过常规存盘 ⇒ 内存与盘双丢（a0f2edfc7 一期
+            // 接线缺口）。以 withMessages(newMessages) 喂 ⇒ S+Δ 口径成立，
+            // 「landed 跳存盘」才合法。idle 直投换入点（AgentPingpong:251）
+            // 无在飞轮、state.messages 本就完整，不随此改。
+            .executeSwap(agentDef, resources, depth, state.withMessages(newMessages), sid, ready)
             .map(o => Some(BoundarySwap(o.landed, o.state)))
         case _ => IO.pure(None)
 
@@ -367,7 +374,17 @@ private[agent] object AgentFinishTurn:
         // v2 已失效）；弃换/未挂 ⇒ swapBase = 原 state（行为逐字）。idle 底座与
         // 队列字段全部取自 swapBase，保持同一谱系。
         val swapBase = swapDone.map(_.state).getOrElse(state)
-        val baseMessages = swapBase.messages
+        // redfix A3（2026-10-14，报告 #9）：**非换入腿**的 idle 底座消息必须是
+        // newMessages（含本轮 assistant 产出）——a0f2edfc7 误改为 swapBase.messages
+        // （= state.messages，assistant 从未回写其中，见 :176）⇒ 每个轮边界丢一条
+        // assistant 历史（LoopNodeSpec:302 实锤：round-2 worker 全请求有 round-1
+        // 用户注入、无 round-1 产出；弃换腿同病——盘存 newMessages、内存
+        // swapBase.messages，内存/盘分叉）。landed 腿的 swapBase.messages 经上方
+        // executeSwap 喂态修正后已含本轮产出（S+Δ），此处取它才与原意一致。
+        // 非乒乓会话（swapDone=None）⇒ newMessages，与乒乓前旧路径逐字节等价。
+        val baseMessages = swapDone match
+          case Some(s) if s.landed => s.state.messages
+          case _ => newMessages
         val updatedState = swapBase
           .copy(execution =
             ExecutionContext
