@@ -2241,11 +2241,8 @@ export default {
   'secrets.error.emptyValue': '请先输入值。',
   'secrets.error.io': '密钥请求失败（{code}）。请检查网关连接后重试。',
   // === Phase 3b session rail: paste-ticket entry (ws.js stage B) ===
-  'ws.ticketEntry.title': '登录此控制台',
-  'ws.ticketEntry.hint': '粘贴一次性控制台票据即可打开已登录会话。在本机执行 nebflow token 铸票。',
-  'ws.ticketEntry.placeholder': '在此粘贴票据',
-  'ws.ticketEntry.open': '打开控制台',
-  'ws.ticketEntry.website': '通过 nebflow 官网登录',
-  'ws.ticketEntry.needTicket': '请先粘贴票据 —— 可用 nebflow token 铸票',
-  'ws.ticketEntry.notify': '需要登录 —— 粘贴控制台票据以继续（可用 nebflow token 铸票）',
+  'ws.ticketEntry.title': '登录 nebflow',
+  'ws.ticketEntry.hint': '此控制台连接需要 nebflow 账号。点击下方按钮前往官网登录，登录后自动返回控制台。',
+  'ws.ticketEntry.login': '通过 nebflow 账号登录',
+  'ws.ticketEntry.notify': '需要登录——点击登录按钮，通过 nebflow 账号继续',
 };
