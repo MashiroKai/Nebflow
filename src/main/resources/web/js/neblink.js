@@ -75,12 +75,32 @@ export const LOCAL_FILE_CODES = [
   'credential-delete-denied'
 ];
 
+// ── 隔离护栏拒绝的可判别化（coldstart DX 批②，2026-10-14 作者令）──────────
+// 修复前形态：登录链路上护栏拒绝若不带结构化 `code` 到达前端（老网关 / 带「Failed to
+// start device flow: 」前缀的包装串），登录框只能裸打原文 —— 22:20 截图的「裸报
+// Unauthorized/拒绝原文」即此族。本判据按**拒绝文案签名**（两段护栏原文共有的稳定短语）
+// 反查回稳定码 `enroll-refused-isolated-home`，让失败面走既有 i18n 分类分支（原因 +
+// 两出路 + 诊断码），替换裸串。签名取自 EnrollGuard 两段 refusal 文案的共同稳定子串
+// （"this instance runs on an isolated data root"），不匹配任何普通网络错误。
+export const GUARD_REFUSAL_SIGNATURE = 'runs on an isolated data root';
+export const GUARD_REFUSAL_CODE = 'enroll-refused-isolated-home';
+
+/** 从失败载荷反查分类码：优先 `code`（后端结构化通道）；缺失时按护栏签名判别。
+ *  返回 '' = 无分类（保持原样渲染，不猜）。 */
+export function classifyLoginFailureCode(payload = {}) {
+  const code = payload && payload.code ? String(payload.code) : '';
+  if (code) return code;
+  const raw = `${(payload && payload.reason) || ''}${(payload && payload.error) || ''}`;
+  return raw.includes(GUARD_REFUSAL_SIGNATURE) ? GUARD_REFUSAL_CODE : '';
+}
+
 /** 失败面文案的**唯一前端组装点**（§8.3 三段式）。
  *  文案来源优先级：i18n（`login.reason.<code>` / `login.action.<code>` —— UI 文案的
  *  唯一来源，zh/en 成对）⇒ 后端 `reason`/`action`（老网关 / 未知码）⇒ 原始 `error`。
- *  `code` 恒为后端给的稳定枚举，直接进「诊断码：」尾串（可让用户报给我们 grep 日志）。 */
+ *  `code` 恒为后端给的稳定枚举（结构化通道缺失时由 [[classifyLoginFailureCode]]
+ *  按护栏签名反查），直接进「诊断码：」尾串（可让用户报给我们 grep 日志）。 */
 export function loginFailureText(payload = {}) {
-  const code = payload.code || '';
+  const code = classifyLoginFailureCode(payload);
   const rk = code ? `login.reason.${code}` : '';
   const ak = code ? `login.action.${code}` : '';
   const tr = rk ? t(rk) : '';
@@ -551,7 +571,7 @@ export function pollDeviceFlow(deviceCode, interval, expiresInSeconds, onSuccess
       : { error: failure == null ? '' : String(failure) };
     neblinkState.flowState = 'idle';
     neblinkState.pairError = loginFailureText(payload);
-    neblinkState.pairErrorCode = payload.code || '';
+    neblinkState.pairErrorCode = classifyLoginFailureCode(payload);
     neblinkState.userCode = '';
     neblinkState.deviceCode = '';
     if (_rerender) _rerender();
@@ -673,7 +693,7 @@ export function pollPkceState(onSuccess, onError, intervalMs = 1200, timeoutMs =
     const text = loginFailureText(payload);
     neblinkState.flowState = 'idle';
     neblinkState.pairError = text;
-    neblinkState.pairErrorCode = payload.code || '';
+    neblinkState.pairErrorCode = classifyLoginFailureCode(payload);
     neblinkState.credentialIssue = payload.code ? payload : neblinkState.credentialIssue;
     if (_rerender) _rerender();
     onError?.(text, payload);

@@ -19,7 +19,7 @@
 // stays visible when the sidebar is collapsed.
 
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from './sidebar.js';
-import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow, avatarViewState, noteAvatarFailure, paintAvatarSlot, LOCAL_FILE_CODES, openEndSessionHandoff } from './neblink.js';
+import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow, avatarViewState, noteAvatarFailure, paintAvatarSlot, LOCAL_FILE_CODES, openEndSessionHandoff, classifyLoginFailureCode, loginFailureText } from './neblink.js';
 import { setUpdateDot } from './updateCheck.js';
 import { createIconsIn, escapeHtml, statusIcon } from './utils.js';
 import { getProfileUrl } from './brand.js';
@@ -824,8 +824,9 @@ function showLoginModal(opts = {}) {
       finished = true;
       setPairing(false);
       // 缺陷 A：把分类码一路带到 error 渲染面（「清理并重登」键的门控判据 +
-      // `data-code` 二值断言契约）。
-      render('error', { message: errMsg, code: payload?.code || '' });
+      // `data-code` 二值断言契约）。coldstart DX 批②：码缺失时按护栏签名判别
+      // （与 `errMsg` 的组装同判据），保证文与码不劈叉。
+      render('error', { message: errMsg, code: classifyLoginFailureCode(payload || {}) });
     };
     try {
       // Primary path: Authorization Code + PKCE via the hosted Logto page.
@@ -869,7 +870,16 @@ function showLoginModal(opts = {}) {
       finished = true;
       setPairing(false);
       navigateReserved(null); // release the reserved popup on failure
-      render('error', { message: e.message || t('login.startFailed') });
+      // coldstart DX 批②（2026-10-14）：启动腿的失败原文先过护栏签名判别 —— 命中
+      // `enroll-refused-isolated-home` ⇒ 渲染既有 i18n 分类分支（原因 + 两出路
+      // `--net staging` / `NEBFLOW_ALLOW_PROD_ENROLL=1` + 诊断码），替换裸串（22:20
+      // 截图的「裸报」面）；未命中 ⇒ 与修前逐字同款（原文直出，不猜）。
+      const failMsg = e.message || t('login.startFailed');
+      const failCode = classifyLoginFailureCode({ error: failMsg });
+      render('error', {
+        message: loginFailureText({ code: failCode, error: failMsg }),
+        code: failCode
+      });
     }
   };
 
