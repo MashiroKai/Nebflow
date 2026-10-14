@@ -490,6 +490,7 @@ function onCanvasPanelButtonClick(tabId, openFn) {
 /** @type {Map<string, () => unknown>} tabId -> 该页签既有刷新入口 */
 const panelTabRefresh = new Map([
   ['projects', () => import('./projectTab.js').then((m) => m.rerenderProjectsTab())],
+  ['wiki-graph', () => import('./wikiGraph.js').then((m) => m.rerenderWikiGraph())],
 ]);
 
 /** state 3 补拉（D 项）：切回已在册页签时补一次该页签自己的刷新入口。
@@ -849,6 +850,15 @@ export function hasTab(id) {
   return tabs.has(id);
 }
 
+/** The active tab's content pane — the Ctrl/Cmd+F file-search routing face
+ *  (fileSearch.js): whether a file tab is displayed decides whether the
+ *  keystroke searches file content or falls back to the chat history search.
+ *  @returns {HTMLElement|null} */
+export function activeCanvasPane() {
+  const entry = activeTabId ? tabs.get(activeTabId) : null;
+  return entry ? entry.paneEl : null;
+}
+
 // ── File viewers ───────────────────────────────────────────
 
 /** Render a web URL into a tab pane: slim toolbar (hostname + "open in new
@@ -986,7 +996,7 @@ export async function openWorkspaceItem(item) {
   // id is let (not const): the absPath dedupe below may rewrite it to the
   // existing tab's id for the same file.
   let { id } = item;
-  const { itemType, title, content, absPath, size, pinned, anchor, warnings, stream, mtimeMs } = item;
+  const { itemType, title, content, absPath, size, pinned, anchor, warnings, stream, mtimeMs, readOnly } = item;
   if (!id) return;
 
   // URL type — render the page in a sandboxed iframe. Handled before all
@@ -1069,6 +1079,13 @@ export async function openWorkspaceItem(item) {
       const view = /** @type {any} */ (entry.paneEl)._streamClient;
       if (view && typeof view.acceptMeta === 'function') view.acceptMeta({ mtimeMs, size });
     }
+    // wiki-graph batch: consume a stashed jump anchor here — a reference
+    // click into an ALREADY-OPEN document rides the same readFile round trip
+    // as a first open, and the anchor must survive into the re-render
+    // (markdown.js consumes ctx.anchor). The stash is deleted unconditionally:
+    // a jump into a source-mode tab does not fire later as a stale jump.
+    const stash = absPath ? pendingRefAnchors.get(absPath) : undefined;
+    if (absPath) pendingRefAnchors.delete(absPath);
     if (content && !isTabDirty(entry) && entry.paneEl.dataset.sourceMode !== '1') {
       // Skip the re-render when the live editor already shows this content —
       // remounting Monaco on every refresh would steal the cursor/scroll for
@@ -1080,7 +1097,7 @@ export async function openWorkspaceItem(item) {
           entry.paneEl._editorHandle = null;
         }
         const { renderFile } = await import('./fileViewers.js');
-        await renderFile(entry.paneEl, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, warnings });
+        await renderFile(entry.paneEl, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: anchor || stash, warnings });
       }
     }
     // Background refresh responses must not steal activation — the user may
@@ -1100,9 +1117,12 @@ export async function openWorkspaceItem(item) {
   if (content === '' && itemType === '' && absPath) {
     // #303 C3: a document-reference jump carries a page anchor — stash it so
     // it survives the readFile round trip (the response item has no anchor)
-    // and is consumed at render time below.
+    // and is consumed at render time below. The wiki-graph batch widened the
+    // stash from PDF pageStart to the full anchor payload (block/heading/line).
     const pgStash = anchor && anchor.pageStart;
-    if (Number.isFinite(pgStash)) pendingRefAnchors.set(absPath, { pageStart: pgStash });
+    if (anchor && (Number.isFinite(pgStash) || anchor.kind)) {
+      pendingRefAnchors.set(absPath, anchor);
+    }
     Promise.all([
       import('./ws.js'),
       import('./state.js')
@@ -1179,8 +1199,8 @@ export async function openWorkspaceItem(item) {
   // locally — typed only, the object passed to renderFile is unchanged.
   // `stream`/`mtimeMs` are the text-stream descriptor fields (卡 §三.4): also
   // widened here for the same reason — the viewer reads them, nothing else changes.
-  /** @type {import('./utils.js').ViewerContext & {objectUrl?: string, stream?: any, mtimeMs?: number}} */
-  const renderCtx = { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: renderAnchor, warnings, objectUrl: item.objectUrl, stream: item.stream || null, mtimeMs: item.mtimeMs || 0 };
+  /** @type {import('./utils.js').ViewerContext & {objectUrl?: string, stream?: any, mtimeMs?: number, readOnly?: boolean}} */
+  const renderCtx = { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: renderAnchor, warnings, objectUrl: item.objectUrl, stream: item.stream || null, mtimeMs: item.mtimeMs || 0, readOnly: readOnly === true };
   await renderFile(pane, renderCtx);
   entry._lastRefreshAt = Date.now();  // just rendered — don't immediately re-fetch
 }

@@ -97,6 +97,7 @@ export function applyLocaleToHtml() {
     'activity-avatar': ['title', 'activity.login'],
     'usage-btn': ['title', 'activity.usage'],
     'projects-btn': ['title', 'project.title'],
+    'wiki-btn': ['title', 'wiki.tabTitle'],
     // 2026-09-04 件 B：#agents-btn 改挂「插件」页（原「智能体」入口移除，
     // key 换成 activity.plugins；activity.agents 保留给封存面板恢复的旧标签页）。
     'agents-btn': ['title', 'activity.plugins'],

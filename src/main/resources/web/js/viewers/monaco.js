@@ -40,6 +40,11 @@ async function viewMonaco(pane, ctx) {
     handle.focus();
   });
 
+  // wiki-graph batch: floating in-file find toggle (opens Monaco's own find
+  // widget; right:16px — the code viewer has no source toggle to stack with).
+  const { addFindToggle } = await import('./shared.js');
+  addFindToggle(pane, 16);
+
   // If this pane is already active (just opened), set as active editor
   if (pane.classList.contains('active')) {
     setActiveEditor(handle);

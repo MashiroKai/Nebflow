@@ -5,7 +5,8 @@
 // ctrl/cmd+wheel and ⌘/ctrl key presses over the iframe reach the parent
 // through zoomBridgeScript postMessage (cross-frame events don't bubble).
 
-import { buildThemeVarsCSS, resolveLocalFiles, addSourceToggle, addElementRefToggle, localLinkNavScript, bindLocalLinkBridge, imgClickScript } from './shared.js';
+import { buildThemeVarsCSS, resolveLocalFiles, addSourceToggle, addElementRefToggle, addFindToggle, localLinkNavScript, bindLocalLinkBridge, imgClickScript } from './shared.js';
+import { frameFindScript } from '../fileSearch.js';
 import { makeReference } from '../reference.js';
 import { t } from '../i18n.js';
 import { enableViewerZoom } from './zoom.js';
@@ -115,6 +116,12 @@ const anchorNavScript = `<script>
  *  behaviour the author wants for a linked image is carried in the batch report
  *  as a pending semantic decision — it is not settled by this comment. */
 const imgClickMarkup = imgClickScript();
+
+/** wiki-graph batch (2026-10-14): dormant in-frame find script — the frame
+ *  half of the fileSearch.js find bar (search / navigate / clear, results
+ *  reported back via `_nfFindResult`). Same injection pattern as
+ *  imgClickMarkup / refSelectScript. */
+const frameFindMarkup = frameFindScript;
 
 /** #303 B6: dormant element-select script, embedded in the srcdoc at assembly
  *  (same pattern as imgClickMarkup/anchorNavScript). Sleeps until the parent
@@ -520,7 +527,7 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
   <\/script>`;
 
   // 6. Assemble srcdoc with base styles (transparent bg, theme-aware, scrollable)
-  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}${graphvizCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg,var(--color-surface,white));color:var(--color-text,#1a1a1a);overflow:auto;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}img{max-width:100%;height:auto;}</style></head><body>${html}${refSelectScript}${localLinkNavScript()}${zoomBridgeScript}${svgInlineScript}${imgClickMarkup}${anchorNavScript}${themePropScript}</body></html>`;
+  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}${graphvizCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg,var(--color-surface,white));color:var(--color-text,#1a1a1a);overflow:auto;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}img{max-width:100%;height:auto;}mark.nf-find-hit{background:rgba(255,213,0,0.45);color:inherit;}mark.nf-find-current{background:rgba(94,106,210,0.55);color:#fff;}</style></head><body>${html}${refSelectScript}${localLinkNavScript()}${frameFindMarkup()}${zoomBridgeScript}${svgInlineScript}${imgClickMarkup}${anchorNavScript}${themePropScript}</body></html>`;
 
   const iframe = document.createElement('iframe');
   iframe.style.width = '100%';
@@ -697,6 +704,9 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
   addSourceToggle(pane, viewHtml, { content, absPath, fileName, warnings });
   // #303 B6: element-select toggle, seated left of the source toggle.
   setupElementRefSelect(pane, iframe, { absPath, fileName });
+  // wiki-graph batch: in-file find toggle, seated left of the element-select
+  // toggle (find searches INSIDE the frame via the injected script above).
+  addFindToggle(pane, 112);
   // Cache the rendered content for the unchanged-guard at the top. Set after
   // the pane is fully assembled; the guard also requires a live iframe, so a
   // stale marker after a navigation-away replacement is harmless (no iframe →

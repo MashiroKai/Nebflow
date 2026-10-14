@@ -527,11 +527,14 @@ function isRenderedFrame(src) {
  *  markup writes `target` — form equivalence is the point, not tab bookkeeping.
  *  Exported for the OTHER end of the same channel: the markdown viewer renders
  *  into the app document (no frame, no postMessage), so it calls this directly.
- *  @param {string} path */
-export function openLocalFileTab(path) {
+ *  `anchor` (wiki-graph batch) rides the open-item payload through the readFile
+ *  round trip: {kind:'block',id} | {kind:'heading',text} | {kind:'line',line}.
+ *  @param {string} path
+ *  @param {any} [anchor] */
+export function openLocalFileTab(path, anchor) {
   if (!path) return;
   window.dispatchEvent(new CustomEvent('workspace-open-item', {
-    detail: { id: 'file:' + path, itemType: '', content: '', absPath: path },
+    detail: { id: 'file:' + path, itemType: '', content: '', absPath: path, anchor: anchor || undefined },
   }));
   revealCanvas();
 }
@@ -733,6 +736,84 @@ export function addElementRefToggle(pane, opts) {
     btn.setAttribute('aria-pressed', String(active));
     btn.title = active ? t('ref.exitSelect') : t('ref.selectElement');
     if (typeof onToggle === 'function') onToggle(active);
+  });
+  pane.appendChild(btn);
+  return btn;
+}
+
+// ── In-file find + wiki graph toggles (2026-10-14 wiki-graph batch) ────
+
+const FIND_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>';
+const GRAPH_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="6" r="2.5"/><circle cx="19" cy="5" r="2.5"/><circle cx="12" cy="18" r="2.5"/><line x1="7" y1="7.5" x2="10.5" y2="15.5"/><line x1="17" y1="7" x2="13.5" y2="15.5"/><line x1="7.5" y1="6" x2="16.5" y2="5"/></svg>';
+
+/**
+ * Floating "search in this file" toggle — the same glass material and corner
+ * family as the source toggle; the button seats at `right` px (callers pass
+ * the offset that keeps one 48px gap per stacked button). Clicking (or the
+ * Ctrl/Cmd+F binding) routes through fileSearch.js: Monaco tabs get the
+ * editor's own find widget, rendered md/html tabs get the glass find bar.
+ *  @param {HTMLElement} pane — canvas tab pane
+ *  @param {number} [right] - offset from the pane's right edge (default 64)
+ */
+export function addFindToggle(pane, right = 64) {
+  pane.querySelector('.canvas-find-toggle')?.remove();
+  if (getComputedStyle(pane).position === 'static') pane.style.position = 'relative';
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'canvas-find-toggle';
+  btn.innerHTML = FIND_ICON_SVG;
+  btn.title = t('find.openInFile');
+  btn.style.right = right + 'px';
+  btn.addEventListener('click', () => {
+    import('../fileSearch.js').then(({ openFindForPane }) => openFindForPane(pane))
+      .catch(() => { /* module unavailable — no-op */ });
+  });
+  pane.appendChild(btn);
+  return btn;
+}
+
+/**
+ * Floating "open in wiki graph" toggle (markdown tabs). Resolves this
+ * document's graph node by matching absPath against the project vaults the
+ * graph API reports, then opens the wiki-graph tab centered on the node.
+ *  @param {HTMLElement} pane — canvas tab pane
+ *  @param {string} [absPath] - absolute path of the open document
+ *  @param {number} [right] - offset from the pane's right edge
+ */
+export function addGraphToggle(pane, absPath, right = 112) {
+  pane.querySelector('.canvas-graph-toggle')?.remove();
+  if (getComputedStyle(pane).position === 'static') pane.style.position = 'relative';
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'canvas-graph-toggle';
+  btn.innerHTML = GRAPH_ICON_SVG;
+  btn.title = t('wiki.openGraphForDoc');
+  btn.style.right = right + 'px';
+  btn.addEventListener('click', async () => {
+    if (!absPath) {
+      window.__showToast?.(t('wiki.notInVault'), 'info');
+      return;
+    }
+    try {
+      const { authHeaders } = await import('../flowHelpers.js');
+      const res = await fetch('/api/wiki/graph', { headers: { ...authHeaders() } });
+      if (!res.ok) throw new Error(String(res.status));
+      const data = await res.json();
+      const norm = String(absPath).replace(/\\/g, '/');
+      const proj = (data.projects || []).find((p) => {
+        const vault = String(p.vault || '').replace(/\\/g, '/').replace(/\/+$/, '');
+        return vault && norm.toLowerCase().startsWith(vault.toLowerCase() + '/');
+      });
+      if (!proj) { window.__showToast?.(t('wiki.notInVault'), 'info'); return; }
+      const vault = String(proj.vault).replace(/\\/g, '/').replace(/\/+$/, '');
+      const rel = norm.slice(vault.length + 1);
+      const { focusWikiNode } = await import('../wikiGraph.js');
+      focusWikiNode(proj.name, rel);
+    } catch (e) {
+      window.__showToast?.(t('wiki.graphUnavailable'), 'error');
+    }
   });
   pane.appendChild(btn);
   return btn;
