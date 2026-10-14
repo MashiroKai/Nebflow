@@ -3,6 +3,7 @@ package nebflow.neblink
 import cats.effect.IO
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
+import cats.syntax.all.*
 import munit.CatsEffectSuite
 import nebflow.shared.PathUtil
 
@@ -177,6 +178,53 @@ class NeblinkRelayTunnelZombieHealSpec extends CatsEffectSuite:
           // 45s at the 3s cadence is ~15 beats; answering at least 12 of them
           // (20% scheduler slack) proves the window never false-kills.
           assert(fix.pongsSent.get() >= 12, s"45s should answer at least 12 of ~15 3s heartbeat beats, got ${fix.pongsSent.get()}")
+      }
+    }
+  }
+
+  test("hbzombie-src D2：relay 不回 pong 但数据帧持续入向 ⇒ 活连接不得判僵尸（30s 零重连、isAlive 恒真）") {
+    withFixture { fix =>
+      fix.relayMode = RelayAuthFixtureServer.RelayMode.AcceptIfLive
+      fix.pongReplies = false // A4 形态：relay 心跳腿沉默，但下行数据面仍在流
+      withStack(fix) { (_, client, tunnel) =>
+        // benign 上行回授帧：handleFrame 只走 DEBUG 忽略分支，零业务副作用；
+        // 修前它不刷新 lastPong（仅 pong 刷新）⇒ ~9s 即 abort + 第二 101，本用例必红。
+        val pushes = new java.util.concurrent.atomic.AtomicInteger(0)
+        val pushOne = IO.blocking {
+          val n = fix.sendTextToRelay("""{"type":"http_response"}""")
+          if n > 0 then pushes.incrementAndGet()
+          ()
+        }
+        val pusher = (pushOne *> IO.sleep(2.seconds)).foreverM
+        for
+          _ <- client.login(Device, "qa-host", "macos", Nil)
+          _ <- tunnel.connect()
+          first <- waitUntil(20.seconds)(IO(fix.attemptCount(101) >= 1))
+          _ <- IO(assert(first, s"基线连接失败：${fix.relayAttempts}"))
+          samples <- pusher.background.use { _ =>
+            // 30s > 3× LivenessTimeoutMs(9s)：修前的 pong-only 口径在 ~9-12s
+            // 就会误杀并重连；30s 观察窗给出充分的判别时间。
+            def loop(acc: Vector[(Boolean, Int)], elapsed: FiniteDuration): IO[Vector[(Boolean, Int)]] =
+              if elapsed >= 30.seconds then IO.pure(acc)
+              else
+                IO.sleep(250.millis) *>
+                  IO(tunnel.isAlive -> fix.attemptCount(101)).flatMap { s =>
+                    loop(acc :+ s, elapsed + 250.millis)
+                  }
+            loop(Vector.empty, Duration.Zero)
+          }
+        yield
+          assert(pushes.get() >= 10, s"判别力前提：观察窗内必须真的推入 ≥10 条数据帧（实测 ${pushes.get()}）")
+          assertEquals(
+            samples.map(_._2).distinct.toList,
+            List(1),
+            "数据帧持续入向的连接不得被判僵尸重连（修前 pong-only 口径必在此翻红）"
+          )
+          assert(
+            samples.forall(_._1),
+            "数据帧 = 对端活着的直接证据：isAlive 不得翻转（false 采样数 = " +
+              s"${samples.count(s => !s._1)}/${samples.size}）"
+          )
       }
     }
   }
