@@ -93,6 +93,21 @@ final class NeblinkRelayTunnel(
   private val running = new AtomicBoolean(true)
   private val alive = new AtomicBoolean(false)
   private val lastPong = new AtomicLong(System.currentTimeMillis())
+
+  /**
+   * hbzombie-src（2026-10-14 客户端腿同案确认批）：**ping 的最后成功入线时刻**。
+   *
+   * 与 [[lastPong]] 成对，构成僵尸判据「起算点」的另一半：`LivenessTimeoutMs` 的
+   * 本义是「我们本应收到那个 pong 而没收到」的等待，**不是**「距离上次上行已经
+   * 多久」。修前只有 `lastPong` 一个读数 ⇒ 它同时兼任了「pong 等待窗」与「任意
+   * 帧间隔」两义：只要本端**自己没有成功发出**一次 ping（大流量下 `sendText` 被
+   * 对端 TCP 背压阻塞、或与本 socket 上在飞的 bulk 发送撞 JDK 单发契约），pong
+   * 自然永不到来，9s 到点即判僵尸——但这不是对端沉默，是本端自己写不出去。
+   *
+   * 取值点 = `sendText` 入队成功（future 返回），即「这一拍真的上了线」；心跳
+   * 僵尸判据与 `isAlive` 共用它，不新增第二个阈值轴。
+   */
+  private val lastPingSentAt = new AtomicLong(System.currentTimeMillis())
   private var heartbeat: Option[ScheduledExecutorService] = None
 
   /**
@@ -247,8 +262,9 @@ final class NeblinkRelayTunnel(
    * `alive` 单点——它只在 `closed.get` 返回之后才被清假（:313-317），而闩在
    * 「abort 不回调 Listener」的僵尸态里永不返回（E3 探针复现）⇒ 通道死了 4 小时
    * 而 `/api/neblink/status` 仍报 `relay.available:true`（E4 假阳性）。
-   * 现语义 = **连线在册 且 最近一次 pong 在存活窗（`LivenessTimeoutMs`）内**——判据与
-   * 心跳的僵尸判据同源（同一个 `LivenessTimeoutMs`，不新增第二个阈值）。消费面：
+   * 现语义 = **连线在册 且 最近一次入向帧（hbzombie-src 起 = 任意帧，修前仅 pong）
+   * 在存活窗（`LivenessTimeoutMs`）内**——判据与心跳的僵尸判据同源（同一个
+   * `LivenessTimeoutMs`，不新增第二个阈值）。消费面：
    * status 端点的 `relay.available`（含 per-peer reachable 提示）与
    * `RemoteExecutor` 的 P2P/relay 选路（僵尸隧道不再被当作可用 relay）。
    */
@@ -746,6 +762,7 @@ final class NeblinkRelayTunnel(
         wsRef = Some(w)
         alive.set(true)
         lastPong.set(System.currentTimeMillis())
+        lastPingSentAt.set(System.currentTimeMillis())
         startHeartbeat(w, closed)
         // Anti-loop reset + F7: a successful upgrade means the credential
         // problem is over — the next rejection gets a fresh heal budget and the
@@ -900,7 +917,11 @@ final class NeblinkRelayTunnel(
 
   end handleRelayRequestLive
 
-  /** Called by WS listener when pong arrives — refreshes heartbeat liveness. */
+  /**
+   * Called by the WS listener on ANY inbound delivery (hbzombie-src 起不再限于
+   * pong：任意入向帧都是「对端活着」的直接证据，与服务端同口径）——refreshes
+   * heartbeat liveness. 字段名 `lastPong` 保留（读数点不动），语义 = 最近入向帧时刻。
+   */
   private[neblink] def updateLastPong(): Unit =
     lastPong.set(System.currentTimeMillis())
 
@@ -1150,7 +1171,9 @@ final class NeblinkRelayTunnel(
       { () =>
         try
           if alive.get() then
-            if System.currentTimeMillis() - lastPong.get() > NeblinkRelayTunnel.LivenessTimeoutMs then
+            val now = System.currentTimeMillis()
+            val lastInbound = lastPong.get()
+            if now - lastInbound > NeblinkRelayTunnel.LivenessTimeoutMs then
               // Zombie-connection fix (diag-transfer-stuck R2): a half-open TCP
               // connection never delivers sendClose to the peer and the JDK
               // listener's onError/onClose never fire, so `closed` (the
@@ -1160,19 +1183,25 @@ final class NeblinkRelayTunnel(
               // and connectLoop reconnects.
               // 波3（①opt-A1）：该注释里的「listener fires immediately」经探针证伪
               // ——abort 不回调，故此处补看门狗把闩补完（幂等）。
-              logger.infoSync("Relay tunnel heartbeat timeout — aborting zombie connection for reconnect")
-              ws.abort()
-              armZombieLatchWatchdog(closed)
+              //
+              // hbzombie-src（2026-10-14）：判死前多问一句「我们**问出去过**吗」。
+              // 修前只看 `lastPong` 年龄 ⇒ 大流量下 ping 持续撞 JDK 单发契约
+              // （bulk 发送恒占在飞位 ⇒ 每拍都被跳过）时，「没等到 pong」根本不是
+              // 对端沉默的证据，却照样 abort 一条正在传输的活连接（A4 崩塌的
+              // 客户端侧放大器）。现在：只有「上次入向帧之后确有 ping 成功入线、
+              // 且已等满至少一拍（复用心跳间隔，不新增阈值轴）仍无任何入向帧」
+              // 才判僵尸；否则先补发一问，下一拍再判。
+              val askedAt = lastPingSentAt.get()
+              val pingOutstanding =
+                askedAt > lastInbound && now - askedAt >= NeblinkRelayTunnel.HeartbeatIntervalSec * 1000
+              if pingOutstanding then
+                logger.infoSync("Relay tunnel heartbeat timeout — aborting zombie connection for reconnect")
+                ws.abort()
+                armZombieLatchWatchdog(closed)
+              else
+                sendHeartbeatPing(ws, closed)
             else
-              try ws.sendText("""{"type":"ping"}""", true)
-              catch
-                case _: Exception =>
-                  // send failure on a live-flagged connection means the socket is
-                  // already broken — abort now instead of waiting out the pong
-                  // window with a dead connection (alive must track reality).
-                  logger.debugSync("Relay tunnel ping send failed — aborting broken connection")
-                  ws.abort()
-                  armZombieLatchWatchdog(closed)
+              sendHeartbeatPing(ws, closed)
         catch case _: Exception => ()
       },
       NeblinkRelayTunnel.HeartbeatIntervalSec,
@@ -1181,6 +1210,53 @@ final class NeblinkRelayTunnel(
     )
 
   end startHeartbeat
+
+  /**
+   * 心跳 ping 的单拍发送（hbzombie-src，2026-10-14 客户端腿同案确认批 D1 修）。
+   *
+   * 修前缺陷：本拍直接 `ws.sendText` 并把**任何**同步异常读成「socket 已死 ⇒
+   * abort」。但 JDK `WebSocket.sendText` 遵守「前一发未完成 ⇒ 抛
+   * IllegalStateException」契约（`RelayFrameSender` 的锁注释即此）：bulk 传输
+   * 期间 256KiB body 帧几乎恒占唯一在飞发送位（A4 慢 WAN 上每帧 0.4–13s）
+   * ⇒ 心跳拍与 bulk 发送必撞 ⇒ 误 abort 一条**出向完好**的活连接。且真写失败
+   * JDK 放进返回的 future 而不抛（`sendAck` 的 F3 注）⇒ 修前的 try/catch 对真
+   * 失败是死代码、对假阳性百发百中。
+   *
+   * 修后口径：
+   *   - **入队成功** ⇒ 记 `lastPingSentAt`（僵尸判据的「问出去过」证据），
+   *     future 异步失败 = 真写失败的面 ⇒ abort + 闩看门狗（修前「发送失败即
+   *     撕」的原意图，落到它真正能触发的位置）；
+   *   - **同步异常 + `isOutputClosed`** ⇒ 出向真死：维持修前语义，立即
+   *     abort，不等 pong 窗；
+   *   - **同步异常 + 出向开**（= 另一发送在飞，构造上即「出向刚被证明可写」）
+   *     ⇒ 只跳过本拍，**不** abort：服务端 miss 计数被任意入向帧重置（bulk
+   *     帧本身即在重置它），本端僵尸判据也以「问出去过」为前提，不会因此误杀。
+   */
+  private[neblink] def sendHeartbeatPing(ws: WebSocket, closed: Deferred[IO, Unit]): Unit =
+    try
+      val fut = ws.sendText("""{"type":"ping"}""", true)
+      lastPingSentAt.set(System.currentTimeMillis())
+      fut.whenComplete { (_, err) =>
+        if err != null then
+          logger.debugSync(s"Relay tunnel ping write failed async — aborting broken connection: ${NeblinkRelayTunnel.describeErr(err)}")
+          try ws.abort()
+          catch case _: Exception => ()
+          armZombieLatchWatchdog(closed)
+      }
+      ()
+    catch
+      case e: Exception =>
+        if ws.isOutputClosed() then
+          // send failure on a live-flagged connection with its output CLOSED means
+          // the socket is already broken — abort now instead of waiting out the
+          // pong window with a dead connection (alive must track reality).
+          logger.debugSync("Relay tunnel ping send failed (output closed) — aborting broken connection")
+          ws.abort()
+          armZombieLatchWatchdog(closed)
+        else
+          logger.debugSync(
+            s"Relay tunnel ping beat skipped: another send is in flight (${NeblinkRelayTunnel.describeErr(e)}) — output open, not a failure"
+          )
 
   private def stopHeartbeat(): Unit =
     heartbeat.foreach { hb =>
@@ -1327,9 +1403,12 @@ object NeblinkRelayTunnel:
   private[neblink] val HeartbeatIntervalSec: Long = 3L
 
   /**
-   * Liveness window (①-2 / ①opt-A1, wave 3 2026-09-12): a pong older than
-   * this window means the connection is a zombie. The SAME value feeds both
-   * the heartbeat's zombie judgment and `isAlive` (never a second threshold —
+   * Liveness window (①-2 / ①opt-A1, wave 3 2026-09-12): a last-INBOUND-frame
+   * stamp older than this window means the connection is a zombie (hbzombie-src
+   * 2026-10-14：刷新面由「仅 pong」放宽到「任意入向帧」，与服务端
+   * 「any inbound frame resets the missed-pong counter」同口径；且心跳判死另加
+   * 「确有 ping 入线且等满一拍」前提，见 startHeartbeat）。The SAME value feeds
+   * both the heartbeat's zombie judgment and `isAlive` (never a second threshold —
    * drifting the two would make status and self-heal disagree).
    *
    * Phase 3c retune arithmetic (with the 6s server miss window, plan §7.3):
@@ -1551,6 +1630,13 @@ private final class RelayWsListener(
    * 走直通分支 ⇒ 与修前逐字等价。
    */
   override def onText(ws: WebSocket, data: CharSequence, last: Boolean): CompletionStage[?] =
+    // hbzombie-src（2026-10-14 客户端腿同案确认批 D2 修）：**任何入向交付**（含
+    // 分片中间片、契约帧、bulk 数据帧）都刷新存活戳——与服务端「任意入向帧重置
+    // missed-pong 计数」同口径（见 LivenessTimeoutMs 注）。修前只有
+    // {"type":"pong"} 刷新 ⇒ relay 心跳腿被 bulk 饿死、但数据帧仍在流动时，本端
+    // 把一条活连接误判僵尸并 abort（A4 崩塌的客户端侧放大器）。半开 TCP 的判死
+    // 能力不受影响：半开时根本不会有任何入向交付。
+    tunnel.updateLastPong()
     reassembler.accept(data, last) match
       case RelayWsListener.FrameStep.Complete(payload) =>
         handleFrame(ws, payload)
