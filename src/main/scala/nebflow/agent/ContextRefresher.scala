@@ -302,7 +302,13 @@ object ContextRefresher:
       MemoryStore.loadUserMemory,
       agentMemory,
       MemoryHygieneSignal.takePending(),
-      nebflow.core.tools.TaskListStore.openSummaryLine(),
+      // taskunify 合一批（2026-09-24 `75fddc5db`）：数据源指向**合一账本**
+      // （`~/.nebflow/tasks-v2.json`，`TaskLedgerStore.openSummaryLine`，标记
+      // `[Task]`）——旧 `TaskListStore.openSummaryLine()` 读的
+      // `~/.nebflow/tasks.json` 已随批退役（裁定 L：只读归档，新代码不读）。
+      // 🔴 本行曾被 PR48 head tree 重建族（0b26aa857+ee1c8058c，09-27/28）静默
+      // 回退回旧数据源；2026-10-14 redfix 批按 taskunify 语义恢复。
+      nebflow.core.project.TaskLedgerStore.open().openSummaryLine(),
       contextWindow
     )
   end buildMemoryBlock

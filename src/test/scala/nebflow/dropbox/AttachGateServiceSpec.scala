@@ -323,14 +323,26 @@ class AttachGateServiceSpec extends CatsEffectSuite:
 
   test("R1 服务面：记录 tempPath 可用 ⇒ Usable 分支复用它（断点续传同一文件的前提）") {
     val transferId = "tid-r1-usable"
-    val payload = Array.tabulate(32)(i => (i * 5 % 251).toByte)
-    val headers = DropboxService.ChunkHeaders(0, 64L, 32, ChunkedTransfer.sha256Hex(payload), "z" * 64)
+    // 🔴 重锚（2026-10-14 redfix 批，报告 #10）：本例原为 16 字节种子 + chunk 0，
+    // 期望「追加 48」。xferb 线B P0-2（`4f8b6799d`，2026-09-20，**晚于本例首钉**
+    // 179c8e048 2026-09-13）给接收端加了**续传对齐**契约：本块 offset 之前若存在
+    // 非整块尾（16 % 32 ≠ 0 = 中断的 append 残尾），必须先截到 frame.offset 再
+    // 追加（防同段字节落两遍 ⇒ 末块整件摘要必炸）。16 字节种子 + offset 0 的块
+    // ⇒ 截到 0 重写 32 = **现合同的正确行为**，旧 48 期望是 P0-2 之前的形态。
+    // 本重锚把种子改为**块对齐**（32 字节 = 恰一块），入向块 = chunk 1（末块）：
+    // 复用记录路径的判据原样保留（记录文件 32 → 64 增长；回落派生名 ⇒ 记录停
+    // 在 32 + 派生文件在场 ⇒ 双双转红）——若 Usable 链真断，本例照样红。
+    val seedBytes = Array.tabulate(32)(i => (i * 7 % 251).toByte) // 上一会话已落的块 0（对齐尾）
+    val payload = Array.tabulate(32)(i => (i * 5 % 251).toByte) // 本块 = 块 1（末块）
+    val whole = ChunkedTransfer.sha256Hex(seedBytes ++ payload)
+    val headers = DropboxService.ChunkHeaders(1, 64L, 32, ChunkedTransfer.sha256Hex(payload), whole)
     val derived = DropboxUtil.downloadsDir / s".r1-usable.bin.dropbox-${transferId.take(8)}"
     withStackSeeded { dataRoot =>
-      // 记录路径指向 dataRoot 下**已有 16 字节**的真实文件 ⇒ 本块必须**追加**在它上面
-      // （Usable ⇒ 复用记录路径；若误回落派生名，记录文件长度会停在 16 ⇒ 测试转红）。
+      // 记录路径指向 dataRoot 下**已有 32 字节（整块对齐）**的真实文件 ⇒ 本块必须
+      // **追加**在它上面（Usable ⇒ 复用记录路径；若误回落派生名，记录文件长度会
+      // 停在 32 ⇒ 测试转红）。
       val recorded = dataRoot / "recorded-temp.bin"
-      IO.blocking(os.write(recorded, payload.take(16), createFolders = true))
+      IO.blocking(os.write(recorded, seedBytes, createFolders = true))
         .as(inboundTransfer(transferId, "r1-usable.bin", Some(recorded.toString), 64L))
     } { (_, svc) =>
       val recorded = PathUtil.dataRoot / "recorded-temp.bin"
@@ -340,9 +352,15 @@ class AttachGateServiceSpec extends CatsEffectSuite:
         derivedExists <- IO.blocking(os.exists(derived))
       yield
         ack match
-          case Right(a) => assertEquals(a.bytesReceived, 16L + payload.length.toLong)
+          case Right(a) =>
+            assertEquals(a.bytesReceived, seedBytes.length.toLong + payload.length.toLong)
+            assertEquals(a.wholeSha256, Some(whole), "末块回执必须带接收端自算整件摘要（对齐尾未被截）")
           case Left(err) => fail(s"Usable 分支必须复用记录路径：${err.render}")
-        assertEquals(sizeAfter, 16L + payload.length.toLong, "本块必须追加在**记录路径**上（复用而非另起新文件）")
+        assertEquals(
+          sizeAfter,
+          seedBytes.length.toLong + payload.length.toLong,
+          "本块必须追加在**记录路径**上（复用而非另起新文件；对齐尾不得被截）"
+        )
         assert(!derivedExists, "Usable 分支不得再回落派生名（回落即等于丢失续传锚点）")
       body.guarantee(
         IO.blocking {

@@ -46,9 +46,9 @@ class RootSixBaseToolsSpec extends FunSuite:
   private def mkDef(name: String, tools: List[String] = Nil): AgentDef =
     AgentDef(name = name, description = "", tools = tools)
 
-  // ===== ① 文件面六件 ⊆ Nebula 机制集 ∧ NodeList ∅ ∧ TaskList ∈（变异验红锚点）=====
+  // ===== ① 文件面六件 ⊆ Nebula 机制集 ∧ NodeList ∅ ∧ Task ∈（变异验红锚点）=====
 
-  test("① 文件面六件 ⊆ Nebula 机制集（静态集+交付面双层，2026-09-18 18:18 令恢复）∧ NodeList 不在 ∧ TaskList 在——再摘文件面任一件或摘掉 TaskList、计数漂移即红"):
+  test("① 文件面六件 ⊆ Nebula 机制集（静态集+交付面双层，2026-09-18 18:18 令恢复）∧ NodeList 不在 ∧ Task 在——再摘文件面任一件或摘掉 Task、计数漂移即红"):
     val six = AgentCore.BaseTools
     assert(
       six == Set("Read", "Write", "Edit", "Glob", "Grep", "Bash"),
@@ -67,16 +67,17 @@ class RootSixBaseToolsSpec extends FunSuite:
     // NodeList——节点结果沿 out 边自动投递，主动查图与裁定职责重叠
     // （dispatcher 面不受影响）
     assert(!fixed.contains("NodeList"), "Nebula 机制集不含 NodeList（00:48 裁定摘除）")
-    // 钉死断言（2026-09-06 TaskList 批）：TaskList ∈ Nebula 机制集——
-    // 快变状态出记忆的专属编排件（摘掉或改名即红）
-    assert(fixed.contains("TaskList"), "Nebula 机制集含 TaskList（TaskList 批 +1）")
-    // 交付面（buildAllowedToolSet，注册表过滤后）同样文件面六件在、NodeList 零、TaskList 在
+    // 钉死断言（taskunify 合一批 2026-09-24 取代 2026-09-06 TaskList 批；PR48 重建族
+    // 曾静默回退，2026-10-14 redfix 批恢复）：Task ∈ Nebula 机制集——合一账本唯一
+    // 写面的专属编排件（摘掉或改名即红）
+    assert(fixed.contains("Task"), "Nebula 机制集含 Task（taskunify 合一：TaskList+TaskBoard → Task）")
+    // 交付面（buildAllowedToolSet，注册表过滤后）同样文件面六件在、NodeList 零、Task 在
     val delivered = CoreProbe.allowed(mkDef("Nebula"))
     Set("Read", "Glob", "Grep", "Bash", "Write", "Edit").foreach { t =>
       assert(delivered.contains(t), s"Nebula 交付面缺文件面件（2026-09-18 18:18 令）: $t")
     }
     assert(!delivered.contains("NodeList"), "Nebula 交付面零 NodeList（00:48 裁定摘除）")
-    assert(delivered.contains("TaskList"), "Nebula 交付面含 TaskList（注册层已挂）")
+    assert(delivered.contains("Task"), "Nebula 交付面含 Task（注册层已挂，taskunify 合一）")
     // 件数以单点常量 AgentCore.RootOrchestrationToolsExpectedSize 为准：
     // 17（2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后值 17，builtin-def 批
     // 2026-10-03 +Delegate ⇒ 19，pop 批 −Card ⇒ 18，unified-delegate 批 −AgentFlow ⇒ 17）；

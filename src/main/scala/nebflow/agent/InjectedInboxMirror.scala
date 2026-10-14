@@ -83,9 +83,14 @@ object InjectedInboxMirror:
    * 阻塞桥（builtin-merge 批新增）创建的会话 id 用 `subagent-` / `workflow-` 前缀，
    * 前端弹窗判据早已收录两者，后端本表当时未同步 ⇒ 镜像腿对这两个族的注入行
    * **结构性漏投**。本批补齐两侧同源（单侧扩面正是契约门要禁的形态）。
+   *
+   * external-executors 批 #1225（`37a5b37d8`，2026-10-06）：前端 `isBgAgentId`
+   * 单侧加 `external-`（外部 CLI delegate 会话 `external-<exec>-<id>`），后端本表
+   * 未随更（PR48 重建族静默丢失）⇒ external 族不在后端镜像目标集 = 同型漏投。
+   * 2026-10-14 redfix 批补齐（恢复两侧同源契约）。
    */
   val SubAgentIdPrefixes: List[String] =
-    List("delegate-", "subtask-", "subagent-", "workflow-", "node-", "dispatcher-")
+    List("delegate-", "subtask-", "subagent-", "workflow-", "node-", "dispatcher-", "external-")
 
   /** 是否子代理会话 id（前缀判据见 [[SubAgentIdPrefixes]]）。 */
   def isSubAgentSession(sessionId: String): Boolean =

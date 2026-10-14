@@ -440,7 +440,11 @@ class AllowedToolSetSpec extends FunSuite:
     // 「Nebula no longer carries Mail (2026-09-05 旧体系退役)」随 R2 作废：
     // Mail 成为全平台唯一消息原语，Nebula 面必须携带（史实 16→16 净 0：−Task +Mail；史实 13 = 搜索件摘除后、12 = −Delegate 后；当前 = 17）。
     assert(allowed.contains("Mail"), "R2: Nebula carries Mail — 平台唯一消息原语（2026-09-12）")
-    assert(!allowed.contains("Task"), "R2: Task 退役，Nebula 面零 Task")
+    // taskunify 合一批（2026-09-24）：Task 以「合一账本唯一写面」身份**复活进场**
+    // （取代 TaskList+TaskBoard；旧义「触发项目」已归 Mail）。PR48 重建族曾把
+    // 机制集成员名静默回退成未注册的 TaskList（Nebula 活面零任务写件），
+    // 2026-10-14 redfix 批恢复 ⇒ 本断言随合同钉 Task 在场。
+    assert(allowed.contains("Task"), "taskunify: Task = 合一账本唯一写面，Nebula 面在场（2026-09-24 复活）")
     assert(!allowed.contains("NodeMessage"), "R2: NodeMessage 退役，Nebula 面零 NodeMessage")
 
   test("standalone agents do NOT get FlowExecute"):
@@ -607,7 +611,7 @@ class AllowedToolSetSpec extends FunSuite:
       "Mail",
       "Project", // N2 project-tool 批 2026-10-06 ⑨A 更名（原 ProjectCreate）——件数零变化，纯换名
       "AgentControl", // 编排触发（R2 批：−Task +Mail 史实净 16；史实 13 = 搜索件摘除后、12 = −Delegate 后；当前 17 = 2026-09-18 18:18 令 +5；NodeList 摘除）
-      "TaskList", // 任务编排（TaskList 批：快变状态出记忆）
+      "Task", // 任务编排（taskunify 合一 2026-09-24：TaskList+TaskBoard → Task 一件，件数净 0）
       "SendMessage", // 通信（好友功能非旧体系，保留）
       "Read", // 读件（08:40 解禁四件）
       "Glob",
@@ -634,9 +638,10 @@ class AllowedToolSetSpec extends FunSuite:
       assert(allowed.contains(t), s"Nebula 面含搜索件（2026-09-18 18:18 令——变异验红锚：摘掉即红）: $t")
     }
     // R2 断言反转（2026-09-12）：原「旧体系三件维持退役」含 Mail 已作废——
-    // Mail 是 R2 唯一消息原语、必在 Nebula 面；退役件改判为 Task/NodeMessage。
-    Set("Task", "NodeMessage", "FlowTrigger", "FlowExecute").foreach { t =>
-      assert(!allowed.contains(t), s"退役件（R2 2026-09-12 + 2026-09-05 旧体系）不得出现: $t")
+    // Mail 是 R2 唯一消息原语、必在 Nebula 面；退役件 = NodeMessage/旧体系两件
+    // + taskunify 退役件 TaskList/TaskBoard（Task 已复活进场，见上）。
+    Set("TaskList", "TaskBoard", "NodeMessage", "FlowTrigger", "FlowExecute").foreach { t =>
+      assert(!allowed.contains(t), s"退役件（taskunify 2026-09-24 / R2 2026-09-12 / 2026-09-05 旧体系）不得出现: $t")
     }
     // Delegate 已由 builtin-def 批 2026-10-03 作者令②恢复进 Nebula 固定面（退役件
     // 反向钉被取代——正向钉，与 Bash/Write/Edit 同型）；Issue/NodeList 维持反向钉。
@@ -648,41 +653,43 @@ class AllowedToolSetSpec extends FunSuite:
     assert(allowed.contains("Write"), "Nebula 含 Write（2026-09-18 18:18 令恢复）")
     assert(allowed.contains("Edit"), "Nebula 含 Edit（2026-09-18 18:18 令恢复）")
 
-  // ===== TaskList 工具面隔离（2026-09-06 TaskList 批，硬约束）=====
-  // Nebula 专属编排件：仅 NebulaOrchestrationTools 携带（+1；当前 = 17，
-  // 2026-09-18 18:18 令 +5 后值；史实 12 = −Delegate 后、13 = 搜索件摘除后）；
+  // ===== Task 工具面隔离（taskunify 合一批 2026-09-24 取代 2026-09-06 TaskList 批，硬约束）=====
+  // Nebula 专属编排件：仅 NebulaOrchestrationTools 携带（件数净 0 的一对一改名）；
   // dispatcher（DispatcherFixedTools）/ general（BaseTools+AskUserQuestion）与一切非
   // Nebula 身份（含 "*" 声明、dream、SubTask worker、flow 节点）零出现。
 
-  test("TaskList 仅 Nebula（工具面总数=原数目+1 仅此一件）：dispatcher/general 固定面均不含"):
-    // Nebula 面 +1
+  test("Task 仅 Nebula（合一账本唯一写面仅此一件）：dispatcher/general 固定面均不含"):
+    // Nebula 面携带
     val nebulaFixed = AgentCore.fixedToolsFor(mkDef("Nebula", Nil))
-    assert(nebulaFixed.contains("TaskList"), "Nebula 机制集含 TaskList")
-    // dispatcher 固定集不含（分发器只分解不维护 Nebula 私有任务清单）
-    assert(!AgentCore.DispatcherFixedTools.contains("TaskList"), "dispatcher 固定集零 TaskList")
+    assert(nebulaFixed.contains("Task"), "Nebula 机制集含 Task")
+    // dispatcher 固定集不含（分发器只分解不维护 Nebula 私有任务账本）
+    assert(!AgentCore.DispatcherFixedTools.contains("Task"), "dispatcher 固定集零 Task")
     assert(
-      !CoreProbe.allowed(mkDef("project-dispatcher", Nil), isFlowNode = true).contains("TaskList"),
-      "dispatcher 交付面零 TaskList"
+      !CoreProbe.allowed(mkDef("project-dispatcher", Nil), isFlowNode = true).contains("Task"),
+      "dispatcher 交付面零 Task"
     )
     // 执行 agent 固定集不含（builtin-merge 批：general ⇒ nebflow）
-    assert(!AgentCore.NebflowFixedTools.contains("TaskList"), "nebflow 固定集零 TaskList")
-    assert(!CoreProbe.allowed(mkDef("nebflow", Nil), isFlowNode = true).contains("TaskList"), "nebflow 交付面零 TaskList")
+    assert(!AgentCore.NebflowFixedTools.contains("Task"), "nebflow 固定集零 Task")
+    assert(!CoreProbe.allowed(mkDef("nebflow", Nil), isFlowNode = true).contains("Task"), "nebflow 交付面零 Task")
 
-  test("TaskList 防声明逃逸：非 Nebula 显式声明与 '*' 通配均剥离（RootExclusiveTools）"):
-    assert(AgentCore.RootExclusiveTools.contains("TaskList"), "TaskList 进 RootExclusiveTools（剥离语义单点）")
-    val declared = CoreProbe.allowed(mkDef("sneaky", List("Read", "TaskList")))
-    assert(!declared.contains("TaskList"), "standalone 显式声明无效")
+  test("Task/TaskInfo 防声明逃逸：非 Nebula 显式声明与 '*' 通配均剥离（RootExclusiveTools）"):
+    assert(AgentCore.RootExclusiveTools.contains("Task"), "Task 进 RootExclusiveTools（剥离语义单点）")
+    assert(AgentCore.RootExclusiveTools.contains("TaskInfo"), "TaskInfo 同进剥离单点（taskunify：项目域只读件）")
+    val declared = CoreProbe.allowed(mkDef("sneaky", List("Read", "Task")))
+    assert(!declared.contains("Task"), "standalone 显式声明无效")
+    assert(!CoreProbe.allowed(mkDef("sneaky2", List("Read", "TaskInfo"))).contains("TaskInfo"), "TaskInfo 显式声明同剥")
     val wildcard = CoreProbe.allowed(mkDef("omni", List("*")))
-    assert(!wildcard.contains("TaskList"), "wildcard 剥离")
+    assert(!wildcard.contains("Task"), "wildcard 剥离")
+    assert(!wildcard.contains("TaskInfo"), "wildcard 剥离（TaskInfo）")
     val team = CoreProbe.allowed(mkDef("member", List("*")).copy(category = "team"))
-    assert(!team.contains("TaskList"), "team 成员剥离")
+    assert(!team.contains("Task"), "team 成员剥离")
     val worker = CoreProbe.allowed(mkDef("w", List("*")).copy(category = "team"), isSubTaskWorker = true)
-    assert(!worker.contains("TaskList"), "SubTask worker 剥离")
+    assert(!worker.contains("Task"), "SubTask worker 剥离")
     val flow = CoreProbe.allowed(mkDef("f", List("*")).copy(category = "flow"))
-    assert(!flow.contains("TaskList"), "flow 节点剥离")
-    // dream 无豁免（豁免面恰为 MemoryNote 一件，TaskList 对 dream 照剥）
-    val dream = CoreProbe.allowed(mkDef("dream", List("TaskList")))
-    assert(!dream.contains("TaskList"), "dream 声明 TaskList 无效（非 DreamAdmittedTools）")
+    assert(!flow.contains("Task"), "flow 节点剥离")
+    // dream 无豁免（豁免面恰为 MemoryNote 一件，Task/TaskInfo 对 dream 照剥）
+    val dream = CoreProbe.allowed(mkDef("dream", List("Task")))
+    assert(!dream.contains("Task"), "dream 声明 Task 无效（非 DreamAdmittedTools）")
 
   test("Nebula 文件工具面（2026-09-18 18:18 令）：converged 名声明整体失效——交付面 ≡ 机制集，文件面六件因机制集而在场"):
     // 🔴 本用例的**目的** = 「converged 名的 tools 声明整体失效（base=∅）」——

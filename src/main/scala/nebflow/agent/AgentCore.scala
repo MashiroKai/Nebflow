@@ -200,15 +200,17 @@ object AgentCore:
     "Delegate",
     "AgentControl",
     "MemoryNote",
-    // TaskList（2026-09-06 TaskList 批）：Nebula 专属编排件——任务=快变状态
-    // 存储（~/.nebflow/tasks.json），与 MemoryNote 同域隔离（非 Nebula 声明即剥）。
-    "TaskList",
-    // TaskBoard（20260908 任务板批 2）：项目域编排件（非 Nebula 专属——分发器
-    // 固定面 + project 节点会话按身份挂载），但同享本集的【防声明逃逸】通道：
-    // agent.json 声明（含 "*"）对一切非 Nebula 身份不授能。project 会话的真实
-    // 授能在 buildAllowedToolSet 末段按会话身份追加（晚于本集剥离点），分发器
-    // 固定面同理（nebulaFiltered 先剥、末段再挂）——剥离与授能两点不相干扰。
-    "TaskBoard",
+    // Task（taskunify 合一批 2026-09-24 `75fddc5db`：TaskList/TaskBoard 双件合一
+    // ⇒ 本集成员一对一改名 `TaskList`/`TaskBoard` → `Task`/`TaskInfo`）：Nebula
+    // 专属写面（合一账本 tasks-v2.json）+ 项目域只读件 TaskInfo——非 Nebula 身份
+    // 声明即剥（防声明逃逸）。project 会话按身份挂载；但同享本集的【防声明逃逸】
+    // 通道：agent.json 声明（含 "*"）对一切非 Nebula 身份不授能。project 会话的
+    // 真实授能在 buildAllowedToolSet 末段按会话身份追加（晚于本集剥离点）——剥离
+    // 与授能两点不相干扰。🔴 本两行曾被 PR48 重建族静默回退回旧名
+    // （TaskList/TaskBoard 均已不注册，旧名条目剥了个寂寞——"Task" 反而可被 "*"
+    // 声明授能）；2026-10-14 redfix 批按 taskunify 语义恢复。
+    "Task",
+    "TaskInfo",
     // Pop（2026-09-10 作者裁定「我觉得把pop工具给nebula专属吧」）：Pop 收归
     // Nebula 专属——Canvas 是用户面呈现通道，节点乱 Pop 是过程件污染的入口，
     // 靠纪律不如靠工具面收口。本集同时是【防声明逃逸】通道：agent.json 声明
@@ -405,8 +407,15 @@ object AgentCore:
     // `RootExclusiveTools` 的 "Delegate" 条目继续承担**防声明逃逸**剥离（非
     // Nebula 身份声明 Delegate 仍被剥）。
     "Delegate",
-    // 任务编排（2026-09-06 TaskList 批：快变状态出记忆；首期无前端）
-    "TaskList",
+    // 任务编排（taskunify 合一批 2026-09-24 `75fddc5db`：TaskList/TaskBoard 双件
+    // 合一 ⇒ 本集成员一对一改名 `TaskList` → `Task`，件数不变）。`TaskList` 名已
+    // 删净退役（registry 不注册 ⇒ 调用走 RetiredToolGuides 墓碑指引）；`Task` 是
+    // Nebula 独占唯一写面（一个账本 tasks-v2.json、一个编号空间、一个变更史文件）。
+    // 🔴 本行曾被 PR48 head tree 重建族（7adc7c8a4 / 0b26aa857+ee1c8058c，09-27/28）
+    // 静默回退回 `TaskList`——2026-10-05 作者授权的 pfhygiene-taskunify-fix 批
+    // （`d23d37ba9`，补 TaskList/TaskBoard 墓碑表项）已再证「Task 活、TaskList 退役」
+    // 为在案合同；2026-10-14 redfix 批按 taskunify 语义恢复改名。
+    "Task",
     // TaskSearch（task-rag 批 #1227 / §Batch 7）：任务语义检索（Nebula 面，
     // 只读）——账本条目 + delegate 地址簿的 embedding/词法检索，返回 task #N/
     // 标题/状态/执行器图标/address(delegate:<id>)/snippet；检索到的地址可直接

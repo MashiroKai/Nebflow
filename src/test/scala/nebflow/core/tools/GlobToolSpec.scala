@@ -36,6 +36,17 @@ class GlobToolSpec extends FunSuite:
   }
 
   test("crash 2/5 (09:38 Coder): web js recursive pattern") {
+    // 🔴 加固（2026-10-14 redfix 批，报告 #6/B11）：`web/js/**/*.js` 实有 152 个 >
+    // MAX_RESULTS(100)（GlobTool.scala:9），rg 按 mtime 序截断——worktree 整树
+    // checkout 使全树 mtime 齐平 ⇒ chat.js 被随机截出（10-12 审计定谳为 mtime
+    // 截断伪影；主仓真 mtime 分布下本例一直绿）。断言改 **mtime 无关**：先把
+    // chat.js 的 mtime 置为 now（纯 mtime 触碰，git 不跟踪、内容零改动）⇒ 它必进
+    // 前 100，worktree 形态下也绿。截断语义的正确性仍由 crash 4/5 的「非空命中」钉。
+    val chatJs = os.pwd / "src" / "main" / "resources" / "web" / "js" / "chat.js"
+    java.nio.file.Files.setLastModifiedTime(
+      chatJs.toNIO,
+      java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis())
+    )
     val r = call("src/main/resources/web/js/**/*.js")
     assert(r.isRight, s"InvalidSegment crash regression: $r")
     assert(r.toOption.get.contains("chat.js"), s"expected chat.js, got: ${r.toOption.get.take(300)}")
