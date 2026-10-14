@@ -135,4 +135,59 @@ class WikiIndexSpec extends FunSuite:
     assertEquals(WikiIndex.normalizeTarget("img.png"), "img.png")
     assertEquals(WikiIndex.normalizeTarget("a\\b.md"), "a/b.md")
   }
+
+  // ───────────── scenario packs (frontmatter + attachments) ─────────────
+
+  test("WI-10 frontmatter feeds docType/status; line numbers stay full-file") {
+    val text = """---
+type: research-log
+status: open
+---
+
+# Research log
+
+Day 1: framed the retry budget question. ^frame
+"""
+    val scan = WikiIndex.buildVaultScan("proj", "self", List("log.md" -> text))
+    val node = scan.nodes.head
+    assertEquals(node.docType, Some("research-log"))
+    assertEquals(node.status, Some("open"))
+    // Heading/block line numbers include the frontmatter offset (full-file coords).
+    assertEquals(node.headings.map(h => (h.text, h.line)), List(("Research log", 6)))
+    assertEquals(node.blocks.map(b => (b.id, b.line)), List(("frame", 8)))
+  }
+
+  test("WI-11 attachments become kind=attachment nodes and resolve as link targets") {
+    val scan = WikiIndex.buildVaultScan(
+      "proj", "self",
+      List("review.md" -> "Read [[chen-2024-retry.pdf]] and see ![[figure.png]]."),
+      attachments = List("attachments/chen-2024-retry.pdf", "attachments/figure.png")
+    )
+    val att = scan.nodes.filter(_.kind == "attachment")
+    assertEquals(att.map(_.rel).sorted, List("attachments/chen-2024-retry.pdf", "attachments/figure.png"))
+    assert(att.forall(n => !n.stub))
+    // Both links resolved to real nodes — no phantoms for present attachments.
+    assert(scan.edges.forall(e => scan.nodes.exists(n => n.id == e.to && !n.stub)))
+    assert(scan.edges.exists(_.to == "proj:attachments/chen-2024-retry.pdf"))
+  }
+
+  test("WI-12 frontmatter is excluded from heading/link extraction") {
+    val doc = WikiIndex.parseDoc(
+      "a.md",
+      """---
+type: glossary
+see: [[not-a-link]]
+---
+body links [[real]]"""
+    )
+    assertEquals(doc.headings, Nil)
+    assertEquals(doc.links.map(_._1), List("real"))
+  }
+
+  test("WI-13 file classification: md/html are docs, viewer files are attachments") {
+    assertEquals(WikiIndex.DocExtensions.contains(".html"), true)
+    assertEquals(WikiIndex.AttachmentExtensions.contains(".pdf"), true)
+    assertEquals(WikiIndex.extOf("paper.PDF"), ".pdf")
+    assertEquals(WikiIndex.extOf("noext"), "")
+  }
 end WikiIndexSpec

@@ -42,7 +42,10 @@ object WikiIndex:
     title: String,     // first H1, else file basename
     headings: List[WikiHeading],
     blocks: List[WikiBlockAnchor],
-    stub: Boolean      // true = project-level placeholder (vault missing/unreadable)
+    stub: Boolean,     // true = project-level placeholder / unresolved phantom
+    kind: String = "doc",         // "doc" | "attachment"
+    docType: Option[String] = None, // YAML frontmatter `type:` (scenario pack)
+    status: Option[String] = None   // YAML frontmatter `status:` (open/solved/…)
   )
 
   final case class WikiHeading(text: String, line: Int)
@@ -59,6 +62,53 @@ object WikiIndex:
   )
 
   final case class VaultScan(nodes: List[WikiDocNode], edges: List[WikiEdge], warnings: List[String])
+
+  // ── File classification (docs vs attachments) ───────────────────
+
+  /** Document extensions indexed as first-class graph nodes. `.md` is the
+    * primary face; `.html` covers visual-report HTML deliverables so they get
+    * the same node treatment the author mandated. */
+  val DocExtensions: Set[String] = Set(".md", ".markdown", ".html")
+
+  /** Attachment extensions indexed as `kind=attachment` nodes — exactly the
+    * files a canvas viewer can open, so a literature PDF cited from a document
+    * is one click away. Unknown extensions are skipped entirely. */
+  val AttachmentExtensions: Set[String] = Set(
+    ".pdf", ".docx", ".pptx", ".xlsx", ".epub",
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
+    ".mp4", ".webm", ".mov", ".mp3", ".wav", ".csv"
+  )
+
+  def extOf(rel: String): String =
+    val lower = rel.toLowerCase
+    val dot = lower.lastIndexOf('.')
+    if dot < 0 then "" else lower.substring(dot)
+
+  // ── Frontmatter (scenario packs: type / status / tags) ───────────
+
+  /** A leading `--- … ---` block's key/value pairs (flat scalars only — the
+    * vault convention keeps frontmatter tiny), the text AFTER it, and the
+    * number of lines it occupied (body line numbers stay in FULL-FILE
+    * coordinates so anchors agree with the authoring view). */
+  def frontmatterOf(text: String): (Option[Map[String, String]], String, Int) =
+    val lines = text.linesIterator.toVector
+    if lines.isEmpty || lines.head.trim != "---" then (None, text, 0)
+    else
+      var endIdx = -1
+      var i = 1
+      while i < lines.length && endIdx < 0 do
+        if lines(i).trim == "---" then endIdx = i
+        i += 1
+      if endIdx < 0 then (None, text, 0)
+      else
+        val fields = lines.slice(1, endIdx).flatMap { l =>
+          val idx = l.indexOf(':')
+          if idx <= 0 then None
+          else Some(l.substring(0, idx).trim -> l.substring(idx + 1).trim.stripPrefix("\"").stripSuffix("\""))
+        }.toMap
+        val body = lines.drop(endIdx + 1).mkString("\n")
+        (Some(fields), body, endIdx + 1)
+
 
   // ── Link extraction ──────────────────────────────────────────────
 
@@ -146,9 +196,12 @@ object WikiIndex:
     links: List[(String, Option[String], String, Int)] // (target, anchor, kind, line)
   )
 
-  /** Parse raw markdown text into headings / block anchors / outgoing links. */
+  /** Parse raw markdown text into headings / block anchors / outgoing links.
+    * A leading frontmatter block is metadata, not content — its lines are
+    * excluded from heading/block/link extraction. */
   def parseDoc(rel: String, text: String): ParsedDoc =
-    val lines = text.linesIterator.toVector
+    val (_, body, fmOffset) = frontmatterOf(text)
+    val lines = body.linesIterator.toVector
     val mask = fencedMask(lines)
     val headings = ListBuffer.empty[WikiHeading]
     val blocks = ListBuffer.empty[WikiBlockAnchor]
@@ -157,7 +210,7 @@ object WikiIndex:
     var i = 0
     while i < lines.length do
       val line = lines(i)
-      val lineNo = i + 1
+      val lineNo = i + 1 + fmOffset // full-file coordinates (frontmatter included)
       if !mask(i) then
         // Headings take precedence over block-id detection (a `^id` on a
         // heading line addresses the heading itself, not a separate block).
@@ -229,13 +282,17 @@ object WikiIndex:
   def phantomNode(project: String, device: String, rel: String): WikiDocNode =
     WikiDocNode(nodeId(project, rel), project, device, rel, basename(rel).stripSuffix(".md"), Nil, Nil, stub = true)
 
-  /** Build a full vault scan from (rel -> raw text) pairs. */
-  def buildVaultScan(project: String, device: String, docs: List[(String, String)]): VaultScan =
-    val knownRels = docs.map(_._1).toSet
+  /** Build a full vault scan from (rel -> raw text) document pairs plus the
+    * vault's attachment files (rel paths; content is never read). Attachments
+    * join the resolution namespace so `[[paper.pdf]]` cites resolve like any
+    * Obsidian link. */
+  def buildVaultScan(project: String, device: String, docs: List[(String, String)], attachments: List[String] = Nil): VaultScan =
+    val knownRels = docs.map(_._1).toSet ++ attachments.toSet
     val nodes = ListBuffer.empty[WikiDocNode]
     val edges = ListBuffer.empty[WikiEdge]
     val phantom = scala.collection.mutable.LinkedHashMap.empty[String, WikiDocNode]
     docs.foreach { (rel, text) =>
+      val (frontmatter, _, _) = frontmatterOf(text)
       val parsed = parseDoc(rel, text)
       nodes += WikiDocNode(
         id = nodeId(project, rel),
@@ -245,9 +302,25 @@ object WikiIndex:
         title = parsed.title,
         headings = parsed.headings,
         blocks = parsed.blocks,
-        stub = false
+        stub = false,
+        kind = "doc",
+        docType = frontmatter.flatMap(_.get("type")).filter(_.nonEmpty),
+        status = frontmatter.flatMap(_.get("status")).filter(_.nonEmpty)
       )
       edges ++= buildEdges(project, device, rel, parsed, knownRels)
+    }
+    attachments.foreach { rel =>
+      nodes += WikiDocNode(
+        id = nodeId(project, rel),
+        project = project,
+        device = device,
+        rel = rel,
+        title = basename(rel),
+        headings = Nil,
+        blocks = Nil,
+        stub = false,
+        kind = "attachment"
+      )
     }
     edges.foreach { e =>
       if !nodes.exists(_.id == e.to) && !phantom.contains(e.to) then
@@ -267,7 +340,10 @@ object WikiIndex:
       "title" -> n.title.asJson,
       "headings" -> n.headings.map(h => Json.obj("t" -> h.text.asJson, "line" -> h.line.asJson)).asJson,
       "blocks" -> n.blocks.map(b => Json.obj("id" -> b.id.asJson, "line" -> b.line.asJson)).asJson,
-      "stub" -> n.stub.asJson
+      "stub" -> n.stub.asJson,
+      "kind" -> n.kind.asJson,
+      "type" -> n.docType.map(_.asJson).getOrElse(Json.Null),
+      "status" -> n.status.map(_.asJson).getOrElse(Json.Null)
     )
 
   def edgeJson(e: WikiEdge): Json =

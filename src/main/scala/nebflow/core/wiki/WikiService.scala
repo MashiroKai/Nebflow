@@ -38,7 +38,14 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
 
   /** Remote per-vault fetch caps — bounded work per graph build. */
   val MaxRemoteFiles = 300
+  val MaxRemoteAttachments = 200
   val MaxRemoteDocBytes = WikiIndex.MaxDocBytes
+
+  /** Binary viewer extensions — remote-doc returns base64 for these so the
+    * frontend can open them from a blob URL (literature PDFs, figures). */
+  private val BinaryDocExtensions: Set[String] = Set(
+    ".pdf", ".docx", ".pptx", ".xlsx", ".epub", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".mp4", ".webm", ".mov", ".mp3", ".wav"
+  )
 
   private val cacheState = new java.util.concurrent.atomic.AtomicReference[Option[(Long, Json)]](None)
   private val building = new java.util.concurrent.atomic.AtomicBoolean(false)
@@ -128,16 +135,21 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
       else
         val docs = ListBuffer.empty[(String, String)]
         val warnings = ListBuffer.empty[String]
-        listMdFiles(vault).foreach { f =>
+        listVaultFiles(vault, WikiIndex.DocExtensions).foreach { f =>
           val rel = f.relativeTo(vault).toString.replace('\\', '/')
           if os.size(f) > WikiIndex.MaxDocBytes then warnings += s"$rel exceeds ${WikiIndex.MaxDocBytes} bytes — skipped"
           else
             try docs += ((rel, os.read(f)))
             catch case e: Exception => warnings += s"$rel unreadable: ${msgOf(e)}"
         }
+        // Attachments: rel paths only — literature PDFs, figures, datasets.
+        // Content is never read here; the canvas opens them on click.
+        val attachments = listVaultFiles(vault, WikiIndex.AttachmentExtensions)
+          .map(_.relativeTo(vault).toString.replace('\\', '/'))
+          .take(WikiIndex.MaxFilesPerVault)
         ProjectScan(
           pd.name, device, ws.toString(), vault.toString(),
-          WikiIndex.buildVaultScan(pd.name, device, docs.toList),
+          WikiIndex.buildVaultScan(pd.name, device, docs.toList, attachments.toList),
           if warnings.isEmpty then None else Some(warnings.mkString("; ")),
           stubProject = false
         )
@@ -146,9 +158,10 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
     )
 
   /**
-   * Remote vault scan: list the peer's `<workspace>/docs`, then pull each md
-   * file through the scoped browse channel and parse it locally. Any failure
-   * (peer offline, refused, egress-denied) degrades to a stub project node.
+   * Remote vault scan: list the peer's `<workspace>/docs` (plus its
+   * `attachments/` folder, best-effort), then pull each document through the
+   * scoped browse channel and parse it locally. Any failure (peer offline,
+   * refused, egress-denied) degrades to a stub project node.
    */
   private def scanRemoteProject(pd: ProjectDef): IO[ProjectScan] =
     val device = deviceOf(pd)
@@ -167,31 +180,41 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
           entries <- listed match
             case Right(json) => IO.pure(json.hcursor.downField("entries").as[List[Json]].getOrElse(Nil))
             case Left(err) => IO.raiseError[List[Json]](new Exception(err))
-          files = entries.flatMap { e =>
-            val c = e.hcursor
-            for
-              name <- c.downField("name").as[String].toOption
-              typ <- c.downField("type").as[String].toOption
-              size <- c.downField("size").as[Long].toOption
-              if typ == "file" && name.toLowerCase.endsWith(".md") && size <= MaxRemoteDocBytes
-            yield name
-          }.take(MaxRemoteFiles)
-          docs <- files.traverse { name =>
-            val rel =
-              if vaultPath.endsWith("/") || vaultPath.endsWith("\\") then vaultPath + name
-              else vaultPath + "/" + name
-            executor.transferGetScoped(peer, rel).flatMap {
+          // Attachments folder listing is best-effort (a vault may not have one).
+          attachmentEntries <- executor
+            .transferListScoped(peer, joinRemote(vaultPath, WikiIndex.AttachmentsDirName))
+            .map(_.map(_.hcursor.downField("entries").as[List[Json]].getOrElse(Nil)).getOrElse(Nil))
+            .handleErrorWith(_ => IO.pure(Nil))
+          docNames = fileNames(entries, WikiIndex.DocExtensions).take(MaxRemoteFiles)
+          // Attachment rel paths ride the namespace without fetching content.
+          attachments = fileNames(attachmentEntries, WikiIndex.AttachmentExtensions)
+            .take(MaxRemoteAttachments)
+            .map(name => s"${WikiIndex.AttachmentsDirName}/$name")
+          docs <- docNames.traverse { name =>
+            executor.transferGetScoped(peer, joinRemote(vaultPath, name)).flatMap {
               case Right(bytes) => IO.pure(name -> new String(bytes, java.nio.charset.StandardCharsets.UTF_8))
               case Left(err) => IO.raiseError[(String, String)](new Exception(s"$name: $err"))
             }
           }
-        yield WikiIndex.buildVaultScan(pd.name, device, docs.toList)
+        yield WikiIndex.buildVaultScan(pd.name, device, docs.toList, attachments.toList)
         scan
           .map(s => ProjectScan(pd.name, device, wsPath, vaultPath, s, None, stubProject = false))
           .handleErrorWith(e =>
             IO(logger.warnSync(s"wiki: remote vault scan for '${pd.name}' on '$device' failed: ${msgOf(e)}")) *>
               IO.pure(ProjectScan(pd.name, device, wsPath, vaultPath, emptyStubScan(pd.name, device), Some(msgOf(e)), stubProject = true))
           )
+
+  /** File names of one remote listing filtered to `exts` (metadata only). */
+  private def fileNames(entries: List[Json], exts: Set[String]): List[String] =
+    entries.flatMap { e =>
+      val c = e.hcursor
+      for
+        name <- c.downField("name").as[String].toOption
+        typ <- c.downField("type").as[String].toOption
+        size <- c.downField("size").as[Long].toOption
+        if typ == "file" && exts.contains(WikiIndex.extOf(name)) && size <= MaxRemoteDocBytes
+      yield name
+    }
 
   /** Single-file fetch from a peer (remote doc open face). */
   def remoteDoc(device: String, remotePath: String): IO[Either[String, Json]] =
@@ -208,15 +231,19 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
                 case Right(bytes) =>
                   if bytes.length > MaxRemoteDocBytes then IO.pure(Left(s"file exceeds ${MaxRemoteDocBytes} bytes"))
                   else
-                    IO.pure(
-                      Right(
-                        Json.obj(
-                          "device" -> device.asJson,
-                          "path" -> remotePath.asJson,
-                          "content" -> new String(bytes, java.nio.charset.StandardCharsets.UTF_8).asJson
-                        )
-                      )
-                    )
+                    // Binary viewer files (literature PDFs, figures) come back
+                    // base64 so the frontend can open them from a blob URL;
+                    // text documents keep the decoded-content shape.
+                    val binary = BinaryDocExtensions.contains(WikiIndex.extOf(remotePath))
+                    val fields: List[(String, Json)] = List(
+                      "device" -> device.asJson,
+                      "path" -> remotePath.asJson,
+                      "binary" -> binary.asJson
+                    ) ++ (if binary then
+                            List("contentBase64" -> java.util.Base64.getEncoder.encodeToString(bytes).asJson)
+                          else
+                            List("content" -> new String(bytes, java.nio.charset.StandardCharsets.UTF_8).asJson))
+                    IO.pure(Right(Json.obj(fields*)))
                 case Left(err) => IO.pure(Left(err))
               }
           }
@@ -249,14 +276,13 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
     if base.endsWith("/") || base.endsWith("\\") then base + child
     else base + "/" + child
 
-  private def listMdFiles(vault: os.Path): List[os.Path] =
+  private def listVaultFiles(vault: os.Path, exts: Set[String]): List[os.Path] =
     val out = ListBuffer.empty[os.Path]
     def walk(dir: os.Path, depth: Int): Unit =
       if depth <= WikiIndex.MaxScanDepth && out.sizeIs < WikiIndex.MaxFilesPerVault then
         os.list(dir).foreach { p =>
-          if os.isDir(p) then
-            if p.last != WikiIndex.AttachmentsDirName then walk(p, depth + 1)
-          else if p.last.toLowerCase.endsWith(".md") then out += p
+          if os.isDir(p) then walk(p, depth + 1)
+          else if exts.contains(WikiIndex.extOf(p.last)) then out += p
         }
     walk(vault, 0)
     out.toList
