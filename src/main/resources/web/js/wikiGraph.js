@@ -28,6 +28,20 @@ const GRAPH_API = '/api/wiki/graph';
 // are the token defaults so the graph keeps working inside iframes.
 const PALETTE = ['#07c160', '#5e6ad2', '#e6a23c', '#d2695e', '#3aa0ff', '#9a6dd7', '#2fbfb0', '#c8567b'];
 
+// Frontmatter statuses that mark RESOLVED work (research: solved/concluded;
+// engineering: accepted/done; learning: mastered) — ✓ ring on the node.
+const DONE_STATUSES = /^(solved|resolved|done|concluded|accepted|mastered|published|closed)$/i;
+
+function roundedRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
 /**
  * Live state of the wiki graph tab (one instance at a time).
  * @typedef {Object} WikiViewState
@@ -53,6 +67,9 @@ const PALETTE = ['#07c160', '#5e6ad2', '#e6a23c', '#d2695e', '#3aa0ff', '#9a6dd7
  * @property {number} W
  * @property {number} H
  * @property {{text: string, muted: string} | null} colors
+ * @property {string} facetKind
+ * @property {string} facetType
+ * @property {string} facetStatus
  */
 
 /** @type {WikiViewState | null} */
@@ -134,6 +151,28 @@ async function renderInto(pane) {
   status.className = 'wiki-toolbar-status';
 
   bar.append(search, refreshBtn, status);
+  // Scenario facets (wiki-graph v2): kind + frontmatter type/status filters —
+  // the research "open problems / conclusions" and learning "progress" faces.
+  // Options are (re)derived from the loaded data in rebuildSim.
+  const facetRow = document.createElement('div');
+  facetRow.className = 'wiki-facets';
+  const mkFacet = (cls) => {
+    const sel = document.createElement('select');
+    sel.className = 'wiki-facet glass-control ' + cls;
+    sel.addEventListener('change', () => {
+      if (!view) return;
+      if (cls === 'wiki-facet-kind') view.facetKind = sel.value;
+      else if (cls === 'wiki-facet-type') view.facetType = sel.value;
+      else view.facetStatus = sel.value;
+      applyFilter();
+    });
+    return sel;
+  };
+  const kindSel = mkFacet('wiki-facet-kind');
+  const typeSel = mkFacet('wiki-facet-type');
+  const statusSel = mkFacet('wiki-facet-status');
+  facetRow.append(kindSel, typeSel, statusSel);
+  pane.appendChild(facetRow);
   pane.appendChild(bar);
 
   const canvasEl = document.createElement('canvas');
@@ -144,7 +183,8 @@ async function renderInto(pane) {
            raf: 0, focusId: pendingFocus || '', filter: '', byId: new Map(),
            focusNode: null, focusPulse: 0, vx: 0, vy: 0, scale: 1,
            dragging: null, panning: false, hover: null,
-           lastPointer: null, resizeObs: null, colors: null, W: 0, H: 0 };
+           lastPointer: null, resizeObs: null, colors: null, W: 0, H: 0,
+           facetKind: '', facetType: '', facetStatus: '' };
   pendingFocus = '';
 
   bindCanvas(canvasEl);
@@ -200,7 +240,7 @@ function rebuildSim() {
     color: n.stub ? 'rgba(139,142,150,0.55)' : (hues.get(n.project) || PALETTE[0]),
     remote: n.device && n.device !== 'self',
     project: n.project,
-    radius: n.stub ? 5 : 6 + Math.min(6, (n.headings || []).length * 0.8),
+    radius: n.stub ? 5 : (n.kind === 'attachment' ? 5.5 : 6 + Math.min(6, (n.headings || []).length * 0.8)),
     fixed: false,
   }));
   const byId = new Map(nodes.map(n => [n.id, n]));
@@ -217,7 +257,28 @@ function rebuildSim() {
     text: (cs.getPropertyValue('--color-text') || '#1c1e22').trim() || '#1c1e22',
     muted: 'rgba(128,132,140,0.95)',
   };
-  // Center on focus node after two ticks (positions need to spread first).
+  // Scenario facet options from the loaded data (stable sorted, capped).
+  const typeSel = /** @type {HTMLSelectElement|null} */ (view.pane.querySelector('.wiki-facet-type'));
+  const statusSel = /** @type {HTMLSelectElement|null} */ (view.pane.querySelector('.wiki-facet-status'));
+  const kindSel = /** @type {HTMLSelectElement|null} */ (view.pane.querySelector('.wiki-facet-kind'));
+  if (kindSel) {
+    kindSel.innerHTML = '';
+    [['', t('wiki.facetAll')], ['doc', t('wiki.facetDocs')], ['attachment', t('wiki.facetAttachments')]].forEach(([v, label]) => {
+      const o = document.createElement('option'); o.value = v; o.textContent = label; kindSel.appendChild(o);
+    });
+    kindSel.value = view.facetKind;
+  }
+  const fillFacet = (sel, values, allLabel) => {
+    if (!sel) return;
+    sel.innerHTML = '';
+    const all = document.createElement('option'); all.value = ''; all.textContent = allLabel; sel.appendChild(all);
+    values.forEach((v) => { const o = document.createElement('option'); o.value = v; o.textContent = v; sel.appendChild(o); });
+    sel.value = view.facetStatus !== undefined && sel === statusSel ? view.facetStatus : (sel === typeSel ? view.facetType : '');
+  };
+  const types = [...new Set((data.nodes || []).map(n => n.type).filter(Boolean))].sort().slice(0, 12);
+  const statuses = [...new Set((data.nodes || []).map(n => n.status).filter(Boolean))].sort().slice(0, 12);
+  fillFacet(typeSel, types, t('wiki.facetAllTypes'));
+  fillFacet(statusSel, statuses, t('wiki.facetAllStatuses'));
   updateStatus();
   applyFilter();
   view.focusNode = null;
@@ -247,7 +308,12 @@ function applyFilter() {
   if (!view || !view.sim) return;
   const q = view.filter;
   view.sim.nodes.forEach(n => {
-    n.dimmed = !!q && !(n.label || '').toLowerCase().includes(q) && !(n.ref.rel || '').toLowerCase().includes(q) && !(n.project || '').toLowerCase().includes(q);
+    let visible = true;
+    if (q) visible = (n.label || '').toLowerCase().includes(q) || (n.ref.rel || '').toLowerCase().includes(q) || (n.project || '').toLowerCase().includes(q);
+    if (visible && view.facetKind) visible = (n.ref.kind || 'doc') === view.facetKind;
+    if (visible && view.facetType) visible = n.ref.type === view.facetType;
+    if (visible && view.facetStatus) visible = n.ref.status === view.facetStatus;
+    n.dimmed = !visible;
   });
 }
 
@@ -385,6 +451,16 @@ function draw() {
       ctx.lineWidth = 1.2;
       ctx.stroke();
       ctx.setLineDash([]);
+    } else if (n.ref.kind === 'attachment') {
+      // Attachments (literature PDFs, figures) draw as rounded squares so the
+      // document/attachment split reads at a glance.
+      const s = r * 1.7;
+      roundedRect(ctx, n.x - s / 2, n.y - s / 2, s, s, 3);
+      ctx.fillStyle = n.color;
+      ctx.shadowColor = n.color;
+      ctx.shadowBlur = isHover ? 12 : 3;
+      ctx.fill();
+      ctx.shadowBlur = 0;
     } else {
       ctx.beginPath();
       ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
@@ -393,6 +469,15 @@ function draw() {
       ctx.shadowBlur = isHover ? 14 : 4;
       ctx.fill();
       ctx.shadowBlur = 0;
+      // Status glyph: solved/closed work carries a ✓ ring — the research
+      // "what's already resolved" read.
+      if (n.ref.status && DONE_STATUSES.test(n.ref.status)) {
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r + 3.5, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(7,193,96,0.85)';
+        ctx.lineWidth = 1.3;
+        ctx.stroke();
+      }
     }
     // Label — only when readable (zoomed in, hovered, or few docs).
     const labelOn = isHover || view.scale > 1.6 || sim.nodes.length <= 40 || (neighbors && neighbors.has(n) && view.scale > 0.9);
@@ -400,7 +485,8 @@ function draw() {
       ctx.font = (isHover ? '600 ' : '') + '11px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
       ctx.fillStyle = isHover ? (view.colors ? view.colors.text : '#1c1e22') : (view.colors ? view.colors.muted : 'rgba(128,132,140,0.95)');
       ctx.textAlign = 'center';
-      const label = n.label.length > 28 ? n.label.slice(0, 27) + '…' : n.label;
+      let label = n.label.length > 28 ? n.label.slice(0, 27) + '…' : n.label;
+      if (n.ref.kind === 'attachment') label = '⎘ ' + label;
       ctx.fillText(label, n.x, n.y + r + 13);
     }
     ctx.globalAlpha = 1;
@@ -515,9 +601,16 @@ function showTooltip(node, px, py) {
   }
   const d = node.ref;
   const deviceLine = node.remote ? `<div class="wiki-tip-device">${t('wiki.remoteDevice').replace('{device}', d.device)}</div>` : '';
-  tip.innerHTML = `<div class="wiki-tip-title"></div><div class="wiki-tip-path"></div>${deviceLine}`;
+  // Scenario metadata: kind + frontmatter type/status (research/learning packs).
+  const meta = [];
+  if (d.kind === 'attachment') meta.push(t('wiki.kindAttachment'));
+  if (d.type) meta.push(d.type);
+  if (d.status) meta.push(d.status);
+  const metaLine = meta.length ? `<div class="wiki-tip-meta"></div>` : '';
+  tip.innerHTML = `<div class="wiki-tip-title"></div><div class="wiki-tip-path"></div>${metaLine}${deviceLine}`;
   tip.querySelector('.wiki-tip-title').textContent = d.title || d.rel;
   tip.querySelector('.wiki-tip-path').textContent = d.rel || '';
+  if (meta.length) tip.querySelector('.wiki-tip-meta').textContent = meta.join(' · ');
   tip.style.left = Math.min(window.innerWidth - 260, px + 14) + 'px';
   tip.style.top = (py + 14) + 'px';
   tip.classList.add('show');
@@ -544,6 +637,8 @@ async function openNode(node) {
   }
   if (!node.remote) {
     // Local: the graph carries the project vault — rebuild the absolute path.
+    // Attachments open through the SAME channel: the viewer registry picks the
+    // pdf/image/office viewer by extension (literature one click away).
     const proj = (view.data.projects || []).find(p => p.name === d.project);
     if (!proj) return;
     const sep = proj.vault.includes('\\') ? '\\' : '/';
@@ -552,24 +647,38 @@ async function openNode(node) {
     openLocalFileTab(abs);
     return;
   }
-  // Remote: fetch read-only content through the peer channel.
+  // Remote: fetch read-only content through the peer channel. Binary viewer
+  // files (literature PDFs, figures) arrive base64 and open from a blob URL.
   try {
     const res = await fetch(`/api/wiki/remote-doc?device=${encodeURIComponent(d.device)}&path=${encodeURIComponent((view.data.projects.find(p => p.name === d.project)?.vault || '') + '/' + d.rel)}`, { headers: { ...authHeaders() } });
     if (!res.ok) { window.__showToast?.(t('wiki.remoteFetchFailed'), 'error'); return; }
     const body = await res.json();
-    window.dispatchEvent(new CustomEvent('workspace-open-item', {
-      detail: {
-        id: 'wiki-remote:' + d.id,
-        itemType: 'markdown',
-        title: (d.title || d.rel) + ' · ' + d.device,
-        content: body.content || '',
-        readOnly: true,
-      },
-    }));
+    const detail = {
+      id: 'wiki-remote:' + d.id,
+      title: (d.title || d.rel) + ' · ' + d.device,
+      readOnly: true,
+    };
+    if (body.binary && body.contentBase64) {
+      const bin = atob(body.contentBase64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const mime = REMOTE_MIME[d.rel.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] || ''] || 'application/octet-stream';
+      detail.itemType = REMOTE_ITEM_TYPE[d.rel.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] || ''] || 'image';
+      detail.objectUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
+      detail.fileName = d.title || d.rel;
+    } else {
+      detail.itemType = 'markdown';
+      detail.content = body.content || '';
+    }
+    window.dispatchEvent(new CustomEvent('workspace-open-item', { detail }));
   } catch (e) {
     window.__showToast?.(t('wiki.remoteFetchFailed'), 'error');
   }
 }
+
+/** Extension → blob mime / canvas itemType for remote attachment opens. */
+const REMOTE_MIME = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml' };
+const REMOTE_ITEM_TYPE = { pdf: 'pdf', docx: 'docx', pptx: 'pptx', xlsx: 'xlsx', epub: 'epub', png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', svg: 'image' };
 
 /** Focus a node (used by the md-viewer graph button): open the tab centered
  *  on that document, identified by project + rel path. */

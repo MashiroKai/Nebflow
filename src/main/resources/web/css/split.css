@@ -1627,3 +1627,14 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   .nf-findbar { animation: none; }
   .canvas-md-viewer .nf-jump-flash { animation: none; background: rgba(94, 106, 210, 0.18); }
 }
+
+/* ── Scenario facets + metadata tooltip (wiki-graph v2) ──────────── */
+.wiki-facets { display: flex; align-items: center; gap: 8px; padding: 0 14px 8px; flex: none; }
+.wiki-facet {
+  height: 26px; padding: 0 8px;
+  border-radius: 9px; border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  color: var(--color-text); font-size: 12px; outline: none; cursor: pointer;
+  max-width: 170px;
+}
+.wiki-tip-meta { font-size: 11px; color: var(--sapphire-refraction, #5e6ad2); margin-bottom: 2px; }

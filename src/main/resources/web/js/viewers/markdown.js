@@ -70,7 +70,15 @@ const BLOCK_ID_LINE_RE = /^(\s*(?:#{1,6}\s+)?[^\n]*\S)[ \t]+\^([A-Za-z0-9][A-Za-
  * @returns {{ html: string, blockStarts: number[], blockIds: Map<string, number> }}
  */
 function analyzeSource(content) {
-  const lines = content.split('\n');
+  let lines = content.split('\n');
+  // Frontmatter is metadata, not content — blank its lines (count preserved,
+  // so block-id and block-start line numbers stay in FULL-FILE coordinates
+  // and every anchor agrees with the authoring view).
+  if (lines[0] && lines[0].trim() === '---') {
+    for (let i = 1; i < lines.length; i++) {
+      if (lines[i].trim() === '---') { lines = lines.map((l, j) => (j <= i ? '' : l)); break; }
+    }
+  }
   const blockIds = new Map();
   const stripped = lines.map((line, i) => {
     const m = BLOCK_ID_LINE_RE.exec(line);
@@ -251,7 +259,10 @@ function resolveWikiTarget(target, baseDir, data) {
 async function renderWikilinks(mdViewer, baseDir) {
   let data = null;
   try { data = await wikiGraph(); } catch (e) { data = null; }
-  const WIKI_TEXT_RE = /\[\[([^\[\]]+?)\]\]/g;
+  // `![[embed]]` rides the same regex (Obsidian embed syntax): image embeds
+  // keep the literal for now, everything else (literature PDFs, figures) is
+  // turned into the reference link — one click opens it in canvas.
+  const WIKI_TEXT_RE = /(!?)\[\[([^\[\]]+?)\]\]/g;
   const walker = document.createTreeWalker(mdViewer, NodeFilter.SHOW_TEXT, {
     acceptNode: (node) => {
       const p = node.parentElement;
@@ -259,7 +270,7 @@ async function renderWikilinks(mdViewer, baseDir) {
       const tag = p.tagName;
       if (tag === 'CODE' || tag === 'PRE' || tag === 'SCRIPT' || tag === 'STYLE' || tag === 'A') return NodeFilter.FILTER_REJECT;
       if (p.closest('pre, code, a.nf-wikilink')) return NodeFilter.FILTER_REJECT;
-      return node.nodeValue && node.nodeValue.includes('[[') ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      return node.nodeValue && /\!?\[\[/.test(node.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
     },
   });
   const textNodes = [];
@@ -274,7 +285,8 @@ async function renderWikilinks(mdViewer, baseDir) {
     let m;
     while ((m = WIKI_TEXT_RE.exec(value)) !== null) {
       if (m.index > last) frag.appendChild(document.createTextNode(value.slice(last, m.index)));
-      const inner = m[1];
+      const embed = m[1] === '!';
+      const inner = m[2];
       const pipe = inner.indexOf('|');
       const body = pipe >= 0 ? inner.slice(0, pipe) : inner;
       const hash = body.indexOf('#');
