@@ -816,6 +816,20 @@ export function initInput(view) {
     syncRefOnlyGate(view);
   });
 
+  // Voice dictation state — declared at the top of the setup scope because
+  // the placeholder helper below runs during init (before the dictation
+  // section executes) and reads `voiceActive`; a later `let` would be a
+  // temporal-dead-zone reference there and crash the whole initInput chain.
+  // Push-and-hold the mic button to start; release to stop.
+  // Interim text streams directly into the input box — no overlay.
+  let voiceActive = false;
+  let voiceAnchor = 0;       // position where current voice segment starts
+  let voiceInterimLen = 0;   // length of interim text currently displayed
+  // Snapshot of input.value at the last voice write / user edit. The diff
+  // baseline that lets us re-anchor the live draft slot after user edits
+  // (2026-09-02 duplicate-fix; see the input listener below).
+  let voiceBaseline = '';
+
   // 附件/引用条的任何重建都会同步闸态（观察器覆盖面含 chat.js 侧 ref 芯片的移除
   // 按钮与 send() 尾部清空 strip 两条非本文件路径）。popup 每次打开重建 DOM ⇒
   // 旧观察器先断开，避免挂在已脱离文档的节点上。
@@ -1065,17 +1079,6 @@ export function initInput(view) {
     });
   }
 
-  // Voice dictation — uses browser Web Speech API (free, no API key needed)
-  // Push-and-hold the mic button to start; release to stop.
-  // Interim text streams directly into the input box — no overlay.
-  let voiceActive = false;
-  let voiceAnchor = 0;       // position where current voice segment starts
-  let voiceInterimLen = 0;   // length of interim text currently displayed
-  // Snapshot of input.value at the last voice write / user edit. The diff
-  // baseline that lets us re-anchor the live draft slot after user edits
-  // (2026-09-02 duplicate-fix; see the input listener below).
-  let voiceBaseline = '';
-
   // Shared callbacks for dictation mode.
   function makeVoiceCallbacks() {
     return {
@@ -1278,7 +1281,7 @@ export function initInput(view) {
   // the bubble inside the same wrap, shown on hover and while dragging.
   let voiceDrag = null;
   let suppressVoiceClickUntil = 0;
-  const micOrbWrap = voiceBtn.closest('.mic-orb-wrap');
+  const micOrbWrap = voiceBtn?.closest('.mic-orb-wrap') || null;
   // Scope-local placeholder refresh (the shared updateInputPlaceholder lives
   // in the per-view setup scope and is not reachable here).
   const refreshPlaceholder = () => {
