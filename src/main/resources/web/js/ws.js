@@ -461,6 +461,45 @@ function showTicketEntry() {
   import('./activityBar.js').then((m) => m.activateAccountEntry()).catch(() => {});
 }
 
+// Silent host-session re-establishment (same-origin console). The relay's own
+// session outlives the host's in-memory session store (every host restart
+// wipes it), but the WS bridge's second leg forwards the browser's cookies to
+// the host's local face — so a live relay session alone still fails the
+// handshake. Before surfacing any login face, re-run the portal's own cycle
+// same-origin: mint a fresh one-time ticket for the bound host (the relay
+// issues it over the live tunnel) and navigate to its consoleUrl — the host
+// redeems the ticket and the relayed Set-Cookie re-seats the host session;
+// the reload then connects on its own. Any refusal (relay session expired /
+// no binding / host offline / rate limit) returns false and the caller falls
+// back to the login gate. Once-per-page-life guard (sessionStorage): a
+// persistently failing host must not turn this into a reload loop.
+async function remintHostSessionAndReload() {
+  const GUARD = 'nebflow_ws_remint_at';
+  let last = 0;
+  try { last = Number(sessionStorage.getItem(GUARD)) || 0; } catch (_) {}
+  if (Date.now() - last < 30000) return false;
+  try { sessionStorage.setItem(GUARD, String(Date.now())); } catch (_) {}
+  try {
+    const status = await fetch('/api/portal/status', { credentials: 'same-origin' });
+    if (!status.ok) return false;
+    const deviceId = (await status.json())?.boundHost?.deviceId;
+    if (typeof deviceId !== 'string' || deviceId === '') return false;
+    const mint = await fetch('/api/portal/console-ticket', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId }),
+    });
+    if (!mint.ok) return false;
+    const consoleUrl = (await mint.json())?.consoleUrl;
+    if (typeof consoleUrl !== 'string' || consoleUrl === '') return false;
+    window.location.href = consoleUrl;
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 
 const HB_INTERVAL_MS = 30000;
 const HB_PONG_GRACE_MIN_MS = 5000;
@@ -625,15 +664,19 @@ export function connect() {
     disconnectCallbacks.forEach(cb => { try { cb(); } catch (e) { console.error('[ws] disconnect callback error:', e); } });
     if (state.heartbeat) { clearInterval(state.heartbeat); state.heartbeat = null; }
     if (!opened) {
-      // Handshake rejected (e.g. 403) before the socket ever opened. Stage D
-      // removed the last non-session credential fallback, so EVERY degraded
-      // shape — no credential, stale credential, blocked cookies — lands on
-      // the paste-ticket entry (plan §6.5, T-8-7: one entry, no second copy
-      // path). The notification and the card keep the failure visible; the
-      // reconnect loop continues in the background behind the modal.
-      console.warn('[ws] connect failed - offering the console ticket entry');
-      addNotification('conn', t('ws.ticketEntry.notify'));
-      showTicketEntry();
+      // Handshake rejected before the socket ever opened. First try the
+      // silent host-session re-establishment (fresh ticket → redemption →
+      // reload): a live relay session with a stale host session is the
+      // common shape after a host restart, and it must self-heal without
+      // any login face. Only when the remint is refused (or this origin
+      // doesn't serve the portal routes — direct-LAN consoles) does the
+      // unified login entry appear; the reconnect loop continues behind it.
+      console.warn('[ws] connect failed - attempting silent console-session re-establishment');
+      remintHostSessionAndReload().then((navigating) => {
+        if (navigating) return;
+        addNotification('conn', t('ws.ticketEntry.notify'));
+        showTicketEntry();
+      });
     }
     scheduleReconnect();
   };
