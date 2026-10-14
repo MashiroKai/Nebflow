@@ -278,7 +278,22 @@ class ProjectUnmountSpec extends CatsEffectSuite:
         Set("n-solo"),
         "node leg sweeps only unchained Running (chain members n-c1 ride the chain leg's cascade — finality asserted below): " + r.nodesCancelled
       )
-      assertEquals(r.sessionsCancelled, List("dispatcher-um01"), "dispatcher leg")
+      // 🔴 重锚（2026-10-14 redfix 批，报告 #21）：03a23259c（2026-09-16）起链取消
+      // = **一条聚合 dispatcher 注入**（chain-cancel leg spawn 新分发器会话
+      // `dispatcher-<hex>`）+ 令 3 分发器空闲保活窗（ProjectActor.scala:124）使其
+      // 活到 stop 步枚举 ⇒ 被一并取消入报告（本批实测 obtained =
+      // List("dispatcher-um01","dispatcher-27fe04d0")）。行为链自洽
+      // （spawn→stop 步收殓），严格单元素钉未随「注入 + 保活」两笔行为演化更新。
+      // 重锚 = fixture 会话必在场 + 其余成员只允许注入 spawn 的 dispatcher-* 形态
+      // （若未来注入腿撤除、单元素回归，本断言仍绿——过滤后断言防再脆）。
+      assert(
+        r.sessionsCancelled.contains("dispatcher-um01"),
+        s"dispatcher leg must cancel the fixture dispatcher session: ${r.sessionsCancelled}"
+      )
+      assert(
+        r.sessionsCancelled.forall(s => s == "dispatcher-um01" || s.startsWith("dispatcher-")),
+        s"dispatcher leg may only carry the fixture session + chaincancel-injected dispatcher-* spawns: ${r.sessionsCancelled}"
+      )
       assertEquals(r.delegatesCancelled, List("delegate-um01"), "delegate leg")
       assertEquals(snapAfter.nodes("n-c1").status, NodeLifecycle.Cancelled, "chain head finalized cancelled")
       assertEquals(snapAfter.nodes("n-c2").status, NodeLifecycle.Cancelled, "chain tail cascade-cancelled")

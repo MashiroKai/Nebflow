@@ -113,7 +113,14 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
     healthPollMs = 10
   )
 
-  private def waitUntil(desc: String, timeoutMs: Long = 8000)(cond: IO[Boolean]): IO[Unit] =
+  // 🔴 环境伪影稳定性修正（2026-10-14 redfix 批，报告 #19）：默认 8s → 30s。
+  // ①full 例（世代闸 `generation = now`（HotRestart.scala:565）≥ 锚点本应恒真）
+  // solo 全绿，但 **22 套件合跑的套件并行负载**下两轮实测 8.146s/8.061s 超时
+  // ⇒ 8s 是「独跑」标定值，合跑负载不够。夹具面修正（默认参数），断言与判据
+  // 零改动；30s 只放宽等待上限，成功路径仍然秒级通过（条件达成即返回）。
+  // ①abort-install 例已自愈（judge9 的游离链污染源 = 前例 ①full 8s 超时残留
+  // 的孤儿链；本修正消除该污染源），无需单独动作。
+  private def waitUntil(desc: String, timeoutMs: Long = 30000)(cond: IO[Boolean]): IO[Unit] =
     def loop: IO[Unit] = cond.flatMap(if _ then IO.unit else IO.sleep(20.millis) *> loop)
     loop
       .timeout(timeoutMs.millis)

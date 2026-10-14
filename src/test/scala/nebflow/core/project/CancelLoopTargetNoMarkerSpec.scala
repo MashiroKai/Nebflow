@@ -394,8 +394,15 @@ class CancelLoopTargetNoMarkerSpec extends CatsEffectSuite:
     assert(detachCancelled.contains("cascadeCancelledIds"), "and keeps consulting the cross-call suppress set")
     // ③ 本批判据（#675(a)）：目标集前向腿排除 `:loop`
     // 2026-09-24:钉死文本更新为 scalafmt 重排后的两行形态(判据语义不变)。
+    // 🔴 第三次重钉（2026-10-14 redfix 批，报告 #25）+ 防再脆硬化：a0f2edfc7
+    // （2026-10-10 night batch）使 NodeCompletion.scala:1132-1133 续行缩进漂移
+    // 2 格（16→18），逐字含缩进源窗钉第三次碎裂（前两次：2026-09-24 重钉形态、
+    // 更早的逐字窗）。#675(a) 语义在场上完好（`.filterNot(OutEdge.isLoopEdge)`
+    // 就在 :1133）。改钉 = **空白归一后的语义行匹配**——标记序列
+    // `val forward = from.out` 紧跟 `.filterNot(OutEdge.isLoopEdge)` 必须存在，
+    // 但对缩进/换行形态不敏感 ⇒ 未来纯格式重排不再碎裂本钉（判据本体改动仍会红）。
     assert(
-      detachCancelled.contains("val forward = from.out\n                .filterNot(OutEdge.isLoopEdge)"),
+      detachCancelled.replaceAll("\\s+", " ").contains("val forward = from.out .filterNot(OutEdge.isLoopEdge)"),
       "the marking leg's forward scan must skip ':loop' back-edges (the whole point of #675(a))"
     )
   }
