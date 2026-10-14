@@ -123,7 +123,13 @@ final class DropboxService private (
 
   /** Load persisted messages and register the WS data channel handler. */
   def init: IO[Unit] =
-    loadMessages *> loadTransfers *> sweepOrphanTemps *> neblinkService.addDataHandler(handleDataMessage)
+    // P6 步2 判别读数（2026-10-14）：注册后打实例指纹（零行为改动，仅一行日志）——
+    // 与 DeviceDelegate arming 行的 ns= 指纹及分发面 svc= 指纹三方对照。
+    loadMessages *> loadTransfers *> sweepOrphanTemps *>
+      neblinkService.addDataHandler(handleDataMessage) *>
+      IO.blocking(logger.infoSync(
+        s"P6 probe: dropbox data handler registered ns=${System.identityHashCode(neblinkService)}"
+      ))
 
   /**
    * 启动清孤儿：temp 目录里有、但没有任何**活跃**会话引用的文件 ⇒ 删除。

@@ -1290,7 +1290,9 @@ class NeblinkClient(
         // 响应 body 同经本路径（relayNotify → relayExec），无需第二桩。DEBUG 级 +
         // 512B 截断防刷屏；下方 decode/output/error 提取语义零改动。
         // ⚠ 冲突面：本桩位于作者 WIP 文件（NeblinkClient.scala），合并时将与其 WIP 冲突。
-        logger.debug(
+        // P6 步2 修复（2026-10-14）：原 `logger.debug` 返回 IO[Unit]，在语句位置被
+        // 丢弃 ⇒ 探针从未输出（步2 复现实证）。改用 debugSync 真打。
+        logger.debugSync(
           s"P6 probe: relay exec response http=OK target=$targetDeviceId action=$action " +
             s"body=${respBody.take(512)}"
         )

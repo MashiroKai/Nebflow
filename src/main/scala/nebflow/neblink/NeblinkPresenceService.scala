@@ -985,7 +985,10 @@ final class NeblinkPresenceService(
 
   /** Called by the WS listener when a data message arrives from a peer. */
   private[neblink] def onDataReceived(payload: Json): Unit = {
-    logger.info(
+    // P6 诊断探针批（2026-10-14 步2 · 可观测性修复③）：logger.info 的 IO 在同步
+    // Unit 语境被丢弃 ⇒ 「presence data frame from ws」从未输出。改用 infoSync。
+    // ⚠ 冲突面：本文件在作者 4 件 WIP 内。
+    logger.infoSync(
       s"presence data frame from ws: channel=${payload.hcursor.downField("channel").as[String].toOption.getOrElse("?")} bytes=${payload.noSpaces.length}"
     )
     dispatcher.unsafeRunAndForget(neblinkService.handleDataMessage(payload))
@@ -1002,7 +1005,11 @@ final class NeblinkPresenceService(
    */
   def sendData(deviceId: String, channel: String, payload: Json): IO[Boolean] =
     IO.blocking {
-      logger.info(s"presence sendData: device=$deviceId channel=$channel connectionsHasKey=${connections.containsKey(deviceId)}")
+      // P6 诊断探针批（2026-10-14 步2 · 可观测性修复④）：logger.info 的 IO 在
+      // IO.blocking 同步块内被丢弃 ⇒ 发送面读数从未输出（本次复现实证：双腿
+      // 「发出成功」却零传输痕迹的直接原因之一）。改用 infoSync。
+      // ⚠ 冲突面：本文件在作者 4 件 WIP 内。
+      logger.infoSync(s"presence sendData: device=$deviceId channel=$channel connectionsHasKey=${connections.containsKey(deviceId)}")
       val conn = connections.get(deviceId)
       if conn != null then
         val msg = Json.obj(

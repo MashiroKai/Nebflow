@@ -848,10 +848,12 @@ final class NeblinkRelayTunnel(
           // spawn handler 真正入口，其既有 INFO「delegate-spawn RECEIVED」与本行对照）。
           // 选址在 DeviceDelegate.scala 之外（作者 WIP 红线）的等价调用点。DEBUG 级、
           // 只读载荷摘要（spawnId/from/task 截断 80 字符防刷屏），分发语义零改动。
+          // P6 步2 修复（2026-10-14）：原 `logger.debug` 返回 IO[Unit]，在语句位置被
+          // 丢弃 ⇒ 探针从未输出（步2 复现实证）。改用 debugSync 真打。
           if payload.hcursor.downField("kind").as[String].getOrElse("") ==
               nebflow.core.delegate.DeviceDelegate.KindSpawn
           then
-            logger.debug(
+            logger.debugSync(
               s"P6 probe: spawn dispatched " +
                 s"handler=DeviceDelegate.handleSpawn via=NeblinkService.handleDataMessage " +
                 s"request_id=$requestId " +
