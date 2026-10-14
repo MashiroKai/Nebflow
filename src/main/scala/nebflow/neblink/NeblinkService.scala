@@ -484,22 +484,41 @@ class NeblinkService private (
 
   /** Register a handler for incoming data messages from peers. */
   def addDataHandler(handler: Json => IO[Unit]): IO[Unit] =
-    dataHandlers.update(_ :+ handler)
+    // P6 步2 判别读数（2026-10-14）：注册即报「注册后表规模 + 实例指纹」，与分发面
+    // 「handlers=N svc=…」对照——判「表丢失」「注册进别实例」「同实例正常」三态。
+    dataHandlers.modify { l =>
+      val n = l :+ handler
+      (n, n.size)
+    }.flatMap { sizeAfter =>
+      IO.blocking(logger.infoSync(s"P6 probe: addDataHandler size-after=$sizeAfter svc=${System.identityHashCode(this)}"))
+    }
 
   /** Forward an incoming WS data message to all registered handlers. */
   private[nebflow] def handleDataMessage(payload: Json): IO[Unit] =
-    IO.blocking(logger.debug(s"Data frame received: channel=${payload.hcursor.downField("channel").as[String].getOrElse("?")} bytes=${payload.noSpaces.length}")) *>
-      dataHandlers.get.flatMap { handlers =>
-        if handlers.isEmpty then
-          // A data frame with NO registered handler is an integration fault
-          // (the sender believed the channel live) — never silently dropped.
-          logger.warn(
-            s"Data frame DROPPED: no data handler registered (channel=${payload.hcursor.downField("channel").as[String].getOrElse("?")})"
-          )
-          IO.unit
-        else
-          handlers.traverse_(_.apply(payload).handleErrorWith(e => logger.debug(s"Data handler error: ${e.getMessage}")))
-      }
+    dataHandlers.get.flatMap { handlers =>
+      // P6 诊断探针批（2026-10-14 步2 · 可观测性修复②）：原 `logger.debug`/`logger.warn`
+      // 返回 IO[Unit]，在 IO.blocking 同步块 / 语句位置被丢弃 ⇒ 「Data frame received」
+      // 与「Data frame DROPPED」从未真正输出（spawn 断点追查的死日志坑，M10 审计登记
+      // 过同款）。改用 *Sync 变体真打；并补 handlers=N 读数（步2 判别读数：B 侧收到帧
+      // 却无 DeviceDelegate 入口日志时，用 handler 表规模判别「表空」还是「表非空但
+      // DeviceDelegate 缺席」）。分发语义零改动。
+      // ⚠ 冲突面：本文件在作者 4 件 WIP 内，合并时将与其 WIP 冲突。
+      IO.blocking(logger.debugSync(
+        s"Data frame received: channel=${payload.hcursor.downField("channel").as[String].getOrElse("?")} " +
+          s"bytes=${payload.noSpaces.length} handlers=${handlers.size} svc=${System.identityHashCode(this)}"
+      )) *>
+        (if handlers.isEmpty then
+           // A data frame with NO registered handler is an integration fault
+           // (the sender believed the channel live) — never silently dropped.
+           logger.warnSync(
+             s"Data frame DROPPED: no data handler registered (channel=${payload.hcursor.downField("channel").as[String].getOrElse("?")})"
+           )
+           IO.unit
+         else
+           // 注：此处的 logger.debug（IO 版）在 handleErrorWith 链内会真跑，勿改
+           // Sync 变体（类型不符且不必要）——步2 复核留痕。
+           handlers.traverse_(_.apply(payload).handleErrorWith(e => logger.debug(s"Data handler error: ${e.getMessage}"))))
+    }
 
   /**
    * Send function for outgoing WS data messages. Set by GatewayMain after

@@ -216,10 +216,29 @@ object DeviceDelegate:
   def initialize(resources: AgentRuntimePort): Unit =
     resources.neblinkService match
       case None =>
-        logger.warn("DeviceDelegate.initialize skipped: NebLink is not configured (no device network)")
+        // P6 诊断探针批（2026-10-14 步2 · 可观测性修复⑥）：两分支原 logger 均为
+        // 丢弃 IO（装配面此前零读数——B 侧「handler 到底注册没有」不可判）。
+        // 改 Sync 真打。⌚ 步2 判别读数。
+        // ⚠ 冲突面：本文件在作者 4 件 WIP 内。
+        logger.warnSync("DeviceDelegate.initialize skipped: NebLink is not configured (no device network)")
       case Some(ns) =>
-        ns.addDataHandler(payload => handlePayload(resources, payload))
-        logger.info("DeviceDelegate receive face armed (channel: delegate-spawn/result/accept)")
+        // P6 步2 根因修复（2026-10-14）：原 `ns.addDataHandler(...)` 返回 IO[Unit]，
+        // 在本 **Unit 同步语境被丢弃** ⇒ delegate 收件面**从未注册**（r4 判别读数：
+        // dropbox 注册走 NeblinkService.addDataHandler 打出 size-after=1，本注册连
+        // 方法体都没进；分发面 handlers=1 恒缺本 handler）。后果 = spawn 帧到达后由
+        // dropbox handler 对未知 kind 静默 IO.unit 吞掉 → 隧道回 200 notified 但
+        // spawn 零分发 —— 即 M10 断点本体（双腿皆然，presence 直发与 relay 兜底
+        // 共用本 handleDataMessage 入口）。
+        // 修法 = boot 期真注册：unsafeRunSync（既有先例 = GatewayMain
+        // `neblinkConfigAtBoot.unsafeRunSync()`，同处 boot 链、同款阻塞语义）。
+        // ⚠ 冲突面：本文件在作者 4 件 WIP 内，合并时将与其 WIP 冲突。
+        ns.addDataHandler(payload => handlePayload(resources, payload)).unsafeRunSync()(
+          using cats.effect.unsafe.implicits.global
+        )
+        // 步2 判别读数：实例指纹（identityHashCode）——与分发面「svc=」指纹对照。
+        logger.infoSync(
+          s"DeviceDelegate receive face armed (channel: delegate-spawn/result/accept) ns=${System.identityHashCode(ns)}"
+        )
 
   /** 数据通道入口分派（dropbox handleDataMessage 同款 kind 判别）。 */
   private[delegate] def handlePayload(resources: AgentRuntimePort, payload: Json): IO[Unit] =
@@ -248,10 +267,18 @@ object DeviceDelegate:
     val parentSessionId = hc.downField("parentSessionId").as[String].getOrElse("")
     val rootSessionId = hc.downField("rootSessionId").as[String].getOrElse("")
     val taskId = hc.downField("taskId").as[Option[String]].toOption.flatten
-    logger.info(
+    // P6 诊断探针批（2026-10-14 步2 · 可观测性修复①）：本行原为 `logger.info`——
+    // NebflowLogger.info 返回 IO[Unit]，此处位于同步 Unit 语境（语句位置），IO 被
+    // 丢弃 ⇒ 「delegate-spawn RECEIVED」从未真正输出（M10 审计登记过的同款坑：
+    // 「观测探针 logger.info 返回未运行的 IO 导致探针静默」）。改用 infoSync 真打。
+    // ⚠ 冲突面：本文件在作者 4 件 WIP 内，合并时将与其 WIP 冲突。
+    logger.infoSync(
       s"[device-delegate] delegate-spawn RECEIVED (from=$fromDeviceId, project=$projectName, spawnId=$spawnId) — verifying pairing/HMAC"
     )
 
+    // 注（步2 复核）：reject 的 IO 是 handleSpawn if/else 的**分支值**，经
+    // handleDataMessage 的 handlers.traverse_ 链会被真跑——logger.warn（IO 版）
+    // 语义正确，勿改 Sync 变体（类型不符）。
     def reject(reason: String): IO[Unit] =
       logger.warn(
         s"[device-delegate] spawn REJECTED (spawnId=$spawnId from=$fromDeviceId): $reason " +
@@ -292,6 +319,8 @@ object DeviceDelegate:
               ) *> spawnLocalDelegate(resources, payload).flatMap {
                 case Left(err) =>
                   processedSpawns.remove(spawnId)
+                  // 注（步2 复核）：此 warn 是 flatMap 回调的**返回值**，链上真跑——
+                  // 勿改 Sync 变体（类型不符）。
                   logger.warn(s"[device-delegate] local spawn failed for spawnId=$spawnId: $err")
                 case Right(localSessionId) =>
                   // delegate-accept 回执（fire-and-forget：host 侧只作可观测读数）。
@@ -302,6 +331,8 @@ object DeviceDelegate:
                     "deviceId" -> fromDeviceId.asJson
                   )
                   sendToDevice(resources, fromDeviceId, accept).handleErrorWith(e =>
+                    // 注：此处的 logger.warn（IO 版）在 handleErrorWith 链内会真跑，
+                    // 勿改 Sync 变体（类型不符且不必要）——步2 复核留痕。
                     logger.warn(s"[device-delegate] accept send failed for spawnId=$spawnId: ${e.getMessage}")
                   ).void
               }
