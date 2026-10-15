@@ -146,8 +146,10 @@ object LogtoAuthCode:
    * (website face precedent, route.ts 2026-09-15 + fix-plan §7.3): quick
    * social entries always pair direct_sign_in with prompt "login consent"
    * (forced fresh IdP auth — the automaticAccountLinking silent-merge
-   * guardrail); the pairing is the CALLER's contract ([[beginPkceLogin]] maps
-   * its social provider to forceLogin=true), never implied here.
+   * guardrail); the pairing is the CALLER's contract — the first-party JS
+   * passes forceLogin=true alongside every social provider ([[beginPkceLogin]]
+   * derives `prompt` from `forceLogin` alone; nothing is implied server-side
+   * here).
    */
   def authorizeUrl(
     endpoint: String,
