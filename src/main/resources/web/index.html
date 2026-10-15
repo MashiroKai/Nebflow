@@ -109,11 +109,14 @@
          Projects 按钮沿用 Team/Flow 让出的槽位。 -->
     <button id="files-btn" class="activity-btn active" data-panel-btn="files" title="Files" aria-pressed="true"><i data-lucide="files"></i></button>
     <button id="projects-btn" class="activity-btn" title="Projects"><i data-lucide="folder-kanban"></i></button>
-    <!-- Wiki document graph (wiki-graph batch, 2026-10-14): star icon opening
-         the Obsidian-compatible cross-project document graph as a Canvas tab.
+    <!-- Wiki document graph (wiki-graph batch, 2026-10-14; icon wiring batch,
+         2026-10-15: lucide sparkles replaced by the C2 hub-spoke inline SVG —
+         geometry from .nebflow/evidence/20261014_wiki-dx/icons/c2-hub-spoke.svg,
+         stroke/size follow the .activity-btn svg active spec 19×19 · 1.8; the
+         asset's inline color is dropped so the 4-state currentColor applies).
          Same 4-state panel-button contract as Projects (canvas.js
          registerCanvasPanelButton, wired from main.js). -->
-    <button id="wiki-btn" class="activity-btn" title="Wiki Graph"><i data-lucide="sparkles"></i></button>
+    <button id="wiki-btn" class="activity-btn" title="Wiki Graph"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><circle cx="4.8" cy="4.8" r="2.2"/><circle cx="19.2" cy="4.8" r="2.2"/><circle cx="4.8" cy="19.2" r="2.2"/><circle cx="19.2" cy="19.2" r="2.2"/><line x1="9" y1="9" x2="7.1" y2="7.1"/><line x1="15" y1="9" x2="16.9" y2="7.1"/><line x1="9" y1="15" x2="7.1" y2="16.9"/><line x1="15" y1="15" x2="16.9" y2="16.9"/></svg></button>
     <!-- 2026-09-04 件 B：原「智能体」独立面板入口移除，按钮改挂「插件」页
          （plugins.js 接管注册，id/按下态机制不变；i18n 标题走 activity.plugins）。
          2026-09-05 重排规格：语义顺序 文件→项目→插件→token→设置。 -->
