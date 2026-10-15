@@ -6,11 +6,17 @@
 //   · 创建定时任务/心跳/查看记忆等按钮 → 居中浮于会话上层；
 //   · 后台任务/智能体面板同样居中浮层；浮层移动端适配。
 //
-// 实现：把 header 右簇的 reminder-btn（定时任务）/ daemon-btn（心跳）/
-// memory-btn（记忆）与后台任务/智能体两只计数胶囊（bg-indicator /
-// bgagent-indicator）**整体搬移**进居中悬浮条 #mobile-float-actions（悬浮于
-// 输入区上方、水平居中于内容面板）。DOM 搬移不丢事件监听（监听随节点走），
-// 共享行为零复制；拆层时按记录的锚点原样归还 header。
+// r2 追加（规格③ header 治理「杂项收纳 · 去向=浮层」）：#search-btn（搜索聊天
+// 记录）自 header 右簇归入本浮条 —— 搜索是偶发会话工具，不属 header 必要项。
+// header 手机层仅留：模型上下文环（#header-model-info）/ 会话名 / 安全模式
+// （#bypass-dropdown）/ 待答问题胶囊（#pending-asks-indicator），去向表见交付说明。
+//
+// 实现：把 header 右簇的 search-btn（搜索）/ reminder-btn（定时任务）/
+// daemon-btn（心跳）/ memory-btn（记忆）与后台任务/智能体两只计数胶囊
+// （bg-indicator / bgagent-indicator）**整体搬移**进居中悬浮条
+// #mobile-float-actions（悬浮于输入区上方、水平居中于内容面板）。DOM 搬移
+// 不丢事件监听（监听随节点走），共享行为零复制；拆层时按记录的锚点原样
+// 归还 header。
 //
 // 与桌面 header 自适应隐藏链（main.js initHeaderResizeObserver）的正交处理：
 // 被搬移节点仍会被该链按 id 命中并可能加 .nb-header-hide —— 手机层 CSS 以
@@ -22,8 +28,8 @@
 // 的几何改写全部在 mobileLayer.css（body.mobile-layer 作用域， specificity
 // 高于桌面 id 规则），本文件只管 DOM 搬移与悬浮条定位变量。
 
-/** 悬浮条成员（左→右）：后台任务胶囊、智能体胶囊、定时任务、心跳、记忆。 */
-const FLOAT_IDS = ['bg-indicator', 'bgagent-indicator', 'reminder-btn', 'daemon-btn', 'memory-btn'];
+/** 悬浮条成员（左→右）：搜索、后台任务胶囊、智能体胶囊、定时任务、心跳、记忆。 */
+const FLOAT_IDS = ['search-btn', 'bg-indicator', 'bgagent-indicator', 'reminder-btn', 'daemon-btn', 'memory-btn'];
 
 /** @type {{id:string, parent:Node, next:Node|null}[]} 归还锚点。 */
 let anchors = [];
