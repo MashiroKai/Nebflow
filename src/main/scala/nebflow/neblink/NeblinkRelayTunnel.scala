@@ -105,9 +105,11 @@ final class NeblinkRelayTunnel(
    * 自然永不到来，9s 到点即判僵尸——但这不是对端沉默，是本端自己写不出去。
    *
    * 取值点 = `sendText` 入队成功（future 返回），即「这一拍真的上了线」；心跳
-   * 僵尸判据与 `isAlive` 共用它，不新增第二个阈值轴。
+   * 僵尸判据与 `isAlive` 共用它，不新增第二个阈值轴。pump-selfabort-fix 起放宽为
+   * `private[neblink]`：饱和跳拍分支会回滚本戳，回归钉须直读它验证「跳拍不得
+   * 伪造 D3 的『问出去过』前提」（与 `sendHeartbeatPing` 同款测试可见性）。
    */
-  private val lastPingSentAt = new AtomicLong(System.currentTimeMillis())
+  private[neblink] val lastPingSentAt = new AtomicLong(System.currentTimeMillis())
   private var heartbeat: Option[ScheduledExecutorService] = None
 
   /**
@@ -1212,36 +1214,65 @@ final class NeblinkRelayTunnel(
   end startHeartbeat
 
   /**
-   * 心跳 ping 的单拍发送（hbzombie-src，2026-10-14 客户端腿同案确认批 D1 修）。
+   * 心跳 ping 的单拍发送（hbzombie-src，2026-10-14 客户端腿同案确认批 D1 修；
+   * pump-selfabort-fix，2026-10-15 残余批把**异步失败面**也按真实含义分流）。
    *
-   * 修前缺陷：本拍直接 `ws.sendText` 并把**任何**同步异常读成「socket 已死 ⇒
-   * abort」。但 JDK `WebSocket.sendText` 遵守「前一发未完成 ⇒ 抛
-   * IllegalStateException」契约（`RelayFrameSender` 的锁注释即此）：bulk 传输
-   * 期间 256KiB body 帧几乎恒占唯一在飞发送位（A4 慢 WAN 上每帧 0.4–13s）
-   * ⇒ 心跳拍与 bulk 发送必撞 ⇒ 误 abort 一条**出向完好**的活连接。且真写失败
-   * JDK 放进返回的 future 而不抛（`sendAck` 的 F3 注）⇒ 修前的 try/catch 对真
-   * 失败是死代码、对假阳性百发百中。
+   * 修前缺陷（hbzombie-src 之前）：本拍直接 `ws.sendText` 并把**任何**同步异常读成
+   * 「socket 已死 ⇒ abort」。但 JDK `WebSocket.sendText` 对真写失败是把异常放进
+   * **返回的 future** 而不抛（`sendAck` 的 F3 注）⇒ 修前的 try/catch 对真失败是
+   * 死代码、对假阳性百发百中。
    *
-   * 修后口径：
-   *   - **入队成功** ⇒ 记 `lastPingSentAt`（僵尸判据的「问出去过」证据），
-   *     future 异步失败 = 真写失败的面 ⇒ abort + 闩看门狗（修前「发送失败即
-   *     撕」的原意图，落到它真正能触发的位置）；
-   *   - **同步异常 + `isOutputClosed`** ⇒ 出向真死：维持修前语义，立即
-   *     abort，不等 pong 窗；
-   *   - **同步异常 + 出向开**（= 另一发送在飞，构造上即「出向刚被证明可写」）
-   *     ⇒ 只跳过本拍，**不** abort：服务端 miss 计数被任意入向帧重置（bulk
-   *     帧本身即在重置它），本端僵尸判据也以「问出去过」为前提，不会因此误杀。
+   * hbzombie-src D1 的口径按「失败在哪一面浮现」分流：同步异常 + 出向关 ⇒ 真死
+   * abort；同步异常 + 出向开 ⇒ 跳拍；入队成功 ⇒ 记 `lastPingSentAt` 并挂 future，
+   * **异步失败一律当真死 abort**。
+   *
+   * pump-selfabort-fix（本批）钉死的事实：D1 的假设在这个 JDK 上不成立——
+   * Temurin 23 `WebSocketImpl.sendText` 对「前一发未完成」**从不同步抛**
+   * IllegalStateException，而是返回一个**已完成的失败 future**
+   * （`failedFuture(new IllegalStateException("Send pending"))`，源码
+   * `pendingTextOrBinary.compareAndSet` 失败分支；真 RFC 6455 定向复现
+   * （NeblinkRelayTunnelHeartbeatSendSpec 真 socket 契约钉）实证：bulk 在飞时
+   * 心跳 sendText **零同步异常**、future 携 `IllegalStateException: Send pending`
+   * 失败、**isOutputClosed()==false**（出向完好、连接未死）。于是 bulk 洪峰下
+   * 每一拍心跳都落进 D1 的异步分支 ⇒ 误 abort 一条出向完好的活连接 ⇒
+   * portal bridge 在飞发送面随撕（`portal http cycle failed: Output closed`
+   * 伴生）⇒ 2–5s 自愈重连（A4-R2 残余族，与本批同 jar 指纹双批复现）。
+   *
+   * 修后口径（**按失败的真实含义分流，不按浮现面**）：
+   *   - **入队成功** ⇒ 记 `lastPingSentAt`（僵尸判据的「问出去过」证据）；
+   *   - **异步失败 + `IllegalStateException` + 出向开** = 「另一发送在飞」的
+   *     饱和/背压面（该 future 上 JDK 只可能放这一种 ISE——sendText/sendBinary
+   *     的 Send pending CAS 失败分支；真写失败走 IOException 家族）⇒ **跳拍不撕**：
+   *     回滚 `lastPingSentAt`（这一拍**没有**上线，不得伪造 D3 的「问出去过」
+   *     前提），不 abort、不闩看门狗。服务端 miss 计数被任意入向帧重置（bulk
+   *     帧本身即在重置它），本端僵尸判据以真实入线的 ping 为前提，不会因此误杀；
+   *   - **异步失败（其余一切：IOException「Output closed」/ broken pipe /
+   *     ISE 但出向已关等）** = 真死面 ⇒ 维持 D1 语义立即 abort + 闩看门狗；
+   *   - **同步异常**（其它 JDK 实现（按 javadoc 契约同步抛 ISE）的防御面，
+   *     本 JDK 上不可达）：+ `isOutputClosed` ⇒ 真死 abort；出向开 ⇒ 跳拍不撕。
    */
   private[neblink] def sendHeartbeatPing(ws: WebSocket, closed: Deferred[IO, Unit]): Unit =
     try
+      val prevAskedAt = lastPingSentAt.get()
       val fut = ws.sendText("""{"type":"ping"}""", true)
-      lastPingSentAt.set(System.currentTimeMillis())
+      val bumpedAt = System.currentTimeMillis()
+      lastPingSentAt.set(bumpedAt)
       fut.whenComplete { (_, err) =>
         if err != null then
-          logger.debugSync(s"Relay tunnel ping write failed async — aborting broken connection: ${NeblinkRelayTunnel.describeErr(err)}")
-          try ws.abort()
-          catch case _: Exception => ()
-          armZombieLatchWatchdog(closed)
+          err match
+            case _: IllegalStateException if !ws.isOutputClosed() =>
+              // 饱和/背压面：bulk 在飞占住 JDK 单发位，「Send pending」拒绝本拍 ——
+              // 出向开着 = 连接没死的直接见证。跳拍不撕；回滚 lastPingSentAt
+              // （future 已失败 ⇒ ping 没上线 ⇒ 「问出去过」的戳必须退回）。
+              lastPingSentAt.compareAndSet(bumpedAt, prevAskedAt)
+              logger.debugSync(
+                s"Relay tunnel ping beat skipped: another send is in flight (${NeblinkRelayTunnel.describeErr(err)}) — output open, not a failure"
+              )
+            case _ =>
+              logger.debugSync(s"Relay tunnel ping write failed async — aborting broken connection: ${NeblinkRelayTunnel.describeErr(err)}")
+              try ws.abort()
+              catch case _: Exception => ()
+              armZombieLatchWatchdog(closed)
       }
       ()
     catch
