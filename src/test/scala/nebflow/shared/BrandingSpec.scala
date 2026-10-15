@@ -48,6 +48,12 @@ class BrandingSpec extends FunSuite:
     assertEquals(Branding.envPrefix, "NEBFLOW")
     assertEquals(Branding.cosBucket, "nebflow-releases")
     assertEquals(Branding.subsystemName, "neblink")
+    // brand-switch-console batch 2026-10-15: name falls back to productName
+    // when the optional brand.conf key is absent; the logo references default
+    // to the canonical in-place /css/ assets (files stay where they are).
+    assertEquals(Branding.name, "Nebflow")
+    assertEquals(Branding.logoUrl, "/css/logo-bright-4.png")
+    assertEquals(Branding.logoDarkUrl, "/css/logo-dark-4.png")
   }
 
   test("academicSearchUserAgent is byte-identical to the pre-rebrand UA") {

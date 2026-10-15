@@ -22,10 +22,25 @@
  * @property {string} [profileUrl] Absolute https URL of the account profile
  *   page (login-chain fix 2026-09-01). Optional: gateways that predate the
  *   field omit it, so read it through getProfileUrl().
+ * @property {string} [name] Short display name slot (console switch batch
+ *   2026-10-15). Optional: absent on older gateways — read sites fall back
+ *   to the literal below (or to productName semantics). Consumed by the
+ *   avatar-letter slot; NOT a replacement for productName in UI copy.
+ * @property {string} [logoUrl] Console logo asset reference, bright variant
+ *   (same batch). Reference slot only — an <img> source, never a URL builder.
+ * @property {string} [logoDarkUrl] Console logo asset reference, dark
+ *   (prefers-color-scheme) variant.
  */
 
 /** @type {Brand} */
-const fallback = { productName: 'Nebflow', lowerName: 'nebflow', domain: 'nebflow.space' };
+const fallback = {
+  productName: 'Nebflow',
+  lowerName: 'nebflow',
+  domain: 'nebflow.space',
+  name: 'Nebflow',
+  logoUrl: '/css/logo-bright-4.png',
+  logoDarkUrl: '/css/logo-dark-4.png'
+};
 
 const injected = /** @type {Window & { __BRAND__?: Brand }} */ (window).__BRAND__;
 

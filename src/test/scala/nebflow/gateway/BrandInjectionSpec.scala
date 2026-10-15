@@ -27,11 +27,17 @@ class BrandInjectionSpec extends FunSuite:
           json.hcursor.get[String]("profileUrl"),
           Right("https://nebflow.space/profile")
         )
+        // brand-switch-console batch 2026-10-15: name/logoUrl/logoDarkUrl
+        // join the contract (append-only). Defaults = productName fallback
+        // + the canonical in-place /css/ logo assets.
+        assertEquals(json.hcursor.get[String]("name"), Right("Nebflow"))
+        assertEquals(json.hcursor.get[String]("logoUrl"), Right("/css/logo-bright-4.png"))
+        assertEquals(json.hcursor.get[String]("logoDarkUrl"), Right("/css/logo-dark-4.png"))
   }
 
   test("brandScriptJson: '</' inside values is escaped (script breakout hardening)") {
     val hostile = """a"</script>b"""
-    val json = StaticRoutes.brandScriptJson(hostile, "x", "y", "z", "https://nebflow.space/profile")
+    val json = StaticRoutes.brandScriptJson(hostile, "x", "y", "z", "https://nebflow.space/profile", "n", "/l.png", "/ld.png")
     assert(!clue(json).contains("</script>"))
     assert(clue(json).contains("<\\/"))
     // '<\/' is a legal JSON escape for '/' — the value round-trips intact

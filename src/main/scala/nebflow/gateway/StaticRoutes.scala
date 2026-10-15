@@ -33,10 +33,15 @@ object StaticRoutes:
    * batches (initial contract: productName, lowerName, domain; L3 batch 3
    * appended homeDirName for the frontend's own legacy-path messaging;
    * 2026-09-01 login-chain fix appended profileUrl — the frontend's ONLY
-   * URL input, consumed by activityBar.js to build the profile link).
+   * URL input, consumed by activityBar.js to build the profile link;
+   * brand-switch-console batch 2026-10-15 appended name/logoUrl/logoDarkUrl —
+   * the avatar-letter slot and the two console logo asset references, each
+   * optional on the frontend: older gateways that omit them leave every
+   * consumer on its current-value fallback).
    * `domain` carries the default value (nebflow.space); a `NEBFLOW_BRAND_DOMAIN`
    * env override may replace it (single-domain, 2026-09-07 naming ruling) —
-   * display-only, never consumed to build a URL.
+   * display-only, never consumed to build a URL. `logoUrl`/`logoDarkUrl` are
+   * reference slots of the same display-only class: <img> sources only.
    *
    * circe handles JSON string escaping; the serialized blob additionally
    * escapes the forward slash of "</" because it is inlined inside a
@@ -48,20 +53,27 @@ object StaticRoutes:
         Branding.lowerName,
         Branding.domain,
         Branding.homeDirName,
-        Branding.profileUrl
+        Branding.profileUrl,
+        Branding.name,
+        Branding.logoUrl,
+        Branding.logoDarkUrl
       )};</script>"""
   end brandScriptTag
 
   /**
    * Serialize the contract JSON (values injected for testability of the
-   * escaping hardening).
+   * escaping hardening). Field order is append-only: the five original
+   * fields first, then the 2026-10-15 console slots.
    */
   private[gateway] def brandScriptJson(
     productName: String,
     lowerName: String,
     domain: String,
     homeDirName: String,
-    profileUrl: String
+    profileUrl: String,
+    name: String,
+    logoUrl: String,
+    logoDarkUrl: String
   ): String =
     Json
       .obj(
@@ -69,7 +81,10 @@ object StaticRoutes:
         "lowerName" -> Json.fromString(lowerName),
         "domain" -> Json.fromString(domain),
         "homeDirName" -> Json.fromString(homeDirName),
-        "profileUrl" -> Json.fromString(profileUrl)
+        "profileUrl" -> Json.fromString(profileUrl),
+        "name" -> Json.fromString(name),
+        "logoUrl" -> Json.fromString(logoUrl),
+        "logoDarkUrl" -> Json.fromString(logoDarkUrl)
       )
       .noSpaces
       .replace("</", "<\\/")

@@ -503,14 +503,14 @@ export default {
   'messages.groupsUnavailable': '群聊功能暂不可用',
   'messages.attachUnsupportedGroup': '群聊窗暂无附件发送入口（附件可正常接收与下载）',
   'messages.notFriendBlocked': '对方已不是你的好友，无法发送消息',
-  'messages.loginRequired': '登录 nebflow 账号后使用消息与联系人',
+  'messages.loginRequired': '登录 {lowerBrand} 账号后使用消息与联系人',
   'login.popupBlocked': '弹窗被拦截，请允许后重试',
   'login.openPage': '打开登录页',
   // 登录入口 / 登录面板（2026-09-16 登录入口批）：面板文案此前是 activityBar.js
   // 注入样式一族的硬编码中文字面量，本批整体搬进 i18n（zh/en 成对，禁死键）。
-  'login.title': '登录 nebflow，连接你的其他设备',
+  'login.title': '登录 {lowerBrand}，连接你的其他设备',
   'login.starting': '正在启动登录…',
-  'login.hintBrowser': '在浏览器中登录 nebflow 账号，此设备即与账号下的其他设备互联',
+  'login.hintBrowser': '在浏览器中登录 {lowerBrand} 账号，此设备即与账号下的其他设备互联',
   'login.hintAuthorize': '在浏览器中完成授权，此设备即与账号下的其他设备互联',
   'login.reopenAuthPage': '重新打开登录页面',
   'login.openAuthPage': '打开授权页面',
@@ -542,7 +542,7 @@ export default {
   'login.reason.credential-missing': '本机还没有登录凭据',
   'login.action.credential-missing': '点「登录」重新登录',
   'login.reason.credential-unreadable': '本机凭据文件打不开（权限或占用）',
-  'login.action.credential-unreadable': '先退出其他 nebflow 实例再重试；仍失败则点「清理并重登」',
+  'login.action.credential-unreadable': '先退出其他 {lowerBrand} 实例再重试；仍失败则点「清理并重登」',
   'login.reason.credential-undecodable': '本机凭据文件已损坏（已备份留档）',
   'login.action.credential-undecodable': '点「登录」重建本机凭据（坏件已改名留档）',
   'login.reason.credential-write-denied': '凭据写不进去（权限或占用）',
@@ -561,13 +561,13 @@ export default {
   'login.reason.device-register-failed': '登录服务器设备注册失败',
   'login.action.device-register-failed': '点「重试」；仍失败则「使用其他账号登录」',
   'login.reason.callback-state-invalid': '登录回调校验失败（一次性校验码不匹配或已过期）',
-  'login.action.callback-state-invalid': '回到 nebflow 重新点「登录」',
+  'login.action.callback-state-invalid': '回到 {lowerBrand} 重新点「登录」',
   'login.reason.provider-error': '登录被服务方拒绝或中断',
   'login.action.provider-error': '重新点「登录」；必要时换一个账号',
-  'login.reason.service-unavailable': 'nebflow 服务未初始化',
-  'login.action.service-unavailable': '重启 nebflow 后重新登录',
+  'login.reason.service-unavailable': '{lowerBrand} 服务未初始化',
+  'login.action.service-unavailable': '重启 {lowerBrand} 后重新登录',
   'login.reason.logto-not-configured': '登录服务未配置（缺少应用标识）',
-  'login.action.logto-not-configured': '检查 nebflow 的登录配置后重试',
+  'login.action.logto-not-configured': '检查 {lowerBrand} 的登录配置后重试',
   'login.reason.login-failed': '登录过程中出现未分类的错误',
   'login.action.login-failed': '点「重试」；仍失败请附日志反馈',
   'messages.login': '登录',
@@ -1597,7 +1597,7 @@ export default {
   'neblink.reachDirect': 'P2P 直连已建立',
   'neblink.reachRelay': '可经服务器中继',
   'neblink.reachServerOnly': '在线——暂无直连通道',
-  'neblink.loggedOutHint': '未登录 —— 点击上方头像登录 nebflow 账号，登录后自动入网',
+  'neblink.loggedOutHint': '未登录 —— 点击上方头像登录 {lowerBrand} 账号，登录后自动入网',
   // 缺陷 A（2026-09-18）：未登录面板的两条读数 —— ①「清理并重登」入口（只在
   // 本地凭据文件类分类下渲染）；②状态面降级（`/status` 非 2xx 的可见读数，修前静默）。
   'neblink.cleanupRelogin': '清理并重登',
@@ -2105,8 +2105,8 @@ export default {
   // zh side verbatim, en side translated; slideblocks/slideblocks carries an en
   // server value ⇒ en side verbatim, zh side translated (IO-A: the side that
   // owns the source language mirrors the server value verbatim).
-  'content.skill.nebflow-plugin-creator/description-quality.desc': 'Nebflow 插件 manifest 描述规范的操作手册——description 五段式唯一描述源口径、触发词核心词表圈定法（全命中判定）、M1-M15 判定口径与四例好坏对照；适用于撰写或体检 plugin.json description 时逐条对照执行。',
-  'content.skill.nebflow-plugin-creator/plugin-packaging.desc': '把能力需求封装为合规 Nebflow 插件包的执行手册——三输入形态判定（既有 skill 迁移 / MCP server 配置 / 口头能力描述）→生成→机械自检→交付全流程，含六分叉处置与「落盘即生效」的交付口径；适用于节点被分配「封装插件 / 做插件」类任务时按本手册执行。',
+  'content.skill.nebflow-plugin-creator/description-quality.desc': '{brand} 插件 manifest 描述规范的操作手册——description 五段式唯一描述源口径、触发词核心词表圈定法（全命中判定）、M1-M15 判定口径与四例好坏对照；适用于撰写或体检 plugin.json description 时逐条对照执行。',
+  'content.skill.nebflow-plugin-creator/plugin-packaging.desc': '把能力需求封装为合规 {brand} 插件包的执行手册——三输入形态判定（既有 skill 迁移 / MCP server 配置 / 口头能力描述）→生成→机械自检→交付全流程，含六分叉处置与「落盘即生效」的交付口径；适用于节点被分配「封装插件 / 做插件」类任务时按本手册执行。',
   'content.skill.slideblocks/slideblocks.desc': '用 SlideBlocks 自主制作或改进完整、精良的 Slidev 演示——输入可以是一条很短的请求，也可以是 PDF、Word、网页、Markdown、表格、图片、品牌素材、PowerPoint 源 deck 等混合材料。适用于：用户想做一份演示；想迁移到 Slidev；想重新设计、扩充或改进演示；需要为报告、路演、评审、授课、发布、决策或演讲做一份完整 deck；想要 SlideBlocks 的 Blocks、Decks 或 Recipes；或直接给材料说「做成 PPT」。不适用于：要求的最终交付物是任何 PPT/PPTX 或 Office 文件、通用 Office 编辑、或非 Slidev 的演示运行时。',
   'content.skill.visual-report/visual-report.desc': '可视化汇报工具。用专业工具（matplotlib/graphviz/plotly 等）生成 SVG 图表，落盘后在交付文本里给绝对路径（展示权归 Nebula，节点不调用 Pop）。当需要制作图表、架构图、流程图、数据可视化、可视化报告时使用。',
 
@@ -2247,5 +2247,5 @@ export default {
   'secrets.error.emptyValue': '请先输入值。',
   'secrets.error.io': '密钥请求失败（{code}）。请检查网关连接后重试。',
   // === Phase 3b session rail: paste-ticket entry (ws.js stage B) ===
-  'ws.ticketEntry.notify': '需要登录——点击登录按钮，通过 nebflow 账号继续',
+  'ws.ticketEntry.notify': '需要登录——点击登录按钮，通过 {lowerBrand} 账号继续',
 };

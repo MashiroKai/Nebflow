@@ -17,6 +17,10 @@ if (!LOCALES[current]) current = 'zh-CN';
  * Supports nested keys via dot notation: 'settings.runtime'
  * Falls back to key itself if not found.
  * '{brand}' is always interpolated from brand.js (no need to pass it).
+ * '{lowerBrand}' likewise interpolates brand.lowerName (console switch batch
+ * 2026-10-15): locale copy spelled in the lowercase form ("nebflow account")
+ * keys on it so the rendered case stays verbatim under the default brand —
+ * '{brand}' would uppercase it and violate the zero-visual-change rule.
  */
 export function t(key, params) {
   const dict = LOCALES[current] || zhCN;
@@ -26,8 +30,8 @@ export function t(key, params) {
     val = en[key];
   }
   if (val === undefined) return key;
-  if (params || val.indexOf('{brand}') !== -1) {
-    const p = { brand: brand.productName, ...params };
+  if (params || val.indexOf('{brand}') !== -1 || val.indexOf('{lowerBrand}') !== -1) {
+    const p = { brand: brand.productName, lowerBrand: brand.lowerName, ...params };
     return val.replace(/\{(\w+)\}/g, (_, k) => p[k] ?? '');
   }
   return val;

@@ -132,6 +132,46 @@ object Branding:
   /** Device-interop subsystem name (D2: stays as-is across the rename). */
   val subsystemName: String = get("subsystemName")
 
+  // ── Console single-switch slots (brand-switch-console batch, 2026-10-15) ──
+
+  /**
+   * Canonical in-place console logo assets (bright/dark variants). The FILES
+   * stay where they are (web/css/, served by the /css/ static route — no new
+   * route, no file rename); only the REFERENCE is centralized here so a logo
+   * swap is a brand.conf/env edit, not a markup hunt. Absolute-path form
+   * ("/css/…") so the reference resolves from any page depth.
+   */
+  val LogoDefaultBright: String = "/css/logo-bright-4.png"
+  val LogoDefaultDark: String = "/css/logo-dark-4.png"
+
+  /**
+   * Short display name slot for the `__BRAND__` contract (append-only). The
+   * brand.conf key is OPTIONAL: absent → falls back to [[productName]], so a
+   * rename day productName edit flows through automatically and an explicit
+   * `name` key only exists to decouple the short-form slot from the display
+   * name. Consumed by the console avatar-letter slot (index.html pre-paint,
+   * `name(0)`). Env override: `NEBFLOW_BRAND_NAME` (dual-prefix read).
+   *
+   * Declared AFTER `envPrefix` on purpose: unlike `domain`/`profileUrl`/
+   * `loginUrl` above (whose env() reads run before `envPrefix`'s initializer
+   * — harmless today only because the legacy NEBFLOW_ fallback names the
+   * same variable), these fields keep textual order so the brand-prefix
+   * lookup is live for them.
+   */
+  val name: String = env("BRAND_NAME").orElse(conf.get("name")).getOrElse(productName)
+
+  /**
+   * Console logo asset reference (bright variant) — injected as
+   * `__BRAND__.logoUrl`. Optional brand.conf key `logoUrl`; default = the
+   * canonical in-place asset. Env override: `NEBFLOW_BRAND_LOGO_URL`.
+   * Display/reference semantics: like `domain`, the frontend must not
+   * string-build other URLs from it — it is an <img> source slot only.
+   */
+  val logoUrl: String = env("BRAND_LOGO_URL").orElse(conf.get("logoUrl")).getOrElse(LogoDefaultBright)
+
+  /** Console logo asset reference (dark / prefers-color-scheme variant). */
+  val logoDarkUrl: String = env("BRAND_LOGO_DARK_URL").orElse(conf.get("logoDarkUrl")).getOrElse(LogoDefaultDark)
+
   // ── Derived helpers ──────────────────────────────────────────────────────
 
   /**

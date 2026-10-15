@@ -5,6 +5,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import fs2.Stream
 import nebflow.neblink.*
+import nebflow.shared.Branding
 import org.http4s.*
 import org.http4s.dsl.io.*
 import org.http4s.headers.{Location, `Content-Type`}
@@ -133,7 +134,7 @@ private[gateway] object AuthRoutes:
             symbol = "!",
             symbolColor = "#d1242f",
             headline = "续登链接已使用",
-            detail = "切号续登入口一次性有效，重放本页不会再次自动登录。如需切换账号，请在 nebflow 设置页重新点「切换账号」。"
+            detail = s"切号续登入口一次性有效，重放本页不会再次自动登录。如需切换账号，请在 ${Branding.lowerName} 设置页重新点「切换账号」。"
           ),
           Status.Ok
         )
@@ -143,7 +144,7 @@ private[gateway] object AuthRoutes:
             symbol = "!",
             symbolColor = "#d1242f",
             headline = "续登已超时",
-            detail = "本次切号续登标记已过期，未自动登录。请在 nebflow 设置页重新点「切换账号」。"
+            detail = s"本次切号续登标记已过期，未自动登录。请在 ${Branding.lowerName} 设置页重新点「切换账号」。"
           ),
           Status.Ok
         )
@@ -151,7 +152,7 @@ private[gateway] object AuthRoutes:
         neblinkService match
           case None =>
             htmlResponse(
-              switchNoticePage("!", "#d1242f", "续登未启动", "nebflow 服务未初始化，请在本窗口手动登录。"),
+              switchNoticePage("!", "#d1242f", "续登未启动", s"${Branding.lowerName} 服务未初始化，请在本窗口手动登录。"),
               Status.Ok
             )
           case Some(ms) =>
@@ -484,16 +485,20 @@ private[gateway] object AuthRoutes:
   /**
    * Static loopback login result page (success + error variants). The
    * frontend learns the outcome by polling /api/neblink/auth/state.
+   * Brand slots (brand-switch-console batch, 2026-10-15): the title and the
+   * success detail read [[Branding]] — under the current brand the rendered
+   * bytes are identical to the pre-batch literals (lowercase form, same as
+   * the page carried before).
    */
   private[gateway] def callbackPage(ok: Boolean, message: String): String =
     val headline = if ok then "登录成功，可关闭本页" else "登录失败"
-    val detail = if ok then "nebflow 账号已连接，本窗口可以关闭" else message
+    val detail = if ok then s"${Branding.lowerName} 账号已连接，本窗口可以关闭" else message
     val icon = if ok then "✓" else "✕"
     val iconColor = if ok then "#07c160" else "#d1242f"
     s"""<!doctype html>
        |<html lang="zh-CN"><head><meta charset="utf-8">
        |<meta name="viewport" content="width=device-width,initial-scale=1">
-       |<title>nebflow 登录</title>
+       |<title>${Branding.lowerName} 登录</title>
        |<style>body{font-family:-apple-system,'Segoe UI','PingFang SC',sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f6f7f9;color:#1f2328}
        |.card{text-align:center;padding:44px 52px;border-radius:14px;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.08)}
        |.icon{color:$iconColor;font-size:42px;line-height:1;margin-bottom:10px}h1{font-size:18px;font-weight:600;margin:0 0 8px}
@@ -507,17 +512,22 @@ private[gateway] object AuthRoutes:
    * landing must stay byte-identical, so the switch-continuation cards are a
    * separate builder ([[switchNoticePage]]) rather than a parameterisation of
    * this one.
+   * Brand slots (brand-switch-console batch, 2026-10-15): the title and body
+   * brand token read [[Branding.lowerName]] — rendered bytes identical to the
+   * pre-batch literals under the current brand (the "byte-identical" clause
+   * above is about page STRUCTURE vs the switch cards, and still holds: the
+   * h1 headline and skeleton are untouched literals).
    */
   private def loggedOutPage: String =
     s"""<!doctype html>
        |<html lang="zh-CN"><head><meta charset="utf-8">
        |<meta name="viewport" content="width=device-width,initial-scale=1">
-       |<title>nebflow 已退出登录</title>
+       |<title>${Branding.lowerName} 已退出登录</title>
        |<style>body{font-family:-apple-system,'Segoe UI','PingFang SC',sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f6f7f9;color:#1f2328}
        |.card{text-align:center;padding:44px 52px;border-radius:14px;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.08)}
        |.icon{color:#07c160;font-size:42px;line-height:1;margin-bottom:10px}h1{font-size:18px;font-weight:600;margin:0 0 8px}
        |p{color:#6a737d;font-size:13px;margin:0;max-width:320px;word-break:break-all}</style></head>
-       |<body><div class="card"><div class="icon">✓</div><h1>已退出登录</h1><p>已在浏览器中退出 nebflow 账号，本页可以关闭</p></div></body></html>""".stripMargin
+       |<body><div class="card"><div class="icon">✓</div><h1>已退出登录</h1><p>已在浏览器中退出 ${Branding.lowerName} 账号，本页可以关闭</p></div></body></html>""".stripMargin
 
   /**
    * Switch-account continuation notice card (one-window switch, 2026-09-16) —
@@ -530,7 +540,7 @@ private[gateway] object AuthRoutes:
     s"""<!doctype html>
        |<html lang="zh-CN"><head><meta charset="utf-8">
        |<meta name="viewport" content="width=device-width,initial-scale=1">
-       |<title>nebflow 切换账号</title>
+       |<title>${Branding.lowerName} 切换账号</title>
        |<style>body{font-family:-apple-system,'Segoe UI','PingFang SC',sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f6f7f9;color:#1f2328}
        |.card{text-align:center;padding:44px 52px;border-radius:14px;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.08)}
        |.icon{color:$symbolColor;font-size:42px;line-height:1;margin-bottom:10px}h1{font-size:18px;font-weight:600;margin:0 0 8px}
