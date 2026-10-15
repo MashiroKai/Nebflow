@@ -42,19 +42,38 @@ object ProjectCrashRecovery:
    * GatewayMain boot 链挂接入口：对全部已挂载项目跑快段 + fork 慢段。
    * 返回有恢复动作的项目数（>0 时调用方记 info）。项目级 handleErrorWith——单项目
    * 异常不拖垮其他项目，该项目残余 Running 由 watchdog 兜底（R4）。
+   * 排除表命中（`Defaults.SweepExcludeProjects`，exclusivity 批 2026-10-15）的项目
+   * 整体跳过（零认领零通知零 rehydrate）＋一行 `excluded-by-config` info 日志。
+   * trigger 为测试接缝（recoverProject 同款纪律；生产调用点零传参）。
    */
-  def recoverAll(concurrency: Int = Defaults.CrashRecoveryConcurrency): IO[Int] =
+  def recoverAll(
+    concurrency: Int = Defaults.CrashRecoveryConcurrency,
+    trigger: Option[String => IO[Unit]] = None
+  ): IO[Int] =
     ProjectRuntimeRegistry.all.flatMap { rts =>
+      // 排除表（exclusivity 批 2026-10-15，双活根治一）：热读一次、逐项目精确匹配——
+      // 命中者整项目跳过（快段零认领零通知、慢段零 rehydrate），记一行
+      // `excluded-by-config`（可观测；boot-wake 腿对同一张表同码零触碰跳过，log-only）。
+      val excluded = Defaults.SweepExcludeProjects
       rts
         .traverse { rt =>
-          recoverProject(rt, concurrency)
-            .handleErrorWith(e =>
-              logger
-                .error(
-                  s"[boot-recovery] project '${rt.project.name}' sweep failed: ${Option(e.getMessage).getOrElse(e.toString)} — residual running nodes left to the dead-session watchdog"
-                )
-                .as(0)
-            )
+          if excluded.contains(rt.project.name) then
+            logger
+              .info(
+                s"[boot-recovery] project '${rt.project.name}' skipped: excluded-by-config " +
+                  s"(sweep exclusion table nebflow.sweep.excludeProjects — project owned by another instance)"
+              )
+              .as(0)
+          else
+            recoverProject(rt, concurrency, trigger)
+              .handleErrorWith(e =>
+                logger
+                  .error(
+                    s"[boot-recovery] project '${rt.project.name}' sweep failed: ${Option(e.getMessage).getOrElse(e.toString)} — residual running nodes left to the dead-session watchdog"
+                  )
+                  .as(0)
+              )
+          end if
         }
         .map(_.count(_ > 0))
     }

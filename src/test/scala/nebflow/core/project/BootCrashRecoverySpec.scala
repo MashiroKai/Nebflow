@@ -503,6 +503,59 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
     end for
   }
 
+  // ── CX 排除表（exclusivity 批 2026-10-15，双活根治一）：recoverAll 双面之一 ──
+
+  test(
+    "CX: recoverAll honors nebflow.sweep.excludeProjects — excluded project zero claim zero notify (control boot without the table claims as usual)"
+  ) {
+    val ws = tempRoot / "ws-cx"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"bcr-cx-${scala.util.Random.nextInt(1000000)}")
+    val llm = ScriptLlm(_ => "SHOULD-NOT-RUN")
+    val prop = "nebflow.sweep.excludeProjects"
+    for
+      // 本用例走 recoverAll（全注册表面）⇒ 用例内先清注册表自隔离（suite 级
+      // beforeEach/afterEach 的 clear 为被丢弃 IO 值，不构成隔离——C1-C3 各自持
+      // recoverProject 直呼不受影响；本用例是首个全表面用例）。
+      _ <- ProjectRuntimeRegistry.clear
+      res <- mkResources(system, llm.handle)
+      _ <- registerRecorder(res, system, "nebula-root")
+      rt <- mountProject("bcr-excl", ws, system, res)
+      // (c) 类形态（C3 同款）：sessionRef=None ⇒ 控制腿认领 = failed（无 LLM、无 rehydrate）
+      _ <- seedRunning(rt, "n-cx", "residue-x", "excluded task")
+      (trig, trigger) <- triggerRecorder
+      // 排除腿：整项目跳过——零认领零通知零事件，节点保持 Running
+      _ <- IO(sys.props.update(prop, "bcr-excl, some-other"))
+      actionsEx <- ProjectCrashRecovery.recoverAll(trigger = trigger)
+      trigEx <- trig.get
+      stEx <- byName(rt, "residue-x").map(_.status)
+      eventsEx <- readEvents(ws)
+      hotRead <- IO {
+        val during = nebflow.shared.Defaults.SweepExcludeProjects
+        sys.props.remove(prop)
+        (during, nebflow.shared.Defaults.SweepExcludeProjects)
+      }
+      // 控制腿（无排除）：同 fixture 认领照旧——排除是唯一行为差
+      actionsCtl <- ProjectCrashRecovery.recoverAll(trigger = trigger)
+      _ <- waitUntil(20.seconds)(byName(rt, "residue-x").map(n => NodeLifecycle.Terminal.contains(n.status)))
+      stCtl <- byName(rt, "residue-x").map(_.status)
+      trigCtl <- trig.get
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(actionsEx, 0, "excluded project: zero actions from the sweep")
+      assertEquals(trigEx, Nil, "excluded project: zero notify")
+      assertEquals(stEx, NodeLifecycle.Running, "excluded project: crashed node untouched by the sweep")
+      assert(
+        !eventsEx.exists(_.contains("boot-recovery")),
+        s"excluded project: zero boot-recovery audit events, got $eventsEx"
+      )
+      assertEquals(hotRead, (Set("bcr-excl", "some-other"), Set.empty[String]), "prop hot-reads; empty = no exclusion")
+      assertEquals(actionsCtl, 1, "control boot (table off): claim happens as usual (exclusion is the only delta)")
+      assertEquals(stCtl, NodeLifecycle.Failed, "control: class-c claim fails the node (C3 semantics unchanged)")
+      assertEquals(trigCtl.size, 1, "control: project-level summary notify fires exactly once")
+    end for
+  }
+
   // ── C4 降级兜底：未被认领的 running 残留仍由 watchdog **接手（提醒腿）** ──────
 
   test(
