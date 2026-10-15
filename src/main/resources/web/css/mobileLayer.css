@@ -33,17 +33,43 @@
  *      走廊 --mobile-bar-gutter 随常驻 bar 回归，内容面/页面/卡片层/浮层
  *      统一让位，bar 永不遮挡可交互内容。
  *
+ * r4（作者手机轮 4 三点）落位：
+ *   ① Header 归位：底部只留输入卡 —— 会话工具条 #mobile-float-actions 不再
+ *      fixed 悬浮于输入卡上方（r2「去向=浮层」作废，floatController 改收编
+ *      进 header 右簇），搜索/历史/图标条上移归位进顶部一体化顶栏。
+ *   ② 视口全链：html 层压点（html.mobile-html-layer 由 bootstrap.js 与
+ *      body.mobile-layer 同路径加/摘）100svh/100dvh + overflow:hidden；
+ *      #input-area 底距 safe-area 显式重申 —— html/body/#main/输入卡
+ *      全链过一遍，输入卡完整悬浮于 iOS 底部工具栏之上。
+ *   ③ bar 双态：展开态贴右缘（right:0，左圆右直半嵌角），**无任何外部浮动
+ *      把手**（收/展键集成 bar 左缘内 .mobile-bar-fold）；收起态整条 bar
+ *      收缩为低调 Apple 风图标（细描边、低透明度、半嵌右缘）即展开钮；
+ *      走廊 --mobile-bar-gutter 随态适配（展开 58 / 收起 30），两态均不压
+ *      可交互内容。
+ *
  * z 层序（手机层内约定，桌面值不被本文件改动）：
  *   聊天 root(桌面默认) < #settings-overlay/#usage-overlay 155(状态载体垫层)
  *   < #mobile-pages 156(页面容器，收编面随页面体) < #canvas-panel 170(文档卡片层)
- *   < #mobile-float-actions 210(会话工具条) < #mobile-activity-bar 240(常驻 bar)
+ *   < #mobile-activity-bar 240(双态 bar)
  *   < 桌面模态族 310+/10000/11000(原样)
  */
 
+/* ── ② 视口链 html 层压点（bootstrap.js 同路径加/摘，桌面永不命中）──────
+   html 无法以 body 类作条件选择；r3 只压了 body，html 仍 UA 默认（height:auto）
+   ⇒ iOS 上文档橡皮筋仍可拉动。此类与 body.mobile-layer 同一激活/拆除路径，
+   安全性同源。逐级覆盖回退：dvh（iOS 15.4+ 动态视口）→ svh 兜底 → 100vh。 */
+html.mobile-html-layer {
+  height: 100vh;
+  height: 100svh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
 body.mobile-layer {
-  /* 右缘活动栏走廊（右距 10 + 栏宽 48 + 间隙 10）——内容面/浮层统一让位 */
-  --mobile-bar-gutter: 68px;
-  /* 悬浮工具条底距（跟随输入区高度，floatController 写入，缺省=单行输入估高） */
+  /* ③ 右缘活动栏走廊（展开：右缘 0 + 栏宽 48 + 间隙 10）——内容面/浮层统一让位 */
+  --mobile-bar-gutter: 58px;
+  /* 悬浮面板底距（跟随输入区高度，floatController 写入，缺省=单行输入估高；
+     ①后仅浮层面板仍锚输入卡上方，会话工具条已收编进顶栏） */
   --mobile-float-bottom: 92px;
   /* ④ 动态视口：100vh（base.css）在浏览器工具栏展开时把输入卡压到底栏之下
      —— svh 兜底（旧内核降级回 100vh），dvh 随工具栏伸缩。文档级零滚动
@@ -52,6 +78,10 @@ body.mobile-layer {
   height: 100svh;
   height: 100dvh;
   overflow: hidden;
+}
+/* ③ 收起态走廊：半嵌图标 22 + 间隙 8 —— 内容面回拢，图标仍零压内容。 */
+body.mobile-layer.mb-bar-collapsed {
+  --mobile-bar-gutter: 30px;
 }
 
 /* ── ②＋③ 桌面壳退场：桌面活动栏/侧栏/列拉手/右缘条/头部两侧展开按钮 ── */
@@ -70,14 +100,16 @@ body.mobile-layer .project-open-btn {
   display: none !important;
 }
 
-/* ── ⑤ 右侧活动栏：常驻（boot 即展开恒在；毛玻璃 token 不换值）────────
-   r1 形态回归。r2 的「默认隐藏＋把手」（滑出屏外/拖拽跟手/#mobile-bar-handle）
-   全部作废 —— 无收起态 ⇒ 无 .open/.dragging/inert 切换，bar 键恒可达。
-   内容面以 --mobile-bar-gutter 走廊让位（见 #main/页面/卡片层/浮层各节），
-   bar 永不遮挡可交互内容。 */
+/* ── ③ 右侧活动栏：双态（展开=贴右缘；收起=半嵌低调图标）──────────────
+   r3 常驻形态的 r4 演进：展开态 right:0 紧贴右缘（10px 悬浮退场），左圆右直
+   半嵌角；收/展控制键集成 bar 左缘内（.mobile-bar-fold）—— 展开态旁边零
+   漂浮把手。收起态整条 bar 收缩为半嵌右缘的低调图标（细描边、低透明度），
+   该图标即展开钮（点击整条收起态 bar 任意处展开，命中区=22×~52+padding）。
+   毛玻璃 --glass-bg/--glass-blur token 不换值。走廊 gutter 随态 58/30，
+   两态 bar 均不压可交互内容。 */
 body.mobile-layer #mobile-activity-bar {
   position: fixed;
-  right: 10px;
+  right: 0;
   top: 50%;
   transform: translateY(-50%);
   z-index: 240;
@@ -87,18 +119,25 @@ body.mobile-layer #mobile-activity-bar {
   gap: 8px;
   width: 48px;
   padding: 10px 0;
-  border-radius: 20px;
+  border-radius: 20px 0 0 20px;
   overflow: hidden;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
+  border-right: none;
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
     0px 2px 8px rgba(0, 0, 0, 0.04),
     0px 8px 24px rgba(0, 0, 0, 0.06);
   user-select: none;
   -webkit-user-select: none;
+  /* 双态切换只动自身几何（内容面走廊随类瞬时回拢，不参与动画） */
+  transition:
+    width 0.22s ease,
+    padding 0.22s ease,
+    border-radius 0.22s ease,
+    opacity 0.22s ease;
 }
 @media (prefers-color-scheme: dark) {
   body.mobile-layer #mobile-activity-bar {
@@ -118,10 +157,58 @@ body.mobile-layer #mobile-activity-bar .activity-btn i svg {
   width: 19px;
   height: 19px;
 }
+/* 收/展控制键：bar 左缘内集成件（非外部浮把手），低调细描边。 */
+body.mobile-layer #mobile-activity-bar .mobile-bar-fold {
+  width: 30px;
+  height: 24px;
+  margin-top: 2px;
+  padding: 0;
+  flex-shrink: 0;
+  border: none;
+  border-top: 1px solid var(--glass-border);
+  border-radius: 0;
+  background: none;
+  color: var(--color-frame-text-muted, #98a2b3);
+  opacity: 0.75;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+body.mobile-layer #mobile-activity-bar .mobile-bar-fold svg,
+body.mobile-layer #mobile-activity-bar .mobile-bar-fold i svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.75; /* 细描边（Apple 风）；CSS 覆盖 lucide 行内 stroke-width=2 */
+}
+body.mobile-layer #mobile-activity-bar .mobile-bar-fold:active {
+  opacity: 1;
+}
+/* ── 收起态：更小更低调的半嵌图标（即展开钮）────────────────────────── */
+body.mobile-layer.mb-bar-collapsed #mobile-activity-bar {
+  width: 22px;
+  padding: 14px 0;
+  gap: 0;
+  border-radius: 11px 0 0 11px;
+  opacity: 0.55;
+  box-shadow: none;
+  background: var(--glass-bg);
+}
+body.mobile-layer.mb-bar-collapsed #mobile-activity-bar .activity-btn {
+  display: none;
+}
+body.mobile-layer.mb-bar-collapsed #mobile-activity-bar .mobile-bar-fold {
+  width: 22px;
+  height: 24px;
+  margin: 0;
+  border-top: none;
+  opacity: 0.9;
+}
 
-/* ── ⑤ 内容面让位走廊：#main（聊天面）右缘内缩 ───────────────────────
-   常驻 bar 恒占右缘 ⇒ 内容面（含 header/任务带/输入卡）一律止步于走廊线，
-   bar 永不压在可交互内容上。 */
+/* ── ③＋⑤ 内容面让位走廊：#main（聊天面）右缘内缩 ───────────────────
+   bar 双态恒占右缘（展开 58 / 收起 30，见 --mobile-bar-gutter）⇒ 内容面
+   （含 header/任务带/输入卡）一律止步于走廊线，bar 两态永不压在可交互
+   内容上。 */
 body.mobile-layer #main {
   margin-right: var(--mobile-bar-gutter);
   min-width: 0;
@@ -142,7 +229,9 @@ body.mobile-layer #header {
   border-radius: 0;
   border: none;
   border-bottom: 1px solid var(--glass-border);
-  padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 10px;
+  /* r4：水平 padding 12→10 —— 会话工具收编右簇后给安全模式让站位（375 档
+     碰撞链滞回预算，见 floatController.js 文件头读数） */
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 10px 10px;
   background: var(--glass-bg);
   box-shadow: none;
   flex-shrink: 0;
@@ -255,11 +344,16 @@ body.mobile-layer #mobile-pages .canvas-tab-pane {
 }
 
 /* ── ③ 画板 = 文档卡片层：只承载 pop 出来的文档 ───────────────────────
-   非卡片态（未开 / 面板页签被页面接管）一律不可见 —— 画板不再是目的地。 */
+   非卡片态（未开 / 面板页签被页面接管）一律不可见 —— 画板不再是目的地。
+   r4：visibility:hidden → display:none —— 桌面关闭态盒（flex-basis 0 但
+   margin 16/10/10 + 边框 = 22px 残列）在手机层把 #main 压窄 22px（r3 遗留①
+   的 boot 瞬态），并连带把 header 碰撞链在首帧挤进「藏盾」分支；关闭态整盒
+   退场后 #main 从首帧即满走廊宽（卡片层亮起时本节 fixed 覆盖，不受影响）。 */
 body.mobile-layer #canvas-panel {
-  visibility: hidden;
+  display: none;
 }
 body.mobile-layer.mf-cards-live #canvas-panel {
+  display: flex;
   position: fixed;
   left: 10px;
   /* ⑤ 右缘止步于走廊线（卡片层同页面口径，bar 区不被卡片盖住） */
@@ -426,36 +520,42 @@ body.mobile-layer #usage-close {
   display: none !important;
 }
 
-/* ── ⑤ 会话上层悬浮工具条（搜索/定时任务/心跳/记忆/后台任务/智能体）──── */
+/* ── ① 会话工具条收编 header 右簇（r4「底部只留输入卡」）──────────────
+   r2 的 body 级 fixed 浮条（bottom:calc(--mobile-float-bottom + safe-area)，
+   悬浮输入卡上方 —— r4 前置清点实锤的「搜索/历史/图标条留在底部」结构因）
+   作废：floatController 把 pill 挂进 #header .header-right 末尾，本节只做
+   顶栏内的簇形态（去 fixed 几何、去玻璃底座，与 header 同平面同材质）。
+   搜索/定时/心跳/记忆/后台/智能体上移归位进顶部一体化顶栏；输入卡上方
+   零 header 内容。 */
 body.mobile-layer #mobile-float-actions {
-  position: fixed;
-  left: 12px;
-  /* ⑤ 居中域＝内容面（右缘让出常驻 bar 走廊） */
-  right: calc(var(--mobile-bar-gutter) + 2px);
-  bottom: calc(var(--mobile-float-bottom) + env(safe-area-inset-bottom, 0px));
-  z-index: 210;
+  position: static;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 12px;
-  pointer-events: none;
+  gap: 1px;
+  margin-left: 0;
+  flex: 0 0 auto;
 }
-body.mobile-layer #mobile-float-actions > * {
-  pointer-events: auto;
+/* 玻璃底座退场（已与顶栏同底）；全员内容性 hidden 时不留空簇。 */
+body.mobile-layer #mobile-float-actions::before {
+  content: none;
 }
-/* 页面/卡片层亮起时悬浮条退场（会话工具只属聊天 root）。 */
-body.mobile-layer.mf-cards-live #mobile-float-actions,
-body.mobile-layer.mf-page-open #mobile-float-actions {
-  opacity: 0;
-  pointer-events: none;
+body.mobile-layer #mobile-float-actions.all-hidden {
+  display: none;
 }
-/* 桌面 header 自适应隐藏链（.nb-header-hide）对悬浮条成员无效 —— 按钮已
-   离开 header 宽度竞争，不再参与窄宽裁剪；内容性 hidden 语义不受影响。 */
+/* 页面/卡片层亮起时无需显隐处理：顶栏属聊天 root，.live 页面（z156）
+   整面盖过 header。 */
+/* 桌面 header 自适应隐藏链（.nb-header-hide）对收编成员无效 —— 已回归
+   header 的成员不参与窄宽裁剪（r2 顶回规则语义保留）；内容性 hidden 语义
+   （memory-btn 未有会话、后台计数清零）不受影响。 */
 body.mobile-layer #mobile-float-actions .nb-header-hide {
   display: flex !important;
 }
-/* header 玻璃图标钮在浮条内的复刻（原样式挂 #header 作用域，搬移后失配）：
-   搜索钮（#header #search-btn）与记忆钮（#header .memory-btn）。 */
+/* header 玻璃图标钮在收编簇内的形态对齐（原样式挂 #header 作用域，成员
+   曾搬离；现已在 #header 内 —— 规则保留保证 gap/尺寸与右簇一致）：
+   搜索钮（#search-btn）与记忆钮（.memory-btn）。r4 收敛：簇钮 24px
+   （icon 16px 不变）——给安全模式（#bypass-dropdown，碰撞链最低位）在
+   375 档腾出站位；作者 09-07 裁定为纲（名字优先、图标让位），长会话名时
+   仍由链收敛盾，见 floatController.js 文件头。 */
 body.mobile-layer #mobile-float-actions #search-btn,
 body.mobile-layer #mobile-float-actions .memory-btn {
   background: none;
@@ -463,8 +563,8 @@ body.mobile-layer #mobile-float-actions .memory-btn {
   color: var(--color-frame-text-muted);
   cursor: pointer;
   padding: 0;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -476,25 +576,14 @@ body.mobile-layer #mobile-float-actions .memory-btn svg {
   width: 16px;
   height: 16px;
 }
-/* 玻璃底座：胶囊与按钮共享的浮起感（iOS 底部工具条风）。 */
-body.mobile-layer #mobile-float-actions::before {
-  content: '';
-  position: absolute;
-  inset: -6px -10px;
-  z-index: -1;
-  border-radius: 999px;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
+/* r4 收敛：簇钮 24px（icon 16px 不变）——给安全模式（#bypass-dropdown，
+   碰撞链最低位）在 375 档腾出站位；作者 09-07 裁定为纲（名字优先、图标
+   让位），长会话名时仍由链收敛盾，见 floatController.js 文件头。 */
+body.mobile-layer #mobile-float-actions > button {
+  width: 24px;
+  height: 24px;
 }
-@media (prefers-color-scheme: dark) {
-  body.mobile-layer #mobile-float-actions::before {
-    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.32);
-  }
-}
-/* 计数胶囊（bg/bgagent）进悬浮条后沿用桌面胶囊形态，仅去绝对定位残留。 */
+/* 计数胶囊（bg/bgagent）收编后沿用桌面胶囊形态，仅去绝对定位残留。 */
 body.mobile-layer #mobile-float-actions #bg-indicator,
 body.mobile-layer #mobile-float-actions #bgagent-indicator {
   position: static;
@@ -562,4 +651,13 @@ body.mobile-layer .nebflow-login-modal {
 /* 头部中簇（会话名）在无两侧按钮后获得完整空间。 */
 body.mobile-layer #header .header-center {
   max-width: none !important;
+}
+/* ── ② 输入卡：视口链末端压点（完整悬浮于 iOS 底部工具栏之上）────────
+   body/html 已 100dvh（顶/本文件头部）——浏览器底栏伸缩时随之收缩，输入卡
+   永在可视底缘内。bottom 锚与 safe-area 底距在此显式重申（桌面 input.css
+   max(10px,…) 与 mobile.css calc(12px+…) 双源并存 ⇒ 手机层取更稳妥的
+   max(12px, env) 单源口径，home indicator 区不压输入卡）。 */
+body.mobile-layer #input-area {
+  bottom: 0;
+  padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
 }

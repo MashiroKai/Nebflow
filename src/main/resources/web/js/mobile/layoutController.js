@@ -1,20 +1,26 @@
-// mobile/layoutController.js — r3 规格⑤：右侧活动栏「常驻」（r1 形态回归，把手退场）。
+// mobile/layoutController.js — r4 规格③：右侧活动栏「双态」。
 //
-// 作者规格（原文语义）：
-//   · 右侧活动栏默认展开**常驻**（毛玻璃 blur(24px) saturate(1.15)＋
-//     rgba(255,255,255,.55) 保留 —— 即 --glass-blur/--glass-bg token，不换值）；
-//   · 废除 r2 的「默认隐藏＋把手」模式：#mobile-bar-handle 不再创建（退场），
-//     boot 即展开，展开态恒在（无收起态 ⇒ 无持久化问题）；
-//   · 内容面让位：r1 的右缘走廊 --mobile-bar-gutter 随常驻 bar 一并回归
-//     （#main margin-right；页面/卡片层/浮层几何同口径，见 mobileLayer.css）。
+// 作者轮 4 规格（原文语义）：
+//   · 展开态 = 紧贴右缘（right:0），**无任何浮动把手图标**（展开后旁边不得再
+//     飘「<」类把手）；
+//   · 收起态 = 更小更低调的 Apple 风图标（细描边、低透明度、半嵌入边缘）；
+//   · 展开/收起交互保留；两态均不压可交互内容（--mobile-bar-gutter 走廊
+//     随态适配：展开 58px＝栏宽 48＋间隙 10；收起 30px＝图标 22＋间隙 8）。
+//
+// r3 → r4 演进：r3 是「常驻恒展开」（r2 把手退场）；r4 在常驻基础上补回
+// **收起态**——收/展控制键**集成在 bar 自身左缘内**（.mobile-bar-fold，非
+// 外部浮把手，展开态旁边零漂浮元素）；收起态整条 bar 收缩为半嵌右缘的低调
+// 图标（该图标即展开钮，命中区=整条收起态 bar）。状态持久化 localStorage
+// （nebflow_mobile_bar_collapsed，私有模式 try/catch 静默），缺省展开。
 //
 // bar 键 = r2 导航面（规格②③）：主会话（pop 到 root + 收卡片层）、画板
 // （文档卡片层开/收）、项目/图谱/插件/用量/设置（navigateTo —— 归 root 再
 // push，栈深实际 ≤2）。按下态严格镜像 navController 的栈顶 + 卡片层状态。
-// 常驻 bar 不随导航收起（键按后 bar 原位常在，目标面在走廊内呈现）。
+// bar 不随导航自动收起（键按后 bar 原位，目标面在走廊内呈现）；收起态由
+// 用户显式触发、跨导航保持。
 //
 // 与层内既有手势的协调：长按画板按钮 → 多卡视图已随 r2 废除（监听已删净）；
-// 底缘手势带/横滑属画板卡片层（canvasGestures），与常驻 bar 不同表面，零冲突。
+// 底缘手势带/横滑属画板卡片层（canvasGestures），与 bar 不同表面，零冲突。
 //
 // 共享组件复用声明：本文件不复制任何桌面逻辑；桌面代码路径零改动。
 
@@ -44,10 +50,51 @@ function tt(zh, en) {
   return /^zh/i.test(lang) ? zh : en;
 }
 
+// ── r4 双态：收起/展开（键集成 bar 内，无外部浮把手）─────────────────
+
+const BAR_COLLAPSED_KEY = 'nebflow_mobile_bar_collapsed';
+
+/** @type {boolean} */
+let barCollapsed = false;
+
+function readCollapsedPref() {
+  try { return localStorage.getItem(BAR_COLLAPSED_KEY) === 'true'; } catch { return false; }
+}
+
+function writeCollapsedPref(v) {
+  try { localStorage.setItem(BAR_COLLAPSED_KEY, v ? 'true' : 'false'); } catch { /* private mode */ }
+}
+
+/** 折叠键图标：展开态显示「收进去」（chevrons-right），收起态显示「展开出来」（chevrons-left）。 */
+function renderFoldIcon(fold) {
+  fold.innerHTML = `<i data-lucide="${barCollapsed ? 'chevrons-left' : 'chevrons-right'}"></i>`;
+  if (typeof lucide !== 'undefined') createIconsIn(fold);
+}
+
+function applyBarState() {
+  const bar = document.getElementById('mobile-activity-bar');
+  if (!bar) return;
+  document.body.classList.toggle('mb-bar-collapsed', barCollapsed);
+  const fold = bar.querySelector('.mobile-bar-fold');
+  if (fold) {
+    renderFoldIcon(fold);
+    fold.setAttribute('aria-expanded', barCollapsed ? 'false' : 'true');
+    fold.title = tt(barCollapsed ? '展开活动栏' : '收起活动栏', barCollapsed ? 'Expand activity bar' : 'Collapse activity bar');
+    fold.setAttribute('aria-label', fold.title);
+  }
+}
+
+function toggleBar() {
+  barCollapsed = !barCollapsed;
+  writeCollapsedPref(barCollapsed);
+  logEvent('bar-toggle', { collapsed: barCollapsed });
+  applyBarState();
+}
+
 /** @type {Array<() => void>} */
 let unsubs = [];
 
-// ── 壳构建：常驻 bar（单一 fixed 节点，boot 即展开，恒在）────────────
+// ── 壳构建：双态 bar（单一 fixed 节点；展开=贴右缘全键列，收起=半嵌低调图标）──
 
 function buildBar() {
   const bar = document.createElement('div');
@@ -65,6 +112,12 @@ function buildBar() {
     btn.innerHTML = `<i data-lucide="${b.icon}"></i>`;
     bar.appendChild(btn);
   }
+  // r4 收/展控制键：集成在 bar 左缘内（细描边低调，非外部浮把手 —— 展开
+  // 态旁边零漂浮元素）；收起态它是整条 bar 唯一可见图标（即展开钮）。
+  const fold = document.createElement('button');
+  fold.type = 'button';
+  fold.className = 'mobile-bar-fold';
+  bar.appendChild(fold);
   document.body.appendChild(bar);
   if (typeof lucide !== 'undefined') createIconsIn(bar);
   return bar;
@@ -131,6 +184,7 @@ function watchPressed() {
       const btn = bar.querySelector(`[data-face="${b.face}"]`);
       if (btn) btn.title = tt(b.zh, b.en);
     }
+    applyBarState(); // 折叠键标题随语言刷新（图标不变）
   };
   window.addEventListener('locale-changed', onLocale);
   unsubs.push(() => {
@@ -170,9 +224,17 @@ function watchBootAutoOpen() {
 export function activateLayout() {
   const bar = buildBar();
   bar.addEventListener('click', (e) => {
+    // r4 双态：折叠键 / 收起态整条 bar（=展开钮）→ 切态；展开态其余点击走导航。
+    if (e.target.closest('.mobile-bar-fold') || barCollapsed) {
+      toggleBar();
+      return;
+    }
     const btn = e.target.closest('[data-face]');
     if (btn && bar.contains(btn)) onBarClick(btn.dataset.face);
   });
+  // 恢复持久化态（缺省展开）+ 图标/aria 同步。
+  barCollapsed = readCollapsedPref();
+  applyBarState();
   watchPressed();
   watchBootAutoOpen();
 
