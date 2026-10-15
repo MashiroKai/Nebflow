@@ -506,6 +506,11 @@ export default {
   'messages.loginRequired': '登录 nebflow 账号后使用消息与联系人',
   'login.popupBlocked': '弹窗被拦截，请允许后重试',
   'login.openPage': '打开登录页',
+  // 登录卡社交一键批（2026-10-15）：卡面选择键文案（provider 官方名不译；
+  // 「其他方式」= 弹出壳内的统一账号登录，邮箱/用户名等并列——mail 次选）。
+  'login.social.github': '使用 GitHub 登录',
+  'login.social.google': '使用 Google 登录',
+  'login.social.other': '使用邮箱或其他方式登录',
   // 登录入口 / 登录面板（2026-09-16 登录入口批）：面板文案此前是 activityBar.js
   // 注入样式一族的硬编码中文字面量，本批整体搬进 i18n（zh/en 成对，禁死键）。
   'login.title': '登录 nebflow，连接你的其他设备',

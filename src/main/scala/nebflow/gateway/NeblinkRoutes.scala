@@ -810,13 +810,23 @@ private[gateway] object NeblinkRoutes:
       // client UI language. WHITELISTED to "zh"/"en" — any other value (or an
       // absent field) resolves to "" and the param is omitted, which is also
       // the byte-identical legacy behavior for old callers.
+      // Optional body {"provider":"github"|"google"} (social one-click leg,
+      // 2026-10-15 login-card batch): whitelisted the same way — the value
+      // becomes `direct_sign_in=social:<provider>` on the authorize URL AND
+      // the caller must pair it with forceLogin=true (the quick-social-entry
+      // guardrail: forced fresh IdP auth against the automaticAccountLinking
+      // silent merge; fix-plan §7.3). Any other value (or absent field)
+      // resolves to "" — byte-identical legacy shape for old callers. The
+      // direct leg was probed on the deployed tenant for THIS client before
+      // wiring (both providers honored, 303 → /direct/social/<p> with
+      // fallback=sign-in graceful degradation).
       case req @ POST -> Root / "neblink" / "auth" / "start" =>
         gate(req):
           neblinkService match
             case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
             case Some(ms) =>
               for
-                // One body read feeds both optional fields (http4s streams a
+                // One body read feeds all optional fields (http4s streams a
                 // request body once).
                 bodyJson <- req
                   .attemptAs[Json]
@@ -829,6 +839,10 @@ private[gateway] object NeblinkRoutes:
                   .flatMap(_.hcursor.downField("uiLocales").as[String].toOption)
                   .flatMap(v => if v == "zh" || v == "en" then Some(v) else None)
                   .getOrElse("")
+                provider = bodyJson
+                  .flatMap(_.hcursor.downField("provider").as[String].toOption)
+                  .flatMap(v => if v == "github" || v == "google" then Some(v) else None)
+                  .getOrElse("")
                 // Embedded-default fallback: missing logto block resolves to the
                 // product's hosted auth service (fresh installs get PKCE login).
                 // The authorize URL itself has ONE builder — [[beginPkceLogin]] —
@@ -836,7 +850,7 @@ private[gateway] object NeblinkRoutes:
                 // An explicit login start supersedes any pending switch handoff
                 // (the marker is single-use and must not survive a new attempt).
                 _ <- AuthRoutes.switchHandoff.disarm
-                authorizeUrl <- AuthRoutes.beginPkceLogin(ms, forceLogin, uiLocales)
+                authorizeUrl <- AuthRoutes.beginPkceLogin(ms, forceLogin, uiLocales, provider)
                 resp <- authorizeUrl match
                   case Some(url) => Ok(Json.obj("authorizeUrl" -> url.asJson))
                   // Logto unconfigured, or configured without the AC app id —
