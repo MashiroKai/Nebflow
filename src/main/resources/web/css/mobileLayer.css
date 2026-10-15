@@ -12,16 +12,21 @@
  *      独立 section，互斥 .live；每页左上角圆形毛玻璃「<」返回钮）
  *   ③ 面板体系 app 化：
  *      - 项目/图谱/插件 = 真页面（桌面画板 pane re-parent 进页面体，页签条永不显示）
- *      - 用量/设置 = overlay 节点升格页面面（不透明整幅、页面 z 层）
  *      - 画板 = 文档卡片层（.mf-cards-live 才可见；卡片头 = 标题/计数/关闭；
  *        圆角浮层卡片；页签条永久退场）
  *      - header 杂项收纳：搜索归浮条（floatController），header 仅留
  *        模型上下文环/会话名/安全模式/待答问题胶囊
  *   ⑤ 悬浮工具条（定时任务/心跳/记忆/搜索/后台任务/智能体）+ 居中浮层面板几何
  *
+ * r3（p4fix-settings-usage）落位：
+ *   用量/设置内容面收编进页面体（r2 的 overlay 原地升格垫在页面容器之下被
+ *   遮挡成空页，作废）—— #settings-modal / #usage-dashboard re-parent 进
+ *   .mobile-page-body，与三页 pane-adopt 同款；overlay 退为状态载体
+ *   （.on / [hidden] 对账不变）。
+ *
  * z 层序（手机层内约定，桌面值不被本文件改动）：
- *   聊天 root(桌面默认) < #settings-overlay/#usage-overlay 155(页面面)
- *   < #mobile-pages 156(页面容器) < #canvas-panel 170(文档卡片层)
+ *   聊天 root(桌面默认) < #settings-overlay/#usage-overlay 155(状态载体垫层)
+ *   < #mobile-pages 156(页面容器，收编面随页面体) < #canvas-panel 170(文档卡片层)
  *   < #mobile-float-actions 210(会话工具条) < #mobile-activity-bar 240(bar)
  *   < #mobile-bar-handle 245(把手) < 桌面模态族 310+/10000/11000(原样)
  */
@@ -355,44 +360,56 @@ body.mobile-layer #canvas-content {
   touch-action: pan-y;
 }
 
-/* ── ③ 设置 = 独立页面（overlay 节点升格：不透明整幅、页面 z 层 155，
-   位于页面容器 156 之下 ⇒ 被后续页面盖住即「真切换」）────────────────── */
+/* ── ③ 设置/用量 = 页面体收编（r3 p4fix；r2 的 overlay 原地升格被页面容器
+   156 遮挡成空页，作废）──────────────────────────────────────────────
+   内容面（#settings-modal / #usage-dashboard）由 navController 收编进
+   .mobile-page-body（re-parent，出栈/拆层原位归还）；overlay 节点原地保留为
+   状态载体（.on / [hidden] 与桌面关闭对账观察者不变），不再承载可见面 ——
+   垫在页面容器 156 之下，被 .live 页面盖住。 */
 body.mobile-layer #settings-overlay {
   z-index: 155;
   background: var(--color-bg, #f5f6f8);
   padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px);
 }
-body.mobile-layer #settings-overlay.on {
-  display: flex;
-}
-body.mobile-layer #settings-overlay.on #settings-modal {
-  width: 100%;
-  max-width: none;
-  max-height: none;
-  height: 100%;
-  border-radius: 0;
-  border-left: none;
-  border-right: none;
-}
-/* 桌面关闭钮退场：返回钮（navController 注入 .mobile-back-injected）接管。 */
-body.mobile-layer #settings-modal-close {
-  display: none !important;
-}
-
-/* 用量看板：同款页面面升格。 */
 body.mobile-layer #usage-overlay {
   z-index: 155;
   align-items: stretch;
   background: var(--color-bg, #f5f6f8);
   padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px);
 }
-body.mobile-layer #usage-dashboard {
+/* 用量关闭尾动画（桌面 100ms ud-out）在手机层即时退场：出页有自己的滑出曲线，
+   面归位后尾巴会在 chat root 上闪一帧残影 —— 不画（对账/hidden 收尾照旧）。 */
+body.mobile-layer #usage-overlay.closing {
+  display: none !important;
+}
+/* 收编态几何。#settings-modal 的 display:flex 在桌面挂在
+   #settings-overlay.on 后代链上（css/modal.css），re-parent 后失配 ⇒ 页面体
+   位置补同款 display + 全幅几何（填充页面体；modalIn 入场动画随节点照播）。 */
+body.mobile-layer #mobile-pages #settings-modal {
+  display: flex;
+  flex-direction: column;
   width: 100%;
   max-width: none;
   max-height: none;
-  height: 100%;
+  height: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+}
+body.mobile-layer #mobile-pages #usage-dashboard {
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  height: auto;
+  flex: 1 1 auto;
+  min-height: 0;
   border-radius: 0;
 }
+/* 桌面关闭钮退场：返回钮（页面头「<」＋ navController 注入款 .mobile-back-injected）
+   接管；桌面关闭路径本身保留（Escape/外部关闭 ⇒ 对账弹栈，见 navController）。 */
+body.mobile-layer #settings-modal-close,
 body.mobile-layer #usage-close {
   display: none !important;
 }

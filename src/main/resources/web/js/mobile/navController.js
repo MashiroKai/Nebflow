@@ -16,10 +16,13 @@
 //     全走桌面导出 API，零复制）。页签系统本身仍是桌面共享的**数据模型**
 //     （restore/persist/4 态机不动）；移动层废除的是它的**视觉形态**
 //     （页签条永不显示，见 mobileLayer.css）。
-//   · 用量/设置：桌面 overlay 节点原地升格为页面面（不透明整幅、页面 z 层 155、
-//     位于页面容器 156 之下 —— 面页面在栈中被后续页面盖住即「真切换」）；
-//     开/关走桌面导出 API（openUsageDashboard / openSettingsPanel），
-//     头部注入同款「<」返回钮（桌面关闭钮手机层隐藏）。
+//   · 用量/设置：内容面（#settings-modal / #usage-dashboard）**收编进各自页面体**
+//     （r3 p4fix：r2 的「overlay 原地升格」垫在页面容器 156 之下被不透明页面
+//     遮挡 ⇒ 页面体恒空 —— 改为与三页 pane-adopt 同款的 re-parent 真页面；
+//     锚点记录/原位归还照 paneAnchors 惯例）。overlay 节点原地保留，仅作状态
+//     载体（.on / [hidden] 与桌面关闭对账观察者不变）；开/关走桌面导出 API
+//     （openUsageDashboard / openSettingsPanel），头部注入同款「<」返回钮
+//     （桌面关闭钮手机层隐藏）。
 //   · 画板 = 文档卡片层：画板层只承载「pop 出来的文档」——面板 pane 一律被
 //     移出画板；文档以卡片呈现（圆角浮层卡片 + 卡片头：标题 / 计数 / 关闭）。
 //     卡片 X = closeTab（关单卡，关后落相邻文档卡）；上滑收整叠（closeCanvas，
@@ -182,6 +185,55 @@ function adoptPane(pageId) {
   paneAnchors.push({ pane, parent: pane.parentElement, next: pane.nextSibling });
   logEvent('pane-adopt', { page: pageId, tab: def.tabId });
   body.appendChild(pane);
+}
+
+// ── overlay 内容面收编（r3 p4fix：usage/settings 与三页同款真页面）─────
+// overlay 节点原地保留，只作状态载体（.on / [hidden] 与 watchOverlayClose 的
+// 关闭对账照旧）；可见内容面 re-parent 进页面体。桌面重渲/销毁兼容：renderSettings
+// 写 #settings-content、usage reloadAll 写面板子树 —— 全是收编节点内部的面写入，
+// 与面的落点无关；两节点本体桌面代码从不替换（settings modal 静态、usage
+// buildShell 每页只建一次）。桌面层（layerActive=false）不走本文件任何路径 ⇒ 零收编。
+/** @type {Map<string, {face: Element, parent: Node, next: Node|null}>} page id → 面锚点 */
+const overlayAnchors = new Map();
+/** 页面 → overlay 内容面（收编对象）。 */
+const overlayFaceByPage = {
+  settings: '#settings-modal',
+  usage: '#usage-dashboard',
+};
+
+/** 把 overlay 内容面移入页面体（幂等；锚点照 paneAnchors 惯例记录）。 */
+function adoptOverlayFace(pageId) {
+  const sel = overlayFaceByPage[pageId];
+  const face = sel ? document.querySelector(sel) : null;
+  const body = bodyOf(pageId);
+  if (!face || !body || face.parentElement === body) return;
+  overlayAnchors.set(pageId, { face, parent: face.parentElement, next: face.nextSibling });
+  logEvent('pane-adopt', { page: pageId, face: sel });
+  body.appendChild(face);
+}
+
+/** 页面体 → overlay 原位归还（出栈/拆层；面不在页面体时空操作）。 */
+function restoreOverlayFace(pageId) {
+  const a = overlayAnchors.get(pageId);
+  if (!a) return;
+  overlayAnchors.delete(pageId);
+  const body = bodyOf(pageId);
+  if (!a.face || !body || a.face.parentElement !== body || !a.parent || !a.parent.isConnected) return;
+  try {
+    a.parent.insertBefore(a.face, a.next);
+    logEvent('pane-restore', { page: pageId, face: overlayFaceByPage[pageId] });
+  } catch { /* 树已变：放弃归还，避免二次破坏 */ }
+}
+
+/** 栈 ↔ overlay 面对账（汇合点 = renderPages：在栈即收编，出栈即归还 ——
+ *  外部关闭对账（watchOverlayClose）改栈后也走 renderPages，一处兜全）。
+ *  usage 首开时面板由 openUsageDashboard 异步建出 —— pushPage 的 .then 里
+ *  显式再跑一次；本函数幂等。 */
+function syncOverlayFaces() {
+  for (const id of Object.keys(overlayFaceByPage)) {
+    if (stack.includes(id)) adoptOverlayFace(id);
+    else restoreOverlayFace(id);
+  }
 }
 
 /** 页面 → 桌面模块入口（pane 的创建/渲染全部走桌面导出 API，零复制）。 */
@@ -369,9 +421,12 @@ function renderPages() {
     if (live) section.querySelector('.mobile-page-title')?.focus?.();
   }
   document.body.classList.toggle('mf-page-open', PAGE_BY_ID.has(top));
+  syncOverlayFaces(); // usage/settings 面随栈收编/归还（外部关闭对账路径同此汇合）
 }
 
-/** 页面面关闭（overlay 升格的 usage/settings 与栈同步；面板页由 renderPages 收）。 */
+/** 页面面关闭（overlay 升格的 usage/settings 与栈同步；面板页由 renderPages 收）。
+ *  r3 p4fix：面关闭后其内容面的原位归还统一走 renderPages → syncOverlayFaces
+ *  （本函数只负责桌面开/关态同步，不碰 DOM 落点）。 */
 function closePageFace(pageId) {
   if (pageId === 'settings') {
     try { if (isSettingsPanelActive()) closeSettingsPanel(); } catch { /* 模块态异常不阻断 */ }
@@ -408,6 +463,7 @@ export function pushPage(pageId) {
         m.openUsageDashboard();
         ensureInjectedBack('.ud-header', 'usage');
         ensureUsageReconcile(); // overlay 首开即建 —— 此刻才存在，挂对账观察者
+        syncOverlayFaces();     // 首开的面板此刻才建出 —— 建好即收编进页面体
       })
       .catch((e) => console.error('[mobile-layer] usage', e));
   }
@@ -469,7 +525,12 @@ function ensureInjectedBack(hostSel, pageId) {
   back.title = backLabel();
   back.setAttribute('aria-label', backLabel());
   back.innerHTML = '<i data-lucide="chevron-left"></i>';
-  back.addEventListener('click', () => popToPage(pageId));
+  // r3 p4fix：自身页在栈顶时就是普通「返回一层」（popToPage 对栈顶页是空转）；
+  // 不在栈顶（下方叠了别的页）才弹回本页。
+  back.addEventListener('click', () => {
+    if (stack[stack.length - 1] === pageId) popPage();
+    else popToPage(pageId);
+  });
   host.insertBefore(back, host.firstChild);
   injectedBacks.push(back);
   if (typeof lucide !== 'undefined') createIconsIn(back);
@@ -550,7 +611,7 @@ export function activateNav() {
   window.__nfMobileNav = {
     get stack() { return navState().stack; },
     get top() { return navState().top; },
-    version: 'mobile-ui-refactor r2 nav',
+    version: 'mobile-ui-refactor r3 nav (p4fix settings/usage face-adopt)',
   };
   return function teardownNav() {
     for (const fn of unsubs.splice(0)) { try { fn(); } catch { /* ignore */ } }
@@ -561,6 +622,10 @@ export function activateNav() {
       } catch { /* 树已变：放弃归还，避免二次破坏 */ }
     }
     paneAnchors.length = 0;
+    // overlay 内容面原位归还（锚点语义同 paneAnchors；开/关态原样保留给桌面 ——
+    // 视口跨越回桌面时正在看的设置/用量页直接以桌面形态续显）。
+    for (const id of [...overlayAnchors.keys()].reverse()) restoreOverlayFace(id);
+    overlayAnchors.clear();
     if (cardHead) { cardHead.remove(); cardHead = null; }
     for (const b of injectedBacks.splice(0)) b.remove();
     document.body.classList.remove('mf-cards-live', 'mf-page-open');
