@@ -24,10 +24,10 @@
 // canvas-open 且用户尚未触碰交互层 ⇒ 视为「启动自动展开」并立即收起，启动落
 // 在主会话。桌面路径不受影响（判定挂在 body.mobile-layer 之下）。
 
-import { openCanvas, closeCanvas, isCanvasOpen } from '../js/canvas.js';
-import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '../js/sidebar.js';
-import { setSideBarCollapsed, isSideBarCollapsed } from '../js/activityBar.js';
-import { createIconsIn } from '../js/utils.js';
+import { openCanvas, closeCanvas, isCanvasOpen } from '../canvas.js';
+import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '../sidebar.js';
+import { setSideBarCollapsed, isSideBarCollapsed } from '../activityBar.js';
+import { createIconsIn } from '../utils.js';
 
 /** 双语轻取值：手机层自带（不写桌面 locales 文件，桌面文件零改动）。 */
 function tt(zh, en) {
@@ -87,10 +87,10 @@ function lazy(key, loader) {
   if (!lazyMods[key]) lazyMods[key] = loader().catch((err) => { delete lazyMods[key]; throw err; });
   return lazyMods[key];
 }
-const modProjects = () => lazy('projects', () => import('../js/projectTab.js'));
-const modGraph = () => lazy('graph', () => import('../js/wikiGraph.js'));
-const modPlugins = () => lazy('plugins', () => import('../js/plugins.js'));
-const modUsage = () => lazy('usage', () => import('../js/usageDashboard.js'));
+const modProjects = () => lazy('projects', () => import('../projectTab.js'));
+const modGraph = () => lazy('graph', () => import('../wikiGraph.js'));
+const modPlugins = () => lazy('plugins', () => import('../plugins.js'));
+const modUsage = () => lazy('usage', () => import('../usageDashboard.js'));
 
 // ── 面板面路由（③：单一内容面）──────────────────────────────────
 

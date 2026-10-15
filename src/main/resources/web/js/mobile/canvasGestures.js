@@ -17,8 +17,8 @@
 // + 确保画板展开。Monaco/iframe 类重控件在卡片中为空白占位 —— 静态缩微卡的
 // 已知边界，如实注记（QA 报告披露）。
 
-import { openCanvas, closeCanvas, isCanvasOpen, setActiveTab } from '../js/canvas.js';
-import { createIconsIn } from '../js/utils.js';
+import { openCanvas, closeCanvas, isCanvasOpen, setActiveTab } from '../canvas.js';
+import { createIconsIn } from '../utils.js';
 
 /** @type {Array<() => void>} */
 let unsubs = [];
