@@ -122,7 +122,7 @@ function bindGestures() {
     }
   };
 
-  const onUp = (e) => {
+  const onUp = (e, cancelled = false) => {
     if (!g) return;
     const dx = e.clientX - g.x;
     const dy = e.clientY - g.y;
@@ -138,7 +138,9 @@ function bindGestures() {
       return;
     }
     // 左右滑切页签：横 intention、位移越阈、时限内；内容区起步且目标非交互控件。
-    if (intent === 'h' && Math.abs(dx) >= TAB_SWITCH_PX && dt < 900 && !isInteractiveTarget(e.target)) {
+    // pointercancel（纵向滚动接管）时若横意图已定且位移足额，同样判切 ——
+    // 浏览器吞掉后续 move 不影响已成立的横滑判定。
+    if (intent === 'h' && Math.abs(dx) >= TAB_SWITCH_PX && (dt < 900 || cancelled) && !isInteractiveTarget(e.target)) {
       switchTab(dx < 0 ? 1 : -1); // 左滑＝下一页签，右滑＝上一页签（iOS 同向）
     }
   };
@@ -146,7 +148,7 @@ function bindGestures() {
   root.addEventListener('pointerdown', onDown, true);
   root.addEventListener('pointermove', onMove, true);
   root.addEventListener('pointerup', onUp, true);
-  root.addEventListener('pointercancel', () => { g = null; resetSlide(); }, true);
+  root.addEventListener('pointercancel', (e) => { onUp(e, true); }, true);
 
   return () => {
     root.removeEventListener('pointerdown', onDown, true);

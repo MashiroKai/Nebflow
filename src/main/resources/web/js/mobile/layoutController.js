@@ -39,8 +39,6 @@ function tt(zh, en) {
 
 /** @type {boolean} 记录用户是否已触碰过手机层（启动自动展开抑制只管开机窗）。 */
 let userTouched = false;
-/** @type {number} 启动抑制窗截止时刻（epoch ms）。 */
-let suppressUntil = 0;
 /** @type {MutationObserver|null} */
 let bodyObserver = null;
 /** @type {Array<() => void>} */
@@ -196,14 +194,14 @@ function watchActive() {
 }
 
 // ── ③ 附加：启动自动展开抑制（消灭「画板卡默认展开盖输入区」形态）────
-
+// 无截止时刻、以首次用户交互为界：restoreTabs 服务端合并/冷启动缓存都可能让
+// openPlugins/openCanvas 晚至数秒后到达 —— 只要用户尚未触碰手机层，开机后出现
+// 的 canvas-open 都按「启动自动展开」收起；用户一旦交互，抑制立即永久失效。
 function watchBootAutoOpen() {
-  suppressUntil = Date.now() + 4000;
   const maybeSuppress = () => {
-    if (userTouched || Date.now() > suppressUntil) return;
+    if (userTouched) return;
     if (canvasOpen()) {
       closeCanvas(); // 启动兜底 openPlugins/restoreTabs 的自动展开 —— 手机层落主会话
-      suppressUntil = 0; // 一次性：此后开画板都是用户/系统真实意图
     }
   };
   const mo = new MutationObserver(maybeSuppress);
@@ -271,6 +269,5 @@ export function activateLayout() {
     for (const fn of unsubs.splice(0)) { try { fn(); } catch { /* ignore */ } }
     bar.remove();
     userTouched = false;
-    suppressUntil = 0;
   };
 }
