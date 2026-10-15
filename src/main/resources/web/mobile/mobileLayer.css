@@ -1,0 +1,390 @@
+/* mobile/mobileLayer.css — 手机交互层样式（mobile-ui-refactor 批，作者五点规格）。
+ *
+ * 铁律：本文件全部规则挂在 body.mobile-layer 之下 —— 该类只由 mobile/bootstrap.js
+ * 在手机视口（≤768px，与既有 css/mobile.css 折叠点同源）激活。桌面窗口永远不
+ * 命中任何一条规则（桌面渲染逐字节不变）；桌面对本文件的唯一感知是 index.html
+ * 里一行 <link> 注册钩子。
+ *
+ * 规格落位：
+ *   ① 右侧竖排活动栏（#mobile-activity-bar，垂直居中、两侧留白、iOS 风）
+ *   ② 手机绑定（social-btn）/文件浏览器（files-btn）入口随桌面栏整体不在手机层
+ *      出现；项目卡「在文件浏览器中打开」按钮隐藏
+ *   ③ 布局＝右侧活动栏＋左侧内容面板；画板=整幅内容面板；设置/用量=面板形态
+ *      （不再居中弹窗）；启动自动展开的画板卡由 layoutController 抑制
+ *   ④ 画板手势的触控面（页签栏/底缘带 touch-action；内容区 pan-y）+ 卡片视图
+ *   ⑤ 悬浮工具条（定时任务/心跳/记忆/后台任务/智能体）+ 居中浮层面板几何
+ */
+
+body.mobile-layer {
+  /* 活动栏占位（右缘内缩 10 + 栏宽 48 + 间隙 10）——内容面板/浮层统一让位 */
+  --mobile-bar-gutter: 68px;
+  /* 悬浮工具条底距（跟随输入区高度，floatController 写入，缺省=单行输入估高） */
+  --mobile-float-bottom: 92px;
+}
+
+/* ── ②＋③ 桌面壳退场：桌面活动栏/侧栏/列拉手/右缘条/头部两侧展开按钮 ── */
+body.mobile-layer #activity-bar,
+body.mobile-layer #sidebar,
+body.mobile-layer .col-resizer,
+body.mobile-layer .edge-bar-right,
+body.mobile-layer #sidebar-toggle,
+body.mobile-layer #canvas-toggle-btn {
+  display: none !important;
+}
+
+/* 手机绑定 / 文件浏览器的间接入口一并退场：
+   ② 项目卡「在文件浏览器中打开」按钮（projectTab.js 桌面渲染零改动，仅隐藏） */
+body.mobile-layer .project-open-btn {
+  display: none !important;
+}
+
+/* ── ③ 左侧内容面板：#main（聊天面）让出右缘活动栏走廊 ─────────────── */
+body.mobile-layer #main {
+  margin-right: var(--mobile-bar-gutter);
+  min-width: 0;
+}
+
+/* ── ① 右侧竖排活动栏（iOS 风：不满屏、垂直居中、两侧留白）──────────── */
+body.mobile-layer #mobile-activity-bar {
+  position: fixed;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 48px;
+  padding: 10px 0;
+  border-radius: 20px;
+  overflow: hidden;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0px 2px 8px rgba(0, 0, 0, 0.04),
+    0px 8px 24px rgba(0, 0, 0, 0.06);
+}
+@media (prefers-color-scheme: dark) {
+  body.mobile-layer #mobile-activity-bar {
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
+}
+/* 按钮复用桌面 .activity-btn 形态（36×36 玻璃钮），触屏命中区放宽。 */
+body.mobile-layer #mobile-activity-bar .activity-btn {
+  width: 40px;
+  height: 36px;
+}
+body.mobile-layer #mobile-activity-bar .activity-btn svg,
+body.mobile-layer #mobile-activity-bar .activity-btn i svg {
+  width: 19px;
+  height: 19px;
+}
+
+/* ── ③ 画板＝整幅左侧内容面板（覆盖桌面 side-by-side 与 overlay 两种形态） */
+body.mobile-layer.canvas-open #canvas-panel {
+  position: fixed;
+  left: 0;
+  right: var(--mobile-bar-gutter);
+  top: 0;
+  bottom: 0;
+  width: auto;
+  max-width: none;
+  flex: none;
+  margin: 0;
+  border-radius: 0;
+  border-left: none;
+  border-top: none;
+  border-bottom: none;
+  z-index: 150;
+}
+/* 桌面 overlay 形态的 top 变量在手机层一律压回全幅。 */
+body.mobile-layer.canvas-open.canvas-overlay #canvas-panel {
+  top: 0;
+}
+/* 页签栏区/底缘带：手势触控面（见 canvasGestures.js 三带划分）。 */
+body.mobile-layer #canvas-panel .canvas-header {
+  touch-action: none;
+}
+body.mobile-layer #canvas-panel .mobile-canvas-edgezone {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 28px;
+  z-index: 30;
+  touch-action: none;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 5px;
+  pointer-events: auto;
+}
+/* iOS home-indicator 同形抓手：上滑关闭的可见线索。 */
+body.mobile-layer #canvas-panel .mobile-canvas-edgezone::after {
+  content: '';
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-frame-text-muted, #98a2b3);
+  opacity: 0.45;
+}
+/* 内容区：纵向滚动归浏览器，横向意图让给页签切换手势。 */
+body.mobile-layer #canvas-content {
+  touch-action: pan-y;
+}
+
+/* ── ③ 内容面板形态：设置面（不再居中弹窗，直接铺满左侧面板）───────── */
+body.mobile-layer #settings-overlay {
+  background: transparent;
+  left: 0;
+  right: var(--mobile-bar-gutter);
+}
+body.mobile-layer #settings-overlay.on #settings-modal {
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  height: 100%;
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+}
+
+/* 用量看板：同规格铺满内容面板。 */
+body.mobile-layer #usage-overlay {
+  left: 0;
+  right: var(--mobile-bar-gutter);
+  padding: 10px 0 10px 10px;
+}
+body.mobile-layer #usage-dashboard {
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  height: 100%;
+  border-radius: 0;
+}
+
+/* ── ⑤ 会话上层悬浮工具条（定时任务/心跳/记忆/后台任务/智能体）──────── */
+body.mobile-layer #mobile-float-actions {
+  position: fixed;
+  left: 12px;
+  right: calc(var(--mobile-bar-gutter) + 2px);
+  bottom: calc(var(--mobile-float-bottom) + env(safe-area-inset-bottom, 0px));
+  z-index: 210;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  pointer-events: none;
+}
+body.mobile-layer #mobile-float-actions > * {
+  pointer-events: auto;
+}
+/* 全员内容性隐藏（无任务计数、未启用记忆）时不留空玻璃条。 */
+body.mobile-layer #mobile-float-actions.all-hidden {
+  display: none;
+}
+/* 桌面 header 自适应隐藏链（.nb-header-hide）对悬浮条成员无效 —— 按钮已
+   离开 header 宽度竞争，不再参与窄宽裁剪；内容性 hidden 语义不受影响。 */
+body.mobile-layer #mobile-float-actions .nb-header-hide {
+  display: flex !important;
+}
+/* 玻璃底座：胶囊与按钮共享的浮起感（iOS 底部工具条风）。 */
+body.mobile-layer #mobile-float-actions::before {
+  content: '';
+  position: absolute;
+  inset: -6px -10px;
+  z-index: -1;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
+}
+@media (prefers-color-scheme: dark) {
+  body.mobile-layer #mobile-float-actions::before {
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.32);
+  }
+}
+/* 计数胶囊（bg/bgagent）进悬浮条后沿用桌面胶囊形态，仅去绝对定位残留。 */
+body.mobile-layer #mobile-float-actions #bg-indicator,
+body.mobile-layer #mobile-float-actions #bgagent-indicator,
+body.mobile-layer #mobile-float-actions #pending-asks-indicator {
+  position: static;
+}
+
+/* ── ⑤ 居中浮层面板：定时任务 / 心跳 / 后台任务 / 智能体 ─────────────
+   桌面为 header 锚定的右上角下拉；手机层改为输入区上方居中浮层。 */
+body.mobile-layer #reminder-panel,
+body.mobile-layer #daemon-panel,
+body.mobile-layer #bg-dropdown,
+body.mobile-layer #bgagent-dropdown {
+  position: fixed;
+  top: auto;
+  right: calc(var(--mobile-bar-gutter) + 2px);
+  left: 12px;
+  bottom: calc(var(--mobile-float-bottom) + 64px + env(safe-area-inset-bottom, 0px));
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  max-height: 52vh;
+}
+/* 心跳配置浮层（daemonPanel.js 注入样式 + JS 内联定位）：!important 压内联。 */
+body.mobile-layer #daemon-config-overlay {
+  left: 12px !important;
+  right: calc(var(--mobile-bar-gutter) + 2px) !important;
+  top: auto !important;
+  bottom: calc(var(--mobile-float-bottom) + 64px + env(safe-area-inset-bottom, 0px)) !important;
+  transform: none !important;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+}
+body.mobile-layer #daemon-config-overlay .daemon-config-iframe {
+  height: 300px;
+}
+
+/* 记忆 / 搜索 / 规则 / 通用确认：居中浮层（规格⑤族），居中域＝内容面板。 */
+body.mobile-layer #memory-overlay,
+body.mobile-layer #rules-overlay,
+body.mobile-layer #search-overlay,
+body.mobile-layer #modal-overlay {
+  left: 0;
+  right: var(--mobile-bar-gutter);
+  padding: 0 10px;
+}
+body.mobile-layer #memory-modal,
+body.mobile-layer #rules-modal {
+  width: 100%;
+  max-width: 420px;
+  max-height: 72vh;
+}
+body.mobile-layer #search-modal {
+  width: 100%;
+  max-width: none;
+  max-height: 78vh;
+}
+
+/* 登录墙卡：375 宽安全边距。 */
+body.mobile-layer .nebflow-login-modal {
+  max-width: calc(100vw - var(--mobile-bar-gutter) - 12px);
+}
+
+/* ── ④ 卡片视图（长按画板按钮 → 类 iOS home 多卡切换）──────────────── */
+body.mobile-layer #mobile-canvas-cards {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  background: rgba(8, 10, 16, 0.45);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px calc(24px + env(safe-area-inset-bottom, 0px)) calc(16px);
+  animation: mccIn 0.18s ease;
+}
+@keyframes mccIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+body.mobile-layer #mobile-canvas-cards .mcc-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  width: 100%;
+  max-width: 340px;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 4px;
+}
+body.mobile-layer #mobile-canvas-cards .mcc-card {
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+body.mobile-layer #mobile-canvas-cards .mcc-card:active {
+  transform: scale(0.97);
+}
+body.mobile-layer #mobile-canvas-cards .mcc-card.active {
+  border-color: var(--color-primary, #5b7fbf);
+  box-shadow: 0 0 0 2px var(--color-primary, #5b7fbf), 0 8px 28px rgba(0, 0, 0, 0.18);
+}
+body.mobile-layer #mobile-canvas-cards .mcc-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-frame-text, #e6e9ef);
+  border-bottom: 1px solid var(--glass-border);
+}
+body.mobile-layer #mobile-canvas-cards .mcc-card-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body.mobile-layer #mobile-canvas-cards .mcc-card-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: transparent;
+  flex-shrink: 0;
+}
+body.mobile-layer #mobile-canvas-cards .mcc-card.active .mcc-card-dot {
+  background: var(--color-primary, #5b7fbf);
+}
+body.mobile-layer #mobile-canvas-cards .mcc-preview {
+  position: relative;
+  height: 150px;
+  overflow: hidden;
+  background: var(--color-surface, rgba(255, 255, 255, 0.04));
+}
+body.mobile-layer #mobile-canvas-cards .mcc-clone {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+  pointer-events: none;
+}
+body.mobile-layer #mobile-canvas-cards .mcc-close {
+  margin-top: 18px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: var(--color-frame-text, #e6e9ef);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.14);
+}
+body.mobile-layer #mobile-canvas-cards .mcc-close svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* ── 手机层通用补遗（与既有 css/mobile.css 的 ≤768px 规则互补）──────── */
+body.mobile-layer #header {
+  padding-right: 4px;
+}
+/* 头部中簇（会话名）在无两侧按钮后获得完整空间。 */
+body.mobile-layer #header .header-center {
+  max-width: none !important;
+}
