@@ -6,8 +6,6 @@
  * 里一行 <link> 注册钩子。
  *
  * r2（体验反馈轮）落位：
- *   ① 活动栏「默认隐藏＋把手」（#mobile-bar-handle 恒贴右缘；bar 默认滑出屏外，
- *      拖拽跟手滑出/滑回，展开态不持久 —— 刷新后仍隐藏）
  *   ② 聊天为 root 的页面栈导航（#mobile-pages：项目/图谱/插件/用量/设置五个
  *      独立 section，互斥 .live；每页左上角圆形毛玻璃「<」返回钮）
  *   ③ 面板体系 app 化：
@@ -24,16 +22,36 @@
  *   .mobile-page-body，与三页 pane-adopt 同款；overlay 退为状态载体
  *   （.on / [hidden] 对账不变）。
  *
+ * r3（layout 三点）落位：
+ *   ③ Header 一体化：顶部分离浮卡（absolute 圆角浮卡）退场 —— #header 改
+ *      relative 入流顶栏（全幅、直角、贴安全区顶），聊天/任务带在其下自然
+ *      排布，header 与内容面成为一体平面；bypass 下拉锚点随顶栏高度同步。
+ *   ④ 视口比例：body 高度改动态视口单位（100svh 兜底 + 100dvh），输入卡
+ *      不再被浏览器底栏遮挡；文档级零滚动（#chat 自持滚动）。
+ *   ⑤ 活动栏常驻：r1 形态回归 —— bar boot 即展开恒在（毛玻璃 token 不换
+ *      值），r2「默认隐藏＋把手」作废（#mobile-bar-handle 不再存在）；右缘
+ *      走廊 --mobile-bar-gutter 随常驻 bar 回归，内容面/页面/卡片层/浮层
+ *      统一让位，bar 永不遮挡可交互内容。
+ *
  * z 层序（手机层内约定，桌面值不被本文件改动）：
  *   聊天 root(桌面默认) < #settings-overlay/#usage-overlay 155(状态载体垫层)
  *   < #mobile-pages 156(页面容器，收编面随页面体) < #canvas-panel 170(文档卡片层)
- *   < #mobile-float-actions 210(会话工具条) < #mobile-activity-bar 240(bar)
- *   < #mobile-bar-handle 245(把手) < 桌面模态族 310+/10000/11000(原样)
+ *   < #mobile-float-actions 210(会话工具条) < #mobile-activity-bar 240(常驻 bar)
+ *   < 桌面模态族 310+/10000/11000(原样)
  */
 
 body.mobile-layer {
+  /* 右缘活动栏走廊（右距 10 + 栏宽 48 + 间隙 10）——内容面/浮层统一让位 */
+  --mobile-bar-gutter: 68px;
   /* 悬浮工具条底距（跟随输入区高度，floatController 写入，缺省=单行输入估高） */
   --mobile-float-bottom: 92px;
+  /* ④ 动态视口：100vh（base.css）在浏览器工具栏展开时把输入卡压到底栏之下
+     —— svh 兜底（旧内核降级回 100vh），dvh 随工具栏伸缩。文档级零滚动
+     （滚动全部收进 #chat / 页面体内部）。 */
+  height: 100vh;
+  height: 100svh;
+  height: 100dvh;
+  overflow: hidden;
 }
 
 /* ── ②＋③ 桌面壳退场：桌面活动栏/侧栏/列拉手/右缘条/头部两侧展开按钮 ── */
@@ -52,16 +70,16 @@ body.mobile-layer .project-open-btn {
   display: none !important;
 }
 
-/* ── ① 右侧活动栏：默认隐藏（滑出屏外），展开＝滑入贴右缘 ─────────────
-   悬浮于内容之上（fixed，不占布局列 —— r1 的让位走廊 --mobile-bar-gutter
-   随常驻 bar 一并废除，内容全幅）。收起态以 inert + aria-hidden 保证按钮
-   不可达；位移出屏（+56px 余量盖住阴影尾，与 layoutController offDistance
-   同值），无 visibility 抖动。 */
+/* ── ⑤ 右侧活动栏：常驻（boot 即展开恒在；毛玻璃 token 不换值）────────
+   r1 形态回归。r2 的「默认隐藏＋把手」（滑出屏外/拖拽跟手/#mobile-bar-handle）
+   全部作废 —— 无收起态 ⇒ 无 .open/.dragging/inert 切换，bar 键恒可达。
+   内容面以 --mobile-bar-gutter 走廊让位（见 #main/页面/卡片层/浮层各节），
+   bar 永不遮挡可交互内容。 */
 body.mobile-layer #mobile-activity-bar {
   position: fixed;
-  right: 28px;
+  right: 10px;
   top: 50%;
-  transform: translate(calc(100% + 56px), -50%);
+  transform: translateY(-50%);
   z-index: 240;
   display: flex;
   flex-direction: column;
@@ -79,16 +97,8 @@ body.mobile-layer #mobile-activity-bar {
     inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
     0px 2px 8px rgba(0, 0, 0, 0.04),
     0px 8px 24px rgba(0, 0, 0, 0.06);
-  transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
   user-select: none;
   -webkit-user-select: none;
-}
-body.mobile-layer #mobile-activity-bar.open {
-  transform: translate(0, -50%);
-}
-/* 把手拖拽中：跟手位移（inline transform），过渡关闭。 */
-body.mobile-layer #mobile-activity-bar.dragging {
-  transition: none;
 }
 @media (prefers-color-scheme: dark) {
   body.mobile-layer #mobile-activity-bar {
@@ -109,42 +119,39 @@ body.mobile-layer #mobile-activity-bar .activity-btn i svg {
   height: 19px;
 }
 
-/* ── ① 把手：小、贴右缘、不遮挡内容、不占布局；恒在（展开/收起两态同一位置，
-   图标随 aria-expanded 翻转指示滑向）────────────────────────────────── */
-body.mobile-layer #mobile-bar-handle {
-  position: fixed;
-  right: 3px;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 245;
-  width: 22px;
-  height: 64px;
-  padding: 0;
-  border: 1px solid var(--glass-border);
-  border-radius: 12px;
+/* ── ⑤ 内容面让位走廊：#main（聊天面）右缘内缩 ───────────────────────
+   常驻 bar 恒占右缘 ⇒ 内容面（含 header/任务带/输入卡）一律止步于走廊线，
+   bar 永不压在可交互内容上。 */
+body.mobile-layer #main {
+  margin-right: var(--mobile-bar-gutter);
+  min-width: 0;
+}
+
+/* ── ③ Header 一体化：分离浮卡退场，header＝内容面一体顶栏 ────────────
+   桌面 #header 是 absolute 圆角浮卡（margin-top 16 + radius 20 + 浮卡阴影，
+   聊天从其下穿过）—— 手机层改 relative 入流：全幅直角、贴安全区顶、无浮卡
+   阴影，聊天/任务带在顶栏之下自然排布，header 与内容面成为同一平面。
+   relative（非 static）保住 .header-center 的绝对居中包含块。玻璃底与底缘
+   分界线保留（与 .mobile-page-header 同材质，root 与页面共用一套顶栏语言）。 */
+body.mobile-layer #header {
+  position: relative;
+  top: auto;
+  left: auto;
+  right: auto;
+  margin: 0;
+  border-radius: 0;
+  border: none;
+  border-bottom: 1px solid var(--glass-border);
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 10px;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.10);
-  color: var(--color-frame-text-muted, #98a2b3);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  touch-action: none;
-  cursor: pointer;
-  user-select: none;
-  -webkit-user-select: none;
+  box-shadow: none;
+  flex-shrink: 0;
 }
-body.mobile-layer #mobile-bar-handle svg {
-  width: 15px;
-  height: 15px;
-  transition: transform 0.2s ease;
-}
-body.mobile-layer #mobile-bar-handle[aria-expanded='true'] svg {
-  transform: rotate(180deg);
-}
-body.mobile-layer #mobile-bar-handle:active {
-  transform: translateY(-50%) scale(0.94);
+/* bypass 下拉锚在 #main 上（top 50px 按桌面浮卡几何硬编码）——顶栏入流后
+   高度 = 49px + 安全区，锚点同步下移，菜单永远挂在顶栏正下方。 */
+body.mobile-layer .header-dropdown-menu {
+  top: calc(50px + env(safe-area-inset-top, 0px));
+  right: 12px;
 }
 
 /* ── ② 页面容器 + 页面 section（互斥 .live；iOS push/pop 曲线）───────── */
@@ -156,7 +163,11 @@ body.mobile-layer #mobile-pages {
 }
 body.mobile-layer .mobile-page {
   position: absolute;
-  inset: 0;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  /* ⑤ 右缘止步于走廊线：页面体内容永不伸进常驻 bar 区 */
+  right: var(--mobile-bar-gutter);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -251,7 +262,8 @@ body.mobile-layer #canvas-panel {
 body.mobile-layer.mf-cards-live #canvas-panel {
   position: fixed;
   left: 10px;
-  right: 10px;
+  /* ⑤ 右缘止步于走廊线（卡片层同页面口径，bar 区不被卡片盖住） */
+  right: var(--mobile-bar-gutter);
   top: calc(10px + env(safe-area-inset-top, 0px));
   bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   width: auto;
@@ -418,7 +430,8 @@ body.mobile-layer #usage-close {
 body.mobile-layer #mobile-float-actions {
   position: fixed;
   left: 12px;
-  right: 12px;
+  /* ⑤ 居中域＝内容面（右缘让出常驻 bar 走廊） */
+  right: calc(var(--mobile-bar-gutter) + 2px);
   bottom: calc(var(--mobile-float-bottom) + env(safe-area-inset-bottom, 0px));
   z-index: 210;
   display: flex;
@@ -495,7 +508,8 @@ body.mobile-layer #bg-dropdown,
 body.mobile-layer #bgagent-dropdown {
   position: fixed;
   top: auto;
-  right: 12px;
+  /* ⑤ 居中域＝内容面（右缘让出常驻 bar 走廊） */
+  right: calc(var(--mobile-bar-gutter) + 2px);
   left: 12px;
   bottom: calc(var(--mobile-float-bottom) + 64px + env(safe-area-inset-bottom, 0px));
   width: auto;
@@ -506,7 +520,7 @@ body.mobile-layer #bgagent-dropdown {
 /* 心跳配置浮层（daemonPanel.js 注入样式 + JS 内联定位）：!important 压内联。 */
 body.mobile-layer #daemon-config-overlay {
   left: 12px !important;
-  right: 12px !important;
+  right: calc(var(--mobile-bar-gutter) + 2px) !important;
   top: auto !important;
   bottom: calc(var(--mobile-float-bottom) + 64px + env(safe-area-inset-bottom, 0px)) !important;
   transform: none !important;
@@ -518,13 +532,13 @@ body.mobile-layer #daemon-config-overlay .daemon-config-iframe {
   height: 300px;
 }
 
-/* 记忆 / 搜索 / 规则 / 通用确认：居中浮层（规格⑤族），全幅居中域。 */
+/* 记忆 / 搜索 / 规则 / 通用确认：居中浮层（规格⑤族），居中域＝内容面。 */
 body.mobile-layer #memory-overlay,
 body.mobile-layer #rules-overlay,
 body.mobile-layer #search-overlay,
 body.mobile-layer #modal-overlay {
   left: 0;
-  right: 0;
+  right: var(--mobile-bar-gutter);
   padding: 0 10px;
 }
 body.mobile-layer #memory-modal,
@@ -539,9 +553,9 @@ body.mobile-layer #search-modal {
   max-height: 78vh;
 }
 
-/* 登录墙卡：375 宽安全边距。 */
+/* 登录墙卡：内容面宽安全边距（右缘让出常驻 bar 走廊）。 */
 body.mobile-layer .nebflow-login-modal {
-  max-width: calc(100vw - 24px);
+  max-width: calc(100vw - var(--mobile-bar-gutter) - 12px);
 }
 
 /* ── 手机层通用补遗（与既有 css/mobile.css 的 ≤768px 规则互补）──────── */

@@ -13,7 +13,8 @@
 //   · 视口跨越（旋转/拉窗）双向处理：进入手机态激活，退回桌面态拆除并原样
 //     归还被移动的桌面 DOM 节点（floatController 记锚点）。
 //
-// 规格①   → layoutController（活动栏「默认隐藏＋把手」：拖拽滑出/滑回/点外收回）
+// 规格⑤侧 → layoutController（活动栏「常驻」：boot 即展开恒在；r3 把手退场，
+//              右缘走廊 --mobile-bar-gutter 内容面让位，见 mobileLayer.css）
 // 规格②③ → navController（聊天为 root 的页面栈导航 + 面板真页面 + 文档卡片画板）
 // 规格③   → canvasGestures（文档卡片手势：横滑切卡 / 上滑收层；r1 页签形态已废除）
 // 规格⑤   → floatController（定时任务/心跳/记忆/搜索/后台任务居中悬浮 + 居中浮层面板）
@@ -79,5 +80,5 @@ if (mq.matches) activate();
 // QA / 诊断探针（只读）。
 window.__nfMobileLayer = {
   get active() { return active; },
-  version: 'mobile-ui-refactor r2 (nav-stack + doc-cards + handle)',
+  version: 'mobile-ui-refactor r3 (nav-stack + doc-cards + resident-bar + unified-header + dvh)',
 };
