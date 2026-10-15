@@ -117,7 +117,7 @@ body.mobile-layer #canvas-panel .mobile-canvas-edgezone {
   left: 0;
   right: 0;
   bottom: 0;
-  height: 28px;
+  height: 40px; /* 高于内容区原生横向滚动条带（触屏无此条，桌面鼠标路径仍在） */
   z-index: 30;
   touch-action: none;
   display: flex;
@@ -189,6 +189,12 @@ body.mobile-layer #mobile-float-actions > * {
 /* 全员内容性隐藏（无任务计数、未启用记忆）时不留空玻璃条。 */
 body.mobile-layer #mobile-float-actions.all-hidden {
   display: none;
+}
+/* 画板展开＝内容面板态：悬浮工具条是「会话上层」_face（规格⑤），画板面上
+   让位收起，避免盖住画板底缘手势带。 */
+body.mobile-layer.canvas-open #mobile-float-actions {
+  opacity: 0;
+  pointer-events: none;
 }
 /* 桌面 header 自适应隐藏链（.nb-header-hide）对悬浮条成员无效 —— 按钮已
    离开 header 宽度竞争，不再参与窄宽裁剪；内容性 hidden 语义不受影响。 */

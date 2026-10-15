@@ -39,6 +39,8 @@ function tt(zh, en) {
 
 /** @type {boolean} 记录用户是否已触碰过手机层（启动自动展开抑制只管开机窗）。 */
 let userTouched = false;
+/** @type {Array<{t:number,kind:string}>} 层事件流水（QA 探针只读）。 */
+const __nfEvents = [];
 /** @type {MutationObserver|null} */
 let bodyObserver = null;
 /** @type {Array<() => void>} */
@@ -101,6 +103,7 @@ async function goHome() {
 
 function onBarClick(face) {
   userTouched = true;
+  __nfEvents.push({ t: Date.now(), kind: 'bar-click', face });
   switch (face) {
     case 'home':
       goHome();
@@ -194,16 +197,22 @@ function watchActive() {
 }
 
 // ── ③ 附加：启动自动展开抑制（消灭「画板卡默认展开盖输入区」形态）────
-// 无截止时刻、以首次用户交互为界：restoreTabs 服务端合并/冷启动缓存都可能让
-// openPlugins/openCanvas 晚至数秒后到达 —— 只要用户尚未触碰手机层，开机后出现
-// 的 canvas-open 都按「启动自动展开」收起；用户一旦交互，抑制立即永久失效。
+// 两条腿，覆盖两条到达路径：
+//   a) 同步腿：localStorage 恢复在 main.js 模块求值内同步发生（先于本层模块
+//      注册观察者）—— 激活时若用户未触碰且画板已开，立即收起一次；
+//   b) 异步腿：服务端存档合并/冷启动重试可能晚至数秒 —— 观察者持续盯
+//      canvas-open，首次用户交互前出现的一律按「启动自动展开」收起。
 function watchBootAutoOpen() {
   const maybeSuppress = () => {
     if (userTouched) return;
     if (canvasOpen()) {
-      closeCanvas(); // 启动兜底 openPlugins/restoreTabs 的自动展开 —— 手机层落主会话
+      __nfEvents.push({ t: Date.now(), kind: 'suppress-boot-open' });
+      closeCanvas();
     }
   };
+  // a) 同步腿：激活即刻清一次开机态。
+  maybeSuppress();
+  // b) 异步腿：持续盯到首次交互。
   const mo = new MutationObserver(maybeSuppress);
   mo.observe(document.body, { attributes: true, attributeFilter: ['class'] });
   unsubs.push(() => mo.disconnect());
@@ -264,6 +273,9 @@ export function activateLayout() {
   const warm = () => { modProjects(); modGraph(); modPlugins(); modUsage(); };
   if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(warm, { timeout: 3000 });
   else setTimeout(warm, 1200);
+
+  // QA 探针：层事件流水（只读；抑制动作/交互时点可回放）。
+  window.__nfMobileLayerEvents = __nfEvents;
 
   return function teardownLayout() {
     for (const fn of unsubs.splice(0)) { try { fn(); } catch { /* ignore */ } }

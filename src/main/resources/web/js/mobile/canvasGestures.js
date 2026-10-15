@@ -23,7 +23,7 @@ import { createIconsIn } from '../utils.js';
 /** @type {Array<() => void>} */
 let unsubs = [];
 
-const EDGE_ZONE_PX = 28;     // 底缘上滑带高度（iOS home-indicator 同位）
+const EDGE_ZONE_PX = 40;     // 底缘上滑带高度（iOS home-indicator 同位；高于横向滚动条带）
 const CLOSE_THRESHOLD = 56;  // 上滑关闭触发位移（px）
 const TAB_SWITCH_PX = 56;    // 左右滑切页签触发位移（px）
 const MAX_FOLLOW = 320;      // 上滑跟手最大位移（px）
