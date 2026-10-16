@@ -115,6 +115,16 @@ object BootDispatcherWake:
   val ReasonNotifyFailed: String = "notify-failed"
   val ReasonInternalError: String = "internal-error"
 
+  /**
+   * 排除表命中（exclusivity 批 2026-10-15，双活根治一）：项目名 ∈
+   * `Defaults.SweepExcludeProjects` ⇒ 本 boot 对该项目零唤醒零清单构建。**零磁盘
+   * 接触**——标记/事件都不写（`boot-wake.json` 与 `flow-map-events.jsonl` 都在项目
+   * workspace 的 `.nebflow` 下，写之即跨引擎触碰独占项目的运行态，正是本批要关的口）；
+   * 可观测 = 本原因码一行 info 日志 + boot 汇总行的 `<p>=skipped(excluded-by-config)`
+   * 条目（`record` 之外的最小留痕面）。
+   */
+  val ReasonExcludedByConfig: String = "excluded-by-config"
+
   /** 进程内快路径去重（权威去重面是落盘标记；本 Ref 只挡同 bootId 的重复调用）。 */
   private val wokenKeys: Ref[IO, Set[String]] = Ref.unsafe[IO, Set[String]](Set.empty)
 
@@ -344,10 +354,23 @@ object BootDispatcherWake:
     else
       projects.fold(ProjectStore.list())(pds => IO.pure(pds)).flatMap { pds =>
         val ordered = pds.sortBy(_.name)
+        // 排除表（exclusivity 批 2026-10-15，双活根治一）：热读一次、逐项目精确匹配。
+        // 排除判定先于 MaxProjectsPerBoot 位次——被排除项目不占单 boot 唤醒名额。
+        val excluded = Defaults.SweepExcludeProjects
         ordered.zipWithIndex
           .traverse { case (pd, idx) =>
             val at = nowMs()
-            if idx >= MaxProjectsPerBoot then
+            if excluded.contains(pd.name) then
+              // 零触碰跳过（exclusivity 批 2026-10-15）：不读该项目 flow-map、不写标记/
+              // 事件（写之即跨引擎触碰独占项目 workspace 的运行态）；留痕 = 日志行 +
+              // 汇总行条目，Outcome 直铸不经 record。
+              logger
+                .info(
+                  s"[boot-wake] project '${pd.name}' auto-reentry: result=$ResultSkipped reason=$ReasonExcludedByConfig " +
+                    s"boot=$bootId nodes=0 (sweep exclusion table nebflow.sweep.excludeProjects — project owned by another instance, zero disk contact)"
+                )
+                .as(Outcome(pd.name, ResultSkipped, ReasonExcludedByConfig, 0, Nil))
+            else if idx >= MaxProjectsPerBoot then
               record(pd, bootId, ResultSkipped, ReasonCapExceeded, None, blocking = false, atMs = at)
             else
               wakeProject(pd, bootId, trigger, nowMs, maxItems, sessionsDir, at)
