@@ -408,7 +408,7 @@ object StaticRoutes:
    * ETag keeps revalidation a cheap 304). The incumbent /css/logo-* files
    * are NOT touched by this route — it only makes the NEW slot tree
    * reachable; default brand rendering is byte-identical (before slotting,
-   * /brand/* answered 404 and nothing referenced it).
+   * the whole /brand/ tree answered 404 and nothing referenced it).
    *
    * Standalone (zero class deps) so it is directly unit-testable
    * (BrandSubtreeRoutesSpec), like vendorSubtree/jsRoutes.
