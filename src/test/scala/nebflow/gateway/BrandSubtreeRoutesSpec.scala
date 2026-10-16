@@ -8,7 +8,7 @@ import org.typelevel.ci.CIString
 
 /**
  * Route-level tests for StaticRoutes.brandSubtree: serving the rebrand asset
- * slot tree `web/brand/**` at any depth (stand-logo-slotting batch,
+ * slot tree under `web/brand/` at any depth (stand-logo-slotting batch,
  * 2026-10-15).
  *
  * Outage being pinned: the optional __BRAND__ logoUrl/logoDarkUrl reference
