@@ -1604,24 +1604,31 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 }
 .wiki-canvas { flex: 1 1 auto; min-height: 0; width: 100%; cursor: grab; background: transparent; }
 
-/* Hover tooltip (shared document-level element, glass material). */
+/* Hover tooltip (shared document-level element, glass material).
+   Glass Aurora port: bead card with sapphire cast + refraction top edge. */
 .wiki-tip {
   position: fixed; z-index: 1200; max-width: 250px;
-  padding: 8px 11px; border-radius: 10px;
+  padding: 8px 11px; border-radius: 12px;
   border: 1px solid var(--glass-border, rgba(255,255,255,0.35));
   background: var(--glass-bg, rgba(24, 28, 38, 0.68));
   backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
+  box-shadow: 0 12px 34px rgb(var(--sapphire, 91 127 191) / 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
   font-size: 12px; color: var(--color-text);
   pointer-events: none; opacity: 0; transition: opacity .12s ease;
 }
+.wiki-tip::before {
+  content: ''; position: absolute; top: 0; left: 10%; right: 10%; height: 1px;
+  background: linear-gradient(90deg, transparent 10%, var(--sapphire-refraction, rgba(255,255,255,0.45)) 50%, transparent 90%);
+}
 .wiki-tip.show { opacity: 1; }
-.wiki-tip-title { font-weight: 600; margin-bottom: 2px; word-break: break-all; }
+.wiki-tip-title { font-weight: 600; margin-bottom: 2px; word-break: break-all; font-size: 13px; }
 .wiki-tip-path {
   font-family: var(--font-mono, monospace); font-size: 10.5px;
   color: var(--color-text-muted); word-break: break-all;
 }
-.wiki-tip-device { margin-top: 3px; font-size: 11px; color: var(--sapphire-refraction, #5e6ad2); }
+.wiki-tip-device { margin-top: 3px; font-size: 11px; color: rgb(var(--sapphire, 91 127 191) / 0.9); }
 
 @media (prefers-reduced-motion: reduce) {
   .nf-findbar { animation: none; }
@@ -1637,4 +1644,144 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   color: var(--color-text); font-size: 12px; outline: none; cursor: pointer;
   max-width: 170px;
 }
-.wiki-tip-meta { font-size: 11px; color: var(--sapphire-refraction, #5e6ad2); margin-bottom: 2px; }
+.wiki-tip-meta { font-size: 11px; color: rgb(var(--sapphire, 91 127 191) / 0.9); margin-bottom: 2px; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Wiki graph · Glass Aurora skin (draftB port, 2026-10-16)
+   ═══════════════════════════════════════════════════════════════════ */
+/* Ported from .nebflow/evidence/20261014_wiki-dx/style/assets/
+   draftB-glass-aurora.css onto the production pane: aurora wash (sapphire
+   primary + a whisper of brand-green, both themes), glass command bar with
+   refraction edge, facet pills, right glass sidebar (real filters), zoom
+   cluster. Canvas nodes stay grayscale (wikiGraph.js author ruling) — the
+   sapphire accent is reserved for interaction states. */
+
+.wiki-graph-pane { position: relative; }
+.wiki-graph-pane.wx-B {
+  background:
+    radial-gradient(85% 65% at 12% 8%, rgba(91, 127, 191, 0.13) 0%, rgba(91, 127, 191, 0) 55%),
+    radial-gradient(55% 45% at 92% 94%, rgba(7, 193, 96, 0.045) 0%, rgba(7, 193, 96, 0) 60%),
+    var(--color-bg);
+}
+@media (prefers-color-scheme: dark) {
+  .wiki-graph-pane.wx-B {
+    background:
+      radial-gradient(85% 65% at 12% 8%, rgba(91, 127, 191, 0.18) 0%, rgba(91, 127, 191, 0) 55%),
+      radial-gradient(55% 45% at 92% 94%, rgba(7, 193, 96, 0.05) 0%, rgba(7, 193, 96, 0) 60%),
+      var(--color-bg);
+  }
+}
+
+/* Glass command bar — floats over the canvas; counts moved to the sidebar. */
+.wiki-graph-pane.wx-B .wiki-toolbar {
+  position: absolute; top: 12px; left: 12px; right: 236px; z-index: 6;
+  gap: 8px; padding: 8px 12px;
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur, 10px)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-control-blur, 10px)) saturate(1.15);
+  border: 1px solid var(--glass-control-border);
+  border-radius: 12px;
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 8px 24px var(--glass-control-shadow);
+  overflow: hidden;
+}
+.wiki-graph-pane.wx-B .wiki-toolbar::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 8%; right: 8%; height: 1px;
+  background: linear-gradient(90deg, transparent 8%, var(--sapphire-refraction) 50%, transparent 92%);
+  pointer-events: none;
+}
+.wiki-graph-pane.wx-B .wiki-facets {
+  position: absolute;
+  top: 58px; left: 12px; right: 236px;
+  z-index: 6; gap: 6px; padding: 0; flex-wrap: wrap;
+}
+.wiki-graph-pane.wx-B .wiki-toolbar-status { display: none; }
+.wiki-graph-pane.wx-B .wiki-toolbar-search { border-radius: 9px; flex: 1 1 auto; }
+.wiki-graph-pane.wx-B .wiki-toolbar-btn { border-radius: 9px; }
+.wiki-graph-pane.wx-B .wiki-facet { border-radius: 999px; padding: 0 10px; max-width: 96px; }
+
+/* The canvas fills the whole pane — the glass layers float above it. */
+.wiki-graph-pane.wx-B .wiki-canvas { position: absolute; inset: 0; }
+
+/* Right glass sidebar — real filters (projects / types / statuses) + legend. */
+.wx-sidebar {
+  position: absolute;
+  top: 12px; bottom: 12px; right: 12px; width: 232px;
+  z-index: 7;
+  box-sizing: border-box;
+  padding: 12px 12px 16px;
+  font-size: 12px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  box-shadow: 0 12px 34px rgb(var(--sapphire) / 0.14), 0 2px 8px rgba(0, 0, 0, 0.06);
+  color: var(--color-text);
+}
+/* Refraction top edge — sticky so it survives the panel's own scrolling. */
+.wx-sidebar::before {
+  content: '';
+  position: sticky; top: 0;
+  display: block; height: 1px; margin-bottom: -1px;
+  background: linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%);
+}
+.wx-sb-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-weight: 600; font-size: 12.5px; color: var(--color-text);
+  padding: 2px 4px 10px; letter-spacing: 0.02em;
+}
+.wx-sb-clear {
+  all: unset; cursor: pointer; font-size: 11px;
+  color: rgb(var(--sapphire) / 0.95);
+  padding: 3px 8px; border-radius: 8px;
+  border: 1px solid rgb(var(--sapphire) / 0.30);
+}
+.wx-sb-clear:hover { background: rgb(var(--sapphire) / 0.10); }
+.wx-sb-sec { padding: 8px 0 6px; border-top: 1px solid var(--glass-etched-border); }
+.wx-sb-title { color: var(--color-text-muted); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; padding: 2px 4px 6px; }
+.wx-sb-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; border-radius: 9px; cursor: pointer; color: var(--color-text);
+}
+.wx-sb-item:hover { background: rgb(var(--sapphire) / 0.08); }
+.wx-sb-item.active { background: var(--sapphire-tint-15); color: var(--color-text); }
+.wx-sb-item .wx-proj-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wx-sb-item .wx-count { margin-left: auto; color: var(--color-text-muted); font-variant-numeric: tabular-nums; font-size: 10.5px; }
+.wx-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; box-shadow: none; border: 1px solid rgba(0, 0, 0, 0.08); }
+.wx-sb-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 4px; }
+.wx-chip {
+  cursor: pointer; padding: 3px 10px;
+  border: 1px solid var(--glass-etched-border);
+  background: var(--glass-etched-bg);
+  color: var(--color-text-muted);
+  border-radius: 999px;
+  font-size: 11px;
+}
+.wx-chip:hover { color: var(--color-text); border-color: rgb(var(--sapphire) / 0.35); }
+.wx-chip.active { background: var(--sapphire-tint-15); border-color: rgb(var(--sapphire) / 0.45); color: var(--color-text); }
+.wx-sb-legend { padding: 4px 8px; color: var(--color-text-muted); line-height: 1.9; }
+.wx-sb-legend b { color: var(--color-text); font-weight: 500; }
+
+/* Zoom cluster — bottom-left glass bead (right side yields to the sidebar). */
+.wx-zoom {
+  position: absolute; bottom: 16px; left: 14px; z-index: 7;
+  display: flex; flex-direction: column; gap: 2px; padding: 5px; border-radius: 12px;
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur, 10px));
+  backdrop-filter: blur(var(--glass-control-blur, 10px));
+  border: 1px solid var(--glass-control-border);
+  box-shadow: inset 0 1px 0 var(--glass-control-highlight), 0 8px 24px var(--glass-control-shadow);
+}
+.wx-zoom button {
+  all: unset; cursor: pointer; width: 26px; height: 26px; border-radius: 9px;
+  display: grid; place-items: center; color: var(--color-text); font-size: 14px;
+  box-sizing: border-box;
+}
+.wx-zoom button:hover { background: rgb(var(--sapphire) / 0.14); }
