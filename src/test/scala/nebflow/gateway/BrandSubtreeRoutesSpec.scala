@@ -71,5 +71,8 @@ class BrandSubtreeRoutesSpec extends FunSuite:
   }
 
   test("rejects backslash segments") {
-    assertEquals(get("/brand/stand\\logo/logo-512-light.png").status, Status.NotFound)
+    // Encoded form (vendor-subtree pattern): a RAW backslash is rejected by
+    // http4s URI parsing before the route ever runs, so the pin uses %5C —
+    // it must land on 404 (no such resource), never leak a file.
+    assertEquals(get("/brand/stand%5Clogo/logo-512-light.png").status, Status.NotFound)
   }
