@@ -1704,8 +1704,11 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 .wiki-graph-pane.wx-B .wiki-toolbar-btn { border-radius: 9px; }
 .wiki-graph-pane.wx-B .wiki-facet { border-radius: 999px; padding: 0 10px; max-width: 96px; }
 
-/* The canvas fills the whole pane — the glass layers float above it. */
-.wiki-graph-pane.wx-B .wiki-canvas { position: absolute; inset: 0; }
+/* The canvas fills the whole pane — the glass layers float above it. An
+   absolutely-positioned REPLACED element (canvas) keeps its intrinsic height
+   under bare `inset: 0`, so the explicit 100%/100% is load-bearing: without
+   it the bitmap never learns the pane grew and ResizeObserver never fires. */
+.wiki-graph-pane.wx-B .wiki-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 
 /* Right glass sidebar — real filters (projects / types / statuses) + legend. */
 .wx-sidebar {
