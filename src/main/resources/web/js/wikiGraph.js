@@ -12,10 +12,16 @@
 // through /api/wiki/remote-doc). Hovering highlights the node's neighborhood;
 // the toolbar search dims everything that does not match.
 //
-// Styling uses the Sapphire Glass design tokens (css/base.css, css/sapphire.css):
-// a transparent canvas over the pane, glass toolbar controls, project hues from
-// the accent palette. No new vendor dependencies — the force simulation is a
-// small velocity-Verlet loop sized for vault-scale graphs (hundreds of nodes).
+// Styling is the Glass Aurora skin (draftB port, 2026-10-16): aurora wash on
+// the pane, glass command bar + facet pills + right sidebar + zoom cluster
+// (css/split.css), curved sapphire edges, bead tooltip. Nodes are GRAYSCALE by
+// author ruling (2026-10-16): a low-saturation gray family layered by degree
+// (hubs darker → the map's structure reads at a glance), node TYPE carried by
+// shape/stroke (filled circle doc / stroked rounded-square attachment / dashed
+// hollow stub / ringed resolved doc), never by flashy hue. Sapphire stays the
+// single interaction accent (hover edge + hover/focus rings). No new vendor
+// dependencies — the force simulation is a small velocity-Verlet loop sized
+// for vault-scale graphs (hundreds of nodes).
 
 import { t } from './i18n.js';
 import { authHeaders } from './flowHelpers.js';
@@ -23,14 +29,49 @@ import { authHeaders } from './flowHelpers.js';
 const TAB_ID = 'wiki-graph';
 const GRAPH_API = '/api/wiki/graph';
 
-// Project palette — mirrors the accent ramp used across the design system
-// (--color-primary green, sapphire blue, plus warm/cool companions). Values
-// are the token defaults so the graph keeps working inside iframes.
-const PALETTE = ['#07c160', '#5e6ad2', '#e6a23c', '#d2695e', '#3aa0ff', '#9a6dd7', '#2fbfb0', '#c8567b'];
+// Aurora-gray node family, one ramp per theme (dark inverts lightness so the
+// nodes keep reading against the aurora wash). Degree maps onto the leaf→hub
+// lightness step; attachments take the mid step + a stroke; stubs stay hollow.
+const GRAY_RAMP = {
+  light: { hub: '#3f444c', mid: '#5d626b', leaf: '#8b919a', attach: '#6e7076',
+           stroke: '#2a2e34', stub: '#9aa0a8', doneRing: '#3f444c',
+           label: '#1c1e22', labelMuted: 'rgba(58,62,68,0.78)' },
+  dark:  { hub: '#bcc2cc', mid: '#949aa4', leaf: '#6a6f78', attach: '#7e848d',
+           stroke: '#e8ebef', stub: '#7a8089', doneRing: '#d4d9e0',
+           label: '#e8ebef', labelMuted: 'rgba(198,203,210,0.72)' },
+};
+
+// Sidebar project dots: fixed gray steps — project identity stays visible in
+// the panel without re-introducing hue on the canvas.
+const PROJECT_DOTS = ['#3f444c', '#71767e', '#9aa0a8', '#c2c6cc'];
+
+// Sapphire edge colors (canvas has no CSS var access) — matches the draftB
+// colorRules mapping (hover edge → strong sapphire; normal → fine sapphire
+// line; filtered-out → near-invisible).
+const EDGE = { hover: 'rgba(91,127,191,0.9)', normal: 'rgba(91,127,191,0.28)', dim: 'rgba(91,127,191,0.07)' };
+const EDGE_BEND = 0.10;          // quadratic bow (draftB `bend`)
+const GLOW = { hover: 30, idle: 9, attachHover: 26, attachIdle: 7 }; // draftB glowBoost ×2.4
 
 // Frontmatter statuses that mark RESOLVED work (research: solved/concluded;
-// engineering: accepted/done; learning: mastered) — ✓ ring on the node.
+// engineering: accepted/done; learning: mastered) — ring on the node.
 const DONE_STATUSES = /^(solved|resolved|done|concluded|accepted|mastered|published|closed)$/i;
+
+function hexToRgb(hex) {
+  const v = parseInt(hex.slice(1), 16);
+  return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+}
+
+/** Mix two ramp grays by t∈[0,1] → layered node color (degree shading). */
+function mixGray(aHex, bHex, t) {
+  const a = hexToRgb(aHex), b = hexToRgb(bHex);
+  return `rgb(${Math.round(a[0] + (b[0] - a[0]) * t)},${Math.round(a[1] + (b[1] - a[1]) * t)},${Math.round(a[2] + (b[2] - a[2]) * t)})`;
+}
+
+/** The theme ramp the canvas currently draws with (prefers-color-scheme). */
+function themeRamp() {
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+    ? GRAY_RAMP.dark : GRAY_RAMP.light;
+}
 
 function roundedRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
@@ -70,6 +111,9 @@ function roundedRect(ctx, x, y, w, h, r) {
  * @property {string} facetKind
  * @property {string} facetType
  * @property {string} facetStatus
+ * @property {MediaQueryList | null} themeMQ
+ * @property {(() => void) | null} onThemeChange
+ * @property {{hub: string, mid: string, leaf: string, attach: string, stroke: string, stub: string, doneRing: string, label: string, labelMuted: string} | null} ramp
  */
 
 /** @type {WikiViewState | null} */
@@ -121,7 +165,7 @@ async function renderInto(pane) {
   }
   teardown();
   pane.innerHTML = '';
-  pane.classList.add('wiki-graph-pane');
+  pane.classList.add('wiki-graph-pane', 'wx-B');
 
   const bar = document.createElement('div');
   bar.className = 'wiki-toolbar';
@@ -179,12 +223,74 @@ async function renderInto(pane) {
   canvasEl.className = 'wiki-canvas';
   pane.appendChild(canvasEl);
 
+  // ── Glass Aurora right sidebar (draftB port) — shell here, lists filled by
+  // renderSidebar() once the data lands in rebuildSim. Every filter row drives
+  // the EXISTING toolbar/facet controls through real events, so panel and
+  // toolbar state can never diverge.
+  const sb = document.createElement('div');
+  sb.className = 'wx-sidebar';
+  sb.innerHTML = `
+    <div class="wx-sb-head"><span class="wx-sb-head-title"></span><button class="wx-sb-clear" type="button"></button></div>
+    <div class="wx-sb-sec"><div class="wx-sb-title wx-sb-proj-title"></div><div class="wx-sb-list wx-projects"></div></div>
+    <div class="wx-sb-sec"><div class="wx-sb-title wx-sb-types-title"></div><div class="wx-sb-chips wx-types"></div></div>
+    <div class="wx-sb-sec"><div class="wx-sb-title wx-sb-status-title"></div><div class="wx-sb-chips wx-status"></div></div>
+    <div class="wx-sb-sec"><div class="wx-sb-title wx-sb-legend-title"></div><div class="wx-sb-legend"></div></div>`;
+  sb.querySelector('.wx-sb-head-title').textContent = t('wiki.panelTitle');
+  const clearBtn = sb.querySelector('.wx-sb-clear');
+  clearBtn.textContent = t('wiki.clearAll');
+  clearBtn.title = t('wiki.clearAllTitle');
+  sb.querySelector('.wx-sb-types-title').textContent = t('wiki.sbTypes');
+  sb.querySelector('.wx-sb-status-title').textContent = t('wiki.sbStatuses');
+  sb.querySelector('.wx-sb-legend-title').textContent = t('wiki.sbLegend');
+  sb.querySelector('.wx-sb-legend').innerHTML =
+    `<div><b>●</b> <span class="wx-lg-docs"></span> &nbsp;<b>▢</b> <span class="wx-lg-attach"></span> &nbsp;<b>◌</b> <span class="wx-lg-stub"></span></div>` +
+    `<div><b>◎</b> <span class="wx-lg-done"></span> &nbsp;<b>—</b> <span class="wx-lg-links"></span></div>`;
+  sb.querySelector('.wx-lg-docs').textContent = t('wiki.legendDocs');
+  sb.querySelector('.wx-lg-attach').textContent = t('wiki.legendAttachments');
+  sb.querySelector('.wx-lg-stub').textContent = t('wiki.legendUnresolved');
+  sb.querySelector('.wx-lg-done').textContent = t('wiki.legendDone');
+  sb.querySelector('.wx-lg-links').textContent = t('wiki.legendLinks');
+  clearBtn.addEventListener('click', () => {
+    const search = pane.querySelector('.wiki-toolbar-search');
+    const kindSel = pane.querySelector('.wiki-facet-kind');
+    const typeSel = pane.querySelector('.wiki-facet-type');
+    const statusSel = pane.querySelector('.wiki-facet-status');
+    if (search) { search.value = ''; search.dispatchEvent(new Event('input', { bubbles: true })); }
+    [kindSel, typeSel, statusSel].forEach((s) => { if (s) { s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true })); } });
+    sb.querySelectorAll('.active').forEach((el) => el.classList.remove('active'));
+  });
+  pane.appendChild(sb);
+
+  // ── Zoom cluster (draftB): in/out reuse the wheel zoom math; ⟲ re-lands the
+  // layout (rebuildSim resets scale + pan and re-seeds positions).
+  const zoom = document.createElement('div');
+  zoom.className = 'wx-zoom';
+  const mkZoomBtn = (z, label, title) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.dataset.z = z; b.textContent = label; b.title = title;
+    return b;
+  };
+  zoom.append(
+    mkZoomBtn('in', '+', t('wiki.zoomInTitle')),
+    mkZoomBtn('out', '−', t('wiki.zoomOutTitle')),
+    mkZoomBtn('fit', '⟲', t('wiki.zoomResetTitle')),
+  );
+  zoom.addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b || !view) return;
+    if (b.dataset.z === 'in') zoomCanvas(1.12);
+    else if (b.dataset.z === 'out') zoomCanvas(1 / 1.12);
+    else rebuildSim();
+  });
+  pane.appendChild(zoom);
+
   view = { pane, canvas: canvasEl, ctx: canvasEl.getContext('2d'), data: null, sim: null,
            raf: 0, focusId: pendingFocus || '', filter: '', byId: new Map(),
            focusNode: null, focusPulse: 0, vx: 0, vy: 0, scale: 1,
            dragging: null, panning: false, hover: null,
            lastPointer: null, resizeObs: null, colors: null, W: 0, H: 0,
-           facetKind: '', facetType: '', facetStatus: '' };
+           facetKind: '', facetType: '', facetStatus: '',
+           themeMQ: null, onThemeChange: null, ramp: null };
   pendingFocus = '';
 
   bindCanvas(canvasEl);
@@ -192,6 +298,18 @@ async function renderInto(pane) {
     view.resizeObs = new ResizeObserver(() => resizeCanvas());
     view.resizeObs.observe(canvasEl);
   }
+  // Theme flip (system light/dark) mid-session: repaint the gray ramp + label
+  // colors on the next frame. CSS surfaces follow the media query themselves.
+  view.themeMQ = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  view.onThemeChange = () => {
+    if (!view || !view.sim) return;
+    paintNodes();
+    const g = themeRamp();
+    view.ramp = g;
+    view.colors = { text: g.label, muted: g.labelMuted };
+    wake(0.1);
+  };
+  if (view.themeMQ && view.themeMQ.addEventListener) view.themeMQ.addEventListener('change', view.onThemeChange);
 
   await loadData(false);
   rebuildSim();
@@ -201,6 +319,9 @@ function teardown() {
   if (!view) return;
   if (view.raf) cancelAnimationFrame(view.raf);
   if (view.resizeObs) view.resizeObs.disconnect();
+  if (view.themeMQ && view.onThemeChange && view.themeMQ.removeEventListener) {
+    view.themeMQ.removeEventListener('change', view.onThemeChange);
+  }
   view = null;
 }
 
@@ -217,16 +338,23 @@ async function loadData(force) {
 
 // ── Simulation model ───────────────────────────────────────────
 
-function projectHue(projects) {
-  const map = new Map();
-  (projects || []).forEach((p, i) => map.set(p.name, PALETTE[i % PALETTE.length]));
-  return map;
+/** Assign the aurora-gray node colors from link degree (hubs darker). */
+function paintNodes() {
+  if (!view || !view.sim) return;
+  const g = themeRamp();
+  const deg = view.sim.degree;
+  for (const n of view.sim.nodes) {
+    if (n.ref.stub) { n.color = g.stub; continue; }
+    if (n.ref.kind === 'attachment') { n.color = g.attach; continue; }
+    // t: leaf (degree 0) → hub (degree 6+ saturates) — the layering read.
+    const t = Math.min(1, (deg.get(n.id) || 0) / 6);
+    n.color = mixGray(g.leaf, g.hub, t);
+  }
 }
 
 function rebuildSim() {
   if (!view || !view.data) return;
   const data = view.data;
-  const hues = projectHue(data.projects);
   const W = view.W || view.canvas.clientWidth || 800;
   const H = view.H || view.canvas.clientHeight || 600;
   const nodes = (data.nodes || []).map((n, i) => ({
@@ -237,7 +365,7 @@ function rebuildSim() {
     y: H / 2 + Math.sin((i / Math.max(1, data.nodes.length)) * Math.PI * 2) * (0.25 * Math.min(W, H)),
     px: 0, py: 0,
     vx: 0, vy: 0,
-    color: n.stub ? 'rgba(139,142,150,0.55)' : (hues.get(n.project) || PALETTE[0]),
+    color: '#8b919a',
     remote: n.device && n.device !== 'self',
     project: n.project,
     radius: n.stub ? 5 : (n.kind === 'attachment' ? 5.5 : 6 + Math.min(6, (n.headings || []).length * 0.8)),
@@ -247,16 +375,23 @@ function rebuildSim() {
   const edges = (data.edges || [])
     .map(e => ({ from: byId.get(e.from), to: byId.get(e.to), anchor: e.anchor || '' }))
     .filter(e => e.from && e.to && e.from !== e.to);
-  view.sim = { nodes, edges, alpha: 1 };
+  // Link degree per node — drives the grayscale layering (paintNodes).
+  const degree = new Map();
+  edges.forEach(e => {
+    degree.set(e.from.id, (degree.get(e.from.id) || 0) + 1);
+    degree.set(e.to.id, (degree.get(e.to.id) || 0) + 1);
+  });
+  view.sim = { nodes, edges, degree, alpha: 1 };
   view.byId = byId;
+  paintNodes();
   view.scale = 1;
   view.vx = 0; view.vy = 0;
-  // Design-token colors for canvas (2D context cannot read CSS variables).
-  const cs = getComputedStyle(document.documentElement);
-  view.colors = {
-    text: (cs.getPropertyValue('--color-text') || '#1c1e22').trim() || '#1c1e22',
-    muted: 'rgba(128,132,140,0.95)',
-  };
+  // Canvas label colors follow the same theme ramp as the nodes (2D context
+  // cannot read CSS variables). Cached per rebuild + theme flip (draw reads
+  // view.ramp — no per-frame matchMedia).
+  const g = themeRamp();
+  view.ramp = g;
+  view.colors = { text: g.label, muted: g.labelMuted };
   // Scenario facet options from the loaded data (stable sorted, capped).
   const typeSel = /** @type {HTMLSelectElement|null} */ (view.pane.querySelector('.wiki-facet-type'));
   const statusSel = /** @type {HTMLSelectElement|null} */ (view.pane.querySelector('.wiki-facet-status'));
@@ -279,6 +414,7 @@ function rebuildSim() {
   const statuses = [...new Set((data.nodes || []).map(n => n.status).filter(Boolean))].sort().slice(0, 12);
   fillFacet(typeSel, types, t('wiki.facetAllTypes'));
   fillFacet(statusSel, statuses, t('wiki.facetAllStatuses'));
+  renderSidebar();
   updateStatus();
   applyFilter();
   view.focusNode = null;
@@ -414,20 +550,23 @@ function draw() {
   const hover = view.hover;
   const neighbors = hover ? neighborhood(hover) : null;
 
-  // Edges.
+  // Edges — fine sapphire lines with the draftB aurora bow (quadratic bend);
+  // the hovered node's links highlight strong, filtered links fall to near-0.
   for (const e of sim.edges) {
     const hl = neighbors && (e.from === hover || e.to === hover);
     const dimmed = (e.from.dimmed || e.to.dimmed);
-    ctx.strokeStyle = hl
-      ? 'rgba(94,106,210,0.9)'
-      : (dimmed ? 'rgba(128,132,140,0.06)' : 'rgba(128,132,140,0.22)');
-    ctx.lineWidth = hl ? 1.6 : 1;
+    ctx.strokeStyle = hl ? EDGE.hover : (dimmed ? EDGE.dim : EDGE.normal);
+    ctx.lineWidth = hl ? 2 : 1.25;
+    const dx = e.to.x - e.from.x, dy = e.to.y - e.from.y;
+    const mx = (e.from.x + e.to.x) / 2 - dy * EDGE_BEND;
+    const my = (e.from.y + e.to.y) / 2 + dx * EDGE_BEND;
     ctx.beginPath();
     ctx.moveTo(e.from.x, e.from.y);
-    ctx.lineTo(e.to.x, e.to.y);
+    ctx.quadraticCurveTo(mx, my, e.to.x, e.to.y);
     ctx.stroke();
   }
-  // Nodes.
+  // Nodes — grayscale family: layering = degree (paintNodes), type = shape.
+  const g = view.ramp || themeRamp();
   for (const n of sim.nodes) {
     const r = n.radius;
     const isHover = n === hover;
@@ -437,47 +576,70 @@ function draw() {
     if (n === view.focusNode && view.focusPulse > 0) {
       ctx.beginPath();
       ctx.arc(n.x, n.y, r + 10 * view.focusPulse, 0, Math.PI * 2);
-      ctx.strokeStyle = n.color;
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = EDGE.hover;
+      ctx.lineWidth = 1.9;
       ctx.globalAlpha = view.focusPulse * 0.8;
       ctx.stroke();
       ctx.globalAlpha = alpha;
     }
     if (n.ref.stub) {
+      // Unresolved: hollow dashed circle — shape carries the type, no fill.
       ctx.setLineDash([2.5, 2.5]);
       ctx.beginPath();
       ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
       ctx.strokeStyle = n.color;
-      ctx.lineWidth = 1.2;
+      ctx.lineWidth = 1.5;
       ctx.stroke();
       ctx.setLineDash([]);
     } else if (n.ref.kind === 'attachment') {
-      // Attachments (literature PDFs, figures) draw as rounded squares so the
-      // document/attachment split reads at a glance.
+      // Attachments (literature PDFs, figures) draw as stroked rounded squares
+      // so the document/attachment split reads at a glance (shape + stroke,
+      // per the grayscale ruling — never hue).
       const s = r * 1.7;
       roundedRect(ctx, n.x - s / 2, n.y - s / 2, s, s, 3);
       ctx.fillStyle = n.color;
       ctx.shadowColor = n.color;
-      ctx.shadowBlur = isHover ? 12 : 3;
+      ctx.shadowBlur = isHover ? GLOW.attachHover : GLOW.attachIdle;
       ctx.fill();
       ctx.shadowBlur = 0;
+      ctx.strokeStyle = g.stroke;
+      ctx.lineWidth = 1;
+      ctx.stroke();
     } else {
       ctx.beginPath();
       ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
       ctx.fillStyle = n.color;
       ctx.shadowColor = n.color;
-      ctx.shadowBlur = isHover ? 14 : 4;
+      ctx.shadowBlur = isHover ? GLOW.hover : GLOW.idle;
       ctx.fill();
       ctx.shadowBlur = 0;
-      // Status glyph: solved/closed work carries a ✓ ring — the research
-      // "what's already resolved" read.
+      // Status glyph: resolved work carries a ring — graphite stroke keeps the
+      // glyph inside the gray family (was brand green before the ruling).
       if (n.ref.status && DONE_STATUSES.test(n.ref.status)) {
         ctx.beginPath();
         ctx.arc(n.x, n.y, r + 3.5, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(7,193,96,0.85)';
-        ctx.lineWidth = 1.3;
+        ctx.strokeStyle = g.doneRing;
+        ctx.lineWidth = 1.6;
         ctx.stroke();
       }
+      // Hover ring — the clear "this is the one" state (sapphire, the single
+      // interaction accent).
+      if (isHover) {
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r + 2.5, 0, Math.PI * 2);
+        ctx.strokeStyle = EDGE.hover;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+    }
+    // Selected (focused from a document's graph button): persistent ring so the
+    // selection survives the landing pulse.
+    if (n === view.focusNode && !n.ref.stub && view.focusPulse <= 0) {
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r + 4.5, 0, Math.PI * 2);
+      ctx.strokeStyle = EDGE.hover;
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
     }
     // Label — only when readable (zoomed in, hovered, or few docs).
     const labelOn = isHover || view.scale > 1.6 || sim.nodes.length <= 40 || (neighbors && neighbors.has(n) && view.scale > 0.9);
@@ -579,16 +741,97 @@ function bindCanvas(canvasEl) {
     if (!view) return;
     e.preventDefault();
     wake(0.15);
-    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
     const rect = canvasEl.getBoundingClientRect();
-    const px = e.clientX - rect.left, py = e.clientY - rect.top;
-    const W = view.W / 2, H = view.H / 2;
-    // Zoom toward the pointer.
-    const ox = px - W - view.vx, oy = py - H - view.vy;
-    view.vx -= ox * (factor - 1);
-    view.vy -= oy * (factor - 1);
-    view.scale = Math.min(4, Math.max(0.25, view.scale * factor));
+    zoomAt(e.clientX - rect.left, e.clientY - rect.top, e.deltaY < 0 ? 1.12 : 1 / 1.12);
   }, { passive: false });
+}
+
+/** Zoom anchored at pane-local (px,py) — shared by the wheel and the cluster. */
+function zoomAt(px, py, factor) {
+  if (!view) return;
+  const W = view.W / 2, H = view.H / 2;
+  const ox = px - W - view.vx, oy = py - H - view.vy;
+  view.vx -= ox * (factor - 1);
+  view.vy -= oy * (factor - 1);
+  view.scale = Math.min(4, Math.max(0.25, view.scale * factor));
+}
+
+/** Zoom-cluster leg: wheel math anchored at the pane center. */
+function zoomCanvas(factor) {
+  if (!view) return;
+  wake(0.15);
+  zoomAt(view.W / 2, view.H / 2, factor);
+}
+
+// ── Glass Aurora sidebar (draftB port) ─────────────────────────
+// Lists re-derive from view.data on every rebuildSim; filter wiring goes
+// through the real toolbar/facet controls (set value + dispatch), so the
+// panel, the selects and the canvas share one filter state.
+
+function renderSidebar() {
+  if (!view || !view.pane) return;
+  const sb = view.pane.querySelector('.wx-sidebar');
+  if (!sb) return;
+  const d = view.data || {};
+  const nodes = d.nodes || [];
+  const docCount = nodes.filter(n => !n.stub).length;
+  const linkCount = (d.edges || []).length;
+  sb.querySelector('.wx-sb-proj-title').textContent =
+    t('wiki.sbProjectsCount').replace('{docs}', String(docCount)).replace('{links}', String(linkCount));
+
+  // Projects (gray step dots, per-project doc counts) — click = search filter.
+  const projList = sb.querySelector('.wx-projects');
+  projList.innerHTML = '';
+  const projects = d.projects || [];
+  const search = view.pane.querySelector('.wiki-toolbar-search');
+  projects.forEach((p, i) => {
+    const row = document.createElement('div');
+    row.className = 'wx-sb-item wx-proj';
+    if (view.filter === p.name.toLowerCase()) row.classList.add('active');
+    const dot = document.createElement('span');
+    dot.className = 'wx-dot';
+    dot.style.background = PROJECT_DOTS[i % PROJECT_DOTS.length];
+    const name = document.createElement('span');
+    name.className = 'wx-proj-name';
+    name.textContent = p.name + (p.stub ? t('wiki.remoteProject') : '');
+    const count = document.createElement('span');
+    count.className = 'wx-count';
+    count.textContent = String(p.docCount ?? 0);
+    row.append(dot, name, count);
+    row.addEventListener('click', () => {
+      const active = row.classList.toggle('active');
+      projList.querySelectorAll('.wx-proj').forEach((r) => { if (r !== row) r.classList.remove('active'); });
+      if (search) { search.value = active ? p.name : ''; search.dispatchEvent(new Event('input', { bubbles: true })); }
+    });
+    projList.appendChild(row);
+  });
+
+  // Type / status chips — click = facet select. Counts capped like the selects.
+  const chipInto = (hostSel, selCls, counts) => {
+    const host = sb.querySelector(hostSel);
+    host.innerHTML = '';
+    const sel = view.pane.querySelector(selCls);
+    counts.forEach(([v, c]) => {
+      const el = document.createElement('span');
+      el.className = 'wx-chip';
+      if (sel && sel.value === v) el.classList.add('active');
+      el.textContent = `${v} ${c}`;
+      el.addEventListener('click', () => {
+        const on = !el.classList.contains('active');
+        host.querySelectorAll('.wx-chip').forEach((c2) => c2.classList.remove('active'));
+        if (on) el.classList.add('active');
+        if (sel) { sel.value = on ? v : ''; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+      });
+      host.appendChild(el);
+    });
+  };
+  const topCounts = (key) => {
+    const m = new Map();
+    nodes.forEach((n) => { if (n[key]) m.set(n[key], (m.get(n[key]) || 0) + 1); });
+    return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+  };
+  chipInto('.wx-types', '.wiki-facet-type', topCounts('type'));
+  chipInto('.wx-status', '.wiki-facet-status', topCounts('status'));
 }
 
 function showTooltip(node, px, py) {
