@@ -506,15 +506,15 @@ export default {
   'messages.groupsUnavailable': 'Group chat is unavailable',
   'messages.attachUnsupportedGroup': 'No attachment entry point in the group window yet (attachments can be received and downloaded)',
   'messages.notFriendBlocked': 'You can no longer message this contact',
-  'messages.loginRequired': 'Log in to your nebflow account to use messages and contacts',
+  'messages.loginRequired': 'Log in to your {lowerBrand} account to use messages and contacts',
   'login.popupBlocked': 'Popup blocked - allow popups and retry',
   'login.openPage': 'Open login page',
   // Login entry / login panel (2026-09-16 login-entry batch): the panel strings
   // used to be hard-coded Chinese literals in activityBar.js's injected style
   // family; this batch moves them into i18n (zh/en paired, no dead keys).
-  'login.title': 'Sign in to nebflow — link your devices',
+  'login.title': 'Sign in to {lowerBrand} — link your devices',
   'login.starting': 'Starting login…',
-  'login.hintBrowser': 'Sign in to your nebflow account in the browser; this device then interconnects with your other devices',
+  'login.hintBrowser': 'Sign in to your {lowerBrand} account in the browser; this device then interconnects with your other devices',
   'login.hintAuthorize': 'Complete authorization in the browser; this device then interconnects with your other devices',
   'login.reopenAuthPage': 'Reopen the login page',
   'login.openAuthPage': 'Open authorization page',
@@ -548,7 +548,7 @@ export default {
   'login.reason.credential-missing': 'this device has no stored login credential yet',
   'login.action.credential-missing': 'click "Sign in" to authenticate again',
   'login.reason.credential-unreadable': 'the local credential file cannot be opened (permissions or in use)',
-  'login.action.credential-unreadable': 'quit other nebflow instances and retry; if it still fails, click "Clean up and sign in again"',
+  'login.action.credential-unreadable': 'quit other {lowerBrand} instances and retry; if it still fails, click "Clean up and sign in again"',
   'login.reason.credential-undecodable': 'the local credential file is damaged (a copy was archived)',
   'login.action.credential-undecodable': 'click "Sign in" to rebuild the local credential (the damaged file was renamed aside)',
   'login.reason.credential-write-denied': 'the credential cannot be written (permissions or in use)',
@@ -556,7 +556,7 @@ export default {
   'login.reason.credential-acl-not-applied': 'the credential file permissions could not be narrowed (security risk)',
   'login.action.credential-acl-not-applied': 'check that file permissions on shared machines; this was recorded in the log',
   'login.reason.credential-delete-denied': 'the local credential cannot be removed (permissions or in use)',
-  'login.action.credential-delete-denied': 'quit other instances and retry; otherwise rename that file aside after stopping nebflow',
+  'login.action.credential-delete-denied': 'quit other instances and retry; otherwise rename that file aside after stopping {lowerBrand}',
   // Other login legs (no local file to clean up — no cleanup entry offered)
   'login.reason.enroll-refused-isolated-home': 'this instance runs on an isolated data root and the local isolation guard refused to join (not a network failure)',
   'login.action.enroll-refused-isolated-home': 'restart with the default data root and retry; to allow it explicitly, change the env switch (see log) and retry',
@@ -567,13 +567,13 @@ export default {
   'login.reason.device-register-failed': 'the login server rejected the device registration',
   'login.action.device-register-failed': 'click "Retry"; if it still fails, use "Sign in with another account"',
   'login.reason.callback-state-invalid': 'the login callback check failed (the one-time token did not match or expired)',
-  'login.action.callback-state-invalid': 'go back to nebflow and click "Sign in" again',
+  'login.action.callback-state-invalid': 'go back to {lowerBrand} and click "Sign in" again',
   'login.reason.provider-error': 'the login was refused or interrupted by the identity provider',
   'login.action.provider-error': 'click "Sign in" again; try another account if needed',
-  'login.reason.service-unavailable': 'the nebflow service is not initialised',
-  'login.action.service-unavailable': 'restart nebflow and sign in again',
+  'login.reason.service-unavailable': 'the {lowerBrand} service is not initialised',
+  'login.action.service-unavailable': 'restart {lowerBrand} and sign in again',
   'login.reason.logto-not-configured': 'the login service is not configured (application id missing)',
-  'login.action.logto-not-configured': 'check the nebflow login settings and retry',
+  'login.action.logto-not-configured': 'check the {lowerBrand} login settings and retry',
   'login.reason.login-failed': 'an unclassified error occurred during login',
   'login.action.login-failed': 'click "Retry"; if it still fails, send us the log',
   'messages.login': 'Log in',
@@ -804,7 +804,7 @@ export default {
   'ob2.ph.free': 'Write it in your own words…',
   'ob2.source.unnamed': 'The one without a name yet',
   'ob2.greet1': 'Hello. First time meeting you.',
-  'ob2.greet2': 'I\'m the agent born for you inside Nebflow — though right now I have no name, no personality, and no memory of you at all.',
+  'ob2.greet2': 'I\'m the agent born for you inside {brand} — though right now I have no name, no personality, and no memory of you at all.',
   'ob2.greet3': 'I\'ll ask you one question at a time, like a very short questionnaire. Skip anything you can\'t or don\'t want to answer — skipping won\'t hold us up, it just leaves that page blank for now.',
   'ob2.greet4': 'What you say becomes two files of memory: Soul.md is "who I am", shaped by what you expect of me; User.md is "who you are".',
   'ob2.collected': 'That\'s the whole questionnaire. Now, let me write myself out in front of you.',
@@ -1655,7 +1655,7 @@ export default {
   'neblink.reachDirect': 'Direct P2P connection established',
   'neblink.reachRelay': 'Reachable via server relay',
   'neblink.reachServerOnly': 'Online — no direct data path',
-  'neblink.loggedOutHint': 'Not signed in — click the avatar above to sign in with your nebflow account; signing in joins the network automatically.',
+  'neblink.loggedOutHint': 'Not signed in — click the avatar above to sign in with your {lowerBrand} account; signing in joins the network automatically.',
   // Defect A (2026-09-18): two readings of the signed-out panel — (1) the
   // "clean up and sign in again" entry (local credential-file class only);
   // (2) the status-face degradation line (a non-2xx `/status` used to be silent).
@@ -2168,8 +2168,8 @@ export default {
   // zh side verbatim, en side translated; slideblocks/slideblocks carries an en
   // server value ⇒ en side verbatim, zh side translated (IO-A: the side that
   // owns the source language mirrors the server value verbatim).
-  'content.skill.nebflow-plugin-creator/description-quality.desc': 'Operating manual for the Nebflow plugin manifest description spec — the five-part description as the single source of description, the method for bounding the core trigger vocabulary (all-hit determination), the M1-M15 criteria, and four worked good/bad examples; work through it item by item when writing or reviewing a plugin.json description.',
-  'content.skill.nebflow-plugin-creator/plugin-packaging.desc': 'Execution manual for packaging a capability requirement into a compliant Nebflow plugin pack — the whole pipeline (three-input form determination: migrating an existing skill / MCP server configuration / a spoken capability description → generation → mechanical self-check → delivery), including the handling of six forks and the \'takes effect once written to disk\' delivery convention; follow this manual when a node is assigned a packaging / build-a-plugin task.',
+  'content.skill.nebflow-plugin-creator/description-quality.desc': 'Operating manual for the {brand} plugin manifest description spec — the five-part description as the single source of description, the method for bounding the core trigger vocabulary (all-hit determination), the M1-M15 criteria, and four worked good/bad examples; work through it item by item when writing or reviewing a plugin.json description.',
+  'content.skill.nebflow-plugin-creator/plugin-packaging.desc': 'Execution manual for packaging a capability requirement into a compliant {brand} plugin pack — the whole pipeline (three-input form determination: migrating an existing skill / MCP server configuration / a spoken capability description → generation → mechanical self-check → delivery), including the handling of six forks and the \'takes effect once written to disk\' delivery convention; follow this manual when a node is assigned a packaging / build-a-plugin task.',
   'content.skill.slideblocks/slideblocks.desc': 'Autonomously create or improve complete, polished Slidev presentations with SlideBlocks from short requests and mixed materials including PDF, Word, web pages, Markdown, spreadsheets, images, brand assets, and PowerPoint source decks. Use when the user wants a presentation made, migrated to Slidev, redesigned, extended, or improved; needs a full deck for a report, pitch, review, lesson, launch, decision, or talk; wants SlideBlocks Blocks, Decks, or Recipes; or provides materials and simply asks to make them into a PPT. Do not use when the required final deliverable is any PPT/PPTX or Office file, for general Office editing, or for non-Slidev presentation runtimes.',
   'content.skill.visual-report/visual-report.desc': 'Visual reporting toolkit. Generate SVG figures with professional tools (matplotlib/graphviz/plotly and the like); after writing them to disk, give the absolute path in the delivery text (display belongs to Nebula — nodes do not invoke Pop). Use when you need to draw charts, architecture diagrams or flow diagrams, when you need data visualization, or when you need a visual report.',
 
@@ -2313,5 +2313,5 @@ export default {
   // rescue it (the tokenized startup URL no longer exists). The user pastes a
   // one-time console ticket (CLI: `nebflow token`); the redemption face
   // (?ticket=) exchanges it for an HttpOnly session cookie.
-  'ws.ticketEntry.notify': 'Sign-in required — click the sign-in button to continue with your nebflow account',
+  'ws.ticketEntry.notify': 'Sign-in required — click the sign-in button to continue with your {lowerBrand} account',
 };

@@ -903,6 +903,32 @@ object Defaults:
   def BootDispatcherWakeEnabled: Boolean =
     sys.props.getOrElse("nebflow.boot.dispatcherWake", "true").toBoolean
 
+  // ---- 项目独占执行面（exclusivity 批 2026-10-15，双活根治一）----
+
+  /**
+   * boot 期两认领面的项目级排除表（双活根治一）：逗号分隔项目名**精确匹配**——命中者
+   * boot 期双面跳过：crash-recovery sweep 不认领（`recoverAll` 逐项目过滤 + 一行
+   * `excluded-by-config` 日志）＋ boot-wake 不重入（`wakeAll` 零触碰跳过：零清单构建、
+   * 零标记零事件——被排除项目 workspace 运行态零磁盘接触；留痕 = `excluded-by-config`
+   * 一行日志 + boot 汇总行 `<p>=skipped(excluded-by-config)` 条目）。
+   *
+   * 用途 = 双宿主（8080/8090）共享同一项目存储时，非属主实例对独占项目零认领零唤醒
+   * （作者裁定 nebflow/CZT/SiPM康普顿成像＝8090 独占；8080 宿主侧经 relaunch 脚本注入
+   * 本 prop）。注意本表**只覆盖 boot 期 sweep+re-entry 两面**——项目注册/trigger 竞态面
+   * 与 delegate 作用域 sweep 不在本批（设计备忘 dual-engine-exclusivity-design「后续项」）。
+   *
+   * 空 = 无排除（逐字节回到现状）。system prop `nebflow.sweep.excludeProjects`（每次
+   * 调用现读，`BootDispatcherWakeEnabled` 同款 kill-switch 先例）；名字须与
+   * `ProjectStore` 在册项目名逐字一致（trim 后精确 equals，无大小写/宽度归一）。
+   */
+  def SweepExcludeProjects: Set[String] =
+    sys.props
+      .getOrElse("nebflow.sweep.excludeProjects", "")
+      .split(",")
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .toSet
+
   // ---- 优雅关机 interrupted 非终态（中断恢复语义批 2026-09-13，spec
   //      `20260908_interrupt-recovery-semantics.md` §2.3/§2.7，作者裁定方案 A）----
 

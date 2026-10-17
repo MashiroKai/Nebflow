@@ -34,8 +34,11 @@ class BrandingSpec extends FunSuite:
     // Data-value assertions (will be updated together with brand.conf on
     // rename day) — they guard the packaging path: if brand.conf stops
     // reaching the classpath, these fail with the packaging error.
-    assertEquals(Branding.productName, "Nebflow")
-    assertEquals(Branding.lowerName, "nebflow")
+    // Updated on rename day 2026-10-16 (stand S2 prep, chain-n-f349f81b):
+    // productName/lowerName/name/logo slots flipped; issuer-face values
+    // (domain/profileUrl/loginUrl/installUrl/serverUrl) deliberately kept.
+    assertEquals(Branding.productName, "stand")
+    assertEquals(Branding.lowerName, "stand")
     assertEquals(Branding.fullName, "Nebflow")
     assertEquals(Branding.domain, "nebflow.space") // 唯一真值（2026-09-07 命名边界裁定；可 env 覆盖）
     assertEquals(Branding.profileUrl, "https://nebflow.space/profile")
@@ -48,12 +51,19 @@ class BrandingSpec extends FunSuite:
     assertEquals(Branding.envPrefix, "NEBFLOW")
     assertEquals(Branding.cosBucket, "nebflow-releases")
     assertEquals(Branding.subsystemName, "neblink")
+    // brand-switch-console batch 2026-10-15: name falls back to productName
+    // when the optional brand.conf key is absent; the logo references default
+    // to the canonical in-place /css/ assets (files stay where they are).
+    // 2026-10-16: stand switch slots the explicit logo keys (r4 clean set).
+    assertEquals(Branding.name, "stand")
+    assertEquals(Branding.logoUrl, "/brand/stand/logo/logo-512-light.png")
+    assertEquals(Branding.logoDarkUrl, "/brand/stand/logo/logo-512-dark.png")
   }
 
-  test("academicSearchUserAgent is byte-identical to the pre-rebrand UA") {
+  test("academicSearchUserAgent derives from the live brand (productName + installUrl host)") {
     assertEquals(
       Branding.academicSearchUserAgent,
-      "Nebflow/academic-search (mailto:research@nebflow.space)"
+      "stand/academic-search (mailto:research@nebflow.space)"
     )
   }
 

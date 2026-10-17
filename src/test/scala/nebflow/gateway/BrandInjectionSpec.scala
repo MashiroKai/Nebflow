@@ -16,8 +16,11 @@ class BrandInjectionSpec extends FunSuite:
     parser.parse(jsonStr) match
       case Left(err) => fail(s"not valid JSON: $err")
       case Right(json) =>
-        assertEquals(json.hcursor.get[String]("productName"), Right("Nebflow"))
-        assertEquals(json.hcursor.get[String]("lowerName"), Right("nebflow"))
+        // Live-value pins — updated together with brand.conf on rename day
+        // (stand switch 2026-10-16, chain-n-f349f81b): brand face flipped,
+        // issuer face (domain/profileUrl/homeDirName) deliberately kept.
+        assertEquals(json.hcursor.get[String]("productName"), Right("stand"))
+        assertEquals(json.hcursor.get[String]("lowerName"), Right("stand"))
         assertEquals(json.hcursor.get[String]("domain"), Right("nebflow.space"))
         // L3 batch 3 append-only extension: homeDirName joins the contract
         assertEquals(json.hcursor.get[String]("homeDirName"), Right(".nebflow"))
@@ -27,11 +30,17 @@ class BrandInjectionSpec extends FunSuite:
           json.hcursor.get[String]("profileUrl"),
           Right("https://nebflow.space/profile")
         )
+        // brand-switch-console batch 2026-10-15: name/logoUrl/logoDarkUrl
+        // join the contract (append-only). Stand switch slots the explicit
+        // logo keys; name falls back to the new productName.
+        assertEquals(json.hcursor.get[String]("name"), Right("stand"))
+        assertEquals(json.hcursor.get[String]("logoUrl"), Right("/brand/stand/logo/logo-512-light.png"))
+        assertEquals(json.hcursor.get[String]("logoDarkUrl"), Right("/brand/stand/logo/logo-512-dark.png"))
   }
 
   test("brandScriptJson: '</' inside values is escaped (script breakout hardening)") {
     val hostile = """a"</script>b"""
-    val json = StaticRoutes.brandScriptJson(hostile, "x", "y", "z", "https://nebflow.space/profile")
+    val json = StaticRoutes.brandScriptJson(hostile, "x", "y", "z", "https://nebflow.space/profile", "n", "/l.png", "/ld.png")
     assert(!clue(json).contains("</script>"))
     assert(clue(json).contains("<\\/"))
     // '<\/' is a legal JSON escape for '/' — the value round-trips intact

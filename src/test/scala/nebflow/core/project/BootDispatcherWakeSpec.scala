@@ -799,4 +799,79 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
       assertEquals(texts, Nil, "no wake from a project list over the cap without a flow map")
     end for
   }
+
+  // ══ A8 排除表（exclusivity 批 2026-10-15，双活根治一）══════════════════
+
+  test("A8: excluded-by-config — sweep exclusion table skips the project before any wake work (zero disk contact, hot-read)") {
+    val ws = root / "ws-a8"
+    val pdEx = pdOf("a8-excluded", ws)
+    val pdCtl = pdOf("a8-control", root / "ws-a8ctl")
+    val prop = "nebflow.sweep.excludeProjects"
+    val system = ActorSystem(s"bdw-a8-${scala.util.Random.nextInt(1000000)}")
+    for
+      _ <- IO(os.makeDir.all(ws))
+      _ <- IO(os.makeDir.all(root / "ws-a8ctl"))
+      res <- mkResources(system, new ScriptLlm(_ => "x").handle)
+      // 两项目都挂载：excluded 分支在 registry 查找**之前**判定（挂载仍被跳过才证顺序）；
+      // control 不在表 → 同 boot 必唤醒（对照读数）
+      _ <- mountRuntime(pdEx.name, ws, system, res)
+      _ <- mountRuntime(pdCtl.name, root / "ws-a8ctl", system, res)
+      // 需唤醒 fixture（B4 blocked + 上游终态）：无排除时必唤醒
+      _ <- seedFlowMap(pdEx, List(node("n-block", "gate", NodeLifecycle.Blocked, completedAt = Some(tenMinAgo))))
+      _ <- seedFlowMap(pdCtl, List(node("n-block-c", "gate-c", NodeLifecycle.Blocked, completedAt = Some(tenMinAgo))))
+      (trig, trigger) <- recorder
+      // 排除态：excluded 项目跳过 + control 项目照常唤醒（同 boot 同表）
+      _ <- IO(sys.props.update(prop, s" ${pdEx.name} , other-project "))
+      reportEx <- BootDispatcherWake.wakeAll(
+        trigger = trigger,
+        bootId = "boot-A8-excl",
+        projects = Some(List(pdEx, pdCtl)),
+        nowMs = () => nowMs
+      )
+      textsEx <- trig.get
+      eventsEx <- readEvents(pdEx)
+      markerEx <- readMarker(pdEx)
+      invEx <- BootWakeInventory.fromDisk(dirOf(pdEx), pdEx.name, nowMs)
+      // 热读口径（kill-switch 先例）+ 空值归一
+      hotRead <- IO {
+        val during = nebflow.shared.Defaults.SweepExcludeProjects
+        sys.props.remove(prop)
+        val off = nebflow.shared.Defaults.SweepExcludeProjects
+        (during, off)
+      }
+      // 无排除态（负控）：同 fixture 必唤醒
+      reportCtl <- BootDispatcherWake.wakeAll(
+        trigger = trigger,
+        bootId = "boot-A8-ctl",
+        projects = Some(List(pdEx)),
+        nowMs = () => nowMs
+      )
+      textsCtl <- trig.get
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      val exOutcome = reportEx.outcomes.find(_.project == pdEx.name)
+      assertEquals(
+        exOutcome.map(o => (o.result, o.reason)),
+        Some((BootDispatcherWake.ResultSkipped, BootDispatcherWake.ReasonExcludedByConfig)),
+        s"excluded project must be skipped with excluded-by-config, got ${reportEx.outcomes.map(o => o.project -> o.reason)}"
+      )
+      assertEquals(textsEx.count(_.contains(pdEx.name)), 0, "excluded project: zero wake text")
+      assertEquals(
+        reportEx.outcomes.find(_.project == pdCtl.name).map(_.result),
+        Some(BootDispatcherWake.ResultWoken),
+        "control project (not on the table) must wake in the same boot"
+      )
+      assertEquals(hotRead, (Set(pdEx.name, "other-project"), Set.empty[String]), "prop is hot-read; empty = no exclusion")
+      // 零触碰语义：被排除项目的 workspace 运行态（events + boot-wake.json 标记）零写入
+      assertEquals(eventsEx, Nil, "excluded project: zero events written into its workspace (zero disk contact)")
+      assertEquals(markerEx, None, "excluded project: zero marker written into its workspace (zero disk contact)")
+      assert(
+        invEx.isRight && invEx.exists(_.needWake),
+        "exclusion must skip BEFORE inventory-driven decisions (fixture does need wake — skip reason is the table, not no-reentry)"
+      )
+      assertEquals(reportCtl.outcomes.headOption.map(_.result), Some(BootDispatcherWake.ResultWoken), "no exclusion = status quo (control)")
+      // recorder 跨两次 boot 累积（excluded boot 里 control 项目已贡献一条）——按项目名数
+      assertEquals(textsCtl.count(_.contains(pdEx.name)), 1, "control boot: exactly one wake text for pdEx")
+    end for
+  }
 end BootDispatcherWakeSpec

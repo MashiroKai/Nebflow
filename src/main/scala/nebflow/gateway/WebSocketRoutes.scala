@@ -1181,6 +1181,17 @@ class WebSocketRoutes(
         // behavior is byte-identical; this only fills the 404ing gap.
         StaticRoutes.vendorSubtree(req)
 
+      case req @ GET -> _ if req.uri.path.renderString.startsWith("/brand/") =>
+        // Brand asset subtree (stand-logo-slotting batch, 2026-10-15): serves
+        // web/brand/** at any depth so the optional __BRAND__ logoUrl /
+        // logoDarkUrl reference slots can point at the slotted stand kit
+        // (/brand/stand/…) on switch day without moving the incumbent
+        // /css/logo-* files. Same gap-filler shape as the /vendor/ subtree
+        // case above — /brand/* was previously unrouted (404) and nothing
+        // referenced it, so default behavior is byte-identical; guards are
+        // the vendorSubtree precedent, pinned by BrandSubtreeRoutesSpec.
+        StaticRoutes.brandSubtree(req)
+
       case req @ GET -> Root / fileName =>
         val allowed =
           Set(

@@ -33,10 +33,15 @@ object StaticRoutes:
    * batches (initial contract: productName, lowerName, domain; L3 batch 3
    * appended homeDirName for the frontend's own legacy-path messaging;
    * 2026-09-01 login-chain fix appended profileUrl — the frontend's ONLY
-   * URL input, consumed by activityBar.js to build the profile link).
+   * URL input, consumed by activityBar.js to build the profile link;
+   * brand-switch-console batch 2026-10-15 appended name/logoUrl/logoDarkUrl —
+   * the avatar-letter slot and the two console logo asset references, each
+   * optional on the frontend: older gateways that omit them leave every
+   * consumer on its current-value fallback).
    * `domain` carries the default value (nebflow.space); a `NEBFLOW_BRAND_DOMAIN`
    * env override may replace it (single-domain, 2026-09-07 naming ruling) —
-   * display-only, never consumed to build a URL.
+   * display-only, never consumed to build a URL. `logoUrl`/`logoDarkUrl` are
+   * reference slots of the same display-only class: <img> sources only.
    *
    * circe handles JSON string escaping; the serialized blob additionally
    * escapes the forward slash of "</" because it is inlined inside a
@@ -48,20 +53,27 @@ object StaticRoutes:
         Branding.lowerName,
         Branding.domain,
         Branding.homeDirName,
-        Branding.profileUrl
+        Branding.profileUrl,
+        Branding.name,
+        Branding.logoUrl,
+        Branding.logoDarkUrl
       )};</script>"""
   end brandScriptTag
 
   /**
    * Serialize the contract JSON (values injected for testability of the
-   * escaping hardening).
+   * escaping hardening). Field order is append-only: the five original
+   * fields first, then the 2026-10-15 console slots.
    */
   private[gateway] def brandScriptJson(
     productName: String,
     lowerName: String,
     domain: String,
     homeDirName: String,
-    profileUrl: String
+    profileUrl: String,
+    name: String,
+    logoUrl: String,
+    logoDarkUrl: String
   ): String =
     Json
       .obj(
@@ -69,7 +81,10 @@ object StaticRoutes:
         "lowerName" -> Json.fromString(lowerName),
         "domain" -> Json.fromString(domain),
         "homeDirName" -> Json.fromString(homeDirName),
-        "profileUrl" -> Json.fromString(profileUrl)
+        "profileUrl" -> Json.fromString(profileUrl),
+        "name" -> Json.fromString(name),
+        "logoUrl" -> Json.fromString(logoUrl),
+        "logoDarkUrl" -> Json.fromString(logoDarkUrl)
       )
       .noSpaces
       .replace("</", "<\\/")
@@ -376,6 +391,43 @@ object StaticRoutes:
       end if
     end if
   end vendorSubtree
+
+  /**
+   * Brand asset subtree passthrough (stand-logo-slotting batch, 2026-10-15):
+   * serves `web/brand/` at ANY depth — the slot tree for rebrand asset kits
+   * (`web/brand/stand/…`, the slotted mono kit). The optional __BRAND__
+   * logoUrl/logoDarkUrl reference slots (display-only <img> sources, see the
+   * brandScriptTag scaladoc) are free strings and may point into this tree
+   * via brand.conf/env on switch day — without this route every /brand/…
+   * reference 404s (the tree was previously unrouted), which is exactly the
+   * outage class [[vendorSubtree]] closed for /vendor (per-directory cases
+   * grew one hand-written case at a time). Same gap-filler shape and guard
+   * set as vendorSubtree: trailing slash (directory request) rejected, ".."
+   * and backslash segments rejected, classpath resource join, no-cache at
+   * every depth (a rebuilt classpath tree must be picked up; StaticFile's
+   * ETag keeps revalidation a cheap 304). The incumbent /css/logo-* files
+   * are NOT touched by this route — it only makes the NEW slot tree
+   * reachable; default brand rendering is byte-identical (before slotting,
+   * the whole /brand/ tree answered 404 and nothing referenced it).
+   *
+   * Standalone (zero class deps) so it is directly unit-testable
+   * (BrandSubtreeRoutesSpec), like vendorSubtree/jsRoutes.
+   */
+  def brandSubtree(req: Request[IO]): IO[Response[IO]] =
+    if req.uri.path.endsWithSlash then NotFound()
+    else
+      val segs = req.uri.path.segments.map(_.encoded).toList.drop(1) // drop "brand"
+      if segs.isEmpty || segs.last.isEmpty then NotFound()
+      else if segs.exists(s => s == ".." || s.contains("\\")) then NotFound()
+      else
+        val path = segs.mkString("/")
+        StaticFile
+          .fromResource(s"web/brand/$path", Some(req))
+          .map(_.putHeaders("Cache-Control" -> "no-cache"))
+          .getOrElseF(NotFound())
+      end if
+    end if
+  end brandSubtree
 
   /**
    * Serves everything under web/js at ANY depth. The frontend's ES modules
