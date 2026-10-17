@@ -509,6 +509,12 @@ export default {
   'messages.loginRequired': 'Log in to your {lowerBrand} account to use messages and contacts',
   'login.popupBlocked': 'Popup blocked - allow popups and retry',
   'login.openPage': 'Open login page',
+  // Social one-click keys (2026-10-15 login-card batch): provider names stay
+  // untranslated; "other methods" = the unified account login inside the
+  // hosted shell (email/username et al.) — mail as the secondary pick.
+  'login.social.github': 'Continue with GitHub',
+  'login.social.google': 'Continue with Google',
+  'login.social.other': 'Sign in with email or other methods',
   // Login entry / login panel (2026-09-16 login-entry batch): the panel strings
   // used to be hard-coded Chinese literals in activityBar.js's injected style
   // family; this batch moves them into i18n (zh/en paired, no dead keys).

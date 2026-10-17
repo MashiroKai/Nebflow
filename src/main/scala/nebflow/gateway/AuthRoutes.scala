@@ -58,11 +58,28 @@ private[gateway] object AuthRoutes:
    * redirect URI, same PKCE parameters, same prompt mapping — `forceLogin`
    * ⇒ `prompt="login consent"`, the forced-fresh-login semantic the
    * switch-account path requires).
+   *
+   * `provider` (social one-click leg, 2026-10-15 login-card batch): the
+   * pre-whitelisted social connector name ("github" / "google"; the ROUTE
+   * layer owns the whitelist — anything else arrives as ""). Non-empty ⇒
+   * TWO things ride together, and they must never split:
+   *   1. `direct_sign_in=social:<provider>` on the authorize URL (core 303s
+   *      straight into the connector — probed on the deployed tenant for the
+   *      console PKCE client, both providers honored, see
+   *      [[LogtoAuthCode.authorizeUrl]]);
+   *   2. forced-fresh-login prompt (`forceLogin` semantics): the CALLER
+   *      passes forceLogin=true with a provider, keeping the website-face
+   *      guardrail (quick social entry ⇒ prompt "login consent", the
+   *      automaticAccountLinking silent-merge guardrail, fix-plan §7.3).
+   * The social leg changes NOTHING downstream: the same loopback callback,
+   * the same `handleAuthCallback` code exchange, the same register+persist
+   * enrollment — provider identity is gone after the OIDC round-trip.
    */
   private[gateway] def beginPkceLogin(
     ms: NeblinkService,
     forceLogin: Boolean,
-    uiLocales: String
+    uiLocales: String,
+    provider: String = ""
   )(using ctx: RestApiCtx): IO[Option[String]] =
     import ctx.*
 
@@ -81,7 +98,8 @@ private[gateway] object AuthRoutes:
             challenge,
             state,
             prompt = if forceLogin then "login consent" else "consent",
-            uiLocales = uiLocales
+            uiLocales = uiLocales,
+            directSignIn = if provider.isEmpty then "" else s"social:$provider"
           )
         yield Some(authorizeUrl)
         end for

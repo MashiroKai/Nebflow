@@ -130,6 +130,26 @@ object LogtoAuthCode:
    * note: NO feature flag here (handoff ① ruling) — the rollback lever is
    * server-side (Logto Console custom-UI upload/removal), and a release
    * strip would defeat the point (release builds are the ones that log in).
+   *
+   * `directSignIn` (social one-click leg, 2026-10-15 login-card batch): the
+   * provider's `direct_sign_in` parameter, verbatim ("social:github" /
+   * "social:google"). Non-empty ⇒ core 303s STRAIGHT into the social
+   * connector (`/direct/social/<p>?...&fallback=sign-in` — the BYUI shell's
+   * direct-sign-in path channel picks it up; a failed direct leg degrades to
+   * the sign-in page via `fallback=sign-in`, never a dead end). Probed on the
+   * deployed tenant against the CONSOLE PKCE client (csxh16cas0x03bgk6w7ej,
+   * loopback redirect) before wiring: both `social:github` and `social:google`
+   * were honored with the shipped `prompt="login consent"` combo (GET-only
+   * probes, 303 → /direct/social/<p>). Empty (default) omits the param — the
+   * URL is byte-identical to the pre-social shape, so the plain mail chain
+   * and the switch-account landing continuation are untouched. Guardrail
+   * (website face precedent, route.ts 2026-09-15 + fix-plan §7.3): quick
+   * social entries always pair direct_sign_in with prompt "login consent"
+   * (forced fresh IdP auth — the automaticAccountLinking silent-merge
+   * guardrail); the pairing is the CALLER's contract — the first-party JS
+   * passes forceLogin=true alongside every social provider ([[beginPkceLogin]]
+   * derives `prompt` from `forceLogin` alone; nothing is implied server-side
+   * here).
    */
   def authorizeUrl(
     endpoint: String,
@@ -138,7 +158,8 @@ object LogtoAuthCode:
     codeChallenge: String,
     state: String,
     prompt: String = "consent",
-    uiLocales: String = ""
+    uiLocales: String = "",
+    directSignIn: String = ""
   ): String =
     s"${endpoint.stripSuffix("/")}${Protocol.LogtoOidc.authorize}?" +
       LogtoDeviceFlow.formEncode(
@@ -153,6 +174,7 @@ object LogtoAuthCode:
             "code_challenge_method" -> "S256",
             "state" -> state
           ) ++ (if uiLocales.nonEmpty then Seq("ui_locales" -> uiLocales) else Seq.empty)
+            ++ (if directSignIn.nonEmpty then Seq("direct_sign_in" -> directSignIn) else Seq.empty)
         )*
       )
 

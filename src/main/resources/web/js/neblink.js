@@ -632,12 +632,31 @@ export function cancelDeviceFlow() {
  * hosted sign-in page matches the app language. Harmless pre-BYUI (the
  * stock hosted page uses it to pick its language); the server whitelists
  * the value and omits the param otherwise → navigator.language fallback.
+ *
+ * `provider` (social one-click leg, 2026-10-15 login-card batch): "github" |
+ * "google" → the gateway adds `direct_sign_in=social:<provider>` to the
+ * authorize URL, so the hosted leg jumps STRAIGHT into that connector
+ * (core 303 → /direct/social/<p>, BYUI direct-sign-in path channel; a failed
+ * direct leg degrades to the sign-in page via `fallback=sign-in`). The caller
+ * MUST pair provider with forceLogin=true: the quick-social-entry guardrail
+ * (forced fresh IdP auth against the automaticAccountLinking silent merge,
+ * fix-plan §7.3) is the same contract the website face ships. Any other
+ * value (or "") → the field is OMITTED from the body entirely (conditional
+ * spread), so the plain mail chain's request is byte-identical to the
+ * pre-social shape.
  */
-export async function startPkceLogin(forceLogin = false) {
+export async function startPkceLogin(forceLogin = false, provider = '') {
   const resp = await fetch('/api/neblink/auth/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getAuthToken() },
-    body: JSON.stringify({ forceLogin: !!forceLogin, uiLocales: getLocale() === 'en' ? 'en' : 'zh' }),
+    body: JSON.stringify({
+      forceLogin: !!forceLogin,
+      uiLocales: getLocale() === 'en' ? 'en' : 'zh',
+      // Additive field, present ONLY on the social leg: an empty/absent
+      // provider keeps the serialized body byte-identical to the legacy
+      // mail chain (zero behavior regression on the existing path).
+      ...(provider ? { provider } : {}),
+    }),
   });
   let data = {};
   try { data = await resp.json(); } catch (_) { data = {}; }
