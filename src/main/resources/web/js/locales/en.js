@@ -564,8 +564,9 @@ export default {
   'login.reason.credential-delete-denied': 'the local credential cannot be removed (permissions or in use)',
   'login.action.credential-delete-denied': 'quit other instances and retry; otherwise rename that file aside after stopping {lowerBrand}',
   // Other login legs (no local file to clean up — no cleanup entry offered)
-  'login.reason.enroll-refused-isolated-home': 'this instance runs on an isolated data root and the local isolation guard refused to join (not a network failure)',
-  'login.action.enroll-refused-isolated-home': 'restart with the default data root and retry; to allow it explicitly, change the env switch (see log) and retry',
+  // coldstart DX batch ② (2026-10-14): the way-out copy carries BOTH escapes (--net staging / explicit switch).
+  'login.reason.enroll-refused-isolated-home': 'this debug instance is not allowed into the production network: the local isolation guard refused the login (not a network failure)',
+  'login.action.enroll-refused-isolated-home': 'two ways out: 1) restart the debug instance with the staging tier (add --net staging to the coldstart script, sign-in then joins the staging network); 2) set NEBFLOW_ALLOW_PROD_ENROLL=1 explicitly if the production network is really needed',
   'login.reason.server-no-device-token': 'the login server did not return a device credential',
   'login.action.server-no-device-token': 'click "Retry"; if it still fails, use "Sign in with another account"',
   'login.reason.token-exchange-failed': 'exchanging tokens with the login server failed',

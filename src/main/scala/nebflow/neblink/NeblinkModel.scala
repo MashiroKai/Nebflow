@@ -163,9 +163,20 @@ object DeviceIdentity:
   //   - 同一 (机器码, scope) ⇒ 同 id。默认 home 下任意重装 / 删 device.json /
   //     换安装目录都得到同一个 id（服务端因此不再堆幽灵行）。
   //   - 非默认 home（CLI --home 或 <PREFIX>_HOME，见 PathUtil.dataRoot）的 scope
-  //     = dataRoot 路径字符串 ⇒ **有意**派生不同 id：隔离/测试实例与作者主客户端
-  //     不撞身份（同 id 会因服务端 one-live-session-per-(device, network) 把主
-  //     客户端踢下线，见 NeblinkClient.scala:448 一带注释）。
+  //     = 隔离 home 摘要（见 [[isolatedHomeScope]]）⇒ **有意**派生不同 id：隔离/
+  //     测试实例与作者主客户端不撞身份（同 id 会因服务端
+  //     one-live-session-per-(device, network) 把主客户端踢下线，见
+  //     NeblinkClient.scala:448 一带注释）。
+  //   - 🔴 熵修复（coldstart DX 批④，2026-10-14 作者令）：隔离 scope 曾是 dataRoot
+  //     **裸路径字符串**——同一台机器上「该路径的确定性再铸」恒等于历史铸造值。事故
+  //     实录：/tmp/nebflow-coldstart 曾铸出 6a64d249-…，该隔离身份后来（种子/搬运链）
+  //     落进了默认 home 的 device.json ⇒ 之后再跑冷启动（同路径）= 再铸同一 id ⇒
+  //     与主客户端在服务端同 (device_id) 维度相撞。修复 = 隔离 scope 改为
+  //     `home|<路径稳定摘要>` 形态：与「default」和一切裸路径**形态级不相交**，
+  //     历史铸造值不再可被任何新铸复现；同机不同 home ⇒ 不同 id 的原语义不变。
+  //     兼容面硬约束：默认 home 的 scope 语义保持原值 `default`（派生算法逐字不动，
+  //     DeviceIdentitySpec 钉死），既有 device.json（可解码即沿用）也一律不受影响；
+  //     只有「非默认 home 上的新铸」换用新 scope（一次性换牌，非漂移）。
   //   - 一台机器上开两个不同账号的实例（各自 home）互不影响：身份按 home 隔离，
   //     服务端踢线只发生在同一 (device_id, network_id) 维度（store.rs:1039 /
   //     :1801）——「同机同账号被踢」允许发生，但**不是**必须发生。
@@ -202,9 +213,40 @@ object DeviceIdentity:
     PathUtil.dataRoot.toNIO.toAbsolutePath.normalize !=
       (os.home / Branding.homeDirName).toNIO.toAbsolutePath.normalize
 
-  /** Scope component of the derivation (see the block comment above). */
+  /**
+   * Scope component of the derivation (see the block comment above).
+   *
+   * Default data root ⇒ [[DefaultScope]] verbatim（兼容面硬约束：默认 home 的派生
+   * 语义零漂移）; redirected root ⇒ [[isolatedHomeScope]]（熵修复后的隔离 scope，
+   * coldstart DX 批④）。
+   */
   private[neblink] def deviceIdScope: String =
-    if isNonDefaultHome then PathUtil.dataRoot.toString else DefaultScope
+    if isNonDefaultHome then isolatedHomeScope(PathUtil.dataRoot) else DefaultScope
+
+  /**
+   * Entropy fix (coldstart DX 批④, 2026-10-14 作者令): the stable scope for a
+   * redirected data root — `home|<uuidV5-of-the-normalized-path>`.
+   *
+   * Why NOT the raw path string (the pre-fix shape): a raw path is a perfectly
+   * deterministic scope, but determinism cuts both ways — the id minted at a
+   * given path is reproducible forever, INCLUDING after that identity has been
+   * carried somewhere else (the 2026-09-11 → 2026-10-14 incident chain: the
+   * /tmp/nebflow-coldstart identity 6a64d249-… ended up in the default home's
+   * device.json, so every fresh coldstart at that path re-minted the host's
+   * own id and the two homes collided on the server). The `home|<uuid>` shape
+   * is disjoint from BOTH the default scope (`default`) and every raw path
+   * (a POSIX path never starts with `home|`), so no historical derivation can
+   * be reproduced by a fresh mint — while staying a pure, deterministic
+   * function of the normalized absolute path (same home ⇒ same id across
+   * restarts; different homes ⇒ different ids).
+   *
+   * The path itself is normalized (`toAbsolutePath.normalize`) so aliasing
+   * spellings of the same directory (trailing slashes, `..` segments, symlinks
+   * resolved by the OS mount) derive one id, not several.
+   */
+  private[neblink] def isolatedHomeScope(root: os.Path): String =
+    val normalized = root.toNIO.toAbsolutePath.normalize.toString
+    s"home|${uuidV5(DeviceIdNamespace, s"iso-scope|$normalized")}"
 
   /**
    * Pure: the device id for a (machineCode, scope) pair — same input, same

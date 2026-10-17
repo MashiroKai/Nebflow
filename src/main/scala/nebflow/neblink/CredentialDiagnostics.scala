@@ -109,7 +109,7 @@ object CredentialDiagnostics:
     case CredentialFailure.CredentialAclNotApplied => "凭据文件权限未收窄（安全隐患）"
     case CredentialFailure.CredentialDeleteDenied => "本机凭据清理不掉（权限或占用）"
     case CredentialFailure.EnrollRefusedIsolatedHome =>
-      "本机为隔离数据根，入网被本地隔离护栏拒绝（非网络故障）"
+      "调试/隔离实例未放行生产网：登录被本地隔离护栏拒绝（非网络故障）"
     case CredentialFailure.ServerNoDeviceToken => "登录服务器没有发回设备凭据"
     case CredentialFailure.TokenExchangeFailed => "与登录服务器交换令牌失败"
     case CredentialFailure.DeviceRegisterFailed => "登录服务器设备注册失败"
@@ -130,7 +130,12 @@ object CredentialDiagnostics:
     case CredentialFailure.CredentialDeleteDenied =>
       "先退出其他实例再试；仍失败请在停机后手工改名该文件留档"
     case CredentialFailure.EnrollRefusedIsolatedHome =>
-      "用默认数据根启动后重试；确需放行时改环境开关（见日志）后重试"
+      // coldstart DX 批②（2026-10-14 作者令）：出路文案必须带**两种**逃生口 ——
+      // ① staging 档重启（coldstart 脚本 --net staging，登录即入网 staging 网络）；
+      // ② 显式放行生产网（NEBFLOW_ALLOW_PROD_ENROLL=1）。🔴 保持「干净」（无路径 /
+      // 无文件名 / 无 `.nebflow` 字面量）：本串经 EnrollRefusedIsolatedHome 的例外
+      // 分支逐字进用户可见面（isCleanVisibleText 闸门）。
+      "两种出路：用 staging 档重启调试实例（冷启动脚本加 --net staging），或确需进生产网时显式设 NEBFLOW_ALLOW_PROD_ENROLL=1 后重试"
     case CredentialFailure.ServerNoDeviceToken => "点「重试」；仍失败则「使用其他账号登录」"
     case CredentialFailure.TokenExchangeFailed => "点「重试」；仍失败则「使用其他账号登录」"
     case CredentialFailure.DeviceRegisterFailed => "点「重试」；仍失败则「使用其他账号登录」"

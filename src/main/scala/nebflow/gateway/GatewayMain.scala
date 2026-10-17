@@ -975,8 +975,9 @@ object GatewayMain extends IOApp:
                                         // 2026-09-14 订正（踢旧批 ③，**纯注释，零行为改动**）：原文写
                                         // 「同账号重复登录会踢掉作者主客户端」与实现不符——自
                                         // 2026-09-11 起 deviceId = UUIDv5(机器码|scope)，非默认 home 的
-                                        // scope = dataRoot 路径 ⇒ 派生**不同** id（NeblinkModel.scala
-                                        // 的 deviceIdScope / deriveDeviceId），而服务端踢旧维度是
+                                        // scope 随 dataRoot 派生（2026-10-14 熵修复起为 `home|<摘要>`，
+                                        // 见 NeblinkModel.scala 的 deviceIdScope / isolatedHomeScope）
+                                        // ⇒ 派生**不同** id，而服务端踢旧维度是
                                         // (device_id, network_id) ⇒ 隔离实例登录**不会**踢主客户端
                                         // （该表述是随机 deviceId 时代的残留，取证见
                                         // .nebflow/reports/20260914_170224_kickold-forensics__chain-n-07d47ec4.md

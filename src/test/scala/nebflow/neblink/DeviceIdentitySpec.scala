@@ -102,7 +102,7 @@ class DeviceIdentitySpec extends FunSuite:
     assertEquals(DeviceIdentity.sanitizeMachineCode(Some(" ABC-123 ")), Some("ABC-123"))
   }
 
-  test("scope: default data root -> 'default'; redirected root -> the root path") {
+  test("scope: default data root -> 'default'; redirected root -> the isolated home scope (entropy fix)") {
     withDataRoot(os.home / nebflow.shared.Branding.homeDirName) {
       assertEquals(DeviceIdentity.isNonDefaultHome, false)
       assertEquals(DeviceIdentity.deviceIdScope, DeviceIdentity.DefaultScope)
@@ -110,13 +110,68 @@ class DeviceIdentitySpec extends FunSuite:
     val home = os.temp.dir()
     withDataRoot(home) {
       assertEquals(DeviceIdentity.isNonDefaultHome, true)
-      assertEquals(DeviceIdentity.deviceIdScope, home.toString)
+      val scope = DeviceIdentity.deviceIdScope
+      // 熵修复（coldstart DX 批④）：隔离 scope = `home|<uuid>` 摘要形态，不再是裸路径。
+      assert(scope.startsWith("home|"), s"隔离 scope 形态: $scope")
+      assertNotEquals(scope, home.toString, "隔离 scope 不得是裸路径（历史铸造值不得可复现）")
+      assert(!scope.contains(home.toString), s"scope 不得内嵌路径原文: $scope")
+      assertNotEquals(scope, DeviceIdentity.DefaultScope)
+      // 确定性：同根同 scope（冷启动反复重铸得到稳定身份）。
+      assertEquals(scope, DeviceIdentity.deviceIdScope)
       // 隔离实例有意派生不同 id（与作者主客户端不撞身份 / 不互踢）
       assertNotEquals(
         DeviceIdentity.deriveDeviceId("machine-code-fixture", DeviceIdentity.deviceIdScope),
         DeviceIdentity.deriveDeviceId("machine-code-fixture", DeviceIdentity.DefaultScope)
       )
     }
+  }
+
+  // ===== coldstart DX 批④（2026-10-14 作者令）：device.json 铸造熵修复 =====
+  //
+  // 事故链：/tmp/nebflow-coldstart 铸出 6a64d249-…（scope=裸路径），该隔离身份后来
+  // 落进默认 home 的 device.json ⇒ 同机多 home 撞同一身份。修复 = 隔离 scope 换形态；
+  // 硬约束 = 默认 home 的 scope 语义（`default` + 现派生算法）零漂移。
+
+  test("熵修复: 默认 home 的 scope 语义不漂移（派生算法逐字钉死）") {
+    // 该常量 = uuidV5(DeviceIdNamespace, "machine-code-fixture|default") 的现值：
+    // 算法（v5/SHA-1）、命名空间、`|` 拼接、默认 scope 字面任一变动都会打破本钉 ——
+    // 默认 home 一旦重铸将得到另一个 id（生产宿主换身份 = 事故），故逐字节钉死。
+    assertEquals(
+      DeviceIdentity.deriveDeviceId("machine-code-fixture", DeviceIdentity.DefaultScope),
+      "147e8e20-2bd3-518b-aee0-0027a42b8c02"
+    )
+  }
+
+  test("熵修复: 同机不同 home scope ⇒ 不同 id（隔离身份按 home 独立）") {
+    val homeA = os.temp.dir()
+    val homeB = os.temp.dir()
+    val scopeA = DeviceIdentity.isolatedHomeScope(homeA)
+    val scopeB = DeviceIdentity.isolatedHomeScope(homeB)
+    assertNotEquals(scopeA, scopeB, "不同 home ⇒ 不同 scope")
+    assertNotEquals(
+      DeviceIdentity.deriveDeviceId("machine-code-fixture", scopeA),
+      DeviceIdentity.deriveDeviceId("machine-code-fixture", scopeB),
+      "同机不同 home 必须派生不同 id"
+    )
+    // 纯函数：同根重复推导恒等。
+    assertEquals(scopeA, DeviceIdentity.isolatedHomeScope(homeA))
+    // 形态级不相交：隔离 scope 既非 default 也非裸路径 ⇒ 与历史派生输入空间零交集。
+    assert(scopeA.startsWith("home|") && scopeB.startsWith("home|"))
+    assert(!DeviceIdentity.DefaultScope.startsWith("home|"))
+  }
+
+  test("熵修复: 冷启动事故路径的旧铸造不再可复现（/tmp/nebflow-coldstart ⇒ 换牌）") {
+    // 6a64d249-e526-52b1-b5b6-3b19ea029b26 = uuidV5(真机码, "/tmp/nebflow-coldstart")
+    // （裸路径 scope 时代的铸造，事故实录见主 home 与 /tmp/nebflow-coldstart 的 device.json）。
+    // 新 scope 对同一路径必须给出不同派生 ⇒ 任何新铸都不可能再产出宿主旧身份。
+    val collisionPath = os.Path("/tmp/nebflow-coldstart")
+    val newScope = DeviceIdentity.isolatedHomeScope(collisionPath)
+    assertNotEquals(newScope, "/tmp/nebflow-coldstart", "scope 不得等于裸路径（= 旧铸造输入）")
+    assertNotEquals(
+      DeviceIdentity.deriveDeviceId("machine-code-fixture", newScope),
+      DeviceIdentity.deriveDeviceId("machine-code-fixture", "/tmp/nebflow-coldstart"),
+      "新 scope 的派生必须与裸路径 scope 的派生（= 6a64d249 的铸造形态）不同"
+    )
   }
 
   test("acceptance 1: corrupt device.json -> 3 boots yield the SAME deviceId; corrupt file backed up") {
@@ -225,7 +280,8 @@ class DeviceIdentitySpec extends FunSuite:
     val home = os.temp.dir()
     withDataRoot(home) {
       val id = DeviceIdentity.loadOrCreate.unsafeRunSync()
-      val fp = DeviceIdentity.scopeFingerprint(home.toString)
+      // 后缀指纹 = 现 scope（熵修复后为 `home|<uuid>` 摘要，不再是裸路径）的指纹。
+      val fp = DeviceIdentity.scopeFingerprint(DeviceIdentity.deviceIdScope)
       assert(id.deviceName.endsWith(s"-iso-$fp"), id.deviceName)
       assert(!id.deviceName.contains(home.toString), s"名字里不得出现数据根路径: ${id.deviceName}")
       // id 仍是 UUIDv5(machineCode|scope) 形态（本批不动 id）

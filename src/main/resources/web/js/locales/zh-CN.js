@@ -557,8 +557,9 @@ export default {
   'login.reason.credential-delete-denied': '本机凭据清理不掉（权限或占用）',
   'login.action.credential-delete-denied': '先退出其他实例再试；仍失败请在停机后手工改名该文件留档',
   // 其余登录腿（无本地文件可清 ⇒ 不给清理入口）
-  'login.reason.enroll-refused-isolated-home': '本机为隔离数据根，入网被本地隔离护栏拒绝（非网络故障）',
-  'login.action.enroll-refused-isolated-home': '用默认数据根启动后重试；确需放行时改环境开关（见日志）后重试',
+  // coldstart DX 批②（2026-10-14）：出路文案带两种逃生口（--net staging / 显式放行开关）。
+  'login.reason.enroll-refused-isolated-home': '调试/隔离实例未放行生产网：登录被本地隔离护栏拒绝（非网络故障）',
+  'login.action.enroll-refused-isolated-home': '两种出路：① 用 staging 档重启调试实例（冷启动脚本加 --net staging，登录即入网 staging 网络）；② 确需进生产网时显式设 NEBFLOW_ALLOW_PROD_ENROLL=1 后重试',
   'login.reason.server-no-device-token': '登录服务器没有发回设备凭据',
   'login.action.server-no-device-token': '点「重试」；仍失败则「使用其他账号登录」',
   'login.reason.token-exchange-failed': '与登录服务器交换令牌失败',

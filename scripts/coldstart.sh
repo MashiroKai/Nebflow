@@ -13,8 +13,8 @@
 #   2) 绝不碰宿主 :8080 —— 脚本只对 $COLDSTART_PORT（默认 8097）做 lsof 定位，
 #      且 COLDSTART_PORT 被误设为 8080 时直接拒绝执行：8080 是 Nebflow 宿主实例端口，
 #      对它产生任何信号都会杀掉宿主与当前会话。本脚本逻辑面从头到尾只覆盖 $COLDSTART_PORT。
-#   3) DRY_RUN=1 只预览不删不杀 —— 供作者先审行为（将 kill 谁 / 将清哪个 home）再实跑，
-#      防止脚本在作者未 review 的情况下就动手删数据/杀进程。
+#   3) DRY_RUN=1 只预览不删不杀不种 —— 供作者先审行为（将 kill 谁 / 将清哪个 home /
+#      将种哪些件）再实跑，防止脚本在作者未 review 的情况下就动手删数据/杀进程/写配置。
 #   4) 默认【不】放行生产设备注册 —— 隔离实验若要进生产网必须显式设 env（作者 2026-09-17 裁定 (b)）。
 #      本脚本的 data root 在 /tmp（非默认根），会命中 NebLink 隔离护栏
 #      （src/main/scala/nebflow/neblink/EnrollGuard.scala：非默认 data root ∧ 未显式放行 ∧
@@ -39,15 +39,45 @@
 #      就地清理的中断方向只会留下残留条目，配置始终在原位（fail-safe）。
 #      首次冷启动（保留件尚未生成）下三件均未命中，脚本照常启动；每轮都逐条打印保留清单与
 #      删除清单，便于作者由 stdout 核对「哪些留、哪些删」。
-#
+#   6) 网络档位 --net（coldstart DX 批①，2026-10-14 作者令）—— staging | prod | off（默认 staging）：
+#      - staging（默认）：清理后往新 home 写 <home>/neblink/config.json 的
+#        `neblinkServer.url` = staging relay + `neblinkServer.networkId` = staging 网络
+#        路由标识（真源 .nebflow/evidence/20261014_delegate-p6/repro.md；分别可用
+#        COLDSTART_STAGING_SERVER / COLDSTART_STAGING_NETWORK 覆盖）。networkId 是
+#        NeblinkServerConfig 解码的必填字段（缺它 ⇒ 整文件解码失败 ⇒ NeblinkConfig.load
+#        静默回落默认 ⇒ 注入死代码），且为路由标识**非凭据**（无 token/secret 时零认证
+#        能力；登录成功后服务端响应里的 networkId 会覆写此占位）。EnrollGuard 只拦
+#        生产域（nebflow.space），staging host 天然放行 ⇒ 登录即指向 staging 网络，
+#        生产网零触碰。已有 config.json 时【绝不覆盖】（作者手配优先）。
+#        注入面 = 配置文件（`NeblinkConfig.load` 的唯一读取点），零 Scala 改动；
+#        仅地址与网络标识、零凭据（🔴 无任何 token/密钥写入）。
+#      - prod：现行为——不注入任何 server 覆盖；未显式设 NEBFLOW_ALLOW_PROD_ENROLL=1 时
+#        隔离护栏照旧拒绝生产注册（4) 的全部语义逐字保留）。
+#      - off：不注入 server ⇒ 实例无入网目标，不起 relay 隧道。登录/设备互联在本档【不可用】：
+#        登录链路会给出「无入网目标」的可见失败（EnrollGuard 案 b① + guard 感知文案，
+#        批②）——这是本档预期行为而非故障；要入网请改用 --net staging（或 --net prod +
+#        NEBFLOW_ALLOW_PROD_ENROLL=1）。脚本启动前把这句话打印清楚，不给死路。
+#   7) 模型配置种子（coldstart DX 批③，2026-10-14 作者令）——主 home → 新 home 单向拷贝：
+#      首次冷启动无配置是「localhost:8097 无法直接可用」的根因（新 home 无 LLM provider）。
+#      清理后逐件检查主 home 的 nebflow.json / models.json / model-presets.json：
+#      源存在且新 home 无同名件 ⇒ 拷入（cp -p 保权限；nebflow.json 可能含 provider 密钥，
+#      种入后收紧为 600，与仓内凭据件 ACL 纪律同向）。已有同名件（冷启动保留件）⇒ 不覆盖。
+#      主 home 解析与 Scala 端同序：NEBFLOW_HOME（Branding.env 首选）> $HOME/<brand 目录>；
+#      brand 目录名从 brand.conf 的 homeDirName 现读，🔴 不写死任何绝对路径。
+#      🔴 device.json / auth.json（身份与凭据面）明确不拷、零触碰——身份/凭据跨 home
+#      流动正是 2026-09-11 撞身份事故链的一环（见 coldstart DX 批④的 scope 熵修复）。
+
 # 用法：
-#   ./scripts/coldstart.sh                                            # 真实冷启动（默认【不】进生产网）
-#   DRY_RUN=1 ./scripts/coldstart.sh                                  # 只预览，不启动 sbt
+#   ./scripts/coldstart.sh                                            # staging 档冷启动（默认，不进生产网）
+#   ./scripts/coldstart.sh --net prod                                 # 现行为（须配 NEBFLOW_ALLOW_PROD_ENROLL=1 才进生产网）
+#   ./scripts/coldstart.sh --net off                                  # 纯本地：不注入入网目标，不起 relay 隧道
+#   COLDSTART_NET=off ./scripts/coldstart.sh                          # env 等价形态（--net 优先于 COLDSTART_NET）
+#   DRY_RUN=1 ./scripts/coldstart.sh                                  # 只预览，不启动 sbt、不写任何文件
 #   COLDSTART_PORT=<port> COLDSTART_HOME=<path> ./scripts/coldstart.sh  # 覆盖默认
-#   NEBFLOW_ALLOW_PROD_ENROLL=1 ./scripts/coldstart.sh                # 显式放行：注册到生产 NebLink
+#   NEBFLOW_ALLOW_PROD_ENROLL=1 ./scripts/coldstart.sh --net prod     # 显式放行：注册到生产 NebLink
 #
 # 说明：已配置的模型（home 顶层的 nebflow.json / models.json / model-presets.json）
-#       在冷启动时原地保留，只有其余 home 条目被清空。
+#       在冷启动时原地保留；主 home 有而新 home 无的模型配置会被种入（见 7)）。
 #
 set -euo pipefail
 
@@ -57,14 +87,68 @@ DRY_RUN="${DRY_RUN:-0}"
 # 本脚本自起实例的 cmdline 特征标记（验身用）。
 COLDSTART_MARKER="nebflow-coldstart"
 
-# --- 安全红线①：绝不触碰宿主 :8080 ---
+# ── 网络档位解析（批①）：--net <tier> 优先，其次 COLDSTART_NET，默认 staging ──
+NET_TIER="${COLDSTART_NET:-staging}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --net)
+      if [ $# -lt 2 ]; then
+        echo "[coldstart] ERROR: --net 需要一个取值（staging|prod|off）" >&2
+        exit 2
+      fi
+      NET_TIER="$2"
+      shift 2
+      ;;
+    --net=*)
+      NET_TIER="${1#--net=}"
+      shift
+      ;;
+    *)
+      echo "[coldstart] ERROR: 未知参数 '$1'（本脚本只认 --net staging|prod|off；端口/home 走 COLDSTART_PORT/COLDSTART_HOME env）" >&2
+      exit 2
+      ;;
+  esac
+done
+case "$NET_TIER" in
+  staging | prod | off) : ;;
+  *)
+    echo "[coldstart] ERROR: --net 取值须为 staging|prod|off，得到 '$NET_TIER'" >&2
+    exit 2
+    ;;
+esac
+
+# staging relay 真源：.nebflow/evidence/20261014_delegate-p6/repro.md（地址非凭据，可覆盖）。
+COLDSTART_STAGING_SERVER="${COLDSTART_STAGING_SERVER:-https://neblink-stg.45.32.62.185.sslip.io}"
+# staging 网络 id（同上真源）：NeblinkServerConfig 解码必填字段（解码器见
+# src/main/scala/nebflow/neblink/NeblinkClient.scala —— 缺 networkId ⇒ 整文件解码失败 ⇒
+# NeblinkConfig.load 静默回落默认 ⇒ 本注入沦为死代码）；路由标识非凭据（无
+# token/secret 零认证能力，登录成功后被服务端响应的 networkId 覆写）。
+COLDSTART_STAGING_NETWORK="${COLDSTART_STAGING_NETWORK:-90287e76-b4aa-4778-8ac5-fd63aacd5d63}"
+
+# ── 安全红线①：绝不触碰宿主 :8080 ──
 # 作者现行习惯默认端口为 8097；若被误设为 8080（宿主端口），在动手前直接拒绝。
 if [ "$COLDSTART_PORT" = "8080" ]; then
   echo "[coldstart] ERROR: COLDSTART_PORT=8080 是运行中的 Nebflow 宿主实例端口，拒绝触碰。" >&2
   exit 1
 fi
 
-echo "[coldstart] port=$COLDSTART_PORT home=$COLDSTART_HOME dry_run=$DRY_RUN"
+echo "[coldstart] port=$COLDSTART_PORT home=$COLDSTART_HOME dry_run=$DRY_RUN net=$NET_TIER"
+
+# ── 网络档位 NOTICE（三档都明示，绝不静默；批①「启动 NOTICE 文案同步三档」）──
+case "$NET_TIER" in
+  staging)
+    echo "[coldstart] NOTICE: --net staging（默认档）→ 本实例 neblink 指向 staging relay ${COLDSTART_STAGING_SERVER}（配置注入 <home>/neblink/config.json，已有件不覆盖）。EnrollGuard 只拦生产域，staging 天然放行 ⇒ 登录即指向 staging 网络；生产网零触碰。"
+    if [ -n "${NEBFLOW_ALLOW_PROD_ENROLL:-}" ]; then
+      echo "[coldstart] NOTICE: 你已设 NEBFLOW_ALLOW_PROD_ENROLL=${NEBFLOW_ALLOW_PROD_ENROLL}——staging 档的入网目标来自配置文件（staging relay），该开关在本档不改变目标；脚本仍原样透传、绝不改写你的设置。"
+    fi
+    ;;
+  prod)
+    echo "[coldstart] NOTICE: --net prod → 不注入任何 server 覆盖（现行为）。入网目标与生产放行判定见下方 NEBFLOW_ALLOW_PROD_ENROLL 分支。"
+    ;;
+  off)
+    echo "[coldstart] NOTICE: --net off → 不注入入网目标、不起 relay 隧道：登录/设备互联在本档【不可用】（登录会看到「实例未放行入网目标」的可见提示——这是本档预期行为，不是故障）。要入网请改用 --net staging（staging 网络），或 --net prod 且显式 NEBFLOW_ALLOW_PROD_ENROLL=1（生产网）。"
+    ;;
+esac
 
 # ── 生产注册放行开关：默认【不】放行（详见文件头 4)）──
 # 🔴 本批（作者 2026-09-17 裁定 (b)）已删除「未设时默认导出 1」的行为：
@@ -175,6 +259,69 @@ else
     ! -name 'nebflow.json' ! -name 'models.json' ! -name 'model-presets.json' \
     -exec rm -rf {} + || true
   echo "[coldstart] home 已选择性清理: $COLDSTART_HOME"
+fi
+
+# ── 步骤 2.5：主 home 模型配置种子（批③；清理后执行 ⇒ 「种子→后续冷启动原地保留」协同）──
+# 主 home 解析与 Scala 端 PathUtil.dataRoot 同序：NEBFLOW_HOME（Branding.env 首选）>
+# $HOME/<brand 目录>；brand 目录名从 brand.conf 现读，🔴 不写死绝对路径。
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# brand.conf 缺席（脚本被单拷走）时管道失败 ⇒ `|| true` 兜底（pipefail 下退化为默认 .nebflow）。
+BRAND_DIR="$(sed -n -E 's/^[[:space:]]*homeDirName[[:space:]]*=[[:space:]]*([^[:space:]#]+).*/\1/p' "$SCRIPT_DIR/../brand.conf" 2>/dev/null | tail -1 || true)"
+BRAND_DIR="${BRAND_DIR:-.nebflow}"
+MAIN_HOME="${NEBFLOW_HOME:-$HOME/$BRAND_DIR}"
+echo "[coldstart] 模型配置种子来源（主 home）: $MAIN_HOME"
+seed_model_configs() {
+  local f src dst
+  for f in $KEEP_FILES; do
+    src="$MAIN_HOME/$f"
+    dst="$COLDSTART_HOME/$f"
+    if [ -e "$dst" ]; then
+      echo "[coldstart]   种子 $f ：新 home 已有（冷启动保留件），不覆盖 → $dst"
+    elif [ -f "$src" ]; then
+      if [ "$DRY_RUN" = "1" ]; then
+        echo "[coldstart] [DRY_RUN]   种子 $f ：将 cp -p $src → $dst"
+      else
+        cp -p "$src" "$dst"
+        # nebflow.json 可能含 provider 密钥（LLM 块）：种入即收紧为 owner-only，
+        # 与仓内凭据件写后 ACL 纪律（CredentialWriteAcl）同向；其余两件为能力注记，保原权限。
+        if [ "$f" = "nebflow.json" ]; then
+          chmod 600 "$dst" 2>/dev/null || true
+        fi
+        echo "[coldstart]   种子 $f ：已拷入 $dst ← $src"
+      fi
+    else
+      echo "[coldstart]   种子 $f ：主 home 无此件（$src 不存在）→ 跳过；模型可在 web UI 设置"
+    fi
+  done
+  echo "[coldstart] 种子面仅限三件模型配置；device.json / auth.json（身份与凭据面）明确不拷、零触碰。"
+}
+if [ -d "$MAIN_HOME" ]; then
+  seed_model_configs
+else
+  echo "[coldstart] 主 home $MAIN_HOME 不存在 ⇒ 无配置可种；首次模型配置请走 web UI 设置。"
+fi
+
+# ── 步骤 2.6：staging 档注入入网目标（批①；off/prod 档不注入）──
+# 注入面 = <home>/neblink/config.json（NeblinkConfig.load 的唯一读取点），url + networkId
+# （解码必填）、零凭据。已存在 config.json ⇒ 绝不覆盖（作者手配 / 上轮登录凭据优先）。
+# 清理步已删整个 neblink/ 目录，故正常路径下这里总是「新建」；DRY_RUN 只预告不写。
+seed_staging_target() {
+  local cfg_dir="$COLDSTART_HOME/neblink"
+  local cfg="$cfg_dir/config.json"
+  if [ -e "$cfg" ]; then
+    echo "[coldstart] staging 注入：已存在 $cfg，不覆盖（保留现状）。"
+    return
+  fi
+  if [ "$DRY_RUN" = "1" ]; then
+    echo "[coldstart] [DRY_RUN] staging 注入：将写入 $cfg （{\"neblinkServer\":{\"url\":\"$COLDSTART_STAGING_SERVER\",\"networkId\":\"$COLDSTART_STAGING_NETWORK\"}}）"
+    return
+  fi
+  mkdir -p "$cfg_dir"
+  printf '{\n  "neblinkServer" : {\n    "url" : "%s",\n    "networkId" : "%s"\n  }\n}\n' "$COLDSTART_STAGING_SERVER" "$COLDSTART_STAGING_NETWORK" >"$cfg"
+  echo "[coldstart] staging 注入：已写入 $cfg （neblinkServer.url=${COLDSTART_STAGING_SERVER} networkId=${COLDSTART_STAGING_NETWORK}）——登录即指向 staging relay。"
+}
+if [ "$NET_TIER" = "staging" ]; then
+  seed_staging_target
 fi
 
 # ── 步骤 3：启动全新实例（DRY_RUN 跳过）──
