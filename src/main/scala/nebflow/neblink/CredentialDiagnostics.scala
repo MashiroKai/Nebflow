@@ -3,6 +3,8 @@ package nebflow.neblink
 import io.circe.Json
 import io.circe.syntax.*
 
+import nebflow.shared.Branding
+
 /**
  * 凭据面 / 登录腿的**失败分类**（缺陷 A：换号登录失败频发 + 报错只说文件名不说原因）。
  *
@@ -113,14 +115,14 @@ object CredentialDiagnostics:
     case CredentialFailure.DeviceRegisterFailed => "登录服务器设备注册失败"
     case CredentialFailure.CallbackStateInvalid => "登录回调校验失败（一次性校验码不匹配或已过期）"
     case CredentialFailure.ProviderError => "登录被服务方拒绝或中断"
-    case CredentialFailure.ServiceUnavailable => "nebflow 服务未初始化"
+    case CredentialFailure.ServiceUnavailable => s"${Branding.lowerName} 服务未初始化"
     case CredentialFailure.LogtoNotConfigured => "登录服务未配置（缺少应用标识）"
     case CredentialFailure.Unclassified => "登录过程中出现未分类的错误"
 
   private def actionOf(f: CredentialFailure): String = f match
     case CredentialFailure.CredentialMissing => "点「登录」重新登录"
     case CredentialFailure.CredentialUnreadable =>
-      "先退出其他 nebflow 实例再重试；仍失败则点「清理并重登」重建本机凭据"
+      s"先退出其他 ${Branding.lowerName} 实例再重试；仍失败则点「清理并重登」重建本机凭据"
     case CredentialFailure.CredentialUndecodable => "点「登录」重建本机凭据（坏件已备份留档）"
     case CredentialFailure.CredentialWriteDenied =>
       "不要再反复点；先退出其他实例再重试，仍失败则点「清理并重登」"
@@ -132,10 +134,10 @@ object CredentialDiagnostics:
     case CredentialFailure.ServerNoDeviceToken => "点「重试」；仍失败则「使用其他账号登录」"
     case CredentialFailure.TokenExchangeFailed => "点「重试」；仍失败则「使用其他账号登录」"
     case CredentialFailure.DeviceRegisterFailed => "点「重试」；仍失败则「使用其他账号登录」"
-    case CredentialFailure.CallbackStateInvalid => "回到 nebflow 重新点「登录」"
+    case CredentialFailure.CallbackStateInvalid => s"回到 ${Branding.lowerName} 重新点「登录」"
     case CredentialFailure.ProviderError => "重新点「登录」；必要时换一个账号"
-    case CredentialFailure.ServiceUnavailable => "重启 nebflow 后重新登录"
-    case CredentialFailure.LogtoNotConfigured => "检查 nebflow 的登录配置后重试"
+    case CredentialFailure.ServiceUnavailable => s"重启 ${Branding.lowerName} 后重新登录"
+    case CredentialFailure.LogtoNotConfigured => s"检查 ${Branding.lowerName} 的登录配置后重试"
     case CredentialFailure.Unclassified => "点「重试」；仍失败请附日志反馈"
 
   /**
