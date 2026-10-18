@@ -260,13 +260,18 @@ object Main extends IOApp:
               url,
               authenticateLocal = !GatewayConfig.noBrowser && !nebflow.core.HeadlessMode.enabled
             ).flatMap { focusTarget =>
-              nebflow.cli.SingleInstanceGuard
-                .focusExisting(
-                  focusTarget,
-                  "same port",
-                  openBrowser = !nebflow.gateway.GatewayConfig.noBrowser
-                )
-                .as(ExitCode.Success)
+              // #512 门审计批：聚焦腿开门目标落 stdout（CLI 路径无 logger 面）——
+              // 二实例撞端口时「开的是哪条门」可从终端对账。
+              IO.println(
+                s"[door] focus 开门: 目标=$focusTarget（解析=PortalUrl env>config>brand；NEBFLOW_OPEN_UI=local ⇒ 本地自铸票）"
+              ) *>
+                nebflow.cli.SingleInstanceGuard
+                  .focusExisting(
+                    focusTarget,
+                    "same port",
+                    openBrowser = !nebflow.gateway.GatewayConfig.noBrowser
+                  )
+                  .as(ExitCode.Success)
             }
           case nebflow.cli.SingleInstanceGuard.ForeignOccupant(detail) =>
             IO.println(s"ERROR: $detail — ${Branding.productName} cannot start.") *>
