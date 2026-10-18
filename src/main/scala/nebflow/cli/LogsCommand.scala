@@ -30,11 +30,11 @@ object LogsCommand extends CliCommand:
 
   /**
    * 活动日志文件名 = logback.xml 的 `<file>` 末段（src/main/resources/logback.xml
-   * 的 FILE appender，唯一权威；轮转件为 `nebflow.<date>.<i>.log`）。此处刻意留
-   * 字面量并指回该处，不做第二套推导 —— logback 实际写的是哪个文件，本命令就读
-   * 哪个文件。
+   * 的 FILE appender，唯一权威；轮转件为 `stand.<date>.<i>.log`；更名前的历史
+   * `nebflow.*` 文件原地保留，本命令照常可读）。此处刻意留字面量并指回该处，
+   * 不做第二套推导 —— logback 实际写的是哪个文件，本命令就读哪个文件。
    */
-  private[cli] val ActiveLogName = "nebflow.log"
+  private[cli] val ActiveLogName = "stand.log"
 
   private[cli] val DefaultTailLines = 50
 
@@ -146,8 +146,8 @@ object LogsCommand extends CliCommand:
 
   /**
    * `--file` 只接受 logs 目录下的**裸文件名**：拒绝路径分隔符 / `..` / 绝对路径
-   * （路径穿越面 fail-closed）。合法日志名（`nebflow.log`、
-   * `nebflow.2026-09-19.0.log`）均不含这些形态。
+   * （路径穿越面 fail-closed）。合法日志名（`stand.log`、
+   * `stand.2026-09-19.0.log`，以及更名前的历史 `nebflow.*` 件）均不含这些形态。
    */
   private[cli] def validateLogFileName(raw: String): Either[String, String] =
     val name = raw.trim

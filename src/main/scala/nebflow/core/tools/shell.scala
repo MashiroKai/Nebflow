@@ -616,7 +616,8 @@ final class ShellSession private (
           throw new java.io.IOException(
             if isWindows then
               "bash.exe not found. The Bash tool requires Git for Windows.\n" +
-                "Install it from https://git-scm.com/download/win or re-run the Nebflow installer."
+                "Install it from https://git-scm.com/download/win or re-run the " +
+                nebflow.shared.Branding.productName + " installer."
             else "bash not found in PATH. Please install bash (e.g. apt install bash).",
             e
           )

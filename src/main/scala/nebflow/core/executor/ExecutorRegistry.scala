@@ -73,7 +73,7 @@ object ExecutorRegistry:
   val defs: List[ExecutorDef] = List(
     ExecutorDef(
       id = "nebflow",
-      displayName = "Nebflow",
+      displayName = nebflow.shared.Branding.productName,
       binNames = Nil,
       description = "Built-in executor agent (kernel base tools + subagent + workflow)",
       external = false,

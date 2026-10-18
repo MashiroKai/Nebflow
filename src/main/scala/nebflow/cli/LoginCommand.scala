@@ -104,12 +104,12 @@ private[cli] object LoginCopy:
   // + `logout` + 23 空格（同列 37）；H5 = `nebflow ` + `whoami` + 24 空格（列 38 —— 批件
   // 原文如此）。🔴 本段按「逐字含空格对齐」纪律**原样保留、不自行校正**；H5 比 H1/H4
   // 多一空格这一处，在报告 §16 单列呈报（不擅自改成列 37）。
-  val H1LoginHelp = "nebflow login                        Sign in to your Nebflow account"
+  val H1LoginHelp = s"nebflow login                        Sign in to your ${nebflow.shared.Branding.productName} account"
   val H4LogoutHelp = "nebflow logout                       Sign out and remove the stored device credential"
   val H5WhoamiHelp = "nebflow whoami                        Show the signed-in account and device status"
 
   // 描述位（命令注册表的 `description`；与上列 H 行的正文逐字同源）
-  val SignInDesc = "Sign in to your Nebflow account"
+  val SignInDesc = s"Sign in to your ${nebflow.shared.Branding.productName} account"
   val SignOutDesc = "Sign out and remove the stored device credential"
   val WhoamiDesc = "Show the signed-in account and device status"
 

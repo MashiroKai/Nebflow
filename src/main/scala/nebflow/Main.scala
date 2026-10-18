@@ -75,11 +75,11 @@ object MainDispatch:
       case SingleInstanceGuard.PortFree => None
       case SingleInstanceGuard.NebflowInstance(_) =>
         Some(
-          s"daemon child refused: port $port already served by a nebflow instance — " +
+          s"daemon child refused: port $port already served by a ${Branding.productName} instance — " +
             "not focusing (no terminal), not killing"
         )
       case SingleInstanceGuard.ForeignOccupant(detail) =>
-        Some(s"ERROR: $detail — nebflow cannot start.\nStop it, or pick another port (--port / GATEWAY_PORT).")
+        Some(s"ERROR: $detail — ${Branding.productName} cannot start.\nStop it, or pick another port (--port / GATEWAY_PORT).")
 
 end MainDispatch
 

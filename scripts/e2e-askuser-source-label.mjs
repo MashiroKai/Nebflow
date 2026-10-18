@@ -32,7 +32,7 @@
 // Run（worktree 根，jar 已构建）：node scripts/e2e-askuser-source-label.mjs
 // Env：fixture home 默认**不删**（要清理设 CLEAN=1 / NB_CLEAN=1；NB_DRY_RUN=1 只跑删除守卫断言）；
 //   GATEWAY_PORT=8098 MOCK_PORT=18998；
-//   JAR 默认 target/scala-3.5.2/nebflow-assembly-*.jar（取最新）。
+//   JAR 默认 target/scala-3.5.2/stand-assembly-*.jar（取最新）。
 
 import { spawn, execSync } from 'node:child_process';
 import http from 'node:http';
@@ -269,7 +269,7 @@ function buildFixture() {
 // ── 隔离实例（assembly jar 配方；NEBFLOW_GATEWAY_PORT env 为主保险）──
 function findJar() {
   const dir = join(REPO, 'target/scala-3.5.2');
-  const jars = readdirSync(dir).filter((f) => f.startsWith('nebflow-assembly-') && f.endsWith('.jar'));
+  const jars = readdirSync(dir).filter((f) => f.startsWith('stand-assembly-') && f.endsWith('.jar'));
   if (!jars.length) throw new Error('assembly jar not found — run sbt assembly first');
   return join(dir, jars.sort().pop());
 }

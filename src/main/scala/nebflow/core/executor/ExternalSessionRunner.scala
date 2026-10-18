@@ -222,7 +222,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
     if record.executor == ExecutorRegistry.DefaultId then
       // 前置违例（内部记录误入外部腿）：显式拒绝，不猜路由。
       IO.pure(
-        Left(s"Delegate '${record.id}' is an internal (nebflow) record — wrong routing leg. (EXTERNAL_LEG_MISMATCH)")
+        Left(s"Delegate '${record.id}' is an internal (${nebflow.shared.Branding.productName}) record — wrong routing leg. (EXTERNAL_LEG_MISMATCH)")
       )
     else
       ExternalExecutor.forId(record.executor) match

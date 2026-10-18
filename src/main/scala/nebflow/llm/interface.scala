@@ -13,7 +13,7 @@ import sttp.client4.httpclient.fs2.HttpClientFs2Backend
 import scala.concurrent.duration.*
 
 /** Raised when a JVM shutdown hook aborts an in-flight LLM request. */
-final class ShutdownAbort extends RuntimeException("Nebflow shutting down: LLM request aborted")
+final class ShutdownAbort extends RuntimeException(s"${Branding.productName} shutting down: LLM request aborted")
 
 /**
  * Raised when TaskStuckWatcher hard-cancels an agent's in-flight LLM request
@@ -1033,7 +1033,7 @@ object LlmInterface extends LlmRuntime:
                                                     // 🔴 隐私面（与 A5 同口径）：provider 可能把收到的凭据
                                                     // 回显在错误体里 ⇒ 落盘前先走 `redactSecrets`。不抹除的话
                                                     // 本行会在事故形态下（秒级重投 × 每候选每轮一条）把密钥
-                                                    // 写进 nebflow.log，而同一份响应体在 httperror.jsonl 里
+                                                    // 写进 stand.log，而同一份响应体在 httperror.jsonl 里
                                                     // 反而是抹除过的——两条腿不一致。截断 + 抹除都不影响
                                                     // 「响应体可读」这个 A3 目的。
                                                       + classification.message

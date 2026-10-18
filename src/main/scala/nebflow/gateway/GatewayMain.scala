@@ -56,7 +56,7 @@ object GatewayMain extends IOApp:
             if stalePids.nonEmpty then
               logger
                 .warn(
-                  s"[startup] killing verified stale nebflow processes on port $port: " +
+                  s"[startup] killing verified stale ${Branding.productName} processes on port $port: " +
                     s"${stalePids.mkString(", ")}"
                 )
                 .unsafeRunSync()
@@ -69,7 +69,7 @@ object GatewayMain extends IOApp:
             // holds the port. NEVER destroy it — refuse startup loudly; the
             // boot dies here instead of killing someone else's process.
             val detail =
-              s"[startup] REFUSING to start: port $port is held by a non-nebflow " +
+              s"[startup] REFUSING to start: port $port is held by a non-${Branding.productName} " +
                 s"process (${foreign.detail}) — stop it or pick another port " +
                 "(--port / NEBFLOW_GATEWAY_PORT)"
             logger.error(detail).unsafeRunSync()
@@ -560,7 +560,7 @@ object GatewayMain extends IOApp:
                         // 非法或 container/auto 未实现 ⇒ 显式失败，不静默回落宿主）。
                         val sandboxCfg = nebflow.core.sandbox.SandboxConfig.load(config.sandbox)
                         nebflow.core.sandbox.SandboxRuntime.init(sandboxCfg)
-                        logger.info(s"nebflow ${nebflow.Version.string}") *>
+                        logger.info(s"${Branding.productName} ${nebflow.Version.string}") *>
                           (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")
                            else
                              presetLabel match
@@ -1365,7 +1365,7 @@ object GatewayMain extends IOApp:
                                                       // 连接级异常钩子（0.23.30 仅有的官方连接级缝，设计件 §B.4/§C④-3）：
                                                       // ReadTimeout = 闲置回收（5min idle 的常规动作）；RequestHeaders
                                                       // Timeout = 头部摄取超时（慢速摄取/风暴形状信号）；写失败 = 对端
-                                                      // 断开。逐条落 nebflow.log——把「静默失联」变可留痕。未匹配异常
+                                                      // 断开。逐条落 stand.log——把「静默失联」变可留痕。未匹配异常
                                                       // 走 ember 默认处理，行为零改动。（注：RequestHeadersTimeout 类
                                                       // 本体 private[ember] ⇒ 以类名守卫判别，不用类型模式。）
                                                       .withConnectionErrorHandler {

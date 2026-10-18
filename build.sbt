@@ -8,8 +8,9 @@ lazy val root = (project in file("."))
   .settings(
     // L2 rebrand: name/organization (hence the assembly jar name) derive
     // from repo-root brand.conf via project/Branding.scala — the only edit
-    // point for a rename. Current values are byte-identical to the previous
-    // literals ("nebflow"): zero build behavior change.
+    // point for a rename. With brand.conf lowerName = stand the artifact is
+    // stand-assembly-<VERSION>.jar (legacy nebflow-assembly-*.jar files from
+    // older checkouts are NOT cleaned by the build — installers dual-glob).
     name := BrandingBuild.lowerName,
     version := IO.read(file("VERSION")).trim,
     organization := BrandingBuild.lowerName,
