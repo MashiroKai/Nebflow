@@ -202,24 +202,27 @@ object GatewayMain extends IOApp:
     end match
   end succeedPortGate
 
-  private def openBrowser(url: String): IO[Unit] = IO.blocking {
+  // 冷启动开门「载体」注入（2026-10-18 冷启动官网开门批）：STAND_OPEN_BROWSER /
+  // NEBFLOW_OPEN_BROWSER（Branding.env 双前缀读取）指到一个可执行件路径（coldstart
+  // 脚本生成的 wrapper，内部自带 --user-data-dir 等参数）时，boot 开门 exec
+  // [该件, url] —— 单 token、零 shell、零分词，路径带空格安全；文件缺席/不可执行
+  // 落既有 catch 静默，由脚本回落腿兜底。
+  // 边界：本 env 只换开门【载体】（浏览器件），开门【目标】仍由 PortalUrl 单点
+  // 解析（env > config > brand 缺省；NEBFLOW_OPEN_UI=local 回落本地）——不另造
+  // 入口目标开关。未注入 = 既有 open / rundll32 / xdg-open 行为逐字保留。
+  // 2026-10-18 #512 门审计批抽出 browserLauncher：boot 开门日志需点名载体，
+  // 不复制选择梯（openBrowser 行为逐字不变）。
+  private def browserLauncher: Seq[String] =
     val os = sys.props.getOrElse("os.name", "").toLowerCase
-    // 冷启动开门「载体」注入（2026-10-18 冷启动官网开门批）：STAND_OPEN_BROWSER /
-    // NEBFLOW_OPEN_BROWSER（Branding.env 双前缀读取）指到一个可执行件路径（coldstart
-    // 脚本生成的 wrapper，内部自带 --user-data-dir 等参数）时，boot 开门 exec
-    // [该件, url] —— 单 token、零 shell、零分词，路径带空格安全；文件缺席/不可执行
-    // 落既有 catch 静默，由脚本回落腿兜底。
-    // 边界：本 env 只换开门【载体】（浏览器件），开门【目标】仍由 PortalUrl 单点
-    // 解析（env > config > brand 缺省；NEBFLOW_OPEN_UI=local 回落本地）——不另造
-    // 入口目标开关。未注入 = 既有 open / rundll32 / xdg-open 行为逐字保留。
-    val launcher: Seq[String] =
-      Branding.env("OPEN_BROWSER").map(_.trim).filter(_.nonEmpty) match
-        case Some(path) => Seq(path)
-        case None =>
-          if os.contains("mac") then Seq("open")
-          else if os.contains("win") then Seq("rundll32", "url.dll,FileProtocolHandler")
-          else Seq("xdg-open")
-    try Runtime.getRuntime.exec((launcher :+ url).toArray)
+    Branding.env("OPEN_BROWSER").map(_.trim).filter(_.nonEmpty) match
+      case Some(path) => Seq(path)
+      case None =>
+        if os.contains("mac") then Seq("open")
+        else if os.contains("win") then Seq("rundll32", "url.dll,FileProtocolHandler")
+        else Seq("xdg-open")
+
+  private def openBrowser(url: String): IO[Unit] = IO.blocking {
+    try Runtime.getRuntime.exec((browserLauncher :+ url).toArray)
     catch case _: Exception => ()
   }
 
@@ -1732,7 +1735,14 @@ object GatewayMain extends IOApp:
                                                                   ),
                                                                   localUrl = url
                                                                 )
-                                                                .flatMap(openBrowser)
+                                                                .flatMap { target =>
+                                                                  // #512 门审计批：开门目标与载体落日志——
+                                                                  // 「重启后开的是哪条门」从终端日志即可对账
+                                                                  //（此前 openBrowser 静默 exec，验收只能靠肉眼）。
+                                                                  logger.info(
+                                                                    s"[door] boot 开门: 载体=${browserLauncher.mkString(" ")} 目标=$target（解析=PortalUrl env>config>brand；NEBFLOW_OPEN_UI=local ⇒ 本地自铸票）"
+                                                                  ) *> openBrowser(target)
+                                                                }
                                                           // --- Background init: skills dir, MCP servers ---
                                                           _ <- SkillService
                                                             .ensureDefaults()
