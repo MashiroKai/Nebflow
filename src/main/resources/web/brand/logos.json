@@ -28,5 +28,11 @@
     "light": "/brand/nebflow/logto/bright-logo.png",
     "dark": "/brand/nebflow/logto/dark-logo.png",
     "resample": "nearest"
+  },
+  "stand-illustrator": {
+    "name": "Stand illustrator / 矢量",
+    "light": "/brand/stand/illustrator/logo-512-light.png",
+    "dark": "/brand/stand/illustrator/logo-512-dark.png",
+    "resample": "lanczos"
   }
 }
