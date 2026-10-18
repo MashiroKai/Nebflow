@@ -130,10 +130,17 @@ class GatewaySessionStoreSpec extends CatsEffectSuite:
     assertEquals(cookie.content, "abc123")
     assertEquals(cookie.maxAge, Some(GatewaySessionStore.AbsoluteTtlSeconds), "Max-Age=43200 (12h)")
     assertEquals(cookie.sameSite, Some(org.http4s.SameSite.Lax), "SameSite=Lax")
-    assert(cookie.secure, "Secure")
+    assert(cookie.secure, "Secure is the DEFAULT (https / tunnel-marked faces)")
     assert(cookie.httpOnly, "HttpOnly")
     assertEquals(cookie.domain, None, "host-only: no Domain attribute")
     assertEquals(cookie.path, Some("/"), "Path=/")
+    // #522: the plain-http direct leg (local console) is the ONE shape that
+    // must drop `Secure` — WebKit refuses to store Secure cookies over plain
+    // http, which silently no-oped every local session seating. Explicit and
+    // opt-in at the single call site; every other attribute is unchanged.
+    val plainHttp = GatewaySessionStore.newCookie("abc123", secure = false)
+    assert(!plainHttp.secure, "plain-http direct leg: Secure omitted")
+    assert(plainHttp.httpOnly && plainHttp.sameSite.contains(org.http4s.SameSite.Lax), "other attrs unchanged")
     // The name is brand-derived and NOT the legacy cookie name.
     assert(cookie.name != "nebflow_token", "the session cookie must be a distinct jar entry")
     assertEquals(cookie.name, s"${nebflow.shared.Branding.lowerName}_session")

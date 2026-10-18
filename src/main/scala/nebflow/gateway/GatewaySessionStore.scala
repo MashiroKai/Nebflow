@@ -193,12 +193,19 @@ object GatewaySessionStore:
 
   /**
    * The session cookie, with the frozen attribute set (v3 :145): HttpOnly +
-   * Secure + SameSite=Lax + host-only (no `domain`) + `Path=/` +
-   * `Max-Age=43200`. The cookie value never changes over the session's life
-   * (sliding renewal is server-side only), so this is emitted exactly once —
-   * on the 303 redemption response.
+   * SameSite=Lax + host-only (no `domain`) + `Path=/` + `Max-Age=43200`,
+   * plus `Secure` on the faces where the consuming browser origin is HTTPS
+   * (tunnel-marked relay legs and direct https). #522: on a plain-http
+   * direct leg (the local console, e.g. Safari at http://127.0.0.1:8080) the
+   * `Secure` flag MUST be omitted — WebKit drops Secure cookies delivered
+   * over plain http (no localhost exemption, unlike Chrome/Firefox), which
+   * silently bricked session seating on the local console: every later
+   * request (WS handshake + REST) answered 403 while the user was in fact
+   * seated. The value never changes over the session's life (sliding renewal
+   * is server-side only), so this is emitted exactly once — on the 303
+   * redemption response.
    */
-  def newCookie(sessionId: String): ResponseCookie =
+  def newCookie(sessionId: String, secure: Boolean = true): ResponseCookie =
     ResponseCookie(
       name = CookieName,
       content = sessionId,
@@ -207,7 +214,7 @@ object GatewaySessionStore:
       domain = None, // host-only: never set a Domain attribute
       path = Some("/"),
       sameSite = Some(SameSite.Lax),
-      secure = true,
+      secure = secure,
       httpOnly = true,
       extension = None
     )

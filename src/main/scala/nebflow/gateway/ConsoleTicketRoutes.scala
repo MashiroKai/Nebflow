@@ -76,6 +76,22 @@ object ConsoleTicketRoutes:
                 else
                   networkIdNow.flatMap { nid =>
                     sessions.create(t.accountSub, t.origin, nid).flatMap { rec =>
+                      // #522: Secure rides the consuming browser origin, not the
+                      // server's preference — https and tunnel-marked legs (the
+                      // relay console behind the HTTPS ingress) keep `Secure`;
+                      // a plain-http DIRECT leg (the local console) must NOT
+                      // carry it: WebKit refuses to store Secure cookies over
+                      // plain http (no localhost exemption), which silently
+                      // dropped every local session seating — WS handshake and
+                      // REST then answered 403 behind a "please log in" loop.
+                      // A direct client cannot forge the mark (boot-armed
+                      // 256-bit in-process value, client-supplied copies of the
+                      // header are dropped by the bridge before injection), so
+                      // "marked" is exactly "the cookie will be consumed at an
+                      // HTTPS origin".
+                      val secure =
+                        req.uri.scheme.exists(_.value.equalsIgnoreCase("https")) ||
+                          nebflow.shared.TunnelOriginMark.isMarked(req)
                       logger.info(
                         s"console ticket redeemed: session established (accountSub=${t.accountSub}, " +
                           s"origin=${t.origin}, sid=${rec.sessionId.take(8)}…, networkId=${nid.take(24)})"
@@ -83,7 +99,7 @@ object ConsoleTicketRoutes:
                       IO.pure(
                         Response[IO](Status.SeeOther)
                           .putHeaders(Location(Uri(path = Uri.Path.unsafeFromString("/"))))
-                          .addCookie(GatewaySessionStore.newCookie(rec.sessionId))
+                          .addCookie(GatewaySessionStore.newCookie(rec.sessionId, secure = secure))
                       )
                     }
                   }
