@@ -44,7 +44,9 @@ class DelegateUiDataPlaneSpec extends FunSuite:
       DelegateRegistry.Record(
         id = id,
         executor = "nebflow",
-        cwd = "/tmp/w",
+        // 座位须在实例世界内（#506 现役窗世界座位闸：/tmp 形态 = 外来隔离实例记录，
+        // 现役窗不再投影）——本 spec 的行投影断言（G5/G6）因此坐 dataRoot 下的缺省座位。
+        cwd = (tempRoot / "general").toString,
         project = None,
         taskId = None,
         parentSessionId = "root",

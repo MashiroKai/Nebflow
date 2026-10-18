@@ -498,4 +498,85 @@ class TaskLedgerStoreSpec extends FunSuite:
     assert(!out.contains("not-mine"), s"another task's data must never appear: $out")
   }
 
+  // ------------------------------------------------------------------
+  // project 过滤正确性（面板退役台账泄漏微批 #506，2026-10-18）
+  // ------------------------------------------------------------------
+
+  private def listProject(s: TaskLedgerStore, tag: String) =
+    s.listSync(project = Some(tag))
+
+  test("project filter: the field is authoritative — project=stand returns field-tagged entries") {
+    reset()
+    val s = store
+    s.createSync("field-tagged", project = Some("stand"))
+    s.createSync("other project", project = Some("nebflow"))
+    val out = listProject(s, "stand")
+    assert(out.isRight, out)
+    val body = out.toOption.get
+    assert(body.contains("field-tagged"), body)
+    assert(!body.contains("other project"), body)
+    assert(body.contains("1 entry"), body)
+  }
+
+  test("project filter: legacy title-prefix encoding (project field absent) is matched — the stand fleet gap") {
+    reset()
+    val s = store
+    // 2026-10-18 前的派发面形态：tag 只进标题前缀 `"stand — …"`，字段 None。
+    s.createSync("stand — in-flight batch")
+    val out = listProject(s, "stand")
+    assert(out.isRight, out)
+    val body = out.toOption.get
+    assert(body.contains("in-flight batch"), body)
+  }
+
+  test("project filter: the legacy prefix needs the exact delimiter — stand never eats stand-website") {
+    reset()
+    val s = store
+    s.createSync("stand-website — different project")
+    s.createSync("stand — the real one")
+    val stand = listProject(s, "stand")
+    assert(stand.isRight, stand)
+    val standBody = stand.toOption.get
+    assert(standBody.contains("the real one"), standBody)
+    assert(!standBody.contains("different project"), s"prefix-name bleed: $standBody")
+    val website = listProject(s, "stand-website")
+    assert(website.isRight, website)
+    val webBody = website.toOption.get
+    assert(webBody.contains("different project"), webBody)
+    assert(!webBody.contains("the real one"), webBody)
+  }
+
+  test("project filter: a present field wins over the title — a mis-titled field-tagged entry stays put") {
+    reset()
+    val s = store
+    s.createSync("stand — decoy title but field says nebflow", project = Some("nebflow"))
+    val stand = listProject(s, "stand").toOption.get
+    assert(!stand.contains("decoy title"), "field present ⇒ no title fallback")
+    val nebflow = listProject(s, "nebflow").toOption.get
+    assert(nebflow.contains("decoy title"), nebflow)
+  }
+
+  test("project filter: the filter value is trimmed; matching stays case-sensitive (CZT/czt-class name pairs exist)") {
+    reset()
+    val s = store
+    s.createSync("trim-me", project = Some("stand"))
+    val padded = listProject(s, "  stand  ")
+    assert(padded.isRight, padded)
+    assert(padded.toOption.get.contains("trim-me"), padded)
+    // 空白过滤值 = 不过滤（等价无 project 参数），不是「匹配空 tag」。
+    val blank = listProject(s, "   ")
+    assert(blank.isRight, blank)
+    assert(blank.toOption.get.contains("trim-me"), blank)
+    // 大小写敏感：Stand ≠ stand（值域存在仅大小写异形的真实项目对）。
+    val cased = listProject(s, "Stand").toOption.get
+    assert(!cased.contains("trim-me"), cased)
+  }
+
+  test("project filter: empty-result message echoes the trimmed tag (actionable scope, not raw input)") {
+    reset()
+    val s = store
+    val out = listProject(s, "  no-such-project  ").toOption.get
+    assert(out.contains("project=no-such-project"), out)
+  }
+
 end TaskLedgerStoreSpec

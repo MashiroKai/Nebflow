@@ -5,6 +5,7 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.delegate.{ChainStore, DelegateRegistry, MergeQueue}
+import nebflow.shared.PathUtil
 
 /**
  * ChainsReadFace —— **per-task 只读读面**（N1 刀3 · 设计 v3 §3 A8 / §9；#1228 stub
@@ -44,12 +45,82 @@ object ChainsReadFace:
    * `archived`（delegate-ui 批 2026-10-08 · G6 历史窗）：`false`（缺省）= 在册窗
    * （`archivedAt` 缺席的记录）；`true` = 历史窗（`?archived=1`，只出已归档）——
    * 两窗互补零重叠，归档旗零删除（记录本体原样）。
+   *
+   * 🔴 现役窗**世界座位闸**（面板退役台账泄漏微批 2026-10-18，#506）：在册窗只投影
+   * 座位（[[seatOf]]）落在本实例世界（[[activeWorldSeats]]：dataRoot 子树 ∪ 各未归档/
+   * 未卸载项目定义的 workspace 子树）的记录——registry 是实例级共享地址簿，隔离实例
+   * （coldstart 腿，座位 `/tmp/nebflow-coldstart/general`）的遗留记录也会落进来；它们
+   * 的 taskNo/title 是**退役台账**派发时刻的快照（同号不同物实证：#33-#86 vs 现役 v2
+   * 台账），reportStatus 缺席 ⇒ 前端按 running 渲染 ⇒「阻塞/进行中」旧任务混进现役
+   * 面板。历史窗（archived=true）**零过滤**——归档抽屉是记录的全量查看窗，零删除
+   * 纪律不破。世界解析失败 = fail-open（不过滤，宁见旧勿丢现役——显示面不因读盘抖动
+   * 清空）。
    */
   def rowsJson(registry: Map[String, nebflow.actor.AgentRecord], archived: Boolean = false): IO[Json] =
     IO.blocking(DelegateRegistry.list()).flatMap { records =>
       val scoped = records.filter(rec => rec.archivedAt.isDefined == archived)
-      scoped.traverse(rowJson(registry)).map(rows => Json.obj("rows" -> rows.asJson))
+      val windowed: IO[List[DelegateRegistry.Record]] =
+        if archived then IO.pure(scoped) // 历史窗：全量（零删除展示纪律）
+        else activeWorldSeatFilter(scoped)
+      windowed.flatMap(_.traverse(rowJson(registry))).map(rows => Json.obj("rows" -> rows.asJson))
     }
+
+  /** 记录的「座位」：项目 workspace 优先，回落派发 cwd（scopeProjection 同款取序）。 */
+  private[project] def seatOf(rec: DelegateRegistry.Record): String =
+    rec.projectWorkspace.getOrElse(rec.cwd)
+
+  /** 现役窗世界闸（fail-open：世界解析失败 = 不过滤）。 */
+  private def activeWorldSeatFilter(records: List[DelegateRegistry.Record]): IO[List[DelegateRegistry.Record]] =
+    activeWorldSeats.map {
+      case None => records
+      case Some(world) => records.filter(rec => inActiveWorld(world, seatOf(rec)))
+    }
+
+  /**
+   * 本实例「现役世界」座位集：dataRoot 本身（缺省 general 座位与其余引擎侧工作区）∪
+   * 各未归档/未卸载项目定义的 workspace（挂载单源 = [[ProjectStore.list]]，与面板项目
+   * 列表/启动挂载同源）。读盘失败 = `None`（调用方 fail-open）。
+   */
+  private def activeWorldSeats: IO[Option[Set[String]]] =
+    ProjectStore.list().attempt.map {
+      case Right(defs) => Some((PathUtil.dataRoot.toString +: defs.map(_.workspace)).toSet)
+      case Left(e) =>
+        nebflow.shared.NebflowLogger
+          .forName("nebflow.core.project.chains-read-face")
+          .warnSync(s"chains rows: active-world resolution failed — showing unscoped rows: ${e.getMessage}")
+        None
+    }
+
+  /**
+   * 座位 ∈ 世界：canonical 化后的相等/子树判定（symlink 稳——`Nebflow → Stand` 改名
+   * 后旧记录 cwd 仍走旧名实证）。canonical 化 = [[canonicalPath]]（确定性解析：现存
+   * 最深祖先 `toRealPath`（symlink 全解）+ 不存在尾巴词面回接——JDK `getCanonicalPath`
+   * 对「新建 symlink + 不存在尾巴」的解析有未定义态，弃用）。空座位恒 false（保守
+   * 剔除，cwd 陷阱不进判定）。
+   */
+  private[project] def inActiveWorld(world: Set[String], seat: String): Boolean =
+    if seat.trim.isEmpty then false
+    else
+      val seatCanon = canonicalPath(seat)
+      world.exists { root =>
+        root.trim.nonEmpty && {
+          val rootCanon = canonicalPath(root)
+          seatCanon == rootCanon || seatCanon.startsWith(rootCanon + java.io.File.separator)
+        }
+      }
+
+  /** 确定性 canonical：现存最深祖先 `toRealPath`（symlink 全解）+ 不存在尾巴词面回接。 */
+  private def canonicalPath(path: String): String =
+    try
+      val p = java.nio.file.Paths.get(path)
+      var anchor = p
+      while !java.nio.file.Files.exists(anchor) && anchor.getParent != null do anchor = anchor.getParent
+      if !java.nio.file.Files.exists(anchor) then p.toString
+      else
+        val realAnchor = anchor.toRealPath()
+        val tail = anchor.relativize(p)
+        if tail.toString.isEmpty then realAnchor.toString else realAnchor.resolve(tail).toString
+    catch case _: Throwable => path
 
   /**
    * 单行投影：Record 原样 + live 提示 + 最新 terminal-verdict 判词（ready-to-merge 供给源）

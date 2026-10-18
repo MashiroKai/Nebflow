@@ -598,6 +598,11 @@ class TaskLedgerStore private ():
   /**
    * list: render entries (state + dependencies). Optional exact filters
    * (status/assignee/project).
+   *
+   * project 过滤（面板退役台账泄漏微批 2026-10-18，#506）：过滤值 trim 后走
+   * [[TaskLedgerStore.matchesProjectTag]] 单点——字段精确匹配 + **遗留编码回退**
+   * （派发面 2026-10-18 前的条目把 tag 只写进标题前缀 `"stand — …"`、`project` 字段
+   * 缺席，精确过滤因此返空——过滤字段错位修复）。空结果文案同样用 trim 后的值。
    */
   def listSync(
     status: Option[String] = None,
@@ -606,15 +611,16 @@ class TaskLedgerStore private ():
     nodeTerminal: Map[String, String] = Map.empty
   ): Either[ToolError, String] =
     val store = readViewSync()
+    val projectTag = project.map(_.trim).filter(_.nonEmpty)
     val filtered = store.tasks
       .filter(t => status.forall(_ == t.status))
       .filter(t => assignee.forall(t.assignee.contains))
-      .filter(t => project.forall(t.project.contains))
+      .filter(t => projectTag.forall(matchesProjectTag(t, _)))
     if filtered.isEmpty then
       val scope = List(
         status.map(s => s"status=$s"),
         assignee.map(a => s"assignee=$a"),
-        project.map(p => s"project=$p")
+        projectTag.map(p => s"project=$p")
       ).flatten.mkString(" ")
       Right(s"Task ledger — empty${
           if scope.isEmpty then "" else s" matching $scope"
@@ -762,6 +768,32 @@ object TaskLedgerStore:
    * overwrite** `~/.nebflow/tasks.json`).
    */
   val FileName: String = "tasks-v2.json"
+
+  /**
+   * 派发面标题前缀的遗留项目 tag 定界符（`"<project> — <brief>"`；DelegateTool
+   * createLedgerEntry / DeviceDelegate spawnLocalDelegate 2026-10-18 前的编码形态，
+   * 字面含两侧空格 + U+2014）。**匹配单点 [[matchesProjectTag]] 专用**——改派发面
+   * 前缀措辞时必须同步这里。
+   */
+  val LegacyTitleTagDelimiter: String = " — "
+
+  /**
+   * list 的 project 过滤判据单点（面板退役台账泄漏微批 2026-10-18，#506——
+   * 「过滤字段错位」修复）：
+   *   1. `project` 字段缺席（None / 空串）⇒ 回退匹配**遗留编码**：标题以
+   *      `"<tag>" + [[LegacyTitleTagDelimiter]]` 开头。定界符带两侧空格 ⇒
+   *      `stand` 不吃 `stand-website — …`（前缀名串扰封死）。
+   *   2. 字段在场 ⇒ 精确相等（trim 后），**不再回退标题**——字段是权威，写坏了
+   *      该改数据而不是让读面猜。
+   * 大小写敏感：挂载名值域存在仅大小写异形的真实对（CZT / czt-project 同仓实证），
+   * 折叠会串组。
+   */
+  private[project] def matchesProjectTag(entry: Entry, tag: String): Boolean =
+    val wanted = tag.trim
+    entry.project.map(_.trim).filter(_.nonEmpty) match
+      case Some(p) => p == wanted
+      case None => entry.title.startsWith(wanted + LegacyTitleTagDelimiter)
+  end matchesProjectTag
 
   /** The three-state constants (the single source of the wire format, ruling a①). */
   object Status:
