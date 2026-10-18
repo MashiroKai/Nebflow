@@ -9,6 +9,17 @@
 //   index.html                 rewritten: 16 app CSS links -> 1 bundle link,
 //                              js/main.js -> assets/app-[hash].js, vendor kept
 //   assets/app-[hash].js       JS entry chunk (esbuild splitting, esm)
+//   assets/mobile/bootstrap-[hash].js
+//                              mobile-layer entry chunk (#510). js/mobile/
+//                              bootstrap.js is a SECOND <script type="module">
+//                              entry in index.html (mobile-ui-refactor), so it
+//                              is unreachable from main.js and a single-entry
+//                              build both orphan-guarded it red and shipped a
+//                              dist whose mobile hook 404'd. Bundled as a
+//                              second esbuild entry; its dynamic controller
+//                              imports stay lazy via the shared chunks/ pool
+//                              (splitting dedupes modules reachable from both
+//                              entries into shared chunks).
 //   assets/chunks/*-[hash].js  lazy chunks - every literal dynamic import()
 //                              keeps its lazy boundary (viewers, modal, ...)
 //   assets/app-[hash].css      app CSS concat in index.html link order
@@ -102,7 +113,13 @@ const RELEASE_DEFINES = STRIP_FRIENDS
   ? { 'window.__NEBFLOW_RELEASE__': 'true' }
   : {};
 const result = await esbuild.build({
-  entryPoints: [join(SRC, 'js', 'main.js')],
+  // Two entry points (see layout block above): the desktop app entry plus the
+  // mobile-layer bootstrap hook — both are loaded directly by index.html via
+  // <script type="module">, so both MUST be roots of the bundle graph.
+  entryPoints: [
+    { in: join(SRC, 'js', 'main.js'), out: 'app' },
+    { in: join(SRC, 'js', 'mobile', 'bootstrap.js'), out: 'mobile/bootstrap' },
+  ],
   bundle: true,
   splitting: true,
   format: 'esm',
@@ -112,7 +129,10 @@ const result = await esbuild.build({
   metafile: true,
   define: RELEASE_DEFINES,
   outdir: join(OUT, 'assets'),
-  entryNames: 'app-[hash]',
+  // [dir]/[name]: 'app' -> app-[hash].js (unchanged flat layout),
+  // 'mobile/bootstrap' -> mobile/bootstrap-[hash].js (assets/ subtree, served
+  // by the /assets/** wildcard route in dist mode).
+  entryNames: '[dir]/[name]-[hash]',
   chunkNames: 'chunks/[name]-[hash]',
   logLevel: 'warning',
 });
@@ -122,10 +142,16 @@ if (result.warnings.length > 0) {
 }
 // NOTE: with splitting, every dynamically-imported chunk also carries an
 // entryPoint flag (it is a dynamic entry). Match the real entry by path.
-const jsEntry = Object.entries(result.metafile.outputs)
-  .find(([, o]) => (o.entryPoint || '').replace(/\\/g, '/').endsWith('/js/main.js'))?.[0];
-if (!jsEntry) throw new Error('metafile has no main.js entry output');
-const jsEntryUrl = relative(OUT, jsEntry).split('\\').join('/');
+const entryOutputUrl = (entrySuffix) => {
+  const found = Object.entries(result.metafile.outputs)
+    .find(([, o]) => (o.entryPoint || '').replace(/\\/g, '/').endsWith(entrySuffix))?.[0];
+  if (!found) throw new Error(`metafile has no ${entrySuffix} entry output`);
+  return relative(OUT, found).split('\\').join('/');
+};
+const jsEntryUrl = entryOutputUrl('/js/main.js');
+// Mobile bootstrap entry (#510): emitted under assets/mobile/, rewritten into
+// the second <script type="module"> tag below.
+const mobileEntryUrl = entryOutputUrl('/js/mobile/bootstrap.js');
 
 // ── 4. Orphan guard: every web/js/**/*.js must be in metafile inputs ──
 const jsFiles = [];
@@ -176,8 +202,17 @@ html = html.replace(
   /<script\s+type="module"\s+src="js\/main\.js"><\/script>/,
   `<script type="module" src="${jsEntryUrl}"></script>`
 );
+// Mobile bootstrap hook (#510) -> its bundled entry (same discipline).
+html = html.replace(
+  /<script\s+type="module"\s+src="js\/mobile\/bootstrap\.js"><\/script>/,
+  `<script type="module" src="${mobileEntryUrl}"></script>`
+);
 if (!html.includes(`assets/${cssName}`)) throw new Error('index.html rewrite failed: css bundle link missing');
 if (!html.includes(jsEntryUrl)) throw new Error('index.html rewrite failed: js entry missing');
+if (!html.includes(mobileEntryUrl)) throw new Error('index.html rewrite failed: mobile bootstrap entry missing');
+if (html.includes('src="js/main.js"') || html.includes('src="js/mobile/bootstrap.js"')) {
+  throw new Error('index.html rewrite failed: unbundled script reference survived');
+}
 writeFileSync(join(OUT, 'index.html'), html);
 
 // ── 7. Copy-through: everything except js/, css/, index.html ───
@@ -192,6 +227,7 @@ for (const entry of readdirSync(SRC, { withFileTypes: true })) {
 const chunks = Object.keys(result.metafile.outputs).filter(o => o.includes('chunks/'));
 console.log(`build-web OK -> ${relative(ROOT, OUT)}/`);
 console.log(`  js entry : ${jsEntryUrl}`);
+console.log(`  mobile   : ${mobileEntryUrl} (bootstrap hook, #510)`);
 console.log(`  chunks   : ${chunks.length} lazy chunks (dynamic import boundaries preserved)`);
 console.log(`  css      : assets/${cssName} (${appCss.length} files concatenated in source link order)`);
 console.log(`  js files : ${jsFiles.length} sources, all in bundle graph (orphans: 0, exemptions: ${ORPHAN_EXEMPTIONS.size})`);
