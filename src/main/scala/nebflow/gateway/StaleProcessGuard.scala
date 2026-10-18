@@ -2,6 +2,8 @@ package nebflow.gateway
 
 import scala.collection.mutable.ListBuffer
 
+import nebflow.shared.Branding
+
 /**
  * P0 2026-09-06 (09:07 host-kill incident) — identity check BEFORE any kill.
  *
@@ -20,11 +22,17 @@ import scala.collection.mutable.ListBuffer
  * legitimately owns the port carries a marker):
  *   java -cp … nebflow.Main start                      → "nebflow.Main"
  *   java … nebflow.gateway.GatewayMain (sbt run / dev) → "GatewayMain"
- *   java -jar …/nebflow-assembly-<v>.jar start         → "nebflow-assembly"
- *   java -jar ~/.local/bin/nebflow.jar start           → "nebflow.jar"
- *   /Applications/Nebflow.app/Contents/MacOS/Nebflow   → "Nebflow.app/Contents/MacOS"
+ *   java -jar …/stand-assembly-<v>.jar start           → "stand-assembly"
+ *   java -jar ~/.local/bin/stand.jar start             → "stand.jar"
+ *   /Applications/stand.app/Contents/MacOS/stand       → "stand.app/Contents/MacOS"
+ * plus the pre-rename legacy spellings (nebflow-assembly / nebflow.jar /
+ * Nebflow.app) — old-brand installs still legitimately own the port.
  * so `stop && start`, RestartHelper self-restart (`exec java -jar … start`)
  * and launchd/desktop auto-start still get their stale instance cleared.
+ *
+ * 重启窗热修批 2026-10-18：brand-derived 标记（assembly/jar/app 名）自
+ * [[nebflow.shared.Branding]] 派生，不再裸拼；legacy 字面 = 兼容层，与
+ * release/install.sh 的 archive_legacy_jars 双拼 glob 同判据。
  */
 object StaleProcessGuard:
 
@@ -34,11 +42,14 @@ object StaleProcessGuard:
    * reintroduce the kill-anything hole — only full tokens qualify.
    */
   val NebflowMarkers: List[String] = List(
-    "nebflow.Main", // classpath launches + jpackage exec form
+    "nebflow.Main", // classpath launches + jpackage exec form (package tree is NOT parameterized, D3)
     "GatewayMain", // nebflow.gateway.GatewayMain (sbt run / dev forks)
-    "nebflow-assembly", // java -jar …/nebflow-assembly-<version>.jar
-    "nebflow.jar", // ~/.local/bin/nebflow.jar install form (Makefile install)
-    "Nebflow.app/Contents/MacOS" // macOS desktop launcher binary (jpackage)
+    s"${Branding.lowerName}-assembly", // java -jar …/stand-assembly-<version>.jar (current artifact)
+    "nebflow-assembly", // legacy artifact spelling (pre-rename installs)
+    s"${Branding.lowerName}.jar", // ~/.local/bin/stand.jar install form (Makefile install, current)
+    "nebflow.jar", // legacy Makefile install spelling
+    s"${Branding.productName}.app/Contents/MacOS", // macOS desktop launcher binary (jpackage --name = productName)
+    "Nebflow.app/Contents/MacOS" // legacy macOS app-bundle spelling
   )
 
   def isNebflowCommandLine(cmdline: String): Boolean =

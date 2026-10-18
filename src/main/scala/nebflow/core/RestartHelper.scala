@@ -1,6 +1,6 @@
 package nebflow.core
 
-import nebflow.shared.{NebflowLogger, PathUtil}
+import nebflow.shared.{Branding, NebflowLogger, PathUtil}
 
 import java.io.File
 
@@ -82,11 +82,26 @@ object RestartHelper:
 
   /** Resolve the absolute path to the running JAR (from java.class.path). */
   def resolveJarPath(): Option[String] =
-    val cp = sys.props.getOrElse("java.class.path", "")
+    resolveJarPathFrom(sys.props.getOrElse("java.class.path", "")).map(p => new File(p).getAbsolutePath)
+
+  /**
+   * Pure core of [[resolveJarPath]] (parameterized for the spec). The packaged
+   * run form is recognized by brand: the fat jar name carries
+   * `Branding.lowerName` (`stand-assembly-*.jar` today) — legacy
+   * `nebflow-assembly-*` checkouts are still accepted (dual read, same
+   * contract as the installers' dual-glob). 重启窗热修批 2026-10-18: the bare
+   * `contains("nebflow")` probe went blind under the stand artifact, so the
+   * generic first-jar fallback could win and point restart spawns at a random
+   * classpath jar.
+   */
+  def resolveJarPathFrom(classPath: String): Option[String] =
+    val cp = classPath
+    val lowerName = Branding.lowerName.toLowerCase
     cp.split(File.pathSeparatorChar)
-      .find(p => p.endsWith(".jar") && p.toLowerCase.contains("nebflow"))
+      .find { p =>
+        p.endsWith(".jar") && (p.toLowerCase.contains(lowerName) || p.toLowerCase.contains("nebflow"))
+      }
       .orElse(cp.split(File.pathSeparatorChar).find(_.endsWith(".jar")))
-      .map(p => new File(p).getAbsolutePath)
 
   private def ensureLogsDir(): Unit =
     val logsDir = new File(PathUtil.dataRoot.toString, "logs")

@@ -28,9 +28,13 @@ class StaleProcessGuardSpec extends FunSuite:
     // Real nebflow launch shapes (restart-flow compatibility set)
     100L -> "java -cp /x/nebflow-assembly-1.4.1.jar nebflow.Main --home /tmp/a --port 8095 start",
     101L -> "java -Xmx2g -cp … nebflow.gateway.GatewayMain", // sbt run / dev fork
-    102L -> "java -jar /opt/nebflow/nebflow-assembly-1.4.1.jar start --no-browser", // RestartHelper / autostart
-    103L -> "java --add-opens java.base/java.lang=ALL-UNNAMED -jar /Users/x/.local/bin/nebflow.jar start --no-browser", // Makefile install form
-    104L -> "/Applications/Nebflow.app/Contents/MacOS/Nebflow --server", // macOS desktop (jpackage)
+    102L -> "java -jar /opt/nebflow/nebflow-assembly-1.4.1.jar start --no-browser", // RestartHelper / autostart (legacy artifact spelling)
+    103L -> "java --add-opens java.base/java.lang=ALL-UNNAMED -jar /Users/x/.local/bin/nebflow.jar start --no-browser", // Makefile install form (legacy spelling)
+    104L -> "/Applications/Nebflow.app/Contents/MacOS/Nebflow --server", // macOS desktop (jpackage, legacy spelling)
+    // Current-brand (stand) launch shapes — brand-derived markers (重启窗热修批 2026-10-18)
+    110L -> "java -jar /opt/stand/stand-assembly-2026.9.20.jar start --no-browser", // RestartHelper / autostart (current artifact)
+    111L -> "java --add-opens java.base/java.lang=ALL-UNNAMED -jar /Users/x/.local/bin/stand.jar start --no-browser", // Makefile install form (current)
+    112L -> "/Applications/stand.app/Contents/MacOS/stand --server", // macOS desktop (jpackage --name = productName)
     // Foreign occupants
     200L -> "python3 -m http.server 8080",
     201L -> "node main.js", // bare "Main" must NOT match — the incident hole reopened
@@ -41,7 +45,7 @@ class StaleProcessGuardSpec extends FunSuite:
   private def fakeReader: Long => Option[String] = fakeCmds.lift
 
   test("every real nebflow launch shape classifies stale (restart flows keep clearing)"):
-    List(100L, 101L, 102L, 103L, 104L).foreach { pid =>
+    List(100L, 101L, 102L, 103L, 104L, 110L, 111L, 112L).foreach { pid =>
       StaleProcessGuard.classify(List(pid), 1L, fakeReader) match
         case Right(stale) => assertEquals(stale, List(pid))
         case Left(f) => fail(s"pid $pid is a nebflow launch shape — must be killable, got foreign: ${f.detail}")

@@ -86,20 +86,30 @@ class SingleInstanceGuardSpec extends FunSuite:
 
   test("stand health is recognized after rename") {
     withHttpServer("""{"product":"stand","status":"ok","version":"2026.10.18"}""") { p =>
-      assert(SingleInstanceGuard.checkPort("127.0.0.1", p).unsafeRunSync()
-        .isInstanceOf[SingleInstanceGuard.NebflowInstance])
+      assert(
+        SingleInstanceGuard
+          .checkPort("127.0.0.1", p)
+          .unsafeRunSync()
+          .isInstanceOf[SingleInstanceGuard.NebflowInstance]
+      )
     }
   }
 
   test("unrelated product/version fields must not hijack startup focus") {
     for body <- List(
-      """{"product":"other","version":"1.0"}""",
-      """{"version":"1.0"}""",
-      """<html>"product" and "version"</html>"""
-    ) do withHttpServer(body) { p =>
-      assert(SingleInstanceGuard.checkPort("127.0.0.1", p).unsafeRunSync()
-        .isInstanceOf[SingleInstanceGuard.ForeignOccupant])
-    }
+        """{"product":"other","version":"1.0"}""",
+        """{"version":"1.0"}""",
+        """<html>"product" and "version"</html>"""
+      )
+    do
+      withHttpServer(body) { p =>
+        assert(
+          SingleInstanceGuard
+            .checkPort("127.0.0.1", p)
+            .unsafeRunSync()
+            .isInstanceOf[SingleInstanceGuard.ForeignOccupant]
+        )
+      }
   }
 
   test("silent socket (no HTTP) classifies ForeignOccupant") {
@@ -192,11 +202,16 @@ class SingleInstanceGuardSpec extends FunSuite:
     }
 
   test("health JSON carries the product marker") {
-    // Contract side: /api/health must include "product":"nebflow" so the
+    // Contract side: /api/health must include "product":<lowerName> so the
     // guard's primary identification marker actually exists. The health
     // payload's single source is HealthPayload.build (hotupdate 批 2 G3
     // 单一来源化, nebflow/core/hotrestart/HealthProbe.scala) — the route
     // (RestApiRoutes) delegates to it and no longer carries the literal.
+    // 重启窗热修批 2026-10-18: the marker is brand-DERIVED
+    // (`Branding.lowerName`, i.e. "stand" today; the bare "nebflow" literal
+    // died with the stand rename) — the guard dual-accepts legacy spellings
+    // (Set("nebflow", "stand", Branding.lowerName)), so old + new instances
+    // still identify each other across the rename boundary.
     // Pinned here textually against that single source to survive
     // refactorings; the route itself is exercised E2E.
     val source = scala.io.Source
@@ -204,7 +219,10 @@ class SingleInstanceGuardSpec extends FunSuite:
         java.nio.file.Path.of("src/main/scala/nebflow/core/hotrestart/HealthProbe.scala").toFile
       )
       .mkString
-    assert(source.contains("\"product\" -> \"nebflow\""), "health product marker missing")
+    assert(
+      source.contains("\"product\" -> Branding.lowerName.asJson"),
+      "health product marker (brand-derived) missing"
+    )
   }
 
 end SingleInstanceGuardSpec

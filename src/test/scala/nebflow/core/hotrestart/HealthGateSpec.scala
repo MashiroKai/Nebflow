@@ -81,7 +81,11 @@ class HealthGateSpec extends munit.CatsEffectSuite:
       // 取证：健康载荷含版本号（设计 §12 未取证项 #2 的答案）+ 路径与既有端点一致
       payload <- HealthHttp.fetch("127.0.0.1", ep.port, 2000).flatMap(orDie("health fetch"))
       _ = assertEquals(HealthPayload.versionOf(payload), Some(version), "health payload must carry the version field")
-      _ = assert(payload.hcursor.downField("product").as[String].toOption.contains("nebflow"))
+      // product = 品牌派生（重启窗热修批 2026-10-18：字面 "nebflow" → Branding.lowerName；
+      // single-instance guard 双读 legacy 拼写，两侧契约不变）
+      _ = assert(
+        payload.hcursor.downField("product").as[String].toOption.contains(nebflow.shared.Branding.lowerName)
+      )
       _ = assertEquals(
         ProbeEndpoint.Path,
         "/api/health",
@@ -205,6 +209,11 @@ class HealthGateSpec extends munit.CatsEffectSuite:
         HealthCheck.expectedVersion(Some("  "), Some("-jar /x/nebflow-assembly-1.4.1-beta.56.jar")),
         Some("1.4.1-beta.56")
       )
+      // 现行品牌产物形态（重启窗热修批 2026-10-18）：stand-assembly-*.jar 同样解析
+      assertEquals(
+        HealthCheck.expectedVersion(None, Some("java -jar /x/stand-assembly-2026.9.20.jar start")),
+        Some("2026.9.20")
+      )
       assertEquals(HealthCheck.expectedVersion(None, Some("cannot resolve run JAR (sbt run / dev classpath?)")), None)
       assertEquals(HealthCheck.expectedVersion(None, None), None)
     }.unsafeRunSync()
@@ -239,7 +248,9 @@ class HealthGateSpec extends munit.CatsEffectSuite:
       _ = assertEquals(cur, Some("2026.9.20"))
       _ = assertEquals(prev, Some("2026.9.19"))
       jar <- InstallPointer.jarIn(dir, "2026.9.19").flatMap(orDie("retained package"))
-      _ = assert(jar.endsWith("versions/2026.9.19/nebflow-assembly-2026.9.19.jar"), jar)
+      // jar 名 = `${Branding.lowerName}-assembly-<v>.jar`（现值 stand-assembly-…，
+      // 与 release/install.sh 的 JAR_NAME 契约同构；重启窗热修批 2026-10-18）。
+      _ = assert(jar.endsWith("versions/2026.9.19/stand-assembly-2026.9.19.jar"), jar)
       flipped <- InstallPointer.flip(dir)
       _ = assertEquals(flipped, Right(("2026.9.19", "2026.9.20")))
       after <- InstallPointer.layout(dir)
@@ -258,6 +269,30 @@ class HealthGateSpec extends munit.CatsEffectSuite:
       flipOnly <- InstallPointer.flip(onlyCurrent)
       _ = assert(flipOnly.isLeft, "no previous version ⇒ nothing to roll back to")
       _ = assert(InstallPointer.jarIn(onlyCurrent, "2026.9.19").unsafeRunSync().isLeft)
+    yield ()
+  }
+
+  test("retained-package lookup: legacy nebflow-assembly-* spelling still rolls back; current brand wins when both") {
+    // 品牌迁移前的存量安装：versions/<v>/ 里只有上一代 `nebflow-assembly-<v>.jar`
+    // 拼写——运行时读侧 dual-glob（与 release/install.sh 的 archive_legacy_jars
+    // 同判据；重启窗热修批 2026-10-18）保证跨改名边界的回滚不断。
+    for
+      dir <- tmpDir("nb-ptr-legacy")
+      legacyDir = dir / InstallPointer.VersionsDirName / "2026.9.18"
+      _ <- IO.blocking {
+        os.makeDir.all(legacyDir)
+        os.write(legacyDir / "nebflow-assembly-2026.9.18.jar", "jar-legacy", createFolders = true)
+      }
+      legacyJar <- InstallPointer.jarIn(dir, "2026.9.18").flatMap(orDie("legacy retained package"))
+      _ = assert(legacyJar.endsWith("versions/2026.9.18/nebflow-assembly-2026.9.18.jar"), legacyJar)
+      bothDir = dir / InstallPointer.VersionsDirName / "2026.9.17"
+      _ <- IO.blocking {
+        os.makeDir.all(bothDir)
+        os.write(bothDir / "nebflow-assembly-2026.9.17.jar", "jar-legacy", createFolders = true)
+        os.write(bothDir / "stand-assembly-2026.9.17.jar", "jar-current", createFolders = true)
+      }
+      currentJar <- InstallPointer.jarIn(dir, "2026.9.17").flatMap(orDie("dual-spelling package"))
+      _ = assert(currentJar.endsWith("versions/2026.9.17/stand-assembly-2026.9.17.jar"), currentJar)
     yield ()
   }
 
@@ -286,7 +321,7 @@ class HealthGateSpec extends munit.CatsEffectSuite:
       _ = assertEquals(layout.current, Some("2026.9.19"), "green: the launcher now runs the previous version")
       _ = assertEquals(layout.previous, Some("2026.9.20"))
       seen <- captured.get
-      _ = assert(seen.exists(_._1.endsWith("versions/2026.9.19/nebflow-assembly-2026.9.19.jar")), seen.toString)
+      _ = assert(seen.exists(_._1.endsWith("versions/2026.9.19/stand-assembly-2026.9.19.jar")), seen.toString)
       // 「只替换包路径」的可核判据：回执/意图里的复起命令**逐字等于既有纯函数命令构造**
       // 对同一 form/javaBin **只把包路径换成上一版**的产物（不新造命令构造器）。
       // ⚠️ 不直接断言 spawnCmd 含版本号：`HotRestart.detectForm` 在测试 JVM（sbt 类路径、

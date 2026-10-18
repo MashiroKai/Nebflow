@@ -2,6 +2,8 @@ package nebflow.core
 
 import munit.FunSuite
 
+import java.io.File
+
 class AutoStartServiceSpec extends FunSuite:
 
   test("isBundledApp detects jpackage app-bundle jar layout") {
@@ -70,6 +72,45 @@ class AutoStartServiceSpec extends FunSuite:
       )
     )
     assert(entry.contains("X-GNOME-Autostart-enabled=true"))
+  }
+
+  // ── 打包态判定（重启窗热修批 2026-10-18：jar 名品牌派生）─────────────
+
+  test("isDistributionJar accepts current-brand and legacy spellings, rejects foreign jars") {
+    // 现行品牌产物（stand-assembly-<v>.jar）——热修前 contains("nebflow") 恒 miss
+    assert(AutoStartService.isDistributionJar("/opt/stand/stand-assembly-2026.9.20.jar"))
+    assert(AutoStartService.isDistributionJar("/opt/stand/STAND-ASSEMBLY-2026.9.20.JAR")) // case-insensitive
+    // 上一代拼写的存量 checkout 仍然合法（installer dual-glob 同判据）
+    assert(AutoStartService.isDistributionJar("/opt/nebflow/nebflow-assembly-1.4.1.jar"))
+    // jpackage app bundle 内的 jar 恒可（布局判据，与名字无关）
+    assert(AutoStartService.isDistributionJar("/Applications/stand.app/Contents/app/stand.jar"))
+    // 非 distribution jar（sbt run 的 scala-library 等）必须被滤掉
+    assert(!AutoStartService.isDistributionJar("/repo/target/scala-3.5.2/scala-library.jar"))
+    assert(!AutoStartService.isDistributionJar("/tmp/random-thing.jar"))
+  }
+
+  test("RestartHelper.resolveJarPathFrom prefers the brand jar over a generic classpath jar") {
+    // 现行品牌 fat jar 在场 ⇒ 选它（而非首个 .jar）
+    assertEquals(
+      RestartHelper.resolveJarPathFrom(
+        s"/repo/lib/scala-library.jar${File.pathSeparator}/opt/stand/stand-assembly-2026.9.20.jar"
+      ),
+      Some("/opt/stand/stand-assembly-2026.9.20.jar")
+    )
+    // legacy 拼写同样被识别（双读）
+    assertEquals(
+      RestartHelper.resolveJarPathFrom(
+        s"/repo/lib/scala-library.jar${File.pathSeparator}/opt/nebflow/nebflow-assembly-1.4.1.jar"
+      ),
+      Some("/opt/nebflow/nebflow-assembly-1.4.1.jar")
+    )
+    // 无品牌 jar ⇒ generic 回落（首个 .jar）——resolveRunJar 的过滤层兜底
+    assertEquals(
+      RestartHelper.resolveJarPathFrom("/repo/lib/scala-library.jar"),
+      Some("/repo/lib/scala-library.jar")
+    )
+    // 空 classpath ⇒ None
+    assertEquals(RestartHelper.resolveJarPathFrom(""), None)
   }
 
 end AutoStartServiceSpec
