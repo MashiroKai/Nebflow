@@ -13,7 +13,7 @@ import org.typelevel.ci.CIString
 import java.net.URI
 import java.net.http.{HttpClient, WebSocket, WebSocketHandshakeException}
 import java.nio.charset.StandardCharsets.UTF_8
-import java.util.concurrent.{ConcurrentHashMap, CompletionStage, TimeUnit}
+import java.util.concurrent.{CompletableFuture, ConcurrentHashMap, CompletionStage, ExecutionException, TimeoutException, TimeUnit}
 
 /**
  * Portal frame bridge for ONE relay WebSocket connection (phase 3a design
@@ -806,29 +806,186 @@ private[neblink] final class PortalTunnelBridge(
 
 end PortalTunnelBridge
 
-/** Frames sent to the relay WS, serialized per socket (JDK sendText ordering contract). */
-private[neblink] final class RelayFrameSender(ws: WebSocket):
+/**
+ * Frames sent to the relay WS, serialized per socket (JDK sendText ordering
+ * contract).
+ *
+ * portal-cycle 批（2026-10-15，复测 W1 两个失败面的修复件）——修前
+ * `send` 只是「锁跨 `future.get(15s)`」，两个邻接失败面都出自该语义的盲区：
+ *
+ *  - **写停摆超时**（W1 `TimeoutException` ×5）：路径停摆时 future 在写预算内
+ *    不完成 ⇒ 周期失败。但 `get` 超时**不取消** future——帧仍在写、JDK 单发位
+ *    （`pendingTextOrBinary`）仍被它占着；修前丢掉了这个事实，下一帧
+ *    `sendText` 撞位拿到已失败的 `IllegalStateException` future ⇒ 第二个健康
+ *    周期被一个误导性错误连坐。修后：在飞 future 记账（[[inFlight]]），下一发
+ *    **先排空**（有界）再入队——顺序由构造保证，路径在排空窗内恢复则周期存活。
+ *  - **单发位瞬态碰撞**（W1 `ISE: Send pending` ×4）：心跳 ping/pong、ack、
+ *    bind_confirm、relay_response 等**绕锁直发方**（控制面不得被 bulk 顶头
+ *    阻塞，绕锁是有意的）恰在本方入队瞬间占位 ⇒ 修前一发拒接就整周期失败。
+ *    修后：拒接（future 已失败携 `IllegalStateException` 且出向开）按瞬态
+ *    处理——小额停等重试，有界；真写失败（IOException 族 / 出向已关的 ISE）
+ *    照旧立即如实传播。
+ *
+ * 超时语义收紧为诚实三件：本周期失败携带**可读消息**的 `TimeoutException`；
+ * **不 abort** socket（写仍可能完成——停摆不是会话死亡证据，撕会话不属于
+ * sender 的权限）；在飞帧保持记账，不污染后续发送。
+ */
+private[neblink] final class RelayFrameSender(
+  ws: WebSocket,
+  sendTimeoutSec: Int = RelayFrameSender.SendTimeoutSec,
+  pendingRetryMillis: Long = RelayFrameSender.PendingRetryMillis
+):
 
   private val lock = new Object
 
   /**
+   * The last future this sender handed to `ws.sendText` that may still be in
+   * flight — i.e. still holding the JDK single-send position. Guarded by
+   * `lock`; null = position known free.
+   */
+  private var inFlight: CompletableFuture[WebSocket] = null
+
+  /**
    * Send one complete text frame. The lock serializes ALL portal uplink
-   * frames on this socket: `java.net.http.WebSocket.sendText` throws
-   * IllegalStateException when the previous send has not completed, so
-   * concurrent fibers (mailbox consumer + per-cycle streamers) must not race.
-   * The bounded wait keeps a stalled relay from wedging the senders forever.
+   * frames on this socket: `java.net.http.WebSocket.sendText` fails while the
+   * previous text send has not completed, so concurrent fibers (mailbox
+   * consumer + per-cycle streamers) must not race the position.
+   *
+   * Budgeting (implementation constants, not contract): acquiring the
+   * single-send position — draining a still-in-flight predecessor plus
+   * retrying transient rejections — shares ONE [[RelayFrameSender.SendTimeoutSec]]
+   * window; once enqueued, the frame's own write gets a fresh full window.
+   * The bounded waits keep a stalled relay from wedging the senders forever
+   * without ever tearing the session from inside the sender.
    */
   def send(text: String): IO[Unit] =
     IO.blocking {
       lock.synchronized {
-        ws.sendText(text, true).get(RelayFrameSender.SendTimeoutSec.toLong, TimeUnit.SECONDS)
+        val positionDeadlineNs = System.nanoTime() + TimeUnit.SECONDS.toNanos(sendTimeoutSec.toLong)
+        drainPrevious(positionDeadlineNs)
+        enqueueAndAwait(text, positionDeadlineNs)
         ()
       }
     }
 
+  /**
+   * A predecessor frame whose write budget expired (or that was interrupted
+   * mid-await) may STILL be occupying the single-send position. Wait for it
+   * (bounded by the remaining position budget) instead of letting our own
+   * `sendText` bounce off the position with a misleading
+   * IllegalStateException: if the stalled write completes, this send proceeds
+   * and the cycle survives; if the budget exhausts, this send fails with an
+   * honest stall error while the predecessor stays tracked for the next one.
+   * A predecessor that completed EXCEPTIONALLY also frees the position — the
+   * failure itself surfaces from our own send below (the socket is likely
+   * broken; the tunnel liveness machinery owns that path).
+   */
+  private def drainPrevious(positionDeadlineNs: Long): Unit =
+    val predecessor = inFlight
+    inFlight = null
+    if predecessor != null && !predecessor.isDone then
+      val remainingNs = math.max(0L, positionDeadlineNs - System.nanoTime())
+      try predecessor.get(remainingNs, TimeUnit.NANOSECONDS)
+      catch
+        case _: TimeoutException =>
+          // Still in flight ⇒ still holding the single-send position: keep the
+          // accounting (the doc promise above) so the NEXT send drains it
+          // instead of bouncing off the held position through the retry loop.
+          inFlight = predecessor
+          throw previousStallTimeout()
+        case e: InterruptedException =>
+          // Interrupted mid-drain: the predecessor was NOT cancelled and keeps
+          // the position — same accounting as the timeout face.
+          inFlight = predecessor
+          Thread.currentThread().interrupt()
+          throw e
+        case _: ExecutionException => () // position free either way; our send reports the socket honestly
+
+  /**
+   * Enqueue behind the (now expected-free) single-send position and await the
+   * wire write with a fresh full write budget. Transient position rejections
+   * — an already-failed `IllegalStateException` future while the output is
+   * open, i.e. a lock-BYPASSING control sender (heartbeat ping/pong, ack,
+   * bind_confirm, relay_response) held the position at our instant — are
+   * retried with a small park until the position budget runs out; they are
+   * normal operation, never a cycle failure. Real write failures (IOException
+   * family; ISE with the output already closed) propagate immediately.
+   */
+  private def enqueueAndAwait(text: String, positionDeadlineNs: Long): Unit =
+    var pendingRejection: Throwable = null
+    var done = false
+    while !done do
+      if System.nanoTime() >= positionDeadlineNs then throw positionTimeout(pendingRejection)
+      val fut: CompletableFuture[WebSocket] =
+        try ws.sendText(text, true)
+        catch
+          // Defensive sync-throw face: the javadoc contract says
+          // IllegalStateException when a previous send is pending (this JDK
+          // returns a failed future instead — pinned by the pump-selfabort P1
+          // real-socket fixture). Same verdict as the async face below: retry
+          // while the output is open, real death otherwise.
+          case e: IllegalStateException =>
+            if ws.isOutputClosed() then throw e
+            pendingRejection = e
+            parkBeforeRetry()
+            null
+      if fut != null then
+        inFlight = fut
+        try
+          // (InterruptedException propagates with `inFlight` still set on
+          // purpose: the future was not cancelled and keeps the position —
+          // the next send drains it, same accounting as drainPrevious.)
+          fut.get(sendTimeoutSec.toLong, TimeUnit.SECONDS)
+          inFlight = null
+          done = true
+        catch
+          case e: ExecutionException =>
+            inFlight = null
+            e.getCause match
+              case ise: IllegalStateException if !ws.isOutputClosed() =>
+                pendingRejection = ise
+                parkBeforeRetry()
+              case c: Exception => throw c
+              case c            => throw new ExecutionException(c)
+          case _: TimeoutException =>
+            // Write budget exhausted while the frame is STILL in flight (`get`
+            // with timeout does not cancel it — it keeps holding the single-send
+            // position). Keep it tracked so the NEXT send drains instead of
+            // bouncing off the position misleadingly; fail THIS cycle only and
+            // never abort the socket: a stalled write is not a session death
+            // verdict (the write may still complete once the path recovers).
+            throw writeStallTimeout()
+
+  private def parkBeforeRetry(): Unit =
+    try Thread.sleep(pendingRetryMillis)
+    catch case _: InterruptedException => Thread.currentThread().interrupt()
+
+  private def writeStallTimeout(): TimeoutException =
+    new TimeoutException(
+      s"relay frame write did not complete within ${sendTimeoutSec}s — relay write stalled (slow WAN / path stall?); " +
+        "connection left intact, frame still in flight"
+    )
+
+  private def previousStallTimeout(): TimeoutException =
+    new TimeoutException(
+      s"previous relay frame still in flight after ${sendTimeoutSec}s — relay write stalled (slow WAN / path stall?); " +
+        "connection left intact"
+    )
+
+  private def positionTimeout(lastRejection: Throwable): TimeoutException =
+    val cause =
+      if lastRejection == null then ""
+      else s" (last rejection: ${NeblinkRelayTunnel.describeErr(lastRejection)})"
+    new TimeoutException(
+      s"relay send position not acquired within ${sendTimeoutSec}s$cause — connection left intact"
+    )
+
 object RelayFrameSender:
   /** Non-contract implementation constant (backpressure tuning belongs to T-1). */
   val SendTimeoutSec: Int = 15
+
+  /** Non-contract implementation constant: park between position retries. */
+  val PendingRetryMillis: Long = 25L
 
 private[neblink] object PortalTunnelBridge:
 
