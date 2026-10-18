@@ -82,3 +82,38 @@ export function friendsEnabled() {
  * i18n 键 / CSS 全部保留。纯本地标记，零后端参与。
  */
 export const TRUST_SEALED = true;
+
+/**
+ * VOICE_SEALED — 全双工语音 + 同源语音气泡 封存开关（voiceseal 批，作者令
+ * 批 #508 逐字：「把全双工语音的功能先封存。携带跟他同源的拖动居中语音气泡的
+ * 功能一起隐藏。」）。
+ *
+ * 形态沿用本仓封存惯例的**好友批分支**（`friendsEnabled()` 同款）：flag 源 =
+ * 既有服务端配置通道，不新增机制 —— <home>/nebflow.json 键
+ * `"features": { "voice": true }` 经 WS `configData` → `state.parsedConfig`
+ * 原样到达前端；**缺席即封存（默认 OFF）**。main.js 在本 boot 首帧
+ * configData 上一次性 latch（好友批同款：不热切换，配置改动刷新页面生效）。
+ *
+ * **一个 flag 管两个同源面**（作者令②「两个面同一 flag 或同族 flag」）：
+ *   · 面 A = 全双工语音（voice-mode batch）：`#voice-mode-overlay` +
+ *     voiceMode.js + input.js 拖动手势入口 + voiceEngine conversation 模式；
+ *   · 面 B = 拖动居中语音气泡（同源判定见 voiceSeal 头注 / 本批报告）：
+ *     `#mic-orb-wrap`（#voice-btn + #mic-canvas + #mic-css-orb +
+ *     .voice-drag-hint）+ micOrb.js 单例挂载。
+ * 两面由同一 `voiceEnabled()` 判定，封存/恢复同步翻转。
+ *
+ * 与 `friendsEnabled()` 的**一处刻意差异**（在此申报）：好友批在 release
+ * bundle 里走 `__NEBFLOW_RELEASE__` 物理剥除（esbuild define 折叠）；语音批
+ * **不接** release 剥除分支 —— 封存姿态（默认 OFF）在 dev/release 一致，release
+ * 产物同样可用 `"features": {"voice": true}` 恢复（封存 ≠ 剥除，可恢复优先；
+ * ⑥-E 的「release 面无需另加」结论在此同样成立：默认 OFF 已覆盖 release 面）。
+ *
+ * 生效路径（同好友批）：
+ *   · dev 树（sbt run 直供 source）：改 nebflow.json → 刷新页面即生效；
+ *   · 打包态：改 nebflow.json + 重建 jar（web 资源内嵌）→ 重启生效；
+ *   · 封存/恢复零数据副作用：localStorage `voice_used` 标记、orb 预设配置
+ *     （orbPresets 本地档）、i18n 键、CSS、路由注册全部保留不删。
+ */
+export function voiceEnabled() {
+  return state.parsedConfig?.features?.voice === true; // 缺席 = 封存（默认 OFF）
+}

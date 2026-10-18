@@ -126,7 +126,10 @@ import { initSocialPanel } from './socialPanel.js';
 // from the settings page entry row (#btn-open-secrets). Document-level wiring,
 // so it survives the settings re-renders that rebuild that button.
 import { initSecretsPanel } from './secretsPanel.js';
-import { friendsEnabled } from './featureFlags.js';
+import { friendsEnabled, voiceEnabled } from './featureFlags.js';
+// voiceseal 批（批 #508）：全双工语音 + 同源语音气泡 封存面的 DOM 挡板
+// （hidden 挡面，零删除；flag = features.voice，默认封存）。
+import { applyVoiceSeal } from './voiceSeal.js';
 // FE 组件化批次七(2026-09-28):main.js 顶层函数族抽取 —— import 回绑(主体调用点逐字不动;
 // window.* 挂钩行与顶层 setInterval/addEventListener 挂点保留在 main.js 原位置)。
 import { stopThinkingTimer } from './main/thinkingTimer.js';
@@ -138,6 +141,11 @@ import { updateBgAgentIndicator, bgAgentKindFromSession, renderBgAgentDropdown, 
 // Friends release gating latch (2026-09-08): false until the first configData
 // of the boot decides the flag (see the configData handler below).
 let friendsGateDecided = false;
+
+// voiceseal 批（批 #508）语音封存 latch：同好友批 —— 本 boot 首帧 configData
+// 一次性判定（不热切换，flag 改动刷新页面生效）。latch 前两面维持 index.html
+// 的静态封存姿态（`hidden`，预绘制零闪现）。
+let voiceGateDecided = false;
 
 // Expose for cross-module cleanup (input.js)
 window.__stopThinkingTimer = stopThinkingTimer;
@@ -2271,6 +2279,18 @@ onMessage('configData', (msg, view) => {
       initMessages();
     }
   }
+  // Voice seal latch（voiceseal 批，批 #508）：全双工语音（#voice-mode-overlay）
+  // + 同源拖动居中语音气泡（#mic-orb-wrap）两面同一 flag 一并受控。
+  //   · ON  → 摘两面 `hidden` + initMicOrb()（orb 单例此刻才挂载：GL 上下文
+  //           与 1s 状态轮询只在未封存态占资源）；
+  //   · OFF → 幂等补挂 `hidden`（静态封存姿态兜底重申）。
+  // latch 前不可能存在语音会话（入口 display:none 不可交互、WS 未连 ⇒ 发送腿
+  // 不存在），故无需处理「打开中的会话」迁移。
+  if (!voiceGateDecided) {
+    voiceGateDecided = true;
+    applyVoiceSeal(voiceEnabled());
+    if (voiceEnabled()) initMicOrb();
+  }
   const editor = document.getElementById('config-editor');
   if (editor) editor.value = state.configText;
   // Re-render settings if the modal is open
@@ -3322,7 +3342,11 @@ initInput(chatViews.primary);
 // `initMicOrb()` 现在是 no-op（挂载判据 = `#mic-canvas` 在场；主区已无该 canvas）。
 // 调用点保留：设置面/预览面的 OrbRenderer 管线仍由本模块导出，且未来若重挂输入区
 // orb 只需恢复 index.html 的 canvas（一处）。麦克风反馈改由 input.js 承担。
-initMicOrb(); // Mic orb renderer — composer mount retired (no #mic-canvas ⇒ no-op)
+// voicefix 批（2026-09-21 ③）回退修正④ ⇒ 输入区光球重新在位，本调用重新生效。
+// voiceseal 批（批 #508）：封存态（features.voice 默认 OFF）此处为 no-op
+// （getMicOrb 的 flag 闸返回 null）—— orb 挂载移至 configData latch（flag ON
+// 时 unseal 后 initMicOrb()，见上方 voice seal latch）。
+initMicOrb(); // Mic orb renderer — seal-gated (voiceseal): mounts only when features.voice is on
 initGlobalFileDrop(); // #303 — document-level drag & drop onto input bars
 
 // Keep the last chat message visible above the floating #input-area.
