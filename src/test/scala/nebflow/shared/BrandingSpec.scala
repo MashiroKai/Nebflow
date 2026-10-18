@@ -43,7 +43,7 @@ class BrandingSpec extends FunSuite:
     assertEquals(Branding.profileUrl, "https://mystand.space/profile")
     assertEquals(Branding.loginUrl, "https://mystand.space/login")
     assertEquals(Branding.installUrl, "https://nebflow.space/install.sh")
-    assertEquals(Branding.serverUrl, "https://neblink.nebflow.space")
+    assertEquals(Branding.serverUrl, "https://link.mystand.space")
     assertEquals(Branding.githubOrg, "MashiroKai")
     assertEquals(Branding.githubRepo, "Nebflow")
     assertEquals(Branding.homeDirName, ".nebflow")

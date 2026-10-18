@@ -232,6 +232,10 @@ class DeviceIdentitySpec extends FunSuite:
     // apex domain and subdomains both count as production
     assert(nebflow.neblink.EnrollGuard.enrollRefusal("https://nebflow.space", true, false).isDefined)
     assert(nebflow.neblink.EnrollGuard.enrollRefusal("http://auth.nebflow.space:443", true, false).isDefined)
+    // the current brand/relay family counts as production too (apex + subdomains)
+    assert(nebflow.neblink.EnrollGuard.enrollRefusal("https://link.mystand.space", true, false).isDefined)
+    assert(nebflow.neblink.EnrollGuard.enrollRefusal("https://console.mystand.space", true, false).isDefined)
+    assert(nebflow.neblink.EnrollGuard.enrollRefusal("https://mystand.space", true, false).isDefined)
     // explicit switch -> allowed (old behaviour)
     assertEquals(nebflow.neblink.EnrollGuard.enrollRefusal(prod, true, true), None)
     // default data root -> allowed (zero behaviour change)

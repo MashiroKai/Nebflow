@@ -23,7 +23,7 @@
 #      设备注册被拒 ⇒ 隔离实例默认不进生产网。为免「静默」，脚本在启动前另打印 NOTICE 明示本次
 #      判定（见下方分支），使作者一眼可见「本次不进生产网」。
 #      为何不再默认放行：旧行为让「随手起一个隔离实例」= 往【生产】NebLink
-#      https://neblink.nebflow.space 注册一台新设备（brand.conf 的 serverUrl 真值，也是
+#      https://link.mystand.space 注册一台新设备（brand.conf 的 serverUrl 真值，也是
 #      `neblinkServerUrl()` 的最终 fallback）——同一账号跑多实例会互踢：后登录的实例上线时
 #      旧实例被踢下线；且生产设备表会被隔离实例污染（2026-09-11 事故，dup-device-verdict
 #      §1.2 类 2）。
@@ -47,7 +47,7 @@
 #        NeblinkServerConfig 解码的必填字段（缺它 ⇒ 整文件解码失败 ⇒ NeblinkConfig.load
 #        静默回落默认 ⇒ 注入死代码），且为路由标识**非凭据**（无 token/secret 时零认证
 #        能力；登录成功后服务端响应里的 networkId 会覆写此占位）。EnrollGuard 只拦
-#        生产域（nebflow.space），staging host 天然放行 ⇒ 登录即指向 staging 网络，
+#        生产域（mystand.space / nebflow.space），staging host 天然放行 ⇒ 登录即指向 staging 网络，
 #        生产网零触碰。已有 config.json 时【绝不覆盖】（作者手配优先）。
 #        注入面 = 配置文件（`NeblinkConfig.load` 的唯一读取点），零 Scala 改动；
 #        仅地址与网络标识、零凭据（🔴 无任何 token/密钥写入）。
@@ -160,13 +160,13 @@ esac
 # 🔴 三条分支都打印明示，绝不静默：未设时明确告知「本次不进生产网」并给出显式放行用法。
 case "${NEBFLOW_ALLOW_PROD_ENROLL:-}" in
   1 | [tT][rR][uU][eE] | [yY][eE][sS])
-    echo "[coldstart] NOTICE: NEBFLOW_ALLOW_PROD_ENROLL=${NEBFLOW_ALLOW_PROD_ENROLL}（显式放行）→ 本次将把设备注册到【生产 NebLink】https://neblink.nebflow.space —— 同一账号多实例会互踢，后登录的实例上线时旧实例会被踢下线。"
+    echo "[coldstart] NOTICE: NEBFLOW_ALLOW_PROD_ENROLL=${NEBFLOW_ALLOW_PROD_ENROLL}（显式放行）→ 本次将把设备注册到【生产 NebLink】https://link.mystand.space —— 同一账号多实例会互踢，后登录的实例上线时旧实例会被踢下线。"
     ;;
   "")
-    echo "[coldstart] NOTICE: 未设 NEBFLOW_ALLOW_PROD_ENROLL → 本次【不进生产网】：本实例不会注册到生产 NebLink https://neblink.nebflow.space，隔离护栏 EnrollGuard 生效（非默认 data root ∧ 未显式放行 ∧ 生产域 ⇒ 拒绝自动注册）。要显式放行请用：NEBFLOW_ALLOW_PROD_ENROLL=1 ./scripts/coldstart.sh"
+    echo "[coldstart] NOTICE: 未设 NEBFLOW_ALLOW_PROD_ENROLL → 本次【不进生产网】：本实例不会注册到生产 NebLink https://link.mystand.space，隔离护栏 EnrollGuard 生效（非默认 data root ∧ 未显式放行 ∧ 生产域 ⇒ 拒绝自动注册）。要显式放行请用：NEBFLOW_ALLOW_PROD_ENROLL=1 ./scripts/coldstart.sh"
     ;;
   *)
-    echo "[coldstart] NOTICE: NEBFLOW_ALLOW_PROD_ENROLL=${NEBFLOW_ALLOW_PROD_ENROLL}（非 1/true/yes）→ 保留你的设置，隔离护栏生效：本实例不会注册到生产 NebLink https://neblink.nebflow.space（同一账号多实例的互踢风险随之消失）。"
+    echo "[coldstart] NOTICE: NEBFLOW_ALLOW_PROD_ENROLL=${NEBFLOW_ALLOW_PROD_ENROLL}（非 1/true/yes）→ 保留你的设置，隔离护栏生效：本实例不会注册到生产 NebLink https://link.mystand.space（同一账号多实例的互踢风险随之消失）。"
     ;;
 esac
 

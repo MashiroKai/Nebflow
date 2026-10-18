@@ -66,6 +66,8 @@ class EnrollGuardExplicitLoginSpec extends FunSuite:
     assertEquals(EnrollGuard.enrollRefusal("http://127.0.0.1:9095", nonDefaultHome = true, explicitAllow = false), None)
     // 子域仍属生产域
     assert(EnrollGuard.enrollRefusal("https://auth.nebflow.space", true, false).isDefined)
+    // 现役品牌域家族同属生产域
+    assert(EnrollGuard.enrollRefusal("https://link.mystand.space", true, false).isDefined)
   }
 
   // ── ② live 判据（本 spec 全程跑在重定向的 data root 上）────
@@ -201,10 +203,11 @@ class EnrollGuardExplicitLoginSpec extends FunSuite:
     assertEquals(LogdevTestSupport.violations(d.message, PathUtil.dataRoot), Nil)
     assert(CredentialDiagnostics.isCleanVisibleText(EnrollGuard.prodFallbackRefusalReason))
 
-    // 负控（防空断言）：把真实生产域名塞进 detail ⇒ 必须被闸门拦下、退回模板原因。
-    val dirty = s"${EnrollGuard.prodFallbackRefusalReason} (${nebflow.shared.Branding.serverUrl})"
+    // 负控（防空断言）：把命中 Forbidden 正则的字面（数据根路径，含 `.nebflow`）
+    // 塞进 detail ⇒ 必须被闸门拦下、退回模板原因。
+    val dirty = s"${EnrollGuard.prodFallbackRefusalReason} (data-root=/tmp/qa-iso/.nebflow)"
     val degraded = CredentialDiagnostics.diagnosticOf(CredentialFailure.EnrollRefusedIsolatedHome, dirty)
-    assert(!degraded.reason.contains("isolated data root"), "含生产域名（`.nebflow` 字面量）的 detail 不得进可见面")
+    assert(!degraded.reason.contains("isolated data root"), "含数据根路径（`.nebflow` 字面量）的 detail 不得进可见面")
     assertEquals(degraded.detail, dirty, "原文仍须进日志面（可归因）")
   }
 
