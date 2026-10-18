@@ -1,0 +1,17 @@
+{
+  "label": "BEFORE",
+  "web": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-5aafcde4/src/main/resources/web",
+  "dropped": {
+    "ok": true,
+    "refType": "file"
+  },
+  "readout": {
+    "placeholder": "",
+    "hintExists": true,
+    "hintText": "请附一句话后发送",
+    "hintHidden": false,
+    "hasAttachmentsClass": true,
+    "sendDisabled": true,
+    "chipCount": 1
+  }
+}

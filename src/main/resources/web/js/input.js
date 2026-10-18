@@ -798,27 +798,15 @@ export function initInput(view) {
   // Sync the send button's connection state on init (grey until connected).
   refreshSendButtonState();
 
-  // ── fwdguard-impl (2026-09-17)：纯引用帧闸的提示件（每视图一件）─────────
-  // 挂在 input-wrap 内、attPreview **之外**：renderAttachmentPreview 会整块
-  // innerHTML='' 重建 strip，提示件挂进去会被下一次渲染抹掉（attachment-preview
-  // 只承载载荷卡片）。文案走 i18n（禁硬编码中文）。
-  // 位置 = #input 之前的文档流位（composer-overlap 修复 2026-10-18 保持不变）：
-  // 附件条 #attachment-preview 是 input-wrap 顶部的 absolute overlay（z-index:3、
-  // top:4px、max-height:30px），提示件原先在文档流首位 ⇒ 恰落 overlay 带内，引用
-  // chip 叠印在「请附一句话后发送」上（作者截图 2026-10-18）。修复 = CSS 顶部
-  // 让位（.ref-gate-hint 的 padding-top 把提示行推到 chip 带下方渲染），**DOM 位
-  // 置不动** —— 这个流位还承担把 textarea 盒压到 chip 命中带之下的结构角色
-  // （挪到 input 之后会让输入框滑进 overlay 带，全宽引用 chip 会吃掉输入框中央
-  // 的点击，fwdguard B1 实测回归）。
-  if (!view.dom.refGateHint && input.parentElement) {
-    const hint = document.createElement('div');
-    hint.className = 'ref-gate-hint';
-    hint.dataset.refGateHint = '1';
-    hint.hidden = true;
-    hint.textContent = t('input.refOnlyHint');
-    input.parentElement.insertBefore(hint, input);
-    view.dom.refGateHint = hint;
-  }
+  // ── fwdguard-impl（2026-09-17）→ #531 占位形态修正（作者令 2026-10-18 23:36）──
+  // 纯引用帧闸的提示**不再设独立提示行**：旧实现插入 .ref-gate-hint div（#input
+  // 之前的文档流位），blocked 时在附件 chip 下方另起一行渲染「请附一句话后发送」
+  // ——作者裁定提示应落在**原输入框自己的 placeholder 位**（updateInputPlaceholder
+  // 的 isRefOnlyFrame 分支），本元素整个移除。原流位的结构角色（把 textarea 盒压到
+  // 附件条 chip 命中带之下，防全宽引用 chip 吃掉输入框中央点击，fwdguard B1/B2 实测
+  // 回归面）由既有 `#input-wrap.has-attachments #input { padding-top: 44px }`
+  // （css/input.css）承担——blocked 时 chip 必在场 ⇒ has-attachments 必开，几何等价。
+  // 闸的视觉态 = 发送键禁用（syncRefOnlyGate）+ placeholder 文案（下方两个 helper）。
 
   // Auto-resize textarea + 同步纯引用帧闸（文本变化会改变闸判据）。
   input.addEventListener('input', () => {
@@ -826,7 +814,7 @@ export function initInput(view) {
     input.style.height = Math.min(input.scrollHeight, 200) + 'px';
     syncRefOnlyGate(view);
     // 输入使闸解除时（blocked→false）占位符立即回到附件/通用文案 ——
-    // 闸文案由 ref-gate-hint 独占（composer-overlap 修复 2026-10-18）。
+    // 闸文案由输入框自身 placeholder 承担（#531，2026-10-18）。
     updateInputPlaceholder();
   });
 
@@ -870,11 +858,10 @@ export function initInput(view) {
     if (voiceActive) { input.placeholder = t('input.ph.listening'); return; }
     const n = view.dom.attPreview ? view.dom.attPreview.childElementCount : 0;
     input.parentElement?.classList.toggle('has-attachments', n > 0);
-    // 纯引用帧（blocked）：发送被闸禁用，提示文案由 ref-gate-hint 独占（输入框
-    // 下方一行）——占位符置空，避免「已附加文件——…」与闸提示同屏双文案
-    // （composer-overlap 修复 2026-10-18）。必须读实时判据而非 n：n>0 的引用
-    // chip 正是 blocked 的构成条件，n 在这里恒 >0。
-    if (isRefOnlyFrame(view)) { input.placeholder = ''; return; }
+    // 纯引用帧（blocked）：发送被闸禁用，「请附一句话后发送」直接落在输入框自己的
+    // placeholder 位（#531 作者令 2026-10-18：不新增独立占位行；清空附件/输入附言
+    // 后由下方分支恢复原文案）。
+    if (isRefOnlyFrame(view)) { input.placeholder = t('input.refOnlyHint'); return; }
     if (n > 0) { input.placeholder = t('input.ph.attachments').replace('%n', String(n)); return; }
     input.placeholder = t('input.placeholder');
   }
@@ -1333,9 +1320,9 @@ export function initInput(view) {
     if (voiceActive) { input.placeholder = t('input.ph.listening'); return; }
     const n = view.dom.attPreview ? view.dom.attPreview.childElementCount : 0;
     input.parentElement?.classList.toggle('has-attachments', n > 0);
-    // 纯引用帧分支同 updateInputPlaceholder：闸文案由 ref-gate-hint 独占
-    // （composer-overlap 修复 2026-10-18）。
-    if (isRefOnlyFrame(view)) { input.placeholder = ''; return; }
+    // 纯引用帧分支同 updateInputPlaceholder：闸文案落在输入框自身 placeholder
+    // （#531，2026-10-18；无独立提示行）。
+    if (isRefOnlyFrame(view)) { input.placeholder = t('input.refOnlyHint'); return; }
     input.placeholder = n > 0
       ? t('input.ph.attachments').replace('%n', String(n))
       : t('input.placeholder');
