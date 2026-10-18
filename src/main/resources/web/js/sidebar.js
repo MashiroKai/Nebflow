@@ -822,10 +822,6 @@ export function renderSettings() {
         <select class="cfg-select" id="cfg-language" style="width:auto">${langOpts}</select>
       </div>
       <div class="settings-row">
-        <span class="settings-label">Logo</span>
-        <a class="cfg-btn" href="/brand/index.html">Logo ↗</a>
-      </div>
-      <div class="settings-row">
         <span class="settings-label">${t('settings.autostart')}</span>
         ${toggleHTML({ on: !!(state.autostartStatus && state.autostartStatus.enabled), id: 'toggle-autostart', label: t('settings.autostart'), disabled: !!(state.autostartStatus && !state.autostartStatus.supported) })}
       </div>

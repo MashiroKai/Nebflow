@@ -8,9 +8,20 @@ Stand 原名 Nebflow。网站入口是 https://mystand.space，跨设备控制�
 
 如果提示已有实例，说明网关已经在运行；无需再启动第二个进程。本地地址为 http://localhost:8080。旧版本需要运行 `sbt "run token"` 获取一次性票据并在登录卡片中使用。不要删除数据目录来解决登录问题。更新源码后，已运行的旧 JVM 需要由其所属会话重启才能加载新版本。
 
+## 远程控制台构建
+
+远程部署使用项目已有的前端 bundle；不要把只服务开发源码的 assembly 当作远程发布包。首次加载源码模块可能超过隧道每分钟 240 次的请求预算，造成 429、配置或引导加载不完整。
+
+```sh
+node scripts/build-web.mjs
+sbt -Dstand.webdist=1 assembly
+```
+
+构建保持 index.html 的真实样式顺序（包含 sapphire 后的响应式覆盖），入口使用带内容摘要的资源。构建后的静态资产门禁使用 `node scripts/verify-web-assets.mjs --root build/web-dist http://localhost:8080`。主机已有模型和 onboarding 状态不因远程浏览器首次访问而重置。
+
 ## Logo
 
-统一真源是 `brand.conf` 的 `activeLogo` 和 `src/main/resources/web/brand/logos.json` 中归档的原图。`/brand/index.html` 只展示历史版本，不提供浏览器私有覆盖。
+统一真源是 `brand.conf` 的 `activeLogo` 和 `src/main/resources/web/brand/logos.json` 中归档的原图。普通用户设置不提供 Logo 入口；品牌由项目统一配置。
 
 ```sh
 python3 scripts/switch-logo.py --list
