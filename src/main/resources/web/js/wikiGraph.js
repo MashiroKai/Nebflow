@@ -143,9 +143,10 @@ window.addEventListener('canvas-tab-restore', (/** @type {CustomEvent} */ e) => 
 });
 
 // Tab close: stop the animation loop — a detached canvas must not keep a
-// requestAnimationFrame cycle (and its CPU) alive.
+// requestAnimationFrame cycle (and its CPU) alive — and hand the explorer
+// panel space back to the file tree.
 document.addEventListener('canvas-tab-closed', (/** @type {CustomEvent} */ e) => {
-  if (e.detail && e.detail.id === TAB_ID) teardown();
+  if (e.detail && e.detail.id === TAB_ID) { teardown(); unmountGraphExplorerList(); }
 });
 
 /** Debounced refetch when the tab is re-activated (canvas.js panelTabRefresh). */
@@ -223,43 +224,13 @@ async function renderInto(pane) {
   canvasEl.className = 'wiki-canvas';
   pane.appendChild(canvasEl);
 
-  // ── Glass Aurora right sidebar (draftB port) — shell here, lists filled by
-  // renderSidebar() once the data lands in rebuildSim. Every filter row drives
-  // the EXISTING toolbar/facet controls through real events, so panel and
-  // toolbar state can never diverge.
-  const sb = document.createElement('div');
-  sb.className = 'wx-sidebar';
-  sb.innerHTML = `
-    <div class="wx-sb-head"><span class="wx-sb-head-title"></span><button class="wx-sb-clear" type="button"></button></div>
-    <div class="wx-sb-sec"><div class="wx-sb-title wx-sb-proj-title"></div><div class="wx-sb-list wx-projects"></div></div>
-    <div class="wx-sb-sec"><div class="wx-sb-title wx-sb-types-title"></div><div class="wx-sb-chips wx-types"></div></div>
-    <div class="wx-sb-sec"><div class="wx-sb-title wx-sb-status-title"></div><div class="wx-sb-chips wx-status"></div></div>
-    <div class="wx-sb-sec"><div class="wx-sb-title wx-sb-legend-title"></div><div class="wx-sb-legend"></div></div>`;
-  sb.querySelector('.wx-sb-head-title').textContent = t('wiki.panelTitle');
-  const clearBtn = /** @type {HTMLElement} */ (sb.querySelector('.wx-sb-clear'));
-  clearBtn.textContent = t('wiki.clearAll');
-  clearBtn.title = t('wiki.clearAllTitle');
-  sb.querySelector('.wx-sb-types-title').textContent = t('wiki.sbTypes');
-  sb.querySelector('.wx-sb-status-title').textContent = t('wiki.sbStatuses');
-  sb.querySelector('.wx-sb-legend-title').textContent = t('wiki.sbLegend');
-  sb.querySelector('.wx-sb-legend').innerHTML =
-    `<div><b>●</b> <span class="wx-lg-docs"></span> &nbsp;<b>▢</b> <span class="wx-lg-attach"></span> &nbsp;<b>◌</b> <span class="wx-lg-stub"></span></div>` +
-    `<div><b>◎</b> <span class="wx-lg-done"></span> &nbsp;<b>—</b> <span class="wx-lg-links"></span></div>`;
-  sb.querySelector('.wx-lg-docs').textContent = t('wiki.legendDocs');
-  sb.querySelector('.wx-lg-attach').textContent = t('wiki.legendAttachments');
-  sb.querySelector('.wx-lg-stub').textContent = t('wiki.legendUnresolved');
-  sb.querySelector('.wx-lg-done').textContent = t('wiki.legendDone');
-  sb.querySelector('.wx-lg-links').textContent = t('wiki.legendLinks');
-  clearBtn.addEventListener('click', () => {
-    const search = pane.querySelector('.wiki-toolbar-search');
-    const kindSel = pane.querySelector('.wiki-facet-kind');
-    const typeSel = pane.querySelector('.wiki-facet-type');
-    const statusSel = pane.querySelector('.wiki-facet-status');
-    if (search) { search.value = ''; search.dispatchEvent(new Event('input', { bubbles: true })); }
-    [kindSel, typeSel, statusSel].forEach((s) => { if (s) { s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true })); } });
-    sb.querySelectorAll('.active').forEach((el) => el.classList.remove('active'));
-  });
-  pane.appendChild(sb);
+  // The graph's file list is NOT built here anymore (graph-view interaction
+  // batch, 2026-10-18): while this tab is the visible Canvas content the list
+  // is hosted by the SAME panel space the file explorer uses
+  // (syncGraphExplorerList / renderGraphFileList below), so the pane stays
+  // pure graph + toolbar. renderSidebar() fills that host once the data lands
+  // in rebuildSim; its filter rows still drive the EXISTING toolbar/facet
+  // controls through real events, so list and toolbar state can never diverge.
 
   // ── Zoom cluster (draftB): in/out reuse the wheel zoom math; ⟲ re-lands the
   // layout (rebuildSim resets scale + pan and re-seeds positions).
@@ -523,6 +494,23 @@ function wake(minAlpha = 0.3) {
   if (!view.raf) startLoop();
 }
 
+/** One-frame repaint after the wiki-graph tab is re-activated
+ *  (canvas-tab-switched). Scheduled on the NEXT animation frame so the
+ *  ResizeObserver has already restored the bitmap size — observer callbacks
+ *  run before rAF callbacks within a frame, so a synchronous draw here would
+ *  be wiped by the observer's resize. Skipped when the loop is already
+ *  running (it repaints every frame anyway). */
+function repaintOnActivate() {
+  if (!view || !view.canvas || !view.canvas.isConnected) return;
+  view.hover = null;
+  hideTooltip();
+  requestAnimationFrame(() => {
+    if (!view || !view.canvas || !view.canvas.isConnected || view.raf) return;
+    resizeCanvas();
+    draw();
+  });
+}
+
 // ── Rendering ─────────────────────────────────────────────────
 
 function resizeCanvas() {
@@ -763,28 +751,115 @@ function zoomCanvas(factor) {
   zoomAt(view.W / 2, view.H / 2, factor);
 }
 
-// ── Glass Aurora sidebar (draftB port) ─────────────────────────
-// Lists re-derive from view.data on every rebuildSim; filter wiring goes
+// ── File list hosted in the explorer panel space (graph-view interaction
+// batch, 2026-10-18) ────────────────────────────────────────────
+// While the wiki-graph tab is the visible Canvas content, its file list —
+// projects with their documents, the facet chips and the legend — is hosted
+// by the SAME panel space the file explorer uses (#panel-sessions, beside
+// #explorer-section, which hides for the duration). The pane itself builds no
+// list block. Mount/unmount ride the tab lifecycle: every activation funnels
+// through canvas.js setActiveTab → 'canvas-tab-switched'; closing rides
+// 'canvas-tab-closed'; the Canvas panel's collapse has no event — it toggles
+// body.canvas-open, mirrored with a MutationObserver. Filter wiring goes
 // through the real toolbar/facet controls (set value + dispatch), so the
-// panel, the selects and the canvas share one filter state.
+// list, the selects and the canvas share one filter state.
 
-function renderSidebar() {
-  if (!view || !view.pane) return;
-  const sb = view.pane.querySelector('.wx-sidebar');
-  if (!sb) return;
-  const d = view.data || {};
+const EXPLORER_HOST_ID = 'wiki-graph-explorer-section';
+
+/** The explorer panel space this module may host the list in — null when the
+ *  panel is absent (embedded/test contexts): the pane then simply stays pure
+ *  graph. @returns {{panel: HTMLElement, explorer: HTMLElement} | null} */
+function explorerPanelSpace() {
+  const panel = document.getElementById('panel-sessions');
+  const explorer = document.getElementById('explorer-section');
+  return panel && explorer ? { panel, explorer } : null;
+}
+
+/** True when the wiki-graph tab is the VISIBLE Canvas content (its pane is
+ *  the active one ∧ the Canvas panel is open — the same predicate
+ *  canvas.js syncCanvasPanelButtons mirrors onto the activity-bar button). */
+function graphTabVisible() {
+  const pane = /** @type {HTMLElement|null} */ (document.querySelector('#canvas-content .canvas-tab-pane.active'));
+  return !!pane && pane.dataset.tabId === TAB_ID && document.body.classList.contains('canvas-open');
+}
+
+/** Mount the file list into the explorer panel space — or restore the
+ *  explorer when the graph tab is not the visible content. Idempotent. */
+function syncGraphExplorerList() {
+  const space = explorerPanelSpace();
+  if (!space) return;
+  if (!graphTabVisible()) { unmountGraphExplorerList(); return; }
+  let host = document.getElementById(EXPLORER_HOST_ID);
+  if (!host) {
+    host = document.createElement('div');
+    host.id = EXPLORER_HOST_ID;
+    space.panel.insertBefore(host, space.explorer.nextSibling);
+  }
+  space.explorer.style.display = 'none';
+  renderGraphFileList(host);
+}
+
+/** Restore the file explorer (the graph list is no longer hosted). */
+function unmountGraphExplorerList() {
+  document.getElementById(EXPLORER_HOST_ID)?.remove();
+  const explorer = document.getElementById('explorer-section');
+  if (explorer) explorer.style.display = '';
+}
+
+/** The file list face: head (title + clear), projects with their documents,
+ *  facet chips, legend. A document row opens through the SAME entry the
+ *  canvas node clicks use (openDoc → openLocalFileTab / remote-doc channel). */
+function renderGraphFileList(host) {
+  if (!view || !view.data) return;
+  const d = view.data;
   const nodes = d.nodes || [];
   const docCount = nodes.filter(n => !n.stub).length;
   const linkCount = (d.edges || []).length;
-  sb.querySelector('.wx-sb-proj-title').textContent =
-    t('wiki.sbProjectsCount').replace('{docs}', String(docCount)).replace('{links}', String(linkCount));
+  const pane = view.pane;
+  const search = /** @type {HTMLInputElement|null} */ (pane ? pane.querySelector('.wiki-toolbar-search') : null);
 
-  // Projects (gray step dots, per-project doc counts) — click = search filter.
-  const projList = sb.querySelector('.wx-projects');
-  projList.innerHTML = '';
-  const projects = d.projects || [];
-  const search = /** @type {HTMLInputElement|null} */ (view.pane.querySelector('.wiki-toolbar-search'));
-  projects.forEach((p, i) => {
+  host.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'wx-sb-head';
+  const title = document.createElement('span');
+  title.className = 'wx-sb-head-title';
+  title.textContent = t('wiki.panelTitle');
+  const clearBtn = document.createElement('button');
+  clearBtn.type = 'button';
+  clearBtn.className = 'wx-sb-clear';
+  clearBtn.textContent = t('wiki.clearAll');
+  clearBtn.title = t('wiki.clearAllTitle');
+  clearBtn.addEventListener('click', () => {
+    if (!view || !view.pane) return;
+    const search2 = /** @type {HTMLInputElement|null} */ (view.pane.querySelector('.wiki-toolbar-search'));
+    const kindSel = /** @type {HTMLSelectElement|null} */ (view.pane.querySelector('.wiki-facet-kind'));
+    const typeSel = /** @type {HTMLSelectElement|null} */ (view.pane.querySelector('.wiki-facet-type'));
+    const statusSel = /** @type {HTMLSelectElement|null} */ (view.pane.querySelector('.wiki-facet-status'));
+    if (search2) { search2.value = ''; search2.dispatchEvent(new Event('input', { bubbles: true })); }
+    [kindSel, typeSel, statusSel].forEach((s) => { if (s) { s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true })); } });
+    host.querySelectorAll('.active').forEach((el) => el.classList.remove('active'));
+  });
+  head.append(title, clearBtn);
+
+  const body = document.createElement('div');
+  body.className = 'wx-sb-body';
+
+  // Projects + their documents — the file list itself. Project rows keep the
+  // old sidebar behaviour (click = toolbar search filter); document rows open
+  // the file in a Canvas tab through openDoc.
+  const projSec = document.createElement('div');
+  projSec.className = 'wx-sb-sec';
+  const projTitle = document.createElement('div');
+  projTitle.className = 'wx-sb-title wx-sb-proj-title';
+  projTitle.textContent = t('wiki.sbProjectsCount').replace('{docs}', String(docCount)).replace('{links}', String(linkCount));
+  const projList = document.createElement('div');
+  projList.className = 'wx-sb-list wx-projects';
+  const byProject = new Map();
+  nodes.forEach((n) => {
+    if (!byProject.has(n.project)) byProject.set(n.project, []);
+    byProject.get(n.project).push(n);
+  });
+  (d.projects || []).forEach((p, i) => {
     const row = document.createElement('div');
     row.className = 'wx-sb-item wx-proj';
     if (view.filter === p.name.toLowerCase()) row.classList.add('active');
@@ -804,35 +879,105 @@ function renderSidebar() {
       if (search) { search.value = active ? p.name : ''; search.dispatchEvent(new Event('input', { bubbles: true })); }
     });
     projList.appendChild(row);
+    // Document rows — real files only (stubs are unresolved links, not files;
+    // clicking a stub node on the canvas explains that via its own toast).
+    for (const n of byProject.get(p.name) || []) {
+      if (n.stub) continue;
+      const doc = document.createElement('div');
+      doc.className = 'wx-sb-item wx-doc';
+      const docName = document.createElement('span');
+      docName.className = 'wx-doc-name';
+      docName.textContent = (n.kind === 'attachment' ? '⎘ ' : '') + (n.title || n.rel.split('/').pop());
+      doc.title = n.rel;
+      doc.append(docName);
+      doc.addEventListener('click', () => { void openDoc(n); });
+      projList.appendChild(doc);
+    }
   });
+  projSec.append(projTitle, projList);
 
   // Type / status chips — click = facet select. Counts capped like the selects.
   const chipInto = (hostSel, selCls, counts) => {
-    const host = sb.querySelector(hostSel);
-    host.innerHTML = '';
-    const sel = view.pane.querySelector(selCls);
+    const sec = document.createElement('div');
+    sec.className = 'wx-sb-sec';
+    const secTitle = document.createElement('div');
+    secTitle.className = 'wx-sb-title';
+    secTitle.textContent = hostSel === '.wx-types' ? t('wiki.sbTypes') : t('wiki.sbStatuses');
+    const chips = document.createElement('div');
+    chips.className = 'wx-sb-chips';
+    const sel = pane ? pane.querySelector(selCls) : null;
     counts.forEach(([v, c]) => {
       const el = document.createElement('span');
       el.className = 'wx-chip';
-      if (sel && sel.value === v) el.classList.add('active');
+      if (sel && /** @type {HTMLSelectElement} */ (sel).value === v) el.classList.add('active');
       el.textContent = `${v} ${c}`;
       el.addEventListener('click', () => {
         const on = !el.classList.contains('active');
-        host.querySelectorAll('.wx-chip').forEach((c2) => c2.classList.remove('active'));
+        chips.querySelectorAll('.wx-chip').forEach((c2) => c2.classList.remove('active'));
         if (on) el.classList.add('active');
-        if (sel) { sel.value = on ? v : ''; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+        if (sel) { /** @type {HTMLSelectElement} */ (sel).value = on ? v : ''; sel.dispatchEvent(new Event('change', { bubbles: true })); }
       });
-      host.appendChild(el);
+      chips.appendChild(el);
     });
+    sec.append(secTitle, chips);
+    return sec;
   };
   const topCounts = (key) => {
     const m = new Map();
     nodes.forEach((n) => { if (n[key]) m.set(n[key], (m.get(n[key]) || 0) + 1); });
     return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
   };
-  chipInto('.wx-types', '.wiki-facet-type', topCounts('type'));
-  chipInto('.wx-status', '.wiki-facet-status', topCounts('status'));
+
+  // Legend — node shapes (moved with the list; the pane stays pure graph).
+  const legendSec = document.createElement('div');
+  legendSec.className = 'wx-sb-sec';
+  const legendTitle = document.createElement('div');
+  legendTitle.className = 'wx-sb-title';
+  legendTitle.textContent = t('wiki.sbLegend');
+  const legend = document.createElement('div');
+  legend.className = 'wx-sb-legend';
+  legend.innerHTML =
+    `<div><b>●</b> <span class="wx-lg-docs"></span> &nbsp;<b>▢</b> <span class="wx-lg-attach"></span> &nbsp;<b>◌</b> <span class="wx-lg-stub"></span></div>` +
+    `<div><b>◎</b> <span class="wx-lg-done"></span> &nbsp;<b>—</b> <span class="wx-lg-links"></span></div>`;
+  legend.querySelector('.wx-lg-docs').textContent = t('wiki.legendDocs');
+  legend.querySelector('.wx-lg-attach').textContent = t('wiki.legendAttachments');
+  legend.querySelector('.wx-lg-stub').textContent = t('wiki.legendUnresolved');
+  legend.querySelector('.wx-lg-done').textContent = t('wiki.legendDone');
+  legend.querySelector('.wx-lg-links').textContent = t('wiki.legendLinks');
+  legendSec.append(legendTitle, legend);
+
+  body.append(projSec, chipInto('.wx-types', '.wiki-facet-type', topCounts('type')),
+    chipInto('.wx-status', '.wiki-facet-status', topCounts('status')), legendSec);
+  host.append(head, body);
 }
+
+/** Data-landing hook (rebuildSim): refresh the hosted list in place. */
+function renderSidebar() {
+  const host = document.getElementById(EXPLORER_HOST_ID);
+  if (host) renderGraphFileList(host);
+}
+
+// Tab switching drives the explorer-space hosting: any activation re-evaluates
+// (syncGraphExplorerList self-guards on WHICH pane is active — mount for this
+// tab, restore the explorer for any other).
+// Re-activation repaint: while this tab is hidden its canvas backing store is
+// dropped (ResizeObserver resize → 1px bitmap) and the idle-stopped loop draws
+// nothing on its own, so switching back used to leave a blank canvas. One
+// frame after the observer has restored the size repaints the settled layout
+// as-is — no refetch, zoom/pan preserved (refetch stays the wiki-button /
+// refresh-entry semantics). Stale hover is dropped with it: activation comes
+// from a tab click or the md graph button, so the pointer is not over the
+// canvas, and a kept hover would repaint a ghost highlight ring.
+document.addEventListener('canvas-tab-switched', (/** @type {CustomEvent} */ e) => {
+  if (e.detail && e.detail.id === TAB_ID) repaintOnActivate();
+  syncGraphExplorerList();
+});
+
+// Canvas panel collapse/expand dispatches no event (body.canvas-open is the
+// state mirror canvas.js itself reads) — track it so the explorer comes back
+// the moment the graph stops being visible.
+new MutationObserver(() => { syncGraphExplorerList(); })
+  .observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
 function showTooltip(node, px, py) {
   let tip = document.getElementById('wiki-graph-tip');
@@ -840,7 +985,11 @@ function showTooltip(node, px, py) {
     tip = document.createElement('div');
     tip.id = 'wiki-graph-tip';
     tip.className = 'wiki-tip';
-    document.body.appendChild(tip);
+    // Mounted INSIDE the graph pane, not on document.body: the pane is
+    // position:relative + overflow:hidden, so the tip (position:absolute) is
+    // structurally confined to the graph view and can never surface over the
+    // conversation UI. A stale tip also dies with the pane's innerHTML reset.
+    view.pane.appendChild(tip);
   }
   const d = node.ref;
   const deviceLine = node.remote ? `<div class="wiki-tip-device">${t('wiki.remoteDevice').replace('{device}', d.device)}</div>` : '';
@@ -854,8 +1003,13 @@ function showTooltip(node, px, py) {
   tip.querySelector('.wiki-tip-title').textContent = d.title || d.rel;
   tip.querySelector('.wiki-tip-path').textContent = d.rel || '';
   if (meta.length) tip.querySelector('.wiki-tip-meta').textContent = meta.join(' · ');
-  tip.style.left = Math.min(window.innerWidth - 260, px + 14) + 'px';
-  tip.style.top = (py + 14) + 'px';
+  // (px,py) are canvas-local pointer coords; the canvas fills the pane
+  // (inset:0), so they are pane-local too — exactly the tip's positioning
+  // space now. Clamp against the MEASURED tip box so it stays fully inside
+  // the pane even near the right/bottom edges (the old clamp mixed canvas
+  // coords with window.innerWidth — the misplacement bug this fixes).
+  tip.style.left = Math.max(4, Math.min(view.pane.clientWidth - tip.offsetWidth - 4, px + 14)) + 'px';
+  tip.style.top = Math.max(4, Math.min(view.pane.clientHeight - tip.offsetHeight - 4, py + 14)) + 'px';
   tip.classList.add('show');
 }
 
@@ -868,7 +1022,7 @@ async function openNode(node) {
   if (d.stub) {
     // A project-level stub or an unresolved link — explain honestly.
     if (d.rel.endsWith('/')) {
-      const proj = (view.data.projects || []).find(p => p.name === d.project);
+      const proj = (view?.data.projects || []).find(p => p.name === d.project);
       window.__showToast?.(
         proj && proj.error ? t('wiki.stubError').replace('{error}', proj.error)
           : t('wiki.stubProject').replace('{project}', d.project),
@@ -878,11 +1032,23 @@ async function openNode(node) {
     }
     return;
   }
-  if (!node.remote) {
+  await openDoc(d);
+}
+
+/** Open one graph document through the SAME channel every other file open in
+ *  the product uses (workspace-open-item → canvas.js openWorkspaceItem →
+ *  Canvas tab): local files ride openLocalFileTab — the entry the markdown
+ *  viewer's links use — so tab dedupe/switching behave identically; peer-device
+ *  docs are fetched read-only through /api/wiki/remote-doc. Shared by canvas
+ *  node clicks AND the explorer-panel file list rows (graph-view interaction
+ *  batch, 2026-10-18). @param {any} d graph node ref */
+async function openDoc(d) {
+  const remote = d.device && d.device !== 'self';
+  if (!remote) {
     // Local: the graph carries the project vault — rebuild the absolute path.
     // Attachments open through the SAME channel: the viewer registry picks the
     // pdf/image/office viewer by extension (literature one click away).
-    const proj = (view.data.projects || []).find(p => p.name === d.project);
+    const proj = (view?.data.projects || []).find(p => p.name === d.project);
     if (!proj) return;
     const sep = proj.vault.includes('\\') ? '\\' : '/';
     const abs = proj.vault.replace(/[\\/]+$/, '') + sep + d.rel.split('/').join(sep);
@@ -893,7 +1059,7 @@ async function openNode(node) {
   // Remote: fetch read-only content through the peer channel. Binary viewer
   // files (literature PDFs, figures) arrive base64 and open from a blob URL.
   try {
-    const res = await fetch(`/api/wiki/remote-doc?device=${encodeURIComponent(d.device)}&path=${encodeURIComponent((view.data.projects.find(p => p.name === d.project)?.vault || '') + '/' + d.rel)}`, { headers: { ...authHeaders() } });
+    const res = await fetch(`/api/wiki/remote-doc?device=${encodeURIComponent(d.device)}&path=${encodeURIComponent((view?.data.projects.find(p => p.name === d.project)?.vault || '') + '/' + d.rel)}`, { headers: { ...authHeaders() } });
     if (!res.ok) { window.__showToast?.(t('wiki.remoteFetchFailed'), 'error'); return; }
     const body = await res.json();
     const detail = {
