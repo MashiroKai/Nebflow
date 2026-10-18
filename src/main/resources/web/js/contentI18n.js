@@ -20,8 +20,10 @@
 // values and the client picks a string by locale. Behaviour is untouched by
 // construction — no Scala and no `seed/**` byte changes.
 //
-// LANGUAGE SOURCE OF TRUTH = i18n.js only (localStorage key `nebflow_locale`
-// via getLocale()). This module introduces NO second source of truth: it reads
+// LANGUAGE SOURCE OF TRUTH = i18n.js only (localStorage key `key('locale')`
+// via getLocale() — branding.js namespaced, `stand_locale` today; the bare
+// `'nebflow_locale'` literal died with the brand migration). This module
+// introduces NO second source of truth: it reads
 // the current locale from i18n.js and never writes one.
 //
 // FALLBACK CHAIN = current locale → en → the server-provided source value.
