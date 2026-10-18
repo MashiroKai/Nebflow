@@ -50,11 +50,13 @@ object EnrollGuard:
    */
   val AllowProdEnrollEnv: String = "NEBFLOW_ALLOW_PROD_ENROLL"
 
-  /** Production domain; subdomains included. */
-  private val ProdDomain: String = "nebflow.space"
+  /** Production domains; subdomains included. `mystand.space` is the current
+    * brand/relay family; `nebflow.space` stays listed so installs still pointed
+    * at the legacy relay host keep hitting the gate. */
+  private val ProdDomains: Seq[String] = Seq("mystand.space", "nebflow.space")
 
   /**
-   * True when `url` points into the production domain (subdomains included).
+   * True when `url` points into a production domain (subdomains included).
    *
    * Host is taken from the URI; when the string is not URI-parseable (custom
    * schemes etc.) a literal containment check keeps the gate closed instead of
@@ -65,8 +67,8 @@ object EnrollGuard:
     if raw.isEmpty then false
     else
       hostOf(raw) match
-        case Some(h) => h == ProdDomain || h.endsWith("." + ProdDomain)
-        case None => raw.contains(ProdDomain)
+        case Some(h) => ProdDomains.exists(d => h == d || h.endsWith("." + d))
+        case None => ProdDomains.exists(raw.contains)
 
   private[neblink] def hostOf(url: String): Option[String] =
     try
@@ -151,8 +153,8 @@ object EnrollGuard:
    *
    * 🔴 必须保持「干净」（无数据根路径 / 无文件名 / 无 `.nebflow` 字面量 / 无 Java
    * 类名）：`CredentialDiagnostics.diagnosticOf` 只在 detail 通过 `isCleanVisibleText`
-   * 时才把 `EnrollRefusedIsolatedHome` 的原文透出到登录页 —— 带上真实域名
-   * （`neblink.nebflow.space` 含 `.nebflow` 字面量）就会静默降级成模板文案。
+   * 时才把 `EnrollRefusedIsolatedHome` 的原文透出到登录页 —— 文案一旦带进命中
+   * Forbidden 正则的字面（如数据根路径、Java 类名）就会静默降级成模板文案。
    * 由 `EnrollGuardExplicitLoginSpec` 的负控断言钉住。
    */
   def prodFallbackRefusalReason: String =

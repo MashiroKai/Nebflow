@@ -433,7 +433,10 @@ class NeblinkLogoutRoutesSpec extends CatsEffectSuite:
                 Some("tok.hint.sig"),
                 "stored id_token must be replayed verbatim as the hint"
               )
-              assertEquals(q.get("post_logout_redirect_uri"), Some("http://127.0.0.1:8080/auth/logged-out"))
+              // Plain logout lands on the website's /logged-out page (derived
+              // from the login URL's origin; the local landing is switch-only).
+              val websiteOrigin = java.net.URI.create(nebflow.shared.Branding.loginUrl).resolve("/").toString.stripSuffix("/")
+              assertEquals(q.get("post_logout_redirect_uri"), Some(s"$websiteOrigin/logged-out"))
               // Local teardown (same 8 steps as POST /neblink/logout) happened.
               assertEquals(cred, None, "credential (with the hint) removed")
               assertEquals(peers, Nil)
