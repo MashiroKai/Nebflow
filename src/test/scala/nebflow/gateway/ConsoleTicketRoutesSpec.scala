@@ -11,8 +11,13 @@ import scala.concurrent.duration.*
  * The `/?ticket=` redemption face (phase 3b, plan §3 / criterion 4 + 3):
  *
  *  - success: 303 See Other to "/" carrying the frozen session-cookie
- *    attribute set (HttpOnly / Secure / SameSite=Lax / Path=/ / Max-Age=43200
- *    / host-only, criterion 4's response-header face);
+ *    attribute set (HttpOnly / SameSite=Lax / Path=/ / Max-Age=43200
+ *    / host-only, criterion 4's response-header face) — with `Secure` IFF the
+ *    consuming browser origin is HTTPS (#522): direct https and
+ *    tunnel-marked (relay console) legs carry `Secure`; a plain-http DIRECT
+ *    leg (the local console) must NOT — WebKit drops Secure cookies over
+ *    plain http (no localhost exemption), which silently bricked local
+ *    session seating (WS handshake + REST then 403 behind a login loop);
  *  - atomic one-shot: the SAME ticket a second time lands on the readable
  *    failure page with NO Set-Cookie (criterion 3);
  *  - the origin branch: a relay-mint ticket is refused while the binding is
@@ -71,15 +76,48 @@ class ConsoleTicketRoutesSpec extends CatsEffectSuite:
       c = cookies.head
       _ = assert(c.startsWith(s"${GatewaySessionStore.CookieName}="), s"cookie name: $c")
       _ = assert(c.contains("HttpOnly"), c)
-      _ = assert(c.contains("Secure"), c)
       _ = assert(c.contains("SameSite=Lax"), c)
       _ = assert(c.contains("Path=/"), c)
       _ = assert(c.contains("Max-Age=43200"), c)
       _ = assert(!c.toLowerCase.contains("domain="), s"host-only: no Domain attribute: $c")
+      // #522: this request is plain-http and unmarked (the local console's
+      // exact shape) — `Secure` must be ABSENT, or WebKit drops the cookie and
+      // the seating silently no-ops.
+      _ = assert(!c.toLowerCase.contains("secure"), s"plain-http direct leg: no Secure: $c")
       // The session is live behind the cookie value.
       verified <- brandSessions.verifyAndTouch(cookieValue(c))
       _ = assert(verified.isDefined, "the issued cookie must verify against the store")
       _ = assertEquals(verified.get.origin, GatewaySessionStore.OriginRelayMint)
+    yield ()
+
+  test("success over https => cookie carries Secure (the consuming origin is HTTPS)"):
+    for
+      unbound <- cats.effect.Ref.of[IO, Boolean](false)
+      store = ConsoleTicketStore.unsafeCreate()
+      faces = mkFaces(unbound, store)
+      issued <- store.issue("logto|user-42", "qa-device")
+      https = Request[IO](Method.GET, Uri.unsafeFromString(s"https://console.example/?ticket=${issued.token}"))
+      resp <- route(faces)(https).value.map(_.get)
+      _ = assertEquals(resp.status, Status.SeeOther)
+      c = setCookies(resp).head
+      _ = assert(c.contains("Secure"), s"https leg keeps Secure: $c")
+    yield ()
+
+  test("success on a tunnel-marked leg => cookie carries Secure (relay console, HTTPS origin)"):
+    for
+      unbound <- cats.effect.Ref.of[IO, Boolean](false)
+      store = ConsoleTicketStore.unsafeCreate()
+      faces = mkFaces(unbound, store)
+      issued <- store.issue("logto|user-42", "qa-device")
+      _ = nebflow.shared.TunnelOriginMark.arm()
+      marked = nebflow.shared.TunnelOriginMark.armedValue.fold(get(s"/?ticket=${issued.token}")) { v =>
+        val http = get(s"/?ticket=${issued.token}")
+        http.withHeaders(org.http4s.Headers(nebflow.shared.TunnelOriginMark.headerName -> v))
+      }
+      resp <- route(faces)(marked).value.map(_.get)
+      _ = assertEquals(resp.status, Status.SeeOther)
+      c = setCookies(resp).head
+      _ = assert(c.contains("Secure"), s"tunnel-marked leg keeps Secure: $c")
     yield ()
 
   test("criterion 3: the SAME ticket a second time => readable failure page, NO Set-Cookie"):

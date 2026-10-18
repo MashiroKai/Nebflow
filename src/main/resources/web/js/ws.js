@@ -474,7 +474,10 @@ function showTicketEntry() {
 // back to the login gate. Once-per-page-life guard (sessionStorage): a
 // persistently failing host must not turn this into a reload loop.
 async function remintHostSessionAndReload() {
-  const GUARD = 'nebflow_ws_remint_at';
+  // #522 键盘点收尾：GUARD 原 `nebflow_ws_remint_at` 裸字面随品牌迁移失效——
+  // 与 #500 同族迁 `key()`（branding.js 单一真源）。sessionStorage 30s 防
+  // 重载闸，语义不变；旧拼写值弃置无害（最坏多一次 remint 尝试）。
+  const GUARD = key('ws_remint_at');
   let last = 0;
   try { last = Number(sessionStorage.getItem(GUARD)) || 0; } catch (_) {}
   if (Date.now() - last < 30000) return false;
