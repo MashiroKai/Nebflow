@@ -30,7 +30,7 @@ end HelpCommand
 
 object UpdateCommand extends CliCommand:
   def name = "update"
-  def description = "Update nebflow to the latest version"
+  def description = s"Update ${nebflow.shared.Branding.productName} to the latest version"
   def subcommands = List(UpdateRun)
   def examples = List("nebflow update", "nebflow update --beta", "nebflow update --device DESKTOP-IJBBEOT")
 
@@ -109,7 +109,7 @@ end UpdateCommand
 
 object UninstallCommand extends CliCommand:
   def name = "uninstall"
-  def description = "Uninstall nebflow"
+  def description = s"Uninstall ${nebflow.shared.Branding.productName}"
   def subcommands = List(UninstallRun)
   def examples = List("nebflow uninstall")
 
@@ -147,7 +147,7 @@ object VersionCommand extends CliCommand:
 
     def run(ctx: CliContext): IO[CliResult] =
       if ctx.json then IO.pure(CliResult.Json(io.circe.Json.obj("version" -> nebflow.Version.string.asJson)))
-      else IO.pure(CliResult.text(s"nebflow ${nebflow.Version.string}"))
+      else IO.pure(CliResult.text(s"${nebflow.shared.Branding.productName} ${nebflow.Version.string}"))
 
 object StartCommand extends CliCommand:
   def name = "start"
@@ -192,7 +192,7 @@ object StopCommand extends CliCommand:
   ): IO[CliResult] =
     ProcessManager.stopHardened(opts, deps).map {
       case ProcessManager.StopOutcome.NotRunning =>
-        CliResult.Exit(0, "nebflow is not running")
+        CliResult.Exit(0, s"${nebflow.shared.Branding.productName} is not running")
       case ProcessManager.StopOutcome.Stopped(message) =>
         CliResult.Exit(0, message)
       case ProcessManager.StopOutcome.Refused(reason) =>
@@ -547,7 +547,7 @@ object DoctorCommand extends CliCommand:
           )
         else
           val lines = scala.collection.mutable.ListBuffer.empty[String]
-          lines += s"nebflow ${nebflow.Version.string} — diagnostics"
+          lines += s"${nebflow.shared.Branding.productName} ${nebflow.Version.string} — diagnostics"
           lines += ""
           for d <- checks do
             val icon = if d.ok then "✓" else "✗"

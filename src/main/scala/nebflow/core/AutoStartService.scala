@@ -111,7 +111,7 @@ $argsXml
   def renderDesktopEntry(javaBin: String, jarPath: String): String =
     s"""[Desktop Entry]
 Type=Application
-Name=Nebflow Gateway
+Name=${nebflow.shared.Branding.productName} Gateway
 Exec=${shellQuote(javaBin)} --add-opens java.base/java.lang=ALL-UNNAMED -jar ${shellQuote(jarPath)} start --no-browser
 Hidden=false
 NoDisplay=false
@@ -147,7 +147,7 @@ X-GNOME-Autostart-enabled=true
       case _ => os.exists(linuxAutostartFile)
     val reason =
       if supported then None
-      else Some("Development mode (sbt run) — auto-start needs a packaged Nebflow JAR")
+      else Some(s"Development mode (sbt run) — auto-start needs a packaged ${nebflow.shared.Branding.productName} JAR")
     Status(enabled, supported, reason)
   }
 
@@ -157,7 +157,7 @@ X-GNOME-Autostart-enabled=true
       case None =>
         OpResult(
           ok = false,
-          "Cannot determine Nebflow JAR path — auto-start is only available from a packaged instance"
+          s"Cannot determine ${nebflow.shared.Branding.productName} JAR path — auto-start is only available from a packaged instance"
         )
       case Some(jar) =>
         osName match
@@ -196,7 +196,7 @@ X-GNOME-Autostart-enabled=true
       List(
         s"  Plist: ${launchAgentPlist}",
         s"  Form: $form",
-        "  Nebflow will start automatically on login.",
+        s"  ${nebflow.shared.Branding.productName} will start automatically on login.",
         s"  Logs: $logPath"
       )
     )
@@ -225,7 +225,7 @@ X-GNOME-Autostart-enabled=true
       OpResult(
         ok = true,
         "Auto-start enabled (Windows Scheduled Task)",
-        List(s"  Task: ${RestartHelper.WinTaskName}", "  Nebflow will start automatically on login.")
+        List(s"  Task: ${RestartHelper.WinTaskName}", s"  ${nebflow.shared.Branding.productName} will start automatically on login.")
       )
     else OpResult(ok = false, s"Failed to create scheduled task (exit code: $exitCode)")
 
@@ -254,7 +254,7 @@ X-GNOME-Autostart-enabled=true
     OpResult(
       ok = true,
       "Auto-start enabled (XDG autostart)",
-      List(s"  File: ${linuxAutostartFile}", "  Nebflow will start automatically on login.")
+      List(s"  File: ${linuxAutostartFile}", s"  ${nebflow.shared.Branding.productName} will start automatically on login.")
     )
 
   private def disableLinux(): OpResult =

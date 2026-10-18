@@ -1401,7 +1401,7 @@ object RemoteExecutor:
         Left(
           ToolError(
             if peers.isEmpty then
-              s"No peer devices discovered after scan. Check: (1) NebLink Server is configured on both machines, (2) Nebflow is running on '$deviceName', (3) both devices are on the same NebLink network."
+              s"No peer devices discovered after scan. Check: (1) NebLink Server is configured on both machines, (2) ${nebflow.shared.Branding.productName} is running on '$deviceName', (3) both devices are on the same NebLink network."
             else s"Device '$deviceName' not found among ${peers.size} peer(s). Available: ${available.mkString(", ")}"
           )
         )

@@ -32,7 +32,7 @@ object DaemonSpawn:
 
   /**
    * Rotate `daemon.out` when it exceeds this size (single-generation
-   * `.old` copy; logback only rolls `nebflow.log` — `daemon.out` is the
+   * `.old` copy; logback only rolls `stand.log` — `daemon.out` is the
    * child's raw stdout+stderr face and has no other manager).
    */
   private[cli] val DaemonOutMaxBytes: Long = 16L * 1024 * 1024
@@ -111,7 +111,7 @@ object DaemonSpawn:
 
   /** The single stdout confirmation line (byte budget: one line, ≤ 200 bytes). */
   private[cli] def readyLine(childPid: Long, consoleUrl: String): String =
-    s"nebflow started (pid $childPid) — $consoleUrl"
+    s"${nebflow.shared.Branding.productName} started (pid $childPid) — $consoleUrl"
 
   /** daemon.out rotation predicate (single generation). */
   private[cli] def shouldRotate(size: Long): Boolean = size > DaemonOutMaxBytes

@@ -1961,7 +1961,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                     //   ① **不投对端**——remoteDeviceOpt 对非名单工具恒 None，永不进远端分支；
                     //   ② **参数原样传给工具**——下面 `tool.call(finalInput, ctx)` 用的
                     //      `finalInput` **未改写、未删除 device 键**（禁改写 / 禁丢弃）；
-                    //   ③ **WARN + 事件（可见）**——WARN 落 nebflow.log，事件经
+                    //   ③ **WARN + 事件（可见）**——WARN 落 stand.log，事件经
                     //      AgentCommand.ExternalEvent 进 agent 事件面（logAgentEvent +
                     //      可见外部事件注入），不静默。
                     val strayDeviceNotice: IO[Unit] = strayDeviceOpt match

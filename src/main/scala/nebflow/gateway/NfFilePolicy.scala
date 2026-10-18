@@ -404,11 +404,12 @@ object NfFilePolicy extends FilePolicyPort:
           val head = rel.split('/').headOption.getOrElse("")
           if head == "secrets" || rel == "auth.json" || rel == "nebflow.json" then
             Some(
-              (
-                NfDenyLayer.Credential,
-                "this path is a Nebflow credential file inside the data directory " +
-                  "(auth.json / nebflow.json / the secrets subtree)"
-              )
+                (
+                  NfDenyLayer.Credential,
+                  "this path is a " + nebflow.shared.Branding.productName +
+                    " credential file inside the data directory " +
+                    "(auth.json / nebflow.json / the secrets subtree)"
+                )
             )
           else None
         else None
@@ -532,7 +533,7 @@ object NfFilePolicy extends FilePolicyPort:
               NfVerdict.Denied(
                 Status.Forbidden,
                 "credential-hardlink",
-                "this file is a hard link to a Nebflow credential file"
+                s"this file is a hard link to a ${nebflow.shared.Branding.productName} credential file"
               )
             )
           )

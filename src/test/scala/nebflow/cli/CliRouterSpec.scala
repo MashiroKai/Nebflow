@@ -499,7 +499,7 @@ class CliRouterSpec extends FunSuite:
       res match
         case CliResult.Exit(code, output) =>
           assertEquals(code, 0)
-          assertEquals(output, "nebflow is not running")
+          assertEquals(output, s"${nebflow.shared.Branding.productName} is not running")
         case other => fail(s"expected Exit, got $other")
     }
   }

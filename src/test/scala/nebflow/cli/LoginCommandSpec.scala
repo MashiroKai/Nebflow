@@ -18,7 +18,9 @@ class LoginCommandSpec extends FunSuite:
   // ── A. H1 / H4 / H5：三命令帮助行逐字（含空格对齐） ────────────────────────
 
   test("H1/H4/H5 逐字节 == 批件逐字（期望值独立于实现件的第二份副本）") {
-    assertEquals(LoginCopy.H1LoginHelp, "nebflow login                        Sign in to your Nebflow account")
+    // 2026-09 stand 微批：H1 描述位品牌词 Nebflow → Branding.productName（brand.conf
+    // 现值 stand）渲染后的逐字；命令位/对齐空格不变。
+    assertEquals(LoginCopy.H1LoginHelp, "nebflow login                        Sign in to your stand account")
     assertEquals(
       LoginCopy.H4LogoutHelp,
       "nebflow logout                       Sign out and remove the stored device credential"

@@ -67,7 +67,7 @@ import nebflow.shared.{Defaults, NebflowLogger, PathUtil}
  * 至多 1 次、单 boot 项目数上限 [[MaxProjectsPerBoot]]（超出记 `cap-exceeded`）。
  *
  * == 可观测 + 可关 ==
- * - 日志（`nebflow.log`）：`[boot-wake] project '<p>' auto-reentry: result=… reason=…
+ * - 日志（`stand.log`）：`[boot-wake] project '<p>' auto-reentry: result=… reason=…
  *   nodes=… b1=… b2=… b3=… b4=… items=… at=…`（谁 / 何时 / 结果）＋ boot 汇总行
  *   （含零命中可读）。
  * - 事件流（`<workspace>/.nebflow/flow-map-events.jsonl`，type=`dispatcher-wake`）：

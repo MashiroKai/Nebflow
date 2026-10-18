@@ -137,7 +137,7 @@ object BuiltinAgents:
         // stays "Nebula" and the whole backend addresses the agent by it.
         case "Nebula" => (NebulaDescription, NebulaPrompt, Some(displayNameForRoot), List("*"))
         case "project-dispatcher" => (DispatcherDescription, DispatcherPrompt, None, Nil)
-        case "nebflow" => (NebflowDescription, NebflowNodePrompt, Some("Nebflow"), Nil)
+        case "nebflow" => (NebflowDescription, NebflowNodePrompt, Some(nebflow.shared.Branding.productName), Nil)
         case "subagent" => (SubagentDescription, SubagentPrompt, Some("Subagent"), Nil)
         case _ => ("", "", None, Nil)
       Some(

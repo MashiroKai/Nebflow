@@ -319,7 +319,7 @@ object FeishuScanBind:
   val SourceTag = "nebflow"
 
   /** ③ preset copy shown on the phone confirmation page (§16 outpiece). */
-  val AppPresetName = "Nebflow 机器人"
+  val AppPresetName = s"${nebflow.shared.Branding.productName} 机器人"
 
   /** Registry cap (each begin adds one entry; old entries are pruned). */
   val MaxSessions = 24

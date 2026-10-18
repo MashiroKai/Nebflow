@@ -441,7 +441,7 @@ Device sends are not gated by any confirmation tier. Wait for the tool result â€
           Left(
             ToolError(
               if peers.isEmpty then
-                "No peer devices discovered. Ensure NebLink Server is configured on both machines and both Nebflow instances are connected."
+                s"No peer devices discovered. Ensure NebLink Server is configured on both machines and both ${Branding.productName} instances are connected."
               else s"Device '$q' not found among ${peers.size} peer(s). Available: ${available.mkString(", ")}"
             )
           )

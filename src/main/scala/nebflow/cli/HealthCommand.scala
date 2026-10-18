@@ -186,7 +186,7 @@ object HealthCommand extends CliCommand:
         else
           def mark(ok: Boolean): String = if ok then "✓" else "✗"
           val lines = List(
-            s"nebflow $cliVersion — health: $status",
+            s"${nebflow.shared.Branding.productName} $cliVersion — health: $status",
             s"  ${mark(selfOk && homeWritable)} self     $selfDetail",
             s"  ${mark(apiReachable)} gateway  $gatewayDetail",
             s"  ${mark(apiReachable && providersDown == 0 && searchStatus != "down")} deps     $depsDetail"

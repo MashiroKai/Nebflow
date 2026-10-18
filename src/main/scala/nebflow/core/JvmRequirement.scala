@@ -109,7 +109,7 @@ object JvmRequirement:
     val found = detected match
       case Some(v) => s"Java $v"
       case None => "an unreadable Java version"
-    s"""ERROR: nebflow requires Java $MinimumFeatureVersion or newer — this JVM is $found.
+    s"""ERROR: ${nebflow.shared.Branding.productName} requires Java $MinimumFeatureVersion or newer — this JVM is $found.
        |The gateway will not start on an older JVM. Upgrade it, then start again:
        |  macOS:   brew install openjdk@21 && export JAVA_HOME=$$(/usr/libexec/java_home -v 21)
        |  Windows: winget install EclipseAdoptium.Temurin.21.JDK

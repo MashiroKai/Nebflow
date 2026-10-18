@@ -437,7 +437,7 @@ When to use:
 
   /**
    * Block 2（§C3-4）：Team cancel/restart 审计行——logger `nebflow.audit`
-   * （随 nebflow.log 落盘）。
+   * （随 stand.log 落盘）。
    */
   private val auditLogger = nebflow.shared.NebflowLogger.forName("nebflow.audit")
 

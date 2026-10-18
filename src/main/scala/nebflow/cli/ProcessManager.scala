@@ -109,7 +109,7 @@ object ProcessManager:
                 case Some(cmd) => s"command: ${StaleProcessGuard.truncate(cmd)}"
                 case None => "command line unreadable"
               StopOutcome.Refused(
-                s"pid $pid is not a verified nebflow process ($detail) — refusing, no signal sent"
+                s"pid $pid is not a verified ${nebflow.shared.Branding.productName} process ($detail) — refusing, no signal sent"
               )
     }
 
@@ -176,7 +176,7 @@ object ProcessManager:
             return StopOutcome.Failed(s"ports still served after stop: ${busy.mkString(", ")}")
 
         removePid()
-        StopOutcome.Stopped(declaration.getOrElse(s"nebflow stopped (pid $pid)"))
+        StopOutcome.Stopped(declaration.getOrElse(s"${nebflow.shared.Branding.productName} stopped (pid $pid)"))
 
   private def waitUntil(deps: StopDeps, pid: Long, timeoutMs: Long): Boolean =
     val deadline = System.currentTimeMillis() + timeoutMs
@@ -233,7 +233,7 @@ object ProcessManager:
               case Some(c) if StaleProcessGuard.isNebflowCommandLine(c) || isSbtCommandLine(c) =>
                 Right(m)
               case Some(c) =>
-                Left(s"member $m is not a verified nebflow/sbt process: ${StaleProcessGuard.truncate(c)}")
+                Left(s"member $m is not a verified ${nebflow.shared.Branding.productName}/sbt process: ${StaleProcessGuard.truncate(c)}")
               case None =>
                 Left(s"member $m command line unreadable — refusing the whole tree")
           }

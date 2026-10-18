@@ -109,7 +109,7 @@ class ProcessManagerSpec extends FunSuite:
       val (deps, rec) = stubDeps(readCmd = _ => Some("sleep 9876"))
       runStop(ProcessManager.StopOptions(), deps) match
         case ProcessManager.StopOutcome.Refused(reason) =>
-          assert(reason.contains("not a verified nebflow process"), reason)
+          assert(reason.contains(s"not a verified ${nebflow.shared.Branding.productName} process"), reason)
           assert(reason.contains("sleep 9876"), reason)
         case other => fail(s"expected Refused, got $other")
       assert(rec.destroyed.isEmpty)
