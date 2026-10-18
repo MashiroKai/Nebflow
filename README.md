@@ -1,6 +1,6 @@
 <div align="center">
 
-# Nebflow
+# stand
 
 **One entry. Every agent.**
 
@@ -15,11 +15,11 @@ A self-hosted AI agent orchestration platform — bring all your work to one ent
   <img src="docs/assets/readme/hero-flow-map.png" alt="Nebflow Flow Map — a task chain executing live" width="960">
 </p>
 
-**[Website](https://nebflow.space)** · **[Releases](https://github.com/MashiroKai/Nebflow/releases)**
+**[Website](https://mystand.space)** · **[Releases](https://github.com/MashiroKai/Nebflow/releases)**
 
 </div>
 
-Nebflow runs entirely on your own machine: a single self-contained JAR serves a browser-based workspace where you chat, orchestrate multi-agent projects, and automate recurring work. There is no cloud account and no external service dependency beyond the LLM providers you choose to configure.
+Stand (formerly Nebflow) runs on your own machine: a single self-contained JAR serves a browser-based workspace where you chat, orchestrate multi-agent projects, and automate recurring work. Local console access works independently of the website; cross-device access uses your Stand account. See [startup and branding](REBRAND.md) for migration, local access and unified logo management.
 
 ## Features
 

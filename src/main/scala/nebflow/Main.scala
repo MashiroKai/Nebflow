@@ -4,7 +4,7 @@ import cats.effect.{ExitCode, IO, IOApp}
 import cats.syntax.all.*
 import nebflow.cli.*
 import nebflow.gateway.GatewayConfig
-import nebflow.shared.{Config, PathUtil}
+import nebflow.shared.{Branding, Config, PathUtil}
 
 import scala.util.Try
 
@@ -89,7 +89,7 @@ object Main extends IOApp:
     // Phase 1: Parse global flags before any dispatching
     val (homeOpt, portOpt, succeedOpt, daemonChild, explicitForeground, remaining) = parseGlobalFlags(args)
 
-    homeOpt.foreach { h =>
+    homeOpt.orElse(Branding.env("HOME")).foreach { h =>
       // 产品侧同源（2026-09-10 作者裁定）：`--home` 决定一切落盘位置，日志同属
       // 该语义范围内——不是新语义，是既有语义的补齐。logback 的 FILE appender
       // 读的是系统属性/环境变量 `NEBFLOW_HOME`（src/main/resources/logback.xml:18,23），
@@ -103,8 +103,8 @@ object Main extends IOApp:
       // 之前只有 IOApp 引导（不碰 slf4j），parseGlobalFlags 亦不触 logger，故
       // 此处是最早点。logback 的 ${NEBFLOW_HOME:-…} 解析顺序为系统属性 > 环境
       // 变量，故显式 `--home` 时系统属性胜出、env 作兜底。
-      // 仅在显式给出 `--home` 时设置：未给则保持回落默认数据根（env 若设了
-      // NEBFLOW_HOME，logback 仍按 env 生效，行为与改动前一致）。
+      // CLI --home wins over STAND_HOME, then NEBFLOW_HOME. Bridge the
+      // resolved home to logback's legacy property before any logger starts.
       sys.props("NEBFLOW_HOME") = root.toString
       PathUtil.setDataRoot(root)
     }
@@ -119,7 +119,7 @@ object Main extends IOApp:
     // explicit --foreground / NEBFLOW_START_FOREGROUND=1 is the operator
     // escape hatch (still the launcher plane, so stop may manage it).
     val syspropForeground = sys.props.get("nebflow.start.foreground").contains("true")
-    val envForeground = sys.env.get("NEBFLOW_START_FOREGROUND").contains("1")
+    val envForeground = Branding.env("START_FOREGROUND").contains("1")
     val foreground = explicitForeground || syspropForeground || envForeground
     // Meta attribution for foreground boots: sbt-owned when injected by the
     // build (conservative — stop refuses by default), launcher otherwise.
@@ -246,35 +246,6 @@ object Main extends IOApp:
           }
       }
 
-  /**
-   * Focus an already-running instance (pid fast path shared by the legacy
-   * foreground and daemon start faces; .app relaunch relies on the
-   * exit-0-focus semantics — must never look like a crash exit).
-   */
-  private def focusRunningPid(pid: Long): IO[ExitCode] =
-    for
-      cfg <- nebflow.gateway.GatewayConfig.load
-      state = pidFocusState(cfg)
-      _ <- state match
-        case Some(url) =>
-          // 门户开门（neblink portal MVP, 2026-10-10）：聚焦目标经 PortalUrl
-          // 解析（env > config > 生产缺省；回落 = 本地 url 原样）。健康探测
-          // （probeNebflow）仍打 localhost:port 原样不动。
-          nebflow.gateway.PortalUrl.focusUrl(url).flatMap { focusTarget =>
-            nebflow.cli.SingleInstanceGuard.focusExisting(
-              focusTarget,
-              s"pid $pid",
-              openBrowser = !nebflow.gateway.GatewayConfig.noBrowser
-            )
-          }
-        case None =>
-          IO.println(s"nebflow is already running (pid: $pid)") *>
-            IO.println("Run 'nebflow stop' to stop it.")
-    // Focusing an existing instance is a success exit — the desktop
-    // .app relaunch must not look like a crash (stdout is discarded
-    // there; the browser focus is the visible action).
-    yield ExitCode.Success
-
   /** Port gate with focus/foreign handling shared by both start faces. */
   private def portGateThen(onFree: => IO[ExitCode]): IO[ExitCode] =
     nebflow.gateway.GatewayConfig.load.flatMap { cfg =>
@@ -285,7 +256,10 @@ object Main extends IOApp:
             onFree
           case nebflow.cli.SingleInstanceGuard.NebflowInstance(url) =>
             // 门户开门（同 pid 快道）：聚焦目标换 PortalUrl 解析值；探测原样。
-            nebflow.gateway.PortalUrl.focusUrl(url).flatMap { focusTarget =>
+            nebflow.gateway.PortalUrl.focusUrl(
+              url,
+              authenticateLocal = !GatewayConfig.noBrowser && !nebflow.core.HeadlessMode.enabled
+            ).flatMap { focusTarget =>
               nebflow.cli.SingleInstanceGuard
                 .focusExisting(
                   focusTarget,
@@ -295,47 +269,27 @@ object Main extends IOApp:
                 .as(ExitCode.Success)
             }
           case nebflow.cli.SingleInstanceGuard.ForeignOccupant(detail) =>
-            IO.println(s"ERROR: $detail — nebflow cannot start.") *>
+            IO.println(s"ERROR: $detail — ${Branding.productName} cannot start.") *>
               IO.println(
                 "Stop it, or pick another port (--port / GATEWAY_PORT)."
               ) *> IO.pure(ExitCode.Error)
         }
     }
 
-  /**
-   * Today's full start semantics (foreground exemption, §1.5): pid fast
-   * path + port gate + foreground bootGateway — preserved byte-for-byte for
-   * the sbt dev chain (build.sbt injects nebflow.start.foreground=true) and
-   * the explicit --foreground / env escape hatches.
+  /** The listening port is authoritative. A PID copied from another device
+   * can refer to an unrelated live process, and must never suppress startup.
    */
   private def startGatewayLegacy(metaStartedBy: String): IO[ExitCode] =
     ensureFirstRunConfig() *>
-      (ProcessManager.readPid() match
-        case Some(pid) if ProcessManager.isRunning(pid) =>
-          focusRunningPid(pid)
-        case _ =>
-          // Port-level guard (2026-08-27 hard requirement): the pid file is
-          // per-home and misses cross-home collisions, stale files, and older
-          // builds — the port is the actual contended resource.
-          portGateThen(bootGateway(metaStartedBy, PidMeta.ModeForeground))
-      )
+      portGateThen(bootGateway(metaStartedBy, PidMeta.ModeForeground))
 
-  /**
-   * Default product start face (§1.1): same idempotence (pid fast path
-   * focuses + exit 0) and the same port gate, then the parent launcher
-   * spawns the daemon child and waits for it to serve.
-   */
+  /** Product start uses the same port gate before spawning its daemon. */
   private def startGatewayDaemon(): IO[ExitCode] =
     ensureFirstRunConfig() *>
-      (ProcessManager.readPid() match
-        case Some(pid) if ProcessManager.isRunning(pid) =>
-          focusRunningPid(pid)
-        case _ =>
-          portGateThen(
-            nebflow.gateway.GatewayConfig.load.flatMap { cfg =>
-              DaemonSpawn.launch(PathUtil.dataRoot, cfg.port.value, GatewayConfig.noBrowser)
-            }
-          )
+      portGateThen(
+        nebflow.gateway.GatewayConfig.load.flatMap { cfg =>
+          DaemonSpawn.launch(PathUtil.dataRoot, cfg.port.value, GatewayConfig.noBrowser)
+        }
       )
 
   /**
@@ -385,13 +339,6 @@ object Main extends IOApp:
           .run(Nil)
           .guarantee(IO.blocking(ProcessManager.removePid()))
     }
-
-  /**
-   * For the pid-file hit: probe whether our port serves a nebflow health
-   * endpoint (best-effort, reused from the guard). Some -> focus URL.
-   */
-  private def pidFocusState(cfg: nebflow.gateway.GatewayConfig): Option[String] =
-    nebflow.cli.SingleInstanceGuard.checkPortBlocking(cfg.host.toString, cfg.port.value)
 
   private def bootGateway(startedBy: String, mode: String): IO[ExitCode] =
     val pid = java.lang.ProcessHandle.current().pid()

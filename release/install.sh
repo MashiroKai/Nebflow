@@ -21,12 +21,12 @@ set -e
 # -- release time (scripts/render-brand.sh); do not edit by hand. -----------
 # The runtime dual-reads legacy names (L3), so rendering NEW values here
 # keeps existing user data working - old dirs/env/config fall back.
-PRODUCT_NAME=Nebflow
-LOWER_NAME=nebflow
+PRODUCT_NAME=stand
+LOWER_NAME=stand
 COS_BUCKET=nebflow-releases
 HOME_DIR=.nebflow
 CONFIG_FILE=nebflow.json
-WRAPPER_NAME=nebflow
+WRAPPER_NAME=stand
 COS_BASE_CN="https://${COS_BUCKET}.oss-cn-hangzhou.aliyuncs.com"
 # Batch 2 (v2): all third-party deps mirrored on the above endpoint under the
 # deps/ prefix (single primary source for every region; upstream sources

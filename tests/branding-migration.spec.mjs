@@ -1,11 +1,11 @@
 // branding-migration.spec.mjs — rename-day storage migration (批3 L3 task 2).
 //
 // Contract under test (js/branding.js, module-init side effect):
-//   1. Today (brand = nebflow): zero behavior change — key() yields the
+//   1. Legacy fixture (brand = nebflow): zero behavior change — key() yields the
 //      historical literals, and the two pre-standardization spellings
 //      ('nebflow-task-collapsed', 'nebflow:timeFormat') are normalized into
 //      the scheme on every boot.
-//   2. Rename day (brand = neblink): every legacy nebflow_* localStorage key
+//   2. Current brand (brand = stand): every legacy nebflow_* localStorage key
 //      (including the nebflow_tasks_* family) is copied to the new namespace
 //      and removed; existing new-namespace data always wins; branding.js
 //      touches ONLY localStorage — the stage D retirement removed the old
@@ -34,7 +34,7 @@ const MIME = {
 };
 
 const ROOT_SID = 'e2e-root-session';
-const REBRAND = { productName: 'NebLink', lowerName: 'neblink', domain: 'neblink.app', homeDirName: '.neblink' };
+const REBRAND = { productName: 'stand', lowerName: 'stand', domain: 'mystand.space', homeDirName: '.nebflow' };
 
 /**
  * Minimal boot: configData (onboarding terminal) + sessionList.
@@ -54,10 +54,10 @@ async function bootApp(page, opts = {}) {
     if (!file.startsWith(WEB)) return route.fulfill({ status: 403, body: 'forbidden' });
     try {
       let body = readFileSync(file);
-      if (opts.rebrand && p === '/index.html') {
+      if (p === '/index.html') {
         // Inject the gateway-provided brand BEFORE the classic inline script
         // (sidebar collapse restore) and any module load.
-        const tag = `<script>window.__BRAND__=${JSON.stringify(REBRAND)};</script>`;
+        const tag = `<script>window.__BRAND__=${JSON.stringify(opts.rebrand ? REBRAND : {productName: 'Nebflow', lowerName: 'nebflow', domain: 'nebflow.space'})};</script>`;
         body = Buffer.from(body.toString('utf8').replace('<body>', `<body>\n  ${tag}`));
       }
       return route.fulfill({ status: 200, contentType: MIME[extname(file)] || 'application/octet-stream', body });
@@ -109,7 +109,7 @@ function lsDump(page) {
   });
 }
 
-test('today (brand=nebflow): keys unchanged, irregular spellings normalized', async ({ page }) => {
+test('today (legacy brand=nebflow): keys unchanged, irregular spellings normalized', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
 
@@ -140,7 +140,7 @@ test('today (brand=nebflow): keys unchanged, irregular spellings normalized', as
   expect(pageErrors).toEqual([]);
 });
 
-test('rename day (brand=neblink): legacy data migrates, user notices nothing', async ({ page }) => {
+test('rename day (brand=stand): legacy data migrates, user notices nothing', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
 
@@ -152,34 +152,34 @@ test('rename day (brand=neblink): legacy data migrates, user notices nothing', a
     localStorage.setItem('nebflow_sidebar_collapsed', 'true');
     localStorage.setItem('nebflow-task-collapsed', 'true');
     // Conflict case: new-namespace data already exists and must win.
-    localStorage.setItem('neblink_input_history', '["new-data-wins"]');
+    localStorage.setItem('stand_input_history', '["new-data-wins"]');
     localStorage.setItem('nebflow_input_history', '["old"]');
     document.cookie = 'nebflow_token=legacy-token-123; path=/';
   });
   await bootApp(page, { rebrand: true });
 
   const ls = await lsDump(page);
-  // Core keys migrated and legacy removed. (neblink_sessions is app-owned:
+  // Core keys migrated and legacy removed. (stand_sessions is app-owned:
   // the boot sequence legitimately rewrites it after migration, so assert
   // the legacy key is gone and the new key exists, not the exact value.)
-  expect(ls['neblink_token']).toBe('legacy-token-123');
-  expect(ls['neblink_sessions']).toBeDefined();
-  expect(ls['neblink_locale']).toBe('en');
-  expect(ls['neblink_sidebar_collapsed']).toBe('true');
+  expect(ls['stand_token']).toBe('legacy-token-123');
+  expect(ls['stand_sessions']).toBeDefined();
+  expect(ls['stand_locale']).toBe('en');
+  expect(ls['stand_sidebar_collapsed']).toBe('true');
   expect(ls['nebflow_token']).toBeUndefined();
   expect(ls['nebflow_sessions']).toBeUndefined();
   expect(ls['nebflow_locale']).toBeUndefined();
 
   // Prefix family (nebflow_tasks_*) covered by enumeration.
-  expect(ls['neblink_tasks_abc123']).toBe('[{"id":1}]');
+  expect(ls['stand_tasks_abc123']).toBe('[{"id":1}]');
   expect(ls['nebflow_tasks_abc123']).toBeUndefined();
 
   // Irregular spelling lands in the NEW namespace on rename day.
-  expect(ls['neblink_task_collapsed']).toBe('true');
+  expect(ls['stand_task_collapsed']).toBe('true');
   expect(ls['nebflow-task-collapsed']).toBeUndefined();
 
   // New data wins; the losing legacy key is left untouched.
-  expect(ls['neblink_input_history']).toBe('["new-data-wins"]');
+  expect(ls['stand_input_history']).toBe('["new-data-wins"]');
   expect(ls['nebflow_input_history']).toBe('["old"]');
 
   // index.html classic inline script: migration has NOT run when it executes
@@ -199,7 +199,7 @@ test('rename day (brand=neblink): legacy data migrates, user notices nothing', a
     const { key } = await import('/js/branding.js');
     return key('token');
   });
-  expect(tokenKey).toBe('neblink_token');
+  expect(tokenKey).toBe('stand_token');
 
   expect(pageErrors).toEqual([]);
 });

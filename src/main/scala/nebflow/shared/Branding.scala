@@ -105,6 +105,9 @@ object Branding:
   /** Device-interop default server URL (current true value). */
   val serverUrl: String = get("serverUrl")
 
+  /** Browser portal, independent of the device relay endpoint. */
+  val portalUrl: String = get("portalUrl")
+
   val githubOrg: String = get("githubOrg")
 
   val githubRepo: String = get("githubRepo")
@@ -186,7 +189,9 @@ object Branding:
    * `name` is the bare suffix without prefix, e.g. "HOME", "GATEWAY_PORT".
    */
   def env(name: String): Option[String] =
-    dualEnv(sys.env, envPrefix, name)
+    // Read the parsed source directly: domain/profile/login initializers call
+    // env() before the public envPrefix val has been initialized.
+    dualEnv(sys.env, conf.getOrElse("envPrefix", "NEBFLOW"), name)
 
   /**
    * Pure core of `env` (parameterized for the spec — the live prefix is a

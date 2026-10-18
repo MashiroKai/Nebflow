@@ -792,8 +792,8 @@ export function renderSettings() {
       <button class="settings-avatar-entry" id="settings-avatar-entry" type="button">
         <span class="settings-avatar-frame">
           <picture>
-            <source media="(prefers-color-scheme: dark)" srcset="css/logo-dark-4.png">
-            <img class="settings-avatar-logo" src="css/logo-bright-4.png" alt="">
+            <source media="(prefers-color-scheme: dark)" srcset="${brand.logoDarkUrl}">
+            <img class="settings-avatar-logo" src="${brand.logoUrl}" alt="">
           </picture>
           <img class="settings-avatar-photo" alt="" hidden>
         </span>
@@ -820,6 +820,10 @@ export function renderSettings() {
       <div class="settings-row">
         <span class="settings-label">${t('settings.language')}</span>
         <select class="cfg-select" id="cfg-language" style="width:auto">${langOpts}</select>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">Logo</span>
+        <a class="cfg-btn" href="/brand/index.html">Logo ↗</a>
       </div>
       <div class="settings-row">
         <span class="settings-label">${t('settings.autostart')}</span>

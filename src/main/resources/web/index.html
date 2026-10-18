@@ -14,20 +14,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <!-- Neutral initial title: js/brand.js sets the real one from window.__BRAND__. -->
   <title></title>
-  <!-- Favicon: pixel logo v5 (website canonical bright variant), fixed regardless of theme.
-       PNG/ICO derived from the website canonical public/logo/bright.png via nearest-neighbor resample
-       (224 canvas with 16/40 margins, so 32/16/48 all land on whole art pixels).
-       ?v=5 busts the browser cache for the in-place favicon rewrite — the
-       gateway root route only serves a fixed filename whitelist, so the
-       favicon-* names cannot change with the artwork.
-       The 180/192/512 tiers (apple-touch + high-resolution, added 2026-09-20) are the
-       same canonical chain — nearest-neighbor direct, same ?v=5 token. -->
-  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=5">
-  <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png?v=5">
-  <link rel="shortcut icon" href="favicon.ico?v=5">
-  <link rel="icon" type="image/png" sizes="192x192" href="favicon-192.png?v=5">
-  <link rel="icon" type="image/png" sizes="512x512" href="favicon-512.png?v=5">
-  <link rel="apple-touch-icon" sizes="180x180" href="favicon-180.png?v=5">
+  <!-- Favicons are derived by scripts/switch-logo.py. Their content digest
+       invalidates browser caches when another logo is selected. -->
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=c746bb561f1b428a">
+  <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png?v=c746bb561f1b428a">
+  <link rel="shortcut icon" href="favicon.ico?v=c746bb561f1b428a">
+  <link rel="icon" type="image/png" sizes="192x192" href="favicon-192.png?v=c746bb561f1b428a">
+  <link rel="icon" type="image/png" sizes="512x512" href="favicon-512.png?v=c746bb561f1b428a">
+  <link rel="apple-touch-icon" sizes="180x180" href="favicon-180.png?v=c746bb561f1b428a">
   <link rel="stylesheet" href="vendor/katex.min.css">
   <link rel="stylesheet" href="vendor/highlight-github.min.css" media="(prefers-color-scheme: light)">
   <link rel="stylesheet" href="vendor/highlight-github-dark.min.css" media="(prefers-color-scheme: dark)">
@@ -87,8 +81,8 @@
   <div id="activity-bar">
     <button id="activity-avatar" class="activity-avatar" title="Login">
       <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="css/logo-dark-4.png">
-        <img class="activity-avatar-logo" src="css/logo-bright-4.png" alt="">
+        <source media="(prefers-color-scheme: dark)" srcset="/brand/black-cat/source.png">
+        <img class="activity-avatar-logo" src="/brand/black-cat/source.png" alt="">
       </picture>
       <img class="activity-avatar-photo" alt="" hidden>
       <span class="activity-avatar-letter" hidden>N</span>

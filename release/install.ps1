@@ -30,12 +30,12 @@ try {
 # -- release time (scripts/render-brand.sh); do not edit by hand. -----------
 # The runtime dual-reads legacy names (L3), so rendering NEW values here
 # keeps existing user data working - old dirs/env/config fall back.
-$ProductName = "Nebflow"
-$LowerName = "nebflow"
+$ProductName = "stand"
+$LowerName = "stand"
 $CosBucket = "nebflow-releases"
 $HomeDir = ".nebflow"
 $ConfigFile = "nebflow.json"
-$WrapperName = "nebflow"
+$WrapperName = "stand"
 $CosBaseCn = "https://$CosBucket.oss-cn-hangzhou.aliyuncs.com"
 # Single-source conclusion unchanged: the Nebflow jar download and the version
 # resolution go through the mirror endpoint above (same value as the CI upload

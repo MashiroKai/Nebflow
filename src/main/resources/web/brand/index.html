@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Stand · Logo</title>
+<style>
+:root { color-scheme: light dark; font: 16px/1.6 system-ui, sans-serif; }
+body { max-width: 1000px; margin: 64px auto; padding: 0 24px; }
+h1 { margin-bottom: 8px; } p { opacity: .7; }
+#logos { display: grid; grid-template-columns: repeat(auto-fit,minmax(240px,1fr)); gap: 24px; margin: 36px 0; }
+article { border: 1px solid #8885; border-radius: 16px; padding: 24px; }
+.previews { display: flex; gap: 8px; } img { width: 48%; aspect-ratio: 1; object-fit: contain; border-radius: 8px; }
+.light { background: #fff; } .dark { background: #171717; }
+button, a { font: inherit; } button { cursor: pointer; padding: 8px 16px; border-radius: 8px; border: 1px solid #8885; }
+code { font-size: 12px; overflow-wrap: anywhere; } #status { min-height: 2em; }
+</style></head>
+<body><a href="/">← 返回 Stand</a><h1>Logo 资源库</h1>
+<p>所有渠道共用项目中的当前 Logo 配置。这里保留原图、历史版本和统一同步命令。</p>
+<div id="logos"></div><p id="status" role="status"></p>
+
+<p>运行统一命令后，重建发布官网、登录页与客户端，并同步邮件品牌配置。</p>
+<script type="module" src="/js/logoGallery.js"></script></body></html>

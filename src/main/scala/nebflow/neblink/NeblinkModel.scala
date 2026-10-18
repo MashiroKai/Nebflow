@@ -613,7 +613,7 @@ case class NeblinkConfig(
    * (`<dataRoot>/neblink/config.json`); 🔴 there is deliberately NO
    * nebflow.json surface (its neblink block is inert — see the LogtoConfig
    * doc above). Resolution order lives in `nebflow.gateway.PortalUrl`:
-   * NEBFLOW_PORTAL_URL env > this field > the production default. An empty
+   * STAND_PORTAL_URL / NEBFLOW_PORTAL_URL env > this field > the website portal. An empty
    * string means explicitly OFF (the startup open falls back to the local
    * localhost UI — dev mode).
    */

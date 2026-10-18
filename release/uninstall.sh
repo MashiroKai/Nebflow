@@ -2,10 +2,10 @@
 
 # -- Brand values (L2 rebrand): rendered from repo-root brand.conf at -----
 # -- release time (scripts/render-brand.sh); do not edit by hand. ----------
-PRODUCT_NAME=Nebflow
-LOWER_NAME=nebflow
+PRODUCT_NAME=stand
+LOWER_NAME=stand
 HOME_DIR=.nebflow
-WRAPPER_NAME=nebflow
+WRAPPER_NAME=stand
 set -e
 
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"

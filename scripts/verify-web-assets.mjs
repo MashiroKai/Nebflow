@@ -77,6 +77,7 @@ function toUrl(rel) {
   const [top, second] = segs;
   if (top === 'assets' && DIST_MODE) return `/assets/${segs.slice(1).join('/')}`;
   if (top === 'css') return segs.length === 2 ? `/css/${second}` : null;
+  if (top === 'brand') return `/brand/${segs.slice(1).join('/')}`;
   if (top === 'js') return `/js/${segs.slice(1).join('/')}`;
   if (top === 'vendor') {
     if (segs.length === 2) return `/vendor/${second}`;
