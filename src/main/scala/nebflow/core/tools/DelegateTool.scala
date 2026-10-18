@@ -304,6 +304,10 @@ object DelegateTool extends Tool:
         .open()
         .createSyncReturningId(
           title = s"${resolvedProject.getOrElse(DefaultWorkspaceName)} — $description",
+          // 🔴 project 字段随派发面落库（#506 过滤字段错位修复，2026-10-18）：此前 tag
+          // 只进标题前缀（上方遗留编码），字段恒 None ⇒ `Task list project=<名>` 精确
+          // 过滤返空。标题前缀保留（面板/回执既有显示契约），字段成为权威 tag。
+          project = resolvedProject,
           actor = TaskLedgerHistory.Actors.Nebula
         )
     }.attempt

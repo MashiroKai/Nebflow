@@ -371,6 +371,9 @@ object DeviceDelegate:
           .open()
           .createSyncReturningId(
             title = s"$projectName — $title (device-delegate from ${fromDeviceName.take(40)})",
+            // 🔴 project 字段随派发面落库（#506 过滤字段错位修复，2026-10-18）——
+            // 与 DelegateTool.createLedgerEntry 同批同型；空名 = 缺省座位（None）。
+            project = Option(projectName).map(_.trim).filter(_.nonEmpty),
             actor = nebflow.core.project.TaskLedgerHistory.Actors.Nebula
           )
       }.attempt.map(_.toOption.flatMap(_.toOption))

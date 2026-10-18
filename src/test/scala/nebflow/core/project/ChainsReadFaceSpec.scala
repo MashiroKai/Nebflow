@@ -47,6 +47,9 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     (ProjectRuntimeRegistry.clear *> DelegateFlowHosts.clear).unsafeRunSync()
     if os.exists(tempRoot / "delegates") then os.remove.all(tempRoot / "delegates")
     if os.exists(tempRoot / "chains") then os.remove.all(tempRoot / "chains")
+    if os.exists(tempRoot / "projects") then os.remove.all(tempRoot / "projects")
+    if os.exists(tempRoot / "c4b-real-ws") then os.remove.all(tempRoot / "c4b-real-ws")
+    if os.exists(tempRoot / "c4b-alias-root") then os.remove.all(tempRoot / "c4b-alias-root")
 
   override def afterEach(context: munit.AfterEach): Unit =
     (ProjectRuntimeRegistry.clear *> DelegateFlowHosts.clear).unsafeRunSync()
@@ -313,6 +316,123 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
       assertEquals(badBody, None, "invalid key ⇒ None (route 400s before, defense in depth)")
       assert(!ghostDirCreated, "the read face never creates scope directories")
     end for
+  }
+
+  // ── C4 现役窗世界座位闸（面板退役台账泄漏微批 #506，2026-10-18）──────────────
+
+  /** 项目定义夹具（ProjectStore.list() 的世界腿数据源；project.json 手写最小形）。 */
+  private def putProjectDef(name: String, workspace: os.Path): Unit =
+    val dir = tempRoot / "projects" / name
+    os.makeDir.all(dir)
+    os.write(
+      dir / "project.json",
+      io.circe.Json
+        .obj(
+          "name" -> name.asJson,
+          "workspace" -> workspace.toString.asJson,
+          "agentFile" -> (workspace / "AGENTS.md").toString.asJson,
+          "createdAt" -> System.currentTimeMillis().asJson
+        )
+        .noSpaces
+    )
+
+  /** 外来隔离实例（coldstart 腿）形态的记录：座位在实例世界之外。 */
+  private def foreignRecord(id: String, taskId: Option[String], createdAt: Long): DelegateRegistry.Record =
+    DelegateRegistry.Record(
+      id = id,
+      executor = "nebflow",
+      cwd = s"/tmp/nb-spec-coldstart-$id/general",
+      project = None,
+      taskId = taskId,
+      parentSessionId = "coldstart-root",
+      title = "retired-ledger leftover",
+      createdAt = createdAt
+    )
+
+  test(
+    "C4: the active rows window drops foreign-seat (retired-instance) records; the archived window keeps them (zero deletion)"
+  ) {
+    // 世界两腿：dataRoot 子树（缺省 general 座位）+ 项目定义 workspace（dataRoot 之外）。
+    val projectWs = os.temp.dir(prefix = "nb-crf-c4-projws-", deleteOnExit = false)
+    putProjectDef("spec-proj", projectWs)
+    val defaultSeat = DelegateRegistry.Record(
+      id = "delegate-general-66aa77bb",
+      executor = "nebflow",
+      cwd = (tempRoot / "general").toString, // dataRoot 子树（缺省座位）
+      project = None,
+      taskId = Some("900"),
+      parentSessionId = "nebula-root",
+      title = "in-world default seat",
+      createdAt = System.currentTimeMillis(),
+      projectWorkspace = None
+    )
+    val projectSeat = record("delegate-general-77bb88cc", Some("901")).copy(
+      project = Some("spec-proj"),
+      projectWorkspace = Some(projectWs.toString),
+      cwd = (projectWs / ".nebflow" / "worktrees" / "wt-901").toString // worktree 座位 ⊂ 项目 workspace
+    )
+    val staleActive = foreignRecord("delegate-nebflow-88cc99dd", Some("33"), createdAt = 1L)
+    val staleArchived = foreignRecord("delegate-nebflow-99dd00ee", Some("36"), createdAt = 2L)
+      .copy(archivedAt = Some(3L))
+    List(defaultSeat, projectSeat, staleActive, staleArchived).foreach(DelegateRegistry.put)
+
+    for
+      activeBody <- ChainsReadFace.rowsJson(Map.empty)
+      archivedBody <- ChainsReadFace.rowsJson(Map.empty, archived = true)
+    yield
+      val activeIds = activeBody.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil).map(
+        _.hcursor.get[String]("id").toOption.getOrElse("")
+      )
+      val archivedIds = archivedBody.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil).map(
+        _.hcursor.get[String]("id").toOption.getOrElse("")
+      )
+      assertEquals(
+        activeIds.toSet,
+        Set(defaultSeat.id, projectSeat.id),
+        "active window = this instance's world only (default seat + project-workspace seat); retired-instance rows never leak"
+      )
+      assert(
+        !activeIds.contains(staleActive.id),
+        "a /tmp coldstart-seat record (retired ledger taskNo) is not panel-visible"
+      )
+      assertEquals(
+        archivedIds.toSet,
+        Set(staleArchived.id),
+        "the archived window stays complete (zero deletion): archived foreign record still inspectable"
+      )
+  }
+
+  test("C4b: seat scoping is canonical-path stable — a symlinked workspace alias still counts as in-world") {
+    // 真实形态：projects 目录 nebflow→stand 改名后，旧记录 cwd 仍走旧名（symlink 别名）。
+    // canonical 判定必须吃掉别名差异（否则改名即丢现役行）。夹具落 tempRoot 内（生产
+    // 形态 = /Users 下稳定路径的改名 symlink，非系统 tmpdir 形态）。
+    val realWs = tempRoot / "c4b-real-ws"
+    val aliasDir = tempRoot / "c4b-alias-root"
+    val aliasWs = aliasDir / "AliasName"
+    os.makeDir.all(realWs)
+    os.makeDir.all(aliasDir)
+    java.nio.file.Files.createSymbolicLink(
+      aliasWs.toNIO,
+      realWs.toNIO
+    )
+    putProjectDef("spec-alias-proj", realWs) // 世界登记 = 真名
+    val aliasedSeat = record("delegate-general-aabb0011", Some("902")).copy(
+      projectWorkspace = Some((aliasWs / ".nebflow" / "worktrees" / "wt-902").toString) // 座位走别名
+    )
+    DelegateRegistry.put(aliasedSeat)
+    val foreign = foreignRecord("delegate-nebflow-bbcc0022", Some("64"), createdAt = 4L)
+    DelegateRegistry.put(foreign)
+    for
+      body <- ChainsReadFace.rowsJson(Map.empty)
+    yield
+      val ids = body.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil).map(
+        _.hcursor.get[String]("id").toOption.getOrElse("")
+      )
+      assertEquals(
+        ids.toSet,
+        Set(aliasedSeat.id),
+        "symlink-aliased project seat resolves into the world (canonical compare); foreign seat filtered"
+      )
   }
 
 end ChainsReadFaceSpec
