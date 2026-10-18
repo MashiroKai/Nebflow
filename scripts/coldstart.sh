@@ -66,6 +66,20 @@
 #      brand 目录名从 brand.conf 的 homeDirName 现读，🔴 不写死任何绝对路径。
 #      🔴 device.json / auth.json（身份与凭据面）明确不拷、零触碰——身份/凭据跨 home
 #      流动正是 2026-09-11 撞身份事故链的一环（见 coldstart DX 批④的 scope 熵修复）。
+#   8) 浏览器隔离开门 + 出厂档（新用户体验批）——实例的 home 是干净的，但浏览器层会
+#      沿用本机登录状态：boot 自动开门用的是默认浏览器档案（其中 cookie 与 Logto SSO
+#      会话是域名级、跨实例共享的，点「登录」会被静默签入已登录账号，跳过凭据页）。
+#      因此：
+#      - 实例改带 --no-browser 启动（关掉 boot 自动开门——其目标经 PortalUrl 解析，
+#        现配置下还会打开门户网站而非本地控制台）；脚本在实例就绪后自铸一次性开门票
+#        （POST /api/auth/console-ticket，AuthAdmin BearerFileOnly 面，token 读自
+#        <home>/auth.json），再用 Chrome【一次性档案】（--user-data-dir 临时目录：
+#        零 cookie、零 SSO、零 localStorage）打开本地控制台 ⇒ 浏览器层等价一台全新
+#        机器，登录必然要求真实凭据。Chrome 缺席（或 COLDSTART_CHROME 指向他物）
+#        时退化为打印「请用无痕窗口打开」——无痕窗同样隔离本机会话状态。一次性档案
+#        目录固定 /tmp/stand-coldstart-console-profile，每轮启动前重建。
+#      - COLDSTART_FULL=1：跳过 7) 的模型配置种子 ⇒ home 连 LLM 配置都零携带，
+#        onboarding 的选模型步走真实新用户路径。缺省 0 = 沿用种子（开发免重配）。
 
 # 用法：
 #   ./scripts/coldstart.sh                                            # staging 档冷启动（默认，不进生产网）
@@ -74,6 +88,8 @@
 #   COLDSTART_NET=off ./scripts/coldstart.sh                          # env 等价形态（--net 优先于 COLDSTART_NET）
 #   DRY_RUN=1 ./scripts/coldstart.sh                                  # 只预览，不启动 sbt、不写任何文件
 #   COLDSTART_PORT=<port> COLDSTART_HOME=<path> ./scripts/coldstart.sh  # 覆盖默认
+#   COLDSTART_FULL=1 ./scripts/coldstart.sh                           # 出厂档：不种模型配置（全零携带）
+#   COLDSTART_CHROME=<path> ./scripts/coldstart.sh                    # 指定开门用的 Chrome 可执行件
 #   NEBFLOW_ALLOW_PROD_ENROLL=1 ./scripts/coldstart.sh --net prod     # 显式放行：注册到生产 NebLink
 #
 # 说明：已配置的模型（home 顶层的 nebflow.json / models.json / model-presets.json）
@@ -86,6 +102,10 @@ COLDSTART_HOME="${COLDSTART_HOME:-/tmp/nebflow-coldstart}"
 DRY_RUN="${DRY_RUN:-0}"
 # 本脚本自起实例的 cmdline 特征标记（验身用）。
 COLDSTART_MARKER="nebflow-coldstart"
+# 出厂档开关：1 = 跳过模型配置种子（home 全零携带，见文件头 8)）；缺省 0。
+COLDSTART_FULL="${COLDSTART_FULL:-0}"
+# 开门用 Chrome 可执行件（缺省 = 标准 macOS 安装位；缺失时退化为无痕窗口指引）。
+CHROME_BIN="${COLDSTART_CHROME:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
 
 # ── 网络档位解析（批①）：--net <tier> 优先，其次 COLDSTART_NET，默认 staging ──
 NET_TIER="${COLDSTART_NET:-staging}"
@@ -132,7 +152,8 @@ if [ "$COLDSTART_PORT" = "8080" ]; then
   exit 1
 fi
 
-echo "[coldstart] port=$COLDSTART_PORT home=$COLDSTART_HOME dry_run=$DRY_RUN net=$NET_TIER"
+echo "[coldstart] port=$COLDSTART_PORT home=$COLDSTART_HOME dry_run=$DRY_RUN net=$NET_TIER full=$COLDSTART_FULL"
+echo "[coldstart] 开门形态: --no-browser 启动 + 一次性浏览器档案（真·新用户浏览器层；普通窗口会静默沿用本机登录状态）"
 
 # ── 网络档位 NOTICE（三档都明示，绝不静默；批①「启动 NOTICE 文案同步三档」）──
 case "$NET_TIER" in
@@ -295,7 +316,9 @@ seed_model_configs() {
   done
   echo "[coldstart] 种子面仅限三件模型配置；device.json / auth.json（身份与凭据面）明确不拷、零触碰。"
 }
-if [ -d "$MAIN_HOME" ]; then
+if [ "$COLDSTART_FULL" = "1" ]; then
+  echo "[coldstart] COLDSTART_FULL=1 ⇒ 跳过模型配置种子：home 全零携带（出厂档）；模型/Provider 请在 onboarding 或设置面现配。"
+elif [ -d "$MAIN_HOME" ]; then
   seed_model_configs
 else
   echo "[coldstart] 主 home $MAIN_HOME 不存在 ⇒ 无配置可种；首次模型配置请走 web UI 设置。"
@@ -309,7 +332,7 @@ seed_staging_target() {
   local cfg_dir="$COLDSTART_HOME/neblink"
   local cfg="$cfg_dir/config.json"
   if [ -e "$cfg" ]; then
-    echo "[coldstart] staging 注入：已存在 $cfg，不覆盖（保留现状）。"
+    echo "[coldstart] staging 注入：已存在 ${cfg}，不覆盖（保留现状）。"
     return
   fi
   if [ "$DRY_RUN" = "1" ]; then
@@ -330,6 +353,67 @@ if [ "$DRY_RUN" = "1" ]; then
   exit 0
 fi
 
-# exec 替换当前 shell。sbt run = Main 入口，--home / --port 正确解析（安全形态）。
+# 实例带 --no-browser 启动（见文件头 8)）：boot 自动开门被关掉，开门由本脚本接管。
+# sbt run = Main 入口，--home / --port / --no-browser 均为全局旗标（安全形态）；
+# NEBFLOW_GATEWAY_PORT 为 fork-proof 主保险（随进程树继承到 fork 出的实例 JVM）。
 # 注：禁止 `java nebflow.gateway.GatewayMain` 直启 —— 它带参即 fail-fast，且非用户入口。
-exec sbt "run --home $COLDSTART_HOME --port $COLDSTART_PORT"
+echo "[coldstart] 启动实例（--no-browser，开门由脚本接管）…"
+NEBFLOW_GATEWAY_PORT=$COLDSTART_PORT sbt "run --home $COLDSTART_HOME --port $COLDSTART_PORT --no-browser" &
+SBT_PID=$!
+cleanup() { kill "$SBT_PID" 2>/dev/null || true; }
+trap cleanup EXIT
+
+# 就绪轮询：端口开始 LISTEN 即视为就绪。sbt 首次编译可能较久（上限 ~5 分钟）；
+# 超时不杀实例，打印手动开门说明后继续陪跑。
+echo "[coldstart] 等待实例就绪（端口 ${COLDSTART_PORT}，每 3s 复查）…"
+READY=0
+for _ in $(seq 1 100); do
+  if lsof -tiTCP:"$COLDSTART_PORT" -sTCP:LISTEN 2>/dev/null | grep -q .; then READY=1; break; fi
+  sleep 3
+done
+
+# 自铸一次性开门票：POST /api/auth/console-ticket（AuthAdmin BearerFileOnly 面），
+# token 读自 <home>/auth.json（JSON 字符串形态）。铸造失败不拦启动：退化为开门面。
+OPEN_URL="http://localhost:$COLDSTART_PORT/"
+if [ "$READY" = "1" ]; then
+  TOKEN=""
+  for _ in $(seq 1 10); do
+    [ -f "$COLDSTART_HOME/auth.json" ] && break
+    sleep 1
+  done
+  if [ -f "$COLDSTART_HOME/auth.json" ]; then
+    TOKEN="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])))' "$COLDSTART_HOME/auth.json" 2>/dev/null || true)"
+  fi
+  if [ -n "$TOKEN" ]; then
+    TICKET="$(curl -s --noproxy '*' -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}' \
+      "http://127.0.0.1:$COLDSTART_PORT/api/auth/console-ticket" \
+      | python3 -c 'import json,sys;print(json.load(sys.stdin).get("ticket",""))' 2>/dev/null || true)"
+    if [ -n "$TICKET" ]; then
+      ENC="$(python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "$TICKET" 2>/dev/null || true)"
+      [ -n "$ENC" ] && OPEN_URL="http://localhost:$COLDSTART_PORT/?ticket=$ENC"
+    fi
+  fi
+  echo "[coldstart] 控制台地址: http://localhost:$COLDSTART_PORT/（开门票 120s 有效；过期刷新页面按门面指引重进）"
+else
+  echo "[coldstart] WARN: 就绪等待超时（实例可能仍在编译）。就绪后请手动用无痕窗口打开: $OPEN_URL"
+fi
+
+# 一次性浏览器档案开门：零 cookie / 零 SSO / 零 localStorage ⇒ 浏览器层 = 全新机器。
+CHROME_PROFILE="/tmp/stand-coldstart-console-profile"
+if [ "$READY" = "1" ] && [ -x "$CHROME_BIN" ]; then
+  rm -rf "$CHROME_PROFILE"
+  mkdir -p "$CHROME_PROFILE"
+  echo "[coldstart] 用一次性浏览器档案开门（档案=${CHROME_PROFILE}，仅服务本次测试，实例停止后可整目录删除）"
+  "$CHROME_BIN" --user-data-dir="$CHROME_PROFILE" --no-first-run --no-default-browser-check "$OPEN_URL" >/dev/null 2>&1 &
+else
+  echo "[coldstart] 未执行一次性档案开门（Chrome 缺席或实例未就绪）⇒ 请用浏览器【无痕窗口】打开: $OPEN_URL"
+  echo "[coldstart] （无痕窗口同样隔离本机 cookie / Logto SSO；普通窗口会被静默签入你已登录的账号）"
+fi
+
+# 陪跑：Ctrl+C 与 sbt 同进程组直达实例；退出码原样透传。
+set +e
+wait "$SBT_PID"
+EXIT_CODE=$?
+set -e
+echo "[coldstart] 实例已停止（exit=${EXIT_CODE}）。"
+exit "$EXIT_CODE"
