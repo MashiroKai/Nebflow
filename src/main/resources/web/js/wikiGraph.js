@@ -957,7 +957,11 @@ function showTooltip(node, px, py) {
     tip = document.createElement('div');
     tip.id = 'wiki-graph-tip';
     tip.className = 'wiki-tip';
-    document.body.appendChild(tip);
+    // Mounted INSIDE the graph pane, not on document.body: the pane is
+    // position:relative + overflow:hidden, so the tip (position:absolute) is
+    // structurally confined to the graph view and can never surface over the
+    // conversation UI. A stale tip also dies with the pane's innerHTML reset.
+    view.pane.appendChild(tip);
   }
   const d = node.ref;
   const deviceLine = node.remote ? `<div class="wiki-tip-device">${t('wiki.remoteDevice').replace('{device}', d.device)}</div>` : '';
@@ -971,8 +975,13 @@ function showTooltip(node, px, py) {
   tip.querySelector('.wiki-tip-title').textContent = d.title || d.rel;
   tip.querySelector('.wiki-tip-path').textContent = d.rel || '';
   if (meta.length) tip.querySelector('.wiki-tip-meta').textContent = meta.join(' · ');
-  tip.style.left = Math.min(window.innerWidth - 260, px + 14) + 'px';
-  tip.style.top = (py + 14) + 'px';
+  // (px,py) are canvas-local pointer coords; the canvas fills the pane
+  // (inset:0), so they are pane-local too — exactly the tip's positioning
+  // space now. Clamp against the MEASURED tip box so it stays fully inside
+  // the pane even near the right/bottom edges (the old clamp mixed canvas
+  // coords with window.innerWidth — the misplacement bug this fixes).
+  tip.style.left = Math.max(4, Math.min(view.pane.clientWidth - tip.offsetWidth - 4, px + 14)) + 'px';
+  tip.style.top = Math.max(4, Math.min(view.pane.clientHeight - tip.offsetHeight - 4, py + 14)) + 'px';
   tip.classList.add('show');
 }
 

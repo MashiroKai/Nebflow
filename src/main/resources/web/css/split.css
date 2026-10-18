@@ -1604,10 +1604,15 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 }
 .wiki-canvas { flex: 1 1 auto; min-height: 0; width: 100%; cursor: grab; background: transparent; }
 
-/* Hover tooltip (shared document-level element, glass material).
+/* Hover tooltip (pane-local element of .wiki-graph-pane, glass material).
+   graph-view batch, 2026-10-18 (tooltip display domain): mounted inside the
+   pane instead of document.body — the pane is position:relative +
+   overflow:hidden, so this absolute tip stays in the graph view's geometry
+   domain and can never render over the conversation UI. z-index 8 tops the
+   pane's internal layers (toolbar/facets 6, zoom cluster 7).
    Glass Aurora port: bead card with sapphire cast + refraction top edge. */
 .wiki-tip {
-  position: fixed; z-index: 1200; max-width: 250px;
+  position: absolute; z-index: 8; max-width: 250px;
   padding: 8px 11px; border-radius: 12px;
   border: 1px solid var(--glass-border, rgba(255,255,255,0.35));
   background: var(--glass-bg, rgba(24, 28, 38, 0.68));
