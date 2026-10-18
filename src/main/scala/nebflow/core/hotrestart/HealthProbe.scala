@@ -6,6 +6,7 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.ProviderHealthPort
+import nebflow.shared.Branding
 import nebflow.shared.NebflowLogger
 
 import java.net.*
@@ -45,7 +46,7 @@ object HealthPayload:
         case nebflow.shared.SearchApiHealth.Down(reason, since) =>
           Json.obj("status" -> "down".asJson, "reason" -> reason.asJson, "since" -> since.asJson)
       Json.obj(
-        "product" -> "nebflow".asJson, // single-instance guard identification
+        "product" -> Branding.lowerName.asJson, // single-instance guard identification (brand-derived; guard dual-accepts legacy spellings)
         "status" -> "ok".asJson,
         "version" -> nebflow.Version.string.asJson,
         "providers" -> providers.asJson,
@@ -242,7 +243,12 @@ object HealthCheck:
   def expectedVersion(pointer: Option[String], spawnCmd: Option[String]): Option[String] =
     pointer.map(_.trim).filter(_.nonEmpty).orElse(spawnCmd.flatMap(versionFromJarPath))
 
-  /** 从包路径里解析版本（`nebflow-assembly-<version>.jar`；与安装脚本的命名契约一致）。 */
+  /**
+   * 从包路径里解析版本（`<lowerName>-assembly-<version>.jar`，现行产物
+   * `stand-assembly-2026.9.20.jar`；前缀无关正则同时覆盖 legacy
+   * `nebflow-assembly-*` 与 jpackage `*-launcher-*` 形态——与安装脚本的
+   * `${LOWER_NAME}-assembly-${VERSION}.jar` 命名契约一致）。
+   */
   def versionFromJarPath(cmd: String): Option[String] =
     val re = raw"[^/\s]*-(?:assembly|launcher)-([0-9][^/\s]*)\.jar".r
     re.findFirstMatchIn(cmd).map(_.group(1)).filter(_.nonEmpty)

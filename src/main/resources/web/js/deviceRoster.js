@@ -14,6 +14,14 @@
 //
 // 失败纪律：取数失败/未登录 = 显式 `null` 读数（调用方回落 deviceId 直显，不猜名字、
 // 不猜在线态）；绝不缓存失败读数（下次调用重问）。
+//
+// 凭据纪律：Bearer 令牌读 `key('token')`（branding.js 命名空间派生，与
+// agentManager/ws 等全站同族逐字同源）。重启窗热修批 2026-10-18：此前裸写
+// `'nebflow_token'` 字面——品牌迁移（stand-startup-branding 批）把存量令牌迁到
+// 现行命名空间（stand_*）后该裸键恒空 ⇒ Bearer 空 ⇒ /api/neblink/status 恒 401 ⇒
+// 「存放设备」菜单静默退化仅本机、设备 chip/徽标全盲。
+
+import { key } from './branding.js';
 
 const CACHE_TTL_MS = 60_000;
 
@@ -24,7 +32,7 @@ export async function getDeviceRoster() {
   if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache;
   let data = null;
   try {
-    const token = localStorage.getItem('nebflow_token') || '';
+    const token = localStorage.getItem(key('token')) || '';
     const r = await fetch('/api/neblink/status', { headers: { Authorization: `Bearer ${token}` } });
     if (r.ok) data = await r.json();
   } catch (_) { /* 显式 null 读数（下方归一） */ }

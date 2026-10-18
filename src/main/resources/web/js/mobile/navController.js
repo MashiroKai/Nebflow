@@ -43,6 +43,7 @@
 import {
   openCanvas, closeCanvas, isCanvasOpen, getTabPane, setActiveTab, closeTab,
 } from '../canvas.js';
+import { key } from '../branding.js';
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '../sidebar.js';
 import { createIconsIn } from '../utils.js';
 
@@ -72,8 +73,10 @@ const modUsage = () => lazy('usage', () => import('../usageDashboard.js'));
 export function warm() { modProjects(); modGraph(); modPlugins(); modUsage(); }
 
 function tt(zh, en) {
+  // 语言源 = i18n.js 同源键（key('locale')，branding.js 命名空间派生）。
+  // 重启窗热修批 2026-10-18：裸 `'nebflow_locale'` 字面随品牌迁移失效，迁 `key()`。
   let lang = '';
-  try { lang = localStorage.getItem('nebflow_locale') || localStorage.getItem('locale') || ''; } catch { /* private mode */ }
+  try { lang = localStorage.getItem(key('locale')) || ''; } catch { /* private mode */ }
   if (!lang) lang = document.documentElement.lang || navigator.language || '';
   return /^zh/i.test(lang) ? zh : en;
 }

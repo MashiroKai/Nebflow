@@ -1,7 +1,7 @@
 package nebflow.core
 
 import cats.effect.IO
-import nebflow.shared.PathUtil
+import nebflow.shared.{Branding, PathUtil}
 
 import scala.sys.process.*
 
@@ -32,17 +32,27 @@ object AutoStartService:
 
   /**
    * Locate the running JAR, but only trust classpath entries that actually
-   * look like a Nebflow distribution: a jar whose file name contains
-   * "nebflow" (fat jar) or any jar inside a jpackage `.app/Contents` bundle.
-   * RestartHelper.resolveJarPath's generic fallback (first jar on the
+   * look like a Nebflow distribution: a jar whose file name carries the brand
+   * (`Branding.lowerName`, i.e. `stand-assembly-*.jar` today; legacy
+   * `nebflow-assembly-*` checkouts dual-accepted — same contract as the
+   * installers' dual-glob) or any jar inside a jpackage `.app/Contents`
+   * bundle. RestartHelper.resolveJarPath's generic fallback (first jar on the
    * classpath) would return scala-library.jar under sbt run — that must be
    * filtered out here, not written into a plist.
+   *
+   * 重启窗热修批 2026-10-18: the bare `fileName.contains("nebflow")` filter
+   * went blind under the stand artifact (stand-assembly-<v>.jar carries no
+   * "nebflow") ⇒ packaged-mode detection missed and auto-start degraded.
    */
   def resolveRunJar(): Option[String] =
-    RestartHelper.resolveJarPath().filter { p =>
-      val fileName = p.substring(math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) + 1).toLowerCase
-      fileName.contains("nebflow") || p.contains(".app/Contents")
-    }
+    RestartHelper.resolveJarPath().filter(isDistributionJar)
+
+  /** Pure core of [[resolveRunJar]]'s distribution-shape filter (spec-facing). */
+  def isDistributionJar(jarPath: String): Boolean =
+    val fileName = jarPath.substring(math.max(jarPath.lastIndexOf('/'), jarPath.lastIndexOf('\\')) + 1).toLowerCase
+    fileName.contains(Branding.lowerName.toLowerCase) || fileName.contains("nebflow") || jarPath.contains(
+      ".app/Contents"
+    )
 
   // ===== pure helpers (unit-testable) =====
 
@@ -225,7 +235,10 @@ X-GNOME-Autostart-enabled=true
       OpResult(
         ok = true,
         "Auto-start enabled (Windows Scheduled Task)",
-        List(s"  Task: ${RestartHelper.WinTaskName}", s"  ${nebflow.shared.Branding.productName} will start automatically on login.")
+        List(
+          s"  Task: ${RestartHelper.WinTaskName}",
+          s"  ${nebflow.shared.Branding.productName} will start automatically on login."
+        )
       )
     else OpResult(ok = false, s"Failed to create scheduled task (exit code: $exitCode)")
 
@@ -254,7 +267,10 @@ X-GNOME-Autostart-enabled=true
     OpResult(
       ok = true,
       "Auto-start enabled (XDG autostart)",
-      List(s"  File: ${linuxAutostartFile}", s"  ${nebflow.shared.Branding.productName} will start automatically on login.")
+      List(
+        s"  File: ${linuxAutostartFile}",
+        s"  ${nebflow.shared.Branding.productName} will start automatically on login."
+      )
     )
 
   private def disableLinux(): OpResult =

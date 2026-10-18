@@ -24,6 +24,7 @@
 //
 // 共享组件复用声明：本文件不复制任何桌面逻辑；桌面代码路径零改动。
 
+import { key } from '../branding.js';
 import { closeCanvas, isCanvasOpen } from '../canvas.js';
 import { setSideBarCollapsed, isSideBarCollapsed } from '../activityBar.js';
 import { createIconsIn } from '../utils.js';
@@ -44,15 +45,20 @@ const BAR_BUTTONS = [
 ];
 
 function tt(zh, en) {
+  // 语言源 = i18n.js 同源键（key('locale')，branding.js 命名空间派生）。
+  // 重启窗热修批 2026-10-18：裸 `'nebflow_locale'` 字面随品牌迁移失效，迁 `key()`。
   let lang = '';
-  try { lang = localStorage.getItem('nebflow_locale') || localStorage.getItem('locale') || ''; } catch { /* private mode */ }
+  try { lang = localStorage.getItem(key('locale')) || ''; } catch { /* private mode */ }
   if (!lang) lang = document.documentElement.lang || navigator.language || '';
   return /^zh/i.test(lang) ? zh : en;
 }
 
 // ── r4 双态：收起/展开（键集成 bar 内，无外部浮把手）─────────────────
 
-const BAR_COLLAPSED_KEY = 'nebflow_mobile_bar_collapsed';
+// 收展偏好键 = branding.js 命名空间派生（重启窗热修批 2026-10-18：裸
+// `'nebflow_mobile_bar_collapsed'` 字面随品牌迁移失效——存量值由 branding.js
+// 启动前缀清扫自动迁入现行命名空间，此处只读派生键）。
+const BAR_COLLAPSED_KEY = key('mobile_bar_collapsed');
 
 /** @type {boolean} */
 let barCollapsed = false;

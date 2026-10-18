@@ -2,6 +2,7 @@ package nebflow.core.hotrestart
 
 import cats.effect.IO
 import cats.syntax.all.*
+import nebflow.shared.Branding
 import nebflow.shared.NebflowLogger
 
 /**
@@ -11,8 +12,8 @@ import nebflow.shared.NebflowLogger
  * {{{
  *   <installDir>/current-version                 # 指针：当前版本（启动器以此为准）
  *   <installDir>/previous-version                # 指针：上一版（回滚目标）
- *   <installDir>/versions/<version>/nebflow-assembly-<version>.jar   # 每版一目录，不可变
- *   <installDir>/nebflow                          # 启动器（既有件，改为指针优先）
+ *   <installDir>/versions/<version>/<lowerName>-assembly-<version>.jar  # 每版一目录，不可变
+ *   <installDir>/nebflow                         # 启动器（既有件，改为指针优先）
  * }}}
  *
  * **取舍（申报：指针 vs 移出扫描面）**：选**显式指针**，不作为「把坏版移出扫描面」
@@ -49,7 +50,20 @@ object InstallPointer:
   def previousPath(dir: os.Path): os.Path = dir / PreviousFileName
   def versionsDir(dir: os.Path): os.Path = dir / VersionsDirName
   def versionDir(dir: os.Path, version: String): os.Path = versionsDir(dir) / version
-  def jarName(version: String): String = s"nebflow-assembly-$version.jar"
+
+  /**
+   * 安装包名（与 `release/install.sh:download_jar` 的 `JAR_NAME` 契约逐字同构：
+   * `${LOWER_NAME}-assembly-${VERSION}.jar`，两侧同源自 brand.conf `lowerName`）。
+   * 重启窗热修批 2026-10-18：此前裸拼 `nebflow-assembly-`，stand 品牌产物
+   * `stand-assembly-*.jar` 下回滚直取恒 miss。
+   */
+  def jarName(version: String): String = s"${Branding.lowerName}-assembly-$version.jar"
+
+  /** 现行品牌拼装的包名前缀（读侧 glob 用；与 [[jarName]] 同源）。 */
+  private def jarPrefix: String = s"${Branding.lowerName}-assembly-"
+
+  /** 上一代品牌拼装的包名前缀（品牌迁移前落盘的存量留存包；legacy 字面 = 兼容层）。 */
+  private val LegacyJarPrefix = "nebflow-assembly-"
 
   private def readTrimmed(path: os.Path): IO[Option[String]] =
     IO.blocking(if os.exists(path) then Some(os.read(path).trim) else None)
@@ -99,7 +113,13 @@ object InstallPointer:
       val direct = vd / jarName(version)
       if os.exists(direct) then Some(direct.toString)
       else if os.exists(vd) then
-        os.list(vd).find(p => p.last.startsWith("nebflow-assembly-") && p.last.endsWith(".jar")).map(_.toString)
+        // 双拼 glob（与 release/install.sh 的 archive_legacy_jars 同判据）：现行品牌
+        // 前缀优先，品牌迁移前落盘的 legacy `nebflow-assembly-*` 留存包仍可回滚。
+        val jars = os.list(vd).filter(_.last.endsWith(".jar"))
+        jars
+          .find(_.last.startsWith(jarPrefix))
+          .orElse(jars.find(_.last.startsWith(LegacyJarPrefix)))
+          .map(_.toString)
       else None
     }.map {
       case Some(p) => Right(p)

@@ -41,6 +41,8 @@
 // 的几何改写全部在 mobileLayer.css（body.mobile-layer 作用域， specificity
 // 高于桌面 id 规则），本文件只管 DOM 搬移与悬浮条定位变量。
 
+import { key } from '../branding.js';
+
 /** 收编簇成员（左→右）：搜索、后台任务胶囊、智能体胶囊、定时任务、心跳、记忆。 */
 const FLOAT_IDS = ['search-btn', 'bg-indicator', 'bgagent-indicator', 'reminder-btn', 'daemon-btn', 'memory-btn'];
 
@@ -50,8 +52,10 @@ let anchors = [];
 let inputRo = null;
 
 function tt(zh, en) {
+  // 语言源 = i18n.js 同源键（key('locale')，branding.js 命名空间派生）。
+  // 重启窗热修批 2026-10-18：裸 `'nebflow_locale'` 字面随品牌迁移失效，迁 `key()`。
   let lang = '';
-  try { lang = localStorage.getItem('nebflow_locale') || localStorage.getItem('locale') || ''; } catch { /* private mode */ }
+  try { lang = localStorage.getItem(key('locale')) || ''; } catch { /* private mode */ }
   if (!lang) lang = document.documentElement.lang || navigator.language || '';
   return /^zh/i.test(lang) ? zh : en;
 }
