@@ -160,7 +160,7 @@ function ensureContainer() {
       if (!s) continue;
       const t = s.querySelector('.mobile-page-title');
       if (t) t.textContent = tt(def.zh, def.en);
-      const b = s.querySelector('.mobile-back-btn');
+      const b = /** @type {HTMLElement|null} */ (s.querySelector('.mobile-back-btn'));
       if (b) { b.title = backLabel(); b.setAttribute('aria-label', backLabel()); }
     }
     syncCardChrome();
@@ -262,7 +262,7 @@ function watchCanvasContent() {
   const tabIdToPage = new Map(PAGES.filter((p) => p.tabId).map((p) => [p.tabId, p.id]));
   const sweep = () => {
     for (const pane of content.querySelectorAll(':scope > .canvas-tab-pane')) {
-      const pageId = tabIdToPage.get(pane.dataset.tabId);
+      const pageId = tabIdToPage.get((/** @type {HTMLElement} */ (pane)).dataset.tabId);
       if (pageId) adoptPane(pageId);
     }
     syncCardLayer();
@@ -276,7 +276,7 @@ function watchCanvasContent() {
 // ── 文档卡片（③：画板层只承载 pop 出来的文档，以卡片呈现）───────────
 
 function activeTabId() {
-  const el = document.querySelector('#canvas-tab-bar .canvas-tab.active');
+  const el = /** @type {HTMLElement|null} */ (document.querySelector('#canvas-tab-bar .canvas-tab.active'));
   return el ? el.dataset.tabId : null;
 }
 
@@ -287,7 +287,7 @@ export function docTabs() {
   if (!content) return [];
   const out = [];
   for (const el of document.querySelectorAll('#canvas-tab-bar .canvas-tab')) {
-    const id = el.dataset.tabId;
+    const id = (/** @type {HTMLElement} */ (el)).dataset.tabId;
     const pane = id ? getTabPane(id) : null;
     if (pane && pane.parentElement === content) {
       out.push({ id, label: el.querySelector('.canvas-tab-label')?.textContent || id });
@@ -338,7 +338,7 @@ function syncCardChrome() {
   const idx = docs.findIndex((d) => d.id === activeId);
   const title = cardHead.querySelector('.mobile-card-title');
   if (title) title.textContent = idx >= 0 ? docs[idx].label : '';
-  const count = cardHead.querySelector('.mobile-card-count');
+  const count = /** @type {HTMLElement|null} */ (cardHead.querySelector('.mobile-card-count'));
   if (count) {
     const show = docs.length > 1 && idx >= 0;
     count.hidden = !show;
@@ -418,7 +418,7 @@ function renderPages() {
   for (const [id, section] of sections) {
     const live = top === id;
     section.classList.toggle('live', live);
-    if (live) section.querySelector('.mobile-page-title')?.focus?.();
+    if (live) (/** @type {HTMLElement|null} */ (section.querySelector('.mobile-page-title')))?.focus?.();
   }
   document.body.classList.toggle('mf-page-open', PAGE_BY_ID.has(top));
   syncOverlayFaces(); // usage/settings 面随栈收编/归还（外部关闭对账路径同此汇合）
@@ -598,7 +598,7 @@ function watchCanvasEvents() {
 // ── 激活 / 拆除 ─────────────────────────────────────────────────────
 
 export function activateNav() {
-  window.__nfMobileLayerEvents = __nfEvents;
+  (/** @type {any} */ (window)).__nfMobileLayerEvents = __nfEvents;
   ensureContainer();
   watchCanvasContent();
   watchOverlayClose();
@@ -608,7 +608,7 @@ export function activateNav() {
   syncCardLayer();
   renderPages();
   // 只读探针（App 壳/深链留缝点）。
-  window.__nfMobileNav = {
+  (/** @type {any} */ (window)).__nfMobileNav = {
     get stack() { return navState().stack; },
     get top() { return navState().top; },
     version: 'mobile-ui-refactor r3 nav (p4fix settings/usage face-adopt)',
@@ -634,6 +634,6 @@ export function activateNav() {
     stack = ['chat'];
     layerTouched = false;
     usageReconcileBound = false;
-    delete window.__nfMobileNav;
+    delete (/** @type {any} */ (window)).__nfMobileNav;
   };
 }
