@@ -460,7 +460,7 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
    * ephemeral port only. The head is recorded BEFORE the 101 is written, so
    * once the client's open future completes the capture is already readable.
    */
-  private final class WsHandshakeCapture extends AutoCloseable:
+  private final class WsHandshakeCapture(message: Option[Array[Byte]] = None) extends AutoCloseable:
     val handshakes = new ConcurrentLinkedQueue[String]()
     private val server = new java.net.ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"))
     private val sockets = new ConcurrentLinkedQueue[java.net.Socket]()
@@ -513,6 +513,23 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
             s"Sec-WebSocket-Accept: $accept\r\n\r\n"
         sock.getOutputStream.write(resp.getBytes(UTF_8))
         sock.getOutputStream.flush()
+        message.foreach { bytes =>
+          val out = new java.io.DataOutputStream(sock.getOutputStream)
+          def emit(op: Int, fin: Boolean, data: Array[Byte]): Unit =
+            out.writeByte((if fin then 0x80 else 0) | op)
+            if data.length < 126 then out.writeByte(data.length)
+            else if data.length <= 65535 then
+              out.writeByte(126)
+              out.writeShort(data.length)
+            else
+              out.writeByte(127)
+              out.writeLong(data.length.toLong)
+            out.write(data)
+            out.flush()
+          val cut = bytes.length / 2
+          emit(1, false, bytes.take(cut))
+          emit(0, true, bytes.drop(cut))
+        }
       catch case _: Exception => ()
 
 
@@ -594,6 +611,31 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
         yield ()
       }
       .guarantee(IO(capture.close()))
+
+  test("fragmented large config crosses the real JDK listener as one complete browser JSON message"):
+    val payload = io.circe.Json.obj(
+      "type" -> io.circe.Json.fromString("configData"),
+      "config" -> io.circe.Json.fromString("配置😀" * 12000)
+    ).noSpaces.getBytes(UTF_8)
+    val capture = new WsHandshakeCapture(Some(payload))
+    val faces = new PortalHostFaces(gatewayPort = capture.port)
+    val fake = new FakeWebSocket
+    val bridge = new PortalTunnelBridge(mkDeps(faces), new RelayFrameSender(fake))
+    (for
+      fiber <- bridge.run.start
+      _ = bridge.enqueueFrame(WsOpen(Rid, "/ws", None, None))
+      ok <- waitUntil(5.seconds)(IO(decodeSent(fake).exists {
+        case f: WsFrame => f.fin
+        case _ => false
+      })).guarantee(fiber.cancel *> bridge.teardown())
+      _ = assert(ok, "fragmented config never completed")
+      frames = decodeSent(fake).collect { case f: WsFrame => f }
+      _ = assertEquals(frames.size, 1, "the relay sends each wire frame as a complete browser message")
+      _ = assertEquals(frames.head.fin, true)
+      _ = assertEquals(frames.head.kind, "text")
+      _ = assert(java.util.Arrays.equals(frames.head.data, payload), "UTF-8 config bytes must survive fragmentation")
+      _ = assert(io.circe.parser.parse(new String(frames.head.data, UTF_8)).isRight)
+    yield ()).guarantee(IO(capture.close()))
 
   // ── console ticket mint ────────────────────────────────────────────────
 

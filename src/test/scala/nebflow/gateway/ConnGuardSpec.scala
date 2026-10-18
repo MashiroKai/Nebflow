@@ -342,6 +342,21 @@ class ConnGuardSpec extends CatsEffectSuite:
 
   // ── Phase 3a tunnel face（判据⑤：键 = 信封 IP ∧ 环回不豁免 ∧ 阈值拒）─────
 
+  test("default tunnel budget admits two cold console boots but remains bounded"):
+    val cfg = ConnGuardConfig.fromEnv(_ => None)
+    val bootRequests = 404 * 2 + 64 // two source asset trees plus bootstrap/retries
+    assert(cfg.tunnelPerIpCap >= bootRequests)
+    assertEquals(cfg.tunnelPerIpCap, ConnGuardConfig().tunnelPerIpCap)
+    for
+      g <- guard(cfg)
+      verdicts <- (1 to cfg.tunnelPerIpCap + 1).toList.traverse { _ =>
+        g.observeTunnelRequest("198.51.100.90") *> g.checkTunnel("198.51.100.90")
+      }
+    yield
+      assert(verdicts.take(bootRequests).forall(_.isEmpty))
+      assert(verdicts.take(cfg.tunnelPerIpCap).forall(_.isEmpty))
+      assertEquals(verdicts.last, Some("tunnel-per-ip-cap"))
+
   test("tunnel face: per-envelope-IP window admits exactly the cap then rejects"):
     for
       g <- guard(ConnGuardConfig(tunnelPerIpCap = 3, tunnelTotalCap = 1000))

@@ -21,21 +21,21 @@ class BrandInjectionSpec extends FunSuite:
         // issuer face (domain/profileUrl/homeDirName) deliberately kept.
         assertEquals(json.hcursor.get[String]("productName"), Right("stand"))
         assertEquals(json.hcursor.get[String]("lowerName"), Right("stand"))
-        assertEquals(json.hcursor.get[String]("domain"), Right("nebflow.space"))
+        assertEquals(json.hcursor.get[String]("domain"), Right("mystand.space"))
         // L3 batch 3 append-only extension: homeDirName joins the contract
         assertEquals(json.hcursor.get[String]("homeDirName"), Right(".nebflow"))
         // 2026-09-01 login-chain fix: profileUrl joins the contract — the
         // frontend's ONLY URL input (activityBar.js builds the profile link).
         assertEquals(
           json.hcursor.get[String]("profileUrl"),
-          Right("https://nebflow.space/profile")
+          Right("https://mystand.space/profile")
         )
         // brand-switch-console batch 2026-10-15: name/logoUrl/logoDarkUrl
         // join the contract (append-only). Stand switch slots the explicit
         // logo keys; name falls back to the new productName.
         assertEquals(json.hcursor.get[String]("name"), Right("stand"))
-        assertEquals(json.hcursor.get[String]("logoUrl"), Right("/brand/stand/logo/logo-512-light.png"))
-        assertEquals(json.hcursor.get[String]("logoDarkUrl"), Right("/brand/stand/logo/logo-512-dark.png"))
+        assertEquals(json.hcursor.get[String]("logoUrl"), Right(nebflow.shared.Branding.logoUrl))
+        assertEquals(json.hcursor.get[String]("logoDarkUrl"), Right(nebflow.shared.Branding.logoDarkUrl))
   }
 
   test("brandScriptJson: '</' inside values is escaped (script breakout hardening)") {

@@ -29,7 +29,8 @@ class SingleInstanceGuardSpec extends FunSuite:
   private def withHttpServer(body: String)(f: Int => Unit): Unit =
     val port = freePort()
     val server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0)
-    server.setExecutor(Executors.newCachedThreadPool())
+    val executor = Executors.newCachedThreadPool()
+    server.setExecutor(executor)
     server.createContext(
       "/api/health",
       (ex: com.sun.net.httpserver.HttpExchange) =>
@@ -41,7 +42,9 @@ class SingleInstanceGuardSpec extends FunSuite:
     )
     server.start()
     try f(port)
-    finally server.stop(0)
+    finally
+      server.stop(0)
+      executor.shutdownNow()
 
   end withHttpServer
 
@@ -78,6 +81,24 @@ class SingleInstanceGuardSpec extends FunSuite:
     withHttpServer("""{"status":"fine","service":"something-else"}""") { p =>
       val st = SingleInstanceGuard.checkPort("127.0.0.1", p).unsafeRunSync()
       assert(st.isInstanceOf[SingleInstanceGuard.ForeignOccupant])
+    }
+  }
+
+  test("stand health is recognized after rename") {
+    withHttpServer("""{"product":"stand","status":"ok","version":"2026.10.18"}""") { p =>
+      assert(SingleInstanceGuard.checkPort("127.0.0.1", p).unsafeRunSync()
+        .isInstanceOf[SingleInstanceGuard.NebflowInstance])
+    }
+  }
+
+  test("unrelated product/version fields must not hijack startup focus") {
+    for body <- List(
+      """{"product":"other","version":"1.0"}""",
+      """{"version":"1.0"}""",
+      """<html>"product" and "version"</html>"""
+    ) do withHttpServer(body) { p =>
+      assert(SingleInstanceGuard.checkPort("127.0.0.1", p).unsafeRunSync()
+        .isInstanceOf[SingleInstanceGuard.ForeignOccupant])
     }
   }
 

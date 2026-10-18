@@ -12,7 +12,7 @@
 //   assets/chunks/*-[hash].js  lazy chunks - every literal dynamic import()
 //                              keeps its lazy boundary (viewers, modal, ...)
 //   assets/app-[hash].css      app CSS concat in index.html link order
-//                              (sapphire.css LAST - it is the design-system
+//                              (source link order, including responsive overrides after the design-system
 //                              override layer; esbuild's import graph is NOT
 //                              trusted for ordering, links are concatenated
 //                              explicitly)
@@ -70,11 +70,9 @@ const allCssLinks = [...indexSrc.matchAll(linkRe)].map(m => m[1]);
 const appCss = allCssLinks.filter(h => h.startsWith('css/'));
 const vendorCss = allCssLinks.filter(h => !h.startsWith('css/'));
 if (appCss.length === 0) throw new Error('no app css/ links found in index.html');
-// Hard guard for the design-system contract: sapphire.css is the standard
-// layer and must stay LAST so equal-specificity conflicts resolve to it.
-if (appCss[appCss.length - 1] !== 'css/sapphire.css') {
-  throw new Error(`sapphire.css must be the last app css link in index.html (found: ${appCss[appCss.length - 1]})`);
-}
+// Preserve the live source cascade, including responsive overrides after sapphire.
+// Reordering CSS while bundling would change the production layout.
+if (!appCss.includes('css/sapphire.css')) throw new Error('missing sapphire design-system layer');
 // CSS orphan guard: every web/css/*.css must be linked from index.html -
 // an unlinked stylesheet would be silently dropped from the bundle.
 const cssOnDisk = readdirSync(join(SRC, 'css')).filter(f => f.endsWith('.css')).map(f => `css/${f}`);
@@ -195,7 +193,7 @@ const chunks = Object.keys(result.metafile.outputs).filter(o => o.includes('chun
 console.log(`build-web OK -> ${relative(ROOT, OUT)}/`);
 console.log(`  js entry : ${jsEntryUrl}`);
 console.log(`  chunks   : ${chunks.length} lazy chunks (dynamic import boundaries preserved)`);
-console.log(`  css      : assets/${cssName} (${appCss.length} files concatenated in link order, sapphire last)`);
+console.log(`  css      : assets/${cssName} (${appCss.length} files concatenated in source link order)`);
 console.log(`  js files : ${jsFiles.length} sources, all in bundle graph (orphans: 0, exemptions: ${ORPHAN_EXEMPTIONS.size})`);
 console.log(`  vendor   : copied through (${vendorCss.length} vendor css links kept separate)`);
 console.log(`  form     : ${STRIP_FRIENDS ? 'SEALED (--strip-friends: release marker injected, dev branch DCE-stripped)' : 'UNSEALED (default: no release marker, friends visible)'}`);

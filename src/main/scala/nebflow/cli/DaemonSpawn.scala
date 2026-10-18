@@ -173,7 +173,8 @@ object DaemonSpawn:
       .flatMap {
         case Launched(childPid) =>
           nebflow.gateway.PortalUrl
-            .focusUrl(s"http://localhost:$port")
+            .openUrl(nebflow.neblink.DeviceIdentity.readDeviceIdOnly)
+            .map(_.getOrElse(s"http://localhost:$port"))
             .map(readyLine(childPid, _))
             .flatMap(IO.println)
             .as(ExitCode.Success)

@@ -34,30 +34,33 @@ class BrandingSpec extends FunSuite:
     // Data-value assertions (will be updated together with brand.conf on
     // rename day) — they guard the packaging path: if brand.conf stops
     // reaching the classpath, these fail with the packaging error.
-    // Updated on rename day 2026-10-16 (stand S2 prep, chain-n-f349f81b):
-    // productName/lowerName/name/logo slots flipped; issuer-face values
-    // (domain/profileUrl/loginUrl/installUrl/serverUrl) deliberately kept.
+    // Display and website values use Stand; storage and service compatibility
+    // values remain stable until their deployments are migrated.
     assertEquals(Branding.productName, "stand")
     assertEquals(Branding.lowerName, "stand")
-    assertEquals(Branding.fullName, "Nebflow")
-    assertEquals(Branding.domain, "nebflow.space") // 唯一真值（2026-09-07 命名边界裁定；可 env 覆盖）
-    assertEquals(Branding.profileUrl, "https://nebflow.space/profile")
-    assertEquals(Branding.loginUrl, "https://nebflow.space/login")
+    assertEquals(Branding.fullName, "stand")
+    assertEquals(Branding.domain, "mystand.space") // 唯一真值（2026-09-07 命名边界裁定；可 env 覆盖）
+    assertEquals(Branding.profileUrl, "https://mystand.space/profile")
+    assertEquals(Branding.loginUrl, "https://mystand.space/login")
     assertEquals(Branding.installUrl, "https://nebflow.space/install.sh")
     assertEquals(Branding.serverUrl, "https://neblink.nebflow.space")
     assertEquals(Branding.githubOrg, "MashiroKai")
     assertEquals(Branding.githubRepo, "Nebflow")
     assertEquals(Branding.homeDirName, ".nebflow")
-    assertEquals(Branding.envPrefix, "NEBFLOW")
+    assertEquals(Branding.envPrefix, "STAND")
     assertEquals(Branding.cosBucket, "nebflow-releases")
     assertEquals(Branding.subsystemName, "neblink")
-    // brand-switch-console batch 2026-10-15: name falls back to productName
-    // when the optional brand.conf key is absent; the logo references default
-    // to the canonical in-place /css/ assets (files stay where they are).
-    // 2026-10-16: stand switch slots the explicit logo keys (r4 clean set).
+    // Logo selection follows brand.conf, so every catalog entry can be selected
+    // without editing tests. This also verifies the classpath copy is current.
     assertEquals(Branding.name, "stand")
-    assertEquals(Branding.logoUrl, "/brand/stand/logo/logo-512-light.png")
-    assertEquals(Branding.logoDarkUrl, "/brand/stand/logo/logo-512-dark.png")
+    val source = Branding.parseBrandConf(os.read(os.pwd / "brand.conf"))
+    assertEquals(Branding.logoUrl, source("logoUrl"))
+    assertEquals(Branding.logoDarkUrl, source("logoDarkUrl"))
+  }
+
+  test("early environment lookups use the configured STAND prefix") {
+    assertEquals(Branding.dualEnv(Map("STAND_HOME" -> "/new", "NEBFLOW_HOME" -> "/old"), "STAND", "HOME"), Some("/new"))
+    assertEquals(Branding.dualEnv(Map("NEBFLOW_HOME" -> "/old"), "STAND", "HOME"), Some("/old"))
   }
 
   test("academicSearchUserAgent derives from the live brand (productName + installUrl host)") {

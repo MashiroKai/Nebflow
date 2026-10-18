@@ -1,3 +1,4 @@
+import { brand } from './brand.js';
 // executorIcons.js — per-executor logo marks for the unified delegate face
 // (executor-registry batch, 2026-10-03; icon-native batch 2026-10-10).
 //
@@ -22,7 +23,7 @@
 
 /** Local asset marks: executor id → asset reference (self-hosted, no CDN). */
 const BRAND_ASSET = {
-  nebflow: { dark: 'css/logo-dark-4.png', light: 'css/logo-bright-4.png' },
+  nebflow: { dark: brand.logoDarkUrl, light: brand.logoUrl },
   'claude-code': { src: 'vendor/logos/claude-code.svg' },
   codex: { src: 'vendor/logos/codex.svg' },
 };

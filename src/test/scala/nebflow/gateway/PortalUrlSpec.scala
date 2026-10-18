@@ -9,27 +9,11 @@ import nebflow.shared.{Branding, PathUtil}
 
 import java.nio.file.Files
 
-/**
- * 门户开门（neblink portal MVP，2026-10-10，方案 §3.2 E1/E2）——解析单点判据钉。
- *
- * 契约（方案 §7 冻结点 + 本批任务书）：
- *   · 配置位 = `<dataRoot>/neblink/config.json` 顶层 `portalUrl`（🔴 nebflow.json 的
- *     neblink 块是惰性的——NeblinkModel.scala:617-621 qa 实锤——故不设 nebflow.json 面）；
- *   · 解析降序 = `NEBFLOW_PORTAL_URL` env > config `portalUrl` > 生产缺省
- *     `https://neblink.nebflow.space`（= `Branding.serverUrl` 单源）；
- *   · `NEBFLOW_OPEN_UI=local` ⇒ None（开发态逃生口：调用方回落 localhost 既有行为）；
- *   · config `portalUrl: ""`（空白同）= **显式关门户** ⇒ None（本批任务书「配置关门户
- *     时回落 localhost」）；
- *   · 出口 URL = base + `?device=<deviceId>`（有 deviceId 才带；`?`/`&` 边界按 base
- *     现状判定；deviceId URL 编码）；
- *   · 隔离实例（重定向 data root）：门户 URL 解析**不受** EnrollGuard 门控——开门是
- *     零副作用的浏览器动作（不写凭据、不注册设备），案 a/b① 拦的是入网写面；此处
- *     把该边界**机械钉住**，防日后误加闸把隔离实例的开门打回 localhost。
- */
+/** Portal resolution remains separate from relay and account transport. */
 class PortalUrlSpec extends FunSuite:
 
-  private val Default = Branding.serverUrl
-  private val ProdDefault = "https://neblink.nebflow.space"
+  private val Default = Branding.portalUrl
+  private val ProdDefault = "https://mystand.space/portal"
 
   private var tmpDir: java.nio.file.Path = null
   private var savedRoot: os.Path = scala.compiletime.uninitialized
@@ -97,6 +81,23 @@ class PortalUrlSpec extends FunSuite:
 
   test("default is the frozen production portal URL (方案 §7 契约冻结)") {
     assertEquals(Default, ProdDefault)
+  }
+
+  test("focus includes the persisted device id without creating or rewriting identity") {
+    val root = os.Path(tmpDir, os.pwd)
+    val device = root / "device.json"
+    assertEquals(PortalUrl.focusUrl("http://localhost:8199").unsafeRunSync(), Default)
+    assert(!os.exists(device))
+    val raw = """{"deviceId":"existing-device","deviceName":"Migrated Mac","platform":"macos","deviceSecret":"kept"}"""
+    os.write(device, raw)
+    assertEquals(PortalUrl.focusUrl("http://localhost:8199").unsafeRunSync(), s"$Default?device=existing-device")
+    assertEquals(os.read(device), raw)
+  }
+
+  test("no-browser local focus leaves session ticket minting disabled") {
+    NeblinkConfig.save(NeblinkConfig(portalUrl = Some(""))).unsafeRunSync()
+    val local = "http://localhost:8199"
+    assertEquals(PortalUrl.focusUrl(local, authenticateLocal = false).unsafeRunSync(), local)
   }
 
   // ── 配置腿（真盘：重定向 data root 上的 config.json 读写）────────────────

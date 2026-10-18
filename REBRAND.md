@@ -1,69 +1,55 @@
-# REBRAND.md — 改名执行手册（人工 checklist）
+# Stand 品牌与启动
 
-> 本文档由批4（2026-08-17）落地。机械部分由 `scripts/rebrand.sh --apply` 完成；
-> 本清单覆盖**无法脚本化**的外部步骤。执行顺序自上而下，灰度期双跑。
+Stand 原名 Nebflow。网站入口是 https://mystand.space，跨设备控制台是 https://mystand.space/portal。启动器会携带已有的设备 ID，避免打开另一台设备。设备中继仍使用 `https://neblink.nebflow.space`，登录身份提供方仍兼容旧部署；它们是服务地址，不是浏览器入口，不能按产品名猜测新子域。
 
-## 0. 前置（脚本执行）
+已有数据继续使用 `~/.nebflow` 和 `nebflow.json`，无需复制到 `.stand`，会话、密钥和设备身份留在原处。环境变量支持 `STAND_*`，兼容 `NEBFLOW_*`，新前缀优先。Scala 的 `nebflow.Main` 仍是兼容入口。
 
-- [ ] `brand.conf` 全字段改为新品牌值（唯一编辑点——包括 `domain` 从占位换成真值）
-- [ ] `scripts/rebrand.sh --dry-run` 审阅替换清单
-- [ ] `scripts/rebrand.sh --apply`（前置校验+包树 rename+验证+sbt 全绿+冒烟+迁移冒烟+dmg/msi+安装脚本渲染）
-- [ ] 审阅 `REBRAND-CHECKLIST.md`（脚本生成的本清单实例化版本）
+本机使用可设置 `STAND_OPEN_UI=local`。启动或再次打开时，启动器用现有本机凭据换取一次性浏览器会话票据，不把长期令牌放进地址栏。门户配置在 `<home>/neblink/config.json` 顶层 `portalUrl`；设为空字符串同样选择本机入口。云端模式通过网站账号登录，本机会话不能代替云端账号登录。
 
-## 1. DNS / 网络（阿里云）
+如果提示已有实例，说明网关已经在运行；无需再启动第二个进程。本地地址为 http://localhost:8080。旧版本需要运行 `sbt "run token"` 获取一次性票据并在登录卡片中使用。不要删除数据目录来解决登录问题。更新源码后，已运行的旧 JVM 需要由其所属会话重启才能加载新版本。
 
-- [ ] 新域名 A/CNAME 记录指向 VPS（203.0.113.10）
-- [ ] 设备子域名（如 device.新域名）同指向
-- [ ] 旧域 nebflow.space 301 → 新域名（保留 ≥12 月）
+## 远程控制台构建
 
-## 2. VPS（Caddy 灰度）
+远程部署使用项目已有的前端 bundle；不要把只服务开发源码的 assembly 当作远程发布包。首次加载源码模块可能超过旧版隧道每分钟 240 次的请求预算，造成 429、配置或引导加载不完整。
 
-- [ ] Caddyfile 增加新域名 server block（旧域名 block 保留灰度期）
-- [ ] `docker compose up -d` 生效；双域名均出证书
+```sh
+node scripts/build-web.mjs
+sbt -Dstand.webdist=1 assembly
+```
 
-## 3. GitHub
+隧道默认预算同时调整为每 IP 每分钟 1024、全局 10240，覆盖完整资源与启动请求；超限仍拒绝，环境变量显式设定仍优先。
 
-- [ ] 新建 org；Settings → Transfer repository（旧 URL 自动重定向）
-- [ ] OAuth App（`Ov23liu3nC6jzBmNIQNB`）回调 URL 更新（新域名 + 新仓库路径）；Client Secret 更新到 VPS `.env`
+构建保持 index.html 的真实样式顺序（包含 sapphire 后的响应式覆盖），入口使用带内容摘要的资源。构建后的静态资产门禁使用 `node scripts/verify-web-assets.mjs --root build/web-dist http://localhost:8080`。主机已有模型和 onboarding 状态不因远程浏览器首次访问而重置。
 
-## 4. OSS（发布镜像）
+远程实时消息在主机端按完整消息组装后再转发，防止 JDK WebSocket 回调分片被浏览器误当成独立 JSON。组装保留跨回调的 UTF-16 代理对，文本/二进制均有 4 MiB 上限，超限关闭对应连接而不发送残缺消息；认证和账号绑定规则不变。
 
-- [ ] 新桶开通（brand.conf `cosBucket` 值）
-- [ ] CI 双写开关（新旧桶同时上传）灰度期开启
-- [ ] 旧桶 `nebflow-releases` 保留 ≥12 月；最后推送一个版本文件指向新桶
+## Logo
 
-## 5. 官网（Vercel）
+统一真源是 `brand.conf` 的 `activeLogo` 和 `src/main/resources/web/brand/logos.json` 中归档的原图。普通用户设置不提供 Logo 入口；品牌由项目统一配置。
 
-- [ ] 官网仓配置改新域名/新仓库地址 → deploy
-- [ ] `NEBLINK_SERVER_URL` env 注入（指向设备服务新域名）
+```sh
+python3 scripts/switch-logo.py --list
+python3 scripts/switch-logo.py black-cat --website <官网仓库> --auth-repo <neblink-server仓库>
+python3 scripts/switch-logo.py --website <官网仓库> --auth-repo <neblink-server仓库> --check
+```
 
-## 6. neblink-server（VPS 独立部署）
+命令需要 Python 3 和 Pillow。默认要求同时提供官网和认证仓库，防止只更新一个渠道；仅构建本地客户端时须显式使用 `--client-only`。
 
-- [ ] `src/brand.rs` 品牌常量更新（PRODUCT_SITE / DEVICE_ORIGIN）
-- [ ] 灰度期可用 `NEBLINK_CORS_ORIGINS` env 先加新域名 origin
-- [ ] `.env`（参照 `deploy/docker/.env.example`）：SITE_DOMAIN / OAUTH_REDIRECT_URL / APP_PUBLIC_URL 三件套同源一致
-- [ ] git remote 换新 org；VPS `git pull` + `docker compose up -d --build`
+一条同步命令生成客户端浅深色标志、favicon、桌面安装图标，以及官网、PWA、独立登录页的资源与清单。生成资源带内容摘要，原图和旧版本保留；各端不能再通过各自环境变量选择不同 Logo。`--check` 检测生成件漂移，不写文件。目标仓库必须显式传入，避免误改其他检出。
 
-## 7. 资产
+官网资源发布之后，用同一清单同步 Logto 品牌和邮箱验证码模板（认证页图片从同一来源内联生成，兼容其图片安全策略）：
 
-- [ ] 新 logo 三件套：favicon.svg / logo.svg / og.png（人工设计）
-- [ ] dmg/msi 图标随 packaging 脚本（brand.conf 驱动）重打包
+```sh
+python3 scripts/sync-brand-auth.py --env-file <官网凭据文件> --apply
+python3 scripts/sync-brand-auth.py --env-file <官网凭据文件>
+```
 
-## 8. 公告
+脚本检查官网实际图片字节后才写认证配置；不打印或保存凭据，保留邮件主题、正文、占位符、SMTP 和账号配置。SignIn、Register、ForgotPassword、Generic 四种邮件中的品牌图片统一取版本化官网 URL。未来切换只需选一次原图并重新运行同一流程，不需要逐个查找页面或邮件模板。生成和上线分开：官网、登录页重建发布，客户端重建重启，桌面图标随安装包生效；不会把尚未发布的文件说成线上已更新。
 
-- [ ] README 更名说明（旧名 → 新名，数据目录兼容承诺：旧 `~/.nebflow` 自动迁移，copy 非 move 可回滚）
-- [ ] 版本公告；旧桶版本文件推送迁移版指引
+## 发布与兼容边界
 
-## 凭据红线
-
-VPS 凭据在主仓 `NEBLINK_HANDOVER.md`（**gitignored**）。本清单及任何代码/文档
-只允许引用其**路径**，一律不复制内容。
-
-## 兼容性承诺（用户侧）
-
-- 数据目录：旧 `~/.nebflow` 首次以新名启动自动 **copy** 迁移（原目录保留可回滚，`.rebrand-migrated` 标记防重跑）
-- 环境变量：旧 `NEBFLOW_*` 前缀永久回落识别（launchd/脚本不破）
-- 配置文件：旧 `nebflow.json` 双读回落，首次写回新名
-- localStorage/cookie：前端 branding.js 旧键迁移（读旧写新删旧）
-- `window.Nebflow`：新全局名 + 永久兼容别名
-- 协议（D2）：`X-Neblink-Device` / `/api/device/*` / `neblinkServer` 字段**不变**——存量配对设备零影响
+- 官网登录使用 `https://auth.mystand.space`，现有 Logto 应用保留旧域回调并追加新域回调；不新建账号、不更改密码。
+- 数据目录继续为 `~/.nebflow`，配置继续为 `nebflow.json`。本次更名不复制或搬移已有账号、设备、密钥和会话。
+- `nebflow.Main`、存储键、Scala 包名和中继协议继续兼容；更名不要求改写历史数据。
+- 官网和登录页通过已授权的部署发布；源码保留在修复分支，未经明确指示不合并、不推送 Git 分支、不打标签、不改 VERSION。
+- 自动检查覆盖 OIDC 初始化、回调注册、租户配置、错误密码路径和资源一致性。真实密码登录、社交身份提供方往返与邮件实际收件需要真实用户完成，不能用自动检查代替。

@@ -163,7 +163,7 @@ private[neblink] final class PortalTunnelBridge(
           case Some(reason) =>
             logger.warn(
               s"portal http_request rejected by the tunnel guard: requestId=${frame.requestId} " +
-                s"envelopeIp=$envelopeIp reason=$reason — answering 429"
+                s"envelopeIp=$envelopeIp method=${frame.method} path=${frame.path.takeWhile(_ != '?')} reason=$reason — answering 429"
             ) *>
               // One-shot answer (head + optional body): spawned OFF the mailbox —
               // the consumer never waits on the relay socket.
@@ -655,38 +655,49 @@ private[neblink] final class PortalTunnelBridge(
       // uplink order result-then-frames without early-frame buffering.
       ()
 
+    private val messages = new PortalWsMessageAssembler()
+    @volatile private var failed = false
+
+    private def received(ws: WebSocket, kind: String, result: Either[String, Option[Array[Byte]]]): Unit =
+      result match
+        case Right(Some(bytes)) =>
+          offerUp(WsCycle.UplinkItem.Frame(PortalWireCodec.WsFrame(requestId, kind, bytes, fin = true)))
+          ws.request(1)
+        case Right(None) => ws.request(1)
+        case Left(reason) =>
+          failed = true
+          messages.reset()
+          wsCycles.remove(requestId, cycle)
+          val code = if reason == "message-too-large" then 1009 else 1002
+          offerUp(WsCycle.UplinkItem.RelayClose(code, reason))
+          cycle.toLocal.offer(WsCycle.DownlinkItem.LocalGone)
+          ws.abort()
+
     override def onText(ws: WebSocket, data: CharSequence, last: Boolean): CompletionStage[?] =
-      offerUp(
-        WsCycle.UplinkItem.Frame(
-          PortalWireCodec.WsFrame(requestId, "text", data.toString.getBytes(UTF_8), last)
-        )
-      )
-      ws.request(1)
+      if !failed then received(ws, "text", messages.text(data, last))
       null
 
     override def onBinary(ws: WebSocket, data: java.nio.ByteBuffer, last: Boolean): CompletionStage[?] =
-      val bytes = new Array[Byte](data.remaining())
-      data.get(bytes)
-      offerUp(WsCycle.UplinkItem.Frame(PortalWireCodec.WsFrame(requestId, "binary", bytes, last)))
-      ws.request(1)
+      if !failed then received(ws, "binary", messages.binary(data, last))
       null
 
     override def onClose(ws: WebSocket, statusCode: Int, reason: String): CompletionStage[?] =
-      // Local endpoint closed: propagate the close UP (tail marker — the uplink
-      // pump drains pending frames first, then sends ws_close and exits) and
-      // stop the downlink pump (nothing more can be forwarded).
-      wsCycles.remove(requestId, cycle)
-      offerUp(WsCycle.UplinkItem.RelayClose(statusCode, reason))
-      cycle.toLocal.offer(WsCycle.DownlinkItem.LocalGone)
+      messages.reset()
+      if !failed then
+        failed = true
+        wsCycles.remove(requestId, cycle)
+        offerUp(WsCycle.UplinkItem.RelayClose(statusCode, reason))
+        cycle.toLocal.offer(WsCycle.DownlinkItem.LocalGone)
       null
 
     override def onError(ws: WebSocket, error: Throwable): Unit =
-      logger.debugSync(
-        s"portal local ws error: requestId=$requestId error=${NeblinkRelayTunnel.describeErr(error)}"
-      )
-      wsCycles.remove(requestId, cycle)
-      offerUp(WsCycle.UplinkItem.RelayClose(1011, error.getClass.getSimpleName))
-      cycle.toLocal.offer(WsCycle.DownlinkItem.LocalGone)
+      messages.reset()
+      if !failed then
+        failed = true
+        logger.debugSync(s"portal local ws error: requestId=$requestId error=${NeblinkRelayTunnel.describeErr(error)}")
+        wsCycles.remove(requestId, cycle)
+        offerUp(WsCycle.UplinkItem.RelayClose(1011, error.getClass.getSimpleName))
+        cycle.toLocal.offer(WsCycle.DownlinkItem.LocalGone)
 
     private def offerUp(item: WsCycle.UplinkItem): Unit =
       if !cycle.uplink.offer(item) then
@@ -997,6 +1008,8 @@ private[neblink] object PortalTunnelBridge:
 
   /** Per-cycle WS pump inbox depth (downlink and uplink alike). */
   val WsQueueSlots: Int = 128
+  // Base64 plus envelope stays below the relay listener's 8 MiB frame cap.
+  val MaxWsMessageBytes: Int = 4 * 1024 * 1024
 
   /**
    * Backstop for a bodyful request that receives ZERO body_frames (contract

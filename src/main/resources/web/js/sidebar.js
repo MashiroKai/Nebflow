@@ -792,8 +792,8 @@ export function renderSettings() {
       <button class="settings-avatar-entry" id="settings-avatar-entry" type="button">
         <span class="settings-avatar-frame">
           <picture>
-            <source media="(prefers-color-scheme: dark)" srcset="css/logo-dark-4.png">
-            <img class="settings-avatar-logo" src="css/logo-bright-4.png" alt="">
+            <source media="(prefers-color-scheme: dark)" srcset="${brand.logoDarkUrl}">
+            <img class="settings-avatar-logo" src="${brand.logoUrl}" alt="">
           </picture>
           <img class="settings-avatar-photo" alt="" hidden>
         </span>

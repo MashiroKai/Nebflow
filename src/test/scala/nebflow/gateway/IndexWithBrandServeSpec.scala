@@ -43,10 +43,10 @@ class IndexWithBrandServeSpec extends FunSuite:
     assert(clue(body).contains("<script>window.__BRAND__="))
     // the contract JSON must appear with REAL quotes in the document —
     // the hijacked encoder would emit \"productName\" instead
-    assert(clue(body).contains("\"productName\":\"Nebflow\""))
-    assert(clue(body).contains("\"domain\":\"nebflow.space\""))
+    assert(clue(body).contains("\"productName\":\"stand\""))
+    assert(clue(body).contains("\"domain\":\"mystand.space\""))
     // 2026-09-01 login-chain fix: profileUrl joins the inlined contract
-    assert(clue(body).contains("\"profileUrl\":\"https://nebflow.space/profile\""))
+    assert(clue(body).contains("\"profileUrl\":\"https://mystand.space/profile\""))
   }
 
   test("response headers: explicit Content-Length matches body, no-cache") {

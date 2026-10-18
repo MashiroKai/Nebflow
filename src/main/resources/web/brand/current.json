@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "active": "black-cat",
+  "revision": "c746bb561f1b428a",
+  "sourceSha256": {
+    "light": "c938427039feb553c6b0cfcb58eaf1b60ddb5de2060c44a0fa461ba7c56bf80a",
+    "dark": "c938427039feb553c6b0cfcb58eaf1b60ddb5de2060c44a0fa461ba7c56bf80a"
+  },
+  "logo": "/brand/releases/c746bb561f1b428a/light-512.png",
+  "logoBright4": "/brand/releases/c746bb561f1b428a/light-128.png",
+  "logoDark4": "/brand/releases/c746bb561f1b428a/dark-128.png",
+  "emailLogo": "https://mystand.space/brand/releases/c746bb561f1b428a/light-512.png",
+  "faviconBase": "/brand/releases/c746bb561f1b428a",
+  "appleTouch": "/brand/releases/c746bb561f1b428a/light-180.png",
+  "faviconSvg": "",
+  "logtoDir": "/brand/releases/c746bb561f1b428a/"
+}

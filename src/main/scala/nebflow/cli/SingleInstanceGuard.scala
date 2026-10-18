@@ -1,7 +1,8 @@
 package nebflow.cli
 
 import cats.effect.IO
-import nebflow.shared.PathUtil
+import nebflow.shared.Branding
+import io.circe.parser.parse
 
 import java.net.*
 
@@ -146,12 +147,9 @@ object SingleInstanceGuard:
    */
   def connectProbeAccepted(port: Int): Boolean = connectAccepted(port)
 
-  /**
-   * HTTP probe of the occupant's /api/health. MUST bypass the JVM system
-   * proxy (a local HTTP proxy otherwise swallows localhost, slow-failing the
-   * probe). Identification accepts EITHER the new `product:"nebflow"` marker
-   * OR the legacy `version` field — a running older build (pre-product-field)
-   * is still our instance and must still be focused, not fought.
+  /** Probe health without the system proxy. Recognize the current/legacy
+   * product names, or the full legacy health shape, rather than arbitrary
+   * responses containing a product/version key.
    */
   private def probeNebflow(port: Int): Option[String] =
     Try {
@@ -169,7 +167,15 @@ object SingleInstanceGuard:
           val body = Using.resource(scala.io.Source.fromInputStream(conn.getInputStream))(
             _.mkString
           )
-          val isOurs = body.contains("\"product\"") || body.contains("\"version\"")
+          val isOurs = parse(body).toOption.exists { json =>
+            val c = json.hcursor
+            c.get[String]("product").toOption match
+              case Some(product) => Set("nebflow", "stand", Branding.lowerName).contains(product)
+              case None =>
+                c.get[String]("status").toOption.contains("ok") &&
+                  c.get[String]("version").toOption.exists(_.nonEmpty) &&
+                  c.downField("providers").focus.exists(_.isObject)
+          }
           if isOurs then Some(s"http://localhost:$port") else None
       finally conn.disconnect()
     }.toOption.flatten
@@ -180,8 +186,8 @@ object SingleInstanceGuard:
    * when the desktop shell lands). Respect --no-browser / headless.
    */
   def focusExisting(url: String, reason: String, openBrowser: Boolean): IO[Unit] =
-    IO.println(s"nebflow is already running ($reason)") *>
-      IO.println(s"focusing existing instance: $url") *>
+    IO.println(s"${Branding.productName} is already running ($reason)") *>
+      IO.println(s"focusing existing instance: ${url.takeWhile(_ != '?')}") *>
       IO.whenA(openBrowser && !nebflow.core.HeadlessMode.enabled)(openBrowserTo(url))
 
   private def openBrowserTo(url: String): IO[Unit] = IO.blocking {

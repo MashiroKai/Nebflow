@@ -34,12 +34,12 @@
 
 /** @type {Brand} */
 const fallback = {
-  productName: 'Nebflow',
-  lowerName: 'nebflow',
-  domain: 'nebflow.space',
-  name: 'Nebflow',
-  logoUrl: '/css/logo-bright-4.png',
-  logoDarkUrl: '/css/logo-dark-4.png'
+  productName: 'stand',
+  lowerName: 'stand',
+  domain: 'mystand.space',
+  name: 'stand',
+  logoUrl: '/brand/releases/c746bb561f1b428a/light-128.png',
+  logoDarkUrl: '/brand/releases/c746bb561f1b428a/dark-128.png'
 };
 
 const injected = /** @type {Window & { __BRAND__?: Brand }} */ (window).__BRAND__;
@@ -74,7 +74,7 @@ export const brand = Object.freeze(injected || fallback);
  * Bar avatar, settings avatar entry) carries the identical parameter by
  * construction.
  */
-const PROFILE_URL_FALLBACK = 'https://nebflow.space/profile';
+const PROFILE_URL_FALLBACK = 'https://mystand.space/profile';
 
 /** Cross-repo contract (🔴 逐字 = `from=client`): landing-URL hint param + value. */
 const FROM_CLIENT_PARAM = 'from';
@@ -112,7 +112,7 @@ export function getProfileUrl() {
  * that contract marks desktop-client profile entries, not console-gate
  * returns; the `next=%2Fportal` target is what carries the user back.
  */
-const WEBSITE_LOGIN_FALLBACK = 'https://nebflow.space/login?next=%2Fportal';
+const WEBSITE_LOGIN_FALLBACK = 'https://mystand.space/login?next=%2Fportal';
 
 export function getWebsiteLoginUrl() {
   const raw = /** @type {Brand} */ (brand).profileUrl;
@@ -138,4 +138,6 @@ export function getWebsiteLoginUrl() {
  */
 export function initBranding() {
   document.title = brand.lowerName;
+  // Clear obsolete per-browser artwork overrides; the project owns the selection.
+  try { localStorage.removeItem('stand_logo_choice'); } catch { /* Optional storage. */ }
 }
