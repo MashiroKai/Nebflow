@@ -18,9 +18,11 @@ python3 scripts/switch-logo.py black-cat --website <官网仓库> --auth-repo <n
 python3 scripts/switch-logo.py --website <官网仓库> --auth-repo <neblink-server仓库> --check
 ```
 
+命令需要 Python 3 和 Pillow。默认要求同时提供官网和认证仓库，防止只更新一个渠道；仅构建本地客户端时须显式使用 `--client-only`。
+
 一条同步命令生成客户端浅深色标志、favicon、桌面安装图标，以及官网、PWA、独立登录页的资源与清单。生成资源带内容摘要，原图和旧版本保留；各端不能再通过各自环境变量选择不同 Logo。`--check` 检测生成件漂移，不写文件。目标仓库必须显式传入，避免误改其他检出。
 
-官网资源发布之后，用同一清单同步 Logto 品牌和邮箱验证码模板：
+官网资源发布之后，用同一清单同步 Logto 品牌和邮箱验证码模板（认证页图片从同一来源内联生成，兼容其图片安全策略）：
 
 ```sh
 python3 scripts/sync-brand-auth.py --env-file <官网凭据文件> --apply

@@ -18,11 +18,14 @@ def main():
     p.add_argument('--website', type=Path)
     p.add_argument('--auth-repo', type=Path)
     p.add_argument('--check', action='store_true')
+    p.add_argument('--client-only', action='store_true', help='explicitly generate only client/packaging outputs')
     a = p.parse_args()
     catalog = json.loads((WEB / 'brand/logos.json').read_text())
     if a.list:
         for key, item in catalog.items(): print(f'{key:16} {item["name"]}')
         return
+    if not a.client_only and not (a.website and a.auth_repo):
+        p.error('global sync requires both --website and --auth-repo; use --client-only for a local build')
     conf = (ROOT / 'brand.conf').read_text()
     selected = re.search(r'^activeLogo\s*=\s*([^\s#]+)', conf, re.M)
     active = a.logo or (selected.group(1) if selected else 'black-cat')
