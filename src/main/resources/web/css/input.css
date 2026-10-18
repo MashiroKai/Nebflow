@@ -324,6 +324,13 @@
   overflow-y: hidden;
   scrollbar-width: none;
 }
+/* Click pass-through (composer-typing fix 2026-10-18): the overlay strip spans
+   the full input-wrap width, so its empty areas sat on top of the textarea and
+   swallowed every click aimed at it — the caret could not be placed and typed
+   keys went nowhere. The container ignores pointers; the chips themselves (and
+   their remove buttons / ref cards) stay fully interactive. */
+#input-wrap #attachment-preview { pointer-events: none; }
+#input-wrap #attachment-preview > * { pointer-events: auto; }
 #input-wrap #attachment-preview::-webkit-scrollbar { display: none; }
 .att-thumb {
   width: 50px; height: 50px;
