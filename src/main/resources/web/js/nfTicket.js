@@ -17,6 +17,7 @@
 // same-origin cookie, with a Bearer retry as the fallback.
 
 import { key } from './branding.js';
+import { noteAuthRejected } from './sessionGate.js';
 
 /** @typedef {{ t: string, exp: number }} CachedTicket */
 
@@ -202,7 +203,13 @@ async function mintRound(paths) {
       const tok = storedToken();
       if (tok) resp = await send({ Authorization: 'Bearer ' + tok });
     }
-    if (!resp.ok) throw new Error('mint HTTP ' + resp.status);
+    if (!resp.ok) {
+      // #520（2026-10-18）：401/403 = 同源凭据被拒（relay 门 15min 票过期 /
+      // host 会话失效）。这是「点了零反应」的静默根，交给 sessionGate 出
+      // 可见面 + 自愈 reload；其余状态照旧走熔断计数。
+      if (resp.status === 401 || resp.status === 403) noteAuthRejected('nf-ticket');
+      throw new Error('mint HTTP ' + resp.status);
+    }
     const data = await resp.json();
     // F3: a 200 whose body is not an object, or carries no `tickets` mapping
     // (the catch-all harness shape `{}`), means "no tickets available". It is
