@@ -29,7 +29,9 @@ import scala.concurrent.duration.*
  *    显示，非运行超时；Node 运行本身不设超时）
  * 3. CancelNode：转发到 NodeEngine（复用 cancel 信号）
  *
- * 无 Mail 身份（自身不是 agent）；Mail(→project) 触发路由留阶段 1。
+ * 无 Mail 身份（自身不是 agent）；Mail(→project) 触发路由已拆除
+ * （project-trigger 拆除批 2026-10-18：Mail = 纯通信原语，对本 actor 零触发面；
+ * 现存触发方 = DispatchNotify 回流 / boot 崩溃恢复与唤醒 / blocked 重入）。
  */
 
 /** Project 运行时（工具/REST 层直接操作 store/engine 的入口）。 */
@@ -412,16 +414,16 @@ object ProjectActor:
 
   /**
    * 注入来源权威定名（Q2-B2，2026-09-11 任务分发器收件规则批）。三分：
-   *  - [[SourceTask]] = 项目触发入口（`Mail(address="project:<name>")` / 重入 /
-   *    spawn 首条 prompt；**值不改名**——R2 批 D-5 裁定观测面零断代。
-   *    本条覆盖此前相关指令：旧注释里的 `Task` 工具已删净退役，
-   *    入口唯一 = Mail）；
+   *  - [[SourceTask]] = 项目触发入口（重入 / spawn 首条 prompt；**值不改名**
+   *    ——R2 批 D-5 裁定观测面零断代。project-trigger 拆除批 2026-10-18 起
+   *    Mail 不再是入口；该值仍为 `TriggerDispatcher.source` 的默认值，服务
+   *    引擎侧触发与存量落盘行的渲染）；
    *  - [[SourceDispatch]] = 回流通知（DispatchNotify → TriggerDispatcher）；
    *  - `"node"` = 节点消息（NodeEngine.deliverToNebula 侧，本批不动）。
    * 前端 `INJECTED_SOURCE_LABELS` 有对应显式标签（web/js/chat.js）——
    * **后端是唯一定名源**，前端不得靠首字母大写兜底。
-   * `TriggerDispatcher.source` 默认 [[SourceTask]] ⇒ 既有调用点（MailTool /
-   * ProjectCrashRecovery）零改动即落 task 语义。
+   * `TriggerDispatcher.source` 默认 [[SourceTask]] ⇒ 既有调用点
+   * （ProjectCrashRecovery 等）零改动即落 task 语义。
    */
   val SourceTask: String = "task"
   val SourceDispatch: String = "dispatch"
@@ -1264,7 +1266,7 @@ object ProjectActor:
     // the task text is injected into that session (turn-boundary: queued while busy, a
     // new turn when idle); none (including the slot's session having just ended) =>
     // spawn a fresh **bound** instance = the empty-slot rebuild from the ledger (the
-    // ledger existence/terminal checks live in MailTool.routeToProject; the engine never
+    // ledger existence/terminal checks live at the trigger caller; the engine never
     // re-delivers on its own).
     // 令 3：注入命中即 `idleSince = None`（**新任务到达 = 重置空闲计时**，设计 §3.1-3）。
     // source（Q2-B2）：Task 入口 = task；DispatchNotify 回流通知 = dispatch。

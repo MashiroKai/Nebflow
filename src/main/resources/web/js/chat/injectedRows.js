@@ -27,8 +27,9 @@ import { attachQuoteMenu, nextChatMsgId } from '../msgQuote.js';
  *  names (proper nouns) — no i18n needed. Unknown sources are capitalized.
  *
  *  task / dispatch（Q2-B2，2026-09-11 任务分发器收件规则批）：后端对分发器收件的
- *  两种入口权威定名——`task` = Task 入口（Task 工具 / Mail(→project) / 重入 /
- *  spawn 首条 prompt），`dispatch` = 回流通知（DispatchNotify）。二者显式登记，
+ *  两种入口权威定名——`task` = Task 入口（TriggerDispatcher 默认源：重入 /
+ *  spawn 首条 prompt；Mail(→project) 触发腿已拆除），`dispatch` = 回流通知
+ *  （DispatchNotify）。二者显式登记，
  *  **不靠首字母大写兜底**（兜底对多词源名/大小写变体不设防）。 */
 const INJECTED_SOURCE_LABELS = {
   mail: 'Mail', delegate: 'Delegate', subtask: 'SubTask', skill: 'Skill',
@@ -96,7 +97,9 @@ function nodeStatusLabel(eventType) {
  *  intake (optional, mailbadge batch 2026-09-13 — author ruling「必须显示 MAIL」,
  *  option C): the **intake-channel discriminant** the backend stamps next to
  *  `source` when the injection arrived through a specific receipt channel
- *  (`Mail(address="project:…")` at the dispatcher face ⇒ `intake='mail'`, while
+ *  (`Mail(address="project:…")` at the dispatcher face — that trigger leg is
+ *  demolished (2026-10-18); the intake value + label survive only to render
+ *  legacy rows — ⇒ `intake='mail'`, while
  *  `source` stays 'task' — the bridge's consumption accounting key, unchanged by
  *  author decree). The intake value comes from the same backend-named source
  *  vocabulary, so it resolves through the same explicitly-registered table. It

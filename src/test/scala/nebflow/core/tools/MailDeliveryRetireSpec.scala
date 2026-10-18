@@ -120,7 +120,7 @@ class MailDeliveryRetireSpec extends FunSuite:
     MailTool.inputSchema("properties").flatMap(_.asObject).getOrElse(fail("Mail schema has no properties"))
 
   test(
-    "schema (mailparams re-pin + taskunify `task` + mailmodel re-pin): the `delivery` key is retired from the schema; the property set is exactly 6 entries and excludes the retired keys"
+    "schema (mailparams re-pin + mailmodel re-pin + project-trigger demolition): the `delivery` key is retired from the schema; the property set is exactly 5 entries and excludes the retired keys"
   ):
     // 机械锚 ①：该键**零命中** + 集合**精确等值**（任何与本批无关的增 / 删 / 改名一律红）。
     assert(
@@ -128,25 +128,32 @@ class MailDeliveryRetireSpec extends FunSuite:
       s"the `delivery` key must be GONE from the schema (2026-09-17 mailparams batch), got: ${propsOf.keys.toList.sorted}"
     )
     // taskunify merge batch (2026-09-24): + `task` (optional; **no address-syntax
-    // extension**) — when Mail targets a project it auto-creates a task / continues an
-    // existing open task, so the property face grew by one.
+    // extension**) — when Mail targeted a project it auto-created / continued a task.
     // mailmodel batch (2026-09-25, rulings (d)/(e)): - `device` and - `type` — the
     // cross-device leg and the five mail-type tags are retired both ways; the property
-    // face goes 8 → 6. This is a **behaviour-visible** change (declared: a stale
-    // `device=` call refuses with MAIL_DEVICE_RETIRED, a stale `type=` is ignored).
+    // face went 8 → 6.
+    // project-trigger demolition batch (2026-10-18): - `task` — the project leg is
+    // demolished (Mail dispatches nothing), so the parameter has no consumer left;
+    // the property face goes 6 → 5. Behaviour-visible: a stale `task=` refuses with
+    // MAIL_TASK_PARAM_UNSUPPORTED (tombstone read in call(), same fail-closed shape
+    // as the `delivery` / `device` tombstones).
     assertEquals(
       propsOf.keys.toSet,
-      Set("address", "message", "chainId", "task", "images", "attachments"),
-      "the property set must be exactly the surviving parameters (6 after the mailmodel batch)"
+      Set("address", "message", "chainId", "images", "attachments"),
+      "the property set must be exactly the surviving parameters (5 after the project-trigger demolition)"
     )
     assert(
       !propsOf.keys.toSet.contains("device") && !propsOf.keys.toSet.contains("type"),
       s"the `device` / `type` keys must be GONE from the schema (2026-09-25 mailmodel batch), got: ${propsOf.keys.toList.sorted}"
     )
+    assert(
+      !propsOf.keys.toSet.contains("task"),
+      s"the `task` key must be GONE from the schema (project-trigger demolition), got: ${propsOf.keys.toList.sorted}"
+    )
     // The live capability faces MUST stay present (never delete live faces in
-    // passing: all six surviving keys are live capabilities; the criterion is that
+    // passing: all five surviving keys are live capabilities; the criterion is that
     // each is still a declared property in **object form**, not merely a name).
-    for k <- List("address", "message", "chainId", "task", "images", "attachments") do
+    for k <- List("address", "message", "chainId", "images", "attachments") do
       assert(
         propsOf(k).flatMap(_.asObject).nonEmpty,
         s"`$k` must still be a declared object property with its own face (live capability, untouched)"
