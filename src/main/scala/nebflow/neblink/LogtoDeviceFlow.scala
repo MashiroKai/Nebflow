@@ -61,16 +61,32 @@ object LogtoDeviceFlow:
     accessToken: String,
     deviceId: String,
     deviceName: String,
-    platform: String
+    platform: String,
+    machineFingerprint: Option[String] = None
   ): Request =
+    // Additive optional `machineFingerprint` (单设备单账号批, design §A.3):
+    // the machine fingerprint rides along with the SAME source/moment as the
+    // deviceId derivation (DeviceIdentity.machineFingerprint). None ⇒ the
+    // key is ABSENT from the payload (not null, not empty) — the server
+    // fail-opens on absence with a WARN, so "no field" is the honest wire
+    // shape for an unreadable machine code.
     Request(
       url = s"${serverUrl.stripSuffix("/")}${Protocol.DeviceApi.register}",
       contentType = "application/json",
-      body = Json
-        .obj(
-          "deviceId" -> deviceId.asJson,
-          "deviceName" -> deviceName.asJson,
-          "platform" -> platform.asJson
+      body = machineFingerprint
+        .fold(
+          Json.obj(
+            "deviceId" -> deviceId.asJson,
+            "deviceName" -> deviceName.asJson,
+            "platform" -> platform.asJson
+          )
+        )(fp =>
+          Json.obj(
+            "deviceId" -> deviceId.asJson,
+            "deviceName" -> deviceName.asJson,
+            "platform" -> platform.asJson,
+            "machineFingerprint" -> fp.asJson
+          )
         )
         .noSpaces,
       bearer = Some(accessToken)
@@ -168,24 +184,51 @@ object LogtoDeviceFlow:
     }
 
   /**
+   * Non-2xx register outcome, STRUCTURED (单设备单账号批): the server's
+   * stable `reason` (409 machine-gate: `device_bound_other_account` /
+   * `device_already_logged_in` — literals pinned verbatim across repos, the
+   * `binding_revoked` discipline) rides along so callers classify the
+   * refusal instead of string-matching free text. `message` is the old
+   * free-string face (`error` field, or "HTTP <status>").
+   */
+  final case class RegisterRejection(
+    status: Int,
+    reason: Option[String],
+    message: String
+  )
+
+  /**
    * Exchange the provider access token for a long-lived device credential.
    * The response is the server's EnrollResponse JSON (deviceToken /
    * networkId / avatarUrl / githubUsername) — the exact shape the legacy
    * flow returned, so the caller's persist/hot-swap path is shared.
+   *
+   * Failure channel is [[RegisterRejection]] (was a free string): callers
+   * map `reason` onto their copy pipeline; the raw body stays available in
+   * `message` for logs.
    */
   def register(send: Send)(
     serverUrl: String,
     accessToken: String,
     deviceId: String,
     deviceName: String,
-    platform: String
-  ): IO[Either[String, Json]] =
-    send(registerRequest(serverUrl, accessToken, deviceId, deviceName, platform)).flatMap { case (status, body) =>
-      IO.pure(
-        if status == 200 then parser.parse(body).left.map(_.message)
-        else Left(extractError(status, body))
-      )
-    }
+    platform: String,
+    machineFingerprint: Option[String] = None
+  ): IO[Either[RegisterRejection, Json]] =
+    send(registerRequest(serverUrl, accessToken, deviceId, deviceName, platform, machineFingerprint))
+      .flatMap { case (status, body) =>
+        IO.pure(
+          if status == 200 then
+            parser
+              .parse(body)
+              .left
+              .map(err => RegisterRejection(status, None, Option(err.getMessage).getOrElse(err.toString)))
+          else
+            val parsed = parser.parse(body).toOption
+            val reason = parsed.flatMap(_.hcursor.downField("reason").as[String].toOption)
+            Left(RegisterRejection(status, reason, extractError(status, body)))
+        )
+      }
 
   private def extractError(status: Int, body: String): String =
     if status == 0 then body // transport failure: body carries the message

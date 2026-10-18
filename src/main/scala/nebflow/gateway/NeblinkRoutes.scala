@@ -780,7 +780,18 @@ private[gateway] object NeblinkRoutes:
                               completeDeviceEnrollment(ms, resolvedUrl, json)
                             case Left(err) =>
                               // authorization_pending is expected during polling — pass through.
-                              BadRequest(Json.obj("error" -> err.asJson))
+                              // 单设备单账号批：register 的失败通道已结构化
+                              // （RegisterRejection）——老代理腿只透传 message 自由串
+                              // （机器闸 409 的分类文案由 PKCE 主链负责，此腿是遗留
+                              // 设备码路径，遇闸拒绝时裸串可接受）。
+                              BadRequest(
+                                Json.obj(
+                                  "error" -> (err match
+                                    case r: LogtoDeviceFlow.RegisterRejection => r.message
+                                    case s => String.valueOf(s)
+                                  ).asJson
+                                )
+                              )
                         yield resp
                   yield resp
               end match

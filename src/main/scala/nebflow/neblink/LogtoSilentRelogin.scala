@@ -178,7 +178,8 @@ object LogtoSilentRelogin:
                 tokens.accessToken,
                 identity.deviceId,
                 identity.deviceName,
-                identity.platform
+                identity.platform,
+                DeviceIdentity.machineFingerprint()
               )
               .flatMap {
                 case Right(json) =>
@@ -198,8 +199,14 @@ object LogtoSilentRelogin:
                         case Left(err) => warn(s"silent re-login persist failed: $err").as(None)
                       }
                   )
-                case Left(err) =>
-                  warn(s"silent re-login register failed: $err").as(None)
+                case Left(rejection) =>
+                  // 单设备单账号批：拒绝已结构化。机器指纹闸 409 在静默腿**预期内**
+                  // （同机第二实例/换账号——正是本批要挡的场景），照实 warn 带稳定码；
+                  // 指纹与 deviceId 同源同时刻（DeviceIdentity.machineFingerprint）。
+                  warn(
+                    s"silent re-login register failed: ${rejection.message} " +
+                      s"(status=${rejection.status}, reason=${rejection.reason.getOrElse("-")})"
+                  ).as(None)
               }
           }
       case Left(err) => warn(s"silent re-login refresh failed: $err").as(None)

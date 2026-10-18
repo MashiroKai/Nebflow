@@ -566,6 +566,11 @@ export default {
   'login.action.token-exchange-failed': '点「重试」；仍失败则「使用其他账号登录」',
   'login.reason.device-register-failed': '登录服务器设备注册失败',
   'login.action.device-register-failed': '点「重试」；仍失败则「使用其他账号登录」',
+  // 单设备单账号批（机器指纹闸 409；码 = 服务端 wire reason 逐字同源）。
+  'login.reason.device_bound_other_account': '此设备已登录另一个账号：同一台设备同一时间只能登录一个账号',
+  'login.action.device_bound_other_account': '先在本机退出原账号（如原实例仍在本机运行），或到官网「设备管理」移除该设备后再登录',
+  'login.reason.device_already_logged_in': '此设备已有一个登录中的实例：同一台机器同一时间只能登录一个账号',
+  'login.action.device_already_logged_in': '在原有实例中退出登录后重试；隔离测试请使用测试账号',
   'login.reason.callback-state-invalid': '登录回调校验失败（一次性校验码不匹配或已过期）',
   'login.action.callback-state-invalid': '回到 {lowerBrand} 重新点「登录」',
   'login.reason.provider-error': '登录被服务方拒绝或中断',

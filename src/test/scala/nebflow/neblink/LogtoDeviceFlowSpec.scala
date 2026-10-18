@@ -58,6 +58,53 @@ class LogtoDeviceFlowSpec extends FunSuite:
     assertEquals(body.downField("platform").as[String], Right("darwin"))
   }
 
+  // ── machineFingerprint payload field (单设备单账号批) ─────────────────────
+
+  test("registerRequest carries machineFingerprint when readable, ABSENT when not") {
+    // Readable → the additive optional field rides with the base three.
+    val withFp = LogtoDeviceFlow.registerRequest(
+      "https://server.example",
+      "at",
+      "device-1",
+      "My Mac",
+      "darwin",
+      machineFingerprint = Some("IOPLATFORM-UUID-ABCD")
+    )
+    val fpBody = parse(withFp.body).fold(e => fail(e.message), identity)
+    assertEquals(
+      fpBody.hcursor.downField("machineFingerprint").as[String],
+      Right("IOPLATFORM-UUID-ABCD")
+    )
+
+    // Unreadable → the key is ABSENT (not null, not empty) — the server
+    // fail-opens on absence with a WARN; "no field" is the honest wire shape.
+    val withoutFp = LogtoDeviceFlow.registerRequest(
+      "https://server.example",
+      "at",
+      "device-1",
+      "My Mac",
+      "darwin",
+      machineFingerprint = None
+    )
+    val plainBody = parse(withoutFp.body).fold(e => fail(e.message), identity)
+    assert(
+      plainBody.asObject.exists(!_.contains("machineFingerprint")),
+      s"absent fingerprint must omit the key entirely: ${withoutFp.body}"
+    )
+    // And the default parameter keeps the legacy call shape fingerprint-free.
+    val defaultCall = LogtoDeviceFlow.registerRequest(
+      "https://server.example",
+      "at",
+      "device-1",
+      "My Mac",
+      "darwin"
+    )
+    assert(
+      parse(defaultCall.body).toOption.exists(_.asObject.exists(!_.contains("machineFingerprint"))),
+      "default call must stay fingerprint-free"
+    )
+  }
+
   // ── start response mapping (frontend contract) ──────────────────────────
 
   test("parseStartResponse maps Logto snake_case onto the camelCase frontend contract") {
@@ -199,7 +246,7 @@ class LogtoDeviceFlowSpec extends FunSuite:
     val enroll = LogtoDeviceFlow
       .register(send)("https://server.example", success, "device-1", "Mac", "darwin")
       .unsafeRunSync()
-      .fold(e => fail(e), identity)
+      .fold(e => fail(s"unexpected register rejection: $e"), identity)
     assertEquals(enroll.hcursor.downField("deviceToken").as[String], Right("dt-1"))
     assertEquals(enroll.hcursor.downField("networkId").as[String], Right("net-1"))
 
@@ -209,13 +256,53 @@ class LogtoDeviceFlowSpec extends FunSuite:
     assertEquals(registerReq.url, "https://server.example/api/device/register")
   }
 
-  test("register surfaces the server error on rejection") {
-    val send: LogtoDeviceFlow.Send = _ => IO.pure((403, """{"error":"Invalid or expired token"}"""))
-    val err = LogtoDeviceFlow
-      .register(send)("https://server.example", "bad-token", "d", "n", "p")
+  test("register rejection is STRUCTURED: status + stable reason + free message") {
+    // 机器指纹闸 409（异账号）：reason 原样进 RegisterRejection——字面量与
+    // 服务端 wire / CredentialFailure code 逐字同源。
+    val send409Other: LogtoDeviceFlow.Send = _ =>
+      IO.pure(
+        (
+          409,
+          """{"error":"This machine already has a live login under a different account","reason":"device_bound_other_account"}"""
+        )
+      )
+    val rejOther = LogtoDeviceFlow
+      .register(send409Other)("https://server.example", "at", "d", "n", "p")
       .unsafeRunSync()
       .fold(identity, j => fail(s"expected Left, got $j"))
-    assertEquals(err, "Invalid or expired token")
+    assertEquals(rejOther.status, 409)
+    assertEquals(rejOther.reason, Some("device_bound_other_account"))
+    assert(rejOther.message.contains("different account"))
+
+    // 机器指纹闸 409（同账号第二实例）。
+    val send409Same: LogtoDeviceFlow.Send = _ =>
+      IO.pure(
+        (409, """{"error":"same machine other instance","reason":"device_already_logged_in"}""")
+      )
+    val rejSame = LogtoDeviceFlow
+      .register(send409Same)("https://server.example", "at", "d", "n", "p")
+      .unsafeRunSync()
+      .fold(identity, j => fail(s"expected Left, got $j"))
+    assertEquals(rejSame.reason, Some("device_already_logged_in"))
+
+    // 非 409 拒绝：reason 缺席时为 None，message 保持既有自由串语义。
+    val send403: LogtoDeviceFlow.Send = _ => IO.pure((403, """{"error":"Invalid or expired token"}"""))
+    val rej403 = LogtoDeviceFlow
+      .register(send403)("https://server.example", "bad-token", "d", "n", "p")
+      .unsafeRunSync()
+      .fold(identity, j => fail(s"expected Left, got $j"))
+    assertEquals(rej403.reason, None)
+    assertEquals(rej403.status, 403)
+    assertEquals(rej403.message, "Invalid or expired token")
+
+    // 非 JSON 错误体：退化为 HTTP 状态串（既有语义）。
+    val send503: LogtoDeviceFlow.Send = _ => IO.pure((503, "gateway down"))
+    val rej503 = LogtoDeviceFlow
+      .register(send503)("https://server.example", "at", "d", "n", "p")
+      .unsafeRunSync()
+      .fold(identity, j => fail(s"expected Left, got $j"))
+    assertEquals(rej503.reason, None)
+    assertEquals(rej503.message, "HTTP 503")
   }
 
   test("transport failure (status 0) surfaces the exception message, not HTTP 0") {

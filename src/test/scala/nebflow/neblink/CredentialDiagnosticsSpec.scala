@@ -434,4 +434,52 @@ class CredentialDiagnosticsSpec extends FunSuite:
     assert(json.hcursor.downField("action").as[String].toOption.exists(_.nonEmpty))
   }
 
+  // ── R5 机器指纹闸 409 分类（单设备单账号批）─────────────────────────────
+
+  /**
+   * 服务端 409 wire reason（link-server `model.rs` 钉死）——跨仓契约字面量。
+   * 本断言钉住三层同源：wire reason == 引擎 CredentialFailure code ==
+   * webui i18n 键后缀（R4b 的逐字镜像断言负责第三层的成对存在）。
+   */
+  private val ServerWireReasons: Map[String, CredentialFailure] = Map(
+    "device_bound_other_account" -> CF.DeviceBoundOtherAccount,
+    "device_already_logged_in" -> CF.DeviceAlreadyLoggedIn
+  )
+
+  test("R5a 机器指纹闸两条稳定码与服务端 wire reason 逐字同源（跨仓钉字面量）") {
+    ServerWireReasons.foreach { (wire, failure) =>
+      assertEquals(failure.code, wire, s"CredentialFailure code must equal the server wire reason verbatim ($wire)")
+      assert(!failure.isLocalFile, "机器闸拒绝不是本地文件类 —— 不得给「清理并重登」入口")
+    }
+    // 反向钉死：防止有人「顺手改名」码而不同步服务端。
+    assert(CF.DeviceBoundOtherAccount.code == "device_bound_other_account")
+    assert(CF.DeviceAlreadyLoggedIn.code == "device_already_logged_in")
+  }
+
+  test("R5b 两条分类的三段式文案：原因/动作各就各位，且即便 detail 最脏也零禁项") {
+    ServerWireReasons.foreach { (wire, failure) =>
+      val d = CD.diagnosticOf(failure, "java.nio.file.AccessDeniedException: C:\\x")
+      assert(d.message.startsWith("登录失败："), s"($wire) 三段式模板头: ${d.message}")
+      assert(d.message.contains(s"诊断码：$wire"), s"($wire) 诊断码尾串: ${d.message}")
+      assert(d.reason.nonEmpty && d.action.nonEmpty, s"($wire) 原因与动作都不得为空")
+      // 异账号码的动作必须给**两条**出路（本机退出 / 官网解绑，设计 §A.5/§D.2）。
+      if failure == CF.DeviceBoundOtherAccount then
+        assert(d.action.contains("退出"), s"异账号码动作须含本机退出出路: ${d.action}")
+        assert(d.action.contains("设备管理"), s"异账号码动作须含官网解绑出路: ${d.action}")
+      assert(
+        CD.isCleanVisibleText(d.reason) && CD.isCleanVisibleText(d.action) && CD.isCleanVisibleText(d.message),
+        s"($wire) 用户可见串必须零禁项（无路径/异常类名）: ${d.message}"
+      )
+    }
+  }
+
+  test("R5c 全表负控遍历覆盖两条新码（allMessages 含机器闸文案且全干净）") {
+    val messages = CD.allMessages
+    ServerWireReasons.keys.foreach { wire =>
+      val hit = messages.find(_.contains(s"诊断码：$wire"))
+      assert(hit.isDefined, s"allMessages 必须覆盖 $wire")
+      assertEquals(LogdevTestSupport.violations(hit.get, root), Nil, s"($wire) 三条判据必须全过")
+    }
+  }
+
 end CredentialDiagnosticsSpec

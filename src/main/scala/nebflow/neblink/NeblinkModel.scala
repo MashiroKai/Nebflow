@@ -305,6 +305,25 @@ object DeviceIdentity:
       case Some(overridden) => sanitizeMachineCode(Some(overridden))
       case None => sanitizeMachineCode(readMachineCodeFromOs())
 
+  /**
+   * Machine fingerprint for the register payload (单设备单账号批, wire field
+   * `machineFingerprint` — literal pinned across repos: engine
+   * `LogtoDeviceFlow.registerRequest` ↔ server `DeviceRegisterRequest`).
+   *
+   * Same source and same moment as the deviceId derivation (`readMachineCode`,
+   * the exact probe `mint()` ran): a fresh read at register-request build
+   * time, so the reported fingerprint always describes the machine this
+   * deviceId was derived from. `None` (unreadable — permission / unsupported
+   * platform / placeholder) ⇒ the payload carries NO field and the server
+   * fail-opens with a WARN (design §A.3, Q3 ruling): the honest boundary is
+   * "constraint lost", never "login bricked".
+   *
+   * Public on purpose: the register call sites live in `nebflow.gateway`
+   * (AuthRoutes PKCE callback) and in this package (silent re-login) — both
+   * must report the same dimension.
+   */
+  def machineFingerprint(): Option[String] = readMachineCode()
+
   private[neblink] def sanitizeMachineCode(raw: Option[String]): Option[String] =
     raw
       .map(_.trim)

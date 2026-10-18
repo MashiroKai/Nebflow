@@ -59,6 +59,21 @@ enum CredentialFailure(val code: String):
   /** 服务端 `/api/device/register` 腿失败。 */
   case DeviceRegisterFailed extends CredentialFailure("device-register-failed")
 
+  /**
+   * 服务端机器指纹闸 409（单设备单账号批，wire reason `device_bound_other_account`）：
+   * 这台机器已被**别的账号**的活登录占用。code 与服务端 wire reason **逐字同源**
+   * （跨仓钉字面量，沿 `binding_revoked` 先例——同码也是 webui i18n 键后缀
+   * `login.reason.<code>` / `login.action.<code>` 与 neblink.js 反查表的键）。
+   */
+  case DeviceBoundOtherAccount extends CredentialFailure("device_bound_other_account")
+
+  /**
+   * 服务端机器指纹闸 409（wire reason `device_already_logged_in`）：同一账号的
+   * **另一实例**已在这台机器上登录（同机双 home 双实例——隔离 home 有意派生不同
+   * deviceId，deviceId 维度判不出「同一台机器」，指纹维度才判得出，设计 §5.1）。
+   */
+  case DeviceAlreadyLoggedIn extends CredentialFailure("device_already_logged_in")
+
   /** 回调 state 不匹配 / 过期 / 无待决尝试。 */
   case CallbackStateInvalid extends CredentialFailure("callback-state-invalid")
 
@@ -113,6 +128,10 @@ object CredentialDiagnostics:
     case CredentialFailure.ServerNoDeviceToken => "登录服务器没有发回设备凭据"
     case CredentialFailure.TokenExchangeFailed => "与登录服务器交换令牌失败"
     case CredentialFailure.DeviceRegisterFailed => "登录服务器设备注册失败"
+    case CredentialFailure.DeviceBoundOtherAccount =>
+      "此设备已登录另一个账号：同一台设备同一时间只能登录一个账号"
+    case CredentialFailure.DeviceAlreadyLoggedIn =>
+      "此设备已有一个登录中的实例：同一台机器同一时间只能登录一个账号"
     case CredentialFailure.CallbackStateInvalid => "登录回调校验失败（一次性校验码不匹配或已过期）"
     case CredentialFailure.ProviderError => "登录被服务方拒绝或中断"
     case CredentialFailure.ServiceUnavailable => s"${Branding.lowerName} 服务未初始化"
@@ -139,6 +158,13 @@ object CredentialDiagnostics:
     case CredentialFailure.ServerNoDeviceToken => "点「重试」；仍失败则「使用其他账号登录」"
     case CredentialFailure.TokenExchangeFailed => "点「重试」；仍失败则「使用其他账号登录」"
     case CredentialFailure.DeviceRegisterFailed => "点「重试」；仍失败则「使用其他账号登录」"
+    case CredentialFailure.DeviceBoundOtherAccount =>
+      // 单设备单账号批（设计 §A.5/§D.2）：两条出路——本机退出原账号 / 官网设备管理
+      // 解绑。🔴 保持「干净」：无路径、无文件名、无域名字面量（官网入口在控制台
+      // 常驻可点，无需把 URL 写进文案）。
+      "先在本机退出原账号（如原实例仍在本机运行），或到官网「设备管理」移除该设备后再登录"
+    case CredentialFailure.DeviceAlreadyLoggedIn =>
+      "在原有实例中退出登录后重试；隔离测试请使用测试账号"
     case CredentialFailure.CallbackStateInvalid => s"回到 ${Branding.lowerName} 重新点「登录」"
     case CredentialFailure.ProviderError => "重新点「登录」；必要时换一个账号"
     case CredentialFailure.ServiceUnavailable => s"重启 ${Branding.lowerName} 后重新登录"
