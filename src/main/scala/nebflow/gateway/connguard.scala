@@ -47,9 +47,9 @@ final case class ConnGuardConfig(
   snapshotSec: Int = 60,
   extraTrustedIps: Set[String] = Set.empty,
   /** Tunnel face (phase 3a): per-envelope-IP request budget per window. Implementation constants. */
-  tunnelPerIpCap: Int = 240,
+  tunnelPerIpCap: Int = ConnGuardConfig.DefaultTunnelPerIpCap,
   /** Tunnel face: cross-IP total request budget per window. */
-  tunnelTotalCap: Int = 2400,
+  tunnelTotalCap: Int = ConnGuardConfig.DefaultTunnelTotalCap,
   /** Tunnel face: fixed-window length. */
   tunnelWindowSec: Int = 60
 ):
@@ -57,6 +57,12 @@ final case class ConnGuardConfig(
   val trustedIps: Set[String] = ConnGuardConfig.DefaultTrustedIps ++ extraTrustedIps
 
 object ConnGuardConfig:
+
+  // A console cold load includes modules, editor preload, assets and API reads.
+  // Admit two full asset trees plus bootstrap/retry traffic in the same window.
+  // Keep both per-IP and process-wide limits finite, including loopback envelopes.
+  val DefaultTunnelPerIpCap: Int = 1024
+  val DefaultTunnelTotalCap: Int = 10240
 
   val DefaultTrustedIps: Set[String] = Set("127.0.0.1", "::1", "0:0:0:0:0:0:0:1")
 
@@ -100,8 +106,8 @@ object ConnGuardConfig:
       maxTrackedIps = intEnv("GATEWAY_CONN_GUARD_MAX_TRACKED_IPS", 1024, 1),
       snapshotSec = intEnv("GATEWAY_CONN_GUARD_SNAPSHOT_SEC", 60, 15),
       extraTrustedIps = extra,
-      tunnelPerIpCap = intEnv("GATEWAY_CONN_GUARD_TUNNEL_PER_IP_CAP", 240, 1),
-      tunnelTotalCap = intEnv("GATEWAY_CONN_GUARD_TUNNEL_TOTAL_CAP", 2400, 1),
+      tunnelPerIpCap = intEnv("GATEWAY_CONN_GUARD_TUNNEL_PER_IP_CAP", DefaultTunnelPerIpCap, 1),
+      tunnelTotalCap = intEnv("GATEWAY_CONN_GUARD_TUNNEL_TOTAL_CAP", DefaultTunnelTotalCap, 1),
       tunnelWindowSec = intEnv("GATEWAY_CONN_GUARD_TUNNEL_WINDOW_SEC", 60, 1)
     )
   end fromEnv
@@ -154,9 +160,9 @@ object ConnGuard:
     /** Tunnel face: requests rejected with 429 in total. */
     tunnelRejectedTotal: Long = 0L,
     /** Tunnel face: per-envelope-IP budget per window. */
-    tunnelPerIpCap: Int = 240,
+    tunnelPerIpCap: Int = ConnGuardConfig.DefaultTunnelPerIpCap,
     /** Tunnel face: cross-IP total budget per window. */
-    tunnelTotalCap: Int = 2400,
+    tunnelTotalCap: Int = ConnGuardConfig.DefaultTunnelTotalCap,
     wsPerIpCap: Int,
     wsTotalCap: Int,
     maxTrackedIps: Int,

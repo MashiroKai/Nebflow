@@ -10,14 +10,18 @@ Stand 原名 Nebflow。网站入口是 https://mystand.space，跨设备控制�
 
 ## 远程控制台构建
 
-远程部署使用项目已有的前端 bundle；不要把只服务开发源码的 assembly 当作远程发布包。首次加载源码模块可能超过隧道每分钟 240 次的请求预算，造成 429、配置或引导加载不完整。
+远程部署使用项目已有的前端 bundle；不要把只服务开发源码的 assembly 当作远程发布包。首次加载源码模块可能超过旧版隧道每分钟 240 次的请求预算，造成 429、配置或引导加载不完整。
 
 ```sh
 node scripts/build-web.mjs
 sbt -Dstand.webdist=1 assembly
 ```
 
+隧道默认预算同时调整为每 IP 每分钟 1024、全局 10240，覆盖完整资源与启动请求；超限仍拒绝，环境变量显式设定仍优先。
+
 构建保持 index.html 的真实样式顺序（包含 sapphire 后的响应式覆盖），入口使用带内容摘要的资源。构建后的静态资产门禁使用 `node scripts/verify-web-assets.mjs --root build/web-dist http://localhost:8080`。主机已有模型和 onboarding 状态不因远程浏览器首次访问而重置。
+
+远程实时消息在主机端按完整消息组装后再转发，防止 JDK WebSocket 回调分片被浏览器误当成独立 JSON。组装保留跨回调的 UTF-16 代理对，文本/二进制均有 4 MiB 上限，超限关闭对应连接而不发送残缺消息；认证和账号绑定规则不变。
 
 ## Logo
 
