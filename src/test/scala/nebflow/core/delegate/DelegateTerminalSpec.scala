@@ -823,7 +823,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
   }
 
   test(
-    "⑬ (P2-3 只读座位诚实化) judged-read-only seat + completed + commits ahead ⇒ flips to ready-to-merge (auto-enqueued); working seat same shape ⇒ noted only, never flipped"
+    "⑬ (P2-3 只读座位诚实化 × #524 引擎自动合并) judged-read-only seat + completed + commits ahead ⇒ flips to ready-to-merge (auto-enqueued); working seat same shape ⇒ engine auto-merges (never flipped, no legacy note)"
   ) {
     val system = ActorSystem(s"dt-13-${scala.util.Random.nextInt(100000)}")
     try
@@ -860,8 +860,11 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         )
         queued = MergeQueue.find("delegate-nebflow-ro")
         flipVerdict = verdictLine("delegate-nebflow-ro")
-        // 工作座位对照：同形态但判是旗在场 ⇒ 判词归判定机，引擎只注记不翻转
+        // 工作座位对照：同形态但判是旗在场 ⇒ 判词归判定机，#524 引擎自动合并接管交付
         workingRepo = mkRealRepo(tempRoot / "work-note-repo", branch = "delegate/delegate-nebflow-wn", ahead = 1)
+        // 座位形态归位：基工作区 HEAD 回 main（可并形态——目标分支必须是检出分支）
+        _ = os.proc("git", "-C", workingRepo.toString, "checkout", "main")
+          .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
         _ = seedRecord(
           "delegate-nebflow-wn",
           Some("64"),
@@ -901,8 +904,20 @@ class DelegateTerminalSpec extends CatsEffectSuite:
           "a working seat stays with the judge's completed verdict"
         )
         assertEquals(verdictLine("delegate-nebflow-wn"), Some("completed"))
-        assert(MergeQueue.find("delegate-nebflow-wn").isEmpty, "the working seat is NOT flipped — note only")
-        assertEquals(noteRows.lastOption, Some(Some(1)), "the unmerged-work note row lands with the ahead count")
+        assert(MergeQueue.find("delegate-nebflow-wn").isEmpty, "the working seat is NOT flipped — engine auto-merge owns the delivery")
+        // #524（2026-10-04 裁定引擎化）：工作座位 × completed × 领先提交的交付改由
+        // 引擎原生自动合并处置（--no-ff 并回 main，审计行 action=merged）；旧
+        // unmerged-work 注记只在钩子未产出尾注时回退（开关 off / 不可评场景）。
+        val autoMergeRows = ChainStore.listSync().flatMap(_.entries).filter(_.kind == DelegateAutoMerge.EntryKind).flatMap { e =>
+          e.payload.hcursor
+            .get[String]("delegateId")
+            .toOption
+            .filter(_ == "delegate-nebflow-wn")
+            .map(_ => e.payload.hcursor.get[String]("action").toOption.getOrElse(""))
+        }
+        assert(GitWorktrees.isAncestor(workingRepo, "delegate/delegate-nebflow-wn", "main").contains(true), "the engine really merged the working seat's branch into main")
+        assertEquals(autoMergeRows.lastOption, Some("merged"), "the engine-native auto-merge audit row lands (merged)")
+        assertEquals(noteRows, Nil, "the legacy unmerged-work note is superseded when the hook evaluated (suffix present)")
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
     end try

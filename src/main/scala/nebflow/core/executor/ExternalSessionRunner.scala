@@ -11,6 +11,7 @@ import nebflow.actor.ActorRef
 import nebflow.core.AgentRuntimePort
 import nebflow.core.GitWorktrees
 import nebflow.core.delegate.ChainStore
+import nebflow.core.delegate.DelegateAutoMerge
 import nebflow.core.delegate.DelegateRegistry
 import nebflow.core.delegate.DelegateWorkspace
 import nebflow.core.delegate.ExternalJudgeHook
@@ -539,6 +540,22 @@ You will be notified when it completes via a system message. Do NOT duplicate th
                     IO.pure(Outcome.Blocked(s"mechanical merge acceptance unreadable: ${e.getMessage}"))
                   )
               case (other, _) => IO.pure(other)
+          // 引擎原生 delegate worktree 自动合并批（#524）：外部腿 completed 终态 ×
+          // 非合并轮 ⇒ 与内部腿同闸（[[DelegateAutoMerge.onCompletedHook]]，引擎侧
+          // FIFO `merge --no-ff` 回集成分支）。外部执行器经 DelegateWorkspace.prepare
+          // 同样有分支锚——能拿到分支就纳入（作者令边界条款）；锚缺失（非 git 腿 /
+          // 旧盘记录）= 注记跳过、诚实可查。合并轮豁免（外部合并轮的机械验收闸在
+          // 上方 P1-1①）。
+          autoMergeNote <-
+            (outcome, mergeRoundNow) match
+              case (Outcome.Completed, false) =>
+                rec match
+                  case Some(r) if r.branch.isDefined => DelegateAutoMerge.onCompletedHook(rec)
+                  case _ =>
+                    IO.pure(
+                      Some("\n\n[auto-merge] skipped (no branch anchors on record) — branch behaviour not evaluated")
+                    )
+              case _ => IO.pure(None)
           reasonOpt = outcome match
             case Outcome.Blocked(r) => Some(r)
             case Outcome.Cancelled => Some("cancelled")
@@ -632,10 +649,18 @@ You will be notified when it completes via a system message. Do NOT duplicate th
           _ <- outcome match
             case Outcome.ReadyToMerge => IO.unit
             case other => MergeQueue.onTerminalIO(sessionId)
-          // 父投递（ready-to-merge 不发——MergeQueue 持有父回报权）。
+          // 父投递（ready-to-merge 不发——MergeQueue 持有父回报权）。#524：
+          // auto-merge 尾注并入终文——冲突挂起的文件清单随终态抵达父会话。
           _ <- outcome match
             case Outcome.ReadyToMerge => IO.unit
-            case other => notifyParent(spec, sessionId, other, text, reasonOpt)
+            case other =>
+              notifyParent(
+                spec,
+                sessionId,
+                other,
+                autoMergeNote.map(n => s"$text$n").getOrElse(text),
+                reasonOpt
+              )
           // 面板终态帧（与内部 delegate 的 agentDone 同契约）。
           _ <- emitFrame(spec.wsSend, spec.rootSessionId, spec.parentSessionId, sessionId)(
             Json.obj("type" -> "agentDone".asJson, "agentId" -> sessionId.asJson)
