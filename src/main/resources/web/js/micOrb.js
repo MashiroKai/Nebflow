@@ -262,7 +262,7 @@ import * as orbPresets from './orbPresets.js';
 import { rootDisplayName } from './rootName.js';
 // voiceseal 批（批 #508）：语音封存 flag（features.voice，默认封存）——
 // 封存态不挂载 orb 单例（不建 GL 上下文、不起 1s 轮询，见 getMicOrb）。
-import { voiceEnabled } from './featureFlags.js';
+import { voiceOrbMountable } from './featureFlags.js';
 
 /* ========================================================================
    9-state definition (spec §10.1 + §10.5). v8.3.0: color language lives in
@@ -1444,22 +1444,26 @@ let voiceEngineMod = null;
 /**
  * Lazily create + return the MicOrb singleton (binds #voice-btn).
  *
- * voiceseal 批（批 #508）：语音封存（featureFlags.voiceEnabled，默认封存）时
- * **不构造**单例 —— 不建 WebGL 上下文、不起 bindObservers 的 1s 状态轮询
- * （flag=OFF 零资源占用）；调用方拿到 null 后按既有 no-op 路径落空
- * （notifyVoiceState / registerVoiceModeOrb 皆 null-safe）。恢复 = flag ON
- * 后 main.js latch 调 initMicOrb()（见下）。
+ * voiceseal 批（批 #508）→ 纠正批（#513）：挂载门从 voiceEnabled() 换为
+ * **voiceOrbMountable()**（气泡开关默认显示 + 配置已到）。#508 曾以全双工
+ * flag 连带不挂单例 = 理解过宽（作者澄清：「怎么语音气泡直接没了，我要去掉
+ * 的是hover拖动这些功能。」）；#513 起气泡默认挂载（WebGL 上下文 + 1s 状态
+ * 轮询照常服务点击听写的状态显示）。挂载时序 = #508 的 **configData latch
+ * 制**（见 featureFlags.voiceOrbMountable 注）：显式 `features.voiceOrb:false`
+ * 或配置未到时**不构造**（调用方拿到 null 后按既有 no-op 路径落空 ——
+ * notifyVoiceState / registerVoiceModeOrb 皆 null-safe）；挂载动作由 main.js
+ * 的 latch 在 flag ON 时调 initMicOrb() 完成。
  */
 export function getMicOrb() {
-  if (!voiceEnabled()) return null;
+  if (!voiceOrbMountable()) return null;
   if (!instance && document.getElementById('voice-btn')) instance = new MicOrb();
   return instance;
 }
 
 /** Initialize the orb after the DOM is ready (called once from main.js).
- *  voiceseal 批：封存态 no-op；flag ON 由 main.js 的 configData latch 在
- *  unsealVoiceFaces() 之后调用本函数完成挂载（boot 期配置未到的窗口一律
- *  封存姿态，与好友批 detach-at-boot 同款时序）。 */
+ *  #513：boot 期调用点保留但在挂载判据下为 no-op（配置未到不挂）；实际挂载
+ *  由 main.js 的 configData latch 在 voiceOrbEnabled() 时调用本函数完成
+ *  （#508 同款时序，气泡开关换轨）。 */
 export function initMicOrb() {
   getMicOrb();
 }

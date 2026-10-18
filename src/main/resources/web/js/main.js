@@ -126,7 +126,7 @@ import { initSocialPanel } from './socialPanel.js';
 // from the settings page entry row (#btn-open-secrets). Document-level wiring,
 // so it survives the settings re-renders that rebuild that button.
 import { initSecretsPanel } from './secretsPanel.js';
-import { friendsEnabled, voiceEnabled } from './featureFlags.js';
+import { friendsEnabled, voiceEnabled, voiceOrbEnabled } from './featureFlags.js';
 // voiceseal 批（批 #508）：全双工语音 + 同源语音气泡 封存面的 DOM 挡板
 // （hidden 挡面，零删除；flag = features.voice，默认封存）。
 import { applyVoiceSeal } from './voiceSeal.js';
@@ -2279,17 +2279,20 @@ onMessage('configData', (msg, view) => {
       initMessages();
     }
   }
-  // Voice seal latch（voiceseal 批，批 #508）：全双工语音（#voice-mode-overlay）
-  // + 同源拖动居中语音气泡（#mic-orb-wrap）两面同一 flag 一并受控。
-  //   · ON  → 摘两面 `hidden` + initMicOrb()（orb 单例此刻才挂载：GL 上下文
-  //           与 1s 状态轮询只在未封存态占资源）；
-  //   · OFF → 幂等补挂 `hidden`（静态封存姿态兜底重申）。
-  // latch 前不可能存在语音会话（入口 display:none 不可交互、WS 未连 ⇒ 发送腿
+  // Voice seal latch（voiceseal 批 #508 → 纠正批 #513 双参化）：分面受控。
+  //   · 面 A 全双工（#voice-mode-overlay）— voiceEnabled()（默认封存，#508
+  //     形态原样维持）：ON → 摘 `hidden`；OFF → 幂等补挂（静态兜底重申）。
+  //   · 面 B 语音气泡（#mic-orb-wrap）— voiceOrbEnabled()（默认**显示**，
+  //     #513 纠正：#508 连带藏气泡 = 理解过宽）：显式 voiceOrb:false 才藏。
+  //   orb 挂载门 = voiceOrbMountable()（flag ON + 配置已到，#508 的 latch 挂载
+  //   时序）：boot 期 initMicOrb() 在配置未到时 no-op，本 latch 在 flag ON 时
+  //   initMicOrb() 完成挂载；显式 voiceOrb:false ⇒ 不挂 + 气泡补挂 `hidden`。
+  // latch 前不可能存在全双工会话（入口 display:none 不可交互、WS 未连 ⇒ 发送腿
   // 不存在），故无需处理「打开中的会话」迁移。
   if (!voiceGateDecided) {
     voiceGateDecided = true;
-    applyVoiceSeal(voiceEnabled());
-    if (voiceEnabled()) initMicOrb();
+    applyVoiceSeal(voiceEnabled(), voiceOrbEnabled());
+    if (voiceOrbEnabled()) initMicOrb();
   }
   const editor = document.getElementById('config-editor');
   if (editor) editor.value = state.configText;
@@ -3343,10 +3346,11 @@ initInput(chatViews.primary);
 // 调用点保留：设置面/预览面的 OrbRenderer 管线仍由本模块导出，且未来若重挂输入区
 // orb 只需恢复 index.html 的 canvas（一处）。麦克风反馈改由 input.js 承担。
 // voicefix 批（2026-09-21 ③）回退修正④ ⇒ 输入区光球重新在位，本调用重新生效。
-// voiceseal 批（批 #508）：封存态（features.voice 默认 OFF）此处为 no-op
-// （getMicOrb 的 flag 闸返回 null）—— orb 挂载移至 configData latch（flag ON
-// 时 unseal 后 initMicOrb()，见上方 voice seal latch）。
-initMicOrb(); // Mic orb renderer — seal-gated (voiceseal): mounts only when features.voice is on
+// voiceseal 批（批 #508）：封存态 no-op —— 纠正批（#513）换轨：挂载门 =
+// voiceOrbMountable()（气泡 flag 默认 ON + 配置已到）。boot 期配置未到 ⇒
+// no-op（防「预挂后 voiceOrb:false 收不回」）；实际挂载由上方 configData
+// latch 在 voiceOrbEnabled() 时调 initMicOrb() 完成（#508 同款时序）。
+initMicOrb(); // Mic orb renderer — latch-mounted (#513): boot call is a no-op until configData arrives
 initGlobalFileDrop(); // #303 — document-level drag & drop onto input bars
 
 // Keep the last chat message visible above the floating #input-area.

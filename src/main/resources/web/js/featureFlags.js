@@ -84,23 +84,24 @@ export function friendsEnabled() {
 export const TRUST_SEALED = true;
 
 /**
- * VOICE_SEALED — 全双工语音 + 同源语音气泡 封存开关（voiceseal 批，作者令
- * 批 #508 逐字：「把全双工语音的功能先封存。携带跟他同源的拖动居中语音气泡的
- * 功能一起隐藏。」）。
+ * VOICE_SEALED — 全双工语音（面 A）封存开关（voiceseal 批，作者令批 #508
+ * 逐字：「把全双工语音的功能先封存。携带跟他同源的拖动居中语音气泡的功能
+ * 一起隐藏。」）。
+ *
+ * 🔴 voiceseal-纠正批（批 #513，作者澄清令逐字：「怎么语音气泡直接没了，
+ * 我要去掉的是hover拖动这些功能。」）：#508 把气泡整个藏了 = 理解过宽，
+ * 本批纠正 flag 语义 —— **`voiceEnabled()` 只管面 A（全双工）**：
+ *   · 面 A = 全双工语音（voice-mode batch）：`#voice-mode-overlay` +
+ *     voiceMode.js + input.js 拖动手势入口 + voiceEngine conversation 模式；
+ * 面 B（语音气泡 `#mic-orb-wrap`）**不再受本 flag 压制**——气泡默认显示
+ * （纯静态可点，hover/拖动手势面已摘除），改由独立轻量开关
+ * `voiceOrbEnabled()`（下）控制，二者正交。
  *
  * 形态沿用本仓封存惯例的**好友批分支**（`friendsEnabled()` 同款）：flag 源 =
  * 既有服务端配置通道，不新增机制 —— <home>/nebflow.json 键
  * `"features": { "voice": true }` 经 WS `configData` → `state.parsedConfig`
  * 原样到达前端；**缺席即封存（默认 OFF）**。main.js 在本 boot 首帧
  * configData 上一次性 latch（好友批同款：不热切换，配置改动刷新页面生效）。
- *
- * **一个 flag 管两个同源面**（作者令②「两个面同一 flag 或同族 flag」）：
- *   · 面 A = 全双工语音（voice-mode batch）：`#voice-mode-overlay` +
- *     voiceMode.js + input.js 拖动手势入口 + voiceEngine conversation 模式；
- *   · 面 B = 拖动居中语音气泡（同源判定见 voiceSeal 头注 / 本批报告）：
- *     `#mic-orb-wrap`（#voice-btn + #mic-canvas + #mic-css-orb +
- *     .voice-drag-hint）+ micOrb.js 单例挂载。
- * 两面由同一 `voiceEnabled()` 判定，封存/恢复同步翻转。
  *
  * 与 `friendsEnabled()` 的**一处刻意差异**（在此申报）：好友批在 release
  * bundle 里走 `__NEBFLOW_RELEASE__` 物理剥除（esbuild define 折叠）；语音批
@@ -116,4 +117,40 @@ export const TRUST_SEALED = true;
  */
 export function voiceEnabled() {
   return state.parsedConfig?.features?.voice === true; // 缺席 = 封存（默认 OFF）
+}
+
+/**
+ * voiceOrbEnabled — 语音气泡（面 B）轻量开关（voiceseal-纠正批 #513 新立）。
+ *
+ * 语义与 `voiceEnabled()` **反向**：气泡按作者令 #513 回归为**默认产品形态**
+ * （可见、纯静态可点），故缺席/非 false = 显示（默认 ON）；只有显式
+ * `"features": { "voiceOrb": false }` 才藏气泡（继承 #508 的隐藏能力，但与
+ * 全双工解耦——藏气泡不再连带封听写等基础功能）。
+ *
+ * 取舍申报（任务④的两个选项中**两样都做**）：`voiceEnabled()` 收窄为只管
+ * 面 A（不再压气泡）＋ 气泡另立本轻量开关。理由：#508 的作者令里「隐藏气泡」
+ * 是一个真实存在过的产品意图，零删除惯例下保留一个可退出的开关比「气泡永久
+ * 不可配置」更可回退；且与面 A 正交后，藏气泡不再误伤点击听写。
+ * latch 时序与面 A 同帧（main.js configData 首帧，applyVoiceSeal 双参），
+ * boot 期配置未到的窗口按默认 ON（气泡在位）。
+ *
+ * 生效路径同面 A：dev 树改 nebflow.json 刷新即生效；打包态重建 jar + 重启。
+ */
+export function voiceOrbEnabled() {
+  return state.parsedConfig?.features?.voiceOrb !== false; // 缺席 = 显示（默认 ON）
+}
+
+/**
+ * voiceOrbMountable — orb 单例**挂载判据**（#513）：气泡 flag 默认 ON，但挂载
+ * 时序沿用 #508 的 **configData latch 制** —— 配置未到（首帧 configData 之前）
+ * 不挂载。原因：flag 缺席 = 默认显示，若 boot 期（配置未到）就按默认值预挂，
+ * 显式 `voiceOrb:false` 的页面会先建单例（GL 上下文 + 1s 轮询 + aria 接管）
+ * 再被 latch 藏起 —— 单例无销毁 API，资源占用与 aria 改写都无法收回。挂载
+ * 判据因此 = 「flag 默认/显式 ON **且** 配置已到达」；main.js 的 latch 在
+ * flag ON 时调 initMicOrb() 完成挂载（boot 期的 initMicOrb() 调用点保留，
+ * 在本判据下自然为 no-op）。#508 的两条 QA spec（micorb-settings-hidden /
+ * verify-micorb-hide-qa）本就按 latch 挂载时序同步过，此处维持同一时序。
+ */
+export function voiceOrbMountable() {
+  return voiceOrbEnabled() && state.parsedConfig != null;
 }
