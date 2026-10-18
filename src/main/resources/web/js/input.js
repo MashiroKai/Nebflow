@@ -799,6 +799,14 @@ export function initInput(view) {
   // 挂在 input-wrap 内、attPreview **之外**：renderAttachmentPreview 会整块
   // innerHTML='' 重建 strip，提示件挂进去会被下一次渲染抹掉（attachment-preview
   // 只承载载荷卡片）。文案走 i18n（禁硬编码中文）。
+  // 位置 = #input 之前的文档流位（composer-overlap 修复 2026-10-18 保持不变）：
+  // 附件条 #attachment-preview 是 input-wrap 顶部的 absolute overlay（z-index:3、
+  // top:4px、max-height:30px），提示件原先在文档流首位 ⇒ 恰落 overlay 带内，引用
+  // chip 叠印在「请附一句话后发送」上（作者截图 2026-10-18）。修复 = CSS 顶部
+  // 让位（.ref-gate-hint 的 padding-top 把提示行推到 chip 带下方渲染），**DOM 位
+  // 置不动** —— 这个流位还承担把 textarea 盒压到 chip 命中带之下的结构角色
+  // （挪到 input 之后会让输入框滑进 overlay 带，全宽引用 chip 会吃掉输入框中央
+  // 的点击，fwdguard B1 实测回归）。
   if (!view.dom.refGateHint && input.parentElement) {
     const hint = document.createElement('div');
     hint.className = 'ref-gate-hint';
@@ -814,6 +822,9 @@ export function initInput(view) {
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 200) + 'px';
     syncRefOnlyGate(view);
+    // 输入使闸解除时（blocked→false）占位符立即回到附件/通用文案 ——
+    // 闸文案由 ref-gate-hint 独占（composer-overlap 修复 2026-10-18）。
+    updateInputPlaceholder();
   });
 
   // Voice dictation state — declared at the top of the setup scope because
@@ -856,6 +867,11 @@ export function initInput(view) {
     if (voiceActive) { input.placeholder = t('input.ph.listening'); return; }
     const n = view.dom.attPreview ? view.dom.attPreview.childElementCount : 0;
     input.parentElement?.classList.toggle('has-attachments', n > 0);
+    // 纯引用帧（blocked）：发送被闸禁用，提示文案由 ref-gate-hint 独占（输入框
+    // 下方一行）——占位符置空，避免「已附加文件——…」与闸提示同屏双文案
+    // （composer-overlap 修复 2026-10-18）。必须读实时判据而非 n：n>0 的引用
+    // chip 正是 blocked 的构成条件，n 在这里恒 >0。
+    if (isRefOnlyFrame(view)) { input.placeholder = ''; return; }
     if (n > 0) { input.placeholder = t('input.ph.attachments').replace('%n', String(n)); return; }
     input.placeholder = t('input.placeholder');
   }
@@ -1298,6 +1314,9 @@ export function initInput(view) {
     if (voiceActive) { input.placeholder = t('input.ph.listening'); return; }
     const n = view.dom.attPreview ? view.dom.attPreview.childElementCount : 0;
     input.parentElement?.classList.toggle('has-attachments', n > 0);
+    // 纯引用帧分支同 updateInputPlaceholder：闸文案由 ref-gate-hint 独占
+    // （composer-overlap 修复 2026-10-18）。
+    if (isRefOnlyFrame(view)) { input.placeholder = ''; return; }
     input.placeholder = n > 0
       ? t('input.ph.attachments').replace('%n', String(n))
       : t('input.placeholder');

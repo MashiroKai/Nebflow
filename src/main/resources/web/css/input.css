@@ -312,7 +312,15 @@
    input.js) names what is attached. The textarea grows top padding while
    chips are present (#input-wrap.has-attachments). */
 #input-wrap { position: relative; }
-#input-wrap.has-attachments #input { padding-top: 26px; }
+/* 44px = 条带命中带底缘（top 4px + max-height 30px = 34px）+ 安全余量。不只是
+   文字避让（旧值 26px 按 .att-file ~21px 调的，.att-ref 28px 时 chip 底缘压进
+   首行 ~6px）：textarea 盒从 wrap 顶起，盒中心在 (padding-top+28)/2 —— 必须
+   落到 34px 命中带之下，否则全宽引用 chip（.att-ref-fm 350px 满宽）吃掉输入框
+   中央的点击（composer-overlap 修复 2026-10-18；fwdguard B2 同类实测）。 */
+#input-wrap.has-attachments #input { padding-top: 44px; }
+/* 闸提示可见时（blocked）提示行已经把 textarea 盒压到 chip 带下方，44px 让位
+   变成双重空档 ⇒ 收回常规顶距。:has 不支持时优雅退化（多一段空档，无功能损）。 */
+#input-wrap.has-attachments:has(> .ref-gate-hint:not([hidden])) #input { padding-top: 8px; }
 #input-wrap #attachment-preview {
   position: absolute;
   top: 4px;
@@ -323,6 +331,10 @@
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
+  /* 单行横向滚动（composer-overlap 修复 2026-10-18）：flex-wrap:wrap 与
+     max-height:30px + overflow-y:hidden 组合时，换到第二行的 chip 被整行裁没，
+     且横向滚动够不到纵向换行的内容 ⇒ 折行禁用，超出走横向滚动（滚动条已隐）。 */
+  flex-wrap: nowrap;
 }
 /* Click pass-through (composer-typing fix 2026-10-18): the overlay strip spans
    the full input-wrap width, so its empty areas sat on top of the textarea and
@@ -611,6 +623,13 @@
   color: var(--color-text-muted);
   font-size: 12px;
   line-height: 1.4;
+  /* margin-top 35px = 顶部让位（composer-overlap 修复 2026-10-18）：本提示只在
+     blocked 时可见 ⇒ chip 必在场，absolute 条带占据 wrap 顶部 4..34px 命中/绘制
+     带 —— 旧 3px 让提示盒正落带内，chip 叠印在文案上（作者截图）。用 **margin**
+     而非 padding 让位：整个盒（含几何中心）都落到 35px 之下，elementFromPoint
+     对盒中心的命中测试回到提示自身。DOM 流位不动（见 input.js 插入点注释：该
+     流位同时把 textarea 盒压在 chip 命中带之下）。 */
+  margin-top: 35px;
   padding: 3px 2px;
 }
 .ref-gate-hint[hidden] { display: none; }
@@ -642,6 +661,10 @@
   flex: none;
 }
 .att-remove { position: absolute; top: -4px; right: -4px; font-size: 10px; }
+/* 命中域外扩到 30×30（composer-overlap 批 2026-10-18）：16px 视觉圆盘的可点域
+   过小（作者批注「×删除钮可点域」）。::after 生成外扩 7px 的透明层 —— 生成盒
+   隶属本元素，:hover 命中测试同样落在圆盘上，视觉零变化。 */
+.att-remove::after { content: ''; position: absolute; inset: -7px; border-radius: 50%; }
 .att-remove svg,
 .fm-quote-remove svg { width: 8px; height: 8px; display: block; }
 /* 共用件的 hover 态也归**同一个声明块**：`.att-ref-remove:hover`（本表 :529/:534，
