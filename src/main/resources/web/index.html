@@ -310,12 +310,18 @@
              「参考我们最新的实现……把最近的有光球的回退回来」⇒ 回退源 =
              2cba0a224 删除前的最近版（git show 2cba0a224^），非 v8.2.2 原初版；
              设置页光球调色板维持现状不恢复）。DOM 四件照原样恢复。
-             🔴 voiceseal 批（批 #508）封存面 B：静态 `hidden` = boot 默认封存
-             姿态（预绘制零闪现）；main.js 在首帧 configData 上按
-             featureFlags.voiceEnabled() latch（js/voiceSeal.js）—— flag ON
-             摘 `hidden` 原样恢复，OFF 保持。隐藏 ≠ 删除：子树/监听/i18n/CSS
-             全保留（companion 规则 = css/input.css `.mic-orb-wrap[hidden]`）。 -->
-        <div class="mic-orb-wrap" id="mic-orb-wrap" hidden>
+             🟢 voiceseal 纠正批（批 #513，作者澄清：「怎么语音气泡直接没了，
+             我要去掉的是hover拖动这些功能。」）：#508 的静态 `hidden` 摘除，
+             气泡回归**默认产品形态 = 可见可点**（点击听写等非全双工路径照常），
+             但为**纯静态**——`voice-static` 姿态类静态携带、JS 从不摘除：
+             hover 悬停反馈（.voice-drag-hint）被 css/voiceMode.css 静态姿态
+             覆盖规则压死，拖动/回弹手势由 input.js pointerdown 的
+             voiceEnabled() 闸（#508 原样）兜死 ⇒ 气泡固定默认位。
+             挂载门 = featureFlags.voiceOrbEnabled()（默认显示；显式
+             `features.voiceOrb:false` 才藏，与全双工正交——js/voiceSeal.js
+             双参 latch）。隐藏 ≠ 删除：子树/监听/i18n/CSS 全保留
+             （companion 规则 = css/input.css `.mic-orb-wrap[hidden]`）。 -->
+        <div class="mic-orb-wrap voice-static" id="mic-orb-wrap">
           <button class="micbubble" id="voice-btn" type="button" title="Voice input" aria-label="Voice input">
             <canvas class="orb-canvas" id="mic-canvas" aria-hidden="true"></canvas>
             <div class="css-orb orb" id="mic-css-orb" role="img" aria-label="Mic state"></div>
@@ -360,7 +366,10 @@
        as #daemon-config-overlay): must cover the viewport and escape any
        overflow / backdrop-filter ancestor clipping.
        🔴 voiceseal 批（批 #508）封存面 A：静态 `hidden` = boot 默认封存姿态；
-       js/voiceSeal.js 按 featureFlags.voiceEnabled() latch（与面 B 同一 flag）。
+       js/voiceSeal.js 按 featureFlags.voiceEnabled() latch。🔴 纠正批（#513）：
+       面语义收窄 —— overlay 只挂全双工 flag（voiceEnabled，默认封存），
+       **维持 #508 封存不变**；语音气泡（原同 flag 的面 B）已分家
+       （voiceOrbEnabled，默认显示，见 #mic-orb-wrap 注）。
        隐藏 ≠ 删除：overlay 子树 / voiceMode.js / voiceEngine conversation 模式
        全保留（companion 规则 = css/voiceMode.css `#voice-mode-overlay[hidden]`）。 -->
   <div id="voice-mode-overlay" role="dialog" aria-modal="false" aria-label="Voice conversation" hidden>

@@ -212,6 +212,15 @@ body.voice-mode-active #queue-bar {
 }
 .mic-orb-wrap:hover .voice-drag-hint,
 .mic-orb-wrap.dragging .voice-drag-hint { display: flex; }
+/* 🟡 voiceseal 纠正批（批 #513，作者澄清逐字：「怎么语音气泡直接没了，我要
+   去掉的是hover拖动这些功能。」）—— #508 连带藏气泡 = 理解过宽；纠正为
+   摘 hover 交互面：气泡回归静态姿态（`.voice-static` 由 index.html 静态
+   携带、JS 从不摘除），本覆盖规则以同特异性 + 靠后源序压过上面两条
+   `:hover`/`.dragging` 显示规则 ⇒ 悬停放大/箭头等 hover 反馈恒不出现。
+   规则零删除（上面两条原样保留）：features.voice:true 解封全双工时拖动手势
+   可用，但 chevrons 仍不回归 —— 姿态类承载的是产品决策（拖拽 affordance
+   随手势面退役），非 flag 态。 */
+.mic-orb-wrap.voice-static .voice-drag-hint { display: none; }
 .voice-drag-hint span {
   width: 0;
   height: 0;

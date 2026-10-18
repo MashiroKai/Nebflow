@@ -22,7 +22,7 @@ import { startDictation, stopDictation, isModelReady } from './voiceEngine.js';
 import { notifyVoiceState } from './micOrb.js';
 // voiceseal 批（批 #508）：语音封存 flag（features.voice，默认封存）——
 // 听写入口与全双工拖动入口在封存态一并闸死（见 onVoiceToggle/enterVoiceModeNow）。
-import { voiceEnabled } from './featureFlags.js';
+import { voiceEnabled, voiceOrbEnabled } from './featureFlags.js';
 import { showToast } from './modal.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
@@ -1262,9 +1262,12 @@ export function initInput(view) {
   // Click-toggle voice (user ruling 2026-08-25 21:34: tap once to start, tap
   // again to stop — replaces the old push-and-hold). Also spec §3.3.
   function onVoiceToggle(e) {
-    // voiceseal 批（批 #508）：封存（默认）时听写引擎会话一律不启动 —— 正常
-    // 情形气泡已 display:none 不可点，此闸兜住程序化调用（后端腿零启动）。
-    if (!voiceEnabled()) return;
+    // voiceseal 批（批 #508）→ 纠正批（#513）：门收窄为气泡开关
+    // voiceOrbEnabled()（默认显示）。#508 曾以全双工 flag 连带闸死听写 =
+    // 理解过宽；#513 起点击听写（非全双工基础路径）随气泡回归照常可用，
+    // 全双工封存不受影响（会话腿仍由 enterVoiceModeNow/voiceMode 闸死）。
+    // 气泡显式隐藏（voiceOrb:false）时正常情形不可点，此闸兜住程序化调用。
+    if (!voiceOrbEnabled()) return;
     if (e) e.preventDefault();
     // A drag that just entered voice mode must not also toggle dictation
     // (the synthetic click fires after pointerup).
@@ -1311,6 +1314,13 @@ export function initInput(view) {
   // .dragging, so tracking is 1:1 and the snap-back animates on release);
   // the gradient chevrons (.voice-drag-hint, css/voiceMode.css) float above
   // the bubble inside the same wrap, shown on hover and while dragging.
+  // 🟡 voiceseal 纠正批（批 #513，作者澄清：「我要去掉的是hover拖动这些
+  // 功能。」）：拖动手势 = 全双工唯一入口，**归属面 A**——默认封存态
+  // （voiceEnabled() OFF）整个手势面 dead：pointerdown 闸住后 voiceDrag
+  // 恒 null ⇒ 跟手 transform / `.dragging` 类 / 拖右开全双工 / 合成 click
+  // 抑制全不发生，气泡固定默认位、纯静态可点（hover 箭头另由 voiceMode.css
+  // 的 `.voice-static` 姿态规则压死）。代码零删除：features.voice:true 时
+  // 手势随面 A 原样回归（#508 封存/恢复机制不变）。
   let voiceDrag = null;
   let suppressVoiceClickUntil = 0;
   const micOrbWrap = voiceBtn?.closest('.mic-orb-wrap') || null;
@@ -1331,6 +1341,10 @@ export function initInput(view) {
       : t('input.placeholder');
   };
   voiceBtn.addEventListener('pointerdown', (e) => {
+    // #513 纠正：拖动手势 = 全双工入口（面 A），默认封存态整个 dead ——
+    // 不捕获指针、不进跟手态、不改 placeholder（chevrons 的 hover 显示
+    // 面也已由 css 静态姿态压死）。gesture 体零删除，flag ON 原样回归。
+    if (!voiceEnabled()) return;
     // Capture the pointer to THIS element: mouse/pen drags leave the 44px
     // button immediately, and without capture the pointermove events go to
     // whatever element is under the cursor — the gesture never fires.
