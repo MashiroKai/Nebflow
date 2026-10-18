@@ -66,18 +66,29 @@
 #      brand 目录名从 brand.conf 的 homeDirName 现读，🔴 不写死任何绝对路径。
 #      🔴 device.json / auth.json（身份与凭据面）明确不拷、零触碰——身份/凭据跨 home
 #      流动正是 2026-09-11 撞身份事故链的一环（见 coldstart DX 批④的 scope 熵修复）。
-#   8) 浏览器隔离开门 + 出厂档（新用户体验批）——实例的 home 是干净的，但浏览器层会
-#      沿用本机登录状态：boot 自动开门用的是默认浏览器档案（其中 cookie 与 Logto SSO
-#      会话是域名级、跨实例共享的，点「登录」会被静默签入已登录账号，跳过凭据页）。
-#      因此：
-#      - 实例改带 --no-browser 启动（关掉 boot 自动开门——其目标经 PortalUrl 解析，
-#        现配置下还会打开门户网站而非本地控制台）；脚本在实例就绪后自铸一次性开门票
-#        （POST /api/auth/console-ticket，AuthAdmin BearerFileOnly 面，token 读自
-#        <home>/auth.json），再用 Chrome【一次性档案】（--user-data-dir 临时目录：
-#        零 cookie、零 SSO、零 localStorage）打开本地控制台 ⇒ 浏览器层等价一台全新
-#        机器，登录必然要求真实凭据。Chrome 缺席（或 COLDSTART_CHROME 指向他物）
-#        时退化为打印「请用无痕窗口打开」——无痕窗同样隔离本机会话状态。一次性档案
-#        目录固定 /tmp/stand-coldstart-console-profile，每轮启动前重建。
+#   8) 浏览器隔离开门 + 出厂档（新用户体验批；2026-10-18 13:29 作者二次拍板改形）——
+#      实例的 home 是干净的，但浏览器层会沿用本机登录状态：默认浏览器档案的 cookie
+#      与 Logto SSO 会话是域名级、跨实例共享的，点「登录」会被静默签入已登录账号、
+#      跳过凭据页。作者拍板的冷启动开门形态（拆开「官网入口」与「静默 SSO」的捆）：
+#      - 恢复 boot 自动开门（实例不再带 --no-browser）：开门【目标】由引擎 PortalUrl
+#        单点解析（env > config > brand 缺省 = 官网统一入口 https://mystand.space/portal；
+#        NEBFLOW_OPEN_UI=local / portalUrl="" 回落本地），登录后经门户回投 relay-mint
+#        票进本地控制台。
+#      - 开门【载体】= Chrome【一次性档案】（--user-data-dir 临时目录：零 cookie、
+#        零 SSO、零 localStorage ⇒ 浏览器层等价一台全新机器，凭据页必然出现 = 不被
+#        静默签入的机制保障）。载体注入面：脚本生成 wrapper 可执行件（内部写死
+#        Chrome 路径 + 档案参数），经 STAND_OPEN_BROWSER / NEBFLOW_OPEN_BROWSER env
+#        传给实例——引擎 openBrowser 只认「载体路径」，URL 由引擎追加，目标解析零改动
+#        （GatewayMain.openBrowser）。该 env 只在本脚本子进程树内生效，宿主实例不受影响。
+#      - localhost?ticket 自铸票开门降级为【回落路径】：仅当官网/门户不可达（探测
+#        失败）或实例侧开门未落地时才走，且必打印回落说明——冷启动绝不死在门外。
+#        铸票面不变（POST /api/auth/console-ticket，AuthAdmin BearerFileOnly，token
+#        读自 <home>/auth.json，120s 一次性、origin=local-ticket）。
+#      - Chrome 缺席（或 COLDSTART_CHROME 指向他物）时：实例退回 --no-browser 启动
+#        （宁可不开门，绝不用默认档案浏览器开门——那是静默签入面），脚本打印「请用
+#        无痕窗口打开」指引——无痕窗同样隔离本机会话状态。一次性档案目录每轮独立
+#        （/tmp/stand-coldstart-console-profile-<pid>；上轮门窗还开着则保留其档，
+#        无引用的陈档启动前自动清——绝不抽运行中浏览器脚下的档案）。
 #      - COLDSTART_FULL=1：跳过 7) 的模型配置种子 ⇒ home 连 LLM 配置都零携带，
 #        onboarding 的选模型步走真实新用户路径。缺省 0 = 沿用种子（开发免重配）。
 
@@ -86,6 +97,7 @@
 #   ./scripts/coldstart.sh --net prod                                 # 现行为（须配 NEBFLOW_ALLOW_PROD_ENROLL=1 才进生产网）
 #   ./scripts/coldstart.sh --net off                                  # 纯本地：不注入入网目标，不起 relay 隧道
 #   COLDSTART_NET=off ./scripts/coldstart.sh                          # env 等价形态（--net 优先于 COLDSTART_NET）
+#   NEBFLOW_OPEN_UI=local ./scripts/coldstart.sh                      # 显式本地档：boot 开门直接走本地自铸票（PortalUrl 既有回落语义）
 #   DRY_RUN=1 ./scripts/coldstart.sh                                  # 只预览，不启动 sbt、不写任何文件
 #   COLDSTART_PORT=<port> COLDSTART_HOME=<path> ./scripts/coldstart.sh  # 覆盖默认
 #   COLDSTART_FULL=1 ./scripts/coldstart.sh                           # 出厂档：不种模型配置（全零携带）
@@ -94,6 +106,10 @@
 #
 # 说明：已配置的模型（home 顶层的 nebflow.json / models.json / model-presets.json）
 #       在冷启动时原地保留；主 home 有而新 home 无的模型配置会被种入（见 7)）。
+#       开门形态见文件头 8)：boot 自动开门 → PortalUrl 官网统一入口；一次性档案
+#       = 开门载体（无静默 SSO）；localhost?ticket 自铸票 = 明确回落（门户不可达 /
+#       开门未落地时才走，打印回落说明）。STAND_OPEN_BROWSER / NEBFLOW_OPEN_BROWSER
+#       env 由本脚本管理（开门载体注入面），使用者无需手设。
 #
 set -euo pipefail
 
@@ -153,7 +169,7 @@ if [ "$COLDSTART_PORT" = "8080" ]; then
 fi
 
 echo "[coldstart] port=$COLDSTART_PORT home=$COLDSTART_HOME dry_run=$DRY_RUN net=$NET_TIER full=$COLDSTART_FULL"
-echo "[coldstart] 开门形态: --no-browser 启动 + 一次性浏览器档案（真·新用户浏览器层；普通窗口会静默沿用本机登录状态）"
+echo "[coldstart] 开门形态: boot 自动开门 → PortalUrl 官网统一入口；载体=Chrome 一次性档案（真·新用户浏览器层，凭据页必然出现）；localhost 自铸票=明确回落"
 
 # ── 网络档位 NOTICE（三档都明示，绝不静默；批①「启动 NOTICE 文案同步三档」）──
 case "$NET_TIER" in
@@ -353,12 +369,86 @@ if [ "$DRY_RUN" = "1" ]; then
   exit 0
 fi
 
-# 实例带 --no-browser 启动（见文件头 8)）：boot 自动开门被关掉，开门由本脚本接管。
-# sbt run = Main 入口，--home / --port / --no-browser 均为全局旗标（安全形态）；
-# NEBFLOW_GATEWAY_PORT 为 fork-proof 主保险（随进程树继承到 fork 出的实例 JVM）。
+# ── 步骤 3 前置：开门载体（文件头 8)）——一次性档案重建 + wrapper 注入 ──
+# 档案每轮启动【独立目录】（-$$ 后缀）：上一轮的门窗 Chrome 可能还开着（门窗页
+# 不随实例停止关闭），固定路径会撞出两层事故——① rm -rf 把运行中 Chrome 脚下的
+# 档案目录抽掉；② 旧窗进程被开门观察误判成本轮开门。独立目录 + 「有活进程引用
+# 则不删」的陈档清理双双根除（陈档 = 上轮遗留，实例停止后可整目录删除的语义不变）。
+# 重建提前到 sbt 启动【之前】：boot 自动开门（实例侧）在就绪时即用此档案开门。
+# wrapper = 可执行件（内部写死 Chrome 路径 + 档案参数），经 NEBFLOW_OPEN_BROWSER
+# 传给实例的 openBrowser——单 token exec、URL 由引擎追加（零 shell、零分词）。
+# 放进 $COLDSTART_HOME：下轮清理步顺带回收，无残留。
+CHROME_PROFILE="/tmp/stand-coldstart-console-profile-$$"
+CHROME_PRESENT=0
+if [ -x "$CHROME_BIN" ]; then CHROME_PRESENT=1; fi
+LAUNCH_FLAGS=""
+if [ "$CHROME_PRESENT" = "1" ]; then
+  # 陈档清理（含旧版固定路径 /tmp/stand-coldstart-console-profile）：仅当无活进程
+  # 引用才删——门窗还开着的档绝不抽底（绝不重演 rm -rf 抽运行中 Chrome 的档案）。
+  for stale in /tmp/stand-coldstart-console-profile /tmp/stand-coldstart-console-profile-*; do
+    [ -d "$stale" ] || continue
+    [ "$stale" = "$CHROME_PROFILE" ] && continue
+    if pgrep -f "user-data-dir=$stale" >/dev/null 2>&1; then
+      echo "[coldstart] 陈档保留（门窗仍开着）: $stale"
+    else
+      rm -rf "$stale"
+      echo "[coldstart] 陈档已清（无进程引用）: $stale"
+    fi
+  done
+  mkdir -p "$CHROME_PROFILE"
+  OPEN_DOOR="$COLDSTART_HOME/open-door.sh"
+  sh_quote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+  printf '#!/bin/sh\n# coldstart 开门载体（每轮重建；引擎 openBrowser 追加 URL 调用）\nexec %s --user-data-dir=%s --no-first-run --no-default-browser-check "$@"\n' \
+    "$(sh_quote "$CHROME_BIN")" "$(sh_quote "$CHROME_PROFILE")" >"$OPEN_DOOR"
+  chmod +x "$OPEN_DOOR"
+  # 双前缀都导出：与 Branding.env 读取序对齐（STAND_ 现役前缀优先，NEBFLOW_ 永久回退）。
+  export STAND_OPEN_BROWSER="$OPEN_DOOR"
+  export NEBFLOW_OPEN_BROWSER="$OPEN_DOOR"
+  echo "[coldstart] 开门载体就绪: 一次性档案=${CHROME_PROFILE}（每轮重建） wrapper=${OPEN_DOOR}"
+  echo "[coldstart] 恢复 boot 自动开门（无 --no-browser）：就绪后实例经 PortalUrl 解析开门目标"
+else
+  # 无一次性载体 ⇒ 宁可不开门：保留 --no-browser，绝不让实例用默认档案浏览器开门
+  # （默认档案的 Logto SSO 域名级共享 = 静默签入面）；脚本在就绪后打印无痕窗指引。
+  LAUNCH_FLAGS="--no-browser"
+  echo "[coldstart] Chrome 缺席（$CHROME_BIN 不可执行）⇒ 实例带 --no-browser 启动（宁可不开门，不用默认档案开门）；就绪后打印无痕窗口指引"
+fi
+
+# ── 开门目标解析（与 PortalUrl 既有解析序同向：env > config > brand 缺省）──
+# 仅用于打印/回落探测；权威目标由引擎 PortalUrl.startupUrl 单点解析，脚本不复制判定。
+OPEN_UI_VAL="${STAND_OPEN_UI:-${NEBFLOW_OPEN_UI:-}}"
+OPEN_UI_LOCAL=0
+case "$OPEN_UI_VAL" in [lL][oO][cC][aA][lL]) OPEN_UI_LOCAL=1 ;; esac
+PORTAL_BASE="${STAND_PORTAL_URL:-${NEBFLOW_PORTAL_URL:-}}"
+if [ -z "$PORTAL_BASE" ] && [ -f "$SCRIPT_DIR/../brand.conf" ]; then
+  PORTAL_BASE="$(sed -n -E 's/^[[:space:]]*portalUrl[[:space:]]*=[[:space:]]*([^[:space:]#]+).*/\1/p' "$SCRIPT_DIR/../brand.conf" 2>/dev/null | tail -1 || true)"
+fi
+
+# ── 官网可达性预探（文件头 8) 回落触发器；启动前一次，必然早于 boot 开门）──
+# 门户不可达时若仍让引擎开官网，用户只会得到一张浏览器报错页 = 死在门外。故启动前
+# 预探（≤5s）：可达 → 官网统一入口档照常；不可达 → 显式回落【本地开门档】（导出
+# NEBFLOW_OPEN_UI=local——PortalUrl 既有回落语义，引擎自己走 LocalConsoleUrl 自铸
+# 票开门），并大声打印回落原因。不另造开关、不改解析序：用的就是既有 env 的既有语义。
+# 预探通过而 boot 时刻门户才断（探测窗口外抖动）属残余风险：开门后页面报错时按
+# 打印指引 NEBFLOW_OPEN_UI=local 重跑即可。
+if [ "$CHROME_PRESENT" = "1" ] && [ "$OPEN_UI_LOCAL" = "0" ] && [ -n "$PORTAL_BASE" ]; then
+  if curl -sS -o /dev/null -m 5 "$PORTAL_BASE" 2>/dev/null; then
+    echo "[coldstart] 官网可达: $PORTAL_BASE → 本次走官网统一入口档（真实凭据登录）"
+  else
+    export STAND_OPEN_UI=local
+    export NEBFLOW_OPEN_UI=local
+    OPEN_UI_LOCAL=1
+    echo "[coldstart] WARN: 官网/门户探测不可达（${PORTAL_BASE}，超时 5s）→ 本次自动回落【本地开门档】（等价 NEBFLOW_OPEN_UI=local；PortalUrl 既有回落语义，非新开关）——冷启动绝不死在门外"
+  fi
+fi
+
+# 实例启动（文件头 8)）：开门目标经 PortalUrl 单点解析（env > config > brand 缺省 =
+# 官网统一入口）；开门载体由 NEBFLOW_OPEN_BROWSER 注入（无载体 = --no-browser 关闭
+# boot 开门）。sbt run = Main 入口，--home / --port / --no-browser 均为全局旗标
+# （安全形态）；NEBFLOW_GATEWAY_PORT 为 fork-proof 主保险（随进程树继承到 fork 出
+# 的实例 JVM，NEBFLOW_OPEN_BROWSER 同机制随之注入）。
 # 注：禁止 `java nebflow.gateway.GatewayMain` 直启 —— 它带参即 fail-fast，且非用户入口。
-echo "[coldstart] 启动实例（--no-browser，开门由脚本接管）…"
-NEBFLOW_GATEWAY_PORT=$COLDSTART_PORT sbt "run --home $COLDSTART_HOME --port $COLDSTART_PORT --no-browser" &
+echo "[coldstart] 启动实例…"
+NEBFLOW_GATEWAY_PORT=$COLDSTART_PORT sbt "run --home $COLDSTART_HOME --port $COLDSTART_PORT $LAUNCH_FLAGS" &
 SBT_PID=$!
 cleanup() { kill "$SBT_PID" 2>/dev/null || true; }
 trap cleanup EXIT
@@ -372,42 +462,94 @@ for _ in $(seq 1 100); do
   sleep 3
 done
 
-# 自铸一次性开门票：POST /api/auth/console-ticket（AuthAdmin BearerFileOnly 面），
-# token 读自 <home>/auth.json（JSON 字符串形态）。铸造失败不拦启动：退化为开门面。
-OPEN_URL="http://localhost:$COLDSTART_PORT/"
-if [ "$READY" = "1" ]; then
-  TOKEN=""
-  for _ in $(seq 1 10); do
-    [ -f "$COLDSTART_HOME/auth.json" ] && break
-    sleep 1
-  done
-  if [ -f "$COLDSTART_HOME/auth.json" ]; then
-    TOKEN="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])))' "$COLDSTART_HOME/auth.json" 2>/dev/null || true)"
-  fi
-  if [ -n "$TOKEN" ]; then
-    TICKET="$(curl -s --noproxy '*' -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}' \
-      "http://127.0.0.1:$COLDSTART_PORT/api/auth/console-ticket" \
-      | python3 -c 'import json,sys;print(json.load(sys.stdin).get("ticket",""))' 2>/dev/null || true)"
-    if [ -n "$TICKET" ]; then
-      ENC="$(python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "$TICKET" 2>/dev/null || true)"
-      [ -n "$ENC" ] && OPEN_URL="http://localhost:$COLDSTART_PORT/?ticket=$ENC"
+# ── 开门目标显示口径的设备标识补充（device.json 由实例 boot 铸出，此处现读）──
+# 仅用于打印/回落探测；权威目标由引擎 PortalUrl.startupUrl 单点解析，脚本不复制判定。
+DEVICE_ID=""
+if [ -f "$COLDSTART_HOME/device.json" ]; then
+  DEVICE_ID="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("deviceId",""))' "$COLDSTART_HOME/device.json" 2>/dev/null || true)"
+fi
+portal_with_device() {
+  local base="$1" enc
+  if [ -n "$DEVICE_ID" ]; then
+    enc="$(python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "$DEVICE_ID" 2>/dev/null || true)"
+    if [ -n "$enc" ]; then
+      case "$base" in
+        *\?*) printf '%s&device=%s' "$base" "$enc" ;;
+        *)    printf '%s?device=%s' "$base" "$enc" ;;
+      esac
+      return
     fi
   fi
-  echo "[coldstart] 控制台地址: http://localhost:$COLDSTART_PORT/（开门票 120s 有效；过期刷新页面按门面指引重进）"
-else
-  echo "[coldstart] WARN: 就绪等待超时（实例可能仍在编译）。就绪后请手动用无痕窗口打开: $OPEN_URL"
-fi
+  printf '%s' "$base"
+}
 
-# 一次性浏览器档案开门：零 cookie / 零 SSO / 零 localStorage ⇒ 浏览器层 = 全新机器。
-CHROME_PROFILE="/tmp/stand-coldstart-console-profile"
-if [ "$READY" = "1" ] && [ -x "$CHROME_BIN" ]; then
-  rm -rf "$CHROME_PROFILE"
-  mkdir -p "$CHROME_PROFILE"
-  echo "[coldstart] 用一次性浏览器档案开门（档案=${CHROME_PROFILE}，仅服务本次测试，实例停止后可整目录删除）"
-  "$CHROME_BIN" --user-data-dir="$CHROME_PROFILE" --no-first-run --no-default-browser-check "$OPEN_URL" >/dev/null 2>&1 &
+if [ "$READY" = "1" ]; then
+  if [ "$OPEN_UI_LOCAL" = "1" ]; then
+    echo "[coldstart] 开门档: NEBFLOW_OPEN_UI=local ⇒ 实例开门走【本地自铸票】（PortalUrl 回落语义 LocalConsoleUrl；不经官网登录）"
+  else
+    echo "[coldstart] 开门目标: 官网统一入口 $(portal_with_device "$PORTAL_BASE")（PortalUrl 解析序；登录后经门户回投 relay-mint 票进本地控制台）"
+  fi
+  # 观察实例侧 boot 开门是否落地：一次性档案的 Chrome 进程出现（≤10s 轮询；
+  # 避免与 boot 开门时序竞判为失败）。NEBFLOW_OPEN_UI=local 时引擎走 LocalConsoleUrl
+  # 自铸票，同一 wrapper 档案开门，观察口径相同。
+  DOOR_OPENED=0
+  if [ "$CHROME_PRESENT" = "1" ]; then
+    # 模式不带前导「-」（BSD pgrep 会把 --user-data-dir 当选项）；子串匹配命令行。
+    for _ in $(seq 1 10); do
+      if pgrep -f "user-data-dir=$CHROME_PROFILE" >/dev/null 2>&1; then DOOR_OPENED=1; break; fi
+      sleep 1
+    done
+  fi
+  if [ "$DOOR_OPENED" = "1" ]; then
+    echo "[coldstart] 已自动开门（实例侧 boot 开门落地）。浏览器=一次性档案（零 cookie/零 SSO ⇒ 凭据页必然出现，不被静默签入）"
+    echo "[coldstart] 控制台地址(参考): http://localhost:$COLDSTART_PORT/ ｜ 无法走通官网链时可用 NEBFLOW_OPEN_UI=local 重跑（显式本地档）"
+  else
+    # ── 回落路径（文件头 8)）：仅在此腿才允许 localhost 自铸票直开，且必打印说明 ──
+    echo "[coldstart] WARN: 未观察到实例自动开门（Chrome 缺席 / wrapper 未落地 / 实例侧开门失败）→ 走脚本回落开门"
+    FALLBACK_URL=""
+    PORTAL_UP=0
+    if [ "$OPEN_UI_LOCAL" = "0" ] && [ -n "$PORTAL_BASE" ]; then
+      if curl -sS -o /dev/null -m 5 "$PORTAL_BASE" 2>/dev/null; then PORTAL_UP=1; fi
+    fi
+    if [ "$PORTAL_UP" = "1" ]; then
+      # 门户可达：回落目标仍是官网入口（实例侧开门失败 ≠ 官网不可用）——保持
+      # 「官网统一入口 + 真实凭据登录」形态，只换开门执行者。
+      FALLBACK_URL="$(portal_with_device "$PORTAL_BASE")"
+      echo "[coldstart] 回落开门: 门户可达 → 用一次性档案打开官网入口（真实凭据登录 → 门户回投进本地控制台）: $FALLBACK_URL"
+    else
+      # 官网/门户不可达（或本地档）：自铸一次性开门票 → 本地直开，明确回落说明。
+      # 铸票失败不拦启动：退化为开门面指引。
+      OPEN_URL="http://localhost:$COLDSTART_PORT/"
+      TOKEN=""
+      for _ in $(seq 1 10); do
+        [ -f "$COLDSTART_HOME/auth.json" ] && break
+        sleep 1
+      done
+      if [ -f "$COLDSTART_HOME/auth.json" ]; then
+        TOKEN="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])))' "$COLDSTART_HOME/auth.json" 2>/dev/null || true)"
+      fi
+      if [ -n "$TOKEN" ]; then
+        TICKET="$(curl -s --noproxy '*' -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}' \
+          "http://127.0.0.1:$COLDSTART_PORT/api/auth/console-ticket" \
+          | python3 -c 'import json,sys;print(json.load(sys.stdin).get("ticket",""))' 2>/dev/null || true)"
+        if [ -n "$TICKET" ]; then
+          ENC="$(python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "$TICKET" 2>/dev/null || true)"
+          [ -n "$ENC" ] && OPEN_URL="http://localhost:$COLDSTART_PORT/?ticket=$ENC"
+        fi
+      fi
+      FALLBACK_URL="$OPEN_URL"
+      echo "[coldstart] 回落开门: 官网/门户不可达 → 明确回落【本地直开】（break-glass 自铸票，120s 一次性；不经官网登录——账号互联请在控制台内走设备互联登录链）: $FALLBACK_URL"
+    fi
+    if [ "$CHROME_PRESENT" = "1" ] && [ -n "$FALLBACK_URL" ]; then
+      "$CHROME_BIN" --user-data-dir="$CHROME_PROFILE" --no-first-run --no-default-browser-check "$FALLBACK_URL" >/dev/null 2>&1 &
+      echo "[coldstart] 回落开门已执行（一次性档案，零 cookie/零 SSO）"
+    else
+      echo "[coldstart] 未执行一次性档案开门（Chrome 缺席）⇒ 请用浏览器【无痕窗口】打开: ${FALLBACK_URL:-$(portal_with_device "${PORTAL_BASE:-http://localhost:$COLDSTART_PORT/}")}"
+      echo "[coldstart] （无痕窗口同样隔离本机 cookie / Logto SSO；普通窗口会被静默签入你已登录的账号）"
+    fi
+  fi
 else
-  echo "[coldstart] 未执行一次性档案开门（Chrome 缺席或实例未就绪）⇒ 请用浏览器【无痕窗口】打开: $OPEN_URL"
-  echo "[coldstart] （无痕窗口同样隔离本机 cookie / Logto SSO；普通窗口会被静默签入你已登录的账号）"
+  echo "[coldstart] WARN: 就绪等待超时（实例可能仍在编译）。就绪后请手动用无痕窗口打开: $(portal_with_device "${PORTAL_BASE:-http://localhost:$COLDSTART_PORT/}")（或 NEBFLOW_OPEN_UI=local 重跑走本地档）"
 fi
 
 # 陪跑：Ctrl+C 与 sbt 同进程组直达实例；退出码原样透传。
