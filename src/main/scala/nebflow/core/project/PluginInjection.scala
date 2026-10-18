@@ -38,7 +38,9 @@ import nebflow.shared.{NebflowLogger, PathUtil}
  * == 三态模式词（审计/结构帧 `allocation` 字段值域）==
  * `jev` / `llm-fallback`（两态 = 分配成功，集合可能为空）／`fail-open`（两臂全败，
  * 空集注入派发照走）／`disabled`（PluginsConfig 总闸关）／`empty-catalog`（无可分配
- * 包——合法「无能力面」态，零模型调用）／`off`（分配端口未注册——未装配环境）。
+ * 包——合法「无能力面」态，零模型调用）／`off`（分配端口未注册——未装配环境）／
+ * `auto-off`（#523 补齐批：`plugins.autoAllocate=false`——声明集照常注入，空声明
+ * 不再问模型；惰性态，与 disabled/off 同族）。
  *
  * 失败语义分层（与节点路径同款，2026-09-13 无审批批口径）：**分配**失败 = fail-open
  * （空集，派发绝不阻塞）；**解析/注入**失败（选中包被封禁/技能文件不可读）= `Left`
@@ -54,11 +56,15 @@ object PluginInjection:
     def actionRan: Boolean = !InertModes.contains(mode)
 
   /** 分配面未发生动作的模式词（不写分配审计、不进结构帧行）。 */
-  private val InertModes: Set[String] = Set("disabled", "off")
+  private val InertModes: Set[String] = Set("disabled", "off", "auto-off")
 
   /**
    * delegate spawn（内置执行器腿，含 Mail 续聊复活腿——同点复用）的分配＋解析全链。
    * `Left` 仅出自**解析/注入**失败（spawn 显式拒）；分配三态全数落到 `Right`。
+   *
+   * #523 补齐批：`plugins.autoAllocate=false` ⇒ 自动分配专用闸短路（声明集路径不受
+   * 影响——本函数本就只服务空声明臂）：零模型调用、惰性态 auto-off（INFO 单行留痕，
+   * 不写分配审计/结构帧行——与 disabled 同族语义）。
    */
   def allocatePreparation(
     subject: String,
@@ -67,27 +73,34 @@ object PluginInjection:
     PluginsConfig.enabled.flatMap {
       case false => IO.pure(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, "disabled")))
       case true =>
-        PluginCatalog.entries.flatMap { catalog =>
-          if catalog.isEmpty then
-            // 空目录 = 合法「无能力面安装」态（JevAllocator 同款短路口）：零模型调用，
-            // 空集分配成功（duty = Allocated(empty)）。recordSuccess 落一条 allocated 行。
-            JevFallback
-              .recordSuccess(subject, Nil)
-              .as(
-                Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, "empty-catalog"))
-              )
-          else
-            PluginAllocator.allocatePlugins(subject, taskText, catalog).flatMap { result =>
-              val (mode, names) = result.allocation match
-                case JevAllocation.Allocated(ns) =>
-                  result.via.map(_.wire).getOrElse("jev") -> ns
-                case JevAllocation.FellBack(JevFallbackKind.Off, _) => ("off", Nil)
-                case JevAllocation.FellBack(_, _) => ("fail-open", Nil)
-              logDuty(subject, result)
-              if InertModes.contains(mode) then
-                IO.pure(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, mode)))
-              else if names.isEmpty then IO.pure(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, mode)))
-              else resolvePreparation(names).map(_.map(prep => (prep, AllocatedSet(names, mode))))
+        PluginsConfig.autoAllocate.flatMap {
+          case false =>
+            logger
+              .info(s"plugin allocation '$subject': skipped (plugins.autoAllocate=false)")
+              .as(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, "auto-off")))
+          case true =>
+            PluginCatalog.entries.flatMap { catalog =>
+              if catalog.isEmpty then
+                // 空目录 = 合法「无能力面安装」态（JevAllocator 同款短路口）：零模型调用，
+                // 空集分配成功（duty = Allocated(empty)）。recordSuccess 落一条 allocated 行。
+                JevFallback
+                  .recordSuccess(subject, Nil)
+                  .as(
+                    Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, "empty-catalog"))
+                  )
+              else
+                PluginAllocator.allocatePlugins(subject, taskText, catalog).flatMap { result =>
+                  val (mode, names) = result.allocation match
+                    case JevAllocation.Allocated(ns) =>
+                      result.via.map(_.wire).getOrElse("jev") -> ns
+                    case JevAllocation.FellBack(JevFallbackKind.Off, _) => ("off", Nil)
+                    case JevAllocation.FellBack(_, _) => ("fail-open", Nil)
+                  logDuty(subject, result)
+                  if InertModes.contains(mode) then
+                    IO.pure(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, mode)))
+                  else if names.isEmpty then IO.pure(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, mode)))
+                  else resolvePreparation(names).map(_.map(prep => (prep, AllocatedSet(names, mode))))
+                }
             }
         }
     }
@@ -115,7 +128,7 @@ object PluginInjection:
         case Left(err) => IO.pure(Left(err))
         case Right((prep, set)) =>
           // 结构帧行（plugins 摘要可查——沿既有 ChainStore 行形态，零新建存储⑤A）：
-          // 仅分配动作真实发生时落行（disabled/off 无行可查）。
+          // 仅分配动作真实发生时落行（disabled/off/auto-off 无行可查）。
           if InertModes.contains(set.mode) then IO.pure(Right(prep))
           else
             // appendSync 的 Either 形态（同步原子落盘；落盘失败只 WARN——结构帧行
