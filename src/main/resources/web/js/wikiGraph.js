@@ -494,6 +494,23 @@ function wake(minAlpha = 0.3) {
   if (!view.raf) startLoop();
 }
 
+/** One-frame repaint after the wiki-graph tab is re-activated
+ *  (canvas-tab-switched). Scheduled on the NEXT animation frame so the
+ *  ResizeObserver has already restored the bitmap size — observer callbacks
+ *  run before rAF callbacks within a frame, so a synchronous draw here would
+ *  be wiped by the observer's resize. Skipped when the loop is already
+ *  running (it repaints every frame anyway). */
+function repaintOnActivate() {
+  if (!view || !view.canvas || !view.canvas.isConnected) return;
+  view.hover = null;
+  hideTooltip();
+  requestAnimationFrame(() => {
+    if (!view || !view.canvas || !view.canvas.isConnected || view.raf) return;
+    resizeCanvas();
+    draw();
+  });
+}
+
 // ── Rendering ─────────────────────────────────────────────────
 
 function resizeCanvas() {
@@ -943,7 +960,18 @@ function renderSidebar() {
 // Tab switching drives the explorer-space hosting: any activation re-evaluates
 // (syncGraphExplorerList self-guards on WHICH pane is active — mount for this
 // tab, restore the explorer for any other).
-document.addEventListener('canvas-tab-switched', () => { syncGraphExplorerList(); });
+// Re-activation repaint: while this tab is hidden its canvas backing store is
+// dropped (ResizeObserver resize → 1px bitmap) and the idle-stopped loop draws
+// nothing on its own, so switching back used to leave a blank canvas. One
+// frame after the observer has restored the size repaints the settled layout
+// as-is — no refetch, zoom/pan preserved (refetch stays the wiki-button /
+// refresh-entry semantics). Stale hover is dropped with it: activation comes
+// from a tab click or the md graph button, so the pointer is not over the
+// canvas, and a kept hover would repaint a ghost highlight ring.
+document.addEventListener('canvas-tab-switched', (/** @type {CustomEvent} */ e) => {
+  if (e.detail && e.detail.id === TAB_ID) repaintOnActivate();
+  syncGraphExplorerList();
+});
 
 // Canvas panel collapse/expand dispatches no event (body.canvas-open is the
 // state mirror canvas.js itself reads) — track it so the explorer comes back

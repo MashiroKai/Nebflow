@@ -1576,7 +1576,12 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 }
 
 /* ── Wiki graph tab ─────────────────────────────────────────────── */
-.wiki-graph-pane { display: flex; flex-direction: column; overflow: hidden; }
+/* Visibility rides the canvas tab mechanism (.canvas-tab-pane / .active) —
+   no display declaration here: a display:flex on the bare pane class would
+   win the cascade over .canvas-tab-pane's display:none (same specificity,
+   later in source) and the pane would stay visible behind whichever tab is
+   active. */
+.wiki-graph-pane { flex-direction: column; overflow: hidden; }
 .wiki-toolbar {
   flex: none;
   display: flex; align-items: center; gap: 10px;
