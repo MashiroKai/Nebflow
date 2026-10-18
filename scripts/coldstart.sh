@@ -10,6 +10,13 @@
 #   1) 逐 pid 验身才 kill —— 端口可能被无关进程占用（复用 8097 的其它服务/调试进程）。
 #      只有 cmdline 含 `nebflow-coldstart` 特征（即本脚本自己起的实例）才允许 kill；
 #      非特征进程一律拒绝启动并报 WARN，绝不盲杀（盲杀 = 杀错无辜进程 / 宿主）。
+#   1b) pid 文件自证（sbt-fork 形态补丁）—— `sbt run` fork 出的 JVM 真参在启动即被
+#      sbt 删除的临时文件里，cmdline 永不含 marker ⇒ Ctrl+C 杀掉 sbt 壳后，孤儿 fork
+#      会被特征法误判为「非特征」而永远无法重跑接管。引擎 boot 会把真实 JVM 的
+#      pid/命令行写进 <home>/.pid 与 .pid.meta，据此增设第二验身渠道（详见
+#      coldstart_pidfile_self）：三元一致才允许 kill，对真外来进程的拒绝语义不变。
+#      端口释放等待由 5s 扩为有界 120s（sbt-fork 对 TERM 收敛慢，实测 6s~60s+），
+#      超时拒绝继续并给人工指引。
 #   2) 绝不碰宿主 :8080 —— 脚本只对 $COLDSTART_PORT（默认 8097）做 lsof 定位，
 #      且 COLDSTART_PORT 被误设为 8080 时直接拒绝执行：8080 是 Nebflow 宿主实例端口，
 #      对它产生任何信号都会杀掉宿主与当前会话。本脚本逻辑面从头到尾只覆盖 $COLDSTART_PORT。
@@ -207,6 +214,45 @@ case "${NEBFLOW_ALLOW_PROD_ENROLL:-}" in
     ;;
 esac
 
+# ── sbt-fork 自证（pid 文件验身，安全设计 1b）──────────────────
+# `sbt run` fork 的 JVM 形如 `java @/…/sbt-args<rand>.tmp`：真参（含 --home/特征路径）在
+# 启动即被 sbt 删除的临时文件里 ⇒ cmdline 永不含 marker，特征法认不出自家上一轮实例。
+# 引擎 boot 时会把真实 JVM 的 pid/命令行写进 <home>/.pid 与 .pid.meta，以此作第二验身渠道：
+#   占端 pid == .pid == .pid.meta.pid  ∧  sha256(实测 cmdline) == .pid.meta.cmdlineSha256
+# （sha 不匹配时退回命令行原文全等比较，双保险）。三元全对 ⇒ 自家上一轮实例，允许 kill；
+# 否则维持「非特征拒绝」，对真外来进程的护栏一字不松。实例优雅退出时会自删这两件 ⇒
+# 盘上残留恰是「杀壳留孤儿」的目标场景。
+coldstart_pidfile_self() {
+  local pid="$1" rec="" meta="" meta_pid="" meta_cmdline="" meta_sha="" live_cmdline="" live_sha=""
+  [ -r "$COLDSTART_HOME/.pid" ] && [ -r "$COLDSTART_HOME/.pid.meta" ] || return 1
+  rec=$(tr -d '[:space:]' < "$COLDSTART_HOME/.pid" 2>/dev/null || true)
+  if [ -z "$rec" ] || [ "$rec" != "$pid" ]; then return 1; fi
+  meta=$(python3 -c '
+import json,sys
+try:
+    d=json.load(open(sys.argv[1]))
+    print(d.get("pid") or "")
+    print(d.get("cmdline") or "")
+    print(d.get("cmdlineSha256") or "")
+except Exception:
+    pass
+' "$COLDSTART_HOME/.pid.meta" 2>/dev/null || true)
+  meta_pid=$(printf '%s\n' "$meta" | sed -n '1p')
+  meta_cmdline=$(printf '%s\n' "$meta" | sed -n '2p')
+  meta_sha=$(printf '%s\n' "$meta" | sed -n '3p')
+  if [ "$meta_pid" != "$pid" ]; then return 1; fi
+  live_cmdline=$(ps -p "$pid" -o command= 2>/dev/null | sed 's/[[:space:]]*$//' || true)
+  if [ -z "$live_cmdline" ]; then return 1; fi
+  live_sha=$(printf '%s' "$live_cmdline" | shasum -a 256 2>/dev/null | awk '{print $1}')
+  if [ -n "$meta_sha" ] && [ -n "$live_sha" ] && [ "$live_sha" = "$meta_sha" ]; then
+    return 0
+  fi
+  if [ -n "$meta_cmdline" ] && [ "$live_cmdline" = "$meta_cmdline" ]; then
+    return 0
+  fi
+  return 1
+}
+
 # ── 步骤 1：清理占端口的旧实例（逐 pid 验身）──
 # lsof -ti 找占 $COLDSTART_PORT 的 pid；无输出则说明端口空闲。
 pids=$(lsof -tiTCP:"$COLDSTART_PORT" -sTCP:LISTEN 2>/dev/null || true)
@@ -221,6 +267,9 @@ else
     cmdline=$(ps -p "$pid" -o command= 2>/dev/null || true)
     if echo "$cmdline" | grep -q "$COLDSTART_MARKER"; then
       echo "[coldstart]   pid=$pid 特征命中（${COLDSTART_MARKER}）→ 判定为本脚本旧实例，允许清理"
+      feature_pids="$feature_pids $pid"
+    elif coldstart_pidfile_self "$pid"; then
+      echo "[coldstart]   pid=$pid 命中 pid 文件自证（<home>/.pid + .pid.meta 与实测进程一致）→ 判定为本脚本上一轮 sbt-fork 实例（真参在已删临时文件，特征法不可见），允许清理"
       feature_pids="$feature_pids $pid"
     else
       echo "[coldstart]   pid=$pid cmdline=『${cmdline:-<无法读取>}』不含特征 '${COLDSTART_MARKER}' → 非特征进程" >&2
@@ -244,13 +293,26 @@ else
     fi
   done
   if [ "$DRY_RUN" != "1" ]; then
-    # 等待端口释放（最多约 5s，每 0.5s 复查一次）。
-    for _ in $(seq 1 10); do
+    # 等待端口释放（有界 120s，1s 轮询，每 10s 一次心跳读数）。sbt-fork 实例对 TERM
+    # 的收敛可能很慢（实测 6s ~ 60s+，运行越久收尾越久），旧 5s 等待会过早放弃 ⇒
+    # 端口仍被旧实例占着就往下走清场/启动，新实例必然起不来。超时 ⇒ 拒绝继续
+    # （清场与启动都以「端口已空」为前提），给人工处置指引，绝不带占启动。
+    released=0
+    for i in $(seq 1 120); do
       if ! lsof -tiTCP:"$COLDSTART_PORT" -sTCP:LISTEN 2>/dev/null | grep -q .; then
+        released=1
         break
       fi
-      sleep 0.5
+      if [ $((i % 10)) -eq 0 ]; then
+        echo "[coldstart] 等待旧实例退出… ${i}s/120s（仍占端: $(lsof -tiTCP:"$COLDSTART_PORT" -sTCP:LISTEN 2>/dev/null | tr '\n' ' ')）"
+      fi
+      sleep 1
     done
+    if [ "$released" != "1" ]; then
+      echo "[coldstart] WARN: 旧实例 120s 未释放端口 $COLDSTART_PORT（kill 已发但未收敛）→ 拒绝继续，绝不带占启动。" >&2
+      echo "[coldstart] 人工处置：lsof -nP -iTCP:$COLDSTART_PORT -sTCP:LISTEN 验明占端 pid 后 kill -9 <pid>（该 pid 已通过验身，属本脚本实例）。" >&2
+      exit 1
+    fi
     echo "[coldstart] 旧实例清理完成。"
   fi
 fi
