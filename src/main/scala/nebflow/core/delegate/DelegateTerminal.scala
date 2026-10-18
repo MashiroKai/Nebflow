@@ -198,13 +198,28 @@ object DelegateTerminal:
             s"mechanical merge acceptance refused the release (the delegate/verdict claimed a completed merge): ${r.evidence}"
           )
         case _ => finalVerdict0
+      // 引擎原生 delegate worktree 自动合并批（#524 · 2026-10-04 裁定引擎化）：
+      // completed 判词 × 有分支锚 × 非合并轮 ⇒ 引擎侧 FIFO 自动合并（开关
+      // `delegateAutoMerge.enabled` 热读；目标 = config targetBranch ∥ spawn 绑定
+      // baseBranch）。尾注并入终态 payload（冲突挂起 = 文件清单候人/候智能裁决）。
+      // 开关 off / 不可评（无锚）= None ⇒ 下方 P2-3 既有注记路径逐字保留。
+      autoMergeSuffix <-
+        if finalVerdict == DelegateJudge.Verdict.Completed && !mergeRound then
+          DelegateAutoMerge
+            .onCompletedHook(record)
+            .handleErrorWith(e =>
+              IO(Some(s"\n\n[auto-merge] hook error: ${Option(e.getMessage).getOrElse(e.toString).take(200)} — branch left untouched."))
+            )
+        else IO.pure(None)
       // P2-3 工作座位注记（不阻断）：completed 判词 + worktree 座位 + 领先提交
       // ——判词是判定机的「无可并之物」裁定，引擎只注记（非合并轮；合并轮的
-      // 同形态已被上方验收闸拦下）。
+      // 同形态已被上方验收闸拦下）。#524：钩子已产出尾注（含开关 on 的全部评估
+      // 路径）时不再重复注记——审计行/台账行已由 DelegateAutoMerge 落。
       _ <- IO
         .blocking {
           if finalVerdict == DelegateJudge.Verdict.Completed && !mergeRound &&
-            aheadOfBase.exists(_ > 0) && record.flatMap(_.worktree).isDefined
+            aheadOfBase.exists(_ > 0) && record.flatMap(_.worktree).isDefined &&
+            autoMergeSuffix.isEmpty
           then noteUnmergedWork(delegateId, taskId, branch, aheadOfBase)
           else ()
         }
@@ -238,7 +253,10 @@ object DelegateTerminal:
           val cleanup =
             if mergeRound && acceptance.exists(_.ok) then PostMergeCleanup.run(record)
             else IO.pure(false)
-          cleanup *> IO.pure(Outcome.Release(verdictLineCompleted(unjudged)))
+          // #524：auto-merge 尾注（merged / conflict-pending / refused / already-
+          // merged / failed 五态文案）并入判词行——delegate 终态 payload 即冲突
+          // 挂起状态的承载面之一。
+          cleanup *> IO.pure(Outcome.Release(verdictLineCompleted(unjudged) + autoMergeSuffix.getOrElse("")))
         case DelegateJudge.Verdict.Blocked(reason) =>
           IO.pure(Outcome.Release(s"\n\n[delegate-judge] verdict: blocked — $reason"))
     yield outcome
