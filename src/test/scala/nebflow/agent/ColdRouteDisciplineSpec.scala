@@ -139,20 +139,22 @@ class ColdRouteDisciplineSpec extends munit.FunSuite:
       assert(!body.contains("{{"), "段体不得含模板占位符")
     }
 
-  test("order-370 段体逐条覆盖六句 spec（①路由首位 / ②Mail 已有项目 / ③ProjectsCreate 兜底 / ④Read 用途 / ⑤缺信息交项目 / ⑥禁猜测路径）"):
+  test("order-370 段体逐条覆盖六句 spec（①路由首位 / ②Delegate 已有项目 / ③ProjectsCreate 兜底 / ④Read 用途 / ⑤缺信息交项目 / ⑥禁猜测路径）"):
     withIsolatedDataRoot {
       val body = rootRoutingDisciplineSection
       // ① 第一个工具调用 = 路由
       assert(body.contains("first tool call routes the task"), "① 首动作 = 路由 未落地")
-      // ② 已有项目 ⇒ Mail(project:<name>)
+      // ② 已有项目 ⇒ Delegate(task=..., project=<name>)（project-trigger 拆除批：
+      //    派发面唯一入口 = Delegate；Mail 不再承载项目触发）
       assert(
-        body.contains("""Mail(address="project:<name>", message=<task>)"""),
-        "② 已有项目 ⇒ Mail 未落地"
+        body.contains("""Delegate(task=<self-contained brief>, project=<name>)"""),
+        "② 已有项目 ⇒ Delegate 未落地"
       )
+      assert(!body.contains("Mail(address=\"project:<name>\""), "② Mail(project:) 触发指令必须已拆除")
       // ③ 没有 ⇒ Project（原 ProjectCreate，b33f179b8 2026-10-07 更名）再转发
       // 🔴 重锚（2026-10-14 redfix 批，报告 #18）：纯更名滞后——spec 字面未随
       // ProjectCreateTool → Project 更名（PromptSections:305 现文）。
-      assert(body.contains("`Project` and then that Mail"), "③ 无项目 ⇒ Project 后 Mail 未落地")
+      assert(body.contains("`Project` and then that Delegate"), "③ 无项目 ⇒ Project 后 Delegate 未落地")
       // ④ Read 的用途 = 读回项目返回结果
       assert(body.contains("`Read` reads back results only"), "④ Read 用途 未落地")
       // ⑤ 缺信息 ⇒ 派给项目让项目感知（根不亲自探文件系统）

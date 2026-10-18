@@ -23,7 +23,7 @@ import nebflow.actor.{
   AgentRecord
 } // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, MailTool, NodeTools, ProjectTool, ToolContext}
+import nebflow.core.tools.{FileLockManager, NodeTools, ProjectTool, ToolContext}
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.ModelCandidate
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
@@ -443,13 +443,18 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
               .get,
             toolCtx(ws, system, res, wsSend = Some((j: Json) => frames.update(_ :+ j)))
           )
-          triggered <- MailTool.call(
-            Json
-              .obj("address" -> Json.fromString("project:trigger-proj"), "message" -> Json.fromString("冒烟任务"))
-              .asObject
-              .get,
-            toolCtx(ws, system, res)
-          )
+          // project-trigger 拆除批（2026-10-18）：触发向量由 Mail(project:) 改为
+          // **引擎直发** `TriggerDispatcher`（Mail 对项目地址已显式拒绝，见
+          // MailProjectTriggerDemolitionSpec）——本用例钉的是「create 后引擎触发
+          // 拉起分发器会话」的生命周期链，与触发工具面正交。触发失败（未挂载/
+          // 无 actorRef）直接 raiseError 终止用例。
+          _ <- ProjectRuntimeRegistry.get("trigger-proj").flatMap {
+            case Some(rt) =>
+              rt.actorRef match
+                case Some(ref) => (ref ! ProjectActor.ProjectCommand.TriggerDispatcher("冒烟任务", "root-pcp-4")).void
+                case None => IO.raiseError(new AssertionError("mounted project must carry an actorRef"))
+            case None => IO.raiseError(new AssertionError("created project must be mounted"))
+          }
           // 分发器会话拉起证据：engine wsSend 路由帧 agentStart.nodeSessionId = dispatcher-*
           _ <- waitUntil(30.seconds)(frames.get.map { fs =>
             fs.exists { j =>
@@ -469,8 +474,6 @@ class ProjectCreatePanelSpec extends CatsEffectSuite:
           _ <- system.stopAll.handleErrorWith(_ => IO.unit)
         yield
           assert(created.isRight, s"create must succeed: $created")
-          assert(triggered.isRight, s"Task must trigger: $triggered")
-          assert(triggered.toOption.get.contains("dispatcher triggered"), triggered.toOption.get)
           assert(heldRegistered, "令 3：turn 完成后（窗口内）分发器会话必须保活，而非即时拆除")
           assert(gone, "令 3：窗口到期后必须销毁注销（ghost-row 语义保持）")
         end for

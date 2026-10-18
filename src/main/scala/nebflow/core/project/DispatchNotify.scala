@@ -43,8 +43,9 @@ import scala.concurrent.duration.*
  * == 不占 out 边（设计约束①） ==
  * out 边限 1 条且已被合并节点纪律占用；回流是独立信号通道：
  *  - 信号面 = NodeDef.notifyDispatcher 布尔标志（completion 专用；NodeEdit 按需
- *    开启，默认关）+ ProjectActor.TriggerDispatcher 消息（与 `Mail(address="project:<名>")`
- *    同链路）；failed 通知无 per-node 开关（见类头）。
+ *    开启，默认关）+ ProjectActor.TriggerDispatcher 消息（曾与
+ *    `Mail(address="project:<名>")` 触发腿同链路——该腿已随 project-trigger
+ *    拆除批（2026-10-18）退役，本通道为现存触发方）；failed 通知无 per-node 开关（见类头）。
  *  - 结果全文不进通知文本——走既有投递面：全文已持久化于
  *    `<workspace>/.nebflow/results/<nodeId>.md`，通知文本只带节点名/终态/原因码 +
  *    NodeList(detail) 读取指引，分发器按单次会话语义自读。分发器会话忙时注入排队

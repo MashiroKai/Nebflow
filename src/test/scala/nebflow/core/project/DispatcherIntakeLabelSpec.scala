@@ -141,8 +141,9 @@ class DispatcherIntakeLabelSpec extends CatsEffectSuite:
   end mount
 
   /**
-   * 驱动一次「Mail → project」收件：与 `MailTool#routeToProject` 逐字同形
-   * （`SourceTask` + attribution；`intake` 由本用例参数决定 = 腿① 置位 / 无置位）。
+   * 驱动一次分发器收件（引擎直发，project-trigger 拆除批前与 `MailTool#routeToProject`
+   * 逐字同形：`SourceTask` + attribution；`intake` 由本用例参数决定 = 旧腿① 置位 /
+   * 无置位——该腿拆除后本 spec 继续钉引擎收件面的呈现契约，与触发工具面正交）。
    */
   private def dispatchMail(
     rt: ProjectRuntime,

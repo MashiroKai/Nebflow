@@ -112,7 +112,9 @@ object ToolRegistry:
       // ——建项目 + 工作区脚手架 + unmount 硬卸载面；workspace 缺省/不可用
       // 时弹 AskUser 式路径面板复用 pending 机制。旧名走 RetiredToolGuides 墓碑指路）。
       // 本条覆盖此前相关指令：**`Task` 已删净退役**（2026-09-12「一个 Mail
-      // 统一」批，B3-a + B5-c）——项目触发入口唯一 = `Mail(address="project:<name>")`；
+      // 统一」批，B3-a + B5-c）——当时的触发入口 `Mail(address="project:<name>")`
+      // 亦已随 project-trigger 拆除批（2026-10-18）退役，派发入口唯一 =
+      // `Delegate(task=<自足任务书>, project=<name>)`；
       // 打到 `Task` 的调用走 AgentCore 的退役工具迁移指引表（只产错误文案，
       // 非兼容壳，零执行面）。**`NodeMessage` 已删净退役**——并入
       // `Mail(address="node:<id>")`（三态判据复用引擎侧 NodeEngine.sendNodeMessage）。

@@ -72,29 +72,26 @@ class InjectionIntakeContractSpec extends FunSuite:
   private def countLiteral(hay: String, needle: String): Int =
     if needle.isEmpty then 0 else hay.sliding(needle.length).count(_ == needle)
 
-  test("② 置位侧不变量：intake 只在腿①（→project）置位；node 腿家族一律裸构造、零置位"):
+  test("② 置位侧不变量：intake 在 MailTool 面零置位点（腿① project-trigger 拆除）；node 腿家族一律裸构造、零置位"):
     // mailmodel batch (2026-09-25): the `type` key is retired => mailAttribution's
-    // first argument changed from `mailType` to eventType; leg 1 is pinned to "info"
-    // (the P0 exemption is now judged on the root injection side via the leading
-    // [INTERRUPT] literal).
+    // first argument changed from `mailType` to eventType; leg 1 was pinned to "info".
     //
-    // 🔴 计数探针 → 语义不变量（S6=C · N1 刀3 · USTC 合并报告申报存量红 2026-10-10，
-    //    三树同红）：node 腿家族从单腿（deliverToNode，脚②原批）扩为三腿
-    //    （+ deliverToScopeNode 委托作用域腿 / deliverToRootNodeRef root→已登记链腿，
-    //    A 线既有形态），三腿共用同一个裸构造点。原「裸调用恰好一处」的计数探针把
-    //    「node 腿家族扩员」误读为置位越界。泛化为三条语义判据（计数只作载体）：
-    //      I1  intake 置位**恰一处** = 腿①（→project）的 IntakeMail 重载；
+    // 🔴 project-trigger 拆除批（2026-10-18）重写本判据：腿①（routeToProject →
+    //    分发器收件面）已整体拆除 ⇒ IntakeMail 重载在 MailTool 面恒 **0 处**
+    //    （`intake` 键本身保留 = 存量历史行渲染 + 透传面契约不变，见 ③④⑤）。
+    //    node 腿家族判据沿旧（S6=C · N1 刀3 · USTC 合并报告申报存量红 2026-10-10）：
+    //      I1  intake 置位**恒零处**（腿①拆除；新腿也不得置位——呈现判别面收口）；
     //      I2  node 腿家族（→node 面）共用裸构造、显式零置位——裸调用 ≥1，
     //          新 node 腿加入使裸计数增长属预期形态，不越界；
-    //      I3  不存在第三种调用形态（既非裸构造也非腿①重载 ⇒ 实参面越界扩张）。
+    //      I3  不存在第三种调用形态（既非裸构造也非 IntakeMail 重载 ⇒ 实参面越界扩张）。
     val leg1Call = "mailAttribution(\"info\", ctx, Some(InjectionAttribution.IntakeMail))"
     val bareCall = "mailAttribution(\"info\", ctx)"
     val callPrefix = "mailAttribution(\"info\", ctx"
     assertEquals(
       countLiteral(mailTool, leg1Call),
-      1,
-      s"`$leg1Call` 必须**恰好一处**（腿① routeToProject）——intake 置位面只许 →project 腿，" +
-        "在共用构造点统一置位会把节点收件面标签抬成 Mail（越界扩面）"
+      0,
+      s"`$leg1Call` 必须**零处**（腿① 随 project-trigger 拆除退役）——intake 置位面已收口，" +
+        "任何 IntakeMail 重载回潮 = 越界扩面"
     )
     assert(
       countLiteral(mailTool, bareCall) >= 1,
@@ -105,7 +102,7 @@ class InjectionIntakeContractSpec extends FunSuite:
     assertEquals(
       countLiteral(mailTool, bareCall) + countLiteral(mailTool, leg1Call),
       countLiteral(mailTool, callPrefix),
-      "出现第三种调用形态（既非裸构造也非腿① IntakeMail 重载）——mailAttribution 实参面越界扩张；" +
+      "出现第三种调用形态（既非裸构造也非 IntakeMail 重载）——mailAttribution 实参面越界扩张；" +
         "node 腿置位必须保持显式不允许（新腿加入须沿用裸构造）"
     )
     assert(

@@ -50,8 +50,9 @@ import scala.concurrent.duration.*
  *   - **A3** same-machine note = absolute path + byte size + sha256, ZERO bytes moved - face (5)
  *     (end-to-end: the note really reaches the recipient session, read from the real LLM request body);
  *   - **A4** `images` face untouched (<=5 / 10 MiB) - face (1) (pinned reading by reading);
- *   - **B6** `project:` / `node:` + `images` => explicit refusal (cures the silent
- *     "load/base64 then never use") - face (4).
+ *   - **B6** `node:` + `images` => explicit refusal (cures the silent
+ *     "load/base64 then never use" drop; the `project:` leg is demolished outright
+ *     — project-trigger demolition batch, refused before the vision gate) - face (4).
  *
  * Every assertion reads ONLY the model-visible face or observable behaviour (description
  * text, schema, `call`'s `Either`, the real LLM request body) - no implementation-detail
@@ -187,11 +188,13 @@ class MailAttachSpec extends FunSuite:
       // retirement NOTE that names MAIL_DEVICE_RETIRED stays by design; only the
       // advertisement of the live device faces dies.)
       assert(!f.contains("4000"), s"$label: the device-leg 4000-char budget is retired and must be gone")
-    // 反向：`images` 的参数级描述不得再宣称无通用附件，且必须声明两条腿不支持 vision。
+    // 反向：`images` 的参数级描述不得再宣称无通用附件，且必须声明 text-only 腿。
+    // （project-trigger 拆除批：text-only 腿 = `node:` 一条——project 腿已拆除。）
     val img = n(propDesc(MailTool.inputSchema, "images"))
     assert(!img.contains("NO general attachments"), s"images 参数级描述仍宣称无通用附件: $img")
     assert(!img.contains("no `attachments` parameter"), s"images 参数级描述仍否认该参数: $img")
-    assert(img.contains("`project:` / `node:`"), s"images 参数级描述缺 text-only 腿的现状声明: $img")
+    assert(!img.contains("`project:`"), s"images 参数级描述不得再点名已拆除的 project 腿: $img")
+    assert(img.contains("`node:`"), s"images 参数级描述缺 text-only 腿的现状声明: $img")
     assert(img.contains("max 5"), s"images 参数级描述缺件数上限: $img")
 
   // ============================================================
@@ -305,23 +308,24 @@ class MailAttachSpec extends FunSuite:
       assert(msg.contains("attachments"), s"必须指明可用的替代路径: $msg")
     finally os.remove.all(tmp)
 
-  test("④ B6：`project:` + images ⇒ 显式拒绝（裸项目名入口走同一单点）"):
+  test("④ 拆除：`project:` + images ⇒ 腿拒绝先于 vision 闸（MAIL_PROJECT_TRIGGER_UNSUPPORTED）"):
     val tmp = os.temp.dir(prefix = "mailattach-b6b")
     val img = realImage(tmp)
     val system = ActorSystem(s"mailattach-b6b-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       val msg = callErr(
         withArr(qIn("message" -> "hi"), "images", img.toString).add("address", Json.fromString("project:any")),
-        // The project: leg is Root-exclusive; the vision gate is pinned from a
-        // Nebula-root context (the only role still admitted to the leg).
+        // project-trigger 拆除批：project 地址对一切角色 = 腿拒绝（零投递），
+        // 先于 vision 闸——拒绝词点名 Delegate，与挂载状态无关。
         ctx(nebulaRoot = true).copy(actorSystem = Some(system))
       )
-      assert(msg.contains(MailTool.ErrVisionUnsupportedLeg), s"必须带显式拒码: $msg")
-      assert(!msg.contains("is not mounted"), s"拒绝必须发生在挂载判定之前: $msg")
-      assert(msg.contains("Nebula"), s"必须指出哪条腿能承载 vision: $msg")
+      assert(msg.contains(MailTool.ErrProjectTriggerUnsupported), s"必须带拆除拒码: $msg")
+      assert(!msg.contains(MailTool.ErrVisionUnsupportedLeg), s"腿拒绝必须先于 vision 闸: $msg")
+      assert(!msg.contains("is not mounted"), s"拒绝必须与挂载状态无关: $msg")
+      assert(msg.contains("Delegate"), s"必须指路派发面唯一入口: $msg")
     finally os.remove.all(tmp)
 
-  test("④ B6 对照：同两条腿**不带** images ⇒ 既有判定逐字保留（本闸只咬 images 非空）"):
+  test("④ B6 对照：同两条腿**不带** images ⇒ node 判定逐字保留；project 腿 = 拆除拒绝"):
     val system = ActorSystem(s"mailattach-b6c-${java.util.UUID.randomUUID().toString.take(6)}")
     val node = callErr(
       qIn("address" -> "node:n-9", "message" -> "hi"),
@@ -331,12 +335,14 @@ class MailAttachSpec extends FunSuite:
     assert(node.contains("no project context"), s"既有判定须逐字保留: $node")
     val proj = callErr(
       qIn("address" -> "project:any", "message" -> "hi"),
-      // Root context: the project: leg is Root-exclusive, so the mount check
-      // is reachable only from here.
+      // project-trigger 拆除批：零触发面——拒绝与挂载状态无关。
       ctx(nebulaRoot = true).copy(actorSystem = Some(system))
     )
     assert(!proj.contains(MailTool.ErrVisionUnsupportedLeg), s"无 images 不得命中本闸: $proj")
-    assert(proj.contains("is not mounted"), s"既有判定须逐字保留: $proj")
+    assert(
+      proj.contains(MailTool.ErrProjectTriggerUnsupported),
+      s"project 腿 = 拆除拒绝（既有「is not mounted」面随腿退役）: $proj"
+    )
 
   // ============================================================
   // (6)(7) REMOVED by the mailmodel batch (2026-09-25, ruling (e)): the device

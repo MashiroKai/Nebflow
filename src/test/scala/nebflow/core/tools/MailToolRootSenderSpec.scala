@@ -86,7 +86,7 @@ class MailToolRootSenderSpec extends FunSuite:
       .unsafeRunSync()
     assertRejected(res, "immediate short name")
 
-  // ── R2 分层地址面（R-13/R-14/R-15，2026-09-12）：Nebula 发信者只可发 project:<name> ──
+  // ── R2 分层地址面（R-13/R-14/R-15，2026-09-12；project-trigger 拆除批后 Root 面不含项目地址）──
 
   /** Nebula root 身份：判据 = agentDef.name（引擎侧身份，非字符串猜名）。 */
   private def nebulaCtx(system: ActorSystem): ToolContext =
@@ -128,7 +128,7 @@ class MailToolRootSenderSpec extends FunSuite:
       res match
         case Left(err) =>
           assert(err.message.contains("self"), s"须点名自身地址：${err.message}")
-          assert(err.message.contains("project:<项目名>"), s"错误文案须指明合法地址面：${err.message}")
+          assert(err.message.contains("node:<节点id或名>"), s"错误文案须指明合法地址面：${err.message}")
         case Right(v) => fail(s"Nebula 发自身上址必须显式报错，got: $v")
     finally system.stopAll.unsafeRunSync()
 
@@ -144,15 +144,17 @@ class MailToolRootSenderSpec extends FunSuite:
       res match
         case Left(err) =>
           assert(err.message.contains("not a recognizable target"), s"须是解析失败报错：${err.message}")
-          assert(err.message.contains("project:<项目名>"), s"错误文案须指明合法地址面：${err.message}")
+          assert(err.message.contains("node:<节点id或名>"), s"错误文案须指明合法地址面：${err.message}")
           assert(!err.message.contains("TEAM names only"), "不得回落成 team 路由口径（禁静默兜底）")
         case Right(v) => fail(s"认不出的地址必须显式报错，got: $v")
     finally system.stopAll.unsafeRunSync()
 
-  // ── project: leg is Root-exclusive (the dispatcher-trigger gate) ──────────
-  // The documented address faces grant `project:<name>` to Nebula (root) only;
-  // every other role gets the explicit out-of-face error BEFORE any mount
-  // check or dispatcher trigger runs (no spawn, no revive, no note append).
+  // ── project: leg demolished (the project-trigger demolition batch) ──────────
+  // Mail carries NO project trigger face any more: a project address
+  // (`project:<name>` — bare mounted names are refused on their own legs) is an
+  // explicit MAIL_PROJECT_TRIGGER_UNSUPPORTED refusal for EVERY role, before any
+  // mount check or dispatcher trigger runs (no spawn, no revive, no note append,
+  // no auto-created task). Task dispatching is Delegate's entry.
 
   private def delegateCtx(system: ActorSystem): ToolContext =
     ToolContext(
@@ -169,7 +171,7 @@ class MailToolRootSenderSpec extends FunSuite:
       actorSystem = Some(system)
     )
 
-  test("R2: delegate session + project:<name> => explicit out-of-face (no dispatcher trigger)"):
+  test("demolished: delegate session + project:<name> => explicit refusal (no dispatcher trigger)"):
     val system = ActorSystem(s"mail-r2-del-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       val res = MailTool
@@ -180,13 +182,16 @@ class MailToolRootSenderSpec extends FunSuite:
         .unsafeRunSync()
       res match
         case Left(err) =>
-          assert(err.message.contains("outside your address face"), s"must be the out-of-face error: ${err.message}")
-          assert(err.message.contains("node:<节点id或名>"), s"must name the delegate face: ${err.message}")
-          assert(!err.message.contains("not mounted"), s"role gate must fire before the mount check: ${err.message}")
+          assert(
+            err.message.contains(MailTool.ErrProjectTriggerUnsupported),
+            s"must be the demolition refusal: ${err.message}"
+          )
+          assert(err.message.contains("Delegate"), s"must point at Delegate: ${err.message}")
+          assert(!err.message.contains("not mounted"), s"the refusal must not depend on mount state: ${err.message}")
         case Right(v) => fail(s"a delegate mailing project: must be rejected, got: $v")
     finally system.stopAll.unsafeRunSync()
 
-  test("R2: team sender + project:<name> => explicit out-of-face (no dispatcher trigger)"):
+  test("demolished: team sender + project:<name> => explicit refusal (no dispatcher trigger)"):
     val system = ActorSystem(s"mail-r2-team-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       val res = MailTool
@@ -197,13 +202,15 @@ class MailToolRootSenderSpec extends FunSuite:
         .unsafeRunSync()
       res match
         case Left(err) =>
-          assert(err.message.contains("outside your address face"), s"must be the out-of-face error: ${err.message}")
-          assert(err.message.contains("team/agent"), s"must name the team face: ${err.message}")
-          assert(!err.message.contains("not mounted"), s"role gate must fire before the mount check: ${err.message}")
+          assert(
+            err.message.contains(MailTool.ErrProjectTriggerUnsupported),
+            s"must be the demolition refusal: ${err.message}"
+          )
+          assert(!err.message.contains("not mounted"), s"the refusal must not depend on mount state: ${err.message}")
         case Right(v) => fail(s"a team sender mailing project: must be rejected, got: $v")
     finally system.stopAll.unsafeRunSync()
 
-  test("R2: dispatcher + project:<name> => explicit out-of-face (no self-trigger)"):
+  test("demolished: dispatcher + project:<name> => explicit refusal (no self-trigger)"):
     val system = ActorSystem(s"mail-r2-disp-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       val res = MailTool
@@ -214,12 +221,15 @@ class MailToolRootSenderSpec extends FunSuite:
         .unsafeRunSync()
       res match
         case Left(err) =>
-          assert(err.message.contains("outside your address face"), s"must be the out-of-face error: ${err.message}")
-          assert(!err.message.contains("not mounted"), s"role gate must fire before the mount check: ${err.message}")
+          assert(
+            err.message.contains(MailTool.ErrProjectTriggerUnsupported),
+            s"must be the demolition refusal: ${err.message}"
+          )
+          assert(!err.message.contains("not mounted"), s"the refusal must not depend on mount state: ${err.message}")
         case Right(v) => fail(s"a dispatcher mailing project: must be rejected, got: $v")
     finally system.stopAll.unsafeRunSync()
 
-  test("R2: Nebula root + project:<name> still reaches the mount check (leg preserved)"):
+  test("demolished: Nebula root + project:<name> => explicit refusal (the trigger leg is gone, mount state irrelevant)"):
     val system = ActorSystem(s"mail-r2-root-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       val res = MailTool
@@ -230,9 +240,16 @@ class MailToolRootSenderSpec extends FunSuite:
         .unsafeRunSync()
       res match
         case Left(err) =>
-          assert(err.message.contains("not mounted"), s"root must reach the mount check: ${err.message}")
-          assert(!err.message.contains("outside your address face"), s"root is inside the project: face: ${err.message}")
-        case Right(v) => fail(s"an unmounted project must be an explicit error, got: $v")
+          assert(
+            err.message.contains(MailTool.ErrProjectTriggerUnsupported),
+            s"must be the demolition refusal: ${err.message}"
+          )
+          assert(err.message.contains("Delegate"), s"must point at Delegate: ${err.message}")
+          assert(
+            !err.message.contains("outside your address face"),
+            s"the demolition word replaces the face word: ${err.message}"
+          )
+        case Right(v) => fail(s"a project address must be refused, got: $v")
     finally system.stopAll.unsafeRunSync()
 
   // ── root sender + TEAM name: routes to the team Manager ──

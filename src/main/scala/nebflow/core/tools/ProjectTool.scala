@@ -31,7 +31,7 @@ object ProjectTool extends Tool:
 - **Unknown workspace path**: omit `workspace` — an AskUserQuestion-style card pops up on the user's window with a prominent "选择工作区" (pick workspace) target that opens the in-app folder browser (no native OS dialog, no candidate chips). Alongside that target the card still shows a free-input box (displayed whenever the card carries no options), so the user can hand-type an absolute path with `~` expansion handled by the backend. The chosen path flows back into the card and creation proceeds automatically.
 - `name` defaults to the workspace path's basename when omitted.
 ## After Creation
-- Dispatch work with Mail(address="project:<name>", message=...) — the project is mounted and triggerable immediately.
+- Dispatch work with Delegate(task=<self-contained brief>, project=<name>) — the project is mounted and dispatchable immediately (Mail dispatches nothing; the former Mail(project:) trigger leg is retired).
 ## Create Semantics
 - Same name + same workspace → idempotent (returns "already exists", re-mounts and backfills any missing scaffold file; safe to repeat).
 - Same name + different workspace → explicit error (never silently re-points an existing project).

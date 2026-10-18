@@ -987,9 +987,12 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     end for
   }
 
-  // ── ⑩ Mail → project 路由（§3.2 试点期新旧并存）─────────
+  // ── ⑩ 裸名分类（project-trigger 拆除批 2026-10-18）─────────
+  // 旧钉（命中 project 分支 → "no mounted ProjectActor"）随 Mail→project 触发腿
+  // 整体退役：裸名对 Root 只作**分类**——已挂载 ⇒ 拆除拒绝（零触发、零建任务）；
+  // 未挂载 ⇒ 显式 unresolvable（注册表探测不作触发面）。
 
-  test("⑩ Mail→project: mounted project name routes to ProjectActor branch (not mailNotFound)") {
+  test("⑩ bare mounted project name from Root = explicit demolition refusal (zero trigger, not mailNotFound)") {
     val ws = tempRoot / "ws-mail"
     os.makeDir.all(ws)
     val system = ActorSystem(s"acc-mail-${scala.util.Random.nextInt(100000)}")
@@ -997,7 +1000,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
       rt <- mountProject("acc-mail-route", ws, system, res) // actorRef = None
       ctx = mkCtx(res, system, ws.toString)
-      // 已挂载 project（无 actorRef）→ 命中 project 分支：明确错误提示
+      // 已挂载 project（无 actorRef）→ 分类为项目名 ⇒ 拆除拒绝（不触达 ProjectActor）
       r <- MailTool.call(
         Json
           .obj(
@@ -1008,7 +1011,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
           .get,
         ctx
       )
-      // 未挂载名字 → 不命中 project 分支，落到原逻辑（sender 无 team → TeamOnlyRoutingError）
+      // 未挂载名字 → 不命中项目分类（探测未命中），落既有 team-only 瀑布（D-6：legacy 面不随批收口）
       r2 <- MailTool.call(
         Json
           .obj(
@@ -1021,15 +1024,19 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       )
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assert(r.isLeft, s"project-without-actor must give an error, got: $r")
+      assert(r.isLeft, s"mounted project name must be refused, got: $r")
       assert(
-        r.left.exists(_.message.contains("no mounted ProjectActor")),
-        s"must hit the project route branch (not mailNotFound), got: $r"
+        r.left.exists(_.message.contains("MAIL_PROJECT_TRIGGER_UNSUPPORTED")),
+        s"must hit the demolition refusal (zero trigger, zero task creation), got: $r"
       )
-      assert(r2.isLeft, s"unknown address must fall through to legacy routing, got: $r2")
+      assert(r2.isLeft, s"unknown bare name must fall to the legacy waterfall, got: $r2")
       assert(
-        !r2.left.exists(_.message.contains("no mounted ProjectActor")),
-        s"unknown address must NOT hit project branch, got: $r2"
+        r2.left.exists(_.message.contains("TEAM names only")),
+        s"unmounted bare name keeps the legacy team-only face (D-6), got: $r2"
+      )
+      assert(
+        !r2.left.exists(_.message.contains("MAIL_PROJECT_TRIGGER_UNSUPPORTED")),
+        s"unmounted bare name is a resolution miss, not a project address, got: $r2"
       )
     end for
   }
@@ -1237,7 +1244,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     ): Stream[IO, StreamChunk] =
       Stream.eval(gate.get) >> Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
-  test("Task①: Task(project, task) triggers dispatcher session (dispatcher-<uuid> spawned)") {
+  test("Task①: TriggerDispatcher command triggers dispatcher session (dispatcher-<uuid> spawned)") {
     writeDispatcherAgent()
     val ws = tempRoot / "ws-task1"
     os.makeDir.all(ws)
@@ -1248,6 +1255,9 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
     // → 窗口到期由 TtlTick 扫描腿销毁 ⇒ 注销」——ghost-row 语义（无永久幽灵行）仍在，
     // 只是收尾时点由「完成即拆」变为「窗口到期」。窗口压到 2 s（等效性依据：只压
     // 窗口/节拍两个常量，判定与销毁代码路径逐行未变），节拍由 ttlScanner 1 s 驱动。
+    // project-trigger 拆除批（2026-10-18）：触发向量由 Mail(project:) 改为
+    // **引擎直发** `ProjectActor.ProjectCommand.TriggerDispatcher`——被钉的是引擎
+    // 会话生命周期（spawn/保活/TTL 销毁），与触发工具面正交。
     ProjectActor.ttlScanner(1.second).background.use { _ =>
       for
         gate <- cats.effect.Deferred[IO, Unit]
@@ -1262,14 +1272,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
           anchorTaskTerminal = Some(false)
         )
         _ <- ProjectRuntimeRegistry.register(rt0.copy(actorRef = Some(ref)))
-        ctx = mkRootCtx(res, system, ws.toString, sid = "root-acc-task1")
-        r <- MailTool.call(
-          Json
-            .obj("address" -> Json.fromString("project:acc-task1"), "message" -> Json.fromString("调研 X"))
-            .asObject
-            .get,
-          ctx
-        )
+        _ <- (ref ! ProjectActor.ProjectCommand.TriggerDispatcher("调研 X", "root-acc-task1")).void
         // 1) 运行中必须注册（getActiveAgents 快照依赖）——agent 被 gate 卡在 turn 内，
         //    注册条目稳定存在，轮询必命中。
         seen <- pollRegistryFor(res.agentRegistry, _.startsWith("dispatcher-"), 100, 20.millis)
@@ -1282,7 +1285,6 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
         regAfter <- res.agentRegistry.get
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
       yield
-        assert(r.exists(_.contains("dispatcher triggered")), s"got: $r")
         assert(
           seen.exists(_.nonEmpty),
           s"dispatcher session must be registered while running (snapshot/面板可见性前提), seen: $seen"
@@ -1342,7 +1344,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       }
     }
 
-  test("Task②: unmounted project → explicit error (no registry entry)") {
+  test("Task②: project address → demolition refusal (no mount-dependent error, nothing delivered)") {
     val system = ActorSystem(s"acc-task2-${scala.util.Random.nextInt(100000)}")
     for
       res <- SpecResources.mkResources(system, tempRoot, new RecordingLlm)
@@ -1354,10 +1356,16 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(r.isLeft, s"must fail, got: $r")
-      assert(r.left.exists(_.message.contains("not mounted")), s"error must say not mounted, got: $r")
+      // project-trigger 拆除批：项目地址 = 一律显式拒绝（Mail 无项目触发面），
+      // 与挂载状态无关——拒绝词点名 Delegate，派发面唯一入口。
+      assert(
+        r.left.exists(_.message.contains(nebflow.core.tools.MailTool.ErrProjectTriggerUnsupported)),
+        s"error must be the demolition refusal, got: $r"
+      )
+      assert(r.left.exists(_.message.contains("Delegate")), s"error must point at Delegate, got: $r")
   }
 
-  test("Task③（R2 后）: same-name collision — Mail(project:)→dispatcher vs Mail→team (channels distinct)") {
+  test("Task③（拆除后）: same-name collision — Mail(project:) refused vs Mail→team (channels still distinct)") {
     writeDispatcherAgent()
     val ws = tempRoot / "ws-task3"
     os.makeDir.all(ws)
@@ -1375,13 +1383,11 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       ref <- spawnProjectActor(rt0, system, res, "proj-slide")
       _ <- ProjectRuntimeRegistry.register(rt0.copy(actorRef = Some(ref)))
       _ <- TeamSessionRegistry.registerSession("slideblocks", "boss", "boss-sid")
-      // 🔴 重锚（报告 #14-16，Root-only 合同 a170bb841）：腿① project: 触发改用
-      // Root 发送者（Teamish 已被面闸拒）；腿② Mail→team 的合法发送者仍是
-      // Teamish（团队名不在 Root 面——rootFace 只有 project:/裸项目名与 node:），
-      // 保持原 mkCtx 形态 ⇒ 两腿各用其合同内合法角色，渠道区分断言原样成立。
+      // project-trigger 拆除批：Mail(project:) = 显式拒绝（零触发——旧形态在此会
+      // 触发分发器）；裸名路径的「团队优先」事实保持不变。
       rootCtx = mkRootCtx(res, system, ws.toString, sid = "root-sid")
       teamCtx = mkCtx(res, system, ws.toString).copy(sessionId = Some("root-sid"))
-      // Mail(address="project:slideblocks") → project dispatcher（新渠道；旧 Task 工具已删净退役）
+      // Mail(address="project:slideblocks") ⇒ 拆除拒绝（零触发）
       rTask <- MailTool.call(
         Json
           .obj("address" -> Json.fromString("project:slideblocks"), "message" -> Json.fromString("做 PPT"))
@@ -1398,15 +1404,15 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(
-        rTask.exists(_.contains("dispatcher triggered")),
-        s"Mail(project:) must hit project dispatcher, got: $rTask"
+        rTask.left.exists(_.message.contains(nebflow.core.tools.MailTool.ErrProjectTriggerUnsupported)),
+        s"Mail(project:) must be refused with the demolition word, got: $rTask"
       )
       // Mail 路由事实：同名团队命中（lead 可解析）→ 团队路由优先，完全不碰 project 分支
       assertEquals(leadSid, Some("boss-sid"), "same-named team lead must resolve (team routing premise)")
       assert(!rMail.exists(_.contains("dispatcher triggered")), s"Mail must NOT hit project dispatcher, got: $rMail")
       assert(
-        !rMail.exists(_.contains("no mounted ProjectActor")),
-        s"Mail must NOT hit project branch at all, got: $rMail"
+        !rMail.exists(_.contains(nebflow.core.tools.MailTool.ErrProjectTriggerUnsupported)),
+        s"same-named TEAM routing must not surface the project refusal, got: $rMail"
       )
     end for
   }

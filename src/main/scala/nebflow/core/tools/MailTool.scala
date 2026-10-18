@@ -97,12 +97,42 @@ object MailTool extends Tool:
   //   MAIL_KERNEL_SPAWN_RETIRED  a bare `kernel` address (the former spawn leg) => explicit
   //                          refusal (Delegate is the only
   //                          kernel trigger; Mail communicates only)
+  //   MAIL_PROJECT_TRIGGER_UNSUPPORTED  a project address (`project:<name>` or a bare
+  //                          mounted project name) => explicit refusal — Mail carries no
+  //                          project trigger face (task dispatching is Delegate's entry;
+  //                          Mail communicates only)
+  //   MAIL_TASK_PARAM_UNSUPPORTED  a stale caller still sends `task=` => explicit refusal
+  //                          (fail-closed tombstone, same shape as the `delivery` /
+  //                          `device` tombstones — the schema key is deleted and the
+  //                          engine does zero JSON-Schema validation => the stale key
+  //                          still reaches call(), where one read line refuses it)
   // ============================================================
   val ErrTargetMissing: String = "MAIL_TARGET_MISSING"
   val ErrDeviceLegRetired: String = "MAIL_DEVICE_UNSUPPORTED"
   val ErrKernelExclusive: String = "MAIL_KERNEL_EXCLUSIVE"
   val ErrKernelNotLive: String = "MAIL_KERNEL_NOT_LIVE"
   val ErrKernelSpawnRetired: String = "MAIL_KERNEL_SPAWN_UNSUPPORTED"
+  val ErrProjectTriggerUnsupported: String = "MAIL_PROJECT_TRIGGER_UNSUPPORTED"
+  val ErrTaskParamUnsupported: String = "MAIL_TASK_PARAM_UNSUPPORTED"
+
+  /** Project-address refusal (pure constructor, for direct spec testing). */
+  private[tools] def projectTriggerUnsupportedError(address: String): ToolError =
+    ToolError(
+      s"[$ErrProjectTriggerUnsupported] Mail does not trigger project dispatchers — '$address' is a " +
+        "project address, and project addresses are not Mail targets (a bare mounted project name is " +
+        "not either). Mail is a pure communication primitive: it creates no task, continues none and " +
+        "revives none. Task dispatching is Delegate's face — call Delegate(task=<self-contained brief>, " +
+        "project=<mounted project>) instead. Nothing was sent."
+    )
+
+  /** Stale-caller refusal for the removed `task=` parameter (pure constructor, for direct spec testing). */
+  private[tools] def taskParamUnsupportedError(task: String): ToolError =
+    ToolError(
+      s"[$ErrTaskParamUnsupported] This tool takes no 'task' parameter — Mail carries no task-dispatch " +
+        "face (it cannot create, continue or revive a task; the ledger's task numbers are not Mail " +
+        "addresses). Dispatch or continue work with Delegate(task=<self-contained brief>, " +
+        "project=<mounted project>) instead. Nothing was sent (task='" + task + "')."
+    )
 
   /**
    * Both-missing error (verbatim word table; after the device leg retired, the target face is `address`-only).
@@ -117,9 +147,10 @@ object MailTool extends Tool:
    * source.
    */
   private[tools] def targetMissingMessage: String =
-    s"[$ErrTargetMissing] Missing target: fill 'address' (an agent/team/project target — e.g. " +
-      "\"project:<name>\", a team name, or a member short name). This tool takes no 'device' parameter " +
-      "(MAIL_DEVICE_UNSUPPORTED); " +
+    s"[$ErrTargetMissing] Missing target: fill 'address' (an agent/team target — e.g. " +
+      "\"delegate:<id>\"/\"node:<id>\" (Nebula root), a team name, or a member short name; project " +
+      "addresses are not Mail targets — dispatching is Delegate's face). This tool takes no 'device' " +
+      "parameter (MAIL_DEVICE_UNSUPPORTED); " +
       (if nebflow.core.FriendsSeal.isSealed then
          "files for another machine go via SendMessage's `device:` target — its friend/group/local " +
            "targets (including the local this-machine copy) are sealed (FRIENDS_SEALED) until the " +
@@ -132,8 +163,8 @@ object MailTool extends Tool:
       s"[$ErrDeviceLegRetired] This tool takes no 'device' parameter — cross-device " +
         "agent mail is not a Mail face, so nothing was sent and nothing is queued. Got device='" + device + "'. To move files or " +
         "text to another MACHINE use SendMessage (pure transport; that machine's agent is not informed). To " +
-        "reach an AGENT use 'address': \"project:<name>\" (or a bare mounted project name), a team name or " +
-        "member short name, or — Nebula root only — \"kernel:<id>\" (a live Delegate kernel instance)."
+        "reach an AGENT use 'address': \"delegate:<id>\"/\"kernel:<id>\" or \"node:<id>\" (Nebula root only), a team name or " +
+        "member short name. Project addresses are not Mail targets — dispatching is Delegate's face."
     )
 
   /** Kernel-leg unauthorized-caller refusal (Nebula-exclusive). */
@@ -332,14 +363,14 @@ object MailTool extends Tool:
 
   // ============================================================
   // 附件面路线 A——「静默丢」修 B6 的**唯一来源**词表。
-  //   MAIL_VISION_UNSUPPORTED_LEG  `project:` / `node:` / `kernel` (the spawn leg)
-  //                                receiving `images` => explicit refusal.
-  // Rationale: these legs are **structurally string-only** (`ProjectActor.TriggerDispatcher(message)` /
-  // `NodeEngine.sendNodeMessage(nodeId, message, _)` and the kernel spawn brief all lack a blocks
-  // parameter) => the old behavior was "load + base64, then never use it" = silent drop (plan risk 1).
+  //   MAIL_VISION_UNSUPPORTED_LEG  `node:` receiving `images` => explicit refusal.
+  // Rationale: this leg is **structurally string-only** (`NodeEngine.sendNodeMessage(nodeId, message, _)`
+  // lacks a blocks parameter) => the old behavior was "load + base64, then never use it" = silent drop (plan risk 1).
   // Now an explicit refusal, with the message giving **category + reason + alternative path** and
   // naming the legs that can carry images.
-  // (the device leg retired whole => its B7 4000-char body
+  // (the `project:` leg and the bare `kernel` spawn leg are refused earlier with their own
+  // codes — MAIL_PROJECT_TRIGGER_UNSUPPORTED / MAIL_KERNEL_SPAWN_UNSUPPORTED — so they never
+  // reach this gate; the device leg retired whole => its B7 4000-char body
   // gate (`MaxDeviceMailTextChars` / `MAIL_DEVICE_TEXT_TOO_LONG`) is deleted with it.)
   // ============================================================
   val ErrVisionUnsupportedLeg: String = "MAIL_VISION_UNSUPPORTED_LEG"
@@ -348,8 +379,7 @@ object MailTool extends Tool:
   private[tools] def sameMachineVisionUnsupportedError(target: String, count: Int): ToolError =
     ToolError(
       s"[$ErrVisionUnsupportedLeg] $count image(s) cannot be delivered to '$target': this leg is TEXT ONLY — " +
-        "it hands a plain string to an engine-side session (ProjectActor.TriggerDispatcher / " +
-        "NodeEngine.sendNodeMessage), so it has no attachment channel and nothing was sent. " +
+        "it hands a plain string to an engine-side session (NodeEngine.sendNodeMessage), so it has no attachment channel and nothing was sent. " +
         "Use `attachments` instead (same-machine targets get each file's absolute path, byte size and " +
         "sha256 in the message text, and the recipient reads the original), or send the images over a leg " +
         "that can carry them: address=\"Nebula\" or a team/agent short name."
@@ -377,11 +407,14 @@ Required: message, plus `address`.
   MAIL_DEVICE_UNSUPPORTED error, never a silent send.)
 
 ## Address face (role-scoped — an address outside your face is an explicit error)
-- **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare
-  mounted project name is accepted as an equivalent form). `kernel:<id>` — continue
+- **Nebula (root)**: `delegate:<id>` — continue THAT live Delegate-started session
+  (the Delegate receipt carries its id; starting one is Delegate's job, never
+  Mail's); `kernel:<id>` — continue
   THAT live Delegate-started Kernel instance; `node:<id|name>` — a node in a
-  registered delegate chain (its chain-registered id OR name). No bare `kernel`
-  address and no self-address.
+  registered delegate chain (its chain-registered id OR name). Project addresses
+  (`project:<name>` or a bare mounted project name) are NOT Mail targets — task
+  dispatching is Delegate's face (MAIL_PROJECT_TRIGGER_UNSUPPORTED). No bare
+  `kernel` address and no self-address.
 
 ## Kernel continuation leg (Nebula-exclusive)
 Only the Nebula root session may mail a kernel — a dispatcher, team agent or node that
@@ -429,15 +462,15 @@ Images (optional `images` parameter — up to 5 absolute local image paths,
 PNG/JPG/JPEG/GIF/WEBP/BMP), injected as **vision blocks**. **Agent targets (`address`)
 that reach a chat turn** (Nebula / a team or agent short name / a live `kernel:<id>`
 instance): the recipient sees the images directly (vision models) plus their paths as
-text. **`project:` / `node:` targets are text-only** — those
-legs hand a plain string to an engine-side session, so `images` there is an **explicit
+text. **`node:` targets are text-only** — that
+leg hands a plain string to an engine-side session, so `images` there is an **explicit
 error** and nothing is sent; use `attachments` (path mode) instead, or target `Nebula` /
 a team agent.
 
 Attachments (optional `attachments` parameter — up to 9 absolute local paths of ANY file
 type, each up to 1024 MB = 1 GiB) are how a non-image file — or any file you do not need
 the model to *see* — reaches the recipient. **Same-machine targets** (`address` =
-`project:…` / `node:…` / `kernel:<id>` / `Nebula` / a team or agent short name): nothing is
+`node:…` / `kernel:<id>` / `Nebula` / a team or agent short name): nothing is
 copied — the mail text carries each
 file's **absolute path, byte size and sha256**, because the recipient shares your disk
 and reads the original. So the file must still exist when the recipient reads it: do not
@@ -485,7 +518,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     "## Address face (role-scoped — an address outside your face is an explicit error)\n"
 
   private[nebflow] val AddressFaceRoot: String =
-    "- **Nebula (root)**: `project:<name>` — triggers that project's dispatcher (a bare\n  mounted project name is accepted as an equivalent form). `kernel:<id>` — continue\n  THAT live Delegate-started Kernel instance; `node:<id|name>` — a node in a\n  registered delegate chain (its chain-registered id OR name). No bare `kernel`\n  address and no self-address.\n\n## Kernel continuation leg (Nebula-exclusive)\nOnly the Nebula root session may mail a kernel — a dispatcher, team agent or node that\nmails `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE and nothing is sent. Mail does not\nSTART kernels: triggering is Delegate-only, and the Delegate result carries the\ninstance's continuation address (`kernel:<id>`). `address=\"kernel:<id>\"` continues THAT\nlive instance (injected at its next turn boundary). A `kernel:<id>` whose instance has\nalready finished is an explicit error (MAIL_KERNEL_NOT_LIVE) — its result was already\ndelivered; start a new one with Delegate. A bare `kernel` address is an explicit error\n(MAIL_KERNEL_SPAWN_UNSUPPORTED) — never a spawn.\n\n"
+    "- **Nebula (root)**: `delegate:<id>` — continue THAT live Delegate-started session\n  (the Delegate receipt carries its id; starting one is Delegate's job, never\n  Mail's); `kernel:<id>` — continue\n  THAT live Delegate-started Kernel instance; `node:<id|name>` — a node in a\n  registered delegate chain (its chain-registered id OR name). Project addresses\n  (`project:<name>` or a bare mounted project name) are NOT Mail targets — task\n  dispatching is Delegate's face (MAIL_PROJECT_TRIGGER_UNSUPPORTED). No bare\n  `kernel` address and no self-address.\n\n## Kernel continuation leg (Nebula-exclusive)\nOnly the Nebula root session may mail a kernel — a dispatcher, team agent or node that\nmails `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE and nothing is sent. Mail does not\nSTART kernels: triggering is Delegate-only, and the Delegate result carries the\ninstance's continuation address (`kernel:<id>`). `address=\"kernel:<id>\"` continues THAT\nlive instance (injected at its next turn boundary). A `kernel:<id>` whose instance has\nalready finished is an explicit error (MAIL_KERNEL_NOT_LIVE) — its result was already\ndelivered; start a new one with Delegate. A bare `kernel` address is an explicit error\n(MAIL_KERNEL_SPAWN_UNSUPPORTED) — never a spawn.\n\n"
 
   private[nebflow] val AddressFaceDelegate: String =
     "- **Delegate session (a chain's creator)**: `node:<id|name>` — a node in YOUR OWN\n  scope chain map (its chain-registered id OR name; ambiguous name = explicit error).\n"
@@ -536,7 +569,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
       "properties" -> Json.obj(
         "address" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Role-scoped address. Nebula (root): \"project:<name>\" (a bare mounted project name is equivalent); \"delegate:<id>\" continues THAT live Delegate instance (the Delegate receipt carries its id) — starting one is Delegate's job, never Mail's. Project dispatcher: \"Nebula\" or \"node:<nodeId>\". Team context: a team name, a member short name, or \"team/agent\". An address outside your face is an explicit error.".asJson
+          "description" -> "Role-scoped address. Mail is a pure communication primitive — it carries no task-dispatch face. Nebula (root): \"delegate:<id>\" continues THAT live Delegate-started session (the Delegate receipt carries its id — starting one is Delegate's job, never Mail's); \"node:<id|name>\" addresses a node in a registered delegate chain. Project dispatcher: \"Nebula\" or \"node:<nodeId>\". Team context: a team name, a member short name, or \"team/agent\". A project address (\"project:<name>\" or a bare mounted project name) is an explicit error (MAIL_PROJECT_TRIGGER_UNSUPPORTED) — dispatching is Delegate's face. An address outside your face is an explicit error.".asJson
         ),
         "message" -> Json.obj(
           "type" -> "string".asJson,
@@ -546,21 +579,6 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
           "type" -> "string".asJson,
           "description" -> "Optional chain id (e.g. \"chain-n-933b5a8c\") of the batch this Mail belongs to. Validated against the project's chain registry: the derived chain set (declared chains ∪ fallback-derived components) ∪ chain-level dependency targets ∪ every chain id registered in the chain ledger (after a chain re-id the superseded old id stays reachable via its alias). An id that is registered nowhere is an explicit error (MAIL_CHAIN_NOT_FOUND). Not persisted anywhere; when provided it is embedded verbatim in the injected text so the recipient can quote it back. REQUIRED when reporting a batch close-out to Nebula.".asJson
         ),
-        "task" -> Json.obj(
-          "type" -> "string".asJson,
-          "description" -> ("Optional task id — continue THAT task's dispatcher instead of starting a new one. " +
-            "OMIT it to have the engine CREATE a task for this Mail and return its number in the result header " +
-            "(`[task #N] …`): pass that number on subsequent Mails about the same work so they continue the same " +
-            "task instead of spawning a parallel one. A `task` that reached a terminal state (`completed` / " +
-            "`closed`) is CONTINUED, not refused: the engine revives it — the task flips back to `open`, one " +
-            "`revived by Mail: context inherited, prior session torn down` line lands on its note timeline, any " +
-            "leftover dispatcher session is torn down and a fresh one mounts, inheriting the task file as its " +
-            "context (title, note timeline, state events); the receipt header reports " +
-            "`Task 上下文已继承（前态=<prior state>，已重启）· dispatcher re-mounted`. A `task` that does not exist " +
-            "(never created, or pruned after its terminal retention) is an explicit error and nothing is sent. " +
-            "Only meaningful on the `project:<name>` leg. The Mail body is automatically appended " +
-            "to that task's note timeline by the engine — there is no note parameter anywhere.").asJson
-        ),
         "images" -> Json.obj(
           "type" -> "array".asJson,
           "items" -> Json.obj("type" -> "string".asJson).asJson,
@@ -568,7 +586,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
           "description" -> ("Optional absolute local image paths (PNG/JPG/JPEG/GIF/WEBP/BMP, max 5), injected as " +
             "vision blocks. For `address` targets that reach a chat turn (Nebula / team / agent short name / a " +
             "live `kernel:<id>` instance) the recipient sees the images directly plus their paths as text. NOT " +
-            "supported on `project:` / `node:` (or the kernel START leg) — those legs are text-only, so passing " +
+            "supported on `node:` (or the kernel START leg) — those legs are text-only, so passing " +
             "`images` there is an explicit error and nothing is sent; pass those paths as `attachments` " +
             "instead.").asJson,
           "default" -> Json.arr()
@@ -622,10 +640,12 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     val deliveryTombstone = input("delivery").flatMap(_.asString).getOrElse("immediate")
     val deviceTombstone = input("device").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
     val chainIdRaw = input("chainId").flatMap(_.asString).map(_.trim).filter(_.nonEmpty).filter(_ != "null")
-    // task-continuation parameter (restored in the W1 re-anchor merge): the
-    // optional explicit task id is threaded to the project leg only (layeredRoute);
-    // base/main extraction form kept verbatim.
-    val taskRaw = input("task").flatMap(_.asString).map(_.trim.stripPrefix("#")).filter(_.nonEmpty).filter(_ != "null")
+    // 墓碑读取（project-trigger 拆除批）：`task` 键已退役出 schema —— 它曾是 project
+    // 腿的「续任务/复活」参数，该腿整体拆除后此键零消费者。保留一行墓碑读取：旧调用方
+    // 送来的任何非空 `task=` 一律显式拒绝（fail-closed，与 `delivery` / `device` 墓碑
+    // 同形态——引擎零 JSON-Schema 校验 ⇒ 旧键照样到达此处；静默忽略 = 静默语义损失：
+    // 调用方会以为任务收到了这条消息）。
+    val taskTombstone = input("task").flatMap(_.asString).map(_.trim.stripPrefix("#")).filter(_.nonEmpty).filter(_ != "null")
 
     // Mail 模型裁定: the `device` tombstone gate — **ahead of
     // every other judgment and delivery side effect** (same order as the existing
@@ -641,6 +661,8 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     // 「本工具面零 queue 入口」。（设备腿已退役 ⇒ 不再有它自己的字面量；
     // 旧设备腿调用方在上面的 device 墓碑处被拒，永不走到本闸。）
     else if deliveryTombstone == "queue" then IO.pure(Left(ToolError(deliveryQueueRetiredMessage(address))))
+    // task 墓碑闸：任何非空 `task=` 显式拒绝（先于 chainId 校验与一切路由/投递）。
+    else if taskTombstone.isDefined then IO.pure(Left(taskParamUnsupportedError(taskTombstone.get)))
     else
       // B2-x：chainId 只校验不落库（零链级账本）——校验在一切投递副作用之前。
       validateChainId(chainIdRaw, ctx).flatMap {
@@ -684,8 +706,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
                             imagePaths,
                             chainId,
                             ctx,
-                            system,
-                            taskRaw
+                            system
                           ) match
                             case Some(action) => action
                             case None =>
@@ -747,7 +768,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
   /** 统一 delegate 续聊地址前缀。 */
   private val DelegatePrefix = "delegate:"
 
-  private def rootFace: String = "\"project:<项目名>\"（裸项目名等价接受）或 \"node:<节点id或名>\"（已登记 delegate 链）"
+  private def rootFace: String = "\"delegate:<id>\"/\"kernel:<id>\"（续聊）或 \"node:<节点id或名>\"（已登记 delegate 链）——项目地址（project:<名> 或裸挂载项目名）不是 Mail 面，派发走 Delegate"
   private def dispatcherFace: String = "\"Nebula\"（root）或 \"node:<节点id或名>\""
   private def delegateFace: String = "\"node:<节点id或名>\"（你自己作用域链图内的节点）"
 
@@ -780,6 +801,9 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
    * delivery 退役：本层**不再持有 `delivery` 参数**——「非设备腿禁
    * queue」由 `call` 的单点前置闸统一下判（该闸在设备腿分支之后、本层之前），
    * 故本层结构上**零 queue 分支**（`project:` 腿原先「两分支同体」也已折成单支）。
+   * project-trigger 拆除批：本层**不再持有 `task` 参数**——project 腿已拆除，
+   * `task=` 由 `call` 的墓碑闸统一下判。project 地址（`project:<name>` 形态与
+   * Root 的裸挂载项目名）= 显式拒绝，零触发面（派发 = Delegate 唯一入口）。
    */
   private def layeredRoute(
     address: String,
@@ -788,8 +812,7 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     imagePaths: List[String],
     chainId: Option[String],
     ctx: ToolContext,
-    system: ActorSystem,
-    task: Option[String] = None
+    system: ActorSystem
   ): Option[IO[Either[ToolError, String]]] =
     val role = roleOf(ctx)
     // ── delegate leg: the Nebula-exclusive
@@ -837,16 +860,11 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
         else IO.pure(Left(outOfFaceError(address, role)))
       )
     else if address.startsWith(ProjectPrefix) then
-      val pname = address.stripPrefix(ProjectPrefix).trim
-      Some(
-        if pname.isEmpty then IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"project:<项目名>\".")))
-        // The project: leg (dispatcher trigger) is Root-exclusive — the
-        // documented address faces grant it to Nebula only. Every other role
-        // (dispatcher / delegate / team) gets the explicit out-of-face error;
-        // no silent fallback.
-        else if role != SenderRole.Root then IO.pure(Left(outOfFaceError(address, role)))
-        else deliverToProject(pname, message, imagePaths, ctx, task)
-      )
+      // Project-trigger 拆除：project 地址对**一切角色**都是显式拒绝（Mail 不再
+      // 触发项目分发器，零建任务、零复活、零 TriggerDispatcher——派发面唯一入口 =
+      // Delegate）。与裸 `kernel` 起实例腿同款退役形态：统一拒绝词 + 指路 Delegate，
+      // 硬禁静默降级。
+      Some(IO.pure(Left(projectTriggerUnsupportedError(address))))
     else if address == MailTool.RootAgentName then
       role match
         case SenderRole.Root =>
@@ -872,10 +890,12 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
         // （合法面文案指明；零静默兜底，与 canMailRoot 的 team 闸语义不同层不混）。
         case SenderRole.Delegate => Some(IO.pure(Left(outOfFaceError(address, role))))
     else if role == SenderRole.Root then
-      // Nebula 的裸名形态 = 裸项目名（等价接受）；认不出的地址显式报错。
+      // Nebula 的裸名形态 = 裸项目名。Project-trigger 拆除后：命中已挂载项目 ⇒
+      // 与 `project:` 形态同款显式拒绝（零触发）；未命中 ⇒ 显式 unresolvable。
+      // 注册表探测在此只作**分类**（这是不是项目名），不作触发。
       Some(
         ProjectRuntimeRegistry.get(address).flatMap {
-          case Some(_) => deliverToProject(address, message, imagePaths, ctx, task)
+          case Some(_) => IO.pure(Left(projectTriggerUnsupportedError(address)))
           case None => IO.pure(Left(unresolvableError(address, role)))
         }
       )
@@ -986,10 +1006,12 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
    * `sendMail` 共用同一取值口径 —— 三种 Mail 形态的气泡顶栏因此同源。
    *
    * `intake`（「必须显示 MAIL」⇒ 选项 C）是
-   * **调用方声明的收件通道判别**，**不由本方法统一置位**：本方法是三条腿的
-   * 共用构造点，而三条腿的收件面**呈现口径不同** ——
-   *   - 腿①（`routeToProject` → 分发器收件面）：传
-   *     [[InjectionAttribution.IntakeMail]] ⇒ 标签显示 `Mail`（本机制的目标）；
+   * **调用方声明的收件通道判别**，**不由本方法统一置位**：本方法是共用构造点，
+   * 各腿收件面**呈现口径不同** ——
+   *   - 旧腿①（`routeToProject` → 分发器收件面）：曾传
+   *     [[InjectionAttribution.IntakeMail]] ⇒ 标签显示 `Mail`。Project-trigger
+   *     拆除批后该腿整体退役 ⇒ 本工具面**零置位点**（`intake` 键保留 = 存量
+   *     历史行渲染 + 透传面契约不变；落盘行照常解码）；
    *   - 腿②（`deliverToNode` → 节点收件面）：**不传**（默认 `None`）——
    *     `source` 保持 `"system"` ⇒ 标签恒 `System` + `[NODE-MESSAGE]` 文本头
    *     逐字不变（节点收件面单独立项）；
@@ -1488,34 +1510,6 @@ $message"""
     catch case _: Exception => "unreadable"
 
   /**
-   * 腿①（Nebula → 项目分发器）：保留既有内核（`ProjectActor.TriggerDispatcher`）。
-   * B6（静默丢修）：本腿结构上只能收字符串
-   * （`TriggerDispatcher(message: String, …)` 无 blocks 形参）⇒ `images` 无承载面，
-   * 旧行为 = 静默丢，现行为 = 显式拒绝（覆盖三入口：`project:` / Nebula 裸项目名 / 分发器）。
-   */
-  private def deliverToProject(
-    name: String,
-    message: String,
-    imagePaths: List[String],
-    ctx: ToolContext,
-    task: Option[String] = None
-  ): IO[Either[ToolError, String]] =
-    if imagePaths.nonEmpty then IO.pure(Left(sameMachineVisionUnsupportedError(s"project:$name", imagePaths.size)))
-    else
-      routeToProject(name, message, ctx, task).flatMap {
-        case Some(r) => IO.pure(r)
-        case None =>
-          IO.pure(
-            Left(
-              ToolError(
-                s"Project '$name' is not mounted — Mail to a project triggers its dispatcher (ProjectActor.TriggerDispatcher). " +
-                  "Mounted projects mount at gateway startup; re-mount / restart, or check the exact name."
-              )
-            )
-          )
-      }
-
-  /**
    * 腿③（分发器 → root）：**解析到真正的 Nebula root 会话**。
    * 硬禁三种静默行为：① 回落成发信者自身 ② 落到非 Nebula 的 Root 会话
    * ③ 解析失败仍报成功——解析不到即**显式报错**（并不指明合法地址面）。
@@ -1574,158 +1568,11 @@ $message"""
   // `MailIdleGateWiringSpec` —— 它们钉的是 idle-gate / 冷激活 / 根解析等**已落契约**，
   // 与退役面正交）；② 在库消费者仍在（`AgentActor` 的 legacy 队列排空、
   // `RestApiRoutes` 的队列检视/取消端点 —— 禁碰）。摘除属另议。
-
-  /**
-   * The `[task #N] …` receipt header of the project leg (task-continuation): the ordinary (non-revived) face is byte-for-byte the historical string;
-   * the revive face reports a verbatim continuation line — `前态=` carries the
-   * ACTUAL prior state (`completed` | `closed`), and the Chinese literal is the
-   * author-given receipt text quoted as-is (the one intentional non-English string in
-   * this batch).
-   */
-  private def receiptHeader(taskId: String, address: String, revivedPrior: Option[String]): String =
-    revivedPrior match
-      case Some(prior) => s"[task #$taskId] Task 上下文已继承（前态=$prior，已重启）· dispatcher re-mounted"
-      case None => s"[task #$taskId] Project '$address' dispatcher triggered"
-
-  /**
-   * #28 阶段 0 §3.2：Mail(→project) 触发分发器（试点期新旧并存）。
-   * queue/immediate 两个入口共用——address 是已挂载 project → 返回
-   * Some(结果)（已处理：触发 ProjectActor.TriggerDispatcher 或挂载错误）；
-   * 非 project 名 → None（调用方继续旧路由）。Mail 仅触发、无回报——
-   * Node results are delivered along out edges (§2.7), never back through Mail.
-   *
-   * -- ruling c①: **an explicit parameter, no address-syntax
-   * extension**) --
-   * Semantics (the "first Mail" concept is gone):
-   *   ① **without** `task` ⇒ treated as creating a dispatcher: the engine **creates a task
-   *      automatically** and spawns it, and the receipt header returns the **task number**
-   *      (the caller continues from it);
-   *   ② **with** `task` ⇒ **continue** that task's dispatcher (active ⇒ inject / inactive ⇒
-   *      spawn or inject per the slot table), 🔴 **never create a new one**;
-   *   ③ **with** `task` pointing at a **terminal** task (`completed` / `closed`) ⇒ REVIVE
-   *      (task-continuation ruling): the entry
-   *      flips back to `open` ([[TaskLedgerStore.reviveSync]] — state flip + change-history
-   *      event + the verbatim note line), a **fresh** dispatcher session is
-   *      mounted (`TriggerDispatcher(revive = true)` — residue slots are evicted inside
-   *      the single actor, never reused), and the receipt header reports
-   *      `Task 上下文已继承（前态=<prior>，已重启）· dispatcher re-mounted`;
-   *   ④ `task` pointing at a **non-existent / pruned** task ⇒ **refused** + a readable
-   *      reason (fail-closed — the non-continuable face is unchanged).
-   * Also: after a successful delivery the engine **appends the Mail body as one record on
-   * that task's note timeline** (structured: `from` + timestamp + body; the only write
-   * path, and the tool layer has no note parameter).
-   */
-  private def routeToProject(
-    address: String,
-    message: String,
-    ctx: ToolContext,
-    task: Option[String] = None
-  ): IO[Option[Either[ToolError, String]]] =
-    ProjectRuntimeRegistry.get(address).flatMap {
-      case None => IO.pure(None)
-      case Some(rt) =>
-        rt.actorRef match
-          case None =>
-            IO.pure(Some(Left(ToolError(s"Project '$address' has no mounted ProjectActor — re-mount it"))))
-          case Some(ref) =>
-            val rootSid = ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("")
-            // Attribution resolution (the explicit parameter is primary, the
-            // address syntax is not extended).
-            // ① without task ⇒ the engine creates a task automatically (new watermark; the
-            //    "first Mail" concept is gone).
-            // ② with task ⇒ continue it (it must exist; an OPEN entry takes the ordinary
-            //    inject-or-spawn path, byte-for-byte unchanged).
-            // ③ with task pointing at a TERMINAL entry (`completed` / `closed`) ⇒ revive:
-            //    flip back to `open` + mount a FRESH dispatcher session (a finished task is continued, not refused).
-            // ④ with task pointing at a non-existent / pruned entry ⇒ refused + a readable
-            //    reason (the non-continuable face, unchanged).
-            // The resolved value carries the prior state (`Some(prior)` iff a revive
-            // happened): the receipt header and the TriggerDispatcher revive flag both
-            // read from it, so "the receipt says re-mounted" and "the actor evicts any
-            // residue slot" can never drift apart.
-            val ledger = nebflow.core.project.TaskLedgerStore.open()
-            val resolved: IO[Either[ToolError, (String, Option[String])]] = task match
-              case None =>
-                // P0 fix: the auto-create consumes the PURE ledger id
-                // (`createSyncReturningId`) -- never the rendered `[OK] ...` banner. The
-                // id travels below into the slot binding (TriggerDispatcher), the note
-                // append and the `[task #N]` receipt header; the banner stays the `Task`
-                // tool's display face only. (Pre-fix flow: the whole banner string
-                // traveled as the task id -- slot keys poisoned, appendNoteSync missed,
-                // and every session attached from the receipt got a TaskInfo
-                // TASK_NOT_FOUND.)
-                IO.blocking(
-                  ledger.createSyncReturningId(
-                    title = s"$address — ${message.take(120).replace("\n", " ")}",
-                    actor = nebflow.core.project.TaskLedgerHistory.Actors.Dispatcher
-                  )
-                ).map {
-                  case Left(err) => Left(err)
-                  case Right(id) => Right((id, None))
-                }
-              case Some(tid) =>
-                IO.blocking(ledger.findSync(tid.stripPrefix("#").trim)).flatMap {
-                  case None =>
-                    IO.pure(
-                      Left(
-                        ToolError(
-                          s"Mail: no task '#${tid.stripPrefix("#")}' in the ledger — it was never created (or it was pruned after reaching " +
-                            s"a terminal state). Omit `task` to have the engine create a new one and return its number. (${nebflow.core.project.TaskLedgerStore.Codes.NotFound})"
-                        )
-                      )
-                    )
-                  case Some(entry) if entry.status != nebflow.core.project.TaskLedgerStore.Status.Open =>
-                    // Revive branch (the old TASK_STATUS terminal-refusal lived here —
-                    // both terminal states (`completed` and `closed`)
-                    // are continuable through the same primitive; the non-existent /
-                    // pruned face above stays an explicit error.
-                    IO.blocking(ledger.reviveSync(entry.id)).map {
-                      case Left(err) => Left(err)
-                      case Right(_) => Right((entry.id, Some(entry.status)))
-                    }
-                  case Some(entry) => IO.pure(Right((entry.id, None)))
-                }
-            resolved.flatMap {
-              case Left(err) => IO.pure(Some(Left(err)))
-              case Right((taskIdStr, revivedPrior)) =>
-                // Leg ① source annotation: the sender travels
-                // with the trigger message into the dispatcher session's injection bubble
-                // header (source stays = task; the value is not renamed).
-                // Option C: **only this leg** sets `intake` --
-                // the dispatcher intake face is the landing point of the author's "annotate
-                // Mail with a blue bubble" ruling; `source` stays `"task"` untouched (the
-                // bridge's single consumption-count point `ProjectActor:622` and the
-                // `idleSince` 30 min idle window are unchanged line by line).
-                // the `type` key is retired — the
-                // dispatcher-intake attribution is pinned to `info` (the P0 window
-                // exemption is judged on the body's first-line [INTERRUPT] literal at
-                // the root-injection side, not on a message type here).
-                mailAttribution("info", ctx, Some(InjectionAttribution.IntakeMail)).flatMap { attribution =>
-                  (ref ! ProjectActor.ProjectCommand.TriggerDispatcher(
-                    message,
-                    rootSid,
-                    ProjectActor.SourceTask,
-                    Some(attribution),
-                    Some(taskIdStr),
-                    revive = revivedPrior.isDefined
-                  )).void *>
-                    // Automatic note append (ruling n: the only write path is engine-side,
-                    // never through the tool layer): the Mail body becomes one record on that
-                    // task's note timeline. A history-append failure does not fail the main
-                    // delivery (the Mail is already sent) but it **must be stated explicitly**
-                    // (never silently).
-                    IO.blocking(
-                      ledger.appendNoteSync(
-                        taskIdStr,
-                        message,
-                        from = nebflow.core.project.TaskLedgerHistory.Origins.Nebula,
-                        actor = nebflow.core.project.TaskLedgerHistory.Actors.Nebula
-                      )
-                    ) *>
-                    IO.pure(Some(Right(receiptHeader(taskIdStr, address, revivedPrior))))
-                }
-            }
-    }
+  //
+  // Project-trigger 拆除批：本层原有的 queue→project 对称腿（`routeToProject` 直调，
+  // 「#28 阶段 0 §3.2 试点期新旧并存」）已随触发链整体拆除——queue 形态下项目名
+  // 不再触达 `ProjectActor.TriggerDispatcher`（该形态本就生产不可达；摘除的是
+  // D-5 登记的「退役未摘除」残面，与立即路径的拆除同批对称收口）。
 
   private[tools] def deliverQueue(
     address: String,
@@ -1781,45 +1628,38 @@ $message"""
                 )
           yield r
         case None =>
+          // Project-trigger 拆除批：本 case 原有的 queue→project 对称腿
+          // （`routeToProject`，#28 阶段 0 §3.2）已整体拆除——queue 形态下项目名
+          // 不再触达分发器触发（生产本就不可达；见本层头部退役登记）。
           for
-            // Mail(→project) 路由（#28 阶段 0，§3.2 试点期新旧并存）：
-            // project 名 → ProjectActor.TriggerDispatcher（触发分发器会话）。
-            // 团队名路由优先（旧体系照常）；project 名兜底（新体系试点）。
-            // Mail 仅做触发、无回报——节点结果沿 out 边投递（§2.7），不靠 Mail。
-            pr <- routeToProject(address, message, ctx).flatMap {
-              case Some(r) => IO.pure(r)
-              case None =>
+            senderTeamOpt <- TeamSessionRegistry.teamOfSession(senderSessionId)
+            sr <- senderTeamOpt match
+              case None if address != RootAgentName =>
+                IO.pure(Left(ToolError(TeamOnlyRoutingError)))
+              case _ =>
                 for
-                  senderTeamOpt <- TeamSessionRegistry.teamOfSession(senderSessionId)
-                  sr <- senderTeamOpt match
-                    case None if address != RootAgentName =>
-                      IO.pure(Left(ToolError(TeamOnlyRoutingError)))
-                    case _ =>
-                      for
-                        targetRes <- ctx.sharedResources match
-                          case Some(res) =>
-                            TeamSessionRegistry.resolveSessionId(senderSessionId, address, res.sessionStore)
-                          case None => IO.pure(Right(None))
-                        sr2 <- targetRes match
-                          case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
-                          case Right(Some(targetSid)) =>
-                            queueToSession(
-                              targetSid,
-                              address,
-                              message,
-                              eventType,
-                              imagePaths,
-                              ctx,
-                              system,
-                              senderSessionId
-                            )
-                          case Right(None) if address == RootAgentName =>
-                            queueToRoot(message, eventType, imagePaths, ctx, system, senderSessionId, address, None)
-                          case Right(None) => mailNotFound(address)
-                      yield sr2
-                yield sr
-            }
-          yield pr
+                  targetRes <- ctx.sharedResources match
+                    case Some(res) =>
+                      TeamSessionRegistry.resolveSessionId(senderSessionId, address, res.sessionStore)
+                    case None => IO.pure(Right(None))
+                  sr2 <- targetRes match
+                    case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
+                    case Right(Some(targetSid)) =>
+                      queueToSession(
+                        targetSid,
+                        address,
+                        message,
+                        eventType,
+                        imagePaths,
+                        ctx,
+                        system,
+                        senderSessionId
+                      )
+                    case Right(None) if address == RootAgentName =>
+                      queueToRoot(message, eventType, imagePaths, ctx, system, senderSessionId, address, None)
+                    case Right(None) => mailNotFound(address)
+                yield sr2
+          yield sr
     yield result
 
   /**
@@ -2125,64 +1965,65 @@ $message"""
           yield r
 
         case None =>
-          // Mail(→project) 路由（§3.2，immediate 路径对称）——先于旧 short-name 解析。
-          for pr <- routeToProject(address, message, ctx).flatMap {
-              case Some(r) => IO.pure(r)
-              case None =>
-                // Not a team name — short agent name. Routable only for senders
-                // with a team context (same-team priority); outside a team, only
-                // team names and "Nebula" are valid (user ruling 08-24 — the
-                // team/agent escape hatch is closed for root senders).
-                for
-                  senderTeamOpt <- TeamSessionRegistry.teamOfSession(senderSessionId)
-                  sr <- senderTeamOpt match
-                    case None if address != RootAgentName =>
-                      IO.pure(Left(ToolError(TeamOnlyRoutingError)))
-                    case _ =>
-                      for
-                        targetRes <- ctx.sharedResources match
-                          case Some(res) =>
-                            TeamSessionRegistry.resolveSessionId(senderSessionId, address, res.sessionStore)
-                          case None => IO.pure(Right(None))
-                        sr2 <- targetRes match
-                          case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
-                          case Right(Some(targetSid)) =>
-                            for
-                              res <- deliverToSession(targetSid, address, message, blocks, eventType, ctx, system)
-                              _ <- res match
-                                case Right(_) => onMailDelivered(senderSessionId, targetSid, address, message, ctx)
-                                case Left(_) => IO.unit
-                            yield res
-                          case Right(None) =>
-                            val isRootTarget = address == RootAgentName || address.endsWith(s"/$RootAgentName")
-                            if isRootTarget then
-                              // 追加条款：**必须**落到真正的 Nebula root 会话。
-                              // 旧实现取 `getParentActor(senderSessionId)`（last-writer-wins 注册）
-                              // 并在缺失时取「第一条 Root 记录」——两条都可能落到发信者自身或
-                              // 其它 Root 会话，且解析失败仍返回成功文案（静默）。现改为单点解析
-                              // `resolveNebulaRootRef`（session meta agentName == "Nebula" ∧ 排除
-                              // 发信者自身 ∧ 唯一），解析不到即**显式报错**，不投递。
-                              ctx.sharedResources match
-                                case Some(res) =>
-                                  resolveRootRef(res, senderSessionId, ctx.rootSessionId).flatMap {
-                                    case Some((sid, ref)) =>
-                                      for
-                                        res <- sendMail(ref, RootAgentName, message, blocks, eventType, ctx, system)
-                                        _ <- res match
-                                          case Right(_) =>
-                                            onMailDelivered(senderSessionId, sid, RootAgentName, message, ctx)
-                                          case Left(_) => IO.unit
-                                      yield res
-                                    case None => IO.pure(Left(rootUnresolvedError(senderSessionId)))
-                                  }
-                                case None =>
-                                  IO.pure(Left(ToolError("Cannot resolve the Nebula root session: missing resources.")))
-                            else mailNotFound(address)
-                            end if
-                      yield sr2
-                yield sr
-            }
-          yield pr
+          // Project-trigger 拆除批（D-4 缺口同批关闭）：裸名先过**挂载项目**分类——
+          // 命中已挂载项目 ⇒ 与 `project:` 形态同款显式拒绝（零触发；旧形态在此
+          // 会隐式触发分发器，且无发送方角色闸）。未命中 ⇒ 照旧落 short-name 瀑布。
+          ProjectRuntimeRegistry.get(address).flatMap {
+            case Some(_) => IO.pure(Left(projectTriggerUnsupportedError(address)))
+            case None =>
+              // Not a team name — short agent name. Routable only for senders
+              // with a team context (same-team priority); outside a team, only
+              // team names and "Nebula" are valid (user ruling 08-24 — the
+              // team/agent escape hatch is closed for root senders).
+              for
+                senderTeamOpt <- TeamSessionRegistry.teamOfSession(senderSessionId)
+                sr <- senderTeamOpt match
+                  case None if address != RootAgentName =>
+                    IO.pure(Left(ToolError(TeamOnlyRoutingError)))
+                  case _ =>
+                    for
+                      targetRes <- ctx.sharedResources match
+                        case Some(res) =>
+                          TeamSessionRegistry.resolveSessionId(senderSessionId, address, res.sessionStore)
+                        case None => IO.pure(Right(None))
+                      sr2 <- targetRes match
+                        case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
+                        case Right(Some(targetSid)) =>
+                          for
+                            res <- deliverToSession(targetSid, address, message, blocks, eventType, ctx, system)
+                            _ <- res match
+                              case Right(_) => onMailDelivered(senderSessionId, targetSid, address, message, ctx)
+                              case Left(_) => IO.unit
+                          yield res
+                        case Right(None) =>
+                          val isRootTarget = address == RootAgentName || address.endsWith(s"/$RootAgentName")
+                          if isRootTarget then
+                            // 追加条款：**必须**落到真正的 Nebula root 会话。
+                            // 旧实现取 `getParentActor(senderSessionId)`（last-writer-wins 注册）
+                            // 并在缺失时取「第一条 Root 记录」——两条都可能落到发信者自身或
+                            // 其它 Root 会话，且解析失败仍返回成功文案（静默）。现改为单点解析
+                            // `resolveNebulaRootRef`（session meta agentName == "Nebula" ∧ 排除
+                            // 发信者自身 ∧ 唯一），解析不到即**显式报错**，不投递。
+                            ctx.sharedResources match
+                              case Some(res) =>
+                                resolveRootRef(res, senderSessionId, ctx.rootSessionId).flatMap {
+                                  case Some((sid, ref)) =>
+                                    for
+                                      res <- sendMail(ref, RootAgentName, message, blocks, eventType, ctx, system)
+                                      _ <- res match
+                                        case Right(_) =>
+                                          onMailDelivered(senderSessionId, sid, RootAgentName, message, ctx)
+                                        case Left(_) => IO.unit
+                                    yield res
+                                  case None => IO.pure(Left(rootUnresolvedError(senderSessionId)))
+                                }
+                              case None =>
+                                IO.pure(Left(ToolError("Cannot resolve the Nebula root session: missing resources.")))
+                          else mailNotFound(address)
+                          end if
+                    yield sr2
+              yield sr
+          }
     yield result
 
   /** Marker a team's rules.md can set to opt in to cross-team explicit Mail. */

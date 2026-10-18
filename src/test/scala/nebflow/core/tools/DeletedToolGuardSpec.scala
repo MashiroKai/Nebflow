@@ -100,6 +100,14 @@ class DeletedToolGuardSpec extends FunSuite:
         s"$g guide must point at Task (the unified ledger), got: ${guide.take(120)}"
       )
     }
+    // 名字复用教义（project-trigger 拆除批断言，AgentFlow/Project 先例同型）：
+    // `Task` 已注册为台账工具 ⇒ 表内不得存在指向活名的死条目（旧 "Task" 墓碑的
+    // 「Project triggering is now Mail」文案既不可达、又与拆除后的现行为相悖）。
+    assert(ToolRegistry.TOOL_MAP.contains("Task"), "Task must be registered (the live ledger name)")
+    assert(
+      !nebflow.agent.AgentCore.RetiredToolGuides.contains("Task"),
+      "no tombstone entry may exist for the live name \"Task\" (registered ⇒ unreachable dead text)"
+    )
 
   test("rename-retired (N1): Workflow is unregistered, its guide is present and names AgentFlow"):
     renameRetiredNames.foreach { g =>

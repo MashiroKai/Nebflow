@@ -291,9 +291,10 @@ object AgentCore:
    * 注册表注册全部保留——team/flow 双轨期
    * legacyFixedTools 对成员仍授能，零触碰）。**本条覆盖此前相关指令**：
    * 2026-09-12「一个 Mail 统一」批（B4 取代条款）已把「`Task` = 唯一项目触发
-   * 入口」**作废**——新口径 = **Mail 唯一消息原语 + Task 已退役**；Nebula 经
+   * 入口」**作废**——当日口径 = **Mail 唯一消息原语 + Task 已退役**；Nebula 曾经
    * `Mail(address="project:<name>")` 触发项目分发器（与已退役的 `Task` 同内核
-   * `ProjectActor.TriggerDispatcher`）。2026-09-05 13:11 作者裁定曾把
+   * `ProjectActor.TriggerDispatcher`；🔴 该触发腿已随 project-trigger 拆除批
+   * 2026-10-18 整体退役——现口径见本集 "Mail" 条目批注）。2026-09-05 13:11 作者裁定曾把
    * 基础六件 Read/Glob/Edit/Write/Grep/Bash 定为全体 agent 统一默认
    * （Nebula 补齐 Write/Edit 至恰十七件——史实，时点 2026-09-05）；同日
    * 23:34 作者裁定
@@ -381,11 +382,13 @@ object AgentCore:
     // 编排触发（NodeList 2026-09-06 00:48 裁定摘除）
     // **Mail**（R2「一个 Mail 统一」批，2026-09-12 作者裁定 D-1/D-2/B4 取代条款）：
     // −`Task` +`Mail`，件数 16 → 16（史实：该批净 0；当前 = 17，见
-    // NebulaOrchestrationToolsExpectedSize。本条覆盖此前「Task = 唯一项目触发入口」的
-    // 全部相关指令——`Task` 已删净退役，不留壳、不留别名）。Nebula 的 Mail
-    // **地址面按角色分层 = 仅项目分发器**（`project:<name>` 形态；裸项目名等价
-    // 接受，D-1 取 B1-a 原样）：发 `node:<id>` 或自身地址（`"Nebula"`）⇒ 显式
-    // 报错并指明合法地址面（硬禁静默兜底/模糊匹配）；入站不受限。
+    // NebulaOrchestrationToolsExpectedSize）。**project-trigger 拆除批（2026-10-18，
+    // 作者令「完全拆除」Mail→dispatcher 触发路径，落地 2026-10-03 作者令
+    // 「Mail 降级为用于通信」）**：Mail = 纯通信原语——项目地址（`project:<name>`
+    // 形态与裸挂载项目名）对**一切角色**显式拒绝（`MAIL_PROJECT_TRIGGER_UNSUPPORTED`），
+    // 零建任务、零复活、零 TriggerDispatcher；派发面唯一入口 = `Delegate`。
+    // Root 的 Mail 地址面 = `delegate:<id>`/`kernel:<id>` 续聊 + `node:<id|name>`
+    //（`node:<id>`/自身地址照旧显式报错或指路，硬禁静默兜底/模糊匹配）；入站不受限。
     "Mail",
     // Project（N2 project-tool 批 2026-10-06 ⑨A 硬替换：ProjectCreate → Project，
     // 同参数面 + 新增 action="unmount" 硬卸载腿；旧名入 RetiredToolGuides 指路）。
@@ -590,8 +593,11 @@ object AgentCore:
    * 表零膨胀纪律：只收「本批删净且必须给出迁移路径」的名字，不预收未来退役项。
    */
   val RetiredToolGuides: Map[String, String] = Map(
-    "Task" ->
-      """Project triggering is now Mail — use `Mail(address="project:<项目名>", message=<任务文本>)` (a bare project name is accepted too; the same engine entry, ProjectActor.TriggerDispatcher).""",
+    // 旧 "Task" 墓碑条目随 project-trigger 拆除批删除（2026-10-18）：`Task` 名已被
+    // taskunify 批（`75fddc5db`，2026-09-24）复用为台账工具注册名（本文件 Root
+    // OrchestrationTools "Task" 条目），注册即令本表对该名永不可达——留条目＝死文本，
+    // 违表零膨胀纪律（AgentFlow/Project 先例同型）。条目旧文「Project triggering is
+    // now Mail」亦与拆除后的现行为相悖（派发面唯一入口 = Delegate）。
     "NodeMessage" ->
       """Node course-correction is now Mail — use `Mail(address="node:<节点id>", message=<补充文本>)` (same engine semantics: running = injected at the next turn boundary, wiring/pending = appended to the node task, terminal = refused).""",
     "TransferFile" ->

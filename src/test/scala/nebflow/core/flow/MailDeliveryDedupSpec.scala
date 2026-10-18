@@ -106,9 +106,9 @@ class MailDeliveryDedupSpec extends FunSuite:
   }
 
   test("M-1 R2 分层地址面：指纹面 = (sender|recipientSessionId|content)，地址形态与 chainId 均无独立字段") {
-    // R2 三腿（project:<name> / Nebula / node:<id>）在投递前一律解析成**会话 id**
-    // （MailTool.deliverToNode / deliverToProject / deliverToRootAgent），投递层
-    // 只见会话 ⇒ 去重口径与地址形态解耦。
+    // R2 各腿（Nebula / node:<id>；project 腿已随 project-trigger 拆除批退役）在
+    // 投递前一律解析成**会话 id**（MailTool.deliverToNode / deliverToRootAgent），
+    // 投递层只见会话 ⇒ 去重口径与地址形态解耦。
     val sid = "node-sess-r2"
     val fp = MailDeliveryDedup.fingerprint("disp-1", sid, "same content")
     // 手算复核：SHA-256("from|sid|content") —— 恰好三元组，无第四个字段

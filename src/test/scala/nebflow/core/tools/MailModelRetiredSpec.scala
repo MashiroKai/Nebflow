@@ -153,13 +153,13 @@ class MailModelRetiredSpec extends FunSuite:
   // ============================================================
 
   test(
-    "① schema: the property set is exactly the 6 surviving keys; `device` and `type` are gone; required stays [message]"
+    "① schema: the property set is exactly the 5 surviving keys; `device` / `type` / `task` are gone; required stays [message]"
   ):
     val props = MailTool.inputSchema("properties").flatMap(_.asObject).getOrElse(fail("no properties"))
     assertEquals(
       props.keys.toSet,
-      Set("address", "message", "chainId", "task", "images", "attachments"),
-      s"the parameter face must be the 6 surviving keys, got: ${props.keys.toList.sorted}"
+      Set("address", "message", "chainId", "images", "attachments"),
+      s"the parameter face must be the 5 surviving keys (the `task` key died with the project-trigger demolition), got: ${props.keys.toList.sorted}"
     )
     assertEquals(
       MailTool.inputSchema("required").flatMap(_.asArray).map(_.flatMap(_.asString).toList).getOrElse(Nil),
