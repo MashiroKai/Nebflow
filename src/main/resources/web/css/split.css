@@ -1672,9 +1672,11 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   }
 }
 
-/* Glass command bar — floats over the canvas; counts moved to the sidebar. */
+/* Glass command bar — floats over the canvas (graph-view interaction batch,
+   2026-10-18: the pane carries no sidebar anymore — its file list is hosted
+   by the explorer panel space, see #wiki-graph-explorer-section below). */
 .wiki-graph-pane.wx-B .wiki-toolbar {
-  position: absolute; top: 12px; left: 12px; right: 236px; z-index: 6;
+  position: absolute; top: 12px; left: 12px; right: 12px; z-index: 6;
   gap: 8px; padding: 8px 12px;
   background: var(--glass-control-bg);
   -webkit-backdrop-filter: blur(var(--glass-control-blur, 10px)) saturate(1.15);
@@ -1696,7 +1698,7 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 }
 .wiki-graph-pane.wx-B .wiki-facets {
   position: absolute;
-  top: 58px; left: 12px; right: 236px;
+  top: 58px; left: 12px; right: 12px;
   z-index: 6; gap: 6px; padding: 0; flex-wrap: wrap;
 }
 .wiki-graph-pane.wx-B .wiki-toolbar-status { display: none; }
@@ -1710,31 +1712,10 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
    it the bitmap never learns the pane grew and ResizeObserver never fires. */
 .wiki-graph-pane.wx-B .wiki-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 
-/* Right glass sidebar — real filters (projects / types / statuses) + legend. */
-.wx-sidebar {
-  position: absolute;
-  top: 12px; bottom: 12px; right: 12px; width: 232px;
-  z-index: 7;
-  box-sizing: border-box;
-  padding: 12px 12px 16px;
-  font-size: 12px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
-  border-radius: 14px;
-  box-shadow: 0 12px 34px rgb(var(--sapphire) / 0.14), 0 2px 8px rgba(0, 0, 0, 0.06);
-  color: var(--color-text);
-}
-/* Refraction top edge — sticky so it survives the panel's own scrolling. */
-.wx-sidebar::before {
-  content: '';
-  position: sticky; top: 0;
-  display: block; height: 1px; margin-bottom: -1px;
-  background: linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%);
-}
+/* (The pane sidebar was retired by the graph-view interaction batch,
+   2026-10-18: its projects/types/statuses/legend now host in the explorer
+   panel space — #wiki-graph-explorer-section at the end of this file. The
+   .wx-sb-* / .wx-chip / .wx-dot / .wx-lg-* rules below survive there.) */
 .wx-sb-head {
   display: flex; align-items: center; justify-content: space-between;
   font-weight: 600; font-size: 12.5px; color: var(--color-text);
@@ -1788,3 +1769,35 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   box-sizing: border-box;
 }
 .wx-zoom button:hover { background: rgb(var(--sapphire) / 0.14); }
+
+/* ── Graph file list hosted in the explorer panel space (graph-view
+   interaction batch, 2026-10-18) ─────────────────────────────────────────
+   While the wiki-graph tab is the visible Canvas content, its file list mounts
+   as #wiki-graph-explorer-section — the SAME panel space #explorer-section
+   occupies (which hides for the duration). Inner rows reuse the .wx-* glass
+   classes from the pane sidebar above; only the hosting layout is new. */
+#wiki-graph-explorer-section {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  padding: 0 8px 8px;
+}
+#wiki-graph-explorer-section .wx-sb-head {
+  flex: none;
+  padding: 10px 6px 8px;
+}
+#wiki-graph-explorer-section .wx-sb-body {
+  flex: 1; min-height: 0;
+  overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+#wiki-graph-explorer-section .wx-sb-body::-webkit-scrollbar { width: 4px; }
+#wiki-graph-explorer-section .wx-sb-body::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.15); border-radius: 2px;
+}
+/* Document rows — the file entries under each project row (indented one
+   level, same hover/active family as .wx-sb-item). */
+#wiki-graph-explorer-section .wx-doc { padding-left: 26px; }
+#wiki-graph-explorer-section .wx-doc .wx-doc-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
