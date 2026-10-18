@@ -844,10 +844,17 @@ export function initInput(view) {
 
   /** Contextual composer placeholder (mobile voice redesign): the pending
    *  attachment count and the mic state replace the generic line —
-   *  attachments no longer claim their own row, the placeholder names them. */
+   *  attachments no longer claim their own row, the placeholder names them.
+   *  Count source = the RENDERED strip (childElementCount), NOT the global
+   *  pendingAttCount in-flight counter: this runs from the attPreview
+   *  MutationObserver, which fires after addFileAttachment has already
+   *  decremented the counter back to 0, so the counter can never drive the
+   *  has-attachments class at steady state — the padding-top compensation
+   *  stayed dead and the overlay strip swallowed every click aimed at the
+   *  textarea (composer-typing fix 2026-10-18). */
   function updateInputPlaceholder() {
     if (voiceActive) { input.placeholder = t('input.ph.listening'); return; }
-    const n = pendingAttCount.value;
+    const n = view.dom.attPreview ? view.dom.attPreview.childElementCount : 0;
     input.parentElement?.classList.toggle('has-attachments', n > 0);
     if (n > 0) { input.placeholder = t('input.ph.attachments').replace('%n', String(n)); return; }
     input.placeholder = t('input.placeholder');
@@ -1284,9 +1291,12 @@ export function initInput(view) {
   const micOrbWrap = voiceBtn?.closest('.mic-orb-wrap') || null;
   // Scope-local placeholder refresh (the shared updateInputPlaceholder lives
   // in the per-view setup scope and is not reachable here).
+  // Count source = the rendered strip, same as updateInputPlaceholder — the
+  // global pendingAttCount is an in-flight counter (already 0 when this runs),
+  // so it could never hold has-attachments open (composer-typing fix).
   const refreshPlaceholder = () => {
     if (voiceActive) { input.placeholder = t('input.ph.listening'); return; }
-    const n = pendingAttCount.value;
+    const n = view.dom.attPreview ? view.dom.attPreview.childElementCount : 0;
     input.parentElement?.classList.toggle('has-attachments', n > 0);
     input.placeholder = n > 0
       ? t('input.ph.attachments').replace('%n', String(n))
