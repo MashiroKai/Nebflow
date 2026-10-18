@@ -38,8 +38,8 @@ const fallback = {
   lowerName: 'stand',
   domain: 'mystand.space',
   name: 'stand',
-  logoUrl: '/brand/releases/c746bb561f1b428a/light-128.png',
-  logoDarkUrl: '/brand/releases/c746bb561f1b428a/dark-128.png'
+  logoUrl: '/brand/releases/df9c1c1ecff6021e/light-128.png',
+  logoDarkUrl: '/brand/releases/df9c1c1ecff6021e/dark-128.png'
 };
 
 const injected = /** @type {Window & { __BRAND__?: Brand }} */ (window).__BRAND__;
