@@ -1,0 +1,15 @@
+--- a/AGENTS.md	2026-10-14 16:50:30
++++ b/AGENTS.md	2026-10-14 16:51:22
+@@ -455,4 +455,10 @@
+ 
+ -检查文档历史时，要检查.nebflow隐藏目录下的内容。
+ 
+-19.功能的实现通常伴随着agent 提示词 、工具说明的修改，修改时禁止出现XX已退役，XX-XX-XX作者裁定等过程文字，我们这是一个生产级的项目，要保持提示词干净。
+\ No newline at end of file
++19.功能的实现通常伴随着agent 提示词 、工具说明的修改，修改时禁止出现XX已退役，XX-XX-XX作者裁定等过程文字，我们这是一个生产级的项目，要保持提示词干净。
++## 附 · 生产操作护栏文档指针（docs/）
++
++  本节为指针节：三件生产操作护栏文档的落位与适用面，正文以 docs/ 原文为权威，出处与沿革见各件文首。
++  - `docs/production-ops-checklist.zh-CN.md` — 生产操作检查单：五起生产事故（台账 S1–S5）逐起蒸馏为操作前检查项：Caddy 变更（validate+备份+仓库版与现网版 diff）、进程 kill 验身（归属证据三件套+父链、单 pid）、env/secret 快照与凭据传递（回显即轮换）、生产写先报后动、部署终验指纹对比；每项注出处事故。
++  - `docs/parallel-session-resources.zh-CN.md` — 并行会话资源预分配规范：worktree 每会话一具与命名、QA 实例端口分配表（保留段/QA 段/项目 dev 段，约定值待作者核）、先验身再 kill 铁则（归属证据＋非目标端口零触碰清单）、同仓并行写冲突预防（sbt/assembly 先问后跑）。
++  - `docs/design/visual-report-gate-plan.zh-CN.md` — visual-report 机械闸方案件：md/html 产出按图谱编排的机械可查特征清单（正则草案）与三挂点评估（交付前 lint / 完成核验器加检 / tools.json 授权面），推荐案为完成核验器加检。
