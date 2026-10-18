@@ -2,7 +2,6 @@
 import state from '../state.js';
 import { activeView, chatViews, setActiveView } from '../chatView.js';
 import { renderAttachmentPreview } from '../chat.js';
-import { t } from '../i18n.js';
 import { makeReference } from '../reference.js';
 
 // ---------- Image Compression ----------
@@ -173,7 +172,9 @@ export function isRefOnlyFrame(view) {
   return wireAttachmentsOf(view).length === 0;
 }
 
-/** 同步「纯引用帧」闸的视觉态（发送键禁用 + 提示可见）。返回闸是否生效。
+/** 同步「纯引用帧」闸的视觉态（发送键禁用；提示文案由输入框自身 placeholder 承担
+  * —— updateInputPlaceholder / refreshPlaceholder 的 isRefOnlyFrame 分支，#531
+  * 2026-10-18：无独立提示行）。返回闸是否生效。
   * 调用点（覆盖全部会改变该判据的路径）：initInput 首帧、输入事件、attPreview 的
   * DOM 变更观察器（附件/引用的增删都经 renderAttachmentPreview 重建整条 strip，
   * 含 chat.js 侧 ref 芯片的移除按钮——本文件不介入 chat.js）。 */
@@ -190,11 +191,6 @@ export function syncRefOnlyGate(view) {
     btn.disabled = frozen || blocked;
     if (blocked) btn.setAttribute('aria-disabled', 'true');
     else if (!frozen) btn.removeAttribute('aria-disabled');
-  }
-  const hint = v.dom.refGateHint;
-  if (hint) {
-    if (blocked) hint.textContent = t('input.refOnlyHint');
-    hint.hidden = !blocked;
   }
   return blocked;
 }

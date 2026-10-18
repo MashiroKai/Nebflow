@@ -318,9 +318,11 @@
    落到 34px 命中带之下，否则全宽引用 chip（.att-ref-fm 350px 满宽）吃掉输入框
    中央的点击（composer-overlap 修复 2026-10-18；fwdguard B2 同类实测）。 */
 #input-wrap.has-attachments #input { padding-top: 44px; }
-/* 闸提示可见时（blocked）提示行已经把 textarea 盒压到 chip 带下方，44px 让位
-   变成双重空档 ⇒ 收回常规顶距。:has 不支持时优雅退化（多一段空档，无功能损）。 */
-#input-wrap.has-attachments:has(> .ref-gate-hint:not([hidden])) #input { padding-top: 8px; }
+/* #531（2026-10-18）：blocked（纯引用帧）态不再有独立提示行 —— 旧 `.has-attachments:
+   :has(> .ref-gate-hint:not([hidden]))` 收顶距的特例随 .ref-gate-hint 元素一并移除，
+   blocked 态与常规附件态共用上面的 44px 让位（chip 必在场 ⇒ 类必开），闸文案改由
+   输入框自身 placeholder 承担（input.js updateInputPlaceholder 的 isRefOnlyFrame
+   分支），恰好落在 44px 让位带之下的原占位符位置。 */
 #input-wrap #attachment-preview {
   position: absolute;
   top: 4px;
@@ -615,24 +617,10 @@
   transition: opacity 0.3s ease;
 }
 .att-error-fade { opacity: 0; }
-/* fwdguard-impl (2026-09-17): 空文本 + 纯引用帧（转发不附言）的发送闸提示。
-   与 .att-error 同区（输入框上方、附件条内侧），但语义是「为什么此刻不能发」
-   而非错误 ⇒ 走 muted 字色 + 零背景，复用既有 token（零新色值）。禁用的发送键
-   由既有 `#send-btn:disabled` 档承担（本批零新增按钮配色）。 */
-.ref-gate-hint {
-  color: var(--color-text-muted);
-  font-size: 12px;
-  line-height: 1.4;
-  /* margin-top 35px = 顶部让位（composer-overlap 修复 2026-10-18）：本提示只在
-     blocked 时可见 ⇒ chip 必在场，absolute 条带占据 wrap 顶部 4..34px 命中/绘制
-     带 —— 旧 3px 让提示盒正落带内，chip 叠印在文案上（作者截图）。用 **margin**
-     而非 padding 让位：整个盒（含几何中心）都落到 35px 之下，elementFromPoint
-     对盒中心的命中测试回到提示自身。DOM 流位不动（见 input.js 插入点注释：该
-     流位同时把 textarea 盒压在 chip 命中带之下）。 */
-  margin-top: 35px;
-  padding: 3px 2px;
-}
-.ref-gate-hint[hidden] { display: none; }
+/* fwdguard-impl (2026-09-17) 的 .ref-gate-hint 提示行已随 #531（2026-10-18 作者令：
+   「不应该换行，而是在原有输入框提示文字的位置进行修改」）移除 —— 闸文案改走输入框
+   自身 placeholder（js/input.js），发送键禁用态仍由既有 `#send-btn:disabled` 档
+   承担（零新增按钮配色）。 */
 /* ── 待清件「清除」键（❌）— **单一声明块、两处消费者** ────────────────────────
    ① 主窗口图片/文件附件的 ❌（`.att-remove`，`js/chat.js` 的 renderAttachmentPreview）
    ② 好友消息面引用条的 ❌（`.fm-quote-remove`，`js/reference.js` 的 closeStyle:'disc'

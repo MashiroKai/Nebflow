@@ -8,7 +8,8 @@
 // （`input.js:696-701`）⇒ 会话永久「转圈」= 空转。
 //
 // 本件判据 = **作者取向 Q1 的落地读数**：不做 `|| refs.nonEmpty`、不改 `:4055`，改为
-// 前端在「空文本 + 带 ref」时禁用发送键 + 显示提示，两个入口（Enter 直发 / 点击发送）
+// 前端在「空文本 + 带 ref」时禁用发送键 + 在输入框自身 placeholder 显示提示
+// （#531 作者令 2026-10-18：不新增独立占位行），两个入口（Enter 直发 / 点击发送）
 // 都不产帧；并**必做防误伤**（空文本 + 真附件仍可发送、有附言 + ref 正常发送）。
 //
 // ── 判红纪律（同族先例 tests/content-i18n.spec.mjs）──
@@ -23,15 +24,18 @@
 // ── 断言面 ──
 //   A0 应用真启动（静态 serve 本仓 web/ + MockWebSocket 捕获出站帧）
 //   A1 转发腿两调用落进输入框（makeReference + appendRefToActiveView，与 messages.js:2202-2221 同源）
-//   A2 [闸] 空文本 + ref ⇒ 发送键 disabled + 提示可见（真渲染：在视口内 + elementFromPoint 命中）
-//   A3 [闸] 提示文案 = 服务树 zh 字典的 input.refOnlyHint（作者逐字「请附一句话后发送」）
+//   A2 [闸] 空文本 + ref ⇒ 发送键 disabled
+//   A2b [闸] 闸提示改输入框自身 placeholder（#531 作者令 2026-10-18：不新增独立
+//       占位行）⇒ input.placeholder = refOnlyHint ∧ .ref-gate-hint 元素不存在
+//   A2c [闸] 输入框真渲染可见（非隐藏 ∧ 视口内 ∧ 值为空 ⇒ placeholder 即屏上文案）
+//   A3 [闸] placeholder 文案 = 服务树 zh 字典的 input.refOnlyHint（作者逐字「请附一句话后发送」）
 //   A4 [闸] Enter 直发 ⇒ 零帧（入口①）
 //   A5 [闸] 真鼠标点击发送键 ⇒ 零帧（入口②）
 //   A6 [闸] 判据本身：isRefOnlyFrame 对纯引用帧为 true
-//   B1 有附言 + ref ⇒ 正常发送（1 帧，content 非空 + refs 长度 1）
+//   B1 有附言 + ref ⇒ 正常发送（1 帧，content 非空 + refs 长度 1；闸解除后 placeholder 复位）
 //   B2 空文本 + 真附件 ⇒ 仍可发送（1 帧，attachments 长度 1，content 为空）—— 防误伤必做
 //   B3 空文本 + 无任何载荷 ⇒ 不触发本闸（既有 578-581 空守卫语义不变）
-//   B4 ref 芯片移除（chat.js 侧）⇒ 闸随动解除（MutationObserver 路径）
+//   B4 ref 芯片移除（chat.js 侧）⇒ 闸随动解除 + placeholder 恢复通用文案（清空附件复位）
 //   C1 出站帧总账（逐条打印；改前树应含且仅含断点帧）
 //
 // 自包含：静态服务器（随机隔离端口）+ route 拦截 + MockWebSocket 注入；finally 必关
@@ -192,33 +196,33 @@ try {
     afterRef.ok === true && afterRef.refType === 'friend-message' && afterRef.inputValue === '' && afterRef.chipRendered,
     JSON.stringify(afterRef));
 
-  // ── A2/A3 闸的可见态 ─────────────────────────────────────────────────
+  // ── A2/A3 闸的可见态（#531：提示面 = 输入框自身 placeholder，无独立占位行）──
   const gateView = await page.evaluate(() => {
     const btn = document.getElementById('send-btn');
-    const hint = document.querySelector('#input-bar .ref-gate-hint');
-    let hintVis = null;
-    if (hint) {
-      const r = hint.getBoundingClientRect();
-      const cs = getComputedStyle(hint);
-      const cx = Math.round(r.left + r.width / 2), cy = Math.round(r.top + r.height / 2);
-      const hit = (cx > 0 && cy > 0) ? document.elementFromPoint(cx, cy) : null;
-      hintVis = {
-        hidden: hint.hidden, display: cs.display, w: Math.round(r.width), h: Math.round(r.height),
+    const input = document.getElementById('input');
+    const hint = document.querySelector('.ref-gate-hint');
+    let inputVis = null;
+    if (input) {
+      const r = input.getBoundingClientRect();
+      inputVis = {
+        value: input.value, placeholder: input.placeholder,
+        rendered: !!input.offsetParent && !input.hidden,
         inViewport: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight,
-        hitSelf: !!(hit && (hit === hint || hint.contains(hit) || hit.contains(hint))),
-        text: hint.textContent,
       };
     }
-    return { disabled: btn.disabled, aria: btn.getAttribute('aria-disabled'), hintVis };
+    return { disabled: btn.disabled, aria: btn.getAttribute('aria-disabled'), inputVis, hintExists: !!hint };
   });
   checkGate('A2 空文本 + ref ⇒ 发送键 disabled', gateView.disabled === true, `disabled=${gateView.disabled} aria=${gateView.aria}`);
-  checkGate('A2b 提示件存在（#input-bar .ref-gate-hint）', !!gateView.hintVis);
-  checkGate('A2c 提示**真渲染可见**（display≠none ∧ 视口内 ∧ elementFromPoint 命中自身）',
-    !!(gateView.hintVis && gateView.hintVis.display !== 'none' && gateView.hintVis.inViewport && gateView.hintVis.hitSelf),
-    JSON.stringify(gateView.hintVis));
-  checkGate('A3 提示文案 = 服务树 zh 字典 input.refOnlyHint（作者逐字「请附一句话后发送」）',
-    !!(gateView.hintVis && gateView.hintVis.text === HINT_EXPECT),
-    `expect=${JSON.stringify(HINT_EXPECT)} got=${JSON.stringify(gateView.hintVis && gateView.hintVis.text)}`);
+  checkGate('A2b 闸提示改输入框自身 placeholder（=refOnlyHint）∧ 无独立占位行（.ref-gate-hint 不存在）',
+    !!(gateView.inputVis && gateView.inputVis.placeholder === HINT_EXPECT && !gateView.hintExists),
+    JSON.stringify({ placeholder: gateView.inputVis && gateView.inputVis.placeholder, hintExists: gateView.hintExists }));
+  checkGate('A2c 输入框真渲染可见（非隐藏 ∧ 视口内 ∧ 值为空）⇒ 屏上文案即闸提示（placeholder=refOnlyHint）',
+    !!(gateView.inputVis && gateView.inputVis.rendered && gateView.inputVis.inViewport
+      && gateView.inputVis.value === '' && gateView.inputVis.placeholder === HINT_EXPECT),
+    JSON.stringify(gateView.inputVis));
+  checkGate('A3 placeholder 文案 = 服务树 zh 字典 input.refOnlyHint（作者逐字「请附一句话后发送」）',
+    !!(gateView.inputVis && gateView.inputVis.placeholder === HINT_EXPECT),
+    `expect=${JSON.stringify(HINT_EXPECT)} got=${JSON.stringify(gateView.inputVis && gateView.inputVis.placeholder)}`);
 
   // ── A4 Enter 直发 ⇒ 零帧 ─────────────────────────────────────────────
   await page.evaluate(() => { window.__frames.length = 0; });
@@ -267,14 +271,18 @@ try {
   await page.waitForTimeout(120);
   const enabledAfterText = await page.evaluate(() => ({
     disabled: document.getElementById('send-btn').disabled,
-    hintHidden: document.querySelector('#input-bar .ref-gate-hint')?.hidden ?? null,
+    hintExists: !!document.querySelector('.ref-gate-hint'),
+    ph: document.getElementById('input').placeholder,
   }));
+  // 附件态占位期望：strip 内剩 1 条 ref chip ⇒ input.ph.attachments（%n=1）。
+  const PH_ATTACH_N1 = ZH_REF['input.ph.attachments'].replace('%n', '1');
   await page.keyboard.press('Enter');
   await page.waitForTimeout(250);
   const b1 = await userFrames(false);
-  check('B1a 有附言 ⇒ 发送键可用（改后树：闸解除 + 提示隐藏）',
+  check('B1a 有附言 ⇒ 发送键可用（改后树：闸解除 + 无独立提示行 + placeholder 复位附件文案）',
     enabledAfterText.disabled === false
-      && (!EXPECT_RED ? enabledAfterText.hintHidden === true : true), JSON.stringify(enabledAfterText));
+      && (!EXPECT_RED ? (enabledAfterText.hintExists === false
+        && enabledAfterText.ph === PH_ATTACH_N1) : true), JSON.stringify(enabledAfterText));
   check('B1b 有附言 + ref ⇒ 正常发送（1 帧，content 非空 ∧ refs 携带本条转发引用）',
     b1.n === 1 && !!b1.frame && b1.frame.content === '这是附言。'
       && (b1.frame.refs || []).length >= 1
@@ -338,11 +346,13 @@ try {
     const after = {
       disabled: document.getElementById('send-btn').disabled,
       chips: document.querySelectorAll('.att-ref').length,
+      ph: document.getElementById('input').placeholder,
     };
     return { before, after };
   });
-  checkGate('B4 ref 芯片移除 ⇒ 闸随动解除（发送键恢复可用）',
-    b4.before.disabled === true && b4.after.chips === 0 && b4.after.disabled === false, JSON.stringify(b4));
+  checkGate('B4 ref 芯片移除 ⇒ 闸随动解除（发送键恢复可用）+ placeholder 复位通用文案（清空附件）',
+    b4.before.disabled === true && b4.after.chips === 0 && b4.after.disabled === false
+      && b4.after.ph === ZH_REF['input.placeholder'], JSON.stringify(b4));
 
   // ── C1 出站帧总账 ────────────────────────────────────────────────────
   const ledger = await page.evaluate(() => ({
