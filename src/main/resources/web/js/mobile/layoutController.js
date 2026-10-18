@@ -75,7 +75,7 @@ function applyBarState() {
   const bar = document.getElementById('mobile-activity-bar');
   if (!bar) return;
   document.body.classList.toggle('mb-bar-collapsed', barCollapsed);
-  const fold = bar.querySelector('.mobile-bar-fold');
+  const fold = /** @type {HTMLElement|null} */ (bar.querySelector('.mobile-bar-fold'));
   if (fold) {
     renderFoldIcon(fold);
     fold.setAttribute('aria-expanded', barCollapsed ? 'false' : 'true');
@@ -181,7 +181,7 @@ function watchPressed() {
     const bar = document.getElementById('mobile-activity-bar');
     if (!bar) return;
     for (const b of BAR_BUTTONS) {
-      const btn = bar.querySelector(`[data-face="${b.face}"]`);
+      const btn = /** @type {HTMLElement|null} */ (bar.querySelector(`[data-face="${b.face}"]`));
       if (btn) btn.title = tt(b.zh, b.en);
     }
     applyBarState(); // 折叠键标题随语言刷新（图标不变）
@@ -224,12 +224,13 @@ function watchBootAutoOpen() {
 export function activateLayout() {
   const bar = buildBar();
   bar.addEventListener('click', (e) => {
+    const tgt = /** @type {Element} */ (e.target);
     // r4 双态：折叠键 / 收起态整条 bar（=展开钮）→ 切态；展开态其余点击走导航。
-    if (e.target.closest('.mobile-bar-fold') || barCollapsed) {
+    if (tgt.closest('.mobile-bar-fold') || barCollapsed) {
       toggleBar();
       return;
     }
-    const btn = e.target.closest('[data-face]');
+    const btn = /** @type {HTMLElement|null} */ (tgt.closest('[data-face]'));
     if (btn && bar.contains(btn)) onBarClick(btn.dataset.face);
   });
   // 恢复持久化态（缺省展开）+ 图标/aria 同步。

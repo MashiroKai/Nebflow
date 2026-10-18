@@ -90,7 +90,7 @@ function roundedRect(ctx, x, y, w, h, r) {
  * @property {HTMLCanvasElement} canvas
  * @property {CanvasRenderingContext2D} ctx
  * @property {any} data
- * @property {{nodes: Array<any>, edges: Array<any>, alpha: number} | null} sim
+ * @property {{nodes: Array<any>, edges: Array<any>, degree: Map<string, number>, alpha: number} | null} sim
  * @property {number} raf
  * @property {string} focusId
  * @property {string} filter
@@ -236,7 +236,7 @@ async function renderInto(pane) {
     <div class="wx-sb-sec"><div class="wx-sb-title wx-sb-status-title"></div><div class="wx-sb-chips wx-status"></div></div>
     <div class="wx-sb-sec"><div class="wx-sb-title wx-sb-legend-title"></div><div class="wx-sb-legend"></div></div>`;
   sb.querySelector('.wx-sb-head-title').textContent = t('wiki.panelTitle');
-  const clearBtn = sb.querySelector('.wx-sb-clear');
+  const clearBtn = /** @type {HTMLElement} */ (sb.querySelector('.wx-sb-clear'));
   clearBtn.textContent = t('wiki.clearAll');
   clearBtn.title = t('wiki.clearAllTitle');
   sb.querySelector('.wx-sb-types-title').textContent = t('wiki.sbTypes');
@@ -276,7 +276,7 @@ async function renderInto(pane) {
     mkZoomBtn('fit', '⟲', t('wiki.zoomResetTitle')),
   );
   zoom.addEventListener('click', (e) => {
-    const b = e.target.closest('button');
+    const b = (/** @type {Element} */ (e.target)).closest('button');
     if (!b || !view) return;
     if (b.dataset.z === 'in') zoomCanvas(1.12);
     else if (b.dataset.z === 'out') zoomCanvas(1 / 1.12);
@@ -783,7 +783,7 @@ function renderSidebar() {
   const projList = sb.querySelector('.wx-projects');
   projList.innerHTML = '';
   const projects = d.projects || [];
-  const search = view.pane.querySelector('.wiki-toolbar-search');
+  const search = /** @type {HTMLInputElement|null} */ (view.pane.querySelector('.wiki-toolbar-search'));
   projects.forEach((p, i) => {
     const row = document.createElement('div');
     row.className = 'wx-sb-item wx-proj';

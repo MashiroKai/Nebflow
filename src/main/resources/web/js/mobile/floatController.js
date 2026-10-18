@@ -121,6 +121,6 @@ export function activateFloats() {
 function syncPillVisibility() {
   const pill = document.getElementById('mobile-float-actions');
   if (!pill) return;
-  const anyVisible = [...pill.children].some((el) => !el.hidden && !el.classList.contains('hidden'));
+  const anyVisible = [...pill.children].some((el) => !(/** @type {HTMLElement} */ (el)).hidden && !el.classList.contains('hidden'));
   pill.classList.toggle('all-hidden', !anyVisible);
 }

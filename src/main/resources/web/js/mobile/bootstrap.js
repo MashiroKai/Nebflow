@@ -85,7 +85,7 @@ if (typeof mq.addEventListener === 'function') {
 if (mq.matches) activate();
 
 // QA / 诊断探针（只读）。
-window.__nfMobileLayer = {
+(/** @type {any} */ (window)).__nfMobileLayer = {
   get active() { return active; },
   version: 'mobile-ui-refactor r4 (tools-into-header + dvh-full-chain + bar-dual-state)',
 };
