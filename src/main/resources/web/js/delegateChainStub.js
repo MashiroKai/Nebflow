@@ -136,6 +136,10 @@ const PENDING_N1_KINDS = new Set([FRAME_KINDS.CHAIN_REGISTERED, FRAME_KINDS.CHAI
  * @property {{branch: string, worktree: string, cwd: string, baseWorkspace: string, baseBranch: string, baseSha: string, plugins: string[], allocation: string}|null} worktree
  *                                      spawn 行投影（S11 自动建 worktree 面的数据源；无分支腿 = null）。
  *                                      plugins/allocation = jev-plugins 批 additive 两键（旧行缺键 → []/''）
+ * @property {string[]} plugins          分配集顶层投影（#523 补齐批：jev-plugins spawn 行 additive 键
+ *                                      原名透传——无分支腿的 spawn 也有分配面，旧盘/缺键 → []）
+ * @property {string} allocation         分配模式词顶层投影（jev / llm-fallback / fail-open /
+ *                                      empty-catalog；惰性态 disabled/off/auto-off 与旧行缺键 → ''）
  * @property {{verdict: string, reason: string, source: string, at: number}|null} verdict
  *                                      terminal-verdict 行投影（三判词 + reason）
  * @property {Array<{delegateId: string, branch: string, projectKey: string, readyAt: number, action: string, at: number}>} mergeQueue
@@ -231,6 +235,10 @@ export function chainFromStoreRecord(record) {
   let verdict = null;
   let spawnAt = -1;
   let verdictAt = -1;
+  // #523 补齐批：spawn 行分配两键的顶层投影（与 worktree 投影同帧同源——挂在
+  // 顶层是为了让无分支腿（worktree 投影为 null）的 spawn 也有分配可见面）。
+  let allocPlugins = [];
+  let allocMode = '';
   for (const e of entries) {
     if (!e || typeof e !== 'object') continue;
     const kind = String(e.kind || '');
@@ -242,6 +250,8 @@ export function chainFromStoreRecord(record) {
         spawnAt = at;
         // plugins/allocation: jev-plugins additive spawn payload keys (#1226) —
         // absent in old rows → []/'' (missing-tolerant, no fabrication).
+        allocPlugins = Array.isArray(p.plugins) ? p.plugins.map((x) => String(x || '')) : [];
+        allocMode = String(p.allocation || '');
         worktree = {
           branch: String(p.branch || ''),
           worktree: String(p.worktree || ''),
@@ -299,6 +309,8 @@ export function chainFromStoreRecord(record) {
     delegateId,
     nodes,
     worktree: worktree && (worktree.branch || worktree.cwd) ? worktree : null,
+    plugins: allocPlugins,
+    allocation: allocMode,
     verdict,
     mergeQueue: mergeQueueFifo(queue),
     frames,

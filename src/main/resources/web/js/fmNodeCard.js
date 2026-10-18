@@ -338,10 +338,20 @@ export function nodeHtml(n, pos, originX, nameOf, opts = {}) {
   // 一致；88px 固定卡纵向不可加行（独占行实测溢出加剧），复用 .solar-node-sub。
   // 🔴 换源接线批：opts.subText 给出时整面覆盖（ChainNode 无 preset/plugins 权威面，
   //   禁回落「默认预设」臆造空态）；'' = 副行整行省略（零空行）。
+  // #523 补齐批（任务面板 plugins/allocation 行）：n.allocation 在场（delegate 链
+  //   视图 root 卡——分配模式词只由 delegateFlowMap 投影设置）⇒ 副行 = 分配面：
+  //   `p1, p2 · allocation: jev`；空集/失败态只剩 `allocation: fail-open`（诚实显
+  //   集合为空的成因）。分配词缺席（经典项目图）⇒ 既有 preset·plugins 分支逐字节
+  //   不变；allocation 词面是数据原文（spawn 行键名 + 三态词——无新 locale 键，
+  //   与 L2 座 spawnAllocBits 同款「前缀 = 数据」纪律）。
   const subGiven = 'subText' in o;
   const presetText = n.preset || t('flowmap.presetDefault');
   const pluginsText = (n.plugins || []).join(', ');
-  const subTitle = subGiven ? String(o.subText || '') : (pluginsText ? `${presetText} · ${pluginsText}` : presetText);
+  const allocWord = String(n.allocation || '');
+  const subTitle = subGiven ? String(o.subText || '')
+    : allocWord
+      ? [pluginsText, `allocation: ${allocWord}`].filter(Boolean).join(' · ')
+      : (pluginsText ? `${presetText} · ${pluginsText}` : presetText);
   const titleAttr = subGiven
     ? `${esc(n.name)}${subTitle ? ` · ${esc(subTitle)}` : ''}${(term || delegateReady) && FM_NODE_ST_KEY[st] ? `（${esc(t(FM_NODE_ST_KEY[st]))}）` : ''}`
     : `${esc(n.name)} · ${esc(subTitle)}${term && FM_NODE_ST_KEY[st] ? `（${esc(t(FM_NODE_ST_KEY[st]))}）` : ''}`;

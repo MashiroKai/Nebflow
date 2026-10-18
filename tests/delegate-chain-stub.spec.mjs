@@ -15,6 +15,7 @@
 //   T6 §16 七键逐字钉（zh/en 双语值提取比对）＋ fm-node 拆出件单源钉（静态）
 //   T7 S1 展开：已落三行族解读渲染＋候定集透传不解读；折叠记忆跨重渲；外部行守卫
 //   T8 S10 per-task 链视图：ChainNode 卡（fmNodeCard 单源渲染）＋返回钮键2＋fail-soft 键7 重试
+//   T8b #523 分配可见面：root 卡副行 plugins/allocation ＋ fm-detail 分配方式行（#504 同点位）；旧行缺键零渲染
 //   T9 S11 结构总视图：头键3＋FIFO 泳道键4 readyAt 序＋worktree 座键5＋链卡点进
 //   T10 S16 外部行：openNative 出口（POST 断言）＋进度 offset 增量＋展开守卫
 //   ── N1 刀3 真源换源（A8 REST provider）扩例 ──
@@ -367,6 +368,19 @@ const chain34 = {
   frames: [],
 };
 
+/** #523 分配可见面夹具：spawn 行带 jev-plugins additive 两键（ChainView 顶层投影）。 */
+const chainAlloc = {
+  taskId: '31', delegateId: 'delegate-nebflow-aa11',
+  nodes: [{ id: 'delegate-nebflow-aa11', kind: 'delegate', label: '重构任务面板数据源',
+    description: '把 delegate 行接上 ⑤A 读取口', status: 'running', deps: [], executor: 'nebflow' }],
+  worktree: { branch: 'delegate/task-31', worktree: '/wt/31', cwd: '/wt/31', baseWorkspace: '/w', baseBranch: 'main', baseSha: 'abc123' },
+  plugins: ['doc-production'],
+  allocation: 'jev',
+  verdict: { verdict: 'running', reason: '', source: '', at: 0 },
+  mergeQueue: [],
+  frames: [],
+};
+
 /** 进 per-task 链视图的 UI 路径（树批 2026-10-09 后）：任务列表行内零 L1 入口钮
  *  （内部行行尾 workflow 钮退役）——项目面板「项目流程图」圆钮（方案 A2）→ L2 →
  *  点该 delegate 链卡。 */
@@ -553,6 +567,46 @@ test('T8 S10 per-task 链视图：ChainNode 卡（单源渲染件）＋返回钮
   await expect(detail.locator('.fm-detail-title')).toHaveText('#31 重构任务面板数据源');
   await page.keyboard.press('Escape');
   await expect(detail).toBeHidden();
+
+  expect(pageErrors).toEqual([]);
+});
+
+test('T8b #523 分配可见面：root 卡副行 plugins/allocation ＋ fm-detail 分配方式行；旧行缺键零渲染', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  await bootApp(page);
+  // 相 1：spawn 行带分配两键 → L1 root 卡副行 = 分配面（`doc-production · allocation: jev`），
+  // fm-detail 配置区 = 插件行 + 分配方式行（#504 🟠 同点位）。
+  await setFixture(page, { rows: [row31], chains: [chainAlloc] });
+  await openChainViewViaProjects(page, '31');
+  const pane = page.locator('.canvas-tab-pane[data-tab-id="projects"]');
+  const card = pane.locator('.fm-node[data-node-id="delegate-nebflow-aa11"]');
+  await expect(card).toHaveCount(1);
+  await expect(card.locator('.solar-node-sub')).toHaveText('doc-production · allocation: jev');
+  await card.click();
+  const detail = pane.locator('.fm-detail');
+  await expect(detail).toHaveClass(/open/);
+  const kv = detail.locator('.fm-detail-kv').first(); // 配置区 = 首个 kv 块
+  await expect(kv).toContainText('doc-production'); // 分配集 = 插件行承载
+  await expect(kv).toContainText('分配方式'); // 新键 flowmap.detail.allocation（zh）
+  await expect(kv).toContainText('jev'); // 模式词 = 数据原文
+  await page.keyboard.press('Escape');
+  await expect(detail).toBeHidden();
+
+  // 相 2：旧行链（两键缺席——chain31 早于 #1226 additive 键）→ 零臆造：
+  // 副行回落既有 preset 空态、配置区无分配方式行。
+  await pane.locator('[data-back-to-tasks]').click();
+  await expect(pane).toHaveCount(0);
+  await setFixture(page, { rows: [row31], chains: [chain31] });
+  await openChainViewViaProjects(page, '31');
+  const card2 = page.locator('.fm-node[data-node-id="delegate-nebflow-aa11"]');
+  await expect(card2).toHaveCount(1);
+  await expect(card2.locator('.solar-node-sub')).toHaveText('默认预设'); // 既有空态逐字
+  await card2.click();
+  const detail2 = page.locator('.fm-detail');
+  await expect(detail2).toHaveClass(/open/);
+  await expect(detail2.locator('.fm-detail-kv').first()).not.toContainText('分配方式');
 
   expect(pageErrors).toEqual([]);
 });

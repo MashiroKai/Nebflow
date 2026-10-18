@@ -91,6 +91,18 @@ export function buildDelegateFm(key) {
   const rootStatus = String((rootFromChain && rootFromChain.status)
     || (row && row.status) || 'running');
   const rootName = [taskNo ? `#${taskNo}` : '', title].filter(Boolean).join(' ');
+  // jev-plugins 分配可见面（#523 补齐批：任务面板 plugins/allocation 行）——root 卡
+  // 副行（fmNodeCard）与 fm-detail 配置区（flowMapArchive）的权威数据源。单源 =
+  // ChainView 顶层投影（无分支腿的 spawn 也有分配面）；旧投影/夹具只在 worktree
+  // 内带两键时回落读取（适配缝容忍）。老 spawn 行/惰性态（disabled/off/auto-off）
+  // 两键缺席 ⇒ 空集 → undefined（缺键容忍，零臆造——经典项目图节点不含这两键，
+  // 渲染逐字节不变）。
+  const allocPlugins = (Array.isArray(chain.plugins) && chain.plugins.length
+    ? chain.plugins
+    : (chain.worktree && Array.isArray(chain.worktree.plugins) ? chain.worktree.plugins : []));
+  const allocNames = allocPlugins.filter(Boolean).map(String);
+  const allocMode = String(chain.allocation || (chain.worktree && chain.worktree.allocation) || '');
+
   /** @type {any} */
   const root = {
     id: rootId,
@@ -103,6 +115,8 @@ export function buildDelegateFm(key) {
     worktree: chain.worktree ? String(chain.worktree.worktree || chain.worktree.cwd || '') : '',
     mergeQueue: row && row.mergeQueue ? row.mergeQueue : undefined,
     mergeQueuePos: row && row.mergeQueuePos ? row.mergeQueuePos : undefined,
+    plugins: allocNames.length ? allocNames : undefined,
+    allocation: allocMode || undefined,
     in: [], deps: [], out: [],
   };
 

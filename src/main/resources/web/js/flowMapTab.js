@@ -1560,6 +1560,9 @@ function nodeContentKey(n) {
     n.role || '',
     n.preset || '',
     (n.plugins || []).join(','),
+    // #523 补齐批：delegate 链视图 root 卡副行的分配模式词入签名（参与渲染的字段
+    // 全入——否则重 spawn 换臂/换模式时增量路径复用旧卡，副行陈旧）。
+    n.allocation || '',
     n.hasWorktree || n.worktree ? 1 : 0,
     n.worktree || '',
     n.merge === true ? 1 : 0,
