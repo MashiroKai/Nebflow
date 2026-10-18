@@ -573,6 +573,11 @@ export default {
   'login.action.token-exchange-failed': 'click "Retry"; if it still fails, use "Sign in with another account"',
   'login.reason.device-register-failed': 'the login server rejected the device registration',
   'login.action.device-register-failed': 'click "Retry"; if it still fails, use "Sign in with another account"',
+  // Single-device-single-account batch (machine-fingerprint gate 409; codes are verbatim the server wire reasons).
+  'login.reason.device_bound_other_account': 'this device is already signed in to a different account: one device can hold only one live account at a time',
+  'login.action.device_bound_other_account': 'sign out of the original account on this machine first (if that instance still runs here), or remove this device from the website\'s "Devices" page, then sign in again',
+  'login.reason.device_already_logged_in': 'this device already has a signed-in instance: one machine can hold only one live account at a time',
+  'login.action.device_already_logged_in': 'sign out in the existing instance and retry; use a test account for isolated testing',
   'login.reason.callback-state-invalid': 'the login callback check failed (the one-time token did not match or expired)',
   'login.action.callback-state-invalid': 'go back to {lowerBrand} and click "Sign in" again',
   'login.reason.provider-error': 'the login was refused or interrupted by the identity provider',

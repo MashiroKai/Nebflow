@@ -363,7 +363,8 @@ private[gateway] object AuthRoutes:
                                     tokens.accessToken,
                                     identity.deviceId,
                                     identity.deviceName,
-                                    identity.platform
+                                    identity.platform,
+                                    nebflow.neblink.DeviceIdentity.machineFingerprint()
                                   )
                                   .flatMap {
                                     case Right(json) =>
@@ -422,13 +423,17 @@ private[gateway] object AuthRoutes:
                                                 Status.InternalServerError
                                               )
                                         }
-                                    case Left(err) =>
-                                      val diagnostic = nebflow.neblink.CredentialDiagnostics.diagnosticOf(
-                                        nebflow.neblink.CredentialFailure.DeviceRegisterFailed,
-                                        err
-                                      )
+                                    case Left(rejection) =>
+                                      // 单设备单账号批：register 拒绝是**结构化**的
+                                      // （`RegisterRejection` 携带服务端稳定 reason）——
+                                      // 两条机器指纹闸 409 走各自的稳定码与文案键，
+                                      // 其余保持 `DeviceRegisterFailed`（原文进日志）。
+                                      val diagnostic = classifyRegisterRejection(rejection)
                                       logger.warn(
-                                        diagnostic.logLine("device register failed"),
+                                        diagnostic.logLine(
+                                          s"device register failed (status=${rejection.status}" +
+                                            s", reason=${rejection.reason.getOrElse("-")})"
+                                        ),
                                         "code" -> diagnostic.code
                                       ) *>
                                         pkceLogin.failDiagnosed(diagnostic) *>
@@ -476,6 +481,23 @@ private[gateway] object AuthRoutes:
     end match
 
   end handleAuthCallback
+
+  /**
+   * 单设备单账号批：register 拒绝 → 分类映射。服务端 409 的稳定 `reason`
+   * （wire 字面量跨仓钉死，沿 `binding_revoked` 先例）与
+   * `CredentialFailure` 的 code **逐字同源**，因此按码直查；其余 reason
+   * （或无 reason）保持既有的 `device-register-failed` 兜底，服务端原文只进
+   * 日志（`detail` 通道，禁进用户可见面）。
+   */
+  private def classifyRegisterRejection(
+    rejection: LogtoDeviceFlow.RegisterRejection
+  ): nebflow.neblink.CredentialDiagnostics.Diagnostic =
+    import nebflow.neblink.{CredentialDiagnostics as CD, CredentialFailure as CF}
+    val failure = rejection.reason match
+      case Some(r) if r == CF.DeviceBoundOtherAccount.code => CF.DeviceBoundOtherAccount
+      case Some(r) if r == CF.DeviceAlreadyLoggedIn.code => CF.DeviceAlreadyLoggedIn
+      case _ => CF.DeviceRegisterFailed
+    CD.diagnosticOf(failure, rejection.message)
 
   /**
    * 案 C ①(a)（2026-09-14）语义的**分类化**承接（缺陷 A / 上游 §8.2 第 4 项）：

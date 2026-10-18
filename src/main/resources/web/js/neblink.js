@@ -85,12 +85,25 @@ export const LOCAL_FILE_CODES = [
 export const GUARD_REFUSAL_SIGNATURE = 'runs on an isolated data root';
 export const GUARD_REFUSAL_CODE = 'enroll-refused-isolated-home';
 
-/** 从失败载荷反查分类码：优先 `code`（后端结构化通道）；缺失时按护栏签名判别。
- *  返回 '' = 无分类（保持原样渲染，不猜）。 */
+// ── 机器指纹闸 409 的可判别化（单设备单账号批）──────────────────────────────
+// 服务端 register 409 的两条稳定 reason（wire 字面量跨仓钉死：link-server
+// `model.rs` ↔ 引擎 `CredentialFailure` code ↔ 本表 ↔ i18n 键后缀）。
+// 结构化通道（`payload.code`）存在时直接命中；老网关/包装串把 code 通道丢掉时，
+// 按**字面量反查**——失败原文（诊断码行「诊断码：<code>」或裸 reason）里必然携带
+// 该码，匹配任何普通网络错误都不可能撞上（下划线 + 专有短语形态）。
+export const REGISTER_CONFLICT_CODES = [
+  'device_bound_other_account',
+  'device_already_logged_in'
+];
+
+/** 从失败载荷反查分类码：优先 `code`（后端结构化通道）；缺失时按护栏签名与
+ *  机器指纹闸 reason 字面量判别。返回 '' = 无分类（保持原样渲染，不猜）。 */
 export function classifyLoginFailureCode(payload = {}) {
   const code = payload && payload.code ? String(payload.code) : '';
   if (code) return code;
   const raw = `${(payload && payload.reason) || ''}${(payload && payload.error) || ''}`;
+  const conflict = REGISTER_CONFLICT_CODES.find((c) => raw.includes(c));
+  if (conflict) return conflict;
   return raw.includes(GUARD_REFUSAL_SIGNATURE) ? GUARD_REFUSAL_CODE : '';
 }
 
