@@ -72,7 +72,10 @@ test.beforeEach(async ({ page }) => {
       let m; try { m = JSON.parse(raw); } catch { return; }
       if (m.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0 }));
     });
-    ws.send(JSON.stringify({ type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {} }));
+    // voiceseal 批（批 #508）测试同步（行为零改）：V2a/V2b 判据要求「产品面
+    // 单一挂载点 + 单例绑定产品画布」——语音封存 flag（features.voice，生产
+    // 默认封存 ⇒ orb 不挂载）须在 seed 解封，产品面 orb 才按原路径挂载。
+    ws.send(JSON.stringify({ type: 'configData', config: '{"features":{"voice":true}}', configured: true, onboarding: 'done', models: [], defaults: {} }));
     ws.send(JSON.stringify({ type: 'sessionList', sessions: [], activeId: null, folders: [] }));
   });
 });
@@ -194,6 +197,10 @@ async function expectComposerOrbMounted(page) {
       orbBubbleNodes: document.querySelectorAll('.micbubble').length,
       orbCanvasNodes: document.querySelectorAll('.orb-canvas').length,
       orbCssNodes: document.querySelectorAll('.css-orb').length,
+      // voiceseal 批（批 #508）计数对位补充：家族两件各自恰一（防「第三份
+      // 杂散拷贝」的原判据强度不降）。
+      productWrapNodes: document.querySelectorAll('#input-bar .mic-orb-wrap').length,
+      vmoWrapNodes: document.querySelectorAll('#voice-mode-overlay .mic-orb-wrap').length,
       singleton: !!o,
       singletonBound: !!o && !!btn && !!canvas && o.btn === btn && o.canvas === canvas,
     };
@@ -201,10 +208,19 @@ async function expectComposerOrbMounted(page) {
   expect(mounted.composerWrap, 'composer orb wrap mounted (voicefix revert)').toBe(true);
   expect(mounted.composerCanvas, 'composer orb canvas mounted (voicefix revert)').toBe(true);
   expect(mounted.voiceBtnOrbChild, 'voice button carries the orb canvas').toBe(true);
-  expect(mounted.orbWrapNodes, 'exactly one orb wrap (no strays)').toBe(1);
-  expect(mounted.orbBubbleNodes, 'exactly one micbubble').toBe(1);
-  expect(mounted.orbCanvasNodes, 'exactly one orb canvas').toBe(1);
-  expect(mounted.orbCssNodes, 'exactly one css-orb').toBe(1);
+  // voiceseal 批（批 #508）计数对位（纯测试同步 · 行为零改）：voice-mode 批
+  // （3f6494f53）给 overlay 落了居中镜像 #vmo-orb-wrap.mic-orb-wrap —— 家族
+  // `.mic-orb-wrap`/`.micbubble`/`.orb-canvas`/`.css-orb` 各 2 件（产品面 +
+  // overlay 镜像，同一封存 flag 家族）。**基线本就如此**（stash 验证：本 spec
+  // 在 de1d09b25 净树上同样 2 failed —— voice-mode 批落地晚于
+  // voicefix-testsync2 的「恰一」断言，未同步）。判据改写为「家族各 2 + 成员
+  // 各恰 1」，防杂散拷贝的判据强度不降。
+  expect(mounted.orbWrapNodes, 'exactly two orb wraps (product + voice-mode mirror)').toBe(2);
+  expect(mounted.orbBubbleNodes, 'exactly two micbubbles (product + mirror)').toBe(2);
+  expect(mounted.orbCanvasNodes, 'exactly two orb canvases (product + mirror)').toBe(2);
+  expect(mounted.orbCssNodes, 'exactly two css-orbs (product + mirror)').toBe(2);
+  expect(mounted.productWrapNodes, 'exactly ONE product orb wrap (no strays in composer)').toBe(1);
+  expect(mounted.vmoWrapNodes, 'exactly ONE voice-mode mirror wrap (no strays)').toBe(1);
   expect(mounted.singleton, 'MicOrb singleton live (mount gate satisfied)').toBe(true);
   expect(mounted.singletonBound, 'MicOrb singleton bound to the PRODUCT button + canvas').toBe(true);
 }

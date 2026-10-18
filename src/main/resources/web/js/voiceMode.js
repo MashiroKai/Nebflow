@@ -24,6 +24,9 @@ import { startDictation, stopDictation, setMicVolumeListener } from './voiceEngi
 import { registerVoiceModeOrb, notifyVoiceState } from './micOrb.js';
 import { showToast } from './modal.js';
 import { speakText, ensureVoiceAudible } from './chat.js';
+// voiceseal 批（批 #508）：语音封存 flag（features.voice，默认封存）——
+// enterVoiceMode 的最终闸（见函数体首行），任何未来入口路径都被它兜住。
+import { voiceEnabled } from './featureFlags.js';
 
 const BARGE_LEVEL = 0.22;    // mic level that counts as real speech during playback
 const BARGE_MS = 320;        // sustained speech that triggers the barge-in
@@ -188,6 +191,10 @@ function engineCallbacks() {
  *           getSessionId?: () => string|null }} depsIn
  */
 export function enterVoiceMode(depsIn) {
+  // voiceseal 批（批 #508）：封存终闸 —— flag OFF（默认）时全双工语音模式
+  // 不可进入（正常入口 input.js 拖动手势已被 gate；此处兜住一切直呼路径，
+  // 引擎会话/TTS 队列/WS transcribe 腿均不启动）。flag ON 完整恢复。
+  if (!voiceEnabled()) return;
   if (active) return;
   if (!depsIn || typeof depsIn.sendText !== 'function') return;
   el.overlay = byId('voice-mode-overlay');

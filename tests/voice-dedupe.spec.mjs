@@ -75,7 +75,17 @@ async function injectMocks(page) {
       constructor(url) {
         this.url = url; this.readyState = 1;
         FakeWS.instance = this; FakeWS.sent = FakeWS.sent || [];
-        queueMicrotask(() => this.onopen && this.onopen({}));
+        queueMicrotask(() => {
+          this.onopen && this.onopen({});
+          // voiceseal 批（批 #508）测试同步（行为零改）：语音封存 flag
+          // （features.voice）经 configData 在 boot 首帧 latch —— 本 spec 测的
+          // 是「未封存态」的听写引擎行为，故 seed 解封（生产默认仍封存）。
+          this.onmessage && this.onmessage({ data: JSON.stringify({
+            type: 'configData',
+            config: JSON.stringify({ features: { voice: true } }),
+            configured: true, onboarding: 'done', models: [], defaults: {},
+          }) });
+        });
       }
       send(d) { FakeWS.sent.push(d); }
       close() { this.readyState = 3; }

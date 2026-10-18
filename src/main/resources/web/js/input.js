@@ -20,6 +20,9 @@ import { makeReference } from './reference.js';
 import { renderQuoteStrip } from './msgQuote.js';
 import { startDictation, stopDictation, isModelReady } from './voiceEngine.js';
 import { notifyVoiceState } from './micOrb.js';
+// voiceseal 批（批 #508）：语音封存 flag（features.voice，默认封存）——
+// 听写入口与全双工拖动入口在封存态一并闸死（见 onVoiceToggle/enterVoiceModeNow）。
+import { voiceEnabled } from './featureFlags.js';
 import { showToast } from './modal.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
@@ -1259,6 +1262,9 @@ export function initInput(view) {
   // Click-toggle voice (user ruling 2026-08-25 21:34: tap once to start, tap
   // again to stop — replaces the old push-and-hold). Also spec §3.3.
   function onVoiceToggle(e) {
+    // voiceseal 批（批 #508）：封存（默认）时听写引擎会话一律不启动 —— 正常
+    // 情形气泡已 display:none 不可点，此闸兜住程序化调用（后端腿零启动）。
+    if (!voiceEnabled()) return;
     if (e) e.preventDefault();
     // A drag that just entered voice mode must not also toggle dictation
     // (the synthetic click fires after pointerup).
@@ -1274,6 +1280,9 @@ export function initInput(view) {
   // input.js ↔ voiceMode.js cycle-free at module-eval time (same pattern as
   // micOrb → voiceEngine).
   function enterVoiceModeNow() {
+    // voiceseal 批（批 #508）：封存（默认）时全双工入口闸死 —— 不动态加载
+    // voiceMode.js（voiceMode.enterVoiceMode 内还有一道终闸，双保险）。
+    if (!voiceEnabled()) return;
     setActiveView(view); // utterances must land in THIS session even if ws.js flips activeView later
     import('./voiceMode.js').then((m) => {
       m.enterVoiceMode({

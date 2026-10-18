@@ -761,6 +761,11 @@
      .dragging is held (transition suppressed), then snaps back on release. */
   transition: transform 0.25s ease;
 }
+/* voiceseal 批（批 #508）封存面 B 的 companion 规则（social-section-remote
+   同款先例）：上面的 `display:flex` 会压过 UA 的 `[hidden]{display:none}`，
+   必须显式重申 —— 隐藏 ≠ 删除，摘掉 `hidden`（js/voiceSeal.js flag latch）
+   即原样回归，本条规则自动失效。 */
+.mic-orb-wrap[hidden] { display: none; }
 .mic-orb-wrap.dragging { transition: none; }
 .micbubble {
   position: relative;

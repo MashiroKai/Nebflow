@@ -309,8 +309,13 @@
         <!-- 语音输入 = micOrb 液态光球（voicefix 批，作者 2026-09-21 14:0x ③：
              「参考我们最新的实现……把最近的有光球的回退回来」⇒ 回退源 =
              2cba0a224 删除前的最近版（git show 2cba0a224^），非 v8.2.2 原初版；
-             设置页光球调色板维持现状不恢复）。DOM 四件照原样恢复。 -->
-        <div class="mic-orb-wrap" id="mic-orb-wrap">
+             设置页光球调色板维持现状不恢复）。DOM 四件照原样恢复。
+             🔴 voiceseal 批（批 #508）封存面 B：静态 `hidden` = boot 默认封存
+             姿态（预绘制零闪现）；main.js 在首帧 configData 上按
+             featureFlags.voiceEnabled() latch（js/voiceSeal.js）—— flag ON
+             摘 `hidden` 原样恢复，OFF 保持。隐藏 ≠ 删除：子树/监听/i18n/CSS
+             全保留（companion 规则 = css/input.css `.mic-orb-wrap[hidden]`）。 -->
+        <div class="mic-orb-wrap" id="mic-orb-wrap" hidden>
           <button class="micbubble" id="voice-btn" type="button" title="Voice input" aria-label="Voice input">
             <canvas class="orb-canvas" id="mic-canvas" aria-hidden="true"></canvas>
             <div class="css-orb orb" id="mic-css-orb" role="img" aria-label="Mic state"></div>
@@ -353,8 +358,12 @@
 
   <!-- Full-duplex voice mode overlay. BODY-LEVEL on purpose (same reasoning
        as #daemon-config-overlay): must cover the viewport and escape any
-       overflow / backdrop-filter ancestor clipping. -->
-  <div id="voice-mode-overlay" role="dialog" aria-modal="false" aria-label="Voice conversation">
+       overflow / backdrop-filter ancestor clipping.
+       🔴 voiceseal 批（批 #508）封存面 A：静态 `hidden` = boot 默认封存姿态；
+       js/voiceSeal.js 按 featureFlags.voiceEnabled() latch（与面 B 同一 flag）。
+       隐藏 ≠ 删除：overlay 子树 / voiceMode.js / voiceEngine conversation 模式
+       全保留（companion 规则 = css/voiceMode.css `#voice-mode-overlay[hidden]`）。 -->
+  <div id="voice-mode-overlay" role="dialog" aria-modal="false" aria-label="Voice conversation" hidden>
     <div class="vmo-scrim"></div>
     <div class="vmo-center">
       <div class="mic-orb-wrap vmo-orb-wrap" id="vmo-orb-wrap">

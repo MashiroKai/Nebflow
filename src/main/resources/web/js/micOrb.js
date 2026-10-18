@@ -260,6 +260,9 @@ import state from './state.js';
 import { t } from './i18n.js';
 import * as orbPresets from './orbPresets.js';
 import { rootDisplayName } from './rootName.js';
+// voiceseal 批（批 #508）：语音封存 flag（features.voice，默认封存）——
+// 封存态不挂载 orb 单例（不建 GL 上下文、不起 1s 轮询，见 getMicOrb）。
+import { voiceEnabled } from './featureFlags.js';
 
 /* ========================================================================
    9-state definition (spec §10.1 + §10.5). v8.3.0: color language lives in
@@ -1438,13 +1441,25 @@ let instance = null;
    shared level consumers (voiceMode barge-in) on the Web Speech path. */
 let voiceEngineMod = null;
 
-/** Lazily create + return the MicOrb singleton (binds #voice-btn). */
+/**
+ * Lazily create + return the MicOrb singleton (binds #voice-btn).
+ *
+ * voiceseal 批（批 #508）：语音封存（featureFlags.voiceEnabled，默认封存）时
+ * **不构造**单例 —— 不建 WebGL 上下文、不起 bindObservers 的 1s 状态轮询
+ * （flag=OFF 零资源占用）；调用方拿到 null 后按既有 no-op 路径落空
+ * （notifyVoiceState / registerVoiceModeOrb 皆 null-safe）。恢复 = flag ON
+ * 后 main.js latch 调 initMicOrb()（见下）。
+ */
 export function getMicOrb() {
+  if (!voiceEnabled()) return null;
   if (!instance && document.getElementById('voice-btn')) instance = new MicOrb();
   return instance;
 }
 
-/** Initialize the orb after the DOM is ready (called once from main.js). */
+/** Initialize the orb after the DOM is ready (called once from main.js).
+ *  voiceseal 批：封存态 no-op；flag ON 由 main.js 的 configData latch 在
+ *  unsealVoiceFaces() 之后调用本函数完成挂载（boot 期配置未到的窗口一律
+ *  封存姿态，与好友批 detach-at-boot 同款时序）。 */
 export function initMicOrb() {
   getMicOrb();
 }

@@ -78,7 +78,10 @@ test.beforeEach(async ({ page }) => {
       let m; try { m = JSON.parse(raw); } catch { return; }
       if (m.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0 }));
     });
-    ws.send(JSON.stringify({ type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {} }));
+    // voiceseal 批（批 #508）测试同步（行为零改）：H3 驱动**产品面 live orb**
+    // —— 语音封存 flag（features.voice，生产默认封存 ⇒ orb 不挂载）须在 seed
+    // 解封，产品面 orb 才按原路径挂载。
+    ws.send(JSON.stringify({ type: 'configData', config: '{"features":{"voice":true}}', configured: true, onboarding: 'done', models: [], defaults: {} }));
     ws.send(JSON.stringify({ type: 'sessionList', sessions: [], activeId: null, folders: [] }));
   });
 });
@@ -233,10 +236,16 @@ test('H3: hidden entry ≠ dropped config — saveSaved custom selection drives 
   expect(mounted.voiceBtnOrbChild, 'voice button carries the orb canvas').toBe(true);
   // 「单一挂载点」= 旧「零节点」判据的正向对位：不得有游离/重复件（挂载判据按 id 取
   // 画布，重复 `#mic-canvas` 会让单例绑错目标）。
-  expect(mounted.orbWrapNodes, 'exactly one orb wrap').toBe(1);
-  expect(mounted.orbBubbleNodes, 'exactly one micbubble').toBe(1);
-  expect(mounted.orbCanvasNodes, 'exactly one orb canvas').toBe(1);
-  expect(mounted.orbCssNodes, 'exactly one css-orb').toBe(1);
+  // voiceseal 批（批 #508）计数对位（纯测试同步 · 行为零改）：voice-mode 批
+  // （3f6494f53）给 overlay 落了居中镜像 #vmo-orb-wrap.mic-orb-wrap ⇒ 家族
+  // `.mic-orb-wrap`/`.micbubble`/`.orb-canvas`/`.css-orb` 各 2 件（产品面 +
+  // overlay 镜像，同一封存 flag 家族）。**基线本就如此**（stash 验证：本 spec
+  // 在 de1d09b25 净树上同样 1 failed —— voice-mode 批落地晚于本批的「恰一」
+  // 断言，未同步）。判据改写为「家族各 2 + 成员各恰 1」，判据强度不降。
+  expect(mounted.orbWrapNodes, 'exactly two orb wraps (product + voice-mode mirror)').toBe(2);
+  expect(mounted.orbBubbleNodes, 'exactly two micbubbles (product + mirror)').toBe(2);
+  expect(mounted.orbCanvasNodes, 'exactly two orb canvases (product + mirror)').toBe(2);
+  expect(mounted.orbCssNodes, 'exactly two css-orbs (product + mirror)').toBe(2);
   expect(mounted.canvasIdNodes, 'exactly one #mic-canvas').toBe(1);
   expect(mounted.singleton, 'MicOrb singleton is live (mount gate satisfied)').toBe(true);
   expect(mounted.singletonBound, 'MicOrb singleton bound to the PRODUCT button + canvas').toBe(true);

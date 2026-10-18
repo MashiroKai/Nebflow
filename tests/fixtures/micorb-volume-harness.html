@@ -47,6 +47,10 @@
      pollDerived would then flip the orb to offline mid-test. Simulate the
      connected reality the tests assert against. */
   state.default.connected = true;
+  /* voiceseal 批（批 #508）测试同步（行为零改）：本 harness 测「未封存态」的
+     listening 形变管线 —— 语音封存 flag（features.voice，生产默认封存 ⇒
+     getMicOrb/initMicOrb 返回 null）须在挂载前解封。 */
+  state.default.parsedConfig = { features: { voice: true } };
   micOrb.initMicOrb();
 
   const renderer = () => micOrb.getMicOrb().renderer;

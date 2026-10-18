@@ -57,6 +57,12 @@ body.voice-mode-active #queue-bar {
     transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
     opacity 0.24s ease;
 }
+/* voiceseal 批（批 #508）封存面 A 的 companion 规则：idle 态本就
+   visibility:hidden 不可见，但封存要求「不渲染」——显式重申 `hidden` 的
+   display:none（本文件内没有 display 声明与 UA 规则竞争，此条为防御性
+   对位；social-section-remote / flowMap.css 同款先例）。摘掉 `hidden`
+   （js/voiceSeal.js flag latch）即原样恢复。 */
+#voice-mode-overlay[hidden] { display: none; }
 
 .vmo-scrim {
   display: none; /* the compact form has no viewport scrim */
