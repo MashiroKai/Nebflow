@@ -198,6 +198,7 @@ export default {
   'flowmap.detail.secExec': 'Execution',
   'flowmap.detail.preset': 'Preset',
   'flowmap.detail.plugins': 'Plugins',
+  'flowmap.detail.allocation': 'Allocation',
   'flowmap.detail.none': 'None',
   'flowmap.detail.in': 'Input',
   'flowmap.detail.out': 'Output',

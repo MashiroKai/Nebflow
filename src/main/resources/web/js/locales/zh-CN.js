@@ -188,6 +188,7 @@ export default {
   'flowmap.detail.secExec': '执行形态',
   'flowmap.detail.preset': '预设',
   'flowmap.detail.plugins': '插件',
+  'flowmap.detail.allocation': '分配方式',
   'flowmap.detail.none': '无',
   'flowmap.detail.in': '输入',
   'flowmap.detail.out': '输出',

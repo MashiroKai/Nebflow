@@ -70,6 +70,15 @@ class PluginInjectionSpec extends CatsEffectSuite:
       createFolders = true
     )
 
+  /** #523：自动分配专用闸写入（plugins.autoAllocate；总闸恒开态使用）。 */
+  private def setAutoAllocate(on: Boolean): Unit =
+    os.write.over(
+      tempRoot / "nebflow.json",
+      if on then """{"plugins":{"enabled":true,"autoAllocate":true}}"""
+      else """{"plugins":{"enabled":true,"autoAllocate":false}}""",
+      createFolders = true
+    )
+
   /** 分配桩面：固定返回 names（via=Jev），并记录调用。 */
   private def installStub(
     names: List[String],
@@ -197,6 +206,76 @@ class PluginInjectionSpec extends CatsEffectSuite:
       assertEquals(line.payload.hcursor.get[String]("nodeId").toOption, Some("n1"))
       assertEquals(line.payload.hcursor.get[List[String]]("plugins").toOption, Some(List("p1")))
       assertEquals(line.payload.hcursor.get[String]("allocation").toOption, Some("jev"))
+  }
+
+  // ── #523 补齐批：plugins.autoAllocate 专用闸 ＋ Jev 不可用回退路径（注入层）──
+
+  test("allocatePreparation: autoAllocate=false → mode=auto-off, zero model calls, zero allocation audit") {
+    setPluginsEnabled(true)
+    setAutoAllocate(false)
+    writeSkillPlugin("p1", "NEVER-ALLOC")
+    val calls = installStub(List("p1"))
+    for r <- PluginInjection.allocatePreparation("delegate-auto-off", "task")
+    yield
+      val (prep, set) = r.toOption.get
+      assertEquals(prep.injectedBlock, "", "the auto gate short-circuits before any injection")
+      assertEquals(set, PluginInjection.AllocatedSet(Nil, "auto-off"))
+      assertEquals(calls.size, 0, "autoAllocate=false never consults the Jev/LLM family")
+      // 惰性态 = 不写分配审计（与 disabled 同族）；连 allocated 成功行也不落。
+      val logLines =
+        if os.exists(tempRoot / "logs" / "jev-allocation.jsonl") then os.read.lines(tempRoot / "logs" / "jev-allocation.jsonl")
+        else Vector.empty
+      assert(!logLines.exists(_.contains("delegate-auto-off")), logLines.mkString("\n"))
+  }
+
+  test("forNode S9: autoAllocate=false + delegate-scope + empty declaration → no step-plugins line, no allocation call") {
+    setPluginsEnabled(true)
+    setAutoAllocate(false)
+    writeSkillPlugin("p1", "NEVER-STEP")
+    val calls = installStub(List("p1"))
+    for r <- PluginInjection.forNode(node, delegateScope = true, scopeKey = "delegate-scope-auto-off")
+    yield
+      assertEquals(r.toOption.get.injectedBlock, "")
+      assertEquals(calls.size, 0, "the step spawn is gated by the same auto switch")
+      assertEquals(os.exists(tempRoot / "chains"), false, "inert mode writes no step-plugins line")
+  }
+
+  test("allocatePreparation: both allocation arms fail → mode=fail-open, empty injection, dispatch continues (Jev 不可用回退路径)") {
+    setPluginsEnabled(true)
+    writeSkillPlugin("p1", "FAIL-OPEN") // 非空目录——越过 empty-catalog 短路，分配面真实到场
+    PluginAllocator.install(
+      new PluginAllocator.Face:
+        def allocatePlugins(subject: String, taskText: String, catalog: List[CatalogEntry]) =
+          IO.raiseError(new java.util.concurrent.TimeoutException("jev+llm both down"))
+    )
+    for r <- PluginInjection.allocatePreparation("delegate-fail-open", "task")
+    yield
+      val (prep, set) = r.toOption.get
+      assertEquals(prep.injectedBlock, "", "fail-open = empty set, dispatch is never wedged")
+      assertEquals(set, PluginInjection.AllocatedSet(Nil, "fail-open"))
+      // fail-open 落 Failure 事件行（JevFallback WARN + jsonl 审计——④判定结果落审计）。
+      val events = os.read.lines(tempRoot / "logs" / "jev-allocation.jsonl")
+      assert(events.exists(l => l.contains("delegate-fail-open") && l.contains("failure")), events.mkString("\n"))
+  }
+
+  test("allocatePreparation: LLM fallback arm produces mode=llm-fallback (Jev unavailable → small-model takeover)") {
+    setPluginsEnabled(true)
+    writeSkillPlugin("p1", "LLM-FALLBACK")
+    PluginAllocator.install(
+      new PluginAllocator.Face:
+        def allocatePlugins(subject: String, taskText: String, catalog: List[CatalogEntry]) =
+          IO.pure(
+            PluginAllocator.PluginAllocationResult(
+              JevAllocation.Allocated(List("p1")),
+              Some(PluginAllocator.AllocationVia.LlmFallback)
+            )
+          )
+    )
+    for r <- PluginInjection.allocatePreparation("delegate-llm-fb", "task")
+    yield
+      val (prep, set) = r.toOption.get
+      assertEquals(set, PluginInjection.AllocatedSet(List("p1"), "llm-fallback"))
+      assert(prep.injectedBlock.contains("LLM-FALLBACK"), prep.injectedBlock)
   }
 
 end PluginInjectionSpec

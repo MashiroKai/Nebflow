@@ -80,6 +80,8 @@ function statusClass(st) {
  * @property {string=} name
  * @property {string=} preset 节点预设名（NodePayload；未配置 → 前端空态「默认预设」）
  * @property {string[]=} plugins 分配插件名列表（NodePayload，条件序列化——非空才带）
+ * @property {string=} allocation 分配模式词（#523 补齐批：delegate 链视图 root 节点投影，
+ *   delegateFlowMap 单点设置——spawn 行 additive 键透传；经典项目图节点恒缺 = 行缺席）
  * @property {string=} status
  * @property {string=} description 一行描述（创建必写；2026-09-05 载荷收敛第一层）
  * @property {boolean=} hasResult 节点持有结果全文（载荷不含 result 本体——按需拉取标记）
@@ -947,14 +949,22 @@ function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n)
   ].filter(Boolean).join('<br>');
   // 配置区（核心诉求）：preset 恒带可 null（空态沿用「默认预设」口径）；plugins
   // 条件字段非空才有——全部列出，未分配 muted 空态。
+  // #523 补齐批（fm-detail 加 plugins/allocation 副行，#504 🟠 同点位）：allocation
+  // 行仅在场才渲染（值 = spawn 行三态/惰性模式词原文——jev / llm-fallback /
+  // fail-open / empty-catalog / disabled / off / auto-off）；经典项目图节点无此键
+  // ⇒ 配置区输出逐字节不变。分配集（allocated plugins）由上方 plugins 行承载。
   const presetText = String(n.preset || '') || t('flowmap.presetDefault');
   const plugins = Array.isArray(n.plugins) ? n.plugins : [];
+  const allocWord = String(n.allocation || '');
+  /** @type {[string, string, boolean?][]} */
+  const configRows = [
+    [t('flowmap.detail.preset'), esc(presetText), !n.preset],
+    [t('flowmap.detail.plugins'), plugins.length ? esc(plugins.join(', ')) : esc(t('flowmap.detail.none')), !plugins.length],
+  ];
+  if (allocWord) configRows.push([t('flowmap.detail.allocation'), esc(allocWord)]);
   const configHtml = `
     <div class="fm-detail-sec">${esc(t('flowmap.detail.secConfig'))}</div>
-    ${kvHtml([
-      [t('flowmap.detail.preset'), esc(presetText), !n.preset],
-      [t('flowmap.detail.plugins'), plugins.length ? esc(plugins.join(', ')) : esc(t('flowmap.detail.none')), !plugins.length],
-    ])}`;
+    ${kvHtml(configRows)}`;
   // 拓扑区：in 恒带数组（空 → muted 无）；out 兼容双形态——D6 批 E1（5a45c788）
   // 载荷改边对象数组 [{to,on,mode}]（归一化单点 buildNodeJson，缺键=无出边），
   // legacy 字符串/字符串数组（双读解码前的存量盘上形态）一并防御，取目标名列表
