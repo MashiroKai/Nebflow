@@ -69,6 +69,12 @@
        against feature CSS hover/base states. -->
   <link rel="stylesheet" href="css/sapphire.css">
   <link rel="stylesheet" href="css/mobile.css">
+  <!-- mobile-ui-refactor 批：手机交互层（独立层，非响应式补丁）。全部规则挂在
+       body.mobile-layer 之下 —— 该类只由 js/mobile/bootstrap.js 在 ≤768px 视口
+       激活，桌面窗口不命中任何一条（桌面渲染零变化）。注册钩子 = 本行 + 文件尾
+       script。层样式落 css/（/css/<file> 单段路由服务），控制器落 js/mobile/
+       （jsRoutes 任意深度服务）—— 均为既有静态路由面，零引擎改动。 -->
+  <link rel="stylesheet" href="css/mobileLayer.css">
 </head>
 <body>
   <script>document.documentElement.classList.add('ui-init');</script>
@@ -565,5 +571,9 @@
   <script src="vendor/katex.min.js"></script>
   <script src="vendor/highlight.min.js"></script>
   <script type="module" src="js/main.js"></script>
+  <!-- 手机交互层注册钩子：桌面视口只做一次 media-query 判定即返回（不 import
+       控制器、不建 DOM）；手机视口动态加载 js/mobile/ 四控制器（nav/layout/
+       gestures/floats，r2 规格①②③⑤）。 -->
+  <script type="module" src="js/mobile/bootstrap.js"></script>
 </body>
 </html>
