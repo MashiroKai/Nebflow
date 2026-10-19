@@ -1,0 +1,236 @@
+[
+  {
+    "tag": "after-dark",
+    "stats": {
+      "text": "8 tasks",
+      "marginLeft": "0px",
+      "box": {
+        "x": 359,
+        "y": 81.5,
+        "w": 40.8,
+        "h": 15
+      }
+    },
+    "toggleBox": {
+      "x": 331,
+      "y": 79,
+      "w": 20,
+      "h": 20
+    },
+    "rows": {
+      "537": {
+        "icon": null,
+        "glyphBox": {
+          "x": 359.6,
+          "y": 358.9,
+          "w": 14.9,
+          "h": 14.9
+        },
+        "meta": null
+      },
+      "552": {
+        "icon": null,
+        "glyphBox": {
+          "x": 361,
+          "y": 334.1,
+          "w": 12,
+          "h": 12
+        },
+        "meta": null
+      },
+      "554": {
+        "icon": null,
+        "glyphBox": {
+          "x": 359.6,
+          "y": 306.5,
+          "w": 14.9,
+          "h": 14.9
+        },
+        "meta": null
+      },
+      "563": {
+        "icon": {
+          "box": {
+            "x": 381,
+            "y": 266.8,
+            "w": 12,
+            "h": 12
+          },
+          "html": "<span class=\"executor-icon executor-icon-zcode\" aria-hidden=\"true\"><svg width=\"1"
+        },
+        "glyphBox": {
+          "x": 359.6,
+          "y": 265.3,
+          "w": 14.9,
+          "h": 14.9
+        },
+        "meta": "\"applied\": true"
+      },
+      "567": {
+        "icon": {
+          "box": {
+            "x": 381,
+            "y": 225.6,
+            "w": 12,
+            "h": 12
+          },
+          "html": "<span class=\"executor-icon executor-icon-codex\" aria-hidden=\"true\"><img src=\"ven"
+        },
+        "glyphBox": {
+          "x": 359.6,
+          "y": 224.1,
+          "w": 14.9,
+          "h": 14.9
+        },
+        "meta": "patch plan written (3 files)"
+      },
+      "568": {
+        "icon": null,
+        "glyphBox": {
+          "x": 359.6,
+          "y": 197.9,
+          "w": 14.9,
+          "h": 14.9
+        },
+        "meta": null
+      },
+      "570": {
+        "icon": null,
+        "glyphBox": {
+          "x": 359.6,
+          "y": 171.7,
+          "w": 14.9,
+          "h": 14.9
+        },
+        "meta": null
+      },
+      "571": {
+        "icon": null,
+        "glyphBox": {
+          "x": 359.6,
+          "y": 127.6,
+          "w": 14.9,
+          "h": 14.9
+        },
+        "meta": null
+      }
+    }
+  },
+  {
+    "tag": "after-light",
+    "stats": {
+      "text": "8 tasks",
+      "marginLeft": "0px",
+      "box": {
+        "x": 359,
+        "y": 81.5,
+        "w": 40.8,
+        "h": 15
+      }
+    },
+    "toggleBox": {
+      "x": 331,
+      "y": 79,
+      "w": 20,
+      "h": 20
+    },
+    "rows": {
+      "537": {
+        "icon": null,
+        "glyphBox": {
+          "x": 361,
+          "y": 360.3,
+          "w": 12,
+          "h": 12
+        },
+        "meta": null
+      },
+      "552": {
+        "icon": null,
+        "glyphBox": {
+          "x": 361,
+          "y": 334.1,
+          "w": 12,
+          "h": 12
+        },
+        "meta": null
+      },
+      "554": {
+        "icon": null,
+        "glyphBox": {
+          "x": 361,
+          "y": 307.9,
+          "w": 12,
+          "h": 12
+        },
+        "meta": null
+      },
+      "563": {
+        "icon": {
+          "box": {
+            "x": 381,
+            "y": 266.8,
+            "w": 12,
+            "h": 12
+          },
+          "html": "<span class=\"executor-icon executor-icon-zcode\" aria-hidden=\"true\"><svg width=\"1"
+        },
+        "glyphBox": {
+          "x": 361,
+          "y": 266.8,
+          "w": 12,
+          "h": 12
+        },
+        "meta": "\"applied\": true"
+      },
+      "567": {
+        "icon": {
+          "box": {
+            "x": 381,
+            "y": 225.6,
+            "w": 12,
+            "h": 12
+          },
+          "html": "<span class=\"executor-icon executor-icon-codex\" aria-hidden=\"true\"><img src=\"ven"
+        },
+        "glyphBox": {
+          "x": 361,
+          "y": 225.6,
+          "w": 12,
+          "h": 12
+        },
+        "meta": "patch plan written (3 files)"
+      },
+      "568": {
+        "icon": null,
+        "glyphBox": {
+          "x": 361,
+          "y": 199.4,
+          "w": 12,
+          "h": 12
+        },
+        "meta": null
+      },
+      "570": {
+        "icon": null,
+        "glyphBox": {
+          "x": 361,
+          "y": 173.2,
+          "w": 12,
+          "h": 12
+        },
+        "meta": null
+      },
+      "571": {
+        "icon": null,
+        "glyphBox": {
+          "x": 361,
+          "y": 129,
+          "w": 12,
+          "h": 12
+        },
+        "meta": null
+      }
+    }
+  }
+]

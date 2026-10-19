@@ -2,9 +2,10 @@
 // plane (the classic flowmap-era chain-structure list) + the L1 map face
 // (the flowmap engine re-driven on delegate data). Acceptance coverage:
 //   T1 collapsed face: one block per live delegate, header row anatomy (twisty,
-//      glyph, executor mark, #N, title, dotmap+meta jump zone, word, time),
-//      members hidden by default, leaf placeholder alignment, project groups,
-//      stats = total unit count
+//      glyph, external-executor badge — 九点② dedup, #N, title, dotmap+meta
+//      jump zone, word, time), members hidden by default, leaf placeholder
+//      alignment, project groups, stats = total unit count, stats edge
+//      alignment (2026-10-19 作者令：靠边)
 //   T2 fold interaction: header click expands (aria-expanded, member rows in
 //      topological order with sequence labels + kind dots + status words),
 //      re-collapse; fold state survives a re-render
@@ -16,6 +17,9 @@
 //   T5 transition motion: a member status change across renders plays the
 //      self-drawing check + word roll-in; first-paint terminal rows stay static
 //   T6 camera: wheel zooms the world transform, double-click refits
+//   T7 external row tail guard (tasklist-display-fixes 2026-10-19): stderr /
+//      control / fragment lines never render on the row (list zero-leak),
+//      over-cap line hard-truncated
 //
 // Data plane = stub read-port fixtures (same harness family as
 // delegate-chain-stub.spec.mjs); zero backend, zero sbt.
@@ -154,13 +158,18 @@ test('T1 collapsed face: blocks + header anatomy + dotmap/meta + leaf placeholde
   await expect(panel.locator('.task-chain-head')).toHaveCount(3);
   await expect(panel.locator('.task-chain-member')).toHaveCount(0);
 
-  // Header anatomy on the membered chain: twisty + glyph + icon + #N + title +
+  // Header anatomy on the membered chain: twisty + glyph + #N + title +
   // dotmap (root + 2 children + 2 flow-steps = 5 dots) + meta + word + time.
   const headA = panel.locator('.task-chain-head[data-task-no="41"]');
   await expect(headA.locator('.task-chain-twisty')).toHaveCount(1);
   await expect(headA).toHaveAttribute('aria-expanded', 'false');
   await expect(headA.locator('.task-node-spin')).toHaveCount(1);
-  await expect(headA.locator('.executor-icon-nebflow')).toHaveCount(1);
+  // 九点② dedup on the panel row (tasklist-display-fixes 2026-10-19): internal
+  // executors (nebflow/empty) carry NO badge — the status glyph is the
+  // identity visual; external executors keep theirs (rowB zcode / rowC
+  // claude-code), 12px in the glyph-slot rhythm (same margin-top as the
+  // glyph/twisty slot; the old unstyled 14px span grew to the line box).
+  await expect(headA.locator('.task-delegate-icon')).toHaveCount(0);
   await expect(headA.locator('.task-delegate-no')).toHaveText('#41');
   await expect(headA.locator('.task-node-label')).toHaveText('链甲任务');
   // The chain-level jump zone = the progress meta text (minimal face — the
@@ -177,6 +186,15 @@ test('T1 collapsed face: blocks + header anatomy + dotmap/meta + leaf placeholde
   const headB = panel.locator('.task-chain-head[data-task-no="42"]');
   await expect(headB.locator('.task-chain-twisty-leaf')).toHaveCount(1);
   await expect(headB.locator('.task-chain-jump')).toHaveCount(0);
+  // External executor badge: present on zcode/claude-code rows, 12px, aligned
+  // to the glyph slot (same y, line-box-free 12px box).
+  await expect(headB.locator('.executor-icon-zcode')).toHaveCount(1);
+  await expect(panel.locator('.task-chain-head[data-task-no="43"] .executor-icon-claude-code')).toHaveCount(1);
+  const iconBox = await headB.locator('.task-delegate-icon').boundingBox();
+  const glyphBox = await headB.locator('.task-node-spin').boundingBox();
+  expect(Math.abs(iconBox.y - glyphBox.y)).toBeLessThan(2);
+  expect(iconBox.height).toBeLessThanOrEqual(13);
+  expect(iconBox.width).toBeLessThanOrEqual(13);
 
   // Groups: 'Nebflow' + 'docs' headers + the headerless group (rowB).
   const headers = panel.locator('.task-node-group-header');
@@ -187,6 +205,15 @@ test('T1 collapsed face: blocks + header anatomy + dotmap/meta + leaf placeholde
 
   // Stats = total unit count: chain A 5 units + external root 1 + queued root 1.
   await expect(panel.locator('.task-stats')).toHaveText('7 任务');
+  // 2026-10-19 作者令：任务数靠边 — the count sits right beside the collapse
+  // toggle (one 8px flex gap, no indent; the old 44px text-column alignment
+  // read as a floating centered card on wide panels).
+  await expect(panel.locator('.task-stats')).toHaveCSS('margin-left', '0px');
+  const statsBox = await panel.locator('.task-stats').boundingBox();
+  const toggleBox = await panel.locator('.task-toggle').boundingBox();
+  const gap = statsBox.x - (toggleBox.x + toggleBox.width);
+  expect(gap).toBeGreaterThan(5);
+  expect(gap).toBeLessThan(12);
 
   expect(pageErrors).toEqual([]);
 });
@@ -385,6 +412,46 @@ test('T6 camera: wheel zooms the world transform; double-click refits', async ({
   await page.waitForTimeout(450);
   const refit = await transformOf();
   expect(scaleOf(refit)).toBeLessThanOrEqual(1);
+
+  expect(pageErrors).toEqual([]);
+});
+
+test('T7 external row tail guard: stderr/control/fragment lines never render on the row (raw buffer stays for the detail view)', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  await bootApp(page);
+  // The buffer exactly as ExternalOutputStore serves it: stdout raw + engine
+  // stderr appended with a `[stderr] ` prefix. The author's screenshot showed
+  // exactly these two tails: `[stderr]}` under the codex row and `}` (a JSON
+  // dump fragment) under the zcode row — 2026-10-19 作者令: stderr 只进详情
+  // 视图，列表行零泄漏.
+  const bodies = [
+    {
+      output: 'Analyzing workspace structure\n[stderr] 2026-10-19T07:29:01.114Z WARN stream: chunk parse retry\npatch plan written (3 files)\n}\n[stderr] }',
+      nextOffset: 4317, exitCode: null,
+    },
+    // Second round: an over-cap stdout line (260 chars) → hard-truncated leg.
+    { output: `\n${'x'.repeat(260)}`, nextOffset: 4600, exitCode: null },
+  ];
+  await page.route(/\/api\/delegates\/[^/]+\/output/, (route) =>
+    route.fulfill({ json: bodies.length > 1 ? bodies.shift() : bodies[0] }));
+
+  await setFixture(page, { rows: [rowB], chains: [], children: {} });
+  const meta = page.locator('.task-chain-head[data-task-no="42"] .task-node-meta');
+  // The render-path poll picks the first reading up right away (freshness gate
+  // passes on the empty record): the guard picks the last RENDERABLE line —
+  // control ([stderr] …) and fragment (}) lines skipped.
+  await expect(meta).toHaveText('patch plan written (3 files)');
+
+  // One forced round (harness seam): the over-cap line lands hard-truncated
+  // (200 + ellipsis), and the earlier `[stderr] }` tail (still in the
+  // accumulated buffer) stays out.
+  await page.evaluate(async () => {
+    const { __pollDelegateProgress } = await import('/js/taskList.js');
+    await __pollDelegateProgress(true);
+  });
+  await expect(meta).toHaveText(`${'x'.repeat(200)}…`);
 
   expect(pageErrors).toEqual([]);
 });

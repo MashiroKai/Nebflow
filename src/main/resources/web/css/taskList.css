@@ -79,11 +79,9 @@
   color: var(--color-text-muted, #888);
   /* Unified panel spec §3.3: tabular figures for the count pair. */
   font-variant-numeric: tabular-nums;
-  /* Stats line x-alignment with the chain-header text column: grouped rows
-     nest 10px under their group header, so row text x = group indent 10 +
-     twisty 12 + gap 8 + glyph 12 + gap 8 + executor mark 14 + gap 8 = 72;
-     header x = toggle 20 + gap 8 + margin 44 = 72. Narrow variant below. */
-  margin-left: 44px;
+  /* 2026-10-19 作者令：任务数靠边——紧跟左侧折叠箭头（同一 flex 行，8px gap），
+     不再 44px 缩进对齐行文本列（宽面板上读作居中悬置；列对齐语义随
+     executor 徽标 九点② 去重一并失效，方程不再成立）。 */
 }
 
 /* Collapsed body — use grid-template-rows for smooth height-aware animation */
@@ -348,9 +346,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    /* Narrow header gap 4: stats margin = row text column 72 − (toggle 20 +
-       gap 4) = 48 (same equation as the base rule above). */
-    margin-left: 48px;
+    /* 靠边纪律同基规则（2026-10-19 作者令）：无缩进，窄 gap 4 即全部间距。 */
   }
   /* 窄屏收起状态词与相对时间（delegate 行沿用 .task-node-word/-time 同槽） */
   .task-node-word, .task-node-time { display: none; }
@@ -532,6 +528,26 @@
 /* ── Delegate row action zone (external rows' open-native exit) ─────────────
    Zero new color values: everything reuses existing tokens (--color-*). The
    trailing button syntax follows the 22×20 icon-button family. */
+/* Executor badge slot (external rows only — 九点② dedup: internal executors
+   carry no badge, the status glyph is the identity visual). 12px in the
+   glyph-slot rhythm: same mark size as the twisty slot, same margin-top 3px
+   first-line vertical centering; the inline-flex box keeps the wrapped
+   svg/img out of the line-box baseline math (the old unstyled span grew to
+   the 13px/1.4 line height — 18.2px tall — and hung below the glyph;
+   tasklist-display-fixes 2026-10-19). */
+.task-delegate-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  margin-top: 3px;
+  overflow: hidden;
+}
+.task-delegate-icon img,
+.task-delegate-icon svg { display: block; width: 12px; height: 12px; }
+
 .task-delegate-actions {
   flex-shrink: 0;
   display: inline-flex;

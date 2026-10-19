@@ -3,9 +3,10 @@
 // Panel face = chain blocks over the delegate plane (the classic flowmap-era
 // chain-structure list, re-sourced from the delegate read port):
 //   - One CHAIN BLOCK per live delegate: a header row (the chain's root node)
-//     carrying the status glyph + executor mark + #N + title + topology dotmap
-//     + n/N progress meta + muted status word + relative time, and a fold
-//     twisty when the chain has members. Member rows (sub-agent children and
+//     carrying the status glyph + external-executor badge (九点② dedup:
+//     internal executors carry none) + #N + title + n/N progress meta + muted
+//     status word + relative time, and a fold twisty when the chain has
+//     members. Member rows (sub-agent children and
 //     AgentFlow flow-steps) render nested under the header in topological
 //     order (depth ↑, createdAt ↑, id ↑) with a hierarchical sequence label
 //     carrying depth past the CSS indent cap.
@@ -455,8 +456,9 @@ function chainProgressMeta(members) {
 }
 
 /**
- * Chain header row (the root node): `[twisty][glyph][executor] #N title
- * [dotmap+meta] [word] [rank] [time] [actions]`.
+ * Chain header row (the root node): `[twisty][glyph][executor badge — external
+ * executors only, 九点② dedup] #N title [dotmap+meta] [word] [rank] [time]
+ * [actions]`.
  * Click = fold toggle (membered chains) / open L1 (leaf roots); the dotmap+meta
  * zone = chain-level jump to the L1 map (stopPropagation). External executors
  * (open-native exit) and ready-to-merge rows (rank chip) stay display-only.
@@ -492,11 +494,21 @@ function buildChainHeaderRow(block) {
 
   row.appendChild(buildTwisty(!openable));
   row.appendChild(buildNodeGlyph(st, NODE_STATUS_CLS[st] || ''));
-  const icon = document.createElement('span');
-  icon.className = 'task-delegate-icon';
-  icon.setAttribute('aria-hidden', 'true');
-  icon.innerHTML = executorIcon(String(r.executor || ''), 14);
-  row.appendChild(icon);
+  // Executor badge — 九点② dedup discipline (the L1 card face's rule,
+  // delegate-ui 2026-10-09, now on the panel row too): internal executors
+  // (nebflow/empty) carry NO badge — the status glyph is the row's identity
+  // visual (the old unfiltered slot rendered a nebflow logo / neutral gear-dot
+  // ghost next to the glyph); external executors keep theirs, 12px in the
+  // glyph-slot rhythm (tasklist-display-fixes 2026-10-19: the old 14px
+  // unaligned mark crowded the title line).
+  const executorId = String(r.executor || '');
+  if (executorId && executorId !== 'nebflow') {
+    const icon = document.createElement('span');
+    icon.className = 'task-delegate-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.innerHTML = executorIcon(executorId, 12);
+    row.appendChild(icon);
+  }
 
   const text = document.createElement('div');
   text.className = 'task-node-text';
@@ -752,7 +764,9 @@ function buildNodeSection(chains) {
 }
 
 // ── S16 external-row progress face (offset-incremental poll) ─────────────
-// Coarse progress leg: the buffered output tail line (raw data, not copy).
+// Coarse progress leg: the buffered output tail line (raw data, not copy —
+// but guarded: stderr/control/fragment lines never reach the row, see
+// progressTailText; 2026-10-19 作者令「列表行零泄漏」).
 // Only visible external running rows are polled; offset-incremental reads
 // (nextOffset carried); terminal (exitCode arrived) / no-buffer (404) stops
 // the slot; a row never breaks or clears on a single failed fetch.
@@ -765,13 +779,31 @@ const DELEGATE_PROGRESS_TICK_MS = 3000;
 const DELEGATE_PROGRESS_NOBUFFER_BACKOFF_MS = 15000;
 let delegateProgressTimer = null;
 
-/** Tail extraction: the last non-empty line of the buffer (verbatim). */
+// Row-tail leak guards (display layer only — the raw buffer and the detail
+// view keep everything; the guard lives at the row-render seam):
+//   - Control lines: the engine appends stderr into the SAME output buffer
+//     with a `[stderr] ` prefix (ExternalSessionRunner stderr thread) plus its
+//     own `[read-loop crashed]` / `[launch-failed]` markers — 2026-10-19 作者令：
+//     stderr 只进详情视图，列表行零泄漏 ⇒ these never render on the row.
+//   - Fragment lines: a punctuation-only line (`}`, `]}` … JSON dump tails)
+//     reads as a leak, not as progress — skipped like an empty line.
+//   - Hard cap: CSS ellipsis truncates visually; this bounds the DOM node and
+//     the hover title too (defensive truncation leg beside the other two).
+const ROW_TAIL_CONTROL_RE = /^\[(?:stderr|read-loop crashed|launch-failed)\]/;
+const ROW_TAIL_FRAGMENT_RE = /^[\s{}[\]",:;]*$/;
+const DELEGATE_TAIL_LINE_MAX = 200;
+
+/** Tail extraction: the last renderable line of the buffer (guarded above). */
 function progressTailText(entry) {
   if (!entry || !entry.tail) return '';
   const lines = String(entry.tail).split('\n');
   for (let i = lines.length - 1; i >= 0; i--) {
     const s = lines[i].trim();
-    if (s) return s;
+    if (!s) continue;
+    if (ROW_TAIL_CONTROL_RE.test(s)) continue;
+    if (ROW_TAIL_FRAGMENT_RE.test(s)) continue;
+    return s.length > DELEGATE_TAIL_LINE_MAX
+      ? `${s.slice(0, DELEGATE_TAIL_LINE_MAX)}…` : s;
   }
   return '';
 }

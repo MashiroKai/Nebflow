@@ -155,7 +155,7 @@ test('T1 默认零变化：stub 无夹具 ⇒ delegate 区块零渲染、面板�
   expect(pageErrors).toEqual([]);
 });
 
-test('T2 骨架行渲染：task#N＋执行器图标＋状态 glyph/词；ready-to-merge=§16键1「待合并」；外部行 coarse 标记', async ({ page }) => {
+test('T2 骨架行渲染：task#N＋执行器徽标（九点②去重：内部零挂牌/外部保留）＋状态 glyph/词；ready-to-merge=§16键1「待合并」；外部行 coarse 标记', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
 
@@ -167,18 +167,21 @@ test('T2 骨架行渲染：task#N＋执行器图标＋状态 glyph/词；ready-t
   await expect(panel.locator('.task-section-nodes')).toHaveCount(1);
   await expect(panel.locator('.task-delegate')).toHaveCount(3);
 
-  // #31 nebflow running：编号、标题、图标、运行态三点轨道（修订批九点⑥：flowmap
+  // #31 nebflow running：编号、标题、运行态三点轨道（修订批九点⑥：flowmap
   // 节点同款视觉，替代旧单环 spinner）、状态词=既有键（task.inProgressShort）。
+  // 徽标去重（九点②纪律上板行 · tasklist-display-fixes 2026-10-19）：内部执行器
+  // （nebflow/空）零挂牌——状态 glyph 即行身份视觉（旧 14px 图标槽退役）。
   const r31 = panel.locator('.task-delegate[data-task-no="31"]');
   await expect(r31.locator('.task-delegate-no')).toHaveText('#31');
   await expect(r31.locator('.task-node-label')).toHaveText('重构任务面板数据源');
-  await expect(r31.locator('.executor-icon-nebflow')).toHaveCount(1);
+  await expect(r31.locator('.task-delegate-icon')).toHaveCount(0);
   await expect(r31.locator('.task-node-spin')).toHaveCount(1); // 运行态 = 单环转动圈（列表尺度经典脸）
   await expect(r31.locator('.task-node-word')).toHaveText('进行中');
   await expect(r31).not.toHaveAttribute('data-external');
   await expect(r31).toHaveAttribute('data-delegate-id', 'delegate-nebflow-aa11');
 
   // #32 zcode blocked（外部）：琥珀点 + 阻塞（既有键 task.nodeBlocked）+ coarse 标记。
+  // 外部执行器徽标保留（异构执行器身份仍有信息量，九点②）。
   const r32 = panel.locator('.task-delegate[data-task-no="32"]');
   await expect(r32.locator('.executor-icon-zcode')).toHaveCount(1);
   await expect(r32.locator('.task-node-dot-blocked')).toHaveCount(1);
@@ -886,7 +889,7 @@ test('T12 per-task 臂：REST record+chain ⇒ S10 渲染一致（节点整组�
   expect(pageErrors).toEqual([]);
 });
 
-test('T13 badge 行×任务行盒模型对齐（ui-train-threefix C·2026-10-07 截图令）：统计徽标文案列与 delegate 行文案列同线', async ({ page }) => {
+test('T13 任务数靠边（tasklist-display-fixes·2026-10-19 作者令，取代 ui-train-threefix C 列对齐钉）：统计徽标紧跟左侧折叠箭头', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
 
@@ -896,25 +899,24 @@ test('T13 badge 行×任务行盒模型对齐（ui-train-threefix C·2026-10-07 
   // (translateX(-12px) → 0, 0.3s) — wait it out before measuring.
   await page.waitForFunction(() => !document.querySelector('#task-list .task-node-entering'), null, { timeout: 5000 }).catch(() => {});
 
-  // 盒模型读数（card-relative）：badge 行（.task-header/.task-stats）文案左缘 ==
-  // 任务行（.task-node-text）文案左缘。方程（链块行脸）：toggle 20 + gap 8 +
-  // 对齐余量 44 == 组缩进 10 + twisty 12 + gap 8 + glyph 12 + gap 8 + 执行器
-  // 图标 14 + gap 8（taskList.css .task-stats 注）。本钉 = 同线（±0.75px）。
+  // 盒模型读数（card-relative）：任务数（.task-stats）文案左缘 = toggle 右缘 +
+  // 一个 flex gap（8px）。2026-10-19 作者令：任务数靠边（对齐左侧折叠箭头一侧），
+  // 旧「行文本列同线 44px 缩进」方程随九点②徽标去重一并退役（本钉取代同线钉）。
   const boxes = await page.evaluate(() => {
     const card = document.querySelector('.task-card');
     const c = card.getBoundingClientRect();
     const rel = (el) => {
       const r = el.getBoundingClientRect();
-      return { x: +(r.left - c.left).toFixed(1), y: +(r.top - c.top).toFixed(1) };
+      return { x: +(r.left - c.left).toFixed(1), y: +(r.top - c.top).toFixed(1), w: +(r.width).toFixed(1) };
     };
     return {
       stats: rel(document.querySelector('.task-stats')),
-      rowText: rel(document.querySelector('.task-node.task-delegate .task-node-text')),
       toggle: rel(document.querySelector('.task-toggle')),
+      rowText: rel(document.querySelector('.task-node.task-delegate .task-node-text')),
     };
   });
-  expect(Math.abs(boxes.stats.x - boxes.rowText.x)).toBeLessThanOrEqual(0.75);
-  // 方向守卫：badge 文案必须仍在其 toggle 右侧（修的是列对齐，不是行序/换行）。
+  expect(Math.abs(boxes.stats.x - (boxes.toggle.x + boxes.toggle.w + 8))).toBeLessThanOrEqual(0.75);
+  // 方向守卫：badge 文案必须仍在其 toggle 右侧（修的是贴边距离，不是行序/换行）。
   expect(boxes.stats.x).toBeGreaterThan(boxes.toggle.x + 20);
   // 纵向序守卫：badge 行在任务行上方（两行盒模型 = 上下两行，不是同行元素）。
   expect(boxes.stats.y).toBeLessThan(boxes.rowText.y);
