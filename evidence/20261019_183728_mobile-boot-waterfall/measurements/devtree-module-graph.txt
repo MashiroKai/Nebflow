@@ -1,0 +1,37 @@
+MAX import depth (serial RTT waves): 16
+STATIC imports (eager, render-blocking): 155 files, 4615 KB raw
+DYNAMIC-only chunks (lazy): 6 files, 96 KB raw
+--- top 20 static ---
+   371.5 KB  js/messages.js
+   213.6 KB  js/chat.js
+   209.2 KB  js/main.js
+   144.6 KB  js/locales/en.js
+   144.3 KB  js/sidebar.js
+   140.5 KB  js/locales/zh-CN.js
+   120.3 KB  js/flowMapTab.js
+    86.3 KB  js/socialPanel.js
+    84.4 KB  js/chatSearch.js
+    81.1 KB  js/persistence.js
+    80.2 KB  js/friendsApi.js
+    78.7 KB  js/projectTab.js
+    77.8 KB  js/micOrb.js
+    77.0 KB  js/flowMapArchive.js
+    76.2 KB  js/canvas.js
+    73.1 KB  js/explorer.js
+    71.9 KB  js/input.js
+    68.8 KB  js/contacts.js
+    66.6 KB  js/neblink.js
+    60.6 KB  js/utils.js
+--- bare/missing specifiers: 41
+    /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-e8f2c41e/src/main/resources/web/js/state.js -> model_info
+    /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-e8f2c41e/src/main/resources/web/js/main.js -> s body), so throwing here stops the boot before anything opens WS
+// connections or restores canvas tabs — which is what recursed.
+if (document.documentElement.dataset.nfEmbedded === 
+    /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-e8f2c41e/src/main/resources/web/js/utils.js -> row
+    /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-e8f2c41e/src/main/resources/web/js/viewers/shared.js -> Invalid regular expression: /+/g: Nothing to repeat
+    /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-e8f2c41e/src/main/resources/web/js/popArtifacts.js -> function
+    /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-e8f2c41e/src/main/resources/web/js/reference.js -> click
+    /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-e8f2c41e/src/main/resources/web/js/imeGuard.js -> 1
+    /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-e8f2c41e/src/main/resources/web/js/viewers/markdown.js -> <img onerror=
+    /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-e8f2c41e/src/main/resources/web/js/workline.js -> function
+    /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-e8f2c41e/src/main/resources/web/js/workline.js -> data-nf-ask-answer
