@@ -63,5 +63,11 @@
   PASS  7c 设备内联腿走合帧铸票（queuedTicketUrl）
   PASS  7d 静默回落腿已移除（预览路径 previewLocalPath 只剩文本腿一处）
   PASS  7e 文本腿逐字保留（previewLocalPath 仍在场）
+  PASS  7f 本机件走本机票据路（不误走好友下载腿）
 
-3 checks, 0 failed
+== static(NfFileRoutes.scala 缓存头钉) ==
+  PASS  8a 200/206/304 腿携 private, max-age=300
+  PASS  8b 凭据拒绝腿 no-store（401 缺票腿）
+  PASS  8c 缓存头只挂可缓存正腿（404 腿不动）
+
+4 checks, 0 failed

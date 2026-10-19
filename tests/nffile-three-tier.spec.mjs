@@ -294,7 +294,31 @@ for (const [label, engine] of [['chromium', chromium], ['webkit(Safari引擎族)
   t('7c 设备内联腿走合帧铸票（queuedTicketUrl）', /queuedTicketUrl\(s\.path\)/.test(src));
   t('7d 静默回落腿已移除（预览路径 previewLocalPath 只剩文本腿一处）', (src.match(/previewLocalPath\(\{ path: s\.path, title \}\)/g) || []).length === 1);
   t('7e 文本腿逐字保留（previewLocalPath 仍在场）', /canFetchLocalBytes\(s\.path\)\) return previewLocalPath/.test(src));
+  // #538 结论①「本机件不得误走下载腿」的接线钉：设备 path 腿字节源 = 票据路
+  // （ticketUrl ⇒ /api/nf-file，引擎本机直读），好友鉴权路由只属好友/群腿。
+  // 切片止于下载键腿的 JSDoc 起始（其块注释提到 `downloadAttachment`，非代码）。
+  const deviceLeg = src.slice(
+    src.indexOf('async function previewDeviceSavedAttachment'),
+    src.indexOf('/** 设备面（legacy）下载键')
+  );
+  t('7f 本机件走本机票据路（不误走好友下载腿）', /ticketUrl\(s\.path\)/.test(deviceLeg) && !/downloadAttachment/.test(deviceLeg));
   report['static(messages.js 接线钉)'] = rows;
+}
+
+// ── 站8：#538 候选吸收钉（nf-file 缓存头，引擎面）──
+// 测量批 nf-file-cache-header.patch（evidence/20261019_imgslow538-timing/）由本批
+// 裁量吸收：200/206/304 ⇒ Cache-Control: private, max-age=300（远小于票据 TTL，
+// 凭据不可能活过缓存）；401/403/400 ⇒ no-store（拒绝响应永不入库）。真正的契约
+// 回归 = Scala 侧 NfFileRoutesSpec（本批运行，输出入 evidence）；此处源码钉保证
+// 前端树与该地基不脱钩。
+{
+  const rows = {};
+  const t = (name, cond, extra = '') => { rows[name] = cond ? 'PASS' : `FAIL${extra ? ' — ' + extra : ''}`; };
+  const scala = readFileSync(join(WEB_DIR, '../../../main/scala/nebflow/gateway/NfFileRoutes.scala'), 'utf8');
+  t('8a 200/206/304 腿携 private, max-age=300', /private val NfCacheControl: String = "private, max-age=300"/.test(scala));
+  t('8b 凭据拒绝腿 no-store（401 缺票腿）', /putHeaders\(cacheHeader\("no-store"\)\)/.test(scala));
+  t('8c 缓存头只挂可缓存正腿（404 腿不动）', /if r\.status == Status\.Ok \|\| r\.status == Status\.NotModified then/.test(scala));
+  report['static(NfFileRoutes.scala 缓存头钉)'] = rows;
 }
 
 server.close();

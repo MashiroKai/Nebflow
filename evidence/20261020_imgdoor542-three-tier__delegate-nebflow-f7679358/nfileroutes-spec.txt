@@ -1,0 +1,9 @@
+# NfFileRoutesSpec（引擎面回归 · #538 缓存头吸收批）
+# 运行：sbt -batch "testOnly nebflow.gateway.NfFileRoutesSpec"（工作树 delegate-nebflow-f7679358）
+# 结果：Passed: Total 23, Failed 0, Errors 0（Total time: 208s）
+# 新增 4 条契约钉（patch: evidence/20261019_imgslow538-timing/nf-file-cache-header.patch）：
++ #538: the 200 whole-file leg carries Cache-Control: private, max-age=300
++ #538: the 206 Range leg carries the same Cache-Control directive
++ #538: the 304 revalidation leg 304s and restates the cache policy
++ #538: credential refusals are no-store (a 401/403 must never park in a cache)
+# 既有 19 条（R5 拒token/白名册 census/Range 206 家族/Companion 模块/404/400）全绿无回归。
