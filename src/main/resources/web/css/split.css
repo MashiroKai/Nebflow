@@ -1265,13 +1265,18 @@ body.canvas-open.canvas-overlay #canvas-panel {
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
 }
-/* HTML viewer: zoom bar joins the bottom-right chrome cluster (source/ref
-   toggles at right:16/64). The default top-right spot floats over arbitrary
-   HTML content — posters put interactive headers exactly there, blocking
-   clicks on both sides. Scoped to html panes; image/PDF keep top-right. */
+/* HTML viewer: zoom bar joins the bottom-right chrome cluster. The default
+   top-right spot floats over arbitrary HTML content — posters put interactive
+   headers exactly there, blocking clicks on both sides. Scoped to html panes;
+   image/PDF keep top-right.
+   Cluster slots (48px pitch, 40px circles): source 16 · ref-select 64 ·
+   find 112 (html.js addFindToggle(pane, 112)) · zoom bar 160. The zoom bar
+   used to sit at right:112 — the find toggle's slot since the wiki-graph
+   batch — so the circle printed on top of the bar's Fit button (screenshot
+   2026-10-19). 160 keeps the 8px gap after the find circle (ends at 152). */
 .canvas-tab-pane[data-type="html"] .canvas-zoom-bar {
   top: auto;
-  right: 112px;
+  right: 160px;
   bottom: 18px;
 }
 
