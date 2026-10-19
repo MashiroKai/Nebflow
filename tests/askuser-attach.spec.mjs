@@ -33,9 +33,26 @@ const TOKEN = process.env.NEBFLOW_TOKEN ?? defaultToken();
 const SID = 'e2e-askuser-attach-session';
 const RID = 'asknb-e2eattach01';
 
+// 会话 cookie 复用（本 spec 16 腿 > console-ticket 铸票预算 10/60s 窗——
+// ConsoleTicketStore.MintBudgetPerWindow）：首腿走完整 ticket rail 一次，
+// 捕获整罐 cookie，后续腿直接注入 + goto。配 --workers=1 = 每进程至多一铸。
+let sharedCookies = null;
+async function establishShared(page) {
+  // 文案断言面统一 en（隔离实例 locale 随 nebflow.json/系统走 zh-CN——
+  // social-panel 先例同款 addInitScript 预置）。
+  await page.addInitScript(() => { try { localStorage.setItem('nebflow_locale', 'en'); } catch { /* ignore */ } });
+  if (sharedCookies && sharedCookies.length) {
+    await page.context().addCookies(sharedCookies);
+    await page.goto(BASE_URL + '/', { waitUntil: 'load' });
+    return;
+  }
+  await establishSession(BASE_URL, TOKEN, page); // 唯一铸票点（模块级一次）
+  sharedCookies = await page.context().cookies(BASE_URL);
+}
+
 /** 与 askuser.spec.mjs 同骨架的活卡装配；本批多传第 4 参 requestId（活卡挂面前提）。 */
 async function setupCard(page, items, requestId) {
-  await establishSession(BASE_URL, TOKEN, page);
+  await establishShared(page);
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(600);
 
@@ -78,20 +95,26 @@ function lastCard(page) {
   return page.locator('.option-box').last();
 }
 
-/** 上传端点桩：逐请求递增 seq，返回已落盘引用（与真端点响应同形状）。 */
-function stubUploadOk(page) {
+/** 上传端点桩：逐请求递增 seq，返回已落盘引用（与真端点响应同形状）。
+  * mime 按扩展名回（真端点以 part Content-Type 为准；XHR FormData 恒带它）。
+  * delayMs > 0 时压住响应，让「上传中」瞬态可被断言（否则 fulfill 先于断言到达）。
+  * ⚠️ 并发两件 XHR 的 seq 竞争——断言按 name 匹配，禁按序。 */
+const MIME_BY_EXT = { png: 'image/png', jpg: 'image/jpeg', txt: 'text/plain', pdf: 'application/pdf' };
+function stubUploadOk(page, delayMs = 0) {
   let seq = 0;
-  return page.route('**/api/askuser/attachments*', (route) => {
+  return page.route('**/api/askuser/attachments*', async (route) => {
     seq += 1;
+    if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
     const url = new URL(route.request().url());
     const name = (route.request().postData() || '').match(/filename="([^"]+)"/)?.[1] || 'file';
+    const ext = name.split('.').pop().toLowerCase();
     route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
         ok: true, id: `att-${url.searchParams.get('requestId')}-${seq}`, seq,
         name, path: `/uploads/e2e/ask-${url.searchParams.get('requestId')}/${seq}-${name}`,
-        sha256: `sha-${seq}`, size: 10, mime: 'application/octet-stream', deduplicated: false,
+        sha256: `sha-${seq}`, size: 10, mime: MIME_BY_EXT[ext] || 'application/octet-stream', deduplicated: false,
       }),
     });
   });
@@ -190,7 +213,7 @@ test.describe('Entry gating — open questions only, silent elsewhere', () => {
 
 test.describe('Multi-file + send gate', () => {
   test('click-pick 2 files → 2 chips upload → done; zero-option card confirm unlocks; frame carries manifest', async ({ page }) => {
-    await stubUploadOk(page);
+    await stubUploadOk(page, 700); // 压 700ms：上传中瞬态可断言
     await setupCard(page, [{ question: 'Describe the incident (files welcome).' }], RID);
     const box = lastCard(page);
     const confirm = box.locator('.option-confirm');
@@ -220,8 +243,9 @@ test.describe('Multi-file + send gate', () => {
     expect(p).toBeTruthy();
     expect(p.requestId).toBe(RID);
     expect(p.attachments).toHaveLength(2);
-    expect(p.attachments[0]).toMatchObject({ name: 'a.png', kind: 'image', path: expect.stringContaining('1-a.png') });
-    expect(p.attachments[1]).toMatchObject({ name: 'b.txt', kind: 'file' });
+    const byName = Object.fromEntries(p.attachments.map((a) => [a.name, a])); // seq 竞争：按名匹配
+    expect(byName['a.png']).toMatchObject({ kind: 'image', path: expect.stringContaining('a.png') });
+    expect(byName['b.txt']).toMatchObject({ kind: 'file' });
 
     // 发送后锁卡：× 移除钮全数消失，空态按钮隐藏（只读降级）。
     await expect(box.locator('.ask-answer-attach-rm')).toHaveCount(0);
@@ -258,17 +282,17 @@ test.describe('Multi-file + send gate', () => {
     await expect(chip.locator('text=Failed')).toBeVisible();
     await expect(chip.locator('button', { hasText: 'Retry' })).toBeVisible();
 
-    let captured = await page.evaluate(() => window.__captured);
-    const before = captured.filter((m) => m.type === 'askUserAnswer').length;
-    await lastCard(page).locator('.option-confirm').click();
-    captured = await page.evaluate(() => window.__captured);
-    // 失败 chip ⇒ 发送闸不开（satisfyGate 无 done 件）⇒ 点按无效：未产帧。
-    expect(captured.filter((m) => m.type === 'askUserAnswer').length).toBe(before);
+    // 失败 chip（无 done 件）⇒ 发送闸不开：钮禁用 + 零作答帧（禁点禁用钮——
+    // Playwright 点击禁用件会等满超时，闸语义用 disabled 断言读）。
+    const captured = await page.evaluate(() => window.__captured);
+    expect(captured.filter((m) => m.type === 'askUserAnswer').length).toBe(0);
+    await expect(lastCard(page).locator('.option-confirm')).toBeDisabled();
 
-    // 重试腿：路由改回成功 → Retry 点击 → chip 转 done。
+    // 重试腿：路由改回成功 → Retry 点击 → chip 转 done ⇒ 闸开。
     await stubUploadOk(page);
     await chip.locator('button', { hasText: 'Retry' }).click();
     await expect(chip.locator('text=Attached')).toBeVisible();
+    await expect(lastCard(page).locator('.option-confirm')).toBeEnabled();
   });
 
   test('choice card stays option-gated: attachments never substitute options (修正①)', async ({ page }) => {
@@ -299,7 +323,7 @@ test.describe('Multi-file + send gate', () => {
 
 test.describe('Answered badge on history cards', () => {
   test('renderAskUserHistory with answerAttachments → badge + read-only row; without → byte-identical legacy', async ({ page }) => {
-    await establishSession(BASE_URL, TOKEN, page);
+    await establishShared(page);
     await page.waitForLoadState('networkidle');
     await page.evaluate(async () => {
       const { isCanvasOpen, closeCanvas } = await import('/js/canvas.js');
@@ -352,8 +376,8 @@ test.describe('Answered badge on history cards', () => {
 // ============================================================
 // §5 375×812 移动面（作者修正④）+ 截图证据
 // ============================================================
-
-test.describe.configure({ mode: 'serial' });
+// 无测试间依赖（每 test 独立 page/context）——不用 serial：一条装配抖动不该
+// 级联跳过整批（截图腿各自成证）。
 
 test.describe('375px adaptation + evidence shots', () => {
   let browser;
@@ -400,6 +424,7 @@ test.describe('375px adaptation + evidence shots', () => {
     expect(m.scrollW).toBeLessThanOrEqual(m.clientW); // 无横溢
     expect(m.chipsWrap).toBe('wrap'); // chip 换行不挤爆
     expect(m.zoneRight).toBeLessThanOrEqual(375 + 1); // 附件区不探出视口
+    await page.waitForTimeout(900); // 卡片淡入（ob-fade-in）+ 挂面动画落定 ⇒ 证据截图不糊
     await page.screenshot({ path: join(EVIDENCE, 'ask-attach-375.png'), fullPage: false });
   });
 });
