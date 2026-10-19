@@ -1,0 +1,34 @@
+# build/web-dist inventory (scripts/build-web.mjs, worktree a68c217af)
+
+## totals
+- files: 440 (incl. sourcemaps)
+ 31M	.
+- sourcemaps: 7.2 MB
+- non-map: 23.0 MB raw
+- gzipped text (js/css/html/svg/json): 5.07 MB
+- binaries raw (png/ico/woff2/woff/ttf): 2.14 MB
+
+## Top10 chunks (raw / gzip)
+   322.0 KB raw     95.0 KB gzip  assets/chunks/chunk-EWHDF4QI.js
+   261.0 KB raw     73.0 KB gzip  assets/app-RM7GELWJ.js
+   251.0 KB raw     70.0 KB gzip  assets/chunks/chunk-CF25Z7HK.js
+   103.0 KB raw     32.0 KB gzip  assets/chunks/chunk-STNKVVXX.js
+    98.0 KB raw     30.0 KB gzip  assets/chunks/delegateChainView-EIY2N3GV.js
+    72.0 KB raw     23.0 KB gzip  assets/chunks/chunk-ZZ4QPURE.js
+    61.0 KB raw     19.0 KB gzip  assets/chunks/chunk-PM7E2NWS.js
+    50.0 KB raw     16.0 KB gzip  assets/chunks/chunk-JGFKMDVE.js
+    48.0 KB raw     10.0 KB gzip  assets/chunks/chunk-F2SZYYCK.js
+    41.0 KB raw     12.0 KB gzip  assets/chunks/chunk-BQYWERPN.js
+
+## entry + css + html
+assets/app-RM7GELWJ.js raw=267916 gzip=   75537
+assets/app-cc83735e.css raw=431454 gzip=   68354
+index.html raw=36620 gzip=   11953
+
+## vendor (copied verbatim, loaded eagerly by index.html)
+vendor/lucide.min.js raw=355285 gzip=   82761
+vendor/lottie.min.js raw=305543 gzip=   76601
+vendor/katex.min.js raw=275414 gzip=   76029
+vendor/highlight.min.js raw=124980 gzip=   42299
+vendor/marked.min.js raw=35479 gzip=   10786
+vendor/qrcode.js raw=57548 gzip=   12090

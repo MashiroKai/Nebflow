@@ -1,0 +1,58 @@
+# mobile-boot-waterfall — live probe transcript (2026-10-19T10:37:56Z, from author's Mac, curl direct / no system proxy)
+
+## A. mystand.space (Vercel) legs
+$ curl -w ... https://mystand.space/  (follow -L)
+code=200 dns=0.067049 tls=0.354790 ttfb=1.218321 total=1.318290 size=85897 ip=76.76.21.21 h=2
+$ curl ... https://mystand.space/portal (no session → 15B redirect)
+Redirecting...
+
+
+$ curl -L https://mystand.space/login?next=%2Fportal
+code=200 ttfb=0.754764 total=0.759819 size=28235
+
+## B. link.mystand.space / neblink (VPS 45.32.62.185, Caddy)
+https://link.mystand.space/ → code=302 redirect=https://link.mystand.space/api/auth/login?return_to=%2Fexit dns=0.004511 tls=0.458621 ttfb=0.579362 total=0.579454 size=0 h=2
+https://link.mystand.space/js/main.js → code=403 redirect= dns=0.005152 tls=2.728137 ttfb=2.974904 total=2.975415 size=25 h=2
+https://link.mystand.space/vendor/lucide.min.js → code=403 redirect= dns=0.007753 tls=0.622156 ttfb=1.319330 total=1.319702 size=25 h=2
+https://link.mystand.space/css/base.css → code=403 redirect= dns=0.004018 tls=0.818393 ttfb=2.050711 total=2.050910 size=25 h=2
+https://link.mystand.space/favicon-32.png → code=403 redirect= dns=0.007265 tls=0.265815 ttfb=0.387339 total=0.387549 size=25 h=2
+
+## C. Mac↔VPS RTT (tunnel leg)
+4 packets transmitted, 4 packets received, 0.0% packet loss
+round-trip min/avg/max/stddev = 328.661/353.890/390.344/23.753 ms
+
+## D. Local engine (127.0.0.1:8080) — validator/headers on running engine
+-- /js/main.js
+HTTP/1.1 200 OK
+Last-Modified: Sun, 18 Oct 2026 14:00:03 GMT
+Cache-Control: no-cache
+Content-Encoding: gzip
+Vary: Accept-Encoding
+-- /vendor/lucide.min.js
+HTTP/1.1 200 OK
+Last-Modified: Sun, 18 Oct 2026 14:00:03 GMT
+Content-Encoding: gzip
+Vary: Accept-Encoding
+-- /css/base.css
+HTTP/1.1 200 OK
+Last-Modified: Sun, 18 Oct 2026 14:00:03 GMT
+Cache-Control: no-cache
+Content-Encoding: gzip
+Vary: Accept-Encoding
+-- /favicon-32.png?v=df9c1c1ecff6021e
+HTTP/1.1 200 OK
+Last-Modified: Sun, 18 Oct 2026 14:00:03 GMT
+Cache-Control: no-cache
+
+## E. conditional GET replay (server honors If-Modified-Since)
+LM=[Sun, 18 Oct 2026 14:00:03 GMT]
+with If-Modified-Since → code=304 size=0
+
+## F. local per-asset warm timings (curl serial)
+/ ttfb=0.025316 total=0.026835 size=11434
+/js/main.js ttfb=0.002048 total=0.017545 size=73167
+/js/messages.js ttfb=0.038895 total=0.057382 size=138159
+/js/chat.js ttfb=0.017155 total=0.048806 size=74333
+/vendor/lucide.min.js ttfb=0.006912 total=0.026873 size=82747
+/css/base.css ttfb=0.010869 total=0.029488 size=5526
+/js/locales/zh-CN.js ttfb=0.007443 total=0.022727 size=52890
