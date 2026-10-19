@@ -2,6 +2,6 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "website",
   "version": "1.0.1",
-  "description": "Nebflow 官网（nebflow.space）开发包——节点获得 Next.js/Tailwind 前端实现、设计 tokens 复用与三端响应式排版、Vercel 部署发布能力。适用于改 nebflow.space 官网、官网加页面改文案、官网视觉调整、官网发布上线等任务。内含 skills：website-frontend（Next.js 16/Tailwind v4、i18n 动态路由、API Route Handlers）、website-design（设计 tokens 复用、排版与动效规范、Pop 目检）、deploy-website（Vercel 生产部署双域发布）。不适用于 Nebflow 主仓 web/ 前端（另配 nebflow-frontend-dev 插件）；仅限 nebflow.space 域，勿用于其他网站。组件面：无 mcp.json、无工具扩展。",
-  "author": {"name": "Nebflow"}
+  "description": "Stand 官网（mystand.space）开发包——节点获得 Next.js/Tailwind 前端实现、设计 tokens 复用与三端响应式排版、Vercel 部署发布能力。适用于改 mystand.space 官网、官网加页面改文案、官网视觉调整、官网发布上线等任务。内含 skills：website-frontend（Next.js 16/Tailwind v4、i18n 动态路由、API Route Handlers）、website-design（设计 tokens 复用、排版与动效规范、Pop 目检）、deploy-website（Vercel 生产部署双域发布）。不适用于 Nebflow 主仓 web/ 前端（另配 nebflow-frontend-dev 插件）；仅限 mystand.space 域，勿用于其他网站。组件面：无 mcp.json、无工具扩展。",
+  "author": {"name": "Stand"}
 }
