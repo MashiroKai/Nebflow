@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>冷启动加载卡 · 交互样张（设计批 2026-10-19，零实施）</title>
+<style>
+  /* ═══════════════════════════════════════════════════════════════
+     冷启动启动卡样张 — 全部 token 取自仓内设计系统现值
+     base.css（亮 #f5f6f8 / 暗 #13161c · 文字 · muted · border）
+     sapphire.css（--sapphire 玻璃 · --brand-green）
+     本文件自包含离线可开；logo 用占位标（实施批换 /brand/stand/
+     illustrator/svg/stand-symbol-{black,white}.svg <picture> 对 +
+     window.__BRAND__ 注入覆盖，见 index.html:97-103 现成模式）。
+     ═══════════════════════════════════════════════════════════════ */
+  :root {
+    --bg: #f5f6f8;
+    --surface: #ffffff;
+    --text: #1b1e26;
+    --text-muted: #8b8e96;
+    --text-dim: #6b6e76;
+    --border: #ddd;
+    --glass-bg: rgba(255, 255, 255, 0.55);
+    --glass-blur: 24px;
+    --glass-border: rgba(255, 255, 255, 0.35);
+    --sapphire: 91 127 191;
+    --brand-green: 7 193 96;
+    --shadow: 0 18px 50px rgba(16, 20, 30, 0.14), 0 2px 8px rgba(16, 20, 30, 0.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #13161c;
+      --surface: #1c1f27;
+      --text: #e8eaed;
+      --text-muted: #7b7e88;
+      --text-dim: #9ba0aa;
+      --border: #2a2d35;
+      --glass-bg: rgba(28, 31, 39, 0.62);
+      --glass-border: rgba(91, 127, 191, 0.14);
+      --shadow: 0 18px 50px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.35);
+    }
+  }
+  /* 主题演示覆盖（样张控制台专用；实施批无此块 —— 纯 prefers-color-scheme） */
+  html.theme-light { --bg:#f5f6f8; --surface:#fff; --text:#1b1e26; --text-muted:#8b8e96; --text-dim:#6b6e76; --border:#ddd; --glass-bg:rgba(255,255,255,.55); --glass-border:rgba(255,255,255,.35); --shadow:0 18px 50px rgba(16,20,30,.14),0 2px 8px rgba(16,20,30,.06); }
+  html.theme-light .demo-shell-bg { background: linear-gradient(160deg, #dfe6f2 0%, #eef1f6 45%, #f5f6f8 100%); }
+  html.theme-dark  { --bg:#13161c; --surface:#1c1f27; --text:#e8eaed; --text-muted:#7b7e88; --text-dim:#9ba0aa; --border:#2a2d35; --glass-bg:rgba(28,31,39,.62); --glass-border:rgba(91,127,191,.14); --shadow:0 18px 50px rgba(0,0,0,.5),0 2px 8px rgba(0,0,0,.35); }
+  html.theme-dark .demo-shell-bg { background: linear-gradient(160deg, #171b24 0%, #12151b 50%, #101218 100%); }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); }
+
+  /* ── 演示舞台：模拟应用冷启动首帧的页面底 ── */
+  .demo-shell-bg { min-height: 100vh; position: relative; overflow: hidden; }
+
+  /* ═════════ 启动卡本体（实施批 = index.html <body> 首子元素 + head 内联 CSS）═════════ */
+  #boot-card {
+    position: fixed; inset: 0; z-index: 999;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+    transition: opacity .3s ease;
+  }
+  #boot-card.fading { opacity: 0; pointer-events: none; }
+  #boot-card.gone { display: none; }
+  .boot-panel {
+    width: min(360px, 100%);
+    background: var(--glass-bg);
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    border-radius: 20px;
+    box-shadow: var(--shadow);
+    padding: 36px 32px 28px;
+    text-align: center;
+  }
+  .boot-logo { width: 56px; height: 56px; margin: 0 auto 14px; display: block; color: #1b1e26; }
+  @media (prefers-color-scheme: dark) { .boot-logo { color: #e8eaed; } }
+  html.theme-light .boot-logo { color: #1b1e26; }
+  html.theme-dark .boot-logo { color: #e8eaed; }
+  .boot-title { font-size: 16px; font-weight: 600; letter-spacing: .2px; }
+  .boot-sub { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
+
+  /* 阶段步进清单 —— 诚实步进（已观测事件置位），非进度条 */
+  .boot-steps { margin: 26px auto 0; text-align: left; width: fit-content; display: flex; flex-direction: column; gap: 11px; }
+  .boot-step { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-dim); transition: color .25s ease; }
+  .boot-step .dot {
+    width: 14px; height: 14px; flex: 0 0 auto; border-radius: 50%;
+    border: 1.6px solid var(--border); position: relative;
+    transition: border-color .25s ease;
+  }
+  .boot-step.active { color: var(--text); }
+  .boot-step.active .dot { border-color: rgb(var(--sapphire)); }
+  .boot-step.active .dot::after {
+    content: ''; position: absolute; inset: 2.2px; border-radius: 50%;
+    border: 1.8px solid transparent; border-top-color: rgb(var(--sapphire));
+    animation: spin .8s linear infinite;
+  }
+  .boot-step.done { color: var(--text-muted); }
+  .boot-step.done .dot { border-color: rgb(var(--brand-green)); background: rgb(var(--brand-green) / .14); }
+  .boot-step.done .dot::after {
+    content: ''; position: absolute; left: 3.4px; top: 1.2px; width: 4.6px; height: 8px;
+    border: solid rgb(var(--brand-green)); border-width: 0 1.8px 1.8px 0; transform: rotate(42deg);
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* 慢腿降级文案（>4s / >12s，单行淡入，不换布局） */
+  .boot-slow { margin-top: 22px; font-size: 12px; line-height: 1.5; color: var(--status-warn, #b45309); min-height: 18px; opacity: 0; transition: opacity .4s ease; }
+  html.theme-dark .boot-slow { --status-warn: #ffa83c; }
+  .boot-slow.on { opacity: 1; }
+  .boot-foot { margin-top: 20px; font-size: 11px; color: var(--text-muted); opacity: .7; }
+
+  /* ═════════ 对比形态 B：侧栏局部 skeleton（候拍 Q5，非主形态）═════════ */
+  .skeleton-demo {
+    position: absolute; left: 76px; top: 50%; transform: translateY(-50%);
+    width: 232px; border-radius: 14px; overflow: hidden;
+    background: var(--glass-bg); -webkit-backdrop-filter: blur(var(--glass-blur)); backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border); box-shadow: var(--shadow);
+    display: none;
+  }
+  .skeleton-demo.show { display: block; }
+  .sk-head { padding: 12px 14px 8px; font-size: 12px; font-weight: 600; color: var(--text-muted); }
+  .sk-row { display: flex; gap: 10px; padding: 9px 14px; align-items: center; }
+  .sk-bar { height: 10px; border-radius: 5px; background: linear-gradient(90deg, rgb(var(--sapphire) / .08) 25%, rgb(var(--sapphire) / .18) 45%, rgb(var(--sapphire) / .08) 65%); background-size: 220% 100%; animation: shimmer 1.3s ease infinite; }
+  @keyframes shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+  .sk-note { padding: 10px 14px 14px; font-size: 11px; color: var(--text-dim); line-height: 1.5; }
+
+  /* ═════════ 样张控制台（非设计物；交付即拆）═════════ */
+  .demo-bar {
+    position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 1000;
+    display: flex; gap: 6px; flex-wrap: wrap; justify-content: center;
+    background: var(--glass-bg); -webkit-backdrop-filter: blur(var(--glass-blur)); backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border); border-radius: 999px; padding: 7px 10px;
+    box-shadow: var(--shadow);
+  }
+  .demo-bar button {
+    font: 12px/1 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--text);
+    background: transparent; border: 1px solid var(--border); border-radius: 999px;
+    padding: 6px 11px; cursor: pointer;
+  }
+  .demo-bar button:hover { background: rgb(var(--sapphire) / .12); border-color: rgb(var(--sapphire) / .4); }
+  .demo-bar .sep { width: 1px; background: var(--border); margin: 3px 3px; }
+
+  /* 375px 档演示：demo-bar 触发时把卡容器收窄成手机画框 */
+  .phone-frame #boot-card { padding: 24px; justify-content: center; align-items: flex-start; padding-top: 64px; }
+  .phone-frame .boot-panel { width: min(327px, 100%); padding: 30px 24px 24px; }
+  .phone-frame .boot-logo { width: 44px; height: 44px; }
+  .phone-frame .boot-steps { gap: 10px; }
+  .phone-frame .boot-step { font-size: 13px; }
+
+  .hint {
+    position: absolute; top: 18px; left: 50%; transform: translateX(-50%);
+    font-size: 12px; color: var(--text-muted); text-align: center; max-width: 86vw;
+  }
+</style>
+</head>
+<body>
+<div class="demo-shell-bg" id="shell">
+  <div class="hint">冷启动启动卡样张 · 自动播放：启动 → 连接 → 资源 → 会话 → 完成淡出 · 底部控制台可重放/步进/切主题/试慢腿/375px 档</div>
+
+  <!-- ══════════ 启动卡（设计物本体）══════════ -->
+  <div id="boot-card" role="status" aria-live="polite">
+    <div class="boot-panel">
+      <!-- 占位标：实施批换 stand-symbol 亮暗 <picture> 对（index.html:97-98 模式） -->
+      <svg class="boot-logo" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+        <circle cx="24" cy="24" r="20" stroke="currentColor" stroke-width="2.4"/>
+        <circle cx="24" cy="24" r="6.5" fill="currentColor"/>
+        <circle cx="8.5" cy="8.5" r="4" stroke="currentColor" stroke-width="2.2"/>
+        <circle cx="39.5" cy="8.5" r="4" stroke="currentColor" stroke-width="2.2"/>
+        <circle cx="8.5" cy="39.5" r="4" stroke="currentColor" stroke-width="2.2"/>
+        <circle cx="39.5" cy="39.5" r="4" stroke="currentColor" stroke-width="2.2"/>
+        <path d="M12 12l7 7M36 12l-7 7M12 36l7-7M36 36l-7-7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+      </svg>
+      <div class="boot-title">Nebflow 控制台</div>
+      <div class="boot-sub">正在启动</div>
+
+      <div class="boot-steps" id="steps">
+        <div class="boot-step" data-step="1"><span class="dot"></span>正在启动</div>
+        <div class="boot-step" data-step="2"><span class="dot"></span>连接服务器</div>
+        <div class="boot-step" data-step="3"><span class="dot"></span>加载资源</div>
+        <div class="boot-step" data-step="4"><span class="dot"></span>恢复会话</div>
+      </div>
+
+      <div class="boot-slow" id="slow"></div>
+      <div class="boot-foot">阶段步进 = 真实事件锚点，非进度估算</div>
+    </div>
+  </div>
+
+  <!-- ══════════ 对比形态 B：侧栏 skeleton（候拍 Q5）══════════ -->
+  <div class="skeleton-demo" id="skel">
+    <div class="sk-head">会话</div>
+    <div class="sk-row"><div class="sk-bar" style="width:64%"></div></div>
+    <div class="sk-row"><div class="sk-bar" style="width:48%"></div></div>
+    <div class="sk-row"><div class="sk-bar" style="width:56%"></div></div>
+    <div class="sk-note">形态 B（辅助）：仅卡淡出后、侧栏会话列表未到的窄窗口；聊天区形状不可预知 → 不做聊天区骨架（会撒谎）。</div>
+  </div>
+
+  <!-- ══════════ 样张控制台（非设计物）══════════ -->
+  <div class="demo-bar">
+    <button onclick="replay()">↻ 重放</button>
+    <button onclick="stepTo(stage + 1)">⇥ 下一阶段</button>
+    <button onclick="finish()">✓ 完成（淡出）</button>
+    <div class="sep"></div>
+    <button onclick="toggleSlow()" id="slowBtn">慢腿文案</button>
+    <button onclick="toggleSkel()">形态B·skeleton</button>
+    <div class="sep"></div>
+    <button onclick="toggleTheme()" id="themeBtn">🌙/☀️ 主题</button>
+    <button onclick="togglePhone()" id="phoneBtn">375px 档</button>
+  </div>
+</div>
+
+<script>
+  /* 演示驱动（实施批对应物 = window.__nfBoot 微对象，classic script）：
+     stage(1) 卡随首帧出现（head 内联 CSS 保证 CSS 阻塞期即渲染）
+     stage(2) ws.js:568 connect() 入口
+     stage(3) ws.js:625 onopen
+     stage(4) main.js:1542 sessionList → auto-restore
+     finish() main.js:1599 首帧 historyPage 渲染完成 → 300ms 淡出 + 1.2s 最短展示 */
+  let stage = 0, finished = false, timer = null, startTime = 0, slowLevel = 0, slowForced = false;
+  const stepsEl = [...document.querySelectorAll('.boot-step')];
+  const slowEl = document.getElementById('slow');
+  const subEl = document.querySelector('.boot-sub');
+
+  function render() {
+    stepsEl.forEach(el => {
+      const n = +el.dataset.step;
+      el.classList.toggle('done', n < stage);
+      el.classList.toggle('active', n === stage && !finished);
+    });
+    subEl.textContent = finished ? '就绪' : ['正在启动', '正在启动', '连接服务器…', '已连接，加载资源…', '恢复会话…'][stage] || '正在启动';
+  }
+  function slowTick() {
+    if (finished || stage < 2) return;
+    const t = (Date.now() - startTime) / 1000;
+    if (slowForced || t > 12) { slowLevel = 2; }
+    else if (slowForced || t > 4) { slowLevel = Math.max(slowLevel, 1); }
+    slowEl.textContent = slowLevel === 1 ? '远程连接较慢，仍在加载…'
+      : slowLevel === 2 ? '连接较慢——请检查网络，或刷新页面重试' : '';
+    slowEl.classList.toggle('on', slowLevel > 0);
+  }
+  function stepTo(n) {
+    if (finished) return;
+    stage = Math.min(4, n);
+    if (stage >= 2 && !startTime) startTime = Date.now();
+    render();
+  }
+  function finish() {
+    if (finished) return;
+    finished = true; stage = 4; render(); slowEl.classList.remove('on');
+    const card = document.getElementById('boot-card');
+    setTimeout(() => card.classList.add('fading'), 400);   /* 1.2s 最短展示在样张里压缩演示 */
+    setTimeout(() => card.classList.add('gone'), 900);
+  }
+  function replay() {
+    finished = false; stage = 0; startTime = 0; slowLevel = 0; slowForced = false;
+    document.getElementById('slowBtn').textContent = '慢腿文案';
+    const card = document.getElementById('boot-card');
+    card.classList.remove('fading', 'gone');
+    slowEl.textContent = ''; slowEl.classList.remove('on');
+    render();
+    clearInterval(timer);
+    timer = setInterval(slowTick, 500);
+    /* 自动播放演示时序（真实时序由事件锚点驱动，此处仅为观看） */
+    setTimeout(() => !finished && stepTo(2), 900);
+    setTimeout(() => !finished && stepTo(3), 2000);
+    setTimeout(() => !finished && stepTo(4), 3000);
+    setTimeout(() => !finished && finish(), 4200);
+  }
+  function toggleSlow() { slowForced = !slowForced; if (stage < 2) stepTo(2); slowTick(); }
+  function toggleSkel() { document.getElementById('skel').classList.toggle('show'); }
+  function toggleTheme() {
+    const html = document.documentElement, dark = html.classList.contains('theme-dark');
+    html.classList.toggle('theme-dark', !dark); html.classList.toggle('theme-light', dark);
+  }
+  function togglePhone() { document.getElementById('shell').classList.toggle('phone-frame'); }
+  replay();
+</script>
+</body>
+</html>
