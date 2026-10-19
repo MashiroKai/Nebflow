@@ -1,0 +1,942 @@
+diff --git a/src/main/resources/web/js/chat.js b/src/main/resources/web/js/chat.js
+index 915848145..5a0bcc296 100644
+--- a/src/main/resources/web/js/chat.js
++++ b/src/main/resources/web/js/chat.js
+@@ -50,6 +50,10 @@ import { startWorklineItem, doneWorklineItem, failWorklineItem, thinkingWorkline
+ // (state.js only) ⇒ no cycle. Used only on display faces; mechanism keys stay
+ // the literal "Nebula".
+ import { isRootNamed, rootDisplayName } from './rootName.js';
++// askuser-dragdrop 实施批（2026-10-19，批 #551）：卡片作用域答复附件面（拖入即传
++// / 粘贴 / 点选；入口判据 = `answerAttachmentsAllowed`——只给开放题，secret/dirPicker/
++// 选择题卡一律静默无入口，作者修正①②）+ 历史卡「已回答 · 附 N 个文件」徽标。
++import { answerAttachmentsAllowed, mountAnswerAttachments, mountAnsweredBadge } from './askAttachments.js';
+ 
+ // stream-ux §二.1.1: the work-line shows the FIRST line of the tool's card
+ // label (same string the user reads on the card), so the single-line badge and
+@@ -2167,6 +2171,10 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
+   // secretSlots 专用 WS 键）——绝不写 answers[qi]，因此普通答案通道/草稿/历史行
+   // 都不会碰到值。null = 未作答（confirm 闸与 shouldShow 重置共用该语义）。
+   const secretValues = new Array(questions.length).fill(null);
++  // askuser-dragdrop 实施批（2026-10-19，批 #551）：答复附件面控制器。**声明前置**
++  // （checkAllAnswered 在 syncMulti 的草稿恢复腿里早于挂载点被调用——TDZ 防御）；
++  // 挂载本体在按钮行构造处（活卡 + 入口判据通过才挂，见彼处注）。
++  let answerAttach = null;
+   const confirmLabel = doneLabel || t('chat.confirm');
+   const saved = askSessionId ? loadAskDrafts(askSessionId) : {};
+   const questionWrappers = [];
+@@ -2565,7 +2573,24 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
+   confirmBtn.className = 'option-confirm';
+   confirmBtn.innerHTML = '<i data-lucide="check"></i><span>' + escapeHtml(confirmLabel) + '</span>';
+   confirmBtn.disabled = !questions.every((_, qi) => !shouldShow(qi) || isAnswered(qi));
++  // askuser-dragdrop 实施批（2026-10-19，批 #551）：答复附件面。只在**活卡**（有
++  // onConfirm 的 live 腿；历史腿传 null）+ 有 requestId + 入口判据（`mounted` ——
++  // 只给开放题；secret/dirPicker/选择题卡一律静默无入口，作者修正①②）下挂载。
++  // 历史/重放腿的只读附件行仍走 renderAskAttachments（单点不动）。
++  const answerAttachMounted = !!(onConfirm && requestId && answerAttachmentsAllowed(questions));
++  if (answerAttachMounted) {
++    answerAttach = mountAnswerAttachments(box, { requestId, onChange: () => checkAllAnswered() });
++  }
+   confirmBtn.onclick = () => {
++    // askuser-dragdrop 批（作者修正⑤·设计稿 §2.7）：有失败 chip ⇒ toast 且不发送
++    // （上传中的 chip 已由发送钮置灰覆盖；失败不阻塞文本输入与其它 chip）。
++    if (answerAttach && answerAttach.hasFailed()) {
++      window.__showToast?.(t('askUser.attachSendBlocked'));
++      return;
++    }
++    // askuser-dragdrop 批：随帧携带**已落盘**附件引用（只含 done 件；无附件 ⇒ 空数组
++    // ⇒ 帧与改前逐字节同形）。
++    const answerAttachments = answerAttach ? answerAttach.attachments() : [];
+     // Lock the card: drop it from the Canvas answer registry (E6: late
+     // _nfAskAnswer postMessages find no entry and are silently discarded).
+     // #250 ④: only THIS card's entry — sibling pending cards keep their channel.
+@@ -2573,6 +2598,16 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
+     if (requestId) dirPickCards.delete(requestId); // 工作区选择卡事件一并失主
+     // 已决 ⇒ 共用层单一闸（工作区选择卡的 `.ws-pick-target` / 卡片空白区在此一并失效）
+     lockOptionBox(box);
++    // askuser-dragdrop 批：附件面转只读并整区撤下（同一批文件随后由
++    // renderAskAttachments 以**与历史恢复腿同一张脸**渲染只读行 ⇒ live 与历史逐字
++    // 同构，禁同一批文件双渲染面）。
++    if (answerAttach) {
++      answerAttach.lock();
++      const zone = box.querySelector('.ask-answer-attach-zone');
++      if (zone) zone.remove();
++      const dropOverlay = box.querySelector('.ask-answer-drop-overlay');
++      if (dropOverlay) dropOverlay.remove();
++    }
+     confirmBtn.style.display = 'none';
+     cancelBtn.style.display = 'none';
+ 
+@@ -2594,6 +2629,17 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
+     ansDiv.className = 'option-answer';
+     ansDiv.textContent = '-> ' + displayParts.join(', ');
+     box.appendChild(ansDiv);
++    // askuser-dragdrop 批（设计稿 §2.8）：作答行附件计数（行内带计数利于检索）+
++    // 「已回答 · 附 N 个文件」徽标 + 只读附件行（与历史恢复腿同一渲染器）。
++    if (answerAttachments.length) {
++      const countLine = document.createElement('div');
++      countLine.className = 'option-answer';
++      countLine.style.cssText = 'color: var(--color-text-muted, #888); font-size: 12px;';
++      countLine.textContent = t('askUser.attachAnswerCount', { n: String(answerAttachments.length) });
++      box.appendChild(countLine);
++      mountAnsweredBadge(box, answerAttachments.length);
++      renderAskAttachments(box, answerAttachments.map(a => a.path));
++    }
+     questions.forEach((qz, qi) => {
+       if (qz && qz.secret === true) {
+         secretValues[qi] = null; // 内存槽立即清（快照已取）
+@@ -2607,7 +2653,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
+     // askuser-secret 批：secret 槽的 answers 位恒空串（hub 以 stored 回执占位化），
+     // 值走 secretSlots 专用键（网关检出后直写 secrets——值不进普通 answers 通道）。
+     const finalAnswers = answers.map(a => Array.isArray(a) ? JSON.stringify(a) : (a !== null ? a : ''));
+-    if (onConfirm) onConfirm(finalAnswers, secretSlots);
++    if (onConfirm) onConfirm(finalAnswers, secretSlots, answerAttachments);
+   };
+   btnRow.appendChild(cancelBtn);
+   btnRow.appendChild(confirmBtn);
+@@ -2642,7 +2688,18 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
+   smartScroll();
+ 
+   function checkAllAnswered() {
+-    confirmBtn.disabled = !questions.every((_, qi) => !shouldShow(qi) || isAnswered(qi));
++    // askuser-dragdrop 实施批（2026-10-19，批 #551）：发送闸三段——
++    //   ① 基础闸（逐字保留）：可见题都已作答；
++    //   ② 附件补充满足（仅**零选项卡**）：≥1 个已附 chip 且全部题无 options
++    //      （作者修正①：选择题卡不显示附件入口，附件也不替代选项——设计稿 §2.5）；
++    //   ③ 上传中 ⇒ 置灰 + 文案「上传中…」（任何在传 chip 都阻塞发送）。
++    const baseOk = questions.every((_, qi) => !shouldShow(qi) || isAnswered(qi));
++    const zeroOptions = !questions.some(q => q && q.options && q.options.length > 0);
++    const attachOk = !!(answerAttach && zeroOptions && answerAttach.satisfyGate());
++    const uploading = !!(answerAttach && answerAttach.uploading());
++    confirmBtn.disabled = uploading || !(baseOk || attachOk);
++    const labelSpan = confirmBtn.querySelector('span');
++    if (labelSpan) labelSpan.textContent = uploading ? t('askUser.attachUploadingLabel') : confirmLabel;
+   }
+ }
+ 
+@@ -2936,16 +2993,19 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
+   // Use the sessionId from the askUser message, not the currently active session
+   const targetSid = askSessionId || activeView.sessionId;
+   try {
+-    showOptions(bubble, items, (answers, secretSlots) => {
++    showOptions(bubble, items, (answers, secretSlots, answerAttachments) => {
+       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+         // askuser-secret 批（规格 §2 值通道）：密码题的值走 `secretSlots` 专用键
+         // （网关检出后直写 secrets——值不进普通 answers 通道、不进 .ui.json）。
+         // 无秘密题 ⇒ 与改前逐字节同帧（secretSlots 键缺席）。
++        // askuser-dragdrop 批（2026-10-19）：随卡回传的已落盘附件走 `attachments`
++        // 可选键（逐键解析向后兼容；空数组 ⇒ 键缺席，帧与改前逐字节同形）。
+         state.ws.send(JSON.stringify({
+           type: 'askUserAnswer',
+           sessionId: targetSid,
+           answers,
+           ...(Array.isArray(secretSlots) && secretSlots.length > 0 ? { secretSlots } : {}),
++          ...(Array.isArray(answerAttachments) && answerAttachments.length > 0 ? { attachments: answerAttachments } : {}),
+           ...(requestId && { requestId })
+         }));
+       }
+@@ -3101,10 +3161,15 @@ export function closeAskUserCard(sessionId, requestId, note) {
+  *  attachments: askUser 历史恢复批（2026-10-02，chain-askuser-histattach）——提问
+  *  行随行落盘的附件引用列表（与 live 腿 `renderAskUser` 同构的顶层 `attachments`）。
+  *  缺席 / 空列表 ⇒ 本函数与改前**逐字节同形**（`renderAskAttachments` 自行早退）。
++ *  answerAttachments（askuser-dragdrop 实施批 2026-10-19，批 #551）：**作答行**随行
++ *  落盘的答复附件清单（`User.answerAttachments`，`UiMessage.askUserAnswer` 单一构造
++ *  点；persistence.js 两条历史腿按 `answerOf` 精确寻址取来）。已作答卡 ⇒ 渲染
++ *  「已回答 · 附 N 个文件」徽标 + 只读附件行（`renderAskAttachments` 与 live 确认腿
++ *  同一渲染器）。缺席 / 未作答 / 已取消 ⇒ 与改前逐字节同形。
+  *  🔴 落「无作答记录」的方向 = 「未作答」而非「已作答」：宁可让一张其实已答过的卡
+  *  显示待定（重放腿/作答链会纠正），也不许让一张真 pending 卡被画成已答（那正是
+  *  重放腿去重判据被击穿、双开首卡恒死的成因）。 */
+-export function renderAskUserHistory(bubble, items, answerText, requestId, attachments) {
++export function renderAskUserHistory(bubble, items, answerText, requestId, attachments, answerAttachments) {
+   if (!Array.isArray(items) || items.length === 0) return;
+   try {
+     // Ghost seat (askuser-hybrid 重皮): history-replay twin of renderAskUser —
+@@ -3126,12 +3191,23 @@ export function renderAskUserHistory(bubble, items, answerText, requestId, attac
+   // （卡内 `.option-btn-row` 之前），本函数不新开第二套开法 / 不新增模块 / 不新增 CSS。
+   // 缺席或空列表 ⇒ 函数内早退 ⇒ 历史卡形态与改前逐字节同。
+   renderAskAttachments(box, attachments);
++  // askuser-dragdrop 批（2026-10-19，批 #551）：**作答**附件的只读面——只在确有
++  // 作答（非取消 / 非「无作答记录」）时渲染：徽标（已回答 · 附 N 个文件）+
++  // renderAskAttachments 同一渲染器的只读行。判据 = answerText 为真且非取消哨兵
++  // （与下方作答行分支同一判据源）。
++  const answerAtts = Array.isArray(answerAttachments)
++    ? answerAttachments.filter(a => a && typeof a.path === 'string' && a.path)
++    : [];
++  const cancelled = answerText === '__cancelled__';
++  if (answerText && !cancelled && answerAtts.length) {
++    mountAnsweredBadge(box, answerAtts.length);
++    renderAskAttachments(box, answerAtts.map(a => a.path));
++  }
+   // 单一判据的形态锚（`sameAskCards` ②）：这张卡来自历史恢复，不是 live 卡。
+   // 属性不进 innerHTML ⇒ 与 live 卡的逐字节 parity 断言（history-replay-cards.spec）
+   // 不受影响。
+   box.dataset.historyReplay = '1';
+   box.classList.remove('ob-fade-in'); // settled card — no creation animation on replay
+-  const cancelled = answerText === '__cancelled__';
+   if (answerText && !cancelled) markAnsweredPick(box, items, answerText);
+   // Lock — same end-state as the live confirm path (confirmBtn.onclick) or
+   // cancel path (cancelBtn.onclick) depending on the recorded answer. 2026-09-18
+diff --git a/src/main/resources/web/js/locales/en.js b/src/main/resources/web/js/locales/en.js
+index 757d37ab7..43767fffb 100644
+--- a/src/main/resources/web/js/locales/en.js
++++ b/src/main/resources/web/js/locales/en.js
+@@ -1363,6 +1363,25 @@ export default {
+   'askUser.secretEphemeralHint': 'One-time code mode: the first read consumes it (valid 10 minutes); the agent receives a stored pointer only.',
+   'askUser.secretStoredLine': 'securely stored (receipt injected into the session)',
+   'askUser.rejectSecret': 'A secret question received a plain-text answer (this page predates secure input) — the value was discarded unstored; refresh this page and re-enter it on the card',
++  // askuser-dragdrop impl batch (2026-10-19, #551): card-scoped reply attachments
++  // (open questions only — choice/secret/terminal cards get NO entry at all,
++  // author corrections ①②; ≤9 files / 100MB each).
++  'askUser.replyAttachTitle': 'Reply attachments (optional)',
++  'askUser.attachEmpty': 'Drop files or images, paste with Ctrl/⌘+V, or click to choose',
++  'askUser.attachDropHint': 'Drop to attach',
++  'askUser.attachUploading': 'Uploading {n}%',
++  'askUser.attachUploadingLabel': 'Uploading…',
++  'askUser.attachAttached': 'Attached',
++  'askUser.attachRetry': 'Retry',
++  'askUser.attachUploadFailed': 'Failed',
++  'askUser.attachUploadFailedToast': '{name} failed to upload — retry or remove',
++  'askUser.attachTooMany': 'At most {n} files per question',
++  'askUser.attachTooLarge': '{name} exceeds the 100MB per-file limit',
++  'askUser.attachDuplicate': '{name} is already attached',
++  'askUser.attachSendBlocked': 'Some attachments are not uploaded yet — retry or remove them before sending',
++  'askUser.attachAnswerCount': '({n} file(s) attached)',
++  'askUser.attachCountBadge': 'Answered · {n} file(s)',
++  'askUser.removeAttachment': 'Remove attachment {name}',
+   'chat.waitingQuestion': 'Waiting for question...',
+   'chat.askFailed': 'Ask failed',
+   'chat.askLabel': 'Ask',
+diff --git a/src/main/resources/web/js/locales/zh-CN.js b/src/main/resources/web/js/locales/zh-CN.js
+index b2b317247..701f50a86 100644
+--- a/src/main/resources/web/js/locales/zh-CN.js
++++ b/src/main/resources/web/js/locales/zh-CN.js
+@@ -1312,6 +1312,24 @@ export default {
+   'askUser.secretEphemeralHint': '验证码模式：一次读取后即作废（10 分钟内有效）；代理只收到存储指针。',
+   'askUser.secretStoredLine': '已安全存储（回执已注入会话）',
+   'askUser.rejectSecret': '密码题收到了明文作答（旧版页面不识别安全输入）——值已丢弃未存储，请刷新本页后在卡片上重新输入',
++  // askuser-dragdrop 实施批（2026-10-19，批 #551）：答复附件面（开放题专属——
++  // 选择题/secret/已终结卡一律静默无入口，作者修正①②；多文件 ≤9/单件 ≤100MB）。
++  'askUser.replyAttachTitle': '回复附件（可选）',
++  'askUser.attachEmpty': '拖入文件或图片，或 Ctrl/⌘+V 粘贴 —— 也可点击选择',
++  'askUser.attachDropHint': '松手附上文件',
++  'askUser.attachUploading': '上传中 {n}%',
++  'askUser.attachUploadingLabel': '上传中…',
++  'askUser.attachAttached': '已附',
++  'askUser.attachRetry': '重试',
++  'askUser.attachUploadFailed': '失败',
++  'askUser.attachUploadFailedToast': '{name} 上传失败，可重试或移除',
++  'askUser.attachTooMany': '最多附 {n} 个文件',
++  'askUser.attachTooLarge': '{name} 超过单文件 100MB 上限',
++  'askUser.attachDuplicate': '{name} 已在附件列表',
++  'askUser.attachSendBlocked': '有附件未上传完成，可重试或移除后再发送',
++  'askUser.attachAnswerCount': '（附 {n} 个文件）',
++  'askUser.attachCountBadge': '已回答 · 附 {n} 个文件',
++  'askUser.removeAttachment': '移除附件 {name}',
+   'chat.waitingQuestion': '等待问题...',
+   'chat.askFailed': '询问失败',
+   'chat.askLabel': '询问',
+diff --git a/src/main/resources/web/js/main.js b/src/main/resources/web/js/main.js
+index 63118f67f..7b8d5e7d3 100644
+--- a/src/main/resources/web/js/main.js
++++ b/src/main/resources/web/js/main.js
+@@ -1467,7 +1467,10 @@ onMessage('interactionAnswerRejected', (msg) => {
+     'no-kind-compatible': 'askUser.rejectNoMatch',
+     // askuser-secret 批（2026-10-08）：秘密槽明文回流（旧前端不识别 secret 键，
+     // 值打进了普通 answers）——hub 拒收保卡，值未存储；toast 指引刷新。
+-    'secret-slot-mismatch': 'askUser.rejectSecret'
++    'secret-slot-mismatch': 'askUser.rejectSecret',
++    // askuser-dragdrop 实施批（2026-10-19，批 #551）：答案侧附件终验拒收（secret
++    // 卡 / 路径越界 / 超限——纵深防御面；正常前端无此路径，作者修正②）。
++    'attach-rejected': 'askUser.rejectAttach'
+   }[msg.reason] || 'askUser.rejectGeneric';
+   window.__showToast?.(t(key), 'error');
+ });
+diff --git a/src/main/resources/web/js/persistence.js b/src/main/resources/web/js/persistence.js
+index 7776fce39..50904871c 100644
+--- a/src/main/resources/web/js/persistence.js
++++ b/src/main/resources/web/js/persistence.js
+@@ -387,6 +387,24 @@ function askUserAnswerText(msgs, i) {
+   return answer;
+ }
+ 
++/** 作答行的**答复附件清单**（askuser-dragdrop 实施批 2026-10-19，批 #551）。
++ *  与 [[askUserAnswerText]] 的①精确腿同一条寻址（`answerOf === askUser 行 requestId`）
++ *  —— 附件清单只随案 B 后的作答行落盘（`User.answerAttachments`，缺席即旧行字节
++ *  形态不变）；启发式腿（无标记旧行）没有附件可还原 ⇒ null。两腿历史卡由此渲染
++ *  「已回答 · 附 N 个文件」徽标 + 只读附件行（renderAskUserHistory 第 6 参）。 */
++function askUserAnswerAtts(msgs, i) {
++  const ask = msgs[i];
++  const askRid = ask && ask.requestId;
++  if (typeof askRid !== 'string' || !askRid) return null;
++  for (let j = i + 1; j < msgs.length; j++) {
++    const m = msgs[j];
++    if (m && m.type === 'user' && m.answerOf === askRid) {
++      return Array.isArray(m.answerAttachments) && m.answerAttachments.length ? m.answerAttachments : null;
++    }
++  }
++  return null;
++}
++
+ /** R5（作者裁定 = 补上，2026-09-14）：历史 askUser 卡的复制载荷 —— 各问句的**纯文本**
+  *  （`AskItem.question` 可为富文本 HTML，复制键只该给纯文本，故剥标签并压缩空白），
+  *  一问一句、`\n` 分隔。空卡 ⇒ 空串 ⇒ 调用侧不挂药丸（不产生游离按钮）。 */
+@@ -804,7 +822,7 @@ export function restoreFromStorage(opts = {}) {
+       // 保持本腿改前的取值（本腿历来不传 requestId ⇒ 仍是 undefined，本批不越界改
+       // 这条 id 语义），只补第 5 形参 `m.attachments`。缺席 / 空列表 ⇒
+       // `renderAskAttachments` 内早退 ⇒ 本腿历史卡与改前逐字节同形。
+-      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i), undefined, m.attachments);
++      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i), undefined, m.attachments, askUserAnswerAtts(msgs, i));
+       // R5（作者裁定 = 补上，2026-09-14）：历史 askUser 卡原**不挂** footer，而 live
+       // ask 行（chat.js）与历史 ask 问答行都挂 ⇒ 卡片 footer 奇偶不一致。现补一枚
+       // 药丸（复用同一 builder ⇒ 分隔符守卫与三面形态同源）。`AskUser` 落盘无
+@@ -1241,7 +1259,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
+       // 落盘行顶层 `attachments`（后端历史恢复腿 `handleGetHistory` → `getHistoryPage`
+       // → `Encoder[UiMessage]` 编出的同一形状）。缺席 / 空列表 ⇒
+       // `renderAskAttachments` 内早退 ⇒ 无附件行（改前形态逐字不变）。
+-      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i), m.requestId, m.attachments);
++      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i), m.requestId, m.attachments, askUserAnswerAtts(msgs, i));
+       // R5（作者裁定 = 补上）：与 localStorage 兜底路径同款补药丸，两条历史路径
+       // 逐字对齐（本函数与 restoreFromStorage 的历史形态必须一致）。
+       const askCopy = askUserQuestionText(m.items);
+diff --git a/src/main/scala/nebflow/actor/InteractionHubCommand.scala b/src/main/scala/nebflow/actor/InteractionHubCommand.scala
+index 414f8b267..5b4dc4241 100644
+--- a/src/main/scala/nebflow/actor/InteractionHubCommand.scala
++++ b/src/main/scala/nebflow/actor/InteractionHubCommand.scala
+@@ -119,8 +119,27 @@ object InteractionHubCommand:
+    */
+   final case class SecretSlotsOf(requestId: String, reply: ActorRef[Option[List[SecretSlotSpec]]])
+       extends InteractionHubCommand
++
++  /**
++   * askuser-dragdrop 实施批（2026-10-19，批 #551）：**只读**附件闸查询 ——
++   * `requestId` 的槽位是否是一张**仍 pending 的 AskUser 卡**、其 root 会话、以及
++   * 卡上是否携带 secret 型题。唯一消费方 = 网关 `POST /api/askuser/attachments`
++   * 上传端点的前置闸：卡不在册（已答 / 已收 / 从未存在）⇒ `None`（端点 410）；
++   * secret 卡 ⇒ `hasSecret=true`（端点 403 fail-closed——防凭据被「另存为文件」
++   * 旁路落盘）。与 [[SecretSlotsOf]] 同一纪律：只读（不碰 pending/渲染/广播）、
++   * hub 是槽位唯一权威。
++   */
++  final case class AttachGateOf(requestId: String, reply: ActorRef[Option[AttachGate]])
++      extends InteractionHubCommand
+ end InteractionHubCommand
+ 
++/**
++ * askuser-dragdrop 实施批（2026-10-19，批 #551）：[[InteractionHubCommand.AttachGateOf]]
++ * 的查询回执。`rootSessionId` = 上传落盘目录的归属会话（`uploads/<rootSessionId>/ask-<requestId>/`）；
++ * `hasSecret` = 卡上任一题 secret 型（fail-closed 拒传）。
++ */
++final case class AttachGate(rootSessionId: String, hasSecret: Boolean)
++
+ /**
+  * askuser-secret 批：一条 secret 型题的落库参数（hub 从 pending 载荷的 items 里
+  * 解出，经 [[InteractionHubCommand.SecretSlotsOf]] 回给网关）。零值字段——值只在
+diff --git a/src/main/scala/nebflow/agent/AskUserAnswerBridge.scala b/src/main/scala/nebflow/agent/AskUserAnswerBridge.scala
+index ebe059fb1..59dda6e91 100644
+--- a/src/main/scala/nebflow/agent/AskUserAnswerBridge.scala
++++ b/src/main/scala/nebflow/agent/AskUserAnswerBridge.scala
+@@ -1,9 +1,12 @@
+ package nebflow.agent
+ 
+ import cats.effect.IO
++import cats.syntax.all.*
++import io.circe.Json
++import io.circe.syntax.*
+ import nebflow.actor.*
+-import nebflow.core.tools.{AskUserQuestionTool, ToolContext}
+-import nebflow.shared.{AskItem, AskUserDispatch, NebflowLogger}
++import nebflow.core.tools.{AskUserQuestionTool, ImageInject, ToolContext}
++import nebflow.shared.{AskItem, AskUserAnswerAttachments, AskUserDispatch, ContentBlock, NebflowLogger}
+ 
+ import scala.concurrent.duration.*
+ 
+@@ -121,7 +124,11 @@ object AskUserAnswerBridge:
+           s"answer and nothing is injected into session=${ctx.sessionId.getOrElse("<unknown>")}"
+       )
+     else
+-      val text = AskUserQuestionTool.formatAnswer(items, answers)
++      // askuser-dragdrop 实施批（2026-10-19，批 #551）：剥取尾随**答复附件清单槽**
++      // （hub `complete` 只在帧带非空 attachments 时追加；无附件 ⇒ take 恒等透传，
++      // 注入文本与改前逐字节一致）。
++      val (slots, attachments) = AskUserAnswerAttachments.take(answers)
++      val text = AskUserQuestionTool.formatAnswer(items, slots)
+       sessionAlive(ctx).flatMap {
+         case false =>
+           logger.warn(
+@@ -129,19 +136,106 @@ object AskUserAnswerBridge:
+               s"(sessionId=${ctx.sessionId.getOrElse("<unknown>")}); answer NOT delivered"
+           )
+         case true =>
+-          logger.info(
+-            s"askUser answer bridge: requestId=$requestId → injected as a user message into " +
+-              s"session=${ctx.sessionId.getOrElse("<unknown>")} (${answers.size} answer slot(s))"
+-          ) *>
+-            (target ! AgentCommand.ImmediateInput(
+-              text = text,
+-              source = Some(AskUserAnswerSource.AnswerSource),
+-              eventType = Some(AskUserAnswerSource.AnswerSource),
+-              fromUser = true
+-            ))
++          attachmentInjection(attachments, requestId, ctx).flatMap { case (attachText, imageBlocks, uiLines) =>
++            val injectText = if attachText.isEmpty then text else text + attachText
++            val uiText = if uiLines.isEmpty then injectText else injectText + uiLines
++            // blocks 在场 ⇒ LLM 消息取 blocks（Path 见 AgentProcessing drain）；UI 气泡
++            // 取 text。无附件 ⇒ blocks 缺席，与改前逐字节同形。
++            val blocksOpt =
++              if attachText.isEmpty then None
++              else Some(ContentBlock.Text(injectText) +: imageBlocks)
++            logger.info(
++              s"askUser answer bridge: requestId=$requestId → injected as a user message into " +
++                s"session=${ctx.sessionId.getOrElse("<unknown>")} (${slots.size} answer slot(s)" +
++                (if attachments.isEmpty then "" else s", ${attachments.size} attachment(s)") + ")"
++            ) *>
++              (target ! AgentCommand.ImmediateInput(
++                text = uiText,
++                blocks = blocksOpt,
++                source = Some(AskUserAnswerSource.AnswerSource),
++                eventType = Some(AskUserAnswerSource.AnswerSource),
++                fromUser = true
++              ))
++          }
++      }
++
++  /**
++   * 答复附件的**双通道注入物构造**（askuser-dragdrop 实施批，规格 §3.4）：
++   *
++   *   · 文本通道（全部附件）：路径清单行 —— 模型可对任意一条 `Read`（与出向
++   *     attachments 的 `FileRefs.describe` 口径同族：路径引用面）。
++   *   · vision 块（图片子集）：`mime` 以 `image/` 开头且 ≤10MB 的**前 5 张** →
++   *     `ContentBlock.Image`(base64) —— 数值对齐 `ImageInject` 既有上限（单源常量，
++   *     禁第二把尺）；>10MB 图片仅路径文本（模型可 Read / 开 Canvas）。
++   *
++   * 纯读盘 + 纯串构造，零写面；文件缺失 / 读失败 ⇒ 该件降级为「不可读」清单行，
++   * 绝不让一次读失败炸掉整个答复注入。
++   *
++   * @return (模型清单文本, 图片块, UI 气泡附加行)
++   */
++  private def attachmentInjection(
++    attachments: List[Json],
++    requestId: String,
++    ctx: ToolContext
++  ): IO[(String, List[ContentBlock.Image], String)] =
++    if attachments.isEmpty then IO.pure(("", Nil, ""))
++    else
++      val parsed = attachments.map { a =>
++        val c = a.hcursor
++        val path = c.downField("path").as[String].toOption.getOrElse("")
++        val name = c.downField("name").as[String].toOption.getOrElse(path.split('/').lastOption.getOrElse("file"))
++        val mime = c.downField("mime").as[String].toOption
++          .orElse(c.downField("mimeType").as[String].toOption)
++          .getOrElse("application/octet-stream")
++        val size = c.downField("size").as[Long].toOption.getOrElse(0L)
++        val sha = c.downField("sha256").as[String].toOption.getOrElse("")
++        (path, name, mime, size, sha)
++      }
++      val maxImages = ImageInject.MAX_ATTACHMENTS
++      val maxImageBytes = ImageInject.MAX_IMAGE_BYTES
++      def isFileOk(path: String, size: Long): Boolean =
++        try os.isFile(os.Path(path)) && os.size(os.Path(path)) == size
++        catch case _: Throwable => false
++      def readImage(path: String): IO[Option[String]] =
++        if !isFileOk(path, -1L) then IO.pure(None)
++        else
++          IO.blocking(java.util.Base64.getEncoder.encodeToString(os.read.bytes(os.Path(path))))
++            .map(Some(_))
++            .handleErrorWith(e =>
++              logger.warn(s"askUser answer bridge: requestId=$requestId — image read failed ($path): ${e.getMessage}")
++                .as(None)
++            )
++      // vision 子集：图片、文件仍在、≤10MB 的**前 5 张**（ImageInject 单源上限）。
++      val imageCandidates =
++        parsed.collect { case e @ (p, _, m, s, _) if m.startsWith("image/") && s > 0 && s <= maxImageBytes => e }
++          .take(maxImages)
++      val imageReads = imageCandidates.traverse { case (p, _, _, _, _) => readImage(p) }
++      imageReads.map { imageB64s =>
++        val lines = parsed.map { case (path, name, mime, size, sha) =>
++          val shaNote = if sha.nonEmpty then s", sha256=$sha" else ""
++          val unreadNote = if isFileOk(path, size) then "" else " (file missing or changed since upload)"
++          s"- $path — $name, $mime, $size bytes$shaNote$unreadNote"
++        }
++        val imageBlocks = imageCandidates.zip(imageB64s).collect { case ((_, _, mime, _, _), Some(b64)) =>
++          ContentBlock.Image(b64, mime)
++        }
++        val attachText =
++          "\n\nUser attached " + parsed.size + " file(s) with this answer:\n" + lines.mkString("\n") +
++            "\n(Read any of these paths for full content" +
++            (if imageBlocks.nonEmpty then "; the attached images are already visible to you" else "") +
++            ".)"
++        val uiLines = "\n\n" + parsed.map { case (path, name, mime, size, _) =>
++          s"- $name (${humanSize(size)})" + (if isFileOk(path, size) then "" else " · unavailable")
++        }.mkString("\n")
++        (attachText, imageBlocks, uiLines)
+       }
++  end attachmentInjection
+ 
+-  end deliver
++  /** 人可读大小（注入气泡行用；纯展示，禁进任何判据）。 */
++  private def humanSize(bytes: Long): String =
++    if bytes >= 1_048_576 then f"${bytes / 1048576.0}%.1f MB"
++    else if bytes >= 1024 then s"${bytes / 1024} KB"
++    else s"$bytes B"
+ 
+   /**
+    * 目标会话是否还在（注册表行存在 = 活着）。无 sharedResources / 无 sessionId
+diff --git a/src/main/scala/nebflow/agent/InteractionHub.scala b/src/main/scala/nebflow/agent/InteractionHub.scala
+index e672bd34f..99ad43353 100644
+--- a/src/main/scala/nebflow/agent/InteractionHub.scala
++++ b/src/main/scala/nebflow/agent/InteractionHub.scala
+@@ -113,6 +113,10 @@ object InteractionHub:
+               // askuser-secret 批（2026-10-08）：只读 secret 槽位查询（网关作答闸的
+               // 判据来源）——见 InteractionHubCommand.SecretSlotsOf 注。
+               ctx.forkTurn(handleSecretSlotsOf(pending, requestId, reply)) *> IO.pure(behavior)
++            case InteractionHubCommand.AttachGateOf(requestId, reply) =>
++              // askuser-dragdrop 实施批（2026-10-19，批 #551）：只读附件闸查询
++              // （上传端点前置闸的判据来源）——见 InteractionHubCommand.AttachGateOf 注。
++              ctx.forkTurn(handleAttachGateOf(pending, requestId, reply)) *> IO.pure(behavior)
+         }
+       IO.pure(behavior)
+     }
+@@ -428,6 +432,24 @@ object InteractionHub:
+       )
+       .flatMap(specs => (reply ! specs).void)
+ 
++  /**
++   * 只读查询（AttachGateOf，askuser-dragdrop 实施批 2026-10-19）：槽位在册且
++   * kind=AskUser ⇒ 回附件闸（root 会话 + 是否 secret 卡）；否则 None（端点按
++   * 卡不在册处理 → 410）。
++   */
++  private def handleAttachGateOf(
++    pending: Ref[IO, Map[String, PendingRequest]],
++    requestId: String,
++    reply: ActorRef[Option[AttachGate]]
++  ): IO[Unit] =
++    pending.get
++      .map(m =>
++        m.get(requestId).filter(_.kind == InteractionKind.AskUser).map { p =>
++          AttachGate(rootSessionId = p.rootSessionId, hasSecret = secretSlotsOf(p).nonEmpty)
++        }
++      )
++      .flatMap(gate => (reply ! gate).void)
++
+   // ============================================================
+   // 工具面按角色分化批 B6 (2026-09-13): read-only reachability probe.
+   //
+@@ -823,12 +845,12 @@ object InteractionHub:
+    * 关了」）：`via` 曾另有 `chat-input` 取值，随 `handleChatInputAnswer` 一并
+    * 删除 ⇒ 现存唯一取值 = card（卡片入口作答）。
+    */
+-  private def auditAnswer(requestId: String, p: PendingRequest, answersJoined: String, via: String): IO[Unit] =
++  private def auditAnswer(requestId: String, p: PendingRequest, answersJoined: String, via: String, attachNote: String = ""): IO[Unit] =
+     val excerpt = if answersJoined.length > 200 then answersJoined.take(200) + "..." else answersJoined
+     audit
+       .info(
+         s"event=answer requestId=$requestId sourceSession=${p.sourceSession} rootSessionId=${p.rootSessionId} " +
+-          s"kind=${p.kind} via=$via answersJoined=$excerpt"
++          s"kind=${p.kind} via=$via$attachNote answersJoined=$excerpt"
+       )
+       .handleErrorWith(_ => IO.unit)
+ 
+@@ -909,9 +931,29 @@ object InteractionHub:
+                 "L3 is always-ask (host red line); no session approval recorded"
+             )
+         case _ => ()
++    // askuser-dragdrop 实施批（2026-10-19，批 #551）：随卡回传的**答复附件清单**
++    // （网关 askUserAnswer 帧的 `attachments` 键，已由网关终验）。只对 AskUser 槽位
++    // 生效：非空 ⇒ 以尾随清单槽（[[AskUserAnswerAttachments.manifestSlot]]）与答复
++    // 同投 —— 桥腿（AskUserAnswerBridge）剥下后注入模型上下文；其它消费面
++    // （formatAnswer / parsePanelAnswer / SendConfirm）对尾随多余槽天然无感。
++    val answerAttachments: List[Json] =
++      if p.kind == InteractionKind.AskUser then
++        ans.payload.hcursor.downField("attachments").as[List[Json]].toOption.getOrElse(Nil)
++      else Nil
++    val attachAuditNote =
++      if answerAttachments.isEmpty then ""
++      else
++        s" attach=${answerAttachments.size}(" +
++          answerAttachments
++            .map(a =>
++              val c = a.hcursor
++              s"${c.downField("name").as[String].getOrElse("?")},${c.downField("size").as[Long].toOption.getOrElse(0L)}B"
++            )
++            .mkString(";") + ")"
+     for
+       _ <- logger.info(
+-        s"InteractionAnswered requestId=${ans.requestId} kind=${p.kind} approved=$approved answers=${answers.map(_.size)}"
++        s"InteractionAnswered requestId=${ans.requestId} kind=${p.kind} approved=$approved answers=${answers.map(_.size)}" +
++          (if answerAttachments.isEmpty then "" else s" attachments=${answerAttachments.size}")
+       )
+       _ <- auditAnswer(
+         ans.requestId,
+@@ -927,7 +969,8 @@ object InteractionHub:
+             .orElse(approved.map(a => s"approved=$a"))
+             .getOrElse("-")
+         ),
+-        via
++        via,
++        attachAuditNote
+       )
+       _ <- IO.delay(rememberSessionApproval)
+       _ <- p.reply match
+@@ -936,7 +979,10 @@ object InteractionHub:
+         case InteractionReply.McpPermissionReply(deferred) =>
+           mcpAnswer.fold(IO.unit)(a => deferred.complete(a).void.handleErrorWith(_ => IO.unit))
+         case InteractionReply.AskUserReply(replyTo) =>
+-          replyTo.fold(IO.unit)(r => (r ! answersForDelivery))
++          replyTo.fold(IO.unit)(r =>
++            (r ! (answersForDelivery ++
++              nebflow.shared.AskUserAnswerAttachments.manifestSlot(answerAttachments)))
++          )
+     yield ()
+     end for
+   end complete
+diff --git a/src/main/scala/nebflow/gateway/RestApiRoutes.scala b/src/main/scala/nebflow/gateway/RestApiRoutes.scala
+index 9b72c6798..5f932650b 100644
+--- a/src/main/scala/nebflow/gateway/RestApiRoutes.scala
++++ b/src/main/scala/nebflow/gateway/RestApiRoutes.scala
+@@ -77,6 +77,9 @@ class RestApiRoutes(
+ 
+   def routes: HttpRoutes[IO] =
+     HealthRoutes.routes(ctx) <+> SessionRoutes.routes(ctx) <+> AskUserCancelRoutes.routes(ctx) <+>
++      // askuser-dragdrop 实施批（2026-10-19，批 #551）：卡片作用域答复附件上传域
++      // （/api/askuser/attachments —— 与 cancel 域同族挂载）。
++      AskUserAttachmentRoutes.routes(ctx) <+>
+       ConfigRoutes.routes(ctx) <+>
+       ProjectsRoutes.routes(ctx) <+> WikiRoutes.routes(ctx) <+> RegistryRoutes.routes(ctx) <+>
+       NeblinkRoutes.routes(ctx) <+>
+diff --git a/src/main/scala/nebflow/gateway/StaticRoutes.scala b/src/main/scala/nebflow/gateway/StaticRoutes.scala
+index 622a618c0..f9a1c057c 100644
+--- a/src/main/scala/nebflow/gateway/StaticRoutes.scala
++++ b/src/main/scala/nebflow/gateway/StaticRoutes.scala
+@@ -229,8 +229,11 @@ object StaticRoutes:
+     // form semantics must NOT leak here), nothing skipped. Decoding happens
+     // BEFORE the guards below so a `%2E%2E` evasion decodes INTO them.
+     val segs = req.uri.path.segments.map(s => s.decoded()).toList
+-    // Path shape is exactly <sid>/<filename> — two segments after "uploads".
+-    if segs.sizeIs != 3 then NotFound()
++    // Path shape: <sid>/<filename> — two segments after "uploads", or (askuser-dragdrop
++    // 实施批 2026-10-19，批 #551) <sid>/ask-<requestId>/<filename> — three segments:
++    // card-scoped answer attachments live in an extra layer under the same base and
++    // are served by the SAME percent-decode + traversal-guard chain below.
++    if segs.sizeIs != 3 && segs.sizeIs != 4 then NotFound()
+     else
+       val relParts = segs.drop(1) // drop "uploads"
+       // Block path traversal (same guard style as voice-models). Post-decode
+diff --git a/src/main/scala/nebflow/gateway/WsSessionChatHandlers.scala b/src/main/scala/nebflow/gateway/WsSessionChatHandlers.scala
+index f4933e02f..6a12dd151 100644
+--- a/src/main/scala/nebflow/gateway/WsSessionChatHandlers.scala
++++ b/src/main/scala/nebflow/gateway/WsSessionChatHandlers.scala
+@@ -75,26 +75,157 @@ private[gateway] object WsSessionChatHandlers:
+     (hc.downField("answers").as[List[String]], hc.downField("sessionId").as[String]) match
+       case (Right(answers), Right(askSessionId)) =>
+         val requestId = hc.downField("requestId").as[String].toOption.getOrElse("")
++        // askuser-dragdrop 实施批（2026-10-19，批 #551）：随作答回传的**已落盘附件**
++        // （上传端点 `/api/askuser/attachments` 的响应记录，逐键解析向后兼容——缺键
++        // 即旧行为逐字节不变）。
++        val attachmentsJson = hc.downField("attachments").as[List[Json]].toOption.getOrElse(Nil)
+         // askuser-secret 批（2026-10-08，规格 §2「唯一新闸口」）：先问 hub 该卡是否
+         // 携 secret 型题——无（旧卡 / 无 requestId / hub 未装配 / 查询失败）⇒ 与
+         // 改前**逐字节同路径**；有 ⇒ 秘密槽分流（值落 sink、.ui.json 落脱敏行、
+         // hub 载荷带 stored 回执），见 [[handleSecretAwareAnswer]]。
+         secretSlotsFor(sharedResources, requestId).flatMap {
++          case specs if specs.nonEmpty && attachmentsJson.nonEmpty =>
++            // 修正② fail-closed（纵深防御）：secret 卡的作答**永不**接受附件——
++            // 前端对 secret 卡本就无附件入口，此闸只服务伪造/越权客户端。整帧
++            // 拒收：不落盘、不进 hub（卡保留，可刷新后重新作答）。
++            rejectAttachFrame(wsSend, askSessionId, requestId, "ASKUSER_ATTACH_SECRET_CARD",
++              "secret questions never accept attachments")
+           case Nil =>
+-            // 案 B（双开缺陷批 2026-09-21，chain-askuserdup）作答行单一构造点逐字
+-            // 保留：秘密题缺席的卡与改前同形（answers-only 载荷、原样行文本）。
+-            val answerText = answers.mkString("\n")
+-            sessionStore.appendUiMessages(
+-              askSessionId,
+-              List(UiMessage.askUserAnswer(answerText, requestId, System.currentTimeMillis()))
+-            ) *>
+-              forwardInteractionAnswer(requestId, askSessionId, io.circe.Json.obj("answers" -> answers.asJson))
++            validateAnswerAttachments(askSessionId, requestId, attachmentsJson).flatMap {
++              case Some((code, detail)) => rejectAttachFrame(wsSend, askSessionId, requestId, code, detail)
++              case None =>
++                // 案 B（双开缺陷批 2026-09-21，chain-askuserdup）作答行单一构造点逐字
++                // 保留：秘密题缺席的卡与改前同形（answers-only 载荷、原样行文本）；
++                // 附件在场 ⇒ 行带附件清单（本批），载荷带 attachments 键。
++                val answerText = answers.mkString("\n")
++                sessionStore.appendUiMessages(
++                  askSessionId,
++                  List(UiMessage.askUserAnswer(answerText, requestId, System.currentTimeMillis(), attachmentsJson))
++                ) *>
++                  markAnswered(askSessionId, requestId, attachmentsJson) *>
++                  forwardInteractionAnswer(
++                    requestId,
++                    askSessionId,
++                    io.circe.Json.obj("answers" -> answers.asJson) deepMerge
++                      (if attachmentsJson.isEmpty then io.circe.Json.obj()
++                       else io.circe.Json.obj("attachments" -> attachmentsJson.asJson))
++                  )
++            }
+           case specs => handleSecretAwareAnswer(ctx, answers, hc, requestId, askSessionId, specs)
+         }
+       case _ => IO.unit
+     end match
+   end handleAskUserAnswer
+ 
++  /**
++   * askuser-dragdrop 实施批（2026-10-19，批 #551）：答案侧**提交时终验**（设计稿
++   * §3.3，对齐出向面 `validateAttachments` 的反向）。逐条 fail-closed：
++   *   ① 计数 ≤ `AttachContract.MaxAttachmentsPerMessage`；
++   *   ② 每条 path 必须真实存在、是普通文件；
++   *   ③ realpath 必须落在 `<dataRoot>/uploads/<askSessionId>/ask-<requestId>/` 前缀内
++   *      （路径逃逸 = 拒收；端点是唯一落盘闸）；
++   *   ④ 单件 ≤ `AskUserQuestionTool.MaxAttachmentBytes`（真实文件尺寸，非声明值）；
++   *   ⑤ sha 与服务端受理台账一致（台账在 ⇒ 必须一致；进程重启后台账缺失 ⇒ 降级为
++   *      ①–④ 把关，不作安全依赖）。
++   * 返回 `None` = 全部通过；`Some((code, detail))` = 拒收（调用方整帧丢弃）。
++   */
++  private[gateway] def validateAnswerAttachments(
++    askSessionId: String,
++    requestId: String,
++    attachments: List[Json]
++  ): IO[Option[(String, String)]] =
++    if attachments.isEmpty then IO.pure(None)
++    else if requestId.trim.isEmpty then
++      IO.pure(Some(("ASKUSER_BAD_REQUEST", "attachments require a requestId (card-scoped uploads)")))
++    else if attachments.size > AttachContract.MaxAttachmentsPerMessage then
++      IO.pure(
++        Some(
++          (
++            "ASKUSER_ATTACH_TOO_MANY",
++            s"${attachments.size} attachments — at most ${AttachContract.MaxAttachmentsPerMessage} per card"
++          )
++        )
++      )
++    else
++      val baseDir = AskUserAttachmentRoutes.Store.dirOf(askSessionId, requestId).toString
++      attachments.foldLeft[IO[Option[(String, String)]]](IO.pure(None)) { (acc, att) =>
++        acc.flatMap {
++          case some @ Some(_) => IO.pure(some)
++          case None =>
++            val c = att.hcursor
++            val path = c.downField("path").as[String].toOption.getOrElse("").trim
++            val claimedSha = c.downField("sha256").as[String].toOption.getOrElse("")
++            if path.isEmpty then IO.pure(Some(("ASKUSER_BAD_REQUEST", "attachment entry without a path")))
++            else
++              IO.blocking {
++                val p = os.Path(path, os.pwd)
++                if !os.isFile(p) then Left(Some(("ASKUSER_ATTACH_NOT_FOUND", s"attachment file missing: $path")))
++                else
++                  val real = java.nio.file.Paths.get(p.toString).toRealPath().toString
++                  val baseReal =
++                    try java.nio.file.Paths.get(baseDir).toRealPath().toString
++                    catch case _: Throwable => baseDir
++                  if !real.startsWith(baseReal + java.io.File.separator) then
++                    Left(Some(("ASKUSER_ATTACH_OUTSIDE_CARD", s"attachment path outside the card upload dir: $path")))
++                  else
++                    val size = os.size(p)
++                    if size > nebflow.core.tools.AskUserQuestionTool.MaxAttachmentBytes then
++                      Left(
++                        Some(
++                          (
++                            "ASKUSER_ATTACH_TOO_LARGE",
++                            s"$path is $size bytes — over the ${nebflow.core.tools.AskUserQuestionTool.MaxAttachmentBytes / (1024 * 1024)} MB per-file limit"
++                          )
++                        )
++                      )
++                    else Right(()) // 基础闸过；sha 比对在 blocking 块外（需查台账 IO）
++              }.flatMap {
++                case Left(reject) => IO.pure(reject)
++                case Right(_) =>
++                  // 台账 sha 比对（存在才比——重启后缺失，降级不拒）。
++                  shaRecordFor(path).map {
++                    case Some(recorded) if claimedSha.nonEmpty && recorded != claimedSha =>
++                      Some(("ASKUSER_ATTACH_SHA_MISMATCH", s"attachment sha mismatch: $path"))
++                    case _ => None
++                  }
++              }.handleErrorWith(e => IO.pure(Some(("ASKUSER_ATTACH_UNREADABLE", s"attachment not readable: ${e.getMessage}"))))
++        }
++      }
++
++  /** 服务端受理台账里该 path 的 sha（按 path 线性查——每卡 ≤9 条，代价可忽略）。 */
++  private def shaRecordFor(path: String): IO[Option[String]] =
++    AskUserAttachmentRoutes.Store.registry.get.map { m =>
++      m.values.flatMap(_.files.values).find(_.path == path).map(_.sha256)
++    }
++
++  /** 拒收帧（前端 toast 面；与 hub `rejectAnswer` 广播同族同形状）。 */
++  private def rejectAttachFrame(
++    wsSend: io.circe.Json => IO[Unit],
++    askSessionId: String,
++    requestId: String,
++    code: String,
++    detail: String
++  ): IO[Unit] =
++    nebflow.shared.NebflowLogger
++      .forName("nebflow.ws")
++      .warn(s"askUserAnswer with attachments REJECTED requestId=$requestId root=$askSessionId code=$code detail=$detail") *>
++      wsSend(
++        io.circe.Json.obj(
++          "type" -> "interactionAnswerRejected".asJson,
++          "sessionId" -> askSessionId.asJson,
++          "rootSessionId" -> askSessionId.asJson,
++          "requestId" -> requestId.asJson,
++          "reason" -> "attach-rejected".asJson,
++          "detail" -> s"$code: $detail".asJson
++        )
++      )
++
++  /** 已作答卡的 `.answered` 标记（孤儿清扫的保留判据；只对带附件的作答落——
++    * 无附件作答卡即便曾传过孤儿件也照扫）。best-effort。 */
++  private def markAnswered(askSessionId: String, requestId: String, attachments: List[Json]): IO[Unit] =
++    if attachments.isEmpty then IO.unit
++    else AskUserAttachmentRoutes.markAnswered(askSessionId, requestId)
++
+   /**
+    * askuser-secret 批（规格 §2 值通道图的本落点）：
+    *
+diff --git a/src/main/scala/nebflow/shared/askUser.scala b/src/main/scala/nebflow/shared/askUser.scala
+index 6cc205026..07fe6c55c 100644
+--- a/src/main/scala/nebflow/shared/askUser.scala
++++ b/src/main/scala/nebflow/shared/askUser.scala
+@@ -191,3 +191,60 @@ object AskUserCancelled:
+       case _ => false
+ 
+ end AskUserCancelled
++
++/**
++ * AskUser **答复附件清单槽**（askuser-dragdrop 实施批 2026-10-19，批 #551）——
++ * 网关 `askUserAnswer` 帧携带的 `attachments`（用户随卡回传的已落盘文件引用）经
++ * hub `complete` 沿**既有答复管道**（`AskUserReply.replyTo`，`ActorRef[List[String]]`）
++ * 投回请求方时的搭载体。
++ *
++ * 形态与 [[AskUserDispatch]] / [[AskUserCancelled]] 同一信号族（「一条判据 + 单点
++ * 解析，禁第二份副本」），差别只在**不替换**答复槽：清单以**尾随追加槽**的形式
++ * 与正常答复同投（`answers :+ manifest`）——
++ *   · `AskUserQuestionTool.formatAnswer`（桥腿格式化）按 `items.zipWithIndex.lift`
++ *     读槽，尾随的多余槽天然被忽略；
++ *   · `ProjectTool.parsePanelAnswer`（面板阻塞腿）只读 `answers.head`，同样无感；
++ *   · `SendConfirm` 的确认链槽位**永远不会**携带清单（其答复载荷无 attachments 键，
++ *     hub 只在 kind=AskUser 且清单非空时追加）。
++ *
++ * 消费点 = `AskUserAnswerBridge.deliver`（唯一）：剥下清单槽 → 附件清单文本注入 +
++ * 图片子集 vision 块注入（≤5 张 / ≤10MB，对齐 `ImageInject` 既有上限）。
++ */
++object AskUserAnswerAttachments:
++
++  /** 机器可读锚（清单槽 JSON 的唯一顶层键，判据起点）。 */
++  val Key = "askUserAnswerAttachments"
++
++  /** 清单槽前缀（槽串 = `{"askUserAnswerAttachments":[…]}`，前缀匹配即可判）。 */
++  val Prefix: String = s"""{"$Key":"""
++
++  /**
++   * 构造**尾随清单槽**：清单为空 ⇒ `Nil`（答复列表逐字节同形，无清单零改动）；
++   * 非空 ⇒ 单槽紧凑 JSON。调用点 = hub `complete`（唯一生产者）。
++   */
++  def manifestSlot(attachments: List[io.circe.Json]): List[String] =
++    if attachments.isEmpty then Nil
++    else List(io.circe.Json.obj(Key -> io.circe.Json.fromValues(attachments)).noSpaces)
++
++  /**
++   * 是否清单槽（单点判据，消费点一律委托）。只对**尾随**槽有意义；调用方
++   * （[[take]]）保证只检查最后一个元素。
++   */
++  def isManifestSlot(slot: String): Boolean = slot.startsWith(Prefix)
++
++  /**
++   * 剥取尾随清单槽：`(纯答复槽, 附件清单)`。无清单（空 / 不可解析）⇒
++   * `(原列表, Nil)` —— 旧信号（取消 / 派发失败）与无附件答复逐字节透传。
++   */
++  def take(answers: List[String]): (List[String], List[io.circe.Json]) =
++    answers.lastOption.filter(isManifestSlot) match
++      case None => (answers, Nil)
++      case Some(slot) =>
++        val parsed = io.circe.parser
++          .parse(slot)
++          .toOption
++          .flatMap(_.hcursor.downField(Key).as[List[io.circe.Json]].toOption)
++          .getOrElse(Nil)
++        (answers.dropRight(1), parsed)
++
++end AskUserAnswerAttachments
+diff --git a/src/main/scala/nebflow/shared/protocol.scala b/src/main/scala/nebflow/shared/protocol.scala
+index d26994350..0d87697ec 100644
+--- a/src/main/scala/nebflow/shared/protocol.scala
++++ b/src/main/scala/nebflow/shared/protocol.scala
+@@ -331,7 +331,21 @@ object UiMessage:
+      * （+/− 高亮）。缺席即不落键 ⇒ 非 delegate 行与旧 `.ui.json` 行字节形态
+      * **逐字相同**（intake/header/answerOf/quote 先例同款条件编码）。
+      */
+-    fileChanges: Option[Json] = None
++    fileChanges: Option[Json] = None,
++    /**
++     * **随卡回传的答复附件清单**（askuser-dragdrop 实施批 2026-10-19，批 #551）：
++     * 仅作答行（`answerOf` 在场）携带——用户在 AskUser 卡上拖入/粘贴/点选并经
++     * `POST /api/askuser/attachments` 落盘的文件引用。形状 = 上传端点响应记录
++     * `{id, seq, name, path, sha256, size, mime, kind}`，引擎不解释内部字段，原样
++     * 落盘原样下发；前端历史恢复腿（`renderAskUserHistory` 第 6 参）读它渲染
++     * 「已回答 · 附 N 个文件」徽标 + 只读 chips。
++     *
++     * 🔴 刻意**不复用** [[User.attachments]]：那个键被用户消息媒体面
++     * （`buildUserAttachmentRows`）消费——作答行若落同键会在历史恢复时对同一批
++     * 文件**双渲染**（气泡媒体行 + 卡片 chips）。缺席即不落键（既有行字节形态与
++     * 旧读法逐字不变；intake/header/answerOf/quote/fileChanges 先例同款条件编码）。
++     */
++    answerAttachments: Option[Json] = None
+   ) extends UiMessage:
+     val typeName = "user"
+ 
+@@ -431,10 +445,23 @@ object UiMessage:
+    *
+    * `requestId` 为空/空白 ⇒ `answerOf = None`（缺席即不落键）：无从标记来源时宁可
+    * 不标记，让前端回落邻接启发式，而不是落一个空串把「有标记」的语义也污染掉。
++   *
++   * `answerAttachments`（askuser-dragdrop 实施批 2026-10-19，批 #551）：随卡回传的
++   * 已落盘附件清单。非空 ⇒ 行文本尾部追加「（附 N 个文件）」（行内带计数利于检索；
++   * 清单本体在结构字段 `answerAttachments`，渲染层读结构不解析文本——设计稿 §3.3
++   * 原口径）。空 ⇒ 与改前逐字节同形（无尾行、不落键）。
+    */
+-  def askUserAnswer(answerText: String, requestId: String, timestamp: Long): User =
++  def askUserAnswer(answerText: String, requestId: String, timestamp: Long, answerAttachments: List[Json] = Nil): User =
+     val rid = requestId.trim
+-    User(answerText, timestamp = timestamp, answerOf = if rid.isEmpty then None else Some(rid))
++    val text =
++      if answerAttachments.isEmpty then answerText
++      else answerText + "\n（附 " + answerAttachments.size + " 个文件）"
++    User(
++      text,
++      timestamp = timestamp,
++      answerOf = if rid.isEmpty then None else Some(rid),
++      answerAttachments = if answerAttachments.isEmpty then None else Some(Json.fromValues(answerAttachments))
++    )
+ 
+   given Encoder[UiMessage] = Encoder.instance {
+     case m: User =>
+@@ -463,7 +490,10 @@ object UiMessage:
+       val withQuote = m.quote.fold(withAnswerOf)(q => withAnswerOf.deepMerge(Json.obj("quote" -> q)))
+       // file-diff → 委托结果行（bug #58 修 2026-10-09）：diff 载荷缺席即不落键
+       // ⇒ 非 delegate 行与旧字节形态逐字相同。
+-      m.fileChanges.fold(withQuote)(fc => withQuote.deepMerge(Json.obj("fileChanges" -> fc)))
++      val withFileChanges = m.fileChanges.fold(withQuote)(fc => withQuote.deepMerge(Json.obj("fileChanges" -> fc)))
++      // askuser-dragdrop 实施批（2026-10-19，批 #551）：随卡回传的答复附件清单——
++      // 缺席即不落键（既有行字节形态逐字不变）。
++      m.answerAttachments.fold(withFileChanges)(a => withFileChanges.deepMerge(Json.obj("answerAttachments" -> a)))
+     case m: Ai =>
+       val base = Json.obj("type" -> "ai".asJson, "text" -> m.text.asJson)
+       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
+@@ -531,6 +561,9 @@ object UiMessage:
+           quote <- cursor.downField("quote").as[Option[Json]]
+           // file-diff → 委托结果行：diff 载荷（旧行无本键 ⇒ None，同上兼容纪律）
+           fileChanges <- cursor.downField("fileChanges").as[Option[Json]]
++          // askuser-dragdrop 实施批（2026-10-19，批 #551）：随卡回传的答复附件清单
++          // （旧行无本键 ⇒ None，同上兼容纪律）
++          answerAttachments <- cursor.downField("answerAttachments").as[Option[Json]]
+         yield User(
+           text,
+           atts.getOrElse(Nil),
+@@ -545,7 +578,8 @@ object UiMessage:
+           header,
+           answerOf.filter(_.nonEmpty),
+           quote,
+-          fileChanges
++          fileChanges,
++          answerAttachments
+         )
+       case "ai" =>
+         for
