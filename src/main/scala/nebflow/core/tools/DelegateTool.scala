@@ -47,12 +47,13 @@ object DelegateTool extends Tool:
   /**
    * brief 申报纪律行（提示词来源拆分批 2026-10-08 上提为公开常量——上提只为
    * 判据门可钉：`PromptFaceSplitSpec` 断言本行 = delegate_report 纪律且模型可见面
-   * 零 node_report；文本内容 = 原 spawnWithPlugins 局部 `reportLine` 逐字，零改写。
+   * 零 node_report；文本内容 = 原 spawnWithPlugins 局部 `reportLine`，#566 起两态：
+   * blocked 类别退役——报不了的腿照常 finish，阻塞事实写进终稿）。
    * S7/S8「node 同款提醒（防忘记调用）」的最小形态——delegate 常为单 turn 会话，
-   * 提醒落在 brief 而非中途 ladder；未申报不阻断终态）。
+   * 提醒落在 brief 而非中途 ladder；未申报不阻断终态。
    */
   val BriefReportLine: String =
-    """[report] when your work reaches its end state, call delegate_report(category="finish"|"merge"|"blocked", detail=…) right before your final text — "merge" = your deliverable commits sit on your working branch and need the merge queue (you keep working until the merge reminder arrives); "finish" = done for good (pure read / no file changes, or the merge has landed); "blocked" = it cannot be completed. The report updates your status record; your final text remains the deliverable."""
+    """[report] when your work reaches its end state, call delegate_report(category="finish"|"merge", detail=…) right before your final text — "merge" = your deliverable commits sit on your working branch and need the merge queue (you keep working until the merge reminder arrives); "finish" = done for good (pure read / no file changes, the merge has landed, or the task could not be completed — state the blocker plainly in your final text; there is no separate blocked state). The report updates your status record; your final text remains the deliverable."""
 
   val name = "Delegate"
 
@@ -158,9 +159,11 @@ object DelegateTool extends Tool:
    * 在线设备，**绝不静默落 host**（G.12）。
    */
   private[tools] sealed trait WorkspaceResolution
+
   private[tools] object WorkspaceResolution:
     /** 本机座位（现状形态）：workspace + 挂载项目名（缺省派发 = None）。 */
     final case class Local(workspace: String, project: Option[String]) extends WorkspaceResolution
+
     /** 远端路由：origin 设备 + 项目名 + origin 盘 workspace（对端本地直达零取件）。 */
     final case class RemoteRoute(peer: PeerInfo, deviceName: String, project: String, workspace: String)
         extends WorkspaceResolution
@@ -254,13 +257,16 @@ object DelegateTool extends Tool:
               IO.pure(
                 Left(
                   ToolError(
-                    s"project '$projectName' 的设备 '$device' 不在线（在线设备：${if online.isEmpty then "（无）" else online.mkString(", ")}）。" +
+                    s"project '$projectName' 的设备 '$device' 不在线（在线设备：${
+                        if online.isEmpty then "（无）" else online.mkString(", ")
+                      }）。" +
                       "任务不会落回本机执行——等该设备上线后重试。 (DELEGATE_DEVICE_OFFLINE)"
                   )
                 )
               )
             case Right(peer) =>
               IO.pure(Right(WorkspaceResolution.RemoteRoute(peer, peer.deviceName, projectName, workspace)))
+          end match
         }
     end match
   end routeRemote

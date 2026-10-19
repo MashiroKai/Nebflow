@@ -373,7 +373,7 @@ Merge turn (FIFO): your branch `${entry.branch}` has been judged ready-to-merge 
 Execute the merge EXACTLY like this (single command, no flags beyond these):
   git -C ${entry.baseWs} merge --no-ff ${entry.branch}
 This merges your branch into the base branch `${entry.baseBranch}`. Do NOT merge anywhere else, do NOT force-push, do NOT rebase, do NOT touch other branches or other sessions' work.
-If git refuses or reports conflicts: STOP — change nothing, resolve nothing; report the refusal/conflict verbatim in your final text, call delegate_report(category="blocked", detail=<the refusal/conflict>), and end your turn.
+If git refuses or reports conflicts: STOP — change nothing, resolve nothing; report the refusal/conflict verbatim in your final text, call delegate_report(category="finish", detail=<the refusal/conflict>), and end your turn (there is no blocked category — the refusal is your report's content, not a state).
 On success, call delegate_report(category="finish", detail=<what the merge landed>) and end with your final report; the engine re-judges the merge round.
 </system-reminder>"""
 

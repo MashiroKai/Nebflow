@@ -12,7 +12,8 @@ import nebflow.shared.PathUtil
  *
  *  - 身份双保险之工具内侧：非 delegate 会话（engine-side 判据
  *    DelegateSessions.isDelegateSession）→ DELEGATE_REPORT_FORBIDDEN；
- *  - 值域 finish | blocked：非法值拒；detail 空 = 拒（对齐 node_report 门形）；
+ *  - 值域 finish | merge（#566 起 blocked 类别退役——拒绝并给去处）：非法值拒；
+ *    detail 空 = 拒（对齐 node_report 门形）；
  *  - **仅状态单写**：合法申报只落 DelegateRegistry 状态槽（reportStatus/Detail/
  *    Suggestion），其余字段（cwd/branch/…）原样保真——不携汇报面；
  *  - 未 spawn（查无记录）= 显式拒，不凭空造状态。
@@ -73,21 +74,35 @@ class DelegateReportToolSpec extends CatsEffectSuite:
     seed(id)
     for
       res <- call(sessionId = Some(id))(
-        "category" -> "blocked".asJson,
-        "detail" -> "missing credentials".asJson,
-        "suggestion" -> "ask for the key".asJson
+        "category" -> "merge".asJson,
+        "detail" -> "branch carries the docs pass".asJson,
+        "suggestion" -> "none".asJson
       )
       rec = DelegateRegistry.find(id)
     yield
       assert(res.isRight, s"legal report must succeed, got: $res")
-      assertEquals(rec.map(_.reportStatus), Some(Some("blocked")))
-      assertEquals(rec.map(_.reportDetail), Some(Some("missing credentials")))
-      assertEquals(rec.map(_.reportSuggestion), Some(Some("ask for the key")))
+      assertEquals(rec.map(_.reportStatus), Some(Some("merge")))
+      assertEquals(rec.map(_.reportDetail), Some(Some("branch carries the docs pass")))
+      assertEquals(rec.map(_.reportSuggestion), Some(Some("none")))
       // 其余字段原样保真（仅状态单写——不携汇报、不动元数据）
       assertEquals(rec.map(_.cwd), Some(tempRoot.toString))
       assertEquals(rec.map(_.taskId), Some(Some("77")))
       assertEquals(rec.map(_.title), Some("seeded"))
       assertEquals(rec.map(_.executor), Some("nebflow"))
+    end for
+  }
+
+  test("#566: the retired 'blocked' category is refused with guidance (no blocked state for delegates)") {
+    val id = "delegate-nebflow-retired"
+    seed(id)
+    for
+      res <- call(sessionId = Some(id))("category" -> "blocked".asJson, "detail" -> "missing credentials".asJson)
+      rec = DelegateRegistry.find(id)
+    yield
+      assert(res.left.exists(_.contains("DELEGATE_REPORT_CATEGORY")), s"got: $res")
+      assert(res.left.exists(_.contains("retired")), "the refusal names the retirement and points at finish")
+      // 拒绝态零写（状态槽不被污染）。
+      assertEquals(rec.flatMap(_.reportStatus), None, "the retired category writes nothing")
     end for
   }
 

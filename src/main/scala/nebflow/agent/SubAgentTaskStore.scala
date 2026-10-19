@@ -81,6 +81,22 @@ class SubAgentTaskStore(baseDir: os.Path) extends SubAgentTaskStorePort:
   def findByParent(parentSessionId: String): IO[List[SubAgentTask]] =
     withLock(readTasksSync(parentSessionId))
 
+  /**
+   * 全量任务行（#566 修复批：/api/chains 行投影的 taskStatus 权威读数——delegate
+   * 终态（completed/failed/cancelled/ready-to-merge）的引擎侧唯一状态源）。
+   * **单遍扫目录**（一次读全部父文件，不逐行 findByTaskId 全扫 N 遍——行投影
+   * 每 refresh 一次，量级 = 活跃父会话文件数）。fail-soft：坏文件跳过。
+   */
+  def findAllTasks(): IO[List[SubAgentTask]] =
+    withLock {
+      if !os.exists(baseDir) then List.empty[SubAgentTask]
+      else
+        os.list(baseDir)
+          .filter(_.toString.endsWith(".json"))
+          .flatMap(f => decode[List[SubAgentTask]](os.read(f)).toOption.getOrElse(List.empty[SubAgentTask]))
+          .toList
+    }
+
   def saveTasks(parentSessionId: String, tasks: List[SubAgentTask]): IO[Unit] =
     withLock(writeTasksSync(parentSessionId, tasks))
 

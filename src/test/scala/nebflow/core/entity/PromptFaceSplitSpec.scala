@@ -28,28 +28,35 @@ class PromptFaceSplitSpec extends FunSuite:
 
   /** 节点面读路（NodeStarter → EntityLoader.loadAgent → entry 的同一单点）。 */
   private def nodePrompt: String =
-    nebflow.core.entity.BuiltinAgents.entry(executorName)
+    nebflow.core.entity.BuiltinAgents
+      .entry(executorName)
       .map(_.systemPrompt)
       .getOrElse(fail(s"BuiltinAgents must carry a code-defined '$executorName' entry"))
 
   /** delegate 面读路（DelegateTool.spawnKernel / MailTool 续聊腿的同一单点）。 */
   private def delegatePrompt: String =
-    nebflow.core.entity.BuiltinAgents.delegateEntry(executorName)
+    nebflow.core.entity.BuiltinAgents
+      .delegateEntry(executorName)
       .map(_.systemPrompt)
       .getOrElse(fail(s"BuiltinAgents must resolve '$executorName' via delegateEntry"))
 
-  test("delegate 面系统提示词 = delegate_report 纪律在位（三态值域 + 配套指令）"):
+  test("delegate 面系统提示词 = delegate_report 纪律在位（两态值域 + 配套指令；#566 起 blocked 类别退役）"):
     val text = delegatePrompt
     assert(text.contains("delegate_report"), "delegate_report 申报义务在位")
     assert(text.contains("Report your state (delegate_report)"), "申报段头在位")
-    for v <- Seq("finish", "merge", "blocked") do
-      assert(text.contains(s"`$v`"), s"delegate_report 值域态在位: $v")
+    for v <- Seq("finish", "merge") do assert(text.contains(s"`$v`"), s"delegate_report 值域态在位: $v")
+    assert(!text.contains("- `blocked` —"), "blocked 类别整行退役（delegate 面无 blocked 态——作者令）")
+    assert(text.contains("NO separate blocked category"), "「报不了 = finish＋阻塞写进内容」的语义在位")
     assert(text.contains("MergeQueue"), "merge 态的 MergeQueue 语义在位")
     assert(text.contains("Your roles: executor, dispatcher, manager"), "三角色段在位（delegate 语义）")
 
   test("delegate 面系统提示词模型可见面零 node_report 指令（零出现，防回流）"):
     val hits = delegatePrompt.split("\n", -1).toList.filter(_.contains("node_report"))
-    assertEquals(hits, Nil, s"delegate 面模型可见文本零 node_report（命中 ${hits.length} 行，首行: ${hits.headOption.getOrElse("").take(120)}）")
+    assertEquals(
+      hits,
+      Nil,
+      s"delegate 面模型可见文本零 node_report（命中 ${hits.length} 行，首行: ${hits.headOption.getOrElse("").take(120)}）"
+    )
     assert(!delegatePrompt.contains("You are a task node"), "节点身份句不得出现在 delegate 面（节点面专属开头）")
 
   test("flow 节点面系统提示词 = 节点四要素（任务文本全部世界 / 末条输出交付物 / out 边交接 / 监督约束）"):
@@ -81,9 +88,10 @@ class PromptFaceSplitSpec extends FunSuite:
       val viaDelegate = nebflow.core.entity.BuiltinAgents.delegateEntry(name).map(_.systemPrompt)
       assertEquals(viaDelegate, viaEntry, s"'$name' 无 delegate 面变体（回落 entry）")
 
-  test("brief 申报行（DelegateTool.BriefReportLine）= delegate_report 纪律、零 node_report"):
+  test("brief 申报行（DelegateTool.BriefReportLine）= delegate_report 纪律、零 node_report（#566 起两态）"):
     val line = nebflow.core.tools.DelegateTool.BriefReportLine
-    assert(line.contains("delegate_report(category=\"finish\"|\"merge\"|\"blocked\", detail=…)"), "brief 申报行的三态调用形态在位")
+    assert(line.contains("delegate_report(category=\"finish\"|\"merge\", detail=…)"), "brief 申报行的两态调用形态在位")
+    assert(!line.contains("|\"blocked\""), "brief 申报行零 blocked 类别（delegate 面无 blocked 态——作者令）")
     assert(!line.contains("node_report"), "brief 申报行零 node_report（delegate brief 面同判据）")
     assert(line.contains("your final text remains the deliverable"), "末条输出 = 交付物语义在位")
 

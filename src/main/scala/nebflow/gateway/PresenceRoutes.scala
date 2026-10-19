@@ -450,10 +450,18 @@ private[gateway] object PresenceRoutes:
       // 与 fail-soft 纪律见 nebflow.core.project.ChainsReadFace 头注）。
       // delegate-ui 批 2026-10-08（G6 历史窗）：`?archived=1` = 只出已归档（archivedAt
       // 在册）；缺省 = 在册窗（未归档）。两窗互补零重叠。
+      // #566 修复批：行投影并挂 `taskStatus`（SubAgentTaskStore 全量单遍扫批量供给
+      // ——delegate 终态行的 UI 权威读数；fail-soft 空表 = 旧投影）。
       case req @ GET -> Root / "chains" =>
         withAuth(req) {
           val archived = req.params.get("archived").contains("1")
-          sharedResources.agentRegistry.get.flatMap(reg => ChainsReadFace.rowsJson(reg, archived).flatMap(Ok(_)))
+          sharedResources.agentRegistry.get.flatMap { reg =>
+            sharedResources.subAgentTaskStore
+              .findAllTasks()
+              .map(tasks => tasks.collect { case t if t.taskId.nonEmpty => t.taskId -> t.status }.toMap)
+              .handleErrorWith(_ => IO.pure(Map.empty[String, String]))
+              .flatMap(statuses => ChainsReadFace.rowsJson(reg, archived, statuses).flatMap(Ok(_)))
+          }
         }
 
       // GET /api/chains/:key — per-task 链视图（A8 读面下半）：record = ChainStore
@@ -1276,37 +1284,39 @@ private[gateway] object PresenceRoutes:
         // the same checkAuth verdict withAuth would have used, unchanged.
         // Phase 3b: checkAuth is IO now — the verdict binds before the
         // by-name body, same evaluation order as before.
-        checkAuth(req).flatMap(v => withIngressAuth(req, v) {
-          req.as[Json].attempt.flatMap {
-            case Left(_) =>
-              BadRequest(
-                Json.obj(
-                  "error" -> "invalid_field".asJson,
-                  "reason" -> "request body must be a JSON object".asJson
+        checkAuth(req).flatMap(v =>
+          withIngressAuth(req, v) {
+            req.as[Json].attempt.flatMap {
+              case Left(_) =>
+                BadRequest(
+                  Json.obj(
+                    "error" -> "invalid_field".asJson,
+                    "reason" -> "request body must be a JSON object".asJson
+                  )
                 )
-              )
-            case Right(body) =>
-              nebflow.social.WeixinIlinkBridgePlugin.parseInbound(body) match
-                case Left(reason) =>
-                  BadRequest(Json.obj("error" -> "invalid_field".asJson, "reason" -> reason.asJson))
-                case Right(in) =>
-                  val seam: IO[Option[nebflow.social.WeixinIlinkBridgePlugin]] =
-                    sharedResources.bridgeManager match
-                      case Some(m) =>
-                        m.plugin(nebflow.social.WeixinIlinkBridgePlugin.Name)
-                          .map(_.collect { case p: nebflow.social.WeixinIlinkBridgePlugin => p })
-                      case None => IO.pure(None)
-                  seam.flatMap {
-                    case Some(p) => p.deliver(in).flatMap(v => Ok(v.json))
-                    case None =>
-                      Ok(
-                        nebflow.social.WeixinIlinkBridgePlugin.Verdict
-                          .Dropped(nebflow.social.WeixinIlinkBridgePlugin.ReasonNotStarted)
-                          .json
-                      )
-                  }
+              case Right(body) =>
+                nebflow.social.WeixinIlinkBridgePlugin.parseInbound(body) match
+                  case Left(reason) =>
+                    BadRequest(Json.obj("error" -> "invalid_field".asJson, "reason" -> reason.asJson))
+                  case Right(in) =>
+                    val seam: IO[Option[nebflow.social.WeixinIlinkBridgePlugin]] =
+                      sharedResources.bridgeManager match
+                        case Some(m) =>
+                          m.plugin(nebflow.social.WeixinIlinkBridgePlugin.Name)
+                            .map(_.collect { case p: nebflow.social.WeixinIlinkBridgePlugin => p })
+                        case None => IO.pure(None)
+                    seam.flatMap {
+                      case Some(p) => p.deliver(in).flatMap(v => Ok(v.json))
+                      case None =>
+                        Ok(
+                          nebflow.social.WeixinIlinkBridgePlugin.Verdict
+                            .Dropped(nebflow.social.WeixinIlinkBridgePlugin.ReasonNotStarted)
+                            .json
+                        )
+                    }
+            }
           }
-        })
+        )
 
       case req @ POST -> Root / "social" / "channels" / channelId =>
         withAuth(req) {

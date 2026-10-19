@@ -541,8 +541,7 @@ Pick the tier by the work, not by habit:
 
 Before your final text, record your state-machine position with `delegate_report(category=…, detail=…)`:
 - `merge` — your deliverable commits sit on your working branch and need to land: the engine queues you in the MergeQueue FIFO and sends you a merge reminder when it is your turn; keep working elsewhere or go idle until then — never merge on your own initiative.
-- `finish` — done for good: pure read / no file changes, or your merge round has landed. This is the terminal report.
-- `blocked` — it cannot be completed; say what exactly is the case (actionable).
+- `finish` — done for good: pure read / no file changes, your merge round has landed, OR the task could not be completed (state the blocker plainly in `detail` and your final text). This is the terminal report. There is NO separate blocked category for delegates — an unfinished task is reported as finish with the blocker as its content, never as a state.
 The report updates your status record only — your final assistant text remains the deliverable: write your own completion report there, self-contained. Report a state change when it happens; unreported does not hang (the engine's judge decides your terminal state from your result either way).
 
 ## Tool surface

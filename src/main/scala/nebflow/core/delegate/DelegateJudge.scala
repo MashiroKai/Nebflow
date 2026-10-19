@@ -24,9 +24,10 @@ import java.util.concurrent.atomic.AtomicReference
  *     （brief 行走只读变体，零领先提交终态降级 completed 不入队）；两层全败 =
  *     按「判是」执行（fail-open 反转——宁可白建分支，不可丢分支纪律）。建权在
  *     判定机，delegate 不自建。
- *   - [[Face.judgeTerminal]] —— delegate 终态后：三态判词
- *     completed / blocked(+原因) / ready-to-merge（原文 Batch 4 终态 judge；输入 =
- *     任务书＋结果＋git status 摘要＋delegate_report 自申报）。
+ *   - [[Face.judgeTerminal]] —— delegate 终态后：两态判词
+ *     completed(+注记) / ready-to-merge（原文 Batch 4 终态 judge；输入 =
+ *     任务书＋结果＋git status 摘要＋delegate_report 自申报；#566：blocked
+ *     判词退役——判官的「没做成」折 completed＋注记，不是状态）。
  *
  * 失败语义（fail-open，JevAllocator 同款裁定：派发与终态绝不因判定机阻塞）：
  * 两个方法返回 `IO[Option[_]]`——`None` = 判定机不可用/失败，调用方走回落
@@ -35,16 +36,38 @@ import java.util.concurrent.atomic.AtomicReference
  */
 object DelegateJudge:
 
-  /** 终态三态判词（原文 Batch 4：completed / blocked(+原因) / ready-to-merge）。 */
+  /**
+   * 终态判词（#566 修复批 2026-10-19 · 作者令：delegate 面退役 blocked 状态——
+   * 「delegate 是不应该有 blocked 型状态的，直接上报就行了，blocked 是给
+   * agentflow 用的」）。
+   *
+   * 原文 Batch 4 三态（completed / blocked(+原因) / ready-to-merge）改为两态＋注记：
+   * 判官的「没找到合并 / 任务没做成」之类**只是报告注记，不是状态**——delegate
+   * 到点交报告就是 completed（注记随判词行 reason 通道与交付尾注走）；failed 保留
+   * 给真失败（引擎 failed 终态腿，不经本枚举）。
+   */
   enum Verdict:
     /** 任务完成、无可合并产物（或合并已完成后）——报 Nebula（既有链）。 */
     case Completed
 
-    /** 做不成 / 合并冲突——报 Nebula＋原因（既有链，payload 携带 reason）。 */
-    case Blocked(reason: String)
+    /**
+     * completed 判词的**注记形**（原 blocked 判词的唯一残留通道）：wire 仍编
+     * `completed`（无独立状态），note = 判官/预检/漂移闸/验收闸的注记文本，
+     * 随判词行 reason 与交付尾注走。引擎控制流与裸 Completed 同面（Release）。
+     */
+    case CompletedNote(note: String)
 
     /** 工作分支上有可合并产物——入 MergeQueue（FIFO 按完成时间），合并轮终态再判。 */
     case ReadyToMerge
+
+    /**
+     * completed 形判词判定（裸 Completed 与注记形都算——机械验收闸等「completed
+     *  形态全过闸」的判据单点）。
+     */
+    def isCompletedShaped: Boolean = this match
+      case Completed | CompletedNote(_) => true
+      case _ => false
+  end Verdict
 
   /** 判定机对一次终态 judge 的全部输入。 */
   final case class TerminalInput(
@@ -55,7 +78,10 @@ object DelegateJudge:
     resultText: String,
     /** git status 摘要（[[nebflow.core.GitWorktrees.statusDigest]]；非 git 工作区 = ""）。 */
     gitDigest: String,
-    /** delegate_report 自申报（status, detail）——值域 finish | blocked。 */
+    /**
+     * delegate_report 自申报（status, detail）——值域 finish | merge；blocked 为
+     *  退役前旧申报（#566 起映射 completed＋注记，不再产生独立状态）。
+     */
     selfReport: Option[(String, String)],
     /** true = 该 delegate 已在合并轮（MergeQueue 已注入过合并 reminder）。 */
     mergeRound: Boolean,
@@ -117,7 +143,10 @@ object DelegateJudge:
       def decideWorktreeDetailed(task: String): IO[Option[WorktreeJudgement]] =
         decideWorktree(task).map(_.map(b => WorktreeJudgement(b, JudgeLeg.Unknown)))
 
-      /** 终态三态判定。`None` = 判定机不可用/失败（调用方按自申报/既有语义回落）。 */
+      /**
+       * 终态两态判定（#566：blocked 判词退役——判官的「没做成」折 completed＋注记）。
+       * `None` = 判定机不可用/失败（调用方按自申报/既有语义回落）。
+       */
       def judgeTerminal(input: TerminalInput): IO[Option[Verdict]]
     end Face
 
@@ -147,15 +176,28 @@ object DelegateJudge:
   /** 判词的 JSON 承重键（判定机输出与 spec 断言共用，禁字面量散落）。 */
   object VerdictWire:
     val Completed: String = "completed"
+
+    /**
+     * 退役 wire 词（#566）：引擎**永不写出**（判官的「blocked」答案在映射点折成
+     * completed＋注记）；常量保留仅供旧盘判词行/旧模型回文的解析侧容错。
+     */
     val Blocked: String = "blocked"
+
     val ReadyToMerge: String = "ready-to-merge"
 
+    /**
+     * 引擎终态 wire 词（failed/cancelled——engine 判词行的 verdict 值域补全，
+     *  #566：failed/cancelled 终态写真值，不再冒充 blocked）。
+     */
+    val Failed: String = "failed"
+    val Cancelled: String = "cancelled"
+
     def fromWire(s: String): Option[String] =
-      Set(Completed, Blocked, ReadyToMerge).find(_ == s.trim.toLowerCase)
+      Set(Completed, Blocked, ReadyToMerge, Failed, Cancelled).find(_ == s.trim.toLowerCase)
 
     def encode(v: Verdict): String = v match
       case Verdict.Completed => Completed
-      case Verdict.Blocked(_) => Blocked
+      case Verdict.CompletedNote(_) => Completed // 注记形无独立 wire 词（注记走 reason）
       case Verdict.ReadyToMerge => ReadyToMerge
   end VerdictWire
 
@@ -175,9 +217,22 @@ object DelegateJudge:
       VerdictPayloadKeys.TaskId -> Json.fromString(taskId.getOrElse("")),
       VerdictPayloadKeys.Verdict -> Json.fromString(VerdictWire.encode(v)),
       VerdictPayloadKeys.Reason -> Json.fromString(v match
-        case Verdict.Blocked(r) => r
+        case Verdict.CompletedNote(n) => n
         case _ => ""),
       VerdictPayloadKeys.Source -> Json.fromString(source)
+    )
+
+  /**
+   * 引擎终态判词行 payload（#566：failed/cancelled 腿写真值——不再写 blocked 冒充）。
+   * verdict = 引擎任务终态词（VerdictWire.Failed / Cancelled），reason = 引擎注记。
+   */
+  def engineTerminalPayload(delegateId: String, taskId: Option[String], status: String, detail: String): Json =
+    Json.obj(
+      VerdictPayloadKeys.DelegateId -> Json.fromString(delegateId),
+      VerdictPayloadKeys.TaskId -> Json.fromString(taskId.getOrElse("")),
+      VerdictPayloadKeys.Verdict -> Json.fromString(status),
+      VerdictPayloadKeys.Reason -> Json.fromString(detail),
+      VerdictPayloadKeys.Source -> Json.fromString("engine")
     )
 
 end DelegateJudge

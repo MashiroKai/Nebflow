@@ -117,10 +117,13 @@ if (typeof document !== 'undefined' && !document.getElementById('bgagent-delegat
 </style>`);
 }
 
-/** 判词 → 行状态词键（与 taskList.DELEGATE_WORD_KEY 同族映射；零 locale 新键）。 */
+/** 判词 → 行状态词键（与 taskList.DELEGATE_WORD_KEY 同族映射；零 locale 新键）。
+ *  #566：blocked 词退役（verdictToStatus 已把退役判词折 completed），不再出
+ *  「已阻断」徽章；引擎 failed/cancelled 真值终态行照常出词。 */
 const STRIP_VERDICT_KEY = {
   completed: 'flowmap.done',
-  blocked: 'task.nodeBlocked',
+  failed: 'flowmap.fail',
+  cancelled: 'flowmap.st.cancelled',
   'ready-to-merge': 'delegate.readyToMerge',
 };
 

@@ -13,8 +13,8 @@ import scala.concurrent.duration.*
  * 四修②（2026-10-07 修复令「判词诚实化」）判读：
  *
  *  - 确定性预检（不依赖 LLM 判）：`sessionToolCalls = Some(0)` 且终文空/空烧
- *    stub ⇒ 直接判 blocked——判定机两层连问都不问（fake judge 在场即炸，
- *    证明 LLM 判零消耗）；ChainStore 行 source=`precheck`；
+ *    stub ⇒ 判 completed＋注记（#566：原 blocked 退役——判定机两层连问都不问，
+ *    fake judge 在场即炸，证明 LLM 判零消耗）；ChainStore 行 source=`precheck`；
  *  - 诚实未判：判定机两层全败＋自申报缺失 ⇒ 仍 completed（fail-open 既有语义
  *    不变），但判词行 = `completed (unjudged — judge unavailable)`，ChainStore
  *    行 source=`unjudged`；
@@ -111,7 +111,7 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
   private def lastVerdict(delegateId: String): Option[(String, String)] = verdictLines(delegateId).lastOption
 
   test(
-    "① deterministic precheck: zero tool calls + empty resultText ⇒ blocked WITHOUT consulting the judge (source=precheck)"
+    "① deterministic precheck: zero tool calls + empty resultText ⇒ completed+note WITHOUT consulting the judge (source=precheck; #566 no blocked state)"
   ) {
     val system = ActorSystem(s"dtp-1-${scala.util.Random.nextInt(100000)}")
     try
@@ -136,15 +136,16 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
       yield
         assert(outcome.isInstanceOf[DelegateTerminal.Outcome.Release], s"got: $outcome")
         val line = outcome.toString
-        assert(line.contains("verdict: blocked"), s"the honest blocked verdict line must land: $line")
+        assert(line.contains("verdict: completed"), s"the verdict line must read completed (#566): $line")
+        assert(line.contains("[delegate-judge] note:"), s"the precheck note must ride the note channel: $line")
         assert(line.contains("deterministic precheck"), s"the precheck marker must be named: $line")
-        assertEquals(v, Some(("blocked", "precheck")), "the chain line carries verdict=blocked source=precheck")
+        assertEquals(v, Some(("completed", "precheck")), "the chain line carries verdict=completed source=precheck")
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
     end try
   }
 
-  test("② the max_tokens empty-burn stub is NOT real output: stub + zero tools ⇒ blocked (the incident form)") {
+  test("② the max_tokens empty-burn stub is NOT real output: stub + zero tools ⇒ completed+note (the incident form)") {
     val system = ActorSystem(s"dtp-2-${scala.util.Random.nextInt(100000)}")
     try
       for
@@ -166,8 +167,11 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
         v = lastVerdict("delegate-precheck-stub")
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
       yield
-        assert(outcome.toString.contains("verdict: blocked"), s"stub-only output must be judged incomplete: $outcome")
-        assertEquals(v, Some(("blocked", "precheck")))
+        assert(
+          outcome.toString.contains("verdict: completed") && outcome.toString.contains("note"),
+          s"stub-only output must be judged completed+note (#566): $outcome"
+        )
+        assertEquals(v, Some(("completed", "precheck")))
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
     end try
