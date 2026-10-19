@@ -414,10 +414,23 @@ You will be notified when it completes via a system message. Do NOT duplicate th
     prompt: String,
     resumeSid: Option[String]
   ): java.lang.ProcessBuilder =
-    val args = ex.launchArgs(prompt, resumeSid)
-    val pb = new java.lang.ProcessBuilder((spec.binPath +: args)*)
-    pb.directory(new java.io.File(spec.workspace))
+    configureProcessBuilder(spec.binPath, spec.workspace, ex.launchArgs(prompt, resumeSid))
+
+  /**
+   * spawn 构造纯面（spec 可驱动）：argv + cwd + 分管 + 代理环境注入
+   * （codex-spawn-fix 批 2026-10-19 死因①——[[ExternalSpawnConfig]] 点名键值，
+   * 缺省零注入）。stdin 不在此处 redirect：关闭动作在 start() 后立即执行，
+   * 见 [[sealChildStdin]] 的选型理由。
+   */
+  private[executor] def configureProcessBuilder(
+    binPath: String,
+    workspace: String,
+    args: List[String]
+  ): java.lang.ProcessBuilder =
+    val pb = new java.lang.ProcessBuilder((binPath +: args)*)
+    pb.directory(new java.io.File(workspace))
     pb.redirectErrorStream(false)
+    ExternalSpawnConfig.installProxyEnv(pb)
     pb
 
   /**

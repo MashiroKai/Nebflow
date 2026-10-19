@@ -139,6 +139,12 @@ object ExternalExecutor:
    *   {"type":"item.completed","item":{"type":"agent_message","text":"..."}}
    *   {"type":"turn.completed","usage":{...}} / {"type":"turn.failed","error":{...}}
    * 续聊：`codex exec resume <thread_id> <task>`。
+   *
+   * **网络前提（codex-spawn-fix 批 2026-10-19 实证）**：订阅模式直连 OpenAI
+   * API——需代理可达，否则进程挂死（带 `https_proxy=http://127.0.0.1:7890`
+   * 实测全通：SMOKE-OK / exit 0 / JSONL 正常）。引擎 spawn 不继承 shell rc
+   * 的代理导出——经 nebflow.json `externalExecutors.proxyEnv` 点名注入
+   * （[[ExternalSpawnConfig]]）。
    */
   object Codex extends ExternalExecutor:
     val id = "codex"
