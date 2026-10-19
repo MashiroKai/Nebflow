@@ -526,9 +526,10 @@ private[gateway] object AuthRoutes:
    * Static loopback login result page (success + error variants). The
    * frontend learns the outcome by polling /api/neblink/auth/state.
    * Brand slots (brand-switch-console batch, 2026-10-15): the title and the
-   * success detail read [[Branding]] — under the current brand the rendered
-   * bytes are identical to the pre-batch literals (lowercase form, same as
-   * the page carried before).
+   * success detail read [[Branding]] — the title brand token is UPPERCASE
+   * ([[Branding.upperName]], tab-title ruling「STAND 大写」); the body copy
+   * keeps lowerName, so under the current brand the body bytes are identical
+   * to the pre-batch literals while the tab title renders "STAND 登录".
    */
   private[gateway] def callbackPage(ok: Boolean, message: String): String =
     val headline = if ok then "登录成功，可关闭本页" else "登录失败"
@@ -538,7 +539,7 @@ private[gateway] object AuthRoutes:
     s"""<!doctype html>
        |<html lang="zh-CN"><head><meta charset="utf-8">
        |<meta name="viewport" content="width=device-width,initial-scale=1">
-       |<title>${Branding.lowerName} 登录</title>
+       |<title>${Branding.upperName} 登录</title>
        |<style>body{font-family:-apple-system,'Segoe UI','PingFang SC',sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f6f7f9;color:#1f2328}
        |.card{text-align:center;padding:44px 52px;border-radius:14px;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.08)}
        |.icon{color:$iconColor;font-size:42px;line-height:1;margin-bottom:10px}h1{font-size:18px;font-weight:600;margin:0 0 8px}
@@ -553,16 +554,18 @@ private[gateway] object AuthRoutes:
    * separate builder ([[switchNoticePage]]) rather than a parameterisation of
    * this one.
    * Brand slots (brand-switch-console batch, 2026-10-15): the title and body
-   * brand token read [[Branding.lowerName]] — rendered bytes identical to the
-   * pre-batch literals under the current brand (the "byte-identical" clause
-   * above is about page STRUCTURE vs the switch cards, and still holds: the
-   * h1 headline and skeleton are untouched literals).
+   * brand token read [[Branding]] — the title token is UPPERCASE
+   * ([[Branding.upperName]], tab-title ruling「STAND 大写」), the body token
+   * stays lowerName, so under the current brand the rendered body bytes
+   * remain identical to the pre-batch literals.
+   * The "byte-identical" clause above is about page STRUCTURE vs the switch
+   * cards, and still holds: the h1 headline and skeleton are untouched literals.
    */
   private def loggedOutPage: String =
     s"""<!doctype html>
        |<html lang="zh-CN"><head><meta charset="utf-8">
        |<meta name="viewport" content="width=device-width,initial-scale=1">
-       |<title>${Branding.lowerName} 已退出登录</title>
+       |<title>${Branding.upperName} 已退出登录</title>
        |<style>body{font-family:-apple-system,'Segoe UI','PingFang SC',sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f6f7f9;color:#1f2328}
        |.card{text-align:center;padding:44px 52px;border-radius:14px;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.08)}
        |.icon{color:#07c160;font-size:42px;line-height:1;margin-bottom:10px}h1{font-size:18px;font-weight:600;margin:0 0 8px}
@@ -580,7 +583,7 @@ private[gateway] object AuthRoutes:
     s"""<!doctype html>
        |<html lang="zh-CN"><head><meta charset="utf-8">
        |<meta name="viewport" content="width=device-width,initial-scale=1">
-       |<title>${Branding.lowerName} 切换账号</title>
+       |<title>${Branding.upperName} 切换账号</title>
        |<style>body{font-family:-apple-system,'Segoe UI','PingFang SC',sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f6f7f9;color:#1f2328}
        |.card{text-align:center;padding:44px 52px;border-radius:14px;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.08)}
        |.icon{color:$symbolColor;font-size:42px;line-height:1;margin-bottom:10px}h1{font-size:18px;font-weight:600;margin:0 0 8px}

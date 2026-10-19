@@ -38,6 +38,9 @@ class BrandingSpec extends FunSuite:
     // values remain stable until their deployments are migrated.
     assertEquals(Branding.productName, "stand")
     assertEquals(Branding.lowerName, "stand")
+    // Tab-title face: UPPERCASE brand token (author ruling「客户端网页标签
+    // STAND 大写」); derived from lowerName, no brand.conf key.
+    assertEquals(Branding.upperName, "STAND")
     assertEquals(Branding.fullName, "stand")
     assertEquals(Branding.domain, "mystand.space") // 唯一真值（2026-09-07 命名边界裁定；可 env 覆盖）
     assertEquals(Branding.profileUrl, "https://mystand.space/profile")

@@ -72,6 +72,15 @@ object Branding:
   /** Lowercase name — jar/binary names, storage key prefixes. */
   val lowerName: String = get("lowerName")
 
+  /**
+   * UPPERCASE brand token for browser tab titles (author ruling
+   * 「所有的客户端网页标签的STAND都要用这个大写」, 2026-10: supersedes the
+   * 2026-08-25 lowercase tab-title ruling). Derived from [[lowerName]] — no
+   * brand.conf key — so a rename day edit flows through. Locale.ROOT: brand
+   * tokens are ASCII identifiers, never localize the case mapping.
+   */
+  val upperName: String = lowerName.toUpperCase(java.util.Locale.ROOT)
+
   /** Full name — about dialog, first mention in docs. */
   val fullName: String = get("fullName")
 
