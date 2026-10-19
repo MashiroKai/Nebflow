@@ -229,8 +229,11 @@ object StaticRoutes:
     // form semantics must NOT leak here), nothing skipped. Decoding happens
     // BEFORE the guards below so a `%2E%2E` evasion decodes INTO them.
     val segs = req.uri.path.segments.map(s => s.decoded()).toList
-    // Path shape is exactly <sid>/<filename> — two segments after "uploads".
-    if segs.sizeIs != 3 then NotFound()
+    // Path shape: <sid>/<filename> — two segments after "uploads", or (askuser-dragdrop
+    // 实施批 2026-10-19，批 #551) <sid>/ask-<requestId>/<filename> — three segments:
+    // card-scoped answer attachments live in an extra layer under the same base and
+    // are served by the SAME percent-decode + traversal-guard chain below.
+    if segs.sizeIs != 3 && segs.sizeIs != 4 then NotFound()
     else
       val relParts = segs.drop(1) // drop "uploads"
       // Block path traversal (same guard style as voice-models). Post-decode
