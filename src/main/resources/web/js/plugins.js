@@ -1,5 +1,23 @@
 // plugins.js — Plugins page (Canvas tab, activity-bar entry «插件»/Plugins).
 //
+// 2026-10-21 作者令批（插件面板七条，纯插件视角收口）：
+//   ① 只看纯插件：agent 区块整段退役（列表/摘要行/深链绑定/枚举过滤全删）——
+//      本页从此只呈现插件条目（agent 管理面归 agentManager 既有入口）。
+//   ② plugin.md = 插件必要文件（引擎侧 PluginInjection 同批切链）：包根 Plugin.md
+//      是插件功能描述单源；本面板 Plugin.md 入口照旧（探针在场显形 + Canvas 深链）。
+//   ③ 展开态布局收紧：展开态行摘要从 visibility:hidden（占位留白）改 display:none
+//      （空间塌缩），详情区间距收密——信息密度优先。
+//   ④ 「变更」提示退役：contentChanged 不再驱动任何面板 UI（药丸 amber 档、
+//      `.plugins-card-hint.changed`、卡片 changed 类全删；blocked 面保留）。
+//      🔴 契约字段 `contentChanged` 仍在 payload（C6 契约保留），本页不再消费。
+//   ⑤ 顶部统计 = skill 总数 + MCP server 总数（全注册表面口径，`plugins-stats`）。
+//   ⑥ skill 列表改胶囊：详情区 skills 改「胶囊小图标 + skill 描述」紧凑列表；
+//      点击胶囊经既有 /api/plugin-assets/<name>/skills/<skill>/SKILL.md 路由取
+//      SKILL.md 原文，走既有 Canvas 通路（workspace-open-item → markdown viewer）
+//      打开文档——旧「id+描述+preview 内联渲染」形态退役。
+//   ⑦ nebflow.space 品牌残留：面板可见文案链（插件 description/skill 描述）随
+//      seed `website` 包文案一并清扫（mystand.space 现役域），本文件零 brand 字面量。
+//
 // 2026-09-13 作者裁定（插件「无审批」批——「装了就是信任」）：
 //   ① 方案 = A「在位即信任 + 保留封禁」（引擎轨；`plugins.trust.*` 记录不再决定
 //      装载、零迁移）；② 内容变更 = 不停（内容一变**不**抖掉在飞节点的插件 MCP）。
@@ -110,20 +128,12 @@ import { openTab, getTabPane, hasTab, setActiveTab, isCanvasOpen, openCanvas, re
 import { t } from './i18n.js';
 import { contentText } from './contentI18n.js';
 import { escapeHtml, statusIcon } from './utils.js';
-import { toggleHTML, bindToggle, setToggleState } from './toggle.js';
-import { fetchAgents, fetchAgentModel, openAgentDetail } from './agentManager.js';
+import { toggleHTML, setToggleState } from './toggle.js';
 import { key } from './branding.js';
 import { openLoginModal } from './activityBar.js';
 
 // ── Helpers ────────────────────────────────────────────────
 function esc(s) { return escapeHtml(s); }
-
-/** Short display ref for a model chain (last path segment). */
-function shortModel(ref) {
-  if (!ref) return '';
-  const idx = ref.lastIndexOf('/');
-  return idx >= 0 ? ref.slice(idx + 1) : ref;
-}
 
 /** Authorized JSON fetch (same token pattern as agentManager.js).
  *
@@ -173,27 +183,18 @@ async function fetchPluginRegistry() {
   return resp.json();
 }
 
-/** Classify a manifest's CONTENT state from the frozen contract fields
- *  (C6, 2026-09-13 无审批批) — drives the status pill, the card classes and
- *  the block/unblock secondary action.
- *  • `blocked: true`       → 已封禁（引擎轨：不进目录 + 闸拒 + 在飞 MCP ≤30s 停）
- *  • `contentChanged: true`→ 内容已变更（**非拦截**可见性信号——内容已按新版本
- *                            生效；三处各一行：API 字段 / 目录段尾注记 / 启动健康摘要）
- *  • 其余                  → 已启用（在位即信任）
- *
- *  🔴 本函数**不再读 `trusted` 决定展示**：审批语义已退场（作者 2026-09-13 令），
- *  药丸绑 `trusted` 会恒显「已启用」成噪声。`trusted` 字段仍在 payload 里
- *  （契约保留），但本页不消费它。
- *
- *  优先级：blocked > contentChanged > enabled（药丸只能显示一个态；封禁压过其余）。 */
+/** Classify a manifest's CONTENT state — 2026-10-21 作者令④：「变更」提示退役后
+ *  本页唯一内容态 = blocked（面板 change 提示逻辑整体退役；payload 的
+ *  `contentChanged` 字段仍在契约里，本页不再消费）。
+ *  • `blocked: true` → 已封禁（引擎轨：不进目录 + 闸拒 + 在飞 MCP ≤30s 停）
+ *  • 其余          → 已启用（在位即信任） */
 function pluginStatus(manifest) {
   return {
     blocked: manifest.blocked === true,
-    contentChanged: manifest.contentChanged === true,
   };
 }
 
-/** Pill class + pill text for a status triple — single source shared by the
+/** Pill class + pill text for a status — single source shared by the
  *  full render (renderPluginCard) and the in-place convergence
  *  (applyPluginCardState), so the two can never drift apart.
  *
@@ -201,13 +202,12 @@ function pluginStatus(manifest) {
  *  toggle 本体自明，面板不留说明性小字）⇒ 默认态**不出文字**。
  *  🔴 **2026-09-15 作者裁定「删掉空框」**：`text === ''` ⇒ 渲染点**不生成 pill 元素**
  *  （`applyPluginCardState` 侧则**移除**既有元素）——判据 = DOM 里 `.plugins-state-pill`
- *  count = 0，🔴 **不是**「元素在、用 CSS 藏起来」。`blocked` / `changed` 仍出字并
- *  照常渲染（那是可行动信号）。`key` 仅在出字时被消费（元素缺席 ⇒ 无类可挂）。 */
+ *  count = 0，🔴 **不是**「元素在、用 CSS 藏起来」。`blocked` 仍出字并照常渲染
+ *  （可行动信号）。`key` 仅在出字时被消费（元素缺席 ⇒ 无类可挂）。
+ *  （2026-10-21 作者令④：amber「changed」档随面板 change 提示退役整档删除。） */
 function pillOf(status) {
-  const key = status.blocked ? 'blocked' : (status.contentChanged ? 'changed' : 'on');
-  const text = status.blocked
-    ? t('plugins.stateBlocked')
-    : (status.contentChanged ? t('plugins.stateChanged') : '');
+  const key = status.blocked ? 'blocked' : 'on';
+  const text = status.blocked ? t('plugins.stateBlocked') : '';
   return { key, text };
 }
 
@@ -255,28 +255,15 @@ function dispatchState(manifest, blocked) {
 }
 
 // ── Data assembly ──────────────────────────────────────────
-/** 面板隐藏 agent（2026-10-07 14:13 作者令②「任务分发器面板隐藏」）——枚举链
- *  **第三过滤点**（前端兜底腿；判据语义与后端单点
- *  `BuiltinAgents.PanelHiddenNames` 同源，后端 GET /api/agents 为权威过滤）。
- *  🔴 只过滤本面板的 agents 列表枚举；`/api/agents/:name` 单取、编辑器深链、
- *  生命周期面零触碰——藏的是可见性不是生命。#1229 物理删除候 S19③。 */
-const PANEL_HIDDEN_AGENTS = ['project-dispatcher'];
 
 /**
  * Load everything the page needs in one pass.
- * @returns {Promise<{registry: object, agents: Array}>}
+ * （2026-10-21 作者令①「只看纯插件」：agents 枚举整段退役——本页数据面只剩
+ *  插件注册表一个端点。）
+ * @returns {Promise<{registry: object}>}
  */
 async function loadPluginsData() {
-  const [registry, agents] = await Promise.all([fetchPluginRegistry(), fetchAgents()]);
-  return { registry, agents: agents.filter(a => !PANEL_HIDDEN_AGENTS.includes(a.name)) };
-}
-
-/** Per-agent model snapshot for the summary row's preset/model pills. */
-async function loadAgentSummaries(agents) {
-  return Promise.all(agents.map(async a => ({
-    ...a,
-    model: await fetchAgentModel(a.name).catch(() => null),
-  })));
+  return { registry: await fetchPluginRegistry() };
 }
 
 // ── Rendering ──────────────────────────────────────────────
@@ -317,20 +304,20 @@ function compositionSkills(skills) {
   return `<span class="plugins-comp">${esc(t('plugins.compositionSkills', { n: skills.length }))}</span>`;
 }
 
-/** 详情区 per-skill 清单（既有投影原样：id ＋ 描述 ＋ preview 摘录）。
- *  🔴 契约无 per-skill 状态字段（PluginSkill = id/name/description/path，
- *  approvalManifest 下发 id/description/preview）⇒ 不新造；skill 可用性随
- *  插件级状态药丸。多 skill 时 `.plugins-item-skills` 内滚动（CSS max-height）。 */
-function skillListHtml(skills) {
+/** 详情区 per-skill 胶囊清单（2026-10-21 作者令⑥）：「胶囊小图标 + skill 描述」
+ *  紧凑列表；点击胶囊取该 skill 的 SKILL.md 原文经既有 Canvas 通路打开（见
+ *  openSkillDoc）。旧「id+描述+preview 内联渲染」形态退役（preview 不再下发到
+ *  DOM——文档全文归 Canvas 文档页）。🔴 契约无 per-skill 状态字段（PluginSkill =
+ *  id/name/description/path，approvalManifest 下发 id/description/preview）⇒
+ *  胶囊可用性随插件级状态药丸。 */
+function skillListHtml(skills, pluginName) {
   if (!skills.length) return '';
   const items = skills.map(s => `
-    <div class="plugins-skill-item">
-      <div class="plugins-skill-item-head">
-        <span class="plugins-skill-item-id">${esc(s.id)}</span>
-        <span class="plugins-skill-item-desc">${esc(contentText('skill', s.id, 'desc', s.description || ''))}</span>
-      </div>
-      ${s.preview ? `<pre class="plugins-skill-preview">${esc(s.preview)}</pre>` : ''}
-    </div>`).join('');
+    <button type="button" class="plugins-skill-capsule" data-skill-doc="${esc(pluginName)}"
+      data-skill-id="${esc(s.id)}" title="${esc(contentText('skill', s.id, 'desc', s.description || ''))}">
+      ${statusIcon('file-text', 11, '')}
+      <span class="plugins-skill-capsule-desc">${esc(contentText('skill', s.id, 'desc', s.description || ''))}</span>
+    </button>`).join('');
   return `<div class="plugins-item-skills">${items}</div>`;
 }
 
@@ -391,12 +378,16 @@ const ITEM_CHEVRON_SVG = '<svg class="plugins-item-chevron" width="14" height="1
  *                               两处视图），点击 stopPropagation 不触发展开
  *    `.plugins-card-state`    — 条目行右上状态区（药丸 + 行尾开关 + chevron 载体）
  *    `[data-plugin-doc]`      — Plugin.md 入口（探针在场才显形；默认 hidden）
+ *    `[data-skill-doc]`       — skill 胶囊（2026-10-21 作者令⑥：点击取 SKILL.md
+ *                               经既有 Canvas 通路打开；data-skill-id = skill id）
  *  🔴 2026-09-14 面板收敛批退场钩子（**生产代码零使用**，判据见报告静态腿）：
  *    `[data-plugin-more]` / `[data-plugin-menu]` / `[data-plugin-block]`
  *  🔴 内容审批开关（hook `data-plugin-switch`）已随 2026-09-13 无审批批**退场**。
  *  🔴 旧「skills chip toggle」机构（`.plugins-comp-toggle` / `[data-expand-for]` /
  *     `.plugins-skill-expand`）随 2026-10-07 条目式批退场——skills 清单改由详情区
- *     直接呈现（2026-10-07 前的面板形态见 git 历史）。 */
+ *     直接呈现（2026-10-07 前的面板形态见 git 历史）。
+ *  🔴 旧「skill 条目内联渲染」（`.plugins-skill-item` 族 + `.plugins-skill-preview`）
+ *     随 2026-10-21 作者令⑥退场——skills 改胶囊深链（见上 [data-skill-doc]）。 */
 function renderPluginCard(manifest) {
   const status = pluginStatus(manifest);
   const disp = dispatchState(manifest, status.blocked);
@@ -418,7 +409,7 @@ function renderPluginCard(manifest) {
   const composition = compositionSkills(skills) + compositionMcp(servers)
     + compositionTools(tools) + compositionViewers(manifest);
 
-  return `<div class="plugins-card${status.blocked ? ' blocked' : (status.contentChanged ? ' changed' : ' on')}" data-plugin="${esc(name)}">
+  return `<div class="plugins-card${status.blocked ? ' blocked' : ' on'}" data-plugin="${esc(name)}">
     <div class="plugins-card-head" data-plugin-item="${esc(name)}" role="button" tabindex="0"
       aria-expanded="false" aria-controls="${esc(detailId)}" title="${esc(t('plugins.detail'))}">
       <div class="plugins-item-id">
@@ -449,7 +440,6 @@ function renderPluginCard(manifest) {
     <div class="plugins-item-detail" id="${esc(detailId)}" hidden>
       ${manifest.description ? `<div class="plugins-card-desc">${esc(desc)}</div>` : ''}
       <div class="plugins-dispatch-note"${disp.note ? '' : ' hidden'}>${esc(disp.note)}</div>
-      ${status.contentChanged ? `<div class="plugins-card-hint changed">${esc(t('plugins.changedHint'))}</div>` : ''}
       ${status.blocked ? `<div class="plugins-card-hint blocked">${esc(t('plugins.blockedHint'))}</div>` : ''}
       ${composition ? `<div class="plugins-card-composition">${composition}</div>` : ''}
       <button type="button" class="plugins-item-doc" data-plugin-doc="${esc(name)}" hidden>${statusIcon('file-text', 12, '')}Plugin.md</button>
@@ -468,7 +458,7 @@ function renderPluginCard(manifest) {
           })}
         </span>
       </div>
-      ${skillListHtml(skills)}
+      ${skillListHtml(skills, name)}
     </div>
   </div>`;
 }
@@ -491,29 +481,16 @@ function renderRejectedCard(entry) {
   </div>`;
 }
 
-/** Agent summary row: name + description + preset/model 现状 — the whole row
- *  deep-links into the per-agent detail editor (openAgentDetail).
- *  builtin-def 批（2026-10-03 作者令①）：代码定义的四件内置 agent 带只读徽标——
- *  面板对内置 agent 只读查看，编辑器进详情页也是只读（builtin 标记来自
- *  GET /api/agents 的 `builtin` 字段）。 */
-function renderAgentRow(agent) {
-  const model = agent.model || {};
-  const preset = model.preset || '';
-  const resolved = model.preferred || model.current || model.default || '';
-  const meta = [
-    preset ? esc(preset) : '',
-    resolved ? esc(shortModel(resolved)) : '',
-  ].filter(Boolean).map(p => `<span class="plugins-agent-meta-pill">${p}</span>`).join('');
-  const builtinBadge = agent.builtin
-    ? `<span class="plugins-agent-builtin-badge" title="${esc(t('plugins.builtinTitle'))}">${esc(t('plugins.builtinBadge'))}</span>`
-    : '';
-  return `<div class="plugins-agent-row" data-detail-agent="${esc(agent.name)}" role="button" tabindex="0"
-    title="${esc(t('plugins.detail'))}">
-    <span class="plugins-agent-name">${esc(contentText('agent', agent.name, 'name', agent.displayName || agent.name))}${builtinBadge}</span>
-    <span class="plugins-agent-desc">${esc(contentText('agent', agent.name, 'desc', agent.description || ''))}</span>
-    <span class="plugins-agent-meta">${meta}</span>
-    <svg class="plugins-agent-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-  </div>`;
+/** 顶部统计（2026-10-21 作者令⑤）：skill 总数 + MCP server 总数（全注册表面
+ *  口径——逐包 skills/mcpServers 求和；纯数据投影 + locale 计数键）。 */
+function topStatsHtml(plugins) {
+  const skillCount = plugins.reduce((n, p) => n + (Array.isArray(p.skills) ? p.skills.length : 0), 0);
+  const mcpCount = plugins.reduce((n, p) => n + (Array.isArray(p.mcpServers) ? p.mcpServers.length : 0), 0);
+  return `<span class="plugins-stats" data-plugins-stats>
+    <span class="plugins-stats-item" data-stat-skills="${skillCount}">${esc(t('plugins.statSkills', { n: skillCount }))}</span>
+    <span class="plugins-stats-sep" aria-hidden="true">·</span>
+    <span class="plugins-stats-item" data-stat-mcp="${mcpCount}">${esc(t('plugins.statMcp', { n: mcpCount }))}</span>
+  </span>`;
 }
 
 /** Render the whole page into the Plugins tab pane. */
@@ -522,24 +499,14 @@ export function renderPlugins() {
   if (!content) return;
   content.innerHTML = `<div class="plugins-loading">${esc(t('plugins.loading'))}</div>`;
 
-  Promise.all([loadPluginsData()]).then(async ([{ registry, agents }]) => {
+  loadPluginsData().then(async ({ registry }) => {
     if (!content.isConnected) return; // tab closed while fetching
 
     const plugins = (registry.plugins || []).slice().sort((a, b) => a.name.localeCompare(b.name));
     const rejected = (registry.rejected || []).slice().sort((a, b) => a.name.localeCompare(b.name));
-    const summaries = await loadAgentSummaries(agents);
-    if (!content.isConnected) return;
 
-    // Agents section first (author directive 2026-09-25: agent roster on top
-    // of the plugins tab); blocks are order-swapped verbatim, internals untouched.
+    // 纯插件视角（2026-10-21 作者令①）：单一插件区块；顶部统计 = skill + MCP 口径。
     const listHtml = `
-      <div class="plugins-section" id="plugins-section-agents">
-        <div class="plugins-section-title">${esc(t('plugins.agents'))}</div>
-        <div class="plugins-section-hint">${esc(t('plugins.agentsHint'))}</div>
-        <div class="plugins-agent-list">${summaries.length
-          ? summaries.map(renderAgentRow).join('')
-          : `<span class="plugins-none">${esc(t('plugins.noAgents'))}</span>`}</div>
-      </div>
       <div class="plugins-section" id="plugins-section-plugins">
         <div class="plugins-section-title">${esc(t('plugins.list'))}</div>
         <div class="plugins-section-hint">${esc(t('plugins.listHint'))}</div>
@@ -551,6 +518,7 @@ export function renderPlugins() {
     content.innerHTML = `
       <div class="plugins-topbar">
         <span class="plugins-title">${esc(t('activity.plugins'))}</span>
+        ${topStatsHtml(plugins)}
       </div>
       ${listHtml}`;
 
@@ -666,18 +634,17 @@ function applyPluginCardState(card, manifest) {
   const status = pluginStatus(manifest);
   const disp = dispatchState(manifest, status.blocked);
   const pill = pillOf(status);
-  card.classList.toggle('on', !status.blocked && !status.contentChanged);
-  card.classList.toggle('changed', status.contentChanged);
+  card.classList.toggle('on', !status.blocked);
   card.classList.toggle('blocked', status.blocked);
-  // 状态药丸：绑 blocked / contentChanged（不绑 trusted）。🔴 空文案态 ⇒ **零元素**
+  // 状态药丸：绑 blocked（2026-10-21 作者令④：change 档退役）。🔴 空文案态 ⇒ **零元素**
   // （作者 2026-09-15 令「删掉空框」）：在位的移除、缺位的**不创建**；有文字态
-  // （changed / blocked）照常新建 / 更新 —— 收敛路径与整页重渲共用 `pillOf()` 单一判据。
+  // （blocked）照常新建 / 更新 —— 收敛路径与整页重渲共用 `pillOf()` 单一判据。
   let pillEl = card.querySelector('.plugins-state-pill');
   if (!pill.text) {
     pillEl?.remove();
   } else if (pillEl) {
     pillEl.innerHTML = pillInnerHtml(pill);
-    pillEl.classList.remove('on', 'changed', 'blocked');
+    pillEl.classList.remove('on', 'blocked');
     pillEl.classList.add(pill.key);
   } else {
     const stateBox = card.querySelector('.plugins-card-state');
@@ -702,8 +669,8 @@ function applyPluginCardState(card, manifest) {
     dnote.hidden = !disp.note;
     dnote.textContent = disp.note;
   }
-  // 两条卡片级提示：内容已变更（amber，非拦截可见性）/ 已封禁（error 族，可行动）。
-  setCardHint(card, 'changed', status.contentChanged, t('plugins.changedHint'));
+  // 卡片级提示：只剩「已封禁」（error 族，可行动）——2026-10-21 作者令④：
+  // 「变更」提示条退役（setCardHint 的 changed 腿随批删除）。
   setCardHint(card, 'blocked', status.blocked, t('plugins.blockedHint'));
 }
 
@@ -712,7 +679,8 @@ function applyPluginCardState(card, manifest) {
  *  ui-status-redesign（盘点 #52）：blocked 提示条 = 行首 ban 图标 + 中性正文
  *  （红底红边图案由 CSS 保留）。
  *  2026-10-07 条目式批：锚点自已退场的 `.plugins-skill-expand` 改挂
- *  `.plugins-item-skills`（详情区末位的 skills 清单）。 */
+ *  `.plugins-item-skills`（详情区末位的 skills 清单）。
+ *  2026-10-21 作者令④：changed 腿退役——本函数只剩 blocked 一个消费方。 */
 function setCardHint(card, kind, show, text) {
   let el = card.querySelector(`.plugins-card-hint.${kind}`);
   if (!show) { el?.remove(); return; }
@@ -730,7 +698,7 @@ function setCardHint(card, kind, show, text) {
 function cardSignature(manifest) {
   const status = pluginStatus(manifest);
   const disp = dispatchState(manifest, status.blocked);
-  return `${status.blocked ? 1 : 0}|${status.contentChanged ? 1 : 0}|${disp.on ? 1 : 0}|${disp.blocked}|${disp.note}`;
+  return `${status.blocked ? 1 : 0}|${disp.on ? 1 : 0}|${disp.blocked}|${disp.note}`;
 }
 
 /** The same signature read back off the DOM (used to detect drift). */
@@ -739,7 +707,6 @@ function domCardSignature(card) {
   const note = card.querySelector('.plugins-dispatch-note');
   return [
     card.classList.contains('blocked') ? 1 : 0,
-    card.classList.contains('changed') ? 1 : 0,
     dsw?.classList.contains('on') ? 1 : 0,
     dsw?.getAttribute('data-dispatch-blocked') || '',
     note && !note.hidden ? note.textContent : '',
@@ -932,10 +899,34 @@ function mountPluginMdEntry(card) {
   });
 }
 
+/** skill 胶囊深链（2026-10-21 作者令⑥）：点击时现取该 skill 的 SKILL.md 原文 →
+ *  既有 Canvas 通路（workspace-open-item → markdown viewer）打开文档页。路由 =
+ *  既有 /api/plugin-assets/<name>/skills/<skill>/SKILL.md（封禁包服务端
+ *  fail-closed 404 ⇒ toast 原始错误，零新串——与 Plugin.md 入口同族）。 */
+async function openSkillDoc(pluginName, skillId) {
+  const skillName = skillId.startsWith(`${pluginName}/`) ? skillId.slice(pluginName.length + 1) : skillId;
+  const url = `/api/plugin-assets/${encodeURIComponent(pluginName)}/skills/${encodeURIComponent(skillName)}/SKILL.md`;
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const content = await resp.text();
+    window.dispatchEvent(new CustomEvent('workspace-open-item', { detail: {
+      id: `plugin-skill-md:${skillId}`,
+      title: `${skillId} · SKILL.md`,
+      itemType: 'markdown',
+      content,
+      pinned: false,
+      background: false,
+    }}));
+  } catch (e) {
+    window.__showToast?.(String(e?.message || e), 'error');
+  }
+}
+
 /** Bind one plugin item's interactions (row accordion toggle, dispatch switch,
- *  Plugin.md entry). Shared by the full render and the live-sync insert path.
- *  Idempotent via WeakSets (not expando properties — checkJs zero-new-errors
- *  discipline).
+ *  Plugin.md entry, skill capsules). Shared by the full render and the
+ *  live-sync insert path. Idempotent via WeakSets (not expando properties —
+ *  checkJs zero-new-errors discipline).
  *  （2026-09-14 面板收敛批：「更多」菜单开合与封禁/解封两条绑定随该 UI 退场；
  *  2026-10-07 条目式批：skills chip toggle 绑定随该机构退场，改为条目行
  *  accordion toggle。） */
@@ -983,29 +974,29 @@ function bindCardEvents(card) {
       if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
     });
   }
+  // skill 胶囊（2026-10-21 作者令⑥）：点击取 SKILL.md 进 Canvas（浅绑定即可——
+  // 胶囊元素随卡片重渲重建，无跨重渲身份）。
+  card.querySelectorAll('[data-skill-doc]').forEach(capsule => {
+    capsule.addEventListener('click', (e) => {
+      e.stopPropagation(); // 胶囊在 accordion 行为面之外，但冒泡出详情区不得翻整行
+      const plugin = capsule.getAttribute('data-skill-doc');
+      const skillId = capsule.getAttribute('data-skill-id');
+      if (plugin && skillId) openSkillDoc(plugin, skillId);
+    });
+  });
   mountPluginMdEntry(card);
 }
 
 /** Bind interactions: the item-row accordion toggle, the dispatch switch
- *  (optimistic in-place toggling), the Plugin.md entry, agent summary rows →
- *  per-agent detail tab.
- *  (The manual refresh button was removed 2026-09-05 — the poller keeps the
+ *  (optimistic in-place toggling), the Plugin.md entry, the skill capsules.
+ *  （agent 摘要行深链绑定随 2026-10-21 作者令①「只看纯插件」退役。
+ *  The manual refresh button was removed 2026-09-05 — the poller keeps the
  *  list live; see startPluginsPolling. The 更多 secondary action was removed
  *  2026-09-14 with the block/unblock UI. The skills chip-toggle was removed
  *  2026-10-07 with the itemized form — the skill list now lives in the detail
- *  area.) */
+ *  area.） */
 function bindPluginsEvents(content) {
   content.querySelectorAll('.plugins-card').forEach(bindCardEvents);
-
-  // Agent summary row → per-agent detail tab (summary / preset / system
-  // prompt — the tools/skills/flows capability sections were retired
-  // 2026-09-06 with the tool-face batch).
-  content.querySelectorAll('[data-detail-agent]').forEach(el => {
-    el.addEventListener('click', () => openAgentDetail(el.dataset.detailAgent));
-    el.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAgentDetail(el.dataset.detailAgent); }
-    });
-  });
 }
 
 // ── Wiring ─────────────────────────────────────────────────

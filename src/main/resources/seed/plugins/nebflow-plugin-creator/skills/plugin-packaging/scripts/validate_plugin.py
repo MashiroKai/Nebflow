@@ -581,6 +581,19 @@ def check_c11(pkg, manifest, mcp_data):
     else:
         record("C11", "未知条目告警面", True,
                "manifest 键／包根五件（第五件 Plugin.md 恰一文件、逐字命名）／org.nebflow／mcp.json（顶层+entry）全部命中已知集合")
+    # C11b 包根必要文件（作者令 2026-10-21「plugin.md = 插件必要文件机制」）：
+    # Plugin.md 必须在位（恰一文件、逐字命名）——缺失 = FAIL（分配注入读包根
+    # Plugin.md，缺文件 fail-closed 拒注入；大写为正字，小写 plugin.md 容忍但提示）。
+    has_md = os.path.isfile(os.path.join(pkg, "Plugin.md"))
+    lower_only = (not has_md) and os.path.isfile(os.path.join(pkg, "plugin.md"))
+    if has_md:
+        record("C11b", "包根必要文件 Plugin.md", True, "包根 Plugin.md 在位（恰一文件，分配注入面）")
+    elif lower_only:
+        record("C11b", "包根必要文件 Plugin.md", False,
+               "包根只有小写 plugin.md（引擎回退同认，但白名单正字为 Plugin.md）——重命名为 'Plugin.md'", warn=True)
+    else:
+        record("C11b", "包根必要文件 Plugin.md", False,
+               "包根缺 Plugin.md（插件必要文件：分配注入 = 该文件内容，缺文件 fail-closed 拒注入）——按 §3.4 生成")
 
 
 def check_c12(manifest):

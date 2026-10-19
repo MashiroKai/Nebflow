@@ -72,6 +72,8 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
       s"""{"$$schema":"${nebflow.core.plugin.PluginRegistry.CanonicalSchema}","name":"$name","version":"1.0.0","description":"$marker fixture"}""",
       createFolders = true
     )
+    // 必要文件（作者令「plugin.md = 插件必要文件机制」）：注入面读包根 Plugin.md
+    os.write.over(dir / "Plugin.md", s"# $name\n\n## $marker\n", createFolders = true)
     os.write.over(
       dir / "skills" / "howto" / "SKILL.md",
       s"""---

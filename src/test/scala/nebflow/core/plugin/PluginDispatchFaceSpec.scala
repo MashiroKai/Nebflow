@@ -72,6 +72,9 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
     s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"inject-skill","version":"1.0.0","description":"dispatch face fixture"}"""
   )
 
+  // 必要文件（作者令「plugin.md = 插件必要文件机制」）：注入面读包根 Plugin.md
+  os.write.over(skillDir / "Plugin.md", "# inject-skill\n\n## DispatchFacePluginMdMarker\n")
+
   os.write.over(
     skillDir / "skills" / "howto" / "SKILL.md",
     """---
@@ -232,6 +235,7 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
       keepDir / "plugin.json",
       s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"keep-skill","version":"1.0.0","description":"contrast face fixture"}"""
     )
+    os.write.over(keepDir / "Plugin.md", "# keep-skill\n\nContrast face fixture package.\n")
     os.write.over(
       keepDir / "skills" / "contrast" / "SKILL.md",
       """---
@@ -358,7 +362,7 @@ class PluginDispatchFaceSpec extends CatsEffectSuite:
       val downReq = ins.find(_.contains("down work")).getOrElse("")
       assert(downReq.nonEmpty, s"已派发节点必须在关闭后仍能启动并跑到 LLM，got ${ins.size} request(s)")
       assert(downReq.contains("<injected-plugins>"), "已派发节点的插件注入块必须完整在位（关闭只影响未来派发；已启用提示词的审计面不变）")
-      assert(downReq.contains("DispatchFaceBodyMarker"), "SKILL 全文照注入（内容面未撤）")
+      assert(downReq.contains("DispatchFacePluginMdMarker"), "Plugin.md 全文照注入（内容面未撤；作者令批：注入 = 包根 Plugin.md）")
     end for
   }
 

@@ -10,8 +10,10 @@
 //      语义自洽，逐条目独立）；Enter/Space 键盘可达。
 //   ③ 操作钮层级：派发开关收进详情区 `.plugins-item-actions` 行（只动层级）——
 //      乐观翻转 → POST /disable → 收敛，展开态跨收敛保持（节点身份不变）。
-//   ④ skills 清单：详情区逐 skill 条目（既有投影 id+desc+preview）；多 skill 时
-//      清单容器内滚动（max-height + overflow-y 计算样式钉）。
+//   ④ skills 胶囊（2026-10-21 作者令⑥）：详情区逐 skill =「胶囊小图标 + 描述」
+//      紧凑列表（data-skill-doc/data-skill-id 钩子）；旧 id+desc+preview 内联渲染
+//      退役（.plugins-skill-preview 零在场）；多 skill 时清单容器内滚动
+//      （max-height + overflow-y 计算样式钉）。
 //   ⑤ Plugin.md 入口：包根有 Plugin.md 才在场（既有 /api/plugin-assets/<name>/
 //      Plugin.md 探针 200；404 包永不在场）——只做入口呈现，点击走既有 Canvas
 //      通路（workspace-open-item → markdown viewer，tab 出现且内容在 pane）；
@@ -77,10 +79,12 @@ const DOC_ABSENT = 'doc-absent'; // 包根无 Plugin.md 的夹具包（入口缺
 const DOC_TEXT = '# Fixture Plugin.md\n\nEntry-presentation fixture for the itemized panel spec.\n';
 
 /** Mutable registry — reset per test in beforeEach. `many-skills` = skill 多包
- *  （6 个，触发清单内滚动断言）；`doc-absent` 顺带断言 org.nebflow 无贡献不渲染。 */
+ *  （12 个——胶囊紧凑形态下触发清单内滚动断言的真实溢出）；`doc-absent` 顺带断言 org.nebflow 无贡献不渲染。 */
 const registry = { plugins: [], rejected: [{ name: 'broken-plugin', reason: 'missing plugin.json manifest' }] };
 /** Probe bookkeeping: every /api/plugin-assets/&lt;name&gt;/Plugin.md request the page makes. */
 let docProbes = [];
+/** Skill-doc bookkeeping: every `&lt;plugin&gt;/&lt;skill&gt;` SKILL.md fetch the page makes. */
+let skillDocFetches = [];
 
 function manifest(name, over = {}) {
   return {
@@ -115,13 +119,16 @@ test.beforeEach(() => {
       toolsExtension: ['tool_a', 'tool_b'],
     }),
     manifest('many-skills', {
-      skills: ['s1', 's2', 's3', 's4', 's5', 's6'].map(n => ({ id: `many-skills/${n}`, description: `Skill ${n}`, preview: `${n} body` })),
+      // 12 个 skill：胶囊紧凑形态下（作者令⑥）6 个已不再溢出 240px 容器——
+      // 12 个（≈12×26px + 11×4px gap）才能触发内滚动断言的真实溢出。
+      skills: Array.from({ length: 12 }, (_, i) => ({ id: `many-skills/s${i + 1}`, description: `Skill ${i + 1}`, preview: `s${i + 1} body` })),
       viewerContributions: { viewers: [{ name: 'bar-chart' }, { name: 'map-view' }] },
     }),
     manifest(DOC_ABSENT),
   ];
   registry.rejected = [{ name: 'broken-plugin', reason: 'missing plugin.json manifest' }];
   docProbes = [];
+  skillDocFetches = [];
 });
 
 /** Shell load with the full API/WS/asset mock set. */
@@ -136,6 +143,15 @@ async function loadShell(page) {
     const name = decodeURIComponent(r.request().url().match(/plugin-assets\/([^/?]+)\/Plugin\.md/)?.[1] || '');
     docProbes.push(name);
     if (name === DOC_OK) return r.fulfill({ body: DOC_TEXT, contentType: 'text/markdown' });
+    return r.fulfill({ status: 404, body: 'not found' });
+  });
+  await page.route(/\/api\/plugin-assets\/[^/]+\/skills\/[^/]+\/SKILL\.md$/, r => {
+    const url = r.request().url();
+    const m = url.match(/plugin-assets\/([^/]+)\/skills\/([^/]+)\/SKILL\.md$/);
+    skillDocFetches.push(`${decodeURIComponent(m?.[1] || '')}/${decodeURIComponent(m?.[2] || '')}`);
+    if (m?.[1] === DOC_OK) {
+      return r.fulfill({ body: `# SKILL ${m[2]}\n\nSkill doc body for ${m[2]} (itemize spec fixture).\n`, contentType: 'text/markdown' });
+    }
     return r.fulfill({ status: 404, body: 'not found' });
   });
   await page.route('**/api/plugins/*/enable', r => {
@@ -347,9 +363,9 @@ test('③ 派发开关在详情区语义零变：乐观翻转→收敛；展开�
   expect(errors, 'pageerror 0').toEqual([]);
 });
 
-// ══ ④ skills 清单：逐 skill 条目 + 多 skill 内滚动 ═══════════════════════
+// ══ ④ skills 胶囊（2026-10-21 作者令⑥）：胶囊小图标 + 描述；preview 内联渲染退役 ═
 
-test('④ skills 清单：详情区逐 skill 条目（既有投影）；多 skill 容器内滚动', async ({ page }) => {
+test('④ skills 胶囊：详情区逐 skill 胶囊（图标+描述，data-skill-doc 钩子）；preview 零在场；多 skill 容器内滚动', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   await loadShell(page);
@@ -358,27 +374,45 @@ test('④ skills 清单：详情区逐 skill 条目（既有投影）；多 skil
   const few = await page.evaluate((n) => {
     const detail = document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-item-detail`);
     const list = detail?.querySelector('.plugins-item-skills');
-    const ids = [...(list?.querySelectorAll('.plugins-skill-item-id') || [])].map(el => el.textContent.trim());
+    const capsules = [...(list?.querySelectorAll('.plugins-skill-capsule') || [])].map(el => ({
+      plugin: el.getAttribute('data-skill-doc'),
+      skillId: el.getAttribute('data-skill-id'),
+      hasIcon: !!el.querySelector('.st-ic'),
+      desc: el.querySelector('.plugins-skill-capsule-desc')?.textContent.trim(),
+    }));
     const cs = list ? getComputedStyle(list) : null;
-    return { ids, listPresent: !!list, overflow: cs?.overflowY, maxH: cs?.maxHeight };
+    return {
+      capsules,
+      listPresent: !!list,
+      overflow: cs?.overflowY,
+      maxH: cs?.maxHeight,
+      // 退役形态判据：preview 块与旧条目族零在场
+      previewCount: detail?.querySelectorAll('.plugins-skill-preview').length ?? null,
+      legacyItemCount: detail?.querySelectorAll('.plugins-skill-item').length ?? null,
+    };
   }, DOC_OK);
   expect(few.listPresent, '详情区带 skills 清单容器').toBe(true);
-  expect(few.ids, '逐 skill 条目（既有投影 id）').toEqual([`${DOC_OK}/alpha`, `${DOC_OK}/beta`]);
+  expect(few.capsules.map(c => c.skillId), '逐 skill 胶囊（既有投影 id）').toEqual([`${DOC_OK}/alpha`, `${DOC_OK}/beta`]);
+  expect(few.capsules.map(c => c.plugin), '胶囊携带插件名（SKILL.md 深链路由输入）').toEqual([DOC_OK, DOC_OK]);
+  expect(few.capsules.every(c => c.hasIcon), '每胶囊带小图标（st-ic）').toBe(true);
+  expect(few.capsules.map(c => c.desc), '胶囊文本 = skill 描述（既有投影）').toEqual(['Alpha skill', 'Beta skill']);
+  expect(few.previewCount, 'preview 内联渲染退役（零在场）').toBe(0);
+  expect(few.legacyItemCount, '旧 .plugins-skill-item 条目族退役（零在场）').toBe(0);
 
   // skill 多包：清单容器 max-height + overflow-y:auto（详情区内滚动）
   await page.click('.plugins-card[data-plugin="many-skills"] [data-plugin-item]');
   const many = await page.evaluate((n) => {
     const list = document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-item-skills`);
-    const ids = [...(list?.querySelectorAll('.plugins-skill-item-id') || [])].map(el => el.textContent.trim());
+    const capsules = [...(list?.querySelectorAll('.plugins-skill-capsule') || [])];
     const cs = list ? getComputedStyle(list) : null;
     return {
-      count: ids.length,
+      count: capsules.length,
       maxH: parseFloat(cs?.maxHeight || '0'),
       overflowY: cs?.overflowY,
       scrollable: list ? list.scrollHeight > list.clientHeight || parseFloat(cs.maxHeight) < list.scrollHeight : false,
     };
   }, 'many-skills');
-  expect(many.count, 'skill 多包全条目在清单').toBe(6);
+  expect(many.count, 'skill 多包全胶囊在清单').toBe(12);
   expect(many.maxH, '清单容器 max-height 上限（内滚动语义）').toBeGreaterThan(0);
   expect(many.overflowY, '清单容器 overflow-y auto').toBe('auto');
   expect(many.scrollable, 'skill 多包实际可滚动（scrollHeight > clientHeight 或受 max-height 约束）').toBe(true);
@@ -456,7 +490,7 @@ test('⑥ 组件面：org.nebflow viewer 名数据投影（有贡献才渲染）
   }, 'many-skills');
   const viewerChip = comps.find(c => c.startsWith('org.nebflow:'));
   expect(viewerChip, 'org.nebflow chip = 命名空间字面量 + viewers[].name 数据投影').toBe('org.nebflow: bar-chart、map-view');
-  const skillsChipTruth = await localeTruth(page, 'plugins.compositionSkills', { n: 6 });
+  const skillsChipTruth = await localeTruth(page, 'plugins.compositionSkills', { n: 12 });
   expect(comps, 'skills 计数 chip = locale 键现读（组件面）').toContain(skillsChipTruth);
 
   const none = await page.evaluate((n) => {

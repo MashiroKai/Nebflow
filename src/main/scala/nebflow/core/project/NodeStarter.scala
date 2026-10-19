@@ -327,8 +327,8 @@ private[project] trait NodeStarter:
           // 阶段 2b Plugins（§B.4 第 4 步，spawn 前执行）：① 解析 node.plugins
           // （不存在/被封禁/装载非法 → failNode，错误消息列明原因——分配失败是
           // 节点级失败，不静默降级；内容变更**不**拒启动，见 prepareNodePlugins）；
-          // ② skill 全文读出 + ${SKILL_DIR} 替换
-          // （SkillService.loadSkill 单点复用）组装 <injected-plugins> 块；
+          // ② 包根 Plugin.md 全文读出组装 <injected-plugins> 块（作者令
+          // 「plugin.md = 插件必要文件机制」批——解析块单点 = PluginInjection）；
           // ③ MCP server 启动 + 引用记账（PluginMcpManager，启动失败 → failNode）。
           // 三步全部发生在状态翻转（status=Running）之前——失败路径零 running 残留。
           // panelscheme 批（2026-09-21）：§E.3 node.preset 静态消费**废止**——
