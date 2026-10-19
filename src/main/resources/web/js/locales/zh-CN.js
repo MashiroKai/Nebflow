@@ -1820,7 +1820,9 @@ export default {
   'wiki.panelTitle': '图谱',
   'wiki.clearAll': '清除',
   'wiki.clearAllTitle': '清除全部筛选',
-  'wiki.sbProjectsCount': '项目 · {docs} 篇 · {links} 链',
+  // 侧栏排版（wiki-graph UX 批 §3）：计数拆独立 meta 行，节标题只留名 + 右挂总计
+  'wiki.sbMeta': '{projects} 项目 · {docs} 文档 · {links} 链接',
+  'wiki.sbProjects': '项目',
   'wiki.sbTypes': '类型',
   'wiki.sbStatuses': '状态',
   'wiki.sbLegend': '图例',
@@ -1828,8 +1830,11 @@ export default {
   'wiki.legendAttachments': '附件',
   'wiki.legendUnresolved': '未解析',
   'wiki.legendDone': '已完成',
-  'wiki.legendLinks': '链接 / 嵌入',
   'wiki.remoteProject': '（远端）',
+  // 筛选无结果空态（§3）
+  'wiki.sbEmptyMain': '没有匹配的文档',
+  'wiki.sbEmptyHintPrefix': '试试更短的关键词，或',
+  'wiki.sbEmptyHintSuffix': '全部筛选',
   'wiki.zoomInTitle': '放大',
   'wiki.zoomOutTitle': '缩小',
   'wiki.zoomResetTitle': '复位视野',
