@@ -1706,7 +1706,6 @@ function renderOneSessionItem(s, container, opts = {}) {
     '</div>' +
     '<div class="session-status ' + statusCls + '">' +
     '<div class="status-spinner"><i data-lucide="loader-2"></i></div>' +
-    '<div class="status-compact-spinner"><i data-lucide="minimize-2"></i></div>' +
     '<div class="status-dot"></div>' +
     '</div>' +
     deleteBtnHtml;
@@ -2310,21 +2309,16 @@ export function deleteFolder(folderId) {
 }
 
 // ---------- Session status state machine ----------
-// Priority: attention > compacting-bg > busy > marked unread > unread > idle
+// Priority: attention > busy > marked unread > unread > idle
 // Only one indicator visible at a time, controlled by a single CSS class.
-// Attention takes priority over compacting so AskUser/permission prompts are visible
-// even while the session is still technically compacting.
+// Attention takes priority so AskUser/permission prompts are visible.
 //
-// Compact logic:
-//   - Active session compacting: green compact info shown in chat area status bar;
-//     sidebar shows 'busy' (falls through).
-//   - Non-active session compacting: sidebar shows 'compacting' spinner.
+// 压缩中无独立可见态（作者令 2026-10-09 ①「『压缩中』可见指示列为拆除项」，
+// compaction-pill-remove 批）：compactingSessionIds 仅剩功能职责（输入闸 /
+// 排队闸），侧栏会话/文件夹行不再显示压缩指示（压缩 spinner 元素与样式已拆）。
 
 function getSessionStatusClass(sessionId) {
   if (state.attentionSessions.has(sessionId)) return 'attention';
-  // Only show 'compacting' spinner in sidebar for non-active sessions.
-  // Active session shows compact info in the chat area status bar instead.
-  if (state.compactingSessionIds.has(sessionId) && sessionId !== state.activeSessionId) return 'compacting';
   if (state.busySessionIds.has(sessionId)) return 'busy';
   if (state.markedUnreadSessions.has(sessionId) || state.unreadSessions.has(sessionId)) return 'unread';
   return '';
@@ -2910,9 +2904,7 @@ function getFolderStatusClass(folderId, sessions) {
   for (const s of folderSessions) {
     if (state.attentionSessions.has(s.id)) return 'attention';
   }
-  for (const s of folderSessions) {
-    if (state.compactingSessionIds.has(s.id) && s.id !== state.activeSessionId) return 'compacting';
-  }
+  // 压缩中指示已拆除（作者令 2026-10-09 ①）——文件夹行不再有 compacting 态。
   for (const s of folderSessions) {
     if (state.busySessionIds.has(s.id)) return 'busy';
   }
@@ -2952,7 +2944,6 @@ function renderFolderItem(folder, sessions, container) {
     (folder.projectRoot ? '<span class="folder-badge" title="' + escapeHtml(folder.projectRoot) + '"><i data-lucide="hard-drive" style="width:12px;height:12px"></i></span>' : '') +
     '<div class="folder-status ' + statusCls + '">' +
       '<div class="status-spinner"><i data-lucide="loader-2"></i></div>' +
-      '<div class="status-compact-spinner"><i data-lucide="minimize-2"></i></div>' +
       '<div class="folder-status-dot"></div>' +
     '</div>' +
     '<button class="folder-delete" title="' + t('sidebar.folderDelete') + '"><i data-lucide="x"></i></button>';

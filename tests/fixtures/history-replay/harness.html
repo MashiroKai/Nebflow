@@ -10,8 +10,12 @@
                             (historyPage handler → main.js).
        window.__live()    → the exact live-render functions the app calls on
                             WS events (renderTool / renderAskUser /
-                            renderCompactStartCard / renderCompactDoneCard /
-                            renderUserBubble).
+                            renderCompactDoneCard / renderUserBubble). The
+                            in-progress compacting pill is DISMANTLED (作者令
+                            2026-10-09 ①) — the live driver mirrors the new
+                            main.js compactStart handler: no start card, just
+                            the view.compactStartTs stamp for the done card's
+                            elapsed suffix.
 
      The spec (tests/history-replay-cards.spec.mjs) serves the repo root over
      a throwaway static server (never the 8080 host) and drives both paths
@@ -101,7 +105,9 @@
           if (afterAsk) { afterAsk = false; continue; } // recorded answer, not a live bubble
           chat.renderUserBubble(m.text, m.attachments, m.timestamp);
         } else if (m.type === 'system' && m.i18nKey === 'chat.compacting') {
-          chat.renderCompactStartCard(chatViews.primary);
+          // 令①拆除（compaction-pill-remove 批）：无起卡——复刻新 main.js
+          // handler，仅盖时间戳供完成卡「用时」后缀。
+          chatViews.primary.compactStartTs = Date.now();
         } else if (m.type === 'system' && m.i18nKey === 'chat.compacted') {
           chat.renderCompactDoneCard(chatViews.primary, {
             before: m.params.before, after: m.params.after, detail: m.params.detail,

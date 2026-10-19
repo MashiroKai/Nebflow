@@ -28,7 +28,7 @@ import {
   renderTool, renderToolPending, renderError, renderTimeoutNotice,
   feedBusyWatchdog, removeStillProcessingNotice,
   renderSystemBubble, renderRetryStatus, clearRetryStatus,
-  renderCompactStartCard, renderCompactDoneCard, renderCompactFailCard,
+  renderCompactDoneCard, renderCompactFailCard,
   showOptions, renderAskUser, renderPermissionPrompt, closeAskUserCard,
   reclaimAskUserCards,
   renderAttachmentPreview,
@@ -2082,9 +2082,12 @@ onMessage('compactStart', (msg, view) => {
   resetStreamTimeout(sid);
   setCompacting(sid, true);
   if (view) {
-    renderCompactStartCard(view);
-    // Persist the same system text as before — history restore renders it as
-    // a quiet notice card; the live status card is a live-view-only element.
+    // 作者令 2026-10-09 10:23 ①（compaction-pill-remove 批）：「压缩中」可见
+    // 指示已拆除——本帧不再起卡。帧本身保留：setCompacting 供输入闸
+    // （input.js isBusy）与排队闸（队列 drain）使用，saveMsg 供历史记录
+    // （重放腿按 restoreCompactCardRow 抑制起条目）；时间戳供完成卡的
+    // 「用时」后缀（完成态 UI 零改动）。
+    view.compactStartTs = Date.now();
     saveMsg({ type: 'system', content: t('chat.compacting') }, sid);
   }
 });

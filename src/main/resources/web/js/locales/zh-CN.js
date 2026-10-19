@@ -1347,7 +1347,6 @@ export default {
   'chat.thinking.4': '穿越星云中...',
   'chat.thinking.5': '追光逐影中...',
   'chat.compacting': '正在压缩上下文...',
-  'chat.compactingCard': '正在压缩上下文',
   'chat.compactElapsed': ' · 用时 {seconds}s',
   'chat.compacted': '上下文已压缩：{before} → {after} 条消息{detail}',
   'chat.compactFailed': '上下文压缩失败（第 {attempt}/{maxAttempts} 次）',

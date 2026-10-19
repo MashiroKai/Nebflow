@@ -252,14 +252,13 @@
   font-style: italic;
 }
 /* Session status indicator — state-machine driven, one visible at a time */
-/* Priority: attention > compacting > busy > unread > idle */
+/* Priority: attention > busy > unread > idle（压缩中可见指示已拆，作者令 2026-10-09 ①） */
 .session-status {
   flex-shrink: 0;
   align-self: center;
   display: none;
 }
 .session-status.busy,
-.session-status.compacting,
 .session-status.attention,
 .session-status.unread {
   display: flex;
@@ -268,7 +267,6 @@
 }
 /* Inner elements: hidden by default, shown by parent state class */
 .session-status .status-spinner,
-.session-status .status-compact-spinner,
 .session-status .status-dot { display: none; }
 
 /* State: busy — lucide spinner icon */
@@ -282,22 +280,9 @@
   height: 14px;
 }
 
-/* State: compacting — dedicated compress icon with pulse animation */
-.session-status .status-compact-spinner { display: none; }
-.session-status.compacting .status-compact-spinner {
-  display: flex;
-  color: var(--color-primary, #07c160);
-  animation: compactPulse 1.2s ease-in-out infinite;
-}
-.session-status .status-compact-spinner svg {
-  width: 14px;
-  height: 14px;
-}
-
-@keyframes compactPulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.5; transform: scale(0.8); }
-}
+/* State: compacting — DISMANTLED (作者令 2026-10-09 ①「『压缩中』可见指示列为
+   拆除项」, compaction-pill-remove 批): 会话/文件夹行的压缩 spinner 规则与其
+   脉冲动画帧已随元素一并拆除。 */
 
 /* State: attention — pulsing amber dot */
 .session-status.attention .status-dot {
@@ -529,14 +514,12 @@
   margin-right: 4px;
 }
 .folder-status.busy,
-.folder-status.compacting,
 .folder-status.attention,
 .folder-status.unread {
   display: flex;
 }
 /* All inner indicators hidden by default */
-.folder-status .status-spinner,
-.folder-status .status-compact-spinner { display: none; }
+.folder-status .status-spinner { display: none; }
 .folder-status svg {
   width: 12px;
   height: 12px;
@@ -545,11 +528,6 @@
 .folder-status.busy .status-spinner svg {
   color: var(--color-primary, #07c160);
   animation: spin 1.5s linear infinite;
-}
-.folder-status.compacting .status-compact-spinner { display: flex; }
-.folder-status.compacting .status-compact-spinner svg {
-  color: var(--color-primary, #07c160);
-  animation: compactPulse 1.2s ease-in-out infinite;
 }
 .folder-status-dot {
   display: none;
