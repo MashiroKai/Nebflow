@@ -1199,6 +1199,7 @@ class WebSocketRoutes(
             "app.js",
             "favicon-32.png",
             "favicon-16.png",
+            "favicon.svg",
             "favicon.ico",
             "favicon-180.png",
             "favicon-192.png",

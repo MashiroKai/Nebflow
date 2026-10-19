@@ -1,38 +1,35 @@
 {
-  "black-cat": {
-    "name": "Black cat / 黑猫",
-    "light": "/brand/black-cat/source.png",
-    "dark": "/brand/black-cat/source.png",
-    "resample": "lanczos"
-  },
-  "stand-mono": {
-    "name": "Stand monochrome / 单色",
-    "light": "/brand/stand/logo/logo-512-light.png",
-    "dark": "/brand/stand/logo/logo-512-dark.png",
-    "resample": "lanczos"
-  },
-  "nebflow-pixel": {
-    "name": "Nebflow pixel / 像素",
-    "light": "/css/logo-bright-4.png",
-    "dark": "/css/logo-dark-4.png",
-    "resample": "nearest"
-  },
-  "nebflow-classic": {
-    "name": "Nebflow classic / 初版",
-    "light": "/brand/nebflow/classic/bright.png",
-    "dark": "/brand/nebflow/classic/dark.png",
-    "resample": "nearest"
-  },
-  "nebflow-login": {
-    "name": "Nebflow login / 登录页",
-    "light": "/brand/nebflow/logto/bright-logo.png",
-    "dark": "/brand/nebflow/logto/dark-logo.png",
-    "resample": "nearest"
-  },
-  "stand-illustrator": {
-    "name": "Stand illustrator / 矢量",
-    "light": "/brand/stand/illustrator/logo-512-light.png",
-    "dark": "/brand/stand/illustrator/logo-512-dark.png",
-    "resample": "lanczos"
-  }
+ "stand-mono": {
+  "name": "Stand monochrome / 单色",
+  "light": "/brand/stand/logo/logo-512-light.png",
+  "dark": "/brand/stand/logo/logo-512-dark.png",
+  "resample": "lanczos"
+ },
+ "nebflow-pixel": {
+  "name": "Nebflow pixel / 像素",
+  "light": "/css/logo-bright-4.png",
+  "dark": "/css/logo-dark-4.png",
+  "resample": "nearest"
+ },
+ "nebflow-classic": {
+  "name": "Nebflow classic / 初版",
+  "light": "/brand/nebflow/classic/bright.png",
+  "dark": "/brand/nebflow/classic/dark.png",
+  "resample": "nearest"
+ },
+ "nebflow-login": {
+  "name": "Nebflow login / 登录页",
+  "light": "/brand/nebflow/logto/bright-logo.png",
+  "dark": "/brand/nebflow/logto/dark-logo.png",
+  "resample": "nearest"
+ },
+ "stand-illustrator": {
+  "name": "Stand illustrator / 矢量",
+  "light": "/brand/stand/illustrator/logo-512-light.png",
+  "dark": "/brand/stand/illustrator/logo-512-dark.png",
+  "avatarLight": "/brand/stand/illustrator/symbol-light.png",
+  "avatarDark": "/brand/stand/illustrator/symbol-dark.png",
+  "svg": "/brand/stand/illustrator/svg/stand-app-icon-light.svg",
+  "resample": "lanczos"
+ }
 }

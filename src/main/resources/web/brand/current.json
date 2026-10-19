@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
   "active": "stand-illustrator",
-  "revision": "df9c1c1ecff6021e",
+  "revision": "f9e37ba994f63d8f",
   "sourceSha256": {
     "light": "5f12ee6b4900e759094deabe3ba5834ce9523410c366b105683fb0a8dd4e4fa2",
     "dark": "e348f615b73c0537fcb4ef7c375bc6189709b362e62fe1096036b839d26a5141"
   },
-  "logo": "/brand/releases/df9c1c1ecff6021e/light-512.png",
-  "logoBright4": "/brand/releases/df9c1c1ecff6021e/light-128.png",
-  "logoDark4": "/brand/releases/df9c1c1ecff6021e/dark-128.png",
-  "emailLogo": "https://mystand.space/brand/releases/df9c1c1ecff6021e/light-512.png",
-  "faviconBase": "/brand/releases/df9c1c1ecff6021e",
-  "appleTouch": "/brand/releases/df9c1c1ecff6021e/light-180.png",
-  "faviconSvg": "",
-  "logtoDir": "/brand/releases/df9c1c1ecff6021e/"
+  "logo": "/brand/releases/f9e37ba994f63d8f/light-512.png",
+  "logoBright4": "/brand/releases/f9e37ba994f63d8f/symbol-light-128.png",
+  "logoDark4": "/brand/releases/f9e37ba994f63d8f/symbol-dark-128.png",
+  "emailLogo": "https://mystand.space/brand/releases/f9e37ba994f63d8f/light-512.png",
+  "faviconBase": "/brand/releases/f9e37ba994f63d8f",
+  "appleTouch": "/brand/releases/f9e37ba994f63d8f/light-180.png",
+  "faviconSvg": "/brand/releases/f9e37ba994f63d8f/favicon.svg",
+  "logtoDir": "/brand/releases/f9e37ba994f63d8f/"
 }

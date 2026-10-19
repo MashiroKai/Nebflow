@@ -43,7 +43,7 @@ const BASE = (baseArg ?? process.env.BASE_URL ?? 'http://localhost:8080').replac
 // (WebSocketRoutes.scala `Root / fileName` whitelist).
 const ROOT_WHITELIST = new Set([
   'style.css', 'app.js',
-  'favicon-16.png', 'favicon-32.png', 'favicon.ico',
+  'favicon-16.png', 'favicon-32.png', 'favicon.svg', 'favicon.ico',
   'favicon-180.png', 'favicon-192.png', 'favicon-512.png',
 ]);
 
