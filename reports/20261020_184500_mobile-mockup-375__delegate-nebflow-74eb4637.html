@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>移动端 375px 工整化样张 · 聊天/任务/设置（暗亮双主题 · A′/B 栏形态）</title>
+<style>
+/* ── tokens（镜像 src/main/resources/web/css/base.css + sapphire.css 现值，零新色值） ── */
+:root{
+  --sapphire:127,156,245;
+  --ease:cubic-bezier(.32,.72,0,1);
+}
+.phone{
+  --bg:#f5f6f8; --surface:#fff; --text:#1b1e26; --muted:#8b8e96; --dim:#6b6e76;
+  --frame-text:#3a3d45; --bright:#1b1e26; --f-muted:#717379; --line:#e0e1e4;
+  --glass:rgba(255,255,255,.55); --glass-b:rgba(255,255,255,.35);
+  --ctrl:rgba(255,255,255,.45); --ctrl-b:rgba(255,255,255,.4);
+  --user:#95ec69; --ok:#2e7d32; --warn:#b45309; --err:#d64545;
+  --shadow:0 2px 8px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.06);
+}
+.phone.dark{
+  --bg:#13161c; --surface:#1c1f27; --text:#e8eaed; --muted:#7b7e88; --dim:#9ba0aa;
+  --frame-text:#c8cad0; --bright:#e8eaed; --f-muted:#81838a; --line:#282b33;
+  --glass:rgba(24,28,38,.68); --glass-b:rgba(255,255,255,.06);
+  --ctrl:rgba(255,255,255,.05); --ctrl-b:rgba(255,255,255,.1);
+  --shadow:0 2px 8px rgba(0,0,0,.2),0 8px 24px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:#0d0f14;color:#c8cad0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer;-webkit-tap-highlight-color:transparent}
+
+/* ── 外层控制台 ── */
+.wrap{display:flex;gap:28px;align-items:flex-start;justify-content:center;padding:28px 20px 60px;flex-wrap:wrap}
+.console{width:250px;display:flex;flex-direction:column;gap:14px;position:sticky;top:24px}
+.console h1{font-size:15px;font-weight:600;color:#e8eaed}
+.console .sub{font-size:12px;color:#7b7e88;line-height:1.6}
+.grp{background:#161923;border:1px solid #232733;border-radius:12px;padding:12px}
+.grp .lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#7b7e88;margin-bottom:8px}
+.seg{display:flex;background:#0e1117;border:1px solid #232733;border-radius:9px;padding:3px;gap:3px}
+.seg button{flex:1;padding:6px 4px;border-radius:7px;font-size:12px;color:#9ba0aa;white-space:nowrap}
+.seg button.on{background:#242a3a;color:#e8eaed;font-weight:600}
+.note{font-size:12px;color:#9ba0aa;line-height:1.7}
+.note b{color:#e8eaed}
+.note .tag{display:inline-block;font-size:11px;background:#1d2740;color:#9db4f0;border-radius:5px;padding:0 6px;margin-right:4px}
+.deflist{display:flex;flex-direction:column;gap:8px}
+.deflist .di{display:flex;gap:8px;font-size:12px;line-height:1.55;color:#b8bcc6}
+.deflist .dn{flex:0 0 20px;height:20px;border-radius:50%;background:#3a2b2b;color:#f2a9a9;font-size:11px;display:flex;align-items:center;justify-content:center;font-weight:700}
+.deflist.ok .dn{background:#1d3327;color:#7fd6a0}
+
+/* ── 手机框 ── */
+.stage{display:flex;flex-direction:column;gap:10px;align-items:center}
+.phone{width:375px;height:780px;border-radius:44px;background:var(--bg);position:relative;overflow:hidden;
+  border:9px solid #10131a;box-shadow:0 30px 80px rgba(0,0,0,.55);color:var(--text);flex:none}
+.sbar{height:47px;flex:none;display:flex;align-items:flex-end;justify-content:space-between;padding:0 26px 6px;
+  font-size:14px;font-weight:600;color:var(--bright);position:relative;z-index:60}
+.sbar .r{display:flex;gap:5px;align-items:center}
+.app{position:absolute;inset:47px 0 0 0}
+
+/* ── 屏切换 ── */
+.scr{position:absolute;inset:0;display:none}
+.scr.live{display:block}
+.zone{position:absolute;inset:0 var(--cor,58px) 0 0;display:flex;flex-direction:column;transition:right .22s var(--ease)}
+.scr[data-bar="bottom"]{--cor:0px}
+.scr[data-bar="bottom"] .zone{right:0;bottom:64px}
+
+/* 走廊参考线 */
+.cor-line{position:absolute;top:0;bottom:0;right:calc(var(--cor,58px) - 1px);width:0;border-right:1px dashed #f26b6b;
+  z-index:58;display:none;pointer-events:none}
+.cor-line::after{content:"走廊线";position:absolute;top:8px;right:4px;font-size:9px;color:#f26b6b;writing-mode:vertical-rl;letter-spacing:2px}
+.guide .cor-line{display:block}
+.guide[data-bar="bottom"] .cor-line{display:none}
+
+/* ═══ 提案 · 顶栏（双行制 §3.1） ═══ */
+.hd{flex:none;background:var(--glass);-webkit-backdrop-filter:blur(24px) saturate(1.15);backdrop-filter:blur(24px) saturate(1.15);
+  border-bottom:1px solid var(--glass-b);position:relative;z-index:40}
+.hd .row1{height:46px;display:grid;grid-template-columns:40px 1fr 40px;align-items:center;padding:0 8px}
+.ring{width:28px;height:28px;border-radius:50%;border:3px solid #4caf50;border-top-color:#d8d9dd;position:relative;justify-self:center}
+.ring::after{content:"34";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:8px;color:var(--f-muted)}
+.hd .name{text-align:center;font-size:15px;font-weight:600;color:var(--bright);overflow:hidden;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.stbtn{width:36px;height:36px;border-radius:50%;justify-self:center;position:relative;display:flex;align-items:center;justify-content:center;
+  background:var(--ctrl);border:1px solid var(--ctrl-b);color:var(--f-muted)}
+.stbtn svg{width:17px;height:17px}
+.stbtn .bdg{position:absolute;top:-3px;right:-3px;min-width:16px;height:16px;border-radius:8px;background:#07c160;color:#fff;
+  font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 4px;border:2px solid var(--bg)}
+.hd .row2{height:44px;display:flex;align-items:center;gap:2px;padding:0 8px 6px}
+.tkey{min-width:40px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;gap:4px;
+  color:var(--f-muted);position:relative;padding:0 6px}
+.tkey svg{width:18px;height:18px}
+.tkey .cnt{font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--f-muted)}
+.tkey.active{background:var(--ctrl);color:var(--bright)}
+.tkey .dot{position:absolute;top:5px;right:5px;width:6px;height:6px;border-radius:50%;background:#07c160}
+.hd .sp{flex:1}
+
+/* ═══ 顶挂抽层（§3.2/§3.8） ═══ */
+.scrim{position:absolute;inset:0;background:rgba(8,10,16,.35);opacity:0;pointer-events:none;transition:opacity .22s;z-index:44}
+.sheet{position:absolute;left:12px;right:var(--cor,58px);top:92px;max-height:62vh;background:var(--glass);
+  -webkit-backdrop-filter:blur(24px) saturate(1.15);backdrop-filter:blur(24px) saturate(1.15);
+  border:1px solid var(--glass-b);border-radius:0 0 18px 18px;box-shadow:var(--shadow);z-index:45;
+  transform:translateY(-112%);transition:transform .26s var(--ease);display:flex;flex-direction:column;overflow:hidden}
+.scr[data-bar="bottom"] .sheet{right:12px}
+.sheet.open{transform:none}
+.scrim.open{opacity:1;pointer-events:auto}
+.sheet .sh-hd{display:flex;align-items:center;gap:8px;padding:12px 14px 8px;font-size:13px;font-weight:600;color:var(--bright);flex:none}
+.sheet .sh-hd .n{font-size:12px;color:var(--f-muted);font-weight:500;font-variant-numeric:tabular-nums}
+.sheet .sh-hd svg{width:15px;height:15px;color:var(--f-muted)}
+.sheet .sh-bd{overflow-y:auto;padding:0 10px 12px;display:flex;flex-direction:column;gap:8px}
+.chain{background:var(--ctrl);border:1px solid var(--ctrl-b);border-radius:12px;padding:8px 10px}
+.chain .c-hd{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text)}
+.chain .glyph{width:8px;height:8px;border-radius:50%;flex:none}
+.chain .g-run{background:#07c160}.chain .g-done{background:#4caf50}.chain .g-queue{background:#98a2b3}.chain .g-fail{background:#d64545}
+.chain .ttl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chain .meta{font-size:11px;color:var(--f-muted);font-variant-numeric:tabular-nums;flex:none}
+.chain .word{font-size:11px;color:var(--f-muted);flex:none}
+.chain .members{margin:6px 0 0 16px;display:flex;flex-direction:column;gap:4px}
+.chain .mem{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted)}
+.chain .mem .st{width:12px;height:12px;flex:none;border-radius:50%;border:1.5px solid var(--f-muted);display:flex;align-items:center;justify-content:center}
+.chain .mem .st svg{width:8px;height:8px;color:var(--ok)}
+.chain .mem .st.run{border-color:#07c160;border-top-color:transparent;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.strow{display:flex;align-items:center;gap:10px;padding:9px 6px;font-size:13px;color:var(--text);border-bottom:1px solid var(--line)}
+.strow:last-child{border-bottom:none}
+.strow svg{width:16px;height:16px;color:var(--f-muted)}
+.strow .v{margin-left:auto;font-size:12px;color:var(--f-muted);font-variant-numeric:tabular-nums}
+
+/* ═══ 聊天流（§3.3） ═══ */
+.chat{flex:1;overflow-y:auto;padding:6px 12px 8px;display:flex;flex-direction:column;scrollbar-width:none}
+.chat::-webkit-scrollbar{display:none}
+.trow{display:flex;align-items:center;gap:8px;margin:8px 0 2px;font-size:12px;color:var(--f-muted)}
+.trow .b{min-width:20px;height:20px;border-radius:50%;background:var(--ctrl);border:1px solid var(--ctrl-b);
+  display:flex;align-items:center;justify-content:center}
+.trow .b svg{width:11px;height:11px}
+.rowm{display:flex;margin:5px 0;font-size:11px;color:var(--f-muted);gap:2px;align-items:center}
+.rowm.u{justify-content:flex-end}
+.rowm .act{padding:1px 5px;border-radius:5px;background:var(--ctrl);border:1px solid var(--ctrl-b)}
+.bub{max-width:85%;padding:10px 14px;border-radius:16px;font-size:14.5px;line-height:1.55;word-break:break-word;color:var(--text)}
+.bub.ai{align-self:flex-start;background:var(--surface);border:1px solid var(--line);border-top-left-radius:4px}
+.bub.user{align-self:flex-end;background:var(--user);color:#17301a;border-bottom-right-radius:4px}
+.bub code{font:12px ui-monospace,Menlo,monospace;background:rgba(127,156,245,.14);border-radius:4px;padding:0 4px}
+.toolrow{align-self:flex-start;display:flex;align-items:center;gap:7px;font-size:12px;color:var(--f-muted);
+  background:var(--ctrl);border:1px solid var(--ctrl-b);border-radius:10px;padding:5px 10px;margin:5px 0}
+.toolrow svg{width:13px;height:13px}
+/* 思考行：单行状态胶囊（§3.6） */
+.think{align-self:flex-start;display:flex;align-items:center;gap:7px;max-width:85%;height:30px;padding:0 11px;margin:6px 0;
+  border-radius:15px;background:var(--ctrl);border:1px solid var(--ctrl-b);color:var(--f-muted);font-size:12px}
+.think .ast{color:var(--dim);animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+.think .pv{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  -webkit-mask-image:linear-gradient(90deg,#000 82%,transparent);mask-image:linear-gradient(90deg,#000 82%,transparent)}
+.think .tm{font-variant-numeric:tabular-nums;flex:none}
+
+/* ═══ 输入区 ═══ */
+.comp{flex:none;padding:6px 12px 10px;display:flex;flex-direction:column;gap:6px;position:relative;z-index:30}
+.ibar{display:flex;align-items:flex-end;gap:8px;background:var(--glass);-webkit-backdrop-filter:blur(24px) saturate(1.15);
+  backdrop-filter:blur(24px) saturate(1.15);border:1px solid var(--glass-b);border-radius:22px;padding:8px 10px;box-shadow:var(--shadow)}
+.ibar .ta{flex:1;font-size:16px;color:var(--text);padding:6px 2px;min-width:0}
+.ibar .ta .ph{color:var(--f-muted)}
+.ibar .cbtn{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--f-muted);flex:none}
+.ibar .cbtn svg{width:19px;height:19px}
+.ibar .stop{background:#f44336;color:#fff}
+.homebar{width:120px;height:5px;border-radius:3px;background:var(--f-muted);opacity:.4;margin:2px auto 0}
+
+/* ═══ 右栏 A′（§3.4） ═══ */
+.rbar{position:absolute;right:0;top:50%;transform:translateY(-50%);width:48px;z-index:50;
+  display:flex;flex-direction:column;align-items:center;gap:8px;padding:10px 0;
+  border-radius:20px 0 0 20px;background:var(--glass);border:1px solid var(--glass-b);border-right:none;
+  -webkit-backdrop-filter:blur(24px) saturate(1.15);backdrop-filter:blur(24px) saturate(1.15);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.25),var(--shadow);
+  transition:width .22s var(--ease),padding .22s var(--ease),border-radius .22s var(--ease),opacity .22s}
+.rbar .k{width:40px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--f-muted);flex:none}
+.rbar .k svg{width:19px;height:19px}
+.rbar .k.on{background:var(--ctrl);color:var(--bright)}
+.rbar .fold{width:30px;height:26px;display:flex;align-items:center;justify-content:center;color:var(--f-muted);opacity:.75;
+  border-top:1px solid var(--glass-b);margin-top:2px;padding-top:6px}
+.rbar .fold svg{width:14px;height:14px}
+.scr.reading .rbar{width:22px;padding:14px 0;gap:0;border-radius:11px 0 0 11px;opacity:.6}
+.scr.reading .rbar .k{display:none}
+.scr.reading .rbar .fold{border-top:none;margin:0;padding:0}
+.scr.reading .rbar .fold svg{transform:rotate(180deg)}
+/* B 底栏 */
+.bbar{position:absolute;left:0;right:0;bottom:0;height:64px;z-index:50;display:none;align-items:center;justify-content:space-around;
+  padding:0 10px calc(6px + 3px);background:var(--glass);border-top:1px solid var(--glass-b);
+  -webkit-backdrop-filter:blur(24px) saturate(1.15);backdrop-filter:blur(24px) saturate(1.15)}
+.scr[data-bar="bottom"] .bbar{display:flex}
+.scr[data-bar="bottom"] .rbar{display:none}
+.bbar .bk{width:56px;display:flex;flex-direction:column;align-items:center;gap:2px;color:var(--f-muted);font-size:10px}
+.bbar .bk svg{width:20px;height:20px}
+.bbar .bk.on{color:var(--bright)}
+
+/* ═══ 现状对照屏（刻意复刻缺陷） ═══ */
+.cur .hd1{position:relative;height:50px;flex:none;background:var(--glass);-webkit-backdrop-filter:blur(24px) saturate(1.15);
+  backdrop-filter:blur(24px) saturate(1.15);border-bottom:1px solid var(--glass-b);display:flex;align-items:center;
+  padding:0 10px 0 0;gap:4px;z-index:40}
+.cur .cname{position:absolute;left:50%;transform:translateX(-50%);z-index:10;font-size:15px;font-weight:600;color:var(--bright);white-space:nowrap}
+.cur .ccl{display:flex;align-items:center;gap:4px;margin-left:auto;flex:none}
+.cur .cap{display:flex;align-items:center;gap:5px;border-radius:999px;padding:2px 9px;font-size:12px}
+.cur .cap.g{background:rgba(7,193,96,.15);border:1px solid rgba(7,193,96,.35);color:#07c160}
+.cur .cap.bl{background:rgba(127,156,245,.16);border:1px solid rgba(127,156,245,.4);color:rgb(var(--sapphire))}
+.cur .cap .dt{width:7px;height:7px;border-radius:50%;background:currentColor}
+.cur .ic{width:24px;height:24px;display:flex;align-items:center;justify-content:center;color:var(--f-muted)}
+.cur .ic svg{width:16px;height:16px}
+.cur .dead{height:68px;flex:none}
+.cur .taskfloat{flex:none;margin:0 8px;position:relative;z-index:25}
+.cur .tcard{background:var(--glass);border:1px solid var(--glass-b);border-radius:14px;padding:8px 12px;
+  display:flex;align-items:center;gap:8px;font-size:12px;color:var(--f-muted);box-shadow:var(--shadow)}
+.cur .tcard svg{width:14px;height:14px}
+.cur .tcard .s{margin-left:36px}
+.cur .chat2{flex:1;overflow:hidden;padding:4px 0 0;display:flex;flex-direction:column;position:relative}
+.cur .chat2 .bub{max-width:80%}
+.cur .bub.flush{border-top-right-radius:16px}
+.cur .rawthink{position:relative;padding:2px 12px;font-size:12px;color:var(--f-muted);display:flex;gap:4px;align-items:center;overflow:hidden;white-space:nowrap}
+.cur .rawthink svg{width:12px;height:12px;flex:none}
+/* 缺陷标记 */
+.mk{position:absolute;z-index:70;pointer-events:none}
+.mk .pin{width:22px;height:22px;border-radius:50%;background:#f26b6b;color:#fff;font-size:12px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 3px rgba(242,107,107,.25)}
+.mk .box{position:absolute;inset:-4px;border:1.5px dashed #f26b6b;border-radius:8px}
+
+/* ═══ 设置屏（§3.7） ═══ */
+.pghd{flex:none;height:52px;display:flex;align-items:center;gap:6px;padding:6px 10px 6px calc(10px + var(--cor,58px)*0);
+  background:var(--glass);border-bottom:1px solid var(--glass-b);position:relative;z-index:40;
+  -webkit-backdrop-filter:blur(24px) saturate(1.15);backdrop-filter:blur(24px) saturate(1.15)}
+.back{width:30px;height:30px;border-radius:50%;border:1px solid var(--glass-b);background:var(--glass);
+  display:flex;align-items:center;justify-content:center;color:var(--frame-text);flex:none}
+.back svg{width:17px;height:17px}
+.pgtt{flex:1;text-align:center;font-size:16px;font-weight:600;color:var(--bright)}
+.pghd .sp{width:30px;flex:none}
+.pbody{flex:1;overflow-y:auto;padding:14px 12px 24px;display:flex;flex-direction:column;gap:16px;scrollbar-width:none}
+.pbody::-webkit-scrollbar{display:none}
+.sgrp{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.sgrp .gt{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--f-muted);padding:0 14px 6px}
+.srow{display:flex;align-items:center;gap:10px;min-height:46px;padding:8px 14px;border-bottom:1px solid var(--line);font-size:14px;color:var(--text)}
+.srow:last-child{border-bottom:none}
+.srow svg{width:17px;height:17px;color:var(--f-muted);flex:none}
+.srow .v{margin-left:auto;color:var(--f-muted);font-size:13px;display:flex;align-items:center;gap:6px}
+.sw{width:42px;height:26px;border-radius:13px;background:#d8d9dd;position:relative;flex:none;transition:background .2s}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:22px;height:22px;border-radius:50%;background:#fff;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.sw.on{background:#07c160}
+.sw.on::after{left:18px}
+.seg2{display:flex;background:var(--bg);border-radius:8px;padding:2px;gap:2px}
+.seg2 button{padding:3px 10px;border-radius:6px;font-size:12px;color:var(--f-muted)}
+.seg2 button.on{background:var(--surface);color:var(--text);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+svg.i{display:block;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+</style>
+</head>
+<body>
+<!-- 图标库（lucide 路径内联，零外部依赖） -->
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-msg" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/><path d="M8 10v4"/><path d="M12 10v2"/><path d="M16 10v6"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></symbol>
+  <symbol id="i-puzzle" viewBox="0 0 24 24"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-chevrs" viewBox="0 0 24 24"><path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></symbol>
+  <symbol id="i-brain" viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect width="10" height="10" x="7" y="7" rx="1.5" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-chevl" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+  <symbol id="i-term" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></symbol>
+  <symbol id="i-tasks" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4"/><path d="M16 3v4"/><path d="m8.5 14 2 2 4.5-4.5"/></symbol>
+</svg>
+
+<div class="wrap">
+  <div class="console">
+    <div>
+      <h1>移动端 375px 工整化样张</h1>
+      <div class="sub">设计批 · 只设计不实施 · 配套规范见同名 .md<br>几何全部按 375pt 实排，非示意图</div>
+    </div>
+    <div class="grp">
+      <div class="lbl">界面</div>
+      <div class="seg" id="segScr">
+        <button data-s="p1" class="on">聊天·提案</button>
+        <button data-s="p2">任务抽层</button>
+        <button data-s="p3">设置</button>
+        <button data-s="cur">现状对照</button>
+      </div>
+    </div>
+    <div class="grp">
+      <div class="lbl">主题</div>
+      <div class="seg" id="segTheme">
+        <button data-t="dark" class="on">暗</button>
+        <button data-t="light">亮</button>
+      </div>
+    </div>
+    <div class="grp">
+      <div class="lbl">控制栏形态（开放问题 1）</div>
+      <div class="seg" id="segBar">
+        <button data-b="side" class="on">A′ 悬浮玻璃右栏</button>
+        <button data-b="bottom">B 底部导航栏</button>
+      </div>
+      <div class="note" style="margin-top:8px">A′：聊天下滑自动半收（样张内真实生效：滚动消息区试试）；B：输入态需隐藏底栏让位键盘。</div>
+    </div>
+    <div class="grp">
+      <div class="lbl">参考</div>
+      <div class="seg"><button id="btnCor">显示/隐藏 走廊线</button></div>
+    </div>
+    <div class="grp" id="legend">
+      <div class="lbl">图例</div>
+      <div class="note" id="lgText"></div>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="phone dark" id="phone">
+      <div class="sbar"><span>9:41</span><span class="r" style="font-size:11px">▮▮▮ ⌁ ▭</span></div>
+      <div class="app" id="app">
+
+        <!-- ═══ 屏1 聊天·提案 ═══ -->
+        <section class="scr live" id="scr-p1" data-bar="side">
+          <div class="zone">
+            <header class="hd">
+              <div class="row1">
+                <div class="ring" title="上下文环"></div>
+                <div class="name">笨笨</div>
+                <button class="stbtn" id="stBtn"><svg class="i"><use href="#i-activity"/></svg><span class="bdg">8</span></button>
+              </div>
+              <div class="row2">
+                <button class="tkey" id="taskBtn"><svg class="i"><use href="#i-tasks"/></svg><span class="cnt">12</span></button>
+                <button class="tkey"><svg class="i"><use href="#i-search"/></svg></button>
+                <button class="tkey"><svg class="i"><use href="#i-clock"/></svg></button>
+                <button class="tkey"><svg class="i"><use href="#i-server"/></svg></button>
+                <button class="tkey"><svg class="i"><use href="#i-brain"/></svg></button>
+                <span class="sp"></span>
+                <button class="tkey"><svg class="i"><use href="#i-shield"/></svg></button>
+              </div>
+            </header>
+
+            <div class="chat" id="chatP1">
+              <div class="trow"><span class="b"><svg class="i"><use href="#i-check"/></svg></span>已折叠 6 行 · 思考与工具调用</div>
+              <div class="bub ai">…出（终端视图），不登登，顺带发现：zcode 现在 turn 期间是静默的，翻一个隐藏旗标（<code>--output-format stream-json</code>）就有 live 流可渲染——候你拍板。</div>
+              <div class="bub ai">推荐打法：面A/B（你已批的日志卡+聚焦）先上，C1→C2 跟进。样张看着行就「按推荐」，我排实施批。</div>
+              <div class="rowm"><span class="act">16:44</span><span class="act">复制</span><span class="act">引用</span></div>
+              <div class="bub user">我从官网进手机端的加载速度非常慢 能不能想办法优化一下，而且我如果直接用sbt run 连接客户端的时候还是有卡片显示当前状态的 我们目前是加载又慢又没有卡片 或者placeholder之类的东西来帮助缓解</div>
+              <div class="rowm u"><span class="act">17:03</span><span class="act">复制</span></div>
+              <div class="toolrow"><svg class="i"><use href="#i-term"/></svg>Read css/mobileLayer.css · 663 行</div>
+              <div class="think" id="thinkPill"><span class="ast">✻</span><span class="pv">来缓解. The design is straightforward (…</span><span class="tm">41s</span></div>
+            </div>
+
+            <div class="comp">
+              <div class="ibar">
+                <div class="ta"><span class="ph">输入消息…</span></div>
+                <button class="cbtn"><svg class="i"><use href="#i-clip"/></svg></button>
+                <button class="cbtn stop"><svg class="i"><use href="#i-stop"/></svg></button>
+              </div>
+              <div class="homebar"></div>
+            </div>
+          </div>
+          <div class="scrim" data-for="p1"></div>
+          <div class="cor-line"></div>
+          <aside class="rbar">
+            <button class="k on"><svg class="i"><use href="#i-msg"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-layers"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-folder"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-spark"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-puzzle"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-chart"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-gear"/></svg></button>
+            <button class="fold" id="foldP1"><svg class="i"><use href="#i-chevrs"/></svg></button>
+          </aside>
+          <nav class="bbar">
+            <button class="bk on"><svg class="i"><use href="#i-msg"/></svg>聊天</button>
+            <button class="bk"><svg class="i"><use href="#i-tasks"/></svg>任务</button>
+            <button class="bk"><svg class="i"><use href="#i-layers"/></svg>画板</button>
+            <button class="bk"><svg class="i"><use href="#i-folder"/></svg>项目</button>
+            <button class="bk"><svg class="i"><use href="#i-gear"/></svg>设置</button>
+          </nav>
+        </section>
+
+        <!-- ═══ 屏2 任务抽层（= 提案聊天 + 顶挂抽层展开态） ═══ -->
+        <section class="scr" id="scr-p2" data-bar="side">
+          <div class="zone">
+            <header class="hd">
+              <div class="row1">
+                <div class="ring"></div><div class="name">笨笨</div>
+                <button class="stbtn"><svg class="i"><use href="#i-activity"/></svg><span class="bdg">8</span></button>
+              </div>
+              <div class="row2">
+                <button class="tkey active"><svg class="i"><use href="#i-tasks"/></svg><span class="cnt">12</span></button>
+                <button class="tkey"><svg class="i"><use href="#i-search"/></svg></button>
+                <button class="tkey"><svg class="i"><use href="#i-clock"/></svg></button>
+                <button class="tkey"><svg class="i"><use href="#i-server"/></svg></button>
+                <button class="tkey"><svg class="i"><use href="#i-brain"/></svg></button>
+                <span class="sp"></span>
+                <button class="tkey"><svg class="i"><use href="#i-shield"/></svg></button>
+              </div>
+            </header>
+            <div class="chat" style="filter:saturate(.9)">
+              <div class="bub user">手机端再排一批布局工整化吧，逐界面过。</div>
+              <div class="bub ai">收到，设计批已开工：现状审计 + 375 规范 + 样张。</div>
+            </div>
+            <div class="comp"><div class="ibar"><div class="ta"><span class="ph">输入消息…</span></div>
+              <button class="cbtn"><svg class="i"><use href="#i-clip"/></svg></button>
+              <button class="cbtn stop"><svg class="i"><use href="#i-stop"/></svg></button></div><div class="homebar"></div></div>
+          </div>
+          <div class="scrim open" data-for="p2"></div>
+          <div class="sheet open">
+            <div class="sh-hd"><svg class="i"><use href="#i-tasks"/></svg>任务<span class="n">12 · 2 运行中</span>
+              <svg class="i" style="margin-left:auto"><use href="#i-down"/></svg></div>
+            <div class="sh-bd">
+              <div class="chain"><div class="c-hd"><span class="glyph g-run"></span><span class="ttl">#3 移动端布局逐界面工整化 · 设计批</span><span class="meta">3/7</span><span class="word">运行中</span></div>
+                <div class="members">
+                  <div class="mem"><span class="st run"></span>现状审计 · file:line 清单</div>
+                  <div class="mem"><span class="st"><svg class="i"><use href="#i-check"/></svg></span>375px 逐界面规范</div>
+                  <div class="mem"><span class="st"><svg class="i"><use href="#i-check"/></svg></span>HTML 样张 · 暗亮双主题</div>
+                </div></div>
+              <div class="chain"><div class="c-hd"><span class="glyph g-done"></span><span class="ttl">#2 外部执行器任务可观测面</span><span class="meta">8/8</span><span class="word">已完成</span></div></div>
+              <div class="chain"><div class="c-hd"><span class="glyph g-run"></span><span class="ttl">#569 重连幂等去重 复跑读数</span><span class="meta">5/6</span><span class="word">运行中</span></div></div>
+              <div class="chain"><div class="c-hd"><span class="glyph g-queue"></span><span class="ttl">#4 手机体验专项 · 实施批</span><span class="meta">0/5</span><span class="word">排队</span></div></div>
+              <div class="chain"><div class="c-hd"><span class="glyph g-done"></span><span class="ttl">#576 worktree 分配/自动合并链审计</span><span class="meta">4/4</span><span class="word">已完成</span></div></div>
+            </div>
+          </div>
+          <div class="cor-line"></div>
+          <aside class="rbar"><button class="k on"><svg class="i"><use href="#i-msg"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-layers"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-folder"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-spark"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-puzzle"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-chart"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-gear"/></svg></button>
+            <button class="fold"><svg class="i"><use href="#i-chevrs"/></svg></button></aside>
+          <nav class="bbar">
+            <button class="bk on"><svg class="i"><use href="#i-msg"/></svg>聊天</button>
+            <button class="bk on"><svg class="i"><use href="#i-tasks"/></svg>任务</button>
+            <button class="bk"><svg class="i"><use href="#i-layers"/></svg>画板</button>
+            <button class="bk"><svg class="i"><use href="#i-folder"/></svg>项目</button>
+            <button class="bk"><svg class="i"><use href="#i-gear"/></svg>设置</button>
+          </nav>
+        </section>
+
+        <!-- ═══ 屏3 设置 ═══ -->
+        <section class="scr" id="scr-p3" data-bar="side">
+          <div class="zone">
+            <div class="pghd"><span class="sp"></span><span class="pgtt">设置</span><span class="sp"></span></div>
+            <div class="pbody">
+              <div class="sgrp"><div class="srow"><svg class="i"><use href="#i-gear"/></svg>外观<span class="v"><span class="seg2"><button>跟随</button><button>亮</button><button class="on">暗</button></span></span></div>
+                <div class="srow"><svg class="i"><use href="#i-layers"/></svg>毛玻璃强度<span class="v">标准</span></div></div>
+              <div class="sgrp"><div class="srow"><svg class="i"><use href="#i-msg"/></svg>默认模型<span class="v">zcode-4 ›</span></div>
+                <div class="srow"><svg class="i"><use href="#i-shield"/></svg>安全模式<span class="v">确认编辑</span></div>
+                <div class="srow"><svg class="i"><use href="#i-brain"/></svg>思考过程<span class="v"><span class="sw on"></span></span></div>
+                <div class="srow"><svg class="i"><use href="#i-activity"/></svg>阅读态自动半收右栏<span class="v"><span class="sw on"></span></span></div></div>
+              <div class="sgrp"><div class="srow"><svg class="i"><use href="#i-clock"/></svg>定时任务<span class="v">3 条 ›</span></div>
+                <div class="srow"><svg class="i"><use href="#i-server"/></svg>心跳进程<span class="v">1 运行 ›</span></div></div>
+              <div class="sgrp"><div class="srow"><svg class="i"><use href="#i-chart"/></svg>token 用量<span class="v">本月 1.2M ›</span></div>
+                <div class="srow"><svg class="i"><use href="#i-puzzle"/></svg>插件<span class="v">8 已启用 ›</span></div></div>
+              <div class="sgrp"><div class="srow"><svg class="i"><use href="#i-spark"/></svg>检查更新<span class="v">v2026.10（最新）</span></div></div>
+            </div>
+          </div>
+          <div class="cor-line"></div>
+          <aside class="rbar"><button class="k"><svg class="i"><use href="#i-msg"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-layers"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-folder"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-spark"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-puzzle"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-chart"/></svg></button>
+            <button class="k on"><svg class="i"><use href="#i-gear"/></svg></button>
+            <button class="fold"><svg class="i"><use href="#i-chevrs"/></svg></button></aside>
+          <nav class="bbar">
+            <button class="bk"><svg class="i"><use href="#i-msg"/></svg>聊天</button>
+            <button class="bk"><svg class="i"><use href="#i-tasks"/></svg>任务</button>
+            <button class="bk"><svg class="i"><use href="#i-layers"/></svg>画板</button>
+            <button class="bk"><svg class="i"><use href="#i-folder"/></svg>项目</button>
+            <button class="bk on"><svg class="i"><use href="#i-gear"/></svg>设置</button>
+          </nav>
+        </section>
+
+        <!-- ═══ 屏4 现状对照（复刻 IMG_1524 缺陷） ═══ -->
+        <section class="scr cur" id="scr-cur" data-bar="side">
+          <div class="zone">
+            <div class="hd1">
+              <div class="ccl">
+                <button class="ic"><svg class="i"><use href="#i-search"/></svg></button>
+                <span class="cap g"><span class="dt"></span>4</span>
+                <span class="cap bl"><span class="dt"></span>4</span>
+                <button class="ic"><svg class="i"><use href="#i-clock"/></svg></button>
+                <button class="ic"><svg class="i"><use href="#i-server"/></svg></button>
+                <button class="ic"><svg class="i"><use href="#i-brain"/></svg></button>
+              </div>
+              <div class="cname">笨笨</div>
+              <div class="mk" style="left:127px;top:9px"><span class="box" style="width:80px;height:32px"></span><span class="pin" style="position:absolute;left:62px;top:-13px">1</span></div>
+            </div>
+            <div class="dead"></div>
+            <div class="taskfloat">
+              <div class="tcard"><svg class="i"><use href="#i-down"/></svg><span class="s">12 任务</span></div>
+              <div class="mk" style="right:8px;top:-8px;right:auto;left:-14px"><span class="box" style="width:288px;height:38px"></span><span class="pin" style="position:absolute;left:-9px;top:-13px">2</span></div>
+            </div>
+            <div class="chat2">
+              <div class="bub ai flush">…出（终端视图），不登登，<br>· 顺带发现：zcode 现在 turn 期间是静默的，翻一个隐藏旗标（<code>--output-format stream-json</code>）就有 live 流可渲染——候你拍板。<br>推荐打法：面A/B（你已批的日志卡+聚焦）先上，C1→C2 跟进。样张看着行就「按推荐」，我排实施批。</div>
+              <div class="mk" style="left:4px;top:2px"><span class="box" style="width:210px;height:26px"></span><span class="pin" style="position:absolute;left:-12px;top:-4px">4</span></div>
+              <div class="rowm"><span class="act">16:44</span><span class="act">复制</span><span class="act">引用</span></div>
+              <div class="bub user" style="margin-right:0">我从官网进手机端的加载速度非常慢 能不能想办法优化一下，而且我如果直接用sbt run 连接客户端的时候还是有卡片显示当前状态的 我们目前是加载又慢又没有卡片 或者placeholder之类的东西来帮助缓解</div>
+              <div class="mk" style="right:48px;top:118px"><span class="box" style="width:24px;height:120px"></span><span class="pin" style="position:absolute;right:-9px;top:-13px">3</span></div>
+              <div class="rowm u"><span class="act">17:03</span><span class="act">复制</span></div>
+            </div>
+            <div class="rawthink"><svg class="i"><use href="#i-chevl"/></svg>来缓解. The design is straightforward (
+              <span class="mk" style="left:20px;top:-5px"><span class="box" style="width:240px;height:24px"></span><span class="pin" style="position:absolute;left:-13px;top:-2px">5</span></span>
+            </div>
+            <div class="comp"><div class="ibar"><div class="ta"><span class="ph">输入消息…</span></div>
+              <button class="cbtn"><svg class="i"><use href="#i-clip"/></svg></button>
+              <button class="cbtn stop"><svg class="i"><use href="#i-stop"/></svg></button></div><div class="homebar"></div></div>
+          </div>
+          <div class="cor-line"></div>
+          <aside class="rbar" style="opacity:.55">
+            <button class="k on"><svg class="i"><use href="#i-msg"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-layers"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-folder"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-spark"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-puzzle"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-chart"/></svg></button>
+            <button class="k"><svg class="i"><use href="#i-gear"/></svg></button>
+            <button class="fold"><svg class="i"><use href="#i-chevrs"/></svg></button>
+          </aside>
+        </section>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const phone = document.getElementById('phone');
+const app = document.getElementById('app');
+const scrP1 = document.getElementById('scr-p1');
+const chatP1 = document.getElementById('chatP1');
+
+// ── 屏切换 ──
+const legends = {
+  p1: '<span class="tag">提案</span>顶栏<b>双行制</b>：Row1 = 上下文环 + 会话名（永不截断）+ 状态汇总键；Row2 = 任务/搜索/定时/心跳/记忆 + 盾。任务收进顶栏键（12），聊天流无漂浮卡。气泡左右 12px 呼吸，右栏毛玻璃悬空、内容走走廊线。思考行 = 单行状态胶囊（不再裸奔）。<b>下滑消息区试试自动半收。</b>',
+  p2: '<span class="tag">提案</span>任务 = <b>顶挂抽层</b>：自顶栏下沿滑出，玻璃材质，链块 + 成员行；展开不再把正文推着跑（现状是 50vh 入流带）。遮罩点击收起。',
+  p3: '<span class="tag">提案</span>设置页 375 规范：单列分组卡、行高 46、左右 12px；含开放问题 6 的「阅读态自动半收」开关位。',
+  cur:'<span class="tag">现状对照</span>复刻 IMG_1524：① 搜索图标压会话名、名字压绿色胶囊（碰撞链被手机层 !important 顶回）② 「12 任务」卡悬在聊天流中间（68px 桌面锚死区）③ 气泡贴走廊线零呼吸，读感被栏遮 ④ 消息顶部被视口硬裁 ⑤ 原始思考尾行裸奔在输入框上方。',
+};
+const lgText = document.getElementById('lgText');
+function showScr(id){
+  document.querySelectorAll('.scr').forEach(s=>s.classList.toggle('live', s.id === 'scr-'+id));
+  lgText.innerHTML = legends[id] || '';
+  const isCur = id === 'cur';
+  document.getElementById('segBar').style.opacity = isCur ? .35 : 1;
+}
+document.getElementById('segScr').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  document.querySelectorAll('#segScr button').forEach(x=>x.classList.toggle('on', x===b));
+  showScr(b.dataset.s);
+});
+showScr('p1');
+
+// ── 主题 ──
+document.getElementById('segTheme').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  document.querySelectorAll('#segTheme button').forEach(x=>x.classList.toggle('on', x===b));
+  phone.classList.toggle('dark', b.dataset.t === 'dark');
+  phone.classList.toggle('light', b.dataset.t === 'light');
+});
+
+// ── 栏形态（A′ 右栏 / B 底栏）──
+document.getElementById('segBar').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  document.querySelectorAll('#segBar button').forEach(x=>x.classList.toggle('on', x===b));
+  document.querySelectorAll('.scr').forEach(s=>{ if(s.id !== 'scr-cur') s.dataset.bar = b.dataset.b; });
+});
+
+// ── 走廊线 ──
+document.getElementById('btnCor').addEventListener('click', ()=>phone.classList.toggle('guide'));
+
+// ── 任务抽层 / 状态抽层（屏1 内交互）──
+const scrimP1 = scrP1.querySelector('.scrim');
+let sheetP1 = null;
+function openSheet(html){
+  closeSheet();
+  const sh = document.createElement('div');
+  sh.className = 'sheet open'; sh.innerHTML = html;
+  scrP1.appendChild(sh); sheetP1 = sh;
+  scrimP1.classList.add('open');
+}
+function closeSheet(){
+  if(sheetP1){ sheetP1.remove(); sheetP1 = null; }
+  scrimP1.classList.remove('open');
+}
+scrimP1.addEventListener('click', closeSheet);
+document.getElementById('taskBtn').addEventListener('click', ()=>{
+  const src = document.querySelector('#scr-p2 .sheet');
+  openSheet(src.innerHTML);
+});
+document.getElementById('stBtn').addEventListener('click', ()=>{
+  openSheet(`<div class="sh-hd"><svg class="i"><use href="#i-activity"/></svg>运行状态<span class="n">后台 4 · 智能体 4 · 待答 0</span></div>
+  <div class="sh-bd"><div class="chain"><div class="c-hd"><span class="glyph g-run"></span><span class="ttl">后台任务</span><span class="meta">4</span></div></div>
+  <div class="chain"><div class="c-hd"><span class="glyph g-run"></span><span class="ttl">后台智能体</span><span class="meta">4</span></div></div>
+  <div class="strow"><svg class="i"><use href="#i-check"/></svg>全部完成时角标自动消失</div></div>`);
+});
+document.getElementById('thinkPill').addEventListener('click', ()=>{
+  openSheet(`<div class="sh-hd">✻ 思考中 · 41s</div><div class="sh-bd"><div style="font-size:13px;color:var(--muted);line-height:1.7">…来缓解. The design is straightforward (流式思考 5 行窗迁入抽层，max-height 7.5em 内滚语义保留；完成后折叠为 turn-header 摘要行)。</div></div>`);
+});
+
+// ── A′ 自动半收（下滑 → 阅读态；触顶/上滚 → 展开）──
+let lastY = 0;
+chatP1.addEventListener('scroll', ()=>{
+  const y = chatP1.scrollTop;
+  const goingDown = y > lastY + 8, goingUp = y < lastY - 8;
+  if(goingDown && y > 48) scrP1.classList.add('reading');
+  else if(goingUp || y <= 48) scrP1.classList.remove('reading');
+  lastY = y;
+});
+document.getElementById('foldP1').addEventListener('click', ()=>scrP1.classList.toggle('reading'));
+scrP1.querySelector('.rbar').addEventListener('click', e=>{
+  if(e.target.closest('.k')) scrP1.classList.remove('reading');
+});
+
+// ── 深链：#scr=cur|p1|p2|p3 & t=light|dark & b=bottom（样张分享/评审直达）──
+const q = new URLSearchParams(location.hash.slice(1));
+if(q.get('t')) document.querySelector(`#segTheme [data-t="${q.get('t')}"]`)?.click();
+if(q.get('b')) document.querySelector(`#segBar [data-b="${q.get('b')}"]`)?.click();
+if(q.get('scr')) document.querySelector(`#segScr [data-s="${q.get('scr')}"]`)?.click();
+</script>
+</body>
+</html>
