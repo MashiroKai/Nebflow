@@ -1,77 +1,134 @@
-// mobile/floatController.js — 规格⑤：会话上层的居中悬浮按钮 + 居中浮层面板。
+// mobile/floatController.js — v3「左列液态下拉 + 二级液态面板」（样张
+// 20261020_214500 v3③⑤ 同款 + 作者现场扩展②「其他下拉键同款适配」）。
 //
-// 作者规格（原文语义）：
-//   · 会话窗口两侧展开按钮删除（#sidebar-toggle / #canvas-toggle-btn —— 画板
-//     已有活动栏独立按钮，侧栏入口手机层不存在；两者由 mobileLayer.css 隐藏）；
-//   · 创建定时任务/心跳/查看记忆等按钮 → 居中浮于会话上层；
-//   · 后台任务/智能体面板同样居中浮层；浮层移动端适配。
+// 键位映射对齐真实客户端（任务书）：左列 = 本文件 FLOAT_IDS 六键
+//   search-btn（搜索聊天记录）/ bg-indicator（后台任务）/ bgagent-indicator（智能体）
+//   / reminder-btn（定时任务）/ daemon-btn（心跳）/ memory-btn（记忆）
+//   + 任务键（v3⑤ 任务浮层入口，本文件建）+ pending-asks-indicator（D6 F2 待答
+//   胶囊 —— 非 FLOAT_IDS 成员，内容驱动显隐，随左列直动作跳最旧待答卡）。
+// r4 的「收编 header 右簇 #mobile-float-actions」作废（v3 顶栏=双列液态下拉，
+// 右簇形态退役）。
 //
-// r2（规格③ header 治理「杂项收纳 · 去向=浮层」）：#search-btn（搜索聊天记录）
-// 自 header 右簇归入本浮条。
+// 交互（扩展②口径）：
+//   · 任务键 → 六键收回 → 圆钮原地二级液态形变加宽成任务浮层（taskPanel.js）；
+//   · 其余「点开有面板」的键（搜索/定时/心跳/记忆/后台/智能体）一律同款二级
+//     液态形变（钮变面板）—— 面板显隐仍走各自既有开合路径（零功能重造），
+//     本文件只拦呈现：点键瞬间收列，面板现身即从该键 origin morphIn；
+//   · 无面板承载的键（pending-asks）保持直动作。
 //
-// r4（作者轮 4 令①「底部只留输入卡」）：r2 的「去向=底部悬浮条」作废 ——
-// #mobile-float-actions 不再 fixed 悬浮于输入卡上方（r3 前置清点实锤的结构因：
-// body 级 fixed 条 bottom:calc(--mobile-float-bottom + safe-area) 把搜索/定时/
-// 心跳/记忆留在输入卡上沿），改 **收编进 header 右簇**（.header-right 末尾）：
-// 搜索/历史/图标条上移归位进顶部一体化顶栏，输入卡上方零 header 内容。
-// 收编后这些成员重新参与桌面 header 碰撞链（main.js initHeaderResizeObserver
-// 按 id 测量整条 header）——r2 的 `.nb-header-hide` 顶回规则**保留**（成员
-// 不参与窄宽裁剪，链对其隐藏被 CSS !important 抵消；碰撞体量仍被链计量，
-// 中心带重叠时链先藏低优先级成员 bypass/voice，语义与桌面一致）。
-//
-// 实现：把 header 右簇的 search-btn（搜索）/ reminder-btn（定时任务）/
-// daemon-btn（心跳）/ memory-btn（记忆）与后台任务/智能体两只计数胶囊
-// （bg-indicator / bgagent-indicator）**整体搬移**进 #mobile-float-actions
-// （现挂 .header-right 末尾 = 顶栏内的一簇）。DOM 搬移不丢事件监听（监听随
-// 节点走），共享行为零复制；拆层时按记录的锚点原样归还 header。
-//
-// r4 收敛（作者 2026-09-07 现行裁定为纲：会话名永不截断/隐藏/压图标，顶栏
-// 压力由图标让位吸收）：盾（#bypass-dropdown，r2 保留名单成员＝全链最低位）
-// 在 375 档与 28px 簇钮组合下连 boot 空名态都放不下（r4 前置探针实锤）——
-// 簇钮压至 24px（icon 不变 16px）后，375/390 空名态盾均站得住（free 27/42）；
-// 长会话名时仍由桌面碰撞链按 09-07 裁定让盾收敛隐藏（名字优先，既有语义）。
-//
-// 与桌面 header 自适应隐藏链（main.js initHeaderResizeObserver）的正交处理：
-// 被搬移节点仍会被该链按 id 命中并可能加 .nb-header-hide —— 手机层 CSS 以
-// `#mobile-float-actions .nb-header-hide { display:flex !important }` 顶回
-// （悬浮条内按钮不参与 header 宽度竞争）；内容性 hidden（如 memory-btn 未有
-// 会话时的 hidden 属性）语义原样保留，不受影响。
-//
-// 居中浮层面板（reminder / daemon / bg / bgagent / memory / daemon-config）
-// 的几何改写全部在 mobileLayer.css（body.mobile-layer 作用域， specificity
-// 高于桌面 id 规则），本文件只管 DOM 搬移与悬浮条定位变量。
+// 实现：把 FLOAT_IDS + pending-asks 节点整体**搬移**进 headerController 的左列
+//（appendChild = move，监听随节点走，桌面归还锚点照旧）；任务键为自建节点。
+// 面板 morph 靠 MutationObserver 盯六个面板载体的显隐类（.open/.on/.hidden），
+// 零面板 JS 改动。拆层按锚点原样归还 header。
 
+import { t } from '../i18n.js';
 import { key } from '../branding.js';
+import { createIconsIn } from '../utils.js';
+import { leftList, collapseDDs } from './headerController.js';
+import { openTaskPanel, taskBadgeCount } from './taskPanel.js';
+import { morphIn } from './morphPanel.js';
+import { logEvent, touchLayer } from './navController.js';
 
-/** 收编簇成员（左→右）：搜索、后台任务胶囊、智能体胶囊、定时任务、心跳、记忆。 */
+/** 收编左列成员（任务键之下，自上而下）：搜索、后台任务、智能体、定时、心跳、记忆、待答。 */
 const FLOAT_IDS = ['search-btn', 'bg-indicator', 'bgagent-indicator', 'reminder-btn', 'daemon-btn', 'memory-btn'];
+const PENDING_ASKS_ID = 'pending-asks-indicator';
+
+/** 键 → 面板载体（morph 目标）与「可见」判据。 */
+const PANEL_FACE = [
+  { keyId: 'search-btn', panel: () => document.getElementById('search-modal'), visible: () => document.getElementById('search-overlay')?.classList.contains('on') === true },
+  { keyId: 'memory-btn', panel: () => document.getElementById('memory-modal'), visible: () => document.getElementById('memory-overlay')?.classList.contains('on') === true },
+  { keyId: 'reminder-btn', panel: () => document.getElementById('reminder-panel'), visible: () => document.getElementById('reminder-panel')?.classList.contains('open') === true },
+  { keyId: 'daemon-btn', panel: () => document.getElementById('daemon-panel'), visible: () => document.getElementById('daemon-panel')?.classList.contains('open') === true },
+  { keyId: 'bg-indicator', panel: () => document.getElementById('bg-dropdown'), visible: () => document.getElementById('bg-dropdown')?.classList.contains('hidden') === false },
+  { keyId: 'bgagent-indicator', panel: () => document.getElementById('bgagent-dropdown'), visible: () => document.getElementById('bgagent-dropdown')?.classList.contains('hidden') === false },
+];
 
 /** @type {{id:string, parent:Node, next:Node|null}[]} 归还锚点。 */
 let anchors = [];
-/** @type {ResizeObserver|null} */
+/** @type {MutationObserver|null} */
 let inputRo = null;
+/** @type {MutationObserver|null} */
+let faceMo = null;
+/** @type {number|null} */
+let taskOpenTimer = null;
+/** @type {HTMLElement|null} 任务键（morph origin + 徽标宿主）。 */
+let taskKey = null;
 
 function tt(zh, en) {
   // 语言源 = i18n.js 同源键（key('locale')，branding.js 命名空间派生）。
-  // 重启窗热修批 2026-10-18：裸 `'nebflow_locale'` 字面随品牌迁移失效，迁 `key()`。
   let lang = '';
   try { lang = localStorage.getItem(key('locale')) || ''; } catch { /* private mode */ }
   if (!lang) lang = document.documentElement.lang || navigator.language || '';
   return /^zh/i.test(lang) ? zh : en;
 }
 
-function buildPill() {
-  const pill = document.createElement('div');
-  pill.id = 'mobile-float-actions';
-  pill.setAttribute('role', 'toolbar');
-  pill.setAttribute('aria-label', tt('会话工具', 'Session tools'));
-  // r4：收编进 header 右簇（顶部一体化顶栏内），不再 body 级悬浮。
-  const host = document.querySelector('#header .header-right') || document.body;
-  host.appendChild(pill);
-  return pill;
+/** 任务键（自建；v3⑤ 入口）。 */
+function buildTaskKey() {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.id = 'mobile-task-key';
+  btn.className = 'mh-key';
+  btn.title = tt('任务', 'Tasks');
+  btn.setAttribute('aria-label', tt('任务', 'Tasks'));
+  btn.innerHTML = '<i data-lucide="list-todo"></i><span class="mh-key-badge" hidden></span>';
+  btn.addEventListener('click', () => {
+    touchLayer();
+    logEvent('dd-key', { key: 'task' });
+    collapseDDs(); // ⑤ 二级液态第一步：六键收回
+    if (taskOpenTimer) clearTimeout(taskOpenTimer);
+    taskOpenTimer = setTimeout(() => openTaskPanel(btn), 260); // 钮形变加宽成浮层
+  });
+  if (typeof lucide !== 'undefined') createIconsIn(btn);
+  return btn;
 }
 
-/** 输入区高度变化 → 更新浮层面板底距变量（面板仍锚输入卡上方；pill 已入顶栏）。 */
+function syncTaskBadge() {
+  if (!taskKey) return;
+  const badge = /** @type {HTMLElement|null} */ (taskKey.querySelector('.mh-key-badge'));
+  if (!badge) return;
+  const n = taskBadgeCount();
+  badge.hidden = n <= 0;
+  badge.textContent = String(n);
+}
+
+/** 面板载体显隐 → 从触发键 origin morphIn（扩展②：一律二级液态形变）。 */
+function watchPanelFaces() {
+  const keyById = (id) => /** @type {HTMLElement|null} */ (document.getElementById(id));
+  const recentlyClicked = new Map(); // keyId → ts（仅新开窗 morph，常亮不重播）
+  const onKeyCapture = (e) => {
+    const el = e.target instanceof Element ? e.target.closest('.mh-dd-bd > [id]') : null;
+    if (el && el.id) {
+      recentlyClicked.set(el.id, Date.now());
+      // 二级液态第一步（样张⑤口径）：键按下先收列，面板现身即从该键 morph。
+      collapseDDs();
+    }
+  };
+  document.addEventListener('click', onKeyCapture, true);
+
+  faceMo = new MutationObserver(() => {
+    for (const face of PANEL_FACE) {
+      if (!face.visible()) continue;
+      const panelEl = face.panel();
+      const originEl = keyById(face.keyId);
+      if (!panelEl || !originEl || !originEl.isConnected) continue;
+      const ts = recentlyClicked.get(face.keyId) || 0;
+      if (Date.now() - ts > 600) continue; // 非本次点键的显隐（外部开合）不播形变
+      // 键收回 → 钮变面板的时序：先隐（等列收），再 morph 揭示。
+      panelEl.style.opacity = '0';
+      setTimeout(() => morphIn(/** @type {HTMLElement} */ (panelEl), originEl), 160);
+      break; // 一次显隐变化只播一个面
+    }
+  });
+  for (const id of ['search-overlay', 'memory-overlay', 'reminder-panel', 'daemon-panel', 'bg-dropdown', 'bgagent-dropdown']) {
+    const el = document.getElementById(id);
+    if (el) faceMo.observe(el, { attributes: true, attributeFilter: ['class'] });
+  }
+  return () => document.removeEventListener('click', onKeyCapture, true);
+}
+
+let unwatchFaces = () => {};
+
+/** 输入区高度变化 → 更新浮层面板底距变量（心跳配置浮层仍消费该变量）。 */
 function watchInputArea() {
   const input = document.getElementById('input-area');
   const update = () => {
@@ -86,20 +143,136 @@ function watchInputArea() {
   }
 }
 
+// ── 附件条 v3：in-flow 行 + 溢出收「+N」（样张 v2 p5 已批形态）──────────
+// #attachment-preview 在手机层改 in-flow 首行（CSS），本段只做折叠腿：
+// 单行装不下的尾部 chip 落 .mh-att-collapsed，行尾补「+N」件；点 +N 展开为
+// 横向滚动（再点收拢）。chip 增删/换行由 MutationObserver + ResizeObserver 驱动。
+/** @type {{ro: ResizeObserver|null, mo: MutationObserver|null, more: HTMLElement|null}} */
+let attRow = { ro: null, mo: null, more: null };
+
+/** chip 实测宽缓存（折叠态 display:none 无盒 —— 用上次可见时的宽度参算）。 */
+const attChipW = new WeakMap();
+
+function syncAttachmentRow() {
+  const row = document.getElementById('attachment-preview');
+  if (!row) return;
+  const chips = [...row.children].filter((el) => !el.classList.contains('mh-att-more'));
+  let more = attRow.more;
+  if (!more) {
+    more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'mh-att-more';
+    more.addEventListener('click', () => {
+      row.classList.toggle('mh-att-expanded');
+      collapseAttachmentRow();
+    });
+    attRow.more = more;
+  }
+  // 自激纪律：本函数由本行的 MutationObserver(childList+attributes+subtree)
+  // + ResizeObserver 驱动。禁止「先重置再重折」的两段式写法 —— 折叠平衡态下
+  // 每次同步都会撤销再重做（remove k + add k = 2k+2 条记录/次），微任务风暴
+  // 直接冻死页面（实测 evaluate 挂死）。改为：纯读算目标 → diff 应用，
+  // 平衡态零写入。
+  const expanded = row.classList.contains('mh-att-expanded');
+
+  // 目标态计算（纯读；collapsed 芯片无盒 → 用宽度缓存参算）。
+  const gap = parseFloat(getComputedStyle(row).columnGap) || 6;
+  const widths = chips.map((c) => {
+    if (!c.classList.contains('mh-att-collapsed') && c.offsetWidth > 0) attChipW.set(c, c.offsetWidth);
+    return attChipW.get(c) || 0;
+  });
+  const total = widths.reduce((s, w, i) => s + w + (i ? gap : 0), 0);
+  const avail = row.clientWidth;
+  const moreW = (more.isConnected && more.offsetWidth) || 34; // CSS min-width 28 + padding 兜底
+  const overflow = !expanded && total > avail + 1;
+  // 折叠目标 = 保前缀（至少 1 枚），前缀宽 + more 槽 ≤ 行宽（+N 自身吃滚动差）。
+  let keep = chips.length;
+  if (overflow) {
+    const budget = avail - moreW - gap;
+    let acc = 0;
+    keep = 0;
+    for (let i = 0; i < chips.length; i++) {
+      const next = acc + widths[i] + (i ? gap : 0);
+      if (next > budget) break;
+      acc = next;
+      keep++;
+    }
+    if (keep < 1) keep = 1; // 至少保首枚可见（全收 = 无意义折叠）
+  }
+
+  // diff 应用（平衡态零写）。
+  for (let i = 0; i < chips.length; i++) {
+    const want = i >= keep;
+    const has = chips[i].classList.contains('mh-att-collapsed');
+    if (want && !has) chips[i].classList.add('mh-att-collapsed');
+    else if (!want && has) chips[i].classList.remove('mh-att-collapsed');
+  }
+  const hiddenCount = chips.length - keep;
+  if (expanded) {
+    // 展开态：+N 保留行尾作「收拢」键（点它 toggle 回折叠；文本沿用折叠计数）。
+    if (more.parentElement !== row || row.lastElementChild !== more) row.appendChild(more);
+    if (more.hidden) more.hidden = false;
+  } else if (overflow && hiddenCount > 0) {
+    if (more.parentElement !== row || row.lastElementChild !== more) row.appendChild(more);
+    if (more.hidden) more.hidden = false;
+    const moreText = `+${hiddenCount}`;
+    if (more.textContent !== moreText) more.textContent = moreText;
+  } else {
+    if (more.isConnected) more.remove();
+    if (!more.hidden) more.hidden = true;
+  }
+}
+
+/** 展开态重算（展开后行宽变化 → 重新判定折叠）。 */
+function collapseAttachmentRow() { syncAttachmentRow(); }
+
+function watchAttachmentRow() {
+  const row = document.getElementById('attachment-preview');
+  if (!row) return;
+  attRow.mo = new MutationObserver(syncAttachmentRow);
+  attRow.mo.observe(row, { childList: true, attributes: true, subtree: true });
+  if (window.ResizeObserver) {
+    attRow.ro = new ResizeObserver(syncAttachmentRow);
+    attRow.ro.observe(row);
+  }
+  syncAttachmentRow();
+}
+
+function unwatchAttachmentRow() {
+  if (attRow.ro) { attRow.ro.disconnect(); attRow.ro = null; }
+  if (attRow.mo) { attRow.mo.disconnect(); attRow.mo = null; }
+  if (attRow.more) { attRow.more.remove(); attRow.more = null; }
+  const row = document.getElementById('attachment-preview');
+  if (row) {
+    row.classList.remove('mh-att-expanded');
+    row.querySelectorAll('.mh-att-collapsed').forEach((el) => el.classList.remove('mh-att-collapsed'));
+  }
+}
+
 export function activateFloats() {
-  const pill = buildPill();
-  for (const id of FLOAT_IDS) {
+  const list = leftList();
+  if (!list) return () => {};
+  // 任务键（自建，列首）。
+  taskKey = buildTaskKey();
+  list.appendChild(taskKey);
+  // FLOAT_IDS + 待答胶囊：真实节点搬移（监听随节点走）。
+  for (const id of [...FLOAT_IDS, PENDING_ASKS_ID]) {
     const el = document.getElementById(id);
     if (!el) continue;
     anchors.push({ id, parent: el.parentNode, next: el.nextSibling });
-    pill.appendChild(el); // appendChild = move（监听随节点走）
+    el.classList.add('mh-key');
+    list.appendChild(el);
   }
+  if (typeof lucide !== 'undefined') createIconsIn(list);
   watchInputArea();
-  syncPillVisibility();
+  watchAttachmentRow();
+  syncTaskBadge();
+  window.addEventListener('delegate-chain-mirror-updated', syncTaskBadge);
+  window.addEventListener('nebflow-session-change', syncTaskBadge);
+  unwatchFaces = watchPanelFaces();
 
-  // 内容性 hidden 变化（memory-btn 启用、后台任务计数清零）驱动悬浮条
-  // 整体显隐（全员不可见时不留空玻璃条）。
-  const mo = new MutationObserver(syncPillVisibility);
+  // 内容性 hidden 变化（memory-btn 启用、后台计数清零）→ 任务徽标/列内显隐同步。
+  const mo = new MutationObserver(() => { syncTaskBadge(); });
   for (const id of FLOAT_IDS) {
     const el = document.getElementById(id);
     if (el) mo.observe(el, { attributes: true, attributeFilter: ['hidden', 'class'] });
@@ -107,24 +280,24 @@ export function activateFloats() {
 
   return function teardownFloats() {
     mo.disconnect();
+    unwatchFaces();
+    if (taskOpenTimer) { clearTimeout(taskOpenTimer); taskOpenTimer = null; }
+    window.removeEventListener('delegate-chain-mirror-updated', syncTaskBadge);
+    window.removeEventListener('nebflow-session-change', syncTaskBadge);
     if (inputRo) { inputRo.disconnect(); inputRo = null; }
+    unwatchAttachmentRow();
     // 按锚点原样归还 header（相对次序保持搬移前状态）。
     for (const a of anchors) {
       try {
         const el = document.getElementById(a.id);
-        if (el && a.parent && a.parent.isConnected) a.parent.insertBefore(el, a.next);
+        if (el) {
+          el.classList.remove('mh-key');
+          if (a.parent && a.parent.isConnected) a.parent.insertBefore(el, a.next);
+        }
       } catch { /* 节点树已变：放弃归还，避免二次破坏 */ }
     }
     anchors = [];
-    pill.remove();
+    if (taskKey) { taskKey.remove(); taskKey = null; }
     document.documentElement.style.removeProperty('--mobile-float-bottom');
   };
-}
-
-/** 悬浮条内任一成员可见 ⇔ 悬浮条可见（全部 hidden 时整条隐藏）。 */
-function syncPillVisibility() {
-  const pill = document.getElementById('mobile-float-actions');
-  if (!pill) return;
-  const anyVisible = [...pill.children].some((el) => !(/** @type {HTMLElement} */ (el)).hidden && !el.classList.contains('hidden'));
-  pill.classList.toggle('all-hidden', !anyVisible);
 }

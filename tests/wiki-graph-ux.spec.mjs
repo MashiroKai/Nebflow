@@ -246,11 +246,12 @@ test('R4 reload restore with graph as the active tab auto-expands after first re
 
 test('R8 mobile viewport never auto-opens (drawer exclusivity wins)', async ({ page }) => {
   const errors = await boot(page, { viewport: { width: 375, height: 812 } });
-  // ≤768 移动层会抑制一切启动/程序化画板展开（watchBootAutoOpen），真实用户
-  // 路径 = 底部 bar 的 graph face（onBarClick：touchLayer + navigateTo('graph')）。
+  // ≤768 移动层会抑制一切启动/程序化画板展开（watchBootAutoOpen）。真实用户
+  // 路径（v3 批更新）：顶栏右圆钮液态下拉列的 graph face（onKeyClick：
+  // touchLayer + navigateTo('graph')；r4 底部 bar 已随 v3③ 退役）。
   // 程序化 click 同样触发绑定的 click handler，且 touchLayer 同步抬除抑制。
-  await page.waitForSelector('#mobile-bar-graph', { state: 'attached', timeout: 10000 }); // 移动层异步装配
-  await page.evaluate(() => document.getElementById('mobile-bar-graph').click());
+  await page.waitForSelector('.mh-dd[data-dd="right"] [data-face="graph"]', { state: 'attached', timeout: 10000 }); // 移动层异步装配
+  await page.evaluate(() => document.querySelector('.mh-dd[data-dd="right"] [data-face="graph"]').click());
   // 前提成立：图谱 pane 已是激活内容（移动层接管了桌面侧栏槽位，explorer
   // 槽位不再承载图谱列表 —— R8 的被测面是 Side Bar 不自动开）。
   await expect.poll(() => page.evaluate(() => document.querySelector('.canvas-tab-pane.active')?.dataset.tabId), { timeout: 10000 }).toBe('wiki-graph');

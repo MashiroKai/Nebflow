@@ -4632,3 +4632,217 @@
    下方整宽条）退役 —— 引用 chip 与附件 chip 同条带落 #attachment-preview（渲染单点
    = chat.js renderAttachmentPreview），尺寸作用域规则见 input.css「quote-message
    引用 chip」段。 */
+
+/* ═══════════════════════════════════════════════════════════════════════
+   会话头头像 + profile 面板（mobile-mockup-375 v3 实施批 · 扩展③）
+   会话头两端同款（v2/v3 已批形态）：头像居中 + 名称在下 —— agentProfile.js
+   把同一节点（#agent-avatar-btn）插进 .header-center 首位，两端共用；手机
+   375 形态在 mobileLayer.css v3 段。本段 = 桌面形态 + 面板本体（两端共享件，
+   桌面 = 居中卡；手机几何改写在 mobileLayer.css）。
+   ═══════════════════════════════════════════════════════════════════════ */
+/* 桌面会话头：中簇改纵向（头像在上居中、名称在下）；header 高度随内容生长
+   （#chat 顶距由 main.js 顶带实测让位自动跟随）。memory-btn 仍随名称行。 */
+#header .header-center {
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 2px;
+}
+#agent-avatar-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  flex: none;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: pointer;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 600;
+  background: linear-gradient(145deg, #5b7fbf, #3c568c);
+  border: 1px solid var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    0 2px 8px var(--glass-control-shadow);
+  transition: transform 0.15s ease;
+}
+#agent-avatar-btn:hover { transform: scale(1.03); }
+#agent-avatar-btn:active { transform: scale(0.95); }
+#agent-avatar-btn .agent-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+#agent-avatar-btn svg { width: 18px; height: 18px; }
+
+/* profile 面板（body 级一件；桌面 = 居中玻璃卡，无遮罩暗化 —— 视觉铁律 1）。
+   面板材质/控件 = glass-control token 族（sapphire.css）；手机几何改写 +
+   morph 形变在 mobileLayer.css。 */
+.agent-profile-panel {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 300px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 16px 14px;
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border: 1px solid var(--glass-control-border);
+  border-radius: 16px;
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),
+    0 2px 8px var(--glass-control-shadow),
+    0 4px 16px rgba(0, 0, 0, 0.10);
+  animation: agentProfileIn 0.2s ease;
+}
+@media (prefers-color-scheme: dark) {
+  .agent-profile-panel {
+    box-shadow:
+      inset 0 1px 0 var(--glass-control-highlight),
+      inset 0 -1px 0 var(--glass-control-underedge),
+      0 1px 3px var(--glass-control-glow),
+      0 2px 8px var(--glass-control-shadow),
+      0 4px 16px rgba(0, 0, 0, 0.35);
+  }
+}
+@keyframes agentProfileIn {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.96); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+.agent-profile-panel .ap-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-frame-text-bright, var(--color-frame-text));
+}
+.agent-profile-panel .ap-head > svg,
+.agent-profile-panel .ap-head > i svg {
+  width: 15px;
+  height: 15px;
+  color: var(--color-frame-text-muted, #98a2b3);
+}
+.agent-profile-panel .ap-close {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  flex: none;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-frame-text, #e6e9ef);
+  cursor: pointer;
+}
+.agent-profile-panel .ap-close svg { width: 13px; height: 13px; }
+.agent-profile-panel .ap-avatar-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0 2px;
+}
+.agent-profile-panel .ap-avatar-img {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+  border: 1px solid var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    0 2px 8px var(--glass-control-shadow);
+}
+.agent-profile-panel .ap-avatar-initial {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(145deg, #5b7fbf, #3c568c);
+  border: 1px solid var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    0 2px 8px var(--glass-control-shadow);
+}
+.agent-profile-panel .ap-btnrow {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+}
+.agent-profile-panel .ap-btn {
+  flex: 1;
+  height: 38px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  color: var(--color-frame-text, #e6e9ef);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+}
+.agent-profile-panel .ap-btn svg { width: 15px; height: 15px; }
+.agent-profile-panel .ap-btn-primary {
+  background: rgb(var(--brand-green));
+  color: #fff;
+  border-color: transparent;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(7, 193, 96, 0.28);
+}
+.agent-profile-panel .ap-btn-ghost {
+  color: var(--color-frame-text-muted, #98a2b3);
+}
+.agent-profile-panel .ap-namerow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.agent-profile-panel .ap-name-label {
+  flex: none;
+  font-size: 12px;
+  color: var(--color-frame-text-muted, #98a2b3);
+}
+.agent-profile-panel .ap-name-input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-etched-bg, rgba(0, 0, 0, 0.025));
+  color: var(--color-text);
+  font-size: 13px;
+  outline: none;
+}
+.agent-profile-panel .ap-name-input:focus {
+  border-color: var(--glass-etched-border-focus, rgba(91, 127, 191, 0.35));
+}
+.agent-profile-panel .ap-note {
+  font-size: 11px;
+  color: var(--color-frame-text-muted, #98a2b3);
+  line-height: 1.65;
+  padding: 8px 2px 0;
+  border-top: 1px solid var(--glass-border);
+}
