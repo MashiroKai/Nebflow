@@ -1,0 +1,46 @@
+PASS  C1 card mounted (srcdoc set)
+PASS  C1 failure placeholder rendered
+PASS  C1 placeholder text carries NO credential
+PASS  C1 placeholder still names the file (not stripped to empty)
+PASS  C1 no pageerror
+PASS  C2 srcdoc ticket count == reference count (2)
+PASS  C2 first mount minted once
+PASS  C2 re-mount minted a SECOND round
+PASS  C2 re-mount ticket values differ from the first mount
+PASS  C2 no pageerror
+PASS  C6 srcdoc mounted
+PASS  C6 unquoted url() ticket stays INSIDE the parens
+PASS  C6 NO ticket appended after the closing paren
+PASS  C6 injection did not swallow past )}</style><img
+PASS  C6 card DOM still holds the <img> element
+PASS  C6 no pageerror
+PASS  C5 nf-file requests actually happened
+PASS  C5 every nf-file request carries ticket=
+PASS  C5 no nf-file request carries token=
+PASS  C5 no pageerror
+PASS  C3 markdown image tooltip set on error
+PASS  C3 tooltip carries NO credential
+PASS  C3 tooltip still names the file
+PASS  C3 no pageerror
+PASS  C4 canvas iframe image clicked
+PASS  C4 lightbox opened with an image
+PASS  C4 parent img.src carries NO credential (blob: preview)
+PASS  C4 lightbox fetched through its OWN mint round
+PASS  C4 the lightbox round asked for the lightbox path
+PASS  C4 no pageerror
+PASS  Dg1 all 3 cards mounted despite the mint outage (no whole-batch blank)
+PASS  Dg1 every card still carries its own content
+PASS  Dg1 mint request count <= 3 (F6 breaker)
+PASS  Dg1 no pageerror
+PASS  Dg2 all 3 cards mounted on a ticketless 200 (renders with no-ticket URLs)
+PASS  Dg2 mint request count <= 3
+PASS  Dg2 no pageerror
+PASS  Dg3 the ticketed asset loaded
+PASS  Dg3 the two unticketed assets degraded to placeholders (not contagious)
+PASS  Dg3 no mint storm (one round per render)
+PASS  Dg3 no pageerror
+PASS  Dg4 card with no local reference still mounts
+PASS  Dg4 ZERO mint requests for a local-reference-free card (F1)
+PASS  Dg4 no pageerror
+
+=== 44/44 PASS ===

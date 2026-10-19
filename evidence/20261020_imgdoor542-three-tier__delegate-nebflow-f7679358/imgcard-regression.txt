@@ -1,0 +1,32 @@
+
+== chromium ==
+  PASS  A1 铸票 200 ⇒ 票在手
+  PASS  A2 页面零 JS 异常
+  PASS  B1 URL 带票
+  PASS  B2 取字节 200
+  PASS  B3 字节非空(PNG)
+  PASS  C1 previewBlob = ok
+  PASS  C2 Canvas 面板开启
+  PASS  C3 image viewer 挂载
+  PASS  C4 缩略图字节解码成功(naturalWidth>0)
+  PASS  D1 铸票 403 ⇒ 无票（断点站位）
+  PASS  D2 无票兑换被 401 拒（ticketGuard）
+  PASS  D3 sessionGate 可见过期横幅在场(#520 修复)
+  PASS  D4 页面零 JS 异常（降级腿不抛）
+
+== webkit(Safari引擎族) ==
+  PASS  A1 铸票 200 ⇒ 票在手
+  PASS  A2 页面零 JS 异常
+  PASS  B1 URL 带票
+  PASS  B2 取字节 200
+  PASS  B3 字节非空(PNG)
+  PASS  C1 previewBlob = ok
+  PASS  C2 Canvas 面板开启
+  PASS  C3 image viewer 挂载
+  PASS  C4 缩略图字节解码成功(naturalWidth>0)
+  PASS  D1 铸票 403 ⇒ 无票（断点站位）
+  PASS  D2 无票兑换被 401 拒（ticketGuard）
+  PASS  D3 sessionGate 可见过期横幅在场(#520 修复)
+  PASS  D4 页面零 JS 异常（降级腿不抛）
+
+2 checks, 0 failed

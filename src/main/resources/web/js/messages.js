@@ -64,7 +64,7 @@ import {
 // Canvas 渲染腿都在那边）；本模块只做接线 + 降级文案 + 取字节（禁在此再写第二套类型判据 /
 // 第二套取字节路）。`previewLocalPath` 在设备面已降为**回落腿**（票据路由拒绝的类型），
 // 与 `previewBlob` 同属该模块的既有出口。
-import { previewBlob, previewLocalPath, canPreviewLocalPath, canPreviewName, canFetchLocalBytes, isPreviewOpen } from './attachmentPreview.js';
+import { previewBlob, previewLocalPath, canPreviewLocalPath, canPreviewName, canFetchLocalBytes, isPreviewOpen, previewWithProgress } from './attachmentPreview.js';
 // 附件**上传**（attachcl 批，作者 2026-09-16 07:36）：好友窗与群窗的发送面**唯一**
 // 实现（上传链 + 闸位 + 上传卡渲染都在那边 ⇒ 两面不各写一套）。设备面**不**经此
 // （设备腿仍走 dropbox.js 单点，零行为变化）。
@@ -98,7 +98,10 @@ import {
 // 内联图片附件的取字节/票据面：好友·群面 = 既有鉴权路由（friendsApi），设备面 =
 // 既有本机落盘路径的 nf-ticket 链（`ticketUrl`）。两套都是**既有**取数面，
 // 本批禁新增第三条取字节路（并禁与另一套附件渲染面混淆）。
-import { ticketUrl } from './nfTicket.js';
+import { ticketUrl, queuedTicketUrl } from './nfTicket.js';
+// imgdoor #542（三档加速）：流式读出器（边收边报进度）——只吃调用方给定的
+// **既有**路由 URL（票据路/鉴权路），禁第三条取字节路。
+import { fetchBlobWithProgress } from './nfFileCache.js';
 import { MAX_INLINE_IMAGE_BYTES, isImageAttachmentName } from './attachmentPreview.js';
 
 let conversations = [];
@@ -2194,7 +2197,10 @@ function attachInlineImage(card, att, kind, src) {
       mount(outInlineUrlOf(key) || rememberOutInlineUrl(key, URL.createObjectURL(s.file)), 'local-file');
       return true;
     }
-    ticketUrl(s.path)
+    // imgdoor #542（档1 + 票据计数面）：合帧批量铸票——同帧渲染的 N 张设备图只发
+    // 一次 POST /api/nf-ticket（N 图 ≤ 1 铸票）；点击开图的 `ticketUrl` 随后全部命中
+    // per-path 票据缓存 ⇒ 零追加铸票。拿不到票 ⇒ 既有无票 URL（onerror 摘槽）。
+    queuedTicketUrl(s.path)
       .then((url) => { if (url) mount(url, 'server-ticket'); else box.remove(); })
       .catch(() => box.remove());
     return true;
@@ -2452,7 +2458,12 @@ function makeCardPreviewable(card, att, showToastOnUnavailable) {
 
 /** 好友面预览：取字节**只走应用内鉴权路由**（`friendsApi.downloadAttachment`，同下载腿
  *  的唯一取字节口，禁第二条取字节路）⇒ 交给 attachmentPreview 判类型 + 渲染。
- *  @returns {Promise<boolean>} true = 需要**可见降级**文案 */
+ *
+ *  imgdoor #542（档3）：预览改走**流式开**（`previewWithProgress`）——点击**同步**
+ *  出 Canvas 标签（零延迟出标签），字节边收边报进度环（Content-Length 可得 → 百分比，
+ *  不可得 → 转圈），完成即渲染；失败 ⇒ 标签内**就地可见**错误态 + 重试键（禁静默）。
+ *  档2：`cacheKey = attach:<id>` ⇒ 已取过的件零取数直渲染（速度 = 档1）。
+ *  @returns {Promise<boolean>} true = 需要**可见降级**文案（失败已在标签内可见时为 false） */
 async function previewFriendAttachment(att, card) {
   if (!att || !att.id) return true;
   if (card.dataset.attPreviewBusy === '1') return false;
@@ -2460,25 +2471,31 @@ async function previewFriendAttachment(att, card) {
   if (isPreviewOpen(`attach:${att.id}`)) return false;
   card.dataset.attPreviewBusy = '1';
   try {
-    const { blob, filename } = await api.downloadAttachment(att.id);
-    const r = await previewBlob({
+    const fileName = (att && att.name) || '';
+    const title = fileName || t('messages.attachUnnamed');
+    const r = await previewWithProgress({
       id: `attach:${att.id}`,
-      title: (att && att.name) || filename || t('messages.attachUnnamed'),
-      fileName: (att && att.name) || filename || '',
-      blob,
+      title,
+      fileName,
+      cacheKey: `attach:${att.id}`,
+      load: async ({ onProgress }) => {
+        try {
+          const { blob } = await api.downloadAttachment(att.id, { onProgress });
+          return { blob };
+        } catch (err) {
+          // 410 = 服务端权威「附件已过期」（终态）：补一条权威文案（就地错误面之外，
+          // 同改前双读数面）；其余状态由标签内错误面 + 重试键承接（档3 可见面）。
+          if (err && err.status === 410) modalToast(t('messages.attachExpired'));
+          throw err;
+        }
+      },
     });
     if (r === 'unsupported') {
-      modalToast(t('messages.attachPreviewUnsupported', { name: (att && att.name) || '' }));
+      modalToast(t('messages.attachPreviewUnsupported', { name: fileName }));
       return false; // 文案已就位，不再叠一条通用失败提示
     }
-    return r !== 'ok';
-  } catch (err) {
-    // 会话过期 / 非好友：全局链已给引导（与下载腿同一处置），不再叠文案。
-    if (err && (err.status === 401 || err.status === 403)) return false;
-    // 410 = 服务端权威「附件已过期」（终态）：给**可见**读数（下载腿的就地卡片升级
-    // 是那条路的处置；此处不复制第二套状态迁移，只保证用户看得见、非静默）。
-    if (err && err.status === 410) { modalToast(t('messages.attachExpired')); return false; }
-    return true;
+    // 'ok'，或 'failed'（失败态已在标签内可见 + 重试键）⇒ 都不再叠卡片 toast。
+    return false;
   } finally {
     card.dataset.attPreviewBusy = '0';
   }
@@ -2547,20 +2564,22 @@ async function savedPathBlob(path) {
   } catch { return null; }
 }
 
-/** 设备面（legacy）预览：**与好友/群同路**（`previewBlob`）。
+/** 设备面（legacy）预览：**与好友/群同路**（Canvas 预览单点渲染腿）。
  *
  *  两条字节腿（都是**既有**路，禁第三条）——分派判据 = 该件的票据路由可服务性
  *  （`canFetchLocalBytes`，见 attachmentPreview.js）：
- *   ① blob 腿（image/pdf/docx/xlsx/pptx/epub…）= **本批新主路**：票据路由字节
- *      （`savedPathBlob`）⇒ `previewBlob`（判据/渲染腿与好友面同族，点开即 Canvas 预览）；
+ *   ① blob 腿（image/pdf/docx/xlsx/pptx/epub…）= 主路：imgdoor #542 改**流式开**
+ *      （`previewWithProgress`：点击**同步**出 Canvas 标签 ⇒ 铸票/取字节边收边报进度环
+ *      ⇒ 完成即渲染；失败 ⇒ 标签内可见错误态 + 重试键）。字节仍是同一条票据路由
+ *      （`ticketUrl` ⇒ `/api/nf-file?path=…&ticket=…`），只是不再**全量缓冲完才开标签**
+ *      （改前 `savedPathBlob` 形态）；
  *   ② 文本腿（markdown/csv/yaml/json/code…）= **改前那条路逐字**（`previewLocalPath`
  *      ⇒ `workspace-open-item` ⇒ Canvas `pop.readFile`）：它们的字节不经 nf-file 白名单，
  *      故不在此发那次注定被拒的请求（零多余请求、零行为变化 = ④ 的要求）。
- *  路由**运行期**失败（票据铸造故障 / 文件已被删除 / 白名单外的 blob 腿扩展名如 .doc）
- *      ⇒ 仍回落 ② 这条既有路（保证「点得动」，同 `input.js:1893-1907` 的两段式惯例）。
- *  📌 selfattach 批（片 2 · A 腿）：**新增 blob 支**（发送侧本机 `File` 句柄在手 ⇒ 字节已在手，
- *     无需任何路由）——`previewBlob` 仍是**同一条**渲染腿（与好友面同族）；path 支
- *     **逐字保留**（判据源 `canFetchLocalBytes` 与三条分支一字未改）。
+ *  🔴 路由**运行期**失败的旧回落（改前：悄悄回落 ② 文本腿 ⇒ 对图片零反馈，#520 取证
+ *     判「症状放大器」）**已移除**——blob 腿失败现在就地可见（档3 + 静默降级可见化）。
+ *  📌 selfattach 批（片 2 · A 腿）：**blob 支**（发送侧本机 `File` 句柄在手 ⇒ 字节已在手，
+ *     无需任何路由）——`previewBlob` 仍是**同一条**渲染腿（与好友面同族）。
  *  @param {any} att @param {HTMLElement} card
  *  @param {{kind:'blob',file:File}|{kind:'path',path:string}|{kind:'none'}} src 字节源（单点判定）
  *  @returns {Promise<boolean>} true = 需要**可见降级**文案（同 `previewFriendAttachment` 契约） */
@@ -2585,15 +2604,29 @@ async function previewDeviceSavedAttachment(att, card, src) {
       }
       return r !== 'ok';
     }
-    if (!canFetchLocalBytes(s.path)) return previewLocalPath({ path: s.path, title }) !== 'ok'; // ② 文本腿
-    const blob = await savedPathBlob(s.path);
-    if (!blob) return previewLocalPath({ path: s.path, title }) !== 'ok'; // 路由运行期失败 ⇒ 回落
-    const r = await previewBlob({ id, title, fileName: title, blob });
+    if (!canFetchLocalBytes(s.path)) return previewLocalPath({ path: s.path, title }) !== 'ok'; // ② 文本腿（逐字保留：字节不经 nf-file 白名单，WS readFile 链）
+    // ① blob 腿主路（imgdoor #542 改流式开）：**先出标签再取数**（档3 作者令「点击
+    //    立即在 canvas 显示标签页」）——`previewWithProgress` 同步开标签，之后才轮到
+    //    这里铸票/取字节；进度环/失败可见面/重试键都在标签内（档3）。
+    //    档2：`cacheKey = nf:<path>` ⇒ 已取过的件零取数直渲染（速度 = 档1）。
+    //    🔴 2588 族静默降级（改前：`savedPathBlob` 拿不到 ⇒ 悄悄回落 previewLocalPath
+    //    文本腿，图片零反馈）就此**移除**——运行期失败改落标签内**可见**错误态 + 重试键。
+    const r = await previewWithProgress({
+      id,
+      title,
+      fileName: title,
+      cacheKey: `nf:${s.path}`,
+      load: async ({ onProgress }) => {
+        const res = await fetchBlobWithProgress(await ticketUrl(s.path), onProgress);
+        return { blob: res.blob, version: res.version };
+      },
+    });
     if (r === 'unsupported') {
       modalToast(t('messages.attachPreviewUnsupported', { name: title }));
       return false; // 文案已就位，不再叠一条通用失败提示
     }
-    return r !== 'ok';
+    // 'ok'，或 'failed'（失败态已在标签内可见 + 重试键）⇒ 都不再叠卡片 toast。
+    return false;
   } finally {
     card.dataset.attPreviewBusy = '0';
   }

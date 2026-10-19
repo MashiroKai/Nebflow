@@ -16,6 +16,8 @@
 
 import { openTab, hasTab, setActiveTab } from './canvas.js';
 import { itemTypeForFileName } from './fileViewers.js';
+import { t } from './i18n.js';
+import { nfCachedBlob, nfCachePut } from './nfFileCache.js';
 
 /** 要 `content`（文本）的 itemType —— code/json/csv/yaml 共用同一 monaco 实现，
  *  markdown 走 md viewer（同一渲染管线 = 聊天窗 md 那条）。 */
@@ -111,14 +113,18 @@ async function looksTextual(blob) {
   } catch { return false; }
 }
 
-/** 委托给既有 Canvas tab + viewer 渲染（**唯一**渲染腿，两入口共用）。
- *  @returns {Promise<'ok'|'failed'>} */
+/** 委托给既有 Canvas tab + viewer 渲染（**唯一**渲染腿，两入口共用）。 */
+async function renderIntoPane(paneEl, itemType, ctx) {
+  const { renderFile } = await import('./fileViewers.js');
+  await renderFile(paneEl, { itemType, absPath: null, ...ctx });
+}
+
+/** @returns {Promise<'ok'|'failed'>} */
 async function renderIntoTab(id, title, itemType, ctx) {
   const entry = openTab(id, title || id, { type: itemType });
   if (!entry) return 'failed';
   entry.paneEl.dataset.attachmentPreview = '1';
-  const { renderFile } = await import('./fileViewers.js');
-  await renderFile(entry.paneEl, { itemType, absPath: null, ...ctx });
+  await renderIntoPane(entry.paneEl, itemType, ctx);
   return 'ok';
 }
 
@@ -264,4 +270,205 @@ export function canPreviewName(name) {
  *  @param {string} path @returns {boolean} */
 export function canFetchLocalBytes(path) {
   return BLOB_ITEM_TYPES.has(itemTypeForFileName(path));
+}
+
+// ── 流式开图（imgdoor #542 · 三档加速）────────────────────────────────────
+// 作者令 2026-10-20 逐字：「慢的应该是非本机文件，点击有一个下载过程，但是也应该
+// 立即在canvas显示标签页，然后标签页显示一个圈作为下载进度显示。」
+//
+// `previewWithProgress` = 档3 的单点实现，同时承接档1/档2 的快路：
+//   · **tab-first（档3）**：`openTab` 同步出标签（零延迟），之后的一切取数都在
+//     标签已可见之后发生——今天的链（`savedPathBlob` 全量缓冲完才 `previewBlob`
+//     开标签）从根上倒置；
+//   · **进度环（档3）**：`load` 侧边收边报（`onProgress(loaded, total)`），
+//     Content-Length 可得 → 百分比环（`data-nf-progress="determinate"`），
+//     不可得 → 转圈（`"indeterminate"`）；
+//   · **可见失败（档3 + messages.js:2588 族静默降级可见化）**：取数/渲染失败
+//     ⇒ 标签内就地错误态（`data-nf-error="1"`）+ **重试键**，永不静默；
+//   · **缓存快路（档2）**：`cacheKey` 在场先查 `nfFileCache`，命中零取数直渲染
+//     （速度 = 档1）；未命中取数成功后落缓存；
+//   · **字节路由零新增（红线）**：本函数**不拼 URL、不 fetch**——字节获取由
+//     调用方经 `load` 注入（既有票据路 / friendsApi 鉴权路的流式读出器），本模块
+//     的「禁第三条取字节路」纪律逐字保持。
+//
+// 渲染出口仍走**既有** viewer 注册表（`renderFile`），与 `previewBlob` 同一条腿。
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const PROGRESS_RING_R = 18;
+const PROGRESS_RING_C = 2 * Math.PI * PROGRESS_RING_R;
+
+/** 档3 进度面板：百分比环（Content-Length 可得）或转圈（不可得）。
+ *  数据读数面：`data-nf-progress` = determinate|indeterminate、`data-nf-pct` = 0..100。 */
+function renderProgressPane(paneEl, label) {
+  paneEl.classList.add('scrollable');
+  paneEl.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'nf-progress-pane';
+  wrap.setAttribute('data-nf-progress', 'indeterminate');
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('class', 'nf-progress-ring');
+  svg.setAttribute('viewBox', '0 0 44 44');
+  const mkCircle = (cls) => {
+    const c = document.createElementNS(SVG_NS, 'circle');
+    c.setAttribute('class', cls);
+    c.setAttribute('cx', '22');
+    c.setAttribute('cy', '22');
+    c.setAttribute('r', String(PROGRESS_RING_R));
+    return c;
+  };
+  const bg = mkCircle('nf-progress-ring-bg');
+  const fg = mkCircle('nf-progress-ring-fg');
+  fg.style.strokeDasharray = String(PROGRESS_RING_C);
+  fg.style.strokeDashoffset = String(PROGRESS_RING_C);
+  svg.append(bg, fg);
+  const spinner = document.createElement('div');
+  spinner.className = 'canvas-loading-spinner nf-progress-spinner';
+  const pct = document.createElement('div');
+  pct.className = 'nf-progress-pct';
+  const lab = document.createElement('div');
+  lab.className = 'nf-progress-label';
+  lab.textContent = label;
+  wrap.append(svg, spinner, pct, lab);
+  paneEl.appendChild(wrap);
+  return {
+    /** @param {number} loaded @param {number} total */
+    setProgress(loaded, total) {
+      if (!wrap.isConnected) return;
+      if (total > 0) {
+        wrap.setAttribute('data-nf-progress', 'determinate');
+        const p = Math.max(0, Math.min(100, Math.round((loaded / total) * 100)));
+        fg.style.strokeDashoffset = String(PROGRESS_RING_C * (1 - p / 100));
+        pct.textContent = `${p}%`;
+        wrap.setAttribute('data-nf-pct', String(p));
+      } else {
+        wrap.setAttribute('data-nf-progress', 'indeterminate');
+      }
+    },
+  };
+}
+
+/** 档3 可见失败态：就地错误面板 + 重试键（**禁静默**——messages.js:2588 族旧腿
+ *  「blob 拿不到 ⇒ 悄悄回落文本腿」对图片零反馈，本面板即其可见化替身）。 */
+function renderProgressFailure(paneEl, err, subject, onRetry) {
+  if (!paneEl.isConnected) return;
+  paneEl.classList.add('scrollable');
+  paneEl.innerHTML = '';
+  const box = document.createElement('div');
+  box.className = 'canvas-error';
+  box.setAttribute('data-nf-error', '1');
+  const statusSuffix = err && /** @type {Error & {status?: number}} */ (err).status
+    ? ` (HTTP ${/** @type {Error & {status?: number}} */ (err).status})` : '';
+  const msg = document.createElement('div');
+  msg.textContent = `${t('canvas.loadFailed')}${statusSuffix}`;
+  const sub = document.createElement('div');
+  sub.className = 'nf-error-subject';
+  sub.textContent = subject || '';
+  box.append(msg, sub);
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.className = 'viewer-retry-btn';
+  retry.textContent = t('canvas.retry');
+  retry.setAttribute('data-nf-retry', '1');
+  retry.addEventListener('click', () => { if (paneEl.isConnected) onRetry(); });
+  box.appendChild(retry);
+  paneEl.appendChild(box);
+}
+
+/** 终态不可重试面（unsupported / 超上限）：同一面板家族，无重试键。 */
+function renderProgressNote(paneEl, message) {
+  if (!paneEl.isConnected) return;
+  paneEl.classList.add('scrollable');
+  paneEl.innerHTML = '';
+  const box = document.createElement('div');
+  box.className = 'canvas-error';
+  box.setAttribute('data-nf-note', '1');
+  box.textContent = message;
+  paneEl.appendChild(box);
+}
+
+/**
+ * 一次「进度 → 取数 → 渲染」尝试（重试键复入同一函数 ⇒ 绕开 tab 已存在的
+ * 幂等早退）。
+ * @returns {Promise<'ok'|'unsupported'|'failed'>}
+ */
+async function runProgressAttempt(paneEl, args) {
+  const { fileName, load, cacheKey } = args;
+  const name = fileName || '';
+  const prog = renderProgressPane(paneEl, t('canvas.loadingFile'));
+  try {
+    let blob = cacheKey ? await nfCachedBlob(cacheKey) : null; // 档2：命中零取数
+    if (blob) {
+      prog.setProgress(1, 1);
+    } else {
+      const res = await load({ onProgress: prog.setProgress });
+      blob = res && res.blob;
+      if (blob && cacheKey) void nfCachePut(cacheKey, blob, res.version);
+    }
+    if (!blob || typeof blob.size !== 'number' || blob.size <= 0) throw new Error('empty body');
+    // 判据与 previewBlob 同源同序：调用方显式 itemType > 文件名（ext→itemType 真源
+    // `itemTypeForFileName`）> 内容嗅探（无 viewer 认领扩展名时，确证文本才落 code）。
+    let effType = args.itemType
+      || itemTypeForFileName(name)
+      || ((blob.size <= MAX_TEXT_BYTES && await looksTextual(blob)) ? 'code' : '');
+    if (!effType || EXCLUDED_ITEM_TYPES.has(effType)) {
+      renderProgressNote(paneEl, t('messages.attachPreviewUnsupported', { name }));
+      return 'unsupported';
+    }
+    if (TEXT_ITEM_TYPES.has(effType)) {
+      if (blob.size > MAX_TEXT_BYTES) {
+        renderProgressNote(paneEl, t('messages.attachPreviewUnsupported', { name }));
+        return 'unsupported';
+      }
+      const content = await blob.text();
+      await renderIntoPane(paneEl, effType, { content, fileName: name, size: blob.size });
+      return 'ok';
+    }
+    if (BLOB_ITEM_TYPES.has(effType)) {
+      // 重试/重挂腿：同 tab id 换新 objectURL 前先撤旧的（禁泄漏，同 closeTab 家族）。
+      const prevUrl = objectUrls.get(args.id);
+      if (prevUrl) {
+        objectUrls.delete(args.id);
+        setTimeout(() => URL.revokeObjectURL(prevUrl), 1000);
+      }
+      bindObjectUrlRevoke();
+      const objectUrl = URL.createObjectURL(blob);
+      objectUrls.set(args.id, objectUrl);
+      await renderIntoPane(paneEl, effType, { objectUrl, fileName: name, size: blob.size });
+      return 'ok';
+    }
+    renderProgressNote(paneEl, t('messages.attachPreviewUnsupported', { name }));
+    return 'unsupported';
+  } catch (err) {
+    renderProgressFailure(paneEl, /** @type {Error} */ (err), name, () => {
+      runProgressAttempt(paneEl, args).catch(() => {});
+    });
+    return 'failed';
+  }
+}
+
+/**
+ * 流式预览（档1/2/3 单点）：**同步开标签** → 进度 → 取数（缓存快路）→ 渲染，
+ * 失败就地可见 + 重试。返回 `'failed'` 时失败态**已在标签内可见**（调用方无需再叠
+ * 通用 toast——「可见」由本函数保证，「fail-silent」从此不存在）。
+ *
+ * @typedef {{ id: string, title?: string, fileName?: string, itemType?: string,
+ *   load: (h: {onProgress: (loaded: number, total: number) => void}) => Promise<{blob: Blob, version?: string}>,
+ *   cacheKey?: string }} PreviewWithProgressArgs
+ *   id = Canvas tab id（重复点击即复用）；itemType 缺席时按文件名 + 内容嗅探判；
+ *   load = 字节获取（调用方注入**既有**路由的流式读出器；本模块零 fetch）；
+ *   cacheKey = 档2 缓存键（缺席 = 不缓存）。
+ * @param {PreviewWithProgressArgs} p
+ * @returns {Promise<'ok'|'unsupported'|'failed'>}
+ */
+export async function previewWithProgress({ id, title, fileName, itemType, load, cacheKey }) {
+  if (!id || typeof load !== 'function') return 'failed';
+  if (alreadyOpen(id)) return 'ok';
+  // 判据先行（同步、零取数）：与 previewBlob 同一真源。openTab 的 type 用它，
+  // 使 persistTabs/restore 的形态与改前 previewBlob 腿一致（restore 后重渲染同型）。
+  const typeGuess = itemType || itemTypeForFileName(fileName || '');
+  // 🔴 tab-first：openTab 同步执行（面板 + 标签当帧可见），取数在其后。
+  const entry = openTab(id, title || id, { type: typeGuess || 'generic' });
+  if (!entry) return 'failed';
+  entry.paneEl.dataset.attachmentPreview = '1';
+  return runProgressAttempt(entry.paneEl, { id, title, fileName, itemType: typeGuess, load, cacheKey });
 }

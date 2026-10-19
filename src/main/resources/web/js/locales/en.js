@@ -1595,6 +1595,9 @@ export default {
   'canvas.unreadableTitle': 'File unreadable',
   'canvas.unreadableHint': 'The file does not exist or was cleaned up; it cannot be read.',
   'canvas.unreadablePathHint': 'The path is invalid; it cannot be read.',
+  'canvas.loadingFile': 'Opening…',
+  'canvas.loadFailed': 'Failed to open',
+  'canvas.retry': 'Retry',
 
   // === Tool names (label first line) ===
   'tool.Read': 'Read',
