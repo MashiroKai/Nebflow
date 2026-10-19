@@ -1,0 +1,13 @@
+── 验红实证（busy-stuck-fix 批）：对已提交正式版注入两处变异 ⇒ 新 spec 定向红 ──
+
+MUTATION-1: messageDuplicate 精确腿失效（idMatchesLatestSend=false，回落旧守卫形态）
+MUTATION-2: send() 派发腿不武装 turn-start 确认网
+
+FAIL  B2b 派发前 15s 内有本会话流活动 ⇒ 仍走精确腿即收（回落 15s 窗会挡死）  — busy=true
+FAIL  C2 确认网到点收幻影 busy（无任何服务端帧）  — busy=true
+FAIL  C3 幻影收口连 turnExpecting 一并清
+FAIL  C4 队列项在场（busy 中入队）
+FAIL  C6 flush 派发轮照常收尾（busy 清）
+FAIL  D1 窗口内 busy{true} 到场 ⇒ 网不误清（慢 turn busy 保留）  — busy=false
+FAIL  E2 派发腿武装确认网（send/drain/offline/inject）  — arms=3
+7 FAILURE(S)

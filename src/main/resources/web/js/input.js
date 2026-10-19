@@ -362,6 +362,10 @@ export function send(resendId) {
   if (state.ws && state.ws.readyState === WebSocket.OPEN) {
     if (v.sessionId) delete state.lastTerminalAt[v.sessionId];
     setBusy(v.sessionId);
+    // busy-stuck-fix：乐观置位 = 草签——武装 turn-start 确认网（引擎 sessionBusy
+    // {busy:true}/终态帧/本会话流帧任一到场即撤；到点无任何 turn 事实 ⇒ 判幻影
+    // 收 busy，#569 判重丢弃帧不再永久卡 busy）。
+    state.armTurnConfirm?.(v.sessionId);
   } else {
     console.warn('[send] frame not dispatched (ws closed) — busy not armed (①-2 guard)');
   }
@@ -692,6 +696,9 @@ function dispatchOfflineItem(sid, item) {
     delete state.lastTerminalAt[sid];
   }
   setBusy(sid);
+  // busy-stuck-fix：补发腿同款草签（同 id 重放被服务端判重丢弃时，无 turn 无终态帧，
+  // 靠确认网/判重回执收幻影 busy）。
+  state.armTurnConfirm?.(sid);
   state.turnStartTimes[sid] = Date.now();
   armBusyWatchdogFor(sid);
   return true;
@@ -964,6 +971,9 @@ export function drainMessageQueue(sessionId) {
   // ①-2: 本次 drain 派发 = 新 turn 起点 ⇒ 取代上一 turn 的终止戳（同 send()）。
   if (sessionId) delete state.lastTerminalAt[sessionId];
   setBusy(sessionId);
+  // busy-stuck-fix：drain 派发腿同款草签（服务端 busy 排队闸判重丢弃时，无 turn
+  // 无终态帧，靠确认网/判重回执收幻影 busy）。
+  state.armTurnConfirm?.(sessionId);
   state.turnStartTimes[sessionId] = Date.now();
 
   // Safety timeout（freezetimeout B2：到点只呈现「仍在处理」，不发 interrupt）
@@ -1040,6 +1050,8 @@ export function injectUserMessage(text, options = {}) {
   // ①-2: 本派发同样是新 turn 起点 ⇒ 取代上一 turn 的终止戳（同 send()/drain）。
   if (sessionId) delete state.lastTerminalAt[sessionId];
   setBusy(sessionId);
+  // busy-stuck-fix：插件卡注入腿同款草签（同上三条派发腿）。
+  state.armTurnConfirm?.(sessionId);
   // Only set timer if not already running — don't reset during active turn
   if (!state.turnStartTimes[sessionId]) state.turnStartTimes[sessionId] = Date.now();
 
@@ -1161,6 +1173,7 @@ export function initInput(view) {
     setActiveView(view);
     const sid = view.sessionId;
     sendWs({type: 'interrupt', sessionId: sid});
+    state.cancelTurnConfirm?.(sid);
     if (sid && state.sessionBusyTimeouts[sid]) {
       clearTimeout(state.sessionBusyTimeouts[sid]);
       delete state.sessionBusyTimeouts[sid];

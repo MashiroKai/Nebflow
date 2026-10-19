@@ -1,0 +1,13 @@
+=== f1-send-queue ===
+ALL PASS
+=== resend-dedup ===
+ALL PASS
+=== msgqueue-recall-attach ===
+
+  6 passed (8.9s)
+=== msgqueue-image-mime ===
+
+  5 passed (6.1s)
+=== tool-heartbeat-timer ===
+    tests/tool-heartbeat-timer.spec.mjs:223:1 › T2b: 真停摆回归（send 路径）——发送后零活动，input.js timer 到点发 interrupt 杀 turn（作者症状路径不回归） 
+  2 passed (9.9s)
