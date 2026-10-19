@@ -1,0 +1,63 @@
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-98bce68b-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98bce68b/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-98bce68b/)
+[info] running (fork) nebflow.Main --home /tmp/nf-w1-home --port 18777 --no-browser
+OpenJDK 64-Bit Server VM warning: Option ZGenerational was deprecated in version 23.0 and will likely be removed in a future release.
+20:51:56.352 [36mINFO [0m nebflow.gateway - LLM log recording: disabled (persisted=none → default off) | retention=armed (3-day window, independent of the write switch)
+20:51:56.559 [36mINFO [0m nebflow.core.sandbox.SandboxRuntime$ - sandbox provider=host — 宿主直跑，无包裹（Bash 不再 fail-closed）
+20:51:56.561 [36mINFO [0m nebflow.gateway - stand 2026.9.20
+20:51:56.561 [36mINFO [0m nebflow.gateway - No LLM provider configured — open the web UI to set up
+20:51:57.097 [36mINFO [0m nebflow.gateway - Boot dispatcher wake: boot=1792414315458-6519 projects=0 woken=0 skipped=0 failed=0
+20:51:57.102 [36mINFO [0m nebflow.gateway - Merge-queue boot sweep: reMounted=0 () alreadyMerged=0 droppedEmpty=0 blocked=0
+20:51:57.135 [36mINFO [0m nebflow.neblink.relay - Starting relay tunnel to NebLink Server
+20:51:57.142 [36mINFO [0m nebflow.neblink - P6 probe: addDataHandler size-after=1 svc=1644179031
+20:51:57.142 [36mINFO [0m nebflow.dropbox - P6 probe: dropbox data handler registered ns=1644179031
+20:51:57.143 [36mINFO [0m nebflow.scheduled-task - Starting scheduled task service (10s poll interval)
+20:51:57.146 [36mINFO [0m nebflow.neblink - P6 probe: addDataHandler size-after=2 svc=1644179031
+20:51:57.146 [36mINFO [0m nebflow.device-delegate - DeviceDelegate receive face armed (channel: delegate-spawn/result/accept) ns=1644179031
+20:51:57.183 [36mINFO [0m nebflow.conn-guard - conn-guard enabled=true wsPerIpCap=64 wsTotalCap=1024 warnPct=80 snapshotSec=60 trusted=[127.0.0.1,::1,0:0:0:0:0:0:0:1]
+20:51:57.488 [36mINFO [0m nebflow.gateway - gateway listening on 0.0.0.0:18777
+20:51:57.488 [36mINFO [0m nebflow.gateway - static tree: disk web-dist at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98bce68b/build/web-dist (fresh vs web/ sources) — -Dstand.webdist=dev forces the dev tree
+20:51:57.489 [36mINFO [0m nebflow.gateway - access URL: http://localhost:18777 (token in ~/.nebflow/auth.json)
+20:51:57.617 [36mINFO [0m nebflow.bridge - Bridge plugin 'feishu' unregistered
+20:51:57.618 [36mINFO [0m nebflow.bridge - Bridge plugin 'weixin-ilink' unregistered
+20:51:57.619 [36mINFO [0m nebflow.bridge - No bridge plugins configured
+20:51:57.626 [36mINFO [0m nebflow.gateway - Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop
+20:51:57.639 [36mINFO [0m nebflow.gateway - Initializing global MCP servers...
+20:51:57.641 [36mINFO [0m nebflow.gateway - MCP servers initialized
+20:51:57.644 [36mINFO [0m nebflow.tools - No external tools loaded
+20:52:29.423 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:52:31.036 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:52:35.253 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:52:43.870 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:52:57.512 [36mINFO [0m nebflow.conn-guard - conn-guard snapshot ws=0/1024 perIpCap=64 trackedIps=1/1024 overflow=0 accepted=0 rejected=0 reqTotal=74 reqUntracked=0 top=[] tunnelReq=0 tunnelRejected=0
+20:52:58.519 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:53:22.272 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:53:24.642 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:53:27.975 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:53:35.506 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:53:40.615 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:53:42.883 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:53:47.105 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:53:56.324 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:53:57.495 [36mINFO [0m nebflow.conn-guard - conn-guard snapshot ws=0/1024 perIpCap=64 trackedIps=1/1024 overflow=0 accepted=0 rejected=0 reqTotal=176 reqUntracked=0 top=[] tunnelReq=0 tunnelRejected=0
+20:54:09.979 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:54:14.341 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:54:20.532 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:54:28.255 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:54:35.504 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:54:50.554 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:54:57.495 [36mINFO [0m nebflow.conn-guard - conn-guard snapshot ws=0/1024 perIpCap=64 trackedIps=1/1024 overflow=0 accepted=0 rejected=0 reqTotal=207 reqUntracked=0 top=[] tunnelReq=0 tunnelRejected=0
+20:55:26.060 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:55:34.889 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:55:37.068 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:55:41.780 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:55:50.682 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:55:57.409 [36mINFO [0m nebflow.conn-guard - conn-guard snapshot ws=0/1024 perIpCap=64 trackedIps=1/1024 overflow=0 accepted=0 rejected=0 reqTotal=236 reqUntracked=0 top=[] tunnelReq=0 tunnelRejected=0
+20:56:09.637 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+20:56:40.208 [36mINFO [0m nebflow.gateway - shutting down...
+[error] nonzero exit code returned from runner: 143
+[error] (Compile / run) nonzero exit code returned from runner: 143
+[error] Total time: 290 s (0:04:50.0), completed 2026年10月19日 20:56:41

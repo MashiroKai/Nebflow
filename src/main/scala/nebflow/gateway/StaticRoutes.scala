@@ -15,17 +15,101 @@ import scala.io.Source
 object StaticRoutes:
 
   /**
-   * P1: true when the esbuild production bundle is packed on the classpath
-   * (sbt -Dnebflow.webdist=1 assembly mounts build/ as a resource dir).
-   * Lazy — the classpath is fixed for the JVM's lifetime, so this resolves
-   * once. Single switch point for the static tree: only the "/" entry
-   * chooses between dist and dev sources; all other static routes keep
-   * serving the web/ source tree (vendor passthrough is byte-identical in
-   * both trees, and the C1 source-mode contract requires web/ paths to stay
-   * green on prod instances too).
+   * W1 (mobile-quickwins 2026-10-20): which static tree the gateway feeds.
+   * Single switch point for the static tree: only the "/" entry and the
+   * /assets prefix choose between dist and dev sources; all other static
+   * routes keep serving the web/ source tree (vendor passthrough is
+   * byte-identical in both trees, and the C1 source-mode contract requires
+   * web/ paths to stay green on prod instances too).
    */
-  lazy val hasBundledDist: Boolean =
-    getClass.getClassLoader.getResource("web-dist/index.html") != null
+  enum StaticSource:
+    /** Dev source tree — the sbt run hot-edit default. */
+    case DevTree
+    /** esbuild bundle packed on the classpath (sbt -D<lower>.webdist=1 assembly). */
+    case BundledDist
+    /** esbuild bundle on disk (build/web-dist under the engine working dir). */
+    case DiskDist(root: os.Path)
+  end StaticSource
+
+  /**
+   * W1 resolution order (mobile-quickwins 2026-10-20):
+   *   1. explicit dev flag — system property `<lowerName>.webdist` (legacy
+   *      `nebflow.webdist` dual-read, same as build.sbt) set to dev / 0 /
+   *      false forces the dev tree (the hot-edit escape hatch);
+   *   2. classpath dist — the jar-packed bundle wins over disk (an assembly
+   *      was a deliberate atomic packaging decision);
+   *   3. disk dist — build/web-dist/index.html under the engine working dir,
+   *      USED ONLY WHEN FRESH: no file under src/main/resources/web is newer
+   *      than the dist index. This is what keeps `sbt run` hot-edit intact —
+   *      the moment a web/ source is edited (or a merge touches the tree),
+   *      the on-disk dist goes stale and the dev tree is served again until
+   *      scripts/build-web.mjs is re-run (the P1 build.sbt guard's "must not
+   *      silently serve the stale dist tree" ruling, enforced at runtime).
+   *      A missing sources dir (installed runtime) counts as fresh.
+   *   4. otherwise dev tree.
+   *
+   * Any filesystem surprise during the freshness walk is a conservative
+   * fallback to the dev tree (never a partial dist).
+   */
+  def resolveStaticSource(
+    lowerName: String,
+    webdistProp: Option[String],
+    classpathDist: Boolean,
+    projectRoot: Option[os.Path]
+  ): StaticSource =
+    val devFlag = webdistProp.exists(v => Set("dev", "0", "false")(v.trim.toLowerCase))
+    if devFlag then StaticSource.DevTree
+    else if classpathDist then StaticSource.BundledDist
+    else
+      projectRoot.flatMap(diskDistRoot) match
+        case Some(root) => StaticSource.DiskDist(root)
+        case None       => StaticSource.DevTree
+  end resolveStaticSource
+
+  /** Disk dist root under `root`, only when it exists AND is fresh vs sources. */
+  private def diskDistRoot(root: os.Path): Option[os.Path] =
+    val index = root / "build" / "web-dist" / "index.html"
+    if os.isFile(index) && distFresh(index, root / "src" / "main" / "resources" / "web")
+    then Some(index / os.up)
+    else None
+
+  /** Dist index mtime must be >= every file under the web/ source tree. */
+  private def distFresh(index: os.Path, sources: os.Path): Boolean =
+    try
+      if !os.isDir(sources) then true // installed runtime: no sources to go stale against
+      else
+        val stamp = os.mtime(index)
+        !os.walk(sources).exists(f => os.isFile(f) && os.mtime(f) > stamp)
+    catch case _: Throwable => false
+  end distFresh
+
+  /**
+   * Production resolution. Lazy — classpath and disk are fixed for the
+   * JVM's lifetime, so this resolves once (first dereference at boot, when
+   * the static routes compose). The decision is announced by GatewayMain's
+   * boot chain via [[staticSourceDescription]] (NebflowLogger returns IO —
+   * it can only fire inside an IO context, never from this lazy val).
+   */
+  lazy val staticSource: StaticSource =
+    resolveStaticSource(
+      Branding.lowerName,
+      sys.props
+        .get(s"${Branding.lowerName}.webdist")
+        .orElse(sys.props.get("nebflow.webdist")),
+      getClass.getClassLoader.getResource("web-dist/index.html") != null,
+      Some(os.pwd)
+    )
+  end staticSource
+
+  /** Boot-visibility line for GatewayMain: which static tree is being fed. */
+  def staticSourceDescription: String =
+    staticSource match
+      case StaticSource.DevTree => "static tree: dev web/ sources"
+      case StaticSource.BundledDist =>
+        "static tree: bundled web-dist (classpath) — -D" + Branding.lowerName + ".webdist=dev forces the dev tree"
+      case StaticSource.DiskDist(root) =>
+        "static tree: disk web-dist at " + root + " (fresh vs web/ sources) — -D" + Branding.lowerName + ".webdist=dev forces the dev tree"
+  end staticSourceDescription
 
   /**
    * L1 rebrand: the frontend brand contract. window.__BRAND__ is the only
@@ -124,20 +208,48 @@ object StaticRoutes:
   def indexWithBrand(indexResource: String): IO[Response[IO]] =
     IO.blocking(readClasspathResourceUtf8(indexResource)).flatMap {
       case None => NotFound()
-      case Some(html) =>
-        val served = injectBeforeHeadClose(html, brandScriptTag).getOrElse(html)
-        val bytes = served.getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        IO.pure(
-          Response[IO](Status.Ok)
-            .withBodyStream(Stream.emits(bytes))
-            .withContentType(`Content-Type`(MediaType.text.html, Charset.`UTF-8`))
-            .putHeaders(
-              "Content-Length" -> bytes.length.toString,
-              "Cache-Control" -> "no-cache"
-            )
-        )
+      case Some(html) => brandInjectedResponse(html)
     }
   end indexWithBrand
+
+  /**
+   * W1: the disk twin of [[indexWithBrand]] — same brand injection, same
+   * response contract (no-cache, no validators — the body is content-
+   * generated, not the file bytes), fed from build/web-dist/index.html.
+   * A read failure (dist vanished mid-boot, permissions) degrades to 404
+   * rather than a 500 — the entry must stay a clean miss.
+   */
+  def indexWithBrandFile(file: os.Path): IO[Response[IO]] =
+    IO.blocking(new String(os.read.bytes(file), java.nio.charset.StandardCharsets.UTF_8))
+      .flatMap(brandInjectedResponse)
+      .handleErrorWith(_ => NotFound())
+  end indexWithBrandFile
+
+  /** Shared index response build: brand injection + raw-bytes no-cache response. */
+  private def brandInjectedResponse(html: String): IO[Response[IO]] =
+    val served = injectBeforeHeadClose(html, brandScriptTag).getOrElse(html)
+    val bytes = served.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+    IO.pure(
+      Response[IO](Status.Ok)
+        .withBodyStream(Stream.emits(bytes))
+        .withContentType(`Content-Type`(MediaType.text.html, Charset.`UTF-8`))
+        .putHeaders(
+          "Content-Length" -> bytes.length.toString,
+          "Cache-Control" -> "no-cache"
+        )
+    )
+  end brandInjectedResponse
+
+  /**
+   * W1: the "/" entry point dispatching on [[staticSource]] — bundled
+   * classpath dist, fresh disk dist, or the dev tree. Same brand injection
+   * and response contract on every branch.
+   */
+  def indexResponse: IO[Response[IO]] = staticSource match
+    case StaticSource.BundledDist     => indexWithBrand("web-dist/index.html")
+    case StaticSource.DiskDist(root)  => indexWithBrandFile(root / "index.html")
+    case StaticSource.DevTree         => indexWithBrand("web/index.html")
+  end indexResponse
 
   private def readClasspathResourceUtf8(name: String): Option[String] =
     Option(getClass.getClassLoader.getResourceAsStream(name)).map { in =>
@@ -148,18 +260,32 @@ object StaticRoutes:
 
   /**
    * P1: serve the bundled asset tree (any depth under the /assets prefix —
-   * hashed entry and lazy chunks produced by build-web.mjs). Guard pattern
-   * copied from jsRoutes: trailing-slash (directory request) is rejected,
-   * path traversal (`..` and backslash) is rejected, and the lookup is a
-   * plain classpath resource join. Serves ONLY the web-dist tree — the
-   * hashed names are a dist-build artifact and never exist in dev sources.
-   * In dev every /assets request 404s; harmless, the dev index never
-   * references the /assets prefix.
+   * hashed entry and lazy chunks produced by build-web.mjs). W1
+   * (mobile-quickwins 2026-10-20): dispatches on [[staticSource]] —
+   *   · BundledDist: classpath web-dist/assets (jar-packed, unchanged);
+   *   · DiskDist: the same tree read from build/web-dist/assets on disk
+   *     (the sbt run leg — same esbuild output, same guard chain, plus a
+   *     realpath-containment fence mirroring uploadsServe);
+   *   · DevTree: 404 (unchanged — the dev index never references /assets,
+   *     every hashed name is a dist-build artifact).
    *
-   * Standalone (zero class deps) so it is directly unit-testable; composed
-   * ahead of the instance routes like jsRoutes.
+   * W2 (same batch): the hashed names ARE the cache key — the response is
+   * `public, max-age=31536000, immutable`. The old no-cache turned every
+   * revisit into ~200 validator round-trips (tunnel: ~1 RTT each — the #2
+   * root cause in evidence/20261019_183728_mobile-boot-waterfall). A rebuilt
+   * dist changes the hashes, so immutability can never serve stale bytes;
+   * index.html stays no-cache and is the sole freshness judge.
+   *
+   * Guard pattern copied from jsRoutes: trailing-slash (directory request)
+   * is rejected, path traversal (`..` and backslash) is rejected, and the
+   * lookup is a plain resource/file join.
+   *
+   * Standalone via [[assetsRoutesFor]] so it is directly unit-testable;
+   * composed ahead of the instance routes like jsRoutes.
    */
-  def assetsRoutes: HttpRoutes[IO] = HttpRoutes.of[IO] {
+  def assetsRoutes: HttpRoutes[IO] = assetsRoutesFor(staticSource)
+
+  def assetsRoutesFor(source: StaticSource): HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ GET -> _ if req.uri.path.renderString.startsWith("/assets/") =>
       if req.uri.path.endsWithSlash then NotFound()
       else
@@ -168,13 +294,28 @@ object StaticRoutes:
         else if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
         else
           val path = relParts.mkString("/")
-          StaticFile
-            .fromResource(s"web-dist/assets/$path", Some(req))
-            .map(_.putHeaders("Cache-Control" -> "no-cache"))
-            .getOrElseF(NotFound())
+          source match
+            case StaticSource.BundledDist =>
+              StaticFile
+                .fromResource(s"web-dist/assets/$path", Some(req))
+                .map(_.putHeaders("Cache-Control" -> HashedAssetCacheControl))
+                .getOrElseF(NotFound())
+            case StaticSource.DiskDist(root) =>
+              val base = root / "assets"
+              val file = base / os.RelPath(path)
+              if file.startsWith(base) && os.isFile(file) then
+                StaticFile
+                  .fromPath(fs2.io.file.Path(file.toString), Some(req))
+                  .map(_.putHeaders("Cache-Control" -> HashedAssetCacheControl))
+                  .getOrElseF(NotFound())
+              else NotFound()
+            case StaticSource.DevTree => NotFound()
         end if
       end if
   }
+
+  /** W2: hashed dist assets are content-addressed — cache for a year, immutable. */
+  val HashedAssetCacheControl: String = "public, max-age=31536000, immutable"
 
   /**
    * G1: serve user-uploaded attachments from
