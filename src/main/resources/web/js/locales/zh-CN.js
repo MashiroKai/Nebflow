@@ -615,6 +615,9 @@ export default {
   'input.voiceError': '语音输入不可用，请使用 Chrome 浏览器',
   'input.queued': '排队中',
   'input.sendImmediate': '立即发送',
+  // f1-send-queue（2026-10-19）：断线入队的待送达小标 tooltip + 队列溢出告警。
+  'chat.pendingSend': '待送达 · 重连后自动补发',
+  'input.queueOverflow': '消息队列已满（100 条）：最早的一条已丢弃',
   'input.pasteTooLarge': '粘贴内容过大（>300KB），已改为直接插入文本',
   'input.removeQueued': '移除',
   // fwdguard-impl (2026-09-17)：空文本 + 纯引用（转发）帧的闸提示 —— 该形态会被

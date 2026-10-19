@@ -427,14 +427,28 @@ export function clearBusy(sessionId) {
 }
 
 // ---------- User bubble ----------
+
+/** f1-send-queue：待送达小标（时钟）—— 离线入队乐观气泡的 footer 标注。
+ *  视觉对齐 meta 行既有语言（与 .msg-copy/.msg-recall 同档 11px 灰小标），
+ *  只加小标不改布局；补发送达后由 input.js flipOfflineMark 摘除。 */
+function createPendingSendMark() {
+  const mark = document.createElement('span');
+  mark.className = 'msg-pending-mark';
+  mark.title = t('chat.pendingSend');
+  mark.setAttribute('aria-label', t('chat.pendingSend'));
+  mark.innerHTML = statusIcon('clock', 11, '');
+  return mark;
+}
+
 /**
  * Render the user's own message row.
  * @param {string} text
  * @param {Array} attachments
  * @param {number} [timestamp]
- * @param {{msgId?: string}} [opts]  quote-message 一期（spec §3.6/§3.4）：msgId =
- *   本行的稳定 id（用户发送腿传 clientMessageId，与引擎帧同键；其余调用点缺省
+ * @param {{msgId?: string, pending?: boolean}} [opts]  quote-message 一期（spec §3.6/§3.4）：
+ *   msgId = 本行的稳定 id（用户发送腿传 clientMessageId，与引擎帧同键；其余调用点缺省
  *   生成 c-<rand>）。行挂 data-msg-id = 引用跳转的唯一寻址面。
+ *   f1-send-queue：pending = true ⇒ footer 前置「待送达」时钟小标（离线入队的乐观气泡）。
  */
 export function renderUserBubble(text, attachments, timestamp, opts) {
   const chat = activeView.dom.chat;
@@ -500,7 +514,11 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
 
   // Timestamp + copy button (unified v1.2 footer pill)
   const ts = timestamp || Date.now();
-  row.appendChild(createMsgFooterBadge(ts, text));
+  const badge = createMsgFooterBadge(ts, text);
+  // f1-send-queue：待送达小标前置（badge 为 inline-flex gap:6px，前置即有自然间距，
+  // 不动 time/copy 与分隔符的既有序）。
+  if (opts && opts.pending) badge.prepend(createPendingSendMark());
+  row.appendChild(badge);
   // quote-message 一期（spec §2.1）：用户文本行右键 = 复制 + 引用（好友窗 msgmenu
   // 同壳 showPopupMenu；引用走 msgQuote.startQuote 替换语义）。
   attachQuoteMenu(row, {
@@ -515,6 +533,9 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
   // whatever the conversation appends next (AC-S4's DOM shape).
   const mediaRow = buildUserMediaRow(mediaAtts);
   if (mediaRow) {
+    // f1-send-queue：媒体卡随行挂同一 msgId —— 离线乐观气泡被撤回/移除/溢出丢弃时
+    // 「消息行 + 媒体卡」两排一起收（input.js removeOfflineBubble 的寻址面）。
+    mediaRow.dataset.msgId = row.dataset.msgId;
     // 用户附件点击统一批（2026-10-08）：live 发送时行先于后端落盘渲染，item 无
     // path —— 媒体整面点击只能落到 pathless 灯箱、文件卡点击是死的。把行登记进
     // popArtifacts 的待补表，`attachmentsSaved` 帧（后端 ui.json 落盘后回传）到达
