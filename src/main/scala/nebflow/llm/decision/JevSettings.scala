@@ -19,7 +19,6 @@ final case class JevSettings(
   provider: String,
   endpoint: String,
   model: String,
-  timeoutMs: Long,
   token: Option[String],
   choiceHighBasePolicy: Option[String],
   health: Option[DecisionHealthPort]
@@ -62,7 +61,6 @@ object JevSettings:
               else DecisionProvider.DefaultTypesafeEndpoint
             )
           val model = c.model.filter(_.nonEmpty).getOrElse(DecisionProvider.DefaultModel)
-          val timeout = c.timeoutMs.filter(_ > 0).getOrElse(DecisionProvider.DefaultTimeoutMs)
           val token = readSecretToken(c.keyRef)
           val keyRefExpected = c.keyRef.map(_.trim).exists(_.nonEmpty)
           if keyRefExpected && token.isEmpty then
@@ -78,7 +76,6 @@ object JevSettings:
                 provider = provider,
                 endpoint = endpoint,
                 model = model,
-                timeoutMs = timeout,
                 token = token,
                 choiceHighBasePolicy = c.choiceHighBasePolicy.filter(_.nonEmpty),
                 health = health

@@ -49,7 +49,6 @@ class LlmAllocatorSpec extends CatsEffectSuite:
   private def llm(reply: Option[String], calls: TrieMap[String, String] = TrieMap.empty): LlmAllocator =
     new LlmAllocator(
       params => IO { calls.update(params.model, params.messages.headOption.map(_.textContent).getOrElse("")); reply },
-      timeoutMs = 15000L,
       candidate = IO.pure(
         Some(
           ModelCandidate(
@@ -114,8 +113,6 @@ class LlmAllocatorSpec extends CatsEffectSuite:
               )
             )
           )
-      ,
-      15000L
     )
 
   private def jevFailing(kind: DecisionError): JevAllocator =
@@ -123,8 +120,6 @@ class LlmAllocatorSpec extends CatsEffectSuite:
       new DecisionProvider[IO]:
         def id: String = "typesafe-jev"
         def predict(req: DecisionRequest) = IO.pure(Left(kind))
-      ,
-      15000L
     )
 
   private def machine(
@@ -140,7 +135,6 @@ class LlmAllocatorSpec extends CatsEffectSuite:
       configured = true,
       enabled = true,
       provider = "typesafe-jev",
-      timeoutMs = 15000L,
       choiceHighBasePolicy = ""
     )
   )

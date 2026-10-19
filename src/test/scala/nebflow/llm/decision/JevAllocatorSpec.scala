@@ -41,7 +41,7 @@ class JevAllocatorSpec extends CatsEffectSuite:
   // ── the question set (#2, #7) ──────────────────────────────────────────
 
   test("the question set is one batched call with need_/fit_ pairs") {
-    val alloc = new JevAllocator(NoopProvider, 15000L)
+    val alloc = new JevAllocator(NoopProvider)
     val qs = alloc.questionsFor(catalog)
     assertEquals(qs.size, catalog.size * 2, "one need_ + one fit_ per catalog entry")
     assertEquals(
@@ -65,7 +65,7 @@ class JevAllocatorSpec extends CatsEffectSuite:
   }
 
   test("the whole set rides ONE request (the batch property)") {
-    val alloc = new JevAllocator(NoopProvider, 15000L)
+    val alloc = new JevAllocator(NoopProvider)
     val body = JevWireCodec.requestBody(DecisionRequest("t", alloc.questionsFor(catalog)), "jev-latest")
     val questions = body.hcursor.downField("questions").focus.flatMap(_.asObject)
     assertEquals(questions.map(_.size), Some(6), "all six questions in one body")
@@ -74,7 +74,7 @@ class JevAllocatorSpec extends CatsEffectSuite:
   // ── membership (#7) ────────────────────────────────────────────────────
 
   test("membership is probabilities[yes] >= 0.5 and is read from the choice answer") {
-    val alloc = new JevAllocator(NoopProvider, 15000L)
+    val alloc = new JevAllocator(NoopProvider)
     val resp = DecisionResponse(
       model = Some("jev-1.13.0"),
       answers = Map(
@@ -92,7 +92,7 @@ class JevAllocatorSpec extends CatsEffectSuite:
     // The measured trap: using fit >= 1.0 as the threshold collapsed exactness
     // to 5%. Even a maximal fit score must not add a member whose need_ answer
     // says no.
-    val alloc = new JevAllocator(NoopProvider, 15000L)
+    val alloc = new JevAllocator(NoopProvider)
     val resp = DecisionResponse(
       model = None,
       answers = Map(
@@ -107,21 +107,21 @@ class JevAllocatorSpec extends CatsEffectSuite:
   test("a noul answer can never satisfy a need_ question") {
     // Structural: the accessor returns None across the type boundary, so a
     // noul — however high — cannot be read as a yes.
-    val alloc = new JevAllocator(NoopProvider, 15000L)
+    val alloc = new JevAllocator(NoopProvider)
     val resp = DecisionResponse(None, Map("need_backend-dev" -> DecisionAnswer.Noul(0.99)), None)
     assertEquals(alloc.select(resp, catalog), Nil)
     assertEquals(DecisionAnswer.pYes(DecisionAnswer.Noul(0.99)), None)
   }
 
   test("a missing need_ answer shrinks the set conservatively rather than granting") {
-    val alloc = new JevAllocator(NoopProvider, 15000L)
+    val alloc = new JevAllocator(NoopProvider)
     assertEquals(alloc.select(DecisionResponse(None, Map.empty, None), catalog), Nil)
   }
 
   // ── the empty catalog is a legal state, not a failure ──────────────────
 
   test("an empty catalog yields the empty set without spending a call") {
-    val alloc = new JevAllocator(NoopProvider, 15000L)
+    val alloc = new JevAllocator(NoopProvider)
     withTempDataRoot { tmp =>
       val before = NoopProvider.calls
       for
@@ -148,7 +148,7 @@ class JevAllocatorSpec extends CatsEffectSuite:
         def id: String = "typesafe-jev"
         def predict(req: DecisionRequest) = IO.pure(Left(DecisionError.Server("HTTP 500")))
       for
-        out <- new JevAllocator(failing, 15000L).allocate("some task", catalog)
+        out <- new JevAllocator(failing).allocate("some task", catalog)
         _ = assert(out.isInstanceOf[JevAllocation.FellBack], s"expected a fallback, got: $out")
         lines <- IO(os.read(tmp / "logs" / "jev-allocation.jsonl").trim.linesIterator.toList)
         _ = assertEquals(lines.size, 1, "a fallback must leave exactly one visibility event")
@@ -161,7 +161,7 @@ class JevAllocatorSpec extends CatsEffectSuite:
       val timingOut = new DecisionProvider[IO]:
         def id: String = "typesafe-jev"
         def predict(req: DecisionRequest) = IO.pure(Left(DecisionError.Timeout("read timed out")))
-      new JevAllocator(timingOut, 15000L).allocate("t", catalog).map { out =>
+      new JevAllocator(timingOut).allocate("t", catalog).map { out =>
         assertEquals(out, JevAllocation.FellBack(JevFallbackKind.Timeout, "decision API timeout: read timed out"))
       }
     }
@@ -179,8 +179,8 @@ class JevAllocatorSpec extends CatsEffectSuite:
         def id: String = "typesafe-jev"
         def predict(req: DecisionRequest) = IO.pure(Left(DecisionError.Timeout("read deadline exceeded")))
       for
-        a <- new JevAllocator(misleading, 15000L).allocate("t", catalog)
-        b <- new JevAllocator(silent, 15000L).allocate("t", catalog)
+        a <- new JevAllocator(misleading).allocate("t", catalog)
+        b <- new JevAllocator(silent).allocate("t", catalog)
       yield
         assertEquals(a.asInstanceOf[JevAllocation.FellBack].kind, JevFallbackKind.Failure)
         assertEquals(b.asInstanceOf[JevAllocation.FellBack].kind, JevFallbackKind.Timeout)
@@ -192,7 +192,7 @@ class JevAllocatorSpec extends CatsEffectSuite:
       val exploding = new DecisionProvider[IO]:
         def id: String = "typesafe-jev"
         def predict(req: DecisionRequest) = IO.raiseError(new RuntimeException("boom"))
-      new JevAllocator(exploding, 15000L).allocate("t", catalog).map { out =>
+      new JevAllocator(exploding).allocate("t", catalog).map { out =>
         assert(out.isInstanceOf[JevAllocation.FellBack], s"a defect must not escape: $out")
       }
     }
@@ -216,7 +216,7 @@ class JevAllocatorSpec extends CatsEffectSuite:
           )
         )
       for
-        out <- new JevAllocator(fixed, 15000L).allocate("t", catalog)
+        out <- new JevAllocator(fixed).allocate("t", catalog)
         _ = assertEquals(out, JevAllocation.Allocated(List("backend-dev")))
         lines <- IO(os.read(tmp / "logs" / "jev-allocation.jsonl").trim.linesIterator.toList)
         _ = assert(lines.head.contains("\"event\":\"allocated\""), s"success must be recorded: ${lines.head}")
@@ -235,7 +235,7 @@ class JevAllocatorSpec extends CatsEffectSuite:
     val seen = new java.util.concurrent.atomic.AtomicReference[String]("")
     val capture = capturing(seen)
     withTempDataRoot { _ =>
-      new JevAllocator(capture, 15000L, stateCapChars = 100000).allocate("fix the Scala actor", catalog).map { _ =>
+      new JevAllocator(capture, stateCapChars = 100000).allocate("fix the Scala actor", catalog).map { _ =>
         val state = seen.get()
         for e <- catalog do
           assert(
@@ -252,7 +252,7 @@ class JevAllocatorSpec extends CatsEffectSuite:
   test("the catalog keeps catalog order and both section headers are present") {
     val seen = new java.util.concurrent.atomic.AtomicReference[String]("")
     withTempDataRoot { _ =>
-      new JevAllocator(capturing(seen), 15000L, stateCapChars = 100000).allocate("t", catalog).map { _ =>
+      new JevAllocator(capturing(seen), stateCapChars = 100000).allocate("t", catalog).map { _ =>
         val state = seen.get()
         assert(state.contains("=== INSTALLED PLUGIN CAPABILITY CATALOG ==="), s"catalog header missing:\n$state")
         assert(state.contains("=== TASK BRIEF ==="), s"brief header missing:\n$state")
@@ -275,7 +275,7 @@ class JevAllocatorSpec extends CatsEffectSuite:
     // ("text", "executed"), so a whole-state count measures the wrong thing.
     val seen = new java.util.concurrent.atomic.AtomicReference[String]("")
     withTempDataRoot { _ =>
-      new JevAllocator(capturing(seen), 15000L, stateCapChars = 100).allocate("x" * 5000, catalog).map { _ =>
+      new JevAllocator(capturing(seen), stateCapChars = 100).allocate("x" * 5000, catalog).map { _ =>
         val state = seen.get()
         assertEquals(briefOf(state), "x" * 100, s"the brief must be capped at the budget:\n$state")
         for e <- catalog do
@@ -288,7 +288,7 @@ class JevAllocatorSpec extends CatsEffectSuite:
     // The instructions are model input: the scorer's sentences ARE the method.
     // Pinned verbatim so a later paraphrase fails here instead of silently
     // moving the methodology while leaving every other assertion green.
-    val alloc = new JevAllocator(NoopProvider, 15000L)
+    val alloc = new JevAllocator(NoopProvider)
     val qs = alloc.questionsFor(List(CatalogEntry("backend-dev", "Scala backend development")))
     assertEquals(
       qs.head.instructions,
@@ -307,7 +307,7 @@ class JevAllocatorSpec extends CatsEffectSuite:
     // `setscore_one.mjs:75-78` spells the no-label in full. The label is part of
     // the question the model answers, so a shortened variant is a methodology
     // change wearing the clothes of a copy-edit.
-    val alloc = new JevAllocator(NoopProvider, 15000L)
+    val alloc = new JevAllocator(NoopProvider)
     val need = alloc.questionsFor(catalog).head.asInstanceOf[DecisionQuestion.Choice]
     assertEquals(
       need.criteria,
@@ -320,7 +320,7 @@ class JevAllocatorSpec extends CatsEffectSuite:
 
   test("the state handed over is capped so a huge task cannot blow the budget") {
     val seen = new java.util.concurrent.atomic.AtomicReference[String]("")
-    val alloc = new JevAllocator(capturing(seen), 15000L, stateCapChars = 100)
+    val alloc = new JevAllocator(capturing(seen), stateCapChars = 100)
     withTempDataRoot { _ =>
       alloc.allocate("x" * 5000, catalog).map { _ =>
         assertEquals(briefOf(seen.get()), "x" * 100, "the brief must be truncated to the cap")

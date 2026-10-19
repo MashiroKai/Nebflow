@@ -106,7 +106,7 @@ class JevShadowSpec extends CatsEffectSuite:
   test("the shadow records both arms and flags divergence, changing nothing") {
     withTempDataRoot { tmp =>
       val shadow =
-        new JevShadowEvaluator(Some(new JevAllocator(yesProvider(Set("backend-dev")), 15000L)), enabled = true)
+        new JevShadowEvaluator(Some(new JevAllocator(yesProvider(Set("backend-dev")))), enabled = true)
       for
         rec <- shadow.evaluate("n-1", "task", catalog, declaredCapabilities = Nil, keyProvided = false)
         _ = assert(rec.isDefined, "the shadow must produce a record when enabled")
@@ -125,7 +125,7 @@ class JevShadowSpec extends CatsEffectSuite:
   test("agreement is recorded as non-divergence when the declared set matches") {
     withTempDataRoot { _ =>
       val shadow =
-        new JevShadowEvaluator(Some(new JevAllocator(yesProvider(Set("backend-dev")), 15000L)), enabled = true)
+        new JevShadowEvaluator(Some(new JevAllocator(yesProvider(Set("backend-dev")))), enabled = true)
       shadow.evaluate("n-1", "t", catalog, declaredCapabilities = List("backend-dev"), keyProvided = true).map { rec =>
         val r = rec.get
         assertEquals(r.legacySatisfied, true)
@@ -137,7 +137,7 @@ class JevShadowSpec extends CatsEffectSuite:
 
   test("a disabled shadow writes nothing") {
     withTempDataRoot { _ =>
-      val shadow = new JevShadowEvaluator(Some(new JevAllocator(yesProvider(Set.empty), 15000L)), enabled = false)
+      val shadow = new JevShadowEvaluator(Some(new JevAllocator(yesProvider(Set.empty))), enabled = false)
       for
         rec <- shadow.evaluate("n", "t", catalog, Nil, keyProvided = true)
         _ = assertEquals(rec, None)
@@ -170,7 +170,7 @@ class JevShadowSpec extends CatsEffectSuite:
       val exploding = new DecisionProvider[IO]:
         def id: String = "typesafe-jev"
         def predict(req: DecisionRequest) = IO.raiseError(new RuntimeException("shadow boom"))
-      val shadow = new JevShadowEvaluator(Some(new JevAllocator(exploding, 15000L)), enabled = true)
+      val shadow = new JevShadowEvaluator(Some(new JevAllocator(exploding)), enabled = true)
       for
         rec <- shadow.evaluate("n", "t", catalog, Nil, keyProvided = true)
         // The allocator already fails open, so a record IS produced — the point
@@ -191,7 +191,7 @@ class JevShadowSpec extends CatsEffectSuite:
       val exploding = new DecisionProvider[IO]:
         def id: String = "typesafe-jev"
         def predict(req: DecisionRequest) = IO.raiseError(new RuntimeException("shadow boom"))
-      val shadow = new JevShadowEvaluator(Some(new JevAllocator(exploding, 15000L)), enabled = true)
+      val shadow = new JevShadowEvaluator(Some(new JevAllocator(exploding)), enabled = true)
       // The caller declared the empty set and the fallback produced the empty
       // set, so the SET term is false; both duty verdicts are satisfied
       // (key present / action ran), so the VERDICT term is false too.
@@ -213,7 +213,7 @@ class JevShadowSpec extends CatsEffectSuite:
       val exploding = new DecisionProvider[IO]:
         def id: String = "typesafe-jev"
         def predict(req: DecisionRequest) = IO.raiseError(new RuntimeException("shadow boom"))
-      val shadow = new JevShadowEvaluator(Some(new JevAllocator(exploding, 15000L)), enabled = true)
+      val shadow = new JevShadowEvaluator(Some(new JevAllocator(exploding)), enabled = true)
       // Both arms satisfied, so the verdict term is false; the SET term is
       // recorded honestly (empty produced vs non-empty declared) because
       // `fallbackReason` is what distinguishes a degraded run from a genuine

@@ -13,10 +13,19 @@ import scala.concurrent.duration.*
  *
  * Mirrors the standalone-search leg's direct-call shape
  * (`SearchProviderResolver.executeStandaloneSearch`, `:367`): the shared
- * connection-pooled backend, a per-call read timeout, and HTTP-status error
- * classification. It never touches `LlmHandle`, never spends model tokens and
- * never consults model-provider health — the decision face has its own health
- * channel exactly as search does.
+ * connection-pooled backend and HTTP-status error classification. It never
+ * touches `LlmHandle`, never spends model tokens and never consults
+ * model-provider health — the decision face has its own health channel exactly
+ * as search does.
+ *
+ * 🔴 ZERO-TIMEOUT (2026-10-19 author decision, 「stand 设计不要有任何超时控制」):
+ * NO read timeout is set on the decision call — the former per-call
+ * `readTimeout(15s)` (the `jev.timeoutMs` / `DefaultTimeoutMs` allocation
+ * deadline) is demolished. Call completion is expressed through the monitoring
+ * face ([[DecisionHealthPort]] record points + `GET /api/decision/health`),
+ * never by a timer kill. The only remaining transport bound is
+ * `SharedBackend`'s CONNECT timeout (connection establish — network
+ * infrastructure, a different axis).
  */
 private[decision] object DecisionHttpTransport:
 
@@ -34,8 +43,7 @@ private[decision] object DecisionHttpTransport:
   def post(
     endpoint: String,
     token: String,
-    body: String,
-    timeoutMs: Long
+    body: String
   ): IO[Either[DecisionError, String]] =
     IO.blocking {
       try
@@ -44,7 +52,9 @@ private[decision] object DecisionHttpTransport:
           .header("Authorization", s"Bearer $token")
           .header("Content-Type", "application/json")
           .body(body)
-          .readTimeout(timeoutMs.millis)
+          // sttp otherwise applies its own 60s default read timeout — an
+          // EXPLICIT Undefined is the only form that disables the kill.
+          .readTimeout(Duration.Undefined)
           .response(asStringAlways)
         val resp = request.send(SharedBackend.instance)
         if resp.code.isSuccess then Right(resp.body)

@@ -1,0 +1,4 @@
+{"what": "keyRef before (panel-stored raw key value)", "keyRef_prefix": "apikey_2", "len": 107, "sha256_16": "e233951a97564733"}
+{"what": "secrets/typesafe-api-key content", "prefix": "apikey_2", "len": 107, "sha256_16": "e233951a97564733", "content_matches_panel_value": true}
+{"what": "keyRef after alignment", "keyRef": "typesafe-api-key", "endpoint": "https://api.typesafe.ai/v1/systemone"}
+{"what": "non-jev sections untouched", "ok": true}

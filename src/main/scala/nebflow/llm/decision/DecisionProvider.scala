@@ -250,11 +250,15 @@ trait DecisionProvider[F[_]]:
 /**
  * Provider ids and shared constants of the decision face.
  *
- * `timeoutMs` axis warning (P0 #6): this timeout is the ALLOCATION CALL
- * deadline — how long the caller waits for a decision before falling back.
- * It is a DIFFERENT axis from the R6 tool-authorization budget
- * (`Delegate.timeout` -> `Defaults.declaredToolTimeoutMs`), which is the
- * blocking-tool judgement window. Two different questions; do not conflate.
+ * 🔴 ZERO-TIMEOUT (2026-10-19 author decision, 「stand 设计不要有任何超时控制」):
+ * the decision face carries NO wall-clock budget. The former allocation-call
+ * deadline (`DefaultTimeoutMs = 15_000` + the `jev.timeoutMs` config knob) is
+ * DEMOLISHED — decision-call completion is expressed through the monitoring
+ * face ([[DecisionHealthPort]] record points + `GET /api/decision/health`),
+ * never by a timer kill. This is the ALLOCATION axis only; the judge machine's
+ * own budget (`DelegateJudgeMachine.DefaultTimeoutMs` / `judge.timeoutMs`) and
+ * the network-layer infrastructure timeouts (LLM adapter read timeout, search
+ * leg, connect timeout on `SharedBackend`) are separate axes, untouched here.
  */
 object DecisionProvider:
 
@@ -273,14 +277,6 @@ object DecisionProvider:
   val DefaultLayaEndpoint: String = "http://127.0.0.1:8080/predict"
 
   val DefaultModel: String = "jev-latest"
-
-  /**
-   * Allocation-call deadline default. Mirrors the standalone-search leg's
-   * fixed timeout (`StandaloneSearchConfig.TimeoutMs = 15_000`) rather than
-   * inventing a number: the measured decision latency median is ~0.9s, so 15s
-   * is a generous cap that still bounds dispatch latency.
-   */
-  val DefaultTimeoutMs: Long = 15_000L
 
   /** Capacity threshold above which LAYA precision degrades (card §A.2.4 ②). */
   val LayaChoiceHighBaseThreshold: Int = 20

@@ -33,7 +33,6 @@ class JevGateSpec extends CatsEffectSuite:
       configured = true,
       enabled = true,
       provider = "typesafe-jev",
-      timeoutMs = 15000L,
       choiceHighBasePolicy = ""
     )
     assertEquals(JevGate.effective(on), JevGateOutcome.Applied(on))
@@ -51,7 +50,6 @@ class JevGateSpec extends CatsEffectSuite:
       configured = true,
       enabled = true,
       provider = "typesafe-jev",
-      timeoutMs = 15000L,
       choiceHighBasePolicy = ""
     )
     assertEquals(JevGate.effective(base.copy(provider = "")), JevGateOutcome.Off(JevGateReason.ProviderMissing))
@@ -92,21 +90,21 @@ class JevGateSpec extends CatsEffectSuite:
         _ <- IO(
           os.write.over(
             tmp / "nebflow.json",
-            """{"jev":{"enabled":true,"provider":"laya","timeoutMs":2500,"choiceHighBasePolicy":"warn"}}"""
+            """{"jev":{"enabled":true,"provider":"laya","choiceHighBasePolicy":"warn"}}"""
           )
         )
         snap <- JevConfigReader.snapshot
         _ = assert(snap.configured)
         _ = assert(snap.enabled)
         _ = assertEquals(snap.provider, "laya")
-        _ = assertEquals(snap.timeoutMs, 2500L)
         _ = assertEquals(snap.choiceHighBasePolicy, "warn")
         out <- JevConfigReader.outcome
         _ = assert(JevGate.isApplied(snap), s"expected applied, got: $out")
-        // A non-positive deadline is not a deadline: it reads as unset.
+        // 零超时（2026-10-19 作者拍板）：快照不再携带 `timeoutMs`——旧文件里的
+        // 残留键被忽略（零迁移），分配链无 wall-clock 预算可言。
         _ <- IO(os.write.over(tmp / "nebflow.json", """{"jev":{"enabled":true,"provider":"laya","timeoutMs":0}}"""))
-        zero <- JevConfigReader.snapshot
-        _ = assertEquals(zero.timeoutMs, 0L)
+        legacy <- JevConfigReader.snapshot
+        _ = assert(legacy.enabled, "a legacy config carrying the removed knob still reads")
       yield ()
     }
   }

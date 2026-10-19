@@ -41,11 +41,12 @@ object JevConfigReader:
 
   private def readBlock(o: io.circe.JsonObject): JevGateSnapshot =
     val c = Json.fromJsonObject(o).hcursor
+    // 零超时（2026-10-19 作者拍板）：`timeoutMs` 配置位已拆——旧文件里的残留键
+    // 在此被忽略（deriveDecoder/downField 只读在册键，零迁移）。
     JevGateSnapshot(
       configured = true,
       enabled = c.downField("enabled").as[Boolean].toOption.getOrElse(false),
       provider = c.downField("provider").as[String].toOption.getOrElse(""),
-      timeoutMs = c.downField("timeoutMs").as[Long].toOption.filter(_ > 0).getOrElse(0L),
       choiceHighBasePolicy = c.downField("choiceHighBasePolicy").as[String].toOption.getOrElse("")
     )
 

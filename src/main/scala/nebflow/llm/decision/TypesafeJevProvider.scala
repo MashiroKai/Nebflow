@@ -20,7 +20,6 @@ final class TypesafeJevProvider(
   endpoint: String,
   model: String,
   token: String,
-  timeoutMs: Long,
   health: Option[DecisionHealthPort]
 ) extends DecisionProvider[IO]:
 
@@ -30,7 +29,7 @@ final class TypesafeJevProvider(
     val m = req.model.filter(_.nonEmpty).getOrElse(model)
     val body = JevWireCodec.requestBody(req, m).noSpaces
     DecisionHttpTransport
-      .post(endpoint, token, body, timeoutMs)
+      .post(endpoint, token, body)
       .map(_.flatMap(JevWireCodec.parseResponse))
       .flatTap(outcome => DecisionHttpTransport.record(health, outcome))
 
@@ -52,7 +51,6 @@ object TypesafeJevProvider:
       endpoint = settings.endpoint,
       model = settings.model,
       token = settings.token.getOrElse(""),
-      timeoutMs = settings.timeoutMs,
       health = settings.health
     )
 end TypesafeJevProvider

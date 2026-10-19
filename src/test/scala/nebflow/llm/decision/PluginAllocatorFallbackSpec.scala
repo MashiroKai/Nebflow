@@ -4,14 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import munit.CatsEffectSuite
-import nebflow.core.jev.{
-  CatalogEntry,
-  JevAllocation,
-  JevGateOutcome,
-  JevGateReason,
-  JevGateSnapshot,
-  PluginAllocator
-}
+import nebflow.core.jev.{CatalogEntry, JevAllocation, JevGateOutcome, JevGateReason, JevGateSnapshot, PluginAllocator}
 import nebflow.llm.ModelCandidate
 import nebflow.shared.{LlmProtocol, PathUtil, ProviderConfig}
 
@@ -69,8 +62,6 @@ class PluginAllocatorFallbackSpec extends CatsEffectSuite:
               )
             )
           )
-      ,
-      15000L
     )
 
   private def jevFailing(kind: DecisionError): JevAllocator =
@@ -78,14 +69,11 @@ class PluginAllocatorFallbackSpec extends CatsEffectSuite:
       new DecisionProvider[IO]:
         def id: String = "typesafe-jev"
         def predict(req: DecisionRequest) = IO.pure(Left(kind))
-      ,
-      15000L
     )
 
   private def llm(reply: Option[String], calls: TrieMap[String, String] = TrieMap.empty): LlmAllocator =
     new LlmAllocator(
       params => IO { calls.update(params.model, params.messages.headOption.map(_.textContent).getOrElse("")); reply },
-      timeoutMs = 15000L,
       candidate = IO.pure(
         Some(
           ModelCandidate(
@@ -125,7 +113,6 @@ class PluginAllocatorFallbackSpec extends CatsEffectSuite:
       configured = true,
       enabled = true,
       provider = "typesafe-jev",
-      timeoutMs = 15000L,
       choiceHighBasePolicy = ""
     )
   )
@@ -135,7 +122,11 @@ class PluginAllocatorFallbackSpec extends CatsEffectSuite:
 
   test("fallback on timeout: jev leg times out → llm leg takes over, the allocation is NOT lost") {
     withTempDataRoot { _ =>
-      machine(Some(jevFailing(DecisionError.Timeout("allocation deadline exceeded"))), Some(llm(Some("""{"plugins":["backend-dev","visual-report"]}"""))), gateOn)
+      machine(
+        Some(jevFailing(DecisionError.Timeout("allocation deadline exceeded"))),
+        Some(llm(Some("""{"plugins":["backend-dev","visual-report"]}"""))),
+        gateOn
+      )
         .allocatePlugins("delegate-x", "task", catalog)
         .map { r =>
           assertEquals(r.via, Some(PluginAllocator.AllocationVia.LlmFallback))
@@ -146,7 +137,11 @@ class PluginAllocatorFallbackSpec extends CatsEffectSuite:
 
   test("fallback on auth failure: jev leg 401s → llm leg takes over (超时/网络/鉴权一视同仁)") {
     withTempDataRoot { _ =>
-      machine(Some(jevFailing(DecisionError.Auth("401 unauthorized"))), Some(llm(Some("""{"plugins":["visual-report"]}"""))), gateOn)
+      machine(
+        Some(jevFailing(DecisionError.Auth("401 unauthorized"))),
+        Some(llm(Some("""{"plugins":["visual-report"]}"""))),
+        gateOn
+      )
         .allocatePlugins("delegate-x", "task", catalog)
         .map { r =>
           assertEquals(r.via, Some(PluginAllocator.AllocationVia.LlmFallback))
@@ -160,7 +155,14 @@ class PluginAllocatorFallbackSpec extends CatsEffectSuite:
   test("leg bookkeeping: jev down + llm took over → channel Up but legs show jev Down + llm Up") {
     withTempDataRoot { _ =>
       DecisionHealthMonitor.create
-        .flatMap(m => runAllocation(m, gateOn, Some(jevFailing(DecisionError.Timeout("boom"))), Some("""{"plugins":["backend-dev"]}""")))
+        .flatMap(m =>
+          runAllocation(
+            m,
+            gateOn,
+            Some(jevFailing(DecisionError.Timeout("boom"))),
+            Some("""{"plugins":["backend-dev"]}""")
+          )
+        )
         .map { case (channel, legs, result) =>
           assertEquals(result.via, Some(PluginAllocator.AllocationVia.LlmFallback))
           assertEquals(channel, DecisionHealth.Up, "the channel produced an allocation (llm takeover) — overall Up")
@@ -177,15 +179,27 @@ class PluginAllocatorFallbackSpec extends CatsEffectSuite:
     withTempDataRoot { _ =>
       DecisionHealthMonitor.create
         .flatMap { m =>
-          machine(Some(jevFailing(DecisionError.Auth("401"))), Some(llm(Some("""{"plugins":["backend-dev"]}"""))), gateOn, health = Some(m))
+          machine(
+            Some(jevFailing(DecisionError.Auth("401"))),
+            Some(llm(Some("""{"plugins":["backend-dev"]}"""))),
+            gateOn,
+            health = Some(m)
+          )
             .allocatePlugins("delegate-x", "task", catalog) *> m.toJson
         }
         .map { json =>
           val legs = json.hcursor.downField("legs")
           assertEquals(legs.downField("jev").get[String]("status").toOption, Some("down"), "legs.jev.status = down")
-          assert(legs.downField("jev").get[String]("reason").toOption.exists(_.contains("auth")), "legs.jev.reason names the classified failure")
+          assert(
+            legs.downField("jev").get[String]("reason").toOption.exists(_.contains("auth")),
+            "legs.jev.reason names the classified failure"
+          )
           assertEquals(legs.downField("llm").get[String]("status").toOption, Some("up"), "legs.llm.status = up")
-          assertEquals(json.hcursor.get[String]("status").toOption, Some("up"), "top-level status stays the effective channel state")
+          assertEquals(
+            json.hcursor.get[String]("status").toOption,
+            Some("up"),
+            "top-level status stays the effective channel state"
+          )
         }
     }
   }
@@ -222,7 +236,9 @@ class PluginAllocatorFallbackSpec extends CatsEffectSuite:
     val llmCalls = TrieMap.empty[String, String]
     withTempDataRoot { _ =>
       DecisionHealthMonitor.create
-        .flatMap(m => runAllocation(m, gateOn, Some(jevAnswering(List("visual-report"))), Some("""{"plugins":["x"]}"""), llmCalls))
+        .flatMap(m =>
+          runAllocation(m, gateOn, Some(jevAnswering(List("visual-report"))), Some("""{"plugins":["x"]}"""), llmCalls)
+        )
         .map { case (channel, legs, _) =>
           assertEquals(llmCalls.size, 0, "llm leg untouched when the jev leg allocated")
           assertEquals(legs.get("jev"), Some(DecisionHealth.Up))
@@ -235,7 +251,10 @@ class PluginAllocatorFallbackSpec extends CatsEffectSuite:
   test("legacy faces unaffected: a plain success/failure write keeps the tri-state semantics (transport write path)") {
     withTempDataRoot { _ =>
       DecisionHealthMonitor.create
-        .flatMap(m => m.recordDecisionSuccess() *> m.recordDecisionFailure("decision API timeout: x") *> (m.toJson, m.legs).mapN((j, l) => (j, l)))
+        .flatMap(m =>
+          m.recordDecisionSuccess() *> m.recordDecisionFailure("decision API timeout: x") *> (m.toJson, m.legs)
+            .mapN((j, l) => (j, l))
+        )
         .map { case (json, legs) =>
           assertEquals(json.hcursor.get[String]("status").toOption, Some("down"))
           assert(json.hcursor.get[String]("reason").toOption.exists(_.contains("timeout")))

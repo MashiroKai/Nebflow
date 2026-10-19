@@ -45,7 +45,9 @@ class JevGoldenDiffSpec extends CatsEffectSuite:
     """{"llm":{"providers":{}},"plugins":{"enabled":true},"mcpServers":{},"jev":{"enabled":false,"provider":"typesafe-jev"}}"""
 
   private val withJevOn =
-    """{"llm":{"providers":{}},"plugins":{"enabled":true},"mcpServers":{},"jev":{"enabled":true,"provider":"typesafe-jev","timeoutMs":15000}}"""
+    // 零超时（2026-10-19 作者拍板）：`jev` 节不再有 `timeoutMs` 配置位（拆除的
+    // 键在旧文件里被忽略——零迁移，见 JevGateSpec 的 legacy 容忍用例）。
+    """{"llm":{"providers":{}},"plugins":{"enabled":true},"mcpServers":{},"jev":{"enabled":true,"provider":"typesafe-jev"}}"""
 
   private def topLevelKeys(json: String): Set[String] =
     io.circe.parser.parse(json).toOption.flatMap(_.asObject).map(_.keys.toSet).getOrElse(Set.empty)
