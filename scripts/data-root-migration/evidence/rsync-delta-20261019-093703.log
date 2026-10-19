@@ -1,0 +1,23 @@
+=== rsync -n second-pass delta @ 2026-10-19 09:37:03 ===
+rsync: openrsync: protocol version 29
+flags=-aH --dry-run --delete --stats (DRY-RUN: read-only on both sides)
+Number of files: 3530718
+Number of files transferred: 247667
+Total file size: 256056630540 B
+Total transferred file size: 27415036743 B
+Unmatched data: 0 B
+Matched data: 0 B
+File list size: 480697642 B
+File list generation time: 105.114 seconds
+File list transfer time: 85.618 seconds
+Total sent: 492436682 B
+Total received: 11739040 B
+
+sent 492436682 bytes  received 11739040 bytes  1627212 bytes/sec
+total size is 256056630540  speedup is 507.87
+
+real	8m21.382s
+user	0m28.085s
+sys	3m19.988s
+rc=0
+=== done @ 2026-10-19 09:45:25 ===

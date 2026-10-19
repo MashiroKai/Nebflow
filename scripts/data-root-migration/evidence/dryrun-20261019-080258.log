@@ -1,0 +1,199 @@
+=== DRYRUN @ 20261019-080258  sandbox=/tmp/stand-dryrun-20261019-080258.OB09p2 ===
+SRC=/tmp/stand-dryrun-20261019-080258.OB09p2/home/.nebflow
+DST=/tmp/stand-dryrun-20261019-080258.OB09p2/home/.stand
+PLIST_DIR=/tmp/stand-dryrun-20261019-080258.OB09p2/LaunchAgents
+fixture built: 34 entries
++ bash /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-75b0ba04/scripts/data-root-migration/precopy.sh
++ bash /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-75b0ba04/scripts/data-root-migration/precopy.sh
+[2026-10-19 08:02:58] free space on target volume: 34 GiB
+[2026-10-19 08:02:58] Phase A: clonefile copy /tmp/stand-dryrun-20261019-080258.OB09p2/home/.nebflow/ → /tmp/stand-dryrun-20261019-080258.OB09p2/home/.stand/
+[2026-10-19 08:02:58] Phase A done (per-entry detail in /tmp/stand-precopy-20261019-080258.log)
+[2026-10-19 08:02:58] Phase B: rsync -aH top-up
+[2026-10-19 08:02:58] Phase B rsync: ok (stats appended to log)
+[2026-10-19 08:02:58] SUMMARY: entries src=34 dst=34 | du src=620K dst=620K | free=34GiB | rsync_errors=0
+[2026-10-19 08:02:58] pre-copy DONE — engine kept running; authoritative sync happens in finalize.sh during the downtime window.
+  (exit=0)
+  (exit=0)
+ASSERT-PASS: precopy: tasks-v2.json present in DST
+ASSERT-PASS: precopy: tasks-v2.json present in DST
+ASSERT-PASS: precopy: sqlite cloned
+ASSERT-PASS: precopy: sqlite cloned
+ASSERT-PASS: precopy: source intact (zero-delete)
+ASSERT-PASS: precopy: source intact (zero-delete)
++ bash /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-75b0ba04/scripts/data-root-migration/finalize.sh
++ bash /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-75b0ba04/scripts/data-root-migration/finalize.sh
+[2026-10-19 08:02:58] engine guard: checking for listener on 8080
+[2026-10-19 08:02:58]   SKIPPED by NEBFLOW_MIGRATE_ENGINE_GUARD=0 (dry-run mode)
+[2026-10-19 08:02:58] delta sync: rsync -aH --delete /tmp/stand-dryrun-20261019-080258.OB09p2/home/.nebflow/ → /tmp/stand-dryrun-20261019-080258.OB09p2/home/.stand/
+[2026-10-19 08:02:59]   ok
+[2026-10-19 08:02:59] rename: /tmp/stand-dryrun-20261019-080258.OB09p2/home/.nebflow → /tmp/stand-dryrun-20261019-080258.OB09p2/home/.nebflow-migrated-20261019-080258
+[2026-10-19 08:02:59]   ok — old root preserved at /tmp/stand-dryrun-20261019-080258.OB09p2/home/.nebflow-migrated-20261019-080258 (delete only by Kai's explicit decision, later)
+[2026-10-19 08:02:59] sanity: /tmp/stand-dryrun-20261019-080258.OB09p2/home/.stand/tasks-v2.json present
+[2026-10-19 08:02:59] plist patches (write-only, NO launchctl reload):
+[2026-10-19 08:02:59]   patched: /tmp/stand-dryrun-20261019-080258.OB09p2/LaunchAgents/com.nebflow.weixin-sidecar.plist (backup: /tmp/stand-dryrun-20261019-080258.OB09p2/LaunchAgents/com.nebflow.weixin-sidecar.plist.bak-20261019-080258)
+[2026-10-19 08:02:59]   patched: /tmp/stand-dryrun-20261019-080258.OB09p2/LaunchAgents/com.nebflow.gateway.plist (backup: /tmp/stand-dryrun-20261019-080258.OB09p2/LaunchAgents/com.nebflow.gateway.plist.bak-20261019-080258)
+[2026-10-19 08:02:59]   no matching refs: /tmp/stand-dryrun-20261019-080258.OB09p2/LaunchAgents/com.nebflow.gateway.plist
+[2026-10-19 08:02:59]   no matching refs: /tmp/stand-dryrun-20261019-080258.OB09p2/LaunchAgents/com.nebflow.weixin-sidecar.plist
+[2026-10-19 08:02:59] in-data-root reference patches:
+Unknown regexp modifier "/t" at -e line 1, at end of line
+Illegal octal digit '8' at -e line 1, at end of line
+Illegal octal digit '8' at -e line 1, at end of line
+syntax error at -e line 1, near "/."
+Execution of -e aborted due to compilation errors.
+[2026-10-19 08:02:59]   patched ( refs): daemons.json (backup: daemons.json.bak-20261019-080258)
+Unknown regexp modifier "/t" at -e line 1, at end of line
+Illegal octal digit '8' at -e line 1, at end of line
+Illegal octal digit '8' at -e line 1, at end of line
+syntax error at -e line 1, near "/."
+Execution of -e aborted due to compilation errors.
+[2026-10-19 08:02:59]   patched ( refs): install-manifest.json (backup: install-manifest.json.bak-20261019-080258)
+Unknown regexp modifier "/t" at -e line 1, at end of line
+Illegal octal digit '8' at -e line 1, at end of line
+Illegal octal digit '8' at -e line 1, at end of line
+syntax error at -e line 1, near "/."
+Execution of -e aborted due to compilation errors.
+[2026-10-19 08:02:59]   patched ( refs): bin/nebflow-autostart.sh (backup: nebflow-autostart.sh.bak-20261019-080258)
+Unknown regexp modifier "/t" at -e line 1, at end of line
+Illegal octal digit '8' at -e line 1, at end of line
+Illegal octal digit '8' at -e line 1, at end of line
+syntax error at -e line 1, near "/."
+Execution of -e aborted due to compilation errors.
+[2026-10-19 08:02:59]   patched ( refs): bin/memsample.sh (backup: memsample.sh.bak-20261019-080258)
+[2026-10-19 08:02:59]   intentionally untouched: bin/nebflow (8090 stable-line launcher) + all *.bak-* records
+[2026-10-19 08:02:59] residual /tmp/stand-dryrun-20261019-080258.OB09p2/home/.nebflow refs in /tmp/stand-dryrun-20261019-080258.OB09p2/home/.stand top-level json (records like tasks-v2.json stay as history — REPORT-ONLY):
+[2026-10-19 08:02:59] FINALIZE DONE.
+[2026-10-19 08:02:59] next: start the engine with NEBFLOW_HOME=/tmp/stand-dryrun-20261019-080258.OB09p2/home/.stand (see runbook), then run verify.sh --strict
+  (exit=0)
+  (exit=0)
+ASSERT-PASS: finalize: source renamed away
+ASSERT-PASS: finalize: source renamed away
+ASSERT-PASS: finalize: migrated backup exists
+ASSERT-PASS: finalize: migrated backup exists
+ASSERT-FAIL: finalize: daemons.json not patched
+ASSERT-FAIL: finalize: daemons.json not patched
+ASSERT-PASS: finalize: daemons.json free of old path
+ASSERT-PASS: finalize: daemons.json free of old path
+ASSERT-FAIL: finalize: autostart.sh not patched
+ASSERT-FAIL: finalize: autostart.sh not patched
+ASSERT-PASS: finalize: sidecar NEBFLOW_HOME patched
+ASSERT-PASS: finalize: sidecar NEBFLOW_HOME patched
+ASSERT-PASS: finalize: gateway plist patched
+ASSERT-PASS: finalize: gateway plist patched
+ASSERT-PASS: finalize: plist .bak kept
+ASSERT-PASS: finalize: plist .bak kept
+ASSERT-PASS: finalize: cfg .bak kept
+ASSERT-PASS: finalize: cfg .bak kept
+ASSERT-PASS: finalize: delta file d4 synced
+ASSERT-PASS: finalize: delta file d4 synced
+ASSERT-PASS: finalize: --delete honored (s5 gone)
+ASSERT-PASS: finalize: --delete honored (s5 gone)
++ bash /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-75b0ba04/scripts/data-root-migration/verify.sh --strict
++ bash /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-75b0ba04/scripts/data-root-migration/verify.sh --strict
+=== verify.sh --strict @ 2026-10-19 08:02:59 ===
+DST(target) = /tmp/stand-dryrun-20261019-080258.OB09p2/home/.stand
+REF(compare) = /tmp/stand-dryrun-20261019-080258.OB09p2/home/.nebflow-migrated-20261019-080258  [renamed-backup: /tmp/stand-dryrun-20261019-080258.OB09p2/home/.nebflow-migrated-20261019-080258]
+PASS  tasks-v2.json
+PASS  tasks.json
+PASS  User.md
+PASS  auth.json
+PASS  nebflow.json
+PASS  preferences.json
+PASS  models.json
+FAIL  daemons.json (sha differs vs reference)
+FAIL  install-manifest.json (sha differs vs reference)
+PASS  .seed-state.json
+PASS  .pid.meta
+PASS  neblink/config.json
+FAIL  bin/nebflow-autostart.sh (sha differs vs reference)
+PASS  logs/big.bin
+PASS  sessions/s1.json
+PASS  sessions/s2.json
+PASS  sessions/s3.json
+PASS  sessions/s4.json
+--- sqlite integrity ---
+SQLITE-OK   test.db
+--- task ledger counts ---
+LEDGER tasks-v2.json: target_entries=3 ref_entries=3 bytes=144
+LEDGER tasks.json: target_entries= ref_entries= bytes=14
+--- summary ---
+files sampled=18 pass=15 pass*(patched-as-intended)=0 fail=3 skip=0
+target file count=31
+volume free=34.4 GiB
+STRICT RESULT: FAIL (3 mismatches)
+  (exit=1)
+  (exit=1)
+ASSERT-FAIL: verify --strict failed
+ASSERT-FAIL: verify --strict failed
+ASSERT-FAIL: verify: no patched-as-intended seen
+ASSERT-FAIL: verify: no patched-as-intended seen
+ASSERT-PASS: verify: sqlite integrity ok
+ASSERT-PASS: verify: sqlite integrity ok
++ bash /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-75b0ba04/scripts/data-root-migration/finalize.sh
++ bash /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-75b0ba04/scripts/data-root-migration/finalize.sh
+[2026-10-19 08:03:00] engine guard: checking for listener on 8080
+[2026-10-19 08:03:00]   SKIPPED by NEBFLOW_MIGRATE_ENGINE_GUARD=0 (dry-run mode)
+[2026-10-19 08:03:00] source /tmp/stand-dryrun-20261019-080258.OB09p2/home/.nebflow already absent — assuming renamed earlier; skipping rsync+rename (idempotent re-run)
+[2026-10-19 08:03:00] sanity: /tmp/stand-dryrun-20261019-080258.OB09p2/home/.stand/tasks-v2.json present
+[2026-10-19 08:03:00] plist patches (write-only, NO launchctl reload):
+[2026-10-19 08:03:00]   no matching refs: /tmp/stand-dryrun-20261019-080258.OB09p2/LaunchAgents/com.nebflow.weixin-sidecar.plist
+[2026-10-19 08:03:00]   no matching refs: /tmp/stand-dryrun-20261019-080258.OB09p2/LaunchAgents/com.nebflow.gateway.plist
+[2026-10-19 08:03:01]   no matching refs: /tmp/stand-dryrun-20261019-080258.OB09p2/LaunchAgents/com.nebflow.gateway.plist
+[2026-10-19 08:03:01]   no matching refs: /tmp/stand-dryrun-20261019-080258.OB09p2/LaunchAgents/com.nebflow.weixin-sidecar.plist
+[2026-10-19 08:03:01] in-data-root reference patches:
+Unknown regexp modifier "/t" at -e line 1, at end of line
+Illegal octal digit '8' at -e line 1, at end of line
+Illegal octal digit '8' at -e line 1, at end of line
+syntax error at -e line 1, near "/."
+Execution of -e aborted due to compilation errors.
+[2026-10-19 08:03:01]   patched ( refs): daemons.json (backup: daemons.json.bak-20261019-080300)
+Unknown regexp modifier "/t" at -e line 1, at end of line
+Illegal octal digit '8' at -e line 1, at end of line
+Illegal octal digit '8' at -e line 1, at end of line
+syntax error at -e line 1, near "/."
+Execution of -e aborted due to compilation errors.
+[2026-10-19 08:03:01]   patched ( refs): install-manifest.json (backup: install-manifest.json.bak-20261019-080300)
+Unknown regexp modifier "/t" at -e line 1, at end of line
+Illegal octal digit '8' at -e line 1, at end of line
+Illegal octal digit '8' at -e line 1, at end of line
+syntax error at -e line 1, near "/."
+Execution of -e aborted due to compilation errors.
+[2026-10-19 08:03:01]   patched ( refs): bin/nebflow-autostart.sh (backup: nebflow-autostart.sh.bak-20261019-080300)
+Unknown regexp modifier "/t" at -e line 1, at end of line
+Illegal octal digit '8' at -e line 1, at end of line
+Illegal octal digit '8' at -e line 1, at end of line
+syntax error at -e line 1, near "/."
+Execution of -e aborted due to compilation errors.
+[2026-10-19 08:03:01]   patched ( refs): bin/memsample.sh (backup: memsample.sh.bak-20261019-080300)
+[2026-10-19 08:03:01]   intentionally untouched: bin/nebflow (8090 stable-line launcher) + all *.bak-* records
+[2026-10-19 08:03:01] residual /tmp/stand-dryrun-20261019-080258.OB09p2/home/.nebflow refs in /tmp/stand-dryrun-20261019-080258.OB09p2/home/.stand top-level json (records like tasks-v2.json stay as history — REPORT-ONLY):
+[2026-10-19 08:03:01] FINALIZE DONE.
+[2026-10-19 08:03:01] next: start the engine with NEBFLOW_HOME=/tmp/stand-dryrun-20261019-080258.OB09p2/home/.stand (see runbook), then run verify.sh --strict
+  (exit=0)
+  (exit=0)
+ASSERT-PASS: idempotent re-run: DST intact
+ASSERT-PASS: idempotent re-run: DST intact
++ bash /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-75b0ba04/scripts/data-root-migration/rollback.sh --full
++ bash /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-75b0ba04/scripts/data-root-migration/rollback.sh --full
+rollback: /tmp/stand-dryrun-20261019-080258.OB09p2/home/.nebflow-migrated-20261019-080258 → /tmp/stand-dryrun-20261019-080258.OB09p2/home/.nebflow
+  ok — old data root is back at /tmp/stand-dryrun-20261019-080258.OB09p2/home/.nebflow (the .stand copy at /tmp/stand-dryrun-20261019-080258.OB09p2/home/.stand is left untouched for now)
+restoring patched files from .bak (full rollback):
+  restored: /tmp/stand-dryrun-20261019-080258.OB09p2/LaunchAgents/com.nebflow.weixin-sidecar.plist  (from com.nebflow.weixin-sidecar.plist.bak-20261019-080258)
+  restored: /tmp/stand-dryrun-20261019-080258.OB09p2/LaunchAgents/com.nebflow.gateway.plist  (from com.nebflow.gateway.plist.bak-20261019-080258)
+  restored: /tmp/stand-dryrun-20261019-080258.OB09p2/home/.stand/daemons.json  (from daemons.json.bak-20261019-080300)
+  restored: /tmp/stand-dryrun-20261019-080258.OB09p2/home/.stand/install-manifest.json  (from install-manifest.json.bak-20261019-080300)
+  restored: /tmp/stand-dryrun-20261019-080258.OB09p2/home/.stand/bin/nebflow-autostart.sh  (from nebflow-autostart.sh.bak-20261019-080300)
+  restored: /tmp/stand-dryrun-20261019-080258.OB09p2/home/.stand/bin/memsample.sh  (from memsample.sh.bak-20261019-080300)
+ROLLBACK DONE.
+next: start the engine the usual way (old data root) — e.g. your normal sbt start in /Users/kaiyu/Claude code/Stand
+      (/tmp/stand-dryrun-20261019-080258.OB09p2/home/.stand remains on disk; nothing was deleted)
+  (exit=0)
+  (exit=0)
+ASSERT-PASS: rollback: source name restored
+ASSERT-PASS: rollback: source name restored
+ASSERT-PASS: rollback: sidecar plist restored from .bak
+ASSERT-PASS: rollback: sidecar plist restored from .bak
+ASSERT-FAIL: rollback --full: DST daemons.json not restored
+ASSERT-FAIL: rollback --full: DST daemons.json not restored
+ASSERT-PASS: rollback: .stand copy preserved (zero-delete)
+ASSERT-PASS: rollback: .stand copy preserved (zero-delete)
+=== DRYRUN RESULT: 5 FAILURES ===

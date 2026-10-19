@@ -1,0 +1,30 @@
+=== verify.sh  @ 2026-10-19 09:39:39 ===
+DST(target) = /Users/kaiyu/.stand
+REF(compare) = /Users/kaiyu/.nebflow  [live-source]
+PASS  auth.json
+PASS  nebflow.json
+PASS  preferences.json
+PASS  models.json
+PASS  daemons.json
+FAIL  daemon-pids.json (sha differs vs reference)
+PASS  install-manifest.json
+PASS  friend-remarks.json
+PASS  device.json
+FAIL  canvas_tabs.json (sha differs vs reference)
+PASS  .seed-state.json
+PASS  .pid.meta
+PASS  neblink/config.json
+PASS  neblink/device.json
+PASS  neblink/peers.json
+PASS  bin/nebflow-autostart.sh
+FAIL  logs/stand.log (sha differs vs reference)
+--- sqlite integrity ---
+SQLITE-OK   projects/link-server/neblink.db
+SQLITE-OK   browser-data/first_party_sets.db
+SQLITE-OK   browser-data/Default/heavy_ad_intervention_opt_out.db
+--- task ledger counts ---
+--- summary ---
+files sampled=17 pass=14 pass*(patched-as-intended)=0 fail=3 skip=0
+target file count=3052633
+volume free=31.4 GiB
+RESULT: report-only OK (use --strict after finalize for pass/fail gate)
