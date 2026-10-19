@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>移动端 375px 样张 v3 · 悬浮顶栏 + 液态下拉制（作者五条修正 · 暗亮双主题）</title>
+<style>
+/* ── tokens（镜像 src/main/resources/web/css/base.css + sapphire.css 现值，零新色值；
+      v3 新增：--gc* = glass-control 同族 token，逐值镜像 sapphire.css :root/暗档块） ── */
+:root{
+  --sapphire:127,156,245;
+  --spring:cubic-bezier(.3,1.36,.45,1);
+  --ease:cubic-bezier(.32,.72,0,1);
+}
+.phone,.desk{
+  --bg:#f5f6f8; --surface:#fff; --text:#1b1e26; --muted:#8b8e96; --dim:#6b6e76;
+  --frame-text:#3a3d45; --bright:#1b1e26; --f-muted:#717379; --line:#e0e1e4;
+  --glass:rgba(255,255,255,.55); --glass-b:rgba(255,255,255,.35);
+  --ctrl:rgba(255,255,255,.55); --ctrl-b:rgba(0,0,0,.10);
+  --user:#95ec69; --ok:#2e7d32; --warn:#b45309; --err:#d64545;
+  --shadow:0 2px 8px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.06);
+  /* glass-control 家族（sapphire.css :root 亮档逐值） */
+  --gcb:rgba(255,255,255,.45); --gcbh:rgba(255,255,255,.65); --gcbd:rgba(255,255,255,.40);
+  --gchl:rgba(255,255,255,.50); --gcue:rgba(0,0,0,.08); --gcglow:rgba(0,0,0,.06);
+  --gcsh:rgba(0,0,0,.04); --gcblur:10px; --gcpanel:rgba(255,255,255,.62);
+}
+.phone.dark,.desk.dark{
+  --bg:#13161c; --surface:#1c1f27; --text:#e8eaed; --muted:#7b7e88; --dim:#9ba0aa;
+  --frame-text:#c8cad0; --bright:#e8eaed; --f-muted:#81838a; --line:#282b33;
+  --glass:rgba(24,28,38,.68); --glass-b:rgba(255,255,255,.06);
+  --ctrl:rgba(255,255,255,.09); --ctrl-b:rgba(255,255,255,.16);
+  --shadow:0 2px 8px rgba(0,0,0,.2),0 8px 24px rgba(0,0,0,.35);
+  /* glass-control 家族（sapphire.css 暗档块逐值） */
+  --gcb:rgba(255,255,255,.05); --gcbh:rgba(255,255,255,.10); --gcbd:rgba(255,255,255,.08);
+  --gchl:rgba(255,255,255,.08); --gcue:rgba(0,0,0,.25); --gcglow:rgba(0,0,0,.20);
+  --gcsh:rgba(0,0,0,.15); --gcblur:10px; --gcpanel:rgba(28,32,42,.80);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:#0d0f14;color:#c8cad0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer;-webkit-tap-highlight-color:transparent}
+
+/* ── 外层控制台 ── */
+.wrap{display:flex;gap:28px;align-items:flex-start;justify-content:center;padding:28px 20px 60px;flex-wrap:wrap}
+.console{width:252px;display:flex;flex-direction:column;gap:14px;position:sticky;top:24px}
+.console h1{font-size:15px;font-weight:600;color:#e8eaed}
+.console h1 em{font-style:normal;color:#34c98e}
+.console .sub{font-size:12px;color:#7b7e88;line-height:1.6}
+.grp{background:#161923;border:1px solid #232733;border-radius:12px;padding:12px}
+.grp .lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#7b7e88;margin-bottom:8px}
+.seg{display:flex;flex-wrap:wrap;background:#0e1117;border:1px solid #232733;border-radius:9px;padding:3px;gap:3px}
+.seg button{flex:1 1 30%;padding:6px 4px;border-radius:7px;font-size:12px;color:#9ba0aa;white-space:nowrap}
+.seg button.on{background:#242a3a;color:#e8eaed;font-weight:600}
+.note{font-size:12px;color:#9ba0aa;line-height:1.7}
+.note b{color:#e8eaed}
+.note .tag{display:inline-block;font-size:11px;background:#1d3327;color:#7fd6a0;border-radius:5px;padding:0 6px;margin-right:4px}
+.note .tag.bl{background:#1d2740;color:#9db4f0}
+.difflist{display:flex;flex-direction:column;gap:8px}
+.difflist .di{display:flex;gap:8px;font-size:12px;line-height:1.55;color:#b8bcc6}
+.difflist .dn{flex:0 0 20px;height:20px;border-radius:50%;background:#173328;color:#34c98e;font-size:11px;display:flex;align-items:center;justify-content:center;font-weight:700}
+.verdict{border-left:2px solid #34c98e;padding-left:10px;font-size:12px;color:#b8bcc6;line-height:1.7}
+.verdict b{color:#7fd6a0}
+
+/* ── 手机框 ── */
+.stage{display:flex;flex-direction:column;gap:10px;align-items:center}
+.phone{width:375px;height:780px;border-radius:44px;background:var(--bg);position:relative;overflow:hidden;
+  border:9px solid #10131a;box-shadow:0 30px 80px rgba(0,0,0,.55);color:var(--text);flex:none}
+.sbar{height:47px;flex:none;display:flex;align-items:flex-end;justify-content:space-between;padding:0 26px 6px;
+  font-size:14px;font-weight:600;color:var(--bright);position:relative;z-index:60}
+.sbar .r{display:flex;gap:5px;align-items:center}
+.app{position:absolute;inset:47px 0 0 0}
+
+/* ── 屏切换 ── */
+.scr{position:absolute;inset:0;display:none}
+.scr.live{display:block}
+.zone{position:absolute;inset:0;display:flex;flex-direction:column}
+
+/* v3 diff 标注层（样张批注，非产品件） */
+.dm{position:absolute;z-index:72;width:18px;height:18px;border-radius:50%;background:#0f2a1f;color:#34c98e;
+  border:1px solid #34c98e;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;
+  pointer-events:none;box-shadow:0 0 0 3px rgba(52,201,142,.14)}
+
+/* ═══ v3② · 悬浮顶栏：无通栏底面，内容直顶状态栏下，圆钮/头像浮在其上 ═══ */
+.hd{position:absolute;top:0;left:0;right:0;z-index:40;pointer-events:none;
+  display:grid;grid-template-columns:52px 1fr 52px;align-items:start;padding:6px 6px 0}
+.hd>*{pointer-events:auto}
+/* 圆钮 = glass-control 标准材质（sapphire.css .glass-control 逐值：blur10 saturate1.2 + 顶亮/底暗 inset + 辉光/投影） */
+.rbtn{width:40px;height:40px;border-radius:50%;justify-self:center;display:flex;align-items:center;justify-content:center;
+  background:var(--gcb);border:1px solid var(--gcbd);color:var(--frame-text);position:relative;
+  -webkit-backdrop-filter:blur(var(--gcblur)) saturate(1.2);backdrop-filter:blur(var(--gcblur)) saturate(1.2);
+  box-shadow:inset 0 1px 0 var(--gchl),inset 0 -1px 0 var(--gcue),0 1px 3px var(--gcglow),0 2px 8px var(--gcsh);
+  transition:background .15s,transform .15s}
+.rbtn:active{transform:scale(.94)}
+.rbtn svg{width:19px;height:19px}
+.rbtn .bdg{position:absolute;top:-3px;right:-3px;min-width:16px;height:16px;border-radius:8px;background:#07c160;color:#fff;
+  font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 4px;border:2px solid var(--bg)}
+/* 会话头：头像居中浮起 + 名称玻璃胶囊（v3① 时间戳摘除；v2 的「名称+时间戳」两行退役） */
+.who{display:flex;flex-direction:column;align-items:center;gap:4px;padding-top:2px;min-width:0}
+.avx{width:52px;height:52px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;
+  font-size:21px;font-weight:600;color:#fff;
+  background:linear-gradient(145deg,#5b7fbf,#3c568c);border:1px solid var(--gcbd);position:relative;
+  box-shadow:inset 0 1px 0 var(--gchl),0 2px 8px var(--gcsh)}
+.avx .cam{position:absolute;right:-2px;bottom:-2px;width:18px;height:18px;border-radius:50%;background:var(--surface);
+  border:1px solid var(--gcbd);display:flex;align-items:center;justify-content:center;color:var(--f-muted)}
+.avx .cam svg{width:10px;height:10px}
+.who .nm{font-size:13px;font-weight:600;color:var(--bright);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  padding:2px 10px;border-radius:999px;background:var(--gcb);border:1px solid var(--gcbd);
+  -webkit-backdrop-filter:blur(var(--gcblur)) saturate(1.2);backdrop-filter:blur(var(--gcblur)) saturate(1.2);
+  box-shadow:inset 0 1px 0 var(--gchl),inset 0 -1px 0 var(--gcue),0 1px 3px var(--gcglow)}
+
+/* ═══ v3③ · 液态下拉：圆钮自身向下拉长（宽 40 恒定），子钮依次液态弹出 ═══ */
+.dd{position:relative;width:40px;height:40px;justify-self:center;z-index:46;border-radius:20px;overflow:hidden;
+  background:var(--gcb);border:1px solid var(--gcbd);color:var(--frame-text);
+  -webkit-backdrop-filter:blur(var(--gcblur)) saturate(1.2);backdrop-filter:blur(var(--gcblur)) saturate(1.2);
+  box-shadow:inset 0 1px 0 var(--gchl),inset 0 -1px 0 var(--gcue),0 1px 3px var(--gcglow),0 2px 8px var(--gcsh);
+  transition:height .55s var(--spring),box-shadow .2s}
+.dd.open{height:var(--dh);animation:ddSquash .6s var(--spring);transform-origin:50% 0;
+  box-shadow:inset 0 1px 0 var(--gchl),inset 0 -1px 0 var(--gcue),0 6px 24px var(--gcsh),0 2px 8px var(--gcsh)}
+@keyframes ddSquash{0%{transform:scaleY(1)}25%{transform:scaleY(.94) scaleX(1.07)}68%{transform:scaleY(1.02) scaleX(.99)}100%{transform:none}}
+.dd .dd-hd{width:40px;height:40px;flex:none;display:flex;align-items:center;justify-content:center;position:relative}
+.dd .dd-hd svg{width:19px;height:19px;transition:transform .45s var(--spring)}
+.dd.open .dd-hd svg{transform:scale(.85)}
+.dd .dd-hd .bdg{top:1px;right:1px;min-width:14px;height:14px;font-size:9px;border-width:1.5px;border-color:transparent}
+.dd-bd{display:flex;flex-direction:column;gap:6px;padding:0 0 6px}
+.dd-k{width:40px;height:40px;flex:none;border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative;color:var(--frame-text);
+  transform:scale(.3) translateY(-12px);opacity:0;filter:blur(6px);
+  transition:transform .5s var(--spring),opacity .28s ease,filter .38s ease;
+  transition-delay:calc((var(--n) - var(--i) - 1)*16ms)}  /* 收合：下钮先沉 */
+.dd.open .dd-k{transform:none;opacity:1;filter:blur(0);
+  transition-delay:calc(70ms + var(--i)*38ms)}            /* 展开：顶钮先出 */
+.dd-k:active{transform:scale(.9)}
+.dd.open .dd-k:active{transform:scale(.9)}
+.dd-k svg{width:18px;height:18px}
+.dd-k .k{position:absolute;top:0;right:0;min-width:14px;height:14px;border-radius:7px;background:#07c160;color:#fff;
+  font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 3px}
+.scrim{position:absolute;inset:0;background:rgba(8,10,16,.28);opacity:0;pointer-events:none;transition:opacity .25s;z-index:44}
+.scrim.open{opacity:1;pointer-events:auto}
+
+/* ═══ v3⑤ · 任务面板：二级液态——六键收回 → 圆钮原地形变加宽成浮层 ═══ */
+.tpanel{position:absolute;top:54px;left:6px;width:40px;height:40px;border-radius:20px;overflow:hidden;z-index:48;
+  background:var(--gcpanel);border:1px solid var(--gcbd);
+  -webkit-backdrop-filter:blur(var(--gcblur)) saturate(1.2);backdrop-filter:blur(var(--gcblur)) saturate(1.2);
+  box-shadow:inset 0 1px 0 var(--gchl),inset 0 -1px 0 var(--gcue),0 1px 3px var(--gcglow),0 2px 8px var(--gcsh),0 4px 16px rgba(0,0,0,.10);
+  opacity:0;pointer-events:none;display:flex;flex-direction:column}
+.tpanel.open{opacity:1;pointer-events:auto;animation:tpOpen .68s var(--spring) forwards}
+.tpanel.close{opacity:1;pointer-events:none;animation:tpClose .42s cubic-bezier(.4,0,.72,.24) forwards}
+@keyframes tpOpen{
+  0%{width:40px;height:40px;border-radius:20px;opacity:0}
+  26%{opacity:1}
+  62%{width:318px;height:574px;border-radius:16px}
+  100%{width:308px;height:560px;border-radius:16px;opacity:1}}
+@keyframes tpClose{
+  0%{width:308px;height:560px;border-radius:16px;opacity:1}
+  52%{width:56px;height:56px;border-radius:20px;opacity:1}
+  100%{width:40px;height:40px;border-radius:20px;opacity:0}}
+.tp-in{display:flex;flex-direction:column;min-height:0;flex:1;opacity:0}
+.tpanel.open .tp-in{animation:tpFade .32s ease .24s forwards}
+.tpanel.close .tp-in{animation:none;opacity:0}
+@keyframes tpFade{to{opacity:1}}
+.tp-hd{display:flex;align-items:center;gap:8px;padding:11px 8px 7px 13px;font-size:14px;font-weight:600;color:var(--bright);flex:none}
+.tp-hd svg.hi{width:16px;height:16px;color:var(--f-muted)}
+.tp-hd .n{font-size:12px;color:var(--f-muted);font-weight:500;font-variant-numeric:tabular-nums}
+.tp-hd .xbtn{margin-left:auto;width:28px;height:28px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;
+  color:var(--frame-text);background:var(--gcb);border:1px solid var(--gcbd);
+  box-shadow:inset 0 1px 0 var(--gchl),inset 0 -1px 0 var(--gcue)}
+.tp-hd .xbtn svg{width:13px;height:13px}
+.tp-bd{overflow-y:auto;padding:0 10px 12px;display:flex;flex-direction:column;gap:6px;scrollbar-width:none}
+.tp-bd::-webkit-scrollbar{display:none}
+.tp-grp{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--f-muted);padding:7px 4px 1px;flex:none}
+.tcard{background:var(--ctrl);border:1px solid var(--ctrl-b);border-radius:12px;padding:8px 10px;flex:none}
+.tcard.done{opacity:.72}
+.tcard .c-hd{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text)}
+.tcard .glyph{width:8px;height:8px;border-radius:50%;flex:none}
+.g-run{background:#07c160}.g-done{background:#4caf50}.g-queue{background:#98a2b3}.g-fail{background:#d64545}
+.tcard .ttl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tcard .meta{font-size:11px;color:var(--f-muted);font-variant-numeric:tabular-nums;flex:none}
+.tcard .word{font-size:11px;color:var(--f-muted);flex:none}
+.tcard .members{margin:6px 0 0 16px;display:flex;flex-direction:column;gap:4px}
+.tcard .mem{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted)}
+.tcard .mem .st{width:12px;height:12px;flex:none;border-radius:50%;border:1.5px solid var(--f-muted);display:flex;align-items:center;justify-content:center}
+.tcard .mem .st svg{width:8px;height:8px;color:var(--ok)}
+.tcard .mem .st.run{border-color:#07c160;border-top-color:transparent;animation:spin 1s linear infinite}
+.tcard .mem .more{font-size:11px;color:var(--f-muted);padding-left:19px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ═══ 聊天流（v2 3.3 沿用；v3 顶栏悬浮 → 内容顶到状态栏下，滚动滑入圆钮/头像之下） ═══ */
+.chat{flex:1;overflow-y:auto;padding:94px 12px 8px;display:flex;flex-direction:column;scrollbar-width:none}
+.chat::-webkit-scrollbar{display:none}
+.trow{display:flex;align-items:center;gap:8px;margin:8px 0 2px;font-size:12px;color:var(--f-muted)}
+.trow .b{min-width:20px;height:20px;border-radius:50%;background:var(--ctrl);border:1px solid var(--ctrl-b);
+  display:flex;align-items:center;justify-content:center}
+.trow .b svg{width:11px;height:11px}
+.rowm{display:flex;margin:5px 0;font-size:11px;color:var(--f-muted);gap:2px;align-items:center}
+.rowm.u{justify-content:flex-end}
+.rowm .act{padding:1px 5px;border-radius:5px;background:var(--ctrl);border:1px solid var(--ctrl-b)}
+.bub{max-width:85%;padding:10px 14px;border-radius:16px;font-size:14.5px;line-height:1.55;word-break:break-word;color:var(--text)}
+.bub.ai{align-self:flex-start;background:var(--surface);border:1px solid var(--line);border-top-left-radius:4px}
+.bub.user{align-self:flex-end;background:var(--user);color:#17301a;border-bottom-right-radius:4px}
+.bub code{font:12px ui-monospace,Menlo,monospace;background:rgba(127,156,245,.14);border-radius:4px;padding:0 4px}
+.toolrow{align-self:flex-start;display:flex;align-items:center;gap:7px;font-size:12px;color:var(--f-muted);
+  background:var(--ctrl);border:1px solid var(--ctrl-b);border-radius:10px;padding:5px 10px;margin:5px 0}
+.toolrow svg{width:13px;height:13px}
+.think{align-self:flex-start;display:flex;align-items:center;gap:7px;max-width:85%;height:30px;padding:0 11px;margin:6px 0;
+  border-radius:15px;background:var(--ctrl);border:1px solid var(--ctrl-b);color:var(--f-muted);font-size:12px}
+.think .ast{color:var(--dim);animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+.think .pv{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  -webkit-mask-image:linear-gradient(90deg,#000 82%,transparent);mask-image:linear-gradient(90deg,#000 82%,transparent)}
+.think .tm{font-variant-numeric:tabular-nums;flex:none}
+
+/* ═══ 输入区（v2⑥ 沿用：附件条 = 独立流内行） ═══ */
+.comp{flex:none;padding:6px 12px 10px;display:flex;flex-direction:column;gap:6px;position:relative;z-index:30}
+.att-row{display:flex;align-items:center;gap:6px;overflow-x:auto;scrollbar-width:none;padding:2px 2px 0}
+.att-row::-webkit-scrollbar{display:none}
+.fchip{display:flex;align-items:center;gap:5px;height:28px;padding:0 8px;border-radius:8px;flex:none;
+  background:var(--ctrl);border:1px solid var(--ctrl-b);font-size:12px;color:var(--text);position:relative}
+.fchip svg{width:12px;height:12px;color:var(--f-muted)}
+.fchip .fn{max-width:58px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fchip .x{width:14px;height:14px;border-radius:50%;background:var(--ctrl-b);display:flex;align-items:center;justify-content:center;color:var(--f-muted)}
+.fchip .x svg{width:8px;height:8px;color:var(--f-muted)}
+.ichip{width:44px;height:44px;border-radius:9px;flex:none;overflow:hidden;position:relative;border:1px solid var(--ctrl-b)}
+.ichip img{width:100%;height:100%;object-fit:cover;display:block}
+.ichip .x{position:absolute;top:2px;right:2px;width:14px;height:14px;border-radius:50%;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center}
+.ichip .x svg{width:8px;height:8px;color:#fff}
+.morechip{min-width:28px;height:28px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;
+  background:var(--ctrl);border:1px solid var(--ctrl-b);font-size:11px;color:var(--f-muted);padding:0 7px;font-variant-numeric:tabular-nums}
+.ibar{display:flex;align-items:flex-end;gap:8px;background:var(--glass);-webkit-backdrop-filter:blur(24px) saturate(1.15);
+  backdrop-filter:blur(24px) saturate(1.15);border:1px solid var(--glass-b);border-radius:22px;padding:8px 10px;box-shadow:var(--shadow)}
+.ibar .ta{flex:1;font-size:16px;color:var(--text);padding:6px 2px;min-width:0}
+.ibar .ta .ph{color:var(--f-muted)}
+.ibar .cbtn{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--f-muted);flex:none}
+.ibar .cbtn svg{width:19px;height:19px}
+.ibar .cbtn.stop{background:#f44336;color:#fff}
+.homebar{width:120px;height:5px;border-radius:3px;background:var(--f-muted);opacity:.4;margin:2px auto 0}
+
+/* ═══ v3④ · 登录卡：nf-findbar/glass-control 同族 token + 官方横排 lockup（单键制保持） ═══ */
+.login-bg{position:absolute;inset:0;display:flex;flex-direction:column;filter:saturate(.85);opacity:.5}
+.login-bg .chat{max-height:none;padding-top:12px}
+.login-card{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);width:300px;z-index:46;
+  background:var(--gcb);-webkit-backdrop-filter:blur(var(--gcblur)) saturate(1.2);backdrop-filter:blur(var(--gcblur)) saturate(1.2);
+  border:1px solid var(--gcbd);border-radius:16px;
+  box-shadow:inset 0 1px 0 var(--gchl),inset 0 -1px 0 var(--gcue),0 1px 3px var(--gcglow),0 2px 8px var(--gcsh),0 4px 16px rgba(0,0,0,.10);
+  display:flex;flex-direction:column;align-items:center;gap:10px;padding:24px 22px 20px;text-align:center}
+.login-card .lockup{color:var(--bright);display:block;margin-bottom:2px}
+.login-card h3{font-size:15.5px;font-weight:600;color:var(--bright)}
+.login-card .hint{font-size:12.5px;color:var(--muted);line-height:1.6}
+.login-card .hint b{color:var(--text);font-weight:500}
+.login-btn{width:100%;height:44px;border-radius:12px;background:#07c160;color:#fff;font-size:15px;font-weight:600;
+  display:flex;align-items:center;justify-content:center;gap:7px;box-shadow:0 2px 8px rgba(7,193,96,.28)}
+.login-btn svg{width:17px;height:17px}
+.login-card .sub2{font-size:11px;color:var(--f-muted);line-height:1.55}
+
+/* ═══ v2④ 沿用 · 头像提案抽层（作者未挑战，仅随顶栏悬浮态微调 top） ═══ */
+.sheet{position:absolute;left:10px;right:10px;top:122px;max-height:60vh;background:var(--glass);
+  -webkit-backdrop-filter:blur(24px) saturate(1.15);backdrop-filter:blur(24px) saturate(1.15);
+  border:1px solid var(--glass-b);border-radius:0 0 18px 18px;box-shadow:var(--shadow);z-index:45;
+  transform:translateY(-112%);transition:transform .26s var(--ease);display:flex;flex-direction:column;overflow:hidden}
+.sheet.open{transform:none}
+.sheet .sh-hd{display:flex;align-items:center;gap:8px;padding:12px 14px 8px;font-size:13px;font-weight:600;color:var(--bright);flex:none}
+.sheet .sh-hd .n{font-size:12px;color:var(--f-muted);font-weight:500;font-variant-numeric:tabular-nums}
+.sheet .sh-hd svg{width:15px;height:15px;color:var(--f-muted)}
+.sheet .sh-bd{overflow-y:auto;padding:0 10px 12px;display:flex;flex-direction:column;gap:8px;scrollbar-width:none}
+.avsheet .avbig{display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 0 4px}
+.avsheet .avbig .avx{width:72px;height:72px;font-size:28px}
+.avsheet .avbtns{display:flex;gap:8px;padding:4px 2px 8px}
+.avsheet .abtn{flex:1;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;gap:6px;
+  font-size:13px;background:var(--gcb);border:1px solid var(--gcbd);color:var(--text);
+  box-shadow:inset 0 1px 0 var(--gchl),inset 0 -1px 0 var(--gcue)}
+.avsheet .abtn.primary{background:#07c160;color:#fff;border-color:transparent;font-weight:600}
+.avsheet .abtn svg{width:15px;height:15px}
+.avsheet .avnote{font-size:11px;color:var(--f-muted);line-height:1.65;padding:8px 4px 2px;border-top:1px solid var(--line)}
+
+/* ═══ p6 桌面端对照（① 顶栏去时间两端同款；上下文环桌面保留） ═══ */
+.desk{width:900px;height:540px;border-radius:18px;background:var(--bg);position:relative;overflow:hidden;
+  border:1px solid #232733;box-shadow:0 30px 80px rgba(0,0,0,.55);color:var(--text);flex:none;display:flex;flex-direction:column}
+.desk .dhd{flex:none;height:96px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:0 16px;
+  background:var(--glass);-webkit-backdrop-filter:blur(24px) saturate(1.15);backdrop-filter:blur(24px) saturate(1.15);
+  border-bottom:1px solid var(--glass-b);position:relative;z-index:40}
+.desk .dlft{display:flex;align-items:center;gap:10px;position:relative;justify-self:start}
+.ring{width:28px;height:28px;border-radius:50%;border:3px solid #4caf50;border-top-color:#d8d9dd;position:relative;flex:none}
+.ring::after{content:"34";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:8px;color:var(--f-muted)}
+.dchip{display:flex;align-items:center;gap:5px;border-radius:999px;padding:3px 10px;font-size:12px;color:var(--f-muted);
+  background:var(--ctrl);border:1px solid var(--ctrl-b);font-variant-numeric:tabular-nums}
+.desk .dctr{display:flex;flex-direction:column;align-items:center;gap:3px;position:relative}
+.desk .dctr .avx{width:44px;height:44px;font-size:17px}
+.desk .dctr .nm{font-size:14px;font-weight:600;color:var(--bright)}
+.desk .drgt{display:flex;align-items:center;gap:8px;justify-content:flex-end}
+.desk .dchat{flex:1;overflow:hidden;padding:12px 24px;display:flex;flex-direction:column;gap:8px}
+.desk .dcomp{flex:none;padding:8px 24px 14px}
+.desk .ibar .ta{font-size:14.5px}
+
+/* ── 设置屏（p2 图例引用沿用） ── */
+svg.i{display:block;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+</style>
+</head>
+<body>
+<!-- 图标库（lucide 路径内联，零外部依赖） -->
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-msg" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/><path d="M8 10v4"/><path d="M12 10v2"/><path d="M16 10v6"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></symbol>
+  <symbol id="i-puzzle" viewBox="0 0 24 24"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></symbol>
+  <symbol id="i-brain" viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect width="10" height="10" x="7" y="7" rx="1.5" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-term" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></symbol>
+  <symbol id="i-tasks" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4"/><path d="M16 3v4"/><path d="m8.5 14 2 2 4.5-4.5"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
+  <symbol id="i-login" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" x2="3" y1="12" y2="12"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/></symbol>
+  <!-- v3④ 官方 logo lockup：symbol + stand 文字横排（仓内集中源
+        src/main/resources/web/brand/stand/illustrator/svg/stand-horizontal-compact-*.svg
+        原路径内联，fill 改 currentColor 随主题亮/暗） -->
+  <symbol id="i-stand-lockup" viewBox="0 0 1219.03 224.41">
+    <g transform="translate(12.00,12.00) scale(0.640000)" fill="currentColor" fill-rule="evenodd"><path d="M 22.96,167.53 L 27.19,174.53 L 32.46,179.99 L 37.46,183.80 L 46.46,188.91 L 58.46,193.82 L 68.46,196.76 L 90.46,200.79 L 102.46,201.93 L 121.46,202.18 L 150.46,199.84 L 174.46,194.71 L 186.46,190.82 L 198.46,185.85 L 206.46,181.86 L 206.46,180.81 L 185.46,183.98 L 174.46,184.80 L 160.46,184.79 L 142.46,182.69 L 127.46,177.99 L 119.03,172.53 L 115.30,168.53 L 113.11,164.53 L 112.05,160.53 L 112.04,155.53 L 115.16,145.53 L 118.19,140.53 L 123.13,134.53 L 134.46,124.20 L 145.46,116.23 L 165.46,104.32 L 198.46,88.22 L 237.46,72.24 L 291.46,53.27 L 336.36,39.53 L 347.46,31.86 L 386.55,0.53 L 385.46,0.00 L 373.46,0.20 L 344.46,2.29 L 316.46,6.40 L 278.46,14.36 L 244.46,23.31 L 199.46,37.41 L 164.46,50.21 L 133.46,63.25 L 102.46,78.21 L 80.46,90.35 L 60.46,103.21 L 44.46,115.98 L 33.21,127.53 L 28.07,134.53 L 24.31,141.53 L 22.08,147.53 L 20.95,154.53 L 21.13,161.53 Z M 0.00,312.53 L 1.46,313.15 L 12.46,312.94 L 42.46,310.78 L 77.46,305.78 L 117.46,297.83 L 159.46,287.80 L 191.46,278.79 L 225.46,267.89 L 255.46,256.74 L 286.46,242.70 L 304.46,232.86 L 320.46,221.84 L 329.91,213.53 L 338.81,203.53 L 344.83,192.53 L 346.62,185.53 L 346.85,180.53 L 345.82,173.53 L 341.66,165.53 L 336.25,159.53 L 327.46,153.14 L 320.46,149.27 L 308.46,144.37 L 298.46,141.24 L 273.46,136.23 L 246.46,134.53 L 219.46,136.21 L 193.46,141.31 L 172.46,148.35 L 158.21,155.53 L 158.46,156.42 L 186.46,152.28 L 203.46,151.98 L 221.46,154.13 L 229.46,156.24 L 236.46,159.04 L 244.46,164.18 L 249.69,170.53 L 251.73,178.53 L 249.76,187.53 L 242.62,197.53 L 230.46,207.68 L 211.46,218.93 L 192.46,227.86 L 170.46,236.75 L 147.46,244.88 L 99.46,259.83 L 49.46,274.05 L 42.46,278.25 Z"/></g><g transform="translate(283.39,44.61) scale(1.000000)" fill="currentColor" fill-rule="evenodd"><path d="M 544.59,124.16 L 454.52,1.16 L 433.31,0.00 L 420.31,0.74 L 337.45,103.16 L 319.12,124.16 L 320.31,124.71 L 362.31,124.05 L 433.04,35.16 L 436.31,32.11 L 505.31,123.73 L 543.31,124.72 Z M 181.48,104.16 L 183.66,98.16 L 184.53,92.16 L 184.57,78.16 L 183.67,72.16 L 181.55,66.16 L 178.50,61.16 L 174.31,56.75 L 168.31,52.72 L 161.31,49.75 L 150.31,47.86 L 62.31,47.89 L 59.31,47.27 L 55.15,44.16 L 53.98,42.16 L 53.00,37.16 L 54.05,33.16 L 56.31,30.34 L 58.31,28.81 L 62.31,27.57 L 153.31,27.19 L 184.31,2.51 L 184.87,1.16 L 153.31,0.34 L 51.31,0.78 L 42.31,2.88 L 33.31,7.95 L 28.31,12.10 L 24.81,16.16 L 20.12,24.16 L 18.86,28.16 L 18.15,34.16 L 18.10,45.16 L 18.81,50.16 L 22.03,59.16 L 27.62,66.16 L 35.31,71.41 L 41.31,73.60 L 47.31,74.71 L 138.31,75.11 L 142.31,75.68 L 146.31,77.81 L 148.63,81.16 L 149.47,85.16 L 148.63,90.16 L 146.86,93.16 L 144.31,95.48 L 139.31,96.84 L 36.31,97.48 L 0.00,124.16 L 1.31,124.79 L 152.31,124.01 L 162.31,121.50 L 169.31,117.39 L 176.31,111.12 Z M 182.06,27.16 L 255.31,27.41 L 257.45,28.16 L 257.51,134.16 L 258.31,135.20 L 288.60,107.16 L 288.80,28.16 L 290.31,27.45 L 341.31,27.40 L 368.00,1.16 L 367.31,0.50 L 205.31,0.53 L 182.24,26.16 Z M 726.38,124.16 L 726.31,0.98 L 711.31,0.24 L 696.31,0.56 L 695.06,1.16 L 695.01,87.16 L 694.31,88.01 L 584.31,1.75 L 580.31,0.80 L 555.31,0.46 L 554.03,1.16 L 554.31,123.95 L 583.31,124.29 L 584.62,123.16 L 584.65,44.16 L 585.31,42.80 L 692.31,123.47 L 694.31,124.50 L 725.31,124.76 Z M 921.76,98.16 L 923.64,91.16 L 923.55,32.16 L 921.47,26.16 L 914.58,15.16 L 908.31,8.01 L 901.31,3.10 L 895.31,1.02 L 888.31,0.38 L 737.31,0.57 L 736.67,1.16 L 753.62,19.16 L 753.58,123.16 L 754.31,124.32 L 883.31,124.24 L 889.31,123.46 L 897.31,120.45 L 905.31,115.38 L 914.65,107.16 Z M 886.66,87.16 L 883.31,91.34 L 879.31,94.49 L 870.31,97.31 L 786.90,97.16 L 786.02,95.16 L 786.05,28.16 L 788.31,27.40 L 869.31,27.42 L 876.31,28.79 L 880.31,30.88 L 886.43,37.16 L 888.52,42.16 L 888.96,45.16 L 888.98,79.16 Z"/></g>
+  </symbol>
+</svg>
+
+<div class="wrap">
+  <div class="console">
+    <div>
+      <h1>移动端 375px 样张 <em>v3</em></h1>
+      <div class="sub">作者五条修正 · 悬浮顶栏 + 液态下拉制 · 只设计不实施<br>基线 = v2（20261020_211500）；绿圈号 = v2→v3 diff 点</div>
+    </div>
+    <div class="grp">
+      <div class="lbl">界面</div>
+      <div class="seg" id="segScr">
+        <button data-s="p1" class="on">聊天 v3</button>
+        <button data-s="p2">头像提案</button>
+        <button data-s="p3">任务面板</button>
+        <button data-s="p4">登录卡</button>
+        <button data-s="p5">附件形态</button>
+        <button data-s="p6">桌面端</button>
+      </div>
+    </div>
+    <div class="grp">
+      <div class="lbl">主题</div>
+      <div class="seg" id="segTheme">
+        <button data-t="dark" class="on">暗</button>
+        <button data-t="light">亮</button>
+      </div>
+    </div>
+    <div class="grp">
+      <div class="lbl">v2 → v3 diff（作者令逐条）</div>
+      <div class="difflist">
+        <div class="di"><span class="dn">1</span><span><b>顶栏去时间</b>：会话头时间戳摘除（移动/桌面同款原则，桌面端对照屏同步去）；v2「头像+名称+时间戳」三段 →「头像+名称」两段。</span></div>
+        <div class="di"><span class="dn">2</span><span><b>顶栏悬浮态</b>：通栏玻璃底面 + 底缘分隔线退役；聊天内容直顶状态栏下方滚动，圆钮/头像/名称胶囊各自悬浮其上（glass-control 毛玻璃质感留在控件自身）。</span></div>
+        <div class="di"><span class="dn">3</span><span><b>液态下拉</b>：大抽层弹层（pmenu 212px 面板）退役；圆钮自身向下拉长（宽 40 恒定），子钮依次液态弹出（弹性过冲 + squash/stretch + 模糊析出），再点反向收回。左右各一列，每钮独立。</span></div>
+        <div class="di"><span class="dn">4</span><span><b>登录卡对齐站内控件语言</b>：面板/按钮换 glass-control token（blur10·saturate1.2·顶亮底暗 inset·辉光投影，即 nf-findbar/.glass-control 同族）；首牌字母方块换<b>官方横排 lockup</b>（symbol + stand 文字，仓内集中源 stand-horizontal-compact svg 内联，currentColor 随主题）。单键方向保持。</span></div>
+        <div class="di"><span class="dn">5</span><span><b>任务承载重设计</b>：v1 几何顶挂抽层退役。新形态 = <b>二级液态</b>：下拉列中点「任务」→ 六键液态收回 → 圆钮原地形变加宽成任务浮层（40→308px）。方案说明与 12 卡信息层级见「任务面板」屏。</span></div>
+      </div>
+    </div>
+    <div class="grp">
+      <div class="lbl">⑤ 方案说明 · 二级液态任务面板</div>
+      <div class="note">
+        <b>形态判定：不用「同列继续下拉」，用「按钮形变浮层」。</b>同列续拉装不下任务卡（列宽恒 40px），独立弹层又断液态语言。取中：任务面板<b>由圆钮原地液态形变而来</b>——六键先反向收回进钮，钮再纵向拉长 + 横向加宽（40→308 / 40→560，圆角 20→16，过冲后回稳），内容随形变揭示。<b>万物从圆钮里长出来</b>，这是与③自洽的唯一生长逻辑。<br><br>
+        <b>12 卡信息层级（六级，自上而下）</b>：<br>
+        ① 状态点（运行绿/排队灰/完成绿）·② 标题（#id + 名）·③ 进度 n/m（tabular-nums）·④ 状态词 ·⑤ 成员预览（仅运行中卡，限 2 行 +「+n」溢出计数）·⑥ 分组序：运行中 2 → 排队 4 → 已完成 6（已完成整卡降透明；分组标签 = 站内 .gt 小写字号语言，无装饰条）。<br><br>
+        <b>退出</b>：面板 X → 逆向形变收回为圆钮；点空白全收。运行态成员行转速条 = 现有 spin 语言。
+      </div>
+    </div>
+    <div class="grp" id="legend">
+      <div class="lbl">图例</div>
+      <div class="note" id="lgText"></div>
+    </div>
+    <div class="grp">
+      <div class="lbl">⑥ 判定（附件重叠 · v2 已结）</div>
+      <div class="verdict"><b>现源不复现，非活 bug。</b>Playwright 探针（真实 CSS 级联 + 真实 DOM @375 暗色）：44px 让位生效，净空 10px；修复出处 = composer-overlap 批（e492a2a62 / 54898f4d1 / d8445ede4，2026-10-18）。附件形态已批「很好」→ v3 原样保留（「附件形态」屏）。</div>
+    </div>
+  </div>
+
+  <div class="stage" id="stagePhone">
+    <div class="phone dark" id="phone">
+      <div class="sbar"><span>9:41</span><span class="r" style="font-size:11px">▮▮▮ ⌁ ▭</span></div>
+      <div class="app" id="app">
+
+        <!-- ═══ 屏1 聊天 v3：悬浮顶栏 + 双液态下拉列 ═══ -->
+        <section class="scr live" id="scr-p1">
+          <div class="zone">
+            <header class="hd">
+              <div class="dd" id="ddL" style="--n:6;--dh:318px">
+                <button class="dd-hd" aria-label="会话功能"><svg class="i"><use href="#i-sliders"/></svg><span class="bdg">8</span></button>
+                <div class="dd-bd">
+                  <button class="dd-k" style="--i:0" data-k="task" title="任务"><svg class="i"><use href="#i-tasks"/></svg><span class="k">12</span></button>
+                  <button class="dd-k" style="--i:1" title="搜索"><svg class="i"><use href="#i-search"/></svg></button>
+                  <button class="dd-k" style="--i:2" title="定时任务"><svg class="i"><use href="#i-clock"/></svg><span class="k">3</span></button>
+                  <button class="dd-k" style="--i:3" title="心跳进程"><svg class="i"><use href="#i-server"/></svg><span class="k">1</span></button>
+                  <button class="dd-k" style="--i:4" title="记忆"><svg class="i"><use href="#i-brain"/></svg></button>
+                  <button class="dd-k" style="--i:5" data-k="status" title="运行状态"><svg class="i"><use href="#i-activity"/></svg><span class="k">8</span></button>
+                </div>
+              </div>
+              <div class="who">
+                <div class="avx">笨<span class="cam"><svg class="i"><use href="#i-camera"/></svg></span></div>
+                <div class="nm">笨笨</div>
+              </div>
+              <div class="dd" id="ddR" style="--n:6;--dh:318px">
+                <button class="dd-hd" aria-label="前往"><svg class="i"><use href="#i-layers"/></svg></button>
+                <div class="dd-bd">
+                  <button class="dd-k" style="--i:0" title="画板"><svg class="i"><use href="#i-layers"/></svg></button>
+                  <button class="dd-k" style="--i:1" title="项目"><svg class="i"><use href="#i-folder"/></svg></button>
+                  <button class="dd-k" style="--i:2" title="图谱"><svg class="i"><use href="#i-spark"/></svg></button>
+                  <button class="dd-k" style="--i:3" title="插件"><svg class="i"><use href="#i-puzzle"/></svg><span class="k">8</span></button>
+                  <button class="dd-k" style="--i:4" title="用量"><svg class="i"><use href="#i-chart"/></svg></button>
+                  <button class="dd-k" style="--i:5" title="设置"><svg class="i"><use href="#i-gear"/></svg></button>
+                </div>
+              </div>
+              <span class="dm" style="left:0;top:44px" title="v2→v3 ①：顶栏时间戳摘除（桌面同步）">1</span>
+              <span class="dm" style="left:calc(50% + 58px);top:0" title="v2→v3 ②：通栏底面退役，内容直顶状态栏下，控件悬浮">2</span>
+              <span class="dm" style="right:0;top:44px" title="v2→v3 ③：圆钮液态下拉（点击体验）">3</span>
+            </header>
+
+            <div class="chat" id="chatP1">
+              <div class="trow"><span class="b"><svg class="i"><use href="#i-check"/></svg></span>已折叠 6 行 · 思考与工具调用</div>
+              <div class="bub ai">…出（终端视图），不登登，顺带发现：zcode 现在 turn 期间是静默的，翻一个隐藏旗标（<code>--output-format stream-json</code>）就有 live 流可渲染——候你拍板。</div>
+              <div class="bub ai">推荐打法：面A/B（你已批的日志卡+聚焦）先上，C1→C2 跟进。样张看着行就「按推荐」，我排实施批。</div>
+              <div class="rowm"><span class="act">16:44</span><span class="act">复制</span><span class="act">引用</span></div>
+              <div class="bub user">我从官网进手机端的加载速度非常慢 能不能想办法优化一下，而且我如果直接用sbt run 连接客户端的时候还是有卡片显示当前状态的 我们目前是加载又慢又没有卡片 或者placeholder之类的东西来帮助缓解</div>
+              <div class="rowm u"><span class="act">17:03</span><span class="act">复制</span></div>
+              <div class="toolrow"><svg class="i"><use href="#i-term"/></svg>Read css/mobileLayer.css · 663 行</div>
+              <div class="think" id="thinkPill"><span class="ast">✻</span><span class="pv">来缓解. The design is straightforward (…</span><span class="tm">41s</span></div>
+              <div class="bub ai">顶栏这版做成悬浮态了：内容顶到状态栏下，圆钮和头像浮在流上——点两个圆钮看液态下拉。</div>
+            </div>
+
+            <div class="comp">
+              <div class="ibar">
+                <div class="ta"><span class="ph">输入消息…</span></div>
+                <button class="cbtn"><svg class="i"><use href="#i-clip"/></svg></button>
+                <button class="cbtn stop"><svg class="i"><use href="#i-stop"/></svg></button>
+              </div>
+              <div class="homebar"></div>
+            </div>
+          </div>
+          <div class="scrim" data-scrim></div>
+
+          <!-- v3⑤ 二级液态任务面板（由左圆钮形变而来；静态演示态也可从 p3 直达） -->
+          <div class="tpanel" data-tpanel>
+            <div class="tp-in">
+              <div class="tp-hd"><svg class="i hi"><use href="#i-tasks"/></svg>任务<span class="n">12 · 2 运行中</span>
+                <button class="xbtn" data-tpclose aria-label="收回"><svg class="i"><use href="#i-x"/></svg></button></div>
+              <div class="tp-bd">
+                <div class="tp-grp">运行中 · 2</div>
+                <div class="tcard"><div class="c-hd"><span class="glyph g-run"></span><span class="ttl">#3 移动端布局逐界面工整化 · 设计批</span><span class="meta">3/7</span><span class="word">运行中</span></div>
+                  <div class="members">
+                    <div class="mem"><span class="st run"></span>现状审计 · file:line 清单</div>
+                    <div class="mem"><span class="st"><svg class="i"><use href="#i-check"/></svg></span>375px 逐界面规范</div>
+                    <div class="mem more">+5</div>
+                  </div></div>
+                <div class="tcard"><div class="c-hd"><span class="glyph g-run"></span><span class="ttl">#569 重连幂等去重 复跑读数</span><span class="meta">5/6</span><span class="word">运行中</span></div>
+                  <div class="members">
+                    <div class="mem"><span class="st run"></span>第 6 轮复跑 · 读数采集中</div>
+                  </div></div>
+                <div class="tp-grp">排队 · 4</div>
+                <div class="tcard"><div class="c-hd"><span class="glyph g-queue"></span><span class="ttl">#4 手机体验专项 · 实施批</span><span class="meta">0/5</span><span class="word">排队</span></div></div>
+                <div class="tcard"><div class="c-hd"><span class="glyph g-queue"></span><span class="ttl">#581 登录卡控件语言对齐</span><span class="meta">0/3</span><span class="word">排队</span></div></div>
+                <div class="tcard"><div class="c-hd"><span class="glyph g-queue"></span><span class="ttl">#33 冷启动加载卡 · 实施批</span><span class="meta">0/2</span><span class="word">排队</span></div></div>
+                <div class="tcard"><div class="c-hd"><span class="glyph g-queue"></span><span class="ttl">#612 附件探针自动化归档</span><span class="meta">0/1</span><span class="word">排队</span></div></div>
+                <div class="tp-grp">已完成 · 6</div>
+                <div class="tcard done"><div class="c-hd"><span class="glyph g-done"></span><span class="ttl">#2 外部执行器任务可观测面</span><span class="meta">8/8</span><span class="word">已完成</span></div></div>
+                <div class="tcard done"><div class="c-hd"><span class="glyph g-done"></span><span class="ttl">#576 worktree 分配/自动合并链审计</span><span class="meta">4/4</span><span class="word">已完成</span></div></div>
+                <div class="tcard done"><div class="c-hd"><span class="glyph g-done"></span><span class="ttl">#579 消息搜索弹窗 · 规格 v2</span><span class="meta">6/6</span><span class="word">已完成</span></div></div>
+                <div class="tcard done"><div class="c-hd"><span class="glyph g-done"></span><span class="ttl">#77 外部执行器详情样张</span><span class="meta">3/3</span><span class="word">已完成</span></div></div>
+                <div class="tcard done"><div class="c-hd"><span class="glyph g-done"></span><span class="ttl">#603 品牌资产集中源迁移</span><span class="meta">5/5</span><span class="word">已完成</span></div></div>
+                <div class="tcard done"><div class="c-hd"><span class="glyph g-done"></span><span class="ttl">#88 Flow Map 图谱方向断言回归</span><span class="meta">2/2</span><span class="word">已完成</span></div></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ═══ 屏2 头像提案（v2④ 沿用，随顶栏悬浮态微调） ═══ -->
+        <section class="scr" id="scr-p2">
+          <div class="zone">
+            <header class="hd">
+              <button class="rbtn" aria-label="会话功能"><svg class="i"><use href="#i-sliders"/></svg></button>
+              <div class="who">
+                <div class="avx">笨<span class="cam"><svg class="i"><use href="#i-camera"/></svg></span></div>
+                <div class="nm">笨笨</div>
+              </div>
+              <button class="rbtn" aria-label="前往"><svg class="i"><use href="#i-layers"/></svg></button>
+            </header>
+            <div class="chat" style="filter:saturate(.92)">
+              <div class="bub user">给笨笨设个头像吧，会话头里认起来快。</div>
+              <div class="bub ai">好嘞，点头像就能换——本地即时生效，登录后随账号同步。</div>
+            </div>
+            <div class="comp"><div class="ibar"><div class="ta"><span class="ph">输入消息…</span></div>
+              <button class="cbtn"><svg class="i"><use href="#i-clip"/></svg></button>
+              <button class="cbtn stop"><svg class="i"><use href="#i-stop"/></svg></button></div><div class="homebar"></div></div>
+          </div>
+          <div class="scrim open"></div>
+          <div class="sheet open avsheet">
+            <div class="sh-hd"><svg class="i"><use href="#i-user"/></svg>智能体头像<span class="n">笨笨</span></div>
+            <div class="sh-bd">
+              <div class="avbig">
+                <div class="avx">笨</div>
+                <div class="note" style="font-size:12px">默认 = 首字母圆牌（现有命名牌同源）</div>
+              </div>
+              <div class="avbtns">
+                <button class="abtn primary"><svg class="i"><use href="#i-image"/></svg>上传头像</button>
+                <button class="abtn"><svg class="i"><use href="#i-x"/></svg>恢复默认</button>
+              </div>
+              <div class="avnote">设计提案（实施批支撑面，v2 原案沿用）：<br>① 入口双路 = 会话头头像角标（本屏）+ 设置页「智能体 · 头像」行；<br>② 存储 = local-first：localStorage dataURL 按 agentId 键（镜像 avatarCache.js 命名空间键位），登录后可经账号档案字段同步；<br>③ 渲染 = avatarRender.js 复用池（avatarImgNode），同 URL 零重解码零闪；缺省回落首字母圆牌；<br>④ 需实施批：设置行、文件选择/裁剪、存储键、会话头/列表行/抽层三处消费点。</div>
+            </div>
+          </div>
+          <span class="dm" style="left:50%;top:6px;transform:translateX(-50%)" title="v2④ 头像提案（作者未挑战，v3 沿用；顶栏随②转悬浮）">4</span>
+        </section>
+
+        <!-- ═══ 屏3 任务面板（v3⑤ 二级液态：进入即演示形变完成态） ═══ -->
+        <section class="scr" id="scr-p3">
+          <div class="zone">
+            <header class="hd">
+              <button class="rbtn" aria-label="会话功能"><svg class="i"><use href="#i-sliders"/></svg><span class="bdg">8</span></button>
+              <div class="who">
+                <div class="avx">笨<span class="cam"><svg class="i"><use href="#i-camera"/></svg></span></div>
+                <div class="nm">笨笨</div>
+              </div>
+              <button class="rbtn" aria-label="前往"><svg class="i"><use href="#i-layers"/></svg></button>
+            </header>
+            <div class="chat" style="filter:saturate(.9)">
+              <div class="bub user">手机端再排一批布局工整化吧，逐界面过。</div>
+              <div class="bub ai">收到，设计批已开工：现状审计 + 375 规范 + 样张。</div>
+            </div>
+            <div class="comp"><div class="ibar"><div class="ta"><span class="ph">输入消息…</span></div>
+              <button class="cbtn"><svg class="i"><use href="#i-clip"/></svg></button>
+              <button class="cbtn stop"><svg class="i"><use href="#i-stop"/></svg></button></div><div class="homebar"></div></div>
+          </div>
+          <div class="scrim open"></div>
+          <div class="tpanel open" data-tpanel style="animation:none;width:308px;height:560px;border-radius:16px;opacity:1">
+            <div class="tp-in" style="animation:none;opacity:1">
+              <div class="tp-hd"><svg class="i hi"><use href="#i-tasks"/></svg>任务<span class="n">12 · 2 运行中</span>
+                <button class="xbtn" aria-label="收回"><svg class="i"><use href="#i-x"/></svg></button></div>
+              <div class="tp-bd">
+                <div class="tp-grp">运行中 · 2</div>
+                <div class="tcard"><div class="c-hd"><span class="glyph g-run"></span><span class="ttl">#3 移动端布局逐界面工整化 · 设计批</span><span class="meta">3/7</span><span class="word">运行中</span></div>
+                  <div class="members">
+                    <div class="mem"><span class="st run"></span>现状审计 · file:line 清单</div>
+                    <div class="mem"><span class="st"><svg class="i"><use href="#i-check"/></svg></span>375px 逐界面规范</div>
+                    <div class="mem more">+5</div>
+                  </div></div>
+                <div class="tcard"><div class="c-hd"><span class="glyph g-run"></span><span class="ttl">#569 重连幂等去重 复跑读数</span><span class="meta">5/6</span><span class="word">运行中</span></div>
+                  <div class="members">
+                    <div class="mem"><span class="st run"></span>第 6 轮复跑 · 读数采集中</div>
+                  </div></div>
+                <div class="tp-grp">排队 · 4</div>
+                <div class="tcard"><div class="c-hd"><span class="glyph g-queue"></span><span class="ttl">#4 手机体验专项 · 实施批</span><span class="meta">0/5</span><span class="word">排队</span></div></div>
+                <div class="tcard"><div class="c-hd"><span class="glyph g-queue"></span><span class="ttl">#581 登录卡控件语言对齐</span><span class="meta">0/3</span><span class="word">排队</span></div></div>
+                <div class="tcard"><div class="c-hd"><span class="glyph g-queue"></span><span class="ttl">#33 冷启动加载卡 · 实施批</span><span class="meta">0/2</span><span class="word">排队</span></div></div>
+                <div class="tcard"><div class="c-hd"><span class="glyph g-queue"></span><span class="ttl">#612 附件探针自动化归档</span><span class="meta">0/1</span><span class="word">排队</span></div></div>
+                <div class="tp-grp">已完成 · 6</div>
+                <div class="tcard done"><div class="c-hd"><span class="glyph g-done"></span><span class="ttl">#2 外部执行器任务可观测面</span><span class="meta">8/8</span><span class="word">已完成</span></div></div>
+                <div class="tcard done"><div class="c-hd"><span class="glyph g-done"></span><span class="ttl">#576 worktree 分配/自动合并链审计</span><span class="meta">4/4</span><span class="word">已完成</span></div></div>
+                <div class="tcard done"><div class="c-hd"><span class="glyph g-done"></span><span class="ttl">#579 消息搜索弹窗 · 规格 v2</span><span class="meta">6/6</span><span class="word">已完成</span></div></div>
+                <div class="tcard done"><div class="c-hd"><span class="glyph g-done"></span><span class="ttl">#77 外部执行器详情样张</span><span class="meta">3/3</span><span class="word">已完成</span></div></div>
+                <div class="tcard done"><div class="c-hd"><span class="glyph g-done"></span><span class="ttl">#603 品牌资产集中源迁移</span><span class="meta">5/5</span><span class="word">已完成</span></div></div>
+                <div class="tcard done"><div class="c-hd"><span class="glyph g-done"></span><span class="ttl">#88 Flow Map 图谱方向断言回归</span><span class="meta">2/2</span><span class="word">已完成</span></div></div>
+              </div>
+            </div>
+          </div>
+          <span class="dm" style="left:280px;top:44px" title="v2→v3 ⑤：任务承载 = 二级液态面板（由圆钮形变而来，非抽层）">5</span>
+        </section>
+
+        <!-- ═══ 屏4 设备互联登录卡（v3④ glass-control 同族 + 官方 lockup，单键制保持） ═══ -->
+        <section class="scr" id="scr-p4">
+          <div class="login-bg">
+            <div class="chat">
+              <div class="bub ai">设备已就绪，登录后即可加入你的设备网络。</div>
+              <div class="bub user">先在这台手机上登一下。</div>
+            </div>
+            <div class="comp"><div class="ibar"><div class="ta"><span class="ph">输入消息…</span></div>
+              <button class="cbtn"><svg class="i"><use href="#i-clip"/></svg></button></div><div class="homebar"></div></div>
+          </div>
+          <div class="login-card">
+            <svg class="lockup" viewBox="0 0 1219.03 224.41" width="136" height="25" aria-label="stand"><use href="#i-stand-lockup"/></svg>
+            <h3>连接你的其他设备</h3>
+            <div class="hint"><b>登录后此设备与账号下其他设备互联</b></div>
+            <button class="login-btn"><svg class="i"><use href="#i-login"/></svg>登录 stand 账号</button>
+            <div class="sub2">将打开浏览器完成认证；GitHub / Google 快捷登录在认证页内</div>
+            <span class="dm" style="right:-9px;top:-9px" title="v2→v3 ④：面板/按钮对齐 glass-control token（nf-findbar 同族）+ 官方横排 lockup；单键制保持">4</span>
+          </div>
+        </section>
+
+        <!-- ═══ 屏5 附件形态（已批「很好」，v3 原样保留；顶栏随②转悬浮） ═══ -->
+        <section class="scr" id="scr-p5">
+          <div class="zone">
+            <header class="hd">
+              <button class="rbtn" aria-label="会话功能"><svg class="i"><use href="#i-sliders"/></svg><span class="bdg">8</span></button>
+              <div class="who">
+                <div class="avx">笨<span class="cam"><svg class="i"><use href="#i-camera"/></svg></span></div>
+                <div class="nm">笨笨</div>
+              </div>
+              <button class="rbtn" aria-label="前往"><svg class="i"><use href="#i-layers"/></svg></button>
+            </header>
+            <div class="chat">
+              <div class="bub user">这批素材和需求单发你，格式按第三节的要求核一遍。</div>
+              <div class="bub ai">收到，附件 5 件已入队，我逐件核对后回清单。</div>
+            </div>
+            <div class="comp">
+              <div class="att-row">
+                <div class="fchip"><svg class="i"><use href="#i-file"/></svg><span class="fn">requirements-v2.pdf</span><span class="x"><svg class="i"><use href="#i-x"/></svg></span></div>
+                <div class="ichip"><img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='44'%3E%3Crect width='44' height='44' fill='%234a6fa5'/%3E%3Ccircle cx='16' cy='16' r='7' fill='%23a5c4ea'/%3E%3Cpath d='M0 44 18 22 32 36 44 26 44 44Z' fill='%233c568c'/%3E%3C/svg%3E"><span class="x"><svg class="i"><use href="#i-x"/></svg></span></div>
+                <div class="fchip"><svg class="i"><use href="#i-folder"/></svg><span class="fn">素材批次-0412.zip</span><span class="x"><svg class="i"><use href="#i-x"/></svg></span></div>
+                <div class="morechip">+2</div>
+              </div>
+              <div class="ibar">
+                <div class="ta">帮我看看这份需求里第三节的排版要求，逐条核对格式</div>
+                <button class="cbtn"><svg class="i"><use href="#i-clip"/></svg></button>
+                <button class="cbtn stop"><svg class="i"><use href="#i-stop"/></svg></button>
+              </div>
+              <div class="homebar"></div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </div>
+
+    <!-- ═══ p6 桌面端对照（① 顶栏去时间两端同款；上下文环桌面保留） ═══ -->
+    <div class="desk dark" id="desk" style="display:none">
+      <div class="dhd">
+        <div class="dlft">
+          <div class="ring"></div>
+          <span class="dchip">zcode-4</span>
+          <span class="dchip">ctx 34%</span>
+          <span class="dm" style="left:38px;top:-6px" title="①（v2）：桌面保留上下文/用量显示（仅移动端摘除）">1</span>
+        </div>
+        <div class="dctr">
+          <div class="avx">笨</div>
+          <div class="nm">笨笨</div>
+          <span class="dm" style="right:-14px;top:6px" title="v2→v3 ①：顶栏时间戳摘除，移动/桌面同款">1</span>
+        </div>
+        <div class="drgt">
+          <button class="rbtn" style="width:34px;height:34px"><svg class="i" style="width:16px;height:16px"><use href="#i-search"/></svg></button>
+          <button class="rbtn" style="width:34px;height:34px"><svg class="i" style="width:16px;height:16px"><use href="#i-activity"/></svg><span class="bdg" style="top:-2px;right:-2px">8</span></button>
+          <button class="rbtn" style="width:34px;height:34px"><svg class="i" style="width:16px;height:16px"><use href="#i-layers"/></svg></button>
+        </div>
+      </div>
+      <div class="dchat">
+        <div class="bub ai" style="max-width:62%">…出（终端视图），不登登，顺带发现：zcode 现在 turn 期间是静默的，翻一个隐藏旗标就有 live 流可渲染——候你拍板。</div>
+        <div class="bub user" style="max-width:52%">桌面端也换成这个会话头，上下文环留在原位就行。</div>
+        <div class="rowm u"><span class="act">16:44</span><span class="act">复制</span></div>
+      </div>
+      <div class="dcomp">
+        <div class="ibar">
+          <div class="ta"><span class="ph">输入消息…</span></div>
+          <button class="cbtn"><svg class="i"><use href="#i-clip"/></svg></button>
+          <button class="cbtn stop" style="display:none"><svg class="i"><use href="#i-stop"/></svg></button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const phone = document.getElementById('phone');
+
+// ── 屏切换 ──
+const legends = {
+  p1: '<span class="tag">v3 主屏</span><b>悬浮顶栏 + 液态下拉</b>：内容直顶状态栏下滚动，圆钮/头像/名称胶囊悬浮其上（glass-control 材质，无通栏底面）。<b>点两个圆钮试试</b>：钮自身向下拉长（宽 40 恒定），子钮依次液态弹出（过冲回弹 + 模糊析出），再点反向收回；左列「任务」进二级液态面板（⑤）。时间戳已摘除（①）。',
+  p2: '<span class="tag bl">v2④ 沿用</span><b>头像提案</b>（作者未挑战，原案保留）：入口双路（会话头角标 + 设置页行）；存储 local-first（localStorage dataURL 按 agentId，镜像 avatarCache 键位），登录后随账号同步；渲染走 avatarRender 复用池防闪；缺省回落首字母圆牌。顶栏随②转悬浮。',
+  p3: '<span class="tag">v3⑤</span><b>二级液态任务面板</b>：p1 左列点「任务」→ 六键液态收回 → 圆钮原地形变加宽成浮层（40→308px，过冲回稳）。分组 运行中2/排队4/已完成6；卡六级层级 = 状态点/标题/进度 n/m/状态词/成员预览(限2+«+n»)/分组降权（已完成整卡降透明）。方案全文见控制台「⑤ 方案说明」。',
+  p4: '<span class="tag">v3④</span><b>登录卡对齐站内控件语言</b>：面板 = glass-control token（blur10·saturate1.2·顶亮底暗 inset·辉光投影 + nf-findbar 式 4px 16px 外影），即 .canvas-find-toggle/.nf-findbar 同族；首牌字母方块换<b>官方横排 lockup</b>（仓内集中源 stand-horizontal-compact svg 内联，currentColor 随主题）；单键制保持，微信绿实色键不动（visual-style 铁律 2）。',
+  p5: '<span class="tag">已批</span><b>附件形态 v3 原样保留</b>（作者批「很好」）：附件条 = 独立流内行，chip 恒完整显示，溢出收「+N」，与输入文字零重叠。顶栏随②转悬浮。',
+  p6: '<span class="tag bl">①</span><b>桌面端对照</b>：顶栏时间戳摘除（移动/桌面同款原则）；上下文环 + 模型/用量 chip 桌面保留（仅移动端摘除）；桌面保留实心玻璃栏形态（②悬浮态为移动端语言）。',
+};
+const lgText = document.getElementById('lgText');
+function showScr(id){
+  document.querySelectorAll('.scr').forEach(s=>s.classList.toggle('live', s.id === 'scr-'+id));
+  const isDesk = id === 'p6';
+  document.getElementById('phone').style.display = isDesk ? 'none' : '';
+  document.getElementById('desk').style.display = isDesk ? 'flex' : 'none';
+  lgText.innerHTML = legends[id] || '';
+  if(id === 'p3'){ // 进入即演示二级液态：先收态再放形变动画
+    const sec = document.getElementById('scr-p3');
+    const tp = sec.querySelector('[data-tpanel]');
+    tp.style.cssText = ''; tp.classList.remove('open');
+    void tp.offsetWidth;
+    requestAnimationFrame(()=>requestAnimationFrame(()=>tp.classList.add('open')));
+  }
+}
+document.getElementById('segScr').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  document.querySelectorAll('#segScr button').forEach(x=>x.classList.toggle('on', x===b));
+  showScr(b.dataset.s);
+});
+showScr('p1');
+
+// ── 主题 ──
+document.getElementById('segTheme').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  document.querySelectorAll('#segTheme button').forEach(x=>x.classList.toggle('on', x===b));
+  [phone, document.getElementById('desk')].forEach(el=>{
+    el.classList.toggle('dark', b.dataset.t === 'dark');
+    el.classList.toggle('light', b.dataset.t === 'light');
+  });
+});
+
+// ── p1 液态下拉 + 二级任务面板 ──
+const secP1 = document.getElementById('scr-p1');
+const ddL = document.getElementById('ddL');
+const ddR = document.getElementById('ddR');
+const scrimP1 = secP1.querySelector('[data-scrim]');
+const tpanelP1 = secP1.querySelector('[data-tpanel]');
+let tpTimer = null;
+
+function closeDD(except){ [ddL,ddR].forEach(d=>{ if(d!==except) d.classList.remove('open'); }); }
+function closeTPanel(tp, done){
+  if(!tp.classList.contains('open')) { if(done) done(); return; }
+  tp.classList.remove('open'); tp.classList.add('close');
+  clearTimeout(tp._t);
+  tp._t = setTimeout(()=>{ tp.classList.remove('close'); if(done) done(); }, 430);
+}
+function openTPanel(tp){
+  clearTimeout(tp._t); tp.classList.remove('close');
+  void tp.offsetWidth;               // 重放形变动画
+  tp.classList.add('open');
+}
+scrimP1.addEventListener('click', ()=>{ closeDD(); closeTPanel(tpanelP1); });
+ddL.querySelector('.dd-hd').addEventListener('click', ()=>{
+  const was = ddL.classList.contains('open');
+  if(was){ ddL.classList.remove('open'); }
+  else { closeDD(ddL); closeTPanel(tpanelP1); ddL.classList.add('open'); }
+});
+ddR.querySelector('.dd-hd').addEventListener('click', ()=>{
+  const was = ddR.classList.contains('open');
+  if(was){ ddR.classList.remove('open'); }
+  else { closeDD(ddR); ddR.classList.add('open'); }
+});
+ddL.addEventListener('click', e=>{
+  const k = e.target.closest('.dd-k'); if(!k) return;
+  if(k.dataset.k === 'task'){        // ⑤ 二级液态：六键收回 → 钮形变加宽
+    ddL.classList.remove('open');
+    clearTimeout(tpTimer);
+    tpTimer = setTimeout(()=>openTPanel(tpanelP1), 260);
+  } else if(k.dataset.k === 'status'){
+    ddL.classList.remove('open');    // 运行状态汇总（后台 4 · 智能体 4）——实施批接真面
+  } else {
+    ddL.classList.remove('open');
+  }
+});
+ddR.addEventListener('click', e=>{ if(e.target.closest('.dd-k')) ddR.classList.remove('open'); });
+tpanelP1.querySelector('[data-tpclose]').addEventListener('click', ()=>closeTPanel(tpanelP1));
+
+// ── 深链：#scr=p1..p6 & t=light（样张分享/评审直达）──
+const q = new URLSearchParams(location.hash.slice(1));
+if(q.get('t')) document.querySelector(`#segTheme [data-t="${q.get('t')}"]`)?.click();
+if(q.get('scr')) document.querySelector(`#segScr [data-s="${q.get('scr')}"]`)?.click();
+</script>
+</body>
+</html>
