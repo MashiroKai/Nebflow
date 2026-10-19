@@ -58,7 +58,6 @@ import nebflow.shared.NebflowLogger
  */
 final class JevAllocator(
   provider: DecisionProvider[IO],
-  timeoutMs: Long,
   /**
    * Maximum characters of the TASK-BRIEF portion of `state`.
    *
@@ -245,14 +244,19 @@ object JevAllocator:
   private[decision] def catalogText(catalog: List[CatalogEntry]): String =
     catalog.map(e => s"### ${e.name}\n${e.description}").mkString("\n\n")
 
-  def apply(provider: DecisionProvider[IO], timeoutMs: Long): JevAllocator =
-    new JevAllocator(provider, timeoutMs)
+  def apply(provider: DecisionProvider[IO]): JevAllocator =
+    new JevAllocator(provider)
 
   /**
    * Build an allocator from the live config, or `None` when the face is off.
    *
    * This is the single place the port implementation is obtained, so call
    * sites in `core` never construct a provider themselves.
+   *
+   * 🔴 ZERO-TIMEOUT (2026-10-19 author decision): no allocation-call deadline
+   * is carried or applied — the former `jev.timeoutMs` budget is demolished
+   * (see [[DecisionProvider]]); completion is expressed through the monitoring
+   * face, never a timer kill.
    */
   def fromConfig(
     health: Option[DecisionHealthPort],
@@ -261,5 +265,5 @@ object JevAllocator:
     for
       settings <- JevSettings.fromConfig(health, configPath)
       provider <- DecisionProviders.build(settings)
-    yield new JevAllocator(provider, settings.timeoutMs)
+    yield new JevAllocator(provider)
 end JevAllocator

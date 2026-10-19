@@ -26,7 +26,6 @@ final class LayaProvider(
   endpoint: String,
   model: String,
   token: String,
-  timeoutMs: Long,
   minConfidence: Option[Double],
   health: Option[DecisionHealthPort]
 ) extends DecisionProvider[IO]:
@@ -53,7 +52,6 @@ final class LayaProvider(
           .header("Authorization", s"Bearer $token")
           .header("Content-Type", "application/json")
           .body(body)
-          .readTimeout(timeoutMs.millis)
           .response(asStringAlways)
         val resp = request.send(SharedBackend.instance)
         if resp.code.isSuccess then Right(resp.body)
@@ -85,7 +83,6 @@ final class LayaProvider(
       try
         val resp = basicRequest
           .get(uri"$healthUrl")
-          .readTimeout(timeoutMs.millis)
           .response(asStringAlways)
           .send(SharedBackend.instance)
         if resp.code.isSuccess then Right(resp.code.code)
@@ -106,7 +103,6 @@ object LayaProvider:
       endpoint = settings.endpoint,
       model = settings.model,
       token = settings.token.getOrElse(""),
-      timeoutMs = settings.timeoutMs,
       // The abstention floor is not part of the shared settings record: it is a
       // LAYA-only knob and lives with the LAYA provider rather than widening
       // the common config face.
@@ -119,7 +115,6 @@ object LayaProvider:
       endpoint = settings.endpoint,
       model = settings.model,
       token = settings.token.getOrElse(""),
-      timeoutMs = settings.timeoutMs,
       minConfidence = minConfidence,
       health = settings.health
     )

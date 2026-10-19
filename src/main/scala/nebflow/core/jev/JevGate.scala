@@ -29,8 +29,6 @@ final case class JevGateSnapshot(
   enabled: Boolean,
   /** Resolved provider id ("" when unconfigured). */
   provider: String,
-  /** Allocation-call deadline (ms). See the axis warning on [[JevGate]]. */
-  timeoutMs: Long,
   /** High-cardinality choice policy ("" when unset). */
   choiceHighBasePolicy: String
 )
@@ -39,7 +37,7 @@ object JevGateSnapshot:
 
   /** The snapshot of an absent/disabled face — resolves to OFF. */
   val Off: JevGateSnapshot =
-    JevGateSnapshot(configured = false, enabled = false, provider = "", timeoutMs = 0L, choiceHighBasePolicy = "")
+    JevGateSnapshot(configured = false, enabled = false, provider = "", choiceHighBasePolicy = "")
 
 /**
  * Why the face is not applied.
@@ -79,12 +77,9 @@ object JevGate:
   /**
    * The single decision point.
    *
-   * 🔴 `timeoutMs` AXIS WARNING: the deadline carried here is the
-   * ALLOCATION-CALL budget (how long dispatch waits for a decision before
-   * falling back). It is a DIFFERENT axis from the R6 tool-authorization
-   * budget (`Delegate.timeout` -> `Defaults.declaredToolTimeoutMs`), which is
-   * the blocking-tool judgement window. Both exist, they do not interact, and
-   * conflating them would silently change the stuck-judgement face.
+   * 🔴 零超时（2026-10-19 作者拍板）：快照不再携带 `timeoutMs`——分配链的
+   * wall-clock 预算已拆（决策调用完成与否靠监测手段表达，不用定时器杀）；
+   * R6 工具授权窗（`Delegate.timeout`）是另一根轴，与本面无关。
    */
   def effective(snapshot: JevGateSnapshot): JevGateOutcome =
     if !snapshot.configured then JevGateOutcome.Off(JevGateReason.NotConfigured)

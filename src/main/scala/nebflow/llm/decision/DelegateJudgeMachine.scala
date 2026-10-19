@@ -69,8 +69,10 @@ object DelegateJudgeMachine:
       override def decideWorktreeDetailed(task: String): IO[Option[DelegateJudge.WorktreeJudgement]] =
         jevLeg
           .flatMap {
-            case Some((p, ms)) =>
-              jevWorktree(p, ms, task).map(_.map(b => DelegateJudge.WorktreeJudgement(b, DelegateJudge.JudgeLeg.Jev)))
+            case Some(p) =>
+              jevWorktree(p, judgeTimeoutMs, task).map(
+                _.map(b => DelegateJudge.WorktreeJudgement(b, DelegateJudge.JudgeLeg.Jev))
+              )
             case None =>
               smallJudgeWorktree(registry, task).map(
                 _.map(b => DelegateJudge.WorktreeJudgement(b, DelegateJudge.JudgeLeg.SmallJudge))
@@ -89,7 +91,7 @@ object DelegateJudgeMachine:
       def judgeTerminal(input: TerminalInput): IO[Option[Verdict]] =
         jevLeg
           .flatMap {
-            case Some((p, ms)) => jevVerdict(p, ms, input)
+            case Some(p) => jevVerdict(p, judgeTimeoutMs, input)
             case None => smallJudgeVerdict(registry, input)
           }
           .flatTap {
@@ -105,11 +107,17 @@ object DelegateJudgeMachine:
 
   // ── ① Jev 优先腿 ─────────────────────────────────────────────────────
 
-  /** 热读装配：未配置 = None（整腿跳过 → SmallJudge 兜底）；携带分配调用时限。 */
-  private def jevLeg: IO[Option[(DecisionProvider[IO], Long)]] =
+  /**
+   * 热读装配：未配置 = None（整腿跳过 → SmallJudge 兜底）。
+   *
+   * 判定机自带预算轴：分配链的 `jev.timeoutMs`（15s）已按 2026-10-19 作者拍板
+   * 拆除（零超时化只及分配链），本机每腿时限改挂**判定机自己的**预算
+   * （`judge.timeoutMs` → [[judgeTimeoutMs]]，缺省 30s）——判定族的 wall-clock
+   * 预算不随分配链拆除而消失，是否进一步拆除候作者逐项拍。
+   */
+  private def jevLeg: IO[Option[DecisionProvider[IO]]] =
     IO.blocking(JevSettings.fromConfig(health = None))
-      .map(_.map(s => (DecisionProviders.build(s), s.timeoutMs)))
-      .map(_.collect { case (Some(p), ms) => (p, ms) })
+      .map(_.flatMap(DecisionProviders.build(_)))
 
   /** 判 worktree 的 Jev 问句（Choice；need_ 同族判据 P(yes)≥0.5）。 */
   private def jevWorktree(p: DecisionProvider[IO], timeoutMs: Long, task: String): IO[Option[Boolean]] =

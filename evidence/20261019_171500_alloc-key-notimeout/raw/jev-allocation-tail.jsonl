@@ -1,0 +1,12 @@
+{"ts":"1792400967098","event":"failure","subject":"delegate-nebflow-993d31ef","reason":"decision API server error: HTTP 500: {\"detail\":\"capture-only\"}"}
+{"ts":"1792400981544","event":"failure","subject":"node:probe5","reason":"decision API server error: HTTP 500: {\"detail\":\"capture-only\"}"}
+{"ts":"1792400982122","event":"timeout","subject":"delegate-nebflow-993d31ef","reason":"llm allocator: TimeoutException"}
+{"ts":"1792400984031","event":"allocated","subject":"node:probe5","reason":"ok","count":"0","capabilities":"","via":"llm-fallback"}
+{"ts":"1792401070094","event":"failure","subject":"node:probe6","reason":"decision API malformed response: answer 'fit_design-spec': decision API malformed response: score answer has no numeric 'score'"}
+{"ts":"1792401073620","event":"allocated","subject":"node:probe6","reason":"ok","count":"0","capabilities":"","via":"llm-fallback"}
+{"ts":"1792401078251","event":"failure","subject":"delegate-nebflow-74eb4637","reason":"decision API malformed response: answer 'fit_browser-use': decision API malformed response: score answer has no numeric 'score'"}
+{"ts":"1792401093325","event":"timeout","subject":"delegate-nebflow-74eb4637","reason":"llm allocator: TimeoutException"}
+{"ts":"1792401493829","event":"failure","subject":"node:probe7","reason":"decision API malformed response: answer 'fit_academic-research': decision API malformed response: score answer has no numeric 'score'"}
+{"ts":"1792401493828","event":"failure","subject":"node:probe7","reason":"decision API malformed response: answer 'fit_design-spec': decision API malformed response: score answer has no numeric 'score'"}
+{"ts":"1792401497881","event":"allocated","subject":"node:probe7","reason":"ok","count":"0","capabilities":"","via":"llm-fallback"}
+{"ts":"1792401500241","event":"allocated","subject":"node:probe7","reason":"ok","count":"0","capabilities":"","via":"llm-fallback"}

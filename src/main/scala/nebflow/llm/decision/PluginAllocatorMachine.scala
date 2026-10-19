@@ -42,8 +42,10 @@ final class JevPluginAllocator(
 
   private val logger = NebflowLogger.forName("nebflow.llm.plugin-alloc")
 
-  /** 分腿记账键（三改③，2026-10-09）：写腿与显示面（REST `legs` 块 + 设置页
-    * 徽标）共用同一拼写。 */
+  /**
+   * 分腿记账键（三改③，2026-10-09）：写腿与显示面（REST `legs` 块 + 设置页
+   * 徽标）共用同一拼写。
+   */
   private val JevLegKey = "jev"
   private val LlmLegKey = "llm"
 
@@ -69,11 +71,15 @@ final class JevPluginAllocator(
                 // （超时/网络/鉴权——`DecisionError` 分类件）⇒ WARN 行 + 分腿
                 // 记账，然后 LLM 兜底腿**自动接管，分配不丢**（⑦ 同族口径：
                 // 未配置或失败都兜）。
-                IO(logger.warnSync(
-                  s"plugin allocation '$subject': jev leg unavailable ($reason) — falling back to the llm leg (allocation preserved)"
-                )) *>
+                IO(
+                  logger.warnSync(
+                    s"plugin allocation '$subject': jev leg unavailable ($reason) — falling back to the llm leg (allocation preserved)"
+                  )
+                ) *>
                   fallbackLeg(
-                    subject, taskText, catalog,
+                    subject,
+                    taskText,
+                    catalog,
                     viaNote = Some(s"jev leg fell back (${kind.wire})"),
                     jevState = Some(DecisionHealth.Down(s"jev leg: $reason", System.currentTimeMillis()))
                   )
@@ -87,11 +93,13 @@ final class JevPluginAllocator(
     }
   end allocatePlugins
 
-  /** LLM 兜底腿：产出集合 = `LlmFallback`；腿也败 = fail-open（JevFallback 已记账）。
-    *
-    * `jevState` = 本次调用 jev 腿的终态（None = 腿没跑，不造键——显示面据此
-    * 区分「没跑」与「跑了挂了」）。通道整体终态语义与三改前一致：兜底腿的
-    * 产出/失败就是通道终态。 */
+  /**
+   * LLM 兜底腿：产出集合 = `LlmFallback`；腿也败 = fail-open（JevFallback 已记账）。
+   *
+   * `jevState` = 本次调用 jev 腿的终态（None = 腿没跑，不造键——显示面据此
+   * 区分「没跑」与「跑了挂了」）。通道整体终态语义与三改前一致：兜底腿的
+   * 产出/失败就是通道终态。
+   */
   private def fallbackLeg(
     subject: String,
     taskText: String,
@@ -161,8 +169,13 @@ object PluginAllocatorMachine:
     )
 
   /**
-   * Jev 腿热读装配（未配置/解不出 provider = None → 兜底腿承接）。分配调用时限
-   * 内置于 JevAllocator（JevSettings.timeoutMs——构建单点）。
+   * Jev 腿热读装配（未配置/解不出 provider = None → 兜底腿承接）。
+   *
+   * 🔴 零超时（2026-10-19 作者拍板）：分配链（两腿）**不带任何 wall-clock 预算**
+   * ——决策调用完成与否靠监测手段表达（[[DecisionHealthPort]] 探活 +
+   * `GET /api/decision/health` + 设置页徽标；卡住/异常进健康面与面板可见），
+   * 不用定时器杀。`jev.timeoutMs` 配置位与 15s 缺省一并拆除（见
+   * [[DecisionProvider]]），LLM 兜底腿的 `fromRegistry` 也不再携带时限。
    */
   private def jevLeg: IO[Option[JevAllocator]] =
     IO.blocking(JevAllocator.fromConfig(health = None))

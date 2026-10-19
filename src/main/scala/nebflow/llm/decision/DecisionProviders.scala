@@ -47,7 +47,6 @@ object DecisionProviders:
       "provider" -> settings.provider,
       "endpoint" -> settings.endpoint,
       "model" -> settings.model,
-      "timeoutMs" -> settings.timeoutMs.toString,
       "keyRefResolved" -> settings.token.isDefined.toString,
       "choiceHighBasePolicy" -> settings.choiceHighBasePolicy.getOrElse("-")
     )

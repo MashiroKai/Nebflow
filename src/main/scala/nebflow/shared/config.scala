@@ -180,7 +180,7 @@ object SearchConfig:
  *   "jev": { "enabled": true, "provider": "typesafe-jev",
  *            "endpoint": "https://api.typesafe.ai/v1/systemone",
  *            "model": "jev-latest", "keyRef": "typesafe-api-key",
- *            "timeoutMs": 15000, "choiceHighBasePolicy": "warn" }
+ *            "choiceHighBasePolicy": "warn" }
  *
  * ==Every field is optional ON PURPOSE==
  * `SearchConfig` requires `provider` + `apiKey`, so a partially written
@@ -197,17 +197,17 @@ object SearchConfig:
  * no readable secret all mean "the face is skipped" — existing users need no
  * migration, exactly as with `search`.
  *
+ * 🔴 零超时（2026-10-19 作者拍板，「stand 设计不要有任何超时控制」）：本节
+ * **不带 `timeoutMs` 配置位**——分配链的 15s 决策预算已拆除（原字段进入
+ * config 即被忽略，零迁移）；决策调用完成与否靠监测手段表达（探活面 +
+ * 面板可见），不用定时器杀。
+ *
  * @param keyRef
  *   NAME of a secret under `~/.nebflow/secrets/` (the social/daemon reference
  *   form: the config stores a POINTER, never a value). Being a pointer rather
  *   than a credential, it is intentionally NOT matched by
  *   `ConfigService.sensitiveKeyPattern`; the pattern still covers any key
  *   adjacent to it that WOULD carry a value (e.g. `apiKey`).
- * @param timeoutMs
- *   ALLOCATION-CALL deadline (how long dispatch waits for a decision before
- *   falling back). This is a DIFFERENT axis from the R6 tool-authorization
- *   budget (`Delegate.timeout` -> `Defaults.declaredToolTimeoutMs`), which is
- *   the blocking-tool judgement window. Do not conflate the two.
  * @param choiceHighBasePolicy
  *   What to do when a choice question exceeds the provider's precision range
  *   (LAYA degrades above ~20 options). Carried as an opaque policy string for
@@ -220,7 +220,6 @@ case class JevConfig(
   endpoint: Option[String] = None,
   model: Option[String] = None,
   keyRef: Option[String] = None,
-  timeoutMs: Option[Long] = None,
   choiceHighBasePolicy: Option[String] = None
 ):
   /**

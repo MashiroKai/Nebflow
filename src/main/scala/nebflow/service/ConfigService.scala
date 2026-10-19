@@ -342,9 +342,11 @@ object ConfigService:
    *
    * 🔴 `keyRef` 在册（指针形态）；**值型凭据键一律不在册**——本白名单同时是
    * 「本面不收凭据值」的机械表达（缺键 ⇒ 写入被拒）。
+   * 🔴 零超时（2026-10-19 作者拍板）：`timeoutMs` 已移出白名单——分配链的
+   * wall-clock 预算拆除后**不留配置位**，越界键 400（防超时位静默回归）。
    */
   private val JEV_WRITABLE_KEYS: List[String] =
-    List("enabled", "provider", "endpoint", "model", "keyRef", "timeoutMs", "choiceHighBasePolicy")
+    List("enabled", "provider", "endpoint", "model", "keyRef", "choiceHighBasePolicy")
 
   /** 只读回程：过滤掉任何可能含凭据值的键（本面当前无此类键，作为结构性护栏）。 */
   def jevWritableKeys: List[String] = JEV_WRITABLE_KEYS

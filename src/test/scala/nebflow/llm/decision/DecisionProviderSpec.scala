@@ -134,6 +134,24 @@ class DecisionProviderSpec extends CatsEffectSuite:
       case other => fail(s"expected Score, got: $other")
   }
 
+  test("a fractional score position is coerced to the nearest position, not a batch failure") {
+    // 2026-10-19 alloc-key batch evidence: jev-1.13.0 serves fit_ scores on a
+    // CONTINUOUS scale on real allocation traffic (0.01/0.52/1.92 measured in
+    // engine-received bytes); a fraction must not poison all 42 answers.
+    val cases = List(
+      ("""{"type":"score","score":0.52}""", 1), // nearest position
+      ("""{"type":"score","score":0.01}""", 0),
+      ("""{"type":"score","score":1.92}""", 2)
+    )
+    cases.foreach { case (answer, want) =>
+      val parsed = JevWireCodec.parseResponse(s"""{"answers":{"q":$answer}}""")
+      assert(parsed.isRight, s"fractional score must coerce, got: $parsed")
+      parsed.toOption.get.answers("q") match
+        case s: DecisionAnswer.Score => assertEquals(s.score, want, s"body: $answer")
+        case other => fail(s"expected Score, got: $other")
+    }
+  }
+
   // ── malformed inputs are loud, never silent empties ─────────────────────
 
   test("malformed envelopes and answers fail loudly with a specific reason") {
@@ -202,16 +220,11 @@ class DecisionProviderSpec extends CatsEffectSuite:
     assertEquals(JevSettings.resolve(Some(cfg), None), None)
   }
 
-  test("settings apply the documented defaults and the hot-read timeout guard") {
+  test("settings apply the documented defaults (zero-timeout: no allocation deadline exists)") {
     val cfg = nebflow.shared.JevConfig(enabled = Some(true))
     val s = JevSettings.resolve(Some(cfg), None).get
     assertEquals(s.provider, DecisionProvider.TypesafeJev)
     assertEquals(s.endpoint, DecisionProvider.DefaultTypesafeEndpoint)
-    assertEquals(s.timeoutMs, DecisionProvider.DefaultTimeoutMs)
-    // A non-positive timeout is not a valid deadline: fall back to the default
-    // rather than building an instantly-expiring call.
-    val bad = JevSettings.resolve(Some(cfg.copy(timeoutMs = Some(0L))), None).get
-    assertEquals(bad.timeoutMs, DecisionProvider.DefaultTimeoutMs)
   }
 
   test("the LAYA provider defaults to its loopback endpoint") {
@@ -239,7 +252,6 @@ class DecisionProviderSpec extends CatsEffectSuite:
         provider = DecisionProvider.TypesafeJev,
         endpoint = "http://localhost",
         model = "m",
-        timeoutMs = 1000L,
         token = Some("LEAK-CANARY"),
         choiceHighBasePolicy = None,
         health = None
@@ -369,7 +381,6 @@ class DecisionProviderSpec extends CatsEffectSuite:
         endpoint = s"http://127.0.0.1:$port/v1/systemone",
         model = "jev-latest",
         token = "test-token",
-        timeoutMs = 5000L,
         health = None
       )
       provider.predict(canonicalRequest).map { out =>
@@ -384,7 +395,7 @@ class DecisionProviderSpec extends CatsEffectSuite:
 
   test("a non-2xx status classifies and does not parse") {
     withMockServer(ex => respond(ex, 429, """{"error":"quota"}""")) { port =>
-      val provider = new TypesafeJevProvider(s"http://127.0.0.1:$port/x", "m", "t", 5000L, None)
+      val provider = new TypesafeJevProvider(s"http://127.0.0.1:$port/x", "m", "t", None)
       provider.predict(canonicalRequest).map { out =>
         assert(out.isLeft, "429 must not parse as a successful decision")
         assert(out.swap.toOption.get.isInstanceOf[DecisionError.Quota], s"expected Quota, got: $out")
@@ -392,17 +403,18 @@ class DecisionProviderSpec extends CatsEffectSuite:
     }.unsafeToFuture()
   }
 
-  test("a timeout is classified as a timeout, not as a transport failure") {
+  test("a slow endpoint is awaited, never timer-killed (zero-timeout, 2026-10-19 author decision)") {
     withMockServer { ex =>
-      // Sleep past the provider deadline, then answer — the client must give
-      // up first and report a timeout.
+      // Sleep far longer than any former deadline, then answer — the client
+      // must wait for the answer: the decision face carries no wall-clock
+      // budget (monitoring face expresses stuckness; no timer kill).
       Thread.sleep(2500)
       respond(ex, 200, capturedResponse)
     } { port =>
-      val provider = new TypesafeJevProvider(s"http://127.0.0.1:$port/x", "m", "t", 300L, None)
+      val provider = new TypesafeJevProvider(s"http://127.0.0.1:$port/x", "m", "t", None)
       provider.predict(canonicalRequest).map { out =>
-        assert(out.isLeft, "an expired deadline must not yield an answer")
-        assert(out.swap.toOption.get.isInstanceOf[DecisionError.Timeout], s"expected Timeout, got: $out")
+        assert(out.isRight, "a slow answer must be awaited and parsed, not aborted")
+        assertEquals(out.toOption.get.answers.size, 3)
       }
     }.unsafeToFuture()
   }
@@ -413,7 +425,7 @@ class DecisionProviderSpec extends CatsEffectSuite:
     withMockServer { ex =>
       respond(ex, if seen.getAndIncrement() == 0 then 200 else 500, capturedResponse)
     } { port =>
-      val provider = new TypesafeJevProvider(s"http://127.0.0.1:$port/x", "m", "t", 5000L, Some(monitor))
+      val provider = new TypesafeJevProvider(s"http://127.0.0.1:$port/x", "m", "t", Some(monitor))
       for
         first <- provider.predict(canonicalRequest)
         up <- monitor.getDecisionHealth
@@ -435,7 +447,7 @@ class DecisionProviderSpec extends CatsEffectSuite:
       respond(ex, 503, """{"detail":"busy"}""")
     } { port =>
       val provider = LayaProvider(
-        JevSettings(DecisionProvider.Laya, s"http://127.0.0.1:$port/predict", "laya", 5000L, Some("t"), None, None),
+        JevSettings(DecisionProvider.Laya, s"http://127.0.0.1:$port/predict", "laya", Some("t"), None, None),
         minConfidence = Some(0.25)
       )
       provider.predict(canonicalRequest).map { out =>

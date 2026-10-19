@@ -120,9 +120,17 @@ object JevWireCodec:
             )
       case Some(DecisionQuestionType.Score) =>
         // The score position is lenient about representation: JeV echoes an
-        // integer in the captured sample, but a JSON float of the same value
-        // must not be discarded as malformed.
-        c.downField("score").focus.flatMap(DecisionProvider.uintOf) match
+        // integer in the captured sample, a JSON float of the same value must
+        // not be discarded as malformed, and — measured 2026-10-19 (alloc-key
+        // batch evidence) — the serving model (jev-1.13.0) ALSO returns the
+        // fit_ score on a CONTINUOUS scale (0.01 / 0.52 / 1.92 …) on real
+        // allocation traffic. A fractional read is coerced to the NEAREST
+        // position instead of poisoning the whole batch: membership never
+        // consults the score (`JevAllocator.select` reads the need_ choice
+        // answers only), so the coercion touches the sensitivity axis alone.
+        c.downField("score").focus.flatMap(DecisionProvider.uintOf).orElse {
+          c.downField("score").focus.flatMap(_.asNumber).map(n => math.rint(n.toDouble).toLong.max(0L))
+        } match
           case None => Left(DecisionError.Malformed("score answer has no numeric 'score'"))
           case Some(pos) =>
             Right(

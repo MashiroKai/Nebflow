@@ -7,8 +7,6 @@ import nebflow.core.jev.{CatalogEntry, JevAllocation, JevFallback, JevFallbackKi
 import nebflow.llm.{ModelCandidate, ProviderRegistry, SendMessageParams}
 import nebflow.shared.{Message, MessageRole, NebflowLogger}
 
-import scala.concurrent.duration.*
-
 /**
  * LlmAllocator —— **LLM 兜底分配腿**（jev-plugins 批 #1226；原文「未配 Jev → 新
  * LlmAllocator（单次 LLM JSON 选插件，同语义）」的执行体）.
@@ -36,8 +34,6 @@ import scala.concurrent.duration.*
 final class LlmAllocator(
   /** 单次调用缝（生产 = registry.getAdapter(...).sendMessage；spec 注 canned 回文）。 */
   singleCall: SendMessageParams => IO[Option[String]],
-  /** 分配调用时限（分配预算轴——与 R6 工具授权窗是两根轴，禁混同）。 */
-  timeoutMs: Long,
   /** 模型候选（None = 无可用模型——腿不可用，Failure fail-open）。 */
   candidate: IO[Option[ModelCandidate]]
 ):
@@ -70,9 +66,7 @@ final class LlmAllocator(
             sessionId = Some(AllocSessionId),
             agentId = Some(AllocSessionId)
           )
-          singleCall(params)
-            .timeout(timeoutMs.millis)
-            .attempt
+          singleCall(params).attempt
             .flatMap {
               case Right(Some(reply)) =>
                 parsePlugins(reply, catalog) match
@@ -85,10 +79,10 @@ final class LlmAllocator(
               case Right(None) =>
                 JevFallback.record(JevFallbackKind.Failure, subject, "llm allocator: call failed (no reply)")
               case Left(e) =>
-                val kind =
-                  if e.isInstanceOf[java.util.concurrent.TimeoutException] then JevFallbackKind.Timeout
-                  else JevFallbackKind.Failure
-                JevFallback.record(kind, subject, s"llm allocator: ${e.getClass.getSimpleName}")
+                // 🔴 零超时（2026-10-19 作者拍板）：本腿不再挂分配调用定时器
+                // （原 15s `.timeout()` 已拆）——左值只能来自调用缝自身的网络/
+                // 传输异常，统一记 Failure（Timeout 分类无进路，不再造）。
+                JevFallback.record(JevFallbackKind.Failure, subject, s"llm allocator: ${e.getClass.getSimpleName}")
             }
       }
 
@@ -139,17 +133,15 @@ end LlmAllocator
 object LlmAllocator:
 
   /**
-   * 分配调用时限缺省（Jev 未配置时的兜底腿预算；与 DecisionProvider.DefaultTimeoutMs
-   * 同源口径——分配调用预算轴，实测决策延迟中位 ~0.9s，15s 是宽裕上界）。
-   */
-  val DefaultTimeoutMs: Long = DecisionProvider.DefaultTimeoutMs
-
-  /**
    * 生产装配：模型候选解析（`judge.utilityModel` ref → 候选；缺省 = 全局候选链首选
    * ——判定机 utilityCandidate 同口径；判定机件不动，此处为分配族自己的同形装配）。
-   * None = 无可用候选（腿不可用）。timeoutMs 缺省 = 分配调用预算缺省。
+   * None = 无可用候选（腿不可用）。
+   *
+   * 🔴 零超时（2026-10-19 作者拍板，「stand 设计不要有任何超时控制——通过监测的
+   * 手段」）：本腿**不带分配调用预算**（原 `timeoutMs` 参数与 15s `.timeout()`
+   * 定时器杀已拆，不留配置位）；调用完成与否由探活面与分配审计表达。
    */
-  def fromRegistry(registry: ProviderRegistry, timeoutMs: Long = DefaultTimeoutMs): IO[Option[LlmAllocator]] =
+  def fromRegistry(registry: ProviderRegistry): IO[Option[LlmAllocator]] =
     candidateFrom(registry).map {
       case None => None
       case Some(cand) =>
@@ -158,7 +150,7 @@ object LlmAllocator:
             case Right(resp) => Some(resp.reply)
             case Left(_) => None
           }
-        Some(new LlmAllocator(call, timeoutMs, IO.pure(Some(cand))))
+        Some(new LlmAllocator(call, IO.pure(Some(cand))))
     }
 
   /** 候选解析（判定机 utilityCandidate 同口径：ref 优先，缺省 = 候选链首选）。 */
