@@ -16,7 +16,6 @@ import nebflow.core.jev.{
   PluginCatalog
 }
 import nebflow.core.plugin.{PluginRegistry, PluginsConfig}
-import nebflow.core.skill.SkillService
 import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**
@@ -150,9 +149,9 @@ object PluginInjection:
 
   /**
    * 声明集（或分配集）→ 注入物。原 `NodeStarter.prepareNodePlugins` 解析块逐字迁入：
-   * 逐包 `PluginRegistry.resolve`（内容面：不存在/被封禁 = Left 列明原因）；逐 skill
-   * 读全文（[[injectedPluginBlock]]，文件不可读 = Left 不静默降级）；组装
-   * `<injected-plugins>` 块 + MCP 插件清单 + builtin 工具授予。
+   * 逐包 `PluginRegistry.resolve`（内容面：不存在/被封禁 = Left 列明原因）；逐包读
+   * 包根 Plugin.md 全文（[[injectedPluginBlock]]，必要文件缺失/不可读 = Left 不静默
+   * 降级）；组装 `<injected-plugins>` 块 + MCP 插件清单 + builtin 工具授予。
    */
   def resolvePreparation(names: List[String]): IO[Either[String, NodeEngine.PluginPreparation]] =
     PluginsConfig.enabled.flatMap {
@@ -166,49 +165,60 @@ object PluginInjection:
             else
               val defs = resolved.collect { case Right(d) => d }
               defs.traverse(injectedPluginBlock).map { blocks =>
-                val inner = blocks.collect { case Right(b) if b.nonEmpty => b }
-                Right(
-                  NodeEngine.PluginPreparation(
-                    injectedBlock =
-                      if inner.isEmpty then ""
-                      else s"<injected-plugins>\n${inner.mkString("\n\n")}\n</injected-plugins>",
-                    mcpPlugins = defs.filter(_.mcpServers.nonEmpty),
-                    builtinTools = defs.flatMap(_.toolsExtension).distinct
-                  )
-                )
+                // 必要文件缺失/不可读 = Left 上浮（旧链在 injectedPluginBlock 内聚合
+                // Left；机制切到 Plugin.md 后单块 Left 在此单点收集——语义不变：
+                // 节点级失败，绝不静默降级成空注入）。
+                blocks.collectFirst { case Left(e) => e } match
+                  case Some(err) => Left(err)
+                  case None =>
+                    val inner = blocks.collect { case Right(b) => b }
+                    Right(
+                      NodeEngine.PluginPreparation(
+                        injectedBlock =
+                          if inner.isEmpty then ""
+                          else s"<injected-plugins>\n${inner.mkString("\n\n")}\n</injected-plugins>",
+                        mcpPlugins = defs.filter(_.mcpServers.nonEmpty),
+                        builtinTools = defs.flatMap(_.toolsExtension).distinct
+                      )
+                    )
               }
             end if
           }
     }
 
   /**
-   * 逐 plugin 逐 skill 读 SKILL.md 全文（frontmatter 去除 + ${SKILL_DIR} 替换，
-   * SkillService.loadSkill 单点复用——修复「模型自读拿不到替换」缺口，§B.4 ②）。
-   * 文件不可读 → Left（节点级失败，不静默降级）。数据根渲染：
-   * `{{data_root}}` 在此渲染为实例数据根（PathUtil.substituteDataRoot）。
+   * 插件必要文件注入（作者令 2026-10-21「plugin.md = 插件必要文件机制」）：分配
+   * 注入的提示词 = **包根 Plugin.md 的内容**（该插件的功能描述单源）。旧链 =
+   * 逐 skill 读 SKILL.md 全文拼 `<plugin name skill>` 块——随本批退役（SKILL.md
+   * 回归「按需查阅」件，面板胶囊深链打开，不再随分配整文注入）。
+   *
+   * 文件名 = 包根 `Plugin.md`（既有包生态的既有命名，零迁移）；小写 `plugin.md`
+   * 同认（回退一查——同一文件机制，覆盖手写小写名的包）。`{{data_root}}` 照旧
+   * 渲染为实例数据根（PathUtil.substituteDataRoot）。
+   *
+   * 缺失/不可读 → Left（节点级失败，显式列路径——与旧 SKILL.md 不可读同款
+   * no-silent-degradation；Plugin.md 自本批起是插件必要文件，存量包已随本批
+   * 全部补齐）。
    */
   private def injectedPluginBlock(defn: PluginRegistry.PluginDef): IO[Either[String, String]] =
-    if defn.skills.isEmpty then IO.pure(Right(""))
-    else
-      defn.skills
-        .traverse { sk =>
-          SkillService.loadSkill(sk.path).flatMap {
-            case Some(content) =>
-              IO.pure[Either[String, String]](Right(s"""<plugin name="${defn.name}" skill="${sk.name}">\n${PathUtil
-                  .substituteDataRoot(content.content)}\n</plugin>"""))
-            case None =>
-              IO.pure[Either[String, String]](
-                Left(
-                  s"Plugin '${defn.name}' skill '${sk.id}' file unreadable: ${sk.path} — allocation refused (no silent degradation)"
-                )
-              )
-          }
-        }
-        .map { blocks =>
-          blocks.find(_.isLeft) match
-            case Some(Left(err)) => Left(err)
-            case _ => Right(blocks.collect { case Right(b) => b }.mkString("\n\n"))
-        }
+    val root = os.Path(defn.dir)
+    val readPrimary = IO.blocking(os.read(root / "Plugin.md")).attempt
+    val readLowercase = IO.blocking(os.read(root / "plugin.md")).attempt
+    readPrimary
+      .orElse(readLowercase)
+      .flatMap {
+        case Right(text) =>
+          IO.pure(
+            Right(s"""<plugin name="${defn.name}">\n${PathUtil.substituteDataRoot(text)}\n</plugin>""")
+          )
+        case Left(_) =>
+          IO.pure(
+            Left(
+              s"Plugin '${defn.name}' required file Plugin.md missing/unreadable at ${root / "Plugin.md"} — " +
+                "allocation refused (no silent degradation)"
+            )
+          )
+      }
 
   /**
    * duty 记账（INFO 单行；判定 = [[JevDeclarationDuty.evaluate]] 单点）：分配动作

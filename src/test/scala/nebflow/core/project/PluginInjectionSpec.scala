@@ -13,7 +13,8 @@ import scala.concurrent.duration.*
  * PluginInjection 判读（jev-plugins 批 #1226）：
  *
  *  - allocatePreparation 全链：总闸 disabled → 空注入零调用；空目录 → empty-catalog；
- *    分配集 → 解析注入（`<injected-plugins>` 块内容 = 注册表技能全文）；选中包被封禁
+ *    分配集 → 解析注入（`<injected-plugins>` 块内容 = 包根 Plugin.md——作者令
+ *    「plugin.md = 插件必要文件机制」，缺文件 = Left）；选中包被封禁
  *    → Left 显式拒（分配失败是节点级失败，不静默降级）；
  *  - forNode S9 分支单点：声明集权威（分配面零调用）；per-project 引擎空声明 =
  *    旧行为（空注入零调用）；delegate 作用域引擎空声明 → 分配面 + `step-plugins`
@@ -42,6 +43,8 @@ class PluginInjectionSpec extends CatsEffectSuite:
   override def afterEach(context: munit.AfterEach): Unit = PluginAllocator.clear()
 
   // ── 插件夹具（NodePluginChainSpec 同款单包形态：$schema canonical + 仅 skills）──
+  // 作者令「plugin.md = 插件必要文件」批：分配注入的提示词 = 包根 Plugin.md 内容，
+  // 夹具随该机制带 Plugin.md（marker 写在 Plugin.md 里——注入断言的锚）。
   private def writeSkillPlugin(name: String, marker: String): Unit =
     val dir = tempRoot / "plugins" / name
     os.makeDir.all(dir / "skills" / "howto")
@@ -50,6 +53,7 @@ class PluginInjectionSpec extends CatsEffectSuite:
       s"""{"$$schema":"${nebflow.core.plugin.PluginRegistry.CanonicalSchema}","name":"$name","version":"1.0.0","description":"$marker fixture"}""",
       createFolders = true
     )
+    os.write.over(dir / "Plugin.md", s"# $name\n\n## $marker\n", createFolders = true)
     os.write.over(
       dir / "skills" / "howto" / "SKILL.md",
       s"""---
@@ -142,8 +146,49 @@ class PluginInjectionSpec extends CatsEffectSuite:
       val (prep, set) = r.toOption.get
       assertEquals(set, PluginInjection.AllocatedSet(List("p1"), "jev"))
       assert(prep.injectedBlock.contains("<injected-plugins>"), prep.injectedBlock)
-      assert(prep.injectedBlock.contains("INJECTED-MARKER"), "the skill body reached the block")
+      assert(prep.injectedBlock.contains("INJECTED-MARKER"), "the Plugin.md content reached the block")
       assertEquals(prep.mcpPlugins, Nil, "a skills-only package carries no MCP leg")
+  }
+
+  // ── 作者令「plugin.md = 插件必要文件机制」：注入内容 = Plugin.md，缺文件 = Left ──
+
+  test("injection source = Plugin.md: the block wraps Plugin.md (no skill attr) and SKILL.md is no longer injected") {
+    setPluginsEnabled(true)
+    writeSkillPlugin("p1", "PLUGIN-MD-ONLY")
+    installStub(List("p1"))
+    for r <- PluginInjection.allocatePreparation("delegate-pluginmd", "task")
+    yield
+      val (prep, _) = r.toOption.get
+      // 注入块 = 包根 Plugin.md 原文（`<plugin name>` 无 skill 属性——旧逐 skill 形态退役）
+      assert(prep.injectedBlock.contains("<plugin name=\"p1\">"), prep.injectedBlock)
+      assert(!prep.injectedBlock.contains("skill="), prep.injectedBlock)
+      assert(prep.injectedBlock.contains("## PLUGIN-MD-ONLY"), "Plugin.md body is the injected prompt")
+      // SKILL.md 全文不再随分配注入（回归按需查阅件）
+      assert(!prep.injectedBlock.contains("injection test skill"), "SKILL.md body must NOT ride the allocation prompt")
+  }
+
+  test("injection accepts the lowercase plugin.md spelling (same mechanism, zero migration)") {
+    setPluginsEnabled(true)
+    writeSkillPlugin("p1", "LOWER-SPELLING")
+    os.move(tempRoot / "plugins" / "p1" / "Plugin.md", tempRoot / "plugins" / "p1" / "plugin.md")
+    installStub(List("p1"))
+    for r <- PluginInjection.allocatePreparation("delegate-lowermd", "task")
+    yield
+      val (prep, _) = r.toOption.get
+      assert(prep.injectedBlock.contains("LOWER-SPELLING"), "lowercase plugin.md is the same required file")
+  }
+
+  test("a package missing the required Plugin.md is an explicit refusal (Left) naming the path") {
+    setPluginsEnabled(true)
+    writeSkillPlugin("p1", "NO-PLUGIN-MD")
+    os.remove(tempRoot / "plugins" / "p1" / "Plugin.md")
+    installStub(List("p1"))
+    for r <- PluginInjection.allocatePreparation("delegate-missing-md", "task")
+    yield
+      assert(r.isLeft, s"expected Left, got: $r")
+      val err = r.left.toOption.get
+      assert(err.contains("required file Plugin.md"), err)
+      assert(err.contains("no silent degradation"), err)
   }
 
   test("allocatePreparation: a blocked allocated package is an explicit refusal (Left), never a silent downgrade") {

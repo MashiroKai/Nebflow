@@ -74,6 +74,8 @@ class NodeSchemaSlimSpec extends CatsEffectSuite:
       slimPluginDir / "plugin.json",
       """{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"slim-e2e","version":"1.0.0","description":"slim payload e2e fixture"}"""
     )
+    // 必要文件（作者令「plugin.md = 插件必要文件机制」）：注入面读包根 Plugin.md
+    os.write.over(slimPluginDir / "Plugin.md", "# slim-e2e\n\nSlim payload e2e fixture package.\n")
     os.write.over(
       slimPluginDir / "skills" / "howto" / "SKILL.md",
       """---

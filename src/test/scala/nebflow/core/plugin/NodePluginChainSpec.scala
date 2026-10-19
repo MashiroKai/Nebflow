@@ -32,7 +32,8 @@ import scala.collection.concurrent.TrieMap
  *
  * 真实 NodeEdit → NodeEngine 链（NodeAcceptanceSpec 基建复用：RecordingLlm 捕获
  * LlmRequest 断言首条消息注入 + 工具清单）：
- * - §B.8-1：分配后 node 首条消息含 <injected-plugins> 全文 + ${SKILL_DIR} 已替换
+ * - §B.8-1：分配后 node 首条消息含 <injected-plugins> 全文（= 包根 Plugin.md——
+ *   作者令「plugin.md = 插件必要文件机制」批；SKILL.md 不再随注入）
  * - §B.4-③：plugin MCP server 启动 + 工具进会话清单；终态回收（全终态汇合点）
  * - **内容面（无审批批 2026-09-13）**：内容变更/无记录**不拦装载**（节点照常启动，
  *   装载的是新内容）；**封禁**（deny-list）在 0 spawn 校验即拒（PLUGIN_BLOCKED）
@@ -107,6 +108,16 @@ class NodePluginChainSpec extends CatsEffectSuite:
     s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"inject-skill","version":"1.0.0","description":"skill injection fixture"}"""
   )
 
+  // 作者令「plugin.md = 插件必要文件机制」：分配注入的提示词 = 包根 Plugin.md
+  // （旧 SKILL.md 全文注入退役——SKILL.md 回归按需查阅件，不再随分配进提示词）。
+  os.write.over(
+    injectSkillDir / "Plugin.md",
+    """# inject-skill
+
+      |## PluginMd Body Marker
+      |Injection prompt source = this file.""".stripMargin
+  )
+
   os.write.over(
     injectSkillDir / "skills" / "howto" / "SKILL.md",
     """---
@@ -125,6 +136,9 @@ class NodePluginChainSpec extends CatsEffectSuite:
     echoMcpDir / "plugin.json",
     s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"echo-mcp","version":"1.0.0","description":"mcp lifecycle fixture"}"""
   )
+
+  // 必要文件（mcp 包同样过注入面——Plugin.md 缺失 = 分配 Left）
+  os.write.over(echoMcpDir / "Plugin.md", "# echo-mcp\n\nMCP lifecycle fixture package.\n")
 
   os.write.over(
     echoMcpDir / "mcp.json",
@@ -151,6 +165,8 @@ class NodePluginChainSpec extends CatsEffectSuite:
     neverApprovedDir / "plugin.json",
     s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"never-approved","version":"1.0.0","description":"no-record fixture"}"""
   )
+
+  os.write.over(neverApprovedDir / "Plugin.md", "# never-approved\n\nNo-record fixture package.\n")
 
   os.write.over(
     neverApprovedDir / "skills" / "s" / "SKILL.md",
@@ -271,9 +287,9 @@ class NodePluginChainSpec extends CatsEffectSuite:
       case Left(e) => IO.raiseError(new RuntimeException(s"fixture approve failed: $e"))
     }
 
-  // ── §B.8-1：skill 全文注入首条消息 ─────────────────────────
+  // ── §B.8-1：注入全文进首条消息（作者令批：内容 = 包根 Plugin.md）────────
 
-  test("§B.8-1: 分配 skill plugin 的节点——首条消息含 <injected-plugins> 全文且 ${SKILL_DIR} 已替换") {
+  test("§B.8-1: 分配 plugin 的节点——首条消息含 <injected-plugins> 全文（= Plugin.md；SKILL.md 不再随注入）") {
     val capture = TrieMap[String, LlmRequest]()
     val ws = tempRoot / "ws-inject"
     os.makeDir.all(ws)
@@ -315,13 +331,21 @@ class NodePluginChainSpec extends CatsEffectSuite:
         s"first user message must carry the injection block, got:\n${userMsg.take(600)}"
       )
       assert(
-        userMsg.contains("<plugin name=\"inject-skill\" skill=\"howto\">"),
-        "plugin tag with §B.4 shape must be present"
+        userMsg.contains("<plugin name=\"inject-skill\">"),
+        "plugin tag = <plugin name> only — the per-skill shape retired with the Plugin.md mechanism"
       )
-      assert(userMsg.contains("## HowTo Body Marker"), "SKILL.md body (frontmatter stripped) must be injected in full")
-      assert(userMsg.contains("/refs/spec.md"), "SKILL_DIR substitution must keep the relative ref path")
-      assert(!userMsg.contains("${SKILL_DIR}"), "${SKILL_DIR} placeholder must be replaced with the absolute dir")
-      assert(userMsg.contains(injectSkillDir.toString), "SKILL_DIR must resolve to the plugin skill dir")
+      assert(
+        !userMsg.contains("skill="),
+        "the injected block must not carry the legacy per-skill attribute"
+      )
+      assert(
+        userMsg.contains("## PluginMd Body Marker"),
+        "Plugin.md body is the injected prompt (allocation prompt = plugin.md)"
+      )
+      assert(
+        !userMsg.contains("## HowTo Body Marker"),
+        "SKILL.md body must NOT ride the allocation prompt any more (on-demand doc, not injected)"
+      )
       assertEquals(node.plugins, List("inject-skill"), "node model must record the allocation (H-3①)")
       assert(payload.toString.contains("\"plugins\""), "NodePayload must expose plugins (H-3①)")
     }
@@ -451,7 +475,7 @@ class NodePluginChainSpec extends CatsEffectSuite:
         _ = assert(b.isRight, s"downstream B create failed: $b")
         // 校验通过后再改插件（旧语义：digest 失效 ⇒ 拒启动；新语义：**不拦**，装载新内容）
         _ <- IO.sleep(20.millis)
-        _ <- IO.blocking(os.write.append(injectSkillDir / "skills" / "howto" / "SKILL.md", "\ntampered-live-content\n"))
+        _ <- IO.blocking(os.write.append(injectSkillDir / "Plugin.md", "\ntampered-live-content\n"))
         // A 完成 → 投递 → barrier 归零 → B 启动（内容面恒可用）→ 完成
         _ <- waitUntil(30.seconds)(rt.store.getNode(aId).map(_.exists(_.status == NodeLifecycle.Completed)))
         _ <- waitUntil(30.seconds)(
