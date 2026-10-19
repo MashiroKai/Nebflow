@@ -1,0 +1,21 @@
+== 运行实例 ==
+39598 日 10月/18 22:00:04 2026   /Library/Java/JavaVirtualMachines/temurin-23.jdk/Contents/Home/bin/java @/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/sbt-args2220902375001140070.tmp
+构建=main@71452cd22（21:19:09 提交）
+
+== 祖先判定 ==
+34b6ce1c9(#523 闸) IN 71452cd22: NO
+3e359bcc2(#523 面板行) IN 71452cd22: NO
+7a9f42bfa(#1226 分配链) IN 71452cd22: YES
+353f903e8(wiki-graph) IN 71452cd22: YES
+117080bd1(wiki-graph) IN 71452cd22: YES
+bc90b5e2d(wiki-graph) IN 71452cd22: YES
+3518c215b(wiki-graph) IN 71452cd22: YES
+4cd4d2ab3(wiki-graph) IN 71452cd22: YES
+05af870c4(wiki-graph) IN 71452cd22: YES
+
+== 时间线 ==
+71452cd22 2026-10-18 21:19:09 +0800 build(web): mobile/bootstrap.js as second esbuild entry — #510 orphan-guard fix
+34b6ce1c9 2026-10-18 23:09:41 +0800 feat(plugins): #523 delegate 插件自动分配专用闸 plugins.autoAllocate
+3e359bcc2 2026-10-18 23:09:50 +0800 feat(web): #523 任务面板 plugins/allocation 行（A1）＋ fm-detail 分配方式行（#504 同点位）
+dff92d740 2026-10-18 22:29:37 +0800 Merge branch 'delegate/delegate-nebflow-2573afbc'
+0be2be9a5 2026-10-18 23:10:52 +0800 Merge branch 'delegate/delegate-nebflow-99857a68'

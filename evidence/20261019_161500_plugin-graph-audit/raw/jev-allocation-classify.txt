@@ -1,0 +1,16 @@
+total=65 since_10-18_22:00=52
+all events: Counter({'timeout': 60, 'allocated': 5})
+recent events: Counter({'timeout': 47, 'allocated': 5})
+recent via: Counter({None: 47, 'llm-fallback': 5})
+
+{"ts": "1792369253062", "event": "allocated", "subject": "node:tmdb", "reason": "ok", "count": "1", "capabilities": "web-search-toolkit", "via": "llm-fallback"}
+{"ts": "1792369254674", "event": "allocated", "subject": "node:tmdb", "reason": "ok", "count": "1", "capabilities": "web-search-toolkit", "via": "llm-fallback"}
+{"ts": "1792369254761", "event": "allocated", "subject": "node:products", "reason": "ok", "count": "1", "capabilities": "web-search-toolkit", "via": "llm-fallback"}
+{"ts": "1792369254915", "event": "allocated", "subject": "node:fees", "reason": "ok", "count": "1", "capabilities": "web-search-toolkit", "via": "llm-fallback"}
+{"ts": "1792369257372", "event": "allocated", "subject": "node:products", "reason": "ok", "count": "1", "capabilities": "web-search-toolkit", "via": "llm-fallback"}
+
+-- last 4 raw lines --
+{"ts":"1792395812565","event":"timeout","subject":"delegate-nebflow-e33b815f","reason":"llm allocator: TimeoutException"}
+{"ts":"1792395812565","event":"timeout","subject":"delegate-nebflow-709c0592","reason":"llm allocator: TimeoutException"}
+{"ts":"1792396761821","event":"timeout","subject":"delegate-nebflow-01308080","reason":"llm allocator: TimeoutException"}
+{"ts":"1792396819114","event":"timeout","subject":"delegate-nebflow-540b9857","reason":"llm allocator: TimeoutException"}
