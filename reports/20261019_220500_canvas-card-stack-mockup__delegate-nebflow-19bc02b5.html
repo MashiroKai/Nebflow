@@ -1,0 +1,1047 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Canvas 面板 · 标签行改叠卡 · 交互 demo（零源码改动）</title>
+<style>
+/* ═══ 主题 token —— 逐字镜像 sapphire.css / base.css（亮暗双档，零新色相）═══ */
+:root {
+  --color-bg: #f5f6f8;
+  --color-surface: #ffffff;
+  --color-text: #1b1e26;
+  --color-text-muted: #8b8e96;
+  --color-text-dim: #6b6e76;
+  --color-border: #ddd;
+  --color-frame-text-bright: #1b1e26;
+  --color-frame-text-muted: #717379;
+  --color-primary: #07c160;            /* 脏标记沿用现状 --color-primary 语义 */
+
+  --sapphire: 91 127 191;
+  --glass-bg: rgba(255, 255, 255, 0.55);
+  --glass-blur: 24px;
+  --glass-border: rgba(255, 255, 255, 0.35);
+
+  --glass-control-bg: rgba(255, 255, 255, 0.45);
+  --glass-control-bg-hover: rgba(255, 255, 255, 0.65);
+  --glass-control-border: rgba(255, 255, 255, 0.40);
+  --glass-control-highlight: rgba(255, 255, 255, 0.50);
+  --glass-control-underedge: rgba(0, 0, 0, 0.08);
+  --glass-control-glow: rgba(0, 0, 0, 0.06);
+  --glass-control-shadow: rgba(0, 0, 0, 0.04);
+  --glass-control-blur: 10px;
+
+  /* 卡面（叠卡实体）：比面板玻璃更实一档，读作「物」 */
+  --card-bg: rgba(255, 255, 255, 0.82);
+  --card-border: rgba(28, 32, 44, 0.13);
+  --card-shadow:
+    0 1px 2px rgba(16, 20, 30, 0.05),
+    0 6px 18px rgba(16, 20, 30, 0.10),
+    0 18px 44px rgba(16, 20, 30, 0.12);
+  --th-bg: rgba(255, 255, 255, 0.92);
+  --th-border: rgba(28, 32, 44, 0.07);
+  --bar-1: rgba(27, 30, 38, 0.16);
+  --bar-2: rgba(27, 30, 38, 0.09);
+  --bar-3: rgba(27, 30, 38, 0.05);
+  --menu-bg: rgba(255, 255, 255, 0.92);
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) {
+    --color-bg: #13161c;
+    --color-surface: #1c1f27;
+    --color-text: #e8eaed;
+    --color-text-muted: #7b7e88;
+    --color-text-dim: #9ba0aa;
+    --color-border: #2a2d35;
+    --color-frame-text-bright: #e8eaed;
+    --color-frame-text-muted: #81838a;
+
+    --glass-bg: rgba(24, 28, 38, 0.68);
+    --glass-border: rgba(255, 255, 255, 0.06);
+
+    --glass-control-bg: rgba(255, 255, 255, 0.05);
+    --glass-control-bg-hover: rgba(255, 255, 255, 0.10);
+    --glass-control-border: rgba(255, 255, 255, 0.08);
+    --glass-control-highlight: rgba(255, 255, 255, 0.08);
+    --glass-control-underedge: rgba(0, 0, 0, 0.25);
+    --glass-control-glow: rgba(0, 0, 0, 0.20);
+    --glass-control-shadow: rgba(0, 0, 0, 0.15);
+
+    --card-bg: rgba(30, 34, 45, 0.88);
+    --card-border: rgba(255, 255, 255, 0.10);
+    --card-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.30),
+      0 8px 22px rgba(0, 0, 0, 0.35),
+      0 20px 48px rgba(0, 0, 0, 0.38);
+    --th-bg: rgba(255, 255, 255, 0.045);
+    --th-border: rgba(255, 255, 255, 0.06);
+    --bar-1: rgba(232, 234, 237, 0.20);
+    --bar-2: rgba(232, 234, 237, 0.11);
+    --bar-3: rgba(232, 234, 237, 0.06);
+    --menu-bg: rgba(32, 36, 47, 0.94);
+  }
+}
+html[data-theme="dark"] {
+  --color-bg: #13161c;
+  --color-surface: #1c1f27;
+  --color-text: #e8eaed;
+  --color-text-muted: #7b7e88;
+  --color-text-dim: #9ba0aa;
+  --color-border: #2a2d35;
+  --color-frame-text-bright: #e8eaed;
+  --color-frame-text-muted: #81838a;
+
+  --glass-bg: rgba(24, 28, 38, 0.68);
+  --glass-border: rgba(255, 255, 255, 0.06);
+
+  --glass-control-bg: rgba(255, 255, 255, 0.05);
+  --glass-control-bg-hover: rgba(255, 255, 255, 0.10);
+  --glass-control-border: rgba(255, 255, 255, 0.08);
+  --glass-control-highlight: rgba(255, 255, 255, 0.08);
+  --glass-control-underedge: rgba(0, 0, 0, 0.25);
+  --glass-control-glow: rgba(0, 0, 0, 0.20);
+  --glass-control-shadow: rgba(0, 0, 0, 0.15);
+
+  --card-bg: rgba(30, 34, 45, 0.88);
+  --card-border: rgba(255, 255, 255, 0.10);
+  --card-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.30),
+    0 8px 22px rgba(0, 0, 0, 0.35),
+    0 20px 48px rgba(0, 0, 0, 0.38);
+  --th-bg: rgba(255, 255, 255, 0.045);
+  --th-border: rgba(255, 255, 255, 0.06);
+  --bar-1: rgba(232, 234, 237, 0.20);
+  --bar-2: rgba(232, 234, 237, 0.11);
+  --bar-3: rgba(232, 234, 237, 0.06);
+  --menu-bg: rgba(32, 36, 47, 0.94);
+}
+
+/* ═══ 基础 ═══ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: 14px/1.65 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  transition: background 0.25s ease;
+}
+button { font-family: inherit; }
+.page { max-width: 980px; margin: 0 auto; padding: 40px 24px 96px; }
+h1 { font-size: 21px; font-weight: 600; letter-spacing: -0.015em; }
+h2 { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 14px; }
+h3 { font-size: 13.5px; font-weight: 600; margin: 16px 0 6px; }
+p { margin: 6px 0; }
+.meta { color: var(--color-text-muted); font-size: 12.5px; margin: 4px 0 0; }
+section {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  padding: 22px 24px;
+  margin: 20px 0 0;
+}
+.kbd {
+  display: inline-block; padding: 1px 6px; border-radius: 5px;
+  border: 1px solid var(--color-border);
+  background: var(--glass-control-bg);
+  font: 500 11.5px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--color-text-dim);
+}
+ul.spec { margin: 6px 0 0 18px; }
+ul.spec li { margin: 4px 0; }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+.dim { color: var(--color-text-muted); }
+.tag {
+  display: inline-block; padding: 0 8px; border-radius: 999px;
+  background: rgb(var(--sapphire) / 0.10);
+  color: rgb(var(--sapphire));
+  font-size: 11px; font-weight: 600; line-height: 20px;
+}
+
+/* ═══ 页头控件 ═══ */
+.page-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; margin-bottom: 6px; }
+.page-head .grow { flex: 1 1 320px; min-width: 0; }
+.controls { display: flex; align-items: center; gap: 10px; padding-bottom: 2px; }
+.ctl-label { font-size: 12px; color: var(--color-text-muted); }
+.seg { display: flex; padding: 3px; gap: 2px; border-radius: 10px;
+  background: var(--glass-control-bg); border: 1px solid var(--glass-control-border); }
+.seg button {
+  border: none; background: transparent; color: var(--color-text-muted);
+  font-size: 12px; font-weight: 500; padding: 4px 12px; border-radius: 7px; cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.seg button.on { background: var(--color-surface); color: var(--color-text);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.10); }
+#theme-btn {
+  width: 34px; height: 34px; border-radius: 50%; cursor: pointer;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur));
+  backdrop-filter: blur(var(--glass-control-blur));
+  color: var(--color-text); display: flex; align-items: center; justify-content: center;
+  box-shadow: inset 0 1px 0 var(--glass-control-highlight), inset 0 -1px 0 var(--glass-control-underedge);
+  transition: background 0.15s;
+}
+#theme-btn:hover { background: var(--glass-control-bg-hover); }
+#theme-btn svg { width: 16px; height: 16px; }
+
+/* ═══ 演示桌台：左侧会话残列 + 右侧 Canvas 面板（复刻 docked 姿态）═══ */
+.desk {
+  display: flex; justify-content: center; align-items: flex-start;
+  gap: 18px; margin: 26px 0 8px;
+}
+.chat-sliver {
+  flex: 0 0 210px; align-self: stretch; min-height: 420px;
+  border: 1px solid var(--color-border); border-radius: 20px;
+  background: var(--color-surface);
+  padding: 18px 14px; display: flex; flex-direction: column; gap: 10px;
+  opacity: 0.9;
+}
+.chat-sliver .b { height: 30px; border-radius: 10px; background: var(--bar-2); }
+.chat-sliver .b.me { align-self: flex-end; width: 62%; background: rgb(var(--sapphire) / 0.16); }
+.chat-sliver .b.you { align-self: flex-start; width: 74%; }
+.chat-sliver .b.you.l2 { width: 52%; }
+.stage-note { text-align: center; color: var(--color-text-muted); font-size: 12px; margin: 10px 0 0; }
+
+/* ═══ Canvas 面板复刻（split.css #canvas-panel 同款外壳）═══ */
+.cpanel {
+  flex: 0 0 auto;
+  width: 720px; max-width: 100%;
+  height: 460px;
+  display: flex; flex-direction: column;
+  position: relative;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0 2px 8px rgba(0, 0, 0, 0.04),
+    0 8px 24px rgba(0, 0, 0, 0.06);
+  transition: width 0.28s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.22s ease, transform 0.22s ease;
+}
+.cpanel.closed { width: 0 !important; min-width: 0; opacity: 0; transform: translateX(30px); pointer-events: none; border-width: 0; }
+
+/* ── 常态头：浏览器式标签行退役 → 居中文件名 + 右侧叠卡钮 ── */
+.canvas-header {
+  position: relative; z-index: 30;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; height: 46px; flex-shrink: 0;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid var(--glass-border);
+}
+.canvas-title {
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex; align-items: center; gap: 7px;
+  max-width: 52%; min-width: 0;
+  user-select: none;
+}
+.canvas-title .t-inner {
+  display: flex; align-items: center; gap: 7px; min-width: 0;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.canvas-title.swap .t-inner { opacity: 0; transform: translateY(-5px); }
+.canvas-title .t-icon { flex: none; width: 16px; height: 16px; color: var(--color-text-muted); display: flex; }
+.canvas-title .t-icon svg { width: 16px; height: 16px; }
+.canvas-title .t-dot { flex: none; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--color-primary); display: none; }
+.canvas-title.is-dirty .t-dot { display: block; }
+.canvas-title .t-name {
+  font-size: 13px; font-weight: 500; color: var(--color-frame-text-bright);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+}
+.header-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+
+/* 叠卡钮 —— markdown 浮动面钮同款语言：白底细描边玻璃圆钮，图标线重 1.8 */
+.deck-btn {
+  width: 32px; height: 32px; border-radius: 50%; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),
+    0 2px 8px var(--glass-control-shadow);
+  color: var(--color-text);
+  transition: background 0.18s ease, transform 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+.deck-btn:hover { background: var(--glass-control-bg-hover); transform: scale(1.05); }
+.deck-btn:active { transform: scale(0.96); }
+.deck-btn svg { width: 16px; height: 16px; }
+.deck-btn[aria-pressed="true"] {
+  background: rgb(var(--sapphire) / 0.14);
+  border-color: rgb(var(--sapphire) / 0.35);
+  color: rgb(var(--sapphire));
+}
+.deck-btn[disabled] { opacity: 0.35; pointer-events: none; }
+.canvas-close-btn {
+  width: 22px; height: 22px; border: none; background: none; cursor: pointer;
+  color: var(--color-text-muted); border-radius: 6px;
+  display: flex; align-items: center; justify-content: center; flex: none;
+  transition: color 0.15s, background 0.15s;
+}
+.canvas-close-btn:hover { background: var(--glass-control-bg-hover); color: var(--color-text); }
+.canvas-close-btn svg { width: 12px; height: 12px; }
+
+/* ── 内容区 + 常态视图 mock ── */
+#canvas-content { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
+.viewer-mock { flex: 1; min-height: 0; padding: 22px 26px; overflow: hidden; }
+.viewer-mock .v-head { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+.viewer-mock .v-head .t-icon svg { width: 15px; height: 15px; }
+.viewer-mock .v-head span { font-size: 12px; color: var(--color-text-muted); }
+
+/* 通用文本条 mock（缩略与大图共用） */
+.ln { height: 8px; border-radius: 4px; background: var(--bar-2); margin: 0 0 9px; }
+.ln.strong { height: 10px; background: var(--bar-1); border-radius: 5px; }
+.ln.w40 { width: 40%; } .ln.w55 { width: 55%; } .ln.w70 { width: 70%; }
+.ln.w85 { width: 85%; } .ln.w100 { width: 100%; } .ln.w30 { width: 30%; }
+.codeblock { background: var(--th-bg); border: 1px solid var(--th-border); border-radius: 10px; padding: 12px 14px; margin: 4px 0 12px; }
+.codeblock .ln { margin-bottom: 7px; }
+.codeblock .ln:last-child { margin-bottom: 0; }
+.codeblock .kw { background: rgb(var(--sapphire) / 0.30); }
+
+/* ── 叠卡层 ── */
+.deck-layer {
+  position: absolute; inset: 0; z-index: 40;
+  display: flex; flex-direction: column;
+  -webkit-backdrop-filter: blur(7px) saturate(1.05);
+  backdrop-filter: blur(7px) saturate(1.05);
+  background: rgb(0 0 0 / 0.045);
+  user-select: none;
+  opacity: 1;
+  transition: opacity 0.22s ease;
+}
+.deck-layer[hidden] { display: none; }
+html[data-theme="dark"] .deck-layer { background: rgb(0 0 0 / 0.22); }
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .deck-layer { background: rgb(0 0 0 / 0.22); }
+}
+.deck-layer.closing { opacity: 0; pointer-events: none; }
+.deck-stage {
+  flex: 1; position: relative;
+  perspective: 1150px;
+  perspective-origin: 50% 6%;   /* 消失点置于上方：越深的卡越往上收 —— 食谱卡盒 */
+}
+.deck-card {
+  position: absolute; left: 50%; top: 47%;
+  width: min(390px, 76%); height: 252px;
+  transform: translate(-50%, -50%);
+  display: flex; flex-direction: column;
+  border-radius: 14px;
+  background: var(--card-bg);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  backdrop-filter: blur(14px) saturate(1.1);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
+  will-change: transform, opacity;
+  cursor: pointer;
+}
+.deck-card .card-shade {
+  position: absolute; inset: 0; border-radius: inherit;
+  background: rgb(0 0 0 / 1); opacity: 0; pointer-events: none;
+}
+.deck-card.front { cursor: pointer; }
+.deck-card .card-badge {
+  position: absolute; top: 10px; left: 10px; z-index: 3;
+  padding: 1px 8px; border-radius: 999px;
+  font-size: 10.5px; font-weight: 600; line-height: 17px;
+  color: rgb(var(--sapphire));
+  background: rgb(var(--sapphire) / 0.13);
+  box-shadow: inset 0 0 0 1px rgb(var(--sapphire) / 0.28);
+  display: none;
+}
+.deck-card.is-active .card-badge { display: block; }
+.deck-card.is-active { box-shadow: var(--card-shadow), 0 0 0 1.5px rgb(var(--sapphire) / 0.55); }
+.deck-card .card-close {
+  position: absolute; top: 8px; right: 8px; z-index: 3;
+  width: 24px; height: 24px; border-radius: 50%; cursor: pointer;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur));
+  backdrop-filter: blur(var(--glass-control-blur));
+  color: var(--color-text-muted);
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.deck-card:hover .card-close, .deck-card.front:focus-visible .card-close { opacity: 1; }
+.deck-card .card-close:hover { background: var(--glass-control-bg-hover); color: var(--color-text); }
+.deck-card .card-close svg { width: 11px; height: 11px; }
+.deck-card .card-thumb {
+  flex: 1; min-height: 0; margin: 10px 10px 0;
+  border-radius: 9px; overflow: hidden; position: relative;
+  background: var(--th-bg); border: 1px solid var(--th-border);
+}
+.deck-card .card-name {
+  flex: none; display: flex; align-items: center; gap: 7px;
+  padding: 9px 12px 10px; min-width: 0;
+}
+.deck-card .n-icon { flex: none; width: 15px; height: 15px; color: var(--color-text-muted); display: flex; }
+.deck-card .n-icon svg { width: 15px; height: 15px; }
+.deck-card .n-dot { flex: none; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--color-primary); display: none; }
+.deck-card.is-dirty .n-dot { display: block; }
+.deck-card .n-text {
+  font-size: 12.5px; font-weight: 500; color: var(--color-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.deck-card .n-sub { margin-left: auto; flex: none; font-size: 10.5px; color: var(--color-text-muted); }
+
+/* 缩略 mock（卡片内） */
+.thumb-pad { position: absolute; inset: 12px 14px; }
+.thumb-pad .ln { height: 6px; margin-bottom: 7px; border-radius: 3px; }
+.thumb-pad .ln.strong { height: 7px; }
+.thumb-grid {
+  position: absolute; inset: 0;
+  background:
+    repeating-linear-gradient(0deg, var(--bar-3) 0 1px, transparent 1px 22px),
+    repeating-linear-gradient(90deg, var(--bar-3) 0 1px, transparent 1px 34px);
+}
+.thumb-grid .ghead { position: absolute; top: 0; left: 0; right: 0; height: 20px;
+  background: rgb(var(--sapphire) / 0.10); border-bottom: 1px solid rgb(var(--sapphire) / 0.18); }
+.thumb-img { position: absolute; inset: 0;
+  background: linear-gradient(135deg, rgb(var(--sapphire) / 0.38), rgb(var(--sapphire) / 0.10) 60%, rgb(var(--sapphire) / 0.22)); }
+.thumb-img svg { position: absolute; left: 50%; bottom: 8%; transform: translateX(-50%); width: 58%; height: 52%; color: rgb(255 255 255 / 0.75); }
+html[data-theme="dark"] .thumb-img svg { color: rgb(255 255 255 / 0.5); }
+@media (prefers-color-scheme: dark) { html:not([data-theme="light"]) .thumb-img svg { color: rgb(255 255 255 / 0.5); } }
+.thumb-page { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 58%; height: 82%; background: var(--color-surface);
+  border: 1px solid var(--th-border); border-radius: 4px; padding: 10px 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+.thumb-page .ln { height: 5px; margin-bottom: 6px; }
+.thumb-flow { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.thumb-flow svg { width: 78%; height: 68%; color: var(--color-text-muted); }
+.thumb-browser { position: absolute; inset: 0; padding: 8px 10px; }
+.thumb-browser .bar { height: 14px; border-radius: 5px; background: var(--bar-3);
+  border: 1px solid var(--th-border); margin-bottom: 8px; display: flex; align-items: center; gap: 3px; padding: 0 5px; }
+.thumb-browser .bar i { width: 4px; height: 4px; border-radius: 50%; background: var(--bar-1); display: block; }
+.thumb-browser .blk { height: 16px; border-radius: 4px; background: var(--bar-2); margin-bottom: 6px; }
+.thumb-browser .blk.b2 { width: 64%; }
+
+/* 卡组底部提示 + 计数 */
+.deck-foot {
+  flex: none; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 0 0 12px; pointer-events: none;
+}
+.deck-hint { font-size: 11px; color: var(--color-text-muted); transition: opacity 0.4s ease; }
+.deck-hint.faded { opacity: 0; }
+.deck-count { font-size: 11px; color: var(--color-text-dim); font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
+
+/* 右键菜单（glass，同 .canvas-tab-context-menu 语言） */
+.glass-menu {
+  position: fixed; z-index: 5000; min-width: 132px; padding: 4px;
+  background: var(--menu-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  backdrop-filter: blur(20px) saturate(1.2);
+  border: 1px solid var(--card-border); border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.14);
+}
+.glass-menu button {
+  display: block; width: 100%; text-align: left; padding: 5px 10px;
+  border: none; background: none; color: var(--color-text);
+  font-size: 12px; cursor: pointer; border-radius: 6px;
+}
+.glass-menu button:hover { background: rgb(128 128 128 / 0.12); }
+.glass-menu hr { border: none; border-top: 1px solid var(--card-border); margin: 4px 0; }
+.glass-menu button.danger { color: #d64545; }
+html[data-theme="dark"] .glass-menu button.danger { color: #f26b6b; }
+@media (prefers-color-scheme: dark) { html:not([data-theme="light"]) .glass-menu button.danger { color: #f26b6b; } }
+
+/* 窄面板退化（<400px）：卡更小、缩略降级、徽标只留环 */
+.cpanel.narrow .deck-card { width: 88%; height: 208px; }
+.cpanel.narrow .deck-card .card-thumb { margin: 8px 8px 0; }
+.cpanel.narrow .deck-card .n-sub { display: none; }
+.cpanel.narrow .canvas-title { max-width: 44%; }
+.cpanel.narrow .deck-foot .deck-hint { display: none; }
+
+/* 面板关闭后的重开浮钮（demo 用） */
+#reopen-pill {
+  position: fixed; right: 26px; bottom: 26px; z-index: 60;
+  display: none; align-items: center; gap: 8px;
+  padding: 9px 16px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur));
+  backdrop-filter: blur(var(--glass-control-blur));
+  box-shadow: inset 0 1px 0 var(--glass-control-highlight), 0 4px 14px rgba(0,0,0,0.12);
+  color: var(--color-text); font-size: 12.5px; font-weight: 500;
+}
+#reopen-pill.show { display: flex; }
+
+/* toast */
+#toast {
+  position: fixed; left: 50%; bottom: 34px; transform: translate(-50%, 8px);
+  z-index: 70; padding: 8px 16px; border-radius: 10px;
+  background: var(--menu-bg); border: 1px solid var(--card-border);
+  -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.14);
+  font-size: 12.5px; color: var(--color-text);
+  opacity: 0; pointer-events: none; transition: opacity 0.2s ease, transform 0.2s ease;
+}
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+table.map { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.map th, table.map td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--color-border); vertical-align: top; }
+table.map th { color: var(--color-text-muted); font-weight: 500; }
+table.map td:first-child { white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cpanel, .deck-layer, .canvas-title .t-inner { transition-duration: 0.01s !important; }
+}
+</style>
+</head>
+<body>
+<main class="page">
+  <div class="page-head">
+    <div class="grow">
+      <h1>Canvas 面板 · 浏览器式标签行 → 叠卡选择</h1>
+      <p class="meta">交互 demo · 零源码改动 · 可直接操作：滚轮翻卡 · 点击选中 · ESC 退出 · 右键卡片出菜单</p>
+    </div>
+    <button id="theme-btn" title="切换明暗（自动 / 亮 / 暗）"></button>
+  </div>
+
+  <section>
+    <div class="controls" style="margin-bottom:2px">
+      <span class="ctl-label">面板宽度</span>
+      <div class="seg" id="width-seg">
+        <button data-w="720" class="on">720</button>
+        <button data-w="500">500</button>
+        <button data-w="340">340（窄）</button>
+      </div>
+      <span class="dim" style="font-size:12px">窄档演示退化形态（徽标仅剩描边环、缩略收窄、提示行隐藏）</span>
+    </div>
+
+    <div class="desk">
+      <div class="chat-sliver" aria-hidden="true">
+        <div class="b you"></div><div class="b you l2"></div>
+        <div class="b me"></div>
+        <div class="b you"></div>
+        <div class="b me"></div>
+        <div class="b you l2"></div>
+        <div class="b you"></div>
+        <div class="b me"></div>
+      </div>
+
+      <div id="canvas-panel" class="cpanel">
+        <div class="canvas-header">
+          <div class="canvas-title" id="canvas-title">
+            <span class="t-inner">
+              <span class="t-icon" id="t-icon"></span>
+              <span class="t-dot"></span>
+              <span class="t-name" id="t-name">—</span>
+            </span>
+          </div>
+          <div class="header-actions">
+            <button id="deck-btn" class="deck-btn" aria-pressed="false" title="叠卡切换（滚轮翻动 · 点击选中）" aria-label="叠卡切换"></button>
+            <button id="panel-close" class="canvas-close-btn" title="收起画板">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+        </div>
+        <div id="canvas-content">
+          <div class="viewer-mock" id="viewer-mock"></div>
+          <div class="deck-layer" id="deck-layer" hidden>
+            <div class="deck-stage" id="deck-stage"></div>
+            <div class="deck-foot">
+              <div class="deck-hint" id="deck-hint">滚轮前后翻动 · 点击前卡选中 · ESC 退出 · 右键卡片出菜单</div>
+              <div class="deck-count" id="deck-count"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="stage-note">常态头：标签行退役，当前文件名居中（类型图标 + 脏标记点）；右侧 = 叠卡圆钮（面钮同款玻璃语言）+ 既有收起钮。</p>
+  </section>
+
+  <section>
+    <h2>设计规格</h2>
+    <h3>常态头（浏览器式标签行退役）</h3>
+    <ul class="spec">
+      <li>当前文件名<strong>绝对居中</strong>（不随左右按钮组宽度浮动），配类型图标；有未保存编辑时名称前显<strong>绿点</strong>（沿用现状脏标记语义 <span class="mono">.canvas-tab-label.dirty</span>，色 = <span class="mono">--color-primary</span>）。</li>
+      <li>右侧按钮组：<strong>叠卡圆钮</strong>（新）+ 既有面板收起钮。叠卡钮复用 markdown 浮动面钮（<span class="mono">.canvas-source-toggle</span>）同款语言：白底玻璃 + 细描边，图标线重 1.8，图标 = 三层叠卡隐喻；deck 打开时钮呈 sapphire 激活态（<span class="mono">aria-pressed</span>）。</li>
+      <li>单文件 / 空态：叠卡钮置灰（无卡可翻）；空态标题显示「画板」。</li>
+    </ul>
+    <h3>叠卡选择模式</h3>
+    <ul class="spec">
+      <li><strong>进入</strong>：点右侧圆钮。卡组像食谱卡盒/rolodex 叠放：透视 1150px、消失点在上沿——前卡全显，后卡向上露边渐退、渐暗、渐小。</li>
+      <li><strong>滚轮</strong>：向下 = 下一张「翻上来」，向上 = 回翻；rAF 对卡组位置做指数趋近（惯性/液态过渡），翻动中卡片带 rotateX 弧线（翻上 / 翻落两个方向）。触控板小步滚动按阈值合并步进。</li>
+      <li><strong>选中</strong>：点击前卡 = 选中——该卡向常态头标题位收拢飞入并淡出，其余卡向后翻回，标题交叉淡入新文件名。</li>
+      <li><strong>退出</strong>：ESC / 点击卡组外空白 = 不选中直接退回常态。</li>
+      <li><strong>卡面内容</strong>：类型图标 + 文件名 + 脏标记点 + 预览缩略暗示（CSS mock：文条 / 网格 / 图片渐变 / 页面 / 流程图）；当前文件卡带 sapphire 描边环 + 「当前」徽标。</li>
+      <li><strong>键盘</strong>：<span class="kbd">↑</span>/<span class="kbd">↓</span> 翻动、<span class="kbd">Enter</span> 选中、<span class="kbd">Esc</span> 退出（与滚轮同通路）。</li>
+    </ul>
+    <h3>关闭文件的安放（方案）</h3>
+    <ul class="spec">
+      <li><strong>主案 · 卡上关闭钮</strong>：悬停前卡浮现右上角玻璃圆钮（同面钮语言），点击关闭该文件（带收拢退出动画），卡组即时重排；关闭当前文件时自动激活相邻文件（与现状 <span class="mono">closeTab</span> 邻位切换语义一致）。</li>
+      <li><strong>扩展案 · 卡片右键菜单</strong>：玻璃菜单 =「引用当前页/选区 / 关闭 / 关闭其他」，承接现状 <span class="mono">showCanvasRefMenu</span> 能力面；面板类页签无可引用内容时 toast 提示（同现状 <span class="mono">canvas.noRef</span>）。demo 中两案均可试。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>边界情况</h2>
+    <ul class="spec">
+      <li><strong>文件很多</strong>：卡组位置环形取模（最短路径绕回），首尾无缝循环，深处卡片淡出至不可见——demo 9 张卡可直接滚一圈验证。</li>
+      <li><strong>当前文件回归</strong>：进入叠卡时前卡即当前文件（sapphire 环 + 「当前」徽标）；选中即回归常态头。</li>
+      <li><strong>窄面板</strong>：宽度切到 340 档看退化形态——卡宽 88%、高度收窄、副信息与提示行隐藏、标题截断；叠卡交互（滚轮/点击/ESC）不变。</li>
+      <li><strong>单卡 / 空态</strong>：单卡时滚轮空转、点击仍可选中；全部关闭则退出叠卡并收起面板（demo 中把卡全关即可看到）。</li>
+      <li><strong>动效降级</strong>：<span class="mono">prefers-reduced-motion</span> 下惯性插值系数置 1（无过渡、位置直达），进出场仅留淡入淡出。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>实现提示（已同步写入本页控制台）</h2>
+    <ul class="spec">
+      <li>滚轮驱动 = <span class="mono">wheel</span> 事件（<span class="mono">preventDefault</span> + deltaMode 归一 + 阈值步进）+ 卡组浮点位置 rAF 指数趋近；卡片按「相对位置」逐帧映射 <span class="mono">translate3d / rotateX / scale / opacity</span>——<strong>纯 transform 透视栈，不需要任何 3D 库</strong>。</li>
+      <li>落点映射（实施批参考）：<span class="mono">#canvas-tab-bar</span> → 常态头 <span class="mono">.canvas-title</span>；叠卡钮挂 <span class="mono">.canvas-header</span> 右侧按钮组；deck 层挂 <span class="mono">#canvas-content</span> 内（absolute inset 0，不遮头部）；数据源 = 既有 <span class="mono">tabs</span> Map（顺序即卡序），dirty 读 <span class="mono">isTabDirty()</span> 同源。</li>
+      <li>既有能力面保留：preview/pinned 语义、右键「引用当前页」（收进卡片菜单）、面板开合 / overlay 形态、<span class="mono">canvas-tab-closed/switched</span> 事件、Ctrl+F 路由（<span class="mono">activeCanvasPane</span> 不受影响）。</li>
+      <li>注意点：deck 层 <span class="mono">overscroll-behavior: contain</span> 防滚链；「OS 文件拖到标签条即开新签」（canvasdrop R6④）需要把 header 整条注册为替代落区；预览缩略为 CSS mock，实施时文本文件可用首行内容、图片用 objectUrl 真缩略。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>与现状映射（canvas.js）</h2>
+    <table class="map">
+      <tr><th>现状（标签行）</th><th>叠卡方案</th></tr>
+      <tr><td>点击标签切换 <span class="mono">setActiveTab</span></td><td>点击前卡选中（飞入标题位）；点击后卡露边 = 翻到该卡</td></tr>
+      <tr><td>标签 <span class="mono">× </span>关闭</td><td>卡上悬停关闭钮（主案）/ 右键菜单「关闭 / 关闭其他」（扩展案）</td></tr>
+      <tr><td>右键「引用当前页/选区」</td><td>卡片右键菜单同名项，复用 <span class="mono">refForTab</span></td></tr>
+      <tr><td>脏标记 <span class="mono">.dirty</span> 圆点</td><td>常态头名称前绿点 + 卡面名称前绿点（同一状态源）</td></tr>
+      <tr><td>拖拽排序 / 双击 pin / preview 替换</td><td>demo 未含；实施批需给出安放（见报告「开放问题」）</td></tr>
+      <tr><td>标签条 scrollIntoView 定位激活项</td><td>进入叠卡即定位当前卡（天然满足）</td></tr>
+    </table>
+  </section>
+</main>
+
+<div id="reopen-pill">
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 8.5 4.8-8.5 4.8L3.5 6.8 12 2Z"/><path d="m3.5 12 8.5 4.8 8.5-4.8"/><path d="m3.5 17.2 8.5 4.8 8.5-4.8"/></svg>
+  重新打开画板
+</div>
+<div id="ctx-menu" class="glass-menu" hidden>
+  <button data-act="ref">引用当前页 / 选区</button>
+  <hr>
+  <button data-act="close">关闭</button>
+  <button data-act="close-others" class="danger">关闭其他</button>
+</div>
+<div id="toast"></div>
+
+<script>
+'use strict';
+/* ═══════════════ 数据（模拟 tabs Map：文件 + 面板页签） ═══════════════ */
+const TABS = [
+  { id: 'file:docs/canvas叠卡方案.md',   name: 'canvas叠卡方案.md',   type: 'markdown', dirty: true  },
+  { id: 'file:README.md',                name: 'README.md',           type: 'markdown', dirty: false },
+  { id: 'file:src/server/CanvasRoutes.scala', name: 'CanvasRoutes.scala', type: 'code',  dirty: false },
+  { id: 'file:package.json',             name: 'package.json',        type: 'code',     dirty: true  },
+  { id: 'file:reports/usage-10月.xlsx',  name: 'usage-10月.xlsx',     type: 'sheet',    dirty: false },
+  { id: 'file:assets/architecture.png',  name: 'architecture.png',    type: 'image',    dirty: false },
+  { id: 'file:docs/验收报告-2026-10-18.pdf', name: '验收报告-2026-10-18.pdf', type: 'pdf', dirty: false },
+  { id: 'panel:flow',                    name: 'Flow Map',            type: 'flow',     dirty: false },
+  { id: 'panel:projects',                name: '任务看板',             type: 'tasks',    dirty: false },
+];
+let activeId = TABS[0].id;
+
+/* ═══════════════ 图标（1.8 线重，无 emoji） ═══════════════ */
+const ICONS = {
+  markdown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M6 15v-6l3 3.4L12 9v6"/><path d="M18 9v6m0 0-2.2-2.3M18 15l2.2-2.3"/></svg>',
+  code: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m8.5 8-4 4 4 4"/><path d="m15.5 8 4 4-4 4"/></svg>',
+  sheet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M3.5 9.5h17M3.5 15h17M9.5 4v16M15.5 4v16"/></svg>',
+  image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="9.5" r="1.6"/><path d="m4 18 5.2-5.2a1.5 1.5 0 0 1 2.1 0L20 20"/></svg>',
+  pdf: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 16.5h4"/></svg>',
+  flow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.8" width="6" height="5" rx="1.4"/><rect x="3" y="16" width="6" height="5" rx="1.4"/><rect x="15" y="16" width="6" height="5" rx="1.4"/><path d="M12 7.8v3.4M6 16v-2.2a1.6 1.6 0 0 1 1.6-1.6h8.8A1.6 1.6 0 0 1 18 13.8V16"/></svg>',
+  tasks: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="m7 9.5 1.6 1.6L11.5 8"/><path d="M14 10h3.5M7 15.5h3M13.5 15.5h4"/></svg>',
+  deck: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2.5 8.5 4.8L12 12 3.5 7.3 12 2.5Z"/><path d="m3.5 12.2 8.5 4.8 8.5-4.8"/><path d="m3.5 17.1 8.5 4.8 8.5-4.8"/></svg>',
+  close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>',
+  sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5 5l1.6 1.6M17.4 17.4 19 19M19 5l-1.6 1.6M6.6 17.4 5 19"/></svg>',
+  moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13.5A8.2 8.2 0 0 1 10.5 4 8.2 8.2 0 1 0 20 13.5Z"/></svg>',
+  auto: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17Z" fill="currentColor" stroke="none"/></svg>',
+};
+
+/* ═══════════════ 缩略 mock（卡面 + 常态大图共用语言） ═══════════════ */
+function thumbMock(type) {
+  switch (type) {
+    case 'markdown': return '<div class="thumb-pad"><div class="ln strong w40"></div><div class="ln w100"></div><div class="ln w85"></div><div class="ln w55"></div><div class="ln w70"></div><div class="ln w30"></div><div class="ln w100"></div></div>';
+    case 'code': return '<div class="thumb-pad"><div class="ln w40"></div><div class="ln w70"></div><div class="ln w55"></div><div class="ln w85"></div><div class="ln w30"></div><div class="ln w70"></div><div class="ln w55"></div></div>';
+    case 'sheet': return '<div class="thumb-grid"><div class="ghead"></div></div>';
+    case 'image': return '<div class="thumb-img"><svg viewBox="0 0 120 60" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 52 40 22l22 20 18-14 32 24"/></svg></div>';
+    case 'pdf': return '<div class="thumb-page"><div class="ln strong w40"></div><div class="ln w100"></div><div class="ln w85"></div><div class="ln w100"></div><div class="ln w55"></div></div>';
+    case 'flow': return '<div class="thumb-flow"><svg viewBox="0 0 120 70" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><rect x="45" y="4" width="30" height="14" rx="4"/><rect x="8" y="50" width="30" height="14" rx="4"/><rect x="82" y="50" width="30" height="14" rx="4"/><path d="M60 18v14M60 32H23v18M60 32h34v18"/></svg></div>';
+    case 'tasks': return '<div class="thumb-pad"><div class="ln w55"></div><div class="ln w70"></div><div class="ln w40"></div><div class="ln w85"></div></div>';
+    default: return '<div class="thumb-browser"><div class="bar"><i></i><i></i><i></i></div><div class="blk"></div><div class="blk b2"></div><div class="blk"></div></div>';
+  }
+}
+function iconOf(type) { return ICONS.markdown && (ICONS[type] || ICONS.code); }
+
+/* ═══════════════ 常态头 + 常态视图 ═══════════════ */
+const titleEl = document.getElementById('canvas-title');
+const tName = document.getElementById('t-name');
+const tIcon = document.getElementById('t-icon');
+const viewer = document.getElementById('viewer-mock');
+const deckBtn = document.getElementById('deck-btn');
+deckBtn.innerHTML = ICONS.deck;
+
+function tabOf() { return TABS.find(t => t.id === activeId) || null; }
+function renderHeader() {
+  const tab = tabOf();
+  tIcon.innerHTML = tab ? iconOf(tab.type) : '';
+  tName.textContent = tab ? tab.name : '画板';
+  titleEl.classList.toggle('is-dirty', !!(tab && tab.dirty));
+  deckBtn.disabled = TABS.length === 0;
+}
+function renderViewer() {
+  const tab = tabOf();
+  if (!tab) {
+    viewer.innerHTML = '<p class="dim" style="margin-top:60px;text-align:center;font-size:13px">没有打开的页签——从侧栏或会话重新打开文件即可。</p>';
+    return;
+  }
+  const head = '<div class="v-head"><span class="t-icon">' + iconOf(tab.type) + '</span><span>' + tab.name + (tab.dirty ? ' · 未保存' : '') + '</span></div>';
+  let body = '';
+  switch (tab.type) {
+    case 'markdown':
+      body = '<div class="ln strong w40" style="height:13px;border-radius:6px"></div>' +
+        '<div class="ln w100"></div><div class="ln w85"></div><div class="ln w70"></div>' +
+        '<div class="codeblock"><div class="ln w55"></div><div class="ln kw w40"></div><div class="ln w70"></div></div>' +
+        '<div class="ln strong w30" style="height:11px"></div><div class="ln w100"></div><div class="ln w55"></div>';
+      break;
+    case 'code':
+      body = '<div class="codeblock">' +
+        '<div class="ln w30"></div><div class="ln w55" style="margin-left:16px"></div><div class="ln kw w40" style="margin-left:16px"></div>' +
+        '<div class="ln w70" style="margin-left:32px"></div><div class="ln w55" style="margin-left:32px"></div>' +
+        '<div class="ln w40" style="margin-left:16px"></div><div class="ln w85"></div><div class="ln w30"></div></div>';
+      break;
+    case 'sheet': body = '<div style="height:62%;position:relative;border:1px solid var(--th-border);border-radius:10px;overflow:hidden">' + thumbMock('sheet') + '</div>'; break;
+    case 'image': body = '<div style="height:62%;border-radius:12px;overflow:hidden;position:relative">' + thumbMock('image') + '</div>'; break;
+    case 'pdf': body = '<div style="height:82%;display:flex;align-items:center;justify-content:center"><div style="width:50%;height:100%;background:var(--color-surface);border:1px solid var(--th-border);border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,0.10);padding:16px 18px"><div class="ln strong w40"></div><div class="ln w100"></div><div class="ln w85"></div><div class="ln w100"></div><div class="ln w70"></div><div class="ln w55"></div></div></div>'; break;
+    case 'flow': body = thumbMock('flow').replace('thumb-flow', 'thumb-flow" style="position:static;height:70%"'); break;
+    case 'tasks': body = thumbMock('tasks').replace('thumb-pad', 'thumb-pad" style="position:static;padding-top:6px"'); break;
+    default: body = '<div class="codeblock"><div class="ln w70"></div><div class="ln w55"></div></div>';
+  }
+  viewer.innerHTML = head + body;
+}
+function refreshAll() { renderHeader(); renderViewer(); }
+
+/* ═══════════════ 叠卡引擎：浮点卡组位置 + rAF 指数趋近 + 透视栈 ═══════════════ */
+const layer = document.getElementById('deck-layer');
+const stage = document.getElementById('deck-stage');
+const countEl = document.getElementById('deck-count');
+const hintEl = document.getElementById('deck-hint');
+const RM = matchMedia('(prefers-reduced-motion: reduce)');
+
+let deckOpen = false, exiting = false;
+let pos = 0, target = 0;          // 卡组浮点位置（无界，环形取模映射到卡）
+let exitK = 0, exitIdx = -1, exitPose = null;
+let raf = 0, lastT = 0, acc = 0, accTimer = 0, interacted = false;
+
+const mod = (x, n) => ((x % n) + n) % n;
+function wrapDelta(x, n) { x = mod(x, n); return x > n / 2 ? x - n : x; }
+const frontIdx = () => mod(Math.round(pos), TABS.length);
+
+function buildCards() {
+  stage.innerHTML = '';
+  TABS.forEach((tab, i) => {
+    const card = document.createElement('div');
+    card.className = 'deck-card' + (tab.id === activeId ? ' is-active' : '') + (tab.dirty ? ' is-dirty' : '');
+    card.dataset.i = i;
+    card.innerHTML =
+      '<span class="card-badge">当前</span>' +
+      '<button class="card-close" title="关闭" aria-label="关闭 ' + tab.name + '">' + ICONS.close + '</button>' +
+      '<div class="card-thumb">' + thumbMock(tab.type) + '</div>' +
+      '<div class="card-name"><span class="n-icon">' + iconOf(tab.type) + '</span>' +
+      '<span class="n-dot"></span><span class="n-text">' + tab.name + '</span>' +
+      '<span class="n-sub">' + (tab.id.startsWith('panel:') ? '面板' : '') + '</span></div>' +
+      '<div class="card-shade"></div>';
+    card.querySelector('.card-close').addEventListener('click', (e) => { e.stopPropagation(); closeTab(i); });
+    card.addEventListener('click', () => {
+      if (exiting) return;
+      const d = wrapDelta(i - pos, TABS.length);
+      if (Math.abs(d) < 0.5) selectTab(i);
+      else { target = pos + d; startLoop(); }   // 点后卡露边 = 翻到该卡
+    });
+    card.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const d = wrapDelta(i - pos, TABS.length);
+      if (Math.abs(d) >= 0.5) { target = pos + d; return; }
+      openCtxMenu(e.clientX, e.clientY, i);
+    });
+    stage.appendChild(card);
+  });
+  updateCount();
+}
+let lastCount = '';
+function updateCount() {
+  const s = TABS.length ? (frontIdx() + 1) + ' / ' + TABS.length : '';
+  if (s !== lastCount) { lastCount = s; countEl.textContent = s; }
+}
+
+function poseOf(d) {
+  const ad = Math.abs(d);
+  let y, tilt, op;
+  if (d >= 0) {                       // 后方：向上露边渐退（食谱卡盒）
+    const a = Math.min(d, 4.2);
+    const arc = d < 1 ? Math.sin(Math.PI * d) : 0;
+    y = (a <= 1 ? -22 * a : -22 - 11 * (a - 1)) - 26 * arc;
+    tilt = -(5 * a + 32 * arc);
+    op = d <= 0.55 ? 1 : Math.max(0.05, 1 - (d - 0.55) * 0.17);
+  } else {                            // 前方（已翻过）：向下翻落
+    const a = Math.min(-d, 2.2);
+    const arc = -d < 1 ? Math.sin(Math.PI * -d) : 0;
+    y = 30 * a + 40 * arc;
+    tilt = 6 * a + 30 * arc;
+    op = Math.max(0, 1 - (a - 0.12) * 0.42);
+  }
+  const z = -80 * Math.min(ad, 4.2);
+  const scale = 1 - 0.045 * Math.min(ad, 4);
+  return { y, z, tilt, scale, op };
+}
+
+function frame(t) {
+  const dt = Math.min(0.05, (t - lastT) / 1000 || 0.016);
+  lastT = t;
+  const k = RM.matches ? 1 : 1 - Math.exp(-dt * 9);   // 指数趋近 = 液态惯性
+  pos += (target - pos) * k;
+  if (Math.abs(target - pos) < 0.0008) pos = target;
+
+  const n = TABS.length;
+  const cards = stage.children;
+  for (let i = 0; i < cards.length; i++) {
+    const el = cards[i];
+    if (i >= n) continue;
+    const d = wrapDelta(i - pos, n);
+    const ad = Math.abs(d);
+    let p = poseOf(d);
+    let extra = '';
+    if (exiting && i === exitIdx) {   // 选中卡：向常态头标题位收拢飞入
+      exitK = Math.min(1, exitK + dt / 0.26);
+      const e = 1 - Math.pow(1 - exitK, 3);
+      p = { y: p.y * (1 - e) + exitPose.dy * e, z: p.z - 120 * e,
+            tilt: p.tilt * (1 - e), scale: p.scale + (0.16 - p.scale) * e,
+            op: Math.max(0, p.op * (1 - e * 1.15)) };
+      extra = ' translate3d(' + (exitPose.dx * e).toFixed(1) + 'px,0,0)';
+    }
+    el.style.zIndex = String(500 - Math.round(ad * 100));
+    el.style.opacity = p.op.toFixed(3);
+    el.style.transform = 'translate(-50%,-50%)' + extra +
+      ' translate3d(0,' + p.y.toFixed(2) + 'px,' + p.z.toFixed(2) + 'px)' +
+      ' rotateX(' + p.tilt.toFixed(2) + 'deg) scale(' + p.scale.toFixed(4) + ')';
+    el.style.pointerEvents = ad < 0.5 ? 'auto' : 'none';
+    el.classList.toggle('front', ad < 0.5);
+    el.querySelector('.card-shade').style.opacity = Math.min(0.3, ad * 0.12).toFixed(3);
+  }
+  updateCount();
+  const settled = pos === target && !(exiting && exitK < 1);
+  if (exiting && exitK >= 1) { stopLoop(); return; }
+  if (settled && !deckOpen) { stopLoop(); return; }
+  raf = requestAnimationFrame(frame);
+}
+function startLoop() { if (!raf) { lastT = performance.now(); raf = requestAnimationFrame(frame); } }
+function stopLoop() { if (raf) { cancelAnimationFrame(raf); raf = 0; } }
+
+function openDeck() {
+  if (deckOpen || TABS.length === 0) return;
+  deckOpen = true; exiting = false; exitK = 0; interacted = false;
+  acc = 0;
+  buildCards();
+  const i = Math.max(0, TABS.findIndex(t => t.id === activeId));
+  pos = i + 2.3;                       // 从深处「发牌」翻入 —— 复用同一套运动系统
+  target = i;
+  hintEl.classList.remove('faded');
+  layer.hidden = false;
+  deckBtn.setAttribute('aria-pressed', 'true');
+  startLoop();
+}
+function closeDeck(selectI) {
+  if (!deckOpen || exiting) return;
+  exiting = true;
+  if (selectI != null) {
+    exitIdx = selectI; exitK = 0;
+    const s = stage.getBoundingClientRect();
+    const r = titleEl.getBoundingClientRect();
+    exitPose = {
+      dx: (r.left + r.width / 2) - (s.left + s.width / 2),
+      dy: (r.top + r.height / 2) - (s.top + s.height / 2),
+    };
+  } else { exitIdx = -1; }
+  layer.classList.add('closing');
+  deckBtn.setAttribute('aria-pressed', 'false');
+  target -= 2.3;                       // 其余卡向后翻回
+  setTimeout(() => {
+    layer.hidden = true;
+    layer.classList.remove('closing');
+    deckOpen = false; exiting = false; exitIdx = -1; exitK = 0;
+    stopLoop();
+    if (selectI != null) {
+      activeId = TABS[selectI].id;
+      swapTitle();
+    }
+  }, RM.matches ? 30 : 250);
+}
+function swapTitle() {
+  titleEl.classList.add('swap');
+  setTimeout(() => { refreshAll(); titleEl.classList.remove('swap'); }, RM.matches ? 0 : 140);
+}
+function selectTab(i) { closeDeck(i); }
+function closeTab(i) {
+  const tab = TABS[i];
+  if (!tab) return;
+  const wasActive = tab.id === activeId;
+  TABS.splice(i, 1);
+  // 邻位接管（同现状 closeTab：右邻优先，否则左邻）
+  if (wasActive) {
+    const next = TABS[Math.min(i, TABS.length - 1)] || TABS[TABS.length - 1] || null;
+    activeId = next ? next.id : null;
+  }
+  if (!TABS.length) {
+    if (deckOpen) { deckOpen = false; exiting = false; layer.hidden = true; layer.classList.remove('closing'); deckBtn.setAttribute('aria-pressed', 'false'); stopLoop(); }
+    refreshAll();
+    document.getElementById('canvas-panel').classList.add('closed');
+    document.getElementById('reopen-pill').classList.add('show');
+    return;
+  }
+  if (deckOpen) {
+    buildCards();
+    const ni = Math.max(0, TABS.findIndex(t => t.id === activeId));
+    pos = target = ni;                 // 关闭后卡组重排落位
+    startLoop();
+  } else {
+    refreshAll();
+  }
+}
+
+/* 滚轮：阈值步进 + 短窗衰减；连滚多步 = 惯性堆积 */
+layer.addEventListener('wheel', (e) => {
+  if (!deckOpen || exiting) return;
+  e.preventDefault();
+  const dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 100 : 1);
+  acc += dy;
+  clearTimeout(accTimer);
+  accTimer = setTimeout(() => { acc = 0; }, 170);
+  const TH = 90;
+  if (Math.abs(acc) >= TH) {
+    const steps = Math.round(acc / TH);
+    acc -= steps * TH;
+    target += steps;
+    target = Math.max(pos - TABS.length, Math.min(pos + TABS.length, target));
+    if (!interacted) { interacted = true; hintEl.classList.add('faded'); }
+    startLoop();
+  }
+}, { passive: false });
+
+/* 点空白退出（layer 本体 = 空白；卡片自身拦截冒泡） */
+layer.addEventListener('click', (e) => { if (e.target === layer || e.target === stage) closeDeck(null); });
+layer.addEventListener('contextmenu', (e) => { if (e.target === layer || e.target === stage) e.preventDefault(); });
+
+/* 键盘 */
+document.addEventListener('keydown', (e) => {
+  if (!deckOpen) return;
+  if (e.key === 'Escape') { e.preventDefault(); closeDeck(null); }
+  else if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); target += 1; startLoop(); }
+  else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); target -= 1; startLoop(); }
+  else if (e.key === 'Enter') { e.preventDefault(); selectTab(frontIdx()); }
+});
+
+/* 右键菜单（承接「引用当前页/选区」能力面） */
+const ctxMenu = document.getElementById('ctx-menu');
+let ctxTabI = -1;
+function openCtxMenu(x, y, i) {
+  ctxTabI = i;
+  ctxMenu.hidden = false;
+  const w = ctxMenu.offsetWidth, h = ctxMenu.offsetHeight;
+  ctxMenu.style.left = Math.min(x, innerWidth - w - 8) + 'px';
+  ctxMenu.style.top = Math.min(y, innerHeight - h - 8) + 'px';
+}
+function hideCtxMenu() { ctxMenu.hidden = true; ctxTabI = -1; }
+ctxMenu.addEventListener('click', (e) => {
+  const act = e.target.closest('button')?.dataset.act;
+  if (act == null || ctxTabI < 0) return;
+  const tab = TABS[ctxTabI];
+  hideCtxMenu();
+  if (act === 'ref') {
+    toast(tab.id.startsWith('panel:') ? '该页签无可引用内容（同现状 canvas.noRef）' : '（demo）此处将构建 Reference 注入输入栏');
+  } else if (act === 'close') {
+    closeTab(TABS.indexOf(tab));
+  } else if (act === 'close-others') {
+    const keep = tab.id;
+    TABS.length = 0; TABS.push(...[tab]);
+    activeId = keep;
+    if (deckOpen) { buildCards(); const ni = 0; pos = target = ni; startLoop(); }
+    refreshAll();
+    toast('已关闭其他页签');
+  }
+});
+document.addEventListener('mousedown', (e) => { if (!ctxMenu.hidden && !ctxMenu.contains(e.target)) hideCtxMenu(); }, true);
+document.addEventListener('contextmenu', () => hideCtxMenu(), true);
+
+let toastTimer = 0;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2000);
+}
+
+/* ═══════════════ demo 控件 ═══════════════ */
+deckBtn.addEventListener('click', () => { deckOpen ? closeDeck(null) : openDeck(); });
+document.getElementById('panel-close').addEventListener('click', () => {
+  document.getElementById('canvas-panel').classList.add('closed');
+  document.getElementById('reopen-pill').classList.add('show');
+});
+document.getElementById('reopen-pill').addEventListener('click', () => {
+  document.getElementById('canvas-panel').classList.remove('closed');
+  document.getElementById('reopen-pill').classList.remove('show');
+});
+document.getElementById('width-seg').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  document.querySelectorAll('#width-seg button').forEach(x => x.classList.toggle('on', x === b));
+  const panel = document.getElementById('canvas-panel');
+  panel.style.width = b.dataset.w + 'px';
+  panel.classList.toggle('narrow', parseInt(b.dataset.w, 10) < 400);
+});
+
+/* 主题：自动 → 亮 → 暗 */
+const themeBtn = document.getElementById('theme-btn');
+const THEMES = ['auto', 'light', 'dark'];
+let themeI = 0;
+function renderThemeBtn() { themeBtn.innerHTML = themeI === 0 ? ICONS.auto : themeI === 1 ? ICONS.sun : ICONS.moon; }
+themeBtn.addEventListener('click', () => {
+  themeI = (themeI + 1) % 3;
+  const v = THEMES[themeI];
+  if (v === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', v);
+  renderThemeBtn();
+});
+renderThemeBtn();
+
+/* 自动化钩子 */
+window.__demo = {
+  openDeck, closeDeck, closeTab, setWidth: (w) => {
+    document.getElementById('canvas-panel').style.width = w + 'px';
+    document.getElementById('canvas-panel').classList.toggle('narrow', w < 400);
+  },
+  setTheme: (v) => {
+    if (v === 'auto') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', v);
+  },
+  state: () => ({ open: deckOpen, pos, target, activeId, tabs: TABS.map(t => t.name) }),
+};
+
+/* 控制台实现提示（任务要求写进 demo 控制台） */
+console.log('%c[canvas 叠卡 demo] 实现提示', 'font-weight:600;font-size:13px');
+console.log(
+`· 滚轮驱动：wheel 事件（preventDefault + deltaMode 归一 + 阈值步进）维护卡组浮点位置 target，
+  rAF 指数趋近 pos += (target-pos)*(1-exp(-dt*9)) —— 惯性/液态感，无需任何 3D 库。
+· 透视栈：容器 perspective:1150px + perspective-origin 上沿；每张卡按相对位置 d（环形取模）
+  逐帧映射 translate3d/rotateX/scale/opacity —— 见本文件 poseOf()。
+· 实施落点（canvas.js）：#canvas-tab-bar → .canvas-title 常态头；deck 层挂 #canvas-content 内；
+  数据源 = tabs Map（顺序即卡序）；dirty 复用 isTabDirty()；右键「引用当前页」复用 refForTab()；
+  关闭邻位接管语义同 closeTab()；preview/pinned 与拖拽排序的安放见设计报告「开放问题」。`);
+
+refreshAll();
+</script>
+</body>
+</html>
