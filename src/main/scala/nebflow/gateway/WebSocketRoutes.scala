@@ -1092,32 +1092,32 @@ class WebSocketRoutes(
       // now also covers the text asset types (js/css/json) a multi-file HTML
       // deliverable references from the Canvas HTML viewer.
       case GET -> Root =>
-        // P1 single switch point: when the esbuild dist is packed on the
-        // classpath (sbt -Dnebflow.webdist=1 assembly), "/" serves the bundled
-        // dist entry; otherwise the dev source tree entry. Everything else the
-        // dist index references is either under /assets (assetsRoutes) or a
-        // byte-identical passthrough (vendor, fonts, icons) served by the
-        // existing web/ routes — no fallback logic, the entry and its hashed
-        // deps come from one atomic build-web.mjs run.
+        // W1 single switch point (mobile-quickwins 2026-10-20; supersedes the
+        // P1 classpath-only probe): the entry dispatches on
+        // StaticRoutes.staticSource — bundled classpath dist (jar), FRESH
+        // disk dist (build/web-dist under the engine working dir; the
+        // freshness fence is what keeps `sbt run` hot-edit serving the dev
+        // tree the moment a web/ source is newer than the dist), or the dev
+        // source tree. Everything else the dist index references is either
+        // under /assets (assetsRoutes) or a byte-identical passthrough
+        // (vendor, fonts, icons) served by the existing web/ routes — no
+        // fallback logic, the entry and its hashed deps come from one
+        // atomic build-web.mjs run.
         //
-        // L1 rebrand: both entries go through indexWithBrand, which injects
-        // the window.__BRAND__ contract before the closing head tag. The
-        // served body therefore differs from the classpath bytes, which is
-        // why this route no longer uses StaticFile's conditional-request
-        // handling (a jar-entry Last-Modified must not vouch for content we
-        // mutated) — the response stays no-cache with no validators.
-        val indexResource =
-          if StaticRoutes.hasBundledDist then "web-dist/index.html" else "web/index.html"
-        StaticRoutes.indexWithBrand(indexResource)
+        // L1 rebrand: every branch goes through the brand injection before
+        // the closing head tag. The served body therefore differs from the
+        // source bytes, which is why this route does not use StaticFile's
+        // conditional-request handling (a jar-entry Last-Modified must not
+        // vouch for content we mutated) — the response stays no-cache with
+        // no validators.
+        StaticRoutes.indexResponse
 
       case HEAD -> Root =>
         // Headers-only parity with the pre-rebrand StaticFile route (curl -I,
         // health/link checkers). The GET case above does not match HEAD
         // requests, and the body-stripped variant must go through the same
         // content generation so validators never diverge between the verbs.
-        val headIndexResource =
-          if StaticRoutes.hasBundledDist then "web-dist/index.html" else "web/index.html"
-        StaticRoutes.indexWithBrand(headIndexResource).map(_.withBodyStream(Stream.empty))
+        StaticRoutes.indexResponse.map(_.withBodyStream(Stream.empty))
 
       case req @ GET -> Root / "css" / file =>
         StaticFile

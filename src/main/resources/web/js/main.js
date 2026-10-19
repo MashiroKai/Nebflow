@@ -3606,10 +3606,12 @@ initDropbox();
 // modules, started from the configData handler only when the release gate
 // (featureFlags.js friendsEnabled) is on.
 
-// Preload Monaco Editor during idle time so first file open is instant.
-// Monaco (~2MB from CDN) is the main cause of first-open lag.
-const _idleCb = window.requestIdleCallback || ((fn) => setTimeout(fn, 2000));
-_idleCb(() => import('./monacoEditor.js').then(({ preloadMonaco }) => preloadMonaco().catch(() => {})));
+// Monaco is NOT preloaded anymore (W3, mobile-quickwins 2026-10-20): the idle
+// preload pulled ~932KB gzip (31% of boot bytes) on every first load — mobile
+// and desktop alike — for an editor most sessions never open. All consumers
+// (viewers/monaco.js, viewers/shared.js, canvas.js) dynamic-import
+// monacoEditor.js at open time, so the first code-file open pays the load
+// instead of every boot.
 
 // ---------- Safety mode dropdown (header shield) ----------
 // permshield S1/F1 (2026-09-13): the shield is the **only** UI entry point for

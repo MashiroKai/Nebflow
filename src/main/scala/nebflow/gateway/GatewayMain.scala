@@ -1503,6 +1503,10 @@ object GatewayMain extends IOApp:
                                                           _ <- logger.info(
                                                             s"gateway listening on ${cfg.host}:${cfg.port}"
                                                           )
+                                                          // W1 (mobile-quickwins 2026-10-20): announce
+                                                          // which static tree the "/" face resolves to —
+                                                          // bundled jar dist / fresh disk dist / dev tree.
+                                                          _ <- logger.info(StaticRoutes.staticSourceDescription)
                                                           _ <- logger.info(
                                                             s"access URL: $baseUrl (token in ~/.nebflow/auth.json)"
                                                           )
