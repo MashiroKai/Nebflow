@@ -714,7 +714,7 @@ export async function sendFriendMessage(friendUserId, body, attachments, clientM
  *  错误面**保状态码**（`err.status`）× 语义：`410` = 附件已过期（**终态**，
  *  UI 据此升级为「附件已过期」，不提供重试）；`404` = 不存在/不可见；
  *  `403` = 非好友（关系被拉黑等）；其余（含 5xx/网络）⇒ 可重试的下载失败。 */
-export async function downloadAttachment(attachmentId) {
+export async function downloadAttachment(attachmentId, opts = {}) {
   const path = `/api/friends/attachments/${encodeURIComponent(attachmentId)}`;
   if (MOCK) {
     // Mock 模式没有字节面：**显式失败**（不伪造文件），UI 落「下载失败，点击重试」。
@@ -738,7 +738,28 @@ export async function downloadAttachment(attachmentId) {
     }
     throw err;
   }
-  const blob = await resp.blob();
+  // imgdoor #542：可选进度回读（流式读 body；`onProgress(loaded, total)`，
+  // Content-Length 缺席 ⇒ total=0，调用方转不定态）。缺省 opts = **逐字现状**
+  // （整收 `resp.blob()`，既有调用方零行为变化）。
+  const onProgress = opts && typeof opts.onProgress === 'function' ? opts.onProgress : null;
+  if (!onProgress || !resp.body || typeof resp.body.getReader !== 'function') {
+    const blob = await resp.blob();
+    if (onProgress) onProgress(blob.size, blob.size);
+    return { blob, filename: filenameFromDisposition(resp.headers.get('Content-Disposition')) };
+  }
+  const lenHeader = Number(resp.headers.get('Content-Length'));
+  const total = Number.isFinite(lenHeader) && lenHeader > 0 ? lenHeader : 0;
+  const reader = resp.body.getReader();
+  /** @type {Uint8Array[]} */
+  const chunks = [];
+  let loaded = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value && value.length) { chunks.push(value); loaded += value.length; }
+    onProgress(loaded, total);
+  }
+  const blob = new Blob(/** @type {BlobPart[]} */ (chunks));
   return { blob, filename: filenameFromDisposition(resp.headers.get('Content-Disposition')) };
 }
 

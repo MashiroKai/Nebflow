@@ -348,3 +348,88 @@ export function resetTickets() {
   consecutiveFailures = 0;
   breakerUntil = 0;
 }
+
+// ── 合帧批量铸票（imgdoor #542 · 档1 + 票据计数面）───────────────────────────
+// 同一渲染帧里 N 张本机图片各问一次票据 ⇒ 今天的 `ticketUrl(path)` 每张一发
+// POST /api/nf-ticket（N 图 = N 铸票）。本出口把同一宏任务窗（setTimeout 0 一拍）
+// 内排队的路径**合成一次批量铸票**（服务端本就批量：`nfTicketRoutes` 收
+// `paths[]` 逐路径出票）⇒ N 图 ≤ 1 铸票；点击开图的 `ticketUrl` 在批量落账后
+// 全部命中 per-path 缓存 ⇒ 零追加铸票。
+//
+// 失败契约与 `mintTickets` 同族（绝不 reject）：缺失路径 resolve 空串，调用方
+// 走既有无票 URL 降级（端点 401 → 各自可见失败面）。熔断（F6）复用既有状态。
+
+/** @typedef {{ promise: Promise<string>, resolve: (t: string) => void }} BatchWaiter */
+/** @type {Map<string, BatchWaiter>} 排队路径 → 该路径的 waiter（resolve('') = 缺席） */
+const batchWaiters = new Map();
+/** @type {string[]} 当前合帧窗内待铸的路径（去重） */
+let batchPending = [];
+/** @type {number|null} 合帧窗定时器 */
+let batchTimer = null;
+
+/** @param {string} path @returns {Promise<string>} 已缓存则当场给，否则进队。 */
+function queueOne(path) {
+  const hit = cache.get(path);
+  if (hit && isFresh(path)) return Promise.resolve(hit.t);
+  const existing = batchWaiters.get(path);
+  if (existing) return existing.promise;
+  /** @type {(t: string) => void} */
+  let resolve = () => {};
+  const promise = new Promise((r) => { resolve = r; });
+  batchWaiters.set(path, { promise, resolve });
+  batchPending.push(path);
+  return promise;
+}
+
+function flushBatch() {
+  batchTimer = null;
+  const paths = batchPending;
+  batchPending = [];
+  const waiters = new Map(batchWaiters);
+  batchWaiters.clear();
+  if (paths.length === 0) return;
+  mintTickets(paths).then((map) => {
+    for (const [p, waiter] of waiters) waiter.resolve(map.get(p) || '');
+  });
+}
+
+/**
+ * 合帧批量铸票：本拍（同一 setTimeout 0 窗）内所有调用合并为一次
+ * `POST /api/nf-ticket`（N 图 ≤ 1 铸票的机械保证，spec 按请求数断言）。
+ * @param {string[]} paths
+ * @returns {Promise<Map<string, string>>} 拿到票的路径 → 票（缺席路径不在表内）
+ */
+export function mintTicketsQueued(paths) {
+  const wanted = normalize(paths);
+  if (wanted.length === 0) return Promise.resolve(new Map());
+  if (batchTimer === null) batchTimer = setTimeout(flushBatch, 0);
+  // queueOne 与 wanted 严格同序同长（未命中者进队，命中者当场 resolve）。
+  return Promise.all(wanted.map(queueOne)).then((list) => {
+    /** @type {Map<string, string>} */
+    const out = new Map();
+    for (let i = 0; i < wanted.length; i++) {
+      const t = /** @type {string} */ (list[i]);
+      if (t) out.set(wanted[i], t);
+    }
+    return out;
+  });
+}
+
+/**
+ * `ticketUrl` 的合帧版（设备内联图片直显腿用）：N 张图同帧渲染只发一次铸票。
+ * 拿不到票 ⇒ 既有无票 URL（端点 401 → 该 `<img>` 的 onerror 摘槽，逐字现状）。
+ * @param {string} path
+ * @returns {Promise<string>}
+ */
+export async function queuedTicketUrl(path) {
+  const map = await mintTicketsQueued([path]);
+  return urlWithTicket(path, map.get(path) || '');
+}
+
+/** Test seam: 丢弃未合帧的队列（不影响已入账票据）。 */
+export function resetBatchQueue() {
+  if (batchTimer !== null) { clearTimeout(batchTimer); batchTimer = null; }
+  for (const waiter of batchWaiters.values()) waiter.resolve('');
+  batchWaiters.clear();
+  batchPending = [];
+}

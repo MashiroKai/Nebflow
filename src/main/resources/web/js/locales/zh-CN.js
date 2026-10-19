@@ -1536,6 +1536,9 @@ export default {
   'canvas.unreadableTitle': '文件不可读',
   'canvas.unreadableHint': '文件不存在或被清理，无法读取。',
   'canvas.unreadablePathHint': '路径非法，无法读取。',
+  'canvas.loadingFile': '正在打开…',
+  'canvas.loadFailed': '打开失败',
+  'canvas.retry': '重试',
 
   // === Tool names (label first line) ===
   'tool.Read': '读取',

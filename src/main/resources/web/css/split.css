@@ -1339,6 +1339,53 @@ body.canvas-open.canvas-overlay #canvas-panel {
   color: rgb(239, 68, 68);
   font-size: 13px;
 }
+
+/* ── Streamed-open progress pane (imgdoor #542 档3) ──
+   Tab-first open: the pane shows a determinate ring (Content-Length known →
+   `data-nf-progress="determinate"`, `data-nf-pct` 0..100) or an indeterminate
+   spinner; success swaps the pane content for the viewer, failure swaps it for
+   a `.canvas-error[data-nf-error]` box with a retry button. */
+.nf-progress-pane {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 180px;
+  height: 100%;
+  padding: 24px;
+}
+.nf-progress-pane[data-nf-progress='determinate'] .nf-progress-spinner { display: none; }
+.nf-progress-pane[data-nf-progress='indeterminate'] .nf-progress-ring { display: none; }
+.nf-progress-pane[data-nf-progress='indeterminate'] .nf-progress-pct { display: none; }
+.nf-progress-ring { width: 44px; height: 44px; }
+.nf-progress-ring-bg,
+.nf-progress-ring-fg {
+  fill: none;
+  stroke-width: 3.5;
+}
+.nf-progress-ring-bg { stroke: var(--color-text-muted, rgba(128,128,128,0.35)); opacity: 0.35; }
+.nf-progress-ring-fg {
+  stroke: var(--color-accent, rgb(99, 102, 241));
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+  transition: stroke-dashoffset 0.15s linear;
+}
+.nf-progress-pct { font-size: 12px; color: var(--color-text-muted, rgba(128,128,128,0.8)); }
+.nf-progress-label { font-size: 12px; color: var(--color-text-muted, rgba(128,128,128,0.8)); }
+.nf-error-subject {
+  margin-top: 6px;
+  font-size: 11px;
+  opacity: 0.65;
+  word-break: break-all;
+}
+.viewer-retry-btn {
+  margin-top: 12px;
+  padding: 4px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
 .canvas-loading {
   display: flex;
   align-items: center;

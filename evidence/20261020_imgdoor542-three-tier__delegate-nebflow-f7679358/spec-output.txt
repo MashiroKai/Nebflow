@@ -1,0 +1,67 @@
+
+== chromium ==
+  PASS  1a 点击后立即出标签（tab-first）
+  PASS  1b 标签先于字节：面板在场时零取数
+  PASS  1c 进度面板在场
+  PASS  1d 零铸票（缓存在前）或恰一次
+  PASS  1e 完成即渲染（img naturalWidth>0）
+  PASS  1f 取数恰一次
+  PASS  1g 返回 ok
+  PASS  1h 页面零 JS 异常
+  PASS  2a 零取数（nf-file Δ=0）
+  PASS  2b 零追加铸票
+  PASS  2c 命中直渲染（img loaded）
+  PASS  2d 页面零 JS 异常
+  PASS  3a 失败可见（[data-nf-error] 就地）
+  PASS  3b 重试键在场
+  PASS  3c 重试后渲染成功
+  PASS  3d 页面零 JS 异常（失败腿不抛）
+  PASS  4a Content-Length 可得 → 百分比环 40%
+  PASS  4b 不可得 → 转圈（indeterminate）
+  PASS  4c 页面零 JS 异常
+  PASS  5a N=3 图同帧 ≤ 1 铸票
+  PASS  5b 一次铸票携带全部 N 路径
+  PASS  5c 三 URL 全部带票
+  PASS  5d 同路径复用零追加铸票
+  PASS  5e 页面零 JS 异常
+  PASS  6a 预算内淘汰最久未用（k2 出局）
+  PASS  6b 配置生效（maxBytes=1MiB 读回）
+  PASS  6c 页面零 JS 异常
+
+== webkit(Safari引擎族) ==
+  PASS  1a 点击后立即出标签（tab-first）
+  PASS  1b 标签先于字节：面板在场时零取数
+  PASS  1c 进度面板在场
+  PASS  1d 零铸票（缓存在前）或恰一次
+  PASS  1e 完成即渲染（img naturalWidth>0）
+  PASS  1f 取数恰一次
+  PASS  1g 返回 ok
+  PASS  1h 页面零 JS 异常
+  PASS  2a 零取数（nf-file Δ=0）
+  PASS  2b 零追加铸票
+  PASS  2c 命中直渲染（img loaded）
+  PASS  2d 页面零 JS 异常
+  PASS  3a 失败可见（[data-nf-error] 就地）
+  PASS  3b 重试键在场
+  PASS  3c 重试后渲染成功
+  PASS  3d 页面零 JS 异常（失败腿不抛）
+  PASS  4a Content-Length 可得 → 百分比环 40%
+  PASS  4b 不可得 → 转圈（indeterminate）
+  PASS  4c 页面零 JS 异常
+  PASS  5a N=3 图同帧 ≤ 1 铸票
+  PASS  5b 一次铸票携带全部 N 路径
+  PASS  5c 三 URL 全部带票
+  PASS  5d 同路径复用零追加铸票
+  PASS  5e 页面零 JS 异常
+  PASS  6a 预算内淘汰最久未用（k2 出局）
+  PASS  6b 配置生效（maxBytes=1MiB 读回）
+  PASS  6c 页面零 JS 异常
+
+== static(messages.js 接线钉) ==
+  PASS  7a 设备 path 腿走 previewWithProgress（流式开）
+  PASS  7b 好友腿走 previewWithProgress（attach:<id> 缓存键）
+  PASS  7c 设备内联腿走合帧铸票（queuedTicketUrl）
+  PASS  7d 静默回落腿已移除（预览路径 previewLocalPath 只剩文本腿一处）
+  PASS  7e 文本腿逐字保留（previewLocalPath 仍在场）
+
+3 checks, 0 failed
