@@ -1,0 +1,31 @@
+=== entry/size reconciliation @ 2026-10-19 09:37:03 ===
+roots:
+drwx------@ 120 kaiyu  staff  3840 10月 19 09:36 /Users/kaiyu/.nebflow
+drwxr-xr-x@  41 kaiyu  staff  1312 10月 18 11:47 /Users/kaiyu/.nebflow-stable
+drwxr-xr-x@  86 kaiyu  staff  2752 10月 19 08:04 /Users/kaiyu/.stand
+ls: /Users/kaiyu/.nebflow-migrated-*: No such file or directory
+SRC top-level entries: 118
+DST top-level entries: 84
+SRC find -xdev all: 3530718
+DST find -xdev all: 3250262
+SRC files: 3310272
+DST files: 3052635
+du SRC: 212G
+du DST: 220G
+df home:
+/dev/disk3s5   926Gi   855Gi    31Gi    97%     12M  329M    4%   /System/Volumes/Data
+stable-line mtime evidence (untouched check):
+drwxr-xr-x@ 41 kaiyu  staff  1312 10月 18 11:47:50 2026 /Users/kaiyu/.nebflow-stable
+drwxr-xr-x@    6 kaiyu  staff      192 10月  5 11:06:37 2026 /Users/kaiyu/.nebflow-stable/agents
+-rw-------@    1 kaiyu  staff       45 10月  5 11:06:15 2026 /Users/kaiyu/.nebflow-stable/auth.json
+drwxr-xr-x@    7 kaiyu  staff      224 10月 18 11:46:58 2026 /Users/kaiyu/.nebflow-stable/backups
+drwxr-xr-x@    4 kaiyu  staff      128 10月  7 12:45:42 2026 /Users/kaiyu/.nebflow-stable/bin
+-rw-r--r--@    1 kaiyu  staff      212 10月 18 11:47:34 2026 /Users/kaiyu/.nebflow-stable/canvas_tabs.json
+drwxr-xr-x@    7 kaiyu  staff      224 10月 14 22:46:27 2026 /Users/kaiyu/.nebflow-stable/chains
+-rw-r--r--@    1 kaiyu  staff      386 10月 18 11:47:24 2026 /Users/kaiyu/.nebflow-stable/device.json
+drwxr-xr-x@    3 kaiyu  staff       96 10月 14 16:38:59 2026 /Users/kaiyu/.nebflow-stable/dropbox
+drwxr-xr-x@    2 kaiyu  staff       64 10月  5 11:06:38 2026 /Users/kaiyu/.nebflow-stable/flows
+drwxr-xr-x@  843 kaiyu  staff    26976 10月 17 22:51:27 2026 /Users/kaiyu/.nebflow-stable/history
+-rw-r--r--@    1 kaiyu  staff    58134 10月 17 22:55:53 2026 /Users/kaiyu/.nebflow-stable/input_history.jsonl
+drwxr-xr-x@   13 kaiyu  staff      416 10月 18 00:02:22 2026 /Users/kaiyu/.nebflow-stable/logs
+=== done @ 2026-10-19 09:45:05 ===
