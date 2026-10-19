@@ -256,10 +256,8 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
 
     // Boot fallback: fresh session auto-opens the plugins page.
     await page.waitForSelector('#plugins-content .plugins-card[data-plugin="e2e-hello"]', { timeout: 10000 });
-    // Agent summary rows fill model/preset pills asynchronously.
-    await page.waitForFunction(() =>
-      document.querySelector('.plugins-agent-row[data-detail-agent="Coder"] .plugins-agent-meta-pill')?.textContent.trim() === 'preset-one',
-      { timeout: 5000 });
+    // （agent 行异步药丸等待已随 2026-10-21 作者令① agent 区块退役删除——纯插件
+    //  视角下面板只等插件卡片。）
 
     const dump = await page.evaluate(() => {
       const q = (s) => document.querySelector(s);
@@ -396,28 +394,30 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
     expect(dump.noModelTags, `[${locale}] legacy model tags removed`).toBe(0);
     expect(dump.noSkillCards, `[${locale}] standalone skills section removed`).toBe(0);
     expect(dump.noMcpCards, `[${locale}] standalone MCP section removed`).toBe(0);
-    expect(dump.agentRows, `[${locale}] one summary row per agent`).toBe(2);
-    expect(dump.coderName, `[${locale}] agent row name`).toBe('Coder');
-    expect(dump.coderDesc, `[${locale}] agent row description`).toBe('coder agent');
-    expect(dump.coderMeta, `[${locale}] agent row preset + model pills`).toEqual(['preset-one', 'test-model']);
+    // 2026-10-21 作者令①「只看纯插件」：agent 区块整段退役（行/深链钩子/标题零在场）。
+    expect(dump.agentRows, `[${locale}] agent rows retired — zero on the page (pure-plugins view)`).toBe(0);
+    expect(dump.coderName, `[${locale}] agent row name absent`).toBe(undefined);
+    expect(dump.coderDesc, `[${locale}] agent row description absent`).toBe(undefined);
+    expect(dump.coderMeta, `[${locale}] agent row meta pills absent`).toEqual([]);
     expect(dump.titles.plugins, `[${locale}] plugins section title zh/en paired`)
       .toBe(locale === 'zh-CN' ? '插件' : 'Plugins');
-    expect(dump.titles.agents, `[${locale}] agents section title zh/en paired`)
-      .toBe(locale === 'zh-CN' ? '智能体' : 'Agents');
+    expect(dump.titles.agents, `[${locale}] agents section retired — no title`).toBe(undefined);
 
     // Expand path: click the item row → detail area opens with the per-skill
-    // list（2026-10-07 条目式批：原 skills chip-toggle 机构退场，清单在详情区）。
+    // capsule list（2026-10-21 作者令⑥：skill 改胶囊；data-skill-id 钩子为深链输入）。
     await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]');
     const expanded = await page.evaluate(() => ({
       visible: !document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-item-detail')?.hidden,
       ariaExpanded: document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]')?.getAttribute('aria-expanded'),
       expandedClass: document.querySelector('.plugins-card[data-plugin="e2e-hello"]')?.classList.contains('expanded'),
-      ids: [...document.querySelectorAll('.plugins-card[data-plugin="e2e-hello"] .plugins-item-skills .plugins-skill-item-id')].map(el => el.textContent.trim()),
+      skillIds: [...document.querySelectorAll('.plugins-card[data-plugin="e2e-hello"] .plugins-item-skills .plugins-skill-capsule')].map(el => el.getAttribute('data-skill-id')),
+      capsules: document.querySelectorAll('.plugins-card[data-plugin="e2e-hello"] .plugins-skill-capsule').length,
     }));
     expect(expanded.visible, `[${locale}] item row click opens the detail area`).toBe(true);
     expect(expanded.ariaExpanded, `[${locale}] aria-expanded flips to true`).toBe('true');
     expect(expanded.expandedClass, `[${locale}] card carries the expanded class`).toBe(true);
-    expect(expanded.ids, `[${locale}] expanded skill ids`).toEqual(['e2e-hello/hello', 'e2e-hello/wave']);
+    expect(expanded.skillIds, `[${locale}] capsule skill ids`).toEqual(['e2e-hello/hello', 'e2e-hello/wave']);
+    expect(expanded.capsules, `[${locale}] capsule count = skills`).toBe(2);
 
     // Collapse path: click again → 收回（accordion 语义自洽）。
     await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]');
@@ -432,10 +432,10 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
   expect(apiRequests, 'plugins page must not call /api/skills or /api/mcp (unified plugin system)').toEqual([]);
 });
 
-test('B2: entry drives the plugins page; agent summary row deep-links to detail editor', async ({ page }) => {
+test('B2: entry drives the plugins page; agent 区块退役后零深链残留（openAgentDetail 保留为独立面板函数）', async ({ page }) => {
   for (const locale of ['zh-CN', 'en']) {
     await loadShell(page, locale);
-    await page.waitForSelector('#plugins-content .plugins-agent-row', { timeout: 10000 });
+    await page.waitForSelector('#plugins-content .plugins-card[data-plugin="e2e-hello"]', { timeout: 10000 });
     const dump = await page.evaluate(async () => {
       const btn = document.getElementById('agents-btn');
       const holder = btn?.querySelector('[data-lucide]');
@@ -443,16 +443,14 @@ test('B2: entry drives the plugins page; agent summary row deep-links to detail 
       const iconName = holder?.getAttribute('data-lucide')
         || [...(svg?.getAttribute('class') || '').split(' ')].find(c => c.startsWith('lucide-'))?.slice('lucide-'.length)
         || null;
-      // Deep-link: the agent summary row opens the per-agent detail tab.
+      // 2026-10-21 作者令①：agent 深链钩子整段退役——行不存在、点击面不存在。
       const am = await import('/js/agentManager.js');
-      const row = document.querySelector('#plugins-section-agents .plugins-agent-row[data-detail-agent="Coder"]');
-      row?.click();
-      await new Promise(r => setTimeout(r, 500));
       return {
         btnTitle: btn?.title,
         iconName,
+        agentRows: document.querySelectorAll('#plugins-section-agents .plugins-agent-row').length,
+        detailAgentHooks: document.querySelectorAll('[data-detail-agent]').length,
         agentsTabCreated: !!document.querySelector('#canvas-tab-bar .canvas-tab[data-tab-id="agents"]'),
-        detailTabCreated: !!document.querySelector('#canvas-tab-bar .canvas-tab[data-tab-id="agent:Coder"]'),
         openAgentsType: typeof am.openAgents,
         openAgentDetailType: typeof am.openAgentDetail,
       };
@@ -460,10 +458,11 @@ test('B2: entry drives the plugins page; agent summary row deep-links to detail 
     expect(dump.btnTitle, `[${locale}] entry title is Plugins (not Agents)`)
       .toBe(locale === 'zh-CN' ? '插件' : 'Plugins');
     expect(dump.iconName, `[${locale}] icon is puzzle (not bot)`).toBe('puzzle');
+    expect(dump.agentRows, `[${locale}] agent rows retired (pure-plugins view)`).toBe(0);
+    expect(dump.detailAgentHooks, `[${locale}] agent deep-link hooks retired`).toBe(0);
     expect(dump.agentsTabCreated, `[${locale}] no standalone agents tab may appear`).toBe(false);
-    expect(dump.detailTabCreated, `[${locale}] summary row deep-links to the agent detail tab`).toBe(true);
     expect(dump.openAgentsType, 'openAgents preserved (hidden entry ≠ deleted function)').toBe('function');
-    expect(dump.openAgentDetailType, 'openAgentDetail exported for the summary-row deep-link').toBe('function');
+    expect(dump.openAgentDetailType, 'openAgentDetail preserved (agentManager 面自有入口仍用)').toBe('function');
   }
 });
 
@@ -569,17 +568,19 @@ test('B3: 封禁 UI 退场契约 — 面板零 revoke/unblock wire；引擎侧�
     '/api/plugins/e2e-hello/disable', '/api/plugins/e2e-hello/enable',
   ]);
 
-  // 内容已变更 = **非拦截**可见性：卡片**不**被封禁、派发开关**不**锁死，
-  // 只是药丸与提示行改义（内容已按新版本生效，不再需要审批）。
+  // 内容已变更 = **不再有任何面板提示**（2026-10-21 作者令④「不再提示变更」：
+  // 药丸 changed 档 / `.plugins-card-hint.changed` / 卡片 changed 类整面退役；
+  // contentChanged 契约字段仍在 payload，本页零消费——派发开关照常可用）。
   pluginState.contentChanged = true;
   await page.evaluate(async () => { const m = await import('/js/plugins.js'); m.renderPlugins(); });
-  // 2026-10-07 条目式批：提示行收在详情区（默认收起）⇒ 等 attached 而非 visible。
-  await page.waitForSelector('.plugins-card[data-plugin="e2e-hello"] .plugins-card-hint.changed', { state: 'attached', timeout: 5000 });
+  await page.waitForFunction(() => {
+    const c = document.querySelector('.plugins-card[data-plugin="e2e-hello"]');
+    return !!c && c.classList.contains('on') && !document.querySelector('#plugins-content .plugins-loading');
+  }, undefined, { timeout: 8000 });
   const changed = await cardDump(page);
-  expect(changed.pill, 'contentChanged ⇒ 药丸改义为「内容已变更」（不是封禁）').toBe('内容已变更');
-  expect(changed.pillClass, 'pill 带 changed class').toContain('changed');
-  expect(changed.changedHint, 'contentChanged shows the visibility-only hint')
-    .toBe('内容与上次记录的版本不同——已按新内容生效，此提示仅为可见性');
+  expect(changed.pillElCount, 'contentChanged ⇒ 零状态药丸（变更档退役后默认态无药丸）').toBe(0);
+  expect(changed.pill, 'contentChanged ⇒ 药丸文本 null（零元素）').toBe(null);
+  expect(changed.changedHint, 'contentChanged ⇒ 零变更提示条（不再提示变更）').toBe(null);
   expect(changed.blockedHint, 'contentChanged 不是封禁——无封禁提示').toBe(null);
   expect(changed.dispatchDisabled, 'contentChanged does NOT disable dispatch (≠ 封禁)').toBe(false);
   expect(changed.dispatchBlockedAttr, '无 data-dispatch-blocked').toBe(null);
