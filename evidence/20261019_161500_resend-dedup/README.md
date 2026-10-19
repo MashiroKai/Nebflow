@@ -51,6 +51,10 @@ WS 断开 ≈15 分钟（relay 票据 TTL）后重连，客户端把上一条已
 ### 2.1 E2E（真页面 + 真发送链，WS 桩实现服务端判重回执契约）
 
 `e2e-resend-dedup.log` — `node tests/resend-dedup.spec.mjs` ⇒ **ALL PASS (21/21)**
+（2026-10-19 17:04 **重放后独立复跑**覆盖；无并发负载。踩踏后首次复跑曾与 sbt
+全量编译并发，B 场景喂出测试桩自身的时序竞态——重连 getHistory 的
+historyPage 晚于桩合成终态行到达、真值源替换把该行清掉、点击超时——独立复跑
+全绿即证非产品回归。）
 
 - A 已送达场景：首发帧带 id（A1）→ 断开 → 客户端自动重连（A3）→ 真重试键补发
   ⇒ **同一 clientMessageId**（A5）、桩判重零第二次受理（A6）、**零重复气泡**（A7）、
@@ -64,6 +68,10 @@ WS 断开 ≈15 分钟（relay 票据 TTL）后重连，客户端把上一条已
 ### 2.2 服务端 spec（真实 AgentActor harness）
 
 `scalatest-ResendDedupSpec.log` — `sbt testOnly nebflow.agent.ResendDedupSpec` ⇒ 3/3 PASS
+（16:23 踩踏前跑绿；**重放后复跑被并行批卡死**，见 `scalatest-ResendDedupSpec.rerun-blocked.log`：
+主源两轮全量编译过（含本批 4 Scala 文件），测试编译死于并行批在改的测试文件
+`BashAutoBackgroundSpec` / `BashToolForegroundSpec`（misaligned end marker ×4，
+与本批零交集）⇒ 复跑不可达，以踩踏前 3/3 为证，如实申报。）
 
 - RD1 idle：已受理 id 重到 ⇒ 丢弃 + 回执 + 零第二次 LLM 调用。
 - RD2 busy 排队（两层）：已受理 id（本 turn 的）busy 中重到 ⇒ 排队闸丢弃 + 回执；
@@ -73,9 +81,10 @@ WS 断开 ≈15 分钟（relay 票据 TTL）后重连，客户端把上一条已
 
 ### 2.3 回归与闸
 
-- `regression-msgqueue-quote-slash.log`：msgqueue-recall-attach 6/6、msgqueue-image-mime
-  5/5、quote-message 9/10（1 败为 B12 截图像素比对存量 flake，与本批触碰面零交集）、
-  slash-clear-compact 其余全绿。
+- `regression-send-chain.log`：msgqueue-recall-attach 6/6、msgqueue-image-mime 5/5、
+  quote-message 9/9 全绿；**存量红**（HEAD 同败对照确认，非本批）：slash-clear-compact
+  S1b 门键字面量（stand_slash 前缀 vs 期望 nebflow_slash）、imgmsg-send E/B② 字形断言
+  （本批树 1 败、HEAD 反而 2 败）。
 - checkJs（`checkjs.log`）：总量 251 < 基线 273；本批触碰 5 文件零错误。🔴 门红 1 项 =
   `askAttachments.js: new file with 1 errors` —— **存量**（stash 后 HEAD 同败，随
   427e0ed1b askuser #551 批入库、基线未更新），非本批。
@@ -99,3 +108,18 @@ tests/resend-dedup.spec.mjs                          (新增)
 
 范围红线自检：零触碰消息渲染管线（chat.css / 渲染函数未动；唯一呈现面动作 =
 「同 id 重发不再渲染第二份」，属发送链呈现语义）。
+
+## 4. 事故申报：并行批踩踏与恢复（2026-10-19）
+
+本工作树与「gmsgsend」并行批共享。本批验证期间用 `git stash`/`pop` 做 HEAD 基线
+对照，与并行批的 4 次 `git reset`（reflog 实证）互踩：本批全部未提交源码修改一度
+被清、工作树被并行批 ~170 脏文件占据。处置：
+
+1. 从作业记录逐字重放全部 9 文件修改（marker 核对 + esbuild 语法验证）；
+2. E2E 独立复跑 ALL PASS 21/21（§2.1，17:04）；
+3. pathspec 点名 12 路径提交 **f45858019**（16 文件 +1020/−42），与并行批脏文件
+   零交集；提交后核查：本批 12 路径零 drift（并行批未再触碰）；
+4. 教训：共享工作树禁全树 git 操作（stash / checkout / reset），基线对照改用
+   `git show HEAD:<path>`。
+
+复跑受阻面：Scala spec 复跑被并行批在改测试文件卡死（§2.2），以踩踏前 3/3 为证。

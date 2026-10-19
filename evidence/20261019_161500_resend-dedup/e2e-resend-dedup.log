@@ -1,23 +1,23 @@
 PASS  boot 会话视图挂载  — s-resend-e2e
-PASS  A1 首发帧带 clientMessageId  — [{"id":"mvf0dlnt2842","type":"(typeless)"}]
+PASS  A1 首发帧带 clientMessageId  — [{"id":"mvf135fkdopa","type":"(typeless)"}]
 PASS  A2 首发后恰一个用户气泡  — count=1
 PASS  A3 断开后客户端自动重连  — conn #2
 PASS  A4 终态行重试键在场
-FAIL  A5 重发帧携带同一个 clientMessageId（幂等键 = 逻辑消息）  — frames=2, first=mvf0dlnt2842, resend=mvf0dopdka69
-FAIL  A6 桩判重：第二次受理为零（不跑第二个 turn）  — accepted=2
-FAIL  A7 零重复气泡（重发不再渲染第二份）  — before=0, after=1
-FAIL  A8 回执发出且客户端零 pageerror  — receipts=0, pageErrors=[]
+PASS  A5 重发帧携带同一个 clientMessageId（幂等键 = 逻辑消息）  — frames=2, first=mvf135fkdopa, resend=mvf135fkdopa
+PASS  A6 桩判重：第二次受理为零（不跑第二个 turn）  — accepted=1
+PASS  A7 零重复气泡（重发不再渲染第二份）  — before=0, after=0
+PASS  A8 回执发出且客户端零 pageerror  — receipts=1, pageErrors=[]
 PASS  B1 未送达帧不入受理台账
-FAIL  B2 补发帧带原 id 且桩首见受理（不丢）  — frames=1, accepted=0, id=mvf0dpksgr7d
+PASS  B2 补发帧带原 id 且桩首见受理（不丢）  — frames=2, accepted=1, id=mvf138wbn18a
 PASS  B3 补发零新增气泡（呈现面 = 历史真值源，补发不重复渲染）  — count=0
 PASS  B4 零 pageerror  — []
 PASS  C1 busy 中消息入本地队（零出线）  — inbound=0
-PASS  C2 drain 派发恰一帧且带 clientMessageId  — ["mvf0dtnfkhc6"]
+PASS  C2 drain 派发恰一帧且带 clientMessageId  — ["mvf13byht1k0"]
 PASS  C4 重复终态帧对不二连派发（已 drain 消息恰派发一次）  — inbound=1
 PASS  C5 零 pageerror  — []
-FAIL  D1 ask 帧带 clientMessageId
-FAIL  D2 skill 帧带 clientMessageId
-FAIL  D3 immediateInput 帧带 clientMessageId
-FAIL  D4 排队项入队即钉 id（drain/立即发送同 id 复用）
+PASS  D1 ask 帧带 clientMessageId
+PASS  D2 skill 帧带 clientMessageId
+PASS  D3 immediateInput 帧带 clientMessageId
+PASS  D4 排队项入队即钉 id（drain/立即发送同 id 复用）
 
-9 FAILURE(S)
+ALL PASS
