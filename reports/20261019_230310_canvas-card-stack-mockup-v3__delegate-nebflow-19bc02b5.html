@@ -1,0 +1,1333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Canvas 面板 · 标签行改叠卡 · 交互 demo v3（零源码改动）</title>
+<style>
+/* ═══ 主题 token —— 逐字镜像 sapphire.css / base.css（亮暗双档，零新色相）═══ */
+:root {
+  --color-bg: #f5f6f8;
+  --color-surface: #ffffff;
+  --color-text: #1b1e26;
+  --color-text-muted: #8b8e96;
+  --color-text-dim: #6b6e76;
+  --color-border: #ddd;
+  --color-frame-text-bright: #1b1e26;
+  --color-frame-text-muted: #717379;
+  --color-primary: #07c160;            /* 脏标记沿用现状 --color-primary 语义 */
+
+  --sapphire: 91 127 191;
+  --glass-bg: rgba(255, 255, 255, 0.55);
+  --glass-blur: 24px;
+  --glass-border: rgba(255, 255, 255, 0.35);
+
+  --glass-control-bg: rgba(255, 255, 255, 0.45);
+  --glass-control-bg-hover: rgba(255, 255, 255, 0.65);
+  --glass-control-border: rgba(255, 255, 255, 0.40);
+  --glass-control-highlight: rgba(255, 255, 255, 0.50);
+  --glass-control-underedge: rgba(0, 0, 0, 0.08);
+  --glass-control-glow: rgba(0, 0, 0, 0.06);
+  --glass-control-shadow: rgba(0, 0, 0, 0.04);
+  --glass-control-blur: 10px;
+
+  /* 卡面（叠卡实体）：比面板玻璃更实一档，读作「物」 */
+  --card-bg: rgba(255, 255, 255, 0.82);
+  --card-border: rgba(28, 32, 44, 0.13);
+  --card-shadow:
+    0 1px 2px rgba(16, 20, 30, 0.05),
+    0 6px 18px rgba(16, 20, 30, 0.10),
+    0 18px 44px rgba(16, 20, 30, 0.12);
+  --th-bg: rgba(255, 255, 255, 0.92);
+  --th-border: rgba(28, 32, 44, 0.07);
+  --bar-1: rgba(27, 30, 38, 0.16);
+  --bar-2: rgba(27, 30, 38, 0.09);
+  --bar-3: rgba(27, 30, 38, 0.05);
+  --menu-bg: rgba(255, 255, 255, 0.92);
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) {
+    --color-bg: #13161c;
+    --color-surface: #1c1f27;
+    --color-text: #e8eaed;
+    --color-text-muted: #7b7e88;
+    --color-text-dim: #9ba0aa;
+    --color-border: #2a2d35;
+    --color-frame-text-bright: #e8eaed;
+    --color-frame-text-muted: #81838a;
+
+    --glass-bg: rgba(24, 28, 38, 0.68);
+    --glass-border: rgba(255, 255, 255, 0.06);
+
+    --glass-control-bg: rgba(255, 255, 255, 0.05);
+    --glass-control-bg-hover: rgba(255, 255, 255, 0.10);
+    --glass-control-border: rgba(255, 255, 255, 0.08);
+    --glass-control-highlight: rgba(255, 255, 255, 0.08);
+    --glass-control-underedge: rgba(0, 0, 0, 0.25);
+    --glass-control-glow: rgba(0, 0, 0, 0.20);
+    --glass-control-shadow: rgba(0, 0, 0, 0.15);
+
+    --card-bg: rgba(30, 34, 45, 0.88);
+    --card-border: rgba(255, 255, 255, 0.10);
+    --card-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.30),
+      0 8px 22px rgba(0, 0, 0, 0.35),
+      0 20px 48px rgba(0, 0, 0, 0.38);
+    --th-bg: rgba(255, 255, 255, 0.045);
+    --th-border: rgba(255, 255, 255, 0.06);
+    --bar-1: rgba(232, 234, 237, 0.20);
+    --bar-2: rgba(232, 234, 237, 0.11);
+    --bar-3: rgba(232, 234, 237, 0.06);
+    --menu-bg: rgba(32, 36, 47, 0.94);
+  }
+}
+html[data-theme="dark"] {
+  --color-bg: #13161c;
+  --color-surface: #1c1f27;
+  --color-text: #e8eaed;
+  --color-text-muted: #7b7e88;
+  --color-text-dim: #9ba0aa;
+  --color-border: #2a2d35;
+  --color-frame-text-bright: #e8eaed;
+  --color-frame-text-muted: #81838a;
+
+  --glass-bg: rgba(24, 28, 38, 0.68);
+  --glass-border: rgba(255, 255, 255, 0.06);
+
+  --glass-control-bg: rgba(255, 255, 255, 0.05);
+  --glass-control-bg-hover: rgba(255, 255, 255, 0.10);
+  --glass-control-border: rgba(255, 255, 255, 0.08);
+  --glass-control-highlight: rgba(255, 255, 255, 0.08);
+  --glass-control-underedge: rgba(0, 0, 0, 0.25);
+  --glass-control-glow: rgba(0, 0, 0, 0.20);
+  --glass-control-shadow: rgba(0, 0, 0, 0.15);
+
+  --card-bg: rgba(30, 34, 45, 0.88);
+  --card-border: rgba(255, 255, 255, 0.10);
+  --card-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.30),
+    0 8px 22px rgba(0, 0, 0, 0.35),
+    0 20px 48px rgba(0, 0, 0, 0.38);
+  --th-bg: rgba(255, 255, 255, 0.045);
+  --th-border: rgba(255, 255, 255, 0.06);
+  --bar-1: rgba(232, 234, 237, 0.20);
+  --bar-2: rgba(232, 234, 237, 0.11);
+  --bar-3: rgba(232, 234, 237, 0.06);
+  --menu-bg: rgba(32, 36, 47, 0.94);
+}
+
+/* ═══ 基础 ═══ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: 14px/1.65 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  transition: background 0.25s ease;
+}
+button { font-family: inherit; }
+.page { max-width: 980px; margin: 0 auto; padding: 40px 24px 96px; }
+h1 { font-size: 21px; font-weight: 600; letter-spacing: -0.015em; }
+h2 { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 14px; }
+h3 { font-size: 13.5px; font-weight: 600; margin: 16px 0 6px; }
+p { margin: 6px 0; }
+.meta { color: var(--color-text-muted); font-size: 12.5px; margin: 4px 0 0; }
+section {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  padding: 22px 24px;
+  margin: 20px 0 0;
+}
+.kbd {
+  display: inline-block; padding: 1px 6px; border-radius: 5px;
+  border: 1px solid var(--color-border);
+  background: var(--glass-control-bg);
+  font: 500 11.5px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--color-text-dim);
+}
+ul.spec { margin: 6px 0 0 18px; }
+ul.spec li { margin: 4px 0; }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+.dim { color: var(--color-text-muted); }
+.tag {
+  display: inline-block; padding: 0 8px; border-radius: 999px;
+  background: rgb(var(--sapphire) / 0.10);
+  color: rgb(var(--sapphire));
+  font-size: 11px; font-weight: 600; line-height: 20px;
+}
+
+/* ═══ 页头控件 ═══ */
+.page-head { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; margin-bottom: 6px; }
+.page-head .grow { flex: 1 1 320px; min-width: 0; }
+.controls { display: flex; align-items: center; gap: 10px; padding-bottom: 2px; }
+.ctl-label { font-size: 12px; color: var(--color-text-muted); }
+.seg { display: flex; padding: 3px; gap: 2px; border-radius: 10px;
+  background: var(--glass-control-bg); border: 1px solid var(--glass-control-border); }
+.seg button {
+  border: none; background: transparent; color: var(--color-text-muted);
+  font-size: 12px; font-weight: 500; padding: 4px 12px; border-radius: 7px; cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.seg button.on { background: var(--color-surface); color: var(--color-text);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.10); }
+#theme-btn {
+  width: 34px; height: 34px; border-radius: 50%; cursor: pointer;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur));
+  backdrop-filter: blur(var(--glass-control-blur));
+  color: var(--color-text); display: flex; align-items: center; justify-content: center;
+  box-shadow: inset 0 1px 0 var(--glass-control-highlight), inset 0 -1px 0 var(--glass-control-underedge);
+  transition: background 0.15s;
+}
+#theme-btn:hover { background: var(--glass-control-bg-hover); }
+#theme-btn svg { width: 16px; height: 16px; }
+
+/* ═══ 演示桌台：左侧会话残列 + 右侧 Canvas 面板（复刻 docked 姿态）═══ */
+.desk {
+  display: flex; justify-content: center; align-items: flex-start;
+  gap: 18px; margin: 26px 0 8px;
+}
+.chat-sliver {
+  flex: 0 0 210px; align-self: stretch; min-height: 420px;
+  border: 1px solid var(--color-border); border-radius: 20px;
+  background: var(--color-surface);
+  padding: 18px 14px; display: flex; flex-direction: column; gap: 10px;
+  opacity: 0.9;
+}
+.chat-sliver .b { height: 30px; border-radius: 10px; background: var(--bar-2); }
+.chat-sliver .b.me { align-self: flex-end; width: 62%; background: rgb(var(--sapphire) / 0.16); }
+.chat-sliver .b.you { align-self: flex-start; width: 74%; }
+.chat-sliver .b.you.l2 { width: 52%; }
+.stage-note { text-align: center; color: var(--color-text-muted); font-size: 12px; margin: 10px 0 0; }
+
+/* ═══ Canvas 面板复刻（split.css #canvas-panel 同款外壳）═══ */
+.cpanel {
+  flex: 0 0 auto;
+  width: 720px; max-width: 100%;
+  height: 460px;
+  display: flex; flex-direction: column;
+  position: relative;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0 2px 8px rgba(0, 0, 0, 0.04),
+    0 8px 24px rgba(0, 0, 0, 0.06);
+  transition: width 0.28s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.22s ease, transform 0.22s ease;
+}
+.cpanel.closed { width: 0 !important; min-width: 0; opacity: 0; transform: translateX(30px); pointer-events: none; border-width: 0; }
+
+/* ── 常态头：只有居中文件名（v2① 沿用）── */
+.canvas-header {
+  position: relative; z-index: 30;
+  display: flex; align-items: center; justify-content: center;
+  height: 46px; flex-shrink: 0;
+  border-bottom: 1px solid var(--glass-border);
+}
+.canvas-title {
+  display: flex; align-items: center; gap: 7px;
+  max-width: 62%; min-width: 0;
+  user-select: none;
+}
+.canvas-title .t-inner {
+  display: flex; align-items: center; gap: 7px; min-width: 0;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.canvas-title.swap .t-inner { opacity: 0; transform: translateY(-5px); }
+.canvas-title .t-icon { flex: none; width: 16px; height: 16px; color: var(--color-text-muted); display: flex; }
+.canvas-title .t-icon svg { width: 16px; height: 16px; }
+.canvas-title .t-dot { flex: none; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--color-primary); display: none; }
+.canvas-title.is-dirty .t-dot { display: block; }
+.canvas-title .t-name {
+  font-size: 13px; font-weight: 500; color: var(--color-frame-text-bright);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+}
+
+/* [v2①] 层叠浮钮沿用：40px 玻璃圆钮悬浮面板右上（.canvas-source-toggle 同款语言）。
+   [v3①] 语义更新：它掀起的不再是「一层卡组容器」，而是让面板本体物化为前卡、
+   卡组从面板背后长出来；浮钮 z-60 恒在最高层，deck 态 sapphire 激活。 */
+.deck-fab {
+  position: absolute; top: 10px; right: 12px; z-index: 60;
+  width: 40px; height: 40px; border-radius: 50%; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),
+    0 2px 8px var(--glass-control-shadow);
+  color: var(--color-text);
+  opacity: 0.6;
+  transition: background 0.18s ease, transform 0.18s ease, color 0.18s ease,
+              opacity 0.18s ease, box-shadow 0.18s ease;
+}
+.deck-fab:hover { opacity: 1; background: var(--glass-control-bg-hover); transform: scale(1.05); }
+.deck-fab:active { transform: scale(0.96); }
+.deck-fab svg { width: 18px; height: 18px; }
+.deck-fab[aria-pressed="true"] {
+  opacity: 1;
+  background: rgb(var(--sapphire) / 0.14);
+  border-color: rgb(var(--sapphire) / 0.35);
+  color: rgb(var(--sapphire));
+}
+.deck-fab[disabled] { opacity: 0.3; pointer-events: none; }
+
+/* ── 内容区 ──
+   [v3①] 形变模型反转：v2 的 .deck-layer 容器（遮罩+模糊+其上堆卡）整个删除。
+   内容区只有两层——
+     #deck-stage（z-10）：背后卡组层（透视容器），平时空、不可见；
+     .face（z-20）     ：面板本体=前卡。常态即面板内容的无缝延伸（无 chrome、scale 1），
+                         与 v2 常态观感逐像素一致；deck 态「物化」为卡并微后退让位。 */
+#canvas-content { flex: 1; min-height: 0; position: relative; overscroll-behavior: contain; }
+
+/* [v3②] 背后卡组层：z-10 恒在面板面（z-20）之下——卡组永远「长在面板背后」；
+   透视参数沿用 v2（1150px、消失点上沿）， Recipes 盒语言不变，锚点改面板上缘。
+   .over：换面飞行/旧卡缩回期间瞬时抬到 z-30，让飞行的卡盖过面板面（其余卡 op≈0 不受影响）。 */
+#deck-stage {
+  position: absolute; inset: 0; z-index: 10;
+  perspective: 1150px;
+  perspective-origin: 50% 6%;
+}
+#deck-stage.over { z-index: 30; }
+
+/* [v3①] 面板本体=前卡：
+   常态 = 无边框无底无影、scale 1——面板内容的无缝延伸；
+   .as-card（deck 态）= 「物化」：细描边 + 卡底 + 投影 + 14px 圆角 + 微后退让位
+  （scale 0.89 / 下移 8px，腾出上缘露边带）。一次连续形变，无任何容器切换。 */
+.face {
+  position: absolute; inset: 0; z-index: 20;
+  border: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: hidden;
+  transform-origin: 50% 50%;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease,
+              background 0.3s ease, box-shadow 0.3s ease, border-radius 0.3s ease;
+  touch-action: none;                    /* [v3⑤] 前卡拖划依赖 pointer 事件 */
+}
+.face.as-card {
+  border-color: var(--card-border);
+  border-radius: 14px;
+  background: var(--card-bg);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  backdrop-filter: blur(14px) saturate(1.1);
+  box-shadow: var(--card-shadow);
+  transform: translateY(8px) scale(0.89);
+  cursor: grab;
+}
+.face.as-card:active { cursor: grabbing; }
+.face.no-trans { transition: none !important; }
+.face.restore { transition: transform 0.32s cubic-bezier(0.3, 1.25, 0.6, 1), opacity 0.28s ease !important; }
+.face-inner {
+  position: absolute; inset: 0; padding: 22px 26px; overflow: hidden;
+  transition: opacity 0.2s ease;
+}
+/* [v3③] 换面飞行中：旧内容面减淡，让位给飞入的新卡 */
+.face.receiving .face-inner { opacity: 0.35; }
+
+/* [v3⑤] 前卡顶缘右上 ×：只在 deck 态（前卡身份）出现——「卡顶 ×」语义的 v3 落点；
+   常态全 UI 无叉（v2① 铁律不变）。 */
+.face-close {
+  position: absolute; top: 10px; right: 10px; z-index: 5;
+  width: 26px; height: 26px; border-radius: 50%; cursor: pointer;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur));
+  backdrop-filter: blur(var(--glass-control-blur));
+  color: var(--color-text-muted);
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.2s ease, background 0.15s ease, color 0.15s ease;
+}
+.face.as-card .face-close { opacity: 0.85; pointer-events: auto; }
+.face-close:hover { background: var(--glass-control-bg-hover); color: var(--color-text); }
+.face-close:focus { outline: none; }
+.face-close:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.5); outline-offset: 1px; }
+.face-close svg { width: 11px; height: 11px; }
+
+/* 常态内容面（= .face-inner 的内容 mock，v2 viewer-mock 同款排版） */
+.face-inner .v-head { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+.face-inner .v-head .t-icon svg { width: 15px; height: 15px; }
+.face-inner .v-head span { font-size: 12px; color: var(--color-text-muted); }
+
+/* 通用文本条 mock（缩略与大图共用） */
+.ln { height: 8px; border-radius: 4px; background: var(--bar-2); margin: 0 0 9px; }
+.ln.strong { height: 10px; background: var(--bar-1); border-radius: 5px; }
+.ln.w40 { width: 40%; } .ln.w55 { width: 55%; } .ln.w70 { width: 70%; }
+.ln.w85 { width: 85%; } .ln.w100 { width: 100%; } .ln.w30 { width: 30%; }
+.codeblock { background: var(--th-bg); border: 1px solid var(--th-border); border-radius: 10px; padding: 12px 14px; margin: 4px 0 12px; }
+.codeblock .ln { margin-bottom: 7px; }
+.codeblock .ln:last-child { margin-bottom: 0; }
+.codeblock .kw { background: rgb(var(--sapphire) / 0.30); }
+
+/* ── 背后卡组（卡实体样式沿用 v2：顶名称条 + 预览区）── */
+.deck-card {
+  position: absolute; left: 50%; top: 50%;
+  width: var(--card-w, 718px); height: var(--card-h, 412px);
+  transform: translate(-50%, -50%);
+  display: flex; flex-direction: column;
+  border-radius: 14px;
+  background: var(--card-bg);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  backdrop-filter: blur(14px) saturate(1.1);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
+  will-change: transform, opacity;
+  cursor: pointer;
+  overflow: hidden;
+}
+.deck-card .card-shade {
+  position: absolute; inset: 0; border-radius: inherit;
+  background: rgb(0 0 0 / 1); opacity: 0; pointer-events: none;
+}
+.deck-card .card-top {
+  flex: none; display: flex; align-items: center; gap: 7px;
+  height: 38px; padding: 0 12px; min-width: 0;
+  border-bottom: 1px solid var(--th-border);
+  background: var(--th-bg);
+}
+.deck-card .n-icon { flex: none; width: 15px; height: 15px; color: var(--color-text-muted); display: flex; }
+.deck-card .n-icon svg { width: 15px; height: 15px; }
+.deck-card .n-dot { flex: none; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--color-primary); display: none; }
+.deck-card.is-dirty .n-dot { display: block; }
+.deck-card .n-text {
+  font-size: 12.5px; font-weight: 500; color: var(--color-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 100%;
+}
+.deck-card .n-sub { flex: none; font-size: 10.5px; color: var(--color-text-muted); }
+.deck-card .card-thumb {
+  flex: 1; min-height: 0; margin: 12px;
+  border-radius: 9px; overflow: hidden; position: relative;
+  background: var(--th-bg); border: 1px solid var(--th-border);
+}
+
+/* 缩略 mock（卡片内） */
+.thumb-pad { position: absolute; inset: 12px 14px; }
+.thumb-pad .ln { height: 6px; margin-bottom: 7px; border-radius: 3px; }
+.thumb-pad .ln.strong { height: 7px; }
+.thumb-grid {
+  position: absolute; inset: 0;
+  background:
+    repeating-linear-gradient(0deg, var(--bar-3) 0 1px, transparent 1px 22px),
+    repeating-linear-gradient(90deg, var(--bar-3) 0 1px, transparent 1px 34px);
+}
+.thumb-grid .ghead { position: absolute; top: 0; left: 0; right: 0; height: 20px;
+  background: rgb(var(--sapphire) / 0.10); border-bottom: 1px solid rgb(var(--sapphire) / 0.18); }
+.thumb-img { position: absolute; inset: 0;
+  background: linear-gradient(135deg, rgb(var(--sapphire) / 0.38), rgb(var(--sapphire) / 0.10) 60%, rgb(var(--sapphire) / 0.22)); }
+.thumb-img svg { position: absolute; left: 50%; bottom: 8%; transform: translateX(-50%); width: 58%; height: 52%; color: rgb(255 255 255 / 0.75); }
+html[data-theme="dark"] .thumb-img svg { color: rgb(255 255 255 / 0.5); }
+@media (prefers-color-scheme: dark) { html:not([data-theme="light"]) .thumb-img svg { color: rgb(255 255 255 / 0.5); } }
+.thumb-page { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 58%; height: 82%; background: var(--color-surface);
+  border: 1px solid var(--th-border); border-radius: 4px; padding: 10px 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+.thumb-page .ln { height: 5px; margin-bottom: 6px; }
+.thumb-flow { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.thumb-flow svg { width: 78%; height: 68%; color: var(--color-text-muted); }
+.thumb-browser { position: absolute; inset: 0; padding: 8px 10px; }
+.thumb-browser .bar { height: 14px; border-radius: 5px; background: var(--bar-3);
+  border: 1px solid var(--th-border); margin-bottom: 8px; display: flex; align-items: center; gap: 3px; padding: 0 5px; }
+.thumb-browser .bar i { width: 4px; height: 4px; border-radius: 50%; background: var(--bar-1); display: block; }
+.thumb-browser .blk { height: 16px; border-radius: 4px; background: var(--bar-2); margin-bottom: 6px; }
+.thumb-browser .blk.b2 { width: 64%; }
+
+/* [v3④] 底部提示 + 计数：deck 态浮于面板面下缘（z-50，纯提示不可点）；
+   计数行改为「当前 n/N · 下一张 名」——前卡恒为当前内容，被擦洗的是背后环流。 */
+.deck-foot {
+  position: absolute; left: 0; right: 0; bottom: 12px; z-index: 50;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  pointer-events: none;
+  opacity: 0; transform: translateY(6px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+#canvas-content.deck-on .deck-foot { opacity: 1; transform: none; }
+.deck-hint { font-size: 11px; color: var(--color-text-muted); transition: opacity 0.4s ease; }
+.deck-hint.faded { opacity: 0; }
+.deck-count { font-size: 11px; color: var(--color-text-dim); font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
+
+/* 右键菜单（glass，同 .canvas-tab-context-menu 语言） */
+.glass-menu {
+  position: fixed; z-index: 5000; min-width: 132px; padding: 4px;
+  background: var(--menu-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  backdrop-filter: blur(20px) saturate(1.2);
+  border: 1px solid var(--card-border); border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.14);
+}
+.glass-menu button {
+  display: block; width: 100%; text-align: left; padding: 5px 10px;
+  border: none; background: none; color: var(--color-text);
+  font-size: 12px; cursor: pointer; border-radius: 6px;
+}
+.glass-menu button:hover { background: rgb(128 128 128 / 0.12); }
+.glass-menu hr { border: none; border-top: 1px solid var(--card-border); margin: 4px 0; }
+.glass-menu button.danger { color: #d64545; }
+html[data-theme="dark"] .glass-menu button.danger { color: #f26b6b; }
+@media (prefers-color-scheme: dark) { html:not([data-theme="light"]) .glass-menu button.danger { color: #f26b6b; } }
+
+/* 窄面板退化（<400px）：卡/面板面尺寸即内容区本身（天然自适应），只收排版 */
+.cpanel.narrow .canvas-title { max-width: 46%; }
+.cpanel.narrow .deck-hint { display: none; }
+
+/* 面板关闭后的重开浮钮（demo 用） */
+#reopen-pill {
+  position: fixed; right: 26px; bottom: 26px; z-index: 60;
+  display: none; align-items: center; gap: 8px;
+  padding: 9px 16px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur));
+  backdrop-filter: blur(var(--glass-control-blur));
+  box-shadow: inset 0 1px 0 var(--glass-control-highlight), 0 4px 14px rgba(0,0,0,0.12);
+  color: var(--color-text); font-size: 12.5px; font-weight: 500;
+}
+#reopen-pill.show { display: flex; }
+
+/* toast */
+#toast {
+  position: fixed; left: 50%; bottom: 34px; transform: translate(-50%, 8px);
+  z-index: 70; padding: 8px 16px; border-radius: 10px;
+  background: var(--menu-bg); border: 1px solid var(--card-border);
+  -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.14);
+  font-size: 12.5px; color: var(--color-text);
+  opacity: 0; pointer-events: none; transition: opacity 0.2s ease, transform 0.2s ease;
+}
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+table.map { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.map th, table.map td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--color-border); vertical-align: top; }
+table.map th { color: var(--color-text-muted); font-weight: 500; }
+table.map td:first-child { white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cpanel, .face, .face-inner, .deck-foot, .canvas-title .t-inner { transition-duration: 0.01s !important; }
+}
+</style>
+</head>
+<body>
+<main class="page">
+  <div class="page-head">
+    <div class="grow">
+      <h1>Canvas 面板 · 浏览器式标签行 → 叠卡选择 <span class="tag">v3</span></h1>
+      <p class="meta">交互 demo · 零源码改动 · 按作者形变模型澄清反转（面板本体=前卡，卡组从背后长出）· 可直接操作：滚轮连续擦洗 · 点击后卡换入面板 · 划走 / 点 × 关闭 · ESC 收回</p>
+    </div>
+    <button id="theme-btn" title="切换明暗（自动 / 亮 / 暗）"></button>
+  </div>
+
+  <section>
+    <div class="controls" style="margin-bottom:2px">
+      <span class="ctl-label">面板宽度</span>
+      <div class="seg" id="width-seg">
+        <button data-w="720" class="on">720</button>
+        <button data-w="500">500</button>
+        <button data-w="340">340（窄）</button>
+      </div>
+      <span class="dim" style="font-size:12px">前卡与背后卡组即内容区本身（随宽度自适应），切宽度即重排</span>
+    </div>
+
+    <div class="desk">
+      <div class="chat-sliver" aria-hidden="true">
+        <div class="b you"></div><div class="b you l2"></div>
+        <div class="b me"></div>
+        <div class="b you"></div>
+        <div class="b me"></div>
+        <div class="b you l2"></div>
+        <div class="b you"></div>
+        <div class="b me"></div>
+      </div>
+
+      <div id="canvas-panel" class="cpanel">
+        <!-- [v2①] 常态头只剩居中标题；层叠钮 = 右上悬浮浮钮 -->
+        <div class="canvas-header">
+          <div class="canvas-title" id="canvas-title">
+            <span class="t-inner">
+              <span class="t-icon" id="t-icon"></span>
+              <span class="t-dot"></span>
+              <span class="t-name" id="t-name">—</span>
+            </span>
+          </div>
+        </div>
+        <button id="deck-fab" class="deck-fab" aria-pressed="false" title="叠卡切换（滚轮擦洗 · 点击换面 · 划走关闭）" aria-label="叠卡切换"></button>
+        <div id="canvas-content">
+          <!-- [v3②] 背后卡组层：恒在面板面之下，卡组从这里长出来 -->
+          <div id="deck-stage"></div>
+          <!-- [v3①] 面板本体=前卡：常态=内容面本身；deck 态物化为卡（.as-card） -->
+          <div class="face" id="face">
+            <div class="face-inner" id="face-inner"></div>
+            <button class="face-close" id="face-close" title="关闭当前页签" aria-label="关闭当前页签"></button>
+          </div>
+          <div class="deck-foot">
+            <div class="deck-hint" id="deck-hint">滚轮连续擦洗（可回滚） · 点击后卡换入面板 · 左右划走面板 / 点 × 关闭 · ESC 收回</div>
+            <div class="deck-count" id="deck-count"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="stage-note">常态 = 面板单独存在（内容即面板面，无任何覆盖容器）；点浮钮 = 面板物化为前卡、其余卡从它背后上缘长出；点后卡 = 该卡放大换入面板位、旧内容卡缩回卡组。</p>
+  </section>
+
+  <section>
+    <h2>v2 → v3 修订对照（作者形变模型澄清）</h2>
+    <p class="dim" style="font-size:12.5px;margin-bottom:8px">作者：「交互全对，但我需要的是底部这个背景卡片，通过动画变成堆叠效果。而不是堆叠效果放在这个背景卡片之上。」——源码内修订点带 <span class="mono">[v3①]</span>…<span class="mono">[v3⑥]</span> 标签。</p>
+    <table class="map">
+      <tr><th>#</th><th>澄清</th><th>v2（旧模型）</th><th>v3（新模型）</th></tr>
+      <tr><td>①</td><td>画布本体=前卡</td><td><span class="mono">.deck-layer</span> 容器整体盖住内容（遮罩+模糊），卡组放在这层「背景卡」之上——两个分离的层次</td><td><strong>容器整个删除</strong>。常态视图本身就是堆叠前卡（face）；点浮钮 = 面板面「物化」（细描边+卡底+投影+圆角）并微后退让位（scale 0.89 / 下移 8px）——全程只有一张持续形变的画布面</td></tr>
+      <tr><td>②</td><td>卡组从背后长出</td><td>卡组在覆盖层内的 <span class="mono">deck-stage</span> 里展开，观感是「浮在背景卡上方」</td><td>背后卡组层（z-10）恒在面板面（z-20）之下；展开 = 其余卡<strong>从面板上缘背后依次错位露边</strong>（食谱盒语言沿用 v2：消失点上沿、越深越往上往后退），不是在面板上方再浮一层</td></tr>
+      <tr><td>③</td><td>scrub 驱动「面板+背后卡组」</td><td>滚轮驱动覆盖层内卡组环流，前卡随擦洗易主</td><td>滚轮增益/指数趋近照 v2 不变；驱动对象 = 面板前卡 + 背后环流整体——<strong>面板面恒居前不动</strong>，后卡在背后连续可逆环流</td></tr>
+      <tr><td>④</td><td>选中 = 换面</td><td>点击前卡选中，选中卡飞向标题位、覆盖层整体淡出</td><td>点击后卡 = 该卡<strong>放大飞入面板位变成新内容面</strong>（内容随之切换）；旧内容卡以 ghost <strong>缩回卡组</strong>；卡组收回面板背后回常态</td></tr>
+      <tr><td>⑤</td><td>划走 / 卡顶 × 照 v2</td><td>拖前卡甩出关闭；叉在前卡顶条右端</td><td>划走对象 = 面板前卡（甩出=关当前页签，邻位接管后面板面回弹复位）；「卡顶 ×」落在前卡顶缘右上角（仅 deck 态；常态全 UI 仍无叉）</td></tr>
+      <tr><td>⑥</td><td>收回路径</td><td>ESC / 点空白 / 再点浮钮 = 覆盖层淡出回常态</td><td>同三路语义不变，几何重锚：卡组收回面板背后、面板面解除物化回无缝常态（无容器淡出感）</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>v1 → v2 修订对照（历史，全部继续有效）</h2>
+    <table class="map">
+      <tr><th>#</th><th>反馈</th><th>v2 落点（v3 沿用）</th></tr>
+      <tr><td>①</td><td>常态头去掉叉号，层叠钮改浮钮</td><td>头行只留居中标题；层叠钮 = 40px 悬浮浮钮（.canvas-source-toggle 同款语言，rest 半透明 / hover 全显），deck 态 sapphire 激活</td></tr>
+      <tr><td>②</td><td>进堆叠带上当前卡</td><td>v3 强化为模型本体：当前卡就是面板面（前卡），无需「带上」</td></tr>
+      <tr><td>③</td><td>堆叠卡顶部是名称</td><td>背后卡仍为顶部名称横条（类型图标 + 脏点 + 文件名 + 面板标）+ 下方预览区；露边露的正是名称条</td></tr>
+      <tr><td>④</td><td>卡片尺寸自适应占满</td><td>v3 更彻底：前卡与卡组卡 = 内容区本身，天然自适应，无独立尺寸计算；级联位移仍按 sizeK 缩放</td></tr>
+      <tr><td>⑤</td><td>滚轮联动动画（连续 scrub）</td><td>滚多少动多少（增益 1/240、指数趋近、可回滚、无阈值）——v3 原样保留</td></tr>
+      <tr><td>⑥</td><td>堆叠态关卡双路</td><td>划走甩出 + × 点关，邻位接管同 closeTab——v3 重锚到面板前卡</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>设计规格（v3 形变模型）</h2>
+    <h3>常态（无卡组）</h3>
+    <ul class="spec">
+      <li>面板 = 头行居中标题 + 内容面。<strong>内容面就是前卡</strong>：无描边、无投影、无圆角、scale 1——与现状面板内容逐像素一致（face 无 chrome）。</li>
+      <li>常态全 UI 无叉（v2①）；唯一入口 = 右上 40px 层叠浮钮。DOM 里不存在任何覆盖容器（v2 的 <span class="mono">.deck-layer</span> 已删）。</li>
+    </ul>
+    <h3>物化 + 长出卡组（点浮钮）</h3>
+    <ul class="spec">
+      <li><strong>面板面物化</strong>：0.3s 连续形变——浮现细描边 / 卡底（比面板玻璃更实一档）/ 投影 / 14px 圆角，同时微后退让位（scale 0.89、下移 8px），上缘腾出露边带。</li>
+      <li><strong>卡组长出</strong>：其余 N−1 张卡从面板正背后（op 0）沿上缘错位升起：d=1 露出名称条上缘 ~33px，其后每级再上露 ~7px 成错位阶梯，越深越往后（translateZ 负深度 + rotateX 后仰，消失点上沿）且逐级减淡；spread 0→1 双轴独立于擦洗位置。</li>
+      <li><strong>层级保证</strong>：卡组层 z-10 恒在面板面 z-20 之下——任何时刻卡组都「长在面板背后」，绝无浮于面板之上的观感。</li>
+    </ul>
+    <h3>滚轮连续擦洗（v3④）</h3>
+    <ul class="spec">
+      <li>wheel 增量（deltaMode 归一）× 1/240 累进背后环流浮点位置，rAF 指数趋近；滚多少动多少、向上滚回滚。键盘 <span class="kbd">↑</span><span class="kbd">↓</span> 同通路 ±1。</li>
+      <li>面板前卡不随擦洗易主；底部计数行显示「当前 n/N · 下一张 名」——被翻的是背后那摞。</li>
+    </ul>
+    <h3>选中换面（v3③）</h3>
+    <ul class="spec">
+      <li>点击后卡（或 <span class="kbd">Enter</span> 选最上后卡）：该卡从露边位<strong>放大飞入面板位</strong>（0.32s，渲染层级瞬时抬升盖过面板面），旧内容面同步减淡。</li>
+      <li>落位瞬间：面板内容与标题切换为该卡；飞入卡卸除；<strong>旧内容卡以 ghost 从面板位缩回卡组深处</strong>（0.3s）；卡组收回面板背后，面板面解除物化回无缝常态。全程 ~0.65s，一气呵成。</li>
+    </ul>
+    <h3>关闭（v3⑤，语义照 v2）</h3>
+    <ul class="spec">
+      <li><strong>划走</strong>：按住面板前卡左右拖（跟手 + rotateZ 侧倾）；位移 ≥ 卡宽 20% 或速度 ≥ 0.55px/ms → 沿拖行方向甩出淡出并关闭当前页签，不足则弹回。邻位接管（右邻优先，同 <span class="mono">closeTab</span>）后面板面从甩出位姿回弹复位。</li>
+      <li><strong>卡顶 ×</strong>：前卡顶缘右上角 ×（仅 deck 态显示），点击收拢淡出关闭当前页签。后卡关闭走右键菜单「关闭」。</li>
+      <li>右键菜单（引用当前页/选区 / 关闭 / 关闭其他）保留；关掉全部卡 = 收起面板（右下重开）。</li>
+    </ul>
+    <h3>收回（v3⑥）</h3>
+    <ul class="spec">
+      <li>ESC / 点空白 / 点面板面 / 再点浮钮 = spread→0 卡组收回面板背后，面板面解除物化回常态，内容不变。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>边界情况</h2>
+    <ul class="spec">
+      <li><strong>文件很多</strong>：背后环流环形取模（最短路径绕回），首尾无缝循环，深处卡片淡出至不可见——9 张卡可连滚一圈再滚回来（连续擦洗可逆）。</li>
+      <li><strong>当前文件回归</strong>：旧内容卡缩回卡组后固定落在最上露边位（下一张），再开卡组它就在手边。</li>
+      <li><strong>窄面板</strong>：前卡与卡组 = 内容区本身，切 340 天然自适应；只收排版（提示行隐藏、标题截断）。</li>
+      <li><strong>单卡 / 空态</strong>：单卡时卡组为空（计数行提示「仅此一张」），划走 / × 仍可关；全部关闭则收起面板。</li>
+      <li><strong>拖划与点击的界分</strong>：面板面位移 &lt;6px 判为点击（= 收回卡组），≥6px 进入拖划；后卡点击即换面。</li>
+      <li><strong>动效降级</strong>：<span class="mono">prefers-reduced-motion</span> 下惯性插值系数置 1、进出场仅留淡入淡出。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>实现提示（已同步写入本页控制台）</h2>
+    <ul class="spec">
+      <li>[v3①] 结构 = <span class="mono">#canvas-content</span> 内两层：<span class="mono">#deck-stage</span>（z-10 背后卡组，透视容器）+ <span class="mono">.face</span>（z-20 面板前卡）。常态 face 无 chrome；deck 态加 <span class="mono">.as-card</span>（CSS transition 0.3s 完成物化+让位）。v2 的 <span class="mono">.deck-layer</span> 容器整个不存在。</li>
+      <li>[v3②] 卡位姿 <span class="mono">poseOf(d)</span>：y = −(24·a₁+9·a₂)·sizeK（a₁=min(d,1)、a₂=max(0,min(d,4)−1)，y 步进须压过半高收缩才有错位阶梯），z = −90·min(d,4)·sizeK，rotateX 后仰，scale 0.886 起 −0.016/级，op 自 d&gt;0.5 线性衰减——v2 食谱盒曲线改锚面板上缘；spread 只缩放位姿轴（前卡不参与）。</li>
+      <li>[v3③] 换面 = 选中卡位姿 lerp→面板基姿（translateY 8 / scale 0.89，与 .as-card 逐值对齐），期间 <span class="mono">#deck-stage.over</span> 抬 z-30；落位即 <span class="mono">renderFace()</span> 换内容 + 标题交叉淡入 + ghost 旧卡缩回；结束清场回常态。</li>
+      <li>[v3⑤] 划走 = 面板面 pointer 拖划（速度采样同 v2）；越阈甩出（外抛+13° 侧旋+淡出）→ <span class="mono">settleClose</span> 邻位接管 → 面板面带 <span class="mono">.restore</span> 弹性复位；不足阈弹回。× = 面板面收拢淡出。</li>
+      <li>实施落点（canvas.js）：常态头 = <span class="mono">.canvas-title</span>；浮钮挂面板层（原叉位）；<span class="mono">face</span> 即现 <span class="mono">#canvas-content</span> 内容容器加形态类；<span class="mono">deck-stage</span> 挂其内 z 更低；数据源 = <span class="mono">tabs</span> Map（卡序 = active 起的环形序）；dirty 读 <span class="mono">isTabDirty()</span>；引用复用 <span class="mono">refForTab()</span>；关闭接管同 <span class="mono">closeTab()</span>。</li>
+      <li>注意点：<span class="mono">overscroll-behavior: contain</span> 防滚链；「OS 文件拖入开新签」落区 = 整个面板（含卡组态）；预览缩略为 CSS mock，实施时文本用首行内容、图片用 objectUrl 真缩略。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>与现状映射（canvas.js）</h2>
+    <table class="map">
+      <tr><th>现状（标签行）</th><th>叠卡方案（v3）</th></tr>
+      <tr><td>点击标签切换 <span class="mono">setActiveTab</span></td><td>点后卡 = 换面（飞入面板位，内容+标题切换）；滚轮 / ↑↓ 擦洗背后环流</td></tr>
+      <tr><td>标签 <span class="mono">×</span> 关闭</td><td>划走面板面 = 关当前页签；前卡顶缘 ×（deck 态）；右键菜单关闭；邻位接管同 <span class="mono">closeTab</span></td></tr>
+      <tr><td>右键「引用当前页/选区」</td><td>面板面 / 后卡右键菜单同名项，复用 <span class="mono">refForTab</span></td></tr>
+      <tr><td>脏标记 <span class="mono">.dirty</span> 圆点</td><td>常态头名称前绿点 + 后卡名称条绿点（同一状态源）</td></tr>
+      <tr><td>拖拽排序 / 双击 pin / preview 替换</td><td>demo 未含；实施批需给出安放（见 v1 设计报告「开放问题」）</td></tr>
+      <tr><td>标签条 scrollIntoView 定位激活项</td><td>当前文件恒为面板面（天然满足）；旧内容卡缩回后置于最上露边位</td></tr>
+    </table>
+  </section>
+</main>
+
+<div id="reopen-pill">
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 8.5 4.8-8.5 4.8L3.5 6.8 12 2Z"/><path d="m3.5 12 8.5 4.8 8.5-4.8"/><path d="m3.5 17.2 8.5 4.8 8.5-4.8"/></svg>
+  重新打开画板
+</div>
+<div id="ctx-menu" class="glass-menu" hidden>
+  <button data-act="ref">引用当前页 / 选区</button>
+  <hr>
+  <button data-act="close">关闭</button>
+  <button data-act="close-others" class="danger">关闭其他</button>
+</div>
+<div id="toast"></div>
+
+<script>
+'use strict';
+/* ═══════════════ 数据（模拟 tabs Map：文件 + 面板页签） ═══════════════ */
+const TABS = [
+  { id: 'file:docs/canvas叠卡方案.md',   name: 'canvas叠卡方案.md',   type: 'markdown', dirty: true  },
+  { id: 'file:README.md',                name: 'README.md',           type: 'markdown', dirty: false },
+  { id: 'file:src/server/CanvasRoutes.scala', name: 'CanvasRoutes.scala', type: 'code',  dirty: false },
+  { id: 'file:package.json',             name: 'package.json',        type: 'code',     dirty: true  },
+  { id: 'file:reports/usage-10月.xlsx',  name: 'usage-10月.xlsx',     type: 'sheet',    dirty: false },
+  { id: 'file:assets/architecture.png',  name: 'architecture.png',    type: 'image',    dirty: false },
+  { id: 'file:docs/验收报告-2026-10-18.pdf', name: '验收报告-2026-10-18.pdf', type: 'pdf', dirty: false },
+  { id: 'panel:flow',                    name: 'Flow Map',            type: 'flow',     dirty: false },
+  { id: 'panel:projects',                name: '任务看板',             type: 'tasks',    dirty: false },
+];
+let activeId = TABS[0].id;
+
+/* ═══════════════ 图标（1.8 线重，无 emoji） ═══════════════ */
+const ICONS = {
+  markdown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M6 15v-6l3 3.4L12 9v6"/><path d="M18 9v6m0 0-2.2-2.3M18 15l2.2-2.3"/></svg>',
+  code: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m8.5 8-4 4 4 4"/><path d="m15.5 8 4 4-4 4"/></svg>',
+  sheet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M3.5 9.5h17M3.5 15h17M9.5 4v16M15.5 4v16"/></svg>',
+  image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="9.5" r="1.6"/><path d="m4 18 5.2-5.2a1.5 1.5 0 0 1 2.1 0L20 20"/></svg>',
+  pdf: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 16.5h4"/></svg>',
+  flow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.8" width="6" height="5" rx="1.4"/><rect x="3" y="16" width="6" height="5" rx="1.4"/><rect x="15" y="16" width="6" height="5" rx="1.4"/><path d="M12 7.8v3.4M6 16v-2.2a1.6 1.6 0 0 1 1.6-1.6h8.8A1.6 1.6 0 0 1 18 13.8V16"/></svg>',
+  tasks: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="m7 9.5 1.6 1.6L11.5 8"/><path d="M14 10h3.5M7 15.5h3M13.5 15.5h4"/></svg>',
+  deck: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2.5 8.5 4.8L12 12 3.5 7.3 12 2.5Z"/><path d="m3.5 12.2 8.5 4.8 8.5-4.8"/><path d="m3.5 17.1 8.5 4.8 8.5-4.8"/></svg>',
+  close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>',
+  sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5 5l1.6 1.6M17.4 17.4 19 19M19 5l-1.6 1.6M6.6 17.4 5 19"/></svg>',
+  moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13.5A8.2 8.2 0 0 1 10.5 4 8.2 8.2 0 1 0 20 13.5Z"/></svg>',
+  auto: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17Z" fill="currentColor" stroke="none"/></svg>',
+};
+
+/* ═══════════════ 缩略 mock（卡面 + 常态大图共用语言） ═══════════════ */
+function thumbMock(type) {
+  switch (type) {
+    case 'markdown': return '<div class="thumb-pad"><div class="ln strong w40"></div><div class="ln w100"></div><div class="ln w85"></div><div class="ln w55"></div><div class="ln w70"></div><div class="ln w30"></div><div class="ln w100"></div></div>';
+    case 'code': return '<div class="thumb-pad"><div class="ln w40"></div><div class="ln w70"></div><div class="ln w55"></div><div class="ln w85"></div><div class="ln w30"></div><div class="ln w70"></div><div class="ln w55"></div></div>';
+    case 'sheet': return '<div class="thumb-grid"><div class="ghead"></div></div>';
+    case 'image': return '<div class="thumb-img"><svg viewBox="0 0 120 60" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 52 40 22l22 20 18-14 32 24"/></svg></div>';
+    case 'pdf': return '<div class="thumb-page"><div class="ln strong w40"></div><div class="ln w100"></div><div class="ln w85"></div><div class="ln w100"></div><div class="ln w55"></div></div>';
+    case 'flow': return '<div class="thumb-flow"><svg viewBox="0 0 120 70" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><rect x="45" y="4" width="30" height="14" rx="4"/><rect x="8" y="50" width="30" height="14" rx="4"/><rect x="82" y="50" width="30" height="14" rx="4"/><path d="M60 18v14M60 32H23v18M60 32h34v18"/></svg></div>';
+    case 'tasks': return '<div class="thumb-pad"><div class="ln w55"></div><div class="ln w70"></div><div class="ln w40"></div><div class="ln w85"></div></div>';
+    default: return '<div class="thumb-browser"><div class="bar"><i></i><i></i><i></i></div><div class="blk"></div><div class="blk b2"></div><div class="blk"></div></div>';
+  }
+}
+function iconOf(type) { return ICONS[type] || ICONS.code; }
+
+/* ═══════════════ 常态头 + 面板面（前卡内容） ═══════════════
+   [v3①] v2 的 viewer-mock 现在住在 .face-inner 里——常态观感与 v2 逐像素一致。 */
+const titleEl = document.getElementById('canvas-title');
+const tName = document.getElementById('t-name');
+const tIcon = document.getElementById('t-icon');
+const face = document.getElementById('face');
+const faceInner = document.getElementById('face-inner');
+const contentEl = document.getElementById('canvas-content');
+const stage = document.getElementById('deck-stage');
+const deckFab = document.getElementById('deck-fab');
+const countEl = document.getElementById('deck-count');
+const hintEl = document.getElementById('deck-hint');
+const panelEl = document.getElementById('canvas-panel');
+const faceCloseBtn = document.getElementById('face-close');
+deckFab.innerHTML = ICONS.deck;
+faceCloseBtn.innerHTML = ICONS.close;
+
+const tabOf = () => TABS.find(t => t.id === activeId) || null;
+const tabIdxOf = id => Math.max(0, TABS.findIndex(t => t.id === id));
+function renderHeader() {
+  const tab = tabOf();
+  tIcon.innerHTML = tab ? iconOf(tab.type) : '';
+  tName.textContent = tab ? tab.name : '画板';
+  titleEl.classList.toggle('is-dirty', !!(tab && tab.dirty));
+  deckFab.disabled = TABS.length === 0;
+}
+function renderFace() {
+  const tab = tabOf();
+  if (!tab) {
+    faceInner.innerHTML = '<p class="dim" style="margin-top:60px;text-align:center;font-size:13px">没有打开的页签——从侧栏或会话重新打开文件即可。</p>';
+    return;
+  }
+  const head = '<div class="v-head"><span class="t-icon">' + iconOf(tab.type) + '</span><span>' + tab.name + (tab.dirty ? ' · 未保存' : '') + '</span></div>';
+  let body = '';
+  switch (tab.type) {
+    case 'markdown':
+      body = '<div class="ln strong w40" style="height:13px;border-radius:6px"></div>' +
+        '<div class="ln w100"></div><div class="ln w85"></div><div class="ln w70"></div>' +
+        '<div class="codeblock"><div class="ln w55"></div><div class="ln kw w40"></div><div class="ln w70"></div></div>' +
+        '<div class="ln strong w30" style="height:11px"></div><div class="ln w100"></div><div class="ln w55"></div>';
+      break;
+    case 'code':
+      body = '<div class="codeblock">' +
+        '<div class="ln w30"></div><div class="ln w55" style="margin-left:16px"></div><div class="ln kw w40" style="margin-left:16px"></div>' +
+        '<div class="ln w70" style="margin-left:32px"></div><div class="ln w55" style="margin-left:32px"></div>' +
+        '<div class="ln w40" style="margin-left:16px"></div><div class="ln w85"></div><div class="ln w30"></div></div>';
+      break;
+    case 'sheet': body = '<div style="height:62%;position:relative;border:1px solid var(--th-border);border-radius:10px;overflow:hidden">' + thumbMock('sheet') + '</div>'; break;
+    case 'image': body = '<div style="height:62%;border-radius:12px;overflow:hidden;position:relative">' + thumbMock('image') + '</div>'; break;
+    case 'pdf': body = '<div style="height:82%;display:flex;align-items:center;justify-content:center"><div style="width:50%;height:100%;background:var(--color-surface);border:1px solid var(--th-border);border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,0.10);padding:16px 18px"><div class="ln strong w40"></div><div class="ln w100"></div><div class="ln w85"></div><div class="ln w100"></div><div class="ln w70"></div><div class="ln w55"></div></div></div>'; break;
+    case 'flow': body = thumbMock('flow').replace('thumb-flow', 'thumb-flow" style="position:static;height:70%"'); break;
+    case 'tasks': body = thumbMock('tasks').replace('thumb-pad', 'thumb-pad" style="position:static;padding-top:6px"'); break;
+    default: body = '<div class="codeblock"><div class="ln w70"></div><div class="ln w55"></div></div>';
+  }
+  faceInner.innerHTML = head + body;
+}
+function refreshAll() { renderHeader(); renderFace(); }
+
+/* ═══════════════ 叠卡引擎（v3：面板=前卡，卡组在背后） ═══════════════
+   [v3④] 滚轮 = 连续擦洗（增益/趋近照 v2），驱动背后环流；
+   [v3③] 选中 = 飞入面板位换面 + 旧内容卡 ghost 缩回卡组；
+   [v3⑤] 划走/× = 关面板前卡（= 当前页签），邻位接管。 */
+const RM = matchMedia('(prefers-reduced-motion: reduce)');
+
+let deckOpen = false, finalizing = false;
+let ring = [], M = 0;               // 背后环流（不含面板前卡）；M = 环流卡数
+let pos = -1, target = -1;          // 环流浮点位置：d = wrapDelta(r − pos, M)，d=1 = 最上露边位
+let spread = 0, spreadT = 0;        // 展开/收回第二运动轴（0 = 全收在面板正背后）
+let selFly = null;                  // [v3③] { el, tab, k } 换面飞行
+let ghostFx = null;                 // [v3③] { el, k } 旧内容卡缩回卡组
+let faceFx = null;                  // [v3⑤] { mode:'fling'|'spring'|'shrink', k, dx0, dir, endX }
+let drag = null;                    // [v3⑤] 面板面拖划
+let exitCardFx = null;              // 后卡经右键菜单关闭：{ el, i, k }
+let sizeK = 1, cardW = 0, cardH = 0;
+let raf = 0, lastT = 0, interacted = false;
+
+const mod = (x, n) => ((x % n) + n) % n;
+function wrapDelta(x, n) { x = mod(x, n); return x > n / 2 ? x - n : x; }
+const easeOut = k => 1 - Math.pow(1 - Math.min(1, Math.max(0, k)), 3);
+const FACE_BASE = 'translateY(8px) scale(0.89)';   // 与 .face.as-card 逐值一致
+
+/* [v3②] 环流：active 起的环形序（不含前卡）；ring[0] = active 的下一张（d=1 最上露边位） */
+function buildRing() {
+  const ai = tabIdxOf(activeId);
+  const r = [];
+  for (let k = 1; k < TABS.length; k++) r.push(TABS[(ai + k) % TABS.length]);
+  return r;
+}
+/* [v2④→v3] 尺寸：前卡与卡组卡 = 内容区本身；sizeK 只缩放级联位移 */
+function layoutCards() {
+  const w = contentEl.clientWidth, h = contentEl.clientHeight;
+  if (!w || !h) return;
+  cardW = w; cardH = h;
+  sizeK = Math.min(1.2, cardH / 300);
+  stage.style.setProperty('--card-w', cardW.toFixed(0) + 'px');
+  stage.style.setProperty('--card-h', cardH.toFixed(0) + 'px');
+}
+
+function makeCardEl(tab, r) {
+  const card = document.createElement('div');
+  card.className = 'deck-card' + (tab.dirty ? ' is-dirty' : '');
+  card.dataset.r = r;
+  card.innerHTML =
+    '<div class="card-top">' +
+      '<span class="n-icon">' + iconOf(tab.type) + '</span>' +
+      '<span class="n-dot"></span>' +
+      '<span class="n-text">' + tab.name + '</span>' +
+      '<span class="n-sub">' + (tab.id.startsWith('panel:') ? '面板' : '') + '</span>' +
+    '</div>' +
+    '<div class="card-thumb">' + thumbMock(tab.type) + '</div>' +
+    '<div class="card-shade"></div>';
+  card.addEventListener('click', () => {
+    if (!deckOpen || finalizing || selFly || ghostFx || faceFx) return;
+    selectCard(+card.dataset.r);
+  });
+  card.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (finalizing || selFly || ghostFx) return;
+    const i = TABS.indexOf(ring[+card.dataset.r]);
+    if (i >= 0) openCtxMenu(e.clientX, e.clientY, i);
+  });
+  return card;
+}
+function mountRing() {
+  stage.innerHTML = '';
+  ring = buildRing(); M = ring.length;
+  ring.forEach((tab, r) => stage.appendChild(makeCardEl(tab, r)));
+}
+
+/* [v3②] 位姿：v2 食谱盒曲线改锚「面板上缘背后」——
+   d=1 露出名称条上缘（~33px），之后每级再上露 ~7px 成错位阶梯（y 步进须压过
+   半高收缩，否则深处卡被前一张整张遮没）；配合 translateZ 负深度 + rotateX 后仰 +
+   逐级减淡，露边带最深 ~50px，不侵头行标题带。 */
+function poseOf(d) {
+  const dd = Math.max(0, d);
+  const a1 = Math.min(dd, 1);
+  const a2 = Math.max(0, Math.min(dd, 4) - 1);
+  const arc = dd < 1 ? Math.sin(Math.PI * dd) : 0;
+  const y = -(24 * a1 + 9 * a2) * sizeK - 6 * arc * sizeK;
+  const z = -90 * Math.min(dd, 4) * sizeK;
+  const tilt = -(4.2 * Math.min(dd, 4) + 24 * arc);
+  const sDeep = 0.886 - 0.016 * a2;
+  const scale = a1 < 1 ? 0.89 + (sDeep - 0.89) * a1 : sDeep;
+  const op = dd <= 0.5 ? 1 : Math.max(0, 1 - (dd - 0.5) * 0.3);
+  return { y, z, tilt, scale, op, shade: Math.min(0.32, 0.13 * dd) };
+}
+function lerpPose(a, b, e) {
+  return {
+    y: a.y + (b.y - a.y) * e, z: a.z + (b.z - a.z) * e,
+    tilt: a.tilt + (b.tilt - a.tilt) * e, scale: a.scale + (b.scale - a.scale) * e,
+    op: a.op + (b.op - a.op) * e,
+  };
+}
+const FACE_LAND = { y: 8, z: 0, tilt: 0, scale: 0.89, op: 1 };   // 面板基姿（与 .as-card 对齐）
+
+let lastCount = '';
+function updateCount() {
+  let s;
+  if (!TABS.length) s = '';
+  else if (!M) s = '仅此一张 · 无卡组';
+  else {
+    const top = ring[mod(Math.round(pos) + 1, M)];
+    s = '当前 ' + (tabIdxOf(activeId) + 1) + '/' + TABS.length + ' · 下一张 ' + (top ? top.name : '—');
+  }
+  if (s !== lastCount) { lastCount = s; countEl.textContent = s; }
+}
+
+function paintCard(el, p, zi) {
+  el.style.zIndex = zi;
+  el.style.opacity = p.op.toFixed(3);
+  el.style.transform = 'translate(-50%,-50%)' +
+    ' translate3d(0,' + p.y.toFixed(2) + 'px,' + p.z.toFixed(2) + 'px)' +
+    ' rotateX(' + p.tilt.toFixed(2) + 'deg) scale(' + p.scale.toFixed(4) + ')';
+  el.querySelector('.card-shade').style.opacity = (p.shade != null ? p.shade : 0).toFixed(3);
+}
+function setFaceFxStyle(x, rot, op, scaleK) {
+  face.style.opacity = op.toFixed(3);
+  face.style.transform = FACE_BASE + ' translate3d(' + x.toFixed(1) + 'px,0,0) rotateZ(' + rot.toFixed(2) + 'deg)' +
+    (scaleK && scaleK !== 1 ? ' scale(' + scaleK.toFixed(4) + ')' : '');
+}
+
+function frame(t) {
+  const dt = Math.min(0.05, (t - lastT) / 1000 || 0.016);
+  lastT = t;
+  const k = RM.matches ? 1 : 1 - Math.exp(-dt * 10);
+  pos += (target - pos) * k;
+  if (Math.abs(target - pos) < 0.0008) pos = target;
+  const ks = RM.matches ? 1 : 1 - Math.exp(-dt * 7);
+  spread += (spreadT - spread) * ks;
+  if (Math.abs(spreadT - spread) < 0.004) spread = spreadT;
+
+  /* 环流卡（背后） */
+  const cards = stage.querySelectorAll('.deck-card[data-r]');
+  for (const el of cards) {
+    const r = +el.dataset.r;
+    const d = M ? wrapDelta(r - pos, M) : 1;
+    const p0 = poseOf(d);
+    let p = { y: p0.y * spread, z: p0.z * spread, tilt: p0.tilt * spread,
+              scale: 0.89 + (p0.scale - 0.89) * spread, op: p0.op * spread, shade: p0.shade };
+    if (selFly && el === selFly.el) {
+      selFly.k = Math.min(1, selFly.k + dt / (RM.matches ? 0.05 : 0.32));
+      p = lerpPose(p, FACE_LAND, easeOut(selFly.k));
+      paintCard(el, p, '600');
+      if (selFly.k >= 1) { const done = selFly; selFly = null; doSwap(done.tab); }
+      continue;
+    }
+    paintCard(el, p, String(100 - Math.round(d * 10)));
+    /* [v3③] 右键关闭的后卡：收拢淡出 */
+    if (exitCardFx && exitCardFx.el === el) {
+      exitCardFx.k = Math.min(1, exitCardFx.k + dt / (RM.matches ? 0.05 : 0.26));
+      const e = easeOut(exitCardFx.k);
+      el.style.opacity = String(Math.max(0, p.op * (1 - e * 1.2)));
+      el.style.transform += ' scale(' + (1 - 0.12 * e).toFixed(4) + ')';
+      if (exitCardFx.k >= 1) { const done = exitCardFx; exitCardFx = null; settleClose(done.i); }
+    }
+  }
+
+  /* [v3③] ghost 旧内容卡：从面板位缩回卡组深处 */
+  if (ghostFx) {
+    ghostFx.k = Math.min(1, ghostFx.k + dt / (RM.matches ? 0.05 : 0.3));
+    const e = easeOut(ghostFx.k);
+    const p = lerpPose(FACE_LAND, { y: -30, z: -110, tilt: -7, scale: 0.84, op: 0 }, e);
+    paintCard(ghostFx.el, { ...p, shade: 0.1 * (1 - e) }, '600');
+    if (ghostFx.k >= 1) { const g = ghostFx; ghostFx = null; g.el.remove(); finishSwap(); }
+  }
+
+  /* [v3⑤] 面板面 FX：甩出 / 弹回 / 收拢 */
+  if (faceFx) {
+    const dur = faceFx.mode === 'spring' ? 0.24 : 0.3;
+    faceFx.k = Math.min(1, faceFx.k + dt / (RM.matches ? 0.05 : dur));
+    const e = easeOut(faceFx.k);
+    if (faceFx.mode === 'fling') {
+      const dist = contentEl.clientWidth * 0.6 + 240;
+      setFaceFxStyle(faceFx.dx0 + faceFx.dir * dist * e, faceFx.dir * 13 * e, Math.max(0, 1 - e * 1.25));
+      if (faceFx.dir) faceFx.endX = faceFx.dir * dist;
+    } else if (faceFx.mode === 'spring') {
+      setFaceFxStyle(faceFx.dx0 * (1 - e), faceFx.dx0 * (1 - e) * 0.028, 1);
+    } else { /* shrink */
+      setFaceFxStyle(0, 0, Math.max(0, 1 - e * 1.2), 1 - 0.14 * e);
+    }
+    if (faceFx.k >= 1) {
+      const done = faceFx; faceFx = null;
+      face.classList.add('no-trans');
+      if (done.mode !== 'spring') settleClose(tabIdxOf(activeId), done);
+      else { face.style.opacity = ''; face.style.transform = ''; face.classList.remove('no-trans'); }
+    }
+  }
+
+  updateCount();
+  const settled = pos === target && spread === spreadT && !drag && !faceFx && !selFly && !ghostFx && !exitCardFx;
+  if (settled && (!deckOpen || finalizing)) { stopLoop(); return; }
+  raf = requestAnimationFrame(frame);
+}
+function startLoop() { if (!raf) { lastT = performance.now(); raf = requestAnimationFrame(frame); } }
+function stopLoop() { if (raf) { cancelAnimationFrame(raf); raf = 0; } }
+
+/* [v3①] 进入：面板面物化为前卡，其余卡从背后长出 */
+function openDeck() {
+  if (deckOpen || finalizing || TABS.length === 0) return;
+  deckOpen = true; interacted = false;
+  selFly = null; ghostFx = null; faceFx = null; exitCardFx = null; drag = null;
+  mountRing();
+  pos = target = -1;                   // ring[0]（active 的下一张）位于最上露边位
+  spread = 0; spreadT = 1;
+  face.classList.add('as-card');
+  contentEl.classList.add('deck-on');
+  hintEl.classList.remove('faded');
+  layoutCards();
+  deckFab.setAttribute('aria-pressed', 'true');
+  updateCount();
+  startLoop();
+}
+/* [v3⑥] 收回：卡组缩回面板背后，面板面解除物化 */
+function closeDeck() {
+  if (!deckOpen || finalizing || selFly || ghostFx || faceFx) return;
+  finalizing = true;
+  spreadT = 0;
+  face.classList.remove('as-card');
+  contentEl.classList.remove('deck-on');
+  deckFab.setAttribute('aria-pressed', 'false');
+  setTimeout(() => {
+    stage.innerHTML = ''; ring = []; M = 0;
+    deckOpen = false; finalizing = false;
+    stopLoop();
+  }, RM.matches ? 30 : 260);
+}
+
+/* [v3③] 选中换面：后卡放大飞入面板位 */
+function selectCard(r) {
+  if (finalizing || selFly || ghostFx || faceFx) return;
+  const tab = ring[r];
+  if (!tab || tab.id === activeId) return;
+  finalizing = true;
+  const el = stage.querySelector('.deck-card[data-r="' + r + '"]');
+  selFly = { el, tab, k: 0 };
+  stage.classList.add('over');         // 飞行卡瞬时盖过面板面
+  face.classList.add('receiving');     // 旧内容面减淡让位
+  spreadT = 0;                         // 其余卡同步收回面板背后
+  startLoop();
+}
+function doSwap(tab) {
+  const oldTab = tabOf();
+  activeId = tab.id;
+  if (selFly && selFly.el) selFly.el.remove();
+  selFly = null;
+  renderFace();                        // 面板内容随之切换
+  swapTitle();
+  /* 旧内容卡缩回卡组（ghost） */
+  const g = makeCardEl(oldTab, -1);
+  g.dataset.r = '';
+  stage.appendChild(g);
+  ghostFx = { el: g, k: 0 };
+}
+function finishSwap() {
+  stage.classList.remove('over');
+  face.classList.remove('receiving', 'as-card');
+  contentEl.classList.remove('deck-on');
+  deckFab.setAttribute('aria-pressed', 'false');
+  stage.innerHTML = ''; ring = []; M = 0;
+  pos = target = -1; spread = 0; spreadT = 0;
+  deckOpen = false; finalizing = false;
+  stopLoop();
+}
+function swapTitle() {
+  titleEl.classList.add('swap');
+  setTimeout(() => { refreshAll(); titleEl.classList.remove('swap'); }, RM.matches ? 0 : 140);
+}
+
+/* [v3⑤] 关卡完成收尾：邻位接管（右邻优先，同现状 closeTab）；
+   关的是面板前卡（当前页签）时，面板面从甩出/收拢位姿回弹复位。 */
+function settleClose(i, fx) {
+  const tab = TABS[i];
+  if (!tab) { finalizing = false; return; }
+  const wasActive = tab.id === activeId;
+  const flung = fx || faceFx;
+  faceFx = null;
+  TABS.splice(i, 1);
+  if (wasActive) {
+    const next = TABS[Math.min(i, TABS.length - 1)] || null;
+    activeId = next ? next.id : null;
+  }
+  if (!TABS.length) {
+    stage.innerHTML = ''; ring = []; M = 0;
+    deckOpen = false; finalizing = false; selFly = null; ghostFx = null;
+    stopLoop();
+    face.classList.remove('as-card', 'receiving', 'no-trans');
+    face.style.opacity = ''; face.style.transform = '';
+    contentEl.classList.remove('deck-on');
+    deckFab.setAttribute('aria-pressed', 'false');
+    refreshAll();
+    panelEl.classList.add('closed');
+    document.getElementById('reopen-pill').classList.add('show');
+    return;
+  }
+  refreshAll();
+  if (deckOpen) {
+    stage.innerHTML = '';
+    mountRing();
+    pos = target = -1;
+    face.classList.remove('receiving');
+    finalizing = false;
+    updateCount();
+    if (wasActive && flung && flung.mode !== 'spring') restoreFace(flung);
+    startLoop();
+  } else {
+    finalizing = false;
+  }
+}
+/* [v3⑤] 面板面回弹复位：从甩出位姿弹性回到 as-card 基姿 */
+function restoreFace(fx) {
+  face.classList.add('no-trans');
+  face.style.opacity = '0';
+  face.style.transform = FACE_BASE + ' translate3d(' + ((fx.endX || (fx.dir || 1) * (contentEl.clientWidth * 0.6 + 240))).toFixed(1) + 'px,0,0) rotateZ(' + ((fx.dir || 1) * 13).toFixed(2) + 'deg)';
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    face.classList.remove('no-trans');
+    face.classList.add('restore');
+    face.style.opacity = '';
+    face.style.transform = '';
+    setTimeout(() => face.classList.remove('restore'), RM.matches ? 20 : 360);
+  }));
+}
+
+/* [v3④] 滚轮 = 连续擦洗：无阈值步进，滚多少动多少，可回滚（照 v2） */
+const WHEEL_GAIN = 1 / 240;
+contentEl.addEventListener('wheel', (e) => {
+  if (!deckOpen || finalizing || selFly || ghostFx || faceFx) return;
+  e.preventDefault();
+  if (!M) return;
+  const dy = e.deltaY * (e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 100 : 1);
+  target += dy * WHEEL_GAIN;
+  target = Math.max(pos - M, Math.min(pos + M, target));
+  if (!interacted) { interacted = true; hintEl.classList.add('faded'); }
+  startLoop();
+}, { passive: false });
+
+/* [v3⑤] 面板面拖划：跟手 → 越阈甩出关闭 / 不足弹回；位移 <6px 视为点击（= 收回） */
+face.addEventListener('pointerdown', (e) => {
+  if (!deckOpen || finalizing || selFly || ghostFx || faceFx || drag) return;
+  if (e.button !== 0) return;
+  if (e.target.closest('.face-close')) return;
+  drag = { id: e.pointerId, x0: e.clientX, dx: 0, vx: 0, lastX: e.clientX, lastT: e.timeStamp, wasDragged: false };
+  face.setPointerCapture(e.pointerId);
+  face.classList.add('no-trans');
+});
+face.addEventListener('pointermove', (e) => {
+  if (!drag || e.pointerId !== drag.id) return;
+  const dx = e.clientX - drag.x0;
+  if (!drag.wasDragged && Math.abs(dx) > 6) drag.wasDragged = true;
+  const dtms = Math.max(1, e.timeStamp - drag.lastT);
+  drag.vx = 0.8 * drag.vx + 0.2 * ((e.clientX - drag.lastX) / dtms);
+  drag.lastX = e.clientX; drag.lastT = e.timeStamp;
+  if (drag.wasDragged) {
+    drag.dx = dx;
+    setFaceFxStyle(dx, dx * 0.028, 1);
+    startLoop();
+  }
+});
+function endFaceDrag(e, cancelled) {
+  if (!drag || (e && e.pointerId !== drag.id)) return;
+  const d = drag; drag = null;
+  if (cancelled || !d.wasDragged) {
+    face.classList.remove('no-trans');
+    face.style.transform = ''; face.style.opacity = '';
+    if (!cancelled && !d.wasDragged) closeDeck();   // 点面板面 = 收回卡组
+    return;
+  }
+  const far = Math.abs(d.dx) > contentEl.clientWidth * 0.20 || Math.abs(d.vx) > 0.55;
+  if (far) faceFx = { mode: 'fling', k: 0, dx0: d.dx, dir: d.dx >= 0 ? 1 : -1, endX: 0 };
+  else faceFx = { mode: 'spring', k: 0, dx0: d.dx, dir: 0 };
+  startLoop();
+}
+face.addEventListener('pointerup', (e) => endFaceDrag(e, false));
+face.addEventListener('pointercancel', (e) => endFaceDrag(e, true));
+
+/* [v3⑤] 卡顶 ×（面板前卡顶缘右上）：收拢淡出关闭当前页签 */
+faceCloseBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (!deckOpen || finalizing || selFly || ghostFx || faceFx) return;
+  finalizing = true;
+  face.classList.add('no-trans');
+  faceFx = { mode: 'shrink', k: 0, dx0: 0, dir: 0 };
+  startLoop();
+});
+
+/* 点空白（卡组层裸区）收回 */
+stage.addEventListener('click', (e) => {
+  if (e.target === stage) { if (!finalizing) closeDeck(); }
+});
+stage.addEventListener('contextmenu', (e) => { if (e.target === stage) e.preventDefault(); });
+
+/* 键盘：↑↓ 连续擦洗 ±1；Enter 选中（= 换面）最上后卡；Esc 收回 */
+document.addEventListener('keydown', (e) => {
+  if (!deckOpen || finalizing || selFly || ghostFx || faceFx) return;
+  if (e.key === 'Escape') { e.preventDefault(); closeDeck(); }
+  else if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); if (M) { target += 1; startLoop(); } }
+  else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); if (M) { target -= 1; startLoop(); } }
+  else if (e.key === 'Enter') { e.preventDefault(); if (M) selectCard(mod(Math.round(pos) + 1, M)); }
+});
+
+/* 右键菜单（承接「引用当前页/选区」能力面） */
+const ctxMenu = document.getElementById('ctx-menu');
+let ctxTabI = -1;
+face.addEventListener('contextmenu', (e) => {
+  if (!deckOpen || finalizing || selFly || ghostFx) return;
+  e.preventDefault();
+  openCtxMenu(e.clientX, e.clientY, tabIdxOf(activeId));
+});
+function openCtxMenu(x, y, i) {
+  ctxTabI = i;
+  ctxMenu.hidden = false;
+  const w = ctxMenu.offsetWidth, h = ctxMenu.offsetHeight;
+  ctxMenu.style.left = Math.min(x, innerWidth - w - 8) + 'px';
+  ctxMenu.style.top = Math.min(y, innerHeight - h - 8) + 'px';
+}
+function hideCtxMenu() { ctxMenu.hidden = true; ctxTabI = -1; }
+ctxMenu.addEventListener('click', (e) => {
+  const act = e.target.closest('button')?.dataset.act;
+  if (act == null || ctxTabI < 0) return;
+  const tab = TABS[ctxTabI];
+  hideCtxMenu();
+  if (act === 'ref') {
+    toast(tab.id.startsWith('panel:') ? '该页签无可引用内容（同现状 canvas.noRef）' : '（demo）此处将构建 Reference 注入输入栏');
+  } else if (act === 'close') {
+    if (finalizing || selFly || ghostFx || faceFx) return;
+    const i = TABS.indexOf(tab);
+    if (i < 0) return;
+    if (tab.id === activeId) {          // 关当前页签 = 面板面收拢淡出
+      finalizing = true;
+      face.classList.add('no-trans');
+      faceFx = { mode: 'shrink', k: 0, dx0: 0, dir: 0 };
+    } else {                            // 关后卡 = 该卡收拢淡出
+      const el = stage.querySelector('.deck-card[data-r="' + ring.indexOf(tab) + '"]');
+      exitCardFx = { el, i, k: 0 };
+    }
+    startLoop();
+  } else if (act === 'close-others') {
+    const keep = tab.id;
+    TABS.length = 0; TABS.push(...[tab]);
+    activeId = keep;
+    if (deckOpen) { mountRing(); pos = target = -1; }
+    refreshAll();
+    updateCount();
+    toast('已关闭其他页签');
+    startLoop();
+  }
+});
+document.addEventListener('mousedown', (e) => { if (!ctxMenu.hidden && !ctxMenu.contains(e.target)) hideCtxMenu(); }, true);
+document.addEventListener('contextmenu', () => hideCtxMenu(), true);
+
+let toastTimer = 0;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2000);
+}
+
+/* ═══════════════ demo 控件 ═══════════════ */
+deckFab.addEventListener('click', () => { if (finalizing || selFly || ghostFx || faceFx) return; deckOpen ? closeDeck() : openDeck(); });
+document.getElementById('reopen-pill').addEventListener('click', () => {
+  panelEl.classList.remove('closed');
+  document.getElementById('reopen-pill').classList.remove('show');
+});
+document.getElementById('width-seg').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  document.querySelectorAll('#width-seg button').forEach(x => x.classList.toggle('on', x === b));
+  panelEl.style.width = b.dataset.w + 'px';
+  panelEl.classList.toggle('narrow', parseInt(b.dataset.w, 10) < 400);
+  if (deckOpen) { layoutCards(); startLoop(); }
+});
+window.addEventListener('resize', () => { if (deckOpen) { layoutCards(); startLoop(); } });
+
+/* 主题：自动 → 亮 → 暗 */
+const themeBtn = document.getElementById('theme-btn');
+const THEMES = ['auto', 'light', 'dark'];
+let themeI = 0;
+function renderThemeBtn() { themeBtn.innerHTML = themeI === 0 ? ICONS.auto : themeI === 1 ? ICONS.sun : ICONS.moon; }
+themeBtn.addEventListener('click', () => {
+  themeI = (themeI + 1) % 3;
+  const v = THEMES[themeI];
+  if (v === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', v);
+  renderThemeBtn();
+});
+renderThemeBtn();
+
+/* 自动化钩子 */
+window.__demo = {
+  openDeck, closeDeck, selectCard,
+  setWidth: (w) => {
+    panelEl.style.width = w + 'px';
+    panelEl.classList.toggle('narrow', w < 400);
+    if (deckOpen) { layoutCards(); startLoop(); }
+  },
+  setTheme: (v) => {
+    if (v === 'auto') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', v);
+  },
+  state: () => ({
+    open: deckOpen, pos, target, spread, spreadT, M, activeId, cardW, cardH, sizeK,
+    faceFx, selFly: !!selFly, ghost: !!ghostFx,
+    ringCards: ring.map(t => t.name),
+    tabs: TABS.map(t => t.name),
+    faceClass: face.className,
+  }),
+};
+
+/* 控制台实现提示（任务要求写进 demo 控制台） */
+console.log('%c[canvas 叠卡 demo v3] 实现提示', 'font-weight:600;font-size:13px');
+console.log(
+`· [v3①] 形变模型反转：面板本体=前卡。v2 的 .deck-layer 容器（遮罩+模糊+其上堆卡）整个删除；
+  内容区 = #deck-stage（z-10 背后卡组）+ .face（z-20 面板前卡）。常态 face 无 chrome、scale 1，
+  与现状面板内容逐像素一致；deck 态 .as-card 物化（描边+卡底+投影+圆角）+ 微后退让位（0.89 / 8px）。
+· [v3②] 卡组长出 = 环流卡（不含前卡）从面板正背后沿上缘错位升起：d=1 露名称条上缘 ~34px，
+  越深越往上/往后（translateZ + rotateX 后仰，消失点上沿）且越暗；卡组层恒在面板面之下。
+· [v3④] 滚轮擦洗照 v2（增量×1/240 连续累加 + rAF 指数趋近，可回滚），驱动对象 = 背后环流；
+  面板前卡恒居前不动。
+· [v3③] 选中换面：点后卡 → 位姿 lerp 到面板基姿（stage.over 抬层级）→ 落位换内容+标题，
+  旧内容卡 ghost 缩回卡组深处 → 卡组收回面板背后回常态。
+· [v3⑤] 划走/×：面板面 pointer 拖划甩出（或顶缘 × 收拢）= 关当前页签，邻位接管同 closeTab()，
+  面板面 .restore 弹性复位。常态全 UI 无叉（v2①）。
+· 实施落点（canvas.js）：.canvas-title 常态头；浮钮挂面板层；face = 现 #canvas-content 内容容器
+  加形态类；deck-stage 挂其内 z 更低；数据源 = tabs Map；dirty 复用 isTabDirty()；
+  右键「引用当前页」复用 refForTab()；preview/pinned 与拖拽排序安放见 v1 设计报告「开放问题」。`);
+
+refreshAll();
+</script>
+</body>
+</html>
