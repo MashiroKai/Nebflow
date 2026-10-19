@@ -300,6 +300,15 @@ test('T4 login card: single unified key + horizontal lockup (currentColor), soci
   // 单键制：#login-unified 一枚；社交键退役（无 GITHUB/GOOGLE 入口）。
   await expect(modal.locator('#login-unified')).toHaveCount(1);
   await expect(modal.locator('#login-github, #login-google, .login-social-btn[href]')).toHaveCount(0);
+  // 主键规格（作者补充令：官网登录卡对齐，绿实色键退役）—— 单色反白实色键：
+  // 无图标纯文字、非绿底、暗主题下 = 前景色底（官网 dark 腿 --auth-btn-* 对位）。
+  const key0 = modal.locator('#login-unified');
+  await expect(key0.locator('svg')).toHaveCount(0);
+  await expect(key0).toHaveClass(/login-primary-btn/);
+  expect(await key0.evaluate((el) => !/cfg-btn-primary|glass-control/.test(el.className))).toBe(true);
+  const bg0 = await key0.evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(bg0).not.toMatch(/rgb\((?:34|22), 1[0-9]{2}, 4[0-9]/); // 非品牌绿实色
+  expect(bg0).toBe('rgb(232, 234, 237)'); // dark = var(--color-text) 前景反白
   expect(pageErrors).toEqual([]);
 });
 

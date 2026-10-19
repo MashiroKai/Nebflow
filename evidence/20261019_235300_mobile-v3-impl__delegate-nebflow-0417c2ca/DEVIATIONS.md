@@ -35,6 +35,19 @@
 - **桌面会话头**：头像 40px 居中 + 名称在下（`.header-center` 纵排）；桌面顶栏其余
   簇（模型信息/右工具簇）不动 —— 样张只画了会话头本体。
 
+## C2. 登录卡主键（作者补充令 2026-10-19，绿实色键退役）
+
+- **规格来源**：mystand.space/login 官网登录卡（参照截图 `ref-site-login-*.png`，
+  对比图 `login-btn-align-*.png`）。官网主键 = **单色反白实色键**：光 `#111827` 底/
+  白字、hover `#374151`；`html[data-theme=dark]` 前景/背景互换（近白底/深字）、
+  hover `#fff`；全宽居中、rounded-lg 8px、14px/500、无图标、disabled .6（字面值取自
+  官网 auth 键族 CSS 变量 `--auth-btn-*`）。
+- **落地**：`#login-unified` 换 `login-primary-btn` 类（glass-control/cfg-btn-primary/
+  login-social-btn 三类退役 —— 绿实色 tier 与玻璃投影不再挂此键）；图标摘除（官网主键
+  纯文字）。dark 腿以控制台既有 token 对位：bg=`--color-text`、fg=`--color-bg`。
+- **单键布局 + 官方 lockup 不变**（卡结构零改动）；点击链原样（reserve + startFlow）。
+- 官网卡的次键层级（GitHub/Google 描边键）不取 —— 移动卡单键制既定，快捷登录在认证页内。
+
 ## D. 附件 / 走廊
 
 - **附件 +N 折叠**：样张为静态展开；本批做溢出折叠（+N 常驻行尾，点开横向滚动再点

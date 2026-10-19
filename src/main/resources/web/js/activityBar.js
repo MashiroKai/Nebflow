@@ -559,6 +559,38 @@ function injectLoginModalStyles() {
 .login-card-title { font-size: 15.5px; font-weight: 600; color: var(--color-text); margin: 0; letter-spacing: -0.01em; }
 .login-sub2 { font-size: 11px; color: var(--color-text-muted); line-height: 1.55; }
 .login-idle .login-hint b { color: var(--color-text); font-weight: 500; }
+/* 主键 = 官网登录卡同款（mystand.space/login 的 .auth 主键，作者补充令）：
+   单色反白实色、无图标、全宽居中、rounded-lg、14px/500、hover 提阶、disabled .6。
+   字面值 = 官网 auth 键族变量（:root #111827/#fff、hover #374151；
+   html[data-theme=dark] = 前景/背景互换、hover #fff）→ 控制台主题以
+   prefers-color-scheme + --color-text/--color-bg token 对位。 */
+.nebflow-login-modal .login-primary-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  background: #111827;
+  color: #fff;
+  /* sapphire 登录键族块（:is(.fm-login-btn,.login-modal-btn)）的玻璃投影随
+     绿实色一并退役 —— 官网主键是平面单色键。 */
+  box-shadow: none;
+  cursor: pointer;
+  transition: background 0.18s ease, opacity 0.15s ease;
+}
+.nebflow-login-modal .login-primary-btn:hover { background: #374151; }
+.nebflow-login-modal .login-primary-btn:focus-visible { outline: 2px solid rgba(17, 24, 39, 0.35); outline-offset: 2px; }
+.nebflow-login-modal .login-primary-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.nebflow-login-modal .login-primary-btn span { pointer-events: none; }
+@media (prefers-color-scheme: dark) {
+  .nebflow-login-modal .login-primary-btn { background: var(--color-text, #e8eaed); color: var(--color-bg, #13161c); }
+  .nebflow-login-modal .login-primary-btn:hover { background: #fff; }
+  .nebflow-login-modal .login-primary-btn:focus-visible { outline-color: rgba(255, 255, 255, 0.4); }
+}
 `;
   document.head.appendChild(style);
 }
@@ -739,14 +771,18 @@ function showLoginModal(opts = {}) {
       // 20261020_211500 v2⑤ 同裁）：单键制 —— 三键社交选择面退役，一键进入既有
       // 认证流（PKCE 主路径，GitHub / Google 快捷登录在认证页内）。lockup =
       // 仓内集中源 stand-horizontal-compact svg 内联（brand.js standLockupSvg，
-      // fill=currentColor 随主题）；面板材质/键族 token 不动（sapphire.css 登录
-      // 键族块）。单键点击 = 原 #login-unified 链原样（reserve + startFlow）。
+      // fill=currentColor 随主题）。单键点击 = 原 #login-unified 链原样（reserve
+      // + startFlow）。
+      // 主键规格（作者补充令 2026-10-19：微信绿实色键退役，对齐官网登录卡）：
+      // mystand.space/login 主键 = 单色反白实色键（无图标、全宽、rounded-lg 8px、
+      // 14px/500、hover 提阶、disabled .6）—— class login-primary-btn，规格见
+      // 下方注入样式的 .login-primary-btn 块（字面值取自官网 auth 键族 CSS 变量）。
       body = `
         <div class="login-lockup">${standLockupSvg()}</div>
         <h3 class="login-card-title">${t('login.connectTitle')}</h3>
         <div class="login-hint"><b>${t('login.connectHint')}</b></div>
         <div class="login-actions">
-          <button class="login-modal-btn glass-control cfg-btn-primary login-social-btn" id="login-unified"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" x2="3" y1="12" y2="12"/></svg><span>${t('login.unifiedPrimary')}</span></button>
+          <button class="login-modal-btn login-primary-btn" id="login-unified"><span>${t('login.unifiedPrimary')}</span></button>
         </div>
         <div class="login-sub2">${t('login.authNote')}</div>`;
     } else if (state === 'starting') {
