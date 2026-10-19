@@ -251,9 +251,12 @@ private[agent] object AgentFrozen:
           val (isDuplicate, dedupedState) = checkDuplicate(clientMessageId, state)
           if isDuplicate then
             logger.info(s"[frozen] Dropping duplicate wake message clientMessageId=${clientMessageId.getOrElse("")}")
-            IO.pure(
-              frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation)
-            )
+            // resend-dedup 批：与 AgentIdle 丢弃点同款回执（同 id 重发 ⇒ 客户端收
+            // 幻影 busy；唤醒分支本就不开新 turn，零呈现副作用）。best-effort。
+            emitDuplicateReceipt(state.wsSend, state.sessionId, clientMessageId) *>
+              IO.pure(
+                frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation)
+              )
           else
             val userMsg = blocks.filter(_.nonEmpty) match
               case Some(bl) => Message(MessageRole.User, Right(bl))

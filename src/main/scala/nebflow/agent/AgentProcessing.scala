@@ -1344,19 +1344,38 @@ private[agent] object AgentProcessing:
       // Stored in ExecutionContext.pendingUserInputs (not the dead-end `pending`
       // parameter) so they are drained at the next turn boundary — the head is
       // re-sent to self and processed by the idle handler with full metadata.
+      // resend-dedup 批（修复批 #569）：排队入队**前**先查 clientMessageId 是否
+      // 已被受理过（与 AgentIdle 直投 / AgentFrozen 唤醒同一窗口判据）。此前本支
+      // 无查重：断线重连后补发的重复帧（同一 clientMessageId）会被原样追加进
+      // pendingUserInputs ⇒ 下一 turn 边界再派发一次 = 第二个 turn + 第二个气泡
+      // （报障「重复气泡」的服务端半边之一）。重复 ⇒ 丢弃 + messageDuplicate 回执。
+      // 🔴 查而不记：这里**不能**注册 id —— 排队项在 turn 边界会原样转发给自己
+      // （head-to-self drain），真正的注册点 = idle 直投的 checkDuplicate；若在入队
+      // 时注册，转发到 idle 的队头会被自己的注册误判成重复 ⇒ 排队消息永远不派发。
       case msg: AgentCommand.UserInput =>
-        logAgentEvent(
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "user-input-queued",
-          s"textLen=${msg.text.length} pending=${state.execution.pendingUserInputs.size + 1}"
-        )
-        val updatedExec = state.execution.copy(
-          pendingUserInputs = state.execution.pendingUserInputs :+ msg
-        )
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
+        val isDuplicate = msg.clientMessageId.exists(state.recentMessageIds.contains)
+        if isDuplicate then
+          logger.info(
+            s"Dropping duplicate queued message clientMessageId=${msg.clientMessageId.getOrElse("")} " +
+              s"(session busy — not appended to pendingUserInputs)"
+          )
+          emitDuplicateReceipt(state.wsSend, state.sessionId, msg.clientMessageId) *>
+            IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+        else
+          logAgentEvent(
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "user-input-queued",
+            s"textLen=${msg.text.length} pending=${state.execution.pendingUserInputs.size + 1}"
+          )
+          val updatedExec = state.execution.copy(
+            pendingUserInputs = state.execution.pendingUserInputs :+ msg
+          )
+          IO.pure(
+            processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending)
+          )
       case msg: AgentCommand.SkillActivate =>
         val updatedExec = state.execution.copy(
           pendingUserInputs = state.execution.pendingUserInputs :+ msg

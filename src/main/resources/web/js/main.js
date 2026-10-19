@@ -1244,6 +1244,35 @@ onMessage('error', (msg, view) => {
   }
 });
 
+// ── resend-dedup 批（修复批 #569）：服务端按 clientMessageId 去重的**回执**帧 ──
+// 形状：{type:'messageDuplicate', sessionId, clientMessageId}。服务端三处去重点
+// （AgentIdle 直投 / AgentFrozen 唤醒 / AgentProcessing 排队）丢弃重复帧时发出。
+// 客户端语义：这条消息**已经被受理过** ⇒ 本地不再等它的 turn：
+//   · 收掉本会话的看门（同 id 重发乐观置位的 busy 是幻影——不会有终止帧来清它，
+//     置之不理会走满看门阶梯，凭空呈现「仍在处理/连接已断开」行）；
+//   · 清 turnExpecting / lastTerminalAt 的同族幻影登记；
+//   · 只在会话**无活跃流**时清 busy（复用 sessionBusy(false) 处理器的 15s 口径：
+//     防把上一条消息真 turn 的 busy 误清——重复帧不可能开流，15s 内有流帧 = busy
+//     属于别的 turn）。
+// 呈现面零动作：同 id 重发本就不渲染第二个气泡（input.js send(resendId) 分支），
+// 首次尝试的气泡原样保留（已送达场景的用户可见结果 = 什么都没多）。
+onMessage('messageDuplicate', (msg) => {
+  const sid = msg.sessionId || state.activeSessionId;
+  console.info('[ws] messageDuplicate receipt:', { sessionId: sid, clientMessageId: msg.clientMessageId });
+  if (!sid) return;
+  delete state.turnExpecting[sid];
+  // 看门计时槽位直清（与 input.js armBusyWatchdogFor 的清法同款，零新导出面）。
+  if (state.sessionBusyTimeouts[sid]) {
+    clearTimeout(state.sessionBusyTimeouts[sid]);
+    delete state.sessionBusyTimeouts[sid];
+  }
+  const sinceActivity = Date.now() - (state.lastStreamActivity || 0);
+  if (sinceActivity >= 15000 && state.busySessionIds.has(sid)) {
+    // clearBusy 内部已收「仍在处理」行（chat.js clearBusy ⇒ removeStillProcessingNotice）。
+    import('./chat.js').then(({ clearBusy }) => clearBusy(sid)).catch(() => {});
+  }
+});
+
 onMessage('interrupted', (msg, view) => {
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;

@@ -92,7 +92,16 @@ function showAttachmentBanner(message) {
 }
 
 // ---------- Send ----------
-export function send() {
+// resend-dedup 批（修复批 #569）：`resendId` = **同一条逻辑消息**重发时携带的
+// 原 clientMessageId（重试/重发腿从 state.lastUserSendId[sid] 取）。语义分叉：
+//   · 全新发送（resendId 缺省）⇒ 新 id + 乐观气泡 + 落盘 + 入历史（原状）；
+//   · 同 id 重发 ⇒ **零新增呈现**（首次尝试的乐观气泡/落盘/历史都已在场，再渲染
+//     一份就是「重复气泡」的客户端半边）——只把帧再写一次线。服务端 recentMessageIds
+//     命中该 id ⇒ 丢弃并回 `messageDuplicate` 回执（已送达场景 = 无第二次 turn、
+//     无第二个气泡）；没见过 ⇒ 正常受理（真未送达场景 = 补送不丢）。
+export function send(resendId) {
+  // 同 id 重发：输入框常是空的（历史末条重放），空文本守卫要放行。
+  const isResend = typeof resendId === 'string' && resendId.length > 0;
   // Capture the view at entry — activeView is a live module binding that ws.js
   // changes on every incoming message. Without capturing, setTimeout closures
   // (e.g. the 300ms isSending debounce) would clear the flag on the wrong view
@@ -107,6 +116,10 @@ export function send() {
   // strand the popup over the next turn — close it up front.
   closeMentionDropdown();
   const text = input.value.trim();
+  // 同 id 重发：重放 state.inputHistory 末条（resendLastInput 会先把值塞回输入框；
+  // 直接从登记表兜底取文本，输入框被并行路径清空也不落空）。
+  const resendText = !text && isResend ? (state.inputHistory[state.inputHistory.length - 1] || '') : text;
+  const effText = isResend ? resendText : text;
   const isBusy = state.busySessionIds.has(v.sessionId) || state.compactingSessionIds.has(v.sessionId);
   // If in skill mode, send as skill activation
   if (v.skillMode) {
@@ -124,7 +137,11 @@ export function send() {
     }
     v.isSending = true;
     if (v.sessionId) { state.turnExpecting[v.sessionId] = true; markRealUserTurn(v.sessionId); }
-    sendWs({ type: 'skill', skillName, input: text, sessionId: v.sessionId });
+    // resend-dedup 批：skill 帧带客户端唯一 id（wire 形态与普通帧同键；服务端
+    // 本批去重收口在 UserInput 腿，skill 腿先落 id 备二期收口）。
+    const skillId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    if (v.sessionId) state.lastUserSendId[v.sessionId] = skillId;
+    sendWs({ type: 'skill', skillName, input: text, clientMessageId: skillId, sessionId: v.sessionId });
     renderSkillBubble(skillName, text);
     saveMsg({type:'user', text, attachments: (v.pendingAttachments||[]).map(a=>({type:a.type,name:a.name,preview:a.preview}))});
     input.value = '';
@@ -188,8 +205,8 @@ export function send() {
       return;
     }
   }
-  // Empty input — just ignore
-  if (!text && v.pendingAttachments.length === 0) {
+  // Empty input — just ignore (同 id 重发放行：文本走登记表兜底)
+  if (!effText && v.pendingAttachments.length === 0) {
     return;
   }
   // Wait for pending attachment processing (image compression, file reading)
@@ -204,7 +221,9 @@ export function send() {
   // message parked forever — the whole point of freeze is that a user message
   // WAKES the agent (spec §3.2 input.js, F7). Fall through to the normal send
   // path below (direct WS frame, no queueMessage).
-  if (isBusy && !state.frozenSessions.has(v.sessionId)) {
+  // 同 id 重发不入本地队（入队会在 drain 时另派一帧；重发的幂等性靠同 id + 服务端
+  // 去重，不靠队列）。
+  if (isBusy && !isResend && !state.frozenSessions.has(v.sessionId)) {
     queueMessage(v, text, v.pendingAttachments);
     input.value = '';
     input.style.height = 'auto';
@@ -226,7 +245,9 @@ export function send() {
   if (text.startsWith('/ask ')) {
     const question = text.slice(5).trim();
     if (question) {
-      sendWs({ type: 'ask', question, sessionId: v.sessionId });
+      const askId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      sendWs({ type: 'ask', question, clientMessageId: askId, sessionId: v.sessionId });
+      if (v.sessionId) state.lastUserSendId[v.sessionId] = askId;
       state.sessionAskBuffers[v.sessionId] = { question, answer: '' };
       renderAskBubble(question);
     }
@@ -246,17 +267,27 @@ export function send() {
   // quote-message 一期（spec §3.6）：clientMessageId 生成上提到 renderUserBubble
   // 之前 —— 用户行的 data-msg-id = 这个 id（与引擎帧 clientMessageId 同键，为二期
   // 引擎 id 收口预留）。
-  const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  renderUserBubble(text, v.pendingAttachments, undefined, { msgId: clientMessageId });
-  saveMsg({type:'user', text, attachments: (v.pendingAttachments||[]).map(a => a.type === 'taskRef'
-    ? { type: a.type, name: a.subject, taskId: a.taskId, sessionId: a.sessionId, subject: a.subject }
-    : a.type === 'ref'
-      ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) }
-      : { type: a.type, name: a.name, preview: a.preview })});
+  // resend-dedup 批：同 id 重发复用原 id（幂等键 = 逻辑消息，不是发送动作）；
+  // 呈现/落盘/历史三件套全部跳过 —— 首次尝试已留痕，重发再留一份就是重复气泡。
+  const clientMessageId = isResend ? resendId : Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const frameText = isResend ? effText : text;
+  if (isResend) {
+    console.info('[send] resend same id:', { sessionId: v.sessionId, clientMessageId });
+  } else {
+    renderUserBubble(text, v.pendingAttachments, undefined, { msgId: clientMessageId });
+  }
+  if (!isResend) {
+    saveMsg({type:'user', text, attachments: (v.pendingAttachments||[]).map(a => a.type === 'taskRef'
+      ? { type: a.type, name: a.subject, taskId: a.taskId, sessionId: a.sessionId, subject: a.subject }
+      : a.type === 'ref'
+        ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) }
+        : { type: a.type, name: a.name, preview: a.preview })});
+  }
   // Save to input history
   // (/clear 特判已随命令摘除退役 —— /clear 现在就是普通文本消息，照常入历史)
-  if (text) {
-    state.inputHistory.push(text);
+  // 同 id 重发不入历史（首次尝试已入；再入会出现上下键重影）。
+  if (frameText && !isResend) {
+    state.inputHistory.push(frameText);
     if (state.inputHistory.length > 200) state.inputHistory = state.inputHistory.slice(-200);
     try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch(e) {
       // Quota exceeded — trim history to 100 entries and retry once
@@ -283,8 +314,11 @@ export function send() {
       .filter(a => a.type === 'ref')
       .map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) }));
     notifyFriendRefsSent(refs);
+    // resend-dedup 批：帧 content 用 frameText（同 id 重发时 = 登记表兜底文本，
+    // 与首次尝试逐字一致）；登记 lastUserSendId = 重发腿的同 id 取用点。
+    if (v.sessionId) state.lastUserSendId[v.sessionId] = clientMessageId;
     sendWs({
-      content: text,
+      content: frameText,
       ...(taskRefs.length > 0 ? { taskRefs } : {}),
       ...(refs.length > 0 ? { refs } : {}),
       attachments: (v.pendingAttachments || [])
@@ -376,6 +410,8 @@ export function persistQueue() {
         text: it.text,
         skillName: it.skillName || null,
         mode: it.mode || null,
+        // resend-dedup 批：幂等键随队列项跨刷新存活（drain 腿同 id 复用的前提）。
+        clientMessageId: it.clientMessageId || null,
         // v2 B15: taskRef chips must survive refresh — keep taskId/sessionId
         // (+ subject as the display name); #303: ref blocks keep their full
         // Reference shape; file/image keep type+name plus their CLASSIFICATION
@@ -450,12 +486,16 @@ window.addEventListener('queuebar-refresh', (e) => {
 
 function queueMessage(view, text, attachments, skillName, mode) {
   const sid = view.sessionId;
+  // resend-dedup 批：排队时就把幂等键钉在队列项上（不是 drain 时现生成）——
+  // 这条逻辑消息此后无论 drain 几次、跨几次刷新，线上帧都带同一个 id；
+  // 排队项的任何重复派发都会被服务端按 id 去重。
   const item = {
     id: ++queueCounter,
     text,
     attachments: attachments.map(a => ({ ...a })),
     skillName,
-    mode
+    mode,
+    clientMessageId: Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
   };
   if (!state.messageQueue[sid]) state.messageQueue[sid] = [];
   state.messageQueue[sid].push(item);
@@ -465,6 +505,13 @@ function queueMessage(view, text, attachments, skillName, mode) {
 
 function sendImmediate(sessionId, item) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  // resend-dedup 批（「已派发还重发」判断修正）：立即发送的第一步就把项移出队列
+  // ⇒ 项已不在队列 = 已派发过（双击 / 陈旧 handler 重放）⇒ 不再二连发。
+  const q0 = state.messageQueue[sessionId];
+  if (!q0 || !q0.includes(item)) {
+    console.warn('[input] sendImmediate: item already dispatched — skip');
+    return;
+  }
   const taskRefs = (item.attachments || []).filter(a => a.type === 'taskRef');
   const refs = (item.attachments || []).filter(a => a.type === 'ref');
   // File/image attachments (base64 data payload) ride the same default
@@ -473,15 +520,20 @@ function sendImmediate(sessionId, item) {
   // `content` — with content === '' the frame hit handleUserText's empty
   // guard and the agent never saw it (silent non-response).
   const fileAtts = (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref');
+  // resend-dedup 批：幂等键 = 队列项入队时钉死的 clientMessageId（存量恢复项
+  // 现场补一枚）。立即发送是对同一逻辑消息的投递 ⇒ 同 id。
+  const itemMsgId = item.clientMessageId
+    || (item.clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+  state.lastUserSendId[sessionId] = itemMsgId;
   if (item.mode === 'compact') {
     sendWs({ type: 'command', command: 'compact', sessionId, instruction: item.text || undefined });
   } else if (item.skillName) {
-    sendWs({ type: 'skill', skillName: item.skillName, input: item.text, sessionId });
+    sendWs({ type: 'skill', skillName: item.skillName, input: item.text, clientMessageId: itemMsgId, sessionId });
   } else if (taskRefs.length > 0 || refs.length > 0 || fileAtts.length > 0) {
     // v2 + #303: a return/reference message must ride the default user-message
     // branch — the backend parses taskRefs/refs only there (WebSocketRoutes
     // §6.2); immediateInput goes through handleUserText and would drop them.
-    const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const clientMessageId = itemMsgId;
     notifyFriendRefsSent(refs);
     sendWs({
       content: item.text,
@@ -495,16 +547,19 @@ function sendImmediate(sessionId, item) {
       chatWidth: activeView?.dom?.chat?.clientWidth || 0
     });
   } else {
-    sendWs({ type: 'immediateInput', content: item.text, sessionId });
+    // resend-dedup 批：immediateInput 帧带客户端唯一 id（gateway 本批不消费该腿的
+    // id——ImmediateInput 命令无此字段；wire 先行，候二期命令形状收口）。
+    sendWs({ type: 'immediateInput', content: item.text, clientMessageId: itemMsgId, sessionId });
   }
   // Render in chat
+  // resend-dedup 批：renderUserBubble 落 data-msg-id = 幂等键（与普通发送同键）。
   if (activeView && activeView.sessionId === sessionId) {
     if (item.mode === 'compact') {
       renderSystemBubble(item.text ? t('slash.compactDone') + ' — ' + item.text : t('slash.compactDone'));
     } else if (item.skillName) {
       renderSkillBubble(item.skillName, item.text);
     } else {
-      renderUserBubble(item.text, item.attachments);
+      renderUserBubble(item.text, item.attachments, undefined, { msgId: itemMsgId });
     }
   }
   saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => a.type === 'taskRef'
@@ -656,9 +711,14 @@ export function drainMessageQueue(sessionId) {
   if (item.mode === 'compact') {
     sendWs({ type: 'command', command: 'compact', sessionId, instruction: item.text || undefined });
   } else if (item.skillName) {
-    sendWs({ type: 'skill', skillName: item.skillName, input: item.text, sessionId });
+    sendWs({ type: 'skill', skillName: item.skillName, input: item.text, clientMessageId: item.clientMessageId, sessionId });
   } else {
-    const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    // resend-dedup 批：幂等键 = 队列项入队时钉死的 clientMessageId（存量恢复项
+    // 缺失时现场补一枚，仍在本项生命周期内保持稳定）。重复 drain / 刷新后再
+    // drain 的重复派发都在服务端按 id 去重。
+    const clientMessageId = item.clientMessageId
+      || (item.clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+    if (sessionId) state.lastUserSendId[sessionId] = clientMessageId;
     // v2 B15: queued return messages keep their taskRefs when drained.
     // #303: unified refs ride the same default user-message frame (backend
     // parses refs via circe cursor — tolerated for forward-compat).

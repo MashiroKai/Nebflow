@@ -1,0 +1,15 @@
+=== msgqueue-recall-attach ===
+[6/6] tests/msgqueue-recall-attach.spec.mjs:491:1 › J7 锚：队列条附件指示 ≤3 缩略 + 「+N」（既有面，两侧均绿）+ 撤回后 4 件全绘（修复面）
+  6 passed (20.5s)
+=== msgqueue-image-mime ===
+[5/5] tests/msgqueue-image-mime.spec.mjs:347:1 › K5 撤回不回归：刷新等价后撤回 ⇒ stripped 告警照旧 + 回填附件 mimeType 不丢
+  5 passed (19.5s)
+=== quote-message ===
+    tests/quote-message.spec.mjs:489:3 › B13 — 暗亮两态截图自验 › chip 计算背景随 colorScheme 切换 + 双主题截图存证非空 ────
+  9 passed (15.1s)
+=== slash-clear-compact（S1b 存量红，HEAD 同败）===
+FAIL  S1b 门键字面量核对：key("slash.enabled") === "nebflow_slash.enabled"（前缀下划线形态）  — stand_slash.enabled
+FAILURES: 1 failed
+=== imgmsg-send（E/B② 存量红，HEAD 同败且多一败）===
+FAIL  E/B② 字形 = 既有红圈「!」（**非 emoji**）+ `--color-error` 描边  — {"glyph":"!","borderColor":"rgb(214, 69, 69)","radius":"50%"}
+=== after: failures=1 ===
