@@ -1,0 +1,8 @@
+build-web OK -> build/web-dist/
+  js entry : assets/app-PI65OSSM.js
+  mobile   : assets/mobile/bootstrap-44KOFNRZ.js (bootstrap hook, #510)
+  chunks   : 136 lazy chunks (dynamic import boundaries preserved)
+  css      : assets/app-e21a3516.css (25 files concatenated in source link order)
+  js files : 164 sources, all in bundle graph (orphans: 0, exemptions: 5)
+  vendor   : copied through (3 vendor css links kept separate)
+  form     : UNSEALED (default: no release marker, friends visible)

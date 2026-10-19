@@ -1017,9 +1017,9 @@
   width: 32px;
   height: 32px;
   object-fit: contain;
-  /* Pixel-art logo v4: 32px = whole 7px blocks at 224px source scale —
-     keep pixelated so stems stay even (same rule as .activity-avatar-logo). */
-  image-rendering: pixelated;
+  /* stand-symbol vector mark — same supply as .activity-avatar-logo (SVG
+     source, no image-rendering hint; the pixelated rule belonged to the
+     retired pixel-art logo). */
   pointer-events: none;
 }
 .settings-avatar-photo {

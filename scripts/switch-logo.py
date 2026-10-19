@@ -12,6 +12,18 @@ Catalog entry extension (brand-standard batch 2026-10-19): an entry may declare
   sources. `svg` (optional) names a light-theme app-icon SVG; it is published
   as the release favicon.svg with a prefers-color-scheme dark swap and the
   manifest faviconSvg field.
+
+Catalog entry extension (avatar-sharp batch 2026-10-19): an entry may also
+  declare avatarLightSvg/avatarDarkSvg — vector symbol-mark sources. When
+  present they are published byte-identical as release symbol-{light,dark}.svg
+  and the console avatar supply (brand.conf logoUrl/logoDarkUrl, brand.js
+  fallback, manifest logoBrightSvg/logoDarkSvg) points at the SVGs: every
+  console avatar slot is an <img>, and an SVG source stays sharp at any CSS
+  size × any devicePixelRatio (the 128px bitmap + the retired pixel-art
+  `image-rendering: pixelated` slot rule rendered staircase edges). The
+  symbol-{light,dark}-128.png bitmaps keep being generated for raster-only
+  consumers (sync-brand-auth inlines them as data:image/png; the website
+  manifest copies) — logoBright4/logoDark4 stay on the bitmaps.
 """
 import argparse, base64, hashlib, io, json, re, sys
 from pathlib import Path
@@ -44,9 +56,13 @@ def main():
     avatar_sources = ({k: (WEB / item[k].lstrip('/')).read_bytes()
                        for k in ('avatarLight', 'avatarDark') if k in item})
     if len(avatar_sources) not in (0, 2): p.error('avatarLight and avatarDark must be declared together')
+    avatar_svg_sources = ({k: (WEB / item[k].lstrip('/')).read_bytes()
+                           for k in ('avatarLightSvg', 'avatarDarkSvg') if k in item})
+    if len(avatar_svg_sources) not in (0, 2): p.error('avatarLightSvg and avatarDarkSvg must be declared together')
     svg_source = (WEB / item['svg'].lstrip('/')).read_text() if 'svg' in item else None
     digest_material = sources['light'] + sources['dark']
     for data in avatar_sources.values(): digest_material += data
+    for data in avatar_svg_sources.values(): digest_material += data
     if svg_source is not None: digest_material += svg_source.encode()
     digest = hashlib.sha256(digest_material).hexdigest()[:16]
     base = f'/brand/releases/{digest}'
@@ -85,19 +101,28 @@ def main():
     if avatar_sources:
         files['symbol-light-128.png'] = render('avatarLight',128)
         files['symbol-dark-128.png'] = render('avatarDark',128)
+    if avatar_svg_sources:
+        files['symbol-light.svg'] = avatar_svg_sources['avatarLightSvg']
+        files['symbol-dark.svg'] = avatar_svg_sources['avatarDarkSvg']
     if svg_source is not None: files['favicon.svg'] = dark_aware_favicon(svg_source)
     for name, data in files.items(): put(WEB / base.lstrip('/') / name, data)
     origin = re.search(r'^profileUrl\s*=\s*(https://[^/\s]+)',conf,re.M).group(1)
     bright4 = base + ('/symbol-light-128.png' if avatar_sources else '/light-128.png')
     dark4 = base + ('/symbol-dark-128.png' if avatar_sources else '/dark-128.png')
+    # Console avatar supply prefers the vector pair when declared (sharp at any
+    # slot size × dsf); bitmap-only consumers keep logoBright4/logoDark4.
+    bright_slot = base+'/symbol-light.svg' if avatar_svg_sources else bright4
+    dark_slot = base+'/symbol-dark.svg' if avatar_svg_sources else dark4
     manifest = {'schemaVersion':1,'active':active,'revision':digest,
                 'sourceSha256':{k:hashlib.sha256(sources[k]).hexdigest() for k in ('light','dark')},
                 'logo':base+'/light-512.png','logoBright4':bright4,
                 'logoDark4':dark4,'emailLogo':origin+base+'/light-512.png',
                 'faviconBase':base,'appleTouch':base+'/light-180.png',
+                'logoBrightSvg':bright_slot if avatar_svg_sources else '',
+                'logoDarkSvg':dark_slot if avatar_svg_sources else '',
                 'faviconSvg':(base+'/favicon.svg') if svg_source is not None else '','logtoDir':base+'/'}
     put(WEB/'brand/current.json',js(manifest))
-    for key,value in [('logoUrl',manifest['logoBright4']),('logoDarkUrl',manifest['logoDark4'])]:
+    for key,value in [('logoUrl',bright_slot),('logoDarkUrl',dark_slot)]:
         conf,count = re.subn(rf'^{key}\s*=.*$',f'{key} = {value}',conf,flags=re.M)
         if count != 1: p.error(f'brand.conf must define one {key}')
     if selected: conf = re.sub(r'^activeLogo\s*=.*$',f'activeLogo = {active}',conf,flags=re.M)
@@ -113,8 +138,7 @@ def main():
     put(WEB/'index.html',index)
     # Static fallback is generated too; injected runtime settings still take priority.
     brandjs=(WEB/'js/brand.js').read_text()
-    for key in ('logoUrl','logoDarkUrl'):
-        val=manifest['logoBright4' if key=='logoUrl' else 'logoDark4']
+    for key,val in [('logoUrl',bright_slot),('logoDarkUrl',dark_slot)]:
         brandjs=re.sub(rf"({key}: )'[^']+'",rf"\1'{val}'",brandjs,count=1)
     put(WEB/'js/brand.js',brandjs)
     if a.website:

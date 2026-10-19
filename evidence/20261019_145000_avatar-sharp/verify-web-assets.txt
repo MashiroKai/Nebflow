@@ -1,0 +1,3 @@
+C1 asset contract (source tree): 491 files under src/main/resources/web, verifying against http://127.0.0.1:8237
+checked=491 skipped=0 failures=0
+C1 PASS: every web asset is served with 200.

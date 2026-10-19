@@ -16,13 +16,13 @@
   <title></title>
   <!-- Favicons are derived by scripts/switch-logo.py. Their content digest
        invalidates browser caches when another logo is selected. -->
-  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=f9e37ba994f63d8f">
-  <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png?v=f9e37ba994f63d8f">
-  <link rel="icon" type="image/svg+xml" href="favicon.svg?v=f9e37ba994f63d8f">
-  <link rel="shortcut icon" href="favicon.ico?v=f9e37ba994f63d8f">
-  <link rel="icon" type="image/png" sizes="192x192" href="favicon-192.png?v=f9e37ba994f63d8f">
-  <link rel="icon" type="image/png" sizes="512x512" href="favicon-512.png?v=f9e37ba994f63d8f">
-  <link rel="apple-touch-icon" sizes="180x180" href="favicon-180.png?v=f9e37ba994f63d8f">
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=71a456e2d388b27e">
+  <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png?v=71a456e2d388b27e">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg?v=71a456e2d388b27e">
+  <link rel="shortcut icon" href="favicon.ico?v=71a456e2d388b27e">
+  <link rel="icon" type="image/png" sizes="192x192" href="favicon-192.png?v=71a456e2d388b27e">
+  <link rel="icon" type="image/png" sizes="512x512" href="favicon-512.png?v=71a456e2d388b27e">
+  <link rel="apple-touch-icon" sizes="180x180" href="favicon-180.png?v=71a456e2d388b27e">
   <link rel="stylesheet" href="vendor/katex.min.css">
   <link rel="stylesheet" href="vendor/highlight-github.min.css" media="(prefers-color-scheme: light)">
   <link rel="stylesheet" href="vendor/highlight-github-dark.min.css" media="(prefers-color-scheme: dark)">
@@ -91,9 +91,11 @@
         <!-- Brand-standard console batch 2026-10-19: the legacy black-cat
              avatar is retired; the avatar slots show the stand-symbol mark
              (black on light / white on dark). Injected gateways override both
-             legs with __BRAND__.logoUrl/logoDarkUrl (release symbol renders). -->
-        <source media="(prefers-color-scheme: dark)" srcset="/brand/stand/illustrator/symbol-dark.png">
-        <img class="activity-avatar-logo" src="/brand/stand/illustrator/symbol-light.png" alt="">
+             legs with __BRAND__.logoUrl/logoDarkUrl (release symbol renders).
+             Avatar-sharp batch 2026-10-19: both legs are the vector symbol
+             sources — sharp at any slot size × devicePixelRatio. -->
+        <source media="(prefers-color-scheme: dark)" srcset="/brand/stand/illustrator/svg/stand-symbol-white.svg">
+        <img class="activity-avatar-logo" src="/brand/stand/illustrator/svg/stand-symbol-black.svg" alt="">
       </picture>
       <img class="activity-avatar-photo" alt="" hidden>
       <span class="activity-avatar-letter" hidden>N</span>

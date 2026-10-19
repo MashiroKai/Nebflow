@@ -29,6 +29,8 @@
   "dark": "/brand/stand/illustrator/logo-512-dark.png",
   "avatarLight": "/brand/stand/illustrator/symbol-light.png",
   "avatarDark": "/brand/stand/illustrator/symbol-dark.png",
+  "avatarLightSvg": "/brand/stand/illustrator/svg/stand-symbol-black.svg",
+  "avatarDarkSvg": "/brand/stand/illustrator/svg/stand-symbol-white.svg",
   "svg": "/brand/stand/illustrator/svg/stand-app-icon-light.svg",
   "resample": "lanczos"
  }
