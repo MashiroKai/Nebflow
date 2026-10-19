@@ -75,25 +75,156 @@ private[gateway] object WsSessionChatHandlers:
     (hc.downField("answers").as[List[String]], hc.downField("sessionId").as[String]) match
       case (Right(answers), Right(askSessionId)) =>
         val requestId = hc.downField("requestId").as[String].toOption.getOrElse("")
+        // askuser-dragdrop 实施批（2026-10-19，批 #551）：随作答回传的**已落盘附件**
+        // （上传端点 `/api/askuser/attachments` 的响应记录，逐键解析向后兼容——缺键
+        // 即旧行为逐字节不变）。
+        val attachmentsJson = hc.downField("attachments").as[List[Json]].toOption.getOrElse(Nil)
         // askuser-secret 批（2026-10-08，规格 §2「唯一新闸口」）：先问 hub 该卡是否
         // 携 secret 型题——无（旧卡 / 无 requestId / hub 未装配 / 查询失败）⇒ 与
         // 改前**逐字节同路径**；有 ⇒ 秘密槽分流（值落 sink、.ui.json 落脱敏行、
         // hub 载荷带 stored 回执），见 [[handleSecretAwareAnswer]]。
         secretSlotsFor(sharedResources, requestId).flatMap {
+          case specs if specs.nonEmpty && attachmentsJson.nonEmpty =>
+            // 修正② fail-closed（纵深防御）：secret 卡的作答**永不**接受附件——
+            // 前端对 secret 卡本就无附件入口，此闸只服务伪造/越权客户端。整帧
+            // 拒收：不落盘、不进 hub（卡保留，可刷新后重新作答）。
+            rejectAttachFrame(wsSend, askSessionId, requestId, "ASKUSER_ATTACH_SECRET_CARD",
+              "secret questions never accept attachments")
           case Nil =>
-            // 案 B（双开缺陷批 2026-09-21，chain-askuserdup）作答行单一构造点逐字
-            // 保留：秘密题缺席的卡与改前同形（answers-only 载荷、原样行文本）。
-            val answerText = answers.mkString("\n")
-            sessionStore.appendUiMessages(
-              askSessionId,
-              List(UiMessage.askUserAnswer(answerText, requestId, System.currentTimeMillis()))
-            ) *>
-              forwardInteractionAnswer(requestId, askSessionId, io.circe.Json.obj("answers" -> answers.asJson))
+            validateAnswerAttachments(askSessionId, requestId, attachmentsJson).flatMap {
+              case Some((code, detail)) => rejectAttachFrame(wsSend, askSessionId, requestId, code, detail)
+              case None =>
+                // 案 B（双开缺陷批 2026-09-21，chain-askuserdup）作答行单一构造点逐字
+                // 保留：秘密题缺席的卡与改前同形（answers-only 载荷、原样行文本）；
+                // 附件在场 ⇒ 行带附件清单（本批），载荷带 attachments 键。
+                val answerText = answers.mkString("\n")
+                sessionStore.appendUiMessages(
+                  askSessionId,
+                  List(UiMessage.askUserAnswer(answerText, requestId, System.currentTimeMillis(), attachmentsJson))
+                ) *>
+                  markAnswered(askSessionId, requestId, attachmentsJson) *>
+                  forwardInteractionAnswer(
+                    requestId,
+                    askSessionId,
+                    io.circe.Json.obj("answers" -> answers.asJson) deepMerge
+                      (if attachmentsJson.isEmpty then io.circe.Json.obj()
+                       else io.circe.Json.obj("attachments" -> attachmentsJson.asJson))
+                  )
+            }
           case specs => handleSecretAwareAnswer(ctx, answers, hc, requestId, askSessionId, specs)
         }
       case _ => IO.unit
     end match
   end handleAskUserAnswer
+
+  /**
+   * askuser-dragdrop 实施批（2026-10-19，批 #551）：答案侧**提交时终验**（设计稿
+   * §3.3，对齐出向面 `validateAttachments` 的反向）。逐条 fail-closed：
+   *   ① 计数 ≤ `AttachContract.MaxAttachmentsPerMessage`；
+   *   ② 每条 path 必须真实存在、是普通文件；
+   *   ③ realpath 必须落在 `<dataRoot>/uploads/<askSessionId>/ask-<requestId>/` 前缀内
+   *      （路径逃逸 = 拒收；端点是唯一落盘闸）；
+   *   ④ 单件 ≤ `AskUserQuestionTool.MaxAttachmentBytes`（真实文件尺寸，非声明值）；
+   *   ⑤ sha 与服务端受理台账一致（台账在 ⇒ 必须一致；进程重启后台账缺失 ⇒ 降级为
+   *      ①–④ 把关，不作安全依赖）。
+   * 返回 `None` = 全部通过；`Some((code, detail))` = 拒收（调用方整帧丢弃）。
+   */
+  private[gateway] def validateAnswerAttachments(
+    askSessionId: String,
+    requestId: String,
+    attachments: List[Json]
+  ): IO[Option[(String, String)]] =
+    if attachments.isEmpty then IO.pure(None)
+    else if requestId.trim.isEmpty then
+      IO.pure(Some(("ASKUSER_BAD_REQUEST", "attachments require a requestId (card-scoped uploads)")))
+    else if attachments.size > AttachContract.MaxAttachmentsPerMessage then
+      IO.pure(
+        Some(
+          (
+            "ASKUSER_ATTACH_TOO_MANY",
+            s"${attachments.size} attachments — at most ${AttachContract.MaxAttachmentsPerMessage} per card"
+          )
+        )
+      )
+    else
+      val baseDir = AskUserAttachmentRoutes.Store.dirOf(askSessionId, requestId).toString
+      attachments.foldLeft[IO[Option[(String, String)]]](IO.pure(None)) { (acc, att) =>
+        acc.flatMap {
+          case some @ Some(_) => IO.pure(some)
+          case None =>
+            val c = att.hcursor
+            val path = c.downField("path").as[String].toOption.getOrElse("").trim
+            val claimedSha = c.downField("sha256").as[String].toOption.getOrElse("")
+            if path.isEmpty then IO.pure(Some(("ASKUSER_BAD_REQUEST", "attachment entry without a path")))
+            else
+              IO.blocking {
+                val p = os.Path(path, os.pwd)
+                if !os.isFile(p) then Left(Some(("ASKUSER_ATTACH_NOT_FOUND", s"attachment file missing: $path")))
+                else
+                  val real = java.nio.file.Paths.get(p.toString).toRealPath().toString
+                  val baseReal =
+                    try java.nio.file.Paths.get(baseDir).toRealPath().toString
+                    catch case _: Throwable => baseDir
+                  if !real.startsWith(baseReal + java.io.File.separator) then
+                    Left(Some(("ASKUSER_ATTACH_OUTSIDE_CARD", s"attachment path outside the card upload dir: $path")))
+                  else
+                    val size = os.size(p)
+                    if size > nebflow.core.tools.AskUserQuestionTool.MaxAttachmentBytes then
+                      Left(
+                        Some(
+                          (
+                            "ASKUSER_ATTACH_TOO_LARGE",
+                            s"$path is $size bytes — over the ${nebflow.core.tools.AskUserQuestionTool.MaxAttachmentBytes / (1024 * 1024)} MB per-file limit"
+                          )
+                        )
+                      )
+                    else Right(()) // 基础闸过；sha 比对在 blocking 块外（需查台账 IO）
+              }.flatMap {
+                case Left(reject) => IO.pure(reject)
+                case Right(_) =>
+                  // 台账 sha 比对（存在才比——重启后缺失，降级不拒）。
+                  shaRecordFor(path).map {
+                    case Some(recorded) if claimedSha.nonEmpty && recorded != claimedSha =>
+                      Some(("ASKUSER_ATTACH_SHA_MISMATCH", s"attachment sha mismatch: $path"))
+                    case _ => None
+                  }
+              }.handleErrorWith(e => IO.pure(Some(("ASKUSER_ATTACH_UNREADABLE", s"attachment not readable: ${e.getMessage}"))))
+        }
+      }
+
+  /** 服务端受理台账里该 path 的 sha（按 path 线性查——每卡 ≤9 条，代价可忽略）。 */
+  private def shaRecordFor(path: String): IO[Option[String]] =
+    AskUserAttachmentRoutes.Store.registry.get.map { m =>
+      m.values.flatMap(_.files.values).find(_.path == path).map(_.sha256)
+    }
+
+  /** 拒收帧（前端 toast 面；与 hub `rejectAnswer` 广播同族同形状）。 */
+  private def rejectAttachFrame(
+    wsSend: io.circe.Json => IO[Unit],
+    askSessionId: String,
+    requestId: String,
+    code: String,
+    detail: String
+  ): IO[Unit] =
+    nebflow.shared.NebflowLogger
+      .forName("nebflow.ws")
+      .warn(s"askUserAnswer with attachments REJECTED requestId=$requestId root=$askSessionId code=$code detail=$detail") *>
+      wsSend(
+        io.circe.Json.obj(
+          "type" -> "interactionAnswerRejected".asJson,
+          "sessionId" -> askSessionId.asJson,
+          "rootSessionId" -> askSessionId.asJson,
+          "requestId" -> requestId.asJson,
+          "reason" -> "attach-rejected".asJson,
+          "detail" -> s"$code: $detail".asJson
+        )
+      )
+
+  /** 已作答卡的 `.answered` 标记（孤儿清扫的保留判据；只对带附件的作答落——
+    * 无附件作答卡即便曾传过孤儿件也照扫）。best-effort。 */
+  private def markAnswered(askSessionId: String, requestId: String, attachments: List[Json]): IO[Unit] =
+    if attachments.isEmpty then IO.unit
+    else AskUserAttachmentRoutes.markAnswered(askSessionId, requestId)
 
   /**
    * askuser-secret 批（规格 §2 值通道图的本落点）：

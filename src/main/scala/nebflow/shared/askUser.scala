@@ -191,3 +191,60 @@ object AskUserCancelled:
       case _ => false
 
 end AskUserCancelled
+
+/**
+ * AskUser **答复附件清单槽**（askuser-dragdrop 实施批 2026-10-19，批 #551）——
+ * 网关 `askUserAnswer` 帧携带的 `attachments`（用户随卡回传的已落盘文件引用）经
+ * hub `complete` 沿**既有答复管道**（`AskUserReply.replyTo`，`ActorRef[List[String]]`）
+ * 投回请求方时的搭载体。
+ *
+ * 形态与 [[AskUserDispatch]] / [[AskUserCancelled]] 同一信号族（「一条判据 + 单点
+ * 解析，禁第二份副本」），差别只在**不替换**答复槽：清单以**尾随追加槽**的形式
+ * 与正常答复同投（`answers :+ manifest`）——
+ *   · `AskUserQuestionTool.formatAnswer`（桥腿格式化）按 `items.zipWithIndex.lift`
+ *     读槽，尾随的多余槽天然被忽略；
+ *   · `ProjectTool.parsePanelAnswer`（面板阻塞腿）只读 `answers.head`，同样无感；
+ *   · `SendConfirm` 的确认链槽位**永远不会**携带清单（其答复载荷无 attachments 键，
+ *     hub 只在 kind=AskUser 且清单非空时追加）。
+ *
+ * 消费点 = `AskUserAnswerBridge.deliver`（唯一）：剥下清单槽 → 附件清单文本注入 +
+ * 图片子集 vision 块注入（≤5 张 / ≤10MB，对齐 `ImageInject` 既有上限）。
+ */
+object AskUserAnswerAttachments:
+
+  /** 机器可读锚（清单槽 JSON 的唯一顶层键，判据起点）。 */
+  val Key = "askUserAnswerAttachments"
+
+  /** 清单槽前缀（槽串 = `{"askUserAnswerAttachments":[…]}`，前缀匹配即可判）。 */
+  val Prefix: String = s"""{"$Key":"""
+
+  /**
+   * 构造**尾随清单槽**：清单为空 ⇒ `Nil`（答复列表逐字节同形，无清单零改动）；
+   * 非空 ⇒ 单槽紧凑 JSON。调用点 = hub `complete`（唯一生产者）。
+   */
+  def manifestSlot(attachments: List[io.circe.Json]): List[String] =
+    if attachments.isEmpty then Nil
+    else List(io.circe.Json.obj(Key -> io.circe.Json.fromValues(attachments)).noSpaces)
+
+  /**
+   * 是否清单槽（单点判据，消费点一律委托）。只对**尾随**槽有意义；调用方
+   * （[[take]]）保证只检查最后一个元素。
+   */
+  def isManifestSlot(slot: String): Boolean = slot.startsWith(Prefix)
+
+  /**
+   * 剥取尾随清单槽：`(纯答复槽, 附件清单)`。无清单（空 / 不可解析）⇒
+   * `(原列表, Nil)` —— 旧信号（取消 / 派发失败）与无附件答复逐字节透传。
+   */
+  def take(answers: List[String]): (List[String], List[io.circe.Json]) =
+    answers.lastOption.filter(isManifestSlot) match
+      case None => (answers, Nil)
+      case Some(slot) =>
+        val parsed = io.circe.parser
+          .parse(slot)
+          .toOption
+          .flatMap(_.hcursor.downField(Key).as[List[io.circe.Json]].toOption)
+          .getOrElse(Nil)
+        (answers.dropRight(1), parsed)
+
+end AskUserAnswerAttachments

@@ -77,6 +77,9 @@ class RestApiRoutes(
 
   def routes: HttpRoutes[IO] =
     HealthRoutes.routes(ctx) <+> SessionRoutes.routes(ctx) <+> AskUserCancelRoutes.routes(ctx) <+>
+      // askuser-dragdrop 实施批（2026-10-19，批 #551）：卡片作用域答复附件上传域
+      // （/api/askuser/attachments —— 与 cancel 域同族挂载）。
+      AskUserAttachmentRoutes.routes(ctx) <+>
       ConfigRoutes.routes(ctx) <+>
       ProjectsRoutes.routes(ctx) <+> WikiRoutes.routes(ctx) <+> RegistryRoutes.routes(ctx) <+>
       NeblinkRoutes.routes(ctx) <+>

@@ -387,6 +387,24 @@ function askUserAnswerText(msgs, i) {
   return answer;
 }
 
+/** 作答行的**答复附件清单**（askuser-dragdrop 实施批 2026-10-19，批 #551）。
+ *  与 [[askUserAnswerText]] 的①精确腿同一条寻址（`answerOf === askUser 行 requestId`）
+ *  —— 附件清单只随案 B 后的作答行落盘（`User.answerAttachments`，缺席即旧行字节
+ *  形态不变）；启发式腿（无标记旧行）没有附件可还原 ⇒ null。两腿历史卡由此渲染
+ *  「已回答 · 附 N 个文件」徽标 + 只读附件行（renderAskUserHistory 第 6 参）。 */
+function askUserAnswerAtts(msgs, i) {
+  const ask = msgs[i];
+  const askRid = ask && ask.requestId;
+  if (typeof askRid !== 'string' || !askRid) return null;
+  for (let j = i + 1; j < msgs.length; j++) {
+    const m = msgs[j];
+    if (m && m.type === 'user' && m.answerOf === askRid) {
+      return Array.isArray(m.answerAttachments) && m.answerAttachments.length ? m.answerAttachments : null;
+    }
+  }
+  return null;
+}
+
 /** R5（作者裁定 = 补上，2026-09-14）：历史 askUser 卡的复制载荷 —— 各问句的**纯文本**
  *  （`AskItem.question` 可为富文本 HTML，复制键只该给纯文本，故剥标签并压缩空白），
  *  一问一句、`\n` 分隔。空卡 ⇒ 空串 ⇒ 调用侧不挂药丸（不产生游离按钮）。 */
@@ -804,7 +822,7 @@ export function restoreFromStorage(opts = {}) {
       // 保持本腿改前的取值（本腿历来不传 requestId ⇒ 仍是 undefined，本批不越界改
       // 这条 id 语义），只补第 5 形参 `m.attachments`。缺席 / 空列表 ⇒
       // `renderAskAttachments` 内早退 ⇒ 本腿历史卡与改前逐字节同形。
-      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i), undefined, m.attachments);
+      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i), undefined, m.attachments, askUserAnswerAtts(msgs, i));
       // R5（作者裁定 = 补上，2026-09-14）：历史 askUser 卡原**不挂** footer，而 live
       // ask 行（chat.js）与历史 ask 问答行都挂 ⇒ 卡片 footer 奇偶不一致。现补一枚
       // 药丸（复用同一 builder ⇒ 分隔符守卫与三面形态同源）。`AskUser` 落盘无
@@ -1241,7 +1259,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       // 落盘行顶层 `attachments`（后端历史恢复腿 `handleGetHistory` → `getHistoryPage`
       // → `Encoder[UiMessage]` 编出的同一形状）。缺席 / 空列表 ⇒
       // `renderAskAttachments` 内早退 ⇒ 无附件行（改前形态逐字不变）。
-      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i), m.requestId, m.attachments);
+      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i), m.requestId, m.attachments, askUserAnswerAtts(msgs, i));
       // R5（作者裁定 = 补上）：与 localStorage 兜底路径同款补药丸，两条历史路径
       // 逐字对齐（本函数与 restoreFromStorage 的历史形态必须一致）。
       const askCopy = askUserQuestionText(m.items);

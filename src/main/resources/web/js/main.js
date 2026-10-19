@@ -1467,7 +1467,10 @@ onMessage('interactionAnswerRejected', (msg) => {
     'no-kind-compatible': 'askUser.rejectNoMatch',
     // askuser-secret 批（2026-10-08）：秘密槽明文回流（旧前端不识别 secret 键，
     // 值打进了普通 answers）——hub 拒收保卡，值未存储；toast 指引刷新。
-    'secret-slot-mismatch': 'askUser.rejectSecret'
+    'secret-slot-mismatch': 'askUser.rejectSecret',
+    // askuser-dragdrop 实施批（2026-10-19，批 #551）：答案侧附件终验拒收（secret
+    // 卡 / 路径越界 / 超限——纵深防御面；正常前端无此路径，作者修正②）。
+    'attach-rejected': 'askUser.rejectAttach'
   }[msg.reason] || 'askUser.rejectGeneric';
   window.__showToast?.(t(key), 'error');
 });

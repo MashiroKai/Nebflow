@@ -119,7 +119,26 @@ object InteractionHubCommand:
    */
   final case class SecretSlotsOf(requestId: String, reply: ActorRef[Option[List[SecretSlotSpec]]])
       extends InteractionHubCommand
+
+  /**
+   * askuser-dragdrop 实施批（2026-10-19，批 #551）：**只读**附件闸查询 ——
+   * `requestId` 的槽位是否是一张**仍 pending 的 AskUser 卡**、其 root 会话、以及
+   * 卡上是否携带 secret 型题。唯一消费方 = 网关 `POST /api/askuser/attachments`
+   * 上传端点的前置闸：卡不在册（已答 / 已收 / 从未存在）⇒ `None`（端点 410）；
+   * secret 卡 ⇒ `hasSecret=true`（端点 403 fail-closed——防凭据被「另存为文件」
+   * 旁路落盘）。与 [[SecretSlotsOf]] 同一纪律：只读（不碰 pending/渲染/广播）、
+   * hub 是槽位唯一权威。
+   */
+  final case class AttachGateOf(requestId: String, reply: ActorRef[Option[AttachGate]])
+      extends InteractionHubCommand
 end InteractionHubCommand
+
+/**
+ * askuser-dragdrop 实施批（2026-10-19，批 #551）：[[InteractionHubCommand.AttachGateOf]]
+ * 的查询回执。`rootSessionId` = 上传落盘目录的归属会话（`uploads/<rootSessionId>/ask-<requestId>/`）；
+ * `hasSecret` = 卡上任一题 secret 型（fail-closed 拒传）。
+ */
+final case class AttachGate(rootSessionId: String, hasSecret: Boolean)
 
 /**
  * askuser-secret 批：一条 secret 型题的落库参数（hub 从 pending 载荷的 items 里
