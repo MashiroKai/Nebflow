@@ -1502,9 +1502,9 @@
 }
 
 /* ---------- Compaction status card ---------- */
-/* Live compactStart → compactComplete/Failed lifecycle. One card morphs in
- * place: spinning (active) → check (done) / × (error). Restrained glass-lite
- * surface — hairline border, no backdrop blur, single sapphire accent. */
+/* Terminal states only (done / error): the in-progress "compacting" pill is a
+ * dismantled item (作者令 2026-10-09 ①, compaction-pill-remove 批). Restrained
+ * glass-lite surface — hairline border, no backdrop blur, single sapphire accent. */
 .compact-card {
   display: inline-flex;
   align-items: center;
@@ -1525,15 +1525,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.compact-card-spinner {
-  width: 12px;
-  height: 12px;
-  flex-shrink: 0;
-  border: 2px solid rgb(var(--sapphire) / 0.25);
-  border-top-color: rgb(var(--sapphire) / 0.9);
-  border-radius: 50%;
-  animation: spin 0.9s linear infinite;
-}
 .compact-card-icon {
   display: inline-flex;
   flex-shrink: 0;
@@ -1543,10 +1534,6 @@
 /* ui-status-redesign（盘点 #31）：err 图标 = 图案载体 ✓，色值归 token；
    error 边框同归 token color-mix（暗档随 token 自适配）。 */
 .compact-card-icon.err { color: var(--status-error-icon); }
-.compact-card[data-state="active"] {
-  border-color: rgb(var(--sapphire) / 0.3);
-  color: var(--color-text);
-}
 .compact-card[data-state="error"] {
   border-color: color-mix(in srgb, var(--status-error-icon) 35%, transparent);
 }

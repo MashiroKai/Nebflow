@@ -1852,81 +1852,60 @@ export function renderSystemBubble(text) {
 }
 
 // ---------- Compaction status card ----------
-// Status card for the compactStart → compactComplete/Failed lifecycle: one
-// card that morphs in place (spinning → done/failed) instead of two plain
-// notice bubbles. buildCompactCardRow is the SINGLE source of the card DOM —
-// the live lifecycle and the history-replay restore (persistence.js) both
-// build their cards through it, so a refreshed history shows the same card
+// Completion/failure card ONLY. The in-progress "compacting" pill is a
+// dismantled item — 作者令 2026-10-09 10:23 ①:「『压缩中』可见指示列为拆除项」
+// (compaction-pill-remove 批 2026-10-19): compactStart renders NOTHING. The
+// compactStart WS frame itself is retained — main.js still consumes it for the
+// functional gates (input busy gate / queue-drain hold / sidebar bookkeeping)
+// and stamps view.compactStartTs so the done card keeps its elapsed suffix.
+// buildCompactCardRow remains the SINGLE source of the card DOM — the live
+// terminal events and the history-replay restore (persistence.js) both build
+// their cards through it, so a refreshed history shows the same card
 // component as the live view.
 const compactCheckSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 const compactFailSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 
-/** Build one compaction card row. kind: 'active' (spinner) | 'done' (check)
- *  | 'error' (cross). label is plain text and is escaped here. startTs rides
- *  on the card as data-start-ts (live only — replay has no start time). */
-export function buildCompactCardRow(kind, label, startTs = 0) {
+/** Build one compaction card row. kind: 'done' (check) | 'error' (cross).
+ *  label is plain text and is escaped here. */
+export function buildCompactCardRow(kind, label) {
   const row = document.createElement('div');
   row.className = 'row notice';
   const card = document.createElement('div');
   card.className = 'compact-card';
   card.dataset.state = kind;
-  if (startTs) card.dataset.startTs = String(startTs);
   const icon = kind === 'done'
     ? `<span class="compact-card-icon ok">${compactCheckSvg}</span>`
-    : kind === 'error'
-      ? `<span class="compact-card-icon err">${compactFailSvg}</span>`
-      : '<span class="compact-card-spinner"></span>';
+    : `<span class="compact-card-icon err">${compactFailSvg}</span>`;
   card.innerHTML = icon + `<span class="compact-card-label">${escapeHtml(label)}</span>`;
   row.appendChild(card);
   return row;
 }
 
-function findActiveCompactCard(view) {
-  return view?.dom?.chat?.querySelector('.compact-card[data-state="active"]') || null;
-}
-
-function appendCompactCard(view, state, label, startTs) {
+function appendCompactCard(view, state, label) {
   const chat = view?.dom?.chat;
   if (!chat) return null;
-  const row = buildCompactCardRow(state, label, startTs);
+  const row = buildCompactCardRow(state, label);
   appendChatRow(chat, row);
   smartScroll();
   return row.querySelector('.compact-card');
 }
 
-export function renderCompactStartCard(view = activeView) {
-  if (!view?.dom?.chat) return;
-  if (findActiveCompactCard(view)) return; // one active card at a time
-  appendCompactCard(view, 'active', t('chat.compactingCard'), Date.now());
-}
-
 export function renderCompactDoneCard(view = activeView, { before, after, detail } = {}) {
-  const active = findActiveCompactCard(view);
-  const startTs = Number(/** @type {HTMLElement} */ (active)?.dataset.startTs) || 0;
+  // Elapsed rides on the view (stamped by main.js on compactStart — the pill
+  // that used to carry data-start-ts is dismantled, order ①). Absent when the
+  // view was switched/restored mid-compaction: card renders without the suffix.
+  const startTs = Number(view?.compactStartTs) || 0;
+  delete view?.compactStartTs;
   const elapsed = startTs ? Math.max(1, Math.round((Date.now() - startTs) / 1000)) : 0;
   let label = t('chat.compacted', { before, after, detail: detail || '' });
   if (elapsed) label += t('chat.compactElapsed', { seconds: elapsed });
-  if (active) {
-    active.dataset.state = 'done';
-    delete active.dataset.startTs;
-    active.innerHTML = `<span class="compact-card-icon ok">${compactCheckSvg}</span><span class="compact-card-label">${escapeHtml(label)}</span>`;
-  } else {
-    // No active card (view was restored/switched mid-compaction) — append a
-    // card directly in its final state.
-    appendCompactCard(view, 'done', label, 0);
-  }
+  appendCompactCard(view, 'done', label);
   smartScroll();
 }
 
 export function renderCompactFailCard(view = activeView, text) {
-  const active = findActiveCompactCard(view);
-  if (active) {
-    active.dataset.state = 'error';
-    delete active.dataset.startTs;
-    active.innerHTML = `<span class="compact-card-icon err">${compactFailSvg}</span><span class="compact-card-label">${escapeHtml(text)}</span>`;
-  } else {
-    appendCompactCard(view, 'error', text, 0);
-  }
+  delete view?.compactStartTs;
+  appendCompactCard(view, 'error', text);
   smartScroll();
 }
 
