@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>文档图谱 · 三件工整化设计样张（侧栏自动开 / 侧栏排版 / 控件对齐 md 钮面）</title>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   Design tokens — 全部取自生产 CSS，零新造值（样张内 data-theme 切换仅为
+   预览便利；生产实现继续走 prefers-color-scheme 媒体查询，见 sapphire.css）。
+   ════════════════════════════════════════════════════════════════════ */
+:root{
+  /* base.css:94-99（暗档） */
+  --color-bg:#13161c; --color-text:#e8eaed; --color-text-muted:#7b7e88; --color-text-dim:#9ba0aa;
+  --color-frame-text-muted:#81838a;               /* base.css:109 */
+  --color-primary:#07c160; --color-primary-hover:#06ad56;  /* base.css:2-3 */
+  /* sapphire.css:7-9,54-55（暗档） */
+  --sapphire:91 127 191;
+  --sapphire-tint-15:rgba(91,127,191,.15); --sapphire-tint-10:rgba(91,127,191,.10);
+  /* sapphire.css:75-81（暗档） */
+  --glass-bg:rgba(24,28,38,.68); --glass-border:rgba(255,255,255,.06);
+  --glass-etched-bg:rgba(255,255,255,.04);
+  --glass-etched-border:rgba(91,127,191,.08);
+  --glass-etched-border-focus:rgba(91,127,191,.30);
+  /* sapphire.css:134-143（暗档 glass-control 族） */
+  --glass-control-bg:rgba(255,255,255,.05); --glass-control-bg-hover:rgba(255,255,255,.10);
+  --glass-control-border:rgba(255,255,255,.08);
+  --glass-control-highlight:rgba(255,255,255,.08); --glass-control-highlight-hover:rgba(255,255,255,.13);
+  --glass-control-underedge:rgba(0,0,0,.25);
+  --glass-control-glow:rgba(0,0,0,.20); --glass-control-glow-hover:rgba(0,0,0,.28);
+  --glass-control-shadow:rgba(0,0,0,.15); --glass-control-shadow-hover:rgba(0,0,0,.20);
+  --glass-control-blur:10px;
+  /* sapphire.css:365-372（暗档 glass-send 族） */
+  --glass-send-border-active:rgba(255,255,255,.15);
+  --glass-send-border-hover:rgba(255,255,255,.12);
+  --glass-send-bg-active:rgba(255,255,255,.15);
+  --glass-send-shadow-hover:none; --glass-send-shadow-active:none;  /* 暗档恒 none（sapphire.css:378-380） */
+  --glass-blur:24px;                               /* sapphire.css:38 */
+  /* sapphire.css:833-839 + 853（次操作钮档） */
+  --btn-secondary-bg:transparent;
+  --btn-secondary-stroke:var(--glass-send-border-active);
+  --btn-secondary-stroke-hover:var(--color-frame-text-muted);
+  --btn-secondary-ink:var(--color-text);
+  --btn-secondary-fill-hover:var(--glass-control-bg-hover);
+  --btn-unavailable-bg:var(--glass-send-bg-active);
+  --font-ui:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+html[data-theme="light"]{
+  /* base.css:38-45 + 55（亮档） */
+  --color-bg:#f5f6f8; --color-text:#1b1e26; --color-text-muted:#8b8e96; --color-text-dim:#6b6e76;
+  --color-frame-text-muted:#717379;
+  /* sapphire.css:37-55（亮档） */
+  --glass-bg:rgba(255,255,255,.55); --glass-border:rgba(255,255,255,.35);
+  --glass-etched-bg:rgba(0,0,0,.025);
+  --glass-etched-border:rgba(91,127,191,.10);
+  --glass-etched-border-focus:rgba(91,127,191,.35);
+  /* sapphire.css:119-129（亮档 glass-control 族） */
+  --glass-control-bg:rgba(255,255,255,.45); --glass-control-bg-hover:rgba(255,255,255,.65);
+  --glass-control-border:rgba(255,255,255,.40);
+  --glass-control-highlight:rgba(255,255,255,.50); --glass-control-highlight-hover:rgba(255,255,255,.62);
+  --glass-control-underedge:rgba(0,0,0,.08);
+  --glass-control-glow:rgba(0,0,0,.06); --glass-control-glow-hover:rgba(0,0,0,.09);
+  --glass-control-shadow:rgba(0,0,0,.04); --glass-control-shadow-hover:rgba(0,0,0,.06);
+  /* sapphire.css:335-360（亮档 glass-send 族） */
+  --glass-send-border-active:rgba(0,0,0,.18);
+  --glass-send-border-hover:rgba(0,0,0,.10);
+  --glass-send-bg-active:rgba(255,255,255,.66);
+  --glass-send-shadow-hover:0 2px 7px rgba(0,0,0,.14);
+  --glass-send-shadow-active:inset 0 1px 3px rgba(0,0,0,.16);
+}
+
+/* ═══════════════ 基础 ═══════════════ */
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--color-bg);color:var(--color-text);font-family:var(--font-ui);
+     font-size:13px;line-height:1.55;padding:24px 20px 80px;transition:background .2s ease,color .2s ease}
+.wrap{max-width:1180px;margin:0 auto}
+h1{font-size:19px;font-weight:600;letter-spacing:.01em}
+h2{font-size:15px;font-weight:600;margin:44px 0 4px}
+h2 .no{color:rgb(var(--sapphire));font-family:var(--font-mono);font-size:12px;font-weight:500;margin-right:8px}
+.sub{color:var(--color-text-muted);font-size:12px;margin-bottom:12px}
+a{color:rgb(var(--sapphire));text-decoration:none}
+a:hover{text-decoration:underline}
+code{font-family:var(--font-mono);font-size:11.5px;background:var(--glass-etched-bg);
+     border:1px solid var(--glass-etched-border);border-radius:5px;padding:1px 5px}
+.topbar{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.topbar .spacer{flex:1}
+.tog{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--color-text-muted);cursor:pointer;
+     border:1px solid var(--glass-control-border);background:var(--glass-control-bg);border-radius:999px;padding:5px 12px;user-select:none}
+.tog:hover{background:var(--glass-control-bg-hover)}
+.tog .led{width:7px;height:7px;border-radius:50%;background:var(--color-text-muted);opacity:.5}
+.tog.on .led{background:var(--color-primary);opacity:1}
+.legend-note{font-size:11px;color:var(--color-text-dim);margin:6px 0 0}
+
+/* ═══════════════ 样张台：侧栏 + 图谱面 ═══════════════ */
+.stage{display:flex;gap:12px;margin-top:14px;align-items:stretch}
+.mockbar{width:44px;flex:none;border:1px solid var(--glass-border);background:var(--glass-bg);
+         border-radius:14px;display:flex;flex-direction:column;align-items:center;gap:10px;padding:12px 0}
+.mockbar .av{width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,#c9a06b,#8a6a3f);flex:none}
+.mockbar .ic{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;color:var(--color-text-muted)}
+.mockbar .ic.on{background:var(--sapphire-tint-15);color:var(--color-text)}
+.mockbar .sp{flex:1}
+
+/* —— 侧栏（新形态）—— */
+.sidebar{width:272px;flex:none;display:flex;flex-direction:column;background:var(--glass-bg);
+  border:1px solid var(--glass-border);border-radius:14px;overflow:hidden}
+.sb-head{display:flex;align-items:center;gap:8px;padding:12px 12px 4px}
+.sb-head .t{font-size:13px;font-weight:600;letter-spacing:.01em}          /* 现状 12.5px → 13/600 */
+.sb-clear{all:unset;cursor:pointer;margin-left:auto;font-size:11px;font-weight:500;
+  color:rgb(var(--sapphire) / .95);padding:3px 9px;border-radius:8px;
+  border:1px solid rgb(var(--sapphire) / .30);transition:background .15s,border-color .15s}
+.sb-clear:hover{background:rgb(var(--sapphire) / .10)}
+.sb-clear:active{background:rgb(var(--sapphire) / .18)}
+.sb-meta{padding:0 12px 8px;font-size:11px;color:var(--color-text-dim);font-variant-numeric:tabular-nums}
+.sb-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:0 8px 8px;
+  scrollbar-width:thin;scrollbar-color:rgba(128,128,128,.15) transparent}
+.sb-body::-webkit-scrollbar{width:4px}
+.sb-body::-webkit-scrollbar-thumb{background:rgba(128,128,128,.15);border-radius:2px}
+.sb-sec{padding:8px 0 6px;border-top:1px solid var(--glass-etched-border)}
+.sb-sec:first-child{border-top:none}
+.sb-label{display:flex;align-items:baseline;justify-content:space-between;padding:2px 4px 6px;
+  font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--color-text-dim)}
+.sb-label .tot{font-weight:400;letter-spacing:0;text-transform:none;font-variant-numeric:tabular-nums}
+.sb-row{display:flex;align-items:center;gap:8px;padding:3px 8px;border-radius:8px;cursor:pointer;
+  color:var(--color-text);transition:background .1s ease;position:relative;outline:none}
+.sb-row:hover{background:rgb(var(--sapphire) / .06)}
+.sb-row:focus-visible{box-shadow:0 0 0 2px rgb(var(--sapphire) / .45)}
+.sb-row.active{background:var(--sapphire-tint-15)}
+.sb-row.proj{height:26px}
+.sb-row.proj .nm{font-size:12.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sb-row.proj .rm{font-size:10px;font-weight:400;color:var(--color-text-dim);flex:none}
+.sb-dot{width:8px;height:8px;border-radius:50%;flex:none;border:1px solid rgba(0,0,0,.10)}
+.sb-row .ct{margin-left:auto;font-size:11px;color:var(--color-text-muted);font-variant-numeric:tabular-nums;flex:none}
+.sb-row .ct.zero{color:var(--color-text-dim);opacity:.55}   /* 开放问题 Q2：0 计数弱化 */
+.sb-row.doc{height:24px;padding-left:26px}                  /* 缩进对齐项目名（22px 点位 + gap） */
+.sb-row.doc .nm{font-size:12px;font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--color-text)}
+.sb-ic{width:12px;height:12px;flex:none;color:var(--color-text-muted);display:inline-block;vertical-align:middle}
+.sb-row.doc .sb-ic{margin-left:-18px;margin-right:6px}      /* 图标进缩进槽，基线由 flex 对齐（替代原「⎘ 」文本前缀） */
+.sb-empty{display:none;padding:28px 16px;text-align:center;color:var(--color-text-dim);font-size:12px}
+.sb-empty .big{font-size:12px;color:var(--color-text-muted);margin-bottom:4px;font-weight:500}
+.sb.chips-sec .chips{display:flex;flex-wrap:wrap;gap:6px;padding:2px 4px}
+.chip{cursor:pointer;display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 9px;
+  border:1px solid var(--glass-etched-border);background:var(--glass-etched-bg);color:var(--color-text-muted);
+  border-radius:999px;font-size:11px;transition:color .15s,border-color .15s,background .15s;outline:none}
+.chip:hover{color:var(--color-text);border-color:rgb(var(--sapphire) / .35)}
+.chip.active{background:var(--sapphire-tint-15);border-color:rgb(var(--sapphire) / .45);color:var(--color-text)}
+.chip:focus-visible{box-shadow:0 0 0 2px rgb(var(--sapphire) / .45)}
+.chip .n{font-variant-numeric:tabular-nums;opacity:.7}
+.lg-grid{display:grid;grid-template-columns:1fr 1fr;gap:2px 12px;padding:4px 6px;color:var(--color-text-muted);font-size:11px;line-height:1.7}
+.lg-grid .sw{display:inline-block;width:12px;height:12px;vertical-align:-2px;margin-right:5px}
+
+/* —— 图谱面（新控件形态）—— */
+.pane{flex:1;min-width:0;position:relative;border:1px solid var(--glass-border);border-radius:14px;overflow:hidden;
+  background:radial-gradient(85% 65% at 12% 8%,rgba(91,127,191,.18) 0%,rgba(91,127,191,0) 55%),
+             radial-gradient(55% 45% at 92% 94%,rgba(7,193,96,.05) 0%,rgba(7,193,96,0) 60%),
+             var(--color-bg);                                    /* split.css:1728-1734 */
+}
+html[data-theme="light"] .pane{
+  background:radial-gradient(85% 65% at 12% 8%,rgba(91,127,191,.13) 0%,rgba(91,127,191,0) 55%),
+             radial-gradient(55% 45% at 92% 94%,rgba(7,193,96,.045) 0%,rgba(7,193,96,0) 60%),
+             var(--color-bg);                                    /* split.css:1722-1727 */
+}
+.pane svg.gview{position:absolute;inset:0;width:100%;height:100%;cursor:grab}
+.pane svg.gview:active{cursor:grabbing}
+
+/* 玻璃命令条（容器保持现状 split.css:1740-1753；内部控件换脸） */
+.wbar{position:absolute;top:12px;left:12px;right:12px;z-index:6;display:flex;align-items:center;gap:8px;
+  padding:8px 12px;border-radius:12px;overflow:hidden;
+  background:var(--glass-control-bg);
+  -webkit-backdrop-filter:blur(var(--glass-control-blur)) saturate(1.15);
+  backdrop-filter:blur(var(--glass-control-blur)) saturate(1.15);
+  border:1px solid var(--glass-control-border);
+  box-shadow:inset 0 1px 0 var(--glass-control-highlight),inset 0 -1px 0 var(--glass-control-underedge),
+             0 8px 24px var(--glass-control-shadow);
+}
+.wbar::before{content:'';position:absolute;top:0;left:8%;right:8%;height:1px;
+  background:linear-gradient(90deg,transparent 8%,rgba(255,255,255,.45) 50%,transparent 92%)} /* --sapphire-refraction 亮档值 */
+html[data-theme="dark"] .wbar::before{background:linear-gradient(90deg,transparent 8%,rgba(91,127,191,.06) 50%,transparent 92%)}
+.wbar:focus-within{border-color:var(--glass-etched-border-focus);box-shadow:inset 0 1px 0 var(--glass-control-highlight),
+  inset 0 -1px 0 var(--glass-control-underedge),0 8px 24px var(--glass-control-shadow),
+  0 0 0 2px rgb(var(--sapphire) / .18)}
+
+/* ① 搜索输入 → nf-findbar 模式：条内无边框透明输入 + 前置图标 */
+.wsearch{flex:1 1 auto;display:flex;align-items:center;gap:7px;min-width:0}
+.wsearch svg{flex:none;color:var(--color-text-muted)}
+.wsearch input{flex:1;min-width:0;height:28px;border:none;outline:none;background:transparent;
+  color:var(--color-text);font-size:13px;font-family:inherit}
+.wsearch input::placeholder{color:var(--color-text-muted);opacity:.7}
+
+/* ② Refresh → button.glass-control 次操作档 */
+.wbtn{flex:none;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 12px;
+  border-radius:9px;border:1px solid var(--btn-secondary-stroke);background:var(--btn-secondary-bg);
+  color:var(--btn-secondary-ink);font-size:12px;font-weight:500;font-family:inherit;cursor:pointer;
+  transition:background .15s ease,border-color .15s ease,box-shadow .15s ease,transform .1s ease;outline:none}
+.wbtn:hover{border-color:var(--btn-secondary-stroke-hover);background:var(--btn-secondary-fill-hover);
+  box-shadow:var(--glass-send-shadow-hover)}      /* 暗档 none；亮档 = 白玻璃+投影（铁律：亮档用边框+投影） */
+.wbtn:active{background:var(--btn-unavailable-bg);box-shadow:var(--glass-send-shadow-active);transform:translateY(.5px)}
+.wbtn:focus-visible{box-shadow:0 0 0 2px rgb(var(--sapphire) / .45)}
+.wbtn svg{flex:none}
+.wbtn.busy{color:var(--color-text-muted)}
+.wbtn.busy svg{animation:spin .9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.wbtn.busy svg{animation:none;opacity:.6}}
+
+/* ③ 三 facet → 自绘下拉（可交互样张；降级=原生 select 换肤，见 §4 表） */
+.facets{position:absolute;top:60px;left:12px;right:12px;z-index:6;display:flex;gap:6px;flex-wrap:wrap}
+.dd{position:relative}
+.dd-face{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;max-width:150px;
+  border-radius:999px;border:1px solid var(--btn-secondary-stroke);background:var(--btn-secondary-bg);
+  color:var(--btn-secondary-ink);font-size:12px;font-weight:500;font-family:inherit;cursor:pointer;
+  transition:background .15s,border-color .15s,box-shadow .15s;outline:none}
+.dd-face .lb{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dd-face .chev{flex:none;color:var(--color-text-muted);transition:transform .15s ease}
+.dd.open .dd-face{border-color:var(--btn-secondary-stroke-hover);background:var(--btn-secondary-fill-hover)}
+.dd.open .chev{transform:rotate(180deg)}
+.dd-face:focus-visible{box-shadow:0 0 0 2px rgb(var(--sapphire) / .45)}
+.dd-pop{position:absolute;top:calc(100% + 6px);left:0;min-width:148px;z-index:20;display:none;
+  padding:5px;border-radius:12px;
+  background:var(--glass-bg);
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(1.2);
+  backdrop-filter:blur(var(--glass-blur)) saturate(1.2);
+  border:1px solid var(--glass-border);
+  box-shadow:0 12px 34px rgb(var(--sapphire) / .18),0 2px 8px rgba(0,0,0,.08);
+}
+.dd.open .dd-pop{display:block;animation:ddIn .14s ease}
+@keyframes ddIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+.dd-pop{position:absolute}
+.dd-pop::before{content:'';position:absolute;top:0;left:10%;right:10%;height:1px;
+  background:linear-gradient(90deg,transparent 10%,rgba(255,255,255,.45) 50%,transparent 90%)}
+html[data-theme="dark"] .dd-pop::before{background:linear-gradient(90deg,transparent 10%,rgba(91,127,191,.06) 50%,transparent 90%)}
+.dd-opt{display:flex;align-items:center;gap:8px;height:26px;padding:0 9px;border-radius:7px;
+  font-size:12px;color:var(--color-text);cursor:pointer;outline:none}
+.dd-opt:hover,.dd-opt.hl{background:rgb(var(--sapphire) / .08)}
+.dd-opt.sel{background:var(--sapphire-tint-15)}
+.dd-opt .ck{margin-left:auto;color:rgb(var(--sapphire));opacity:0}
+.dd-opt.sel .ck{opacity:1}
+.dd-opt .n{margin-left:auto;font-size:11px;color:var(--color-text-dim);font-variant-numeric:tabular-nums}
+.dd-opt.sel .n{display:none}
+
+/* ④ 缩放钮组 → source-toggle 材质族 + 线条图标 */
+.zoom{position:absolute;left:14px;bottom:16px;z-index:7;display:flex;flex-direction:column;gap:2px;padding:5px;
+  border-radius:12px;background:var(--glass-control-bg);
+  -webkit-backdrop-filter:blur(var(--glass-control-blur));backdrop-filter:blur(var(--glass-control-blur));
+  border:1px solid var(--glass-control-border);
+  box-shadow:inset 0 1px 0 var(--glass-control-highlight),0 8px 24px var(--glass-control-shadow)}
+.zbtn{all:unset;cursor:pointer;width:30px;height:30px;border-radius:9px;display:grid;place-items:center;
+  color:var(--color-text);transition:background .15s,transform .1s ease,outline-color .15s;outline:2px solid transparent}
+.zbtn:hover{background:var(--glass-control-bg-hover)}
+.zbtn:active{transform:scale(.94);box-shadow:inset 0 1px 3px rgba(0,0,0,.16)}
+.zbtn:focus-visible{outline-color:rgb(var(--sapphire) / .45)}
+
+/* 节点 tooltip 样例（现状材质保留 split.css:1671-1686） */
+.wtip{position:absolute;z-index:8;max-width:250px;padding:8px 11px;border-radius:12px;display:none;
+  border:1px solid var(--glass-border);background:var(--glass-bg);
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(1.15);backdrop-filter:blur(var(--glass-blur)) saturate(1.15);
+  box-shadow:0 12px 34px rgb(var(--sapphire) / .18),0 2px 8px rgba(0,0,0,.08);font-size:12px;pointer-events:none}
+.wtip .tt{font-weight:600;font-size:13px;margin-bottom:2px}
+.wtip .tp{font-family:var(--font-mono);font-size:10.5px;color:var(--color-text-muted);word-break:break-all}
+.wtip .tm{margin-top:3px;font-size:11px;color:rgb(var(--sapphire))}
+
+/* ═══════════════ 行为规则演示（①） ═══════════════ */
+.demo{display:flex;gap:14px;margin-top:12px;flex-wrap:wrap}
+.demo-stage{flex:1 1 340px;min-width:300px;border:1px dashed var(--glass-etched-border);border-radius:12px;
+  padding:14px;display:flex;flex-direction:column;gap:10px}
+.demo-canvas{display:flex;gap:8px;height:120px;border-radius:10px;overflow:hidden;
+  border:1px solid var(--glass-etched-border);background:var(--glass-etched-bg)}
+.demo-side{width:76px;flex:none;border-right:1px solid var(--glass-etched-border);background:var(--glass-control-bg);
+  display:flex;flex-direction:column;gap:5px;padding:8px 6px;transition:opacity .2s,transform .2s}
+.demo-side.hidden{opacity:0;transform:translateX(-10px);pointer-events:none}
+.demo-side .r{height:8px;border-radius:4px;background:var(--glass-control-border)}
+.demo-side .badge{margin-top:auto;font-size:9px;text-align:center;padding:2px 0;border-radius:6px;
+  background:var(--sapphire-tint-15);color:rgb(var(--sapphire));font-weight:600}
+.demo-main{flex:1;display:flex;flex-direction:column;gap:6px;padding:10px}
+.demo-main .l{height:8px;border-radius:4px;background:var(--glass-etched-border)}
+.demo-main .l.s{width:60%}
+.demo-tabbar{display:flex;gap:6px}
+.demo-tab{font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid var(--glass-etched-border);color:var(--color-text-muted)}
+.demo-tab.on{background:var(--sapphire-tint-15);color:var(--color-text);border-color:rgb(var(--sapphire) / .45)}
+.demo-btns{display:flex;gap:6px;flex-wrap:wrap}
+.dbtn{font-size:11px;font-weight:500;padding:5px 10px;border-radius:8px;cursor:pointer;
+  border:1px solid var(--btn-secondary-stroke);background:var(--btn-secondary-bg);color:var(--color-text);font-family:inherit}
+.dbtn:hover{border-color:var(--btn-secondary-stroke-hover);background:var(--btn-secondary-fill-hover)}
+.dbtn:active{background:var(--btn-unavailable-bg)}
+.demo-log{font-family:var(--font-mono);font-size:10.5px;color:var(--color-text-dim);line-height:1.8;min-height:88px}
+.demo-log .k{color:rgb(var(--sapphire))}
+
+/* ═══════════════ 规格表 ═══════════════ */
+table.spec{width:100%;border-collapse:collapse;margin-top:10px;font-size:12px}
+table.spec th{ text-align:left;font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--color-text-dim);padding:6px 10px;border-bottom:1px solid var(--glass-etched-border)}
+table.spec td{padding:7px 10px;border-bottom:1px solid var(--glass-etched-border);vertical-align:top}
+table.spec tr:last-child td{border-bottom:none}
+table.spec td.tok{font-family:var(--font-mono);font-size:10.5px;color:rgb(var(--sapphire));white-space:nowrap}
+.now{color:var(--color-text-muted)}
+.new{color:var(--color-text)}
+.pill{display:inline-block;font-size:10px;font-weight:600;padding:1px 7px;border-radius:999px;margin-right:6px;
+  background:var(--sapphire-tint-15);color:rgb(var(--sapphire));vertical-align:1px}
+.pill.warn{background:rgba(7,193,96,.12);color:var(--color-primary)}
+ol.openq{margin:10px 0 0 18px;display:flex;flex-direction:column;gap:7px;font-size:12.5px}
+ol.openq li::marker{color:rgb(var(--sapphire));font-weight:600}
+.anchors{font-size:11.5px;color:var(--color-text-muted);line-height:2}
+.card{border:1px solid var(--glass-etched-border);border-radius:12px;padding:14px 16px;margin-top:10px;background:var(--glass-etched-bg)}
+
+/* ═══════════════ 标注模式（token 名浮标） ═══════════════ */
+body.annotated [data-tok]{position:relative}
+body.annotated [data-tok]::after{
+  content:attr(data-tok);
+  position:absolute;z-index:30;left:50%;top:auto;bottom:calc(100% + 3px);transform:translateX(-50%);
+  font-family:var(--font-mono);font-size:9px;font-weight:400;letter-spacing:0;text-transform:none;
+  color:#fff;background:rgba(91,127,191,.92);border-radius:4px;padding:1px 5px;white-space:nowrap;
+  pointer-events:none;box-shadow:0 2px 6px rgba(0,0,0,.25)}
+body.annotated .sidebar,body.annotated .pane{outline:1px dashed rgba(91,127,191,.5);outline-offset:2px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <h1>文档图谱 · 三件工整化（设计样张，零源码改动）</h1>
+    <div class="spacer"></div>
+    <button class="tog on" id="themeTog"><span class="led"></span><span id="themeLb">深色（主）</span></button>
+    <button class="tog" id="tokTog"><span class="led"></span>标注 token</button>
+  </div>
+  <p class="sub">① 侧边栏自动打开（行为规则） · ② 侧边栏排版与字体（假数据可交互样张） · ③ 图谱控件对齐 md 钮面（可交互 hover/active）。
+     全部色值取自生产 token（sapphire.css / base.css / split.css），样张内 <code>data-theme</code> 切换仅为预览；生产实现继续走 <code>prefers-color-scheme</code>。</p>
+
+  <!-- ═══════════ §2 样张 ═══════════ -->
+  <h2><span class="no">§1</span>样张 · 侧边栏新排版 + 控件新形态（先看这个）</h2>
+  <p class="sub">侧栏数据取自截图（CZT 10 / chisel-fpga 4 / 若干 remote 0 项目）。搜索框可真过滤；下拉可键盘操作（↑↓ / Enter / Esc）；缩放钮真的缩放。</p>
+
+  <div class="stage">
+    <div class="mockbar">
+      <div class="av"></div>
+      <div style="height:8px"></div>
+      <div class="ic" title="Files"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1h-8L9.6 4.6A1 1 0 0 0 8.9 4H4a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1z"/></svg></div>
+      <div class="ic on" title="Wiki Graph"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.2"/><circle cx="4.8" cy="4.8" r="2.2"/><circle cx="19.2" cy="4.8" r="2.2"/><circle cx="4.8" cy="19.2" r="2.2"/><circle cx="19.2" cy="19.2" r="2.2"/><path d="M9 9 7.1 7.1M15 9l1.9-1.9M9 15l-1.9 1.9M15 15l1.9 1.9"/></svg></div>
+      <div class="sp"></div>
+      <div class="ic"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/></svg></div>
+    </div>
+
+    <!-- ── 侧栏：新排版（②）── -->
+    <aside class="sidebar" id="sidebar" data-tok="--glass-bg · --glass-border">
+      <div class="sb-head" data-tok="13px/600 --color-text">
+        <span class="t">Graph</span>
+        <button class="sb-clear" id="clearBtn" data-tok="rgb(--sapphire/.30) 描边 · hover /0.10">Clear</button>
+      </div>
+      <div class="sb-meta" data-tok="11px --color-text-dim · tabular-nums">11 projects · 158 docs · 116 links</div>
+      <div class="sb-body" id="sbBody">
+        <div class="sb-sec">
+          <div class="sb-label" data-tok="10px/600 .06em 大写 · 计数移出标题行"><span>Projects</span><span class="tot">158</span></div>
+          <div id="projList"></div>
+        </div>
+        <div class="sb-sec chips-sec">
+          <div class="sb-label"><span>Types</span></div>
+          <div class="chips" id="typeChips"></div>
+        </div>
+        <div class="sb-sec chips-sec">
+          <div class="sb-label"><span>Statuses</span></div>
+          <div class="chips" id="statusChips"></div>
+        </div>
+        <div class="sb-sec">
+          <div class="sb-label"><span>Legend</span></div>
+          <div class="lg-grid">
+            <div><span class="sw"><svg width="12" height="12"><circle cx="6" cy="6" r="4.5" fill="#9aa0a8"/></svg></span>Document</div>
+            <div><span class="sw"><svg width="12" height="12"><rect x="1.5" y="1.5" width="9" height="9" rx="2.5" fill="#71767e" stroke="#2b2f36"/></svg></span>Attachment</div>
+            <div><span class="sw"><svg width="12" height="12"><circle cx="6" cy="6" r="4.5" fill="none" stroke="#71767e" stroke-dasharray="2 2"/></svg></span>Unresolved</div>
+            <div><span class="sw"><svg width="12" height="12"><circle cx="6" cy="6" r="4.5" fill="none" stroke="#9aa0a8" stroke-width="1.6"/></svg></span>Resolved</div>
+          </div>
+        </div>
+        <div class="sb-empty" id="sbEmpty">
+          <div class="big">没有匹配的文档</div>
+          <div>试试更短的关键词，或 <a href="#" onclick="return false">Clear</a> 清除全部筛选</div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ── 图谱面：控件新形态（③）── -->
+    <div class="pane" id="pane">
+      <svg class="gview" id="gview" viewBox="0 0 900 620" preserveAspectRatio="xMidYMid slice">
+        <g id="gworld">
+          <g id="gedges" stroke="rgba(91,127,191,.28)" stroke-width="1" fill="none"></g>
+          <g id="gnodes"></g>
+        </g>
+      </svg>
+
+      <div class="wbar" data-tok="容器现状保留 · split.css:1740">
+        <div class="wsearch" data-tok="无边框透明输入（nf-findbar 模式）· 13px">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="filterInput" type="text" placeholder="筛选文档">
+        </div>
+        <button class="wbtn" id="refreshBtn" data-tok="button.glass-control 次操作档 · h28 r9 · 12/500">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+          刷新
+        </button>
+      </div>
+
+      <div class="facets" id="facets" data-tok="dd-face = 同 Refresh 次操作档 · r999 · h28"></div>
+
+      <div class="zoom" data-tok="容器现状保留 split.css:1819 · 钮 26→30 r9">
+        <button class="zbtn" data-z="in" title="放大" data-tok="字形 → 1.8 线条 SVG">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+        <button class="zbtn" data-z="out" title="缩小">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+        <button class="zbtn" data-z="fit" title="重置视图">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg></button>
+      </div>
+
+      <div class="wtip" id="wtip"><div class="tt"></div><div class="tp"></div><div class="tm"></div></div>
+    </div>
+  </div>
+  <p class="legend-note">浅蓝浮标 = 开启右上「标注 token」后显示的 css token 名；侧栏/控件的全部色值、圆角、模糊均引用生产既有 token，无新造值。</p>
+
+  <!-- ═══════════ §1 行为规则（①） ═══════════ -->
+  <h2><span class="no">§2</span>行为规则表 · 侧边栏自动打开（①）</h2>
+  <p class="sub">现状一句话：图谱侧栏不是图谱 pane 内的面板，而是<b>寄宿在左侧 Side Bar 的文件树槽位</b>（<code>#panel-sessions</code>，文件树 <code>#explorer-section</code> 隐藏让位）。打开图谱 tab 时 Canvas 面板会自动开（<code>openTab → openCanvas</code>），但 Side Bar 折叠时没人管 —— 就是要手动点的那一下。</p>
+
+  <div class="card">
+    <b>机制现状（锚点）</b>
+    <div class="anchors">
+      寄宿挂载/卸载：<code>src/main/resources/web/js/wikiGraph.js:767-807</code>（EXPLORER_HOST_ID · syncGraphExplorerList · explorer.style.display='hidden'）<br>
+      可见性判据：<code>wikiGraph.js:781-784</code>（活动 pane 是 wiki-graph ∧ body.canvas-open）<br>
+      触发事件面：<code>wikiGraph.js:971-974</code>（canvas-tab-switched）· <code>:148-150</code>（canvas-tab-closed）· <code>:979-980</code>（body class MutationObserver）· <code>:136-143</code>（reload restore）<br>
+      Side Bar 开关与持久化：<code>src/main/resources/web/js/activityBar.js:99-146</code>（body.sidebar-collapsed ⇔ localStorage sidebar_collapsed / sidebar_active_panel）<br>
+      「展开并激活面板」现成 API：<code>activityBar.js:197-202</code>（showSidePanel('files') = 展开 + 激活 + 持久化，且绝不反向折叠）<br>
+      Canvas 面板 4 态机：<code>src/main/resources/web/js/canvas.js:434-472</code>（state 1/3/4 都会走到「图谱成为可见内容」，唯 Side Bar 不动）<br>
+      移动端双 drawer 互斥：<code>canvas.js:377-389</code> + <code>activityBar.js:143-145</code>
+    </div>
+  </div>
+
+  <table class="spec">
+    <tr><th style="width:36px">R#</th><th style="width:190px">场景</th><th>提案行为</th><th style="width:230px">依据 / 锚点</th></tr>
+    <tr><td>R1</td><td>打开图谱 tab（tab 不存在，state 1：活动条按钮 / md 面图谱钮 / wikilink）</td><td>图谱成为可见内容 ⇒ <b>Side Bar 自动展开并激活 files 面板</b>（showSidePanel('files')）。Canvas 面板行为不变（openTab 已带 openCanvas）。</td><td>现状缺口即此；API 现成 activityBar.js:197-202</td></tr>
+    <tr><td>R2</td><td>切回图谱 tab（state 3：tab 已开、Canvas 开、当前显示别的 tab）</td><td>同 R1 自动展开。落点：canvas-tab-switched 的既有监听（wikiGraph.js:971-974）里，挂载分支同步调一次「确保可见」。</td><td>wikiGraph.js:788-800 挂载分支</td></tr>
+    <tr><td>R3</td><td>重开 Canvas（state 4：tab 已开、Canvas 折叠）</td><td>openCanvas + setActiveTab 后走同一挂载分支 ⇒ 同 R1。</td><td>canvas.js:468</td></tr>
+    <tr><td>R4</td><td>刷新/重启后 restore，恢复的活动 tab 是图谱</td><td>restore 完成首次渲染后同 R1（restore 已派发 canvas-tab-restore，wikiGraph.js:136-143）。</td><td>wikiGraph.js:136-143</td></tr>
+    <tr><td>R5</td><td><b>用户手动收起</b>（⌘B / 头部开关 / files 按钮再点 / 移动端 scrim）且图谱可见</td><td>记录会话内标志 <code>graphSidebarDismissed=true</code>：<b>本「图谱查看会话」内不再自动弹开</b>（手动收起是一次明确的意愿表达）。标志只存内存（模块级），<b>不写 localStorage</b>。</td><td>监听 body.sidebar-collapsed 的 false→true 翻转（图谱可见期间）＝收起是手动发生的唯一入口</td></tr>
+    <tr><td>R6</td><td>切走再切回（图谱 → 其他 tab → 图谱）</td><td><b>切走即会话结束，清除 dismissed；切回再次自动展开</b>。「成为可见内容」事件每次都给一次自动展开机会；连续会话内的手动收起才被尊重。</td><td>与 R5 同一标志；canvas-tab-switched 离开分支清除</td></tr>
+    <tr><td>R7</td><td>与既有持久化形态键的关系</td><td><b>零新持久化键</b>：自动展开走与手动展开同一条 API（写 sidebar_collapsed=false + sidebar_active_panel=files），刷新后状态自洽 —— restore 路径（R4）也会再触发自动展开，无双源漂移。</td><td>activityBar.js:128-134</td></tr>
+    <tr><td>R8</td><td>移动端 ≤768px</td><td><b>不自动展开</b>：Side Bar 与 Canvas 是互斥全屏 overlay，谁后开谁赢（canvas.js:377-389）；自动开 Side 抽屉会把图谱整个盖掉。列表照旧走 Files 抽屉。</td><td>canvas.js:377-389 · activityBar.js:143-145</td></tr>
+    <tr><td>R9</td><td>离开图谱 tab / 关闭图谱 tab</td><td>列表卸载、文件树还原（现状保留）；<b>绝不因离开而自动收起 Side Bar</b>（自动开不得反演成自动关）。</td><td>wikiGraph.js:803-807</td></tr>
+    <tr><td>R10</td><td>Side Bar 开着但停在别的面板（未来多面板时）</td><td>showSidePanel('files') 会切回唯一宿主面板；当前单面板无感。<b>多面板出现时本条需复裁定</b>（见 Q6）。</td><td>activityBar.js:197-202</td></tr>
+  </table>
+
+  <h2 style="font-size:13px;margin-top:18px"><span class="no">§2.5</span>行为演示（点按钮走一遍 R1/R5/R6/R9）</h2>
+  <div class="demo">
+    <div class="demo-stage">
+      <div class="demo-btns">
+        <button class="dbtn" id="dOpen">打开图谱 tab</button>
+        <button class="dbtn" id="dClose">⌘B 收起侧栏</button>
+        <button class="dbtn" id="dAway">切到 md 页签</button>
+        <button class="dbtn" id="dBack">切回图谱页签</button>
+        <button class="dbtn" id="dReset">重置</button>
+      </div>
+      <div class="demo-canvas">
+        <div class="demo-side hidden" id="demoSide">
+          <div class="r" style="width:70%"></div><div class="r"></div><div class="r" style="width:85%"></div><div class="r" style="width:55%"></div>
+          <div class="badge" id="demoBadge">dismissed</div>
+        </div>
+        <div class="demo-main">
+          <div class="demo-tabbar"><span class="demo-tab" id="tabGraph">图谱</span><span class="demo-tab" id="tabMd">md 文档</span></div>
+          <div class="l"></div><div class="l s"></div><div class="l" style="width:80%"></div>
+        </div>
+      </div>
+      <div class="demo-log" id="demoLog">— 就绪：Side Bar 折叠，无 dismissed 标志</div>
+    </div>
+    <div class="demo-stage" style="flex:1.2">
+      <b style="font-size:12px">判定树（实现即按此写）</b>
+      <div class="anchors">
+        <span class="k">onGraphTabBecameVisible()</span>：<br>
+        &nbsp;&nbsp;if (isMobileViewport()) return;            <i>// R8</i><br>
+        &nbsp;&nbsp;if (graphSidebarDismissed) return;         <i>// R5</i><br>
+        &nbsp;&nbsp;showSidePanel('files');                    <i>// R1/R2/R3/R4/R6 → 展开即持久化（R7）</i><br><br>
+        <span class="k">onSidebarCollapsedWhileGraphVisible()</span>：<br>
+        &nbsp;&nbsp;graphSidebarDismissed = true;               <i>// R5</i><br><br>
+        <span class="k">onGraphTabLeft()</span>：<br>
+        &nbsp;&nbsp;graphSidebarDismissed = false;              <i>// R6（卸载列表照旧 R9）</i>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ §3 排版规格（②） ═══════════ -->
+  <h2><span class="no">§3</span>侧边栏排版规格（②）</h2>
+  <p class="sub">字重遵循视觉铁律方案 B：body 400 / 标题 600 / 按钮 500。全部行高按 4px 网格；亮暗双主题只走 token。</p>
+  <table class="spec">
+    <tr><th style="width:130px">元素</th><th>现状（锚点 = split.css）</th><th style="width:340px">提案</th><th style="width:210px">token</th></tr>
+    <tr><td>头部标题「Graph」</td><td class="now">12.5px/600，:1781-1785</td><td class="new">13px / 600 / lh 1.3；Clear 改次操作钮档描边（对齐 §4 钮面）</td><td class="tok">--color-text · rgb(--sapphire/.30)</td></tr>
+    <tr><td>计数行（PROJECTS · 158 DOCS · 116 LINKS）</td><td class="now">挤在节标题里 10.5px 大写，:1794 + wiki.sbProjectsCount；观感廉价的主因</td><td class="new"><b>拆出为独立 meta 行</b>：11px / 400 / --color-text-dim / tabular-nums，标题只留「Projects」+ 右侧总计 158；links 计数并入 meta 行</td><td class="tok">--color-text-dim · font-variant-numeric</td></tr>
+    <tr><td>节标题（Types / Statuses / Legend）</td><td class="now">10.5px 大写 .08em muted，:1794</td><td class="new">10px / 600 / .06em 大写 / --color-text-dim（更小更轻 = 结构而非装饰）</td><td class="tok">--color-text-dim</td></tr>
+    <tr><td>项目组头行（.wx-proj）</td><td class="now">无字号声明（继承）、padding 5px 8px、圆点 9px，:1795-1803</td><td class="new">12.5px / <b>500</b>（组头字重区分层级）/ 高 26 / r8 / 点 8px；(remote) 后缀 10px 弱化</td><td class="tok">--color-text · rgb(--sapphire/.06) hover</td></tr>
+    <tr><td>文档行（.wx-doc）</td><td class="now">无缩进、无图标（附件用「⎘ 」文本前缀，基线错位，wikiGraph.js:890）</td><td class="new">12px / 400 / 高 24 / r7 / <b>左缩进 26px</b> 对齐组头名；附件图标改 12px SVG（1.5 线重）进缩进槽，flex 垂直居中</td><td class="tok">--color-text-muted（图标）</td></tr>
+    <tr><td>计数徽标（.wx-count）</td><td class="now">10.5px muted，0 也全量显示，:1802</td><td class="new">11px tabular / muted；<b>0 值再降一档</b>（dim + .55）—— 候拍 Q2</td><td class="tok">--color-text-muted · --color-text-dim</td></tr>
+    <tr><td>类型/状态 chips</td><td class="now">11px 药丸 h≈22，:1805-1814</td><td class="new">保持语言；统一高 20 / 计数右挂 .n 70% 透明 / active 蓝晶 tint</td><td class="tok">--glass-etched-* · --sapphire-tint-15</td></tr>
+    <tr><td>图例</td><td class="now">两行流式 b 符号 + 文本 lh1.9，:1815-1816 + wikiGraph.js:939-941</td><td class="new">两列 grid / 11px / lh 1.7 / 符号改与画布一致的 12px SVG 形状（不再用字符 ●▢◌◎）</td><td class="tok">--color-text-muted</td></tr>
+    <tr><td>hover / active</td><td class="now">hover 与 active 同为 sapphire .08/.15，:1799-1800</td><td class="new">hover 降到 .06（行多时不燥）；active 保持 tint-15；新增 :focus-visible 2px 蓝晶环（可达性）</td><td class="tok">rgb(--sapphire/.06) · --sapphire-tint-15</td></tr>
+    <tr><td>空态（筛选无结果）</td><td class="now">无（列表直接空白）</td><td class="new">居中两行：主行 12px/500 muted「没有匹配的文档」+ 副行 12px dim 建议 + Clear 链接</td><td class="tok">--color-text-muted · --color-text-dim</td></tr>
+    <tr><td>滚动条 / 间距节奏</td><td class="now">4px 细滚动条，:1856-1859（保留）</td><td class="new">不变；节间距统一 8/6、行距 1px、容器 padding 0 8px 8px（现状保留）</td><td class="tok">--glass-etched-border（分隔线）</td></tr>
+  </table>
+
+  <!-- ═══════════ §4 控件映射（③） ═══════════ -->
+  <h2><span class="no">§4</span>图谱控件 → md 钮面映射（③）</h2>
+  <p class="sub">基准 = md 文档面板已定型的钮面语言：悬浮玻璃圆钮族 <code>.canvas-source-toggle / .canvas-ref-select / .canvas-find-toggle / .canvas-graph-toggle</code>（split.css:869-943, 1541-1560）+ 全局玻璃材质 <code>.glass-control</code>（sapphire.css:113-157）+ 次操作钮档 <code>button.glass-control</code>（sapphire.css:962-1028）。取其材质与状态语义，尺寸按图谱工具条的密度取 28px 档。</p>
+  <table class="spec">
+    <tr><th style="width:130px">控件</th><th>现状（锚点 = split.css）</th><th style="width:400px">映射后</th><th style="width:190px">token</th></tr>
+    <tr><td>Filter documents 输入框</td><td class="now">30px 高、r10 自带边框底色的独立输入，:1642-1649（wx-B r9）</td><td class="new"><b>nf-findbar 模式</b>：玻璃命令条容器保留（:1740-1753），输入改条内无边框透明 + 前置 14px 搜索镜（1.8 线重）+ 高 28 / 13px；条 :focus-within 蓝晶描边环</td><td class="tok">--glass-etched-border-focus · rgb(--sapphire/.18)</td></tr>
+    <tr><td>Refresh 按钮</td><td class="now">glass-control 玻璃填充 + r10，:1650-1655；busy=opacity .5</td><td class="new"><b>次操作钮档</b>：rest 透明底 + 描边 + 12/500；hover 描边加深 +（暗档填充递进 / 亮档投影递进 —— 铁律 2 亮档禁白 alpha 递进）；active 按下填充 + 内陷投影；busy = 图标自旋 0.9s（reduced-motion 降静态半透明）</td><td class="tok">--btn-secondary-bg/-stroke/-ink · --btn-secondary-stroke-hover · --btn-secondary-fill-hover · --glass-send-shadow-hover/-active · --btn-unavailable-bg</td></tr>
+    <tr><td>三个原生 select（All / All types / All statuses）</td><td class="now">原生 select 26px，wx-B 药丸化 r999 max-width 96px，:1702-1708 + :1769</td><td class="new"><span class="pill">主案</span>自绘 dropdown：face 同 Refresh 次操作档药丸（h28 r999 + 12px 1.8 线重 chevron，开合旋转 180°）；popover = --glass-bg 毛玻璃 r12 + 顶缘 refraction 线（同 .wiki-toolbar::before）+ 选项行 26px r7，hover 蓝晶 .08、选中 tint-15 + 右侧对勾。<span class="pill warn">降级</span>原生 select 换肤：appearance:none + 同 face + data-URI chevron 背景 —— 打开列表仍由 OS 渲染（配色不保证），键盘/AT 免费保留。自绘的键盘面：↑↓ 移动 / Enter 选中 / Esc 关 / Home End / 首字母 type-ahead，role=listbox+option+aria-selected（WAI-ARIA APG）</td><td class="tok">--glass-bg · --glass-border · --glass-blur · rgb(--sapphire/.08) · --sapphire-tint-15 · --glass-control-shadow</td></tr>
+    <tr><td>缩放钮组 +/−/⤢</td><td class="now">26px 文本字形钮（+ − ⟲）玻璃珠容器 r12，:1819-1833；hover 蓝晶 .14</td><td class="new">容器材质保留；钮 26→<b>30px r9</b>，字形改 <b>1.8 线重 SVG 图标</b>（＋/−/⤢ maximize —— 字形跨平台基线不稳且线重不可控）；hover 玻璃填充递进（对齐 source-toggle 族）；active scale(.94) + 内陷投影；:focus-visible 蓝晶环</td><td class="tok">--glass-control-bg-hover · rgb(--sapphire/.45) · --glass-control-highlight</td></tr>
+    <tr><td>状态行（wiki-toolbar-status）</td><td class="now">11px 右挂，wx-B 下 display:none，:1656-1661 + :1766</td><td class="new">维持隐藏；计数已由侧栏 meta 行承载（§3）</td><td class="tok">—</td></tr>
+    <tr><td>统一钮面几何</td><td class="now">30/26 混排、r9/r10/r999 混用</td><td class="new">一类高度 28px（输入=按钮=下拉）；圆角：条/浮层 r12 · 方钮 r9 · 药丸 r999；图标一律 1.8 线重 13-14px（与活动条 svg 一致）</td><td class="tok">—</td></tr>
+  </table>
+
+  <!-- ═══════════ §5 开放问题 ═══════════ -->
+  <h2><span class="no">§5</span>开放问题（候拍，不阻塞样张）</h2>
+  <ol class="openq">
+    <li><b>Q1 · 下拉是否升级自绘？</b>主案自绘（样式/键盘全可控，实现量 ≈ 120 行 + APG 键盘面）；降级原生换肤（半天，列表 OS 渲染）。建议：主案，但三个下拉共用一个工厂函数。</li>
+    <li><b>Q2 · 计数徽标是否保留 + 0 值策略？</b>样张按「保留、0 值降档（dim+.55）」绘制；也可选「0 直接隐藏」或「0 不显示徽标仅 hover 提示」。</li>
+    <li><b>Q3 · 空白态三态文案：</b>筛选无结果（样张已给）/ vault 为空（wiki.stubProject 文案已有，是否加「创建 &lt;workspace&gt;/docs」动作按钮？）/ 远端设备不可达（wiki.remoteFetchFailed）—— 后两态样张未画，等文案裁定后补。</li>
+    <li><b>Q4 · 项目组要不要折叠（chevron + 展开态记忆）？</b>158 篇文档全量平铺时滚动很长；样张未加（避免越权扩 scope）。</li>
+    <li><b>Q5 · R6 的 dismissed 重置粒度：</b>样张按「切走即重置（切回再开）」；另一档是「app 会话内一直尊重（reload 才重置）」。前者更符合「回到图谱 = 新的查看意图」，后者更安静。</li>
+    <li><b>Q6 · 未来 Side Bar 多面板时 R10 的走向：</b>自动展开是否允许抢面板焦点（现提案：抢，因为 files 是唯一宿主）。</li>
+    <li><b>Q7 · --font-mono 在生产 CSS 无定义</b>（split.css:1690 等处 var(--font-mono, monospace) 恒走 monospace 回退）：meta 行/路径如需等宽，是否顺手定义该 token（超本批范围，仅登记）。</li>
+  </ol>
+
+  <!-- ═══════════ §6 证据锚点 ═══════════ -->
+  <h2><span class="no">§6</span>证据锚点（本样张全部论断出处）</h2>
+  <div class="card anchors">
+    <b>现状机制</b>：wikiGraph.js:123-129（openWikiGraphTab→canvas.openTab）· :162-287（renderInto 工具条/facets/缩放构建）· :767-807（侧栏寄宿）· :781-784（可见性判据）· :812-952（renderGraphFileList：⎘ 文本前缀 :890、计数 :872-874、图例字符 :939-941）· :971-980（切换/折叠事件面）<br>
+    canvas.js:364-429（openCanvas/closeCanvas）· :434-472（4 态机）· :491-494（panelTabRefresh 注册表）· :552-564（openTab 自动开 Canvas）<br>
+    activityBar.js:99-146（collapsed 持久化）· :197-215（showSidePanel / onPanelButtonClick）· :143-145 + canvas.js:377-389（移动端互斥）<br>
+    <b>样式现状</b>：split.css:1637-1661（工具条/搜索/Refresh/status）· :1671-1693（tooltip）· :1701-1709（facets）· :1722-1735（aurora 底）· :1740-1769（wx-B 命令条）· :1781-1816（.wx-sb-* 侧栏全族）· :1819-1833（缩放钮）· :1841-1859（寄宿布局）<br>
+    <b>钮面基准</b>：split.css:869-943（source-toggle / ref-select 40px 玻璃圆钮）· :1541-1560（find/graph toggle）· :1563-1598（nf-findbar + ghost 24px 钮）· sapphire.css:113-157（.glass-control 材质）· :962-1028（button.glass-control 次操作四态）· :334-382（--glass-send-* 族）· :833-839+853（--btn-secondary-* 档）<br>
+    <b>token 值</b>：base.css:2-3,38-45,55,94-99,109 · sapphire.css:7-9,37-55,118-145,335-382,833-853<br>
+    <b>i18n 文案</b>：locales/en.js:1863-1898 · locales/zh-CN.js:1800 起（wiki.* 全组）
+  </div>
+
+</div>
+
+<script>
+/* ── 主题 / 标注 ── */
+const themeTog=document.getElementById('themeTog'),tokTog=document.getElementById('tokTog');
+themeTog.onclick=()=>{const el=document.documentElement;const dark=el.dataset.theme==='dark';
+  el.dataset.theme=dark?'light':'dark';themeTog.classList.toggle('on',dark);
+  document.getElementById('themeLb').textContent=dark?'深色（主）':'亮色';};
+tokTog.onclick=()=>{document.body.classList.toggle('annotated');tokTog.classList.toggle('on');};
+
+/* ── 侧栏假数据（取自截图） ── */
+const DOTS=['#3f444c','#71767e','#9aa0a8','#c2c6cc'];
+const PROJECTS=[
+ {name:'CZT',count:10,dot:DOTS[0],docs:[
+   {t:'CZT 晨间进展汇报（2026-10-19）'},{t:'CZT 项目进展报告（2x）'},{t:'CZT 网页中枢（index）'},
+   {t:'新版项目中枢对照说明'},{t:'CZT 电荷共享 × pitch 矩阵'},{t:'探测器参数核对单审计记录'},
+   {t:'phd-notebook index'},{t:'fig1_cloud_vs_pitch.svg',att:1},{t:'fig2_diffusion_vs_depth.svg',att:1},{t:'fig3_pitch_vs_thickness.svg',att:1}]},
+ {name:'ReminderIsland',remote:true,count:0,dot:DOTS[1],docs:[]},
+ {name:'SlideBlocks Studio',count:0,dot:DOTS[2],docs:[]},
+ {name:'chisel-fpga',count:4,dot:DOTS[1],docs:[
+   {t:'00 总览与总装 —《Manifest》'},{t:'02 FPGA 逻辑（Chisel）'},{t:'03 上位机框架'},{t:'dataflow.svg',att:1}]},
+ {name:'detector-proposal',count:0,dot:DOTS[3],docs:[]},
+ {name:'gamma-telescope',remote:true,count:0,dot:DOTS[0],docs:[]},
+ {name:'general',remote:true,count:0,dot:DOTS[2],docs:[]},
+ {name:'likemeter',remote:true,count:0,dot:DOTS[1],docs:[]},
+];
+const IC_DOC='<svg class="sb-ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>';
+const projList=document.getElementById('projList'),sbBody=document.getElementById('sbBody'),sbEmpty=document.getElementById('sbEmpty');
+function row(cls,inner){const d=document.createElement('div');d.className='sb-row '+cls;d.innerHTML=inner;return d;}
+function renderSidebar(){
+  projList.innerHTML='';
+  PROJECTS.forEach((p,i)=>{
+    const nm=`<span class="nm">${p.name}</span>${p.remote?'<span class="rm">(remote)</span>':''}`;
+    const r=row('proj',`<span class="sb-dot" style="background:${p.dot}"></span>${nm}<span class="ct ${p.count===0?'zero':''}">${p.count}</span>`);
+    r.dataset.proj=p.name;r.tabIndex=0;
+    r.addEventListener('click',()=>{const on=r.classList.toggle('active');
+      projList.querySelectorAll('.sb-row.proj').forEach(x=>{if(x!==r)x.classList.remove('active')});
+      filterDocs();});
+    projList.appendChild(r);
+    p.docs.forEach(d=>{
+      const dr=row('doc',`${d.att?IC_DOC:''}<span class="nm">${d.t}</span>`);
+      dr.dataset.proj=p.name;dr.dataset.text=d.t.toLowerCase();dr.tabIndex=0;dr.title='docs/'+p.name.toLowerCase()+'/'+d.t;
+      dr.addEventListener('click',()=>{projList.querySelectorAll('.sb-row.doc').forEach(x=>x.classList.remove('active'));dr.classList.add('active');});
+      projList.appendChild(dr);
+    });
+  });
+  filterDocs();
+}
+function filterDocs(){
+  const q=document.getElementById('filterInput').value.trim().toLowerCase();
+  const act=projList.querySelector('.sb-row.proj.active');
+  let vis=0;
+  projList.querySelectorAll('.sb-row').forEach(r=>{
+    const okQ=!q||r.dataset.proj.toLowerCase().includes(q)||(r.dataset.text||'').includes(q);
+    const okP=!act||r===act||r.dataset.proj===act.dataset.proj;
+    const show=okQ&&okP;if(show)vis++;r.style.display=show?'':'none';});
+  sbEmpty.style.display=vis?'none':'block';
+}
+renderSidebar();
+document.getElementById('clearBtn').addEventListener('click',()=>{
+  document.getElementById('filterInput').value='';typeSel.clear();statusSel.clear();
+  projList.querySelectorAll('.active').forEach(x=>x.classList.remove('active'));filterDocs();});
+document.getElementById('filterInput').addEventListener('input',filterDocs);
+
+/* chips */
+function chips(hostId,items,cb){const host=document.getElementById(hostId);items.forEach(([v,n])=>{
+  const c=document.createElement('button');c.className='chip';c.innerHTML=`${v} <span class="n">${n}</span>`;
+  c.addEventListener('click',()=>{const on=!c.classList.contains('active');
+    host.querySelectorAll('.chip').forEach(x=>x.classList.remove('active'));if(on)c.classList.add('active');cb(on?v:'');});
+  host.appendChild(c);});}
+chips('typeChips',[['spec',9],['report',14],['note',31],['data',4],['log',11]],()=>{});
+chips('statusChips',[['solved',22],['open',17],['auditing',6],['published',9]],()=>{});
+
+/* ── 自绘下拉 ── */
+function dropdown(mount,label,options){
+  const wrap=document.createElement('div');wrap.className='dd';
+  wrap.innerHTML=`<button class="dd-face" aria-haspopup="listbox" aria-expanded="false" tabindex="0">
+    <span class="lb">${label}</span><svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+    <div class="dd-pop" role="listbox"></div>`;
+  const face=wrap.querySelector('.dd-face'),pop=wrap.querySelector('.dd-pop'),lb=wrap.querySelector('.lb');
+  let val='',hl=0;
+  const opts=options.map(([v,n],i)=>{
+    const o=document.createElement('div');o.className='dd-opt';o.setAttribute('role','option');o.tabIndex=-1;
+    o.innerHTML=`<span>${v}</span><svg class="ck" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>${n!=null?`<span class="n">${n}</span>`:''}`;
+    o.addEventListener('click',()=>pick(v));pop.appendChild(o);return o;});
+  function paint(){opts.forEach((o,i)=>{o.classList.toggle('sel',options[i][0]===val);o.classList.toggle('hl',i===hl);});}
+  function open(v){wrap.classList.toggle('open',v);face.setAttribute('aria-expanded',v);if(v){hl=Math.max(0,opts.findIndex(o=>o.classList.contains('sel')));paint();}}
+  function pick(v){val=v;lb.textContent=v||label;open(false);face.focus();}
+  face.addEventListener('click',()=>open(!wrap.classList.contains('open')));
+  face.addEventListener('keydown',e=>{
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();if(!wrap.classList.contains('open')){open(true);return;}
+      hl=(hl+(e.key==='ArrowDown'?1:-1)+opts.length)%opts.length;paint();}
+    else if(e.key==='Enter'){e.preventDefault();if(wrap.classList.contains('open'))pick(options[hl][0]);else open(true);}
+    else if(e.key==='Escape'){open(false);}
+    else if(e.key==='Home'){hl=0;paint();}else if(e.key==='End'){hl=opts.length-1;paint();}});
+  document.addEventListener('click',e=>{if(!wrap.contains(e.target))open(false);});
+  mount.appendChild(wrap);
+  return {clear(){val='';lb.textContent=label;open(false);paint();}};
+}
+const facets=document.getElementById('facets');
+dropdown(facets,'All',[['All',null],['Documents',132],['Attachments',26]]);
+const typeSel=dropdown(facets,'All types',[['All types',null],['spec',9],['report',14],['note',31],['data',4]]);
+const statusSel=dropdown(facets,'All statuses',[['All statuses',null],['solved',22],['open',17],['auditing',6]]);
+
+/* ── Refresh busy / 缩放 / 节点画布 ── */
+document.getElementById('refreshBtn').addEventListener('click',function(){
+  this.classList.add('busy');setTimeout(()=>this.classList.remove('busy'),900);});
+const gview=document.getElementById('gview'),gworld=document.getElementById('gworld');let scale=1;
+document.querySelectorAll('.zbtn').forEach(b=>b.addEventListener('click',()=>{
+  if(b.dataset.z==='in')scale=Math.min(2,scale*1.15);else if(b.dataset.z==='out')scale=Math.max(.5,scale/1.15);else scale=1;
+  gworld.setAttribute('transform',`translate(450 310) scale(${scale}) translate(-450 -310)`);}));
+(function seed(){
+  const NS='http://www.w3.org/2000/svg',nodes=[],edges=[];
+  const rnd=(a,b)=>a+Math.random()*(b-a);
+  for(let i=0;i<64;i++){const hub=i<5;
+    nodes.push({x:450+rnd(-1,1)*(hub?40:230),y:310+rnd(-1,1)*(hub?35:215),r:hub?7.5:rnd(3,5.5),hub,att:i%13===0,stub:i%17===0});}
+  for(let i=5;i<40;i++){const a=nodes[i%5],b=nodes[i];edges.push([a,b]);}
+  for(let i=5;i<nodes.length;i+=3){edges.push([nodes[5+(i%8)],nodes[i]]);}
+  const ge=document.getElementById('gedges');
+  edges.forEach(([a,b])=>{const p=document.createElementNS(NS,'path');
+    const mx=(a.x+b.x)/2,my=(a.y+b.y)/2+.10*Math.hypot(b.x-a.x,b.y-a.y);
+    p.setAttribute('d',`M${a.x} ${a.y} Q${mx} ${my} ${b.x} ${b.y}`);ge.appendChild(p);});
+  const gn=document.getElementById('gnodes');
+  nodes.forEach(n=>{let el;
+    if(n.stub){el=document.createElementNS(NS,'circle');
+      el.setAttribute('r',4.5);el.setAttribute('fill','none');el.setAttribute('stroke','#71767e');el.setAttribute('stroke-dasharray','2 2');}
+    else if(n.att){el=document.createElementNS(NS,'rect');
+      el.setAttribute('x',-5);el.setAttribute('y',-5);el.setAttribute('width',10);el.setAttribute('height',10);el.setAttribute('rx',3);
+      el.setAttribute('fill','#71767e');el.setAttribute('stroke','#2b2f36');el.setAttribute('transform',`translate(${n.x} ${n.y})`);}
+    else{el=document.createElementNS(NS,'circle');el.setAttribute('r',n.r);
+      el.setAttribute('fill',n.hub?'#565c66':'#9aa0a8');
+      if(n.hub){el.setAttribute('stroke','rgb(91 127 191 / .9)');el.setAttribute('stroke-width',1.5);}}
+    if(!n.att){el.setAttribute('cx',n.x);el.setAttribute('cy',n.y);}
+    el.style.cursor='pointer';
+    el.addEventListener('mouseenter',()=>{const tip=document.getElementById('wtip');const pane=document.getElementById('pane');
+      tip.querySelector('.tt').textContent=n.hub?'CZT 项目进展报告（2x）':(n.att?'fig2_diffusion_vs_depth.svg':'探测器参数核对单审计记录');
+      tip.querySelector('.tp').textContent='docs/czt/'+(n.att?'figures/fig2_diffusion_vs_depth.svg':'progress-report.md');
+      tip.querySelector('.tm').textContent=n.att?'attachment':'solved · 6 links';
+      tip.style.display='block';
+      const pr=pane.getBoundingClientRect(),sr=gview.getBoundingClientRect();
+      tip.style.left=Math.max(8,Math.min((n.x/900)*sr.width-110,sr.width-260))+'px';
+      tip.style.top=Math.max(8,(n.y/620)*sr.height-54)+'px';});
+    el.addEventListener('mouseleave',()=>{document.getElementById('wtip').style.display='none';});
+    gn.appendChild(el);});
+})();
+
+/* ── §1.5 行为演示 ── */
+const S={open:false,dismissed:false,tab:'chat'};
+const demoSide=document.getElementById('demoSide'),demoBadge=document.getElementById('demoBadge'),
+      tabGraph=document.getElementById('tabGraph'),tabMd=document.getElementById('tabMd'),demoLog=document.getElementById('demoLog');
+function paint(){
+  demoSide.classList.toggle('hidden',!(S.open&&S.tab==='graph'));
+  demoBadge.style.display=S.dismissed?'':'none';
+  tabGraph.classList.toggle('on',S.tab==='graph');tabMd.classList.toggle('on',S.tab==='md');
+}
+function log(msg){const d=document.createElement('div');d.innerHTML=msg;demoLog.appendChild(d);}
+function becameVisible(src){
+  if(S.tab!=='graph')return;
+  if(window.innerWidth<=0)return /* R8 占位 */;
+  if(S.dismissed){log(`${src} → dismissed=true ⇒ <span class="k">不弹开</span>（R5/R6 生效中）`);paint();return;}
+  S.open=true;paint();log(`${src} → <span class="k">Side Bar 自动展开</span>（showSidePanel('files')，持久化 collapsed=false）`);
+}
+document.getElementById('dOpen').onclick=()=>{S.tab='graph';log('打开图谱 tab：');becameVisible('state 1');};
+document.getElementById('dClose').onclick=()=>{if(S.tab!=='graph'||!S.open){log('⌘B：侧栏本就收着');return;}
+  S.open=false;S.dismissed=true;paint();log('⌘B 收起（图谱可见中）→ <span class="k">dismissed=true</span>，本会话不再弹开');};
+document.getElementById('dAway').onclick=()=>{S.tab='md';S.dismissed=false;paint();log('切到 md 页签 → 列表卸载、文件树还原；<span class="k">dismissed 清除</span>（会话结束，绝不自动收起）');};
+document.getElementById('dBack').onclick=()=>{S.tab='graph';log('切回图谱页签：');becameVisible('state 3');};
+document.getElementById('dReset').onclick=()=>{S.open=false;S.dismissed=false;S.tab='chat';demoLog.innerHTML='— 已重置：Side Bar 折叠，无 dismissed 标志';paint();};
+paint();
+</script>
+</body>
+</html>
