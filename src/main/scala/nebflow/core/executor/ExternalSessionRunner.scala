@@ -356,6 +356,11 @@ You will be notified when it completes via a system message. Do NOT duplicate th
       .flatMap { pb =>
         IO.blocking {
           val p = pb.start()
+          // codex-spawn-fix 批 2026-10-19 死因②：spawn 后立即关闭子进程 stdin——
+          // codex exec 发现 stdin 可读就「Reading additional input from stdin...」
+          // 永等（引擎会话 40 秒变 orphan 的要因）；exec 模式的 claude/zcode/codex
+          // 任务文本全走 argv，零 stdin 依赖，统一关闭。
+          sealChildStdin(p)
           // stderr 全量入缓冲（错误面留痕），不入流帧——读取线程 = 守护线程。
           val errThread = new Thread(() =>
             val reader = new java.io.BufferedReader(new java.io.InputStreamReader(p.getErrorStream))
@@ -414,6 +419,21 @@ You will be notified when it completes via a system message. Do NOT duplicate th
     pb.directory(new java.io.File(spec.workspace))
     pb.redirectErrorStream(false)
     pb
+
+  /**
+   * spawn 后立即关闭子进程 stdin（所有外部执行器统一）。实现选型 =
+   * start 后关闭管道写端（`getOutputStream.close()`），而非
+   * `redirectInput(Redirect.from(/dev/null))`：
+   *   - 跨平台——/dev/null 在 Windows 不存在，start() 会抛 IOException
+   *     （shell.scala 的 Windows 分支正因同一教训另走 PIPE），引擎发 Windows 版，
+   *     此处引入 /dev/null 即 Windows 回归；
+   *   - 语义等价：子进程读 stdin 立即得 EOF（codex 不再永等 input）；
+   *   - 三适配器零 stdin 依赖已确认：claude `-p` / zcode `-p` / codex `exec`
+   *     的任务文本全部走 argv，exec/print 模式均不读 stdin。
+   */
+  private[executor] def sealChildStdin(p: java.lang.Process): Unit =
+    try p.getOutputStream.close()
+    catch case _: Throwable => () // 已关闭/进程早夭——无害，终态由 readLoop/settle 判定
 
   /** stdout 读取循环：行 → 缓冲 + 帧解析 → WS；进程退出后 settle。 */
   private def readLoop(
