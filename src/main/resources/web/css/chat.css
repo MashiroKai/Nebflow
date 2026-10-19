@@ -833,6 +833,18 @@
 .duration-badge .msg-recall svg { width: 11px; height: 11px; }
 .duration-badge .msg-recall:hover { opacity: 0.6; color: var(--color-warning, #e5a00d); }
 
+/* f1-send-queue：待送达小标（离线入队乐观气泡 footer 的时钟标）。
+   对齐 meta 行既有语言：与 .msg-copy/.msg-recall 同档 11px 灰小标，只加小标不改
+   布局（badge 为 inline-flex gap:6px，小标作为首子项天然入距）；补发送达后摘除。 */
+.duration-badge .msg-pending-mark {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.45;
+  padding: 1px;
+  color: var(--color-text);
+}
+.duration-badge .msg-pending-mark svg { width: 11px; height: 11px; }
+
 .bubble {
   /* 气泡宽度上限 = 消息列宽的 80%。百分比相对 .row 内容盒解析——.row 作为 #chat
      （无水平 padding 的纵向 flex）的拉伸子项恒为全行宽，故长内容只换行、永不

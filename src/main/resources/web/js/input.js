@@ -4,7 +4,7 @@
 import state, { LS_HISTORY_KEY } from './state.js';
 import { key } from './branding.js';
 import { activeView, setActiveView, chatViews, findViewBySessionId } from './chatView.js';
-import { sendWs } from './ws.js';
+import { sendWs, onReconnect, onMessage } from './ws.js';
 import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview, renderAskBubble, renderSkillBubble, cancelToolStreamRAF, refreshSendButtonState } from './chat.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll } from './utils.js';
 import { saveMsg } from './persistence.js';
@@ -44,9 +44,10 @@ export { addFileAttachment, wireAttachmentsOf, isRefOnlyFrame, syncRefOnlyGate, 
 
 // ---------- 真人消息 turn 标志（2026-09-16 msunread-r2；作者裁定 ①）----------
 // 「本机派发了一条真人消息 = 本 turn 的起点」的 per-session turn 级标志。
-// 置位点 = 本文件四个**真人派发**点，与既有 `state.turnExpecting[sid] = true`
+// 置位点 = 本文件五个**真人派发**点，与既有 `state.turnExpecting[sid] = true`
 // **同点同条件**：① `send()` skill 支 ② `send()` ask 支 ③ `send()` 普通支
-// ④ `drainMessageQueue`（排队消息真派发台）。
+// ④ `drainMessageQueue`（排队消息真派发台）⑤ `dispatchOfflineItem`
+// （f1-send-queue：断线入队消息的重连补发真派发台）。
 // 为什么不复用 `turnExpecting`：后端 `sessionBusy{busy:true}`（main.js）同样置它
 // ⇒ 纯程序 turn（REST `rest-turn` / CLI）与真人 turn **不可分**（真渲染读数：两侧
 // 帧序同为 sessionBusy→done→sessionBusy，均被置位）。本标志只由本文件（真人派发）
@@ -235,7 +236,19 @@ export function send(resendId) {
     return;
   }
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
-    console.warn('[send] ws not open:', { ws: !!state.ws, readyState: state.ws?.readyState });
+    // f1-send-queue 批（2026-10-19 · mobile-sync 审计 S4 = 头号丢面）：WS 未开
+    // 不再静默早退（修前 = 消息不入队、不上屏、零提示直接消失）。改走既有客户端
+    // 消息队列（persistQueue 持久化轨，刷新/重启浏览器不丢），乐观气泡上屏为
+    // 「待送达」态；重连后 flushOfflineQueue 按入队时钉死的 clientMessageId 自动
+    // 补发（#569 同 id 幂等轨：服务端见过 ⇒ messageDuplicate 丢弃，没见过 ⇒ 正常
+    // 受理 ⇒ 恰一次，无双发）。
+    // `/ask <q>` 不入队：ask 帧型在队列/drain 无承载（type:'ask' 帧），保持原早退
+    // （本批残余面，证据档申报）。
+    if (text.startsWith('/ask ')) {
+      console.warn('[send] ws not open — /ask not queued:', { readyState: state.ws?.readyState });
+      return;
+    }
+    enqueueOfflineMessage(v, text);
     return;
   }
   v.isSending = true;
@@ -394,6 +407,9 @@ export function armBusyWatchdogFor(sid) {
 
 let queueCounter = 0;
 const LS_QUEUE_KEY = key('message_queue');
+// f1-send-queue：队列容量 100（与 ws.js PENDING_SEND_CAP 同律 = 「cap100 那套」）——
+// 有界防长时间离线/繁忙导致内存与 localStorage 无界增长；溢出丢最旧 + 可见告警。
+const QUEUE_CAP = 100;
 
 /** Persist message queue to localStorage so it survives browser refresh.
  *  Exported for sidebar.js deleteSession — a deleted session's queue entries
@@ -412,6 +428,10 @@ export function persistQueue() {
         mode: it.mode || null,
         // resend-dedup 批：幂等键随队列项跨刷新存活（drain 腿同 id 复用的前提）。
         clientMessageId: it.clientMessageId || null,
+        // f1-send-queue：offline 标记随队列跨刷新存活（重连补发的拣选面）。
+        // rendered 刻意**不落盘**——刷新后乐观气泡不在场，恢复项按未渲染走
+        // （派发时活跃视图补渲），否则刷新后永远等不到翻面、气泡也永远不会出现。
+        offline: it.offline === true,
         // v2 B15: taskRef chips must survive refresh — keep taskId/sessionId
         // (+ subject as the display name); #303: ref blocks keep their full
         // Reference shape; file/image keep type+name plus their CLASSIFICATION
@@ -484,24 +504,214 @@ window.addEventListener('queuebar-refresh', (e) => {
   refreshQueue(e.detail.sessionId);
 });
 
-function queueMessage(view, text, attachments, skillName, mode) {
+function queueMessage(view, text, attachments, skillName, mode, extra) {
   const sid = view.sessionId;
   // resend-dedup 批：排队时就把幂等键钉在队列项上（不是 drain 时现生成）——
   // 这条逻辑消息此后无论 drain 几次、跨几次刷新，线上帧都带同一个 id；
   // 排队项的任何重复派发都会被服务端按 id 去重。
+  // f1-send-queue：`extra` = 离线腿的标记注入面（{offline, rendered}），入队即钉死。
   const item = {
     id: ++queueCounter,
     text,
     attachments: attachments.map(a => ({ ...a })),
     skillName,
     mode,
-    clientMessageId: Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+    clientMessageId: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    ...(extra || {})
   };
   if (!state.messageQueue[sid]) state.messageQueue[sid] = [];
   state.messageQueue[sid].push(item);
+  // f1-send-queue：cap100 溢出丢最旧（与 ws.js pendingSends 同律）+ **可见告警**
+  // （审计 F1：溢出不得静默）。丢掉的若是已上屏的离线乐观气泡，连气泡一并收掉——
+  // 消息已不在场，UI 不得继续谎称「待送达」。
+  while (state.messageQueue[sid].length > QUEUE_CAP) {
+    const dropped = state.messageQueue[sid].shift();
+    console.warn('[input] queue overflow (cap ' + QUEUE_CAP + ') — dropped oldest item #' + (dropped && dropped.id));
+    showToast(t('input.queueOverflow'), 'error');
+    if (dropped && dropped.rendered) removeOfflineBubble(sid, dropped.clientMessageId);
+  }
   refreshQueue(sid);
   persistQueue();
+  // f1-send-queue：返回项 = 调用方取入队钉死的 clientMessageId（离线腿挂气泡用）。
+  return item;
 }
+
+// ---------- f1-send-queue：断线入队（「待送达」态）与重连自动补发 ----------
+// 审计 S4（mobile-sync 2026-10-19）：WS 未开时按 Enter 发纯文本 = 静默丢（最大丢面）。
+// 本簇语义 = 微信式「待送达」：
+//   · 入队 = 既有 queueMessage 轨（offline:true 标记 = 补发拣选面；persistQueue 持久化
+//     ⇒ 刷新/重启浏览器不丢）；busy 排队项**不带** offline 标记 ⇒ 两轨不混（busy 项仍
+//     等 done 终态 drain，补发腿不抢）。
+//   · 上屏 = 乐观气泡照常渲染，footer 带时钟小标（msg-pending-mark）；行 data-msg-id =
+//     入队钉死的 clientMessageId ⇒ 翻面/去重/撤回收泡的寻址面。
+//   · 历史/落盘不在入队点做（drain/flush 派发点做一次，与 busy 排队腿同律——入队点
+//     做会在派发点重复）。
+//   · 补发 = onReconnect（含首连）flushOfflineQueue 按 pinned id 派发；sendWs 写出
+//     成功 ⇒ 出队 + 登记 offlineDeliveredPendingUI；返 false（帧转 ws.js pendingSends
+//     内存轨）⇒ 项留队、小标不翻，下次 open 同 id 再补——双发由服务端判重兜（#569）。
+//   · 翻面/补渲的单点 = materializeOfflineBubbles：重连 historyPage 初载会整替 DOM
+//     （审计 S6），乐观气泡可能被抹 ⇒ 登记项在 historyPage 后/2s 兜底统一落实
+//     「行在场且无小标」；历史页已含同文用户消息（服务端先落盘的竞态）⇒ 不补渲防重复。
+
+/** WS 未开时的离线入队腿（send() 普通支 :237 族的唯一调用点）。 */
+function enqueueOfflineMessage(v, text) {
+  const item = queueMessage(v, text, v.pendingAttachments, null, null, { offline: true, rendered: true });
+  renderUserBubble(text, v.pendingAttachments, undefined, { msgId: item.clientMessageId, pending: true });
+  const input = v.dom.input;
+  input.value = '';
+  input.style.height = 'auto';
+  v.pendingAttachments = [];
+  v.dom.attPreview.innerHTML = '';
+  renderQuoteStrip({ attPreviewEl: v.dom.attPreview, attachments: v.pendingAttachments }); // 引用 chip 随 pending 清空（同发送/排队腿）
+  saveInputDraft(v.sessionId);
+  setTimeout(() => { v.isSending = false; }, 300);
+}
+
+/** 摘掉待送达小标（翻已送达态）。同页命内乐观气泡的寻址面 = 行 data-msg-id。
+ *  返回行是否在场（不在场 = 已被 historyPage 整替抹掉，调用方走补渲台）。 */
+function flipOfflineMark(sid, msgId) {
+  if (!msgId) return false;
+  const view = (sid && findViewBySessionId(sid)) || activeView;
+  const row = view?.dom?.chat?.querySelector(`.row.user[data-msg-id="${msgId}"]`);
+  if (!row) return false;
+  row.querySelector('.msg-pending-mark')?.remove();
+  return true;
+}
+
+/** 收掉离线乐观气泡（撤回/移除/溢出丢弃时——消息不在场，UI 不得谎称待送达）。
+ *  选择器不带 .user 前缀：renderUserBubble 的随行媒体卡挂同一 msgId，一起收。 */
+function removeOfflineBubble(sid, msgId) {
+  if (!msgId) return;
+  const view = (sid && findViewBySessionId(sid)) || activeView;
+  view?.dom?.chat?.querySelectorAll(`[data-msg-id="${msgId}"]`).forEach(el => {
+    (el.closest('.row') || el).remove();
+  });
+}
+
+// sid → [{ text, attachments, msgId }]：已派发（帧已写出）但「气泡最终态」未落实的
+// 离线项。落实 = materializeOfflineBubbles（historyPage 后 + 2s 兜底双触发）。
+// 项常驻至某次 historyPage 落实后清除；从不清仓的残余（本会话再无 historyPage）
+// 每页命数条封顶，可忽略。
+const offlineDeliveredPendingUI = new Map();
+
+function registerOfflineDelivered(sid, item, msgId) {
+  const key = sid || '';
+  if (!offlineDeliveredPendingUI.has(key)) offlineDeliveredPendingUI.set(key, []);
+  offlineDeliveredPendingUI.get(key).push({ text: item.text, attachments: item.attachments, msgId });
+  // 兜底：无 historyPage 可循（会话未重载/帧丢失）时 2s 后自行落实。
+  setTimeout(() => materializeOfflineBubbles(key, undefined), 2000);
+}
+
+/**
+ * 落实已派发离线项的气泡终态：行在 ⇒ 摘小标；行不在（被 historyPage 抹掉/跨刷新
+ * 从未渲染）⇒ 补渲（无小标 = 已送达态）。historyMsgs 在场时先查重——服务端已把
+ * 本条落盘进历史页（补发帧先于 getHistory 被处理的竞态）⇒ 历史行就是它的呈现，
+ * 再补一份就是重复气泡。
+ */
+function materializeOfflineBubbles(sid, historyMsgs) {
+  const list = offlineDeliveredPendingUI.get(sid);
+  if (!list || list.length === 0) return;
+  const view = sid ? findViewBySessionId(sid) : activeView;
+  // 非活跃视图不补渲（气泡由落盘缓存/下次切会话的历史真值源承担）；登记保留。
+  if (!view || !activeView) return;
+  if (sid && activeView.sessionId !== sid) return;
+  for (const entry of list) {
+    const row = view.dom.chat?.querySelector(`.row.user[data-msg-id="${entry.msgId}"]`);
+    if (row) { row.querySelector('.msg-pending-mark')?.remove(); continue; }
+    const inHistory = Array.isArray(historyMsgs)
+      && historyMsgs.some(m => m && m.type === 'user' && m.text === entry.text);
+    if (inHistory) continue;
+    renderUserBubble(entry.text, entry.attachments || [], undefined, { msgId: entry.msgId });
+  }
+  // historyPage 触发 = 权威落实点（整替已完成，此后直到下次重连不再被抹）⇒ 清仓；
+  // 兜底定时器触发（historyMsgs undefined）不清仓——后续真来的 historyPage 还要再核。
+  if (historyMsgs !== undefined) offlineDeliveredPendingUI.delete(sid);
+}
+
+/** 重连（含首连）后补发全部 offline 标记项（ws.js onopen 回调注册点在本簇尾）。 */
+export function flushOfflineQueue() {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  for (const [sid, items] of Object.entries(state.messageQueue)) {
+    if (!Array.isArray(items) || items.length === 0) continue;
+    // 每轮重新 find：dispatchOfflineItem 成功即出队，find 自然前进；失败（ws 中途
+    // 又断）⇒ 留队并整体停轮（保序，剩余项留待下次 open）。
+    let item;
+    while ((item = items.find(it => it && it.offline))) {
+      if (!dispatchOfflineItem(sid === 'null' ? null : sid, item)) return;
+    }
+  }
+}
+
+/** 单条离线项的真派发台（真人派发点 ⑤）。帧形与 drainMessageQueue 普通支逐字同构。 */
+function dispatchOfflineItem(sid, item) {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return false;
+  const view = sid ? findViewBySessionId(sid) : null;
+  // resend-dedup 批：幂等键 = 入队时钉死的 clientMessageId（存量恢复项现场补一枚）。
+  const clientMessageId = item.clientMessageId
+    || (item.clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+  const taskRefs = (item.attachments || []).filter(a => a.type === 'taskRef');
+  const refs = (item.attachments || []).filter(a => a.type === 'ref');
+  notifyFriendRefsSent(refs);
+  const sent = sendWs({
+    content: item.text,
+    ...(taskRefs.length > 0 ? { taskRefs: taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sid })) } : {}),
+    ...(refs.length > 0 ? { refs: refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) })) } : {}),
+    attachments: (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref').map(a => ({
+      mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
+    })),
+    clientMessageId,
+    sessionId: sid,
+    chatWidth: view?.dom?.chat?.clientWidth || 0
+  });
+  if (!sent) return false; // 帧在 ws.js pendingSends 内存轨；项留队，下次 open 同 id 再补
+  // 写出成功 ⇒ 出队 + 持久化（先出队 = 「移出即已派发」口径，同 sendImmediate）
+  const q = state.messageQueue[sid];
+  if (q) { const idx = q.indexOf(item); if (idx >= 0) q.splice(idx, 1); }
+  refreshQueue(sid);
+  persistQueue();
+  // 呈现面：行还在（同页命、未被整替）⇒ 原地摘小标翻已送达态；登记进
+  // offlineDeliveredPendingUI 由 materializeOfflineBubbles 兜底最终态（S6 整替窗口）。
+  flipOfflineMark(sid, clientMessageId);
+  registerOfflineDelivered(sid, item, clientMessageId);
+  // 落盘 + 入历史（恰好一次 = 派发点；入队点刻意不做）
+  saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => a.type === 'taskRef'
+    ? { type: a.type, name: a.subject, taskId: a.taskId, sessionId: a.sessionId, subject: a.subject }
+    : a.type === 'ref'
+      ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display }
+      : { type: a.type, name: a.name, preview: a.preview }) }, sid);
+  if (item.text) {
+    state.inputHistory.push(item.text);
+    if (state.inputHistory.length > 200) state.inputHistory = state.inputHistory.slice(-200);
+    try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch (e) {}
+  }
+  // turn 簿记（同 send()/drainMessageQueue：本次派发 = 新 turn 起点 ⇒ 取代上一 turn
+  // 终止戳、武装看门；服务端 busy 中 ⇒ 帧由服务端排队受理，busy 登记本就恒真）。
+  if (sid) {
+    state.turnExpecting[sid] = true; markRealUserTurn(sid);
+    state.lastUserSendId[sid] = clientMessageId;
+    delete state.lastTerminalAt[sid];
+  }
+  setBusy(sid);
+  state.turnStartTimes[sid] = Date.now();
+  armBusyWatchdogFor(sid);
+  return true;
+}
+
+// 首连/重连收口点：ws.js onopen 在 flushPendingSends 之后、引导帧族之后调
+// reconnectCallbacks —— 离线项补发先行，历史重拉（main.js onReconnect）随后。
+onReconnect(() => {
+  try { flushOfflineQueue(); } catch (e) { console.error('[input] offline flush failed:', e); }
+});
+
+// historyPage 后落实离线气泡终态（S6 整替窗口的收口）。input.js 模块先于 main.js
+// 求值 ⇒ 本处理器注册在前、同步段先跑；setTimeout(0) 把落实推到 main.js 处理器
+// （整替+历史重渲）完成之后。
+onMessage('historyPage', (msg) => {
+  const sid = msg && msg.sessionId;
+  setTimeout(() => {
+    try { materializeOfflineBubbles(sid || '', msg && msg.messages); } catch (e) { /* 呈现兜底不炸处理器 */ }
+  }, 0);
+});
 
 function sendImmediate(sessionId, item) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
@@ -553,7 +763,11 @@ function sendImmediate(sessionId, item) {
   }
   // Render in chat
   // resend-dedup 批：renderUserBubble 落 data-msg-id = 幂等键（与普通发送同键）。
-  if (activeView && activeView.sessionId === sessionId) {
+  // f1-send-queue：rendered 项（离线入队的乐观气泡已在场）零新增呈现 —— 摘掉
+  // 待送达小标即「已送达」翻面；重渲一份就是重复气泡。
+  if (item.rendered) {
+    flipOfflineMark(sessionId, itemMsgId);
+  } else if (activeView && activeView.sessionId === sessionId) {
     if (item.mode === 'compact') {
       renderSystemBubble(item.text ? t('slash.compactDone') + ' — ' + item.text : t('slash.compactDone'));
     } else if (item.skillName) {
@@ -588,6 +802,8 @@ function removeQueuedItem(sessionId, item) {
   if (!q) return;
   const idx = q.indexOf(item);
   if (idx >= 0) q.splice(idx, 1);
+  // f1-send-queue：离线乐观气泡随移除一并收掉（消息已不在场，不留谎称待送达的壳）。
+  if (item.rendered) removeOfflineBubble(sessionId, item.clientMessageId);
   refreshQueue(sessionId);
   persistQueue();
 }
@@ -598,6 +814,9 @@ function recallQueuedItem(sessionId, item) {
   if (!q) return;
   const idx = q.indexOf(item);
   if (idx >= 0) q.splice(idx, 1);
+  // f1-send-queue：离线乐观气泡随撤回一并收掉（文本回输入框重编 = 该条逻辑消息
+  // 已撤回；气泡留着会继续显示「待送达」却永远不会补发）。
+  if (item.rendered) removeOfflineBubble(sessionId, item.clientMessageId);
   refreshQueue(sessionId);
   persistQueue();
 
@@ -678,7 +897,11 @@ export function drainMessageQueue(sessionId) {
   persistQueue();
 
   // Render in chat (only if this session is the active view)
-  if (view && activeView && activeView.sessionId === sessionId) {
+  // f1-send-queue：rendered 项（离线入队的乐观气泡已在场）零新增呈现 —— 摘掉
+  // 待送达小标即可；重渲一份就是重复气泡（与 sendImmediate 同律）。
+  if (item.rendered) {
+    flipOfflineMark(sessionId, item.clientMessageId);
+  } else if (view && activeView && activeView.sessionId === sessionId) {
     if (item.mode === 'compact') {
       renderSystemBubble(item.text ? t('slash.compactDone') + ' — ' + item.text : t('slash.compactDone'));
     } else if (item.skillName) {

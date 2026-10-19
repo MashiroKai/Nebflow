@@ -651,6 +651,9 @@ export default {
   'input.voiceError': 'Voice input not supported in this browser. Try Chrome.',
   'input.queued': 'Queued',
   'input.sendImmediate': 'Send Now',
+  // f1-send-queue (2026-10-19): pending-mark tooltip for offline-queued bubbles + queue overflow toast.
+  'chat.pendingSend': 'Pending - auto-resends on reconnect',
+  'input.queueOverflow': 'Message queue full (100): oldest message dropped',
   'input.pasteTooLarge': 'Pasted content too large (>300KB) - inserted as plain text instead',
   'input.removeQueued': 'Remove',
   // fwdguard-impl (2026-09-17): gate hint for an empty-text + ref-only (forwarded)

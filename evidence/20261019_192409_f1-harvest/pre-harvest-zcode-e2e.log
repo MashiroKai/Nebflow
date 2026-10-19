@@ -1,0 +1,27 @@
+PASS  boot 后在线
+PASS  1a 断线发送零出线（未写 socket）  — inbound=0
+PASS  1b 气泡上屏（乐观呈现）  — count=1
+PASS  1c 气泡带「待送达」时钟小标  — marks=1
+FAIL  1d 入队持久化（localStorage 队列项 offline:true + pinned id）  — []
+PASS  1e 输入框已清空（发送语义闭环，不是草稿残留）
+PASS  1f 重连后自动补发恰一帧  — frames=1
+FAIL  1g 补发帧 = 入队钉死的同一 clientMessageId（#569 幂等轨）  — frame=mvf5jyoqv6fs, pinned=undefined
+FAIL  1h 零重复气泡（补发不渲染第二份）  — count=0
+PASS  1i 待送达小标已摘除（翻已送达态）  — marks=0
+PASS  1j 队列排空  — []
+FAIL  2a 断线入队（刷新前）  — []
+PASS  2b 刷新后重连仍自动补发恰一帧（persistQueue 轨）  — frames=1（connSeq 现值 3，刷新前 2）
+FAIL  2c 补发帧 id = 刷新前钉死的 id（跨刷新幂等键稳定）  — frame=mvf5jzwxsmqz, pinned=undefined
+PASS  2d 队列排空（刷新后）
+PASS  3a 在线发送即时出线恰一帧  — ["mvf5k1zy52v7"]
+PASS  3b 在线气泡**无**待送达小标  — bubbles=1, marks=0
+PASS  3c 在线发送不入队
+PASS  3d 全程零 pageerror  — []
+PASS  4a 旧静默早退形态已移除
+PASS  4b 早退腿改走离线入队
+PASS  4c offline 标记随 persistQueue 落盘
+PASS  4d 重连注册自动补发
+PASS  4e 队列 cap100 + 溢出告警
+PASS  4f renderUserBubble 支持 pending 小标
+
+5 FAILURE(S)
