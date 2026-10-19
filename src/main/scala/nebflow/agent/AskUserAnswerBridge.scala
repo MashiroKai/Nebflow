@@ -1,9 +1,12 @@
 package nebflow.agent
 
 import cats.effect.IO
+import cats.syntax.all.*
+import io.circe.Json
+import io.circe.syntax.*
 import nebflow.actor.*
-import nebflow.core.tools.{AskUserQuestionTool, ToolContext}
-import nebflow.shared.{AskItem, AskUserDispatch, NebflowLogger}
+import nebflow.core.tools.{AskUserQuestionTool, ImageInject, ToolContext}
+import nebflow.shared.{AskItem, AskUserAnswerAttachments, AskUserDispatch, ContentBlock, NebflowLogger}
 
 import scala.concurrent.duration.*
 
@@ -121,7 +124,11 @@ object AskUserAnswerBridge:
           s"answer and nothing is injected into session=${ctx.sessionId.getOrElse("<unknown>")}"
       )
     else
-      val text = AskUserQuestionTool.formatAnswer(items, answers)
+      // askuser-dragdrop 实施批（2026-10-19，批 #551）：剥取尾随**答复附件清单槽**
+      // （hub `complete` 只在帧带非空 attachments 时追加；无附件 ⇒ take 恒等透传，
+      // 注入文本与改前逐字节一致）。
+      val (slots, attachments) = AskUserAnswerAttachments.take(answers)
+      val text = AskUserQuestionTool.formatAnswer(items, slots)
       sessionAlive(ctx).flatMap {
         case false =>
           logger.warn(
@@ -129,19 +136,106 @@ object AskUserAnswerBridge:
               s"(sessionId=${ctx.sessionId.getOrElse("<unknown>")}); answer NOT delivered"
           )
         case true =>
-          logger.info(
-            s"askUser answer bridge: requestId=$requestId → injected as a user message into " +
-              s"session=${ctx.sessionId.getOrElse("<unknown>")} (${answers.size} answer slot(s))"
-          ) *>
-            (target ! AgentCommand.ImmediateInput(
-              text = text,
-              source = Some(AskUserAnswerSource.AnswerSource),
-              eventType = Some(AskUserAnswerSource.AnswerSource),
-              fromUser = true
-            ))
+          attachmentInjection(attachments, requestId, ctx).flatMap { case (attachText, imageBlocks, uiLines) =>
+            val injectText = if attachText.isEmpty then text else text + attachText
+            val uiText = if uiLines.isEmpty then injectText else injectText + uiLines
+            // blocks 在场 ⇒ LLM 消息取 blocks（Path 见 AgentProcessing drain）；UI 气泡
+            // 取 text。无附件 ⇒ blocks 缺席，与改前逐字节同形。
+            val blocksOpt =
+              if attachText.isEmpty then None
+              else Some(ContentBlock.Text(injectText) +: imageBlocks)
+            logger.info(
+              s"askUser answer bridge: requestId=$requestId → injected as a user message into " +
+                s"session=${ctx.sessionId.getOrElse("<unknown>")} (${slots.size} answer slot(s)" +
+                (if attachments.isEmpty then "" else s", ${attachments.size} attachment(s)") + ")"
+            ) *>
+              (target ! AgentCommand.ImmediateInput(
+                text = uiText,
+                blocks = blocksOpt,
+                source = Some(AskUserAnswerSource.AnswerSource),
+                eventType = Some(AskUserAnswerSource.AnswerSource),
+                fromUser = true
+              ))
+          }
       }
 
-  end deliver
+  /**
+   * 答复附件的**双通道注入物构造**（askuser-dragdrop 实施批，规格 §3.4）：
+   *
+   *   · 文本通道（全部附件）：路径清单行 —— 模型可对任意一条 `Read`（与出向
+   *     attachments 的 `FileRefs.describe` 口径同族：路径引用面）。
+   *   · vision 块（图片子集）：`mime` 以 `image/` 开头且 ≤10MB 的**前 5 张** →
+   *     `ContentBlock.Image`(base64) —— 数值对齐 `ImageInject` 既有上限（单源常量，
+   *     禁第二把尺）；>10MB 图片仅路径文本（模型可 Read / 开 Canvas）。
+   *
+   * 纯读盘 + 纯串构造，零写面；文件缺失 / 读失败 ⇒ 该件降级为「不可读」清单行，
+   * 绝不让一次读失败炸掉整个答复注入。
+   *
+   * @return (模型清单文本, 图片块, UI 气泡附加行)
+   */
+  private def attachmentInjection(
+    attachments: List[Json],
+    requestId: String,
+    ctx: ToolContext
+  ): IO[(String, List[ContentBlock.Image], String)] =
+    if attachments.isEmpty then IO.pure(("", Nil, ""))
+    else
+      val parsed = attachments.map { a =>
+        val c = a.hcursor
+        val path = c.downField("path").as[String].toOption.getOrElse("")
+        val name = c.downField("name").as[String].toOption.getOrElse(path.split('/').lastOption.getOrElse("file"))
+        val mime = c.downField("mime").as[String].toOption
+          .orElse(c.downField("mimeType").as[String].toOption)
+          .getOrElse("application/octet-stream")
+        val size = c.downField("size").as[Long].toOption.getOrElse(0L)
+        val sha = c.downField("sha256").as[String].toOption.getOrElse("")
+        (path, name, mime, size, sha)
+      }
+      val maxImages = ImageInject.MAX_ATTACHMENTS
+      val maxImageBytes = ImageInject.MAX_IMAGE_BYTES
+      def isFileOk(path: String, size: Long): Boolean =
+        try os.isFile(os.Path(path)) && os.size(os.Path(path)) == size
+        catch case _: Throwable => false
+      def readImage(path: String): IO[Option[String]] =
+        if !isFileOk(path, -1L) then IO.pure(None)
+        else
+          IO.blocking(java.util.Base64.getEncoder.encodeToString(os.read.bytes(os.Path(path))))
+            .map(Some(_))
+            .handleErrorWith(e =>
+              logger.warn(s"askUser answer bridge: requestId=$requestId — image read failed ($path): ${e.getMessage}")
+                .as(None)
+            )
+      // vision 子集：图片、文件仍在、≤10MB 的**前 5 张**（ImageInject 单源上限）。
+      val imageCandidates =
+        parsed.collect { case e @ (p, _, m, s, _) if m.startsWith("image/") && s > 0 && s <= maxImageBytes => e }
+          .take(maxImages)
+      val imageReads = imageCandidates.traverse { case (p, _, _, _, _) => readImage(p) }
+      imageReads.map { imageB64s =>
+        val lines = parsed.map { case (path, name, mime, size, sha) =>
+          val shaNote = if sha.nonEmpty then s", sha256=$sha" else ""
+          val unreadNote = if isFileOk(path, size) then "" else " (file missing or changed since upload)"
+          s"- $path — $name, $mime, $size bytes$shaNote$unreadNote"
+        }
+        val imageBlocks = imageCandidates.zip(imageB64s).collect { case ((_, _, mime, _, _), Some(b64)) =>
+          ContentBlock.Image(b64, mime)
+        }
+        val attachText =
+          "\n\nUser attached " + parsed.size + " file(s) with this answer:\n" + lines.mkString("\n") +
+            "\n(Read any of these paths for full content" +
+            (if imageBlocks.nonEmpty then "; the attached images are already visible to you" else "") +
+            ".)"
+        val uiLines = "\n\n" + parsed.map { case (path, name, mime, size, _) =>
+          s"- $name (${humanSize(size)})" + (if isFileOk(path, size) then "" else " · unavailable")
+        }.mkString("\n")
+        (attachText, imageBlocks, uiLines)
+      }
+  end attachmentInjection
+
+  /** 人可读大小（注入气泡行用；纯展示，禁进任何判据）。 */
+  private def humanSize(bytes: Long): String =
+    if bytes >= 1_048_576 then f"${bytes / 1048576.0}%.1f MB"
+    else if bytes >= 1024 then s"${bytes / 1024} KB"
+    else s"$bytes B"
 
   /**
    * 目标会话是否还在（注册表行存在 = 活着）。无 sharedResources / 无 sessionId

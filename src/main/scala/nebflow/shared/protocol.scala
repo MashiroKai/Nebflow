@@ -331,7 +331,21 @@ object UiMessage:
      * （+/− 高亮）。缺席即不落键 ⇒ 非 delegate 行与旧 `.ui.json` 行字节形态
      * **逐字相同**（intake/header/answerOf/quote 先例同款条件编码）。
      */
-    fileChanges: Option[Json] = None
+    fileChanges: Option[Json] = None,
+    /**
+     * **随卡回传的答复附件清单**（askuser-dragdrop 实施批 2026-10-19，批 #551）：
+     * 仅作答行（`answerOf` 在场）携带——用户在 AskUser 卡上拖入/粘贴/点选并经
+     * `POST /api/askuser/attachments` 落盘的文件引用。形状 = 上传端点响应记录
+     * `{id, seq, name, path, sha256, size, mime, kind}`，引擎不解释内部字段，原样
+     * 落盘原样下发；前端历史恢复腿（`renderAskUserHistory` 第 6 参）读它渲染
+     * 「已回答 · 附 N 个文件」徽标 + 只读 chips。
+     *
+     * 🔴 刻意**不复用** [[User.attachments]]：那个键被用户消息媒体面
+     * （`buildUserAttachmentRows`）消费——作答行若落同键会在历史恢复时对同一批
+     * 文件**双渲染**（气泡媒体行 + 卡片 chips）。缺席即不落键（既有行字节形态与
+     * 旧读法逐字不变；intake/header/answerOf/quote/fileChanges 先例同款条件编码）。
+     */
+    answerAttachments: Option[Json] = None
   ) extends UiMessage:
     val typeName = "user"
 
@@ -431,10 +445,23 @@ object UiMessage:
    *
    * `requestId` 为空/空白 ⇒ `answerOf = None`（缺席即不落键）：无从标记来源时宁可
    * 不标记，让前端回落邻接启发式，而不是落一个空串把「有标记」的语义也污染掉。
+   *
+   * `answerAttachments`（askuser-dragdrop 实施批 2026-10-19，批 #551）：随卡回传的
+   * 已落盘附件清单。非空 ⇒ 行文本尾部追加「（附 N 个文件）」（行内带计数利于检索；
+   * 清单本体在结构字段 `answerAttachments`，渲染层读结构不解析文本——设计稿 §3.3
+   * 原口径）。空 ⇒ 与改前逐字节同形（无尾行、不落键）。
    */
-  def askUserAnswer(answerText: String, requestId: String, timestamp: Long): User =
+  def askUserAnswer(answerText: String, requestId: String, timestamp: Long, answerAttachments: List[Json] = Nil): User =
     val rid = requestId.trim
-    User(answerText, timestamp = timestamp, answerOf = if rid.isEmpty then None else Some(rid))
+    val text =
+      if answerAttachments.isEmpty then answerText
+      else answerText + "\n（附 " + answerAttachments.size + " 个文件）"
+    User(
+      text,
+      timestamp = timestamp,
+      answerOf = if rid.isEmpty then None else Some(rid),
+      answerAttachments = if answerAttachments.isEmpty then None else Some(Json.fromValues(answerAttachments))
+    )
 
   given Encoder[UiMessage] = Encoder.instance {
     case m: User =>
@@ -463,7 +490,10 @@ object UiMessage:
       val withQuote = m.quote.fold(withAnswerOf)(q => withAnswerOf.deepMerge(Json.obj("quote" -> q)))
       // file-diff → 委托结果行（bug #58 修 2026-10-09）：diff 载荷缺席即不落键
       // ⇒ 非 delegate 行与旧字节形态逐字相同。
-      m.fileChanges.fold(withQuote)(fc => withQuote.deepMerge(Json.obj("fileChanges" -> fc)))
+      val withFileChanges = m.fileChanges.fold(withQuote)(fc => withQuote.deepMerge(Json.obj("fileChanges" -> fc)))
+      // askuser-dragdrop 实施批（2026-10-19，批 #551）：随卡回传的答复附件清单——
+      // 缺席即不落键（既有行字节形态逐字不变）。
+      m.answerAttachments.fold(withFileChanges)(a => withFileChanges.deepMerge(Json.obj("answerAttachments" -> a)))
     case m: Ai =>
       val base = Json.obj("type" -> "ai".asJson, "text" -> m.text.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
@@ -531,6 +561,9 @@ object UiMessage:
           quote <- cursor.downField("quote").as[Option[Json]]
           // file-diff → 委托结果行：diff 载荷（旧行无本键 ⇒ None，同上兼容纪律）
           fileChanges <- cursor.downField("fileChanges").as[Option[Json]]
+          // askuser-dragdrop 实施批（2026-10-19，批 #551）：随卡回传的答复附件清单
+          // （旧行无本键 ⇒ None，同上兼容纪律）
+          answerAttachments <- cursor.downField("answerAttachments").as[Option[Json]]
         yield User(
           text,
           atts.getOrElse(Nil),
@@ -545,7 +578,8 @@ object UiMessage:
           header,
           answerOf.filter(_.nonEmpty),
           quote,
-          fileChanges
+          fileChanges,
+          answerAttachments
         )
       case "ai" =>
         for

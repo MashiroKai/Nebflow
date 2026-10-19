@@ -113,6 +113,10 @@ object InteractionHub:
               // askuser-secret 批（2026-10-08）：只读 secret 槽位查询（网关作答闸的
               // 判据来源）——见 InteractionHubCommand.SecretSlotsOf 注。
               ctx.forkTurn(handleSecretSlotsOf(pending, requestId, reply)) *> IO.pure(behavior)
+            case InteractionHubCommand.AttachGateOf(requestId, reply) =>
+              // askuser-dragdrop 实施批（2026-10-19，批 #551）：只读附件闸查询
+              // （上传端点前置闸的判据来源）——见 InteractionHubCommand.AttachGateOf 注。
+              ctx.forkTurn(handleAttachGateOf(pending, requestId, reply)) *> IO.pure(behavior)
         }
       IO.pure(behavior)
     }
@@ -427,6 +431,24 @@ object InteractionHub:
         }
       )
       .flatMap(specs => (reply ! specs).void)
+
+  /**
+   * 只读查询（AttachGateOf，askuser-dragdrop 实施批 2026-10-19）：槽位在册且
+   * kind=AskUser ⇒ 回附件闸（root 会话 + 是否 secret 卡）；否则 None（端点按
+   * 卡不在册处理 → 410）。
+   */
+  private def handleAttachGateOf(
+    pending: Ref[IO, Map[String, PendingRequest]],
+    requestId: String,
+    reply: ActorRef[Option[AttachGate]]
+  ): IO[Unit] =
+    pending.get
+      .map(m =>
+        m.get(requestId).filter(_.kind == InteractionKind.AskUser).map { p =>
+          AttachGate(rootSessionId = p.rootSessionId, hasSecret = secretSlotsOf(p).nonEmpty)
+        }
+      )
+      .flatMap(gate => (reply ! gate).void)
 
   // ============================================================
   // 工具面按角色分化批 B6 (2026-09-13): read-only reachability probe.
@@ -823,12 +845,12 @@ object InteractionHub:
    * 关了」）：`via` 曾另有 `chat-input` 取值，随 `handleChatInputAnswer` 一并
    * 删除 ⇒ 现存唯一取值 = card（卡片入口作答）。
    */
-  private def auditAnswer(requestId: String, p: PendingRequest, answersJoined: String, via: String): IO[Unit] =
+  private def auditAnswer(requestId: String, p: PendingRequest, answersJoined: String, via: String, attachNote: String = ""): IO[Unit] =
     val excerpt = if answersJoined.length > 200 then answersJoined.take(200) + "..." else answersJoined
     audit
       .info(
         s"event=answer requestId=$requestId sourceSession=${p.sourceSession} rootSessionId=${p.rootSessionId} " +
-          s"kind=${p.kind} via=$via answersJoined=$excerpt"
+          s"kind=${p.kind} via=$via$attachNote answersJoined=$excerpt"
       )
       .handleErrorWith(_ => IO.unit)
 
@@ -909,9 +931,29 @@ object InteractionHub:
                 "L3 is always-ask (host red line); no session approval recorded"
             )
         case _ => ()
+    // askuser-dragdrop 实施批（2026-10-19，批 #551）：随卡回传的**答复附件清单**
+    // （网关 askUserAnswer 帧的 `attachments` 键，已由网关终验）。只对 AskUser 槽位
+    // 生效：非空 ⇒ 以尾随清单槽（[[AskUserAnswerAttachments.manifestSlot]]）与答复
+    // 同投 —— 桥腿（AskUserAnswerBridge）剥下后注入模型上下文；其它消费面
+    // （formatAnswer / parsePanelAnswer / SendConfirm）对尾随多余槽天然无感。
+    val answerAttachments: List[Json] =
+      if p.kind == InteractionKind.AskUser then
+        ans.payload.hcursor.downField("attachments").as[List[Json]].toOption.getOrElse(Nil)
+      else Nil
+    val attachAuditNote =
+      if answerAttachments.isEmpty then ""
+      else
+        s" attach=${answerAttachments.size}(" +
+          answerAttachments
+            .map(a =>
+              val c = a.hcursor
+              s"${c.downField("name").as[String].getOrElse("?")},${c.downField("size").as[Long].toOption.getOrElse(0L)}B"
+            )
+            .mkString(";") + ")"
     for
       _ <- logger.info(
-        s"InteractionAnswered requestId=${ans.requestId} kind=${p.kind} approved=$approved answers=${answers.map(_.size)}"
+        s"InteractionAnswered requestId=${ans.requestId} kind=${p.kind} approved=$approved answers=${answers.map(_.size)}" +
+          (if answerAttachments.isEmpty then "" else s" attachments=${answerAttachments.size}")
       )
       _ <- auditAnswer(
         ans.requestId,
@@ -927,7 +969,8 @@ object InteractionHub:
             .orElse(approved.map(a => s"approved=$a"))
             .getOrElse("-")
         ),
-        via
+        via,
+        attachAuditNote
       )
       _ <- IO.delay(rememberSessionApproval)
       _ <- p.reply match
@@ -936,7 +979,10 @@ object InteractionHub:
         case InteractionReply.McpPermissionReply(deferred) =>
           mcpAnswer.fold(IO.unit)(a => deferred.complete(a).void.handleErrorWith(_ => IO.unit))
         case InteractionReply.AskUserReply(replyTo) =>
-          replyTo.fold(IO.unit)(r => (r ! answersForDelivery))
+          replyTo.fold(IO.unit)(r =>
+            (r ! (answersForDelivery ++
+              nebflow.shared.AskUserAnswerAttachments.manifestSlot(answerAttachments)))
+          )
     yield ()
     end for
   end complete
