@@ -50,6 +50,10 @@ import { startWorklineItem, doneWorklineItem, failWorklineItem, thinkingWorkline
 // (state.js only) ⇒ no cycle. Used only on display faces; mechanism keys stay
 // the literal "Nebula".
 import { isRootNamed, rootDisplayName } from './rootName.js';
+// askuser-dragdrop 实施批（2026-10-19，批 #551）：卡片作用域答复附件面（拖入即传
+// / 粘贴 / 点选；入口判据 = `answerAttachmentsAllowed`——只给开放题，secret/dirPicker/
+// 选择题卡一律静默无入口，作者修正①②）+ 历史卡「已回答 · 附 N 个文件」徽标。
+import { answerAttachmentsAllowed, mountAnswerAttachments, mountAnsweredBadge } from './askAttachments.js';
 
 // stream-ux §二.1.1: the work-line shows the FIRST line of the tool's card
 // label (same string the user reads on the card), so the single-line badge and
@@ -2167,6 +2171,10 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   // secretSlots 专用 WS 键）——绝不写 answers[qi]，因此普通答案通道/草稿/历史行
   // 都不会碰到值。null = 未作答（confirm 闸与 shouldShow 重置共用该语义）。
   const secretValues = new Array(questions.length).fill(null);
+  // askuser-dragdrop 实施批（2026-10-19，批 #551）：答复附件面控制器。**声明前置**
+  // （checkAllAnswered 在 syncMulti 的草稿恢复腿里早于挂载点被调用——TDZ 防御）；
+  // 挂载本体在按钮行构造处（活卡 + 入口判据通过才挂，见彼处注）。
+  let answerAttach = null;
   const confirmLabel = doneLabel || t('chat.confirm');
   const saved = askSessionId ? loadAskDrafts(askSessionId) : {};
   const questionWrappers = [];
@@ -2565,7 +2573,24 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   confirmBtn.className = 'option-confirm';
   confirmBtn.innerHTML = '<i data-lucide="check"></i><span>' + escapeHtml(confirmLabel) + '</span>';
   confirmBtn.disabled = !questions.every((_, qi) => !shouldShow(qi) || isAnswered(qi));
+  // askuser-dragdrop 实施批（2026-10-19，批 #551）：答复附件面。只在**活卡**（有
+  // onConfirm 的 live 腿；历史腿传 null）+ 有 requestId + 入口判据（`mounted` ——
+  // 只给开放题；secret/dirPicker/选择题卡一律静默无入口，作者修正①②）下挂载。
+  // 历史/重放腿的只读附件行仍走 renderAskAttachments（单点不动）。
+  const answerAttachMounted = !!(onConfirm && requestId && answerAttachmentsAllowed(questions));
+  if (answerAttachMounted) {
+    answerAttach = mountAnswerAttachments(box, { requestId, onChange: () => checkAllAnswered() });
+  }
   confirmBtn.onclick = () => {
+    // askuser-dragdrop 批（作者修正⑤·设计稿 §2.7）：有失败 chip ⇒ toast 且不发送
+    // （上传中的 chip 已由发送钮置灰覆盖；失败不阻塞文本输入与其它 chip）。
+    if (answerAttach && answerAttach.hasFailed()) {
+      window.__showToast?.(t('askUser.attachSendBlocked'));
+      return;
+    }
+    // askuser-dragdrop 批：随帧携带**已落盘**附件引用（只含 done 件；无附件 ⇒ 空数组
+    // ⇒ 帧与改前逐字节同形）。
+    const answerAttachments = answerAttach ? answerAttach.attachments() : [];
     // Lock the card: drop it from the Canvas answer registry (E6: late
     // _nfAskAnswer postMessages find no entry and are silently discarded).
     // #250 ④: only THIS card's entry — sibling pending cards keep their channel.
@@ -2573,6 +2598,16 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     if (requestId) dirPickCards.delete(requestId); // 工作区选择卡事件一并失主
     // 已决 ⇒ 共用层单一闸（工作区选择卡的 `.ws-pick-target` / 卡片空白区在此一并失效）
     lockOptionBox(box);
+    // askuser-dragdrop 批：附件面转只读并整区撤下（同一批文件随后由
+    // renderAskAttachments 以**与历史恢复腿同一张脸**渲染只读行 ⇒ live 与历史逐字
+    // 同构，禁同一批文件双渲染面）。
+    if (answerAttach) {
+      answerAttach.lock();
+      const zone = box.querySelector('.ask-answer-attach-zone');
+      if (zone) zone.remove();
+      const dropOverlay = box.querySelector('.ask-answer-drop-overlay');
+      if (dropOverlay) dropOverlay.remove();
+    }
     confirmBtn.style.display = 'none';
     cancelBtn.style.display = 'none';
 
@@ -2594,6 +2629,17 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     ansDiv.className = 'option-answer';
     ansDiv.textContent = '-> ' + displayParts.join(', ');
     box.appendChild(ansDiv);
+    // askuser-dragdrop 批（设计稿 §2.8）：作答行附件计数（行内带计数利于检索）+
+    // 「已回答 · 附 N 个文件」徽标 + 只读附件行（与历史恢复腿同一渲染器）。
+    if (answerAttachments.length) {
+      const countLine = document.createElement('div');
+      countLine.className = 'option-answer';
+      countLine.style.cssText = 'color: var(--color-text-muted, #888); font-size: 12px;';
+      countLine.textContent = t('askUser.attachAnswerCount', { n: String(answerAttachments.length) });
+      box.appendChild(countLine);
+      mountAnsweredBadge(box, answerAttachments.length);
+      renderAskAttachments(box, answerAttachments.map(a => a.path));
+    }
     questions.forEach((qz, qi) => {
       if (qz && qz.secret === true) {
         secretValues[qi] = null; // 内存槽立即清（快照已取）
@@ -2607,7 +2653,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     // askuser-secret 批：secret 槽的 answers 位恒空串（hub 以 stored 回执占位化），
     // 值走 secretSlots 专用键（网关检出后直写 secrets——值不进普通 answers 通道）。
     const finalAnswers = answers.map(a => Array.isArray(a) ? JSON.stringify(a) : (a !== null ? a : ''));
-    if (onConfirm) onConfirm(finalAnswers, secretSlots);
+    if (onConfirm) onConfirm(finalAnswers, secretSlots, answerAttachments);
   };
   btnRow.appendChild(cancelBtn);
   btnRow.appendChild(confirmBtn);
@@ -2642,7 +2688,18 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   smartScroll();
 
   function checkAllAnswered() {
-    confirmBtn.disabled = !questions.every((_, qi) => !shouldShow(qi) || isAnswered(qi));
+    // askuser-dragdrop 实施批（2026-10-19，批 #551）：发送闸三段——
+    //   ① 基础闸（逐字保留）：可见题都已作答；
+    //   ② 附件补充满足（仅**零选项卡**）：≥1 个已附 chip 且全部题无 options
+    //      （作者修正①：选择题卡不显示附件入口，附件也不替代选项——设计稿 §2.5）；
+    //   ③ 上传中 ⇒ 置灰 + 文案「上传中…」（任何在传 chip 都阻塞发送）。
+    const baseOk = questions.every((_, qi) => !shouldShow(qi) || isAnswered(qi));
+    const zeroOptions = !questions.some(q => q && q.options && q.options.length > 0);
+    const attachOk = !!(answerAttach && zeroOptions && answerAttach.satisfyGate());
+    const uploading = !!(answerAttach && answerAttach.uploading());
+    confirmBtn.disabled = uploading || !(baseOk || attachOk);
+    const labelSpan = confirmBtn.querySelector('span');
+    if (labelSpan) labelSpan.textContent = uploading ? t('askUser.attachUploadingLabel') : confirmLabel;
   }
 }
 
@@ -2936,16 +2993,19 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
   // Use the sessionId from the askUser message, not the currently active session
   const targetSid = askSessionId || activeView.sessionId;
   try {
-    showOptions(bubble, items, (answers, secretSlots) => {
+    showOptions(bubble, items, (answers, secretSlots, answerAttachments) => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         // askuser-secret 批（规格 §2 值通道）：密码题的值走 `secretSlots` 专用键
         // （网关检出后直写 secrets——值不进普通 answers 通道、不进 .ui.json）。
         // 无秘密题 ⇒ 与改前逐字节同帧（secretSlots 键缺席）。
+        // askuser-dragdrop 批（2026-10-19）：随卡回传的已落盘附件走 `attachments`
+        // 可选键（逐键解析向后兼容；空数组 ⇒ 键缺席，帧与改前逐字节同形）。
         state.ws.send(JSON.stringify({
           type: 'askUserAnswer',
           sessionId: targetSid,
           answers,
           ...(Array.isArray(secretSlots) && secretSlots.length > 0 ? { secretSlots } : {}),
+          ...(Array.isArray(answerAttachments) && answerAttachments.length > 0 ? { attachments: answerAttachments } : {}),
           ...(requestId && { requestId })
         }));
       }
@@ -3101,10 +3161,15 @@ export function closeAskUserCard(sessionId, requestId, note) {
  *  attachments: askUser 历史恢复批（2026-10-02，chain-askuser-histattach）——提问
  *  行随行落盘的附件引用列表（与 live 腿 `renderAskUser` 同构的顶层 `attachments`）。
  *  缺席 / 空列表 ⇒ 本函数与改前**逐字节同形**（`renderAskAttachments` 自行早退）。
+ *  answerAttachments（askuser-dragdrop 实施批 2026-10-19，批 #551）：**作答行**随行
+ *  落盘的答复附件清单（`User.answerAttachments`，`UiMessage.askUserAnswer` 单一构造
+ *  点；persistence.js 两条历史腿按 `answerOf` 精确寻址取来）。已作答卡 ⇒ 渲染
+ *  「已回答 · 附 N 个文件」徽标 + 只读附件行（`renderAskAttachments` 与 live 确认腿
+ *  同一渲染器）。缺席 / 未作答 / 已取消 ⇒ 与改前逐字节同形。
  *  🔴 落「无作答记录」的方向 = 「未作答」而非「已作答」：宁可让一张其实已答过的卡
  *  显示待定（重放腿/作答链会纠正），也不许让一张真 pending 卡被画成已答（那正是
  *  重放腿去重判据被击穿、双开首卡恒死的成因）。 */
-export function renderAskUserHistory(bubble, items, answerText, requestId, attachments) {
+export function renderAskUserHistory(bubble, items, answerText, requestId, attachments, answerAttachments) {
   if (!Array.isArray(items) || items.length === 0) return;
   try {
     // Ghost seat (askuser-hybrid 重皮): history-replay twin of renderAskUser —
@@ -3126,12 +3191,23 @@ export function renderAskUserHistory(bubble, items, answerText, requestId, attac
   // （卡内 `.option-btn-row` 之前），本函数不新开第二套开法 / 不新增模块 / 不新增 CSS。
   // 缺席或空列表 ⇒ 函数内早退 ⇒ 历史卡形态与改前逐字节同。
   renderAskAttachments(box, attachments);
+  // askuser-dragdrop 批（2026-10-19，批 #551）：**作答**附件的只读面——只在确有
+  // 作答（非取消 / 非「无作答记录」）时渲染：徽标（已回答 · 附 N 个文件）+
+  // renderAskAttachments 同一渲染器的只读行。判据 = answerText 为真且非取消哨兵
+  // （与下方作答行分支同一判据源）。
+  const answerAtts = Array.isArray(answerAttachments)
+    ? answerAttachments.filter(a => a && typeof a.path === 'string' && a.path)
+    : [];
+  const cancelled = answerText === '__cancelled__';
+  if (answerText && !cancelled && answerAtts.length) {
+    mountAnsweredBadge(box, answerAtts.length);
+    renderAskAttachments(box, answerAtts.map(a => a.path));
+  }
   // 单一判据的形态锚（`sameAskCards` ②）：这张卡来自历史恢复，不是 live 卡。
   // 属性不进 innerHTML ⇒ 与 live 卡的逐字节 parity 断言（history-replay-cards.spec）
   // 不受影响。
   box.dataset.historyReplay = '1';
   box.classList.remove('ob-fade-in'); // settled card — no creation animation on replay
-  const cancelled = answerText === '__cancelled__';
   if (answerText && !cancelled) markAnsweredPick(box, items, answerText);
   // Lock — same end-state as the live confirm path (confirmBtn.onclick) or
   // cancel path (cancelBtn.onclick) depending on the recorded answer. 2026-09-18
