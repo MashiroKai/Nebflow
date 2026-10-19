@@ -1,0 +1,106 @@
+[
+  {
+    "tag": "after-svg-rel-light-dsf1",
+    "activity": {
+      "src": "http://127.0.0.1:8191/brand/releases/71a456e2d388b27e/symbol-light.svg",
+      "css": [
+        24,
+        24
+      ],
+      "natural": [
+        403,
+        329
+      ]
+    },
+    "settings": {
+      "src": "http://127.0.0.1:8191/brand/releases/71a456e2d388b27e/symbol-light.svg",
+      "css": [
+        32,
+        32
+      ],
+      "natural": [
+        403,
+        329
+      ]
+    },
+    "dsf": 1
+  },
+  {
+    "tag": "after-svg-rel-light-dsf2",
+    "activity": {
+      "src": "http://127.0.0.1:8191/brand/releases/71a456e2d388b27e/symbol-light.svg",
+      "css": [
+        24,
+        24
+      ],
+      "natural": [
+        403,
+        329
+      ]
+    },
+    "settings": {
+      "src": "http://127.0.0.1:8191/brand/releases/71a456e2d388b27e/symbol-light.svg",
+      "css": [
+        32,
+        32
+      ],
+      "natural": [
+        403,
+        329
+      ]
+    },
+    "dsf": 2
+  },
+  {
+    "tag": "after-svg-rel-dark-dsf1",
+    "activity": {
+      "src": "http://127.0.0.1:8191/brand/releases/71a456e2d388b27e/symbol-dark.svg",
+      "css": [
+        24,
+        24
+      ],
+      "natural": [
+        403,
+        329
+      ]
+    },
+    "settings": {
+      "src": "http://127.0.0.1:8191/brand/releases/71a456e2d388b27e/symbol-dark.svg",
+      "css": [
+        32,
+        32
+      ],
+      "natural": [
+        403,
+        329
+      ]
+    },
+    "dsf": 1
+  },
+  {
+    "tag": "after-svg-rel-dark-dsf2",
+    "activity": {
+      "src": "http://127.0.0.1:8191/brand/releases/71a456e2d388b27e/symbol-dark.svg",
+      "css": [
+        24,
+        24
+      ],
+      "natural": [
+        403,
+        329
+      ]
+    },
+    "settings": {
+      "src": "http://127.0.0.1:8191/brand/releases/71a456e2d388b27e/symbol-dark.svg",
+      "css": [
+        32,
+        32
+      ],
+      "natural": [
+        403,
+        329
+      ]
+    },
+    "dsf": 2
+  }
+]
