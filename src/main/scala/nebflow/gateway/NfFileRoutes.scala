@@ -36,29 +36,6 @@ object NfFileRoutes:
   private def nfDenied(resp: NfVerdict.Denied): Response[IO] =
     nfText(resp.status, s"${resp.reason}: ${resp.message}")
       .putHeaders(org.http4s.Header.Raw(org.typelevel.ci.CIString("X-Nf-Reason"), resp.reason))
-      .putHeaders(cacheHeader("no-store"))
-
-  /**
-   * #538 (2026-10-19, 图片打开慢量化批): deterministic browser caching for the
-   * byte legs. The route always carried `ETag` + `Last-Modified` (StaticFile)
-   * and answers `304` to `If-None-Match` / `If-Modified-Since` (verified), but
-   * it never emitted `Cache-Control` — so repeat opens of the SAME ticketed
-   * URL fell to per-browser HEURISTIC freshness (RFC 9111 §4.2.1: 10% of
-   * `now - Last-Modified`, i.e. seconds for a freshly generated plot), which
-   * on the relay leg (neblink.nebflow.space) re-pulls the full body through
-   * the tunnel on every open. An explicit `private, max-age=300` makes the
-   * repeat-open path deterministic: within 5 min the body is served from the
-   * browser cache with ZERO byte transit; after that, one conditional round
-   * trip buys a 304 (bytes never re-cross the tunnel while unchanged).
-   *
-   * `private` (never a shared/CDN cache) is mandatory: the URL carries the
-   * per-path ticket credential. max-age 300 stays far below the ticket TTL
-   * (default 1800s), so a cached entry can never outlive its credential.
-   */
-  private def cacheHeader(value: String): org.http4s.Header.Raw =
-    org.http4s.Header.Raw(org.typelevel.ci.CIString("Cache-Control"), value)
-
-  private val NfCacheControl: String = "private, max-age=300"
 
   // ────────────────────────────────────────────────────────────────────────
   // HTTP Range support (video-canvas batch, 2026-10-06 author order 13:24).
@@ -137,7 +114,6 @@ object NfFileRoutes:
         org.http4s.headers
           .`Content-Range`(org.http4s.RangeUnit.Bytes, org.http4s.headers.Range.SubRange(start, end), Some(size)),
         org.http4s.headers.`Accept-Ranges`.bytes,
-        cacheHeader(NfCacheControl),
         Header.Raw(org.typelevel.ci.CIString("Content-Length"), len.toString)
       )
       .withBodyStream(fs2.io.file.Files[IO].readRange(real, 64 * 1024, start, end + 1))
@@ -171,7 +147,7 @@ object NfFileRoutes:
       // Not the DSL `Unauthorized`: that constructor demands a
       // WWW-Authenticate challenge, and this route has no auth scheme to
       // advertise (the ticket is an opaque bearer value, not Basic/Digest).
-      IO.pure(nfText(Status.Unauthorized, "Missing 'ticket' parameter").putHeaders(cacheHeader("no-store")))
+      IO.pure(nfText(Status.Unauthorized, "Missing 'ticket' parameter"))
     else
       nfFileVerdictTolerant(rawPath, policy).flatMap {
         case denied: NfVerdict.Denied => IO.pure(nfDenied(denied))
@@ -203,7 +179,6 @@ object NfFileRoutes:
                             Response[IO](Status.RangeNotSatisfiable)
                               .putHeaders(Header.Raw(org.typelevel.ci.CIString("Content-Range"), s"bytes */$size"))
                               .putHeaders(org.http4s.headers.`Accept-Ranges`.bytes)
-                              .putHeaders(cacheHeader("no-store"))
                           )
                   }
                 case None =>
@@ -213,14 +188,7 @@ object NfFileRoutes:
                   StaticFile
                     .fromPath(fsReal, Some(req))
                     .map { r =>
-                      // Cache-Control only on the cacheable positives (200 body /
-                      // 304 revalidation, which must restate the policy); the 404
-                      // leg stays untouched (minimal-diff: pre-#538 shape).
-                      val withCache =
-                        if r.status == Status.Ok || r.status == Status.NotModified then
-                          r.putHeaders(cacheHeader(NfCacheControl))
-                        else r
-                      val withAR = withCache.putHeaders(org.http4s.headers.`Accept-Ranges`.bytes)
+                      val withAR = r.putHeaders(org.http4s.headers.`Accept-Ranges`.bytes)
                       contentTypeFor(fsReal).fold(withAR)(withAR.putHeaders(_))
                     }
                     .getOrElseF(NotFound())
@@ -319,18 +287,17 @@ object NfFileRoutes:
    * the status-code contract is unchanged.
    */
   def nfAuthcheckRoutes(tokenRef: cats.effect.Ref[IO, String], sessions: GatewaySessionStore): HttpRoutes[IO] =
-    HttpRoutes.of[IO] { case req @ GET -> Root / "api" / "nf-authcheck" =>
-      tokenRef.get
-        .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
-        .flatMap {
-          case None => Forbidden("Invalid token")
-          case Some(cred) =>
-            NoContent().map(
-              _.putHeaders(
+    HttpRoutes.of[IO] {
+      case req @ GET -> Root / "api" / "nf-authcheck" =>
+        tokenRef.get
+          .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
+          .flatMap {
+            case None => Forbidden("Invalid token")
+            case Some(cred) =>
+              NoContent().map(_.putHeaders(
                 Header.Raw(org.typelevel.ci.CIString(GatewayAuth.CredentialHeader), cred.railName)
-              )
-            )
-        }
+              ))
+          }
     }
 
   /**
@@ -354,25 +321,16 @@ object NfFileRoutes:
       // Without Expose-Headers the answer's status is readable but the brand
       // header is filtered out of the page's view (T-3 chromium reading) — the
       // shape check ("204 AND the self-evidence header") needs it exposed.
-      Header.Raw(
-        org.typelevel.ci.CIString("Access-Control-Expose-Headers"),
-        s"x-${nebflow.shared.Branding.lowerName}-gateway"
-      ),
-      Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Private-Network"), "true")
+      Header.Raw(org.typelevel.ci.CIString("Access-Control-Expose-Headers"), s"x-${nebflow.shared.Branding.lowerName}-gateway"),
+      Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Private-Network"), "true"),
     )
     HttpRoutes.of[IO] {
       case OPTIONS -> Root / "api" / "nf-reach" =>
         NoContent().map(_.putHeaders(reachCorsHeaders*))
       case GET -> Root / "api" / "nf-reach" =>
-        NoContent().map(
-          _.putHeaders(
-            (Header.Raw(
-              org.typelevel.ci.CIString(s"x-${nebflow.shared.Branding.lowerName}-gateway"),
-              "1"
-            ) :: reachCorsHeaders)*
-          )
-        )
+        NoContent().map(_.putHeaders(
+          (Header.Raw(org.typelevel.ci.CIString(s"x-${nebflow.shared.Branding.lowerName}-gateway"), "1") :: reachCorsHeaders)*
+        ))
     }
-  end nfReachRoutes
 
 end NfFileRoutes

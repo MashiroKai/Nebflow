@@ -1,10 +1,11 @@
-# #538 图片打开慢量化批 — 分段计时表 + 票据复用 + 渲染路径 + 候选排序
+# #538 图片打开慢量化批 — 分段计时表 + 现状与三档目标差距分析 + 候选排序
 
-时间：2026-10-19 07:50 – 08:20 · 执行：#538 量化 delegate · 纪律：引擎零重启、VPS 零改动（只读 HTTPS 探测）、远程腿走作者现役路径（neblink.nebflow.space，作者 Safari 真会话贴探针实测）
+时间：2026-10-19 07:50 – 08:30 · 执行：#538 量化 delegate · 纪律：引擎零重启、VPS 零改动（只读 HTTPS 探测）、远程腿走作者现役路径（neblink.nebflow.space，作者 Safari 真会话贴探针实测）
+**批内口径（作者 07:48 产品形态令）**：本批为纯测量+方案。三档管线（①本机即开 / ②已下载到本机即开 / ③远程先开标签+下载进度圈）由新批承接实现；批内曾实现并测试过的 nf-file Cache-Control 小修**已按令撤出落 main 通道**，降级为候选 #2（patch 已备：`evidence/20261019_imgslow538-timing/nf-file-cache-header.patch`，新批裁量吸收）。
 
 ## 结论（一句话）
 
-**同一条开图链（2.8MB PNG），本机直连腿全链中位 ≈45ms，远程腿活窗中位 ≈2.79s（62×），大头 = 字节穿隧 1531ms（55%）+ 铸票/兑换两段各 ~0.6s 的隧道往返（各 22%）+ 解码 10ms（0.4%）；今晨作者会话还实测到 15min 死窗全程 403（mint 每次 ~308ms 空转、100% 失败）+ 活窗内 1/5 随机 ERR——死窗与重铸摩擦是叠加在其上的可用性问题，relay 根修（fix/ingress-sliding-refresh）+ 本批 Cache-Control 小修可把「重复打开」降到 0 字节、把「首开失败」清零。**
+**同一条开图链（2.8MB PNG），本机直连腿全链中位 ≈45ms，远程腿活窗中位 ≈2.79s（62×），大头 = 字节穿隧 1531ms（55%）+ 铸票/兑换两段各 ~0.6s 的隧道往返（各 22%）+ 解码 10ms（0.4%）；今晨作者会话还实测到 15min 死窗全程 403（mint 每次 ~308ms 空转、100% 失败）+ 活窗内 1/5 随机 ERR——死窗与重铸摩擦是叠加在其上的可用性问题，relay 根修（fix/ingress-sliding-refresh）+ 缓存头候选（patch 已备）可把「重复打开」降到 0 字节、把「首开失败」清零。**
 
 ## ① 分段计时表（真环境对照组）
 
@@ -66,12 +67,22 @@
 - 直连 `<img>` 腿有流式渐进（`viewers/image.js:162` `img.src = ticketUrl`，浏览器边收边绘，progressive 格式可见渐进；onload 仍等全量）。但该腿无加载占位/骨架（pane 在 onload 前空白，失败走 `:34-68` 错误面板）。
 - HTTP 缓存利用：改前 `/api/nf-file` **无 Cache-Control**（但有 ETag+Last-Modified，304 重验证本地实测 1.6ms 可用）；浏览器只能靠启发式新鲜度（RFC 9111 §4.2.1 ≈ (now−Last-Modified)×10%，刚生成的图≈几秒 ⇒ 形同虚设）。远程实测：同 URL 二次 `<img>` 打开 5-13ms（内存缓存命中）——**浏览器愿意复用，缺的只是一条明确策略头**。
 
-## ④ 优化候选排序（收益 × 工作量）
+## 现状与三档目标的差距分析（作者 07:48 令口径）
+
+| 档 | 目标 | 现状（本批实测/代码定位） | 差距 → 新批输入 |
+|---|---|---|---|
+| ① 本机文件 | 即开 | **已达标**：直连腿全链 45ms（mint 1ms + 字节 26ms + 解码/绘制 ~6ms）；本批浏览器层实测无任何一段 >40ms | 无需专门管线；只需保证新三档分派判据对「本机」零误判（把本机件误走下载腿 = 人为变慢） |
+| ② 已下载到本机 | 即开 | **未达标（条件性）**：无「已下载集合」账本，`savedPathBlob`（`messages.js:2542`）每次整链重取；唯一的快路是浏览器 HTTP 缓存对**同 ticket URL** 的命中——但 (a) 无 Cache-Control，只有启发式新鲜度（对刚生成的图≈几秒，形同虚设）；(b) 票 URL 随重铸变化即缓存键失效（T2 重挂载强制重铸，`cardRegistry.js:552`）；(c) 内存命中实测可行（远程同 URL 二次 `<img>` 5-13ms） | ②档需要：已下载账本（哪件字节在哪）+ 本地字节快路（blob/缓存直挂，零铸票零穿隧）；**候选 #2 的缓存头 patch 把 (a) 确定化**（同票 5min 内 0 字节、之后 304 一个 RTT），是②档的服务端地基 |
+| ③ 非本机文件 | 点击立即开标签 + 圈形下载进度 | **未达标（结构性）**：点缩略图腿全量字节收完才开面板（`messages.js:2542` → `previewBlob` → `openTab(objectUrl)`），进度全程无反馈（pane 空白/无占位）；直连 `<img>` 腿（`viewers/image.js:162`）有流式但无占位、无进度；失败才出错误面板 | ③档需要：先 `openTab`（<100ms）→ viewer 挂占位 + 进度环；进度数据源现成——穿隧本体就是流（256KB BodyFrame 序列，2.8MB=11 帧），`fetch` 流式 reader 或 XHR onprogress 即得 received/total（Content-Length 已有）；缓存头候选让「下到一半取消再点」从 0 续传（Range 已支持） |
+
+**量化口径给新批**：③档达标后，远程首开感知 = 标签 ~100ms + 首屏渐进（v.s. 现状中位 2.79s 黑等）；②档达标后，重复打开 = 0 网络（v.s. 现状最多 2.79s）；①档守住 45ms 即是全部要求。
+
+## ④ 优化候选排序（收益 × 工作量；patch 级输入供新批裁量）
 
 | # | 候选 | 预期收益（实测口径） | 工作量 | 状态 |
 |---|---|---|---|---|
 | 1 | **relay 根修 `fix/ingress-sliding-refresh` 部署** | 清零死窗：今晨实测死窗 mint 100% 403（~308ms/次空转+sessionGate 自动 reload 整页重穿隧 5-10s/次）；活跃会话每 15min 必撞一次。**注意它不缩短活窗 635ms 铸票/609ms 兑换的结构性 RTT** | VPS `docker compose up -d --build neblink-server`（restart 无效；代码+589/589 测试已备） | **待作者部署窗口；本批死窗实锤即其部署论据** |
-| 2 | **`/api/nf-file` Cache-Control 小修** | 重复打开同图（同票 URL，5min 内）= **0 字节过隧，省 ≈2.78s/次**；超 5min = 1 次 304 重验证（1 RTT，无字节）。头透传已实测（cc=""），纯引擎侧生效 | 已完成：`NfFileRoutes.scala`（`private, max-age=300`+416/401/403 `no-store`+304 重述策略），23/23 测试 | **本批交付，随本分支落 main** |
+| 2 | **`/api/nf-file` Cache-Control patch（已备，未落 main）** | 重复打开同图（同票 URL，5min 内）= **0 字节过隧，省 ≈2.78s/次**；超 5min = 1 次 304 重验证（1 RTT，无字节）。头透传已实测（cc=""），纯引擎侧生效；是②档「已下载即开」的服务端地基 | patch 已写好+测试已写好（`evidence/20261019_imgslow538-timing/nf-file-cache-header.patch`：200/206/304 腿 `private, max-age=300`+401/403/416 `no-store`+304 重述策略，+4 spec 测试，批内曾 23/23 全绿）；**新批在改文件打开管线时一并吸收/裁量** | 候选（按 07:48 令撤出独立落 main 通道） |
 | 3 | 前端会话级 bytes LRU（重开已开图零请求，跨 HTTP 缓存语义） | 与 #2 高度重叠；#2 落地后边际收益小 | ~0.5-1 天 + 失效策略 + 测试 | 只出方案：**建议不做**，除非出现「同图频繁重开但票 URL 变化」的实际模式 |
 | 4 | Canvas 渐进占位/流式首开（点缩略图腿改流式 `<img>` 或加骨架） | 新图首开感知延迟最多省 ≈1.5s（字节段 1531ms 变为渐进可见）；骨架占位版收益减半 | 流式版 1-2 天（类型判定靠 blob magic bytes 依赖全量，需 Range 预读或信任扩展名）；骨架版 ~0.5 天 | 只出方案：骨架版可做，流式版缓 |
 | 5 | 穿隧二进制帧（去 base64+33%） | 字节段 -25%（2.8MB 图 ≈ -380ms）；所有穿隧流量普适 | 大：codec + link-server 对端 + 兼容窗口（2-3 天） | 只出方案 |
@@ -79,16 +90,17 @@
 
 **优先级：1（部署即得，消除失败面）→ 2（已落地，消除重复传输面）→ 4 骨架版（可选）→ 5（远期）。**
 
-## 本批小修交付（独立分支落 main）
+## 候选 #2 patch 存档说明（原「小修交付」节，按 07:48 令改列候选）
 
-- 分支：`delegate/delegate-nebflow-35b31668`（经 merge 队列落 main）。
-- `src/main/scala/nebflow/gateway/NfFileRoutes.scala`：200/206/304 腿 `Cache-Control: private, max-age=300`（`private` 必须——URL 载票；max-age 远低于票 TTL 1800s，缓存条目永不过其凭据寿）；401/403/416 `no-store`；304 重述缓存策略。ETag/Last-Modified/Accept-Ranges 原样保留。
-- `src/test/scala/nebflow/gateway/NfFileRoutesSpec.scala`：+4 测试（200/206 头、304 重验证+策略重述、401/403 no-store），23/23 绿；相邻 NfTicketRoutesSpec + NfPathEncodingProbeSpec 26/26 绿；scalafmt 仅触及本批两文件。
-- 附带注册（未修，upstream nit）：http4s `StaticFile` 的 304 不重述 ETag（RFC 9110 §15.4.5 要求）；浏览器复用存储验证器故重验证循环可用，修复需复刻其内部 ETag 算法，不值当。
+- patch：`evidence/20261019_imgslow538-timing/nf-file-cache-header.patch`（212 行，`git apply` 即用；基于 81a3be27a 基线对 `NfFileRoutes.scala` + `NfFileRoutesSpec.scala`）。
+- 内容：`NfFileRoutes.scala` — 200/206 腿 `Cache-Control: private, max-age=300`（`private` 必须——URL 载票；max-age 远低于票 TTL 1800s，缓存条目永不过其凭据寿）；304 重述同策略（http4s 静态 304 不带任何缓存头，须补）；401/403/416 `no-store`；ETag/Last-Modified/Accept-Ranges 原样保留。`NfFileRoutesSpec.scala` — +4 测试（200/206 头、304 重验证+策略重述、401/403 no-store）。
+- 批内验证记录：NfFileRoutesSpec 23/23 绿、相邻 NfTicketRoutesSpec + NfPathEncodingProbeSpec 26/26 绿、scalafmt 干净（仅触及该两文件）。
+- 附带注册（patch 未包含，upstream nit）：http4s `StaticFile` 的 304 不重述 ETag（RFC 9110 §15.4.5 要求）；浏览器复用存储验证器故重验证循环可用，修复需复刻其内部 ETag 算法，不值当。
+- 与三档管线的关系：③档「下到一半取消再点」可顺带获得 Range 续传语义（206 腿已带同款缓存头）；②档同票 URL 命中从此确定化。若新批自建字节账本/缓存层，服务端这层仍是正交地基，吸收无冲突。
 
 ## 附带发现（顺手记录）
 
 1. **门户新登录断链**：`GET neblink.nebflow.space/api/auth/callback` 现回 **503**（两轮复现；link-server 侧；本机 headless Logto 全流程走到 callback 即挂）——新会话起不来，老会话（作者 Safari）不受影响。**作者下次 VPS 部署窗口一并查**；在它修好前，任何「新设备/新浏览器登录」路径不可用。
 2. **活窗 1/5 兑换 ERR**（mint 成功后字节腿失败）：远程腿存在随机单次循环失败，用户感知 =「偶尔点开失败，再点一次就好」。建议与 relay 根修同窗观察 PortalTunnelBridge backstop 日志（`portal body backstop fired`）。
-3. 探针脚本与原始读数存档：`evidence/20261019_imgslow538-timing/`（local-timings.json / browser-local.json / remote-probe-snippet-v2.js——作者真会话 5 轮原文在其中）。
+3. 探针脚本与原始读数存档：`evidence/20261019_imgslow538-timing/`（local-timings.json / browser-local.json / remote-probe-snippet-v2.js——作者真会话 5 轮原文在其中 / nf-file-cache-header.patch——候选 #2 现成 patch）。
 4. 测试图 `plots/20261019_b538_timing-probe.png`（2.8MB 噪声 PNG）留在白名单命名空间，供后续复测复用。
