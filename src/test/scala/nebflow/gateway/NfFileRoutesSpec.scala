@@ -473,4 +473,72 @@ class NfFileRoutesSpec extends CatsEffectSuite:
       }
     }
   }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // #538 (2026-10-19 图片打开慢量化批): deterministic browser caching.
+  // The route always had ETag + Last-Modified + working 304 revalidation
+  // (verified live: If-None-Match → 304 in ~2ms), but NO Cache-Control — so
+  // repeat opens of the same ticketed URL fell to per-browser heuristic
+  // freshness, which on the relay leg re-pulls the full body through the
+  // tunnel. The contract below pins the explicit directive set.
+  // ──────────────────────────────────────────────────────────────────────
+
+  test("#538: the 200 whole-file leg carries Cache-Control: private, max-age=300") {
+    withSeedFile("shot.png", Array[Byte](1, 2, 3)) { p =>
+      IO {
+        val resp = get(s"/api/nf-file?path=${p.toString}&ticket=${ticketFor(p.toString)}").get
+        assertEquals(resp.status, Status.Ok)
+        assertEquals(headerOf(resp, "Cache-Control"), Some("private, max-age=300"))
+      }
+    }
+  }
+
+  test("#538: the 206 Range leg carries the same Cache-Control directive") {
+    withSeedFile("clip.mp4", Array.fill[Byte](4096)(7)) { mp4 =>
+      IO {
+        val resp = getRange(s"/api/nf-file?path=${mp4.toString}&ticket=${ticketFor(mp4.toString)}", "bytes=0-1023").get
+        assertEquals(resp.status, Status.PartialContent)
+        assertEquals(headerOf(resp, "Cache-Control"), Some("private, max-age=300"))
+      }
+    }
+  }
+
+  test("#538: the 304 revalidation leg 304s and restates the cache policy") {
+    withSeedFile("shot.png", Array[Byte](1, 2, 3)) { p =>
+      IO {
+        val first = get(s"/api/nf-file?path=${p.toString}&ticket=${ticketFor(p.toString)}").get
+        val etag = headerOf(first, "ETag")
+        assert(etag.isDefined, "ETag must be present for conditional revalidation")
+        val req = Request[IO](
+          Method.GET,
+          Uri.unsafeFromString(s"/api/nf-file?path=${p.toString}&ticket=${ticketFor(p.toString)}")
+        )
+          .putHeaders(org.http4s.Header.Raw(org.typelevel.ci.CIString("If-None-Match"), etag.get))
+        val second = NfFileRoutes.nfFileRoutes(store, policy)(req).value.unsafeRunSync().get
+        assertEquals(second.status, Status.NotModified, "If-None-Match with the live ETag must 304")
+        assertEquals(
+          headerOf(second, "Cache-Control"),
+          Some("private, max-age=300"),
+          "304 must restate the freshness policy (http4s emits a bare 304; validators ride the request)"
+        )
+        // Upstream nit, registered not welded: http4s's 304 does NOT restate the
+        // ETag (RFC 9110 §15.4.5 wants it). Browsers reuse their stored validator
+        // on a 304, so revalidation cycles work; fixing it here would mean
+        // recomputing StaticFile's internal ETag algorithm — fragile. Left to http4s.
+      }
+    }
+  }
+
+  test("#538: credential refusals are no-store (a 401/403 must never park in a cache)") {
+    withTempFiles { dir =>
+      IO {
+        val noTicket = get(s"/api/nf-file?path=${(dir / "shot.png").toString}").get
+        assertEquals(noTicket.status, Status.Unauthorized)
+        assertEquals(headerOf(noTicket, "Cache-Control"), Some("no-store"))
+        val badTicket = get(s"/api/nf-file?path=${(dir / "shot.png").toString}&ticket=not-a-ticket").get
+        assertEquals(badTicket.status, Status.Forbidden)
+        assertEquals(headerOf(badTicket, "Cache-Control"), Some("no-store"))
+      }
+    }
+  }
 end NfFileRoutesSpec

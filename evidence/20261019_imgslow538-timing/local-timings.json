@@ -1,0 +1,84 @@
+{
+ "rtt_floor_local_204": {
+  "n": 12,
+  "med": 0.7,
+  "p95": 20.0,
+  "min": 0.6,
+  "max": 20.0
+ },
+ "mint_1path_big": {
+  "n": 12,
+  "med": 1.0,
+  "p95": 2.9,
+  "min": 0.8,
+  "max": 2.9
+ },
+ "mint_1path_med": {
+  "n": 12,
+  "med": 0.9,
+  "p95": 1.1,
+  "min": 0.8,
+  "max": 1.1
+ },
+ "mint_batch_2paths": {
+  "n": 12,
+  "med": 1.0,
+  "p95": 1.4,
+  "min": 0.8,
+  "max": 1.4
+ },
+ "redeem_ttfb_2.8MB": {
+  "n": 12,
+  "med": 11.7,
+  "p95": 24.6,
+  "min": 6.5,
+  "max": 24.6
+ },
+ "redeem_total_2.8MB": {
+  "n": 12,
+  "med": 11.7,
+  "p95": 24.6,
+  "min": 6.5,
+  "max": 24.6
+ },
+ "redeem_total_2.8MB_bytes": 0,
+ "redeem_total_0.7MB": {
+  "n": 12,
+  "med": 2.3,
+  "p95": 5.0,
+  "min": 1.8,
+  "max": 5.0
+ },
+ "warm_repeat_same_url_2.8MB": {
+  "n": 12,
+  "med": 6.6,
+  "p95": 11.1,
+  "min": 6.0,
+  "max": 11.1
+ },
+ "nf_file_response_headers": {
+  "Last-Modified": "Mon, 19 Oct 2026 00:02:28 GMT",
+  "Content-Length": "2806768",
+  "ETag": "\"1a151777fcb-2ad3f0\"",
+  "Accept-Ranges": "bytes",
+  "Content-Type": "image/png"
+ },
+ "conditional_304": {
+  "etag_sent": "\"1a151777fcb-2ad3f0\"",
+  "status": 304,
+  "size": 0,
+  "ms": 1.6
+ },
+ "conditional_ims": {
+  "lastmod_sent": "Mon, 19 Oct 2026 00:02:28 GMT",
+  "status": 304,
+  "size": 0,
+  "ms": 1.8
+ },
+ "range_256k": {
+  "status": 206,
+  "size": 262144,
+  "ms": 17.9,
+  "cr": "bytes 0-262143/2806768"
+ }
+}
