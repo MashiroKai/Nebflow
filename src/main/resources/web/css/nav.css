@@ -223,10 +223,10 @@ body.sidebar-collapsed #activity-bar {
   width: 24px;
   height: 24px;
   object-fit: contain;
-  /* Pixel-art logo v4 (224x224 source = 8 grid units, art block = 2 units).
-     24px keeps every art block a whole 6px, so pixelated stays even —
-     22px would split blocks into 5.5px and render ragged stems. */
-  image-rendering: pixelated;
+  /* stand-symbol vector mark (avatar-sharp batch 2026-10-19): the slot source
+     is SVG, rasterized at layout size × dsf — no image-rendering hint wanted.
+     (The retired pixel-art logo needed `pixelated`; on smooth art it forced
+     nearest-neighbor downscaling and rendered staircase edges.) */
   pointer-events: none;
 }
 /* Account avatar photo (shown after login, when an avatarUrl is available). */
