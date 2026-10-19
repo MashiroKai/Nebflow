@@ -217,6 +217,21 @@ try {
   await sleep(500);
   ok('B2a 另会话流帧不再给本会话幻影续命（per-session 守卫）', !(await sidBusy()), `busy=${await sidBusy()}`);
 
+  // B2b 精确腿专属探针：本会话在派发**前** 15s 内有流活动（上一轮尾流）——
+  // 旧全局/15s 回落守卫在此必红（sinceSidStream < 15000 ⇒ 回执被挡，幻影坐满
+  // 15s）；精确腿按 id 对账不受前置流活动干扰，回执到场即收。
+  serverSends([
+    { type: 'textDelta', sessionId: SID, delta: 'prev turn tail stream' },
+    { type: 'sessionBusy', sessionId: SID, busy: false }, // 流戳留下、busy 不留（textDelta 会 arm busy）
+  ]);
+  await sleep(200);
+  replyScript = (m) => [
+    { frame: { type: 'messageDuplicate', sessionId: SID, clientMessageId: m.clientMessageId }, delay: 40 },
+  ];
+  await sendText('phantom right after live stream');
+  await sleep(400);
+  ok('B2b 派发前 15s 内有本会话流活动 ⇒ 仍走精确腿即收（回落 15s 窗会挡死）', !(await sidBusy()), `busy=${await sidBusy()}`);
+
   // B3 本会话真流在场：陈旧回执不误杀真 turn 的 busy（busy 属于流中的 turn）
   serverSends([
     { type: 'sessionBusy', sessionId: SID, busy: true },

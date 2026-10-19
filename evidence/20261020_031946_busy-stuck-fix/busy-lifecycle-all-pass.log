@@ -1,0 +1,31 @@
+PASS  boot 后在线
+PASS  A1 首条派发 + 服务端 busy 中
+PASS  A2 busy 中第二条入队（不出线）
+PASS  A3 终态后 busy 清
+PASS  A4 终态后队列恰派发一条（per-turn 窗口闸回归钉）  — frames=1
+PASS  A5 composer 回到可发送态（stop 隐 / send 显）  — {"stopShown":false,"sendShown":true}
+PASS  B1 幻影派发出线恰一帧
+PASS  B2 判重回执到场即收 busy（精确腿，无 15s 等待）  — busy=false
+PASS  B3 turnExpecting 同步收掉
+PASS  B4 幻影派发单条用户气泡（重发零新增呈现不受影响）
+PASS  B2a 另会话流帧不再给本会话幻影续命（per-session 守卫）  — busy=false
+PASS  B2b 派发前 15s 内有本会话流活动 ⇒ 仍走精确腿即收（回落 15s 窗会挡死）  — busy=false
+PASS  B3a 陈旧回执 + 本会话真流在场 ⇒ busy 保留  — busy=true
+PASS  B3b 真流终态照常收 busy
+PASS  C1 派发后短窗内 busy 置位（乐观草签在场）
+PASS  C2 确认网到点收幻影 busy（无任何服务端帧）  — busy=false
+PASS  C3 幻影收口连 turnExpecting 一并清
+PASS  C4 队列项在场（busy 中入队）
+PASS  C5 终态后队列 flush 恰一条  — frames=1
+PASS  C6 flush 派发轮照常收尾（busy 清）
+PASS  D1 窗口内 busy{true} 到场 ⇒ 网不误清（慢 turn busy 保留）  — busy=true
+PASS  D2 慢 turn 终态照常收 busy
+PASS  D3 全程零 pageerror  — []
+PASS  E1 turn-start 确认网（arm/cancel/fire）在 main.js
+PASS  E2 派发腿武装确认网（send/drain/offline/inject）  — arms=4
+PASS  E3 回执腿带 drain（队列 flush 挂点）
+PASS  E4 回执守卫读本会话流活动对账（精确腿 + per-session 15s 回落）
+PASS  E5 per-session 流活动戳 + 确认网字段在 state.js
+PASS  E6 depth>0 前缀会话不武装确认网
+
+ALL PASS
