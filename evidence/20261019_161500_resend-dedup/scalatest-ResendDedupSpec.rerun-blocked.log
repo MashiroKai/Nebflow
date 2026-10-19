@@ -1,0 +1,29 @@
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-189e295a-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-189e295a/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-189e295a/)
+[info] compiling 94 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-189e295a/target/scala-3.5.2/classes ...
+[info] done compiling
+[info] compiling 51 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-189e295a/target/scala-3.5.2/classes ...
+[info] done compiling
+[info] compiling 102 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-189e295a/target/scala-3.5.2/test-classes ...
+[error] -- Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-189e295a/src/test/scala/nebflow/core/tools/BashAutoBackgroundSpec.scala:108:4 
+[error] 108 |    end for
+[error]     |    ^^^^^^^
+[error]     |    misaligned end marker
+[error] -- Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-189e295a/src/test/scala/nebflow/core/tools/BashAutoBackgroundSpec.scala:153:4 
+[error] 153 |    end for
+[error]     |    ^^^^^^^
+[error]     |    misaligned end marker
+[error] -- Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-189e295a/src/test/scala/nebflow/core/tools/BashToolForegroundSpec.scala:100:4 
+[error] 100 |    end for
+[error]     |    ^^^^^^^
+[error]     |    misaligned end marker
+[error] -- Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-189e295a/src/test/scala/nebflow/core/tools/BashToolForegroundSpec.scala:170:4 
+[error] 170 |    end for
+[error]     |    ^^^^^^^
+[error]     |    misaligned end marker
+[error] four errors found
+[error] (Test / compileIncremental) Compilation failed
+[error] Total time: 201 s (0:03:21.0), completed 2026年10月19日 17:02:24

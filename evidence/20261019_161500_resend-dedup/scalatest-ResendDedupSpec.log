@@ -1,0 +1,23 @@
+16:23:55.423 [36mINFO [0m nebflow.agent.lifecycle - [32mNebula-resend-d[0m [35mrd3/resend-d[0m event=freeze-enter detail=resumeAt=1792399980000
+[32mnebflow.agent.ResendDedupSpec:[0m
+[32m  + [0m[32mRD1: idle re-send of an accepted clientMessageId is dropped with a messageDuplicate receipt[0m [90m4.732s[0m
+[32m  + [0m[32mRD2: busy-queue gate drops a duplicate of the in-flight turn's id; a double-queued fresh id drains exactly once[0m [90m2.24s[0m
+[32m  + [0m[32mRD3: duplicate wake clientMessageId while frozen is dropped with a messageDuplicate receipt[0m [90m1.479s[0m
+[info] Passed: Total 3, Failed 0, Errors 0, Passed 3
+16:23:49.849 [36mINFO [0m nebflow.agent.lifecycle - [32mNebula-resend-d[0m [35mrd1/resend-d[0m event=spawn detail=parent=- msgs=0
+16:23:49.967 [36mINFO [0m nebflow.agent.lifecycle - [32mNebula-resend-d[0m [35mrd1/resend-d[0m event=start detail=msgs=0
+16:23:51.656 [36mINFO [0m nebflow.agent.lifecycle - [32mNebula-resend-d[0m [35mrd1/resend-d[0m event=turn-complete detail=msgs=2 textLen=2 textStreamed=true thinking=0 model=-
+16:23:52.628 [36mINFO [0m nebflow.agent.lifecycle - [32mNebula-resend-d[0m [35mrd2/resend-d[0m event=spawn detail=parent=- msgs=0
+16:23:52.631 [36mINFO [0m nebflow.agent.lifecycle - [32mNebula-resend-d[0m [35mrd2/resend-d[0m event=start detail=msgs=0
+16:23:53.036 [36mINFO [0m nebflow.agent.lifecycle - [32mNebula-resend-d[0m [35mrd2/resend-d[0m event=user-input-queued detail=textLen=10 pending=1
+16:23:53.238 [36mINFO [0m nebflow.agent.lifecycle - [32mNebula-resend-d[0m [35mrd2/resend-d[0m event=user-input-queued detail=textLen=10 pending=2
+16:23:53.546 [36mINFO [0m nebflow.agent.lifecycle - [32mNebula-resend-d[0m [35mrd2/resend-d[0m event=turn-complete detail=msgs=2 textLen=2 textStreamed=true thinking=0 model=-
+16:23:53.590 [36mINFO [0m nebflow.agent.lifecycle - [32mNebula-resend-d[0m [35mrd2/resend-d[0m event=start detail=msgs=3
+16:23:53.779 [36mINFO [0m nebflow.agent.lifecycle - [32mNebula-resend-d[0m [35mrd2/resend-d[0m event=turn-complete detail=msgs=5 textLen=2 textStreamed=true thinking=0 model=-
+16:23:55.044 [36mINFO [0m nebflow.agent.lifecycle - [32mNebula-resend-d[0m [35mrd3/resend-d[0m event=spawn detail=parent=- msgs=0
+16:23:55.049 [36mINFO [0m nebflow.agent.lifecycle - [32mNebula-resend-d[0m [35mrd3/resend-d[0m event=start detail=msgs=0
+16:23:55.128 [36mINFO [0m nebflow.agent.lifecycle - [32mNebula-resend-d[0m [35mrd3/resend-d[0m event=freeze-enter detail=resumeAt=1792399980000
+16:23:55.204 [36mINFO [0m nebflow.agent.lifecycle - [32mNebula-resend-d[0m [35mrd3/resend-d[0m event=freeze-wake detail=text=wake once
+16:23:55.312 [36mINFO [0m nebflow.agent.lifecycle - [32mNebula-resend-d[0m [35mrd3/resend-d[0m event=turn-complete detail=msgs=3 textLen=2 textStreamed=true thinking=0 model=-
+16:23:55.417 [36mINFO [0m nebflow.agent.lifecycle - [32mNebula-resend-d[0m [35mrd3/resend-d[0m event=start detail=msgs=4
+16:23:55.423 [36mINFO [0m nebflow.agent.lifecycle - [32mNebula-resend-d[0m [35mrd3/resend-d[0m event=freeze-enter detail=resumeAt=1792399980000

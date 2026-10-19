@@ -152,6 +152,14 @@ export default {
   // Per-session turn start time: sessionId -> timestamp (ms)
   turnStartTimes: {},
 
+  // resend-dedup 批（修复批 #569）：每会话最近一次**真人派发**的 clientMessageId。
+  // 写点 = input.js 的真人派发点（send() 普通/ask/skill 三支 + drainMessageQueue）。
+  // 读点 = chat.js resendLastInput（重试/重发腿）——同一条逻辑消息的任何重发都
+  // 复用**同一个** id：服务端按 id 去重（recentMessageIds 命中 ⇒ 丢弃 + 回执），
+  // 已送达的重发因此天然无害；真未送达时服务端没见过该 id ⇒ 正常受理。断线重连
+  // 场景（WS 断开任意时长后重连）不依赖「断开了多久」，只依赖 id。
+  lastUserSendId: {},
+
   // Per-session pending tool card: sessionId -> DOM row element
   sessionToolCards: {},
 

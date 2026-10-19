@@ -1771,13 +1771,25 @@ export function removeStillProcessingNotice(sid) {
   } catch (e) { /* 呈现层清理失败不影响判定 */ }
 }
 
-/** 重发输入历史末条（原「重试」按钮语义，保持不变）。 */
+/** 重发输入历史末条（原「重试」按钮语义，保持不变）。
+ *  resend-dedup 批（修复批 #569）：重发 = **同一条逻辑消息** ⇒ 复用
+ *  `state.lastUserSendId[sid]` 里首次派发的 clientMessageId（幂等键不动），
+ *  不再现生成新 id。此前每次重发都带新 id ⇒ 服务端视为全新消息：
+ *  「WS 断开≈15 分钟（relay 票据 TTL）后重连 → 重试补发已送达的消息」在服务端
+ *  跑出第二个 turn + 客户端多渲染一个气泡（= 重复气泡报障本体）。现在：
+ *    · 原消息已送达（服务端 recentMessageIds 命中该 id）⇒ 丢弃 + `messageDuplicate`
+ *      回执 ⇒ 不出现重复气泡、不跑第二个 turn；
+ *    · 真未送达（服务端没见过该 id）⇒ 正常受理 ⇒ 补送不丢。
+ *  id 缺席（旧页面残留 / 历史重放无登记）⇒ 保持旧行为现生成（服务端无从去重，
+ *  与改动前逐字同险）。 */
 function resendLastInput(v) {
   const history = state.inputHistory;
   const lastMsg = history.length > 0 ? history[history.length - 1] : '';
   if (!lastMsg) return;
+  const sid = v && v.sessionId;
+  const resendId = (sid && state.lastUserSendId[sid]) || '';
   if (v && v.dom && v.dom.input) v.dom.input.value = lastMsg;
-  import('./input.js').then(({ send }) => { setActiveView(v); send(); });
+  import('./input.js').then(({ send }) => { setActiveView(v); send(resendId || undefined); });
 }
 
 // ---------- 终态行（超时 / 连接已断开）with retry ----------

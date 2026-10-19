@@ -1,0 +1,5 @@
+checkJs: 251 errors (baseline 273, zero-gate files: 3)
+  OK  total errors 251 < baseline 273 (-22) — consider --update to burn the baseline down
+
+checkJs GATE FAILURES:
+  src/main/resources/web/js/askAttachments.js: new file with 1 errors — new/touched files must be checkJs-clean

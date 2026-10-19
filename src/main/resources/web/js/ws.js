@@ -342,7 +342,14 @@ export function pendingSendCount() {
   return pendingSends.length;
 }
 
-/** 连接开启后按序补发 pending 队列（仅由 onopen 调用一次）。 */
+/** 连接开启后按序补发 pending 队列（仅由 onopen 调用一次）。
+ *  resend-dedup 批（修复批 #569）幂等契约：本函数**无条件按序补发**是「真未送达
+ *  ⇒ 补送不丢」的承担腿（离线入队的帧从未被写过任何 socket ⇒ 必然未送达），
+ *  行为保持不变；「已送达还重发」的抑制**不在这一层**——WS 无应用层 ack，本层
+ *  无从判定送达，判定单点 = 服务端 clientMessageId 去重（AgentActor
+ *  recentMessageIds 命中 ⇒ 丢弃 + `messageDuplicate` 回执）。因此：用户输入帧
+ *  （content 帧 / 排队 drain / 立即发送）的幂等键在 input.js 生成并**跨重发稳定**
+ *  （同一条逻辑消息一个 id），重发因此天然无害；ping 等控制帧重发无副作用。 */
 function flushPendingSends() {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
   while (pendingSends.length > 0) {

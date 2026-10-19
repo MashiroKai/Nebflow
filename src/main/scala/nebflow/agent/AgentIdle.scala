@@ -77,7 +77,10 @@ private[agent] object AgentIdle:
         val (isDuplicate, dedupedState) = checkDuplicate(clientMessageId, state)
         if isDuplicate then
           logger.info(s"Dropping duplicate message with clientMessageId=${clientMessageId.getOrElse("")}")
-          IO.pure(idle(agentDef, resources, depth, parentRef, state))
+          // resend-dedup 批：丢弃即回执 —— 客户端凭回执收掉同 id 重发乐观置位的
+          // 幻影 busy（无回执则看门走满阶梯，凭空呈现「仍在处理」）。best-effort。
+          emitDuplicateReceipt(state.wsSend, state.sessionId, clientMessageId) *>
+            IO.pure(idle(agentDef, resources, depth, parentRef, state))
         else
           logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "start", s"msgs=${state.messages.size}")
           val stateWithLang =
