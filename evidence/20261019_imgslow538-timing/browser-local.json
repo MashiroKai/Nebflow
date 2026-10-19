@@ -1,0 +1,148 @@
+{
+ "rounds": [
+  {
+   "cold_mint": 11,
+   "warm_ticket": 0,
+   "remint": 4.799999952316284,
+   "fetch_bytes": 38.5,
+   "bytes": 2806768,
+   "bitmap_decode": 6.900000035762787,
+   "img_decode_cached_url": 3.800000011920929,
+   "canvas_draw": 4.099999964237213
+  },
+  {
+   "cold_mint": 3.800000011920929,
+   "warm_ticket": 0,
+   "remint": 2.400000035762787,
+   "fetch_bytes": 15.900000035762787,
+   "bytes": 2806768,
+   "bitmap_decode": 2.799999952316284,
+   "img_decode_cached_url": 3.899999976158142,
+   "canvas_draw": 4.200000047683716
+  },
+  {
+   "cold_mint": 8.199999988079071,
+   "warm_ticket": 0,
+   "remint": 3.300000011920929,
+   "fetch_bytes": 35.09999996423721,
+   "bytes": 2806768,
+   "bitmap_decode": 2.199999988079071,
+   "img_decode_cached_url": 3.399999976158142,
+   "canvas_draw": 2.900000035762787
+  },
+  {
+   "cold_mint": 9.800000011920929,
+   "warm_ticket": 0,
+   "remint": 4.5,
+   "fetch_bytes": 18.299999952316284,
+   "bytes": 2806768,
+   "bitmap_decode": 3.400000035762787,
+   "img_decode_cached_url": 4,
+   "canvas_draw": 3.800000011920929
+  },
+  {
+   "cold_mint": 8.5,
+   "warm_ticket": 0.09999996423721313,
+   "remint": 5.400000035762787,
+   "fetch_bytes": 26.30000001192093,
+   "bytes": 2806768,
+   "bitmap_decode": 2.5,
+   "img_decode_cached_url": 5.600000023841858,
+   "canvas_draw": 3.399999976158142
+  },
+  {
+   "cold_mint": 15.399999976158142,
+   "warm_ticket": 0,
+   "remint": 2.5,
+   "fetch_bytes": 38.700000047683716,
+   "bytes": 2806768,
+   "bitmap_decode": 2.799999952316284,
+   "img_decode_cached_url": 3.5,
+   "canvas_draw": 3
+  },
+  {
+   "cold_mint": 6.400000035762787,
+   "warm_ticket": 0,
+   "remint": 2.5,
+   "fetch_bytes": 31.5,
+   "bytes": 2806768,
+   "bitmap_decode": 2.199999988079071,
+   "img_decode_cached_url": 4.800000011920929,
+   "canvas_draw": 2.800000011920929
+  },
+  {
+   "cold_mint": 8.699999988079071,
+   "warm_ticket": 0,
+   "remint": 4.600000023841858,
+   "fetch_bytes": 16.900000035762787,
+   "bytes": 2806768,
+   "bitmap_decode": 2.300000011920929,
+   "img_decode_cached_url": 3.5,
+   "canvas_draw": 3.5
+  },
+  {
+   "cold_mint": 9.699999988079071,
+   "warm_ticket": 0,
+   "remint": 3.400000035762787,
+   "fetch_bytes": 20.599999964237213,
+   "bytes": 2806768,
+   "bitmap_decode": 2.200000047683716,
+   "img_decode_cached_url": 3.199999988079071,
+   "canvas_draw": 2.899999976158142
+  },
+  {
+   "cold_mint": 8.100000023841858,
+   "warm_ticket": 0,
+   "remint": 3.300000011920929,
+   "fetch_bytes": 19.100000023841858,
+   "bytes": 2806768,
+   "bitmap_decode": 2.5,
+   "img_decode_cached_url": 3.5,
+   "canvas_draw": 3.399999976158142
+  }
+ ],
+ "summary": {
+  "cold_mint": {
+   "med": 8.7,
+   "min": 3.8,
+   "max": 15.4
+  },
+  "warm_ticket": {
+   "med": 0,
+   "min": 0,
+   "max": 0.1
+  },
+  "remint": {
+   "med": 3.4,
+   "min": 2.4,
+   "max": 5.4
+  },
+  "fetch_bytes": {
+   "med": 26.3,
+   "min": 15.9,
+   "max": 38.7
+  },
+  "bytes": {
+   "med": 2806768,
+   "min": 2806768,
+   "max": 2806768
+  },
+  "bitmap_decode": {
+   "med": 2.5,
+   "min": 2.2,
+   "max": 6.9
+  },
+  "img_decode_cached_url": {
+   "med": 3.8,
+   "min": 3.2,
+   "max": 5.6
+  },
+  "canvas_draw": {
+   "med": 3.4,
+   "min": 2.8,
+   "max": 4.2
+  }
+ },
+ "nf_file_entries": [],
+ "nf_ticket_entries": []
+}
