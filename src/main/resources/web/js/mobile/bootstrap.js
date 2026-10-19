@@ -43,23 +43,24 @@ async function activate() {
   // （桌面视口两路径都不跑 ⇒ html.mobile-html-layer 桌面永不出现）。
   document.documentElement.classList.add('mobile-html-layer');
   try {
-    // 动态 import：桌面视口永不执行这四行（激活判据在前）。
-    // nav 先激活（页面壳/卡片头先于 bar 的按下态同步与手势绑定就位）；
-    // 拆除顺序相反（teardowns 尾部的 nav 最后拆 —— pane 归还在手势解绑之后）。
-    const [nav, layout, gestures, floats] = await Promise.all([
-      import('./navController.js'),
+    // 动态 import：桌面视口永不执行这些行（激活判据在前）。
+    // v3 激活序：header 先行（双液态列壳就位，layout/floats 才有列可填）；
+    // 拆除以**数组序**执行 ⇒ teardowns 倒排激活序：floats 最先归还搬移节点
+    //（锚点归还需要列壳仍在场），nav 最后拆（pane 归还在手势解绑之后）。
+    const [header, layout, gestures, floats, nav] = await Promise.all([
+      import('./headerController.js'),
       import('./layoutController.js'),
       import('./canvasGestures.js'),
       import('./floatController.js'),
+      import('./navController.js'),
     ]);
     if (!active) return; // 激活期间已跨越回桌面 —— 直接拆除
     const navTeardown = nav.activateNav();
-    teardowns = [
-      layout.activateLayout(),
-      gestures.activateGestures(),
-      floats.activateFloats(),
-      navTeardown,
-    ];
+    const tHeader = header.activateHeader();
+    const tLayout = layout.activateLayout();
+    const tGestures = gestures.activateGestures();
+    const tFloats = floats.activateFloats();
+    teardowns = [tFloats, tGestures, tLayout, tHeader, navTeardown];
   } catch (err) {
     // 控制器加载失败：回到桌面形态（宁可退回可用桌面，不可半挂层）。
     console.error('[mobile-layer] activate failed', err);
@@ -87,5 +88,5 @@ if (mq.matches) activate();
 // QA / 诊断探针（只读）。
 (/** @type {any} */ (window)).__nfMobileLayer = {
   get active() { return active; },
-  version: 'mobile-ui-refactor r4 (tools-into-header + dvh-full-chain + bar-dual-state)',
+  version: 'mobile-ui-refactor v3 (floating-header + liquid-dd + secondary-morph + tpanel)',
 };

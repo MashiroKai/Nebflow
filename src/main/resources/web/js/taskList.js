@@ -53,7 +53,8 @@ function openL1(key, meta, opts = {}) {
 
 // ── Panel session gate ───────────────────────────────────────────────────
 /** Only the Nebula unified panel renders rows. */
-function sessionShowsNodeEntries(sid) {
+/** 导出 = 手机层 v3 任务面板的同源面板会话门（mobile/taskPanel.js）。 */
+export function sessionShowsNodeEntries(sid) {
   if (!sid) return false;
   const agent = state.sessionAgentMap ? state.sessionAgentMap[sid] : null;
   return !agent || agent === 'Nebula';
@@ -150,8 +151,9 @@ function buildNodeGlyph(st, cls) {
 }
 
 /** Status word keys (existing locale keys only; domain = stub ROW_STATUS).
- *  blocked 键保留：agentflow flow-step 成员行合法态（#566：delegate 根行不再产生）。 */
-const DELEGATE_WORD_KEY = {
+ *  blocked 键保留：agentflow flow-step 成员行合法态（#566：delegate 根行不再产生）。
+ *  导出 = 手机层 v3 任务面板的同源消费缝（mobile/taskPanel.js 只换呈现不换数据面）。 */
+export const DELEGATE_WORD_KEY = {
   pending: 'task.nodePending',
   running: 'task.inProgressShort',
   blocked: 'task.nodeBlocked',
@@ -342,7 +344,10 @@ function chainMembersOf(r, chain) {
  * @returns {Array<{key: string, project: string, row: any, members: any[],
  *          allCount: number,
  *          view: {ordered: any[], edges: any, depths: Map<string, number>, seqs: Map<string, string>}}>} */
-function collectChains() {
+/** 导出 = 手机层 v3 任务面板的同源数据面（mobile/taskPanel.js 只换呈现不换数据面）。
+ *  返回 collectChains 现值（active rows only，activity 倒序）；字段与面板行渲染
+ *  完全同源 —— 零第二数据权威。 */
+export function collectChains() {
   const rows = listDelegateRows()
     .filter((r) => r && ACTIVE_ROW_STATUSES.has(String(r.status)) && r.archivedAt == null);
   const ts0 = (r) => {
@@ -384,7 +389,8 @@ const chainSeenNext = new Set();
 // ── Row builders ─────────────────────────────────────────────────────────
 
 /** Shared meta carrier handed to the L1 view (raw row fields, no derivation). */
-function rowMetaOf(r) {
+/** 导出 = 手机层 v3 任务卡的 L1 跳转 meta（mobile/taskPanel.js 同源复用）。 */
+export function rowMetaOf(r) {
   const row0 = r && typeof r === 'object' ? r : {};
   return {
     taskNo: String(row0.taskNo || ''),
@@ -443,7 +449,8 @@ function buildTwisty(leaf) {
 /** Chain progress meta ("done/total" + working count + elapsed) — the classic
  *  collapsed-row reading. Members include the root stub, so total counts the
  *  root too (the chain as a whole). */
-function chainProgressMeta(members) {
+/** 导出 = 手机层 v3 任务卡的进度槽（mobile/taskPanel.js 同源复用）。 */
+export function chainProgressMeta(members) {
   const list = Array.isArray(members) ? members : [];
   const done = list.filter((m) => ['completed', 'failed', 'cancelled'].includes(String(m.status))).length;
   const working = list.filter((m) => String(m.status) === 'running').length;

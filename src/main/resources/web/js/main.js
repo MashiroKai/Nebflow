@@ -119,6 +119,7 @@ import './agentManager.js';
 import { openPlugins } from './plugins.js';
 import { initColResizers } from './colResizer.js';
 import { initActivityBar, toggleSideBar, enableFriendPanels } from './activityBar.js';
+import { initAgentProfile } from './agentProfile.js';
 // Social interface cards (socpanel batch, 2026-09-19): entry #social-btn +
 // config dialog. Wiring is document-level, so it survives the friends gate
 // detaching/re-attaching the entry (see socialPanel.js initSocialPanel).
@@ -3377,6 +3378,9 @@ initNavTabs();
 initModals();
 initRulesModal();
 initInput(chatViews.primary);
+// 会话头头像 + profile 面板（mobile-mockup-375 v3 批 · 扩展③）：头像/名称两端
+// 同款 —— 同一 DOM 节点（.header-center 首位），形态差异全在 CSS 层。
+initAgentProfile();
 // visup-b 批（作者 2026-09-19 04:22 修正④）：输入区的 micOrb 气泡形态退役 ⇒
 // `initMicOrb()` 现在是 no-op（挂载判据 = `#mic-canvas` 在场；主区已无该 canvas）。
 // 调用点保留：设置面/预览面的 OrbRenderer 管线仍由本模块导出，且未来若重挂输入区

@@ -515,6 +515,11 @@ export default {
   // 登录入口 / 登录面板（2026-09-16 登录入口批）：面板文案此前是 activityBar.js
   // 注入样式一族的硬编码中文字面量，本批整体搬进 i18n（zh/en 成对，禁死键）。
   'login.title': '登录 {lowerBrand}，连接你的其他设备',
+  // 登录卡 v3 单键面（mobile-mockup-375 v3④）：官方横排 lockup + 单键制。
+  'login.unifiedPrimary': '登录 {lowerBrand} 账号',
+  'login.connectTitle': '连接你的其他设备',
+  'login.connectHint': '登录后此设备与账号下其他设备互联',
+  'login.authNote': '将打开浏览器完成认证；GitHub / Google 快捷登录在认证页内',
   'login.starting': '正在启动登录…',
   'login.hintBrowser': '在浏览器中登录 {lowerBrand} 账号，此设备即与账号下的其他设备互联',
   'login.hintAuthorize': '在浏览器中完成授权，此设备即与账号下的其他设备互联',
@@ -2305,4 +2310,22 @@ export default {
   'secrets.error.io': '密钥请求失败（{code}）。请检查网关连接后重试。',
   // === Phase 3b session rail: paste-ticket entry (ws.js stage B) ===
   'ws.ticketEntry.notify': '需要登录——点击登录按钮，通过 {lowerBrand} 账号继续',
+  // === mobile-mockup-375 v3 实施批（20261020_214500 样张落地）===
+  // profile 面板（扩展③：会话头头像入口 + 头像/名称便捷设置）
+  'profile.title': '智能体',
+  'profile.openAria': '智能体资料',
+  'profile.closeAria': '关闭',
+  'profile.upload': '上传头像',
+  'profile.reset': '恢复默认',
+  'profile.nameLabel': '名称',
+  'profile.namePlaceholder': '输入名称，回车保存',
+  'profile.note': '头像本地优先保存（按智能体各自记忆），登录后可随账号同步；名称回车即存。',
+  // 任务浮层（v3⑤：二级液态任务面板）
+  'taskpanel.title': '任务',
+  'taskpanel.collapse': '收回',
+  'taskpanel.stats': '{n} · {run} 运行中',
+  'taskpanel.grpRunning': '运行中',
+  'taskpanel.grpQueued': '排队',
+  'taskpanel.grpDone': '已完成',
+  'taskpanel.empty': '暂无任务',
 };

@@ -22,7 +22,7 @@ import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from './
 import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow, avatarViewState, noteAvatarFailure, paintAvatarSlot, LOCAL_FILE_CODES, openEndSessionHandoff, classifyLoginFailureCode, loginFailureText } from './neblink.js';
 import { setUpdateDot } from './updateCheck.js';
 import { createIconsIn, escapeHtml, statusIcon } from './utils.js';
-import { getProfileUrl } from './brand.js';
+import { getProfileUrl, standLockupSvg } from './brand.js';
 import { t } from './i18n.js';
 import { key } from './branding.js';
 
@@ -548,18 +548,26 @@ function injectLoginModalStyles() {
    label. Same one-family discipline as the keys above. */
 .login-social-btn { display: flex; align-items: center; justify-content: center; gap: 7px; }
 .login-social-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
+/* v3 登录卡（mobile-mockup-375 v3④）：单键制 + 官方横排 lockup。idle 面无头栏
+   （lockup 即卡头；关闭 = Esc / 点外，既有链）；面板材质沿用上方 .nebflow-login-modal
+   玻璃族（blur24 与 glass-control 同族色值域，键族 token 在 sapphire.css 登录键族块）。 */
+.nebflow-login-modal.login-idle { width: 300px; }
+.nebflow-login-modal.login-idle .login-modal-header { display: none; }
+.nebflow-login-modal.login-idle .login-modal-body { padding: 24px 22px 20px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.login-lockup { color: var(--color-text); display: block; margin-bottom: 2px; }
+.login-lockup .stand-lockup { width: 136px; height: 25px; display: block; }
+.login-card-title { font-size: 15.5px; font-weight: 600; color: var(--color-text); margin: 0; letter-spacing: -0.01em; }
+.login-sub2 { font-size: 11px; color: var(--color-text-muted); line-height: 1.55; }
+.login-idle .login-hint b { color: var(--color-text); font-weight: 500; }
 `;
   document.head.appendChild(style);
 }
 
-// ── Social provider marks (inline SVG) ───────────────────
-// 2026-10-15 login-card batch — the task's「官方图标 inline SVG」: no icon
-// font, no external asset, brand paths verbatim (GitHub = primer octicon
-// mark-github 16×16, currentColor so it follows the key ink; Google = the
-// official four-color "G" 48×48). aria-hidden: the button label carries the
-// accessible name.
-const GITHUB_MARK_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>';
-const GOOGLE_MARK_SVG = '<svg viewBox="0 0 48 48" aria-hidden="true" focusable="false"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>';
+// ── Social provider marks — RETIRED (mobile-mockup-375 v3④) ──────────────
+// The idle face's GitHub/Google one-click keys retired with the v3 single-key
+// card (「登录 stand 账号」→ the EXISTING unified PKCE chain; quick social
+// login lives inside the hosted auth page). The inline brand marks left with
+// them — no other consumer existed (grep-clean 2026-10-20).
 
 /**
  * Public entry for the NebLink login modal (used by the
@@ -727,26 +735,20 @@ function showLoginModal(opts = {}) {
   const render = (state, data = {}) => {
     let body = '';
     if (state === 'idle') {
-      // Social-first choice face (2026-10-15 login-card batch, fix-plan §4
-      // B-1): GitHub/Google one-click keys prominent (primary tier, official
-      // inline marks), the unified account login (email/username inside the
-      // hosted shell — the EXISTING PKCE chain, untouched) as the secondary
-      // pick (「mail 次选」). Nothing on this face has started yet: each key
-      // reserves its popup inside ITS OWN gesture (same contract as the
-      // switch key below), so a merely-opened modal never fires a popup or a
-      // flow. The social keys ride direct_sign_in (probed on the deployed
-      // tenant for the console client: 303 → /direct/social/<p>, with
-      // fallback=sign-in graceful degradation) AND forceLogin semantics —
-      // the quick-social-entry guardrail (forced fresh IdP auth against the
-      // automaticAccountLinking silent merge, fix-plan §7.3), identical to
-      // the website face's contract.
+      // v3 登录卡（mobile-mockup-375 v3④，作者已批「单键制 + 官方横排 lockup」，
+      // 20261020_211500 v2⑤ 同裁）：单键制 —— 三键社交选择面退役，一键进入既有
+      // 认证流（PKCE 主路径，GitHub / Google 快捷登录在认证页内）。lockup =
+      // 仓内集中源 stand-horizontal-compact svg 内联（brand.js standLockupSvg，
+      // fill=currentColor 随主题）；面板材质/键族 token 不动（sapphire.css 登录
+      // 键族块）。单键点击 = 原 #login-unified 链原样（reserve + startFlow）。
       body = `
-        <div class="login-hint">${t('login.hintBrowser')}</div>
+        <div class="login-lockup">${standLockupSvg()}</div>
+        <h3 class="login-card-title">${t('login.connectTitle')}</h3>
+        <div class="login-hint"><b>${t('login.connectHint')}</b></div>
         <div class="login-actions">
-          <button class="login-modal-btn glass-control cfg-btn-primary login-social-btn" id="login-social-github">${GITHUB_MARK_SVG}<span>${t('login.social.github')}</span></button>
-          <button class="login-modal-btn glass-control cfg-btn-primary login-social-btn" id="login-social-google">${GOOGLE_MARK_SVG}<span>${t('login.social.google')}</span></button>
-          <button class="login-modal-btn glass-control login-modal-btn-secondary" id="login-unified">${t('login.social.other')}</button>
-        </div>`;
+          <button class="login-modal-btn glass-control cfg-btn-primary login-social-btn" id="login-unified"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" x2="3" y1="12" y2="12"/></svg><span>${t('login.unifiedPrimary')}</span></button>
+        </div>
+        <div class="login-sub2">${t('login.authNote')}</div>`;
     } else if (state === 'starting') {
       body = `<div class="login-waiting" style="margin-top:0;padding:12px 0">${t('login.starting')}</div>`;
     } else if (state === 'waiting') {
@@ -813,6 +815,9 @@ function showLoginModal(opts = {}) {
           ${cleanupKey}
         </div>`;
     }
+    // v3④：idle（单键卡）面无头栏 —— lockup 即卡头（关 = Esc / 点外，既有链）；
+    // 其余状态（等待/错误/成功）保留头栏标题 + 关闭钮。
+    modal.classList.toggle('login-idle', state === 'idle');
     modal.innerHTML = `
       <div class="login-modal-header">
         <h3>${t('login.title')}</h3>

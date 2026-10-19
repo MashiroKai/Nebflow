@@ -520,6 +520,11 @@ export default {
   // used to be hard-coded Chinese literals in activityBar.js's injected style
   // family; this batch moves them into i18n (zh/en paired, no dead keys).
   'login.title': 'Sign in to {lowerBrand} — link your devices',
+  // Login card v3 single-key face (mobile-mockup-375 v3④): horizontal lockup + one key.
+  'login.unifiedPrimary': 'Sign in to {lowerBrand}',
+  'login.connectTitle': 'Connect your other devices',
+  'login.connectHint': 'Once signed in, this device links with the others on your account',
+  'login.authNote': 'A browser will open to finish sign-in; GitHub / Google quick sign-in lives inside that page',
   'login.starting': 'Starting login…',
   'login.hintBrowser': 'Sign in to your {lowerBrand} account in the browser; this device then interconnects with your other devices',
   'login.hintAuthorize': 'Complete authorization in the browser; this device then interconnects with your other devices',
@@ -2374,4 +2379,22 @@ export default {
   // one-time console ticket (CLI: `nebflow token`); the redemption face
   // (?ticket=) exchanges it for an HttpOnly session cookie.
   'ws.ticketEntry.notify': 'Sign-in required — click the sign-in button to continue with your {lowerBrand} account',
+  // === mobile-mockup-375 v3 implementation batch (mockup 20261020_214500) ===
+  // Profile panel (extension 3: header avatar entry + avatar/name quick settings)
+  'profile.title': 'Agent',
+  'profile.openAria': 'Agent profile',
+  'profile.closeAria': 'Close',
+  'profile.upload': 'Upload avatar',
+  'profile.reset': 'Reset',
+  'profile.nameLabel': 'Name',
+  'profile.namePlaceholder': 'Type a name, press Enter to save',
+  'profile.note': 'Avatars are saved locally first (per agent), and can sync with your account after sign-in; names save on Enter.',
+  // Task panel (v3.5: secondary-liquid task surface)
+  'taskpanel.title': 'Tasks',
+  'taskpanel.collapse': 'Collapse',
+  'taskpanel.stats': '{n} · {run} running',
+  'taskpanel.grpRunning': 'Running',
+  'taskpanel.grpQueued': 'Queued',
+  'taskpanel.grpDone': 'Done',
+  'taskpanel.empty': 'No tasks yet',
 };
