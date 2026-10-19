@@ -125,8 +125,36 @@ export default {
   // 2026-09-01); the panel simply ignores unknown fields.
   toolResultTtl: null,
 
-  // Timestamp of the last textDelta/thinkingDelta received (ms).
+  // Timestamp of the last textDelta/thinkingDelta received (ms). GLOBAL — any
+  // session's stream refreshes it, so it cannot answer "is THIS session's
+  // stream alive". The per-session twin below is the one busy-lifecycle
+  // decisions read.
   lastStreamActivity: 0,
+
+  // busy-stuck-fix (2026-10-20): per-session timestamp of the last stream-frame
+  // activity (textDelta/thinkingDelta/thinking/textDone/toolStart/toolHeartbeat).
+  // Twin of the GLOBAL lastStreamActivity above at per-session granularity —
+  // the messageDuplicate receipt guard and the turn-start confirmation net both
+  // need "has THIS session streamed since T", which a global stamp cannot
+  // answer (any other busy session's deltas would keep masking a phantom).
+  sessionStreamActivity: {},
+
+  // busy-stuck-fix (2026-10-20): per-session pending "turn-start confirmation"
+  // timer ids (setTimeout handle). Armed by every optimistic busy arm
+  // (send / drainMessageQueue / dispatchOfflineItem); cancelled by the engine's
+  // authoritative new-turn signals (sessionBusy{busy:true}, any terminal frame,
+  // or this session's own stream activity). Fires only when NO turn ever
+  // started — clearing the phantom busy the optimistic arm created. Owners
+  // (arm/cancel/fire bodies) live in main.js; these state slots are the
+  // cross-module seam (input.js/chat.js call state.armTurnConfirm?.(sid) —
+  // same pattern as updateSafetyToggle below).
+  turnConfirmTimers: {},
+  armTurnConfirm: null,
+  cancelTurnConfirm: null,
+  // Confirmation window (ms). A real root-session turn is confirmed by the
+  // engine's sessionBusy{busy:true} within RTT of acceptance (AgentIdle emits
+  // it before the LLM call). Overridable for spec timing.
+  turnConfirmMs: 20000,
 
   // ①-2 (2026-09-11, queue-direct-pass diagnosis §1.2 G3): per-session timestamp
   // of the last TERMINAL frame (done/error/interrupted/timeout/maxTokens/

@@ -1694,6 +1694,7 @@ export function onBusyWatchdogDeadline(sid, deadlineAt) {
     const deadReason = !wsAlive ? 'ws-closed' : 'no-inbound';
     const v = findViewBySessionId(sid);
     if (v) { setActiveView(v); renderConnectionLostNotice(sid, deadReason); clearStatus(); }
+    state.cancelTurnConfirm?.(sid);
     clearWatchdogTimer(sid);
     _watchdogRung.delete(sid);
     clearBusy(sid);   // ⇒ removeStillProcessingNotice（chat.js:271）：真死态不留「仍在处理」行

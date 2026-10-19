@@ -411,6 +411,75 @@ const drainWindowUsed = new Set();
 // window gate, dispatching the next queued item in the same window. Dedupe
 // by sid so the terminal-frame pair collapses to a single pending timer.
 const pendingDrainTimers = new Map();
+
+// ── busy-stuck-fix (2026-10-20 · 会话 busy 态卡死修复批) ─────────────────────
+// 「轮次已结束但 busy 不清」的幻影 busy 收口。病史：#569 起服务端对已受理过的
+// clientMessageId 丢弃不开 turn（AgentIdle/AgentFrozen/AgentProcessing 三处去重点
+// + messageDuplicate 回执），而客户端三条派发腿（send / drainMessageQueue /
+// dispatchOfflineItem）在写帧成功后**乐观置位 busy**——「帧写出去」从此不再蕴含
+// 「turn 会跑」。判重回执本应收掉幻影，但旧消费面有两个缺口：
+//   ① 15s 守卫读的是**全局** state.lastStreamActivity——任何其他会话（多代理
+//     工作区常态）15s 内有流帧，回执就永不收 busy ⇒ 幻影 busy 永久；
+//   ② 收掉 busy 也不 scheduleQueueDrain ⇒ 幻影期间排队的消息在唯一的
+//     「终态→drain」挂点全部缺席后永远停摆（报障本体：后续消息入队发不出）。
+// 另有无回执的幻影形态（补发重放被旧后端/丢帧窗吞掉、冻结唤醒搁置）：看门的
+// 真死分支在 WS 存活时被 pong 活性证据永久挡住（by design，判的是慢非幻影），
+// 同样无兜底。
+// 修法两件（均在客户端，引擎零触碰）：
+//   Fix 1 = messageDuplicate 回执升级为**权威无-turn 信号**：按 clientMessageId
+//     精确对账（回执 id === 本会话最新派发 id）+ 本会话流活动对账，命中即收
+//     busy 并照常 drain；对不上 id 的回执回落 per-session 15s 静默窗（语义同旧
+//     守卫，粒度改本会话）。
+//   Fix 2 = 乐观置位改为**草签**：派发腿武装一张 turn-start 确认网（20s），引擎
+//     的权威开turn 信号（sessionBusy{busy:true} / 终态帧 / 本会话流帧）任一到场
+//     即撤；到点仍无任何 turn 事实 ⇒ 判定幻影，收 busy + drain。根会话在 idle
+//     受理瞬间就发 busy{busy:true}（AgentIdle 在 pipeLlmCall 之前），确认延迟
+//     = RTT，20s 只会在「真的没有 turn」时走满。depth>0 会话（delegate-/node-/
+//     dispatcher-/subtask-/team- 前缀，引擎从不发 sessionBusy 帧）**不**武装
+//     本网（首帧延迟不可上界，网会误伤慢流）——它们由 Fix 1 + 看门阶梯兜。
+function cancelTurnConfirm(sid) {
+  if (!sid) return;
+  const t = state.turnConfirmTimers[sid];
+  if (t) { clearTimeout(t); delete state.turnConfirmTimers[sid]; }
+}
+function armTurnConfirm(sid) {
+  if (!sid) return;
+  cancelTurnConfirm(sid);
+  // depth>0 家族不武装（见上）：引擎对这些会话从不出 sessionBusy 帧。
+  if (String(sid).startsWith('delegate-') || String(sid).startsWith('subtask-') ||
+      String(sid).startsWith('node-') || String(sid).startsWith('dispatcher-') ||
+      String(sid).startsWith('team-')) return;
+  const budget = Number(state.turnConfirmMs) || 20000;
+  state.turnConfirmTimers[sid] = setTimeout(() => {
+    delete state.turnConfirmTimers[sid];
+    // 到点仍须 busy 才有意义（终态帧/回执已撤网的场景在此早退）。
+    if (!state.busySessionIds.has(sid)) return;
+    // 本会话窗口内有流帧 ⇒ turn 事实上在跑（慢首帧），绝不是幻影 ⇒ 不动。
+    const sinceStream = Date.now() - (state.sessionStreamActivity[sid] || 0);
+    if (sinceStream < budget) return;
+    console.warn('[busy-confirm] no turn-start fact within ' + budget + 'ms — clearing phantom busy:', sid);
+    delete state.turnExpecting[sid];
+    if (state.sessionBusyTimeouts[sid]) {
+      clearTimeout(state.sessionBusyTimeouts[sid]);
+      delete state.sessionBusyTimeouts[sid];
+    }
+    clearBusy(sid);
+    // 与其他终态路径同律：幻影期间排队的消息照常 flush（红线：修 busy 误判，
+    // 队列语义不动——drain 自身的窗口闸/ws 闸照旧把关）。
+    scheduleQueueDrain(sid);
+  }, budget);
+}
+// 跨模块接缝：input.js（三条派发腿 + stop 键）与 chat.js（看门真死收口）经
+// state 槽调用（与 updateSafetyToggle 同款模式，避免新增静态 import 环）。
+state.armTurnConfirm = armTurnConfirm;
+state.cancelTurnConfirm = cancelTurnConfirm;
+// 本会话流活动戳（全局 lastStreamActivity 的 per-session 孪生，busy-stuck-fix）。
+// 调用点 = 与 armBusyFromStream 同族的流帧处理器 + toolHeartbeat 族（工具执行期
+// 本会话事实上活着，确认网不得在其窗口内走满）。
+function stampSessionStreamActivity(sid) {
+  if (sid) state.sessionStreamActivity[sid] = Date.now();
+}
+
 function scheduleQueueDrain(sid) {
   if (!sid) return;
   if (pendingDrainTimers.has(sid)) return; // drain timer already armed for this session
@@ -446,6 +515,9 @@ function armBusyFromStream(sid) {
   // 派发后 busy 已被 setBusy(sid) 置 true，放进闸后本支对已 busy 的会话永不执行 ⇒
   // depth>0 会话（不发 sessionBusy 帧）的队列在第一次派发后即停摆（症状① 复发）。
   if (sid) drainWindowUsed.delete(sid);
+  // busy-stuck-fix：本会话流活动戳（确认网的活性对账源）——必须同样置于 busy 闸
+  // 之前：busy 中的会话正是确认网在场的会话，它的流帧恰恰是要记账的事实。
+  stampSessionStreamActivity(sid);
   if (!sid || state.busySessionIds.has(sid)) return;
   const termAt = state.lastTerminalAt[sid];
   if (termAt && Date.now() - termAt <= TERMINAL_ARM_GUARD_MS) return;
@@ -461,6 +533,8 @@ function clearBusyFor(msg) {
   // freezetimeout B2: 任何终态帧都收掉「仍在处理」行（busy 可能已被别的路径清掉，
   // 故不依赖下面 clearBusy 的条件分支）。
   if (sid) removeStillProcessingNotice(sid);
+  // busy-stuck-fix：终态帧 = turn 跑完的权威事实 ⇒ turn-start 确认网撤网。
+  cancelTurnConfirm(sid);
   if (state.busySessionIds.has(sid)) {
     clearBusy(sid);
   }
@@ -1249,29 +1323,51 @@ onMessage('error', (msg, view) => {
 // ── resend-dedup 批（修复批 #569）：服务端按 clientMessageId 去重的**回执**帧 ──
 // 形状：{type:'messageDuplicate', sessionId, clientMessageId}。服务端三处去重点
 // （AgentIdle 直投 / AgentFrozen 唤醒 / AgentProcessing 排队）丢弃重复帧时发出。
-// 客户端语义：这条消息**已经被受理过** ⇒ 本地不再等它的 turn：
-//   · 收掉本会话的看门（同 id 重发乐观置位的 busy 是幻影——不会有终止帧来清它，
-//     置之不理会走满看门阶梯，凭空呈现「仍在处理/连接已断开」行）；
-//   · 清 turnExpecting / lastTerminalAt 的同族幻影登记；
-//   · 只在会话**无活跃流**时清 busy（复用 sessionBusy(false) 处理器的 15s 口径：
-//     防把上一条消息真 turn 的 busy 误清——重复帧不可能开流，15s 内有流帧 = busy
-//     属于别的 turn）。
-// 呈现面零动作：同 id 重发本就不渲染第二个气泡（input.js send(resendId) 分支），
-// 首次尝试的气泡原样保留（已送达场景的用户可见结果 = 什么都没多）。
+// 客户端语义：这条消息**已经被受理过** ⇒ 本地不再等它的 turn。
+//
+// busy-stuck-fix（2026-10-20 · 报障「轮次已结束 busy 不清、后续消息入队发不出」）：
+// 回执升级为**权威无-turn 信号**，收幻影 busy 的守卫从「全局 15s 流活动窗」改为
+// 精确对账，两个缺口收口：
+//   ① 旧守卫读**全局** state.lastStreamActivity——多代理工作区里任何其他会话的
+//     流帧都续命本会话的幻影 busy ⇒ 回执永不收 busy（报障主因）。改读本会话的
+//     state.sessionStreamActivity；并优先走 id 对账精确腿：
+//       · msg.clientMessageId === state.lastUserSendId[sid]（本会话最新派发的幂等键）
+//         且派发点之后本会话**零流活动** ⇒ busy 就是这条重复派发的幻影草签 ⇒ 收。
+//         （派发点都无条件重盖 state.turnStartTimes[sid]，对账基准用它。）
+//       · id 对不上（回执指旧消息/无 id）⇒ 回落 per-session 15s 静默窗——语义同旧
+//         守卫，粒度从全局收敛到本会话。
+//   ② 收 busy 之后照常 scheduleQueueDrain——幻影期间排队的消息由本回执路径flush
+//     （与 clearBusyFor / sessionBusy{busy:false} 两条终态路径同律）。旧实现不
+//     drain ⇒ 队列唯一的排空挂点全部缺席 = 报障的「入队发不出」半边。
+// 呈现面零动作不变：同 id 重发本就不渲染第二个气泡。
 onMessage('messageDuplicate', (msg) => {
   const sid = msg.sessionId || state.activeSessionId;
   console.info('[ws] messageDuplicate receipt:', { sessionId: sid, clientMessageId: msg.clientMessageId });
   if (!sid) return;
   delete state.turnExpecting[sid];
+  // busy-stuck-fix：回执本身就是 turn-start 确认网的（否定）答案 ⇒ 撤网。
+  cancelTurnConfirm(sid);
   // 看门计时槽位直清（与 input.js armBusyWatchdogFor 的清法同款，零新导出面）。
   if (state.sessionBusyTimeouts[sid]) {
     clearTimeout(state.sessionBusyTimeouts[sid]);
     delete state.sessionBusyTimeouts[sid];
   }
-  const sinceActivity = Date.now() - (state.lastStreamActivity || 0);
-  if (sinceActivity >= 15000 && state.busySessionIds.has(sid)) {
+  if (!state.busySessionIds.has(sid)) return;
+  const dispatchAt = state.turnStartTimes[sid] || 0;
+  const streamedSinceDispatch = (state.sessionStreamActivity[sid] || 0) > dispatchAt;
+  const idMatchesLatestSend = !!msg.clientMessageId && msg.clientMessageId === state.lastUserSendId[sid];
+  const sinceSidStream = Date.now() - (state.sessionStreamActivity[sid] || 0);
+  const phantomBusy = idMatchesLatestSend
+    ? !streamedSinceDispatch            // 精确腿：本会话在派发后零流活动 = 幻影草签
+    : sinceSidStream >= 15000;          // 回落腿：per-session 15s 静默（旧守卫的会话级口径）
+  if (phantomBusy) {
     // clearBusy 内部已收「仍在处理」行（chat.js clearBusy ⇒ removeStillProcessingNotice）。
-    import('./chat.js').then(({ clearBusy }) => clearBusy(sid)).catch(() => {});
+    import('./chat.js').then(({ clearBusy }) => {
+      clearBusy(sid);
+      // busy-stuck-fix ②：幻影收口照常 drain（与终态帧族同一挂点；drain 自身的
+      // per-turn 窗口闸 / ws 闸照旧把关，队列语义零改动）。
+      scheduleQueueDrain(sid);
+    }).catch(() => {});
   }
 });
 
@@ -2009,8 +2105,16 @@ onMessage('agentToolEnd', (msg, view) => { resetStreamTimeout(msg.sessionId); })
 // 事件段）由后端每 30s 推送心跳重置 busy timer，前端 630s 纯静默超时不再误杀
 // 正在干活的 turn。agentToolHeartbeat（子代理原事件）与 toolHeartbeat（主会话
 // /转换后）都重置对应会话计时器（与 agentToolEnd 既有重置面一致）。
-onMessage('toolHeartbeat', (msg, view) => { resetStreamTimeout(msg.sessionId); });
-onMessage('agentToolHeartbeat', (msg, view) => { resetStreamTimeout(msg.rootSessionId || msg.sessionId); });
+onMessage('toolHeartbeat', (msg, view) => {
+  resetStreamTimeout(msg.sessionId);
+  // busy-stuck-fix：工具执行期心跳 = 本会话 turn 事实上活着——记入本会话流活动，
+  // 防 turn-start 确认网在长工具调用（无 delta 窗口）期间误判幻影。
+  stampSessionStreamActivity(msg.sessionId || msg.rootSessionId);
+});
+onMessage('agentToolHeartbeat', (msg, view) => {
+  resetStreamTimeout(msg.rootSessionId || msg.sessionId);
+  stampSessionStreamActivity(msg.rootSessionId || msg.sessionId);
+});
 onMessage('agentEnd', (msg, view) => { resetStreamTimeout(msg.sessionId); });
 
 onMessage('agentThinking', (msg, view) => { resetStreamTimeout(msg.sessionId); clearBgStuck(msg); });
@@ -2487,6 +2591,9 @@ onMessage('sessionBusy', (msg, view) => {
     // turn 窗口；与上一行 lastTerminalAt 的取代口径逐字同源）。与流式帧族那一支
     // （armBusyFromStream 头注）互补：depth>0 会话只靠后者。
     if (sid) drainWindowUsed.delete(sid);
+    // busy-stuck-fix：引擎权威开turn 信号到场 ⇒ turn-start 确认网撤网（本次置位
+    // 不是幻影）。
+    cancelTurnConfirm(sid);
     setBusy(msg.sessionId);
     // Server explicitly set busy — mark as expecting a turn (e.g. pendingEvents round)
     if (sid) state.turnExpecting[sid] = true;
