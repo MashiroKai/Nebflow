@@ -1639,20 +1639,38 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   display: flex; align-items: center; gap: 10px;
   padding: 10px 14px 6px;
 }
-.wiki-toolbar-search {
+/* Filter documents input — nf-findbar mode (wiki-graph UX batch §4): the
+   glass command bar is the container; the input is borderless + transparent
+   inside it, with a leading 14px magnifier. Focus affordance = the bar's
+   :focus-within ring (see the .wx-B block below). */
+.wiki-search {
   flex: 0 1 240px; min-width: 120px;
-  height: 30px; padding: 0 12px;
-  border-radius: 10px; border: 1px solid var(--glass-control-border);
-  background: var(--glass-control-bg);
-  color: var(--color-text); font-size: 13px; outline: none;
+  display: flex; align-items: center; gap: 7px;
+}
+.wiki-search > svg { flex: none; color: var(--color-text-muted); }
+.wiki-toolbar-search {
+  flex: 1; min-width: 0; height: 28px;
+  border: none; outline: none; background: transparent;
+  color: var(--color-text); font-size: 13px; font-family: inherit;
 }
 .wiki-toolbar-search::placeholder { color: var(--color-text-muted); opacity: .7; }
+/* Refresh — button.glass-control secondary tier (four states live in
+   sapphire.css); geometry here per §4 unified face: h28 · r9 · 12px/500. */
 .wiki-toolbar-btn {
-  flex: none; height: 30px; padding: 0 12px;
-  border-radius: 10px; font-size: 12px; color: var(--color-text);
+  flex: none; display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 12px;
+  border-radius: 9px; font-size: 12px; font-weight: 500; color: var(--color-text);
   cursor: pointer;
 }
-.wiki-toolbar-btn.busy { opacity: .5; pointer-events: none; }
+.wiki-toolbar-btn svg { flex: none; }
+.wiki-toolbar-btn:focus-visible { box-shadow: 0 0 0 2px rgb(var(--sapphire, 91 127 191) / 0.45); }
+.wiki-toolbar-btn.busy { color: var(--color-text-muted); pointer-events: none; }
+.wiki-toolbar-btn.busy svg { animation: wikiToolbarSpin .9s linear infinite; }
+@keyframes wikiToolbarSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .wiki-toolbar-btn.busy svg { animation: none; opacity: .6; }
+  .wiki-dd.open .wiki-dd-pop { animation: none; }
+}
 .wiki-toolbar-status {
   flex: 1; text-align: right;
   font-size: 11px; color: var(--color-text-muted);
@@ -1687,7 +1705,10 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 .wiki-tip.show { opacity: 1; }
 .wiki-tip-title { font-weight: 600; margin-bottom: 2px; word-break: break-all; font-size: 13px; }
 .wiki-tip-path {
-  font-family: var(--font-mono, monospace); font-size: 10.5px;
+  /* Site mono stack — the md panel's code font literal (split.css
+     .canvas-md-viewer code). Deliberately NOT var(--font-mono): that token
+     has no production definition (debt registered in the batch report). */
+  font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10.5px;
   color: var(--color-text-muted); word-break: break-all;
 }
 .wiki-tip-device { margin-top: 3px; font-size: 11px; color: rgb(var(--sapphire, 91 127 191) / 0.9); }
@@ -1698,13 +1719,30 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 }
 
 /* ── Scenario facets + metadata tooltip (wiki-graph v2) ──────────── */
-.wiki-facets { display: flex; align-items: center; gap: 8px; padding: 0 14px 8px; flex: none; }
+.wiki-facets { display: flex; align-items: center; gap: 6px; padding: 0 14px 8px; flex: none; }
+/* Facet face — one geometry with the Refresh button (§4: h28 · pill r999 ·
+   secondary tier). Doubles as the NATIVE degrade skin: appearance:none +
+   data-URI chevron (the open list stays OS-rendered there — a literal muted
+   gray is unavoidable inside a data URI; registered in the batch report). */
 .wiki-facet {
-  height: 26px; padding: 0 8px;
-  border-radius: 9px; border: 1px solid var(--glass-control-border);
-  background: var(--glass-control-bg);
-  color: var(--color-text); font-size: 12px; outline: none; cursor: pointer;
+  height: 28px; padding: 0 28px 0 10px;
+  border-radius: 999px; border: 1px solid var(--btn-secondary-stroke);
+  background-color: var(--btn-secondary-bg);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b8e96' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  color: var(--btn-secondary-ink); font-size: 12px; font-weight: 500; font-family: inherit;
+  outline: none; cursor: pointer;
   max-width: 170px;
+  appearance: none; -webkit-appearance: none;
+}
+.wiki-facet:focus-visible { box-shadow: 0 0 0 2px rgb(var(--sapphire, 91 127 191) / 0.45); }
+/* The native select under a custom dropdown face: visually veiled, still the
+   state owner (value + change events). */
+.wiki-facet-veiled {
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  border: 0; padding: 0; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; pointer-events: none;
 }
 .wiki-tip-meta { font-size: 11px; color: rgb(var(--sapphire, 91 127 191) / 0.9); margin-bottom: 2px; }
 
@@ -1758,15 +1796,77 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   background: linear-gradient(90deg, transparent 8%, var(--sapphire-refraction) 50%, transparent 92%);
   pointer-events: none;
 }
+/* §4: the command bar carries the focus affordance for the borderless search
+   input (:focus-within ring — sapphire, matching the etched focus border). */
+.wiki-graph-pane.wx-B .wiki-toolbar:focus-within {
+  border-color: var(--glass-etched-border-focus);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 8px 24px var(--glass-control-shadow),
+    0 0 0 2px rgb(var(--sapphire, 91 127 191) / 0.18);
+}
 .wiki-graph-pane.wx-B .wiki-facets {
   position: absolute;
-  top: 58px; left: 12px; right: 12px;
+  top: 60px; left: 12px; right: 12px;
   z-index: 6; gap: 6px; padding: 0; flex-wrap: wrap;
 }
 .wiki-graph-pane.wx-B .wiki-toolbar-status { display: none; }
-.wiki-graph-pane.wx-B .wiki-toolbar-search { border-radius: 9px; flex: 1 1 auto; }
-.wiki-graph-pane.wx-B .wiki-toolbar-btn { border-radius: 9px; }
-.wiki-graph-pane.wx-B .wiki-facet { border-radius: 999px; padding: 0 10px; max-width: 96px; }
+.wiki-graph-pane.wx-B .wiki-search { flex: 1 1 auto; }
+.wiki-graph-pane.wx-B .wiki-facet { max-width: 96px; }
+
+/* ── §4 self-drawn facet dropdown (face + glass popover, WAI-ARIA APG) ── */
+.wiki-dd { position: relative; }
+.wiki-dd-face {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 10px; max-width: 150px;
+  border-radius: 999px;
+  border: 1px solid var(--btn-secondary-stroke);
+  background: var(--btn-secondary-bg);
+  color: var(--btn-secondary-ink); font-size: 12px; font-weight: 500; font-family: inherit;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, box-shadow .15s ease;
+  outline: none;
+}
+.wiki-dd-face .wiki-dd-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wiki-dd-face .wiki-dd-chev { flex: none; color: var(--color-text-muted); transition: transform .15s ease; }
+.wiki-dd.open .wiki-dd-face {
+  border-color: var(--btn-secondary-stroke-hover);
+  background: var(--btn-secondary-fill-hover);
+}
+.wiki-dd.open .wiki-dd-chev { transform: rotate(180deg); }
+.wiki-dd-face:focus-visible { box-shadow: 0 0 0 2px rgb(var(--sapphire, 91 127 191) / 0.45); }
+@media (prefers-color-scheme: light) {
+  /* 铁律 2: 亮档反馈用边框 + 投影 — open face 同 button.glass-control hover 档 */
+  .wiki-dd.open .wiki-dd-face { box-shadow: var(--glass-send-stack, none), var(--glass-send-shadow-hover); }
+}
+.wiki-dd-pop {
+  position: absolute; top: calc(100% + 6px); left: 0; min-width: 148px; z-index: 20;
+  display: none; padding: 5px; border-radius: 12px;
+  background: var(--glass-bg, rgba(24, 28, 38, 0.68));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.2);
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35));
+  box-shadow: 0 12px 34px rgb(var(--sapphire, 91 127 191) / 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+.wiki-dd.open .wiki-dd-pop { display: block; animation: wikiDdIn .14s ease; }
+@keyframes wikiDdIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.wiki-dd-pop::before {
+  content: ''; position: absolute; top: 0; left: 10%; right: 10%; height: 1px;
+  background: linear-gradient(90deg, transparent 10%, var(--sapphire-refraction, rgba(255,255,255,0.45)) 50%, transparent 90%);
+}
+.wiki-dd-opt {
+  display: flex; align-items: center; gap: 8px;
+  height: 26px; padding: 0 9px; border-radius: 7px;
+  font-size: 12px; color: var(--color-text); cursor: pointer; outline: none;
+}
+.wiki-dd-opt:hover, .wiki-dd-opt.hl { background: rgb(var(--sapphire, 91 127 191) / 0.08); }
+.wiki-dd-opt.sel { background: var(--sapphire-tint-15); }
+.wiki-dd-opt .wiki-dd-ck { margin-left: auto; flex: none; color: rgb(var(--sapphire, 91 127 191)); opacity: 0; }
+.wiki-dd-opt.sel .wiki-dd-ck { opacity: 1; }
 
 /* The canvas fills the whole pane — the glass layers float above it. An
    absolutely-positioned REPLACED element (canvas) keeps its intrinsic height
@@ -1777,45 +1877,107 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 /* (The pane sidebar was retired by the graph-view interaction batch,
    2026-10-18: its projects/types/statuses/legend now host in the explorer
    panel space — #wiki-graph-explorer-section at the end of this file. The
-   .wx-sb-* / .wx-chip / .wx-dot / .wx-lg-* rules below survive there.) */
+   .wx-sb-* / .wx-chip / .wx-dot / .wx-lg-* rules below survive there.)
+   Typography per wiki-graph UX batch §3: head 13/600 · counts meta row ·
+   labels 10/600 dim · project rows 12.5/500 h26 · doc rows 12/400 h24 with a
+   26px indent · 0-counts demoted · chips h20 with right-hung counts ·
+   legend = 2-col grid of the canvas's own SVG shapes · hover .06 ·
+   :focus-visible sapphire ring. */
 .wx-sb-head {
   display: flex; align-items: center; justify-content: space-between;
-  font-weight: 600; font-size: 12.5px; color: var(--color-text);
-  padding: 2px 4px 10px; letter-spacing: 0.02em;
+  font-weight: 600; font-size: 13px; line-height: 1.3; color: var(--color-text);
+  padding: 2px 4px 10px; letter-spacing: 0.01em;
 }
 .wx-sb-clear {
-  all: unset; cursor: pointer; font-size: 11px;
-  color: rgb(var(--sapphire) / 0.95);
-  padding: 3px 8px; border-radius: 8px;
-  border: 1px solid rgb(var(--sapphire) / 0.30);
+  all: unset; cursor: pointer; margin-left: auto; font-size: 11px; font-weight: 500;
+  color: rgb(var(--sapphire, 91 127 191) / 0.95);
+  padding: 3px 9px; border-radius: 8px;
+  border: 1px solid rgb(var(--sapphire, 91 127 191) / 0.30);
+  transition: background .15s ease, border-color .15s ease;
 }
-.wx-sb-clear:hover { background: rgb(var(--sapphire) / 0.10); }
+.wx-sb-clear:hover { background: rgb(var(--sapphire, 91 127 191) / 0.10); }
+.wx-sb-clear:active { background: rgb(var(--sapphire, 91 127 191) / 0.18); }
+.wx-sb-meta {
+  padding: 0 4px 8px; font-size: 11px; color: var(--color-text-dim);
+  font-variant-numeric: tabular-nums;
+}
 .wx-sb-sec { padding: 8px 0 6px; border-top: 1px solid var(--glass-etched-border); }
-.wx-sb-title { color: var(--color-text-muted); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; padding: 2px 4px 6px; }
+.wx-sb-title {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 2px 4px 6px;
+  color: var(--color-text-dim); font-size: 10px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase;
+}
+.wx-sb-title .wx-sb-tot {
+  font-weight: 400; letter-spacing: 0; text-transform: none;
+  font-variant-numeric: tabular-nums;
+}
 .wx-sb-item {
   display: flex; align-items: center; gap: 8px;
-  padding: 5px 8px; border-radius: 9px; cursor: pointer; color: var(--color-text);
+  height: 26px; padding: 0 8px; border-radius: 8px;
+  cursor: pointer; color: var(--color-text); position: relative; outline: none;
 }
-.wx-sb-item:hover { background: rgb(var(--sapphire) / 0.08); }
+.wx-sb-item:hover { background: rgb(var(--sapphire, 91 127 191) / 0.06); }
 .wx-sb-item.active { background: var(--sapphire-tint-15); color: var(--color-text); }
-.wx-sb-item .wx-proj-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wx-sb-item .wx-count { margin-left: auto; color: var(--color-text-muted); font-variant-numeric: tabular-nums; font-size: 10.5px; }
-.wx-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; box-shadow: none; border: 1px solid rgba(0, 0, 0, 0.08); }
+.wx-sb-item:focus-visible { box-shadow: 0 0 0 2px rgb(var(--sapphire, 91 127 191) / 0.45); }
+.wx-sb-item .wx-proj-name {
+  font-size: 12.5px; font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wx-proj-remote { font-size: 10px; font-weight: 400; color: var(--color-text-dim); flex: none; }
+.wx-sb-item .wx-count {
+  margin-left: auto; flex: none;
+  color: var(--color-text-muted); font-variant-numeric: tabular-nums; font-size: 11px;
+}
+.wx-sb-item .wx-count.zero { color: var(--color-text-dim); opacity: .55; }
+.wx-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; box-shadow: none; border: 1px solid rgba(0, 0, 0, 0.10); }
+/* Document rows — h24 · r7 · 12px/400 · indented 26px to clear the group
+   header; the attachment icon sits in the indent slot (was "⎘ " text). */
+.wx-sb-item.wx-doc { height: 24px; border-radius: 7px; padding-left: 26px; }
+.wx-sb-item.wx-doc .wx-doc-name {
+  font-size: 12px; font-weight: 400; color: var(--color-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wx-doc-icon {
+  width: 12px; height: 12px; flex: none;
+  color: var(--color-text-muted);
+  display: inline-block; vertical-align: middle;
+  margin-left: -18px; margin-right: 6px;
+}
 .wx-sb-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 4px; }
 .wx-chip {
-  cursor: pointer; padding: 3px 10px;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 4px;
+  height: 20px; padding: 0 9px;
+  font-family: inherit; font-size: 11px;
   border: 1px solid var(--glass-etched-border);
   background: var(--glass-etched-bg);
   color: var(--color-text-muted);
   border-radius: 999px;
-  font-size: 11px;
+  transition: color .15s ease, border-color .15s ease, background .15s ease;
+  outline: none;
 }
-.wx-chip:hover { color: var(--color-text); border-color: rgb(var(--sapphire) / 0.35); }
-.wx-chip.active { background: var(--sapphire-tint-15); border-color: rgb(var(--sapphire) / 0.45); color: var(--color-text); }
-.wx-sb-legend { padding: 4px 8px; color: var(--color-text-muted); line-height: 1.9; }
-.wx-sb-legend b { color: var(--color-text); font-weight: 500; }
+.wx-chip:hover { color: var(--color-text); border-color: rgb(var(--sapphire, 91 127 191) / 0.35); }
+.wx-chip.active { background: var(--sapphire-tint-15); border-color: rgb(var(--sapphire, 91 127 191) / 0.45); color: var(--color-text); }
+.wx-chip:focus-visible { box-shadow: 0 0 0 2px rgb(var(--sapphire, 91 127 191) / 0.45); }
+.wx-chip .wx-chip-n { font-variant-numeric: tabular-nums; opacity: .7; }
+.wx-sb-legend {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px;
+  padding: 4px 6px; color: var(--color-text-muted); font-size: 11px; line-height: 1.7;
+}
+.wx-sb-legend .wx-lg-item { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.wx-sb-legend svg { flex: none; }
+/* Filter empty state (§3): centered two lines — main 12/500 muted, hint 12
+   dim with the Clear link. Hidden until zero list rows survive the filter. */
+.wx-sb-empty { display: none; padding: 28px 16px; text-align: center; color: var(--color-text-dim); font-size: 12px; }
+.wx-sb-empty.show { display: block; }
+.wx-sb-empty .wx-sb-empty-big { font-size: 12px; font-weight: 500; color: var(--color-text-muted); margin-bottom: 4px; }
+.wx-sb-empty a { color: rgb(var(--sapphire, 91 127 191)); text-decoration: none; cursor: pointer; }
+.wx-sb-empty a:hover { text-decoration: underline; }
 
-/* Zoom cluster — bottom-left glass bead (right side yields to the sidebar). */
+/* Zoom cluster — bottom-left glass bead (right side yields to the sidebar).
+   §4: container material unchanged; buttons 26→30px r9, 1.8-stroke SVG icons
+   (was text glyphs), hover = glass fill progression, active scale(.94) +
+   inset shadow, focus-visible sapphire ring. */
 .wx-zoom {
   position: absolute; bottom: 16px; left: 14px; z-index: 7;
   display: flex; flex-direction: column; gap: 2px; padding: 5px; border-radius: 12px;
@@ -1826,11 +1988,16 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   box-shadow: inset 0 1px 0 var(--glass-control-highlight), 0 8px 24px var(--glass-control-shadow);
 }
 .wx-zoom button {
-  all: unset; cursor: pointer; width: 26px; height: 26px; border-radius: 9px;
-  display: grid; place-items: center; color: var(--color-text); font-size: 14px;
+  all: unset; cursor: pointer; width: 30px; height: 30px; border-radius: 9px;
+  display: grid; place-items: center; color: var(--color-text);
   box-sizing: border-box;
+  transition: background .15s ease, transform .1s ease, outline-color .15s ease;
+  outline: 2px solid transparent;
 }
-.wx-zoom button:hover { background: rgb(var(--sapphire) / 0.14); }
+.wx-zoom button svg { display: block; }
+.wx-zoom button:hover { background: var(--glass-control-bg-hover); }
+.wx-zoom button:active { transform: scale(.94); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.16); }
+.wx-zoom button:focus-visible { outline-color: rgb(var(--sapphire, 91 127 191) / 0.45); }
 
 /* ── Graph file list hosted in the explorer panel space (graph-view
    interaction batch, 2026-10-18) ─────────────────────────────────────────
@@ -1857,9 +2024,6 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 #wiki-graph-explorer-section .wx-sb-body::-webkit-scrollbar-thumb {
   background: rgba(128, 128, 128, 0.15); border-radius: 2px;
 }
-/* Document rows — the file entries under each project row (indented one
-   level, same hover/active family as .wx-sb-item). */
-#wiki-graph-explorer-section .wx-doc { padding-left: 26px; }
-#wiki-graph-explorer-section .wx-doc .wx-doc-name {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
+/* Document rows — geometry/typography now live on .wx-sb-item.wx-doc in the
+   .wx-sb-* family above (§3: h24 · r7 · 26px indent · 12/400). */
+

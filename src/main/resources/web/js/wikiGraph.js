@@ -142,11 +142,28 @@ window.addEventListener('canvas-tab-restore', (/** @type {CustomEvent} */ e) => 
   }
 });
 
+// Restore dispatch/load race (R4 hardening): canvas.js openPanelTab dispatches
+// canvas-tab-restore synchronously during boot, while this module may still be
+// loading (main.js imports it dynamically) — a fast server-archive fetch can
+// win that race and the dispatch fires with no listener yet. Reconcile once at
+// eval: an already-restored ACTIVE wiki pane renders exactly as the missed
+// event would have. renderInto is idempotent, so the listener path stays safe
+// when the event order is the other way around.
+import('./canvas.js').then(({ getTabPane }) => {
+  const pane = getTabPane(TAB_ID);
+  if (pane && pane.classList.contains('active')) renderInto(pane);
+}).catch(() => { /* canvas unavailable (embedded/test) — skip */ });
+
 // Tab close: stop the animation loop — a detached canvas must not keep a
 // requestAnimationFrame cycle (and its CPU) alive — and hand the explorer
 // panel space back to the file tree.
 document.addEventListener('canvas-tab-closed', (/** @type {CustomEvent} */ e) => {
-  if (e.detail && e.detail.id === TAB_ID) { teardown(); unmountGraphExplorerList(); }
+  if (e.detail && e.detail.id === TAB_ID) {
+    teardown(); unmountGraphExplorerList();
+    // R6: closing the tab also ends the viewing session (and R9 holds — the
+    // Side Bar is never touched here).
+    graphSidebarDismissed = false;
+  }
 });
 
 /** Debounced refetch when the tab is re-activated (canvas.js panelTabRefresh). */
@@ -171,20 +188,34 @@ async function renderInto(pane) {
   const bar = document.createElement('div');
   bar.className = 'wiki-toolbar';
 
+  // Filter documents → nf-findbar mode (§4): the glass command bar stays the
+  // container; the input is a borderless transparent field inside it, with a
+  // leading 14px magnifier (1.8 stroke). The bar's :focus-within ring (CSS)
+  // is the focus affordance.
+  const searchWrap = document.createElement('div');
+  searchWrap.className = 'wiki-search';
+  searchWrap.innerHTML =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
   const search = document.createElement('input');
   search.type = 'text';
-  search.className = 'wiki-toolbar-search glass-control';
+  search.className = 'wiki-toolbar-search';
   search.placeholder = t('wiki.searchPlaceholder');
   search.addEventListener('input', () => {
     if (!view) return;
     view.filter = search.value.trim().toLowerCase();
     applyFilter();
   });
+  searchWrap.appendChild(search);
 
+  // Refresh → button.glass-control secondary tier (§4): rest transparent +
+  // stroke (sapphire.css button.glass-control four states), busy = icon spin.
   const refreshBtn = document.createElement('button');
+  refreshBtn.type = 'button';
   refreshBtn.className = 'glass-control wiki-toolbar-btn';
-  refreshBtn.textContent = t('wiki.refresh');
   refreshBtn.title = t('wiki.refreshTitle');
+  refreshBtn.innerHTML =
+    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>';
+  refreshBtn.appendChild(document.createTextNode(t('wiki.refresh')));
   refreshBtn.addEventListener('click', async () => {
     refreshBtn.classList.add('busy');
     await loadData(true);
@@ -195,7 +226,7 @@ async function renderInto(pane) {
   const status = document.createElement('span');
   status.className = 'wiki-toolbar-status';
 
-  bar.append(search, refreshBtn, status);
+  bar.append(searchWrap, refreshBtn, status);
   // Scenario facets (wiki-graph v2): kind + frontmatter type/status filters —
   // the research "open problems / conclusions" and learning "progress" faces.
   // Options are (re)derived from the loaded data in rebuildSim.
@@ -203,7 +234,11 @@ async function renderInto(pane) {
   facetRow.className = 'wiki-facets';
   const mkFacet = (cls) => {
     const sel = document.createElement('select');
-    sel.className = 'wiki-facet glass-control ' + cls;
+    // §4: the face styles live entirely on .wiki-facet (secondary tier).
+    // The old glass-control class is dropped deliberately — sapphire.css's
+    // .glass-control material rule loads last and its `background` shorthand
+    // would wipe the degrade path's chevron background-image.
+    sel.className = 'wiki-facet ' + cls;
     sel.addEventListener('change', () => {
       if (!view) return;
       if (cls === 'wiki-facet-kind') view.facetKind = sel.value;
@@ -217,6 +252,12 @@ async function renderInto(pane) {
   const typeSel = mkFacet('wiki-facet-type');
   const statusSel = mkFacet('wiki-facet-status');
   facetRow.append(kindSel, typeSel, statusSel);
+  // §4 facet dropdown: the native select stays the state owner; the self-drawn
+  // face/listbox wraps it (APG keyboard). Degrade path (touch-like pointer)
+  // keeps the native select reskinned via CSS — see upgradeFacetToDropdown.
+  upgradeFacetToDropdown(kindSel);
+  upgradeFacetToDropdown(typeSel);
+  upgradeFacetToDropdown(statusSel);
   pane.appendChild(facetRow);
   pane.appendChild(bar);
 
@@ -234,17 +275,27 @@ async function renderInto(pane) {
 
   // ── Zoom cluster (draftB): in/out reuse the wheel zoom math; ⟲ re-lands the
   // layout (rebuildSim resets scale + pan and re-seeds positions).
+  // §4: text glyphs (+ − ⟲) → 1.8-stroke SVG icons — glyph baselines drift
+  // across platforms and their stroke weight is uncontrollable.
   const zoom = document.createElement('div');
   zoom.className = 'wx-zoom';
-  const mkZoomBtn = (z, label, title) => {
+  const ZOOM_ICONS = {
+    in: '<path d="M12 5v14M5 12h14"/>',
+    out: '<path d="M5 12h14"/>',
+    fit: '<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>',
+  };
+  const mkZoomBtn = (z, title) => {
     const b = document.createElement('button');
-    b.type = 'button'; b.dataset.z = z; b.textContent = label; b.title = title;
+    b.type = 'button'; b.dataset.z = z; b.title = title;
+    b.setAttribute('aria-label', title);
+    b.innerHTML =
+      `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ZOOM_ICONS[z]}</svg>`;
     return b;
   };
   zoom.append(
-    mkZoomBtn('in', '+', t('wiki.zoomInTitle')),
-    mkZoomBtn('out', '−', t('wiki.zoomOutTitle')),
-    mkZoomBtn('fit', '⟲', t('wiki.zoomResetTitle')),
+    mkZoomBtn('in', t('wiki.zoomInTitle')),
+    mkZoomBtn('out', t('wiki.zoomOutTitle')),
+    mkZoomBtn('fit', t('wiki.zoomResetTitle')),
   );
   zoom.addEventListener('click', (e) => {
     const b = (/** @type {Element} */ (e.target)).closest('button');
@@ -284,6 +335,9 @@ async function renderInto(pane) {
 
   await loadData(false);
   rebuildSim();
+  // R1 (fresh open) / R4 (restore re-render): the graph is now the visible
+  // Canvas content — give the Side Bar its one auto-expand chance (§2).
+  ensureSideBarForGraph();
 }
 
 function teardown() {
@@ -385,6 +439,8 @@ function rebuildSim() {
   const statuses = [...new Set((data.nodes || []).map(n => n.status).filter(Boolean))].sort().slice(0, 12);
   fillFacet(typeSel, types, t('wiki.facetAllTypes'));
   fillFacet(statusSel, statuses, t('wiki.facetAllStatuses'));
+  // §4: the dropdown faces mirror the re-derived options/values.
+  syncWikiFacets();
   renderSidebar();
   updateStatus();
   applyFilter();
@@ -412,6 +468,7 @@ function updateStatus() {
 }
 
 function applyFilter() {
+  applyListFilter(); // §3: the list mirrors the filter (rows hide / empty state)
   if (!view || !view.sim) return;
   const q = view.filter;
   view.sim.nodes.forEach(n => {
@@ -806,9 +863,206 @@ function unmountGraphExplorerList() {
   if (explorer) explorer.style.display = '';
 }
 
-/** The file list face: head (title + clear), projects with their documents,
- *  facet chips, legend. A document row opens through the SAME entry the
- *  canvas node clicks use (openDoc → openLocalFileTab / remote-doc channel). */
+// ── Side Bar auto-open (§2 behavior rules R1-R10) ─────────────────────────
+// The graph's file list hosts in the Side Bar's panel space — a collapsed
+// Side Bar hides it (the "one manual click" gap this closes).
+//
+//   R1/R2/R3/R4/R6  graph becomes the visible Canvas content ⇒
+//                   showSidePanel('files') — expand + activate, via the SAME
+//                   API a manual expansion uses, so the expand persists
+//                   (R7: writes sidebar_collapsed=false + panel=files; zero
+//                   new persistence keys) and never collapses (R9).
+//   R5              a manual collapse while the graph is visible sets an
+//                   in-memory dismissed flag — the rest of this graph viewing
+//                   session stays quiet. Memory-only by design (R7).
+//   R6              leaving the tab ends the session and clears the flag;
+//                   coming back auto-expands again.
+//   R8              mobile (≤768px) never auto-opens: Side Bar and Canvas are
+//                   mutually exclusive full overlays there.
+//   R10             showSidePanel('files') re-focuses the sole host panel;
+//                   with a single registered panel it is a no-op today.
+let graphSidebarDismissed = false;
+/** Last observed body.sidebar-collapsed state — the false→true flip while the
+ *  graph is visible is the ONLY manual-collapse entry (auto-open only ever
+ *  expands). Initialized from the pre-paint restored state. */
+let lastSidebarCollapsed = document.body.classList.contains('sidebar-collapsed');
+
+/** The graph became the visible Canvas content — the one auto-expand chance.
+ *  Funnel for R1 (fresh open) · R2 (tab switch back) · R3 (Canvas reopen) ·
+ *  R4 (restore). Idempotent: an already-expanded files panel is re-affirmed
+ *  with the same persisted values, nothing else changes. */
+function ensureSideBarForGraph() {
+  if (!graphTabVisible()) return;
+  import('./activityBar.js').then(({ showSidePanel, isMobileViewport }) => {
+    if (!graphTabVisible()) return;         // state may have moved while awaiting
+    if (isMobileViewport()) return;         // R8
+    if (graphSidebarDismissed) return;      // R5
+    showSidePanel('files');                 // R1/R2/R3/R4/R6 → persists (R7)
+  }).catch(() => { /* activityBar unavailable (embedded/test) — skip */ });
+}
+
+// ── Facet dropdowns (§4): self-drawn face over the native select ──────────
+// The native <select> stays the STATE OWNER (value + change events — the
+// sidebar chips and the Clear button drive it through the existing wiring).
+// The custom face + listbox is a pure face layer: a pick writes sel.value and
+// dispatches 'change'; external 'change' events repaint the face, so the two
+// surfaces can never diverge. Keyboard per WAI-ARIA APG (listbox): ↑↓ move /
+// Enter pick / Esc close / Home / End / first-letter type-ahead.
+//
+// Degrade path (spec §4 warn row): on touch-like pointers the native select
+// stays visible, reskinned by CSS (appearance:none + data-URI chevron) — the
+// OS renders the open list, keyboard/AT support stays free.
+const facetRepaints = [];
+
+/** Repaint every custom facet face (after rebuildSim re-derives options). */
+function syncWikiFacets() {
+  facetRepaints.forEach((fn) => { try { fn(); } catch (_) { /* stale face */ } });
+}
+
+function shouldUseNativeFacet() {
+  try {
+    return window.matchMedia('(hover: none)').matches
+      || window.matchMedia('(pointer: coarse)').matches;
+  } catch (_) { return false; }
+}
+
+const DD_CHEVRON =
+  '<svg class="wiki-dd-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
+const DD_CHECK =
+  '<svg class="wiki-dd-ck" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+
+/** Wrap one native facet select with the self-drawn face + listbox. */
+function upgradeFacetToDropdown(sel) {
+  if (shouldUseNativeFacet()) return; // degrade path: reskinned native select
+  try {
+    const dd = document.createElement('div');
+    dd.className = 'wiki-dd';
+    dd.innerHTML =
+      '<button type="button" class="wiki-dd-face" aria-haspopup="listbox" aria-expanded="false">' +
+      '<span class="wiki-dd-label"></span>' + DD_CHEVRON + '</button>' +
+      '<div class="wiki-dd-pop" role="listbox"></div>';
+    const face = /** @type {HTMLButtonElement} */ (dd.querySelector('.wiki-dd-face'));
+    const label = dd.querySelector('.wiki-dd-label');
+    const pop = dd.querySelector('.wiki-dd-pop');
+    let hl = 0;
+
+    const options = () => [...sel.options].map((o) => ({ v: o.value, t: o.textContent }));
+    const paint = () => {
+      const opts = [...pop.querySelectorAll('.wiki-dd-opt')];
+      opts.forEach((/** @type {HTMLElement} */ o, i) => {
+        const isSel = o.dataset.v === sel.value;
+        o.classList.toggle('sel', isSel);
+        o.classList.toggle('hl', i === hl);
+        if (isSel) o.setAttribute('aria-selected', 'true');
+        else o.removeAttribute('aria-selected');
+      });
+      const cur = options().find((o) => o.v === sel.value);
+      label.textContent = cur ? cur.t : '';
+    };
+    const rebuildPop = () => {
+      pop.innerHTML = '';
+      options().forEach(({ v, t: text }) => {
+        const opt = document.createElement('div');
+        opt.className = 'wiki-dd-opt';
+        opt.setAttribute('role', 'option');
+        opt.tabIndex = -1;
+        opt.dataset.v = v;
+        const lb = document.createElement('span');
+        lb.className = 'wiki-dd-opt-label';
+        lb.textContent = text;
+        opt.innerHTML = DD_CHECK; // static icon; the label node goes in front
+        opt.insertBefore(lb, opt.firstChild);
+        opt.addEventListener('click', () => pick(v));
+        pop.appendChild(opt);
+      });
+      paint();
+    };
+    const isOpen = () => dd.classList.contains('open');
+    const open = (v) => {
+      dd.classList.toggle('open', v);
+      face.setAttribute('aria-expanded', String(v));
+      if (v) {
+        rebuildPop();
+        hl = Math.max(0, [...pop.querySelectorAll('.wiki-dd-opt')]
+          .findIndex((o) => o.classList.contains('sel')));
+        paint();
+      }
+    };
+    const pick = (v) => {
+      sel.value = v;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      open(false);
+      face.focus();
+    };
+    face.addEventListener('click', () => open(!isOpen()));
+    face.addEventListener('keydown', (/** @type {KeyboardEvent} */ e) => {
+      const opts = options();
+      const n = opts.length;
+      if (!n) return;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (!isOpen()) { open(true); return; }
+        hl = (hl + (e.key === 'ArrowDown' ? 1 : -1) + n) % n;
+        paint();
+      } else if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        if (isOpen()) pick(opts[hl].v);
+        else open(true);
+      } else if (e.key === 'Escape') {
+        if (isOpen()) open(false);
+      } else if (e.key === 'Home' && isOpen()) {
+        e.preventDefault(); hl = 0; paint();
+      } else if (e.key === 'End' && isOpen()) {
+        e.preventDefault(); hl = n - 1; paint();
+      } else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey && isOpen()) {
+        // Type-ahead: next option whose label starts with the key (wraps).
+        const ch = e.key.toLowerCase();
+        for (let s = 1; s <= n; s++) {
+          const i = (hl + s) % n;
+          if (opts[i].t.toLowerCase().startsWith(ch)) { hl = i; paint(); e.preventDefault(); break; }
+        }
+      }
+    });
+    const onDocClick = (e) => { if (!dd.contains(e.target)) open(false); };
+    document.addEventListener('click', onDocClick);
+    sel.addEventListener('change', paint);
+    // Veil the native select (still the state owner); the face replaces it.
+    sel.classList.add('wiki-facet-veiled');
+    sel.parentNode.insertBefore(dd, sel);
+    facetRepaints.push(paint);
+    paint();
+  } catch (_) {
+    // Any surprise → the reskinned native select is the safe fallback.
+    sel.classList.remove('wiki-facet-veiled');
+  }
+}
+
+/** The file list face: head (title + clear), the counts meta row, projects
+ *  with their documents, facet chips, legend, filter empty state. A document
+ *  row opens through the SAME entry the canvas node clicks use (openDoc →
+ *  openLocalFileTab / remote-doc channel). Typography per design §3:
+ *  counts live in their own meta line, section labels carry a right-hung
+ *  total, project rows 500 / doc rows 400 with a 26px indent, attachment
+ *  rows carry a 12px SVG icon in the indent slot (was a "⎘ " text prefix). */
+
+// Attachment icon (12px, 1.5 stroke) — sits in the doc row's indent slot.
+const DOC_ATTACH_ICON =
+  '<svg class="wx-doc-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>';
+
+// Legend swatches — the SAME shapes the canvas draws (§3: no more glyph
+// characters ●▢◌◎). Fixed hexes = the ramp grays (canvas constants, not CSS
+// tokens — the 2D canvas has no var() access either).
+const LEGEND_SWATCHES = {
+  docs:
+    '<svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="#9aa0a8"/></svg>',
+  attach:
+    '<svg width="12" height="12" aria-hidden="true"><rect x="1.5" y="1.5" width="9" height="9" rx="2.5" fill="#71767e" stroke="#2b2f36"/></svg>',
+  stub:
+    '<svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="#71767e" stroke-dasharray="2 2"/></svg>',
+  done:
+    '<svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="#9aa0a8" stroke-width="1.6"/></svg>',
+};
+
 function renderGraphFileList(host) {
   if (!view || !view.data) return;
   const d = view.data;
@@ -841,6 +1095,15 @@ function renderGraphFileList(host) {
   });
   head.append(title, clearBtn);
 
+  // §3 meta row — the counts moved OUT of the section title into their own
+  // line (11px / dim / tabular-nums): the projects · docs · links summary.
+  const meta = document.createElement('div');
+  meta.className = 'wx-sb-meta';
+  meta.textContent = t('wiki.sbMeta')
+    .replace('{projects}', String((d.projects || []).length))
+    .replace('{docs}', String(docCount))
+    .replace('{links}', String(linkCount));
+
   const body = document.createElement('div');
   body.className = 'wx-sb-body';
 
@@ -851,7 +1114,12 @@ function renderGraphFileList(host) {
   projSec.className = 'wx-sb-sec';
   const projTitle = document.createElement('div');
   projTitle.className = 'wx-sb-title wx-sb-proj-title';
-  projTitle.textContent = t('wiki.sbProjectsCount').replace('{docs}', String(docCount)).replace('{links}', String(linkCount));
+  const projLabel = document.createElement('span');
+  projLabel.textContent = t('wiki.sbProjects');
+  const projTot = document.createElement('span');
+  projTot.className = 'wx-sb-tot';
+  projTot.textContent = String(docCount);
+  projTitle.append(projLabel, projTot);
   const projList = document.createElement('div');
   projList.className = 'wx-sb-list wx-projects';
   const byProject = new Map();
@@ -862,17 +1130,29 @@ function renderGraphFileList(host) {
   (d.projects || []).forEach((p, i) => {
     const row = document.createElement('div');
     row.className = 'wx-sb-item wx-proj';
+    row.tabIndex = 0;
+    row.dataset.proj = p.name.toLowerCase();
     if (view.filter === p.name.toLowerCase()) row.classList.add('active');
     const dot = document.createElement('span');
     dot.className = 'wx-dot';
     dot.style.background = PROJECT_DOTS[i % PROJECT_DOTS.length];
     const name = document.createElement('span');
     name.className = 'wx-proj-name';
-    name.textContent = p.name + (p.stub ? t('wiki.remoteProject') : '');
+    name.textContent = p.name;
+    row.append(dot, name);
+    if (p.stub) {
+      // (remote) suffix — its own weakened span (§3: 10px, dim), no longer
+      // glued into the name string.
+      const rm = document.createElement('span');
+      rm.className = 'wx-proj-remote';
+      rm.textContent = t('wiki.remoteProject');
+      row.appendChild(rm);
+    }
+    const cnt = p.docCount ?? 0;
     const count = document.createElement('span');
-    count.className = 'wx-count';
-    count.textContent = String(p.docCount ?? 0);
-    row.append(dot, name, count);
+    count.className = 'wx-count' + (cnt === 0 ? ' zero' : '');
+    count.textContent = String(cnt);
+    row.appendChild(count);
     row.addEventListener('click', () => {
       const active = row.classList.toggle('active');
       projList.querySelectorAll('.wx-proj').forEach((r) => { if (r !== row) r.classList.remove('active'); });
@@ -885,11 +1165,16 @@ function renderGraphFileList(host) {
       if (n.stub) continue;
       const doc = document.createElement('div');
       doc.className = 'wx-sb-item wx-doc';
+      doc.tabIndex = 0;
+      doc.dataset.proj = p.name.toLowerCase();
+      const label = n.title || n.rel.split('/').pop();
+      doc.dataset.text = label.toLowerCase();
+      if (n.kind === 'attachment') doc.innerHTML = DOC_ATTACH_ICON;
       const docName = document.createElement('span');
       docName.className = 'wx-doc-name';
-      docName.textContent = (n.kind === 'attachment' ? '⎘ ' : '') + (n.title || n.rel.split('/').pop());
+      docName.textContent = label;
       doc.title = n.rel;
-      doc.append(docName);
+      doc.appendChild(docName);
       doc.addEventListener('click', () => { void openDoc(n); });
       projList.appendChild(doc);
     }
@@ -897,6 +1182,8 @@ function renderGraphFileList(host) {
   projSec.append(projTitle, projList);
 
   // Type / status chips — click = facet select. Counts capped like the selects.
+  // §3: chip = label + right-hung count (.wx-chip-n, 70% opacity); a real
+  // button (free keyboard activation), height 20.
   const chipInto = (hostSel, selCls, counts) => {
     const sec = document.createElement('div');
     sec.className = 'wx-sb-sec';
@@ -907,10 +1194,16 @@ function renderGraphFileList(host) {
     chips.className = 'wx-sb-chips';
     const sel = pane ? pane.querySelector(selCls) : null;
     counts.forEach(([v, c]) => {
-      const el = document.createElement('span');
+      const el = document.createElement('button');
+      el.type = 'button';
       el.className = 'wx-chip';
       if (sel && /** @type {HTMLSelectElement} */ (sel).value === v) el.classList.add('active');
-      el.textContent = `${v} ${c}`;
+      const lb = document.createElement('span');
+      lb.textContent = v;
+      const n = document.createElement('span');
+      n.className = 'wx-chip-n';
+      n.textContent = String(c);
+      el.append(lb, n);
       el.addEventListener('click', () => {
         const on = !el.classList.contains('active');
         chips.querySelectorAll('.wx-chip').forEach((c2) => c2.classList.remove('active'));
@@ -929,6 +1222,7 @@ function renderGraphFileList(host) {
   };
 
   // Legend — node shapes (moved with the list; the pane stays pure graph).
+  // §3: two-column grid, the shapes are the canvas's own 12px SVGs.
   const legendSec = document.createElement('div');
   legendSec.className = 'wx-sb-sec';
   const legendTitle = document.createElement('div');
@@ -937,18 +1231,55 @@ function renderGraphFileList(host) {
   const legend = document.createElement('div');
   legend.className = 'wx-sb-legend';
   legend.innerHTML =
-    `<div><b>●</b> <span class="wx-lg-docs"></span> &nbsp;<b>▢</b> <span class="wx-lg-attach"></span> &nbsp;<b>◌</b> <span class="wx-lg-stub"></span></div>` +
-    `<div><b>◎</b> <span class="wx-lg-done"></span> &nbsp;<b>—</b> <span class="wx-lg-links"></span></div>`;
+    `<div class="wx-lg-item">${LEGEND_SWATCHES.docs}<span class="wx-lg-docs"></span></div>` +
+    `<div class="wx-lg-item">${LEGEND_SWATCHES.attach}<span class="wx-lg-attach"></span></div>` +
+    `<div class="wx-lg-item">${LEGEND_SWATCHES.stub}<span class="wx-lg-stub"></span></div>` +
+    `<div class="wx-lg-item">${LEGEND_SWATCHES.done}<span class="wx-lg-done"></span></div>`;
   legend.querySelector('.wx-lg-docs').textContent = t('wiki.legendDocs');
   legend.querySelector('.wx-lg-attach').textContent = t('wiki.legendAttachments');
   legend.querySelector('.wx-lg-stub').textContent = t('wiki.legendUnresolved');
   legend.querySelector('.wx-lg-done').textContent = t('wiki.legendDone');
-  legend.querySelector('.wx-lg-links').textContent = t('wiki.legendLinks');
   legendSec.append(legendTitle, legend);
 
+  // §3 filter empty state — the list blanks out when the toolbar filter
+  // matches nothing; this centered two-line state replaces the blank.
+  const empty = document.createElement('div');
+  empty.className = 'wx-sb-empty';
+  const emptyBig = document.createElement('div');
+  emptyBig.className = 'wx-sb-empty-big';
+  emptyBig.textContent = t('wiki.sbEmptyMain');
+  const emptyHint = document.createElement('div');
+  emptyHint.className = 'wx-sb-empty-hint';
+  emptyHint.appendChild(document.createTextNode(t('wiki.sbEmptyHintPrefix')));
+  const emptyClear = document.createElement('a');
+  emptyClear.href = '#';
+  emptyClear.textContent = t('wiki.clearAll');
+  emptyClear.addEventListener('click', (e) => { e.preventDefault(); clearBtn.click(); });
+  emptyHint.append(emptyClear, document.createTextNode(t('wiki.sbEmptyHintSuffix')));
+  empty.append(emptyBig, emptyHint);
+
   body.append(projSec, chipInto('.wx-types', '.wiki-facet-type', topCounts('type')),
-    chipInto('.wx-status', '.wiki-facet-status', topCounts('status')), legendSec);
-  host.append(head, body);
+    chipInto('.wx-status', '.wiki-facet-status', topCounts('status')), legendSec, empty);
+  host.append(head, meta, body);
+  applyListFilter();
+}
+
+/** §3 list-side filter mirror: the toolbar filter dims the canvas nodes AND
+ *  hides non-matching list rows; zero visible rows raises the empty state. */
+function applyListFilter() {
+  const host = document.getElementById(EXPLORER_HOST_ID);
+  if (!host || !view) return;
+  const q = view.filter;
+  let visible = 0;
+  host.querySelectorAll('.wx-proj, .wx-doc').forEach((/** @type {HTMLElement} */ row) => {
+    const proj = row.dataset.proj || '';
+    const text = row.dataset.text || '';
+    const show = !q || proj.includes(q) || text.includes(q);
+    row.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+  const empty = host.querySelector('.wx-sb-empty');
+  if (empty) empty.classList.toggle('show', visible === 0);
 }
 
 /** Data-landing hook (rebuildSim): refresh the hosted list in place. */
@@ -969,15 +1300,32 @@ function renderSidebar() {
 // from a tab click or the md graph button, so the pointer is not over the
 // canvas, and a kept hover would repaint a ghost highlight ring.
 document.addEventListener('canvas-tab-switched', (/** @type {CustomEvent} */ e) => {
-  if (e.detail && e.detail.id === TAB_ID) repaintOnActivate();
-  syncGraphExplorerList();
+  if (e.detail && e.detail.id === TAB_ID) {
+    repaintOnActivate();
+    syncGraphExplorerList();
+    // R2/R3: switching back (or the state-4 openCanvas+setActiveTab) walks
+    // through here — the one auto-expand chance per "became visible".
+    ensureSideBarForGraph();
+  } else {
+    // R6: leaving the tab ends the graph viewing session — clear the
+    // dismissed flag so the next visit gets a fresh auto-expand.
+    graphSidebarDismissed = false;
+    syncGraphExplorerList();
+  }
 });
 
 // Canvas panel collapse/expand dispatches no event (body.canvas-open is the
 // state mirror canvas.js itself reads) — track it so the explorer comes back
-// the moment the graph stops being visible.
-new MutationObserver(() => { syncGraphExplorerList(); })
-  .observe(document.body, { attributes: true, attributeFilter: ['class'] });
+// the moment the graph stops being visible. The same stream carries the Side
+// Bar's collapsed flips: a false→true transition while the graph is visible
+// is by construction a MANUAL collapse (⌘B / header toggle / files-button
+// re-click / mobile scrim — auto-open only ever expands) → R5 dismisses.
+new MutationObserver(() => {
+  const collapsed = document.body.classList.contains('sidebar-collapsed');
+  if (collapsed && !lastSidebarCollapsed && graphTabVisible()) graphSidebarDismissed = true;
+  lastSidebarCollapsed = collapsed;
+  syncGraphExplorerList();
+}).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
 function showTooltip(node, px, py) {
   let tip = document.getElementById('wiki-graph-tip');
