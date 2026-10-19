@@ -132,12 +132,14 @@ export function getWebsiteLoginUrl() {
  * meta tags (description/og:title) in index.html at this time.
  * Called at the earliest point in main.js so the title is correct ASAP.
  *
- * The tab title uses lowerName (all-lowercase "nebflow") per user ruling
- * 2026-08-25 19:18; productName keeps the brand.conf display spelling for
- * other UI copy (sidebar version line, daemon hints) until the rename.
+ * The tab title brand token is UPPERCASE (rendered from lowerName via
+ * toUpperCase, e.g. "STAND") per author ruling「所有的客户端网页标签的
+ * STAND 都要用这个大写」— this supersedes the 2026-08-25 19:18 lowercase
+ * ruling. The transform is display-only at this one call site: lowerName
+ * keeps its lowercase semantics everywhere else (storage keys, jar names).
  */
 export function initBranding() {
-  document.title = brand.lowerName;
+  document.title = brand.lowerName.toUpperCase();
   // Clear obsolete per-browser artwork overrides; the project owns the selection.
   try { localStorage.removeItem('stand_logo_choice'); } catch { /* Optional storage. */ }
 }
