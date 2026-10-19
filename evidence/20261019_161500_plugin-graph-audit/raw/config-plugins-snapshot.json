@@ -1,0 +1,46 @@
+{
+  "plugins_keys": [
+    "trust"
+  ],
+  "plugins_trust": [
+    "browser-use",
+    "computer-use",
+    "document-production",
+    "nebflow-plugin-creator",
+    "slideblocks",
+    "visual-report",
+    "web-search-toolkit"
+  ],
+  "autoAllocate_key_present": false,
+  "enabled_key_present": false,
+  "jev": {
+    "enabled": true,
+    "provider": "typesafe-jev",
+    "keyRef": "apikey_286bb7bb3df5b5349…",
+    "endpoint": "https://api.typesafe.ai/v1/systemone"
+  },
+  "llm_providers": [
+    "zhipu"
+  ],
+  "llm_models": {
+    "zhipu": [
+      "glm-5.3-flash"
+    ]
+  },
+  "secrets_dir": [
+    ".otp",
+    "aliyun-oss",
+    "demo-accounts",
+    "kai-nbverify",
+    "logto-logout-rollback.json",
+    "logto-test-account",
+    "logto-test-account-20260915",
+    "social-feishu-app-secret",
+    "social-weixin-bot-token",
+    "typesafe-api-key",
+    "vercel-token",
+    "weixin-ilink-ingress-token",
+    "weixin-ilink-send-token"
+  ],
+  "keyRef_secret_file_exists": false
+}
