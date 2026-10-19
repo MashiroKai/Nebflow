@@ -44,15 +44,20 @@ class AskUserAttachmentRoutesSpec extends CatsEffectSuite:
   // ── 文件名清洗（设计稿 §3.2：去路径分隔符与控制字符，保留 unicode）──────
 
   test("sanitizeName 去路径分隔符与 ..，保留 unicode") {
+    // 实现序：先分隔符→"_"，再 ".."→"_"（String.replace = 全量）——".."/分隔符
+    // 双双失效，traversal 无从拼出。
     assertEquals(AskUserAttachmentRoutes.Store.sanitizeName("a/b/c.png"), "a_b_c.png")
-    assertEquals(AskUserAttachmentRoutes.Store.sanitizeName("..\\evil.sh"), "___evil.sh")
+    assertEquals(AskUserAttachmentRoutes.Store.sanitizeName("..\\evil.sh"), "__evil.sh")
+    assertEquals(AskUserAttachmentRoutes.Store.sanitizeName(".."), "_")
+    assertEquals(AskUserAttachmentRoutes.Store.sanitizeName("a..b.txt"), "a_b.txt")
     assertEquals(AskUserAttachmentRoutes.Store.sanitizeName("报告 v1.pdf"), "报告 v1.pdf")
     assertEquals(AskUserAttachmentRoutes.Store.sanitizeName("\u0007bell.txt"), "bell.txt")
   }
 
-  test("sanitizeName 全空 ⇒ \"file\"（seq 前缀仍保唯一性）") {
-    assertEquals(AskUserAttachmentRoutes.Store.sanitizeName("///"), "file")
-    assertEquals(AskUserAttachmentRoutes.Store.fileNameFor(3, "file"), "3-file")
+  test("sanitizeName 纯分隔符输入 ⇒ 全下划线（非 file）；全空白 ⇒ \"file\"") {
+    assertEquals(AskUserAttachmentRoutes.Store.sanitizeName("///"), "___")
+    assertEquals(AskUserAttachmentRoutes.Store.sanitizeName("   "), "file")
+    assertEquals(AskUserAttachmentRoutes.Store.fileNameFor(3, "___"), "3-___")
   }
 
   test("dirName 单一拼接点：ask-<requestId>") {
