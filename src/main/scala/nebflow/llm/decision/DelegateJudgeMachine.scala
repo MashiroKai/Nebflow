@@ -144,7 +144,10 @@ object DelegateJudgeMachine:
     }
   end jevWorktree
 
-  /** 终态三态的 Jev 问句（Choice 三选一；blocked 无自由文本——实质随终态消息直传）。 */
+  /**
+   * 终态判词的 Jev 问句（Choice；「blocked」= 注记通道——#566：blocked 判词退役，
+   *  判官的「没做成」折 completed＋注记，不是独立状态）。
+   */
   private def jevVerdict(p: DecisionProvider[IO], timeoutMs: Long, input: TerminalInput): IO[Option[Verdict]] =
     val req = DecisionRequest(
       state = terminalState(input),
@@ -157,7 +160,7 @@ object DelegateJudgeMachine:
               "there is nothing left to merge: the delegate had no working branch (pure read / no file changes) and is done, or the merge round landed cleanly (the git digest shows the delegate commits merged into the base branch)"
             ),
             DelegateJudge.VerdictWire.Blocked -> Some(
-              "the task could not be completed, or the merge round hit a refusal/conflict — the terminal text states the blocker"
+              "the task could not be completed, or the merge round hit a refusal/conflict — the terminal text states the blocker (this answer is recorded as a completed verdict with a note; there is no separate blocked state)"
             ),
             DelegateJudge.VerdictWire.ReadyToMerge -> Some(
               "the delegate has a working branch and the git digest shows deliverable commits on it, unmerged, ahead of the base branch, with the terminal text reporting success — ready for the merge queue (this outcome requires a working branch: never for pure-read delegates)"
@@ -179,15 +182,20 @@ object DelegateJudgeMachine:
     }
   end jevVerdict
 
-  /** Choice 判词读取（纯函数——spec 判红锚）：`verdict` 问句的选中之词 → 判词。 */
+  /**
+   * Choice 判词读取（纯函数——spec 判红锚）：`verdict` 问句的选中之词 → 判词。
+   *  #566：blocked 选中词 = 注记形 completed（不再是独立状态）。
+   */
   private[decision] def verdictFromChoice(resp: DecisionResponse, input: TerminalInput): Option[Verdict] =
     resp.answers.get("verdict").collect { case c: DecisionAnswer.Choice => c.choice.trim.toLowerCase } flatMap {
       case DelegateJudge.VerdictWire.Completed => Some(Verdict.Completed)
       case DelegateJudge.VerdictWire.ReadyToMerge => Some(Verdict.ReadyToMerge)
       case DelegateJudge.VerdictWire.Blocked =>
         Some(
-          Verdict.Blocked(
-            s"jev judge: blocked${if input.mergeRound then " (merge round)" else ""} — substance in the terminal text"
+          Verdict.CompletedNote(
+            s"judge: could not complete${
+                if input.mergeRound then " (merge round)" else ""
+              } — substance in the terminal text"
           )
         )
       case _ => None
@@ -354,9 +362,9 @@ inFlightChains: ${input.inFlightChains}"""
 
   private def terminalInstructions(input: TerminalInput): String =
     if input.mergeRound then
-      "This is the MERGE ROUND: the delegate was instructed to run `git merge --no-ff` in the base workspace. Judge from the git digest whether the merge landed cleanly (completed) or was refused/conflicted (blocked). ready-to-merge is NOT a valid outcome for a merge round."
+      "This is the MERGE ROUND: the delegate was instructed to run `git merge --no-ff` in the base workspace. Judge from the git digest whether the merge landed cleanly (completed) or was refused/conflicted (blocked — recorded as a completed verdict with a note; there is no separate blocked state). ready-to-merge is NOT a valid outcome for a merge round."
     else
-      "Judge the delegate's state: completed (pure read / no file changes and done — nothing to merge), blocked (could not complete — the reason is in the result/git digest), or ready-to-merge (the delegate has a working branch with deliverable commits unmerged on it — send it to the merge queue)."
+      "Judge the delegate's state: completed (pure read / no file changes and done — nothing to merge), blocked (could not complete — the reason is in the result/git digest; recorded as a completed verdict with a note, NOT a separate state), or ready-to-merge (the delegate has a working branch with deliverable commits unmerged on it — send it to the merge queue)."
 
   private def cap(s: String): String = if s.length > 12000 then s.take(12000) else s
 
@@ -378,7 +386,10 @@ inFlightChains: ${input.inFlightChains}"""
   private[decision] def parseWorktree(text: String): Option[Boolean] =
     extractJsonObject(text).flatMap(j => j.hcursor.get[Boolean]("worktree").toOption)
 
-  /** SmallJudge 三态 JSON：`{"verdict": "...", "reason": "..."}`。 */
+  /**
+   * SmallJudge 三态 JSON：`{"verdict": "...", "reason": "..."}`（#566：blocked
+   *  答案折 completed＋注记——退役状态，不再是独立判词）。
+   */
   private[decision] def parseVerdict(text: String): Option[Verdict] =
     extractJsonObject(text).flatMap { j =>
       val verdict = j.hcursor.get[String]("verdict").toOption.map(_.trim.toLowerCase)
@@ -387,7 +398,12 @@ inFlightChains: ${input.inFlightChains}"""
         case DelegateJudge.VerdictWire.Completed => Some(Verdict.Completed)
         case DelegateJudge.VerdictWire.ReadyToMerge => Some(Verdict.ReadyToMerge)
         case DelegateJudge.VerdictWire.Blocked =>
-          Some(Verdict.Blocked(if reason.nonEmpty then reason else "small-judge: blocked"))
+          Some(
+            Verdict.CompletedNote(
+              if reason.nonEmpty then s"judge: $reason"
+              else "judge: could not complete — substance in the terminal text"
+            )
+          )
         case _ => None
       }
     }

@@ -163,6 +163,28 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
       )
       // 无判词键：deadRec 的键 = delegateId 回落（keyFor）——42 行不属它。
       assert(dead.hcursor.downField("verdict").focus.isEmpty, "no verdict row on its own key ⇒ no verdict key")
+      // 无 taskStatus 供给 = 键缺席（旧投影，缺键容忍）。
+      assert(dead.hcursor.downField("taskStatus").focus.isEmpty, "no taskStatus supply ⇒ no taskStatus key")
+    }
+  }
+
+  test(
+    "C1b (#566): taskStatus supply lands verbatim on the matching row — the engine terminal authority for stale-row retirement"
+  ) {
+    val rec = record("delegate-general-33cc44dd", Some("52"))
+    DelegateRegistry.put(rec)
+    val statuses = Map(
+      rec.id -> "failed",
+      "delegate-unknown-ghost" -> "completed" // 查无行 = 零投影（不臆造）
+    )
+    ChainsReadFace.rowsJson(Map.empty, archived = false, taskStatuses = statuses).map { body =>
+      val rows = body.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil)
+      val row = rows.find(_.hcursor.get[String]("id").toOption.contains(rec.id)).getOrElse(fail("row missing"))
+      assertEquals(
+        row.hcursor.get[String]("taskStatus").toOption,
+        Some("failed"),
+        "the engine task-row status rides the row verbatim (UI terminal authority)"
+      )
     }
   }
 
@@ -380,12 +402,22 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
       activeBody <- ChainsReadFace.rowsJson(Map.empty)
       archivedBody <- ChainsReadFace.rowsJson(Map.empty, archived = true)
     yield
-      val activeIds = activeBody.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil).map(
-        _.hcursor.get[String]("id").toOption.getOrElse("")
-      )
-      val archivedIds = archivedBody.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil).map(
-        _.hcursor.get[String]("id").toOption.getOrElse("")
-      )
+      val activeIds = activeBody.hcursor
+        .downField("rows")
+        .as[List[io.circe.Json]]
+        .toOption
+        .getOrElse(Nil)
+        .map(
+          _.hcursor.get[String]("id").toOption.getOrElse("")
+        )
+      val archivedIds = archivedBody.hcursor
+        .downField("rows")
+        .as[List[io.circe.Json]]
+        .toOption
+        .getOrElse(Nil)
+        .map(
+          _.hcursor.get[String]("id").toOption.getOrElse("")
+        )
       assertEquals(
         activeIds.toSet,
         Set(defaultSeat.id, projectSeat.id),
@@ -400,6 +432,7 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
         Set(staleArchived.id),
         "the archived window stays complete (zero deletion): archived foreign record still inspectable"
       )
+    end for
   }
 
   test("C4b: seat scoping is canonical-path stable — a symlinked workspace alias still counts as in-world") {
@@ -422,17 +455,22 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     DelegateRegistry.put(aliasedSeat)
     val foreign = foreignRecord("delegate-nebflow-bbcc0022", Some("64"), createdAt = 4L)
     DelegateRegistry.put(foreign)
-    for
-      body <- ChainsReadFace.rowsJson(Map.empty)
+    for body <- ChainsReadFace.rowsJson(Map.empty)
     yield
-      val ids = body.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil).map(
-        _.hcursor.get[String]("id").toOption.getOrElse("")
-      )
+      val ids = body.hcursor
+        .downField("rows")
+        .as[List[io.circe.Json]]
+        .toOption
+        .getOrElse(Nil)
+        .map(
+          _.hcursor.get[String]("id").toOption.getOrElse("")
+        )
       assertEquals(
         ids.toSet,
         Set(aliasedSeat.id),
         "symlink-aliased project seat resolves into the world (canonical compare); foreign seat filtered"
       )
+    end for
   }
 
 end ChainsReadFaceSpec

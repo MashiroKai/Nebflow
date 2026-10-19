@@ -211,8 +211,8 @@
 .task-node-dot-cancelled { background: var(--color-warning, #ff9800); }
 .task-node-dot-neutral { background: color-mix(in srgb, var(--color-text-muted, #888) 45%, transparent); }
 
-/* blocked（阻塞，2026-09-05 裁定）：琥珀实心点——警示态，区别于 failed 终结红 */
-.task-node-dot-blocked { background: rgb(var(--amber, 255 152 0) / 0.95); }
+/* #566：.task-node-dot-blocked 退役（delegate 行值域无 blocked——producer 已删，
+   agentflow flow 节点的 blocked 语言在 flowMap/fmNodeCard 面板） */
 
 .task-node-text { flex: 1; min-width: 0; }
 

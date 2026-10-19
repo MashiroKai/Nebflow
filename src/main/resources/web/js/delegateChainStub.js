@@ -31,10 +31,13 @@
 /**
  * 任务行/链节点共用的状态最小集（S1「状态」列的值域）。
  *
- * 推导：DelegateJudge 三判词（completed / blocked / ready-to-merge，引擎面
- * `DelegateJudge.Verdict`）∪ 引擎终态（failed / cancelled）∪ 活性态
- *（running / pending，SubAgentTask store 与外部适配流的 live 面）。
- * `ready-to-merge` 为 #1224 新态（S11 FIFO 入队锚）。
+ * 推导：引擎任务行终态（taskStatus：completed / failed / cancelled / ready-to-merge
+ * ——SubAgentTaskStore 值域，#566 起行投影携带）∪ 判定机判词（completed(+注记) /
+ * ready-to-merge——#566 起 blocked 判词退役，「没做成」只是报告注记，作者令：
+ * 「blocked 是给 agentflow 节点的」）∪ 活性态（running / pending，SubAgentTask
+ * store 与外部适配流的 live 面）。
+ * `ready-to-merge` 为 #1224 新态（S11 FIFO 入队锚）。BLOCKED 值保留 = agentflow
+ * 节点（flow-step 成员）合法态；delegate 行不再产生。
  * @enum {string}
  */
 export const ROW_STATUS = {
@@ -163,10 +166,17 @@ export function normalizeStatus(s) {
 /**
  * DelegateRegistry.Record JSON → 任务行（S1 行数据源的适配半边）。
  *
- * 状态推导（适配层单点，权威仍在后端）：record.reportStatus 是引擎状态槽
- *（'finish' | 'blocked' | 缺省）——finish → completed、blocked → blocked；
- * 缺省时读 `live.status` 提示（stub/换源 provider 供给的活性态）；两者皆无
- * → 'running'。external = executor 非空且 ≠ 'nebflow'（内置执行器唯一
+ * 状态推导（适配层单点，权威仍在后端；#566 修复批 2026-10-19）：
+ *   ① `taskStatus`（行投影新键——引擎任务行终态，SubAgentTaskStore 值域）＝
+ *      **终态权威**：completed / failed / cancelled / ready-to-merge 直映（delegate
+ *      终态后行必须在 UI 反映终态——reportStatus/live 双缺席时旧推导回落 running
+ *      的陈旧行根因修补）；running/restarting 非终态 → 落后续推导。
+ *   ② record.reportStatus 引擎状态槽（'finish' | 'merge' | 退役前 'blocked'）——
+ *      finish → completed；**blocked → completed**（#566：delegate 面无 blocked
+ *      状态——申报 blocked 的行按 completed 交付，阻塞事实是报告注记）。
+ *   ③ 缺省读 `live.status` 提示（stub/换源 provider 供给的活性态）；两者皆无
+ *      → 'running'。
+ * external = executor 非空且 ≠ 'nebflow'（内置执行器唯一
  * id，ExecutorRegistry.Definitions 同口径）⇒ S16 粗粒度行。
  * @param {Record<string, any>} record DelegateRegistry.Record 形 JSON（缺键容忍）
  * @param {{status?: string}} [live]   活性态提示（可选；缺省无）
@@ -176,9 +186,12 @@ export function rowFromRegistry(record, live) {
   const r = record && typeof record === 'object' ? record : {};
   const executor = String(r.executor || '');
   const reported = String(r.reportStatus || '');
+  const engine = String(r.taskStatus || '');
+  const ENGINE_TERMINAL = new Set(['completed', 'failed', 'cancelled', 'ready-to-merge']);
   let status;
-  if (reported === 'finish') status = ROW_STATUS.COMPLETED;
-  else if (reported === 'blocked') status = ROW_STATUS.BLOCKED;
+  if (ENGINE_TERMINAL.has(engine)) status = engine; // ① 引擎终态权威（#566）
+  else if (reported === 'finish') status = ROW_STATUS.COMPLETED;
+  else if (reported === 'blocked') status = ROW_STATUS.COMPLETED; // ② 退役词 → completed（注记在报告）
   else if (live && live.status) status = normalizeStatus(live.status);
   else status = ROW_STATUS.RUNNING;
   // G1/G5/G6 加宽（delegate-ui 批）：缺键容忍——旧盘 null → mode '' / archivedAt
@@ -318,12 +331,16 @@ export function chainFromStoreRecord(record) {
 }
 
 /**
- * 判词 → 行状态（三判词映射；未知判词 → running）。
+ * 判词 → 行状态（#566 判词映射：completed(+注记) / ready-to-merge 两态；引擎
+ * failed/cancelled 终态行写真值。退役 blocked 判词（旧盘行）→ completed——「没
+ * 做成」是报告注记，不再是状态；未知判词 → running）。
  * @param {string} v @returns {string}
  */
 export function verdictToStatus(v) {
   if (v === 'ready-to-merge') return ROW_STATUS.READY_TO_MERGE;
-  if (v === 'blocked') return ROW_STATUS.BLOCKED;
+  if (v === 'failed') return ROW_STATUS.FAILED;
+  if (v === 'cancelled') return ROW_STATUS.CANCELLED;
+  if (v === 'blocked') return ROW_STATUS.COMPLETED; // #566：退役词 → completed
   if (v === 'completed') return ROW_STATUS.COMPLETED;
   return ROW_STATUS.RUNNING;
 }

@@ -8,31 +8,36 @@ import cats.effect.IO
  *
  * == 增补条款 3.3（R6/R7＋⑦ 判定同族）==
  * 外部 judge 同走 #1224 的 DelegateJudge 入口（Jev 优先＋SmallJudge 兜底），
- * 复用其三态枚举（completed / blocked / ready-to-merge）与 per-project
- * MergeQueue（FIFO 完成时间排序）。本批与 #1224 **并行在飞**——接口先行
- * 对齐：本缝就是那个接口的外部侧消费点。#1224 落地后由其接线（一个赋值点，
+ * 复用其判词枚举（completed(+注记) / ready-to-merge——#566：blocked 判词退役）
+ * 与 per-project MergeQueue（FIFO 完成时间排序）。本批与 #1224 **并行在飞**——
+ * 接口先行对齐：本缝就是那个接口的外部侧消费点。#1224 落地后由其接线（一个赋值点，
  * 见 [[classify]]）；本批**不实现判定机**、不建第二套。
  *
  * == 本批缺省行为（缝未接线）==
  * `classify` 缺省恒 `None` ⇒ runner 按进程结果直判：exit 0 且流面无失败帧
- * ⇒ completed；否则 blocked（＋原因）。「ready-to-merge」在本批缺省永不产生
- * ⇒ 无 barrier 悬挂（#1224 的合并轮经 MailTool 外部续聊腿注入**一条 resume
- * 消息**（`merge --no-ff` 回基分支 brief）驱动——S15 钉死，通道已由本批建好）。
+ * ⇒ completed；否则 failed（＋原因——真失败归 failed，作者令 #566）。
+ * 「ready-to-merge」在本批缺省永不产生 ⇒ 无 barrier 悬挂（#1224 的合并轮经
+ * MailTool 外部续聊腿注入**一条 resume 消息**（`merge --no-ff` 回基分支 brief）
+ * 驱动——S15 钉死，通道已由本批建好）。
  *
  * == 合同（#1224 接线时遵守）==
  *   - 输入 = 外部腿的判定素材（任务书摘要 + CLI final 文本 + 进程结果）；
- *   - 输出 = None（弃判，runner 走缺省直判）或三态判词；
+ *   - 输出 = None（弃判，runner 走缺省直判）或判词；
  *   - ready-to-merge 判词下 runner **不发**父终态通知（MergeQueue 持有该
  *     delegate 的父回报权，合并轮终态再判——原书 Batch 4/5 语义）；
- *   - blocked 判词下父通知 eventType="failed"、failureType="blocked"（外部
- *     无 AgentFrozen 冻结面——⑬：失败经 judge 三态 blocked 上报，不建旁路上送）。
+ *   - failed 判词下父通知 eventType="failed"、failureType="failed"（外部
+ *     无 AgentFrozen 冻结面——⑬：失败经判词 failed 上报，不建旁路上送）。
  */
 object ExternalJudgeHook:
 
-  /** 三态判词（#1224 DelegateJudge 枚举的外部侧镜像；接线后以 #1224 为准）。 */
+  /**
+   * 判词（#1224 DelegateJudge 枚举的外部侧镜像；接线后以 #1224 为准）。
+   * #566：镜像的 blocked 改名 Failed——外部腿的「做不成」= 进程/结果真失败，
+   * 终态恒 failed（无独立 blocked 状态）。
+   */
   enum Verdict:
     case Completed
-    case Blocked(reason: String)
+    case Failed(reason: String)
     case ReadyToMerge
 
   /** 判定素材（结果输入 = CLI final 文本——原书不变）。 */
@@ -91,8 +96,11 @@ object ExternalJudgeHook:
         )
       )
       .map(_.map {
+        // #566：core CompletedNote（退役 blocked 的注记形）→ 镜像 Completed——
+        // 外部腿的注记面归终端报告文本；判官「没做成」不在此翻 Failed（进程
+        // 结果兜底才是失败判据）。
         case DelegateJudge.Verdict.Completed => Verdict.Completed
-        case DelegateJudge.Verdict.Blocked(r) => Verdict.Blocked(r)
+        case DelegateJudge.Verdict.CompletedNote(_) => Verdict.Completed
         case DelegateJudge.Verdict.ReadyToMerge => Verdict.ReadyToMerge
       })
 

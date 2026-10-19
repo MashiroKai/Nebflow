@@ -62,7 +62,8 @@ import scala.util.Try
  *     `merge --no-ff` brief 消息——S15 钉死「无第二机制」）。
  *
  * == fail-closed（增补条款 3.4，R2/R11）==
- * 适配器建立 / resume / 进程失败一律显式终态（blocked ＋原因），错误面走任务行
+ * 适配器建立 / resume / 进程失败一律显式终态（failed ＋原因——#566：无独立
+ * blocked 状态），错误面走任务行
  * / AgentControl status / REST 输出面；**零静默回退 nebflow**、零自动重试
  * （单次失败即终态，重派是主 agent 的决策）。
  */
@@ -223,7 +224,9 @@ You will be notified when it completes via a system message. Do NOT duplicate th
     if record.executor == ExecutorRegistry.DefaultId then
       // 前置违例（内部记录误入外部腿）：显式拒绝，不猜路由。
       IO.pure(
-        Left(s"Delegate '${record.id}' is an internal (${nebflow.shared.Branding.productName}) record — wrong routing leg. (EXTERNAL_LEG_MISMATCH)")
+        Left(
+          s"Delegate '${record.id}' is an internal (${nebflow.shared.Branding.productName}) record — wrong routing leg. (EXTERNAL_LEG_MISMATCH)"
+        )
       )
     else
       ExternalExecutor.forId(record.executor) match
@@ -374,7 +377,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               .handleErrorWith(e =>
                 logger.warn(s"External delegate $sessionId read loop crashed: ${e.getMessage}") *>
                   ExternalOutputStore.append(sessionId, s"[read-loop crashed] ${e.getMessage}") *>
-                  // fail-closed：读取循环崩溃 ≠ 完成——显式失败帧进 settle（blocked），
+                  // fail-closed：读取循环崩溃 ≠ 完成——显式失败帧进 settle（failed），
                   // 不向可能仍存活的进程要退出码（exitValue 会抛）。
                   settle(
                     sessionId,
@@ -390,7 +393,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
         }
       }
       .handleErrorWith { e =>
-        // 进程建立失败 = fail-closed 终态（blocked），绝不静默回落。
+        // 进程建立失败 = fail-closed 终态（failed），绝不静默回落。
         logger.warn(s"External delegate $sessionId process launch failed: ${e.getMessage}") *>
           ExternalOutputStore.append(sessionId, s"[launch-failed] ${e.getMessage}") *>
           settle(
@@ -502,15 +505,15 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               (verdict, processFailed) match
                 // 合并轮**无 ready-to-merge 态**（merge brief 明言）——判定机若在
                 // 合并轮回 ready-to-merge = 越权判词，交给机械验收闸定夺（真并了 =
-                // completed 放行；没并 = blocked）。绝不回灌队列（防判定机缺陷驱动的
+                // completed 放行；没并 = failed）。绝不回灌队列（防判定机缺陷驱动的
                 // 无限重入循环）。
                 case (Some(ExternalJudgeHook.Verdict.ReadyToMerge), _) =>
                   if mergeRoundNow then IO.pure(Outcome.Completed) else IO.pure(Outcome.ReadyToMerge)
-                case (Some(ExternalJudgeHook.Verdict.Blocked(r)), _) => IO.pure(Outcome.Blocked(r))
+                case (Some(ExternalJudgeHook.Verdict.Failed(r)), _) => IO.pure(Outcome.Failed(r))
                 case (Some(ExternalJudgeHook.Verdict.Completed), _) => IO.pure(Outcome.Completed)
                 case (None, true) =>
                   IO.pure(
-                    Outcome.Blocked(
+                    Outcome.Failed(
                       finalFrame
                         .map(_.text)
                         .filter(_.trim.nonEmpty)
@@ -522,7 +525,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
                 case (None, false) => IO.pure(Outcome.Completed)
           // P1-1① 外部合并轮同一机械验收闸（绝不凭自申报放行）：合并轮 completed
           // ⇒ 确定性 git 校验；通过 = Release ＋现场回收（P2-4 同闸同守卫）；不
-          // 满足 = 判词回落 blocked（报父，零 LLM）。
+          // 满足 = 判词回落 failed（报父，零 LLM——#566：真失败归 failed）。
           outcome <-
             (outcome0, mergeRoundNow) match
               case (Outcome.Completed, true) =>
@@ -531,13 +534,13 @@ You will be notified when it completes via a system message. Do NOT duplicate th
                     if r.ok then PostMergeCleanup.run(rec).as(Outcome.Completed)
                     else
                       IO.pure(
-                        Outcome.Blocked(
+                        Outcome.Failed(
                           s"mechanical merge acceptance refused the release (the CLI claimed a completed merge): ${r.evidence}"
                         )
                       )
                   }
                   .handleErrorWith(e =>
-                    IO.pure(Outcome.Blocked(s"mechanical merge acceptance unreadable: ${e.getMessage}"))
+                    IO.pure(Outcome.Failed(s"mechanical merge acceptance unreadable: ${e.getMessage}"))
                   )
               case (other, _) => IO.pure(other)
           // 引擎原生 delegate worktree 自动合并批（#524）：外部腿 completed 终态 ×
@@ -557,15 +560,15 @@ You will be notified when it completes via a system message. Do NOT duplicate th
                     )
               case _ => IO.pure(None)
           reasonOpt = outcome match
-            case Outcome.Blocked(r) => Some(r)
+            case Outcome.Failed(r) => Some(r)
             case Outcome.Cancelled => Some("cancelled")
             case _ => None
-          // 进度面终态（3.4 词表：blocked；ready-to-merge 在缓冲面记 completed——
-          // 进程本身成功了，合并轮语义归 #1224 队列）。
+          // 进度面终态（#566 词表：failed——无独立 blocked；ready-to-merge 在缓冲面记
+          // completed——进程本身成功了，合并轮语义归 #1224 队列）。
           _ <- ExternalOutputStore.finalizeTask(
             sessionId,
             status = outcome match
-              case Outcome.Blocked(_) => "blocked"
+              case Outcome.Failed(_) => "failed"
               case Outcome.ReadyToMerge | Outcome.Completed => "completed"
               case Outcome.Cancelled => "cancelled",
             exitCode = exitCode,
@@ -580,7 +583,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
             case Outcome.ReadyToMerge => IO.unit
             case Outcome.Cancelled =>
               updateTaskTolerant(spec.resources, spec.parentSessionId, sessionId, "cancelled", lastError = reasonOpt)
-            case Outcome.Blocked(_) =>
+            case Outcome.Failed(_) =>
               updateTaskTolerant(spec.resources, spec.parentSessionId, sessionId, "failed", lastError = reasonOpt)
           _ <- appendLedgerNote(
             spec.taskId,
@@ -590,7 +593,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               case Outcome.ReadyToMerge =>
                 s"External delegate ready-to-merge (judge; executor=${ex.id}) — enqueued to the merge queue"
               case Outcome.Cancelled => s"External delegate cancelled (executor=${ex.id})"
-              case Outcome.Blocked(r) => s"External delegate blocked (executor=${ex.id}): $r"
+              case Outcome.Failed(r) => s"External delegate failed (executor=${ex.id}): $r"
           )
           // P1-2：ready-to-merge 并入 MergeQueue（外部通道条目——合并轮经续聊通道
           // 注入、settle 终态再判）。锚缺失（非 git 腿误判 ready-to-merge / 记录
@@ -642,7 +645,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
             case _ => IO.unit
           // P1-2/P2-4（引擎加固批 2026-10-09）：外部腿**终态出队**（内部腿同语义 =
           // DelegateTerminal.onTerminalCleanup 的出队臂）。合并轮终态（机械验收
-          // 拒绝 blocked / 放行 completed）后条目必须出队＋单飞行窗释放——否则窗
+          // 拒绝 failed / 放行 completed）后条目必须出队＋单飞行窗释放——否则窗
           // 泄漏（同项目后继全楔死）且账本无 `dequeued` 后继行，下次 boot sweep
           // 会把已终结成员误判为中断成员重挂。ReadyToMerge = 刚入队，出队权归
           // 合并轮。未入队过（completed/cancelled 首轮终态）= onTerminal 幂等 no-op。
@@ -687,10 +690,14 @@ You will be notified when it completes via a system message. Do NOT duplicate th
         yield ()
     }
 
-  /** settle 的终态词汇（三态判词 ＋ cancelled 的 runner 内部形态）。 */
+  /**
+   * settle 的终态词汇（判词 ＋ cancelled 的 runner 内部形态）。#566：原 Blocked
+   * 改名 Failed——外部腿的「做不成」= 进程/结果真失败，终态恒 failed（作者令：
+   * delegate 面无 blocked 状态，failed 保留给真失败）。
+   */
   private enum Outcome:
     case Completed
-    case Blocked(reason: String)
+    case Failed(reason: String)
     case ReadyToMerge
     case Cancelled
 
@@ -733,14 +740,14 @@ You will be notified when it completes via a system message. Do NOT duplicate th
                 "reason" -> reasonOpt.getOrElse("").asJson
               )
             )
-          case Outcome.Blocked(_) => // ⑬：经三态 blocked 上报，无旁路上送、无 AgentFrozen 面
+          case Outcome.Failed(_) => // ⑬：经判词 failed 上报（#566：无独立 blocked 状态），无旁路上送、无 AgentFrozen 面
             (
               "failed",
-              s""""${spec.title}": blocked — ${reasonOpt.getOrElse("external executor failed")}""",
+              s""""${spec.title}": failed — ${reasonOpt.getOrElse("external executor failed")}""",
               io.circe.JsonObject(
                 "failedSessionId" -> sessionId.asJson,
                 "retryable" -> false.asJson,
-                "failureType" -> "blocked".asJson,
+                "failureType" -> "failed".asJson,
                 "reason" -> reasonOpt.getOrElse("").asJson
               )
             )

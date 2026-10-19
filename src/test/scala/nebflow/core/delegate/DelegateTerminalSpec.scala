@@ -14,20 +14,21 @@ import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration.*
 
 /**
- * DelegateTerminal 终态判定钩子判读（worktree-judge-fifo 批 #1224 增补 §3.1/§3.3）：
+ * DelegateTerminal 终态判定钩子判读（worktree-judge-fifo 批 #1224 增补 §3.1/§3.3；
+ * #566 修复批：blocked 判词退役——判官/预检/漂移/验收的「没做成」一律 completed＋注记）：
  *
  *  - ① 判定机全败回落链（fail-open）：无自申报 → completed（既有语义）；
- *    自申报 finish → completed；自申报 blocked → blocked(detail)；
+ *    自申报 finish → completed；自申报 blocked（退役词）→ completed＋注记；
  *  - ② 判定机判 ready-to-merge：任务库状态改 ready-to-merge（completedAt = FIFO
  *    锚）+ MergeQueue 入队 + Outcome.HoldForMerge（**不报父不停 actor** 的判据面
  *    = 返回值），ChainStore 落 terminal-verdict 行；
  *  - ③ 无分支可并的 ready-to-merge = 降级 completed（诚实终态）；A5 步1 扩展
  *    （例⑤）：分支在但零领先提交同降级（commitsAhead==0，防空合并轮）；
  *  - ④ onTerminalCleanup：completed 腿不重复落判词行；failed/cancelled 补
- *    engine blocked 行 + MergeQueue 出队幂等。
- *  - ⑥-⑩（A5 步2 漂移闸红验①-⑤）：确证硬阻断（source=drift）/ 账本归因豁免 /
- *    合并轮豁免 / 读数不可确证 fail-open / worktree 座位只注记——另附分类器
- *    纯函数锚（读数显式入参，零 git）。
+ *    engine 判词行（#566：verdict=failed/cancelled 真值）+ MergeQueue 出队幂等。
+ *  - ⑥-⑩（A5 步2 漂移闸红验①-⑤）：确证 → completed＋注记（source=drift）/
+ *    账本归因豁免 / 合并轮豁免 / 读数不可确证 fail-open / worktree 座位只注记
+ *    ——另附分类器纯函数锚（读数显式入参，零 git）。
  *
  * 判定机输入注入 = DelegateJudgePort 注册器（fake Face——M2 先例的测试装配面）。
  */
@@ -152,7 +153,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       .lastOption
 
   test(
-    "① fallback chain: judge absent + no self-report → completed (legacy); self-report finish → completed; self-report blocked → blocked(detail)"
+    "① fallback chain: judge absent + no self-report → completed (legacy); self-report finish → completed; self-report blocked (retired) → completed + note"
   ) {
     val system = ActorSystem(s"dt-1-${scala.util.Random.nextInt(100000)}")
     for
@@ -182,11 +183,14 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       assert(r2.isInstanceOf[DelegateTerminal.Outcome.Release])
       assertEquals(v1, Some("completed"), "the verdict line lands in ChainStore even on the fallback leg")
       assertEquals(v2, Some("completed"))
+      // #566：退役 blocked 申报 → completed＋注记（wire 无 blocked；注记走尾注+reason）。
       assert(
-        r3.isInstanceOf[DelegateTerminal.Outcome.Release] && r3.toString.contains("blocked"),
-        "self-report blocked → blocked verdict"
+        r3.isInstanceOf[DelegateTerminal.Outcome.Release] && r3.toString.contains("completed"),
+        "self-report blocked (retired) → completed release"
       )
-      assertEquals(v3, Some("blocked"), "blocked verdict line lands with the reason channel")
+      assert(r3.toString.contains("missing key material"), "the retired-blocked detail rides the report note")
+      assertEquals(v3, Some("completed"), "no separate blocked wire word is ever written")
+      assert(r3.toString.contains("[delegate-judge] note:"), "the note channel is explicit in the release suffix")
     end for
   }
 
@@ -357,7 +361,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
   }
 
   test(
-    "④ cleanup: failed/cancelled terminals write the engine blocked line and dequeue; the completed leg does NOT double-write"
+    "④ cleanup: failed/cancelled terminals write the engine verdict line (verdict=failed, #566 true value) and dequeue; the completed leg does NOT double-write"
   ) {
     val system = ActorSystem(s"dt-4-${scala.util.Random.nextInt(100000)}")
     for
@@ -394,8 +398,19 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
       assert(MergeQueue.find("delegate-nebflow-fail").isEmpty, "any terminal releases the queue entry")
-      assertEquals(before, 1, "the failed terminal wrote exactly one engine blocked line")
+      assertEquals(before, 1, "the failed terminal wrote exactly one engine verdict line")
       assertEquals(after, before, "the completed leg must not double-write an engine verdict line")
+      // #566：engine 判词行写真值（verdict=failed），不再冒充 blocked。
+      assert(
+        ChainStore
+          .listSync()
+          .flatMap(_.entries)
+          .filter(e =>
+            e.kind == "terminal-verdict" && e.payload.hcursor.get[String]("source").toOption.contains("engine")
+          )
+          .forall(_.payload.hcursor.get[String]("verdict").toOption.contains("failed")),
+        "the engine verdict line carries verdict=failed"
+      )
     end for
   }
 
@@ -457,7 +472,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     wt
 
   test(
-    "⑥ (A5 步2 红验①) shared-checkout seat + zero-ahead + non-attributable base advance ⇒ blocked, source=drift, reason carries fork/baseTip/commits"
+    "⑥ (A5 步2 红验①; #566) shared-checkout seat + zero-ahead + non-attributable base advance ⇒ completed+note, source=drift, reason carries fork/baseTip/commits"
   ) {
     val system = ActorSystem(s"dt-6-${scala.util.Random.nextInt(100000)}")
     for
@@ -485,8 +500,17 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       rows = verdictRows("delegate-nebflow-dg1")
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
-      assert(outcome.toString.contains("blocked"), s"confirmed drift must hard-block: $outcome")
-      assertEquals(rows.map(_._1).lastOption, Some("blocked"), "the verdict line must be blocked")
+      // #566：确证漂移 = completed＋注记（source=drift），不再是独立 blocked 状态。
+      assert(outcome.toString.contains("completed"), s"confirmed drift must land a completed release: $outcome")
+      assert(
+        outcome.toString.contains("[delegate-judge] note:"),
+        s"the drift evidence rides the note channel: $outcome"
+      )
+      assertEquals(
+        rows.map(_._1).lastOption,
+        Some("completed"),
+        "the verdict line must be completed (note form, no blocked wire word)"
+      )
       assertEquals(rows.map(_._2).lastOption, Some("drift"), "the payload source must be drift")
       val reason = rows.map(_._3).mkString
       // 证据三件：fork / baseTip / 不可归属提交列表（全 sha 直比）
@@ -863,7 +887,8 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         // 工作座位对照：同形态但判是旗在场 ⇒ 判词归判定机，#524 引擎自动合并接管交付
         workingRepo = mkRealRepo(tempRoot / "work-note-repo", branch = "delegate/delegate-nebflow-wn", ahead = 1)
         // 座位形态归位：基工作区 HEAD 回 main（可并形态——目标分支必须是检出分支）
-        _ = os.proc("git", "-C", workingRepo.toString, "checkout", "main")
+        _ = os
+          .proc("git", "-C", workingRepo.toString, "checkout", "main")
           .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
         _ = seedRecord(
           "delegate-nebflow-wn",
@@ -904,27 +929,38 @@ class DelegateTerminalSpec extends CatsEffectSuite:
           "a working seat stays with the judge's completed verdict"
         )
         assertEquals(verdictLine("delegate-nebflow-wn"), Some("completed"))
-        assert(MergeQueue.find("delegate-nebflow-wn").isEmpty, "the working seat is NOT flipped — engine auto-merge owns the delivery")
+        assert(
+          MergeQueue.find("delegate-nebflow-wn").isEmpty,
+          "the working seat is NOT flipped — engine auto-merge owns the delivery"
+        )
         // #524（2026-10-04 裁定引擎化）：工作座位 × completed × 领先提交的交付改由
         // 引擎原生自动合并处置（--no-ff 并回 main，审计行 action=merged）；旧
         // unmerged-work 注记只在钩子未产出尾注时回退（开关 off / 不可评场景）。
-        val autoMergeRows = ChainStore.listSync().flatMap(_.entries).filter(_.kind == DelegateAutoMerge.EntryKind).flatMap { e =>
-          e.payload.hcursor
-            .get[String]("delegateId")
-            .toOption
-            .filter(_ == "delegate-nebflow-wn")
-            .map(_ => e.payload.hcursor.get[String]("action").toOption.getOrElse(""))
-        }
-        assert(GitWorktrees.isAncestor(workingRepo, "delegate/delegate-nebflow-wn", "main").contains(true), "the engine really merged the working seat's branch into main")
+        val autoMergeRows =
+          ChainStore.listSync().flatMap(_.entries).filter(_.kind == DelegateAutoMerge.EntryKind).flatMap { e =>
+            e.payload.hcursor
+              .get[String]("delegateId")
+              .toOption
+              .filter(_ == "delegate-nebflow-wn")
+              .map(_ => e.payload.hcursor.get[String]("action").toOption.getOrElse(""))
+          }
+        assert(
+          GitWorktrees.isAncestor(workingRepo, "delegate/delegate-nebflow-wn", "main").contains(true),
+          "the engine really merged the working seat's branch into main"
+        )
         assertEquals(autoMergeRows.lastOption, Some("merged"), "the engine-native auto-merge audit row lands (merged)")
-        assertEquals(noteRows, Nil, "the legacy unmerged-work note is superseded when the hook evaluated (suffix present)")
+        assertEquals(
+          noteRows,
+          Nil,
+          "the legacy unmerged-work note is superseded when the hook evaluated (suffix present)"
+        )
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
     end try
   }
 
   test(
-    "⑭ (misc②) ready-to-merge without a recorded baseBranch ⇒ blocked verdict (refuses to guess 'main'), engine-source verdict row lands"
+    "⑭ (misc②; #566) ready-to-merge without a recorded baseBranch ⇒ completed+note (refuses to guess 'main'), engine-source verdict row lands"
   ) {
     val system = ActorSystem(s"dt-14-${scala.util.Random.nextInt(100000)}")
     try
@@ -967,16 +1003,18 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
       yield
         assert(outcome.isInstanceOf[DelegateTerminal.Outcome.Release], s"got: $outcome")
-        assert(outcome.toString.contains("blocked"), "the hold-degraded terminal must be blocked")
+        // #566：降级 = completed＋注记（无独立 blocked 状态——注记交付）。
+        assert(outcome.toString.contains("completed"), "the hold-degraded terminal must release as completed")
+        assert(outcome.toString.contains("[delegate-judge] note:"), "the refusal rides the note channel")
         assert(
           outcome.toString.contains("refusing to guess 'main'"),
           s"the refusal reason must name the no-guessing rule: $outcome"
         )
-        assertEquals(rows.lastOption.map(_._1), Some("blocked"), "the verdict line is blocked")
+        assertEquals(rows.lastOption.map(_._1), Some("completed"), "the verdict line is completed (note form)")
         assertEquals(
           rows.lastOption.map(_._2),
           Some("engine"),
-          "the blocked line is engine-sourced (closes the ready-to-merge row)"
+          "the note line is engine-sourced (closes the ready-to-merge row)"
         )
         assert(MergeQueue.find("delegate-nebflow-nobase").isEmpty, "nothing must be enqueued without a merge target")
       end for

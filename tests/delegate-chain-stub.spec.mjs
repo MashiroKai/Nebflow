@@ -132,7 +132,7 @@ const row31 = {
 };
 const row32 = {
   taskNo: '32', delegateId: 'delegate-zcode-bb22', title: 'zcode 修断链',
-  executor: 'zcode', status: 'blocked', external: true, project: '', createdAt: T0 - 240_000,
+  executor: 'zcode', status: 'running', external: true, project: '', createdAt: T0 - 240_000,
 };
 const row33 = {
   taskNo: '33', delegateId: 'delegate-claude-cc33', title: 'claude 文案批',
@@ -178,11 +178,12 @@ test('T2 骨架行渲染：task#N＋执行器图标＋状态 glyph/词；ready-t
   await expect(r31).not.toHaveAttribute('data-external');
   await expect(r31).toHaveAttribute('data-delegate-id', 'delegate-nebflow-aa11');
 
-  // #32 zcode blocked（外部）：琥珀点 + 阻塞（既有键 task.nodeBlocked）+ coarse 标记。
+  // #32 zcode running（外部）：coarse 标记 + 运行词。#566：delegate 行值域无
+  // blocked——「已阻断」琥珀点/词徽章整面退役（本用例即零 blocked 产物断言）。
   const r32 = panel.locator('.task-delegate[data-task-no="32"]');
   await expect(r32.locator('.executor-icon-zcode')).toHaveCount(1);
-  await expect(r32.locator('.task-node-dot-blocked')).toHaveCount(1);
-  await expect(r32.locator('.task-node-word')).toHaveText('阻塞');
+  await expect(r32.locator('.task-node-dot-blocked')).toHaveCount(0);
+  await expect(r32.locator('.task-node-word')).toHaveText('进行中');
   await expect(r32).toHaveAttribute('data-external', '1');
 
   // #33 ready-to-merge：§16 键 1 落库（#1228 两裁①）⇒ 状态词「待合并」逐字；
@@ -260,9 +261,10 @@ test('T4 适配层（页面内纯函数）：registry 行归一＋ChainStore 行
     };
   });
 
-  // 行归一：reportStatus 状态槽映射 + external 判定（≠nebflow）。
+  // 行归一：reportStatus 状态槽映射 + external 判定（≠nebflow）。#566：退役
+  // blocked 申报 → completed（注记在报告，不再是状态）。
   expect(out.rowA).toMatchObject({ taskNo: '44', status: 'completed', external: false, executor: 'nebflow' });
-  expect(out.rowB).toMatchObject({ taskNo: '', status: 'blocked', external: true });
+  expect(out.rowB).toMatchObject({ taskNo: '', status: 'completed', external: true });
   expect(out.rowC).toMatchObject({ status: 'pending', external: false });
 
   // 链视图投影：spawn 行 → worktree；verdict 行 → 判词；FIFO 按 readyAt（完成时间）
@@ -283,7 +285,63 @@ test('T4 适配层（页面内纯函数）：registry 行归一＋ChainStore 行
 
   // 常量钉死（跨批契约键禁漂移）。
   expect(out.consts).toEqual({ ready: 'ready-to-merge', spawn: 'delegate-spawn' });
-  expect(out.statuses).toBe('ready-to-merge|blocked|completed|running');
+  // #566 判词映射钉：退役 blocked → completed；引擎 failed/cancelled 真值照映。
+  expect(out.statuses).toBe('ready-to-merge|completed|completed|running');
+
+  expect(pageErrors).toEqual([]);
+});
+
+test('T4b #566 行状态权威（taskStatus）：引擎终态直映 + 退役 blocked 申报/判词零 blocked 产物', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  await bootApp(page);
+  const out = await page.evaluate(async () => {
+    const stub = await import('/js/delegateChainStub.js');
+    // ① taskStatus 权威：引擎终态直映（reportStatus/live 双缺席也翻终态——陈旧行根因修补）。
+    const dead = { id: 'delegate-nebflow-dead', executor: 'nebflow', cwd: '/w', project: '', taskId: '51', parentSessionId: 's', title: 'T-dead', createdAt: 1 };
+    // ② taskStatus 权威压过退役 blocked 申报（终态真值优先）。
+    const deadBlocked = { ...dead, id: 'delegate-zcode-oldblocked', taskId: '52', executor: 'zcode', reportStatus: 'blocked', reportDetail: 'conflict' };
+    // ③ 无 taskStatus 时 reportStatus='blocked'（旧盘行）→ completed。
+    const legacy = { ...dead, id: 'delegate-nebflow-legacy', taskId: '53', reportStatus: 'blocked' };
+    // ④ live 在场（非终态 taskStatus）→ live 面。
+    const liveRow = { ...dead, id: 'delegate-nebflow-live', taskId: '54', taskStatus: 'running' };
+    return {
+      failed: stub.rowFromRegistry({ ...dead, taskStatus: 'failed' }).status,
+      cancelled: stub.rowFromRegistry({ ...dead, taskStatus: 'cancelled' }).status,
+      queued: stub.rowFromRegistry({ ...dead, taskStatus: 'ready-to-merge' }).status,
+      restarting: stub.rowFromRegistry({ ...dead, taskStatus: 'restarting' }).status,
+      deadBlocked: stub.rowFromRegistry(deadBlocked).status,
+      legacyBlocked: stub.rowFromRegistry(legacy).status,
+      live: stub.rowFromRegistry(liveRow, { status: 'running' }).status,
+      vFailed: stub.verdictToStatus('failed'),
+      vCancelled: stub.verdictToStatus('cancelled'),
+    };
+  });
+  expect(out.failed).toBe('failed');
+  expect(out.cancelled).toBe('cancelled');
+  expect(out.queued).toBe('ready-to-merge');
+  expect(out.restarting).toBe('running'); // 非终态 taskStatus → 落 live/running 推导
+  expect(out.deadBlocked).toBe('completed'); // 旧盘申报 blocked（无 taskStatus）→ completed
+  expect(out.legacyBlocked).toBe('completed'); // 退役申报 → completed（注记在报告）
+  expect(out.live).toBe('running');
+  expect(out.vFailed).toBe('failed');
+  expect(out.vCancelled).toBe('cancelled');
+
+  // 面板级终态行消失钉（A 域验收：终态委托的行不滞留现役窗）：failed/cancelled/
+  // completed 行经 ACTIVE_ROW_STATUSES 闸不渲染；ready-to-merge 照常渲染。
+  await setFixture(page, {
+    rows: [
+      { taskNo: '61', delegateId: 'delegate-nebflow-f61', title: '失败行', executor: 'nebflow', status: 'failed', external: false, project: '', createdAt: T0 - 10_000 },
+      { taskNo: '62', delegateId: 'delegate-nebflow-c62', title: '取消行', executor: 'nebflow', status: 'cancelled', external: false, project: '', createdAt: T0 - 20_000 },
+      { taskNo: '63', delegateId: 'delegate-nebflow-d63', title: '完成行', executor: 'nebflow', status: 'completed', external: false, project: '', createdAt: T0 - 30_000 },
+      { taskNo: '64', delegateId: 'delegate-nebflow-r64', title: '待合并行', executor: 'nebflow', status: 'ready-to-merge', external: false, project: '', createdAt: T0 - 40_000 },
+    ],
+  });
+  const panel = page.locator('#task-list');
+  await expect(panel.locator('.task-delegate')).toHaveCount(1); // 只有 ready-to-merge 在窗
+  await expect(panel.locator('.task-delegate[data-task-no="64"]')).toHaveCount(1);
+  await expect(panel.locator('[data-task-no="61"], [data-task-no="62"], [data-task-no="63"]')).toHaveCount(0);
 
   expect(pageErrors).toEqual([]);
 });
@@ -343,7 +401,7 @@ const chain31 = {
 const chain32 = {
   taskId: '32', delegateId: 'delegate-zcode-bb22',
   nodes: [{ id: 'delegate-zcode-bb22', kind: 'delegate', label: 'zcode 修断链',
-    description: 'internal details', status: 'blocked', deps: [], executor: 'zcode' }],
+    description: 'internal details', status: 'running', deps: [], executor: 'zcode' }],
   worktree: { branch: 'delegate/task-32', worktree: '/wt/32', cwd: '/wt/32', baseWorkspace: '/w', baseBranch: 'main', baseSha: 'def456' },
   verdict: null, mergeQueue: [], frames: [],
 };

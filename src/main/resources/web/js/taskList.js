@@ -120,12 +120,15 @@ const REDUCED_MOTION = typeof matchMedia === 'function' &&
 // Only live delegates stay listed: terminal rows leave the panel as they
 // complete (still reachable in the structure view and the archive drawer).
 // ready-to-merge stays — queued merges are still active work.
-const ACTIVE_ROW_STATUSES = new Set(['pending', 'running', 'blocked', 'ready-to-merge']);
+// #566 修复批：blocked 从 delegate 行值域退役（作者令「blocked 是给 agentflow
+// 用的」）——delegate 根行永不 blocked；chain 成员（agentflow 节点）仍可 blocked。
+const ACTIVE_ROW_STATUSES = new Set(['pending', 'running', 'ready-to-merge']);
 
 /**
- * Status glyph, shared row language: running = orbit, blocked = amber dot,
- * terminal = solid color dot, wiring|pending = box, unknown = neutral dot
- * (graceful degradation).
+ * Status glyph, shared row language: running = orbit, terminal = solid color
+ * dot, wiring|pending = box, unknown = neutral dot (graceful degradation).
+ * (#566: the blocked branch retired from the delegate header — flow-step
+ * member rows render their own marks.)
  * @param {string} st @param {string} cls @returns {HTMLElement} */
 function buildNodeGlyph(st, cls) {
   const g = document.createElement('span');
@@ -135,8 +138,6 @@ function buildNodeGlyph(st, cls) {
     // "in progress" at 12px — the three-dot orbit collapsed into a cryptic
     // clover at this scale; the orbit language stays on the map cards).
     g.className = 'task-node-spin';
-  } else if (st === 'blocked') {
-    g.className = 'task-node-dot task-node-dot-blocked';
   } else if (st === 'completed' || st === 'failed' || st === 'cancelled') {
     g.className = `task-node-dot task-node-dot-${cls}`;
   } else if (st === 'wiring' || st === 'pending') {
@@ -147,7 +148,8 @@ function buildNodeGlyph(st, cls) {
   return g;
 }
 
-/** Status word keys (existing locale keys only; domain = stub ROW_STATUS). */
+/** Status word keys (existing locale keys only; domain = stub ROW_STATUS).
+ *  blocked 键保留：agentflow flow-step 成员行合法态（#566：delegate 根行不再产生）。 */
 const DELEGATE_WORD_KEY = {
   pending: 'task.nodePending',
   running: 'task.inProgressShort',

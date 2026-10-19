@@ -10,9 +10,12 @@ import nebflow.core.delegate.DelegateJudge.{TerminalInput, Verdict}
  * （真 JeV / 真 LLM adapter）不在 spec 范围（依赖外部服务），本件钉死：
  *
  *  - SmallJudge 回文解析：裸 JSON / ```json 围栏 / 混排散文皆容；缺键/非法判词拒；
- *  - 三态判词值域（completed / blocked(+reason) / ready-to-merge）解析往返；
+ *  - 判词值域（completed(+注记) / ready-to-merge）解析往返——#566：blocked 判词
+ *    退役，模型回文的 "blocked" 答案折 CompletedNote（注记形 completed）；
  *  - Jev Choice 判词读取（verdictFromChoice）：合法 label → 判词；未知 label → None
- *    （= 兜底腿接手，非误判）。
+ *    （= 兜底腿接手，非误判）；
+ *  - VerdictWire 编码面：引擎永不写出 "blocked" wire 词（注记形 encode 仍 =
+ *    completed，注记走 reason 通道）；engineTerminalPayload 写 failed/cancelled 真值。
  */
 class DelegateJudgeMachineSpec extends FunSuite:
 
@@ -37,16 +40,17 @@ class DelegateJudgeMachineSpec extends FunSuite:
       DelegateJudgeMachine.parseVerdict("```json\n{\"verdict\": \"completed\", \"reason\": \"\"}\n```"),
       Some(Verdict.Completed)
     )
+    // #566：模型回文 "blocked" → 注记形 completed（reason 进注记，不再是状态）。
     assertEquals(
       DelegateJudgeMachine.parseVerdict(
         "The judge says: {\"verdict\":\"blocked\",\"reason\":\"merge conflict in a.scala\"} (end)"
       ),
-      Some(Verdict.Blocked("merge conflict in a.scala"))
+      Some(Verdict.CompletedNote("judge: merge conflict in a.scala"))
     )
     assertEquals(
       DelegateJudgeMachine.parseVerdict("{\"verdict\":\"blocked\"}"),
-      Some(Verdict.Blocked("small-judge: blocked")),
-      "missing reason gets the default reason, not None"
+      Some(Verdict.CompletedNote("judge: could not complete — substance in the terminal text")),
+      "missing reason gets the default note, not None"
     )
   }
 
@@ -91,15 +95,20 @@ class DelegateJudgeMachineSpec extends FunSuite:
       usage = None
     )
 
-  test("verdictFromChoice: the three legal labels map to the three states; blocked carries the mergeRound marker") {
+  test(
+    "verdictFromChoice: legal labels map to the verdict domain; blocked = completed+note with the mergeRound marker"
+  ) {
     assertEquals(DelegateJudgeMachine.verdictFromChoice(choiceResponse("completed"), input()), Some(Verdict.Completed))
     assertEquals(
       DelegateJudgeMachine.verdictFromChoice(choiceResponse("ready-to-merge"), input()),
       Some(Verdict.ReadyToMerge)
     )
+    // #566：blocked 选中词 = 注记形 completed（合并轮标记进注记）。
     val blocked = DelegateJudgeMachine.verdictFromChoice(choiceResponse("blocked"), input(mergeRound = true))
-    assertEquals(blocked.isDefined, true)
-    assert(blocked.get.toString.contains("blocked"), "blocked verdict carries its reason channel")
+    assertEquals(
+      blocked,
+      Some(Verdict.CompletedNote("judge: could not complete (merge round) — substance in the terminal text"))
+    )
     assertEquals(
       DelegateJudgeMachine.verdictFromChoice(choiceResponse("failed"), input()),
       None,
@@ -109,13 +118,21 @@ class DelegateJudgeMachineSpec extends FunSuite:
 
   // ── VerdictWire 往返（core 侧承重键） ────────────────────────────────
 
-  test("VerdictWire encode/decode round trip; payload keys carry verdict+reason") {
+  test(
+    "VerdictWire: the noted completion encodes 'completed' (no blocked wire word); engine payload writes true terminal values"
+  ) {
     assertEquals(DelegateJudge.VerdictWire.fromWire("READY-TO-MERGE"), Some("ready-to-merge"))
     assertEquals(DelegateJudge.VerdictWire.fromWire("nope"), None)
-    val payload = DelegateJudge.verdictPayload("d-1", Some("9"), Verdict.Blocked("conflict"), source = "judge")
-    assertEquals(payload.hcursor.get[String]("verdict").toOption, Some("blocked"))
+    // #566：注记形 wire 仍编 completed；注记走 reason 通道。
+    val payload = DelegateJudge.verdictPayload("d-1", Some("9"), Verdict.CompletedNote("conflict"), source = "judge")
+    assertEquals(payload.hcursor.get[String]("verdict").toOption, Some("completed"))
     assertEquals(payload.hcursor.get[String]("reason").toOption, Some("conflict"))
     assertEquals(payload.hcursor.get[String]("taskId").toOption, Some("9"))
+    // 引擎终态真值行（failed/cancelled——不再冒充 blocked）。
+    val engine = DelegateJudge.engineTerminalPayload("d-1", Some("9"), "failed", "engine terminal: failed")
+    assertEquals(engine.hcursor.get[String]("verdict").toOption, Some("failed"))
+    assertEquals(engine.hcursor.get[String]("source").toOption, Some("engine"))
+    assertEquals(DelegateJudge.VerdictWire.fromWire("failed"), Some("failed"))
   }
 
 end DelegateJudgeMachineSpec

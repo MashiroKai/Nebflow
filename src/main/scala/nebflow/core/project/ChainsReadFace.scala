@@ -42,6 +42,11 @@ object ChainsReadFace:
 
   /**
    * 任务行投影（rows 臂）。`registry` = agentRegistry 快照（活性提示单源）。
+   * `taskStatuses`（#566 修复批 · 行终态权威）：delegateId → 引擎任务行终态
+   * （SubAgentTaskStore 值域：running/completed/failed/cancelled/restarting/
+   * ready-to-merge）——delegate 终态后 reportStatus/live 双缺席时前端回落 running
+   * 渲染的陈旧行根因修补（行必须在 UI 反映终态）；由调用方批量供给
+   * （findAllTasks 单遍扫），缺席 = 旧投影（字段缺键，前端回落既有推导）。
    * `archived`（delegate-ui 批 2026-10-08 · G6 历史窗）：`false`（缺省）= 在册窗
    * （`archivedAt` 缺席的记录）；`true` = 历史窗（`?archived=1`，只出已归档）——
    * 两窗互补零重叠，归档旗零删除（记录本体原样）。
@@ -56,13 +61,17 @@ object ChainsReadFace:
    * 纪律不破。世界解析失败 = fail-open（不过滤，宁见旧勿丢现役——显示面不因读盘抖动
    * 清空）。
    */
-  def rowsJson(registry: Map[String, nebflow.actor.AgentRecord], archived: Boolean = false): IO[Json] =
+  def rowsJson(
+    registry: Map[String, nebflow.actor.AgentRecord],
+    archived: Boolean = false,
+    taskStatuses: Map[String, String] = Map.empty
+  ): IO[Json] =
     IO.blocking(DelegateRegistry.list()).flatMap { records =>
       val scoped = records.filter(rec => rec.archivedAt.isDefined == archived)
       val windowed: IO[List[DelegateRegistry.Record]] =
         if archived then IO.pure(scoped) // 历史窗：全量（零删除展示纪律）
         else activeWorldSeatFilter(scoped)
-      windowed.flatMap(_.traverse(rowJson(registry))).map(rows => Json.obj("rows" -> rows.asJson))
+      windowed.flatMap(_.traverse(rowJson(registry, taskStatuses))).map(rows => Json.obj("rows" -> rows.asJson))
     }
 
   /** 记录的「座位」：项目 workspace 优先，回落派发 cwd（scopeProjection 同款取序）。 */
@@ -126,9 +135,13 @@ object ChainsReadFace:
    * 单行投影：Record 原样 + live 提示 + 最新 terminal-verdict 判词（ready-to-merge 供给源）
    * + G1 mode（Record 字段随 asJson 原样透出，None = null ⇒ 前端过渡启发兜底）+
    * G5 行内排队条件键（`mergeQueue`/`mergeQueuePos`，判据单点 = [[MergeQueue.queueViewOf]]，
-   * 未排队缺键）。
+   * 未排队缺键）+ #566 `taskStatus`（引擎任务行终态——行状态权威，前端终态判定的
+   * 直接读数；缺席 = 旧投影）。
    */
-  private def rowJson(registry: Map[String, nebflow.actor.AgentRecord])(rec: DelegateRegistry.Record): IO[Json] =
+  private def rowJson(
+    registry: Map[String, nebflow.actor.AgentRecord],
+    taskStatuses: Map[String, String]
+  )(rec: DelegateRegistry.Record): IO[Json] =
     IO.blocking {
       val key = ChainStore.keyFor(rec.taskId, rec.id)
       val live = registry.get(rec.id).map(_ => Json.obj("status" -> "running".asJson))
@@ -138,8 +151,11 @@ object ChainsReadFace:
         case Some(obj) =>
           val withLive = live.fold(obj)(v => obj.add("live", v))
           val withVerdict = verdict.fold(withLive)(v => withLive.add("verdict", v))
-          val withQueue = queue.fold(withVerdict) { q =>
-            withVerdict
+          val withTask = taskStatuses.get(rec.id).fold(withVerdict) { s =>
+            withVerdict.add("taskStatus", s.asJson)
+          }
+          val withQueue = queue.fold(withTask) { q =>
+            withTask
               .add(
                 "mergeQueue",
                 Json.obj(

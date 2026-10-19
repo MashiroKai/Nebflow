@@ -15,9 +15,12 @@ import nebflow.core.delegate.{DelegateRegistry, DelegateSessions}
  *   - 工具内侧：`ctx.sessionId` 同判据拒绝（挂载面过滤是另一侧；兜防御
  *     allowedSet 配置漂移——TaskBoard / node_report 同款双保险）。
  *
- * 值域 `finish | merge | blocked`＋detail（node_report task 角色值域＋merge 态：
- * working →（分支上工作完成且需合并）report merge（进入等待合并态）→（合并轮完成）
- * report finish（终态汇报）；纯读/无文件变更腿 working → finish 直达）。
+ * 值域 `finish | merge`＋detail（#566 修复批 2026-10-19 · 作者令：「delegate 是
+ * 不应该有 blocked 型状态的，直接上报就行了」——blocked 类别退役：报不了的腿照常
+ * report finish，阻塞事实写进 detail 与终稿文本，判官/面板零 blocked 状态）。
+ * （node_report task 角色值域不动：blocked 只归 agentflow 节点。merge 态：working →
+ * （分支上工作完成且需合并）report merge（进入等待合并态）→（合并轮完成）report
+ * finish（终态汇报）；纯读/无文件变更腿 working → finish 直达。）
  * **仅更新 DelegateRegistry 状态，不携汇报**——汇报仍以终态最后一条消息直传
  * （既有 `source="delegate"` 系统消息面不变）：本工具写的是结构化状态槽
  * （reportStatus / reportDetail），消费点 = 终态判定机（DelegateJudge 的
@@ -31,29 +34,31 @@ object DelegateReportTool extends Tool:
 
   val Name: String = "delegate_report"
 
-  /** 值域（node_report task 角色值域＋delegate 三态工作机：finish | merge | blocked）。 */
+  /** 值域（#566：finish | merge 两态——blocked 退役，非法值拒并给去处）。 */
   val FinishValue: String = "finish"
   val MergeValue: String = "merge"
-  val BlockedValue: String = "blocked"
-  val StatusValues: Set[String] = Set(FinishValue, MergeValue, BlockedValue)
+
+  /** 退役类别（旧 brief/旧在飞会话仍可能上报——拒绝并引导 finish，不静默改写）。 */
+  val RetiredBlockedValue: String = "blocked"
+  val StatusValues: Set[String] = Set(FinishValue, MergeValue)
 
   override def name: String = Name
 
   /** 🔴 模型可见文案——§16 待过目标注：本批最小成稿，终稿归 N3 提示词批。 */
   override def description: String =
-    """Report your state-machine position as a structured signal — delegate sessions only. `category` = "merge" (your work on the branch is complete and needs to land: you enter the waiting-merge state — the engine queues you in the MergeQueue FIFO and sends you a merge reminder when it is your turn; do NOT merge on your own initiative), "finish" (terminal report: pure read / no file changes with nothing to merge, or your merge round has landed — this ends your session), or "blocked" (it cannot be completed), plus a `detail` saying what exactly is the case (actionable). The report updates your session's status record only — your final assistant text remains the deliverable that is handed back; write your own completion report there (what you did, artifacts, open items), self-contained. Unreported does not hang: the engine's judge decides your terminal state from your result either way — the report just makes your own semantics explicit."""
+    """Report your state-machine position as a structured signal — delegate sessions only. `category` = "merge" (your work on the branch is complete and needs to land: you enter the waiting-merge state — the engine queues you in the MergeQueue FIFO and sends you a merge reminder when it is your turn; do NOT merge on your own initiative) or "finish" (terminal report: pure read / no file changes with nothing to merge, your merge round has landed, OR the task could not be completed — state the blocker plainly in your final text; there is no separate blocked state), plus a `detail` saying what exactly is the case (actionable). The report updates your session's status record only — your final assistant text remains the deliverable that is handed back; write your own completion report there (what you did, artifacts, open items), self-contained. Unreported does not hang: the engine's judge decides your terminal state from your result either way — the report just makes your own semantics explicit."""
 
   override def inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
     "properties" -> Json.obj(
       "category" -> Json.obj(
         "type" -> "string".asJson,
-        "enum" -> Json.arr(FinishValue.asJson, MergeValue.asJson, BlockedValue.asJson),
-        "description" -> "State-machine position: merge = branch work complete, needs to land (enters the waiting-merge FIFO; a merge reminder follows); finish = terminal report (pure read / no file changes, or the merge has landed); blocked = it cannot be completed.".asJson
+        "enum" -> Json.arr(FinishValue.asJson, MergeValue.asJson),
+        "description" -> "State-machine position: merge = branch work complete, needs to land (enters the waiting-merge FIFO; a merge reminder follows); finish = terminal report (pure read / no file changes, the merge has landed, or the task could not be completed — say so in detail and your final text).".asJson
       ),
       "detail" -> Json.obj(
         "type" -> "string".asJson,
-        "description" -> "What exactly — concrete, actionable (merge: what sits unmerged on the branch; blocked: the reason it cannot proceed). Required.".asJson
+        "description" -> "What exactly — concrete, actionable (merge: what sits unmerged on the branch; unfinished: the reason it cannot proceed). Required.".asJson
       ),
       "suggestion" -> Json.obj(
         "type" -> "string".asJson,
@@ -91,7 +96,10 @@ object DelegateReportTool extends Tool:
       IO.pure(
         Left(
           ToolError(
-            s"delegate_report: invalid category '$category' — must be one of " +
+            (if category == RetiredBlockedValue then
+               s"delegate_report: category 'blocked' is retired — there is NO blocked state for delegates. Report finish instead and state the blocker plainly in your detail and final text. "
+             else "") +
+              s"delegate_report: invalid category '$category' — must be one of " +
               s"${StatusValues.toList.sorted.mkString(" | ")} (DELEGATE_REPORT_CATEGORY). Fix and call again."
           )
         )
@@ -100,7 +108,7 @@ object DelegateReportTool extends Tool:
       IO.pure(
         Left(
           ToolError(
-            s"delegate_report: 'detail' must be non-empty — say WHAT is the case (merge: what sits unmerged on the branch; blocked: the reason it cannot proceed). (DELEGATE_REPORT_DETAIL)"
+            s"delegate_report: 'detail' must be non-empty — say WHAT is the case (merge: what sits unmerged on the branch; unfinished: the reason it cannot proceed). (DELEGATE_REPORT_DETAIL)"
           )
         )
       )
@@ -125,9 +133,8 @@ object DelegateReportTool extends Tool:
             val confirm =
               if category == MergeValue then
                 "[OK] merge recorded — you are now waiting-merge (MergeQueue FIFO). Do NOT merge on your own initiative: keep working elsewhere or go idle; the engine sends you a merge reminder when it is your turn. Your final report comes AFTER the merge round (report finish then)."
-              else if category == FinishValue then
+              else
                 "[OK] finish recorded — now write your final report as normal text output; it is the deliverable handed back to the dispatcher."
-              else "[OK] blocked recorded — write your final report stating the blocker; do not fabricate a result."
             Right(confirm)
         }
     end if
