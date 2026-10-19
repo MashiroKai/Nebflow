@@ -91,6 +91,213 @@ const SVG_FILE =
 const SVG_CHECK =
   '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
 
+// ---- chip 管线（多文件：逐件独立入队——修正③）----
+// 模块级（2026-10-19 W1-W3 修复）：原嵌在 mountAnswerAttachments 闭包内，
+// document 级 paste 监听引用不到 ⇒ 运行时 ReferenceError（checkJs TS2304 同根因）。
+// 下列函数本就全参数化（ctx 显式传参、零闭包捕获），整链提升即对齐作用域，行为不变。
+function enqueueFiles(c, files) {
+  if (c.locked || !files || !files.length) return;
+  let changed = false;
+  for (const file of files) {
+    if (c.items.length >= MAX_FILES) {
+      toast(t('askUser.attachTooMany', { n: String(MAX_FILES) }));
+      break;
+    }
+    if (file.size > MAX_BYTES) {
+      toast(t('askUser.attachTooLarge', { name: file.name }));
+      continue;
+    }
+    if (c.items.some(i => i.name === file.name && i.size === file.size)) {
+      toast(t('askUser.attachDuplicate', { name: file.name }), 'info');
+      continue;
+    }
+    addChip(c, file);
+    changed = true;
+  }
+  if (changed) c.onChange();
+}
+
+function addChip(c, file) {
+  const item = {
+    name: file.name,
+    size: file.size,
+    mime: file.type || 'application/octet-stream',
+    file, // File 本体（重试复用同一引用）
+    status: 'uploading',
+    pct: 0,
+    xhr: null,
+    path: null,
+    sha256: '',
+    seq: 0,
+    localUrl: null,
+  };
+  c.items.push(item);
+
+  const chip = document.createElement('div');
+  chip.className = 'ask-answer-attach-chip';
+  chip.tabIndex = 0;
+  chip.style.cssText =
+    'position:relative;display:flex;align-items:center;gap:9px;padding:6px 10px 6px 6px;border-radius:10px;' +
+    'overflow:hidden;max-width:260px;border:1px solid var(--color-border,rgba(128,128,128,0.35));' +
+    'background:var(--color-surface-2,rgba(127,127,127,0.08));';
+  const isImage = (item.mime || '').startsWith('image/');
+  const thumb = document.createElement('span');
+  thumb.style.cssText =
+    'flex:none;width:38px;height:38px;border-radius:7px;display:flex;align-items:center;justify-content:center;' +
+    'background:var(--color-surface,rgba(20,22,28,0.5));border:1px solid var(--color-border,rgba(128,128,128,0.35));' +
+    'color:var(--color-text-dim,#9ba0aa);overflow:hidden;';
+  if (isImage) {
+    const img = document.createElement('img');
+    img.alt = '';
+    img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+    img.src = URL.createObjectURL(file);
+    item.localUrl = img.src;
+    thumb.appendChild(img);
+  } else {
+    thumb.innerHTML = SVG_FILE;
+  }
+  const meta = document.createElement('div');
+  meta.style.cssText = 'min-width:0;';
+  const nameEl = document.createElement('div');
+  nameEl.className = 'ask-answer-attach-name';
+  nameEl.textContent = file.name;
+  nameEl.title = file.name;
+  nameEl.style.cssText =
+    'font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px;';
+  const sub = document.createElement('div');
+  sub.style.cssText =
+    'font-size:10.5px;color:var(--color-text-muted,#888);margin-top:1px;display:flex;gap:6px;align-items:center;';
+  sub.textContent = t('askUser.attachUploading', { n: '0' });
+  meta.append(nameEl, sub);
+  const rm = document.createElement('button');
+  rm.type = 'button';
+  rm.className = 'ask-answer-attach-rm';
+  rm.textContent = '×';
+  rm.title = t('askUser.removeAttachment', { name: file.name });
+  rm.setAttribute('aria-label', t('askUser.removeAttachment', { name: file.name }));
+  rm.style.cssText =
+    'position:absolute;top:-1px;right:-1px;width:18px;height:18px;border-radius:0 10px 0 8px;border:none;' +
+    'background:var(--color-surface-2,rgba(127,127,127,0.08));border-left:1px solid var(--color-border,rgba(128,128,128,0.35));' +
+    'border-bottom:1px solid var(--color-border,rgba(128,128,128,0.35));color:var(--color-text-muted,#888);' +
+    'font-size:11px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;';
+  rm.addEventListener('click', () => removeChip(c, item));
+  const bar = document.createElement('div');
+  bar.style.cssText = 'position:absolute;left:0;bottom:0;height:3px;width:100%;';
+  const barFill = document.createElement('i');
+  barFill.style.cssText =
+    'display:block;height:100%;width:0%;background:var(--color-primary,#07c160);transition:width .2s linear;';
+  bar.appendChild(barFill);
+  chip.append(thumb, meta, rm, bar);
+  c.els.chips.appendChild(chip);
+  item.chip = chip;
+  item.sub = sub;
+  item.barFill = barFill;
+
+  upload(c, item);
+  refreshHead(c);
+}
+
+function removeChip(c, item) {
+  if (c.locked) return;
+  if (item.xhr) {
+    try { item.xhr.abort(); } catch { /* already done */ }
+  }
+  if (item.localUrl) URL.revokeObjectURL(item.localUrl);
+  if (item.chip) item.chip.remove();
+  c.items = c.items.filter(i => i !== item);
+  refreshHead(c);
+  c.onChange();
+}
+
+function refreshHead(c) {
+  const n = c.items.length;
+  c.els.headCount.textContent = n ? n + ' / ' + MAX_FILES : '';
+  c.els.emptyBtn.style.display = n ? 'none' : '';
+}
+
+function markDoneSub(c, item) {
+  if (!item.sub) return;
+  item.sub.textContent = '';
+  const okSpan = document.createElement('span');
+  okSpan.style.cssText =
+    'color:var(--color-primary,#07c160);display:inline-flex;align-items:center;gap:3px;';
+  okSpan.innerHTML = SVG_CHECK;
+  okSpan.appendChild(document.createTextNode(t('askUser.attachAttached')));
+  item.sub.append(extLabel(item.name) + ' · ' + fmtSize(item.size) + ' ', okSpan);
+}
+
+/** 拖入即传（XHR 带上传进度；fetch 无上传进度面）。鉴权与 /api 域同 rail
+  * （authHeaders 同款：localStorage 令牌在场则 Bearer，会话 cookie 恒自动携带）。 */
+function upload(c, item) {
+  const xhr = new XMLHttpRequest();
+  item.xhr = xhr;
+  item.status = 'uploading';
+  item.pct = 0;
+  if (item.chip) item.chip.style.borderColor = '';
+  if (item.barFill) {
+    item.barFill.style.width = '0%';
+    item.barFill.style.background = 'var(--color-primary,#07c160)';
+  }
+  if (item.sub) item.sub.textContent = t('askUser.attachUploading', { n: '0' });
+  xhr.open('POST', '/api/askuser/attachments?requestId=' + encodeURIComponent(c.requestId));
+  const token = localStorage.getItem('token') || '';
+  if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+  xhr.responseType = 'json';
+  xhr.upload.onprogress = (e) => {
+    if (e.lengthComputable && item.status === 'uploading' && item.xhr === xhr) {
+      item.pct = Math.round((e.loaded / e.total) * 100);
+      if (item.barFill) item.barFill.style.width = item.pct + '%';
+      if (item.sub) item.sub.textContent = t('askUser.attachUploading', { n: String(item.pct) });
+    }
+  };
+  xhr.onerror = () => fail();
+  xhr.onabort = () => { /* 用户移除触发的 abort——无动作 */ };
+  xhr.onload = () => {
+    if (item.xhr !== xhr) return;
+    const body = xhr.response || {};
+    if (xhr.status >= 200 && xhr.status < 300 && body && body.ok) {
+      item.status = 'done';
+      item.path = body.path;
+      item.sha256 = body.sha256 || '';
+      item.seq = body.seq || 0;
+      item.mime = body.mime || item.mime;
+      if (item.barFill) item.barFill.style.width = '0%';
+      markDoneSub(c, item);
+      c.onChange();
+    } else {
+      fail();
+    }
+  };
+  function fail() {
+    if (item.xhr !== xhr) return;
+    item.status = 'failed';
+    if (item.chip) item.chip.style.borderColor = 'color-mix(in srgb, var(--color-error,#f44336) 60%, transparent)';
+    if (item.barFill) {
+      item.barFill.style.width = '100%';
+      item.barFill.style.background = 'var(--color-error,#f44336)';
+    }
+    if (item.sub) {
+      item.sub.textContent = '';
+      const errSpan = document.createElement('span');
+      errSpan.textContent = t('askUser.attachUploadFailed');
+      errSpan.style.cssText = 'color:var(--color-error,#f44336);';
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.textContent = t('askUser.attachRetry');
+      retry.style.cssText =
+        'border:none;background:none;color:var(--color-warning,#ff9800);font:inherit;font-size:11px;' +
+        'cursor:pointer;padding:0;text-decoration:underline;text-underline-offset:2px;';
+      retry.addEventListener('click', () => { if (!c.locked) upload(c, item); });
+      item.sub.append(fmtSize(item.size) + ' · ', errSpan, ' ', retry);
+    }
+    toast(t('askUser.attachUploadFailedToast', { name: item.name }));
+    c.onChange();
+  }
+  const fd = new FormData();
+  fd.append('file', item.file, item.name);
+  xhr.send(fd);
+}
+
 /**
  * 在 AskUser 卡（`.option-box`）内挂附件区 + 整卡拖拽面。只在活卡（有 requestId、
  * `answerAttachmentsAllowed(questions)`）被调用。
@@ -220,210 +427,6 @@ export function mountAnswerAttachments(box, opts) {
     if (!e || !e.dataTransfer) return false;
     const types = Array.from(e.dataTransfer.types || []);
     return types.includes('Files');
-  }
-
-  // ---- chip 管线（多文件：逐件独立入队——修正③）----
-  function enqueueFiles(c, files) {
-    if (c.locked || !files || !files.length) return;
-    let changed = false;
-    for (const file of files) {
-      if (c.items.length >= MAX_FILES) {
-        toast(t('askUser.attachTooMany', { n: String(MAX_FILES) }));
-        break;
-      }
-      if (file.size > MAX_BYTES) {
-        toast(t('askUser.attachTooLarge', { name: file.name }));
-        continue;
-      }
-      if (c.items.some(i => i.name === file.name && i.size === file.size)) {
-        toast(t('askUser.attachDuplicate', { name: file.name }), 'info');
-        continue;
-      }
-      addChip(c, file);
-      changed = true;
-    }
-    if (changed) c.onChange();
-  }
-
-  function addChip(c, file) {
-    const item = {
-      name: file.name,
-      size: file.size,
-      mime: file.type || 'application/octet-stream',
-      file, // File 本体（重试复用同一引用）
-      status: 'uploading',
-      pct: 0,
-      xhr: null,
-      path: null,
-      sha256: '',
-      seq: 0,
-      localUrl: null,
-    };
-    c.items.push(item);
-
-    const chip = document.createElement('div');
-    chip.className = 'ask-answer-attach-chip';
-    chip.tabIndex = 0;
-    chip.style.cssText =
-      'position:relative;display:flex;align-items:center;gap:9px;padding:6px 10px 6px 6px;border-radius:10px;' +
-      'overflow:hidden;max-width:260px;border:1px solid var(--color-border,rgba(128,128,128,0.35));' +
-      'background:var(--color-surface-2,rgba(127,127,127,0.08));';
-    const isImage = (item.mime || '').startsWith('image/');
-    const thumb = document.createElement('span');
-    thumb.style.cssText =
-      'flex:none;width:38px;height:38px;border-radius:7px;display:flex;align-items:center;justify-content:center;' +
-      'background:var(--color-surface,rgba(20,22,28,0.5));border:1px solid var(--color-border,rgba(128,128,128,0.35));' +
-      'color:var(--color-text-dim,#9ba0aa);overflow:hidden;';
-    if (isImage) {
-      const img = document.createElement('img');
-      img.alt = '';
-      img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
-      img.src = URL.createObjectURL(file);
-      item.localUrl = img.src;
-      thumb.appendChild(img);
-    } else {
-      thumb.innerHTML = SVG_FILE;
-    }
-    const meta = document.createElement('div');
-    meta.style.cssText = 'min-width:0;';
-    const nameEl = document.createElement('div');
-    nameEl.className = 'ask-answer-attach-name';
-    nameEl.textContent = file.name;
-    nameEl.title = file.name;
-    nameEl.style.cssText =
-      'font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px;';
-    const sub = document.createElement('div');
-    sub.style.cssText =
-      'font-size:10.5px;color:var(--color-text-muted,#888);margin-top:1px;display:flex;gap:6px;align-items:center;';
-    sub.textContent = t('askUser.attachUploading', { n: '0' });
-    meta.append(nameEl, sub);
-    const rm = document.createElement('button');
-    rm.type = 'button';
-    rm.className = 'ask-answer-attach-rm';
-    rm.textContent = '×';
-    rm.title = t('askUser.removeAttachment', { name: file.name });
-    rm.setAttribute('aria-label', t('askUser.removeAttachment', { name: file.name }));
-    rm.style.cssText =
-      'position:absolute;top:-1px;right:-1px;width:18px;height:18px;border-radius:0 10px 0 8px;border:none;' +
-      'background:var(--color-surface-2,rgba(127,127,127,0.08));border-left:1px solid var(--color-border,rgba(128,128,128,0.35));' +
-      'border-bottom:1px solid var(--color-border,rgba(128,128,128,0.35));color:var(--color-text-muted,#888);' +
-      'font-size:11px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;';
-    rm.addEventListener('click', () => removeChip(c, item));
-    const bar = document.createElement('div');
-    bar.style.cssText = 'position:absolute;left:0;bottom:0;height:3px;width:100%;';
-    const barFill = document.createElement('i');
-    barFill.style.cssText =
-      'display:block;height:100%;width:0%;background:var(--color-primary,#07c160);transition:width .2s linear;';
-    bar.appendChild(barFill);
-    chip.append(thumb, meta, rm, bar);
-    c.els.chips.appendChild(chip);
-    item.chip = chip;
-    item.sub = sub;
-    item.barFill = barFill;
-
-    upload(c, item);
-    refreshHead(c);
-  }
-
-  function removeChip(c, item) {
-    if (c.locked) return;
-    if (item.xhr) {
-      try { item.xhr.abort(); } catch { /* already done */ }
-    }
-    if (item.localUrl) URL.revokeObjectURL(item.localUrl);
-    if (item.chip) item.chip.remove();
-    c.items = c.items.filter(i => i !== item);
-    refreshHead(c);
-    c.onChange();
-  }
-
-  function refreshHead(c) {
-    const n = c.items.length;
-    c.els.headCount.textContent = n ? n + ' / ' + MAX_FILES : '';
-    c.els.emptyBtn.style.display = n ? 'none' : '';
-  }
-
-  function markDoneSub(c, item) {
-    if (!item.sub) return;
-    item.sub.textContent = '';
-    const okSpan = document.createElement('span');
-    okSpan.style.cssText =
-      'color:var(--color-primary,#07c160);display:inline-flex;align-items:center;gap:3px;';
-    okSpan.innerHTML = SVG_CHECK;
-    okSpan.appendChild(document.createTextNode(t('askUser.attachAttached')));
-    item.sub.append(extLabel(item.name) + ' · ' + fmtSize(item.size) + ' ', okSpan);
-  }
-
-  /** 拖入即传（XHR 带上传进度；fetch 无上传进度面）。鉴权与 /api 域同 rail
-    * （authHeaders 同款：localStorage 令牌在场则 Bearer，会话 cookie 恒自动携带）。 */
-  function upload(c, item) {
-    const xhr = new XMLHttpRequest();
-    item.xhr = xhr;
-    item.status = 'uploading';
-    item.pct = 0;
-    if (item.chip) item.chip.style.borderColor = '';
-    if (item.barFill) {
-      item.barFill.style.width = '0%';
-      item.barFill.style.background = 'var(--color-primary,#07c160)';
-    }
-    if (item.sub) item.sub.textContent = t('askUser.attachUploading', { n: '0' });
-    xhr.open('POST', '/api/askuser/attachments?requestId=' + encodeURIComponent(c.requestId));
-    const token = localStorage.getItem('token') || '';
-    if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
-    xhr.responseType = 'json';
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable && item.status === 'uploading' && item.xhr === xhr) {
-        item.pct = Math.round((e.loaded / e.total) * 100);
-        if (item.barFill) item.barFill.style.width = item.pct + '%';
-        if (item.sub) item.sub.textContent = t('askUser.attachUploading', { n: String(item.pct) });
-      }
-    };
-    xhr.onerror = () => fail();
-    xhr.onabort = () => { /* 用户移除触发的 abort——无动作 */ };
-    xhr.onload = () => {
-      if (item.xhr !== xhr) return;
-      const body = xhr.response || {};
-      if (xhr.status >= 200 && xhr.status < 300 && body && body.ok) {
-        item.status = 'done';
-        item.path = body.path;
-        item.sha256 = body.sha256 || '';
-        item.seq = body.seq || 0;
-        item.mime = body.mime || item.mime;
-        if (item.barFill) item.barFill.style.width = '0%';
-        markDoneSub(c, item);
-        c.onChange();
-      } else {
-        fail();
-      }
-    };
-    function fail() {
-      if (item.xhr !== xhr) return;
-      item.status = 'failed';
-      if (item.chip) item.chip.style.borderColor = 'color-mix(in srgb, var(--color-error,#f44336) 60%, transparent)';
-      if (item.barFill) {
-        item.barFill.style.width = '100%';
-        item.barFill.style.background = 'var(--color-error,#f44336)';
-      }
-      if (item.sub) {
-        item.sub.textContent = '';
-        const errSpan = document.createElement('span');
-        errSpan.textContent = t('askUser.attachUploadFailed');
-        errSpan.style.cssText = 'color:var(--color-error,#f44336);';
-        const retry = document.createElement('button');
-        retry.type = 'button';
-        retry.textContent = t('askUser.attachRetry');
-        retry.style.cssText =
-          'border:none;background:none;color:var(--color-warning,#ff9800);font:inherit;font-size:11px;' +
-          'cursor:pointer;padding:0;text-decoration:underline;text-underline-offset:2px;';
-        retry.addEventListener('click', () => { if (!c.locked) upload(c, item); });
-        item.sub.append(fmtSize(item.size) + ' · ', errSpan, ' ', retry);
-      }
-      toast(t('askUser.attachUploadFailedToast', { name: item.name }));
-      c.onChange();
-    }
-    const fd = new FormData();
-    fd.append('file', item.file, item.name);
-    xhr.send(fd);
   }
 
   // ---- controller ----

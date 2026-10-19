@@ -270,6 +270,29 @@ test.describe('Multi-file + send gate', () => {
     await expect(box.locator('.ask-answer-attach-chip', { hasText: 'drag-2.txt' })).toBeVisible();
   });
 
+  test('paste 2 files onto focused card → 2 chips upload → done (paste leg — W1-W3 回归：enqueueFiles 作用域错位曾 ReferenceError)', async ({ page }) => {
+    await stubUploadOk(page);
+    await setupCard(page, [{ question: 'Paste anything here.' }], RID);
+    const box = lastCard(page);
+
+    // 粘贴目标 = 含 activeElement 的活卡（headless 无 hover ⇒ 走焦点腿）。
+    await page.evaluate(() => {
+      const boxes = document.querySelectorAll('.option-box');
+      boxes.item(boxes.length - 1).querySelector('.ask-answer-attach-empty').focus();
+    });
+    await page.evaluate(() => {
+      const dt = new DataTransfer();
+      dt.items.add(new File(['paste-1'], 'paste-1.txt', { type: 'text/plain' }));
+      dt.items.add(new File(['paste-2'], 'paste-2.txt', { type: 'text/plain' }));
+      document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    });
+    await expect(box.locator('.ask-answer-attach-chip')).toHaveCount(2);
+    await expect(box.locator('.ask-answer-attach-chip', { hasText: 'paste-1.txt' })).toBeVisible();
+    // done 断言钉全链：paste → enqueueFiles（模块级）→ addChip → upload → 完成。
+    await expect(box.locator('.ask-answer-attach-chip', { hasText: 'paste-2.txt' }).locator('text=Attached')).toBeVisible();
+    await expect(box.locator('.ask-answer-attach-chip', { hasText: 'paste-1.txt' }).locator('text=Attached')).toBeVisible();
+  });
+
   test('failed upload → red chip + retry + confirm blocked with toast (§2.7)', async ({ page }) => {
     await setupCard(page, [{ question: 'Describe the incident.' }], RID);
     const box = lastCard(page);
