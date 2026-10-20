@@ -1074,6 +1074,7 @@ body.mobile-layer #deck-foot { display: none !important; }
   will-change: transform, opacity;
   cursor: pointer;
   overflow: hidden;
+  touch-action: none; /* 竖拖补充令：卡面拖划（横滑关闭/竖拖换卡）在触屏上走 Pointer Events，不被浏览器滚动接管；卡面纯 chrome 无滚动内容 */
 }
 .deck-card.fly { border-radius: 17px; cursor: default; }   /* 落位≈面板 20px 圆角（v4④） */
 .deck-card.ghost { cursor: default; }

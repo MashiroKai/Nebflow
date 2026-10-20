@@ -7,6 +7,13 @@
 //   精修② 背景阴影浅一档 —— --card-shadow / .stacked 投影密度低于样张值（split.css token）；
 //   精修③ × 退役 → 竖排浅色滑动提示 —— .cv-close 零命中、卡缘/面板缘竖排
 //          writing-mode 小字（「滑动关闭」），划走关闭手势照 v5 保留。
+// 作者补充令（竖拖换卡）断言：
+//   A17 面板面竖拖换卡 —— Pointer Events 纵向拖动 dy 增量喂 scrub 引擎（跟手连续）、
+//       松手惯性+贴靠换卡且不触发关闭；触屏（CDP touch → pointerType:'touch'）同通路；
+//   A18 环卡面竖拖换卡 / 横滑关闭分工 —— 纵向主导换卡不关闭、横向主导甩出关闭
+//       （原 v2⑥ 逻辑保持）；
+//   A19 主导轴判定 —— dy 主导对角→锁 y 换卡、dx 主导对角→锁 x 划走关闭、
+//       ≤8px 死区不锁轴（点击语义保持：点 canvas = 收回卡组）。
 //
 // 与样张 __demo.state() 同口径的断言通道 = window.__canvasDeck.state()。
 // 环境注（继承 v2–v5）：无头 chromium rAF 实测 ~36fps，指数趋近收敛时间按比例拉长，
@@ -187,6 +194,19 @@ async function wheelScrub(page, dy) {
   await page.evaluate(() => {}); // flush
   await page.mouse.move(200, 500);
   await page.mouse.wheel(0, dy);
+}
+
+/** Pointer Events 拖划（鼠标通路，竖拖补充令断言驱动）：按下 → 分步位移 → 松手。
+ *  段间 gap 让 EMA 速度收敛到人手量级（松手惯性项可复现：260px/40ms 间隔 ≈
+ *  冲程 0.2~0.5 卡，贴靠落点确定）；hold=true 不松手（中途态采样后由调用方 up）。 */
+async function pointerDrag(page, x, y, dx, dy, { steps = 10, gap = 40, hold = false } = {}) {
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  for (let i = 1; i <= steps; i++) {
+    await page.mouse.move(x + (dx * i) / steps, y + (dy * i) / steps, { steps: 1 });
+    if (gap) await sleep(gap);
+  }
+  if (!hold) await page.mouse.up();
 }
 
 let pass = 0, fail = 0;
@@ -723,6 +743,157 @@ const browser = await chromium.launch();
   const title = await page.evaluate(() => document.getElementById('canvas-title-name').textContent);
   ok('A16-1 换面后常态头居中标题=bravo.md', title === 'bravo.md', `title=${title}`);
   ok('R0 主文档无 JS 运行时错误（A16）', errors.length === 0, errors.slice(0, 2).join(' | '));
+  await ctx.close();
+}
+
+/* ════════ A17 竖拖换卡（面板面 · Pointer Events 统一通路 · 作者补充令）════════ */
+{
+  const { ctx, page, errors } = await bootPage(browser);
+  await openAllTabs(page);
+  const s0 = await state(page);
+  const c = s0.consts;
+  ok('A17-0 竖拖常量单一来源（gain 1/160 · 惯性 90 冲程/±80px 钳 · 轴锁 8px）',
+    c.dragGain === 1 / 160 && c.dragInertia === 90 && c.dragInertiaMax === 80 && c.axisLockPx === 8,
+    JSON.stringify(c));
+  const hintTxt = await page.evaluate(() => document.querySelector('#deck-foot .deck-hint')?.textContent || '');
+  ok('A17-0b 提示行纳入竖拖换卡（「上下拖动」）', hintTxt.includes('上下拖动') && hintTxt.includes('横向划走'), hintTxt);
+  await page.click('#deck-fab');
+  await settle(page);
+  const pr = await panelRect(page);
+  const cx = Math.round(pr.x + pr.width / 2), cy = Math.round(pr.y + pr.height / 2);
+  await pointerDrag(page, cx, cy, 0, 260, { hold: true });   // 竖向下拖 260px，按住不松
+  const mid = await state(page);
+  ok('A17-1 拖动中主导轴锁 y（面板面手势上报）', !!mid.gesture && mid.gesture.face === 'panel' && mid.gesture.axis === 'y',
+    JSON.stringify(mid.gesture));
+  ok('A17-2 跟手：target 随 dy 增量增长（>0.5 卡 · 未松手未换签）', mid.target > 0.5 && mid.activeId.endsWith('alpha.md'),
+    `target=${mid.target.toFixed(3)} active=${mid.activeId}`);
+  await page.mouse.up();                                     // 松手：少量惯性 + 贴靠
+  await settle(page);
+  const s1 = await state(page);
+  ok('A17-3 竖拖换卡：pos 贴靠 2、charlie 到前景（惯性钳半卡内，落点确定）',
+    approx(s1.pos, 2, 0.01) && s1.frontIdx === 2 && s1.frontName === 'charlie.md',
+    `pos=${s1.pos.toFixed(3)} front=${s1.frontName}`);
+  ok('A17-4 是换卡不是关闭（页签数不变 · deck 保持 · 无面板 FX）',
+    s1.tabCount === s0.tabCount && s1.open === true && s1.faceFx === null,
+    `n=${s1.tabCount}/${s0.tabCount} open=${s1.open} faceFx=${s1.faceFx}`);
+  ok('R0 主文档无 JS 运行时错误（A17 鼠标）', errors.length === 0, errors.slice(0, 2).join(' | '));
+  await ctx.close();
+
+  /* 触屏腿：CDP touch → pointerType:'touch' 的 Pointer Events —— 同一条拖划公共腿。
+     触点在 .stacked 面板（touch-action:none）上，浏览器不接管纵向手势。 */
+  const t = await bootPage(browser);
+  await openAllTabs(t.page);
+  await t.page.click('#deck-fab');
+  await settle(t.page);
+  const t0 = await state(t.page);
+  const tpr = await panelRect(t.page);
+  const tx = Math.round(tpr.x + tpr.width / 2), ty = Math.round(tpr.y + tpr.height / 2);
+  const cdp = await t.ctx.newCDPSession(t.page);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: tx, y: ty, id: 1 }] });
+  for (let i = 1; i <= 10; i++) {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: tx, y: ty + i * 26, id: 1 }] });
+    await sleep(40);
+  }
+  const tmid = await state(t.page);
+  ok('A17-5 触屏竖拖：touch 指针走同一手势通路（轴锁 y · 跟手）',
+    !!tmid.gesture && tmid.gesture.face === 'panel' && tmid.gesture.axis === 'y' && tmid.target > 0.5,
+    JSON.stringify({ g: tmid.gesture, target: +tmid.target.toFixed(3) }));
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await cdp.detach();
+  await settle(t.page);
+  const t1 = await state(t.page);
+  ok('A17-6 触屏竖拖换卡（pos 贴靠 2 · charlie 前景 · 不关闭）',
+    approx(t1.pos, 2, 0.01) && t1.frontName === 'charlie.md' && t1.tabCount === t0.tabCount && t1.open === true,
+    `pos=${t1.pos.toFixed(3)} front=${t1.frontName} n=${t1.tabCount}`);
+  ok('R0 主文档无 JS 运行时错误（A17 触屏）', t.errors.length === 0, t.errors.slice(0, 2).join(' | '));
+  await t.ctx.close();
+}
+
+/* ════════ A18 环卡面分工：竖拖换卡 / 横滑关闭（作者补充令 ②）════════ */
+{
+  const { ctx, page, errors } = await bootPage(browser);
+  await openAllTabs(page);
+  await page.click('#deck-fab');
+  await settle(page);
+  const n0 = (await state(page)).tabCount;
+  await wheelScrub(page, 240);            // bravo 到前景（环卡面）
+  await settle(page);
+  const c1 = await cardRect(page, 1);
+  const cx = Math.round(c1.x + c1.width / 2), cy = Math.round(c1.y + c1.height / 2);
+  await pointerDrag(page, cx, cy, 0, 260, { hold: true });   // 纵向下拖前景环卡
+  const mid = await state(page);
+  ok('A18-1 环卡面纵拖：手势上报 face=card · 轴锁 y', !!mid.gesture && mid.gesture.face === 'card' && mid.gesture.axis === 'y',
+    JSON.stringify(mid.gesture));
+  await page.mouse.up();
+  await settle(page);
+  const s1 = await state(page);
+  ok('A18-2 环卡竖拖换卡：pos 贴靠 3、delta 到前景', approx(s1.pos, 3, 0.01) && s1.frontIdx === 3 && s1.frontName === 'delta.md',
+    `pos=${s1.pos.toFixed(3)} front=${s1.frontName}`);
+  ok('A18-3 纵向主导不触发关闭（页签数不变 · delta 仍在 · 无面板 FX）',
+    s1.tabCount === n0 && s1.tabs.includes('delta.md') && s1.faceFx === null,
+    `n=${s1.tabCount}/${n0} tabs=${s1.tabs.join(',')}`);
+  const c3 = await cardRect(page, 3);     // delta 已在前景位
+  const dx = Math.round(c3.x + c3.width / 2), dy = Math.round(c3.y + c3.height / 2);
+  await pointerDrag(page, dx, dy, -312, 0, { steps: 12, gap: 0 });  // 横向主导左滑（原 A8 通路）
+  await settle(page, 3000);
+  const s2 = await state(page);
+  ok('A18-4 横向主导仍是划走关闭：delta 被关（−1）', s2.tabCount === n0 - 1 && !s2.tabs.includes('delta.md'),
+    `n=${s2.tabCount} (base ${n0})`);
+  ok('A18-5 环流就地收敛保相位：echo 顶上（pos=3）、active 不变',
+    approx(s2.pos, 3, 0.01) && s2.frontName === 'echo.md' && s2.activeId.endsWith('alpha.md'),
+    `pos=${s2.pos.toFixed(3)} front=${s2.frontName} active=${s2.activeId}`);
+  ok('R0 主文档无 JS 运行时错误（A18）', errors.length === 0, errors.slice(0, 2).join(' | '));
+  await ctx.close();
+}
+
+/* ════════ A19 主导轴判定（作者补充令 ②③：横纵分工 + 死区 + 让路面不变）════════ */
+{
+  const { ctx, page, errors } = await bootPage(browser);
+  await openAllTabs(page);
+  await page.click('#deck-fab');
+  await settle(page);
+  const n0 = (await state(page)).tabCount;
+  const pr = await panelRect(page);
+  const cx = Math.round(pr.x + pr.width / 2), cy = Math.round(pr.y + pr.height / 2);
+  /* (a) dy 主导对角（dx=120 恒在参与）→ 锁 y → 换卡不关闭 */
+  await pointerDrag(page, cx, cy, 120, 260, { hold: true });
+  const midY = await state(page);
+  ok('A19-1 对角 dy 主导：锁 y（|dx|>|dy| 才横）', !!midY.gesture && midY.gesture.axis === 'y',
+    JSON.stringify(midY.gesture));
+  await page.mouse.up();
+  await settle(page);
+  const sa = await state(page);
+  ok('A19-2 dy 主导对角 = 换卡不关闭（charlie 前景 · 页签数不变）',
+    approx(sa.pos, 2, 0.01) && sa.frontName === 'charlie.md' && sa.tabCount === n0,
+    `pos=${sa.pos.toFixed(3)} front=${sa.frontName} n=${sa.tabCount}`);
+  /* (b) dx 主导对角 → 锁 x → 划走关闭（原逻辑） */
+  await wheelScrub(page, -480);           // 回滚 2 格：alpha 回前景（面板面复现）
+  await settle(page);
+  await pointerDrag(page, cx, cy, 312, 96, { steps: 12, hold: true });
+  const midX = await state(page);
+  ok('A19-3 对角 dx 主导：锁 x', !!midX.gesture && midX.gesture.axis === 'x', JSON.stringify(midX.gesture));
+  await page.mouse.up();
+  await settle(page, 3000);
+  const sb = await state(page);
+  ok('A19-4 dx 主导对角 = 划走关闭（alpha 被关 · 邻位 bravo 顶上）',
+    sb.tabCount === n0 - 1 && !sb.tabs.includes('alpha.md') && sb.activeId.endsWith('bravo.md'),
+    `n=${sb.tabCount} (base ${n0}) active=${sb.activeId}`);
+  ok('A19-5 关闭后 deck 保持、新 canvas 前景位（环重置 pos=0）',
+    sb.open === true && sb.frontIdx === 0 && sb.frontName === 'bravo.md',
+    `open=${sb.open} front=${sb.frontName}`);
+  /* (c) ≤8px 死区：不锁轴、不驱动；松手 = 点击语义（点 canvas = 收回卡组，原界不变） */
+  await pointerDrag(page, cx, cy, 4, 4, { steps: 1, gap: 0, hold: true });
+  const midD = await state(page);
+  ok('A19-6 死区内不锁轴不驱动（axis null · target 未动）',
+    !!midD.gesture && midD.gesture.axis === null && midD.target === 0,
+    JSON.stringify({ g: midD.gesture, target: midD.target }));
+  await page.mouse.up();
+  await settle(page);
+  const sc = await state(page);
+  ok('A19-7 死区松手 = 点击语义（deck 收回），换卡/关闭均未发生',
+    sc.open === false && sc.tabCount === n0 - 1 && sc.activeId.endsWith('bravo.md'),
+    `open=${sc.open} n=${sc.tabCount}`);
+  ok('R0 主文档无 JS 运行时错误（A19）', errors.length === 0, errors.slice(0, 2).join(' | '));
   await ctx.close();
 }
 

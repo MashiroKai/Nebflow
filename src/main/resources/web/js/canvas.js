@@ -1276,12 +1276,29 @@ export async function openWorkspaceItem(item) {
 //     morph 时长统一 0.28s 档；②投影 token 浅一档（split.css --card-shadow）；
 //     ③× 退役 → 竖排浅色滑动提示（.card-swipe-hint / .deck-swipe-hint）。
 //
+// 作者补充令（竖拖换卡）：上下拖动手势同可换卡（不只鼠标滚轮）——
+//   · Pointer Events 纵向拖动驱动（pointerdown+move 的 dy 增量喂给同一环形 scrub
+//     引擎：target += Δdy × 增益，跟手连续）；松手带少量惯性（EMA 速度 × 冲程、
+//     钳 ±半卡）后 Math.round 贴靠最近卡（拖动手势不停半卡交叉态；滚轮保持连续
+//     不贴靠）；触屏/触控板/鼠标拖动统一走 Pointer Events 一条通路；
+//   · 与「滑动关闭」按主导轴分工：|dx|>|dy| 横向主导 = 划走关闭（原逻辑逐字保持），
+//     否则纵向主导 = scrub 换卡（对角等幅平局从轻取纵——scrub 非破坏性）；
+//   · 8px 死区内不锁轴（此前 <6px 视为点击的语义升格为「未锁轴=点击」）；单卡
+//     （M<2）纵锁降级死轴静默（不做破坏性降级去触发关闭）；
+//   · 既有让路规则原样保持：拖划起点落在可交互子树（Monaco/按钮/画布等）不启动，
+//     与滚轮/键盘同一套让路面。
+//
 // 与样张的落地差异（deviations，均为真实 app 约束所需）：
 //   · deck-layer / deck-foot / fab 为 body 层 fixed 元素逐帧同步面板盒（真实 app 的
 //     面板挂 body flex 行，样张的 #canvas-area 包裹层不存在）；
 //   · 卡面缩略为类型族 CSS mock（样张同款），面板页签副标「面板」= 无 absPath 页签；
 //   · 面板拖划起点落在可交互子树（按钮/编辑器/画布等）时不启动（保护真实查看器交互）；
-//   · 键盘/滚轮在可编辑焦点（输入框/Monaco）让路；Ctrl+滚轮（页面缩放语义）不拦截。
+//   · 键盘/滚轮在可编辑焦点（输入框/Monaco）让路；Ctrl+滚轮（页面缩放语义）不拦截；
+//   · 触摸可达性（竖拖补充令）：.deck-card 补 touch-action:none（卡面纯 chrome 无
+//     滚动内容）；面板面触点常落在 pane 滚动容器内部 —— Chromium 取 touch-action
+//     以滚动容器为界，.stacked 的 touch-action:none 够不着触点链，故 deck 态面板
+//     touchstart 在非交互子树 preventDefault（原生滚动不启动、pointercancel 不打断
+//     竖拖；交互子树照旧让路）—— 触屏/触控板/鼠标拖动统一走 Pointer Events 一条通路。
 // ═════════════════════════════════════════════════════════════════════════
 
 const DECK_SCALE = 0.85;
@@ -1301,6 +1318,13 @@ const DECK_SPRING_DUR = 0.22;
 const DECK_FLING_DUR = 0.24;
 const DECK_SHRINK_DUR = 0.26;
 const DECK_WHEEL_GAIN = 1 / 240;
+// 竖拖补充令：纵向拖动增益（1px 指纹 = 1/160 卡，比滚轮灵敏一档——滚轮有档位
+// 棘感、指纹行程更长）；松手惯性 = EMA 速度(px/ms) × 90px 冲程，钳 ±80px（≤半卡，
+// 快甩不越格不可控）；主导轴判定阈值（累计位移超 8px 才锁轴，锁后不换轴）。
+const DECK_DRAG_GAIN = 1 / 160;
+const DECK_DRAG_INERTIA = 90;
+const DECK_DRAG_INERTIA_MAX = 80;
+const DECK_AXIS_LOCK_PX = 8;
 
 const deckRm = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
 
@@ -1413,6 +1437,62 @@ function deckInteractiveTarget(t) {
   ));
 }
 
+// ── 拖划手势公共腿（竖拖补充令）：面板面（deck.drag）与环卡面（deck.cardDrag）
+//    共用同一套状态机 —— 死区→主导轴锁→分轴驱动，速度 EMA 横纵对称。 ──
+/** 主导轴判定：|dx|>|dy| → 横（划走关闭，原逻辑）；否则纵（scrub 换卡）。对角等幅
+ *  平局取纵 —— scrub 非破坏性，划走关闭销毁页签，疑则从轻。 */
+function deckDominantAxis(dx, dy) { return Math.abs(dx) > Math.abs(dy) ? 'x' : 'y'; }
+/** 竖拖 scrub 喂给（跟手连续）：与滚轮同引擎同钳位（pos±M），单卡（M<2）无环不转。 */
+function deckScrubFeed(dy) {
+  if (deck.M < 2) return;
+  deck.target += dy * DECK_DRAG_GAIN;
+  deck.target = Math.max(deck.pos - deck.M, Math.min(deck.pos + deck.M, deck.target));
+  if (!deck.interacted) { deck.interacted = true; deckHintEl.classList.add('faded'); }
+  deckStartLoop();
+}
+/** 竖拖收尾：少量惯性（钳 ±80px 冲程 = ±半卡）+ Math.round 贴靠最近卡。只由拖动
+ *  松手调用；滚轮不贴靠（连续擦洗语义不变），两条输入各自收尾。注意单位：vy 为
+ *  px/ms、冲程为 px，target 为「卡」——并入前必须乘 DECK_DRAG_GAIN 换算。 */
+function deckScrubRelease(vy) {
+  if (deck.M < 2) return;
+  const flingPx = Math.max(-DECK_DRAG_INERTIA_MAX, Math.min(DECK_DRAG_INERTIA_MAX, vy * DECK_DRAG_INERTIA));
+  deck.target += flingPx * DECK_DRAG_GAIN;
+  deck.target = Math.round(deck.target);
+  deck.target = Math.max(deck.pos - deck.M, Math.min(deck.pos + deck.M, deck.target));
+  deckStartLoop();
+}
+/** 拖划状态工厂：dx/dy 之外补 dy 侧对称的 EMA 速度 + 主导轴锁（null=未锁=点击界内），
+ *  feedDy = 纵轴已喂给引擎的累计位移（增量喂给防回滚段倒灌）。 */
+function deckDragState(e) {
+  return {
+    id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0, feedDy: 0,
+    vx: 0, vy: 0, lastX: e.clientX, lastY: e.clientY, lastT: e.timeStamp,
+    axis: null, wasDragged: false,
+  };
+}
+/** move 公共腿：死区（≤8px 不锁轴）→ 主导轴一次锁定（M<2 时纵降级死轴 'n'：
+ *  单卡无环可转，静默结束而非破坏性降级触发关闭）→ 横纵速度 EMA。返回当前轴。 */
+function deckDragTrack(d, e) {
+  const dx = e.clientX - d.x0, dy = e.clientY - d.y0;
+  if (!d.axis && Math.max(Math.abs(dx), Math.abs(dy)) > DECK_AXIS_LOCK_PX) {
+    d.axis = deckDominantAxis(dx, dy);
+    d.wasDragged = true;
+    if (d.axis === 'y' && deck.M < 2) d.axis = 'n';
+  }
+  const dtms = Math.max(1, e.timeStamp - d.lastT);
+  d.vx = 0.8 * d.vx + 0.2 * ((e.clientX - d.lastX) / dtms);
+  d.vy = 0.8 * d.vy + 0.2 * ((e.clientY - d.lastY) / dtms);
+  d.lastX = e.clientX; d.lastY = e.clientY; d.lastT = e.timeStamp;
+  return d.axis;
+}
+/** 纵轴增量喂给：本次事件累计 dy − 已喂部分 = 增量（锁轴那一刻的死区段一并补喂）。 */
+function deckDragFeedVertical(d, e) {
+  const total = e.clientY - d.y0;
+  const step = total - d.feedDy;
+  d.feedDy = total; d.dy = total;
+  deckScrubFeed(step);
+}
+
 // ── DOM 装配（body 层固定三件：deck-layer（面板之前）+ foot/fab（面板之后））──
 function initDeck() {
   const panel = document.getElementById('canvas-panel');
@@ -1422,12 +1502,12 @@ function initDeck() {
   deckLayer.id = 'deck-layer';
   deckFoot = document.createElement('div');
   deckFoot.id = 'deck-foot';
-  deckFoot.innerHTML = '<div class="deck-hint">滚轮连续擦洗（前景轮换 · 可回滚） · 点击前景卡放大回满幅换入 · 点深处卡翻到该卡 · 划走关闭 · ESC 收回</div><div class="deck-count"></div>';
+  deckFoot.innerHTML = '<div class="deck-hint">滚轮 / 上下拖动 换卡（连续擦洗 · 可回滚） · 点击前景卡放大回满幅换入 · 点深处卡翻到该卡 · 横向划走关闭 · ESC 收回</div><div class="deck-count"></div>';
   deckFab = document.createElement('button');
   deckFab.id = 'deck-fab';
   deckFab.className = 'deck-fab';
   deckFab.setAttribute('aria-pressed', 'false');
-  deckFab.setAttribute('title', '叠卡切换（滚轮擦洗 · 前景轮换 · 点击前景卡换入 · 划走关闭）');
+  deckFab.setAttribute('title', '叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）');
   deckFab.setAttribute('aria-label', '叠卡切换');
   deckFab.innerHTML = DECK_ICONS.deck;
   deckHintEl = deckFoot.querySelector('.deck-hint');
@@ -1585,30 +1665,31 @@ function deckMakeCardEl(entry, r, cls) {
       });
     }
   });
-  /* 前景环卡拖划（v2⑥ 回归）：跟手 → 越阈甩出关闭该文件 / 不足弹回 */
+  /* 前景环卡拖划（v2⑥ 回归 + 竖拖补充令）：主导轴分工 —— 横向主导 = 跟手划走 →
+     越阈甩出关闭该文件 / 不足弹回；纵向主导 = scrub 换卡（dy 增量喂引擎，松手惯性+贴靠） */
   card.addEventListener('pointerdown', (e) => {
     if (!deck.open || deckBusy() || deck.exitCardFx || deck.cardDrag || deck.drag) return;
     if (e.button !== 0) return;
     if (card === deck.selfCardEl) return;                          // canvas 本尊的环卡不参与拖划
     const rr = +card.dataset.r;
     if (deck.M && Math.abs(deckWrapDelta(rr - deck.pos, deck.M)) >= 0.5) return;  // 只拖前景卡
-    deck.cardDrag = { id: e.pointerId, el: card, tabId: entry.id, x0: e.clientX, dx: 0, vx: 0, lastX: e.clientX, lastT: e.timeStamp, wasDragged: false };
+    deck.cardDrag = { ...deckDragState(e), el: card, tabId: entry.id };
     card.setPointerCapture(e.pointerId);
   });
   card.addEventListener('pointermove', (e) => {
     if (!deck.cardDrag || e.pointerId !== deck.cardDrag.id || deck.cardDrag.el !== card) return;
-    const dx = e.clientX - deck.cardDrag.x0;
-    if (!deck.cardDrag.wasDragged && Math.abs(dx) > 6) deck.cardDrag.wasDragged = true;
-    const dtms = Math.max(1, e.timeStamp - deck.cardDrag.lastT);
-    deck.cardDrag.vx = 0.8 * deck.cardDrag.vx + 0.2 * ((e.clientX - deck.cardDrag.lastX) / dtms);
-    deck.cardDrag.lastX = e.clientX; deck.cardDrag.lastT = e.timeStamp;
-    if (deck.cardDrag.wasDragged) deck.cardDrag.dx = dx;           // 跟手位移由 frame() 直写
+    const d = deck.cardDrag;
+    const axis = deckDragTrack(d, e);
+    if (axis === 'x') d.dx = e.clientX - d.x0;                     // 跟手位移由 frame() 直写
+    else if (axis === 'y') deckDragFeedVertical(d, e);             // 纵向主导：换卡（不关闭）
   });
   const endCardDrag = (e, cancelled) => {
     if (!deck.cardDrag || e.pointerId !== deck.cardDrag.id || deck.cardDrag.el !== card) return;
     const d = deck.cardDrag; deck.cardDrag = null;
-    if (cancelled || !d.wasDragged) return;                        // <6px = 点击，交给 click
+    if (cancelled || !d.wasDragged) return;                        // 未锁轴（≤8px 死区）= 点击，交给 click
     deck.suppressCardClick = performance.now() + 350;
+    if (d.axis === 'y') { deckScrubRelease(d.vy); return; }        // 纵向：惯性+贴靠换卡，永不触发关闭
+    if (d.axis !== 'x') return;                                    // 死轴（单卡纵拖）：静默结束
     const rect = deckPanelRect();
     const far = Math.abs(d.dx) > rect.width * 0.20 || Math.abs(d.vx) > 0.55;
     deck.exitCardFx = far
@@ -1787,7 +1868,7 @@ function deckFrame(t) {
       continue;
     }
     let extra = '';
-    if (deck.cardDrag && deck.cardDrag.el === el && deck.cardDrag.wasDragged) {
+    if (deck.cardDrag && deck.cardDrag.el === el && deck.cardDrag.wasDragged && deck.cardDrag.axis === 'x') {
       extra = ' translate3d(' + deck.cardDrag.dx.toFixed(1) + 'px,0,0) rotateZ(' + (deck.cardDrag.dx * 0.028).toFixed(2) + 'deg)';
     }
     if (deck.exitCardFx && deck.exitCardFx.el === el) {
@@ -2110,7 +2191,8 @@ function deckCloseOthers(keepId) {
   deckStartLoop();
 }
 
-// ── 输入绑定（滚轮 / 键盘 / 面板拖划；deck 层与卡片的监听在卡片工厂里）──
+// ── 输入绑定（滚轮 / 键盘 / 面板拖划〔主导轴：横=划走关闭 · 纵=scrub 换卡〕；
+//    deck 层与卡片的监听在卡片工厂里，共用同一套拖划公共腿）──
 function bindDeckInput() {
   const panel = document.getElementById('canvas-panel');
   if (!panel) return;
@@ -2143,38 +2225,43 @@ function bindDeckInput() {
     else if (e.key === 'Enter') { e.preventDefault(); if (deck.M) deckSelectCard(deckMod(Math.round(deck.pos), deck.M)); }
   });
 
-  // 缩放态面板拖划（v4⑥）：跟手 → 越阈甩出关闭 / 不足弹回；位移 <6px 视为点击（= 收回）。
-  // 该面只在 canvas 前景位可触（环卡前景时面板 pointer-events 关断、被前景卡覆盖）；
-  // 起点落在可交互子树（查看器按钮/编辑器/画布）时不启动——真实内容交互优先。
+  // 缩放态面板拖划（v4⑥ + 竖拖补充令）：主导轴分工 —— 横向主导 = 跟手划走，越阈
+  // 甩出关闭 / 不足弹回；纵向主导 = dy 增量喂 scrub 引擎换卡（跟手连续，松手惯性+
+  // 贴靠最近卡）；位移 ≤8px 未锁轴视为点击（= 收回）。该面只在 canvas 前景位可触
+  // （环卡前景时面板 pointer-events 关断、被前景卡覆盖）；起点落在可交互子树
+  // （查看器按钮/编辑器/画布）时不启动——真实内容交互优先（让路规则竖拖同享）。
   panel.addEventListener('pointerdown', (e) => {
     if (!deck.open || deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx || deck.drag || deck.cardDrag || deck.exitCardFx) return;
     if (e.button !== 0) return;
     if (deckInteractiveTarget(e.target)) return;
-    deck.drag = { id: e.pointerId, x0: e.clientX, dx: 0, vx: 0, lastX: e.clientX, lastT: e.timeStamp, wasDragged: false };
+    deck.drag = deckDragState(e);
     panel.setPointerCapture(e.pointerId);
     panel.classList.add('no-trans');
   });
   panel.addEventListener('pointermove', (e) => {
     if (!deck.drag || e.pointerId !== deck.drag.id) return;
-    const dx = e.clientX - deck.drag.x0;
-    if (!deck.drag.wasDragged && Math.abs(dx) > 6) deck.drag.wasDragged = true;
-    const dtms = Math.max(1, e.timeStamp - deck.drag.lastT);
-    deck.drag.vx = 0.8 * deck.drag.vx + 0.2 * ((e.clientX - deck.drag.lastX) / dtms);
-    deck.drag.lastX = e.clientX; deck.drag.lastT = e.timeStamp;
-    if (deck.drag.wasDragged) {
-      deck.drag.dx = dx;
-      deckSetRootFxStyle(panel, dx, dx * 0.028, 1);
+    const d = deck.drag;
+    const axis = deckDragTrack(d, e);
+    if (axis === 'x') {                                            // 横向主导 = 划走关闭（原 v4⑥ 逻辑）
+      d.dx = e.clientX - d.x0;
+      deckSetRootFxStyle(panel, d.dx, d.dx * 0.028, 1);
       deckStartLoop();
+    } else if (axis === 'y') {                                     // 纵向主导 = scrub 换卡（跟手连续）
+      deckDragFeedVertical(d, e);
     }
   });
   const endPanelDrag = (e, cancelled) => {
     if (!deck.drag || (e && e.pointerId !== deck.drag.id)) return;
     const d = deck.drag; deck.drag = null;
     const rect = deckPanelRect();
-    if (cancelled || !d.wasDragged) {
+    if (cancelled || !d.wasDragged || d.axis === 'n') {
       panel.classList.remove('no-trans');
       panel.style.transform = ''; panel.style.opacity = '';
-      if (!cancelled && !d.wasDragged) closeDeck();   // 点 canvas = 收回卡组
+      if (!cancelled && !d.wasDragged) closeDeck();   // 未锁轴 = 点击 canvas = 收回卡组（原界不变）
+      return;                                          // 死轴（单卡纵拖）：复位静默，不关闭不擦洗
+    }
+    if (d.axis === 'y') {                              // 纵向主导：惯性 + 贴靠换卡，永不触发关闭
+      deckScrubRelease(d.vy);
       return;
     }
     const far = Math.abs(d.dx) > rect.width * 0.20 || Math.abs(d.vx) > 0.55;
@@ -2184,6 +2271,18 @@ function bindDeckInput() {
   };
   panel.addEventListener('pointerup', (e) => endPanelDrag(e, false));
   panel.addEventListener('pointercancel', (e) => endPanelDrag(e, true));
+
+  // 触屏通路（竖拖补充令）：deck 态面板面 touchstart 在非交互子树内 preventDefault
+  // —— 否掉原生滚动手势的启动，pointercancel 不再中途打断竖拖 scrub。只拦面板面
+  // （触点常落在 pane 滚动容器内部，Chromium 取 touch-action 以滚动容器为界，
+  // .stacked 的 touch-action:none 够不着触点链）；可交互子树（Monaco/查看器/按钮）
+  // 照旧让路，原生滚动保留（让路规则 ③ 的触屏层）。touchstart preventDefault 不影响
+  // Pointer Events 流（只拦截兼容鼠标事件合成与原生手势），tap 收回仍走 pointerup 通路。
+  panel.addEventListener('touchstart', (e) => {
+    if (!deck.open || deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx) return;
+    if (deckInteractiveTarget(e.target)) return;
+    e.preventDefault();
+  }, { passive: false });
 
   // 右键菜单（deck 态面板 = 当前页签的菜单；含「关闭/关闭其他」，精修③后无 × 依赖）
   panel.addEventListener('contextmenu', (e) => {
@@ -2241,12 +2340,20 @@ window.__canvasDeck = {
       ring: deck.ring.map((t) => t.title),
       tabs: [...tabs.values()].map((t) => t.title),
       tabCount: n,
-      /* 精修①/② 断言通道：常量单一来源 + token 现值 */
+      /* 竖拖补充令断言通道：活动拖划手势（面板面/环卡面 + 主导轴） */
+      gesture: deck.drag
+        ? { face: 'panel', axis: deck.drag.axis, dx: deck.drag.dx, dy: deck.drag.dy }
+        : deck.cardDrag
+          ? { face: 'card', axis: deck.cardDrag.axis, dx: deck.cardDrag.dx, dy: deck.cardDrag.dy }
+          : null,
+      /* 精修①/② + 竖拖补充令断言通道：常量单一来源 + token 现值 */
       consts: {
         scrubApproach: DECK_SCRUB_APPROACH, spreadApproach: DECK_SPREAD_APPROACH,
         fallDrop: DECK_FALL_DROP, fallArc: DECK_FALL_ARC, fallTilt: DECK_FALL_TILT, fallTiltArc: DECK_FALL_TILT_ARC,
         flyDur: DECK_FLY_DUR, ghostDur: DECK_GHOST_DUR, springDur: DECK_SPRING_DUR, flingDur: DECK_FLING_DUR,
         wheelGain: DECK_WHEEL_GAIN,
+        dragGain: DECK_DRAG_GAIN, dragInertia: DECK_DRAG_INERTIA, dragInertiaMax: DECK_DRAG_INERTIA_MAX,
+        axisLockPx: DECK_AXIS_LOCK_PX,
       },
       cardShadow: getComputedStyle(document.documentElement).getPropertyValue('--card-shadow').trim(),
     };
