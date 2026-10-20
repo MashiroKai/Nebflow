@@ -10,9 +10,11 @@ sealed trait Credential extends Product with Serializable:
   def railName: String
 
 object Credential:
+
   /** Session cookie hit; carries the touched session record. */
   final case class ViaSession(record: SessionRecord) extends Credential:
     def railName: String = "session"
+
   /** Bearer hit (`isFileToken` distinguishes the file token from a Logto PAT). */
   final case class ViaBearer(isFileToken: Boolean) extends Credential:
     def railName: String = "bearer"
@@ -77,6 +79,30 @@ object GatewayAuth:
   end Rails
 
   /**
+   * 本地加速 M1 批 ① —— `local-ticket` 会话的**腿绑定**（防 localhost 任意读）。
+   *
+   * 近路产品链（v2 §3.3）：门户页探测 → local 类票 → `GET localhost/?ticket`
+   * 303 + 会话 cookie 落 **localhost origin**（浏览器 cookie jar 按 host 共享、
+   * 不分端口）。绑定即：这条会话令牌只在**真实环回 socket**（[[LoopbackLeg]]）
+   * 上作数 —— cookie 一旦离开浏览器（被搬去隧道腿重放 / LAN / 公网直连），
+   * 会话轨在本批新增的这条判据上拒绝，兜底只读面（隧道桥进程内请求
+   * `remoteAddr=None`）同样拒绝。relay-mint 会话不受影响（门户/隧道的合法腿
+   * 本就非环回，行为逐字不变）。
+   *
+   * 已知残余边界（申报）：**WS 隧道腿**的桥是真拨 `ws://127.0.0.1:<port>`
+   * 回环 socket（TunnelOriginMark 文件头引注），对端地址呈现为环回——重放
+   * 该腿需先持有受害者本人的门户会话（第二腿转发的是浏览器 cookie），不在
+   * 本绑定的威胁模型内；HTTP 隧道腿（进程内，remote=None）与一切非环回
+   * 直连腿都被本判据挡死。
+   *
+   * 顺带语义（无害申报）：verifyAndTouch 先于本判据发生，off-leg 重放会推进
+   * 该会话的滑动窗——但重放方在该判据下永远拿不到任何面，推进只惠及本机
+   * 合法用户，且 12h 绝对上限不豁免。
+   */
+  def localTicketOnLeg(record: SessionRecord, r: Request[?]): Boolean =
+    record.origin != GatewaySessionStore.OriginLocalTicket || LoopbackLeg.isLoopback(r)
+
+  /**
    * Read-only probe response header (plan §4.2#3): on a 204 from
    * `/api/nf-authcheck`, carries the rail name that hit (`session` / `bearer`).
    * The B' frontend purge hook consumes ONLY the `session` value; the other
@@ -105,14 +131,23 @@ object GatewayAuth:
       if !rails.session then IO.pure(None)
       else
         req.cookies.find(_.name == GatewaySessionStore.CookieName).map(_.content).filter(_.nonEmpty) match
-          case None    => IO.pure(None)
-          case Some(sid) => sessions.verifyAndTouch(sid).map(_.map(Credential.ViaSession.apply))
+          case None => IO.pure(None)
+          case Some(sid) =>
+            sessions.verifyAndTouch(sid).map {
+              // 本地加速批 ①（v2 §3.3 近路 + 会话令牌绑定）：local-ticket 会话
+              // 只在环回腿上作数 —— 见 localTicketOnLeg。命中即原样放行；
+              // off-leg 时本轨拒绝（None ⇒ fall-through，纪律不变）。
+              case rec @ Some(record) if localTicketOnLeg(record, req) =>
+                rec.map(Credential.ViaSession.apply)
+              case Some(_) => None // local-ticket 脱腿：会话轨拒绝（可继续 fall-through）
+              case None => None
+            }
 
     def bearerLeg: IO[Option[Credential]] =
       if !rails.bearerFile && !rails.pat then IO.pure(None)
       else
-        req.headers.get[Authorization].collectFirst {
-          case Authorization(Credentials.Token(AuthScheme.Bearer, t)) => t
+        req.headers.get[Authorization].collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
+          t
         } match
           case None => IO.pure(None)
           case Some(t) =>
@@ -123,7 +158,7 @@ object GatewayAuth:
 
     sessionLeg.flatMap {
       case some @ Some(_) => IO.pure(some)
-      case None           => bearerLeg
+      case None => bearerLeg
     }
 
   end authenticate
