@@ -1546,6 +1546,20 @@ exec "\$JAVA_BIN" --add-opens java.base/java.lang=ALL-UNNAMED -jar "\$JAR" "\$@"
 WRAPPER
     chmod +x "${wrapper}"
     log_ok "Wrapper created: ${wrapper}"
+    # Legacy command shim (2026-10-20 rename batch): "nebflow" is retired as
+    # the command name; a thin shim keeps muscle memory and old scripts alive
+    # - it warns on stderr, then forwards to the current wrapper. Fixed legacy
+    # name by design (historical fact, same rule as rebrand.sh) - NOT
+    # brand-derived, so it stays stable across future renames. Also replaces
+    # any pre-rename real "nebflow" binary in INSTALL_DIR (overwrite > shadow).
+    local shim="${INSTALL_DIR}/nebflow"
+    cat > "${shim}" << SHIM
+#!/bin/bash
+echo "WARN: 'nebflow' is deprecated - the command is now '${WRAPPER_NAME}'. Forwarding..." >&2
+exec "${INSTALL_DIR}/${WRAPPER_NAME}" "\$@"
+SHIM
+    chmod +x "${shim}"
+    log_ok "Legacy shim created: ${shim} (deprecation notice, forwards to ${WRAPPER_NAME})"
 }
 
 # Add install dir to PATH in shell profile

@@ -1018,6 +1018,18 @@ rem <<< WINSORT-END v1 <<<
 "@
 Set-Content -Path $cmdPath -Value $cmdContent -Encoding ASCII
 
+# Legacy command shim (2026-10-20 rename batch): "nebflow" is retired as the
+# command name; this thin .cmd warns on stderr, then forwards to the current
+# launcher. Fixed legacy name by design (historical fact, like rebrand.sh).
+$shimPath = Join-Path $InstallDir "nebflow.cmd"
+$shimContent = @"
+@echo off
+echo WARN: 'nebflow' is deprecated - the command is now '$WrapperName'. Forwarding... 1>&2
+"%~dp0$WrapperName.cmd" %*
+exit /b %ERRORLEVEL%
+"@
+Set-Content -Path $shimPath -Value $shimContent -Encoding ASCII
+
 # Add to PATH
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($userPath -notlike "*$InstallDir*") {

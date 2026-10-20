@@ -23,6 +23,7 @@ fi
 # Remove JAR and wrapper
 echo "[1/3] Removing ${PRODUCT_NAME} files..."
 rm -f "${INSTALL_DIR}/${WRAPPER_NAME}"
+rm -f "${INSTALL_DIR}/nebflow"   # legacy command shim (2026-10-20 rename)
 rm -f "${INSTALL_DIR}"/${LOWER_NAME}-assembly-*.jar "${INSTALL_DIR}"/nebflow-assembly-*.jar
 echo "    Removed from ${INSTALL_DIR}"
 
