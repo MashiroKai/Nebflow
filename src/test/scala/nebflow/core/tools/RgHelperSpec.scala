@@ -41,7 +41,7 @@ class RgHelperSpec extends FunSuite:
       val r = RgHelper.resolveRgPathFrom(
         pathEnv = launchdMinimalPath, // dirs exist but carry no rg
         probeDirs = List(probeDir.toString),
-        localPath = (tmp / "no-home" / ".nebflow" / "bin" / rgName).toString, // nonexistent
+        localPaths = List((tmp / "no-home" / ".nebflow" / "bin" / rgName).toString), // nonexistent
         winInstall = None
       )
       assertEquals(r, Some(seeded), "curated probe dir must supply the hit when PATH is minimal")
@@ -58,7 +58,7 @@ class RgHelperSpec extends FunSuite:
       val r = RgHelper.resolveRgPathFrom(
         pathEnv = pathDir.toString,
         probeDirs = List(probeDir.toString),
-        localPath = (tmp / "no-home" / ".nebflow" / "bin" / rgName).toString,
+        localPaths = List((tmp / "no-home" / ".nebflow" / "bin" / rgName).toString),
         winInstall = None
       )
       assertEquals(r, Some(onPath), "PATH hit must keep priority over the curated probe leg")
@@ -75,11 +75,44 @@ class RgHelperSpec extends FunSuite:
       val r = RgHelper.resolveRgPathFrom(
         pathEnv = launchdMinimalPath,
         probeDirs = List(probeDir.toString),
-        localPath = local,
+        localPaths = List(local),
         winInstall = None
       )
       assertEquals(r, Some(probed), "probe leg sits with the PATH leg, before the local bin leg")
     finally os.remove.all(tmp)
+  }
+
+  test("local bin legs: new default (~/.stand/bin) wins over legacy (~/.nebflow/bin); legacy still found alone") {
+    val tmp = os.Path(java.nio.file.Files.createTempDirectory("nb-rg-locallegs"))
+    try
+      // 数据根指向切换批：本地腿两位置按序探测 —— 新默认位在前，legacy 位兜底。
+      val newBin = tmp / "home" / ".stand" / "bin"
+      val legacyBin = tmp / "home" / ".nebflow" / "bin"
+      val newRg = fakeRg(newBin)
+      val legacyRg = fakeRg(legacyBin)
+      val both = RgHelper.resolveRgPathFrom(
+        pathEnv = launchdMinimalPath,
+        probeDirs = Nil,
+        localPaths = List(newRg, legacyRg),
+        winInstall = None
+      )
+      assertEquals(both, Some(newRg), "new default bin position must be probed before the legacy one")
+      val legacyOnly = RgHelper.resolveRgPathFrom(
+        pathEnv = launchdMinimalPath,
+        probeDirs = Nil,
+        localPaths = List(legacyRg),
+        winInstall = None
+      )
+      assertEquals(legacyOnly, Some(legacyRg), "old installs (legacy bin only) must keep resolving rg")
+      val none = RgHelper.resolveRgPathFrom(
+        pathEnv = launchdMinimalPath,
+        probeDirs = Nil,
+        localPaths = List(newRg, legacyRg).map(p => p + ".missing"),
+        winInstall = None
+      )
+      assertEquals(none, None, "missing files in both local legs must stay None")
+    finally os.remove.all(tmp)
+    end try
   }
 
   test("pre-fix shape (no probe dirs, minimal PATH, no local) still resolves to None") {
@@ -88,7 +121,7 @@ class RgHelperSpec extends FunSuite:
       val r = RgHelper.resolveRgPathFrom(
         pathEnv = launchdMinimalPath,
         probeDirs = Nil, // pre-fix shape: the leg did not exist
-        localPath = (tmp / "no-home" / ".nebflow" / "bin" / rgName).toString,
+        localPaths = List((tmp / "no-home" / ".nebflow" / "bin" / rgName).toString),
         winInstall = None
       )
       assertEquals(r, None, "nothing anywhere must stay None (drives the not-found error path)")
@@ -107,7 +140,8 @@ class RgHelperSpec extends FunSuite:
       val r = RgHelper.resolveRgPathFrom(
         pathEnv = launchdMinimalPath,
         probeDirs = probeDirs,
-        localPath = (tmp / "no-home" / ".nebflow" / "bin" / rgName).toString, // nonexistent: isolate the probe leg
+        localPaths =
+          List((tmp / "no-home" / ".nebflow" / "bin" / rgName).toString), // nonexistent: isolate the probe leg
         winInstall = None
       )
       assertEquals(r, Some(expected.get.toAbsolutePath.toString))

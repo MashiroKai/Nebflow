@@ -89,25 +89,28 @@ object Main extends IOApp:
     // Phase 1: Parse global flags before any dispatching
     val (homeOpt, portOpt, succeedOpt, daemonChild, explicitForeground, remaining) = parseGlobalFlags(args)
 
-    homeOpt.orElse(Branding.env("HOME")).foreach { h =>
-      // 产品侧同源（2026-09-10 作者裁定）：`--home` 决定一切落盘位置，日志同属
-      // 该语义范围内——不是新语义，是既有语义的补齐。logback 的 FILE appender
-      // 读的是系统属性/环境变量 `NEBFLOW_HOME`（src/main/resources/logback.xml:18,23），
-      // 单靠 setDataRoot 只能改 JVM 内的数据根，日志仍落默认数据根 ⇒ 显式
-      // `--home <dir>` 时「数据在 A、日志在 B」的分叉。
-      // 取值与 setDataRoot 完全同源（同一 expandHome + os.pwd 解析出的同一
-      // `root` 实例），不引入第二套 home 解析。
-      val root = os.Path(expandHome(h), os.pwd)
-      // 先落系统属性，再设数据根：logback 在 LoggerContext 首次解析配置时就固化
-      // FILE 路径，本行必须早于任何 `LoggerFactory.getLogger` 首用——Main.run
-      // 之前只有 IOApp 引导（不碰 slf4j），parseGlobalFlags 亦不触 logger，故
-      // 此处是最早点。logback 的 ${NEBFLOW_HOME:-…} 解析顺序为系统属性 > 环境
-      // 变量，故显式 `--home` 时系统属性胜出、env 作兜底。
-      // CLI --home wins over STAND_HOME, then NEBFLOW_HOME. Bridge the
-      // resolved home to logback's legacy property before any logger starts.
-      sys.props("NEBFLOW_HOME") = root.toString
-      PathUtil.setDataRoot(root)
-    }
+    // 数据根解析（单一处）：CLI --home > STAND_HOME > NEBFLOW_HOME（legacy）>
+    // 默认 ~/.stand（legacy-only 机器回落 ~/.nebflow + 一行提示，见
+    // PathUtil.resolveDefaultDataRoot）。解析发生在任何 logger 初始化之前，
+    // logback 的 FILE 路径由下面这行桥接钉到同一个根。
+    val root = homeOpt match
+      case Some(h) => os.Path(expandHome(h), os.pwd)
+      case None => PathUtil.dataRoot // dual-env read (Branding.env) + default resolution
+    // 产品侧同源（2026-09-10 作者裁定）：`--home` 决定一切落盘位置，日志同属
+    // 该语义范围内——不是新语义，是既有语义的补齐。logback 的 FILE appender
+    // 读 `STAND_HOME` / `NEBFLOW_HOME`（src/main/resources/logback.xml），单靠
+    // setDataRoot 只能改 JVM 内的数据根，日志仍落 logback 自身默认 ⇒「数据在
+    // A、日志在 B」的分叉。本批起桥接**无条件**进行（含两 env 均未设的默认档）：
+    // legacy-only 机器数据根回落 ~/.nebflow 时，日志必须跟着落 ~/.nebflow。
+    // 取值与 setDataRoot 完全同源（同一解析出的 `root`），不引入第二套 home 解析。
+    // 先落系统属性，再设数据根：logback 在 LoggerContext 首次解析配置时就固化
+    // FILE 路径，本行必须早于任何 `LoggerFactory.getLogger` 首用——Main.run
+    // 之前只有 IOApp 引导（不碰 slf4j），parseGlobalFlags 亦不触 logger，故
+    // 此处是最早点。logback 的 ${STAND_HOME:-${NEBFLOW_HOME:-…}} 解析顺序为
+    // 系统属性 > 环境变量，桥接用的旧名系统属性胜出、env 作兜底（CLI --home
+    // 同理钉住日志位置）。
+    sys.props("NEBFLOW_HOME") = root.toString
+    PathUtil.setDataRoot(root)
     portOpt.foreach { p =>
       GatewayConfig.setPort(p)
     }

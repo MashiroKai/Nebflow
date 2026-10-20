@@ -4,7 +4,7 @@
 # -- release time (scripts/render-brand.sh); do not edit by hand. ----------
 $ProductName = "stand"
 $LowerName = "stand"
-$HomeDir = ".nebflow"
+$HomeDir = ".stand"
 $ProgressPreference = "SilentlyContinue"
 
 $InstallDir = "$env:LOCALAPPDATA\$ProductName"

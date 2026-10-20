@@ -69,8 +69,8 @@
 #      清理后逐件检查主 home 的 nebflow.json / models.json / model-presets.json：
 #      源存在且新 home 无同名件 ⇒ 拷入（cp -p 保权限；nebflow.json 可能含 provider 密钥，
 #      种入后收紧为 600，与仓内凭据件 ACL 纪律同向）。已有同名件（冷启动保留件）⇒ 不覆盖。
-#      主 home 解析与 Scala 端同序：NEBFLOW_HOME（Branding.env 首选）> $HOME/<brand 目录>；
-#      brand 目录名从 brand.conf 的 homeDirName 现读，🔴 不写死任何绝对路径。
+#      主 home 解析与 Scala 端同序：STAND_HOME（第一优先级）> NEBFLOW_HOME（legacy）>
+#      $HOME/<brand 目录>；brand 目录名从 brand.conf 的 homeDirName 现读，🔴 不写死任何绝对路径。
 #      🔴 device.json / auth.json（身份与凭据面）明确不拷、零触碰——身份/凭据跨 home
 #      流动正是 2026-09-11 撞身份事故链的一环（见 coldstart DX 批④的 scope 熵修复）。
 #   8) 浏览器隔离开门 + 出厂档（新用户体验批；2026-10-18 13:29 作者二次拍板改形）——
@@ -390,13 +390,14 @@ else
 fi
 
 # ── 步骤 2.5：主 home 模型配置种子（批③；清理后执行 ⇒ 「种子→后续冷启动原地保留」协同）──
-# 主 home 解析与 Scala 端 PathUtil.dataRoot 同序：NEBFLOW_HOME（Branding.env 首选）>
+# 主 home 解析与 Scala 端 PathUtil.dataRoot 同序（数据根指向切换批 2026-10）：
+# STAND_HOME（第一优先级）> NEBFLOW_HOME（legacy 兼容，现役实例显式带参形态）>
 # $HOME/<brand 目录>；brand 目录名从 brand.conf 现读，🔴 不写死绝对路径。
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# brand.conf 缺席（脚本被单拷走）时管道失败 ⇒ `|| true` 兜底（pipefail 下退化为默认 .nebflow）。
+# brand.conf 缺席（脚本被单拷走）时管道失败 ⇒ `|| true` 兜底（pipefail 下退化为默认 .stand）。
 BRAND_DIR="$(sed -n -E 's/^[[:space:]]*homeDirName[[:space:]]*=[[:space:]]*([^[:space:]#]+).*/\1/p' "$SCRIPT_DIR/../brand.conf" 2>/dev/null | tail -1 || true)"
-BRAND_DIR="${BRAND_DIR:-.nebflow}"
-MAIN_HOME="${NEBFLOW_HOME:-$HOME/$BRAND_DIR}"
+BRAND_DIR="${BRAND_DIR:-.stand}"
+MAIN_HOME="${STAND_HOME:-${NEBFLOW_HOME:-$HOME/$BRAND_DIR}}"
 echo "[coldstart] 模型配置种子来源（主 home）: $MAIN_HOME"
 seed_model_configs() {
   local f src dst

@@ -33,7 +33,7 @@ try {
 $ProductName = "stand"
 $LowerName = "stand"
 $CosBucket = "nebflow-releases"
-$HomeDir = ".nebflow"
+$HomeDir = ".stand"
 $ConfigFile = "nebflow.json"
 $WrapperName = "stand"
 $CosBaseCn = "https://$CosBucket.oss-cn-hangzhou.aliyuncs.com"

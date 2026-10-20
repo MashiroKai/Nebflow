@@ -4,7 +4,7 @@
 # -- release time (scripts/render-brand.sh); do not edit by hand. ----------
 PRODUCT_NAME=stand
 LOWER_NAME=stand
-HOME_DIR=.nebflow
+HOME_DIR=.stand
 WRAPPER_NAME=stand
 set -e
 

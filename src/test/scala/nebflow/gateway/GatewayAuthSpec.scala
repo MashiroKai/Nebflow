@@ -279,7 +279,9 @@ class GatewayAuthSpec extends CatsEffectSuite:
     assertEquals(Credential.ViaSession(nullRecord).railName, "session")
     assertEquals(Credential.ViaBearer(isFileToken = true).railName, "bearer")
     assertEquals(GatewayAuth.CredentialHeader, s"x-${nebflow.shared.Branding.lowerName}-credential")
-    assertEquals(GatewayAuth.CredentialHeader, "x-nebflow-credential")
+    // Live-value pin, follows lowerName (2026-10-16 stand switch left this stale;
+    // refreshed alongside the 数据根指向切换批 family gate)
+    assertEquals(GatewayAuth.CredentialHeader, "x-stand-credential")
 
   private def nullRecord: SessionRecord =
     SessionRecord("sid", "sub", "relay-mint", "net", 0L, 0L, 0L, 0L)

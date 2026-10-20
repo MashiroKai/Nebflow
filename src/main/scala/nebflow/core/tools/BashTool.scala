@@ -170,17 +170,23 @@ Git safety:
 
   /**
    * `rm` against the data root — derived at call time from PathUtil.dataRoot
-   * （home 硬编码 → 运行时动态化）。
+   * （home 硬编码 → 运行时动态化；数据根指向切换批 2026-10 起 legacy 字面同样在列）。
    *
    * 旧实现是固定字面 `rm\s+.*~/.nebflow`：隔离实例（--home /tmp/...）下护错对象
-   * ——真正要护的是**本实例**的数据根。此处同时覆盖两种写法，保护面只增不减：
-   *   - `~/<homeDirName>`（默认 home 的字面形态，当前品牌 = `~/\.nebflow`）——
-   *     与旧正则同一目标串（Regex.quote 精确转义，等价面不缩水）；
-   *   - dataRoot 绝对路径（隔离实例 / 显式 --home 实例的真实写根）。
+   * ——真正要护的是**本实例**的数据根。此处同时覆盖三种写法，保护面只增不减：
+   *   - `~/<homeDirName>`（默认 home 的字面形态，2026-10 起 = `~/.stand`）——
+   *     与切换后新根同一目标串（Regex.quote 精确转义）；
+   *   - `~/<LegacyHomeDirName>`（`~/.nebflow` 旧根字面）—— 老机器/过渡期数据仍在
+   *     旧根，rm 旧根依旧是本批要拦的头号事故形态（保护面不因换根缩水）；
+   *   - dataRoot 绝对路径（隔离实例 / 显式 --home / STAND_HOME 实例的真实写根）。
    * `def` on purpose：dataRoot 可在对象初始化后被换根 —— 正则必须现算。
    */
   private def dataRootWipePatterns: List[scala.util.matching.Regex] =
-    List("~/" + nebflow.shared.Branding.homeDirName, nebflow.shared.PathUtil.dataRoot.toString).distinct
+    List(
+      "~/" + nebflow.shared.Branding.homeDirName,
+      "~/" + nebflow.shared.PathUtil.LegacyHomeDirName,
+      nebflow.shared.PathUtil.dataRoot.toString
+    ).distinct
       .map(root => ("""rm\s+.*""" + scala.util.matching.Regex.quote(root)).r)
 
   private def allDangerousPatterns: List[scala.util.matching.Regex] =
