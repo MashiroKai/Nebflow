@@ -23,7 +23,8 @@ object VersionCheck:
 
   /** 正式通道版本指针地址（桶名走 `Branding.cosBucket` 派生，禁硬编码桶名）。 */
   def pointerUrl: String =
-    s"https://${Branding.cosBucket}.oss-cn-hangzhou.aliyuncs.com/latest-version.txt"
+    sys.props.get("nebflow.updates.pointerUrl").map(_.trim).filter(_.nonEmpty).getOrElse:
+      s"https://${Branding.cosBucket}.oss-cn-hangzhou.aliyuncs.com/latest-version.txt"
 
   /**
    * manifest 地址（DESIGN §5：stable = `/updates/manifest.json`，beta 同构
@@ -61,13 +62,19 @@ object VersionCheck:
    * 解析容错：未知增量字段忽略（向前兼容）；`version` 缺失 ⇒ 不可用。
    */
   def fetchManifest(beta: Boolean): IO[Option[ReleaseManifest]] =
-    fetchRaw(manifestUrl(beta)).map(_.flatMap(ReleaseManifest.parse))
+    // URL 解析在 IO **运行期**求值（构造期会读不到测试注入面——props 是运行时事实）
+    IO(manifestUrl(beta)).flatMap(fetchRaw).map(_.flatMap(ReleaseManifest.parse))
 
   /** 最新版本号（M3 读序：manifest → OSS txt 只检不装 → None；剥前导 `v`）。 */
   def fetchLatestVersion(beta: Boolean = false): IO[Option[String]] =
     fetchManifest(beta).flatMap {
       case Some(m) => IO.pure(Some(m.version.stripPrefix("v")))
-      case None => fetchRaw(if beta then pointerBetaUrl else pointerUrl).map(_.map(_.stripPrefix("v")))
+      case None =>
+        IO {
+          if beta then
+            sys.props.get("nebflow.updates.pointerBetaUrl").map(_.trim).filter(_.nonEmpty).getOrElse(pointerBetaUrl)
+          else pointerUrl
+        }.flatMap(fetchRaw).map(_.map(_.stripPrefix("v")))
     }
 
   /** beta 通道裸 txt 指针（回落位；与 install.sh 的 `latest-beta-version.txt` 同键）。 */

@@ -1622,6 +1622,10 @@ export default {
   'neblink.updateCard.phase.updating': '安装新包',
   'neblink.updateCard.phase.restarting': '低扰动重启',
   'neblink.updateCard.phase.recovering': '恢复中',
+  'neblink.updateCard.phase.idle': '空闲',
+  'neblink.updateCard.phase.completed': '已完成',
+  'neblink.updateCard.phase.aborted': '已中止',
+  'neblink.updateCard.phase.rolled-back': '已回滚',
   // 缺陷 A（2026-09-18）：未登录面板的两条读数 —— ①「清理并重登」入口（只在
   // 本地凭据文件类分类下渲染）；②状态面降级（`/status` 非 2xx 的可见读数，修前静默）。
   'neblink.cleanupRelogin': '清理并重登',

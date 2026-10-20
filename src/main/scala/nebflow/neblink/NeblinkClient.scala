@@ -54,7 +54,9 @@ private[neblink] case class NeblinkPeerInfo(
 )
 
 private case class LoginResponse(token: String, networkId: String, deviceId: String, peers: List[NeblinkPeerInfo])
-private case class HeartbeatResponse(peers: List[NeblinkPeerInfo], update: Option[NeblinkUpdateTarget])
+// private[neblink]（M3 ③）：线解码对齐 spec 直接消费该 wire 类型（防字段漂移的
+// 验收面）——包内可见，包外仍不可见。
+private[neblink] case class HeartbeatResponse(peers: List[NeblinkPeerInfo], update: Option[NeblinkUpdateTarget])
 
 /**
  * 心跳响应里的更新挂账提示（统一更新系统 M3 ③，DESIGN §7 pull-on-online）：
@@ -118,12 +120,13 @@ object NeblinkCodecs:
   }
 
   given Decoder[HeartbeatResponse] = Decoder.instance { c =>
-    for
-      peers <- c.downField("peers").as[Option[List[NeblinkPeerInfo]]].map(_.getOrElse(Nil))
+    c.downField("peers").as[Option[List[NeblinkPeerInfo]]].map(_.getOrElse(Nil)).map { peers =>
       // 统一更新系统 M3 ③：update.target 仅对未收敛设备出现（additive 字段，
-      // 旧 server 无此键 ⇒ None，serde 宽容语义与既有 face 一致）。
-      update <- c.downField("update").downField("target").as[Option[NeblinkUpdateTarget]]
-    yield HeartbeatResponse(peers, update)
+      // 旧 server 无此键 ⇒ None）。宽容解码：**挂账畸形（如 version 缺失）⇒ 折
+      // None，绝不拖垮整条心跳**（收账失败 ≠ 心跳失败——名册同步是主业务）。
+      val update = c.downField("update").downField("target").as[NeblinkUpdateTarget].toOption
+      HeartbeatResponse(peers, update)
+    }
   }
 end NeblinkCodecs
 

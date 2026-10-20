@@ -1680,6 +1680,10 @@ export default {
   'neblink.updateCard.phase.updating': 'installing the new package',
   'neblink.updateCard.phase.restarting': 'low-disturbance restart',
   'neblink.updateCard.phase.recovering': 'recovering',
+  'neblink.updateCard.phase.idle': 'idle',
+  'neblink.updateCard.phase.completed': 'completed',
+  'neblink.updateCard.phase.aborted': 'aborted',
+  'neblink.updateCard.phase.rolled-back': 'rolled back',
   // Defect A (2026-09-18): two readings of the signed-out panel — (1) the
   // "clean up and sign in again" entry (local credential-file class only);
   // (2) the status-face degradation line (a non-2xx `/status` used to be silent).

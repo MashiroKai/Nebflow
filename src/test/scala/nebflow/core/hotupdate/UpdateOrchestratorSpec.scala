@@ -619,8 +619,13 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
             "unexpected-error"
           )
         )
-        // source 枚举字面 = 契约词表（设置页｜设备列表｜中继｜官网｜命令行）——同词表，禁两套字面
-        assertEquals(UpdateSource.values.toList.map(_.wire), List("settings", "device-list", "relay", "website", "cli"))
+        // source 枚举字面 = 契约词表（设置页｜设备列表｜中继｜官网｜命令行｜心跳补推）
+        // ——同词表，禁两套字面。`heartbeat` = 统一更新系统 M3 ③（DESIGN §8 来源
+        // 三分法「官网检测/对端触发/心跳补推」的第三个字面，additive 扩展）。
+        assertEquals(
+          UpdateSource.values.toList.map(_.wire),
+          List("settings", "device-list", "relay", "website", "cli", "heartbeat")
+        )
         // 通道字面（裁定 9：测试通道仅命令行保留，本批不暴露界面）
         assertEquals(UpdateChannel.values.toList.map(_.wire), List("stable", "beta"))
         // 幂等键保留窗口（契约对齐点 ④：数值本批冻结）
@@ -797,13 +802,17 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
           )
         }
       }
-      // 文案键解析：每个相位的 messageKey 必须同时存在于 zh-CN 与 en 文案表
+      // 文案键解析：帧内 messageKey 契约不变（`update.phase.<wire>` 机器键照发），
+      // 但**面板解析层**自 auth-trim 批（设置页更新退役）起换用新命名空间
+      // `neblink.updateCard.phase.<wire>`（M3 ④更新卡的相位文案，zh-CN/en 双表齐备）
+      // ——旧的设置页 `update.phase.*` 文案键组已随该批删除，本断言改为验新表。
       zhRaw <- IO(os.read(os.pwd / "src/main/resources/web/js/locales/zh-CN.js"))
       enRaw <- IO(os.read(os.pwd / "src/main/resources/web/js/locales/en.js"))
       _ <- IO {
         UpdatePhase.values.toList.foreach { p =>
-          assert(zhRaw.contains(s"'${p.messageKey}':"), s"zh-CN must define ${p.messageKey}")
-          assert(enRaw.contains(s"'${p.messageKey}':"), s"en must define ${p.messageKey}")
+          val newKey = s"'neblink.updateCard.phase.${p.wire}':"
+          assert(zhRaw.contains(newKey), s"zh-CN must define ${newKey}")
+          assert(enRaw.contains(newKey), s"en must define ${newKey}")
         }
         assert(phaseTextSeparated(zhRaw), "对勾/叉号前缀不得并入相位文案")
       }
@@ -1000,7 +1009,9 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
 
   /** 对勾/叉号前缀与相位文本分离（设计 §7 通用契约）：本批新增的相位文案不得带前缀。 */
   private def phaseTextSeparated(localeRaw: String): Boolean =
-    val block = localeRaw.split("'update.phase.").drop(1)
+    // 相位文案命名空间 = neblink.updateCard.phase.*（M3 ④；设置页 update.phase.*
+    // 键组已随 auth-trim 退役——判据随新表走，语义不变：前缀不得并入相位文案）
+    val block = localeRaw.split("'neblink.updateCard.phase.").drop(1)
     block.forall(line => !line.take(200).contains("✓") && !line.take(200).contains("✗"))
 
 end UpdateOrchestratorSpec

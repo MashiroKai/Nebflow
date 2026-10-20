@@ -49,23 +49,28 @@ object Version:
    * 惰性求值一次（心跳每拍读盘不可取；文件在进程寿命内不变——换通道 = 重装 = 新进程）。
    */
   lazy val channel: String =
-    val fromManifest =
-      try
-        val path =
-          java.nio.file.Paths.get(
-            sys.props.getOrElse("user.home", ""),
-            Branding.homeDirName,
-            "install-manifest.json"
-          )
-        if java.nio.file.Files.exists(path) then
-          // 固定格式小 JSON（install.sh write_manifest 生成）——正则单字段提取，
-          // 不为此引入 JSON 解析依赖。
-          val text = new String(java.nio.file.Files.readAllBytes(path), java.nio.charset.StandardCharsets.UTF_8)
-          "\"channel\"\\s*:\\s*\"([^\"]+)\"".r
-            .findFirstMatchIn(text)
-            .map(_.group(1).trim)
-            .filter(_.nonEmpty)
-        else None
-      catch case _: Exception => None
-    fromManifest.getOrElse(if string.contains("-beta") then "beta" else "stable")
+    channelFrom(readInstalledChannel(), string)
+
+  /** 派生链本体（纯函数，可测；`channel` 是它对真实环境的单点应用）。 */
+  private[nebflow] def channelFrom(installedChannel: Option[String], versionString: String): String =
+    installedChannel
+      .map(_.trim)
+      .filter(c => c == "stable" || c == "beta")
+      .getOrElse(if versionString.contains("-beta") then "beta" else "stable")
+
+  /** 安装器落盘记录里的通道值（不可读 ⇒ None——启发式兜底在 [[channelFrom]]）。 */
+  private def readInstalledChannel(): Option[String] =
+    try
+      val path = java.nio.file.Paths.get(
+        sys.props.getOrElse("user.home", ""),
+        Branding.homeDirName,
+        "install-manifest.json"
+      )
+      if java.nio.file.Files.exists(path) then
+        // 固定格式小 JSON（install.sh write_manifest 生成）——正则单字段提取，
+        // 不为此引入 JSON 解析依赖。
+        val text = new String(java.nio.file.Files.readAllBytes(path), java.nio.charset.StandardCharsets.UTF_8)
+        "\"channel\"\\s*:\\s*\"([^\"]+)\"".r.findFirstMatchIn(text).map(_.group(1).trim).filter(_.nonEmpty)
+      else None
+    catch case _: Exception => None
 end Version
