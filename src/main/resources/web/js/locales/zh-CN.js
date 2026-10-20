@@ -1748,6 +1748,7 @@ export default {
 
   // === Daemons (Heartbeat) ===
   'daemons.title': '心跳进程',
+  'daemons.pollEvery': '每 5 秒轮询',
   'daemons.empty': '暂无心跳进程',
   'daemons.emptyHint': '心跳进程由 Agent 在执行任务时创建（例如让 Agent 启动开发服务器），用于需要长期在线的服务。',
   'daemons.emptyHint2': '宿主会周期检测服务端口，进程掉线约 10 秒后自动拉起。',

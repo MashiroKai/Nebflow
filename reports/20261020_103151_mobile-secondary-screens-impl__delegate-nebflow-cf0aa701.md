@@ -84,3 +84,35 @@
 测试夹具 = WS（`listScheduledTasks` → `scheduledTaskList`）；中段改推走 `routeWebSocket` 的 WebSocketRoute.send（`page.on('websocket')` 观察对象无 send，不注帧）。Esc 键会关整个面板（桌面全局键），行内创建的退出腿改走面板体内取消路径（分组签点击）。
 
 ---
+
+## P4 心跳进程 — 已实施
+
+**提交**：`feat(mobile-p4)`（本屏一提交）
+
+### 落地面
+
+- **几何（§8-1 同族）**：`#daemon-panel` 手机层迁出 v3 面板族（316/60vh）→ 精确顶挂 `left:6 / top:58+safe / 308×560 / r16` + `display:flex` 纵向。
+- **进程行（样张 §2 行结构，零重造）**：桌面 `.daemon-row` 全字段沿用 —— 状态点（running/starting/stopped/error/crashed 五档语义色）+ 名（portOpen 时原生 `<a>` 链）+ `:port` + 命令 + autoStart 自启开关 + 动作钮；手机层**两行化**（行 1 = 点/名/:port/开关，行 2 = 命令 ellipsis + 动作钮右对齐；`flex-wrap` + order 重排，字段与功能零删减）。
+- **运行点脉冲（样张 §4：1.6s 脉冲光环）**：桌面既有 `daemon-pulse 1.6s ease-out infinite` 原样沿用（T2 断言 animationName 守护）。
+- **脚注（开放点③文案沿用）**：`daemonFace.js` 填桌面恒空节点 `.daemon-panel-footer` —— 「每 5 秒轮询 · 」+ 现网 `daemons.emptyHint2` 原文（「宿主周期检测服务端口，进程掉线约 10 秒后自动拉起。」）；「每 5 秒轮询」= 新键 `daemons.pollEvery`（轮询周期 = openPanel 既有 5000ms 实现值，非虚构）。
+
+### 开放点处置（v3.5 P4 四条）
+
+| 开放点 | 处置 |
+|---|---|
+| ① 进程行 + 近次时间线合成形态 | **时间线不实施**：后端无心跳事件流字段（`/api/daemons` 无 history/lastSeen；daemonStatus WS 为单点状态），不伪造数据 —— 记「需后端透出心跳事件流【新增提案】」，行合成形态中时间线腿缺位 |
+| ② 延迟毫秒展示【新增提案】 | **不实施**（同上，无字段） |
+| ③「掉线约 10 秒自动拉起」文案沿用 | 采纳（脚注后腿 = emptyHint2 原文） |
+| ④ 行内自启开关与桌面双向同步 | 天然满足：开关即桌面同一 DOM 节点（optimistic flip + PUT，失败回滚），T4 守护 flip → PUT |
+
+### 验收映射（spec → `tests/mobile-p4-daemons.spec.mjs`，4/4 绿）
+
+| 样张验收点 | 实机断言 |
+|---|---|
+| §8-1 盒模型（同 P2/P3 面族口径） | T1：x=6 / 308×560 / r16 |
+| §2 进程行五字段 + §4 脉冲 | T2：三行状态点类（running/starting/error）、portOpen 链 href、`:8111`、命令文本、开关勾选态、`animationName = daemon-pulse` |
+| 开放点③ 脚注 | T3：含「每 5 秒轮询」+「掉线约 10 秒后自动拉起」 |
+| 开放点④ 开关同步 | T4：label 点按 flip → `PUT /api/daemons/d1` body `{autoStart:bool}` 双向 |
+| §8-9 零 console error | 各测试双收集 = 0 |
+
+---

@@ -686,10 +686,9 @@ body.mobile-layer .mh-tpanel .tp-mem-more {
 }
 
 /* ── v3 面板族几何：顶挂（morph 自各键）＋ 内容面恒全宽（走廊退役）──── */
-/* 定时/心跳/后台/智能体四面板：桌面为 header 锚定右上角下拉 / r4 为输入卡上方
-   居中 —— v3 改顶挂（悬浮层正下方，morph 起点即各键圆钮位置）。
-   （定时已迁出本族 → P3 精确 308×560，见下方专节。） */
-body.mobile-layer #daemon-panel,
+/* 心跳/后台/智能体三面板：桌面为 header 锚定右上角下拉 —— v3 改顶挂（悬浮层
+   正下方，morph 起点即各键圆钮位置）。（心跳已迁出本族 → P4 精确 308×560，
+   见下方专节。） */
 body.mobile-layer #bg-dropdown,
 body.mobile-layer #bgagent-dropdown {
   position: fixed;
@@ -873,6 +872,56 @@ body.mobile-layer .mh-rd-grp {
 }
 /* 已停用整行降透明（开放点⑤「降透明垫底」；文字档已有 .4 行级 0.72）。 */
 body.mobile-layer .reminder-row.disabled { opacity: 0.72; }
+
+/* ── P4 心跳进程：精确面板 + 进程行两行化（mobile-secondary-screens 批）──
+   样张 v3.5 P4：顶挂 308×560；进程行 = 状态点 + 名 + :port + 命令 + 自启
+   开关（桌面行全字段保留，动作为第二行尾）；运行点 1.6s 脉冲 = 桌面既有
+   daemon-pulse 原样；脚注 = 每 5 秒轮询 · 掉线约 10 秒自动拉起（daemonFace.js，
+   文案沿用现网）。时间线/延迟毫秒：后端无字段，记开放点不实施（不伪造数据）。 */
+body.mobile-layer #daemon-panel {
+  position: fixed;
+  top: calc(58px + env(safe-area-inset-top, 0px));
+  left: 6px;
+  right: auto;
+  width: min(308px, calc(100vw - 24px));
+  height: min(560px, calc(100dvh - 130px));
+  max-height: none;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+}
+/* 进程行两行化（308 宽下动作钮拥挤）：行 1 = 状态点 + 名 + :port + 自启开关；
+   行 2 = 命令（ellipsis）+ 动作钮右对齐。字段与功能零删减。 */
+body.mobile-layer #daemon-panel .daemon-row {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+body.mobile-layer #daemon-panel .daemon-info {
+  flex: 1 1 calc(100% - 92px); /* 行 1 主段：点 8 + 开关 38 + 间隙 */
+  min-width: 0;
+}
+body.mobile-layer #daemon-panel .daemon-autostart {
+  order: 2; /* 行 1 尾（DOM 序在 info 之后、actions 之前 —— 换行自然分段） */
+  margin-left: auto;
+}
+body.mobile-layer #daemon-panel .daemon-actions {
+  order: 3;
+  flex: 1 1 100%;
+  justify-content: flex-end;
+}
+body.mobile-layer #daemon-panel .daemon-command {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 脚注（daemonFace.js 填 .daemon-panel-footer；11px muted，安全区兜底）。 */
+body.mobile-layer .mh-daemon-foot {
+  padding: 8px 14px calc(8px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--glass-border);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-frame-text-muted, #98a2b3);
+}
 
 /* ── ② 页面容器 + 页面 section（互斥 .live；iOS push/pop 曲线）───────── */
 body.mobile-layer #mobile-pages {
