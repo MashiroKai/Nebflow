@@ -17,13 +17,15 @@ import scala.concurrent.duration.*
  * Legs:
  *  - A-1 explicit wait budget: a still-running foreground command auto-backgrounds
  *    at the budget (receipt with job id, process NOT killed, result delivered on
- *    completion through the background query face). The explicit `timeout` and the
- *    default 60min threshold share the single waitBudgetMs path, so compressing
- *    the budget via the explicit parameter exercises the identical conversion
- *    machinery without touching the global prop (zero cross-suite interference).
- *  - A-5 default-threshold arm plumbing: MAX_TIMEOUT reads the compressible prop
- *    (`nebflow.bash.maxTimeoutMs`) at every call, so the default arm (no explicit
- *    timeout) gets its budget from the same adjustable source.
+ *    completion through the background query face). Since main-agent-nonblocking
+ *    (2026-10-21) the effective budget = min(explicit `timeout`, the configured
+ *    budget `ctx.bashConfig.foregroundWaitBudgetMs`, default
+ *    Defaults.ForegroundWaitBudgetMs = 120s) — compressing the budget via the
+ *    explicit parameter exercises the identical conversion machinery without
+ *    touching global config (zero cross-suite interference).
+ *  - A-5 default-threshold arm plumbing: MAX_TIMEOUT (now the explicit-timeout
+ *    parse clamp + remote-exec face only) still reads the compressible prop
+ *    (`nebflow.bash.maxTimeoutMs`) at every call.
  *  - A-2 background no time limit: a waiting-type background task survives past
  *    the old 30min/4h hard cap (BashResilienceConfig with compressed values is
  *    injected into the ToolContext; under the old wiring the task would be killed
@@ -180,7 +182,6 @@ class BashAutoBackgroundSpec extends CatsEffectSuite:
         }
       yield ()).guarantee(ShellSession.destroySession("auto-bg-adopt").attempt.void)
     yield ()
-    end for
   }
 
   test("A-4 adopted job explicit cancel kills the still-running process tree") {

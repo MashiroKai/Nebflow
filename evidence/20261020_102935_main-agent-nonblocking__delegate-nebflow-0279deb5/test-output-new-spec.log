@@ -1,0 +1,34 @@
+sbt -batch "testOnly nebflow.core.tools.BashForegroundBudgetSpec"
+== 本批新增行为 spec（7/7 PASS，2026-10-20 10:38:34）==
+
+10:37:41.090 INFO nebflow.handlers - - - Tool Bash START: python3 -c "import time; time.sleep(8); print('clone-done')"
+10:37:52.478 INFO nebflow.handlers - - - Tool Bash START: python3 -c "import time; time.sleep(12); print('should-never-see-this')"
+10:37:58.917 WARN nebflow.shell - Foreground command idle for 4s (no output, no CPU progress) — killing: python3 -c "import time; time.sleep(12); print('should-never-see-this')"
+10:38:00.441 INFO nebflow.handlers - - - Tool Bash START: python3 -c "import time; time.sleep(9); print('adopted-survivor')"
+10:38:03.095 INFO nebflow.shell - Foreground no-progress ceiling retired — command adopted as background job: python3 -c "import time; time.sleep(9); print('adopted-survivor')"
+10:38:10.889 INFO nebflow.handlers - - - Tool Bash START: for i in 1 2 3 4 5 6 7 8 9 10; do echo tick-$i; sleep 1; done
+10:38:22.458 INFO nebflow.handlers - - - Tool Bash START timeout=3600000ms: sleep 8 && echo clamped-done
+10:38:31.500 INFO nebflow.handlers - - - Tool Bash START: echo short-cmd-ok
+
+nebflow.core.tools.BashForegroundBudgetSpec:
+  + N-1 default face: budget default = 120s, prop-compressible, config default carries it; MAX_TIMEOUT unchanged  0.205s
+  + N-2+N-4 today's clone regression: SILENT no-output command auto-backgrounds at the 2s budget (not stall-killed), receipt carries job id + query hint, result delivered on completion  11.395s
+  + N-3 OLD-face control (对照): same silent command with NO budget hits the 600s-class ceiling kill — the incident path  8.043s
+  + N-5 adopted job survives past the (compressed) no-progress ceiling — adoption retires the ceiling  10.431s
+  + N-2b chatty command backgrounds at the budget too — criterion is TIME, not output liveness  11.489s
+  + N-6 explicit timeout hint is clamped to the configured budget (author's zero-blocking ruling wins)  9.151s
+  + N-7 engine short-command family regression: fast commands stay foreground with real output (default config)  0.972s
+[info] Passed: Total 7, Failed 0, Errors 0, Passed 7
+
+逐条对照（验收①②）：
+- N-2：静默命令（python 睡眠 = 克隆形态）在 2s 预算到点转后台，回执含
+  [Background job started] / Job ID / Auto-backgrounded / NOT killed /
+  background_job_id 查询提示；~2s 返回；完成后查询面拿到 clone-done。
+- N-3：同形命令不注入预算（缺省 120s 不到点）+ 压缩停滞阈值（4s 判死/1s 采样）
+  → WARN "Foreground command idle for 4s … killing" + "[Command stalled]" =
+  今日事故路径的精确复现（对照腿）。
+- N-5：预算 2s 收编后，跨过 4s 判死点进程仍活（INFO "ceiling retired —
+  command adopted as background job" = 收编即退役的运行时证据），9s 自然完成。
+- N-2b：持续吐 tick 的命令照样 2s 转后台（判据=时间，与活性无关）。
+- N-6：agent 传 timeout=3600000 也被 2s 预算钳住（零阻塞裁定 > agent 意愿）。
+- N-7/N-1：短命令前台真实输出不变；缺省 120s / prop 可压缩 / MAX_TIMEOUT 仍 60min。

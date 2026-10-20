@@ -1,0 +1,24 @@
+sbt -batch "testOnly nebflow.core.tools.*" "scalafmtCheckAll"
+== core.tools 全包回归（2026-10-20，879 用例）==
+
+[info] Passed: Total 879, Failed 0, Errors 0, Passed 878, Skipped 1
+（1 skipped = 既有跳过用例，非本批；覆盖 ShellStuckDetectorSpec / ShellSessionRestartSpec /
+ShellKillOnRestartSpec / BashToolSpec / BashActivityBridgeSpec / BgTaskRegistrySpec /
+RemoteExecutorResolveSpec / 全部工具族 spec。）
+
+== 格式化状态说明（重要）==
+
+scalafmtCheckAll 在 main 树上即全量飘红（79 文件 must be formatted，含本批零触碰的
+Main.scala / AgentCore.scala 等——root cause = 533f43b34 "chore: optimize
+scalafmt/scalafix config" 的新配置对全树的改排要求，属 main 既有状态，非本批回归）。
+
+本批处置：
+- 5 个 main 文件（BashTool/shell/GatewayMain/Defaults/config）经 scalafmtOnly
+  重排后编译+测试全绿，fmt 面干净；
+- 2 个 spec 文件（BashAutoBackgroundSpec/BashToolForegroundSpec）scalafmtOnly
+  产出的 `end for` 补插与 scalac 3 的对位规则冲突（misaligned end marker，
+  4 处编译错误）——已删除 scalafmt 插入的 5 个 end marker（A-3 处 1 个本就合法，
+  一并删除保持一致），恢复可编译态并重跑通过（18/18）；这两个文件的 fmt 状态
+  回到与全树一致的既有飘红（本批未使其变差）。
+- scalafmt 3.8.6 对「括号包裹 for 推导式」补插 end marker 的产出无法编译 =
+  上游/配置级问题，建议另立条目处理（不在本批范围）。

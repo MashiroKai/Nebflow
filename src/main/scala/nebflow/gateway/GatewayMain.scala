@@ -611,7 +611,11 @@ object GatewayMain extends IOApp:
                                       stuckWindowSec =
                                         config.bashStuckWindowSec.getOrElse(nebflow.shared.Defaults.BashStuckWindowSec),
                                       healthCheckIntervalSec = config.bashHealthCheckIntervalSec
-                                        .getOrElse(nebflow.shared.Defaults.BgHealthCheckIntervalSec)
+                                        .getOrElse(nebflow.shared.Defaults.BgHealthCheckIntervalSec),
+                                      // main-agent-nonblocking（2026-10-21 作者裁定）：前台等待预算
+                                      // （默认 120s，作者可调）——超预算自动转后台，不杀。
+                                      foregroundWaitBudgetMs = config.bashForegroundWaitBudgetMs
+                                        .getOrElse(nebflow.shared.Defaults.ForegroundWaitBudgetMs)
                                     ),
                                     sandboxConfig = sandboxCfg
                                   )
@@ -1742,7 +1746,7 @@ object GatewayMain extends IOApp:
                                                                 .flatMap { target =>
                                                                   // #512 门审计批：开门目标与载体落日志——
                                                                   // 「重启后开的是哪条门」从终端日志即可对账
-                                                                  //（此前 openBrowser 静默 exec，验收只能靠肉眼）。
+                                                                  // （此前 openBrowser 静默 exec，验收只能靠肉眼）。
                                                                   logger.info(
                                                                     s"[door] boot 开门: 载体=${browserLauncher.mkString(" ")} 目标=$target（解析=PortalUrl env>config>brand；NEBFLOW_OPEN_UI=local ⇒ 本地自铸票）"
                                                                   ) *> openBrowser(target)
