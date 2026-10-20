@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<!-- reconnect-collapse harness.html — static test harness for the
+     「重连后 thinking/工具结果闪现 + 窗口抽动」 family (reconnect-collapse
+     batch, chain 69e5e2e1).
+
+     Imports the REAL frontend render modules (chat.js / persistence.js /
+     chatView.js — no stubs) and exposes two drivers:
+
+       window.__live()       →  build the LIVE mid-turn DOM through the exact
+                               functions the app runs on WS frames
+                               (renderUserBubble / appendThinkingDelta /
+                               renderTool / finishThinking / finishAi).
+       window.__reconnect(h) →  drive the REAL main.js initial-load replay leg
+                               (chat/historyReplay.js :: replayHistoryPageInitialLoad
+                               — moved verbatim out of main.js's historyPage
+                               handler by the 2026-10-20 reconnect-collapse
+                               batch), after seeding the per-session transient
+                               buffers the live frames would have left behind.
+
+     The spec (tests/reconnect-collapse.spec.mjs) serves the repo root over a
+     throwaway static server (never the 8080 host) and drives both paths
+     against the real modules — no replica copy anywhere: the red leg (baseline
+     tree) and the green leg (this tree) each run their own generation's real
+     code.
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>reconnect-collapse harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <style>
+    /* Minimal stand-in for the app shell: give #chat the column width the
+       real layout gives it, everything else comes from the real CSS. */
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #chat {
+      position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    // Namespace keeps live bindings: destructured `activeView` would snapshot
+    // the pre-setActiveView null (crashed the 69e5e2e1 salvage harness).
+    const chatViewMod = await import(`${WEB}/chatView.js`);
+    const { chatViews, ChatView, setActiveView } = chatViewMod;
+    const stateMod = await import(`${WEB}/state.js`);
+    const state = stateMod.default;
+    const chat = await import(`${WEB}/chat.js`);
+    const persistence = await import(`${WEB}/persistence.js`);
+    const utilsMod = await import(`${WEB}/utils.js`);
+    const historyReplay = await import(`${WEB}/chat/historyReplay.js`)
+      .catch(() => null); // baseline tree: the extracted module predates this batch
+
+    const chatEl = document.getElementById('chat');
+    const SID = 'reconnect-harness-session';
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    // ws.js 视图路由按 view.sessionId 匹配 msg.sessionId（findViewBySessionId）
+    // —— 主窗在 renderSessionSidebar/resetChatForActiveSession 里做同一件事。
+    chatViews.primary.sessionId = SID;
+    setActiveView(chatViews.primary);
+    state.activeSessionId = SID;
+
+    // Capture outgoing WS frames — nothing must reach a real socket here.
+    window.__captured = [];
+    state.ws = { readyState: 1, send: (data) => window.__captured.push(JSON.parse(data)) };
+
+    /** 现场读数：滚动位 + 每个 thinking 行的 content display 态 + tool body open
+     *  态 + 全行矩形（布局偏移量的数据源）。 */
+    window.__snapshot = () => {
+      const thinkingRows = [...chatEl.querySelectorAll('.thinking-row')].map((row) => {
+        const label = row.querySelector('.thinking-label');
+        const content = row.querySelector('.thinking-content');
+        const rect = row.getBoundingClientRect();
+        return {
+          display: content ? content.style.display : null,
+          labelExpanded: label ? label.classList.contains('expanded') : null,
+          labelText: label ? (label.textContent || '').trim() : null,
+          tucked: row.classList.contains('nf-tucked'),
+          rowRect: { top: Math.round(rect.top), height: Math.round(rect.height) },
+        };
+      });
+      const toolBodies = [...chatEl.querySelectorAll('.tool-card .body')].map((b) => ({
+        open: b.classList.contains('open'),
+        display: getComputedStyle(b).display,
+      }));
+      const chatRect = chatEl.getBoundingClientRect();
+      return {
+        scrollTop: chatEl.scrollTop,
+        scrollHeight: chatEl.scrollHeight,
+        clientHeight: chatEl.clientHeight,
+        thinkingRows,
+        toolBodies,
+        chatRect: { top: Math.round(chatRect.top), height: Math.round(chatRect.height) },
+      };
+    };
+
+    /** 驱动 1：live 腿 —— 通过 WS 帧同款函数搭出「turn 进行中」的聊天流。 */
+    window.__live = async ({ midThinking = true } = {}) => {
+      // 完全重置视图 + 会话瞬态，保证两个驱动顺序/重复可跑。
+      chatEl.innerHTML = '';
+      const view = chatViews.primary;
+      view.resetStream();
+      delete state.sessionThinkingBuffers[SID];
+      delete state.sessionTexts[SID];
+      delete state.sessionPendingTools[SID];
+      state.busySessionIds.delete(SID);
+
+      chat.renderUserBubble('帮我看一下文件');
+      state.busySessionIds.add(SID);
+
+      if (midThinking) {
+        // 思考进行中：live 腿的行是 nf-tucked（turn-line 单行揭示剧场），
+        // content 对裸行形态可见。
+        chat.appendThinkingDelta('我先梳理一下当前文件的结构：\n\n- 入口在 main.scala\n- 核心逻辑分三层', { round: 1, block: 1 });
+        // 后端记录器在 toolStart 时把 textBuf 里的文字 + thinking 落盘 ——
+        // 这条 ai 行带 text ⇒ history 恢复腿恒折叠它。
+        chat.appendAiText('先读一下入口文件。');
+        chat.finishThinking();
+        chat.finishAi(1200, 'harness-model');
+      } else {
+        chat.appendThinkingDelta('完整思考过程：第一步……第二步……', { round: 1, block: 1 });
+        chat.finishThinking();
+      }
+
+      chat.renderTool('Read', 'src/main/scala/Main.scala', 'package example\n\nobject Main extends App {\n  println(\"hello\")\n}\n', false, {}, SID);
+      state.busySessionIds.delete(SID);
+
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return window.__snapshot();
+    };
+
+    /** 红腿回退（仅基线树生效）：historyReplay.js 缺席 ⇒ 用打捞自 chain
+     *  69e5e2e1 的逐字副本（修复前 main.js 初载腿原样：wipe + restore +
+     *  旧 busy 重建面 —— thinking 内容可见）。本树（修复后）该模块在场，
+     *  此副本永不执行。 */
+    const legacyReplay = (msg, view) => {
+      view.pagination.pendingInitialLoad = false;
+      view.pagination.offset = msg.offset;
+      view.pagination.total = msg.total;
+      view.pagination.hasMore = msg.hasMore;
+      view.dom.chat.innerHTML = '';
+      Object.keys(state.sessionToolCards).forEach((sid) => delete state.sessionToolCards[sid]);
+      const isStillBusy = state.busySessionIds.has(msg.sessionId);
+      persistence.restoreFromBackendHistory(msg.messages, { busyTail: isStillBusy });
+      const thinkBuf = state.sessionThinkingBuffers[msg.sessionId];
+      const txtBuf = state.sessionTexts[msg.sessionId];
+      if (thinkBuf) {
+        view.stream.thinkingText = thinkBuf;
+        const hasText = !!txtBuf;
+        const done = hasText || !isStillBusy;
+        const row = document.createElement('div');
+        row.className = 'row ai thinking-row';
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble ai thinking-bubble' + (done ? ' thinking-done' : '');
+        const label = document.createElement('div');
+        label.className = 'thinking-label' + (done ? ' collapsible' : '');
+        const content = document.createElement('div');
+        content.className = 'thinking-content';
+        if (done) {
+          content.style.display = 'none';
+          label.classList.add('expanded');
+          label.onclick = () => {
+            const visible = content.style.display !== 'none';
+            content.style.display = visible ? 'none' : '';
+            label.classList.toggle('expanded', !visible);
+          };
+        }
+        content.innerHTML = utilsMod.renderMarkdownWithMath(view.stream.thinkingText, true);
+        bubble.appendChild(label);
+        bubble.appendChild(content);
+        row.appendChild(bubble);
+        view.dom.chat.appendChild(row);
+        view.stream.currentThinkingBubble = done ? null : bubble;
+      }
+      if (txtBuf) {
+        view.stream.aiText = txtBuf;
+        const row = document.createElement('div');
+        row.className = 'row ai';
+        view.stream.currentAiBubble = document.createElement('div');
+        view.stream.currentAiBubble.className = 'bubble ai';
+        view.stream.currentAiBubble.innerHTML = utilsMod.renderMarkdownWithMath(view.stream.aiText, true);
+        row.appendChild(view.stream.currentAiBubble);
+        view.dom.chat.appendChild(row);
+      }
+    };
+
+    /** 初载重放单点路由：本树 = 真实 chat/historyReplay.js（与 main.js 同源）；
+     *  基线树 = 上面的修复前副本。 */
+    window.__replayInitial = (msg, view) => {
+      if (historyReplay) historyReplay.replayHistoryPageInitialLoad(msg, view);
+      else legacyReplay(msg, view);
+    };
+
+    /** 驱动 2：重连腿 —— 铺好 live 帧留下的每会话瞬态 buffer，再交给
+     *  __replayInitial（本树跑真实 main.js 重放模块，基线树跑其修复前
+     *  副本）。零副本漂移：红绿腿各自跑自己那一代的真实代码。 */
+    window.__reconnect = async (history, { thinkBuf = '', txtBuf = '', stillBusy = true } = {}) => {
+      const view = chatViewMod.activeView;
+      const before = window.__snapshot();
+
+      if (thinkBuf) state.sessionThinkingBuffers[SID] = thinkBuf;
+      else delete state.sessionThinkingBuffers[SID];
+      if (txtBuf) state.sessionTexts[SID] = txtBuf;
+      else delete state.sessionTexts[SID];
+      if (stillBusy) state.busySessionIds.add(SID);
+      else state.busySessionIds.delete(SID);
+      delete state.pendingRestore[SID];
+
+      const frame = { sessionId: SID, messages: history, offset: 0, total: history.length, hasMore: false };
+      view.pagination.pendingInitialLoad = true;
+      window.__replayInitial(frame, view);
+
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const after = window.__snapshot();
+      return { before, after };
+    };
+
+    /** DOM 节点身份读数：footer 徽章（时长/复制胶囊）与 thinking 行的元素引用
+     *  + 几何矩形。幂等重放的钉 = 重放前后**同一批元素引用**（零重挂载）且
+     *  矩形逐像素相等（零位移）。 */
+    window.__nodeIdentity = () => {
+      const badge = chatEl.querySelector('.duration-badge');
+      const badgeRect = badge ? badge.getBoundingClientRect() : null;
+      const rowRects = [...chatEl.children].map((c) => {
+        const r = c.getBoundingClientRect();
+        return { cls: c.className, top: Math.round(r.top * 100) / 100, h: Math.round(r.height * 100) / 100 };
+      });
+      return {
+        badgeRef: badge || null,
+        badgeRect: badgeRect ? { top: Math.round(badgeRect.top * 100) / 100, left: Math.round(badgeRect.left * 100) / 100, w: Math.round(badgeRect.width * 100) / 100, h: Math.round(badgeRect.height * 100) / 100 } : null,
+        childCount: chatEl.childElementCount,
+        rowRects,
+        scrollTop: chatEl.scrollTop,
+      };
+    };
+
+    /** 节点身份必须**页内同域**比较：跨 page.evaluate 的元素引用会被序列化
+     *  （永远不相等也永远不"相等"）。钉重挂载 = 把重放前的徽章/行引用寄存在
+     *  window 上，重放后在同一 JS 域里做 === 。 */
+    window.__stampIdentity = () => {
+      window.__stamp = {
+        badge: chatEl.querySelector('.duration-badge'),
+        rows: [...chatEl.children],
+        scrollTop: chatEl.scrollTop,
+        rects: [...chatEl.children].map((c) => {
+          const r = c.getBoundingClientRect();
+          return { cls: c.className, top: Math.round(r.top * 100) / 100, h: Math.round(r.height * 100) / 100 };
+        }),
+      };
+      return true;
+    };
+    /** 读回身份判定（与 __stampIdentity 同域 ===）：sameBadge / sameRows /
+     *  rectsEqual / scrollTopEqual / childCount。 */
+    window.__readIdentity = () => {
+      const s = window.__stamp || {};
+      const badge = chatEl.querySelector('.duration-badge');
+      const rects = [...chatEl.children].map((c) => {
+        const r = c.getBoundingClientRect();
+        return { cls: c.className, top: Math.round(r.top * 100) / 100, h: Math.round(r.height * 100) / 100 };
+      });
+      return {
+        sameBadge: !!s.badge && s.badge === badge,
+        badgeConnected: !!badge && badge.isConnected,
+        sameRows: !!s.rows && s.rows.length === chatEl.childElementCount &&
+          s.rows.every((el, i) => el === chatEl.children[i]),
+        rectsEqual: !!s.rects && JSON.stringify(s.rects) === JSON.stringify(rects),
+        scrollTopEqual: s.scrollTop === chatEl.scrollTop,
+        childCount: chatEl.childElementCount,
+        stampedCount: s.rows ? s.rows.length : -1,
+      };
+    };
+
+    window.__reset = () => {
+      chatEl.innerHTML = '';
+      delete chatEl.dataset.nfReplayConsumed;
+      if (chatViews.primary && chatViews.primary.pagination) delete chatViews.primary.pagination.lastReplaySig;
+      state.busySessionIds.clear();
+      delete state.sessionThinkingBuffers[SID];
+      delete state.sessionTexts[SID];
+      delete state.sessionPendingTools[SID];
+    };
+
+    // ── WS 强制重连循环腿：真实 ws.js 机关（connect / onReconnect /
+    //    forceReconnect / 心跳）对上 spec 自起的迷你 RFC6455 peer。
+    //    historyPage 帧走与 main.js 相同的初载重放路由（__replayInitial）。
+    const wsMod = await import(`${WEB}/ws.js`).catch(() => null);
+    window.__wsState = { replays: 0, waiters: [], opens: 0, closes: 0 };
+    if (wsMod) {
+      wsMod.onMessage('historyPage', (msg, view) => {
+        if (!view) return;
+        view.pagination.loading = false;
+        if (view.pagination.pendingInitialLoad) window.__replayInitial(msg, view);
+        window.__wsState.replays++;
+        const waiters = window.__wsState.waiters.splice(0);
+        waiters.forEach((w) => w());
+      });
+      // main.js:3900-3906 重连腿的最小同形：重连成功 ⇒ 标初载 + 拉 history。
+      wsMod.onReconnect(() => {
+        const view = chatViewMod.activeView;
+        view.pagination.pendingInitialLoad = true;
+        wsMod.sendWs({ type: 'getHistory', sessionId: SID, limit: 50 });
+      });
+      window.__wsStart = () => { wsMod.connect(); };
+      /** 等重放计数超过 fromCount（事件错过 ALSO 安全：先查后等，带死线）。
+       *  返回 true=等到重放，false=超时。 */
+      window.__wsWaitReplay = (fromCount, timeoutMs = 8000) => new Promise((res) => {
+        const deadline = Date.now() + timeoutMs;
+        const check = () => {
+          if (window.__wsState.replays > fromCount) return res(true);
+          if (Date.now() > deadline) return res(false);
+          setTimeout(check, 30);
+        };
+        check();
+      });
+      /** 强制重连循环：n 次 forceReconnect（清退避立即重连），每轮等一次
+       *  重放 settle（双 rAF）。返回 { replays, wsReadyState }。 */
+      window.__wsLoop = async (n) => {
+        let from = window.__wsState.replays;
+        for (let i = 0; i < n; i++) {
+          wsMod.forceReconnect();
+          const got = await window.__wsWaitReplay(from, 8000);
+          from = window.__wsState.replays;
+          if (!got) break;
+          await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        }
+        return {
+          replays: window.__wsState.replays,
+          wsReadyState: state.ws ? state.ws.readyState : -1,
+        };
+      };
+    }
+
+    window.__ready = true;
+  </script>
+</body>
+</html>
