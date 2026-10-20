@@ -5,7 +5,7 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.bridge.{BridgeContext, BridgeManager, BridgePlugin}
+import nebflow.bridge.{AskAnswerReceipt, BridgeContext, BridgeManager, BridgePlugin}
 import nebflow.social.outbound.{
   AskPromptCodec,
   PromptAction,
@@ -422,7 +422,14 @@ final class FeishuBridgePlugin(
       case Right(_) =>
         val kept = AskPromptCodec.answers(flat.views, actions)
         val answers = flat.expandAnswerSlots(kept)
-        ctx.forwardInteractionAnswer(rid, rootSid, Json.obj("answers" -> answers.asJson)) *>
+        // answer-landing 实施批：回执反向通道登记（微信文本腿同款——失败出口经它
+        // 把「问题已作废+原因」显式送回本渠道；发送闭包 contained）。
+        AskAnswerReceipt.record(rid, AskAnswerReceipt.Entry(
+          channel = Name,
+          routeKey = rootSid,
+          send = line => reply(rootSid, line)
+        )) *>
+          ctx.forwardInteractionAnswer(rid, rootSid, Json.obj("answers" -> answers.asJson)) *>
           logger.info(s"feishu bridge: text answer forwarded requestId=$rid root=$rootSid answers=${answers.size}")
 
   /**
@@ -446,6 +453,8 @@ final class FeishuBridgePlugin(
       mine match
         case rid :: Nil =>
           ctx.cancelInteractionRequest(rid, "channel-cancel-keyword", FeishuBridgePlugin.Name) *>
+            // answer-landing 批：问题退役 ⇒ 回执反向通道随撤（幂等）。
+            AskAnswerReceipt.drop(rid) *>
             logger.info(s"feishu bridge: ask cancelled by keyword requestId=$rid session=$sessionId") *>
             reply(sessionId, WeixinAskLeg.CancelledLine)
         case Nil =>
@@ -760,6 +769,12 @@ final class FeishuBridgePlugin(
           val items = c.downField("items").as[List[Json]].toOption.getOrElse(Nil)
           val attachments =
             c.downField("attachments").as[List[String]].toOption.getOrElse(Nil).map(_.trim).filter(_.nonEmpty)
+          // answer-landing 实施批（表1 ★）：卡头批名 = 提问载荷归因（project 优先，
+          // 回落 nodeName）；文本降级形态同款（静态卡不动——按钮按 rid 消歧不受影响）。
+          val batch =
+            c.downField("project").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+              .orElse(c.downField("nodeName").as[String].toOption.map(_.trim).filter(_.nonEmpty))
+              .getOrElse("")
           val allViews = AskPromptCodec.viewsFromItemsJson(items)
           (requestId, allViews) match
             case (None, _) =>
@@ -789,9 +804,10 @@ final class FeishuBridgePlugin(
                           chatId,
                           flat.views,
                           FeishuAskCard.fallbackReason(PromptFallback.LocalOnly(localOnlyReason(flat.views))),
-                          undelivered
+                          undelivered,
+                          batch = batch
                         )
-                      else sendAskCards(cr, chatId, rid, flat.views, undelivered)
+                      else sendAskCards(cr, chatId, rid, flat.views, undelivered, batch = batch)
                     }
               }
           end match
@@ -821,7 +837,8 @@ final class FeishuBridgePlugin(
     chatId: String,
     rid: String,
     views: List[PromptView],
-    attachments: List[String]
+    attachments: List[String],
+    batch: String = ""
   ): IO[Unit] =
     val cards = FeishuAskCard.renderFull(views, rid, attachments)
     cards
@@ -837,9 +854,9 @@ final class FeishuBridgePlugin(
             cr,
             chatId,
             views,
-            FeishuAskCard.fallbackReason(PromptFallback.SendRejected(results.head.code, results.head.msg))
-          )
-        else
+            FeishuAskCard.fallbackReason(PromptFallback.SendRejected(results.head.code, results.head.msg)),
+            batch = batch
+          )        else
           IO(
             logger.warn(
               s"feishu bridge: ask cards PARTIALLY delivered to chat $chatId " +
@@ -922,15 +939,24 @@ final class FeishuBridgePlugin(
    * The text fallback leg (S-5/S-6 frozen copy, the same slot machinery).
    * `attachments` carries the UNDELIVERED paths only (media-split contract);
    * `Nil` keeps every pre-P1 render byte-identical.
+   *
+   * answer-landing 实施批（映射规则推荐表 表1 ★）：`batch` 非空 ⇒ 卡头前置一行
+   * 批名标注（`AskPromptCodec.batchHeaderLine` 单一来源模板，微信文本卡同款）；
+   * 空 ⇒ 与改前逐字节一致。
    */
   private def sendTextFallback(
     cr: FeishuCredentials.Credential,
     chatId: String,
     views: List[PromptView],
     reason: String,
-    attachments: List[String] = Nil
+    attachments: List[String] = Nil,
+    batch: String = ""
   ): IO[Unit] =
-    send(cr.appId, cr.appSecret, region, chatId, FeishuAskCard.renderText(views, reason, attachments)).flatMap { res =>
+    val header = nebflow.social.outbound.AskPromptCodec.batchHeaderLine(batch)
+    val body =
+      (if header.isEmpty then "" else header + "\n") +
+        FeishuAskCard.renderText(views, reason, attachments)
+    send(cr.appId, cr.appSecret, region, chatId, body).flatMap { res =>
       if res.ok then IO(logger.info(s"feishu bridge: ask TEXT fallback delivered to chat $chatId"))
       else IO(logger.warn(s"feishu bridge: ask TEXT fallback rejected too code=${res.code} msg=${res.msg}"))
     }
@@ -1051,7 +1077,14 @@ final class FeishuBridgePlugin(
                 .getOrElse(FeishuAskCard.OtherCopy)
             case PromptAction.Other(_, text) =>
               if text.isEmpty then FeishuAskCard.OtherCopy else text
-          ctx.forwardInteractionAnswer(rid, rootSid, Json.obj("answers" -> answers.asJson)) *>
+          // answer-landing 实施批：回执反向通道登记（文本腿同款；卡片点击腿同一
+          // requestId 键——后登记覆盖前登记，幂等）。
+          AskAnswerReceipt.record(rid, AskAnswerReceipt.Entry(
+            channel = Name,
+            routeKey = rootSid,
+            send = line => reply(rootSid, line)
+          )) *>
+            ctx.forwardInteractionAnswer(rid, rootSid, Json.obj("answers" -> answers.asJson)) *>
             IO(
               logger.info(s"feishu bridge: card answer forwarded requestId=$rid root=$rootSid answers=${answers.size}")
             ) *>

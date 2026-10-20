@@ -6,7 +6,7 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.bridge.BridgeContext
+import nebflow.bridge.{AskAnswerReceipt, BridgeContext}
 import nebflow.shared.SessionMeta
 import nebflow.social.outbound.{AskPromptCodec, PromptView}
 
@@ -641,6 +641,134 @@ class WeixinAskLegSpec extends CatsEffectSuite:
       WeixinIlinkBridgePlugin.Verdict.Pulled(2).json,
       Json.obj("verdict" -> "full-text".asJson, "segments" -> 2.asJson)
     )
+  }
+
+  // ──────── answer-landing 批（2026-10-21）：短号自由文本臂（表2 优先级 4★） ────────
+
+  private val secretOne =
+    List(PromptView(0, "密钥?", List(nebflow.social.outbound.PromptOption("甲")), secret = true))
+
+  test("WA-P8 short-number free-text arm: `N <text>` = question N's Other; out-of-range refused; secret fail-closed; the 0-prefix/comma legs unchanged") {
+    // B-3 恒单问：`1 开放` ≡ `0 开放` 的带题号便捷形（单问集 N 恒 1）
+    assertEquals(
+      WeixinAskLeg.parseReply("1 开放", one),
+      Right(Some(List(nebflow.social.outbound.PromptAction.Other(0, "开放"))))
+    )
+    // 多问在册（飞书文本腿形态）：`2 前进` 寻址第 2 题
+    assertEquals(
+      WeixinAskLeg.parseReply("2 前进", twoQuestions),
+      Right(Some(List(nebflow.social.outbound.PromptAction.Other(1, "前进"))))
+    )
+    // N 超界拒不钳制；3 位宽之外的数字串不是编号形（落标签臂 ⇒ 聊天透传）
+    assertEquals(WeixinAskLeg.parseReply("9 开放", one), Left(WeixinAskLeg.RangeReject))
+    assertEquals(WeixinAskLeg.parseReply("999 开放", one), Left(WeixinAskLeg.RangeReject))
+    assertEquals(WeixinAskLeg.parseReply("1000 开放", one), Right(None))
+    // secret 题 fail-closed（同构既有三臂口径）
+    assertEquals(WeixinAskLeg.parseReply("1 x", secretOne), Left(WeixinAskLeg.SecretReject))
+    // 既有腿零回归：`0 文本` 前缀、逗号多选（含逗号后空格容忍）
+    assertEquals(
+      WeixinAskLeg.parseReply("0 自己写", one),
+      Right(Some(List(nebflow.social.outbound.PromptAction.Other(0, "自己写"))))
+    )
+    assertEquals(
+      WeixinAskLeg.parseReply("1, 3", multiOne),
+      Right(
+        Some(List(nebflow.social.outbound.PromptAction.Pick(0, 0), nebflow.social.outbound.PromptAction.Pick(0, 2)))
+      )
+    )
+  }
+
+  // ──────── answer-landing 批（2026-10-21）缺陷②：媒体消息永不进 ask 臂 ────────
+
+  test("WI-A8 media message never enters the ask arm — a placeholder label colliding with an option label is NOT an answer") {
+    val out = Out()
+    val root = tmpRoot()
+    val png = root / "shot.png"; os.write(png, "png-bytes")
+    for
+      (p, ctx) <- started(out, List(meta("wx_a")))
+      // 选项标签就是媒体占位标签——无守卫时 label 臂的规范化碰撞会把「发了张图」
+      // 消费成选项作答（缺陷本体：入站通知被渲染进问题卡回答区）
+      _ <- p.onAgentEvent("s1", askFrame("rid-img", "s1", List(itemJson("选个图?", List("[图片]", "乙")))))
+      v <- p.intake(
+        ctx,
+        WeixinIlinkBridgePlugin
+          .Inbound(Some("wx_a"), Some("[图片]"), Some("m1"), mediaPath = Some(png.toString))
+      )
+      fw <- ctx.forwarded.get
+      injected <- ctx.injected.get
+      receipt <- AskAnswerReceipt.peek("rid-img")
+    yield
+      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Injected("s1"), "媒体消息恒走媒体臂，不进 ask 臂")
+      assertEquals(fw, List.empty, "占位标签不得被消费成作答（零混入）")
+      assert(injected.exists(_._2.contains(png.toString)), s"媒体臂注入落地路径行：$injected")
+      assertEquals(receipt, None, "未作答 ⇒ 无回执登记")
+    end for
+  }
+
+  // ──────── answer-landing 批（2026-10-21）表1 ★：批名卡头 ────────
+
+  test("WA-R4 batch header line: non-empty batch → leading [批名]; empty batch → byte-identical pre-batch card") {
+    val views = List(PromptView(0, "用哪个?", List(nebflow.social.outbound.PromptOption("甲"))))
+    val (withBatch, truncB) = WeixinAskLeg.renderAskText(views, Nil, requestId = "rid-1", batch = "proj-x")
+    val (without, truncN) = WeixinAskLeg.renderAskText(views, Nil, requestId = "rid-1")
+    assert(withBatch.startsWith("[proj-x]\n"), s"批名行卡头前置：${withBatch.take(30)}")
+    assert(without.startsWith("第 1/1 问"), s"无批名零头行：${without.take(30)}")
+    assertEquals(withBatch.stripPrefix("[proj-x]\n"), without, "批名行只前缀差（其余逐字节一致）")
+    assertEquals(truncB, truncN, "批名行不参与截断判据")
+  }
+
+  test("WI-A9 the ask card carries the frame's attribution as the batch header (project first, nodeName fallback, absent → none)") {
+    val out = Out()
+    def frame(rid: String, extra: (String, Json)*): Json =
+      Json.obj(
+        List[(String, Json)](
+          "type" -> "askUser".asJson,
+          "sessionId" -> "s1".asJson,
+          "requestId" -> rid.asJson,
+          "items" -> Json.fromValues(simpleItems)
+        ) ++ extra*
+      )
+    for
+      (p, ctx) <- started(out, List(meta("wx_a")))
+      _ <- p.onAgentEvent("s1", frame("rid-b1", "project" -> "proj-x".asJson))
+      _ <- p.onAgentEvent("s1", frame("rid-b2", "nodeName" -> "node-b".asJson))
+      _ <- p.onAgentEvent("s1", frame("rid-b3"))
+      sent <- out.sent.get
+    yield
+      assertEquals(sent.size, 3, "三张卡各走一次外发")
+      assert(sent(0)._2.startsWith("[proj-x]\n"), s"project 归因进卡头：${sent(0)._2.take(30)}")
+      assert(sent(1)._2.startsWith("[node-b]\n"), s"nodeName 回落：${sent(1)._2.take(30)}")
+      assert(!sent(2)._2.startsWith("["), s"无归因零头行：${sent(2)._2.take(30)}")
+    end for
+  }
+
+  // ──────── answer-landing 批（2026-10-21）缺陷①：回执反向通道接线 ────────
+
+  test("WI-A10 answerAsk registers the receipt channel; cancel/askUserClosed retire it") {
+    val out = Out()
+    for
+      (p, ctx) <- started(out, List(meta("wx_a")))
+      // 作答 ⇒ 转发的同一时刻登记回执通道（channel=渠道名, routeKey=发送者）
+      _ <- p.onAgentEvent("s1", askFrame("rid-rc1", "s1", simpleItems))
+      _ <- p.intake(ctx, WeixinIlinkBridgePlugin.Inbound(Some("wx_a"), Some("2"), Some("m1")))
+      rc1 <- AskAnswerReceipt.peek("rid-rc1")
+      // 取消关键字 ⇒ 登记随撤
+      _ <- p.onAgentEvent("s1", askFrame("rid-rc2", "s1", simpleItems))
+      _ <- p.intake(ctx, WeixinIlinkBridgePlugin.Inbound(Some("wx_a"), Some("取消问题"), Some("m2")))
+      rc2 <- AskAnswerReceipt.peek("rid-rc2")
+      // askUserClosed ⇒ 登记随撤（幂等二次清理）
+      _ <- p.onAgentEvent("s1", askFrame("rid-rc3", "s1", simpleItems))
+      _ <- p.onAgentEvent(
+        "s1",
+        Json.obj("type" -> "askUserClosed".asJson, "sessionId" -> "s1".asJson, "requestId" -> "rid-rc3".asJson)
+      )
+      rc3 <- AskAnswerReceipt.peek("rid-rc3")
+    yield
+      assertEquals(rc1.map(_.channel), Some("weixin-ilink"))
+      assertEquals(rc1.map(_.routeKey), Some("wx_a"))
+      assertEquals(rc2, None, "取消随撤登记（僵尸卡收口的载具面）")
+      assertEquals(rc3, None, "closed 随撤登记")
+    end for
   }
 
 end WeixinAskLegSpec

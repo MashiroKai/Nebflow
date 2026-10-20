@@ -58,7 +58,13 @@ object InteractionHub:
     createdAt: Long
   )
 
-  def apply(): Behavior[InteractionHubCommand] =
+  /**
+   * @param liveness askerAlive 读时投影探针（answer-landing 批 2026-10-21，开放
+   *   问题 #3 推荐默认采纳）：`sourceSession → 注册表在册?`。`None`（缺省）=
+   *   未接线 ⇒ 快照帧逐字节不改（既有测试构造零改动）；GatewayMain 接线
+   *   `sharedResources.agentRegistry` 读数。
+   */
+  def apply(liveness: Option[String => IO[Boolean]] = None): Behavior[InteractionHubCommand] =
     Behaviors.setup { ctx =>
       val pending: Ref[IO, Map[String, PendingRequest]] = Ref.unsafe(Map.empty)
       val rootWsSend: Ref[IO, Map[String, Json => IO[Unit]]] = Ref.unsafe(Map.empty)
@@ -77,12 +83,12 @@ object InteractionHub:
               ctx.forkTurn(handleAnswered(pending, rootWsSend, ans)) *> IO.pure(behavior)
             case InteractionHubCommand.ListPendingAsks(rootSessionId, reply) =>
               // 刷新存活 (2026-09-03): read-only snapshot for reconnect replay.
-              ctx.forkTurn(handleListPendingAsks(pending, rootSessionId, reply)) *> IO.pure(behavior)
+              ctx.forkTurn(handleListPendingAsks(pending, liveness, rootSessionId, reply)) *> IO.pure(behavior)
             case InteractionHubCommand.ListAllPendingAsks(reply) =>
               // #250 第③项 (2026-09-13): global snapshot — the frontend's pending
               // mirror (bar/badge) rebuilds from ONE global read instead of
               // depending on which session happens to be (re)subscribed.
-              ctx.forkTurn(handleListAllPendingAsks(pending, reply)) *> IO.pure(behavior)
+              ctx.forkTurn(handleListAllPendingAsks(pending, liveness, reply)) *> IO.pure(behavior)
             case InteractionHubCommand.RootReachable(rootSessionId, reply) =>
               // 工具面按角色分化批 B6 (2026-09-13): read-only reachability probe —
               // the non-blocking AskUserQuestion preflights with this before it
@@ -295,11 +301,13 @@ object InteractionHub:
   // ============================================================
   private def handleListPendingAsks(
     pending: Ref[IO, Map[String, PendingRequest]],
+    liveness: Option[String => IO[Boolean]],
     rootSessionId: String,
     reply: ActorRef[List[Json]]
   ): IO[Unit] =
     pending.get
       .map(m => snapshotFrames(m, Some(rootSessionId)))
+      .flatMap(list => annotateAskerAlive(list, liveness))
       .flatTap(list =>
         if list.nonEmpty then logger.info(s"ListPendingAsks root=$rootSessionId → ${list.size} pending ask(s) replayed")
         else IO.unit
@@ -322,12 +330,39 @@ object InteractionHub:
    */
   private def handleListAllPendingAsks(
     pending: Ref[IO, Map[String, PendingRequest]],
+    liveness: Option[String => IO[Boolean]],
     reply: ActorRef[List[Json]]
   ): IO[Unit] =
     pending.get
       .map(m => snapshotFrames(m, None))
+      .flatMap(list => annotateAskerAlive(list, liveness))
       .flatTap(list => logger.info(s"ListAllPendingAsks → global pending-ask snapshot: ${list.size} card(s)"))
       .flatMap(list => (reply ! list).void)
+
+  /**
+   * 僵尸 pending 的**发起方活性标注**（answer-landing 实施批 2026-10-21；开放问题
+   * #3 推荐默认采纳「非破坏性标注」——只读不杀，零超时纪律不破）：每帧按
+   * `sourceSession` 现查统一注册表并落 `askerAlive` 布尔键——发起会话已亡的卡
+   * （blocked/终态节点 30min 销毁窗收殓后）在健康面/待办条可见「发起会话已结束，
+   * 答复将走重入面」。**读时投影**（hub-projection placement）：零生命周期钩子、
+   * 零槽位写面、读数恒新鲜（每次快照重算）；探针缺席（未接线）⇒ 逐字节不改帧。
+   * best-effort：单帧标注失败不拖垮快照。
+   */
+  private def annotateAskerAlive(frames: List[Json], liveness: Option[String => IO[Boolean]]): IO[List[Json]] =
+    liveness match
+      case None => IO.pure(frames)
+      case Some(alive) =>
+        frames.traverse { f =>
+          val src = f.hcursor.downField("sourceSession").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+          src match
+            case None => IO.pure(f)
+            case Some(sid) =>
+              alive(sid)
+                .map(a => f.deepMerge(Json.obj("askerAlive" -> Json.fromBoolean(a))))
+                .handleErrorWith(e =>
+                  logger.warn(s"askerAlive annotate failed (sourceSession=$sid): ${e.getMessage}").as(f)
+                )
+        }
 
   /**
    * 快照帧构造（按 root 过滤可选 = None 即全局）。只读：不触碰槽位。
