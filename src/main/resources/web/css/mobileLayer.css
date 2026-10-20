@@ -292,18 +292,31 @@ body.mobile-layer .mh-dd-hd i svg {
   height: 19px;
   transition: transform 0.45s cubic-bezier(0.3, 1.36, 0.45, 1);
 }
+/* 手机六件③：列展开时列头钮（触发钮）实底激活态 —— 与面板内首项同图标
+   可区分（作者实测「两个几乎一样的层叠图标并排」）；实底 = sapphire 底白标。 */
+body.mobile-layer .mh-dd.open .mh-dd-hd {
+  width: 32px;
+  height: 32px;
+  margin: 4px auto 0;
+  border-radius: 50%;
+  background: rgb(var(--sapphire));
+  color: #fff;
+  box-shadow: 0 2px 8px rgb(var(--sapphire) / 0.4);
+}
 body.mobile-layer .mh-dd.open .mh-dd-hd svg,
 body.mobile-layer .mh-dd.open .mh-dd-hd i svg { transform: scale(0.85); }
+/* 手机六件②：左列紧凑化（键 36/gap 4——列长收紧、间距松朗感来自留白而非键距） */
 body.mobile-layer .mh-dd-bd {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 0 0 6px;
+  gap: 4px;
+  padding: 0 0 4px;
 }
 /* 子钮 = 40×40 圆键（搬移的真实键与自建键统一形态；桌面 id 规则被此作用域压过） */
 body.mobile-layer .mh-dd-bd > .mh-key {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
+  margin: 0 auto;
   flex: none;
   padding: 0;
   border: none;
@@ -336,8 +349,8 @@ body.mobile-layer .mh-dd.open .mh-dd-bd > .mh-key {
 body.mobile-layer .mh-dd-bd > .mh-key:active { transform: scale(0.9); }
 body.mobile-layer .mh-dd-bd > .mh-key svg,
 body.mobile-layer .mh-dd-bd > .mh-key i svg {
-  width: 18px;
-  height: 18px;
+  width: 17px;
+  height: 17px;
 }
 body.mobile-layer .mh-dd-bd > .mh-key[hidden],
 body.mobile-layer .mh-dd-bd > .mh-key.hidden {
@@ -369,14 +382,20 @@ body.mobile-layer .mh-dd-bd .bgagent-dot,
 body.mobile-layer .mh-dd-bd .pa-dot { display: none; }
 body.mobile-layer .mh-dd-bd .bg-count,
 body.mobile-layer .mh-dd-bd .bgagent-count,
+/* 手机六件②：徽标出键体外挂（右上角 -3px 悬挂 + 1.5px 页底色描边）——
+   不再压在头像/图标本体上（作者实测「徽标直接压在头像上」）。 */
+body.mobile-layer .mh-dd-bd .bg-count,
+body.mobile-layer .mh-dd-bd .bgagent-count,
 body.mobile-layer .mh-dd-bd .pa-count,
 body.mobile-layer .mh-key-badge {
   position: absolute;
-  top: 0;
-  right: 0;
-  min-width: 14px;
-  height: 14px;
+  top: -3px;
+  right: -3px;
+  min-width: 13px;
+  height: 13px;
   border-radius: 7px;
+  border: 1.5px solid var(--glass-bg, #fff);
+  box-sizing: content-box;
   background: rgb(var(--brand-green));
   color: #fff;
   font-size: 9px;
@@ -1335,8 +1354,9 @@ body.mobile-layer #mobile-pages #usage-dashboard {
   min-height: 0;
   border-radius: 0;
 }
-/* 桌面关闭钮退场：返回钮（页面头「<」＋ navController 注入款 .mobile-back-injected）
-   接管；桌面关闭路径本身保留（Escape/外部关闭 ⇒ 对账弹栈，见 navController）。 */
+/* 桌面关闭钮退场：返回 = 页面壳 .mobile-page-header 唯一「<」（六件⑤：
+   navController 注入款 .mobile-back-injected 双层返回退役）；桌面关闭路径
+   本身保留（Escape/外部关闭 ⇒ 对账弹栈，见 navController）。 */
 body.mobile-layer #settings-modal-close,
 body.mobile-layer #usage-close {
   display: none !important;
@@ -1402,6 +1422,11 @@ body.mobile-layer #agent-profile-panel {
   animation: none;
 }
 body.mobile-layer #agent-profile-panel[hidden] { display: none; }
+/* 六件④：设置页入口行（.profile-entry）弹窗形态 —— 面板/幕升到页面容器(156)
+   之上（root 域 60 不变：根页 #mobile-pages 不 live，零影响）。幕 158 < 面板 160，
+   点幕收面（collapseAll → closeProfilePanel 缝已在 headerController）。 */
+body.mobile-layer.mf-page-open #agent-profile-panel { z-index: 160; }
+body.mobile-layer.mf-page-open.ap-open .mh-scrim { z-index: 158; }
 
 /* ── 手机层通用补遗（与既有 css/mobile.css 的 ≤768px 规则互补）──────── */
 
@@ -1444,13 +1469,19 @@ body.mobile-layer #mobile-pages .team-scroll {
   padding: 12px 12px calc(24px + env(safe-area-inset-bottom, 0px));
 }
 body.mobile-layer #mobile-pages .team-scroll::-webkit-scrollbar { display: none; }
+/* 手机六件⑥：项目卡 = 内容高紧凑卡（基座 .team-card flex:1 1 280px 的拉伸
+   语言在桌面双列网格成立，手机单列纵滚把每卡拉到半屏空白——改内容高顺排，
+   一屏多张往下滚）。 */
 body.mobile-layer #mobile-pages .team-card.project-card {
   width: 100%;
   max-width: none;
   margin: 0;
-  flex-shrink: 0;
+  flex: 0 0 auto;
   border-radius: 16px;
-  padding: 12px 14px;
+  padding: 10px 14px;
+}
+body.mobile-layer #mobile-pages .team-card.project-card .team-card-header {
+  padding: 2px 0 8px;
 }
 body.mobile-layer #mobile-pages .team-card-title {
   font-size: 15px;
@@ -1467,8 +1498,9 @@ body.mobile-layer #mobile-pages .team-card-summary {
   margin-top: 4px;
 }
 body.mobile-layer #mobile-pages .project-fields {
-  gap: 6px;
-  margin-top: 10px;
+  gap: 5px;
+  margin-top: 8px;
+  padding-top: 8px;
 }
 body.mobile-layer #mobile-pages .project-field {
   font-size: 12px;
@@ -1568,25 +1600,56 @@ body.mobile-layer #mobile-pages .ud-curve {
   overflow: hidden;
 }
 
-/* ── P12 设置：profile 区置顶（agentProfile 停靠块）+ 非绿主键（v3.6①）────
-   样张 P12 = profile 区与已实施 agentProfile.js 一一对应（头像预览/上传头像
-   [主键]/恢复默认/名称行内回车存/同源文案），排版置顶；七分组沿用桌面
-   renderSettings 次序（零重排）。
-   停靠形态（navController syncProfileBlock）：面板 = 页体首块常显，头关闭钮
-   退场（块无「关闭」语义），morph 浮层几何（agent-profile-panel 桌面居中卡）
-   在页面体内改文档流卡。 */
-body.mobile-layer .mobile-page-body .agent-profile-panel {
-  position: static;
+/* ── P12 设置：profile 入口行（六件④：停靠常显退役 → 显式入口）────────
+   手机实测反馈「进入设置页自动弹出『智能体』面板模态」——面板不再停靠为页体
+   首块常显，改页体首块一条入口行（navController syncProfileBlock 注入），点击
+   才 openProfilePanel() 弹窗形态（几何 = 1408 行 #agent-profile-panel 手机浮层）。
+   样式与设置面卡同语言：glass 面 + 16px 圆角 + sapphire 图标位 + 尾部 chevron。 */
+body.mobile-layer .mobile-page-body .profile-entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: auto;
-  max-width: none;
-  margin: 12px 12px 0;
   flex-shrink: 0;
-  border-radius: 16px;
+  margin: 12px 12px 0;
   padding: 12px 14px;
-  overflow: hidden;
+  border-radius: 16px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: var(--color-text, #1a1d24);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.18s ease;
 }
-body.mobile-layer .mobile-page-body .agent-profile-panel .ap-close {
-  display: none;
+body.mobile-layer .mobile-page-body .profile-entry:active {
+  background: var(--glass-etched-bg, rgba(0, 0, 0, 0.045));
+}
+body.mobile-layer .mobile-page-body .profile-entry .profile-entry-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  background: rgb(var(--sapphire));
+  color: #fff;
+}
+body.mobile-layer .mobile-page-body .profile-entry .profile-entry-ico svg {
+  width: 17px;
+  height: 17px;
+}
+body.mobile-layer .mobile-page-body .profile-entry span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+body.mobile-layer .mobile-page-body .profile-entry .profile-entry-arrow {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: var(--color-text-muted, #8b8e96);
 }
 /* 上传头像主键 = 官网登录卡同款（v3.6① 绿键退役；值面取 auth 键族字面）：
    light #111827 底/白字、hover #374151；dark 前景背景互换（#e8eaed/#13161c、

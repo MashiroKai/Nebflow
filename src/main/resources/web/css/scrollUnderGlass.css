@@ -19,7 +19,10 @@
  * ::after 描画在 #chat 之上；弹窗族（overlay+modal）同理。pointer-events:none，
  * 不拦任何交互。 */
 
-.scroll-under-glass {
+.scroll-under-glass,
+/* 手机六件①：会话面顶栏（头像 chips 悬浮层）——滚动内容从其下穿过渐隐
+   （仅手机层作用域；桌面 #header 有自己的通栏玻璃底，不适用） */
+body.mobile-layer #header {
   --sug-fade: 28px;   /* 裙边高（= 渐隐过渡带，作者档 24–32px 取中） */
   --sug-blur: 12px;
   --sug-sat: 1.35;
@@ -27,7 +30,8 @@
   position: relative;
 }
 
-.scroll-under-glass::after {
+.scroll-under-glass::after,
+body.mobile-layer #header::after {
   content: '';
   position: absolute;
   top: 100%;
@@ -48,7 +52,9 @@
 /* ── 降级态：机制自选（js/scrollUnderGlass.js 探测器 + CSS.supports 特性检测）──
    只摘 backdrop-filter，tint + mask 渐隐原样保留（几何零变）。 */
 html.no-backdrop .scroll-under-glass::after,
-html.glass-degraded .scroll-under-glass::after {
+html.glass-degraded .scroll-under-glass::after,
+html.no-backdrop body.mobile-layer #header::after,
+html.glass-degraded body.mobile-layer #header::after {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   /* mask 显式重申（降级态的本体 = 渐隐过渡；防类切换后伪元素 mask 计算漂移） */
@@ -58,10 +64,12 @@ html.glass-degraded .scroll-under-glass::after {
 
 /* 暗色：tint 换暗玻璃底色（两态同构，仅配色） */
 @media (prefers-color-scheme: dark) {
-  .scroll-under-glass {
+  .scroll-under-glass,
+  body.mobile-layer #header {
     --sug-tint: rgba(22, 24, 29, 0.46);
   }
-  .scroll-under-glass::after {
+  .scroll-under-glass::after,
+  body.mobile-layer #header::after {
     background: linear-gradient(to bottom, var(--sug-tint), rgba(22, 24, 29, 0));
   }
 }

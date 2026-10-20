@@ -1,11 +1,12 @@
 // mobile-p12-settings.spec.mjs — P12「设置」右列推送页验收
 //（mobile-secondary-screens 实施批；样张 v3.5 P12 + 开放点①②③④按设计批推荐，
-//  主键规格 = v3.6① 绿键退役裁定字面）。
+//  主键规格 = v3.6① 绿键退役裁定字面；六件④ 2026-10-20 停靠常显退役 → 入口行）。
 //
-// 样张→实机 DOM 映射（实施批口径）：
-//   页范式 …… 右列键推入 .mobile-page（壳既有）；内容面 = profile 置顶块
-//        （agentProfile 面板停靠形态，navController syncProfileBlock 收编）+
-//        桌面 #settings-modal（renderSettings 七分组，零重排）。
+// 样张→实机 DOM 映射（实施批口径，六件④ 修订）：
+//   页范式 …… 右列键推入 .mobile-page（壳既有）；内容面 = profile 入口行
+//        （navController syncProfileBlock 注入，点击才 openProfilePanel 弹窗
+//        形态 —— 手机实测「进设置页自动弹『智能体』模态」退役）+ 桌面
+//        #settings-modal（renderSettings 七分组，零重排）。
 //   §2-P12 profile 区 …… 与已实施 agentProfile.js 一一对应：头像预览/上传
 //        头像[主键]/恢复默认/名称行内回车存/同源文案（profile.note i18n 同键）。
 //   v3.6① 非绿主键 …… .ap-btn-primary 手机层 = light #111827/白字 hover
@@ -13,7 +14,7 @@
 //        （应用 DOM 有 lucide svg ⇒ computed display:none 落实「无图标」）；
 //        500 字重。守卫：页内无按钮计算背景 = 品牌绿。
 //   开放点② 分组次序沿用桌面 …… renderSettings 原样（T3 断言首分组在
-//        profile 块之后）。
+//        入口行之后）。
 //   开放点③「重启服务」红字+二次确认【新增提案】④桌面项去留 …… 后端无
 //        重启端点/桌面项为桌面渲染，均不伪造 —— 记报告（不实施）。
 //
@@ -111,27 +112,37 @@ function watchErrors(page) {
   return errors;
 }
 
-test('T1 profile block docked at page-body top, always visible, popup semantics yield', async ({ page }) => {
+test('T1 settings opens with NO auto profile popup; entry row opens panel on explicit click', async ({ page }) => {
   const errors = watchErrors(page);
   await bootApp(page, 'dark');
   await pushSettings(page);
 
-  // 停靠块 = 页体首块（在 #settings-modal 之前）且常显。
+  // 六件④：进设置页零自动弹 —— 面板隐藏、无 ap-open scrim 态。
+  await expect(page.locator('#agent-profile-panel')).toBeHidden();
+  expect(await page.evaluate(() => document.body.classList.contains('ap-open'))).toBe(false);
+
+  // 入口行 = 页体首块（在 #settings-modal 之前）且可见。
   const body = page.locator('.mobile-page[data-page="settings"] .mobile-page-body');
-  const firstChildId = await body.evaluate((el) => el.firstElementChild?.id || '');
-  expect(firstChildId).toBe('agent-profile-panel');
+  const firstClass = await body.evaluate((el) => el.firstElementChild?.className || '');
+  expect(firstClass).toContain('profile-entry');
+  const entry = page.locator('.mobile-page[data-page="settings"] .profile-entry');
+  await expect(entry).toBeVisible();
+  await expect(entry).toContainText('智能体');
+
+  // 显式点击 → 弹窗形态（手机浮层卡 + ap-open scrim 态）。
+  await entry.click();
   await expect(page.locator('#agent-profile-panel')).toBeVisible();
-  await expect(page.locator('#settings-modal')).toBeVisible();
+  expect(await page.evaluate(() => document.body.classList.contains('ap-open'))).toBe(true);
 
   // 同源文案（profile.note i18n 同键 = agentProfile.js 渲染面）。
   await expect(page.locator('#agent-profile-panel .ap-note')).toContainText('头像本地优先保存');
-  // 名称行 + 上传/恢复钮在场；头关闭钮退场（停靠块无「关闭」语义）。
   await expect(page.locator('#agent-profile-panel .ap-name-input')).toBeVisible();
   await expect(page.locator('#agent-profile-panel .ap-btn-primary')).toBeVisible();
   await expect(page.locator('#agent-profile-panel .ap-btn-ghost')).toBeVisible();
-  expect(await page.locator('#agent-profile-panel .ap-close').evaluate((el) => getComputedStyle(el).display)).toBe('none');
 
-  // 弹窗语义让位：停靠形态不走 ap-open scrim（常显块 ≠ 弹窗）。
+  // X 收回（弹窗语义完整：scrim 态清 + 面板隐藏）。
+  await page.locator('#agent-profile-panel .ap-close').click();
+  await expect(page.locator('#agent-profile-panel')).toBeHidden();
   expect(await page.evaluate(() => document.body.classList.contains('ap-open'))).toBe(false);
   expect(errors).toEqual([]);
 });
@@ -140,6 +151,8 @@ test('T2 non-green primary key (v3.6①): light/dark surface swap, flat, no icon
   const errors = watchErrors(page);
   await bootApp(page, 'light');
   await pushSettings(page);
+  // 六件④：面板弹窗形态需入口行显式打开。
+  await page.locator('.mobile-page[data-page="settings"] .profile-entry').click();
   const primary = page.locator('#agent-profile-panel .ap-btn-primary');
   let cs = await primary.evaluate((el) => {
     const s = getComputedStyle(el);
@@ -173,12 +186,14 @@ test('T2 non-green primary key (v3.6①): light/dark surface swap, flat, no icon
   expect(errors).toEqual([]);
 });
 
-test('T3 name inline save on Enter; groups follow desktop order after the profile block; undock on pop', async ({ page }) => {
+test('T3 name inline save on Enter; groups follow desktop order after the entry row; entry removed on pop', async ({ page }) => {
   const errors = watchErrors(page);
   await bootApp(page, 'dark');
   await pushSettings(page);
 
-  // 名称行内回车存（saveName 写穿 state.rootDisplayName + 播 root-name-change）。
+  // 名称行内回车存（先入口行显式开面板；saveName 写穿 state.rootDisplayName
+  // + 播 root-name-change）。
+  await page.locator('.mobile-page[data-page="settings"] .profile-entry').click();
   const input = page.locator('#agent-profile-panel .ap-name-input');
   await input.fill('笨笨二号');
   await input.press('Enter');
@@ -188,12 +203,14 @@ test('T3 name inline save on Enter; groups follow desktop order after the profil
   });
   expect(named).toBe('笨笨二号');
 
-  // 七分组沿用桌面次序：profile 块之后的 #settings-modal 内分组标题在场。
+  // 七分组沿用桌面次序：入口行之后的 #settings-modal 内分组标题在场。
   await expect(page.locator('#settings-modal .settings-modal-header')).toBeVisible();
 
-  // 出页拆铺：面板归位 body 且隐藏（弹窗语义还原）。
+  // 出页清场：入口行移除、面板归位 body 且隐藏（弹窗语义还原）。
+  await page.locator('#agent-profile-panel .ap-close').click();
   await page.locator('.mobile-page[data-page="settings"] .mobile-page-header .mobile-back-btn').click();
   await expect(page.locator('.mobile-page[data-page="settings"]')).not.toHaveClass(/live/);
+  expect(await page.locator('.profile-entry').count()).toBe(0);
   const docked = await page.evaluate(() => {
     const p = document.getElementById('agent-profile-panel');
     return { inBody: p.parentElement === document.body, hidden: p.hidden };

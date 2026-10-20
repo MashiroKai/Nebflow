@@ -86,7 +86,8 @@ function observeList(dd) {
     });
     // 宽 40 恒定：列高（CSS height 直接用）= 头钮 40 + n*40 + (n-1)*6 间隙
     // + 底 6 padding（少算头钮 ⇒ 末键被 overflow 裁掉 —— 实测设置键消失）。
-    dd.style.setProperty('--dh', `${40 + kids.length * 40 + Math.max(0, kids.length - 1) * 6 + 6}px`);
+    // 手机六件②：键 36/gap 4 紧凑档（与 mobileLayer .mh-key 同步）
+    dd.style.setProperty('--dh', `${40 + kids.length * 36 + Math.max(0, kids.length - 1) * 4 + 4}px`);
     dd.classList.toggle('empty', kids.length === 0);
   };
   const mo = new MutationObserver(sync);
