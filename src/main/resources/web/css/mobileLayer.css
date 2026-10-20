@@ -1481,3 +1481,40 @@ body.mobile-layer #mobile-pages .project-field-value {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+
+/* ── P9 图谱：命令条收紧 + 画布满页 + 缩放三钮（glass 珠既有）────────────
+   样张 P9 = 状态行 → 图谱预览 → facet → 项目行 → 最近文档行 → 缩放三钮；
+   实机 = 桌面 wiki-graph pane 收编（工具条[搜索/刷新/状态行] + 力导向画布 +
+   缩放玻璃珠）——预览/列表二分（样张开放点①）实机采纳「全画布漫游」腿，
+   侧栏 facet/文档清单宿主 = 桌面 explorer（手机层桌面壳退场 ⇒ 不入页面，
+   记偏差）。手机层只收工具条密度与画布满页。 */
+body.mobile-layer #mobile-pages .wiki-graph-pane {
+  flex: 1;
+  min-height: 0;
+}
+body.mobile-layer #mobile-pages .wiki-toolbar {
+  flex-wrap: nowrap;
+  gap: 6px;
+  padding: 8px 12px;
+}
+body.mobile-layer #mobile-pages .wiki-toolbar-search {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+}
+body.mobile-layer #mobile-pages .wiki-toolbar-status {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+body.mobile-layer #mobile-pages .wiki-canvas {
+  flex: 1;
+  min-height: 0;
+}
+/* 缩放玻璃珠：桌面 bottom-left（右让位侧栏）—— 手机层无侧栏，仍贴左下，
+   底距让位安全区。 */
+body.mobile-layer #mobile-pages .wx-zoom {
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+}
