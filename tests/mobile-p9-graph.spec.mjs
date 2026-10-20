@@ -128,18 +128,23 @@ test('T1 graph page: adopted pane, status line counts, canvas fills page', async
   const errors = watchErrors(page);
   await pushPage(page, 'graph');
 
-  // pane 收编进页面体。
-  expect(await page.locator(
+  // pane 收编进页面体 —— 异步腿（ensurePanelContent：动态 import + openTab +
+  // renderInto 完成才 adoptPane），类翻转即读数会踩进收编前窗口（高负载下必翻）
+  // ⇒ 重试断言（P3 T2/P6 既有修法同款）。
+  await expect(page.locator(
     '.mobile-page[data-page="graph"] .mobile-page-body .canvas-tab-pane[data-tab-id="wiki-graph"]',
-  ).count()).toBe(1);
+  )).toHaveCount(1);
 
   // 状态行 = wiki.status 模板（stub 不计入）。
   await expect(page.locator('.wiki-toolbar-status')).toHaveText('2 个项目 · 2 篇文档 · 2 条链接');
 
-  // 画布满页（flex:1）—— pane/画布盒非零高。
-  const canvasBox = await page.locator('.wiki-canvas').boundingBox();
-  expect(canvasBox).toBeTruthy();
-  expect(canvasBox.height).toBeGreaterThan(400);
+  // 画布满页（flex:1）—— pane/画布盒非零高。收编有两条腿：ensurePanelContent
+  // 尾随腿（render 完成才移入）与 watchCanvasContent 扫描腿（openTab 一挂 pane
+  // 就移入，此时 .wiki-canvas 未必已建）—— 裸几何读数必须 poll 到非零高。
+  await expect.poll(async () => {
+    const box = await page.locator('.wiki-canvas').boundingBox();
+    return box ? box.height : 0;
+  }, { timeout: 5000 }).toBeGreaterThan(400);
 
   // 页面推入终态全宽（poll 到 transform 归位）。
   const pageBox = () => page.locator('.mobile-page[data-page="graph"]').evaluate((el) => {

@@ -122,10 +122,11 @@ test('T1 usage page: adopted dashboard, four summary cards in 2-col grid', async
   const errors = watchErrors(page);
   await pushPage(page, 'usage');
 
-  // 面收编进页面体（usage 首开异步建面 → navController 收编腿）。
-  expect(await page.locator(
+  // 面收编进页面体（usage 首开异步建面 → navController 收编腿）—— 类翻转即
+  // 读数会踩进建面/收编前窗口，重试断言（P3 T2/P6 既有修法同款）。
+  await expect(page.locator(
     '.mobile-page[data-page="usage"] .mobile-page-body #usage-dashboard',
-  ).count()).toBe(1);
+  )).toHaveCount(1);
 
   // 摘要卡族：总消耗 / 今日 / 缓存命中率 / 本周环比（样张 P11 四件套 ⊆ 桌面
   // 6 卡 —— 桌面另有计数类卡，样张四件套必在场即可）。
