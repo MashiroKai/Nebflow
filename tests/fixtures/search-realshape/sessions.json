@@ -1,0 +1,101 @@
+{
+ "sessions": [
+  {
+   "safetyMode": "auto-all",
+   "agentName": "[agent] 占位文本占位文本",
+   "id": "realspec-root-session",
+   "name": "根会话",
+   "createdAt": 1792487372319,
+   "updatedAt": 1792487372319,
+   "hasUnread": false
+  },
+  {
+   "safetyMode": "auto-all",
+   "agentName": "[agent] 占位文本占位文本",
+   "id": "realspec-extra-1",
+   "name": "邻会话1",
+   "createdAt": 1792487372304,
+   "updatedAt": 1792487372304,
+   "hasUnread": false
+  },
+  {
+   "safetyMode": "auto-all",
+   "agentName": "[agent] 占位文本占位文本",
+   "id": "realspec-extra-2",
+   "name": "邻会话2",
+   "createdAt": 1792487364323,
+   "updatedAt": 1792487364323,
+   "hasUnread": false
+  },
+  {
+   "safetyMode": "auto-all",
+   "agentName": "",
+   "id": "realspec-extra-3",
+   "name": "邻会话3",
+   "createdAt": 1792486904146,
+   "updatedAt": 1792486904146,
+   "hasUnread": false
+  },
+  {
+   "safetyMode": "auto-all",
+   "bridges": {
+    "weixin-ilink": {
+     "ilink_user_id": "o9cq80yJRGnjUHpVssmtAIO-5ETE@im.wechat",
+     "source": "auto",
+     "boundAt": 1792464856398
+    }
+   },
+   "agentName": "[agent] 占位文本占位文本",
+   "id": "realspec-extra-4",
+   "name": "邻会话4",
+   "createdAt": 1791600679215,
+   "updatedAt": 1792486660084,
+   "hasUnread": false
+  },
+  {
+   "safetyMode": "auto-all",
+   "agentName": "",
+   "id": "realspec-extra-5",
+   "name": "邻会话5",
+   "createdAt": 1792482878430,
+   "updatedAt": 1792482878430,
+   "hasUnread": false
+  },
+  {
+   "safetyMode": "auto-all",
+   "agentName": "",
+   "id": "realspec-extra-6",
+   "name": "邻会话6",
+   "createdAt": 1792411398738,
+   "updatedAt": 1792411398738,
+   "hasUnread": false
+  },
+  {
+   "safetyMode": "auto-all",
+   "agentName": "",
+   "id": "realspec-extra-7",
+   "name": "邻会话7",
+   "createdAt": 1792411397501,
+   "updatedAt": 1792411397501,
+   "hasUnread": false
+  },
+  {
+   "safetyMode": "auto-all",
+   "agentName": "[agent] 占位文本占位文本",
+   "id": "realspec-extra-8",
+   "name": "邻会话8",
+   "createdAt": 1792411395416,
+   "updatedAt": 1792411395416,
+   "hasUnread": false
+  },
+  {
+   "safetyMode": "auto-all",
+   "id": "realspec-extra-9",
+   "name": "邻会话9",
+   "createdAt": 1792407158812,
+   "updatedAt": 1792408602366,
+   "hasUnread": false
+  }
+ ],
+ "activeId": "realspec-root-session"
+}
