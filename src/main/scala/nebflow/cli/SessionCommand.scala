@@ -12,10 +12,10 @@ object SessionCommand extends CliCommand:
   def subcommands = List(SessionList, SessionCreate, SessionDelete, SessionRename, SessionHistory, SessionSwitchSub)
 
   def examples = List(
-    "nebflow session list",
-    "nebflow session create --name \"My Session\"",
-    "nebflow session delete abc-123",
-    "nebflow session switch abc-123"
+    "stand session list",
+    "stand session create --name \"My Session\"",
+    "stand session delete abc-123",
+    "stand session switch abc-123"
   )
 
   private object SessionList extends CliSubcommand:

@@ -15,7 +15,7 @@
 #   the certificate-era restore; CI package jobs disabled via `if: false`;
 #   restore = certificates + CI notarytool/signtool integration, then unseal CI.
 # ----------------------------------------------------------------------------
-"""Generate desktop app icons from the nebflow logo (pixel-art PNG).
+"""Generate desktop app icons from the STAND logo (pixel-art PNG).
 
 Source is the canonical pixel mark (224x224 canvas: a 4x3 grid of 48px cells
 = 192x144 ink at origin (16,40), plus the CSS colour #07C160 accent). We scale

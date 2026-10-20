@@ -11,7 +11,7 @@ import nebflow.shared.PathUtil
  *
  * `.pid` says WHICH process owns the instance; `.pid.meta` says WHO started
  * it (launcher / restart-script / sbt / unknown) and in which mode (daemon /
- * foreground). `nebflow stop` reads it to decide whether the CLI is allowed
+ * foreground). `stand stop` reads it to decide whether the CLI is allowed
  * to manage that process: a `launcher`-started daemon is fully managed,
  * while `sbt`/`restart-script` instances belong to their own supervisors and
  * are refused by default.

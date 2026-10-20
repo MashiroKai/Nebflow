@@ -9,7 +9,7 @@ object SkillCommand extends CliCommand:
   def name = "skill"
   def description = "Manage skills"
   def subcommands = List(SkillList, SkillRun, SkillAuditCmd)
-  def examples = List("nebflow skill list", "nebflow skill run my-skill", "nebflow skill audit")
+  def examples = List("stand skill list", "stand skill run my-skill", "stand skill audit")
 
   private object SkillList extends CliSubcommand:
     def name = "list"

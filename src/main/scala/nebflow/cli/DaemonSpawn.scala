@@ -6,7 +6,7 @@ import cats.syntax.all.*
 import java.lang.management.ManagementFactory
 
 /**
- * Daemon launcher (phase 2 daemon plan §1): the `nebflow start` parent
+ * Daemon launcher (phase 2 daemon plan §1): the `stand start` parent
  * process spawns the gateway as a detached child JVM and returns after the
  * child is SERVING, printing exactly one confirmation line.
  *

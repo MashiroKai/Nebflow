@@ -10,8 +10,8 @@ object MemoryCommand extends CliCommand:
   def subcommands = List(MemoryGet, MemorySet)
 
   def examples = List(
-    "nebflow memory get --scope user",
-    "nebflow memory set --scope agent --content \"Use tabs for indentation\""
+    "stand memory get --scope user",
+    "stand memory set --scope agent --content \"Use tabs for indentation\""
   )
 
   private object MemoryGet extends CliSubcommand:

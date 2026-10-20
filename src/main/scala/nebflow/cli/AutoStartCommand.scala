@@ -8,7 +8,7 @@ object AutoStartCommand extends CliCommand:
   def name = "autostart"
   def description = "Enable or disable auto-start on boot"
   def subcommands = List(AutoStartEnable, AutoStartDisable, AutoStartStatus)
-  def examples = List("nebflow autostart enable", "nebflow autostart disable", "nebflow autostart status")
+  def examples = List("stand autostart enable", "stand autostart disable", "stand autostart status")
 
   // Core logic lives in core/AutoStartService (shared with the gateway
   // settings-panel WS toggle, F2). The CLI is a thin shell over it.

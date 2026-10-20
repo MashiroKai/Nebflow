@@ -7,7 +7,7 @@ import io.circe.syntax.*
 /**
  * D6 binding-transfer guard, host face (phase 3c plan §8 component ①):
  *
- *  - `nebflow bind confirm` — run on the OLD host while it is still online:
+ *  - `stand bind confirm` — run on the OLD host while it is still online:
  *    the gateway mints a 6-digit confirmation code and reports it up the
  *    relay control plane; the code is printed here exactly once for the
  *    operator to type into the portal during the re-bind. Re-running the
@@ -38,7 +38,7 @@ object BindCommand extends CliCommand:
   def name = "bind"
   def description = "Host-seat binding transfer: mint the confirmation code (D6 guard)"
   def subcommands = List(BindConfirm)
-  def examples = List("nebflow bind confirm")
+  def examples = List("stand bind confirm")
 
 /** `bind confirm` — mint + report the 6-digit transfer confirmation code (online). */
 private[cli] object BindConfirm extends CliSubcommand:

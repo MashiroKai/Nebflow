@@ -47,7 +47,7 @@ object SingleInstanceGuard:
 
   /**
    * Sync variant for callers already inside blocking context (Main's
-   * pid-file fast path). None == not a live nebflow port.
+   * pid-file fast path). None == not a live stand port.
    */
   def checkPortBlocking(host: String, port: Int): Option[String] =
     probeNebflow(port)
@@ -170,7 +170,7 @@ object SingleInstanceGuard:
           val isOurs = parse(body).toOption.exists { json =>
             val c = json.hcursor
             c.get[String]("product").toOption match
-              case Some(product) => Set("nebflow", "stand", Branding.lowerName).contains(product)
+              case Some(product) => Set("stand", "stand", Branding.lowerName).contains(product)
               case None =>
                 c.get[String]("status").toOption.contains("ok") &&
                   c.get[String]("version").toOption.exists(_.nonEmpty) &&

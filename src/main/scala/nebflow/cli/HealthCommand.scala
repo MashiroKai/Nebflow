@@ -5,7 +5,7 @@ import io.circe.Json
 import io.circe.syntax.*
 
 /**
- * `nebflow health` — 健康读数形态（三面：自身 / 网关 / 依赖）。
+ * `stand health` — 健康读数形态（三面：自身 / 网关 / 依赖）。
  *
  * 只读：只探端口、只发 GET、只读本机文件与进程表；不起停实例、不改任何状态。
  * 三面各自独立成节：任一面不可读只降级该节并显式标出，不隐藏其余读数
@@ -21,7 +21,7 @@ object HealthCommand extends CliCommand:
   def name = "health"
   def description = "Show health readings (self / gateway / dependencies)"
   def subcommands = List(HealthShow)
-  def examples = List("nebflow health", "nebflow health --json")
+  def examples = List("stand health", "stand health --json")
 
   // ── 读数值（纯函数，供 spec 直测；不碰 IO、不碰真实 home）────────────────
 
@@ -30,7 +30,7 @@ object HealthCommand extends CliCommand:
   private[cli] val StatusDown = "down"
 
   /**
-   * Java 运行时门槛 21 —— 与 `nebflow doctor`（SystemCommands.scala DoctorRun
+   * Java 运行时门槛 21 —— 与 `stand doctor`（SystemCommands.scala DoctorRun
    * 「--- 1. Java ---」节）同一常量、同一语义；本命令不新造第二套门槛。
    */
   private[cli] val MinJavaMajor = 21

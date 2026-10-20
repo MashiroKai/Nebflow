@@ -6,7 +6,7 @@ import io.circe.Json
 import io.circe.syntax.*
 
 /**
- * `nebflow logs` — 日志取数面（定位 / 尾读 / 筛选），**纯读**。
+ * `stand logs` — 日志取数面（定位 / 尾读 / 筛选），**纯读**。
  *
  * 禁改既有日志写面：本命令不写、不截断、不轮转、不删任何日志文件，只 `os.list`
  * / `RandomAccessFile(read)`；logback 的 FILE appender 与各 *LogWriter 一字未动。
@@ -20,10 +20,10 @@ object LogsCommand extends CliCommand:
   def subcommands = List(LogsPath, LogsList, LogsTail)
 
   def examples = List(
-    "nebflow logs path",
-    "nebflow logs list",
-    "nebflow logs tail -n 100 --grep ERROR",
-    "nebflow logs --follow"
+    "stand logs path",
+    "stand logs list",
+    "stand logs tail -n 100 --grep ERROR",
+    "stand logs --follow"
   )
 
   // ── 取数面常量（纯，供 spec 直测）────────────────────────────────────────
@@ -51,7 +51,7 @@ object LogsCommand extends CliCommand:
   // ── --follow（phase 2 daemon 批 §3.3）─────────────────────────────────
   //
   // `-f` 已被 `--file` 占用 ⇒ follow 只有长旗、无短旗（对规格字面「-f/--follow」
-  // 的显式偏离，零破坏现有 -f）。路由面（R2-1）：`nebflow logs --follow`（无
+  // 的显式偏离，零破坏现有 -f）。路由面（R2-1）：`stand logs --follow`（无
   // tail 子命令）会以 `--follow` 为首 token 走 acceptsLeadingPositional ⇒ 落
   // head 子命令 LogsPath ⇒ 旗必须同时挂 LogsPath.params 与 LogsTail.params
   // 两处，共用同一循环。
@@ -241,7 +241,7 @@ object LogsCommand extends CliCommand:
                 "exists" -> os.exists(file).asJson
               )
             )
-          else CliResult.text(file.toString) // 单行：`cat "$(nebflow logs path)"` 可直接用
+          else CliResult.text(file.toString) // 单行：`cat "$(stand logs path)"` 可直接用
         }
 
   end LogsPath

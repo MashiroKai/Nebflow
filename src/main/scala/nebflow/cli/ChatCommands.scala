@@ -11,8 +11,8 @@ object ChatCommand extends CliCommand:
   def subcommands = List(ChatSend, ChatRepl)
 
   def examples = List(
-    "nebflow chat \"what does this project do?\"",
-    "nebflow chat --session abc-123 \"continue\""
+    "stand chat \"what does this project do?\"",
+    "stand chat --session abc-123 \"continue\""
   )
 
   /**
@@ -57,7 +57,7 @@ object ChatCommand extends CliCommand:
 
     def run(ctx: CliContext): IO[CliResult] =
       ctx.client match
-        case None => IO.pure(CliResult.Error("Gateway not running. Start with 'nebflow start'"))
+        case None => IO.pure(CliResult.Error("Gateway not running. Start with 'stand start'"))
         case Some(client) =>
           val query = ctx.positionalArgs.headOption.getOrElse("")
           if query.isEmpty then IO.pure(CliResult.Error("No query provided"))
@@ -95,9 +95,9 @@ object ChatCommand extends CliCommand:
     def run(ctx: CliContext): IO[CliResult] =
       // REPL is not wired in this batch (it has never been reachable, so its
       // interactive path has no runtime evidence) — the previous message
-      // ("REPL mode should be invoked as 'nebflow chat' without subcommands")
-      // was self-contradictory: bare `nebflow chat` did not enter REPL either.
-      IO.pure(CliResult.Error("REPL mode is not implemented — use 'nebflow chat send \"<message>\"'"))
+      // ("REPL mode should be invoked as 'stand chat' without subcommands")
+      // was self-contradictory: bare `stand chat` did not enter REPL either.
+      IO.pure(CliResult.Error("REPL mode is not implemented — use 'stand chat send \"<message>\"'"))
 
 end ChatCommand
 
@@ -106,7 +106,7 @@ object AskCommand extends CliCommand:
   def description = "Single question (no session)"
   def subcommands = List(AskRun)
 
-  def examples = List("nebflow ask \"what is 2+2?\"")
+  def examples = List("stand ask \"what is 2+2?\"")
 
   private object AskRun extends CliSubcommand:
     def name = "ask"
@@ -154,7 +154,7 @@ object InterruptCommand extends CliCommand:
   def description = "Interrupt current response"
   def subcommands = List(InterruptRun)
 
-  def examples = List("nebflow interrupt --session abc-123")
+  def examples = List("stand interrupt --session abc-123")
 
   private object InterruptRun extends CliSubcommand:
     def name = "run"

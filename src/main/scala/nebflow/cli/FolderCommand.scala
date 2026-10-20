@@ -12,9 +12,9 @@ object FolderCommand extends CliCommand:
   def subcommands = List(FolderList, FolderCreate, FolderDelete, FolderSetRoot, FolderRules)
 
   def examples = List(
-    "nebflow folder list",
-    "nebflow folder create MyProject",
-    "nebflow folder set-root abc-123 /path/to/project"
+    "stand folder list",
+    "stand folder create MyProject",
+    "stand folder set-root abc-123 /path/to/project"
   )
 
   private object FolderList extends CliSubcommand:

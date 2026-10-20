@@ -12,8 +12,8 @@ import scala.concurrent.duration.*
  * D3). This is the Harbor installed-agent entry: send a task, block until
  * the turn completes, print the result, exit.
  *
- *   nebflow run -p "list files" [--agent X] [--session Y] [--json] [--timeout 1800]
- *   cat task.md | nebflow run --json
+ *   stand run -p "list files" [--agent X] [--session Y] [--json] [--timeout 1800]
+ *   cat task.md | stand run --json
  *
  * Exit codes: 0 completed with a non-empty final message · 1 turn errored or
  * produced no message · 2 gateway unreachable or turn timed out.
@@ -24,9 +24,9 @@ object RunCommand extends CliCommand:
   def subcommands = List(RunTask)
 
   def examples = List(
-    """nebflow run -p "list the files in this directory"""",
-    """nebflow run --agent terminal-solver --json -p "$(cat task.md)"""",
-    "cat task.md | nebflow run"
+    """stand run -p "list the files in this directory"""",
+    """stand run --agent terminal-solver --json -p "$(cat task.md)"""",
+    "cat task.md | stand run"
   )
 
   private object RunTask extends CliSubcommand:
@@ -61,7 +61,7 @@ object RunCommand extends CliCommand:
           ensureGateway.flatMap {
             case false =>
               IO.pure(
-                CliResult.Error("Gateway not reachable (auto-start failed); run 'nebflow start'", 2)
+                CliResult.Error("Gateway not reachable (auto-start failed); run 'stand start'", 2)
               )
             case true =>
               GatewayClient.create.flatMap {
@@ -127,14 +127,14 @@ object RunCommand extends CliCommand:
   end RunTask
 
   /**
-   * Fire-and-forget `nebflow start` (it blocks in the foreground of its own
+   * Fire-and-forget `stand start` (it blocks in the foreground of its own
    * detached process), then poll reachability for up to 60s. Failure to spawn
    * is not fatal here — the poll decides.
    */
   private def ensureGateway: IO[Boolean] =
     IO.blocking {
       try
-        val pb = new ProcessBuilder("nebflow", "start")
+        val pb = new ProcessBuilder("stand", "start")
         pb.redirectOutput(ProcessBuilder.Redirect.DISCARD)
         pb.redirectError(ProcessBuilder.Redirect.DISCARD)
         pb.start()

@@ -212,7 +212,7 @@ object ProcessManager:
   /**
    * Pure: kill set for `--tree`. With `sbtRoot` inside the chain: the chain
    * from root down to pid plus every member's descendants — each verified
-   * (nebflow or sbt marker) first; one unverifiable member refuses the whole
+   * (stand or sbt marker) first; one unverifiable member refuses the whole
    * tree. With no sbt root: the single pid (degraded mode, R2-7) — `--tree`
    * on a daemon tree / orphan means "unlock + kill exactly the target".
    * Result ordered top-down (root side first).

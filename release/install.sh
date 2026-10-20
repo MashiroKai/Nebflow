@@ -162,11 +162,16 @@ INSTALL_DIR="${INSTALL_DIR:-${HOME}/${HOME_DIR}/bin}"
 #   level : NEBFLOW_UI_LEVEL=0..3 forces a level (preview/testing)
 
 # POSIX: indexed arrays are a bash extension (dash rejects the `NAME=(` form),
-# so the three mask rows below are plain scalars in the same order; the row is
-# selected from BANNER_MASK_0/1/2 in print_banner. Same grid, zero data change.
-BANNER_MASK_0="G.WW"
-BANNER_MASK_1=".W.W"
-BANNER_MASK_2=".W.W"
+# so the five mask rows below are plain scalars in the same order; the row is
+# selected from BANNER_MASK_0..4 in print_banner. Same grid, zero data change.
+# 2026-10-20 rebrand: the mark is the STAND "S" symbol (7-seg S in the 4-col
+# grid; stand-symbol.svg is the vector source of record) - green accent pixel
+# stays at the top-left corner of the mark.
+BANNER_MASK_0="GWWW"
+BANNER_MASK_1="W..."
+BANNER_MASK_2="WWWW"
+BANNER_MASK_3="...W"
+BANNER_MASK_4="WWWW"
 
 _ui_level=0
 _ui_theme="dark"
@@ -249,11 +254,13 @@ print_banner() {
     ui_detect
     printf '\n'
     local _i _row _ch
-    for _i in 0 1 2; do
+    for _i in 0 1 2 3 4; do
         case "$_i" in
             0) _row="$BANNER_MASK_0" ;;
             1) _row="$BANNER_MASK_1" ;;
-            *) _row="$BANNER_MASK_2" ;;
+            2) _row="$BANNER_MASK_2" ;;
+            3) _row="$BANNER_MASK_3" ;;
+            *) _row="$BANNER_MASK_4" ;;
         esac
         printf '  '
         # POSIX: no arithmetic for-loop and no ${var:off:len} in dash - walk the
@@ -265,8 +272,8 @@ print_banner() {
             _row="${_row#?}"
         done
         case "$_i" in
-            1) printf '  '; _fg_green; printf '%s' "${LOWER_NAME}"; _rst ;;
-            2) printf '  '; _dim; printf '%s installer (%s)' "${VERSION:-dev}" "${CHANNEL}"; _rst ;;
+            2) printf '  '; _fg_green; printf '%s' "${LOWER_NAME}"; _rst ;;
+            3) printf '  '; _dim; printf '%s installer (%s)' "${VERSION:-dev}" "${CHANNEL}"; _rst ;;
         esac
         printf '\n'
     done
@@ -1546,6 +1553,20 @@ exec "\$JAVA_BIN" --add-opens java.base/java.lang=ALL-UNNAMED -jar "\$JAR" "\$@"
 WRAPPER
     chmod +x "${wrapper}"
     log_ok "Wrapper created: ${wrapper}"
+    # Legacy command shim (2026-10-20 rename batch): "nebflow" is retired as
+    # the command name; a thin shim keeps muscle memory and old scripts alive
+    # - it warns on stderr, then forwards to the current wrapper. Fixed legacy
+    # name by design (historical fact, same rule as rebrand.sh) - NOT
+    # brand-derived, so it stays stable across future renames. Also replaces
+    # any pre-rename real "nebflow" binary in INSTALL_DIR (overwrite > shadow).
+    local shim="${INSTALL_DIR}/nebflow"
+    cat > "${shim}" << SHIM
+#!/bin/bash
+echo "WARN: 'nebflow' is deprecated - the command is now '${WRAPPER_NAME}'. Forwarding..." >&2
+exec "${INSTALL_DIR}/${WRAPPER_NAME}" "\$@"
+SHIM
+    chmod +x "${shim}"
+    log_ok "Legacy shim created: ${shim} (deprecation notice, forwards to ${WRAPPER_NAME})"
 }
 
 # Add install dir to PATH in shell profile

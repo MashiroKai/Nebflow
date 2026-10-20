@@ -5,11 +5,11 @@ import nebflow.gateway.GatewayConfig
 import nebflow.shared.PathUtil
 
 /**
- * `nebflow restart` (phase 2 daemon plan §3.4) = hardened stop → daemon
+ * `stand restart` (phase 2 daemon plan §3.4) = hardened stop → daemon
  * start, as ONE command. The stop leg runs the full hardened face (identity
  * check, ownership gate, 8080/8097 dev-host gate, port confirmation) — a
  * refused or failed stop never starts a second instance. The start leg is
- * the same daemon spawn path as `nebflow start`, with the same single-line
+ * the same daemon spawn path as `stand start`, with the same single-line
  * confirmation and exit codes.
  *
  * Hot-restart (`--succeed` / SuccessorGate) is NOT touched by this command —
@@ -20,7 +20,7 @@ object RestartCommand extends CliCommand:
   def name = "restart"
   def description = "Stop the running Gateway and start it again (daemon)"
   def subcommands = List(RestartRun)
-  def examples = List("nebflow restart", "nebflow restart --force")
+  def examples = List("stand restart", "stand restart --force")
 
   private object RestartRun extends CliSubcommand:
     def name = "run"

@@ -345,10 +345,15 @@ $CosUrl = "$CosBaseCn/$JarName"
 # Theme: NEBFLOW_BANNER_THEME=dark|light overrides; default dark.
 # Batch 3 invariant holds: this file stays PURE ASCII after the UTF-8 BOM -
 # the CJK slogan is gone for good, escapes are built via [char]27.
+# 2026-10-20 rebrand: the mark is the STAND "S" symbol (7-seg S, 4-col grid,
+# green accent pixel top-left; TRUTH = design/stand-mark.pixil, vector source
+# stand-symbol.svg). Same grid the bash installer renders.
 $BannerMask = @(
-    "G.WW",
-    ".W.W",
-    ".W.W"
+    "GWWW",
+    "W...",
+    "WWWW",
+    "...W",
+    "WWWW"
 )
 $BannerTheme = "dark"
 if ($env:NEBFLOW_BANNER_THEME -eq "light" -or $env:NEBFLOW_BANNER_THEME -eq "dark") {
@@ -381,11 +386,11 @@ Write-Host ""
 for ($bi = 0; $bi -lt $BannerMask.Count; $bi++) {
     Write-Host -NoNewline "  "
     foreach ($ch in $BannerMask[$bi].ToCharArray()) { Write-LogoPixel ([string]$ch) }
-    if ($bi -eq 1) {
+    if ($bi -eq 2) {
         if ($BannerLevel -eq 3) { Write-Host -NoNewline "  $BannerEsc[1;38;2;7;193;96m$LowerName$BannerEsc[0m" }
         elseif ($BannerLevel -eq 1) { Write-Host -NoNewline "  $LowerName" -ForegroundColor Green }
         else { Write-Host -NoNewline "  $LowerName" }
-    } elseif ($bi -eq 2) {
+    } elseif ($bi -eq 3) {
         $vline = "$Version installer ($Channel)"
         if ($BannerLevel -eq 3) { Write-Host -NoNewline "  $BannerEsc[2m$vline$BannerEsc[0m" }
         else { Write-Host -NoNewline "  $vline" }
@@ -1017,6 +1022,18 @@ exit /b 0
 rem <<< WINSORT-END v1 <<<
 "@
 Set-Content -Path $cmdPath -Value $cmdContent -Encoding ASCII
+
+# Legacy command shim (2026-10-20 rename batch): "nebflow" is retired as the
+# command name; this thin .cmd warns on stderr, then forwards to the current
+# launcher. Fixed legacy name by design (historical fact, like rebrand.sh).
+$shimPath = Join-Path $InstallDir "nebflow.cmd"
+$shimContent = @"
+@echo off
+echo WARN: 'nebflow' is deprecated - the command is now '$WrapperName'. Forwarding... 1>&2
+"%~dp0$WrapperName.cmd" %*
+exit /b %ERRORLEVEL%
+"@
+Set-Content -Path $shimPath -Value $shimContent -Encoding ASCII
 
 # Add to PATH
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")

@@ -10,9 +10,9 @@ import nebflow.shared.PathUtil
  * Main CLI router. Parses arguments, discovers the command, and dispatches.
  *
  * Usage:
- *   nebflow                          → start the Gateway
- *   nebflow start                    → start Gateway (same branch)
- *   nebflow <command> [sub] [args]   → dispatch to CliCommand
+ *   stand                          → start the Gateway
+ *   stand start                    → start Gateway (same branch)
+ *   stand <command> [sub] [args]   → dispatch to CliCommand
  */
 object CliRouter:
 
@@ -27,7 +27,7 @@ object CliRouter:
       case Nil =>
         printHelp(jsonMode).as(ExitCode.Success)
       case h :: _ if h == "--help" || h == "-h" =>
-        // A7: top-level help was unreachable — `nebflow --help` answered
+        // A7: top-level help was unreachable — `stand --help` answered
         // "Unknown command: --help" with exit 1.
         printHelp(jsonMode).as(ExitCode.Success)
       case "help" :: Nil =>
@@ -69,9 +69,9 @@ object CliRouter:
     args match
       case Nil =>
         // No subcommand — if single subcommand, use it as default; if the
-        // command declares a default subcommand (phase 3b: bare `nebflow
+        // command declares a default subcommand (phase 3b: bare `stand
         // token` mints a break-glass ticket), run that; otherwise report the
-        // missing subcommand (V16: `nebflow chat` used to print the command
+        // missing subcommand (V16: `stand chat` used to print the command
         // help and exit 1, which is not a usable behaviour).
         cmd.subcommands match
           case single :: Nil =>
@@ -103,8 +103,8 @@ object CliRouter:
             if subName == "--help" || subName == "-h" then printCommandHelp(cmd, jsonMode).as(ExitCode.Success)
             else if acceptsLeadingPositional(cmd, subName) then
               // The default subcommand takes this token as data: a leading
-              // flag (`nebflow run -p "task"`) or free text
-              // (`nebflow chat "hi"` — ChatCommands.scala:14).
+              // flag (`stand run -p "task"`) or free text
+              // (`stand chat "hi"` — ChatCommands.scala:14).
               executeSubcommand(cmd, cmd.subcommands.head, args, jsonMode, quietMode)
             else
               // A12: an unrecognised subcommand used to silently fall back to
@@ -113,7 +113,7 @@ object CliRouter:
 
   /**
    * Commands whose declared examples use a bare positional as data rather
-   * than a subcommand name (`chat`: "nebflow chat \"…\"" — ChatCommands.scala:14).
+   * than a subcommand name (`chat`: "stand chat \"…\"" — ChatCommands.scala:14).
    * Every other multi-subcommand command treats an unrecognised first token
    * as an unknown subcommand (A12).
    */
@@ -151,9 +151,9 @@ object CliRouter:
         ctxIO.flatMap { ctx =>
           if !isOffline && ctx.client.isEmpty then
             if jsonMode then
-              IO.println(Json.obj("error" -> "Gateway not running. Start with 'nebflow start'".asJson).spaces2: String)
+              IO.println(Json.obj("error" -> "Gateway not running. Start with 'stand start'".asJson).spaces2: String)
                 .as(ExitCode.Error)
-            else IO.println("Gateway not running. Start with 'nebflow start'").as(ExitCode.Error)
+            else IO.println("Gateway not running. Start with 'stand start'").as(ExitCode.Error)
           else
             // Validate required params (A11: the check no longer exempts every
             // required param as soon as any positional is present).
@@ -347,13 +347,13 @@ object CliRouter:
     else
       IO.println(s"${nebflow.shared.Branding.productName} ${nebflow.Version.string}") *>
         IO.println("") *>
-        IO.println("Usage: nebflow <command> [subcommand] [options]") *>
+        IO.println("Usage: stand <command> [subcommand] [options]") *>
         IO.println("") *>
         IO.println("Starting / stopping:") *>
-        IO.println(s"  ${"nebflow".padTo(16, ' ')}Start the Gateway (same as 'nebflow start')") *>
+        IO.println(s"  ${"stand".padTo(16, ' ')}Start the Gateway (same as 'stand start')") *>
         IO.println(s"  ${"start".padTo(16, ' ')}Start the Gateway server") *>
         IO.println(s"  ${"stop".padTo(16, ' ')}Stop the running Gateway") *>
-        IO.println("  -s, --server          (alias) same as 'nebflow start'") *>
+        IO.println("  -s, --server          (alias) same as 'stand start'") *>
         IO.println("") *>
         IO.println("System commands (offline):") *> {
           CommandRegistry.all
@@ -368,7 +368,7 @@ object CliRouter:
         } *> IO.println("") *>
         IO.println("Global flags: --json, --quiet, --home <dir>, --port <n>, --no-browser, --foreground") *>
         IO.println("Exit codes: 0 ok · 1 error · 2 unreachable/timeout · 3 not running · 4 abnormal") *>
-        IO.println("Use 'nebflow <command> --help' for command details")
+        IO.println("Use 'stand <command> --help' for command details")
 
   private def printCommandHelp(cmd: CliCommand, jsonMode: Boolean): IO[Unit] =
     if jsonMode then

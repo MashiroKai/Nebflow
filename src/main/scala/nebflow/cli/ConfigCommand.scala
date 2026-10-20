@@ -12,11 +12,11 @@ object ConfigCommand extends CliCommand:
   def subcommands = List(ConfigGet, ConfigSet, ConfigShow, ConfigEdit, ConfigPathSub, ConfigValidateSub)
 
   def examples = List(
-    "nebflow config show",
-    "nebflow config get workSchedule",
-    "nebflow config set workSchedule.enabled false",
-    "nebflow config path",
-    "nebflow config validate"
+    "stand config show",
+    "stand config get workSchedule",
+    "stand config set workSchedule.enabled false",
+    "stand config path",
+    "stand config validate"
   )
 
   private object ConfigGet extends CliSubcommand:
@@ -177,7 +177,7 @@ object ConfigCommand extends CliCommand:
 
   /** H9（§16 文案闸：已批逐字，禁改写、禁加前缀/后缀）。 */
   private[cli] val NoEditorMessage =
-    "No editor available (no interactive terminal / no $EDITOR). Use 'nebflow config set <key> <value>' instead."
+    "No editor available (no interactive terminal / no $EDITOR). Use 'stand config set <key> <value>' instead."
 
   /**
    * 非交互判定 = 「无交互终端」。JDK < 22：`System.console()` 为 null 即 stdin/stdout
