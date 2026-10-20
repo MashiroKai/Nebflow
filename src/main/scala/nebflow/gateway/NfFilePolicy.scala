@@ -5,6 +5,8 @@ import nebflow.core.FilePolicyPort
 import nebflow.shared.PathUtil
 import org.http4s.Status
 
+import scala.jdk.CollectionConverters.*
+
 /**
  * The `/api/nf-file` credential-namespace policy engine (C1/R1/R2 batch,
  * design plan §3.3) — extension whitelist, namespace tables, the path
@@ -414,6 +416,84 @@ object NfFilePolicy extends FilePolicyPort:
           else None
         else None
 
+  // ────────────────────────────────────────────────────────────────────────
+  // 存量根双读（数据根切换批 · 媒体/附件服务面收口，2026-10-20 紧急修复批）
+  //
+  // 背景：当晚 19:08 数据根迁移把 ~/.nebflow 整树改名 ~/.nebflow-migrated-<ts>
+  // （新根 ~/.stand 由迁移脚本克隆落位）。存量消息落库的媒体引用是**旧根字面绝对
+  // 路径**（/Users/x/.nebflow/uploads/<sid>/<file>）；迁移后 ~/.nebflow 只剩重建
+  // stub ⇒ 字面路径 exists=false ⇒ 本判据 ladder 第一问直接 not-found ⇒ 铸票被拒
+  // ⇒ 前端「媒体加载失败」（作者实测 2026-10-20 19:35 截图；单会话 19 条存量附件
+  // 同族）。85130dd3 批的 PathUtil.resolveRootRef 双读只覆盖 `~/`-TOKEN 形态的
+  // _ref 面（FeishuCredentials / SocialChannels），媒体服务面（本判据）不在其中。
+  //
+  // 修法（单点）：第一问落空前，若字面路径落在旧根前缀 `<home>/.nebflow/` 之下，
+  // 按同尾（relativize 后的 tail）问两个候选——
+  //   1. `<dataRoot>/<tail>`   —— resolveRootRef 的字面形态同语义（ref 跟数据根
+  //      走）：现役根即迁移克隆落位处，文件在 ⇒ 直接命中（迁移机的常态）；
+  //   2. `<home>/.nebflow-migrated-*/<tail>` —— 改名原树兜底（克隆未覆盖或后续
+  //      才落盘的残留）；目录名后缀是零填充时间戳 ⇒ 字典序降序 = 最新树优先。
+  // 首个「存在且普通文件」的候选顶替字面路径，**继续走原 ladder 不变**（exists/
+  // isRegularFile → toRealPath → R2 inode → 凭据身份）：改写后的候选若撞上
+  // dataRoot 的 secrets/auth.json/nebflow.json，身份层照拒——防线零松动。
+  //
+  // 安全边界（🔴 零放宽，逐条）：
+  //   · 只有旧根前缀命中的字面路径才改写；其余 not-found 一律照旧 404（禁借双读
+  //     漂网——非旧根路径的 tail 永不参与解析）；
+  //   · tail 取自已 normalize 的绝对路径（无 `..` 段），候选恒在 dataRoot / 迁移
+  //     树**内部**，与旧根的包含关系同构；
+  //   · 双读只在判据内部：铸票（POST /api/nf-ticket）与取回（GET /api/nf-file）
+  //     同走本函数 ⇒ 同一原始字面解出同一 realpath，票↔realpath 绑定恒成立；
+  //     字面路径仍在（老机器根未动）时第一问直接命中，行为逐字节不变。
+  //
+  // `home` 参数化（默认进程 user.home）纯为 spec 可隔离注入，零 sys.props 改写。
+  // ────────────────────────────────────────────────────────────────────────
+
+  /** 存量旧根字面残留 → 现役根/迁移树双读（语义见上块注释）。`None` = 不在旧根
+    * 前缀之下，或全部候选都不存在（调用方维持原 404，行为不变）。 */
+  def legacyRootResidual(
+    lexical: java.nio.file.Path,
+    dataRoot: java.nio.file.Path,
+    home: java.nio.file.Path
+  ): Option[java.nio.file.Path] =
+    val legacyRoot = home.resolve(PathUtil.LegacyHomeDirName).normalize()
+    if !lexical.startsWith(legacyRoot) then None
+    else
+      val tail = legacyRoot.relativize(lexical)
+      if tail.toString.isEmpty then None
+      else
+        val primary = dataRoot.resolve(tail)
+        if java.nio.file.Files.exists(primary) && java.nio.file.Files.isRegularFile(primary) then
+          Some(primary)
+        else
+          migratedTrees(home)
+            .iterator
+            .map(_.resolve(tail))
+            .find(p => java.nio.file.Files.exists(p) && java.nio.file.Files.isRegularFile(p))
+
+  /** `<home>/.nebflow-migrated-*` 迁移树清单：目录名后缀为零填充时间戳，字典序
+    * 降序 = 最新树优先。best-effort：列目录失败 = 空表（双读退化为现役根一问）。 */
+  private def migratedTrees(home: java.nio.file.Path): List[java.nio.file.Path] =
+    val prefix = PathUtil.LegacyHomeDirName + "-migrated-"
+    val names =
+      try
+        val stream = java.nio.file.Files.list(home)
+        try
+          stream
+            .iterator()
+            .asScala
+            .filter(p => java.nio.file.Files.isDirectory(p))
+            .map(p => p.getFileName.toString)
+            .filter(_.startsWith(prefix))
+            .toList
+        finally stream.close()
+      catch case _: Throwable => Nil
+    names.sorted(Ordering[String].reverse).map(home.resolve(_))
+
+  /** 进程 user.home（判据默认值；spec 注入合成 home 时不用）。 */
+  private[gateway] def processHome: java.nio.file.Path =
+    java.nio.file.Paths.get(sys.props.getOrElse("user.home", "/"))
+
   /**
    * C1-5: the single authority for "may this raw path be served?".
    *
@@ -424,10 +504,15 @@ object NfFilePolicy extends FilePolicyPort:
    * extension gate (see [[NfFileAllowedExt]]); the served extension is still
    * read from the REAL path for the Allowed verdict (C1-2: a client can no
    * longer pick the served extension by naming a symlink).
+   *
+   * 存量根双读（2026-10-20 紧急修复批）：第一问（字面 exists/isRegularFile）落空
+   * 且字面在旧根前缀下 ⇒ [[legacyRootResidual]] 的同尾候选顶上再问；其余路径的
+   * not-found 形态逐字节不变（404 消息里永远是原始字面路径）。
    */
   def nfFileVerdict(
     rawPath: String,
-    policy: NfPathPolicy
+    policy: NfPathPolicy,
+    home: java.nio.file.Path = processHome
   ): IO[NfVerdict] =
     if rawPath.trim.isEmpty then
       IO.pure(NfVerdict.Denied(Status.BadRequest, "missing-path", "Missing 'path' parameter"))
@@ -435,7 +520,11 @@ object NfFilePolicy extends FilePolicyPort:
       IO.blocking {
         val expanded = PathUtil.expandTilde(rawPath)
         val lexical = java.nio.file.Paths.get(expanded).normalize()
-        if !java.nio.file.Files.exists(lexical) || !java.nio.file.Files.isRegularFile(lexical) then
+        val probed =
+          if java.nio.file.Files.exists(lexical) && java.nio.file.Files.isRegularFile(lexical) then
+            lexical
+          else legacyRootResidual(lexical, policy.dataRoot, home).getOrElse(lexical)
+        if !java.nio.file.Files.exists(probed) || !java.nio.file.Files.isRegularFile(probed) then
           NfVerdict.Denied(
             Status.NotFound,
             "not-found",
@@ -443,7 +532,7 @@ object NfFilePolicy extends FilePolicyPort:
           )
         else
           val realTry =
-            try Right(lexical.toRealPath())
+            try Right(probed.toRealPath())
             catch case e: Throwable => Left(e)
           realTry match
             case Left(e) =>
@@ -562,7 +651,11 @@ object NfFilePolicy extends FilePolicyPort:
    * 票据腿同用此函数（`POST /api/nf-ticket` 与 `GET /api/nf-file` 一条口径），所以
    * 铸票用的 realpath 与取回时解出的 realpath 必然一致。
    */
-  def nfFileVerdictTolerant(rawPath: String, policy: NfPathPolicy): IO[NfVerdict] =
+  def nfFileVerdictTolerant(
+    rawPath: String,
+    policy: NfPathPolicy,
+    home: java.nio.file.Path = processHome
+  ): IO[NfVerdict] =
     def go(rest: List[String], firstNotFound: Option[NfVerdict]): IO[NfVerdict] =
       rest match
         case Nil =>
@@ -571,7 +664,7 @@ object NfFilePolicy extends FilePolicyPort:
               .getOrElse(NfVerdict.Denied(Status.BadRequest, "missing-path", "Missing 'path' parameter"))
           )
         case form :: tail =>
-          nfFileVerdict(form, policy).flatMap {
+          nfFileVerdict(form, policy, home).flatMap {
             // Only "the path does not exist" falls through to the next form. A
             // refusal (credential-path / credential-hardlink / file-type) is
             // final — decoding must never shop for a form that gets past a
