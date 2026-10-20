@@ -622,11 +622,22 @@ object GatewayMain extends IOApp:
                                   // P2: spawn the global InteractionHub and publish its ref.
                                   // Every agent's permission/AskUser requests and every frontend
                                   // interaction answer route through this single actor.
+                                  // answer-landing 批（2026-10-21）：接线 askerAlive 读时投影探针
+                                  // （开放问题 #3 推荐默认采纳）——pending-ask 快照帧按
+                                  // sourceSession 现查统一注册表落 `askerAlive`，「发起会话已
+                                  // 结束、答复将走重入面」在健康面可见（僵尸 pending 标注，
+                                  // 只读不杀）。
                                   val hubSetup: IO[Unit] =
-                                    actorSystem.spawn(nebflow.agent.InteractionHub(), "interaction-hub").flatMap {
-                                      hubRef =>
+                                    actorSystem
+                                      .spawn(
+                                        nebflow.agent.InteractionHub(Some((sid: String) =>
+                                          sharedResources.agentRegistry.get.map(_.contains(sid))
+                                        )),
+                                        "interaction-hub"
+                                      )
+                                      .flatMap { hubRef =>
                                         sharedResources.interactionHubRef.set(Some(hubRef))
-                                    }
+                                      }
                                   // 任务 TTL 启动扫描（任务工具重做 2026-08-30）：扫
                                   // tasks/ 全目录（session+team）物理删除过期任务——
                                   // 判据=磁盘持久化的 createdAt/completedAt，重启后

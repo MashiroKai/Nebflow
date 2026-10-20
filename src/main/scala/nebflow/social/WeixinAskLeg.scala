@@ -21,11 +21,15 @@ import nebflow.social.outbound.{AskPromptCodec, PromptAction, PromptView}
  * segment head, the truncation mark, the 「全文」 keyword) are listed verbatim
  * in the batch report §16 for the author's review.
  *
- * Parsing rules (拍板 B-1/B-2, plus the askuser-media-split batch ruling C2):
+ * Parsing rules (拍板 B-1/B-2, plus the askuser-media-split batch ruling C2 and
+ * the answer-landing batch's short-number arm, 2026-10-21 — mapping-table
+ * priority 4★):
  *   · a bare number (or comma list) addresses the FIRST question of the
  *     current active set — the numbers belong to the ACTIVE SET, and a new
  *     ask renumbers everything (the old ask's numbers die with it);
  *   · `问.编` explicitly addresses question `问`, option `编` (both 1-based);
+ *   · `N <自由文本>` is question N's free-text answer (the `0 `-prefix leg's
+ *     numbered variant; N ∈ active set, out-of-range/blank refused);
  *   · a reply that IS an option label (case-insensitive, whitespace-
  *     insensitive exact match) picks that option — the media-split batch's
  *     return-matching ruling; the FIRST question carrying the label wins
@@ -131,9 +135,19 @@ object WeixinAskLeg:
    * （secretGuideLine）。`requestId` 仅用于该文案的括注；缺省 `""` 时引导行
    * 省略括注（`renderAskText` 的两个调用点都在 rid 在手的作用域内，恒显式传）。
    * 无 secret 题的集合 ⇒ 输出与改前逐字节一致。
+   * answer-landing 实施批（2026-10-21，映射规则推荐表 表1 ★）：`batch` 非空 ⇒
+   * 卡头前置一行批名标注（`AskPromptCodec.batchHeaderLine` 单一来源模板）——
+   * 作者多批并发时辨识「答的是谁」；**标签不是寻址键**，解析臂永不读它。
+   * 批名行计入首段、不参与截断判据（表1 长文降级行）。缺省 `""` ⇒ 卡头与改前
+   * 逐字节一致（无归因提问零变化）。
    */
-  def renderAskText(views: List[PromptView], attachments: List[String], requestId: String = ""): (String, Boolean) =
-    renderAskTextBudgeted(views, attachments, requestId = requestId, questionBudget = None)
+  def renderAskText(
+    views: List[PromptView],
+    attachments: List[String],
+    requestId: String = "",
+    batch: String = ""
+  ): (String, Boolean) =
+    renderAskTextBudgeted(views, attachments, requestId = requestId, questionBudget = None, batch = batch)
 
   /**
    * The 案甲 degraded form for an oversized ask: the question TEXT is cut to
@@ -145,15 +159,23 @@ object WeixinAskLeg:
     views: List[PromptView],
     attachments: List[String],
     questionBudget: Int,
-    requestId: String = ""
+    requestId: String = "",
+    batch: String = ""
   ): (String, Boolean) =
-    renderAskTextBudgeted(views, attachments, requestId = requestId, questionBudget = Some(math.max(questionBudget, 0)))
+    renderAskTextBudgeted(
+      views,
+      attachments,
+      requestId = requestId,
+      questionBudget = Some(math.max(questionBudget, 0)),
+      batch = batch
+    )
 
   private def renderAskTextBudgeted(
     views: List[PromptView],
     attachments: List[String],
     requestId: String,
-    questionBudget: Option[Int]
+    questionBudget: Option[Int],
+    batch: String = ""
   ): (String, Boolean) =
     var truncated = false
     val body = views
@@ -177,8 +199,11 @@ object WeixinAskLeg:
       }
       .mkString("\n\n")
     val attach = AskPromptCodec.attachmentLines(attachments)
+    // 表1 ★：批名行卡头前置（AskPromptCodec 单一来源模板；空批名不注空段 ⇒ 逐字节兼容）。
+    val header = AskPromptCodec.batchHeaderLine(batch)
+    val headed = if header.isEmpty then body else header + "\n" + body
     val text =
-      (if attach.isEmpty then body else body + "\n" + attach) + "\n" +
+      (if attach.isEmpty then headed else headed + "\n" + attach) + "\n" +
         FeishuAskCard.DegradeFoot + "\n" + NumberFooter
     (text, truncated)
 
@@ -225,6 +250,13 @@ object WeixinAskLeg:
   private val Addressed = "^(\\d+)\\.(\\d+)$".r
   private val OtherPrefix = "^(?:0\\s+(.+)|他\\s*(.+))$".r
 
+  // answer-landing 实施批（2026-10-21，映射规则推荐表 表2 优先级 4★）：**短号自由
+  // 文本臂**——`N <文本>` = 第 N 题的自由文本作答（现行 `0 内容` 的带题号变体）。
+  // 插序 = 裸编号之后、选项标签臂之前（「数字开头优先按编号解析」的既有序不变：
+  // 编号形永不进标签臂的白名单判据因此继续成立）。B-3 恒单问下 N 恒为 1（等价
+  // `0 <文本>` 的便捷形），多问在册的渠道（飞书多卡并存 + 文本腿）用它对题寻址。
+  private val ShortNumberFree = "^(\\d{1,3})\\s+(\\S.*)$".r
+
   /**
    * Parse one inbound text against the CURRENT active question set.
    *
@@ -263,6 +295,17 @@ object WeixinAskLeg:
             if picks.exists(oi => oi < 0 || oi >= v.options.size) then Left(RangeReject)
             else if !v.multiple && picks.sizeIs > 1 then Left(SinglePickReject)
             else Right(Some(picks.map(PromptAction.Pick(v.idx, _))))
+      case ShortNumberFree(qn, rest) =>
+        // 表2 优先级 4★：第 N 题的自由文本作答。判据 = N∈活动集（超界拒不钳制）
+        // ∧ 内容非空白（空白 = 无可作答之实，同一拒绝线）；secret 题不收（同构
+        // 既有三臂的 fail-closed 口径）。`{1,3}` 位宽 + toIntOption 双保险——
+        // 超宽数字串/溢出一律落 RangeErrorLine，绝不抛。
+        val qi = qn.toIntOption.map(_ - 1)
+        val content = rest.trim
+        qi.flatMap(views.lift) match
+          case Some(v) if v.secret => Left(SecretReject) // secret 题不收自由输入（规格 §3）
+          case Some(v) if content.nonEmpty => Right(Some(List(PromptAction.Other(v.idx, content))))
+          case _ => Left(RangeReject) // N 超界 / 纯空白内容：同一拒绝线（超界拒不钳制）
       case _ =>
         // C2 (askuser-media-split batch): a reply that IS an option label picks
         // it — number/addr/prefix shapes never reach this arm (the earlier cases

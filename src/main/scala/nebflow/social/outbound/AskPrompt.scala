@@ -143,6 +143,18 @@ object AskPromptCodec:
       case ps => (AttachmentLineHead :: ps.map(p => s"- $p")).mkString("\n")
 
   /**
+   * 卡头**批名标注**（answer-landing 实施批 2026-10-21，映射规则推荐表 表1 ★采纳；
+   * 单一来源常量模板——微信 `renderAskText` 与飞书文本降级两渠道禁第二份字面量）。
+   * 批名 = 提问载荷的 `project`（项目链名）/委托名（D3 归因字段随帧自带）——
+   * **标签不是寻址键**（表1 原则）：作者多批并发时辨识「答的是谁」用，解析臂
+   * 永不读它。空批名 ⇒ `""`（渲染点不注空段 ⇒ 无归因提问的卡头逐字节不变）。
+   */
+  def batchHeaderLine(batch: String): String =
+    batch.trim match
+      case b if b.nonEmpty => s"[$b]"
+      case _ => ""
+
+  /**
    * D1 (askuser-remote P1, author ruling): the flattened form of a question
    * set for a ONE-SHOT remote surface. A remote card has no conditional
    * branch, so the set ships whole, in one pass — and a question whose

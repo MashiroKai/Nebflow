@@ -33,9 +33,13 @@ import scala.concurrent.duration.*
  *    只要 hub 槽位还在（槽位生命周期 = 规格 §3.4 D6 复用），桥就可达；
  *    槽位被撤（答复 / `CleanupForSession` 源会话死亡 / `CloseRequest`）时，
  *    对它的引用自然被丢弃，**零泄漏**（一个 Actor 反而会常驻到答复为止）。
- *  - 残余风险只剩一种：**目标会话本体已消失**而槽位尚未回收。此处**显式处理**
- *    （不落 dead letters 静默）：交付前查一次注册表，行不存在 ⇒ WARN 明说
- *    「答案到达了一个已不存在的会话」，并放弃投递。**这是显式日志面，不是静默面。**
+ *  - 残余风险只剩一种：**目标会话本体已消失**而槽位尚未回收。改前此处显式 WARN
+ *    后放弃投递（答案终点站）；answer-landing 实施批（2026-10-21）把该分支升级为
+ *    **三臂着陆面**（[[AskAnswerLanding]]）：会话亡＋归因在＋宿主在 ⇒ 引擎重入
+ *    （ProjectActor.AskAnswerReentry，ReenterDispatcher 族管线）／委托宿主在 ⇒
+ *    注入委托会话；归因缺席/宿主不在 ⇒ 失败出口（审计 + 桌面 toast + 渠道失败
+ *    回执「问题已作废+原因」）。**任何出口不静默**（原 WARN 面保留为失败出口的
+ *    日志腿）。
  *
  * 线程/IO 归属：本对象不自己跑 IO——`!` 返回的 IO 由**调用方**（hub 的
  * `handleAnswered` fiber）执行。真正的 Actor 层（
@@ -131,10 +135,18 @@ object AskUserAnswerBridge:
       val text = AskUserQuestionTool.formatAnswer(items, slots)
       sessionAlive(ctx).flatMap {
         case false =>
-          logger.warn(
-            s"askUser answer bridge: requestId=$requestId — the requesting session is gone " +
-              s"(sessionId=${ctx.sessionId.getOrElse("<unknown>")}); answer NOT delivered"
-          )
+          // answer-landing 实施批（2026-10-21）：**最后一公里断裂点接三臂着陆面**
+          // （设计批 reports/20261020_123548_askuser-social-answer-inject §3–§5 原案）。
+          // 改前此分支 = WARN + 静默丢（答案终点站）；现按构造时归因快照（ctx 的
+          // project/flowNodeId）分流：项目宿主在 ⇒ 引擎重入（ReenterDispatcher 族
+          // AskAnswerReentry）；委托宿主在 ⇒ 注入委托会话；归因缺席/宿主不在 ⇒
+          // 失败出口（审计 + 桌面 toast + 渠道失败回执「问题已作废+原因」——任何
+          // 出口不静默）。附件清单段随答案同走重入（同一把 formatAnswer 尺，设计
+          // §3「答案语义不变」）。
+          attachmentInjection(attachments, requestId, ctx).flatMap { case (attachText, _, _) =>
+            val fullText = if attachText.isEmpty then text else text + attachText
+            AskAnswerLanding.land(requestId, items, fullText, ctx)
+          }
         case true =>
           attachmentInjection(attachments, requestId, ctx).flatMap { case (attachText, imageBlocks, uiLines) =>
             val injectText = if attachText.isEmpty then text else text + attachText

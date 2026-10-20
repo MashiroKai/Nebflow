@@ -5,7 +5,7 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.bridge.{BridgeContext, BridgeManager, BridgePlugin}
+import nebflow.bridge.{AskAnswerReceipt, BridgeContext, BridgeManager, BridgePlugin}
 import nebflow.shared.NebflowLogger
 import nebflow.social.outbound.{AskPromptCodec, FileLongShot, PromptAction, PromptView, RichDegrade, RichKind, RichProduct}
 
@@ -436,8 +436,21 @@ final class WeixinIlinkBridgePlugin(
    *     re-injected; range errors answer ONE readable refusal line (超界拒不
    *     钳制). Anything else — `Right(None)` from the parser, no ask on
    *     file — is chat: falls through.
+   *
+   * answer-landing 实施批（2026-10-21，任务令缺陷②「回答区混入无关内容」守卫）：
+   * **媒体消息永不进 ask 臂**——`mediaLanded` 在场 ⇒ 整个前置臂跳过（拉取/取消/
+   * 编号解析/墓碑全部让路）。理由：媒体消息的 `text` 是 sidecar 合成的占位标签
+   * （`[图片]`/`[视频]`…，见 msgloop `MEDIA_LABEL`），不是作者键入的映射文本；
+   * 它一旦落进解析臂，占位标签与选项标签的**规范化碰撞**（label 臂大小写/空白
+   * 容忍）会把「发了一张图」消费成「选项作答」——入站通知被渲染进问题卡回答区
+   * = 缺陷本体。媒体腿先于一切 ask 语义（既有序不变：媒体臂本就在文本臂之前），
+   * 媒体消息恒走媒体臂/聊天流，零混入。
    */
   private def askLegs(ctx: BridgeContext, in: Inbound): IO[Option[Verdict]] =
+    if in.mediaLanded then IO.pure(None) else askTextLegs(ctx, in)
+
+  /** The text-shaped tail of [[askLegs]] — media messages never reach it. */
+  private def askTextLegs(ctx: BridgeContext, in: Inbound): IO[Option[Verdict]] =
     val text = in.text.map(_.trim).filter(_.nonEmpty)
     val sender = Option(in.routeKey).filter(_.nonEmpty)
     (text, sender) match
@@ -485,7 +498,7 @@ final class WeixinIlinkBridgePlugin(
 
     end match
 
-  end askLegs
+  end askTextLegs
 
   /**
    * askucancel 批（2026-10-08）：取消关键字腿——按在册 entry 的 requestId 精确
@@ -497,6 +510,8 @@ final class WeixinIlinkBridgePlugin(
   private def cancelAsk(ctx: BridgeContext, sender: String, entry: AskEntry): IO[Verdict] =
     ctx.cancelInteractionRequest(entry.requestId, "channel-cancel-keyword", Name) *>
       askLedgerRef.update(_ - sender) *>
+      // answer-landing 批：问题退役 ⇒ 回执反向通道随撤（幂等 no-op 先例同 askUserClosed）。
+      AskAnswerReceipt.drop(entry.requestId) *>
       outbound(sender, WeixinAskLeg.CancelledLine).flatMap { res =>
         if res.ok then IO.unit
         else logger.warn(s"weixin-ilink bridge: cancel receipt line send failed code=${res.code} reason=${res.reason}")
@@ -519,7 +534,20 @@ final class WeixinIlinkBridgePlugin(
       case Right(_) =>
         val kept = AskPromptCodec.answers(entry.views, actions)
         val answers = entry.expand(kept)
-        ctx.forwardInteractionAnswer(entry.requestId, entry.rootSessionId, Json.obj("answers" -> answers.asJson)) *>
+        // answer-landing 实施批：**回执反向通道登记**（设计开放问题 #2 推荐默认采纳
+        // 「渠道回执」）——转发的同一时刻渠道地址在手，闭包登记后，landing 面失败
+        // 出口（AskAnswerLanding）按 requestId 取用，把「问题已作废+原因」显式送回
+        // 本渠道；重入成功臂则回「答案已转交引擎重入」确认行。发送闭包 contained
+        // （失败只 WARN，绝不 raise——回执是 best-effort 增量面）。
+        AskAnswerReceipt.record(
+          entry.requestId,
+          AskAnswerReceipt.Entry(
+            channel = Name,
+            routeKey = sender,
+            send = line => outbound(sender, line).void
+          )
+        ) *>
+          ctx.forwardInteractionAnswer(entry.requestId, entry.rootSessionId, Json.obj("answers" -> answers.asJson)) *>
           askLedgerRef.update(_.updated(sender, entry.copy(answered = Some(answers)))) *>
           logger.info(
             s"weixin-ilink bridge: ask answer forwarded requestId=${entry.requestId} root=${entry.rootSessionId} " +
@@ -551,6 +579,12 @@ final class WeixinIlinkBridgePlugin(
               val items = c.downField("items").as[List[Json]].toOption.getOrElse(Nil)
               val attachments =
                 c.downField("attachments").as[List[String]].toOption.getOrElse(Nil).map(_.trim).filter(_.nonEmpty)
+              // answer-landing 实施批（表1 ★）：卡头批名 = 提问载荷归因（project
+              // 优先，回落 nodeName——分发器提问取「dispatcher」标）——标签非寻址键。
+              val batch =
+                c.downField("project").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+                  .orElse(c.downField("nodeName").as[String].toOption.map(_.trim).filter(_.nonEmpty))
+                  .getOrElse("")
               val views = AskPromptCodec.viewsFromItemsJson(items)
               (requestId, views) match
                 case (None, _) =>
@@ -574,6 +608,8 @@ final class WeixinIlinkBridgePlugin(
                       .filter(p => p.requestId != rid && p.answered.isEmpty)
                       .map(p =>
                         ctx.closeInteractionRequest(p.requestId) *>
+                          // answer-landing 批：旧问退役 ⇒ 其在飞答案的回执通道随撤。
+                          AskAnswerReceipt.drop(p.requestId) *>
                           logger.info(
                             s"weixin-ilink bridge: new ask displaces requestId=${p.requestId} for sender $sender (B-3 top-old)"
                           )
@@ -590,7 +626,7 @@ final class WeixinIlinkBridgePlugin(
                         ))
                       ) *>
                       deliverAskAttachments(sender, attachments).flatMap { undelivered =>
-                        sendAskCard(sender, flat.views, undelivered, requestId = rid)
+                        sendAskCard(sender, flat.views, undelivered, requestId = rid, batch = batch)
                       }
                   }
               end match
@@ -662,18 +698,21 @@ final class WeixinIlinkBridgePlugin(
     sender: String,
     views: List[PromptView],
     attachments: List[String],
-    requestId: String = ""
+    requestId: String = "",
+    batch: String = ""
   ): IO[Unit] =
     // askuser-secret 批：requestId 透传进渲染面（secret 题的桌面引导文案括注用；
-    // 无 secret 题 ⇒ 渲染输出与改前逐字节一致）。
-    val (text, _) = WeixinAskLeg.renderAskText(views, attachments, requestId)
+    // 无 secret 题 ⇒ 渲染输出与改前逐字节一致）。answer-landing 批：batch 透传
+    // （卡头批名行；空批名 ⇒ 逐字节一致）。
+    val (text, _) = WeixinAskLeg.renderAskText(views, attachments, requestId, batch)
     if text.length <= WeixinAskLeg.FullTextThreshold then deliverText(sender, text).void
     else
       val (short, _) = WeixinAskLeg.renderAskTextTruncated(
         views,
         attachments,
         questionBudget = math.max(WeixinAskLeg.FullTextThreshold - 800, 0),
-        requestId = requestId
+        requestId = requestId,
+        batch = batch
       )
       val segs = WeixinAskLeg.segments(text)
       pullRef.update(_.updated(sender, PullEntry(text, segs.size))) *>
@@ -685,6 +724,7 @@ final class WeixinIlinkBridgePlugin(
    * `askUserClosed` (P1 form): the hub slot is gone (withdraw / cleanup /
    * restart) — the ledger entry dies with it. A later numbered reply then
    * falls through as normal chat (there is nothing left to answer).
+   * answer-landing 批：该问在飞答案的回执反向通道随撤（幂等）。
    */
   private def onAskClosedFrame(c: io.circe.HCursor): IO[Unit] =
     val rid = c.downField("requestId").as[String].toOption.map(_.trim).filter(_.nonEmpty)
@@ -692,7 +732,7 @@ final class WeixinIlinkBridgePlugin(
       askLedgerRef.update { m =>
         val victim = m.collectFirst { case (s, e) if e.requestId == r => s }
         victim.fold(m)(s => m - s)
-      }
+      } *> AskAnswerReceipt.drop(r)
     )
 
   /**
