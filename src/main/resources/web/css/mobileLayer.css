@@ -1518,3 +1518,28 @@ body.mobile-layer #mobile-pages .wiki-canvas {
 body.mobile-layer #mobile-pages .wx-zoom {
   bottom: calc(16px + env(safe-area-inset-bottom, 0px));
 }
+
+/* ── P10 插件：插件卡全宽单列 + 封禁整卡降透明 ──────────────────────────
+   桌面条目式形态（名+版本 meta / 状态药丸 / 行尾分发开关 / chevron 展开详情
+   [描述·组成 chips·Plugin.md·actions]）与样张 P10 卡同构；滚动宿主 = 桌面
+   #plugins-content（flex:1 overflow-y:auto）原样，手机层只收紧内距。
+   开放点：样张「组成 chips 在卡面」—— 桌面 chips 在展开详情（accordion
+   信息层级既有），不挪 DOM（记偏差）；封禁态 = 桌面红边保留 + 样张整卡
+   降透明叠加（纯漆面）。 */
+body.mobile-layer #mobile-pages #plugins-content {
+  padding: 12px 12px calc(24px + env(safe-area-inset-bottom, 0px));
+}
+body.mobile-layer #mobile-pages .plugins-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+body.mobile-layer #mobile-pages .plugins-card {
+  width: 100%;
+  max-width: none;
+  border-radius: 16px;
+  padding: 12px 14px;
+}
+body.mobile-layer #mobile-pages .plugins-card.blocked {
+  opacity: 0.55;
+}

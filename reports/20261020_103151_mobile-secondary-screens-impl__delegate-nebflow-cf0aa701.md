@@ -228,3 +228,26 @@
 | §8-9 零 console error | 各测试双收集 = 0 |
 
 ---
+## P10 插件（右列推送页）— 已实施
+
+### 落地面
+
+- **内容面 = 收编桌面 plugins pane**（GET /api/plugins 冻结契约 C6，桌面零改动）：条目式插件卡（名+版本·作者 meta / 状态药丸 / 行尾分发开关 nb-toggle + chevron 展开详情[描述/组成 chips/Plugin.md/actions]）与样张 P10 卡同构，零新 DOM。
+- **CSS 形态**：滚动宿主 = 桌面 #plugins-content 原样（手机层只收紧内距 + 安全区底垫）+ 卡全宽单列 12px 间距 + 16px 卡圆角。
+- **封禁态**：桌面红边保留 + 样张「整卡降透明」叠加（`opacity .55`，纯漆面；开放点③拒载列表/④无安装入口 = 桌面既有原样）。
+- **开放点①**：三态 pill/「任务分发中」灰 pill = 桌面态机原样（本批夹具布 blocked/on 两态）。
+- **开放点②**：分发开关收起态行内常驻 = 桌面既有（data-plugin-dispatch-row，T2 断言）。
+- **偏差记档**：样张「组成 chips 在卡面」—— 桌面 chips 在 chevron 展开详情（accordion 信息层级既有），不挪 DOM（T2 断言展开后 chips 在场）。
+
+### 验收映射（spec → `tests/mobile-p10-plugins.spec.mjs`，3/3 绿）
+
+| 样张验收点 | 实机断言 |
+|---|---|
+| 页范式 + pane 收编 + 推入终态 | T1：pane 在页面体 + poll x=0/375 + 双卡全宽纵向堆叠 |
+| §2-P10 卡（名+meta / 开关行尾） | T2：名/meta（v1.4.0·作者）逐字 + 行尾 nb-toggle aria-checked=true |
+| 组成 chips（展开详情） | T2：点卡头展开 → composition 含「技能」 |
+| 已封禁整卡降透明 + 药丸 + 开关禁用 | T3：opacity<1 + 「已封禁」pill + disabled 属性 |
+| 返回契约 | T3：pop 后 .live 清零 |
+| §8-9 零 console error | 各测试双收集 = 0 |
+
+---
