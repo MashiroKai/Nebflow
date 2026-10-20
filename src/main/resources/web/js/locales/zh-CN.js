@@ -1602,6 +1602,30 @@ export default {
   'neblink.reachRelay': '可经服务器中继',
   'neblink.reachServerOnly': '在线——暂无直连通道',
   'neblink.loggedOutHint': '未登录 —— 点击上方头像登录 {lowerBrand} 账号，登录后自动入网',
+  // 统一更新系统 M3 ④（2026-10-20）：本机统一更新卡（互联页·设备段顶部）。
+  // 🔴 设置页 update.phase.* 键组已随 auth-trim 批退役，本组是**新命名空间**
+  // （neblink.updateCard.*），不复活旧键；相位键与编排器相位 wire 一一对应。
+  'neblink.updateCard.self': '本机',
+  'neblink.updateCard.updating': '正在更新',
+  'neblink.updateCard.completed': '已更新到 {version}',
+  'neblink.updateCard.aborted': '更新中止——旧版本继续服务。',
+  'neblink.updateCard.refusedFrame': '更新未受理：',
+  'neblink.updateCard.behind': '有新版本 {version}（将自动安装）',
+  'neblink.updateCard.adopted': '新版本 {version} 更新进行中',
+  'neblink.updateCard.insync': '已是最新（官网 {version}）',
+  'neblink.updateCard.refusedChannel': '更新通道与本机不一致，不自动采纳',
+  'neblink.updateCard.refusedUnavailable': '本机未装配更新编排器，暂不能自动更新',
+  'neblink.updateCard.refusedGeneric': '暂不采纳该更新',
+  'neblink.updateCard.phase.checking': '检查版本',
+  'neblink.updateCard.phase.preparing': '准备中',
+  'neblink.updateCard.phase.freezing': '冻结在飞工作',
+  'neblink.updateCard.phase.updating': '安装新包',
+  'neblink.updateCard.phase.restarting': '低扰动重启',
+  'neblink.updateCard.phase.recovering': '恢复中',
+  'neblink.updateCard.phase.idle': '空闲',
+  'neblink.updateCard.phase.completed': '已完成',
+  'neblink.updateCard.phase.aborted': '已中止',
+  'neblink.updateCard.phase.rolled-back': '已回滚',
   // 缺陷 A（2026-09-18）：未登录面板的两条读数 —— ①「清理并重登」入口（只在
   // 本地凭据文件类分类下渲染）；②状态面降级（`/status` 非 2xx 的可见读数，修前静默）。
   'neblink.cleanupRelogin': '清理并重登',

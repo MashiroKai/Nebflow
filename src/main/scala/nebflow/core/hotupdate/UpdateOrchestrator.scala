@@ -379,38 +379,17 @@ object UpdateOrchestrator:
   private val logger = NebflowLogger.forName("nebflow.hotupdate")
 
   /**
-   * **安装动作（复用点 #26）**的默认实现 = 既有 `RemoteUpdateAction.runInstallScript`。
+   * **安装动作（复用点 #26）**的默认实现 = 既有 `RemoteUpdateAction.runInstallScript`
+   * （M3 ③起含 manifest 取件校验腿：校验不过 ⇒ Left ⇒ 既有 Aborted 相位，见该文件头）。
    *
    * 注入面（验证用）：环境变量 `NEBFLOW_HOTUPDATE_INSTALL_COMMAND` 或系统属性
    * `nebflow.hotupdate.installCommand` 非空 ⇒ 以该**良性命令**替换真实安装脚本，
-   * 并大声记 WARN（生产未设 ⇒ 真实安装脚本，逐字节沿用既有面）。
-   * 与 D1「禁另写第二套安装动作」不冲突：这里换的是**命令文本**，不是安装动作本体的
-   * 第二实现——安装脚本的取值、msi 形态守卫、退出码语义仍在 `RemoteUpdateAction` 单一处。
+   * 并大声记 WARN（生产未设 ⇒ 真实安装脚本，逐字节沿用既有面）。注入判定与执行
+   * **收在 RemoteUpdateAction 单一处**（本伴生对象不再复读同一属性——禁双实现）；
+   * 换的是**命令文本**，不是安装动作本体的第二实现。
    */
   def defaultInstall(channel: UpdateChannel): IO[Either[String, String]] =
-    val overrideCmd =
-      sys.props
-        .get("nebflow.hotupdate.installCommand")
-        .map(_.trim)
-        .filter(_.nonEmpty)
-        .orElse(sys.env.get("NEBFLOW_HOTUPDATE_INSTALL_COMMAND").map(_.trim).filter(_.nonEmpty))
-    overrideCmd match
-      case None => RemoteUpdateAction.runInstallScript(channel == UpdateChannel.Beta)
-      case Some(cmd) =>
-        logger.warn(
-          s"[hotupdate] install command OVERRIDDEN by verification injection: $cmd — the real install script is NOT run"
-        )
-        IO.blocking {
-          import sys.process.*
-          Seq("/bin/sh", "-c", cmd).!
-        }.map {
-          case 0 => Right("verification install command succeeded")
-          case code => Left(s"verification install command failed (exit code: $code)")
-        }.handleErrorWith(e =>
-          IO.pure(Left(s"verification install command error: ${Option(e.getMessage).getOrElse(e.toString)}"))
-        )
-
-    end match
+    RemoteUpdateAction.runInstallScript(channel == UpdateChannel.Beta)
 
   end defaultInstall
 

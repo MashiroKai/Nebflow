@@ -20,6 +20,21 @@ lazy val root = (project in file("."))
     // package it into the JAR so runtime Branding reads it from the classpath.
     // No second copy under src/main/resources — single source, no drift.
     Compile / unmanagedResources += baseDirectory.value / "brand.conf",
+    // 统一更新系统 M3（2026-10-20）：构建身份 BUILD_SHA —— 构建期 git short sha
+    // 生成进 managed resources，`nebflow.Version.build` 从 classpath 读取（心跳
+    // `build` 字段自报；DESIGN §5 `build` 字段 / 现状缺口 #4 的机器可读化）。
+    // git 不可用（tarball 构建）⇒ 写 "dev"，Version 侧回退链兜底。内容不变不重写，
+    // 避免无谓的 rejar。
+    Compile / resourceGenerators += Def.task {
+      val out = (Compile / resourceManaged).value / "BUILD_SHA"
+      val sha =
+        try {
+          import scala.sys.process.*
+          Seq("git", "rev-parse", "--short", "HEAD").!!.trim
+        } catch { case _: Exception => "dev" }
+      if (!out.exists() || IO.read(out).trim != sha) IO.write(out, sha)
+      Seq(out)
+    }.taskValue,
     // P1 web bundle: mount build/ (containing web-dist/) as a resource dir ONLY
     // when explicitly requested via -D<lowerName>.webdist=1 (CI: sbt
     // -D${LOWER_NAME}.webdist=1 assembly). The legacy hardcoded -Dnebflow.webdist

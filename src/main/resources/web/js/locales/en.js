@@ -1659,6 +1659,31 @@ export default {
   'neblink.reachRelay': 'Reachable via server relay',
   'neblink.reachServerOnly': 'Online — no direct data path',
   'neblink.loggedOutHint': 'Not signed in — click the avatar above to sign in with your {lowerBrand} account; signing in joins the network automatically.',
+  // Unified update M3 (2026-10-20): local unified-update card (contacts panel,
+  // top of the device section). The retired settings-page update.phase.* key
+  // group is NOT resurrected — this is a NEW namespace (neblink.updateCard.*);
+  // phase keys map 1:1 onto the orchestrator phase wire tokens.
+  'neblink.updateCard.self': 'This device',
+  'neblink.updateCard.updating': 'Updating',
+  'neblink.updateCard.completed': 'Updated to {version}',
+  'neblink.updateCard.aborted': 'Update aborted — the previous version keeps serving.',
+  'neblink.updateCard.refusedFrame': 'Update not accepted: ',
+  'neblink.updateCard.behind': 'New version {version} available (will install automatically)',
+  'neblink.updateCard.adopted': 'Updating to {version}',
+  'neblink.updateCard.insync': 'Up to date (published {version})',
+  'neblink.updateCard.refusedChannel': 'Update channel differs from this device — not adopting automatically',
+  'neblink.updateCard.refusedUnavailable': 'No update orchestrator wired in this instance — automatic updates unavailable',
+  'neblink.updateCard.refusedGeneric': 'This update is not being adopted right now',
+  'neblink.updateCard.phase.checking': 'checking release',
+  'neblink.updateCard.phase.preparing': 'preparing',
+  'neblink.updateCard.phase.freezing': 'freezing in-flight work',
+  'neblink.updateCard.phase.updating': 'installing the new package',
+  'neblink.updateCard.phase.restarting': 'low-disturbance restart',
+  'neblink.updateCard.phase.recovering': 'recovering',
+  'neblink.updateCard.phase.idle': 'idle',
+  'neblink.updateCard.phase.completed': 'completed',
+  'neblink.updateCard.phase.aborted': 'aborted',
+  'neblink.updateCard.phase.rolled-back': 'rolled back',
   // Defect A (2026-09-18): two readings of the signed-out panel — (1) the
   // "clean up and sign in again" entry (local credential-file class only);
   // (2) the status-face degradation line (a non-2xx `/status` used to be silent).

@@ -881,10 +881,21 @@ object GatewayMain extends IOApp:
                                     Some(hotRestart),
                                     wsHub.broadcast
                                   )
+                                  // 统一更新收敛闭环（M3 ③，DESIGN §7.2）：心跳响应领账
+                                  // → 采纳闸（跨通道拒采/前向-only）→ 全复用上面的编排器
+                                  // 七相位执行链（执行链零改动）。零定时器：只在心跳腿被
+                                  // 调用；状态经 updateState 帧 + serverConfig 快照 +
+                                  // /api/health `update` 键可见。
+                                  val updateConvergence =
+                                    new nebflow.neblink.NeblinkUpdateConvergence(
+                                      Some(updateOrchestrator),
+                                      wsHub.broadcast
+                                    )
                                   val sharedResourcesWithRestart =
                                     sharedResources.copy(
                                       hotRestart = Some(hotRestart),
-                                      updateOrchestrator = Some(updateOrchestrator)
+                                      updateOrchestrator = Some(updateOrchestrator),
+                                      updateConvergence = Some(updateConvergence)
                                     )
                                   hubSetup *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> succeedPortGate(
                                     cfg,
@@ -1091,7 +1102,14 @@ object GatewayMain extends IOApp:
                                           neblinkService,
                                           cfg.port.value,
                                           presenceService,
-                                          neblinkClient
+                                          neblinkClient,
+                                          // 统一更新收敛闭环（M3 ③）：心跳响应带 update.target
+                                          // ⇒ 交收敛组件领账（采纳闸在其内；失败自吞，绝不
+                                          // 打断名册同步）。收敛组件在编排器装配点已建
+                                          // （sharedResourcesWithRestart 更新于其前）。
+                                          onUpdateTarget = sharedResourcesWithRestart.updateConvergence.map(c =>
+                                            (t: nebflow.neblink.NeblinkUpdateTarget) => c.onHeartbeatTarget(t)
+                                          )
                                         )
                                         neblinkDiscoveryHolder.set(Some(tsDiscovery))
                                         // A2A 一期：FriendService 基于 NeblinkClient（好友/消息 REST +

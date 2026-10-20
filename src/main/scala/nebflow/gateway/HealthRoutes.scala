@@ -2,6 +2,7 @@
 package nebflow.gateway
 
 import cats.effect.IO
+import cats.syntax.all.*
 import fs2.Stream
 import io.circe.Json
 import io.circe.syntax.*
@@ -34,7 +35,15 @@ private[gateway] object HealthRoutes:
         // reads the very same payload over HTTP, so the version a successor
         // advertises can never drift from what this endpoint serves. Fields,
         // field order and value semantics are unchanged (byte-compatible body).
-        HealthPayload.build(sharedResources.healthMonitor).flatMap(Ok(_))
+        // 统一更新收敛闭环（M3 ③）：`update` 键 = 最近挂账/决策读数，**仅当有状态
+        // 可报时出现**（无键 = 默认载荷逐字节不变，探针契约零回归）。
+        sharedResources.updateConvergence
+          .traverse(_.healthJson)
+          .map(_.flatten)
+          .flatMap { extra =>
+            val updateKey = extra.map(u => Json.obj("update" -> u)).getOrElse(Json.obj())
+            HealthPayload.build(sharedResources.healthMonitor, updateKey).flatMap(Ok(_))
+          }
 
       // 连接面只读读数（R-1b conn-guard 批，设计件 §C④-4）：零凭据面（仅
       // 对端 IP + 计数 + 上限/超时口径 + fd 代理）。与 /health 同级无令牌门

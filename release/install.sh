@@ -1320,6 +1320,27 @@ download_jar() {
     # one new on-disk mechanism of this face). User data stays untouched.
     archive_legacy_jars
 
+    # 统一更新系统 M3 ③（engine manifest era）：引擎侧已按官网 manifest 的
+    # sha256/sizeBytes 逐字节校验过的 jar 可经 NEBFLOW_STAGED_JAR 交接进来——
+    # 采用前**本侧再验一次 sha256**（NEBFLOW_EXPECTED_JAR_SHA256；双向都不信任
+    # 未验哈希的字节，防交接窗内文件被换）；验不过/变量缺席 ⇒ 自然落到下方既有
+    # 下载源，零行为回归。cp 进版本目录后同目录 rename（跨盘交接不产生撕裂文件）。
+    if [ -n "${NEBFLOW_STAGED_JAR:-}" ] && [ -f "${NEBFLOW_STAGED_JAR}" ]; then
+        _staged_sha=$(sha256_of "${NEBFLOW_STAGED_JAR}")
+        if [ -n "${_staged_sha}" ] && [ "${_staged_sha}" = "${NEBFLOW_EXPECTED_JAR_SHA256:-}" ]; then
+            if cp -f "${NEBFLOW_STAGED_JAR}" "${target_versioned}.staged" \
+                && mv -f "${target_versioned}.staged" "${target_versioned}"; then
+                log_ok "Adopted engine-verified staged JAR (sha256 ok)."
+                record_version "${VERSION}" "${prev_now}"
+                return 0
+            fi
+            rm -f "${target_versioned}.staged"
+            log_warn "Staged JAR adoption failed - falling back to download."
+        else
+            log_warn "Staged JAR sha256 mismatch (expected ${NEBFLOW_EXPECTED_JAR_SHA256:-<unset>}, got ${_staged_sha:-none}) - ignoring the handoff, downloading."
+        fi
+    fi
+
     # 单一源（结论不变）：jar 只从上面的镜像端点取。2026-09-17 更正：此前
     # 的「#29 仓库 private ⇒ GitHub Releases 未认证 404」理由已过时（仓库现已
     # 公开），单源理由为可达性与带宽，见文件头品牌值区注释。

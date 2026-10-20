@@ -1015,6 +1015,12 @@ class WebSocketRoutes(
                     workScheduleCfg <- sharedResources.freezeScheduleRef.get
                     skipUntil <- sharedResources.freezeSkipUntilRef.get
                     sttSvc <- sttServiceRef.get
+                    // 统一更新收敛闭环（M3 ③④）：连接初始态即携带更新状态快照
+                    // （自报版本/构建/通道 + 最近挂账与决策）——面板更新卡纯订阅 +
+                    // 快照，零轮询。未装配 ⇒ 空对象，帧形零变化。
+                    updateSnapshot <- sharedResources.updateConvergence
+                      .traverse(_.stateJson)
+                      .map(_.flatten)
                     mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
                       io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
                     })
@@ -1043,6 +1049,8 @@ class WebSocketRoutes(
                             // above `toolsListJson`.
                             "mcpServers" -> mcpServers.asJson
                           )
+                          // M3 ④：update 快照 additive 挂载（未装配 = 空对象 = 不出现键）
+                          .deepMerge(updateSnapshot.map(u => io.circe.Json.obj("update" -> u)).getOrElse(io.circe.Json.obj()))
                           .noSpaces
                       )
                     )

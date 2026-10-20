@@ -46,7 +46,7 @@ class NeblinkPresenceConvergenceSpec extends CatsEffectSuite:
   /** Heartbeat stub client — never touches the network. */
   private def stubClient(peers: List[NeblinkPeerInfo]): NeblinkClient =
     new NeblinkClient(NeblinkServerConfig(url = "http://127.0.0.1:9", networkId = "n1", secret = "s"), 0):
-      override def heartbeat: IO[Either[String, List[NeblinkPeerInfo]]] = IO.pure(Right(peers))
+      override def heartbeat: IO[Either[String, HeartbeatOutcome]] = IO.pure(Right(HeartbeatOutcome(peers, None)))
 
   /** Discovery stub — 覆写 `discover`（`discoverCycle` / `discoverViaServer` 的入口），不触网。 */
   private def discoverStubClient(peers: List[NeblinkPeerInfo]): NeblinkClient =

@@ -72,8 +72,8 @@ class NeblinkActivityGateSpec extends CatsEffectSuite:
     ): IO[Either[String, List[NeblinkPeerInfo]]] =
       IO(discoverCalls.incrementAndGet()).as(Right(Nil))
 
-    override def heartbeat: IO[Either[String, List[NeblinkPeerInfo]]] =
-      IO(heartbeatCalls.incrementAndGet()).as(Right(Nil))
+    override def heartbeat: IO[Either[String, HeartbeatOutcome]] =
+      IO(heartbeatCalls.incrementAndGet()).as(Right(HeartbeatOutcome(Nil, None)))
 
   end CountingClient
 

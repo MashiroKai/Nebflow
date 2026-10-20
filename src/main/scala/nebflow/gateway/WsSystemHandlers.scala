@@ -369,17 +369,15 @@ private[gateway] object WsSystemHandlers:
   ): IO[Unit] =
     import ctx.*
     val currentVer = nebflow.Version.string
-    // #29: 仓库 private 后 GH API 未认证不可用——版本检查读发布镜像
-    // latest-version.txt（stable 通道，与旧 releases/latest 同语义）。
-    // COS→OSS 切仓（2026-09-14）：桶名走 Branding.cosBucket 派生
-    // （brand.conf 为唯一事实源，禁再硬编码桶名）；端点 = 阿里云 OSS 杭州。
-    // hotupdate 批 1：读取与比对本体已抽到 VersionCheck（单一实现）——更新
-    // 编排器的「检查」相位与本分支同源，禁第二套比对。帧形状逐字段不变。
+    // #29: 仓库 private 后 GH API 未认证不可用——版本检查读发布镜像。
+    // 统一更新系统 M3 ②：读源换官网 manifest（stand-website M1 批发布的权威源），
+    // manifest 不可达回落 OSS 裸 txt（只检不装，双读过渡期）；读序收在 VersionCheck
+    // 单一实现内，本分支与其余检查入口同源，禁第二套比对。帧形状逐字段不变
+    // （releaseName：manifest 时代 = manifest version；txt 时代 = 裸 tag 原文）。
     val result = nebflow.core.hotupdate.VersionCheck
-      .fetchRaw()
+      .fetchLatestVersion()
       .flatMap {
-        case Some(tag) =>
-          val latestVer = tag.stripPrefix("v")
+        case Some(latestVer) =>
           val hasUpdate = nebflow.core.hotupdate.VersionCheck.hasUpdate(currentVer, latestVer)
           wsSend(
             io.circe.Json.obj(
@@ -387,7 +385,7 @@ private[gateway] object WsSystemHandlers:
               "currentVersion" -> currentVer.asJson,
               "latestVersion" -> latestVer.asJson,
               "hasUpdate" -> hasUpdate.asJson,
-              "releaseName" -> tag.asJson
+              "releaseName" -> latestVer.asJson
             )
           )
         case None =>
