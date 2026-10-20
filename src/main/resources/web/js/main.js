@@ -44,6 +44,7 @@ import {
 import { startWorklineDots, beginRound } from './workline.js';
 import { replayHistoryPageInitialLoad } from './chat/historyReplay.js';
 import { notePendingAsk, removePendingAsk, applyPendingAskSnapshot, pendingSnapshotFailed, initPendingAsks } from './askPending.js';
+import { initScrollUnderGlass } from './scrollUnderGlass.js'; // uifix ⑤
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
   deleteSession, formatSessionTime, setSessionAttention,
@@ -229,6 +230,7 @@ initChatView(
 
 // D6 批 F2: pending-ask bar + header badge wiring (click = jump to oldest ask).
 initPendingAsks();
+initScrollUnderGlass(); // uifix ⑤：浮层毛玻璃裙边降级探测器
 
 // ---------- 2. Init libraries ----------
 // Guard: Safari may execute module scripts before CDN scripts finish loading.
@@ -3386,10 +3388,13 @@ initGlobalFileDrop(); // #303 — document-level drag & drop onto input bars
     overlays.getBoundingClientRect().bottom,
   );
   const syncTopReserve = () => {
-    const chatTop = chat.getBoundingClientRect().top;
-    // Not laid out yet (#chat always carries the 45px margin-top) — the
-    // observer fires again as soon as it is.
-    if (!chatTop) return;
+    const chatBox = chat.getBoundingClientRect();
+    // Not laid out yet (zero-size box) — the observer fires again as soon as it is.
+    // uifix ⑤（2026-10-20）：原守卫 `if (!chatTop)` 把「视口 top 恰为 0」当未布局
+    // （页面滚过表头即触发），观察器自此永久静默——带改 overlay 后 chat 顶回到
+    // #main 顶，滚动态下 top=0 是常态，守卫改判零尺寸盒。
+    if (!chatBox.width && !chatBox.height) return;
+    const chatTop = chatBox.top;
     const reserve = Math.max(BASE_TOP_PAD, Math.ceil(bandBottom() - chatTop) + BASE_TOP_PAD);
     const prev = parseFloat(getComputedStyle(chat).paddingTop) || BASE_TOP_PAD;
     if (Math.abs(prev - reserve) < 0.5) return;

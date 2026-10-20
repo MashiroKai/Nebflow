@@ -1276,6 +1276,21 @@ export async function openWorkspaceItem(item) {
 //     morph 时长统一 0.28s 档；②投影 token 浅一档（split.css --card-shadow）；
 //     ③× 退役 → 竖排浅色滑动提示（.card-swipe-hint / .deck-swipe-hint）。
 //
+// uifix 批（作者令 2026-10-20 四件，重写叠卡视角）——推翻/升级：
+//   · ③a 层叠阴影重做：投影按环深**渐次减弱**（JS 每帧给卡打 data-dim 层级，
+//     CSS 四档 token），露边间距**拉开**（deckPeekStep 三版档位，body.deck-look-v1
+//     收敛 / v2 均衡(默认) / v3 拉开——作者挑版，setLook 即热切换）；
+//   · ③b 卡片快照：开 deck 时对每张卡截取**真实内容克隆**（markdown=渲染面克隆/
+//     image=img 复源/pdf=首页像素拷贝），Monaco/iframe 类不可克隆面回落类型 mock；
+//     快照 Map 仅存到 deck 关闭（无常驻重渲染，擦洗仍是纯 transform）；
+//   · ③c 滚轮重做（触控板/鼠标分流）：wheel 只在叠卡面内捕获（页面其余区域原生
+//     滚动不被劫持——「双指不与页面滚动打架」）；触控板连续小 delta 直通 scrub，
+//     事件流停 110ms 后速度 EMA 滑行衰减补动量；鼠标格（|dy|≥40）按档位增益
+//     ≈一格近一卡；
+//   · ③d 竖排「滑动关闭」提示文字整体退场（作者令）；
+//   · ③e 卡右上角 × 钮回归（作者最新口径推翻精修③）：pointerdown 阻断防拖划误触，
+//     click 走 deckRequestClose 同右键菜单一条腿（划走手势保留）。
+//
 // 作者补充令（竖拖换卡）：上下拖动手势同可换卡（不只鼠标滚轮）——
 //   · Pointer Events 纵向拖动驱动（pointerdown+move 的 dy 增量喂给同一环形 scrub
 //     引擎：target += Δdy × 增益，跟手连续）；松手带少量惯性（EMA 速度 × 冲程、
@@ -1325,6 +1340,31 @@ const DECK_DRAG_GAIN = 1 / 160;
 const DECK_DRAG_INERTIA = 90;
 const DECK_DRAG_INERTIA_MAX = 80;
 const DECK_AXIS_LOCK_PX = 8;
+
+// ── uifix 批（作者令 2026-10-20 四件）新增 ─────────────────────────────
+// ③a 层叠阴影三版参数（作者挑版，body.deck-look-* 切换；默认 v2 均衡）：
+//   露边阶梯（间距拉开档位）由 deckPeekStep() 同源取值 —— CSS 只管阴影 token，
+//   几何档位在这里（deckPoseOf 每帧读取，切版即重排）。
+const DECK_LOOK_DEFAULT = 'v2';
+const DECK_LOOKS = {
+  v1: { peek1: 22, peek2: 6,  wheelNotch: 1.8 },   // 收敛：贴近 v5 原值，阴影最轻
+  v2: { peek1: 27, peek2: 9,  wheelNotch: 2.2 },   // 均衡（默认）：间距+50%，阴影中档
+  v3: { peek1: 34, peek2: 14, wheelNotch: 2.2 },   // 拉开：间距翻倍，层级感最强
+};
+/** 当前 look 档位参数（body.deck-look-* 单一来源，CSS/JS 同读一类名）。 */
+function deckLook() {
+  const body = document.body;
+  for (const k of Object.keys(DECK_LOOKS)) if (body.classList.contains('deck-look-' + k)) return k;
+  return DECK_LOOK_DEFAULT;
+}
+function deckPeekStep() { return DECK_LOOKS[deckLook()] || DECK_LOOKS[DECK_LOOK_DEFAULT]; }
+// ③c 滚轮动量（触控板自然滚动）：末窗速度（px/ms）→ 事件流静默后滑行衰减。
+//   触控板 macOS 原生动量事件本身持续喂 delta，滑行只补「动量被吞」的浏览器；
+//   鼠标格（单事件 |dy|≥40px）按档位增益（DECK_LOOKS.wheelNotch 倍率）≈一格近一卡。
+const DECK_WHEEL_GLIDE_DELAY = 110;   // 事件流静默 ≥110ms 判定结束
+const DECK_WHEEL_GLIDE_DECAY = 4.6;   // 滑行指数衰减（/s）
+const DECK_WHEEL_GLIDE_VMAX = 3.2;    // 滑行初速钳（px/ms，≤ ~1.1 卡冲程）
+const DECK_NOTCH_PX = 40;             // 单事件 |dy|≥40 判为鼠标格（触控板指纹 1~20px）
 
 const deckRm = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
 
@@ -1502,7 +1542,8 @@ function initDeck() {
   deckLayer.id = 'deck-layer';
   deckFoot = document.createElement('div');
   deckFoot.id = 'deck-foot';
-  deckFoot.innerHTML = '<div class="deck-hint">滚轮 / 上下拖动 换卡（连续擦洗 · 可回滚） · 点击前景卡放大回满幅换入 · 点深处卡翻到该卡 · 横向划走关闭 · ESC 收回</div><div class="deck-count"></div>';
+  // uifix ③d/③e：提示行更新——竖排「滑动关闭」文案退役；关闭走卡面 × / 划走 / 右键。
+  deckFoot.innerHTML = '<div class="deck-hint">滚轮 / 上下拖动 换卡（连续擦洗 · 可回滚） · 点击前景卡放大回满幅换入 · 点深处卡翻到该卡 · 卡面 × 或右键关闭 · 横向划走关闭 · ESC 收回</div><div class="deck-count"></div>';
   deckFab = document.createElement('button');
   deckFab.id = 'deck-fab';
   deckFab.className = 'deck-fab';
@@ -1523,12 +1564,10 @@ function initDeck() {
   panel.style.setProperty('--stack-scale', String(DECK_SCALE));
   panel.style.setProperty('--stack-shift', DECK_SHIFT + 'px');
 
-  // 精修③：面板面上的竖排滑动提示（× 退役）
-  const slide = panel.querySelector('#canvas-slide') || panel;
-  const panelHint = document.createElement('div');
-  panelHint.className = 'deck-swipe-hint';
-  panelHint.textContent = '滑动关闭';
-  slide.appendChild(panelHint);
+  // uifix ③a：默认层叠 look 档位（作者挑版后可经 __canvasDeck.setLook 热切换）
+  if (![...document.body.classList].some((c) => c.indexOf('deck-look-') === 0)) {
+    document.body.classList.add('deck-look-' + DECK_LOOK_DEFAULT);
+  }
 
   deckFab.addEventListener('click', () => {
     if (deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx || deck.exitCardFx || deck.cardDrag) return;
@@ -1640,10 +1679,24 @@ function deckMakeCardEl(entry, r, cls) {
       '<span class="n-text">' + escapeDeckText(entry.title || entry.id) + '</span>' +
       '<span class="n-sub">' + (entry.absPath ? '' : '面板') + '</span>' +
     '</div>' +
-    '<div class="card-thumb">' + deckThumbMock(family) + '</div>' +
-    /* 精修③：× 退役 → 卡缘竖排浅色滑动提示（示意左右划走关闭） */
-    '<div class="card-swipe-hint">滑动关闭</div>' +
+    '<div class="card-thumb" data-snap="pending">' + deckThumbMock(family) + '</div>' +
+    /* uifix ③e：卡右上角 × 关闭钮（作者最新口径，推翻精修③竖排提示方案） */
+    '<button class="deck-card-x" type="button" title="关闭" aria-label="关闭 ' + escapeDeckText(entry.title || entry.id) + '">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>' +
+    '</button>' +
     '<div class="card-shade"></div>';
+  // uifix ③b：开卡组时已缓存的快照先挂上（未及构建的由 deckAttachSnapshots 补挂）
+  deckMountSnapshot(card, entry.id);
+  /* 卡面 × 关闭（作者令）：pointerdown 阻断（不进拖划/点击语义），click 走
+     deckRequestClose 同右键菜单一条腿——前景卡=面板收拢淡出，深处卡=就地收敛保相位 */
+  const xBtn = card.querySelector('.deck-card-x');
+  xBtn.addEventListener('pointerdown', (e) => { e.stopPropagation(); });
+  xBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!deck.open || deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx || deck.exitCardFx) return;
+    if (performance.now() < deck.suppressCardClick) return;
+    deckRequestClose(entry.id);
+  });
   /* 点击：前景卡（|d|<0.5）= 放大回满幅换入；深处卡 = 翻到该卡（不换签） */
   card.addEventListener('click', () => {
     if (!deck.open || deckBusy() || deck.exitCardFx) return;
@@ -1670,6 +1723,7 @@ function deckMakeCardEl(entry, r, cls) {
   card.addEventListener('pointerdown', (e) => {
     if (!deck.open || deckBusy() || deck.exitCardFx || deck.cardDrag || deck.drag) return;
     if (e.button !== 0) return;
+    wheelGlideV = 0;                                               // 拖划接管：截停滚轮滑行
     if (card === deck.selfCardEl) return;                          // canvas 本尊的环卡不参与拖划
     const rr = +card.dataset.r;
     if (deck.M && Math.abs(deckWrapDelta(rr - deck.pos, deck.M)) >= 0.5) return;  // 只拖前景卡
@@ -1704,6 +1758,115 @@ function deckMakeCardEl(entry, r, cls) {
 function escapeDeckText(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+
+// ── ③b 卡片快照（作者令「堆叠视角要能看到卡片快照」）────────────────────
+// 轻量方案 = **开 deck 时截取缓存**（作者口径）：快照源按查看器类型分派 ——
+//   markdown = 渲染面 .canvas-md-viewer 克隆（去 id 防全局重复）/ image = img 同源
+//   克隆（零重解码，走缓存位图）/ pdf = 首页 canvas 像素 drawImage 拷贝；
+//   Monaco / iframe（html/url）/ 面板页签 = 不可安全克隆 → 回落类型 mock（原样）。
+// 纪律：快照 Map 只活到 deck 收场（closeDeck/deckShutdown/deckFinishSwap 清），
+// 每次开卡组重截 —— 无陈旧快照、无常驻重渲染；擦洗期间卡片仍是纯 transform。
+const deckSnapshots = new Map();      // tabId → { node, srcW, kind }
+const DECK_SNAP_BATCH = 2;            // 每帧最多建 2 张（防一帧长任务）
+/** 快照源解析：可克隆面 → { el, kind }；不可克隆 → null（mock 回落）。 */
+function deckSnapshotSource(entry) {
+  const pane = getTabPane(entry.id);
+  if (!pane) return null;
+  const family = deckTypeFamily(entry);
+  if (family === 'markdown' && entry.paneEl.dataset.sourceMode !== '1') {
+    const viewer = pane.querySelector('.canvas-md-viewer');
+    if (viewer) return { el: viewer, kind: 'clone' };
+  }
+  if (family === 'image') {
+    const img = pane.querySelector('.canvas-image-viewport img');
+    if (img && (img.complete || !img.src)) return { el: img, kind: 'img' };
+  }
+  if (family === 'doc') {
+    const page = pane.querySelector('.pdf-pages canvas');
+    if (page && page.width && page.height) return { el: page, kind: 'canvas' };
+  }
+  return null;
+}
+/** 建一张快照节点（已缓存直接返回；不可克隆回落 null）。 */
+function deckBuildSnapshot(entry) {
+  if (deckSnapshots.has(entry.id)) return deckSnapshots.get(entry.id);
+  const src = deckSnapshotSource(entry);
+  if (!src) return null;
+  const area = deckPanelRect();
+  const srcW = (area && area.width) || 900;   // 渲染面宽 = canvas 区宽（display:none 面读不到 offsetWidth）
+  let node = null;
+  try {
+    if (src.kind === 'canvas') {
+      // pdf 首页像素拷贝：按卡宽定高，一次 drawImage（零常驻成本）
+      const c = document.createElement('canvas');
+      c.width = Math.round(Math.min(760, srcW));
+      c.height = Math.round(c.width * (src.el.height / src.el.width));
+      c.getContext('2d').drawImage(src.el, 0, 0, c.width, c.height);
+      node = c;
+    } else {
+      node = src.el.cloneNode(true);
+      node.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));   // 克隆去 id：防全局 getElementById 撞车
+      node.querySelectorAll('button, input, textarea, select').forEach((n) => n.setAttribute('tabindex', '-1'));
+    }
+  } catch { return null; }
+  const snap = { node, srcW, kind: src.kind };
+  deckSnapshots.set(entry.id, snap);
+  return snap;
+}
+/** 把快照挂进卡的 thumb 槽（替换 mock；等比缩放 + 只读）。缩放比取布局常量
+ *  （卡宽 = 面板盒 85%，thumb 内宽 = 卡宽 − 12×2 margin − 2 border）——建环瞬间
+ *  卡未布局，clientWidth 读数不可靠。 */
+function deckMountSnapshot(card, tabId) {
+  const slot = card.querySelector('.card-thumb');
+  if (!slot || slot.dataset.snap !== 'pending') return;
+  const entry = tabs.get(tabId);
+  if (!entry) return;
+  const snap = deckBuildSnapshot(entry);
+  if (!snap) { slot.dataset.snap = 'mock'; return; }
+  slot.dataset.snap = 'live';
+  slot.classList.add('has-snap');
+  const area = deckPanelRect();
+  const thumbW = area && area.width ? area.width * DECK_SCALE - 26 : 0;
+  const k = thumbW && snap.srcW ? thumbW / snap.srcW : 0.85;
+  const wrap = document.createElement('div');
+  wrap.className = 'card-snap';
+  const inner = document.createElement('div');
+  inner.className = 'card-snap-inner';
+  inner.style.width = snap.srcW + 'px';
+  inner.style.transform = 'scale(' + k.toFixed(4) + ')';
+  if (snap.kind === 'img') {
+    const img = /** @type {HTMLElement} */ (snap.node);
+    img.className = 'card-snap-img';
+    inner.style.transform = '';
+    inner.style.width = '100%';
+    inner.appendChild(img);
+  } else {
+    inner.appendChild(snap.node);
+  }
+  wrap.appendChild(inner);
+  slot.replaceChildren(wrap);
+}
+/** 开卡组时批量补快照：前景先挂，其余分帧建（防一帧长任务拖开卡动画）。 */
+function deckAttachSnapshots() {
+  if (!deck.open || !deckLayer) return;
+  const cards = [...deckLayer.querySelectorAll('.deck-card[data-r]')];
+  const pending = cards.filter((c) => { const s = c.querySelector('.card-thumb'); return s && s.dataset.snap === 'pending'; });
+  let i = 0;
+  const step = () => {
+    if (!deck.open) return;                       // 收场即弃（Map 已清）
+    for (let n = 0; n < DECK_SNAP_BATCH && i < pending.length; n++, i++) {
+      deckMountSnapshot(pending[i], pending[i].dataset.tab);
+    }
+    if (i < pending.length) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+/** 快照缓存清场（deck 收场三口：closeDeck / deckShutdown / deckFinishSwap）。
+ *  只清 Map——卡 DOM 由收场自行移除，退场淡出期间快照留在卡上不闪帧。 */
+function deckClearSnapshots() {
+  deckSnapshots.clear();
+}
+
 function deckMountRing() {
   if (!deckLayer) return;
   deckLayer.querySelectorAll('.deck-card').forEach((el) => el.remove());
@@ -1734,13 +1897,15 @@ function deckPoseOf(d) {
     const arc = -d < 1 ? Math.sin(Math.PI * -d) : 0;
     const y = DECK_SHIFT + (DECK_FALL_DROP * a + DECK_FALL_ARC * arc) * deck.sizeK;
     const tilt = (DECK_FALL_TILT * a + DECK_FALL_TILT_ARC * arc) * deck.sizeK;
-    const op = Math.max(0, 1 - (a - 0.12) * 0.42);
+    const op = Math.min(1, Math.max(0, 1 - (a - 0.12) * 0.42));
     return { y, z: 0, tilt, scale: 1, op, shade: Math.min(0.30, a * 0.12) };
   }
+  /* uifix ③a：间距拉开档位（v1 收敛 / v2 均衡 / v3 拉开，deckPeekStep 同源） */
+  const step = deckPeekStep();
   const dd = Math.max(0, d);
   const a1 = Math.min(dd, 1);
   const a2 = Math.max(0, Math.min(dd, 4.5) - 1);
-  const y = DECK_SHIFT - (22 * a1 + 6 * a2) * deck.sizeK;
+  const y = DECK_SHIFT - (step.peek1 * a1 + step.peek2 * a2) * deck.sizeK;
   const tilt = -1.6 * Math.min(dd, 4) * deck.sizeK;
   const op = dd <= 1.2 ? 1 : Math.max(0, 1 - (dd - 1.2) * 0.30);
   return { y, z: 0, tilt, scale: 1, op, shade: Math.min(0.30, 0.11 * dd) };
@@ -1811,6 +1976,14 @@ function deckFrame(t) {
   }
 
   const k = deckRm.matches ? 1 : 1 - Math.exp(-dt * DECK_SCRUB_APPROACH);
+  /* uifix ③c：滚轮滑行段 —— 事件流静默后的 EMA 初速指数衰减并进 target；
+     新输入四路口（wheel/拖划/键盘/收场）已各自截停。 */
+  if (wheelGlideV) {
+    deck.target += wheelGlideV * dt * 1000 * DECK_WHEEL_GAIN;
+    deck.target = Math.max(deck.pos - deck.M, Math.min(deck.pos + deck.M, deck.target));
+    wheelGlideV *= Math.exp(-dt * DECK_WHEEL_GLIDE_DECAY);
+    if (Math.abs(wheelGlideV) < 0.02) wheelGlideV = 0;
+  }
   deck.pos += (deck.target - deck.pos) * k;
   if (Math.abs(deck.target - deck.pos) < 0.0008) deck.pos = deck.target;
   const ks = deckRm.matches ? 1 : 1 - Math.exp(-dt * DECK_SPREAD_APPROACH);
@@ -1855,6 +2028,9 @@ function deckFrame(t) {
   for (const el of cards) {
     const r = +el.dataset.r;
     const d = deck.M ? deckWrapDelta(r - deck.pos, deck.M) : 1;
+    /* uifix ③a：阴影渐次减弱 —— 环深档位打给 CSS（0=前景…3=深处） */
+    const dimTier = Math.min(3, Math.floor(Math.abs(d)));
+    if (el.dataset.dim !== String(dimTier)) el.dataset.dim = String(dimTier);
     const p0 = deckPoseOf(d);
     let p = { y: DECK_SHIFT + (p0.y - DECK_SHIFT) * deck.spread, z: p0.z * deck.spread, tilt: p0.tilt * deck.spread,
               scale: 1, op: p0.op * deck.spread, shade: p0.shade };
@@ -1954,6 +2130,7 @@ function openDeck() {
   deck.open = true; deck.interacted = false;
   deck.selFly = null; deck.ghostFx = null; deck.faceFx = null; deck.exitCardFx = null;
   deck.drag = null; deck.cardDrag = null; deck.suppressCardClick = 0;
+  deckWheelReset();
   deckMountRing();
   deck.pos = deck.target = 0;          // 前景位 = 环首 = 当前 canvas
   deck.d0s = 0; deck.driveSuspend = false; deck.panelFront = true;
@@ -1968,6 +2145,7 @@ function openDeck() {
   deckFoot.classList.add('on');
   deckFab.setAttribute('aria-pressed', 'true');
   deckUpdateCount();
+  deckAttachSnapshots();                 // ③b：开卡组时批量截快照（前景先挂，分帧补）
   deckStartLoop();
 }
 /** 收回（v4⑤ + v5① 轮换态衔接）：面板位姿瞬时归位 + 卡组 .collapse 淡出交叉。 */
@@ -1996,6 +2174,8 @@ function closeDeck() {
     deckFoot.classList.remove('live');
     panel.style.opacity = '';
     deck.open = false; deck.finalizing = false;
+    deckClearSnapshots();
+    deckWheelReset();
     deckStopLoop();
   }, deckRm.matches ? 30 : 300);
 }
@@ -2015,6 +2195,8 @@ function deckShutdown() {
   }
   deckFab.setAttribute('aria-pressed', 'false');
   deck.open = false; deck.finalizing = false; deck.driveSuspend = false;
+  deckClearSnapshots();
+  deckWheelReset();
   deckStopLoop();
 }
 
@@ -2070,6 +2252,8 @@ function deckFinishSwap() {
   deckLayer.classList.remove('live');
   deckFoot.classList.remove('live');
   deck.open = false; deck.finalizing = false; deck.driveSuspend = false;
+  deckClearSnapshots();
+  deckWheelReset();
   deckStopLoop();
 }
 
@@ -2153,7 +2337,7 @@ function deckRestorePanel(panel, fx) {
   }));
 }
 
-// ── 关闭请求（右键菜单；× 已随精修③退役）──
+// ── 关闭请求（右键菜单 + uifix ③e 卡面 × 钮同一条腿；划走关闭经 exitCardFx/faceFx）──
 function deckRequestClose(id) {
   if (!deck.open || deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx) return;
   const panel = document.getElementById('canvas-panel');
@@ -2191,26 +2375,76 @@ function deckCloseOthers(keepId) {
   deckStartLoop();
 }
 
+// ── ③c 滚轮输入（触控板/鼠标分流 + 事件流滑行）─────────────────────────
+// 触控板：macOS 连续小 delta（1~20px/事件，125Hz+）直通 scrub——**末窗速度**
+// （最近 120ms 累计 dy / 窗时长，比全程 EMA 更贴近离手瞬间速度）记录动量；
+// 原生动量事件持续喂 delta 自然延伸，事件流停 110ms 后由末窗速度起一段指数
+// 衰减滑行（补动量被吞的浏览器）。鼠标格：单事件 |dy|≥40 走档位增益
+// （≈一格近一卡），无动量语义。所有动量在「新 wheel / 拖划 / 键盘 / 收场」
+// 四路口截停。
+const DECK_WHEEL_V_WINDOW = 120;      // 末窗速度窗口（ms）
+const DECK_WHEEL_INST_FLOOR = 0.3;    // 滑行武装的瞬时速度地板（px/ms——离手已停不起滑）
+let wheelLastT = 0;        // 最近 wheel 事件时戳
+let wheelV = 0;            // 末窗速度（px/ms）
+let wheelInstV = 0;        // 最近事件瞬时速度（滑行武装第二判据）
+let wheelTimer = 0;        // 事件流静默计时
+let wheelGlideV = 0;       // 滑行速度（≠0 = 滑行中，deckFrame 消耗）
+function deckWheelReset() {
+  wheelLastT = 0; wheelV = 0; wheelInstV = 0; wheelGlideV = 0;
+  if (wheelTimer) { clearTimeout(wheelTimer); wheelTimer = 0; }
+}
+
 // ── 输入绑定（滚轮 / 键盘 / 面板拖划〔主导轴：横=划走关闭 · 纵=scrub 换卡〕；
 //    deck 层与卡片的监听在卡片工厂里，共用同一套拖划公共腿）──
 function bindDeckInput() {
   const panel = document.getElementById('canvas-panel');
   if (!panel) return;
 
-  // 滚轮 = 连续擦洗 + 前景轮换（v5①）：无阈值步进，滚多少动多少，可回滚。
-  // 面板与 deck 层是兄弟层，wheel 在 document 收口；可编辑焦点让路；Ctrl+滚轮
-  // （页面缩放语义）不拦截不擦洗。
+  // 滚轮 = 连续擦洗 + 前景轮换（v5①）+ uifix ③c 分流改造：
+  //   · 捕获域收窄到叠卡面（deck 层 / 缩放态面板 / fab / foot）——页面其余区域
+  //     （聊天列等）的双指滚动不被劫持（「不与页面滚动打架」）；
+  //   · 触控板小 delta 直通 scrub + 事件流滑行补动量；鼠标格档位增益；
+  //   · 可编辑焦点让路；Ctrl+滚轮（页面缩放语义）不拦截不擦洗。
   document.addEventListener('wheel', (e) => {
     if (!deck.open || deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx) return;
     if (e.ctrlKey) return;
     const tgt = e.target;
-    if (tgt instanceof Element && (tgt.closest('input, textarea, [contenteditable="true"], .monaco-editor, .cm-editor'))) return;
+    if (!(tgt instanceof Element)) return;
+    if (tgt.closest('input, textarea, [contenteditable="true"], .monaco-editor, .cm-editor')) return;
+    const inDeck = (deckLayer && deckLayer.contains(tgt)) ||
+      panel.contains(tgt) || !!tgt.closest('#deck-foot, #deck-fab');
+    if (!inDeck) return;               // 叠卡面之外：原生滚动（不 preventDefault）
     e.preventDefault();
     if (deck.M < 2) return;            // 单卡无环可转
     const dy = e.deltaY * (e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 100 : 1);
-    deck.target += dy * DECK_WHEEL_GAIN;
+    wheelGlideV = 0;                   // 新输入立即截停旧滑行
+    const notch = Math.abs(dy) >= DECK_NOTCH_PX;   // 鼠标格：无动量语义，只步进
+    if (!notch) {
+      // 末窗速度（W=120ms 滑窗逼近）：窗内旧速度按剩余窗权衰减、新 dy 全计；
+      // 事件间隔超窗 = 整窗重来。快滚收敛到即时速度，慢滚/尾流自然归零。
+      const dtms = Math.max(1, e.timeStamp - (wheelLastT || e.timeStamp - 16));
+      wheelInstV = dy / dtms;
+      if (dtms > DECK_WHEEL_V_WINDOW) wheelV = dy / dtms;
+      else wheelV = (wheelV * (DECK_WHEEL_V_WINDOW - dtms) + dy) / DECK_WHEEL_V_WINDOW;
+      wheelLastT = e.timeStamp;
+    }
+    const gain = DECK_WHEEL_GAIN * (notch ? deckPeekStep().wheelNotch : 1);
+    deck.target += dy * gain;
     deck.target = Math.max(deck.pos - deck.M, Math.min(deck.pos + deck.M, deck.target));
     if (!deck.interacted) { deck.interacted = true; deckHintEl.classList.add('faded'); }
+    if (!notch) {
+      if (wheelTimer) clearTimeout(wheelTimer);
+      wheelTimer = setTimeout(() => {  // 事件流静默 → 末窗速度起滑行（瞬时速度过地板才武装）
+        wheelTimer = 0;
+        if (!deck.open || deck.M < 2) { wheelV = 0; return; }
+        const armed = Math.abs(wheelV) >= 0.08 && Math.abs(wheelInstV) >= DECK_WHEEL_INST_FLOOR;
+        wheelGlideV = armed
+          ? Math.max(-DECK_WHEEL_GLIDE_VMAX, Math.min(DECK_WHEEL_GLIDE_VMAX, wheelV))
+          : 0;
+        wheelV = 0;
+        if (Math.abs(wheelGlideV) >= 0.08) deckStartLoop();
+      }, DECK_WHEEL_GLIDE_DELAY);
+    } else if (wheelTimer) { clearTimeout(wheelTimer); wheelTimer = 0; wheelV = 0; }
     deckStartLoop();
   }, { passive: false });
 
@@ -2220,8 +2454,8 @@ function bindDeckInput() {
     const tgt = e.target;
     if (tgt instanceof Element && (tgt.closest('input, textarea, select, [contenteditable="true"], .monaco-editor, .cm-editor'))) return;
     if (e.key === 'Escape') { e.preventDefault(); closeDeck(); }
-    else if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); if (deck.M > 1) { deck.target += 1; deckStartLoop(); } }
-    else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); if (deck.M > 1) { deck.target -= 1; deckStartLoop(); } }
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); if (deck.M > 1) { wheelGlideV = 0; deck.target += 1; deckStartLoop(); } }
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); if (deck.M > 1) { wheelGlideV = 0; deck.target -= 1; deckStartLoop(); } }
     else if (e.key === 'Enter') { e.preventDefault(); if (deck.M) deckSelectCard(deckMod(Math.round(deck.pos), deck.M)); }
   });
 
@@ -2233,6 +2467,7 @@ function bindDeckInput() {
   panel.addEventListener('pointerdown', (e) => {
     if (!deck.open || deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx || deck.drag || deck.cardDrag || deck.exitCardFx) return;
     if (e.button !== 0) return;
+    wheelGlideV = 0;                                               // 拖划接管：截停滚轮滑行
     if (deckInteractiveTarget(e.target)) return;
     deck.drag = deckDragState(e);
     panel.setPointerCapture(e.pointerId);
@@ -2314,6 +2549,14 @@ function bindDeckInput() {
 window.__canvasDeck = {
   open: () => openDeck(),
   close: () => closeDeck(),
+  /* uifix 批：作者挑版热切换（body.deck-look-* 单一来源；返回生效档位） */
+  setLook: (v) => {
+    if (!DECK_LOOKS[v]) return deckLook();
+    document.body.classList.remove(...Object.keys(DECK_LOOKS).map((k) => 'deck-look-' + k));
+    document.body.classList.add('deck-look-' + v);
+    if (deck.open) { deckStartLoop(); }        // 间距档位变化 → 重排
+    return v;
+  },
   state: () => {
     const panel = document.getElementById('canvas-panel');
     const rect = deckPanelRect() || { width: 0, height: 0, top: 0, right: 0 };
@@ -2356,6 +2599,21 @@ window.__canvasDeck = {
         axisLockPx: DECK_AXIS_LOCK_PX,
       },
       cardShadow: getComputedStyle(document.documentElement).getPropertyValue('--card-shadow').trim(),
+      /* uifix 批断言通道：look 档位 / 快照挂载 / × 钮 / 竖排提示退场 */
+      look: deckLook(),
+      lookPeek: deckPeekStep(),
+      snapshots: {
+        cached: deckSnapshots.size,
+        live: deckLayer ? deckLayer.querySelectorAll('.card-thumb.has-snap').length : 0,
+        pending: deckLayer ? deckLayer.querySelectorAll('.card-thumb[data-snap="pending"]').length : 0,
+        mock: deckLayer ? deckLayer.querySelectorAll('.card-thumb[data-snap="mock"]').length : 0,
+      },
+      cardXButtons: deckLayer ? deckLayer.querySelectorAll('.deck-card .deck-card-x').length : 0,
+      swipeHints: {
+        panel: document.querySelectorAll('.deck-swipe-hint').length,
+        card: deckLayer ? deckLayer.querySelectorAll('.card-swipe-hint').length : 0,
+      },
+      wheelGlide: wheelGlideV,
     };
   },
 };

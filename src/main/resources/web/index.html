@@ -33,6 +33,7 @@
   <link rel="stylesheet" href="css/modal.css">
   <link rel="stylesheet" href="css/input.css">
   <link rel="stylesheet" href="css/taskList.css">
+  <link rel="stylesheet" href="css/scrollUnderGlass.css">
   <link rel="stylesheet" href="css/reminder.css">
   <link rel="stylesheet" href="css/neblink.css">
   <link rel="stylesheet" href="css/dropbox.css">
@@ -263,7 +264,7 @@
       <div class="bg-dropdown-list" role="list"></div>
     </div>
     <!-- Reminder Panel — floating dropdown from header button -->
-    <div id="reminder-panel">
+    <div id="reminder-panel" class="scroll-under-glass">
       <div class="reminder-panel-header">
         <div class="reminder-panel-title">Scheduled Tasks</div>
         <div class="reminder-panel-header-right">
@@ -277,7 +278,7 @@
       <div class="reminder-panel-footer"></div>
     </div>
     <!-- Daemon Panel — floating dropdown from header button -->
-    <div id="daemon-panel">
+    <div id="daemon-panel" class="scroll-under-glass">
       <div class="daemon-panel-header">
         <div class="daemon-panel-title" data-i18n="daemons.title">Heartbeat</div>
         <div class="daemon-panel-header-right">
@@ -289,7 +290,7 @@
       <div class="daemon-panel-body"></div>
       <div class="daemon-panel-footer"></div>
     </div>
-    <div id="top-overlays">
+    <div id="top-overlays" class="scroll-under-glass">
       <div id="task-list"></div>
       <!-- D6 批 F2: pending-AskUser persistent bar (one row per unanswered
            question: source · summary, click = scroll to card + highlight) -->
@@ -442,7 +443,7 @@
        per-agent editing lives in the Canvas detail tab (agentManager.js). -->
   <!-- Memory Editor Modal (three tabs: Folder / Agent / User) -->
   <div id="memory-overlay">
-    <div id="memory-modal">
+    <div id="memory-modal" class="scroll-under-glass">
       <div id="memory-modal-title">Memory</div>
       <div class="memory-tabs">
         <button class="memory-tab active" data-scope="agent">Agent</button>
@@ -459,7 +460,7 @@
   </div>
   <!-- Rules Editor Modal -->
   <div id="rules-overlay">
-    <div id="rules-modal">
+    <div id="rules-modal" class="scroll-under-glass">
       <div id="rules-modal-title">Project Rules</div>
       <div id="rules-modal-body">
         <textarea id="rules-input" placeholder="" rows="14" spellcheck="false"></textarea>
@@ -473,7 +474,7 @@
   </div>
   <!-- Settings Modal (centered popup — no dimming backdrop, no blur) -->
   <div id="settings-overlay">
-    <div id="settings-modal">
+    <div id="settings-modal" class="scroll-under-glass">
       <div class="settings-modal-header">
         <span id="settings-modal-title">Settings</span>
         <button id="settings-modal-close" class="panel-btn" title="Close"><i data-lucide="x"></i></button>

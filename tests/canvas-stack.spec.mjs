@@ -15,6 +15,14 @@
 //   A19 主导轴判定 —— dy 主导对角→锁 y 换卡、dx 主导对角→锁 x 划走关闭、
 //       ≤8px 死区不锁轴（点击语义保持：点 canvas = 收回卡组）。
 //
+// uifix 批（作者令 2026-10-20 四件，叠卡视角重做）断言修订：
+//   · wheelScrub 改为**触控板式连续小 delta 流**（单事件 <40px 基速增益）——
+//     新 wheel 契约（③c）：叠卡面内才捕获；鼠标格（|dy|≥40）走档位增益 ≈一格近一卡；
+//     光标须落在叠卡面上（面板/卡组层），面外双指滚动不被劫持（与页面滚动不打架）；
+//   · 露边阶梯 22px → **27px**（③a 默认 v2 均衡档间距拉开；v1=22 收敛/v3=34 拉开）；
+//   · 精修③断言（竖排提示）整体改写为 ③d/③e：提示文字零命中 + 卡面 × 钮存在且可关；
+//   · 精修② F2-2 改锚 uifix 新 token（--stacked-shadow 前景档随 look 联动）。
+//
 // 与样张 __demo.state() 同口径的断言通道 = window.__canvasDeck.state()。
 // 环境注（继承 v2–v5）：无头 chromium rAF 实测 ~36fps，指数趋近收敛时间按比例拉长，
 // 自动化等待 ≥2.6s；真实浏览器 60fps 无此现象。
@@ -190,10 +198,33 @@ async function cardRect(page, r) {
     return { x: b.x, y: b.y, width: b.width, height: b.height, op: parseFloat(el.style.opacity || '1') };
   }, r);
 }
+/** uifix ③c：触控板式滚轮擦洗（连续小 delta 流，单事件 <40px 基速增益，合计
+ *  ≈dy/240 卡）。光标落在叠卡面上（面板/卡组层）——新契约只有面内才捕获擦洗，
+ *  面外滚动不被劫持。基速同 v5：240px 合计 = 1.0 卡。
+ *  熄滑尾流：流末静默 >110ms 会以末窗速度起滑行（③c 动量）——补三粒 **0delta**
+ *  尾事件把「末窗/瞬时速度」稀释到武装地板之下，滑行不起（相位钉住整数）。
+ *  ⚠ 页内合成 WheelEvent 派发（非 page.mouse.wheel）：后者经 CDP 原生通路在
+ *  macOS 上伴随 ~1px/次的 scroll-latch 尾事件（240px 流实测超付 +10px，相位
+ *  被推离整数 → 基姿/贴靠断言全红；合成派发 target 精确 = dy/240，探针实证）。 */
 async function wheelScrub(page, dy) {
   await page.evaluate(() => {}); // flush
-  await page.mouse.move(200, 500);
-  await page.mouse.wheel(0, dy);
+  const pr = await panelRect(page);
+  await page.mouse.move(pr.x + pr.width / 2, pr.y + pr.height / 2);
+  const steps = Math.max(1, Math.ceil(Math.abs(dy) / 24));
+  const stepDy = dy / steps;
+  const fire = (d) => page.evaluate(({ d }) => {
+    const p = document.getElementById('canvas-panel');
+    p.dispatchEvent(new WheelEvent('wheel', { deltaY: d, bubbles: true, cancelable: true }));
+  }, { d });
+  await fire(0);                       // 首粒 0delta：只落光标域（不进速度窗：dt 大）
+  for (let i = 0; i < steps; i++) {
+    await fire(stepDy);
+    await sleep(8);
+  }
+  for (let i = 0; i < 3; i++) {        // 熄滑三粒（0delta：稀释末窗速度不动相位——
+    await fire(0);                     //  0.5px 粒会把 target 顶过整数（A15 d₀=0 断红实证）
+    await sleep(30);
+  }
 }
 
 /** Pointer Events 拖划（鼠标通路，竖拖补充令断言驱动）：按下 → 分步位移 → 松手。
@@ -272,7 +303,8 @@ const browser = await chromium.launch();
   ok('A2-3 初始前景位=当前 canvas 卡', s.frontIdx === 0 && s.frontName === 'alpha.md', `front=${s.frontName}`);
   ok('A2-4 canvas 环卡前景位隐没（op≈0）', s.selfCardHidden === true);
   const c1 = await cardRect(page, 1);
-  ok('A2-5 d=1 露边 22px', approx(stackedFrontTop - c1.y, 22, 3.5), `peek=${(stackedFrontTop - c1.y).toFixed(1)}px`);
+  ok('A2-5 d=1 露边 27px（uifix ③a v2 均衡档间距拉开；v1=22/v3=34）',
+    approx(stackedFrontTop - c1.y, 27, 3.5), `peek=${(stackedFrontTop - c1.y).toFixed(1)}px`);
   ok('A2-6 后卡 85%（与缩放态 canvas 同尺寸；透视投影微放宽容差）',
     approx(c1.width, pr.width * 0.85, 8) && approx(c1.height, pr.height * 0.85, 8),
     `${c1.width.toFixed(0)}x${c1.height.toFixed(0)} vs ${(pr.width * 0.85).toFixed(0)}x${(pr.height * 0.85).toFixed(0)}`);
@@ -514,52 +546,59 @@ const browser = await chromium.launch();
   await ctx.close();
 }
 
-/* ════════ A10 精修③：× 退役 → 竖排浅色滑动提示 ════════ */
+/* ════════ A10 uifix ③d/③e：竖排提示退场 + 卡面 × 关闭钮（作者最新口径）════════ */
 {
   const { ctx, page, errors } = await bootPage(browser);
   await openAllTabs(page);
   await page.click('#deck-fab');
-  await settle(page);                  // pos=0：canvas 前景 —— 面板面提示须在此测量
-  const panelHint = await page.evaluate(() => {
-    const p = document.getElementById('canvas-panel');
-    const el = p.querySelector('.deck-swipe-hint');
-    if (!el) return null;
-    const st = getComputedStyle(el);
-    return { wm: st.writingMode, op: st.opacity, stacked: p.classList.contains('stacked'), front: p.classList.contains('is-front') };
-  });
-  ok('A10-5 面板面（canvas 前景）同款竖排提示（stacked+is-front 浮现）',
-    !!panelHint && panelHint.stacked && panelHint.front && panelHint.wm === 'vertical-rl' && parseFloat(panelHint.op) > 0.3,
-    panelHint ? `wm=${panelHint.wm} op=${panelHint.op} stacked=${panelHint.stacked} front=${panelHint.front}` : 'missing');
-  await wheelScrub(page, 240);        // bravo 前景（环卡面）
-  await settle(page);
-  const noClose = await page.evaluate(() => ({
-    cvClose: document.querySelectorAll('.cv-close').length,
-    cardClose: document.querySelectorAll('.deck-card .canvas-tab-close, .deck-card button').length,
+  await settle(page);                  // pos=0：canvas 前景
+  const s0 = await state(page);
+  /* ③d：竖排「滑动关闭」提示文字整体退场（面板面 + 卡面零命中） */
+  const noHint = await page.evaluate(() => ({
+    panel: document.querySelectorAll('.deck-swipe-hint').length,
+    card: document.querySelectorAll('.card-swipe-hint').length,
+    anyText: [...document.querySelectorAll('#deck-layer *')].some((el) => el.textContent === '滑动关闭'),
   }));
-  ok('A10-1 叉号零命中（.cv-close / 卡内关闭钮均不存在）', noClose.cvClose === 0 && noClose.cardClose === 0,
-    `cv=${noClose.cvClose} card=${noClose.cardClose}`);
-  const hint = await page.evaluate(() => {
-    const el = document.querySelector('.deck-card.front .card-swipe-hint');
-    if (!el) return null;
-    const st = getComputedStyle(el);
-    return { text: el.textContent, wm: st.writingMode, op: st.opacity, color: st.color, fs: st.fontSize };
+  ok('A10-0 竖排滑动提示零命中（面板 + 卡面 + 文案扫描）',
+    noHint.panel === 0 && noHint.card === 0 && !noHint.anyText, JSON.stringify(noHint));
+  const x0 = await page.evaluate(() => {
+    const xs = [...document.querySelectorAll('.deck-card .deck-card-x')];
+    const first = xs[0];
+    const st = first ? getComputedStyle(first) : null;
+    return { count: xs.length, cards: document.querySelectorAll('.deck-card').length,
+             visible: st ? st.display !== 'none' && parseFloat(st.opacity) > 0.2 : false,
+             cvClose: document.querySelectorAll('.cv-close').length };
   });
-  ok('A10-2 前景卡竖排滑动提示存在（writing-mode: vertical-rl）', !!hint && hint.wm === 'vertical-rl',
-    hint ? `wm=${hint.wm}` : 'missing');
-  ok('A10-3 提示文案「滑动关闭」、浅色小字（text-dim + 11px + 0.55 浮现）',
-    !!hint && hint.text === '滑动关闭' && parseFloat(hint.op) > 0.3 && parseFloat(hint.op) < 0.8 && hint.fs === '11px',
-    hint ? `op=${hint.op} fs=${hint.fs} color=${hint.color}` : 'missing');
-  const dim = await page.evaluate(() => {
-    const probe = document.createElement('div');
-    probe.style.color = 'var(--color-text-dim)';
-    document.body.appendChild(probe);
-    const c = getComputedStyle(probe).color;
-    probe.remove();
-    return c;
+  ok('A10-1 卡面 × 钮 = 卡数（每卡一枚；.cv-close 仍零命中）',
+    x0.count === x0.cards && x0.visible && x0.cvClose === 0, JSON.stringify(x0));
+  /* ③e 通路：× 点击 = 关闭该卡（前景卡 = 面板收拢淡出，deck 收回 active 换邻位） */
+  const nBase = s0.tabCount;
+  await page.evaluate(() => document.querySelector('.deck-card[data-r="1"] .deck-card-x').click());
+  await settle(page, 3200);
+  const s1 = await state(page);
+  ok('A10-2 × 点击深处卡 = 关闭该卡（−1 · deck 保持 · 相位收敛）',
+    s1.tabCount === nBase - 1 && s1.open === true && !s1.tabs.includes('bravo.md'),
+    `n=${s1.tabCount}/${nBase} open=${s1.open}`);
+  ok('A10-3 × 点击不换签（active 仍 alpha.md · closeTab 邻位语义留给后续前景轮换）',
+    s1.activeId.endsWith('alpha.md'), `active=${s1.activeId}`);
+  const xAfter = await state(page);
+  ok('A10-4 × 钮随环重建补齐（卡数 −1 后仍每卡一枚）', xAfter.cardXButtons === xAfter.M,
+    `x=${xAfter.cardXButtons} M=${xAfter.M}`);
+  /* 前景卡 = canvas 本尊（active 页签）×：面板收拢淡出 → 邻位顶前景、deck 保持
+     （v4⑥ shrink 通路既有契约；「收回」= ESC / 点 canvas 专用，A11/A12 已钉）。
+     A10-2 关闭深处 bravo 后环重绑，pos 仍 0 = alpha 自卡前景（r0）——直接点自卡 ×，
+     不再 scrub（回滚会把环尾绕回卡转到前景，走深卡关闭通路，非本断言对象）。 */
+  const n2 = (await state(page)).tabCount;
+  await page.evaluate(() => {
+    const self = document.querySelector('.deck-card[data-r="0"] .deck-card-x');
+    self.click();
   });
-  ok('A10-4 提示色 = --color-text-dim（浅色 token，非强调色）', !!hint && hint.color.replace(/\s/g, '') === dim.replace(/\s/g, ''),
-    `hint=${hint && hint.color} dim=${dim}`);
-  // 精修③下关闭仍走滑动（A8 已证甩出）——这里补「右键关闭」通路即可（A9 已证），断言划走后提示随前景易主
+  await settle(page, 3200);
+  const s2 = await state(page);
+  ok('A10-5 前景卡 × = 当前页签关闭（−1 · 面板收拢 · 邻位 charlie 顶前景 · deck 保持）',
+    s2.tabCount === n2 - 1 && s2.open === true && s2.frontName === 'charlie.md',
+    `n=${s2.tabCount}/${n2} open=${s2.open} front=${s2.frontName}`);
+  ok('R0 主文档无 JS 运行时错误（A10）', errors.length === 0, errors.slice(0, 2).join(' | '));
   await ctx.close();
 }
 
@@ -612,7 +651,7 @@ const browser = await chromium.launch();
   const c1 = await cardRect(page, 1);
   ok('A13-1 窄档 340：后卡 289×…（=85%）', approx(pr.width, 340, 3) && approx(c1.width, 340 * 0.85, 3),
     `area=${pr.width.toFixed(0)} card=${c1.width.toFixed(0)}`);
-  ok('A13-2 露边 22px 仍在', approx(stackedFrontTop - c1.y, 22, 3.5), `peek=${(stackedFrontTop - c1.y).toFixed(1)}`);
+  ok('A13-2 露边 27px 仍在（v2 档）', approx(stackedFrontTop - c1.y, 27, 3.5), `peek=${(stackedFrontTop - c1.y).toFixed(1)}`);
   await page.mouse.move(200, 500);   // page.click 后光标停在 fab 上：hover scale 1.05 → 视觉 rect 42×42
   const fab = await page.evaluate(() => {
     const el = document.getElementById('deck-fab');
@@ -720,10 +759,26 @@ const browser = await chromium.launch();
     p.classList.remove('no-trans', 'stacked');
     return sh;
   });
-  const sAlphas = [...stackedShadow.matchAll(/rgba\(0,\s*0,\s*0,\s*([\d.]+)\)/g)].map((m) => parseFloat(m[1]));
-  // 样张 .stacked 投影：0.06 / 0.13 / 0.12 —— 精修② 0.04 / 0.09 / 0.08
-  ok('F2-2 .stacked 面板投影密度降一档（0.04/0.09/0.08 < 样张 0.06/0.13/0.12）',
-    sAlphas.slice(-3).join(',') === '0.04,0.09,0.08', sAlphas.join(','));
+  const sAlphas = [...stackedShadow.matchAll(/rgba\([^)]+,\s*([\d.]+)\)/g)].map((m) => parseFloat(m[1]));
+  // uifix ③a：.stacked 投影 = 前景档 token（v2 均衡 0.07/0.13/0.15 + inset 高光）
+  ok('F2-2 .stacked 投影锚 uifix 前景档（v2 0.07/0.13/0.15）',
+    sAlphas.slice(-3).join(',') === '0.07,0.13,0.15', sAlphas.join(','));
+  // 三版 look 联动：setLook 热切换 → .stacked 前景档 token 随 body 类变化（作者挑版通道）
+  const looks = {};
+  for (const v of ['v1', 'v2', 'v3']) {
+    await page.evaluate((vv) => window.__canvasDeck.setLook(vv), v);
+    await sleep(60);
+    looks[v] = await page.evaluate(() => {
+      const p = document.getElementById('canvas-panel');
+      p.classList.add('no-trans', 'stacked');
+      const sh = getComputedStyle(p).boxShadow;
+      p.classList.remove('no-trans', 'stacked');
+      return [...sh.matchAll(/rgba\([^)]+,\s*([\d.]+)\)/g)].map((m) => parseFloat(m[1])).join(',');
+    });
+  }
+  await page.evaluate(() => window.__canvasDeck.setLook('v2'));
+  ok('F2-3 三版 look 前景档阴影互异（作者挑版通道 · setLook 热切换）',
+    new Set(Object.values(looks)).size === 3, JSON.stringify(looks));
   ok('R0 主文档无 JS 运行时错误（F2）', errors.length === 0, errors.slice(0, 2).join(' | '));
   await ctx.close();
 }

@@ -45,7 +45,7 @@ import {
 } from '../canvas.js';
 import { key } from '../branding.js';
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '../sidebar.js';
-import { dockProfileBlock, undockProfileBlock } from '../agentProfile.js';
+import { openProfilePanel, undockProfileBlock } from '../agentProfile.js';
 import { createIconsIn } from '../utils.js';
 
 /** 页面注册表（root 之外）。route id 稳定 = App 深链/壳映射留缝点。 */
@@ -205,34 +205,36 @@ const overlayFaceByPage = {
   usage: '#usage-dashboard',
 };
 
-/** P12 设置页 profile 置顶块（agentProfile 面板停靠形态）：栈顶=设置时收编为
- *  页体首块（常显、弹窗语义让位 —— dock/undock 缝在 agentProfile.js），出栈
- *  拆铺归位。锚点惯例同 overlayAnchors（面板本体挂 document.body）。 */
-const profileAnchor = { face: null, parent: null, next: null };
+/** P12 设置页 profile 块（六件④重做：不再停靠常显 —— 手机实测反馈「进入设置页
+ *  自动弹出『智能体』模态」。面板保持隐藏挂 body，栈顶=设置时页体首块注入一条
+ *  显式入口行，点击才 openProfilePanel() 弹窗形态；出栈移除入口行并 undock
+ *  清残面（保 dock 残留态兜底清理，幂等无副作用）。 */
+const profileEntry = { btn: null };
 
 function syncProfileBlock() {
   const body = bodyOf('settings');
   if (!body) return;
   const live = stack.includes('settings');
   if (live) {
-    const face = dockProfileBlock(); // 幂等：建面 + 停靠态 + 常显（弹窗语义让位）
-    if (!profileAnchor.face) {
-      profileAnchor.face = face;
-      profileAnchor.parent = face.parentElement;
-      profileAnchor.next = face.nextSibling;
-      logEvent('pane-adopt', { page: 'settings', face: '#agent-profile-panel' });
+    if (!profileEntry.btn || !profileEntry.btn.isConnected) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'profile-entry';
+      btn.innerHTML =
+        '<i data-lucide="bot" class="profile-entry-ico"></i>' +
+        `<span>${tt('智能体', 'Agent profile')}</span>` +
+        '<i data-lucide="chevron-right" class="profile-entry-arrow"></i>';
+      btn.addEventListener('click', () => openProfilePanel());
+      body.insertBefore(btn, body.firstChild);
+      if (typeof lucide !== 'undefined') createIconsIn(btn);
+      profileEntry.btn = btn;
+      logEvent('pane-entry-add', { page: 'settings', face: '#agent-profile-panel' });
     }
-    if (face.parentElement !== body) body.insertBefore(face, body.firstChild);
-  } else if (profileAnchor.face) {
-    const { face, parent, next } = profileAnchor;
-    profileAnchor.face = null; profileAnchor.parent = null; profileAnchor.next = null;
-    if (parent && parent.isConnected) {
-      try { parent.insertBefore(face, next); } catch { document.body.appendChild(face); }
-    } else {
-      document.body.appendChild(face);
-    }
-    undockProfileBlock();
-    logEvent('pane-restore', { page: 'settings', face: '#agent-profile-panel' });
+  } else if (profileEntry.btn) {
+    profileEntry.btn.remove();
+    profileEntry.btn = null;
+    undockProfileBlock(); // 兜底：dock 语义已退役，仅清可能的历史残面/scrim 态
+    logEvent('pane-entry-remove', { page: 'settings', face: '#agent-profile-panel' });
   }
 }
 
@@ -490,14 +492,15 @@ export function pushPage(pageId) {
   if (pageId === 'settings') {
     try {
       openSettingsPanel();
-      ensureInjectedBack('.settings-modal-header', 'settings');
+      // 六件⑤：不再向 .settings-modal-header 注入返回钮 —— 页面壳
+      // .mobile-page-header 已有一枚，双层返回（手机实测反馈）退役。
     } catch (e) { console.error('[mobile-layer] settings', e); }
   }
   if (pageId === 'usage') {
     modUsage()
       .then((m) => {
         m.openUsageDashboard();
-        ensureInjectedBack('.ud-header', 'usage');
+        // 六件⑤：.ud-header 注入返回同上退役 —— 单返回入口 = 页面壳。
         ensureUsageReconcile(); // overlay 首开即建 —— 此刻才存在，挂对账观察者
         syncOverlayFaces();     // 首开的面板此刻才建出 —— 建好即收编进页面体
       })
@@ -662,13 +665,12 @@ export function activateNav() {
     // 视口跨越回桌面时正在看的设置/用量页直接以桌面形态续显）。
     for (const id of [...overlayAnchors.keys()].reverse()) restoreOverlayFace(id);
     overlayAnchors.clear();
-    // P12 profile 置顶块拆铺（面板本体归位 body + 弹窗语义还原）。
-    if (profileAnchor.face) {
-      const { face } = profileAnchor;
-      profileAnchor.face = null; profileAnchor.parent = null; profileAnchor.next = null;
-      if (!face.parentElement || face.parentElement !== document.body) document.body.appendChild(face);
-      undockProfileBlock();
+    // P12 profile 入口行拆铺（面板本体一直挂 body 未动；清入口行 + 弹窗语义还原）。
+    if (profileEntry.btn) {
+      profileEntry.btn.remove();
+      profileEntry.btn = null;
     }
+    undockProfileBlock();
     if (cardHead) { cardHead.remove(); cardHead = null; }
     for (const b of injectedBacks.splice(0)) b.remove();
     document.body.classList.remove('mf-cards-live', 'mf-page-open');
