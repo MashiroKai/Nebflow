@@ -483,6 +483,13 @@ class NeblinkClient(
                 Json.obj("address" -> e.address.asJson, "port" -> e.port.asJson, "kind" -> e.kind.asJson)
               }.asJson,
               "version" -> nebflow.Version.string.asJson,
+              // 统一更新系统 M3 ①（DESIGN §9 M2 引擎半边）：心跳带构建身份 build
+              // （git short sha，BUILD_SHA 资源）与通道 channel（install-manifest.json
+              // 记录 → 版本串启发）。字段名与 link-server M2 收侧 HeartbeatRequest
+              // 逐字对齐（`build` / `channel`，serde camelCase 单词不变形，防漂移）。
+              // server 旧版 serde 宽容忽略未知字段，新旧互兼容。
+              "build" -> nebflow.Version.build.asJson,
+              "channel" -> nebflow.Version.channel.asJson,
               // 门户 MVP E5（2026-10-10）：心跳带网关端口（方案 §7 契约冻结键
               // `uiPort`，number）——门户用它拼本机控制台地址（不带凭据）。
               // server 旧版 serde 宽容忽略未知字段，新旧互兼容。
