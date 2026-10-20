@@ -138,6 +138,12 @@
   border-top: 1px solid var(--glass-border, rgba(0,0,0,0.06));
   margin: 4px 0;
 }
+/* canvas-stack：叠卡右键菜单（引用/关闭/关闭其他）与 explorer 菜单同构的分隔线 */
+.canvas-tab-context-menu hr {
+  border: none;
+  border-top: 1px solid var(--glass-border, rgba(0,0,0,0.06));
+  margin: 4px 0;
+}
 #explorer-tree {
   padding: 2px 0 8px;
   flex: 1;
@@ -506,7 +512,9 @@
     0px 2px 8px rgba(0, 0, 0, 0.04),
     0px 8px 24px rgba(0, 0, 0, 0.06);
   transition: flex-basis var(--panel-duration) var(--panel-ease),
-              opacity var(--panel-duration) var(--panel-ease);
+              opacity var(--panel-duration) var(--panel-ease),
+              transform var(--deck-morph-duration, 0.28s) var(--deck-morph-ease, cubic-bezier(0.32, 0, 0.18, 1)),
+              box-shadow var(--deck-morph-duration, 0.28s) ease;
 }
 body.canvas-open #canvas-panel {
   flex-basis: var(--canvas-width, 45vw);
@@ -841,6 +849,404 @@ body.canvas-open.canvas-overlay #canvas-panel {
   background: rgb(var(--sapphire) / 0.06);
   box-shadow: inset 0 0 0 1px rgb(var(--sapphire) / 0.45);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Canvas 标签行 → 叠卡（canvas-stack v5 定稿落地，2026-10-21 实施批）
+
+   样张 = reports/20261020_081631_canvas-card-stack-mockup-v5（作者批「就是这个效果」
+   + 三精修）。模型：整区缩放（v4①②）× 前景轮换（v5①）× 浮钮固定（v5②）；
+   本批三精修——①动画再顺滑一档（rAF 趋近 10/7→12/9、翻落曲线收幅、morph 时长
+   统一 0.28s 档）②卡组/面板投影密度降一档（下方 token 即精修值，样张值见注释）
+   ③× 退役 → 竖排浅色滑动提示（.card-swipe-hint / .deck-swipe-hint，关闭走划走
+   或右键菜单）。
+
+   DOM 判据（spec 钉死）：deck-layer / fab / foot 都是 body 层固定元素（JS 逐帧
+   同步面板盒），canvas 根子树内不存在任何卡组节点——panel.contains(deckLayer/fab)
+   === false；整区缩放类 .stacked 落在 #canvas-panel（v4 落点不变）。 */
+:root {
+  /* 卡面（叠卡实体）：比面板玻璃更实一档，读作「物」 */
+  --card-bg: rgba(255, 255, 255, 0.82);
+  --card-border: rgba(28, 32, 44, 0.13);
+  /* 精修②：投影密度降一档（样张 light 0.05/0.10/0.12 → 0.04/0.07/0.08） */
+  --card-shadow:
+    0 1px 2px rgba(16, 20, 30, 0.04),
+    0 6px 18px rgba(16, 20, 30, 0.07),
+    0 18px 44px rgba(16, 20, 30, 0.08);
+  --th-bg: rgba(255, 255, 255, 0.92);
+  --th-border: rgba(28, 32, 44, 0.07);
+  --bar-1: rgba(27, 30, 38, 0.16);
+  --bar-2: rgba(27, 30, 38, 0.09);
+  --bar-3: rgba(27, 30, 38, 0.05);
+  --menu-bg: rgba(255, 255, 255, 0.92);
+  /* 精修①：morph 时长/缓动单一来源（样张 0.3s cubic(0.4,0,0.2,1) → 0.28s
+     cubic(0.32,0,0.18,1)，换入飞行/ghost/弹性 FX 在 canvas.js 同源取值） */
+  --deck-morph-duration: 0.28s;
+  --deck-morph-ease: cubic-bezier(0.32, 0, 0.18, 1);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --card-bg: rgba(30, 34, 45, 0.88);
+    --card-border: rgba(255, 255, 255, 0.10);
+    /* 精修②：样张 dark 0.30/0.35/0.38 → 0.20/0.24/0.26 */
+    --card-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.20),
+      0 8px 22px rgba(0, 0, 0, 0.24),
+      0 20px 48px rgba(0, 0, 0, 0.26);
+    --th-bg: rgba(255, 255, 255, 0.045);
+    --th-border: rgba(255, 255, 255, 0.06);
+    --bar-1: rgba(232, 234, 237, 0.20);
+    --bar-2: rgba(232, 234, 237, 0.11);
+    --bar-3: rgba(232, 234, 237, 0.06);
+    --menu-bg: rgba(32, 36, 47, 0.94);
+  }
+}
+
+/* ── 常态头（v2①）：桌面态标签行退役 → 居中标题（兼作叠卡前卡的卡顶名称条）。
+   标签条/关闭钮 DOM 保留（数据模型、恢复管线与移动层仍引用），仅桌面隐藏。
+   移动层（body.mobile-layer）有自己的头部形态，零触碰。 */
+body:not(.mobile-layer) .canvas-header {
+  justify-content: center;
+  height: 46px;
+  padding: 0 16px;
+}
+body:not(.mobile-layer) .canvas-header .canvas-tab-bar,
+body:not(.mobile-layer) .canvas-header .canvas-close-btn {
+  display: none;
+}
+.canvas-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  max-width: 62%;
+  min-width: 0;
+  user-select: none;
+}
+body.canvas-deck-narrow .canvas-title { max-width: 46%; }
+.canvas-title .t-inner {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.canvas-title.swap .t-inner { opacity: 0; transform: translateY(-5px); }
+.canvas-title .t-icon { flex: none; width: 16px; height: 16px; color: var(--color-text-muted); display: flex; }
+.canvas-title .t-icon svg { width: 16px; height: 16px; }
+.canvas-title .t-dot {
+  flex: none; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--color-primary); display: none;
+}
+.canvas-title.is-dirty .t-dot { display: block; }
+.canvas-title .t-name {
+  font-size: 13px; font-weight: 500; color: var(--color-frame-text-bright, var(--color-text));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+}
+
+/* ── 层叠浮钮（v5②）：body 层固定元素，JS 逐帧同步面板盒（top 10 / right 12 /
+   40px 玻璃钮语言逐字不动）。不在面板子树（panel.contains(fab)===false），
+   不随整区缩放/前景轮换移动；z-250 恒高于 deck-layer（auto/.over 60/245）与
+   面板（docked auto / overlay 240），低于模态族（300+）。 */
+#deck-fab {
+  position: fixed;
+  top: 10px;
+  right: 12px;
+  z-index: 250;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),
+    0 2px 8px var(--glass-control-shadow);
+  color: var(--color-text);
+  opacity: 0.6;
+  transition: background 0.18s ease, transform 0.18s ease, color 0.18s ease,
+              opacity 0.18s ease, box-shadow 0.18s ease;
+}
+body.canvas-open:not(.mobile-layer) #deck-fab { display: flex; }
+#deck-fab:hover { opacity: 1; background: var(--glass-control-bg-hover); transform: scale(1.05); }
+#deck-fab:active { transform: scale(0.96); }
+#deck-fab svg { width: 18px; height: 18px; }
+#deck-fab[aria-pressed="true"] {
+  opacity: 1;
+  background: rgb(var(--sapphire) / 0.14);
+  border-color: rgb(var(--sapphire) / 0.35);
+  color: rgb(var(--sapphire));
+}
+#deck-fab[disabled] { opacity: 0.3; pointer-events: none; }
+
+/* ── 背后卡组层（v4②/v5①）：body 层固定元素、面板之前（DOM 序 ⇒ docked 态画在
+   面板之下），盒 = 面板盒（JS 逐帧同步）；圆角裁切 = 卡组舞台边界（v4②）。
+   .over：换入飞行/环卡前景期间抬 z，让飞行的卡盖过面板根。
+   .collapse：从轮换态收回时整组 0.18s 淡出（v4⑤ 衔接）。 */
+#deck-layer {
+  position: fixed;
+  inset: auto;
+  z-index: auto;
+  visibility: hidden;
+  pointer-events: none;
+  border-radius: 20px;
+  overflow: hidden;
+  perspective: 1150px;
+  perspective-origin: 50% 10%;
+  overscroll-behavior: contain;
+  transition: opacity 0.18s ease;
+}
+#deck-layer.live { visibility: visible; pointer-events: auto; }
+#deck-layer.over { z-index: 60; }
+body.canvas-overlay #deck-layer.over { z-index: 245; }
+#deck-layer.collapse { opacity: 0; }
+body.mobile-layer #deck-layer,
+body.mobile-layer #deck-fab,
+body.mobile-layer #deck-foot { display: none !important; }
+
+/* ── 整区缩放（v4①）：唯一整区 scale 变换，落 canvas 根。
+   精修②：叠卡态投影密度降一档（样张 0.06/0.13/0.12 → 0.04/0.09/0.08）。 */
+#canvas-panel.stacked {
+  transform: translateY(var(--stack-shift, 8px)) scale(var(--stack-scale, 0.85));
+  border-color: var(--card-border);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0 2px 10px rgba(0, 0, 0, 0.04),
+    0 14px 38px rgba(0, 0, 0, 0.09),
+    0 30px 70px rgba(0, 0, 0, 0.08);
+  cursor: grab;
+  touch-action: none;
+}
+#canvas-panel.stacked:active { cursor: grabbing; }
+#canvas-panel.no-trans { transition: none !important; }
+#canvas-panel.restore {
+  transition: transform 0.3s cubic-bezier(0.3, 1.25, 0.6, 1), opacity 0.26s ease !important;
+}
+/* 换入飞行中：旧内容面减淡，让位给放大回满幅的后卡（v4④） */
+#canvas-panel.receiving #canvas-content { opacity: 0.45; }
+
+/* 精修③：面板面上的竖排滑动提示（× 退役，前卡=canvas 时提示划走关闭） */
+.deck-swipe-hint {
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: var(--color-text-dim);
+  opacity: 0;
+  pointer-events: none;
+  user-select: none;
+  z-index: 40;
+  transition: opacity 0.25s ease;
+}
+#canvas-panel.stacked.is-front .deck-swipe-hint { opacity: 0.5; }
+@media (prefers-color-scheme: dark) {
+  #canvas-panel.stacked.is-front .deck-swipe-hint { opacity: 0.42; }
+}
+
+/* ── 卡组（v4③+v5①）：与缩放后 canvas 同尺寸（85%），顶名称条（v2③）；
+   d≥0 露边阶梯 + 微后仰 + 逐级减淡压暗，无逐级缩放通道（同尺寸铁律）；
+   d<0 = 前景位翻过的卡向下翻落收进卡组（v2 曲线，精修①收幅），绕环回归。 */
+.deck-card {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--card-w, 612px);
+  height: var(--card-h, 391px);
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  background: var(--card-bg);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  backdrop-filter: blur(14px) saturate(1.1);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
+  will-change: transform, opacity;
+  cursor: pointer;
+  overflow: hidden;
+}
+.deck-card.fly { border-radius: 17px; cursor: default; }   /* 落位≈面板 20px 圆角（v4④） */
+.deck-card.ghost { cursor: default; }
+.deck-card.front { cursor: grab; }                          /* 前景卡可拖划（划走=关闭） */
+.deck-card.front:active { cursor: grabbing; }
+.deck-card .card-shade {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: rgb(0 0 0 / 1);
+  opacity: 0;
+  pointer-events: none;
+}
+.deck-card .card-top {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 38px;
+  padding: 0 12px;
+  min-width: 0;
+  border-bottom: 1px solid var(--th-border);
+  background: var(--th-bg);
+}
+.deck-card .n-icon { flex: none; width: 15px; height: 15px; color: var(--color-text-muted); display: flex; }
+.deck-card .n-icon svg { width: 15px; height: 15px; }
+.deck-card .n-dot {
+  flex: none; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--color-primary); display: none;
+}
+.deck-card.is-dirty .n-dot { display: block; }
+.deck-card .n-text {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 100%;
+}
+.deck-card .n-sub { flex: none; font-size: 10.5px; color: var(--color-text-muted); }
+.deck-card .card-thumb {
+  flex: 1;
+  min-height: 0;
+  margin: 12px;
+  border-radius: 9px;
+  overflow: hidden;
+  position: relative;
+  background: var(--th-bg);
+  border: 1px solid var(--th-border);
+}
+
+/* 精修③：卡缘竖排浅色滑动提示（样张的 × 退役；只在前景卡浮现） */
+.deck-card .card-swipe-hint {
+  position: absolute;
+  right: 7px;
+  top: 50%;
+  transform: translateY(-50%);
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: var(--color-text-dim);
+  opacity: 0;
+  pointer-events: none;
+  user-select: none;
+  z-index: 3;
+  transition: opacity 0.25s ease;
+}
+.deck-card.front .card-swipe-hint { opacity: 0.55; }
+@media (prefers-color-scheme: dark) {
+  .deck-card.front .card-swipe-hint { opacity: 0.45; }
+}
+
+/* 卡内缩略 mock（样张 thumb 族原样，作用域收进 #deck-layer） */
+.deck-card .ln { height: 6px; border-radius: 3px; background: var(--bar-2); margin: 0 0 7px; }
+.deck-card .ln.strong { height: 7px; background: var(--bar-1); }
+.deck-card .ln.w30 { width: 30%; } .deck-card .ln.w40 { width: 40%; }
+.deck-card .ln.w55 { width: 55%; } .deck-card .ln.w70 { width: 70%; }
+.deck-card .ln.w85 { width: 85%; } .deck-card .ln.w100 { width: 100%; }
+.deck-card .thumb-pad { position: absolute; inset: 12px 14px; }
+.deck-card .thumb-grid {
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(0deg, var(--bar-3) 0 1px, transparent 1px 22px),
+    repeating-linear-gradient(90deg, var(--bar-3) 0 1px, transparent 1px 34px);
+}
+.deck-card .thumb-grid .ghead {
+  position: absolute; top: 0; left: 0; right: 0; height: 20px;
+  background: rgb(var(--sapphire) / 0.10); border-bottom: 1px solid rgb(var(--sapphire) / 0.18);
+}
+.deck-card .thumb-img {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgb(var(--sapphire) / 0.38), rgb(var(--sapphire) / 0.10) 60%, rgb(var(--sapphire) / 0.22));
+}
+.deck-card .thumb-img svg {
+  position: absolute; left: 50%; bottom: 8%; transform: translateX(-50%);
+  width: 58%; height: 52%; color: rgb(255 255 255 / 0.75);
+}
+@media (prefers-color-scheme: dark) {
+  .deck-card .thumb-img svg { color: rgb(255 255 255 / 0.5); }
+}
+.deck-card .thumb-page {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 58%; height: 82%;
+  background: var(--color-surface);
+  border: 1px solid var(--th-border); border-radius: 4px; padding: 10px 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+.deck-card .thumb-page .ln { height: 5px; margin-bottom: 6px; }
+.deck-card .thumb-flow { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.deck-card .thumb-flow svg { width: 78%; height: 68%; color: var(--color-text-muted); }
+.deck-card .thumb-browser { position: absolute; inset: 0; padding: 8px 10px; }
+.deck-card .thumb-browser .bar {
+  height: 14px; border-radius: 5px; background: var(--bar-3);
+  border: 1px solid var(--th-border); margin-bottom: 8px;
+  display: flex; align-items: center; gap: 3px; padding: 0 5px;
+}
+.deck-card .thumb-browser .bar i { width: 4px; height: 4px; border-radius: 50%; background: var(--bar-1); display: block; }
+.deck-card .thumb-browser .blk { height: 16px; border-radius: 4px; background: var(--bar-2); margin-bottom: 6px; }
+.deck-card .thumb-browser .blk.b2 { width: 64%; }
+
+/* ── 底部提示 + 计数（v4⑤）：body 层固定元素（盒同步），浮在面板下缘外露带之上
+   ——「canvas 区外露出的边缘」归卡组舞台用，面板上不留浮层。精修③：提示文案
+   不再含「点 ×」（× 退役，关闭走划走/右键菜单）。 */
+#deck-foot {
+  position: fixed;
+  inset: auto;
+  z-index: auto;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+#deck-foot.live { display: flex; }
+#deck-foot.on { opacity: 1; transform: none; }
+.deck-hint { font-size: 11px; color: var(--color-text-muted); transition: opacity 0.4s ease; }
+.deck-hint.faded { opacity: 0; }
+.deck-count {
+  font-size: 11px;
+  color: var(--color-text-dim);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+/* 窄面板：只收排版（提示行隐藏、标题截断），几何不变（85% 自适应） */
+#deck-foot.narrow .deck-hint { display: none; }
+
+/* 窄窗 overlay 形态下，叠卡 floating 族随面板浮层；裁切面/盒由 JS 同步 */
+body.canvas-overlay #deck-layer { border-radius: 20px; }
+
+/* 动效降级（样张 A14）：面板/卡组过渡 0.01s */
+@media (prefers-reduced-motion: reduce) {
+  #canvas-panel,
+  #canvas-content,
+  #deck-layer,
+  #deck-foot,
+  #deck-fab,
+  .canvas-title .t-inner { transition-duration: 0.01s !important; }
+}
+
+/* 精修③补：OS 文件拖到居中标题条 = 开新签（标签条退役后的替代落区，v1 备忘） */
+.canvas-header.canvas-drop-target {
+  background: rgb(var(--sapphire) / 0.06);
+  box-shadow: inset 0 0 0 1px rgb(var(--sapphire) / 0.45);
+}
+
 
 /* ── Content viewers ─────────────────────────────────────── */
 .canvas-tab-pane .canvas-monaco-container {
