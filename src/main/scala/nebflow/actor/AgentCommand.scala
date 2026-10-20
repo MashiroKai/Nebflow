@@ -585,7 +585,16 @@ object AgentCommand:
     eventType: String,
     payload: String,
     metadata: JsonObject = JsonObject.empty,
-    correlationId: Option[String] = None
+    correlationId: Option[String] = None,
+    /**
+     * 社交通道入站媒体统一适配（weixin-inbound-media-unify batch, 2026-10-20）：
+     * 桥媒体注入的 **vision 块**（控制台 images 同管线产物——`ImageInject.prepareImage`
+     * 压缩管线 ⇒ `ContentBlock.Image`）。加性尾参（缺席 ⇒ None），全部既有构造点
+     * 零改排；排队/合批组装点据此把注入消息升为 `Right(blocks)`（`AgentActor.
+     * buildEventReminder` / `AgentIdle` 直投两处），无块事件逐字现状。
+     * 持久化（`CompactionQueueStore`）同键可选——旧快照无键解码 None，向后兼容。
+     */
+    blocks: Option[List[nebflow.shared.ContentBlock]] = None
   ) extends AgentCommand
 
   case class SessionStarted(

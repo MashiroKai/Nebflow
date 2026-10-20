@@ -1156,7 +1156,7 @@ private[agent] object AgentProcessing:
         forwardBackgroundTaskNotification(n)(IO.pure(processing(agentDef, resources, depth, parentRef, state, pending)))
 
       // --- External event while processing ---
-      case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId) =>
+      case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId, _) =>
         logAgentEvent(
           agentDef,
           depth,

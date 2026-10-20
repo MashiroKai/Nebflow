@@ -914,7 +914,13 @@ object GatewayMain extends IOApp:
 
                                     // --- Bridge Manager (plugins: telegram, etc.) ---
                                     val bridgeInjectRef: Ref[IO, Option[
-                                      (String, String, Option[String], Option[nebflow.bridge.BridgeOrigin]) => IO[Unit]
+                                      (
+                                          String,
+                                          String,
+                                          Option[String],
+                                          Option[nebflow.bridge.BridgeOrigin],
+                                          List[nebflow.bridge.BridgeAttachment]
+                                      ) => IO[Unit]
                                     ]] =
                                       Ref.unsafe(None)
 
@@ -929,7 +935,20 @@ object GatewayMain extends IOApp:
                                         origin: Option[nebflow.bridge.BridgeOrigin] = None
                                       ): IO[Unit] =
                                         bridgeInjectRef.get.flatMap(
-                                          _.fold(IO.unit)(_(sessionId, content, senderId, origin))
+                                          _.fold(IO.unit)(_(sessionId, content, senderId, origin, Nil))
+                                        )
+                                      // 社交通道入站媒体统一适配批（2026-10-20）：媒体指针
+                                      // 注入的生产装配——同一注入点（handleBridgeMessage）
+                                      // 的媒体面；缺省实现（降级纯文本）在此被覆盖。
+                                      override def injectMessageWithMedia(
+                                        sessionId: String,
+                                        content: String,
+                                        senderId: Option[String],
+                                        origin: Option[nebflow.bridge.BridgeOrigin] = None,
+                                        attachments: List[nebflow.bridge.BridgeAttachment] = Nil
+                                      ): IO[Unit] =
+                                        bridgeInjectRef.get.flatMap(
+                                          _.fold(IO.unit)(_(sessionId, content, senderId, origin, attachments))
                                         )
                                       def interruptAgent(sessionId: String): IO[Unit] =
                                         wsRoutesHolder match
@@ -1537,7 +1556,7 @@ object GatewayMain extends IOApp:
                                                         val wireBridge = wsRoutesHolder match
                                                           case Some(wsRoutes) =>
                                                             bridgeInjectRef.set(
-                                                              Some(wsRoutes.handleBridgeMessage(_, _, _, _))
+                                                              Some(wsRoutes.handleBridgeMessage(_, _, _, _, _))
                                                             )
                                                           case None => IO.unit
                                                         wireBridge *> (for

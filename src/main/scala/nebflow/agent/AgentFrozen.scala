@@ -545,7 +545,7 @@ private[agent] object AgentFrozen:
           )
         end for
 
-      case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId) =>
+      case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId, _) =>
         // 排队 pendingEvents（不唤醒）：出冻结段/唤醒后的下一个 turn 边界
         // （ToolsComplete → drainBarrier）统一注入。barrier 计数语义镜像 idle
         // ExternalEvent——subagent result 到达即递减 outstanding，否则批次在

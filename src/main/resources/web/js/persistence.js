@@ -22,7 +22,7 @@ import { createDurationBadgeElement, createMsgFooterBadge, buildInjectedRow, bin
 // pop-upgrade 批(2026-10-03):Pop 工件载荷面(叠卡/文件卡片)单一真源——live
 // (chat.js renderTool)与两条历史重放路共用本模块;popArtifacts 不 import chat.js
 // (chat.js 的 openPopArtifact/popArtifactFromInput 已移入该处再 re-export,无环)。
-import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, buildUserMediaRow } from './popArtifacts.js';
+import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, buildUserMediaRow, unifyUserMediaFace } from './popArtifacts.js';
 import { buildTurnSummariesForHistory } from './turnGroup.js';
 import { renderRefBlock, normalizeTaskRef } from './reference.js';
 // quote-message 一期（2026-10-09，spec §7.5）：历史重放行挂 data-msg-id（页内
@@ -633,7 +633,10 @@ export function restoreFromStorage(opts = {}) {
       // Ask ANSWER marker — same contract as the backend-history leg below
       // (AskUser 强制展开修令 2026-10-06): mid-turn, never a turn opener.
       if (m.answerOf) row.dataset.nfAskAnswer = m.answerOf;
-      if (m.text) {
+      // 媒体统一适配批（2026-10-20）：存量「已存至」行级换算（单点
+      // unifyUserMediaFace）——识别命中 ⇒ 媒体行接管、文本气泡隐去；否则逐字现状。
+      const userUnified = unifyUserMediaFace(m.text, m.attachments);
+      if (userUnified.text) {
         const bubble = document.createElement('div');
         bubble.className = 'bubble user';
         if (isSkillActivation && skillName) {
@@ -649,12 +652,12 @@ export function restoreFromStorage(opts = {}) {
           // Plain-text face with mention spans (mention-render batch):
           // identical output when nothing matches; user text never enters
           // markdown on a restore path either.
-          appendTextWithMentions(t, m.text || '');
+          appendTextWithMentions(t, userUnified.text || '');
           bubble.appendChild(t);
         }
         row.appendChild(bubble);
       }
-      const storageMediaRow = buildUserAttachmentRows(row, m.attachments);
+      const storageMediaRow = buildUserAttachmentRows(row, userUnified.atts);
       // Unified v1.2 footer pill (time + copy; copy-only when no timestamp)
       if ((m.timestamp && m.timestamp > 0) || m.text) {
         row.appendChild(createAiCopyBadge(m.timestamp, m.text));
@@ -1044,7 +1047,11 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         row.appendChild(composite);
       }
       if (quoteBox) (composite || row).appendChild(quoteBox);
-      if (m.text) {
+      // 媒体统一适配批（2026-10-20）：存量「已存至」行级换算（单点
+      // unifyUserMediaFace，与缓存恢复腿同源）——识别命中 ⇒ 媒体行接管、
+      // 文本气泡隐去；否则逐字现状。
+      const userUnified = unifyUserMediaFace(m.text, m.attachments);
+      if (userUnified.text) {
         const bubble = document.createElement('div');
         bubble.className = 'bubble user';
         if (isSkillActivation && skillName) {
@@ -1053,7 +1060,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
           label.className = 'ask-label';
           label.textContent = t('chat.skillLabel', { skill: skillName });
           const content = document.createElement('div');
-          content.textContent = m.text;
+          content.textContent = userUnified.text;
           bubble.appendChild(label);
           bubble.appendChild(content);
           skipMsg = true; // skip the system message on next iteration
@@ -1062,12 +1069,12 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
           // Plain-text face with mention spans (mention-render batch):
           // identical output when nothing matches; user text never enters
           // markdown on a restore path either.
-          appendTextWithMentions(t, m.text || '');
+          appendTextWithMentions(t, userUnified.text || '');
           bubble.appendChild(t);
         }
         (composite || row).appendChild(bubble);
       }
-      const backendMediaRow = buildUserAttachmentRows(row, m.attachments);
+      const backendMediaRow = buildUserAttachmentRows(row, userUnified.atts);
       // Unified v1.2 footer pill (time + copy; copy-only when no timestamp)
       if ((m.timestamp && m.timestamp > 0) || m.text) {
         row.appendChild(createAiCopyBadge(m.timestamp, m.text));

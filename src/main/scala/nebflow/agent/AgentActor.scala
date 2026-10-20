@@ -202,29 +202,69 @@ object AgentActor extends AgentCore with AgentSession:
    * so the LLM sees the whole batch in a single turn instead of N interruptions.
    * Retryable-failure guidance is appended per event, mirroring the single-event
    * idle path.
+   *
+   * 媒体统一适配批（2026-10-20）：任一事件携带 vision 块（`blocks`）⇒ 消息升为
+   * `Right(blocks)` —— 逐事件贡献「编号行（含各自 reminder 包裹 + retryable 提示）
+   * 的 Text 块 + 该事件的块」并顺序拼合（单事件 = 桥媒体常态，marker 语义与旧形态
+   * 等价）。无块事件（全部历史事件）⇒ 走既有单 reminder 包裹路径，**逐字现状**。
    */
   private[agent] def buildEventReminder(events: List[AgentCommand.ExternalEvent]): Message =
-    val parts = events.zipWithIndex.map { (e, i) =>
-      val hint =
-        if e.eventType == "failed" && e.metadata("retryable").exists(_.asBoolean.getOrElse(false)) then
-          val failureType = e.metadata("failureType").flatMap(_.asString).getOrElse("unknown")
-          val failedSession = e.metadata("failedSessionId").flatMap(_.asString).getOrElse("")
-          val agentName = e.metadata("agentName").flatMap(_.asString).getOrElse("")
-          s"\n<system-reminder>\nA sub-agent task${if agentName.nonEmpty then s" ($agentName)" else ""}" +
-            s"${if failedSession.nonEmpty then s" [session=$failedSession]" else ""} failed" +
-            s" (failure type: $failureType). This is a retryable error — consider re-delegating" +
-            s" the same task with the Delegate or SubTask tool.\n</system-reminder>"
-        else ""
-      s"${i + 1}. ${e.payload}$hint"
-    }
-    // Reminder refactor (2026-08-20): source marker is the fromUser signal —
-    // external-event injections must NOT look like user-typed messages.
-    Message(
-      MessageRole.User,
-      Left(s"<system-reminder>\n${parts.mkString("\n\n")}\n</system-reminder>"),
-      source = Some("external")
-    )
+    val hasBlocks = events.exists(_.blocks.exists(_.nonEmpty))
+    if !hasBlocks then
+      val parts = events.zipWithIndex.map { (e, i) =>
+        val hint =
+          if e.eventType == "failed" && e.metadata("retryable").exists(_.asBoolean.getOrElse(false)) then
+            val failureType = e.metadata("failureType").flatMap(_.asString).getOrElse("unknown")
+            val failedSession = e.metadata("failedSessionId").flatMap(_.asString).getOrElse("")
+            val agentName = e.metadata("agentName").flatMap(_.asString).getOrElse("")
+            s"\n<system-reminder>\nA sub-agent task${if agentName.nonEmpty then s" ($agentName)" else ""}" +
+              s"${if failedSession.nonEmpty then s" [session=$failedSession]" else ""} failed" +
+              s" (failure type: $failureType). This is a retryable error — consider re-delegating" +
+              s" the same task with the Delegate or SubTask tool.\n</system-reminder>"
+          else ""
+        s"${i + 1}. ${e.payload}$hint"
+      }
+      // Reminder refactor (2026-08-20): source marker is the fromUser signal —
+      // external-event injections must NOT look like user-typed messages.
+      Message(
+        MessageRole.User,
+        Left(s"<system-reminder>\n${parts.mkString("\n\n")}\n</system-reminder>"),
+        source = Some("external")
+      )
+    else
+      val blocks = events.zipWithIndex.flatMap { (e, i) =>
+        val hint =
+          if e.eventType == "failed" && e.metadata("retryable").exists(_.asBoolean.getOrElse(false)) then
+            val failureType = e.metadata("failureType").flatMap(_.asString).getOrElse("unknown")
+            val failedSession = e.metadata("failedSessionId").flatMap(_.asString).getOrElse("")
+            val agentName = e.metadata("agentName").flatMap(_.asString).getOrElse("")
+            s"\n<system-reminder>\nA sub-agent task${if agentName.nonEmpty then s" ($agentName)" else ""}" +
+              s"${if failedSession.nonEmpty then s" [session=$failedSession]" else ""} failed" +
+              s" (failure type: $failureType). This is a retryable error — consider re-delegating" +
+              s" the same task with the Delegate or SubTask tool.\n</system-reminder>"
+          else ""
+        ContentBlock.Text(s"<system-reminder>\n${i + 1}. ${e.payload}$hint\n</system-reminder>") :: e.blocks
+          .getOrElse(Nil)
+      }
+      Message(MessageRole.User, Right(blocks), source = Some("external"))
   end buildEventReminder
+
+  /**
+   * 媒体统一适配批（2026-10-20）：ExternalEvent 的 **idle 直投**消息组装单点——
+   * 无块事件 = 既有 `Left(injectionText)` 逐字现状；带块事件（桥媒体）⇒
+   * `Right(Text(injectionText) + blocks)`（文本行 = marker+标签线在前，vision 块随后，
+   * 与控制台 images 的「文本+图」同序语义）。source 口径两处调用点各自保持原值。
+   */
+  private[agent] def immediateEventMessage(
+    injectionText: String,
+    event: AgentCommand.ExternalEvent,
+    source: Option[String]
+  ): Message =
+    event.blocks.filter(_.nonEmpty) match
+      case Some(blocks) =>
+        Message(MessageRole.User, Right(ContentBlock.Text(injectionText) :: blocks), source = source)
+      case None => Message(MessageRole.User, Left(injectionText), source = source)
+  end immediateEventMessage
 
   // ============================================================
   // F1 (2026-08-30, compact-injection-shield G1): unified post-compaction

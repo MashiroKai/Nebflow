@@ -452,6 +452,11 @@ function createPendingSendMark() {
  */
 export function renderUserBubble(text, attachments, timestamp, opts) {
   const chat = activeView.dom.chat;
+  // 媒体统一适配批（2026-10-20）：社交通道入站媒体的**存量「已存至」文本行**
+  // 在行级换算成媒体附件（legacyMediaAttsOf 严格识别，fail-open）——存量行走与
+  // 新登记行同一张媒体气泡面；附件在场（新登记/控制台）⇒ 逐字原样。换算命中
+  // ⇒ 文本气泡隐去（媒体行接管，控制台纯图发送同形）。
+  ({ text, atts: attachments } = unifyUserMediaFace(text, attachments));
   const row = document.createElement('div');
   row.className = 'row user';
   row.dataset.msgId = (opts && opts.msgId) || nextChatMsgId();
@@ -867,7 +872,7 @@ export function finishAgent(agentId) {
 // imported from here — re-export, not redefinition (single source in
 // popArtifacts.js).
 export { openPopArtifact, popArtifactFromInput } from './popArtifacts.js';
-import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, buildUserMediaRow, registerUserMediaRow, patchUserMediaRow } from './popArtifacts.js';
+import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, buildUserMediaRow, registerUserMediaRow, patchUserMediaRow, unifyUserMediaFace } from './popArtifacts.js';
 
 /** quote-message 一期：AskUser 卡首个 question 的纯文本（剥 HTML 标签；镜像
  *  persistence.js askUserQuestionText 的剥标签先例 —— chat.js 不反向 import

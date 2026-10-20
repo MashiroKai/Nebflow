@@ -120,14 +120,19 @@ object CompactionQueueStore:
     )
   }
 
+  // 媒体统一适配批（2026-10-20）：`blocks`（桥媒体 vision 块）同键可选——只在
+  // defined 时落键，旧快照（无键）解码 None ⇒ 向后兼容逐字（ImmediateInput.blocks
+  // 的既有先例同款）。base64 面与 ImmediateInput 的 blocks 持久化同一暴露量级
+  // （5MB 压缩后硬帽封顶），无新预算面。
   given Encoder[AgentCommand.ExternalEvent] = Encoder.instance { e =>
-    Json.obj(
+    val base = Json.obj(
       "source" -> e.source.asJson,
       "eventType" -> e.eventType.asJson,
       "payload" -> e.payload.asJson,
       "metadata" -> Json.fromJsonObject(e.metadata),
       "correlationId" -> e.correlationId.asJson
     )
+    e.blocks.fold(base)(b => base.deepMerge(Json.obj("blocks" -> b.asJson)))
   }
 
   given Decoder[AgentCommand.ExternalEvent] = Decoder.instance { c =>
@@ -137,7 +142,10 @@ object CompactionQueueStore:
       payload <- c.downField("payload").as[String]
       metadata <- c.downField("metadata").as[Option[JsonObject]]
       correlationId <- c.downField("correlationId").as[Option[String]]
-    yield AgentCommand.ExternalEvent(source, eventType, payload, metadata.getOrElse(JsonObject.empty), correlationId)
+      blocks <- c.downField("blocks").as[Option[List[ContentBlock]]]
+    yield AgentCommand
+      .ExternalEvent(source, eventType, payload, metadata.getOrElse(JsonObject.empty), correlationId)
+      .copy(blocks = blocks)
   }
 
   given Encoder[PersistedQueues] = Encoder.instance { q =>

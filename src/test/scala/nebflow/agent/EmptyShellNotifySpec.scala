@@ -44,7 +44,7 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
   /** Spy parent that captures ExternalEvent payloads (loops on itself). */
   private def spyParent(captured: cats.effect.Ref[IO, List[String]]): Behavior[AgentCommand] =
     Behaviors.receiveMessage[AgentCommand] {
-      case AgentCommand.ExternalEvent(_, _, payload, _, _) =>
+      case AgentCommand.ExternalEvent(_, _, payload, _, _, _) =>
         captured.update(_ :+ payload).as(spyParent(captured))
       case _ => IO.pure(spyParent(captured))
     }
