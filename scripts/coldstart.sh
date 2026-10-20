@@ -98,6 +98,23 @@
 #        无引用的陈档启动前自动清——绝不抽运行中浏览器脚下的档案）。
 #      - COLDSTART_FULL=1：跳过 7) 的模型配置种子 ⇒ home 连 LLM 配置都零携带，
 #        onboarding 的选模型步走真实新用户路径。缺省 0 = 沿用种子（开发免重配）。
+#   9) 运行时密钥持久位（悬空引用修复批，2026-10-20）——<home>/secrets 符号链接到
+#      持久目录（缺省 $MAIN_HOME/coldstart-secrets，COLDSTART_SECRETS_DIR 可覆盖）：
+#      事故链：#418 系曾在冷启动实例（home=/tmp/nebflow-coldstart）上完成 weixin
+#      扫码绑定，引擎 SocialChannels.writeSecret 把密钥写进 <home>/secrets/（root 即
+#      数据根），配置面引用的也是 /tmp 路径；macOS /tmp 清理后引用集体悬空
+#      （面板 Invalid configuration「Referenced file does not exist」）+ sidecar
+#      LaunchAgent 指向同目录的 ingress token 一并失踪。根治 = 引擎写 secrets 的
+#      位置不动（<dataRoot>/secrets 是引擎的硬语义），本脚本把【这个子树】落到
+#      持久盘：启动前确保 <home>/secrets → $COLDSTART_SECRETS_DIR（0700）的符号
+#      链接；历史上已是实目录则一次性搬迁内容后再换链接（home 内副本为活态、
+#      覆盖同名）；清理步把 secrets 列入保留集（永不删该条目，无论链接还是目录）。
+#      引擎经链接读写时 NIO 解析父链接，ACL 收窄落在真实目录上，语义不变。
+#      同批 /tmp 落盘审计：开门载体 CHROME_PROFILE（一次性浏览器档案）与
+#      open-door.sh wrapper 属【真正可丢的缓存/脚手架】，保留在 /tmp 是设计而非
+#      遗漏；脚本其余写盘（.pid/.pid.meta、neblink/config.json 的 url+networkId、
+#      模型配置种子）均无凭据面。生产通道（主 home）的密钥引用一律指向
+#      ~/.nebflow/secrets/——跨 home 引用 /tmp 路径即本批事故形态，勿再为。
 
 # 用法：
 #   ./scripts/coldstart.sh                                            # staging 档冷启动（默认，不进生产网）
@@ -318,10 +335,12 @@ else
 fi
 
 # ── 步骤 2：清空旧 home（保留已配置的模型），保证真·冷启动 ──
-# 保留列 = 顶层精确名匹配的三个模型配置件（详见文件头 5)）；其余顶层条目（含点文件/点目录）
+# 保留列 = 顶层精确名匹配的三个模型配置件（详见文件头 5)）+ secrets 条目（文件头 9)：
+# 运行时密钥子树，实目录或符号链接都保留，永不删）；其余顶层条目（含点文件/点目录）
 # 一律真删。home 不存在 ⇒ 只建不删（mkdir -p，原语义照旧）。
 # 保留清单与删除清单每轮都打印（DRY_RUN 下亦打印），使外部可由 stdout 核对留/删。
 KEEP_FILES="nebflow.json models.json model-presets.json"
+KEEP_ENTRY_SECRETS="secrets"
 print_keep_report() {
   local f
   echo "[coldstart] 保留清单（顶层精确名匹配）:"
@@ -332,30 +351,40 @@ print_keep_report() {
       echo "[coldstart]   保留 $COLDSTART_HOME/$f （未命中：本次未生成，跳过）"
     fi
   done
+  if [ -e "$COLDSTART_HOME/$KEEP_ENTRY_SECRETS" ] || [ -L "$COLDSTART_HOME/$KEEP_ENTRY_SECRETS" ]; then
+    echo "[coldstart]   保留 $COLDSTART_HOME/$KEEP_ENTRY_SECRETS （命中：运行时密钥子树，文件头 9)）"
+  else
+    echo "[coldstart]   保留 $COLDSTART_HOME/$KEEP_ENTRY_SECRETS （未命中：步骤 2.7 将建持久链接）"
+  fi
+}
+# 删除谓词（两处使用同一段，DRY_RUN 列表与实删口径一致）：
+# 顶层条目 减去 KEEP_FILES 三件 减去 secrets 保留条目。
+find_delete_args() {
+  find "$COLDSTART_HOME" -maxdepth 1 -mindepth 1 \
+    ! -name 'nebflow.json' ! -name 'models.json' ! -name 'model-presets.json' \
+    ! -name "$KEEP_ENTRY_SECRETS" \
+    -print 2>/dev/null
 }
 if [ "$DRY_RUN" = "1" ]; then
-  echo "[coldstart] [DRY_RUN] 将选择性清理 HOME=${COLDSTART_HOME}（清旧 sessions/注册/锁；保留模型配置件）"
+  echo "[coldstart] [DRY_RUN] 将选择性清理 HOME=${COLDSTART_HOME}（清旧 sessions/注册/锁；保留模型配置件与 secrets）"
   print_keep_report
   if [ -d "$COLDSTART_HOME" ]; then
     echo "[coldstart] [DRY_RUN] 将删除以下顶层条目:"
-    find "$COLDSTART_HOME" -maxdepth 1 -mindepth 1 \
-      ! -name 'nebflow.json' ! -name 'models.json' ! -name 'model-presets.json' \
-      -print 2>/dev/null | sed 's/^/[coldstart]   - /'
+    find_delete_args | sed 's/^/[coldstart]   - /'
   else
     echo "[coldstart] [DRY_RUN] $COLDSTART_HOME 不存在，将仅 mkdir -p（无条目可删）"
   fi
 else
-  echo "[coldstart] 选择性清理旧 home: ${COLDSTART_HOME}（保留模型配置件）"
+  echo "[coldstart] 选择性清理旧 home: ${COLDSTART_HOME}（保留模型配置件与 secrets）"
   mkdir -p "$COLDSTART_HOME"
   print_keep_report
   # 删除清单先落 stdout、再执行删除（同谓词、无并发写者 ⇒ 两遍所见一致）：即使清理中途中断，
   # 配置也只是留在原位，不会滞留在别处。
   echo "[coldstart] 删除清单（顶层非保留条目，实删）:"
+  find_delete_args | sed 's/^/[coldstart]   - /'
   find "$COLDSTART_HOME" -maxdepth 1 -mindepth 1 \
     ! -name 'nebflow.json' ! -name 'models.json' ! -name 'model-presets.json' \
-    -print 2>/dev/null | sed 's/^/[coldstart]   - /'
-  find "$COLDSTART_HOME" -maxdepth 1 -mindepth 1 \
-    ! -name 'nebflow.json' ! -name 'models.json' ! -name 'model-presets.json' \
+    ! -name "$KEEP_ENTRY_SECRETS" \
     -exec rm -rf {} + || true
   echo "[coldstart] home 已选择性清理: $COLDSTART_HOME"
 fi
@@ -424,6 +453,51 @@ seed_staging_target() {
 if [ "$NET_TIER" = "staging" ]; then
   seed_staging_target
 fi
+
+# ── 步骤 2.7：运行时密钥持久位（文件头 9)；悬空引用事故根治）──
+# <home>/secrets → $COLDSTART_SECRETS_DIR（0700）符号链接。引擎把通道密钥写进
+# <dataRoot>/secrets（SocialChannels.writeSecret 硬语义），home 在 /tmp ⇒ 该子树
+# 曾随 macOS 清理蒸发、留下悬空引用。链接在每次冷启动前确保存在；历史实目录先
+# 搬迁再换链接（home 内副本视作活态、覆盖同名）；ACL 收窄由引擎经链接落在真实
+# 目录上（NIO 解析父链接），本脚本只对持久目录收 0700。
+COLDSTART_SECRETS_DIR="${COLDSTART_SECRETS_DIR:-$MAIN_HOME/coldstart-secrets}"
+ensure_coldstart_secrets() {
+  local link="$COLDSTART_HOME/secrets"
+  if [ -L "$link" ] && [ "$(readlink "$link")" = "$COLDSTART_SECRETS_DIR" ]; then
+    mkdir -p "$COLDSTART_SECRETS_DIR"
+    chmod 700 "$COLDSTART_SECRETS_DIR" 2>/dev/null || true
+    echo "[coldstart] 密钥持久位就绪（链接已在）: $link → $COLDSTART_SECRETS_DIR"
+    return
+  fi
+  if [ -d "$link" ] && [ ! -L "$link" ]; then
+    # 历史实目录：一次性搬迁（保权限），home 内副本为活态 → 覆盖同名后换链接。
+    if [ "$DRY_RUN" = "1" ]; then
+      echo "[coldstart] [DRY_RUN] 密钥搬迁: 将 cp -pR $link/. → $COLDSTART_SECRETS_DIR/ 后以符号链接替换 $link"
+      return
+    fi
+    mkdir -p "$COLDSTART_SECRETS_DIR"
+    cp -pR "$link/." "$COLDSTART_SECRETS_DIR/" 2>/dev/null || true
+    chmod 700 "$COLDSTART_SECRETS_DIR" 2>/dev/null || true
+    rm -rf "$link"
+    ln -s "$COLDSTART_SECRETS_DIR" "$link"
+    echo "[coldstart] 密钥持久位: 历史实目录已搬迁并替换为链接 $link → $COLDSTART_SECRETS_DIR"
+    return
+  fi
+  if [ "$DRY_RUN" = "1" ]; then
+    echo "[coldstart] [DRY_RUN] 密钥持久位: 将建目录 ${COLDSTART_SECRETS_DIR}（0700）+ 链接 $link → 该目录"
+    return
+  fi
+  mkdir -p "$COLDSTART_SECRETS_DIR"
+  chmod 700 "$COLDSTART_SECRETS_DIR" 2>/dev/null || true
+  # 悬空链接 / 指向他处的旧链接：一律重建为本批语义（决不跟随未知目标删数据）。
+  rm -f "$link" 2>/dev/null || true
+  ln -s "$COLDSTART_SECRETS_DIR" "$link"
+  echo "[coldstart] 密钥持久位: $link → $COLDSTART_SECRETS_DIR （通道密钥落持久盘；/tmp 只放可丢缓存）"
+}
+if [ ! -d "$MAIN_HOME" ] && [ "$DRY_RUN" != "1" ]; then
+  echo "[coldstart] 主 home $MAIN_HOME 不存在 ⇒ 密钥持久位将由 mkdir -p 现建（$COLDSTART_SECRETS_DIR，仍持久）"
+fi
+ensure_coldstart_secrets
 
 # ── 步骤 3：启动全新实例（DRY_RUN 跳过）──
 if [ "$DRY_RUN" = "1" ]; then
