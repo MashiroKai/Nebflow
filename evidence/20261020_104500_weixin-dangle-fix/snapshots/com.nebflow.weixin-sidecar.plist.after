@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.nebflow.weixin-sidecar</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/Cellar/node/23.9.0/bin/node</string>
+    <string>/Users/kaiyu/Claude code/Stand/tools/weixin-sidecar/shim.mjs</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>/Users/kaiyu/Library/Logs/nebflow-weixin-sidecar/out.log</string>
+  <key>StandardErrorPath</key><string>/Users/kaiyu/Library/Logs/nebflow-weixin-sidecar/err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>WEIXIN_SIDECAR_PORT</key><string>8787</string>
+    <!-- 悬空引用修复批 2026-10-20：入站投递改指主实例生产腿（8080）；
+         ⚠️ 不设 WEIXIN_SEND_TOKEN[_FILE]——该 env 名被 msgloop（入站腿，期望
+         ingress token 路径）与 send.mjs（出站腿，期望 send token 路径）双读，
+         指向任一文件都会使另一腿 401（2026-10-20 实证：指 ingress 文件 ⇒ /send
+         401）。两侧默认值已是持久路径（~/.nebflow/secrets/weixin-ilink-{ingress,
+         send}-token），零 env 即两腿全对；旧 WEIXIN_MSGLOOP_TOKEN_FILE=/tmp/...
+         弃用不再设（/tmp 清理后曾致「token 文件缺席，投递持握」）；
+         NEBFLOW_HOME 移除（回落 ~/.nebflow：send token 与入站媒体根均落持久盘）。 -->
+    <key>WEIXIN_MSGLOOP_INGRESS_URL</key><string>http://127.0.0.1:8080/api/social/channels/weixin-ilink/ingress</string>
+  </dict>
+</dict>
+</plist>

@@ -1,0 +1,24 @@
+{
+ "version": 1,
+ "channels": {
+  "feishu": {
+   "enabled": true,
+   "fields": {
+    "app_secret_ref": "~/.nebflow/secrets/social-feishu-app-secret",
+    "app_id": "cli_aa431c6752f99cce",
+    "region": "feishu"
+   },
+   "updatedAt": 1791598724,
+   "defaultSessionId": "d7c3cb54-dd90-4f3f-bbf6-e7898c425cff"
+  },
+  "weixin-ilink": {
+   "enabled": true,
+   "fields": {
+    "bot_token_ref": "~/.nebflow/secrets/social-weixin-bot-token",
+    "ilink_bot_id": "ac3714d759d1@im.bot",
+    "ilink_user_id": "o9cq80yJRGnjUHpVssmtAIO-5ETE@im.wechat"
+   },
+   "updatedAt": 1792464161
+  }
+ }
+}

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.nebflow.weixin-sidecar</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/Cellar/node/23.9.0/bin/node</string>
+    <string>/Users/kaiyu/Claude code/Stand/tools/weixin-sidecar/shim.mjs</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>/Users/kaiyu/Library/Logs/nebflow-weixin-sidecar/out.log</string>
+  <key>StandardErrorPath</key><string>/Users/kaiyu/Library/Logs/nebflow-weixin-sidecar/err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>WEIXIN_SIDECAR_PORT</key><string>8787</string>
+    <key>WEIXIN_MSGLOOP_INGRESS_URL</key><string>http://127.0.0.1:8097/api/social/channels/weixin-ilink/ingress</string>
+    <key>WEIXIN_MSGLOOP_TOKEN_FILE</key><string>/tmp/nebflow-coldstart/secrets/weixin-ilink-ingress-token</string>
+    <key>NEBFLOW_HOME</key><string>/tmp/nebflow-coldstart</string>
+  </dict>
+</dict>
+</plist>

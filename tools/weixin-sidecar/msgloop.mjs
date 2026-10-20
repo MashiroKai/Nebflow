@@ -692,9 +692,28 @@ export function decideAccountSwitch(currentId, index, loader) {
 // ───────────────────────── deliver leg (§2 wire contract) ─────────────────────────
 
 /**
+ * Dropped verdicts whose meaning is「the engine could not take the message」—
+ * NOT a policy decision about the message itself. A 200 with such a verdict
+ * used to advance the cursor (any 2xx counted as delivered), i.e. the message
+ * was silently lost upstream exactly while a channel was disabled/miswired —
+ * the dangling-secret incident window (2026-10). Two members:
+ *   - adapter-not-started: the seam is not up (bridge unregistered — channel
+ *     disabled, config invalid, or the loop points at the wrong instance);
+ *   - inject-failed: the engine accepted the seam call but the injection threw
+ *     (transient — the same class as a 5xx).
+ * Both hold the cursor (at-least-once, §T6 extended: the cursor never advances
+ * when the engine did not ACCEPT the message). Every other dropped reason is a
+ * FINAL policy verdict (not-on-allowlist / no-session-bound / no-text-body /
+ * ask-*) — holding those would wedge the loop on a poison message, so they
+ * advance exactly as before (the wx_mallory precedent: dropped ⇒ no re-delivery).
+ */
+const CURSOR_HOLD_DROPPED = new Set(["adapter-not-started", "inject-failed"]);
+
+/**
  * One message → the Nebflow ingest seam. Returns {delivered, status, verdict}.
  * 403 re-reads the token file once (rotation pickup) before giving up; the
- * cursor NEVER advances on auth/network failure (at-least-once, §T6).
+ * cursor NEVER advances on auth/network failure (at-least-once, §T6) — nor on
+ * a 200 whose verdict is a CURSOR_HOLD_DROPPED one (see above).
  * weixin-inbound-media batch: the media step runs BEFORE the body is built —
  * a landed item adds the four media fields, a failed one degrades to the
  * placeholder label (the step is contained; it never holds the cursor).
@@ -725,6 +744,14 @@ export async function deliverToIngress(msg, accountId = loopAccount) {
     try { verdict = JSON.parse(raw); } catch { /* non-JSON body: verdict stays unseen */ }
     if (res.ok) {
       debug(`ingress 200 verdict=${raw.slice(0, 120)}`);
+      // A 200 is a transport ack, not a delivery ack: when the verdict says the
+      // engine could not accept the message, hold the cursor — the upstream
+      // iLink queue redelivers on a later poll (at-least-once). Verdict-unseen
+      // (non-JSON body) keeps the legacy advance: the engine spoke 2xx.
+      if (verdict?.verdict === "dropped" && CURSOR_HOLD_DROPPED.has(verdict.reason)) {
+        warn(`ingress: 200 dropped (${verdict.reason}) — engine did not accept, cursor held (redelivery on a later poll)`);
+        return { delivered: false, status: res.status, verdict };
+      }
       return { delivered: true, status: res.status, verdict };
     }
     if (res.status === 403 && attempt === 1) {
