@@ -140,6 +140,16 @@ function updateBadge() {
 
 // ── Render ─────────────────────────────────────────────────────────────
 
+/** P3 手机层分组签（mobile-secondary-screens 实施批；样张 v3.5 P3 口径）：
+ *  「即将触发 / 已超时 / 已停用」站内小写字号语言（任务浮层 tp-grp 同族）。
+ *  只在手机层分组分支使用，桌面扁平序零改动。 */
+function buildGroupLabel(labelKey, n) {
+  const el = document.createElement('div');
+  el.className = 'mh-rd-grp';
+  el.textContent = `${t(labelKey)} · ${n}`;
+  return el;
+}
+
 function renderList() {
   const body = $('#reminder-panel .reminder-panel-body');
   if (!body) return;
@@ -155,6 +165,24 @@ function renderList() {
 
   if (tasks.length === 0 && !isCreating) {
     body.appendChild(buildEmptyState());
+  } else if (document.body.classList.contains('mobile-layer')) {
+    // P3 手机层三分组（样张 v3.5 P3 + 开放点③⑤按设计批推荐）：即将触发 →
+    // 已超时（isOverdue 独立分组，红 clock-alert 语义仍由行级携带）→ 已停用
+    //（enabled=false 整组垫底，行级降透明走既有 .disabled 类 + 手机层组内
+    // 整行降透明）。桌面扁平序（分支外）不变。
+    const upcoming = pending.filter(r => r.enabled !== false && !isOverdue(r));
+    const overdue = pending.filter(r => r.enabled !== false && isOverdue(r));
+    const disabled = pending.filter(r => r.enabled === false);
+    const groups = [
+      ['task.grpUpcoming', upcoming],
+      ['task.overdue', overdue],
+      ['task.grpDisabled', disabled],
+    ];
+    for (const [key, rows] of groups) {
+      if (!rows.length) continue;
+      body.appendChild(buildGroupLabel(key, rows.length));
+      for (const r of rows) body.appendChild(buildRow(r, false));
+    }
   } else {
     for (const r of pending) body.appendChild(buildRow(r, false));
   }
