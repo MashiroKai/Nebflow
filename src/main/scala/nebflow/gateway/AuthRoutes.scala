@@ -152,7 +152,7 @@ private[gateway] object AuthRoutes:
             symbol = "!",
             symbolColor = "#d1242f",
             headline = "续登链接已使用",
-            detail = s"切号续登入口一次性有效，重放本页不会再次自动登录。如需切换账号，请在 ${Branding.lowerName} 设置页重新点「切换账号」。"
+            detail = s"切号续登入口一次性有效，重放本页不会再次自动登录。如需切换账号，请前往 ${Branding.lowerName} 官网门户操作。"
           ),
           Status.Ok
         )
@@ -162,7 +162,7 @@ private[gateway] object AuthRoutes:
             symbol = "!",
             symbolColor = "#d1242f",
             headline = "续登已超时",
-            detail = s"本次切号续登标记已过期，未自动登录。请在 ${Branding.lowerName} 设置页重新点「切换账号」。"
+            detail = s"本次切号续登标记已过期，未自动登录。如需切换账号，请前往 ${Branding.lowerName} 官网门户操作。"
           ),
           Status.Ok
         )

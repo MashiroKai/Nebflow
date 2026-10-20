@@ -20,7 +20,8 @@
 
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from './sidebar.js';
 import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow, avatarViewState, noteAvatarFailure, paintAvatarSlot, LOCAL_FILE_CODES, openEndSessionHandoff, classifyLoginFailureCode, loginFailureText } from './neblink.js';
-import { setUpdateDot } from './updateCheck.js';
+// setUpdateDot（settings-btn 更新绿点，updateCheck.js）已随 auth-trim 批删除 ——
+// 绿点与静默自动检查整链退役（2026-10-20 作者令，未来由官网统一检测更新取代）。
 import { createIconsIn, escapeHtml, statusIcon } from './utils.js';
 import { getProfileUrl, standLockupSvg } from './brand.js';
 import { t } from './i18n.js';
@@ -378,9 +379,8 @@ function bindSettingsButton() {
     if (isSettingsPanelActive()) {
       closeSettingsPanel();
     } else {
-      // Opening settings is the green-dot clear point (updateCheck.js lights
-      // it on a silent auto check; the user has now seen the About section).
-      setUpdateDot(false);
+      // Opening settings used to be the update green-dot clear point — the dot
+      // and its updateCheck.js chain are retired (auth-trim batch, 2026-10-20).
       openSettingsPanel();
     }
   });

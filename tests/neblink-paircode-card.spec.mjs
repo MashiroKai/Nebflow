@@ -111,10 +111,12 @@ test.describe('设置面板未登录态（配对码卡移除后）', () => {
     await expect(page.locator('.neblink-error').first()).toBeVisible();
   });
 
-  test('已登录视图不变：切换账号 + 退出登录两键', async ({ page }) => {
+  test('已登录视图 = 只读身份行（切换账号 + 退出登录两键已退役，auth-trim 2026-10-20）', async ({ page }) => {
     await bootPanel(page, STATUS_LOGGED_IN);
     await expect(page.locator('.neblink-logged-in')).toHaveCount(1);
-    await expect(page.locator('#neblink-switch-btn')).toHaveCount(1);
-    await expect(page.locator('#neblink-logout-btn')).toHaveCount(1);
+    await expect(page.locator('#neblink-switch-btn')).toHaveCount(0);
+    await expect(page.locator('#neblink-logout-btn')).toHaveCount(0);
+    await expect(page.locator('.neblink-switch-modal')).toHaveCount(0);
+    await expect(page.locator('.neblink-account-ro')).toHaveCount(1);
   });
 });

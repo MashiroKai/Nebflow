@@ -1066,61 +1066,14 @@ export default {
   'settings.connection': 'Connection',
   'settings.connected': 'Connected',
   'settings.disconnected': 'Disconnected',
-  'settings.checkUpdate': 'Check for Updates',
-  'settings.checking': 'Checking...',
-  'settings.upToDate': 'You are on the latest version',
-  'settings.updateAvailable': 'New version available: {version}',
-  'settings.updateNow': 'Update Now',
-  'settings.updating': 'Updating...',
-  'settings.updateLater': 'Later',
-  'settings.updateError': 'Update check failed',
+  // Update-check / update-run key groups (settings.checkUpdate/checking/upToDate/
+  // updateAvailable/updateNow/updating/updateLater/updateError + update.phase.*/
+  // update.versions/update.impact/update.receipt.*/update.reason.*/update.source.*)
+  // removed with the auth-trim batch (2026-10-20 author ruling): the settings-page
+  // update feature is retired; unified update detection moves to the website later.
 
-  // Unified update phase text (hotupdate batch 1 · design §7 naming: `update.phase`
-  // plus the phase name). Phase frames carry a messageKey (e.g.
-  // 'update.phase.freezing') — display text is resolved from this table only;
-  // 🔴 frames carry no display text (ruling 10 / D6: failures and rollbacks use the
-  // status line only — no toasts, no modals, no red blocks). Frontend rendering is
-  // batch 3 (G6).
-  'update.phase.idle': 'Not updated yet',
-  'update.phase.checking': 'Checking for a new version',
-  'update.phase.preparing': 'Update request accepted',
-  'update.phase.freezing': 'Waiting for in-flight work to finish, then freezing',
-  'update.phase.updating': 'Installing the new version',
-  'update.phase.restarting': 'Restarting',
-  'update.phase.recovering': 'Recovering tasks',
-  'update.phase.completed': 'Updated to {version}',
-  'update.phase.aborted': 'Update aborted: {reason} — the current version keeps serving, unaffected',
-  'update.phase.rolled-back': 'The new version failed its health check; rolled back to {version}',
-
-  // Consumer-side text for the unified progress surface (hotupdate batch 3 · G6).
-  // All additive: phase text still comes from 'update.phase.*' above; this group
-  // resolves the other machine tokens the frames carry — the abort/failure reason
-  // (`reason` = frozen UpdateReason literal), the source (`source` = frozen
-  // UpdateSource literal) and the three admission-receipt branches.
-  // 🔴 never hardcode these literals in JS — resolve them from this table.
-  'update.versions': 'Current {current} · latest {latest}',
-  'update.impact': 'Pre-update impact (in-flight work): {detail}',
-  'update.receipt.alreadyInFlight': 'The same update request is already in flight (merged, not re-run): {phase}',
-  'update.receipt.busy': 'An update is already running (source: {source}) — updates are exclusive and never queued: {phase}',
-  'update.receipt.refused': 'Update not admitted: {reason}',
-  'update.reason.confirm-missing': 'the confirmation bit is missing',
-  'update.reason.freeze-busy': 'work is in flight and the mode is reject-if-busy',
-  'update.reason.freeze-wait-limit-exceeded': 'in-flight work exceeded the wait limit',
-  'update.reason.freeze-drain-deadline-exceeded': 'work was still in flight when the drain deadline arrived',
-  'update.reason.install-failed': 'installing the new version failed',
-  'update.reason.restart-refused': 'the restart handover was refused or aborted',
-  'update.reason.orchestrator-unavailable': 'this instance has no hot-restart orchestrator',
-  'update.reason.unexpected-error': 'the update orchestrator hit an unexpected error',
-  'update.reason.unspecified': 'no reason provided',
-  'update.source.settings': 'settings',
-  'update.source.device-list': 'device list',
-  'update.source.relay': 'relay',
-  'update.source.website': 'website',
-  'update.source.cli': 'command line',
-
-  // Phase text for the existing restart progress frame (`restartStatus`): that frame
-  // is a SUBSET of the unified progress frame (design §4:104), reusing the same
-  // progress surface and the same renderer (no second channel).
+  // Phase text for the existing restart progress frame (`restartStatus`, consumed by
+  // the settings "Restart Service" status line).
   'restart.phase.quiesce': 'Waiting for in-flight work to finish',
   'restart.phase.draining': 'Freezing and flushing to disk',
   'restart.phase.spawning': 'Launching the successor process',
@@ -1720,12 +1673,11 @@ export default {
   // the trigger/admission face" + design §7:149 "timeout cap and timeout state"): the
   // trigger face's closing text when no result frame arrived within 300 seconds.
   'neblink.updateTimeout': 'Timed out (300s) — check the device state',
-  // Switch account (settings account area, 2026-09-10)
-  'neblink.switchAccount': 'Switch account',
-  'neblink.logout': 'Log out',
-  'neblink.loggingOut': 'Signing out…',
-  'neblink.useOtherAccount': 'Use another account…',
-  'neblink.currentTag': 'Current',
+  // Read-only signed-in display (auth-trim batch 2026-10-20 author ruling): who is
+  // signed in, no action entry. The former switch/logout key group (switchAccount/
+  // logout/loggingOut/useOtherAccount/currentTag) is removed with the two buttons —
+  // sign-out and account switching live on the website portal only.
+  'neblink.loggedInAs': 'Signed in as: {name}',
 
   // Dropbox
   'dropbox.tabChat': 'Chat',

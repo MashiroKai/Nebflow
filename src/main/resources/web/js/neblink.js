@@ -19,7 +19,8 @@ import { escapeHtml } from './utils.js';
 import { t, getLocale } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
 import { lookupAvatar, rememberAvatarProfile, lastKnownAvatarProfile, forgetAvatarProfile } from './avatarCache.js';
-import { getKnownAccounts, rememberAccount } from './knownAccounts.js';
+// knownAccounts.js（切换账号的本地账号记忆）已随 auth-trim 批（2026-10-20 作者令）
+// 整体删除：设置页「切换账号/退出登录」两键退役 ⇒ 记忆的唯一消费面不存在。
 // NOTE: dropbox.js is dynamically imported at the click site - P2-4 cycle cut
 // (neblink <-> dropbox mutual import).
 
@@ -336,12 +337,8 @@ export async function fetchNeblinkStatus() {
       email: d.email || '',
       displayName: d.displayName || ''
     } : null;
-    // Account memory capture (switch-account spec §6): a live logged-in
-    // status with an identity is the "login success" anchor — dedup + move
-    // to head + cap inside rememberAccount. Stores ONLY email+displayName.
-    if (neblinkState.loggedIn && neblinkState.device?.email) {
-      rememberAccount({ email: neblinkState.device.email, displayName: neblinkState.device.displayName });
-    }
+    // 账号记忆捕获（rememberAccount，原切换账号 spec §6）已随 auth-trim 批删除：
+    // 「切换账号」入口退役 ⇒ 本地账号记忆（knownAccounts.js）连同其写入点一并退场。
     // F5（症状③防自过滤）：服务端 peers 若回显本机设备，下方 UI 合并
     // [{...local,isLocal}, ...peers] 会出现「本机 + 同名 peer」双行（数量虚增
     // 恰好 +1）。客户端整条链路零 self 防御（LAN announce 路径有、server 路径
@@ -474,34 +471,21 @@ export function neblinkSettingsHTML() {
     </div>`;
   }
 
-  // ── 设备列表**已移出设置**（①④，作者 2026-09-15）───────────────────────
-  // 作者原话：「我的意思是把入口从设置，转到联系人面板而已。」「而且我不是说这样
-  // 设置里的样式就保留切换账号和登陆就可以了吗」。
+  // ── 登录态设置账号块（auth-trim 批，2026-10-20 作者令）────────────────────
+  // 作者裁定：产品全走纯官网路径，控制台不承担认证态管理 ⇒ 设置页「切换账号 /
+  // 退出登录」两键整体退役（登出/切号只在官网门户操作）。本块降为**只读登录态展示**：
+  //   · `kickedLine`（2026-09-14 作者令 C+B 的被动可见状态行，语义不变，保留）；
+  //   · `whoLine`（谁登录着，只读 — `neblink.loggedInAs`，无任何动作入口）。
+  // 历史备注：切换账号弹窗（knownAccounts.js 账号记忆 + 单窗续登链
+  // `switchLogoutAndLogin`/`watchSwitchHandoff`/`openSwitchAccountModal`）随两键
+  // 整体删除；RP end-session 链本体（`openEndSessionHandoff`）仍服务「清理并重登」
+  // 修复入口（本文件未登录失败面 + activityBar 登录错误面共用），后端 /auth
+  // 落地页族（含 switch handoff 标记）照旧服务官网/修复路径。
   //
-  // 🔴 本段（登录态设置账号块）现在只渲染：被踢状态行 + **切换账号 / 退出登录**两键。
-  // 设备入口的新家 = 联系人面板的「设备」点进展开入口（`contacts.js`
-  // `buildDevicesEntry` / `buildDeviceRows` / `deviceRow`），**样式沿用**本文件原设备行
-  // 的 `.neblink-peer` 家族（类名/结构不动）+ `neblink.css:83-145`（样式表零改动）。
-  //
-  // 🔴 本令**移除项逐条**（全部在本文件内，随 ① 一次摘除）：
-  //   1. 设备行模板 `allDevices` + `deviceRows`（本机行 + 远端行 + 「更新」键组）；
-  //   2. `.neblink-peers-list` 容器插值 `${deviceRows}`；
-  //   3. `peerHint`（无 peer 提示行 `neblink.noPeersHint` —— 设备列表内容，随列表一并摘除）；
-  //   4. `.dropbox-clickable` 点击绑定（**旧设备窗入口**；旧窗随 ① 退役）；
-  //   5. 「更新 / stable / beta / 取消」三组键绑定（其 DOM 即第 1 项，已不存在）。
-  // 🔴 **保留项**：`kickedLine`（2026-09-14 作者令 C+B 的**被动可见状态行**，语义是
-  // 「账号会话被踢」不是「设备列表内容」⇒ 不随本令摘除；见下原注释）。
-  // 未裁项（呈分发器）：`deviceUpdateState` 的 WS 结果帧处理（本文件 :948-970）与其
-  // i18n 键组**未删** —— 远程更新是服务端面既有能力，本次只摘除其客户端入口。
-  //
-  // NL 号入口已移除（作者 2026-09-05 裁定：NL 号统一 = 官网 Username，官网
-  // 已有修改功能，客户端不再重复提供）——原「查看 + 修改 + live 可用性检测」
-  // 区块连同 friendsApi 的 setNeblinkId/neblinkIdAvailable 一并删除；旧
-  // neblink-id 端点同 release 退役（friend-search-contract §4.7）。
+  // 早期史（设备列表 ①④，作者 2026-09-15）：设备入口已迁联系人面板
+  // （`contacts.js` `buildDevicesEntry`/`buildDeviceRows`/`deviceRow`）；
+  // NL 号入口已随 09-05 裁定移除（NL 号统一 = 官网 Username）。
 
-  // 2026-09-10: 「切换账号」joins 「退出登录」in one row (switch-account spec
-  // §1 — green glass primary per the confirmed mockup; row layout styles in
-  // neblink.css .neblink-account-actions).
   // 踢旧批（2026-09-14，作者 17:07 裁定 C+B·客户端一刀）——**案 B 客户端腿**：
   // 被服务端 `disconnect` 帧踢下线后，本机必须**被动可见**（修前零用户感知）。
   // 形态遵一期口径（User.md:36 / messages.js:991「无横幅无提示音」）：
@@ -518,13 +502,16 @@ export function neblinkSettingsHTML() {
     </div>`
     : '';
 
+  // 只读登录态：谁登录着（displayName 优先，回退 email）。纯展示，零动作。
+  const who = (neblinkState.device?.displayName || neblinkState.device?.email || '').trim();
+  const whoLine = who
+    ? `<div class="neblink-account-ro" role="status">${escapeHtml(t('neblink.loggedInAs', { name: who }))}</div>`
+    : '';
+
   return `
     <div class="neblink-logged-in">
       ${kickedLine}
-      <div class="neblink-account-actions">
-        <button class="neblink-switch-btn" id="neblink-switch-btn" type="button">${t('neblink.switchAccount')}</button>
-        <button class="neblink-logout-btn" id="neblink-logout-btn" type="button">${t('neblink.logout')}</button>
-      </div>
+      ${whoLine}
     </div>`;
 }
 
@@ -848,8 +835,8 @@ function endSessionNotice(message, link) {
  *   · 失败支禁静默：非 2xx / 缺 `endSessionUrl` / 网络异常 ⇒ 关窗 + 一条可见提示。
  *
  *  `continueToLogin` = the one-window switch shape（`scenario=switch`）：the landing page
- *  this hop ends on continues into the login in the SAME window; the main window learns the
- *  outcome through [[watchSwitchHandoff]].
+ *  this hop ends on continues into the login in the SAME window.（原主窗看门狗
+ *  `watchSwitchHandoff` 已随切换账号入口退役；本形态现仅服务「清理并重登」。）
  *
  *  🔴 缺陷 A（上游 §8.2 第 6 项）：「清理并重登」入口走的就是本函数（`continueToLogin=true`）
  *  —— 它是「本地凭据坏了、清理掉再登一次」这条自救路径的既有实现，本批零新增链路。
@@ -917,65 +904,23 @@ export function openEndSessionHandoff(continueToLogin = false) {
 export function bindNeblinkEvents(rerender) {
   _rerender = rerender;
 
-  // Full RP-initiated logout chain — the SINGLE shared implementation used by
-  // both the settings logout button and the switch-account modal (spec §4:
-  // "原样复用既有 logout 链路"). RP-logout fix, 2026-09-06; **POST + 预约窗**
-  // since the 2026-09-20 closeout batch (the route is POST + token now, the old
-  // GET arm is a gated 405):
-  // a blank popup is reserved in the SAME gesture tick (synchronous →
-  // popup-blocker safe), the request then goes out as `fetch` POST with the
-  // Bearer token, and the reserved window is navigated to the provider URL the
-  // server returns. The endpoint performs the local teardown (same 8 steps as
-  // the old POST /api/neblink/logout) and the navigation kills the provider's
-  // browser SSO session. Without that hop, the next login silently
-  // re-enters the original account (no account choice — the root cause of
-  // the silent-relogin bug). The window ends on the provider's
-  // logged-out page (or our /auth/logged-out landing once the
-  // post_logout_redirect_uri is allow-listed on the Logto app).
-  // The main window refreshes its status a beat later, after the local
-  // teardown on the backend has landed.
-  //
-  // `opts.continueToLogin` (one-window switch, 2026-09-16): true marks this
-  // logout as the SWITCH-ACCOUNT flow — the gateway arms its single-use handoff
-  // marker, and the landing page this window ends on continues into the login
-  // IN THIS SAME WINDOW (POST body `{"scenario":"switch"}`, query before the
-  // 2026-09-20 closeout batch). A plain logout passes nothing:
-  // the landing stays the static 「已退出登录」 card and the gateway explicitly
-  // clears any leftover marker (zero behaviour change for plain logout).
-  // `ui_locales` is carried through the hop because the landing page is a bare
-  // navigation and cannot read this app's locale.
-  function initiateLogout(opts = {}) {
-    // 🔴 唯一窗口跳转点已抽到 [[openEndSessionHandoff]]（缺陷 A）：「清理并重登」入口
-    // 与「退出/换号」共用同一段 ⇒ 两条腿永不漂移（§13 禁造新轮子）。
-    openEndSessionHandoff(opts.continueToLogin === true);
-  }
-
-  // Logout button.
-  const logoutBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('neblink-logout-btn'));
-  if (logoutBtn) {
-    logoutBtn.addEventListener('click', () => {
-      logoutBtn.disabled = true;
-      logoutBtn.textContent = t('neblink.loggingOut');
-      initiateLogout();
-    });
-  }
-
-  // Switch-account modal entry (2026-09-10, switch-account spec §1-§6).
-  const switchBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('neblink-switch-btn'));
-  if (switchBtn) {
-    switchBtn.addEventListener('click', () => { openSwitchAccountModal(initiateLogout); });
-  }
+  // 「切换账号 / 退出登录」两键及其绑定已随 auth-trim 批（2026-10-20 作者令）删除。
+  // 原共用 RP-initiated logout 链（`initiateLogout`，2026-09-06 起：POST + 预约窗 →
+  // 本地 8 步拆除 → 提供方 end-session → /auth/logged-out 落地页；`continueToLogin`
+  // 单窗续登标记 2026-09-16）**本体保留**为 `openEndSessionHandoff` —— 它现在是
+  // 「清理并重登」修复入口的独占持有者（见下），后端 /auth 路由族照旧。
 
   // 「清理并重登」入口（缺陷 A / 上游 §8.2 第 6 项）：**复用既有链路**，零新轮子 ——
-  // 走的就是「切换账号」那条 `initiateLogout({continueToLogin:true})`（RP end-session →
-  // 本地拆除 → 落地页续登）。它之所以能真的「清理」，靠的是本批后端那笔修复：
-  // end-session 的凭据读点失败**不再跳过本地拆除**（判据 G5）⇒ 坏件即使读不开，拆除
-  // 仍执行（`DeviceCredential.clear` 删不掉时再走改名留档兜底）⇒ 下一次登录从干净盘重建。
+  // 走 `openEndSessionHandoff(true)`（RP end-session → 本地拆除 → 落地页续登）。
+  // 它之所以能真的「清理」，靠的是后端那笔修复：end-session 的凭据读点失败**不再跳过
+  // 本地拆除**（判据 G5）⇒ 坏件即使读不开，拆除仍执行（`DeviceCredential.clear`
+  // 删不掉时再走改名留档兜底）⇒ 下一次登录从干净盘重建。跳转必须在手势栈里同步
+  // 发生（popup-blocker），故直接调用。
   const cleanupBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('neblink-cleanup-btn'));
   if (cleanupBtn) {
     cleanupBtn.addEventListener('click', () => {
       cleanupBtn.disabled = true;
-      initiateLogout({ continueToLogin: true });
+      openEndSessionHandoff(true);
     });
   }
 
@@ -992,224 +937,12 @@ export function bindNeblinkEvents(rerender) {
   // 设备入口本体见 `contacts.js` 的「设备」点进展开（→ `openDeviceChat`，新设备会话窗）。
 }
 
-// ---- Switch-account modal (2026-09-10, spec §2-§5) ----
-// Glass panel per the user modal ruling: NO overlay/backdrop darkening (the
-// panel floats directly over the UI), the panel itself is frosted glass
-// (backdrop-filter blur) — same recipe as the Activity Bar login modal.
-// Reuses the account-domain infra: neblink PKCE start (forceLogin), the
-// shared initiateLogout chain, knownAccounts.js memory. List rows are built
-// with DOM APIs + textContent (emails are untrusted strings — no innerHTML).
-
-/**
- * Switch to a remembered account (spec §4): run the full logout chain
- * (RP end-session + local status refresh), then restart the login flow on
- * the hosted page. The authorize URL is built SERVER-side
- * (/api/neblink/auth/start, prompt="login consent"); this function only
- * navigates to it.
- *
- * ONE-WINDOW SHAPE (2026-09-16 author ruling: "切换账号全程只开一个窗"):
- * the logout hop is a real navigation to the provider (design-required — it
- * must kill the SSO session), and the window it ends on — our
- * `/auth/logged-out` landing page — CONTINUES INTO THE LOGIN THERE, because
- * the gateway marked this logout as a switch (`?scenario=switch`). So this
- * function opens NO window of its own: the old `window.open('about:blank')`
- * login reservation + `startPkceLogin()` + second `window.open` are gone, and
- * with them the second window. Forced fresh login is preserved end to end
- * (the continuation builds its authorize URL through the same server-side
- * login start with `forceLogin=true` ⇒ `prompt="login consent"`).
- *
- * Failure is never silent: [[watchSwitchHandoff]] watches the handoff marker
- * and, when the continuation does not arrive, shows the login panel in this
- * window (no automatic window retry — the panel owns the manual gesture).
- *
- * BYUI prefill slot (forensic verdict 2026-09-10): the auth.nebflow.space
- * BYUI sign-in card does NOT read any URL prefill param yet, and Logto's
- * custom-UI 303 landing does not forward arbitrary authorize query params
- * (production-probed: `first_screen` maps to a path, query is NOT passed
- * through). Per the fork-a ruling the client therefore ships WITHOUT the
- * param; when the BYUI prefill lands (website-side spec: read `login_hint`
- * off the landing URL and prefill the identifier input — one line in
- * auth-ui/src/views/signin.ts), enable prefill here by appending
- * `&login_hint=` + encodeURIComponent(prefillEmail) to `authorizeUrl`
- * before navigating, and pass the account email through from the row click.
- * @param {(opts?: {continueToLogin?: boolean}) => void} initiateLogout — shared RP-logout chain
- * @param {string|null} prefillEmail — account email to prefill (v1: unused)
- */
-async function switchLogoutAndLogin(initiateLogout, prefillEmail = null) {
-  // The ONE window of the whole switch: its landing page continues into the
-  // login (see the doc comment above). Gesture-tick, popup-blocker safe.
-  initiateLogout({ continueToLogin: true });
-  void prefillEmail; // v1 ships without the param — see BYUI prefill slot note above
-  watchSwitchHandoff();
-}
-
-/** Poll cadence / deadline of the switch handoff watchdog (2026-09-16).
- *  The continuation is taken over by the landing hop (log out → provider →
- *  landing) i.e. seconds; the deadline is a generous bound for a slow hop,
- *  not a login duration. */
-const SWITCH_HANDOFF_POLL_MS = 1200;
-const SWITCH_HANDOFF_DEADLINE_MS = 20000;
-let _switchHandoffTimer = null;
-
-/** Watch the gateway's single-use switch handoff marker after a switch
- *  gesture (2026-09-16, one-window switch).
- *
- *  - `consumed` → the logout window's landing page took the continuation over
- *    (the intended one-window path): stop silently, zero UI.
- *  - still not consumed at the deadline (typically: this gateway port is not
- *    on the provider's post_logout_redirect_uri allow-list, which the provider
- *    answers with 400, so the landing page is never reached) → show the login
- *    PANEL as the visible failure face. Deliberately the plain
- *    `openLoginModal({forceLogin:true, deferPopup:true})` call: it is the same
- *    user-gesture-chain surface the avatar uses (so the auto-flow guard is
- *    neither narrowed nor bypassed, and no window is opened from a non-gesture
- *    context — the panel's own button is the gesture that opens one), and
- *    `forceLogin` keeps the switch-account forced-fresh-login semantic instead
- *    of silently downgrading to a plain login.
- *  Exported for the batch harness (the measurement drives the same code the
- *  UI does). */
-export async function watchSwitchHandoff() {
-  if (_switchHandoffTimer) { clearTimeout(_switchHandoffTimer); _switchHandoffTimer = null; }
-  const deadline = Date.now() + SWITCH_HANDOFF_DEADLINE_MS;
-  const tick = async () => {
-    _switchHandoffTimer = null;
-    let state = '';
-    try {
-      const resp = await fetch('/api/neblink/auth/handoff', {
-        headers: { 'Authorization': 'Bearer ' + getAuthToken() },
-      });
-      if (resp.ok) state = (await resp.json()).state || '';
-    } catch (e) { /* transient readout failure — keep polling until the deadline */ }
-    if (state === 'consumed') return; // continuation took over in the logout window
-    if (Date.now() >= deadline) {
-      import('./activityBar.js')
-        .then(m => m.openLoginModal({ forceLogin: true, deferPopup: true }))
-        .catch(() => {});
-      return;
-    }
-    _switchHandoffTimer = setTimeout(tick, SWITCH_HANDOFF_POLL_MS);
-  };
-  _switchHandoffTimer = setTimeout(tick, SWITCH_HANDOFF_POLL_MS);
-}
-
-/**
- * Open the switch-account glass modal (spec §2): title + remembered account
- * list (current account pinned/highlighted with a 「当前」 tag) + the
- * bottom 「使用其他账号登录…」 entry. Empty list → only that entry.
- * Clicking the CURRENT account only closes the modal (zero side effects);
- * any other row runs the logout+login chain (§4); the bottom entry runs it
- * without a prefill target (§5).
- * @param {() => void} initiateLogout — shared RP-logout chain
- */
-function openSwitchAccountModal(initiateLogout) {
-  if (document.getElementById('nebflow-switch-account-modal')) return;
-
-  const modal = document.createElement('div');
-  modal.id = 'nebflow-switch-account-modal';
-  modal.className = 'neblink-switch-modal';
-  modal.setAttribute('role', 'dialog');
-  modal.setAttribute('aria-label', t('neblink.switchAccount'));
-  document.body.appendChild(modal);
-
-  const currentEmail = (neblinkState.device?.email || '').trim().toLowerCase();
-  // Spec §3: current account pinned to top (green frame + 「当前」 tag).
-  // Status capture already keeps the current at head; the explicit stable
-  // hoist makes the pin independent of the stored order.
-  const accounts = getKnownAccounts().slice().sort((a, b) => {
-    const am = currentEmail && a.email.trim().toLowerCase() === currentEmail ? 0 : 1;
-    const bm = currentEmail && b.email.trim().toLowerCase() === currentEmail ? 0 : 1;
-    return am - bm;
-  });
-
-  const close = () => {
-    document.removeEventListener('keydown', onKey);
-    modal.remove();
-  };
-  const onKey = (e) => { if (e.key === 'Escape') close(); };
-  document.addEventListener('keydown', onKey);
-  // Click outside to close (deferred so the opening click doesn't close it).
-  setTimeout(() => {
-    document.addEventListener('click', function outside(e) {
-      if (!document.body.contains(modal)) {
-        document.removeEventListener('click', outside);
-      } else if (!modal.contains(/** @type {Node} */ (e.target))) {
-        close();
-        document.removeEventListener('click', outside);
-      }
-    });
-  }, 100);
-
-  // ── build DOM ──
-  const header = document.createElement('div');
-  header.className = 'neblink-switch-header';
-  const h3 = document.createElement('h3');
-  h3.textContent = t('neblink.switchAccount');
-  const closeBtn = document.createElement('button');
-  closeBtn.className = 'neblink-switch-close';
-  closeBtn.type = 'button';
-  closeBtn.setAttribute('aria-label', t('neblink.switchAccount'));
-  closeBtn.textContent = '\u00d7';
-  closeBtn.addEventListener('click', close);
-  header.append(h3, closeBtn);
-
-  const body = document.createElement('div');
-  body.className = 'neblink-switch-body';
-
-  const list = document.createElement('div');
-  list.className = 'neblink-switch-list';
-  for (const acct of accounts) {
-    const row = document.createElement('button');
-    row.type = 'button';
-    const isCurrent = currentEmail && acct.email.trim().toLowerCase() === currentEmail;
-    row.className = 'neblink-switch-row' + (isCurrent ? ' current' : '');
-
-    const avatar = document.createElement('span');
-    avatar.className = 'neblink-switch-avatar';
-    avatar.setAttribute('aria-hidden', 'true');
-    const initial = (acct.displayName || acct.email).trim().charAt(0).toUpperCase();
-    avatar.textContent = initial || '?';
-
-    const name = document.createElement('span');
-    name.className = 'neblink-switch-name';
-    name.textContent = acct.displayName || acct.email;
-    name.title = acct.email;
-
-    row.append(avatar, name);
-
-    if (isCurrent) {
-      const tag = document.createElement('span');
-      tag.className = 'neblink-switch-tag';
-      tag.textContent = t('neblink.currentTag');
-      row.appendChild(tag);
-      // Spec §4: clicking the current account = close only, zero side effects.
-      row.addEventListener('click', close);
-    } else {
-      // Spec §4: switch = full logout chain + fresh login on the hosted
-      // page (v1 ships without the BYUI prefill param — see the prefill
-      // slot note on switchLogoutAndLogin).
-      row.addEventListener('click', () => {
-        close();
-        void switchLogoutAndLogin(initiateLogout, acct.email);
-      });
-    }
-    list.appendChild(row);
-  }
-  if (accounts.length) body.appendChild(list);
-
-  // Spec §3/§5: bottom entry — logout + hosted login without a prefill
-  // target. Rendered alone when the list is empty.
-  const other = document.createElement('button');
-  other.type = 'button';
-  other.className = 'neblink-switch-other';
-  other.textContent = t('neblink.useOtherAccount');
-  other.addEventListener('click', () => {
-    close();
-    void switchLogoutAndLogin(initiateLogout, null);
-  });
-  body.appendChild(other);
-
-  modal.append(header, body);
-}
+// ---- Switch-account modal（已退役，auth-trim 批 2026-10-20 作者令）----
+// 原整段切换账号机制 —— `switchLogoutAndLogin`（单窗续登链）、`watchSwitchHandoff`
+// （handoff 标记看门狗）、`openSwitchAccountModal`（玻璃弹窗：记住的账号列表 +
+// 「使用其他账号登录…」）—— 随设置页「切换账号/退出登录」两键一并删除。
+// 切换账号能力回归官网门户；客户端的 RP end-session 修复入口见上方
+// `openEndSessionHandoff`（「清理并重登」仍在用）。
 
 // ---- Init (called once from main.js) ----
 export async function initNeblink() {

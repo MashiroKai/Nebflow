@@ -89,7 +89,8 @@ function installRoutes(page, cap, opts = {}) {
       return r.fulfill({
         json: {
           loggedIn: true,
-          device: { id: SELF, name: 'Mac', platform: 'macos', userDescription: '' },
+          // auth-trim 批：登录态设置账号块的只读身份行取数 = email/displayName。
+          device: { id: SELF, name: 'Mac', platform: 'macos', userDescription: '', email: 'me@example.com', displayName: 'Mac 用户' },
           peers: [{ deviceId: PEER, deviceName: PEER_NAME, platform: 'windows', online: true, directOnline: true }],
         },
       });
@@ -189,21 +190,25 @@ try {
         const content = document.getElementById('settings-content');
         return {
           peersList: content.querySelectorAll('.neblink-peers-list').length,
-          peerRows: content.querySelectorAll('.neblink-peer').length,
+          // friendseal 批（2026-09-25）在设置页加了受许可的设备展开区
+          // （#settings-devices-slot，行复用 .neblink-peer 家族）⇒ R1b 只清点
+          // 槽位**之外**的设备行（原裸计数自该批起误红，基线复核 2026-10-20）。
+          peerRows: [...content.querySelectorAll('.neblink-peer')].filter(el => !el.closest('#settings-devices-slot')).length,
           clickable: content.querySelectorAll('.dropbox-clickable').length,
           switchBtn: !!content.querySelector('#neblink-switch-btn'),
           logoutBtn: !!content.querySelector('#neblink-logout-btn'),
+          roLine: !!content.querySelector('.neblink-account-ro'),
           accountBlock: !!content.querySelector('.neblink-logged-in'),
           peerUpdateBtns: content.querySelectorAll('.neblink-peer-update-btn, .neblink-ch-btn, .neblink-ch-cancel').length,
         };
       });
       ok('R1a', '设置账号段无设备列表容器（.neblink-peers-list 0 命中）', settings.peersList === 0, `count=${settings.peersList}`);
-      ok('R1b', '设置账号段无设备行（.neblink-peer 0 命中）', settings.peerRows === 0, `count=${settings.peerRows}`);
+      ok('R1b', '设置账号段无设备行（.neblink-peer 0 命中，#settings-devices-slot 受许可槽位除外）', settings.peerRows === 0, `count=${settings.peerRows}`);
       ok('R1c', '设置页无旧设备窗入口（.dropbox-clickable 0 命中）', settings.clickable === 0, `count=${settings.clickable}`);
       ok('R1d', '设置页无「更新/频道」设备键组残留', settings.peerUpdateBtns === 0, `count=${settings.peerUpdateBtns}`);
-      ok('G1', '设置账号段保留 切换账号 + 退出登录 两键', settings.switchBtn && settings.logoutBtn,
+      ok('G1', '设置账号段两键已退役（auth-trim 2026-10-20：登出/切号只在官网门户）', !settings.switchBtn && !settings.logoutBtn,
         `switch=${settings.switchBtn} logout=${settings.logoutBtn}`);
-      ok('G1b', '设置账号块仍渲染（未把整块删掉）', settings.accountBlock === true);
+      ok('G1b', '设置账号块仍渲染（未把整块删掉）+ 只读身份行在位', settings.accountBlock === true && settings.roLine === true);
       await page.keyboard.press('Escape');
       await sleep(300);
 

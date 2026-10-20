@@ -21,7 +21,9 @@ import { chatViews, setActiveView, activeView } from './chatView.js';
 import { cleanupCardIframes, resetCardAccumulator } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents, avatarViewState, noteAvatarFailure, paintAvatarSlot } from './neblink.js';
-import { notifyManualUpdateCheck, restoreUpdateProgress } from './updateCheck.js';
+// updateCheck.js（更新检查/更新执行链）已随 auth-trim 批（2026-10-20 作者令）整体删除：
+// 设置页「更新」功能退役，未来由官网统一检测更新取代。重启面（restartStatus/
+// restartResult 帧消费）留在本文件（见 bindSettingsEvents 后的模块级订阅）。
 import { toggleHTML, setToggleState } from './toggle.js';
 import { authHeaders } from './flowHelpers.js';
 import { preloadModelCapabilities, renderVisionBadge } from './modelCapabilities.js';
@@ -943,36 +945,14 @@ export function renderSettings() {
           ? statusIcon('circle-check', 14, 'st-ok') + ' <span style="color:var(--status-word)">' + t('settings.connected') + '</span>'
           : statusIcon('wifi-off', 14, 'st-err') + ' <span style="color:var(--status-word)">' + t('settings.disconnected') + '</span>'}</div>
         <div style="margin-top:10px;display:flex;align-items:center;gap:8px">
-          <button class="cfg-btn cfg-btn-sm" id="btn-check-update">${t('settings.checkUpdate')}</button>
           <button class="cfg-btn cfg-btn-sm" id="btn-restart-gateway">${t('settings.restart')}</button>
-          <span id="update-status" style="font-size:12px;line-height:18px;height:18px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--color-text-muted)"></span>
+          <span id="restart-status" role="status" style="font-size:12px;line-height:18px;min-height:18px;flex:1;min-width:0;color:var(--color-text-muted)"></span>
         </div>
-        <!-- 统一进度面（hotupdate 批 3 · G6）：状态行 + 本块共同承载统一进度帧。
-             固定行高 + nowrap/ellipsis ⇒ **相位切换零重排**（设计 §7:153 通用契约）；
-             面板关闭时元素不存在 ⇒ 静默（既有模式，见 updateCheck.js 的静默口径）。
-             🔴 视觉：失败 / 回滚只用中性灰 + 明确原因，无红块、无轻提示、无弹窗（裁定 10）。 -->
-        <div id="update-progress" data-update-surface="1" style="display:none;margin-top:6px">
-          <div id="update-progress-impact" style="font-size:12px;line-height:16px;height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--color-text-muted)"></div>
-          <div id="update-progress-versions" style="font-size:12px;line-height:16px;height:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--color-text-muted)"></div>
-        </div>
-        <div id="update-action" style="display:${state.updateAvailable ? 'block' : 'none'};margin-top:8px">
-          <button class="cfg-btn cfg-btn-primary" id="btn-do-update">${t('settings.updateNow')}</button>
-          <button class="cfg-btn cfg-btn-sm" id="btn-dismiss-update" style="margin-left:6px">${t('settings.updateLater')}</button>
-        </div>
+        <!-- 更新功能已随 auth-trim 批（2026-10-20 作者令）退役：检查更新/立即更新/
+             进度面/绿点整链移除，未来由官网统一检测更新取代。重启（restartStatus/
+             restartResult 帧）状态行 = 上方 #restart-status，消费订阅见模块级。 -->
       </div>
     </div>`;
-
-  // Silent auto checks (updateCheck.js) record their outcome in state so a
-  // panel (re)render shows the same "update available" detail the manual
-  // path would — same chain, one source of truth.
-  // 统一进度面（hotupdate 批 3 · G6）：进度帧一旦到达，状态行由它承载（`messageKey`
-  // 解析的相位文案）⇒ 本回填让位，免得面板重渲染把相位文案盖回「发现新版本」。
-  // 两者仍是一条链（updateCheck.js 单点），单一真源未变。
-  const progressRestored = restoreUpdateProgress();
-  if (!progressRestored && state.updateAvailable) {
-    const statusEl = document.getElementById('update-status');
-    if (statusEl) statusEl.textContent = t('settings.updateAvailable', { version: state.latestVersion });
-  }
 
   renderSettingsAvatar();
   bindSettingsEvents(content, cfg);
@@ -1545,36 +1525,9 @@ function bindSettingsEvents(content, cfg) {
   // (The avatar's own rendering below stays in this module — it is view state,
   // not the entry.)
 
-  // --- Check for updates ---
-  document.getElementById('btn-check-update')?.addEventListener('click', () => {
-    const statusEl = document.getElementById('update-status');
-    const actionEl = document.getElementById('update-action');
-    statusEl.textContent = t('settings.checking');
-    statusEl.style.display = '';
-    actionEl.style.display = 'none';
-    // Flag BEFORE the WS roundtrip: updateCheckResult routes by this flag —
-    // a manual check keeps its About-section echo even if a scheduled auto
-    // check fires meanwhile (auto cycles are skipped while the flag is up).
-    notifyManualUpdateCheck();
-    sendWs({type: 'checkUpdate'});
-  });
-
-  document.getElementById('btn-do-update')?.addEventListener('click', () => {
-    const btn = document.getElementById('btn-do-update');
-    const statusEl = document.getElementById('update-status');
-    btn.textContent = t('settings.updating');
-    btn.disabled = true;
-    statusEl.textContent = '';
-    // confirm:true = 强制确认位（hotupdate 批 1 · D3）：界面上的「立即更新」按钮点击
-    // 就是用户的确认动作，引擎侧沿用既有 restart 命令的 confirm 语义——缺该位一律
-    // 直接拒绝（可行动错误），不静默执行。相位进度由统一 updateProgress 帧下发
-    //（前端消费属批 3 · G6；本行只补确认位，不改既有帧处理）。
-    sendWs({type: 'doUpdate', confirm: true});
-  });
-
-  document.getElementById('btn-dismiss-update')?.addEventListener('click', () => {
-    document.getElementById('update-action').style.display = 'none';
-  });
+  // 「检查更新 / 立即更新 / 稍后」绑定已随 auth-trim 批（2026-10-20 作者令）删除：
+  // 设置页更新功能退役（入口 + checkUpdate/doUpdate 发送 + updateCheck.js 消费链），
+  // 未来由官网统一检测更新取代。
 
   // --- Restart the gateway (hotupdate 批 3 · G6 后半：界面重启触发补齐) ---
   // 🔴 沿用**既有** WS 命令 `restart`（`WebSocketRoutes.scala:1585-1619` 的 `case "restart"`）,
@@ -1605,6 +1558,27 @@ function bindSettingsEvents(content, cfg) {
     });
   }
 }
+
+// ── 重启进度面（auth-trim 批迁址）────────────────────────────────────────────
+// 原 updateCheck.js 的 restartStatus/restartResult 订阅（hotupdate 批 3 · G6）随该文件
+// 整体退役；「重启服务」按钮（btn-restart-gateway，本文件 bindSettingsEvents 内）
+// 仍需可见反馈 ⇒ 订阅迁到本模块**模块级**（import 时恰好一次，settings 面板重渲不重复订阅）。
+// 消费元素 = About 区的 #restart-status；面板关闭时元素不存在 ⇒ 静默（既有口径）。
+// 相位文案仍由 `restart.phase.*` locale 表解析（🔴 不写字面）。
+onMessage('restartStatus', (msg) => {
+  const el = document.getElementById('restart-status');
+  if (!el) return;
+  const key = msg && msg.phase ? 'restart.phase.' + msg.phase : '';
+  el.textContent = key ? t(key, { detail: (msg && msg.detail) || '' }) : '';
+});
+
+onMessage('restartResult', (msg) => {
+  const el = document.getElementById('restart-status');
+  if (!el) return;
+  el.textContent = (msg && msg.ok)
+    ? t('settings.restartAccepted')
+    : t('settings.restartFailed', { error: (msg && msg.error) || '' });
+});
 
 // Delegated segment-editor listeners — bound ONCE at module scope, NOT inside
 // bindSettingsEvents. renderSettings() re-runs on every serverConfig echo while
