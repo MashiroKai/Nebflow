@@ -1,0 +1,49 @@
+digraph pipeline {
+  rankdir=TB;
+  bgcolor="transparent";
+  node [shape=box, style="filled,rounded", fontname="PingFang SC", fontsize=11, color="#8a8f98", penwidth=1.2, margin="0.18,0.10"];
+  edge [fontname="PingFang SC", fontsize=10, color="#8a8f98", fontcolor="#3d4350"];
+
+  subgraph cluster_refs {
+    label="① 引用层 · 每个文件/资产引用携带 locality 位";
+    fontname="PingFang SC"; fontsize=12; color="#8a8f98"; style="rounded"; bgcolor="transparent";
+    canvas [label="Canvas/Pop 文件卡\n消息附件卡", class="ref"];
+    browser [label="项目文件夹浏览器", class="ref"];
+    assets [label="插件资产 / 上传件\nevidence/reports", class="ref"];
+    social [label="社交入站媒体", class="ref"];
+  }
+
+  bit [label="locality 位（引用字段）\nlocal=本机 · device=跨设备 · server=仅服务端", shape=note, class="bit", fillcolor="#fff8e1", fontcolor="#1b1e26"];
+
+  subgraph cluster_route {
+    label="② 统一取数管线 · 按位分流（一次判位，三选一）";
+    fontname="PingFang SC"; fontsize=12; color="#8a8f98"; style="rounded"; bgcolor="transparent";
+    l0 [label="档2 缓存命中？\n（nfFileCache 账本）", shape=diamond, class="q", fillcolor="#f3e8fb", fontcolor="#1b1e26", height=0.9];
+    local [label="local 本机直读\n票据路 /api/nf-file\n零中继 ≈45ms", class="local", fillcolor="#e6f4ea", fontcolor="#1b1e26"];
+    device [label="device 设备通道\n分块传输 + 校验 + 断点续传\n（relay / P2P）", class="device", fillcolor="#e8eaf6", fontcolor="#1b1e26"];
+    server [label="server 服务端现状直走\nfriendsApi / uploads 鉴权路", class="server", fillcolor="#fdf0e0", fontcolor="#1b1e26"];
+  }
+
+  progress [label="③ 统一进度面：大小 / 速度 / 可取消 / 失败可见重试\n零超时纪律：可慢不许假死，健康可见", class="prog", fillcolor="#fbe9e7", fontcolor="#1b1e26"];
+
+  ledger [label="④ 缓存账本（全数据面共享 nfFileCache）\nCache Storage 字节 + localStorage 索引\nLRU + 256MiB 预算 + TTL\n失效：mtime/hash 比对 · 多设备去重", shape=cylinder, style=filled, class="cache", fillcolor="#f3e8fb", fontcolor="#1b1e26"];
+
+  open [label="⑤ 打开：objectURL → 渲染\n（体感 = 本机直读）", class="open", fillcolor="#5e6ad2", fontcolor="#ffffff"];
+
+  canvas -> bit [style=dashed, arrowhead=none, color="#b8bfd4"];
+  browser -> bit [style=dashed, arrowhead=none, color="#b8bfd4"];
+  assets -> bit [style=dashed, arrowhead=none, color="#b8bfd4"];
+  social -> bit [style=dashed, arrowhead=none, color="#b8bfd4"];
+
+  bit -> l0 [label="全部引用先查账本"];
+  l0 -> open [label="命中：零取数"];
+  l0 -> local [label="未命中且 local"];
+  l0 -> device [label="未命中且 device"];
+  l0 -> server [label="未命中且 server"];
+
+  local -> progress [label="流式读出"];
+  device -> progress [label="分块流"];
+  server -> progress [label="流式读出"];
+  progress -> ledger [label="成功整件"];
+  ledger -> open;
+}
