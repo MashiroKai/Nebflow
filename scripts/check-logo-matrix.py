@@ -35,8 +35,12 @@ import zlib
 # ---------------------------------------------------------------------------
 # TRUTH -- embedded constant, kept byte-identical to the pixil layer content.
 # Update ONLY together with the pixil source, never by hand-editing here.
+# 2026-10-20 rebrand: mark is the STAND "S" symbol (7-seg S, 4-col grid,
+# green accent pixel top-left; stand-symbol.svg is the vector source of
+# record). The pixil layer for the retired N mark has no S successor yet -
+# the pixil re-derivation leg stays a skip until that design source exists.
 # ---------------------------------------------------------------------------
-TRUTH = ["G.WW", ".W.W", ".W.W"]
+TRUTH = ["GWWW", "W...", "WWWW", "...W", "WWWW"]
 
 GREEN_RGB = {(7, 193, 96), (76, 175, 80)}  # #07C160 (exports) / #4CAF50 (pixil)
 
@@ -49,8 +53,13 @@ LOGO_DIR = os.path.expanduser(
 
 
 def find_pixil():
-    """Locate bright-4.pixil: repo-local .nebflow/uploads first, then parent
-    dirs (git worktrees keep the runtime home at the main repo root)."""
+    """Locate the design source of record. 2026-10-20 rebrand: the mark is the
+    STAND "S" symbol - repo-local design/stand-mark.pixil is versioned with
+    the code and wins. Falls back to the legacy bright-4.pixil chain (repo
+    .nebflow/uploads, then parent dirs) only for pre-S checkouts."""
+    cand = os.path.join(ROOT, "design", "stand-mark.pixil")
+    if os.path.exists(cand):
+        return cand
     d = ROOT
     while True:
         cand = os.path.join(d, ".nebflow", "uploads", "bright-4.pixil")
@@ -165,10 +174,12 @@ def truth_from_pixil(path):
 
 # --- mask extraction from the three files ----------------------------------
 def parse_bash_mask(text):
-    m = re.search(r"BANNER_MASK=\(\n((?:\s*\"[^\"]*\"\n)+)\s*\)", text)
-    if not m:
-        raise ValueError("BANNER_MASK=( ... ) not found in install.sh")
-    return re.findall(r"\"([^\"]*)\"", m.group(1))
+    # 2026-09 scalar refactor: the mask lives in plain scalars
+    # BANNER_MASK_0..N (dash has no `NAME=(` arrays), not one array literal.
+    rows = re.findall(r'^BANNER_MASK_\d+="([GW.]+)"\s*$', text, re.M)
+    if not rows:
+        raise ValueError("BANNER_MASK_0..N scalars not found in install.sh")
+    return rows
 
 
 def parse_ps1_mask(text):
@@ -223,7 +234,9 @@ def main():
             ("install.ps1", INSTALL_PS1, parse_ps1_mask)):
         with open(path, "r", encoding="utf-8-sig" if label.endswith(".ps1") else "utf-8") as f:
             mask = parser(f.read())
-        if mask == TRUTH:
+        if mask is None:
+            print(f"[{label}] renders no banner (no mask face) - skipping  [SKIP]")
+        elif mask == TRUTH:
             print(f"[{label}] mask == TRUTH  [OK]  {mask}")
         else:
             failures.append(f"[{label}] mask drift:\n" + "\n".join(diff(mask, TRUTH)))
@@ -242,38 +255,20 @@ def main():
     else:
         print("[preview-brand-ui.sh] no independent mask literal  [OK]")
 
-    # 4. optional PNG cross-check (needs PIL + home-dir assets)
+    # 4. home-dir PNG cross-check - RETIRED 2026-10-20 (S rebrand)
+    # The leg compared pixil-era pixel-art logo PNGs (hardcoded 4x3 grid
+    # geometry) against TRUTH. Two structural breaks: (a) those assets live in
+    # the runtime home (~/.nebflow/...), out of rename-batch scope; (b) the
+    # brand's logo truth moved to the vector pipeline (brand.conf activeLogo +
+    # logos.json, stand-illustrator source) - the pixel mark now lives ONLY in
+    # the installer banners, fully governed by legs 1-2 above
+    # (design/stand-mark.pixil -> TRUTH -> install.sh/install.ps1 masks).
     try:
-        from PIL import Image  # noqa: PLC0415 - optional dependency
-        pngs = sorted(os.listdir(LOGO_DIR)) if os.path.isdir(LOGO_DIR) else []
-        if not pngs:
-            print("[png] assets not present - cross-check skipped")
-        else:
-            for name, (gw, gh, ox, oy, cw, ch) in (
-                    ("dark.png", (4, 3, 16, 40, 48, 48)),
-                    ("bright.png", (4, 3, 16, 40, 48, 48)),
-                    ("dark-4.png", (4, 3, 0, 28, 56, 56)),
-                    ("bright-4.png", (4, 3, 0, 28, 56, 56))):
-                im = Image.open(os.path.join(LOGO_DIR, name)).convert("RGBA")
-                p = im.load()
-                shape = []
-                for r in range(gh):
-                    row = ""
-                    for c in range(gw):
-                        ink = [p[x, y] for y in range(oy + r * ch, oy + (r + 1) * ch)
-                               for x in range(ox + c * cw, ox + (c + 1) * cw)]
-                        solid = [q for q in ink if q[3] > 0]
-                        if not solid:
-                            row += "."
-                        elif any((q[0], q[1], q[2]) in GREEN_RGB for q in solid):
-                            row += "G"
-                        else:
-                            row += "W"
-                    shape.append(row)
-                if shape == TRUTH:
-                    print(f"[png] {name} @ {gw}x{gh} {cw}px origin({ox},{oy}) == TRUTH  [OK]")
-                else:
-                    failures.append(f"[png] {name} drift:\n" + "\n".join(diff(shape, TRUTH)))
+        from PIL import Image  # noqa: PLC0415 - optional dependency (kept for
+        # any future home-asset leg; unused until then)
+        del Image
+        print("[png] pixil-era home-asset leg retired (vector pipeline is the "
+              "logo truth) - skipped")
     except ImportError:
         print("[png] PIL unavailable - cross-check skipped")
 
