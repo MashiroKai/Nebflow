@@ -26,15 +26,21 @@ export async function fetchFileChanges(projectName, nodeId) {
 /**
  * Mount the file-changes section into the node detail body.
  *
- *  @param {any} ctx detail-layer context (uses ctx.detailBody, ctx.detailRenderSeq,
- *                   project — same shapes flowMapArchive's own result upgrade uses)
+ *  @param {any} ctx detail-layer context (uses ctx.detailBody, ctx.detailRenderSeq —
+ *                   same shapes flowMapArchive's own result upgrade uses)
  *  @param {number} seq render generation at call time — a late response for a
  *                   replaced/closed detail must not mount (swapCurrent semantics)
  *  @param {string} nodeId
+ *  @param {string} projectName project the report is fetched under — the REAL
+ *                   root project name (⑫B chain-detail-diff fix: the delegate
+ *                   scope key itself has no REST face; flowMapArchive.diffProjectFor
+ *                   resolves it). '' = no project context ⇒ the section is skipped
+ *                   EXPLICITLY (diff 段不适用 — no network call, no silent 404).
  */
-export async function mountFileChangesSection(ctx, seq, nodeId) {
+export async function mountFileChangesSection(ctx, seq, nodeId, projectName) {
   if (!ctx || !ctx.detailBody || !nodeId) return;
-  const payload = await fetchFileChanges(ctx.project, nodeId);
+  if (!projectName) return; // 无项目上下文：diff 段不适用（调用方已显式判定，双保险）
+  const payload = await fetchFileChanges(projectName, nodeId);
   // Stale-generation guard: the detail was re-rendered for another node while
   // the fetch was in flight — drop the response.
   if (!payload || payload.files.length === 0) return;

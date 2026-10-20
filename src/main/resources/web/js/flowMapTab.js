@@ -1888,6 +1888,11 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
   const rawNodes = fmByProject.get(projectName)?.nodes || [];
   const total = rawNodes.length;
   const nodes = visibleNodes(fm);
+  // ⑫B chain-detail-diff 修：delegate 链作用域的详情 diff 段按链的真实 root
+  // project 名拉（delegateFlowMap 投影经 fm.meta.diffProject 透传；此处读原始
+  // fm store——派生视图的 meta 仅按 spread 惯例保留，不依赖）。经典项目作用域
+  // 无此键 ⇒ undefined ⇒ syncArchiveUi 不触碰 ctx（行为逐字节不变）。
+  const diffProject = fmByProject.get(projectName)?.meta?.diffProject;
   // P3 视图过滤控件：diff/全量两路径都保证 nav-bar 开关已挂载且状态收敛
   // （pane 重建/恢复后首帧即补挂）。
   ensureViewFilterControl(container.closest('.canvas-tab-pane'));
@@ -1901,7 +1906,7 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
   if (prev && nodes.length > 0 && visibleNodes(prev).length > 0
       && renderFlowMapDiff(container, prev, fm, projectName)) {
     renderedFmByContainer.set(container, fm);
-    syncArchiveUi(container, projectName);
+    syncArchiveUi(container, projectName, { diffProject });
     return;
   }
   const { positions, width, height } = layoutNodes(fm, heightsFor(projectName));
@@ -1957,7 +1962,7 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
   bindFlowMapClicks(container, projectName);
   if (!navSummary) bindToggle(container, onViewFilterChange); // legacy card-header 内嵌开关
   if (opts.animateAll) animateAllIn(container);
-  syncArchiveUi(container, projectName);
+  syncArchiveUi(container, projectName, { diffProject });
   import('./utils.js').then(({ createIconsIn }) => createIconsIn(container));
   // 实测高驱动层距（裁定①）：挂载后下一帧量实卡高，需要时按实测重算层心并挪位
   scheduleMeasuredLayout(container, fm, projectName);

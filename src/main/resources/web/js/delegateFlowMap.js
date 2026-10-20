@@ -168,7 +168,17 @@ export function buildDelegateFm(key) {
       id: String(key), title, entries: [rootId], ends: [], memberIds,
       control: false, // ChainLedger-free scope: no cancel affordance on cards
     }],
-    meta: { project: delegateMapScope(key), updatedAt: Date.now() },
+    // ⑫B chain-detail-diff 修（2026-10-20）：diffProject = 行挂载的真实 root
+    // project 名（rowMeta 同源——任务列表经 openDelegateChainTask meta 传的同一
+    // 字段）。详情 file-diff 段的 REST 按**真实项目名**寻址（scope 键
+    // `delegate-chain:<key>` 无 per-project 面，旧实现 404 ⇒ Changes 段静默缺席）。
+    // ''（旧盘/未挂载行）= 无真名 ⇒ 详情 diff 段显式不适用（flowMapArchive 显式
+    // 跳过，零网络调用）。
+    meta: {
+      project: delegateMapScope(key),
+      diffProject: String((row && row.project) || ''),
+      updatedAt: Date.now(),
+    },
   };
 }
 

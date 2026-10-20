@@ -1,0 +1,12 @@
+{
+  "scenario": "delegate chain L1 → completed flow-step node detail (report §四.1)",
+  "fileChangesRequests": [
+    {
+      "url": "http://localhost:1/api/projects/Nebflow/flow-map/nodes/s1/file-changes",
+      "status": 200
+    }
+  ],
+  "changesSectionMounted": "src/main/resources/web/js/flowMapArchive.js",
+  "screenshot": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-2f29c239/test-results/evidence-20261020_084534_c-5d35d-ed-node-detail-network-face/detail.png",
+  "capturedAt": "2026-10-20T00:47:05.596Z"
+}
