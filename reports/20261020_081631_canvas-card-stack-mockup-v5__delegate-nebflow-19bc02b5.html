@@ -971,7 +971,7 @@ const clamp01 = x => Math.min(1, Math.max(0, x));
 const smooth = t => { t = clamp01(t); return t * t * (3 - 2 * t); };
 /* [v5①] canvas 面板 alpha（前景位交接窗）：d₀≥0 环卡回归→面板渐入接管；d₀<0 面板翻落→环卡接管 */
 function panelAlphaOf(d0) {
-  return d0 >= 0 ? smooth((0.45 - d0) / 0.30) : smooth(1 - (-d0 - 0.10) / 0.20);
+  return d0 >= 0 ? smooth((0.50 - d0) / 0.40) : smooth(1 - (-d0 - 0.08) / 0.32);
 }
 function lerpPose(a, b, e) {
   return {
