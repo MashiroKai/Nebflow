@@ -12,8 +12,18 @@ object ProviderHealthMonitor:
   /** Interval between background probe cycles for Down providers (2 minutes). */
   val ProbeIntervalSec = 120
 
-  /** Timeout for a single probe request (30 seconds — thinking models are slow). */
-  val ProbeTimeoutSec = 30
+  /**
+   * Probe budget for the FIRST SERVING EVENT (default = the real path's
+   * first-token watchdog, `Defaults.LlmFirstTokenTimeoutSec`). The probe
+   * succeeds at the first content chunk of a streaming request, so its budget
+   * must be the same window a real call would have gotten its first token in —
+   * a probe that succeeds implies a real call would have been served, and vice
+   * versa. Shrinking in spec: sys prop `nebflow.health.probeTimeoutSec`
+   * (read at every probe, `Defaults.BashMaxTimeoutMs` pattern — never a
+   * startup-time constant).
+   */
+  def ProbeTimeoutSec: Int =
+    sys.props.getOrElse("nebflow.health.probeTimeoutSec", Defaults.LlmFirstTokenTimeoutSec.toString).toInt
 
   /**
    * How often a [[ProviderHealthMonitor.waitForAnyUp]] waiter re-checks health
@@ -26,13 +36,18 @@ object ProviderHealthMonitor:
 /**
  * Tracks the health of every provider+model in the candidate chain.
  *
- * Two signals drive state transitions:
+ * Three signals drive state transitions (down→up clears are event-driven):
  *   - Real request failures: when a candidate exhausts retries (or hits a
  *     permanent error), `markDown` is called by the LLM interface.
  *   - Background probes: every [[ProviderHealthMonitor.ProbeIntervalSec]],
- *     each Down candidate is probed via a minimal completion request.
- *     On success, `markUp` fires and wakes any request blocked in
- *     [[waitForAnyUp]].
+ *     each Down candidate is probed with a minimal streaming completion
+ *     request. On the FIRST serving event, `markUp` fires and wakes any
+ *     request blocked in [[waitForAnyUp]].
+ *   - Real request successes: a streaming winner (first content chunk) and a
+ *     non-streaming reply each call `markUp` (wired by the LLM interface) —
+ *     a call that actually succeeds is itself a serving signal, so a marker
+ *     written by a concurrent request's failure verdict is cleared at success
+ *     time instead of waiting for the next probe cycle.
  *
  * Additionally, when all candidates are Down and a request is about to block
  * in [[waitForAnyUp]], [[probeNow]] is called to probe the Down candidates
@@ -231,7 +246,7 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
       for
         downCandidates <- downCandidates()
         _ <-
-          if downCandidates.nonEmpty then downCandidates.traverse_(probe)
+          if downCandidates.nonEmpty then downCandidates.parTraverse_(probe)
           else IO.unit
         _ <- IO.sleep(ProviderHealthMonitor.ProbeIntervalSec.seconds)
         _ <- loop
@@ -251,29 +266,52 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
     // case (two Down providers = up to 60s) before waiters even start waiting.
     candidates.parTraverse_(probe)
 
-  /** Probe a single candidate with a minimal completion request. */
+  /**
+   * Probe a single candidate with a minimal streaming completion request.
+   *
+   * Serving criterion = the FIRST content event (`TextDelta` / `ThinkingDelta`
+   * / `ToolCallChunk` — the exact chunks the real streaming path locks a
+   * winner on), NOT a completed reply, and the stream is cancelled right
+   * after that event: the clear lands at probe-success time, never at a
+   * completion or cycle tail.
+   *
+   * Why streaming-first-event (修 2026-10-21 「供应商恢复后不回绿」): the old
+   * probe awaited a full non-stream `hi` completion under a 30s cap. A
+   * thinking provider that recovered spends its first seconds (often minutes)
+   * on reasoning before any final text — the probe false-failed on timeout
+   * every cycle while real streaming calls (90s first-token watchdog, served
+   * by the very same thinking events) succeeded. The provider stayed DOWN
+   * indefinitely: the only clear path kept rejecting the proof of recovery.
+   *
+   * No per-probe output cap (maxcfg batch 2026-09-16, carried over): the
+   * adapters carry no `maxTokens` request field, and the serving criterion
+   * reads the provider's own first event, so a truncating cap has nothing
+   * left to break.
+   */
   private[llm] def probe(candidate: ModelCandidate): IO[Unit] =
     val params = SendMessageParams(
       messages = List(Message(MessageRole.User, Left("hi"))),
       model = candidate.model,
-      // No per-probe output cap (maxcfg batch 2026-09-16): the old explicit
-      // `maxTokens = Some(4096)` was a request field the adapters no longer
-      // carry. Thinking models (GLM-5.2, DeepSeek reasoning) spend tokens on
-      // reasoning before any text, and a truncating cap made the probe fail
-      // falsely (provider stuck DOWN). The cap is now the adapter default,
-      // which is >= the old 4096 — OpenAI sends none at all (provider default).
       sessionId = Some("health-check"),
       agentId = Some("health-check")
     )
+    def serving(c: StreamChunk): Boolean = c match
+      case _: StreamChunk.TextDelta | _: StreamChunk.ThinkingDelta | _: StreamChunk.ToolCallChunk => true
+      case _ => false
     registry
       .getAdapter(candidate.providerId)
-      .flatMap(_.sendMessage(params))
+      // `find` terminates the stream right after the first serving chunk (the
+      // upstream request is cancelled by the compile scope); a stream that
+      // ends without one — including a transport error raised before it —
+      // surfaces as Left and keeps the candidate Down.
+      .flatMap(_.sendMessageStream(params).find(serving).compile.lastOrError.void)
       .timeout(ProviderHealthMonitor.ProbeTimeoutSec.seconds)
       .attempt
       .flatMap {
         case Right(_) => markUp(candidate.providerId, candidate.model)
         case Left(err) =>
-          logger.debug(s"Probe failed for ${candidate.providerId}/${candidate.model}: ${err.getMessage}")
+          val detail = Option(err.getMessage).getOrElse(err.getClass.getSimpleName)
+          logger.debug(s"Probe failed for ${candidate.providerId}/${candidate.model}: $detail")
       }
 
   end probe

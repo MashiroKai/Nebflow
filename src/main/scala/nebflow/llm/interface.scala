@@ -544,6 +544,10 @@ object LlmInterface extends LlmRuntime:
                   onAttempt = None,
                   onProviderExhausted = Some(c => healthMonitor.markDown(c.providerId, c.model, "provider exhausted"))
                 )
+                // 修 2026-10-21 「恢复不回绿」腿②（非流面）：调用成功即清除——
+                // 与流面 winner 同一事件语义：并发请求中途写入的 Down 标记在
+                // 本请求成功时点清除；本就 Up 时为 no-op。
+                _ <- healthMonitor.markUp(result.usedCandidate.providerId, result.usedCandidate.model)
               yield result).flatMap { result =>
                 val durationMs = System.currentTimeMillis() - start
                 val failedAttempts = result.attempts.filter(_.reason.isDefined)
@@ -839,7 +843,15 @@ object LlmInterface extends LlmRuntime:
                                         chunk match
                                           case StreamChunk.TextDelta(_) | StreamChunk.ToolCallChunk(_) |
                                               StreamChunk.ThinkingDelta(_) =>
-                                            lockedRef.set(true) *> winnerRef.set(Some(candidate))
+                                            // 修 2026-10-21 「恢复不回绿」腿②：调用成功即清除。
+                                            // A real win IS a serving signal: our health filter
+                                            // snapshot was taken at request entry, so a concurrent
+                                            // request's failure verdict may have marked this provider
+                                            // Down mid-flight — clear it at success time (event-driven,
+                                            // no probe dependency). No-op when it was never Down.
+                                            // (变异验红 CallSuccessRecoverySpec T1：去掉本 markUp → T1 红。)
+                                            lockedRef.set(true) *> winnerRef.set(Some(candidate)) *> healthMonitor
+                                              .markUp(candidate.providerId, candidate.model)
                                           case _ => IO.unit
                                       }
                                       .evalMap {
