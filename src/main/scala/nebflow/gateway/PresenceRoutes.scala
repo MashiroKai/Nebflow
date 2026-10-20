@@ -94,11 +94,14 @@ private[gateway] object PresenceRoutes:
      * identical wiring to the weixin save endpoint's resync, so runtime state
      * is never assembled two different ways — and then appends the 绑定即通
      * follow-up legs (weixin bind-through batch, 2026-10-11: the
-     * defaultSessionId write + the sidecar provision, both total/contained
-     * inside [[nebflow.social.WeixinBindAutoWire]] so a broken leg can never
-     * flip a finished binding off `Done`; the sync leg's raise semantics are
-     * unchanged). LAZY for the same two reasons as [[feishuScanBind]] above
-     * (spec-only null manager + one registry per mounted routes value).
+     * defaultSessionId write + the sidecar provision; bind-transactional 批,
+     * 2026-10-20: the provision leg is retry+liveness-gated, and a provision
+     * failure that survives every attempt ROLLS THE BINDING BACK — card
+     * defaultSessionId cleared, bridge revoked, `bindError` written — before
+     * the binding lands `Failed` with the failed steps: a half-bound state is
+     * unreachable. The sync leg's raise semantics are unchanged). LAZY for the
+     * same two reasons as [[feishuScanBind]] above (spec-only null manager +
+     * one registry per mounted routes value).
      */
     lazy val weixinScanBind = new nebflow.social.WeixinIlinkScanBind(
       PathUtil.dataRoot,

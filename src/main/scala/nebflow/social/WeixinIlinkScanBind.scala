@@ -241,8 +241,14 @@ final class WeixinIlinkScanBind(
             IO(logger.info(s"weixin scan-bind [$scanId]: bot ${creds.botId} stored and bridge sync fired")) *>
               statesRef.update(m => m.updated(scanId, State.Done(creds.botId)))
           case Left(e) =>
-            IO(logger.warn(s"weixin scan-bind [$scanId]: bridge sync failed: ${e.getClass.getSimpleName}")) *>
-              statesRef.update(m => m.updated(scanId, State.Failed(s"bridge sync failed: ${e.getClass.getSimpleName}")))
+            // bind-transactional 批 (2026-10-20): the reason now carries the
+            // exception MESSAGE, not just its class name — a provision rollback
+            // raises WeixinBindAutoWire.ProvisionFailedException whose message
+            // names the exact failed steps; the panel's failed-state error must
+            // say where the bind died (面板通道态显式报错，错误含具体失败步).
+            val why = Option(e.getMessage).map(_.trim).filter(_.nonEmpty).getOrElse(e.getClass.getSimpleName)
+            IO(logger.warn(s"weixin scan-bind [$scanId]: bridge sync failed: $why")) *>
+              statesRef.update(m => m.updated(scanId, State.Failed(s"bridge sync failed: $why")))
         }
       case Left(err) =>
         val reason = renderSaveFailure(err)

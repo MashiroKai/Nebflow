@@ -566,6 +566,13 @@ function displayStatus(ch) {
   const base = channelStatus(ch, configByChannel[ch.id], probeByChannel[ch.id], registeredByChannel[ch.id]);
   const live = liveByChannel[ch.id];
   if (base === 'connected' && live && live.fingerprint === 'mismatch') return 'failed';
+  // bind-transactional 批 (2026-10-20): the card's last-bind error (the engine's
+  // rollback arm writes `bindError` onto the stored channel entry) composes as
+  // an explicit failed state — a failed bind is NEVER rendered as configured.
+  // The hint row (cardHint) carries the exact failed steps; a fresh bind
+  // attempt (save) clears the error and the card returns to its base state.
+  const bindErr = configByChannel[ch.id] && configByChannel[ch.id].bindError;
+  if (bindErr) return 'failed';
   return base;
 }
 
@@ -619,6 +626,18 @@ function cardHint(ch, status) {
       return !!v && !!f.pattern && !new RegExp(f.pattern).test(v);
     });
     return t('social.hint.pattern', { field: bad.map((f) => t(f.i18n)).join(', ') });
+  }
+  // bind-transactional 批 (2026-10-20): precedence under configInvalid —
+  //   ① the last-bind error verbatim (the engine recorded the exact failed
+  //     steps; the pill is failed, the hint names where it died);
+  //   ② the runtime health face (reply-loss strikes, `channels[].health`) —
+  //     a DEGRADED channel is a warning line, never a flipped pill: the
+  //     redelivery leg is recovering the lost replies in the background.
+  const cfg = configByChannel[ch.id] || {};
+  if (cfg.bindError) return String(cfg.bindError);
+  if (cfg.health && Array.isArray(cfg.health.strikes) && cfg.health.strikes.length) {
+    const s = cfg.health.strikes[0];
+    return t('social.hint.health', { reason: String(s.reason || ''), count: Number(s.count || 0) });
   }
   return credentialLine(probeByChannel[ch.id]);
 }

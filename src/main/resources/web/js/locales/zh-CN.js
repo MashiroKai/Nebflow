@@ -2194,6 +2194,7 @@ export default {
   'social.hint.missingRef': '引用文件不存在：{path}',
   'social.hint.modeBad': '权限不正确（应为 rw-------）：{path}',
   'social.hint.pattern': '字段格式不符：{field}',
+  'social.hint.health': '回复丢失告警：{reason} ×{count}（将自动补投）',
   'social.status.notConfigured': '未配置',
   'social.status.configuredNotLinked': '已配置 · 未接入',
   'social.status.configInvalid': '配置有误',

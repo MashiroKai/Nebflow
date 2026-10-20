@@ -218,13 +218,38 @@ object SocialChannels:
       val entry = stored.hcursor.downField(id).focus.getOrElse(Json.obj())
       val enabled = entry.hcursor.downField("enabled").as[Boolean].getOrElse(false)
       val fields = entry.hcursor.downField("fields").focus.getOrElse(Json.obj())
+      // bind-transactional 批（2026-10-20）：面板通道态的两个增量键——
+      //   bindError：上一次绑定失败的具体错误（含失败步），null = 无；
+      //   health：运行时健康面 strikes（如 no-return-address 告警），null = 健康。
+      // 两者都是纯增量：前端旧渲染层不认识就忽略，新渲染层据此标红/标黄。
+      val bindError = entry.hcursor.downField(BindErrorKey).as[String].toOption.map(_.trim).filter(_.nonEmpty)
       id -> Json.obj(
         "enabled" -> enabled.asJson,
         "fields" -> fields,
-        "adapterRegistered" -> registered.contains(id).asJson
+        "adapterRegistered" -> registered.contains(id).asJson,
+        "bindError" -> bindError.asJson,
+        "health" -> channelHealth(root, id).asJson
       )
     }
     Json.obj("channels" -> Json.fromFields(out), "adapterRegistered" -> registered.nonEmpty.asJson)
+
+  /**
+   * The channel runtime health face (bind-transactional 批, 2026-10-20): the
+   * strikes file a bridge plugin maintains (`<root>/tmp/social-health/<id>.json`
+   * — the channel-agnostic location, the channel owns the content shape).
+   * `None` = healthy (no file, unreadable, or unparseable — a health face never
+   * raises, never blocks the panel payload).
+   */
+  def channelHealth(root: os.Path, id: String): Option[Json] =
+    val p = healthPath(root, id)
+    try
+      if !os.isFile(p) then None
+      else io.circe.parser.parse(os.read(p)).toOption.filter(_.isObject)
+    catch case _: Exception => None
+
+  /** Where one channel's runtime health strikes live (channel-agnostic path). */
+  def healthPath(root: os.Path, id: String): os.Path =
+    root / "tmp" / "social-health" / s"$id.json"
 
   /**
    * The mechanical triple for one stored path: `{exists, modeOk, readable}`.
@@ -645,5 +670,58 @@ object SocialChannels:
           case Some(sid) => obj.add(DefaultSessionKey, Json.fromString(sid))
           case None => obj.remove(DefaultSessionKey)
         persist(root, id, Json.fromJsonObject(next))
+
+  /**
+   * The channel-entry key holding the LAST BINDING ERROR (bind-transactional
+   * 批, 2026-10-20) — a sibling of `enabled`/`fields`/`defaultSessionId`, the
+   * same shape: deliberately NOT a card field, so the save path (which
+   * validates and rewrites `fields`) can never carry it. A fresh `save` (the
+   * next binding attempt) rebuilds the entry wholesale and thereby CLEARs a
+   * stale error — exactly the wanted lifecycle: the error lives until the user
+   * tries again.
+   */
+  val BindErrorKey = "bindError"
+
+  /** The stored last-bind error of one channel: None = no error on file. */
+  def bindError(root: os.Path, id: String): Option[String] =
+    readChannels(root).hcursor
+      .downField("channels")
+      .downField(id)
+      .downField(BindErrorKey)
+      .as[String]
+      .toOption
+      .map(_.trim)
+      .filter(_.nonEmpty)
+
+  /**
+   * Persist (Some) or clear (None) the last-bind error (bind-transactional
+   * 批). Surgical merge into the channel entry — `enabled`, `fields`,
+   * `defaultSessionId` and every other sibling survive untouched (same
+   * surgical writer as [[setDefaultSessionId]]). A blank value is stored as a
+   * clear, never as an empty string.
+   */
+  def setBindError(root: os.Path, id: String, error: Option[String]): Either[Failure, Unit] =
+    channel(id) match
+      case None => Left(Failure.UnknownChannel(id))
+      case Some(_) =>
+        val entry = readChannels(root).hcursor.downField("channels").downField(id).focus.getOrElse(Json.obj())
+        val obj = entry.asObject.getOrElse(JsonObject.empty)
+        val next = error.map(_.trim).filter(_.nonEmpty) match
+          case Some(e) => obj.add(BindErrorKey, Json.fromString(e))
+          case None => obj.remove(BindErrorKey)
+        persist(root, id, Json.fromJsonObject(next))
+
+  /**
+   * The runtime health strikes WRITE face (channel-agnostic; the content shape
+   * belongs to the calling channel). Contained and total: a health face never
+   * raises — an unwritable location degrades to `false` (logged by the caller).
+   */
+  def writeChannelHealth(root: os.Path, id: String, health: Json): Boolean =
+    try
+      val p = healthPath(root, id)
+      os.makeDir.all(p / os.up)
+      os.write.over(p, health.noSpaces)
+      true
+    catch case _: Exception => false
 
 end SocialChannels

@@ -1,0 +1,1115 @@
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-747cd36a-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-747cd36a/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-747cd36a/)
+[warn] javaOptions will be ignored, fork is set to false
+17:30:30.773 [33mWARN [0m nebflow.social.outbound.feishu - outbound: product not carriable by this channel — extension is in neither authority table: xyz
+17:30:30.797 [33mWARN [0m nebflow.social.outbound.feishu - outbound: rich product with no usable path — image product with no path
+17:30:31.021 [33mWARN [0m nebflow.social.outbound.feishu - outbound: card render failed — 渲染件不可用
+17:30:31.023 [33mWARN [0m nebflow.social.outbound.feishu - outbound: card render failed — 渲染超时
+17:30:31.049 [33mWARN [0m nebflow.social.outbound.feishu - outbound: card screenshot upload refused (code=230020)
+17:30:31.053 [33mWARN [0m nebflow.social.outbound.feishu - outbound: product refused before upload — [未渲染] 尺寸闸拒绝 — 原件：/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-rich-outbound-5785205498265510400/huge.pdf（1073741825 字节，上限 1073741824 字节，ATTACH_TOO_LARGE）
+17:30:31.082 [33mWARN [0m nebflow.social.outbound.feishu - outbound: card render failed — 渲染件不可用
+17:30:31.083 [33mWARN [0m nebflow.social.outbound.feishu - outbound: product not carriable by this channel — nope
+17:30:31.137 [33mWARN [0m nebflow.social.outbound.feishu - outbound: card render failed — 渲染件不可用
+17:30:31.137 [33mWARN [0m nebflow.social.outbound.feishu - outbound: product refused before upload — [未渲染] 尺寸闸拒绝 — 原件：/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-rich-outbound-9693921859664048055/huge.pdf（1073741825 字节，上限 1073741824 字节，ATTACH_TOO_LARGE）
+17:30:31.137 [33mWARN [0m nebflow.social.outbound.feishu - outbound: product not carriable by this channel — extension is in neither authority table: xyz
+17:30:31.137 [33mWARN [0m nebflow.social.outbound.feishu - outbound: product not carriable by this channel — path does not exist or is not a regular file: gone
+17:30:31.152 [33mWARN [0m nebflow.social.outbound.feishu - outbound: product not carriable by this channel — extension is in neither authority table: html
+17:30:31.155 [33mWARN [0m nebflow.social.outbound.feishu - outbound: product not carriable by this channel — extension is in neither authority table: html
+17:30:31.156 [33mWARN [0m nebflow.social.outbound.feishu - outbound: web page file leg failed for /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-rich-outbound-10564851429816609374/diagram.html (file upload refused (code=230021): upload refused) — falling back to the full-page shot
+17:30:31.160 [33mWARN [0m nebflow.social.outbound.feishu - outbound: product not carriable by this channel — extension is in neither authority table: html
+17:30:31.160 [33mWARN [0m nebflow.social.outbound.feishu - outbound: web page file leg failed for /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-rich-outbound-3044505415069118134/diagram.html (file upload refused (code=230021): upload refused) — falling back to the full-page shot
+17:30:31.161 [33mWARN [0m nebflow.social.outbound.feishu - outbound: web page shot unavailable for /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-rich-outbound-3044505415069118134/diagram.html (渲染超时) — degrading to the friendly notice
+17:30:31.162 [33mWARN [0m nebflow.social.outbound.feishu - outbound: product not carriable by this channel — extension is in neither authority table: xyz
+[32mnebflow.social.outbound.RichOutboundSpec:[0m
+[32m  + [0m[32mR-1 classification: card marker → Card; image ext → Image; doc ext → Document; rest → Unknown[0m [90m0.064s[0m
+[32m  + [0m[32mR-1b classification is fail-closed: a missing path is Unknown with a non-empty reason[0m [90m0.0s[0m
+[32m  + [0m[32mR-1c image detection reuses the existing authority table (ImageInject), not a second list[0m [90m0.003s[0m
+[32m  + [0m[32mR-2 Unknown produces exactly one text call and is NEVER silently dropped[0m [90m0.146s[0m
+[32m  + [0m[32mR-2b a rich kind with no path still degrades to one text (fail-closed one step earlier)[0m [90m0.001s[0m
+[32m  + [0m[32mR-2c count conservation holds on the total path: every intent yields exactly one reading[0m [90m0.125s[0m
+[32m  + [0m[32mR-3 an image product is sent with its REAL bytes and the renderer is NOT invoked[0m [90m0.004s[0m
+[32m  + [0m[32mR-4 a rendered card uploads the render product once, sends msg_type=image, then the verbatim note[0m [90m0.069s[0m
+[32m  + [0m[32mR-4b the renderer receives the card's HTML, not the raw JSON payload[0m [90m0.024s[0m
+[32m  + [0m[32mR-5 a failed render sends [未渲染] PLUS the note, and uploads nothing[0m [90m0.002s[0m
+[32m  + [0m[32mR-5b the render timeout branch is a reading, not an exception[0m [90m0.001s[0m
+[32m  + [0m[32mR-5c a rejected upload still reports the channel's code AND texts the recipient (no silence)[0m [90m0.026s[0m
+[32m  + [0m[32mR-6 the size gate reuses the EXISTING constant and refuses BEFORE any upload[0m [90m0.005s[0m
+[32m  + [0m[32mR-6b the gate's own error carries code + actual + limit (the machine-readable half)[0m [90m0.0s[0m
+[32m  + [0m[32mR-7 a document product uploads the ORIGINAL file once and sends msg_type=file[0m [90m0.005s[0m
+[32m  + [0m[32mR-7b fileType maps through the SDK's own enum (PDF named; unknown → STREAM)[0m [90m0.0s[0m
+[32m  + [0m[32mR-8 HC-3 accepts a real noisy PNG of the declared size[0m [90m0.013s[0m
+[32m  + [0m[32mR-8b HC-3 rejects a solid-colour PNG (the empty-render shape)[0m [90m0.004s[0m
+[32m  + [0m[32mR-8c HC-3 rejects a non-PNG carrying a .png name (the renamed-SVG trick)[0m [90m0.001s[0m
+[32m  + [0m[32mR-8d HC-3 rejects a geometry mismatch[0m [90m0.002s[0m
+[32m  + [0m[32mR-8e HC-3 rejects a missing product[0m [90m0.0s[0m
+[32m  + [0m[32mR-9 no credential value appears in any produced text or reading[0m [90m0.003s[0m
+[32m  + [0m[32mR-9b the ADAPTER holds no credential field at all (structural, not just observed)[0m [90m0.0s[0m
+[32m  + [0m[32mR-10 the card plan is image-then-note, in that order[0m [90m0.001s[0m
+[32m  + [0m[32mR-10b the degrade vocabulary is closed and the placeholders are the friendly Chinese face[0m [90m0.002s[0m
+[32m  + [0m[32mR-10c RichLedger never lets an empty detail through on a failure[0m [90m0.0s[0m
+[32m  + [0m[32mR-11 the outbound package contains none of the swallow idioms (design card §7.3 #4)[0m [90m0.018s[0m
+[32m  + [0m[32mR-12a the three rich kinds each drive their own documented call sequence[0m [90m0.03s[0m
+[32m  + [0m[32mR-12b RichDegradeProbe's failure cases hold as assertions on the same code path[0m [90m0.004s[0m
+[32m  + [0m[32mR-P1 an 11-image Pop parses to 11 media items in payload order (the old read kept only the first)[0m [90m0.01s[0m
+[32m  + [0m[32mR-P2 a MIXED image+file+video payload keeps payload order and skips only the video[0m [90m0.0s[0m
+[32m  + [0m[32mR-P3 a video-only payload is NOT a rich product; an item without a path is skipped, not fatal[0m [90m0.002s[0m
+[32m  + [0m[32mW-1 an on-disk html product goes out AS THE ORIGINAL FILE (msg_type=file); the shot seam is never consulted[0m [90m0.003s[0m
+[32m  + [0m[32mW-2 a FILE-leg failure (channel refuses the upload) demotes to the full-page shot: image + original-path note[0m [90m0.005s[0m
+[32m  + [0m[32mW-2b the file leg failing AND the shot failing lands on exactly one friendly b-layer line[0m [90m0.003s[0m
+[32m  + [0m[32mW-3 an off-table NON-web product never consults the shot seam (straight to b)[0m [90m0.001s[0m
+[32m  + [0m[32mW-4 the web-page predicate table and the offline detection face[0m [90m0.001s[0m
+[32mnebflow.social.FeishuAskCardSpec:[0m
+[32m  + [0m[32mT-1 one question with two options and Other yields three buttons with the namespace payload[0m [90m0.007s[0m
+[32m  + [0m[32mT-1b the payload never carries a session id (the answer resolves it from its own ledger)[0m [90m0.001s[0m
+[32m  + [0m[32mT-1c a question with allowOther=false carries no Other button[0m [90m0.001s[0m
+[32m  + [0m[32mT-2 several questions fitting the caps ride ONE card with increasing question indices[0m [90m0.001s[0m
+[32m  + [0m[32mT-2b the header and title use the reviewed copy[0m [90m0.001s[0m
+[32m  + [0m[32mT-3 more questions than the local cap falls back to sequential cards, one question each[0m [90m0.002s[0m
+[32m  + [0m[32mT-3b too many options on one question also overflows, and the caps are local (not claimed remote)[0m [90m0.0s[0m
+[32m  + [0m[32mT-3c an empty prompt renders no card at all[0m [90m0.001s[0m
+[32m  + [0m[32mT-12 the text fallback triggers on a local-panel element, purely[0m [90m0.0s[0m
+[32m  + [0m[32mT-12b the degraded text names the reason and numbers the options, closing with the instruction[0m [90m0.001s[0m
+[32m  + [0m[32mT-12c the adapter and the definition layer agree on the fallback predicate[0m [90m0.001s[0m
+[32m  + [0m[32mT-12d every refusal answers with the reviewed toast that fits its reason[0m [90m0.001s[0m
+[32m  + [0m[32mT-12e fromItems preserves index alignment and maps the local-only affordances[0m [90m0.002s[0m
+17:30:31.269 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:32.287 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: reply delivered to chat oc_bound (om_text)
+17:30:32.291 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:32.295 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:32.297 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:32.298 [33mWARN [0m nebflow.social.outbound.feishu - outbound: card render failed — 渲染件不可用
+17:30:32.300 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:32.300 [33mWARN [0m nebflow.social.outbound.feishu - outbound: product not carriable by this channel — path does not exist or is not a regular file: /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-rich-mainlink-8168579435860879050/gone.png
+17:30:32.302 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:32.303 [33mWARN [0m nebflow.social.outbound.feishu - outbound: product refused before upload — [未渲染] 尺寸闸拒绝 — 原件：/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-rich-mainlink-9589030611389931472/huge.pdf（1073741825 字节，上限 1073741824 字节，ATTACH_TOO_LARGE）
+17:30:32.305 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:32.306 [33mWARN [0m nebflow.social.outbound.feishu - outbound: image upload refused for /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-rich-mainlink-822600383200350756/shot.png (code=230020)
+17:30:32.307 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:32.307 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: reply delivered to chat oc_bound (om_text)
+17:30:32.309 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:32.310 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: reply delivered to chat oc_bound (om_text)
+17:30:32.313 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:32.317 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: reply delivered to chat oc_bound (om_text)
+17:30:32.319 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:32.320 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 0 chat(s) bound to sessions
+17:30:32.323 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:32.327 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:32.331 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:32.332 [33mWARN [0m nebflow.social.outbound.feishu - outbound: image upload refused for /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-rich-mainlink-12300873151803623236/bad.png (code=230020)
+17:30:32.335 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:32.338 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:33.340 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: reply delivered to chat oc_bound (om_text)
+17:30:33.344 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:33.347 [33mWARN [0m nebflow.social.feishu-bridge - feishu bridge: rich item delivery raised for /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-rich-mainlink-16274734992521890973/bad.png (IOException: simulated fault on bad.png) — degrading to a visible line
+17:30:34.345 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: reply delivered to chat oc_bound (om_text)
+[32mnebflow.social.FeishuRichMainLinkSpec:[0m
+[32m  + [0m[32mML-0 the pinned pop sentinel mirrors PopTool.Sentinel; the card marker is the frontend's[0m [90m0.033s[0m
+[32m  + [0m[32mML-1 a CARD product in the turn makes the done turn deliver a rich card AND keeps the text reply[0m [90m1.027s[0m
+[32m  + [0m[32mML-2 an IMAGE product (pop item) makes the done turn take the rich image leg[0m [90m0.005s[0m
+[32m  + [0m[32mML-3 a DOCUMENT product (pop file item) makes the done turn take the rich file leg[0m [90m0.003s[0m
+[32m  + [0m[32mML-4 a card whose render FAILS degrades to visible [未渲染] text plus the note, and uploads nothing[0m [90m0.002s[0m
+[32m  + [0m[32mML-5 a rich-classified product whose path is gone still produces a visible line (no silence)[0m [90m0.002s[0m
+[32m  + [0m[32mML-5b an oversize product degrades to the size-gate line BEFORE any upload[0m [90m0.003s[0m
+[32m  + [0m[32mML-5c an upload the channel refuses still tells the recipient (code echoed, no silence)[0m [90m0.002s[0m
+[32m  + [0m[32mML-6 an ERRORED toolEnd contributes no rich product (its content is an error string)[0m [90m0.002s[0m
+[32m  + [0m[32mML-7 a turn with NO rich product is byte-identical to the pre-batch text path[0m [90m0.004s[0m
+[32m  + [0m[32mML-8 a plain (non-rich) file argument never turns a turn rich[0m [90m0.005s[0m
+[32m  + [0m[32mML-9 an interrupted turn drops the remembered rich product: no card is sent afterwards[0m [90m0.002s[0m
+[32m  + [0m[32mML-10 a session that is not feishu-bound never reaches the rich leg[0m [90m0.002s[0m
+[32m  + [0m[32mML-11 a multi-image Pop delivers EVERY item, in payload order (the old single-pick read dropped the rest)[0m [90m0.004s[0m
+[32m  + [0m[32mML-12 a MIXED image+file Pop keeps the payload order across kinds (no image-first regrouping)[0m [90m0.004s[0m
+[32m  + [0m[32mML-13 ONE refused upload degrades on its own line and does NOT swallow the batch[0m [90m0.004s[0m
+[32m  + [0m[32mML-14 TWO Pop 组卡 in one turn → BOTH delivered, in toolEnd order (the old overwrite lost the first group)[0m [90m0.003s[0m
+[32m  + [0m[32mML-15 mixed text + 组卡: media first, the turn text last (one pacer slot, 媒体先行、正文殿后)[0m [90m1.005s[0m
+[32m  + [0m[32mML-16 one item's unexpected RAISE degrades to its own [未送达] line; the remaining items and the text tail survive[0m [90m1.007s[0m
+[32mnebflow.social.FeishuAskCardParseSpec:[0m
+[32m  + [0m[32mT-4 a well-formed callback becomes the indexed action[0m [90m0.002s[0m
+[32m  + [0m[32mT-4b a foreign namespace is refused by name, never assumed to be ours[0m [90m0.001s[0m
+[32m  + [0m[32mT-4c an unknown or expired request id is refused by name[0m [90m0.0s[0m
+[32m  + [0m[32mT-4d a callback from another chat is refused, not answered into the wrong conversation[0m [90m0.001s[0m
+[32m  + [0m[32mT-4e out-of-range indices and repeats are refused by name (never clamped)[0m [90m0.006s[0m
+[32m  + [0m[32mT-4f the reserved index is the free-text action, and it carries the trimmed input[0m [90m0.001s[0m
+[32m  + [0m[32mT-5 answers are a fixed-length list aligned with question order, gaps filled with the empty string[0m [90m0.002s[0m
+[32m  + [0m[32mT-5b each question's own option label lands in its own slot[0m [90m0.0s[0m
+[32m  + [0m[32mT-5c a free-text answer fills the slot with the trimmed input; a blank input leaves it empty[0m [90m0.0s[0m
+[32m  + [0m[32mT-5d an out-of-range option index contributes nothing (it is never an answer)[0m [90m0.0s[0m
+[32m  + [0m[32mT-6 a multi-select answer is the JSON array string of the labels in option order[0m [90m0.001s[0m
+[32m  + [0m[32mT-6b a single pick on a multi-select question still serialises as an array[0m [90m0.0s[0m
+[32m  + [0m[32mT-6c a single-select question keeps its label verbatim, never an array[0m [90m0.0s[0m
+[32m  + [0m[32mT-6d the answers round-trip through the local decoder (the frontend's own shape)[0m [90m0.0s[0m
+[32m  + [0m[32mvalidation names the offending index instead of failing generically[0m [90m0.002s[0m
+[32mnebflow.social.AskSecretChannelSpec:[0m
+[32m  + [0m[32mC1 viewsFromItemsJson：wire secret 键读进 PromptView（缺省 false 零回归）[0m [90m0.002s[0m
+[32m  + [0m[32mC2 fromItems：AskItem.secret 读进 PromptView[0m [90m0.0s[0m
+[32m  + [0m[32mC3 validate：指向 secret 题的 Pick/Other 显式拒绝；非 secret 作答放行；越界判据不变[0m [90m0.001s[0m
+[32m  + [0m[32mC4 secretGuideLine：规格 §3 原句（第 N/M 问 + requestId 括注）[0m [90m0.001s[0m
+[32m  + [0m[32mC5 renderAskText：secret 题渲染引导行、零选项行；非 secret 集合输出零引导（零回归）[0m [90m0.001s[0m
+[32m  + [0m[32mC6 parseReply：secret 题三条寻址腿全部 SecretReject；非 secret 题照常作答[0m [90m0.001s[0m
+[32m  + [0m[32mC7 oneCard：secret 题只有引导 div——零 action/按钮元素，文案带 rid 括注[0m [90m0.001s[0m
+[32m  + [0m[32mC8 renderText（文本降级腿）：secret 题渲染引导短形[0m [90m0.0s[0m
+17:30:34.425 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:34.430 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:34.431 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:34.437 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: ask answer forwarded requestId=rid-1 root=s1 answers=1
+17:30:34.439 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:34.439 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:34.439 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:34.440 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: ask answer forwarded requestId=rid-1 root=s1 answers=1
+17:30:34.441 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:34.442 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:34.442 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:34.444 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:34.444 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:34.444 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:34.446 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_a -> session s1
+17:30:34.447 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:34.448 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:34.448 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:34.448 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: ask answer forwarded requestId=rid-1 root=s1 answers=1
+17:30:34.449 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:34.450 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:34.450 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:34.450 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_a -> session s1
+17:30:34.452 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:34.453 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:34.453 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate fail-closed (1 allowed sender id(s))
+17:30:34.463 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: inbound message m1 dropped [not-on-allowlist] — sender identity is not on the allowed_ilink_user_ids list
+17:30:34.465 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:34.466 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:34.466 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:34.467 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: new ask displaces requestId=rid-1 for sender wx_a (B-3 top-old)
+17:30:34.467 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: ask answer forwarded requestId=rid-2 root=s1 answers=1
+17:30:34.468 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:34.468 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:34.469 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:34.470 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_a -> session s1
+17:30:34.473 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:34.474 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:34.474 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:34.475 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: ask attachment delivered kind=image (id=md-1)
+17:30:34.475 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: ask attachment delivered kind=file (id=md-1)
+17:30:34.475 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: ask attachment missing on disk — keeping the path line: /gone/missing.md
+17:30:34.478 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:34.478 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:34.479 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:34.481 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: ask attachment send failed code=500 reason=delivery_failed: test — keeping the path line
+17:30:34.482 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:34.483 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:34.483 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:34.486 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:34.487 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:34.487 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:34.488 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: ask answer forwarded requestId=rid-1 root=s1 answers=2
+17:30:34.489 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:34.489 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:34.489 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:34.494 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_a -> session s1
+17:30:34.495 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_a -> session s1
+17:30:34.497 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:34.498 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:34.499 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+[32mnebflow.social.WeixinAskLegSpec:[0m
+[32m  + [0m[32mWA-R1 the numbered card: frozen question/option shapes + NEW footer, no 「其他…」 line[0m [90m0.0s[0m
+[32m  + [0m[32mWA-R2 the truncated form cuts the question TEXT only, keeps numbering+footer[0m [90m0.0s[0m
+[32m  + [0m[32mWA-R3 segments: each within the first tier, order-marked from the second on[0m [90m0.001s[0m
+[32m  + [0m[32mWA-P1 bare number = the FIRST question's option (B-1)[0m [90m0.001s[0m
+[32m  + [0m[32mWA-P2 comma list on a multiple question → the picks in reply order[0m [90m0.0s[0m
+[32m  + [0m[32mWA-P3 comma list on a SINGLE question is refused, never clamped[0m [90m0.0s[0m
+[32m  + [0m[32mWA-P4 问.编 explicit addressing (B-1 兜底)[0m [90m0.001s[0m
+[32m  + [0m[32mWA-P5 the 0/他 PREFIX is the only free-text leg (B-2); bare text is chat[0m [90m0.004s[0m
+[32m  + [0m[32mWA-P6 out-of-range numbers are refused with the ONE readable line[0m [90m0.0s[0m
+[32m  + [0m[32mWA-P7 exact option label answers: case/whitespace tolerant; not-number-shaped; non-label text stays chat[0m [90m0.001s[0m
+[32m  + [0m[32mWI-A1 open ask + bare number → Answered verdict, fixed-length slots forwarded, tombstoned[0m [90m0.032s[0m
+[32m  + [0m[32mWI-A2 a repeat read of the numbers AFTER an answer is refused (never re-injected)[0m [90m0.003s[0m
+[32m  + [0m[32mWI-A3 out-of-range on an open ask → ONE refusal line, ask stays, nothing injected[0m [90m0.002s[0m
+[32m  + [0m[32mWI-A4 chat text on an open ask falls through untouched (B-2 拍板)[0m [90m0.003s[0m
+[32m  + [0m[32mWI-A5 the 他 prefix answers even with an open ask (B-2)[0m [90m0.003s[0m
+[32m  + [0m[32mWI-A6 no open ask → digits are plain chat (the splitter never fires)[0m [90m0.001s[0m
+[32m  + [0m[32mWI-A7 the gate rules the ask legs: a non-member's digits are dropped BEFORE any ask leg[0m [90m0.014s[0m
+[32m  + [0m[32mWI-B1 B-3 top-old: a new ask retires the previous OPEN one by precise CloseRequest[0m [90m0.004s[0m
+[32m  + [0m[32mWI-B2 askUserClosed clears the slot; a later number is chat again[0m [90m0.002s[0m
+[32m  + [0m[32mWI-B3 media split: existing attachments ride the MEDIA seam FIRST; the text card keeps only undelivered path lines[0m [90m0.006s[0m
+[32m  + [0m[32mWI-B3a media split degrade: a FAILED media send keeps its path line in the text card[0m [90m0.006s[0m
+[32m  + [0m[32mWI-B3b no attachments ⇒ zero media calls, the card is the pre-split shape[0m [90m0.002s[0m
+[32m  + [0m[32mWI-B4 D-1 on weixin: the unreachable question's slot stays "" in the forwarded answer[0m [90m0.004s[0m
+[32m  + [0m[32mWI-P1 a >4000-char reply degrades to 摘要+拉取指令; the full text stays pullable[0m [90m0.008s[0m
+[32m  + [0m[32mWI-P2 a ≤4000-char reply is byte-identical to the pre-P1 flush[0m [90m0.003s[0m
+[32m  + [0m[32mWI-P3 verdict json faces (the two new consumed outcomes)[0m [90m0.0s[0m
+17:30:34.516 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'telegram' config written (enabled <absent> -> true)
+17:30:34.519 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'telegram' config written (enabled <absent> -> true)
+17:30:34.521 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'telegram' config written (enabled <absent> -> true)
+[32mnebflow.social.SocialChannelsSpec:[0m
+[32m  + [0m[32mF1-R1 新目标 + 收窄失败 ⇒ 目标零残留 + 既有错误码 + detail 含路径[0m [90m0.006s[0m
+[32m  + [0m[32mF1-R2 新目标成功路径：创建即 0600（收窄换成 no-op 仍 rw-------）+ 内容写对[0m [90m0.005s[0m
+[32m  + [0m[32mF1-R3 已存在宽模式凭据 ⇒ 收窄在明文落盘之前（首调用时仍是旧内容 + 宽模式）[0m [90m0.002s[0m
+[32m  + [0m[32mF1-R4 已存在凭据 + 收窄失败（写前）⇒ 旧凭据保持 0600，新明文不落盘[0m [90m0.002s[0m
+17:30:34.587 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> true)
+17:30:34.639 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> false)
+17:30:34.641 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled false -> true)
+17:30:34.853 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> true)
+17:30:35.010 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> true)
+17:30:35.528 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> false)
+17:30:35.783 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> false)
+17:30:35.793 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled false -> true)
+17:30:35.796 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:30:35.796 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: defaultSessionId=sess-new written to the weixin-ilink card (latest active session at bind time)
+17:30:35.796 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: provisioning sidecar via /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-bindthrough-repo-12212644914709107754/tools/weixin-sidecar/install-launchd.sh (up to 4 attempts, liveness-gated)
+17:30:35.797 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: attempt 1 installed via /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-bindthrough-repo-12212644914709107754/tools/weixin-sidecar/install-launchd.sh — confirming sidecar liveness
+17:30:35.797 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: attempt 1 sidecar alive (LISTEN + /healthz ok) — installed: /tmp/fake.plist state: running
+17:30:35.798 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:30:35.850 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> true)
+17:30:35.850 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: no active session at bind time — defaultSessionId not written (the REST default-session face can set it later)
+17:30:35.850 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: provisioning sidecar via /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-bindthrough-repo-894478003109423440/tools/weixin-sidecar/install-launchd.sh (up to 4 attempts, liveness-gated)
+17:30:35.850 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: attempt 1 installed via /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-bindthrough-repo-894478003109423440/tools/weixin-sidecar/install-launchd.sh — confirming sidecar liveness
+17:30:35.850 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: attempt 1 sidecar alive (LISTEN + /healthz ok) — installed: /tmp/fake.plist state: running
+17:30:35.851 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:30:35.905 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> true)
+17:30:35.910 [36mINFO [0m nebflow.bridge - Bridge plugin 'weixin-ilink' unregistered
+17:30:35.911 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:30:35.911 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:35.911 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:35.911 [36mINFO [0m nebflow.bridge - Bridge plugin 'weixin-ilink' started
+17:30:35.912 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:30:35.912 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: defaultSessionId=sess-1 written to the weixin-ilink card (latest active session at bind time)
+17:30:35.912 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: provisioning sidecar via /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-bindthrough-repo-3648411892879163818/tools/weixin-sidecar/install-launchd.sh (up to 4 attempts, liveness-gated)
+17:30:35.915 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:30:35.915 [33mWARN [0m nebflow.social.weixin-bind-autowire - weixin bind-through rollback: defaultSessionId cleared from the card
+17:30:35.915 [36mINFO [0m nebflow.bridge - Bridge plugin 'weixin-ilink' unregistered
+17:30:35.915 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:30:35.915 [33mWARN [0m nebflow.social.weixin-bind-autowire - weixin bind-through ROLLED BACK — bindError written to the card: provision failed after retries: attempt 1: installer exit 5 (Bootstrap failed: 5: Input/output error); attempt 2: installer exit 5 (Bootstrap failed: 5: Input/output error); attempt 3: installer exit 5 (Bootstrap failed: 5: Input/output error); attempt 4: installer exit 5 (Bootstrap failed: 5: Input/output error)
+17:30:35.962 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> true)
+17:30:35.963 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:30:35.963 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: defaultSessionId=sess-1 written to the weixin-ilink card (latest active session at bind time)
+17:30:35.963 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: provisioning sidecar via /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-bindthrough-repo-11184631121496047922/tools/weixin-sidecar/install-launchd.sh (up to 4 attempts, liveness-gated)
+17:30:35.965 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:30:35.965 [33mWARN [0m nebflow.social.weixin-bind-autowire - weixin bind-through rollback: defaultSessionId cleared from the card
+17:30:35.965 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:30:35.965 [33mWARN [0m nebflow.social.weixin-bind-autowire - weixin bind-through ROLLED BACK — bindError written to the card: provision failed after retries: attempt 1: provision leg raised (RuntimeException: proc blew up); attempt 2: provision leg raised (RuntimeException: proc blew up); attempt 3: provision leg raised (RuntimeException: proc blew up); attempt 4: provision leg raised (RuntimeException: proc blew up)
+17:30:36.017 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> true)
+17:30:36.018 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:30:36.018 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: defaultSessionId=sess-1 written to the weixin-ilink card (latest active session at bind time)
+17:30:36.018 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: provisioning sidecar via /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-bindthrough-repo-17069036228342797132/tools/weixin-sidecar/install-launchd.sh (up to 4 attempts, liveness-gated)
+17:30:36.019 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: attempt 2 installed via /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-bindthrough-repo-17069036228342797132/tools/weixin-sidecar/install-launchd.sh — confirming sidecar liveness
+17:30:36.019 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: attempt 2 sidecar alive (LISTEN + /healthz ok) — installed: /tmp/fake.plist state: running
+17:30:36.020 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:30:36.074 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> true)
+17:30:36.075 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:30:36.075 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: defaultSessionId=sess-1 written to the weixin-ilink card (latest active session at bind time)
+17:30:36.075 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: provisioning sidecar via /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-bindthrough-repo-17091098559783766892/tools/weixin-sidecar/install-launchd.sh (up to 4 attempts, liveness-gated)
+17:30:36.075 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: attempt 1 installed via /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-bindthrough-repo-17091098559783766892/tools/weixin-sidecar/install-launchd.sh — confirming sidecar liveness
+17:30:36.076 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: attempt 2 installed via /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-bindthrough-repo-17091098559783766892/tools/weixin-sidecar/install-launchd.sh — confirming sidecar liveness
+17:30:36.076 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: attempt 3 installed via /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-bindthrough-repo-17091098559783766892/tools/weixin-sidecar/install-launchd.sh — confirming sidecar liveness
+17:30:36.077 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: attempt 4 installed via /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-bindthrough-repo-17091098559783766892/tools/weixin-sidecar/install-launchd.sh — confirming sidecar liveness
+17:30:36.078 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:30:36.078 [33mWARN [0m nebflow.social.weixin-bind-autowire - weixin bind-through rollback: defaultSessionId cleared from the card
+17:30:36.079 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:30:36.079 [33mWARN [0m nebflow.social.weixin-bind-autowire - weixin bind-through ROLLED BACK — bindError written to the card: provision failed after retries: attempt 1: installer exit 0 but sidecar not alive (no LISTEN+healthz within 15 seconds); attempt 2: installer exit 0 but sidecar not alive (no LISTEN+healthz within 15 seconds); attempt 3: installer exit 0 but sidecar not alive (no LISTEN+healthz within 15 seconds); attempt 4: installer exit 0 but sidecar not alive (no LISTEN+healthz within 15 seconds)
+17:30:36.134 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> true)
+17:30:36.135 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:30:36.135 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: defaultSessionId=sess-1 written to the weixin-ilink card (latest active session at bind time)
+17:30:36.135 [33mWARN [0m nebflow.social.weixin-bind-autowire - weixin bind-through: installer missing but the sidecar answers /healthz — provision skipped, the running sidecar stands in
+17:30:36.136 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:30:36.184 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> true)
+17:30:36.185 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:30:36.185 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: defaultSessionId=sess-1 written to the weixin-ilink card (latest active session at bind time)
+17:30:36.185 [33mWARN [0m nebflow.social.weixin-bind-autowire - weixin bind-through: installer missing AND no live sidecar — provision failed
+17:30:36.186 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:30:36.186 [33mWARN [0m nebflow.social.weixin-bind-autowire - weixin bind-through rollback: defaultSessionId cleared from the card
+17:30:36.186 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:30:36.186 [33mWARN [0m nebflow.social.weixin-bind-autowire - weixin bind-through ROLLED BACK — bindError written to the card: provision failed after retries: installer not found and no live sidecar (no LISTEN/healthz)
+17:30:36.238 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:36.242 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> true)
+17:30:36.243 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:30:36.243 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: defaultSessionId=sess-1 written to the weixin-ilink card (latest active session at bind time)
+17:30:36.243 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: provisioning sidecar via /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-bindthrough-repo-5447546503171262147/tools/weixin-sidecar/install-launchd.sh (up to 4 attempts, liveness-gated)
+17:30:36.243 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: attempt 1 installed via /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-bindthrough-repo-5447546503171262147/tools/weixin-sidecar/install-launchd.sh — confirming sidecar liveness
+17:30:36.243 [36mINFO [0m nebflow.social.weixin-bind-autowire - weixin bind-through: attempt 1 sidecar alive (LISTEN + /healthz ok) — installed: /tmp/fake.plist state: running
+17:30:36.244 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+[32mnebflow.social.WeixinIlinkScanBindSpec:[0m
+[32m  + [0m[32mWSB-1 begin → qr_ready: url, user code, remaining seconds; never a secret[0m [90m0.109s[0m
+[32m  + [0m[32mWSB-2 done: save reuses the existing write path (_ref only, rw------- file), activation fires once, verified reachable, the merge keeps sidecar fields[0m [90m0.061s[0m
+[32m  + [0m[32mWSB-3 single-flight: a newer begin supersedes the open session and severs its result path[0m [90m0.206s[0m
+[32m  + [0m[32mWSB-4 a late login event cannot overwrite a terminal state (guarded advance)[0m [90m0.405s[0m
+[32m  + [0m[32mWSB-5 the failure families land in Failed with clean, secret-free reasons[0m [90m0.156s[0m
+[32m  + [0m[32mWSB-5b a side-car-reported failure surfaces its own reason[0m [90m0.055s[0m
+[32m  + [0m[32mWSB-8 the production side-car leg wraps a transport refusal into sidecar_unreachable (never a raw ConnectException)[0m [90m0.205s[0m
+[32m  + [0m[32mWSB-6 a save-side rejection (secrets path blocked) → Failed, zero credential residue[0m [90m0.053s[0m
+[32m  + [0m[32mWSB-7 user_code extraction from the verification URL[0m [90m0.001s[0m
+[32m  + [0m[32mBT-1 done: the binding-time latest session lands on the weixin card's defaultSessionId and the provision leg records the contract-v2 env[0m [90m0.066s[0m
+[32m  + [0m[32mBT-2 no session at bind time: defaultSessionId stays unset (INFO, not a failure), provision still fires, binding still Done[0m [90m0.055s[0m
+[32m  + [0m[32mBT-3 a provision failure that survives EVERY retry rolls the binding back: failed state, defaultSessionId cleared, bridge unregistered, bindError with the steps[0m [90m0.058s[0m
+[32m  + [0m[32mBT-4 a raising runner is an attempt failure like any other — retries exhaust, rollback lands, the raise is contained into the scan-bind Failed state[0m [90m0.056s[0m
+[32m  + [0m[32mBT-6 the retry path closes the incident shape: attempt 1 dies on the occupied-port exit 5, the port releases, attempt 2 installs + passes liveness — binding DONE, defaultSessionId KEPT, no rollback[0m [90m0.055s[0m
+[32m  + [0m[32mBT-7 liveness is the arbiter: installer exit 0 with a DEAD sidecar is a failed attempt — retries exhaust, the binding rolls back (no launchd-says-ok half-bind)[0m [90m0.057s[0m
+[32m  + [0m[32mBT-8 a missing installer arbitrates on LIVENESS: a live sidecar stands in (bound, WARN); a dead one fails the bind[0m [90m0.108s[0m
+[32m  + [0m[32mBT-9 a stale bindError from a previous failed bind is CLEARED by a later successful bind[0m [90m0.057s[0m
+[32m  + [0m[32mBT-10 the bounded waits: port-free returns on the first free read; the liveness poll gates on LISTEN ∧ /healthz and is iteration-bounded (no wall clock)[0m [90m0.004s[0m
+[32m  + [0m[32mBT-5 the env matrix defaults: no card sidecar_url ⇒ the SidecarDefaultBase port; forbidden keys always pinned empty[0m [90m0.004s[0m
+[32mnebflow.social.InboundParseSpec:[0m
+[32m  + [0m[32mIP-1 post degrades to readable lines, verbatim[0m [90m0.002s[0m
+[32m  + [0m[32mIP-2 an unknown post tag leaves a visible trace (never silently dropped)[0m [90m0.001s[0m
+[32m  + [0m[32mIP-3 empty content / null title degrade without inventing lines[0m [90m0.0s[0m
+[32m  + [0m[32mIP-2b an element with no readable strings is the ONLY thing allowed to vanish[0m [90m0.001s[0m
+[32m  + [0m[32mIP-4 placeholders resolve to the mention's display name / id[0m [90m0.001s[0m
+[32m  + [0m[32mIP-5 an unmatched placeholder is KEPT as-is (never swallowed)[0m [90m0.0s[0m
+[32m  + [0m[32mIP-6 a mention with no placeholder in the body adds nothing[0m [90m0.0s[0m
+[32m  + [0m[32mIP-7 a mention with neither name nor id falls back to the fixed word[0m [90m0.0s[0m
+[32m  + [0m[32mIP-8 branch A: a fetched original renders sender + text[0m [90m0.001s[0m
+[32m  + [0m[32mIP-8 branch B: an unfetched original NAMES the id it could not read[0m [90m0.0s[0m
+[32m  + [0m[32mIP-8 branch B default: an unknown sender renders the fixed placeholder[0m [90m0.0s[0m
+[32m  + [0m[32mIP-8 branch C: no parent/root id means NOT a reply — no block at all[0m [90m0.0s[0m
+[32m  + [0m[32mIP-9 an unrecognised type yields the verbatim placeholder with its three mandatory fields[0m [90m0.001s[0m
+[32m  + [0m[32mIP-9b every non-text, non-post type lands in the placeholder[0m [90m0.0s[0m
+[32m  + [0m[32mIP-10 an over-long body is cut to the cap and the cut is stated[0m [90m0.0s[0m
+[32m  + [0m[32mIP-10b a body at or under the cap is untouched[0m [90m0.001s[0m
+[32m  + [0m[32mbodyOf: text is mention-replaced, an empty text body answers None[0m [90m0.0s[0m
+[32m  + [0m[32mbodyOf: a text payload that is not JSON echoes the raw content instead of vanishing[0m [90m0.0s[0m
+[32m  + [0m[32mcompose: quote段 then body, one blank line apart; empty sets answer None[0m [90m0.001s[0m
+17:30:36.322 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'telegram' config written (enabled <absent> -> true)
+17:30:36.325 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'telegram' config written (enabled <absent> -> true)
+17:30:36.326 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'telegram' config written (enabled <absent> -> true)
+17:30:36.327 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'telegram' config written (enabled true -> true)
+[32mnebflow.social.SocialChannelsSecretDirSpec:[0m
+[32m  + [0m[32mQF2-R1 a wide-mode (0755) secrets/ converges to rwx------ on the next secret save[0m [90m0.005s[0m
+[32m  + [0m[32mQF2-R2 create-on-the-fly namespace: save builds secrets/ directly owner-only[0m [90m0.002s[0m
+[32m  + [0m[32mQF2-R3 idempotent: an already-0700 secrets/ survives a second save unchanged[0m [90m0.002s[0m
+[32m  + [0m[32mQF2-R4 ordering: the directory is narrowed even when the later file step fails (fail-closed)[0m [90m0.001s[0m
+17:30:36.340 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:36.341 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:36.427 [33mWARN [0m nebflow.social.weixin-outbound - weixin outbound send failed channel=weixin-ilink to=wx_alice code=502 reason=delivery_failed: delivery_failed: sendmessage ret=-2 errmsg=prepare failed digest=你好，世界 attempts=1
+17:30:36.433 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:36.433 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:36.435 [33mWARN [0m nebflow.social.weixin-outbound - weixin outbound send failed channel=weixin-ilink to=wx_alice code=-1 reason=sidecar_unreachable: ConnectException: Exception when sending request: POST http://127.0.0.1:50084/send digest=hello attempts=1
+17:30:36.436 [33mWARN [0m nebflow.social.weixin-outbound - weixin outbound send failed channel=weixin-ilink to=wx_alice code=-1 reason=shim_token_unconfigured: no token at secrets/weixin-ilink-send-token — the outbound leg stays closed digest=hello attempts=1
+17:30:36.438 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:36.439 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:36.443 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:36.444 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:36.446 [33mWARN [0m nebflow.social.weixin-outbound - weixin outbound send failed channel=weixin-ilink to=wx_alice code=502 reason=delivery_failed: delivery_failed: sendmessage ret=-2 errmsg=prepare failed digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbb… attempts=1
+17:30:36.447 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:36.447 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:36.450 [33mWARN [0m nebflow.social.weixin-outbound - weixin outbound send failed channel=weixin-ilink to=wx_alice code=502 reason=delivery_failed: delivery_failed: cdn http_500 digest=/tmp/pop.png attempts=1
+17:30:36.451 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:36.451 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:36.453 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:36.453 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:36.455 [33mWARN [0m nebflow.social.weixin-outbound - weixin outbound send failed channel=weixin-ilink to=wx_alice code=502 reason=delivery_failed: delivery_failed: sendmessage ret=-2 errmsg=prepare failed digest=这条回复会丢 attempts=1
+17:30:36.455 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: reply send failed code=502 reason=delivery_failed: delivery_failed: sendmessage ret=-2 errmsg=prepare failed
+[32mnebflow.social.WeixinOutboundLogSpec:[0m
+[32m  + [0m[32mWO-L1 shim 502 (iLink ret≠0) ⇒ ONE WARN with channel/to/code/reason/digest/attempts — the incident pinned[0m [90m0.098s[0m
+[32m  + [0m[32mWO-L2 transport failure (dead loopback port = the timeout/exception arm) ⇒ sidecar_unreachable WARN, code=-1[0m [90m0.005s[0m
+[32m  + [0m[32mWO-L3 the closed leg (no token) is logged too — a reply dropped before the wire is still a dropped reply[0m [90m0.001s[0m
+[32m  + [0m[32mWO-L4 a SUCCESSFUL send logs NOTHING (the hot path stays silent — zero noise rule)[0m [90m0.005s[0m
+[32m  + [0m[32mWO-L5 the digest discipline: first 50 chars only, whitespace flattened, the tail never logged[0m [90m0.004s[0m
+[32m  + [0m[32mWO-L6 the MEDIA seam logs the same WARN with the media path as digest (image_path leg)[0m [90m0.004s[0m
+[32m  + [0m[32mWO-L7 end to end: the bridge reply flush through the PRODUCTION seam logs the drop (9-silent-drops incident)[0m [90m0.006s[0m
+17:30:36.517 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled <absent> -> true)
+17:30:36.569 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled <absent> -> true)
+17:30:36.778 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled <absent> -> true)
+17:30:36.935 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled <absent> -> true)
+17:30:37.504 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled <absent> -> true)
+17:30:37.556 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled <absent> -> true)
+[32mnebflow.social.FeishuScanBindSpec:[0m
+[32m  + [0m[32mSB-1 begin → qr_ready: url, user code, remaining seconds; never a secret[0m [90m0.107s[0m
+[32m  + [0m[32mSB-2 done: save reuses the existing write path (_ref only, rw------- file, region=lark), activation fires once, verified reachable with NO verification_token (⑤)[0m [90m0.054s[0m
+[32m  + [0m[32mSB-3 single-flight: a newer begin supersedes the open session and severs its result path[0m [90m0.207s[0m
+[32m  + [0m[32mSB-4 a late SDK status callback cannot overwrite a terminal state (guarded advance)[0m [90m0.407s[0m
+[32m  + [0m[32mSB-5 the SDK failure families land in Failed with clean, secret-free reasons[0m [90m0.212s[0m
+[32m  + [0m[32mSB-6 a save-side rejection (app_id pattern) → Failed, zero credential residue[0m [90m0.054s[0m
+[32m  + [0m[32mSB-7 user_code extraction from the verification URL (plan card A3 ④)[0m [90m0.0s[0m
+[32m  + [0m[32mSB-8 default tenant brand writes region=feishu (④ dual-domain follow)[0m [90m0.053s[0m
+[32m  + [0m[32mSB-9 the scan-bind completion leaves a SCHEMA-resolvable credential that wins over a legacy file (the P0-1 incident, replayed at unit level)[0m [90m0.055s[0m
+17:30:37.618 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:37.622 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: chat oc_bound -> session s1
+17:30:37.623 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:37.625 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:37.627 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: image om_1 landed at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-feishu-bridge-10815448128595082005/uploads/s1/feishu-om_1.jpg (6 bytes)
+17:30:37.628 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:37.629 [33mWARN [0m nebflow.social.feishu-bridge - feishu bridge: image om_1 download failed (code=230001 msg=forbidden)
+17:30:37.636 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:37.639 [33mWARN [0m nebflow.social.feishu-bridge - feishu bridge: image om_1 over the inbound cap (33554433 > 33554432 bytes) — not landed
+17:30:37.640 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:37.640 [33mWARN [0m nebflow.social.feishu-bridge - feishu bridge: image om_1 carries no image_key — nothing to fetch
+17:30:37.641 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:37.641 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: chat oc_bound -> session s1
+17:30:37.642 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:37.642 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: chat oc_bound -> session s1
+17:30:37.643 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:37.643 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: chat oc_bound -> session s1
+17:30:37.644 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:37.644 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: chat oc_bound -> session s1
+17:30:37.645 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:37.645 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: chat oc_bound -> session s1
+17:30:37.646 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:37.646 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: chat oc_bound -> session s1
+17:30:37.647 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:37.647 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:37.647 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:37.647 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: chat oc_bound -> session s1
+17:30:37.648 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:37.649 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: reply delivered to chat oc_bound (om_out)
+17:30:37.650 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:37.651 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:37.652 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:37.652 [33mWARN [0m nebflow.social.feishu-bridge - feishu bridge: send rejected code=230001 msg=rejected
+17:30:37.653 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:37.653 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: reply delivered to chat oc_bound (om_out)
+17:30:38.653 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: reply delivered to chat oc_bound (om_out)
+17:30:39.653 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: reply delivered to chat oc_bound (om_out)
+17:30:39.656 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:39.657 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: reply delivered to chat oc_bound (om_out)
+17:30:40.658 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: reply delivered to chat oc_bound (om_out)
+17:30:40.667 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:40.668 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: reply delivered to chat oc_bound (om_out)
+17:30:41.669 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: reply delivered to chat oc_bound (om_out)
+17:30:41.675 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:41.679 [33mWARN [0m nebflow.social.feishu-bridge - feishu bridge: send rejected code=230001 msg=rejected
+17:30:42.677 [33mWARN [0m nebflow.social.feishu-bridge - feishu bridge: send rejected code=230001 msg=rejected
+17:30:43.677 [33mWARN [0m nebflow.social.feishu-bridge - feishu bridge: send rejected code=230001 msg=rejected
+17:30:43.696 [33mWARN [0m nebflow.social.feishu-bridge - feishu bridge: 1 chat(s) bound to more than one session — the last binding wins
+17:30:43.696 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 2 chat(s) bound to sessions
+17:30:43.697 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 0 chat(s) bound to sessions
+17:30:43.699 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:43.706 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:43.710 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 0 chat(s) bound to sessions
+17:30:43.710 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 0 chat(s) bound to sessions
+17:30:43.713 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 0 chat(s) bound to sessions
+17:30:43.715 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: image om_1 landed at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-feishu-bridge-12340623791117040840/uploads/s_default/feishu-om_1.png (4 bytes)
+17:30:43.718 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:43.747 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 0 chat(s) bound to sessions
+[32mnebflow.social.FeishuBridgePluginSpec:[0m
+[32m  + [0m[32mFB-R1 inbound text from a bound chat injects into the bound session[0m [90m0.006s[0m
+[32m  + [0m[32mFB-R2 a chat with no bound session is dropped (no injection, no error)[0m [90m0.002s[0m
+[32m  + [0m[32mFB-R3 an image message is fetched by image_key, lands under uploads, and injects the media line[0m [90m0.004s[0m
+[32m  + [0m[32mFB-R3b a failed download injects the honest failure line — no file, no placeholder, no silence[0m [90m0.001s[0m
+[32m  + [0m[32mFB-R3f an over-budget image is NOT landed; the session reads the over-limit line[0m [90m0.01s[0m
+[32m  + [0m[32mFB-R3g an image event with no image_key names the miss instead of fetching nothing[0m [90m0.002s[0m
+[32m  + [0m[32mFB-R3h a genuinely unknown type still gets the placeholder (the fallback class is unchanged)[0m [90m0.001s[0m
+[32m  + [0m[32mFB-R3c a quoted reply produces the quoted block AHEAD of the body, and announces its origin[0m [90m0.001s[0m
+[32m  + [0m[32mFB-R3c2 a non-reply message carries no quoted block at all[0m [90m0.0s[0m
+[32m  + [0m[32mFB-R3d a post message injects the degraded rich text verbatim as the body[0m [90m0.001s[0m
+[32m  + [0m[32mFB-R3e a text message with mentions replaces the placeholders and keeps no raw @_user_N[0m [90m0.001s[0m
+[32m  + [0m[32mFB-R4 empty allowlist (shipped default) passes a senderless message[0m [90m0.001s[0m
+[32m  + [0m[32mFB-R5 a non-empty allowlist is fail-closed: member passes, stranger and senderless drop[0m [90m0.002s[0m
+[32m  + [0m[32mFB-R6 deltas accumulate and flush exactly once on done, to the bound chat[0m [90m0.001s[0m
+[32m  + [0m[32mFB-R7 an interrupted turn clears the buffer: no torn reply is ever sent[0m [90m0.001s[0m
+[32m  + [0m[32mFB-R8 a session that is not feishu-bound never triggers a send[0m [90m0.001s[0m
+[32m  + [0m[32mFB-R9 a rejected send is contained: no raise, the call is still recorded[0m [90m0.001s[0m
+[32m  + [0m[32mFB-SG1 three committed segments → THREE in-order immediate sends; done resends nothing[0m [90m2.003s[0m
+[32m  + [0m[32mFB-SG2 the throttle paces adjacent segments: send N starts ≥1s after send N-1 started[0m [90m1.006s[0m
+[32m  + [0m[32mFB-SG3 an empty boundary commits nothing: a pure-tool stretch pushes no message[0m [90m1.011s[0m
+[32m  + [0m[32mFB-SG4 a failed segment is noted, exactly once per failure run; the note rides the same pacer[0m [90m2.022s[0m
+[32m  + [0m[32mFB-R10 refresh rebuilds chat→session routes from SessionMeta.bridges; duplicate chat binds last-wins[0m [90m0.002s[0m
+[32m  + [0m[32mFB-R10b a blank chat_id in a bridge binding is not routable[0m [90m0.001s[0m
+[32m  + [0m[32mFB-A1 the first message from an unbound chat auto-binds to the default session and injects there[0m [90m0.005s[0m
+[32m  + [0m[32mFB-A2 no default session configured keeps the pre-existing drop (the branch this batch must not break)[0m [90m0.005s[0m
+[32m  + [0m[32mFB-A3 allowlist armed (C6): a listed member CAN mint an auto-binding, a stranger CANNOT[0m [90m0.003s[0m
+[32m  + [0m[32mFB-A4 an auto-bound image message binds the chat AND lands + injects the media line[0m [90m0.005s[0m
+[32m  + [0m[32mFB-R12 a message with genuinely no body is still dropped (the residual None arm)[0m [90m0.001s[0m
+[32m  + [0m[32mFB-IP1 imageKeyOf: the content's image_key; absent / blank / non-JSON answer None[0m [90m0.007s[0m
+[32m  + [0m[32mFB-IP2 imageExtOf: magic bytes decide the extension; unknown falls back to .jpg[0m [90m0.0s[0m
+[32m  + [0m[32mFB-F1 fingerprintVerdict: match / mismatch / unknown (pure)[0m [90m0.003s[0m
+[32m  + [0m[32mFB-F2 connection face: the stored-A-connected-B world reads mismatch, never green (P0-2)[0m [90m0.009s[0m
+[32m  + [0m[32mFB-F3 connection face: matching worlds read match; no adapter reads unknown[0m [90m0.003s[0m
+[32m  + [0m[32mFB-B1 bindings face: auto bindings carry source=auto+boundAt; everything else reads manual (C3)[0m [90m0.004s[0m
+[32m  + [0m[32mFB-R11 start without any credential fails soft; stop is idempotent and safe to call twice[0m [90m0.006s[0m
+17:30:43.777 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:30:43.778 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:43.778 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+[32mnebflow.social.WeixinIngressTokenSpec:[0m
+[32m  + [0m[32mWIT-1 ensure mints a well-formed owner-only token at <root>/secrets/[0m [90m0.002s[0m
+[32m  + [0m[32mWIT-2 ensure is idempotent: a second seam-up keeps the minted value[0m [90m0.001s[0m
+[32m  + [0m[32mWIT-3 a corrupt/empty residue is regenerated in place on the next ensure[0m [90m0.001s[0m
+[32m  + [0m[32mWIT-4 accepts: matching ⇒ true; every other failure mode ⇒ the same false[0m [90m0.004s[0m
+[32m  + [0m[32mWIT-5 rotation: an in-place rewrite is picked up at once (old dies, new lives)[0m [90m0.001s[0m
+[32m  + [0m[32mWIT-6 bridge start mints the token (seam-up ⇒ credential plane in place)[0m [90m0.003s[0m
+17:30:43.829 [33mWARN [0m nebflow.social.feishu-outbound - feishu outbound: image upload rejected (rejected) — path /tmp/nebflow-socoutbound/x.png
+17:30:43.830 [33mWARN [0m nebflow.social.feishu-outbound - feishu outbound: file upload rejected (rejected) — path /tmp/nebflow-socoutbound/y.pdf
+17:30:43.835 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:30:43.836 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: reply delivered to chat oc_bound (om_1)
+[32mnebflow.social.FeishuOutboundSpec:[0m
+[32m  + [0m[32mOB-R1 classify short-circuits in the card -> image -> document -> text -> unknown order[0m [90m0.009s[0m
+[32m  + [0m[32mOB-R2 the extension table is the repo's single authority, and no second table is invented[0m [90m0.0s[0m
+[32m  + [0m[32mOB-R3 an unknown class yields EXACTLY one degraded text carrying the [未知类型] note (no silent drop)[0m [90m0.003s[0m
+[32m  + [0m[32mOB-R4 the image branch renders NOTHING (transparent passthrough) and mints exactly one upload[0m [90m0.003s[0m
+[32m  + [0m[32mOB-R5 a failed card render yields ZERO uploads, ZERO sends and one [未渲染] text[0m [90m0.001s[0m
+[32m  + [0m[32mOB-R6 the size gate rejects BEFORE any upload, carrying code + actual + limit[0m [90m0.003s[0m
+[32m  + [0m[32mOB-R7 the text leg carries no bare markdown markers and keeps links alive[0m [90m0.003s[0m
+[32m  + [0m[32mOB-R8 every plan satisfies the no-silent-drop invariants[0m [90m0.001s[0m
+[32m  + [0m[32mOB-R9 the degraded text never carries a secret value[0m [90m0.006s[0m
+[32m  + [0m[32mOB-R10 dispatch conserves call count and reports failures as readings, never silently[0m [90m0.017s[0m
+[32m  + [0m[32mOB-R11 the Feishu adapter delegates classification to the definition layer[0m [90m0.002s[0m
+[32m  + [0m[32mOB-R12 the text leg reaches the wire de-marked-up while the in-session original is untouched[0m [90m0.001s[0m
+[32m  + [0m[32mOB-R13 the WIRED bridge text leg ships a de-marked-up copy, and the in-session original is untouched[0m [90m0.003s[0m
+17:30:43.842 [36mINFO [0m nebflow.bridge - Bridge plugin 'feishu' unregistered
+17:30:43.845 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled <absent> -> true)
+17:30:43.846 [36mINFO [0m nebflow.bridge - Bridge plugin 'feishu' unregistered
+17:30:43.846 [36mINFO [0m nebflow.bridge - Bridge plugin 'feishu' started
+17:30:43.848 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled <absent> -> true)
+17:30:43.849 [36mINFO [0m nebflow.bridge - Bridge plugin 'feishu' unregistered
+17:30:43.850 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled <absent> -> true)
+17:30:43.851 [36mINFO [0m nebflow.bridge - Bridge plugin 'feishu' unregistered
+17:30:43.851 [36mINFO [0m nebflow.bridge - Bridge plugin 'feishu' started
+17:30:43.852 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled true -> false)
+17:30:43.852 [36mINFO [0m nebflow.bridge - Bridge plugin 'feishu' unregistered
+17:30:43.857 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled <absent> -> true)
+17:30:43.860 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled <absent> -> true)
+17:30:43.861 [36mINFO [0m nebflow.bridge - Bridge plugin 'feishu' unregistered
+17:30:43.861 [36mINFO [0m nebflow.bridge - Bridge plugin 'feishu' started
+17:30:43.861 [36mINFO [0m nebflow.bridge - Bridge plugin 'feishu' unregistered
+17:30:43.861 [36mINFO [0m nebflow.bridge - Bridge plugin 'feishu' started
+17:30:43.863 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled <absent> -> true)
+17:30:43.865 [36mINFO [0m nebflow.bridge - Bridge plugin 'feishu' unregistered
+17:30:43.865 [36mINFO [0m nebflow.bridge - Bridge plugin 'feishu' started
+17:30:43.871 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled <absent> -> true)
+17:30:43.872 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled true -> true)
+17:30:43.874 [36mINFO [0m nebflow.bridge - Bridge plugin 'feishu' unregistered
+17:30:43.874 [36mINFO [0m nebflow.bridge - Bridge plugin 'feishu' started
+17:30:43.876 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled <absent> -> true)
+17:30:43.877 [36mINFO [0m nebflow.bridge - Bridge plugin 'feishu' unregistered
+17:30:43.877 [36mINFO [0m nebflow.bridge - Bridge plugin 'feishu' started
+[32mnebflow.social.FeishuAdapterActivationSpec:[0m
+[32m  + [0m[32mACT-1 nothing configured ⇒ sync registers nothing (phase-1 shape untouched)[0m [90m0.002s[0m
+[32m  + [0m[32mACT-2 enabled ∧ verified ⇒ registered and started once; probe/channels faces answer the live truth[0m [90m0.004s[0m
+[32m  + [0m[32mACT-3 enabled but NOT verified (required secret absent) ⇒ NOT registered — the flip cannot be bought with config alone[0m [90m0.002s[0m
+[32m  + [0m[32mACT-4 disabled ⇒ unregistered again (toggle off tears the adapter down)[0m [90m0.004s[0m
+[32m  + [0m[32mACT-5 a pattern-violating app_id fails verification even when secrets are readable (hand-edited config)[0m [90m0.002s[0m
+[32m  + [0m[32mACT-6 a secret file that vanished after saving fails verification (probe is live, not cached)[0m [90m0.003s[0m
+[32m  + [0m[32mACT-7 sync is stable under repetition: resync of a verified card re-registers without doubling[0m [90m0.004s[0m
+[32m  + [0m[32mA1-boot golden: `enabled ∧ verified` ⇒ sync activates AND the feishu subtree's canonical JSON hashes identically before/after the boot path (zero rewrite)[0m [90m0.006s[0m
+[32m  + [0m[32mA1-boot/red-tooth: a write with NO opinion about the switch must not close it — the boot gate still activates (red pre-change)[0m [90m0.007s[0m
+[32m  + [0m[32mACT-8 sync with a factory returning a non-feishu plugin instance completes — the fingerprint guard is a no-op there (feishu-bind batch)[0m [90m0.002s[0m
+17:30:43.887 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:43.889 [33mWARN [0m nebflow.social.weixin-outbound - weixin outbound send failed channel=weixin-ilink to=wx_alice code=-1 reason=shim_token_unconfigured: no token at secrets/weixin-ilink-send-token — the outbound leg stays closed digest=hello attempts=1
+17:30:43.891 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:43.893 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:43.894 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:43.894 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:43.897 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:43.897 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:43.898 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:43.899 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:43.900 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:43.900 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:43.901 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:43.902 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:43.903 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:43.904 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:43.904 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:43.905 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:43.906 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 2 sender id(s) bound to sessions
+17:30:43.906 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:43.906 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:43.907 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:30:43.908 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:43.908 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:43.910 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:43.911 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:43.911 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:43.912 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: reply send failed code=502 reason=delivery_failed: sendmessage ret=1
+17:30:43.912 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:43.913 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:43.913 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:43.915 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:43.915 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:43.915 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:43.917 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:43.917 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:43.917 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:45.924 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:45.925 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:45.925 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:46.933 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:46.934 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:46.935 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:47.948 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:47.948 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:47.949 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:48.007 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:48.010 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:48.010 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:48.012 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: reply send failed code=502 reason=delivery_failed: sendmessage ret=-2
+17:30:49.011 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: reply send failed code=502 reason=delivery_failed: sendmessage ret=-2
+17:30:50.013 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: reply send failed code=502 reason=delivery_failed: sendmessage ret=-2
+17:30:51.014 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: reply send failed code=502 reason=delivery_failed: sendmessage ret=-2
+17:30:51.056 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:51.059 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:51.065 [33mWARN [0m nebflow.social.weixin-outbound - weixin outbound send failed channel=weixin-ilink to=wx_alice code=-1 reason=shim_token_unconfigured: no token at secrets/weixin-ilink-send-token — the outbound leg stays closed digest=/tmp/a.png attempts=1
+17:30:51.075 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:51.076 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:51.077 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:52.090 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:52.090 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:52.091 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:52.097 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:52.098 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:52.099 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:52.112 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: rich media send failed kind=image code=502 reason=delivery_failed: cdn http_500 — degrading to a text notice
+17:30:53.115 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:53.116 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:53.116 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:53.119 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:53.120 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:53.120 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:53.122 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:53.123 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:53.124 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:54.132 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:54.136 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:54.137 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:54.139 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: rich item not carriable (path does not exist or is not a regular file: /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-weixin-outbound-16981383352661355464/gone.png) — the text reply carries the turn
+17:30:54.151 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:54.152 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:54.152 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:54.170 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:54.171 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:54.171 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:54.173 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: web page file send failed code=502 reason=delivery_failed: cdn http_500 — falling back to the full-page shot
+17:30:54.177 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:54.178 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:54.178 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:54.178 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: web page file send failed code=502 reason=delivery_failed: cdn http_500 — falling back to the full-page shot
+17:30:55.195 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:55.196 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:55.197 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:56.207 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:56.207 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:56.207 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:56.210 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:56.210 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:56.210 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:56.211 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: rich media send failed kind=image code=502 reason=delivery_failed: cdn http_500 — degrading to a text notice
+17:30:57.222 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:57.223 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:57.224 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:57.229 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:57.230 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:57.230 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:58.239 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:58.240 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:58.240 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:58.242 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: rich item delivery raised for /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-weixin-outbound-4800569155177884199/bad.png (IOException: simulated media fault) — degrading to a visible line
+[32mnebflow.social.WeixinOutboundSpec:[0m
+[32m  + [0m[32mWO-K1 ensureToken mints an owner-only token; the second call returns the SAME value (never rotated)[0m [90m0.002s[0m
+[32m  + [0m[32mWO-K2 a channel-less root gains NO token file from sendLive (the leg stays closed, spelled out)[0m [90m0.001s[0m
+[32m  + [0m[32mWO-K3 sidecarBase reads the stored card, absent ⇒ the scan-bind default[0m [90m0.001s[0m
+[32m  + [0m[32mWO-F1 textDelta accumulates and `done` flushes ONE plain-text send to the bound sender[0m [90m0.005s[0m
+[32m  + [0m[32mWO-F2 the outbound copy is de-marked-up (toPlain) — the in-session original is never rewritten[0m [90m0.003s[0m
+[32m  + [0m[32mWO-F3 an interrupted turn never flushes (a torn turn is not a reply)[0m [90m0.002s[0m
+[32m  + [0m[32mWO-F4 a retried turn (retryStatus) never flushes its stale partial either[0m [90m0.002s[0m
+[32m  + [0m[32mWO-F5 done with an empty buffer sends nothing (no fabricated empty message)[0m [90m0.002s[0m
+[32m  + [0m[32mWO-F6 only the turn's OWN session flushes (per-session buffers, not one global buffer)[0m [90m0.002s[0m
+[32m  + [0m[32mWO-F7 a session with NO bound sender has no return address: dropped, nothing sent[0m [90m0.003s[0m
+[32m  + [0m[32mWO-F8 a failing send is contained: the flush completes, no exception escapes[0m [90m0.002s[0m
+[32m  + [0m[32mWO-F9 stop clears the pending buffer (a torn turn is never a reply, also across restarts)[0m [90m0.001s[0m
+[32m  + [0m[32mWO-F10 a toolEnd alone never sends: a non-product payload leaves no memory either (text seam stays silent)[0m [90m0.003s[0m
+[32m  + [0m[32mWO-SG1 three committed segments → THREE in-order immediate sends; done resends nothing[0m [90m2.006s[0m
+[32m  + [0m[32mWO-SG2 the throttle paces adjacent segments: send N starts ≥1s after send N-1 started[0m [90m1.008s[0m
+[32m  + [0m[32mWO-SG3 an empty boundary commits nothing: a pure-tool stretch pushes no message[0m [90m1.015s[0m
+[32m  + [0m[32mWO-SG4 interrupted after a committed boundary: the pushed segment stays, the torn tail never flushes[0m [90m0.056s[0m
+[32m  + [0m[32mWO-SG5 a failed segment is noted, exactly once per failure run; the no-retry boundary stays intact[0m [90m3.036s[0m
+[32m  + [0m[32mWO-W1 the /send request body, default form: exactly to+text, NO account key (the side-car owns selection)[0m [90m0.003s[0m
+[32m  + [0m[32mWO-W2 parseSendResponse maps the side-car verdicts onto the vocabulary[0m [90m0.004s[0m
+[32m  + [0m[32mWO-W3 an account hint rides along VERBATIM: keys are exactly account+text+to, the raw bot id untouched[0m [90m0.0s[0m
+[32m  + [0m[32mWO-W4 accountHint reads the card's ilink_bot_id: no card ⇒ None, a card ⇒ Some(raw), a blank value ⇒ None[0m [90m0.012s[0m
+[32m  + [0m[32mWO-M1 buildMediaSendJson image: keys exactly to+image_path (+account under the same verbatim rule), no text key[0m [90m0.002s[0m
+[32m  + [0m[32mWO-M2 buildMediaSendJson file: the file_path form under the same rules[0m [90m0.001s[0m
+[32m  + [0m[32mWO-M3 sendMediaLive with no token ⇒ the media leg stays closed (same vocabulary as the text seam)[0m [90m0.006s[0m
+[32m  + [0m[32mWO-R1 a Pop IMAGE product remembered on toolEnd flushes ONE media send on done (image_path); the text reply is intact[0m [90m1.017s[0m
+[32m  + [0m[32mWO-R2 a Pop FILE item flushes the file_path form (pop batch-media fix: every item, payload order — no kind beats another)[0m [90m0.008s[0m
+[32m  + [0m[32mWO-R3 a FAILED media send degrades to a text notice (保底) BEFORE the turn text; nothing raises[0m [90m1.017s[0m
+[32m  + [0m[32mWO-R4 an interrupted turn drops the remembered product (a torn turn is never a media reply)[0m [90m0.007s[0m
+[32m  + [0m[32mWO-R5 an errored tool result is never a rich product (isError gate)[0m [90m0.003s[0m
+[32m  + [0m[32mWO-R6 a CARD product is the stated v1 boundary: no media send, the text leg carries the turn[0m [90m1.007s[0m
+[32m  + [0m[32mWO-R7 a NON-EXISTENT image path classifies Unknown: no media send (fail-closed, no garbage upload)[0m [90m0.011s[0m
+[32m  + [0m[32mWO-W1 an html product rides the file_path leg AS THE ORIGINAL; the shot seam is never consulted[0m [90m0.026s[0m
+[32m  + [0m[32mWO-W2 a FAILED file send (channel refuses) falls back to the full-page shot on image_path[0m [90m0.008s[0m
+[32m  + [0m[32mWO-W2b a failed file send AND an unavailable shot keep the v1 boundary: no image send, the text reply carries the turn[0m [90m1.012s[0m
+[32m  + [0m[32mWO-B1 an 11-image Pop carries ALL of them, in payload order (the old single-pick read dropped ten)[0m [90m1.019s[0m
+[32m  + [0m[32mWO-B2 a MIXED image+file Pop keeps the payload order across kinds (no image-first regrouping)[0m [90m0.004s[0m
+[32m  + [0m[32mWO-B3 a single failed send degrades on its own and does NOT swallow the batch[0m [90m1.007s[0m
+[32m  + [0m[32mWO-B4 TWO Pop 组卡 in one turn → BOTH delivered, in toolEnd order (the old overwrite lost the first group)[0m [90m0.012s[0m
+[32m  + [0m[32mWO-B5 mixed text + 组卡: media first, the turn text last (one pacer slot, 媒体先行、正文殿后)[0m [90m1.008s[0m
+[32m  + [0m[32mWO-B6 one item's unexpected RAISE degrades to its own [未送达] line; the remaining items and the text tail survive[0m [90m1.015s[0m
+17:30:59.290 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:59.290 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.291 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.291 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_alice -> session s1
+17:30:59.293 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:59.293 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.294 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate fail-closed (2 allowed sender id(s))
+17:30:59.294 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_alice -> session s1
+17:30:59.295 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:59.296 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.296 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate fail-closed (1 allowed sender id(s))
+17:30:59.296 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: inbound message msg_1 dropped [not-on-allowlist] — sender identity is not on the allowed_ilink_user_ids list
+17:30:59.297 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:59.297 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.297 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate fail-closed (1 allowed sender id(s))
+17:30:59.298 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: inbound message msg_1 dropped [not-on-allowlist] — sender identity is unresolvable on the allowed_ilink_user_ids list
+17:30:59.299 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:59.300 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:30:59.300 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.300 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate fail-closed (1 allowed sender id(s))
+17:30:59.301 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: inbound message msg_1 dropped [not-on-allowlist] — sender identity is unresolvable on the allowed_ilink_user_ids list
+17:30:59.302 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:59.302 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.303 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate fail-closed (1 allowed sender id(s))
+17:30:59.303 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: inbound message msg_1 dropped [not-on-allowlist] — sender identity is not on the allowed_ilink_user_ids list
+17:30:59.304 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:59.304 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.305 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate fail-closed (1 allowed sender id(s))
+17:30:59.305 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: inbound message msg_1 dropped [not-on-allowlist] — sender identity is unresolvable on the allowed_ilink_user_ids list
+17:30:59.306 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:30:59.307 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.308 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.309 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: dropped [no-session-bound] — no session is bound to sender wx_none and no default session is configured
+17:30:59.311 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:59.312 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.312 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.312 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: dropped [no-text-body] — inbound message msg_1 has no text body, nothing injected
+17:30:59.314 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:59.314 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.315 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.315 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_alice -> session s1
+17:30:59.315 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: dropped [inject-failed] — inbound injection failed (RuntimeException: injected: peer leg failed), contained, the seam stays up
+17:30:59.316 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:59.316 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.317 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.317 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: dropped [no-session-bound] — no session is bound to sender wx_alice and no default session is configured
+17:30:59.319 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:59.319 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:30:59.319 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.320 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.321 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_new auto-bound to default session s_default
+17:30:59.321 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_new -> session s_default
+17:30:59.323 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:59.324 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.324 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.324 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: dropped [no-text-body] — inbound message msg_1 has no text body, nothing injected
+17:30:59.325 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:59.325 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.325 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.325 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_alice -> session s1
+17:30:59.325 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: dropped [inject-failed] — inbound injection failed (RuntimeException: injected: peer leg failed), contained, the seam stays up
+17:30:59.326 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: 1 sender id(s) bound to more than one session — the last binding wins
+17:30:59.326 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 2 sender id(s) bound to sessions
+17:30:59.326 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.327 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.327 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:30:59.328 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.328 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.330 [36mINFO [0m nebflow.bridge - Bridge plugin 'weixin-ilink' unregistered
+17:30:59.332 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> true)
+17:30:59.333 [36mINFO [0m nebflow.bridge - Bridge plugin 'weixin-ilink' unregistered
+17:30:59.333 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:30:59.334 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.334 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.334 [36mINFO [0m nebflow.bridge - Bridge plugin 'weixin-ilink' started
+17:30:59.336 [36mINFO [0m nebflow.bridge - Bridge plugin 'weixin-ilink' unregistered
+17:30:59.340 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:59.342 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:59.343 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:59.345 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:59.346 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:59.347 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.347 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.347 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_alice -> session s1
+17:30:59.352 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:59.352 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.352 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.354 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:59.354 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:30:59.355 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.356 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.356 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_new auto-bound to default session s_default
+17:30:59.356 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_new -> session s_default
+17:30:59.358 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:59.358 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:30:59.359 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.359 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.359 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_new auto-bound to default session s_default
+17:30:59.359 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_new -> session s_default
+17:30:59.359 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_new -> session s_default
+17:30:59.361 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:59.361 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:30:59.361 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.361 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.362 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_media auto-bound to default session s_default
+17:30:59.363 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:59.363 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:30:59.364 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.364 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.364 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender  -> session s_default
+17:30:59.367 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:30:59.367 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.367 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.367 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: dropped [no-session-bound] — no session is bound to sender wx_none and no default session is configured
+17:30:59.368 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:30:59.368 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.369 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.369 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_alice -> session s1
+17:30:59.370 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:59.370 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:30:59.370 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.371 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.371 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_new auto-bound to default session s_default
+17:30:59.371 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_new -> session s_default
+17:30:59.373 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:59.373 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:30:59.373 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.373 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.374 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender  -> session s_default
+17:30:59.377 [31mERROR[0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: reply for session s_default dropped [no-return-address] — no sender id is bound to this session, so the reply has no iLink target; escalated: user-visible reply loss (health strike recorded, text stashed for redelivery)
+17:30:59.382 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:30:59.382 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.382 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.385 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:59.385 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:30:59.386 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.386 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.386 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender  -> session s_default
+17:30:59.387 [31mERROR[0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: reply for session s_default dropped [no-return-address] — no sender id is bound to this session, so the reply has no iLink target; escalated: user-visible reply loss (health strike recorded, text stashed for redelivery)
+17:30:59.388 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_bob auto-bound to default session s_default
+17:30:59.388 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: redelivering a [no-return-address] dead letter to sender wx_bob (session s_default regained a return address)
+17:30:59.388 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_bob -> session s_default
+17:30:59.390 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:30:59.390 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:30:59.390 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:30:59.391 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:30:59.391 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender  -> session s_default
+17:30:59.393 [31mERROR[0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: reply for session s_default dropped [no-return-address] — no sender id is bound to this session, so the reply has no iLink target; escalated: user-visible reply loss (health strike recorded, text stashed for redelivery)
+17:31:00.401 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:31:00.402 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:31:00.402 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:31:00.403 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:31:00.403 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_old auto-bound to default session s1
+17:31:00.403 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: stale dead letter for session s1 (1860s old) — dropped, not redelivered
+17:31:00.403 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_old -> session s1
+17:31:00.407 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:31:00.407 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:31:00.408 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:31:00.408 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:31:00.408 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: redelivering a [no-return-address] dead letter to sender wx_carol (session s1 regained a return address)
+17:31:00.409 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:31:00.409 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:31:00.410 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:31:00.410 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:31:00.410 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:31:00.410 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender  -> session s_default
+17:31:00.411 [31mERROR[0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: reply for session s_default dropped [no-return-address] — no sender id is bound to this session, so the reply has no iLink target; escalated: user-visible reply loss (health strike recorded, text stashed for redelivery)
+17:31:01.413 [31mERROR[0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: reply for session s_default dropped [no-return-address] — no sender id is bound to this session, so the reply has no iLink target; escalated: user-visible reply loss (health strike recorded, text stashed for redelivery)
+17:31:01.417 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> true)
+17:31:01.420 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:31:01.424 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled true -> true)
+17:31:01.433 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:31:01.434 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:31:01.434 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:31:01.435 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_alice -> session s1
+17:31:01.437 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:31:01.438 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:31:01.439 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:31:01.439 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: media m_media path missing at injection (/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-weixin-media-gone-18275680659014906156/never-landed.png) — fail-closed degrade to the placeholder label, still delivered
+17:31:01.439 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_alice -> session s1
+17:31:01.448 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:31:01.448 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:31:01.448 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:31:01.449 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:31:01.449 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_new auto-bound to default session s_default
+17:31:01.449 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_new -> session s_default
+17:31:01.456 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'weixin-ilink' config written (enabled <absent> -> <absent>)
+17:31:01.456 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:31:01.456 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:31:01.457 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:31:01.457 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender  -> session s_default
+17:31:01.458 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 0 sender id(s) bound to sessions
+17:31:01.458 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:31:01.458 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:31:01.458 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: dropped [no-session-bound] — no session is bound to sender wx_none and no default session is configured
+17:31:01.459 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:31:01.460 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:31:01.460 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate fail-closed (1 allowed sender id(s))
+17:31:01.460 [33mWARN [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: inbound message m_media dropped [not-on-allowlist] — sender identity is not on the allowed_ilink_user_ids list
+[32mnebflow.social.WeixinIlinkBridgeSpec:[0m
+[32m  + [0m[32mWI-G1 empty allowlist ⇒ unrestricted: an unknown sender with a binding passes[0m [90m0.007s[0m
+[32m  + [0m[32mWI-G2 non-empty allowlist + listed sender ⇒ injected into the bound session[0m [90m0.003s[0m
+[32m  + [0m[32mWI-G3 non-empty allowlist + sender OFF the list ⇒ dropped, nothing injected[0m [90m0.001s[0m
+[32m  + [0m[32mWI-G4 non-empty allowlist + UNRESOLVABLE sender identity ⇒ dropped (fail-closed)[0m [90m0.002s[0m
+[32m  + [0m[32mWI-G4b the fail-closed arm is ordered FIRST: it also rules the default-session arm[0m [90m0.003s[0m
+[32m  + [0m[32mWI-G3L a sender OFF the allowlist really logs its drop line (not a dead IO[IO[Unit]])[0m [90m0.002s[0m
+[32m  + [0m[32mWI-G4L an UNRESOLVABLE sender really logs its drop line (the fail-closed arm is observable)[0m [90m0.002s[0m
+[32m  + [0m[32mWI-R1L the no-session-bound drop is observable too (that arm logs)[0m [90m0.005s[0m
+[32m  + [0m[32mWI-R3L the no-text-body drop is observable too (that arm logs)[0m [90m0.003s[0m
+[32m  + [0m[32mWI-R4L the contained injection failure is observable (crash isolation is not silent)[0m [90m0.002s[0m
+[32m  + [0m[32mWI-R1 no binding + no default session ⇒ dropped, nothing injected[0m [90m0.002s[0m
+[32m  + [0m[32mWI-R2 no binding + a configured default session ⇒ injected there (cold read of the config)[0m [90m0.005s[0m
+[32m  + [0m[32mWI-R3 a message with no text body is never fabricated into a text injection[0m [90m0.002s[0m
+[32m  + [0m[32mWI-R4 crash isolation: a raising injectMessage is contained into a drop, never escapes[0m [90m0.002s[0m
+[32m  + [0m[32mWI-R5 routing rebuild reads only weixin-ilink bindings; duplicate sender id = last wins[0m [90m0.001s[0m
+[32m  + [0m[32mWI-R6 a blank ilink_user_id in a binding is not routable[0m [90m0.001s[0m
+[32m  + [0m[32mWI-R7 deliver before start ⇒ dropped(adapter-not-started), no exception[0m [90m0.001s[0m
+[32m  + [0m[32mWI-P1 parseInbound accepts senderId and the peer spelling from_user_id; a missing key stays None[0m [90m0.001s[0m
+[32m  + [0m[32mWI-A1 sync: disabled or unverified ⇒ not registered; enabled ∧ verified ⇒ registered and started[0m [90m0.005s[0m
+[32m  + [0m[32mWI-A2 sync with a disabled card unregisters a previously registered seam[0m [90m0.001s[0m
+[32m  + [0m[32mWI-F1 the weixin-ilink card matches the contract field by field, in order[0m [90m0.002s[0m
+[32m  + [0m[32mWI-F2 the wechat card's field set is UNCHANGED (regression lock)[0m [90m0.0s[0m
+[32m  + [0m[32mWI-F3 channel id set: wechat unchanged and weixin-ilink present exactly once[0m [90m0.001s[0m
+[32m  + [0m[32mWI-F4 read side: the new card renders in channelsJson with its stored fields[0m [90m0.0s[0m
+[32m  + [0m[32mWI-F5 the gate reads the stored card, and an unset field means unrestricted[0m [90m0.002s[0m
+[32m  + [0m[32mWI-B1 a real baseurl WITH a path is accepted (the bare-prefix spelling used to reject it)[0m [90m0.001s[0m
+[32m  + [0m[32mWI-B2 a non-URL baseurl is STILL refused (the fix did not open the gate)[0m [90m0.0s[0m
+[32m  + [0m[32mWI-B3 an EMPTY baseurl is accepted (optional field — presence is what gets matched)[0m [90m0.001s[0m
+[32m  + [0m[32mWI-B4 the SECOND validation path reads the same pattern (one source, not two)[0m [90m0.002s[0m
+[32m  + [0m[32mWI-S1 the weixin inbound injection announces its OWN origin (id + display label), not feishu's[0m [90m0.004s[0m
+[32m  + [0m[32mWI-S2 the label rides the marker template: the rendered block names this channel only[0m [90m0.002s[0m
+[32m  + [0m[32mWI-S3 toolEnd stays a no-op on the outbound leg (weixin-outbound batch: text replies only)[0m [90m0.002s[0m
+[32m  + [0m[32mWI-AB1 an unbound sender + a default session ⇒ auto-binds (source=auto + boundAt), then injects there[0m [90m0.004s[0m
+[32m  + [0m[32mWI-AB2 the second message from an auto-bound sender rides the binding; no re-bind[0m [90m0.003s[0m
+[32m  + [0m[32mWI-AB3 a no-text (media) message from a new sender STILL binds (the address precedes the body)[0m [90m0.002s[0m
+[32m  + [0m[32mWI-AB4 an UNRESOLVABLE sender never mints a binding (an empty key would hijack every anonymous sender)[0m [90m0.004s[0m
+[32m  + [0m[32mWI-AB5 no default session ⇒ the drop arm is unchanged and writes zero bindings[0m [90m0.002s[0m
+[32m  + [0m[32mWI-AB6 an explicitly bound sender's intake never touches the binding plane[0m [90m0.001s[0m
+[32m  + [0m[32mWI-AB7 the auto-binding closes the loop: the UNCHANGED outbound reverse read now resolves the sender[0m [90m0.002s[0m
+[32m  + [0m[32mWI-NR1 a SERVED session's no-return-address drop escalates: health strike + dead-letter stash, no send[0m [90m0.009s[0m
+[32m  + [0m[32mWI-NR2 a never-served session's drop stays QUIET: no strike, no stash (it is not weixin traffic)[0m [90m0.003s[0m
+[32m  + [0m[32mWI-NR3 the sender's FIRST registration redelivers the dead letter (auto-bind arm)[0m [90m0.005s[0m
+[32m  + [0m[32mWI-NR4 a successful reply clears the session's strike (the channel face returns to green)[0m [90m1.01s[0m
+[32m  + [0m[32mWI-NR5 an expired dead letter is dropped, not redelivered[0m [90m0.005s[0m
+[32m  + [0m[32mWI-NR6 the rebuilt routing table redelivers too (the save/REST binding face)[0m [90m0.005s[0m
+[32m  + [0m[32mWI-NR7 repeated drops accumulate the strike count, firstAt stable, letter = latest[0m [90m1.006s[0m
+[32m  + [0m[32mWI-F6 the panel face carries bindError + health; a fresh bind-attempt save clears the bindError (the error lives until the user tries again)[0m [90m0.01s[0m
+[32m  + [0m[32mWI-M1 parseInbound carries the four media fields; absent ⇒ None; unknown fields still ignored[0m [90m0.002s[0m
+[32m  + [0m[32mWI-M2 mediaLabel/mediaLine: kind map (image/video/file/absent/garbage) and the exact wording[0m [90m0.002s[0m
+[32m  + [0m[32mWI-M3 a landed media path injects the media line, replacing the shim's placeholder label[0m [90m0.007s[0m
+[32m  + [0m[32mWI-M4 a media path missing at injection fails CLOSED: the bare label is injected (still delivered)[0m [90m0.01s[0m
+[32m  + [0m[32mWI-M5 a media message from a NEW sender auto-binds (semantics unchanged) AND injects the media line[0m [90m0.004s[0m
+[32m  + [0m[32mWI-M6 an UNRESOLVABLE sender's media message rides the default-session fallback (no binding, media line)[0m [90m0.007s[0m
+[32m  + [0m[32mWI-M7 a media message with NO session to serve it drops as before (the media arm adds no routing)[0m [90m0.002s[0m
+[32m  + [0m[32mWI-M8 a media message OFF the allowlist is still gated FIRST (the gate rules the media arm too)[0m [90m0.001s[0m
+[32mnebflow.social.FeishuChannelSpec:[0m
+[32m  + [0m[32mtextOf extracts the body only for message_type=text[0m [90m0.001s[0m
+[32m  + [0m[32mtextOf keeps unicode and embedded quotes intact[0m [90m0.0s[0m
+[32m  + [0m[32minboundFrom builds a message from complete getter values[0m [90m0.001s[0m
+[32m  + [0m[32minboundFrom refuses to fabricate a message when ids are absent[0m [90m0.0s[0m
+[32m  + [0m[32minboundFrom tolerates a missing eventId and a non-text body[0m [90m0.001s[0m
+[32m  + [0m[32mInbound.toJson carries no credential field[0m [90m0.001s[0m
+[32m  + [0m[32mtextSendBody encodes content as a STRING, not a nested object[0m [90m0.0s[0m
+[32m  + [0m[32mtextSendBody escapes quotes and unicode so the payload stays one line[0m [90m0.0s[0m
+[32m  + [0m[32mlegacy flat feishu.json is read (appId/appSecret camelCase)[0m [90m0.002s[0m
+[32m  + [0m[32mcredential toString and rendering never expose the secret[0m [90m0.001s[0m
+[32m  + [0m[32ma present-but-incomplete legacy file is an error, not a silent fallthrough[0m [90m0.003s[0m
+[32m  + [0m[32mresolution order: a complete schema credential WINS over a legacy flat file (schema-first)[0m [90m0.002s[0m
+[32m  + [0m[32mresolution order: no schema entry falls back to the legacy flat file[0m [90m0.001s[0m
+[32m  + [0m[32mresolution order: a schema entry WITHOUT credential keys does not shadow a usable legacy file[0m [90m0.001s[0m
+[32m  + [0m[32mschema-side resolution reads app_id inline and app_secret via its _ref path[0m [90m0.002s[0m
+[32m  + [0m[32mmissing credential reports both candidate locations[0m [90m0.002s[0m
+[32m  + [0m[32maclReading reports modeOk true for rw------- and false for a wide mode[0m [90m0.001s[0m
+[32m  + [0m[32maclReading never returns file content[0m [90m0.001s[0m
+[32m  + [0m[32mthe offline spec never reaches the network: reading the real home is not attempted[0m [90m0.001s[0m
+17:31:01.506 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:31:01.506 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:31:01.507 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:31:01.509 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: ask cancelled by keyword requestId=asknb-wx1 root=s1 sender=wx_alice
+17:31:01.511 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:31:01.511 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:31:01.511 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:31:01.512 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: ask answer forwarded requestId=asknb-wx2 root=s1 answers=1
+17:31:01.513 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: routing table rebuilt — 1 sender id(s) bound to sessions
+17:31:01.513 [36mINFO [0m nebflow.social.weixin-outbound - weixin outbound: send token regenerated at secrets/weixin-ilink-send-token (owner-only)
+17:31:01.513 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: seam up — routing table rebuilt, sender gate unrestricted (allowed_ilink_user_ids is empty)
+17:31:01.514 [36mINFO [0m nebflow.social.weixin-ilink-bridge - weixin-ilink bridge: sender wx_alice -> session s1
+17:31:01.516 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:01.516 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: ask cancelled by keyword requestId=asknb-fs1 session=root-1
+17:31:01.516 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: reply delivered to chat oc_a (om)
+17:31:01.518 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:01.518 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: cancel keyword ambiguous — 2 open asks for session root-1, refusing
+17:31:01.518 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: reply delivered to chat oc_a (om)
+17:31:01.519 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:01.520 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: chat oc_a -> session root-1
+[32mnebflow.social.AskCancelChannelSpec:[0m
+[32m  + [0m[32mWX-C1 在册 open 问 + 「取消问题」 ⇒ Verdict.Cancelled + cancel 面被调 + 回执行落 seam + 不注入会话[0m [90m0.007s[0m
+[32m  + [0m[32mWX-C2 在册 open 问 + 编号答复照常作答（取消臂不拦截合法答复）[0m [90m0.002s[0m
+[32m  + [0m[32mWX-C3 无在册问 + 「取消问题」 ⇒ 聊天透传（B-2：关键字不拦截不吞）[0m [90m0.002s[0m
+[32m  + [0m[32mFS-C1 恰一张在册问卡 + 「取消问题」 ⇒ 精确取消 + 回执行 + 不注入[0m [90m0.003s[0m
+[32m  + [0m[32mFS-C2 两张在册问卡 ⇒ 歧义拒绝线（绝不猜），零取消[0m [90m0.002s[0m
+[32m  + [0m[32mFS-C3 零在册问卡 + 「取消问题」 ⇒ 聊天透传（B-2），mcp 卡不计入[0m [90m0.001s[0m
+17:31:01.526 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled <absent> -> true)
+17:31:02.628 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled true -> true)
+17:31:02.632 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled <absent> -> true)
+17:31:02.632 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled true -> false)
+17:31:02.633 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled false -> true)
+17:31:02.634 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled <absent> -> true)
+17:31:02.635 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled true -> true)
+17:31:02.636 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled true -> false)
+17:31:02.637 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled <absent> -> <absent>)
+17:31:02.638 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled <absent> -> true)
+17:31:02.639 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled <absent> -> true)
+17:31:02.640 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled true -> true)
+17:31:02.641 [36mINFO [0m nebflow.social.channels - socialChannels: channel 'feishu' config written (enabled <absent> -> true)
+[32mnebflow.social.SocialChannelsBootSealSpec:[0m
+[32m  + [0m[32mA5-a body WITHOUT `enabled` keeps the stored switch true and merges the fields (no close semantics)[0m [90m1.106s[0m
+[32m  + [0m[32mA5-b an EXPLICIT `enabled:false` still lands false (explicit writes are honoured verbatim)[0m [90m0.003s[0m
+[32m  + [0m[32mA3 the archive body keeps the stored credential refs and only flips the switch[0m [90m0.003s[0m
+[32m  + [0m[32mA4 a channel that was NEVER stored keeps the `enabled` key ABSENT (no default-false trap)[0m [90m0.002s[0m
+[32m  + [0m[32mA1 golden explicit `enabled:true`: the switch is written and every other key of the file survives[0m [90m0.002s[0m
+[32m  + [0m[32mA2 fingerprint mismatch is a STATUS: the connection face reports it and rewrites nothing[0m [90m0.002s[0m
+17:31:02.651 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:02.659 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:02.661 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:02.664 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:02.670 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:02.672 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:02.673 [33mWARN [0m nebflow.social.outbound.feishu - outbound: image upload refused for /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-fa-w6b-11405466687517460100/shot.png (code=0)
+17:31:02.675 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:02.676 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:02.677 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:02.678 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:02.679 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:02.681 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:02.683 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:02.684 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:02.685 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: text answer forwarded requestId=rid-t1 root=root-1 answers=1
+17:31:02.686 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:02.686 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: text answer forwarded requestId=rid-t2 root=root-1 answers=1
+17:31:02.687 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: text answer forwarded requestId=rid-t2 root=root-1 answers=1
+17:31:02.687 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:02.688 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: text answer forwarded requestId=rid-t3 root=root-1 answers=2
+17:31:02.688 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: text answer forwarded requestId=rid-t3 root=root-1 answers=2
+17:31:02.689 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:02.689 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: chat oc_author -> session root-1
+17:31:02.690 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:02.690 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: ask text reply refused (编号超出范围，请按题面编号回复（多选用逗号；多问…) — the ONE line answers it
+17:31:02.690 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: reply delivered to chat oc_author (om-1)
+17:31:02.691 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:02.691 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: ask text reply ambiguous — 2 open asks for session root-1, refusing
+17:31:02.691 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: reply delivered to chat oc_author (om-1)
+17:31:02.691 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: chat oc_author -> session root-1
+17:31:02.693 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: routing table rebuilt — 1 chat(s) bound to sessions
+17:31:02.693 [36mINFO [0m nebflow.social.feishu-bridge - feishu bridge: chat oc_author -> session root-1
+[32mnebflow.social.FeishuAskWireSpec:[0m
+[32m  + [0m[32mFA-W1 askUser frame → ONE 1.0 card through the card seam; cache pinned[0m [90m0.009s[0m
+[32m  + [0m[32mFA-W2 LocalOnly (canvas question) → the numbered TEXT card, zero cards[0m [90m0.003s[0m
+[32m  + [0m[32mFA-W3 SendRejected on every card → ONE text fallback (the frozen chain)[0m [90m0.002s[0m
+[32m  + [0m[32mFA-W4 D-1 flatten: the unreachable question is NOT sent, its slot stays ""[0m [90m0.005s[0m
+[32m  + [0m[32mFA-W5 D-1 flatten is a FIXPOINT: a dropped question takes its dependents[0m [90m0.0s[0m
+[32m  + [0m[32mFA-W6 media split: carriable attachments ride the adapter MEDIA leg first; the card keeps only undelivered path lines[0m [90m0.004s[0m
+[32m  + [0m[32mFA-W6b media split degrade: a failed upload keeps the path line AND the adapter's own degrade text goes out[0m [90m0.002s[0m
+[32m  + [0m[32mFA-W7 askUserClosed clears the cache entry (a stale click then reads 已失效)[0m [90m0.001s[0m
+[32m  + [0m[32mFA-C1 allowlist gate: a click from a non-member is refused, nothing forwarded[0m [90m0.001s[0m
+[32m  + [0m[32mFA-C2 hub authority: an unknown/answered requestId toasts 已失效 (A5 — no second ledger)[0m [90m0.001s[0m
+[32m  + [0m[32mFA-C3 chat-mismatch: a click from another chat is refused[0m [90m0.002s[0m
+[32m  + [0m[32mFA-C4 happy click → Answered forwarded (fixed-length slots) + A4 card update, no toast[0m [90m0.001s[0m
+[32m  + [0m[32mFA-C5 A5 degrade: cache miss + hub open → answer proceeds, click re-pins the chat[0m [90m0.002s[0m
+[32m  + [0m[32mFA-C6 an Other click forwards the empty-slot semantics and shows the button label[0m [90m0.002s[0m
+[32m  + [0m[32mFA-T1 one open ask + bare number → the answer is forwarded, never injected, no receipt text[0m [90m0.001s[0m
+[32m  + [0m[32mFA-T2 exact option label answers with case/whitespace tolerance[0m [90m0.002s[0m
+[32m  + [0m[32mFA-T3 a duplicate label resolves to the FIRST question carrying it; 问.编 addressing still works[0m [90m0.001s[0m
+[32m  + [0m[32mFA-T4 non-ask text on an open ask falls through untouched (不误吞)[0m [90m0.001s[0m
+[32m  + [0m[32mFA-T5 out-of-range number on the open ask → the ONE refusal line, nothing forwarded, not injected[0m [90m0.001s[0m
+[32m  + [0m[32mFA-T6 several open asks: an answer-shaped text is refused with the ambiguous line; chat text still injects[0m [90m0.002s[0m
+[32m  + [0m[32mFA-T7 zero open asks → a digit is plain chat (the arm never fires)[0m [90m0.001s[0m
+[info] Passed: Total 392, Failed 0, Errors 0, Passed 392
+[success] Total time: 33 s, completed 2026年10月20日 17:31:02

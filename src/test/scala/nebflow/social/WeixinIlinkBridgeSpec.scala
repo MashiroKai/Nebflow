@@ -864,6 +864,247 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     )
   }
 
+  // ───────── bind-transactional 批 (2026-10-20): the no-return-address escalation face ─────────
+  //
+  // The 2026-10-20 incident: a half-bound session (served by the default-session
+  // fallback, never bound) lost every reply on [no-return-address], silently.
+  // The new contract: a SERVED session's drop escalates — ERROR log, a health
+  // strike on `channels[].health` (the panel marks the channel), the text
+  // stashed as a dead letter that the sender's FIRST registration redelivers;
+  // a never-served session's drop stays quiet (it is not weixin traffic —
+  // dispatchAgentEvent fans every session to every plugin).
+
+  /**
+   * A context whose session list is mutable — the refreshRoutes redelivery leg
+   * needs a binding to APPEAR after start (the save/REST binding face).
+   */
+  private final class VarCtx(sessionsRef: Ref[IO, List[SessionMeta]]) extends BridgeContext:
+    val bound: Ref[IO, List[(String, String, Json)]] = Ref.unsafe[IO, List[(String, String, Json)]](Nil)
+    def injectMessage(
+      sessionId: String,
+      content: String,
+      senderId: Option[String],
+      origin: Option[nebflow.bridge.BridgeOrigin] = None
+    ): IO[Unit] = IO.unit
+    def interruptAgent(sessionId: String): IO[Unit] = IO.unit
+    def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
+    def listSessions: IO[List[SessionMeta]] = sessionsRef.get
+    def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] =
+      config.fold(IO.unit)(c => bound.update(_ :+ ((sessionId, platform, c))))
+
+  /** The escalated-drop setup: an unresolvable sender served by the default session. */
+  private def servedDropFixture(root: os.Path, calls: Ref[IO, List[(String, String)]]): IO[WeixinIlinkBridgePlugin] =
+    for
+      _ <- IO(SocialChannels.setDefaultSessionId(root, WeixinIlinkBridgePlugin.Name, Some("s_default")))
+      c = new RecordingCtx(Nil)
+      p = pluginWithRecorder(root, calls)
+      _ <- p.start(c)
+      // senderId = None ⇒ routeKey empty ⇒ the default-session fallback arm —
+      // injected, nothing persisted, the session is SERVED but has no route
+      v <- p.intake(c, inbound(None))
+      _ = assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Injected("s_default"))
+    yield p
+
+  private def strikesOf(root: os.Path): List[Json] =
+    SocialChannels
+      .channelHealth(root, WeixinIlinkBridgePlugin.Name)
+      .flatMap(_.hcursor.downField("strikes").as[List[Json]].toOption)
+      .getOrElse(Nil)
+
+  test("WI-NR1 a SERVED session's no-return-address drop escalates: health strike + dead-letter stash, no send") {
+    val calls = Ref.unsafe[IO, List[(String, String)]](Nil)
+    val root = tmpRoot()
+    for
+      p <- servedDropFixture(root, calls)
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "the answer".asJson))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
+      got <- calls.get
+      _ = assertEquals(got, Nil, "no route, no send — the drop stands")
+      served <- p.servedRef.get
+      _ = assert(served.contains("s_default"), "the session was served by this seam")
+      strikes = strikesOf(root)
+      _ = assertEquals(strikes.size, 1, "exactly one strike on the health face")
+      s0 = strikes.head
+      _ = assertEquals(s0.hcursor.downField("reason").as[String].toOption, Some(WeixinIlinkBridgePlugin.ReasonNoReturnAddress))
+      _ = assertEquals(s0.hcursor.downField("sessionId").as[String].toOption, Some("s_default"))
+      _ = assertEquals(s0.hcursor.downField("count").as[Long].toOption, Some(1L))
+      _ = assert(s0.hcursor.downField("firstAt").as[Long].toOption.isDefined)
+      dropped <- p.droppedRef.get
+      _ = assertEquals(
+        dropped.get("s_default").map(_.text),
+        Some("the answer"),
+        "the lost reply is stashed for redelivery"
+      )
+    yield ()
+  }
+
+  test("WI-NR2 a never-served session's drop stays QUIET: no strike, no stash (it is not weixin traffic)") {
+    val calls = Ref.unsafe[IO, List[(String, String)]](Nil)
+    val root = tmpRoot()
+    val c = new RecordingCtx(Nil)
+    val p = pluginWithRecorder(root, calls)
+    for
+      _ <- p.start(c)
+      // a pure-local session's turn ends; dispatch fans it to this plugin too
+      _ <- p.onAgentEvent("local_only", Json.obj("type" -> "textDelta".asJson, "delta" -> "unrelated".asJson))
+      _ <- p.onAgentEvent("local_only", Json.obj("type" -> "done".asJson))
+      got <- calls.get
+      _ = assertEquals(got, Nil)
+      _ = assertEquals(strikesOf(root), Nil, "no health strike for traffic this channel never served")
+      dropped <- p.droppedRef.get
+      _ = assertEquals(dropped.get("local_only"), None, "no dead letter for traffic this channel never served")
+    yield ()
+  }
+
+  test("WI-NR3 the sender's FIRST registration redelivers the dead letter (auto-bind arm)") {
+    val calls = Ref.unsafe[IO, List[(String, String)]](Nil)
+    val root = tmpRoot()
+    for
+      p <- servedDropFixture(root, calls)
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "the answer".asJson))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
+      before <- calls.get
+      _ = assertEquals(before, Nil)
+      // a REAL sender arrives: auto-bind to the same default session ⇒ the
+      // session regained a return address ⇒ the stashed reply goes out, marked
+      c = new RecordingCtx(Nil)
+      _ <- p.intake(c, inbound(Some("wx_bob")))
+      got <- calls.get
+      _ = assertEquals(
+        got,
+        List(("wx_bob", WeixinIlinkBridgePlugin.RedeliveryPrefix + "the answer")),
+        "the dead letter rides the auto-bind's first registration"
+      )
+      dropped <- p.droppedRef.get
+      _ = assertEquals(dropped.get("s_default"), None, "the letter is consumed")
+    yield ()
+  }
+
+  test("WI-NR4 a successful reply clears the session's strike (the channel face returns to green)") {
+    val calls = Ref.unsafe[IO, List[(String, String)]](Nil)
+    val root = tmpRoot()
+    for
+      p <- servedDropFixture(root, calls)
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "lost".asJson))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
+      _ = assertEquals(strikesOf(root).size, 1, "precondition: the strike is on")
+      // the return address appears (a manual binding face) and the next flush lands
+      _ <- p.routesRef.update(_.updated("wx_carol", "s_default"))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "found".asJson))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
+      got <- calls.get
+      _ = assertEquals(got, List(("wx_carol", "found")), "the reply goes out")
+      _ = assertEquals(strikesOf(root), Nil, "the strike cleared on the successful send")
+    yield ()
+  }
+
+  test("WI-NR5 an expired dead letter is dropped, not redelivered") {
+    val calls = Ref.unsafe[IO, List[(String, String)]](Nil)
+    val root = tmpRoot()
+    for
+      _ <- IO(SocialChannels.setDefaultSessionId(root, WeixinIlinkBridgePlugin.Name, Some("s1")))
+      c = new RecordingCtx(Nil)
+      p = pluginWithRecorder(root, calls)
+      _ <- p.start(c)
+      _ <- p.droppedRef.update(
+        _ + ("s1" -> WeixinIlinkBridgePlugin.DroppedReply(
+          "stale",
+          System.currentTimeMillis() - (WeixinIlinkBridgePlugin.DroppedReplyTtl.toMillis + 60000)))
+      )
+      _ <- p.intake(c, inbound(Some("wx_old")))
+      got <- calls.get
+      _ = assertEquals(got, Nil, "a half-hour-old reply is stale noise — not redelivered")
+      dropped <- p.droppedRef.get
+      _ = assertEquals(dropped.get("s1"), None, "the expired letter is consumed either way")
+    yield ()
+  }
+
+  test("WI-NR6 the rebuilt routing table redelivers too (the save/REST binding face)") {
+    val calls = Ref.unsafe[IO, List[(String, String)]](Nil)
+    val root = tmpRoot()
+    for
+      sessionsRef <- Ref.of[IO, List[SessionMeta]](Nil)
+      c = new VarCtx(sessionsRef)
+      p = pluginWithRecorder(root, calls)
+      _ <- p.start(c) // boot: empty table, no letters, no sends
+      _ <- p.droppedRef.update(_ + ("s1" -> WeixinIlinkBridgePlugin.DroppedReply("via rest")))
+      _ <- sessionsRef.set(List(meta("s1", Some("wx_carol"))))
+      _ <- p.refreshRoutes
+      got <- calls.get
+      _ = assertEquals(
+        got,
+        List(("wx_carol", WeixinIlinkBridgePlugin.RedeliveryPrefix + "via rest")),
+        "a binding written behind the bridge's back still triggers the redelivery on the next rebuild"
+      )
+      // a rebuild with NO change redelivers nothing (the letter is gone)
+      _ <- p.refreshRoutes
+      got2 <- calls.get
+      _ = assertEquals(got2, got, "idempotent: no second send")
+    yield ()
+  }
+
+  test("WI-NR7 repeated drops accumulate the strike count, firstAt stable, letter = latest") {
+    val calls = Ref.unsafe[IO, List[(String, String)]](Nil)
+    val root = tmpRoot()
+    for
+      p <- servedDropFixture(root, calls)
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "first".asJson))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
+      first :: Nil = strikesOf(root): @unchecked
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "second".asJson))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
+      second :: Nil = strikesOf(root): @unchecked
+      _ = assertEquals(second.hcursor.downField("count").as[Long].toOption, Some(2L), "the count accumulates")
+      _ = assertEquals(
+        second.hcursor.downField("firstAt").as[Long].toOption,
+        first.hcursor.downField("firstAt").as[Long].toOption,
+        "firstAt is the FIRST drop, not the latest"
+      )
+      dropped <- p.droppedRef.get
+      _ = assertEquals(dropped.get("s_default").map(_.text), Some("second"), "the letter is the LATEST drop")
+    yield ()
+  }
+
+  test(
+    "WI-F6 the panel face carries bindError + health; a fresh bind-attempt save clears the bindError " +
+      "(the error lives until the user tries again)"
+  ) {
+    val root = tmpRoot()
+    for
+      _ <- IO(SocialChannels.save(root, "weixin-ilink", Json.obj("enabled" -> true.asJson, "fields" -> Json.obj())))
+      _ <- IO(SocialChannels.setBindError(root, "weixin-ilink", Some("provision failed after retries: attempt 4: exit 5")))
+      _ <- IO(
+        SocialChannels.writeChannelHealth(
+          root,
+          "weixin-ilink",
+          Json.obj(
+            "channel" -> "weixin-ilink".asJson,
+            "updatedAt" -> 1L.asJson,
+            "strikes" -> List(Json.obj("reason" -> "no-return-address".asJson, "sessionId" -> "s1".asJson)).asJson
+          )
+        )
+      )
+      payload = SocialChannels.channelsJson(root)
+      ch = payload.hcursor.downField("channels").downField("weixin-ilink")
+      _ = assertEquals(
+        ch.downField("bindError").as[String].toOption,
+        Some("provision failed after retries: attempt 4: exit 5"),
+        "the explicit panel error"
+      )
+      health = ch.downField("health").focus
+      _ = assert(
+        health.exists(_.hcursor.downField("strikes").as[List[Json]].toOption.getOrElse(Nil).sizeIs == 1),
+        "the health face rides the same payload"
+      )
+      // a fresh save (the next binding attempt) rebuilds the entry: the error
+      // clears, the stored fields survive
+      _ <- IO(SocialChannels.save(root, "weixin-ilink", Json.obj("enabled" -> true.asJson, "fields" -> Json.obj())))
+      after = SocialChannels.channelsJson(root).hcursor.downField("channels").downField("weixin-ilink")
+      _ = assertEquals(after.downField("bindError").as[String].toOption, None, "stale error cleared by a new attempt")
+      _ = assert(after.downField("health").focus.isDefined, "health is config-independent (runtime face)")
+    yield ()
+  }
+
   // ─────────────── weixin-inbound-media batch: the media arm ───────────────
   //
   // The side-car lands image/file/video items on disk BEFORE delivery and
