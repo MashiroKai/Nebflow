@@ -1543,3 +1543,27 @@ body.mobile-layer #mobile-pages .plugins-card {
 body.mobile-layer #mobile-pages .plugins-card.blocked {
   opacity: 0.55;
 }
+
+/* ── P11 用量：摘要卡 2 列 + 热力图横滚 + 条带满宽 ───────────────────────
+   样张 P11 = 维度 seg → 四卡摘要 → 近 14 天条带 → 最耗模型条；实机 = 桌面
+   usage 面收编（r3 几何既有：全幅/无圆角）：#usage-summary 桌面 6 列 → 手机
+   2 列（四卡两行）；ud-curve（24h/14 天条带）满宽；52 周热力图桌面横向滚动
+   机制原样（样张「热力图留桌面」的桌面保留腿 = 横滚查看，不裁不伪）。 */
+body.mobile-layer #mobile-pages #usage-dashboard {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding: 12px 12px calc(24px + env(safe-area-inset-bottom, 0px));
+  gap: 12px;
+}
+body.mobile-layer #mobile-pages #usage-dashboard::-webkit-scrollbar { display: none; }
+body.mobile-layer #mobile-pages #usage-summary {
+  grid-template-columns: repeat(2, 1fr);
+}
+body.mobile-layer #mobile-pages .ud-select.glass-control {
+  max-width: 100%;
+}
+body.mobile-layer #mobile-pages .ud-curve {
+  max-width: 100%;
+  overflow: hidden;
+}
