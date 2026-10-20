@@ -77,7 +77,19 @@ private[tools] class JobHealth(
    * stderr 行回调调用。仅后台路径（executeBackground）注入 BgTaskOutputStore
    * 缓冲 sink；前台/默认 no-op（前台输出直接随 ProcessResult 返回，无需缓冲）。
    */
-  val outputSink: String => Unit = _ => ()
+  val outputSink: String => Unit = _ => (),
+  /**
+   * main-agent-nonblocking 批（2026-10-21 作者裁定「主 agent 一点不能阻塞」）：
+   * 本前台执行已被 adoptAsBackgroundJob 收编为后台任务的单向旗。
+   *
+   * 写点唯一 = `ShellSession.adoptAsBackgroundJob`（转后台瞬间置位）。读点 =
+   * `foregroundNoProgressWatch`（前台 no-progress ceiling 的每窗采样头）：
+   * 置位即**停止看护、永不杀**。为什么必须存在：ceiling fiber 在 runProcess
+   * 内以 `isBackground=false` 起跑，转后台收编**不会**重启该 fiber——若无本旗，
+   * 收编后的后台任务仍会被 ceiling 按「零输出零 CPU 满 600s」杀掉，违反裁定
+   * 「转后台不杀进程、后台任务豁免停滞杀」。
+   */
+  val adoptedAsBackground: AtomicBoolean = new AtomicBoolean(false)
 )
 
 /** Snapshot of a running background job's health. */
@@ -699,6 +711,10 @@ final class ShellSession private (
       // window CPU increment over Defaults.ForegroundCpuProgressNanos) resets
       // the window, so long builds and test suites run to completion
       // (#319 preserved).
+      // main-agent-nonblocking 批（2026-10-21 作者裁定）语义收缩：默认前台预算
+      // （ForegroundWaitBudgetMs = 120s）< 本 ceiling（600s）⇒ 缺省面本 ceiling
+      // 结构性不可达（预算到点先转后台）；剩余管辖 = 前台阶段真挂死兜底（仅当
+      // 作者把预算调大于 600s）+ 收编即退役（adoptedAsBackground 旗，见下）。
       def foregroundNoProgressWatch: IO[Unit] =
         def watch(lastLines: Int, lastCpu: Long, idleMs: Long): IO[Unit] =
           IO.sleep(ForegroundSampleInterval) *> IO {
@@ -707,7 +723,17 @@ final class ShellSession private (
             val cpu = if alive then sampleProcessCpuTime(proc) else 0L
             (alive, lines, cpu)
           }.flatMap { (alive, lines, cpu) =>
-            if !alive then IO.unit
+            // main-agent-nonblocking 批（2026-10-21 作者裁定「主 agent 一点不能
+            // 阻塞」）：本前台执行已被收编为后台任务 ⇒ ceiling **立即退役**（下一
+            // 采样窗静默退出，不再杀树）。语义收缩后本 ceiling 的剩余管辖面 = 仅
+            // 前台阶段（默认预算 120s < 本 ceiling 600s ⇒ 缺省面结构性不可达，
+            // 自然消亡；作者把预算调大于 600s 时作为前台真挂死兜底保留）。后台
+            // 任务的停滞面归 B1（只提醒）/ B2（已被 NoHardTimeout 哨兵豁免）。
+            if h.adoptedAsBackground.get() then
+              shellLogger.info(
+                s"Foreground no-progress ceiling retired — command adopted as background job: ${command.take(80)}"
+              )
+            else if !alive then IO.unit
             // Strictly-greater: macOS `ps` time quantizes to centiseconds —
             // one quantum (10ms) EQUALS the bridge's threshold.
             // 换轴（阈值解耦）：本 ceiling 的「有 CPU 进展」判据改用
@@ -868,8 +894,10 @@ final class ShellSession private (
   end startHeartbeat
 
   /**
-   * Auto-background policy ("no hard cap; auto-background at
-   * 60min; backgrounded commands have no limit"): adopt an ALREADY-RUNNING
+   * Auto-background policy ("no hard cap; auto-background at the foreground
+   * wait budget — main-agent-nonblocking 批：默认 120s，作者可调，见
+   * Defaults.ForegroundWaitBudgetMs; backgrounded commands have no limit"):
+   * adopt an ALREADY-RUNNING
    * foreground execution as a background job. Isomorphic to the registration
    * half of executeBackground (BackgroundJob entry + heartbeat + B1 sensor +
    * on_complete callback), with two differences:
@@ -901,6 +929,11 @@ final class ShellSession private (
     lifecycleMutex.lock.surround {
       for
         _ <- checkAlive *> touch
+        // main-agent-nonblocking（2026-10-21 作者裁定「转后台不杀」）：收编瞬间
+        // 置位 ⇒ 前台 no-progress ceiling 下一采样窗静默退役（见 JobHealth.
+        // adoptedAsBackground / foregroundNoProgressWatch）——收编后的任务与
+        // 原生后台任务（isBackground=true，ceiling 从不起跑）同豁免面。
+        _ <- IO(health.adoptedAsBackground.set(true))
         deferred <- Deferred[IO, Either[Throwable, ProcessResult]]
         watcher <- fiber.join
           .flatMap {

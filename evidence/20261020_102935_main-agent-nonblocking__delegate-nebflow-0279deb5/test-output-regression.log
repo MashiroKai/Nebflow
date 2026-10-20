@@ -1,0 +1,35 @@
+sbt -batch "testOnly nebflow.core.tools.BashToolForegroundSpec nebflow.core.tools.BashAutoBackgroundSpec nebflow.core.tools.BashBackgroundHardTimeoutSpec nebflow.core.tools.BashPersistentBgTaskSpec"
+== 引擎既有 Bash 命令族回归（19/19 PASS，2026-10-20 10:42:51）==
+
+nebflow.core.tools.BashToolForegroundSpec:
+  + short foreground command returns real output (no conversion below the budget)  3.188s
+  + foreground command running >30s completes in the foreground (well below the 120s default budget)  35.849s
+  + foreground command running >60s completes in the foreground (default budget 120s far above; no time kill)  65.835s
+  + explicit timeout is a wait budget — long command auto-backgrounds instead of being killed (bashautobg)  10.86s
+  + orphaned pipe-holder no longer stalls the tool return (#22)  0.992s
+  + wait budget keeps the tree alive past the budget; explicit cancel kills it promptly (bashautobg)  2.247s
+
+nebflow.core.tools.BashAutoBackgroundSpec:
+  + A-1 explicit wait budget auto-backgrounds a still-running command (receipt + job id, process alive, result delivered on completion)  10.936s
+  + A-5 default threshold arm: MAX_TIMEOUT reads the compressible prop per call (default-arm plumbing)  0.009s
+  + A-2 waiting-type background task survives past the old 30min/4h hard cap (compressed config proves the wiring exemption)  9.398s
+  + A-3 adopted foreground execution: deferred + on_complete fire with the real output; health face same as native bg  3.056s
+  + A-4 adopted job explicit cancel kills the still-running process tree  1.105s
+
+nebflow.core.tools.BashBackgroundHardTimeoutSpec:
+  + B-1+B-4: background sleep 3600 killed by injected hard timeout + stuck window  6.753s
+  + B-2: CPU-busy background task survives idle exemption AND hard-timeout stall guard  7.01s
+  + B-3: output-then-stall background task killed after hard timeout + stuck window  7.159s
+
+nebflow.core.tools.BashPersistentBgTaskSpec:
+  + P1: persistent background sleep survives injected hard timeout + stall window (server exemption)  7.026s
+  + P2: non-persistent (waiting-type) same params still killed by guard — existing semantics unchanged  6.164s
+  + P3: BashTool inputSchema carries persistent guidance  0.093s
+  + P4: waitingFor matches own + root-scoped tasks, filters persistent  0.004s
+  + P5: markFailed/drainFailures consume-on-read, session-scoped, persists until drained  0.007s
+
+[info] Passed: Total 19, Failed 0, Errors 0, Passed 19
+
+回归结论（验收③）：引擎既有命令族零回归——短命令前台、35s/65s 中长命令前台
+（新缺省预算 120s 之下）、显式 timeout 转后台、orphan 管道面、adopt/cancel 面、
+后台 B1/B2 注入阈值面、persistent 豁免面全部保持。

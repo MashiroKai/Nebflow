@@ -9,15 +9,20 @@ import munit.CatsEffectSuite
 import scala.concurrent.duration.*
 
 /**
- * #319 (2026-08-19) + #26 (2026-08-30) + bashautobg (2026-09-25 author order):
- * foreground semantics. Historical note: #26 removed the old 300s auto-background
- * ("mechanism A") and made explicit timeouts kill. The 2026-09-25 author order
- * supersedes the time-kill half: there is NO time-based kill anymore — the
- * explicit `timeout` and the default 60min threshold are a foreground WAIT
- * BUDGET; a still-running command crossing it is auto-backgrounded (receipt with
- * a job id) and runs to completion (see BashAutoBackgroundSpec). Short commands
- * still complete in the foreground exactly as before; the only foreground kill
- * remains the no-progress ceiling (stall watchdog).
+ * #319 (2026-08-19) + #26 (2026-08-30) + bashautobg (2026-09-25 author order)
+ * + main-agent-nonblocking (2026-10-21 author ruling): foreground semantics.
+ * Historical note: #26 removed the old 300s auto-background ("mechanism A") and
+ * made explicit timeouts kill. The 2026-09-25 author order superseded the
+ * time-kill half: there is NO time-based kill anymore — a foreground WAIT
+ * BUDGET auto-backgrounds a still-running command (receipt with a job id) and
+ * it runs to completion (see BashAutoBackgroundSpec). The 2026-10-21 author
+ * ruling ("the main session must never block") shrank the default budget to
+ * Defaults.ForegroundWaitBudgetMs = 120s (author-adjustable via nebflow.json
+ * `bashForegroundWaitBudgetMs`); the explicit `timeout` is min-clamped to that
+ * budget. Short commands still complete in the foreground exactly as before
+ * (35s / 65s < 120s); the only foreground kill remains the no-progress ceiling
+ * (stall watchdog) — structurally unreachable while the budget stays below
+ * 600s.
  */
 class BashToolForegroundSpec extends CatsEffectSuite:
 
@@ -55,7 +60,7 @@ class BashToolForegroundSpec extends CatsEffectSuite:
     }
   }
 
-  test("foreground command running >30s completes in the foreground (well below the 60min budget)") {
+  test("foreground command running >30s completes in the foreground (well below the 120s default budget)") {
     runBash("sleep 35 && echo long-done").map {
       case Right(out) =>
         assert(out.contains("long-done"), s"should complete with real output: $out")
@@ -64,7 +69,7 @@ class BashToolForegroundSpec extends CatsEffectSuite:
     }
   }
 
-  test("foreground command running >60s completes in the foreground (budget default 60min far above; no time kill)") {
+  test("foreground command running >60s completes in the foreground (default budget 120s far above; no time kill)") {
     runBash("sleep 65 && echo long-done-65").map {
       case Right(out) =>
         assert(out.contains("long-done-65"), s"should complete with real output: $out")

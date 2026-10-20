@@ -403,10 +403,16 @@ case class NebflowServiceConfig(
    * 硬超时起点）、bashStuckWindowSec（默认 120s 停滞窗口）、
    * bashHealthCheckIntervalSec（默认 30s 健康检查间隔，测试/冒烟可注入小值
    * 加速验证）——只服务显式 run_in_background 后台任务。None → Defaults 值。
+   *
+   * main-agent-nonblocking 批（2026-10-21 作者裁定）新增
+   * `bashForegroundWaitBudgetMs`：前台等待预算 ms（默认 120s，作者可调）——
+   * 前台命令超预算即自动转后台（不杀、完成照旧通知），主 agent 前台零阻塞。
+   * 实例级一份（→ BashResilienceConfig.foregroundWaitBudgetMs → 全部会话）。
    */
   bashBackgroundHardTimeoutMs: Option[Long] = None,
   bashStuckWindowSec: Option[Int] = None,
   bashHealthCheckIntervalSec: Option[Int] = None,
+  bashForegroundWaitBudgetMs: Option[Long] = None,
   /**
    * 工具结果 TTL 清理（#341，tool-result-ttl 设计件）：顶层
    * toolResultTtl 节原样 JSON——ToolResultTtlConfig.load fail-safe 解析（非法

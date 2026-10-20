@@ -168,18 +168,53 @@ object Defaults:
   /**
    * Bash tool foreground auto-background threshold in ms (default 60 minutes).
    *
+   * main-agent-nonblocking 批（2026-10-21 作者裁定重申「主 agent 一点不能阻塞」）
+   * 语义收缩：本值不再是**前台预算的取值点**——前台预算迁往
+   * [[ForegroundWaitBudgetMs]]（默认 120s，短预算量级，作者裁定「默认建议 60-120s」）。
+   * 本值剩两个消费面：
+   *   1. BashTool 解析显式 `timeout` 入参时的上限钳（schema 契约 "max 3600000"
+   *      保持不变——钳的是入参字面，前台实际等待再经 [[ForegroundWaitBudgetMs]]
+   *      二次钳制）；
+   *   2. remote-exec 同步面的超时上限（该面按协议等远端真结果，不适用短预算）。
+   *
    * bashautobg batch (2026-09-25 author order: "the hard cap should not exist;
    * auto-move to background at 60min; backgrounded commands have no limit"):
-   * this value is no longer a kill line. A foreground command still running when
-   * this threshold (or an explicit `timeout`, clamped to it) is reached is
-   * adopted into the session's background registry and the tool returns a
-   * background receipt immediately; the process keeps running and the result is
-   * delivered on completion. I2-style prop face: system prop
+   * this value is no longer a kill line. I2-style prop face: system prop
    * `nebflow.bash.maxTimeoutMs`, read at every call so specs can compress the
    * threshold (kill-switch precedent: ForegroundSampleIntervalMs).
    */
   def BashMaxTimeoutMs: Long =
     sys.props.getOrElse("nebflow.bash.maxTimeoutMs", "3600000").toLong
+
+  /**
+   * Bash 前台等待预算（ms，默认 120000 = 120s）——**主 agent 前台零阻塞**的取值点。
+   *
+   * main-agent-nonblocking 批（2026-10-21 作者裁定重申）：作者当日两次实撞——前台
+   * 克隆 1GB+ 大仓无输出运行，60min 前台预算（旧 BashMaxTimeoutMs 缺省）从未到点，
+   * 600s 无输出停滞阈值（ForegroundNoProgressTimeoutMs）先触发把进程**杀**掉，
+   * 主会话每次硬冻结 10 分钟。裁定：前台命令运行超过**短预算**（作者可调，建议
+   * 60-120s 量级）即自动转后台（拿后台 job id 回执继续跑，完成照旧通知；不杀进程）。
+   *
+   * 语义要点：
+   *   - 判据 = **时间**，与输出活性无关——有输出的长命令同样在预算到点转后台，
+   *     不因「还在吐进度」占着主会话（实现 = exec fiber 与预算 sleep 的 racePair，
+   *     天然只看时间）；
+   *   - 显式 `timeout` 入参**收窄**到本值（min），不能越过作者的零阻塞裁定；
+   *   - 预算到点 → adoptAsBackgroundJob（回执含 job id + 查询方式），进程不杀；
+   *   - 语义收缩的连带：默认 120s < ForegroundNoProgressTimeoutMs（600s）⇒ 前台
+   *     no-progress ceiling 在缺省面**结构性不可达**（自然消亡）；仅当作者把预算
+   *     调大于 600s 时，ceiling 作为前台真挂死兜底保留。转后台后的任务豁免
+   *     ceiling（JobHealth.adoptedAsBackground）。
+   *
+   * 配置面（三档，等价取值）：
+   *   1. nebflow.json 顶层键 `bashForegroundWaitBudgetMs`（GatewayMain fail-safe
+   *      读取 → BashResilienceConfig → ToolContext，与 #391 既有键同族）——**作者主面**；
+   *   2. system prop `nebflow.bash.foregroundWaitBudgetMs`（每次调用现读，
+   *      I2 kill-switch 先例）；
+   *   3. BashResilienceConfig.foregroundWaitBudgetMs 缺省 = 本值（测试注入同款）。
+   */
+  def ForegroundWaitBudgetMs: Long =
+    sys.props.getOrElse("nebflow.bash.foregroundWaitBudgetMs", "120000").toLong
 
   /** Curl tool max timeout in seconds. */
   val CurlMaxTimeoutSec: Int = 120
@@ -1292,9 +1327,16 @@ end Defaults
 /**
  * Bash 卡死防护配置（#26：前台直跑语义；hardTimeout/stuckWindow/healthCheck
  * 只服务显式 run_in_background 后台任务。nebflow.json 顶层键可覆盖。
+ *
+ * main-agent-nonblocking 批（2026-10-21 作者裁定）新增 `foregroundWaitBudgetMs`：
+ * 前台等待预算（默认 120s，作者可调）——前台命令超预算即自动转后台（不杀），
+ * 主 agent 前台零阻塞的取值点。实例级一份（SharedResources.bashResilience →
+ * 全部会话共用：主 agent / 子 agent / 节点同纪律，无 per-agent 差异化面）。
  */
 case class BashResilienceConfig(
   hardTimeoutMs: Long = Defaults.BashBackgroundHardTimeoutMs,
   stuckWindowSec: Int = Defaults.BashStuckWindowSec,
-  healthCheckIntervalSec: Int = Defaults.BgHealthCheckIntervalSec
+  healthCheckIntervalSec: Int = Defaults.BgHealthCheckIntervalSec,
+  /** 前台等待预算 ms（缺省 = Defaults.ForegroundWaitBudgetMs = 120s）。 */
+  foregroundWaitBudgetMs: Long = Defaults.ForegroundWaitBudgetMs
 )

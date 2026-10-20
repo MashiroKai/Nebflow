@@ -24,6 +24,12 @@ object BashTool extends Tool:
    * is adopted into the background registry, never killed by time. `def` (not
    * `val`) so the spec prop compression of Defaults.BashMaxTimeoutMs takes
    * effect at every call.
+   *
+   * main-agent-nonblocking 批（2026-10-21 作者裁定「主 agent 一点不能阻塞」）
+   * 语义收缩：本值退为**入参钳 + remote-exec 面**（见 Defaults.BashMaxTimeoutMs
+   * 注释）；前台实际等待预算 = ctx.bashConfig.foregroundWaitBudgetMs
+   * （缺省 Defaults.ForegroundWaitBudgetMs = 120s，作者经 nebflow.json
+   * `bashForegroundWaitBudgetMs` 可调）。`def` 保留（spec 压缩面不变）。
    */
   def MAX_TIMEOUT: Long = Defaults.BashMaxTimeoutMs
 
@@ -33,7 +39,7 @@ object BashTool extends Tool:
 
 Usage:
 - The working directory persists between commands, but shell state does not persist across Nebflow restarts.
-- You may specify an optional timeout in milliseconds (max 3600000) as the foreground wait budget. When the budget — or 60min by default — is reached, the command is NOT killed: it is auto-backgrounded (you immediately get a background receipt with its job id; the command keeps running to completion and the result is delivered on completion). If not specified, the command runs in the foreground until it completes or is killed by the stall guard only (no output AND under ~1s of CPU per 30s window, sustained for 10 minutes).
+- You may specify an optional timeout in milliseconds (max 3600000) as a foreground wait budget hint. The effective foreground wait is capped by the configured foreground wait budget (default 120s; author-adjustable via nebflow.json `bashForegroundWaitBudgetMs`). When the budget is reached the command is NOT killed: it is auto-backgrounded (you immediately get a background receipt with its job id; the command keeps running to completion and the result is delivered on completion). Auto-backgrounding is time-based ONLY — a chatty long-running command crosses the budget exactly like a silent one; the main session is never blocked longer than the budget.
 - Dangerous commands (rm -rf, force push, etc.) are blocked for safety.
 - For git commands: Prefer to create a new commit rather than amending an existing commit.
 - Only create commits when requested by the user.
@@ -83,7 +89,7 @@ Git safety:
         "timeout" -> io.circe.Json
           .obj(
             "type" -> "number".asJson,
-            "description" -> "Optional foreground wait in milliseconds (max 3600000). When reached, the command is auto-backgrounded — it keeps running to completion and the result is delivered on completion; the command is never killed by time.".asJson
+            "description" -> "Optional foreground wait hint in milliseconds (max 3600000). Effective wait = min(hint, configured foreground budget, default 120s). When reached, the command is auto-backgrounded — it keeps running to completion and the result is delivered on completion; the command is never killed by time.".asJson
           ),
         "description" -> io.circe.Json.obj(
           "type" -> "string".asJson,
@@ -601,26 +607,30 @@ Git safety:
   /**
    * Execute a command in the foreground until it completes or fails.
    *
-   * 用户裁定「Bash 工具不再自动转后台，依赖卡死检测就行了，
-   * 不设超时」）：恢复前台直跑语义——机制 A（5 分钟自动转后台）已推翻
-   * 删除。前台命令一直跑到结束（或显式 timeout watchdog 杀树），返回真实
-   * 输出；不产生「[Command moved to background]」占位。无显式 timeout 时不设
-   * 命令级超时（processTimeout 用 365.days 近似无限）。
+   * main-agent-nonblocking 批（2026-10-21 作者裁定重申「主 agent 一点不能阻塞，
+   * 之前的设计是不杀但自动转后台」）：前台等待预算收缩为**短预算**——
+   * ctx.bashConfig.foregroundWaitBudgetMs（缺省 Defaults.ForegroundWaitBudgetMs
+   * = 120s，作者经 nebflow.json `bashForegroundWaitBudgetMs` 可调）。显式
+   * `timeout` 入参收窄到该预算（min）——agent 不能越过作者的零阻塞裁定。预算
+   * 判据 = **时间**（exec fiber 与预算 sleep 的 racePair），与输出活性无关：
+   * 有输出的长命令同样在到点转后台，不因「还在吐进度」占着主会话。到点 →
+   * autoBackground 收编（回执含 job id + 查询方式），进程不杀，完成照旧经
+   * makeNotifyCallback 通知。
    *
-   * 卡死兜底保持：
-   * - 显式 timeout（若有）→ watchdog 杀进程树
-   * - 前台 no-progress ceiling（shell.scala）：10min 零输出且每个采样窗的 CPU
-   *   增量都 ≤ 1s（**窗口增量**口径，阈值与活动桥接常量解耦）→
-   *   停滞杀（命令级）
-   * - TaskStuckWatcher（turn 级换轴）：判据 = agent 侧事件停滞 ∪
-   *   单个工具调用持续超 10min（工具相位），**均不看进程 CPU**——进程活性
-   *   （processActivityMs）不再是「有进展」的证据，长跑命令不再能凭 CPU 微动
-   *   免疫卡死检测。
+   * 本次裁定之前的旧事故面（为何收缩）：旧缺省预算 = BashMaxTimeoutMs（60min）
+   * ——前台克隆 1GB+ 大仓无输出运行时预算从未到点，600s 无输出停滞阈值
+   * （shell.scala foregroundNoProgressWatch）先触发**杀**树，主会话每次硬冻结
+   * 10 分钟。收缩后默认 120s < 600s：停滞阈值在缺省面结构性不可达（自然消亡），
+   * 仅作者把预算调大于 600s 时作为前台真挂死兜底保留；转后台后的任务豁免
+   * （JobHealth.adoptedAsBackground → ceiling 退役）。
+   *
+   * 卡死兜底保持（收缩后的剩余管辖面）：
+   * - 前台阶段 no-progress ceiling（shell.scala）：仅当配置预算 > 600s 时可达。
+   * - TaskStuckWatcher（turn 级换轴）：判据 = agent 侧事件停滞 ∪ 单个工具调用
+   *   持续超 10min（工具相位）——预算 120s ⇒ 工具相位轴对 Bash 结构性不可达。
    *
    * 活动桥接（#319）保持：有进展（输出/CPU≥阈值/sleep-like）刷新
-   * **processActivityMs**（进程侧字段）——机制 D 让 CPU 判断对齐
-   * CpuActiveThresholdNanos（10ms/30s 采样）；换轴后该戳与 agent 侧
-   * 活动彻底分家（事故根因即两者曾被同一字段承载）。
+   * **processActivityMs**（进程侧字段）——该戳与 agent 侧活动分家。
    */
   private def executeForeground(
     shell: ShellSession,
@@ -630,19 +640,22 @@ Git safety:
     ctx: ToolContext,
     tailN: Option[Int] = None
   ): IO[Either[ToolError, String]] =
-    // Policy "no hard cap; auto-background at
-    // 60min; backgrounded commands have no limit"): an explicit `timeout` is no
-    // longer a kill line — it and the default threshold (MAX_TIMEOUT) are the
-    // same thing: a foreground WAIT BUDGET. When the budget elapses and the
-    // command is still running, it is adopted into the session's background
-    // registry (adoptAsBackgroundJob) and the tool returns a background receipt
-    // immediately (same face as an explicit run_in_background); the process
-    // keeps running to completion and the completion notification rides the
-    // existing background callback chain (makeNotifyCallback). The process-level
-    // time kill is retired as a class (runProcess always gets 365.days now — it
-    // is never shortened). The only retained foreground kill is the no-progress
-    // ceiling (the stall watchdog — not a time limit, kept per behavior def 3).
-    val waitBudgetMs = explicitTimeoutMs.getOrElse(MAX_TIMEOUT)
+    // Policy "no hard cap; auto-background at the foreground wait budget
+    // (main-agent-nonblocking: default 120s, author-adjustable); backgrounded
+    // commands have no limit"): an explicit `timeout` is a budget HINT clamped
+    // to the configured budget (min) — the author's zero-blocking ruling wins
+    // over any agent-requested long foreground wait. When the budget elapses
+    // and the command is still running, it is adopted into the session's
+    // background registry (adoptAsBackgroundJob) and the tool returns a
+    // background receipt immediately (same face as an explicit
+    // run_in_background); the process keeps running to completion and the
+    // completion notification rides the existing background callback chain
+    // (makeNotifyCallback). The process-level time kill is retired as a class
+    // (runProcess always gets 365.days now — it is never shortened). The only
+    // retained foreground kill is the no-progress ceiling (the stall watchdog —
+    // not a time limit; structurally unreachable while budget < 600s).
+    val budgetMs = math.max(1L, ctx.bashConfig.foregroundWaitBudgetMs)
+    val waitBudgetMs = explicitTimeoutMs.fold(budgetMs)(_.min(budgetMs))
     val health = new JobHealth()
     // A running Bash is INVISIBLE — the completion log only
     // fires when it returns, so a long/hung command reads as "turn went
@@ -757,10 +770,16 @@ Git safety:
         onSlowDetected = Some((summary: String) => auditBgSlow(ctx, jobId, summary))
       )
       _ <- emitBgTaskStarted(ctx, jobId, bgDescription, persistent = false)
+    // 回执契约（main-agent-nonblocking 批，裁定原文「转后台时给主 agent 的
+    // 回执要含：已转后台 + job 标识 + 如何查询」）：① [Background job started]
+    // 头 + ② Job ID + ③ 已转后台说明（Auto-backgrounded after … NOT killed）
+    // + ④ 完成通知承诺 + ⑤ 查询/取消方式（background_job_id /
+    // cancel_background_job）。
     yield Right(
       s"[Background job started] Job ID: $jobId\n" +
         s"Auto-backgrounded after ${waitedMs / 1000}s in the foreground (wait budget reached — the command was NOT killed). " +
-        "It keeps running in the background and you will be automatically notified when it finishes — continue with other work or finish your turn."
+        "It keeps running in the background and you will be automatically notified when it finishes — continue with other work or finish your turn. " +
+        s"Query progress anytime with background_job_id: $jobId; cancel it with background_job_id: $jobId + cancel_background_job: true."
     )
 
   /**
