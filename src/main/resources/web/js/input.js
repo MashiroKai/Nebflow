@@ -213,12 +213,14 @@ export function send(resendId) {
       return;
     }
   }
-  // qattachvault 派发闸（直发腿）：撤回回填的「载荷已失」附件（stripped 且无 data）
-  // 不允许再出空心帧（= 服务端 path:null 形态）。就地剔除 + 可判读提示 —— 撤回腿的
-  // toast 已说过一次；这里拦的是「不理会提示直接重发」的残余面。禁静默：剔除可见。
+  // qattachvault 派发闸（直发腿）：撤回回填的「载荷已失」附件（stripped/存量 image
+  // 骨架且无 data）不允许再出空心帧（= 服务端 path:null 形态）。就地剔除 + 可判读
+  // 提示 —— 撤回腿的 toast 已说过一次；这里拦的是「不理会提示直接重发」的残余面。
+  // 禁静默：剔除可见。判据与 lostPayloadAttsOf 同律（image 结构兜底同款）。
   {
     const hollow = (v.pendingAttachments || []).filter(a => a && a.type !== 'taskRef' && a.type !== 'ref'
-      && a.stripped === true && !(typeof a.data === 'string' && a.data.length > 0));
+      && !(typeof a.data === 'string' && a.data.length > 0)
+      && (a.stripped === true || (a.type === 'image' && !a.hash)));
     if (hollow.length > 0) {
       v.pendingAttachments = v.pendingAttachments.filter(a => !hollow.includes(a));
       renderAttachmentPreview({ attPreviewEl: v.dom.attPreview, attachments: v.pendingAttachments });
@@ -536,11 +538,15 @@ export function restoreQueue() {
 //      标 failed（队列条失败样式 + 气泡小标翻红 ! + toast 可判读）；后续项不被楔死，
 //      用户撤回重编重新添加附件 = 可重传。🔴 禁静默、禁发空心帧（path:null）。
 
-/** 项内「载荷已失」附件（权威判据 = stripped 标记 + 水合后仍无 data；B+C 批口径：
- *  纯结构性判据会误伤「大文件 hash 可解析」的在役形态，禁扩）。 */
+/** 项内「载荷已失」附件（权威判据 = stripped 标记 + 水合后仍无 data；B+C 批口径）。
+ *  结构兜底（只对 image）：stripped 标记上线**之前**持久化的存量骨架没有标记，
+ *  而 image 附件的唯一生产者（input/attachments.js addFileAttachment）恒带 data、
+ *  恒不带 hash ⇒ 队列项里的 image 无 data = 必然是丢字节的骨架（大文件 text 腿
+ *  靠 hash 服务端解析，不在兜底内，禁误伤）。 */
 function lostPayloadAttsOf(item) {
   return (item.attachments || []).filter(a => a && a.type !== 'taskRef' && a.type !== 'ref'
-    && a.stripped === true && !(typeof a.data === 'string' && a.data.length > 0));
+    && !(typeof a.data === 'string' && a.data.length > 0)
+    && (a.stripped === true || (a.type === 'image' && !a.hash)));
 }
 
 /** 入队点：把项内真载荷写进载荷库（fire-and-forget；写失败 ⇒ 跨刷新水合不中 ⇒
