@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>移动端 375px 样张 v3.6 · 二级界面全量补齐（作者裁定三修正：①绿键退役 ②搜索收窄主会话 ③画板挂起 · 暗亮双主题）</title>
+<style>
+/* ── tokens（镜像 src/main/resources/web/css/base.css + sapphire.css 现值；
+      v3 新增 --gc* = glass-control 同族 token；v3.5 沿用全套 + --amber（现网 daemons.js 琥珀态）；
+      v3.6 作者令①新增官网主键字面值 #111827/#374151/#e8eaed（mystand.space/login auth 键族，
+      = 已实施 login-primary-btn 规格 ea74165e8 的对位，样张内显式声明非静默引入）── */
+:root{
+  --sapphire:127,156,245;
+  --spring:cubic-bezier(.3,1.36,.45,1);
+  --ease:cubic-bezier(.32,.72,0,1);
+}
+.phone{
+  --bg:#f5f6f8; --surface:#fff; --text:#1b1e26; --muted:#8b8e96; --dim:#6b6e76;
+  --frame-text:#3a3d45; --bright:#1b1e26; --f-muted:#717379; --line:#e0e1e4;
+  --glass:rgba(255,255,255,.55); --glass-b:rgba(255,255,255,.35);
+  --ctrl:rgba(255,255,255,.55); --ctrl-b:rgba(0,0,0,.10);
+  --user:#95ec69; --ok:#2e7d32; --warn:#b45309; --err:#d64545; --amber:#f59e0b;
+  --shadow:0 2px 8px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.06);
+  --gcb:rgba(255,255,255,.45); --gcbh:rgba(255,255,255,.65); --gcbd:rgba(255,255,255,.40);
+  --gchl:rgba(255,255,255,.50); --gcue:rgba(0,0,0,.08); --gcglow:rgba(0,0,0,.06);
+  --gcsh:rgba(0,0,0,.04); --gcblur:10px; --gcpanel:rgba(255,255,255,.62);
+}
+.phone.dark{
+  --bg:#13161c; --surface:#1c1f27; --text:#e8eaed; --muted:#7b7e88; --dim:#9ba0aa;
+  --frame-text:#c8cad0; --bright:#e8eaed; --f-muted:#81838a; --line:#282b33;
+  --glass:rgba(24,28,38,.68); --glass-b:rgba(255,255,255,.06);
+  --ctrl:rgba(255,255,255,.09); --ctrl-b:rgba(255,255,255,.16);
+  --shadow:0 2px 8px rgba(0,0,0,.2),0 8px 24px rgba(0,0,0,.35);
+  --gcb:rgba(255,255,255,.05); --gcbh:rgba(255,255,255,.10); --gcbd:rgba(255,255,255,.08);
+  --gchl:rgba(255,255,255,.08); --gcue:rgba(0,0,0,.25); --gcglow:rgba(0,0,0,.20);
+  --gcsh:rgba(0,0,0,.15); --gcblur:10px; --gcpanel:rgba(28,32,42,.80);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:#0d0f14;color:#c8cad0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer;-webkit-tap-highlight-color:transparent}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ── 外层控制台 ── */
+.wrap{display:flex;gap:28px;align-items:flex-start;justify-content:center;padding:28px 20px 60px;flex-wrap:wrap}
+.console{width:252px;display:flex;flex-direction:column;gap:14px;position:sticky;top:24px}
+.console h1{font-size:15px;font-weight:600;color:#e8eaed}
+.console h1 em{font-style:normal;color:#34c98e}
+.console .sub{font-size:12px;color:#7b7e88;line-height:1.6}
+.grp{background:#161923;border:1px solid #232733;border-radius:12px;padding:12px}
+.grp .lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#7b7e88;margin-bottom:8px}
+.seg{display:flex;flex-wrap:wrap;background:#0e1117;border:1px solid #232733;border-radius:9px;padding:3px;gap:3px}
+.seg button{flex:1 1 30%;padding:6px 4px;border-radius:7px;font-size:12px;color:#9ba0aa;white-space:nowrap}
+.seg button.on{background:#242a3a;color:#e8eaed;font-weight:600}
+.note{font-size:12px;color:#9ba0aa;line-height:1.7}
+.note b{color:#e8eaed}
+.note .tag{display:inline-block;font-size:11px;background:#1d3327;color:#7fd6a0;border-radius:5px;padding:0 6px;margin-right:4px}
+.note .tag.bl{background:#1d2740;color:#9db4f0}
+.np{display:inline-flex;align-items:center;font-size:9.5px;color:#f0a44a;border:1px solid rgba(245,158,11,.5);border-radius:5px;padding:0 5px;letter-spacing:.04em;font-weight:600}
+/* v3.6 · diff 标注签（amber 虚线 = 作者三修正落点；样张批注层，非产品 token） */
+.difftag{display:inline-flex;align-items:center;align-self:flex-start;font-size:9.5px;color:#f0a44a;border:1px dashed rgba(245,158,11,.55);border-radius:6px;padding:2px 7px;letter-spacing:.02em;font-weight:600;background:rgba(245,158,11,.06)}
+
+/* ── 手机框 ── */
+.stage{display:flex;flex-direction:column;gap:10px;align-items:center}
+.phone{width:375px;height:780px;border-radius:44px;background:var(--bg);position:relative;overflow:hidden;
+  border:9px solid #10131a;box-shadow:0 30px 80px rgba(0,0,0,.55);color:var(--text);flex:none}
+.sbar{height:47px;flex:none;display:flex;align-items:flex-end;justify-content:space-between;padding:0 26px 6px;
+  font-size:14px;font-weight:600;color:var(--bright);position:relative;z-index:60}
+.sbar .r{display:flex;gap:5px;align-items:center}
+.app{position:absolute;inset:47px 0 0 0}
+.scr{position:absolute;inset:0;display:none}
+.scr.live{display:block}
+.zone{position:absolute;inset:0;display:flex;flex-direction:column}
+svg.i{display:block;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+/* ═══ v3 已批语言 · 悬浮顶栏 + 圆钮（glass-control 标准材质） ═══ */
+.hd{position:absolute;top:0;left:0;right:0;z-index:40;pointer-events:none;
+  display:grid;grid-template-columns:52px 1fr 52px;align-items:start;padding:6px 6px 0}
+.hd>*{pointer-events:auto}
+.rbtn{width:40px;height:40px;border-radius:50%;justify-self:center;display:flex;align-items:center;justify-content:center;
+  background:var(--gcb);border:1px solid var(--gcbd);color:var(--frame-text);position:relative;
+  -webkit-backdrop-filter:blur(var(--gcblur)) saturate(1.2);backdrop-filter:blur(var(--gcblur)) saturate(1.2);
+  box-shadow:inset 0 1px 0 var(--gchl),inset 0 -1px 0 var(--gcue),0 1px 3px var(--gcglow),0 2px 8px var(--gcsh);
+  transition:background .15s,transform .15s}
+.rbtn:active{transform:scale(.94)}
+.rbtn svg{width:19px;height:19px}
+.rbtn .bdg{position:absolute;top:-3px;right:-3px;min-width:16px;height:16px;border-radius:8px;background:#07c160;color:#fff;
+  font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 4px;border:2px solid var(--bg)}
+.who{display:flex;flex-direction:column;align-items:center;gap:4px;padding-top:2px;min-width:0}
+.avx{width:52px;height:52px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;
+  font-size:21px;font-weight:600;color:#fff;
+  background:linear-gradient(145deg,#5b7fbf,#3c568c);border:1px solid var(--gcbd);position:relative;
+  box-shadow:inset 0 1px 0 var(--gchl),0 2px 8px var(--gcsh)}
+.avx .cam{position:absolute;right:-2px;bottom:-2px;width:18px;height:18px;border-radius:50%;background:var(--surface);
+  border:1px solid var(--gcbd);display:flex;align-items:center;justify-content:center;color:var(--f-muted)}
+.avx .cam svg{width:10px;height:10px}
+.who .nm{font-size:13px;font-weight:600;color:var(--bright);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  padding:2px 10px;border-radius:999px;background:var(--gcb);border:1px solid var(--gcbd);
+  -webkit-backdrop-filter:blur(var(--gcblur)) saturate(1.2);backdrop-filter:blur(var(--gcblur)) saturate(1.2);
+  box-shadow:inset 0 1px 0 var(--gchl),inset 0 -1px 0 var(--gcue),0 1px 3px var(--gcglow)}
+.scrim{position:absolute;inset:0;background:rgba(8,10,16,.28);opacity:0;pointer-events:none;transition:opacity .25s;z-index:44}
+.scrim.open{opacity:1;pointer-events:auto}
+
+/* ═══ 背景会话（v2 3.3 / v3 沿用：内容直顶状态栏下滚动） ═══ */
+.chat{flex:1;overflow-y:auto;padding:94px 12px 8px;display:flex;flex-direction:column;scrollbar-width:none}
+.chat::-webkit-scrollbar{display:none}
+.bub{max-width:85%;padding:10px 14px;border-radius:16px;font-size:14.5px;line-height:1.55;word-break:break-word;color:var(--text)}
+.bub.ai{align-self:flex-start;background:var(--surface);border:1px solid var(--line);border-top-left-radius:4px;margin-top:8px}
+.bub.user{align-self:flex-end;background:var(--user);color:#17301a;border-bottom-right-radius:4px;margin-top:8px}
+.comp{flex:none;padding:6px 12px 10px;display:flex;flex-direction:column;gap:6px;position:relative;z-index:30}
+.ibar{display:flex;align-items:flex-end;gap:8px;background:var(--glass);-webkit-backdrop-filter:blur(24px) saturate(1.15);
+  backdrop-filter:blur(24px) saturate(1.15);border:1px solid var(--glass-b);border-radius:22px;padding:8px 10px;box-shadow:var(--shadow)}
+.ibar .ta{flex:1;font-size:16px;color:var(--text);padding:6px 2px;min-width:0}
+.ibar .ta .ph{color:var(--f-muted)}
+.ibar .cbtn{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--f-muted);flex:none}
+.ibar .cbtn svg{width:19px;height:19px}
+.ibar .cbtn.stop{background:#f44336;color:#fff}
+.homebar{width:120px;height:5px;border-radius:3px;background:var(--f-muted);opacity:.4;margin:2px auto 0}
+
+/* ═══ v3⑤ 已批 · 二级液态面板：圆钮原地形变加宽（40→308 / 40→560）——v3.5 五个左列面板全走此语言 ═══ */
+.tpanel{position:absolute;top:54px;left:6px;width:40px;height:40px;border-radius:20px;overflow:hidden;z-index:48;
+  background:var(--gcpanel);border:1px solid var(--gcbd);
+  -webkit-backdrop-filter:blur(var(--gcblur)) saturate(1.2);backdrop-filter:blur(var(--gcblur)) saturate(1.2);
+  box-shadow:inset 0 1px 0 var(--gchl),inset 0 -1px 0 var(--gcue),0 1px 3px var(--gcglow),0 2px 8px var(--gcsh),0 4px 16px rgba(0,0,0,.10);
+  opacity:0;pointer-events:none;display:flex;flex-direction:column}
+.tpanel.open{opacity:1;pointer-events:auto;animation:tpOpen .68s var(--spring) forwards}
+@keyframes tpOpen{
+  0%{width:40px;height:40px;border-radius:20px;opacity:0}
+  26%{opacity:1}
+  62%{width:318px;height:574px;border-radius:16px}
+  100%{width:308px;height:560px;border-radius:16px;opacity:1}}
+.tp-in{display:flex;flex-direction:column;min-height:0;flex:1;opacity:0}
+.tpanel.open .tp-in{animation:tpFade .32s ease .24s forwards}
+@keyframes tpFade{to{opacity:1}}
+.tp-hd{display:flex;align-items:center;gap:8px;padding:11px 8px 7px 13px;font-size:14px;font-weight:600;color:var(--bright);flex:none}
+.tp-hd svg.hi{width:16px;height:16px;color:var(--f-muted)}
+.tp-hd .n{font-size:12px;color:var(--f-muted);font-weight:500;font-variant-numeric:tabular-nums}
+.tp-hd .sp{flex:1}
+.tp-hd .hbtn,.tp-hd .xbtn{width:28px;height:28px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;
+  color:var(--frame-text);background:var(--gcb);border:1px solid var(--gcbd);
+  box-shadow:inset 0 1px 0 var(--gchl),inset 0 -1px 0 var(--gcue)}
+.tp-hd .hbtn svg,.tp-hd .xbtn svg{width:13px;height:13px}
+.tp-bd{overflow-y:auto;padding:0 10px 12px;display:flex;flex-direction:column;gap:6px;scrollbar-width:none}
+.tp-bd::-webkit-scrollbar{display:none}
+.tp-grp{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--f-muted);padding:7px 4px 1px;flex:none;display:flex;align-items:center;gap:6px}
+
+/* ═══ v3.5 新 · 右列全屏页面（推送页，非下拉）：自身悬浮页头 + 内容滚动 ═══ */
+.page{position:absolute;inset:0;background:var(--bg);z-index:52;display:none;flex-direction:column}
+.scr.live .page{display:flex;animation:pgIn .38s var(--ease)}
+@keyframes pgIn{from{transform:translateX(64px);opacity:0}to{transform:none;opacity:1}}
+.pghd{position:absolute;top:0;left:0;right:0;z-index:40;pointer-events:none;
+  display:grid;grid-template-columns:52px 1fr 52px;align-items:start;padding:6px 6px 0}
+.pghd>*{pointer-events:auto}
+.pgttl{display:flex;justify-content:center;align-items:center;gap:7px;padding-top:8px;min-width:0}
+.pgttl .nm{font-size:14px;font-weight:600;color:var(--bright);padding:5px 14px;border-radius:999px;background:var(--gcb);
+  border:1px solid var(--gcbd);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px;
+  -webkit-backdrop-filter:blur(var(--gcblur)) saturate(1.2);backdrop-filter:blur(var(--gcblur)) saturate(1.2);
+  box-shadow:inset 0 1px 0 var(--gchl),inset 0 -1px 0 var(--gcue),0 1px 3px var(--gcglow)}
+.pgttl .cnt{font-size:10px;color:var(--f-muted);font-variant-numeric:tabular-nums;flex:none}
+.pgbd{position:absolute;inset:0;overflow-y:auto;padding:66px 12px 26px;display:flex;flex-direction:column;gap:7px;scrollbar-width:none}
+.pgbd::-webkit-scrollbar{display:none}
+.pgbar{position:absolute;bottom:6px;left:50%;transform:translateX(-50%);width:120px;height:5px;border-radius:3px;
+  background:var(--f-muted);opacity:.4;z-index:60;pointer-events:none}
+
+/* ═══ v3.5 新 · 面板/页面内容件（全部复用既有 token；无新 token） ═══ */
+.sfield{display:flex;align-items:center;gap:7px;height:38px;padding:0 10px;border-radius:11px;flex:none;
+  background:var(--ctrl);border:1px solid var(--ctrl-b);font-size:13px;color:var(--text)}
+.sfield svg{width:15px;height:15px;color:var(--f-muted);flex:none}
+.sfield .caret{width:1.5px;height:15px;background:var(--bright);animation:blink 1.1s steps(1) infinite;flex:none}
+@keyframes blink{50%{opacity:0}}
+.seg2{display:flex;background:var(--ctrl);border:1px solid var(--ctrl-b);border-radius:9px;padding:2px;gap:2px;flex:none}
+.seg2 button{flex:1;height:26px;border-radius:7px;font-size:11.5px;color:var(--f-muted)}
+.seg2 button.on{background:var(--gcue);color:var(--bright);font-weight:600;box-shadow:inset 0 0 0 1px var(--ctrl-b),inset 0 1px 0 var(--gchl)}
+.rmeta{font-size:11px;color:var(--f-muted);padding:0 2px;font-variant-numeric:tabular-nums;flex:none}
+.rrow{background:var(--ctrl);border:1px solid var(--ctrl-b);border-radius:12px;padding:8px 10px;flex:none}
+.rrow .rh{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text);min-width:0}
+.rrow .rh .sess{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.rrow .rh .tm{margin-left:auto;font-size:10.5px;color:var(--f-muted);font-variant-numeric:tabular-nums;flex:none}
+.rrow .rp{margin-top:4px;font-size:12px;color:var(--muted);line-height:1.5}
+.rrow .rp mark{background:rgba(var(--sapphire),.30);color:inherit;border-radius:3px;padding:0 1px}
+.pill{flex:none;font-size:9.5px;padding:1px 6px;border-radius:999px;background:var(--gcbh);border:1px solid var(--ctrl-b);color:var(--f-muted)}
+.pill.u{color:#17301a;background:var(--user);border-color:transparent;font-weight:600}
+.pill.ban{color:var(--err);border-color:rgba(214,69,69,.4);background:rgba(214,69,69,.08)}
+.pill.chg{color:var(--warn);border-color:rgba(180,83,9,.45);background:rgba(180,83,9,.08)}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.chip{font-size:10px;color:var(--f-muted);background:var(--gcb);border:1px solid var(--ctrl-b);border-radius:6px;padding:1px 6px;font-variant-numeric:tabular-nums}
+.chip.warn{color:var(--warn)}
+.ftabs{display:flex;gap:5px;flex-wrap:wrap;padding:3px 1px 1px;flex:none}
+.ftabs .fl{flex:none;font-size:9.5px;color:var(--f-muted);letter-spacing:.06em;padding:4px 3px 0 1px;font-weight:600}
+.ftab{font-size:10.5px;color:var(--f-muted);background:var(--ctrl);border:1px solid var(--ctrl-b);border-radius:999px;padding:3px 9px}
+.ftab.on{background:var(--gcue);color:var(--bright);border-color:var(--ctrl-b);font-weight:600;box-shadow:inset 0 1px 0 var(--gchl)}
+.srow{display:flex;gap:9px;background:var(--ctrl);border:1px solid var(--ctrl-b);border-radius:12px;padding:9px 10px;flex:none}
+.srow .ring{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--f-muted);flex:none;margin-top:2px}
+.srow .sc{flex:1;min-width:0}
+.srow .sct{font-size:12.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;gap:6px;align-items:center}
+.srow .sct .ttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.srow .stm{font-size:12px;color:var(--bright);font-weight:600;margin-top:3px;font-variant-numeric:tabular-nums;display:flex;align-items:center;gap:5px}
+.srow .stm svg{width:12px;height:12px;color:var(--err)}
+.srow .stm2{font-size:10.5px;color:var(--f-muted);margin-top:1px;font-variant-numeric:tabular-nums}
+.srow.off{opacity:.55}
+.badge{flex:none;font-size:9.5px;padding:1px 6px;border-radius:999px;border:1px solid var(--ctrl-b);background:var(--gcbh);color:var(--f-muted)}
+.tag-od{color:var(--err);border-color:rgba(214,69,69,.4);background:rgba(214,69,69,.10)}
+.drow{display:flex;align-items:center;gap:9px;background:var(--ctrl);border:1px solid var(--ctrl-b);border-radius:12px;padding:9px 10px;flex:none}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.dot.run{background:#07c160;animation:dotPulse 1.6s ease-in-out infinite}
+.dot.start{background:var(--amber)}
+.dot.err{background:var(--err)}
+@keyframes dotPulse{50%{box-shadow:0 0 0 4px rgba(7,193,96,.18)}}
+.drow .dn{font-size:13px;color:var(--text);font-weight:600;flex:none}
+.drow .dp{font-size:11.5px;color:var(--f-muted);font-variant-numeric:tabular-nums;flex:none}
+.drow .dcmd{margin-left:auto;font:10.5px ui-monospace,Menlo,monospace;color:var(--f-muted);max-width:104px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tline{display:flex;flex-direction:column;padding:2px 0 0 5px;flex:none}
+.tev{position:relative;display:flex;gap:10px;padding:0 0 14px 14px;font-size:12px;color:var(--muted)}
+.tev::before{content:"";position:absolute;left:0;top:5px;bottom:-2px;width:1.5px;background:var(--ctrl-b)}
+.tev:last-child{padding-bottom:4px}
+.tev:last-child::before{display:none}
+.tev .tdot{position:absolute;left:-3.5px;top:5px;width:8px;height:8px;border-radius:50%}
+.tev .tt{font-variant-numeric:tabular-nums;color:var(--f-muted);flex:none;font-size:11px;padding-top:1px}
+.tev b{color:var(--text);font-weight:600}
+.mcard{background:var(--ctrl);border:1px solid var(--ctrl-b);border-radius:12px;padding:9px 11px;flex:none}
+.mcard .mt{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--text)}
+.mcard .ms{margin-top:4px;font-size:12px;color:var(--muted);line-height:1.55}
+.mcard .mf{margin-top:6px;display:flex;gap:6px;align-items:center;font-size:10px;color:var(--f-muted);font-variant-numeric:tabular-nums}
+.brow{background:var(--ctrl);border:1px solid var(--ctrl-b);border-radius:12px;padding:9px 10px;flex:none}
+.brow .bh{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--text)}
+.brow .bh .ttl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.brow .bh .tm{font-size:10.5px;color:var(--f-muted);font-variant-numeric:tabular-nums;flex:none}
+.res{display:flex;flex-direction:column;gap:9px;padding:2px 1px;flex:none}
+.res .rr{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--muted)}
+.res .rr .rl{width:40px;flex:none;font-variant-numeric:tabular-nums}
+.res .bar{flex:1;height:8px;border-radius:4px;background:var(--gcue);overflow:hidden;border:1px solid var(--ctrl-b)}
+.res .bar i{display:block;height:100%;border-radius:4px;background:#07c160}
+.res .bar i.amb{background:var(--amber)}
+.res .rv{width:86px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text);flex:none}
+.pfoot{font-size:10.5px;color:var(--f-muted);line-height:1.6;padding:4px 4px 2px;border-top:1px solid var(--line);flex:none}
+.pfoot b{color:var(--text);font-weight:600}
+
+/* ── 右列页面件 ── */
+.qrow{display:flex;gap:8px;flex:none}
+.qbtn{flex:1;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;gap:7px;font-size:12.5px;
+  color:var(--text);background:var(--gcb);border:1px solid var(--gcbd);
+  box-shadow:inset 0 1px 0 var(--gchl),inset 0 -1px 0 var(--gcue)}
+.qbtn svg{width:14px;height:14px}
+.dcrow{display:flex;align-items:center;gap:10px;background:var(--ctrl);border:1px solid var(--ctrl-b);border-radius:12px;padding:9px 10px;flex:none}
+.dcrow .di{width:32px;height:32px;border-radius:9px;flex:none;display:flex;align-items:center;justify-content:center;
+  background:var(--gcb);border:1px solid var(--gcbd);color:var(--frame-text);box-shadow:inset 0 1px 0 var(--gchl)}
+.dcrow .di svg{width:15px;height:15px}
+.dcrow .dt{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.dcrow .dt .d1{font-size:13px;color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dcrow .dt .d2{font-size:10.5px;color:var(--f-muted);margin-top:1px;font-variant-numeric:tabular-nums}
+.dcrow .pin{color:var(--f-muted);flex:none}
+.dcrow .pin svg{width:13px;height:13px}
+.pcard{background:var(--ctrl);border:1px solid var(--ctrl-b);border-radius:12px;padding:10px 11px;flex:none}
+.pcard .pch{display:flex;align-items:center;gap:7px}
+.pcard .pn3{font-size:13.5px;font-weight:600;color:var(--text)}
+.pcard .pdev{flex:none;font-size:9.5px;color:var(--frame-text);border:1px solid var(--ctrl-b);background:var(--gcbh);
+  border-radius:999px;padding:1px 7px;display:flex;align-items:center;gap:4px}
+.pcard .pdev .wd{width:5px;height:5px;border-radius:50%;background:var(--amber)}
+.pcard .psm{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);margin-top:5px}
+.pcard .psm .sd{width:6px;height:6px;border-radius:50%;flex:none}
+.pcard .pfs{margin-top:7px;display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--f-muted);border-top:1px solid var(--line);padding-top:6px}
+.pcard .pfs .fr{display:flex;gap:6px;min-width:0}
+.pcard .pfs .fk{color:var(--f-muted);flex:none}
+.pcard .pfs .fv{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
+.gmini{background:var(--ctrl);border:1px solid var(--ctrl-b);border-radius:12px;overflow:hidden;flex:none}
+.gmini svg{display:block;width:100%;height:150px}
+.gleg{display:flex;gap:11px;padding:7px 10px;font-size:10px;color:var(--f-muted);border-top:1px solid var(--ctrl-b);flex-wrap:wrap}
+.gleg .gl{display:flex;align-items:center;gap:4px}
+.gleg .gd{width:7px;height:7px;border-radius:50%;flex:none}
+.gleg .gs{width:7px;height:7px;flex:none}
+.prow2{display:flex;align-items:center;gap:9px;background:var(--ctrl);border:1px solid var(--ctrl-b);border-radius:11px;padding:9px 11px;font-size:13px;color:var(--text);flex:none}
+.prow2 .pd{width:9px;height:9px;border-radius:50%;flex:none}
+.prow2 .pc{margin-left:auto;font-size:11px;color:var(--f-muted);font-variant-numeric:tabular-nums;flex:none}
+.prow2 .att{color:var(--f-muted);flex:none;display:flex}
+.prow2 .att svg{width:12px;height:12px}
+.plug{background:var(--ctrl);border:1px solid var(--ctrl-b);border-radius:12px;padding:9px 10px;flex:none}
+.plug .ph{display:flex;align-items:center;gap:8px}
+.plug .ph>svg{width:15px;height:15px;color:var(--frame-text);flex:none}
+.plug .pn2{font-size:13px;font-weight:600;color:var(--text)}
+.plug .pv{font-size:10.5px;color:var(--f-muted);font-variant-numeric:tabular-nums;flex:none}
+.plug .pdesc{font-size:11.5px;color:var(--muted);margin-top:4px;line-height:1.5}
+.plug.blocked{opacity:.6}
+.udgrid{display:grid;grid-template-columns:1fr 1fr;gap:7px;flex:none}
+.udcard{background:var(--ctrl);border:1px solid var(--ctrl-b);border-radius:12px;padding:10px 11px}
+.udcard .ul{font-size:10.5px;color:var(--f-muted)}
+.udcard .uv{font-size:19px;font-weight:700;color:var(--bright);margin-top:2px;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.udcard .us{font-size:10px;color:var(--f-muted);margin-top:2px;font-variant-numeric:tabular-nums}
+.udcard .us.up{color:var(--warn)}
+.hbars{display:flex;align-items:flex-end;gap:3px;height:76px;background:var(--ctrl);border:1px solid var(--ctrl-b);border-radius:12px;padding:10px;flex:none}
+.hbars i{flex:1;border-radius:3px 3px 1px 1px;background:rgba(var(--sapphire),.55);min-height:3px}
+.hbars i.max{background:#07c160}
+.hleg{display:flex;gap:9px;font-size:9.5px;color:var(--f-muted);padding:0 3px;font-variant-numeric:tabular-nums;flex:none}
+.mrow2{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text);flex:none}
+.mrow2 .mn{width:76px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mrow2 .mb{flex:1;height:7px;border-radius:4px;background:var(--gcue);overflow:hidden}
+.mrow2 .mb i{display:block;height:100%;background:rgba(var(--sapphire),.65);border-radius:4px}
+.mrow2 .mv{width:58px;text-align:right;color:var(--f-muted);font-variant-numeric:tabular-nums;font-size:11px;flex:none}
+.prof{background:var(--gcb);border:1px solid var(--gcbd);border-radius:16px;padding:16px 14px 12px;display:flex;flex-direction:column;align-items:center;gap:9px;flex:none;
+  -webkit-backdrop-filter:blur(var(--gcblur)) saturate(1.2);backdrop-filter:blur(var(--gcblur)) saturate(1.2);
+  box-shadow:inset 0 1px 0 var(--gchl),inset 0 -1px 0 var(--gcue),0 1px 3px var(--gcglow),0 2px 8px var(--gcsh)}
+.prof .avx{width:64px;height:64px;font-size:25px}
+.prof .pbtns{display:flex;gap:8px;width:100%}
+.prof .pbtn{flex:1;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:12.5px;
+  background:var(--ctrl);border:1px solid var(--ctrl-b);color:var(--text)}
+/* ① v3.6 主键 = 官网登录卡同款（已实施 login-primary-btn 规格 ea74165e8 字面对位）：
+   light #111827 底/白字、hover #374151；dark 前景/背景互换（#e8eaed 底/#13161c 字、hover #fff）；
+   平面单色键（box-shadow none）、无图标、500 字重、hover .18s 提阶。微信绿实色键退役。 */
+.prof .pbtn.primary{background:#111827;color:#fff;border-color:transparent;font-weight:500;box-shadow:none;transition:background .18s ease}
+.phone:not(.dark) .prof .pbtn.primary:hover{background:#374151}
+.phone.dark .prof .pbtn.primary{background:#e8eaed;color:#13161c}
+.phone.dark .prof .pbtn.primary:hover{background:#fff}
+.prof .pbtn svg{width:14px;height:14px}
+.prof .nrow{display:flex;align-items:center;gap:8px;width:100%}
+.prof .nrow label{font-size:12px;color:var(--f-muted);flex:none}
+.prof .nin{flex:1;height:32px;border-radius:9px;border:1px solid var(--ctrl-b);background:var(--ctrl);color:var(--text);font-size:13px;padding:0 9px;display:flex;align-items:center;min-width:0}
+.prof .nin .cur{width:1.5px;height:14px;background:var(--bright);animation:blink 1.1s steps(1) infinite;margin-left:2px}
+.prof .pnote{font-size:10px;color:var(--f-muted);line-height:1.6;text-align:center}
+.srow2{display:flex;align-items:center;gap:9px;background:var(--ctrl);border:1px solid var(--ctrl-b);border-radius:11px;padding:9px 11px;font-size:13px;color:var(--text);flex:none}
+.srow2>svg{width:15px;height:15px;color:var(--f-muted);flex:none}
+.srow2 .sl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.srow2 .sv{margin-left:auto;font-size:12px;color:var(--f-muted);display:flex;align-items:center;gap:5px;flex:none}
+.srow2 .sv svg{width:13px;height:13px}
+.srow2 .sv.green{color:#07c160}
+.srow2.danger .sv{color:var(--err)}
+.srow2.addrow{border-style:dashed;color:var(--f-muted);font-size:12.5px;justify-content:center}
+.srow2.addrow svg{color:var(--f-muted)}
+.sw{width:38px;height:22px;border-radius:11px;background:var(--gcue);border:1px solid var(--ctrl-b);position:relative;flex:none}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.sw.on{background:#07c160;border-color:transparent}
+.sw.on::after{left:18px}
+.sw.sm{width:32px;height:19px}
+.sw.sm::after{width:13px;height:13px}
+.sw.sm.on::after{left:15px}
+
+/* ── 索引页（P1）── */
+.stag.hold2{color:var(--warn);border:1px dashed rgba(245,158,11,.55)}
+/* ③ v3.6 · 画板挂起标注层（候 canvas 设计批准后统一出稿，暂不实施） */
+.holdwrap{position:absolute;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;pointer-events:none;padding:0 24px}
+.hold{width:268px;background:var(--gcpanel);border:1px dashed rgba(245,158,11,.55);border-radius:14px;padding:15px 16px 12px;text-align:center;
+  -webkit-backdrop-filter:blur(var(--gcblur)) saturate(1.2);backdrop-filter:blur(var(--gcblur)) saturate(1.2);
+  box-shadow:0 8px 28px rgba(0,0,0,.22)}
+.hold .hico{width:34px;height:34px;border-radius:50%;margin:0 auto 8px;display:flex;align-items:center;justify-content:center;
+  background:var(--gcbh);border:1px solid var(--ctrl-b);color:var(--warn);box-shadow:inset 0 1px 0 var(--gchl)}
+.hold .hico svg{width:17px;height:17px}
+.hold .ht{font-size:13.5px;font-weight:700;color:var(--bright)}
+.hold .hd1{font-size:11.5px;color:var(--warn);font-weight:600;margin-top:4px}
+.hold .hd2{font-size:10.5px;color:var(--muted);line-height:1.65;margin-top:7px;text-align:left;border-top:1px solid var(--line);padding-top:7px}
+.hold .hd2 b{color:var(--text);font-weight:600}
+#scr-r7 .pgbd{opacity:.38;filter:saturate(.55)}
+.ixnote{font-size:10.5px;color:var(--f-muted);line-height:1.65;padding:2px 4px 4px;flex:none}
+.ixnote b{color:var(--text);font-weight:600}
+.ixg{display:flex;align-items:center;gap:8px;margin:9px 2px 2px;font-size:11px;letter-spacing:.06em;color:var(--f-muted);text-transform:uppercase;flex:none}
+.ixrow{display:flex;align-items:center;gap:10px;background:var(--ctrl);border:1px solid var(--ctrl-b);border-radius:12px;padding:8px 10px;cursor:pointer;flex:none;text-decoration:none;color:inherit}
+.ixrow .ic{width:30px;height:30px;border-radius:9px;flex:none;display:flex;align-items:center;justify-content:center;
+  background:var(--gcb);border:1px solid var(--gcbd);color:var(--frame-text);box-shadow:inset 0 1px 0 var(--gchl)}
+.ixrow .ic svg{width:15px;height:15px}
+.ixrow .it{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.ixrow .it .t1{font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ixrow .it .t2{font-size:10.5px;color:var(--f-muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ixrow .pn{font-size:10px;color:var(--f-muted);font-variant-numeric:tabular-nums;flex:none}
+.stag{flex:none;font-size:9.5px;padding:1px 7px;border-radius:999px}
+.stag.new{color:var(--warn);border:1px solid rgba(180,83,9,.45)}
+.stag.ok{color:#07c160;border:1px solid rgba(7,193,96,.4)}
+.ixrow .cr{color:var(--f-muted);flex:none;display:flex}
+.ixrow .cr svg{width:14px;height:14px}
+
+/* ── 开放点卡（每屏右下角 · 样张批注层） ── */
+.opp{position:absolute;right:10px;bottom:14px;z-index:72;width:200px;background:var(--gcpanel);border:1px solid var(--gcbd);border-radius:11px;
+  padding:8px 10px 7px;pointer-events:none;
+  -webkit-backdrop-filter:blur(var(--gcblur)) saturate(1.2);backdrop-filter:blur(var(--gcblur)) saturate(1.2);
+  box-shadow:inset 0 1px 0 var(--gchl),0 2px 10px var(--gcsh)}
+.opp .oh{font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--frame-text);display:flex;align-items:center;gap:5px;margin-bottom:4px}
+.opp .oh .oc{margin-left:auto;font-weight:500;color:var(--f-muted);letter-spacing:0}
+.opp ol{margin:0;padding-left:14px;font-size:9.5px;line-height:1.55;color:var(--muted)}
+.opp li{margin-bottom:2px}
+.opp li:last-child{margin-bottom:0}
+.opp li b{color:var(--text);font-weight:600}
+</style>
+</head>
+<body>
+<!-- 图标库（lucide 路径内联，零外部依赖；v3 库沿用 + v3.5 补充） -->
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-msg" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/><path d="M8 10v4"/><path d="M12 10v2"/><path d="M16 10v6"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></symbol>
+  <symbol id="i-puzzle" viewBox="0 0 24 24"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></symbol>
+  <symbol id="i-brain" viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect width="10" height="10" x="7" y="7" rx="1.5" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-term" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></symbol>
+  <symbol id="i-tasks" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4"/><path d="M16 3v4"/><path d="m8.5 14 2 2 4.5-4.5"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
+  <symbol id="i-login" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" x2="3" y1="12" y2="12"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/></symbol>
+  <!-- v3.5 补充（lucide 同源） -->
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+  <symbol id="i-cright" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+  <symbol id="i-cdown" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+  <symbol id="i-repeat" viewBox="0 0 24 24"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 20h16a2 2 0 0 0 1.73-2Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></symbol>
+  <symbol id="i-code" viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></symbol>
+  <symbol id="i-palette" viewBox="0 0 24 24"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></symbol>
+  <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></symbol>
+  <symbol id="i-rotate" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></symbol>
+  <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/><path d="M3.22 12H9.5l.5-1 2 4.5 2-7 1.5 3.5h5.27"/></symbol>
+</svg>
+
+<div class="wrap">
+  <div class="console">
+    <div>
+      <h1>移动端 375px 样张 <em>v3.6</em></h1>
+      <div class="sub">二级界面全量补齐 · 修订批：作者裁定三修正（①绿键退役 ②搜索收窄主会话 ③画板挂起）<br>基线 = v3 已批语言（20261020_214500 · 作者已批/已实施）· 只设计不实施</div>
+    </div>
+    <div class="grp">
+      <div class="lbl">v3.5 → v3.6 修订（作者裁定 · 三修正 · 零源码改动）</div>
+      <div class="note">
+        <span class="tag bl">①</span><b>绿色按钮全面退役</b>：逐屏排查，唯一绿实色键 = P12「上传头像」主键 → 改<b>官网登录卡同款</b>（light #111827 / hover #374151 反白实色键；dark 档前景/背景互换、hover #fff；平面无投影、无图标）。其余各屏主/次键本就是 glass-control 同族，零改动。行内开关绿 = nb-toggle 组件 accent（作者 2026-09-06 已裁），非按钮范畴，维持；状态点/条/环等绿色 = v3 已批状态语义，维持。<br>
+        <span class="tag bl">②</span><b>搜索收窄主会话</b>：P2 删「当前会话/全部会话」范围切换，只检索<b>主会话</b>；筛选 = 类型/日期 + 角色（会话/代理两档删除）；结果行去会话名前缀；空态与说明文案同步改。<br>
+        <span class="tag bl">③</span><b>画板 P7 挂起</b>：候 canvas 叠卡设计（v5 交互定稿流程中）批准后统一出稿，暂不实施，本轮不参与批阅；屏面降透明仅存档。<br>
+        屏内 <span style="color:#f0a44a">amber 虚线签 = diff 标注</span>（①②落点 + ③挂起牌）。
+      </div>
+    </div>
+    <div class="grp">
+      <div class="lbl">界面（P1-P12 · 独立可切，← → 键可巡屏）</div>
+      <div class="seg" id="segScr">
+        <button data-s="ix" class="on">P1 索引</button>
+        <button data-s="s2">P2 搜索</button>
+        <button data-s="s3">P3 定时</button>
+        <button data-s="s4">P4 心跳</button>
+        <button data-s="s5">P5 记忆</button>
+        <button data-s="s6">P6 状态</button>
+        <button data-s="r7" style="color:#f0a44a">P7 画板⏸</button>
+        <button data-s="r8">P8 项目</button>
+        <button data-s="r9">P9 图谱</button>
+        <button data-s="r10">P10 插件</button>
+        <button data-s="r11">P11 用量</button>
+        <button data-s="r12">P12 设置</button>
+      </div>
+    </div>
+    <div class="grp">
+      <div class="lbl">主题</div>
+      <div class="seg" id="segTheme">
+        <button data-t="dark" class="on">暗（主）</button>
+        <button data-t="light">亮（切）</button>
+      </div>
+    </div>
+    <div class="grp">
+      <div class="lbl">设计基准（v3 已批语言 · 四件套沿用）</div>
+      <div class="note">
+        <span class="tag">①</span><b>悬浮顶栏</b>：无通栏底面，内容直顶状态栏下，圆钮/头像浮于其上；<br>
+        <span class="tag">②</span><b>双圆钮液态下拉</b>：钮自身拉长、子钮液态弹出（交互完整版见 v3 样张，已批）；<br>
+        <span class="tag">③</span><b>二级液态形变</b>：圆钮原地形变加宽成面板（40→308px，spring 过冲回稳）——v3.5 左列五键<b>全部走此唯一生长逻辑</b>；<br>
+        <span class="tag">④</span><b>glass-control token</b>：blur10 · saturate1.2 · 顶亮/底暗 inset · 辉光投影（nf-findbar 同族）。<br>
+        375 单档 · 暗主亮切 · <b>零源码改动，纯设计</b>。右列页面 = 推送全屏页（作者令：不是下拉），自带悬浮页头（返回圆钮 + 标题胶囊），动效 = 右侧推入 320ms。
+      </div>
+    </div>
+    <div class="grp">
+      <div class="lbl">数据基准（内容镜像现网真实结构）</div>
+      <div class="note">
+        各屏内容按现网数据结构示意：chatSearch / scheduled-task / daemons / memory / 后台任务 / canvas / projectTab / wikiGraph / plugins / usageDashboard / agentProfile（file:line 见同族设计报告）。屏内凡标
+        <span class="np">新增提案</span> 者 = 现网无此字段/列表，需作者裁定是否立项；未标者均为现有字段重排。
+      </div>
+    </div>
+    <div class="grp">
+      <div class="lbl">图例（随屏切换）</div>
+      <div class="note" id="lgText"></div>
+    </div>
+    <div class="grp">
+      <div class="lbl">批注法</div>
+      <div class="note">每屏右下角小字 = <b>开放点</b>清单（①②…编号），候作者逐条批；批完交实施批落地。<b>v3 已批五屏不重做</b>，索引页（P1）内深链直达 v3 样张对应屏。</div>
+    </div>
+  </div>
+
+  <div class="stage" id="stagePhone">
+    <div class="phone dark" id="phone">
+      <div class="sbar"><span>9:41</span><span class="r" style="font-size:11px">▮▮▮ ⌁ ▭</span></div>
+      <div class="app" id="app">
+
+        <!-- ═══ P1 索引：新 11 屏 + v3 已批五屏深链（不重做） ═══ -->
+        <section class="scr live" id="scr-ix">
+          <div class="page">
+            <div class="pghd">
+              <span></span>
+              <div class="pgttl"><span class="nm">二级界面总览 · v3.6</span></div>
+              <span></span>
+            </div>
+            <div class="pgbd">
+              <div class="ixnote">基准 = v3 已批语言（悬浮顶栏 · 双圆钮液态下拉 · 二级液态形变 · glass-control token）· 375 档 · 暗主亮切。点新屏行本样张内切换；点 v3 行打开 v3 样张对应屏（同目录）。<br><b>v3.6 修订</b>：① 绿键退役（P12 主键改官网规格）· ② P2 收窄仅主会话 · ③ P7 画板挂起；屏内 amber 虚线签 = diff 标注。</div>
+              <div class="ixg">左列 · 圆钮形变面板（新 · 待批）</div>
+              <div class="ixrow" data-go="s2"><span class="ic"><svg class="i"><use href="#i-search"/></svg></span><span class="it"><span class="t1">搜索聊天记录</span><span class="t2">仅主会话 · 命中高亮 · 类型/日期/角色筛选</span></span><span class="pn">P2</span><span class="stag new">待批</span><span class="cr"><svg class="i"><use href="#i-cright"/></svg></span></div>
+              <div class="ixrow" data-go="s3"><span class="ic"><svg class="i"><use href="#i-clock"/></svg></span><span class="it"><span class="t1">定时任务</span><span class="t2">任务列表 · 下次触发 · 重复徽标</span></span><span class="pn">P3</span><span class="stag new">待批</span><span class="cr"><svg class="i"><use href="#i-cright"/></svg></span></div>
+              <div class="ixrow" data-go="s4"><span class="ic"><svg class="i"><use href="#i-server"/></svg></span><span class="it"><span class="t1">心跳进程</span><span class="t2">进程在册 · 近次心跳时间线</span></span><span class="pn">P4</span><span class="stag new">待批</span><span class="cr"><svg class="i"><use href="#i-cright"/></svg></span></div>
+              <div class="ixrow" data-go="s5"><span class="ic"><svg class="i"><use href="#i-brain"/></svg></span><span class="it"><span class="t1">记忆</span><span class="t2">记忆条目卡 · 智能体/用户双 scope</span></span><span class="pn">P5</span><span class="stag new">待批</span><span class="cr"><svg class="i"><use href="#i-cright"/></svg></span></div>
+              <div class="ixrow" data-go="s6"><span class="ic"><svg class="i"><use href="#i-activity"/></svg></span><span class="it"><span class="t1">运行状态</span><span class="t2">在飞批任务 · 资源占用（新增提案）</span></span><span class="pn">P6</span><span class="stag new">待批</span><span class="cr"><svg class="i"><use href="#i-cright"/></svg></span></div>
+              <div class="ixg">右列 · 全屏页面（新 · 待批）</div>
+              <div class="ixrow" data-go="r7"><span class="ic"><svg class="i"><use href="#i-layers"/></svg></span><span class="it"><span class="t1">画板</span><span class="t2">候 canvas 设计批准后统一出稿 · 暂不实施</span></span><span class="pn">P7</span><span class="stag hold2">挂起</span><span class="cr"><svg class="i"><use href="#i-cright"/></svg></span></div>
+              <div class="ixrow" data-go="r8"><span class="ic"><svg class="i"><use href="#i-folder"/></svg></span><span class="it"><span class="t1">项目</span><span class="t2">项目卡 · 运行中 agent · 远端徽标</span></span><span class="pn">P8</span><span class="stag new">待批</span><span class="cr"><svg class="i"><use href="#i-cright"/></svg></span></div>
+              <div class="ixrow" data-go="r9"><span class="ic"><svg class="i"><use href="#i-spark"/></svg></span><span class="it"><span class="t1">图谱</span><span class="t2">状态行 · 迷你图谱 · 项目/最近文档</span></span><span class="pn">P9</span><span class="stag new">待批</span><span class="cr"><svg class="i"><use href="#i-cright"/></svg></span></div>
+              <div class="ixrow" data-go="r10"><span class="ic"><svg class="i"><use href="#i-puzzle"/></svg></span><span class="it"><span class="t1">插件</span><span class="t2">插件行 · 分发开关 · 三态 pill</span></span><span class="pn">P10</span><span class="stag new">待批</span><span class="cr"><svg class="i"><use href="#i-cright"/></svg></span></div>
+              <div class="ixrow" data-go="r11"><span class="ic"><svg class="i"><use href="#i-chart"/></svg></span><span class="it"><span class="t1">token 用量</span><span class="t2">总消耗 · 近 14 天条带 · 最耗模型</span></span><span class="pn">P11</span><span class="stag new">待批</span><span class="cr"><svg class="i"><use href="#i-cright"/></svg></span></div>
+              <div class="ixrow" data-go="r12"><span class="ic"><svg class="i"><use href="#i-gear"/></svg></span><span class="it"><span class="t1">设置</span><span class="t2">profile 区（已对齐实施批）· 分组面</span></span><span class="pn">P12</span><span class="stag new">待批</span><span class="cr"><svg class="i"><use href="#i-cright"/></svg></span></div>
+              <div class="ixg">v3 已批 / 已实施（不重做）</div>
+              <a class="ixrow" href="20261020_214500_mobile-mockup-375-v3__delegate-nebflow-74eb4637.html#scr=p1" target="_blank"><span class="ic"><svg class="i"><use href="#i-msg"/></svg></span><span class="it"><span class="t1">聊天主屏 v3</span><span class="t2">悬浮顶栏 + 双液态下拉列</span></span><span class="stag ok">已批 · 已实施</span><span class="cr"><svg class="i"><use href="#i-cright"/></svg></span></a>
+              <a class="ixrow" href="20261020_214500_mobile-mockup-375-v3__delegate-nebflow-74eb4637.html#scr=p2" target="_blank"><span class="ic"><svg class="i"><use href="#i-camera"/></svg></span><span class="it"><span class="t1">头像提案</span><span class="t2">v2④ 沿用 · 作者未挑战</span></span><span class="stag ok">已批</span><span class="cr"><svg class="i"><use href="#i-cright"/></svg></span></a>
+              <a class="ixrow" href="20261020_214500_mobile-mockup-375-v3__delegate-nebflow-74eb4637.html#scr=p3" target="_blank"><span class="ic"><svg class="i"><use href="#i-tasks"/></svg></span><span class="it"><span class="t1">任务面板 · 二级液态</span><span class="t2">圆钮形变原型（本族五面板同语言）</span></span><span class="stag ok">已批 · 已实施</span><span class="cr"><svg class="i"><use href="#i-cright"/></svg></span></a>
+              <a class="ixrow" href="20261020_214500_mobile-mockup-375-v3__delegate-nebflow-74eb4637.html#scr=p4" target="_blank"><span class="ic"><svg class="i"><use href="#i-login"/></svg></span><span class="it"><span class="t1">登录卡</span><span class="t2">glass-control 对齐 + 官方 lockup</span></span><span class="stag ok">已批 · 已实施</span><span class="cr"><svg class="i"><use href="#i-cright"/></svg></span></a>
+              <a class="ixrow" href="20261020_214500_mobile-mockup-375-v3__delegate-nebflow-74eb4637.html#scr=p5" target="_blank"><span class="ic"><svg class="i"><use href="#i-clip"/></svg></span><span class="it"><span class="t1">附件形态</span><span class="t2">流内附件条 + 溢出 +N</span></span><span class="stag ok">已批「很好」</span><span class="cr"><svg class="i"><use href="#i-cright"/></svg></span></a>
+              <a class="ixrow" href="20261020_214500_mobile-mockup-375-v3__delegate-nebflow-74eb4637.html#scr=p6" target="_blank"><span class="ic"><svg class="i"><use href="#i-term"/></svg></span><span class="it"><span class="t1">桌面端对照</span><span class="t2">顶栏同款 · 上下文环桌面保留</span></span><span class="stag ok">已批</span><span class="cr"><svg class="i"><use href="#i-cright"/></svg></span></a>
+            </div>
+            <div class="pgbar"></div>
+          </div>
+        </section>
+
+        <!-- ═══ P2 搜索聊天记录（左列圆钮形变面板） ═══ -->
+        <section class="scr" id="scr-s2">
+          <div class="zone" data-bg='{"u":"帮我找上周聊 nginx 部署的那段","a":"已拉开搜索面板：主会话 12 条结果，命中已高亮。"}'></div>
+          <div class="scrim open"></div>
+          <div class="tpanel" data-panel>
+            <div class="tp-in">
+              <div class="tp-hd"><svg class="i hi"><use href="#i-search"/></svg>搜索聊天记录<span class="sp"></span>
+                <button class="xbtn" data-go="ix" aria-label="收回"><svg class="i"><use href="#i-x"/></svg></button></div>
+              <div class="tp-bd">
+                <div class="sfield"><svg class="i"><use href="#i-search"/></svg><span>画板 部署</span><span class="caret"></span></div>
+                <div class="difftag">diff ② 「当前会话/全部会话」范围切换删除 · 仅检索主会话</div>
+                <div class="rmeta">主会话 · 12 条结果 · 仅显示前 20 条</div>
+                <div class="rrow"><div class="rh"><span class="pill u">用户</span><span class="tm">14:32</span></div>
+                  <div class="rp">把部署文档里的 nginx 配置贴进<mark>画板</mark>看一下，顺带核一遍<mark>部署</mark>清单</div></div>
+                <div class="rrow"><div class="rh"><span class="pill">工具 · WebSearch</span><span class="tm">昨天 09:11</span></div>
+                  <div class="rp"><mark>部署</mark>流水线绿了，镜像已推送 registry，待你复核签名</div></div>
+                <div class="rrow"><div class="rh"><span class="pill">助手</span><span class="tm">2026-10-17 21:47</span></div>
+                  <div class="rp">375 档下输入区与附件条让位已核，<mark>画板</mark>入口下一批接</div></div>
+                <div class="rrow"><div class="rh"><span class="pill">AI</span><span class="tm">2026-10-12 16:04</span></div>
+                  <div class="rp">登录卡规格 v2 已冻结：<mark>画板</mark>入口与 glass-control token 对齐</div>
+                  <div class="chips"><span class="chip">卡片 · 登录卡规格 v2</span><span class="chip">点按内嵌展开</span></div></div>
+                <div class="ftabs"><span class="ftab on">全部</span><span class="ftab">图片与视频</span><span class="ftab">文件</span><span class="ftab">链接</span><span class="ftab">日期</span></div>
+                <div class="ftabs"><span class="fl">角色</span><span class="ftab on">全部来源</span><span class="ftab">用户</span><span class="ftab">助手</span><span class="ftab">AI</span><span class="ftab">工具</span></div>
+                <div class="pfoot">仅检索<b>当前主会话</b> · 类型/日期/角色筛选可叠加 · 空态：「无匹配结果——试试缩短关键词或清除日期/类型筛选」（现网 i18n 同款）</div>
+              </div>
+            </div>
+          </div>
+          <aside class="opp"><div class="oh">开放点<span class="oc">P2 · 3 待批 + ②已裁定</span></div><ol>
+            <li><b>已裁定 v3.6②</b>：仅检索主会话；范围切换删；筛选 = 类型/日期 + 角色</li>
+            <li><b>命中高亮</b>底 = sapphire 30% 透明，字色随主题</li>
+            <li>工具行徽标措辞「<b>工具 · WebSearch</b>」（现网同款）</li>
+            <li>结果卡<b>内嵌展开</b>与点击定位并存，默认展开否</li>
+          </ol></aside>
+        </section>
+
+        <!-- ═══ P3 定时任务（左列圆钮形变面板） ═══ -->
+        <section class="scr" id="scr-s3">
+          <div class="zone" data-bg='{"u":"周五拉周报这事定个提醒","a":"已挂定时任务：每周五 18:00，下次触发 10月24日。"}'></div>
+          <div class="scrim open"></div>
+          <div class="tpanel" data-panel>
+            <div class="tp-in">
+              <div class="tp-hd"><svg class="i hi"><use href="#i-clock"/></svg>定时任务<span class="n">3 待触发 · 1 已超时</span><span class="sp"></span>
+                <button class="hbtn" aria-label="创建"><svg class="i"><use href="#i-plus"/></svg></button>
+                <button class="xbtn" data-go="ix" aria-label="收回"><svg class="i"><use href="#i-x"/></svg></button></div>
+              <div class="tp-bd">
+                <div class="tp-grp">即将触发</div>
+                <div class="srow"><span class="ring"></span><span class="sc">
+                  <span class="sct"><span class="ttl">晨会前拉取 overnight 变更摘要</span><span class="badge">每天</span></span>
+                  <span class="stm">今天 14:30</span><span class="stm2">上次触发 昨天 14:30</span></span></div>
+                <div class="srow"><span class="ring"></span><span class="sc">
+                  <span class="sct"><span class="ttl">周五 18:00 拉周报并归档 reports/</span><span class="badge">每周</span></span>
+                  <span class="stm">10月24日 18:00</span><span class="stm2">上次触发 10月17日 18:00</span></span></div>
+                <div class="srow"><span class="ring"></span><span class="sc">
+                  <span class="sct"><span class="ttl">提醒我 review PR #579</span></span>
+                  <span class="stm">明天 09:00</span></span></div>
+                <div class="tp-grp">已超时</div>
+                <div class="srow"><span class="ring" style="border-color:transparent"></span><span class="sc">
+                  <span class="sct"><span class="ttl">同步官网改版素材到画板</span><span class="badge tag-od">已超时</span></span>
+                  <span class="stm"><svg class="i"><use href="#i-alert"/></svg>昨天 18:00</span></span></div>
+                <div class="tp-grp">已停用</div>
+                <div class="srow off"><span class="ring"></span><span class="sc">
+                  <span class="sct"><span class="ttl">旧版数据备份提醒</span><span class="badge">每天</span></span>
+                  <span class="stm2">已停用 · 不再触发</span></span></div>
+                <div class="pfoot">触发时以「<b>定时任务已触发</b>」气泡进会话 · 点 + 创建（表单：内容 + 时间 + 重复四档）</div>
+              </div>
+            </div>
+          </div>
+          <aside class="opp"><div class="oh">开放点<span class="oc">P3 · 5 条</span></div><ol>
+            <li><b>下次触发为主行</b>、上次触发为副行（灰色小字）</li>
+            <li>重复徽标四档：单次<b>不显</b>/每小时/每天/每周</li>
+            <li>已超时 = err 红 + alert 图标，置独立分组</li>
+            <li>移动端创建入口 = <b>头部 + 钮</b>（本设计）vs 空态引导</li>
+            <li>已停用整行降透明（55%），排序垫底</li>
+          </ol></aside>
+        </section>
+
+        <!-- ═══ P4 心跳进程（左列圆钮形变面板） ═══ -->
+        <section class="scr" id="scr-s4">
+          <div class="zone" data-bg='{"u":"dev-server 是不是又掉了？","a":"心跳进程 3 个在册：探活失败已自动拉起，时间线见面板。"}'></div>
+          <div class="scrim open"></div>
+          <div class="tpanel" data-panel>
+            <div class="tp-in">
+              <div class="tp-hd"><svg class="i hi"><use href="#i-server"/></svg>心跳进程<span class="n">3 在册 · 1 异常</span><span class="sp"></span>
+                <button class="xbtn" data-go="ix" aria-label="收回"><svg class="i"><use href="#i-x"/></svg></button></div>
+              <div class="tp-bd">
+                <div class="drow"><span class="dot run"></span><span class="dn">dev-server</span><span class="dp">:3000</span><span class="dcmd">npm run dev</span><span class="sw sm on"></span></div>
+                <div class="drow"><span class="dot start"></span><span class="dn">docs-watcher</span><span class="dp">:4173</span><span class="dcmd">vite preview</span><span class="sw sm on"></span></div>
+                <div class="drow"><span class="dot err"></span><span class="dn">metrics-probe</span><span class="dp">端口未开</span><span class="dcmd">node probe.js</span><span class="sw sm"></span></div>
+                <div class="tp-grp">近次心跳</div>
+                <div class="tline">
+                  <div class="tev"><span class="tdot" style="background:#07c160"></span><span class="tt">14:32:05</span><span><b>dev-server :3000</b> · 探活成功</span></div>
+                  <div class="tev"><span class="tdot" style="background:var(--err)"></span><span class="tt">14:31:58</span><span><b>metrics-probe</b> · 探活失败 · 已自动拉起</span></div>
+                  <div class="tev"><span class="tdot" style="background:#07c160"></span><span class="tt">14:31:40</span><span><b>docs-watcher :4173</b> · 探活成功</span></div>
+                  <div class="tev"><span class="tdot" style="background:#07c160"></span><span class="tt">14:31:15</span><span><b>dev-server :3000</b> · 探活成功</span></div>
+                </div>
+                <div class="pfoot">每 5 秒轮询 · <b>掉线约 10 秒自动拉起</b>（现网文案）· 行尾小开关 = 自启（autoStart）</div>
+              </div>
+            </div>
+          </div>
+          <aside class="opp"><div class="oh">开放点<span class="oc">P4 · 4 条</span></div><ol>
+            <li>真实结构 = <b>进程行</b>（名/端口/命令/autoStart）+ <b>近次状态时间线</b>（本设计合成）</li>
+            <li><b>延迟毫秒</b>现网无字段——时间线是否加「21ms」<span class="np">新增提案</span></li>
+            <li>「掉线约 10 秒自动拉起」文案沿用现网</li>
+            <li>行内自启开关与桌面端 autoStart 双向同步</li>
+          </ol></aside>
+        </section>
+
+        <!-- ═══ P5 记忆（左列圆钮形变面板） ═══ -->
+        <section class="scr" id="scr-s5">
+          <div class="zone" data-bg='{"u":"你记一下：CSS 禁新色值","a":"已写入记忆（memory.md · 代码风格），移动端条目卡可查。"}'></div>
+          <div class="scrim open"></div>
+          <div class="tpanel" data-panel>
+            <div class="tp-in">
+              <div class="tp-hd"><svg class="i hi"><use href="#i-brain"/></svg>记忆<span class="sp"></span>
+                <button class="hbtn" aria-label="编辑"><svg class="i"><use href="#i-edit"/></svg></button>
+                <button class="xbtn" data-go="ix" aria-label="收回"><svg class="i"><use href="#i-x"/></svg></button></div>
+              <div class="tp-bd">
+                <div class="seg2"><button class="on">智能体 · memory.md</button><button>用户 · User.md</button></div>
+                <div class="mcard"><div class="mt">部署偏好</div>
+                  <div class="ms">stand 走 sbt run；官网静态件走 dist 管线 + 哈希资产 immutable。</div>
+                  <div class="mf"><span>来源 memory.md</span><span>·</span><span>更新 今天 14:02</span></div></div>
+                <div class="mcard"><div class="mt">代码风格</div>
+                  <div class="ms">Scala 2 空格缩进；CSS 禁新色值，一律 token 引用；断言口径在规格书锁死。</div>
+                  <div class="mf"><span>来源 memory.md</span><span>·</span><span>更新 昨天</span></div></div>
+                <div class="mcard"><div class="mt">沟通约定</div>
+                  <div class="ms">样张先出、作者逐条批；结论二值化 PASS/FAIL + 证据清单。</div>
+                  <div class="mf"><span>来源 memory.md</span><span>·</span><span>更新 10-16</span></div></div>
+                <div class="pfoot">移动端 = <b>条目卡只读</b>（按 ## 分节切 <span class="np">新增提案</span>）；「编辑」唤起双栏 markdown 编辑器（桌面同源）· memoryChanged 推送即时刷新 · 更新时间现网无字段 <span class="np">新增提案</span></div>
+              </div>
+            </div>
+          </div>
+          <aside class="opp"><div class="oh">开放点<span class="oc">P5 · 4 条</span></div><ol>
+            <li>现网记忆 = <b>单 md 文件</b>无条目字段——条目卡按 <b>## 分节</b>切（<span class="np">新增提案</span>，切分规则待批）</li>
+            <li>双 scope tab 措辞 = 智能体 / 用户（现网同款）</li>
+            <li>卡上「编辑」= 唤起双栏 markdown 编辑器，不另做移动编辑器</li>
+            <li>卡脚「更新时间」需后端补 mtime 透出（<span class="np">新增提案</span>）</li>
+          </ol></aside>
+        </section>
+
+        <!-- ═══ P6 运行状态（左列圆钮形变面板） ═══ -->
+        <section class="scr" id="scr-s6">
+          <div class="zone" data-bg='{"u":"现在都在飞什么？","a":"4 个在飞：2 运行 / 1 卡死阈值 / 1 取消中，明细见运行状态。"}'></div>
+          <div class="scrim open"></div>
+          <div class="tpanel" data-panel>
+            <div class="tp-in">
+              <div class="tp-hd"><svg class="i hi"><use href="#i-activity"/></svg>运行状态<span class="n">4 在飞</span><span class="sp"></span>
+                <button class="xbtn" data-go="ix" aria-label="收回"><svg class="i"><use href="#i-x"/></svg></button></div>
+              <div class="tp-bd">
+                <div class="tp-grp">在飞任务 · 4</div>
+                <div class="brow"><div class="bh"><span class="glyph dot run"></span><span class="ttl">跑 e2e 回归套件</span><span class="tm">3分12秒</span></div>
+                  <div class="chips"><span class="chip">运行中</span><span class="chip">Nebula</span><span class="chip">本地</span><span class="chip">128行</span></div></div>
+                <div class="brow"><div class="bh"><span class="glyph dot run"></span><span class="ttl">复跑 #569 读数采集</span><span class="tm">41秒</span></div>
+                  <div class="chips"><span class="chip">运行中</span><span class="chip">dispatcher</span><span class="chip">远程</span><span class="chip">12行</span></div></div>
+                <div class="brow"><div class="bh"><span class="glyph dot start"></span><span class="ttl">官网构建产物核对</span><span class="tm">11分06秒</span></div>
+                  <div class="chips"><span class="chip warn">超过 10 分钟无输出</span><span class="chip">node</span><span class="chip">本地</span></div></div>
+                <div class="brow" style="opacity:.72"><div class="bh"><span class="glyph dot" style="background:#98a2b3"></span><span class="ttl">画布叠卡 demo 归档</span><span class="tm">8秒</span></div>
+                  <div class="chips"><span class="chip">取消中…</span><span class="chip">nebula</span><span class="chip">本地</span></div></div>
+                <div class="tp-grp">资源占用 <span class="np">新增提案</span></div>
+                <div class="res">
+                  <div class="rr"><span class="rl">CPU</span><span class="bar"><i style="width:38%"></i></span><span class="rv">38% · 4/16 核</span></div>
+                  <div class="rr"><span class="rl">内存</span><span class="bar"><i class="amb" style="width:19%"></i></span><span class="rv">6.2 / 32 GB</span></div>
+                  <div class="rr"><span class="rl">网络</span><span class="bar"><i style="width:12%"></i></span><span class="rv">↓ 1.2 MB/s</span></div>
+                </div>
+                <div class="pfoot">在飞任务 = 后台任务真实字段（状态词 / origin / 本地·远程 / 行数 / 时长）；资源占用现网无字段，需后端 stats 接口支持 <span class="np">新增提案</span></div>
+              </div>
+            </div>
+          </div>
+          <aside class="opp"><div class="oh">开放点<span class="oc">P6 · 4 条</span></div><ol>
+            <li>与桌面「后台任务 / 子智能体」两下拉的归并：移动端<b>单面板</b>（本设计），子智能体是否并入待批</li>
+            <li>状态词沿用现网六档 + 卡死阈值（&gt;2min 无输出提示 / &gt;10min 标卡死）</li>
+            <li><b>资源占用</b> = <span class="np">新增提案</span>，后端无 CPU/内存/网络字段——立项与否待批</li>
+            <li>远程任务以「远程」chip 标识，与本地同列不分组</li>
+          </ol></aside>
+        </section>
+
+        <!-- ═══ P7 画板（右列全屏页面） ═══ -->
+        <section class="scr" id="scr-r7">
+          <div class="page">
+            <div class="pghd">
+              <button class="rbtn" data-go="ix" aria-label="返回"><svg class="i"><use href="#i-back"/></svg></button>
+              <div class="pgttl"><span class="nm">画板</span><span class="cnt">6 篇打开过</span></div>
+              <button class="rbtn" aria-label="新建"><svg class="i"><use href="#i-plus"/></svg></button>
+            </div>
+            <div class="pgbd">
+              <div class="qrow">
+                <button class="qbtn"><svg class="i"><use href="#i-plus"/></svg>新建文档</button>
+                <button class="qbtn"><svg class="i"><use href="#i-folder"/></svg>打开文件</button>
+              </div>
+              <div class="tp-grp">最近打开 <span class="np">新增提案</span></div>
+              <div class="dcrow"><span class="di"><svg class="i"><use href="#i-file"/></svg></span><span class="dt"><span class="d1">readme.md</span><span class="d2">markdown · 今天 14:02</span></span><span class="pin"><svg class="i"><use href="#i-pin"/></svg></span></div>
+              <div class="dcrow"><span class="di"><svg class="i"><use href="#i-file"/></svg></span><span class="dt"><span class="d1">设计稿-v2.pdf</span><span class="d2">pdf · 今天 11:20</span></span></div>
+              <div class="dcrow"><span class="di"><svg class="i"><use href="#i-image"/></svg></span><span class="dt"><span class="d1">部署架构图.png</span><span class="d2">图片 · 今天 09:47</span></span></div>
+              <div class="dcrow"><span class="di"><svg class="i"><use href="#i-chart"/></svg></span><span class="dt"><span class="d1">周报-1017.xlsx</span><span class="d2">xlsx · 昨天</span></span></div>
+              <div class="dcrow"><span class="di"><svg class="i"><use href="#i-book"/></svg></span><span class="dt"><span class="d1">部署手册.epub</span><span class="d2">epub · 10-16</span></span></div>
+              <div class="dcrow"><span class="di"><svg class="i"><use href="#i-link"/></svg></span><span class="dt"><span class="d1">nebflow.dev/stand</span><span class="d2">链接 · 10-15</span></span></div>
+              <div class="pfoot">画板 = <b>多文档卡层</b>，与桌面 tab 同源（预览 / 钉住 / 关闭）· 钉住置顶带标识 · 空态：画板暂无文档卡片 · 桌面面板 tab（teams/flows/plugins/projects/wiki-graph）移动端归并入口见开放点</div>
+            </div>
+            <div class="pgbar"></div>
+          </div>
+          <div class="holdwrap"><div class="hold">
+            <div class="hico"><svg class="i"><use href="#i-clock"/></svg></div>
+            <div class="ht">画板 · 挂起</div>
+            <div class="hd1">候 canvas 设计批准后统一出稿，暂不实施</div>
+            <div class="hd2">与 <b>canvas 叠卡设计</b>（v5 交互已定稿流程中）统一出稿，避免双头设计。<b>本轮不参与批阅</b>；底层 v3.5 参考稿降透明仅存档。diff ③。</div>
+          </div></div>
+        </section>
+
+        <!-- ═══ P8 项目（右列全屏页面） ═══ -->
+        <section class="scr" id="scr-r8">
+          <div class="page">
+            <div class="pghd">
+              <button class="rbtn" data-go="ix" aria-label="返回"><svg class="i"><use href="#i-back"/></svg></button>
+              <div class="pgttl"><span class="nm">项目</span><span class="cnt">4</span></div>
+              <button class="rbtn" aria-label="新建项目"><svg class="i"><use href="#i-plus"/></svg></button>
+            </div>
+            <div class="pgbd">
+              <div class="pcard"><div class="pch"><span class="pn3">官网改版</span></div>
+                <div class="psm"><span class="sd" style="background:#07c160"></span>设计批 · 样张过审中</div>
+                <div class="pfs">
+                  <div class="fr"><span class="fk">运行中 agent</span><span class="fv">2</span></div>
+                  <div class="fr"><span class="fk">workspace</span><span class="fv">~/work/site</span></div>
+                  <div class="fr"><span class="fk">说明</span><span class="fv">官网改版设计与实施主项目</span></div>
+                </div></div>
+              <div class="pcard"><div class="pch"><span class="pn3">数据分析</span><span class="pdev"><span class="wd"></span>远端 · KAI</span></div>
+                <div class="psm"><span class="sd" style="background:#07c160"></span>跑批 · 出数中</div>
+                <div class="pfs">
+                  <div class="fr"><span class="fk">运行中 agent</span><span class="fv">1</span></div>
+                  <div class="fr"><span class="fk">来源</span><span class="fv">设备 KAI · /home/kaiyu/data</span></div>
+                </div></div>
+              <div class="pcard"><div class="pch"><span class="pn3">移动端体验专项</span></div>
+                <div class="psm"><span class="sd" style="background:#98a2b3"></span>空闲</div>
+                <div class="pfs">
+                  <div class="fr"><span class="fk">运行中 agent</span><span class="fv">0</span></div>
+                  <div class="fr"><span class="fk">workspace</span><span class="fv">~/Claude code/Stand</span></div>
+                </div></div>
+              <div class="pcard" style="opacity:.72"><div class="pch"><span class="pn3">图谱索引</span><span class="badge">暂无节点</span></div>
+                <div class="psm"><span class="sd" style="background:#98a2b3"></span>未挂载</div></div>
+              <div class="srow2 addrow"><svg class="i"><use href="#i-plus"/></svg>还没有项目？让 笨笨 创建项目</div>
+            </div>
+            <div class="pgbar"></div>
+          </div>
+          <aside class="opp"><div class="oh">开放点<span class="oc">P8 · 4 条</span></div><ol>
+            <li>卡字段密度：摘要行 + 运行中 agent + workspace/来源，三段全保留否</li>
+            <li>远端设备徽标 + <b>离线琥珀点</b>（本卡在线，离线时点转琥珀）</li>
+            <li>flow-map 摘要（运行/简报/未挂载/总数）：进卡一行（本设计）vs 点开详情</li>
+            <li>归档项目默认折叠入「归档」分组（本设计隐藏，空态 CTA 沿用现网文案）</li>
+          </ol></aside>
+        </section>
+
+        <!-- ═══ P9 图谱（右列全屏页面） ═══ -->
+        <section class="scr" id="scr-r9">
+          <div class="page">
+            <div class="pghd">
+              <button class="rbtn" data-go="ix" aria-label="返回"><svg class="i"><use href="#i-back"/></svg></button>
+              <div class="pgttl"><span class="nm">图谱</span><span class="cnt">文档图谱</span></div>
+              <button class="rbtn" aria-label="筛选"><svg class="i"><use href="#i-search"/></svg></button>
+            </div>
+            <div class="pgbd">
+              <div class="rmeta">2 个项目 · 38 篇文档 · 126 条链接</div>
+              <div class="gmini">
+                <svg viewBox="0 0 350 150" aria-label="图谱预览">
+                  <g stroke="rgba(139,142,150,.35)" stroke-width="1">
+                    <line x1="40" y1="40" x2="110" y2="30"/><line x1="110" y1="30" x2="140" y2="70"/><line x1="140" y1="70" x2="180" y2="55"/><line x1="180" y1="55" x2="255" y2="35"/><line x1="180" y1="55" x2="230" y2="100"/><line x1="255" y1="35" x2="310" y2="70"/><line x1="230" y1="100" x2="310" y2="70"/><line x1="90" y1="95" x2="140" y2="70"/><line x1="90" y1="95" x2="55" y2="125"/><line x1="160" y1="110" x2="140" y2="70"/><line x1="160" y1="110" x2="230" y2="100"/><line x1="40" y1="40" x2="90" y2="95"/><line x1="230" y1="100" x2="300" y2="125"/><line x1="160" y1="110" x2="210" y2="140"/>
+                  </g>
+                  <circle cx="40" cy="40" r="4" fill="#6b7280"/><circle cx="110" cy="30" r="3" fill="#8b8e96"/><circle cx="140" cy="70" r="6.5" fill="#4b5563"/><circle cx="180" cy="55" r="5" fill="#5b6270"/><circle cx="255" cy="35" r="3.5" fill="#8b8e96"/><circle cx="310" cy="70" r="3" fill="#8b8e96"/><circle cx="90" cy="95" r="4" fill="#6b7280"/><circle cx="230" cy="100" r="4.5" fill="#6b7280"/><circle cx="55" cy="125" r="3" fill="#8b8e96"/><circle cx="300" cy="125" r="3" fill="#8b8e96"/>
+                  <rect x="156" y="106" width="9" height="9" rx="2" fill="#8b8e96"/>
+                  <circle cx="210" cy="140" r="4.5" fill="none" stroke="#8b8e96" stroke-dasharray="2.5 2.5"/>
+                  <circle cx="180" cy="55" r="9" fill="none" stroke="#07c160" stroke-width="1.4" opacity=".85"/>
+                  <text x="192" y="52" font-size="9" fill="#9ba0aa">架构决策 · 12 条链接</text>
+                  <text x="220" y="143" font-size="9" fill="#7b7e88">部署清单 · 未解析</text>
+                </svg>
+                <div class="gleg">
+                  <span class="gl"><span class="gd" style="background:#5b6270"></span>文档（灰阶 · 度数深浅）</span>
+                  <span class="gl"><span class="gs" style="background:#8b8e96;border-radius:2px"></span>附件</span>
+                  <span class="gl"><span class="gd" style="background:none;border:1.2px dashed #8b8e96"></span>未解析</span>
+                  <span class="gl"><span class="gd" style="background:none;border:1.4px solid #07c160"></span>已完成</span>
+                </div>
+              </div>
+              <div class="seg2"><button class="on">全部类型</button><button>全部状态</button><button>筛选文档</button></div>
+              <div class="tp-grp">项目</div>
+              <div class="prow2"><span class="pd" style="background:#5b7fbf"></span>官网改版<span class="pc">12 篇</span></div>
+              <div class="prow2"><span class="pd" style="background:#7fa663"></span>移动端体验<span class="pc">26 篇</span></div>
+              <div class="tp-grp">最近文档</div>
+              <div class="prow2">架构决策<span class="pc">12 条链接</span></div>
+              <div class="prow2">会议纪要-1014<span class="att"><svg class="i"><use href="#i-clip"/></svg></span><span class="pc">附件</span></div>
+              <div class="prow2" style="opacity:.6">部署清单<span class="pc">未解析</span></div>
+              <div class="qrow"><button class="qbtn">放大</button><button class="qbtn">缩小</button><button class="qbtn">复位视野</button></div>
+            </div>
+            <div class="pgbar"></div>
+          </div>
+          <aside class="opp"><div class="oh">开放点<span class="oc">P9 · 4 条</span></div><ol>
+            <li>移动端形态 = <b>预览 + 列表</b>（本设计）vs 全画布手势漫游</li>
+            <li>文档行无更新时间（现网无字段），以「n 条链接」替代</li>
+            <li>项目色点 = 轮换色（wx-proj 同源）；节点灰阶·度数深浅沿用</li>
+            <li>缩放三钮（放大/缩小/复位视野）保留；facet 双下拉收成一段</li>
+          </ol></aside>
+        </section>
+
+        <!-- ═══ P10 插件（右列全屏页面） ═══ -->
+        <section class="scr" id="scr-r10">
+          <div class="page">
+            <div class="pghd">
+              <button class="rbtn" data-go="ix" aria-label="返回"><svg class="i"><use href="#i-back"/></svg></button>
+              <div class="pgttl"><span class="nm">插件</span><span class="cnt">已装 5 · 拒载 1</span></div>
+              <span></span>
+            </div>
+            <div class="pgbd">
+              <div class="plug"><div class="ph"><svg class="i"><use href="#i-puzzle"/></svg><span class="pn2">web-search</span><span class="pill" style="margin-left:auto">任务分发中</span></div>
+                <div class="pdesc">联网检索与网页抓取，供 agent 事实验证。</div>
+                <div class="chips"><span class="chip">v1.4.2 · 作者 Nebflow</span><span class="chip">3 个技能</span><span class="chip">MCP：search</span><span class="chip">内建工具 +2</span></div>
+                <div class="chips"><span style="flex:1"></span><span class="sw sm on"></span></div></div>
+              <div class="plug"><div class="ph"><svg class="i"><use href="#i-puzzle"/></svg><span class="pn2">git-tools</span><span class="pv" style="margin-left:auto">v0.9.1</span></div>
+                <div class="pdesc">提交规范 / 分支巡检 / diff 摘要。</div>
+                <div class="chips"><span class="chip">2 个技能</span><span class="chip">内建工具 +4</span></div>
+                <div class="chips"><span style="flex:1"></span><span class="sw sm on"></span></div></div>
+              <div class="plug"><div class="ph"><svg class="i"><use href="#i-puzzle"/></svg><span class="pn2">design-cards</span><span class="pv" style="margin-left:auto">v2.0.0</span></div>
+                <div class="pdesc">评审 / 汇报 HTML 卡片视觉规范。</div>
+                <div class="chips"><span class="chip">1 个技能</span></div>
+                <div class="chips"><span style="flex:1"></span><span class="sw sm"></span></div></div>
+              <div class="plug"><div class="ph"><svg class="i"><use href="#i-puzzle"/></svg><span class="pn2">wiki-graph</span><span class="pill chg" style="margin-left:auto">内容已变更</span></div>
+                <div class="pdesc">文档图谱构建与检索。</div>
+                <div class="chips"><span class="chip">v1.2.0</span><span class="chip">MCP：graph</span></div>
+                <div class="chips"><span style="flex:1"></span><span class="sw sm on"></span></div></div>
+              <div class="plug blocked"><div class="ph"><svg class="i"><use href="#i-puzzle"/></svg><span class="pn2">legacy-scraper</span><span class="pill ban" style="margin-left:auto">已封禁</span></div>
+                <div class="pdesc">命中 deny-list，禁用且不可分发。</div>
+                <div class="chips"><span class="chip">v0.3.0</span></div>
+                <div class="chips"><span style="flex:1"></span><span class="sw sm" style="opacity:.4"></span></div></div>
+              <div class="tp-grp">智能体</div>
+              <div class="prow2">nebflow<span class="badge">内置</span><span class="pc">默认执行器</span></div>
+              <div class="prow2">Jev<span class="pc">插件分配</span></div>
+              <div class="pfoot">行尾开关 = <b>任务分发器可见性</b>（关 = 不再接新分发，已接任务不受影响）· 拒载行（名 + 理由）入口见开放点</div>
+            </div>
+            <div class="pgbar"></div>
+          </div>
+          <aside class="opp"><div class="oh">开放点<span class="oc">P10 · 4 条</span></div><ol>
+            <li>三态 pill：<b>正常无 pill / 内容已变更（琥珀）/ 已封禁（红）</b>——本设计给正常态补「任务分发中」灰 pill，去留待批</li>
+            <li>分发开关行内常驻（本设计）vs 收进展开详情</li>
+            <li><b>拒载列表</b>（名 + 理由）上移动端否——页头计数「拒载 1」点击查看</li>
+            <li>移动端无安装入口（现网仅展示/开关）——维持否</li>
+          </ol></aside>
+        </section>
+
+        <!-- ═══ P11 token 用量（右列全屏页面） ═══ -->
+        <section class="scr" id="scr-r11">
+          <div class="page">
+            <div class="pghd">
+              <button class="rbtn" data-go="ix" aria-label="返回"><svg class="i"><use href="#i-back"/></svg></button>
+              <div class="pgttl"><span class="nm">token 用量</span><span class="cnt">近 7 天</span></div>
+              <button class="rbtn" aria-label="筛选"><svg class="i"><use href="#i-sliders"/></svg></button>
+            </div>
+            <div class="pgbd">
+              <div class="seg2"><button class="on">总计</button><button>按模型</button><button>按 agent</button></div>
+              <div class="udgrid">
+                <div class="udcard"><div class="ul">总消耗</div><div class="uv">3.4 亿</div><div class="us">计费等效 ¥86.40</div></div>
+                <div class="udcard"><div class="ul">今日</div><div class="uv">1,820 万</div><div class="us up">较昨日 ↑12%</div></div>
+                <div class="udcard"><div class="ul">缓存命中率</div><div class="uv">96.8%</div><div class="us">目标 96%+</div></div>
+                <div class="udcard"><div class="ul">本周环比</div><div class="uv">↑8.4%</div><div class="us">vs 上周</div></div>
+              </div>
+              <div class="tp-grp">近 14 天</div>
+              <div class="hbars"><i style="height:22%"></i><i style="height:35%"></i><i style="height:18%"></i><i style="height:44%"></i><i style="height:30%"></i><i style="height:52%"></i><i style="height:26%"></i><i style="height:38%"></i><i style="height:61%"></i><i style="height:33%"></i><i style="height:70%"></i><i style="height:45%"></i><i class="max" style="height:88%"></i><i style="height:40%"></i></div>
+              <div class="hleg"><span>0</span><span>100万</span><span>1000万</span><span>1亿</span><span style="margin-left:auto">今天 · 峰值 3,210 万（15 时）</span></div>
+              <div class="tp-grp">最耗模型</div>
+              <div class="mrow2"><span class="mn">Opus 4.5</span><span class="mb"><i style="width:62%"></i></span><span class="mv">1.2 亿 · 62%</span></div>
+              <div class="mrow2"><span class="mn">Sonnet 4.5</span><span class="mb"><i style="width:28%"></i></span><span class="mv">5,200 万 · 28%</span></div>
+              <div class="mrow2"><span class="mn">Haiku 4.5</span><span class="mb"><i style="width:10%"></i></span><span class="mv">2,800 万 · 10%</span></div>
+              <div class="pfoot">口径 = 现网 usageDashboard：token 万/亿缩写 · 缓存命中率（目标 96%+）· <b>费用 = 「计费等效」推导值</b> · 明细按 agent / 服务商 / 模型下钻（桌面同源 /api/usage/aggregate）</div>
+            </div>
+            <div class="pgbar"></div>
+          </div>
+          <aside class="opp"><div class="oh">开放点<span class="oc">P11 · 4 条</span></div><ol>
+            <li>费用口径 = <b>「计费等效」推导值</b>（现网唯一费用形态）——保留否</li>
+            <li>52 周热力图移动端 → <b>近 14 天条带</b>（本设计），热力图留桌面</li>
+            <li>维度切换（总计/按模型/按 agent）置顶一段</li>
+            <li>token 万/亿缩写与峰值文案沿用现网格式</li>
+          </ol></aside>
+        </section>
+
+        <!-- ═══ P12 设置（右列全屏页面 · profile 区与已实施 agentProfile.js 对齐） ═══ -->
+        <section class="scr" id="scr-r12">
+          <div class="page">
+            <div class="pghd">
+              <button class="rbtn" data-go="ix" aria-label="返回"><svg class="i"><use href="#i-back"/></svg></button>
+              <div class="pgttl"><span class="nm">设置</span></div>
+              <span></span>
+            </div>
+            <div class="pgbd">
+              <div class="prof">
+                <div class="avx">笨<span class="cam"><svg class="i"><use href="#i-camera"/></svg></span></div>
+                <div class="pbtns">
+                  <button class="pbtn primary">上传头像</button>
+                  <button class="pbtn"><svg class="i"><use href="#i-rotate"/></svg>恢复默认</button>
+                </div>
+                <div class="difftag" style="align-self:stretch;justify-content:center">diff ① 主键 = 官网规格（light #111827 · hover #374151 · dark 反白）· 绿键退役</div>
+                <div class="nrow"><label>名称</label><span class="nin">笨笨<span class="cur"></span></span></div>
+                <div class="pnote">头像本地优先保存（按智能体各自记忆），登录后可随账号同步；名称回车即存。</div>
+              </div>
+              <div class="tp-grp">账号</div>
+              <div class="srow2"><svg class="i"><use href="#i-user"/></svg><span class="sl">stand 账号</span><span class="sv green">登录<svg class="i"><use href="#i-cright"/></svg></span></div>
+              <div class="tp-grp">运行时</div>
+              <div class="srow2"><svg class="i"><use href="#i-spark"/></svg><span class="sl">思考模式</span><span class="seg2" style="width:150px"><button>关闭</button><button>低</button><button class="on">中</button><button>高</button></span></div>
+              <div class="srow2"><svg class="i"><use href="#i-term"/></svg><span class="sl">LLM 日志记录</span><span class="sv"><span class="sw on"></span></span></div>
+              <div class="srow2"><svg class="i"><use href="#i-globe"/></svg><span class="sl">语言</span><span class="sv">简体中文<svg class="i"><use href="#i-cdown"/></svg></span></div>
+              <div class="srow2"><svg class="i"><use href="#i-clock"/></svg><span class="sl">冻结时间（非工作时间）</span><span class="sv">22:00–08:00<svg class="i"><use href="#i-cright"/></svg></span></div>
+              <div class="tp-grp">外观</div>
+              <div class="srow2"><svg class="i"><use href="#i-palette"/></svg><span class="sl">光球基调</span><span class="sv">立体<svg class="i"><use href="#i-cdown"/></svg></span></div>
+              <div class="tp-grp">LLM 服务商</div>
+              <div class="srow2"><svg class="i"><use href="#i-server"/></svg><span class="sl">Anthropic</span><span class="sv">默认<svg class="i"><use href="#i-cright"/></svg></span></div>
+              <div class="srow2"><svg class="i"><use href="#i-puzzle"/></svg><span class="sl">Jev（插件分配）</span><span class="sv"><svg class="i"><use href="#i-cright"/></svg></span></div>
+              <div class="srow2 addrow"><svg class="i"><use href="#i-plus"/></svg>添加服务商</div>
+              <div class="tp-grp">密钥</div>
+              <div class="srow2"><svg class="i"><use href="#i-key"/></svg><span class="sl">密钥管理</span><span class="sv">3 个密钥<svg class="i"><use href="#i-cright"/></svg></span></div>
+              <div class="tp-grp">高级</div>
+              <div class="srow2"><svg class="i"><use href="#i-code"/></svg><span class="sl">编辑原始 JSON</span><span class="sv"><svg class="i"><use href="#i-cright"/></svg></span></div>
+              <div class="srow2"><svg class="i"><use href="#i-rotate"/></svg><span class="sl">重新运行新手引导</span><span class="sv"><svg class="i"><use href="#i-cright"/></svg></span></div>
+              <div class="tp-grp">关于</div>
+              <div class="srow2"><svg class="i"><use href="#i-activity"/></svg><span class="sl">服务连接</span><span class="sv green">已连接 · v2026.9.20</span></div>
+              <div class="srow2"><svg class="i"><use href="#i-rotate"/></svg><span class="sl">检查更新</span><span class="sv"><svg class="i"><use href="#i-cright"/></svg></span></div>
+              <div class="srow2 danger"><svg class="i"><use href="#i-alert"/></svg><span class="sl">重启服务</span><span class="sv">重启<svg class="i"><use href="#i-cright"/></svg></span></div>
+            </div>
+            <div class="pgbar"></div>
+          </div>
+          <aside class="opp"><div class="oh">开放点<span class="oc">P12 · 4 条</span></div><ol>
+            <li><b>profile 区与已实施 agentProfile.js 一一对应</b>：头像预览 / 上传头像 / 恢复默认 / 名称回车存 / 同源文案——已对齐，仅排版为页面顶部；<b>上传头像主键 = 官网规格（v3.6① 已裁定）</b></li>
+            <li>分组与次序沿用桌面 renderSettings：账号→运行时→外观→LLM 服务商→密钥→高级→关于</li>
+            <li>「重启服务」危险项红字 + 二次确认（<span class="np">新增提案</span>）</li>
+            <li>桌面项（开机自启动 / 状态配色 / 编辑原始 JSON）移动端去留待批</li>
+          </ol></aside>
+        </section>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const phone = document.getElementById('phone');
+
+// ── 屏切换 ──
+const ORDER = ['ix','s2','s3','s4','s5','s6','r7','r8','r9','r10','r11','r12'];
+const legends = {
+  ix: '<span class="tag">P1</span><b>索引页</b>：新 11 屏（P2-P12；P7 画板挂起⏸）+ v3 已批五屏深链（不重做，点行打开 v3 样张对应屏）。',
+  s2: '<span class="tag">P2</span><b>搜索聊天记录</b>（v3.6② 收窄：<b>仅主会话</b>）= 左列圆钮二级液态面板：查询框 + 结果行（角色徽标 + 时间 + <mark style="background:rgba(127,156,245,.3);color:inherit;border-radius:3px;padding:0 1px">命中高亮</mark>）+ 筛选两行（类型·日期 / 角色；会话/代理档已删）。数据 = chatSearch.js 真实结构（key/ts/kind/text，mark 居中截 180 字）。',
+  s3: '<span class="tag">P3</span><b>定时任务</b>：即将触发 / 已超时 / 已停用三分组；下次触发主行 + 上次触发副行；重复徽标（单次不显）；头部 + 创建。数据 = scheduled-task.js（triggerAt/repeat/enabled，formatTriggerTime 文案同款）。',
+  s4: '<span class="tag">P4</span><b>心跳进程</b>：真实结构为长驻进程在册（名/端口/命令/autoStart 小开关）+ 近次探活时间线（每 5 秒轮询 · 掉线约 10 秒自动拉起，现网文案）。数据 = daemons.js（/api/daemons · status 四态点色同款）。',
+  s5: '<span class="tag">P5</span><b>记忆</b>：现网 = 双 md 编辑器（智能体 memory.md / 用户 User.md）；移动面板出<b>条目卡只读</b>（按 ## 分节——新增提案）。「编辑」仍唤双栏编辑器。数据 = memory.js（scope 双 tab 同款）。',
+  s6: '<span class="tag">P6</span><b>运行状态</b>：在飞任务 = 后台任务真实字段（状态词六档 / origin / 本地·远程 / 行数 / 时长 / 卡死阈值）；<b>资源占用 = 新增提案</b>（现网 web 无 CPU/内存/网络字段）。数据 = main.js renderBgDropdown。',
+  r7: '<span class="tag">P7</span><b>画板</b> = ⏸ <b>挂起（v3.6③）</b>：候 canvas 叠卡设计（v5 交互定稿流程中）批准后统一出稿，暂不实施，本轮不参与批阅；屏面降透明仅存 v3.5 参考稿。',
+  r8: '<span class="tag">P8</span><b>项目</b>（全屏页）：项目卡 = 摘要行（点色 + brief/空闲/未挂载）+ 运行中 agent + workspace/远端来源；远端徽标带设备名（离线琥珀点）。数据 = projectTab.js（data-running-count / origin {device,path}）。',
+  r9: '<span class="tag">P9</span><b>图谱</b>（全屏页）：状态行（n 项目 · n 文档 · n 链接）+ 迷你图谱预览（灰阶·度数深浅 / 附件方块 / 未解析虚线 / 已完成绿环）+ 项目与最近文档列表 + 缩放三钮。数据 = wikiGraph.js（/api/wiki/graph）。',
+  r10: '<span class="tag">P10</span><b>插件</b>（全屏页）：行 = 版本/作者/描述 + 组成 chips（n 个技能 / MCP / 内建工具 +n）+ 行尾分发开关；三态 pill（正常灰 pill / 内容已变更 / 已封禁）。数据 = plugins.js（frozen contract C6）。',
+  r11: '<span class="tag">P11</span><b>token 用量</b>（全屏页）：六卡摘要（总消耗·计费等效 / 今日·较昨日 / 缓存命中率·目标 96%+ / 本周环比）+ 近 14 天条带（52 周热力图留桌面）+ 最耗模型。口径 = usageDashboard.js（万/亿缩写同款）。',
+  r12: '<span class="tag">P12</span><b>设置</b>（全屏页）：顶部 profile 区与<b>已实施 agentProfile.js 一一对应</b>（头像预览 / 上传头像 / 恢复默认 / 名称回车存 / 同源文案）；分组沿用桌面 renderSettings 次序（账号→运行时→外观→LLM 服务商→密钥→高级→关于）。v3.6①：上传头像主键 = 官网登录卡同款反白实色键（绿键退役）。',
+};
+const lgText = document.getElementById('lgText');
+function showScr(id){
+  document.querySelectorAll('.scr').forEach(s=>s.classList.toggle('live', s.id === 'scr-'+id));
+  lgText.innerHTML = legends[id] || '';
+  const sec = document.getElementById('scr-'+id);
+  if(id.startsWith('s') && sec){ // 左列面板：进场即演示二级液态形变（v3⑤ 同款）
+    const tp = sec.querySelector('[data-panel]');
+    if(tp){ tp.style.cssText=''; tp.classList.remove('open'); void tp.offsetWidth;
+      requestAnimationFrame(()=>requestAnimationFrame(()=>tp.classList.add('open'))); }
+  } // 右列页面：.scr.live .page 动画随 display 切换自动重放
+}
+document.getElementById('segScr').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  document.querySelectorAll('#segScr button').forEach(x=>x.classList.toggle('on', x===b));
+  showScr(b.dataset.s);
+});
+showScr('ix');
+
+// ── 主题 ──
+document.getElementById('segTheme').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  document.querySelectorAll('#segTheme button').forEach(x=>x.classList.toggle('on', x===b));
+  phone.classList.toggle('dark', b.dataset.t === 'dark');
+  phone.classList.toggle('light', b.dataset.t === 'light');
+});
+
+// ── 背景会话注入（左列五屏共用：悬浮顶栏 + 双气泡 + 输入区） ──
+document.querySelectorAll('[data-bg]').forEach(z=>{
+  let d = {}; try{ d = JSON.parse(z.dataset.bg); }catch(_){}
+  z.innerHTML = `
+    <header class="hd">
+      <button class="rbtn" aria-label="会话功能"><svg class="i"><use href="#i-sliders"/></svg><span class="bdg">8</span></button>
+      <div class="who"><div class="avx">笨<span class="cam"><svg class="i"><use href="#i-camera"/></svg></span></div><div class="nm">笨笨</div></div>
+      <button class="rbtn" aria-label="前往"><svg class="i"><use href="#i-layers"/></svg></button>
+    </header>
+    <div class="chat">
+      <div class="bub user">${d.u||''}</div>
+      <div class="bub ai">${d.a||''}</div>
+    </div>
+    <div class="comp"><div class="ibar"><div class="ta"><span class="ph">输入消息…</span></div>
+      <button class="cbtn"><svg class="i"><use href="#i-clip"/></svg></button>
+      <button class="cbtn stop"><svg class="i"><use href="#i-stop"/></svg></button></div><div class="homebar"></div></div>`;
+});
+
+// ── 屏内导航：索引行 / 返回钮 / 面板 X ──
+document.body.addEventListener('click', e=>{
+  const g = e.target.closest('[data-go]'); if(!g) return;
+  if(g.tagName === 'A') return;               // v3 深链 <a> 走原生跳转
+  const id = g.dataset.go;
+  const btn = document.querySelector(`#segScr [data-s="${id}"]`);
+  if(btn) btn.click();
+});
+
+// ── 键盘巡屏 ← → ──
+document.addEventListener('keydown', e=>{
+  if(e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  const cur = document.querySelector('#segScr button.on');
+  const i = ORDER.indexOf(cur ? cur.dataset.s : 'ix');
+  const n = ORDER[(i + (e.key === 'ArrowRight' ? 1 : ORDER.length - 1)) % ORDER.length];
+  document.querySelector(`#segScr [data-s="${n}"]`).click();
+});
+
+// ── 深链：#scr=ix|s2..s6|r7..r12 & t=light（样张分享/评审直达；v3 屏号 p1..p6 见该文件自身深链） ──
+const q = new URLSearchParams(location.hash.slice(1));
+if(q.get('t')) document.querySelector(`#segTheme [data-t="${q.get('t')}"]`)?.click();
+if(q.get('scr')){
+  const raw = q.get('scr');
+  const id = document.getElementById('scr-'+raw) ? raw : 'ix';
+  document.querySelector(`#segScr [data-s="${id}"]`)?.click();
+}
+</script>
+</body>
+</html>
