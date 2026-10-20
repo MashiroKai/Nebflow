@@ -1,0 +1,40 @@
+digraph v2topology {
+  rankdir=TB;
+  bgcolor="transparent";
+  node [shape=box, style="filled,rounded", fontname="PingFang SC", fontsize=11, color="#8a8f98", penwidth=1.2, margin="0.18,0.10"];
+  edge [fontname="PingFang SC", fontsize=10, color="#8a8f98", fontcolor="#3d4350"];
+
+  subgraph cluster_now {
+    label="现状 · 门户默认入口（同机也绕行 VPS）";
+    fontname="PingFang SC"; fontsize=12; color="#c0392b"; style="rounded"; bgcolor="transparent";
+    browserA [label="浏览器（同机）\norigin = 门户 VPS 站", fillcolor="#fdf0e0", fontcolor="#1b1e26"];
+    portal [label="门户站（VPS）\n七类控制台数据全经此", fillcolor="#fbe9e7", fontcolor="#1b1e26"];
+    relay [label="中继 relay-ws 隧道\n≈0.6s/往返 · ping 5s 保活", fillcolor="#fbe9e7", fontcolor="#1b1e26"];
+    bridge [label="PortalTunnelBridge\nhttp_request/ws_frame 展开", fillcolor="#fff8e1", fontcolor="#1b1e26"];
+  }
+
+  subgraph cluster_engine {
+    label="引擎（本机 · 全部真源在此）";
+    fontname="PingFang SC"; fontsize=12; color="#8a8f98"; style="rounded"; bgcolor="transparent";
+    router [label="router / WsHub\n历史页 · token 刷窗 · live 输出\n用量聚合 · 快照 · 台账 · AskUser\n（本机内存/盘读 <20ms）", fillcolor="#e6f4ea", fontcolor="#1b1e26"];
+  }
+
+  subgraph cluster_v2 {
+    label="v2 同机直连近路（一次判定，七面受益）";
+    fontname="PingFang SC"; fontsize=12; color="#1e7e34"; style="rounded"; bgcolor="transparent";
+    probe [label="① 门户页探 localhost/health\n（deviceId 核对）", fillcolor="#e6f4ea", fontcolor="#1b1e26"];
+    ticket [label="② 经隧道铸 local-ticket\n（ConsoleTicketRoutes 零改）", fillcolor="#e6f4ea", fontcolor="#1b1e26"];
+    local [label="③ origin → localhost:8080\nWS+REST 全回环 ≈1-20ms", fillcolor="#5e6ad2", fontcolor="#ffffff"];
+    degrade [label="探测失败 ⇒ 停留门户\n（隧道=现状兜底，会话级降级）", shape=note, fillcolor="#f3e8fb", fontcolor="#1b1e26"];
+  }
+
+  browserA -> portal [label="七类数据逐帧穿 VPS"];
+  portal -> relay [label="下行帧"];
+  relay -> bridge [label="relay-ws（引擎主动拨出）"];
+  bridge -> router [label="进程内直调 / 127.0.0.1 回环"];
+
+  probe -> ticket [label="命中且身份相符"];
+  probe -> degrade [style=dashed, label="未命中/超时"];
+  ticket -> local [label="303 + cookie 落 localhost"];
+  local -> router [label="零中继", color="#1e7e34", penwidth=2];
+}
