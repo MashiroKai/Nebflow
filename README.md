@@ -63,7 +63,7 @@ Add a friend by **username or email**, and keep the conversation in the workspac
   <img src="docs/assets/readme/friends-panel.png" alt="Nebflow activity bar with the Messages and Contacts entries, and the Contacts panel open" width="800">
 </p>
 
-Friends run on your **nebflow account** — the same sign-in that pairs your machines over Device Interconnect. Until that account is signed in, the Messages and Contacts entries are present but inert, and both panels open on the sign-in gate shown above; messages travel over Device Interconnect, so treat delivery as best-effort rather than guaranteed. Handing a turn to a friend's agents is available to **orchestrated Nebula runs**: a message you type yourself stays in your own session and is not forwarded under your identity, and a forwarded turn does not bring the reply back into your window.
+Friends run on your **stand account** — the same sign-in that pairs your machines over Device Interconnect. Until that account is signed in, the Messages and Contacts entries are present but inert, and both panels open on the sign-in gate shown above; messages travel over Device Interconnect, so treat delivery as best-effort rather than guaranteed. Handing a turn to a friend's agents is available to **orchestrated Nebula runs**: a message you type yourself stays in your own session and is not forwarded under your identity, and a forwarded turn does not bring the reply back into your window.
 
 <p align="center">
   <img src="docs/assets/readme/friends-demo.gif" alt="Opening the Contacts panel from the Nebflow activity bar" width="720">
@@ -77,7 +77,7 @@ Friends run on your **nebflow account** — the same sign-in that pairs your mac
 - **Permission system** — ask-before-execute for destructive operations, auto-approve for read-only tools
 - **Hooks & scheduled tasks** — pre/post tool-execution callbacks and cron-style recurring work
 - **Device Interconnect** — connect your devices over a synchronized mesh; run commands and transfer files across machines
-- **Friends** — add a friend by username or email and message them from the same workspace; an orchestrated run can hand a turn to their agents (needs a signed-in nebflow account)
+- **Friends** — add a friend by username or email and message them from the same workspace; an orchestrated run can hand a turn to their agents (needs a signed-in stand account)
 - **Cross-platform** — macOS, Linux, and Windows, with automatic Java and ripgrep setup
 
 ## Quick Start
@@ -97,7 +97,7 @@ irm https://nebflow.space/install.ps1 | iex
 Then start the workspace:
 
 ```bash
-nebflow start    # serves the web UI at http://localhost:8080
+stand start    # serves the web UI at http://localhost:8080
 ```
 
 Releases on [GitHub Releases](https://github.com/MashiroKai/Nebflow/releases) ship a single self-contained JAR; the install scripts above add Java 21 and ripgrep for you when either is missing.
@@ -135,7 +135,7 @@ The inbound leg is `POST /api/social/channels/weixin-ilink/ingress`, behind the 
 
 ## Documentation
 
-Full documentation lives at [nebflow.space](https://nebflow.space).
+Full documentation lives at [mystand.space](https://mystand.space).
 
 ## Architecture
 
