@@ -21,6 +21,7 @@ if (document.documentElement.dataset.nfEmbedded === '1') {
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
 import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, enhanceMentionSpansInDom } from './utils.js';
 import { getProjectsSnapshot, getProjectsListGen, preheatProjects, onProjectsArrival } from './mentionComplete.js';
+import { initServiceWorker } from './swReg.js'; // console-load-perf 批：温访问秒开注册器（load 后注册，降级零影响）
 import { connect, onMessage, sendWs, onReconnect } from './ws.js';
 import {
   setBusy, clearBusy, clearStatus,
@@ -231,6 +232,7 @@ initChatView(
 // D6 批 F2: pending-ask bar + header badge wiring (click = jump to oldest ask).
 initPendingAsks();
 initScrollUnderGlass(); // uifix ⑤：浮层毛玻璃裙边降级探测器
+initServiceWorker(); // console-load-perf 批：温访问秒开（/sw.js 未上线的引擎上为静默空转）
 
 // ---------- 2. Init libraries ----------
 // Guard: Safari may execute module scripts before CDN scripts finish loading.

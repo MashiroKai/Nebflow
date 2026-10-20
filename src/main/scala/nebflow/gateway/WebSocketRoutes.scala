@@ -1205,6 +1205,7 @@ class WebSocketRoutes(
           Set(
             "style.css",
             "app.js",
+            "sw.js", // console-load-perf 批 2026-10-21: 温访问秒开 SW（根 scope 注册要求根路径脚本；no-cache 保证 SW 更新即时可见）
             "favicon-32.png",
             "favicon-16.png",
             "favicon.svg",

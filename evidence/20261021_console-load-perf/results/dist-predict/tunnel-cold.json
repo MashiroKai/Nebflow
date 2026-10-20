@@ -1,0 +1,510 @@
+{
+ "label": "tunnel-cold",
+ "tunnel": true,
+ "cold": true,
+ "wallToLoadMs": 268,
+ "wallSettledMs": 3271,
+ "nav": {
+  "ttfb": 7.899999976158142,
+  "dcl": 59.39999997615814,
+  "load": 61.30000001192093,
+  "transfer": 38386,
+  "swControlled": true
+ },
+ "requestCount": 61,
+ "totalWireBytes": 0,
+ "jsCount": 45,
+ "jsWireBytes": 0,
+ "revalid304": 0,
+ "gzipped": 48,
+ "requests": [
+  {
+   "url": "/",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/html"
+  },
+  {
+   "url": "/vendor/katex.min.css",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/vendor/highlight-github-dark.min.css",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/assets/app-89d2e18f.css",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/brand/stand/illustrator/svg/stand-symbol-white.svg",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "image/svg+xml"
+  },
+  {
+   "url": "/vendor/lucide.min.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/vendor/lottie.min.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/vendor/marked.min.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/vendor/katex.min.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/vendor/highlight.min.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/app-FEUMZJEH.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/mobile/bootstrap-BDCXLJBL.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/vendor/highlight-github.min.css",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/assets/chunks/chunk-VS5ZKXQ2.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-NWZN4C34.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-FSKPE5EG.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-ON2GJSXL.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-J73WZ6WT.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-X52A55MA.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 0,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-Y34VNU24.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-NF3QXXMT.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-KGY4HPFN.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-S43QDR4E.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-7NBYZQZJ.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-XSDVDUR6.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-F2SZYYCK.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-7ZBMYIB7.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-QHY2VUNV.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-LXZS2B5Z.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-QKYWTMZ4.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-25PJKHL4.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-RDDAGC2K.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-PG67G37O.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-CLGFSCWS.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-PCCNAXJL.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-CWBJQ5UK.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-WMCNJR6S.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-ZO47VGOS.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 0,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-D5PIJK6J.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-2W4VYYIM.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-VW47XSNR.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-WWM3ZMLO.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-EKP74JHS.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-HRIC7ZYJ.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-LZGI63RE.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-RASEXVCP.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-J7UYQU62.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/ws-XP3WKEGB.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 0,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/api/chains",
+   "st": 404,
+   "enc": 0,
+   "cc": null,
+   "gz": 0,
+   "mime": ""
+  },
+  {
+   "url": "/api/projects",
+   "st": 404,
+   "enc": 0,
+   "cc": null,
+   "gz": 0,
+   "mime": ""
+  },
+  {
+   "url": "/assets/chunks/wikiGraph-CWBM7O7R.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/api/neblink/status",
+   "st": 404,
+   "enc": 0,
+   "cc": null,
+   "gz": 0,
+   "mime": ""
+  },
+  {
+   "url": "/api/plugins",
+   "st": 404,
+   "enc": 0,
+   "cc": null,
+   "gz": 0,
+   "mime": ""
+  },
+  {
+   "url": "/api/canvas-tabs",
+   "st": 404,
+   "enc": 0,
+   "cc": null,
+   "gz": 0,
+   "mime": ""
+  },
+  {
+   "url": "/api/neblink/status",
+   "st": 404,
+   "enc": 0,
+   "cc": null,
+   "gz": 0,
+   "mime": ""
+  },
+  {
+   "url": "/agents/Nebula/agent.json",
+   "st": 404,
+   "enc": 0,
+   "cc": null,
+   "gz": 0,
+   "mime": ""
+  },
+  {
+   "url": "/api/nf-authcheck",
+   "st": 404,
+   "enc": 0,
+   "cc": null,
+   "gz": 0,
+   "mime": ""
+  },
+  {
+   "url": "/assets/chunks/canvas-HQ4OQ55U.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/favicon.ico?v=71a456e2d388b27e",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 0,
+   "mime": "image/x-icon"
+  },
+  {
+   "url": "/api/canvas-tabs",
+   "st": 404,
+   "enc": 0,
+   "cc": null,
+   "gz": 0,
+   "mime": ""
+  },
+  {
+   "url": "/assets/chunks/activityBar-MFWC2L6F.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  }
+ ]
+}

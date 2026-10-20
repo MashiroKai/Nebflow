@@ -1,0 +1,1549 @@
+{
+ "label": "tunnel-cold",
+ "tunnel": true,
+ "cold": true,
+ "wallToLoadMs": 9109,
+ "wallSettledMs": 12111,
+ "nav": {
+  "ttfb": 9.300000011920929,
+  "dcl": 8975.800000011921,
+  "load": 8978,
+  "transfer": 12680,
+  "swControlled": false
+ },
+ "requestCount": 191,
+ "totalWireBytes": 2260285,
+ "jsCount": 150,
+ "jsWireBytes": 1936720,
+ "revalid304": 0,
+ "gzipped": 181,
+ "requests": [
+  {
+   "url": "/",
+   "st": 200,
+   "enc": 12623,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/html"
+  },
+  {
+   "url": "/vendor/katex.min.css",
+   "st": 200,
+   "enc": 3778,
+   "cc": null,
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/vendor/highlight-github-dark.min.css",
+   "st": 200,
+   "enc": 865,
+   "cc": null,
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/base.css",
+   "st": 200,
+   "enc": 5799,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/nav.css",
+   "st": 200,
+   "enc": 3518,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/sidebar.css",
+   "st": 200,
+   "enc": 18828,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/chat.css",
+   "st": 200,
+   "enc": 52695,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/modal.css",
+   "st": 200,
+   "enc": 9642,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/input.css",
+   "st": 200,
+   "enc": 17470,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/taskList.css",
+   "st": 200,
+   "enc": 7378,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/reminder.css",
+   "st": 200,
+   "enc": 4104,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/neblink.css",
+   "st": 200,
+   "enc": 3452,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/dropbox.css",
+   "st": 200,
+   "enc": 4287,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/projectPanel.css",
+   "st": 200,
+   "enc": 11724,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/flowMap.css",
+   "st": 200,
+   "enc": 19615,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/friends.css",
+   "st": 200,
+   "enc": 31089,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/split.css",
+   "st": 200,
+   "enc": 23639,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/voice.css",
+   "st": 200,
+   "enc": 952,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/voiceMode.css",
+   "st": 200,
+   "enc": 3606,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/lightbox.css",
+   "st": 200,
+   "enc": 1253,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/usage.css",
+   "st": 200,
+   "enc": 3855,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/social.css",
+   "st": 200,
+   "enc": 8238,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/secrets.css",
+   "st": 200,
+   "enc": 6461,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/executors.css",
+   "st": 200,
+   "enc": 1342,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/diffView.css",
+   "st": 200,
+   "enc": 2289,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/sapphire.css",
+   "st": 200,
+   "enc": 18611,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/mobile.css",
+   "st": 200,
+   "enc": 1696,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/css/mobileLayer.css",
+   "st": 200,
+   "enc": 18350,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/brand/stand/illustrator/svg/stand-symbol-white.svg",
+   "enc": 0,
+   "cc": null,
+   "gz": 0,
+   "mime": ""
+  },
+  {
+   "url": "/vendor/lucide.min.js",
+   "st": 200,
+   "enc": 83032,
+   "cc": null,
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/vendor/qrcode.js",
+   "st": 200,
+   "enc": 12342,
+   "cc": null,
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/vendor/lottie.min.js",
+   "st": 200,
+   "enc": 76865,
+   "cc": null,
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/vendor/marked.min.js",
+   "st": 200,
+   "enc": 11034,
+   "cc": null,
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/vendor/katex.min.js",
+   "st": 200,
+   "enc": 76294,
+   "cc": null,
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/vendor/highlight.min.js",
+   "st": 200,
+   "enc": 42552,
+   "cc": null,
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/main.js",
+   "st": 200,
+   "enc": 78073,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/mobile/bootstrap.js",
+   "st": 200,
+   "enc": 3053,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/vendor/highlight-github.min.css",
+   "st": 200,
+   "enc": 861,
+   "cc": null,
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/brand/releases/71a456e2d388b27e/symbol-dark.svg",
+   "st": 200,
+   "enc": 1130,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "image/svg+xml"
+  },
+  {
+   "url": "/js/branding.js",
+   "st": 200,
+   "enc": 2223,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/state.js",
+   "st": 200,
+   "enc": 6821,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/brand.js",
+   "st": 200,
+   "enc": 5526,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/utils.js",
+   "st": 200,
+   "enc": 22495,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/mentionComplete.js",
+   "st": 200,
+   "enc": 7299,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/ws.js",
+   "st": 200,
+   "enc": 19402,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/chat.js",
+   "st": 200,
+   "enc": 77971,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/workline.js",
+   "st": 200,
+   "enc": 12575,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/askPending.js",
+   "st": 200,
+   "enc": 5765,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/sidebar.js",
+   "st": 200,
+   "enc": 44031,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/onboarding.js",
+   "st": 200,
+   "enc": 17796,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/rootName.js",
+   "st": 200,
+   "enc": 2751,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/modal.js",
+   "st": 200,
+   "enc": 4927,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/input.js",
+   "st": 200,
+   "enc": 31413,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/persistence.js",
+   "st": 200,
+   "enc": 24838,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/micOrb.js",
+   "st": 200,
+   "enc": 28807,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/delegateChainProvider.js",
+   "st": 200,
+   "enc": 5340,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/delegateChainStub.js",
+   "st": 200,
+   "enc": 9017,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/cardRegistry.js",
+   "st": 200,
+   "enc": 11730,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/viewers/shared.js",
+   "st": 200,
+   "enc": 18165,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/memory.js",
+   "st": 200,
+   "enc": 1969,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/notificationBanner.js",
+   "st": 200,
+   "enc": 1679,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/i18n.js",
+   "st": 200,
+   "enc": 3545,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/canvas.js",
+   "st": 200,
+   "enc": 47107,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/projectTab.js",
+   "st": 200,
+   "enc": 29304,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/scheduled-task.js",
+   "st": 200,
+   "enc": 8118,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/daemons.js",
+   "st": 200,
+   "enc": 7635,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/chatSearch.js",
+   "st": 200,
+   "enc": 26873,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/fileSearch.js",
+   "st": 200,
+   "enc": 5357,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/usageDashboard.js",
+   "st": 200,
+   "enc": 13085,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/explorer.js",
+   "st": 200,
+   "enc": 23202,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/chatView.js",
+   "st": 200,
+   "enc": 5028,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/errorRecovery.js",
+   "st": 200,
+   "enc": 7918,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/flowAgentPopup.js",
+   "st": 200,
+   "enc": 13269,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/bgAgentPopup.js",
+   "st": 200,
+   "enc": 19244,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/bgTaskOutputPopup.js",
+   "st": 200,
+   "enc": 11486,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/managePanel.js",
+   "st": 200,
+   "enc": 3973,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/neblink.js",
+   "st": 200,
+   "enc": 21976,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/dropbox.js",
+   "st": 200,
+   "enc": 20772,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/contacts.js",
+   "st": 200,
+   "enc": 25825,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/messages.js",
+   "st": 200,
+   "enc": 139316,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/turnGroup.js",
+   "st": 200,
+   "enc": 11271,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/lightbox.js",
+   "st": 200,
+   "enc": 4701,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/ctxthresh.js",
+   "st": 200,
+   "enc": 10659,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/agentManager.js",
+   "st": 200,
+   "enc": 7553,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/plugins.js",
+   "st": 200,
+   "enc": 21639,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/colResizer.js",
+   "st": 200,
+   "enc": 4012,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/activityBar.js",
+   "st": 200,
+   "enc": 19719,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/agentProfile.js",
+   "st": 200,
+   "enc": 5362,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/socialPanel.js",
+   "st": 200,
+   "enc": 28268,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/secretsPanel.js",
+   "st": 200,
+   "enc": 15266,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/featureFlags.js",
+   "st": 200,
+   "enc": 5070,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/voiceSeal.js",
+   "st": 200,
+   "enc": 2662,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/main/thinkingTimer.js",
+   "st": 200,
+   "enc": 799,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/main/freeze.js",
+   "st": 200,
+   "enc": 3322,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/main/historyIndicators.js",
+   "st": 200,
+   "enc": 816,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/main/permToast.js",
+   "st": 200,
+   "enc": 1351,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/main/bgAgents.js",
+   "st": 200,
+   "enc": 13277,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/nodeData.js",
+   "st": 200,
+   "enc": 6538,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/imeGuard.js",
+   "st": 200,
+   "enc": 2976,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/providerModels.js",
+   "st": 200,
+   "enc": 1915,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/taskList.js",
+   "st": 200,
+   "enc": 14880,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/sidebar/providersUi.js",
+   "st": 200,
+   "enc": 10762,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/toggle.js",
+   "st": 200,
+   "enc": 2658,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/flowHelpers.js",
+   "st": 200,
+   "enc": 1515,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/modelCapabilities.js",
+   "st": 200,
+   "enc": 1545,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/orbSettingsUI.js",
+   "st": 200,
+   "enc": 4897,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/sidebar/pathRules.js",
+   "st": 200,
+   "enc": 2840,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/timeFormat.js",
+   "st": 200,
+   "enc": 4289,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/reference.js",
+   "st": 200,
+   "enc": 13286,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/msgQuote.js",
+   "st": 200,
+   "enc": 8140,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/diffRender.js",
+   "st": 200,
+   "enc": 2802,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/diffCanvas.js",
+   "st": 200,
+   "enc": 3233,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/depVisibility.js",
+   "st": 200,
+   "enc": 1468,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/fileViewers.js",
+   "st": 200,
+   "enc": 2328,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/askAttachments.js",
+   "st": 200,
+   "enc": 8073,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/chat/durationBadges.js",
+   "st": 200,
+   "enc": 2979,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/chat/collapsible.js",
+   "st": 200,
+   "enc": 1176,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/chat/popArtifact.js",
+   "st": 200,
+   "enc": 1870,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/chat/askBubbles.js",
+   "st": 200,
+   "enc": 1021,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/chat/injectedRows.js",
+   "st": 200,
+   "enc": 9334,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/popArtifacts.js",
+   "st": 200,
+   "enc": 17677,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/fmMessageCache.js",
+   "st": 200,
+   "enc": 6316,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/fmDropboxCache.js",
+   "st": 200,
+   "enc": 4515,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/localStore.js",
+   "st": 200,
+   "enc": 16817,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/chatQueue.js",
+   "st": 200,
+   "enc": 2630,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/nfTicket.js",
+   "st": 200,
+   "enc": 7489,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/voiceEngine.js",
+   "st": 200,
+   "enc": 9854,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/input/slashCommands.js",
+   "st": 200,
+   "enc": 4460,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/input/inputModes.js",
+   "st": 200,
+   "enc": 1561,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/input/attachments.js",
+   "st": 200,
+   "enc": 6327,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/orbPresets.js",
+   "st": 200,
+   "enc": 4714,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/delegateApi.js",
+   "st": 200,
+   "enc": 3460,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/locales/zh-CN.js",
+   "st": 200,
+   "enc": 54073,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/locales/en.js",
+   "st": 200,
+   "enc": 49772,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/canvasDrop.js",
+   "st": 200,
+   "enc": 9826,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/flowCss.js",
+   "st": 200,
+   "enc": 11912,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/contentI18n.js",
+   "st": 200,
+   "enc": 1876,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/agentFileViewer.js",
+   "st": 200,
+   "enc": 1460,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/listFlip.js",
+   "st": 200,
+   "enc": 4009,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/daemonPanel.js",
+   "st": 200,
+   "enc": 6338,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/popMediaIndex.js",
+   "st": 200,
+   "enc": 4048,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/chatSearchFloat.js",
+   "st": 200,
+   "enc": 6245,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/explorer/selection.js",
+   "st": 200,
+   "enc": 2684,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/explorer/fileRules.js",
+   "st": 200,
+   "enc": 1121,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/msgScrollAnchor.js",
+   "st": 200,
+   "enc": 2934,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/avatarCache.js",
+   "st": 200,
+   "enc": 4163,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/friendsApi.js",
+   "st": 200,
+   "enc": 29622,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/friendGroups.js",
+   "st": 200,
+   "enc": 16004,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/contextMenu.js",
+   "st": 200,
+   "enc": 2225,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/updateCard.js",
+   "st": 200,
+   "enc": 3051,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/avatarRender.js",
+   "st": 200,
+   "enc": 3990,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/attachPreviewField.js",
+   "st": 200,
+   "enc": 13186,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/attachmentPreview.js",
+   "st": 200,
+   "enc": 10069,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/attachUpload.js",
+   "st": 200,
+   "enc": 16958,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/sendState.js",
+   "st": 200,
+   "enc": 7536,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/nfFileCache.js",
+   "st": 200,
+   "enc": 5515,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/messages/friendCopy.js",
+   "st": 200,
+   "enc": 1292,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/messages/friendTrust.js",
+   "st": 200,
+   "enc": 1342,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/messages/elements.js",
+   "st": 200,
+   "enc": 1952,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/messages/timeFmt.js",
+   "st": 200,
+   "enc": 1081,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/modelPanel.js",
+   "st": 200,
+   "enc": 9422,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/socialChannels.js",
+   "st": 200,
+   "enc": 7895,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/executorIcons.js",
+   "st": 200,
+   "enc": 2176,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/viewers/monaco.js",
+   "st": 200,
+   "enc": 1386,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/viewers/markdown.js",
+   "st": 200,
+   "enc": 10711,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/viewers/yaml.js",
+   "st": 200,
+   "enc": 1008,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/viewers/html.js",
+   "st": 200,
+   "enc": 13716,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/viewers/image.js",
+   "st": 200,
+   "enc": 3662,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/viewers/pdf.js",
+   "st": 200,
+   "enc": 3733,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/viewers/docx.js",
+   "st": 200,
+   "enc": 2438,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/viewers/xlsx.js",
+   "st": 200,
+   "enc": 2348,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/viewers/pptx.js",
+   "st": 200,
+   "enc": 9524,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/viewers/epub.js",
+   "st": 200,
+   "enc": 3353,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/viewers/video.js",
+   "st": 200,
+   "enc": 2185,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/viewers/largeText.js",
+   "st": 200,
+   "enc": 11054,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/sessionGate.js",
+   "st": 200,
+   "enc": 2927,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/flowViewers.js",
+   "st": 200,
+   "enc": 7533,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/attachImagePreview.js",
+   "st": 200,
+   "enc": 8386,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/viewers/zoom.js",
+   "st": 200,
+   "enc": 2470,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/js/textStream.js",
+   "st": 200,
+   "enc": 4620,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/api/chains",
+   "st": 403,
+   "enc": 163,
+   "cc": null,
+   "gz": 0,
+   "mime": "application/json"
+  },
+  {
+   "url": "/api/projects",
+   "st": 403,
+   "enc": 163,
+   "cc": null,
+   "gz": 0,
+   "mime": "application/json"
+  },
+  {
+   "url": "/js/wikiGraph.js",
+   "st": 200,
+   "enc": 20979,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/api/neblink/status",
+   "st": 403,
+   "enc": 163,
+   "cc": null,
+   "gz": 0,
+   "mime": "application/json"
+  },
+  {
+   "url": "/api/plugins",
+   "st": 403,
+   "enc": 163,
+   "cc": null,
+   "gz": 0,
+   "mime": "application/json"
+  },
+  {
+   "url": "/api/canvas-tabs",
+   "st": 403,
+   "enc": 163,
+   "cc": null,
+   "gz": 0,
+   "mime": "application/json"
+  },
+  {
+   "url": "/api/neblink/status",
+   "st": 403,
+   "enc": 163,
+   "cc": null,
+   "gz": 0,
+   "mime": "application/json"
+  },
+  {
+   "url": "/agents/Nebula/agent.json",
+   "st": 200,
+   "enc": 385,
+   "cc": null,
+   "gz": 1,
+   "mime": "application/json"
+  },
+  {
+   "url": "/api/nf-authcheck",
+   "st": 403,
+   "enc": 154,
+   "cc": null,
+   "gz": 0,
+   "mime": "application/json"
+  },
+  {
+   "url": "/favicon.ico?v=71a456e2d388b27e",
+   "st": 200,
+   "enc": 22735,
+   "cc": "no-cache",
+   "gz": 0,
+   "mime": "image/x-icon"
+  },
+  {
+   "url": "/api/canvas-tabs",
+   "st": 403,
+   "enc": 163,
+   "cc": null,
+   "gz": 0,
+   "mime": "application/json"
+  }
+ ]
+}
