@@ -3,7 +3,7 @@ package nebflow.core.project
 
 import nebflow.actor.{AgentRecord, AgentStatus, status}
 import nebflow.core.plugin.PluginRegistry
-import nebflow.shared.Message
+import nebflow.shared.{Defaults, Message}
 
 private[project] object NodeEngineContract:
   /**
@@ -649,11 +649,20 @@ private[project] object NodeEngineContract:
    * 角色分支脚注（B9 单点）：`verifier` = 基线 + [[VerifierVerdictFootnote]]
    * 附录；其余（含 None / 未知）= 基线**逐字原文**（旧行为零漂移——既有
    * `endsWith(ProtocolFootnote)` / 末行断言全部保持）。
+   *
+   * sleep-poll 禁令批 C 段（作者令 2026-10-20）：基线前**前缀注入**等待纪律
+   * 铁律（[[Defaults.NoSleepPollRule]]）——前缀（而非尾缀）注入保住
+   * `endsWith(ProtocolFootnote)` 身份断言（NodeChainAttributionSpec :324/:379）
+   * 与末行措辞钉（TaskBoardInjectionSpec）。delegate brief（DelegateTool）与
+   * subagent/workflow 步首条消息（BlockingSubagent）同源注入本常量——三启动面
+   * 单一权威文本。
    */
   def protocolFootnoteFor(role: Option[String]): String =
-    if NodeRoles.normalize(role.getOrElse("")) == NodeRoles.Verifier then
-      ProtocolFootnote + "\n" + VerifierVerdictFootnote
-    else ProtocolFootnote
+    val base =
+      if NodeRoles.normalize(role.getOrElse("")) == NodeRoles.Verifier then
+        ProtocolFootnote + "\n" + VerifierVerdictFootnote
+      else ProtocolFootnote
+    Defaults.NoSleepPollRule + "\n\n" + base
 
   // ── 链级抽象 P2：链上下文透传（过程文档溯源 §9.2）──
 

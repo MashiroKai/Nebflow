@@ -71,6 +71,49 @@ object Defaults:
    */
   val MaxTokensStubText: String = "[Response truncated: max output tokens reached]"
 
+  // ── sleep-poll 禁令批（作者令 2026-10-20，实撞案例 delegate-nebflow-747cd36a）──
+  //
+  // 案例复盘：747cd36a 在 `sleep 570; echo wN` 心跳循环里轮询 5h16m（27 拍），
+  // 等一个后台 sbt test。根因双链：①其交付链要求回归绿才交付 + 历史教训
+  // 「delegate 结束回合=会话终结=后台作业被带走」让同步轮询成为表面安全姿势
+  // （A 段等待屏障拆除该前提）；②LoopGuard R-call 判同参指纹，echo wN 每拍
+  // 变参 ⇒ 指纹恒新、永不命中（B 段护栏补位）。
+
+  /**
+   * 启动注入铁律文本单点（sleep-poll 禁令批 C 段）：delegate brief /
+   * 节点 ProtocolFootnote / subagent·workflow 步首条消息三面同源注入
+   * （文字面禁字面量散落——三消费点只引本常量）。措辞三要素：禁止 +
+   * 正确姿势（run_in_background + 结束回合）+ 作者门控事件（重启/批准）处置。
+   */
+  val NoSleepPollRule: String =
+    """── Waiting discipline (iron rule) ──
+      |NEVER wait with `sleep` or polling loops — sleeping in the foreground burns the turn, the context and hours of wall-clock. The correct pattern: start the long-running work with Bash `run_in_background: true`, then END YOUR TURN immediately — Nebflow's background-task notification wakes this session automatically with the job's output. Same when waiting for an author-gated event (engine restart, approval, merge reminder): deliver your current report and end your turn; you will be woken when it happens.""".stripMargin
+
+  /**
+   * A 段（等待屏障）开关：delegate 会话结束回合时存在未结等待型后台作业 ⇒
+   * 不终态化（hold + 完成通知唤醒 + 复检），对齐 Project node 完成闸语义。
+   * 默认 **true**（作者令本体行为）；现读 prop `nebflow.delegate.bgWaitHold.enabled`
+   * 可关（回退开关——关闭即恢复旧「Completed 即终判」行为）。
+   */
+  def DelegateBgWaitHoldEnabled: Boolean =
+    sys.props.getOrElse("nebflow.delegate.bgWaitHold.enabled", "true").toBoolean
+
+  /**
+   * B 段（sleep-poll 护栏）开关：前台命令含 sleep>N 秒 ⇒ 工具级介入
+   * （首次警告放行 + 同类心跳 N 次后拒绝并升级面板）。默认 **true**；
+   * 现读 prop `nebflow.shell.sleepPollGuard.enabled` 可关。
+   */
+  def SleepPollGuardEnabled: Boolean =
+    sys.props.getOrElse("nebflow.shell.sleepPollGuard.enabled", "true").toBoolean
+
+  /** B 段阈值（s，作者建议 60）：命令内最大 sleep 秒数 ≤ 阈值 = 零开销透传。 */
+  def SleepPollThresholdSec: Int =
+    sys.props.getOrElse("nebflow.shell.sleepPollThresholdSec", "60").toInt
+
+  /** B 段升级档：本会话第 N 次（含本次）超阈值 sleep-poll 命令 ⇒ 拒绝执行。 */
+  def SleepPollEscalateAfter: Int =
+    sys.props.getOrElse("nebflow.shell.sleepPollEscalateAfter", "3").toInt
+
   /**
    * Stream inactivity timeout — resets on every stream event (text/tool/compaction).
    * Long tasks with ongoing activity will not be killed; only truly stuck streams time out.

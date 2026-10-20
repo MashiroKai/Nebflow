@@ -10,7 +10,7 @@ import nebflow.core.delegate.{ChainStore, DelegateRegistry, DelegateWorkspace}
 import nebflow.core.executor.ExecutorRegistry
 import nebflow.core.node.NodeRunner
 import nebflow.core.project.*
-import nebflow.shared.{NebflowLogger, PathUtil, PeerInfo, SubAgentTask}
+import nebflow.shared.{Defaults, NebflowLogger, PathUtil, PeerInfo, SubAgentTask}
 
 /**
  * DelegateTool —— Nebula 唯一的派发入口（unified-delegate 批 2026-10-03）。
@@ -102,6 +102,26 @@ object DelegateTool extends Tool:
     task.linesIterator.nextOption().getOrElse("delegate").trim match
       case "" => "delegate"
       case s => if s.length > 60 then s.take(57) + "..." else s
+
+  /**
+   * delegate brief 装配单点（sleep-poll 禁令批 C 段抽纯函数——spec 判红锚）。
+   * 布局：工作座行（+ 绑定行）→ delegate_report 纪律行 → 等待纪律铁律
+   * （[[Defaults.NoSleepPollRule]]）→ 空行 → 任务全文（→ 插件注入块）。
+   * 铁律置于任务正文之前：单 turn 会话的第一屏即见（747cd36a 形态的启动面
+   * 防线——与其在长轮询后靠 LoopGuard 兜底，不如开局立规）。
+   */
+  private[tools] def assembleBrief(
+    workspaceLine: String,
+    bindingLine: Option[String],
+    task: String,
+    injectedBlock: String
+  ): String =
+    s"""$workspaceLine${bindingLine.map(l => s"\n$l").getOrElse("")}
+${BriefReportLine}
+
+${Defaults.NoSleepPollRule}
+
+$task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
 
   def summarize(input: JsonObject): String =
     s"Delegate(${labelOf(input("task").flatMap(_.asString).getOrElse(""))})"
@@ -702,18 +722,19 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
       // brief：工作座行 + 判定机的 working-branch 申报行（🔴 均模型可见——
       // §16 待过目，最小成稿；无绑定 = 无行，旧 brief 逐字——无绑定 = 非 git
       // 或纯读腿（合法形态，非仅失败降级））+ delegate_report
-      // 申报纪律行（[[BriefReportLine]]，来源拆分批上提为公开常量以便判据门钉住）。
+      // 申报纪律行（[[BriefReportLine]]，来源拆分批上提为公开常量以便判据门钉住）
+      // + sleep-poll 禁令批 C 段：等待纪律铁律（Defaults.NoSleepPollRule 单点
+      // 文本——节点脚注/subagent 步同源；747cd36a 实撞：5h16m sleep 570 心跳
+      // 轮询的启动面防线）。装配单点 = [[assembleBrief]]（spec 判红锚）。
       reportLine = BriefReportLine
       // jev-plugins 批 #1226：分配集注入 = prepareNodePlugins 等价路径（注入块
       // 追加在 brief 尾部——NodeStarter 首条消息同款位形；空分配 = 旧 brief 逐字）。
-      brief =
-        s"""[workspace] $effectiveWs (file tools need absolute paths; Bash cwd is not guaranteed)${binding
-            .flatMap(_.briefLine)
-            .map(l => s"\n$l")
-            .getOrElse("")}
-$reportLine
-
-$task${if preparation.injectedBlock.isEmpty then "" else s"\n\n${preparation.injectedBlock}"}"""
+      brief = assembleBrief(
+        workspaceLine = s"[workspace] $effectiveWs (file tools need absolute paths; Bash cwd is not guaranteed)",
+        bindingLine = binding.flatMap(_.briefLine),
+        task = task,
+        injectedBlock = preparation.injectedBlock
+      )
       ack =
         s"""Delegate task started in the background${taskId.map(n => s" (task #$n)").getOrElse("")}.
 Executor: ${agentName}; workspace: $effectiveWs${project.map(p => s" (project '$p')").getOrElse("")}${binding

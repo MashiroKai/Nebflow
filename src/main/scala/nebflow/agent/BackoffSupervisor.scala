@@ -1,6 +1,6 @@
 package nebflow.agent
 
-import cats.effect.IO
+import cats.effect.{Fiber, IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
@@ -68,7 +68,10 @@ object BackoffSupervisor:
     minBackoff: FiniteDuration = 5.seconds,
     maxBackoff: FiniteDuration = 60.seconds,
     maxRestarts: Int = 2,
-    withinTimeRange: FiniteDuration = 5.minutes
+    withinTimeRange: FiniteDuration = 5.minutes,
+    /** A 段等待屏罩兜底计时上限（spec 注入缝——测试 JVM 下 sys.props 不可靠，
+      * NodeEngine.bgWaitCapMs 同款构造器缝先例）。 */
+    bgWaitCapMs: Long = Defaults.BgGateWaitTimeoutMs
   ): Behavior[AgentEvent] =
     Behaviors.setup { ctx =>
       // R11 第 4 层（作者裁定 U1=C-a / U8=(ii)）：**仅 Delegate 轨**装配 3600s
@@ -86,6 +89,12 @@ object BackoffSupervisor:
         if source == "delegate" then
           DelegateBudget.register(subagentId)(ctx.self ! AgentEvent.Cancelled(subagentId, "timeout"))
         else IO.unit
+      // sleep-poll 禁令批 A 段（等待屏障）：hold 期状态——首 hold 单发标记 +
+      // 兜底计时器句柄（每等待期重臂，NodeStarter 桥 bg-wait 同款形态）+ cap
+      // 触发闩（到点强制终判的复检回合路由）。
+      val bgWaitHeld = Ref.unsafe[IO, Boolean](false)
+      val bgWaitCapFiber = Ref.unsafe[IO, Option[Fiber[IO, Throwable, Unit]]](None)
+      val bgWaitCapFired = Ref.unsafe[IO, Boolean](false)
       budgetArmedIO *> ctx.watch(childRef) *>
         logger
           .info(s"BackoffSupervisor: watching $childName for crash recovery (maxRestarts=$maxRestarts)")
@@ -109,7 +118,11 @@ object BackoffSupervisor:
               minBackoff,
               maxBackoff,
               maxRestarts,
-              withinTimeRange
+              withinTimeRange,
+              bgWaitCapMs,
+              bgWaitHeld,
+              bgWaitCapFiber,
+              bgWaitCapFired
             )
           )
     }
@@ -134,13 +147,17 @@ object BackoffSupervisor:
     minBackoff: FiniteDuration,
     maxBackoff: FiniteDuration,
     maxRestarts: Int,
-    withinTimeRange: FiniteDuration
+    withinTimeRange: FiniteDuration,
+    bgWaitCapMs: Long,
+    bgWaitHeld: Ref[IO, Boolean],
+    bgWaitCapFiber: Ref[IO, Option[Fiber[IO, Throwable, Unit]]],
+    bgWaitCapFired: Ref[IO, Boolean]
   ): Behavior[AgentEvent] =
     new Behavior[AgentEvent]:
       def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
         // 四修①（2026-10-07 修复令「空轮≠完成」）的正常完成体（空轮判据不中时
         // 原样走——逐字保持既有行为）。
-        def completeNormally(messages: List[Message]): IO[Behavior[AgentEvent]] =
+        def completeNormally(messages: List[Message], bgWaitNote: Option[String] = None): IO[Behavior[AgentEvent]] =
           val text = extractLastAssistantText(messages)
           // trim guard: a whitespace-only tail ("\n\n") is NOT a real output —
           // render "(no text output)" instead of an empty-shell payload
@@ -172,7 +189,10 @@ object BackoffSupervisor:
                   // file-diff → 委托结果行（bug #58 修 2026-10-09）：完成批次携带
                   // 改动文件 diff 载荷（metadata.fileChanges）——父会话注入行的
                   // 产物卡展开即 diff 视图。空报告 = 不带键（行字节形态不变）。
-                  fileChangesMetadata().flatMap(fc => notifyParentAndStop("completed", payload + suffix, fc))
+                  // A 段等待屏罩：兜底交付注记（bg-wait cap 到期强制终判时附带
+                  // ——诚实标注「交付时仍有未结后台任务，其完成通知将丢失」）。
+                  val note = bgWaitNote.fold("")(n => s"\n[delegate-bg-wait] $n")
+                  fileChangesMetadata().flatMap(fc => notifyParentAndStop("completed", payload + suffix + note, fc))
                 case Right(nebflow.core.delegate.DelegateTerminal.Outcome.HoldForMerge) =>
                   // 合并窗预算重挂（旧窗口随工作相终结释放；DelegateBudget ∈
                   // agent 层——core 钩子只回 Outcome，重挂留在本层，分层纪律）。
@@ -207,7 +227,11 @@ object BackoffSupervisor:
                         minBackoff,
                         maxBackoff,
                         maxRestarts,
-                        withinTimeRange
+                        withinTimeRange,
+                        bgWaitCapMs,
+                        bgWaitHeld,
+                        bgWaitCapFiber,
+                        bgWaitCapFired
                       )
                     )
                 case Left(err) =>
@@ -221,6 +245,111 @@ object BackoffSupervisor:
           end if
         end completeNormally
 
+        // ═══ sleep-poll 禁令批 A 段：delegate 等待屏障（wait barrier）═══
+        // 作者令 2026-10-20（实撞案例 delegate-nebflow-747cd36a）：delegate 会话
+        // 存在未结等待型后台作业时结束回合**不再终结会话**——进入 hold，作业完成
+        // 通知（makeNotifyCallback → ExternalEvent(source="background-task") 注入
+        // 仍活着的 child）唤醒续跑轮 → 又一次 Completed → 复检。语义对齐
+        // NodeStarter 桥的节点完成闸（BgTaskRegistry.waitingFor 同一判据权威：
+        // 自有任务 sessionId==subagentId ∪ 子代理任务 rootSessionId==subagentId；
+        // persistent 服务型不在等待集）。会话终结只由显式终判（等待集清空后的
+        // 判定机/自申报）或作者侧取消（AgentControl/Cancelled 链）触发。
+        // 兜底面（后台任务不能把 delegate 悬挂成僵尸）：每个等待期武装
+        // bgWaitCapMs 兜底计时器（NodeStarter 桥同款「每等待期重臂」）；到点仍
+        // 非空 ⇒ 置 capFired 闩并重发 Completed——复检回合不再 hold，带诚实注记
+        // 强制终判（fail-open 交付，绝不静默丢失；注记说明未结任务及其通知将随
+        // 会话终结丢失）。默认 bgWaitCapMs = BgGateWaitTimeoutMs（2h，与节点闸
+        // 同值）。
+        def bgWaitCapNote(waiting: List[nebflow.core.tools.BgTaskRegistry.ActiveTask]): String =
+          s"background wait cap hit: completion delivered while ${waiting.size} background task(s) still pending " +
+            s"(${waiting.map(t => s"'${t.description}' (${t.jobId})").mkString(", ")}) — their completion " +
+            "notifications will be lost with this session (honest forced delivery; re-dispatch or re-attach if the work matters)"
+
+        def disarmBgWaitCap: IO[Unit] =
+          bgWaitCapFiber.get.flatMap(_.traverse_(_.cancel).void) *> bgWaitCapFiber.set(None)
+
+        def holdForBgWait(waiting: List[nebflow.core.tools.BgTaskRegistry.ActiveTask], messages: List[Message]): IO[Unit] =
+          bgWaitHeld.get.flatMap { already =>
+            val emitOnce =
+              IO.whenA(!already) {
+                logger.info(
+                  s"BackoffSupervisor: delegate $subagentId turn completed with ${waiting.size} background " +
+                    "task(s) still running — holding completion until they finish (wait barrier, sleep-poll fix batch A)"
+                ) *>
+                  bgWaitHeld.set(true) *>
+                  (wsSend match
+                    case Some(send) =>
+                      send(
+                        Json.obj(
+                          "type" -> "delegateBgWait".asJson,
+                          "sessionId" -> subagentId.asJson,
+                          "rootSessionId" -> parentSessionId.asJson,
+                          "waitingCount" -> waiting.size.asJson,
+                          "waiting" -> waiting.map(t => s"${t.description} (${t.jobId})").asJson
+                        )
+                      ).handleErrorWith(e => logger.warn(s"delegateBgWait WS frame failed: ${e.getMessage}"))
+                    case None => IO.unit)
+              }
+            emitOnce *> armBgWaitCap(messages)
+          }
+
+        def armBgWaitCap(messages: List[Message]): IO[Unit] =
+          disarmBgWaitCap *>
+            (IO.sleep(bgWaitCapMs.millis) *>
+              nebflow.core.tools.BgTaskRegistry.waitingFor(subagentId).flatMap {
+                case Nil => IO.unit // 竞态：唤醒轮在飞，其 Completed 会正常放行
+                case still =>
+                  logger.warn(
+                    s"BackoffSupervisor: delegate $subagentId bg-wait cap (${bgWaitCapMs}ms) hit with " +
+                      s"${still.size} task(s) pending — forcing honest terminal delivery"
+                  ) *>
+                    bgWaitCapFired.set(true) *>
+                    bgWaitHeld.set(false) *>
+                    // 🔴 只清句柄不 cancel——此刻正在本 fiber 体内，cancel 自己
+                    // 会让 self-message 永远发不出去（A-4 实测）。句柄清空后外部
+                    // disarm 调用对其 cancel 为 no-op。
+                    bgWaitCapFiber.set(None) *>
+                    (ctx.self ! AgentEvent.Completed(subagentId, messages)).void
+              }).start.flatMap(f => bgWaitCapFiber.set(Some(f)))
+
+        /**
+         * 等待屏障门（Completed 先过此门再进终判）。三态裁决：
+         *   - Held ⇒ 已 hold（不进终判，调用方保持 active 行为等唤醒轮）；
+         *   - Proceed ⇒ 正常进终判（从未 hold / 等待集已清空的释放腿——干净放行）；
+         *   - ForceWithNote ⇒ cap 兜底触发的强制终判，注记并入交付 payload。
+         */
+        sealed trait BgWaitDecision
+        case object BgWaitHeld extends BgWaitDecision
+        case object BgWaitProceed extends BgWaitDecision
+        final case class BgWaitForce(note: String) extends BgWaitDecision
+
+        def delegateBgWaitGate(messages: List[Message]): IO[BgWaitDecision] =
+          if source != "delegate" || !Defaults.DelegateBgWaitHoldEnabled then IO.pure(BgWaitProceed)
+          else
+            bgWaitCapFired.get.flatMap { fired =>
+              if fired then
+                // cap 触发后的复检回合：不再 hold，带注记强制终判（fail-open 交付）。
+                bgWaitCapFired.set(false) *> bgWaitHeld.set(false) *>
+                  nebflow.core.tools.BgTaskRegistry.waitingFor(subagentId).map {
+                    case Nil => BgWaitProceed // 兜底触发与唤醒轮竞态：实际已清空 ⇒ 干净放行
+                    case still => BgWaitForce(bgWaitCapNote(still))
+                  }
+              else
+                nebflow.core.tools.BgTaskRegistry.waitingFor(subagentId).flatMap {
+                  case Nil =>
+                    bgWaitHeld.get.flatMap { held =>
+                      (disarmBgWaitCap *>
+                        IO.whenA(held) {
+                          bgWaitHeld.set(false) *>
+                            logger.info(
+                              s"BackoffSupervisor: delegate $subagentId background task(s) all finished — releasing held completion"
+                            )
+                        }).as(BgWaitProceed)
+                    }
+                  case waiting => holdForBgWait(waiting, messages).as(BgWaitHeld)
+                }
+            }
+
         event match
           case AgentEvent.Completed(_, messages) =>
             // 四修①两级处置（作者令「有重启预算→自动重启续推；预算耗尽→终判
@@ -231,7 +360,41 @@ object BackoffSupervisor:
             //   - 预算耗尽 → delegate 轨照常过终态判定机：确定性预检
             //     （DelegateTerminal，四修②）据「零工具＋空文」直接判 blocked，
             //     不依赖 LLM 判；subtask 轨 failed 终态（failureType=empty-burn）。
-            if !isEmptyBurnCompletion(messages) then completeNormally(messages)
+            if !isEmptyBurnCompletion(messages) then
+              // A 段等待屏障先于终判：有未结等待型后台作业 ⇒ hold 唤醒复检；
+              // cap 兜底触发 ⇒ 带注记强制终判。
+              delegateBgWaitGate(messages).flatMap {
+                case BgWaitHeld =>
+                  IO.pure(
+                    active(
+                      childRef,
+                      childSpawnFn,
+                      childName,
+                      parentRef,
+                      description,
+                      agentName,
+                      subagentId,
+                      parentSessionId,
+                      resources,
+                      initialPrompt,
+                      source,
+                      extraMetadata,
+                      wsSend,
+                      restartCount,
+                      restartHistory,
+                      minBackoff,
+                      maxBackoff,
+                      maxRestarts,
+                      withinTimeRange,
+                      bgWaitCapMs,
+                      bgWaitHeld,
+                      bgWaitCapFiber,
+                      bgWaitCapFired
+                    )
+                  )
+                case BgWaitProceed => completeNormally(messages)
+                case BgWaitForce(note) => completeNormally(messages, Some(note))
+              }
             else
               val now = System.currentTimeMillis()
               val recent = restartHistory.filter(t => now - t < withinTimeRange.toMillis)
@@ -383,6 +546,11 @@ object BackoffSupervisor:
 
         for
           _ <- logger.info(s"BackoffSupervisor: $triggerLine")
+          // A 段等待屏障：respawn 后旧 hold 期作废（兜底计时器持有的 messages
+          // 是崩溃前旧轮快照）——撤计时器与 hold 状态，续跑轮的 Completed 重新
+          // 评估等待集。
+          _ <- bgWaitCapFiber.get.flatMap(_.traverse_(_.cancel).void) *>
+            bgWaitCapFiber.set(None) *> bgWaitHeld.set(false) *> bgWaitCapFired.set(false)
           _ <- notifyIO
           _ <- resources.subAgentTaskStore
             .updateStatus(
@@ -473,7 +641,11 @@ object BackoffSupervisor:
           minBackoff,
           maxBackoff,
           maxRestarts,
-          withinTimeRange
+          withinTimeRange,
+          bgWaitCapMs,
+          bgWaitHeld,
+          bgWaitCapFiber,
+          bgWaitCapFired
         )
         end for
       end respawn
