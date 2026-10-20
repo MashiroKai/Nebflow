@@ -1752,6 +1752,8 @@ export default {
   'search.placeholder': 'Keyword…',
   'search.scopeCurrent': 'Current session',
   'search.scopeAll': 'All sessions',
+  'search.scopeMain': 'Main session',
+  'search.mobileScopeNote': 'Main session only · type/date/source filters stack · empty: {empty} — {hint}',
   'search.allTypes': 'All types',
   'search.allAgents': 'All agents',
   'search.anyTool': 'Any tool call',

@@ -1690,6 +1690,8 @@ export default {
   'search.placeholder': '输入关键词…',
   'search.scopeCurrent': '当前会话',
   'search.scopeAll': '全部会话',
+  'search.scopeMain': '主会话',
+  'search.mobileScopeNote': '仅检索当前主会话 · 类型/日期/角色筛选可叠加 · 空态：{empty}——{hint}',
   'search.allTypes': '全部类型',
   'search.allAgents': '全部 Agent',
   'search.anyTool': '任意工具调用',

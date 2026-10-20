@@ -770,7 +770,9 @@ function trapFocus(e) {
 }
 
 // ── Progressive search scheduling ──────────────────────────
-function scheduleSearch() {
+/** 导出缝（mobile-secondary-screens 实施批）：手机层角色筛选 change 后走同一
+ *  去抖调度（与 scope/tool select 的 change 监听同一条路径）；桌面调用面零变化。 */
+export function scheduleSearch() {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(triggerSearch, DEBOUNCE_MS);
 }
@@ -951,11 +953,20 @@ function activeToolFilter() {
   return currentTab === 'all' ? (selectById('search-tool')?.value || '') : '';
 }
 
+/** 手机层 P2 角色筛选缝（mobile-secondary-screens 实施批；v3.6 作者裁定②的
+ *  角色档：全部来源/用户/助手/AI/工具）。档值只由手机层 js/mobile/searchFace.js
+ *  写入 window.__mhSearchKind（'' = 全部来源）；桌面路径恒 undefined ⇒ 恒真，
+ *  零行为改动。词表 = data-kind 同款（user|agent|ai|tool）。 */
+function matchesKind(m) {
+  const kind = (typeof window !== 'undefined' && /** @type {any} */ (window).__mhSearchKind) || '';
+  return !kind || m.kind === kind;
+}
+
 /** Filtered + display-sorted view: timestamped newest-first, untimestamped
  *  (ts=0: tool/ask/agent) last by reverse document order. */
 function buildView(all) {
   const toolSel = activeToolFilter();
-  const arr = all.filter(m => matchesTab(m) && matchesTool(m, toolSel));
+  const arr = all.filter(m => matchesTab(m) && matchesTool(m, toolSel) && matchesKind(m));
   arr.sort((a, b) => ((b.ts || 0) - (a.ts || 0)) || (b.ord - a.ord));
   return arr;
 }
@@ -1249,6 +1260,7 @@ async function runSearch() {
       for (const m of all) {
         if (!matchesTab(m)) continue;
         if (!matchesTool(m, toolSel)) continue;
+        if (!matchesKind(m)) continue; // 手机层角色筛选缝（桌面恒真）
         if (!m.text.toLowerCase().includes(kwLower)) continue;
         results.push({
           sessionId: session.id,
@@ -1457,7 +1469,10 @@ function updateStatus() {
 
 /** Status line: result count (+ truncation notice in search mode only). */
 function statusSummary() {
-  const base = t('search.results', { n: lastTotal });
+  // 手机层 P2 计数行（v3.6 作者裁定②）：带「主会话」前缀；桌面路径零改动。
+  const base = document.body.classList.contains('mobile-layer')
+    ? `${t('search.scopeMain')} · ${t('search.results', { n: lastTotal })}`
+    : t('search.results', { n: lastTotal });
   return streamMode === 'search' && lastTotal > MAX_RESULTS
     ? `${base} (${t('search.truncated', { n: MAX_RESULTS })})`
     : base;
