@@ -459,10 +459,19 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
   // 附件里的 chat-message ref（live/排队/草稿恢复共用同一形状 ⇒ 三个入路零
   // 额外处理）；该 ref 不进气泡内的 ref 卡循环（引用块是它唯一的消费面）。
   const quoteAtt = (attachments || []).find(a => a && a.type === 'ref' && a.refType === 'chat-message');
-  if (quoteAtt) {
-    const quote = quoteFromRef(quoteAtt);
-    if (quote) row.appendChild(renderQuoteBlock(quote));
+  const quoteBox = quoteAtt ? (() => { const q = quoteFromRef(quoteAtt); return q ? renderQuoteBlock(q) : null; })() : null;
+  // 引用块宽度约束（2026-10-20 作者令「引用文字不要超过用户发送的文字」）：
+  // 引用块 + 文本气泡同时在场 ⇒ 包进 .msg-quote-composite（气泡驱宽复合盒，
+  // 规则见 chat.css 同名段）——引用块渲染宽 = 气泡宽（窄气泡跟着窄），替代原
+  // 「引用块 ≤ 100% 行宽」与气泡 80% 帽的错位。仅引用无气泡（纯引用帧被
+  // isRefOnlyFrame 闸拦截；此处防御性兜底）不包裹，保持整行形态零回归。
+  let composite = null;
+  if (quoteBox && text) {
+    composite = document.createElement('div');
+    composite.className = 'msg-quote-composite';
+    row.appendChild(composite);
   }
+  if (quoteBox) (composite || row).appendChild(quoteBox);
 
   // Text bubble (separate)
   if (text) {
@@ -480,7 +489,7 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
     // enters markdown.
     appendTextWithMentions(t, text);
     bubble.appendChild(t);
-    row.appendChild(bubble);
+    (composite || row).appendChild(bubble);
   }
 
   // Attachment faces. #491 主题三 (author 2026-10-05 12:14, 【已裁决】#1):
