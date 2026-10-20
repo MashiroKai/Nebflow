@@ -4471,6 +4471,66 @@
 .row.pop-artifact.user .pop-stack-area > .pill { margin-right: 20px; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   attach-bubble-unify (2026-10-20 author ruling 「用户发送附件与气泡设计语言统一
+   ——微信式：附件是气泡的一部分而非独立异形卡」): the USER side's media/file
+   faces join the USER BUBBLE family — same radius (16px + the 4px bottom-right
+   tail of .bubble/.bubble.user), same backing color (var(--color-bubble-user)),
+   same column cap (80%, .bubble), no standing card chrome (border/drop shadow
+   go). Strictly scoped to the user row (.row.user-media); LLM Pop rows keep
+   their faces verbatim (「agent 发的媒体卡维持现设计不动」). Geometry the authored
+   rulings pin — 220px stack/flat boxes, peek transforms, pill clearances
+   (uifix3 ① above) — is deliberately untouched: only the PAINT changes.
+   Theme note: --color-bubble-user has no dark override (base.css), so the
+   unified face is the same green in light and dark — identical to the user
+   text bubble on both themes by construction.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Width cap = the bubble's own cap (.bubble max-width 80%), not the artifact
+   family's 78% — 同宽度约束. */
+.row.user-media .pop-group { max-width: 80%; }
+
+/* Image / video / audio flat face — bubble silhouette. Backing = the user
+   bubble color (visible while bytes load, under the transparent media, and in
+   the failed face); the media element itself goes transparent so the bubble
+   color carries. Letterboxing is a non-issue: the renderer pins the box to the
+   media's own ratio (zcode-484 D1/D3). */
+.row.user-media .pop-media-flat {
+  border-radius: 16px;
+  border-bottom-right-radius: 4px;
+  box-shadow: none;
+  background: var(--color-bubble-user);
+}
+.row.user-media .pop-img,
+.row.user-media .pop-video { background: transparent; }
+
+/* Multi-image stack: front AND the two peeking layers carry the same bubble
+   silhouette. Peek transforms / drag axis / pill geometry stay the uifix3 ①
+   mirrored forms — only the paint changes. */
+.row.user-media .pop-stack-view .media-layer {
+  border-radius: 16px;
+  border-bottom-right-radius: 4px;
+  box-shadow: none;
+  background: var(--color-bubble-user);
+}
+
+/* File card — bubble-colored, borderless, tail corner: the file message IS a
+   user bubble (WeChat form), 同圆角/同底色. Ink = the near-black the bubble
+   family already puts on green (chat.css dark-theme `.bubble.user{color:#111}`);
+   the muted sub line rides a 60% black alpha (≈5.1:1 on #95ec69 — AA at 11px). */
+.row.user-media .file-card {
+  background: var(--color-bubble-user);
+  border: none;
+  border-radius: 16px;
+  border-bottom-right-radius: 4px;
+  box-shadow: none;
+}
+.row.user-media .fc-name { color: #111; }
+.row.user-media .fc-sub { color: rgba(0, 0, 0, 0.6); }
+/* Click affordance survives the de-chrome: the standing shadow is gone, the
+   hover shadow stays (matches the artifact family's hover feedback). */
+.row.user-media .file-card:hover { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
    #491 pop-media 主题二 (2026-10-05 author ruling 「微信的这样的设计来进行分类
    和检索」). Append-only section: the media grid view (chatSearch v3.2) —
    thumbnail cards, video duration badge, source chips, week/month headers.
