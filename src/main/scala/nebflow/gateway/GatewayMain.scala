@@ -679,6 +679,12 @@ object GatewayMain extends IOApp:
                                   // （#28 可观测缺口根因之一）。wsHub 本身无依赖，提前
                                   // 构造零副作用（无连接时 broadcast 空转）。
                                   val wsHub = new WsHub()
+                                  // M2 缓存一致性（v1 §6.1）：注册引擎侧失效广播面
+                                  // （core 写路径工具 / WS 文件操作经 NfCacheInvalidator
+                                  // 发射，此处注入 wsHub.broadcast——窄端口倒置先例同款）。
+                                  // 未注册 = no-op，故 spec/CLI 场景零副作用。
+                                  val nfCacheInvalidatorSetup: IO[Unit] =
+                                    IO(nebflow.core.tools.NfCacheInvalidator.register(json => wsHub.broadcast(json)))
                                   // #37 启动自动挂载（0b 契约「阶段 1 补自动挂载」）：磁盘已有
                                   // 项目 → 幂等挂载（rootSessionId = 顶层 Nebula 主会话 id，
                                   // 启动期无会话上下文直接传顶层根）。免重启后人工重挂——
@@ -897,7 +903,7 @@ object GatewayMain extends IOApp:
                                       updateOrchestrator = Some(updateOrchestrator),
                                       updateConvergence = Some(updateConvergence)
                                     )
-                                  hubSetup *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> succeedPortGate(
+                                  hubSetup *> nfCacheInvalidatorSetup *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {

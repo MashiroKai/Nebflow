@@ -101,7 +101,7 @@ import {
 import { ticketUrl, queuedTicketUrl } from './nfTicket.js';
 // imgdoor #542（三档加速）：流式读出器（边收边报进度）——只吃调用方给定的
 // **既有**路由 URL（票据路/鉴权路），禁第三条取字节路。
-import { fetchBlobWithProgress } from './nfFileCache.js';
+import { fetchBlobWithProgress, nfCacheDrop } from './nfFileCache.js';
 import { MAX_INLINE_IMAGE_BYTES, isImageAttachmentName } from './attachmentPreview.js';
 
 let conversations = [];
@@ -2485,7 +2485,12 @@ async function previewFriendAttachment(att, card) {
         } catch (err) {
           // 410 = 服务端权威「附件已过期」（终态）：补一条权威文案（就地错误面之外，
           // 同改前双读数面）；其余状态由标签内错误面 + 重试键承接（档3 可见面）。
-          if (err && err.status === 410) modalToast(t('messages.attachExpired'));
+          if (err && err.status === 410) {
+            modalToast(t('messages.attachExpired'));
+            // M2 账本 410 对账（v1 §7 M2-3）：终态过期 ⇒ 账本条目同步淘汰（TTL 窗内
+            // 已过期件不再出帧——「命中不回源」的陈旧窗由此收敛）。
+            void nfCacheDrop(`attach:${att.id}`).catch(() => {});
+          }
           throw err;
         }
       },
@@ -2520,6 +2525,8 @@ async function downloadAttachment(att, card, btn, note) {
     if (err && err.status === 410) {
       // 服务端权威：元数据说 ready 但字节已按瞬态口径删除（§B.7 ③ 表）——
       // **就地升级为终态**，并撤掉重试可能（不是「下载失败」）。
+      // M2 账本 410 对账：终态过期 ⇒ 账本条目同步淘汰（同预览腿）。
+      void nfCacheDrop(`attach:${att.id}`).catch(() => {});
       card.dataset.attState = 'expired';
       card.classList.remove('fm-att-ready');
       card.classList.add('fm-att-expired');

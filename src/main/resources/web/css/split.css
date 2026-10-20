@@ -478,6 +478,32 @@
   cursor: pointer;
   transition: background 0.15s;
 }
+/* 取件进度条（M2 · 设计 v1 §4.4 统一进度面契约）：尺寸/速度/可取消/停滞态（纯视觉，
+   零超时纪律——黄条只提示可取消，永不定时杀传输）。 */
+.explorer-pickup-bar.explorer-pickup-progress .bar-ic svg {
+  width: 12px;
+  height: 12px;
+  color: rgb(var(--sapphire));
+  animation: explorerSpin 0.9s linear infinite;
+}
+.explorer-pickup-bar .pickup-pct,
+.explorer-pickup-bar .pickup-speed {
+  flex: 0 0 auto;
+  font: 500 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--color-frame-muted, var(--color-frame-text));
+  white-space: nowrap;
+  opacity: 0.85;
+}
+.explorer-pickup-bar.explorer-pickup-progress[data-stalled="1"] {
+  border-color: var(--status-warn-border, #b58900);
+}
+.explorer-pickup-bar.explorer-pickup-progress[data-stalled="1"] .bar-ic svg {
+  color: var(--status-warn-icon, #b58900);
+  animation: none;
+}
+.explorer-pickup-bar.explorer-pickup-progress[data-stalled="1"] .pickup-speed {
+  color: var(--status-warn-icon, #b58900);
+}
 .explorer-pickup-bar .bar-act:hover { background: var(--color-hover, rgba(128, 128, 128, 0.1)); }
 
 /* ===== Agent Badge =====

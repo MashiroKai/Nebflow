@@ -3,7 +3,7 @@
 // ZIP parsing lives in ./shared.js (parseZipEntries / decompressZipEntry).
 
 import { escapeHtml, parseZipEntries, decompressZipEntry } from './shared.js';
-import { ticketUrl } from '../nfTicket.js';
+import { nfViewerUrl } from '../nfFileCache.js';
 
 /** EPUB viewer — paginated reader with chapter navigation.
  *  Parses ZIP structure, extracts XHTML chapters, renders with CSS column pagination.
@@ -18,7 +18,9 @@ async function viewEpub(pane, { absPath, fileName, size, objectUrl }) {
     pane.innerHTML = `<div class="canvas-error">No file path provided for EPUB viewer.</div>`;
     return;
   }
-  const url = objectUrl || await ticketUrl(absPath);
+  // M2 账本接缝（imgdoor #542 推广批）：票据腿经 nfViewerUrl——账本命中 = blob URL
+  // 直开（第二次打开零取数），未命中走既有票据链并入账 `nf:<absPath>`。
+  const url = await nfViewerUrl({ absPath, objectUrl, pane });
   try {
     const resp = await fetch(url);
     if (!resp.ok) {

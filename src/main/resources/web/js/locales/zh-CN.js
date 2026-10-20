@@ -2049,6 +2049,8 @@ export default {
   'explorer.pickupLoading': '取件中…',
   'explorer.pickupFailed': '取件失败',
   'explorer.pickupClose': '关闭',
+  'explorer.pickupCancel': '取消取件',
+  'explorer.pickupStalled': '停滞 — 可取消',
   'explorer.remoteReadonly': '远端目录只读，写操作不可用。',
   'daemons.delete': '删除',
   // === 工作区选择卡 + 应用内目录浏览器（workspace-picker 批次，2026-09-05） ===

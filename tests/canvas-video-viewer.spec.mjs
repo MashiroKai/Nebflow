@@ -259,12 +259,14 @@ console.log(`\n== ${BEFORE ? 'BEFORE（改前取证：Monaco 兜底应在位）'
     await shot(page, 'before-canvas-video-monaco-fallback.png');
   } else {
     let decoded = false;
+    let videoPath = sampleMp4;
     try { await waitDecoded(page, 4000); decoded = true; } catch { /* codec probe */ }
     if (!decoded) {
       // headless Chromium 缺 H.264 时换 webm 夹具（同一 viewer 机制；新开即激活）。
       console.log('  [codec] mp4 无 metadata → 换 webm 夹具重试');
       await openPath(page, sampleWebm);
       await sleep(1500);
+      videoPath = sampleWebm;
       try { await waitDecoded(page, 4000); decoded = true; } catch { /* fallthrough */ }
     }
     const dims = await page.evaluate(() => {
@@ -289,7 +291,9 @@ console.log(`\n== ${BEFORE ? 'BEFORE（改前取证：Monaco 兜底应在位）'
     ok('可播放（play 后 currentTime 推进）', played);
     await shot(page, 'after-canvas-video-playing.png');
 
-    // 拖进度条 = seek；真端点语义下 seek 依赖 Range 206
+    // 拖进度条 = seek；M2 双档语义（video.js 账本接缝申报）：≤64MiB 小件走账本 blob
+    // 腿——首开一次全量 GET，seek 在 blob 内本地解析（零 Range）；>64MiB 大件保持
+    // 票据 URL 流式，Range/206 seek 语义原样（①c 站验证）。
     const seeked = await page.evaluate(async () => {
       const v = document.querySelector('.canvas-tab-pane.active video');
       if (!v) return false;
@@ -300,9 +304,41 @@ console.log(`\n== ${BEFORE ? 'BEFORE（改前取证：Monaco 兜底应在位）'
       return sawEvent === true && Math.abs(v.currentTime - target) < 0.3;
     }).catch(() => false);
     ok('进度条机制（seek 到位＝seeked 事件）', seeked);
+    ok('小件（≤64MiB）走账本 blob 腿：seek 零 Range 请求（nf-file 只收首开全量 GET）',
+      LAST.nfFileReqs.some((r) => !r.range) && !LAST.nfFileReqs.some((r) => r.range),
+      JSON.stringify(LAST.nfFileReqs.slice(0, 3)));
+    await shot(page, 'after-canvas-video-seeked.png');
+
+    // ── ①b M2 账本命中（档2 推广到视频）：关标签重开同一件 ⇒ 零 nf-file 取数，blob 直开 ──
+    const nfBeforeReopen = LAST.nfFileReqs.length;
+    await page.evaluate(async (p) => { const c = await import('/js/canvas.js'); c.closeTab('file:' + p); }, videoPath);
+    await sleep(300);
+    await openPath(page, videoPath);
+    await sleep(1500);
+    let redecoded = false;
+    try { await waitDecoded(page, 4000); redecoded = true; } catch { /* codec */ }
+    const reopenState = await page.evaluate(() => {
+      const v = document.querySelector('.canvas-tab-pane.active video');
+      return v ? { w: v.videoWidth, src: String(v.src || '').slice(0, 60) } : null;
+    });
+    ok('重开零取数（nf-file Δ=0，账本命中）', LAST.nfFileReqs.length - nfBeforeReopen === 0, `Δ=${LAST.nfFileReqs.length - nfBeforeReopen}`);
+    ok('重开直渲染（videoWidth>0）且 src=blob（账本字节）', redecoded && !!reopenState && reopenState.w > 0 && reopenState.src.startsWith('blob:'), JSON.stringify(reopenState));
+
+    // ── ①c M2 大件档（声明尺寸 >64MiB）：保持票据 URL 流式，Range/206 语义原样 ──
+    await page.evaluate(async (p) => { const c = await import('/js/canvas.js'); c.closeTab('file:' + p); }, videoPath);
+    await sleep(300);
+    await openPath(page, videoPath, { itemType: 'video', size: 70 * 1024 * 1024 });
+    await sleep(1200);
+    let bigDecoded = false;
+    try { await waitDecoded(page, 5000); bigDecoded = true; } catch { /* codec */ }
+    const bigState = await page.evaluate(() => {
+      const v = document.querySelector('.canvas-tab-pane.active video');
+      return v ? { src: String(v.src || '').slice(0, 80), w: v.videoWidth } : null;
+    });
+    ok('大件（>64MiB）src=票据 URL（非 blob，流式原状）', bigDecoded && !!bigState && !bigState.src.startsWith('blob:'), JSON.stringify(bigState));
     ok('Range 请求发生过（nf-file 替身收到 Range 头）', LAST.nfFileReqs.some((r) => r.range), JSON.stringify(LAST.nfFileReqs.slice(0, 3)));
     ok('替身响应 206（进度条拖动依赖）', rangeHits.length > 0, `rangeHits=${rangeHits.length}`);
-    await shot(page, 'after-canvas-video-seeked.png');
+    await shot(page, 'after-canvas-video-big-tier-range.png');
   }
 
   // ── ② 回归抽查：md 打开不受影响（抽 1） ──

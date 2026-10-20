@@ -44,17 +44,25 @@ object PointerPickup:
     val d = java.security.MessageDigest.getInstance("SHA-256")
     d.digest(s"$deviceId|$remotePath".getBytes("UTF-8")).map(b => f"${b & 0xff}%02x").mkString.take(16)
 
-  /**
-   * 落盘：`pickups/<pointerHash>/<消毒后 basename>`。同名重取覆盖（缓存语义）；
-   * basename 消毒防穿越/非法字符（CapturePull.saveCapture 同款正则——禁第二份
-   * 漂移实现的话本可引用，但彼处 private[tools] 同包可见 ⇒ 直接复用其消毒序）。
-   */
+  /** 落盘路径单点：`pickups/<pointerHash>/<消毒后 basename>`（消毒序与 [[save]] 同款）。
+    *
+    * 2026-10-20（M2 分块取件腿）：从 `save` 提出为独立入口——分块拉取腿（BrowseGetCursor）
+    * 要在**首块之前**就知道落点（对既有部分件做续传对齐），不能再等整件到齐才算名。
+    * 与 `save` 同一消毒序（同一条 basename 正则），禁第二份实现。
+    */
+  def pickupPath(deviceId: String, remotePath: String): os.Path =
+    val dir = pickupsRoot / pointerHash(deviceId, remotePath)
+    val base = remotePath.replaceAll("""[/\\]""", "/").split("/").lastOption.getOrElse("pickup")
+    val safe = base.replaceAll("""[^A-Za-z0-9._\-]""", "_").take(80)
+    dir / safe
+
+  /** 落盘：`pickups/<pointerHash>/<消毒后 basename>`。同名重取覆盖（缓存语义）；
+    * basename 消毒防穿越/非法字符（消毒序单点 = [[pickupPath]]）。
+    */
   def save(deviceId: String, remotePath: String, content: Array[Byte]): os.Path =
     val dir = pickupsRoot / pointerHash(deviceId, remotePath)
     os.makeDir.all(dir)
-    val base = remotePath.replaceAll("""[/\\]""", "/").split("/").lastOption.getOrElse("pickup")
-    val safe = base.replaceAll("""[^A-Za-z0-9._\-]""", "_").take(80)
-    val f = dir / safe
+    val f = pickupPath(deviceId, remotePath)
     os.write.over(f, content)
     logger.info(s"[pickup] saved remote pointer $deviceId:$remotePath -> $f (${content.length} bytes)")
     f

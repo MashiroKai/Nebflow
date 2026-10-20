@@ -17,7 +17,7 @@ import nebflow.core.mcp.McpManager
 import nebflow.core.project.{CancelSource as ChainCancelSource, *}
 import nebflow.core.schedule.FreezeSchedule.given
 import nebflow.core.skill.SkillService
-import nebflow.core.tools.{ToolContext, ToolRegistry}
+import nebflow.core.tools.{NfCacheInvalidator, ToolContext, ToolRegistry}
 import nebflow.gateway.NfFilePolicy.*
 import nebflow.gateway.WsDispatch.{inboundEnvelope, parsedJson}
 import nebflow.llm.*
@@ -42,6 +42,7 @@ private[gateway] object WsFileOpsHandlers:
     "watchUnsubscribe" -> handleWatchUnsubscribe,
     "readFile" -> handleReadFile,
     "pop.readFile" -> handlePopReadFile,
+    "fileTransferCancel" -> handleFileTransferCancel,
     "textWindow" -> handleTextWindow,
     "textIndex" -> handleTextIndex,
     "textSearch" -> handleTextSearch,
@@ -388,6 +389,14 @@ private[gateway] object WsFileOpsHandlers:
    *   - 二进制腿：零 content 元数据帧，`absPath` = 本地 pickup（`uploads` 白名单
    *     子树 ⇒ 前端既有 `/api/nf-file` 取回路径可用，零策略改动）。
    * 任何失败 = 显式 error 帧（**绝不静默**——离线/未配对/白名单外都带可读原因）。
+   *
+   * M2（2026-10-20 · 设计 v1 §7 M2-1/2）：取件改走**分块拉取腿**
+   * （`RemoteExecutor.transferGetScopedChunked`——逐块校验 + 断点续传 + 整件收口），
+   * 每块落盘后外发一帧 `fileProgress`（权威读数 = 落盘长度，禁假进度）供前端
+   * 「大小/速度/可取消」进度面；`fileTransferCancel` 帧翻取消旗标 ⇒ 拉取在块间停止，
+   * 回 `fileContent` 帧 + `cancelled:true`（用户主动取消 ≠ 传输失败，前端出「已取消」
+   * 而非错误态）。取消信令 = 本地旗标（拉取协议下对端从不自发推字节，块间即停——
+   * Q2 开放点在拉取形态下的推荐默认，零新对端消息族）。
    */
   private def readRemoteFile(
     ctx: WsDispatchCtx,
@@ -396,12 +405,22 @@ private[gateway] object WsFileOpsHandlers:
     wsSend: io.circe.Json => IO[Unit]
   ): IO[Unit] =
     import ctx.*
-    def errorFrame(msg: String): io.circe.Json =
+    def errorFrame(msg: String, cancelled: Boolean = false): io.circe.Json =
+      val obj = io.circe.JsonObject(
+        "type" -> io.circe.Json.fromString("fileContent"),
+        "error" -> io.circe.Json.fromString(msg),
+        "path" -> io.circe.Json.fromString(remotePath),
+        "device" -> io.circe.Json.fromString(device)
+      )
+      io.circe.Json.fromJsonObject(if cancelled then obj.add("cancelled", io.circe.Json.True) else obj)
+    def progressFrame(bytes: Long, total: Long, chunkMs: Long): io.circe.Json =
       io.circe.Json.obj(
-        "type" -> "fileContent".asJson,
-        "error" -> msg.asJson,
+        "type" -> "fileProgress".asJson,
         "path" -> remotePath.asJson,
-        "device" -> device.asJson
+        "device" -> device.asJson,
+        "bytesReceived" -> bytes.asJson,
+        "totalBytes" -> total.asJson,
+        "chunkMs" -> chunkMs.asJson
       )
     resolveBrowseTarget(device)(using ctx).flatMap {
       case Left(err) => wsSend(errorFrame(err))
@@ -412,54 +431,89 @@ private[gateway] object WsFileOpsHandlers:
         nebflow.core.tools.RemoteExecutor.current match
           case None => wsSend(errorFrame("remote executor not initialized (NebLink disabled?)"))
           case Some(re) =>
-            re.transferGetScoped(peer, remotePath).flatMap {
+            re.transferGetScopedChunked(peer, remotePath, (b, t, ms) => wsSend(progressFrame(b, t, ms))).flatMap {
               case Left(err) =>
                 logger.warn(s"remote readFile failed for ${peer.deviceName}: $err")
-                wsSend(errorFrame(err))
-              case Right(bytes) =>
-                IO.blocking(nebflow.core.tools.PointerPickup.save(peer.deviceId, remotePath, bytes)).flatMap { local =>
-                  val ext = remotePath.split('.').lastOption.getOrElse("").toLowerCase
-                  val entry = nebflow.core.workspace.FileTypeRegistry.detect(ext)
-                  val fileName = remotePath.replaceAll("""[/\\]""", "/").split("/").lastOption.getOrElse(remotePath)
-                  val mtimeMs = scala.util.Try(os.mtime(local)).getOrElse(0L)
-                  if entry.binary then
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "fileContent".asJson,
-                        "path" -> remotePath.asJson,
-                        "absPath" -> local.toString.asJson,
-                        "itemType" -> entry.itemType.asJson,
-                        "fileName" -> fileName.asJson,
-                        "size" -> bytes.length.asJson,
-                        "mtimeMs" -> mtimeMs.asJson,
-                        "device" -> device.asJson
-                      )
+                wsSend(errorFrame(err, cancelled = err == nebflow.core.tools.BrowseGetCursor.Cancelled))
+              case Right(res) =>
+                val ext = remotePath.split('.').lastOption.getOrElse("").toLowerCase
+                val entry = nebflow.core.workspace.FileTypeRegistry.detect(ext)
+                val fileName = remotePath.replaceAll("""[/\\]""", "/").split("/").lastOption.getOrElse(remotePath)
+                val mtimeMs = scala.util.Try(os.mtime(res.path)).getOrElse(0L)
+                // 分块腿整件 hash 的**免费副产品**（v1 §6.3）：下行帧带 `wholeSha256`
+                // 前 16 hex，前端据此入缓存账本副键（多设备同文件去重）。
+                val hash16 = res.wholeSha256.take(16)
+                if entry.binary then
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "fileContent".asJson,
+                      "path" -> remotePath.asJson,
+                      "absPath" -> res.path.toString.asJson,
+                      "itemType" -> entry.itemType.asJson,
+                      "fileName" -> fileName.asJson,
+                      "size" -> res.size.asJson,
+                      "mtimeMs" -> mtimeMs.asJson,
+                      "wholeSha256" -> hash16.asJson,
+                      "device" -> device.asJson
                     )
-                  else
-                    // 文本腿：与本地 readFile 的 2MB 截断规则同规（字节面截断 + 同款标记行）。
-                    val content =
-                      if bytes.length > 2 * 1024 * 1024 then
-                        new String(bytes, 0, 2 * 1024 * 1024, "UTF-8") + "\n\n[... file truncated at 2MB]"
-                      else new String(bytes, "UTF-8")
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "fileContent".asJson,
-                        "path" -> remotePath.asJson,
-                        "absPath" -> local.toString.asJson,
-                        "content" -> content.asJson,
-                        "itemType" -> entry.itemType.asJson,
-                        "fileName" -> fileName.asJson,
-                        "size" -> bytes.length.asJson,
-                        "mtimeMs" -> mtimeMs.asJson,
-                        "device" -> device.asJson
-                      )
+                  )
+                else
+                  // 文本腿：与本地 readFile 的 2MB 截断规则同规（字节面截断 + 同款标记行）。
+                  val bytes = os.read.bytes(res.path)
+                  val content =
+                    if bytes.length > 2 * 1024 * 1024 then
+                      new String(bytes, 0, 2 * 1024 * 1024, "UTF-8") + "\n\n[... file truncated at 2MB]"
+                    else new String(bytes, "UTF-8")
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "fileContent".asJson,
+                      "path" -> remotePath.asJson,
+                      "absPath" -> res.path.toString.asJson,
+                      "content" -> content.asJson,
+                      "itemType" -> entry.itemType.asJson,
+                      "fileName" -> fileName.asJson,
+                      "size" -> bytes.length.asJson,
+                      "mtimeMs" -> mtimeMs.asJson,
+                      "wholeSha256" -> hash16.asJson,
+                      "device" -> device.asJson
                     )
-                }
+                  )
             }
     }.handleErrorWith { e =>
       logger.warn(s"remote readFile failed: ${e.getMessage}")
       wsSend(errorFrame(e.getMessage))
     }
+
+  /**
+   * `fileTransferCancel`（M2 · 设计 v1 §4.4 取消契约 + Q2 推荐默认）：浏览器侧取消
+   * 在途的设备取件。判据 = (device, path) 在途旗标（`BrowseFetchRegistry`，进程内
+   * 会话周期账）；无在途 = 幂等 no-op（回执帧带 `active:false`，前端据此静默清理）。
+   */
+  private def handleFileTransferCancel(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val json = parsedJson(text)
+    val hc = json.hcursor
+    val cancelPath = hc.downField("path").as[String].getOrElse("")
+    val cancelDevice = hc.downField("device").as[String].toOption.map(_.trim).filter(_.nonEmpty).getOrElse("")
+    if cancelPath.isEmpty || cancelDevice.isEmpty then IO.unit
+    else
+      val active = nebflow.core.tools.RemoteExecutor.cancelScopedFetch(cancelDevice, cancelPath)
+      logger.info(s"[pickup-cancel] device=$cancelDevice path=$cancelPath active=$active")
+      wsSend(
+        io.circe.Json.obj(
+          "type" -> "fileTransferCancelResult".asJson,
+          "path" -> cancelPath.asJson,
+          "device" -> cancelDevice.asJson,
+          "active" -> active.asJson
+        )
+      )
+
+  end handleFileTransferCancel
 
   private def handlePopReadFile(
     ctx: WsDispatchCtx,
@@ -833,7 +887,9 @@ private[gateway] object WsFileOpsHandlers:
         }
       yield cfPath)
         .flatMap { p =>
-          wsSend(io.circe.Json.obj("type" -> "fileCreated".asJson, "path" -> p.asJson))
+          // M2 缓存一致性（v1 §6.1）：UI 通道的文件事实变更也广播失效（与 Write 工具
+          // 同一面；新建空文件对「内容缓存」无实义，但覆盖写场景 `writeFile` 在下）。
+          NfCacheInvalidator.invalidated(p) *> wsSend(io.circe.Json.obj("type" -> "fileCreated".asJson, "path" -> p.asJson))
         }
         .handleErrorWith { e =>
           logger.warn(s"createFile failed: ${e.getMessage}")
@@ -938,7 +994,8 @@ private[gateway] object WsFileOpsHandlers:
           else IO.unit
       yield dpPath)
         .flatMap { p =>
-          wsSend(io.circe.Json.obj("type" -> "pathDeleted".asJson, "path" -> p.asJson))
+          // M2 缓存一致性：删除 ⇒ 广播失效（账本残留条目指向已删件，立即淘汰）。
+          NfCacheInvalidator.invalidated(p) *> wsSend(io.circe.Json.obj("type" -> "pathDeleted".asJson, "path" -> p.asJson))
         }
         .handleErrorWith { e =>
           logger.warn(s"deletePath failed: ${e.getMessage}")
@@ -984,13 +1041,15 @@ private[gateway] object WsFileOpsHandlers:
           }
       yield (mpPath, newPath))
         .flatMap { case (oldPath, newPath) =>
-          wsSend(
-            io.circe.Json.obj(
-              "type" -> "pathMoved".asJson,
-              "oldPath" -> oldPath.asJson,
-              "newPath" -> newPath.asJson
+          // M2 缓存一致性：移动 = 旧路径失效 + 新路径入账待刷新（两侧都广播）。
+          NfCacheInvalidator.invalidated(oldPath) *> NfCacheInvalidator.invalidated(newPath) *>
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "pathMoved".asJson,
+                "oldPath" -> oldPath.asJson,
+                "newPath" -> newPath.asJson
+              )
             )
-          )
         }
         .handleErrorWith { e =>
           logger.warn(s"movePath failed: ${e.getMessage}")
@@ -1093,12 +1152,14 @@ private[gateway] object WsFileOpsHandlers:
             if wrEncoding == "base64" then s"${wrContent.length} b64 chars"
             else s"${wrContent.length} chars"
           logger.info(s"File saved: $absPath ($desc)")
-          wsSend(
-            io.circe.Json.obj(
-              "type" -> "fileSaved".asJson,
-              "path" -> wrFilePath.asJson
+          // M2 缓存一致性（v1 §6.1）：编辑器保存 = 最典型的「本机文件改写」⇒ 广播失效。
+          NfCacheInvalidator.invalidated(absPath) *>
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "fileSaved".asJson,
+                "path" -> wrFilePath.asJson
+              )
             )
-          )
         }
         .handleErrorWith { e =>
           logger.warn(s"writeFile failed: ${e.getMessage}")

@@ -105,6 +105,12 @@ object FileTransferAction:
             )
           )
         }.handleErrorWith(e => IO.pure(Left(msgOf(e))))
+      case "get" if hasChunkParams(params) =>
+        // M2（2026-10-20）：浏览取件**分块拉取腿**的服务端（收端 = RemoteExecutor
+        // BrowseGetLoop 逐块拉）。键集与分块 put 同族（chunkIndex/chunkSize），另加
+        // `wantWholeSha256`（会话首请求 ⇒ 对端流式自算整件摘要一次付清）。旧发送端
+        // 从不带这些键 ⇒ 本分支不可达，legacy 整件 get 逐字节不变（零回归）。
+        IO.blocking(chunkedGet(path, pathStr, params)).handleErrorWith(e => IO.pure(Left(msgOf(e))))
       case "put" if hasChunkParams(params) =>
         IO.blocking(chunkedPut(params, path, contentB64, overwrite)).handleErrorWith(e => IO.pure(Left(msgOf(e))))
       case _ =>
@@ -213,6 +219,70 @@ object FileTransferAction:
               try os.remove(fresh)
               catch case _: Exception => ()
               Left(msgOf(e))
+
+  /**
+   * 分块 get（M2 浏览取件分块拉取腿 · 服务端）：读 `[index×size, +min(size, 剩余))`，
+   * 对端（本端 = 服务角色）**自算**块摘要回传；`wantWholeSha256=1` ⇒ 流式自算整件摘要
+   * （发送端算 + 逐块校验链绑定——v1 Q3 推荐口径的发送端算法，接收端仍整件复核）。
+   * 全部失败显式结构化错误（禁静默）。
+   */
+  private def chunkedGet(path: os.Path, pathStr: String, params: JsonObject): Either[String, Json] =
+    if !os.exists(path) || !os.isFile(path) then Left(s"File not found: $pathStr")
+    else
+      val total = os.size(path)
+      val index = params("chunkIndex").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(0)
+      // 块大小对端声明不信任：夹取 [1KiB, AttachContract.MaxChunkSize]（防 0/负/巨值把
+      // 本端读爆；上限 = 分块契约上限 4 MiB，不放大既有线上块长）。
+      val asked = params("chunkSize").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(AttachContract.ChunkSize)
+      val chunkSize = math.max(1024, math.min(AttachContract.MaxChunkSize, asked))
+      val totalChunks = if total == 0L then 0L else (total + chunkSize - 1) / chunkSize
+      val offset = AttachContract.offsetForIndex(index, chunkSize)
+      if offset >= total then
+        Left(
+          AttachContract
+            .AttachError(
+              AttachContract.Codes.OffsetOutOfRange,
+              s"Chunk $index (offset $offset) is past the end of $pathStr ($total bytes, $totalChunks chunks of $chunkSize)",
+              phase = "transfer",
+              chunkIndex = Some(index),
+              expectedIndex = Some(math.max(0, (total - 1) / chunkSize).toInt),
+              actualIndex = Some(index),
+              bytesReceived = Some(total)
+            )
+            .toJson
+            .noSpaces
+        )
+      else
+        val want = math.min(chunkSize.toLong, total - offset).toInt
+        val payload = readSlice(path, offset, want)
+        val base = Json.obj(
+          "content" -> java.util.Base64.getEncoder.encodeToString(payload).asJson,
+          "size" -> total.asJson,
+          "chunkIndex" -> index.asJson,
+          "chunkBytes" -> payload.length.asJson,
+          "chunkSha256" -> ChunkedTransfer.sha256Hex(payload).asJson,
+          "totalChunks" -> totalChunks.asJson
+        )
+        // 会话首请求：整件摘要流式自算（禁整件驻留）。之后每块不带（O(文件) 每会话一次）。
+        if params("wantWholeSha256").flatMap(_.asBoolean).getOrElse(false) then
+          Right(base.deepMerge(Json.obj("wholeSha256" -> ChunkedTransfer.hashFileStreaming(path).asJson)))
+        else Right(base)
+
+  /** 读文件的一个字节窗（有界：≤ chunkSize 驻留，禁整件读入——分块契约 I4 同规）。 */
+  private def readSlice(path: os.Path, offset: Long, want: Int): Array[Byte] =
+    val buf = new Array[Byte](want)
+    val in = os.read.inputStream(path)
+    try
+      var skipped = 0L
+      while skipped < offset do
+        val s = in.skip(offset - skipped)
+        if s <= 0 then skipped = offset else skipped += s
+      var read = 0
+      while read < want do
+        val n = in.read(buf, read, want - read)
+        if n <= 0 then read = want else read += n
+    finally in.close()
+    buf
 
   private def msgOf(e: Throwable): String =
     Option(e.getMessage).filter(_.nonEmpty).getOrElse(e.getClass.getSimpleName)

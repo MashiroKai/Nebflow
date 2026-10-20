@@ -167,7 +167,16 @@ private[gateway] object ProjectsRoutes:
         withAuth(req) {
           ProjectRuntimeRegistry.get(name).flatMap {
             case None => NotFound(Json.obj("error" -> s"project '$name' not mounted".asJson))
-            case Some(rt) => NodeTools.buildNodeListPayload(rt).flatMap(Ok(_))
+            case Some(rt) =>
+              // M2 缓存语义小刀（v2 §3.1 ① · 快照行）：ETag = **结构键** `meta.updatedAt`
+              // （FlowMapStore.mutate 每次变更必 bump 的变更计数——载荷自版本化）。不用
+              // 内容 hash：载荷含逐秒演算的 TTL 展示读数（NodePayload 的 ttlLeft 族），
+              // 内容 hash 永不命中。键变 ⇒ 快照真变 ⇒ 304 语义零漏。
+              NodeTools.buildNodeListPayload(rt).flatMap { payload =>
+                val updatedAt = payload.hcursor.downField("meta").downField("updatedAt").as[Long].toOption.getOrElse(0L)
+                val nodeCount = payload.hcursor.downField("nodes").as[List[Json]].toOption.map(_.size).getOrElse(0)
+                HttpCache.conditionalOk(req, payload, HttpCache.ofSeed(s"flow-map:$updatedAt:$nodeCount"))
+              }
           }
         }
 
@@ -202,12 +211,25 @@ private[gateway] object ProjectsRoutes:
                       )
                   }
                   .sortBy(j => -(j.hcursor.get[Long]("completedAt").toOption.getOrElse(0L)))
-                resp <- Ok(
-                  Json.obj(
-                    "batches" -> inWindow.asJson,
-                    "ttlMs" -> NodeEngine.TtlDisplayMs.asJson,
-                    "count" -> inWindow.size.asJson
-                  )
+                // M2 缓存语义小刀（v2 §3.1 ① · 归档行）：ETag = **结构键**
+                // （批数 + 最大 archivedAt/completedAt——归档一经落库不改，键稳定）。
+                // ⚠ 申报一处设计偏差：v2 §3.1 表该行写 `Cache-Control: private,
+                // immutable`（TTL=24h）；本实现改用 ETag/304 + `private, no-cache`——
+                // 路由响应是**滚动 24h 窗聚合**（窗内批次随时间自然出窗），immutable
+                // 会让浏览器在 max-age 窗内完全跳过再验证 ⇒ flowMapArchive 的「新增
+                // 链 id diff」新鲜性面（toast/脉冲）最长冻结 24h，既有功能破防。
+                // 批级不可变语义留给未来的按批端点（登记为后续项，非本批裁）。
+                payload = Json.obj(
+                  "batches" -> inWindow.asJson,
+                  "ttlMs" -> NodeEngine.TtlDisplayMs.asJson,
+                  "count" -> inWindow.size.asJson
+                )
+                maxArchived = inWindow.flatMap(_.hcursor.get[Long]("archivedAt").toOption).foldLeft(0L)(math.max)
+                maxCompleted = inWindow.flatMap(_.hcursor.get[Long]("completedAt").toOption).foldLeft(0L)(math.max)
+                resp <- HttpCache.conditionalOk(
+                  req,
+                  payload,
+                  HttpCache.ofSeed(s"archive:${inWindow.size}:$maxArchived:$maxCompleted")
                 )
               yield resp
           }

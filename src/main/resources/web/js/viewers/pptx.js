@@ -30,6 +30,7 @@
 
 import { escapeHtml, formatSize, ZIP_BUDGET } from './shared.js';
 import { ticketUrl } from '../nfTicket.js';
+import { nfViewerUrl } from '../nfFileCache.js';
 import { enableViewerZoom } from './zoom.js';
 
 /** 渲染闸（与打开闸分工：100MB 闸管进页面，本闸管渲不渲）。派生：单 tab 内存峰值
@@ -249,7 +250,10 @@ async function viewPptx(pane, { absPath, fileName, size, objectUrl }) {
 
   let buf;
   try {
-    const url = objectUrl || await ticketUrl(absPath);
+    // M2 账本接缝（imgdoor #542 推广批）：票据腿经 nfViewerUrl——账本命中 = blob URL
+    // 直开（第二次打开零取数），未命中走既有票据链并入账。下载锚腿（renderDownloadFallback）
+    // 保持票据 URL 原样（下载语义不经账本）。
+    const url = await nfViewerUrl({ absPath, objectUrl, pane });
     const resp = await fetch(url);
     if (!resp.ok) {
       const detail = await resp.text().catch(() => '');

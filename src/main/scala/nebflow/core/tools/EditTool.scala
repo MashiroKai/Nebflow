@@ -166,6 +166,8 @@ Edit patterns:
                   ctx.fileChangeLedger.traverse_(
                     _.recordToolResult(ctx.sessionId, ctx.flowNodeId, ctx.taskId, "Edit", filePath.toString, result)
                   ) *>
+                  // M2 缓存一致性（v1 §6.1）：本机文件被引擎改写 ⇒ 广播失效。
+                  NfCacheInvalidator.invalidated(filePath.toString) *>
                   MemoryChangeNotifier.notifyIfMemoryFile(filePath.toString, ctx)
                 // Memory-layer over-budget reminder (govmemory batch): append a
                 // <system-reminder> to the tool result when the file sits over

@@ -8,7 +8,7 @@
 // 320KB script + 1MB worker must not tax sessions that never open a PDF.
 
 import { escapeHtml } from './shared.js';
-import { ticketUrl } from '../nfTicket.js';
+import { nfViewerUrl } from '../nfFileCache.js';
 import { enableViewerZoom } from './zoom.js';
 
 /** @type {Promise<any>|null} */
@@ -55,7 +55,9 @@ async function viewPdf(pane, { absPath, fileName, anchor, objectUrl }) {
     // One ticket covers the whole document: pdf.js issues a Range request per
     // chunk/page, and R4 keeps tickets valid for unlimited reads inside the
     // TTL — a one-shot ticket would break page 2 onwards (and every seek).
-    const url = objectUrl || await ticketUrl(absPath);
+    // M2 账本接缝：票据腿经 nfViewerUrl——`nf:<absPath>` 命中 = blob URL 直开
+    // （第二次打开零取数；blob 后端同样支持 pdf.js 的取数路径，附件腿先例）。
+    const url = await nfViewerUrl({ absPath, objectUrl, pane });
     doc = await pdfjsLib.getDocument({ url }).promise;
   } catch (e) {
     if (!pane.isConnected) return;
