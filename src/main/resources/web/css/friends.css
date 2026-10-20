@@ -2143,3 +2143,36 @@ body > .fm-context-menu { z-index: 10001; }
 .fm-msg-device-receipt[data-receipt-state='read'] {
   color: rgb(var(--sapphire));
 }
+
+/* ── 统一更新系统 M3 ④：本机统一更新卡（互联页·设备段顶部）──────────────
+   形态家族 = `.fm-nf-*` 同族（11px 辅助行、muted 中性灰、图标 14px 槽）；
+   状态色只用于**状态行**（is-ok 绿 / is-bad 琥珀警 / is-active 主色），自报行恒中性。 */
+.fm-update-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 2px 0 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--glass-bg, rgba(127, 127, 127, 0.08));
+  font-size: 12px;
+  line-height: 1.45;
+}
+.fm-update-card-self {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text, inherit);
+}
+.fm-update-card-self svg { width: 14px; height: 14px; flex: none; }
+.fm-update-card-version { font-weight: 600; }
+.fm-update-card-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-muted, #888);
+}
+.fm-update-card-state svg { width: 13px; height: 13px; flex: none; }
+.fm-update-card-state.is-ok { color: rgb(var(--sapphire)); }
+.fm-update-card-state.is-bad { color: var(--color-warning, #b8860b); }
+.fm-update-card-state.is-active { color: var(--color-primary); }

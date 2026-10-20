@@ -28,6 +28,9 @@ import { TRUST_SEALED } from './featureFlags.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 // 本模块三个面：搜索框 / 验证附言 / ⑦ 备注行内编辑器（新增面必须同批接入，
 // 否则就是第 16 个分叉点）。
+// 统一更新系统 M3 ④：本机统一更新卡（互联页·设备段顶部，DESIGN 开放问题 #11
+// 推荐落位；帧订阅在 updateCard.js 模块内，本面板只取渲染元素）。
+import { buildLocalUpdateCard } from './updateCard.js';
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 // 头像渲染单点（sessperf Phase B · 2026-09-20）：本文件此前的第二份 `avatarEl`
 // 已收敛到 `avatarRender.avatarNodeFor`（判据：两份实现必然漂移）。
@@ -322,6 +325,10 @@ function render() {
   //  请求列表与其所属的 nf 行隔开 ⇒ 请求列表落在设备行下方、与自己的行脱钩。
   //  故**展开态**顺序 = 新的朋友 → 请求列表（紧贴 nf）→ 设备 → 联系人列表；
   //  **收起态**展开体不在 DOM，设备行仍紧邻 nf 本体（顺序与改前逐字相同）。
+  // 统一更新系统 M3 ④：本机更新卡置设备段**最顶**（与设备行同屏，DESIGN §8
+  // 「面板更新卡」+ 开放问题 #11 推荐落位；快照未到 ⇒ 不出空壳）。
+  const updateCard = buildLocalUpdateCard();
+  if (updateCard) body.appendChild(updateCard);
   body.appendChild(buildDevicesEntry());
   if (devicesExpanded) body.appendChild(buildDeviceRows());
   // 设备行的更新回显按**状态机现读值**同步（面板每次 render 重建行 ⇒ 重开后不丢进度）。
