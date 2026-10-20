@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>Pop 社交腿 E2E 框图</title>
+<style>
+body{font-family:-apple-system,"PingFang SC",sans-serif;margin:24px;background:#fff;color:#111}
+.box{border:2px solid #0969da;border-radius:12px;padding:16px 20px;margin:12px 0;max-width:640px}
+.arrow{color:#57606a;margin:4px 0 4px 24px}
+h1{font-size:22px}
+</style></head>
+<body>
+<h1>Pop 文件类产物 · 社交腿投递链</h1>
+<div class="box">① Pop（Nebula 专属）落文件 → toolEnd 携 <code>___POP_JSON___</code> 载荷</div>
+<div class="arrow">↓ RichProduct 解析 items[]（image/file 全量、载荷序）</div>
+<div class="box">② 桥（weixin-ilink / feishu）记忆，done 触发 rich 腿</div>
+<div class="arrow">↓ RichKind 分类：md/html ∈ Unknown → 长图腿</div>
+<div class="box">③ FileLongShot：node playwright 单张长图 PNG（md 走 marked 渲染）</div>
+<div class="arrow">↓ 去重台账（路径+size+mtime）；转不动 → 文本卡</div>
+<div class="box">④ image_path / image_key 发出 + 原件路径伴行注</div>
+</body>
+</html>

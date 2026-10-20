@@ -9,7 +9,7 @@ import munit.CatsEffectSuite
 import nebflow.bridge.BridgeContext
 import nebflow.core.tools.PopTool
 import nebflow.shared.SessionMeta
-import nebflow.social.outbound.{RichDegrade, RichFeishuAdapter, RichKind, RichPlanner, RichRenderer, WebPageShot}
+import nebflow.social.outbound.{FileLongShot, RichDegrade, RichFeishuAdapter, RichKind, RichPlanner, RichRenderer}
 
 import java.awt.image.BufferedImage
 import java.nio.file.Files
@@ -162,7 +162,7 @@ class FeishuRichMainLinkSpec extends CatsEffectSuite:
 
   /**
    * A bridge whose rich factory builds an adapter over the given recorder. The
-   * shot seam is pinned to Unavailable so no test ever starts node.
+   * long-shot seam is pinned to Unavailable so no test ever starts node.
    */
   private def bridge(rec: OutboundRecorder, renderer: RichRenderer.Renderer, send: SendRecorder): FeishuBridgePlugin =
     new FeishuBridgePlugin(
@@ -178,7 +178,7 @@ class FeishuRichMainLinkSpec extends CatsEffectSuite:
           rec.sendText,
           renderer,
           () => tmpDir(),
-          WebPageShot.Unavailable
+          FileLongShot.Unavailable
         )
     )
 

@@ -108,13 +108,29 @@ object RichDegrade:
         case None => s"$UnsupportedPrefix 这个格式在聊天里看不了（$name）"
 
   /**
-   * 截图兜底腿的伴行注（social-webshot batch；2026-10-09 裁定后只在「文件腿
-   * 失败 → 截图」面出现）：html 以截图（派生图）发出时，文字腿附原件绝对路径
-   * ——用户可在桌面端 Canvas 打开原件（交互/原始形态只有桌面有）。文件腿直发
-   * 成功时不发本注——原件本身就是消息。
+   * 文件类长图腿的伴行注（pop-social-files batch, 2026-10-20）：md/html 以
+   * 派生单张长图发出时，文字腿附原件绝对路径——聊天里看到的是转换产物，原件
+   * （交互/原始形态）只有桌面端有。原 `webPageNote`（「网页原件…」，html 文件
+   * 腿的截图兜底面）随该腿整体退役——本注对 md/html 同一口径，不再叫「网页」。
    */
-  def webPageNote(original: os.Path): String =
-    s"网页原件（桌面端可打开）：$original"
+  def originalNote(original: os.Path): String =
+    s"原件（桌面端可打开）：$original"
+
+  /**
+   * 转不动 ⇒「文件名+本地路径+一句话摘要」文本卡（pop-social-files batch，
+   * 2026-10-20 作者令逐字口径）。占位符 `[未转图]` 机器可匹配（§7.3 #2 的精神）：
+   * 长图转换未成功（渲染件不可用/超时/产物非法），先给原件信息，不静默。
+   *
+   * @param p       原件绝对路径
+   * @param summary 一句话摘要（[[FileLongShot.summarize]]；None ⇒ 省略摘要行）
+   */
+  def unconverted(p: os.Path, summary: Option[String]): String =
+    val head = s"$UnconvertedPrefix ${p.last} — 聊天里转不出长图，先给你原件信息"
+    val tail = s"原件在桌面端：$p"
+    summary.fold(s"$head\n$tail")(s => s"$head\n内容摘要：$s\n$tail")
+
+  /** `[[unconverted]]` 的机器可匹配占位符。 */
+  val UnconvertedPrefix: String = "[未转图]"
 
   /**
    * §6.2 step 4: the oversize reading also becomes the user-visible tail.

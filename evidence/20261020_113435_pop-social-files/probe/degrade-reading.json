@@ -1,0 +1,50 @@
+{
+  "ts": "2026-10-20T03:35:21.355Z",
+  "probe": "RichDegradeProbe",
+  "credentialUsed": false,
+  "networkUsed": false,
+  "cases": [
+    {
+      "id": "A-card-render-failed",
+      "input": "card payload, renderer=RichRenderer.Unavailable (HC-5)",
+      "imagesUploaded": 0,
+      "readings": 1,
+      "textsSent": 1,
+      "text0": "[未渲染] 渲染件不可用 — 原件：卡片内容（HTML 载荷，130 字节）\n交互版见本地面板",
+      "carriesUnrenderedPlaceholder": true,
+      "carriesInteractivePanelNote": true,
+      "verdict": "PASS"
+    },
+    {
+      "id": "B-document-oversize",
+      "input": "sparse file of MaxFileBytes+1 (=1073741825 bytes)",
+      "gateConstant": 1073741824,
+      "uploadsStarted": 0,
+      "readings": 1,
+      "textsSent": 1,
+      "text0": "[未渲染] 尺寸闸拒绝 — 原件：/tmp/nb-probe-home/tmp/nb-probe-huge.pdf（1073741825 字节，上限 1073741824 字节，ATTACH_TOO_LARGE）",
+      "echoesExistingErrorCode": true,
+      "echoesActualSize": true,
+      "verdict": "PASS"
+    },
+    {
+      "id": "C-html-off-table-longshot-unavailable",
+      "input": "on-disk diagram.html, RichKind.Unknown(extension is in neither authority table: html), longshot=Unavailable",
+      "readings": 1,
+      "textsSent": 1,
+      "text0": "[未转图] diagram.html — 聊天里转不出长图，先给你原件信息\n内容摘要：diagram\n原件在桌面端：/tmp/nb-probe-home/tmp/outbound-render/diagram.html",
+      "carriesTextCard": true,
+      "leaksMechanismWording": false,
+      "verdict": "PASS"
+    },
+    {
+      "id": "D-missing-product",
+      "input": "RichKind.Unknown(path does not exist), path names a gone.png",
+      "readings": 1,
+      "textsSent": 1,
+      "text0": "[未送达] 原件没找到（可能已被清理）：/tmp/nb-probe-home/tmp/outbound-render/gone.png",
+      "carriesUnreachableLine": true,
+      "verdict": "PASS"
+    }
+  ]
+}

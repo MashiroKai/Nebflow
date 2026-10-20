@@ -23,9 +23,10 @@ import java.time.temporal.ChronoUnit
  *
  * 🔴 No credential, no network, no browser: the probes below are (a) the
  * degraded-render path, (b) the oversized-product path, (c) the off-table html
- * path with the file upload refused AND the shot seam unavailable (the
- * 2026-10-09 incident shape under the same-day ruling: the demoted shot lands
- * on the friendly line, no mechanism words), (d) the missing-product path.
+ * path with the long-shot seam unavailable (the 2026-10-20 shape under the
+ * pop-social-files ruling: the failed conversion lands on the
+ * 「文件名+本地路径+一句话摘要」text card, no mechanism words), (d) the
+ * missing-product path.
  * `System.exit` is the last statement (the ≤120s self-exit obligation).
  *
  * Modes:
@@ -57,9 +58,9 @@ object RichDegradeProbe:
 
     def uploadFile: RichFeishuAdapter.UploadFile = (p, n) =>
       files = files :+ s"$p ($n)"
-      // 2026-10-09 同日裁定后 html 走「文件腿直发、失败才截图」链；本探针测的是
-      // 降级链，故文件上传一律拒绝（案例 B 的超大件在闸前已被拒，不受影响），
-      // 这样案例 C 才能走到截图兜底（Unavailable ⇒ 友好 b 层一行）。
+      // 2026-10-20 起 html 文件腿退役（pop-social-files：文件类走长图腿）；本
+      // 探针测的是降级链，上传一律拒绝（案例 B 的超大件在闸前已被拒，不受影响，
+      // 案例 C 走的是长图转换失败 ⇒ 文本卡，不经上传腿）。
       cats.effect.IO.pure(RichFeishuAdapter.UploadResult(false, "", 230021, "upload refused (probe)"))
 
     def sendMsg: RichFeishuAdapter.SendMsg = (t, c) =>
@@ -91,7 +92,7 @@ object RichDegradeProbe:
       rec.sendText,
       failing,
       () => os.Path(rendered.toPath, os.pwd),
-      WebPageShot.Unavailable
+      FileLongShot.Unavailable
     )
 
     val cardPayload =
@@ -130,11 +131,11 @@ object RichDegradeProbe:
     val filesB = rec.files
     rec.texts = Nil
 
-    // (c) off-table product on disk — the 2026-10-09 incident shape: a real
-    // diagram.html whose extension is in neither authority table. Per the
-    // same-day ruling the FILE leg runs first; this probe refuses the file
-    // upload, and the shot seam is Unavailable, so the demoted shot falls
-    // through to the friendly b-layer line.
+    // (c) off-table product on disk — the 2026-10-10/20 incident shape: a real
+    // report.html whose extension is in neither authority table. Per the
+    // 2026-10-20 ruling the LONG-SHOT leg runs (file leg retired); this probe
+    // pins the long-shot seam Unavailable, so the conversion failure falls
+    // through to the 「文件名+本地路径+一句话摘要」 text card.
     val html = new File(rendered, "diagram.html")
     write(rendered, "diagram.html", "<html><body><h1>diagram</h1></body></html>")
     val resC = adapter
@@ -194,18 +195,18 @@ object RichDegradeProbe:
         }"
          |    },
          |    {
-         |      "id": "C-html-off-table-file-refused-shot-unavailable",
-         |      "input": "on-disk diagram.html, RichKind.Unknown(extension is in neither authority table: html), file upload refused, webshot=Unavailable",
+         |      "id": "C-html-off-table-longshot-unavailable",
+         |      "input": "on-disk diagram.html, RichKind.Unknown(extension is in neither authority table: html), longshot=Unavailable",
          |      "readings": ${resC.size},
          |      "textsSent": ${textsC.size},
          |      "text0": "${esc(textsC.headOption.getOrElse(""))}",
-         |      "carriesFriendlyUnsupportedLine": ${textsC.exists(t =>
-          t.contains(RichDegrade.UnsupportedPrefix) && t.contains("原件在桌面端") && t.contains("diagram.html")
+         |      "carriesTextCard": ${textsC.exists(t =>
+          t.contains(RichDegrade.UnconvertedPrefix) && t.contains("原件在桌面端") && t.contains("diagram.html")
         )},
          |      "leaksMechanismWording": ${textsC.exists(t => t.contains("authority") || t.contains("neither"))},
          |      "verdict": "${
           if textsC.exists(t =>
-              t.contains(RichDegrade.UnsupportedPrefix) && t.contains("原件在桌面端") && !t.contains("authority")
+              t.contains(RichDegrade.UnconvertedPrefix) && t.contains("原件在桌面端") && !t.contains("authority")
             )
           then "PASS"
           else "FAIL"
