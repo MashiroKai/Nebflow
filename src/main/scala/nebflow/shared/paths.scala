@@ -260,6 +260,37 @@ object PathUtil:
     else text
 
   /**
+   * Inverse of the data-root rendering for stored `_ref` values (数据根指向
+   * 切换批, 2026-10): a ref spelled in a data-root token form maps back under
+   * `root`; an absolute path stays as-is; anything else is relative to `root`.
+   *
+   * Recognized token forms (prefix + "/" only):
+   *   - `~/<LegacyHomeDirName>` — the legacy spelling (`~/.nebflow/...`):
+   *     stored configs written before the switch must keep resolving onto the
+   *     CURRENT root (legacy machine: root IS ~/.nebflow, byte-equal path;
+   *     migrated machine: the ref follows the secrets to the new root — the
+   *     ref is a data-root TOKEN, not a literal path);
+   *   - `~/<brand.homeDirName>` — the rendered form on a default install
+   *     (`~/.stand` since this batch);
+   *   - [[renderDataRootValue]] — an isolated instance's absolute root
+   *     (dedups with the second form on a default install).
+   * Single implementation — FeishuCredentials / SocialChannels `_ref` faces
+   * both consume this (no second spelling of the legacy prefix).
+   */
+  def resolveRootRef(root: os.Path, ref: String): os.Path =
+    val normalized = ref.replace('\\', '/')
+    val tokenPrefixes = List(
+      s"~/$LegacyHomeDirName",
+      s"~/${Branding.homeDirName}",
+      renderDataRootValue(root)
+    ).distinct
+    tokenPrefixes.find(p => normalized.startsWith(p + "/")) match
+      case Some(p) => os.Path(root.toString + normalized.drop(p.length), os.pwd)
+      case None =>
+        if normalized.startsWith("/") then os.Path(normalized, os.pwd)
+        else os.Path(root.toString + "/" + normalized, os.pwd)
+
+  /**
    * The legacy data-root directory name, HARDCODED — it is a historical
    * fact, not a configuration (deriving it from brand.conf would make the
    * fallback unreachable). Single spelling source: resolveDefaultDataRoot's

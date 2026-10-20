@@ -23,7 +23,9 @@ class BrandInjectionSpec extends FunSuite:
         assertEquals(json.hcursor.get[String]("lowerName"), Right("stand"))
         assertEquals(json.hcursor.get[String]("domain"), Right("mystand.space"))
         // L3 batch 3 append-only extension: homeDirName joins the contract
-        assertEquals(json.hcursor.get[String]("homeDirName"), Right(".nebflow"))
+        // (数据根指向切换批 2026-10: default data root → ~/.stand; the legacy
+        // ~/.nebflow stays as the hardcoded fallback in PathUtil, not here)
+        assertEquals(json.hcursor.get[String]("homeDirName"), Right(".stand"))
         // 2026-09-01 login-chain fix: profileUrl joins the contract — the
         // frontend's ONLY URL input (activityBar.js builds the profile link).
         assertEquals(

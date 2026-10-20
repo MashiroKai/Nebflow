@@ -4,7 +4,7 @@ import io.circe.Json
 import io.circe.parser.parse
 import io.circe.syntax.*
 import nebflow.core.CredentialFileAcl
-import nebflow.shared.{Branding, PathUtil}
+import nebflow.shared.PathUtil
 
 import java.nio.file.{Files, Path}
 
@@ -192,15 +192,15 @@ object FeishuCredentials:
   end fromSocialChannelsSchema
 
   /**
-   * Inverse of the `_ref` rendering: an absolute path stays as-is, the rendered
-   * `~/<homeDirName>` form maps back under `root`, anything else is relative to
-   * `root` (same convention as `SocialChannels.resolveRef`).
+   * Inverse of the `_ref` rendering: data-root token forms (current brand
+   * `~/<homeDirName>` AND the legacy `~/.nebflow/...` spelling — 存量配置
+   * 过渡期双读, see PathUtil.resolveRootRef) map back under `root`, an
+   * absolute path stays as-is, anything else is relative to `root`.
+   * 单一实现 = [[nebflow.shared.PathUtil.resolveRootRef]]（与
+   * SocialChannels.resolveRef 同源；数据根指向切换批 2026-10）。
    */
   private def resolveRef(root: os.Path, ref: String): os.Path =
-    val rendered = s"~/${Branding.homeDirName}"
-    if ref.startsWith(rendered + "/") then os.Path(root.toString + ref.drop(rendered.length), os.pwd)
-    else if ref.startsWith("/") then os.Path(ref, os.pwd)
-    else os.Path(root.toString + "/" + ref, os.pwd)
+    nebflow.shared.PathUtil.resolveRootRef(root, ref)
 
   // ─────────── askuser-remote P1: the card-callback credential face ───────────
 

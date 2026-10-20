@@ -270,12 +270,14 @@ object SocialChannels:
     if root == os.home / nebflow.shared.Branding.homeDirName then s"~/${nebflow.shared.Branding.homeDirName}"
     else root.toString
 
-  /** Inverse of [[renderRoot]]: a stored reference back to a real path. */
+  /**
+   * Inverse of [[renderRoot]]: a stored reference back to a real path.
+   * 单一实现 = [[nebflow.shared.PathUtil.resolveRootRef]]（数据根指向切换批
+   * 2026-10：legacy `~/.nebflow/...` 拼写的存量 _ref 双读不丢； FeishuCredentials
+   * 同源消费）。
+   */
   private def resolveRef(root: os.Path, ref: String): os.Path =
-    val rendered = renderRoot(root)
-    if ref.startsWith(rendered + "/") then os.Path(root.toString + ref.drop(rendered.length), os.pwd)
-    else if ref.startsWith("/") then os.Path(ref, os.pwd)
-    else os.Path(root.toString + "/" + ref, os.pwd)
+    nebflow.shared.PathUtil.resolveRootRef(root, ref)
 
   private def storedFields(root: os.Path, id: String): Json =
     readChannels(root).hcursor.downField("channels").downField(id).downField("fields").focus.getOrElse(Json.obj())
