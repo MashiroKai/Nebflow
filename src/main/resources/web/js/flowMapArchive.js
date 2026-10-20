@@ -519,6 +519,10 @@ export function mergeUpstreamWorktrees(project, nodeId) {
 /**
  * @typedef {Object} LayerCtx
  * @property {string} project
+ * @property {string=} diffProject 详情 file-diff 段的拉取项目名（⑫B chain-detail-diff
+ *           修：delegate 链作用域的 scope 键无 per-project REST 面，报告必须按链的
+ *           真实 root project 名拉——由渲染管线经 syncArchiveUi opts 透传；''/缺省 =
+ *           无真名 ⇒ 详情 diff 段显式不适用（无网络调用）。经典项目作用域不用此槽。）
  * @property {HTMLElement} container 渲染容器（卡片宿主，hover 联动定位用）
  * @property {HTMLElement} layer
  * @property {HTMLElement} fab
@@ -582,6 +586,16 @@ function isDelegateScope(project) {
   return String(project || '').startsWith('delegate-chain:');
 }
 
+/** 详情 file-diff 段的拉取项目名（⑫B chain-detail-diff 修 2026-10-20）：REST 面
+ *  按**真实项目名**寻址（ProjectsRoutes /file-changes），delegate 链作用域键
+ *  `delegate-chain:<key>` 本身 404 构造性 ⇒ 经 ctx.diffProject 用链载荷透传的
+ *  真实 root project 名。返回 '' = 该作用域无真名 ⇒ 调用方必须**显式跳过** diff
+ *  段（不适用注记，零网络调用）——消灭旧「静默 404 静默缺席」路径。 */
+function diffProjectFor(/** @type {LayerCtx} */ ctx) {
+  if (!isDelegateScope(ctx.project)) return ctx.project;
+  return String(ctx.diffProject || '');
+}
+
 /**
  * 确保 host 上存在悬浮层并绑定项目上下文（renderFlowMap 全量/增量路径后调用）。
  * host = 就地视图 .flowmap-view-body（自身定位上下文）或 legacy .canvas-tab-pane。
@@ -590,7 +604,7 @@ function isDelegateScope(project) {
  * @param {string} project
  * @returns {LayerCtx}
  */
-export function ensureArchiveLayer(host, container, project) {
+export function ensureArchiveLayer(host, container, project, opts = {}) {
   let layer = layerByHost.get(host);
   if (!layer || !layer.isConnected || layer.parentElement !== host) {
     if (layer) layer.remove();
@@ -628,6 +642,10 @@ export function ensureArchiveLayer(host, container, project) {
   }
   ctx.project = project;
   ctx.container = container;
+  // ⑫B chain-detail-diff 修：diff 拉取项目名只在渲染管线供给时刷新（opts 显式
+  // 带键）——openDetailFor/openDetailForMember 的 ctxFor 重入不携带 opts，不得
+  // 把渲染时透传的值抹掉（详情开窗在渲染之后，重入必须保留）。
+  if (opts && opts.diffProject !== undefined) ctx.diffProject = String(opts.diffProject || '');
   // Delegate scopes: archive FAB hidden (the delegate archive face is the L2
   // drawer); the detail half of the layer is unaffected.
   ctx.fab.style.display = isDelegateScope(project) ? 'none' : '';
@@ -639,16 +657,18 @@ export function ensureArchiveLayer(host, container, project) {
 }
 
 /** 按 (容器, 项目) 找到（必要时创建）该视图的悬浮层上下文。 */
-function ctxFor(container, project) {
+function ctxFor(container, project, opts = {}) {
   const host = container.classList.contains('flowmap-view-body')
     ? container
     : (container.closest('.canvas-tab-pane') || container.parentElement || container);
-  return ensureArchiveLayer(/** @type {HTMLElement} */ (host), container, project);
+  return ensureArchiveLayer(/** @type {HTMLElement} */ (host), container, project, opts);
 }
 
-/** flowMapTab 渲染管线统一入口：渲染后同步悬浮层（徽章/面板/详情计数）。 */
+/** flowMapTab 渲染管线统一入口：渲染后同步悬浮层（徽章/面板/详情计数）。
+ *  opts.diffProject：delegate 链作用域的详情 diff 段拉取项目名（⑫B 修，透传见
+ *  ensureArchiveLayer）——经典项目作用域不带此键（undefined = 不触碰既有值）。 */
 export function syncArchiveUi(container, project, opts = {}) {
-  const ctx = ctxFor(container, project);
+  const ctx = ctxFor(container, project, opts);
   renderArchiveUi(ctx, opts);
   return ctx;
 }
@@ -1088,7 +1108,15 @@ function renderDetail(/** @type {LayerCtx} */ ctx, /** @type {ChainMember} */ n)
   // file-diff feature: completed nodes carry their changed-file diff section
   // (lazily fetched; 404/empty = silently not rendered; seq-guarded like the
   // result upgrade above so a stale response never mounts).
-  if (st === 'completed') mountFileChangesSection(ctx, seq, String(n.id || ''));
+  // ⑫B chain-detail-diff 修（2026-10-20）：拉取项目名走 diffProjectFor 单点——
+  // delegate 链作用域用链载荷透传的真实 root project 名（旧实现传 scope 键
+  // `delegate-chain:<key>` ⇒ REST 404 ⇒ diffView「缺失静默跳过」⇒ Changes 段
+  // 静默缺席）。无真名（ctx.diffProject 空）⇒ **显式跳过**：diff 段不适用——
+  // 零网络调用、零静默 404（验收①第二分支）。
+  if (st === 'completed') {
+    const diffProject = diffProjectFor(ctx);
+    if (diffProject) mountFileChangesSection(ctx, seq, String(n.id || ''), diffProject);
+  }
 }
 
 // ── 详情结果按需全文（20260904「归档详情窗节点结果完整显示」；20260905 载荷收敛
