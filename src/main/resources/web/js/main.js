@@ -97,7 +97,6 @@ import { handleBgAgentHistory, openStepPopup as openBgAgentPopup, cleanupBgAgent
 import { openBgTaskOutput } from './bgTaskOutputPopup.js';
 import { fmtUptime, isFailedSnapshotStatus } from './managePanel.js';
 import { initNeblink } from './neblink.js';
-import { initUpdateCheck } from './updateCheck.js';
 import { initDropbox } from './dropbox.js';
 import { initContacts } from './contacts.js';
 import { initMessages } from './messages.js';
@@ -3248,10 +3247,10 @@ onMessage('rulesDeleted', (msg, view) => handleRulesDeleted(msg));
 // consumed by workspacePicker.js via per-request dynamic onMessage subscriptions
 // — no module-level subscriber anymore (pickeruni batch retired the static one).
 
-// Update check chain (updateCheckResult/updateStarted/updateCompleted) moved
-// to updateCheck.js — it also owns the silent auto-check scheduling and the
-// settings-btn green dot (09-05 五项裁定⑤). initUpdateCheck() is called in
-// the boot section below.
+// Update check chain (updateCheckResult/updateStarted/updateCompleted) 曾迁
+// updateCheck.js（09-05 五项裁定⑤）—— 该文件已随 auth-trim 批（2026-10-20 作者令）
+// 整体删除：设置页更新功能退役（检查/静默自动检查/绿点全链），未来由官网统一检测
+// 更新取代。
 
 
 // ---------- 4. Cross-module wiring ----------
@@ -3712,7 +3711,6 @@ initUsageDashboard();
 initNeblink();
 initSocialPanel();
 initSecretsPanel();
-initUpdateCheck();
 initDropbox();
 // initContacts()/initMessages() are NOT called here — they are friends-feature
 // modules, started from the configData handler only when the release gate

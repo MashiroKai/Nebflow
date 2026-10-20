@@ -312,20 +312,8 @@ body.sidebar-collapsed #activity-bar {
 /* Spacer pushes settings to the bottom of the bar. */
 .activity-spacer { flex: 1; }
 
-/* Update-available dot on the settings button (updateCheck.js silent auto
-   checks). Success token only — no hand-mixed colors (视觉评审先例). The
-   halo ring keeps it legible on hover/active backgrounds in both themes. */
-.settings-update-dot {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-success);
-  box-shadow: 0 0 0 2px var(--color-nav-bg);
-  pointer-events: none;
-}
+/* Update-available dot on the settings button 已随 auth-trim 批（2026-10-20 作者令）
+   删除：updateCheck.js 绿点链退役，未来由官网统一检测更新取代。 */
 
 /* 2026-09-05 旧 UI 退役：legacy-pop/legacy-item（旧面板二级入口 popover）
    样式段已随 #legacy-btn/#legacy-pop DOM 删除。 */
@@ -338,26 +326,5 @@ body.sidebar-collapsed #activity-bar {
   text-align: center;
 }
 
-/* ── NebLink logout button (Settings panel, logged-in state) ──
-   2026-09-16 按钮批（危险族 token 治理）：本节原先自带三处红字面量
-   （半透明红描边 / 半透明红底 / 浅红墨）—— 与 `--color-danger` 构成
-   **同语义两支红**（R9′ 判红）。本批改为 `--btn-danger-*` 具名 token 单一来源
-   （红值集合大小 = 1），形态 = 方向 A 的「红描边 + 红字」（底透明）。 */
-.neblink-logout-btn {
-  width: 100%; margin-top: 12px; padding: 8px;
-  border: 1px solid var(--btn-danger-stroke);
-  background: var(--btn-danger-bg);
-  color: var(--btn-danger-ink); border-radius: 8px; cursor: pointer;
-  font-size: 13px;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
-}
-.neblink-logout-btn:hover {
-  background: var(--btn-danger-tint);
-  border-color: var(--btn-danger-ink);
-}
-.neblink-logout-btn:disabled {
-  background: var(--btn-disabled-bg);
-  border-color: var(--btn-disabled-stroke);
-  color: var(--btn-disabled-ink);
-  opacity: 1; cursor: not-allowed;
-}
+/* ── NebLink logout button 样式段已随 auth-trim 批（2026-10-20 作者令）删除：
+   设置页「退出登录」键退役 ⇒ 红玻璃配方（--btn-danger-* token 版）零残留。 */

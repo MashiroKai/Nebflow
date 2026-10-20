@@ -1,0 +1,10 @@
+{
+  "logoutBtn": false,
+  "switchBtn": false,
+  "accountRo": "登录账号：测试用户",
+  "checkUpdateBtn": false,
+  "doUpdateBtn": false,
+  "updateStatus": false,
+  "restartBtn": true,
+  "settingsDot": false
+}

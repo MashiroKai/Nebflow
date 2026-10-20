@@ -102,7 +102,7 @@ async function bootMockPage() {
   const page = await ctx.newPage();
   page.on('pageerror', e => console.log('[pageerror]', e.message));
   await page.route('**/api/**', r => r.fulfill({ json: {} }));
-  await page.route('**/api/neblink/status', r => r.fulfill({ json: { loggedIn: true, device: { id: 'd1', name: '本机', platform: 'macos', userDescription: '', avatarUrl: '' }, peers: [] } }));
+  await page.route('**/api/neblink/status', r => r.fulfill({ json: { loggedIn: true, device: { id: 'd1', name: '本机', platform: 'macos', userDescription: '', avatarUrl: '', email: 'me@example.com', displayName: '测试用户' }, peers: [] } }));
   await page.routeWebSocket(/\/ws/, ws => {
     ws.onMessage(raw => {
       let m; try { m = JSON.parse(raw); } catch { return; }
@@ -229,7 +229,7 @@ try {
     const apiCalls = [];
     page.on('request', req => { if (req.url().includes('/api/')) apiCalls.push(req.url()); });  // 全量登记（路由拦截之外的观测面）
     await page.route('**/api/**', r => r.fulfill({ json: {} }));   // catch-all first
-    await page.route('**/api/neblink/status', r => r.fulfill({ json: { loggedIn: true, device: { id: 'd1', name: '本机', platform: 'macos', userDescription: '', avatarUrl: '' }, peers: [] } }));
+    await page.route('**/api/neblink/status', r => r.fulfill({ json: { loggedIn: true, device: { id: 'd1', name: '本机', platform: 'macos', userDescription: '', avatarUrl: '', email: 'me@example.com', displayName: '测试用户' }, peers: [] } }));
     // 契约端点拦截：/api/users/search 按 q 返回 contract 原形（snake_case wire）
     await page.route('**/api/users/search*', r => {
       const q = (new URL(r.request().url()).searchParams.get('q') || '').trim().toLowerCase();
@@ -292,9 +292,12 @@ try {
         input: !!root.querySelector('#neblink-nlid-input'),
         devicesLabel: [...root.querySelectorAll('.neblink-section-label')].some(e => e.textContent.includes('设备')),
         logout: !!root.querySelector('#neblink-logout-btn'),
+        roLine: !!root.querySelector('.neblink-account-ro'),
       };
     });
-    ok('D7 设置面板：NL 号修改入口零残留 + 设备区完好', !nl.nlidValue && !nl.editBtn && !nl.input && nl.devicesLabel && nl.logout, JSON.stringify(nl));
+    // 设备区 label 子句已除名（设备列表 2026-09-15 迁联系人面板，label 随之消失——
+    // 该子句自迁址起误红，基线复核 2026-10-20）；auth-trim：登出键退役 + 只读身份行在位。
+    ok('D7 设置面板：NL 号修改入口零残留 + 登出键已退役（auth-trim）+ 只读身份行在位', !nl.nlidValue && !nl.editBtn && !nl.input && !nl.logout && nl.roLine, JSON.stringify(nl));
     await ctx.close();
   }
 

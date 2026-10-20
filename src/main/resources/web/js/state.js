@@ -248,10 +248,8 @@ export default {
 
   serverThinking: null,
 
-  // App update state (updateCheck.js) — fed by updateCheckResult; drives the
-  // settings-btn green dot and the About-section echo after a re-render.
-  updateAvailable: false,
-  latestVersion: '',
+  // App update state（updateAvailable/latestVersion，原 updateCheck.js 消费）已随
+  // auth-trim 批（2026-10-20 作者令）删除：设置页更新功能退役。
 
   // Batch selection (like VS Code Explorer)
   batchMode: false,

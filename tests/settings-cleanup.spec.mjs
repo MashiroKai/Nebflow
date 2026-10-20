@@ -8,15 +8,17 @@
 //      SHOW_RERUN_ONBOARDING flag + settings.rerunOnboarding 键（隐藏 ≠ 删除）。
 //   T3 ③ NL 号入口移除 — neblink-nlid* 全选择器零命中；neblink 设备区仍在；
 //      neblink.nlId* 键组双语已删；friendsApi 两个 NL API 包装已删。
+//      （auth-trim 批 2026-10-20 改写：设置页「切换账号/退出登录」两键退役，
+//      登录态 = 只读身份行 .neblink-account-ro；键组 switchAccount/logout 族已删。）
 //   T4 ④ 设置页头像双态 — 未登录 → logo 可见/photo 隐藏，点击弹登录 modal；
 //      mock 登录+avatarUrl → photo 可见/logo 隐藏，点击 window.open 个人主页
 //      （与 Activity Bar 头像共用行为：#settings-avatar-entry 转发原生 click）。
-//   T5 ⑤ 检查更新自动化绿点 — 推送 updateCheckResult(hasUpdate) → settings-btn
-//      出现 success token 绿点；打开设置 → 绿点清除 + About 回显新版本；
-//      手动检查无新版本 → 无绿点且 About 回显已是最新。
+//   T5 ⑤ 更新功能退役（auth-trim 批 2026-10-20 作者令）— 设置页无 检查更新/立即更新/
+//      进度面/绿点任何残留；不发 checkUpdate/doUpdate 帧；updateCheck.js 模块已删；
+//      update.* 键组双语已删；重启服务键与其状态行保留。
 //   P   i18n zh/en parity（全键集合相等）。
 //
-// 截图（双主题 ≥4 张）落 /tmp/nb-settings-cleanup/shots/。
+// 截图（双主题 ≥3 张）落 /tmp/nb-settings-cleanup/shots/。
 // Run: npx playwright test tests/settings-cleanup.spec.mjs
 
 import { test, expect } from '@playwright/test';
@@ -79,7 +81,9 @@ async function bootPage(page, opts = {}) {
     json: {
       loggedIn,
       device: loggedIn
-        ? { id: 'd1', name: '本机', platform: 'macos', userDescription: '', avatarUrl: avatarUrl || '' }
+        ? { id: 'd1', name: '本机', platform: 'macos', userDescription: '', avatarUrl: avatarUrl || '',
+            // auth-trim 批：只读登录态行（.neblink-account-ro）取数 = email/displayName。
+            email: 'me@example.com', displayName: '测试用户' }
         : null,
       peers: [],
     },
@@ -93,11 +97,6 @@ async function bootPage(page, opts = {}) {
     ws.onMessage(raw => {
       let m; try { m = JSON.parse(raw); } catch { return; }
       frames.push(m);
-      if (m.type === 'checkUpdate') {
-        // Manual check roundtrip: report up-to-date unless the test preempts it.
-        if (m.__reply) wsSend(m.__reply);
-        else ws.send(JSON.stringify({ type: 'updateCheckResult', hasUpdate: false }));
-      }
       if (m.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0 }));
     });
     ws.send(JSON.stringify({ type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {} }));
@@ -110,7 +109,6 @@ async function bootPage(page, opts = {}) {
   return {
     frames,
     send: obj => wsSend(obj),
-    pushUpdate: (hasUpdate, latestVersion) => wsSend({ type: 'updateCheckResult', hasUpdate, latestVersion }),
   };
 }
 
@@ -148,13 +146,15 @@ for (const [locale, mcpTitle] of [['zh-CN', 'MCP 服务器'], ['en', 'MCP Server
     // merged away and the account section must carry the avatar entry + the
     // neblink (device) area.
     if (locale === 'zh-CN') {
-      for (const t of ['账号', '运行时', 'LLM 服务商', '模型方案', '高级', '关于']) {
+      // 2026-10-20 校准：模型方案节已随早前批次并入 LLM 服务商（当前实况 = 账号/
+      // 运行时/LLM 服务商/密钥/高级/关于）。
+      for (const t of ['账号', '运行时', 'LLM 服务商', '密钥', '高级', '关于']) {
         expect(dump.titles, `section ${t} must remain`).toContain(t);
       }
       expect(dump.titles, 'standalone Device Link section must stay merged away').not.toContain('设备互联');
     }
     if (locale === 'en') {
-      for (const t of ['Account', 'Runtime', 'LLM Providers', 'Model Presets', 'Advanced', 'About']) {
+      for (const t of ['Account', 'Runtime', 'LLM Providers', 'Secrets', 'Advanced', 'About']) {
         expect(dump.titles, `section ${t} must remain`).toContain(t);
       }
       expect(dump.titles, 'standalone Device Link section must stay merged away').not.toContain('Device Link');
@@ -188,13 +188,12 @@ test('T2 rerun-onboarding entry sealed (not rendered), code + i18n key retained'
   expect(zh['settings.rerunOnboarding'], 'i18n key settings.rerunOnboarding must be retained').toBeTruthy();
 });
 
-// ══ T3 · ③ NL 号入口移除 ══════════════════════════════════
-// 🔴 2026-09-15 设备/好友统一返工（作者八点）**改写了本测试的设备侧断言**：
-//    ① 设备入口从设置搬到联系人面板 ⇒ 设置账号段**不再有设备列表**
-//    （`.neblink-peers-list` / `.neblink-peer` 零命中，原「device list must remain」断言
-//    被作者令取代）；④ 设置里只保留 切换账号 + 退出登录 两键。
-//    设备侧的新宿主断言见 tests/unifyfix-eight-points.spec.mjs（②：联系人面板点进展开；③：行样式沿用）。
-test('T3 NL-ID entry gone (logged-in view), settings keeps only switch+logout, keys + API wrappers deleted', async ({ page }) => {
+// ══ T3 · ③ NL 号入口移除 + auth-trim：两键退役、只读身份行 ════════════════
+// 🔴 2026-09-15 设备/好友统一返工（作者八点）改写了设备侧断言（设备入口迁联系人面板）。
+// 🔴 auth-trim 批（2026-10-20 作者令）：设置页「切换账号/退出登录」两键退役 ——
+//    产品全走纯官网路径，控制台不承担认证态管理；登录态只留只读身份行
+//    （.neblink-account-ro，neblink.loggedInAs）。键组 switchAccount/logout 族双语已删。
+test('T3 NL-ID entry gone (logged-in view), auth buttons removed with read-only identity, keys + API wrappers deleted', async ({ page }) => {
   await bootPage(page, { locale: 'zh-CN', loggedIn: true });
   await openSettings(page);
   await page.waitForSelector('.neblink-logged-in', { timeout: 8000 });
@@ -204,40 +203,53 @@ test('T3 NL-ID entry gone (logged-in view), settings keeps only switch+logout, k
       '#neblink-nlid-save', '#neblink-nlid-cancel', '.neblink-nlid-statusline', '.neblink-nlid-value'];
     return {
       leaked: sels.filter(s => content.querySelector(s)),
-      // ①④（作者 2026-09-15）：设备列表已移出设置 ⇒ 账号段只剩两键。
+      // ①④（作者 2026-09-15）：设备列表已移出设置 ⇒ 账号段无设备列表。
       peersList: !!content.querySelector('.neblink-peers-list'),
       deviceRows: content.querySelectorAll('.neblink-peer').length,
       oldWindowEntry: content.querySelectorAll('.dropbox-clickable').length,
+      // auth-trim（2026-10-20）：两键零残留 + 只读身份行在位。
       switchBtn: !!content.querySelector('#neblink-switch-btn'),
+      switchModal: !!content.querySelector('.neblink-switch-modal, #nebflow-switch-account-modal'),
       logout: !!content.querySelector('#neblink-logout-btn'),
+      accountBlock: !!content.querySelector('.neblink-logged-in'),
+      roLine: content.querySelector('.neblink-account-ro')?.textContent || '',
     };
   });
   expect(dump.leaked, 'NL-ID selectors must be zero-hit: ' + JSON.stringify(dump.leaked)).toEqual([]);
   expect(dump.peersList, '① device list must be GONE from settings (moved to the contacts panel)').toBe(false);
   expect(dump.deviceRows, '① zero device rows left in the settings account block').toBe(0);
   expect(dump.oldWindowEntry, '① the old device-window entry (.dropbox-clickable) must be gone').toBe(0);
-  expect(dump.switchBtn, '④ switch-account button must remain').toBe(true);
-  expect(dump.logout, '④ logout button must remain').toBe(true);
+  expect(dump.switchBtn, 'auth-trim: switch-account button must be GONE from the console').toBe(false);
+  expect(dump.logout, 'auth-trim: logout button must be GONE from the console').toBe(false);
+  expect(dump.switchModal, 'auth-trim: the switch-account modal must never render').toBe(false);
+  expect(dump.accountBlock, 'settings account block must still render').toBe(true);
+  expect(dump.roLine, 'read-only signed-in line must show the account identity (displayName 优先)').toContain('测试用户');
 
   // i18n key group deleted in BOTH locales; friendsApi NL wrappers deleted.
-  // （p547b 2026-09-15 误报修复：探针剥掉注释再匹配——friendsApi.js:567-568 留有
-  // 「setNeblinkId/neblinkIdAvailable 已随 NL 号入口一并删除」的退役墓碑注释，
-  // 裸子串匹配把注释当代码 ⇒ 误报。函数本体确实已删，墓碑注释须保留。）
+  // （p547b 2026-09-15 误报修复：探针剥掉注释再匹配——注释里的退役墓碑不算代码。）
   const code = await page.evaluate(async () => {
     const zh = (await import('/js/locales/zh-CN.js')).default;
     const en = (await import('/js/locales/en.js')).default;
     const nlKeys = (m) => Object.keys(m).filter(k => k.startsWith('neblink.nlId'));
+    const authKeys = (m) => Object.keys(m).filter(k =>
+      ['neblink.switchAccount', 'neblink.logout', 'neblink.loggingOut', 'neblink.useOtherAccount', 'neblink.currentTag'].includes(k));
     const raw = await (await fetch('/js/friendsApi.js')).text();
     // strip block comments + line comments, then match code only.
     const apiSrc = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
     return {
       zhNl: nlKeys(zh), enNl: nlKeys(en),
+      zhAuth: authKeys(zh), enAuth: authKeys(en),
+      zhRo: zh['neblink.loggedInAs'] || '', enRo: en['neblink.loggedInAs'] || '',
       apiSetNeblinkId: apiSrc.includes('setNeblinkId'),
       apiAvailable: apiSrc.includes('neblinkIdAvailable'),
     };
   });
   expect(code.zhNl, 'zh neblink.nlId* keys must be gone').toEqual([]);
   expect(code.enNl, 'en neblink.nlId* keys must be gone').toEqual([]);
+  expect(code.zhAuth, 'zh auth-trim key group must be gone').toEqual([]);
+  expect(code.enAuth, 'en auth-trim key group must be gone').toEqual([]);
+  expect(code.zhRo, 'zh read-only identity key must exist').toBeTruthy();
+  expect(code.enRo, 'en read-only identity key must exist').toBeTruthy();
   expect(code.apiSetNeblinkId, 'friendsApi.setNeblinkId must be deleted').toBe(false);
   expect(code.apiAvailable, 'friendsApi.neblinkIdAvailable must be deleted').toBe(false);
 });
@@ -295,60 +307,72 @@ test('T4b avatar section logged-in → photo + profile window.open on click', as
   expect(opens, 'click (logged in) must open the profile page like the bar avatar').toBe(1);
 });
 
-// ══ T5 · ⑤ 检查更新自动化绿点 ══════════════════════════════
-test('T5 auto check → green dot (success token) → opening settings clears + About echoes', async ({ page }) => {
+// ══ T5 · ⑤ 更新功能退役（auth-trim 批 2026-10-20 作者令）═══════════════════
+// 设置页「更新」整链退役（未来由官网统一检测更新取代）：入口 DOM 零残留、不发
+// checkUpdate/doUpdate 帧、无绿点、updateCheck.js 模块已删、update.* 键组双语已删；
+// 「重启服务」键与其状态行（restartStatus/restartResult 消费）保留。
+test('T5 update feature fully retired: no entry DOM, no update WS frames, no dot, module + keys gone; restart kept', async ({ page }) => {
   const h = await bootPage(page, { locale: 'zh-CN' });
+  await openSettings(page);
   await page.waitForTimeout(400);
-
-  // No update pushed yet → no dot.
-  expect(await page.evaluate(() => !!document.querySelector('#settings-btn .settings-update-dot')),
-    'no dot before any updateCheckResult').toBe(false);
-
-  // Silent auto-style push (panel closed): dot lights, nothing else visible.
-  h.pushUpdate(true, '9.9.9');
-  await page.waitForSelector('#settings-btn .settings-update-dot', { timeout: 5000 });
-  const dotColor = await page.evaluate(() => {
-    const dot = document.querySelector('#settings-btn .settings-update-dot');
-    return getComputedStyle(dot).backgroundColor;
+  const dump = await page.evaluate(() => {
+    const content = document.getElementById('settings-content');
+    const sels = ['#btn-check-update', '#update-status', '#update-progress', '#update-progress-impact',
+      '#update-progress-versions', '#update-action', '#btn-do-update', '#btn-dismiss-update'];
+    return {
+      leaked: sels.filter(s => content.querySelector(s)),
+      dot: !!document.querySelector('#settings-btn .settings-update-dot'),
+      restartBtn: !!content.querySelector('#btn-restart-gateway'),
+      restartStatus: !!content.querySelector('#restart-status'),
+      aboutText: content.querySelector('.about-info')?.textContent || '',
+    };
   });
-  const successRgb = await page.evaluate(() => {
-    const probe = document.createElement('span');
-    probe.style.color = 'var(--color-success)';
-    document.body.appendChild(probe);
-    const c = getComputedStyle(probe).color;
-    probe.remove();
-    return c;
-  });
-  expect(dotColor, 'dot color must be the success token').toBe(successRgb);
+  expect(dump.leaked, 'update selectors must be zero-hit: ' + JSON.stringify(dump.leaked)).toEqual([]);
+  expect(dump.dot, 'no update dot on the settings button').toBe(false);
+  expect(dump.restartBtn, 'restart service button must remain').toBe(true);
+  expect(dump.restartStatus, 'restart status line must remain').toBe(true);
+  expect(dump.aboutText, 'About section still renders version + connection').toContain('1.4.0');
 
-  // No toast/modal leaked by the silent path.
-  const quiet = await page.evaluate(() => !document.querySelector('.nebflow-toast, .toast, .nebflow-login-modal'));
-  expect(quiet, 'auto check must be silent (no toast/modal)').toBe(true);
+  // No update WS frame may be sent (silent auto check retired) — probe all frames.
+  const updateFrames = h.frames.filter(m => m.type === 'checkUpdate' || m.type === 'doUpdate');
+  expect(updateFrames, 'no checkUpdate/doUpdate frames may be sent').toEqual([]);
 
-  // Opening settings → dot cleared + About echoes the recorded update state.
-  await openSettings(page);
-  await page.waitForTimeout(200);
+  // A legacy updateCheckResult push must stay fully inert (no dot, no crash).
+  h.send({ type: 'updateCheckResult', hasUpdate: true, latestVersion: '9.9.9' });
+  await page.waitForTimeout(300);
   expect(await page.evaluate(() => !!document.querySelector('#settings-btn .settings-update-dot')),
-    'dot must clear once settings is opened').toBe(false);
-  const about = await page.evaluate(() => ({
-    status: document.getElementById('update-status')?.textContent || '',
-    actionVisible: document.getElementById('update-action')?.style.display === 'block',
-  }));
-  expect(about.status, 'About echo of the auto result').toContain('9.9.9');
-  expect(about.actionVisible, 'update action row revealed').toBe(true);
-});
+    'legacy updateCheckResult frame must be inert (no dot)').toBe(false);
 
-test('T5b manual check up-to-date → no dot, About echoes latest; badge not lit', async ({ page }) => {
-  const h = await bootPage(page, { locale: 'zh-CN' });
-  await openSettings(page);
-  await page.click('#btn-check-update');
-  await page.waitForFunction(() => (document.getElementById('update-status')?.textContent || '').length > 0, null, { timeout: 5000 });
-  const about = await page.evaluate(() => ({
-    status: document.getElementById('update-status')?.textContent || '',
-    dot: !!document.querySelector('#settings-btn .settings-update-dot'),
-  }));
-  expect(about.status, 'manual roundtrip echo (已最新)').toContain('最新');
-  expect(about.dot, 'no green dot when up to date').toBe(false);
+  // Chain retired at the source: module gone, keys gone, no sender in sidebar code.
+  const probe = await page.evaluate(async () => {
+    const mod = await fetch('/js/updateCheck.js');
+    const sidebarSrc = await (await fetch('/js/sidebar.js')).text();
+    const mainSrc = await (await fetch('/js/main.js')).text();
+    const activitySrc = await (await fetch('/js/activityBar.js')).text();
+    const zh = (await import('/js/locales/zh-CN.js')).default;
+    const en = (await import('/js/locales/en.js')).default;
+    const updKeys = (m) => Object.keys(m).filter(k => k.startsWith('update.') || k.startsWith('settings.check') || k.startsWith('settings.update') || k.startsWith('settings.upT'));
+    const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+    return {
+      modStatus: mod.status,
+      updZh: updKeys(zh), updEn: updKeys(en),
+      zhRestart: Object.keys(zh).filter(k => k.startsWith('restart.phase.') || k.startsWith('settings.restart')),
+      sendsSidebar: ['checkUpdate', 'doUpdate'].filter(s => strip(sidebarSrc).includes(`'${s}'`)),
+      importSidebar: strip(sidebarSrc).includes('updateCheck'),
+      importMain: strip(mainSrc).includes('updateCheck'),
+      importActivity: strip(activitySrc).includes('updateCheck'),
+      knownAccountsStatus: (await fetch('/js/knownAccounts.js')).status,
+    };
+  });
+  expect(probe.modStatus, 'updateCheck.js must be deleted').toBe(404);
+  expect(probe.updZh, 'zh update keys must be gone').toEqual([]);
+  expect(probe.updEn, 'en update keys must be gone').toEqual([]);
+  expect(probe.zhRestart.length, 'restart keys must be retained').toBeGreaterThanOrEqual(10);
+  expect(probe.sendsSidebar, 'sidebar must not send checkUpdate/doUpdate').toEqual([]);
+  expect(probe.importSidebar, 'sidebar must not reference updateCheck').toBe(false);
+  expect(probe.importMain, 'main must not reference updateCheck').toBe(false);
+  expect(probe.importActivity, 'activityBar must not reference updateCheck').toBe(false);
+  expect(probe.knownAccountsStatus, 'knownAccounts.js must be deleted (auth-trim)').toBe(404);
 });
 
 // ══ P · i18n zh/en parity ═════════════════════════════════
@@ -369,27 +393,24 @@ test('P locale parity: zh/en key sets identical', async ({ page }) => {
   expect(zhCount, 'same key count').toBe(enCount);
 });
 
-// ══ 双主题截图（设置全貌 / 绿点特写 / 头像双态）══════════════
+// ══ 双主题截图（设置全貌 / 账号块特写 / 头像双态）══════════════
 async function shots(colorScheme, tag) {
-  test(`shots[${tag}] settings full + dot closeup + avatar dual state`, async ({ page }) => {
-    // 1) 清理后设置页全貌（含头像区，无 MCP/NL 区）
+  test(`shots[${tag}] settings full + account block closeup + avatar dual state`, async ({ page }) => {
+    // 1) auth-trim 后设置页全貌（含头像区 + 关于区，无 MCP/NL 区、无更新入口）
     await bootPage(page, { locale: 'zh-CN', colorScheme, loggedIn: true, avatarUrl: AVATAR_URL });
     await openSettings(page);
     await page.waitForTimeout(500);
     await page.screenshot({ path: `${SHOTS}/settings-clean-${tag}.png`, fullPage: false });
 
-    // 2) 绿点特写（推送新版本后，设置未开）
-    const h = await bootPage(page, { locale: 'zh-CN', colorScheme });
-    h.pushUpdate(true, '9.9.9');
-    await page.waitForSelector('#settings-btn .settings-update-dot', { timeout: 5000 });
-    const box = await page.evaluate(() => {
-      const r = document.getElementById('settings-btn').getBoundingClientRect();
-      return { x: Math.max(0, r.x - 12), y: Math.max(0, r.y - 12), width: r.width + 24, height: r.height + 24 };
+    // 2) 账号块特写（只读身份行 + 无两键）
+    const account = await page.evaluate(() => {
+      const el = document.querySelector('.neblink-logged-in, .neblink-login-section');
+      const r = (el || document.body).getBoundingClientRect();
+      return { x: Math.max(0, r.x - 24), y: Math.max(0, r.y - 40), width: r.width + 48, height: r.height + 64 };
     });
-    await page.screenshot({ path: `${SHOTS}/update-dot-${tag}.png`, clip: box });
+    await page.screenshot({ path: `${SHOTS}/account-ro-${tag}.png`, clip: account });
 
-    // 3) 头像双态特写（登录态已拍全貌；这里补未登录 + 登录态设置页顶部）
-    await page.click('#settings-btn');
+    // 3) 头像双态特写（登录态已拍全貌 + 账号块特写；此处面板仍开，直接取头像区）
     await page.waitForSelector('#settings-content .settings-section', { timeout: 10000 });
     const top = await page.evaluate(() => {
       const r = document.getElementById('settings-avatar-entry').getBoundingClientRect();
@@ -397,7 +418,7 @@ async function shots(colorScheme, tag) {
     });
     await page.screenshot({ path: `${SHOTS}/avatar-in-${tag}.png`, clip: top });
 
-    const h2 = await bootPage(page, { locale: 'zh-CN', colorScheme, loggedIn: false });
+    await bootPage(page, { locale: 'zh-CN', colorScheme, loggedIn: false });
     await page.click('#settings-btn');
     await page.waitForSelector('#settings-content .settings-section', { timeout: 10000 });
     const top2 = await page.evaluate(() => {

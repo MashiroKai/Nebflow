@@ -82,7 +82,7 @@ async function bootPage({ locale = 'zh-CN', sessions = [{ id: SID, agentName: 'N
   const page = await ctx.newPage();
   page.on('pageerror', e => console.log('[pageerror]', e.message));
   await page.route('**/api/**', r => r.fulfill({ json: {} }));           // catch-all first
-  await page.route('**/api/neblink/status', r => r.fulfill({ json: { loggedIn: true, device: { id: 'd1', name: '本机', platform: 'macos', userDescription: '', avatarUrl: '' }, peers: [] } }));
+  await page.route('**/api/neblink/status', r => r.fulfill({ json: { loggedIn: true, device: { id: 'd1', name: '本机', platform: 'macos', userDescription: '', avatarUrl: '', email: 'me@example.com', displayName: '测试用户' }, peers: [] } }));
   // （[U3] NL 号代理 mock 已删——旧 neblink-id 端点退役 + 设置入口移除，
   //  2026-09-05 10:54 裁定 / friend-search-contract §4.7。）
   const clientFrames = [];
@@ -268,9 +268,12 @@ async function bootPage({ locale = 'zh-CN', sessions = [{ id: SID, agentName: 'N
       cached: !!localStorage.getItem('neblink_id_custom'),
       devicesLabel: [...root.querySelectorAll('.neblink-section-label')].some(e => e.textContent.includes('设备')),
       logout: !!root.querySelector('#neblink-logout-btn'),
+      roLine: !!root.querySelector('.neblink-account-ro'),
     };
   });
-  ok('T5 NL 号修改入口零残留 + 设备区完好', !nl.label && !nl.value && !nl.editBtn && !nl.input && !nl.cached && nl.devicesLabel && nl.logout, JSON.stringify(nl));
+  // 设备区 label 子句已除名（设备列表 2026-09-15 迁联系人面板——该子句自迁址起误红，
+  // 基线复核 2026-10-20）；auth-trim：登出键退役 + 只读身份行在位。
+  ok('T5 NL 号修改入口零残留 + 登出键已退役（auth-trim）+ 只读身份行在位', !nl.label && !nl.value && !nl.editBtn && !nl.input && !nl.cached && !nl.logout && nl.roLine, JSON.stringify(nl));
   await page.close();
 }
 

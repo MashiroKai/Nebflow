@@ -1032,8 +1032,7 @@ button.glass-control:active,
 button.glass-control.fm-gs-kick,
 button.glass-control.fm-gs-danger,
 button.glass-control.fm-gs-action.fm-gs-danger,
-button.fm-req-decline,
-.neblink-logout-btn {
+button.fm-req-decline {
   background: var(--btn-danger-bg);
   border-color: var(--btn-danger-stroke);
   color: var(--btn-danger-ink);
@@ -1052,7 +1051,6 @@ button.glass-control.fm-gs-kick:hover,
 button.glass-control.fm-gs-danger:hover,
 button.glass-control.fm-gs-action.fm-gs-danger:hover,
 button.fm-req-decline:hover,
-.neblink-logout-btn:hover,
 .fm-context-menu button.danger:hover,
 .explorer-context-menu button.danger:hover,
 .canvas-tab-context-menu button.danger:hover {
@@ -1064,7 +1062,6 @@ button.glass-control.fm-gs-kick:active,
 button.glass-control.fm-gs-danger:active,
 button.glass-control.fm-gs-action.fm-gs-danger:active,
 button.fm-req-decline:active,
-.neblink-logout-btn:active,
 .fm-context-menu button.danger:active,
 .explorer-context-menu button.danger:active,
 .canvas-tab-context-menu button.danger:active {
@@ -1154,7 +1151,7 @@ button.glass-control.fm-req-accept:active {
     button.glass-control.fm-gs-save, button.glass-control.fm-req-accept,
     button.glass-control.fm-gs-kick, button.glass-control.fm-gs-danger,
     button.glass-control.fm-gs-action.fm-gs-danger, button.fm-req-decline,
-    .neblink-logout-btn, button.glass-control, .cfg-btn:not(.cfg-btn-primary),
+    button.glass-control, .cfg-btn:not(.cfg-btn-primary),
     .fm-msg-btn, .fm-search-btn, .fm-device-desc-btn, .neblink-switch-btn,
     .fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
     .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,
@@ -1166,7 +1163,7 @@ button.glass-control.fm-req-accept:active {
     button.glass-control.fm-gs-save, button.glass-control.fm-req-accept,
     button.glass-control.fm-gs-kick, button.glass-control.fm-gs-danger,
     button.glass-control.fm-gs-action.fm-gs-danger, button.fm-req-decline,
-    .neblink-logout-btn, button.glass-control, .cfg-btn:not(.cfg-btn-primary),
+    button.glass-control, .cfg-btn:not(.cfg-btn-primary),
     .fm-msg-btn, .fm-search-btn, .fm-device-desc-btn, .neblink-switch-btn,
     .fm-row, .fm-nf-entry, .fm-pick-row, .fm-invite-row,
     .neblink-peer.fm-device-row, .fm-msg-act, .fm-msg-time.time-toggle,

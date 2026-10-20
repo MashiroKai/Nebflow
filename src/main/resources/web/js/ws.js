@@ -147,6 +147,10 @@ const GLOBAL_MSG_TYPES = new Set([
   // emits this frame.
   'rulesData', 'rulesSaved', 'rulesDeleted', 'rulesStatus',
   'browseResult',
+  // auth-trim 批（2026-10-20 作者令）：设置页更新功能退役（updateCheck.js 已删），
+  // 但这些帧类型**保留在 GLOBAL**——后端仍会在 CLI/中继触发更新时广播
+  // updateProgress/updateResult；帧不在 GLOBAL 会被 :485-494 当会话内事件
+  // ⇒ 每次相位推进都把用户正在看的视图切走。留此 = 纯路由惰性（无订阅者即无操作）。
   'updateCheckResult', 'updateStarted', 'updateCompleted',
   // Unified update progress (hotupdate 批 1 契约 · 设计 §4/§7): the update
   // orchestrator broadcasts {type:'updateProgress', phase, messageKey, ...} on
