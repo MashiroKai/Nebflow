@@ -182,3 +182,27 @@
 | §8-9 零 console error | 各测试双收集 = 0 |
 
 ---
+## P8 项目（右列推送页）— 已实施
+
+### 落地面
+
+- **页范式（v3.5 右列六屏统一）**：壳与推入动效 r2/v3 已落地（`.mobile-page` 悬浮页头[圆形毛玻璃「<」+ 居中标题] + `translateX 102%→none` 260ms 推入 + 全宽页体）——本批不加壳，只做**内容形态**。
+- **内容面 = 收编桌面 pane**（既有 adoptPane）：项目列表 = 桌面 projectTab 取数/渲染零改动（GET /api/projects → team-card 卡片、渐进摘要、WS 事件通道全原样）。
+- **卡三段形态（开放点①采纳：样张密度）**：手机层 CSS = `.team-scroll` 全宽单列堆叠（12px 间距 + 安全区底垫）+ 卡 16px 圆角 + 标题 15px/600 + 摘要 13px + 字段行 12px + 值列 ellipsis + tabular-nums（样张 §6 超长文本口径）。桌面 team-card 范式与样张 P8 卡同构（名+徽标 → 摘要行[点色+brief] → 字段行），零新 DOM。
+- **开放点②**：远端徽标 `.dev-badge`/离线琥珀点 = 桌面面C 原样（T2 断言远端卡徽标在场）。
+- **开放点③**：flow-map 摘要进卡 = 桌面 applyCardSummary 渐进填充原样（摘要行即样张摘要行，无需新 DOM）。
+- **开放点④**：归档项目 = 桌面源清单过滤（ProjectStore 卸载即不在名单），移动端无「折叠」DOM 可言 —— 沿用桌面语义，无伪造（记偏差：样张折叠示意不落地）。
+
+### 验收映射（spec → `tests/mobile-p8-projects.spec.mjs`，3/3 绿）
+
+| 样张验收点 | 实机断言 |
+|---|---|
+| 页范式（全宽推送页 + 圆形毛玻璃返回钮） | T1：poll 终态 x=0/375 + 唯一 .live + 返回钮 border-radius 50% + 页名「项目」 |
+| pane 收编 | T1：`.mobile-page-body .canvas-tab-pane[data-tab-id=projects]` 在场 |
+| §2-P8 卡三段 + §6 ellipsis | T2：卡 1 名/工作区 mono 值逐字 + nowrap/ellipsis computed + 三字段行 + 说明行；卡圆角 16 |
+| 开放点② 远端徽标 | T2：卡 2 `.dev-badge` 在场 |
+| 卡密度（开放点①） | T2：全宽堆叠（卡宽 ≥340、纵向排列） |
+| 返回契约 + 键按下态镜像 | T3：pop 后 .live 清零 + 右列键 aria-pressed=false |
+| §8-9 零 console error | 各测试双收集 = 0（flow-map 夹具走 200 空节点腿，404 分支浏览器仍记 console error 故不用于夹具） |
+
+---

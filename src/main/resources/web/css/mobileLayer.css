@@ -1419,3 +1419,65 @@ body.mobile-layer #input-area {
   bottom: 0;
   padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   右列页面内容形态（mobile-secondary-screens 实施批 · P8-P12）
+   v3.5 样张右列六屏 = 悬浮页头 + 推入页 + 滚动内容；壳与推入动效 r2/v3
+   已落地（.mobile-page*），本节只做收编面的**内容形态**（卡密度/字阶/
+   控件尺度/安全区），桌面结构与取数零改动 —— 样张卡形态与桌面 DOM 同构
+   的（P8 team-card / P10 plugins-card / P11 ud-card+ud-curve）直接上漆；
+   桌面无 DOM 的样张件不伪造（逐屏报告记偏差）。
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── P8 项目：项目卡三段形态（名+徽标 → 摘要行 → 字段行）────────────────
+   桌面 team-card 范式与样张同构；手机层 = 全宽单列堆叠 + 16px 卡圆角 +
+   字阶收紧；workspace/说明 ellipsis + tabular-nums（样张 §6 超长文本口径）。 */
+body.mobile-layer #mobile-pages .team-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 12px calc(24px + env(safe-area-inset-bottom, 0px));
+}
+body.mobile-layer #mobile-pages .team-scroll::-webkit-scrollbar { display: none; }
+body.mobile-layer #mobile-pages .team-card.project-card {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  flex-shrink: 0;
+  border-radius: 16px;
+  padding: 12px 14px;
+}
+body.mobile-layer #mobile-pages .team-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  gap: 6px;
+}
+body.mobile-layer #mobile-pages .project-card-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body.mobile-layer #mobile-pages .team-card-summary {
+  font-size: 13px;
+  margin-top: 4px;
+}
+body.mobile-layer #mobile-pages .project-fields {
+  gap: 6px;
+  margin-top: 10px;
+}
+body.mobile-layer #mobile-pages .project-field {
+  font-size: 12px;
+  gap: 8px;
+  min-width: 0;
+}
+body.mobile-layer #mobile-pages .project-field-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
