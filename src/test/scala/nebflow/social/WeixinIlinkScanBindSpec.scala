@@ -360,6 +360,34 @@ class WeixinIlinkScanBindSpec extends CatsEffectSuite:
   // ([[WeixinBindAutoWire.productionActivate]]): sync (None here — offline)
   // → defaultSessionId write → sidecar provision. Everything below is
   // offline: the provision runner is an injected recorder, zero real launchd.
+  //
+  // bind-transactional 批 (2026-10-20): the provision leg is now GATED —
+  // retries + port-release wait + liveness confirmation — and a provision
+  // failure that survives every attempt ROLLS THE BINDING BACK (card
+  // defaultSessionId cleared, bridge unregistered, bindError written) before
+  // the scan-bind state lands `Failed`. The BT-3/BT-4 pins are inverted
+  // accordingly (the old WARN-only semantics WAS the half-bind incident);
+  // BT-1/BT-2/BT-5 stand unchanged, BT-6…BT-10 pin the new contract.
+
+  /** A do-nothing BridgeContext for the BridgeManager under test. */
+  private object NoopCtx extends nebflow.bridge.BridgeContext:
+    def injectMessage(
+      sessionId: String,
+      content: String,
+      senderId: Option[String],
+      origin: Option[nebflow.bridge.BridgeOrigin] = None
+    ): IO[Unit] = IO.unit
+    def interruptAgent(sessionId: String): IO[Unit] = IO.unit
+    def sessionMeta(sessionId: String): IO[Option[nebflow.shared.SessionMeta]] = IO.none
+    def listSessions: IO[List[nebflow.shared.SessionMeta]] = IO.pure(Nil)
+    def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] = IO.unit
+
+  /** A BridgePlugin whose stop is observable — the unregister assertion reads it. */
+  private final class StopRecordingPlugin(val name: String) extends nebflow.bridge.BridgePlugin:
+    val stopped = Ref.unsafe[IO, Int](0)
+    def start(ctx: nebflow.bridge.BridgeContext): IO[Unit] = IO.unit
+    def stop: IO[Unit] = stopped.update(_ + 1)
+    def onAgentEvent(sessionId: String, event: Json): IO[Unit] = IO.unit
 
   /** A fake engine run-dir carrying the installer at the repo-relative spot. */
   private def fakeRepo(): os.Path =
@@ -372,6 +400,34 @@ class WeixinIlinkScanBindSpec extends CatsEffectSuite:
     recordings: Ref[IO, List[(os.Path, Map[String, String])]],
     outcome: Either[String, (Int, String)] = Right((0, "installed: /tmp/fake.plist\nstate: running"))
   ): WeixinBindAutoWire.Runner = (script, env) => recordings.update(_ :+ ((script, env))).as(outcome)
+
+  /** A runner whose outcome is popped per call (the retry-path fake). */
+  private def scriptedRunner(
+    recordings: Ref[IO, List[(os.Path, Map[String, String])]],
+    outcomes: Ref[IO, List[Either[String, (Int, String)]]],
+    fallback: Either[String, (Int, String)]
+  ): WeixinBindAutoWire.Runner = (script, env) =>
+    recordings.update(_ :+ ((script, env))) *>
+      outcomes.modify {
+        case Nil => (Nil, fallback)
+        case h :: t => (t, h)
+      }
+
+  /** A probe that reads its scripted booleans in order (then repeats the last). */
+  private def scriptedProbe(script: Ref[IO, List[Boolean]]): WeixinBindAutoWire.PortProbe = _ =>
+    script.modify {
+      case Nil => (Nil, true)
+      case h :: Nil => (Nil, h)
+      case h :: t => (t, h)
+    }
+
+  /** Offline defaults: sidecar listening + healthy, zero-cost sleeps (recorded). */
+  private def offlineWaits(sleeps: Ref[IO, List[FiniteDuration]]): (
+    WeixinBindAutoWire.PortProbe,
+    WeixinBindAutoWire.HealthProbe,
+    WeixinBindAutoWire.Sleeper
+  ) =
+    ((_ => IO.pure(true)), (_ => IO.pure(true)), (d => sleeps.update(_ :+ d)))
 
   private def metaOf(id: String, updatedAt: Long) =
     nebflow.shared.SessionMeta(id, id, updatedAt, updatedAt, hasUnread = false)
@@ -396,6 +452,8 @@ class WeixinIlinkScanBindSpec extends CatsEffectSuite:
       )
       _ = assert(clue(pre).isRight)
       recordings <- Ref.of[IO, List[(os.Path, Map[String, String])]](Nil)
+      sleeps <- Ref.of[IO, List[FiniteDuration]](Nil)
+      (portProbe, healthProbe, sleeper) = offlineWaits(sleeps)
       now <- IO(System.currentTimeMillis())
       older = metaOf("sess-old", now)
       newer = metaOf("sess-new", now + 5000)
@@ -405,7 +463,10 @@ class WeixinIlinkScanBindSpec extends CatsEffectSuite:
         listSessions = () => IO.pure(List(older, newer)),
         gatewayPort = 18097,
         runner = recorder(recordings),
-        pwd = repo
+        pwd = repo,
+        portProbe = portProbe,
+        healthProbe = healthProbe,
+        sleeper = sleeper
       )
       sb = new WeixinIlinkScanBind(root, loginFn = fakeGate(gate, LoginDone), activate = activate)
       beginJson <- sb.begin()
@@ -454,13 +515,18 @@ class WeixinIlinkScanBindSpec extends CatsEffectSuite:
       root <- IO(tmpRoot())
       repo <- IO(fakeRepo())
       recordings <- Ref.of[IO, List[(os.Path, Map[String, String])]](Nil)
+      sleeps <- Ref.of[IO, List[FiniteDuration]](Nil)
+      (portProbe, healthProbe, sleeper) = offlineWaits(sleeps)
       activate = WeixinBindAutoWire.productionActivate(
         bridgeManager = None,
         root = root,
         listSessions = () => IO.pure(Nil),
         gatewayPort = 18097,
         runner = recorder(recordings),
-        pwd = repo
+        pwd = repo,
+        portProbe = portProbe,
+        healthProbe = healthProbe,
+        sleeper = sleeper
       )
       sb = new WeixinIlinkScanBind(root, loginFn = fakeGate(gate, LoginDone), activate = activate)
       beginJson <- sb.begin()
@@ -478,69 +544,372 @@ class WeixinIlinkScanBindSpec extends CatsEffectSuite:
     yield ()
   }
 
-  test("BT-3 a failing provision (Left or nonzero exit) never flips Done off — WARN only") {
-    def bindWith(outcome: Either[String, (Int, String)]): IO[Json] =
-      for
-        gate <- Deferred[IO, Unit]
-        root <- IO(tmpRoot())
-        repo <- IO(fakeRepo())
-        recordings <- Ref.of[IO, List[(os.Path, Map[String, String])]](Nil)
-        now <- IO(System.currentTimeMillis())
-        activate = WeixinBindAutoWire.productionActivate(
-          bridgeManager = None,
-          root = root,
-          listSessions = () => IO.pure(List(metaOf("sess-1", now))),
-          gatewayPort = 18097,
-          runner = recorder(recordings, outcome),
-          pwd = repo
-        )
-        sb = new WeixinIlinkScanBind(root, loginFn = fakeGate(gate, LoginDone), activate = activate)
-        beginJson <- sb.begin()
-        scanId = scanIdOf(beginJson)
-        _ <- gate.complete(())
-        st <- waitFor(sb, scanId)(s => stateOf(s) == Some("done") || stateOf(s) == Some("failed"))
-        _ = assertEquals(
-          stateOf(st),
-          Some("done"),
-          s"a provision outcome of $outcome must stay a WARN: the binding is Done"
-        )
-        _ = assertEquals(
-          SocialChannels.defaultSessionId(root, "weixin-ilink"),
-          Some("sess-1"),
-          "the defaultSession leg lands independently of the provision outcome"
-        )
-      yield st
-
-    for
-      _ <- bindWith(Left("exec blew up"))
-      _ <- bindWith(Right((1, "port 19999 held by a foreign listener")))
-    yield ()
-  }
-
   test(
-    "BT-4 both legs are total: a raising session store AND a raising runner are contained — " +
-      "the binding still lands Done with no defaultSessionId"
+    "BT-3 a provision failure that survives EVERY retry rolls the binding back: " +
+      "failed state, defaultSessionId cleared, bridge unregistered, bindError with the steps"
   ) {
+    // bind-transactional 批 (2026-10-20): the OLD pin here read "a failing
+    // provision never flips Done off — WARN only". That WARN-only semantics is
+    // exactly the incident: the card kept defaultSessionId, the bridge stayed
+    // up, the LaunchAgent was not loaded — a half-bind whose replies died
+    // silently. The NEW contract: retries exhaust ⇒ rollback + explicit
+    // failure; the half-bound state is unreachable.
     for
       gate <- Deferred[IO, Unit]
       root <- IO(tmpRoot())
       repo <- IO(fakeRepo())
+      recordings <- Ref.of[IO, List[(os.Path, Map[String, String])]](Nil)
+      sleeps <- Ref.of[IO, List[FiniteDuration]](Nil)
+      // the port NEVER releases (the occupied-port incident, held forever) —
+      // the retry path is taken to its cap
+      portProbe: WeixinBindAutoWire.PortProbe = _ => IO.pure(false)
+      healthProbe: WeixinBindAutoWire.HealthProbe = _ => IO.pure(false)
+      sleeper: WeixinBindAutoWire.Sleeper = d => sleeps.update(_ :+ d)
+      // a REAL BridgeManager over a fake context, carrying one plugin whose
+      // stop records the revocation (unregister stops the plugin)
+      manager <- nebflow.bridge.BridgeManager.create(NoopCtx)
+      plugin = new StopRecordingPlugin(WeixinIlinkBridgePlugin.Name)
+      _ <- manager.register(plugin)
+      now <- IO(System.currentTimeMillis())
       activate = WeixinBindAutoWire.productionActivate(
-        bridgeManager = None,
+        bridgeManager = Some(manager),
         root = root,
-        listSessions = () => IO.raiseError(new RuntimeException("store blew up")),
+        listSessions = () => IO.pure(List(metaOf("sess-1", now))),
         gatewayPort = 18097,
-        runner = (_, _) => IO.raiseError(new RuntimeException("proc blew up")),
-        pwd = repo
+        runner = recorder(recordings, Right((5, "Bootstrap failed: 5: Input/output error"))),
+        pwd = repo,
+        portProbe = portProbe,
+        healthProbe = healthProbe,
+        sleeper = sleeper
       )
       sb = new WeixinIlinkScanBind(root, loginFn = fakeGate(gate, LoginDone), activate = activate)
       beginJson <- sb.begin()
       scanId = scanIdOf(beginJson)
       _ <- gate.complete(())
       st <- waitFor(sb, scanId)(s => stateOf(s) == Some("done") || stateOf(s) == Some("failed"))
-      _ = assertEquals(stateOf(st), Some("done"), "leg failures are contained, never Failed")
-      _ = assertEquals(SocialChannels.defaultSessionId(root, "weixin-ilink"), None)
+      err = st.hcursor.downField("error").as[String].getOrElse("")
+      _ = assertEquals(
+        stateOf(st),
+        Some("failed"),
+        "an exhausted provision must NOT stay Done — the binding is explicitly failed"
+      )
+      _ = assert(err.startsWith("bridge sync failed: provision failed"), clue(err))
+      _ = assert(err.contains("attempt 1") && err.contains("exit 5"), clue(err))
+      _ = assert(err.contains("rolled back"), clue(err))
+      // rollback ①: the default session leg's write is UNDONE (it had landed —
+      // leg ① runs before the provision leg; the rollback clears it)
+      _ = assertEquals(
+        SocialChannels.defaultSessionId(root, "weixin-ilink"),
+        None,
+        "rollback clears the card's defaultSessionId"
+      )
+      // rollback ②: the bridge plugin was stopped + unregistered (routes gone)
+      stopped <- plugin.stopped.get
+      _ = assertEquals(stopped, 1, "the bridge plugin's stop ran (routing table revoked)")
+      names <- manager.registeredNames
+      _ = assert(!names.contains(WeixinIlinkBridgePlugin.Name), "the seam is unregistered")
+      // rollback ③: the panel face carries the explicit error with the steps
+      bindErr = SocialChannels.bindError(root, "weixin-ilink")
+      _ = assert(bindErr.isDefined, "bindError must be on the card")
+      _ = assert(clue(bindErr.getOrElse("")).contains("attempt 4"), "the error carries the LAST attempt's step")
+      // the retry cap: exactly MaxProvisionAttempts installer runs
+      recs <- recordings.get
+      _ = assertEquals(recs.size, WeixinBindAutoWire.MaxProvisionAttempts, "retries exhaust at the cap")
+      // the port-release wait ran between attempts, then the exponential backoff
+      sl <- sleeps.get
+      _ = assertEquals(
+        sl,
+        List(1.second, 2.seconds, 4.seconds),
+        "the waits are the port poll (free instantly here) + the 1s/2s/4s backoff ladder"
+      )
+      // the panel payload surfaces the error face
+      payload = SocialChannels.channelsJson(root)
+      _ = assertEquals(
+        payload.hcursor.downField("channels").downField("weixin-ilink").downField("bindError").as[String].toOption,
+        bindErr,
+        "channelsJson carries the bindError"
+      )
     yield ()
+    end for
+  }
+
+  test(
+    "BT-4 a raising runner is an attempt failure like any other — retries exhaust, " +
+      "rollback lands, the raise is contained into the scan-bind Failed state"
+  ) {
+    for
+      gate <- Deferred[IO, Unit]
+      root <- IO(tmpRoot())
+      repo <- IO(fakeRepo())
+      recordings <- Ref.of[IO, List[(os.Path, Map[String, String])]](Nil)
+      sleeps <- Ref.of[IO, List[FiniteDuration]](Nil)
+      (portProbe, healthProbe, sleeper) =
+        ((_ => IO.pure(false)): WeixinBindAutoWire.PortProbe,
+          (_ => IO.pure(false)): WeixinBindAutoWire.HealthProbe,
+          (d => sleeps.update(_ :+ d)): WeixinBindAutoWire.Sleeper)
+      now <- IO(System.currentTimeMillis())
+      activate = WeixinBindAutoWire.productionActivate(
+        bridgeManager = None,
+        root = root,
+        listSessions = () => IO.pure(List(metaOf("sess-1", now))),
+        gatewayPort = 18097,
+        runner = (script, env) =>
+          recordings.update(_ :+ ((script, env))) *> IO.raiseError(new RuntimeException("proc blew up")),
+        pwd = repo,
+        portProbe = portProbe,
+        healthProbe = healthProbe,
+        sleeper = sleeper
+      )
+      sb = new WeixinIlinkScanBind(root, loginFn = fakeGate(gate, LoginDone), activate = activate)
+      beginJson <- sb.begin()
+      scanId = scanIdOf(beginJson)
+      _ <- gate.complete(())
+      st <- waitFor(sb, scanId)(s => stateOf(s) == Some("done") || stateOf(s) == Some("failed"))
+      err = st.hcursor.downField("error").as[String].getOrElse("")
+      _ = assertEquals(
+        stateOf(st),
+        Some("failed"),
+        "a transport-level provision failure is a failed attempt, not a contained WARN any more"
+      )
+      _ = assert(err.contains("provision leg raised"), clue(err))
+      _ = assertEquals(
+        SocialChannels.defaultSessionId(root, "weixin-ilink"),
+        None,
+        "the defaultSessionId write is rolled back"
+      )
+      _ = assert(SocialChannels.bindError(root, "weixin-ilink").isDefined, "bindError is on the card")
+      recs <- recordings.get
+      _ = assertEquals(recs.size, WeixinBindAutoWire.MaxProvisionAttempts)
+    yield ()
+    end for
+  }
+
+  test(
+    "BT-6 the retry path closes the incident shape: attempt 1 dies on the occupied-port " +
+      "exit 5, the port releases, attempt 2 installs + passes liveness — binding DONE, " +
+      "defaultSessionId KEPT, no rollback"
+  ) {
+    for
+      gate <- Deferred[IO, Unit]
+      root <- IO(tmpRoot())
+      repo <- IO(fakeRepo())
+      recordings <- Ref.of[IO, List[(os.Path, Map[String, String])]](Nil)
+      sleeps <- Ref.of[IO, List[FiniteDuration]](Nil)
+      outcomes <- Ref.of[IO, List[Either[String, (Int, String)]]](
+        List(
+          Right((5, "Bootstrap failed: 5: Input/output error")), // attempt 1: the occupied-port race
+          Right((0, "installed: /tmp/fake.plist\nstate: running")) // attempt 2: clean
+        )
+      )
+      // probe script: after attempt 1 the port reads FREE (released), then
+      // LISTENing (the liveness arm); health answers ok
+      portScript <- Ref.of[IO, List[Boolean]](List(false, true))
+      portProbe = scriptedProbe(portScript)
+      healthProbe: WeixinBindAutoWire.HealthProbe = _ => IO.pure(true)
+      sleeper: WeixinBindAutoWire.Sleeper = d => sleeps.update(_ :+ d)
+      runner = scriptedRunner(recordings, outcomes, Right((0, "installed")))
+      now <- IO(System.currentTimeMillis())
+      activate = WeixinBindAutoWire.productionActivate(
+        bridgeManager = None,
+        root = root,
+        listSessions = () => IO.pure(List(metaOf("sess-1", now))),
+        gatewayPort = 18097,
+        runner = runner,
+        pwd = repo,
+        portProbe = portProbe,
+        healthProbe = healthProbe,
+        sleeper = sleeper
+      )
+      sb = new WeixinIlinkScanBind(root, loginFn = fakeGate(gate, LoginDone), activate = activate)
+      beginJson <- sb.begin()
+      scanId = scanIdOf(beginJson)
+      _ <- gate.complete(())
+      st <- waitFor(sb, scanId)(stateOf(_) == Some("done"))
+      _ = assertEquals(stateOf(st), Some("done"), "a transient occupied-port failure is retried, not fatal")
+      _ = assertEquals(
+        SocialChannels.defaultSessionId(root, "weixin-ilink"),
+        Some("sess-1"),
+        "the binding stands — no rollback on a recovered provision"
+      )
+      _ = assertEquals(
+        SocialChannels.bindError(root, "weixin-ilink"),
+        None,
+        "a clean bind leaves no error face"
+      )
+      recs <- recordings.get
+      _ = assertEquals(recs.size, 2, "exactly one retry ran")
+      sl <- sleeps.get
+      _ = assertEquals(sl, List(1.second), "one backoff sleep between the attempts (port already released)")
+    yield ()
+    end for
+  }
+
+  test(
+    "BT-7 liveness is the arbiter: installer exit 0 with a DEAD sidecar is a failed attempt — " +
+      "retries exhaust, the binding rolls back (no launchd-says-ok half-bind)"
+  ) {
+    for
+      gate <- Deferred[IO, Unit]
+      root <- IO(tmpRoot())
+      repo <- IO(fakeRepo())
+      recordings <- Ref.of[IO, List[(os.Path, Map[String, String])]](Nil)
+      sleeps <- Ref.of[IO, List[FiniteDuration]](Nil)
+      // the port never shows a listener and /healthz never answers: the
+      // installer "succeeded" but nothing is alive
+      (portProbe, healthProbe, sleeper) =
+        ((_ => IO.pure(false)): WeixinBindAutoWire.PortProbe,
+          (_ => IO.pure(false)): WeixinBindAutoWire.HealthProbe,
+          (d => sleeps.update(_ :+ d)): WeixinBindAutoWire.Sleeper)
+      now <- IO(System.currentTimeMillis())
+      activate = WeixinBindAutoWire.productionActivate(
+        bridgeManager = None,
+        root = root,
+        listSessions = () => IO.pure(List(metaOf("sess-1", now))),
+        gatewayPort = 18097,
+        runner = recorder(recordings),
+        pwd = repo,
+        portProbe = portProbe,
+        healthProbe = healthProbe,
+        sleeper = sleeper
+      )
+      sb = new WeixinIlinkScanBind(root, loginFn = fakeGate(gate, LoginDone), activate = activate)
+      beginJson <- sb.begin()
+      scanId = scanIdOf(beginJson)
+      _ <- gate.complete(())
+      st <- waitFor(sb, scanId)(s => stateOf(s) == Some("done") || stateOf(s) == Some("failed"))
+      err = st.hcursor.downField("error").as[String].getOrElse("")
+      _ = assertEquals(stateOf(st), Some("failed"), "exit 0 with a dead sidecar must NOT read as bound")
+      _ = assert(err.contains("sidecar not alive"), clue(err))
+      _ = assertEquals(
+        SocialChannels.defaultSessionId(root, "weixin-ilink"),
+        None,
+        "rolled back"
+      )
+      _ = assert(SocialChannels.bindError(root, "weixin-ilink").isDefined)
+      recs <- recordings.get
+      _ = assertEquals(recs.size, WeixinBindAutoWire.MaxProvisionAttempts)
+    yield ()
+    end for
+  }
+
+  test(
+    "BT-8 a missing installer arbitrates on LIVENESS: a live sidecar stands in (bound, WARN); " +
+      "a dead one fails the bind"
+  ) {
+    def bindWith(health: Boolean, port: Boolean): IO[Json] =
+      for
+        gate <- Deferred[IO, Unit]
+        root <- IO(tmpRoot())
+        empty <- IO(os.temp.dir(prefix = "nb-bindthrough-empty-"))
+        sleeps <- Ref.of[IO, List[FiniteDuration]](Nil)
+        now <- IO(System.currentTimeMillis())
+        activate = WeixinBindAutoWire.productionActivate(
+          bridgeManager = None,
+          root = root,
+          listSessions = () => IO.pure(List(metaOf("sess-1", now))),
+          gatewayPort = 18097,
+          pwd = empty, // no installer anywhere
+          portProbe = _ => IO.pure(port),
+          healthProbe = _ => IO.pure(health),
+          sleeper = d => sleeps.update(_ :+ d)
+        )
+        sb = new WeixinIlinkScanBind(root, loginFn = fakeGate(gate, LoginDone), activate = activate)
+        beginJson <- sb.begin()
+        scanId = scanIdOf(beginJson)
+        _ <- gate.complete(())
+        st <- waitFor(sb, scanId)(s => stateOf(s) == Some("done") || stateOf(s) == Some("failed"))
+      yield st
+
+    for
+      // live sidecar: the binding stands (the old contained-skip semantics,
+      // kept for the case where things actually work)
+      live <- bindWith(health = true, port = true)
+      _ = assertEquals(stateOf(live), Some("done"), "a live sidecar stands in for the missing installer")
+      // dead sidecar: no installer to fix it, nothing serving — the bind fails
+      dead <- bindWith(health = false, port = false)
+      err = dead.hcursor.downField("error").as[String].getOrElse("")
+      _ = assertEquals(stateOf(dead), Some("failed"), "no installer + no sidecar must not read as bound")
+      _ = assert(err.contains("installer not found"), clue(err))
+    yield ()
+    end for
+  }
+
+  test(
+    "BT-9 a stale bindError from a previous failed bind is CLEARED by a later successful bind"
+  ) {
+    for
+      gate <- Deferred[IO, Unit]
+      root <- IO(tmpRoot())
+      repo <- IO(fakeRepo())
+      recordings <- Ref.of[IO, List[(os.Path, Map[String, String])]](Nil)
+      sleeps <- Ref.of[IO, List[FiniteDuration]](Nil)
+      (portProbe, healthProbe, sleeper) = offlineWaits(sleeps)
+      _ <- IO(SocialChannels.setBindError(root, "weixin-ilink", Some("provision failed after retries: attempt 4: ...")))
+      now <- IO(System.currentTimeMillis())
+      activate = WeixinBindAutoWire.productionActivate(
+        bridgeManager = None,
+        root = root,
+        listSessions = () => IO.pure(List(metaOf("sess-1", now))),
+        gatewayPort = 18097,
+        runner = recorder(recordings),
+        pwd = repo,
+        portProbe = portProbe,
+        healthProbe = healthProbe,
+        sleeper = sleeper
+      )
+      sb = new WeixinIlinkScanBind(root, loginFn = fakeGate(gate, LoginDone), activate = activate)
+      beginJson <- sb.begin()
+      scanId = scanIdOf(beginJson)
+      _ <- gate.complete(())
+      st <- waitFor(sb, scanId)(stateOf(_) == Some("done"))
+      _ = assertEquals(stateOf(st), Some("done"))
+      _ = assertEquals(
+        SocialChannels.bindError(root, "weixin-ilink"),
+        None,
+        "the success arm clears the stale error — the panel face returns to neutral"
+      )
+    yield ()
+    end for
+  }
+
+  test(
+    "BT-10 the bounded waits: port-free returns on the first free read; the liveness poll " +
+      "gates on LISTEN ∧ /healthz and is iteration-bounded (no wall clock)"
+  ) {
+    for
+      // (a) port busy → free after 3 polls: 3 sleeps, then true
+      sleepsA <- Ref.of[IO, List[FiniteDuration]](Nil)
+      scriptA <- Ref.of[IO, List[Boolean]](List(true, true, true, false))
+      freeA <- WeixinBindAutoWire.awaitPortFree(8787, scriptedProbe(scriptA), d => sleepsA.update(_ :+ d)).map(_ -> sleepsA.get.unsafeRunSync())
+      _ = assertEquals(freeA._1, true, "released on the 4th read")
+      _ = assertEquals(freeA._2.size, 3, "one poll sleep per busy read")
+      // (b) never released: bounded at PortFreePollSteps, returns false
+      sleepsB <- Ref.of[IO, List[FiniteDuration]](Nil)
+      freeB <- WeixinBindAutoWire.awaitPortFree(8787, _ => IO.pure(true), d => sleepsB.update(_ :+ d))
+      nB <- sleepsB.get
+      _ = assertEquals(freeB, false, "still occupied ⇒ false")
+      _ = assertEquals(nB.size, WeixinBindAutoWire.PortFreePollSteps, "the wait is iteration-bounded")
+      // (c) liveness: listening but /healthz failing is NOT alive
+      sleepsC <- Ref.of[IO, List[FiniteDuration]](Nil)
+      aliveC <- WeixinBindAutoWire.awaitLiveness(
+        8787,
+        _ => IO.pure(true),
+        _ => IO.pure(false),
+        d => sleepsC.update(_ :+ d)
+      )
+      _ = assertEquals(aliveC, false, "LISTEN without /healthz is not alive")
+      // (d) liveness: alive mid-poll (listener up on read 3, health ok on read 2)
+      scriptD <- Ref.of[IO, List[Boolean]](List(false, false, true))
+      sleepsD <- Ref.of[IO, List[FiniteDuration]](Nil)
+      aliveD <- WeixinBindAutoWire.awaitLiveness(
+        8787,
+        scriptedProbe(scriptD),
+        _ => IO.pure(true),
+        d => sleepsD.update(_ :+ d)
+      )
+      _ = assertEquals(aliveD, true, "LISTEN + healthz = alive")
+    yield ()
+    end for
   }
 
   test(

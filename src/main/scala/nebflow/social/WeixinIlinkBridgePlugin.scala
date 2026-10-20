@@ -10,6 +10,7 @@ import nebflow.shared.NebflowLogger
 import nebflow.social.outbound.{AskPromptCodec, PromptAction, PromptView, RichKind, RichProduct, WebPageShot}
 
 import java.util.concurrent.atomic.AtomicBoolean
+import scala.concurrent.duration.*
 import scala.util.Try
 
 /**
@@ -212,6 +213,31 @@ final class WeixinIlinkBridgePlugin(
     cats.effect.Ref.unsafe[IO, Map[String, PullEntry]](Map.empty)
   private val ctxRef = cats.effect.Ref.unsafe[IO, Option[BridgeContext]](None)
 
+  // ───────── bind-transactional 批 (2026-10-20): the no-return-address face ─────────
+
+  /**
+   * Sessions THIS seam served in this process lifetime (recorded at
+   * [[inject]]). The escalation discriminator: `dispatchAgentEvent` fans EVERY
+   * session's events to EVERY plugin, so a reply-leg drop for a never-served
+   * session is not weixin traffic at all (debug log, unchanged quiet); a drop
+   * for a SERVED session is a user-visible message loss — the 2026-10-20
+   * incident shape (the default-session fallback injected the message, the
+   * reply had no route back). Cleared on stop.
+   */
+  private[social] val servedRef =
+    cats.effect.Ref.unsafe[IO, Set[String]](Set.empty)
+
+  /**
+   * The dead-letter slot: the LAST reply each served session dropped on
+   * [no-return-address], stashed so the sender's FIRST registration can
+   * redeliver it (补投 — 若可行；the send seam is the feasibility bound). One
+   * letter per session (latest wins), TTL [[WeixinIlinkBridgePlugin.DroppedReplyTtl]]
+   * judged at redelivery time. Cleared on stop: a torn turn is never a reply,
+   * also across restarts.
+   */
+  private[social] val droppedRef =
+    cats.effect.Ref.unsafe[IO, Map[String, DroppedReply]](Map.empty)
+
   /**
    * Double-start guard: boot-time sync AND `startAll` both call start — the
    * second call must be a no-op.
@@ -278,6 +304,8 @@ final class WeixinIlinkBridgePlugin(
       *> richRef.set(Map.empty)
       *> askLedgerRef.set(Map.empty)
       *> pullRef.set(Map.empty)
+      *> servedRef.set(Set.empty)
+      *> droppedRef.set(Map.empty)
 
   /**
    * Whether the seam is up. There is no connection to report: the seam holds no
@@ -767,6 +795,10 @@ final class WeixinIlinkBridgePlugin(
     ctx.updateBridgeConfig(sessionId, Name, Some(cfg)) *>
       routesRef.update(_ + (in.routeKey -> sessionId)) *>
       logger.info(s"weixin-ilink bridge: sender ${in.routeKey} auto-bound to default session $sessionId") *>
+      // bind-transactional 批: the auto-bind IS the sender's first registration
+      // — if this session stashed a [no-return-address] dead letter, it goes
+      // out now (the 2026-10-20 incident's closure arm).
+      redeliverDropped(in.routeKey, sessionId) *>
       // The tail: a landed media path injects the media line (weixin-inbound-
       // media batch) — the BINDING semantics above are unchanged (a media
       // message binds exactly like any other first message); only what gets
@@ -774,7 +806,10 @@ final class WeixinIlinkBridgePlugin(
       mediaArmOrText(ctx, in, sessionId)
 
   private def inject(ctx: BridgeContext, in: Inbound, sessionId: String): IO[Verdict] =
-    logger.info(s"weixin-ilink bridge: sender ${in.routeKey} -> session $sessionId") *>
+    // bind-transactional 批: the session counts as SERVED from the first
+    // injection — the discriminator the reply leg's escalation reads.
+    servedRef.update(_ + sessionId) *>
+      logger.info(s"weixin-ilink bridge: sender ${in.routeKey} -> session $sessionId") *>
       ctx.injectMessage(sessionId, in.text.getOrElse(""), in.senderId, originOf(in)).as(Verdict.Injected(sessionId))
 
   /**
@@ -815,8 +850,18 @@ final class WeixinIlinkBridgePlugin(
             s"weixin-ilink bridge: $dupes sender id(s) bound to more than one session — the last binding wins"
           )
         else IO.unit
-      warn *> routesRef.set(bound) *>
-        logger.info(s"weixin-ilink bridge: routing table rebuilt — ${bound.size} sender id(s) bound to sessions")
+      warn *>
+        routesRef.getAndSet(bound).flatMap { previous =>
+          // bind-transactional 批: every (sender → session) pair that CHANGED
+          // is a first registration for that session's return address — the
+          // redelivery leg fires for a session that carries a stashed
+          // [no-return-address] dead letter (auto-bind lands here too via its
+          // own routes update; this leg covers the save/REST face).
+          logger.info(s"weixin-ilink bridge: routing table rebuilt — ${bound.size} sender id(s) bound to sessions") *>
+            bound.collect {
+              case (sender, sid) if previous.get(sender) != Some(sid) => redeliverDropped(sender, sid)
+            }.toList.foldLeft(IO.unit)((acc, leg) => acc *> leg)
+        }
     }
 
   // ───────────────────────────── outbound ─────────────────────────────
@@ -946,16 +991,30 @@ final class WeixinIlinkBridgePlugin(
     routesRef.get.flatMap { routes =>
       routes.collectFirst { case (sender, sid) if sid == sessionId => sender } match
         case None =>
-          // 失败必打日志批（2026-10-08）: was `IO(logger.warn(...))` — a nested
-          // IO[IO[Unit]] whose inner logback call NEVER executed (the exact
-          // built-but-discarded hazard WeixinIlinkBridgeSpec's header names),
-          // which is why the 2026-10-08 21:52–22:51 incident (9 replies dead
-          // on the shim's ret=-2 502) produced zero engine logs. Sequenced
-          // directly now — the drop actually logs.
-          logger.warn(
-            s"weixin-ilink bridge: reply for session $sessionId dropped [$ReasonNoReturnAddress] — " +
-              s"no sender id is bound to this session, so the reply has no iLink target"
-          )
+          // bind-transactional 批 (2026-10-20): the drop is no longer one quiet
+          // line for every session. The discriminator is [[servedRef]]:
+          //   - a SERVED session (this seam injected into it — the incident
+          //     shape: default-session fallback injected, no route back) lost a
+          //     USER-VISIBLE reply: ERROR-level escalation + a health-face
+          //     strike (channels[].health → the panel marks the channel) + the
+          //     text stashed for redelivery at the sender's first registration.
+          //   - a never-served session is not weixin traffic at all
+          //     (dispatchAgentEvent fans every session to every plugin) — debug,
+          //     exactly as quiet as the noise deserves.
+          servedRef.get.flatMap { served =>
+            if served.contains(sessionId) then
+              noteNoReturnAddress(sessionId, text) *>
+                logger.error(
+                  s"weixin-ilink bridge: reply for session $sessionId dropped [$ReasonNoReturnAddress] — " +
+                    "no sender id is bound to this session, so the reply has no iLink target; " +
+                    "escalated: user-visible reply loss (health strike recorded, text stashed for redelivery)"
+                )
+            else
+              logger.debug(
+                s"weixin-ilink bridge: reply for session $sessionId dropped [$ReasonNoReturnAddress] — " +
+                  "session was never served by this channel, no iLink target"
+              )
+          }
         case Some(sender) =>
           // askuser-remote P1 (B-4 案甲): the flush goes through the deliver
           // path, which applies the 4000-char first tier — at/below it the
@@ -968,7 +1027,8 @@ final class WeixinIlinkBridgePlugin(
               // `IO(logger.info(...))` here was a DEAD nested IO (never ran);
               // it is replaced by the honest no-op rather than unwrapped.
               // 逐段即时批：成功同时复位失败注明闸（下一段失败再注明）。
-              segmentFailNoted.update(_ - sessionId)
+              // bind-transactional 批：成功同时清除该会话的健康告警（回绿）。
+              segmentFailNoted.update(_ - sessionId) *> clearNoReturnStrike(sessionId)
             else
               // 失败必打日志: was `IO(logger.warn(...))` — a nested IO[IO[Unit]]
               // whose inner logback call NEVER executed (the exact
@@ -980,6 +1040,111 @@ final class WeixinIlinkBridgePlugin(
                 // 逐段即时批：段级失败不补发（重发边界不变），注明一条。
                 (if isSegment then noteSegmentFailure(sessionId, res) else IO.unit)
           }
+    }
+
+  // ───────── bind-transactional 批: the strike / dead-letter / redelivery legs ─────────
+
+  /**
+   * The escalated [no-return-address] drop: ONE health strike written to the
+   * channel-agnostic face (`<root>/tmp/social-health/weixin-ilink.json`,
+   * surfaced as `channels[].health` by `SocialChannels.channelsJson` — the
+   * panel marks the channel) and the text stashed as the session's dead letter
+   * (latest wins). TOTAL: a strike write that fails is a WARN — the stash and
+   * the escalated log line are the load-bearing parts.
+   */
+  private def noteNoReturnAddress(sessionId: String, text: String): IO[Unit] =
+    droppedRef.update(m => m.updated(sessionId, DroppedReply(text))) *>
+      writeStrike(sessionId).handleErrorWith(e =>
+        logger.warn(s"weixin-ilink bridge: health strike write failed (${e.getClass.getSimpleName}) — contained"))
+
+  /** Read-modify-write of the channel health face; contained, never raises. */
+  private def writeStrike(sessionId: String): IO[Unit] =
+    IO.blocking {
+      val now = System.currentTimeMillis()
+      val previous = SocialChannels
+        .channelHealth(root, Name)
+        .flatMap(_.hcursor.downField("strikes").as[List[Json]].toOption)
+        .getOrElse(Nil)
+      val (matching, rest) = previous.partition(
+        s => s.hcursor.downField("sessionId").as[String].toOption.contains(sessionId) &&
+          s.hcursor.downField("reason").as[String].toOption.contains(ReasonNoReturnAddress))
+      val count = matching.headOption
+        .flatMap(_.hcursor.downField("count").as[Long].toOption)
+        .getOrElse(0L) + 1L
+      val firstAt = matching.headOption
+        .flatMap(_.hcursor.downField("firstAt").as[Long].toOption)
+        .getOrElse(now)
+      val strike = Json.obj(
+        "reason" -> ReasonNoReturnAddress.asJson,
+        "sessionId" -> sessionId.asJson,
+        "count" -> count.asJson,
+        "firstAt" -> firstAt.asJson,
+        "lastAt" -> now.asJson
+      )
+      val health = Json.obj(
+        "channel" -> Name.asJson,
+        "updatedAt" -> now.asJson,
+        "strikes" -> (strike :: rest).asJson
+      )
+      SocialChannels.writeChannelHealth(root, Name, health)
+    }.flatMap {
+      case true  => IO.unit
+      case false => logger.warn("weixin-ilink bridge: health strike could not be written (face degraded)")
+    }
+
+  /**
+   * The session replied successfully — its [no-return-address] strike clears
+   * (the channel face returns to green for this session). Contained.
+   */
+  private def clearNoReturnStrike(sessionId: String): IO[Unit] =
+    IO.blocking {
+      val now = System.currentTimeMillis()
+      val previous = SocialChannels
+        .channelHealth(root, Name)
+        .flatMap(_.hcursor.downField("strikes").as[List[Json]].toOption)
+        .getOrElse(Nil)
+      val rest = previous.filterNot(
+        s => s.hcursor.downField("sessionId").as[String].toOption.contains(sessionId) &&
+          s.hcursor.downField("reason").as[String].toOption.contains(ReasonNoReturnAddress))
+      if rest == previous then false // nothing to clear — no write
+      else
+        SocialChannels.writeChannelHealth(
+          root,
+          Name,
+          Json.obj("channel" -> Name.asJson, "updatedAt" -> now.asJson, "strikes" -> rest.asJson)
+        )
+    }.handleError(_ => false).flatMap {
+      case true  => IO.unit
+      case false => IO.unit // nothing cleared, or the face degraded — either way quiet
+    }
+
+  /**
+   * The redelivery leg: the sender's FIRST registration for this session (the
+   * auto-bind arm and the rebuilt routing table both land here) sends the
+   * stashed dead letter with the [[RedeliveryPrefix]] mark. The letter is
+   * consumed on the attempt — a failed send keeps the escalation face (the
+   * strike) and drops the letter (no retry loop; the user just messaged in,
+   * the conversation carries). TTL-judged at consumption: an expired letter
+   * dies quietly with one INFO.
+   */
+  private def redeliverDropped(sender: String, sessionId: String): IO[Unit] =
+    droppedRef.modify(m => (m - sessionId, m.get(sessionId))).flatMap {
+      case None => IO.unit
+      case Some(letter) =>
+        val age = System.currentTimeMillis() - letter.droppedAt
+        if age > DroppedReplyTtl.toMillis then
+          logger.info(
+            s"weixin-ilink bridge: stale dead letter for session $sessionId (${age / 1000}s old) — dropped, not redelivered"
+          )
+        else
+          logger.info(
+            s"weixin-ilink bridge: redelivering a [${ReasonNoReturnAddress}] dead letter to sender $sender " +
+              s"(session $sessionId regained a return address)"
+          ) *>
+            outbound(sender, RedeliveryPrefix + letter.text).flatMap { res =>
+              if res.ok then IO.unit
+              else logger.warn(s"weixin-ilink bridge: redelivery send failed code=${res.code} reason=${res.reason}")
+            }
     }
 
   // ───────────── weixin-media batch: the rich-media flush leg ─────────────
@@ -1193,6 +1358,20 @@ object WeixinIlinkBridgePlugin:
    * string, safe to reconcile from a log line.
    */
   val ReasonNoReturnAddress = "no-return-address"
+
+  // ───────── bind-transactional 批 (2026-10-20): the escalation face ─────────
+
+  /** One stashed reply that died on [no-return-address] (the dead letter). */
+  final case class DroppedReply(text: String, droppedAt: Long = System.currentTimeMillis())
+
+  /** The redelivery mark prepended to a stashed reply (补投). */
+  val RedeliveryPrefix = "[补投] "
+
+  /**
+   * A dead letter older than this is dropped at redelivery time, not sent —
+   * a half-hour-old reply has a good chance of being stale noise.
+   */
+  val DroppedReplyTtl: FiniteDuration = 30.minutes
 
   /**
    * The human-readable label this channel announces in the source-marker block
