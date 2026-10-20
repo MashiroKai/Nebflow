@@ -30,7 +30,12 @@ import scala.util.control.NonFatal
  */
 object HealthPayload:
 
-  def build(monitor: ProviderHealthPort): IO[Json] =
+  /**
+   * `extra` = 附加键（统一更新系统 M3 ③：/api/health 的 `update` 挂账/决策读数）。
+   * **空对象 ⇒ 载荷逐字节不变**（探针/第四档自检契约零回归——附加只在有状态可报时
+   * 发生）；非空时 deepMerge 只增键不改既有键。
+   */
+  def build(monitor: ProviderHealthPort, extra: Json = Json.obj()): IO[Json] =
     for
       modelStates <- monitor.getStates
       searchHealth <- monitor.getSearchHealth
@@ -45,13 +50,14 @@ object HealthPayload:
         case nebflow.shared.SearchApiHealth.Up => Json.obj("status" -> "up".asJson)
         case nebflow.shared.SearchApiHealth.Down(reason, since) =>
           Json.obj("status" -> "down".asJson, "reason" -> reason.asJson, "since" -> since.asJson)
-      Json.obj(
+      val base = Json.obj(
         "product" -> Branding.lowerName.asJson, // single-instance guard identification (brand-derived; guard dual-accepts legacy spellings)
         "status" -> "ok".asJson,
         "version" -> nebflow.Version.string.asJson,
         "providers" -> providers.asJson,
         "search" -> search
       )
+      if extra.isNull || (extra.asObject.exists(_.isEmpty)) then base else base.deepMerge(extra)
 
   /** 载荷里的版本号（读侧单点：探针核对与「后继自证」都不许自己解析别处）。 */
   def versionOf(payload: Json): Option[String] =

@@ -54,7 +54,26 @@ private[neblink] case class NeblinkPeerInfo(
 )
 
 private case class LoginResponse(token: String, networkId: String, deviceId: String, peers: List[NeblinkPeerInfo])
-private case class HeartbeatResponse(peers: List[NeblinkPeerInfo])
+private case class HeartbeatResponse(peers: List[NeblinkPeerInfo], update: Option[NeblinkUpdateTarget])
+
+/**
+ * 心跳响应里的更新挂账提示（统一更新系统 M3 ③，DESIGN §7 pull-on-online）：
+ * link-server 把网络的 update_target 搭心跳响应下发（`update.target`），**仅对未
+ * 收敛设备出现**（已收敛设备连 `update` 键都没有）。字段名与 link-server M2
+ * `UpdateTargetView` 逐字对齐（serde camelCase：`manifestUrl` / `publishedAt`，
+ * 防漂移）；`manifestUrl` 为账面专用——engine 自动采纳的 target 为空，此时引擎
+ * 用自己配置的 manifest 地址（DESIGN §7.1）。
+ */
+final case class NeblinkUpdateTarget(
+  version: String,
+  build: Option[String],
+  channel: String,
+  manifestUrl: Option[String],
+  publishedAt: Option[String]
+)
+
+/** 心跳结果：对端列表 + 可选更新挂账（M3 ③收敛闭环的入口载荷）。 */
+final case class HeartbeatOutcome(peers: List[NeblinkPeerInfo], updateTarget: Option[NeblinkUpdateTarget])
 
 // ===== Circe Decoders =====
 
@@ -88,8 +107,23 @@ object NeblinkCodecs:
     yield LoginResponse(token, networkId, deviceId, peers)
   }
 
+  given Decoder[NeblinkUpdateTarget] = Decoder.instance { c =>
+    for
+      version <- c.downField("version").as[String]
+      build <- c.downField("build").as[Option[String]]
+      channel <- c.downField("channel").as[Option[String]].map(_.getOrElse("stable"))
+      manifestUrl <- c.downField("manifestUrl").as[Option[String]]
+      publishedAt <- c.downField("publishedAt").as[Option[String]]
+    yield NeblinkUpdateTarget(version, build, channel, manifestUrl, publishedAt)
+  }
+
   given Decoder[HeartbeatResponse] = Decoder.instance { c =>
-    c.downField("peers").as[Option[List[NeblinkPeerInfo]]].map(_.getOrElse(Nil)).map(HeartbeatResponse.apply)
+    for
+      peers <- c.downField("peers").as[Option[List[NeblinkPeerInfo]]].map(_.getOrElse(Nil))
+      // 统一更新系统 M3 ③：update.target 仅对未收敛设备出现（additive 字段，
+      // 旧 server 无此键 ⇒ None，serde 宽容语义与既有 face 一致）。
+      update <- c.downField("update").downField("target").as[Option[NeblinkUpdateTarget]]
+    yield HeartbeatResponse(peers, update)
   }
 end NeblinkCodecs
 
@@ -471,8 +505,10 @@ class NeblinkClient(
    * server's stored address becomes stale and peers can't reach us via P2P.
    * Including endpoints in the body lets the server update our address even
    * when it doesn't change (idempotent).
+   * 统一更新系统 M3 ③：返回体从裸对端列表升级为 [[HeartbeatOutcome]]（对端列表 +
+   * 可选更新挂账 update.target）——旧 server 无 update 键 ⇒ None，零回归。
    */
-  def heartbeat: IO[Either[String, List[NeblinkPeerInfo]]] =
+  def heartbeat: IO[Either[String, HeartbeatOutcome]] =
     sessionToken match
       case None => IO.pure(Left("Not logged in"))
       case Some(token) =>
@@ -499,7 +535,7 @@ class NeblinkClient(
           sendRequest("POST", s"${config.url}/api/device/heartbeat", body, Some(token)).flatMap {
             case Right(respBody) =>
               decode[HeartbeatResponse](respBody) match
-                case Right(hb) => IO.pure(Right(hb.peers))
+                case Right(hb) => IO.pure(Right(HeartbeatOutcome(hb.peers, hb.update)))
                 case Left(err) => IO.pure(Left(s"Decode error: ${err.getMessage}"))
             case Left(err) => IO.pure(Left(err))
           }
@@ -552,7 +588,9 @@ class NeblinkClient(
       case None => login(deviceId, deviceName, platform, endpoints)
       case Some(_) =>
         heartbeat.flatMap {
-          case Right(peers) => IO.pure(Right(peers))
+          // discover 只取对端列表（挂账走 heartbeat 腿直达收敛组件；login 响应无
+          // update 键 ⇒ 首拍心跳自然补齐）。
+          case Right(outcome) => IO.pure(Right(outcome.peers))
           // 认证类：既有行为逐字保留（置空 token + 重做整会话交换）
           case Left(err) if NeblinkClient.sessionRecoverable(err) =>
             logger.info(s"Heartbeat failed ($err), re-logging in...") *>

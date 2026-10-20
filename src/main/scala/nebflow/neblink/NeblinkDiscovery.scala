@@ -24,7 +24,14 @@ final class NeblinkDiscovery(
   neblinkService: NeblinkService,
   serverPort: Int,
   presenceService: NeblinkPresenceService,
-  initialClient: Option[NeblinkClient] = None
+  initialClient: Option[NeblinkClient] = None,
+  /**
+   * 统一更新收敛闭环（M3 ③，DESIGN §7 pull-on-online）：心跳响应带 `update.target`
+   * 挂账时的领账钩子（GatewayMain 接 NeblinkUpdateConvergence）。None = 未装配
+   * （旧形态/测试）——心跳行为逐字节不变。钩子内部失败自吞（收敛组件职责），
+   * 本腿再兜一层：**领账失败绝不打断名册同步**。
+   */
+  onUpdateTarget: Option[NeblinkUpdateTarget => IO[Unit]] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.neblink.discovery")
 
@@ -99,22 +106,29 @@ final class NeblinkDiscovery(
 
   private def doHeartbeat(client: NeblinkClient): IO[Unit] =
     client.heartbeat.flatMap {
-      case Right(serverPeers) =>
-        // 卡②：心跳腿注入 self deviceId ⇒ 名册回传本机自身时不进设备面
-        // （与 NeblinkService.handleAnnounce 的 self 过滤同判据；作用域内无 identity
-        // ⇒ 取一次再注入，identity 取不到 = 不过滤，保持向后兼容）。
-        neblinkService.identity.map(id => Some(id.deviceId)).handleError(_ => None).flatMap { selfId =>
-          val neblinkPeers = client.toNeblinkPeers(serverPeers, selfId)
-          val peerIps = client.peerAddresses(serverPeers)
-          // syncPeers (not bare upsert): the heartbeat path must CONVERGE the
-          // local peer list — peers that vanished from the server response are
-          // removed, not just refreshed. Upsert-only growth was the root cause
-          // of permanent ghost entries (logged-out devices staying "online").
-          presenceService.syncPeers(neblinkPeers) *>
-            neblinkService.updateTrustedIps(peerIps) *>
-            neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered) *>
-            resetFailCount
-        }
+      case Right(outcome) =>
+        // M3 ③：更新挂账领账（pull-on-online——离线设备上线首心跳即到账）。失败
+        // 自吞双层（钩子内 + 本腿）：收敛闭环的任何失败不得打断名册同步。
+        onUpdateTarget.traverse_(hook =>
+          outcome.updateTarget.traverse_(t =>
+            hook(t).handleErrorWith(e => logger.debug(s"update-target hook failed (ignored): ${e.getMessage}"))
+          )
+        ) *>
+          // 卡②：心跳腿注入 self deviceId ⇒ 名册回传本机自身时不进设备面
+          // （与 NeblinkService.handleAnnounce 的 self 过滤同判据；作用域内无 identity
+          // ⇒ 取一次再注入，identity 取不到 = 不过滤，保持向后兼容）。
+          neblinkService.identity.map(id => Some(id.deviceId)).handleError(_ => None).flatMap { selfId =>
+            val neblinkPeers = client.toNeblinkPeers(outcome.peers, selfId)
+            val peerIps = client.peerAddresses(outcome.peers)
+            // syncPeers (not bare upsert): the heartbeat path must CONVERGE the
+            // local peer list — peers that vanished from the server response are
+            // removed, not just refreshed. Upsert-only growth was the root cause
+            // of permanent ghost entries (logged-out devices staying "online").
+            presenceService.syncPeers(neblinkPeers) *>
+              neblinkService.updateTrustedIps(peerIps) *>
+              neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered) *>
+              resetFailCount
+          }
       case Left(err) =>
         // Heartbeat failed — fall back to full discovery (auto re-login if needed).
         logger.debug(s"Heartbeat failed ($err), falling back to discovery...") *>

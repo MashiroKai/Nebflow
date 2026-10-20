@@ -171,6 +171,13 @@ case class SharedResources(
    */
   updateOrchestrator: Option[nebflow.core.hotupdate.UpdateOrchestrator] = None,
   /**
+   * 统一更新收敛闭环 · 设备侧领账/采纳闸（M3 ③，DESIGN §7.2）：GatewayMain 装配后
+   * 注入；None = 未装配（测试 / 极早期 boot / neblink 关闭）。心跳腿领账 → 采纳闸 →
+   * 交上面的 [[updateOrchestrator]] 执行；状态经 `updateState` 帧 + serverConfig 快照
+   * （WebSocketRoutes）+ /api/health `update` 键（HealthRoutes）可见，零定时器。
+   */
+  updateConvergence: Option[nebflow.neblink.NeblinkUpdateConvergence] = None,
+  /**
    * **会话级压缩阈值比例覆盖**（ctxthresh 批，2026-09-15 方案 A）：键 = **root
    * sessionId**，值 = 比例 `r`（`15% < r ≤ 90%`，见
    * [[nebflow.agent.CompactThresholdOverride]]）。与 `sessionModelOverrides`

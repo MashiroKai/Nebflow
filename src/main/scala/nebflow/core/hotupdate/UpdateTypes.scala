@@ -15,6 +15,12 @@ enum UpdateSource(val wire: String):
   case Relay extends UpdateSource("relay")
   case Website extends UpdateSource("website")
   case Cli extends UpdateSource("cli")
+  /**
+   * 心跳补推（统一更新系统 M3 ③，DESIGN §7/§8「来源 = 心跳补推」）：心跳响应领到
+   * update.target 且过采纳闸（通道一致 + 前向-only）后自动受理。additive 枚举值
+   * ——wire 串进既有进度帧 `source` 字段，面板可区分「官网检测/对端触发/心跳补推」。
+   */
+  case Heartbeat extends UpdateSource("heartbeat")
 
 /**
  * 更新通道（裁定 9）：请求契约带该字段，**不在界面暴露**——测试通道只由既有命令行
