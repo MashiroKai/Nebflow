@@ -45,6 +45,7 @@ import {
 } from '../canvas.js';
 import { key } from '../branding.js';
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '../sidebar.js';
+import { dockProfileBlock, undockProfileBlock } from '../agentProfile.js';
 import { createIconsIn } from '../utils.js';
 
 /** 页面注册表（root 之外）。route id 稳定 = App 深链/壳映射留缝点。 */
@@ -203,6 +204,37 @@ const overlayFaceByPage = {
   settings: '#settings-modal',
   usage: '#usage-dashboard',
 };
+
+/** P12 设置页 profile 置顶块（agentProfile 面板停靠形态）：栈顶=设置时收编为
+ *  页体首块（常显、弹窗语义让位 —— dock/undock 缝在 agentProfile.js），出栈
+ *  拆铺归位。锚点惯例同 overlayAnchors（面板本体挂 document.body）。 */
+const profileAnchor = { face: null, parent: null, next: null };
+
+function syncProfileBlock() {
+  const body = bodyOf('settings');
+  if (!body) return;
+  const live = stack.includes('settings');
+  if (live) {
+    const face = dockProfileBlock(); // 幂等：建面 + 停靠态 + 常显（弹窗语义让位）
+    if (!profileAnchor.face) {
+      profileAnchor.face = face;
+      profileAnchor.parent = face.parentElement;
+      profileAnchor.next = face.nextSibling;
+      logEvent('pane-adopt', { page: 'settings', face: '#agent-profile-panel' });
+    }
+    if (face.parentElement !== body) body.insertBefore(face, body.firstChild);
+  } else if (profileAnchor.face) {
+    const { face, parent, next } = profileAnchor;
+    profileAnchor.face = null; profileAnchor.parent = null; profileAnchor.next = null;
+    if (parent && parent.isConnected) {
+      try { parent.insertBefore(face, next); } catch { document.body.appendChild(face); }
+    } else {
+      document.body.appendChild(face);
+    }
+    undockProfileBlock();
+    logEvent('pane-restore', { page: 'settings', face: '#agent-profile-panel' });
+  }
+}
 
 /** 把 overlay 内容面移入页面体（幂等；锚点照 paneAnchors 惯例记录）。 */
 function adoptOverlayFace(pageId) {
@@ -425,6 +457,7 @@ function renderPages() {
   }
   document.body.classList.toggle('mf-page-open', PAGE_BY_ID.has(top));
   syncOverlayFaces(); // usage/settings 面随栈收编/归还（外部关闭对账路径同此汇合）
+  syncProfileBlock(); // P12：设置页 profile 置顶块随栈停靠/拆铺
 }
 
 /** 页面面关闭（overlay 升格的 usage/settings 与栈同步；面板页由 renderPages 收）。
@@ -629,6 +662,13 @@ export function activateNav() {
     // 视口跨越回桌面时正在看的设置/用量页直接以桌面形态续显）。
     for (const id of [...overlayAnchors.keys()].reverse()) restoreOverlayFace(id);
     overlayAnchors.clear();
+    // P12 profile 置顶块拆铺（面板本体归位 body + 弹窗语义还原）。
+    if (profileAnchor.face) {
+      const { face } = profileAnchor;
+      profileAnchor.face = null; profileAnchor.parent = null; profileAnchor.next = null;
+      if (!face.parentElement || face.parentElement !== document.body) document.body.appendChild(face);
+      undockProfileBlock();
+    }
     if (cardHead) { cardHead.remove(); cardHead = null; }
     for (const b of injectedBacks.splice(0)) b.remove();
     document.body.classList.remove('mf-cards-live', 'mf-page-open');

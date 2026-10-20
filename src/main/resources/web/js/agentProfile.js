@@ -286,6 +286,7 @@ function saveName() {
 
 /** 打开 profile 面板。手机视口由 mobileLayer 接管几何（morph 形态）；桌面居中卡。 */
 export function openProfilePanel() {
+  if (docked) return; // P12：已作设置页置顶块常显 —— 弹窗语义（scrim/X）让位
   const p = ensurePanel();
   fillName();
   paintPreview();
@@ -294,6 +295,30 @@ export function openProfilePanel() {
 }
 
 export function closeProfilePanel() {
+  if (docked) return; // 停靠态块不可被 Esc/scrim 收走（收口 = 出设置页）
+  if (!panel) return;
+  document.body.classList.remove('ap-open');
+  panel.hidden = true;
+}
+
+// ── P12 设置页置顶块（mobile-secondary-screens 批：停靠/拆铺一对缝）──────
+// 设置页 live 时面板被 navController 收编为页体首块（head 关闭钮 CSS 隐藏），
+// 停靠期间弹窗语义整体让位（open/close 早退）；出页拆铺归位并恢复弹窗语义。
+let docked = false;
+
+/** 停靠为设置页置顶块：常显（不走 ap-open scrim 语义），返回面板节点供收编。 */
+export function dockProfileBlock() {
+  const p = ensurePanel();
+  docked = true;
+  fillName();
+  paintPreview();
+  p.hidden = false;
+  return p;
+}
+
+/** 拆铺：归还弹窗语义（隐藏 + 清 scrim 态；scrim 若因停靠前弹窗残留一并清）。 */
+export function undockProfileBlock() {
+  docked = false;
   if (!panel) return;
   document.body.classList.remove('ap-open');
   panel.hidden = true;

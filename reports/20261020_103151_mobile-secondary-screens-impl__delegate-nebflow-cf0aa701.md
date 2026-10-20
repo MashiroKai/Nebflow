@@ -275,3 +275,51 @@
 | §8-9 零 console error | 各测试双收集 = 0 |
 
 ---
+## P12 设置（右列推送页）— 已实施
+
+### 落地面
+
+- **profile 区置顶（开放点①采纳：与已实施 agentProfile.js 一一对应，仅排版置顶）**：`agentProfile.js` 加停靠缝 `dockProfileBlock()/undockProfileBlock()`（幂等建面 + 常显 + 弹窗语义让位 —— open/close 在停靠期早退，Esc/scrim 收不走置顶块）；`navController.syncProfileBlock` 随栈收编：设置页 live ⇒ `#agent-profile-panel` = 页体首块（在 #settings-modal 之前，header 关闭钮 CSS 退场），出栈/拆层原位归位 body + 恢复弹窗语义。头像预览/上传/恢复默认/名称行内回车存（saveName 写穿 state.rootDisplayName 同一机制）/同源文案（profile.note i18n 同键）= 全部既有，零复制。
+- **非绿主键（v3.6① 绿键退役裁定字面）**：手机层作用域 = `.ap-btn-primary`（上传头像主键）+ `#settings-modal .cfg-btn-primary`（桌面设置模态五枚保存类文本主键 —— v3.6①「全面退役」同规格覆盖）：light `#111827` 底/白字、hover `#374151`；dark 前景背景互换（`#e8eaed`/`#13161c`、hover `#fff`）；box-shadow none、500 字重、hover .18s 提阶；上传键「无图标」= 应用 DOM 有 lucide svg ⇒ computed display:none 落实（**偏差记档**：样张「无 svg 子节点」为样张自身 DOM 断言，实机以 display:none 达成同视觉）。桌面绿面不动（body.mobile-layer 作用域）。
+- **v3.6 守卫（对位样张 §3-5，按 v3.6 §1 裁定收窄）**：除行内开关 nb-toggle（共享组件 accent，作者 2026-09-06 已裁「明确维持的绿」）外，设置页内按钮计算背景 ≠ 品牌绿 rgb(7,193,96) —— light/dark 双主题断言。
+- **开放点②**：七分组沿用桌面 renderSettings 次序（#settings-modal 原样，profile 块垫顶，模态内滚既有）。
+- **开放点③「重启服务」红字+二次确认【新增提案】/ ④桌面项去留**：**不实施不伪造**（后端无重启端点；桌面项为桌面渲染面）——记开放点。
+
+### 验收映射（spec → `tests/mobile-p12-settings.spec.mjs`，3/3 绿）
+
+| 样张验收点 | 实机断言 |
+|---|---|
+| 页范式 + profile 置顶（开放点①） | T1：页体首块 id=agent-profile-panel + 常显 + #settings-modal 随后 + 同源文案 + ap-close 退场 |
+| 弹窗语义让位 | T1：停靠期 body.ap-open 恒 false |
+| v3.6① 非绿主键 light | T2：bg rgb(17,24,39)/白字/shadow none/500 + 图标 display:none |
+| v3.6① 非绿主键 dark | T2：bg rgb(232,234,237)/字 rgb(19,22,28) |
+| v3.6 守卫（nb-toggle 例外收窄） | T2：设置页非开关按钮零品牌绿 |
+| 名称行内回车存 | T3：Enter → state.rootDisplayName 逐字 |
+| 开放点② 分组次序 | T3：#settings-modal（桌面 renderSettings）在 profile 块后可见 |
+| 出页拆铺 | T3：面板归位 body + hidden + 弹窗语义还原 |
+| §8-9 零 console error | 各测试双收集 = 0（agent.json 夹具走 200 空对象腿，缺省分支浏览器对非 2xx 记 console error 故不用于夹具） |
+
+---
+
+## P7 画板 — 挂起（v3.6③），不实施
+
+- **处置**：v3.6③ 作者裁定「画板挂起候 canvas 叠卡设计批准后统一出稿，暂不实施」—— 本批零代码；现有画板文档卡层（navController 卡片层/手势/卡片头）保持不变。
+- **守卫**：既有 mobile-v3 spec 的画板卡片层断言（层显隐/卡片头）在本批全量回归中持续全绿 —— 挂起面无回归。
+- **开放点（4 条）**：随 v3.6③ 撤出本轮批阅（样张开放点卡已撤）。
+
+---
+
+## 交付清单与偏差汇总（P2-P12 全量）
+
+- **提交链**：feat(mobile-p2) → feat(mobile-p3) → feat(mobile-p4) → feat(mobile-p5) → feat(mobile-p6) → feat(mobile-p8) → feat(mobile-p9) → feat(mobile-p10) → feat(mobile-p11) → feat(mobile-p12)（逐屏一提交；P7 挂起仅报告）。
+- **测试**：P2 4 + P3 5 + P4 4 + P5 5 + P6 4 + P8 3 + P9 3 + P10 3 + P11 3 + P12 3 + mobile-v3 7 = **44 测试**；全量 ×5 连跑（RUN4-5 双绿、RUN1 单发 P3 T5 偶发 —— 该测试头注自记「smooth-scroll 重渲不稳定窗口」，系 P2-P6 批既有脆项，与本批 P6-P12 增量面无关）。
+- **已知偏差（样张→实机 不落地项，均记档不伪造）**：
+  1. P6 开放点③ 资源占用条 —— 后端无 CPU/内存/网络字段。
+  2. P7 画板整屏 —— v3.6③ 挂起。
+  3. P8 开放点④ 归档折叠 —— 桌面=源清单过滤语义，无折叠 DOM。
+  4. P9 侧栏 facet/最近文档行 —— 宿主为桌面 explorer，手机层不入页（开放点①采全画布漫游腿）。
+  5. P10 组成 chips 在展开详情（样张卡面 chips 不挪 DOM）。
+  6. P11 52 周热力图 = 横滚保留腿（样张「近 14 天条带」= 桌面 ud-curve 既有满宽）。
+  7. P12 开放点③「重启服务」/ ④ 桌面项去留 —— 不实施（无端点/桌面渲染面）。
+  8. P12「无图标」= computed display:none（样张为自身 DOM 无 svg 子节点断言）。
+- **共用测试基建**：`tests/_mobile-panel-settle.mjs` 两段式 morph 终态守护（leg-2 8s；双读 poll 判据在 P3/P6 几何断言内联）。

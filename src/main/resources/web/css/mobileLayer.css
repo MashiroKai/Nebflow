@@ -1567,3 +1567,57 @@ body.mobile-layer #mobile-pages .ud-curve {
   max-width: 100%;
   overflow: hidden;
 }
+
+/* ── P12 设置：profile 区置顶（agentProfile 停靠块）+ 非绿主键（v3.6①）────
+   样张 P12 = profile 区与已实施 agentProfile.js 一一对应（头像预览/上传头像
+   [主键]/恢复默认/名称行内回车存/同源文案），排版置顶；七分组沿用桌面
+   renderSettings 次序（零重排）。
+   停靠形态（navController syncProfileBlock）：面板 = 页体首块常显，头关闭钮
+   退场（块无「关闭」语义），morph 浮层几何（agent-profile-panel 桌面居中卡）
+   在页面体内改文档流卡。 */
+body.mobile-layer .mobile-page-body .agent-profile-panel {
+  position: static;
+  width: auto;
+  max-width: none;
+  margin: 12px 12px 0;
+  flex-shrink: 0;
+  border-radius: 16px;
+  padding: 12px 14px;
+  overflow: hidden;
+}
+body.mobile-layer .mobile-page-body .agent-profile-panel .ap-close {
+  display: none;
+}
+/* 上传头像主键 = 官网登录卡同款（v3.6① 绿键退役；值面取 auth 键族字面）：
+   light #111827 底/白字、hover #374151；dark 前景背景互换（#e8eaed/#13161c、
+   hover #fff）；平面单色（box-shadow none）、无图标、500 字重、hover .18s 提阶。
+   作用域 = 手机层（桌面 .ap-btn-primary/.cfg-btn-primary 绿面不动）。cfg-btn-primary =
+   桌面设置模态五枚保存类文本主键 —— v3.6①「绿键全面退役」同规格覆盖。*/
+body.mobile-layer .agent-profile-panel .ap-btn-primary,
+body.mobile-layer #settings-modal .cfg-btn-primary {
+  background: #111827;
+  color: #fff;
+  border-color: transparent;
+  font-weight: 500;
+  box-shadow: none;
+  transition: background 0.18s ease;
+}
+body.mobile-layer .agent-profile-panel .ap-btn-primary:hover,
+body.mobile-layer #settings-modal .cfg-btn-primary:hover {
+  background: #374151;
+}
+body.mobile-layer .agent-profile-panel .ap-btn-primary svg,
+body.mobile-layer .agent-profile-panel .ap-btn-primary i {
+  display: none;
+}
+@media (prefers-color-scheme: dark) {
+  body.mobile-layer .agent-profile-panel .ap-btn-primary,
+  body.mobile-layer #settings-modal .cfg-btn-primary {
+    background: #e8eaed;
+    color: #13161c;
+  }
+  body.mobile-layer .agent-profile-panel .ap-btn-primary:hover,
+  body.mobile-layer #settings-modal .cfg-btn-primary:hover {
+    background: #fff;
+  }
+}
