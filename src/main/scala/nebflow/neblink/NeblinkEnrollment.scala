@@ -224,7 +224,12 @@ object NeblinkEnrollment:
           // 2026-09-14（踢旧批 r2）：自动登录的停摆门。被服务端 kick 后本客户端
           // 不发任何登录/会话交换/重注册请求（唯一解除口 = 显式用户登录，
           // 见下面对 `resumeAfterUserLogin` 的调用）。
-          autoLoginParked = IO(ms.kickParked)
+          autoLoginParked = IO(ms.kickParked),
+          // 🔴 relay-honest 批（2026-10-20）A 修：凭据腿收口钩（与 GatewayMain boot
+          // 客户端同款）。本客户端后续的每次会话铸造（心跳恢复 / API 自愈的
+          // `/api/device/session` 成功）都无条件发 ensure 信号——隧道 stop() 之后
+          // 不再依赖「恰好又走了一次完整 enroll」才复活。
+          onSessionMinted = Some(ms.ensureRelayTunnel)
         )
         d -> fresh
       })
@@ -242,6 +247,11 @@ object NeblinkEnrollment:
       // 🔴 2026-09-16（kaiauth 修法批 ①配套）：`else` 支不再是空操作 —— 自动路径
       // 改为**证据式**解除（先证明后解锁，失败保持）。显式路径那一支**逐字不变**
       // （案 C 语义：显式登录是无条件解除口）。
+      //
+      // 🔴 relay-honest 批（2026-10-20）A 修：下一行的 `ensureRelayTunnel` 是三条
+      // 登录腿的**统一收口**（enrollment / silent-relogin 都经过本咽喉；凭据腿则由
+      // `NeblinkClient.onSessionMinted` 钩子接到同一处 `NeblinkService.ensureRelayTunnel`）
+      // —— 任何成功的设备登录/会话铸造之后幂等 ensure-start，各腿不再自行判断。
       _ <-
         if explicitUserAction then ms.relayTunnelOpt.fold(IO.unit)(_.resumeAfterUserLogin())
         else liftParkOnProvenCredential(ms, hotSwapped.map(_._2), identity)

@@ -123,6 +123,16 @@ import nebflow.shared.{FriendListResponse, GroupSummary, PeerInfo}
  *   ——被服务端 `disconnect` 踢下线后，自动重登录会连带触发服务端 register
  *   （kick-on-re-enroll），那正是复核位判 fail 的那条腿。唯一解除口 = 用户显式登录
  *   （`NeblinkEnrollment.persist(explicitUserAction = true)` 清停摆位）。
+ * @param onSessionMinted relay-honest 批（2026-10-20）A 修的**凭据腿收口钩**：
+ *   每次 `POST /api/device/login|session` 成功（= 一次设备会话铸造）之后**无条件**
+ *   发出的「确保 relay 隧道在跑」信号（生产装配点传 `NeblinkService.ensureRelayTunnel`
+ *   —— 凭据 / silent-relogin / enrollment 三条腿统一收口到这一处 ensure，本客户端
+ *   不做任何自行判断）。修前缺口：登出 `stop()` 掉隧道后，只有 enrollment /
+ *   silent-relogin 腿（经 `NeblinkEnrollment.persistCredential`）会 ensure 重启；
+ *   **凭据腿**只恢复 device session（只写 `sessionToken`），隧道从此没有任何重启
+ *   触发器 ⇒ 门户永久判 relay 不可达。幂等性由单一 ensure 自带（信号量串行 +
+ *   隧道 CAS 单飞）；钩子失败绝不影响登录结果。默认 None = 测试/纯传输装配点零
+ *   行为变化。
  */
 /**
  * E3 下载响应（4b 腿 A-3）：**状态码 + 原始字节 + 两个透传头**。
@@ -161,7 +171,8 @@ class NeblinkClient(
   serverPort: Int,
   onDeviceTokenRejected: Option[IO[Option[String]]] = None,
   identity: Option[IO[DeviceIdentity]] = None,
-  autoLoginParked: IO[Boolean] = IO.pure(false)
+  autoLoginParked: IO[Boolean] = IO.pure(false),
+  onSessionMinted: Option[IO[Unit]] = None
 ) extends NeblinkClientPort:
   private val logger = NebflowLogger.forName("nebflow.neblink.client")
 
@@ -397,7 +408,21 @@ class NeblinkClient(
           decode[LoginResponse](respBody) match
             case Right(login) =>
               IO { sessionToken = Some(login.token) } *>
-                logger.info(s"Logged into NebLink Server: ${login.peers.size} peer(s)").as(Right(login.peers))
+                logger.info(s"Logged into NebLink Server: ${login.peers.size} peer(s)") *>
+                // 🔴 relay-honest 批（2026-10-20）A 修 —— 会话铸造后的**唯一收口点**：
+                // 每次成功的设备登录/会话交换（本分支是全类唯一的 sessionToken 写点）
+                // 都**无条件**发一次「确保 relay 隧道在跑」。不做任何「要不要发」的腿内
+                // 判断（幂等由单一 ensure 自带）；钩子失败只留一行 WARN，**绝不**改变
+                // 登录结果（凭据腿的职责仍是恢复 device session，隧道复活是它顺带的
+                // 通知义务，不是它的新前置条件）。
+                onSessionMinted
+                  .fold(IO.unit)(_.handleErrorWith(e =>
+                    logger.warn(
+                      "relay tunnel ensure after session mint failed (login result unaffected): " +
+                        e.getClass.getSimpleName
+                    )
+                  ))
+                  .as(Right(login.peers))
             case Left(err) =>
               logger
                 .warn(s"NebLink Server login decode error: ${err.getMessage}")
