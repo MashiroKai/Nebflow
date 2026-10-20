@@ -120,10 +120,11 @@ test('T1 plugins page: adopted pane, two cards stacked full-width', async ({ pag
   const errors = watchErrors(page);
   await pushPage(page, 'plugins');
 
-  // pane 收编 + 推入终态。
-  expect(await page.locator(
+  // pane 收编 + 推入终态 —— 收编是异步腿（动态 import + openTab 完成才
+  // adoptPane），重试断言（P3 T2/P6 既有修法同款）。
+  await expect(page.locator(
     '.mobile-page[data-page="plugins"] .mobile-page-body .canvas-tab-pane[data-tab-id="plugins"]',
-  ).count()).toBe(1);
+  )).toHaveCount(1);
   const pageBox = () => page.locator('.mobile-page[data-page="plugins"]').evaluate((el) => {
     const r = el.getBoundingClientRect();
     return { x: r.x, w: Math.round(r.width) };

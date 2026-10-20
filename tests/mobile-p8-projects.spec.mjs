@@ -145,11 +145,12 @@ test('T1 page shell: full-width push page, glass round back button, adopted pane
   const title = await page.locator('.mobile-page[data-page="projects"] .mobile-page-title').textContent();
   expect(title).toBe('项目');
 
-  // 内容面 = 收编桌面 pane（adoptPane）：pane 在页面体内，卡片在其中渲染。
-  const paneInBody = await page.locator(
+  // 内容面 = 收编桌面 pane（adoptPane）：pane 在页面体内，卡片在其中渲染
+  // —— 收编是异步腿（动态 import + openTab 完成才 adoptPane），重试断言
+  // （P3 T2/P6 既有修法同款）。
+  await expect(page.locator(
     '.mobile-page[data-page="projects"] .mobile-page-body .canvas-tab-pane[data-tab-id="projects"]',
-  ).count();
-  expect(paneInBody).toBe(1);
+  )).toHaveCount(1);
   expect(errors).toEqual([]);
 });
 
