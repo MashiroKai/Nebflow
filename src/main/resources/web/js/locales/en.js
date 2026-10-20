@@ -683,6 +683,11 @@ export default {
   'memory.title': 'Memory',
   'memory.agent': 'Agent',
   'memory.user': 'User',
+  'memory.scopeAgent': 'Agent · memory.md',
+  'memory.scopeUser': 'User · User.md',
+  'memory.edit': 'Edit',
+  'memory.done': 'Done',
+  'memory.emptyHint': 'No memory content yet',
   'memory.placeholder': '# Memory\n\nKey facts, decisions, context...',
   'memory.save': 'Save',
 

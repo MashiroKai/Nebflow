@@ -19,6 +19,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { settlePanel } from './_mobile-panel-settle.mjs';
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
 const MIME = {
@@ -110,14 +111,8 @@ async function openPanel(page) {
   await page.locator('#daemon-btn').click();
   await expect(page.locator('#daemon-panel')).toHaveClass(/open/);
   await expect(page.locator('#daemon-panel')).toBeVisible();
-  // morph 终态：类摘除 ∧ transform 归位（类可能尚未挂上 —— 160ms 延时腿）。
-  await page.waitForFunction(() => {
-    const m = document.getElementById('daemon-panel');
-    if (!m) return false;
-    if (m.classList.contains('mh-morph-anim') || m.classList.contains('mh-morph-close')) return false;
-    const tf = getComputedStyle(m).transform;
-    return tf === 'none' || tf === 'matrix(1, 0, 0, 1, 0, 0)';
-  }, undefined, { timeout: 4000 });
+  // morph 终态（两段式守护，见 _mobile-panel-settle.mjs 头注）。
+  await settlePanel(page, { overlaySel: '#daemon-panel', panelSel: '#daemon-panel', openClass: 'open' });
   await expect(page.locator('#daemon-panel .daemon-row')).toHaveCount(3);
 }
 

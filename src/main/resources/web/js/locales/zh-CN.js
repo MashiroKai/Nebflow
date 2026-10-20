@@ -645,6 +645,11 @@ export default {
   'memory.title': '记忆',
   'memory.agent': '智能体',
   'memory.user': '用户',
+  'memory.scopeAgent': '智能体 · memory.md',
+  'memory.scopeUser': '用户 · User.md',
+  'memory.edit': '编辑',
+  'memory.done': '完成',
+  'memory.emptyHint': '暂无记忆内容',
   'memory.placeholder': '# 记忆\n\n关键事实、决策、上下文...',
   'memory.save': '保存',
 

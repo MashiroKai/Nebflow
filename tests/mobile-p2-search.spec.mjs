@@ -21,6 +21,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { settlePanel } from './_mobile-panel-settle.mjs';
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
 const MIME = {
@@ -108,11 +109,9 @@ async function openPanel(page) {
   await page.locator('#search-btn').click();
   await expect(page.locator('#search-overlay')).toHaveClass(/on/);
   await expect(page.locator('#search-modal')).toBeVisible();
-  // morph 终态等到类摘除（680ms + 观察/延时链余量；reduced-motion 恒无类直通）。
-  await page.waitForFunction(() => {
-    const m = document.getElementById('search-modal');
-    return m && !m.classList.contains('mh-morph-anim') && !m.classList.contains('mh-morph-close');
-  }, undefined, { timeout: 4000 });
+  // morph 终态（两段式守护，见 _mobile-panel-settle.mjs 头注 —— 只查类/
+  // transform 会抢跑进「已 .on 但形变未起」窗口，实测采到插值中值）。
+  await settlePanel(page, { overlaySel: '#search-overlay', panelSel: '#search-modal' });
 }
 
 function watchErrors(page) {

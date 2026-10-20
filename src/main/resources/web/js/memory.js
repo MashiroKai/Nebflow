@@ -54,6 +54,15 @@ function switchTab(scope) {
   loadTab(scope);
 }
 
+/** 手机层 P5 读态卡同步缝（mobile-secondary-screens 实施批）：内容面值由 WS
+ *  异步程序赋值（不触发 input 事件），memoryFace.js 挂 window.__mhMemorySync
+ *  钩子重切读态卡；桌面恒 undefined ⇒ 零行为改动。 */
+function syncMobileFace() {
+  if (document.body.classList.contains('mobile-layer')) {
+    (/** @type {any} */ (window)).__mhMemorySync?.();
+  }
+}
+
 /** Load content for a scope — use cache if hit, otherwise fetch from server. */
 function loadTab(scope) {
   const input = document.getElementById('memory-content-input');
@@ -69,6 +78,7 @@ function loadTab(scope) {
       }
     }, 800);
   }
+  syncMobileFace();
 }
 
 /** Handle memoryData from server — update textarea + cache. */
@@ -77,6 +87,7 @@ export function handleMemoryData(data) {
   if (data.scope === activeScope) {
     document.getElementById('memory-content-input').value = data.content || '';
   }
+  syncMobileFace();
 }
 
 /**

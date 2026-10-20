@@ -923,6 +923,115 @@ body.mobile-layer .mh-daemon-foot {
   color: var(--color-frame-text-muted, #98a2b3);
 }
 
+/* ── P5 记忆：读态卡 + 编辑态切换（mobile-secondary-screens 实施批）────
+   样张 v3.5 P5：顶挂 308×560；读态 = 「## 标题」分节条目卡（标题 + 摘录两行
+   截断 + scope 文件名脚注）；头部「编辑」钮 ⇄ 桌面原 textarea 编辑态（不做
+   移动编辑器）；scope seg 措辞「智能体 · memory.md / 用户 · User.md」。 */
+body.mobile-layer #memory-overlay { padding: 0; }
+body.mobile-layer #memory-modal {
+  position: fixed;
+  top: calc(58px + env(safe-area-inset-top, 0px));
+  left: 6px;
+  right: auto;
+  width: min(308px, calc(100vw - 24px));
+  height: min(560px, calc(100dvh - 130px));
+  max-width: none;
+  max-height: none;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid var(--glass-control-border);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),
+    0 2px 8px var(--glass-control-shadow),
+    0 4px 16px rgba(0, 0, 0, 0.10);
+}
+@media (prefers-color-scheme: dark) {
+  body.mobile-layer #memory-modal {
+    background: rgba(28, 32, 42, 0.80);
+    box-shadow:
+      inset 0 1px 0 var(--glass-control-highlight),
+      inset 0 -1px 0 var(--glass-control-underedge),
+      0 1px 3px var(--glass-control-glow),
+      0 2px 8px var(--glass-control-shadow),
+      0 4px 16px rgba(0, 0, 0, 0.35);
+  }
+}
+/* 编辑态：卡读态隐、textarea + Save/Cancel 显（默认读态反之；态类挂在 body）。 */
+body.mobile-layer #memory-modal #memory-modal-body { display: none; }
+body.mobile-layer #memory-modal #memory-modal-actions { display: none; }
+body.mobile-layer.mh-memory-editing #memory-modal #memory-modal-body,
+body.mobile-layer.mh-memory-editing #memory-modal #memory-modal-actions { display: flex; }
+body.mobile-layer.mh-memory-editing .mh-memory-cards { display: none; }
+/* 头部「编辑/完成」钮（memoryFace.js 建；glass 小钮）。 */
+body.mobile-layer .mh-memory-edit {
+  margin-left: auto;
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 13px;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  color: var(--color-frame-text, #e6e9ef);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+/* 卡读态（读态卡列表 = 面板体的滚动域）。 */
+body.mobile-layer .mh-memory-cards {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 10px 12px;
+  scrollbar-width: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+body.mobile-layer .mh-memory-cards::-webkit-scrollbar { display: none; }
+body.mobile-layer .mh-memory-card {
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  border-radius: 12px;
+  padding: 9px 11px;
+}
+body.mobile-layer .mh-memory-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body.mobile-layer .mh-memory-card-excerpt {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-muted, #8b8e96);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+body.mobile-layer .mh-memory-card-foot {
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--color-frame-text-muted, #98a2b3);
+  font-variant-numeric: tabular-nums;
+}
+body.mobile-layer .mh-memory-empty {
+  padding: 24px 8px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--color-frame-text-muted, #98a2b3);
+}
+
 /* ── ② 页面容器 + 页面 section（互斥 .live；iOS push/pop 曲线）───────── */
 body.mobile-layer #mobile-pages {
   position: fixed;

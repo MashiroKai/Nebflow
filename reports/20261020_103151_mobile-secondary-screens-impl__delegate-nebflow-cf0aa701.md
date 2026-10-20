@@ -116,3 +116,37 @@
 | §8-9 零 console error | 各测试双收集 = 0 |
 
 ---
+
+## P5 记忆 — 已实施
+
+**提交**：`feat(mobile-p5)`（本屏一提交）
+
+### 落地面
+
+- **几何（§8-1 同族）**：`#memory-modal` 手机层迁出居中 modal 族 → 精确顶挂 `left:6 / top:58+safe / 308×560 / r16` + mh-tpanel 同族 surface + `display:flex` 纵向。
+- **读态 = 条目卡（开放点①采纳【新增提案】：切分规则 = 「## 标题」分节）**：`memoryFace.js` 建 `.mh-memory-cards` 卡容器 —— 文档级 H1 行跳过；导言（首个 ## 前正文）= 以首行为题的无签卡；卡 = 标题（ellipsis）+ 摘录（两行 clamp）+ 脚注（scope 文件名）。
+- **编辑态（开放点③采纳：唤既有编辑器、不做移动编辑器）**：头部自建「编辑/完成」钮（`.mh-memory-edit`）⇄ `body.mh-memory-editing` 切换 —— 编辑态 = 桌面原 textarea（#memory-content-input）+ Save/Cancel 原样（保存走桌面 `saveMemory` 同一 WS 路径），零新编辑器。
+- **scope seg 措辞（开放点②）**：tab 文案 =「智能体 · memory.md / 用户 · User.md」（新键 `memory.scopeAgent/scopeUser`，与 memory.js agent→memory.md / user→User.md 落盘同源）；拆层还原桌面原文。
+- **数据缝（memory.js 两处加法，桌面恒 undefined 零行为改动）**：内容面值由 WS 异步程序赋值（不触发 input 事件）→ `loadTab`/`handleMemoryData` 末尾手机层调 `window.__mhMemorySync` 钩子重切卡。
+
+### 开放点处置（v3.5 P5 四条）
+
+| 开放点 | 处置 |
+|---|---|
+| ① 条目卡按 ## 分节切【新增提案·切分规则】 | 采纳（切分规则 = ## 标题行；H1 跳过；导言无签卡；T3 断言） |
+| ② 双 scope tab 措辞 | 采纳（「智能体 · memory.md / 用户 · User.md」，与落盘文件同源） |
+| ③「编辑」唤双栏编辑器、不做移动编辑器 | 采纳（编辑态 = 桌面原 textarea 编辑器原样复用） |
+| ④ 卡脚更新时间需后端透出【新增提案】 | **不实施**（后端无 mtime 字段，不伪造；脚注仅 scope 文件名） |
+
+### 验收映射（spec → `tests/mobile-p5-memory.spec.mjs`，5/5 绿）
+
+| 样张验收点 | 实机断言 |
+|---|---|
+| §8-1 盒模型（同 P2-P4 面族口径） | T1：x=6 / 308×560 / r16 + 读态默认（卡显/textarea 隐） |
+| 开放点② scope 措辞 | T2：两 tab 文案逐字 |
+| 开放点① 分节卡 | T3：3 卡（导言+两 ## 节）标题序 + 摘录 + `memory.md` 脚注 |
+| 开放点③ 编辑切换 + 桌面保存路径 | T4：编辑⇄完成、textarea 值=夹具全文、Save → WS `saveMemory` 帧、回读态 |
+| 开放点② scope 切换 | T5：user tab → User.md 内容 + 脚注 |
+| §8-9 零 console error | 各测试双收集 = 0 |
+
+---
