@@ -162,7 +162,8 @@ object NfFileRoutes:
    */
   def nfFileRoutes(
     store: NfTicketStore,
-    policy: NfPathPolicy = NfPathPolicy.memoized()
+    policy: NfPathPolicy = NfPathPolicy.memoized(),
+    home: java.nio.file.Path = NfFilePolicy.processHome
   ): HttpRoutes[IO] = HttpRoutes.of[IO] { case req @ GET -> Root / "api" / "nf-file" =>
     val rawPath = req.params.get("path").getOrElse("")
     val ticket = req.params.get("ticket").getOrElse("")
@@ -173,7 +174,7 @@ object NfFileRoutes:
       // advertise (the ticket is an opaque bearer value, not Basic/Digest).
       IO.pure(nfText(Status.Unauthorized, "Missing 'ticket' parameter").putHeaders(cacheHeader("no-store")))
     else
-      nfFileVerdictTolerant(rawPath, policy).flatMap {
+      nfFileVerdictTolerant(rawPath, policy, home).flatMap {
         case denied: NfVerdict.Denied => IO.pure(nfDenied(denied))
         case NfVerdict.Allowed(real, _) =>
           store.verifyAndConsume(ticket, real.toString).flatMap {
@@ -248,7 +249,8 @@ object NfFileRoutes:
     tokenRef: cats.effect.Ref[IO, String],
     store: NfTicketStore,
     policy: NfPathPolicy = NfPathPolicy.memoized(),
-    sessions: GatewaySessionStore
+    sessions: GatewaySessionStore,
+    home: java.nio.file.Path = NfFilePolicy.processHome
   ): HttpRoutes[IO] = HttpRoutes.of[IO] { case req @ POST -> Root / "api" / "nf-ticket" =>
     val authorized =
       tokenRef.get.flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
@@ -271,7 +273,7 @@ object NfFileRoutes:
             store.refreshTtlFromConfig() *>
               paths
                 .traverse { p =>
-                  nfFileVerdictTolerant(p, policy).flatMap {
+                  nfFileVerdictTolerant(p, policy, home).flatMap {
                     case NfVerdict.Allowed(real, _) =>
                       store.issue(sessionId, real.toString).map { issued =>
                         Right(
