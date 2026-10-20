@@ -8,17 +8,17 @@ import io.circe.syntax.*
 /**
  * Phase 3b console-credential commands (plan §6.4):
  *
- *  - `nebflow token` / `nebflow token print` — break-glass: mint a ONE-TIME
+ *  - `stand token` / `stand token print` — break-glass: mint a ONE-TIME
  *    console ticket via the AuthAdmin face (`POST /api/auth/console-ticket`)
  *    and print it to the terminal exactly once. The ticket is the ONLY
  *    payload — the long-lived file token is never echoed (v3 :165).
- *  - `nebflow token rotate` — dual-form by design (plan §2.6/T-8-5): when the
+ *  - `stand token rotate` — dual-form by design (plan §2.6/T-8-5): when the
  *    gateway is reachable, rotate through `POST /api/auth/token/rotate`
  *    (file rewrite + in-memory swap; the old value dies on the RUNNING
  *    gateway); when it is not, rewrite auth.json locally with the SAME
  *    atomic write the gateway uses — leak containment must not depend on the
  *    gateway being alive. The new token value is NEVER printed.
- *  - `nebflow sessions revoke` — revoke console sessions (`--all`, or
+ *  - `stand sessions revoke` — revoke console sessions (`--all`, or
  *    `--id <masked-id prefix>`), via `POST /api/auth/sessions/revoke`.
  *    "Console sessions" (plural command name) is deliberately distinct from
  *    the chat `session` command (singular) and the `/api/sessions` chat
@@ -32,8 +32,8 @@ object TokenCommand extends CliCommand:
   def name = "token"
   def description = "Break-glass console ticket and gateway token rotation"
   def subcommands = List(TokenPrint, TokenRotate)
-  def examples = List("nebflow token", "nebflow token rotate", "nebflow sessions revoke --all")
-  // Bare `nebflow token` mints a ticket — print is the default subcommand.
+  def examples = List("stand token", "stand token rotate", "stand sessions revoke --all")
+  // Bare `stand token` mints a ticket — print is the default subcommand.
   override def defaultSubcommand = Some("print")
 
 /** `token print` — mint a one-time break-glass console ticket (online; a live store is the minting object). */
@@ -119,7 +119,7 @@ object SessionsCommand extends CliCommand:
   def name = "sessions"
   def description = "Console sessions (browser sign-ins): revoke them; distinct from the chat `session` command"
   def subcommands = List(SessionsRevoke)
-  def examples = List("nebflow sessions revoke --all", "nebflow sessions revoke --id 1a2b3c4d")
+  def examples = List("stand sessions revoke --all", "stand sessions revoke --id 1a2b3c4d")
 
 private[cli] object SessionsRevoke extends CliSubcommand:
   def name = "revoke"

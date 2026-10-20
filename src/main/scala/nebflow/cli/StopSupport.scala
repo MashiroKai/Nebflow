@@ -7,7 +7,7 @@ package nebflow.cli
  * The old stop face derived "the instance's port" from the CALLER's view
  * (`GatewayClient.readPort`: --port override > GATEWAY_PORT env > 8080).
  * That resolver answers "which port would I talk to", not "which port does
- * the target process serve" — a bare `nebflow stop` on a machine whose dev
+ * the target process serve" — a bare `stand stop` on a machine whose dev
  * host listens on 8080 would then poll 8080 for a foreign process and fail
  * after 65s although the target was already gone. The stop face therefore
  * asks the process itself: which TCP ports does THIS pid listen on.

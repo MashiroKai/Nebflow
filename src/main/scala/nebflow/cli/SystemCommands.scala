@@ -12,7 +12,7 @@ object HelpCommand extends CliCommand:
   def name = "help"
   def description = "Show help information"
   def subcommands = List(HelpShow)
-  def examples = List("nebflow help", "nebflow help session")
+  def examples = List("stand help", "stand help session")
 
   private object HelpShow extends CliSubcommand:
     def name = "show"
@@ -20,11 +20,11 @@ object HelpCommand extends CliCommand:
     def params = Nil
 
     def run(ctx: CliContext): IO[CliResult] =
-      // T7: the previous line said "Use 'nebflow' without arguments to show
+      // T7: the previous line said "Use 'stand' without arguments to show
       // help" — the opposite of the implementation (no arguments starts the
       // Gateway, Main.scala:47-50). Replaced with the pointer line that
       // printHelp already uses (no new wording).
-      IO.pure(CliResult.text("Use 'nebflow <command> --help' for command details"))
+      IO.pure(CliResult.text("Use 'stand <command> --help' for command details"))
 
 end HelpCommand
 
@@ -32,7 +32,7 @@ object UpdateCommand extends CliCommand:
   def name = "update"
   def description = s"Update ${nebflow.shared.Branding.productName} to the latest version"
   def subcommands = List(UpdateRun)
-  def examples = List("nebflow update", "nebflow update --beta", "nebflow update --device DESKTOP-IJBBEOT")
+  def examples = List("stand update", "stand update --beta", "stand update --device DESKTOP-IJBBEOT")
 
   private object UpdateRun extends CliSubcommand:
     def name = "run"
@@ -71,7 +71,7 @@ object UpdateCommand extends CliCommand:
       GatewayClient.create.flatMap {
         case None =>
           IO.pure(
-            CliResult.Error("Gateway not running. Start with 'nebflow start' (local gateway needed for neblink status)")
+            CliResult.Error("Gateway not running. Start with 'stand start' (local gateway needed for neblink status)")
           )
         case Some(client) =>
           // hotupdate 批 3 · G8（设计 §9:173 契约增量）：载荷**新增可选**幂等键
@@ -111,7 +111,7 @@ object UninstallCommand extends CliCommand:
   def name = "uninstall"
   def description = s"Uninstall ${nebflow.shared.Branding.productName}"
   def subcommands = List(UninstallRun)
-  def examples = List("nebflow uninstall")
+  def examples = List("stand uninstall")
 
   private object UninstallRun extends CliSubcommand:
     def name = "run"
@@ -138,7 +138,7 @@ object VersionCommand extends CliCommand:
   def name = "version"
   def description = "Show version"
   def subcommands = List(VersionShow)
-  def examples = List("nebflow version")
+  def examples = List("stand version")
 
   private object VersionShow extends CliSubcommand:
     def name = "show"
@@ -153,7 +153,7 @@ object StartCommand extends CliCommand:
   def name = "start"
   def description = "Start the Gateway server"
   def subcommands = List(StartRun)
-  def examples = List("nebflow start")
+  def examples = List("stand start")
 
   private object StartRun extends CliSubcommand:
     def name = "run"
@@ -168,7 +168,7 @@ object StopCommand extends CliCommand:
   def name = "stop"
   def description = "Stop the running Gateway"
   def subcommands = List(StopRun)
-  def examples = List("nebflow stop", "nebflow stop --force", "nebflow stop --tree")
+  def examples = List("stand stop", "stand stop --force", "stand stop --tree")
 
   private[cli] object StopRun extends CliSubcommand:
     def name = "run"
@@ -211,7 +211,7 @@ object StatusCommand extends CliCommand:
   def name = "status"
   def description = "Check if Gateway is running"
   def subcommands = List(StatusCheck)
-  def examples = List("nebflow status")
+  def examples = List("stand status")
 
   private[cli] object StatusCheck extends CliSubcommand:
     def name = "check"
@@ -288,7 +288,7 @@ object DoctorCommand extends CliCommand:
   def name = "doctor"
   def description = "Diagnose and fix environment issues"
   def subcommands = List(DoctorRun)
-  def examples = List("nebflow doctor", "nebflow doctor --fix")
+  def examples = List("stand doctor", "stand doctor --fix")
 
   private object DoctorRun extends CliSubcommand:
     def name = "check"
@@ -323,9 +323,9 @@ object DoctorCommand extends CliCommand:
           javaVer,
           if !javaOk && fix then
             fixes += "Java 21+ required — please install or update JDK (https://adoptium.net/temurin/releases/?version=21)"
-            "Java 21+ required — install JDK 21, then re-run 'nebflow doctor --fix'"
+            "Java 21+ required — install JDK 21, then re-run 'stand doctor --fix'"
           else if !javaOk then
-            "Java 21+ required — install JDK 21 (https://adoptium.net/temurin/releases/?version=21), then re-run 'nebflow doctor'"
+            "Java 21+ required — install JDK 21 (https://adoptium.net/temurin/releases/?version=21), then re-run 'stand doctor'"
           else ""
         )
 
@@ -415,16 +415,16 @@ object DoctorCommand extends CliCommand:
               "Gateway",
               false,
               "Not running (cleaned stale PID file)",
-              "Run 'nebflow start' to start"
+              "Run 'stand start' to start"
             )
           else if pidExists then
             checks += Diagnostic(
               "Gateway",
               false,
               "Not running (stale PID file)",
-              "Run with --fix to clean, or 'nebflow start'"
+              "Run with --fix to clean, or 'stand start'"
             )
-          else checks += Diagnostic("Gateway", false, "Not running", "Run 'nebflow start'")
+          else checks += Diagnostic("Gateway", false, "Not running", "Run 'stand start'")
           end if
         end if
 

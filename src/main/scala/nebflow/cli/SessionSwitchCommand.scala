@@ -5,7 +5,7 @@ import io.circe.Json
 import io.circe.syntax.*
 
 /**
- * `nebflow session switch <id>` —— 切换网关的**活动会话**。
+ * `stand session switch <id>` —— 切换网关的**活动会话**。
  *
  * 按既有会话模型：发既有 WS 词汇表的 `switchSession` 帧（WebSocketRoutes.scala:2015
  * 的 `case "switchSession"` → `SessionService.switchSession` → `SessionStore.switchSession`

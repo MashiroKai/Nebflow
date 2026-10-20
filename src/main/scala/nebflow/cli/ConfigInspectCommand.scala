@@ -6,23 +6,23 @@ import io.circe.syntax.*
 import nebflow.shared.PathUtil
 
 /**
- * `nebflow config path` + `nebflow config validate` —— **只读**两条子命令。
+ * `stand config path` + `stand config validate` —— **只读**两条子命令。
  *
- * 归属说明：两条都挂 `config` 名下（`nebflow config path|validate`），但实现放在
+ * 归属说明：两条都挂 `config` 名下（`stand config path|validate`），但实现放在
  * 本新件里，`ConfigCommand.scala` 只在其 `subcommands` / `examples` 两行做追加
  * —— 既有 `get/set/show/edit` 分支与脱敏面（`isSecretKey` / `redact`）一字未动，
  * 符合「新件优先、既有件只做必要最小改动」。
  *
  * 无写面：本件不 `os.write` / 不 `os.move` / 不建目录；损坏配置的修复面仍归
- * `nebflow doctor --fix`（SystemCommands.scala DoctorRun 的 Config 节）。
+ * `stand doctor --fix`（SystemCommands.scala DoctorRun 的 Config 节）。
  */
 
 /**
- * `nebflow config path` —— 打印生效的配置文件路径。
+ * `stand config path` —— 打印生效的配置文件路径。
  *
  * 打印的是**读路径**（`PathUtil.configJsonReadPath`，与 `ConfigEdit` 同一实现
  * —— 即本实例实际会读到的那个文件；品牌改名窗口下它可能就是 legacy 名）。
- * 文本模式只回一行，便于 `cat "$(nebflow config path)"` 这类管道用法；
+ * 文本模式只回一行，便于 `cat "$(stand config path)"` 这类管道用法；
  * 其余读数在 `--json` 面。
  */
 object ConfigPathSub extends CliSubcommand:
@@ -49,7 +49,7 @@ object ConfigPathSub extends CliSubcommand:
 end ConfigPathSub
 
 /**
- * `nebflow config validate` —— 校验配置文件「存在 / 可读 / 可解析 / 是 JSON 对象」。
+ * `stand config validate` —— 校验配置文件「存在 / 可读 / 可解析 / 是 JSON 对象」。
  *
  * 三条只读判据，逐条给读数；不修不写。退出码：0 = 合法 · 1 = 不合法（与
  * `health` 同一套「读数即退出码」的脚本消费约定）。
@@ -103,7 +103,7 @@ object ConfigValidateSub extends CliSubcommand:
         )
       else
         val mark = if valid then "✓" else "✗"
-        val hint = if valid then "" else "\n     → repair with 'nebflow doctor --fix' (this command never writes)"
+        val hint = if valid then "" else "\n     → repair with 'stand doctor --fix' (this command never writes)"
         CliResult.Exit(code, s"  $mark $path: $reason$hint")
       end if
     }

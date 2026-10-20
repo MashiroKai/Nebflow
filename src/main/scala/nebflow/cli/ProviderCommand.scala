@@ -13,14 +13,14 @@ object ProviderCommand extends CliCommand:
   // 面是因为子命令帮助的渲染器在 CliRouter（禁改面）——它只印 examples，逐行
   // 加两空格缩进；本类的文案 bytes 与已批文案逐字节一致。
   private[cli] val HelpUsageLine =
-    "nebflow provider add <name> --base-url <url> --protocol <anthropic|openai> [--model <id>]..."
+    "stand provider add <name> --base-url <url> --protocol <anthropic|openai> [--model <id>]..."
 
   private[cli] val HelpKeyLine =
     "API key: --api-key-stdin (recommended) | --api-key-file <path> | env NEBFLOW_PROVIDER_API_KEY"
 
   def examples = List(
-    "nebflow provider list",
-    "nebflow provider test anthropic",
+    "stand provider list",
+    "stand provider test anthropic",
     HelpUsageLine,
     HelpKeyLine
   )

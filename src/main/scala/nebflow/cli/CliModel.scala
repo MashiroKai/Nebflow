@@ -21,7 +21,7 @@ trait CliCommand:
 
   /**
    * Subcommand run when the command is invoked WITHOUT one (phase 3b: bare
-   * `nebflow token` mints a break-glass ticket). None = a bare invocation
+   * `stand token` mints a break-glass ticket). None = a bare invocation
    * prints the "needs a subcommand" error (the historic shape).
    */
   def defaultSubcommand: Option[String] = None
@@ -73,7 +73,7 @@ object CliResult:
 
   /**
    * Print `output` verbatim (no prefix; empty prints nothing) and exit with
-   * `code`. For machine-read stdout (`nebflow run`) where every byte of
+   * `code`. For machine-read stdout (`stand run`) where every byte of
    * output is payload and CliResult.Error's "Error:" prefix would corrupt it.
    */
   case class Exit(code: Int, output: String = "") extends CliResult

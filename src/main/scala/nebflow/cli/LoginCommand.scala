@@ -33,7 +33,7 @@ object LoginCommand extends CliCommand:
   def name = "login"
   def description = LoginCopy.SignInDesc
   def subcommands = List(LoginRun)
-  def examples = List("nebflow login", "nebflow login --device-code")
+  def examples = List("stand login", "stand login --device-code")
 
   private object LoginRun extends CliSubcommand:
     def name = "run"
@@ -52,12 +52,12 @@ object LoginCommand extends CliCommand:
 
 end LoginCommand
 
-/** `nebflow logout` —— 退出登录（本地拆除 + 删凭据），走既有 `POST /api/neblink/logout`。 */
+/** `stand logout` —— 退出登录（本地拆除 + 删凭据），走既有 `POST /api/neblink/logout`。 */
 object LogoutCommand extends CliCommand:
   def name = "logout"
   def description = LoginCopy.SignOutDesc
   def subcommands = List(LogoutRun)
-  def examples = List("nebflow logout")
+  def examples = List("stand logout")
 
   private object LogoutRun extends CliSubcommand:
     def name = "run"
@@ -69,12 +69,12 @@ object LogoutCommand extends CliCommand:
 
 end LogoutCommand
 
-/** `nebflow whoami` —— 现读登录态与设备面（既有 `GET /api/neblink/status`，只读）。 */
+/** `stand whoami` —— 现读登录态与设备面（既有 `GET /api/neblink/status`，只读）。 */
 object WhoamiCommand extends CliCommand:
   def name = "whoami"
   def description = LoginCopy.WhoamiDesc
   def subcommands = List(WhoamiShow)
-  def examples = List("nebflow whoami", "nebflow whoami --json")
+  def examples = List("stand whoami", "stand whoami --json")
 
   private object WhoamiShow extends CliSubcommand:
     def name = "show"
@@ -89,7 +89,7 @@ end WhoamiCommand
 /**
  * 全部用户面文案的**单一归属**（§16 文案闸：已批逐字只在此处出现，禁第二处副本）。
  *
- * 已批逐字 H1–H5 原样落为常量。`.description` 位 = H 行去掉 `nebflow <cmd>` 前缀与
+ * 已批逐字 H1–H5 原样落为常量。`.description` 位 = H 行去掉 `stand <cmd>` 前缀与
  * 对齐空格后的正文 —— 现 CLI 的命令表由 `CliRouter.printHelp` 渲染成
  * `"  " + name.padTo(16, ' ') + description`（`CliRouter.scala:326/330`），前缀与列宽
  * 由该件决定，而该件属 CLI 批 resident 面、本段禁改 ⇒ 可落地的逐字面 = 描述位；H 整行
@@ -100,13 +100,13 @@ private[cli] object LoginCopy:
   // ── H1 / H4 / H5：三命令帮助行（已批逐字，含对齐空格） ──────────────────────
   //
   // 对齐口径现读自作者批件原文（`.nebflow/tasks/n-4dddaea8.md:16/19/20` 与本次任务书
-  // §二逐字同源）：H1 = `nebflow ` + `login` + 24 空格（描述起始列 37）；H4 = `nebflow `
-  // + `logout` + 23 空格（同列 37）；H5 = `nebflow ` + `whoami` + 24 空格（列 38 —— 批件
+  // §二逐字同源）：H1 = `stand ` + `login` + 24 空格（描述起始列 37）；H4 = `stand `
+  // + `logout` + 23 空格（同列 37）；H5 = `stand ` + `whoami` + 24 空格（列 38 —— 批件
   // 原文如此）。🔴 本段按「逐字含空格对齐」纪律**原样保留、不自行校正**；H5 比 H1/H4
   // 多一空格这一处，在报告 §16 单列呈报（不擅自改成列 37）。
-  val H1LoginHelp = s"nebflow login                        Sign in to your ${nebflow.shared.Branding.productName} account"
-  val H4LogoutHelp = "nebflow logout                       Sign out and remove the stored device credential"
-  val H5WhoamiHelp = "nebflow whoami                        Show the signed-in account and device status"
+  val H1LoginHelp = s"stand login                        Sign in to your ${nebflow.shared.Branding.productName} account"
+  val H4LogoutHelp = "stand logout                       Sign out and remove the stored device credential"
+  val H5WhoamiHelp = "stand whoami                        Show the signed-in account and device status"
 
   // 描述位（命令注册表的 `description`；与上列 H 行的正文逐字同源）
   val SignInDesc = s"Sign in to your ${nebflow.shared.Branding.productName} account"
@@ -136,13 +136,13 @@ private[cli] object LoginCopy:
    * [[SignInFailure]] 闭集 ⇒ 稳定码随件。
    */
   def signInFailedLine(reason: String, code: String): String =
-    s"Sign-in failed: $reason (code: $code) — run 'nebflow login' to retry."
+    s"Sign-in failed: $reason (code: $code) — run 'stand login' to retry."
 
   // ── 本段新增文案（超出 H1–H5；逐条在报告 §16 清单呈报，此处集中落位） ──────
   val UnknownValue = "unknown"
   val SignedOut = "Signed out."
-  val NotSignedIn = "Not signed in. Run 'nebflow login' to sign in."
-  val GatewayRequired = "Gateway not running. Start with 'nebflow start'"
+  val NotSignedIn = "Not signed in. Run 'stand login' to sign in."
+  val GatewayRequired = "Gateway not running. Start with 'stand start'"
 
   def deviceLine(name: String, platform: String): String =
     val n = if name.nonEmpty then name else UnknownValue
@@ -368,7 +368,7 @@ private[cli] object LoginFlow:
   // ── IO 面：三命令 ────────────────────────────────────────────────────────
 
   /**
-   * `nebflow login`：设备码流（H2 提示 → 轮询 → H3 成功/失败）。
+   * `stand login`：设备码流（H2 提示 → 轮询 → H3 成功/失败）。
    *
    * 等待腿三件套（纪律 §三.2）：硬墙钟上限 = `expiresIn`；完轮即退（success / expired /
    * network-error 三出口，禁无限轮询）；心跳每轮一行的进度面走 **stderr** —— stdout 留给
@@ -445,7 +445,7 @@ private[cli] object LoginFlow:
     }
 
   /**
-   * `nebflow logout`：既有 `POST /api/neblink/logout`（本地拆除 + 删凭据 + 关 NebLink）。
+   * `stand logout`：既有 `POST /api/neblink/logout`（本地拆除 + 删凭据 + 关 NebLink）。
    * 幂等面由网关侧保证（`performLocalLogout` 每步都是「清空 / 置 false」，无凭据时照样
    * 200），CLI 侧不额外判存在性 —— 多一次读就多一个会与网关状态不一致的判据。
    */
@@ -466,7 +466,7 @@ private[cli] object LoginFlow:
     else CliResult.Error(LoginCopy.signOutFailedLine(f.reason, f.code), 1)
 
   /**
-   * `nebflow whoami`：只读既有状态面。未登录 ⇒ **exit 1 + 可行动文案**（脚本面靠退出码
+   * `stand whoami`：只读既有状态面。未登录 ⇒ **exit 1 + 可行动文案**（脚本面靠退出码
    * 判定，文案给不写脚本的人看）。
    */
   def whoami(ctx: CliContext): IO[CliResult] =

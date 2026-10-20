@@ -5,7 +5,7 @@ import io.circe.Json
 import io.circe.syntax.*
 
 /**
- * `nebflow plugin list|add|approve|revoke|unblock|enable|disable`（阶段 2b §B.3 CLI
+ * `stand plugin list|add|approve|revoke|unblock|enable|disable`（阶段 2b §B.3 CLI
  * 对等，H-14② 裁定：面板为主 + CLI 供脚本化，对齐 `claude plugin` 形态；协议符合度批
  * 补 add——§B.3 外部导入：`plugin add <git-url|本地路径>` → 落盘即生效）。
  *
@@ -28,12 +28,12 @@ object PluginCommand extends CliCommand:
   def subcommands = List(PluginList, PluginAdd, PluginApprove, PluginRevoke, PluginUnblock, PluginEnable, PluginDisable)
 
   def examples = List(
-    "nebflow plugin list",
-    "nebflow plugin add /path/to/my-plugin",
-    "nebflow plugin revoke web-research",
-    "nebflow plugin unblock web-research",
-    "nebflow plugin disable web-research",
-    "nebflow plugin enable web-research"
+    "stand plugin list",
+    "stand plugin add /path/to/my-plugin",
+    "stand plugin revoke web-research",
+    "stand plugin unblock web-research",
+    "stand plugin disable web-research",
+    "stand plugin enable web-research"
   )
 
   private object PluginList extends CliSubcommand:

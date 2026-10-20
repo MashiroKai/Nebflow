@@ -12,8 +12,8 @@ object ModelCommand extends CliCommand:
   def subcommands = List(ModelList, ModelSet)
 
   def examples = List(
-    "nebflow model list",
-    "nebflow model set anthropic/claude-sonnet-4-6"
+    "stand model list",
+    "stand model set anthropic/claude-sonnet-4-6"
   )
 
   private object ModelList extends CliSubcommand:
@@ -120,7 +120,7 @@ object ThinkingCommand extends CliCommand:
   def name = "thinking"
   def description = "Control thinking mode"
   def subcommands = List(ThinkingOn, ThinkingOff, ThinkingStatus)
-  def examples = List("nebflow thinking on", "nebflow thinking off")
+  def examples = List("stand thinking on", "stand thinking off")
 
   private object ThinkingOn extends CliSubcommand:
     def name = "on"

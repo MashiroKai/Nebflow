@@ -11,8 +11,8 @@ object McpCommand extends CliCommand:
   def subcommands = List(McpList, McpStart, McpStop, McpRestart, McpAdd, McpRemove)
 
   def examples = List(
-    "nebflow mcp list",
-    "nebflow mcp start my-server"
+    "stand mcp list",
+    "stand mcp start my-server"
   )
 
   private object McpList extends CliSubcommand:
