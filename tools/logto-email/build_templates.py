@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""Generate the four STAND Logto email templates from template_spec.json.
+
+Source of truth = template_spec.json (v2 dual-mode mapping: light face with the
+black-ink lockup, dark face with the white-ink lockup). Output is written to
+src/main/resources/web/brand/stand/email/templates/<usage>.html.
+
+Usage: python3 build_templates.py [--check]
+  --check  exit 1 if regeneration would change tracked files (drift gate).
+"""
+import argparse
+import json
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[1]
+OUT_DIR = ROOT / "src/main/resources/web/brand/stand/email/templates"
+
+# Chrome is byte-frozen: this skeleton is the hardened dual-mode body. Slots:
+# {title_tag} {preheader} {title} {lead}. All colors/lockups come from the
+# spec-driven dark branch + light inline defaults below.
+SKELETON = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+<title>@TITLE_TAG@</title>
+<style>
+  @media (prefers-color-scheme: dark) {
+    body, table.nf-bg { background-color:#101112 !important; }
+    table.nf-card { background-color:#1b1c1e !important; }
+    .nf-title { color:#f2f2f4 !important; }
+    .nf-body { color:#b9bbc2 !important; }
+    .nf-meta { color:#8f929b !important; }
+    .nf-code { color:#f2f2f4 !important; }
+    .nf-codepanel { background-color:#26272a !important; }
+    .nf-divider { background-color:#313236 !important; }
+    .nf-lockup-light { display:none !important; }
+    .nf-lockup-dark { display:inline-block !important; }
+    body { color:#f2f2f4 !important; }
+  }
+</style>
+</head>
+<body style="margin:0;padding:0;background-color:#f5f6f7;color:#141416;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">@PREHEADER@</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="nf-bg" bgcolor="#f5f6f7" style="background-color:#f5f6f7;">
+<tr><td align="center" style="padding:28px 12px;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" class="nf-card" bgcolor="#ffffff" style="width:100%;max-width:600px;background-color:#ffffff;border-radius:12px;">
+
+  <!-- Lockup: the OFFICIAL horizontal lockup as an image (the wordmark face
+       is part of the logo — never font-simulated). Light ink is the default
+       face; dark-ink variant swaps in via prefers-color-scheme. -->
+  <tr><td style="padding:30px 32px 0 32px;">
+    <img src="https://mystand.space/brand/stand/email/lockup-light.png" width="168" height="42" alt="STAND" class="nf-lockup-light" style="display:inline-block;width:168px;height:42px;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;vertical-align:middle;">
+    <img src="https://mystand.space/brand/stand/email/lockup-dark.png" width="168" height="42" alt="STAND" class="nf-lockup-dark" style="display:none;width:168px;height:42px;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;vertical-align:middle;">
+  </td></tr>
+
+  <!-- Title + lead -->
+  <tr><td style="padding:24px 32px 0 32px;">
+    <div class="nf-title" style="margin:0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;font-size:21px;font-weight:600;color:#141416;letter-spacing:-0.2px;">@TITLE@</div>
+    <p class="nf-body" style="margin:10px 0 0 0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;font-size:15px;line-height:1.75;color:#55565c;">@LEAD@</p>
+  </td></tr>
+
+  <!-- Verification code: neutral panel, 36px mono 700, clear hierarchy -->
+  <tr><td style="padding:22px 32px 0 32px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="nf-codepanel" bgcolor="#f4f5f6" style="background-color:#f4f5f6;border-radius:10px;">
+      <tr><td align="center" style="padding:26px 16px 8px 16px;">
+        <span class="nf-code" style="font-family:ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;font-size:36px;font-weight:700;letter-spacing:8px;color:#141416;">{{code}}</span>
+      </td></tr>
+      <tr><td align="center" style="padding:6px 16px 22px 16px;">
+        <span class="nf-meta" style="font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;font-size:13px;color:#6f727b;">This code expires in 10 minutes. Never share it with anyone.</span>
+      </td></tr>
+    </table>
+  </td></tr>
+
+  <!-- Security notice -->
+  <tr><td style="padding:14px 32px 0 32px;">
+    <p class="nf-meta" style="margin:0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;font-size:13px;line-height:1.7;color:#6f727b;">If you didn't request this, you can safely ignore this email.</p>
+  </td></tr>
+
+  <!-- Signature -->
+  <tr><td style="padding:26px 32px 0 32px;">
+    <p class="nf-title" style="margin:0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;font-size:14px;font-weight:500;color:#141416;">The STAND team</p>
+  </td></tr>
+
+  <!-- Divider + footer meta -->
+  <tr><td style="padding:28px 32px 32px 32px;">
+    <div class="nf-divider" style="height:1px;line-height:1px;font-size:0;background-color:#e8e9ec;">&nbsp;</div>
+    <p class="nf-meta" style="margin:16px 0 0 0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;font-size:12px;line-height:1.8;color:#6f727b;">This is an automated message from STAND. Please do not reply.<br><a href="https://mystand.space" class="nf-body" style="color:#3f4046;text-decoration:underline;">mystand.space</a> · © 2026 STAND</p>
+  </td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>
+"""
+
+
+def render(slot: dict) -> str:
+    return (SKELETON
+            .replace("@TITLE_TAG@", slot["titleTag"])
+            .replace("@PREHEADER@", slot["preheader"])
+            .replace("@TITLE@", slot["title"])
+            .replace("@LEAD@", slot["lead"]))
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--check", action="store_true")
+    a = ap.parse_args()
+    spec = json.loads((HERE / "template_spec.json").read_text())
+    drift = []
+    for t in spec["templates"]:
+        out = OUT_DIR / f"{t['usageType']}.html"
+        html = render(t)
+        if not a.check:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(html)
+            print(f"wrote {out.relative_to(ROOT)} ({len(html)} bytes)")
+        elif out.exists() and out.read_text() != html:
+            drift.append(str(out.relative_to(ROOT)))
+    if a.check:
+        if drift:
+            print("DRIFT:", *drift, sep="\n  ")
+            return 1
+        print("templates in sync with spec")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

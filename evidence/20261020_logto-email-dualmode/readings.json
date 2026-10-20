@@ -1,0 +1,32 @@
+{
+ "timestamp": "2026-10-20T20:0x-20:1x+08:00",
+ "staticGate": "231 checks 0 failed (test_email_templates.py)",
+ "renderGate": "GREEN both colorSchemes x4 templates (render_dualmode.mjs, shots-rendered/)",
+ "patch": {
+  "connector": "cmlj173ef4ho (Email/SMTP)",
+  "endpoint": "https://auth.mystand.space",
+  "driftPre": "4x content sha8 9ad94953/bb8d31ba/8191ecc3/9ad94953 -> 3bde39dd/282200d5/ddb30e5f/3bde39dd (body color pins only)",
+  "verify": "re-GET byte-equality PASS",
+  "driftPost": "zero",
+  "snapshot": "tools/logto-email/snapshots/email-connector-20261020-201005.json (0600, gitignored)"
+ },
+ "qaEmail": {
+  "api": "POST /api/auth/forgot-password/send-code",
+  "status": 200,
+  "response": {
+   "ok": true,
+   "verificationId": "9q1ky4jpwf8huxf3e5n0m"
+  },
+  "inbox": "qa-e2e@neblink.space",
+  "usage": "ForgotPassword",
+  "evidence": "qa-observe3.png + qa_send_observe.mjs"
+ },
+ "lockupAssets": {
+  "published": "2026-10-20 09:36:14/45 GMT (pre-dates this chain 19:20+08)",
+  "ink": {
+   "lockup-light": "black",
+   "lockup-dark": "white"
+  }
+ },
+ "salvage": "delegate 5b4d6ed7 / 2225dcb0: zero recoverable artifacts (branches, worktrees, dangling commits, project metadata all absent across repos); lockup publication 17:36+08 + live-correct template pairing prove the fix push landed before runner death"
+}
