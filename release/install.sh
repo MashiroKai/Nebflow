@@ -24,7 +24,7 @@ set -e
 PRODUCT_NAME=stand
 LOWER_NAME=stand
 COS_BUCKET=nebflow-releases
-HOME_DIR=.nebflow
+HOME_DIR=.stand
 CONFIG_FILE=nebflow.json
 WRAPPER_NAME=stand
 COS_BASE_CN="https://${COS_BUCKET}.oss-cn-hangzhou.aliyuncs.com"
@@ -1558,7 +1558,7 @@ setup_path() {
     elif [ -f "${HOME}/.bash_profile" ]; then
         profile="${HOME}/.bash_profile"
     fi
-    if [ -n "$profile" ] && ! grep -q "\.nebflow/bin" "$profile" 2>/dev/null; then
+    if [ -n "$profile" ] && ! grep -qF "/${HOME_DIR}/bin" "$profile" 2>/dev/null; then
         echo "" >> "$profile"
         echo "# Added by ${PRODUCT_NAME} installer" >> "$profile"
         echo "export PATH=\"\$HOME/${HOME_DIR}/bin:\$PATH\"" >> "$profile"

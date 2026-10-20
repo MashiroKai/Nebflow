@@ -194,10 +194,17 @@ object PathUtil:
           case Left(_) => workspace
 
   /**
-   * The root data directory for Nebflow state (sessions, tasks, memory, config, etc.).
-   * Override priority: CLI --home flag > <PREFIX>_HOME env var (dual-prefix
-   * read, see Branding.env) > default directory (dual-read + one-time
-   * migration, see resolveDefaultDataRoot).
+   * The root data directory for Stand state (sessions, tasks, memory, config, etc.).
+   * Override priority (数据根指向切换批, 2026-10):
+   *   1. CLI --home flag          ( setDataRoot — isolation / canary )
+   *   2. STAND_HOME env           ( first-priority env, brand prefix )
+   *   3. NEBFLOW_HOME env         ( legacy compat — old scripts / launchd
+   *                                 units keep working, read second )
+   *   4. default directory        ( ~/.stand; legacy-only machines fall back
+   *                                 to ~/.nebflow + a one-line hint, see
+   *                                 resolveDefaultDataRoot )
+   * Single point: every data-root derivation must go through this value or
+   * the Branding.homeDirName default — no scattered literals.
    */
   private var _dataRootOverride: Option[os.Path] = None
 
@@ -253,70 +260,62 @@ object PathUtil:
     else text
 
   /**
-   * Marker file placed in the LEGACY directory after a one-time migration,
-   * so a later "new dir missing + legacy present" state (user deleted the
-   * new dir) resolves to the legacy dir instead of re-migrating. Fixed
-   * name — an internal fact, not a brand value.
+   * The legacy data-root directory name, HARDCODED — it is a historical
+   * fact, not a configuration (deriving it from brand.conf would make the
+   * fallback unreachable). Single spelling source: resolveDefaultDataRoot's
+   * fallback and MemoryPaths' recognized bases both consume this — never
+   * re-spell ".nebflow" at a new call site.
    */
-  private val MigrationMarker = ".rebrand-migrated"
+  val LegacyHomeDirName: String = ".nebflow"
 
   /**
-   * Resolved default root — lazy so the (side-effecting) migration runs at
-   * most once per JVM, on first dataRoot access, thread-safely.
+   * Resolved default root — lazy so the default-resolution (existence
+   * probes + the possible legacy fallback hint) runs at most once per JVM,
+   * on first dataRoot access, thread-safely.
    */
   private lazy val resolvedDefaultRoot: os.Path =
     resolveDefaultDataRoot(os.home, Branding.homeDirName)
 
   /**
-   * Default data root resolution (L3 rebrand compat). Parameterized over
-   * home and the brand directory name so the spec can exercise rename-day
-   * behavior; production passes os.home and brand.conf homeDirName.
+   * Default data root resolution (数据根指向切换批, 2026-10). Parameterized
+   * over home and the brand directory name so the spec can exercise the
+   * switch-day behavior; production passes os.home and brand.conf
+   * homeDirName (= ".stand" since this batch).
    *
    * The legacy name ".nebflow" is HARDCODED — it is a historical fact, not
    * a configuration; deriving it from brand.conf would make the fallback
-   * unreachable. With the current brand value (homeDirName == ".nebflow")
+   * unreachable. With the legacy brand value (homeDirName == ".nebflow")
    * every branch collapses to the same directory: zero behavior change.
    *
-   * Resolution order (rename day, homeDirName == ".newbrand"):
-   *  1. same name               → use it (current value; nothing to do)
-   *  2. ~/.newbrand exists      → use it (already migrated, or fresh install
-   *                               that started on the new name)
-   *  3. ~/.nebflow missing      → use ~/.newbrand (fresh install)
-   *  4. legacy already migrated → fall back to ~/.nebflow and warn (the new
-   *    (marker present)           dir disappeared — respect the deletion,
-   *                               never re-copy over a user's rollback)
-   *  5. legacy present, no      → ONE-TIME MIGRATION: copy (not move — the
-   *     marker                    legacy tree stays intact for rollback),
-   *                               drop the marker into the legacy dir, then
-   *                               use ~/.newbrand. Any copy failure falls
-   *                               back to the legacy dir (availability over
-   *                               migration).
+   * NO in-process data migration happens here — the real migration is the
+   * external toolbox scripts/data-root-migration/ (segment 2, downtime
+   * window). The engine only picks a root; it never copies trees.
+   *
+   * Resolution order (switch day, homeDirName == ".stand"):
+   *  1. same name                → use it (legacy brand value; nothing to do)
+   *  2. ~/.stand exists          → use it (already migrated/cloned by the
+   *                                 toolbox, or a fresh install that started
+   *                                 on the new root)
+   *  3. ~/.nebflow missing       → use ~/.stand (fresh machine: no data
+   *                                 anywhere, new installs land here)
+   *  4. only legacy ~/.nebflow   → use ~/.nebflow + ONE-LINE stderr hint
+   *                                 (老机器无痛: keep serving the old root
+   *                                 until the toolbox migrates it; never
+   *                                 strand the data by silently switching
+   *                                 to an empty ~/.stand)
    */
   private[shared] def resolveDefaultDataRoot(home: os.Path, homeDirName: String): os.Path =
     val newDir = home / homeDirName
-    val legacyDir = home / ".nebflow"
+    val legacyDir = home / LegacyHomeDirName
     if newDir == legacyDir then newDir
     else if os.exists(newDir) then newDir
     else if !os.exists(legacyDir) then newDir
-    else if os.exists(legacyDir / MigrationMarker) then
+    else
       System.err.println(
-        s"[${Branding.productName}] data directory $newDir is missing but $legacyDir was already migrated; using $legacyDir"
+        s"[${Branding.productName}] data root: $newDir not found; using legacy $legacyDir " +
+          "(migrate with scripts/data-root-migration/ or set STAND_HOME to pin a root)"
       )
       legacyDir
-    else
-      try
-        os.copy(legacyDir, newDir, createFolders = true, mergeFolders = true, replaceExisting = false)
-        os.write.over(legacyDir / MigrationMarker, s"migrated to $newDir\n")
-        System.err.println(
-          s"[${Branding.productName}] migrated data directory $legacyDir -> $newDir (copied; original kept for rollback)"
-        )
-        newDir
-      catch
-        case e: Exception =>
-          System.err.println(
-            s"[${Branding.productName}] data directory migration $legacyDir -> $newDir failed (${e.getMessage}); continuing with $legacyDir"
-          )
-          legacyDir
 
     end if
 

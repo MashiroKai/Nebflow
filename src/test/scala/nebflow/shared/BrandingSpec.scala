@@ -49,7 +49,7 @@ class BrandingSpec extends FunSuite:
     assertEquals(Branding.serverUrl, "https://link.mystand.space")
     assertEquals(Branding.githubOrg, "MashiroKai")
     assertEquals(Branding.githubRepo, "Nebflow")
-    assertEquals(Branding.homeDirName, ".nebflow")
+    assertEquals(Branding.homeDirName, ".stand") // 数据根指向切换批 2026-10：默认数据根 → ~/.stand
     assertEquals(Branding.envPrefix, "STAND")
     assertEquals(Branding.cosBucket, "nebflow-releases")
     assertEquals(Branding.subsystemName, "neblink")

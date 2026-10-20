@@ -12,15 +12,21 @@
   </appender>
 
   <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
-    <!-- #36: honor NEBFLOW_HOME (isolated instances / canary) so their FILE
-         logs land in their own data root instead of the host's. Falls back
-         to the default data root when unset. -->
-    <file>${NEBFLOW_HOME:-${user.home}/.nebflow}/logs/stand.log</file>
+    <!-- #36: honor STAND_HOME (first priority) / NEBFLOW_HOME (legacy compat)
+         so isolated instances' / canaries' FILE logs land in their own data
+         root instead of the host's. Falls back to the default data root
+         (~/.stand) when unset. NOTE: the engine's Main.run bridges the
+         RESOLVED data root into the NEBFLOW_HOME system property before any
+         logger starts, so the default branch here is only reached by
+         non-Main JVMs (tests); the legacy-only fallback root (~/.nebflow)
+         also travels via that bridge — logs never diverge from the data
+         root. -->
+    <file>${STAND_HOME:-${NEBFLOW_HOME:-${user.home}/.stand}}/logs/stand.log</file>
     <encoder>
       <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %replace(%msg){'\x1B\[[0-9;]*m', ''}%n</pattern>
     </encoder>
     <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-      <fileNamePattern>${NEBFLOW_HOME:-${user.home}/.nebflow}/logs/stand.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+      <fileNamePattern>${STAND_HOME:-${NEBFLOW_HOME:-${user.home}/.stand}}/logs/stand.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
       <maxHistory>7</maxHistory>
       <totalSizeCap>200MB</totalSizeCap>
       <maxFileSize>50MB</maxFileSize>

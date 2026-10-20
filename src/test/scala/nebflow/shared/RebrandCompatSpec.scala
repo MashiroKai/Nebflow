@@ -3,18 +3,20 @@ package nebflow.shared
 import munit.FunSuite
 
 /**
- * L3 rebrand compat spec (batch 3, 2026-08-17). The compat layer's contract:
- * every legacy name (".nebflow" dir, NEBFLOW_ env prefix, "nebflow.json"
- * config file) is HARDCODED as the fallback and never derived from
- * brand.conf — so with the current brand values every dual-read collapses
- * to a single lookup and the whole layer no-ops. On rename day the new
- * names (from brand.conf) take priority and the legacy values keep old
- * data, old env scripts and old config files working.
+ * L3 rebrand compat spec (batch 3, 2026-08-17) + 数据根指向切换批 (2026-10).
+ * The compat layer's contract: every legacy name (".nebflow" dir, NEBFLOW_
+ * env prefix, "nebflow.json" config file) is HARDCODED as the fallback and
+ * never derived from brand.conf. Since the 2026-10 batch the LIVE brand
+ * values are the switched ones (homeDirName = ".stand", envPrefix = STAND):
+ *   - env tiers: STAND_HOME (first) > NEBFLOW_HOME (legacy compat);
+ *   - default root: ~/.stand; legacy-only machines stay on ~/.nebflow with
+ *     a one-line hint; NO in-process migration (the real migration is the
+ *     external scripts/data-root-migration/ toolbox, downtime window).
  *
- * The rename-day branches cannot be exercised through the live Branding
+ * The switched-day branches cannot be exercised through the live Branding
  * vals (compile-time constants from brand.conf), so each dual-read has a
  * parameterized pure core (resolveDefaultDataRoot / dualEnv /
- * resolveConfigJson) that this spec drives with rename-day values.
+ * resolveConfigJson) that this spec drives with switch-day values.
  */
 class RebrandCompatSpec extends FunSuite:
 
@@ -37,6 +39,19 @@ class RebrandCompatSpec extends FunSuite:
 
   test("dualEnv: neither prefix set → None (caller default applies)") {
     assertEquals(Branding.dualEnv(Map.empty, "NEBLINK", "HOME"), None)
+  }
+
+  // 数据根指向切换批：env 两档用**真实前缀**钉死（作者令②③）
+  test("dualEnv: STAND_HOME (第一优先级) wins over legacy NEBFLOW_HOME; NEBFLOW_HOME alone still honored") {
+    assertEquals(
+      Branding.dualEnv(Map("STAND_HOME" -> "/new-root", "NEBFLOW_HOME" -> "/legacy-root"), "STAND", "HOME"),
+      Some("/new-root")
+    )
+    assertEquals(
+      Branding.dualEnv(Map("NEBFLOW_HOME" -> "/legacy-root"), "STAND", "HOME"),
+      Some("/legacy-root"),
+      "现役实例显式带 NEBFLOW_HOME=~/.nebflow —— legacy 兼容读取必须继续认它"
+    )
   }
 
   // ── PathUtil.resolveConfigJson ───────────────────────────────────────────
@@ -73,55 +88,79 @@ class RebrandCompatSpec extends FunSuite:
   }
 
   // ── PathUtil.resolveDefaultDataRoot ──────────────────────────────────────
+  //
+  // 数据根指向切换批（2026-10）：默认根源码级改为 ~/.stand，进程内零迁移 ——
+  // 真迁移在外部工具箱 scripts/data-root-migration/（段二，停机窗执行）。
+  // 分支表（作者令④）：
+  //   ① ~/.stand 存在                 → 用它（工具箱已克隆 / 新装已落新根）
+  //   ② 仅剩旧 ~/.nebflow             → 用旧根 + 一行 stderr 提示（老机器无痛）
+  //   ③ 两者皆无（新装机器/新用户）    → 用 ~/.stand（默认落新根）
+  //   ④ homeDirName == 旧名（.nebflow）→ 各分支塌缩为同目录，零行为变
+  // env 优先级（作者令②③）由 Branding.dualEnv 纯核钉：STAND_HOME > NEBFLOW_HOME。
+  // 每分支至少一例（质量闸「四分支各一例」）。
 
-  test("resolveDefaultDataRoot: current dir name collapses to ~/.nebflow") {
+  test("resolveDefaultDataRoot: ④ legacy brand value (.nebflow) collapses to itself") {
     val home = os.temp.dir(prefix = "rebrand-home")
     assertEquals(PathUtil.resolveDefaultDataRoot(home, ".nebflow"), home / ".nebflow")
   }
 
-  test("resolveDefaultDataRoot: fresh install on rename day starts on the new dir") {
-    val home = os.temp.dir(prefix = "rebrand-home") // no .nebflow, no .newbrand
-    assertEquals(PathUtil.resolveDefaultDataRoot(home, ".newbrand"), home / ".newbrand")
-  }
-
-  test("resolveDefaultDataRoot: new dir present wins (already migrated)") {
+  test("resolveDefaultDataRoot: ① ~/.stand present wins (toolbox-cloned or fresh-on-new-root)") {
     val home = os.temp.dir(prefix = "rebrand-home")
-    os.makeDir.all(home / ".newbrand")
+    os.makeDir.all(home / ".stand")
     os.makeDir.all(home / ".nebflow")
-    assertEquals(PathUtil.resolveDefaultDataRoot(home, ".newbrand"), home / ".newbrand")
+    assertEquals(PathUtil.resolveDefaultDataRoot(home, ".stand"), home / ".stand")
   }
 
-  test("resolveDefaultDataRoot: legacy present triggers ONE-TIME copy migration with marker") {
-    val home = os.temp.dir(prefix = "rebrand-home")
-    val legacy = home / ".nebflow"
-    os.write.over(legacy / "sessions" / "s1.json", "{}", createFolders = true)
-    os.write.over(legacy / "auth.json", "\"token\"")
-
-    val resolved = PathUtil.resolveDefaultDataRoot(home, ".newbrand")
-
-    // resolved to the new dir
-    assertEquals(resolved, home / ".newbrand")
-    // COPY not move: legacy tree intact (rollback safety)
-    assert(os.exists(legacy / "sessions" / "s1.json"))
-    assert(os.exists(legacy / "auth.json"))
-    // marker written into the legacy dir
-    assert(os.exists(legacy / ".rebrand-migrated"))
-    // data actually present in the new tree
-    assert(os.exists(home / ".newbrand" / "sessions" / "s1.json"))
-    assert(os.read(home / ".newbrand" / "auth.json") == "\"token\"")
-
-    // second resolution: new dir now exists → direct hit, no re-migration
-    assertEquals(PathUtil.resolveDefaultDataRoot(home, ".newbrand"), home / ".newbrand")
+  test("resolveDefaultDataRoot: ③ neither dir exists (fresh machine) → lands on ~/.stand") {
+    val home = os.temp.dir(prefix = "rebrand-home") // no .stand, no .nebflow
+    assertEquals(PathUtil.resolveDefaultDataRoot(home, ".stand"), home / ".stand")
   }
 
-  test("resolveDefaultDataRoot: marker present + new dir deleted → fall back to legacy, no re-copy") {
+  test("resolveDefaultDataRoot: ② only legacy ~/.nebflow → legacy root + ONE-LINE hint, zero copy") {
     val home = os.temp.dir(prefix = "rebrand-home")
     val legacy = home / ".nebflow"
     os.write.over(legacy / "auth.json", "\"token\"", createFolders = true)
-    os.write.over(legacy / ".rebrand-migrated", "migrated to somewhere\n")
-    // new dir absent (user deleted it — respect the deletion)
+    os.write.over(legacy / "sessions" / "s1.json", "{}", createFolders = true)
 
-    assertEquals(PathUtil.resolveDefaultDataRoot(home, ".newbrand"), legacy)
+    val err = new java.io.ByteArrayOutputStream
+    val resolved =
+      val prevErr = System.err
+      System.setErr(new java.io.PrintStream(err, true))
+      try PathUtil.resolveDefaultDataRoot(home, ".stand")
+      finally System.setErr(prevErr)
+
+    // resolved to the LEGACY root (老机器无痛)
+    assertEquals(resolved, legacy)
+    // exactly ONE stderr line, actionable (names both roots + the toolbox)
+    val lines = err.toString.linesIterator.filter(_.trim.nonEmpty).toList
+    assertEquals(lines.length, 1, s"hint must be a single line, got: $lines")
+    assert(lines.head.contains(legacy.toString), s"hint must name the legacy root: ${lines.head}")
+    assert(lines.head.contains((home / ".stand").toString), s"hint must name the new root: ${lines.head}")
+    // 进程内零迁移：legacy 树原样（不被改写），新根不被创建，无 marker 落盘
+    assert(os.read(legacy / "auth.json") == "\"token\"", "legacy tree must stay untouched")
+    assert(!os.exists(home / ".stand"), "engine must not create/migrate the new root in-process")
+    assert(!os.exists(legacy / ".rebrand-migrated"), "migration marker is retired with the copy path")
+
+    // 幂等：第二次解析仍落 legacy，行为不漂移
+    assertEquals(PathUtil.resolveDefaultDataRoot(home, ".stand"), legacy)
+  }
+
+  test("resolveDefaultDataRoot: ② toolbox-cloned ~/.stand + legacy present → ~/.stand wins, no hint") {
+    // 段二执行后的本机形态：~/.stand 已克隆（含数据），旧根仍在。
+    val home = os.temp.dir(prefix = "rebrand-home")
+    os.write.over((home / ".stand") / "auth.json", "\"cloned\"", createFolders = true)
+    os.write.over((home / ".nebflow") / "auth.json", "\"legacy\"", createFolders = true)
+
+    val err = new java.io.ByteArrayOutputStream
+    val resolved =
+      val prevErr = System.err
+      System.setErr(new java.io.PrintStream(err, true))
+      try PathUtil.resolveDefaultDataRoot(home, ".stand")
+      finally System.setErr(prevErr)
+
+    assertEquals(resolved, home / ".stand")
+    assertEquals(err.toString.trim, "", "direct hit must stay silent (no hint)")
+    assert(os.read((home / ".stand") / "auth.json") == "\"cloned\"")
   }
 
   // ── Branding install-script companions ───────────────────────────────────

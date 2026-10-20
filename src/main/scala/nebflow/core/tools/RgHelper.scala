@@ -9,10 +9,12 @@ import scala.collection.mutable.StringBuilder
  * Shared helpers for running ripgrep (rg) subprocesses.
  * Used by GrepTool and GlobTool to avoid duplicating process management and output limiting logic.
  *
- * rg is expected to be installed by the nebflow install script (install.sh/ps1)
- * to ~/.nebflow/bin/rg (or rg.exe on Windows). Falls back to PATH lookup and,
- * after it, to curated well-known prefixes (launchd/systemd service contexts
- * run with a minimal PATH that strips the login shell's entries).
+ * rg is expected to be installed by the install script (install.sh/ps1) to
+ * <home>/<homeDirName>/bin/rg (~/.stand/bin/rg since the data-root switch;
+ * legacy installs keep ~/.nebflow/bin/rg — both positions probed, see
+ * rgLocalPaths). Falls back to PATH lookup and, after it, to curated
+ * well-known prefixes (launchd/systemd service contexts run with a minimal
+ * PATH that strips the login shell's entries).
  */
 object RgHelper:
 
@@ -25,8 +27,25 @@ object RgHelper:
 
   private val rgBinName: String = if isWindows then "rg.exe" else "rg"
 
-  private val rgLocalPath: String =
-    sys.props("user.home") + File.separator + ".nebflow" + File.separator + "bin" + File.separator + rgBinName
+  /**
+   * Local install positions of rg, probed in order (数据根指向切换批, 2026-10):
+   *   1. <user.home>/<brand.homeDirName>/bin — the default data-root bin
+   *      (install.sh HOME_DIR = brand.conf homeDirName, now ~/.stand/bin);
+   *   2. <user.home>/.nebflow/bin — the hardcoded LEGACY position (old
+   *      installs keep working until they re-run the installer).
+   * Both are the literal-home install layout (NOT PathUtil.dataRoot): an
+   * isolated instance (--home /tmp/...) has no installer-seeded bin of its
+   * own, so it must still find the host's rg here. Equal when the brand dir
+   * is the legacy name → single probe (dedup).
+   * `def` on purpose: derived at call time like the rest of the render layer.
+   */
+  private def rgLocalPaths: List[String] =
+    List(
+      sys.props(
+        "user.home"
+      ) + File.separator + nebflow.shared.Branding.homeDirName + File.separator + "bin" + File.separator + rgBinName,
+      sys.props("user.home") + File.separator + ".nebflow" + File.separator + "bin" + File.separator + rgBinName
+    ).distinct
 
   private val rgWinInstallPath: Option[String] =
     if isWindows then
@@ -49,16 +68,16 @@ object RgHelper:
 
   /**
    * Resolve rg path: bundled app-dir copy → PATH lookup → curated well-known
-   * prefixes → local nebflow bin (~/.nebflow/bin) → Windows install dir. The
-   * bundled copy (msi payload <install>\app\rg.exe, staged by
-   * packaging/build-msi.sh) wins for determinism — pinned version, tested
-   * with the release.
+   * prefixes → local bin (~/.stand/bin, then legacy ~/.nebflow/bin) →
+   * Windows install dir. The bundled copy (msi payload <install>\app\rg.exe,
+   * staged by packaging/build-msi.sh) wins for determinism — pinned version,
+   * tested with the release.
    */
   private def resolveRgPath: Option[String] =
     resolveRgPathFrom(
       pathEnv = sys.env.getOrElse("PATH", ""),
       probeDirs = curatedProbeDirs,
-      localPath = rgLocalPath,
+      localPaths = rgLocalPaths,
       winInstall = rgWinInstallPath
     )
 
@@ -70,7 +89,7 @@ object RgHelper:
   private[tools] def resolveRgPathFrom(
     pathEnv: String,
     probeDirs: List[String],
-    localPath: String,
+    localPaths: List[String],
     winInstall: Option[String]
   ): Option[String] =
     val fromBundled = nebflow.core.InstallLayout.bundledRg
@@ -86,8 +105,11 @@ object RgHelper:
       .map(d => new File(d, rgBinName))
       .find(_.isFile)
       .map(_.getAbsolutePath)
-    // 3. Local nebflow bin (macOS/Linux: ~/.nebflow/bin/rg)
-    val fromCache = Some(new File(localPath)).filter(_.isFile).map(_.getAbsolutePath)
+    // 3. Local bin (macOS/Linux: ~/.stand/bin/rg, legacy ~/.nebflow/bin/rg)
+    val fromCache = localPaths.iterator
+      .map(p => new File(p))
+      .find(_.isFile)
+      .map(_.getAbsolutePath)
     // 4. Windows install dir (%LOCALAPPDATA%\Nebflow\rg.exe)
     val fromWinInstall = winInstall.flatMap(p => Some(new File(p)).filter(_.isFile).map(_.getAbsolutePath))
     fromBundled.orElse(fromPath).orElse(fromProbe).orElse(fromCache).orElse(fromWinInstall)
