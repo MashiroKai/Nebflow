@@ -353,10 +353,20 @@
   <!-- Column resizer — drag to adjust main / canvas widths (only when canvas open) -->
   <div class="col-resizer" data-left="main" data-right="canvas"></div>
 
-  <!-- Canvas Panel — generic display container (画板) -->
+  <!-- Canvas Panel — generic display container (画板).
+       叠卡批（canvas-stack v5 落地）：桌面态标签行退役 → 常态头只留居中标题
+       （.canvas-title，兼作叠卡前卡的卡顶名称条）；标签条/关闭钮 DOM 保留
+       （数据模型与移动层仍引用），桌面由 split.css 隐藏。 -->
   <div id="canvas-panel">
     <div id="canvas-slide">
       <div class="canvas-header">
+        <div class="canvas-title" id="canvas-title">
+          <span class="t-inner">
+            <span class="t-icon" id="canvas-title-icon"></span>
+            <span class="t-dot"></span>
+            <span class="t-name" id="canvas-title-name"></span>
+          </span>
+        </div>
         <div class="canvas-tab-bar" id="canvas-tab-bar"></div>
         <button id="canvas-close-btn" class="canvas-close-btn" title="Close">
           <i data-lucide="x"></i>
