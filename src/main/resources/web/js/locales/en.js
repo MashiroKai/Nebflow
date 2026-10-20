@@ -1490,6 +1490,7 @@ export default {
   'bg.stuck': 'No output for 10+ min',
   'bg.lines': '{count} lines',
   'bg.header': 'Background tasks · {count}',
+  'bg.sectionAgents': 'Sub-agents',
   'bg.empty': 'No background tasks running',
   'bg.kind.local': 'local',
   'bg.kind.remote': 'remote',

@@ -456,14 +456,18 @@ body.mobile-layer .mh-scrim.open {
   to { opacity: 1; }
 }
 body.mobile-layer .mh-morph-anim {
-  animation: mhMorphOpen var(--mh-ms, 680ms) cubic-bezier(0.3, 1.36, 0.45, 1) forwards;
+  /* !important：morph 系统是这些类的唯一属主 —— 任何带 ID 的面板规则
+     （如 reminder.css `#reminder-panel.open{animation:…}`，(1,1,0)）都以
+     ID 压过本规则 (0,1,1)，会把挂上的动画名遮成 none（实测僵尸终态：
+     类在场、动画零注册、settle 守护超时）。 */
+  animation: mhMorphOpen var(--mh-ms, 680ms) cubic-bezier(0.3, 1.36, 0.45, 1) forwards !important;
   transform-origin: 0 0;
 }
 body.mobile-layer .mh-morph-anim > * {
-  animation: mhMorphFade 0.32s ease 0.24s backwards;
+  animation: mhMorphFade 0.32s ease 0.24s backwards !important;
 }
 body.mobile-layer .mh-morph-close {
-  animation: mhMorphClose var(--mh-ms, 420ms) cubic-bezier(0.4, 0, 0.72, 0.24) forwards;
+  animation: mhMorphClose var(--mh-ms, 420ms) cubic-bezier(0.4, 0, 0.72, 0.24) forwards !important;
   transform-origin: 0 0;
   pointer-events: none;
 }
@@ -685,22 +689,13 @@ body.mobile-layer .mh-tpanel .tp-mem-more {
   to { transform: rotate(360deg); }
 }
 
-/* ── v3 面板族几何：顶挂（morph 自各键）＋ 内容面恒全宽（走廊退役）──── */
-/* 心跳/后台/智能体三面板：桌面为 header 锚定右上角下拉 —— v3 改顶挂（悬浮层
-   正下方，morph 起点即各键圆钮位置）。（心跳已迁出本族 → P4 精确 308×560，
-   见下方专节。） */
-body.mobile-layer #bg-dropdown,
+/* ── v3 面板族几何：顶挂（morph 自各键）＋ 内容面恒全宽（走廊退役）────
+   （后台/智能体两下拉已迁出本族 → P6 合并面板见下方专节。） */
+/* P6 归并（bgStatusFace.js）：子智能体下拉手机层整面退场 —— 列表节点已
+   re-parent 进 #bg-dropdown 合并载体，幽灵面恒不可见（display:none 防桌面
+   任何解隐路径落地）。 */
 body.mobile-layer #bgagent-dropdown {
-  position: fixed;
-  top: calc(58px + env(safe-area-inset-top, 0px));
-  bottom: auto;
-  left: 6px;
-  right: auto;
-  width: min(316px, calc(100vw - 24px));
-  min-width: 0;
-  max-width: none;
-  max-height: min(60vh, calc(100dvh - 160px));
-  border-radius: 16px;
+  display: none !important;
 }
 /* 心跳配置浮层（daemonPanel.js 注入样式 + JS 内联定位）：!important 压内联，
    v3 顶挂同款。 */
@@ -861,6 +856,14 @@ body.mobile-layer #reminder-panel {
   display: flex; /* 桌面块流 + max-height 裁切 → 固定高下 header/body 纵向 flex，body 自滚 */
   flex-direction: column;
 }
+/* 桌面开合动画（reminder.css `#reminder-panel.open{animation:reminderPanelIn}`，
+   特异性 (1,1,0) 压过 morph 系统的 `body.mobile-layer .mh-morph-anim` (0,2,1)）
+   在手机层退场：v3⑤ 起开面动画归 floatController/morphIn 的二级液态独占 ——
+   否则 morphIn 挂的动画名被桌面名遮蔽，animationend 语义错位（实测留下
+   「有 mh-morph-anim 类而无动画」的僵尸终态，settle 守护超时）。 */
+body.mobile-layer #reminder-panel.open {
+  animation: none;
+}
 /* 分组签（tp-grp 同族值：11px / 0.06em / muted）。 */
 body.mobile-layer .mh-rd-grp {
   font-size: 11px;
@@ -922,6 +925,36 @@ body.mobile-layer .mh-daemon-foot {
   line-height: 1.5;
   color: var(--color-frame-text-muted, #98a2b3);
 }
+
+/* ── P6 运行状态：两下拉合并面板（mobile-secondary-screens 实施批）────
+   样张 v3.5 P6 + 开放点①「与桌面两下拉的归并（移动单面板）、子智能体并入」
+   按设计批推荐采纳：载体 = #bg-dropdown 精确顶挂 308×560；#bgagent-dropdown
+   幽灵面退场（上方专节），其列表节点由 bgStatusFace.js 收编进载体（分组签
+   「后台任务 / 智能体」= .mh-rd-grp 同族）。行结构（状态点 + 状态词六档 +
+   origin/kind chip + 行数 + 时长）与取消/输出卡 = 桌面既有零重造。 */
+/* 几何只挂 :not(.hidden) —— chat.css `#bg-dropdown.hidden{display:none}` 是
+   开合唯一真源（桌面同一路径），手机层 display:flex 不得压过它。 */
+body.mobile-layer #bg-dropdown:not(.hidden) {
+  position: fixed;
+  top: calc(58px + env(safe-area-inset-top, 0px));
+  left: 6px;
+  right: auto;
+  width: min(308px, calc(100vw - 24px));
+  height: min(560px, calc(100dvh - 130px));
+  max-height: none;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+}
+body.mobile-layer #bg-dropdown .bg-dropdown-header {
+  flex: none;
+}
+body.mobile-layer #bg-dropdown .bg-dropdown-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+body.mobile-layer #bg-dropdown [hidden] { display: none; }
 
 /* ── P5 记忆：读态卡 + 编辑态切换（mobile-secondary-screens 实施批）────
    样张 v3.5 P5：顶挂 308×560；读态 = 「## 标题」分节条目卡（标题 + 摘录两行

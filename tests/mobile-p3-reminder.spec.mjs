@@ -135,13 +135,26 @@ let harness = null;
 test('T1 panel geometry: top-hung 308×560, left 6, radius 16', async ({ page }) => {
   const errors = watchErrors(page);
   await openPanel(page);
-  const box = await page.locator('#reminder-panel').boundingBox();
-  expect(box).toBeTruthy();
-  expect(box.x).toBe(6);
-  expect(box.width).toBe(308);
-  expect(box.height).toBe(560);
-  const radius = await page.locator('#reminder-panel').evaluate((el) => getComputedStyle(el).borderRadius);
-  expect(radius).toBe('16px');
+  // 终态几何双读 poll（同 P6 T1 口径）：spring 过冲穿越 + faceMo 晚重放
+  // 都可能让单次采样踩进形变中段 —— 相隔 120ms 两次全等 ∧ transform 归位。
+  const geo = () => page.evaluate(() => {
+    const m = document.getElementById('reminder-panel');
+    const snap = () => {
+      const r = m.getBoundingClientRect();
+      return JSON.stringify({
+        x: r.x, w: Math.round(r.width), h: Math.round(r.height),
+        radius: getComputedStyle(m).borderRadius, tf: getComputedStyle(m).transform,
+      });
+    };
+    const a = snap();
+    return new Promise((resolve) => setTimeout(() => {
+      const b = snap();
+      resolve(a === b ? JSON.parse(b) : { x: NaN });
+    }, 120));
+  });
+  await expect.poll(geo, { timeout: 8000 }).toEqual({
+    x: 6, w: 308, h: 560, radius: '16px', tf: 'none',
+  });
   expect(errors).toEqual([]);
 });
 
@@ -149,7 +162,9 @@ test('T2 three groups in order: 即将触发 → 已超时 → 已停用, disabl
   const errors = watchErrors(page);
   await openPanel(page);
 
-  const labels = await page.locator('.mh-rd-grp').allTextContents();
+  // 限定 #reminder-panel：P6 起 .mh-rd-grp 亦用于 bg-dropdown 的「智能体」
+  // 分组签（站内同族语言），全局选择器会跨面板误捞。
+  const labels = await page.locator('#reminder-panel .mh-rd-grp').allTextContents();
   expect(labels).toEqual(['即将触发 · 4', '已超时 · 1', '已停用 · 1']);
 
   // 组序：行在其组签之后、已停用行整体垫底。

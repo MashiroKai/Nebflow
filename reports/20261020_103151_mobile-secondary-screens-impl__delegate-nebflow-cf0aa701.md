@@ -150,3 +150,35 @@
 | §8-9 零 console error | 各测试双收集 = 0 |
 
 ---
+## P6 运行状态（后台任务 + 子智能体合并面板）— 已实施
+
+### 落地面
+
+- **两下拉归并（开放点①采纳：移动单面板、子智能体并入）**：载体 = `#bg-dropdown`（后台任务面板，P6 精确 `left:6 / top:58+safe / 308×560 / r16` + 面族 surface）；`#bgagent-dropdown` 手机层整面 `display:none`（幽灵面），其**列表节点**由 `bgStatusFace.js` re-parent 进载体（navController adoptPane 同款：appendChild = move，监听随节点走，`renderBgAgentDropdown` 面内重渲照常命中）。载体桌面头（`bg-dropdown-header`「后台任务 · N」活计数）即第一分组题，收编列表前一枚「智能体」分组签（`.mh-rd-grp` 站内小写字号语言同 P3）—— 不另设「后台任务」签（与桌面头逐字重复）。拆层 teardown 原位归还。
+- **bgagent 键（capture 拦截）**：`bgStatusFace.js` 在 document capture 拦 `#bgagent-indicator` 点击（stopPropagation + preventDefault —— 桌面对幽灵面的元素级 toggle 不落地），语义 = 载体开（自键圆钮 160ms 二级液态 morphIn，floatController PANEL_FACE 已改指 `#bg-dropdown`，可见判据仍读幽灵面 hidden 翻转）。**拦截 handler 无内部奇偶态**（恒自 classList 读态），无漂移。bg 键路径零改动（桌面自身 toggle 载体）。
+- **收口语义 = 桌面同源**：手机层键列在键击后自动收回（floatController collapseDDs），键不可二连击；点面板外（含重开键列的 hd 点按）→ 桌面既有 document bubble outside-close 收载体。零新增开合路径。
+- **行结构零重造**：状态点 + 状态词六档（running/idle/stuck/cancelling/failed/done，卡死阈值 idle>10min 桌面既有）+ origin chip + 本地·远程 kind chip + 行数 + 时长 + 取消钮 + 输出卡 = `renderBgDropdown`/`renderBgAgentDropdown` 原样。
+- **CSS（mobileLayer.css）**：`#bgagent-dropdown` 幽灵面退场（既有专节）；P6 专节 = `#bg-dropdown` 精确几何（**只挂 `:not(.hidden)`** —— chat.css `#bg-dropdown.hidden{display:none}` 是开合唯一真源，手机层 display:flex 不得压过它）；morph 系统规则（`.mh-morph-anim/.mh-morph-close`）**animation 加 !important** —— morph 类是手机层唯一属主，任何带 ID 的面板规则（reminder.css `#reminder-panel.open{animation:…}`，(1,1,0)）都以 ID 压过 (0,1,1)，把挂上的动画名遮成 none（实测僵尸终态：类在场、动画零注册）；`#reminder-panel.open{animation:none}` 桌面开合动画在手机层退场（morph 未起窗内的桌面闪现一并消除）。
+- **i18n**：`bg.sectionAgents`（智能体/Sub-agents）唯一新键；首分组题复用桌面头活计数文案，无新增。
+- **数据面零后端**：WS `activeBgTasks` 快照 + `state.sessionBgAgents` 直种（spec 夹具），零 sbt。
+
+### 开放点处置（v3.5 P6 四条）
+
+| 开放点 | 处置 |
+|---|---|
+| ① 与桌面两下拉归并（移动单面板）、子智能体并入 | 采纳（列表节点收编 + 分组签 + 键 capture 拦截；幽灵面退场） |
+| ② 状态词六档 + 卡死阈值沿用 | 采纳（桌面既有六档/阈值零改动；T2 断言含「超过 10 分钟无输出」档） |
+| ③ 资源占用条【新增提案】 | **不实施**（后端无 CPU/内存/网络字段，不伪造） |
+| ④ 远程任务 chip | 采纳（`.bg-task-kind` 本地·远程，bg.kind.remote；T2 断言） |
+
+### 验收映射（spec → `tests/mobile-p6-bgstatus.spec.mjs`，4/4 绿）
+
+| 样张验收点 | 实机断言 |
+|---|---|
+| §8-1 盒模型（面族口径） | T1：双读 poll 终态 x=6 / 308×560 / r16 + transform 归位 + 幽灵面 display:none |
+| 行字段（开放点②④沿用） | T2：3 行状态词/origin/kind chip/行数/时长逐字 + 分组题（桌面头「后台任务 · 3」+「智能体」签） |
+| 开放点① 归并 | T3：bgagent 键开载体（幽灵面不落地）+ 收编列表 identity（父=载体）+ outside-close 收口 + 再开保持收编 |
+| 计数 0 自动收（桌面既有） | T4：推空快照 → 载体自动 hidden |
+| §8-9 零 console error | 各测试双收集 = 0 |
+
+---

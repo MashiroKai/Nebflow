@@ -1435,6 +1435,7 @@ export default {
   'bg.stuck': '超过 10 分钟无输出',
   'bg.lines': '{count}行',
   'bg.header': '后台任务 · {count}',
+  'bg.sectionAgents': '智能体',
   'bg.empty': '当前无运行中的后台任务',
   'bg.kind.local': '本地',
   'bg.kind.remote': '远程',

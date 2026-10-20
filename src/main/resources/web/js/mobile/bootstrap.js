@@ -49,7 +49,7 @@ async function activate() {
     //（锚点归还需要列壳仍在场），nav 最后拆（pane 归还在手势解绑之后）。
     // mobile-secondary-screens 批：面板手机面控制器（P2 起逐屏）随 floats
     // 之后激活（只追加自有节点/写缝，不搬移列键），拆除紧随 tFloats。
-    const [header, layout, gestures, floats, nav, searchFace, daemonFace, memoryFace] = await Promise.all([
+    const [header, layout, gestures, floats, nav, searchFace, daemonFace, memoryFace, bgStatusFace] = await Promise.all([
       import('./headerController.js'),
       import('./layoutController.js'),
       import('./canvasGestures.js'),
@@ -58,6 +58,7 @@ async function activate() {
       import('./searchFace.js'),
       import('./daemonFace.js'),
       import('./memoryFace.js'),
+      import('./bgStatusFace.js'),
     ]);
     if (!active) return; // 激活期间已跨越回桌面 —— 直接拆除
     const navTeardown = nav.activateNav();
@@ -68,7 +69,8 @@ async function activate() {
     const tSearchFace = searchFace.activateSearchFace();
     const tDaemonFace = daemonFace.activateDaemonFace();
     const tMemoryFace = memoryFace.activateMemoryFace();
-    teardowns = [tFloats, tSearchFace, tDaemonFace, tMemoryFace, tGestures, tLayout, tHeader, navTeardown];
+    const tBgStatusFace = bgStatusFace.activateBgStatusFace();
+    teardowns = [tFloats, tSearchFace, tDaemonFace, tMemoryFace, tBgStatusFace, tGestures, tLayout, tHeader, navTeardown];
   } catch (err) {
     // 控制器加载失败：回到桌面形态（宁可退回可用桌面，不可半挂层）。
     console.error('[mobile-layer] activate failed', err);

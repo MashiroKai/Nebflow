@@ -33,14 +33,17 @@ import { logEvent, touchLayer } from './navController.js';
 const FLOAT_IDS = ['search-btn', 'bg-indicator', 'bgagent-indicator', 'reminder-btn', 'daemon-btn', 'memory-btn'];
 const PENDING_ASKS_ID = 'pending-asks-indicator';
 
-/** 键 → 面板载体（morph 目标）与「可见」判据。 */
+/** 键 → 面板载体（morph 目标）与「可见」判据。
+ *  P6 归并（mobile-secondary-screens 实施批）：bgagent 键的 morph 载体改指
+ *  #bg-dropdown（合并面板，bgStatusFace.js 押回幽灵面 + 解隐载体；列表节点
+ *  已收编进载体），可见判据仍读 bgagent-dropdown 的 hidden 翻转。 */
 const PANEL_FACE = [
   { keyId: 'search-btn', panel: () => document.getElementById('search-modal'), visible: () => document.getElementById('search-overlay')?.classList.contains('on') === true },
   { keyId: 'memory-btn', panel: () => document.getElementById('memory-modal'), visible: () => document.getElementById('memory-overlay')?.classList.contains('on') === true },
   { keyId: 'reminder-btn', panel: () => document.getElementById('reminder-panel'), visible: () => document.getElementById('reminder-panel')?.classList.contains('open') === true },
   { keyId: 'daemon-btn', panel: () => document.getElementById('daemon-panel'), visible: () => document.getElementById('daemon-panel')?.classList.contains('open') === true },
   { keyId: 'bg-indicator', panel: () => document.getElementById('bg-dropdown'), visible: () => document.getElementById('bg-dropdown')?.classList.contains('hidden') === false },
-  { keyId: 'bgagent-indicator', panel: () => document.getElementById('bgagent-dropdown'), visible: () => document.getElementById('bgagent-dropdown')?.classList.contains('hidden') === false },
+  { keyId: 'bgagent-indicator', panel: () => document.getElementById('bg-dropdown'), visible: () => document.getElementById('bgagent-dropdown')?.classList.contains('hidden') === false },
 ];
 
 /** @type {{id:string, parent:Node, next:Node|null}[]} 归还锚点。 */

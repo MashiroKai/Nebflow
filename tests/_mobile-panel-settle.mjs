@@ -37,5 +37,5 @@ export async function settlePanel(page, { overlaySel, panelSel, openClass = 'on'
     if (finiteRunning) return false;
     const tf = getComputedStyle(m).transform;
     return tf === 'none' || tf === 'matrix(1, 0, 0, 1, 0, 0)';
-  }, { ps: panelSel }, { timeout: 5000 });
+  }, { ps: panelSel }, { timeout: 8000 });
 }
