@@ -659,6 +659,11 @@ export default {
   // f1-send-queue (2026-10-19): pending-mark tooltip for offline-queued bubbles + queue overflow toast.
   'chat.pendingSend': 'Pending - auto-resends on reconnect',
   'input.queueOverflow': 'Message queue full (100): oldest message dropped',
+  // qattachvault (2026-10-21): explicit failed state for lost attachment payloads —
+  // no silent loss: auto-send stops, bar note + red ! bubble mark + toast; recall and
+  // re-add the file to resend.
+  'input.queueAttachLost': 'Attachment file was lost (not saved before the page refreshed) — auto-send stopped. Recall it, re-add the file, then send',
+  'input.queueAttachLostShort': 'Attachment lost · cannot auto-send',
   'input.pasteTooLarge': 'Pasted content too large (>300KB) - inserted as plain text instead',
   'input.removeQueued': 'Remove',
   // fwdguard-impl (2026-09-17): gate hint for an empty-text + ref-only (forwarded)

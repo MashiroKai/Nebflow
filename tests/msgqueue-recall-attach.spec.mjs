@@ -401,9 +401,9 @@ test('J3+J4 往返幂等：入队(带附件)→撤回→再入队 集合与顺�
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// J6 · 刷新盲区不静默（persistQueue 剥离 payload 后的项）
+// J6 · 刷新盲区两腿（qattachvault 批更新：载荷库命中 = 常态回补；库丢 = 不静默）
 // ═══════════════════════════════════════════════════════════════════════════
-test('J6 刷新盲区不静默：persistQueue 剥离后的项撤回 ⇒ 必须可判读（console.warn）+ 元数据不丢', async ({ page }) => {
+test('J6 刷新盲区：库命中 ⇒ 撤回回补完整字节（无告警）；库丢失 ⇒ 可判读告警 + 元数据不丢', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
   const warns = collectWarns(page);
@@ -412,7 +412,8 @@ test('J6 刷新盲区不静默：persistQueue 剥离后的项撤回 ⇒ 必须�
   const enq = await enqueueViaSend(page, 'MQ-RECALL-REFRESH', [ATT_IMG]);
   expect(enq.enqueued).toStrictEqual([ATT_IMG]);
 
-  // 刷新等价动作：persistQueue 已在入队时执行过；restoreQueue 重新读回 = 刷新后内存态
+  // 刷新等价动作（qattachvault 版）：persistQueue 已在入队时执行过；restoreQueue 重新
+  // 读回骨架 + hydrateQueueFromVault 从载荷库灌回字节 = 刷新后内存态。
   const restoredPremise = await page.evaluate(async (sid) => {
     window.__MQ_SID = sid;
     const state = (await import('/js/state.js')).default;
@@ -420,31 +421,65 @@ test('J6 刷新盲区不静默：persistQueue 剥离后的项撤回 ⇒ 必须�
     input.persistQueue();
     const raw = localStorage.getItem(Object.keys(localStorage).find((k) => k.includes('message_queue')));
     input.restoreQueue();
+    await input.hydrateQueueFromVault();
     const it = state.messageQueue[sid][0];
     return { raw, item: JSON.parse(JSON.stringify(it)) };
   }, SID);
 
-  // 前提断言：data/preview 确已被剥离（若此断言红 = 夹具前提失效，非修复面问题）
+  // 前提断言（库命中常态）：localStorage 面「剥离照旧」（载荷不落 localStorage）；
+  // 内存面「字节回补」（水合灌回 = qattachvault 上半句）。
   expect(restoredPremise.raw, '前提：persistQueue 必须已写入 localStorage 队列快照').toBeTruthy();
+  expect(restoredPremise.raw, '前提（既有取舍不变）：localStorage 面不落 base64 载荷').not.toContain(B64_PNG);
   expect(restoredPremise.item.attachments.length).toBe(1);
-  expect(restoredPremise.item.attachments[0].preview, '前提：preview 已被 persistQueue 剥离').toBeUndefined();
-  expect(restoredPremise.item.attachments[0].data, '前提：data 已被 persistQueue 剥离').toBeUndefined();
+  expect(restoredPremise.item.attachments[0].preview, 'qattachvault：水合 ⇒ preview 重建').toBe(PREVIEW_PNG);
+  expect(restoredPremise.item.attachments[0].data, 'qattachvault：水合 ⇒ data 回补').toBe(B64_PNG);
   expect(restoredPremise.item.attachments[0].name).toBe('recall-a.png');
 
+  // J6a：库命中 ⇒ 撤回 = 原样回补（可重发），无「载荷丢失」告警。
   const qid = restoredPremise.item.id;
   warns.length = 0;
   await clickRecall(page, qid);
-  const after = await readRecallState(page);
-  const w = recallWarns(warns);
-
-  // J6：必须给可判读提示（本批允许 = console.warn；🔴 未新增任何 locale key）
+  let after = await readRecallState(page);
+  let w = recallWarns(warns);
   expect(w.some((t) => t.includes('lost their payload to page-refresh persistence')),
-    'J6: 剥离项撤回必须有可判读告警').toBe(true);
-  expect(w.some((t) => t.includes('restored 1 attachment(s)')), 'J6: 同时必须有恢复计数告警').toBe(true);
+    'J6a: 载荷已回补 ⇒ 不得再报「载荷丢失」告警').toBe(false);
+  expect(w.some((t) => t.includes('restored 1 attachment(s)')), 'J6a: 恢复计数告警照旧').toBe(true);
+  expect(after.pending.length).toBe(1);
+  expect(after.pending[0].data, 'J6a: 回填件带完整字节 —— 撤回即原样可重发').toBe(B64_PNG);
+  expect(after.pending[0].preview).toBe(PREVIEW_PNG);
+  expect(after.domTotal).toBeGreaterThanOrEqual(1);
+
+  // J6b：库丢失腿（wipe 模拟真丢：IDB 被清/写失败/隐私模式）⇒ 撤回必须可判读。
+  const enq2 = await enqueueViaSend(page, 'MQ-RECALL-REFRESH-LOST', [ATT_IMG]);
+  await page.evaluate(async () => { await (await import('/js/queueVault.js')).wipe(); });
+  await page.evaluate(async (sid) => {
+    const state = (await import('/js/state.js')).default;
+    const input = await import('/js/input.js');
+    input.persistQueue();
+    input.restoreQueue();
+    await input.hydrateQueueFromVault();
+  }, SID);
+  const lostPremise = await page.evaluate(async ({ sid, itemId }) => {
+    const state = (await import('/js/state.js')).default;
+    const it = (state.messageQueue[sid] || []).find((i) => i.id === itemId);
+    return it ? JSON.parse(JSON.stringify(it)) : null;
+  }, { sid: SID, itemId: enq2.itemId });
+  expect(lostPremise, 'J6b 前提：项在队').not.toBeNull();
+  expect(lostPremise.attachments[0].data, 'J6b 前提：库已清 ⇒ 字节不回补').toBeUndefined();
+  expect(lostPremise.attachments[0].preview, 'J6b 前提：preview 不回补').toBeUndefined();
+  expect(lostPremise.attachments[0].stripped, 'J6b 前提：stripped 保留 = 载荷已失判据').toBe(true);
+
+  warns.length = 0;
+  await clickRecall(page, enq2.itemId);
+  after = await readRecallState(page);
+  w = recallWarns(warns);
+  expect(w.some((t) => t.includes('lost their payload to page-refresh persistence')),
+    'J6b: 库丢失撤回必须有可判读告警（stripped 标记权威支）').toBe(true);
+  expect(w.some((t) => t.includes('restored 1 attachment(s)')), 'J6b: 同时必须有恢复计数告警').toBe(true);
   // 且不得静默：元数据（name）仍回落输入框 ⇒ 用户看得见「有个同名附件待补」
   expect(after.pending.length).toBe(1);
   expect(after.pending[0].name).toBe('recall-a.png');
-  expect(after.domFiles, 'J6: 无 preview 的项回落 .att-file（chat.js:2496 else 分支）').toBe(1);
+  expect(after.domFiles, 'J6b: 无 preview 的项回落 .att-file（chat.js:2496 else 分支）').toBe(1);
   expect(after.domFileNames.join('|')).toContain('recall-a.png');
 
   expect(pageErrors).toEqual([]);

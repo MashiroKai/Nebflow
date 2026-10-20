@@ -65,9 +65,14 @@ export function renderQueueBar(sessionId, handlers = {}) {
   // Items
   items.forEach((item) => {
     const row = document.createElement('div');
-    row.className = 'queue-item';
+    row.className = 'queue-item' + (item.failed ? ' failed' : '');
     row.dataset.queueId = item.id;
     row.draggable = true;
+    // qattachvault：失败项挂机器可读钩（QA 断言面）+ 失败原因码。
+    if (item.failed) {
+      row.dataset.queueFailed = '1';
+      row.dataset.queueFailCode = item.failCode || 'failed';
+    }
 
     // Drag handle (grip icon)
     const grip = document.createElement('span');
@@ -157,17 +162,29 @@ export function renderQueueBar(sessionId, handlers = {}) {
 	      row.appendChild(attEl);
 	    }
 
+    // qattachvault：载荷丢失失败项 → 失败注记行 + 「立即发送」退场（对失败项再点
+    // 只会重复拒绝）；撤回（回输入框重编、重新添加附件）与移除仍可达 = 可重传入口。
+    if (item.failed) {
+      const note = document.createElement('span');
+      note.className = 'queue-item-failed-note';
+      note.textContent = t('input.queueAttachLostShort');
+      note.title = t('input.queueAttachLost');
+      row.appendChild(note);
+    }
+
     const actions = document.createElement('div');
     actions.className = 'queue-item-actions';
 
-    const immBtn = document.createElement('button');
-    immBtn.className = 'queue-item-btn immediate';
-    immBtn.textContent = t('input.sendImmediate') || '立即发送';
-    immBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      handlers.onImmediate?.(item);
-    });
-    actions.appendChild(immBtn);
+    if (!item.failed) {
+      const immBtn = document.createElement('button');
+      immBtn.className = 'queue-item-btn immediate';
+      immBtn.textContent = t('input.sendImmediate') || '立即发送';
+      immBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        handlers.onImmediate?.(item);
+      });
+      actions.appendChild(immBtn);
+    }
 
     const recallBtn = document.createElement('button');
     recallBtn.className = 'queue-item-btn recall';

@@ -26,6 +26,13 @@ import { voiceEnabled, voiceOrbEnabled } from './featureFlags.js';
 import { showToast } from './modal.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+// qattachvault 批（2026-10-21）：消息队列附件**载荷库**（IndexedDB）——入队写字节、
+// 刷新后水合灌回、派发闸拒绝空心帧（失败可见可重传）。叶子模块（queueVault → branding）。
+import {
+  available as vaultAvailable, queueVaultKey, put as vaultPut, get as vaultGet,
+  del as vaultDel, keys as vaultKeys,
+} from './queueVault.js';
+
 // @-mention project autocomplete (mention-routing batch; mention-cn 2026-09-27):
 // '@' opens the mounted-projects popup unless the character right before it is
 // an ASCII letter/digit (email-like 'foo@' never triggers) — whitespace, line
@@ -204,6 +211,21 @@ export function send(resendId) {
       saveInputDraft(v.sessionId);
       setTimeout(() => { v.isSending = false; }, 300);
       return;
+    }
+  }
+  // qattachvault 派发闸（直发腿）：撤回回填的「载荷已失」附件（stripped/存量 image
+  // 骨架且无 data）不允许再出空心帧（= 服务端 path:null 形态）。就地剔除 + 可判读
+  // 提示 —— 撤回腿的 toast 已说过一次；这里拦的是「不理会提示直接重发」的残余面。
+  // 禁静默：剔除可见。判据与 lostPayloadAttsOf 同律（image 结构兜底同款）。
+  {
+    const hollow = (v.pendingAttachments || []).filter(a => a && a.type !== 'taskRef' && a.type !== 'ref'
+      && !(typeof a.data === 'string' && a.data.length > 0)
+      && (a.stripped === true || (a.type === 'image' && !a.hash)));
+    if (hollow.length > 0) {
+      v.pendingAttachments = v.pendingAttachments.filter(a => !hollow.includes(a));
+      renderAttachmentPreview({ attPreviewEl: v.dom.attPreview, attachments: v.pendingAttachments });
+      showAttError(t('messages.queueAttachUnrecoverable', { n: hollow.length }));
+      console.warn('[send] dropped ' + hollow.length + ' stripped attachment(s) with no recoverable payload');
     }
   }
   // Empty input — just ignore (同 id 重发放行：文本走登记表兜底)
@@ -432,6 +454,9 @@ export function persistQueue() {
         mode: it.mode || null,
         // resend-dedup 批：幂等键随队列项跨刷新存活（drain 腿同 id 复用的前提）。
         clientMessageId: it.clientMessageId || null,
+        // qattachvault 批：载荷丢失的显式失败态随队列跨刷新存活（刷新后失败面不丢）。
+        failed: it.failed === true,
+        failCode: it.failCode || null,
         // f1-send-queue：offline 标记随队列跨刷新存活（重连补发的拣选面）。
         // rendered 刻意**不落盘**——刷新后乐观气泡不在场，恢复项按未渲染走
         // （派发时活跃视图补渲），否则刷新后永远等不到翻面、气泡也永远不会出现。
@@ -491,7 +516,146 @@ export function restoreQueue() {
         refreshQueue(sid);
       }
     }
+    // qattachvault：骨架落位后立即水合载荷库（字节灌回内存项）；boot 时 WS 尚未连接，
+    // 派发闸（flushOfflineQueue 等）一律 `afterQueueHydration` 挂在水合之后 ⇒ 无竞态。
+    void hydrateQueueFromVault();
   } catch (e) { /* corrupt data — ignore */ }
+}
+
+// ── qattachvault：队列附件载荷库（IndexedDB）——字节跨刷新存活 + 空心帧派发闸 ──────
+// 缺陷链（file:line）：选图（input/attachments.js addFileAttachment ⇒ {type:'image',
+// data,preview}）→ WS 未开 enqueueOfflineMessage / LLM 忙 queueMessage（内存全量）
+// → persistQueue 把 image 剥成 {type,name,mimeType,hash:'',size:0,stripped:true}
+// （data/preview 不落任何介质）→ 刷新 restoreQueue 骨架**替换**内存态 ⇒ 字节永久丢
+// → 三条派发腿（dispatchOfflineItem / sendImmediate / drainMessageQueue）帧映射
+// `data: a.data` = undefined ⇒ JSON 丢键 ⇒ 服务端 WebSocketRoutes.scala:1621
+// （image 落 uploads 需 data.nonEmpty）不成立 ⇒ 零字节落盘 ⇒ ui.json 落 path:null
+// ⇒ 消息已送达、图片从未落盘 ⇒ 接收面永远「媒体加载失败」。
+// 修复两半：
+//   ① 字节持久化：入队即把载荷写载荷库；刷新后水合灌回 ⇒ 派发帧带全量 data ⇒
+//      服务端落 uploads ⇒ path 真值（「消息可见 ⇒ 文件可落盘」）；
+//   ② 派发闸：水合后仍缺载荷的项（库被清/写失败/IDB 不可用 = 真丢）⇒ **拒绝出线**，
+//      标 failed（队列条失败样式 + 气泡小标翻红 ! + toast 可判读）；后续项不被楔死，
+//      用户撤回重编重新添加附件 = 可重传。🔴 禁静默、禁发空心帧（path:null）。
+
+/** 项内「载荷已失」附件（权威判据 = stripped 标记 + 水合后仍无 data；B+C 批口径）。
+ *  结构兜底（只对 image）：stripped 标记上线**之前**持久化的存量骨架没有标记，
+ *  而 image 附件的唯一生产者（input/attachments.js addFileAttachment）恒带 data、
+ *  恒不带 hash ⇒ 队列项里的 image 无 data = 必然是丢字节的骨架（大文件 text 腿
+ *  靠 hash 服务端解析，不在兜底内，禁误伤）。 */
+function lostPayloadAttsOf(item) {
+  return (item.attachments || []).filter(a => a && a.type !== 'taskRef' && a.type !== 'ref'
+    && !(typeof a.data === 'string' && a.data.length > 0)
+    && (a.stripped === true || (a.type === 'image' && !a.hash)));
+}
+
+/** 入队点：把项内真载荷写进载荷库（fire-and-forget；写失败 ⇒ 跨刷新水合不中 ⇒
+ *  派发闸兜底显式失败，不静默）。只写 `data`（preview = data 的 dataURL 包装，
+ *  水合时按 mimeType 重建，不双写）。 */
+function vaultItemPayloads(sid, item) {
+  (item.attachments || []).forEach((a, idx) => {
+    if (a && typeof a.data === 'string' && a.data.length > 0
+        && a.type !== 'taskRef' && a.type !== 'ref') {
+      void vaultPut(queueVaultKey(sid, item.id, idx), a.data);
+    }
+  });
+}
+
+/** 项离队（派发成功/移除/撤回/溢出）⇒ 载荷库对应键清账（fire-and-forget）。 */
+function purgeVaultItem(sid, item) {
+  if (!item) return;
+  const n = Array.isArray(item.attachments) ? item.attachments.length : 0;
+  for (let idx = 0; idx < n; idx += 1) void vaultDel(queueVaultKey(sid, item.id, idx));
+}
+
+/** @type {Promise<void>|null} 水合链（restoreQueue 触发首趟；派发闸与测试可 await
+ *  最新一趟 —— 每次调用都追加一趟并串行化，页内二次刷新等价动作也能拿到新水合）。 */
+let queueHydration = null;
+
+/** 刷新后把载荷库字节灌回队列项（stripped ⇒ 命中：data 回补 + image preview 重建 +
+ *  摘 stripped；不命中：保留 stripped ⇒ 派发闸拒发）。末尾清孤儿键（deleteSession/
+ *  损坏恢复/溢出丢最旧的残余）。多次调用 = 多趟串行（幂等读，返回最新一趟）。 */
+export function hydrateQueueFromVault() {
+  const run = async () => {
+    let touched = false;
+    for (const [sid, items] of Object.entries(state.messageQueue)) {
+      if (!Array.isArray(items)) continue;
+      for (const item of items) {
+        const atts = Array.isArray(item.attachments) ? item.attachments : [];
+        for (let idx = 0; idx < atts.length; idx += 1) {
+          const a = atts[idx];
+          if (!a || a.stripped !== true) continue;
+          if (typeof a.data === 'string' && a.data.length > 0) { delete a.stripped; continue; }
+          let bytes = null;
+          try { bytes = await vaultGet(queueVaultKey(sid, item.id, idx)); } catch { bytes = null; }
+          if (typeof bytes === 'string' && bytes.length > 0) {
+            a.data = bytes;
+            delete a.stripped;
+            if (a.type === 'image' && !a.preview) {
+              a.preview = 'data:' + (a.mimeType || 'image/jpeg') + ';base64,' + bytes;
+            }
+            touched = true;
+          }
+          // 不命中 ⇒ stripped 保留：派发闸据此显式失败（禁静默、禁空心帧）。
+        }
+      }
+    }
+    if (touched) {
+      for (const sid of Object.keys(state.messageQueue)) refreshQueue(sid);
+    }
+    // 孤儿清扫：队列里已无对应项的键删除（载荷库与 localStorage 队列是两套账，
+    // 队列项被移除/溢出/会话删除时 localStorage 已清，此处收齐 IDB 侧的尾巴）。
+    if (vaultAvailable()) {
+      try {
+        const valid = new Set();
+        for (const [sid, items] of Object.entries(state.messageQueue)) {
+          for (const item of (items || [])) {
+            const n = Array.isArray(item.attachments) ? item.attachments.length : 0;
+            for (let idx = 0; idx < n; idx += 1) valid.add(queueVaultKey(sid, item.id, idx));
+          }
+        }
+        const all = await vaultKeys();
+        await Promise.all(all.filter(k => !valid.has(k)).map(k => vaultDel(k)));
+      } catch { /* 清扫失败不影响水合结果 */ }
+    }
+  };
+  queueHydration = (queueHydration || Promise.resolve()).then(run, run);
+  return queueHydration;
+}
+
+/** 派发闸的统一入口：动作体挂在水合完成之后（boot 竞态面 = 首连 flush 先于水合）。 */
+function afterQueueHydration(fn) {
+  (queueHydration || Promise.resolve()).then(fn, fn);
+}
+
+/** 载荷丢失项的**显式失败态**（qattachvault ②）：队列条失败样式 + 在场气泡小标翻
+ *  红 ! + 可判读 toast；项留队（撤回/移除入口 = 可重传面），failed 随 persistQueue
+ *  落盘 ⇒ 跨刷新失败面不丢。后续派发腿按 `!it.failed` 跳过（不楔死队列）。 */
+function markQueueItemPayloadLost(sid, item) {
+  if (!item || item.failed) return;
+  item.failed = true;
+  item.failCode = 'payload_lost';
+  persistQueue();
+  refreshQueue(sid); // 原始键（Object.entries 形态，与 dispatch 腿 refreshQueue 同律）
+  // 气泡腿：在场 ⇒ 待送达小标原地改型为失败标（!）；不在场（刷新后）⇒ 队列条
+  // 失败态即唯一失败面（materializeOfflineBubbles 只登记已派发项 ⇒ 不会补渲假送达）。
+  if (item.clientMessageId) {
+    const mapped = sid === 'null' ? null : sid;
+    const view = (mapped && findViewBySessionId(mapped)) || activeView;
+    const row = view?.dom?.chat?.querySelector(`.row.user[data-msg-id="${item.clientMessageId}"]`);
+    const mark = row && row.querySelector('.msg-pending-mark');
+    if (mark) {
+      mark.classList.remove('msg-pending-mark');
+      mark.classList.add('msg-failed-mark');
+      mark.title = t('input.queueAttachLost');
+      mark.setAttribute('aria-label', t('input.queueAttachLost'));
+      mark.textContent = '!';
+    }
+  }
+  if (!item.failNotified) {
+    item.failNotified = true; // 内存态即可：跨刷新后气泡已不在场，toast 随失败标一次性给出
+    try { showToast(t('input.queueAttachLost'), 'error'); } catch { /* toast 面失败不阻断 */ }
+  }
 }
 
 /** Helper: re-render the queue bar for a session with standard handlers. */
@@ -533,9 +697,13 @@ function queueMessage(view, text, attachments, skillName, mode, extra) {
     console.warn('[input] queue overflow (cap ' + QUEUE_CAP + ') — dropped oldest item #' + (dropped && dropped.id));
     showToast(t('input.queueOverflow'), 'error');
     if (dropped && dropped.rendered) removeOfflineBubble(sid, dropped.clientMessageId);
+    if (dropped) purgeVaultItem(sid, dropped); // qattachvault：被丢项的载荷一并清账
   }
   refreshQueue(sid);
   persistQueue();
+  // qattachvault：入队即落字节（载荷库 IndexedDB）——「消息可见 ⇒ 文件可落盘」的
+  // 上半句；跨刷新后由 hydrateQueueFromVault 灌回，水合不中由派发闸显式失败兜底。
+  vaultItemPayloads(sid, item);
   // f1-send-queue：返回项 = 调用方取入队钉死的 clientMessageId（离线腿挂气泡用）。
   return item;
 }
@@ -632,18 +800,24 @@ function materializeOfflineBubbles(sid, historyMsgs) {
   if (historyMsgs !== undefined) offlineDeliveredPendingUI.delete(sid);
 }
 
-/** 重连（含首连）后补发全部 offline 标记项（ws.js onopen 回调注册点在本簇尾）。 */
+/** 重连（含首连）后补发全部 offline 标记项（ws.js onopen 回调注册点在本簇尾）。
+ *  qattachvault：动作体挂在水合完成之后（boot 首连 flush 可能先于水合 ⇒ 抢跑会把
+ *  尚未灌回字节的项误判成「载荷丢失」）；failed 项跳过（显式失败态，不楔死队列）。 */
 export function flushOfflineQueue() {
-  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
-  for (const [sid, items] of Object.entries(state.messageQueue)) {
-    if (!Array.isArray(items) || items.length === 0) continue;
-    // 每轮重新 find：dispatchOfflineItem 成功即出队，find 自然前进；失败（ws 中途
-    // 又断）⇒ 留队并整体停轮（保序，剩余项留待下次 open）。
-    let item;
-    while ((item = items.find(it => it && it.offline))) {
-      if (!dispatchOfflineItem(sid === 'null' ? null : sid, item)) return;
+  afterQueueHydration(() => {
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+    for (const [sid, items] of Object.entries(state.messageQueue)) {
+      if (!Array.isArray(items) || items.length === 0) continue;
+      // 每轮重新 find：dispatchOfflineItem 成功即出队，find 自然前进；失败（ws 中途
+      // 又断）⇒ 留队并整体停轮（保序，剩余项留待下次 open）。failed（载荷丢失，终态）
+      // 同律跳过 —— 已有显式失败面，再派发只会重复拒绝。
+      let item;
+      while ((item = items.find(it => it && it.offline && !it.failed))) {
+        if (lostPayloadAttsOf(item).length > 0) { markQueueItemPayloadLost(sid, item); continue; }
+        if (!dispatchOfflineItem(sid === 'null' ? null : sid, item)) return;
+      }
     }
-  }
+  });
 }
 
 /** 单条离线项的真派发台（真人派发点 ⑤）。帧形与 drainMessageQueue 普通支逐字同构。 */
@@ -673,6 +847,7 @@ function dispatchOfflineItem(sid, item) {
   if (q) { const idx = q.indexOf(item); if (idx >= 0) q.splice(idx, 1); }
   refreshQueue(sid);
   persistQueue();
+  purgeVaultItem(sid, item); // qattachvault：载荷已随帧出线 ⇒ 载荷库清账
   // 呈现面：行还在（同页命、未被整替）⇒ 原地摘小标翻已送达态；登记进
   // offlineDeliveredPendingUI 由 materializeOfflineBubbles 兜底最终态（S6 整替窗口）。
   flipOfflineMark(sid, clientMessageId);
@@ -727,6 +902,12 @@ function sendImmediate(sessionId, item) {
   const q0 = state.messageQueue[sessionId];
   if (!q0 || !q0.includes(item)) {
     console.warn('[input] sendImmediate: item already dispatched — skip');
+    return;
+  }
+  // qattachvault 派发闸：载荷丢失（水合不中）⇒ 拒绝出线（空心帧 = path:null 形态，
+  // 禁发）。显式失败态就地给出；项留队，撤回重编 = 可重传。
+  if (lostPayloadAttsOf(item).length > 0) {
+    markQueueItemPayloadLost(sessionId, item);
     return;
   }
   const taskRefs = (item.attachments || []).filter(a => a.type === 'taskRef');
@@ -802,6 +983,7 @@ function sendImmediate(sessionId, item) {
   }
   refreshQueue(sessionId);
   persistQueue();
+  purgeVaultItem(sessionId, item); // qattachvault：载荷已随帧出线 ⇒ 载荷库清账
 }
 
 function removeQueuedItem(sessionId, item) {
@@ -813,6 +995,7 @@ function removeQueuedItem(sessionId, item) {
   if (item.rendered) removeOfflineBubble(sessionId, item.clientMessageId);
   refreshQueue(sessionId);
   persistQueue();
+  purgeVaultItem(sessionId, item); // qattachvault：项已离队 ⇒ 载荷库清账
 }
 
 /** Recall a queued item back to the input box for editing, removing it from the queue. */
@@ -826,6 +1009,7 @@ function recallQueuedItem(sessionId, item) {
   if (item.rendered) removeOfflineBubble(sessionId, item.clientMessageId);
   refreshQueue(sessionId);
   persistQueue();
+  purgeVaultItem(sessionId, item); // qattachvault：项已离队（回输入框重编）⇒ 载荷库清账
 
   // Put text back into the input box
   const view = findViewBySessionId(sessionId);
@@ -890,18 +1074,33 @@ function recallQueuedItem(sessionId, item) {
 
 /** Called on 'done' event — send first queued message as normal UserInput.
  *  Works even when the session isn't currently displayed (view is null):
- *  DOM operations are skipped, but the WS message is still sent. */
+ *  DOM operations are skipped, but the WS message is still sent.
+ *  qattachvault：动作体挂在水合完成之后（boot 后立刻 done 的竞态面）；failed
+ *  （载荷丢失终态）项跳过 —— 不楔死队列，其余项照常 drain。 */
 export function drainMessageQueue(sessionId) {
+  afterQueueHydration(() => drainMessageQueueNow(sessionId));
+}
+
+function drainMessageQueueNow(sessionId) {
   const q = state.messageQueue[sessionId];
   if (!q || q.length === 0) return false;
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return false;
-  const item = q[0];
+  const item = q.find(it => !it.failed);
+  if (!item) return false;
+  // qattachvault 派发闸：载荷丢失（水合不中）⇒ 拒绝出线（空心帧 = path:null 形态，
+  // 禁发）。显式失败态就地给出；项留队，撤回重编 = 可重传。
+  if (lostPayloadAttsOf(item).length > 0) {
+    markQueueItemPayloadLost(sessionId, item);
+    return false;
+  }
   const view = findViewBySessionId(sessionId);
 
   // Remove from queue
-  q.shift();
+  const itemIdx = q.indexOf(item);
+  if (itemIdx >= 0) q.splice(itemIdx, 1);
   refreshQueue(sessionId);
   persistQueue();
+  purgeVaultItem(sessionId, item); // qattachvault：载荷已随帧出线 ⇒ 载荷库清账
 
   // Render in chat (only if this session is the active view)
   // f1-send-queue：rendered 项（离线入队的乐观气泡已在场）零新增呈现 —— 摘掉
