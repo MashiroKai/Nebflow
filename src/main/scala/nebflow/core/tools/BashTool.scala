@@ -1,6 +1,6 @@
 package nebflow.core.tools
 
-import cats.effect.{Fiber, IO}
+import cats.effect.{Fiber, IO, Ref}
 import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.actor.{AgentCommand, AgentState}
@@ -325,6 +325,61 @@ Git safety:
       case (pattern, msg) if pattern.findFirstIn(command).isDefined => msg
     }
 
+  // ── sleep-poll 禁令批 B 段：护栏状态与生产面（判据单点 = SleepPollGuard）──
+
+  /**
+   * 会话级 sleep-poll 计数表（键 = sessionId）。进程内存态——护栏是行为矫正
+   * 面，重启归零无碍（LoopGuard counters 同哲学）。
+   */
+  private val sleepPollCounts: Ref[IO, Map[String, SleepPollGuard.State]] = Ref.unsafe(Map.empty)
+
+  /**
+   * sleep-poll 护栏包裹（B 段生产面）：判定（含计数落账）→ 分发。
+   *   - WarnExecute：命令照常执行，回执首部附警告+指导文案；
+   *   - Reject：**不执行**，先升级面板可见帧（taskStuck/action=sleep-poll，
+     *     既有 TERMINAL 帧族，main.js 按 sessionId 标注子代理行）再拒绝。
+   */
+  private def sleepPollGate(sessionId: String, commandText: String, ctx: ToolContext)(
+    execute: IO[Either[ToolError, String]]
+  ): IO[Either[ToolError, String]] =
+    sleepPollCounts.modify { m =>
+      val prev = m.getOrElse(sessionId, SleepPollGuard.State())
+      SleepPollGuard.decide(commandText, prev, System.currentTimeMillis()) match
+        case SleepPollGuard.Verdict.Pass => (m, None)
+        case SleepPollGuard.Verdict.WarnExecute(next, secs) => (m.updated(sessionId, next), Some((next.count, secs, false)))
+        case SleepPollGuard.Verdict.Reject(next, secs) => (m.updated(sessionId, next), Some((next.count, secs, true)))
+    }.flatMap {
+      case None => execute
+      case Some((count, secs, isReject)) =>
+        if isReject then
+          escalateSleepPoll(ctx, sessionId, count, secs).as(
+            Left(ToolError(SleepPollGuard.rejectionText(count, secs)))
+          )
+        else
+          execute.map {
+            case Right(text) => Right(s"${SleepPollGuard.warningText(secs)}\n\n$text")
+            case left => left
+          }
+    }
+
+  /**
+   * B 段升级腿（面板可见）：taskStuck 帧（action/kind=sleep-poll——前端
+   * 只对 action='restart' 有特判，其余值只标注行，向后兼容）。
+   */
+  private def escalateSleepPoll(ctx: ToolContext, sessionId: String, count: Int, sleepSec: Long): IO[Unit] =
+    ctx.wsSend.fold(IO.unit) { send =>
+      send(
+        io.circe.Json.obj(
+          "type" -> "taskStuck".asJson,
+          "sessionId" -> sessionId.asJson,
+          "kind" -> "sleep-poll".asJson,
+          "action" -> "sleep-poll".asJson,
+          "idleSecs" -> 0L.asJson,
+          "reason" -> s"sleep-poll guard escalation: foreground sleep-poll command #$count above the ${Defaults.SleepPollThresholdSec}s threshold (this one sleeps ${sleepSec}s) — call rejected".asJson
+        )
+      ).handleErrorWith(e => logger.warn(s"sleep-poll escalation frame failed: ${e.getMessage}"))
+    }
+
   def summarize(input: JsonObject): String =
     val cmd = input("command").flatMap(_.asString).getOrElse("").trim
     val bgJobId = input("background_job_id").flatMap(_.asString)
@@ -591,7 +646,19 @@ Git safety:
                       case Left(e) =>
                         Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"))
                     }
-                else executeForeground(shell, actualCommand, explicitTimeoutMs, desc, ctx, tailN)
+                else
+                  // sleep-poll 禁令批 B 段：护栏只包前台腿（显式 run_in_background
+                  // 豁免——后台是正道姿势；auto-background 收编路径也在本腿内，
+                  // 收编前的长 sleep 照样计犯）。判据/阶梯/文案单点 =
+                  // [[SleepPollGuard]]（纯函数，747cd36a `sleep 570; echo wN`
+                  // 心跳形态的机制补位——LoopGuard R-call 判同参指纹抓不到变参
+                  // 心跳；本护栏看命令形态）：
+                  //   - 首犯：放行执行，回执首部附警告+指导；
+                  //   - 第 N 次（Defaults.SleepPollEscalateAfter，默认 3）：
+                  //     拒绝执行 + taskStuck 面板可见帧升级。
+                  sleepPollGate(sessionId, actualCommand, ctx) {
+                    executeForeground(shell, actualCommand, explicitTimeoutMs, desc, ctx, tailN)
+                  }
               }
               .flatTap { result =>
                 // After git branch-changing commands, reset branch tracking so the

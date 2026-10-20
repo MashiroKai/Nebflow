@@ -8,7 +8,7 @@ import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.delegate.DelegateRegistry
 import nebflow.core.node.NodeRunner
-import nebflow.shared.{NebflowLogger, SubAgentTask}
+import nebflow.shared.{Defaults, NebflowLogger, SubAgentTask}
 
 import scala.concurrent.duration.*
 
@@ -108,7 +108,12 @@ object BlockingSubagent:
                 )
               )
               .handleErrorWith(e => logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}"))
-            _ <- ref ! AgentCommand.UserInput(prompt, None)
+            // sleep-poll 禁令批 C 段：步/子会话首条消息注入等待纪律铁律
+            // （Defaults.NoSleepPollRule 单点——delegate brief / 节点脚注同源）。
+            // 只读侦察面无 Bash，规则是纯提示成本（~60 token）；workflow 步
+            // （defName=nebflow，有执行面）是本注入的主对象。包装单点 =
+            // [[promptWithRule]]（spec 判红锚）。
+            _ <- ref ! AgentCommand.UserInput(promptWithRule(prompt), None)
             result <- done.get
               .timeout(Timeout)
               .map {
@@ -146,6 +151,13 @@ object BlockingSubagent:
 
   private def rootOf(ctx: ToolContext): String =
     ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("")
+
+  /**
+   * 步/子会话首条消息铁律包装（sleep-poll 禁令批 C 段单点；spec 判红锚）——
+   * 铁律前缀 + 空行 + 原始任务文本（子会话无历史，首条即全部上下文）。
+   */
+  private[tools] def promptWithRule(prompt: String): String =
+    s"${Defaults.NoSleepPollRule}\n\n$prompt"
 
   /**
    * 叶子终态回收——镜像 [[BackoffSupervisor]]
