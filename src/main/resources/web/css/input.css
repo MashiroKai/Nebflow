@@ -1468,6 +1468,22 @@
   background: rgba(244, 67, 54, 0.08);
 }
 
+/* qattachvault 批：载荷丢失失败项 —— 红左缘 + 文本转红 + 失败注记（禁静默：失败
+   面留在屏上，撤回/移除入口照旧 = 可重传）。「立即发送」对失败项不渲染（chatQueue.js）。 */
+.queue-item.failed {
+  box-shadow: inset 2px 0 0 0 var(--color-error);
+}
+.queue-item.failed .queue-item-text {
+  color: var(--color-error);
+  opacity: 0.85;
+}
+.queue-item-failed-note {
+  font-size: 11px;
+  color: var(--color-error);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   #input-bar {

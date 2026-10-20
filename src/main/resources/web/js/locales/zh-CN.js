@@ -623,6 +623,10 @@ export default {
   // f1-send-queue（2026-10-19）：断线入队的待送达小标 tooltip + 队列溢出告警。
   'chat.pendingSend': '待送达 · 重连后自动补发',
   'input.queueOverflow': '消息队列已满（100 条）：最早的一条已丢弃',
+  // qattachvault（2026-10-21）：载荷丢失（刷新时未能落盘）的显式失败态 —— 禁静默：
+  // 停止自动补发，队列条注记 + 气泡红 ! + toast；撤回重编重新添加附件 = 可重传。
+  'input.queueAttachLost': '附件文件已丢失（页面刷新时未能保存），此条已停止自动补发——撤回后重新添加附件再发送',
+  'input.queueAttachLostShort': '附件已丢失 · 无法自动补发',
   'input.pasteTooLarge': '粘贴内容过大（>300KB），已改为直接插入文本',
   'input.removeQueued': '移除',
   // fwdguard-impl (2026-09-17)：空文本 + 纯引用（转发）帧的闸提示 —— 该形态会被

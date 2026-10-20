@@ -845,6 +845,19 @@
 }
 .duration-badge .msg-pending-mark svg { width: 11px; height: 11px; }
 
+/* qattachvault 批：载荷丢失翻面标（红 !）—— input.js markQueueItemPayloadLost 把
+   在场气泡的待送达时钟标原地改型（同一槽位、不新增元素）；title = 可判读原因。 */
+.duration-badge .msg-failed-mark {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px;
+  color: var(--color-error);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+}
+
 .bubble {
   /* 气泡宽度上限 = 消息列宽的 80%。百分比相对 .row 内容盒解析——.row 作为 #chat
      （无水平 padding 的纵向 flex）的拉伸子项恒为全行宽，故长内容只换行、永不

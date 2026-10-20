@@ -137,7 +137,9 @@ async function enqueueViaSend(page, text, atts) {
 }
 
 /** 刷新等价动作（msgqueue-recall-attach J6 同款）：persistQueue 已在入队时执行，
- *  restoreQueue 把 localStorage 骨架**替换**回 state.messageQueue = 刷新后内存态。 */
+ *  restoreQueue 把 localStorage 骨架**替换**回 state.messageQueue；qattachvault 批
+ *  追加水合腿（hydrateQueueFromVault：载荷库 IndexedDB 字节灌回内存项）——等价于
+ *  真刷新后「boot restoreQueue → 派发闸挂水合之后」的次序，测试 await 之。 */
 async function refreshEquivalent(page) {
   return page.evaluate(async (sid) => {
     const state = (await import('/js/state.js')).default;
@@ -145,6 +147,7 @@ async function refreshEquivalent(page) {
     input.persistQueue();
     const raw = localStorage.getItem(Object.keys(localStorage).find((k) => k.includes('message_queue')));
     input.restoreQueue();
+    await input.hydrateQueueFromVault();
     const q = state.messageQueue[sid] || [];
     return { raw, head: JSON.parse(JSON.stringify(q[0] || null)), queueLen: q.length };
   }, SID);
@@ -199,9 +202,10 @@ test('K1 无刷新 drain：重发帧 attachments 与直接发送映射逐字相�
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// K2 · 核心验红腿：刷新等价（restoreQueue 骨架替换）⇒ 重发帧保 mimeType
+// K2 · 核心腿：刷新等价（restoreQueue 骨架替换 + 载荷库水合）⇒ 内存项字节回补、
+//      重发帧带全量 data（跨刷新图片可落盘 = path 真值的前提）
 // ═══════════════════════════════════════════════════════════════════════════
-test('K2 刷新等价后重发：持久化骨架保 mimeType ⇒ drain/立即发送帧都带图片分类字段', async ({ page }) => {
+test('K2 刷新等价后重发：载荷库水合回补 data/preview ⇒ drain/立即发送帧都带全量图片字节', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
   await bootApp(page);
@@ -209,30 +213,35 @@ test('K2 刷新等价后重发：持久化骨架保 mimeType ⇒ drain/立即发
   const enq = await enqueueViaSend(page, 'K2-REFRESH-DRAIN', [ATT_IMG]);
   expect(enq.queueLen).toBe(1);
 
-  // 刷新等价：骨架替换回内存。前提断言 = 剥离面照旧（data/preview 不落盘）+
-  // 修复面（mimeType/hash/size 存活 + stripped 标记保留）。
+  // 刷新等价：骨架替换 + 水合回补。前提断言 = localStorage 面「剥离照旧」（载荷
+  // 不落 localStorage 的既有取舍不变，mimeType/hash/size 分类元数据存活）；内存面
+  // 「字节回补」（qattachvault：data 从载荷库灌回，preview 按 mimeType 重建）。
   const restored = await refreshEquivalent(page);
   expect(restored.raw, '前提：persistQueue 必须已写入 localStorage 队列快照').toBeTruthy();
+  expect(restored.raw, '既有取舍不变：localStorage 面不落 base64 载荷（骨架 + stripped 标记）')
+    .toContain('"stripped":true');
+  expect(restored.raw, '既有取舍不变：localStorage 面不落 base64 载荷字节').not.toContain(B64_PNG);
   expect(restored.head).not.toBeNull();
   const att = restored.head.attachments[0];
   expect(att.type).toBe('image');
   expect(att.name).toBe('busy-a.png');
-  expect(att.preview, '既有取舍不变：preview 载荷不落 localStorage').toBeUndefined();
-  expect(att.data, '既有取舍不变：data 载荷不落 localStorage').toBeUndefined();
-  expect(att.mimeType, '修复面：图片分类判据 mimeType 必须存活').toBe('image/png');
-  expect(att.stripped, '修复面：载荷确被剥离 ⇒ stripped 标记照旧（recall 可判读）').toBe(true);
+  expect(att.mimeType, '分类判据 mimeType 存活（busyfix-image-mime 沿革）').toBe('image/png');
+  expect(att.data, 'qattachvault：载荷库水合 ⇒ 内存项 data 回补（派发帧的字节源）').toBe(B64_PNG);
+  expect(att.preview, 'qattachvault：image preview 按 mimeType 从 data 重建（气泡媒体卡字节源）')
+    .toBe(PREVIEW_PNG);
+  expect(att.stripped, 'qattachvault：回补成功 ⇒ stripped 标记摘除（不再算「载荷已失」）').toBeUndefined();
 
-  // (a) drain 重发腿：帧带 mimeType（修前 = undefined ⇒ JSON 丢键）。
+  // (a) drain 重发腿：帧带 mimeType + 全量 data（服务端据 data 落 uploads ⇒ path 真值）。
   CAP.frames.length = 0;
   await page.evaluate(async (sid) => {
     const input = await import('/js/input.js');
     input.drainMessageQueue(sid);
   }, SID);
-  await page.waitForTimeout(150);
+  await page.waitForTimeout(250);
   const frA = wireFrames();
   expect(frA.length).toBe(1);
   expect(frA[0].attachments[0].mimeType, 'K2a: 刷新后 drain 帧 mimeType 必须存活').toBe('image/png');
-  expect(frA[0].attachments[0].data, '刷新后字节本就不可恢复（既有取舍）：data 不谎报').toBeUndefined();
+  expect(frA[0].attachments[0].data, 'K2a: 载荷库水合 ⇒ 帧带全量字节（修前 = undefined ⇒ path:null）').toBe(B64_PNG);
   expect(frA[0].attachments[0].name).toBe('busy-a.png');
 
   // (b) 队列条「立即发送」腿（sendImmediate 同映射）：再入队+再刷新+点按钮。
@@ -240,6 +249,7 @@ test('K2 刷新等价后重发：持久化骨架保 mimeType ⇒ drain/立即发
   await refreshEquivalent(page);
   const it2 = await readQueueItem(page, enq2.itemId);
   expect(it2.attachments[0].mimeType).toBe('image/png');
+  expect(it2.attachments[0].data, 'K2b 前提：二次刷新等价同样水合回补').toBe(B64_PNG);
   CAP.frames.length = 0;
   await page.waitForSelector(`.queue-item[data-queue-id="${enq2.itemId}"] .queue-item-btn.immediate`, { state: 'visible', timeout: 8000 });
   await page.click(`.queue-item[data-queue-id="${enq2.itemId}"] .queue-item-btn.immediate`);
@@ -247,13 +257,16 @@ test('K2 刷新等价后重发：持久化骨架保 mimeType ⇒ drain/立即发
   const frB = wireFrames();
   expect(frB.length, '立即发送应恰好发出一帧').toBe(1);
   expect(frB[0].attachments[0].mimeType, 'K2b: 刷新后立即发送帧 mimeType 必须存活').toBe('image/png');
+  expect(frB[0].attachments[0].data, 'K2b: 立即发送帧同样带全量字节').toBe(B64_PNG);
   expect(pageErrors).toEqual([]);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // K3 · 后端落库形态镜像：WebSocketRoutes.scala:1616/1734 判据跑在捕获帧上
+//      qattachvault：刷新帧（水合回补）⇒ image + uploads path 真值（跨刷新可落盘）；
+//      修前帧（mimeType 缺失）⇒ file+null 缺陷形态存档。
 // ═══════════════════════════════════════════════════════════════════════════
-test('K3 后端分类镜像：无刷新帧 ⇒ image+uploads；刷新帧 ⇒ image（不再落 file）；修前帧 ⇒ file+null（缺陷形态存档）', async ({ page }) => {
+test('K3 后端分类镜像：无刷新帧与刷新帧（水合回补）⇒ 均 image+uploads；修前帧 ⇒ file+null（缺陷形态存档）', async ({ page }) => {
   await bootApp(page);
 
   // 帧 1：无刷新 drain（mimeType+data 齐全）。
@@ -263,12 +276,12 @@ test('K3 后端分类镜像：无刷新帧 ⇒ image+uploads；刷新帧 ⇒ ima
   await page.waitForTimeout(150);
   const frameNoRefresh = wireFrames()[0].attachments[0];
 
-  // 帧 2：刷新等价后 drain（mimeType 存活、data 缺）。
+  // 帧 2：刷新等价后 drain（骨架替换 + 载荷库水合回补 data）。
   await enqueueViaSend(page, 'K3-REFRESH', [ATT_IMG]);
   await refreshEquivalent(page);
   CAP.frames.length = 0;
   await page.evaluate(async (sid) => { (await import('/js/input.js')).drainMessageQueue(sid); }, SID);
-  await page.waitForTimeout(150);
+  await page.waitForTimeout(250);
   const frameRefresh = wireFrames()[0].attachments[0];
 
   // 修前重发帧 = persistQueue 骨架经同一映射（mimeType/data 均 undefined ⇒ 丢键）。
@@ -279,8 +292,8 @@ test('K3 后端分类镜像：无刷新帧 ⇒ image+uploads；刷新帧 ⇒ ima
     '无刷新重发：后端必落 type:image + uploads path（= 非 busy 直接发送）')
     .toStrictEqual({ name: 'busy-a.png', type: 'image', path: UPLOADS_PATH });
   expect(backendAttJsonMirror(frameRefresh),
-    '刷新后重发：字节已失 ⇒ path=null，但分类必须仍是 image（不再谎报 file）')
-    .toStrictEqual({ name: 'busy-a.png', type: 'image', path: null });
+    '刷新后重发（qattachvault）：水合回补 data ⇒ 落 uploads + path 真值（修前 = path:null 永久「媒体加载失败」）')
+    .toStrictEqual({ name: 'busy-a.png', type: 'image', path: UPLOADS_PATH });
   expect(backendAttJsonMirror(framePreFix),
     '缺陷存档：修前帧（mimeType 缺失）正是 type:file + path:null 的重放文件卡')
     .toStrictEqual({ name: 'busy-a.png', type: 'file', path: null });
@@ -341,31 +354,69 @@ test('K4 重放渲染：修复后落库形态（type:image+path）重放出媒�
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// K5 · 撤回判据不回归：骨架 mimeType 存活后，recallQueuedItem 的 stripped 判据
-//      （stripped===true 权威支）照常触发可判读告警，且回填件带 mimeType。
+// K5 · 撤回两腿（qattachvault）：
+//      (a) 库命中（常态）：刷新等价后撤回 ⇒ 字节回补、无「载荷丢失」告警，
+//          回填件带 data+preview = 原样可重发；
+//      (b) 库不命中（真丢：库被清）：撤回 ⇒ stripped 告警照旧 + 元数据回落，
+//          且该项在派发闸下拒绝出线（失败可见，禁空心帧）。
 // ═══════════════════════════════════════════════════════════════════════════
-test('K5 撤回不回归：刷新等价后撤回 ⇒ stripped 告警照旧 + 回填附件 mimeType 不丢', async ({ page }) => {
+test('K5 撤回：库命中 ⇒ 字节回补原样可重发（无告警）；库丢失 ⇒ 告警照旧 + 派发闸拒发', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
   const warns = [];
   page.on('console', (m) => { if (m.type() === 'warning') warns.push(m.text()); });
   await bootApp(page);
 
+  // (a) 库命中腿。
   const enq = await enqueueViaSend(page, 'K5-RECALL', [ATT_IMG]);
   await refreshEquivalent(page);
+  warns.length = 0;
 
   await page.waitForSelector(`.queue-item[data-queue-id="${enq.itemId}"] .queue-item-btn.recall`, { state: 'visible', timeout: 8000 });
   await page.click(`.queue-item[data-queue-id="${enq.itemId}"] .queue-item-btn.recall`);
   await page.waitForTimeout(150);
 
   expect(warns.some((w) => w.includes('lost their payload to page-refresh persistence')),
-    'K5: 载荷剥离的可判读告警必须照旧（stripped 标记权威支）').toBe(true);
+    'K5a: 载荷已回补 ⇒ 不得再报「载荷丢失」告警').toBe(false);
   const pending = await page.evaluate(async (sid) => {
     const cv = await import('/js/chatView.js');
     return JSON.parse(JSON.stringify(cv.findViewBySessionId(sid).pendingAttachments));
   }, SID);
   expect(pending.length).toBe(1);
-  expect(pending[0].mimeType, 'K5: 回填件带 mimeType —— 用户重补图片或直接重发，分类不再谎报').toBe('image/png');
+  expect(pending[0].data, 'K5a: 回填件带完整字节（qattachvault 水合）——撤回即原样可重发').toBe(B64_PNG);
+  expect(pending[0].preview).toBe(PREVIEW_PNG);
+  expect(pending[0].mimeType).toBe('image/png');
   expect(pending[0].name).toBe('busy-a.png');
+
+  // (b) 库不命中腿（wipe 模拟真丢）⇒ 派发闸拒发 + 告警照旧。
+  const enq2 = await enqueueViaSend(page, 'K5-RECALL-LOST', [ATT_IMG]);
+  await page.evaluate(async () => { await (await import('/js/queueVault.js')).wipe(); });
+  await refreshEquivalent(page); // 水合不中 ⇒ stripped 保留
+  const lost = await readQueueItem(page, enq2.itemId);
+  expect(lost.attachments[0].data, 'K5b 前提：库已清 ⇒ 字节不回补').toBeUndefined();
+  expect(lost.attachments[0].stripped, 'K5b 前提：stripped 保留 = 载荷已失判据在场').toBe(true);
+
+  CAP.frames.length = 0;
+  await page.evaluate(async (sid) => {
+    const state = (await import('/js/state.js')).default;
+    state.busySessionIds.delete(sid); // 闸腿直接走 drain 派发台（不再入队）
+    (await import('/js/input.js')).drainMessageQueue(sid);
+  }, SID);
+  await page.waitForTimeout(250);
+  expect(wireFrames().length, 'K5b: 载荷丢失 ⇒ 拒绝出线（禁空心帧/path:null 形态）').toBe(0);
+  const lostAfter = await readQueueItem(page, enq2.itemId);
+  expect(lostAfter.failed, 'K5b: 派发闸 ⇒ 项标 failed（显式失败态）').toBe(true);
+  expect(lostAfter.failCode).toBe('payload_lost');
+  expect(warns.length === 0 || warns.every((w) => !w.includes('K5b-noise')), 'K5b: 无异常告警').toBe(true);
+
+  // 失败面可见：队列条失败样式 + 注记 + 「立即发送」退场；撤回 = 可重传入口。
+  await page.waitForSelector(`.queue-item[data-queue-id="${enq2.itemId}"].failed`, { state: 'visible', timeout: 8000 });
+  expect(await page.locator(`.queue-item[data-queue-id="${enq2.itemId}"] .queue-item-failed-note`).count()).toBe(1);
+  expect(await page.locator(`.queue-item[data-queue-id="${enq2.itemId}"] .queue-item-btn.immediate`).count()).toBe(0);
+  warns.length = 0;
+  await page.click(`.queue-item[data-queue-id="${enq2.itemId}"] .queue-item-btn.recall`);
+  await page.waitForTimeout(150);
+  expect(warns.some((w) => w.includes('lost their payload to page-refresh persistence')),
+    'K5b: 载荷真丢的撤回 ⇒ 可判读告警照旧（stripped 标记权威支）').toBe(true);
   expect(pageErrors).toEqual([]);
 });
