@@ -49,3 +49,38 @@
 | §8-9 零 console error | 各测试 pageerror+console error 双收集 = 0 |
 
 ---
+
+## P3 定时任务 — 已实施
+
+**提交**：`feat(mobile-p3)`（本屏一提交）
+
+### 落地面
+
+- **几何（§8-1 同族）**：`#reminder-panel` 手机层迁出 v3 面板族（316/60vh）→ 精确顶挂 `left:6 / top:58+safe / 308×560 / r16`；补 `display:flex` 纵向（桌面为块流 + max-height 裁切，固定高下 body 无法自滚）。
+- **三分组（开放点③⑤按设计批推荐）**：`scheduled-task.js renderList` 加 `body.mobile-layer` 分支 —— **即将触发**（enabled≠false 且未超时）→ **已超时**（`isOverdue` 独立分组，红 clock-alert/「已超时」tag 语义仍由行级携带）→ **已停用**（`enabled=false` 整组垫底 + 行级降透明 0.72，文字档沿用桌面 .disabled）；组签 `.mh-rd-grp`（tp-grp 同族 11px/0.06em/muted）；i18n 新键 `task.grpUpcoming`/`task.grpDisabled`，「已超时」复用现网 `task.overdue`。桌面扁平序分支外逐字不动。
+- **行结构零重造**：空心圈 + 内容 + 重复徽标（`repeatLabel` 单次返回 '' 不建节点 = §8-4 二值达成）+ 下次触发主行（`.reminder-row-time`，逾期带 clock-alert + tag）+ 上次触发副行（`.reminder-row-last`）——桌面既有结构即样张同构，原样沿用。
+- **创建入口（开放点④）**：头部 `#reminder-create-btn`（+）与空态引导（`task.empty`/`task.emptyHint` 现网文案恰为样张口径「暂无定时任务 · 点击空白处或按 + 创建」）并存，行内创建表单（datetime + 重复四档 seg）原样可用。
+
+### 开放点处置（v3.5 P3 五条，全按设计批推荐）
+
+| 开放点 | 处置 |
+|---|---|
+| ① 下次触发主行/上次副行 | 沿用桌面既有双行结构（样张同构） |
+| ② 重复徽标四档、单次不显 | 沿用 `repeatLabel`（单次不建徽标节点，T3 断言守护） |
+| ③ 超时 err 红独立分组 | 采纳（已超时组 + 行级红语义保留） |
+| ④ 创建入口 | 头部 + 钮与空态引导并存（桌面既有双入口原样） |
+| ⑤ 已停用降透明垫底 | 采纳（组垫底 + 行级 0.72） |
+
+### 验收映射（spec → `tests/mobile-p3-reminder.spec.mjs`，5/5 绿）
+
+| 样张验收点 | 实机断言 |
+|---|---|
+| §8-4 重复徽标 {每小时,每天,每周} 枚举、单次行无徽标节点 | T3：三档徽标文本 + 单次行 `.reminder-repeat-badge` 计数 0 |
+| §8-1 盒模型（同 P2 面族口径） | T1：x=6 / 308×560 / r16 |
+| 开放点①③⑤ 分组与行结构 | T2：组签文本序「即将触发 · 4 / 已超时 · 1 / 已停用 · 1」+ 行序 + disabled/overdue 类 + 降透明 <1 |
+| 开放点④ 创建入口 | T5：头部 + 钮 → 行内表单；空态文案 + 点击 → 行内表单 |
+| §8-9 零 console error | 各测试双收集 = 0 |
+
+测试夹具 = WS（`listScheduledTasks` → `scheduledTaskList`）；中段改推走 `routeWebSocket` 的 WebSocketRoute.send（`page.on('websocket')` 观察对象无 send，不注帧）。Esc 键会关整个面板（桌面全局键），行内创建的退出腿改走面板体内取消路径（分组签点击）。
+
+---

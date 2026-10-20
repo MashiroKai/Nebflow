@@ -1683,6 +1683,8 @@ export default {
   'task.createFailed': 'Failed to create scheduled task',
   'task.repeat': 'Repeat',
   'task.repeatOnce': 'Once',
+  'task.grpUpcoming': 'Coming up',
+  'task.grpDisabled': 'Disabled',
   'task.repeatHourly': 'Hourly',
   'task.repeatDaily': 'Daily',
   'task.repeatWeekly': 'Weekly',

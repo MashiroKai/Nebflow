@@ -687,8 +687,8 @@ body.mobile-layer .mh-tpanel .tp-mem-more {
 
 /* ── v3 面板族几何：顶挂（morph 自各键）＋ 内容面恒全宽（走廊退役）──── */
 /* 定时/心跳/后台/智能体四面板：桌面为 header 锚定右上角下拉 / r4 为输入卡上方
-   居中 —— v3 改顶挂（悬浮层正下方，morph 起点即各键圆钮位置）。 */
-body.mobile-layer #reminder-panel,
+   居中 —— v3 改顶挂（悬浮层正下方，morph 起点即各键圆钮位置）。
+   （定时已迁出本族 → P3 精确 308×560，见下方专节。） */
 body.mobile-layer #daemon-panel,
 body.mobile-layer #bg-dropdown,
 body.mobile-layer #bgagent-dropdown {
@@ -844,6 +844,35 @@ body.mobile-layer #search-modal .search-result:hover {
 body.mobile-layer .nebflow-login-modal {
   max-width: calc(100vw - 24px);
 }
+
+/* ── P3 定时任务：三分组面板（mobile-secondary-screens 实施批）─────────
+   样张 v3.5 P3：顶挂 308×560（任务浮层同族恒等式）；行结构桌面已同款
+   （空心圈 + 内容 + 重复徽标〔单次不显〕+ 下次触发主行 + 上次触发副行），
+   本批补三分组「即将触发 → 已超时 → 已停用」（scheduled-task.renderList
+   手机层分支）+ 精确几何。 */
+body.mobile-layer #reminder-panel {
+  position: fixed;
+  top: calc(58px + env(safe-area-inset-top, 0px));
+  left: 6px;
+  right: auto;
+  width: min(308px, calc(100vw - 24px));
+  height: min(560px, calc(100dvh - 130px));
+  max-height: none;
+  border-radius: 16px;
+  display: flex; /* 桌面块流 + max-height 裁切 → 固定高下 header/body 纵向 flex，body 自滚 */
+  flex-direction: column;
+}
+/* 分组签（tp-grp 同族值：11px / 0.06em / muted）。 */
+body.mobile-layer .mh-rd-grp {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-frame-text-muted, #98a2b3);
+  padding: 7px 4px 1px;
+  flex: none;
+}
+/* 已停用整行降透明（开放点⑤「降透明垫底」；文字档已有 .4 行级 0.72）。 */
+body.mobile-layer .reminder-row.disabled { opacity: 0.72; }
 
 /* ── ② 页面容器 + 页面 section（互斥 .live；iOS push/pop 曲线）───────── */
 body.mobile-layer #mobile-pages {

@@ -1623,6 +1623,8 @@ export default {
   'task.createFailed': '定时任务创建失败',
   'task.repeat': '周期',
   'task.repeatOnce': '单次',
+  'task.grpUpcoming': '即将触发',
+  'task.grpDisabled': '已停用',
   'task.repeatHourly': '每小时',
   'task.repeatDaily': '每天',
   'task.repeatWeekly': '每周',
