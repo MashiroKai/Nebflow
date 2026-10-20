@@ -151,13 +151,13 @@ class RichOutboundSpec extends CatsEffectSuite:
   private def adapter(
     rec: Recorder,
     renderer: RichRenderer.Renderer = RichRenderer.Unavailable,
-    shot: WebPageShot.Renderer = WebPageShot.Unavailable
+    longshot: FileLongShot.Renderer = FileLongShot.Unavailable
   ): RichFeishuAdapter =
     // The render-output face is injected as a temp directory: the production
     // default reads the process-global data root, which other suites mutate, so a
-    // spec that used it would be coupled to their state. The shot seam defaults
-    // to Unavailable so no test ever starts node (the offline discipline).
-    new RichFeishuAdapter(rec.uploadImage, rec.uploadFile, rec.sendMsg, rec.sendText, renderer, () => tmpDir(), shot)
+    // spec that used it would be coupled to their state. The long-shot seam
+    // defaults to Unavailable so no test ever starts node (the offline discipline).
+    new RichFeishuAdapter(rec.uploadImage, rec.uploadFile, rec.sendMsg, rec.sendText, renderer, () => tmpDir(), longshot)
 
   private val CardHtml = """<!doctype html><html><body><h1>hello card</h1></body></html>"""
 
@@ -594,8 +594,16 @@ class RichOutboundSpec extends CatsEffectSuite:
     )
     assertEquals(RichDegrade.unknown(None, missing = true), "[未送达] 这条消息没有可发送的文件")
     // a-layer note: the original path rides the text leg, fixed builder output.
-    assertEquals(RichDegrade.webPageNote(p), s"网页原件（桌面端可打开）：$p")
+    assertEquals(RichDegrade.originalNote(p), s"原件（桌面端可打开）：$p")
     assert(RichDegrade.renderFailed("r", p, 1L).contains("原件："))
+    // 文件类文本卡（pop-social-files batch）：文件名 + 一句话摘要 + 本地路径，
+    // 机器可匹配前缀 [未转图]；summary 为 None 时省略摘要行。
+    val card = RichDegrade.unconverted(p, Some("季度审计的结论行"))
+    assert(card.startsWith(s"${RichDegrade.UnconvertedPrefix} x.pdf"), card)
+    assert(card.contains("内容摘要：季度审计的结论行") && card.contains(s"原件在桌面端：$p"), card)
+    val bare = RichDegrade.unconverted(p, None)
+    assert(bare.startsWith(s"${RichDegrade.UnconvertedPrefix} x.pdf") && bare.contains(s"原件在桌面端：$p"), bare)
+    assert(!bare.contains("内容摘要"), "no summary ⇒ no summary line")
   }
 
   test("R-10c RichLedger never lets an empty detail through on a failure") {
@@ -779,138 +787,210 @@ class RichOutboundSpec extends CatsEffectSuite:
     assertEquals(parse(popPayload()), None, "an items-less payload is no product")
   }
 
-  // ───────── social-webshot batch: html 出站（2026-10-09 裁定：文件直发、截图兜底）─────────
+  // ───────── pop-social-files batch: 文件类（md/html）长图腿（2026-10-20 作者令）─────────
 
   /**
-   * Recording shot seam: never starts node; counts invocations, captures the html
-   * input, and can produce a REAL noise PNG at the out path (so the upload leg is
-   * exercised with decodable bytes).
+   * Recording long-shot seam: never starts node; counts invocations, captures the
+   * ORIGINAL input, and can produce a REAL noise PNG at the out path (so the
+   * upload leg is exercised with decodable bytes).
    */
-  private final class RecordingShot(
+  private final class RecordingLongShot(
     result: Either[String, os.Path],
     produce: Option[os.Path => Unit] = None
-  ) extends WebPageShot.Renderer:
+  ) extends FileLongShot.Renderer:
     val calls: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
     val lastInput: Ref[IO, String] = Ref.unsafe[IO, String]("")
     def available: Boolean = true
 
-    def shot(htmlFile: os.Path, outPng: os.Path): IO[Either[String, os.Path]] =
-      calls.update(_ + 1) *> lastInput.set(htmlFile.toString) *> IO.blocking {
+    def shot(file: os.Path, outPng: os.Path): IO[Either[String, os.Path]] =
+      calls.update(_ + 1) *> lastInput.set(file.toString) *> IO.blocking {
         result match
           case Right(_) => produce.foreach(f => f(outPng)); result
           case left => left
       }
 
-  private def writeHtml(dir: os.Path): os.Path =
+  private def writeMd(dir: os.Path, content: String = "# 报告\n\n第一段正文。\n"): os.Path =
+    val p = dir / "report.md"
+    Files.write(p.toNIO, content.getBytes("UTF-8"))
+    p
+
+  private def writeHtmlFile(dir: os.Path): os.Path =
     val p = dir / "diagram.html"
     Files.write(p.toNIO, "<html><body><h1>diagram</h1></body></html>".getBytes("UTF-8"))
     p
 
-  test("W-1 an on-disk html product goes out AS THE ORIGINAL FILE (msg_type=file); the shot seam is never consulted") {
+  test("W-1 an on-disk md product converts to ONE long-shot PNG and rides the image leg + the original-path note") {
+    FileLongShot.Dedup.reset()
     val rec = Recorder()
-    val html = writeHtml(tmpDir())
-    val shot = new RecordingShot(Right(tmpDir() / "never.png"))
-    adapter(rec, shot = shot)
-      .deliver(RichKind.Unknown("extension is in neither authority table: html"), Some(html))
+    val md = writeMd(tmpDir())
+    val produced = tmpDir() / "report.png"
+    val longshot = new RecordingLongShot(Right(produced), Some(p => writeNoisePng(p, 40, 30)))
+    adapter(rec, longshot = longshot)
+      .deliver(RichKind.Unknown("extension is in neither authority table: md"), Some(md))
       .flatMap { results =>
         for
-          calls <- shot.calls.get
-          files <- rec.files.get
-          msgs <- rec.msgs.get
-          imgs <- rec.images.get
-          texts <- rec.texts.get
-        yield
-          assertEquals(calls, 0, "文件腿成功 ⇒ 零截图调用（截图只是兜底，不再是默认腿）")
-          assertEquals(files, List((html, "diagram.html")), "the ORIGINAL html rides the existing file upload leg")
-          assertEquals(msgs.map(_._1), List("file"), "msg_type=file — the file-message leg, not an image")
-          assertEquals(imgs.size, 0, "no screenshot, no image upload")
-          assertEquals(texts.size, 0, "the original IS the message — the file leg carries no companion note")
-          assertEquals(results.size, 1, "one intent, one reading (count conservation)")
-          assert(results.forall(_.ok), s"all readings ok, got ${results.map(_.detail)}")
-      }
-  }
-
-  test("W-2 a FILE-leg failure (channel refuses the upload) demotes to the full-page shot: image + original-path note") {
-    val rec = Recorder(fileOk = false)
-    val html = writeHtml(tmpDir())
-    val produced = tmpDir() / "page.png"
-    val shot = new RecordingShot(Right(produced), Some(p => writeNoisePng(p, 40, 30)))
-    adapter(rec, shot = shot)
-      .deliver(RichKind.Unknown("extension is in neither authority table: html"), Some(html))
-      .flatMap { results =>
-        for
-          calls <- shot.calls.get
-          input <- shot.lastInput.get
+          calls <- longshot.calls.get
+          input <- longshot.lastInput.get
           files <- rec.files.get
           imgs <- rec.images.get
           msgs <- rec.msgs.get
           texts <- rec.texts.get
         yield
-          assertEquals(files.map(_._1), List(html), "the file leg WAS attempted first (the shot is the fallback)")
-          assertEquals(calls, 1, "the shot is consulted only after the file leg failed")
-          assertEquals(input, html.toString, "the shot seam receives the ORIGINAL html file, not derived content")
-          assertEquals(imgs.size, 1, "the shot product is uploaded once")
-          assertEquals(msgs.map(_._1), List("image"), "the fallback rides the image leg (msg_type=image)")
-          assertEquals(texts, List(RichDegrade.webPageNote(html)), "the original-path note rides the FALLBACK face only")
-          assert(texts.head.contains(html.toString), s"the note must carry the original path: ${texts.head}")
-          assertEquals(results.size, 2, "shot send + note = two readings")
+          assertEquals(calls, 1, "the conversion seam is consulted exactly once")
+          assertEquals(input, md.toString, "the seam receives the ORIGINAL md file")
+          assertEquals(files.size, 0, "the original NEVER rides the file leg (2026-10-20 ruling)")
+          assertEquals(imgs, List(produced), "the converted PNG is uploaded once")
+          assertEquals(msgs.map(_._1), List("image"), "msg_type=image — the long-shot, not a file message")
+          assertEquals(texts, List(RichDegrade.originalNote(md)), "the original-path note rides the text leg")
+          assertEquals(results.size, 2, "long-shot send + note = two readings")
           assert(results.forall(_.ok), s"all readings ok, got ${results.map(_.detail)}")
+          assert(FileLongShot.Dedup.size >= 1, "a successful push records the dedup key")
       }
   }
 
-  test("W-2b the file leg failing AND the shot failing lands on exactly one friendly b-layer line") {
-    val rec = Recorder(fileOk = false)
-    val html = writeHtml(tmpDir())
-    val failing = new RecordingShot(Left(RichDegrade.Reason.RenderTimeout))
-    adapter(rec, shot = failing)
+  test("W-1b an on-disk html product takes the SAME long-shot leg (the file-first face is retired)") {
+    FileLongShot.Dedup.reset()
+    val rec = Recorder()
+    val html = writeHtmlFile(tmpDir())
+    val produced = tmpDir() / "diagram.png"
+    val longshot = new RecordingLongShot(Right(produced), Some(p => writeNoisePng(p, 40, 30)))
+    adapter(rec, longshot = longshot)
       .deliver(RichKind.Unknown("extension is in neither authority table: html"), Some(html))
       .flatMap { results =>
         for
-          calls <- failing.calls.get
+          input <- longshot.lastInput.get
+          files <- rec.files.get
+          imgs <- rec.images.get
+          texts <- rec.texts.get
+        yield
+          assertEquals(input, html.toString, "the seam receives the ORIGINAL html file")
+          assertEquals(files.size, 0, "no file upload — the file-first leg is gone")
+          assertEquals(imgs, List(produced), "the converted PNG rides the image leg")
+          assertEquals(texts, List(RichDegrade.originalNote(html)), "the note carries the original path")
+          assertEquals(results.size, 2, "count conservation: shot send + note")
+      }
+  }
+
+  test("W-2 the SAME bytes pushed twice are suppressed once (dedup): the second deliver sends NOTHING") {
+    FileLongShot.Dedup.reset()
+    val rec = Recorder()
+    val md = writeMd(tmpDir())
+    val produced = tmpDir() / "report.png"
+    val longshot = new RecordingLongShot(Right(produced), Some(p => writeNoisePng(p, 40, 30)))
+    val a = adapter(rec, longshot = longshot)
+    for
+      first <- a.deliver(RichKind.Unknown("extension is in neither authority table: md"), Some(md))
+      second <- a.deliver(RichKind.Unknown("extension is in neither authority table: md"), Some(md))
+      imgs <- rec.images.get
+      texts <- rec.texts.get
+    yield
+      assertEquals(first.size, 2, "the first push delivers shot + note")
+      assertEquals(second, Nil, "the duplicate push is suppressed to zero sends (防轰炸)")
+      assertEquals(imgs.size, 1, "exactly ONE image upload across both delivers")
+      assertEquals(texts.size, 1, "exactly ONE note across both delivers")
+  }
+
+  test("W-2b a REGENERATED file (new bytes ⇒ new dedup key) pushes again") {
+    FileLongShot.Dedup.reset()
+    val rec = Recorder()
+    val md = writeMd(tmpDir())
+    val produced = tmpDir() / "report.png"
+    val longshot = new RecordingLongShot(Right(produced), Some(p => writeNoisePng(p, 40, 30)))
+    val a = adapter(rec, longshot = longshot)
+    val kind = RichKind.Unknown("extension is in neither authority table: md")
+    for
+      _ <- a.deliver(kind, Some(md))
+      _ <- IO(Files.write(md.toNIO, "# 报告 v2\n\n改过的内容。\n".getBytes("UTF-8")))
+      second <- a.deliver(kind, Some(md))
+      imgs <- rec.images.get
+    yield
+      assertEquals(second.size, 2, "new bytes ⇒ new key ⇒ the push goes out again")
+      assertEquals(imgs.size, 2, "both pushes uploaded")
+  }
+
+  test("W-3 a FAILED conversion degrades to exactly one 「文件名+路径+摘要」text card; nothing uploads") {
+    FileLongShot.Dedup.reset()
+    val rec = Recorder()
+    val md = writeMd(tmpDir(), "# 存储审计\n\n结论先行的报告正文。")
+    val failing = new RecordingLongShot(Left(RichDegrade.Reason.EngineUnavailable))
+    adapter(rec, longshot = failing)
+      .deliver(RichKind.Unknown("extension is in neither authority table: md"), Some(md))
+      .flatMap { results =>
+        for
           imgs <- rec.images.get
           msgs <- rec.msgs.get
           texts <- rec.texts.get
         yield
-          assertEquals(calls, 1, "the shot was attempted (after the file leg failed)")
-          assertEquals(imgs.size + msgs.size, 0, "a failed chain uploads and sends nothing rich")
-          assertEquals(texts.size, 1, "the b-layer is exactly one visible line")
+          assertEquals(imgs.size + msgs.size, 0, "a failed conversion uploads and sends nothing rich")
+          assertEquals(texts.size, 1, "the degrade is exactly one visible text card")
           val line = texts.head
-          assert(line.contains(RichDegrade.UnsupportedPrefix), line)
-          assert(line.contains("原件在桌面端") && line.contains(html.toString), line)
-          assert(
-            !line.toLowerCase.contains("timeout") && !line.contains("渲染超时"),
-            s"the closed-vocab reason stays in the log, not in the chat: $line"
-          )
+          assert(line.startsWith(RichDegrade.UnconvertedPrefix), s"machine-matchable prefix: $line")
+          assert(line.contains("report.md"), s"the card names the file: $line")
+          assert(line.contains(md.toString), s"the card carries the local path: $line")
+          assert(line.contains("存储审计"), s"the card carries the one-line summary: $line")
+          assert(results.size == 1 && results.head.ok, "the card SEND is the one reading")
       }
   }
 
-  test("W-3 an off-table NON-web product never consults the shot seam (straight to b)") {
+  test("W-3b a long-shot UPLOAD refusal degrades to the [未渲染] line + the original-path note") {
+    FileLongShot.Dedup.reset()
+    val rec = Recorder(imageOk = false)
+    val md = writeMd(tmpDir())
+    val produced = tmpDir() / "report.png"
+    val longshot = new RecordingLongShot(Right(produced), Some(p => writeNoisePng(p, 40, 30)))
+    adapter(rec, longshot = longshot)
+      .deliver(RichKind.Unknown("extension is in neither authority table: md"), Some(md))
+      .flatMap { results =>
+        for
+          imgs <- rec.images.get
+          texts <- rec.texts.get
+        yield
+          assertEquals(imgs.size, 1, "the upload WAS attempted")
+          assertEquals(texts.size, 1, "the refusal lands as one text reading")
+          assert(texts.head.contains("[未渲染]"), s"the closed placeholder: ${texts.head}")
+          assert(texts.head.contains(md.toString), s"the note survives the degrade: ${texts.head}")
+          assertEquals(results.size, 1, "the degrade card is the one reading (the refused upload leaves no upload reading)")
+          assert(results.head.ok, "the CARD was delivered — the refusal lives in the card text, not a failed send")
+      }
+  }
+
+  test("W-4 an off-table NON-convertible product never consults the long-shot seam (straight to b)") {
+    FileLongShot.Dedup.reset()
     val rec = Recorder()
     val odd = tmpDir() / "notes.xyz"
     Files.write(odd.toNIO, Array[Byte](1))
-    val shot = new RecordingShot(Right(tmpDir() / "never.png"))
-    adapter(rec, shot = shot)
+    val longshot = new RecordingLongShot(Right(tmpDir() / "never.png"))
+    adapter(rec, longshot = longshot)
       .deliver(RichKind.Unknown("extension is in neither authority table: xyz"), Some(odd))
       .flatMap { _ =>
         for
-          calls <- shot.calls.get
+          calls <- longshot.calls.get
           texts <- rec.texts.get
         yield
-          assertEquals(calls, 0, "only html/htm may reach the shot seam")
+          assertEquals(calls, 0, "only md/markdown/html/htm may reach the conversion seam")
           assertEquals(texts.size, 1)
           assert(texts.head.contains(RichDegrade.UnsupportedPrefix) && texts.head.contains(odd.toString), texts.head)
       }
   }
 
-  test("W-4 the web-page predicate table and the offline detection face") {
-    assert(WebPageShot.isWebPage(os.Path("/tmp/a/diagram.html", os.pwd)))
-    assert(WebPageShot.isWebPage(os.Path("/tmp/a/DIAGRAM.HTML", os.pwd)), "case-insensitive")
-    assert(WebPageShot.isWebPage(os.Path("/tmp/a/x.htm", os.pwd)))
-    assert(!WebPageShot.isWebPage(os.Path("/tmp/a/x.htmlx", os.pwd)), "no suffix leakage across extensions")
-    assert(!WebPageShot.isWebPage(os.Path("/tmp/a/noext", os.pwd)))
-    assert(!WebPageShot.NodePlaywright(script = None).available, "no script ⇒ not available")
+  test("W-5 the convertibility table and the offline detection face") {
+    assert(FileLongShot.isConvertible(os.Path("/tmp/a/diagram.html", os.pwd)))
+    assert(FileLongShot.isConvertible(os.Path("/tmp/a/x.htm", os.pwd)))
+    assert(FileLongShot.isConvertible(os.Path("/tmp/a/report.md", os.pwd)), "md is the incident shape")
+    assert(FileLongShot.isConvertible(os.Path("/tmp/a/REPORT.MD", os.pwd)), "case-insensitive")
+    assert(FileLongShot.isConvertible(os.Path("/tmp/a/notes.markdown", os.pwd)))
+    assert(!FileLongShot.isConvertible(os.Path("/tmp/a/x.htmlx", os.pwd)), "no suffix leakage across extensions")
+    assert(!FileLongShot.isConvertible(os.Path("/tmp/a/noext", os.pwd)))
+    // `available` is the pure discovery read (both repo scripts found), never a
+    // node start — the definition is pinned so it cannot quietly narrow.
+    assertEquals(
+      FileLongShot.NodeShot().available,
+      WebPageShot.NodePlaywright.detectScriptNamed("social-html-shot.mjs").isDefined &&
+        WebPageShot.NodePlaywright.detectScriptNamed("social-md-shot.mjs").isDefined,
+      "available ⇔ both conversion scripts are discovered"
+    )
     // Unavailable never lies: Left with the closed-vocab engine reason.
-    WebPageShot.Unavailable.shot(os.Path("/tmp/a.html", os.pwd), os.Path("/tmp/out.png", os.pwd)).map {
+    FileLongShot.Unavailable.shot(os.Path("/tmp/a.md", os.pwd), os.Path("/tmp/out.png", os.pwd)).map {
       case Left(reason) => assertEquals(reason, RichDegrade.Reason.EngineUnavailable)
       case Right(_) => fail("Unavailable must never fake a shot")
     }

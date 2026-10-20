@@ -7,7 +7,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.bridge.{BridgeContext, BridgeManager, BridgePlugin}
 import nebflow.shared.NebflowLogger
-import nebflow.social.outbound.{AskPromptCodec, PromptAction, PromptView, RichKind, RichProduct, WebPageShot}
+import nebflow.social.outbound.{AskPromptCodec, FileLongShot, PromptAction, PromptView, RichDegrade, RichKind, RichProduct}
 
 import java.util.concurrent.atomic.AtomicBoolean
 import scala.util.Try
@@ -103,14 +103,16 @@ final class WeixinIlinkBridgePlugin(
    */
   documentExtensions: Set[String] = FeishuOutboundAdapter.defaultTable,
   /**
-   * 网页类产物（html/htm）的整页截图缝（social-webshot batch, 2026-10-09）：
-   * 同日用户裁定修正——html/htm 原件先走既有 file_path 文件腿直发（不再自动
-   * 截图），本缝降为兜底：仅当文件腿发送失败（渠道拒绝/超时）才截成整页 PNG
-   * 走既有 image_path 媒体腿。生产 = [[WebPageShot.NodePlaywright]]；
-   * 离线 spec 注入 fake / [[WebPageShot.Unavailable]]（脚本缺失/超时 ⇒ v1 边界：
-   * 日志一行、正文腿带回合）。
+   * 文件类产物（md/markdown/html/htm）的单张长图转换缝（pop-social-files
+   * batch, 2026-10-20；作者令：Pop 的文件类产物投递社交腿=转单张长图 PNG，
+   * 转不动降「文件名+本地路径+一句话摘要」文本卡，去重防轰炸）。生产 =
+   * [[FileLongShot.NodeShot]]（仓内 node playwright，md 走 marked 同款渲染）；
+   * 离线 spec 注入 fake / [[FileLongShot.Unavailable]]（脚本缺失/超时 ⇒ 文本卡
+   * 降级）。原 social-webshot batch 的 `webshot` 缝（html 文件直发、截图兜底）
+   * 随其文件腿一并退役——2026-10-20 裁定接管 2026-10-09 14:0x 的同名裁定面
+   * （同字节 html 文件消息微信侧实测零到达，长图是作者点名的可看形态）。
    */
-  webshot: WebPageShot.Renderer = WebPageShot.NodePlaywright()
+  longshot: FileLongShot.Renderer = FileLongShot.NodeShot()
 ) extends BridgePlugin:
 
   import WeixinIlinkBridgePlugin.*
@@ -1003,14 +1005,17 @@ final class WeixinIlinkBridgePlugin(
    *
    *   - CARD — the card payload is HTML for the feishu renderer; the weixin
    *     leg cannot transcode it, so nothing goes out but the text reply;
-   *   - UNKNOWN — since the social-webshot batch (2026-10-09) an EXISTING
-   *     html/htm item is no longer here; per the SAME-DAY author ruling
-   *     (2026-10-09 14:0x「社交 html 可以以文件的形式发过来 不用自动转图」) it
-   *     FIRST rides the file_path leg AS THE ORIGINAL FILE, and only a FAILED
-   *     file send falls back to the full-page screenshot ([[deliverWebPageMedia]]).
-   *     The rest (non-existent path, extension in neither authority table,
-   *     video-only payload…) stays log-only — the text reply carries the turn,
-   *     and no mechanism wording ever reached a weixin user.
+ *   - UNKNOWN — since the pop-social-files batch (2026-10-20) an EXISTING
+ *     md/markdown/html/htm item rides the LONG-SHOT leg FIRST ([[FileLongShot]]:
+ *     the file is converted to one full-height PNG and sent on `image_path`,
+ *     with a companion note carrying the original path — the 2026-10-20 author
+ *     ruling that superseded the same-day 2026-10-09 file-first face, whose
+ *     file sends measured ZERO arrival on the weixin side). A duplicate of the
+ *     SAME bytes is suppressed (dedup). Conversion failure degrades to the
+ *     「文件名+本地路径+一句话摘要」text card. The rest (non-existent path,
+ *     extension in neither authority table, video-only payload…) stays
+ *     log-only — the text reply carries the turn, and no mechanism wording
+ *     ever reached a weixin user.
    *
    * 🔴 A session with no bound sender has no return address — same rule as the
    * text leg; the text leg's own WARN covers the turn, so this leg passes.
@@ -1049,13 +1054,14 @@ final class WeixinIlinkBridgePlugin(
                   case RichKind.Document =>
                     deliverMedia(sender, WeixinOutboundAdapter.WeixinMedia.file(p.toString), "file")
                   case RichKind.Unknown(reason) =>
-                    // 2026-10-09 同日裁定修正：可渲染网页类（html/htm 且原件在
-                    // 盘上）先走 file_path 腿直发原件，文件腿失败才截整页 PNG
-                    // 走 image_path 兜底（[[deliverWebPageMedia]]）。其余保持
-                    // v1 边界（日志一行，正文腿带回合——机制词汇从未到过微信
-                    // 用户眼前）。
-                    if Try(os.isFile(p)).getOrElse(false) && WebPageShot.isWebPage(p) then
-                      deliverWebPageMedia(sender, p)
+                    // pop-social-files batch（2026-10-20 作者令）：文件类可转换
+                    // 形态（md/markdown/html/htm 且原件在盘上）→ 单张长图 PNG 走
+                    // image_path 腿 + 原件路径伴行注（[[deliverLongShotMedia]]，
+                    // 同字节重复 Pop 去重抑制；转不动降文本卡）。其余保持 v1
+                    // 边界（日志一行，正文腿带回合——机制词汇从未到过微信用户
+                    // 眼前）。
+                    if Try(os.isFile(p)).getOrElse(false) && FileLongShot.isConvertible(p) then
+                      deliverLongShotMedia(sender, p)
                     else
                       // 逐字一行即 IO（pop multi-group fix 顺手修正）：原
                       // `IO(logger.info(...))` 是 IO[IO[Unit]] 死日志（内层
@@ -1101,38 +1107,74 @@ final class WeixinIlinkBridgePlugin(
     richs.foldLeft(IO.unit)((acc, rich) => acc *> deliverRichMedia(sessionId, rich))
 
   /**
-   * 网页产物腿（social-webshot batch；用户裁定 2026-10-09 14:0x 修正）：
-   * html/htm 原件先走既有 file_path 媒体缝直发（① 文件腿——原件本体即消息，
-   * 不再自动截图）；文件腿发送失败（渠道拒绝/超时）才退整页截图
-   * （[[WebPageShot]]，30s 预算，产物进本数据根的临时面）→ 既有 image_path 腿
-   * （② 兜底——其发送失败的保底文案由 [[deliverMedia]] 原样承担）；截图也不可
-   * 用 ⇒ v1 边界（③：日志一行、正文腿带回合——微信侧从未把机制报错发给用户，
-   * b 层在微信侧由回合正文承担）。文件腿经 [[outboundMedia]] 裸发而非
-   * [[deliverMedia]]：失败不得先发 `[文件发送失败]` 文案——兜底链先于一切
-   * 用户可见字。分类层零改动：html 仍判 Unknown，本腿只在 Unknown 臂被读取。
+   * 文件类长图腿（pop-social-files batch, 2026-10-20；作者裁定「文件类产物投递
+   * 社交腿=md/html→单张长图 PNG，转不动降文本卡，去重防轰炸」）：
+   *
+   *   ⓪ 去重 —— 同字节指纹（路径+size+mtime）已在账 ⇒ 零发送、一行日志（前次
+   *      推送成功才落账，失败不落账 ⇒ 下次 Pop 照常重试）；
+   *   ① 转换主腿 —— 原件经仓内 node playwright 转单张长图 PNG（[[FileLongShot]]，
+   *      30s 预算，产物进本数据根的临时面）→ 既有 image_path 腿裸发
+   *      （[[outboundMedia]]，失败不得先发用户可见字）→ 成功后伴行注
+   *      （[[RichDegrade.originalNote]]，桌面端可打开原件）+ 落去重账；
+   *   ② 渠道拒绝 —— 与 [[deliverMedia]] 的图片保底同款文案（`[图片发送失败
+   *      code=…]`），不落账；
+   *   ③ 转不动（渲染件不可用/超时/产物非法）⇒「文件名+本地路径+一句话摘要」
+   *      文本卡（[[RichDegrade.unconverted]]）。
+   *
+   * 分类层零改动：md/html 仍判 Unknown，本腿只在 Unknown 臂被读取。原
+   * deliverWebPageMedia（html 文件直发、截图兜底）随本腿整体退役。
    */
-  private def deliverWebPageMedia(sender: String, html: os.Path): IO[Unit] =
-    outboundMedia(sender, WeixinOutboundAdapter.WeixinMedia.file(html.toString)).flatMap {
-      case res if res.ok =>
+  private def deliverLongShotMedia(sender: String, p: os.Path): IO[Unit] =
+    IO(FileLongShot.Dedup.keyOf(p)).flatMap {
+      case Some(key) if FileLongShot.Dedup.seen(key) =>
         IO(logger.info(
-          s"weixin-ilink bridge: web page delivered as the original file to sender $sender " +
-            s"(id=${res.messageId.getOrElse("-")})"
+          s"weixin-ilink bridge: long-shot duplicate suppressed for $p — same bytes already pushed (dedup)"
         ))
-      case res =>
+      case keyOpt =>
         val out = root / "tmp" / "outbound-render" /
-          s"page-${java.util.UUID.randomUUID().toString.take(12)}.png"
-        logger.warn(
-          s"weixin-ilink bridge: web page file send failed code=${res.code} reason=${res.reason} " +
-            "— falling back to the full-page shot"
-        ) *>
-          webshot.shot(html, out).flatMap {
-            case Left(reason) =>
-              IO(logger.info(
-                s"weixin-ilink bridge: web page shot unavailable for $html ($reason) — the text reply carries the turn"
-              ))
-            case Right(png) =>
-              deliverMedia(sender, WeixinOutboundAdapter.WeixinMedia.image(png.toString), "image")
-          }
+          s"file-${java.util.UUID.randomUUID().toString.take(12)}.png"
+        longshot.shot(p, out).flatMap {
+          case Right(png) =>
+            outboundMedia(sender, WeixinOutboundAdapter.WeixinMedia.image(png.toString)).flatMap {
+              case res if res.ok =>
+                keyOpt.foreach(FileLongShot.Dedup.record)
+                outbound(sender, RichDegrade.originalNote(p)).flatMap { r2 =>
+                  if r2.ok then IO.unit
+                  else
+                    IO(logger.warnSync(
+                      s"weixin-ilink bridge: long-shot note send failed code=${r2.code} reason=${r2.reason}"
+                    ))
+                } *> IO(logger.info(
+                  s"weixin-ilink bridge: file long-shot delivered to sender $sender (id=${res.messageId.getOrElse("-")})"
+                ))
+              case res =>
+                val line = s"[图片发送失败 code=${res.code}] ${res.reason}"
+                logger.warn(
+                  s"weixin-ilink bridge: long-shot image send failed code=${res.code} reason=${res.reason} " +
+                    "— degrading to a text notice"
+                ) *>
+                  outbound(sender, line).flatMap { r2 =>
+                    if r2.ok then IO.unit
+                    else
+                      logger.warn(
+                        s"weixin-ilink bridge: degrade notice send failed code=${r2.code} reason=${r2.reason}"
+                      )
+                  }
+            }
+          case Left(reason) =>
+            logger.info(
+              s"weixin-ilink bridge: file long-shot unavailable for $p ($reason) — degrading to the text card"
+            ) *>
+              IO(FileLongShot.summarize(p)).flatMap { summary =>
+                outbound(sender, RichDegrade.unconverted(p, summary)).flatMap { r2 =>
+                  if r2.ok then IO.unit
+                  else
+                    logger.warn(
+                      s"weixin-ilink bridge: text card send failed code=${r2.code} reason=${r2.reason}"
+                    )
+                }
+              }
+        }
     }
 
   /**

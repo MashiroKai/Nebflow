@@ -88,16 +88,16 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     send: os.Path => WeixinIlinkBridgePlugin.Send,
     sendMedia: os.Path => WeixinIlinkBridgePlugin.SendMedia = _ =>
       (_, _) => IO.pure(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered")),
-    webshot: nebflow.social.outbound.WebPageShot.Renderer = nebflow.social.outbound.WebPageShot.Unavailable
+    longshot: nebflow.social.outbound.FileLongShot.Renderer = nebflow.social.outbound.FileLongShot.Unavailable
   ): WeixinIlinkBridgePlugin =
-    // webshot defaults to Unavailable: no test ever starts node (offline discipline);
-    // the production default is WebPageShot.NodePlaywright.
+    // longshot defaults to Unavailable: no test ever starts node (offline discipline);
+    // the production default is FileLongShot.NodeShot.
     new WeixinIlinkBridgePlugin(
       root,
       pinnedAllowedIlinkUserIds = None,
       send = send,
       sendMedia = sendMedia,
-      webshot = webshot
+      longshot = longshot
     )
 
   private def meta(id: String, senderId: Option[String]): SessionMeta =
@@ -715,94 +715,147 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     yield assertEquals(mediaCalls, Nil, "RichKind.of(exists=false) ⇒ Unknown ⇒ the v1 boundary log, no send")
   }
 
-  // ───── social-webshot batch: html 出站（2026-10-09 裁定：文件直发、截图兜底）─────
+  // ───── pop-social-files batch: 文件类（md/html）长图腿（2026-10-20 作者令）─────
 
   /**
-   * A recording shot seam: never starts node; counts invocations and pins the
-   * input, so a test can prove the file leg succeeds WITHOUT consulting it.
+   * A recording long-shot seam: never starts node; counts invocations and pins
+   * the ORIGINAL input, so a test can prove which file reached the converter.
    */
-  private final class RecordingShot(result: Either[String, os.Path])
-      extends nebflow.social.outbound.WebPageShot.Renderer:
+  private final class RecordingLongShot(result: Either[String, os.Path])
+      extends nebflow.social.outbound.FileLongShot.Renderer:
     val calls: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
     val lastInput: Ref[IO, String] = Ref.unsafe[IO, String]("")
     def available: Boolean = true
-    def shot(htmlFile: os.Path, outPng: os.Path): IO[Either[String, os.Path]] =
-      calls.update(_ + 1) *> lastInput.set(htmlFile.toString).as(result)
+    def shot(file: os.Path, outPng: os.Path): IO[Either[String, os.Path]] =
+      calls.update(_ + 1) *> lastInput.set(file.toString).as(result)
 
-  test("WO-W1 an html product rides the file_path leg AS THE ORIGINAL; the shot seam is never consulted") {
-    val html = tmpRoot() / "diagram.html"
-    os.write(html, "<html><body>diagram</body></html>", createFolders = true)
-    val media = RecordingMedia(okResult)
-    val shot = RecordingShot(Right(tmpRoot() / "never.png"))
-    val p = plugin(tmpRoot(), RecordingSend(okResult).factory, media.factory, webshot = shot)
-    for
-      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
-      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", html))))
-      _ <- p.onAgentEvent("s1", doneEv("s1"))
-      mediaCalls <- media.calls.get
-      shotCalls <- shot.calls.get
-    yield
-      assertEquals(
-        mediaCalls.map(_._2),
-        List(WeixinOutboundAdapter.WeixinMedia.file(html.toString)),
-        "the ORIGINAL html rides file_path directly (2026-10-09 ruling) — no auto screenshot"
-      )
-      assertEquals(shotCalls, 0, "文件腿成功 ⇒ 零截图调用（截图只是兜底）")
-  }
-
-  test("WO-W2 a FAILED file send (channel refuses) falls back to the full-page shot on image_path") {
-    val html = tmpRoot() / "diagram.html"
-    os.write(html, "<html><body>diagram</body></html>", createFolders = true)
-    val png = tmpRoot() / "page-shot.png"
+  test("WO-W1 an md product converts to ONE long-shot PNG on image_path + the original-path note; the file leg is gone") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val md = tmpRoot() / "report.md"
+    os.write(md, "# 报告\n\n第一段正文。\n", createFolders = true)
+    val png = tmpRoot() / "report-long.png"
     os.write(png, "png-bytes", createFolders = true)
-    // The file send is refused (failOn = anything carrying file_path); the image
-    // send after the shot succeeds.
-    val media = RecordingMedia(okResult, failOn = _.filePath.nonEmpty)
-    val shot = RecordingShot(Right(png))
-    val p = plugin(tmpRoot(), RecordingSend(okResult).factory, media.factory, webshot = shot)
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult)
+    val longshot = new RecordingLongShot(Right(png))
+    val p = plugin(tmpRoot(), rec.factory, media.factory, longshot = longshot)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", md))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+      shotCalls <- longshot.calls.get
+      shotInput <- longshot.lastInput.get
+    yield
+      assertEquals(shotCalls, 1, "the conversion seam is consulted exactly once")
+      assertEquals(shotInput, md.toString, "the seam receives the ORIGINAL md")
+      assertEquals(
+        mediaCalls.map(_._2),
+        List(WeixinOutboundAdapter.WeixinMedia.image(png.toString)),
+        "ONE image send of the converted PNG — no file_path send (the file-first face is retired)"
+      )
+      assertEquals(calls, List(("wx_alice", nebflow.social.outbound.RichDegrade.originalNote(md))),
+        "the companion note carries the original path")
+      assert(nebflow.social.outbound.FileLongShot.Dedup.size >= 1, "a successful push records the dedup key")
+  }
+
+  test("WO-W2 an html product takes the SAME long-shot leg (2026-10-20 ruling supersedes file-first)") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val html = tmpRoot() / "diagram.html"
+    os.write(html, "<html><body>diagram</body></html>", createFolders = true)
+    val png = tmpRoot() / "diagram-long.png"
+    os.write(png, "png-bytes", createFolders = true)
+    val media = RecordingMedia(okResult)
+    val longshot = new RecordingLongShot(Right(png))
+    val p = plugin(tmpRoot(), RecordingSend(okResult).factory, media.factory, longshot = longshot)
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
       _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", html))))
       _ <- p.onAgentEvent("s1", doneEv("s1"))
       mediaCalls <- media.calls.get
-      shotCalls <- shot.calls.get
+      shotInput <- longshot.lastInput.get
     yield
-      assertEquals(shotCalls, 1, "the shot is consulted only after the file leg failed")
+      assertEquals(shotInput, html.toString, "the seam receives the ORIGINAL html")
       assertEquals(
         mediaCalls.map(_._2),
-        List(
-          WeixinOutboundAdapter.WeixinMedia.file(html.toString),
-          WeixinOutboundAdapter.WeixinMedia.image(png.toString)
-        ),
-        "file first (attempted), then the shot product on image_path — in that order"
+        List(WeixinOutboundAdapter.WeixinMedia.image(png.toString)),
+        "the converted PNG on image_path; the original NEVER rides file_path"
       )
   }
 
-  test("WO-W2b a failed file send AND an unavailable shot keep the v1 boundary: no image send, the text reply carries the turn") {
-    val html = tmpRoot() / "diagram.html"
-    os.write(html, "<html><body>diagram</body></html>", createFolders = true)
+  test("WO-W3 the SAME bytes pushed twice are suppressed once (dedup 防轰炸)") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val md = tmpRoot() / "report.md"
+    os.write(md, "# 报告\n", createFolders = true)
+    val png = tmpRoot() / "report-long.png"
+    os.write(png, "png-bytes", createFolders = true)
     val rec = RecordingSend(okResult)
-    val media = RecordingMedia(okResult, failOn = _.filePath.nonEmpty)
-    val p = plugin(
-      tmpRoot(),
-      rec.factory,
-      media.factory,
-      webshot = nebflow.social.outbound.WebPageShot.Unavailable
-    )
+    val media = RecordingMedia(okResult)
+    val longshot = new RecordingLongShot(Right(png))
+    val p = plugin(tmpRoot(), rec.factory, media.factory, longshot = longshot)
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
-      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", html))))
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "框图在这".asJson))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", md))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", md)))) // same file again
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+      shotCalls <- longshot.calls.get
+    yield
+      assertEquals(shotCalls, 1, "the duplicate never reaches the converter (dedup gates BEFORE conversion)")
+      assertEquals(mediaCalls.size, 1, "exactly ONE media send across both turns")
+      assertEquals(calls.size, 1, "exactly ONE note across both turns")
+  }
+
+  test("WO-W4 a FAILED conversion degrades to the 「文件名+路径+摘要」text card; the turn text is intact") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val md = tmpRoot() / "audit.md"
+    os.write(md, "# 存储审计\n\n结论先行的报告。", createFolders = true)
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult)
+    val p = plugin(tmpRoot(), rec.factory, media.factory) // longshot defaults Unavailable ⇒ conversion fails
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", md))))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "正文照发".asJson))
       _ <- p.onAgentEvent("s1", doneEv("s1"))
       mediaCalls <- media.calls.get
       calls <- rec.calls.get
     yield
-      assertEquals(
-        mediaCalls.map(_._2),
-        List(WeixinOutboundAdapter.WeixinMedia.file(html.toString)),
-        "the file leg was attempted; no image send without a shot product"
-      )
-      assertEquals(calls, List(("wx_alice", "框图在这")), "b 层在微信侧 = 回合正文承担，绝不吞回合")
+      assertEquals(mediaCalls, Nil, "a failed conversion sends no media")
+      assertEquals(calls.size, 2, "the text card AND the turn text both go out")
+      val card = calls.head._2
+      assert(card.startsWith(nebflow.social.outbound.RichDegrade.UnconvertedPrefix), s"machine-matchable card: $card")
+      assert(card.contains("audit.md") && card.contains(md.toString), s"file name + local path: $card")
+      assert(card.contains("存储审计"), s"the one-line summary: $card")
+      assertEquals(calls(1)._2, "正文照发", "the turn text is never suppressed")
+  }
+
+  test("WO-W5 a FAILED image send does NOT record dedup: the next Pop of the same file retries") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val md = tmpRoot() / "report.md"
+    os.write(md, "# 报告\n", createFolders = true)
+    val png = tmpRoot() / "report-long.png"
+    os.write(png, "png-bytes", createFolders = true)
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult, failOn = _.imagePath.contains(png.toString))
+    val longshot = new RecordingLongShot(Right(png))
+    val p = plugin(tmpRoot(), rec.factory, media.factory, longshot = longshot)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", md))))
+      _ <- p.onAgentEvent("s1", doneEv("s1")) // first push: image send FAILS
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", md))))
+      _ <- p.onAgentEvent("s1", doneEv("s1")) // second Pop: must RETRY, not suppress
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(mediaCalls.size, 2, "the failed first push left no dedup record ⇒ the retry goes out")
+      assertEquals(calls.size, 2, "two degrade notices ([图片发送失败]) and NO note (nothing succeeded)")
+      assert(calls.head._2.startsWith("[图片发送失败 code=502]"), s"the notice names the failure: ${calls.head._2}")
+      assert(nebflow.social.outbound.FileLongShot.Dedup.size == 0, "a failed push never records dedup")
   }
 
   // ───── pop batch-media fix: ONE Pop of N artifacts is N media sends ─────

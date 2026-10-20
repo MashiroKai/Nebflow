@@ -68,12 +68,14 @@ final class RichFeishuAdapter(
   renderer: RichRenderer.Renderer,
   renderOutputDir: () => os.Path = RichFeishuAdapter.defaultRenderOutputDir,
   /**
-   * 网页类产物（html/htm）的整页截图缝（social-webshot batch, 2026-10-09；
-   * 同日裁定降为兜底——html 现以文件腿直发，仅文件腿失败才截图）。
-   * 生产 = [[WebPageShot.NodePlaywright]]（仓内 node playwright）；离线 spec
-   * 注入 fake / [[WebPageShot.Unavailable]]，不启动 node。
+   * 文件类产物（md/markdown/html/htm）的单张长图转换缝（pop-social-files
+   * batch, 2026-10-20；作者令：文件类投递社交腿=转长图，转不动降文本卡）。
+   * 生产 = [[FileLongShot.NodeShot]]（仓内 node playwright，md 走 marked 同款
+   * 渲染）；离线 spec 注入 fake / [[FileLongShot.Unavailable]]，不启动 node。
+   * 原 social-webshot batch 的 `webshot` 缝（html 文件直发、截图兜底）随其
+   * 文件腿一并退役——2026-10-20 裁定接管了 2026-10-09 14:0x 的同名裁定面。
    */
-  webshot: WebPageShot.Renderer = WebPageShot.NodePlaywright()
+  longshot: FileLongShot.Renderer = FileLongShot.NodeShot()
 ):
 
   private val logger = NebflowLogger.forName("nebflow.social.outbound.feishu")
@@ -94,14 +96,17 @@ final class RichFeishuAdapter(
       case RichKind.Document => path.fold(degradeOnly("document product with no path"))(deliverDocument)
       case RichKind.Card => deliverCard(content)
       case RichKind.Unknown(reason) =>
-        // 机制词汇（分类原因）只进日志；用户行走三层降级（2026-10-09 裁定修正）：
-        //   a) 可渲染网页类（html/htm 且原件在盘上）→ 文件消息腿直发原件；
-        //   b) 文件腿失败 → 整页截图 → 以图片发出（含原件路径伴行注）；
-        //   c) 其余/再失败 → 友好中文一行（[[RichDegrade.unknown]]），绝不透英文机制报错。
+        // 机制词汇（分类原因）只进日志；用户行走两层（pop-social-files batch
+        // 2026-10-20 作者令，接管 2026-10-09 的三层链）：
+        //   a) 文件类可转换形态（md/markdown/html/htm 且原件在盘上）→ 单张长图
+        //      PNG → 图片腿 + 原件路径伴行注；同字节重复 Pop 去重抑制；
+        //   b) 转不动 / 其余形态 → 「文件名+本地路径+一句话摘要」文本卡
+        //      （[[RichDegrade.unconverted]]）或 `[未送达]` 友好一行
+        //      （[[RichDegrade.unknown]]），绝不透英文机制报错。
         logger.warnSync(s"outbound: product not carriable by this channel — $reason")
         val onDisk = path.filter(p => Files.isRegularFile(p.toNIO))
-        onDisk.filter(WebPageShot.isWebPage) match
-          case Some(p) => deliverWebPage(p)
+        onDisk.filter(FileLongShot.isConvertible) match
+          case Some(p) => deliverLongShot(p)
           case None =>
             // onDisk 为空 = 原件不在盘上（路径不存在/非普通文件）⇒ [未送达] 面。
             sendDegrade(RichDegrade.unknown(path, missing = onDisk.isEmpty), okDetail = "unknown-kind notice delivered")
@@ -114,135 +119,87 @@ final class RichFeishuAdapter(
     logger.warnSync(s"outbound: rich product with no usable path — $reason")
     sendDegrade(RichDegrade.unknown(None, missing = true), okDetail = "missing-path notice delivered")
 
-  // ────────────────── web page leg（social-webshot batch；2026-10-09 裁定修正）──────────────────
+  // ────────────────── file long-shot leg（pop-social-files batch, 2026-10-20）──────────────────
 
   /**
-   * 网页产物（html/htm，原件在盘上）出站 —— 用户裁定 2026-10-09 14:0x
-   * （「社交 html 可以以文件的形式发过来 不用自动转图」）：
+   * 文件类产物（md/markdown/html/htm，原件在盘上）出站 —— 作者裁定
+   * 2026-10-20（「Pop 的文件类产物投递社交腿=md/html→单张长图 PNG，转不动的
+   * 形态降级为『文件名+本地路径+一句话摘要』文本卡；去重防轰炸」）：
    *
-   *   ① 文件腿优先 —— 复用既有文件消息腿（[[uploadFileFn]] + `msg_type=file`，
-   *      html 扩展名落 [[fileTypeOf]] 的 STREAM 档），html 原件本体即消息，
-   *      不截图、无伴行注；
-   *   ② 截图降为兜底 —— 仅当文件腿发送失败（尺寸闸拒绝/上传被拒/消息被拒，
-   *      即渠道拒绝与超时面）才退整页截图 → 图片腿 + 原件路径伴行注
-   *      （[[deliverWebPageShot]]）；
-   *   ③ 截图再失败 —— 同腿内既有 b 层友好一行收尾。
+   *   ⓪ 去重 —— 同字节指纹（路径+size+mtime）已在账（前次推送已成功落账）⇒
+   *      本次零发送，一行日志（防轰炸；失败不落账 ⇒ 下次 Pop 照常重试）；
+   *   ① 转换主腿 —— 原件经仓内 node playwright 转**单张长图 PNG**
+   *      （[[FileLongShot]]，30s 预算；md 走 marked 渲染——与聊天同一份 vendor
+   *      库）→ 图片腿发出 → 文字腿附原件绝对路径（[[RichDegrade.originalNote]]，
+   *      桌面端可打开原件）；发送成功才落去重账；
+   *   ② 转不动（playwright 不可用/超时/产物非法）⇒ 友好文本卡收尾
+   *      （[[RichDegrade.unconverted]]），绝不透机制报错。
    *
-   * 分类层（[[RichKind.of]]）零改动：html 仍判 Unknown，本腿只在 Unknown 臂被
-   * 读取。尺寸闸失败也计入「文件腿失败」：截图兜底比「太大发不出」更贴近裁定
-   * 的送达意图（截图产物照旧不过闸，HC-3 判定 + 上传拒绝面兜底）。
+   * 分类层（[[RichKind.of]]）零改动：md/html 仍判 Unknown，本腿只在 Unknown 臂
+   * 被读取。与 card 腿同构：转换产物不走尺寸闸（HC-3 判定 + 上传拒绝面兜底）；
+   * 产物输出进数据根临时面（HC-4）。原 social-webshot 的「文件直发、截图兜底」
+   * 腿（2026-10-09 14:0x 裁定）随本腿整体退役——同字节 html 文件消息在微信侧
+   * 实测零到达（2026-10-20 实况），长图是作者点名的可看形态。
    */
-  private def deliverWebPage(original: os.Path): IO[List[RichCallResult]] =
-    webPageFileLeg(original).flatMap {
-      case Right(results) => IO.pure(results)
-      case Left(fail) =>
-        logger.warnSync(
-          s"outbound: web page file leg failed for $original (${fail.detail}) — falling back to the full-page shot"
-        )
-        deliverWebPageShot(original)
-    }
-
-  /** 文件腿的失败面：`reason` 用封闭词汇（只进日志/读数），`detail` 是机制细节
-    * （同上，从不直达用户）。 */
-  private final case class WebPageFileFail(reason: String, detail: String)
-
-  /**
-   * ① 文件腿的裸读数：尺寸闸 → [[uploadFileFn]] → `msg_type=file`。与
-   * [[deliverDocument]] 同一闸、同一缝、同一读数形状，差别只在失败面——这里
-   * 失败返回 `Left` 且不发降级文案（是否退截图由调用方决定，兜底链必须先于
-   * 一切用户可见字）；成功 ⇒ 一条 UploadFile 读数（原件本体即消息，无伴行注）。
-   */
-  private def webPageFileLeg(original: os.Path): IO[Either[WebPageFileFail, List[RichCallResult]]] =
-    IO.blocking {
-      val size = Files.size(original.toNIO)
-      AttachContract
-        .checkFileSize(size)
-        .left
-        .map(err => WebPageFileFail(RichDegrade.Reason.SizeGateRejected, RichDegrade.tooLarge(err, original)))
-        .map(_ => size)
-    }.flatMap {
-      case Left(fail) => IO.pure(Left(fail))
-      case Right(bytes) =>
-        uploadFileFn(original, original.last).flatMap { up =>
-          if !up.ok then
-            IO.pure(Left(WebPageFileFail(
-              RichDegrade.Reason.channelRejected(up.code),
-              s"file upload refused (code=${up.code}): ${up.detail}"
-            )))
-          else
-            sendMsgFn("file", fileKeyBody(up.key)).map { sent =>
-              if sent.ok then
-                Right(List(RichLedger.of(
-                  RichCall.UploadFile(original, original.last, thenSendFile = true),
-                  ok = true,
-                  sent.code,
-                  sent.messageId,
-                  s"web page sent as the original file (${bytes} bytes)"
-                )))
-              else
-                Left(WebPageFileFail(
-                  RichDegrade.Reason.channelRejected(sent.code),
-                  s"file message rejected: ${sent.detail}"
-                ))
-            }
-        }
-    }.handleErrorWith(e =>
-      IO.pure(Left(WebPageFileFail(
-        RichDegrade.Reason.FileUnreadable,
-        s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"
-      )))
-    )
-
-  /**
-   * ② 截图兜底腿（原 a 层主腿；2026-10-09 裁定后仅文件腿失败才走）：html 原件
-   * 经仓内 node playwright 整页截图（[[WebPageShot]]，30s 预算）→ 截图随图片
-   * 发出 → 文字腿附原件绝对路径（[[RichDegrade.webPageNote]]，桌面端 Canvas 可
-   * 打开原件）。截图失败（playwright 不可用/超时/产物非法）→ 退 b 层友好一行
-   * （含原件路径），绝不透机制报错。与 card 腿同构：截图产物不走尺寸闸（HC-3
-   * 判定 + 上传拒绝面兜底）；产物输出进数据根临时面（HC-4）。
-   */
-  private def deliverWebPageShot(original: os.Path): IO[List[RichCallResult]] =
-    prepareRenderOutput("page").flatMap { out =>
-      webshot.shot(original, out).flatMap {
-        case Left(reason) =>
+  private def deliverLongShot(original: os.Path): IO[List[RichCallResult]] =
+    IO(FileLongShot.Dedup.keyOf(original)).flatMap {
+      case Some(key) if FileLongShot.Dedup.seen(key) =>
+        // 零发送；调用方看到空读数即「本次没有可投递项」（warnSync 是同步
+        // 日志——返回 Unit，直包 IO 提升为读数）。
+        IO {
           logger.warnSync(
-            s"outbound: web page shot unavailable for $original ($reason) — degrading to the friendly notice"
+            s"outbound: long-shot duplicate suppressed for $original — same bytes already pushed (dedup)"
           )
-          sendDegrade(RichDegrade.unknown(Some(original)), okDetail = "web-page degrade notice delivered")
-        case Right(png) =>
-          uploadImageFn(png).flatMap { up =>
-            if !up.ok then
-              val pngBytes = if Files.exists(png.toNIO) then Files.size(png.toNIO) else 0L
-              val line = RichDegrade.renderFailed(RichDegrade.Reason.channelRejected(up.code), png, pngBytes)
-              logger.warnSync(s"outbound: web page screenshot upload refused (code=${up.code})")
-              sendDegrade(
-                s"$line\n${RichDegrade.webPageNote(original)}",
-                okDetail = s"web page screenshot upload refused (code=${up.code})"
+          Nil
+        }
+      case keyOpt =>
+        prepareRenderOutput("file").flatMap { out =>
+          longshot.shot(original, out).flatMap {
+            case Left(reason) =>
+              logger.warnSync(
+                s"outbound: file long-shot unavailable for $original ($reason) — degrading to the text card"
               )
-            else
-              for
-                imgSent <- sendMsgFn("image", imageKeyBody(up.key))
-                noteSent <- sendTextFn(RichDegrade.webPageNote(original))
-              yield List(
-                RichLedger.of(
-                  RichCall.UploadImage(png, thenSendImage = true),
-                  imgSent.ok,
-                  imgSent.code,
-                  imgSent.messageId,
-                  if imgSent.ok then "web page screenshot sent"
-                  else s"web page image message rejected: ${imgSent.detail}"
-                ),
-                RichLedger.of(
-                  RichCall.SendText(RichDegrade.webPageNote(original)),
-                  noteSent.ok,
-                  noteSent.code,
-                  noteSent.messageId,
-                  if noteSent.ok then "web page original-path note sent"
-                  else s"note send rejected: ${noteSent.detail}"
-                )
-              )
+              IO(FileLongShot.summarize(original)).flatMap(s =>
+                sendDegrade(
+                  RichDegrade.unconverted(original, s),
+                  okDetail = "unconverted file card delivered"
+                ))
+            case Right(png) =>
+              uploadImageFn(png).flatMap { up =>
+                if !up.ok then
+                  val pngBytes = if Files.exists(png.toNIO) then Files.size(png.toNIO) else 0L
+                  val line = RichDegrade.renderFailed(RichDegrade.Reason.channelRejected(up.code), png, pngBytes)
+                  logger.warnSync(s"outbound: long-shot upload refused (code=${up.code})")
+                  sendDegrade(
+                    s"$line\n${RichDegrade.originalNote(original)}",
+                    okDetail = s"long-shot upload refused (code=${up.code})"
+                  )
+                else
+                  for
+                    imgSent <- sendMsgFn("image", imageKeyBody(up.key))
+                    _ <- IO(if imgSent.ok then keyOpt.foreach(FileLongShot.Dedup.record) else ())
+                    noteSent <- sendTextFn(RichDegrade.originalNote(original))
+                  yield List(
+                    RichLedger.of(
+                      RichCall.UploadImage(png, thenSendImage = true),
+                      imgSent.ok,
+                      imgSent.code,
+                      imgSent.messageId,
+                      if imgSent.ok then "file long-shot sent"
+                      else s"long-shot image message rejected: ${imgSent.detail}"
+                    ),
+                    RichLedger.of(
+                      RichCall.SendText(RichDegrade.originalNote(original)),
+                      noteSent.ok,
+                      noteSent.code,
+                      noteSent.messageId,
+                      if noteSent.ok then "file original-path note sent"
+                      else s"note send rejected: ${noteSent.detail}"
+                    )
+                  )
+              }
           }
-      }
+        }
     }
 
   // ─────────────────────────── image leg ───────────────────────────

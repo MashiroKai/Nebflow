@@ -147,16 +147,21 @@ object WebPageShot:
   object NodePlaywright:
 
     /** 仓内脚本发现：系统属性 `nebflow.social.webshot.script` 显式指定优先；
-      * 否则从 user.dir 与 cwd 各向上找 ≤6 级的 `scripts/social-html-shot.mjs`
-      * （sbt 的 cwd 不保证是仓根；打包安装形态下两处都找不到 = 不可用，属
-      * 正常降级形态）。 */
-    def detectScript: Option[os.Path] =
-      val rel = os.rel / "scripts" / "social-html-shot.mjs"
+      * 否则从 user.dir 与 cwd 各向上找 ≤6 级的 `scripts/<name>`（sbt 的 cwd 不
+      * 保证是仓根；打包安装形态下两处都找不到 = 不可用，属正常降级形态）。
+      *
+      * `detectScriptNamed` 是通用面（pop-social-files batch）：[[FileLongShot]]
+      * 的 md 腿用同一走查规则发现 `social-md-shot.mjs`，本方法退化为具名一读，
+      * 不再有第二份向上走查。 */
+    def detectScriptNamed(name: String): Option[os.Path] =
+      val rel = os.rel / "scripts" / name
       val byProp = Option(System.getProperty("nebflow.social.webshot.script"))
         .flatMap(p => Try(os.Path(p, os.pwd)).toOption)
       def up(start: os.Path): Option[os.Path] =
         Iterator.iterate(start)(p => p / os.up).take(6).map(_ / rel).find(os.exists)
       byProp.orElse(up(os.Path(System.getProperty("user.dir"), os.pwd)))
         .orElse(up(os.pwd))
+
+    def detectScript: Option[os.Path] = detectScriptNamed("social-html-shot.mjs")
 
 end WebPageShot

@@ -1113,9 +1113,10 @@ final class FeishuBridgePlugin(
               val adapter = buildRichAdapter(c, region, chatId)
               // 🔴 The adapter is called for EVERY classified item, `Unknown`
               // included: something WAS observed as a product this turn, so the
-              // recipient must be told what happened to it（网页类 → 文件腿直发
-              // 原件、文件腿失败才截图兜底；其余 → `[暂不支持]`/`[未送达]` 友好
-              // 一行 —— social-webshot batch 2026-10-09 + 同日用户裁定修正，
+              // recipient must be told what happened to it（文件类 md/html →
+              // 单张长图 PNG + 原件路径伴行注、去重防轰炸；转不动 → `[未转图]`
+              // 文本卡 / `[未送达]` 友好一行 —— pop-social-files batch
+              // 2026-10-20 作者令，接管 social-webshot 的 2026-10-09 面，
               // 机制词汇只进日志）— a silent return here would be
               // exactly the drop this batch forbids.
               // 🔴 pop multi-group fix: one item's RAISE is contained to that
@@ -1163,7 +1164,8 @@ final class FeishuBridgePlugin(
                 if results.isEmpty then
                   IO(
                     logger.warn(
-                      s"feishu bridge: rich reply for chat $chatId carried no deliverable media — " +
+                      s"feishu bridge: rich reply for chat $chatId carried no deliverable media this time " +
+                        "(convertible md/html items may have been suppressed as same-bytes duplicates) — " +
                         "the text reply carries the turn"
                     )
                   )
