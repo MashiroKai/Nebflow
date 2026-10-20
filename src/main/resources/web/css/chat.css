@@ -4647,7 +4647,10 @@
    · 焦点环 rgb(var(--sapphire)/0.5) — friends.css:1427 同款；
    · 引用条宿主形态 — friends.css .fm-quote-strip 同族（D2 裁定：输入条下方）。
    🔴 无 accent bar、无左缘色条（好友窗设计硬约束沿用）。
-   引用块两行 clamp（作者裁定 2026-10-09：与好友窗 D1 两行式一致）。 */
+   引用块两行 clamp（作者裁定 2026-10-09：与好友窗 D1 两行式一致）。
+   引用块宽度约束（作者令 2026-10-20「引用文字不要超过用户发送的文字」）：
+   见下方 .msg-quote-composite 段 —— 带引用文本行把引用块与气泡包进同一
+   气泡驱宽复合盒，引用块渲染宽 = 气泡宽（窄气泡跟着窄），不再 ≤ 100% 行宽。 */
 .msg-quote-block {
   margin: 0 0 6px;
   padding: 6px 10px;
@@ -4670,6 +4673,21 @@
 @media (prefers-color-scheme: dark) {
   .msg-quote-block { background: rgba(255, 255, 255, 0.055); }
 }
+/* 引用块宽度约束（2026-10-20）：复合盒仅由「引用块 + 文本气泡同时在场」的两条
+   渲染腿（chat.js renderUserBubble / persistence.js restoreFromBackendHistory）
+   包裹 —— 本征宽纯由气泡贡献（引用块 width:0 ⇒ max-content 贡献归零；
+   min-width:100% ⇒ 渲染宽 = 复合盒宽 = 气泡宽）：复合盒 max-width 继承气泡帽
+   （80% 行宽，与 .bubble 同一含块解析），窄气泡时引用块跟着窄；超长被引文本走
+   既有 60 字摘要 + 两行 clamp，不撑宽。仅引用无气泡 / 无引用行不包裹，布局零
+   变化。零新色值（引用块材质/暗色媒体查询原样继承）。 */
+.msg-quote-composite {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  max-width: 80%;
+}
+.msg-quote-composite .bubble.user { max-width: 100%; }
+.msg-quote-composite .msg-quote-block { width: 0; min-width: 100%; }
 /* 降级注记（「原消息已删除」；.fm-quote-note 同族：再降一档不透明度）。 */
 .msg-quote-note { opacity: 0.75; font-size: 11px; margin-top: 2px; }
 .msg-quote-note:empty { display: none; }

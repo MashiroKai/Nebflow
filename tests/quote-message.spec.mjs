@@ -26,6 +26,11 @@
 //       （.nebflow/evidence/20261010_quotechip-composer/）
 //   B14 空引用不发（零回归）：仅引用无正文 ⇒ 纯引用帧闸生效（isRefOnlyFrame /
 //       syncRefOnlyGate ⇒ 发送键禁用）；引用+附件并存时闸不误伤
+//   B15 引用块宽度约束（2026-10-20 作者令「引用文字不要超过用户发送的文字」）：
+//       几何断言「引用块宽度 ≤ 气泡宽度」—— 引用块+文本气泡包进
+//       .msg-quote-composite 气泡驱宽复合盒（chat.css 同名段），窄气泡跟着窄，
+//       超长被引文本走既有摘要+两行 clamp 不撑宽；zh/en × 亮暗各验一例 + 截图
+//       存证（.nebflow/evidence/20261020_quoteblock-width/）
 //
 // Run: node node_modules/@playwright/test/cli.js test tests/quote-message.spec.mjs
 
@@ -548,5 +553,85 @@ test.describe('B14 — 纯引用帧闸（空引用不发）', () => {
 
     expect(pageErrors).toEqual([]);
     await context.close();
+  });
+});
+
+/* ══ B15 — 引用块宽度约束（2026-10-20 作者令「引用文字不要超过用户发送的文字」）═══
+ * 断言面 = 几何：引用块渲染宽 ≤ 气泡渲染宽（作者截图 2026-10-20 16.24.50：灰底
+ * 引用块横铺整行、比下方绿色回复气泡还宽）。修法 = 引用块 + 文本气泡同时在场 ⇒
+ * 包进 .msg-quote-composite 气泡驱宽复合盒（规则单点 = chat.css 同名段）：引用块
+ * 本征贡献归零（width:0）+ 渲染宽 = 复合盒宽 = 气泡宽（min-width:100%），复合盒
+ * max-width 继承气泡帽（80% 行宽）⇒ 窄气泡时引用块跟着窄；超长被引文本走既有
+ * 60 字摘要 + 两行 clamp，不撑宽。live（renderUserBubble）与历史重放
+ * （restoreFromBackendHistory）同一包裹规则。几何读数走 prefers-reduced-motion
+ * （nf-pop 动画 none，rect 无 scale 抖动）。 */
+
+test.describe('B15 — 引用块宽度约束（几何断言）', () => {
+  const WIDTH_EVIDENCE_DIR = path.join(REPO_ROOT, '.nebflow/evidence/20261020_quoteblock-width');
+  const QUOTED_AI_TEXT = '你推的数据面还不够广，要推广到所有，比如后台agent，消息，token面板，所有需要通过中继的数据都要盘点一遍，然后做统一的加速通道设计。';
+  const REPLY_TEXT = '我这里还要补充一下，就是比如我是在Windows上，那么我就应该加速，这里的本机不是指主机，是指我们使用控制台的机器。';
+
+  /** 渲染「引用长助手消息 + 回复」一行并读几何（row / quote / bubble 矩形宽）。 */
+  async function quotedRowGeometry(page, replyText) {
+    const ids = await page.evaluate(txt => window.__renderHistory([{ type: 'ai', text: txt }]), QUOTED_AI_TEXT);
+    await page.evaluate(async id => window.__startQuoteOn(id), ids[0]);
+    await page.evaluate(txt => window.__renderUserRowWithQuote(txt, 'cm-width-1'), replyText);
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    return page.evaluate(() => {
+      const row = document.querySelector('.row[data-msg-id="cm-width-1"]');
+      const q = row.querySelector('.msg-quote-block');
+      const b = row.querySelector('.bubble.user:not(.att-bubble)');
+      const qr = q.getBoundingClientRect();
+      const br = b.getBoundingClientRect();
+      return {
+        quoteW: qr.width,
+        bubbleW: br.width,
+        rowW: row.getBoundingClientRect().width,
+        composite: !!row.querySelector('.msg-quote-composite'),
+        quoteBlockFirst: q.nextElementSibling === b,
+      };
+    });
+  }
+
+  test('长引用+气泡：引用块 ≤ 气泡宽且不再铺满整行；复合盒在场、引用块仍在气泡正上方', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: 'light' });
+    const g = await quotedRowGeometry(page, REPLY_TEXT);
+    expect(g.composite, '引用+文本气泡 ⇒ 复合盒包裹').toBe(true);
+    expect(g.quoteBlockFirst, '引用块仍在气泡正上方（B5 形态零回归）').toBe(true);
+    expect(g.quoteW, '几何断言：引用块宽度 ≤ 气泡宽度').toBeLessThanOrEqual(g.bubbleW);
+    expect(g.quoteW, '引用块不再铺满整行（修复前 = 整行宽）').toBeLessThan(g.rowW);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('窄气泡跟随：短回复 ⇒ 引用块跟着收窄到气泡宽（不被动引用撑宽）', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: 'light' });
+    const g = await quotedRowGeometry(page, '好的');
+    expect(g.quoteW, '窄气泡 ⇒ 引用块 ≤ 气泡宽').toBeLessThanOrEqual(g.bubbleW);
+    expect(g.bubbleW, '气泡维持内容宽（长引用未把气泡撑宽）').toBeLessThan(g.rowW * 0.3);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('zh/en × 亮暗各验一例：几何恒成立 + 双语双主题截图存证', async ({ browser }) => {
+    fs.mkdirSync(WIDTH_EVIDENCE_DIR, { recursive: true });
+    for (const [locale, scheme] of [['zh-CN', 'light'], ['zh-CN', 'dark'], ['en-US', 'light'], ['en-US', 'dark']]) {
+      const { context, page, pageErrors } = await newPage(browser);
+      await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: scheme });
+      if (locale !== 'zh-CN') {
+        await page.evaluate(async loc => {
+          (await import('/src/main/resources/web/js/i18n.js')).setLocale(loc);
+        }, locale);
+      }
+      const g = await quotedRowGeometry(page, REPLY_TEXT);
+      expect(g.quoteW, `${locale}/${scheme}：引用块宽度 ≤ 气泡宽度`).toBeLessThanOrEqual(g.bubbleW);
+      const file = path.join(WIDTH_EVIDENCE_DIR, `after-${locale}-${scheme}.png`);
+      await page.locator('.row[data-msg-id="cm-width-1"]').screenshot({ path: file, animations: 'disabled' });
+      expect(fs.statSync(file).size, `${locale}/${scheme} 截图非空`).toBeGreaterThan(1000);
+      expect(pageErrors).toEqual([]);
+      await context.close();
+    }
   });
 });

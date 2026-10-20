@@ -1033,9 +1033,17 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       // 换设备/分页都稳）。目标行可点性在 fragment 挂载后由 syncQuoteJumpStates
       // 统一收敛（页内靠后的目标行此刻可能尚未创建）；未命中 ⇒ 快照文 +
       // 「原消息已删除」注记 + 无指针（无死点击）。
-      if (m.quote && typeof m.quote === 'object') {
-        row.appendChild(renderQuoteBlock(m.quote));
+      // 引用块宽度约束（2026-10-20 作者令「引用文字不要超过用户发送的文字」）：
+      // 与 live 腿同一包裹规则 —— 引用块 + 文本气泡同时在场 ⇒ .msg-quote-composite
+      // 气泡驱宽复合盒（规则单点 = chat.css 同名段）；仅引用无文本不包裹。
+      const quoteBox = (m.quote && typeof m.quote === 'object') ? renderQuoteBlock(m.quote) : null;
+      let composite = null;
+      if (quoteBox && m.text) {
+        composite = document.createElement('div');
+        composite.className = 'msg-quote-composite';
+        row.appendChild(composite);
       }
+      if (quoteBox) (composite || row).appendChild(quoteBox);
       if (m.text) {
         const bubble = document.createElement('div');
         bubble.className = 'bubble user';
@@ -1057,7 +1065,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
           appendTextWithMentions(t, m.text || '');
           bubble.appendChild(t);
         }
-        row.appendChild(bubble);
+        (composite || row).appendChild(bubble);
       }
       const backendMediaRow = buildUserAttachmentRows(row, m.attachments);
       // Unified v1.2 footer pill (time + copy; copy-only when no timestamp)
