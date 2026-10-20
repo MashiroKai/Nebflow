@@ -28,7 +28,14 @@ import org.typelevel.ci.CIString
  * Stage C origin gate history: while the two file-token rails still existed
  * they were direct-loopback-only (tunnel-refused); stage D removed the rails
  * entirely, so the matrix below now expects refusal everywhere. The
- * origin-blindness of the session/Bearer rails stays pinned.
+ * origin-blindness of the session/Bearer rails stays pinned FOR relay-mint —
+ * and only for relay-mint: the 本地加速 M1 batch (v2 §3.3) adds ONE leg
+ * binding to the session rail — a `local-ticket` session authenticates ONLY
+ * on a real loopback socket ([[LoopbackLeg]]), so a localhost-seated session
+ * cookie cannot be replayed on the tunnel/LAN/public legs for arbitrary
+ * reads. The binding is origin-class-scoped (relay-mint legs unchanged on
+ * every arm, pinned below) and composes with the fall-through discipline
+ * (refused local-ticket + valid Bearer ⇒ ViaBearer).
  *
  * PAT positive-path (a real signed JWT against JWKS) is an integration face —
  * here an INVALID PAT is asserted to fall through, which is the phase-A
@@ -43,6 +50,7 @@ class GatewayAuthSpec extends CatsEffectSuite:
   // The origin matrix needs a live armed mark value; arm() is idempotent
   // and process-global, so every read below observes the same value.
   TunnelOriginMark.arm()
+
   private val TrueMark: String =
     TunnelOriginMark.armedValue.getOrElse(sys.error("tunnel mark failed to arm"))
 
@@ -156,7 +164,9 @@ class GatewayAuthSpec extends CatsEffectSuite:
       )
     yield ()
 
-  test("only Bearer file token: ApiFull/WsAuth/OpenAiCompat/BearerFileOnly accept; StaticAuth refuses and falls through"):
+  test(
+    "only Bearer file token: ApiFull/WsAuth/OpenAiCompat/BearerFileOnly accept; StaticAuth refuses and falls through"
+  ):
     val r = req(bearer = Some(FileToken))
     for
       api <- auth(r, GatewayAuth.Rails.ApiFull)
@@ -211,6 +221,7 @@ class GatewayAuthSpec extends CatsEffectSuite:
     ("lan-direct", Some(SpecRequests.Lan)),
     ("public-direct", Some(SpecRequests.Public))
   )
+
   private val OriginMarks = List(
     ("no-mark", None),
     ("garbage-mark", Some("0123456789abcdef-not-the-real-value")),
@@ -255,6 +266,125 @@ class GatewayAuthSpec extends CatsEffectSuite:
       bearer <- auth(req(bearer = Some(FileToken), remote = None, mark = Some(TrueMark)), GatewayAuth.Rails.ApiFull)
       _ = assertEquals(session.map(_.railName), Some("session"), "session rail must survive the tunnel origin")
       _ = assertEquals(bearer, Some(Credential.ViaBearer(isFileToken = true)), "Bearer stays cross-tunnel legal")
+    yield ()
+
+  // ── 本地加速 M1 批 ①: local-ticket 会话的腿绑定（防 localhost 任意读）────
+  //
+  // v2 §3.3 近路把会话 cookie 座到 localhost origin（jar 按 host 共享、不分
+  // 端口）。绑定判据 = 真实环回 socket（LoopbackLeg）：v4 / v6 / v4-mapped 环
+  // 回都在腿内；隧道腿（进程内 remote=None）、LAN、公网一律拒绝，且拒绝是
+  // fall-through（不短路）——本轨死亡后 Bearer 照常接管。
+
+  test("local-ticket ON a loopback leg (v4/v6/mapped) authenticates on every session-carrying face"):
+    val loopbacks = List(
+      ("loopback-v4", Some(SpecRequests.LoopbackV4)),
+      ("loopback-v6", Some(SpecRequests.LoopbackV6)),
+      ("loopback-mapped", Some(SpecRequests.LoopbackMapped))
+    )
+    for
+      sid <- liveSession(GatewaySessionStore.OriginLocalTicket)
+      _ <- loopbacks.foldLeft(IO.unit) { case (acc, (name, remote)) =>
+        acc.flatMap { _ =>
+          val mk = req(cookies = (GatewaySessionStore.CookieName, sid), remote = remote)
+          for
+            ws <- auth(mk, GatewayAuth.Rails.WsAuth)
+            api <- auth(mk, GatewayAuth.Rails.ApiFull)
+            static <- auth(mk, GatewayAuth.Rails.StaticAuth)
+            _ = assertEquals(ws.map(_.railName), Some("session"), s"$name: WsAuth must seat the local session")
+            _ = assertEquals(api.map(_.railName), Some("session"), s"$name: ApiFull must seat the local session")
+            _ = assertEquals(static.map(_.railName), Some("session"), s"$name: StaticAuth must seat the local session")
+          yield ()
+        }
+      }
+    yield ()
+
+    end for
+
+  test("local-ticket OFF-leg (tunnel-None / LAN / public) refuses the session rail on every face"):
+    val offLegs = List(
+      ("tunnel(None)", None),
+      ("lan-direct", Some(SpecRequests.Lan)),
+      ("public-direct", Some(SpecRequests.Public))
+    )
+    for
+      sid <- liveSession(GatewaySessionStore.OriginLocalTicket)
+      _ <- offLegs.foldLeft(IO.unit) { case (acc, (name, remote)) =>
+        acc.flatMap { _ =>
+          val mk = req(cookies = (GatewaySessionStore.CookieName, sid), remote = remote)
+          for
+            ws <- auth(mk, GatewayAuth.Rails.WsAuth)
+            api <- auth(mk, GatewayAuth.Rails.ApiFull)
+            static <- auth(mk, GatewayAuth.Rails.StaticAuth)
+            openai <- auth(mk, GatewayAuth.Rails.OpenAiCompat)
+            _ = assertEquals(ws, None, s"$name: the localhost session must not authenticate over the tunnel leg")
+            _ = assertEquals(api, None, s"$name: the localhost session must not authenticate over ApiFull")
+            _ = assertEquals(static, None, s"$name: the localhost session must not authenticate over StaticAuth")
+            _ = assertEquals(openai, None, s"$name: the localhost session must not authenticate over OpenAiCompat")
+          yield ()
+        }
+      }
+    yield ()
+
+    end for
+
+  test("local-ticket refusal composes with fall-through: off-leg cookie + valid Bearer => ViaBearer"):
+    for
+      sid <- liveSession(GatewaySessionStore.OriginLocalTicket)
+      both <- auth(
+        req(bearer = Some(FileToken), cookies = (GatewaySessionStore.CookieName, sid), remote = Some(SpecRequests.Lan)),
+        GatewayAuth.Rails.ApiFull
+      )
+      _ = assertEquals(
+        both,
+        Some(Credential.ViaBearer(isFileToken = true)),
+        "a refused local-ticket rail must not short-circuit a valid Bearer (fall-through discipline intact)"
+      )
+    yield ()
+
+  test("the binding is origin-class-scoped: relay-mint keeps authenticating on EVERY leg"):
+    val arms = OriginRemotes
+    for
+      sid <- liveSession() // relay-mint
+      _ <- arms.foldLeft(IO.unit) { case (acc, (name, remote)) =>
+        acc.flatMap { _ =>
+          val mk = req(cookies = (GatewaySessionStore.CookieName, sid), remote = remote)
+          auth(mk, GatewayAuth.Rails.ApiFull).map { hit =>
+            assertEquals(
+              hit.map(_.railName),
+              Some("session"),
+              s"relay-mint session must stay leg-agnostic (changed: remote=$name)"
+            )
+          }
+        }
+      }
+    yield ()
+
+    end for
+
+  test("localTicketOnLeg predicate: loopback leg opens, tunnel/LAN/public legs refuse; relay-mint is exempt"):
+    for
+      sid <- liveSession(GatewaySessionStore.OriginLocalTicket)
+      local = SessionRecord(
+        sid,
+        "sub",
+        GatewaySessionStore.OriginLocalTicket,
+        "net",
+        0L,
+        Long.MaxValue,
+        0L,
+        Long.MaxValue
+      )
+      relay = local.copy(origin = GatewaySessionStore.OriginRelayMint)
+      onLoop = req() // default req() remote = loopback v4
+      offTunnel = req(remote = None)
+      offLan = req(remote = Some(SpecRequests.Lan))
+      offPublic = req(remote = Some(SpecRequests.Public))
+      _ = assert(GatewayAuth.localTicketOnLeg(local, onLoop), "local-ticket on loopback: seats")
+      _ = assert(!GatewayAuth.localTicketOnLeg(local, offTunnel), "local-ticket on tunnel leg (remote=None): refuses")
+      _ = assert(!GatewayAuth.localTicketOnLeg(local, offLan), "local-ticket on LAN: refuses")
+      _ = assert(!GatewayAuth.localTicketOnLeg(local, offPublic), "local-ticket on public: refuses")
+      _ = assert(GatewayAuth.localTicketOnLeg(relay, offTunnel), "relay-mint is leg-exempt (tunnel is its home leg)")
+      _ = assert(GatewayAuth.localTicketOnLeg(relay, offLan), "relay-mint is leg-exempt (LAN)")
     yield ()
 
   // ── rotate linkage (criterion 7, unit face) ────────────────────────────

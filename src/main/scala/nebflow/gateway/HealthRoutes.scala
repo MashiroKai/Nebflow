@@ -7,6 +7,7 @@ import fs2.Stream
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.hotrestart.HealthPayload
+import nebflow.shared.Branding
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
@@ -17,6 +18,11 @@ import org.http4s.headers.`Content-Type`
  * /health、/health/conn、/usage/aggregate、/tts、/command case 逐字迁入,
  * 行为保持;经 RestApiRoutes.routes 级联首位挂载,各臂首段路径字面量与
  * 其余域互不重叠。
+ *
+ * 本地加速 M1 批 ②/④(v2 §3.3):/health 增「同机近路探测」面 —— 环回腿
+ * 并 `deviceId` 键(门户探测身份核对锚)+ 门户 origin 白名单 CORS 应答
+ * (GET/OPTIONS 预检);非环回/非白名单 = 载荷与响应头逐字不变(现状即
+ * 降级兜底)。判据与应答助手见 companion 末段。
  */
 private[gateway] object HealthRoutes:
 
@@ -28,7 +34,7 @@ private[gateway] object HealthRoutes:
       // (unconfigured/up/down) — INDEPENDENT of model health, so "模型配额 DOWN
       // 但搜索 API 正常" is visible at a glance. `status` stays "ok" while the
       // gateway serves (the watchdog keys on HTTP 200).
-      case GET -> Root / "health" =>
+      case req @ GET -> Root / "health" =>
         // Payload construction is SINGLE-SOURCED in
         // `nebflow.core.hotrestart.HealthPayload.build` (hotupdate batch 2, G3): the
         // hot-restart door self-check (tier 3 "port-serving" / tier 4 "version-match")
@@ -37,13 +43,28 @@ private[gateway] object HealthRoutes:
         // field order and value semantics are unchanged (byte-compatible body).
         // 统一更新收敛闭环（M3 ③）：`update` 键 = 最近挂账/决策读数，**仅当有状态
         // 可报时出现**（无键 = 默认载荷逐字节不变，探针契约零回归）。
+        // 本地加速批 ②（v2 §3.3 步骤1-2）：环回腿额外并 `deviceId` 键 —— 门户页
+        // 同机探测的身份核对锚（与 URL `?device=` 一致才允许近路切换）。键只在
+        // 「环回腿 ∧ 本机已铸身份」时出现，与 `update` 键同一「有状态才出现」
+        // 纪律；非环回腿/未铸身份 = 默认载荷逐字节不变。CORS 白名单应答只发生
+        // 在环回腿上（见 probeCorsHeaders）——LAN/隧道腿照旧零 CORS 头。
         sharedResources.updateConvergence
           .traverse(_.healthJson)
           .map(_.flatten)
           .flatMap { extra =>
             val updateKey = extra.map(u => Json.obj("update" -> u)).getOrElse(Json.obj())
-            HealthPayload.build(sharedResources.healthMonitor, updateKey).flatMap(Ok(_))
+            HealthPayload.build(sharedResources.healthMonitor, updateKey)
           }
+          .flatMap(nearPathProbePayload(req, _))
+          .flatMap(Ok(_).map(_.putHeaders(probeCorsHeaders(req)*)))
+
+      // 同机近路探测的预检腿（本地加速批 ②，v2 §3.3）：门户页（公网 https）
+      // 探本机回环 /api/health 属 Private-Network 请求，Chromium 先发 OPTIONS
+      // 预检；此前该路径落空（/api 树 404）⇒ 探测必败。应答同 probeCorsHeaders
+      // 白名单闸 —— 非白名单 origin / 非环回腿 = 裸 204 无 CORS 头（浏览器不可
+      // 读 ⇒ 门户停留现状，批 ④ 的降级语义）。
+      case req @ OPTIONS -> Root / "health" =>
+        NoContent().map(_.putHeaders(probeCorsHeaders(req)*))
 
       // 连接面只读读数（R-1b conn-guard 批，设计件 §C④-4）：零凭据面（仅
       // 对端 IP + 计数 + 上限/超时口径 + fd 代理）。与 /health 同级无令牌门
@@ -128,5 +149,84 @@ private[gateway] object HealthRoutes:
 
     }
   end routes
+
+  // ── 同机近路探测面（本地加速 M1 批 ②/④，接口契约 = v2 §3.3 步骤1-2/5）─────
+
+  /**
+   * `deviceId` 并键（身份核对锚）：只在**环回腿**上读本机身份（零写盘、零铸造
+   * 的 `readDeviceIdOnly`；PortalUrl.startupUrl 同一读法先例）。LAN/隧道腿不并
+   * ——`/health` 无令牌门（watchdog 用），deviceId 不该因本批而变成 LAN 可枚举
+   * 量；跨设备本无近路，探测面只服务本机门户页。未铸身份 ⇒ 载荷原样（门户
+   * 探测读不到 deviceId ⇒ 不切换 = 停留门户，批 ④ 降级语义）。
+   */
+  private def nearPathProbePayload(req: Request[IO], base: Json): IO[Json] =
+    if !LoopbackLeg.isLoopback(req) then IO.pure(base)
+    else
+      IO.blocking(nebflow.neblink.DeviceIdentity.readDeviceIdOnly).flatMap {
+        case None => IO.pure(base)
+        case Some(id) => IO.pure(base.deepMerge(Json.obj("deviceId" -> id.asJson)))
+      }
+
+  /** 预检缓存窗（探测是低频动作，600s 与 nf-reach 同族量级）。 */
+  private val ProbeCorsMaxAge: String = "600"
+
+  /**
+   * CORS 白名单（v2 §3.3 步骤1「网关对本机健康端点回 CORS 白名单，新增一小刀」）。
+   *
+   * 白名单源 = 门户 URL 的 origin：brand.conf `portalUrl` + 门户 env 覆盖
+   * （`Branding.env("PORTAL_URL")` 双前缀，同 PortalUrl.livePortalEnv 口径）。
+   * **不是 `*`**：载荷含 deviceId/version（本机指纹面），只有门户 origin 配读；
+   * 其他一切 origin（含任意 localhost 端口页面）零 CORS 头 ⇒ 浏览器读不到 ⇒
+   * 近路判定不成立 = 停留门户（批 ④）。
+   *
+   * 且整个应答**只在环回腿上发生**（`LoopbackLeg`）：门户页探的正是本机网关，
+   * 跨设备场景不存在近路，不该给「从另一台设备探到的本机实例」开 CORS。
+   * PNA 头（Allow-Private-Network）与 nf-reach 同款：公网页面 → 回环目标的
+   * Chromium 私网预检必须由服务端应答。
+   */
+  def probeCorsHeaders(req: Request[IO]): List[Header.ToRaw] =
+    val reqOrigin = req.headers.headers
+      .find(h => h.name.toString.equalsIgnoreCase("Origin"))
+      .map(_.value.trim)
+      .filter(_.nonEmpty)
+    val allowed =
+      LoopbackLeg.isLoopback(req) &&
+        reqOrigin.exists(o => canonicalOrigin(o).exists(allowedProbeOrigins.contains))
+    if !allowed then Nil
+    else
+      val origin = reqOrigin.getOrElse("")
+      List(
+        Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Origin"), origin),
+        Header.Raw(org.typelevel.ci.CIString("Vary"), "Origin"),
+        Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Methods"), "GET, OPTIONS"),
+        Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Headers"), "content-type"),
+        Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Private-Network"), "true"),
+        Header.Raw(org.typelevel.ci.CIString("Access-Control-Max-Age"), ProbeCorsMaxAge)
+      )
+
+  end probeCorsHeaders
+
+  /** 白名单 origin 集（纯函数，spec 直读）：门户 base + 门户 env 覆盖。 */
+  private[gateway] def allowedProbeOrigins: Set[String] =
+    List(Option(Branding.portalUrl), Branding.env("PORTAL_URL")).flatten
+      .flatMap(u => canonicalOrigin(u))
+      .toSet
+
+  /**
+   * origin 归一（scheme+host 小写 + 缺省端口抹除）：`https://x:443/a` 与
+   * `https://x` 同一 origin。非 http(s)/无 host（坏值、`about:…`）⇒ None。
+   */
+  private[gateway] def canonicalOrigin(url: String): Option[String] =
+    try
+      val u = new java.net.URI(url)
+      val scheme = Option(u.getScheme).map(_.toLowerCase)
+      val host = Option(u.getHost).map(_.toLowerCase)
+      (scheme, host) match
+        case (Some(s), Some(h)) =>
+          val explicit = Option(u.getPort).filter(p => p != -1)
+          val port = explicit.filterNot(p => (s == "https" && p == 443) || (s == "http" && p == 80))
+          Some(port.fold(s"$s://$h")(p => s"$s://$h:$p"))
+        case _ => None
+    catch case _: Exception => None
 
 end HealthRoutes
