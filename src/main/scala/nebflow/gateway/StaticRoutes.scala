@@ -25,8 +25,10 @@ object StaticRoutes:
   enum StaticSource:
     /** Dev source tree — the sbt run hot-edit default. */
     case DevTree
+
     /** esbuild bundle packed on the classpath (sbt -D<lower>.webdist=1 assembly). */
     case BundledDist
+
     /** esbuild bundle on disk (build/web-dist under the engine working dir). */
     case DiskDist(root: os.Path)
   end StaticSource
@@ -63,7 +65,7 @@ object StaticRoutes:
     else
       projectRoot.flatMap(diskDistRoot) match
         case Some(root) => StaticSource.DiskDist(root)
-        case None       => StaticSource.DevTree
+        case None => StaticSource.DevTree
   end resolveStaticSource
 
   /** Disk dist root under `root`, only when it exists AND is fresh vs sources. */
@@ -104,12 +106,39 @@ object StaticRoutes:
   /** Boot-visibility line for GatewayMain: which static tree is being fed. */
   def staticSourceDescription: String =
     staticSource match
-      case StaticSource.DevTree => "static tree: dev web/ sources"
+      case StaticSource.DevTree => "static tree: dev web/ sources" + staleDiskDistHint
       case StaticSource.BundledDist =>
         "static tree: bundled web-dist (classpath) — -D" + Branding.lowerName + ".webdist=dev forces the dev tree"
       case StaticSource.DiskDist(root) =>
         "static tree: disk web-dist at " + root + " (fresh vs web/ sources) — -D" + Branding.lowerName + ".webdist=dev forces the dev tree"
   end staticSourceDescription
+
+  /**
+   * console-load-perf 批 2026-10-21 — the silent-fallback visibility fix for the
+   * 10-20 stranding: the engine restarted 19:20 chose the dev tree because the
+   * disk dist was built at 20:05 (AFTER boot) and [[staticSource]] is a lazy
+   * val resolved once — the boot line said "dev web/ sources" with zero hint
+   * that a rebuild+restart would flip it. When the dev tree IS being fed and a
+   * disk dist EXISTS but lost the freshness race, name the cause and the fix on
+   * the boot line (a fresh dist never lands here — it would have been picked by
+   * [[resolveStaticSource]]; so this hint only ever fires for the stale case,
+   * and the intentional `-D.webdist=dev` hot-edit escape keeps its clean line).
+   */
+  private def staleDiskDistHint: String =
+    try
+      val index = os.pwd / "build" / "web-dist" / "index.html"
+      if !os.isFile(index) then ""
+      else
+        val sources = os.pwd / "src" / "main" / "resources" / "web"
+        val stale =
+          if !os.isDir(sources) then 0
+          else os.walk(sources).count(f => os.isFile(f) && os.mtime(f) > os.mtime(index))
+        if stale == 0 then ""
+        else
+          s" — WARNING: disk dist build/web-dist is STALE ($stale web source files newer); " +
+            "run scripts/build-web.mjs then restart to activate it"
+    catch case _: Throwable => ""
+  end staleDiskDistHint
 
   /**
    * L1 rebrand: the frontend brand contract. window.__BRAND__ is the only
@@ -246,9 +275,9 @@ object StaticRoutes:
    * and response contract on every branch.
    */
   def indexResponse: IO[Response[IO]] = staticSource match
-    case StaticSource.BundledDist     => indexWithBrand("web-dist/index.html")
-    case StaticSource.DiskDist(root)  => indexWithBrandFile(root / "index.html")
-    case StaticSource.DevTree         => indexWithBrand("web/index.html")
+    case StaticSource.BundledDist => indexWithBrand("web-dist/index.html")
+    case StaticSource.DiskDist(root) => indexWithBrandFile(root / "index.html")
+    case StaticSource.DevTree => indexWithBrand("web/index.html")
   end indexResponse
 
   private def readClasspathResourceUtf8(name: String): Option[String] =
@@ -310,6 +339,7 @@ object StaticRoutes:
                   .getOrElseF(NotFound())
               else NotFound()
             case StaticSource.DevTree => NotFound()
+          end match
         end if
       end if
   }
@@ -395,6 +425,8 @@ object StaticRoutes:
           StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
         else NotFound()
     end if
+
+  end uploadsServe
 
   /**
    * canvas-media Wave1 (2026-10-05, OD-2=V-C): tokenized static route for
@@ -486,6 +518,8 @@ object StaticRoutes:
             else NotFound()
         }
     end if
+
+  end pluginAssetsServe
 
   /** jsRoutes-style emptiness guard: no segments at all, or a trailing empty one. */
   private def relPartsEmpty(relParts: List[String]): Boolean =

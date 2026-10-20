@@ -594,12 +594,18 @@
 
   <!-- 2026-09-05 旧 UI 退役：body 级 legacy-pop 容器（含 teams-btn/flows-btn）
        已删除——旧面板入口非封存而是摘除（作者裁定）。 -->
-  <script src="vendor/lucide.min.js"></script>
-  <script src="vendor/qrcode.js"></script>
-  <script src="vendor/lottie.min.js"></script>
-  <script src="vendor/marked.min.js"></script>
-  <script src="vendor/katex.min.js"></script>
-  <script src="vendor/highlight.min.js"></script>
+  <!-- vendor 经典脚本 defer 化（console-load-perf 批 2026-10-21）：defer 经典脚本与
+       module 脚本同入「按文档序延迟执行」队列——下列脚本仍在 js/main.js 之前执行，
+       window 全局契约与执行顺序不变；变化只在不再阻塞 HTML 解析/首帧（10-19 瀑布
+       审计根因#4 止损）。qrcode.js 摘出首开路径：非首屏（社交渠道二维码），按需
+       注入见 socialPanel.js ensureVendorQr——typeof 兜底路径原样保留。katex/lottie
+       保留 defer 在册：katex 服务聊天历史数学块渲染、lottie 服务 boot 门控
+       （main.js waitForGlobals），二者按需化会引入首屏回归面，留 dist 打包时代再收。 -->
+  <script defer src="vendor/lucide.min.js"></script>
+  <script defer src="vendor/lottie.min.js"></script>
+  <script defer src="vendor/marked.min.js"></script>
+  <script defer src="vendor/katex.min.js"></script>
+  <script defer src="vendor/highlight.min.js"></script>
   <script type="module" src="js/main.js"></script>
   <!-- 手机交互层注册钩子：桌面视口只做一次 media-query 判定即返回（不 import
        控制器、不建 DOM）；手机视口动态加载 js/mobile/ 四控制器（nav/layout/

@@ -1413,6 +1413,31 @@ function scanNode(channelId, sel) {
 }
 
 /**
+ * On-demand vendor QR loader (console-load-perf 批 2026-10-21)：qrcode.js 已摘出
+ * 首开瀑布（index.html 不再预载，58KB 原始字节/首开少一个阻塞脚本位），首次真实
+ * 需要渲染二维码时才注入。Promise 缓存 = 只注一次；加载失败 → 调用方走既有
+ * renderQrFallback（URL 本身可用，与 vendor 缺席时同一出口）。
+ * @returns {Promise<void>}
+ */
+let qrVendorPromise = null;
+function ensureVendorQr() {
+  if (typeof qrcode === 'function') return Promise.resolve();
+  if (!qrVendorPromise) {
+    qrVendorPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = '/vendor/qrcode.js';
+      script.onload = () => resolve();
+      script.onerror = () => {
+        qrVendorPromise = null; // 失败可重试：下次渲染再注入
+        reject(new Error('vendor qrcode.js load failed'));
+      };
+      document.head.appendChild(script);
+    });
+  }
+  return qrVendorPromise;
+}
+
+/**
  * Vendor QR render (web/vendor/qrcode.js, MIT): canvas, white ground + the
  * light-theme text token value as ink. The literals are deliberate — a QR
  * must scan identically in both themes, so it does not follow the palette.
@@ -1421,7 +1446,22 @@ function scanNode(channelId, sel) {
  * @param {string} url
  */
 function renderQr(channelId, container, url) {
-  if (typeof qrcode !== 'function') { renderQrFallback(channelId, container, url); return; }
+  if (typeof qrcode !== 'function') {
+    // 按需加载位（原版此处直接走 fallback——现在先试一次懒注入，QR 首用晚 ~一个
+    // 脚本往返，其余行为不变；加载失败仍走同一 fallback）。
+    ensureVendorQr()
+      .then(() => {
+        if (typeof qrcode === 'function') drawQr(channelId, container, url);
+        else renderQrFallback(channelId, container, url);
+      })
+      .catch(() => renderQrFallback(channelId, container, url));
+    return;
+  }
+  drawQr(channelId, container, url);
+}
+
+/** renderQr 的绘制腿（console-load-perf 批拆出，字节等价原实现）。 */
+function drawQr(channelId, container, url) {
   const qr = qrcode(0, 'M');
   qr.addData(url);
   qr.make();
