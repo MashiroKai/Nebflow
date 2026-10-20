@@ -65,6 +65,14 @@ final class RelayAuthFixtureServer extends AutoCloseable:
    */
   @volatile var loginDelayMs: Long = 0L
 
+  /**
+   * Artificial relay-upgrade latency (relay-honest 批 2026-10-20 测试旋钮)：
+   * hold the 101 response back so a caller can deterministically land
+   * `stop()` INSIDE the upgrade window (the stop-during-upgrade race the
+   * batch guards in `connectOnce`). 0 = unchanged timing.
+   */
+  @volatile var upgradeDelayMs: Long = 0L
+
   /** Answer login with 500 (server-side failure) instead of issuing a token. */
   @volatile var failLogins: Boolean = false
 
@@ -545,6 +553,7 @@ final class RelayAuthFixtureServer extends AutoCloseable:
   private def handleRelayUpgrade(req: Request, sock: Socket, out: OutputStream): Unit =
     val tok = bearer(req)
     relayTokens.add(if tok.length > 8 then tok.take(8) + "…" else tok)
+    if upgradeDelayMs > 0 then Thread.sleep(upgradeDelayMs)
     val live = isLive(tok)
     relayMode match
       case RelayMode.Auth403 =>

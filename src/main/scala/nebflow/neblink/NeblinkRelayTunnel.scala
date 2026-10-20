@@ -395,20 +395,31 @@ final class NeblinkRelayTunnel(
    */
   def ensure(): IO[Unit] = start()
 
-  /** Gracefully stop the tunnel. */
+  /**
+   * Gracefully stop the tunnel.
+   *
+   * 🔴 relay-honest 批（2026-10-20，link-server 诊断「登出→重登录后 relay 隧道
+   * 无重启触发器」②的一半）：修前本方法**零日志** —— 登出第 2 步走到这里，引擎日志
+   * 里没有任何 disconnect 行，状态翻转完全不可见（诊断原话：「引擎日志零 disconnect
+   * 行」）。现在断开必须有可见行：与既有断开族同措辞（`Relay tunnel disconnected …`，
+   * INFO 级 = 与 `connectConfigured` 的掉线行同档），机器可 grep（`tunnel stop`）。
+   * 复活行（`(re)starting after stop()`）由 `start()` 负责，配对可查。
+   */
   def stop(): IO[Unit] =
-    signalWake() *> IO.blocking {
-      running.set(false)
-      alive.set(false)
-      heartbeat.foreach { hb =>
-        try hb.shutdownNow()
-        catch case _: Exception => ()
+    logger.info("Relay tunnel disconnected: stop() — tunnel torn down (logout local teardown); " +
+      "status no longer reports this tunnel connected") *>
+      signalWake() *> IO.blocking {
+        running.set(false)
+        alive.set(false)
+        heartbeat.foreach { hb =>
+          try hb.shutdownNow()
+          catch case _: Exception => ()
+        }
+        wsRef.foreach { w =>
+          try w.sendClose(WebSocket.NORMAL_CLOSURE, "shutdown")
+          catch case _: Exception => ()
+        }
       }
-      wsRef.foreach { w =>
-        try w.sendClose(WebSocket.NORMAL_CLOSURE, "shutdown")
-        catch case _: Exception => ()
-      }
-    }
 
   // ===== Connection loop =====
 
@@ -754,52 +765,79 @@ final class NeblinkRelayTunnel(
           .header("Authorization", s"Bearer $token")
           .buildAsync(URI.create(wsUri), listener)
           .get(10, TimeUnit.SECONDS)
-        // Phase 3a: one portal bridge per relay connection — the per-requestId
-        // body channels and local WS cycles it holds die with this socket.
-        // (Tiny window before this bind: frames arriving between the upgrade
-        // completing and this line drop with an explicit "bridge not wired"
-        // WARN; the server never sends portal frames in that window — they
-        // require a mint/binding cycle first.)
-        portalDeps.foreach(deps => portalConn.bind(new PortalTunnelBridge(deps, new RelayFrameSender(w))))
-        wsRef = Some(w)
-        alive.set(true)
-        lastPong.set(System.currentTimeMillis())
-        lastPingSentAt.set(System.currentTimeMillis())
-        startHeartbeat(w, closed)
-        // Anti-loop reset + F7: a successful upgrade means the credential
-        // problem is over — the next rejection gets a fresh heal budget and the
-        // status stops claiming "auth rejected" (code/time stay as history).
-        authFailStreak.set(0)
-        lastAuthRejection = lastAuthRejection.map(_.copy(active = false))
-        // N3: re-arm the first-line INFO voice — a later outage (e.g. after
-        // logout) gets one visible line instead of silence.
-        noTokenInfoLogged.set(false)
-        // Judgment-table row 4 (design §3.5): a successful upgrade (101, no
-        // terminal code) clears the terminal binding state and re-enters the
-        // network. Pre-gate caveat: until the server binding gate (design
-        // §2.6) is deployed, an unbound device's upgrade still succeeds, so
-        // the first reconnect clears — deployment-order hard constraint puts
-        // the gate before/with this row.
-        portalDeps.foreach { deps =>
+        // 🔴 relay-honest 批（2026-10-20）：**stop-during-upgrade 诚实闸**。
+        //
+        // 修前这条竞态的真实形态：`stop()`（登出第 2 步）落在 101 升级在飞的窗口里
+        // ⇒ 它的 `sendClose` 打在**旧 wsRef**（此刻还是 None/旧 socket）上，而下面的
+        // 装配块照跑 —— `alive=true` + 新心跳挂上 stop() 永远够不着的**新** socket
+        // ⇒ 登出之后：状态面继续报「连着」（isAlive 靠这条 socket 的 pong 自证），
+        // socket 在服务端继续挂着，且日志里**再无任何一行**（诊断的「状态面还显示
+        // 连着=假象」的机制根源）。
+        //
+        // 现语义：装配前现读 `running` —— stop() 已落 ⇒ 立即关闭这只新 socket、
+        // 补完闩（幂等补法同 `armZombieLatchWatchdog`）、**零装配**（不写 wsRef /
+        // alive / 心跳 / portal 桥），循环经既有 `running==false` 分支自然退场，
+        // 断开行由 `stop()` 自己的 disconnect 行承接。残余的纳秒级窗口由
+        // `isAlive` 的 9s 存活窗兜底（stop() 已停心跳 ⇒ 无新 pong ⇒ 最多 9s 自愈）。
+        if !running.get() then
+          try w.sendClose(WebSocket.NORMAL_CLOSURE, "stopped during upgrade")
+          catch case _: Exception => ()
           dispatcher.unsafeRunAndForget(
-            deps.bindingState.clearTerminal().flatMap { cleared =>
-              IO.whenA(cleared)(
-                logger.info(
-                  "Relay tunnel: successful upgrade cleared the terminal binding state — re-entering the network"
-                )
-              )
-            }
+            closed.complete(()).void.handleErrorWith(e =>
+              logger.debug(s"stop-during-upgrade latch complete errored (${e.getClass.getSimpleName})")
+            )
           )
-        }
-        logger.infoSync(s"Relay tunnel connected: $wsUri")
-        // Self-driven portal lifecycle (staging fix): the mailbox consumer
-        // starts and the teardown arms HERE, through the dispatcher — not off
-        // the connectOnce chain tail, which stalls across reconnect rounds
-        // when the chain runs as a dispatcher task (repro: consumer seconds
-        // late on the first connection, never on the second — every answer
-        // then left through a stale, output-closed sender).
-        portalConn.armLifecycle(closed)
-        ()
+          logger.infoSync(
+            "Relay tunnel: stop() landed during the upgrade — closing the fresh socket, nothing installed"
+          )
+          ()
+        else
+          // Phase 3a: one portal bridge per relay connection — the per-requestId
+          // body channels and local WS cycles it holds die with this socket.
+          // (Tiny window before this bind: frames arriving between the upgrade
+          // completing and this line drop with an explicit "bridge not wired"
+          // WARN; the server never sends portal frames in that window — they
+          // require a mint/binding cycle first.)
+          portalDeps.foreach(deps => portalConn.bind(new PortalTunnelBridge(deps, new RelayFrameSender(w))))
+          wsRef = Some(w)
+          alive.set(true)
+          lastPong.set(System.currentTimeMillis())
+          lastPingSentAt.set(System.currentTimeMillis())
+          startHeartbeat(w, closed)
+          // Anti-loop reset + F7: a successful upgrade means the credential
+          // problem is over — the next rejection gets a fresh heal budget and the
+          // status stops claiming "auth rejected" (code/time stay as history).
+          authFailStreak.set(0)
+          lastAuthRejection = lastAuthRejection.map(_.copy(active = false))
+          // N3: re-arm the first-line INFO voice — a later outage (e.g. after
+          // logout) gets one visible line instead of silence.
+          noTokenInfoLogged.set(false)
+          // Judgment-table row 4 (design §3.5): a successful upgrade (101, no
+          // terminal code) clears the terminal binding state and re-enters the
+          // network. Pre-gate caveat: until the server binding gate (design
+          // §2.6) is deployed, an unbound device's upgrade still succeeds, so
+          // the first reconnect clears — deployment-order hard constraint puts
+          // the gate before/with this row.
+          portalDeps.foreach { deps =>
+            dispatcher.unsafeRunAndForget(
+              deps.bindingState.clearTerminal().flatMap { cleared =>
+                IO.whenA(cleared)(
+                  logger.info(
+                    "Relay tunnel: successful upgrade cleared the terminal binding state — re-entering the network"
+                  )
+                )
+              }
+            )
+          }
+          logger.infoSync(s"Relay tunnel connected: $wsUri")
+          // Self-driven portal lifecycle (staging fix): the mailbox consumer
+          // starts and the teardown arms HERE, through the dispatcher — not off
+          // the connectOnce chain tail, which stalls across reconnect rounds
+          // when the chain runs as a dispatcher task (repro: consumer seconds
+          // late on the first connection, never on the second — every answer
+          // then left through a stale, output-closed sender).
+          portalConn.armLifecycle(closed)
+          ()
       } *> closed.get <* IO.blocking {
           alive.set(false)
           stopHeartbeat()

@@ -1046,7 +1046,15 @@ object GatewayMain extends IOApp:
                                                   // 2026-09-14（踢旧批 r2）：自动登录的停摆门
                                                   // （真值源 = NeblinkService.kickParked，写侧 =
                                                   // 隧道的 `disconnect` 帧，清侧 = 显式用户登录）。
-                                                  autoLoginParked = IO(neblinkService.kickParked)
+                                                  autoLoginParked = IO(neblinkService.kickParked),
+                                                  // 🔴 relay-honest 批（2026-10-20）A 修：凭据腿收口钩。
+                                                  // boot / 心跳恢复 / API 自愈走 `/api/device/session`
+                                                  // 成功 = 一次会话铸造 ⇒ 无条件发 ensure 信号（单飞 +
+                                                  // 幂等，信号本身无代价）。修前缺口：登出 stop() 掉
+                                                  // 隧道后只有 enrollment / silent-relogin 腿会重启
+                                                  // 隧道，凭据腿只恢复 device session ⇒ 隧道无任何
+                                                  // 重启触发器 ⇒ 门户永久判 relay 不可达。
+                                                  onSessionMinted = Some(neblinkService.ensureRelayTunnel)
                                                 )
                                               )
                                             case nc if nc.neblinkServer.isDefined =>
