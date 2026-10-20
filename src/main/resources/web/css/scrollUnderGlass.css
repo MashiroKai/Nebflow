@@ -1,0 +1,67 @@
+/* scrollUnderGlass.css — uifix ⑤ 浮层压滚动内容：下缘毛玻璃裙边（作者令 2026-10-20 第五件）
+ *
+ * 症状：消息滚动到浮层面板（任务列表带等）下方被硬切——chat 滚动容器在带底缘
+ * 直接裁剪，无任何过渡。
+ *
+ * 作者令：消息应从面板下方**穿过并有毛玻璃效果透出下层**；backdrop-filter 实测
+ * 耗资源时退化 = **毛玻璃渐隐过渡消失（mask 渐变）**。推广到所有浮层压滚动内容
+ * 的面板（任务列表 / 提醒 / 心跳下拉 / 设置 / 记忆 / 规则弹窗）。
+ *
+ * 实现 = 共享工具类 .scroll-under-glass：**裙边**方案——面板本体（含内容、圆角、
+ * 投影、footer 动作钮）零触碰，面板底缘向下挂一条 ::after 裙边：
+ *   · 主态：backdrop-filter blur + 饱和度微调（消息穿过裙边即被磨砂透出）
+ *     + tint 渐变背景 + mask-image 纵向渐隐（28px，作者给 24–32px 档）；
+ *   · 降级态（html.no-backdrop = 引擎不支持 / html.glass-degraded = 探测到渲染
+ *     吃紧，js/scrollUnderGlass.js 单向锁）：只留 tint 渐变 + mask —— 纯渐隐过渡。
+ * 两态几何完全一致（同一条裙边同一段渐变），仅去模糊，切换零跳动。
+ *
+ * z-index/层序注：#top-overlays 是带 z-25 的 flex 项（自成堆叠上下文），裙边作其
+ * ::after 描画在 #chat 之上；弹窗族（overlay+modal）同理。pointer-events:none，
+ * 不拦任何交互。 */
+
+.scroll-under-glass {
+  --sug-fade: 28px;   /* 裙边高（= 渐隐过渡带，作者档 24–32px 取中） */
+  --sug-blur: 12px;
+  --sug-sat: 1.35;
+  --sug-tint: rgba(251, 252, 254, 0.42);      /* 亮色：贴面板玻璃底色 */
+  position: relative;
+}
+
+.scroll-under-glass::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  height: var(--sug-fade);
+  pointer-events: none;
+  z-index: 1;
+  /* tint 渐变 = 面板底色向下的接续（主态/降级态共用，渐隐过渡本体） */
+  background: linear-gradient(to bottom, var(--sug-tint), rgba(251, 252, 254, 0));
+  -webkit-backdrop-filter: blur(var(--sug-blur)) saturate(var(--sug-sat));
+  backdrop-filter: blur(var(--sug-blur)) saturate(var(--sug-sat));
+  /* mask 渐变：裙边自身纵向渐隐（毛玻璃"过渡消失"的几何载体） */
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
+}
+
+/* ── 降级态：机制自选（js/scrollUnderGlass.js 探测器 + CSS.supports 特性检测）──
+   只摘 backdrop-filter，tint + mask 渐隐原样保留（几何零变）。 */
+html.no-backdrop .scroll-under-glass::after,
+html.glass-degraded .scroll-under-glass::after {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  /* mask 显式重申（降级态的本体 = 渐隐过渡；防类切换后伪元素 mask 计算漂移） */
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
+}
+
+/* 暗色：tint 换暗玻璃底色（两态同构，仅配色） */
+@media (prefers-color-scheme: dark) {
+  .scroll-under-glass {
+    --sug-tint: rgba(22, 24, 29, 0.46);
+  }
+  .scroll-under-glass::after {
+    background: linear-gradient(to bottom, var(--sug-tint), rgba(22, 24, 29, 0));
+  }
+}

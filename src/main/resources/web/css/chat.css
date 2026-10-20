@@ -22,7 +22,7 @@
      #input-area height). padding-top stays JS-owned (main.js top-reserve
      block): with the band in flow that measurement is ≤ 0 forever, so the
      block self-parks at the 8px baseline below and never writes again. */
-  margin: 2px 0 0;
+  margin: 0; /* uifix ⑤：带已 overlay，chat 顶回 #main 顶（让位走 JS reserve） */
   padding: 8px 0 36px;
   display: flex;
   flex-direction: column;
@@ -2530,10 +2530,18 @@
    preceding #main sibling (#header, .header-dropdown-menu, #bgagent-dropdown,
    #bg-dropdown, #reminder-panel, #daemon-panel) is out of flow, so this is the
    first in-flow child and lands exactly where the overlay sat. */
+/* uifix ⑤（2026-10-20 作者令第五件）：带改 overlay —— 「消息应从面板下方穿过
+   并有毛玻璃效果透出下层」。原 in-flow 布局（uifix-taskbar-flow 2026-10-09）让
+   #chat 在带底缘硬裁滚动内容（作者截图症状）；改绝对定位后 chat 顶回到 #main 顶，
+   内容上滚即从带下穿过（卡片玻璃 backdrop blur + .scroll-under-glass 裙边渐隐透
+   出）。首屏让位由 main.js top-reserve 观察器按带实测高度自动写 #chat padding-top
+   （该机制本为 overlay 设计，in-flow 年代自泊 8px 基线，现恢复现役）。 */
 #top-overlays {
-  flex-shrink: 0;
-  margin-top: 68px;
-  z-index: 25; /* still a flex item — z-index applies without position */
+  position: absolute;
+  top: 68px;
+  left: 0;
+  right: 0;
+  z-index: 25; /* 自成堆叠上下文：带内玻璃卡与裙边盖过 #chat 内容 */
   display: flex;
   flex-direction: column;
   pointer-events: none;
@@ -4718,16 +4726,20 @@
    375 形态在 mobileLayer.css v3 段。本段 = 桌面形态 + 面板本体（两端共享件，
    桌面 = 居中卡；手机几何改写在 mobileLayer.css）。
    ═══════════════════════════════════════════════════════════════════════ */
-/* 桌面会话头：中簇改纵向（头像在上居中、名称在下）；header 高度随内容生长
-   （#chat 顶距由 main.js 顶带实测让位自动跟随）。memory-btn 仍随名称行。 */
-#header .header-center {
-  flex-direction: column;
-  gap: 3px;
-  padding-top: 2px;
+/* ═══════════════════════════════════════════════════════════════════════
+   会话头中簇收纳（uifix 批 · 四件之四）：头像+名字同列横排紧凑 ——
+   「顶部会话（区）同列只显示头像+名字（其余信息退场），确保塞得进 header，
+   记忆按钮放旁边」。column 纵排（头像 40 + 名称行）会让 header 随内容生长、
+   挤占 right 链空间；恢复横排行后 header 恒定 50px（10×2 padding + 28 头像
+   + 2 border）。手机 375 形态在 mobileLayer.css（52px 大头像 + 纵排），零触碰。 */
+body:not(.mobile-layer) #header .header-center {
+  flex-direction: row;
+  gap: 6px;
+  padding-top: 0;
 }
 #agent-avatar-btn {
-  width: 40px;
-  height: 40px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   flex: none;
   padding: 0;
@@ -4737,7 +4749,7 @@
   overflow: hidden;
   cursor: pointer;
   color: #fff;
-  font-size: 17px;
+  font-size: 13px;
   font-weight: 600;
   background: linear-gradient(145deg, #5b7fbf, #3c568c);
   border: 1px solid var(--glass-control-border);
@@ -4746,7 +4758,7 @@
     0 2px 8px var(--glass-control-shadow);
   transition: transform 0.15s ease;
 }
-#agent-avatar-btn:hover { transform: scale(1.03); }
+#agent-avatar-btn:hover { transform: scale(1.04); }
 #agent-avatar-btn:active { transform: scale(0.95); }
 #agent-avatar-btn .agent-avatar-img {
   width: 100%;
@@ -4754,11 +4766,17 @@
   object-fit: cover;
   display: block;
 }
-#agent-avatar-btn svg { width: 18px; height: 18px; }
+#agent-avatar-btn svg { width: 15px; height: 15px; }
 
 /* profile 面板（body 级一件；桌面 = 居中玻璃卡，无遮罩暗化 —— 视觉铁律 1）。
    面板材质/控件 = glass-control token 族（sapphire.css）；手机几何改写 +
    morph 形变在 mobileLayer.css。 */
+/* uifix 批（四件之一「面板关不掉」根因修复）：桌面态缺本条 —
+   上方 display:flex 按级联来源压过 UA 的 [hidden]{display:none}（同特异级
+   别作者源后出），X/Esc 设了 hidden 属性面板仍渲染 ⇒ 「关不掉」。
+   同坑先例：.wsp-err[hidden]（本文件）/ .mic-orb-wrap[hidden]（input.css）。
+   手机面已有 mobileLayer.css 同款守卫，此处补齐桌面。 */
+.agent-profile-panel[hidden] { display: none; }
 .agent-profile-panel {
   position: fixed;
   top: 50%;
