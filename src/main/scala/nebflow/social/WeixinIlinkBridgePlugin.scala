@@ -7,7 +7,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.bridge.{AskAnswerReceipt, BridgeContext, BridgeManager, BridgePlugin}
 import nebflow.shared.NebflowLogger
-import nebflow.social.outbound.{AskPromptCodec, FileLongShot, PromptAction, PromptView, RichDegrade, RichKind, RichProduct}
+import nebflow.social.outbound.{AskPromptCodec, FileLeg, FileLongShot, PromptAction, PromptView, RichDegrade, RichKind, RichProduct}
 
 import java.util.concurrent.atomic.AtomicBoolean
 import scala.concurrent.duration.*
@@ -1231,22 +1231,28 @@ final class WeixinIlinkBridgePlugin(
    * notice and the loop moves on to the next item, so a single failure never
    * swallows the rest of the batch.
    *
-   * The other kinds are the stated v1 boundary, each answered with a log line
-   * (never a silent drop, never a garbage send):
+   * The other kinds:
    *
    *   - CARD — the card payload is HTML for the feishu renderer; the weixin
    *     leg cannot transcode it, so nothing goes out but the text reply;
- *   - UNKNOWN — since the pop-social-files batch (2026-10-20) an EXISTING
- *     md/markdown/html/htm item rides the LONG-SHOT leg FIRST ([[FileLongShot]]:
- *     the file is converted to one full-height PNG and sent on `image_path`,
- *     with a companion note carrying the original path — the 2026-10-20 author
- *     ruling that superseded the same-day 2026-10-09 file-first face, whose
- *     file sends measured ZERO arrival on the weixin side). A duplicate of the
- *     SAME bytes is suppressed (dedup). Conversion failure degrades to the
- *     「文件名+本地路径+一句话摘要」text card. The rest (non-existent path,
- *     extension in neither authority table, video-only payload…) stays
- *     log-only — the text reply carries the turn, and no mechanism wording
- *     ever reached a weixin user.
+   *   - UNKNOWN — since the pop-social-files batch (2026-10-20) an EXISTING
+   *     md/markdown/html/htm item rides the LONG-SHOT leg FIRST ([[FileLongShot]]:
+   *     the file is converted to one full-height PNG and sent on `image_path`,
+   *     with a companion note carrying the original path). A duplicate of the
+   *     SAME bytes is suppressed (dedup). Conversion failure degrades to the
+   *     「文件名+本地路径+一句话摘要」text card. Since the pop-file-leg batch
+   *     (2026-10-21, 作者令「pop 把这个文件发给我，就自动传过来了呀」) a
+   *     pushable ARCHIVE item ([[FileLeg.ArchiveExtensions]] — the file class
+   *     both authority tables never carried) rides the FILE leg directly
+   *     ([[deliverFileMedia]]: dedup + size gate + `file_path`). The rest
+   *     (non-existent path, extension in neither table nor the archive class,
+   *     video-only payload…) stays log-only — the text reply carries the turn,
+   *     and no mechanism wording ever reached a weixin user.
+   *   - DOCUMENT — since the same pop-file-leg batch the document arm goes
+   *     through [[deliverFileMedia]] too (dedup + size gate before the
+   *     `file_path` send); 2026-10-09's "file messages never arrived"
+   *     observation is superseded by the author's order and the same-day
+   *     manual file-leg curl that DID arrive.
    *
    * 🔴 A session with no bound sender has no return address — same rule as the
    * text leg; the text leg's own WARN covers the turn, so this leg passes.
@@ -1283,16 +1289,25 @@ final class WeixinIlinkBridgePlugin(
                   case RichKind.Image =>
                     deliverMedia(sender, WeixinOutboundAdapter.WeixinMedia.image(p.toString), "image")
                   case RichKind.Document =>
-                    deliverMedia(sender, WeixinOutboundAdapter.WeixinMedia.file(p.toString), "file")
+                    // pop-file-leg batch（2026-10-21 作者令「pop 把这个文件发给我，
+                    // 就自动传过来了」）：文件腿直推，前置去重 + 体积闸
+                    // （[[deliverFileMedia]]）。PDF/办公件本就在文档权威表——
+                    // 2026-10-09 实测的「文件消息零到达」被本批作者令接管（当日
+                    // 手动 curl 文件腿实达），直推为口径。
+                    deliverFileMedia(sender, p)
                   case RichKind.Unknown(reason) =>
                     // pop-social-files batch（2026-10-20 作者令）：文件类可转换
                     // 形态（md/markdown/html/htm 且原件在盘上）→ 单张长图 PNG 走
                     // image_path 腿 + 原件路径伴行注（[[deliverLongShotMedia]]，
-                    // 同字节重复 Pop 去重抑制；转不动降文本卡）。其余保持 v1
-                    // 边界（日志一行，正文腿带回合——机制词汇从未到过微信用户
-                    // 眼前）。
+                    // 同字节重复 Pop 去重抑制；转不动降文本卡）。
+                    // pop-file-leg batch（2026-10-21 作者令）：压缩包类（两张权
+                    // 威表都不收的文件交付物缺口，[[FileLeg.ArchiveExtensions]]）
+                    // → 文件腿直推（同款去重 + 体积闸）。其余保持 v1 边界（日志
+                    // 一行，正文腿带回合——机制词汇从未到过微信用户眼前）。
                     if Try(os.isFile(p)).getOrElse(false) && FileLongShot.isConvertible(p) then
                       deliverLongShotMedia(sender, p)
+                    else if Try(os.isFile(p)).getOrElse(false) && FileLeg.isPushable(p) then
+                      deliverFileMedia(sender, p)
                     else
                       // 逐字一行即 IO（pop multi-group fix 顺手修正）：原
                       // `IO(logger.info(...))` 是 IO[IO[Unit]] 死日志（内层
@@ -1309,6 +1324,9 @@ final class WeixinIlinkBridgePlugin(
                     IO.unit
                 // pop multi-group fix: one item's RAISE is contained to that
                 // item (visible line + WARN); the remaining items keep going.
+                // pop-file-leg batch：deliverMedia 返回 reading（文件腿落账面要
+                // 读它）⇒ 本臂也产出同型 reading——leg 已 raise，无真实读数，
+                // 合成 failed reading（code=-1 contained）即本臂的诚实语义。
                 leg.handleErrorWith { e =>
                   val name = p.last
                   for
@@ -1322,8 +1340,14 @@ final class WeixinIlinkBridgePlugin(
                            IO(logger.warnSync(
                              s"weixin-ilink bridge: degrade notice send failed code=${r2.code} reason=${r2.reason}"
                            ))
-                  yield ()
-                }
+                  yield WeixinOutboundAdapter.SendResult(
+                    false,
+                    false,
+                    None,
+                    -1,
+                    s"contained raise: ${e.getClass.getSimpleName}"
+                  )
+                }.void
               }
             }
     }
@@ -1409,19 +1433,76 @@ final class WeixinIlinkBridgePlugin(
     }
 
   /**
+   * 文件腿直推（pop-file-leg batch, 2026-10-21 作者令「Pop 文件卡自动过桥」）：
+   * Document 臂（PDF/办公件——文档权威表）与 Unknown 臂的压缩包分支
+   * （[[FileLeg.ArchiveExtensions]]）共用的投递面，三道闸依序：
+   *
+   *   ⓪ 去重 —— [[FileLongShot.Dedup]] 同一进程级台账（键 = 路径+size+mtime，
+   *      与长图腿共用一个指纹面）：已在账 ⇒ 零发送、一行日志；**发送成功才落
+   *      账**（超限文本卡发成功也算交付义务已了，落账——同件再 Pop 不再重复
+   *      轰炸；文件重生成 ⇒ 新键照推）。
+   *   ① 体积闸 —— 超过 [[FileLeg.MaxBytes]]（与 sidecar 发送腿 sanity 默认
+   *      25MB 对齐；iLink 文件消息无公开权威上限，依据见 [[FileLeg]] 文件头）
+   *      ⇒ 不发起必被 400 拒绝的发送，降级为「[文件过大] + 文件名 + 原件路径
+   *      + 控制台取件指引」文本卡（[[RichDegrade.oversizeFile]]）。
+   *   ② 发送 —— 既有 file_path 腿（[[outboundMedia]]）+ [[deliverMedia]] 同款
+   *      保底（`[文件「x」发送失败 code=…]`），失败不落账（下次 Pop 照常重试）。
+   */
+  private def deliverFileMedia(sender: String, p: os.Path): IO[Unit] =
+    IO(FileLongShot.Dedup.keyOf(p)).flatMap {
+      case Some(key) if FileLongShot.Dedup.seen(key) =>
+        IO(logger.info(
+          s"weixin-ilink bridge: file-leg duplicate suppressed for $p — same bytes already pushed (dedup)"
+        ))
+      case keyOpt =>
+        val oversize: Option[String] = FileLeg.sizeOf(p) match
+          case Some(n) if n > FileLeg.MaxBytes =>
+            Some(RichDegrade.oversizeFile(p, Some(n), FileLeg.MaxBytes))
+          case _ => None
+        oversize match
+          case Some(card) =>
+            logger.info(
+              s"weixin-ilink bridge: file-leg oversize gate for $p (cap ${FileLeg.MaxBytes}B) — degrading to the text card"
+            ) *>
+              outbound(sender, card).flatMap { r =>
+                // 文本卡发成功 = 交付义务已了（取件指引已到）⇒ 落账防重复轰炸；
+                // 发失败不落账（下次照常告知）。
+                if r.ok then
+                  keyOpt.foreach(FileLongShot.Dedup.record)
+                  IO.unit
+                else
+                  logger.warn(
+                    s"weixin-ilink bridge: oversize text card send failed code=${r.code} reason=${r.reason}"
+                  )
+              }
+          case None =>
+            deliverMedia(sender, WeixinOutboundAdapter.WeixinMedia.file(p.toString), "file").flatMap {
+              case res if res.ok =>
+                keyOpt.foreach(FileLongShot.Dedup.record)
+                IO.unit
+              case _ => IO.unit // deliverMedia already logged + put out the 保底 notice
+            }
+    }
+
+  /**
    * One media send with the 保底 degrade: a FAILED media send puts out ONE
    * text notice through the SAME text seam (contained, never a raise, never a
    * retry — the outbound leg's own containment rule; the notice names the
-   * stable code + reason vocabulary so the recipient can act on it).
+   * stable code + reason vocabulary so the recipient can act on it). Returns
+   * the reading so [[deliverFileMedia]] can record dedup on success only.
    */
-  private def deliverMedia(sender: String, media: WeixinOutboundAdapter.WeixinMedia, kindLabel: String): IO[Unit] =
+  private def deliverMedia(
+      sender: String,
+      media: WeixinOutboundAdapter.WeixinMedia,
+      kindLabel: String
+  ): IO[WeixinOutboundAdapter.SendResult] =
     outboundMedia(sender, media).flatMap { res =>
       if res.ok then
         IO(
           logger.info(
             s"weixin-ilink bridge: rich media delivered to sender $sender kind=$kindLabel (id=${res.messageId.getOrElse("-")})"
           )
-        )
+        ).as(res)
       else
         val name = media.imagePath.orElse(media.filePath).map(_.split('/').last).getOrElse(kindLabel)
         val line =
@@ -1434,7 +1515,7 @@ final class WeixinIlinkBridgePlugin(
           outbound(sender, line).flatMap { r2 =>
             if r2.ok then IO.unit
             else logger.warn(s"weixin-ilink bridge: degrade notice send failed code=${r2.code} reason=${r2.reason}")
-          }
+          }.as(res)
     }
 
 end WeixinIlinkBridgePlugin

@@ -62,6 +62,8 @@ object RichDegrade:
     val RenderInvalid = "渲染输出非法(PNG 校验失败)"
     val SizeGateRejected = "尺寸闸拒绝"
     val FileUnreadable = "原件不可读"
+    /** 文件腿体积闸（pop-file-leg batch, 2026-10-21）：超引擎闸（sidecar 发送腿同款 25MB）。 */
+    val FileOversize = "文件超出社交腿上限"
     def channelRejected(code: Int): String = s"渠道拒绝(code=$code)"
 
   /** §7.1: `[未渲染] <reason> — 原件：<path>（<bytes> 字节）`. */
@@ -131,6 +133,27 @@ object RichDegrade:
 
   /** `[[unconverted]]` 的机器可匹配占位符。 */
   val UnconvertedPrefix: String = "[未转图]"
+
+  /**
+   * 文件腿体积闸降级（pop-file-leg batch, 2026-10-21 作者令「超限降级为文本
+   * 说明+控制台指引」）：超限件不发起发送（sidecar 必 400），改发文本说明——
+   * 文件名 + 实际大小 + 上限 + 原件桌面端路径 + 控制台取件指引。占位符
+   * `[文件过大]` 机器可匹配（§7.3 #2 的精神）。大小用 MB 一位小数（人类读数）。
+   *
+   * @param p      原件绝对路径
+   * @param bytes  实际字节数（读不到 ⇒ 省略大小行）
+   * @param limit  上限字节（[[FileLeg.MaxBytes]]）
+   */
+  def oversizeFile(p: os.Path, bytes: Option[Long], limit: Long): String =
+    // 十进制 MB（10^6）：上限本体是 25_000_000 字节（sidecar 发送腿同款字节闸），
+    // 显示口径与闸值严格一致（MiB 除数会把 25MB 显示成 23.8MB，两套口径打架）。
+    val mb = (n: Long) => f"${n / 1_000_000.0}%.1fMB"
+    val head = s"$OversizePrefix ${p.last}（${Reason.FileOversize}：上限 ${mb(limit)}" +
+      bytes.fold("")(b => s"，本件 ${mb(b)}") + "）"
+    s"$head\n原件在桌面端：$p\n微信里收不了这么大的文件，请到 Nebflow 控制台该会话取件（卡片可下载）。"
+
+  /** `[[oversizeFile]]` 的机器可匹配占位符。 */
+  val OversizePrefix: String = "[文件过大]"
 
   /**
    * §6.2 step 4: the oversize reading also becomes the user-visible tail.
