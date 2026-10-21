@@ -1,0 +1,76 @@
+{
+  "$comment": "STAND Logto 邮件模板 v2 设计映射表（双模式钉色）。语义口径：light=亮色模式面（亮卡黑 lockup），dark=暗色模式面（暗卡白 lockup）。lockup 文件名按『服务的背景』命名：lockup-light.png=黑墨（亮面），lockup-dark.png=白墨（暗面）。历史缺陷=两分支配对互换（症状：暗色模式邮件是亮的，亮色模式邮件是暗的）；本表为唯一权威配对。",
+  "palette": {
+    "light": {
+      "pageBg": "#f5f6f7",
+      "cardBg": "#ffffff",
+      "titleInk": "#141416",
+      "bodyInk": "#55565c",
+      "metaInk": "#6f727b",
+      "codeInk": "#141416",
+      "codepanelBg": "#f4f5f6",
+      "dividerBg": "#e8e9ec",
+      "linkInk": "#3f4046",
+      "lockupUrl": "https://mystand.space/brand/stand/email/lockup-light.png",
+      "lockupInk": "black"
+    },
+    "dark": {
+      "pageBg": "#101112",
+      "cardBg": "#1b1c1e",
+      "titleInk": "#f2f2f4",
+      "bodyInk": "#b9bbc2",
+      "metaInk": "#8f929b",
+      "codeInk": "#f2f2f4",
+      "codepanelBg": "#26272a",
+      "dividerBg": "#313236",
+      "linkInk": "#b9bbc2",
+      "lockupUrl": "https://mystand.space/brand/stand/email/lockup-dark.png",
+      "lockupInk": "white"
+    }
+  },
+  "classMap": {
+    "body+.nf-bg": "pageBg",
+    "table.nf-card": "cardBg",
+    ".nf-title": "titleInk",
+    ".nf-body": "bodyInk",
+    ".nf-meta": "metaInk",
+    ".nf-code": "codeInk",
+    "table.nf-codepanel": "codepanelBg",
+    ".nf-divider": "dividerBg",
+    "a.nf-body": "linkInk"
+  },
+  "templates": [
+    {
+      "usageType": "SignIn",
+      "subject": "STAND sign-in code: {{code}}",
+      "title": "Sign in to STAND",
+      "titleTag": "Sign in to STAND",
+      "lead": "We received a request to sign in to your STAND account. Enter the verification code below on the sign-in page:",
+      "preheader": "Your STAND verification code is {{code}}, valid for 10 minutes."
+    },
+    {
+      "usageType": "Register",
+      "subject": "STAND sign-up code: {{code}}",
+      "title": "Create your STAND account",
+      "titleTag": "Create your STAND account",
+      "lead": "Thanks for signing up for STAND. Enter the verification code below to finish creating your account:",
+      "preheader": "Your STAND verification code is {{code}}, valid for 10 minutes."
+    },
+    {
+      "usageType": "ForgotPassword",
+      "subject": "STAND password reset code: {{code}}",
+      "title": "Reset your password",
+      "titleTag": "Reset your password",
+      "lead": "We received a request to reset the password for your STAND account. Enter the verification code below on the reset page:",
+      "preheader": "Your STAND verification code is {{code}}, valid for 10 minutes."
+    },
+    {
+      "usageType": "Generic",
+      "subject": "STAND sign-in code: {{code}}",
+      "title": "Sign in to STAND",
+      "titleTag": "Sign in to STAND",
+      "lead": "We received a request to sign in to your STAND account. Enter the verification code below on the sign-in page:",
+      "preheader": "Your STAND verification code is {{code}}, valid for 10 minutes."
+    }
+  ]
+}
