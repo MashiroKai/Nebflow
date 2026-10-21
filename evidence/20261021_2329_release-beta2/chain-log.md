@@ -60,7 +60,7 @@ assets=[stand-assembly-2026.10.21-beta.2.jar, size=110274860]  ← 与 OSS 字�
 |---|---|---|
 | pre-push（2026-10-21-1500-staging） | GREEN-PARTIAL 33/0/2 | skip=idp:google/github 网络不可达（已知环境边界，人工臂项） |
 | post-deploy 首跑（2026-10-21-1521-staging） | RED 29/4/2 | ①install:manifest-beta-version + install:rendered 两红 = **测试夹具钉过期**（钉=beta.1，run-e2e.mjs `EXPECTED_BETA_VERSION` 为发版批自有维护点）——站点已正确服 beta.2；②launch:github/google fetch failed = github 直连间歇（pre-push 同刻全绿，已知边界）。**非部署缺陷** |
-| 收口 | 待钉 bump 部署后重跑 | 钉 bump commit `e82a259` 已推 staging（测试随发版同步 bump 的设计协议）；最终 GREEN 留档补入本目录 |
+| **终跑（2026-10-21-1530-staging）** | **GREEN-PARTIAL 33/0/2** | 钉 bump（e82a259）后 install:* 全绿（版本显示=beta.2、四命令齐、页=manifest 一致）；launch:github/google 本轮全绿；唯二 skip = IdP 人工臂（google 网络不可达 / github 需真机登录往返），逐条已交代。**beta.2 staging 验收收口** |
 
 ## 8. 未做 / 边界
 

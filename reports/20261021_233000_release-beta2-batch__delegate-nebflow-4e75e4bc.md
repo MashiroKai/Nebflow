@@ -5,7 +5,7 @@
 
 ## 0. TL;DR
 
-**①beta.2 已发：全链十环零断**（bump → tag → 构建 → sha256 → OSS → 回读核验 → manifest 入册 → 指针 in sync → GitHub prerelease 挂 jar → staging 部署 + 版本显示验证），门禁留档齐（pre-push GREEN-PARTIAL；post-deploy 首跑 4 红全部拆解为「测试钉过期 ×2 + 已知网络边界 ×2」，钉已按协议 bump 收口中）。**②CI 选型唯一推荐 = 方案 B（本机 Mac self-hosted runner）**——已全量落地：runner 2.338.0 在线（labels self-hosted/macOS/ARM64）+ LaunchAgent 常驻 + pilot workflow 入分支；Windows 线（方案 A）实测受阻于该机 Clash 未运行（github 大文件传输 1h 超时 ×2），工具链已备、网络卡已给。**③勤发机制设计候批文档已落**，未挂任何定时。
+**①beta.2 已发：全链十环零断**（bump → tag → 构建 → sha256 → OSS → 回读核验 → manifest 入册 → 指针 in sync → GitHub prerelease 挂 jar → staging 部署 + 版本显示验证），**staging 验收终跑 GREEN-PARTIAL 33/0/2 收口**（唯二 skip = IdP 人工臂，逐条交代）。**②CI 选型唯一推荐 = 方案 B（本机 Mac self-hosted runner）**——已全量落地：runner 2.338.0 在线（labels self-hosted/macOS/ARM64）+ LaunchAgent 常驻 + pilot workflow 入分支；Windows 线（方案 A）实测受阻于该机 Clash 未运行（github 大文件传输 1h 超时 ×2），工具链已备、网络卡已给。**③勤发机制设计候批文档已落**，未挂任何定时。
 
 ## 1. ①发布全链（证据逐环，详见 evidence/20261021_2329_release-beta2/chain-log.md）
 
@@ -24,7 +24,7 @@
 
 全程 github 操作走 `https_proxy=127.0.0.1:7890`（直连 10s+/超时，代理 2.5s——任务书预判属实）。
 
-**门禁与留档**：pre-push staging gate GREEN-PARTIAL 33/0/2（skip=IdP 网络不可达）。post-deploy 首跑 RED 4 红全拆解：`install:*` ×2 = 测试夹具版本钉过期（钉=beta.1；run-e2e.mjs `EXPECTED_BETA_VERSION` 注释即写明「每次 beta 发版入册时同步 bump，发版批自有」——本批照协议 bump，commit `e82a259` 已推 staging，站点行为正确）；`launch:*` ×2 = github 直连间歇（pre-push 同刻全绿）。钉 bump 部署完成后终跑 GREEN 留档补入 evidence 目录。**排障注记**：一度误判「Vercel 未触发部署」——v6 deployments API 带 teamId 过滤返回旧页；project-scoped（无 teamId）复查即见 READY。git 集成在位，staging push 即部署。
+**门禁与留档**：pre-push GREEN-PARTIAL 33/0/2（skip=IdP 网络不可达）→ post-deploy 首跑 RED 4 红全拆解（`install:*` ×2 = 测试夹具版本钉过期，run-e2e.mjs `EXPECTED_BETA_VERSION` 注释即写明「每次 beta 发版入册时同步 bump，发版批自有」——照协议 bump，commit `e82a259` 已推 staging；`launch:*` ×2 = github 直连间歇）→ **终跑 GREEN-PARTIAL 33/0/2 收口**（install:* 全绿：版本显示=beta.2、四命令齐、页=manifest 一致；launch 本轮全绿；唯二 skip = IdP 人工臂，逐条已交代）。三轮 JSON 留档在 evidence 目录。**排障注记**：一度误判「Vercel 未触发部署」——v6 deployments API 带 teamId 过滤返回旧页；project-scoped（无 teamId）复查即见 READY。git 集成在位，staging push 即部署。
 
 **使用面即时生效语义**：beta 安装链真源头 = OSS 指针 + jar（第 5/8 环），已在官网部署前生效——**现在装 beta 即得 beta.2**；官网 staging 页面为 M3 引擎/展示面。
 
