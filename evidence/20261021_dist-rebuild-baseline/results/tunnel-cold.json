@@ -1,0 +1,518 @@
+{
+ "label": "tunnel-cold",
+ "tunnel": true,
+ "cold": true,
+ "wallToLoadMs": 267,
+ "wallSettledMs": 3268,
+ "nav": {
+  "ttfb": 11.100000023841858,
+  "dcl": 89.39999997615814,
+  "load": 91.10000002384186,
+  "transfer": 38386,
+  "swControlled": true
+ },
+ "requestCount": 62,
+ "totalWireBytes": 0,
+ "jsCount": 46,
+ "jsWireBytes": 0,
+ "revalid304": 0,
+ "gzipped": 49,
+ "requests": [
+  {
+   "url": "/",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/html"
+  },
+  {
+   "url": "/vendor/katex.min.css",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/vendor/highlight-github-dark.min.css",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/assets/app-7775ffa6.css",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/brand/stand/illustrator/svg/stand-symbol-white.svg",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "image/svg+xml"
+  },
+  {
+   "url": "/vendor/lucide.min.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/vendor/lottie.min.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/vendor/marked.min.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/vendor/katex.min.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/vendor/highlight.min.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/app-EE6L54KN.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/mobile/bootstrap-YVXYHWQ4.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/vendor/highlight-github.min.css",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 1,
+   "mime": "text/css"
+  },
+  {
+   "url": "/assets/chunks/chunk-ZOHARDR6.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-MLUYI5KE.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-DYHFVLWE.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-4BNMNFMP.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-LQM2JQPW.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-GSJMEPTG.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-WQY7BM4J.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 0,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-3ZTP7AC3.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-2IKP5TF5.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-6SUJTHJC.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-C6XLUZ5E.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-JSRBEE63.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-F2SZYYCK.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-ZMC2SZCL.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-SFBZEC2V.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-LBS4LGC4.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-DE6UFPSO.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-GQO2GTKA.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-AQD5YAHL.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-ROSDFO5N.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-YNVWKD2X.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-C7KH2NC2.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-ICR2YWPH.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-CWBJQ5UK.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-WMCNJR6S.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-ZO47VGOS.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 0,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-A2H34PYD.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-FILIAPQ3.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-VW47XSNR.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-FPE666ED.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-LHNFN62R.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-HRIC7ZYJ.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-LZGI63RE.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-RASEXVCP.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/chunk-J7UYQU62.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/assets/chunks/ws-KQHYP5MB.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 0,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/api/chains",
+   "st": 404,
+   "enc": 0,
+   "cc": null,
+   "gz": 0,
+   "mime": ""
+  },
+  {
+   "url": "/api/projects",
+   "st": 404,
+   "enc": 0,
+   "cc": null,
+   "gz": 0,
+   "mime": ""
+  },
+  {
+   "url": "/assets/chunks/wikiGraph-WXHWWEIO.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/api/neblink/status",
+   "st": 404,
+   "enc": 0,
+   "cc": null,
+   "gz": 0,
+   "mime": ""
+  },
+  {
+   "url": "/api/plugins",
+   "st": 404,
+   "enc": 0,
+   "cc": null,
+   "gz": 0,
+   "mime": ""
+  },
+  {
+   "url": "/api/canvas-tabs",
+   "st": 404,
+   "enc": 0,
+   "cc": null,
+   "gz": 0,
+   "mime": ""
+  },
+  {
+   "url": "/api/neblink/status",
+   "st": 404,
+   "enc": 0,
+   "cc": null,
+   "gz": 0,
+   "mime": ""
+  },
+  {
+   "url": "/agents/Nebula/agent.json",
+   "st": 404,
+   "enc": 0,
+   "cc": null,
+   "gz": 0,
+   "mime": ""
+  },
+  {
+   "url": "/api/nf-authcheck",
+   "st": 404,
+   "enc": 0,
+   "cc": null,
+   "gz": 0,
+   "mime": ""
+  },
+  {
+   "url": "/assets/chunks/canvas-YNFD7KHY.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  },
+  {
+   "url": "/favicon.ico?v=71a456e2d388b27e",
+   "st": 200,
+   "enc": 0,
+   "cc": "no-cache",
+   "gz": 0,
+   "mime": "image/x-icon"
+  },
+  {
+   "url": "/api/canvas-tabs",
+   "st": 404,
+   "enc": 0,
+   "cc": null,
+   "gz": 0,
+   "mime": ""
+  },
+  {
+   "url": "/assets/chunks/activityBar-WQWUJIJR.js",
+   "st": 200,
+   "enc": 0,
+   "cc": "public, max-age=31536000, immutable",
+   "gz": 1,
+   "mime": "application/javascript"
+  }
+ ]
+}
