@@ -283,17 +283,22 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
    * by the very same thinking events) succeeded. The provider stayed DOWN
    * indefinitely: the only clear path kept rejecting the proof of recovery.
    *
-   * No per-probe output cap (maxcfg batch 2026-09-16, carried over): the
-   * adapters carry no `maxTokens` request field, and the serving criterion
-   * reads the provider's own first event, so a truncating cap has nothing
-   * left to break.
+   * Per-probe output cap (clamp batch 2026-10-21, updated): the probe pins
+   * `Defaults.ProbeMaxTokens` (16384, the pre-raise serving value) via
+   * `maxTokensOverride` — after the serving cap rose to 128000, a verbatim
+   * constant would hand every probe a max_tokens that strict endpoints (glm
+   * flash tiers et al.) may 400, flipping providers DOWN fleet-wide. The
+   * override bypasses the clamp legs on purpose: the value is engine-internal
+   * and years-proven. The serving criterion reads the provider's own first
+   * event, so the small cap has nothing left to break.
    */
   private[llm] def probe(candidate: ModelCandidate): IO[Unit] =
     val params = SendMessageParams(
       messages = List(Message(MessageRole.User, Left("hi"))),
       model = candidate.model,
       sessionId = Some("health-check"),
-      agentId = Some("health-check")
+      agentId = Some("health-check"),
+      maxTokensOverride = Some(Defaults.ProbeMaxTokens)
     )
     def serving(c: StreamChunk): Boolean = c match
       case _: StreamChunk.TextDelta | _: StreamChunk.ThinkingDelta | _: StreamChunk.ToolCallChunk => true

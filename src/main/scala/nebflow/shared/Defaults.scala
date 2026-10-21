@@ -26,13 +26,42 @@ object Defaults:
    * REQUIRES the field. **NOT user configurable** — maxcfg batch (2026-09-16,
    * author ruling "我觉得直接去掉这个参数，以后少一个配置项") removed the
    * `llm.providers.*.models[].maxTokens` config key; this constant is the
-   * replacement source. Value unchanged (16384) = the old *default* of the
-   * removed key, so users who never set it see zero behaviour change.
+   * replacement source.
    *
-   * AnthropicAdapter raises it above the thinking budget when needed — the
-   * Anthropic API requires `budget_tokens < max_tokens`.
+   * 128000 (output-cap raise, author ruling 2026-10-21 「应该是我们设置的不合理
+   * 总输出上限小于思考上限了 把总输出上限改为128000」): the previous 16384 was
+   * SMALLER than the 32000 thinking budget, so a reasoning model could burn the
+   * entire allowance on thinking alone and end the turn with zero visible
+   * output (stopReason=max_tokens, `MaxTokensStubText` empty-burn shape). The
+   * value must never sit below the thinking ceiling [[MaxThinkingBudget]]
+   * (32768); 128000 leaves 4× headroom above it.
+   *
+   * The raw constant is NOT sent blindly: AnthropicAdapter clamps the outgoing
+   * value per model (family output caps + context-window input headroom) before
+   * it reaches the wire — endpoints that would 400 on a 128000 request (smaller
+   * real output caps, or a context window that must also hold the input) never
+   * see it. Auxiliary faces (health probe / small-judge / allocator) pin the
+   * proven-safe [[ProbeMaxTokens]] instead of this constant.
+   *
+   * AnthropicAdapter still raises it above the thinking budget when needed —
+   * the Anthropic API requires `budget_tokens < max_tokens`.
+   *
+   * 引擎侧生效需重启窗（本批报告已注明，不等待）。
    */
-  val MaxTokens = 16384
+  val MaxTokens = 128000
+
+  /**
+   * Auxiliary-face output cap (output-cap raise batch, 2026-10-21). Health
+   * probes, the delegate small-judge legs and the LLM allocator are
+   * single-token / tiny-JSON calls: they need no large output allowance, and
+   * after the 128000 raise a verbatim constant would hand every probe a
+   * max_tokens that strict endpoints (glm flash tiers et al.) may 400 —
+   * flipping providers DOWN fleet-wide. 16384 = the pre-raise serving value,
+   * years-proven on every live endpoint. Sent verbatim (no clamp leg): it is
+   * engine-internal and already known-safe; for the same reason a probe keeps
+   * working on tiny-window configs exactly as before this batch.
+   */
+  val ProbeMaxTokens = 16384
 
   /**
    * Internal ceiling for `thinking.budget_tokens` (maxcfg batch 2026-09-16).

@@ -8,6 +8,7 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.llm.{AdapterResponse, ProviderAdapter, SendMessageParams}
+import nebflow.core.compact.TokenEstimator
 import nebflow.shared.*
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.*
@@ -254,28 +255,105 @@ class AnthropicAdapter(
     }
 
   /**
-   * `max_tokens` for this face (maxcfg batch 2026-09-16).
+   * `max_tokens` for this face (maxcfg batch 2026-09-16; clamp batch
+   * 2026-10-21, author ruling 「总输出上限改为128000」).
    *
    * The Anthropic API REQUIRES `max_tokens`, and additionally requires
-   * `budget_tokens < max_tokens`. The output cap is no longer user
-   * configurable (the `models[].maxTokens` config key was removed), so the
-   * value is derived here from the internal constant:
+   * `budget_tokens < max_tokens`. The output cap is not user configurable
+   * (the `models[].maxTokens` config key was removed), so the value is
+   * derived here, in three legs:
    *
-   *   - no thinking, or a budget below the cap → `Defaults.MaxTokens` (16384).
-   *     That is exactly the old *default* of the removed key, so installs that
-   *     never set it see the identical value;
-   *   - budget ≥ that cap → raised to leave a full output allowance above the
-   *     budget. Without this, a "high" thinking request (budget 32768) would
-   *     violate `budget_tokens < max_tokens` and be rejected with a 400 — the
-   *     old `maxTokens / 2` clamp used to hide the mismatch by cutting the
-   *     budget, which is precisely what was removed.
+   *  1. **Override leg** — `maxTokensOverride` (engine-internal, auxiliary
+   *     faces only: probe / small-judge / allocator) is sent verbatim. Those
+   *     faces pin `Defaults.ProbeMaxTokens` (16384, the pre-raise proven
+   *     value) and must stay byte-identical to pre-batch requests, so the
+   *     override deliberately bypasses every clamp below.
+   *  2. **Raise leg (unchanged in form)** — base = `Defaults.MaxTokens`
+   *     (128000), raised to `budget + Defaults.MaxTokens` when thinking is
+   *     on, keeping the API invariant `budget_tokens < max_tokens` with a
+   *     FULL output allowance above the budget.
+   *  3. **Clamp legs (new)** — the constant is never sent blindly to an
+   *     endpoint that would 400 it:
+   *       - family cap: models with a documented smaller real output cap
+   *         (glm family → 32768) are bounded below the constant;
+   *       - window cap: `contextWindow − (estimated input + 8192 headroom)`,
+   *         floored at 16384 — the output allowance must leave room for the
+   *         input that shares the same window.
+   *     After both, the thinking invariant is re-asserted as a hard floor
+   *     (`budget + 1`): a clamp that would make `max_tokens ≤ budget_tokens`
+   *     turns a truncation risk into a guaranteed 400, so the invariant wins.
    *
-   * No per-model output-limit metadata exists to derive a tighter value from:
-   * `ModelRegistry.ModelEntry` carries only `vision` + `capabilities`.
+   * The clamp is best-effort by design: family caps are conservative floors
+   * (under-clamping only shortens output, never 400s), and the window leg is
+   * an estimate (`TokenEstimator`, compaction-grade). Engine-side values take
+   * effect on the next restart window.
    */
   private[providers] def maxTokensFor(params: SendMessageParams): Int =
-    val budget = params.thinking.flatMap(_.hcursor.get[Int]("budget_tokens").toOption).getOrElse(0)
-    math.max(Defaults.MaxTokens, budget + Defaults.MaxTokens)
+    params.maxTokensOverride match
+      case Some(fixed) => fixed
+      case None =>
+        val budget = params.thinking.flatMap(_.hcursor.get[Int]("budget_tokens").toOption).getOrElse(0)
+        val base = math.max(Defaults.MaxTokens, budget + Defaults.MaxTokens)
+        val clamped = familyOutputCap(params.model) match
+          case Some(family) => math.min(base, family)
+          case None => base
+        val windowClamped = params.contextWindow match
+          case Some(cw) => math.min(clamped, windowOutputCap(cw, params))
+          case None => clamped
+        // Hard API invariant: budget_tokens < max_tokens (see doc, leg 3).
+        if budget > 0 then math.max(windowClamped, budget + 1) else windowClamped
+
+  /**
+   * Known per-family output caps — CONSERVATIVE floors, not vendor truth:
+   * every entry must be ≤ the smallest documented output cap across the
+   * family's current SKUs, because the failure being prevented (HTTP 400 on
+   * an oversized `max_tokens`) is an outage, while the cost of under-clamping
+   * (output stops early, `MaxTokensStubText` closing text) is routine. Add an
+   * entry only with verified vendor documentation; a missing entry degrades
+   * to the window leg + smoke tests, a wrong entry silently caps outputs.
+   */
+  private val FamilyOutputCaps: List[(String, Int)] = List(
+    // glm family: zhipu documents output caps well below 128000 across SKUs
+    // (GLM-4.x flash tiers ≤ 8K, 4.5/4.6 ≥ 96K — 32768 is safe on all of them
+    // and still clears MaxThinkingBudget-class budgets via the floor leg).
+    "glm" -> 32768
+  )
+
+  private def familyOutputCap(model: String): Option[Int] =
+    val m = model.toLowerCase
+    FamilyOutputCaps.collectFirst { case (needle, cap) if m.contains(needle) => cap }
+
+  /**
+   * Window leg: the input shares the context window with the output, so the
+   * output allowance is `window − estimated input − headroom`, never below
+   * [[WindowFloorTokens]]. The floor equals the pre-raise serving cap — on a
+   * window too small for any meaningful output the request degrades to
+   * exactly the pre-batch wire shape instead of inventing a new failure mode.
+   * (Same number as `Defaults.ProbeMaxTokens` on purpose: both are "the last
+   * proven-legal small cap". If the two roles ever need to diverge, revisit
+   * this line consciously — do not silently split the constant.)
+   */
+  private def windowOutputCap(contextWindow: Int, params: SendMessageParams): Int =
+    val reserve = estimateInputTokens(params) + InputHeadroomTokens
+    math.max(contextWindow - reserve, WindowFloorTokens)
+
+  /**
+   * Compaction-grade input estimate (chars/4, CJK-weighted — `TokenEstimator`)
+   * over messages + system parts + tool schemas. Tool schemas are near-pure
+   * Latin JSON: raw chars/4 is adequate inside the headroom margin.
+   */
+  private def estimateInputTokens(params: SendMessageParams): Int =
+    val systemText = params.systemStable.getOrElse("") + params.systemDynamic.getOrElse("")
+    val toolsChars = params.tools.foldLeft(0)((acc, ts) => acc + ts.map(t => t.inputSchema.asJson.noSpaces.length).sum)
+    TokenEstimator.estimate(params.messages) +
+      (TokenEstimator.estimateWeightedChars(systemText) / 4) +
+      (toolsChars / 4)
+
+  /** Output allowance reserved for the input-side estimate error margin. */
+  private val InputHeadroomTokens = 8192
+
+  /** Window-leg floor — the pre-raise serving cap (see [[windowOutputCap]]). */
+  private val WindowFloorTokens = Defaults.ProbeMaxTokens
 
   def sendMessage(params: SendMessageParams): IO[AdapterResponse] =
     val systemBlocks = buildSystemBlocks(params)
