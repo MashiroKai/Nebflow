@@ -159,112 +159,12 @@ function watchInputArea() {
   }
 }
 
-// ── 附件条 v3：in-flow 行 + 溢出收「+N」（样张 v2 p5 已批形态）──────────
-// #attachment-preview 在手机层改 in-flow 首行（CSS），本段只做折叠腿：
-// 单行装不下的尾部 chip 落 .mh-att-collapsed，行尾补「+N」件；点 +N 展开为
-// 横向滚动（再点收拢）。chip 增删/换行由 MutationObserver + ResizeObserver 驱动。
-/** @type {{ro: ResizeObserver|null, mo: MutationObserver|null, more: HTMLButtonElement|null}} */
-let attRow = { ro: null, mo: null, more: null };
-
-/** chip 实测宽缓存（折叠态 display:none 无盒 —— 用上次可见时的宽度参算）。 */
-const attChipW = new WeakMap();
-
-function syncAttachmentRow() {
-  const row = document.getElementById('attachment-preview');
-  if (!row) return;
-  // checkJs 对位：row.children 是 Element 拙集 —— 附件 chip 实为 HTMLElement。
-  const chips = /** @type {HTMLElement[]} */ ([...row.children].filter((el) => !el.classList.contains('mh-att-more')));
-  let more = attRow.more;
-  if (!more) {
-    more = document.createElement('button');
-    more.type = 'button';
-    more.className = 'mh-att-more';
-    more.addEventListener('click', () => {
-      row.classList.toggle('mh-att-expanded');
-      collapseAttachmentRow();
-    });
-    attRow.more = more;
-  }
-  // 自激纪律：本函数由本行的 MutationObserver(childList+attributes+subtree)
-  // + ResizeObserver 驱动。禁止「先重置再重折」的两段式写法 —— 折叠平衡态下
-  // 每次同步都会撤销再重做（remove k + add k = 2k+2 条记录/次），微任务风暴
-  // 直接冻死页面（实测 evaluate 挂死）。改为：纯读算目标 → diff 应用，
-  // 平衡态零写入。
-  const expanded = row.classList.contains('mh-att-expanded');
-
-  // 目标态计算（纯读；collapsed 芯片无盒 → 用宽度缓存参算）。
-  const gap = parseFloat(getComputedStyle(row).columnGap) || 6;
-  const widths = chips.map((c) => {
-    if (!c.classList.contains('mh-att-collapsed') && c.offsetWidth > 0) attChipW.set(c, c.offsetWidth);
-    return attChipW.get(c) || 0;
-  });
-  const total = widths.reduce((s, w, i) => s + w + (i ? gap : 0), 0);
-  const avail = row.clientWidth;
-  const moreW = (more.isConnected && more.offsetWidth) || 34; // CSS min-width 28 + padding 兜底
-  const overflow = !expanded && total > avail + 1;
-  // 折叠目标 = 保前缀（至少 1 枚），前缀宽 + more 槽 ≤ 行宽（+N 自身吃滚动差）。
-  let keep = chips.length;
-  if (overflow) {
-    const budget = avail - moreW - gap;
-    let acc = 0;
-    keep = 0;
-    for (let i = 0; i < chips.length; i++) {
-      const next = acc + widths[i] + (i ? gap : 0);
-      if (next > budget) break;
-      acc = next;
-      keep++;
-    }
-    if (keep < 1) keep = 1; // 至少保首枚可见（全收 = 无意义折叠）
-  }
-
-  // diff 应用（平衡态零写）。
-  for (let i = 0; i < chips.length; i++) {
-    const want = i >= keep;
-    const has = chips[i].classList.contains('mh-att-collapsed');
-    if (want && !has) chips[i].classList.add('mh-att-collapsed');
-    else if (!want && has) chips[i].classList.remove('mh-att-collapsed');
-  }
-  const hiddenCount = chips.length - keep;
-  if (expanded) {
-    // 展开态：+N 保留行尾作「收拢」键（点它 toggle 回折叠；文本沿用折叠计数）。
-    if (more.parentElement !== row || row.lastElementChild !== more) row.appendChild(more);
-    if (more.hidden) more.hidden = false;
-  } else if (overflow && hiddenCount > 0) {
-    if (more.parentElement !== row || row.lastElementChild !== more) row.appendChild(more);
-    if (more.hidden) more.hidden = false;
-    const moreText = `+${hiddenCount}`;
-    if (more.textContent !== moreText) more.textContent = moreText;
-  } else {
-    if (more.isConnected) more.remove();
-    if (!more.hidden) more.hidden = true;
-  }
-}
-
-/** 展开态重算（展开后行宽变化 → 重新判定折叠）。 */
-function collapseAttachmentRow() { syncAttachmentRow(); }
-
-function watchAttachmentRow() {
-  const row = document.getElementById('attachment-preview');
-  if (!row) return;
-  attRow.mo = new MutationObserver(syncAttachmentRow);
-  attRow.mo.observe(row, { childList: true, attributes: true, subtree: true });
-  if (window.ResizeObserver) {
-    attRow.ro = new ResizeObserver(syncAttachmentRow);
-    attRow.ro.observe(row);
-  }
-  syncAttachmentRow();
-}
-
-function unwatchAttachmentRow() {
-  if (attRow.ro) { attRow.ro.disconnect(); attRow.ro = null; }
-  if (attRow.mo) { attRow.mo.disconnect(); attRow.mo = null; }
-  if (attRow.more) { attRow.more.remove(); attRow.more = null; }
-  const row = document.getElementById('attachment-preview');
-  if (row) {
-    row.classList.remove('mh-att-expanded');
-    row.querySelectorAll('.mh-att-collapsed').forEach((el) => el.classList.remove('mh-att-collapsed'));
-  }
-}
+// ── 附件条 v3 → v4（uifix 批 2026-10-22）：折叠腿上移共用单点 ───────────
+// #attachment-preview 桌面层同批改 in-flow 独立行（作者令「附件放在对话框上面，
+// 不要遮挡文字」）⇒ 折叠腿（+N 收展）不再是手机层私有：原样上移为
+// js/attachStripFold.js（观察链桌面启动即挂、幂等），手机层 bootstrap 拆装
+// **不再**接管（同一条链两层共用，激活/拆层零动作）。类名/形态逐字沿用：
+// .mh-att-more（+N）/ .mh-att-collapsed（收）/ .mh-att-expanded（展开横滚）。
 
 export function activateFloats() {
   const list = leftList();
@@ -292,7 +192,8 @@ export function activateFloats() {
   }
   if (typeof lucide !== 'undefined') createIconsIn(list);
   watchInputArea();
-  watchAttachmentRow();
+  // 附件条折叠腿（uifix 批 2026-10-22）：观察链已由 main.js 启动即挂
+  // （attachStripFold.watchAttachmentStrip，幂等 + 两层共用）——手机层激活零接管。
   syncTaskBadge();
   window.addEventListener('delegate-chain-mirror-updated', syncTaskBadge);
   window.addEventListener('nebflow-session-change', syncTaskBadge);
@@ -312,7 +213,7 @@ export function activateFloats() {
     window.removeEventListener('delegate-chain-mirror-updated', syncTaskBadge);
     window.removeEventListener('nebflow-session-change', syncTaskBadge);
     if (inputRo) { inputRo.disconnect(); inputRo = null; }
-    unwatchAttachmentRow();
+    // 附件条折叠观察链不拆（共用单点存续；折叠态随行存续，拆层零残留）。
     // 按锚点原样归还 header（相对次序保持搬移前状态）。
     for (const a of anchors) {
       try {

@@ -3481,6 +3481,64 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
 }
 
 // ---------- Attachment preview ----------
+
+// ── 发送清空动画（uifix 批 2026-10-22 作者令「附件面打磨一批」之一）────────
+// 载荷被消费（发送 / 排队 / 离线入队，input.js 三腿改走 renderAttachmentPreview）
+// ⇒ strip 从 N>0 清到 0 的那次重建不再瞬时蒸发：chip 先「渐隐 + 上浮退场」
+// （WAAPI，~160ms），落定后才清 DOM —— 行高收缩只发生一步且在视觉退场之后。
+// 纪律：prefers-reduced-motion ⇒ 直清（零动画）；WAAPI 不可用 ⇒ 直清；
+// 动画窗内来新渲染（用户秒补附件）⇒ dataset 闸作废在播清空、立即重建（禁吞件）。
+const ATT_STRIP_CLEAR_MS = 160;
+
+/** @param {HTMLElement} host @param {() => void} done */
+function animateStripClear(host, done) {
+  const kids = Array.from(host.children);
+  const reduced = typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!kids.length || reduced || typeof /** @type {any} */ (kids[0]).animate !== 'function') {
+    done();
+    return;
+  }
+  let finished = 0;
+  const step = () => { finished += 1; if (finished >= kids.length) done(); };
+  for (const k of kids) {
+    try {
+      const a = /** @type {any} */ (k).animate(
+        [{ opacity: '1', transform: 'translateY(0) scale(1)' },
+         { opacity: '0', transform: 'translateY(-6px) scale(0.96)' }],
+        { duration: ATT_STRIP_CLEAR_MS, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' });
+      a.addEventListener('finish', step);
+      a.addEventListener('cancel', step);
+    } catch { step(); }
+  }
+  // 硬上限：动画事件全哑也不吞清空（done 幂等，dataset 闸防跨渲染误清）。
+  setTimeout(done, ATT_STRIP_CLEAR_MS + 120);
+}
+
+/**
+ * 发送/排队/离线入队消费载荷后的条带清空 —— **渐隐退场动画版**（uifix 批
+ * 2026-10-22 作者令「附件面打磨一批：发送后清空动画」）。chip 先「渐隐 + 上浮
+ * 退场」（WAAPI ~160ms），落定才清 DOM；行高收缩只在视觉退场后发生一步。
+ *
+ * 纪律：**只有发送族三腿**（input.js send / queue / enqueueOfflineMessage）
+ * 调用本函数；chip ✕ 移除与引用替换走普通 [[renderAttachmentPreview]]
+ * （数据变化即时重建，零动画——单件删除延迟落 DOM 会吃掉点击反馈的真实感，
+ * 也破坏既有测试的同步读数面）。prefers-reduced-motion / 无 WAAPI ⇒ 直清。
+ * @param {{attPreviewEl?: HTMLElement}} [target] 与 renderAttachmentPreview 同形
+ */
+export function clearAttachmentStripAnimated(target) {
+  const attPreview = (target && target.attPreviewEl) || activeView.dom.attPreview;
+  if (!attPreview) return;
+  if (attPreview.childElementCount === 0) return;
+  if (attPreview.dataset.attClearing === '1') return; // 动画已在播：不重复排
+  attPreview.dataset.attClearing = '1';
+  animateStripClear(attPreview, () => {
+    if (attPreview.dataset.attClearing !== '1') return; // 动画窗内来了新渲染 ⇒ 本轮清空作废
+    delete attPreview.dataset.attClearing;
+    attPreview.innerHTML = '';
+  });
+}
+
 export function renderAttachmentPreview(target) {
   // target: optional { attPreviewEl, attachments } for non-primary windows.
   // Defaults to the primary window's attPreview + pendingAttachments so existing
@@ -3488,6 +3546,12 @@ export function renderAttachmentPreview(target) {
   const attPreview = (target && target.attPreviewEl) || activeView.dom.attPreview;
   const attachments = (target && target.attachments) || activeView.pendingAttachments;
   if (!attPreview) return;
+  // 清空动画协同（uifix 批 2026-10-22）：动画在播时的**空数据**重渲染（发送族
+  // 腿随后的 renderQuoteStrip）不打断动画、不清 DOM —— 让退场播完；带**新内容**
+  // 的重渲染（用户秒补附件/引用、chip ✕ 移除、引用替换）作废在播清空并立即
+  // 重建（pending done 靠 dataset 闸自灭）。常规路径零动画、瞬时重建。
+  if (attPreview.dataset.attClearing === '1' && attachments.length === 0) return;
+  if (attPreview.dataset.attClearing) delete attPreview.dataset.attClearing;
   attPreview.innerHTML = '';
   attachments.forEach((att, idx) => {
     // ── 全局引用（#303 v1.1）：type='ref'（新统一模型）与旧 type='taskRef'
@@ -3533,7 +3597,10 @@ export function renderAttachmentPreview(target) {
       const wrap = document.createElement('div');
       wrap.className = 'att-file';
       wrap.style.position = 'relative';
-      wrap.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100px">' + escapeHtml(att.name) + '</span>';
+      // uifix 批 2026-10-22：文件名 span 改类挂样式（.att-file-name，input.css
+      // 统一 chip 语言段）—— 旧内联 max-width:100px 收 140px（+N 折叠在，长名
+      // 不再吃满条带宽）。
+      wrap.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg><span class="att-file-name">' + escapeHtml(att.name) + '</span>';
       const rm = document.createElement('div');
       rm.className = 'att-remove';
       rm.innerHTML = CLOSE_X_SVG;   // 修正②：几何对称 ✕（同图片附件键）

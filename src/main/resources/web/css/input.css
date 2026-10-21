@@ -299,67 +299,90 @@
   color: rgb(var(--amber) / 0.95);
   text-shadow: 0 0 8px rgb(var(--amber-glow) / 0.30);
 }
+/* ── Attachment strip: in-flow row above the textarea（uifix 批 2026-10-22）──
+   作者令：「设计一批附件的ui优化。让附件放在对话框上面，不要遮挡文字。」
+   附件预览从「textarea 顶缘 overlay + 44px padding 让位带」（composer-overlap
+   修复 2026-10-18 的形态）改为 #input-wrap（column flex）内的 **in-flow 独立行**
+   —— chip 条带与文字输入区完全分离，任何附件数量下零遮挡：
+   · 几何：chip bottom ≤ textarea top（quote-message B12/B2-B4/B13 的 aboveInput
+     断言面，overlay 时代被打破的 4 条红线由本形态复位）；
+   · 点击：in-flow 后空隙不再压在 textarea 上 ⇒ composer-typing 的
+     pointer-events 透传面（旧 :346-347）与 44px 让位带一并退役；
+   · 溢出（桌面层）：**换行多行**（flex-wrap: wrap）—— chip 恒可见恒可点，
+     不藏件不滚动；这也是 quote-message B12 在管断言的既批语义（「溢出走换行
+     （flex-wrap）不横向溢出」，2026-10-18 改 nowrap+横滚时被打红，本批复位）。
+     手机层仍走单行 + 「+N」折叠（v3 已批形态，纵向空间稀缺 —— 覆盖见
+     mobileLayer.css；折叠腿单点 = js/attachStripFold.js）。
+   · 不裁切：行自身保持 overflow:visible —— ✕ 圆盘的 -4px 悬出（既有形态）
+     不被条带裁顶；手机层展开态（.mh-att-expanded）才开横向滚动。 */
 #attachment-preview {
   display: flex;
+  align-items: center;
   gap: 6px;
-  margin-bottom: 4px;
+  margin: 0 0 6px;
   flex-wrap: wrap;
-}
-
-/* Mobile-first compact attachment strip (composer-inline): the pending-file
-   chips overlay the textarea's top edge instead of claiming their own block
-   row — the composer keeps ONE line, and the placeholder (updated by
-   input.js) names what is attached. The textarea grows top padding while
-   chips are present (#input-wrap.has-attachments). */
-#input-wrap { position: relative; }
-/* 44px = 条带命中带底缘（top 4px + max-height 30px = 34px）+ 安全余量。不只是
-   文字避让（旧值 26px 按 .att-file ~21px 调的，.att-ref 28px 时 chip 底缘压进
-   首行 ~6px）：textarea 盒从 wrap 顶起，盒中心在 (padding-top+28)/2 —— 必须
-   落到 34px 命中带之下，否则全宽引用 chip（.att-ref-fm 350px 满宽）吃掉输入框
-   中央的点击（composer-overlap 修复 2026-10-18；fwdguard B2 同类实测）。 */
-#input-wrap.has-attachments #input { padding-top: 44px; }
-/* #531（2026-10-18）：blocked（纯引用帧）态不再有独立提示行 —— 旧 `.has-attachments:
-   :has(> .ref-gate-hint:not([hidden]))` 收顶距的特例随 .ref-gate-hint 元素一并移除，
-   blocked 态与常规附件态共用上面的 44px 让位（chip 必在场 ⇒ 类必开），闸文案改由
-   输入框自身 placeholder 承担（input.js updateInputPlaceholder 的 isRefOnlyFrame
-   分支），恰好落在 44px 让位带之下的原占位符位置。 */
-#input-wrap #attachment-preview {
-  position: absolute;
-  top: 4px;
-  left: 6px;
-  right: 6px;
-  z-index: 3;
-  max-height: 30px;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: visible;
   scrollbar-width: none;
-  /* 单行横向滚动（composer-overlap 修复 2026-10-18）：flex-wrap:wrap 与
-     max-height:30px + overflow-y:hidden 组合时，换到第二行的 chip 被整行裁没，
-     且横向滚动够不到纵向换行的内容 ⇒ 折行禁用，超出走横向滚动（滚动条已隐）。 */
-  flex-wrap: nowrap;
 }
-/* Click pass-through (composer-typing fix 2026-10-18): the overlay strip spans
-   the full input-wrap width, so its empty areas sat on top of the textarea and
-   swallowed every click aimed at it — the caret could not be placed and typed
-   keys went nowhere. The container ignores pointers; the chips themselves (and
-   their remove buttons / ref cards) stay fully interactive. */
-#input-wrap #attachment-preview { pointer-events: none; }
-#input-wrap #attachment-preview > * { pointer-events: auto; }
-#input-wrap #attachment-preview::-webkit-scrollbar { display: none; }
+/* 空条带不占任何行高/边距（发送清空后 composer 高度精确回落）。 */
+#attachment-preview:empty { margin: 0; }
+#attachment-preview::-webkit-scrollbar { display: none; }
+/* +N 折叠键（手机层折叠腿 attachStripFold.js 建；样式为两层基座）。 */
+#attachment-preview.mh-att-expanded { overflow-x: auto; }
+.mh-att-more {
+  flex: none;
+  min-width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--glass-etched-bg, rgba(0, 0, 0, 0.025));
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-muted, #8b8e96);
+  font-size: 11px;
+  padding: 0 7px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+/* 折叠收件（手机层折叠腿 attachStripFold.js 落 .mh-att-collapsed）：选择器带
+   #attachment-preview 前缀提特异度 —— chip 自身的 display 声明（.att-file 的
+   inline-flex / .att-ref 的 flex 等，同为 0,1,0 且声明序更靠后）不得压过折叠
+   收件（旧手机层规则 body.mobile-layer .mh-att-collapsed 为 0,2,1 恒胜；基座
+   上移后须以 1,1,0 自保）。 */
+#attachment-preview .mh-att-collapsed { display: none; }
+#input-wrap { position: relative; }
+/* ── 统一 chip 语言（同批打磨）：缩略图与文件卡同 28px 档 / 同 8px 圆角 /
+   同条带基线 —— strip 高度恒 28px，不再随 chip 种类起伏（旧 .att-thumb 50×50
+   在 overlay 时代被 max-height:30px 裁成 50×30 杂交形态）。文件卡材质 =
+   --glass-etched-* token（主题自适应；旧硬编码 #e0e0e0 暗色下发白）。 */
 .att-thumb {
-  width: 50px; height: 50px;
+  width: 28px; height: 28px;
   object-fit: cover;
-  border-radius: 6px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  box-sizing: border-box;
+  display: block;
   position: relative;
 }
 .att-file {
-  background: #e0e0e0;
-  padding: 3px 8px;
-  border-radius: 6px;
-  font-size: 11px;
-  display: flex;
+  height: 28px;
+  box-sizing: border-box;
+  display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--color-text);
+}
+.att-file .att-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
 }
 
 /* v2 §5.2: task return reference chip — sapphire tint (distinct from the
@@ -370,11 +393,13 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  height: 28px;                    /* uifix 批 2026-10-22：同条带统一 28px 档 */
+  box-sizing: border-box;
   background: rgb(var(--sapphire) / 0.06);
   border: 1px solid rgb(var(--sapphire) / 0.25);
-  border-radius: 6px;
-  padding: 3px 8px;
-  font-size: 11px;
+  border-radius: 8px;
+  padding: 0 10px;
+  font-size: 12px;
   color: var(--color-text);
   position: relative;
   max-width: 100%;                 /* never exceed the chips container (B13) */
@@ -588,18 +613,18 @@
 }
 
 /* ── quote-message 引用 chip（2026-10-09 用户反馈改版）: composer 引用 chip 与
-   附件 chip 同条带（宿主 = #attachment-preview，输入框上方）同大小 —— 尺寸取
-   .att-file 档（11px 字号 / 3px 8px 内距 / 6px 圆角 / 4px 间距）。材质（sapphire
-   alpha token）、message-circle 图标、实心圆白 ✕ 全部沿用现状（零新色值）。
+   附件 chip 同条带（宿主 = #attachment-preview，输入框上方）同大小 —— uifix 批
+   2026-10-22 统一后两族同取 28px 档（.att-file 28px 档；高度 delta=0，B12 的
+   ±4px 断言恒稳）：字号/圆角随 .att-ref 基座（12px/8px），作用域只调间距与
+   收缩面。材质（sapphire alpha token）、message-circle 图标、实心圆白 ✕ 全部
+   沿用现状（零新色值）。
    作用域 = 附件条内的 chat-message chip（data-ref-type 锚定）：其它 .att-ref
-   chip（file/document/task/html-element）维持上方 28px 紧凑档逐值不变。
-   溢出处理 = 宿主既有 flex-wrap 换行（chips 换行不横向溢出）。── */
+   chip（file/document/task/html-element）维持 .att-ref 基座 28px 档逐值不变。
+   溢出处理 = 折叠腿「+N」收展（attachStripFold.js；B12 断言的「换行不横向溢出」
+   由折叠态 display:none 同判成立 —— 条带 scrollWidth 恒 ≤ clientWidth）。── */
 #attachment-preview .att-ref[data-ref-type="chat-message"] {
-  height: auto;
   gap: 4px;
-  padding: 3px 6px 3px 8px;
-  border-radius: 6px;
-  font-size: 11px;
+  padding: 0 6px 0 8px;
   flex: 0 1 auto;
   min-width: 0;
 }

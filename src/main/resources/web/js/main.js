@@ -144,6 +144,9 @@ import { applyLocalFreeze, setFrozenBarState, skipCurrentFreeze } from './main/f
 import { showHistoryLoader, hideHistoryLoader, showHistoryEnd, clearHistoryIndicators } from './main/historyIndicators.js';
 import { showGlobalPermissionToast, dismissGlobalPermissionToasts } from './main/permToast.js';
 import { updateBgAgentIndicator, bgAgentKindFromSession, renderBgAgentDropdown, armBgUptimeTick, fetchActiveAgentsOnOpen, clearBgStuck } from './main/bgAgents.js';
+// uifix 批（2026-10-22 作者令「附件放在对话框上面，不要遮挡文字」）：附件条 in-flow
+// 独立行的溢出折叠腿（+N 收展）—— 桌面/手机层共用单点，桌面启动即挂观察链（幂等）。
+import { watchAttachmentStrip } from './attachStripFold.js';
 
 // Friends release gating latch (2026-09-08): false until the first configData
 // of the boot decides the flag (see the configData handler below).
@@ -3326,6 +3329,7 @@ initAgentProfile();
 // latch 在 voiceOrbEnabled() 时调 initMicOrb() 完成（#508 同款时序）。
 initMicOrb(); // Mic orb renderer — latch-mounted (#513): boot call is a no-op until configData arrives
 initGlobalFileDrop(); // #303 — document-level drag & drop onto input bars
+watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿（+N 收展），桌面启动即挂（两层共用，幂等）
 
 // Keep the last chat message visible above the floating #input-area.
 // #input-area (position:absolute; bottom:0) overlays #chat and has variable
