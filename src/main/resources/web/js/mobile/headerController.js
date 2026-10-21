@@ -76,7 +76,10 @@ function observeList(dd) {
   const sync = () => {
     // 隐藏键（计数为 0 的指示键等）不占位 —— 只给可见键排 stagger 序与列高，
     // 否则列尾留一段空玻璃（样张口径：列即所见）。
-    const kids = [...bd.children].filter((k) => !(k.hidden || k.classList.contains('hidden')));
+    // 例外 = data-mh-persist 键（手机小批 2026-10-21：bg/bgagent 图标常驻键）——
+    // 其 .hidden 只是「角标=0」信号（mobileLayer.css 已反转键本体显隐：图标
+    // 常驻），列占位常驻；桌面 toggle 语义零触碰。
+    const kids = [...bd.children].filter((k) => !(k.hidden || (k.classList.contains('hidden') && !k.hasAttribute('data-mh-persist'))));
     [...bd.children].forEach((k) => {
       if (k.hasAttribute('data-vi')) k.removeAttribute('data-vi');
     });

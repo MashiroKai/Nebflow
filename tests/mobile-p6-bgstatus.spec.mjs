@@ -117,6 +117,9 @@ async function seedAgent(page) {
     });
   }, SID);
   await expect(page.locator('#bgagent-indicator')).toBeVisible();
+  // 图标常驻键角标 = 运行中子智能体数（桌面 updateBgAgentIndicator 同源信号，
+  // 只数运行行 —— 2026-09-14 author ruling 语义在手机层原样）。
+  await expect(page.locator('#bgagent-indicator .bgagent-count')).toHaveText('1');
 }
 
 /** 开载体：后台键（桌面自身 toggle 路径）。 */
@@ -194,6 +197,10 @@ test('T2 task rows: status word / origin chip / local·remote kind chip / lines 
   const grps = page.locator('#bg-dropdown .mh-bg-grp');
   await expect(grps).toHaveCount(1);
   expect(await grps.nth(0).textContent()).toBe('智能体');
+  // 手机小批（2026-10-21 图标常驻键）：键角标 = 后台任务计数（桌面 updateBgTasksUI
+  // 同源信号 —— badge == 面板行数，桌面 §3 不变量在手机层同样成立）。
+  await expect(page.locator('#bg-indicator')).toBeVisible();
+  await expect(page.locator('#bg-indicator .bg-count')).toHaveText('3');
   expect(errors).toEqual([]);
 });
 
@@ -241,5 +248,10 @@ test('T4 empty drain: panel auto-hides when all tasks end (desktop auto-hide int
   // 推空快照（activeBgTasks 同源路径）→ updateBgTasksUI 计数 0 自动隐藏载体。
   harness?.sendBg({});
   await expect(page.locator('#bg-dropdown')).toBeHidden({ timeout: 8000 });
+  // 手机小批（2026-10-21 图标常驻键）：排空后键本体常驻（图标不退场）、角标
+  // 隐藏（.hidden = 桌面 count-0 信号源，CSS 只藏角标 —— 零新轮询零新监听）。
+  await expect(page.locator('#bg-indicator')).toBeVisible();
+  await expect(page.locator('#bg-indicator .bg-count')).toBeHidden();
+  await expect(page.locator('#bg-indicator svg.mh-persist-ico')).toBeVisible();
   expect(errors).toEqual([]);
 });

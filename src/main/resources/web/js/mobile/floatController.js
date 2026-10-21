@@ -33,6 +33,18 @@ import { logEvent, touchLayer } from './navController.js';
 const FLOAT_IDS = ['search-btn', 'bg-indicator', 'bgagent-indicator', 'reminder-btn', 'daemon-btn', 'memory-btn'];
 const PENDING_ASKS_ID = 'pending-asks-indicator';
 
+/** 图标常驻键（手机小批 2026-10-21 作者令「与桌面端做区分」）：bg/bgagent 键
+ *  手机层改图标常驻 + 角标计数 —— 桌面 count=0 时的 .hidden toggle 保留为计数
+ *  信号源（WS 事件驱动，零新轮询），手机层 CSS 反转呈现（键常驻、角标随
+ *  .hidden 隐藏，见 mobileLayer.css）；列占位由 data-mh-persist 声明
+ *  （headerController observeList 对位）。图标于本处注入（桌面胶囊无图标位，
+ *  键语言 = mh-key 圆键 17px lucide；拆层摘除，桌面形态零残留）。图标取色 =
+ *  桌面胶囊色语义原样（绿=后台任务 / sapphire=子智能体，chat.css 同源）。 */
+const PERSIST_ICONS = {
+  'bg-indicator': 'square-terminal',   // 后台任务（后台 shell/远端任务）
+  'bgagent-indicator': 'bot',          // 子智能体（navController profile 入口同款词形）
+};
+
 /** 键 → 面板载体（morph 目标）与「可见」判据。
  *  P6 归并（mobile-secondary-screens 实施批）：bgagent 键的 morph 载体改指
  *  #bg-dropdown（合并面板，bgStatusFace.js 押回幽灵面 + 解隐载体；列表节点
@@ -48,7 +60,8 @@ const PANEL_FACE = [
 
 /** @type {{id:string, parent:Node, next:Node|null}[]} 归还锚点。 */
 let anchors = [];
-/** @type {MutationObserver|null} */
+/** @type {ResizeObserver|null} 输入区高度观察（watchInputArea；checkJs 对位 ——
+ *  实际 new 的是 ResizeObserver，旧注 MutationObserver 是笔误）。 */
 let inputRo = null;
 /** @type {MutationObserver|null} */
 let faceMo = null;
@@ -150,7 +163,7 @@ function watchInputArea() {
 // #attachment-preview 在手机层改 in-flow 首行（CSS），本段只做折叠腿：
 // 单行装不下的尾部 chip 落 .mh-att-collapsed，行尾补「+N」件；点 +N 展开为
 // 横向滚动（再点收拢）。chip 增删/换行由 MutationObserver + ResizeObserver 驱动。
-/** @type {{ro: ResizeObserver|null, mo: MutationObserver|null, more: HTMLElement|null}} */
+/** @type {{ro: ResizeObserver|null, mo: MutationObserver|null, more: HTMLButtonElement|null}} */
 let attRow = { ro: null, mo: null, more: null };
 
 /** chip 实测宽缓存（折叠态 display:none 无盒 —— 用上次可见时的宽度参算）。 */
@@ -159,7 +172,8 @@ const attChipW = new WeakMap();
 function syncAttachmentRow() {
   const row = document.getElementById('attachment-preview');
   if (!row) return;
-  const chips = [...row.children].filter((el) => !el.classList.contains('mh-att-more'));
+  // checkJs 对位：row.children 是 Element 拙集 —— 附件 chip 实为 HTMLElement。
+  const chips = /** @type {HTMLElement[]} */ ([...row.children].filter((el) => !el.classList.contains('mh-att-more')));
   let more = attRow.more;
   if (!more) {
     more = document.createElement('button');
@@ -264,6 +278,16 @@ export function activateFloats() {
     if (!el) continue;
     anchors.push({ id, parent: el.parentNode, next: el.nextSibling });
     el.classList.add('mh-key');
+    // 图标常驻键（bg/bgagent）：注入键图标 + 常占位声明（幂等；拆层摘除）。
+    const icon = PERSIST_ICONS[id];
+    if (icon && !el.querySelector('.mh-persist-ico')) {
+      el.dataset.mhPersist = 'count';
+      const ico = document.createElement('i');
+      ico.setAttribute('data-lucide', icon);
+      ico.className = 'mh-persist-ico';
+      ico.setAttribute('aria-hidden', 'true');
+      el.insertBefore(ico, el.firstChild);
+    }
     list.appendChild(el);
   }
   if (typeof lucide !== 'undefined') createIconsIn(list);
@@ -295,6 +319,11 @@ export function activateFloats() {
         const el = document.getElementById(a.id);
         if (el) {
           el.classList.remove('mh-key');
+          // 图标常驻键拆层还原：摘注入图标 + 常占位声明（桌面胶囊形态零残留）。
+          if (PERSIST_ICONS[a.id]) {
+            el.querySelector('.mh-persist-ico')?.remove();
+            delete el.dataset.mhPersist;
+          }
           if (a.parent && a.parent.isConnected) a.parent.insertBefore(el, a.next);
         }
       } catch { /* 节点树已变：放弃归还，避免二次破坏 */ }

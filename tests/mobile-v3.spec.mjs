@@ -153,15 +153,18 @@ test('T1 liquid dropdowns: aria-expanded, width-40 constant, visible-key count, 
   await expect(page.locator('.mh-dd[data-dd="left"]')).toHaveCSS('width', '40px');
   await expect(page.locator('.mh-dd[data-dd="right"]')).toHaveCSS('width', '40px');
 
-  // 左列成员：任务键 + FLOAT_IDS 搬移键在列内；0 计数键（bg/bgagent/待答）与
-  // 关闭的 memory 键 hidden 退场（.mh-key[hidden]{display:none}）。
+  // 左列成员：任务键 + FLOAT_IDS 搬移键在列内；关闭的 memory 键 hidden 退场
+  // （.mh-key[hidden]{display:none}）。手机小批（2026-10-21 作者令「与桌面端做
+  // 区分」）后 bg/bgagent 键改**图标常驻**：0 计数不退场（.hidden 只藏角标），
+  // 注入图标在场；待答胶囊内容驱动语义不变（0 退场）。
   await expect(page.locator('#mobile-task-key')).toBeVisible();
-  for (const id of ['search-btn', 'reminder-btn', 'daemon-btn']) {
+  for (const id of ['search-btn', 'reminder-btn', 'daemon-btn', 'bg-indicator', 'bgagent-indicator']) {
     await expect(page.locator(`.mh-dd[data-dd="left"] > .mh-dd-bd > #${id}`)).toBeVisible();
   }
-  for (const id of ['bg-indicator', 'bgagent-indicator', 'memory-btn']) {
-    await expect(page.locator(`.mh-dd[data-dd="left"] > .mh-dd-bd > #${id}`)).toBeHidden();
+  for (const id of ['bg-indicator', 'bgagent-indicator']) {
+    await expect(page.locator(`.mh-dd[data-dd="left"] > .mh-dd-bd > #${id} svg.mh-persist-ico`)).toBeVisible();
   }
+  await expect(page.locator('.mh-dd[data-dd="left"] > .mh-dd-bd > #memory-btn')).toBeHidden();
 
   await hdL.click();
   await expect(hdL).toHaveAttribute('aria-expanded', 'true');
