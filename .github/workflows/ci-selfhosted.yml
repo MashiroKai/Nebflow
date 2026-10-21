@@ -1,0 +1,74 @@
+name: CI Self-Hosted (jar pilot)
+
+# 自托管 CI 试点（CI 迁移批，作者令 2026-10-21「GitHub Actions 额度耗尽→把 CI 挪到自有
+# 在线设备跑」）：
+#   - 仅 workflow_dispatch 手动触发：零托管分钟消耗、零 push 干扰。
+#   - 跑在自托管 runner 上（self-hosted 分钟不计费）。当前推荐宿主 = 本机 Mac
+#     （labels: self-hosted, macOS, ARM64）；Windows 宿主（DESKTOP-IJBBEOT）待其
+#     github 出口修复（Clash 未开 → runner 包/克隆均超时，2026-10-21 实测）后把
+#     runs-on 换成 [self-hosted, Windows, X64] 即迁。
+#   - 职责 = 重活样板：web bundle + sbt assembly + sha256，与 ci.yml assembly job
+#     同构（含 friends strip 断言），证明 jar 构建在自托管宿主全链可跑通。
+#   - 工具链自举不依赖宿主预装：sbt 走 Aliyun maven sbt-launch（与 ci.yml 同款），
+#     JDK 用 actions/setup-java 钉 temurin 21（repo 基线，不依赖宿主默认 java）。
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-selfhosted-jar
+  cancel-in-progress: false
+
+jobs:
+  jar-selfhosted:
+    name: Build JAR (self-hosted)
+    runs-on: [self-hosted, macOS, ARM64]
+    # github.com 直连不稳（2026-10-21 实测）：checkout/下载统一走本机代理；
+    # maven.aliyun.com / npmmirror 腿不受影响（env 对直连域名无害）。
+    env:
+      https_proxy: http://127.0.0.1:7890
+      http_proxy: http://127.0.0.1:7890
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Brand values from brand.conf
+        shell: bash
+        run: |
+          bv() { sed -n "s/^$1[[:space:]]*=[[:space:]]*//p" brand.conf | sed 's/[[:space:]]#.*$//; s/[[:space:]]*$//' | head -1; }
+          echo "LOWER_NAME=$(bv lowerName)" >> "$GITHUB_ENV"
+          echo "PRODUCT_NAME=$(bv productName)" >> "$GITHUB_ENV"
+
+      - name: Build web bundle (P1)
+        shell: bash
+        run: |
+          npm ci
+          node scripts/build-web.mjs
+
+      - name: Friends release-strip assertion (dual-form gate)
+        shell: bash
+        run: node tests/release-strip-friends.static.mjs
+
+      - name: Setup sbt (Aliyun sbt-launch bootstrap, no host sbt needed)
+        shell: bash
+        run: |
+          curl -fL "https://maven.aliyun.com/repository/central/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o "$RUNNER_TEMP/sbt-launch.jar"
+          mkdir -p "$RUNNER_TEMP/sbt-bin"
+          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar "$RUNNER_TEMP/sbt-launch.jar" "$@"\n' > "$RUNNER_TEMP/sbt-bin/sbt"
+          chmod +x "$RUNNER_TEMP/sbt-bin/sbt"
+          echo "$RUNNER_TEMP/sbt-bin" >> "$GITHUB_PATH"
+
+      - name: Build assembly
+        shell: bash
+        run: sbt -D${LOWER_NAME}.webdist=1 assembly
+
+      - name: Assert jar + sha256
+        shell: bash
+        run: |
+          jar=$(ls target/scala-3.5.2/${LOWER_NAME}-assembly-*.jar | head -1)
+          test -s "$jar"
+          shasum -a 256 "$jar"

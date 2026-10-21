@@ -1,0 +1,258 @@
+{
+  "overall": "RED",
+  "faces": [
+    {
+      "face": "staging",
+      "origin": "https://staging.mystand.space",
+      "verdict": "RED",
+      "counts": {
+        "pass": 29,
+        "fail": 4,
+        "skip": 2
+      },
+      "at": "2026-10-21T15:21:11.763Z",
+      "results": [
+        {
+          "id": "core:/",
+          "status": "PASS",
+          "detail": "/ → 307 → /en",
+          "evidence": {
+            "want": "307|200"
+          }
+        },
+        {
+          "id": "core:/en",
+          "status": "PASS",
+          "detail": "/en → 200",
+          "evidence": {
+            "want": "200"
+          }
+        },
+        {
+          "id": "core:/zh",
+          "status": "PASS",
+          "detail": "/zh → 200",
+          "evidence": {
+            "want": "200"
+          }
+        },
+        {
+          "id": "core:/login",
+          "status": "PASS",
+          "detail": "/login → 200",
+          "evidence": {
+            "want": "200"
+          }
+        },
+        {
+          "id": "core:/register",
+          "status": "PASS",
+          "detail": "/register → 200",
+          "evidence": {
+            "want": "200"
+          }
+        },
+        {
+          "id": "core:/en/docs",
+          "status": "PASS",
+          "detail": "/en/docs → 307 → /en/docs/getting-started",
+          "evidence": {
+            "want": "200|307"
+          }
+        },
+        {
+          "id": "core:/en/docs/getting-started",
+          "status": "PASS",
+          "detail": "/en/docs/getting-started → 200",
+          "evidence": {
+            "want": "200"
+          }
+        },
+        {
+          "id": "legacy:profile-redirect",
+          "status": "PASS",
+          "detail": "/profile → 307 同源 /settings — 不跨旧域",
+          "evidence": {
+            "status": 307,
+            "location": "/settings"
+          }
+        },
+        {
+          "id": "legacy:settings-200",
+          "status": "PASS",
+          "detail": "/settings → 200 (跳转目标页必须真实存在, 不造 404)"
+        },
+        {
+          "id": "legacy:home-html",
+          "status": "PASS",
+          "detail": "/ 渲染零旧域字面量"
+        },
+        {
+          "id": "legacy:docs-html",
+          "status": "PASS",
+          "detail": "/en/docs/concepts/neblink 渲染零旧域字面量"
+        },
+        {
+          "id": "install:bom:install.ps1",
+          "status": "PASS",
+          "detail": "install.ps1 → HTTP 200 · BOM-less"
+        },
+        {
+          "id": "install:charset:install.ps1",
+          "status": "PASS",
+          "detail": "install.ps1 Content-Type=\"text/plain; charset=utf-8\" — 必须带 charset=utf-8",
+          "evidence": {
+            "contentType": "text/plain; charset=utf-8"
+          }
+        },
+        {
+          "id": "install:bom:install-beta.ps1",
+          "status": "PASS",
+          "detail": "install-beta.ps1 → HTTP 200 · BOM-less"
+        },
+        {
+          "id": "install:charset:install-beta.ps1",
+          "status": "PASS",
+          "detail": "install-beta.ps1 Content-Type=\"text/plain; charset=utf-8\" — 必须带 charset=utf-8",
+          "evidence": {
+            "contentType": "text/plain; charset=utf-8"
+          }
+        },
+        {
+          "id": "install:bom:uninstall.ps1",
+          "status": "PASS",
+          "detail": "uninstall.ps1 → HTTP 200 · BOM-less"
+        },
+        {
+          "id": "install:charset:uninstall.ps1",
+          "status": "PASS",
+          "detail": "uninstall.ps1 Content-Type=\"text/plain; charset=utf-8\" — 必须带 charset=utf-8",
+          "evidence": {
+            "contentType": "text/plain; charset=utf-8"
+          }
+        },
+        {
+          "id": "install:manifest-beta-version",
+          "status": "FAIL",
+          "detail": "manifest-beta version=2026.10.21-beta.2（钉=2026.10.21-beta.1，退役 semver 禁入榜）"
+        },
+        {
+          "id": "install:rendered",
+          "status": "FAIL",
+          "detail": "四条命令齐 · 渲染零旧域 · 未渲染新版本（钉=2026.10.21-beta.1） · 页面=manifest"
+        },
+        {
+          "id": "authorize:github",
+          "status": "PASS",
+          "detail": "307 形态齐 → tenant 303 (303 → /sign-in, callback 被接受)",
+          "evidence": {
+            "tenantHop": 303
+          }
+        },
+        {
+          "id": "authorize:google",
+          "status": "PASS",
+          "detail": "307 形态齐 → tenant 303 (303 → /sign-in, callback 被接受)",
+          "evidence": {
+            "tenantHop": 303
+          }
+        },
+        {
+          "id": "launch:github",
+          "status": "FAIL",
+          "detail": "TypeError: fetch failed"
+        },
+        {
+          "id": "launch:google",
+          "status": "FAIL",
+          "detail": "TypeError: fetch failed"
+        },
+        {
+          "id": "idp:google",
+          "status": "SKIP",
+          "detail": "accounts.google.com 不可达 (TypeError: fetch failed) — SKIP≠绿, 部署留档须交代"
+        },
+        {
+          "id": "idp:github",
+          "status": "SKIP",
+          "detail": "github.com 网络不可达 (TypeError: fetch failed) — SKIP≠绿, 部署留档须交代; 需人工真机点一次 GitHub 键补证"
+        },
+        {
+          "id": "brand:html",
+          "status": "PASS",
+          "detail": "4 页 HTML 零黑猫标记 (c746bb / black-cat)",
+          "evidence": {
+            "hits": []
+          }
+        },
+        {
+          "id": "brand:favicon.ico",
+          "status": "PASS",
+          "detail": "/favicon.ico sha=000a1560 基准=000a1560",
+          "evidence": {
+            "sha": "000a1560"
+          }
+        },
+        {
+          "id": "brand:light-32",
+          "status": "PASS",
+          "detail": "/logo/favicon/stand-app-icon-light-32.png sha=10fa6882 基准=10fa6882",
+          "evidence": {
+            "sha": "10fa6882"
+          }
+        },
+        {
+          "id": "brand:dark-32",
+          "status": "PASS",
+          "detail": "/logo/favicon/stand-app-icon-dark-32.png sha=8f192789 基准=8f192789",
+          "evidence": {
+            "sha": "8f192789"
+          }
+        },
+        {
+          "id": "brand:apple-192",
+          "status": "PASS",
+          "detail": "/logo/favicon/stand-app-icon-light-192.png sha=52e17b37 基准=52e17b37",
+          "evidence": {
+            "sha": "52e17b37"
+          }
+        },
+        {
+          "id": "brand:manifest",
+          "status": "PASS",
+          "detail": "manifest 200 且零黑猫标记"
+        },
+        {
+          "id": "portal:route",
+          "status": "PASS",
+          "detail": "/portal → 302 /login?next=%2Fportal (未登录必须进登录)",
+          "evidence": {
+            "status": 302,
+            "loc": "/login?next=%2Fportal"
+          }
+        },
+        {
+          "id": "portal:status-api",
+          "status": "PASS",
+          "detail": "/api/portal/status → 401 {\"error\":\"unauthorized\"} (未登录 401)"
+        },
+        {
+          "id": "ttl:me-unauth",
+          "status": "PASS",
+          "detail": "/api/auth/me 未登录 → 401 {\"error\":\"未登录\"}"
+        },
+        {
+          "id": "ttl:refresh-unauth",
+          "status": "PASS",
+          "detail": "POST /api/auth/refresh 无 cookie → 401 且零 Set-Cookie",
+          "evidence": {
+            "status": 401,
+            "setCookie": 0,
+            "body": "{\"ok\":false,\"error\":\"no refresh token\"}"
+          }
+        }
+      ]
+    }
+  ],
+  "note": "standing pre-deploy E2E gate — scripts/deploy-e2e/run-e2e.mjs"
+}
