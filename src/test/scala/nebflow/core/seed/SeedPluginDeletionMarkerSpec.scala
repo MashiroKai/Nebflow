@@ -166,14 +166,33 @@ class SeedPluginDeletionMarkerSpec extends FunSuite:
     assert(userRemoved.contains(Target), "前置：标记在位")
 
     copySeedPlugin(Target) // 用户手动装回（整目录拷回）
-    os.write.over(pluginDir(Target) / "USER-NOTES.md", "user note\n") // 用户自己的文件，须保留
+    os.write.over(pluginDir(Target) / "USER-NOTES.md", "user note\n") // 用户自己的文件
     val before = treeAsText(pluginDir(Target))
 
     ensure() // boot #3：目录再次存在 ⇒ 清标记
 
     assert(!userRemoved.contains(Target), "③ 标记被清（依据信号 = <root>/plugins/<name> 再次存在）")
     assert(seen.contains(Target), "③ 台账回到「在位」态")
-    assertEquals(treeAsText(pluginDir(Target)), before, "③ 清理不改写内容（用户版本保留）")
+    // 内容面（2026-10-21 诊断批合同翻转）：Target 是保留 `nebflow-` 前缀官方包——
+    // 装载层 OfficialPackages 只认当前分发 jar 的出厂 digest，手动装回 + 用户附件的
+    // 形态必然被官方闸拒载（正是 10-20 死锁实录的形态），旧口径「用户版本保留」在
+    // 这层 namespace 上保不住一个活包。修后：标记清理腿不变，digest 仲裁走出厂字节赢
+    // （种子镜像覆盖 + 重审）；被覆盖内容进 pre-sync 备份（回滚材料完整）。
+    // 非保留名包的「用户版本保留」语义不变（SeedPluginReconcileSpec ②/⑧ 仍在钉）。
+    assertEquals(treeAsText(pluginDir(Target)), treeAsText(seedDirOf(Target)), "③ 官方包镜像回出厂树（逐字节）")
+    val backups = os.list(home / "plugins-backups").filter(os.isDir).toList
+    val backup = backups.find(_.last.endsWith(s"_pre-sync-$Target"))
+    assert(backup.isDefined, s"③ 被覆盖的用户装回内容有 pre-sync 备份: ${backups.map(_.last)}")
+    val backupFiles = os
+      .walk(backup.get)
+      .filter(os.isFile)
+      .map(p => p.relativeTo(backup.get).toString -> os.read.bytes(p))
+      .toMap
+    assertEquals(backupFiles.keySet - "PRE-SHA256.txt", before.keySet, "③ 备份文件集 == 覆盖前装回形态")
+    assert(
+      backupFiles.get("USER-NOTES.md").exists(b => new String(b, UTF_8) == "user note\n"),
+      "③ 用户附件 USER-NOTES.md 在备份里逐字节保留（回滚材料）"
+    )
 
     os.remove.all(pluginDir(Target)) // 再删一次（生命周期闭合）
     ensure()

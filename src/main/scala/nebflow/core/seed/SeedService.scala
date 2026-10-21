@@ -5,7 +5,7 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.AtomicJson
-import nebflow.core.plugin.PluginRegistry
+import nebflow.core.plugin.{OfficialPackages, PluginRegistry}
 import nebflow.core.project.ProjectStore
 import nebflow.shared.{NebflowLogger, PathUtil}
 
@@ -489,45 +489,66 @@ object SeedService:
               // 仲裁基准 = 信任记录落库 digest（approve 时刻 fingerprint，目录漂移不影响记录
               // 本身）。无审批批 2026-09-13：记录不再决定装载（在位即信任），故**只能**从记录表
               // 取基准——现算 TrustStatus 恒受信，取不到「用户是否改过」这一信息。
+              //
+              // 官方 namespace 例外（2026-10-21 诊断批）：保留 `nebflow-` 前缀由装载层的
+              // OfficialPackages 硬闸仲裁（digest = **当前分发 jar** 的出厂树，fail-closed）——
+              // runtime ≠ seed 的官方包无论信任记录怎么裁都已被该闸判死，「用户改过保留」
+              // 在这层 namespace 上没有合法存在形态，只会把死包冻结在盘上：出厂每次前进
+              // （10-14 e885→0621、10-20 0621→f0b9）都重演同一死锁——信任记录停在 approve
+              // 时刻 digest ⇒ 种子刷新腿（要求 runtime==trusted）永不触发 ⇒ 保留用户版 ⇒
+              // 官方闸拒载。故保留前缀包的 runtime ≠ seed 一律走出厂字节赢（备份 + 镜像 +
+              // 重审），与装载层的「官方包只认出厂 digest」姿态对齐；用户定制面走非保留名
+              // （OfficialPackages 拒载文案既有的指引）。
+              def refreshFromSeed(why: String): Unit =
+                // 覆盖前备份：**凡覆盖写必须有
+                // pre-sync 备份**，不因「按设计这是安全覆盖」而豁免——「本路径按设计安全」
+                // 与「覆盖后有可回滚材料」是两件事，后者是回滚材料完整性的要求。
+                val stamp = java.time.format.DateTimeFormatter
+                  .ofPattern("yyyyMMdd_HHmmss")
+                  .format(java.time.LocalDateTime.now())
+                val backupDir = root / "plugins-backups" / s"${stamp}_pre-sync-$name"
+                val preShas = runtimeFileShas(targetDir)
+                os.makeDir.all(backupDir)
+                os.walk(targetDir).filter(os.isFile).foreach { f =>
+                  val rel = f.relativeTo(targetDir)
+                  val dest = backupDir / os.SubPath(rel.toString)
+                  os.makeDir.all(dest / os.up)
+                  os.copy.over(f, dest)
+                }
+                os.write.over(
+                  backupDir / "PRE-SHA256.txt",
+                  s"# plugin=$name  sampled=$stamp\n" +
+                    preShas.map((rel, sha) => s"$sha  $rel").mkString("\n") + "\n"
+                )
+                mirrorSeed(targetDir, seedFiles)
+                PluginRegistry.approve(name).unsafeRunSync()
+                logger.infoSync(
+                  s"Seed: plugin '$name' refreshed from seed ($why; digest ${runtimeDigest.take(12)}… → ${seedDigest.take(12)}…) and re-approved; " +
+                    s"pre-sync backup at ${backupDir.toString.stripPrefix(root.toString + "/")} (${preShas.size} file(s))"
+                )
+              end refreshFromSeed
               PluginRegistry.trustRecordDigest(name) match
                 case Some(td) if td == runtimeDigest =>
                   // 干净运行时（自 approve 后零漂移）→ 覆盖前备份 + 种子镜像覆盖 + 自动重审
-                  // 覆盖前备份：**凡覆盖写必须有
-                  // pre-sync 备份**，不因「按设计这是安全覆盖」而豁免——「本路径按设计安全」
-                  // 与「覆盖后有可回滚材料」是两件事，后者是回滚材料完整性的要求。
-                  val stamp = java.time.format.DateTimeFormatter
-                    .ofPattern("yyyyMMdd_HHmmss")
-                    .format(java.time.LocalDateTime.now())
-                  val backupDir = root / "plugins-backups" / s"${stamp}_pre-sync-$name"
-                  val preShas = runtimeFileShas(targetDir)
-                  os.makeDir.all(backupDir)
-                  os.walk(targetDir).filter(os.isFile).foreach { f =>
-                    val rel = f.relativeTo(targetDir)
-                    val dest = backupDir / os.SubPath(rel.toString)
-                    os.makeDir.all(dest / os.up)
-                    os.copy.over(f, dest)
-                  }
-                  os.write.over(
-                    backupDir / "PRE-SHA256.txt",
-                    s"# plugin=$name  sampled=$stamp\n" +
-                      preShas.map((rel, sha) => s"$sha  $rel").mkString("\n") + "\n"
-                  )
-                  mirrorSeed(targetDir, seedFiles)
-                  PluginRegistry.approve(name).unsafeRunSync()
-                  logger.infoSync(
-                    s"Seed: plugin '$name' refreshed from seed (digest ${runtimeDigest.take(12)}… → ${seedDigest.take(12)}…) and re-approved; " +
-                      s"pre-sync backup at ${backupDir.toString.stripPrefix(root.toString + "/")} (${preShas.size} file(s))"
+                  refreshFromSeed("clean runtime (zero drift since approve)")
+                case Some(td) if OfficialPackages.isReserved(name) =>
+                  refreshFromSeed(
+                    s"official reserved-namespace package (trusted ${td.take(12)}… is not the shipped factory; " +
+                      "the official gate admits the shipped digest only)"
                   )
                 case Some(td) =>
-                  // 用户改过（runtime 漂移出 trust 记录）→ 用户编辑 > 种子
+                  // 用户改过（runtime 漂移出 trust 记录）→ 用户编辑 > 种子（非保留名才可达）
                   logger.warnSync(
                     s"Seed: plugin '$name' differs from seed (seed ${seedDigest.take(12)}…) — runtime is user-modified (digest ${runtimeDigest.take(12)}… ≠ trusted ${td.take(12)}…), keeping user version"
                   )
+                case None if OfficialPackages.isReserved(name) =>
+                  refreshFromSeed("official reserved-namespace package with no trust record")
                 case None =>
-                  // 无信任记录（从未 approve）→ 无仲裁基准，保守不覆盖
+                  // 无信任记录（从未 approve）→ 无仲裁基准，保守不覆盖（非保留名才可达）
                   logger.warnSync(
                     s"Seed: plugin '$name' differs from seed (seed ${seedDigest.take(12)}… vs runtime ${runtimeDigest.take(12)}…) and has no trust record — keeping runtime version"
                   )
+              end match
             case Left(err) =>
               logger.warnSync(s"Seed: plugin '$name' runtime digest failed: $err — skipped")
           end match
