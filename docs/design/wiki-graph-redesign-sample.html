@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<!--
+  图谱接线（wiki-docs 纪律）：本文的出处与配套文档——
+  设计稿 [[wiki-graph-redesign-design.zh-CN]] · 词表 [[glossary]] · 库入口 [[index]]
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>文档图谱 · 极简化样张（wiki-graph redesign sample）</title>
+<!--
+  静态样张（design mockup）— 配套设计稿：docs/design/wiki-graph-redesign-design.zh-CN.md
+  数据：仓内 docs/ 真实引用关系，由 visual-report 插件 wiki-docs skill 的
+        check_wiki_docs.py --graph 自动抽取（节点=文档，边=Obsidian 引用）。
+  本文件是设计演示，不属于产品实现；实施在作者批准设计稿后另开批。
+  URL 参数（截图/复核用）：?node=<rel> 直开某文档预览；?hover=1 悬停钉住；?dir=<目录> 预设过滤。
+-->
+<style>
+  :root {
+    --color-background: #f5f6f7;
+    --color-card: #ffffff;
+    --color-foreground: #141416;
+    --color-muted: #6f727b;
+    --color-card-border: #e8e9ec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --color-background: #101112;
+      --color-card: #1b1c1e;
+      --color-foreground: #f2f2f4;
+      --color-muted: #8f929b;
+      --color-card-border: #313236;
+    }
+  }
+  /* 评审辅助：?theme=light|dark 强制主题（默认跟随系统） */
+  :root[data-theme="light"] {
+    --color-background: #f5f6f7;
+    --color-card: #ffffff;
+    --color-foreground: #141416;
+    --color-muted: #6f727b;
+    --color-card-border: #e8e9ec;
+  }
+  :root[data-theme="dark"] {
+    --color-background: #101112;
+    --color-card: #1b1c1e;
+    --color-foreground: #f2f2f4;
+    --color-muted: #8f929b;
+    --color-card-border: #313236;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; overflow: hidden;
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font: 400 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  #graph { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: default; }
+  #graph.grabbing { cursor: grabbing; }
+  #graph.hovering { cursor: pointer; }
+
+  /* ── 顶栏：标题 + 搜索 + 目录 chips（唯一三层控件） ── */
+  #topbar {
+    position: absolute; top: 0; left: 0; right: 0;
+    display: flex; align-items: center; gap: 16px;
+    padding: 14px 20px 10px;
+    pointer-events: none;
+  }
+  #topbar > * { pointer-events: auto; }
+  #brand { display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
+  #brand .name { font-size: 15px; font-weight: 500; letter-spacing: .2px; }
+  #brand .tag { font-size: 11px; color: var(--color-muted); }
+  #search {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--color-card);
+    border: 1px solid var(--color-card-border);
+    border-radius: 10px; padding: 6px 12px; min-width: 220px;
+  }
+  #search:focus-within { border-color: var(--color-muted); }
+  #search svg { flex: none; color: var(--color-muted); }
+  #search input {
+    border: 0; outline: 0; background: transparent; color: var(--color-foreground);
+    font: inherit; width: 100%;
+  }
+  #search input::placeholder { color: var(--color-muted); }
+  #chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip {
+    border: 1px solid var(--color-card-border); background: var(--color-card);
+    color: var(--color-muted); border-radius: 999px; padding: 4px 12px;
+    font: inherit; font-size: 12px; cursor: pointer;
+  }
+  .chip:hover { color: var(--color-foreground); }
+  .chip.on { background: var(--color-foreground); border-color: var(--color-foreground); color: var(--color-background); }
+
+  /* ── 悬停 tooltip ── */
+  #tip {
+    position: absolute; z-index: 30; display: none; max-width: 320px;
+    background: var(--color-card); border: 1px solid var(--color-card-border);
+    border-radius: 12px; padding: 10px 14px;
+    box-shadow: 0 8px 28px color-mix(in srgb, var(--color-foreground) 10%, transparent);
+    pointer-events: none;
+  }
+  #tip .tt { font-weight: 500; font-size: 13px; margin-bottom: 3px; }
+  #tip .ts { color: var(--color-muted); font-size: 12px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  #tip .td { color: var(--color-muted); font-size: 11px; margin-top: 5px; }
+
+  /* ── 右侧预览卡（单击节点滑入） ── */
+  #preview {
+    position: absolute; z-index: 20; top: 64px; right: 20px; bottom: 52px; width: 300px;
+    background: var(--color-card); border: 1px solid var(--color-card-border);
+    border-radius: 14px; padding: 18px 18px 14px; overflow-y: auto;
+    box-shadow: 0 12px 40px color-mix(in srgb, var(--color-foreground) 12%, transparent);
+    transform: translateX(24px); opacity: 0; visibility: hidden;
+    transition: transform .18s ease, opacity .18s ease, visibility .18s;
+  }
+  #preview.open { transform: none; opacity: 1; visibility: visible; }
+  #preview .close {
+    position: absolute; top: 10px; right: 10px; width: 26px; height: 26px;
+    border: 0; background: transparent; color: var(--color-muted); cursor: pointer;
+    border-radius: 8px; font-size: 15px; line-height: 26px;
+  }
+  #preview .close:hover { color: var(--color-foreground); background: var(--color-background); }
+  #preview h2 { margin: 2px 24px 4px 0; font-size: 15px; font-weight: 500; line-height: 1.4; }
+  #preview .badges { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 10px; }
+  #preview .badge {
+    font-size: 11px; color: var(--color-muted);
+    border: 1px solid var(--color-card-border); border-radius: 999px; padding: 1px 9px;
+  }
+  #preview .summary { color: var(--color-muted); font-size: 12.5px; margin: 0 0 12px; }
+  #preview h3 { font-size: 11px; font-weight: 500; color: var(--color-muted); letter-spacing: .8px; margin: 14px 0 6px; text-transform: uppercase; }
+  #preview ul { list-style: none; margin: 0; padding: 0; }
+  #preview li { margin: 3px 0; }
+  #preview li.ghost { color: var(--color-muted); }
+  #preview .ref {
+    border: 0; background: transparent; padding: 0; font: inherit; cursor: pointer;
+    color: var(--color-foreground); text-align: left; display: block; width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #preview .ref:hover { text-decoration: underline; }
+  #preview .path {
+    font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--color-muted); word-break: break-all;
+    background: var(--color-background); border-radius: 8px; padding: 6px 9px; margin-top: 12px;
+  }
+  #preview .openbtn {
+    margin-top: 12px; width: 100%; padding: 8px 0;
+    border: 1px solid var(--color-foreground); border-radius: 10px;
+    background: var(--color-foreground); color: var(--color-background);
+    font: inherit; font-weight: 500; cursor: pointer;
+  }
+  #preview .hint { display: none; margin-top: 8px; font-size: 11px; color: var(--color-muted); }
+  #preview .hint.show { display: block; }
+
+  /* ── 信息行（左下）与图例（右下） ── */
+  #infoline {
+    position: absolute; left: 20px; bottom: 16px; z-index: 10;
+    color: var(--color-muted); font-size: 12px; pointer-events: none;
+  }
+  #infoline button {
+    pointer-events: auto; border: 0; background: transparent; padding: 0;
+    font: inherit; color: var(--color-muted); text-decoration: underline dotted; cursor: pointer;
+  }
+  #infoline button:hover { color: var(--color-foreground); }
+  #legend {
+    position: absolute; right: 20px; bottom: 16px; z-index: 10;
+    color: var(--color-muted); font-size: 11px; text-align: right; pointer-events: none;
+  }
+  #preview.open ~ #legend { display: none; }
+
+  /* ── 断链浮层 ── */
+  #broken {
+    position: absolute; left: 20px; bottom: 40px; z-index: 25; display: none;
+    width: 380px; max-height: 260px; overflow-y: auto;
+    background: var(--color-card); border: 1px solid var(--color-card-border);
+    border-radius: 12px; padding: 10px 14px;
+    box-shadow: 0 8px 28px color-mix(in srgb, var(--color-foreground) 10%, transparent);
+  }
+  #broken.open { display: block; }
+  #broken h3 { margin: 2px 0 8px; font-size: 12px; font-weight: 500; }
+  #broken .row { font-size: 11.5px; color: var(--color-muted); margin: 3px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #broken .row b { color: var(--color-foreground); font-weight: 500; }
+
+  @media (max-width: 720px) {
+    #chips { display: none; }
+    #preview { left: 12px; right: 12px; width: auto; top: auto; height: 46vh; bottom: 12px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="graph"></canvas>
+
+<div id="topbar">
+  <div id="brand">
+    <span class="name">文档图谱</span>
+    <span class="tag">样张 · 数据 = docs/ 真实引用</span>
+  </div>
+  <div id="search">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input id="search-input" type="text" placeholder="搜索文档标题或路径" aria-label="搜索文档">
+  </div>
+  <div id="chips" role="group" aria-label="按目录过滤"></div>
+</div>
+
+<div id="tip" role="tooltip">
+  <div class="tt"></div>
+  <div class="ts"></div>
+  <div class="td"></div>
+</div>
+
+<aside id="preview" aria-label="文档预览">
+  <button class="close" type="button" aria-label="关闭预览">×</button>
+  <h2></h2>
+  <div class="badges"></div>
+  <p class="summary"></p>
+  <h3>目录</h3><ul class="toc"></ul>
+  <h3>引出</h3><ul class="out"></ul>
+  <h3>被引</h3><ul class="in"></ul>
+  <div class="path"></div>
+  <button class="openbtn" type="button">打开文档</button>
+  <div class="hint">样张为静态演示：实施时此处打开 Canvas 文件页签并跳转锚点。</div>
+</aside>
+
+<div id="infoline"></div>
+
+<div id="broken">
+  <h3>未解析引用（断链不立节点，仅在此列出）</h3>
+  <div class="rows"></div>
+</div>
+
+<div id="legend">节点大小 = 被引＋引出 · 边 = 文档间引用 · 悬停看摘要 · 单击出预览</div>
+
+<script id="graph-data" type="application/json">{"project":"stand","nodes":[{"i":"actor-mailbox-pattern-review.md","t":"Actor Mailbox 模式应用建议清单","d":".","g":0,"ty":"","st":"","s":"> 背景：Dream 调度器已从定时轮询改为事件驱动 actor，效果显著——空闲时零 CPU 开销。","h":["Actor Mailbox 模式应用建议清单","模式对比","一、建议改造（收益明确）","1. Mesh 同步循环 — `MeshService.","2. UDP 广播 — `UdpDiscovery.st"]},{"i":"agent-icon-design-guide.md","t":"Nebflow Agent 图标设计指南","d":".","g":0,"ty":"","st":"","s":"Nebflow 侧边栏的 agent 图标使用 7x7 像素 SVG 实现，支持空闲/运行两种状态的帧动画。","h":["Nebflow Agent 图标设计指南","概述","核心规格","配色规则","各 Agent 配色"]},{"i":"architecture/JARVIS_PHASE1_SPEC.md","t":"Phase 1: Jarvis 主 Agent — 实施规格书","d":"architecture","g":0,"ty":"","st":"","s":"> 面向工程 Agent，结构化、代码优先。所有文件路径相对于项目根 /Users/kaiyu/Claude code/Nebflow。","h":["Phase 1: Jarvis 主 Agent — 实施","1. 类型变更","1.1 SessionMeta — 新增 `descri","1.2 TurnContext — 新增 `sessio","2. Jarvis Agent 定义"]},{"i":"architecture/JARVIS_PHASE1_SUMMARY.md","t":"Phase 1: Jarvis 主 Agent — 架构摘要","d":"architecture","g":0,"ty":"","st":"","s":"将 Nebflow 从「多 Agent 切换」模式转变为以 Jarvis 为唯一入口的统一 Session 模型。去除 Agent 导航栏，所有 Session 平铺展示，Session 元数","h":["Phase 1: Jarvis 主 Agent — 架构","TL;DR","背景与动机","现状问题","设计目标"]},{"i":"behavior-parity/README.md","t":"Rust (工作树) vs Scala (857d375b@main) 行为对比清单","d":"behavior-parity","g":0,"ty":"","st":"","s":"> 目的：系统核对当前 Rust 设计与 main 分支 857d375b 提交处的 Scala 版本（Scala 代码删除前）在行为层面的差距。","h":["Rust (工作树) vs Scala (857d375","清单总览","已知 Rust 侧疑似缺失（子 agent 需核实是否以","文档模板（每个子 agent 遵循）","使用说明"]},{"i":"behavior-parity/_INSTRUCTIONS.md","t":"_INSTRUCTIONS","d":"behavior-parity","g":0,"ty":"","st":"","s":"","h":[]},{"i":"context-memory-analysis.md","t":"Nebflow 上下文管理与记忆系统 — 深度技术分析","d":".","g":0,"ty":"","st":"","s":"> 分析对象：Nebflow v1.4.1-beta.37","h":["Nebflow 上下文管理与记忆系统 — 深度技术分析","1. 系统总览","一句话描述","完整数据流","核心类关系"]},{"i":"design-memory-v2.md","t":"Nebflow 记忆系统 V2 设计方案","d":".","g":0,"ty":"","st":"","s":"记忆是便利贴，不是笔记本。一条记忆 = 触发正确行为的最小信号。","h":["Nebflow 记忆系统 V2 设计方案","一、设计哲学","核心隐喻","两条原则","六条规则"]},{"i":"design/20260928_nodeprogress-node-task-card.md","t":"设计卡 · 节点私有任务进度工具（NodeProgress 族）","d":"design","g":0,"ty":"","st":"","s":"> 交付形态 = docs 面交付文件 + 内容 hash 溯源：本卡落 docs/ 面（本仓 .gitignore:30 = docs/）；依 root 2026-09-28 裁定（本条取代","h":["设计卡 · 节点私有任务进度工具（NodeProgres","§0 语义基准与边界","§1 现读事实（§二 取证结论）","1.1 节点卡与详情面板（§二.1）","1.2 NodeDef 与载荷契约（§二.2）"]},{"i":"design/analysis.md","t":"多 Agent 协调方案（修正版）","d":"design","g":0,"ty":"","st":"","s":"三个独立组件，各司其职：","h":["多 Agent 协调方案（修正版）","架构概述","组件 1：注意力层（AgentAttentionHub）","职责","Snapshot 数据结构"]},{"i":"design/architecture-optimization-proposal.md","t":"Nebflow 架构优化建议","d":"design","g":0,"ty":"","st":"","s":"> 基于 Pekko 迁移完成后的现状评估。定位:可执行的重构 backlog,不是理论批评。","h":["Nebflow 架构优化建议","0. 评估结论速览","运行时模型(做得好的)","架构缺陷(需要改的)","Pekko 工具箱使用率"]},{"i":"design/card-rendering-protocol.md","t":"Nebflow Card Rendering Protocol","d":"design","g":0,"ty":"","st":"","s":"> Status: Active","h":["Nebflow Card Rendering Proto","Overview","Architecture","Agent Frontend Setup","Directory Structure"]},{"i":"design/ci-testing.md","t":"Nebflow CI/CD 测试与自修复方案","d":"design","g":0,"ty":"","st":"","s":"> 状态: 已实现","h":["Nebflow CI/CD 测试与自修复方案","1. 目标","2. 配置快照服务 (ConfigSnapshot) ✅","实现","3. doctor 增强 ✅"]},{"i":"design/cli-design.md","t":"Nebflow CLI 设计文档","d":"design","g":0,"ty":"","st":"","s":"1. agent-to-agent 调用：其他 AI agent 通过 nebflow CLI 发送指令、获取结果（stdout JSON）","h":["Nebflow CLI 设计文档","1. 目标","2. 设计原则","3. 架构","4. 命令清单"]},{"i":"design/design.md","t":"多 Agent 协调系统 — 设计方案","d":"design","g":0,"ty":"","st":"","s":"> 版本: v1.0 | 状态: 草案","h":["多 Agent 协调系统 — 设计方案","1. 问题定义","1.1 现状","1.2 缺失的能力","1.3 设计目标"]},{"i":"design/flow-engine.md","t":"Flow Engine 设计方案","d":"design","g":0,"ty":"","st":"","s":"> 2026-08-03 · 基于 Nebflow 自研 Actor 系统","h":["Flow Engine 设计方案","一、概述","1.1 Flow Engine 是什么","1.2 解决的问题","1.3 设计原则"]},{"i":"design/flow-tree.md","t":"FlowTree 设计方案","d":"design","g":0,"ty":"","st":"","s":"> 2026-08-10 · 替代 Flow Engine (DAG 工作流)，升级为生命周期管理","h":["FlowTree 设计方案","一、概述","1.1 范式转变","1.2 核心公式","1.3 设计原则"]},{"i":"design/git-management.md","t":"Nebflow Git 管理协助设计","d":"design","g":0,"ty":"","st":"","s":"> 创建：2025-05-06","h":["Nebflow Git 管理协助设计","1. 问题","2. 设计目标","3. 架构概览","4. GitContext — Git 上下文感知"]},{"i":"design/hook-system-demo.html","t":"hook-system-demo","d":"design","g":0,"ty":"","st":"","s":"","h":[]},{"i":"design/inter-agent-mail.md","t":"Inter-Agent Mail System Design","d":"design","g":0,"ty":"","st":"","s":"> Status: Deferred — code removed, design preserved for future implementation.","h":["Inter-Agent Mail System Desi","Background","Architecture","AgentMailbox","PostOffice"]},{"i":"design/memory-system.md","t":"Nebflow 记忆系统设计","d":"design","g":0,"ty":"","st":"","s":"Markdown 文件注入 system prompt，与 Claude Code 的 CLAUDE.md 做法一致。","h":["Nebflow 记忆系统设计","一、核心思路","二、目录结构","三级记忆","三、System Prompt 注入"]},{"i":"design/mesh-sync-v2.md","t":"Mesh Sync v2 — Full Data Sync","d":"design","g":0,"ty":"","st":"","s":"像微信一样，多设备登录同一账号后，会话、文件夹、规则、消息记录自动同步。用户在任何设备上的操作，其他设备都能看到。","h":["Mesh Sync v2 — Full Data Syn","目标","数据清单","架构设计","核心原则"]},{"i":"design/multi-view-refactor.md","t":"多窗口状态路由重构方案","d":"design","g":0,"ty":"","st":"","s":"> 状态：设计阶段","h":["多窗口状态路由重构方案","1. 问题诊断","1.1 根因","1.2 当前的\"解法\"——运行时状态交换（swap）","1.3 swap 产生的债务清单"]},{"i":"design/plugin-md-required-file-spec.zh-CN.md","t":"plugin.md = 插件必要文件机制 spec（作者令 2026-10-21 批 · 条②）","d":"design","g":0,"ty":"","st":"","s":"插件必要文件：每个插件目录必须有包根 Plugin.md，内容 = 该插件的功能描述。","h":["plugin.md = 插件必要文件机制 spec（作者","1. 机制定义","2. 缺文件行为（fail-closed，断言钉）","3. 注入内容 = plugin.md 断言（spec ","4. 存量补齐（本批落地）"]},{"i":"design/session-reminder.md","t":"Session Reminder 设计文档","d":"design","g":0,"ty":"","st":"","s":"在 session 顶栏右侧添加 Reminder（提醒）图标，交互逻辑参照 Apple Reminders / ReminderIsland。","h":["Session Reminder 设计文档","概述","交互设计（参考 ReminderIsland）","入口","弹出面板"]},{"i":"design/sync-design.md","t":"Nebflow 登录与多设备同步设计方案 v2","d":"design","g":0,"ty":"","st":"","s":"> 2026-06-08 · 基于国产化基础设施重写","h":["Nebflow 登录与多设备同步设计方案 v2","一、现状分析","1.1 当前架构","1.2 需要同步的数据分类","二、主流方案调研"]},{"i":"design/sync-mvp.md","t":"Nebflow Mesh — 内置互联方案","d":"design","g":0,"ty":"","st":"","s":"配对码配对 → 设备自动发现 → 核心数据自动同步 → agent 原生跨设备操作（Bash/Read/Write/Edit 指定 device 参数即可在远程执行）。不依赖 Tailscal","h":["Nebflow Mesh — 内置互联方案","一句话","认证方案","整体架构","Agent 跨设备操作（核心设计）"]},{"i":"design/telemetry-dashboard.md","t":"Nebflow 遥测与 Dashboard 设计文档","d":"design","g":0,"ty":"","st":"","s":"> 版本: v1.0 | 状态: 草案 | 日期: 2026-06-05","h":["Nebflow 遥测与 Dashboard 设计文档","1. 背景与目标","1.1 现状","1.2 目标","1.3 设计原则"]},{"i":"design/visual-report-gate-plan.zh-CN.md","t":"visual-report 机械门禁方案（zh-CN · 仅方案，未实现）","d":"design","g":2,"ty":"","st":"","s":"目标：把「md/html 产出按图谱编排（论文式 / wiki-docs 规范）」从 skill 行为约束升级为机械可查的检查器——产出文件静态扫描，逐特征给 PASS/FAIL，可接入判定链","h":["visual-report 机械门禁方案（zh-CN ·","1. 检查特征清单（正则草案）","R1 · vault 落位","R2 · 首个 H1 即标题","R3 · frontmatter type/status"]},{"i":"design/wiki-graph-redesign-design.zh-CN.md","t":"wiki-graph 极简化重设计 · 设计稿（候作者批）","d":"design","g":16,"ty":"design-note","st":"open","s":"> 本篇是图谱功能重设计的设计稿，只出稿与样张（样张 = 只做设计演示、不进产品代码的静态 HTML，glossary；样张本体见 wiki-graph-redesign-sample.htm","h":["wiki-graph 极简化重设计 · 设计稿（候作者批","1. 背景与现状病灶","2. 设计目标（作者令的转译）","3. 交互规格（全部交互一张表）","4. 视觉规格（对齐 mystand.space）"]},{"i":"design/wiki-graph-redesign-sample.html","t":"wiki-graph-redesign-sample","d":"design","g":6,"ty":"","st":"","s":"","h":[]},{"i":"evidence/20260929_0200_brief-transport-silent-truncation.md","t":"NodeEdit brief-transport silent truncation and HTML-entity escaping — sealed evidence","d":"evidence","g":0,"ty":"","st":"","s":"Status: sealed evidence for a registered defect (case B). Read-only forensics; no fix applied in","h":["NodeEdit brief-transport sil","0. Evidence tiers (mandatory","1. The §7.1 reference fragme","2. F1 — silent truncation, z","2.1 Reproduction (as recorde"]},{"i":"flow-redesign-plan.md","t":"Flow 架构改造方案","d":".","g":0,"ty":"","st":"","s":"当前 Flow 系统依赖 FlowSession（750 行）作为集中式生命周期管理器：触发时 spawn 全部 agent，完成后销毁。实验证明 Flow 本质就是\"有组织通信机制的多 se","h":["Flow 架构改造方案","背景","1. Nebula 与普通 Session 的差异","1.1 Nebula 专属工具","1.2 当前过滤机制"]},{"i":"glossary.md","t":"词汇表","d":".","g":29,"ty":"glossary","st":"current","s":"本文件是 docs/ 文档库（）的唯一定义源：跨文档复用的名词概念在此定义（每条以块锚结尾），其余文档首次使用时一律引用、不得重定义。条款校验工具 check_wiki_docs.py 随 v","h":["词汇表"]},{"i":"index.md","t":"文档库索引","d":".","g":14,"ty":"index","st":"current","s":"本目录（docs/）是 Stand 项目仓的文档库（glossary）：Obsidian 兼容，图谱视图（glossary）自动从 wiki-link（glossary）抽取引用关系（glos","h":["文档库索引","按目录","写作纪律"]},{"i":"issues/000-issue-template.md","t":"Issue 类型选择","d":"issues","g":1,"ty":"","st":"","s":"> 创建 issue 时，先选择类型，再按对应模板填写。","h":["Issue 类型选择","填写规范","状态变更规则","目录结构"]},{"i":"issues/010-plugin-system-architecture.md","t":"Feature: Plugin System Architecture","d":"issues","g":1,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["Feature: Plugin System Archi","[创建] 元信息","[创建] 一句话描述","背景（可选）","[创建] 动机"]},{"i":"issues/011-mcp-tool-auto-discovery.md","t":"Feature: MCP Tool Auto-Discovery and Registration","d":"issues","g":1,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["Feature: MCP Tool Auto-Disco","[创建] 元信息","[创建] 一句话描述","背景（可选）","[创建] 动机"]},{"i":"issues/012-extensible-tool-cards.md","t":"Feature: Extensible Tool Card Renderer","d":"issues","g":1,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["Feature: Extensible Tool Car","[创建] 元信息","[创建] 一句话描述","背景（可选）","[创建] 动机"]},{"i":"issues/014-chat-history-persistence-redesign.md","t":"Feature: 服务端全量持久化 UI 事件流 + 前端 IndexedDB + 按需分页加载","d":"issues","g":1,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["Feature: 服务端全量持久化 UI 事件流 + 前","[创建] 元信息","[创建] 一句话描述","背景（可选）","[创建] 动机"]},{"i":"issues/015-merge-session-agent-actor.md","t":"重构：合并 SessionActor 与 AgentActor 为统一的 AgentActor","d":"issues","g":1,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["重构：合并 SessionActor 与 AgentAc","[创建] 元信息","[创建] 一句话描述","背景（可选）","[创建] 动机"]},{"i":"issues/016-flatten-agent-state.md","t":"重构：拆分 AgentState 为嵌套子结构，消除扁平大对象","d":"issues","g":1,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["重构：拆分 AgentState 为嵌套子结构，消除扁平","[创建] 元信息","[创建] 一句话描述","背景（可选）","[创建] 动机"]},{"i":"issues/017-actor-io-async-cleanup.md","t":"重构：消除 Agent Actor 中的 unsafeRunSync，统一 IO 异步边界","d":"issues","g":1,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["重构：消除 Agent Actor 中的 unsafeR","[创建] 元信息","[创建] 一句话描述","背景（可选）","[创建] 动机"]},{"i":"issues/018-context-manage-bug.md","t":"Bug：ContextManage 工具调用导致混合工具结果丢失 + 子 agent 崩溃","d":"issues","g":1,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["Bug：ContextManage 工具调用导致混合工具","[创建] 元信息","[创建] 一句话描述","[创建] 影响评估","[创建] 复现"]},{"i":"issues/019-edit-tool-single-mode-refactor.md","t":"Refactor: EditTool 单模式重构 + 模糊匹配与鲁棒性增强","d":"issues","g":1,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["Refactor: EditTool 单模式重构 + 模","[创建] 元信息","[创建] 一句话描述","背景","[创建] 动机"]},{"i":"issues/020-slash-ask-command.md","t":"Feature: `/ask` Slash Command — Isolated LLM Q&A","d":"issues","g":1,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["Feature: `/ask` Slash Comman","[创建] 元信息","[创建] 一句话描述","背景（可选）","[创建] 动机"]},{"i":"issues/021-remove-stagnation-detection.md","t":"Refactor: 移除停滞检测逻辑","d":"issues","g":1,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["Refactor: 移除停滞检测逻辑","[创建] 元信息","[创建] 一句话描述","背景","[创建] 动机"]},{"i":"issues/022-mcp-production-hardening.md","t":"Refactor: MCP 子系统生产级加固","d":"issues","g":1,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["Refactor: MCP 子系统生产级加固","[创建] 元信息","[创建] 一句话描述","[创建] 动机","[创建] 目标"]},{"i":"issues/023-decouple-core-from-agent.md","t":"023 — 解耦 core/tools 对 agent 层的反向依赖","d":"issues","g":0,"ty":"","st":"","s":"| 字段 | 内容 |","h":["023 — 解耦 core/tools 对 agent ","[创建] 元信息","[创建] 一句话描述","背景","[创建] 动机"]},{"i":"issues/024-tool-lifecycle-hooks.md","t":"024 — Tool Lifecycle Hooks","d":"issues","g":1,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["024 — Tool Lifecycle Hooks","[创建] 元信息","[创建] 一句话描述","背景","[创建] 动机"]},{"i":"issues/025-agent-centric-architecture.md","t":"Feature: Agent-Centric Architecture — 以 Agent 为中心的插件/扩展系统重构","d":"issues","g":1,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["Feature: Agent-Centric Archi","[创建] 元信息","[创建] 一句话描述","背景","现状"]},{"i":"issues/025-external-event-system.md","t":"025 — External Event System（通用事件唤醒机制）","d":"issues","g":1,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["025 — External Event System（","[创建] 元信息","[创建] 一句话描述","背景","[创建] 动机"]},{"i":"issues/026-unified-agent-registration.md","t":"Refactor: 统一 Agent 注册机制 — 消除三套路径","d":"issues","g":1,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["Refactor: 统一 Agent 注册机制 — 消除","[创建] 元信息","[创建] 一句话描述","背景","机制 1：硬编码内置 Agent（`AgentLibra"]},{"i":"issues/templates/README.md","t":"Issue 模板使用指南","d":"issues","g":9,"ty":"","st":"","s":"1. 选择模板类型","h":["Issue 模板使用指南","快速开始","术语规范","模板维护","修改公共区块"]},{"i":"issues/templates/_base.md","t":"Issue 基础模板","d":"issues","g":2,"ty":"","st":"","s":"> 本文件不直接使用。所有 issue 模板通过脚本从本文件注入公共区块。","h":["Issue 基础模板","[创建] 元信息","[创建] 一句话描述","[创建] 范围","In Scope"]},{"i":"issues/templates/_glossary.md","t":"术语定义","d":"issues","g":26,"ty":"","st":"","s":"所有术语的取值必须来自下表，禁止自定义。","h":["术语定义","优先级（Priority）","严重程度（Severity）","影响范围（Impact）","复现频率"]},{"i":"issues/templates/bug.md","t":"Bug Template","d":"issues","g":2,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["Bug Template","[创建] 元信息","[创建] 一句话描述","[创建] 影响评估","[创建] 复现"]},{"i":"issues/templates/feature.md","t":"Feature Template","d":"issues","g":2,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["Feature Template","[创建] 元信息","[创建] 一句话描述","背景（可选）","[创建] 动机"]},{"i":"issues/templates/perf.md","t":"Performance Regression Template","d":"issues","g":2,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["Performance Regression Templ","[创建] 元信息","[创建] 一句话描述","[创建] 影响评估","[创建] 指标数据"]},{"i":"issues/templates/quickfix.md","t":"Quick Fix Template","d":"issues","g":2,"ty":"","st":"","s":"> 适用于一行代码修复、文档笔误、配置调整等极小变更。","h":["Quick Fix Template","[创建] 元信息","[创建] 一句话描述","[创建] 问题","[创建] 修复"]},{"i":"issues/templates/refactor.md","t":"Refactor Template","d":"issues","g":2,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["Refactor Template","[创建] 元信息","[创建] 一句话描述","背景（可选）","[创建] 动机"]},{"i":"issues/templates/tech-debt.md","t":"Tech Debt Template","d":"issues","g":2,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["Tech Debt Template","[创建] 元信息","[创建] 一句话描述","[创建] 债务描述","[创建] 影响评估"]},{"i":"issues/templates/test.md","t":"Test Template","d":"issues","g":2,"ty":"","st":"","s":"> [必填] 标记为必须填写，其余按需填写。","h":["Test Template","[创建] 元信息","[创建] 一句话描述","[创建] 动机","[创建] 目标"]},{"i":"parallel-session-resources.zh-CN.md","t":"并行会话资源预分配规范（zh-CN）","d":".","g":0,"ty":"","st":"","s":"目的：zcode 四会话审计共性风险 4 的沉淀——「并行任务预分配 worktree/实例/端口」。多个 agent 会话与作者在同一台机器、同一批仓库上并行工作时，资源面（git 检出、端","h":["并行会话资源预分配规范（zh-CN）","0. 互扰实例台账（为什么需要预分配）","1. worktree 约定（每会话一具）","2. QA 实例端口分配表（约定值待作者核）","2.1 保留段（禁占、禁杀、禁 signal）"]},{"i":"production-ops-checklist.zh-CN.md","t":"生产操作检查单（五起事故蒸馏 · zh-CN）","d":".","g":0,"ty":"","st":"","s":"目的：把 zcode 四会话审计（/tmp/zcode-audit-report.md）中的五起生产面自造事故蒸馏为动笔前逐项核对的检查单。生产操作链路此前靠 agent 纪律兜底（审计共性风","h":["生产操作检查单（五起事故蒸馏 · zh-CN）","0. 事故台账（S1–S5）","A. Caddy / 入口层变更（出处 S1、S2）","B. 进程 / kill 操作（出处 S3）","C. env / secret / 凭据操作（出处 S4"]},{"i":"reviews/arch-refactor-doc-review.html","t":"arch-refactor-doc-review","d":"reviews","g":0,"ty":"","st":"","s":"","h":[]},{"i":"reviews/parity/01-tool-execution.md","t":"01 — 工具执行行为对比","d":"reviews","g":0,"ty":"","st":"","s":"Rust 实现复刻了 Scala 的工具注册表骨架、大部分工具的 schema/描述，以及一组自包含的基础设施（FileHistory / FileLockManager / ReadTrac","h":["01 — 工具执行行为对比","总览","Scala 设计","Rust 设计","行为差距"]},{"i":"reviews/parity/02-agent-runtime.md","t":"02 — Agent 运行时与回合循环行为对比","d":"reviews","g":0,"ty":"","st":"","s":"本文件对比 Nebflow 的 Scala 实现与 Rust 实现在 Agent 运行时与回合循环 子系统上的行为差距。","h":["02 — Agent 运行时与回合循环行为对比","总览","Scala 设计","Rust 设计","行为差距"]},{"i":"reviews/parity/03-compaction-memory-maintenance.md","t":"03 — 上下文压缩 / 记忆维护 / Dream 模式行为对比","d":"reviews","g":0,"ty":"","st":"","s":"> 对比 Nebflow Scala（commit 857d375b）与 Rust 当前分支在「上下文压缩 / 记忆维护 / Dream 模式」子系统上的行为差距。","h":["03 — 上下文压缩 / 记忆维护 / Dream 模式","总览","Scala 设计","Rust 设计","行为差距"]},{"i":"reviews/parity/04-flow-engine.md","t":"04 — Flows 引擎行为对比","d":"reviews","g":0,"ty":"","st":"","s":"本文对比 Nebflow 的 Scala 实现（commit 857d375b）与 Rust 实现（当前分支）在 Flows 引擎子系统上的行为差距。Flows 引擎覆盖 DAG 执行、Flo","h":["04 — Flows 引擎行为对比","总览","Scala 设计","Rust 设计","行为差距"]},{"i":"reviews/parity/05-teams.md","t":"05 — Teams 调用与挂载行为对比","d":"reviews","g":0,"ty":"","st":"","s":"Teams 子系统是 Nebflow 多智能体协作的核心。Scala 与 Rust 在该子系统上的差距集中在五处：","h":["05 — Teams 调用与挂载行为对比","总览","Scala 设计","TeamCatalog 构建","启动时自动挂载"]},{"i":"reviews/parity/06-system-prompt.md","t":"06 — 系统提示词组装行为对比","d":"reviews","g":0,"ty":"","st":"","s":"> 对比对象：Scala 实现（commit 857d375b，/tmp/scala-ref/）与 Rust 实现（当前分支，nebflow-rs/）。","h":["06 — 系统提示词组装行为对比","总览","Scala 设计","数据模型与拆分","提示词组装主链路（AgentCore）"]},{"i":"reviews/parity/07-memory-skills-external-tools.md","t":"07 — 记忆 / Skills / 规则 / 外部工具行为对比","d":"reviews","g":0,"ty":"","st":"","s":"本文对比 Nebflow Scala 实现（commit 857d375b）与 Rust 实现在四个子系统上的行为差距：","h":["07 — 记忆 / Skills / 规则 / 外部工具","总览","Scala 设计","MemoryStore（`service/MemoryS","MemoryChangeNotifier（`core/t"]},{"i":"reviews/parity/08-session-management.md","t":"08 — 会话管理与持久化行为对比","d":"reviews","g":0,"ty":"","st":"","s":"本子系统负责会话元数据索引、LLM 消息（<id>.json）、UI 消息（<id>.ui.json）、folderId sidecar（<id>.meta.json）、文件夹、启动恢复、损坏","h":["08 — 会话管理与持久化行为对比","总览","Scala 设计","存储层（`/tmp/scala-ref/src/main","启动 `load`（`SessionStore.scal"]},{"i":"reviews/parity/09-ws-and-rest.md","t":"09 — WebSocket 消息与 REST 路由行为对比","d":"reviews","g":0,"ty":"","st":"","s":"对比对象：Scala 实现（commit 857d375b，/tmp/scala-ref）与 Rust 实现（nebflow-rs/nebflow-gateway）。","h":["09 — WebSocket 消息与 REST 路由行为","总览","Scala 设计（含 file:line）","Rust 设计（含 file:line）","行为差距"]},{"i":"reviews/parity/10-scheduler.md","t":"10 — 定时任务（Scheduler）行为对比","d":"reviews","g":0,"ty":"","st":"","s":"Scala 的定时任务子系统是一套完整可用的会话级调度系统：任务按 session 隔离持久化，由常驻 fiber 以 10s 轮询，到期后向 agent 投递 ExternalEvent、把","h":["10 — 定时任务（Scheduler）行为对比","总览","Scala 设计","任务模型","存储"]},{"i":"reviews/parity/11-daemon.md","t":"11 — Daemons（守护进程）行为对比","d":"reviews","g":0,"ty":"","st":"","s":"Daemons 子系统管理外部长运行进程（如开发服务器）的生命周期：启动/停止/重启、采集输出、自动启动、自动重启与崩溃检测。两个实现都把配置持久化到 ~/.nebflow/daemons.j","h":["11 — Daemons（守护进程）行为对比","总览","Scala 设计","Rust 设计","行为差距"]},{"i":"reviews/parity/12-neblink-dropbox.md","t":"12 — NebLink P2P / Dropbox 行为对比","d":"reviews","g":0,"ty":"","st":"","s":"本节对比 Scala 与 Rust 在 NebLink P2P 设备互联 与 Dropbox 跨设备消息/文件 两个子系统上的行为。","h":["12 — NebLink P2P / Dropbox 行","总览","Scala 设计","Rust 设计","行为差距"]},{"i":"reviews/parity/13-llm-layer.md","t":"13 — LLM 适配层 / 健康监控 / 回退行为对比","d":"reviews","g":0,"ty":"","st":"","s":"本节对比 Nebflow 的 Scala 实现与 Rust 实现在 LLM 适配层、健康监控、回退子系统上的行为差距。","h":["13 — LLM 适配层 / 健康监控 / 回退行为对比","总览","Scala 设计","适配器（ProviderAdapter trait + ","ProviderRegistry / fallback"]},{"i":"reviews/parity/14-mcp.md","t":"14 — MCP 客户端行为对比","d":"reviews","g":0,"ty":"","st":"","s":"MCP 客户端子系统的核心协议层（JSON-RPC 类型、McpClient 的 initialize/list/call、Stdio/HTTP 两种 transport 的报文收发）在 Ru","h":["14 — MCP 客户端行为对比","总览","Scala 设计","Rust 设计","行为差距"]},{"i":"reviews/parity/15-hooks.md","t":"15 — Hooks 系统行为对比","d":"reviews","g":0,"ty":"","st":"","s":"Scala 的 Hooks 子系统是一个完整、统一、可扩展的事件驱动框架：单一 HookEngine.emit() 入口、HookRunner 进程级协议（stdin JSON / stdou","h":["15 — Hooks 系统行为对比","总览","Scala 设计","数据结构与事件类型（HookTypes.scala）","HookEngine（HookEngine.scala）"]},{"i":"reviews/parity/16-delegate-mail-permissions.md","t":"16 — 子 Agent 委派 / Mail / 权限行为对比","d":"reviews","g":0,"ty":"","st":"","s":"对比基线：Scala 实现（commit 857d375b）vs Rust 实现（nebflow-rs）。本文档仅覆盖 DelegateTool、MailTool、AskUserQuestio","h":["16 — 子 Agent 委派 / Mail / 权限行","总览","Scala 设计（含 file:line）","DelegateTool（`DelegateTool.s","MailTool（`MailTool.scala`）"]},{"i":"reviews/parity/17-plan-ask-empty-response.md","t":"17 — 计划模式 / Ask 模式 / 空响应处理行为对比","d":"reviews","g":0,"ty":"","st":"","s":"本节对比 Scala 与 Rust 在三个紧密相关的子系统上的行为：计划模式（Plan mode）、Ask 模式、空响应处理（empty response / max_tokens / con","h":["17 — 计划模式 / Ask 模式 / 空响应处理行为","总览","Scala 设计","计划模式：PlanAgent 子 actor + pla","Ask 模式：完整状态机"]},{"i":"reviews/parity/18-misc-subsystems.md","t":"18 — 其他缺失子系统行为对比","d":"reviews","g":0,"ty":"","st":"","s":"> Scala 基线 commit 857d375b（已恢复到 /tmp/scala-ref/）。Rust 当前分支在","h":["18 — 其他缺失子系统行为对比","总览","Scala 设计","Rust 设计","行为差距"]},{"i":"reviews/parity/README.md","t":"Rust vs Scala 行为对比分析","d":"reviews","g":0,"ty":"","st":"","s":"> 目标：对比当前 Rust 实现（分支 fix/migration-cleanup-and-parity）与 Scala 实现（main 分支 commit 857d375b，即 Scala","h":["Rust vs Scala 行为对比分析","对比范围（清单）"]},{"i":"reviews/parity/REMAINING-AUDIT.md","t":"剩余未修复项核对报告","d":"reviews","g":0,"ty":"","st":"","s":"> 生成时间：2026-08-09（分支 fix/migration-cleanup-and-parity，HEAD f9e96025）","h":["剩余未修复项核对报告","总览","逐项核对","01-tool-execution","02-agent-runtime"]},{"i":"reviews/scala-rust-diff.md","t":"Rust vs Scala 功能差异清点报告","d":"reviews","g":0,"ty":"","st":"","s":"> 生成时间：2026-08-08","h":["Rust vs Scala 功能差异清点报告","总体结论","1. WebSocket 消息处理器","🔴 纯 stub（返回硬编码值，无真实逻辑）","🔴 假 P2P（本地文件队列，非真实投递）"]},{"i":"scala-context-management-report.md","t":"Nebflow Scala 版 — 上下文管理（Context Management）技术报告","d":".","g":0,"ty":"","st":"","s":"> 分析基准: archive/scala 分支","h":["Nebflow Scala 版 — 上下文管理（Cont","目录","1. Context Compaction（上下文压缩）","1.1 整体架构","1.2 触发机制"]},{"i":"templates/console-403-diagnosis.md","t":"控制台 403 症状群诊断报告（2026-10-21）","d":"templates","g":13,"ty":"report","st":"solved","s":"> 范本说明：本文是 docs 文档批的格式范本之一，改写自仓内既有报告 reports/20261021_115500_console-403-group-diagnosis__delega","h":["控制台 403 症状群诊断报告（2026-10-21）","每症状一行结论","403 群主攻：判定与证据","插件修复证据（实时，免重启）","症状⑧修复：智能体头像/名称的持久与跨设备同步腿（候重启"]},{"i":"templates/console-load-perf.md","t":"控制台加载提速报告（A 段止损 + B 段 dist 激活卡，2026-10-21）","d":"templates","g":12,"ty":"report","st":"done","s":"> 范本说明：本文是 docs 文档批的格式范本之二，改写自仓内既有报告 reports/20261021_005659_console-load-perf__delegate-nebflow","h":["控制台加载提速报告（A 段止损 + B 段 dist 激","结论先行","A 段（无重启立得，随合并落 main 刷新生效）","B 段（dist 激活卡 · 候作者窗 · 备妥不执行）","质量闸读数"]},{"i":"attachments/wiki-graph-redesign/hover.png","t":"hover.png","d":"attachments","g":1,"ty":"","st":"","s":"","h":[]},{"i":"attachments/wiki-graph-redesign/overview-dark.png","t":"overview-dark.png","d":"attachments","g":1,"ty":"","st":"","s":"","h":[]},{"i":"attachments/wiki-graph-redesign/overview-light.png","t":"overview-light.png","d":"attachments","g":1,"ty":"","st":"","s":"","h":[]},{"i":"attachments/wiki-graph-redesign/preview.png","t":"preview.png","d":"attachments","g":1,"ty":"","st":"","s":"","h":[]}],"edges":[["design/visual-report-gate-plan.zh-CN.md","glossary.md",0],["design/visual-report-gate-plan.zh-CN.md","glossary.md",0],["design/wiki-graph-redesign-design.zh-CN.md","glossary.md",0],["design/wiki-graph-redesign-design.zh-CN.md","design/wiki-graph-redesign-sample.html",0],["design/wiki-graph-redesign-design.zh-CN.md","glossary.md",0],["design/wiki-graph-redesign-design.zh-CN.md","glossary.md",0],["design/wiki-graph-redesign-design.zh-CN.md","glossary.md",0],["design/wiki-graph-redesign-design.zh-CN.md","glossary.md",0],["design/wiki-graph-redesign-design.zh-CN.md","design/wiki-graph-redesign-sample.html",0],["design/wiki-graph-redesign-design.zh-CN.md","attachments/wiki-graph-redesign/overview-light.png",1],["design/wiki-graph-redesign-design.zh-CN.md","attachments/wiki-graph-redesign/overview-dark.png",1],["design/wiki-graph-redesign-design.zh-CN.md","attachments/wiki-graph-redesign/hover.png",1],["design/wiki-graph-redesign-design.zh-CN.md","attachments/wiki-graph-redesign/preview.png",1],["design/wiki-graph-redesign-design.zh-CN.md","design/wiki-graph-redesign-sample.html",0],["design/wiki-graph-redesign-design.zh-CN.md","glossary.md",0],["design/wiki-graph-redesign-design.zh-CN.md","index.md",0],["design/wiki-graph-redesign-sample.html","design/wiki-graph-redesign-design.zh-CN.md",0],["design/wiki-graph-redesign-sample.html","glossary.md",0],["design/wiki-graph-redesign-sample.html","index.md",0],["index.md","glossary.md",0],["index.md","glossary.md",0],["index.md","glossary.md",0],["index.md","glossary.md",0],["index.md","glossary.md",0],["index.md","design/wiki-graph-redesign-design.zh-CN.md",0],["index.md","templates/console-403-diagnosis.md",0],["index.md","templates/console-load-perf.md",0],["index.md","glossary.md",0],["index.md","glossary.md",0],["issues/000-issue-template.md","issues/templates/_glossary.md",0],["issues/010-plugin-system-architecture.md","issues/templates/_glossary.md",0],["issues/011-mcp-tool-auto-discovery.md","issues/templates/_glossary.md",0],["issues/012-extensible-tool-cards.md","issues/templates/_glossary.md",0],["issues/014-chat-history-persistence-redesign.md","issues/templates/_glossary.md",0],["issues/015-merge-session-agent-actor.md","issues/templates/_glossary.md",0],["issues/016-flatten-agent-state.md","issues/templates/_glossary.md",0],["issues/017-actor-io-async-cleanup.md","issues/templates/_glossary.md",0],["issues/018-context-manage-bug.md","issues/templates/_glossary.md",0],["issues/019-edit-tool-single-mode-refactor.md","issues/templates/_glossary.md",0],["issues/020-slash-ask-command.md","issues/templates/_glossary.md",0],["issues/021-remove-stagnation-detection.md","issues/templates/_glossary.md",0],["issues/022-mcp-production-hardening.md","issues/templates/_glossary.md",0],["issues/024-tool-lifecycle-hooks.md","issues/templates/_glossary.md",0],["issues/025-agent-centric-architecture.md","issues/templates/_glossary.md",0],["issues/025-external-event-system.md","issues/templates/_glossary.md",0],["issues/026-unified-agent-registration.md","issues/templates/_glossary.md",0],["issues/templates/README.md","issues/templates/feature.md",0],["issues/templates/README.md","issues/templates/bug.md",0],["issues/templates/README.md","issues/templates/perf.md",0],["issues/templates/README.md","issues/templates/refactor.md",0],["issues/templates/README.md","issues/templates/tech-debt.md",0],["issues/templates/README.md","issues/templates/test.md",0],["issues/templates/README.md","issues/templates/quickfix.md",0],["issues/templates/README.md","issues/templates/_glossary.md",0],["issues/templates/README.md","issues/templates/_base.md",0],["issues/templates/_base.md","issues/templates/_glossary.md",0],["issues/templates/bug.md","issues/templates/_glossary.md",0],["issues/templates/feature.md","issues/templates/_glossary.md",0],["issues/templates/perf.md","issues/templates/_glossary.md",0],["issues/templates/quickfix.md","issues/templates/_glossary.md",0],["issues/templates/refactor.md","issues/templates/_glossary.md",0],["issues/templates/tech-debt.md","issues/templates/_glossary.md",0],["issues/templates/test.md","issues/templates/_glossary.md",0],["templates/console-403-diagnosis.md","glossary.md",0],["templates/console-403-diagnosis.md","templates/console-load-perf.md",0],["templates/console-403-diagnosis.md","glossary.md",0],["templates/console-403-diagnosis.md","glossary.md",0],["templates/console-403-diagnosis.md","glossary.md",0],["templates/console-403-diagnosis.md","glossary.md",0],["templates/console-403-diagnosis.md","glossary.md",0],["templates/console-403-diagnosis.md","glossary.md",0],["templates/console-403-diagnosis.md","templates/console-load-perf.md",0],["templates/console-403-diagnosis.md","index.md",0],["templates/console-load-perf.md","glossary.md",0],["templates/console-load-perf.md","templates/console-403-diagnosis.md",0],["templates/console-load-perf.md","glossary.md",0],["templates/console-load-perf.md","glossary.md",0],["templates/console-load-perf.md","glossary.md",0],["templates/console-load-perf.md","glossary.md",0],["templates/console-load-perf.md","glossary.md",0],["templates/console-load-perf.md","templates/console-403-diagnosis.md",0],["templates/console-load-perf.md","index.md",0]],"unresolved":[["design/visual-report-gate-plan.zh-CN.md","..."],["design/visual-report-gate-plan.zh-CN.md","..."],["design/visual-report-gate-plan.zh-CN.md","..."],["design/visual-report-gate-plan.zh-CN.md","..."],["design/visual-report-gate-plan.zh-CN.md","doc"],["design/visual-report-gate-plan.zh-CN.md","..."],["design/visual-report-gate-plan.zh-CN.md","x.pdf"],["design/visual-report-gate-plan.zh-CN.md","x.pdf"],["issues/000-issue-template.md","./templates/_meta.md"]]}</script>
+
+<script>
+'use strict';
+(function () {
+  const DATA = JSON.parse(document.getElementById('graph-data').textContent);
+
+  // ── 画布与主题（颜色一律经 CSS 变量，canvas 用 getComputedStyle 读取） ──
+  const canvas = document.getElementById('graph');
+  const ctx = canvas.getContext('2d');
+  let W = 0, H = 0, dpr = 1;
+  function resize() {
+    dpr = window.devicePixelRatio || 1;
+    W = canvas.clientWidth; H = canvas.clientHeight;
+    canvas.width = Math.max(1, Math.floor(W * dpr));
+    canvas.height = Math.max(1, Math.floor(H * dpr));
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+  function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  let C = {};
+  function readColors() { C = { bg: css('--color-background'), ink: css('--color-foreground'), muted: css('--color-muted'), line: css('--color-card-border') }; }
+
+  // ── 数据整形：去重边、目录集、索引 ──
+  const byId = new Map();
+  for (const n of DATA.nodes) { n.out = []; n.inc = []; byId.set(n.i, n); }
+  const seenEdge = new Set();
+  const edges = [];
+  for (const [from, to, embed] of DATA.edges) {
+    if (from === to) continue;
+    const key = from + '|' + to;
+    if (seenEdge.has(key)) continue;
+    seenEdge.add(key);
+    const a = byId.get(from), b = byId.get(to);
+    if (!a || !b) continue;
+    edges.push({ a, b });
+    a.out.push(b); b.inc.push(a);
+  }
+  const dirs = [...new Set(DATA.nodes.map(n => n.d))].sort();
+
+  // ── 确定性布局：目录聚簇初始化 + 力导向收敛（跑完即停，无常驻动画） ──
+  function mulberry32(seed) {
+    return function () {
+      seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function radiusOf(n) { return 4 + Math.min(7, Math.sqrt(n.g) * 1.9); }
+  function layout() {
+    const rnd = mulberry32(42);
+    const dirIdx = new Map(dirs.map((d, i) => [d, i]));
+    const R = Math.min(W, H) * 0.34;
+    for (const n of DATA.nodes) {
+      const ang = (dirIdx.get(n.d) / dirs.length) * Math.PI * 2;
+      const cx = W / 2 + Math.cos(ang) * R, cy = H / 2 + Math.sin(ang) * R;
+      n.x = cx + (rnd() - 0.5) * 90;
+      n.y = cy + (rnd() - 0.5) * 90;
+    }
+    let alpha = 1;
+    for (let it = 0; it < 320; it++) {
+      for (let i = 0; i < DATA.nodes.length; i++) {
+        const a = DATA.nodes[i];
+        for (let j = i + 1; j < DATA.nodes.length; j++) {
+          const b = DATA.nodes[j];
+          let dx = a.x - b.x, dy = a.y - b.y;
+          let d2 = dx * dx + dy * dy;
+          if (d2 < 1) { dx = rnd() - 0.5; dy = rnd() - 0.5; d2 = 1; }
+          if (d2 > 160000) continue;
+          const f = 1500 * alpha / d2, d = Math.sqrt(d2);
+          const fx = dx / d * f, fy = dy / d * f;
+          a.x += fx; a.y += fy; b.x -= fx; b.y -= fy;
+        }
+      }
+      for (const e of edges) {
+        const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
+        const d = Math.max(1, Math.hypot(dx, dy));
+        const f = (d - 95) * 0.02 * alpha;
+        e.a.x += dx / d * f; e.a.y += dy / d * f;
+        e.b.x -= dx / d * f; e.b.y -= dy / d * f;
+      }
+      for (const n of DATA.nodes) {
+        n.x += (W / 2 - n.x) * 0.002 * alpha;
+        n.y += (H / 2 - n.y) * 0.002 * alpha;
+      }
+      alpha *= 0.985;
+    }
+  }
+
+  // ── 视图状态 ──
+  let scale = 1, panX = 0, panY = 0;
+  let hoverN = null, hoverPin = false, selected = null, draggingNode = null, panning = false;
+  let query = '', dirFilter = '';
+
+  function activeFilter() {
+    return function (n) {
+      if (dirFilter && n.d !== dirFilter) return false;
+      if (query) {
+        const q = query.toLowerCase();
+        if (!(n.t.toLowerCase().includes(q) || n.i.toLowerCase().includes(q))) return false;
+      }
+      return true;
+    };
+  }
+
+  function neighborhood(n) {
+    const set = new Set([n]);
+    for (const m of n.out) set.add(m);
+    for (const m of n.inc) set.add(m);
+    return set;
+  }
+
+  // ── 绘制 ──
+  function draw() {
+    if (!C.ink) readColors();
+    ctx.clearRect(0, 0, W, H);
+    ctx.save();
+    ctx.translate(W / 2 + panX, H / 2 + panY);
+    ctx.scale(scale, scale);
+    ctx.translate(-W / 2, -H / 2);
+
+    const focus = hoverN || selected;
+    const near = focus ? neighborhood(focus) : null;
+    const pass = activeFilter();
+    const showLabels = DATA.nodes.length <= 120 || scale > 1.4;
+
+    // 边：1px 直线；焦点邻域全亮，其余淡
+    for (const e of edges) {
+      const hl = near && (e.a === focus || e.b === focus);
+      const dim = (!pass(e.a)) || (!pass(e.b)) || (near && !hl && !(near.has(e.a) && near.has(e.b)));
+      ctx.strokeStyle = C.muted;
+      ctx.globalAlpha = hl ? 0.85 : (dim ? 0.05 : 0.22);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(e.a.x, e.a.y);
+      ctx.lineTo(e.b.x, e.b.y);
+      ctx.stroke();
+    }
+
+    // 节点：实心圆点，度数→半径与墨色深浅（muted→ink）；附件节点恒小、默认无标签
+    for (const n of DATA.nodes) {
+      const isAttach = !/\.(md|markdown|html)$/i.test(n.i);
+      const r = isAttach ? 3.5 : radiusOf(n);
+      const dim = !pass(n) || (near && !near.has(n));
+      ctx.globalAlpha = dim ? 0.12 : 1;
+      const shade = isAttach ? 0 : Math.min(1, n.g / 8);
+      ctx.fillStyle = shade > 0.45 ? C.ink : C.muted;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      if (n === selected || n === hoverN) {
+        ctx.strokeStyle = C.ink;
+        ctx.globalAlpha = dim ? 0.2 : 0.9;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r + 3.5, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = dim ? 0.12 : 1;
+      }
+      if (showLabels && !dim && (!isAttach || n === hoverN || n === selected)) {
+        ctx.globalAlpha = (n === hoverN) ? 1 : 0.62;
+        ctx.fillStyle = C.ink;
+        ctx.font = (n === hoverN ? '500 ' : '400 ') + '11px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
+        ctx.textAlign = 'center';
+        const label = n.t.length > 22 ? n.t.slice(0, 21) + '…' : n.t;
+        ctx.fillText(label, n.x, n.y + r + 13);
+        ctx.globalAlpha = dim ? 0.12 : 1;
+      }
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
+  // ── tooltip ──
+  const tip = document.getElementById('tip');
+  function showTip(n, px, py) {
+    tip.querySelector('.tt').textContent = n.t;
+    tip.querySelector('.ts').textContent = n.s || '（无摘要——首段即标题或列表）';
+    tip.querySelector('.td').textContent = n.d + ' · 被引 ' + n.inc.length + ' · 引出 ' + n.out.length;
+    tip.style.display = 'block';
+    const r = canvas.getBoundingClientRect();
+    let x = px + 14, y = py + 14;
+    if (x + 330 > r.width) x = px - 330;
+    if (y + 90 > r.height) y = py - 90;
+    tip.style.left = x + 'px';
+    tip.style.top = y + 'px';
+  }
+  function hideTip() { tip.style.display = 'none'; }
+
+  // ── 预览卡 ──
+  const preview = document.getElementById('preview');
+  function refItem(n) {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'ref';
+    b.textContent = n.t;
+    b.addEventListener('click', () => select(n, true));
+    li.appendChild(b);
+    return li;
+  }
+  function ghostItem(text) {
+    const li = document.createElement('li');
+    li.className = 'ghost';
+    li.textContent = text + '（未解析）';
+    return li;
+  }
+  function renderPreview(n) {
+    preview.querySelector('h2').textContent = n.t;
+    const badges = preview.querySelector('.badges');
+    badges.textContent = '';
+    for (const text of [n.d === '.' ? '根目录' : n.d, n.ty, n.st]) {
+      if (!text) continue;
+      const s = document.createElement('span');
+      s.className = 'badge';
+      s.textContent = text;
+      badges.appendChild(s);
+    }
+    preview.querySelector('.summary').textContent = n.s || '（无摘要——首段即标题或列表）';
+    const toc = preview.querySelector('.toc');
+    toc.textContent = '';
+    for (const h of (n.h || []).slice(0, 5)) {
+      const li = document.createElement('li');
+      li.textContent = h;
+      toc.appendChild(li);
+    }
+    toc.previousElementSibling.style.display = toc.children.length ? '' : 'none';
+    const outL = preview.querySelector('.out');
+    outL.textContent = '';
+    (n.out.length ? n.out : []).slice(0, 5).forEach(m => outL.appendChild(refItem(m)));
+    if (!n.out.length) outL.appendChild(ghostItem('无出链'));
+    const inL = preview.querySelector('.in');
+    inL.textContent = '';
+    n.inc.slice(0, 5).forEach(m => inL.appendChild(refItem(m)));
+    if (!n.inc.length) inL.appendChild(ghostItem('无入链（孤儿：纪律要求至少引用词表或 index）'));
+    preview.querySelector('.path').textContent = 'docs/' + n.i;
+  }
+  function select(n, scroll) {
+    selected = n;
+    renderPreview(n);
+    preview.classList.add('open');
+    if (scroll) {
+      // 把选中节点平移到视野中心（保持缩放），并向左让出预览卡宽度的一半
+      panX = W / 2 - n.x * scale - 150 * scale;
+      panY = H / 2 - n.y * scale;
+    }
+    draw();
+  }
+  function deselect() {
+    selected = null;
+    preview.classList.remove('open');
+    draw();
+  }
+  preview.querySelector('.close').addEventListener('click', deselect);
+  preview.querySelector('.openbtn').addEventListener('click', () => {
+    preview.querySelector('.hint').classList.add('show');
+  });
+
+  // ── 拾取与指针交互 ──
+  function toWorld(px, py) {
+    return [(px - W / 2 - panX) / scale + W / 2, (py - H / 2 - panY) / scale + H / 2];
+  }
+  function pick(px, py) {
+    const [wx, wy] = toWorld(px, py);
+    let best = null, bestD = 1e9;
+    for (const n of DATA.nodes) {
+      const d = Math.hypot(n.x - wx, n.y - wy);
+      if (d < radiusOf(n) + 5 && d < bestD) { best = n; bestD = d; }
+    }
+    return best;
+  }
+  let lastPointer = null;
+  canvas.addEventListener('pointermove', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const px = e.clientX - r.left, py = e.clientY - r.top;
+    lastPointer = [px, py];
+    if (panning) { panX += e.movementX; panY += e.movementY; draw(); return; }
+    if (draggingNode) {
+      const [wx, wy] = toWorld(px, py);
+      draggingNode.x = wx; draggingNode.y = wy;
+      draw();
+      return;
+    }
+    const n = pick(px, py);
+    if (n !== hoverN) { hoverN = n; draw(); }
+    canvas.classList.toggle('hovering', !!n);
+    if (n) showTip(n, px, py); else hideTip();
+  });
+  canvas.addEventListener('pointerdown', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const px = e.clientX - r.left, py = e.clientY - r.top;
+    const n = pick(px, py);
+    canvas.setPointerCapture(e.pointerId);
+    if (n) { draggingNode = n; canvas.classList.add('grabbing'); }
+    else { panning = true; canvas.classList.add('grabbing'); }
+  });
+  canvas.addEventListener('pointerup', (e) => {
+    const wasDragging = draggingNode;
+    const wasPanning = panning;
+    draggingNode = null; panning = false;
+    canvas.classList.remove('grabbing');
+    if (wasDragging && !wasPanning) { select(wasDragging, false); return; }
+    if (!wasPanning) {
+      const r = canvas.getBoundingClientRect();
+      const n = pick(e.clientX - r.left, e.clientY - r.top);
+      if (n) select(n, false); else deselect();
+    }
+  });
+  canvas.addEventListener('pointerleave', () => { if (!hoverPin) { hoverN = null; hideTip(); draw(); } });
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const r = canvas.getBoundingClientRect();
+    const px = e.clientX - r.left, py = e.clientY - r.top;
+    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    const next = Math.min(3.2, Math.max(0.35, scale * factor));
+    const k = next / scale;
+    panX = px - (px - panX) * k;
+    panY = py - (py - panY) * k;
+    scale = next;
+    draw();
+  }, { passive: false });
+
+  // ── 搜索 + 目录 chips ──
+  const searchInput = document.getElementById('search-input');
+  searchInput.addEventListener('input', () => { query = searchInput.value.trim(); draw(); });
+
+  const chipsEl = document.getElementById('chips');
+  function renderChips() {
+    chipsEl.textContent = '';
+    const mk = (label, value) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'chip' + (dirFilter === value ? ' on' : '');
+      b.textContent = label;
+      b.addEventListener('click', () => { dirFilter = (dirFilter === value ? '' : value); renderChips(); draw(); });
+      return b;
+    };
+    chipsEl.appendChild(mk('全部', ''));
+    for (const d of dirs) chipsEl.appendChild(mk(d === '.' ? '根目录' : d + '/', d));
+  }
+
+  // ── 信息行 + 断链浮层 ──
+  const infoline = document.getElementById('infoline');
+  const broken = document.getElementById('broken');
+  function renderInfo() {
+    infoline.textContent = '';
+    const span = document.createElement('span');
+    span.textContent = DATA.nodes.length + ' 篇文档 · ' + DATA.edges.length + ' 条引用 · ';
+    infoline.appendChild(span);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = DATA.unresolved.length + ' 条未解析引用';
+    btn.addEventListener('click', () => broken.classList.toggle('open'));
+    infoline.appendChild(btn);
+    const rows = broken.querySelector('.rows');
+    rows.textContent = '';
+    for (const [from, target] of DATA.unresolved.slice(0, 40)) {
+      const div = document.createElement('div');
+      div.className = 'row';
+      const b = document.createElement('b');
+      b.textContent = from + ' → ';
+      div.appendChild(b);
+      div.appendChild(document.createTextNode(target));
+      rows.appendChild(div);
+    }
+  }
+
+  // ── 键盘 ──
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (broken.classList.contains('open')) { broken.classList.remove('open'); return; }
+    if (preview.classList.contains('open')) { deselect(); return; }
+    if (query) { query = ''; searchInput.value = ''; draw(); return; }
+    if (dirFilter) { dirFilter = ''; renderChips(); draw(); }
+  });
+
+  // ── 主题翻转 ──
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq.addEventListener) mq.addEventListener('change', () => { readColors(); draw(); });
+
+  // ── URL 参数（截图/复核用） ──
+  function applyParams() {
+    const p = new URLSearchParams(location.search);
+    const theme = p.get('theme');
+    if (theme === 'light' || theme === 'dark') {
+      document.documentElement.setAttribute('data-theme', theme);
+      readColors();
+    }
+    const dir = p.get('dir');
+    if (dir && dirs.includes(dir)) { dirFilter = dir; }
+    const rel = p.get('node');
+    if (rel && byId.has(rel)) {
+      const n = byId.get(rel);
+      hoverN = p.get('hover') ? n : null;
+      select(n, true);
+      if (p.get('hover')) {
+        hoverPin = true;
+        const pt = [(n.x - W / 2) * scale + W / 2 + panX, (n.y - H / 2) * scale + H / 2 + panY];
+        showTip(n, pt[0], pt[1]);
+      }
+    }
+  }
+
+  // ── 启动 ──
+  readColors();
+  resize();
+  renderChips();
+  renderInfo();
+  window.addEventListener('resize', resize);
+  layout();
+  applyParams();
+  draw();
+})();
+</script>
+</body>
+</html>

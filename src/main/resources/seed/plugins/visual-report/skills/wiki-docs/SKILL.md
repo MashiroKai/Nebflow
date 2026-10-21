@@ -11,6 +11,45 @@ Write it into the vault, wire it into the graph, and keep it readable as a
 standalone paper. The graph face (nebflow wiki graph view) indexes everything
 below automatically.
 
+## Mandatory clauses (checkable — a violation is a rework)
+
+The three clauses below are author mandates (2026-10-21), not style advice.
+Every clause is machine-checkable by the validator in
+`scripts/check_wiki_docs.py` (Python 3 stdlib only, zero deps):
+
+1. **Obsidian format, every document** — written inside the vault
+   `<workspace>/docs/`, with a frontmatter block (`type:` / `status:`),
+   references as wikilinks, attachments under `attachments/`.
+   → check rule `obsidian-format`.
+2. **Paper-style citation graph** — when document B builds on document A, B
+   cites A at the point of use. Broken references (missing target, missing
+   `#heading` anchor, missing `^block-id`) are defects; so is an orphan
+   document with zero outgoing and zero incoming links (index/glossary
+   exempt). → check rules `broken-link` / `broken-anchor` / `broken-block` /
+   `orphan-doc`.
+3. **Every concept: explained or cited at first occurrence** — at a term's
+   first mention there must be an inline one-sentence definition (dash /
+   colon / parenthesis form), or a `[[glossary#^block-id]]` citation to the
+   document that already defines it. Multiple documents must never invent
+   their own definition of the same concept — the glossary is the single
+   definition source. → check rules `concept-first-use` / `duplicate-definition`.
+
+Run before delivering any document batch:
+
+```
+python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --root <workspace>/docs --glossary glossary.md
+```
+
+- Deliverables must pass with zero NEW violations (exit 0). Pre-existing
+  legacy violations in the vault are not a pass for this batch — fix what you
+  touch.
+- `--graph out.json` exports a WikiIndex-semantics `{nodes, edges}` JSON
+  (graph samples / offline analysis); `--json` machine-reads the violation
+  list; exit codes: 0 clean, 1 violations, 2 usage error.
+- Syntax examples with literal double brackets must live inside fenced code
+  blocks — a bare `[[...]]` in prose is parsed as a real link (same semantics
+  as the engine's WikiIndex parser).
+
 ## Vault layout
 
 - Vault root: `<workspace>/docs/`. Create it on first write (idempotent).
@@ -31,6 +70,7 @@ below automatically.
   inline in one or two sentences at the point of first use, or link the
   definition to the document/section that defines it (see references below).
   Never leave a term that only a companion document explains without the link.
+  (This is mandatory clause ③ — the validator above enforces it.)
 - Concepts that recur across documents belong in a glossary document
   (`docs/glossary.md`): one block per concept, each block ending with a block
   id, e.g.
