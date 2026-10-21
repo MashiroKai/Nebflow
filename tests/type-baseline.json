@@ -13,9 +13,6 @@
       "TS2339": 4,
       "TS8032": 1
     },
-    "src/main/resources/web/js/canvas.js": {
-      "TS2339": 8
-    },
     "src/main/resources/web/js/cardRegistry.js": {
       "TS2339": 8,
       "TS2322": 1

@@ -42,6 +42,7 @@
 
 import {
   openCanvas, closeCanvas, isCanvasOpen, getTabPane, setActiveTab, closeTab,
+  mobileCardToggle, isCardIndependent, cardCanPop,
 } from '../canvas.js';
 import { key } from '../branding.js';
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '../sidebar.js';
@@ -362,7 +363,22 @@ function ensureCardHead() {
   close.setAttribute('aria-label', tt('关闭文档', 'Close document'));
   close.innerHTML = '<i data-lucide="x"></i>';
   close.addEventListener('click', () => closeCard());
-  cardHead.append(title, count, close);
+  // UI 批⑧：独立/合并 toggle（新标签页姿态直切；文件卡才显示 —— 同 canvas.js
+  // cardCanPop 口径）。同位换形：.is-independent 切双图标 + title。
+  const pop = document.createElement('button');
+  pop.type = 'button';
+  pop.className = 'mobile-card-pop';
+  pop.hidden = true;
+  pop.title = tt('独立窗口打开', 'Open in standalone window');
+  pop.setAttribute('aria-label', tt('独立窗口打开', 'Open in standalone window'));
+  pop.innerHTML =
+    '<svg class="pop-ic-pop" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>' +
+    '<svg class="pop-ic-merge" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><path d="M14 10 21 3"/><path d="M3 21l7-7"/></svg>';
+  pop.addEventListener('click', () => {
+    const id = activeDocId();
+    if (id && cardCanPop(id)) mobileCardToggle(id);
+  });
+  cardHead.append(title, count, pop, close);
   header.insertBefore(cardHead, header.firstChild);
   if (typeof lucide !== 'undefined') createIconsIn(cardHead);
   return cardHead;
@@ -380,6 +396,19 @@ function syncCardChrome() {
     const show = docs.length > 1 && idx >= 0;
     count.hidden = !show;
     if (show) count.textContent = `${idx + 1}/${docs.length}`;
+  }
+  // UI 批⑧：独立/合并钮形同步（文件卡才可见；独立中 = 合并形 + 高亮）
+  const pop = /** @type {HTMLElement|null} */ (cardHead.querySelector('.mobile-card-pop'));
+  if (pop) {
+    const can = !!activeId && cardCanPop(activeId);
+    pop.hidden = !can;
+    if (can) {
+      const indep = isCardIndependent(activeId);
+      pop.classList.toggle('is-independent', indep);
+      const t = indep ? tt('合并回主窗', 'Merge back to main window') : tt('独立窗口打开', 'Open in standalone window');
+      pop.title = t;
+      pop.setAttribute('aria-label', t);
+    }
   }
 }
 
@@ -625,11 +654,14 @@ function watchCanvasEvents() {
   const onSwitch = () => syncCardLayer();
   document.addEventListener('canvas-tab-switched', onSwitch);
   document.addEventListener('canvas-tab-closed', onSwitch);
+  // UI 批⑧：独立/合并态变化 → 卡头钮形跟随（canvas.js markIndependentUI 派发）
+  document.addEventListener('canvas-independent-changed', syncCardChrome);
   const mo = new MutationObserver(() => syncCardLayer());
   mo.observe(document.body, { attributes: true, attributeFilter: ['class'] });
   unsubs.push(() => {
     document.removeEventListener('canvas-tab-switched', onSwitch);
     document.removeEventListener('canvas-tab-closed', onSwitch);
+    document.removeEventListener('canvas-independent-changed', syncCardChrome);
     mo.disconnect();
   });
 }

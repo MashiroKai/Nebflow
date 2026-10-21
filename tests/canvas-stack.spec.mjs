@@ -23,6 +23,19 @@
 //   · 精修③断言（竖排提示）整体改写为 ③d/③e：提示文字零命中 + 卡面 × 钮存在且可关；
 //   · 精修② F2-2 改锚 uifix 新 token（--stacked-shadow 前景档随 look 联动）。
 //
+// UI 批（作者令 2026-10-21 五件，堆叠视图）断言修订：
+//   · ①帮助条整体退役：A2-9/A3-11/A13-4/A17-0b 改写为 deck-foot 零命中 +
+//     文案扫描零命中（前景轮换身份改由 state().frontName 断言）；
+//   · ②连点稳定 spec 钉 = A20：快速三连点每次计数（排队补发）、收场清重入锁、
+//     泄漏修复后 fab 照常响应；
+//   · ③真容快照 + 活性窗 = A22：md 族全克隆零 pending、可视卡 ±2 精渲染窗、
+//     源滚动缩略镜像、源变更防抖重截；
+//   · ④动效层 = A21 + A2-6/A2-7/A13-1 改锚缩放坡道（近大远小 + 视差 z）；
+//     ④②deckProjectYComp 透视 y 补偿：投影顶钉回设计露边阶梯（补偿前投影把
+//     27px 阶梯压扁到 ~4px、深处命中带 <1px 致 A9 红）——A2-5/A13-2 直接锚
+//     设计值 27px；
+//   · ⑤边缘融合 = F2-2/F2-3 改锚羽化 token（环境晕 + 大模糊 + 描边退役 + shade 渐变）。
+//
 // 与样张 __demo.state() 同口径的断言通道 = window.__canvasDeck.state()。
 // 环境注（继承 v2–v5）：无头 chromium rAF 实测 ~36fps，指数趋近收敛时间按比例拉长，
 // 自动化等待 ≥2.6s；真实浏览器 60fps 无此现象。
@@ -303,24 +316,35 @@ const browser = await chromium.launch();
   ok('A2-3 初始前景位=当前 canvas 卡', s.frontIdx === 0 && s.frontName === 'alpha.md', `front=${s.frontName}`);
   ok('A2-4 canvas 环卡前景位隐没（op≈0）', s.selfCardHidden === true);
   const c1 = await cardRect(page, 1);
-  ok('A2-5 d=1 露边 27px（uifix ③a v2 均衡档间距拉开；v1=22/v3=34）',
-    approx(stackedFrontTop - c1.y, 27, 3.5), `peek=${(stackedFrontTop - c1.y).toFixed(1)}px`);
-  ok('A2-6 后卡 85%（与缩放态 canvas 同尺寸；透视投影微放宽容差）',
-    approx(c1.width, pr.width * 0.85, 8) && approx(c1.height, pr.height * 0.85, 8),
-    `${c1.width.toFixed(0)}x${c1.height.toFixed(0)} vs ${(pr.width * 0.85).toFixed(0)}x${(pr.height * 0.85).toFixed(0)}`);
+  /* UI 批 ④②：deckProjectYComp 透视 y 补偿后，投影顶 = 设计顶 —— 露边阶梯
+     27px（peek1 档）在屏幕上真实存在（补偿前投影压扁到 ~4px，A9 命中带消失）。 */
+  ok('A2-5 d=1 露边 27px（设计值；④②透视补偿后投影顶=设计顶，±4px）',
+    approx(stackedFrontTop - c1.y, 27, 4), `peek=${(stackedFrontTop - c1.y).toFixed(1)}`);
+  /* UI 批 ④：缩放坡道（近大远小）+ 视差 z。d=1 卡预期宽 ≈ 面板宽 × 0.85（卡基）
+     × 0.945（DECK_DEPTH_SCALE_NEAR）× 0.978（透视 z=-26 投影）≈ ×0.783。 */
+  const d1Expected = pr.width * 0.85 * (1 - 0.055) * (1150 / (1150 + 26));
+  ok('A2-6 后卡 = 缩放坡道 d=1 位（0.85 × 近档缩小 × 透视投影，±3%）',
+    approx(c1.width, d1Expected, d1Expected * 0.03) && c1.width < pr.width * 0.85 - 8,
+    `${c1.width.toFixed(0)} vs ${d1Expected.toFixed(0)}（面板 ${(pr.width * 0.85).toFixed(0)}）`);
   const c3 = await cardRect(page, 3);
-  ok('A2-7 d1 vs d3 宽差 <2.5%（无逐级缩放通道；微后仰投影偏差随区高）', Math.abs(c1.width - c3.width) / c1.width < 0.025,
-    `dw=${Math.abs(c1.width - c3.width).toFixed(1)}px`);
+  const d3Expected = pr.width * 0.85 * (1 - 0.055 - 0.036) * (1150 / (1150 + 26 * 3));
+  ok('A2-7 d3 卡更深一档（宽 < d1，且落在坡道公式 ±4%——近大远小连续）',
+    c3.width < c1.width - 4 && approx(c3.width, d3Expected, d3Expected * 0.04),
+    `d1=${c1.width.toFixed(0)} d3=${c3.width.toFixed(0)} exp=${d3Expected.toFixed(0)}`);
   ok('A2-8 canvas 前景时 .over 未抬', s.deckOver === false);
-  const count = await page.evaluate(() => document.querySelector('#deck-foot .deck-count').textContent);
-  const alphaStrip = s.tabs.indexOf('alpha.md') + 1;
-  ok('A2-9 计数行「前景 <strip>/N · alpha.md · 下一张 bravo.md」（自校准）',
-    count.includes(`前景 ${alphaStrip}/${s.tabCount}`) && count.includes('alpha.md') && count.includes('下一张 bravo.md'), count);
-  const footOn = await page.evaluate(() => {
-    const f = document.getElementById('deck-foot');
-    return f.classList.contains('on') && parseFloat(getComputedStyle(f).opacity) > 0.9;
-  });
-  ok('A2-10 foot 浮现（on + opacity→1）', footOn === true);
+  /* UI 批 ①：两行帮助条（操作提示 + 前景计数）整体退役——deck-foot 元素零命中、
+     面板/卡组层一个字不留。 */
+  const helpGone = await page.evaluate(() => ({
+    foot: !!document.getElementById('deck-foot'),
+    hint: document.querySelectorAll('.deck-hint').length,
+    count: document.querySelectorAll('.deck-count').length,
+    anyText: [...document.querySelectorAll('#canvas-panel, #deck-layer')].some((el) =>
+      el.textContent.includes('滚轮 / 上下拖动') || el.textContent.includes('下一张')),
+  }));
+  ok('A2-9 帮助条整行退役（deck-foot/hint/count 零命中 + 文案扫描零命中）',
+    !helpGone.foot && helpGone.hint === 0 && helpGone.count === 0 && !helpGone.anyText,
+    JSON.stringify(helpGone));
+  ok('A2-10 断言通道 helpRetired=true', s.helpRetired === true);
   ok('R0 主文档无 JS 运行时错误（A2）', errors.length === 0, errors.slice(0, 2).join(' | '));
   await page.screenshot({ path: join(SHOTS_DIR, 'light-deck-open.png'), clip: { x: pr.x - 8, y: pr.y - 8, width: pr.width + 16, height: pr.height + 16 } });
   await ctx.close();
@@ -364,9 +388,10 @@ const browser = await chromium.launch();
     return { front: el.classList.contains('front'), cursor: getComputedStyle(el).cursor, hint: !!el.querySelector('.card-swipe-hint') };
   });
   ok('A3-10 前卡 .front 可拖划', frontCls.front === true && frontCls.cursor === 'grab');
-  const count = await page.evaluate(() => document.querySelector('#deck-foot .deck-count').textContent);
-  const bravoStrip = s1.tabs.indexOf('bravo.md') + 1;
-  ok('A3-11 计数行「前景 <bravo strip>/N」（自校准）', count.includes(`前景 ${bravoStrip}/`) && count.includes('bravo.md'), count);
+  /* UI 批 ①：计数行退役——轮换态身份改由 state().frontName 断言（A3-6 已钉）。 */
+  const countGone = await page.evaluate(() => !document.getElementById('deck-foot'));
+  ok('A3-11 计数行退役（轮换态仍可断言：frontName=bravo.md）', countGone && s1.frontName === 'bravo.md',
+    `foot=${countGone} front=${s1.frontName}`);
   const fallen = await cardRect(page, 0);
   ok('A3-12 canvas 本尊翻落收进卡组（op 显著衰减）', fallen !== null && fallen.op < 0.7, `op=${fallen && fallen.op}`);
   await wheelScrub(page, -240);
@@ -522,7 +547,7 @@ const browser = await chromium.launch();
   const n0 = (await state(page)).tabCount;
   await wheelScrub(page, 240);
   await settle(page);
-  // 深处卡只露出顶缘 6px 带（peek 阶梯），右键必须落在露出的名称条上缘
+  // 深处卡只露出顶缘带（④②透视补偿后 = 设计阶梯 9px 档），右键必须落在露出的名称条上缘
   const c3 = await cardRect(page, 3);
   await page.click('.deck-card[data-r="3"]', { button: 'right', position: { x: Math.round(c3.width / 2), y: 3 } });
   await sleep(400);
@@ -649,9 +674,13 @@ const browser = await chromium.launch();
   const pr = await panelRect(page);
   const stackedFrontTop = pr.y + (pr.height - pr.height * 0.85) / 2 + 8;
   const c1 = await cardRect(page, 1);
-  ok('A13-1 窄档 340：后卡 289×…（=85%）', approx(pr.width, 340, 3) && approx(c1.width, 340 * 0.85, 3),
+  ok('A13-1 窄档 340：后卡 = 85% 基 × 近档缩小（±4%）', approx(pr.width, 340, 3) &&
+    approx(c1.width, 340 * 0.85 * (1 - 0.055) * (1150 / (1150 + 26)), 340 * 0.85 * 0.04),
     `area=${pr.width.toFixed(0)} card=${c1.width.toFixed(0)}`);
-  ok('A13-2 露边 27px 仍在（v2 档）', approx(stackedFrontTop - c1.y, 27, 3.5), `peek=${(stackedFrontTop - c1.y).toFixed(1)}`);
+  /* UI 批 ④②：窄档同享透视补偿 —— 投影顶 = 设计顶，露边 27px 档真实可测。 */
+  ok('A13-2 露边 27px 仍在（v2 档；④②透视补偿后投影顶=设计顶，±4px）',
+    approx(stackedFrontTop - c1.y, 27, 4),
+    `peek=${(stackedFrontTop - c1.y).toFixed(1)}`);
   await page.mouse.move(200, 500);   // page.click 后光标停在 fab 上：hover scale 1.05 → 视觉 rect 42×42
   const fab = await page.evaluate(() => {
     const el = document.getElementById('deck-fab');
@@ -660,11 +689,9 @@ const browser = await chromium.launch();
   ok('A13-3 浮钮仍固定 40px 原位（不缩放不移位；布局盒口径）',
     fab.w === 40 && fab.h === 40 && approx(fab.y - pr.y, 10, 1.5) && approx(pr.right - (fab.x + fab.w), 12, 1.5),
     `${fab.w}x${fab.h} dy=${(fab.y - pr.y).toFixed(1)} dr=${(pr.right - fab.x - fab.w).toFixed(1)}`);
-  const hintHidden = await page.evaluate(() => {
-    const h = document.querySelector('#deck-foot .deck-hint');
-    return h && getComputedStyle(h).display === 'none';
-  });
-  ok('A13-4 窄档提示行隐藏', hintHidden === true);
+  /* UI 批 ①：窄档不再有提示行可藏——deck-foot 整体退役（几何与宽档同规）。 */
+  const footGoneNarrow = await page.evaluate(() => !document.getElementById('deck-foot'));
+  ok('A13-4 窄档帮助条退役（deck-foot 零命中）', footGoneNarrow === true);
   await page.screenshot({ path: join(SHOTS_DIR, 'light-narrow-340.png'), clip: { x: pr.x - 8, y: pr.y - 8, width: pr.width + 16, height: pr.height + 16 } });
   ok('R0 主文档无 JS 运行时错误（A13）', errors.length === 0, errors.slice(0, 2).join(' | '));
   await ctx.close();
@@ -760,9 +787,29 @@ const browser = await chromium.launch();
     return sh;
   });
   const sAlphas = [...stackedShadow.matchAll(/rgba\([^)]+,\s*([\d.]+)\)/g)].map((m) => parseFloat(m[1]));
-  // uifix ③a：.stacked 投影 = 前景档 token（v2 均衡 0.07/0.13/0.15 + inset 高光）
-  ok('F2-2 .stacked 投影锚 uifix 前景档（v2 0.07/0.13/0.15）',
-    sAlphas.slice(-3).join(',') === '0.07,0.13,0.15', sAlphas.join(','));
+  /* UI 批 ⑤：.stacked 投影 = 羽化前景档 token（v2：环境晕 0.02 + 0.05/0.10/0.12，
+     模糊半径放大、不透明度降档——边缘无硬边）；末三层锚前景档本体。 */
+  ok('F2-2 .stacked 投影锚 UI 批⑤ 羽化前景档（v2 环境晕 0.02 + 0.05/0.10/0.12）',
+    sAlphas.slice(-4).join(',') === '0.02,0.05,0.1,0.12', sAlphas.join(','));
+  /* UI 批 ⑤：卡描边退役 + 投影羽化——需真实卡组在挂（deck 开启后 data-dim 档生效）。
+     box-shadow 计算值 = color-first 序列化（rgba(...) x y blur spread …），逐层取第
+     3 个长度（blur）求最大，锚羽化档最大模糊 110px。 */
+  await page.click('#deck-fab');
+  await settle(page);
+  const cardEdge = await page.evaluate(() => {
+    const c = document.querySelector('.deck-card[data-dim="0"]') || document.querySelector('.deck-card');
+    if (!c) return null;
+    const st = getComputedStyle(c);
+    const shadow = st.boxShadow;
+    const blurs = [...shadow.matchAll(/rgba\([^)]+\)\s*((?:-?\d+(?:\.\d+)?px\s*)+)/g)].map((m) => {
+      const nums = m[1].trim().split(/\s+/).map((s) => parseFloat(s));
+      return nums[2] || 0;   // x y blur spread → blur
+    });
+    return { borderColor: st.borderColor, maxBlur: Math.max(...blurs), shadeBg: getComputedStyle(c.querySelector('.card-shade')).backgroundImage };
+  });
+  ok('F2-3 卡描边退役 + 投影羽化（边框透明、最大模糊 ≥90px、shade 为纵向渐变）',
+    !!cardEdge && cardEdge.maxBlur >= 90 && cardEdge.shadeBg.includes('linear-gradient'),
+    JSON.stringify(cardEdge));
   // 三版 look 联动：setLook 热切换 → .stacked 前景档 token 随 body 类变化（作者挑版通道）
   const looks = {};
   for (const v of ['v1', 'v2', 'v3']) {
@@ -777,7 +824,7 @@ const browser = await chromium.launch();
     });
   }
   await page.evaluate(() => window.__canvasDeck.setLook('v2'));
-  ok('F2-3 三版 look 前景档阴影互异（作者挑版通道 · setLook 热切换）',
+  ok('F2-4 三版 look 前景档阴影互异（作者挑版通道 · setLook 热切换）',
     new Set(Object.values(looks)).size === 3, JSON.stringify(looks));
   ok('R0 主文档无 JS 运行时错误（F2）', errors.length === 0, errors.slice(0, 2).join(' | '));
   await ctx.close();
@@ -810,8 +857,13 @@ const browser = await chromium.launch();
   ok('A17-0 竖拖常量单一来源（gain 1/160 · 惯性 90 冲程/±80px 钳 · 轴锁 8px）',
     c.dragGain === 1 / 160 && c.dragInertia === 90 && c.dragInertiaMax === 80 && c.axisLockPx === 8,
     JSON.stringify(c));
-  const hintTxt = await page.evaluate(() => document.querySelector('#deck-foot .deck-hint')?.textContent || '');
-  ok('A17-0b 提示行纳入竖拖换卡（「上下拖动」）', hintTxt.includes('上下拖动') && hintTxt.includes('横向划走'), hintTxt);
+  const hintGone = await page.evaluate(() => ({
+    hint: document.querySelector('.deck-hint')?.textContent || '',
+    foot: !!document.getElementById('deck-foot'),
+  }));
+  ok('A17-0b 提示行退役（UI 批 ①：竖拖换卡交互自学，不再有文案行）',
+    hintGone.hint === '' && !hintGone.foot,
+    `hint="${hintGone.hint}" foot=${hintGone.foot}`);
   await page.click('#deck-fab');
   await settle(page);
   const pr = await panelRect(page);
@@ -949,6 +1001,129 @@ const browser = await chromium.launch();
     sc.open === false && sc.tabCount === n0 - 1 && sc.activeId.endsWith('bravo.md'),
     `open=${sc.open} n=${sc.tabCount}`);
   ok('R0 主文档无 JS 运行时错误（A19）', errors.length === 0, errors.slice(0, 2).join(' | '));
+  await ctx.close();
+}
+
+/* ════════ A20 堆叠按钮连点稳定（UI 批 ②：spec 钉，含快速连点场景）════════ */
+{
+  const { ctx, page, errors } = await bootPage(browser);
+  await openAllTabs(page);
+  /* (a) 快速三连点：开 → 收（finalizing 窗口） → 排队——收场后补发，终态=开。
+     旧实现第 2/3 点被 finalizing 守卫静默丢弃（终态=关且第 3 点丢失）。 */
+  await page.click('#deck-fab');
+  await page.click('#deck-fab');       // deck 刚开即再点（收场 300ms 窗口内）
+  await page.click('#deck-fab');       // 第 3 点：finalizing 中 → 应登记排队
+  await settle(page);
+  const sA = await state(page);
+  ok('A20-1 快速三连点每次计数（终态=开：开→收→排队补发）',
+    sA.open === true && sA.M === sA.tabCount, `open=${sA.open} M=${sA.M} queued=${sA.fabQueued}`);
+  ok('A20-2 排队已清空（补发后 fabQueued=false）', sA.fabQueued === false);
+  // 第 4 点照常翻转（连点后不粘死）
+  await page.click('#deck-fab');
+  await settle(page);
+  const sB = await state(page);
+  ok('A20-3 连点后第 4 点照常翻转（终态=关，不粘）', sB.open === false && sB.tabCount === sA.tabCount);
+  /* (b) 重入锁泄漏回归：竖拖进行中按 ESC（closeDeck 收场）→ 收场必须清
+     deck.cardDrag——旧实现残留 flag 让 fab 永久吞点击（真 bug 成因 a）。 */
+  await page.click('#deck-fab');
+  await settle(page);
+  await wheelScrub(page, 240);         // bravo 到前景（环卡面可拖）
+  await settle(page);
+  const c1 = await cardRect(page, 1);
+  const gx = Math.round(c1.x + c1.width / 2), gy = Math.round(c1.y + c1.height / 2);
+  await pointerDrag(page, gx, gy, 0, 120, { steps: 4, hold: true });   // 按住纵拖（轴已锁）
+  await page.keyboard.press('Escape'); // 拖划进行中收场（旧实现：cardDrag 残留）
+  await page.mouse.up();
+  await settle(page);
+  const sC = await state(page);
+  ok('A20-4 收场清重入锁（gesture=null · deck 关）', sC.gesture === null && sC.open === false,
+    `gesture=${JSON.stringify(sC.gesture)} open=${sC.open}`);
+  await page.click('#deck-fab');       // 旧实现此处 fab 永久无响应
+  await settle(page);
+  const sD = await state(page);
+  ok('A20-5 泄漏修复后 fab 照常响应（deck 重开）', sD.open === true && sD.M === sD.tabCount,
+    `open=${sD.open} M=${sD.M}`);
+  ok('R0 主文档无 JS 运行时错误（A20）', errors.length === 0, errors.slice(0, 2).join(' | '));
+  await ctx.close();
+}
+
+/* ════════ A21 动效层（UI 批 ④：缩放坡道常量单一来源 + 轮换中间帧位姿）════════ */
+{
+  const { ctx, page, errors } = await bootPage(browser);
+  await openAllTabs(page);
+  const c0 = (await state(page)).consts;
+  ok('A21-0 动效层常量单一来源（近档 0.055 / 深档 0.018 / 视差 z 26 / 翻落缩 0.10 / 透视 1150·origin 0.10）',
+    c0.depthScaleNear === 0.055 && c0.depthScaleFar === 0.018 && c0.depthZ === 26 && c0.fallShrink === 0.1 &&
+    c0.perspective === 1150 && c0.originYK === 0.1,
+    JSON.stringify(c0));
+  await page.click('#deck-fab');
+  await settle(page);
+  const pr = await panelRect(page);
+  const f1 = await cardRect(page, 1);   // d=1（前一位）
+  const f2 = await cardRect(page, 2);   // d=2
+  const base = pr.width * 0.85;
+  ok('A21-1 前景位基姿不变（d=0 卡与缩放态 canvas 同位同宽——交接窗换手无跳变）',
+    approx(f1.width / base, (1 - 0.055) * (1150 / (1150 + 26)), 0.03),
+    `d1/base=${(f1.width / base).toFixed(3)}`);
+  ok('A21-2 近大远小连续（d2 < d1 < 基卡，单调坡道）',
+    f2.width < f1.width && f1.width < base, `d1=${f1.width.toFixed(0)} d2=${f2.width.toFixed(0)} base=${base.toFixed(0)}`);
+  ok('A21-3 透明度渐变仍在（深处卡 op 随深衰减）', f2.op < 1 && f1.op > f2.op,
+    `op1=${f1.op} op2=${f2.op}`);
+  /* 翻落支：canvas 本尊（d=-1）缩小 + 显著衰减 */
+  await wheelScrub(page, 240);
+  await settle(page);
+  const fallen = await cardRect(page, 0);
+  ok('A21-4 翻落支缩小（d=-1 卡宽 < 基卡 × 0.94）', fallen !== null && fallen.width < base * 0.94,
+    `fallen=${fallen && fallen.width.toFixed(0)} base=${base.toFixed(0)}`);
+  ok('R0 主文档无 JS 运行时错误（A21）', errors.length === 0, errors.slice(0, 2).join(' | '));
+  await ctx.close();
+}
+
+/* ════════ A22 快照活性窗（UI 批 ③：真容升级 + 可视卡 ±2 精渲染）════════ */
+{
+  const { ctx, page, errors } = await bootPage(browser);
+  await openAllTabs(page);
+  await page.click('#deck-fab');
+  await settle(page, 3200);
+  const snap0 = await page.evaluate(() => ({
+    hasSnap: document.querySelectorAll('.card-thumb.has-snap').length,
+    cards: document.querySelectorAll('.deck-card').length,
+    pending: document.querySelectorAll('.card-thumb[data-snap="pending"]').length,
+    mock: document.querySelectorAll('.card-thumb[data-snap="mock"]').length,
+  }));
+  /* 真容补齐：可克隆族（md）全挂真容快照（pending 零），面板族页签回落类型 mock */
+  ok('A22-1 全环真容补齐（md 族全克隆零 pending；面板族 mock 回落）',
+    snap0.pending === 0 && snap0.hasSnap === snap0.cards - snap0.mock && snap0.hasSnap >= 1,
+    JSON.stringify(snap0));
+  /* 活性窗：可视卡 ±2 挂同步（环 ≥9 卡 → 窗内 5），深处卡静态快照 */
+  const sWin = await state(page);
+  ok('A22-2 活性窗 = 可视卡 ±2（环 ≥9 → 窗内 5）', sWin.snapshots.liveWindow === 5,
+    JSON.stringify(sWin.snapshots));
+  /* 源滚动 → 缩略镜像（滚动中同步更新）：先灌长文使 scroller 可滚 */
+  const mirrored = await page.evaluate(async () => {
+    const pane = document.querySelector('.canvas-tab-pane.active');
+    const viewer = pane.querySelector('.canvas-md-viewer');
+    viewer.insertAdjacentHTML('beforeend', Array.from({ length: 40 }, (_, i) => '<p>填充段落' + i + '</p>').join(''));
+    await new Promise((r) => setTimeout(r, 900));   // 等变更重截落定
+    const scroller = pane.querySelector('.canvas-md-scroll') || pane;
+    scroller.scrollTop = 220;
+    scroller.dispatchEvent(new Event('scroll', { bubbles: false }));
+    await new Promise((r) => setTimeout(r, 200));
+    const inner = document.querySelector('.deck-card[data-r="0"] .card-snap-inner');
+    return inner ? inner.style.transform : '';
+  });
+  ok('A22-3 源滚动镜像（缩略 translateY 随 scrollTop 同步）', /translateY\(-/.test(mirrored), mirrored);
+  /* 源 DOM 变更 → 防抖重截（实时映射） */
+  const reCloned = await page.evaluate(async () => {
+    const pane = document.querySelector('.canvas-tab-pane.active');
+    const viewer = pane.querySelector('.canvas-md-viewer');
+    viewer.insertAdjacentHTML('afterbegin', '<p id="ui5-live-marker">活性窗重截标记段</p>');
+    await new Promise((r) => setTimeout(r, 900));
+    const inner = document.querySelector('.deck-card[data-r="0"] .card-snap-inner');
+    return inner ? inner.textContent.includes('活性窗重截标记段') : false;
+  });
+  ok('A22-4 源变更防抖重截（近卡实时映射）', reCloned === true);
+  ok('R0 主文档无 JS 运行时错误（A22）', errors.length === 0, errors.slice(0, 2).join(' | '));
   await ctx.close();
 }
 

@@ -898,7 +898,9 @@ body.canvas-open.canvas-overlay #canvas-panel {
    同步面板盒），canvas 根子树内不存在任何卡组节点——panel.contains(deckLayer/fab)
    === false；整区缩放类 .stacked 落在 #canvas-panel（v4 落点不变）。 */
 :root {
-  /* 卡面（叠卡实体）：比面板玻璃更实一档，读作「物」 */
+  /* 卡面（叠卡实体）：比面板玻璃更实一档，读作「物」。
+     UI 批 ⑤：描边感退役——硬边 1px 描边淡出（层次靠明暗差，不靠线），投影
+     token 全族放大模糊半径、降低不透明度（羽化融边，边缘与背景过渡）。 */
   --card-bg: rgba(255, 255, 255, 0.82);
   --card-border: rgba(28, 32, 44, 0.13);
   /* 精修②：投影密度降一档（样张 light 0.05/0.10/0.12 → 0.04/0.07/0.08） */
@@ -906,29 +908,35 @@ body.canvas-open.canvas-overlay #canvas-panel {
     0 1px 2px rgba(16, 20, 30, 0.04),
     0 6px 18px rgba(16, 20, 30, 0.07),
     0 18px 44px rgba(16, 20, 30, 0.08);
-  /* uifix ③a：阴影渐次减弱四档（dim0=前景最重 … dim3=深处最轻）。
-     v2 均衡档（默认）——各档 = 整组投影 token 同族衰减，重叠不再糊成一片。 */
+  /* UI 批 ⑤：阴影渐次减弱四档羽化版（dim0=前景最重 … dim3=深处最轻）。
+     v2 均衡档（默认）——模糊半径放大 ~1.5×、不透明度降 ~25%，外加一圈大尺度
+     环境光晕（0 0 Npx 扩张层），边缘不再有可辨硬边。 */
   --card-dim-0:
-    0 2px 4px rgba(16, 20, 30, 0.07),
-    0 14px 30px rgba(16, 20, 30, 0.13),
-    0 34px 72px rgba(16, 20, 30, 0.15);
+    0 0 0 1px rgba(16, 20, 30, 0.02),
+    0 2px 8px rgba(16, 20, 30, 0.05),
+    0 20px 48px rgba(16, 20, 30, 0.10),
+    0 52px 110px rgba(16, 20, 30, 0.12);
   --card-dim-1:
-    0 1px 3px rgba(16, 20, 30, 0.05),
-    0 9px 22px rgba(16, 20, 30, 0.10),
-    0 24px 52px rgba(16, 20, 30, 0.11);
+    0 0 0 1px rgba(16, 20, 30, 0.015),
+    0 1px 6px rgba(16, 20, 30, 0.04),
+    0 14px 34px rgba(16, 20, 30, 0.075),
+    0 38px 86px rgba(16, 20, 30, 0.085);
   --card-dim-2:
-    0 1px 2px rgba(16, 20, 30, 0.04),
-    0 6px 15px rgba(16, 20, 30, 0.07),
-    0 16px 36px rgba(16, 20, 30, 0.08);
+    0 0 0 1px rgba(16, 20, 30, 0.01),
+    0 1px 4px rgba(16, 20, 30, 0.03),
+    0 10px 26px rgba(16, 20, 30, 0.055),
+    0 26px 62px rgba(16, 20, 30, 0.06);
   --card-dim-3:
-    0 1px 2px rgba(16, 20, 30, 0.03),
-    0 4px 10px rgba(16, 20, 30, 0.05),
-    0 10px 24px rgba(16, 20, 30, 0.06);
+    0 0 0 1px rgba(16, 20, 30, 0.008),
+    0 1px 3px rgba(16, 20, 30, 0.02),
+    0 7px 18px rgba(16, 20, 30, 0.04),
+    0 18px 44px rgba(16, 20, 30, 0.04);
   /* 缩放态面板（= 前景位）投影随档（前景投影 = dim0 同族） */
   --stacked-shadow:
-    0 2px 4px rgba(16, 20, 30, 0.07),
-    0 14px 30px rgba(16, 20, 30, 0.13),
-    0 34px 72px rgba(16, 20, 30, 0.15);
+    0 0 0 1px rgba(16, 20, 30, 0.02),
+    0 2px 8px rgba(16, 20, 30, 0.05),
+    0 20px 48px rgba(16, 20, 30, 0.10),
+    0 52px 110px rgba(16, 20, 30, 0.12);
   --th-bg: rgba(255, 255, 255, 0.92);
   --th-border: rgba(28, 32, 44, 0.07);
   --bar-1: rgba(27, 30, 38, 0.16);
@@ -939,52 +947,64 @@ body.canvas-open.canvas-overlay #canvas-panel {
      cubic(0.32,0,0.18,1)，换入飞行/ghost/弹性 FX 在 canvas.js 同源取值） */
   --deck-morph-duration: 0.28s;
   --deck-morph-ease: cubic-bezier(0.32, 0, 0.18, 1);
+  /* UI 批 ⑤：卡顶内嵌高光（玻璃体量感；主题分档——暗色压到 0.06 免成亮线） */
+  --card-inset-hi: rgba(255, 255, 255, 0.14);
 }
-/* uifix ③a：look v1（收敛）——各档整体再浅一档（近 v5 原手感） */
+/* uifix ③a：look v1（收敛）——各档整体再浅一档（近 v5 原手感）；UI 批 ⑤ 羽化同族 */
 body.deck-look-v1 {
   --card-dim-0:
-    0 1px 3px rgba(16, 20, 30, 0.05),
-    0 10px 24px rgba(16, 20, 30, 0.10),
-    0 26px 54px rgba(16, 20, 30, 0.11);
+    0 0 0 1px rgba(16, 20, 30, 0.015),
+    0 2px 6px rgba(16, 20, 30, 0.035),
+    0 16px 40px rgba(16, 20, 30, 0.075),
+    0 42px 92px rgba(16, 20, 30, 0.085);
   --card-dim-1:
-    0 1px 2px rgba(16, 20, 30, 0.04),
-    0 7px 17px rgba(16, 20, 30, 0.08),
-    0 18px 40px rgba(16, 20, 30, 0.09);
+    0 0 0 1px rgba(16, 20, 30, 0.012),
+    0 1px 5px rgba(16, 20, 30, 0.03),
+    0 12px 30px rgba(16, 20, 30, 0.06),
+    0 32px 74px rgba(16, 20, 30, 0.065);
   --card-dim-2:
-    0 1px 2px rgba(16, 20, 30, 0.03),
-    0 5px 12px rgba(16, 20, 30, 0.06),
-    0 12px 28px rgba(16, 20, 30, 0.07);
+    0 0 0 1px rgba(16, 20, 30, 0.008),
+    0 1px 4px rgba(16, 20, 30, 0.022),
+    0 8px 22px rgba(16, 20, 30, 0.045),
+    0 22px 54px rgba(16, 20, 30, 0.05);
   --card-dim-3:
-    0 1px 2px rgba(16, 20, 30, 0.02),
-    0 3px 8px rgba(16, 20, 30, 0.04),
-    0 8px 18px rgba(16, 20, 30, 0.05);
+    0 0 0 1px rgba(16, 20, 30, 0.006),
+    0 1px 3px rgba(16, 20, 30, 0.016),
+    0 6px 16px rgba(16, 20, 30, 0.032),
+    0 15px 38px rgba(16, 20, 30, 0.035);
   --stacked-shadow:
-    0 1px 3px rgba(16, 20, 30, 0.05),
-    0 10px 24px rgba(16, 20, 30, 0.10),
-    0 26px 54px rgba(16, 20, 30, 0.11);
+    0 0 0 1px rgba(16, 20, 30, 0.015),
+    0 2px 6px rgba(16, 20, 30, 0.035),
+    0 16px 40px rgba(16, 20, 30, 0.075),
+    0 42px 92px rgba(16, 20, 30, 0.085);
 }
-/* uifix ③a：look v3（拉开）——前景最重、深处更轻，层级感最强 */
+/* uifix ③a：look v3（拉开）——前景最重、深处更轻，层级感最强；UI 批 ⑤ 羽化同族 */
 body.deck-look-v3 {
   --card-dim-0:
-    0 3px 6px rgba(16, 20, 30, 0.09),
-    0 18px 40px rgba(16, 20, 30, 0.17),
-    0 44px 92px rgba(16, 20, 30, 0.20);
+    0 0 0 1px rgba(16, 20, 30, 0.025),
+    0 3px 10px rgba(16, 20, 30, 0.065),
+    0 26px 60px rgba(16, 20, 30, 0.13),
+    0 64px 130px rgba(16, 20, 30, 0.16);
   --card-dim-1:
-    0 2px 4px rgba(16, 20, 30, 0.06),
-    0 12px 28px rgba(16, 20, 30, 0.12),
-    0 30px 64px rgba(16, 20, 30, 0.13);
+    0 0 0 1px rgba(16, 20, 30, 0.02),
+    0 2px 8px rgba(16, 20, 30, 0.05),
+    0 18px 44px rgba(16, 20, 30, 0.09),
+    0 46px 100px rgba(16, 20, 30, 0.105);
   --card-dim-2:
-    0 1px 3px rgba(16, 20, 30, 0.05),
-    0 8px 18px rgba(16, 20, 30, 0.09),
-    0 20px 44px rgba(16, 20, 30, 0.10);
+    0 0 0 1px rgba(16, 20, 30, 0.014),
+    0 1px 6px rgba(16, 20, 30, 0.04),
+    0 13px 34px rgba(16, 20, 30, 0.068),
+    0 34px 78px rgba(16, 20, 30, 0.075);
   --card-dim-3:
-    0 1px 2px rgba(16, 20, 30, 0.04),
-    0 5px 12px rgba(16, 20, 30, 0.06),
-    0 13px 30px rgba(16, 20, 30, 0.07);
+    0 0 0 1px rgba(16, 20, 30, 0.01),
+    0 1px 4px rgba(16, 20, 30, 0.028),
+    0 9px 24px rgba(16, 20, 30, 0.048),
+    0 24px 56px rgba(16, 20, 30, 0.052);
   --stacked-shadow:
-    0 3px 6px rgba(16, 20, 30, 0.09),
-    0 18px 40px rgba(16, 20, 30, 0.17),
-    0 44px 92px rgba(16, 20, 30, 0.20);
+    0 0 0 1px rgba(16, 20, 30, 0.025),
+    0 3px 10px rgba(16, 20, 30, 0.065),
+    0 26px 60px rgba(16, 20, 30, 0.13),
+    0 64px 130px rgba(16, 20, 30, 0.16);
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -995,79 +1015,95 @@ body.deck-look-v3 {
       0 1px 2px rgba(0, 0, 0, 0.20),
       0 8px 22px rgba(0, 0, 0, 0.24),
       0 20px 48px rgba(0, 0, 0, 0.26);
-    /* uifix ③a dark 四档（v2 均衡默认） */
+    /* uifix ③a dark 四档（v2 均衡默认）；UI 批 ⑤ 羽化版：大模糊 + 环境光晕 */
     --card-dim-0:
-      0 2px 4px rgba(0, 0, 0, 0.26),
-      0 14px 30px rgba(0, 0, 0, 0.34),
-      0 34px 72px rgba(0, 0, 0, 0.38);
+      0 0 0 1px rgba(0, 0, 0, 0.10),
+      0 2px 8px rgba(0, 0, 0, 0.20),
+      0 22px 50px rgba(0, 0, 0, 0.26),
+      0 54px 116px rgba(0, 0, 0, 0.30);
     --card-dim-1:
-      0 1px 3px rgba(0, 0, 0, 0.22),
-      0 9px 22px rgba(0, 0, 0, 0.29),
-      0 24px 52px rgba(0, 0, 0, 0.32);
+      0 0 0 1px rgba(0, 0, 0, 0.08),
+      0 1px 6px rgba(0, 0, 0, 0.17),
+      0 16px 38px rgba(0, 0, 0, 0.22),
+      0 40px 90px rgba(0, 0, 0, 0.25);
     --card-dim-2:
-      0 1px 2px rgba(0, 0, 0, 0.18),
-      0 6px 15px rgba(0, 0, 0, 0.24),
-      0 16px 36px rgba(0, 0, 0, 0.27);
+      0 0 0 1px rgba(0, 0, 0, 0.06),
+      0 1px 5px rgba(0, 0, 0, 0.14),
+      0 12px 30px rgba(0, 0, 0, 0.18),
+      0 28px 66px rgba(0, 0, 0, 0.20);
     --card-dim-3:
-      0 1px 2px rgba(0, 0, 0, 0.14),
-      0 4px 10px rgba(0, 0, 0, 0.19),
-      0 10px 24px rgba(0, 0, 0, 0.22);
+      0 0 0 1px rgba(0, 0, 0, 0.05),
+      0 1px 4px rgba(0, 0, 0, 0.11),
+      0 9px 22px rgba(0, 0, 0, 0.14),
+      0 20px 48px rgba(0, 0, 0, 0.16);
     --stacked-shadow:
-      0 2px 4px rgba(0, 0, 0, 0.26),
-      0 14px 30px rgba(0, 0, 0, 0.34),
-      0 34px 72px rgba(0, 0, 0, 0.38);
+      0 0 0 1px rgba(0, 0, 0, 0.10),
+      0 2px 8px rgba(0, 0, 0, 0.20),
+      0 22px 50px rgba(0, 0, 0, 0.26),
+      0 54px 116px rgba(0, 0, 0, 0.30);
     --th-bg: rgba(255, 255, 255, 0.045);
     --th-border: rgba(255, 255, 255, 0.06);
     --bar-1: rgba(232, 234, 237, 0.20);
     --bar-2: rgba(232, 234, 237, 0.11);
     --bar-3: rgba(232, 234, 237, 0.06);
     --menu-bg: rgba(32, 36, 47, 0.94);
+    --card-inset-hi: rgba(255, 255, 255, 0.06);
   }
-  /* uifix ③a dark v1（收敛） */
+  /* uifix ③a dark v1（收敛）；UI 批 ⑤ 羽化同族 */
   body.deck-look-v1 {
     --card-dim-0:
-      0 1px 3px rgba(0, 0, 0, 0.22),
-      0 10px 24px rgba(0, 0, 0, 0.28),
-      0 26px 54px rgba(0, 0, 0, 0.30);
+      0 0 0 1px rgba(0, 0, 0, 0.08),
+      0 2px 7px rgba(0, 0, 0, 0.17),
+      0 18px 44px rgba(0, 0, 0, 0.22),
+      0 46px 100px rgba(0, 0, 0, 0.24);
     --card-dim-1:
-      0 1px 2px rgba(0, 0, 0, 0.18),
-      0 7px 17px rgba(0, 0, 0, 0.23),
-      0 18px 40px rgba(0, 0, 0, 0.26);
+      0 0 0 1px rgba(0, 0, 0, 0.07),
+      0 1px 5px rgba(0, 0, 0, 0.14),
+      0 13px 34px rgba(0, 0, 0, 0.18),
+      0 34px 80px rgba(0, 0, 0, 0.20);
     --card-dim-2:
-      0 1px 2px rgba(0, 0, 0, 0.15),
-      0 5px 12px rgba(0, 0, 0, 0.20),
-      0 12px 28px rgba(0, 0, 0, 0.22);
+      0 0 0 1px rgba(0, 0, 0, 0.055),
+      0 1px 4px rgba(0, 0, 0, 0.115),
+      0 10px 26px rgba(0, 0, 0, 0.15),
+      0 24px 58px rgba(0, 0, 0, 0.17);
     --card-dim-3:
-      0 1px 2px rgba(0, 0, 0, 0.12),
-      0 3px 8px rgba(0, 0, 0, 0.16),
-      0 8px 18px rgba(0, 0, 0, 0.19);
+      0 0 0 1px rgba(0, 0, 0, 0.045),
+      0 1px 3px rgba(0, 0, 0, 0.09),
+      0 7px 20px rgba(0, 0, 0, 0.12),
+      0 17px 42px rgba(0, 0, 0, 0.14);
     --stacked-shadow:
-      0 1px 3px rgba(0, 0, 0, 0.22),
-      0 10px 24px rgba(0, 0, 0, 0.28),
-      0 26px 54px rgba(0, 0, 0, 0.30);
+      0 0 0 1px rgba(0, 0, 0, 0.08),
+      0 2px 7px rgba(0, 0, 0, 0.17),
+      0 18px 44px rgba(0, 0, 0, 0.22),
+      0 46px 100px rgba(0, 0, 0, 0.24);
   }
-  /* uifix ③a dark v3（拉开） */
+  /* uifix ③a dark v3（拉开）；UI 批 ⑤ 羽化同族 */
   body.deck-look-v3 {
     --card-dim-0:
-      0 3px 6px rgba(0, 0, 0, 0.30),
-      0 18px 40px rgba(0, 0, 0, 0.40),
-      0 44px 92px rgba(0, 0, 0, 0.46);
+      0 0 0 1px rgba(0, 0, 0, 0.12),
+      0 3px 11px rgba(0, 0, 0, 0.24),
+      0 28px 62px rgba(0, 0, 0, 0.32),
+      0 66px 138px rgba(0, 0, 0, 0.36);
     --card-dim-1:
-      0 2px 4px rgba(0, 0, 0, 0.26),
-      0 12px 28px rgba(0, 0, 0, 0.33),
-      0 30px 64px rgba(0, 0, 0, 0.37);
+      0 0 0 1px rgba(0, 0, 0, 0.10),
+      0 2px 9px rgba(0, 0, 0, 0.20),
+      0 20px 50px rgba(0, 0, 0, 0.26),
+      0 50px 108px rgba(0, 0, 0, 0.29);
     --card-dim-2:
-      0 1px 3px rgba(0, 0, 0, 0.21),
-      0 8px 18px rgba(0, 0, 0, 0.27),
-      0 20px 44px rgba(0, 0, 0, 0.31);
+      0 0 0 1px rgba(0, 0, 0, 0.08),
+      0 1px 7px rgba(0, 0, 0, 0.16),
+      0 15px 38px rgba(0, 0, 0, 0.21),
+      0 36px 82px rgba(0, 0, 0, 0.24);
     --card-dim-3:
-      0 1px 2px rgba(0, 0, 0, 0.17),
-      0 5px 12px rgba(0, 0, 0, 0.21),
-      0 13px 30px rgba(0, 0, 0, 0.25);
+      0 0 0 1px rgba(0, 0, 0, 0.065),
+      0 1px 5px rgba(0, 0, 0, 0.13),
+      0 11px 28px rgba(0, 0, 0, 0.16),
+      0 26px 60px rgba(0, 0, 0, 0.19);
     --stacked-shadow:
-      0 3px 6px rgba(0, 0, 0, 0.30),
-      0 18px 40px rgba(0, 0, 0, 0.40),
-      0 44px 92px rgba(0, 0, 0, 0.46);
+      0 0 0 1px rgba(0, 0, 0, 0.12),
+      0 3px 11px rgba(0, 0, 0, 0.24),
+      0 28px 62px rgba(0, 0, 0, 0.32),
+      0 66px 138px rgba(0, 0, 0, 0.36);
   }
 }
 
@@ -1177,20 +1213,21 @@ body.canvas-open:not(.mobile-layer) #deck-fab { display: flex; }
 body.canvas-overlay #deck-layer.over { z-index: 245; }
 #deck-layer.collapse { opacity: 0; }
 body.mobile-layer #deck-layer,
-body.mobile-layer #deck-fab,
-body.mobile-layer #deck-foot { display: none !important; }
+body.mobile-layer #deck-fab { display: none !important; }
 
 /* ── 整区缩放（v4①）：唯一整区 scale 变换，落 canvas 根。
-   uifix ③a：叠卡态投影 = 前景档 token（随 look 三版联动）。 */
+   uifix ③a：叠卡态投影 = 前景档 token（随 look 三版联动）。
+   UI 批 ⑤：描边随卡族一并退役（层次靠明暗差），投影羽化融边。 */
 #canvas-panel.stacked {
   transform: translateY(var(--stack-shift, 8px)) scale(var(--stack-scale, 0.85));
-  border-color: var(--card-border);
+  border-color: transparent;
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
     var(--stacked-shadow,
-      0 2px 10px rgba(0, 0, 0, 0.04),
-      0 14px 38px rgba(0, 0, 0, 0.09),
-      0 30px 70px rgba(0, 0, 0, 0.08));
+      0 0 0 1px rgba(0, 0, 0, 0.02),
+      0 2px 8px rgba(0, 0, 0, 0.05),
+      0 20px 48px rgba(0, 0, 0, 0.10),
+      0 52px 110px rgba(0, 0, 0, 0.12));
   cursor: grab;
   touch-action: none;
 }
@@ -1218,28 +1255,36 @@ body.mobile-layer #deck-foot { display: none !important; }
   background: var(--card-bg);
   -webkit-backdrop-filter: blur(14px) saturate(1.1);
   backdrop-filter: blur(14px) saturate(1.1);
-  border: 1px solid var(--card-border);
+  /* UI 批 ⑤：1px 硬描边退役（透明占位保布局盒不变），边缘读感交给投影羽化；
+     顶部一条内嵌高光保留玻璃体量（内高光不是描边，不产生硬边感） */
+  border: 1px solid transparent;
+  box-shadow: inset 0 1px 0 var(--card-inset-hi);
   /* uifix ③a：基础投影 = 深处档（兜底），数据 dim 档位逐卡切换；
      数据 dim 由 deckFrame 每帧写（0=前景…3=深处）——同档零节流 */
-  box-shadow: var(--card-dim-3, var(--card-shadow));
   will-change: transform, opacity;
   cursor: pointer;
   overflow: hidden;
   touch-action: none; /* 竖拖补充令：卡面拖划（横滑关闭/竖拖换卡）在触屏上走 Pointer Events，不被浏览器滚动接管；卡面纯 chrome 无滚动内容 */
 }
-.deck-card[data-dim="0"] { box-shadow: var(--card-dim-0); }
-.deck-card[data-dim="1"] { box-shadow: var(--card-dim-1); }
-.deck-card[data-dim="2"] { box-shadow: var(--card-dim-2); }
-.deck-card[data-dim="3"] { box-shadow: var(--card-dim-3); }
+.deck-card[data-dim="0"] { box-shadow: inset 0 1px 0 var(--card-inset-hi), var(--card-dim-0); }
+.deck-card[data-dim="1"] { box-shadow: inset 0 1px 0 var(--card-inset-hi), var(--card-dim-1); }
+.deck-card[data-dim="2"] { box-shadow: inset 0 1px 0 var(--card-inset-hi), var(--card-dim-2); }
+.deck-card[data-dim="3"] { box-shadow: inset 0 1px 0 var(--card-inset-hi), var(--card-dim-3); }
 .deck-card.fly { border-radius: 17px; cursor: default; }   /* 落位≈面板 20px 圆角（v4④） */
 .deck-card.ghost { cursor: default; }
 .deck-card.front { cursor: grab; }                          /* 前景卡可拖划（划走=关闭） */
 .deck-card.front:active { cursor: grabbing; }
+/* UI 批 ⑤：压暗层改纵向渐变——堆叠层次靠明暗差（近卡亮、深处渐沉），与背景
+   融合过渡，不再是整面等强黑罩。透明度仍由 JS 按环深逐帧写。 */
 .deck-card .card-shade {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: rgb(0 0 0 / 1);
+  background: linear-gradient(180deg,
+    rgb(0 0 0 / 0.9),
+    rgb(0 0 0 / 0.62) 34%,
+    rgb(0 0 0 / 0.46) 68%,
+    rgb(0 0 0 / 0.56));
   opacity: 0;
   pointer-events: none;
 }
@@ -1397,34 +1442,9 @@ body.mobile-layer #deck-foot { display: none !important; }
 .deck-card .thumb-browser .blk { height: 16px; border-radius: 4px; background: var(--bar-2); margin-bottom: 6px; }
 .deck-card .thumb-browser .blk.b2 { width: 64%; }
 
-/* ── 底部提示 + 计数（v4⑤）：body 层固定元素（盒同步），浮在面板下缘外露带之上
-   ——「canvas 区外露出的边缘」归卡组舞台用，面板上不留浮层。精修③：提示文案
-   不再含「点 ×」（× 退役，关闭走划走/右键菜单）。 */
-#deck-foot {
-  position: fixed;
-  inset: auto;
-  z-index: auto;
-  display: none;
-  flex-direction: column;
-  align-items: center;
-  gap: 1px;
-  pointer-events: none;
-  opacity: 0;
-  transform: translateY(6px);
-  transition: opacity 0.25s ease, transform 0.25s ease;
-}
-#deck-foot.live { display: flex; }
-#deck-foot.on { opacity: 1; transform: none; }
-.deck-hint { font-size: 11px; color: var(--color-text-muted); transition: opacity 0.4s ease; }
-.deck-hint.faded { opacity: 0; }
-.deck-count {
-  font-size: 11px;
-  color: var(--color-text-dim);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.04em;
-}
-/* 窄面板：只收排版（提示行隐藏、标题截断），几何不变（85% 自适应） */
-#deck-foot.narrow .deck-hint { display: none; }
+/* ── 底部提示 + 计数：UI 批 ①（作者令 2026-10-21）整体退役——deck-foot 元素
+   不再装配（canvas.js initDeck），堆叠态顶部两行帮助条一个字不留；交互自学，
+   收进 ？ 帮由后续批定。此处的规则连同元素一并摘除（无死 CSS）。 */
 
 /* 窄窗 overlay 形态下，叠卡 floating 族随面板浮层；裁切面/盒由 JS 同步 */
 body.canvas-overlay #deck-layer { border-radius: 20px; }
@@ -1434,7 +1454,6 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   #canvas-panel,
   #canvas-content,
   #deck-layer,
-  #deck-foot,
   #deck-fab,
   .canvas-title .t-inner { transition-duration: 0.01s !important; }
 }
@@ -2631,3 +2650,194 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 /* Document rows — geometry/typography now live on .wx-sb-item.wx-doc in the
    .wx-sb-* family above (§3: h24 · r7 · 26px indent · 12/400). */
 
+
+/* ═══════════════ UI 批⑧ canvas 单卡独立窗口 ═══════════════
+   主窗：卡头 toggle（独立 ⧉ / 合并 ⇲ 同位换形）+ 独立中轻态浮标（占位不消失）；
+   卡窗（body.card-window）：壳退役、canvas 面板全幅即卡面；双向动画 +
+   prefers-reduced-motion 直切。 */
+
+/* ── 主窗可见卡头 toggle：标题头（#canvas-pop-btn）+ 环卡卡头（.deck-card-pop）──
+   （桌面标签行/移动层标签条均已退役，卡头 = 居中标题 + 环卡名条 + 手机卡片头） */
+.canvas-pop-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.canvas-pop-btn:hover { background: var(--glass-control-bg-hover); color: var(--color-text); }
+.canvas-pop-btn .pop-ic-merge { display: none; }
+.canvas-pop-btn.is-independent {
+  color: rgb(var(--sapphire));
+  background: rgb(var(--sapphire) / 0.12);
+}
+.canvas-pop-btn.is-independent .pop-ic-pop { display: none; }
+.canvas-pop-btn.is-independent .pop-ic-merge { display: block; }
+.deck-card .deck-card-pop {
+  position: absolute;
+  top: 7px;
+  right: 38px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  background: transparent;
+  opacity: 0.5;
+  z-index: 4;
+  transition: opacity 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+.deck-card .deck-card-pop svg { width: 13px; height: 13px; }
+.deck-card .deck-card-pop:hover { opacity: 1; color: var(--color-text); background: var(--glass-control-bg-hover); }
+.deck-card .deck-card-pop .pop-ic-merge { display: none; }
+.deck-card .deck-card-pop.is-independent { opacity: 1; color: rgb(var(--sapphire)); }
+.deck-card .deck-card-pop.is-independent .pop-ic-pop { display: none; }
+.deck-card .deck-card-pop.is-independent .pop-ic-merge { display: block; }
+
+/* ── 主窗：卡面「独立中」浮标（属性驱动 ::after，零 DOM 插拔）── */
+#canvas-content .canvas-tab-pane { position: relative; }
+.canvas-tab-pane[data-independent]::after {
+  content: '独立中';
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 5;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  color: rgb(var(--sapphire));
+  background: rgb(var(--sapphire) / 0.10);
+  border: 1px solid rgb(var(--sapphire) / 0.22);
+  pointer-events: none;
+  animation: nf-chip-in 0.18s ease;
+}
+.deck-card[data-independent] .card-top::after {
+  content: '独立中';
+  margin-left: auto;
+  margin-right: 30px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  color: rgb(var(--sapphire));
+  background: rgb(var(--sapphire) / 0.12);
+  border: 1px solid rgb(var(--sapphire) / 0.22);
+}
+
+/* ── 双向动画 ──
+   独立：主窗卡面 pop 脉冲（release 感）；卡窗根放大淡入。
+   合并：卡窗收缩淡出；主窗卡面回弹展开（.restore 同族 spring 曲线）。 */
+@keyframes nf-card-pop {
+  0% { transform: scale(1); }
+  45% { transform: scale(0.965); opacity: 0.72; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.canvas-tab-pane.card-pop-anim { animation: nf-card-pop 0.24s cubic-bezier(0.3, 0.9, 0.3, 1); }
+@keyframes nf-card-restore {
+  0% { transform: scale(0.958); opacity: 0.55; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.canvas-tab-pane.card-merge-anim { animation: nf-card-restore 0.26s cubic-bezier(0.3, 1.25, 0.6, 1); }
+@keyframes nf-card-win-in {
+  from { opacity: 0; transform: scale(0.955); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes nf-card-win-out {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.94); }
+}
+
+/* ── 卡窗：壳退役 + 面板全幅 ── */
+body.card-window #activity-bar,
+body.card-window #sidebar,
+body.card-window #header,
+body.card-window #chat,
+body.card-window #input-area,
+body.card-window #top-overlays,
+body.card-window #reminder-panel,
+body.card-window #daemon-panel,
+body.card-window #daemon-config-overlay,
+body.card-window .edge-bar,
+body.card-window #deck-fab,
+body.card-window #deck-layer,
+body.card-window #canvas-close-btn { display: none !important; }
+body.card-window #main {
+  margin: 0 !important;
+  --canvas-width: 100vw;
+}
+body.card-window #canvas-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  width: auto !important;
+  max-width: none !important;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+  transform: none !important;
+  animation: nf-card-win-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+body.card-window #canvas-panel.stacked { transform: none !important; }
+body.card-window #canvas-panel .canvas-header { padding-top: 8px; }
+/* 卡窗卡头「合并」钮 */
+.canvas-merge-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  margin-left: 8px;
+  border: 1px solid var(--glass-control-border);
+  border-radius: 8px;
+  background: var(--glass-control-bg);
+  color: var(--color-text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.canvas-merge-btn:hover { background: var(--glass-control-bg-hover); border-color: rgb(var(--sapphire) / 0.4); }
+/* 卡窗合并 out 动画（requestMergeSelf 挂类，180ms 后 close） */
+body.card-window #canvas-panel.card-win-merging { animation: nf-card-win-out 0.18s ease-in forwards; }
+
+/* prefers-reduced-motion：独立/合并直切 */
+@media (prefers-reduced-motion: reduce) {
+  .canvas-tab-pane.card-pop-anim,
+  .canvas-tab-pane.card-merge-anim,
+  body.card-window #canvas-panel,
+  body.card-window #canvas-panel.card-win-merging,
+  .canvas-tab-pane[data-independent]::after { animation: none !important; }
+}
+
+/* 手机卡头独立/合并钮（navController 建；新标签页姿态直切） */
+.mobile-card-pop {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: var(--color-frame-text, #e6e9ef);
+  cursor: pointer;
+}
+.mobile-card-pop:active { transform: scale(0.9); }
+.mobile-card-pop .pop-ic-merge { display: none; }
+.mobile-card-pop.is-independent .pop-ic-pop { display: none; }
+.mobile-card-pop.is-independent .pop-ic-merge { display: block; color: rgb(var(--sapphire)); }

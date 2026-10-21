@@ -17,6 +17,10 @@
 //   G4 暗色 —— 亮暗两套 colorScheme 重复 G1 几何 + G2/G3 像素核心链。
 //   G5 探测器 —— state() 形状 + no-backdrop 特性腿（CSS.supports 恒真环境下
 //      仅验 supported=true 路径；不支持路径由降级类同名腿覆盖）。
+//   G6/G7 UI 批⑥⑦（2026-10-21）顶部渐隐契约 —— 桌面：#chat 盒顶 = header 盒底
+//      （⑦裁剪线，滚动态不动）+ #header 零裙边（⑥顶部渐隐桌面摘除）；手机层：
+//      mobile-layer + #header::after 28px 渐隐裙边在位 + chat 不裁剪（渐隐穿顶
+//      现状不动）。G0 让位算式改锚 #chat 实际盒顶（⑦ margin 钉制后的新几何）。
 //
 // 环境注：任务带内容管线（ws 链）由 taskList 族 spec 自管，此处直接驱动
 // .has-tasks + 注入示意卡（被测面 = 裙边 CSS/几何/像素，与数据管线解耦）。
@@ -286,11 +290,13 @@ for (const scheme of ['light', 'dark']) {
     pad: parseFloat(getComputedStyle(document.getElementById('chat')).paddingTop) || 0,
     bandBottom: document.getElementById('top-overlays').getBoundingClientRect().bottom,
     mainTop: document.getElementById('main').getBoundingClientRect().top,
+    chatTop: document.getElementById('chat').getBoundingClientRect().top,
   }));
-  /* 锚 #main（滚动无关）：带 overlay 后 chat 顶 = #main 顶 */
-  const expectPad = Math.max(8, Math.ceil(g0.bandBottom - g0.mainTop) + 8);
+  /* 锚 #chat 实际盒顶（UI 批⑦：桌面 #chat 盒顶 = header 下沿 margin 钉制，
+     padding 让位算式仍 = 带底 − chat 顶 + 8——与算式同源测量，不锚 #main 顶） */
+  const expectPad = Math.max(8, Math.ceil(g0.bandBottom - g0.chatTop) + 8);
   ok(`G0[${tag}] top-reserve 让位（#chat padding-top = 带底缘让位 + 8）`,
-    Math.abs(g0.pad - expectPad) <= 2, `pad=${g0.pad.toFixed(0)} expect=${expectPad} band=${g0.bandBottom.toFixed(0)} mainTop=${g0.mainTop.toFixed(0)} log=${JSON.stringify(await page.evaluate(() => window.__resvLog.slice(-4)))}`);
+    Math.abs(g0.pad - expectPad) <= 2, `pad=${g0.pad.toFixed(0)} expect=${expectPad} band=${g0.bandBottom.toFixed(0)} chatTop=${g0.chatTop.toFixed(0)} log=${JSON.stringify(await page.evaluate(() => window.__resvLog.slice(-4)))}`);
 
   /* G2 主态像素 */
   await pixelRound(page, tag, false);
@@ -311,6 +317,92 @@ for (const scheme of ['light', 'dark']) {
 
   ok(`R[${tag}] 零 JS 运行时错误`, errors.length === 0, errors.slice(0, 2).join(' | '));
   await ctx.close();
+}
+
+/* ════════ G6/G7 UI 批⑥⑦（2026-10-21 作者令）：顶部渐隐契约对齐 ════════
+   ⑥「毛玻璃渐隐只保留手机端最顶部」+ ⑦「桌面消息最顶部不得超过 header」：
+   桌面 = #chat 盒顶钉 header 下沿（裁剪线，内容不进 header 区）+ #header 无任何
+   顶部裙边；手机 = v3 悬浮顶栏现状不动（内容穿顶 + body.mobile-layer #header::after
+   渐隐裙边在挂）。六面浮层裙边桌面照旧（G1 已证，作者明示浮层原样）。 */
+{
+  const { ctx, page, errors } = await boot('light');
+  const d = await page.evaluate(() => {
+    const chat = document.getElementById('chat');
+    const header = document.getElementById('header');
+    const cr = chat.getBoundingClientRect(), hr = header.getBoundingClientRect();
+    const after = getComputedStyle(header, '::after');
+    return {
+      chatTop: cr.top, headerBottom: hr.bottom, headerTop: hr.top,
+      chatMargin: parseFloat(getComputedStyle(chat).marginTop) || 0,
+      skirtContent: after.content, skirtMask: after.maskImage || after.webkitMaskImage || '',
+      headerHasClass: header.classList.contains('scroll-under-glass'),
+      mobile: document.body.classList.contains('mobile-layer'),
+    };
+  });
+  ok('G6[桌面] ⑦裁剪线：#chat 盒顶 = header 盒底（±2px，内容不可能高于 header）',
+    !d.mobile && Math.abs(d.chatTop - d.headerBottom) <= 2,
+    `chatTop=${d.chatTop.toFixed(1)} headerBottom=${d.headerBottom.toFixed(1)} margin=${d.chatMargin}`);
+  ok('G6[桌面] ⑥顶部渐隐摘除：#header 无裙边类、::after 不存在（content none）',
+    !d.headerHasClass && /none|normal/.test(d.skirtContent) && !/linear-gradient/.test(d.skirtMask),
+    `class=${d.headerHasClass} after=${d.skirtContent} mask=${d.skirtMask.slice(0, 40)}`);
+  /* 滚动态实证：滚到深处后盒顶纹丝不动（裁剪线与滚动位置无关） */
+  const d2 = await page.evaluate(() => {
+    const chat = document.getElementById('chat');
+    chat.scrollTop = chat.scrollHeight;
+    return new Promise((r) => setTimeout(() => {
+      const cr = document.getElementById('chat').getBoundingClientRect();
+      const hr = document.getElementById('header').getBoundingClientRect();
+      r({ chatTop: cr.top, headerBottom: hr.bottom });
+    }, 120));
+  });
+  ok('G6[桌面] ⑦滚动态：裁剪线不动（scrolled chatTop 仍 = header 盒底 ±2px）',
+    Math.abs(d2.chatTop - d2.headerBottom) <= 2,
+    `chatTop=${d2.chatTop.toFixed(1)} headerBottom=${d2.headerBottom.toFixed(1)}`);
+  ok(`R[G6] 零 JS 运行时错误`, errors.length === 0, errors.slice(0, 2).join(' | '));
+  await ctx.close();
+
+  /* G7 手机层：渐隐穿顶现状不动 */
+  const mctx = await browser.newContext({ viewport: { width: 375, height: 667 }, colorScheme: 'light', isMobile: true, hasTouch: true });
+  await mctx.addInitScript(() => {
+    localStorage.setItem('nebflow_token', 't'); localStorage.setItem('neblink_token', 't');
+    localStorage.setItem('nebflow_locale', 'zh-CN'); localStorage.setItem('neblink_locale', 'zh-CN');
+    localStorage.setItem('nebflow_canvas_tabs', JSON.stringify({ v: 2, tabs: [] }));
+    localStorage.setItem('neblink_canvas_tabs', JSON.stringify({ v: 2, tabs: [] }));
+  });
+  const mpage = await mctx.newPage();
+  const merrors = [];
+  mpage.on('pageerror', (e) => merrors.push(String(e).slice(0, 100)));
+  await mpage.route('**/api/**', (r) => r.fulfill({ status: 404, json: {} }));
+  await installTicketMock(mpage);
+  await mpage.routeWebSocket(/\/ws/, (ws) => {
+    ws.onMessage((raw) => { let m; try { m = JSON.parse(raw); } catch { return; } if (m.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0 })); });
+    ws.send(JSON.stringify({ type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {} }));
+    ws.send(JSON.stringify({ type: 'sessionList', sessions: [{ id: 'sess-1', agentName: 'Nebula', title: 'T', updatedAt: Date.now() }], activeId: 'sess-1', folders: [] }));
+  });
+  await mpage.goto(BASE + '/index.html');
+  await mpage.waitForSelector('#chat', { timeout: 15000 });
+  await sleep(700);
+  const m = await mpage.evaluate(() => {
+    const chat = document.getElementById('chat');
+    const header = document.getElementById('header');
+    const cr = chat.getBoundingClientRect(), hr = header.getBoundingClientRect();
+    const after = getComputedStyle(header, '::after');
+    return {
+      mobile: document.body.classList.contains('mobile-layer'),
+      chatTop: cr.top, headerBottom: hr.bottom,
+      chatMargin: parseFloat(getComputedStyle(chat).marginTop) || 0,
+      skirtContent: after.content, skirtMask: after.maskImage || after.webkitMaskImage || '',
+      skirtH: parseFloat(after.height) || 0,
+    };
+  });
+  ok('G7[手机] ⑥渐隐穿顶保持：mobile-layer 在挂 + #header::after 渐隐裙边在位（28px mask 渐变）',
+    m.mobile && m.skirtContent === '""' && /linear-gradient/.test(m.skirtMask) && m.skirtH === 28,
+    `mobile=${m.mobile} after=${m.skirtContent} mask=${m.skirtMask.slice(0, 40)} h=${m.skirtH}`);
+  ok('G7[手机] ⑦不裁剪：chat margin=0 且盒顶高于 header 盒底（内容穿顶现状）',
+    m.chatMargin === 0 && m.chatTop < m.headerBottom,
+    `margin=${m.chatMargin} chatTop=${m.chatTop.toFixed(1)} headerBottom=${m.headerBottom.toFixed(1)}`);
+  ok(`R[G7] 零 JS 运行时错误`, merrors.length === 0, merrors.slice(0, 2).join(' | '));
+  await mctx.close();
 }
 
 await browser.close();

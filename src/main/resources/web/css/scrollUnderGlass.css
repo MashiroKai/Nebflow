@@ -17,7 +17,14 @@
  *
  * z-index/层序注：#top-overlays 是带 z-25 的 flex 项（自成堆叠上下文），裙边作其
  * ::after 描画在 #chat 之上；弹窗族（overlay+modal）同理。pointer-events:none，
- * 不拦任何交互。 */
+ * 不拦任何交互。
+ *
+ * UI 批⑥⑦（2026-10-21 作者令）顶部渐隐契约：**「顶部渐隐穿顶」效果 = 手机层
+ * 唯一**（body.mobile-layer #header::after 裙边，v3 悬浮顶栏内容直顶穿栏的现状
+ * 渐隐，不动）。桌面端顶部无任何渐隐挂载 —— #header 从不携带 .scroll-under-glass、
+ * 也没有 ::after 顶部裙边；桌面消息顶部裁剪线 = header 下沿（main.js syncTopReserve
+ * 写 #chat margin-top，⑦），内容根本不进 header 区，无需渐隐。本文件的六面浮层
+ * 裙边（面板/任务带/弹窗）桌面照旧挂载 —— 作者明示「面板浮层原样」，勿误伤。 */
 
 .scroll-under-glass,
 /* 手机六件①：会话面顶栏（头像 chips 悬浮层）——滚动内容从其下穿过渐隐
