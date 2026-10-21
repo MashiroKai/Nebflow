@@ -18,6 +18,9 @@ import { renderRefBlock, normalizeTaskRef, parseTaskReturnText, buildTaskRefLine
 // quote-message 一期（spec §7）：主聊天区右键引用 —— 菜单/引用条/引用块/跳转收口在
 // msgQuote.js 单模块（chat.js 只挂点，不复制逻辑）。
 import { attachQuoteMenu, renderQuoteBlock, quoteFromRef, nextChatMsgId, syncQuoteJumpStates, scheduleQuoteButtonMount } from './msgQuote.js';
+// 图标眼单源（设计语言批 2026-10-21）：AskUser 密钥题的「显示」眼与设置页
+// provider 密码域（sidebar.js）同一份 SVG——providersUi.js 单向提供，无环。
+import { eyeSvg, eyeOffSvg } from './sidebar/providersUi.js';
 // file-diff → 委托结果行（bug #58 修 2026-10-09）：注入行展开体里的「Changes」段
 // 渲染器复用 diffRender.js（零依赖纯 HTML 模块，与 Flow Map 节点详情同一实现；
 // 样式 = css/diffView.css 既有类，chat 面只追加容器级规则）。
@@ -2285,30 +2288,37 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     // askuser-secret 批（规格 §1/§3）：secret 题 = 密码框（遮蔽 + 「显示」眼睛
     // 切换）。零选项、零 textarea、零草稿恢复（freeInput:false 先例）——整段
     // 选项/自由输入机制经 early-return 跳过。值只进 secretValues[qi]；确认后
-    // DOM 值立即清空（confirm 路径）。inline 样式自包含（本批不动 chat.css）。
+    // DOM 值立即清空（confirm 路径）。
+    // 设计语言批 2026-10-21：内联样式整批退役 → `.option-secret-*` 类
+    // （css/chat.css askuser-hybrid 段，材质对齐同卡 `.option-custom-input`
+    // 兄弟输入档）；「显示/隐藏」文字钮 → 图标眼（eyeSvg/eyeOffSvg 单源 =
+    // sidebar/providersUi.js，与密钥面板/设置页同一枚眼），toggle 逻辑不动
+    // （type password↔text），aria-label/title 仍走 t() 双语键，aria-pressed
+    // 随揭示态。信息架构与交互语义零变化（视觉语言统一批）。
     if (item.secret === true) {
       const row = document.createElement('div');
       row.className = 'option-secret-row';
-      row.style.cssText = 'display:flex;gap:8px;align-items:stretch;margin-top:6px;';
       const pw = document.createElement('input');
       pw.type = 'password';
       pw.className = 'option-secret-input';
       pw.autocomplete = 'off';
       pw.spellcheck = false;
       pw.placeholder = t('askUser.secretPlaceholder');
-      pw.style.cssText = 'flex:1;min-width:0;padding:8px 10px;border-radius:8px;' +
-        'border:1px solid var(--color-border, rgba(128,128,128,0.35));' +
-        'background:var(--color-surface, rgba(127,127,127,0.08));color:inherit;font:inherit;';
       const eye = document.createElement('button');
       eye.type = 'button';
       eye.className = 'option-secret-eye';
-      eye.textContent = t('askUser.secretShow');
-      eye.style.cssText = 'padding:6px 10px;border-radius:8px;border:1px solid var(--color-border, rgba(128,128,128,0.35));' +
-        'background:transparent;color:var(--color-text-muted, #888);font:inherit;cursor:pointer;';
+      eye.innerHTML = eyeSvg;
+      eye.setAttribute('aria-label', t('askUser.secretShow'));
+      eye.setAttribute('aria-pressed', 'false');
+      eye.title = t('askUser.secretShow');
       eye.onclick = () => {
         const show = pw.type === 'password';
         pw.type = show ? 'text' : 'password';
-        eye.textContent = show ? t('askUser.secretHide') : t('askUser.secretShow');
+        eye.innerHTML = show ? eyeOffSvg : eyeSvg;
+        eye.setAttribute('aria-pressed', String(show));
+        const label = show ? t('askUser.secretHide') : t('askUser.secretShow');
+        eye.setAttribute('aria-label', label);
+        eye.title = label;
       };
       pw.oninput = () => {
         secretValues[qi] = pw.value;
@@ -2320,7 +2330,6 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
       wrapper.appendChild(row);
       const hint = document.createElement('div');
       hint.className = 'option-secret-hint';
-      hint.style.cssText = 'margin-top:6px;font-size:12px;color:var(--color-text-muted, #888);';
       hint.textContent = item.ephemeral ? t('askUser.secretEphemeralHint') : t('askUser.secretHint');
       wrapper.appendChild(hint);
       box.appendChild(wrapper);

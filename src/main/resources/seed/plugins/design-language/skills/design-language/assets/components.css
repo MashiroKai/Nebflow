@@ -1,0 +1,218 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   design-language components.css — 组件原型参考实现
+   配套 tokens.css（--dl-*）。两用途：
+   ① 新建组件的抄写底本（套档不造轮子）；
+   ② 独立 HTML 卡/demo 的自足样式（不依赖客户端 CSS 时 --dl-* 自带全值）。
+   客户端内的运行时等价物（供对照）：
+     弹窗 → #settings-modal / #secrets-modal（modal.css / secrets.css）
+     卡   → .cfg-card / .option-box / .secrets-row[data-open]
+     按钮 → .cfg-btn / .cfg-btn-primary / .cfg-btn-add / 发送族（sapphire.css）
+     输入 → .cfg-input / .cfg-select / .secrets-input / .option-secret-input
+     行   → .settings-row / .cfg-row / .secrets-row-head
+     徽标 → .secrets-mode-badge / .count-pill
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── 弹窗外壳（三档宽度硬档：sm 400 / md 560 / lg 640）─────────────────
+   玻璃外壳 + radius 20 + 面板族影 + 背层恒透明（禁遮罩）。max-height 85vh。 */
+.dl-modal {
+  display: none;
+  flex-direction: column;
+  width: 560px;                            /* md 档；sm=400px lg=640px 按面板类型选 */
+  max-width: calc(100vw - 48px);
+  max-height: 85vh;
+  overflow: hidden;
+  border-radius: var(--dl-r-shell);
+  background: var(--dl-glass-bg);
+  -webkit-backdrop-filter: blur(var(--dl-glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--dl-glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35));
+  box-shadow: var(--dl-shadow-panel);
+  animation: dl-modal-in var(--dl-dur-enter) var(--dl-ease-enter);
+}
+.dl-modal.dl-modal-sm { width: 400px; }
+.dl-modal.dl-modal-lg { width: 640px; }
+.dl-modal.on { display: flex; }
+@keyframes dl-modal-in {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+.dl-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px 12px 20px;            /* 栅格距：12/16/20 */
+  border-bottom: 1px solid var(--dl-border-light);
+  flex-shrink: 0;
+}
+.dl-modal-title {
+  font-size: var(--dl-fs-title);
+  font-weight: 600;
+  color: var(--dl-text-bright);
+}
+.dl-modal-body {
+  padding: 12px 20px 20px;
+  overflow-y: auto;
+}
+
+/* ── 卡（sm 行卡 10 / md 面板内卡 14 / lg 浮层卡 16；平面族无影）──────── */
+.dl-card-sm {
+  border-radius: var(--dl-r-card-sm);
+  background: var(--dl-etched-bg);
+}
+.dl-card {
+  border: 1px solid var(--dl-border-light);
+  background: var(--dl-etched-bg);
+  border-radius: var(--dl-r-card-md);
+  overflow: hidden;
+}
+.dl-card-lg {
+  background: linear-gradient(180deg, var(--dl-surface), var(--dl-bg));
+  border: 1px solid var(--dl-border);
+  border-radius: var(--dl-r-card-lg);
+  box-shadow: var(--dl-shadow-panel);
+  padding: 12px 16px;                      /* 13px 14px 斜数已整改归栅格 */
+}
+
+/* ── 按钮（md 面板档 12px/6px 12px/r8 · sm 12px/4px 10px/r8 ·
+      主档绿实底 · ghost 静息灰 · 危险 ghost+hover 红 · chip 选项档）──── */
+.dl-btn,
+.dl-btn-sm,
+.dl-btn-primary {
+  font-family: inherit;
+  font-size: var(--dl-fs-btn);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--dl-dur-2) ease, color var(--dl-dur-2) ease,
+              border-color var(--dl-dur-2) ease, box-shadow var(--dl-dur-2) ease;
+}
+.dl-btn {                                 /* 面板档（ghost 玻璃） */
+  padding: 6px 12px;
+  border-radius: var(--dl-r-input);
+  border: 1px solid var(--dl-border);
+  background: var(--glass-control-bg, rgba(255, 255, 255, 0.45));
+  color: var(--dl-text);
+}
+.dl-btn-sm { padding: 4px 10px; border-radius: var(--dl-r-input); border: 1px solid var(--dl-border); background: none; color: var(--dl-text-muted); }
+.dl-btn-primary {                         /* 主档：品牌绿实底白字 */
+  padding: 6px 14px;
+  border-radius: var(--dl-r-input);
+  border: 1px solid var(--dl-primary);
+  background: var(--dl-primary);
+  color: #fff;
+}
+.dl-btn-primary:hover { background: var(--dl-primary-hover); border-color: var(--dl-primary-hover); }
+.dl-btn:hover { background: var(--color-frame-hover, #e5e6e9); color: var(--dl-text-bright); }
+.dl-btn.dl-danger:hover,
+.dl-btn.dl-danger:focus-visible {
+  color: var(--dl-error-icon);
+  border-color: color-mix(in srgb, var(--dl-error-icon) 25%, transparent);
+  background: color-mix(in srgb, var(--dl-error-icon) 10%, transparent);
+}
+.dl-btn-add {                             /* 尾行新建入口：虚线卡槽 */
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px;
+  border: 1px dashed var(--dl-border);
+  border-radius: var(--dl-r-card-md);
+  background: none;
+  color: var(--dl-text-muted);
+  font-family: inherit;
+  font-size: var(--dl-fs-body);
+  cursor: pointer;
+}
+.dl-btn-add:hover { background: var(--color-frame-hover, #e5e6e9); color: var(--dl-text-bright); }
+
+/* ── 输入/下拉（13px 与正文同档 · 面板档 6px 10px · 卡内档 8px 12px）──── */
+.dl-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 10px;
+  font: 400 var(--dl-fs-body) var(--dl-font-ui);
+  border-radius: var(--dl-r-input);
+  border: 1px solid var(--dl-etched-border);
+  background: var(--dl-etched-bg);
+  color: var(--dl-text);
+  outline: none;
+  transition: border-color var(--dl-dur-2) ease, box-shadow var(--dl-dur-2) ease;
+}
+.dl-input:focus {
+  border-color: rgb(var(--dl-sapphire) / 0.4);
+  box-shadow: 0 0 0 2px rgb(var(--dl-sapphire) / 0.12);
+}
+.dl-input.dl-input-card { padding: 8px 12px; }  /* 卡内档（浮层卡里） */
+
+/* ── 列表行（rest = 8px 12px + hairline + hover wash；展开升卡）───────── */
+.dl-row-head {
+  display: flex;
+  align-items: center;
+  gap: var(--dl-sp-2);
+  width: 100%;
+  padding: 8px 12px;                       /* 9px 10px 已整改 */
+  background: none;
+  border: 0;
+  border-radius: var(--dl-r-card-sm);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dl-dur-2) ease;
+}
+.dl-row-head:hover { background: var(--color-frame-hover, #e5e6e9); }
+.dl-row-name {
+  font-size: var(--dl-fs-body);
+  font-weight: 600;
+  color: var(--dl-text-bright);
+}
+.dl-row + .dl-row { border-top: 1px solid color-mix(in srgb, var(--dl-border) 55%, transparent); }
+.dl-row[data-open] {
+  background: var(--dl-etched-bg);
+  border: 1px solid var(--dl-border);
+  border-radius: var(--dl-r-card-md);
+}
+
+/* ── 徽标 pill（10-11px · radius 4 · tint 底 + 25% 边 · 字中性）───────── */
+.dl-badge {
+  font-size: var(--dl-fs-meta);
+  padding: 1px 7px;
+  border-radius: var(--dl-r-badge);
+  border: 1px solid transparent;
+  color: var(--dl-text-muted);
+  background: color-mix(in srgb, var(--dl-text-muted) 12%, transparent);
+}
+.dl-badge.dl-badge-danger {
+  color: var(--dl-text-muted);
+  background: color-mix(in srgb, var(--dl-error-icon) 10%, transparent);
+  border-color: color-mix(in srgb, var(--dl-error-icon) 25%, transparent);
+}
+
+/* ── 图标眼（24px 热区 + 16px 线稿；静息 muted，hover 提升）────────────── */
+.dl-eye {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--dl-r-chip);
+  cursor: pointer;
+  color: var(--dl-text-muted);
+  line-height: 0;
+  transition: background var(--dl-dur-2) ease, color var(--dl-dur-2) ease;
+}
+.dl-eye:hover { color: var(--dl-text); background: var(--color-frame-hover, #e5e6e9); }
+
+/* ── 空态（一句现状 12px muted + 动作入口；禁孤句禁插图堆砌）──────────── */
+.dl-empty {
+  padding: var(--dl-sp-2) 0;
+  font-size: var(--dl-fs-hint);
+  color: var(--dl-text-muted);
+}
+
+/* ── 图标眼 SVG 底本（lucide v0.454 线稿，stroke=currentColor）────────── */
+/* eye:    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>
+   eye-off: 把 stroke 换到 secretsPanel.js EYE_OFF_SVG 同一份 path（仓内单源，此处不复制） */
