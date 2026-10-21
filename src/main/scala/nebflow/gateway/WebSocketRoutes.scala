@@ -809,14 +809,28 @@ class WebSocketRoutes(
    * Public API for external sources (e.g. bridge plugins) to inject a user message
    * into a session's agent. Reuses the same logic as WebSocket user messages:
    * rate limiting, UiMessage recording, agent routing.
+   *
+   * 社交通道入站媒体统一适配批（2026-10-20）：`attachments`（(path,name,mime)
+   * 指针）在场 ⇒ 三同一登记/渲染/构块，判据 = **控制台 uploads 管线同款**
+   * （`nebflow.bridge.UnifiedMedia` 单点）：
+   *   - 登记同一：attJson=[{name,type,path}]（mime `image/` 前缀 ⇒ image，否则
+   *     file——console :1770 同式）随 `UiMessage.User` 落盘；指针登记，字节留 media 根。
+   *   - 显示同一：`bridgeUser` 帧增加性 `attachments` 键，前端既有媒体气泡面接管
+   *     （文本面 = `content` 随文，纯媒体 = ""，与控制台纯图发送同形）。
+   *   - 读取同一：image ⇒ `ImageInject.prepareImage` 管线 ⇒ `ContentBlock.Image`
+   *     随 ExternalEvent.blocks 直入 LLM；file ⇒ 标签线文本（ReadTool 同面）。
+   * 模型面文本 = faces(origin, senderId, 标签线 + 随文)，marker 块照旧只进模型面；
+   * 构块失败（超帽/读失败）⇒ 块缺省、文本线仍送达（fail-closed 降级）。
+   * 缺省形参 = 全部既有调用点（纯文本注入）逐字现状。
    */
   def handleBridgeMessage(
     sessionId: String,
     content: String,
     senderId: Option[String] = None,
-    origin: Option[nebflow.bridge.BridgeOrigin] = None
+    origin: Option[nebflow.bridge.BridgeOrigin] = None,
+    attachments: List[nebflow.bridge.BridgeAttachment] = Nil
   ): IO[Unit] =
-    if content.isEmpty || sessionId.isEmpty then IO.unit
+    if (content.isEmpty && attachments.isEmpty) || sessionId.isEmpty then IO.unit
     else
       rateLimiter.check("bridge").flatMap { allowed =>
         if !allowed then logger.warn("Bridge rate limit exceeded")
@@ -832,43 +846,70 @@ class WebSocketRoutes(
           // [[nebflow.bridge.BridgeOrigin]]; `origin = None` (the default, and
           // every pre-existing caller) leaves every face byte-identical to the
           // pre-batch behaviour.
-          val faces = nebflow.bridge.BridgeOrigin.faces(origin, senderId, content)
+          val media = attachments.filter(_.path.trim.nonEmpty)
+          // 媒体统一适配批：标签线（控制台逐字同款）+ 随文 = 模型面的 content；
+          // 纯文本注入（media 空）⇒ content 原样（逐字现状）；显示面 = 随文
+          // （纯媒体 = ""，媒体卡接管聊天流——控制台纯图发送同形）。
+          val modelContent =
+            if media.isEmpty then content
+            else
+              val labels = nebflow.bridge.UnifiedMedia.labelLinesOf(media)
+              if content.trim.isEmpty then labels else labels + "\n" + content
+          val faces = nebflow.bridge.BridgeOrigin.faces(origin, senderId, modelContent)
           val source = senderId.map(id => s"[via bridge:$id]").getOrElse("[via bridge]")
           // The log line is diagnostic, not a display face: it may quote the
           // labelled model payload. The log file is never rendered as a chat
           // stream and never read back as a `UiMessage`.
           logger.info(s"Bridge message for session $sessionId: ${faces.modelPayload.take(60)}... $source") *>
-            // Record as UiMessage — DISPLAY face: bare content, no marker.
-            sharedResources.sessionStore
-              .appendUiMessages(
-                sessionId,
-                List(UiMessage.User(faces.sessionDisplay, Nil, timestamp = System.currentTimeMillis()))
-              )
-              .handleErrorWith(e => logger.warn(s"Failed to record bridge UiMessage: ${e.getMessage}")) *>
-            // Push to frontend in real-time so it shows without switching sessions
-            // — DISPLAY face: bare content, no marker.
-            wsHub.broadcast(
-              io.circe.Json.obj(
-                "type" -> "bridgeUser".asJson,
-                "sessionId" -> sessionId.asJson,
-                "text" -> faces.sessionDisplay.asJson
-              )
-            ) *>
-            // Use ExternalEvent instead of UserInput so the message is queued in
-            // pendingEvents and can be injected at the next ToolsComplete gap —
-            // avoids being stashed until the entire turn finishes.
-            // MODEL face: the payload KEEPS the marker block (the model must stay
-            // able to tell a bridged message from a local one); the structured
-            // origin rides along in `metadata` for later consumers.
-            ensureAgent(sessionId)(ref =>
-              ref ! AgentCommand.ExternalEvent(
-                source = "bridge",
-                eventType = "user-message",
-                payload = faces.modelPayload,
-                metadata = faces.metadata,
-                correlationId = None
-              )
-            )
+            // 媒体统一适配批：vision 块先构（控制台 images 同管线；失败 ⇒ Nil，
+            // 文本线仍送达）。逐件构块按序拼合（微信腿恒单件）。
+            media.traverse(a => nebflow.bridge.UnifiedMedia.imageBlocksOf(a)).flatMap { perItem =>
+              val imageBlocks = perItem.flatten
+              // 媒体指针的 attJson（控制台同形 [{name,type,path}]）；纯文本注入 = Nil 逐字现状。
+              val attJson = nebflow.bridge.UnifiedMedia.attJsonOf(media)
+              val displayText = if media.isEmpty then faces.sessionDisplay else content
+              // Record as UiMessage — DISPLAY face: bare content, no marker.
+              // 媒体统一适配批：attJson 随行落盘（控制台同位），历史/缓存恢复走
+              // 既有媒体行渲染面。
+              sharedResources.sessionStore
+                .appendUiMessages(
+                  sessionId,
+                  List(UiMessage.User(displayText, attJson, timestamp = System.currentTimeMillis()))
+                )
+                .handleErrorWith(e => logger.warn(s"Failed to record bridge UiMessage: ${e.getMessage}")) *>
+                // Push to frontend in real-time so it shows without switching sessions
+                // — DISPLAY face: bare content, no marker.
+                // 媒体统一适配批：`attachments` 键增加性并帧（旧前端忽略未知键 =
+                // 纯文本回落，协议零破坏）。
+                wsHub.broadcast(
+                  {
+                    val base = io.circe.Json.obj(
+                      "type" -> "bridgeUser".asJson,
+                      "sessionId" -> sessionId.asJson,
+                      "text" -> displayText.asJson
+                    )
+                    if attJson.isEmpty then base
+                    else base.deepMerge(io.circe.Json.obj("attachments" -> attJson.asJson))
+                  }
+                ) *>
+                // Use ExternalEvent instead of UserInput so the message is queued in
+                // pendingEvents and can be injected at the next ToolsComplete gap —
+                // avoids being stashed until the entire turn finishes.
+                // MODEL face: the payload KEEPS the marker block (the model must stay
+                // able to tell a bridged message from a local one); the structured
+                // origin rides along in `metadata` for later consumers.
+                // 媒体统一适配批：vision 块随 `blocks` 读取同管线直入 LLM 上下文。
+                ensureAgent(sessionId)(ref =>
+                  ref ! AgentCommand.ExternalEvent(
+                    source = "bridge",
+                    eventType = "user-message",
+                    payload = faces.modelPayload,
+                    metadata = faces.metadata,
+                    correlationId = None,
+                    blocks = Option(imageBlocks).filter(_.nonEmpty)
+                  )
+                )
+            }
       }
 
   /**

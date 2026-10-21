@@ -801,6 +801,66 @@
       });
     };
 
+    /* ── 媒体统一适配批（social-inbound-media-unify, 2026-10-20）probes ──
+       社交通道入站媒体的桥帧面：bridgeUser 帧的 attachments 透传腿、存量
+       「已存至」行识别器、hydrateMedia resolver 拒答的票腿回落。全部**加性**
+       绑定（既有探针零触碰）。 */
+
+    // fetch 记录（票腿铸票请求的观察面；img.src 元素加载不经 fetch，不在此列）。
+    window.__nfRequests = [];
+    const __origFetch = window.fetch.bind(window);
+    window.fetch = (...args) => {
+      try { window.__nfRequests.push(String(args && args[0])); } catch { /* probe only */ }
+      return __origFetch(...args);
+    };
+
+    /** A bridgeUser frame render: exactly what main.js's handler does
+        (attachments pass-through, empty-text media rows). Returns __seq. */
+    window.__bridgeMedia = async (text, atts) => {
+      window.__clearChat();
+      chatMod.renderUserBubble(text, atts || [], Date.now());
+      await raf2();
+      return window.__seq('#chat');
+    };
+
+    /** The unified media face's own readings (media tag / names / counts). */
+    window.__mediaFaceRead = () => {
+      const row = document.querySelector('#chat > .row.user-media');
+      const img = row && row.querySelector('.pop-img');
+      const vid = row && row.querySelector('.pop-video');
+      const card = row && row.querySelector('.file-card');
+      return {
+        rowPresent: !!row,
+        rowClass: row ? row.className : '',
+        mediaTag: img ? 'img' : (vid ? 'video' : ''),
+        mediaName: (img || vid) ? ((img || vid).dataset.nfName || '') : '',
+        mediaFailed: !!(img || vid) && (img || vid).classList.contains('nf-img-failed'),
+        cardName: card && card.querySelector('.fc-name') ? card.querySelector('.fc-name').textContent : '',
+        fileCards: row ? row.querySelectorAll('.file-card').length : 0,
+        textBubbles: document.querySelectorAll('#chat > .row.user > .bubble.user').length,
+      };
+    };
+
+    /** The single-source recognizers (unit surface, same module the render
+        branch consumes — no second copy in the spec). */
+    window.__legacyAtts = (text) => popMod.legacyMediaAttsOf(text);
+    window.__legacyUnify = (text, atts) => popMod.unifyUserMediaFace(text, atts);
+
+    /** The restore leg's row builder against a caller-provided attachment list
+        (the uploads resolver rides inside buildUserAttachmentRows — the same
+        construction the two replay legs run). */
+    window.__restoreRows = async (atts) => {
+      window.__clearChat();
+      const row = document.createElement('div');
+      row.className = 'row user';
+      chatEl.appendChild(row);
+      const mediaRow = persistMod.buildUserAttachmentRows(row, atts || []);
+      if (mediaRow) chatEl.appendChild(mediaRow);
+      await raf2();
+      await new Promise(r => setTimeout(r, 80));
+      return { seq: window.__seq('#chat'), face: window.__mediaFaceRead() };
+    };
+
     window.__ready = true;
   </script>
 </body>

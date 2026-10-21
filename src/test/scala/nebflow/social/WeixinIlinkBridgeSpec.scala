@@ -59,6 +59,10 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val injected: Ref[IO, List[(String, String, Option[String])]] =
       Ref.unsafe[IO, List[(String, String, Option[String])]](Nil)
 
+    // 媒体统一适配批（2026-10-20）：统一媒体缝的记录面——(session, 指针列表, origin)。
+    val mediaInjections: Ref[IO, List[(String, List[nebflow.bridge.BridgeAttachment], Option[nebflow.bridge.BridgeOrigin])]] =
+      Ref.unsafe[IO, List[(String, List[nebflow.bridge.BridgeAttachment], Option[nebflow.bridge.BridgeOrigin])]](Nil)
+
     val bound: Ref[IO, List[(String, String, Json)]] =
       Ref.unsafe[IO, List[(String, String, Json)]](Nil)
 
@@ -70,6 +74,18 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     ): IO[Unit] =
       if raiseOnInject then IO.raiseError(new RuntimeException("injected: peer leg failed"))
       else injected.update(_ :+ ((sessionId, content, senderId)))
+
+    // 生产装配覆盖语义：媒体指针走媒体缝（不再降级为纯文本 injectMessage）。
+    override def injectMessageWithMedia(
+      sessionId: String,
+      content: String,
+      senderId: Option[String],
+      origin: Option[nebflow.bridge.BridgeOrigin] = None,
+      attachments: List[nebflow.bridge.BridgeAttachment] = Nil
+    ): IO[Unit] =
+      if raiseOnInject then IO.raiseError(new RuntimeException("injected: peer leg failed"))
+      else mediaInjections.update(_ :+ ((sessionId, attachments, origin)))
+
     def interruptAgent(sessionId: String): IO[Unit] = IO.unit
     def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
     def listSessions: IO[List[SessionMeta]] = IO.pure(sessions)
@@ -1110,10 +1126,12 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
   // The side-car lands image/file/video items on disk BEFORE delivery and
   // rides mediaPath/mediaKind/mediaName/mediaMime with the placeholder label
   // still in `text`. The media arm sits ahead of both text arms: a landed
-  // path injects the 「[图片] 已存至 …」 line (the label is replaced); a path
-  // that died in between fails CLOSED to the bare label — still delivered
-  // (the side-car never holds its cursor for a media leg). Without a media
-  // path every pre-media arm is byte-identical (WI-R3 / WI-AB3 pin that).
+  // path rides the UNIFIED media seam as a (path,name,mime) pointer (媒体统一
+  // 适配批 2026-10-20 — classification/attJson/vision happen gateway-side with
+  // the console uploads pipeline); a path that died in between fails CLOSED
+  // to the bare label — still delivered (the side-car never holds its cursor
+  // for a media leg). Without a media path every pre-media arm is
+  // byte-identical (WI-R3 / WI-AB3 pin that).
 
   /**
    * A media-shaped inbound like the side-car sends it: the placeholder label
@@ -1182,7 +1200,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     )
   }
 
-  test("WI-M3 a landed media path injects the media line, replacing the shim's placeholder label") {
+  test("WI-M3 a landed media path rides the unified media seam as a POINTER (no text line, no vision guess here)") {
     val dir = os.temp.dir(prefix = "nb-weixin-media-")
     val media = dir / "m1-pic.png"
     os.write(media, "png")
@@ -1192,14 +1210,26 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
       _ <- started(p, c)
       v <- p.intake(c, mediaInbound(Some("wx_alice"), Some(media.toString)))
       got <- c.injected.get
+      gotMedia <- c.mediaInjections.get
     yield
       assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Injected("s1"))
+      assertEquals(got, List.empty, "the legacy text line is GONE — the media seam carries the pointer")
       assertEquals(
-        got,
+        gotMedia.map { case (sid, atts, origin) => (sid, atts, origin.map(_.channelId)) },
         List(
-          ("s1", WeixinIlinkBridgePlugin.mediaLine(media.toString, Some("image"), Some("pic.png")), Some("wx_alice"))
+          (
+            "s1",
+            List(
+              nebflow.bridge.BridgeAttachment(
+                media.toString,
+                Some("pic.png"),
+                None
+              )
+            ),
+            Some(WeixinIlinkBridgePlugin.Name)
+          )
         ),
-        "the label text the shim sent is REPLACED by the media line"
+        "the (path,name,mime) pointer + origin reach the unified seam (classification/attJson/vision live gateway-side)"
       )
   }
 
@@ -1225,7 +1255,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     }
   }
 
-  test("WI-M5 a media message from a NEW sender auto-binds (semantics unchanged) AND injects the media line") {
+  test("WI-M5 a media message from a NEW sender auto-binds (semantics unchanged) AND rides the media pointer seam") {
     val root = tmpRoot()
     val c = new RecordingCtx(Nil)
     val p = plugin(root = root)
@@ -1246,6 +1276,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
       )
       bound <- c.bound.get
       got <- c.injected.get
+      gotMedia <- c.mediaInjections.get
     yield
       assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Injected("s_default"))
       assertEquals(
@@ -1253,14 +1284,15 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
         List(("s_default", WeixinIlinkBridgePlugin.Name, Some("auto"))),
         "the binding semantics are unchanged (the address precedes the body)"
       )
+      assertEquals(got.map(_._2), List.empty, "no legacy text line rides the unified seam")
       assertEquals(
-        got.map(_._2),
-        List(WeixinIlinkBridgePlugin.mediaLine(media.toString, Some("file"), Some("report.pdf")))
+        gotMedia.map { case (sid, atts, _) => (sid, atts.map(a => (a.path, a.name))) },
+        List(("s_default", List((media.toString, Some("report.pdf")))))
       )
     end for
   }
 
-  test("WI-M6 an UNRESOLVABLE sender's media message rides the default-session fallback (no binding, media line)") {
+  test("WI-M6 an UNRESOLVABLE sender's media message rides the default-session fallback (pointer seam)") {
     val root = tmpRoot()
     val c = new RecordingCtx(Nil)
     val p = plugin(root = root)
@@ -1272,12 +1304,14 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
       v <- p.intake(c, mediaInbound(None, Some(media.toString)))
       bound <- c.bound.get
       got <- c.injected.get
+      gotMedia <- c.mediaInjections.get
     yield
       assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Injected("s_default"))
       assertEquals(bound, List.empty, "no binding without a resolvable sender id (unchanged)")
+      assertEquals(got.map(_._2), List.empty, "no legacy text line rides the unified seam")
       assertEquals(
-        got.map(_._2),
-        List(WeixinIlinkBridgePlugin.mediaLine(media.toString, Some("image"), Some("pic.png")))
+        gotMedia.map { case (sid, atts, _) => (sid, atts.map(a => (a.path, a.name))) },
+        List(("s_default", List((media.toString, Some("pic.png")))))
       )
   }
 

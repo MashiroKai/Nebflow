@@ -350,8 +350,9 @@ final class WeixinIlinkBridgePlugin(
           case None =>
             // weixin-inbound-media batch (2026-10-08): `in.mediaLanded` joins
             // the selector so the MEDIA ARM sits ahead of both text arms —
-            // a landed media path injects the 「[图片] 已存至 …」 line (the
-            // shim's placeholder label in `text` is replaced); without one,
+            // a landed media path rides the unified media seam as a (path,
+            // name, mime) POINTER (媒体统一适配批 2026-10-20：登记/显示/vision
+            // 构块全在网关注入点按控制台 uploads 管线完成); without one,
             // every arm below is byte-identical to the pre-media behaviour.
             (gateOpen, routes.get(in.routeKey), in.mediaLanded, in.text) match
               case (false, _, _, _) =>
@@ -408,19 +409,30 @@ final class WeixinIlinkBridgePlugin(
   // ───────── weixin-inbound-media batch: the media arm (intake 前置臂) ─────────
 
   /**
-   * The MEDIA ARM (weixin-inbound-media batch, 2026-10-08): a message whose
-   * item landed on disk injects [[mediaLine]] through the SAME text injection
-   * path ([[inject]] — the agent reads the file itself; nothing is uploaded
-   * or re-fetched here). Fail-closed on the path: a file that died between
-   * the side-car's landing and this injection logs a WARN and degrades to
-   * the bare placeholder label — the message is STILL delivered either way
-   * (the side-car's cursor is never held for a media leg, so a drop here
-   * would silently lose the media; the degrade keeps it visible).
+   * The MEDIA ARM (weixin-inbound-media batch, 2026-10-08; 媒体统一适配批
+   * 2026-10-20 改走统一媒体缝): a message whose item landed on disk hands the
+   * (path,name,mime) POINTER to the unified injection seam
+   * ([[BridgeContext.injectMessageWithMedia]]) — 登记/显示/vision 构块全在网关
+   * 唯一注入点按**控制台 uploads 管线同款判据**完成（类型识别 mime `image/` 前缀、
+   * attJson 同形、`ImageInject.prepareImage` 同管线）；本臂不再自拼「已存至」文本线
+   * （该线保留为降级面与飞书腿既有语义）。Fail-closed on the path: a file that
+   * died between the side-car's landing and this injection logs a WARN and
+   * degrades to the bare placeholder label — the message is STILL delivered
+   * either way (the side-car's cursor is never held for a media leg, so a drop
+   * here would silently lose the media; the degrade keeps it visible).
    */
   private def mediaArm(ctx: BridgeContext, in: Inbound, sessionId: String): IO[Verdict] =
     val p = in.mediaPath.map(_.trim).filter(_.nonEmpty).getOrElse("")
     mediaPathExists(p).flatMap {
-      case true => inject(ctx, in.copy(text = Some(mediaLine(p, in.mediaKind, in.mediaName))), sessionId)
+      case true =>
+        // 统一媒体缝（2026-10-20）：指针（path+原始名+mime）交网关统一登记/构块；
+        // text = 随文（iLink 媒体恒无随文 ⇒ None ⇒ ""）。
+        inject(
+          ctx,
+          in.copy(text = None),
+          sessionId,
+          List(nebflow.bridge.BridgeAttachment(p, in.mediaName, in.mediaMime))
+        )
       case false =>
         logger.warn(
           s"weixin-ilink bridge: media${in.messageId.fold("")(id => s" $id")} path missing at injection ($p) — " +
@@ -847,12 +859,26 @@ final class WeixinIlinkBridgePlugin(
       // injected for a no-text media message grew.
       mediaArmOrText(ctx, in, sessionId)
 
-  private def inject(ctx: BridgeContext, in: Inbound, sessionId: String): IO[Verdict] =
+  /**
+   * The text injection (with its SERVED accounting and log line). 媒体统一适配批
+   * （2026-10-20）：`media` 指针在场 ⇒ 改走统一媒体缝
+   * [[BridgeContext.injectMessageWithMedia]]（登记/显示/vision 构块在网关统一注入点
+   * 按控制台 uploads 管线完成）；`content` = 随文（iLink 媒体无随文 ⇒ ""）。
+   * 缺省（Nil）= 纯文本注入逐字现状。Verdict 口径不变（Injected）。
+   */
+  private def inject(
+    ctx: BridgeContext,
+    in: Inbound,
+    sessionId: String,
+    media: List[nebflow.bridge.BridgeAttachment] = Nil
+  ): IO[Verdict] =
     // bind-transactional 批: the session counts as SERVED from the first
     // injection — the discriminator the reply leg's escalation reads.
     servedRef.update(_ + sessionId) *>
       logger.info(s"weixin-ilink bridge: sender ${in.routeKey} -> session $sessionId") *>
-      ctx.injectMessage(sessionId, in.text.getOrElse(""), in.senderId, originOf(in)).as(Verdict.Injected(sessionId))
+      (if media.isEmpty then ctx.injectMessage(sessionId, in.text.getOrElse(""), in.senderId, originOf(in))
+       else ctx.injectMessageWithMedia(sessionId, in.text.getOrElse(""), in.senderId, originOf(in), media))
+        .as(Verdict.Injected(sessionId))
 
   /**
    * The channel-agnostic origin descriptor this bridge contributes. The channel
@@ -1471,8 +1497,9 @@ object WeixinIlinkBridgePlugin:
    * One inbound message handed over by the side-car. The four `media*`
    * fields (weixin-inbound-media batch, 2026-10-08) ride ONLY when the
    * side-car landed the item on local disk before delivery; the media arm
-   * ([[WeixinIlinkBridgePlugin.mediaLine]]) turns them into the injection
-   * line the agent reads.
+   * hands the pointer to the unified seam (媒体统一适配批 2026-10-20) — the
+   * 「已存至」 wording ([[WeixinIlinkBridgePlugin.mediaLine]]) survives as the
+   * Feishu leg's injection line and the frontend's legacy-row recognizer.
    */
   final case class Inbound(
     senderId: Option[String],

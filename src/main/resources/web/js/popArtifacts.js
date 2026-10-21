@@ -171,19 +171,19 @@ function hydrateMedia(el, item, onFail) {
     if (typeof onFail === 'function') onFail(el);
   };
   // #491 主题三: user attachments ride the uploads route, NOT the nf-file
-  // ticket — a resolver on the item replaces the ticket leg entirely (its null
-  // result is terminal: the URL builder refused the path, retrying through a
-  // different route cannot help).
+  // ticket — a resolver on the item replaces the ticket leg entirely.
+  // 媒体统一适配批（2026-10-20）：resolver **拒答**（null）不再是终态 —— 该路径
+  // 不属 uploads URL 族（社交通道入站媒体的指针登记落 media 根），回落**同一**
+  // nf-file 票腿（2026-10-07 撤门后同域判据，与 agent Pop 媒体同路由）；票腿也
+  // 404 才是终态失败。uploads 族路径仍由 resolver 命中，行为逐字不变。
   if (typeof item.resolver === 'function') {
     let url = null;
     try { url = item.resolver(path); } catch { url = null; }
     if (url) {
       el.addEventListener('error', () => fail());
       el.src = url;
-    } else {
-      fail();
+      return;
     }
-    return;
   }
   // No `once` on the error listener: the FIRST error arms the re-mint, and a
   // second error (re-mint also failed, or the re-minted URL 404s) must reach
@@ -705,6 +705,46 @@ function buildFileCard(item) {
   card.append(iconEl, meta, btn);
   meta.append(name, sub);
   return card;
+}
+
+/* ── 存量「已存至」兼容渲染（媒体统一适配批 2026-10-20）──────────────────
+ * 社交通道入站媒体统一前的存量行是**纯文本**注入：「[图片] 已存至 <path>
+ * （原始文件名 n），可用 Read 查看」（WeixinIlinkBridgePlugin.mediaLine 两种
+ * 拼装——微信腿存量 + 飞书腿现役同款）。识别器把该行**换算**成媒体附件
+ * （kind 标签→image/video/file，原始文件名→name，路径→path），让存量行走与
+ * 新登记行**同一张媒体气泡面**（buildUserMediaRow），文本气泡随之隐去。
+ * 严格匹配 = fail-open：不匹配/缺路径 ⇒ null（调用方保持原文本行渲染，零回归）。
+ * 识别纯前端（后端不迁移存量行）；文件已亡 ⇒ 媒体面自身的失败占位与控制台
+ * 失败脸同款（路径仍在灯箱/Canvas 可读）。 */
+
+/** mediaLine 的严格形状（两种拼装各一例）：
+ *   「[图片] 已存至 /root/m1-pic.png（原始文件名 pic.png），可用 Read 查看」
+ *   「[视频] 已存至 /root/m2-clip.mp4，可用 Read 查看」 */
+const LEGACY_MEDIA_LINE = /^\[(图片|视频|文件)\] 已存至 (.+?)(?:（原始文件名 (.+)）)?，可用 Read 查看$/;
+
+/** kind 标签 → 附件 type（识别是**恢复**不是分类：kind 原样带回最富形态——
+ * 新登记行的 type 判据仍是控制台管线的 image|file，两侧各守其源）。 */
+const LEGACY_MEDIA_TYPE = { '图片': 'image', '视频': 'video', '文件': 'file' };
+
+/** @returns {Array|null} 换算出的媒体附件数组；非媒体行 ⇒ null。 */
+export function legacyMediaAttsOf(text) {
+  if (typeof text !== 'string') return null;
+  const m = LEGACY_MEDIA_LINE.exec(text.trim());
+  if (!m) return null;
+  const path = (m[2] || '').trim();
+  if (!path || path.includes('..')) return null;
+  const name = (m[3] || '').trim() || path.split('/').pop() || 'file';
+  return [{ type: LEGACY_MEDIA_TYPE[m[1]] || 'file', name, path }];
+}
+
+/** Live 渲染/历史恢复共用的行级换算：附件在场 ⇒ 原样；否则试存量识别。
+ *  返回 {atts, text} —— atts = 有效附件；text = 仍需文本气泡的内容
+ *  （媒体接管 ⇒ ''，与控制台纯图发送同形）。 */
+export function unifyUserMediaFace(text, attachments) {
+  const atts = Array.isArray(attachments) ? attachments.filter(a => a && typeof a === 'object') : [];
+  if (atts.length) return { atts, text: text || '' };
+  const legacy = legacyMediaAttsOf(text);
+  return legacy ? { atts: legacy, text: '' } : { atts, text: text || '' };
 }
 
 /* ─────────────── row assembly ─────────────── */

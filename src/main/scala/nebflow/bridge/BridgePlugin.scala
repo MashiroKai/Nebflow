@@ -57,6 +57,28 @@ trait BridgeContext:
     origin: Option[BridgeOrigin] = None
   ): IO[Unit]
 
+  /**
+   * 社交通道入站媒体统一适配（weixin-inbound-media-unify batch, 2026-10-20）：
+   * 渠道入站媒体（图片/文件/视频，sidecar 已落本机盘）经**指针登记**注入会话。
+   *
+   *   - `content` = 随文正文（等价控制台帧的 `content`；纯媒体消息 = ""）
+   *   - `attachments` = (path,name,mime) 指针列表 —— 渠道零知识：分类/登记/构块全在
+   *     网关统一注入点按**控制台 uploads 管线同款判据**完成（mime startsWith "image/"
+   *     ⇒ image，否则 file；图片构块走 ImageInject.prepareImage 同一实现）。
+   *   - `origin` = 渠道来源（source-marker 照旧只进模型面）。
+   *
+   * 🔴 **default 实现 = 降级委托 `injectMessage`**：无媒体指针/旧实现/离线 fake
+   * 逐字行为不变（飞书腿 2026-10-20 仅接口就位，零改动）；生产装配覆盖为媒体面。
+   */
+  def injectMessageWithMedia(
+    sessionId: String,
+    content: String,
+    senderId: Option[String],
+    origin: Option[BridgeOrigin] = None,
+    attachments: List[BridgeAttachment] = Nil
+  ): IO[Unit] =
+    injectMessage(sessionId, content, senderId, origin)
+
   /** Interrupt the agent's current turn for a session. */
   def interruptAgent(sessionId: String): IO[Unit]
 
@@ -112,6 +134,28 @@ trait BridgeContext:
    */
   def cancelInteractionRequest(requestId: String, reason: String, by: String): IO[Unit] = IO.unit
 end BridgeContext
+
+/**
+ * One channel-inbound media item, reduced to its LOCAL-DISK POINTER (social
+ * channel inbound media unified adaptation batch, 2026-10-20). The sidecar has
+ * already landed the bytes; the pointer is all the unified registration needs —
+ * classification (image vs file), the ui.json attachment row and the vision
+ * blocks are built at the gateway's single injection point with the CONSOLE
+ * uploads-pipeline criteria. Channel-agnostic by construction: the WeChat leg
+ * fills it today, the Feishu leg's interface is reserved (no behavior change).
+ *
+ *   - `path` — absolute local path of the landed item (fail-closed: the caller
+ *     probes existence before handing the pointer over).
+ *   - `name` — the original file name when the wire carried one (display +
+ *     Canvas title); absent ⇒ the path basename.
+ *   - `mime` — the sniffed MIME type; the classification criterion
+ *     (`startsWith("image/")`) is the console leg's own gate, never re-derived.
+ */
+final case class BridgeAttachment(
+  path: String,
+  name: Option[String] = None,
+  mime: Option[String] = None
+)
 
 /**
  * Where an inbound message came from, expressed channel-agnostically: a stable

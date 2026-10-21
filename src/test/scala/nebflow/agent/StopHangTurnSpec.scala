@@ -167,7 +167,7 @@ class StopHangTurnSpec extends CatsEffectSuite:
             counter.get.flatMap { n =>
               parentEvents.get.flatMap { evs =>
                 if n >= 2 && evs.exists {
-                    case AgentCommand.ExternalEvent(_, eventType, _, _, _) => eventType == "completed"
+                    case AgentCommand.ExternalEvent(_, eventType, _, _, _, _) => eventType == "completed"
                     case _ => false
                   }
                 then IO.unit

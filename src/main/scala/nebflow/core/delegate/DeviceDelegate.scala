@@ -444,7 +444,7 @@ $task"""
   ): Behavior[AgentCommand] =
     Behaviors.receiveMessage { cmd =>
       cmd match
-        case AgentCommand.ExternalEvent(source, eventType, payloadText, metadata, _) =>
+        case AgentCommand.ExternalEvent(source, eventType, payloadText, metadata, _, _) =>
           val pointers = extractPointers(metadata, selfDeviceId)
           val result = Json.obj(
             "kind" -> KindResult.asJson,

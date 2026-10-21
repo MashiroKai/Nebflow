@@ -1213,12 +1213,12 @@ class FreezeGateSpec extends CatsEffectSuite:
         )
         _ <- waitUntil(System.currentTimeMillis() + 5000)(
           parentEvents.get.map(_.exists {
-            case AgentCommand.ExternalEvent(_, eventType, _, _, _) => eventType == "error-escalated"
+            case AgentCommand.ExternalEvent(_, eventType, _, _, _, _) => eventType == "error-escalated"
             case _ => false
           })
         )
         parentGot <- parentEvents.get.map(_.collectFirst {
-          case AgentCommand.ExternalEvent(_, eventType, _, metadata, _) if eventType == "error-escalated" =>
+          case AgentCommand.ExternalEvent(_, eventType, _, metadata, _, _) if eventType == "error-escalated" =>
             metadata("reason").flatMap(_.as[String].toOption).getOrElse("")
         })
         _ = assertEquals(parentGot, Some("llm-transient"), "escalation event must carry the freeze reason")

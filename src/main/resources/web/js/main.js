@@ -2370,13 +2370,18 @@ onMessage('deviceMailInjectFailed', (msg) => {
 });
 
 // --- Bridge user message (e.g. from external platform) ---
+// 媒体统一适配批（2026-10-20）：帧上的 `attachments`（社交通道入站媒体指针登记
+// 行 [{name,type,path}]，控制台 attJson 同形）增加性透传 —— renderUserBubble 的
+// 既有媒体气泡面接管（图=Pop 媒体面/文件=文件卡，字节走 nf-file 票腿）；旧后端
+// 缺该键 ⇒ []（纯文本行，逐字现状）。存量行随缓存/ui.json 恢复时走
+// unifyUserMediaFace 的「已存至」识别（popArtifacts 单点）。
 onMessage('bridgeUser', (msg, view) => {
   const sid = msg.sessionId;
   if (!sid) return;
   state.turnExpecting[sid] = true;
-  saveMsg({type: 'user', text: msg.text}, sid);
+  saveMsg({type: 'user', text: msg.text, attachments: Array.isArray(msg.attachments) ? msg.attachments : []}, sid);
   if (sid === state.activeSessionId) {
-    renderUserBubble(msg.text, []);
+    renderUserBubble(msg.text, Array.isArray(msg.attachments) ? msg.attachments : []);
     smartScroll();
   }
 });

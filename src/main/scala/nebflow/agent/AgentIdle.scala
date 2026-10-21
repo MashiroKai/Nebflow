@@ -318,7 +318,7 @@ private[agent] object AgentIdle:
       case n: AgentCommand.BackgroundTaskNotification =>
         forwardBackgroundTaskNotification(n)(IO.pure(idle(agentDef, resources, depth, parentRef, state)))
 
-      case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId) =>
+      case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId, _) =>
         logAgentEvent(
           agentDef,
           depth,
@@ -408,10 +408,12 @@ private[agent] object AgentIdle:
               parentRef,
               state
                 .withMessages(
-                  state.messages :+ Message(
-                    MessageRole.User,
-                    Left(injectionText),
-                    source = visSource.orElse(Some("external"))
+                  // 媒体统一适配批（2026-10-20）：组装单点 immediateEventMessage——
+                  // 带块事件（桥媒体）⇒ Right(Text+blocks)，无块 ⇒ Left 逐字现状。
+                  state.messages :+ immediateEventMessage(
+                    injectionText,
+                    event,
+                    visSource.orElse(Some("external"))
                   )
                 )
                 .withOutstandingSubagentResults(newOutstanding)
@@ -477,10 +479,12 @@ private[agent] object AgentIdle:
                     // Reminder refactor (2026-08-20): always carry a source marker —
                     // external-event turns are system events, not real user input
                     // (fromUser = Message.source.isEmpty).
-                    state.messages :+ Message(
-                      MessageRole.User,
-                      Left(injectionText),
-                      source = visSource.orElse(Some("external"))
+                    // 媒体统一适配批（2026-10-20）：组装单点 immediateEventMessage——
+                    // 带块事件（桥媒体）⇒ Right(Text+blocks)，无块 ⇒ Left 逐字现状。
+                    state.messages :+ immediateEventMessage(
+                      injectionText,
+                      event,
+                      visSource.orElse(Some("external"))
                     )
                   )
                   // #25: apply the barrier decrement. Pre-fix this branch

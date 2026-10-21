@@ -129,7 +129,7 @@ class TeamMemberFailureNotifySpec extends CatsEffectSuite:
           _ <- member ! AgentCommand.UserInput("finish the W2 report")
           _ <- waitUntil(10.seconds)(
             received.get.map(_.exists {
-              case AgentCommand.ExternalEvent(_, eventType, _, _, _) => eventType == "failed"
+              case AgentCommand.ExternalEvent(_, eventType, _, _, _, _) => eventType == "failed"
               case _ => false
             })
           )
