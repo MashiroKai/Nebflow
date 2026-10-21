@@ -625,7 +625,8 @@ final class NeblinkRelayTunnel(
       // Phase 3b (plan §5 row 2): the binding-dead signal now revokes the
       // SAME three faces the bridge's BindingControl(revoked) row revokes —
       // console tickets + relay-mint sessions + nf path-read tickets. Two
-      // entries, ONE semantics (v3 :184 "no 12h residual window").
+      // entries, ONE semantics (v3 :184 "no residual window" — the ceiling
+      // it referenced then was 12h, today 30d; immediacy is the invariant).
       for
         _ <- portalDeps.fold(IO.unit)(_.bindingState.markUnbound().void)
         dropped <- portalDeps.fold(IO.pure((0, 0, 0))) { deps =>

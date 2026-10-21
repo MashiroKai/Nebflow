@@ -11,7 +11,7 @@ import scala.concurrent.duration.*
  * The `/?ticket=` redemption face (phase 3b, plan §3 / criterion 4 + 3):
  *
  *  - success: 303 See Other to "/" carrying the frozen session-cookie
- *    attribute set (HttpOnly / SameSite=Lax / Path=/ / Max-Age=43200
+ *    attribute set (HttpOnly / SameSite=Lax / Path=/ / Max-Age=absolute TTL
  *    / host-only, criterion 4's response-header face) — with `Secure` IFF the
  *    consuming browser origin is HTTPS (#522): direct https and
  *    tunnel-marked (relay console) legs carry `Secure`; a plain-http DIRECT
@@ -78,7 +78,7 @@ class ConsoleTicketRoutesSpec extends CatsEffectSuite:
       _ = assert(c.contains("HttpOnly"), c)
       _ = assert(c.contains("SameSite=Lax"), c)
       _ = assert(c.contains("Path=/"), c)
-      _ = assert(c.contains("Max-Age=43200"), c)
+      _ = assert(c.contains(s"Max-Age=${GatewaySessionStore.AbsoluteTtlSeconds}"), c)
       _ = assert(!c.toLowerCase.contains("domain="), s"host-only: no Domain attribute: $c")
       // #522: this request is plain-http and unmarked (the local console's
       // exact shape) — `Secure` must be ABSENT, or WebKit drops the cookie and

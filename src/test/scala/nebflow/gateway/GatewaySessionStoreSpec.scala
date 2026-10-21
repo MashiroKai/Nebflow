@@ -7,13 +7,15 @@ import cats.syntax.all.*
 import scala.concurrent.duration.*
 
 /**
- * GatewaySessionStore unit tests (phase 3b, plan §2): mint/verify, the 12h
- * absolute ceiling, the 2h sliding window (capped at the ceiling),
+ * GatewaySessionStore unit tests (phase 3b, plan §2): mint/verify, the 30d
+ * absolute ceiling, the 7d sliding window (capped at the ceiling),
  * expired-then-gone in the same transition, and the three revocation faces
  * (masked-id prefix / all / relay-mint-only origin filter).
  *
  * Shortened TTLs are injected through the test seam (`create(absolute,
- * idle)`) — production constants are 43200/7200 and must not be waited out.
+ * idle)`) — production constants are 2592000/604800 and must not be waited
+ * out; the values themselves are pinned verbatim in the cookie-attribute
+ * test below (session TTL batch 2026-10-21: 12h/2h → 30d/7d).
  */
 class GatewaySessionStoreSpec extends CatsEffectSuite:
 
@@ -70,7 +72,7 @@ class GatewaySessionStoreSpec extends CatsEffectSuite:
       rec <- store.create("u", "relay-mint", "net")
       _ <- IO.sleep(1100.millis)
       after <- store.verifyAndTouch(rec.sessionId)
-      _ = assert(after.isEmpty, "the 12h absolute ceiling must never be renewed away")
+      _ = assert(after.isEmpty, "the 30d absolute ceiling must never be renewed away")
     yield ()
 
   test("revokeRelayMinted drops ONLY relay-mint sessions (break-glass local-ticket survives)"):
@@ -125,10 +127,14 @@ class GatewaySessionStoreSpec extends CatsEffectSuite:
     yield ()
 
   test("the session cookie carries the frozen attribute set (criterion 4, response-header face)"):
+    // Session TTL batch (2026-10-21): the production values themselves are
+    // pinned HERE so a silent TTL drift fails the suite (was 43200/7200).
+    assertEquals(GatewaySessionStore.AbsoluteTtlSeconds, 2592000L, "absolute ceiling = 30d")
+    assertEquals(GatewaySessionStore.IdleTimeoutSeconds, 604800L, "sliding idle window = 7d")
     val cookie = GatewaySessionStore.newCookie("abc123")
     assertEquals(cookie.name, GatewaySessionStore.CookieName)
     assertEquals(cookie.content, "abc123")
-    assertEquals(cookie.maxAge, Some(GatewaySessionStore.AbsoluteTtlSeconds), "Max-Age=43200 (12h)")
+    assertEquals(cookie.maxAge, Some(GatewaySessionStore.AbsoluteTtlSeconds), "Max-Age=2592000 (30d)")
     assertEquals(cookie.sameSite, Some(org.http4s.SameSite.Lax), "SameSite=Lax")
     assert(cookie.secure, "Secure is the DEFAULT (https / tunnel-marked faces)")
     assert(cookie.httpOnly, "HttpOnly")

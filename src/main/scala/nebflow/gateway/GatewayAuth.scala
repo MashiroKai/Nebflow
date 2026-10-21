@@ -97,7 +97,7 @@ object GatewayAuth:
    *
    * 顺带语义（无害申报）：verifyAndTouch 先于本判据发生，off-leg 重放会推进
    * 该会话的滑动窗——但重放方在该判据下永远拿不到任何面，推进只惠及本机
-   * 合法用户，且 12h 绝对上限不豁免。
+   * 合法用户，且 30d 绝对上限不豁免（原 12h，session TTL 批 2026-10-21）。
    */
   def localTicketOnLeg(record: SessionRecord, r: Request[?]): Boolean =
     record.origin != GatewaySessionStore.OriginLocalTicket || LoopbackLeg.isLoopback(r)

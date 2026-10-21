@@ -116,6 +116,59 @@ try {
   await sleep(200);
   ok('④ 冷却窗内 reload 后 403 不再横幅（防连环刷新）',
     await page.locator('[data-session-gate="1"]').count() === 0);
+
+  // ⑤ 会话保活腿（session TTL 批 2026-10-21）：入座证实后武装 12h 一拍保活；
+  //    204 拍零动作（滑动已在拍内发生）、403 拍走自愈腿、网络错拍静默、武装幂等。
+  await page.reload(); // 模块态/单飞归零（sessionStorage 冷却键先清，防 403 拍落冷却窗）
+  await page.evaluate(() => {
+    Object.keys(sessionStorage).filter((k) => k.includes('auth_gate_at')).forEach((k) => sessionStorage.removeItem(k));
+  });
+  await page.evaluate(async () => {
+    const mod = await import('/js/sessionGate.js');
+    window.__gate = mod;
+    mod._sessionGateTestHooks().setReload(() => {
+      window.__reloads = (window.__reloads || 0) + 1;
+    });
+    window.__kaTicks = [];
+    mod._keepaliveTestHooks().setSchedule((fn, ms) => {
+      window.__kaTicks.push({ fn, ms });
+      return 0;
+    });
+    mod._keepaliveTestHooks().setFetch(() =>
+      window.__kaStatus === 'reject'
+        ? Promise.reject(new TypeError('network down'))
+        : Promise.resolve({ status: window.__kaStatus })
+    );
+  });
+  ok('⑤ 保活拍间隔 = 12h', await page.evaluate(() => window.__gate.KEEPALIVE_INTERVAL_MS === 12 * 60 * 60 * 1000));
+  await page.evaluate(() => {
+    window.__kaStatus = 204;
+    window.__gate.armSessionKeepalive();
+    window.__gate.armSessionKeepalive(); // 幂等：二次武装不得叠拍
+  });
+  ok('⑤ 武装幂等：恰好注册一拍', await page.evaluate(() => window.__kaTicks.length === 1));
+  ok('⑤ 注册间隔为 KEEPALIVE_INTERVAL_MS',
+    await page.evaluate(() => window.__kaTicks[0].ms === window.__gate.KEEPALIVE_INTERVAL_MS));
+  await page.evaluate(() => window.__kaTicks[0].fn());
+  await sleep(200);
+  ok('⑤ 204 拍零动作（不横幅不 reload）',
+    await page.evaluate(() => !document.querySelector('[data-session-gate="1"]') && !(window.__reloads > 0)));
+  await page.evaluate(() => {
+    window.__kaStatus = 'reject';
+    return window.__kaTicks[0].fn();
+  });
+  await sleep(200);
+  ok('⑤ 网络错拍静默（离线抖动不是会话死亡）',
+    await page.evaluate(() => !document.querySelector('[data-session-gate="1"]') && !(window.__reloads > 0)));
+  await page.evaluate(() => {
+    window.__kaStatus = 403;
+    return window.__kaTicks[0].fn();
+  });
+  await sleep(300);
+  ok('⑤ 403 拍拉起横幅（keepalive 触发面读数）',
+    (await page.locator('[data-session-gate="1"]').getAttribute('data-source')) === 'keepalive');
+  await sleep(1500);
+  ok('⑤ 403 拍拉自愈 reload 腿', (await page.evaluate(() => window.__reloads)) === 1);
 } finally {
   await browser.close();
   server.close();
