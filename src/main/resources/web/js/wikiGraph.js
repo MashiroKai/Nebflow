@@ -1,4 +1,4 @@
-// wikiGraph.js — Wiki document graph (Obsidian-style force-directed map).
+// wikiGraph.js — Wiki document graph (极简化 redesign, 2026-10-21 batch).
 //
 // The Canvas tab `wiki-graph` renders the merged document graph served by
 // GET /api/wiki/graph: one node per markdown document across every project's
@@ -6,22 +6,27 @@
 // projects scanned through the NebLink browse channel), one edge per
 // Obsidian wikilink / markdown link / embed.
 //
-// Interaction model follows the Obsidian graph view: drag to pan, wheel to
-// zoom, drag a node to pull the layout, click a node to open the document
-// (local files open as Canvas file tabs; remote docs are fetched read-only
-// through /api/wiki/remote-doc). Hovering highlights the node's neighborhood;
-// the toolbar search dims everything that does not match.
+// This is the design-doc implementation (docs/design/wiki-graph-redesign-
+// design.zh-CN.md — 批准实施批): the five old parallel channels (facet
+// dropdowns, zoom cluster, explorer-hosted file list, glow/pulse/degree-gray
+// node encodings, direct click-through) are retired in favor of the sample's
+// three-control face — search box, directory chips, info line — plus:
+//   hover   → tooltip (title + summary + degree), neighborhood stays lit
+//   click   → preview card slides in (280px): summary, TOC, in/out refs,
+//             badges, 打开文档 button (the only path that leaves the view)
+//   broken  → unresolved references never become nodes; they are counted in
+//             the info line and listed in a bottom-left overlay
+// Nodes are solid graphite dots (degree → radius 5-11 + ink depth), edges are
+// 1px straight muted lines. No glow, no pulse, no accent hue, no persistent
+// animation (the force loop stops once the layout settles).
 //
-// Styling is the Glass Aurora skin (draftB port, 2026-10-16): aurora wash on
-// the pane, glass command bar + facet pills + right sidebar + zoom cluster
-// (css/split.css), curved sapphire edges, bead tooltip. Nodes are GRAYSCALE by
-// author ruling (2026-10-16): a low-saturation gray family layered by degree
-// (hubs darker → the map's structure reads at a glance), node TYPE carried by
-// shape/stroke (filled circle doc / stroked rounded-square attachment / dashed
-// hollow stub / ringed resolved doc), never by flashy hue. Sapphire stays the
-// single interaction accent (hover edge + hover/focus rings). No new vendor
-// dependencies — the force simulation is a small velocity-Verlet loop sized
-// for vault-scale graphs (hundreds of nodes).
+// Label density (代审追加整改): the default state labels ONLY the top-N hub
+// nodes (by reference degree) — the sample's all-labels default overlapped in
+// the dense center. Remaining labels fade in with hover (neighborhood) and
+// zoom (linear ramp up to all labels at LABEL_ALL_AT_SCALE).
+//
+// No new vendor dependencies — the force simulation stays the small
+// velocity-Verlet loop sized for vault-scale graphs (hundreds of nodes).
 
 import { t } from './i18n.js';
 import { authHeaders } from './flowHelpers.js';
@@ -29,59 +34,18 @@ import { authHeaders } from './flowHelpers.js';
 const TAB_ID = 'wiki-graph';
 const GRAPH_API = '/api/wiki/graph';
 
-// Aurora-gray node family, one ramp per theme (dark inverts lightness so the
-// nodes keep reading against the aurora wash). Degree maps onto the leaf→hub
-// lightness step; attachments take the mid step + a stroke; stubs stay hollow.
-const GRAY_RAMP = {
-  light: { hub: '#3f444c', mid: '#5d626b', leaf: '#8b919a', attach: '#6e7076',
-           stroke: '#2a2e34', stub: '#9aa0a8', doneRing: '#3f444c',
-           label: '#1c1e22', labelMuted: 'rgba(58,62,68,0.78)' },
-  dark:  { hub: '#bcc2cc', mid: '#949aa4', leaf: '#6a6f78', attach: '#7e848d',
-           stroke: '#e8ebef', stub: '#7a8089', doneRing: '#d4d9e0',
-           label: '#e8ebef', labelMuted: 'rgba(198,203,210,0.72)' },
-};
+// Label density knobs (代审整改): hubs labeled by default; zoom reveals the
+// rest linearly until everything is labeled at LABEL_ALL_AT_SCALE.
+const LABEL_HUBS = 12;
+const LABEL_ALL_AT_SCALE = 1.5;
+const ZOOM_MIN = 0.08; // design §3: 8%–320%
+const ZOOM_MAX = 3.2;
+const LABEL_MAX_CHARS = 22;   // canvas label truncation (design §4)
+const SUMMARY_TIP_CHARS = 0;  // tooltip summary clamps by CSS line-clamp, not chars
 
-// Sidebar project dots: fixed gray steps — project identity stays visible in
-// the panel without re-introducing hue on the canvas.
-const PROJECT_DOTS = ['#3f444c', '#71767e', '#9aa0a8', '#c2c6cc'];
-
-// Sapphire edge colors (canvas has no CSS var access) — matches the draftB
-// colorRules mapping (hover edge → strong sapphire; normal → fine sapphire
-// line; filtered-out → near-invisible).
-const EDGE = { hover: 'rgba(91,127,191,0.9)', normal: 'rgba(91,127,191,0.28)', dim: 'rgba(91,127,191,0.07)' };
-const EDGE_BEND = 0.10;          // quadratic bow (draftB `bend`)
-const GLOW = { hover: 30, idle: 9, attachHover: 26, attachIdle: 7 }; // draftB glowBoost ×2.4
-
-// Frontmatter statuses that mark RESOLVED work (research: solved/concluded;
-// engineering: accepted/done; learning: mastered) — ring on the node.
-const DONE_STATUSES = /^(solved|resolved|done|concluded|accepted|mastered|published|closed)$/i;
-
-function hexToRgb(hex) {
-  const v = parseInt(hex.slice(1), 16);
-  return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
-}
-
-/** Mix two ramp grays by t∈[0,1] → layered node color (degree shading). */
-function mixGray(aHex, bHex, t) {
-  const a = hexToRgb(aHex), b = hexToRgb(bHex);
-  return `rgb(${Math.round(a[0] + (b[0] - a[0]) * t)},${Math.round(a[1] + (b[1] - a[1]) * t)},${Math.round(a[2] + (b[2] - a[2]) * t)})`;
-}
-
-/** The theme ramp the canvas currently draws with (prefers-color-scheme). */
-function themeRamp() {
-  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
-    ? GRAY_RAMP.dark : GRAY_RAMP.light;
-}
-
-function roundedRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-}
+/** @typedef {{ref:any, id:string, label:string, dir:string, isAttach:boolean,
+ *             x:number, y:number, vx:number, vy:number, degree:number, rank:number,
+ *             out:Array<any>, inc:Array<any>, dimmed:boolean}} WgNode */
 
 /**
  * Live state of the wiki graph tab (one instance at a time).
@@ -90,30 +54,30 @@ function roundedRect(ctx, x, y, w, h, r) {
  * @property {HTMLCanvasElement} canvas
  * @property {CanvasRenderingContext2D} ctx
  * @property {any} data
- * @property {{nodes: Array<any>, edges: Array<any>, degree: Map<string, number>, alpha: number} | null} sim
+ * @property {{nodes: WgNode[], edges: {a:WgNode,b:WgNode}[], alpha: number} | null} sim
  * @property {number} raf
  * @property {string} focusId
- * @property {string} filter
- * @property {Map<string, any>} byId
- * @property {any} focusNode
- * @property {number} focusPulse
+ * @property {Map<string, WgNode>} byId
+ * @property {WgNode | null} hover
+ * @property {WgNode | null} selected
  * @property {number} vx
  * @property {number} vy
  * @property {number} scale
- * @property {any} dragging
+ * @property {WgNode | null} dragging
  * @property {boolean} panning
- * @property {any} hover
  * @property {{px: number, py: number} | null} lastPointer
  * @property {ResizeObserver | null} resizeObs
  * @property {number} W
  * @property {number} H
- * @property {{text: string, muted: string} | null} colors
- * @property {string} facetKind
- * @property {string} facetType
- * @property {string} facetStatus
+ * @property {{ink: string, muted: string, line: string} | null} colors
+ * @property {string} filter
+ * @property {string} dirFilter
+ * @property {string[]} dirs
+ * @property {{from: string, target: string}[]} unresolved
+ * @property {{name: string, error: string, stub: boolean}[]} projectErrors
  * @property {MediaQueryList | null} themeMQ
  * @property {(() => void) | null} onThemeChange
- * @property {{hub: string, mid: string, leaf: string, attach: string, stroke: string, stub: string, doneRing: string, label: string, labelMuted: string} | null} ramp
+ * @property {(() => void) | null} onKey
  */
 
 /** @type {WikiViewState | null} */
@@ -124,7 +88,18 @@ export async function openWikiGraphTab(focusNodeId = '') {
   const canvas = await import('./canvas.js');
   const entry = canvas.openTab(TAB_ID, t('wiki.tabTitle'), { type: TAB_ID, closable: true });
   if (!entry) return;
-  if (focusNodeId) view ? (view.focusId = focusNodeId) : (pendingFocus = focusNodeId);
+  if (focusNodeId) {
+    // Tab already live: select + center + preview directly (the renderInto
+    // idempotence guard would otherwise swallow the focus request).
+    if (view && view.pane === entry.paneEl && view.canvas && view.canvas.isConnected) {
+      const n = view.byId.get(focusNodeId);
+      if (n) { select(n, true); return; }
+      view.focusId = focusNodeId; // not in the loaded data — retry after refetch
+      rebuildSim();
+      return;
+    }
+    pendingFocus = focusNodeId; // fresh/restore render applies it in rebuildSim
+  }
   await renderInto(entry.paneEl);
 }
 
@@ -154,16 +129,10 @@ import('./canvas.js').then(({ getTabPane }) => {
   if (pane && pane.classList.contains('active')) renderInto(pane);
 }).catch(() => { /* canvas unavailable (embedded/test) — skip */ });
 
-// Tab close: stop the animation loop — a detached canvas must not keep a
-// requestAnimationFrame cycle (and its CPU) alive — and hand the explorer
-// panel space back to the file tree.
+// Tab close: stop the animation loop and drop every document-level listener —
+// a closed tab must not keep a rAF cycle (and its CPU) alive.
 document.addEventListener('canvas-tab-closed', (/** @type {CustomEvent} */ e) => {
-  if (e.detail && e.detail.id === TAB_ID) {
-    teardown(); unmountGraphExplorerList();
-    // R6: closing the tab also ends the viewing session (and R9 holds — the
-    // Side Bar is never touched here).
-    graphSidebarDismissed = false;
-  }
+  if (e.detail && e.detail.id === TAB_ID) teardown();
 });
 
 /** Debounced refetch when the tab is re-activated (canvas.js panelTabRefresh). */
@@ -178,141 +147,93 @@ export function rerenderWikiGraph() {
 
 async function renderInto(pane) {
   if (view && view.pane === pane && view.canvas && view.canvas.isConnected) {
-    if (pendingFocus) { view.focusId = pendingFocus; pendingFocus = ''; }
+    if (pendingFocus) { view.focusId = pendingFocus; pendingFocus = ''; rebuildSim(); }
     return;
   }
   teardown();
   pane.innerHTML = '';
-  pane.classList.add('wiki-graph-pane', 'wx-B');
+  pane.classList.add('wiki-graph-pane');
 
-  const bar = document.createElement('div');
-  bar.className = 'wiki-toolbar';
-
-  // Filter documents → nf-findbar mode (§4): the glass command bar stays the
-  // container; the input is a borderless transparent field inside it, with a
-  // leading 14px magnifier (1.8 stroke). The bar's :focus-within ring (CSS)
-  // is the focus affordance.
+  // ── The three controls (design §3/§4): search box + directory chips ──
+  const topbar = document.createElement('div');
+  topbar.className = 'wg-topbar';
   const searchWrap = document.createElement('div');
-  searchWrap.className = 'wiki-search';
+  searchWrap.className = 'wg-search';
   searchWrap.innerHTML =
-    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
   const search = document.createElement('input');
   search.type = 'text';
-  search.className = 'wiki-toolbar-search';
+  search.className = 'wg-search-input';
   search.placeholder = t('wiki.searchPlaceholder');
+  search.setAttribute('aria-label', t('wiki.searchPlaceholder'));
   search.addEventListener('input', () => {
     if (!view) return;
     view.filter = search.value.trim().toLowerCase();
     applyFilter();
+    draw();
   });
   searchWrap.appendChild(search);
-
-  // Refresh → button.glass-control secondary tier (§4): rest transparent +
-  // stroke (sapphire.css button.glass-control four states), busy = icon spin.
-  const refreshBtn = document.createElement('button');
-  refreshBtn.type = 'button';
-  refreshBtn.className = 'glass-control wiki-toolbar-btn';
-  refreshBtn.title = t('wiki.refreshTitle');
-  refreshBtn.innerHTML =
-    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>';
-  refreshBtn.appendChild(document.createTextNode(t('wiki.refresh')));
-  refreshBtn.addEventListener('click', async () => {
-    refreshBtn.classList.add('busy');
-    await loadData(true);
-    rebuildSim();
-    refreshBtn.classList.remove('busy');
-  });
-
-  const status = document.createElement('span');
-  status.className = 'wiki-toolbar-status';
-
-  bar.append(searchWrap, refreshBtn, status);
-  // Scenario facets (wiki-graph v2): kind + frontmatter type/status filters —
-  // the research "open problems / conclusions" and learning "progress" faces.
-  // Options are (re)derived from the loaded data in rebuildSim.
-  const facetRow = document.createElement('div');
-  facetRow.className = 'wiki-facets';
-  const mkFacet = (cls) => {
-    const sel = document.createElement('select');
-    // §4: the face styles live entirely on .wiki-facet (secondary tier).
-    // The old glass-control class is dropped deliberately — sapphire.css's
-    // .glass-control material rule loads last and its `background` shorthand
-    // would wipe the degrade path's chevron background-image.
-    sel.className = 'wiki-facet ' + cls;
-    sel.addEventListener('change', () => {
-      if (!view) return;
-      if (cls === 'wiki-facet-kind') view.facetKind = sel.value;
-      else if (cls === 'wiki-facet-type') view.facetType = sel.value;
-      else view.facetStatus = sel.value;
-      applyFilter();
-    });
-    return sel;
-  };
-  const kindSel = mkFacet('wiki-facet-kind');
-  const typeSel = mkFacet('wiki-facet-type');
-  const statusSel = mkFacet('wiki-facet-status');
-  facetRow.append(kindSel, typeSel, statusSel);
-  // §4 facet dropdown: the native select stays the state owner; the self-drawn
-  // face/listbox wraps it (APG keyboard). Degrade path (touch-like pointer)
-  // keeps the native select reskinned via CSS — see upgradeFacetToDropdown.
-  upgradeFacetToDropdown(kindSel);
-  upgradeFacetToDropdown(typeSel);
-  upgradeFacetToDropdown(statusSel);
-  pane.appendChild(facetRow);
-  pane.appendChild(bar);
+  const chips = document.createElement('div');
+  chips.className = 'wg-chips';
+  chips.setAttribute('role', 'group');
+  topbar.append(searchWrap, chips);
 
   const canvasEl = document.createElement('canvas');
   canvasEl.className = 'wiki-canvas';
-  pane.appendChild(canvasEl);
 
-  // The graph's file list is NOT built here anymore (graph-view interaction
-  // batch, 2026-10-18): while this tab is the visible Canvas content the list
-  // is hosted by the SAME panel space the file explorer uses
-  // (syncGraphExplorerList / renderGraphFileList below), so the pane stays
-  // pure graph + toolbar. renderSidebar() fills that host once the data lands
-  // in rebuildSim; its filter rows still drive the EXISTING toolbar/facet
-  // controls through real events, so list and toolbar state can never diverge.
+  // Hover tooltip — pane-local (position:absolute in a relative+hidden pane),
+  // so it can never surface over the conversation UI.
+  const tip = document.createElement('div');
+  tip.className = 'wg-tip';
+  tip.setAttribute('role', 'tooltip');
+  tip.innerHTML = '<div class="tt"></div><div class="ts"></div><div class="td"></div>';
 
-  // ── Zoom cluster (draftB): in/out reuse the wheel zoom math; ⟲ re-lands the
-  // layout (rebuildSim resets scale + pan and re-seeds positions).
-  // §4: text glyphs (+ − ⟲) → 1.8-stroke SVG icons — glyph baselines drift
-  // across platforms and their stroke weight is uncontrollable.
-  const zoom = document.createElement('div');
-  zoom.className = 'wx-zoom';
-  const ZOOM_ICONS = {
-    in: '<path d="M12 5v14M5 12h14"/>',
-    out: '<path d="M5 12h14"/>',
-    fit: '<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>',
-  };
-  const mkZoomBtn = (z, title) => {
-    const b = document.createElement('button');
-    b.type = 'button'; b.dataset.z = z; b.title = title;
-    b.setAttribute('aria-label', title);
-    b.innerHTML =
-      `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ZOOM_ICONS[z]}</svg>`;
-    return b;
-  };
-  zoom.append(
-    mkZoomBtn('in', t('wiki.zoomInTitle')),
-    mkZoomBtn('out', t('wiki.zoomOutTitle')),
-    mkZoomBtn('fit', t('wiki.zoomResetTitle')),
-  );
-  zoom.addEventListener('click', (e) => {
-    const b = (/** @type {Element} */ (e.target)).closest('button');
-    if (!b || !view) return;
-    if (b.dataset.z === 'in') zoomCanvas(1.12);
-    else if (b.dataset.z === 'out') zoomCanvas(1 / 1.12);
-    else rebuildSim();
+  // Preview card (design §3): slides in on node click; 打开文档 is the only
+  // path out of the view.
+  const preview = document.createElement('aside');
+  preview.className = 'wg-preview';
+  preview.setAttribute('aria-label', t('wiki.tabTitle'));
+  preview.innerHTML =
+    '<button class="close" type="button" aria-label="' + t('wiki.closePreview') + '">×</button>' +
+    '<h2></h2><div class="badges"></div><p class="summary"></p>' +
+    '<h3></h3><ul class="toc"></ul>' +
+    '<h3></h3><ul class="out"></ul>' +
+    '<h3></h3><ul class="in"></ul>' +
+    '<div class="path"></div>' +
+    '<button class="openbtn" type="button"></button>';
+  const previewH3s = preview.querySelectorAll('h3');
+  previewH3s[0].textContent = t('wiki.secToc');
+  previewH3s[1].textContent = t('wiki.secOut');
+  previewH3s[2].textContent = t('wiki.secIn');
+  preview.querySelector('.openbtn').textContent = t('wiki.openDoc');
+  preview.querySelector('.close').addEventListener('click', () => deselect());
+  preview.querySelector('.openbtn').addEventListener('click', () => {
+    if (view && view.selected) void openDoc(view.selected.ref);
   });
-  pane.appendChild(zoom);
+
+  // Info line (bottom-left): counts + the broken-reference toggle that opens
+  // the overlay. Replaces the old count bar + facet rows + file sidebar.
+  const infoline = document.createElement('div');
+  infoline.className = 'wg-infoline';
+  const broken = document.createElement('div');
+  broken.className = 'wg-broken';
+  broken.innerHTML = '<h3></h3><div class="rows"></div>';
+  broken.querySelector('h3').textContent = t('wiki.brokenTitle');
+
+  const legend = document.createElement('div');
+  legend.className = 'wg-legend';
+  legend.textContent = t('wiki.legendLine');
+
+  pane.append(canvasEl, topbar, tip, preview, infoline, broken, legend);
 
   view = { pane, canvas: canvasEl, ctx: canvasEl.getContext('2d'), data: null, sim: null,
-           raf: 0, focusId: pendingFocus || '', filter: '', byId: new Map(),
-           focusNode: null, focusPulse: 0, vx: 0, vy: 0, scale: 1,
-           dragging: null, panning: false, hover: null,
-           lastPointer: null, resizeObs: null, colors: null, W: 0, H: 0,
-           facetKind: '', facetType: '', facetStatus: '',
-           themeMQ: null, onThemeChange: null, ramp: null };
+           raf: 0, focusId: pendingFocus || '', byId: new Map(),
+           hover: null, selected: null,
+           vx: 0, vy: 0, scale: 1,
+           dragging: null, panning: false, lastPointer: null,
+           resizeObs: null, W: 0, H: 0, colors: null,
+           filter: '', dirFilter: '', dirs: [], unresolved: [], projectErrors: [],
+           themeMQ: null, onThemeChange: null, onKey: null };
   pendingFocus = '';
 
   bindCanvas(canvasEl);
@@ -320,24 +241,32 @@ async function renderInto(pane) {
     view.resizeObs = new ResizeObserver(() => resizeCanvas());
     view.resizeObs.observe(canvasEl);
   }
-  // Theme flip (system light/dark) mid-session: repaint the gray ramp + label
-  // colors on the next frame. CSS surfaces follow the media query themselves.
+  // Theme flip (system light/dark) mid-session: re-read the graphite palette
+  // from the pane's CSS variables and repaint on the next frame.
   view.themeMQ = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
-  view.onThemeChange = () => {
-    if (!view || !view.sim) return;
-    paintNodes();
-    const g = themeRamp();
-    view.ramp = g;
-    view.colors = { text: g.label, muted: g.labelMuted };
-    wake(0.1);
-  };
+  view.onThemeChange = () => { if (view) { readColors(); draw(); } };
   if (view.themeMQ && view.themeMQ.addEventListener) view.themeMQ.addEventListener('change', view.onThemeChange);
+
+  // Esc — layer-by-layer exit (design §3): broken overlay → preview →
+  // search filter → directory filter.
+  view.onKey = (/** @type {KeyboardEvent} */ e) => {
+    if (!view || e.key !== 'Escape') return;
+    const brokenEl = view.pane.querySelector('.wg-broken');
+    if (brokenEl && brokenEl.classList.contains('open')) { brokenEl.classList.remove('open'); return; }
+    if (view.selected) { deselect(); return; }
+    if (view.filter) {
+      view.filter = '';
+      const input = /** @type {HTMLInputElement|null} */ (view.pane.querySelector('.wg-search-input'));
+      if (input) input.value = '';
+      applyFilter(); draw();
+      return;
+    }
+    if (view.dirFilter) { view.dirFilter = ''; renderChips(); applyFilter(); draw(); }
+  };
+  document.addEventListener('keydown', view.onKey);
 
   await loadData(false);
   rebuildSim();
-  // R1 (fresh open) / R4 (restore re-render): the graph is now the visible
-  // Canvas content — give the Side Bar its one auto-expand chance (§2).
-  ensureSideBarForGraph();
 }
 
 function teardown() {
@@ -347,6 +276,7 @@ function teardown() {
   if (view.themeMQ && view.onThemeChange && view.themeMQ.removeEventListener) {
     view.themeMQ.removeEventListener('change', view.onThemeChange);
   }
+  if (view.onKey) document.removeEventListener('keydown', view.onKey);
   view = null;
 }
 
@@ -361,20 +291,28 @@ async function loadData(force) {
   if (view.data.error) window.__showToast?.(String(view.data.error), 'error');
 }
 
-// ── Simulation model ───────────────────────────────────────────
+// ── Simulation model (design §7: the force kernel survives the redesign) ──
 
-/** Assign the aurora-gray node colors from link degree (hubs darker). */
-function paintNodes() {
-  if (!view || !view.sim) return;
-  const g = themeRamp();
-  const deg = view.sim.degree;
-  for (const n of view.sim.nodes) {
-    if (n.ref.stub) { n.color = g.stub; continue; }
-    if (n.ref.kind === 'attachment') { n.color = g.attach; continue; }
-    // t: leaf (degree 0) → hub (degree 6+ saturates) — the layering read.
-    const t = Math.min(1, (deg.get(n.id) || 0) / 6);
-    n.color = mixGray(g.leaf, g.hub, t);
-  }
+/** Deterministic PRNG — the dir-cluster seed must not jitter between refreshes. */
+function mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Directory facet of a node — the rel's first segment ('.' at the vault
+ *  root). Client-side derivation, per design §5 (no backend change). */
+function dirOfRel(rel) {
+  const i = rel.indexOf('/');
+  return i < 0 ? '.' : rel.slice(0, i);
+}
+
+function radiusOf(n) {
+  if (n.isAttach) return 3.5;
+  return 5 + Math.min(6, Math.sqrt(n.degree) * 1.9); // design §4: 5–11px
 }
 
 function rebuildSim() {
@@ -382,103 +320,207 @@ function rebuildSim() {
   const data = view.data;
   const W = view.W || view.canvas.clientWidth || 800;
   const H = view.H || view.canvas.clientHeight || 600;
-  const nodes = (data.nodes || []).map((n, i) => ({
-    ref: n,
-    id: n.id,
-    label: n.title || (n.rel || '').split('/').pop(),
-    x: W / 2 + Math.cos((i / Math.max(1, data.nodes.length)) * Math.PI * 2) * (0.25 * Math.min(W, H)),
-    y: H / 2 + Math.sin((i / Math.max(1, data.nodes.length)) * Math.PI * 2) * (0.25 * Math.min(W, H)),
-    px: 0, py: 0,
-    vx: 0, vy: 0,
-    color: '#8b919a',
-    remote: n.device && n.device !== 'self',
-    project: n.project,
-    radius: n.stub ? 5 : (n.kind === 'attachment' ? 5.5 : 6 + Math.min(6, (n.headings || []).length * 0.8)),
-    fixed: false,
-  }));
+  const allById = new Map((data.nodes || []).map(n => [n.id, n]));
+
+  // Broken references never become nodes (design §3): stubs are dropped and
+  // their edges are counted into the info line instead.
+  const nodes = /** @type {WgNode[]} */ ((data.nodes || [])
+    .filter(n => !n.stub)
+    .map(n => ({
+      ref: n,
+      id: n.id,
+      label: n.title || (n.rel || '').split('/').pop(),
+      dir: dirOfRel(n.rel || ''),
+      isAttach: n.kind === 'attachment',
+      x: 0, y: 0, vx: 0, vy: 0,
+      degree: 0, rank: 0, out: [], inc: [], dimmed: false,
+    })));
   const byId = new Map(nodes.map(n => [n.id, n]));
-  const edges = (data.edges || [])
-    .map(e => ({ from: byId.get(e.from), to: byId.get(e.to), anchor: e.anchor || '' }))
-    .filter(e => e.from && e.to && e.from !== e.to);
-  // Link degree per node — drives the grayscale layering (paintNodes).
-  const degree = new Map();
-  edges.forEach(e => {
-    degree.set(e.from.id, (degree.get(e.from.id) || 0) + 1);
-    degree.set(e.to.id, (degree.get(e.to.id) || 0) + 1);
-  });
-  view.sim = { nodes, edges, degree, alpha: 1 };
+
+  // Deduplicated reference edges between real nodes.
+  const seen = new Set();
+  const edges = [];
+  for (const e of data.edges || []) {
+    const a = byId.get(e.from), b = byId.get(e.to);
+    if (!a || !b || a === b) continue;
+    const key = e.from + '|' + e.to;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    edges.push({ a, b });
+  }
+  for (const e of edges) { e.a.out.push(e.b); e.b.inc.push(e.a); }
+  for (const n of nodes) n.degree = n.out.length + n.inc.length;
+
+  // Unresolved references (edge targets that are stubs) — counted, listed in
+  // the broken overlay, never drawn. Project-level stubs surface as vault
+  // errors in the same overlay.
+  const unresolvedSeen = new Set();
+  const unresolved = [];
+  for (const e of data.edges || []) {
+    const from = allById.get(e.from), to = allById.get(e.to);
+    if (!from || !to || !to.stub) continue;
+    const key = e.from + '|' + e.to;
+    if (unresolvedSeen.has(key)) continue;
+    unresolvedSeen.add(key);
+    unresolved.push({ from: from.rel || from.title || e.from, target: to.rel || to.title || e.to });
+  }
+  view.unresolved = unresolved;
+  view.projectErrors = (data.projects || [])
+    .filter(p => p.stub || p.error)
+    .map(p => ({ name: p.name, error: p.error || '', stub: !!p.stub }));
+
+  // Hub ranks (代审整改): degree-descending order drives the default label set.
+  [...nodes].sort((a, b) => b.degree - a.degree).forEach((n, i) => { n.rank = i; });
+
+  view.sim = { nodes, edges, alpha: 1 };
   view.byId = byId;
-  paintNodes();
+  view.dirs = [...new Set(nodes.map(n => n.dir))].sort();
+
+  // Dir-cluster seed (sample layout): same-directory nodes start near the
+  // same angle, so clusters read immediately while the forces settle.
+  const rnd = mulberry32(42);
+  const dirIdx = new Map(view.dirs.map((d, i) => [d, i]));
+  const R = 0.25 * Math.min(W, H);
+  for (const n of nodes) {
+    const ang = ((dirIdx.get(n.dir) + 0.5) / Math.max(1, view.dirs.length)) * Math.PI * 2;
+    n.x = W / 2 + Math.cos(ang) * R + (rnd() - 0.5) * 90;
+    n.y = H / 2 + Math.sin(ang) * R + (rnd() - 0.5) * 90;
+  }
+
+  readColors();
   view.scale = 1;
   view.vx = 0; view.vy = 0;
-  // Canvas label colors follow the same theme ramp as the nodes (2D context
-  // cannot read CSS variables). Cached per rebuild + theme flip (draw reads
-  // view.ramp — no per-frame matchMedia).
-  const g = themeRamp();
-  view.ramp = g;
-  view.colors = { text: g.label, muted: g.labelMuted };
-  // Scenario facet options from the loaded data (stable sorted, capped).
-  const typeSel = /** @type {HTMLSelectElement|null} */ (view.pane.querySelector('.wiki-facet-type'));
-  const statusSel = /** @type {HTMLSelectElement|null} */ (view.pane.querySelector('.wiki-facet-status'));
-  const kindSel = /** @type {HTMLSelectElement|null} */ (view.pane.querySelector('.wiki-facet-kind'));
-  if (kindSel) {
-    kindSel.innerHTML = '';
-    [['', t('wiki.facetAll')], ['doc', t('wiki.facetDocs')], ['attachment', t('wiki.facetAttachments')]].forEach(([v, label]) => {
-      const o = document.createElement('option'); o.value = v; o.textContent = label; kindSel.appendChild(o);
-    });
-    kindSel.value = view.facetKind;
-  }
-  const fillFacet = (sel, values, allLabel) => {
-    if (!sel) return;
-    sel.innerHTML = '';
-    const all = document.createElement('option'); all.value = ''; all.textContent = allLabel; sel.appendChild(all);
-    values.forEach((v) => { const o = document.createElement('option'); o.value = v; o.textContent = v; sel.appendChild(o); });
-    sel.value = view.facetStatus !== undefined && sel === statusSel ? view.facetStatus : (sel === typeSel ? view.facetType : '');
-  };
-  const types = [...new Set((data.nodes || []).map(n => n.type).filter(Boolean))].sort().slice(0, 12);
-  const statuses = [...new Set((data.nodes || []).map(n => n.status).filter(Boolean))].sort().slice(0, 12);
-  fillFacet(typeSel, types, t('wiki.facetAllTypes'));
-  fillFacet(statusSel, statuses, t('wiki.facetAllStatuses'));
-  // §4: the dropdown faces mirror the re-derived options/values.
-  syncWikiFacets();
-  renderSidebar();
-  updateStatus();
+  view.hover = null;
+  hideTip();
+
+  // Preserve selection across refetches by id (the old node objects die here).
+  const selId = view.selected ? view.selected.id : '';
+  view.selected = (selId && byId.get(selId)) || null;
+
+  renderChips();
+  renderInfo();
   applyFilter();
-  view.focusNode = null;
-  view.focusPulse = 0;
+  if (view.selected) renderPreview(view.selected);
+
   if (view.focusId && byId.has(view.focusId)) {
     const n = byId.get(view.focusId);
-    view.vx = W / 2 - n.x; view.vy = H / 2 - n.y;
-    view.focusNode = n;
-    view.focusPulse = 1;
-    view.sim.alpha = 1.2;
+    view.focusId = ''; // one-shot: a data refresh must not re-center/re-open
+    select(n, true);
   }
   startLoop();
 }
 
-function updateStatus() {
+function readColors() {
+  if (!view) return;
+  let cs = null;
+  try { cs = getComputedStyle(view.pane); } catch (_) { /* detached pane */ }
+  const v = (name, fb) => ((cs && cs.getPropertyValue(name)) || '').trim() || fb;
+  view.colors = {
+    ink: v('--wg-foreground', '#141416'),
+    muted: v('--wg-muted', '#6f727b'),
+    line: v('--wg-border', '#e8e9ec'),
+  };
+}
+
+function updateInfoLineBody() { /* counts render in renderInfo; kept for symmetry */ }
+
+function renderChips() {
   if (!view || !view.pane) return;
-  const status = view.pane.querySelector('.wiki-toolbar-status');
-  if (!status) return;
+  const chips = view.pane.querySelector('.wg-chips');
+  if (!chips) return;
+  chips.textContent = '';
+  const mk = (label, value) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'wg-chip' + (view.dirFilter === value ? ' on' : '');
+    b.textContent = label;
+    b.addEventListener('click', () => {
+      if (!view) return;
+      view.dirFilter = view.dirFilter === value ? '' : value;
+      renderChips();
+      applyFilter();
+      draw();
+    });
+    return b;
+  };
+  chips.appendChild(mk(t('wiki.chipAll'), ''));
+  for (const d of view.dirs) chips.appendChild(mk(d === '.' ? t('wiki.chipRoot') : d + '/', d));
+}
+
+function renderInfo() {
+  if (!view || !view.pane) return;
+  const infoline = view.pane.querySelector('.wg-infoline');
+  const broken = view.pane.querySelector('.wg-broken');
+  if (!infoline || !broken) return;
   const d = view.data || {};
-  const docs = (d.nodes || []).filter(n => !n.stub).length;
-  const links = (d.edges || []).length;
-  const projects = (d.projects || []).filter(p => !p.stub).length;
-  status.textContent = t('wiki.status').replace('{docs}', String(docs)).replace('{links}', String(links)).replace('{projects}', String(projects));
+  infoline.textContent = '';
+  const span = document.createElement('span');
+  span.textContent = t('wiki.infoDocs')
+    .replace('{docs}', String((d.nodes || []).filter(n => !n.stub).length))
+    .replace('{links}', String(view.sim ? view.sim.edges.length : 0));
+  infoline.appendChild(span);
+  const n = view.unresolved.length;
+  if (n > 0 || view.projectErrors.length > 0) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = t('wiki.infoUnresolved').replace('{n}', String(n));
+    btn.addEventListener('click', () => broken.classList.toggle('open'));
+    infoline.appendChild(btn);
+  }
+  // Broken overlay rows: unreadable vaults first (honesty about missing
+  // projects), then the unresolved reference list. A row re-selects its
+  // SOURCE document in the graph.
+  const rows = broken.querySelector('.rows');
+  rows.textContent = '';
+  for (const p of view.projectErrors.slice(0, 8)) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.textContent = (p.stub && !p.error)
+      ? t('wiki.brokenVault').replace('{project}', p.name)
+      : t('wiki.brokenProject').replace('{project}', p.name).replace('{error}', p.error);
+    rows.appendChild(row);
+  }
+  view.unresolved.slice(0, 60).forEach(({ from, target }, i) => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'row';
+    const b = document.createElement('b');
+    b.textContent = from + ' → ';
+    row.appendChild(b);
+    row.appendChild(document.createTextNode(target));
+    row.addEventListener('click', () => {
+      broken.classList.remove('open');
+      const srcNode = [...view.byId.values()].find(nn => (nn.ref.rel || '') === from);
+      if (srcNode) select(srcNode, true);
+    });
+    if (i === 59) {
+      const more = document.createElement('div');
+      more.className = 'row more';
+      more.textContent = '…';
+      rows.appendChild(more);
+    }
+  });
 }
 
 function applyFilter() {
-  applyListFilter(); // §3: the list mirrors the filter (rows hide / empty state)
   if (!view || !view.sim) return;
   const q = view.filter;
-  view.sim.nodes.forEach(n => {
-    let visible = true;
-    if (q) visible = (n.label || '').toLowerCase().includes(q) || (n.ref.rel || '').toLowerCase().includes(q) || (n.project || '').toLowerCase().includes(q);
-    if (visible && view.facetKind) visible = (n.ref.kind || 'doc') === view.facetKind;
-    if (visible && view.facetType) visible = n.ref.type === view.facetType;
-    if (visible && view.facetStatus) visible = n.ref.status === view.facetStatus;
-    n.dimmed = !visible;
-  });
+  const pass = filterPass();
+  view.sim.nodes.forEach(n => { n.dimmed = !pass(n); });
+}
+
+function filterPass() {
+  const q = view ? view.filter : '';
+  const dir = view ? view.dirFilter : '';
+  return (/** @type {WgNode} */ n) => {
+    if (dir && n.dir !== dir) return false;
+    if (q) {
+      const rel = (n.ref.rel || '').toLowerCase();
+      const proj = (n.ref.project || '').toLowerCase();
+      if (!(n.label.toLowerCase().includes(q) || rel.includes(q) || proj.includes(q))) return false;
+    }
+    return true;
+  };
 }
 
 function tick() {
@@ -505,25 +547,24 @@ function tick() {
   }
   // Springs.
   for (const e of edges) {
-    const dx = e.to.x - e.from.x, dy = e.to.y - e.from.y;
+    const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
     const d = Math.max(1, Math.hypot(dx, dy));
     const target = 110;
     const f = (d - target) * 0.015 * kAlpha;
     const fx = dx / d * f, fy = dy / d * f;
-    e.from.vx += fx; e.from.vy += fy;
-    e.to.vx -= fx; e.to.vy -= fy;
+    e.a.vx += fx; e.a.vy += fy;
+    e.b.vx -= fx; e.b.vy -= fy;
   }
   // Gravity toward center + integrate.
   const drag = 0.85;
   for (const n of nodes) {
     n.vx += (W / 2 - n.x) * 0.0015 * kAlpha;
     n.vy += (H / 2 - n.y) * 0.0015 * kAlpha;
-    if (n.dragging) { n.vx = 0; n.vy = 0; continue; }
+    if (n === view.dragging) { n.vx = 0; n.vy = 0; continue; }
     n.vx *= drag; n.vy *= drag;
     n.x += n.vx; n.y += n.vy;
   }
-  if (view.focusPulse > 0) view.focusPulse = Math.max(0, view.focusPulse - 0.008);
-  sim.alpha *= 0.995;
+  sim.alpha *= 0.95; // settle ≈1.1s (design §4: convergence <1.2s, then stop)
 }
 
 function startLoop() {
@@ -533,9 +574,9 @@ function startLoop() {
     if (!view || !view.sim) return;
     tick();
     draw();
-    // Idle stop: the layout settled and nobody is interacting — save the
-    // battery. Any pointer/zoom/filter interaction restarts the loop.
-    if (view.sim.alpha < 0.02 && view.focusPulse <= 0 && !view.hover && !view.dragging && !view.panning) {
+    // Idle stop: the layout settled and nobody is interacting — zero steady-
+    // state CPU (design §4). Any pointer/zoom/filter interaction restarts it.
+    if (view.sim.alpha < 0.02 && !view.hover && !view.dragging && !view.panning) {
       view.raf = 0;
       return;
     }
@@ -560,13 +601,20 @@ function wake(minAlpha = 0.3) {
 function repaintOnActivate() {
   if (!view || !view.canvas || !view.canvas.isConnected) return;
   view.hover = null;
-  hideTooltip();
+  hideTip();
   requestAnimationFrame(() => {
     if (!view || !view.canvas || !view.canvas.isConnected || view.raf) return;
     resizeCanvas();
     draw();
   });
 }
+
+// Tab switching: repaint on re-activation (the hidden canvas backing store is
+// dropped while the tab is inactive). No explorer-space hosting anymore — the
+// redesign's info line replaced the file list.
+document.addEventListener('canvas-tab-switched', (/** @type {CustomEvent} */ e) => {
+  if (e.detail && e.detail.id === TAB_ID) repaintOnActivate();
+});
 
 // ── Rendering ─────────────────────────────────────────────────
 
@@ -580,135 +628,98 @@ function resizeCanvas() {
   view.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
+function neighborhood(node) {
+  const set = new Set([node]);
+  for (const m of node.out) set.add(m);
+  for (const m of node.inc) set.add(m);
+  return set;
+}
+
+/** How many nodes carry a default (non-hover) label at this zoom — the
+ *  代审整改 ramp: LABEL_HUBS at ≤100%, everything at LABEL_ALL_AT_SCALE. */
+function labelCountAt(scale) {
+  if (!view || !view.sim) return LABEL_HUBS;
+  const total = view.sim.nodes.length;
+  if (scale >= LABEL_ALL_AT_SCALE || total <= LABEL_HUBS) return total;
+  const frac = Math.max(0, (scale - 1) / (LABEL_ALL_AT_SCALE - 1));
+  return Math.min(total, Math.round(LABEL_HUBS + frac * (total - LABEL_HUBS)));
+}
+
 function draw() {
   if (!view || !view.ctx) return;
   const { ctx, sim } = view;
   if (view.canvas.width === 1) resizeCanvas();
-  const W = view.W, H = view.H;
-  ctx.clearRect(0, 0, W, H);
   if (!sim) return;
+  const W = view.W, H = view.H;
+  if (!view.colors) readColors();
+  const C = view.colors;
+  ctx.clearRect(0, 0, W, H);
   ctx.save();
   ctx.translate(W / 2 + view.vx, H / 2 + view.vy);
   ctx.scale(view.scale, view.scale);
   ctx.translate(-W / 2, -H / 2);
 
-  const hover = view.hover;
-  const neighbors = hover ? neighborhood(hover) : null;
+  const focus = view.hover || view.selected;
+  const near = focus ? neighborhood(focus) : null;
+  const pass = filterPass();
+  const labelCount = labelCountAt(view.scale);
 
-  // Edges — fine sapphire lines with the draftB aurora bow (quadratic bend);
-  // the hovered node's links highlight strong, filtered links fall to near-0.
+  // Edges — 1px straight muted lines (design §4: no bows, no accent hue);
+  // the focused neighborhood stays lit, everything else recedes.
   for (const e of sim.edges) {
-    const hl = neighbors && (e.from === hover || e.to === hover);
-    const dimmed = (e.from.dimmed || e.to.dimmed);
-    ctx.strokeStyle = hl ? EDGE.hover : (dimmed ? EDGE.dim : EDGE.normal);
-    ctx.lineWidth = hl ? 2 : 1.25;
-    const dx = e.to.x - e.from.x, dy = e.to.y - e.from.y;
-    const mx = (e.from.x + e.to.x) / 2 - dy * EDGE_BEND;
-    const my = (e.from.y + e.to.y) / 2 + dx * EDGE_BEND;
+    const hl = near && (e.a === focus || e.b === focus);
+    const dim = !pass(e.a) || !pass(e.b) || (near && !(near.has(e.a) && near.has(e.b)));
+    ctx.strokeStyle = C.muted;
+    ctx.globalAlpha = hl ? 0.85 : (dim ? 0.05 : 0.22);
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(e.from.x, e.from.y);
-    ctx.quadraticCurveTo(mx, my, e.to.x, e.to.y);
+    ctx.moveTo(e.a.x, e.a.y);
+    ctx.lineTo(e.b.x, e.b.y);
     ctx.stroke();
   }
-  // Nodes — grayscale family: layering = degree (paintNodes), type = shape.
-  const g = view.ramp || themeRamp();
+
+  // Nodes — solid graphite dots; degree → radius and ink depth (design §4).
   for (const n of sim.nodes) {
-    const r = n.radius;
-    const isHover = n === hover;
-    const connected = !neighbors || n === hover || neighbors.has(n);
-    const alpha = n.dimmed ? 0.12 : (connected ? 1 : 0.25);
-    ctx.globalAlpha = alpha;
-    if (n === view.focusNode && view.focusPulse > 0) {
+    const r = radiusOf(n);
+    const dim = n.dimmed || (near && !near.has(n));
+    ctx.globalAlpha = dim ? 0.12 : 1;
+    const shade = n.isAttach ? 0 : Math.min(1, n.degree / 8);
+    ctx.fillStyle = shade > 0.45 ? C.ink : C.muted;
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    if (n === view.selected || n === view.hover) {
+      ctx.strokeStyle = C.ink;
+      ctx.globalAlpha = dim ? 0.2 : 0.9;
+      ctx.lineWidth = 1.4;
       ctx.beginPath();
-      ctx.arc(n.x, n.y, r + 10 * view.focusPulse, 0, Math.PI * 2);
-      ctx.strokeStyle = EDGE.hover;
-      ctx.lineWidth = 1.9;
-      ctx.globalAlpha = view.focusPulse * 0.8;
+      ctx.arc(n.x, n.y, r + 3.5, 0, Math.PI * 2);
       ctx.stroke();
-      ctx.globalAlpha = alpha;
+      ctx.globalAlpha = dim ? 0.12 : 1;
     }
-    if (n.ref.stub) {
-      // Unresolved: hollow dashed circle — shape carries the type, no fill.
-      ctx.setLineDash([2.5, 2.5]);
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-      ctx.strokeStyle = n.color;
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.setLineDash([]);
-    } else if (n.ref.kind === 'attachment') {
-      // Attachments (literature PDFs, figures) draw as stroked rounded squares
-      // so the document/attachment split reads at a glance (shape + stroke,
-      // per the grayscale ruling — never hue).
-      const s = r * 1.7;
-      roundedRect(ctx, n.x - s / 2, n.y - s / 2, s, s, 3);
-      ctx.fillStyle = n.color;
-      ctx.shadowColor = n.color;
-      ctx.shadowBlur = isHover ? GLOW.attachHover : GLOW.attachIdle;
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.strokeStyle = g.stroke;
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    } else {
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-      ctx.fillStyle = n.color;
-      ctx.shadowColor = n.color;
-      ctx.shadowBlur = isHover ? GLOW.hover : GLOW.idle;
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      // Status glyph: resolved work carries a ring — graphite stroke keeps the
-      // glyph inside the gray family (was brand green before the ruling).
-      if (n.ref.status && DONE_STATUSES.test(n.ref.status)) {
-        ctx.beginPath();
-        ctx.arc(n.x, n.y, r + 3.5, 0, Math.PI * 2);
-        ctx.strokeStyle = g.doneRing;
-        ctx.lineWidth = 1.6;
-        ctx.stroke();
-      }
-      // Hover ring — the clear "this is the one" state (sapphire, the single
-      // interaction accent).
-      if (isHover) {
-        ctx.beginPath();
-        ctx.arc(n.x, n.y, r + 2.5, 0, Math.PI * 2);
-        ctx.strokeStyle = EDGE.hover;
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
+    // Label — hub-density rule (module header): hovered/selected always,
+    // their neighborhood when focused, all matches while a filter is active,
+    // otherwise only the top-`labelCount` hubs. Attachments label on
+    // hover/selection only.
+    let labelAlpha = 0;
+    if (!dim) {
+      const isFocusNode = n === view.hover || n === view.selected;
+      if (isFocusNode) labelAlpha = 1;
+      else if (near && near.has(n)) labelAlpha = 0.62;
+      else if (view.filter || view.dirFilter) labelAlpha = 0.62;
+      else if (!n.isAttach && n.rank < labelCount) labelAlpha = 0.62;
     }
-    // Selected (focused from a document's graph button): persistent ring so the
-    // selection survives the landing pulse.
-    if (n === view.focusNode && !n.ref.stub && view.focusPulse <= 0) {
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, r + 4.5, 0, Math.PI * 2);
-      ctx.strokeStyle = EDGE.hover;
-      ctx.lineWidth = 1.6;
-      ctx.stroke();
-    }
-    // Label — only when readable (zoomed in, hovered, or few docs).
-    const labelOn = isHover || view.scale > 1.6 || sim.nodes.length <= 40 || (neighbors && neighbors.has(n) && view.scale > 0.9);
-    if (labelOn && !n.dimmed) {
-      ctx.font = (isHover ? '600 ' : '') + '11px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
-      ctx.fillStyle = isHover ? (view.colors ? view.colors.text : '#1c1e22') : (view.colors ? view.colors.muted : 'rgba(128,132,140,0.95)');
+    if (labelAlpha > 0) {
+      ctx.globalAlpha = labelAlpha;
+      ctx.fillStyle = C.ink;
+      ctx.font = (labelAlpha === 1 ? '500 ' : '400 ') + '11px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
       ctx.textAlign = 'center';
-      let label = n.label.length > 28 ? n.label.slice(0, 27) + '…' : n.label;
-      if (n.ref.kind === 'attachment') label = '⎘ ' + label;
+      const label = n.label.length > LABEL_MAX_CHARS ? n.label.slice(0, LABEL_MAX_CHARS - 1) + '…' : n.label;
       ctx.fillText(label, n.x, n.y + r + 13);
     }
-    ctx.globalAlpha = 1;
   }
+  ctx.globalAlpha = 1;
   ctx.restore();
-}
-
-function neighborhood(node) {
-  if (!view || !view.sim) return null;
-  const set = new Set();
-  for (const e of view.sim.edges) {
-    if (e.from === node) set.add(e.to);
-    else if (e.to === node) set.add(e.from);
-  }
-  return set;
 }
 
 // ── Pointer interaction ───────────────────────────────────────
@@ -727,7 +738,7 @@ function pick(px, py) {
   let best = null, bestD = Infinity;
   for (const n of view.sim.nodes) {
     const d = Math.hypot(n.x - p.x, n.y - p.y);
-    if (d < n.radius + 8 && d < bestD) { best = n; bestD = d; }
+    if (d < radiusOf(n) + 5 && d < bestD) { best = n; bestD = d; }
   }
   return best;
 }
@@ -742,8 +753,8 @@ function bindCanvas(canvasEl) {
     const hit = pick(px, py);
     moved = false;
     wake(hit ? 0.6 : 0.25);
-    if (hit) { hit.dragging = true; view.dragging = hit; }
-    else { view.panning = true; }
+    if (hit) { view.dragging = hit; canvasEl.classList.add('grabbing'); }
+    else { view.panning = true; canvasEl.classList.add('grabbing'); }
     view.lastPointer = { px, py };
   });
   canvasEl.addEventListener('pointermove', (e) => {
@@ -759,637 +770,188 @@ function bindCanvas(canvasEl) {
       wake(0.35);
     } else if (view.panning) {
       view.vx += dx; view.vy += dy;
+      if (!view.raf) draw();
     } else {
       const hit = pick(px, py);
       if (hit !== view.hover) {
         view.hover = hit;
-        canvasEl.style.cursor = hit ? 'pointer' : 'grab';
+        canvasEl.classList.toggle('hovering', !!hit);
+        if (!view.raf) draw();
       }
-      if (hit) showTooltip(hit, px, py);
-      else hideTooltip();
+      if (hit) showTip(hit, px, py);
+      else hideTip();
     }
     view.lastPointer = { px, py };
   });
   const endDrag = (e) => {
     if (!view) return;
-    if (view.dragging) view.dragging.dragging = false;
-    if (!moved && view.dragging) openNode(view.dragging);
+    const wasDragging = view.dragging;
+    const wasPanning = view.panning;
     view.dragging = null;
     view.panning = false;
     view.lastPointer = null;
-    hideTooltip();
+    canvasEl.classList.remove('grabbing');
+    hideTip();
+    if (moved) return;
+    if (wasDragging) { select(wasDragging, false); return; }
+    if (!wasPanning) return;
+    const rect = canvasEl.getBoundingClientRect();
+    const hit = pick(e.clientX - rect.left, e.clientY - rect.top);
+    if (hit) select(hit, false);
+    else deselect();
   };
   canvasEl.addEventListener('pointerup', endDrag);
   canvasEl.addEventListener('pointercancel', endDrag);
-  canvasEl.addEventListener('pointerleave', () => { if (view) { view.hover = null; hideTooltip(); } });
+  canvasEl.addEventListener('pointerleave', () => {
+    if (!view) return;
+    view.hover = null;
+    hideTip();
+    if (!view.raf) draw();
+  });
   canvasEl.addEventListener('wheel', (e) => {
     if (!view) return;
     e.preventDefault();
     wake(0.15);
     const rect = canvasEl.getBoundingClientRect();
     zoomAt(e.clientX - rect.left, e.clientY - rect.top, e.deltaY < 0 ? 1.12 : 1 / 1.12);
+    draw();
   }, { passive: false });
 }
 
-/** Zoom anchored at pane-local (px,py) — shared by the wheel and the cluster. */
+/** Zoom anchored at pane-local (px,py), cursor-anchored (design §3). */
 function zoomAt(px, py, factor) {
   if (!view) return;
-  const W = view.W / 2, H = view.H / 2;
-  const ox = px - W - view.vx, oy = py - H - view.vy;
-  view.vx -= ox * (factor - 1);
-  view.vy -= oy * (factor - 1);
-  view.scale = Math.min(4, Math.max(0.25, view.scale * factor));
+  const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, view.scale * factor));
+  const k = next / view.scale;
+  view.vx = px - (px - view.vx) * k;
+  view.vy = py - (py - view.vy) * k;
+  view.scale = next;
 }
 
-/** Zoom-cluster leg: wheel math anchored at the pane center. */
-function zoomCanvas(factor) {
+// ── Tooltip / preview card ────────────────────────────────────
+
+function dirLabel(dir) { return dir === '.' ? t('wiki.chipRoot') : dir; }
+
+function showTip(node, px, py) {
+  if (!view || !view.pane) return;
+  const tip = /** @type {HTMLElement|null} */ (view.pane.querySelector('.wg-tip'));
+  if (!tip) return;
+  const d = node.ref;
+  tip.querySelector('.tt').textContent = d.title || d.rel || '';
+  tip.querySelector('.ts').textContent = d.summary
+    || (node.isAttach ? (d.rel || '') : t('wiki.noSummary'));
+  tip.querySelector('.td').textContent = dirLabel(node.dir) + ' · ' + t('wiki.tipDegree')
+    .replace('{in}', String(node.inc.length))
+    .replace('{out}', String(node.out.length));
+  tip.style.display = 'block';
+  // Clamp against the MEASURED tip box so it stays fully inside the pane.
+  const maxW = 330;
+  let x = px + 14, y = py + 14;
+  if (x + maxW > view.pane.clientWidth) x = Math.max(4, px - maxW - 8);
+  if (y + 110 > view.pane.clientHeight) y = Math.max(4, py - 110);
+  tip.style.left = x + 'px';
+  tip.style.top = y + 'px';
+}
+
+function hideTip() {
+  if (!view || !view.pane) return;
+  const tip = /** @type {HTMLElement|null} */ (view.pane.querySelector('.wg-tip'));
+  if (tip) tip.style.display = 'none';
+}
+
+/** Fill the preview card for one node (design §3: title, badges, summary,
+ *  TOC ≤5, in/out refs ≤5 clickable, path, 打开文档). */
+function renderPreview(n) {
+  if (!view || !view.pane) return;
+  const card = view.pane.querySelector('.wg-preview');
+  if (!card) return;
+  const d = n.ref;
+  card.querySelector('h2').textContent = n.label;
+  const badges = card.querySelector('.badges');
+  badges.textContent = '';
+  const badgeTexts = [
+    dirLabel(n.dir) + (n.dir === '.' ? '' : '/'),
+    d.type || '',
+    d.status || '',
+    n.isAttach ? t('wiki.kindAttachment') : '',
+    (d.device && d.device !== 'self') ? t('wiki.badgeDevice').replace('{device}', d.device) : '',
+  ];
+  for (const text of badgeTexts) {
+    if (!text) continue;
+    const s = document.createElement('span');
+    s.className = 'badge';
+    s.textContent = text;
+    badges.appendChild(s);
+  }
+  card.querySelector('.summary').textContent = d.summary || t('wiki.noSummary');
+  const toc = card.querySelector('.toc');
+  toc.textContent = '';
+  for (const h of (d.headings || []).slice(0, 5)) {
+    const li = document.createElement('li');
+    li.textContent = h.t || h;
+    toc.appendChild(li);
+  }
+  const tocHead = /** @type {HTMLElement|null} */ (toc.previousElementSibling);
+  if (tocHead) tocHead.style.display = toc.children.length ? '' : 'none';
+  const refItem = (m) => {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'ref';
+    b.textContent = m.label;
+    b.addEventListener('click', () => select(m, true));
+    li.appendChild(b);
+    return li;
+  };
+  const ghostItem = (text) => {
+    const li = document.createElement('li');
+    li.className = 'ghost';
+    li.textContent = text;
+    return li;
+  };
+  const outL = card.querySelector('.out');
+  outL.textContent = '';
+  n.out.slice(0, 5).forEach(m => outL.appendChild(refItem(m)));
+  if (!n.out.length) outL.appendChild(ghostItem(t('wiki.emptyOut')));
+  const inL = card.querySelector('.in');
+  inL.textContent = '';
+  n.inc.slice(0, 5).forEach(m => inL.appendChild(refItem(m)));
+  if (!n.inc.length) inL.appendChild(ghostItem(t('wiki.emptyIn')));
+  card.querySelector('.path').textContent = (d.project ? d.project + ' · ' : '') + 'docs/' + (d.rel || '');
+}
+
+function select(n, scroll) {
   if (!view) return;
+  view.selected = n;
+  renderPreview(n);
+  const card = view.pane.querySelector('.wg-preview');
+  if (card) card.classList.add('open');
+  if (scroll) {
+    // Center the node, yielding half the preview card's width (sample math).
+    view.vx = view.W / 2 - n.x * view.scale - 140 * view.scale;
+    view.vy = view.H / 2 - n.y * view.scale;
+  }
   wake(0.15);
-  zoomAt(view.W / 2, view.H / 2, factor);
+  draw();
 }
 
-// ── File list hosted in the explorer panel space (graph-view interaction
-// batch, 2026-10-18) ────────────────────────────────────────────
-// While the wiki-graph tab is the visible Canvas content, its file list —
-// projects with their documents, the facet chips and the legend — is hosted
-// by the SAME panel space the file explorer uses (#panel-sessions, beside
-// #explorer-section, which hides for the duration). The pane itself builds no
-// list block. Mount/unmount ride the tab lifecycle: every activation funnels
-// through canvas.js setActiveTab → 'canvas-tab-switched'; closing rides
-// 'canvas-tab-closed'; the Canvas panel's collapse has no event — it toggles
-// body.canvas-open, mirrored with a MutationObserver. Filter wiring goes
-// through the real toolbar/facet controls (set value + dispatch), so the
-// list, the selects and the canvas share one filter state.
-
-const EXPLORER_HOST_ID = 'wiki-graph-explorer-section';
-
-/** The explorer panel space this module may host the list in — null when the
- *  panel is absent (embedded/test contexts): the pane then simply stays pure
- *  graph. @returns {{panel: HTMLElement, explorer: HTMLElement} | null} */
-function explorerPanelSpace() {
-  const panel = document.getElementById('panel-sessions');
-  const explorer = document.getElementById('explorer-section');
-  return panel && explorer ? { panel, explorer } : null;
+function deselect() {
+  if (!view) return;
+  view.selected = null;
+  const card = view.pane.querySelector('.wg-preview');
+  if (card) card.classList.remove('open');
+  draw();
 }
 
-/** True when the wiki-graph tab is the VISIBLE Canvas content (its pane is
- *  the active one ∧ the Canvas panel is open — the same predicate
- *  canvas.js syncCanvasPanelButtons mirrors onto the activity-bar button). */
-function graphTabVisible() {
-  const pane = /** @type {HTMLElement|null} */ (document.querySelector('#canvas-content .canvas-tab-pane.active'));
-  return !!pane && pane.dataset.tabId === TAB_ID && document.body.classList.contains('canvas-open');
-}
-
-/** Mount the file list into the explorer panel space — or restore the
- *  explorer when the graph tab is not the visible content. Idempotent. */
-function syncGraphExplorerList() {
-  const space = explorerPanelSpace();
-  if (!space) return;
-  if (!graphTabVisible()) { unmountGraphExplorerList(); return; }
-  let host = document.getElementById(EXPLORER_HOST_ID);
-  if (!host) {
-    host = document.createElement('div');
-    host.id = EXPLORER_HOST_ID;
-    space.panel.insertBefore(host, space.explorer.nextSibling);
-  }
-  space.explorer.style.display = 'none';
-  renderGraphFileList(host);
-}
-
-/** Restore the file explorer (the graph list is no longer hosted). */
-function unmountGraphExplorerList() {
-  document.getElementById(EXPLORER_HOST_ID)?.remove();
-  const explorer = document.getElementById('explorer-section');
-  if (explorer) explorer.style.display = '';
-}
-
-// ── Side Bar auto-open (§2 behavior rules R1-R10) ─────────────────────────
-// The graph's file list hosts in the Side Bar's panel space — a collapsed
-// Side Bar hides it (the "one manual click" gap this closes).
-//
-//   R1/R2/R3/R4/R6  graph becomes the visible Canvas content ⇒
-//                   showSidePanel('files') — expand + activate, via the SAME
-//                   API a manual expansion uses, so the expand persists
-//                   (R7: writes sidebar_collapsed=false + panel=files; zero
-//                   new persistence keys) and never collapses (R9).
-//   R5              a manual collapse while the graph is visible sets an
-//                   in-memory dismissed flag — the rest of this graph viewing
-//                   session stays quiet. Memory-only by design (R7).
-//   R6              leaving the tab ends the session and clears the flag;
-//                   coming back auto-expands again.
-//   R8              mobile (≤768px) never auto-opens: Side Bar and Canvas are
-//                   mutually exclusive full overlays there.
-//   R10             showSidePanel('files') re-focuses the sole host panel;
-//                   with a single registered panel it is a no-op today.
-let graphSidebarDismissed = false;
-/** Last observed body.sidebar-collapsed state — the false→true flip while the
- *  graph is visible is the ONLY manual-collapse entry (auto-open only ever
- *  expands). Initialized from the pre-paint restored state. */
-let lastSidebarCollapsed = document.body.classList.contains('sidebar-collapsed');
-
-/** The graph became the visible Canvas content — the one auto-expand chance.
- *  Funnel for R1 (fresh open) · R2 (tab switch back) · R3 (Canvas reopen) ·
- *  R4 (restore). Idempotent: an already-expanded files panel is re-affirmed
- *  with the same persisted values, nothing else changes. */
-function ensureSideBarForGraph() {
-  if (!graphTabVisible()) return;
-  import('./activityBar.js').then(({ showSidePanel, isMobileViewport }) => {
-    if (!graphTabVisible()) return;         // state may have moved while awaiting
-    if (isMobileViewport()) return;         // R8
-    if (graphSidebarDismissed) return;      // R5
-    showSidePanel('files');                 // R1/R2/R3/R4/R6 → persists (R7)
-  }).catch(() => { /* activityBar unavailable (embedded/test) — skip */ });
-}
-
-// ── Facet dropdowns (§4): self-drawn face over the native select ──────────
-// The native <select> stays the STATE OWNER (value + change events — the
-// sidebar chips and the Clear button drive it through the existing wiring).
-// The custom face + listbox is a pure face layer: a pick writes sel.value and
-// dispatches 'change'; external 'change' events repaint the face, so the two
-// surfaces can never diverge. Keyboard per WAI-ARIA APG (listbox): ↑↓ move /
-// Enter pick / Esc close / Home / End / first-letter type-ahead.
-//
-// Degrade path (spec §4 warn row): on touch-like pointers the native select
-// stays visible, reskinned by CSS (appearance:none + data-URI chevron) — the
-// OS renders the open list, keyboard/AT support stays free.
-const facetRepaints = [];
-
-/** Repaint every custom facet face (after rebuildSim re-derives options). */
-function syncWikiFacets() {
-  facetRepaints.forEach((fn) => { try { fn(); } catch (_) { /* stale face */ } });
-}
-
-function shouldUseNativeFacet() {
-  try {
-    return window.matchMedia('(hover: none)').matches
-      || window.matchMedia('(pointer: coarse)').matches;
-  } catch (_) { return false; }
-}
-
-const DD_CHEVRON =
-  '<svg class="wiki-dd-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
-const DD_CHECK =
-  '<svg class="wiki-dd-ck" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
-
-/** Wrap one native facet select with the self-drawn face + listbox. */
-function upgradeFacetToDropdown(sel) {
-  if (shouldUseNativeFacet()) return; // degrade path: reskinned native select
-  try {
-    const dd = document.createElement('div');
-    dd.className = 'wiki-dd';
-    dd.innerHTML =
-      '<button type="button" class="wiki-dd-face" aria-haspopup="listbox" aria-expanded="false">' +
-      '<span class="wiki-dd-label"></span>' + DD_CHEVRON + '</button>' +
-      '<div class="wiki-dd-pop" role="listbox"></div>';
-    const face = /** @type {HTMLButtonElement} */ (dd.querySelector('.wiki-dd-face'));
-    const label = dd.querySelector('.wiki-dd-label');
-    const pop = dd.querySelector('.wiki-dd-pop');
-    let hl = 0;
-
-    const options = () => [...sel.options].map((o) => ({ v: o.value, t: o.textContent }));
-    const paint = () => {
-      const opts = [...pop.querySelectorAll('.wiki-dd-opt')];
-      opts.forEach((/** @type {HTMLElement} */ o, i) => {
-        const isSel = o.dataset.v === sel.value;
-        o.classList.toggle('sel', isSel);
-        o.classList.toggle('hl', i === hl);
-        if (isSel) o.setAttribute('aria-selected', 'true');
-        else o.removeAttribute('aria-selected');
-      });
-      const cur = options().find((o) => o.v === sel.value);
-      label.textContent = cur ? cur.t : '';
-    };
-    const rebuildPop = () => {
-      pop.innerHTML = '';
-      options().forEach(({ v, t: text }) => {
-        const opt = document.createElement('div');
-        opt.className = 'wiki-dd-opt';
-        opt.setAttribute('role', 'option');
-        opt.tabIndex = -1;
-        opt.dataset.v = v;
-        const lb = document.createElement('span');
-        lb.className = 'wiki-dd-opt-label';
-        lb.textContent = text;
-        opt.innerHTML = DD_CHECK; // static icon; the label node goes in front
-        opt.insertBefore(lb, opt.firstChild);
-        opt.addEventListener('click', () => pick(v));
-        pop.appendChild(opt);
-      });
-      paint();
-    };
-    const isOpen = () => dd.classList.contains('open');
-    const open = (v) => {
-      dd.classList.toggle('open', v);
-      face.setAttribute('aria-expanded', String(v));
-      if (v) {
-        rebuildPop();
-        hl = Math.max(0, [...pop.querySelectorAll('.wiki-dd-opt')]
-          .findIndex((o) => o.classList.contains('sel')));
-        paint();
-      }
-    };
-    const pick = (v) => {
-      sel.value = v;
-      sel.dispatchEvent(new Event('change', { bubbles: true }));
-      open(false);
-      face.focus();
-    };
-    face.addEventListener('click', () => open(!isOpen()));
-    face.addEventListener('keydown', (/** @type {KeyboardEvent} */ e) => {
-      const opts = options();
-      const n = opts.length;
-      if (!n) return;
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        if (!isOpen()) { open(true); return; }
-        hl = (hl + (e.key === 'ArrowDown' ? 1 : -1) + n) % n;
-        paint();
-      } else if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        if (isOpen()) pick(opts[hl].v);
-        else open(true);
-      } else if (e.key === 'Escape') {
-        if (isOpen()) open(false);
-      } else if (e.key === 'Home' && isOpen()) {
-        e.preventDefault(); hl = 0; paint();
-      } else if (e.key === 'End' && isOpen()) {
-        e.preventDefault(); hl = n - 1; paint();
-      } else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey && isOpen()) {
-        // Type-ahead: next option whose label starts with the key (wraps).
-        const ch = e.key.toLowerCase();
-        for (let s = 1; s <= n; s++) {
-          const i = (hl + s) % n;
-          if (opts[i].t.toLowerCase().startsWith(ch)) { hl = i; paint(); e.preventDefault(); break; }
-        }
-      }
-    });
-    const onDocClick = (e) => { if (!dd.contains(e.target)) open(false); };
-    document.addEventListener('click', onDocClick);
-    sel.addEventListener('change', paint);
-    // Veil the native select (still the state owner); the face replaces it.
-    sel.classList.add('wiki-facet-veiled');
-    sel.parentNode.insertBefore(dd, sel);
-    facetRepaints.push(paint);
-    paint();
-  } catch (_) {
-    // Any surprise → the reskinned native select is the safe fallback.
-    sel.classList.remove('wiki-facet-veiled');
-  }
-}
-
-/** The file list face: head (title + clear), the counts meta row, projects
- *  with their documents, facet chips, legend, filter empty state. A document
- *  row opens through the SAME entry the canvas node clicks use (openDoc →
- *  openLocalFileTab / remote-doc channel). Typography per design §3:
- *  counts live in their own meta line, section labels carry a right-hung
- *  total, project rows 500 / doc rows 400 with a 26px indent, attachment
- *  rows carry a 12px SVG icon in the indent slot (was a "⎘ " text prefix). */
-
-// Attachment icon (12px, 1.5 stroke) — sits in the doc row's indent slot.
-const DOC_ATTACH_ICON =
-  '<svg class="wx-doc-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>';
-
-// Legend swatches — the SAME shapes the canvas draws (§3: no more glyph
-// characters ●▢◌◎). Fixed hexes = the ramp grays (canvas constants, not CSS
-// tokens — the 2D canvas has no var() access either).
-const LEGEND_SWATCHES = {
-  docs:
-    '<svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="#9aa0a8"/></svg>',
-  attach:
-    '<svg width="12" height="12" aria-hidden="true"><rect x="1.5" y="1.5" width="9" height="9" rx="2.5" fill="#71767e" stroke="#2b2f36"/></svg>',
-  stub:
-    '<svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="#71767e" stroke-dasharray="2 2"/></svg>',
-  done:
-    '<svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="#9aa0a8" stroke-width="1.6"/></svg>',
-};
-
-function renderGraphFileList(host) {
-  if (!view || !view.data) return;
-  const d = view.data;
-  const nodes = d.nodes || [];
-  const docCount = nodes.filter(n => !n.stub).length;
-  const linkCount = (d.edges || []).length;
-  const pane = view.pane;
-  const search = /** @type {HTMLInputElement|null} */ (pane ? pane.querySelector('.wiki-toolbar-search') : null);
-
-  host.innerHTML = '';
-  const head = document.createElement('div');
-  head.className = 'wx-sb-head';
-  const title = document.createElement('span');
-  title.className = 'wx-sb-head-title';
-  title.textContent = t('wiki.panelTitle');
-  const clearBtn = document.createElement('button');
-  clearBtn.type = 'button';
-  clearBtn.className = 'wx-sb-clear';
-  clearBtn.textContent = t('wiki.clearAll');
-  clearBtn.title = t('wiki.clearAllTitle');
-  clearBtn.addEventListener('click', () => {
-    if (!view || !view.pane) return;
-    const search2 = /** @type {HTMLInputElement|null} */ (view.pane.querySelector('.wiki-toolbar-search'));
-    const kindSel = /** @type {HTMLSelectElement|null} */ (view.pane.querySelector('.wiki-facet-kind'));
-    const typeSel = /** @type {HTMLSelectElement|null} */ (view.pane.querySelector('.wiki-facet-type'));
-    const statusSel = /** @type {HTMLSelectElement|null} */ (view.pane.querySelector('.wiki-facet-status'));
-    if (search2) { search2.value = ''; search2.dispatchEvent(new Event('input', { bubbles: true })); }
-    [kindSel, typeSel, statusSel].forEach((s) => { if (s) { s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true })); } });
-    host.querySelectorAll('.active').forEach((el) => el.classList.remove('active'));
-  });
-  head.append(title, clearBtn);
-
-  // §3 meta row — the counts moved OUT of the section title into their own
-  // line (11px / dim / tabular-nums): the projects · docs · links summary.
-  const meta = document.createElement('div');
-  meta.className = 'wx-sb-meta';
-  meta.textContent = t('wiki.sbMeta')
-    .replace('{projects}', String((d.projects || []).length))
-    .replace('{docs}', String(docCount))
-    .replace('{links}', String(linkCount));
-
-  const body = document.createElement('div');
-  body.className = 'wx-sb-body';
-
-  // Projects + their documents — the file list itself. Project rows keep the
-  // old sidebar behaviour (click = toolbar search filter); document rows open
-  // the file in a Canvas tab through openDoc.
-  const projSec = document.createElement('div');
-  projSec.className = 'wx-sb-sec';
-  const projTitle = document.createElement('div');
-  projTitle.className = 'wx-sb-title wx-sb-proj-title';
-  const projLabel = document.createElement('span');
-  projLabel.textContent = t('wiki.sbProjects');
-  const projTot = document.createElement('span');
-  projTot.className = 'wx-sb-tot';
-  projTot.textContent = String(docCount);
-  projTitle.append(projLabel, projTot);
-  const projList = document.createElement('div');
-  projList.className = 'wx-sb-list wx-projects';
-  const byProject = new Map();
-  nodes.forEach((n) => {
-    if (!byProject.has(n.project)) byProject.set(n.project, []);
-    byProject.get(n.project).push(n);
-  });
-  (d.projects || []).forEach((p, i) => {
-    const row = document.createElement('div');
-    row.className = 'wx-sb-item wx-proj';
-    row.tabIndex = 0;
-    row.dataset.proj = p.name.toLowerCase();
-    if (view.filter === p.name.toLowerCase()) row.classList.add('active');
-    const dot = document.createElement('span');
-    dot.className = 'wx-dot';
-    dot.style.background = PROJECT_DOTS[i % PROJECT_DOTS.length];
-    const name = document.createElement('span');
-    name.className = 'wx-proj-name';
-    name.textContent = p.name;
-    row.append(dot, name);
-    if (p.stub) {
-      // (remote) suffix — its own weakened span (§3: 10px, dim), no longer
-      // glued into the name string.
-      const rm = document.createElement('span');
-      rm.className = 'wx-proj-remote';
-      rm.textContent = t('wiki.remoteProject');
-      row.appendChild(rm);
-    }
-    const cnt = p.docCount ?? 0;
-    const count = document.createElement('span');
-    count.className = 'wx-count' + (cnt === 0 ? ' zero' : '');
-    count.textContent = String(cnt);
-    row.appendChild(count);
-    row.addEventListener('click', () => {
-      const active = row.classList.toggle('active');
-      projList.querySelectorAll('.wx-proj').forEach((r) => { if (r !== row) r.classList.remove('active'); });
-      if (search) { search.value = active ? p.name : ''; search.dispatchEvent(new Event('input', { bubbles: true })); }
-    });
-    projList.appendChild(row);
-    // Document rows — real files only (stubs are unresolved links, not files;
-    // clicking a stub node on the canvas explains that via its own toast).
-    for (const n of byProject.get(p.name) || []) {
-      if (n.stub) continue;
-      const doc = document.createElement('div');
-      doc.className = 'wx-sb-item wx-doc';
-      doc.tabIndex = 0;
-      doc.dataset.proj = p.name.toLowerCase();
-      const label = n.title || n.rel.split('/').pop();
-      doc.dataset.text = label.toLowerCase();
-      if (n.kind === 'attachment') doc.innerHTML = DOC_ATTACH_ICON;
-      const docName = document.createElement('span');
-      docName.className = 'wx-doc-name';
-      docName.textContent = label;
-      doc.title = n.rel;
-      doc.appendChild(docName);
-      doc.addEventListener('click', () => { void openDoc(n); });
-      projList.appendChild(doc);
-    }
-  });
-  projSec.append(projTitle, projList);
-
-  // Type / status chips — click = facet select. Counts capped like the selects.
-  // §3: chip = label + right-hung count (.wx-chip-n, 70% opacity); a real
-  // button (free keyboard activation), height 20.
-  const chipInto = (hostSel, selCls, counts) => {
-    const sec = document.createElement('div');
-    sec.className = 'wx-sb-sec';
-    const secTitle = document.createElement('div');
-    secTitle.className = 'wx-sb-title';
-    secTitle.textContent = hostSel === '.wx-types' ? t('wiki.sbTypes') : t('wiki.sbStatuses');
-    const chips = document.createElement('div');
-    chips.className = 'wx-sb-chips';
-    const sel = pane ? pane.querySelector(selCls) : null;
-    counts.forEach(([v, c]) => {
-      const el = document.createElement('button');
-      el.type = 'button';
-      el.className = 'wx-chip';
-      if (sel && /** @type {HTMLSelectElement} */ (sel).value === v) el.classList.add('active');
-      const lb = document.createElement('span');
-      lb.textContent = v;
-      const n = document.createElement('span');
-      n.className = 'wx-chip-n';
-      n.textContent = String(c);
-      el.append(lb, n);
-      el.addEventListener('click', () => {
-        const on = !el.classList.contains('active');
-        chips.querySelectorAll('.wx-chip').forEach((c2) => c2.classList.remove('active'));
-        if (on) el.classList.add('active');
-        if (sel) { /** @type {HTMLSelectElement} */ (sel).value = on ? v : ''; sel.dispatchEvent(new Event('change', { bubbles: true })); }
-      });
-      chips.appendChild(el);
-    });
-    sec.append(secTitle, chips);
-    return sec;
-  };
-  const topCounts = (key) => {
-    const m = new Map();
-    nodes.forEach((n) => { if (n[key]) m.set(n[key], (m.get(n[key]) || 0) + 1); });
-    return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
-  };
-
-  // Legend — node shapes (moved with the list; the pane stays pure graph).
-  // §3: two-column grid, the shapes are the canvas's own 12px SVGs.
-  const legendSec = document.createElement('div');
-  legendSec.className = 'wx-sb-sec';
-  const legendTitle = document.createElement('div');
-  legendTitle.className = 'wx-sb-title';
-  legendTitle.textContent = t('wiki.sbLegend');
-  const legend = document.createElement('div');
-  legend.className = 'wx-sb-legend';
-  legend.innerHTML =
-    `<div class="wx-lg-item">${LEGEND_SWATCHES.docs}<span class="wx-lg-docs"></span></div>` +
-    `<div class="wx-lg-item">${LEGEND_SWATCHES.attach}<span class="wx-lg-attach"></span></div>` +
-    `<div class="wx-lg-item">${LEGEND_SWATCHES.stub}<span class="wx-lg-stub"></span></div>` +
-    `<div class="wx-lg-item">${LEGEND_SWATCHES.done}<span class="wx-lg-done"></span></div>`;
-  legend.querySelector('.wx-lg-docs').textContent = t('wiki.legendDocs');
-  legend.querySelector('.wx-lg-attach').textContent = t('wiki.legendAttachments');
-  legend.querySelector('.wx-lg-stub').textContent = t('wiki.legendUnresolved');
-  legend.querySelector('.wx-lg-done').textContent = t('wiki.legendDone');
-  legendSec.append(legendTitle, legend);
-
-  // §3 filter empty state — the list blanks out when the toolbar filter
-  // matches nothing; this centered two-line state replaces the blank.
-  const empty = document.createElement('div');
-  empty.className = 'wx-sb-empty';
-  const emptyBig = document.createElement('div');
-  emptyBig.className = 'wx-sb-empty-big';
-  emptyBig.textContent = t('wiki.sbEmptyMain');
-  const emptyHint = document.createElement('div');
-  emptyHint.className = 'wx-sb-empty-hint';
-  emptyHint.appendChild(document.createTextNode(t('wiki.sbEmptyHintPrefix')));
-  const emptyClear = document.createElement('a');
-  emptyClear.href = '#';
-  emptyClear.textContent = t('wiki.clearAll');
-  emptyClear.addEventListener('click', (e) => { e.preventDefault(); clearBtn.click(); });
-  emptyHint.append(emptyClear, document.createTextNode(t('wiki.sbEmptyHintSuffix')));
-  empty.append(emptyBig, emptyHint);
-
-  body.append(projSec, chipInto('.wx-types', '.wiki-facet-type', topCounts('type')),
-    chipInto('.wx-status', '.wiki-facet-status', topCounts('status')), legendSec, empty);
-  host.append(head, meta, body);
-  applyListFilter();
-}
-
-/** §3 list-side filter mirror: the toolbar filter dims the canvas nodes AND
- *  hides non-matching list rows; zero visible rows raises the empty state. */
-function applyListFilter() {
-  const host = document.getElementById(EXPLORER_HOST_ID);
-  if (!host || !view) return;
-  const q = view.filter;
-  let visible = 0;
-  host.querySelectorAll('.wx-proj, .wx-doc').forEach((/** @type {HTMLElement} */ row) => {
-    const proj = row.dataset.proj || '';
-    const text = row.dataset.text || '';
-    const show = !q || proj.includes(q) || text.includes(q);
-    row.style.display = show ? '' : 'none';
-    if (show) visible++;
-  });
-  const empty = host.querySelector('.wx-sb-empty');
-  if (empty) empty.classList.toggle('show', visible === 0);
-}
-
-/** Data-landing hook (rebuildSim): refresh the hosted list in place. */
-function renderSidebar() {
-  const host = document.getElementById(EXPLORER_HOST_ID);
-  if (host) renderGraphFileList(host);
-}
-
-// Tab switching drives the explorer-space hosting: any activation re-evaluates
-// (syncGraphExplorerList self-guards on WHICH pane is active — mount for this
-// tab, restore the explorer for any other).
-// Re-activation repaint: while this tab is hidden its canvas backing store is
-// dropped (ResizeObserver resize → 1px bitmap) and the idle-stopped loop draws
-// nothing on its own, so switching back used to leave a blank canvas. One
-// frame after the observer has restored the size repaints the settled layout
-// as-is — no refetch, zoom/pan preserved (refetch stays the wiki-button /
-// refresh-entry semantics). Stale hover is dropped with it: activation comes
-// from a tab click or the md graph button, so the pointer is not over the
-// canvas, and a kept hover would repaint a ghost highlight ring.
-document.addEventListener('canvas-tab-switched', (/** @type {CustomEvent} */ e) => {
-  if (e.detail && e.detail.id === TAB_ID) {
-    repaintOnActivate();
-    syncGraphExplorerList();
-    // R2/R3: switching back (or the state-4 openCanvas+setActiveTab) walks
-    // through here — the one auto-expand chance per "became visible".
-    ensureSideBarForGraph();
-  } else {
-    // R6: leaving the tab ends the graph viewing session — clear the
-    // dismissed flag so the next visit gets a fresh auto-expand.
-    graphSidebarDismissed = false;
-    syncGraphExplorerList();
-  }
-});
-
-// Canvas panel collapse/expand dispatches no event (body.canvas-open is the
-// state mirror canvas.js itself reads) — track it so the explorer comes back
-// the moment the graph stops being visible. The same stream carries the Side
-// Bar's collapsed flips: a false→true transition while the graph is visible
-// is by construction a MANUAL collapse (⌘B / header toggle / files-button
-// re-click / mobile scrim — auto-open only ever expands) → R5 dismisses.
-new MutationObserver(() => {
-  const collapsed = document.body.classList.contains('sidebar-collapsed');
-  if (collapsed && !lastSidebarCollapsed && graphTabVisible()) graphSidebarDismissed = true;
-  lastSidebarCollapsed = collapsed;
-  syncGraphExplorerList();
-}).observe(document.body, { attributes: true, attributeFilter: ['class'] });
-
-function showTooltip(node, px, py) {
-  let tip = document.getElementById('wiki-graph-tip');
-  if (!tip) {
-    tip = document.createElement('div');
-    tip.id = 'wiki-graph-tip';
-    tip.className = 'wiki-tip';
-    // Mounted INSIDE the graph pane, not on document.body: the pane is
-    // position:relative + overflow:hidden, so the tip (position:absolute) is
-    // structurally confined to the graph view and can never surface over the
-    // conversation UI. A stale tip also dies with the pane's innerHTML reset.
-    view.pane.appendChild(tip);
-  }
-  const d = node.ref;
-  const deviceLine = node.remote ? `<div class="wiki-tip-device">${t('wiki.remoteDevice').replace('{device}', d.device)}</div>` : '';
-  // Scenario metadata: kind + frontmatter type/status (research/learning packs).
-  const meta = [];
-  if (d.kind === 'attachment') meta.push(t('wiki.kindAttachment'));
-  if (d.type) meta.push(d.type);
-  if (d.status) meta.push(d.status);
-  const metaLine = meta.length ? `<div class="wiki-tip-meta"></div>` : '';
-  tip.innerHTML = `<div class="wiki-tip-title"></div><div class="wiki-tip-path"></div>${metaLine}${deviceLine}`;
-  tip.querySelector('.wiki-tip-title').textContent = d.title || d.rel;
-  tip.querySelector('.wiki-tip-path').textContent = d.rel || '';
-  if (meta.length) tip.querySelector('.wiki-tip-meta').textContent = meta.join(' · ');
-  // (px,py) are canvas-local pointer coords; the canvas fills the pane
-  // (inset:0), so they are pane-local too — exactly the tip's positioning
-  // space now. Clamp against the MEASURED tip box so it stays fully inside
-  // the pane even near the right/bottom edges (the old clamp mixed canvas
-  // coords with window.innerWidth — the misplacement bug this fixes).
-  tip.style.left = Math.max(4, Math.min(view.pane.clientWidth - tip.offsetWidth - 4, px + 14)) + 'px';
-  tip.style.top = Math.max(4, Math.min(view.pane.clientHeight - tip.offsetHeight - 4, py + 14)) + 'px';
-  tip.classList.add('show');
-}
-
-function hideTooltip() {
-  document.getElementById('wiki-graph-tip')?.classList.remove('show');
-}
-
-async function openNode(node) {
-  const d = node.ref;
-  if (d.stub) {
-    // A project-level stub or an unresolved link — explain honestly.
-    if (d.rel.endsWith('/')) {
-      const proj = (view?.data.projects || []).find(p => p.name === d.project);
-      window.__showToast?.(
-        proj && proj.error ? t('wiki.stubError').replace('{error}', proj.error)
-          : t('wiki.stubProject').replace('{project}', d.project),
-        'info');
-    } else {
-      window.__showToast?.(t('wiki.unresolved'), 'info');
-    }
-    return;
-  }
-  await openDoc(d);
-}
+// ── Document open (unchanged channel: every other file open in the product
+//    uses the same entries — workspace-open-item / openLocalFileTab) ──
 
 /** Open one graph document through the SAME channel every other file open in
  *  the product uses (workspace-open-item → canvas.js openWorkspaceItem →
  *  Canvas tab): local files ride openLocalFileTab — the entry the markdown
  *  viewer's links use — so tab dedupe/switching behave identically; peer-device
- *  docs are fetched read-only through /api/wiki/remote-doc. Shared by canvas
- *  node clicks AND the explorer-panel file list rows (graph-view interaction
- *  batch, 2026-10-18). @param {any} d graph node ref */
+ *  docs are fetched read-only through /api/wiki/remote-doc. Fired by the
+ *  preview card's 打开文档 button. @param {any} d graph node ref */
 async function openDoc(d) {
   const remote = d.device && d.device !== 'self';
   if (!remote) {
@@ -1443,3 +1005,17 @@ export function focusWikiNode(project, rel) {
   const id = `${project}:${rel.replace(/\\/g, '/')}`;
   openWikiGraphTab(id);
 }
+
+// ── Harness probe (read-only) ─────────────────────────────────
+// The canvas is ONE bitmap — DOM reads cannot see nodes, so the e2e harness
+// reads laid-out coordinates here to drive real pointer events. Exposes
+// layout state only; no mutation path.
+/** @type {any} */ (window).__wikiGraphProbe = () => view && view.sim ? {
+  alpha: view.sim.alpha,
+  scale: view.scale,
+  vx: view.vx, vy: view.vy, W: view.W, H: view.H,
+  nodes: view.sim.nodes.map(n => ({ id: n.id, x: n.x, y: n.y, degree: n.degree, rank: n.rank, dir: n.dir })),
+  unresolved: view.unresolved.length,
+  filter: view.filter, dirFilter: view.dirFilter,
+  selected: view.selected ? view.selected.id : null,
+} : null;

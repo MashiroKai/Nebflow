@@ -45,7 +45,8 @@ object WikiIndex:
     stub: Boolean,     // true = project-level placeholder / unresolved phantom
     kind: String = "doc",         // "doc" | "attachment"
     docType: Option[String] = None, // YAML frontmatter `type:` (scenario pack)
-    status: Option[String] = None   // YAML frontmatter `status:` (open/solved/…)
+    status: Option[String] = None,  // YAML frontmatter `status:` (open/solved/…)
+    summary: Option[String] = None  // graph-preview summary (summaryOf — wiki-graph redesign)
   )
 
   final case class WikiHeading(text: String, line: Int)
@@ -188,17 +189,19 @@ object WikiIndex:
     if idx < 0 then (decoded.trim, None)
     else (decoded.substring(0, idx).trim, Some(decoded.substring(idx + 1).trim))
 
-  /** One parsed document: headings, block anchors and every outgoing link. */
+  /** One parsed document: headings, block anchors, outgoing links and the
+    * graph summary. */
   final case class ParsedDoc(
     title: String,
     headings: List[WikiHeading],
     blocks: List[WikiBlockAnchor],
-    links: List[(String, Option[String], String, Int)] // (target, anchor, kind, line)
+    links: List[(String, Option[String], String, Int)], // (target, anchor, kind, line)
+    summary: Option[String]
   )
 
-  /** Parse raw markdown text into headings / block anchors / outgoing links.
-    * A leading frontmatter block is metadata, not content — its lines are
-    * excluded from heading/block/link extraction. */
+  /** Parse raw markdown text into headings / block anchors / outgoing links /
+    * summary. A leading frontmatter block is metadata, not content — its lines
+    * are excluded from heading/block/link/summary extraction. */
   def parseDoc(rel: String, text: String): ParsedDoc =
     val (_, body, fmOffset) = frontmatterOf(text)
     val lines = body.linesIterator.toVector
@@ -207,6 +210,7 @@ object WikiIndex:
     val blocks = ListBuffer.empty[WikiBlockAnchor]
     val links = ListBuffer.empty[(String, Option[String], String, Int)]
     var title = basename(rel).stripSuffix(".md")
+    var afterFirstH1 = -1
     var i = 0
     while i < lines.length do
       val line = lines(i)
@@ -219,7 +223,9 @@ object WikiIndex:
             val headingText = m.group(2).trim
             if headingText.nonEmpty then
               headings += WikiHeading(headingText, lineNo)
-              if line.startsWith("# ") then title = headingText
+              if line.startsWith("# ") then
+                title = headingText // (unchanged legacy behavior: last H1 wins)
+                if afterFirstH1 < 0 then afterFirstH1 = i + 1
           case None =>
             BlockIdRe.findFirstMatchIn(line).foreach { m =>
               blocks += WikiBlockAnchor(m.group(2), lineNo)
@@ -235,7 +241,57 @@ object WikiIndex:
           if target.nonEmpty then links += ((target, anchor, "link", lineNo))
         }
       i += 1
-    ParsedDoc(title, headings.toList, blocks.toList, links.toList)
+    ParsedDoc(title, headings.toList, blocks.toList, links.toList, summaryOf(lines, mask, afterFirstH1))
+
+  // ── Graph summary (wiki-graph redesign §5) ──────────────────────
+
+  /** Summary cap — the graph surfaces exactly one preview line per document. */
+  val SummaryMaxChars = 140
+
+  /** A line the summary scan may not start from or continue through: blank,
+    * any heading (the first paragraph AFTER the H1 — later headings bound the
+    * paragraph), or a fence marker line. Fenced CONTENT is masked separately
+    * by `mask`. */
+  private def summaryBreak(line: String): Boolean =
+    val t = line.trim
+    t.isEmpty || t.startsWith("#") || FenceRe.findFirstMatchIn(t).isDefined
+
+  /** First non-empty non-heading paragraph after the first H1, inline markup
+    * stripped, capped at [[SummaryMaxChars]]. No H1 ⇒ no summary (the graph
+    * shows the title only). Multi-line paragraphs join with a space; per-line
+    * blockquote/list prefixes are stripped before the join so a quoted first
+    * paragraph reads like prose. */
+  def summaryOf(lines: Vector[String], mask: Vector[Boolean], fromIdx: Int): Option[String] =
+    if fromIdx < 0 || fromIdx >= lines.length then None
+    else
+      var i = fromIdx
+      val buf = ListBuffer.empty[String]
+      while i < lines.length && (mask(i) || summaryBreak(lines(i))) do i += 1
+      while i < lines.length && !mask(i) && !summaryBreak(lines(i)) do
+        buf += lines(i).replaceAll(raw"^\s*>\s?", "").replaceAll(raw"^\s*(?:[-*+]|\d+[.)])\s+", "")
+        i += 1
+      val cleaned = cleanSummaryText(buf.mkString(" "))
+      if cleaned.isEmpty then None else Some(truncateSummary(cleaned, SummaryMaxChars))
+
+  /** Strip inline markdown from a summary candidate: images → alt, links and
+    * wikilinks → their text/alias, emphasis/strikethrough markers and inline
+    * backticks removed, whitespace collapsed. Plain prose passes verbatim. */
+  def cleanSummaryText(s: String): String =
+    s.replaceAll(raw"!\[([^\]]*)\]\([^)]*\)", "$1") // image → alt
+      .replaceAll(raw"\[([^\]]*)\]\([^)]*\)", "$1") // md link → text
+      .replaceAll(raw"!?\[\[[^\]\|]+\|([^\]]+)\]\]", "$1") // aliased wikilink → alias
+      .replaceAll(raw"!?\[\[([^\]]+)\]\]", "$1")    // plain wikilink/embed → target
+      .replaceAll(raw"\*\*([^*]+)\*\*", "$1")
+      .replaceAll(raw"__([^_]+)__", "$1")
+      .replaceAll(raw"\*([^*]+)\*", "$1")
+      .replaceAll(raw"~~([^~]+)~~", "$1")
+      .replaceAll("`", "")
+      .replaceAll(raw"\s+", " ")
+      .trim
+
+  private def truncateSummary(s: String, max: Int): String =
+    if s.length <= max then s
+    else s.substring(0, s.offsetByCodePoints(0, max - 1)) + "…" // never split a code point
 
   private def basename(rel: String): String =
     val norm = rel.replace('\\', '/')
@@ -305,7 +361,8 @@ object WikiIndex:
         stub = false,
         kind = "doc",
         docType = frontmatter.flatMap(_.get("type")).filter(_.nonEmpty),
-        status = frontmatter.flatMap(_.get("status")).filter(_.nonEmpty)
+        status = frontmatter.flatMap(_.get("status")).filter(_.nonEmpty),
+        summary = parsed.summary
       )
       edges ++= buildEdges(project, device, rel, parsed, knownRels)
     }
@@ -343,7 +400,8 @@ object WikiIndex:
       "stub" -> n.stub.asJson,
       "kind" -> n.kind.asJson,
       "type" -> n.docType.map(_.asJson).getOrElse(Json.Null),
-      "status" -> n.status.map(_.asJson).getOrElse(Json.Null)
+      "status" -> n.status.map(_.asJson).getOrElse(Json.Null),
+      "summary" -> n.summary.map(_.asJson).getOrElse(Json.Null)
     )
 
   def edgeJson(e: WikiEdge): Json =
