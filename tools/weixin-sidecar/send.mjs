@@ -53,7 +53,12 @@
 //     401 {"error":"unauthorized"}        — missing/mismatching bearer token
 //     405 {"error":"method_not_allowed: POST only"}
 //     500 {"error":"…"}                   — host-account state refusal (empty /
-//                                           ambiguous / unusable account index)
+//                                           unusable account index; pop-file-leg
+//                                           batch 2026-10-21: several accounts
+//                                           with no hint NO LONGER refuses —
+//                                           the newest USABLE account is adopted
+//                                           automatically, the msgloop's own
+//                                           selection rule)
 //     502 {"error":"delivery_failed:…"}   — iLink refused (ret!==0 / HTTP 4xx-5xx,
 //                                           never retried) or network-class
 //                                           failure after the retry budget
@@ -71,9 +76,14 @@
 //   Credential flow (design §0.2): the bot_token NEVER crosses the engine↔shim
 //   wire. It is read here, per send, from the host account file this side-car
 //   already mirrors (~/.openclaw/openclaw-weixin/accounts/<id>.json — the same
-//   file the official plugin reads). Account selection: the optional `account`
-//   field (normalized id or raw bot id), else THE single indexed account; with
-//   several accounts and no hint the request is refused rather than guessed.
+//   file the official plugin reads). Account selection (pop-file-leg batch,
+//   2026-10-21 — 同腿同权 ruling): the optional `account` field (normalized id
+//   or raw bot id) wins; without a hint THE single indexed account, and with
+//   several the NEWEST USABLE one is adopted automatically — the same
+//   newest-valid rule the inbound msgloop runs (WEIXIN_MSGLOOP_ACCOUNT_ID
+//   default "newest indexed", self-heal adopts the newest valid). The old
+//   ambiguous_account refusal (manual `account` face) is retired: the account
+//   the inbound loop listens on is the account replies go out on.
 //
 //   Mutual exclusion (design §0.4, contract ②): a send consumes no getUpdates
 //   cursor and the server dedups by client_id, so the outbound leg does not
@@ -618,10 +628,39 @@ async function sendMediaMessage(cx, { base, cdnBase, botToken, to, text, kind, m
 // ───────────────────────── host account face ─────────────────────────
 
 /**
+ * Newest USABLE account in the index (pop-file-leg batch, 2026-10-21) — the
+ * send-side twin of msgloop.mjs's `latestValidAccountId` (msgloop self-heal
+ * batch, 2026-10-08; same walk: newest→oldest, first account file that loads
+ * with a non-empty token, null when none qualifies). Deliberately a twin, not
+ * an import: send.mjs imports NOTHING from shim.mjs/msgloop.mjs (the
+ * standalone unit-test contract, file header) — the same twinning precedent
+ * as `classifyFetchError` / `CDN_DEFAULT_BASE`.
+ * @param {string[]} index account ids, oldest → newest
+ * @param {(id: string) => {token?: unknown} | null} loader
+ * @returns {string | null}
+ */
+export function latestValidAccountId(index, loader) {
+  for (let i = index.length - 1; i >= 0; i--) {
+    const id = String(index[i] ?? "").trim();
+    if (!id) continue;
+    const acct = loader(id);
+    if (acct && typeof acct.token === "string" && acct.token.trim()) return id;
+  }
+  return null;
+}
+
+/**
  * Resolve the bot credentials for one send. `hint` is the optional `account`
  * request field (normalized account id or raw bot id). Returns
- * {id, token, baseUrl} or {refusal} — a multi-account index without a hint is
- * an explicit refusal, never a guess.
+ * {id, token, baseUrl} or {refusal}. Selection (pop-file-leg batch,
+ * 2026-10-21 — 同腿同权): a hint pins the account (exact match, else
+ * unknown_account refusal); without a hint the single indexed account, and
+ * with several the NEWEST USABLE one is adopted automatically — never a
+ * refusal-by-ambiguity any more (the text leg's engine caller always carried a
+ * hint, so only bare calls ever hit the old ambiguous_account face; the
+ * msgloop's inbound rule is the authority this now aligns with). Refusals left:
+ * an empty index (`no_host_account`) and an all-unusable index
+ * (`no_usable_account`).
  */
 export function resolveAccount(hint, cx) {
   const ids = cx.listIndexedAccountIds();
@@ -636,7 +675,12 @@ export function resolveAccount(hint, cx) {
   } else if (ids.length === 1) {
     id = ids[0];
   } else {
-    return { refusal: `ambiguous_account: ${ids.length} host accounts indexed (${ids.join(", ")}); pass "account"` };
+    id = latestValidAccountId(ids, (i) => cx.loadAccount(i));
+    if (!id) {
+      return {
+        refusal: `no_usable_account: ${ids.length} host accounts indexed (${ids.join(", ")}) and none carries a usable token`,
+      };
+    }
   }
   const acct = cx.loadAccount(id);
   const token = acct?.token?.trim();

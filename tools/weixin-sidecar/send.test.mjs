@@ -9,8 +9,10 @@
 //     base_info (mirror of the official plugin 2.4.9 send face)
 //   - delivery verdict: ret=0 → delivered + lossless message_id; ret!==0 →
 //     502 (deterministic, NOT retried); network-class → retried then 502
-//   - account resolution: single account auto-picked; ambiguous refused;
-//     unknown hint refused
+//   - account resolution: single account auto-picked; several without a hint
+//     auto-adopt the NEWEST USABLE one (pop-file-leg batch 2026-10-21 — the
+//     msgloop's own rule; the old ambiguous_account refusal is retired);
+//     all-unusable refused; unknown hint refused
 // Run: node --test tools/weixin-sidecar/send.test.mjs
 
 import test from "node:test";
@@ -29,6 +31,8 @@ import {
   encryptAesEcb,
   aesEcbPaddedSize,
   parseLosslessIds,
+  latestValidAccountId,
+  resolveAccount,
 } from "./send.mjs";
 
 // ───────────────────────── harness ─────────────────────────
@@ -353,7 +357,7 @@ test("send: network-class failure IS retried, then reported as 502 with the clas
 
 // ───────────────────────── account resolution ─────────────────────────
 
-test("send: one indexed account is auto-picked; several without a hint is a refusal, never a guess", async () => {
+test("send: single auto-picked; several without a hint ADOPT THE NEWEST USABLE (同腿同权); hint pins; unknown refused", async () => {
   const stub = stubIlink((req, res) => {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ret: 0, message_id: 7 }));
@@ -370,11 +374,11 @@ test("send: one indexed account is auto-picked; several without a hint is a refu
 
         const many = makeCtx(fakeState(["t0", "t1"]), base).ctx;
         const r2 = await callHandler(makeSendHandler(many), { token: "t", body: { to: "a", text: "x" } });
-        assert.equal(r2.status, 500);
-        assert.match(r2.body.error, /ambiguous_account/);
+        assert.equal(r2.status, 200, "several accounts + no hint ⇒ the newest USABLE is adopted, never refused");
+        assert.equal(stub.seen.at(-1).headers["authorization"], "Bearer t1", "the NEWEST indexed account wins");
 
         const r3 = await callHandler(makeSendHandler(many), { token: "t", body: { to: "a", text: "x", account: "acct1@im.bot" } });
-        assert.equal(r3.status, 200, "an explicit hint (raw bot id) resolves the ambiguity");
+        assert.equal(r3.status, 200, "an explicit hint still pins the account");
         assert.equal(stub.seen.at(-1).headers["authorization"], "Bearer t1");
 
         const r4 = await callHandler(makeSendHandler(many), { token: "t", body: { to: "a", text: "x", account: "nope" } });
@@ -385,6 +389,65 @@ test("send: one indexed account is auto-picked; several without a hint is a refu
       }
     },
   );
+});
+
+test("send: newest account tokenless ⇒ adopt the newest VALID; all unusable ⇒ 500 no_usable_account", async () => {
+  // A definitely-free LOOPBACK port: bind port 0, take the assigned port, close.
+  const freePort = await new Promise((resolve, reject) => {
+    const s = http.createServer();
+    s.listen(0, "127.0.0.1", () => {
+      const p = s.address().port;
+      s.close(() => (s.closeAllConnections?.(), resolve(p))); // release the handle — an open server would keep the test process alive
+    });
+    s.on("error", reject);
+  });
+  const base = `http://127.0.0.1:${freePort}`;
+  await withEnv(
+    // 🔴 egress discipline: the base is pinned to the dead LOOPBACK port — the
+    // send fails fast and locally; the point under test is only WHICH account
+    // was adopted, never any real wire.
+    {
+      WEIXIN_SEND_TOKEN: "t",
+      NEBFLOW_HOME: "/nonexistent-nb-home",
+      WEIXIN_SIDECAR_ILINK_BASE: base,
+      WEIXIN_SIDECAR_SEND_ATTEMPTS: "1",
+      WEIXIN_SIDECAR_SEND_TIMEOUT_MS: "50",
+      WEIXIN_SIDECAR_SEND_BACKOFF_MS: "0",
+    },
+    async () => {
+      // newest index entry (acct1) carries no usable token — the walk skips it
+      const state = fakeState(["t0", null]);
+      const { ctx } = makeCtx(state, base);
+      const r = await callHandler(makeSendHandler(ctx), { token: "t", body: { to: "a", text: "x" } });
+      assert.equal(r.status, 502, "no iLink stub wired — but the account face must NOT be the refusal");
+      assert.doesNotMatch(r.body.error, /no_usable_account|ambiguous_account|unusable_account/, "acct0 (the newest VALID) was adopted");
+      assert.match(r.body.error, /delivery_failed/, "the failure is the send itself, not the account");
+
+      const none = makeCtx(fakeState([null, null]), base).ctx;
+      const r2 = await callHandler(makeSendHandler(none), { token: "t", body: { to: "a", text: "x" } });
+      assert.equal(r2.status, 500);
+      assert.match(r2.body.error, /no_usable_account/);
+    },
+  );
+});
+
+test("latestValidAccountId: walks newest→oldest, skips blank ids and tokenless files (msgloop twin)", () => {
+  const loader = (id) => (id === "b" ? null : { token: id === "a" ? "  " : `tok-${id}` });
+  assert.equal(latestValidAccountId(["a", "b", "c"], loader), "c");
+  assert.equal(latestValidAccountId(["a", "", "c"], loader), "c");
+  assert.equal(latestValidAccountId(["a", "b"], loader), null, "none usable ⇒ null");
+  assert.equal(latestValidAccountId([], loader), null);
+});
+
+test("resolveAccount: hint normalization still maps a raw bot id; blank hint = no hint (auto-adopt)", () => {
+  const cx = {
+    listIndexedAccountIds: () => ["acct0-im-bot", "acct1-im-bot"],
+    loadAccount: (id) => ({ token: `tok-${id}` }),
+    normalizeAccountId: (raw) => String(raw).replace(/[^A-Za-z0-9_-]/g, "-"),
+  };
+  assert.equal(resolveAccount("acct1@im.bot", cx).id, "acct1-im-bot", "raw bot id normalizes to the fs-safe id");
+  assert.equal(resolveAccount("   ", cx).id, "acct1-im-bot", "a blank hint is no hint — the newest usable is adopted");
+  assert.equal(resolveAccount(undefined, cx).id, "acct1-im-bot");
 });
 
 test("send: empty host account index ⇒ 500 no_host_account (never a silent fallback)", async () => {

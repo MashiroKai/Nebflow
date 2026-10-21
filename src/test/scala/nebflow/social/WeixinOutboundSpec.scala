@@ -858,6 +858,124 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       assert(nebflow.social.outbound.FileLongShot.Dedup.size == 0, "a failed push never records dedup")
   }
 
+  // ───── pop-file-leg batch: 文件腿直推（2026-10-21 作者令「pop 把这个文件发给
+  // 我，就自动传过来了呀」）— PDF/办公件走文档表 Document 臂、压缩包走 Unknown
+  // 臂的 [[FileLeg]] 收编分支，共用去重台账 + 体积闸 ─────
+
+  test("WO-W6 a PDF product rides the FILE leg directly: one file_path send, dedup recorded on success") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val pdf = tmpRoot() / "report.pdf"
+    os.write(pdf, "%PDF-1.4 fake", createFolders = true)
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult)
+    val p = plugin(tmpRoot(), rec.factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", pdf))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(
+        mediaCalls.map(_._2),
+        List(WeixinOutboundAdapter.WeixinMedia.file(pdf.toString)),
+        "the Pop→桥→文件腿 chain: the ORIGINAL pdf goes out on file_path — no conversion, no suppression"
+      )
+      assertEquals(calls, Nil, "a clean file delivery puts out NO companion text")
+      assert(nebflow.social.outbound.FileLongShot.Dedup.size == 1, "success records the dedup key")
+  }
+
+  test("WO-W7 an ARCHIVE product (zip — in neither authority table) rides the file leg via the FileLeg class") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val zip = tmpRoot() / "bundle.zip"
+    os.write(zip, "PK fake-zip", createFolders = true)
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult)
+    val p = plugin(tmpRoot(), rec.factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", zip))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(
+        mediaCalls.map(_._2),
+        List(WeixinOutboundAdapter.WeixinMedia.file(zip.toString)),
+        "the archive gap (NfFileAllowedExt has no zip) is closed: direct file leg, no log-only drop"
+      )
+      assertEquals(calls, Nil)
+      assert(nebflow.social.outbound.FileLongShot.Dedup.size == 1)
+  }
+
+  test("WO-W8 the SAME archive bytes pushed twice are suppressed (file-leg dedup, mtime+size fingerprint)") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val zip = tmpRoot() / "bundle.zip"
+    os.write(zip, "PK fake-zip", createFolders = true)
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult)
+    val p = plugin(tmpRoot(), rec.factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", zip))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", zip)))) // same bytes again
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(mediaCalls.size, 1, "exactly ONE file send across both turns")
+      assertEquals(calls, Nil, "no companion/degrade text either — the duplicate is quiet")
+  }
+
+  test("WO-W9 an OVERSIZE file never attempts the send: [文件过大] text card + console guidance, dedup records") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val big = tmpRoot() / "huge.pdf"
+    os.write(big, Array.fill(25_000_001)(0.toByte), createFolders = true) // 1 byte over the 25MB cap
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult)
+    val p = plugin(tmpRoot(), rec.factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", big))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", big)))) // same oversize bytes again
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(mediaCalls, Nil, "over the cap the file leg is never attempted (no doomed 400)")
+      assertEquals(calls.size, 1, "ONE text card; the repeat Pop is dedup-suppressed (anti-spam)")
+      val card = calls.head._2
+      assert(card.startsWith(nebflow.social.outbound.RichDegrade.OversizePrefix), s"machine-matchable card: $card")
+      assert(card.contains("huge.pdf") && card.contains(big.toString), s"file name + local path: $card")
+      assert(card.contains("控制台"), s"the console guidance: $card")
+      assert(card.contains("25.0MB"), s"the limit in human units: $card")
+      assert(nebflow.social.outbound.FileLongShot.Dedup.size == 1, "the delivered card discharges the obligation — recorded")
+  }
+
+  test("WO-W10 a FAILED file send does NOT record dedup: the next Pop of the same file retries") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val zip = tmpRoot() / "bundle.zip"
+    os.write(zip, "PK fake-zip", createFolders = true)
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult, failOn = _.filePath.contains(zip.toString))
+    val p = plugin(tmpRoot(), rec.factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", zip))))
+      _ <- p.onAgentEvent("s1", doneEv("s1")) // first push FAILS
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", zip))))
+      _ <- p.onAgentEvent("s1", doneEv("s1")) // second Pop must RETRY
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(mediaCalls.size, 2, "the failed push left no dedup record ⇒ the retry goes out")
+      assertEquals(calls.size, 2, "two 保底 notices ([文件…发送失败]), no companion note")
+      assert(calls.head._2.startsWith("[文件「bundle.zip」发送失败 code=502]"), s"the notice: ${calls.head._2}")
+      assert(nebflow.social.outbound.FileLongShot.Dedup.size == 0, "a failed push never records dedup")
+  }
+
   // ───── pop batch-media fix: ONE Pop of N artifacts is N media sends ─────
 
   test("WO-B1 an 11-image Pop carries ALL of them, in payload order (the old single-pick read dropped ten)") {
