@@ -159,9 +159,16 @@ function openPane(mode, taskKey, summary, opts = {}) {
     && (mode !== 'task' || pane.dataset.delegateKey === String(taskKey || ''));
   ensureFlowCss();
   if (!sameView) {
+    // 离开旧视图的清理（先取旧值再覆写）：task 视图的引擎侧图缓存（fmByProject/
+    // detail store/fold timers 活在该 delegate 作用域键下）随视图切换摘除。
+    const prevMode = pane.dataset.delegateMode || '';
+    const prevKey = pane.dataset.delegateKey || '';
     pane.dataset.projectsView = 'delegate-chain';
     pane.dataset.delegateMode = mode;
     pane.dataset.delegateKey = String(taskKey || '');
+    if (prevMode === 'task' && prevKey && mode !== 'task') {
+      dropDelegateMapScope(prevKey);
+    }
     // Leaving a task view ⇒ drop that chain's engine-side map caches
     // (fmByProject/detail store/fold timers live under the delegate scope key).
     if (pane.dataset.delegateMode === 'task' && pane.dataset.delegateKey) {
@@ -287,11 +294,24 @@ function renderTaskBody(pane, key, opts = {}) {
 /**
  * 打开 delegate 结构总视图（S11 改义面）：worktree 座 ＋ FIFO 合并泳道 ＋ 各
  * delegate 链卡。数据 = listDelegateRows × getChainByTask 投影（stub 读取口）。
+ * 视图重设计实施批（2026-10-21）：S11 平铺面由**全景视图**（delegatePanoramaView）
+ * 承接——本函数保留为兼容别名（既有入口零断链），渲染体 = 全景组件（入口统一：
+ * 任务列表行 / 项目面板卡同路 openDelegatePanorama）。
  */
-export function openDelegateChainStructure() {
-  const pane = openPane('structure', '', '');
-  if (!pane) return;
-  renderStructureBody(pane);
+export function openDelegateChainStructure(projectFilter = '') {
+  import('./delegatePanoramaView.js')
+    .then(({ openDelegatePanorama }) => openDelegatePanorama(String(projectFilter || '')))
+    .catch(() => {});
+}
+
+/**
+ * 全景视图 pane 脚手架（delegatePanoramaView 静态复用；openPane 保持模块私有）。
+ * mode='panorama'：pane 记忆 projectsView='delegate-chain' + delegateMode 存项目
+ * 过滤参数（'' = 全量）。summary = 顶栏标题。
+ * @param {string} projectFilter @param {string} summary
+ */
+export function openPanoramaPane(projectFilter, summary) {
+  return openPane('panorama', String(projectFilter || ''), summary);
 }
 
 /** S11 视图体渲染。
@@ -455,11 +475,17 @@ function renderStructureBody(pane) {
 }
 
 /** projectTab.rerenderProjectsTab 视图分流挂钩：按 pane 记忆的模式重渲当前视图
- *  （数据面 = stub 读取口现读；WS/live 增量属 N1 结构帧落地后的 provider 面）。 */
+ *  （数据面 = stub 读取口现读；WS/live 增量属 N1 结构帧落地后的 provider 面）。
+ *  panorama 模式 = 全景组件动态 import（静态零环——全景模块反向动态 import 本件
+ *  的 L1 下钻）。 */
 export function rerenderDelegateChainPane(pane) {
   if (!pane || pane.dataset.projectsView !== 'delegate-chain') return;
   if (pane.dataset.delegateMode === 'task') renderTaskBody(pane, String(pane.dataset.delegateKey || ''));
-  else if (pane.dataset.delegateMode === 'structure') renderStructureBody(pane);
+  else if (pane.dataset.delegateMode === 'panorama') {
+    import('./delegatePanoramaView.js')
+      .then(({ renderPanoramaBody }) => renderPanoramaBody(pane))
+      .catch(() => {});
+  } else if (pane.dataset.delegateMode === 'structure') renderStructureBody(pane);
 }
 
 // ── L2 唯一归档面（两层架构批 · 2026-10-09 §D WF-07）：FAB → 右侧抽屉 ──────────
@@ -633,9 +659,9 @@ function fmtAgoShort(ms) {
  * 挂 L2 右上角归档 FAB + 抽屉（两层架构批 §D WF-07；幂等——每次重渲重建 body，
  * FAB 随建）。徽章计数 = 首拉回执（fail-soft：拉取失败 = 徽章缺席，FAB 仍可点开
  * 重试）；自动归档到达（delegate-archived 事件）= 徽章脉冲 + toast 带 5s 撤销。
- * @param {HTMLElement} body L2 视图体（.delegate-chain-view-body，relative 宿主）
+ * @param {HTMLElement} body 视图体（.delegate-chain-view-body，relative 宿主）
  */
-function attachStructureArchive(body) {
+export function attachStructureArchive(body) {
   ensureArchiveCss();
   const pane = body.closest('.canvas-tab-pane') || body.parentElement;
   const fab = document.createElement('button');
@@ -870,6 +896,11 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
       // animates real deltas and leaves an unchanged map byte-identical (zero
       // DOM churn); the fail-soft face re-tries the read port the same way.
       renderTaskBody(pane, String(pane.dataset.delegateKey || ''));
+    } else if (pane.dataset.delegateMode === 'panorama') {
+      // 全景（视图重设计实施批）：镜像刷新 = 同缝重渲（数据权威恒在 REST 镜像）。
+      import('./delegatePanoramaView.js')
+        .then(({ renderPanoramaBody }) => renderPanoramaBody(pane))
+        .catch(() => {});
     } else if (pane.dataset.delegateMode === 'structure') {
       renderStructureBody(pane);
     }

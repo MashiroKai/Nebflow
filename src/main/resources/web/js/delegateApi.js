@@ -40,6 +40,13 @@ export const DELEGATE_API = {
   // 归档历史窗（delegate-ui 修订批 2026-10-09 九点⑧：S11 右上角归档 FAB 的清单源；
   // 与 /api/chains 在册窗互补零重叠——G6 双窗口径）。
   archived: () => '/api/chains?archived=1',
+  // delegates 列表读面（delegate 视图重设计实施批 2026-10-21 · 引擎 UI 最小集）：
+  // /api/chains 行投影同源（含 G1 taskStatus=merging 覆写 + mergeQueue/mergeQueuePos）
+  // + `?project=` 过滤参数 + 行内 `topology` 子过程拓扑载荷（children=星扇全集 /
+  // steps=agentflow 链节点）。全景视图的数据面单缝（provider 全量拉取；过滤参数
+  // 供单项目收窄拉取）。
+  list: (project) =>
+    '/api/delegates' + (project ? `?project=${encodeURIComponent(String(project))}` : ''),
 };
 
 /** 该 id 是否为星型区/归档入口的适用形态（delegate 域会话；外部 delegate 同域——

@@ -151,7 +151,14 @@ object ChainsReadFace:
         case Some(obj) =>
           val withLive = live.fold(obj)(v => obj.add("live", v))
           val withVerdict = verdict.fold(withLive)(v => withLive.add("verdict", v))
-          val withTask = taskStatuses.get(rec.id).fold(withVerdict) { s =>
+          // G1「合并中」一等可查询态（delegate 视图重设计实施批 2026-10-21）：
+          // 合并窗持有者（MergeQueue 单飞行窗 `inFlight` 的队头 = queueView.holder
+          // 命中本行）⇒ 行 `taskStatus` 显式覆写为 "merging"。推导单点收进引擎
+          // 读面（判据本体仍是 MergeQueue 引擎闸，零新存储、零第二权威）——
+          // 前端从「holder 派生第二权威」红线中解放，API 直接可查。非持有者行
+          // 维持 taskStatuses 供给（缺 = 键缺席，旧投影）。
+          val merging = queue.exists(_.holder.contains(rec.id))
+          val withTask = (if merging then Some("merging") else taskStatuses.get(rec.id)).fold(withVerdict) { s =>
             withVerdict.add("taskStatus", s.asJson)
           }
           val withQueue = queue.fold(withTask) { q =>
@@ -207,6 +214,109 @@ object ChainsReadFace:
 
   private def payloadString(e: ChainStore.Entry, field: String): String =
     e.payload.hcursor.get[String](field).getOrElse("")
+
+  /**
+   * delegates 列表投影（delegate 视图重设计实施批 2026-10-21 · 引擎 UI 最小集）：
+   * [[rowsJson]] 全量投影的加宽臂——行集完全同源（含 G1 `merging` taskStatus 覆写），
+   * 只多两个面：
+   *   - `project` 过滤参数（`?project=`，G4 最小臂）：精确匹配 Record.project（挂载
+   *     项目名）；`None` = 不过滤（全量）。
+   *   - 行内 `topology` 子过程拓扑载荷（G5 批量面最小集）：编排模式为
+   *     subagent-star / agentflow 的行附 `{mode, children[], steps[]}`——
+   *     `children` = [[nebflow.shared.SubAgentTask]] 星扇全集（`childrenOf` 由路由侧
+   *     注入 SubAgentTaskStore.findByParent——store 实例在 SharedResources，本面不持，
+   *     零第二读取路径；失败 = 空集 fail-soft）；`steps` = agentflow 行的作用域
+   *     FlowMap 活动区节点紧凑形 `{id,label,status,deps}`（状态映射复用 [[rowStatusOf]]
+   *     同一单点；作用域图缺席 = 空集）。single / 旧盘（mode 缺失）行**零 topology
+   *     键**（与 mergeQueue「未排队缺键」同纪律）。
+   */
+  def delegatesJson(
+    registry: Map[String, nebflow.actor.AgentRecord],
+    archived: Boolean = false,
+    taskStatuses: Map[String, String] = Map.empty,
+    project: Option[String] = None,
+    childrenOf: String => IO[List[nebflow.shared.SubAgentTask]] = _ => IO.pure(Nil)
+  ): IO[Json] =
+    rowsJson(registry, archived, taskStatuses).flatMap { body =>
+      val rows = body.hcursor.downField("rows").as[List[Json]].getOrElse(Nil)
+      val scoped = project.fold(rows)(p => rows.filter(rowProjectOf(_).contains(p)))
+      scoped.traverse(withTopology(_, childrenOf)).map(rs => Json.obj("rows" -> rs.asJson))
+    }
+
+  /** 行的挂载项目名（Record.project 透传键；缺席 = ""——缺省座位行）。 */
+  private def rowProjectOf(row: Json): String =
+    row.hcursor.get[String]("project").getOrElse("")
+
+  /**
+   * 行 + 子过程拓扑（delegates 臂专属）：编排模式非 single / 旧盘才附 `topology` 键
+   * （🔴 缺键纪律：不加空壳键）。children/steps 双腿各自 fail-soft（单腿失败 = 该腿
+   * 空集，行本体零损）。
+   */
+  private def withTopology(
+    row: Json,
+    childrenOf: String => IO[List[nebflow.shared.SubAgentTask]]
+  ): IO[Json] =
+    val id = row.hcursor.get[String]("id").getOrElse("")
+    val mode = row.hcursor.get[String]("orchestrationMode").getOrElse("")
+    if id.isEmpty || (mode != DelegateRegistry.ModeSubagentStar && mode != DelegateRegistry.ModeAgentflow) then
+      IO.pure(row)
+    else
+      val childrenIO = childrenOf(id)
+        .map(children => Json.obj("children" -> children.map(topologyChildJson).asJson))
+        .handleErrorWith(e =>
+          nebflow.shared.NebflowLogger
+            .forName("nebflow.core.project.chains-read-face")
+            .warn(s"delegates topology: children read failed for '$id': ${e.getMessage}")
+            .as(Json.obj("children" -> List.empty[Json].asJson))
+        )
+      val stepsIO: IO[Json] =
+        if mode != DelegateRegistry.ModeAgentflow then IO.pure(Json.obj("steps" -> List.empty[Json].asJson))
+        else
+          IO.blocking(DelegateRegistry.find(id)).flatMap {
+            case None => IO.pure(Json.obj("steps" -> List.empty[Json].asJson))
+            case Some(rec) =>
+              scopeProjection(rec)
+                .map { chain =>
+                  val nodes =
+                    chain.flatMap(_.hcursor.downField("nodes").as[List[Json]].toOption).getOrElse(Nil)
+                  val steps = nodes.flatMap { n =>
+                    for
+                      nid <- n.hcursor.get[String]("id").toOption
+                      label <- n.hcursor.get[String]("label").toOption
+                      status <- n.hcursor.get[String]("status").toOption
+                      deps <- n.hcursor.downField("deps").as[List[String]].toOption
+                    yield Json.obj(
+                      "id" -> nid.asJson,
+                      "label" -> label.asJson,
+                      "status" -> status.asJson,
+                      "deps" -> deps.asJson
+                    )
+                  }
+                  Json.obj("steps" -> steps.asJson)
+                }
+                .handleErrorWith(e =>
+                  nebflow.shared.NebflowLogger
+                    .forName("nebflow.core.project.chains-read-face")
+                    .warn(s"delegates topology: steps read failed for '$id': ${e.getMessage}")
+                    .as(Json.obj("steps" -> List.empty[Json].asJson))
+                )
+          }
+      (childrenIO, stepsIO).mapN { (ch, st) =>
+        row.mapObject(_.add("topology", Json.obj("mode" -> mode.asJson).deepMerge(ch).deepMerge(st)))
+      }
+  end withTopology
+
+  /** 星扇子条目紧凑投影（SubAgentTask → {taskId,agentName,description,status,spawnedAt,completedAt}）。 */
+  private def topologyChildJson(t: nebflow.shared.SubAgentTask): Json =
+    Json.obj(
+      "taskId" -> t.taskId.asJson,
+      "agentName" -> t.agentName.asJson,
+      "description" -> t.description.asJson,
+      "status" -> t.status.asJson,
+      "spawnedAt" -> t.spawnedAt.asJson,
+      "completedAt" -> t.completedAt.asJson
+    )
+
 
   /**
    * per-task 链视图投影（chains/:key 臂）。`None` = 查无 delegate 记录（HTTP 404 面）；

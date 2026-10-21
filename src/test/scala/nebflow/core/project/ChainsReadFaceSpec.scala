@@ -8,7 +8,7 @@ import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, AgentKind, AgentRecord, AgentCommand}
 import nebflow.agent.SharedResources
 import nebflow.core.{RateLimiter, SessionStore}
-import nebflow.core.delegate.{ChainStore, DelegateRegistry}
+import nebflow.core.delegate.{ChainStore, DelegateRegistry, MergeQueue}
 import nebflow.core.project.DelegateFlowHosts
 import nebflow.core.tools.FileLockManager
 import nebflow.llm.ModelCandidate
@@ -186,6 +186,174 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
         "the engine task-row status rides the row verbatim (UI terminal authority)"
       )
     }
+  }
+
+  // ── C5 G1「合并中」一等可查询态（delegate 视图重设计实施批 · 2026-10-21）──────
+
+  test(
+    "C5 (G1): the merge-window holder row exposes taskStatus=merging — an explicit engine-queryable state, not a frontend derivation"
+  ) {
+    val holderId = "delegate-general-merge-holder-1"
+    val queuedId = "delegate-general-merge-queued-2"
+    val recHolder = record(holderId, Some("61"))
+    val recQueued = record(queuedId, Some("62"))
+    DelegateRegistry.put(recHolder)
+    DelegateRegistry.put(recQueued)
+    val projectKey = tempRoot.toString
+    // 队列两行：holder（队头，入队即 pump 持窗）+ 排队者。readyAt 错开保证 FIFO 序。
+    def entry(id: String, readyAt: Long, taskId: Option[String]): MergeQueue.Entry =
+      MergeQueue.Entry(
+        delegateId = id,
+        branch = s"delegate/$id",
+        baseWs = projectKey,
+        baseBranch = "main",
+        worktree = false,
+        projectKey = projectKey,
+        taskId = taskId,
+        parentSessionId = "spec-root",
+        description = "spec merge",
+        readyAt = readyAt,
+        childRef = MergeQueue.NoopChild,
+        supervisorRef = MergeQueue.NoopSupervisor
+      )
+    MergeQueue.enqueue(entry(holderId, 1000L, Some("61")))
+    MergeQueue.enqueue(entry(queuedId, 2000L, Some("62")))
+    val statuses = Map(holderId -> "ready-to-merge", queuedId -> "ready-to-merge")
+    // 清理挂 IO 链尾（guarantee）——finally 会先于 munit 跑 IO 执行，队列出队会
+    // 撕掉被断言的 holder 态。
+    ChainsReadFace.rowsJson(Map.empty, archived = false, taskStatuses = statuses).map { body =>
+      val rows = body.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil)
+      val holder = rows.find(_.hcursor.get[String]("id").toOption.contains(holderId)).getOrElse(fail("holder row missing"))
+      val queued = rows.find(_.hcursor.get[String]("id").toOption.contains(queuedId)).getOrElse(fail("queued row missing"))
+      assertEquals(
+        holder.hcursor.get[String]("taskStatus").toOption,
+        Some("merging"),
+        "the merge-window holder exposes the explicit merging state (G1: derivation lives in the engine read face)"
+      )
+      // 排队者维持 ready-to-merge（排队 ≠ 合并中）。
+      assertEquals(
+        queued.hcursor.get[String]("taskStatus").toOption,
+        Some("ready-to-merge"),
+        "a queued (non-holder) row keeps ready-to-merge"
+      )
+      // 行内排队键照常（位次/持有者——前端零派生的透传面）。
+      assertEquals(
+        holder.hcursor.downField("mergeQueue").get[String]("holder").toOption,
+        Some(holderId),
+        "mergeQueue.holder rides the row for visibility"
+      )
+      assertEquals(
+        queued.hcursor.downField("mergeQueuePos").get[Int]("position").toOption,
+        Some(2),
+        "mergeQueuePos.position = engine FIFO order (holder included in total)"
+      )
+    }.guarantee(IO {
+      MergeQueue.onTerminal(holderId)
+      MergeQueue.onTerminal(queuedId)
+    })
+  }
+
+  // ── C6 delegates 列表投影（视图重设计实施批 · UI 最小集）──────────────────────
+
+  test(
+    "C6: delegatesJson filters by project and attaches the sub-process topology payload (children for star, steps for agentflow); single rows carry no topology key"
+  ) {
+    import nebflow.shared.SubAgentTask
+    val starId = "delegate-general-c6-star"
+    val flowId = "delegate-general-c6-flow"
+    val singleId = "delegate-general-c6-single"
+    val otherId = "delegate-general-c6-other-project"
+    val ws = tempRoot
+    DelegateRegistry.put(
+      record(starId, Some("71")).copy(orchestrationMode = Some("subagent-star"), project = Some("spec-proj-c6"))
+    )
+    DelegateRegistry.put(
+      record(flowId, Some("72")).copy(orchestrationMode = Some("agentflow"), project = Some("spec-proj-c6"))
+    )
+    DelegateRegistry.put(
+      record(singleId, Some("73")).copy(project = Some("spec-proj-c6"))
+    )
+    DelegateRegistry.put(
+      record(otherId, Some("74")).copy(project = Some("spec-proj-other"))
+    )
+    // agentflow 行的盘面作用域（探针只读腿——C2 同款最小 flow-map.json）。
+    val flowDir = ws / ".nebflow" / "flow-maps" / flowId
+    os.makeDir.all(flowDir)
+    os.write.over(
+      flowDir / "flow-map.json",
+      FlowMapState(
+        project = flowId,
+        updatedAt = 0L,
+        nodes = Map(
+          "s1" -> NodeDef(
+            id = "s1",
+            name = "step-one",
+            agent = "general",
+            task = Some("step one full task"),
+            status = NodeLifecycle.Completed,
+            createdAt = 1L
+          )
+        )
+      ).asJson.noSpaces
+    )
+    val child = SubAgentTask(
+      taskId = "subtask-c6-1",
+      parentSessionId = starId,
+      agentName = "scout",
+      prompt = "p",
+      description = "star child",
+      status = "running",
+      retryCount = 0,
+      spawnedAt = 1L,
+      completedAt = None,
+      lastError = None,
+      source = "subagent"
+    )
+    val childrenOf = (id: String) =>
+      if id == starId then IO(List(child)) else IO(Nil)
+    for
+      all <- ChainsReadFace.delegatesJson(Map.empty, childrenOf = childrenOf)
+      filtered <- ChainsReadFace.delegatesJson(
+        Map.empty,
+        project = Some("spec-proj-c6"),
+        childrenOf = childrenOf
+      )
+    yield
+      val rowsOf = (body: io.circe.Json) =>
+        body.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil)
+      val byId = (rows: List[io.circe.Json], id: String) =>
+        rows.find(_.hcursor.get[String]("id").toOption.contains(id))
+      // 项目过滤：只留 spec-proj-c6 三行。
+      val frows = rowsOf(filtered)
+      assertEquals(frows.size, 3, "project filter keeps only the matching rows")
+      // 星扇行：topology.children 全集；agentflow 行：topology.steps 紧凑形（rowStatusOf 映射）。
+      val star = byId(frows, starId).getOrElse(fail("star row missing"))
+      val starTop = star.hcursor.downField("topology")
+      assertEquals(starTop.get[String]("mode").toOption, Some("subagent-star"))
+      val kids = starTop.downField("children").as[List[io.circe.Json]].toOption.getOrElse(Nil)
+      assertEquals(kids.size, 1, "children = the star fan payload")
+      assertEquals(kids.headOption.flatMap(_.hcursor.get[String]("agentName").toOption), Some("scout"))
+      assertEquals(kids.headOption.flatMap(_.hcursor.get[String]("status").toOption), Some("running"))
+      val flow = byId(frows, flowId).getOrElse(fail("flow row missing"))
+      val flowTop = flow.hcursor.downField("topology")
+      assertEquals(flowTop.get[String]("mode").toOption, Some("agentflow"))
+      val steps = flowTop.downField("steps").as[List[io.circe.Json]].toOption.getOrElse(Nil)
+      assertEquals(steps.size, 1, "steps = the scoped flow-map nodes (probe leg)")
+      assertEquals(steps.headOption.flatMap(_.hcursor.get[String]("id").toOption), Some("s1"))
+      assertEquals(
+        steps.headOption.flatMap(_.hcursor.get[String]("status").toOption),
+        Some("completed"),
+        "step status goes through the same rowStatusOf mapping"
+      )
+      // single 行零 topology 键（缺键纪律——不加空壳键）。
+      val single = byId(frows, singleId).getOrElse(fail("single row missing"))
+      assert(
+        single.hcursor.downField("topology").focus.isEmpty,
+        "single rows carry no topology key (missing-key discipline)"
+      )
+      // 全量臂不过滤。
+      assertEquals(rowsOf(all).size, 4, "no project filter = the full row set")
+    end for
   }
 
   // ── C2 链投影 ───────────────────────────────────────────────────────────

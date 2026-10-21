@@ -585,6 +585,31 @@ private[gateway] object PresenceRoutes:
             }
         }
 
+      // GET /delegates — delegate 列表读面（delegate 视图重设计实施批 2026-10-21 ·
+      // 引擎 UI 最小集）：行投影与 /api/chains 同源同语义（rowsJson 单点——live/
+      // verdict/taskStatus/mergeQueue/mergeQueuePos + G1 merging taskStatus 覆写），
+      // 加宽两面：`?project=` 列表过滤参数（G4 最小臂，精确匹配挂载项目名）＋ 行内
+      // `topology` 子过程拓扑载荷（G5 批量面：children = 星扇全集（SubAgentTaskStore
+      // .findByParent 注入）、steps = agentflow 链节点紧凑形）。`?archived=1` 历史
+      // 窗语义沿 /api/chains。投影语义 = ChainsReadFace.delegatesJson（本路由只做
+      // 参数解析与 store 注入，零投影逻辑）。ETag = 载荷内容寻址（/api/chains 同款）。
+      case req @ GET -> Root / "delegates" =>
+        withAuth(req) {
+          val archived = req.params.get("archived").contains("1")
+          val project = req.params.get("project").map(_.trim).filter(_.nonEmpty)
+          sharedResources.agentRegistry.get.flatMap { reg =>
+            sharedResources.subAgentTaskStore
+              .findAllTasks()
+              .map(tasks => tasks.collect { case t if t.taskId.nonEmpty => t.taskId -> t.status }.toMap)
+              .handleErrorWith(_ => IO.pure(Map.empty[String, String]))
+              .flatMap { statuses =>
+                ChainsReadFace
+                  .delegatesJson(reg, archived, statuses, project, sharedResources.subAgentTaskStore.findByParent)
+                  .flatMap(body => HttpCache.conditionalOk(req, body, HttpCache.ofJson(body)))
+              }
+          }
+        }
+
       // GET /delegates/:id — delegate 聚合单查（delegate-ui 批 2026-10-08 · G4，视图④
       // 详情首绘单缝）：record 全量 + live 活性提示 + verdict 最新判词 + task 台账全文 +
       // childrenCount（星型子代理计数 = SubAgentTaskStore.findByParent 整表读）+ output
