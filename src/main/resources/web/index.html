@@ -238,6 +238,13 @@
           <span class="pa-dot"></span>
           <span class="pa-count">0</span>
         </div>
+        <!-- held-receipt 投递可靠性批（2026-10-21 fix 3）：本会话「N 条回执待投递」
+             徽标——held（被屏障扣留）+ unread（催注穷尽终态）。同 pending-asks 胶囊族，
+             由 WS heldReceipts 帧驱动（main.js），归零即隐。 -->
+        <div id="held-receipts-indicator" class="hidden" role="button" tabindex="0" title="Held delivery receipts">
+          <span class="pa-dot"></span>
+          <span class="pa-count">0</span>
+        </div>
         <div id="bgagent-indicator" class="hidden" title="Sub-agents running" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" aria-controls="bgagent-dropdown">
           <span class="bgagent-dot"></span>
           <span class="bgagent-count">0</span>

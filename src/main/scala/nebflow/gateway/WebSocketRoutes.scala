@@ -2907,7 +2907,13 @@ object WebSocketRoutes:
       // NodeDef), taskTitle = resolved by the caller via the unified ledger.
       // Empty string = no badge rendered (falsy contract, same as `project`).
       "taskId" -> rec.taskId.getOrElse("").asJson,
-      "taskTitle" -> taskTitle.getOrElse("").asJson
+      "taskTitle" -> taskTitle.getOrElse("").asJson,
+      // held-receipt 投递可靠性批（2026-10-21 · fix 3 可见化快照面）：pendingEventCount
+      // = 被 HOLD 的已产出回执数（actor 权威快照）、unreadReceiptCount = 催注穷尽后
+      // 的未读终态数（HeldDeliveryWatchdog 独占写）。空 = 0 → 前端 falsy 不渲染
+      // （同 project/taskId 徽标契约）。
+      "heldReceipts" -> rec.pendingEventCount.asJson,
+      "unreadReceipts" -> rec.unreadReceiptCount.asJson
     )
 
   // ============================================================

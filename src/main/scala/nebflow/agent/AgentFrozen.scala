@@ -641,6 +641,15 @@ private[agent] object AgentFrozen:
           IO.pure(frozen(agentDef, resources, depth, parentRef, s, replyTo, resumeAt, reason, retryCount, escalation))
         )
 
+      // ── HeldDeliveryWatchdog 催注（平台修复批 fix 2）：frozen 态收到 = 留任
+      // no-op——冻结解出后的队列 drain（drainQueuesAfterCompaction 的屏障豁免面 +
+      // turn 边界 drainBarrier）兜投递；催注不穿透冻结门（调度器按 status==Idle
+      // 过滤，此分支为竞态窗口的宽容面）。
+      case AgentCommand.DrainHeldReceipts =>
+        IO.pure(
+          frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation)
+        )
+
       case AgentCommand.SessionStarted(address, agentName, taskDescription) =>
         val session = AgentSessionInfo(address, agentName, taskDescription, "running")
         agentSessionsStay(state, state.agentSessions :+ session)(s =>

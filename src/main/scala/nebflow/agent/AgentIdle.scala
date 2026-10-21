@@ -111,10 +111,20 @@ private[agent] object AgentIdle:
             case Some(bl) => Message(MessageRole.User, Right(bl))
             case None => Message(MessageRole.User, Left(text))
           ).copy(source = injectionSource)
-          val newMessages = stateWithFlush.messages :+ userMsg
+          // ── Held-receipt 先补注入（平台修复批 fix 1 第三腿，2026-10-21）────────
+          // 有被子代理批屏障扣留的已产出回执（pendingEvents 非空）⇒ 本回合**先**
+          // 注入回执（reminder 合批一件、前置于本输入）、再处理本输入——「父会话
+          // 任何后续事件先补注入未读回执再处理事件」。空队列 ⇒ None，本腿逐字现状。
+          // 屏障随补注归还（outstanding 清零）：回执全部产出后剩余槽位只能是永不
+          // 投递的幻影（issue #31）；仍在飞的真实成员此后经 idle 单件腿照常注入。
+          val heldFlush = heldFlushPlan(stateWithFlush)
+          val flushBase = heldFlush.map(_.state).getOrElse(stateWithFlush)
+          val newMessages =
+            flushBase.messages ++ heldFlush.map(_.messages).getOrElse(Nil) :+ userMsg
+          val heldFlushIO = heldFlush.fold(IO.unit)(p => flushHeldSideEffects(agentDef, resources, depth, p))
           val sessionBusyIO =
             if depth == 0 then
-              stateWithWidth.sessionId.fold(IO.unit)(sid => emitSessionBusy(stateWithWidth.wsSend, sid, busy = true))
+              flushBase.sessionId.fold(IO.unit)(sid => emitSessionBusy(flushBase.wsSend, sid, busy = true))
             else IO.unit
           val injectedEventIO = injectionSource match
             case Some(src) =>
@@ -136,6 +146,7 @@ private[agent] object AgentIdle:
               )
             case None => IO.unit
           for
+            _ <- heldFlushIO
             _ <- sessionBusyIO
             _ <- injectedEventIO
             result <- pipeLlmCall(
@@ -143,7 +154,7 @@ private[agent] object AgentIdle:
               resources,
               depth,
               parentRef,
-              stateWithFlush
+              flushBase
                 .withMessages(newMessages)
                 .withEmptyResponseRetries(0)
                 .withMailUsedThisTurn(false)
@@ -429,6 +440,10 @@ private[agent] object AgentIdle:
             _ <- sessionBusyIO
             _ <- receiveVisibility(waiting = false)
             _ <- touchBarrierSnapshot(resources, state.sessionId, 0, 0)
+            // 台账对账（平台修复批 fix 1）：held 全量投递 ⇒ 台账清空 + 徽标帧归零。
+            _ <- syncHeldReceipts(resources, state.sessionId, Nil).flatMap((h, u) =>
+              emitHeldReceiptsBadge(state, h, u)
+            )
             result <- pipeLlmCall(
               agentDef,
               resources,
@@ -465,23 +480,33 @@ private[agent] object AgentIdle:
                 resources.agentRegistry.get.map(_.get(sid).flatMap(_.supervisorRef))
               )
           continuationReplyTo.flatMap { contReplyTo =>
+            // Held-receipt 先补注入（fix 1 第三腿）：非子代理事件（background-task /
+            // Schedule / Mail 询问等）到达且有被扣留的已产出回执 ⇒ 先随本 turn 补注
+            // 回执再注入本事件；屏障随补注归还。空队列 ⇒ flushBase = state，本腿逐字现状。
+            val heldFlush = heldFlushPlan(state)
+            val flushBase = heldFlush.map(_.state).getOrElse(state)
+            val heldMessages = heldFlush.map(_.messages).getOrElse(Nil)
+            val flushIO = heldFlush.fold(IO.unit)(p => flushHeldSideEffects(agentDef, resources, depth, p))
             for
+              _ <- flushIO
               _ <- sessionBusyIO
               _ <- receiveVisibility(waiting = false)
-              _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, 0)
+              _ <-
+                if heldFlush.isDefined then IO.unit
+                else touchBarrierSnapshot(resources, state.sessionId, newOutstanding, 0)
               result <- pipeLlmCall(
                 agentDef,
                 resources,
                 depth,
                 parentRef,
-                state
+                flushBase
                   .withMessages(
                     // Reminder refactor (2026-08-20): always carry a source marker —
                     // external-event turns are system events, not real user input
                     // (fromUser = Message.source.isEmpty).
                     // 媒体统一适配批（2026-10-20）：组装单点 immediateEventMessage——
                     // 带块事件（桥媒体）⇒ Right(Text+blocks)，无块 ⇒ Left 逐字现状。
-                    state.messages :+ immediateEventMessage(
+                    flushBase.messages ++ heldMessages :+ immediateEventMessage(
                       injectionText,
                       event,
                       visSource.orElse(Some("external"))
@@ -494,7 +519,9 @@ private[agent] object AgentIdle:
                   // unconditionally at turn end; once the completion debt is
                   // parked (#25) a stuck counter means the debt is NEVER paid
                   // and the waiting supervisor/bridge hangs.
-                  .withOutstandingSubagentResults(newOutstanding)
+                  // flush 腿（回执补注）已把 outstanding 归零（幻影槽位归还），
+                  // 不再叠加本回合事件自身的减量（减无可减）。
+                  .withOutstandingSubagentResults(if heldFlush.isDefined then 0 else newOutstanding)
                   .withNextLoopTurn, // Block 3：外部事件唤醒 = 新 turn
                 contReplyTo
               )
@@ -580,6 +607,58 @@ private[agent] object AgentIdle:
           case _ => IO.pure(idle(agentDef, resources, depth, parentRef, state))
         }
 
+      // ── HeldDeliveryWatchdog 催注（平台修复批 fix 2 动作面，2026-10-21）────────
+      // idle 态收到 = 投递可靠性自检判定「已产出回执 N 分钟未注入」成立 → 强制补投
+      // 全部 held 回执（buildEventReminder 合批一 turn，语义与批完成汇聚腿同形），
+      // 并归还幻影屏障槽位（outstanding 清零，issue #31）+ 补投注记气泡（父会话
+      // 可见的投递事实）+ 徽标帧清零。队列已空（正常 drain 抢先投递）⇒ 幂等 no-op，
+      // 仅把 pendingEventCount 快照对齐防漂移。processing/frozen 态另有各自 no-op
+      // 分支（turn 边界 drain / 解冻后 drain 兜住）。
+      case AgentCommand.DrainHeldReceipts =>
+        val held = state.execution.pendingEvents
+        if held.isEmpty then
+          touchBarrierSnapshot(resources, state.sessionId, state.execution.outstandingSubagentResults, 0) *>
+            IO.pure(idle(agentDef, resources, depth, parentRef, state))
+        else
+          val batchMessage = buildEventReminder(held)
+          val cleaned = state.copy(execution =
+            state.execution.copy(pendingEvents = Nil, outstandingSubagentResults = 0)
+          )
+          for
+            _ <- IO(
+              logAgentEvent(
+                agentDef,
+                depth,
+                state.sessionId,
+                state.sessionName,
+                "held-receipts-force-drain",
+                s"held=${held.size} returned-outstanding=${state.execution.outstandingSubagentResults}"
+              )
+            )
+            _ <-
+              if depth == 0 then
+                state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
+              else IO.unit
+            _ <- emitForceDrainVisibility(resources, state, held)
+            _ <- touchBarrierSnapshot(resources, state.sessionId, 0, 0)
+            _ <- persistQueues(state.sessionId, cleaned.execution)
+            _ <- syncHeldReceipts(resources, state.sessionId, Nil).flatMap((h, u) =>
+              emitHeldReceiptsBadge(state, h, u)
+            )
+            result <- pipeLlmCall(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              cleaned
+                .withMessages(cleaned.messages :+ batchMessage)
+                .withNextLoopTurn, // Block 3：催注补投 = 新 turn
+              None
+            )
+          yield result
+          end for
+        end if
+
       // Immediate input arriving in idle (turn already finished) — treat as normal UserInput
       // ② (2026-09-11): `fromUser` is carried across the conversion — dropping it
       // here is exactly what made a real human text land in the
@@ -610,6 +689,11 @@ private[agent] object AgentIdle:
         windowItems match
           case Some(items) if items.nonEmpty =>
             val expanded = expandRootNotify(imm)
+            // Held-receipt 先补注入（fix 1 第三腿，与 idle UserInput 腿同判据）：
+            // 节点通报（Schedule/调度触发类）同样先带全部 held 回执再展开载荷。
+            val heldFlush = heldFlushPlan(state)
+            val flushBase = heldFlush.map(_.state).getOrElse(state)
+            val heldMessages = heldFlush.map(_.messages).getOrElse(Nil)
             // Per-item context messages (each carries its OWN body — never the merged digest).
             val carrierMessages = expanded.map(item =>
               (item.blocks match
@@ -625,11 +709,12 @@ private[agent] object AgentIdle:
                   state.sessionId,
                   state.sessionName,
                   "window-carrier-expanded-in-idle",
-                  s"batch=${expanded.size} texts=${expanded.map(_.text.take(40)).mkString(" | ").take(200)}"
+                  s"batch=${expanded.size} heldFlush=${heldMessages.size} texts=${expanded.map(_.text.take(40)).mkString(" | ").take(200)}"
                 )
               )
+              _ <- heldFlush.fold(IO.unit)(p => flushHeldSideEffects(agentDef, resources, depth, p))
               _ <-
-                if depth == 0 then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
+                if depth == 0 then flushBase.sessionId.fold(IO.unit)(sid => emitSessionBusy(flushBase.wsSend, sid, busy = true))
                 else IO.unit
               // One injected frame per payload item — each carries its own text / sender /
               // status, so the frontend renders N bubbles with zero frontend change
@@ -659,8 +744,8 @@ private[agent] object AgentIdle:
                 resources,
                 depth,
                 parentRef,
-                state
-                  .withMessages(state.messages ++ carrierMessages)
+                flushBase
+                  .withMessages(flushBase.messages ++ heldMessages ++ carrierMessages)
                   .withEmptyResponseRetries(0)
                   .withMailUsedThisTurn(false)
                   .withNextLoopTurn,

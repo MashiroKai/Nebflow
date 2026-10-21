@@ -207,6 +207,32 @@ object BackoffSupervisor:
                         s"BackoffSupervisor: delegate $subagentId held for merge round (fresh merge-window budget armed)"
                       )
                     )
+                    // 显式等待停靠态（平台修复批 fix 4，2026-10-21）：ready-to-merge
+                    // 停靠不再貌似 Idle 完成——registry 状态快照置 Waiting（等待屏障
+                    // 语义：TaskStuckWatcher 豁免 / MailIdleGate 视同可投递 / 面板
+                    // 快照透出 "Waiting"），父会话与作者都看得见「在等合并轮」。
+                    // 清理面零新增：终态腿 notifyParentAndStop 本就整行移除 registry。
+                    .*>(
+                      resources.agentRegistry.modify { m =>
+                        m.get(subagentId) match
+                          case Some(rec) if rec.status != AgentStatus.Waiting =>
+                            (m.updated(subagentId, rec.copy(status = AgentStatus.Waiting)), ())
+                          case _ => (m, ())
+                      }
+                    )
+                    .*>(
+                      wsSend match
+                        case Some(send) =>
+                          send(
+                            Json.obj(
+                              "type" -> "delegateWaiting".asJson,
+                              "sessionId" -> subagentId.asJson,
+                              "rootSessionId" -> parentSessionId.asJson,
+                              "mode" -> "merge".asJson
+                            )
+                          ).handleErrorWith(e => logger.warn(s"delegateWaiting WS frame failed: ${e.getMessage}"))
+                        case None => IO.unit
+                    )
                     .as(
                       active(
                         childRef,

@@ -779,6 +779,9 @@ export default {
   'subagents.empty': 'No running sub-agents',
   'subagents.indicatorTitle': 'Background sub-agents',
   'subagents.status.running': 'Running',
+  // held-receipt 投递可靠性批（2026-10-21 fix 4）：显式等待停靠态（等合并轮）。
+  'subagents.status.waiting': 'Waiting',
+  'subagents.status.waitingMerge': 'waiting-merge (FIFO)',
   'subagents.status.idle': 'Idle',
   'subagents.status.stuck': 'Stuck',
   'subagents.status.error': 'Failed',
@@ -1302,7 +1305,12 @@ export default {
   'askUser.attachmentUnavailable': 'unavailable',
   'askUser.attachmentOpenCanvas': 'Open {name} in Canvas',
   'askUser.attachmentDownload': 'Download {name} (no in-app viewer for this type)',
-  'askUser.pendingTitle': 'Pending questions',
+    'askUser.pendingTitle': 'Pending questions',
+  // held-receipt 投递可靠性批（2026-10-21 fix 3）：「N 条回执待投递」徽标词条。
+  'heldReceipts.title': 'Delivery receipts pending injection',
+  'heldReceipts.held': '{n} receipt(s) held by the sub-agent barrier',
+  'heldReceipts.unread': '{n} undelivered (retry exhausted)',
+
   'askUser.sourceClosed': 'Source closed (node cancelled)',
   // AskUser double-card batch (chain-askuserdup plan A①): explicit label for a
   // history question row with NO recorded answer (it used to be painted as

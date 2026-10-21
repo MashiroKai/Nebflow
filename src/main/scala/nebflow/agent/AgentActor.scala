@@ -267,6 +267,117 @@ object AgentActor extends AgentCore with AgentSession:
   end immediateEventMessage
 
   // ============================================================
+  // Held-receipt delivery reliability（平台修复批 2026-10-21，fix 1/2/3）
+  // ============================================================
+
+  /**
+   * 台账对账单点：以当前 pendingEvents 为准同步 HeldReceiptStore，返回
+   * (held 行数, exhausted 未读数)。hold / drain / flush 各接线点调用；写失败
+   * 由 store 内吞（簿记面绝不阻断主路径）。
+   */
+  private[agent] def syncHeldReceipts(
+    resources: SharedResources,
+    sessionId: Option[String],
+    pendingEvents: List[AgentCommand.ExternalEvent]
+  ): IO[(Int, Int)] =
+    sessionId.fold(IO.pure((0, 0))) { sid =>
+      nebflow.core.processor.HeldReceiptStore
+        .syncFromEvents(sid, pendingEvents)
+        .map(entries => (entries.size, entries.count(_.exhausted)))
+    }
+
+  /**
+   * 徽标帧（fix 3 可见化面）：held/unread 计数随会话 wsSend 下发——前端
+   * `heldReceipts` 处理器置头部胶囊与 Sub-Agents 行徽标。计数无变化时的重复
+   * 发送无害（幂等置位），调用点以路径自然到达为准、不做本地去重缓存。
+   */
+  private[agent] def emitHeldReceiptsBadge(
+    state: AgentState,
+    held: Int,
+    unread: Int
+  ): IO[Unit] =
+    state.sessionId.fold(IO.unit) { sid =>
+      state
+        .wsSend(
+          Json.obj(
+            "type" -> "heldReceipts".asJson,
+            "sessionId" -> sid.asJson,
+            "held" -> held.asJson,
+            "unread" -> unread.asJson
+          )
+        )
+        .handleErrorWith(e =>
+          NebflowLogger.forName("nebflow.agent").warn(s"heldReceipts badge frame failed: ${e.getMessage}")
+        )
+    }
+
+  /**
+   * held 回执**先补注入**决策（纯函数；fix 1 第三腿的状态面）：pendingEvents 非空
+   * ⇒ 本输入事件所在 turn 先携带全部 held 回执（buildEventReminder 合批一件），
+   * 并归还屏障（outstanding 清零——回执全部产出后剩余槽位只能是幻影，issue #31）。
+   * 空队列 ⇒ None（调用路径逐字现状，零影响）。
+   *
+   * 侧效应（台账对账 / 快照 / 徽标帧）不在本函数——调用方以 [[flushHeldSideEffects]]
+   * 在 IO 链内执行，保持决策可独立 spec。
+   */
+  private[agent] case class HeldFlushPlan(
+    /** 前置于本输入事件消息之前的 reminder 消息（先补注入语义：回执在用户消息前）。 */
+    messages: List[Message],
+    /** 清空 held 队列与幻影槽位后的 state（调用方以此为基础继续组本回合消息）。 */
+    state: AgentState,
+    /** 被 flush 的事件（对账/日志输入）。 */
+    events: List[AgentCommand.ExternalEvent]
+  )
+
+  private[agent] def heldFlushPlan(state: AgentState): Option[HeldFlushPlan] =
+    if state.execution.pendingEvents.isEmpty then None
+    else
+      val held = state.execution.pendingEvents
+      val cleaned = state.copy(execution =
+        state.execution.copy(pendingEvents = Nil, outstandingSubagentResults = 0)
+      )
+      Some(HeldFlushPlan(List(buildEventReminder(held)), cleaned, held))
+
+  /** [[heldFlushPlan]] 的伴生副作用：日志 + 屏障快照 + 台账对账 + 徽标帧。 */
+  private[agent] def flushHeldSideEffects(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    plan: HeldFlushPlan
+  )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
+    IO(
+      logAgentEvent(
+        agentDef,
+        depth,
+        plan.state.sessionId,
+        plan.state.sessionName,
+        "held-receipts-flushed-before-input",
+        s"held=${plan.events.size}"
+      )
+    ) *>
+      touchBarrierSnapshot(resources, plan.state.sessionId, 0, 0) *>
+      syncHeldReceipts(resources, plan.state.sessionId, Nil).flatMap((held, unread) =>
+        emitHeldReceiptsBadge(plan.state, held, unread)
+      ) *>
+      persistQueues(plan.state.sessionId, plan.state.execution)
+
+  /** 催注强补投递（fix 2 动作面）：全部 held 回执合批注入一 turn。 */
+  private[agent] def emitForceDrainVisibility(
+    resources: SharedResources,
+    state: AgentState,
+    held: List[AgentCommand.ExternalEvent]
+  )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
+    emitInjectedUserEvent(
+      resources,
+      state.wsSend,
+      state.sessionId,
+      s"[投递补注] ${held.size} 条回执此前被子代理批屏障扣留未注入（屏障槽位已归还），现随本回合补投:",
+      "system",
+      Some("force-drain"),
+      sessionProject = state.projectName
+    )
+
+  // ============================================================
   // F1 (2026-08-30, compact-injection-shield G1): unified post-compaction
   // queue drain. Both CompactionComplete(Right) branches (resume=true
   // auto-compaction continuation and resume=false return-to-idle) share ONE

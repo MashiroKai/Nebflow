@@ -541,9 +541,12 @@ When to use:
           // issue #31 Fix D: barrier snapshot — phantom visibility. outstanding>0
           // on an idle session with no in-flight work = a batch member hung / died
           // without a terminal event; held>0 = results parked waiting for the batch.
+          // held-receipt 批（fix 3）：held 列追加 unread 终态计数（催注穷尽的未读
+          // 回执）——`o/h(+u)` 形态，u>0 即「父会话有 N 条回执注入不了」的可见积压。
           val barrier =
-            if rec.outstandingSubagents > 0 || rec.pendingEventCount > 0 then
-              s"${rec.outstandingSubagents}/${rec.pendingEventCount}"
+            if rec.outstandingSubagents > 0 || rec.pendingEventCount > 0 || rec.unreadReceiptCount > 0 then
+              val base = s"${rec.outstandingSubagents}/${rec.pendingEventCount}"
+              if rec.unreadReceiptCount > 0 then s"$base(+${rec.unreadReceiptCount})" else base
             else "-"
           List(
             rec.sessionId,
@@ -660,6 +663,8 @@ When to use:
              |       rounds this turn (escalates at 70% turn budget / 8). Non-zero = loop suspicion — check status, consider restart.
              |barrier = outstandingSubagents/heldResults (issue #31): outstanding>0 while idle with no in-flight work = phantom slot
              |          (a batch member hung or died without a terminal event — held results never inject until restart).
+             |          The HeldDeliveryWatchdog (60s) now nudges undelivered held receipts with exponential backoff; after
+             |          ${nebflow.shared.Defaults.HeldDeliveryMaxAttempts} nudges they become unread (+u) and flush ahead of the session's next input.
              |Cancelable kinds: Delegate / SubTask / Ephemeral, and Project node/dispatcher sessions (node-*/dispatcher-*, cancel settles via the session bridge). Restartable: Delegate(ephemeral) / SubTask.
              |Team members: the team's Manager (direct parent) or Nebula (global; killing a team MANAGER requires confirm=true + reason — audited). Legacy dag-* Flow workers and Root are read-only.$scopeNote""".stripMargin
       Right(summary)
@@ -729,6 +734,12 @@ When to use:
             s"barrier: outstanding=${rec.outstandingSubagents} held=${rec.pendingEventCount}" +
               (if rec.outstandingSubagents > 0 then
                  " ⚠ outstanding > 0 — if no batch is actually in flight this is a phantom slot"
+               else "") +
+              // held-receipt 批（fix 3）：unread 终态面——催注穷尽的未读回执，
+              // 随本会话下一输入先补注入（HeldDeliveryWatchdog 已停催）。
+              (if rec.unreadReceiptCount > 0 then
+                 s"\nunread receipts: ${rec.unreadReceiptCount} — held delivery receipt(s) exhausted their retry " +
+                   "budget and will be flushed ahead of this session's next input"
                else "")
           ) ++ taskOpt
             .map { t =>

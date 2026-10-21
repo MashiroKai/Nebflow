@@ -735,6 +735,11 @@ object TaskStuckWatcher:
           // Processing with a fresh lastActivityMs — AgentActor AskUser handler
           // / AgentCore.askUserPermission), so true hangs stay reachable.
           .filter(rec => rec.status != AgentStatus.WaitingForUser)
+          // 显式等待停靠态同样豁免（平台修复批 fix 4，2026-10-21）：Waiting =
+          // 「等合并轮提醒」一类引擎停靠（delegate ready-to-merge 被 MergeQueue
+          // 持有）——推进者 = 引擎合并轮转，不是本会话进程；与 WaitingForUser
+          // 同款等待屏障语义。同上为显式守卫（Processing 过滤已排除）。
+          .filter(rec => rec.status != AgentStatus.Waiting)
         // 2026-09-10 换轴：判据收敛到 assess（agent 侧事件停滞 ∪ 工具相位超时，
         // 二者都不引用进程 CPU）。旧行 `now - rec.lastActivityMs > thresholdMs`
         // 保留为 assess 的判据 ①，其余语义不变。

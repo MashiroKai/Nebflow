@@ -456,6 +456,23 @@ object AgentCommand:
    */
   case object CheckFreezeGate extends AgentCommand
 
+  /**
+   * HeldDeliveryWatchdog（60s 轮询）→ 有 held 回执到期未注入的会话：催注投递
+   * （平台修复批「delegate 回执投递可靠性」作者令 2026-10-21，fix 1/2）。
+   *
+   * 语义：子代理批屏障把已产出回执 HOLD 在 pendingEvents；屏障槽位成幻影
+   * （issue #31：成员 hang / 停止失败永不归还）时 held 回执永不注入、会话看似
+   * Idle 完成。本命令 = 投递可靠性自检的催注件——idle 态收到即**强制补注**全部
+   * held 回执（buildEventReminder 合批一 turn），并归还幻影屏障槽位（outstanding
+   * 清零——已产出的回执全部交付后，剩余槽位只能是永远不会投递的幻影）；processing/
+   * frozen 态收到即 no-op 留任（turn 边界的正常 drain 与解冻后的 drain 兜住），
+   * 调度器按退避下次再催。
+   *
+   * 幂等性：pendingEvents 已空（正常 drain 已投递）时 no-op——竞态窗口的迟到催注
+   * 不产生重复注入。
+   */
+  case object DrainHeldReceipts extends AgentCommand
+
   case class UpdateContextWindow(window: Int) extends AgentCommand
 
   /**

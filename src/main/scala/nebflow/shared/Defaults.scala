@@ -733,6 +733,32 @@ object Defaults:
   /** TaskStuckWatcher scan interval. */
   val StuckWatcherIntervalSec: Int = 30
 
+  // ---- Held-receipt delivery reliability（平台修复批：delegate 回执投递可靠性）----
+
+  /**
+   * HeldDeliveryWatchdog 扫描周期（秒）。扫描器职责 = 投递可靠性自检（fix 2）：
+   * idle 会话有已产出回执但 N 分钟未注入 → 判投递失败催注重投。**不是**任务超时
+   * ——「无超时」哲学不动，本扫描器只催注回执、绝不杀会话。
+   */
+  val HeldDeliveryScanIntervalSec: Int = 60
+
+  /**
+   * 回执被 HOLD 后首催间隔（ms）——「N 分钟未投递」的 N（10min）。首催前窗口
+   * 留给正常屏障语义（并行批次汇聚注入）；到期仍在 held ⇒ 判投递失败、进入
+   * 指数退避催注链。
+   */
+  val HeldDeliveryFirstRetryMs: Long = 10 * 60 * 1000L
+
+  /** 催注退避封顶（ms）：10min ×2 递增到此值后走平（≈30min 一催）。 */
+  val HeldDeliveryMaxBackoffMs: Long = 30 * 60 * 1000L
+
+  /**
+   * 催注穷尽阈值：催注 HeldDeliveryMaxAttempts 次后回执仍 held ⇒ exhausted 终态
+   * 落盘（台账 exhausted 旗 + 父会话「N 条未读回执」徽标），调度器停催；父会话
+   * 任何后续事件走「先补注入未读回执」腿消费（fix 1）。
+   */
+  val HeldDeliveryMaxAttempts: Int = 5
+
   /**
    * 2026-09-10 卡死判据换轴（取证 20260910_130621_flow-node-activity-signal-forensics.md）：
    * **工具相位**卡死阈值——同一 turn 内单个工具调用持续超过此值、且该 turn 仍

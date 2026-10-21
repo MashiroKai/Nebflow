@@ -48,7 +48,10 @@ object MailIdleGate:
     checkStatus: Boolean = true
   ): Boolean =
     registry.get(sid).exists { rec =>
-      (!checkStatus || rec.status == AgentStatus.Idle) &&
+      // 显式等待停靠态（平台修复批 fix 4，2026-10-21）视同可投递：Waiting =
+      // 引擎停靠（等合并轮提醒）——停靠会话的已产出报告照样走投递链，合并轮
+      // Mail/续聊可达；「自身 busy」语义只对真实 turn（Processing）成立。
+      (!checkStatus || rec.status == AgentStatus.Idle || rec.status == AgentStatus.Waiting) &&
       rec.outstandingSubagents == 0 &&
       // 无在飞任务型子 agent（一阶；递归由存在性覆盖）
       !registry.values.exists(c => c.parentRef.exists(_ == rec.ref) && taskKinds.contains(c.kind)) &&

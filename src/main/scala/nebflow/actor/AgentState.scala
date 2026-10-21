@@ -130,6 +130,13 @@ case class AgentRecord(
    */
   pendingEventCount: Int = 0,
   /**
+   * 「未读回执」徽标数（平台修复批 fix 3 可见化面，2026-10-21）：held 回执催注
+   * 穷尽后的 exhausted 终态计数——**唯一写者 = HeldDeliveryWatchdog**（读盘台账
+   * 现值回写；与 pendingEventCount 的 actor 权威面分权，互不覆盖）。
+   * 消费面 = activeAgents 快照字段 `unreadReceipts` / AgentControl / 徽标帧。
+   */
+  unreadReceiptCount: Int = 0,
+  /**
    * v2 冻结式错误恢复升级链（§5.2）：升级链状态快照（P0 内存态）——
    * enterErrorFrozen 第 3 次进入时设置、FreezeScheduler.scan 读它检查
    * escalateAt 到期（升级/跳级/到达用户）。与 AgentState.execution.escalation
@@ -222,6 +229,19 @@ enum AgentStatus:
   case Idle
   case Processing
   case WaitingForUser
+
+  /**
+   * 显式等待停靠态（平台修复批「delegate 回执投递可靠性」作者令 2026-10-21，fix 4）：
+   * 「等合并轮提醒」一类会话（delegate ready-to-merge 被 MergeQueue 停靠）不再
+   * 貌似 Idle 完成——以本状态停靠，消费面用与 WaitingForUser 同款的等待屏障语义：
+   *   - TaskStuckWatcher 豁免（停靠等待不是卡死）；
+   *   - MailIdleGate 视同可投递（停靠会话的已产出报告照样走投递链，合并提醒/Mail
+   *     可达）；
+   *   - 面板/快照面原样透出 "Waiting"（activeAgents status 字段 toString）。
+   * 写点 = BackoffSupervisor 终态判定机 HoldForMerge 腿（delegate 轨）；actor 的
+   * 下一 turn（合并提醒唤醒）经 pipeLlmCall 自然置回 Processing → Idle。
+   */
+  case Waiting
 
   /** 冻结调度：dispatch 边界被冻结时间表拦住（#337 黑名单语义），挂起等待出冻结段/用户唤醒。 */
   case Frozen
