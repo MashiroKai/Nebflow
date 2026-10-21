@@ -75,3 +75,5 @@
 | pilot workflow | `.github/workflows/ci-selfhosted.yml` |
 
 **外部仓交付**：stand-website staging 分支 `67ea391`（manifest-beta 入册）+ `e82a259`（测试钉 bump），均已部署/部署中；GitHub release v2026.10.21-beta.2 已挂 jar。
+
+**落 main 后待续一行项**：beta.1 先例有「推 USTC+GitHub」腿——本批分支+tag 已推 GitHub（origin）；merge 落 main 后 USTC（dev remote）补推 main+tag 即对齐先例：`git push dev main v2026.10.21-beta.2`。
