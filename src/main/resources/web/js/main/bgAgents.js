@@ -110,10 +110,14 @@ export function bgAgentKindFromSession(sessionId) {
  *  Defensive fallback for envelopes lacking rootSessionId (old backend /
  *  REST-invoked tools): key on msg.sessionId as-is. */
 
-/** Row state machine (spec §3): done > stuck > frozen > error > idle > active. */
+/** Row state machine (spec §3): done > stuck > waiting > frozen > error > idle > active.
+ *  `waiting`（held-receipt 投递可靠性批 2026-10-21 fix 4）：delegate ready-to-merge
+ *  显式停靠态（引擎 Waiting 状态 / delegateWaiting 帧）——「等合并轮提醒」的显式
+ *  等待，不再貌似 Idle 完成。 */
 function bgRowState(info) {
   if (info.done) return 'done';
   if (info.stuck) return 'stuck';
+  if (info.waiting || info.status === 'Waiting') return 'waiting';
   if (info.frozen) return 'frozen';
   if (isFailedSnapshotStatus(info.status)) return 'error';
   const st = info.status || '';
@@ -321,6 +325,7 @@ function bgTaskRowHtml(id, info, opts = {}) {
   const dotClass = {
     active: 'bg-status-active', idle: 'bg-status-idle', stuck: 'bg-status-stuck',
     error: 'bg-status-error', frozen: 'bg-status-frozen', done: 'bg-status-done',
+    waiting: 'bg-status-waiting',
   }[rowState];
   // 修订批九点②补漏：快照 kind（AgentKind.SubTask）同走显示词归一（数据面不动）。
   const kind = (opts && opts.badgeWord) || bgKindDisplayWord(info.kind) ||
@@ -376,6 +381,11 @@ function bgTaskRowHtml(id, info, opts = {}) {
               : t('manage.stuck', { secs: info.stuck.idleSecs ?? '' })
       ) + '</span>'
     : '';
+  // Waiting（held-receipt 投递可靠性批 2026-10-21 fix 4）：显式停靠标签——
+  // 「等合并轮」的 delegate 行显示等待词，不再貌似 Idle 完成。
+  const waitingPart = (rowState === 'waiting')
+    ? '<span class="bg-task-waiting">' + escapeHtml(t('subagents.status.waitingMerge')) + '</span>'
+    : '';
   const toolLabel = info.currentTool || '';
   const toolPart = (toolLabel && !terminal)
     ? '<span class="bgagent-tool" title="' + escapeHtml(toolLabel) + '">↳ ' + escapeHtml(toolLabel) + '</span>'
@@ -410,7 +420,7 @@ function bgTaskRowHtml(id, info, opts = {}) {
           escapeHtml(statusLabel) + '</span>' +
         kindPart + projectPart + namePart + taskPart + retriesPart + uptimePart +
       '</div>' +
-      stuckPart + toolPart +
+      stuckPart + waitingPart + toolPart +
     '</div>' +
   '</div>';
 }

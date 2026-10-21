@@ -1203,7 +1203,13 @@ private[agent] object AgentProcessing:
             AgentStreamEvent.ExternalEventReceived(source, eventType, correlationId),
             isSubagent = depth > 0,
             state.sessionId
-          ) *> persistQueues(state.sessionId, updatedExec) *> IO.pure(
+          ) *> persistQueues(state.sessionId, updatedExec) *>
+          // 台账对账（平台修复批 fix 1 落账点）：回执入 held 队列即记 producedAt，
+          // HeldDeliveryWatchdog 据此起算「N 分钟未投递」催注时钟；徽标帧随行
+          // （held 计数上升面）。
+          syncHeldReceipts(resources, state.sessionId, updatedExec.pendingEvents).flatMap((h, u) =>
+            emitHeldReceiptsBadge(state, h, u)
+          ) *> IO.pure(
             processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending)
           )
 
@@ -1446,6 +1452,20 @@ private[agent] object AgentProcessing:
         AgentPingpong
           .handleShadowFailed(agentDef, depth, state, cmd)
           .map(st => processing(agentDef, resources, depth, parentRef, st, pending))
+
+      // ── HeldDeliveryWatchdog 催注（平台修复批 fix 2）：processing 态收到 = 留任
+      // no-op——turn 边界的 drainBarrier 兜正常投递；催注只对 idle 态生效（调度器
+      // 本就按 registry status==Idle 过滤，此分支是竞态窗口的宽容面）。仅留痕。
+      case AgentCommand.DrainHeldReceipts =>
+        logAgentEvent(
+          agentDef,
+          depth,
+          state.sessionId,
+          state.sessionName,
+          "held-receipts-nudge-deferred",
+          s"held=${state.execution.pendingEvents.size} outstanding=${state.execution.outstandingSubagentResults} turn-in-flight"
+        )
+        IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
 
       case _ =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))

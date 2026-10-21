@@ -478,6 +478,11 @@ private[agent] object AgentFinishTurn:
         _ <- roundCompleteIO
         // F2: keep the disk snapshot in sync after the drain (drained events gone).
         _ <- persistQueues(state.sessionId, updatedState.execution)
+        // 台账对账 + 徽标帧（平台修复批 fix 1/3）：drainBarrier 投递面——已投递回执
+        // 出账、余件保簿记；held 计数下降随行。
+        _ <- syncHeldReceipts(resources, state.sessionId, remainingEvents).flatMap((h, u) =>
+          emitHeldReceiptsBadge(state, h, u)
+        )
         _ <-
           if !isSubagent then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
           else IO.unit

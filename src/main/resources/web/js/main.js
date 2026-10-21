@@ -1964,6 +1964,59 @@ onMessage('taskStuck', (msg) => {
   }
 });
 
+// ── Held-receipt 投递可靠性批（2026-10-21 · fix 3 可见化）────────────────────
+// WS `heldReceipts` 帧（发射面：actor 的 hold/drain/flush 点 + HeldDeliveryWatchdog
+// unread 广播）：{sessionId(持有积压的父会话), held, unread}。前端两件事：
+//   ① state.sessionHeldReceipts[sessionId] 记账（held=被屏障扣留的已产出回执数，
+//      unread=催注穷尽的未读终态数；两零 = 清除条目）；
+//   ② 头部胶囊 #held-receipts-indicator 按**当前活跃会话**的积压渲染（N>0 显示
+//      「待投递」计数，归零即隐）——作者与父会话操作者都看得见积压。
+// 会话切换不重发帧：监听 nebflow-session-change（sidebar.js 派发）重渲胶囊。
+function renderHeldReceiptsCapsule() {
+  const el = document.getElementById('held-receipts-indicator');
+  if (!el) return;
+  const sid = state.activeSessionId;
+  const rec = (sid && state.sessionHeldReceipts && state.sessionHeldReceipts[sid]) || null;
+  const total = rec ? (rec.held || 0) + (rec.unread || 0) : 0;
+  el.classList.toggle('hidden', total === 0);
+  const count = el.querySelector('.pa-count');
+  if (count) count.textContent = total > 9 ? '9+' : String(total);
+  if (rec) {
+    const parts = [];
+    if (rec.held > 0) parts.push(t('heldReceipts.held', { n: rec.held }));
+    if (rec.unread > 0) parts.push(t('heldReceipts.unread', { n: rec.unread }));
+    el.title = parts.join(' · ') || t('heldReceipts.title');
+  } else {
+    el.title = t('heldReceipts.title');
+  }
+}
+window.addEventListener('nebflow-session-change', renderHeldReceiptsCapsule);
+onMessage('heldReceipts', (msg) => {
+  const sid = msg.sessionId || '';
+  if (!sid) return;
+  const held = msg.held || 0;
+  const unread = msg.unread || 0;
+  state.sessionHeldReceipts = state.sessionHeldReceipts || {};
+  if (held <= 0 && unread <= 0) delete state.sessionHeldReceipts[sid];
+  else state.sessionHeldReceipts[sid] = { held, unread };
+  renderHeldReceiptsCapsule();
+});
+// delegateWaiting（平台修复批 fix 4）：delegate ready-to-merge 停靠——快照/面板
+// 由 activeAgents status:"Waiting" 承载；本帧仅作 Sub-Agents 行的实时态提示（行
+// 仍在则置 waiting 标记并刷新指示器）。
+onMessage('delegateWaiting', (msg) => {
+  const bare = (msg.sessionId || '').replace(/^team-/, '');
+  if (!bare) return;
+  for (const [rootSid, agents] of Object.entries(state.sessionBgAgents)) {
+    for (const info of Object.values(agents)) {
+      const entrySid = (info.sessionId || '').replace(/^team-/, '');
+      if (entrySid !== bare) continue;
+      info.waiting = { mode: msg.mode || 'merge' };
+      updateBgAgentIndicator(rootSid);
+    }
+  }
+});
+
 onMessage('agentDone', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
   const sid = msg.rootSessionId || msg.sessionId || state.activeSessionId;
@@ -3183,6 +3236,7 @@ onMessage('forkComplete', (msg, view) => {
     'bg-indicator',            // v2 tier 1 — hides LAST (11:36 裁定)
     'bgagent-indicator',       // v2 tier 1
     'pending-asks-indicator',  // v2 tier 1 (same capsule family)
+    'held-receipts-indicator', // v2 tier 1 (held-receipt 投递可靠性批 2026-10-21，同胶囊族)
     'memory-btn',              // v2 tier 2
     'header-model-info',       // v2 tier 2
     'daemon-btn',              // v2 tier 3 — legacy P-order reversed: daemon

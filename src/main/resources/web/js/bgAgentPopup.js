@@ -417,6 +417,9 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
         if (isFailedSnapshotStatus(row.status)) entry.meta.status = 'failed';
         else if (row.status === 'Processing') entry.meta.status = 'running';
         else if (row.status === 'Frozen') entry.meta.status = 'frozen';
+        // held-receipt 投递可靠性批（2026-10-21 fix 4）：显式停靠态快照恢复——
+        // 「等合并轮」的 delegate 行不再貌似 Idle。
+        else if (row.status === 'Waiting') entry.meta.status = 'waiting';
       }
       if (row.retryCount > 0) entry.meta.retries = Math.max(entry.meta.retries || 0, row.retryCount);
       break;

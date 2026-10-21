@@ -1762,6 +1762,19 @@ object GatewayMain extends IOApp:
                                                                 nebflow.shared.Defaults.FreezeCheckIntervalSec.seconds
                                                             )
                                                             .start
+                                                          // --- Background: HeldDeliveryWatchdog (平台修复批 2026-10-21) ---
+                                                          // held 回执投递可靠性自检：周期扫 idle 会话的 held-receipts
+                                                          // 台账，到期未注入的回执催注（DrainHeldReceipts，指数退避）、
+                                                          // 穷尽置 exhausted 终态 + unread 徽标广播。只催注回执投递、
+                                                          // 绝不杀会话——「无超时」哲学不动（投递自检 ≠ 任务超时）。
+                                                          _ <- nebflow.core.processor.HeldDeliveryWatchdog
+                                                            .run(
+                                                              sharedResourcesWithDaemon,
+                                                              wsHub,
+                                                              interval =
+                                                                nebflow.shared.Defaults.HeldDeliveryScanIntervalSec.seconds
+                                                            )
+                                                            .start
                                                           // --- P0（2026-08-30）：skip 持久化恢复 ---
                                                           // 重启前「跳过本次」若未到期（skipUntil > now），恢复进内存
                                                           // ref——WS/REST 的 freezeState.skipped 随即可见，输入栏不再

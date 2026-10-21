@@ -739,6 +739,9 @@ export default {
   'subagents.empty': '当前无运行中的子智能体',
   'subagents.indicatorTitle': '后台子智能体',
   'subagents.status.running': '进行中',
+  // held-receipt 投递可靠性批（2026-10-21 fix 4）：显式等待停靠态（等合并轮）。
+  'subagents.status.waiting': '停靠等待',
+  'subagents.status.waitingMerge': '等待合并轮',
   'subagents.status.idle': '空闲',
   'subagents.status.stuck': '卡死',
   'subagents.status.error': '失败',
@@ -1256,7 +1259,12 @@ export default {
   'askUser.attachmentUnavailable': '不可用',
   'askUser.attachmentOpenCanvas': '在 Canvas 打开 {name}',
   'askUser.attachmentDownload': '下载 {name}（该类型没有应用内查看器）',
-  'askUser.pendingTitle': '待回答问题',
+    'askUser.pendingTitle': '待回答问题',
+  // held-receipt 投递可靠性批（2026-10-21 fix 3）：「N 条回执待投递」徽标词条。
+  'heldReceipts.title': '回执待投递',
+  'heldReceipts.held': '{n} 条回执被子代理屏障扣留',
+  'heldReceipts.unread': '{n} 条未投递（重试已穷尽）',
+
   'askUser.sourceClosed': '来源已关闭（节点已取消）',
   // 双开缺陷批（chain-askuserdup 案 A①）：历史里的提问行**无作答记录**时的显式标注
   // （改前这种卡被画成「已作答」= 一行假的 `-> `）—— 死卡显式标注优于静默死亡。
