@@ -13,7 +13,17 @@
 | `pano-full-light.png` | 全景全量 · 亮 | 同上，亮主题（生产 token 双主题零分叉）；#678 完成卡报告条 + 已投递实线入汇点 |
 | `pano-star-dark.png` | 子过程星扇 · 暗（stand 过滤） | 「子过程 · 真实拓扑 2 ‹」展开：真数据 3 张 subagent 子卡（#694 活子 + #648 星扇），星扇虚线边自 #694 卡下锚；`subagent · 1` 行内徽标 |
 | `pano-star-light.png` | 子过程星扇 · 亮 | 同上，亮主题 |
-| `pano-merge-dark.png` / `pano-merge-light.png` | 合并管线视图 | 本 delegate `delegate_report(merge)` 后进队/持窗时截——候合并琥珀 FIFO + 合并窗蓝晶行军蚁（真实引擎状态，非夹具） |
+| `pano-merge-dark.png` / `pano-merge-light.png` | 合并管线视图（明标夹具带＋真实带同框） | 「⚠️夹具演示 merge-pipeline」带：#81 候合并卡（琥珀环+队列徽标 FIFO #1+琥珀虚线入队弧+报告条）/ #82 合并中卡（蓝晶环+「合并窗持有」徽标+蓝晶行军蚁「合并窗流入」边+汇点「合并窗」chip）；其余四带 = 真机真实数据同框对照（stand/stand-website/DOSTEL） |
+
+### 合并管线视图为何走明标夹具（兜底如实记录）
+
+真机 ：8080 是旧构建——G1 `merging` 一等态覆写与 terminal-verdict 判词行都在**本批
+新引擎代码**里（未部署）；waiting-merge 期旧行面 taskStatus 恒 'running'（实测
+`/api/chains` #699 行），真实「候合并/合并中」状态在旧引擎面上不可达
+（`shoot.mjs merge` 实测 `merge-state visible: false`）。故按批计划走兜底：
+stub 夹具注入（harness 缝）合成明标演示带，真机真实行原样保留同框。三重编码的
+DOM 级断言不依赖夹具——tests/delegate-panorama.spec.mjs T1 直接钉死；新引擎部署
+后 `node shoot.mjs merge both` 即可重取真实状态截图。
 
 ## 再现
 
