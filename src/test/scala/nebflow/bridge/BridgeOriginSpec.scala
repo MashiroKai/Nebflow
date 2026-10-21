@@ -117,13 +117,19 @@ class BridgeOriginSpec extends FunSuite:
 
   test("SOURCE CONTRACT: the one bridge injection point sends each face to its own consumer") {
     val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "gateway" / "WebSocketRoutes.scala")
-    val iFaces = src.indexOf("nebflow.bridge.BridgeOrigin.faces(origin, senderId, content)")
+    // 媒体统一适配批（2026-10-20）：标签线/随文先组为 modelContent，faces 单点拆分不变。
+    val iFaces = src.indexOf("nebflow.bridge.BridgeOrigin.faces(origin, senderId, modelContent)")
     assert(iFaces > 0, "handleBridgeMessage no longer splits the message into faces")
 
-    val iRecord = src.indexOf("UiMessage.User(faces.sessionDisplay", iFaces)
-    assert(iRecord > iFaces, "the recorded UiMessage row must carry the DISPLAY face (bare content)")
+    // DISPLAY face 仍不得携带 marker：媒体件显示面 = 原样 content（媒体行由 attJson
+    // 行内附件承载），非媒体件 = faces.sessionDisplay（裸文本）。
+    val iDisplay = src.indexOf("val displayText = if media.isEmpty then faces.sessionDisplay else content")
+    assert(iDisplay > iFaces, "the display face must keep its media/non-media sourcing rule")
 
-    val iBroadcast = src.indexOf("\"text\" -> faces.sessionDisplay.asJson", iFaces)
+    val iRecord = src.indexOf("UiMessage.User(displayText, attJson", iFaces)
+    assert(iRecord > iFaces, "the recorded UiMessage row must carry the DISPLAY face (bare content, attJson row)")
+
+    val iBroadcast = src.indexOf("\"text\" -> displayText.asJson", iFaces)
     assert(iBroadcast > iFaces, "the bridgeUser broadcast must carry the DISPLAY face (bare content)")
 
     val iPayload = src.indexOf("payload = faces.modelPayload", iFaces)
