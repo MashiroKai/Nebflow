@@ -20,6 +20,7 @@ Usage:
 - Supports full regex syntax (e.g. "log.*Error", "function\\s+\\w+")
 - Filter files with glob parameter (e.g. "*.js", "*.{ts,tsx}") or type parameter (e.g. "js", "py", "rust")
 - Output modes: "content" shows matching lines (supports -A/-B/-C context), "files_with_matches" shows only file paths, "count" shows match counts
+- Set "ranked": true (files_with_matches mode) to order files by match count, best-first — surfaced the way a corpus search engine (BM25-style) ranks hits instead of raw walk order
 - Use -i for case insensitive search"""
 
   private val VCS_DIRS = List(".git", ".svn", ".hg", ".bzr", ".jj")
@@ -48,6 +49,10 @@ Usage:
           "type" -> "string".asJson,
           "enum" -> io.circe.Json.arr("content".asJson, "files_with_matches".asJson, "count".asJson),
           "description" -> "Output mode. Defaults to \"files_with_matches\". \"content\" supports -A/-B/-C context lines.".asJson
+        ),
+        "ranked" -> io.circe.Json.obj(
+          "type" -> "boolean".asJson,
+          "description" -> "files_with_matches only: order matched files by match count (descending), most-relevant first. Default: false (rg walk order).".asJson
         ),
         "-i" -> io.circe.Json.obj("type" -> "boolean".asJson, "description" -> "Case insensitive search".asJson),
         "-A" -> io.circe.Json.obj(
@@ -160,7 +165,11 @@ Usage:
       "--color=never",
       "--hidden",
       "--max-columns",
-      "500"
+      "500",
+      // xerj 借鉴（2026-10-21 记忆检索批提案②）：命中行超 --max-columns 时给出
+      // 截断预览而非整行隐藏——「命中不隐身」原则；对 CJK 长行（会话日志/JSONL）
+      // 尤其重要，默认替换形态会把命中完全抹掉。
+      "--max-columns-preview"
     )
 
     for dir <- VCS_DIRS do args ++= List("--glob", s"!$dir")
@@ -170,7 +179,12 @@ Usage:
     if input("multiline").flatMap(_.asBoolean).contains(true) then args ++= List("-U", "--multiline-dotall")
 
     mode match
-      case "files_with_matches" => args += "--files-with-matches"
+      case "files_with_matches" =>
+        // xerj 借鉴（2026-10-21 记忆检索批提案①）：opt-in 相关性排序——
+        // rg 走 --count-matches 一次遍历，按命中计数降序稳定排序（同计数保持
+        // rg 原序），输出仍为纯路径（wire 契约零变化）。默认 false = 行为零回归。
+        if input("ranked").flatMap(_.asBoolean).contains(true) then args += "--count-matches"
+        else args += "--files-with-matches"
       case "count" => args += "--count"
       case "content" => args += "--line-number"
       case _ => args += "--files-with-matches"
@@ -213,9 +227,12 @@ Usage:
               Right(result + pagination)
 
             case "files_with_matches" =>
-              val sliced = allLines.slice(offset, offset + effectiveLimit)
+              val ordered =
+                if input("ranked").flatMap(_.asBoolean).contains(true) then rankCountLines(allLines.toList)
+                else allLines.toList
+              val sliced = ordered.slice(offset, offset + effectiveLimit)
               val result = sliced.map(relativizeLine(_, workDirPath, hasColon = false)).mkString("\n")
-              val pagination = formatPagination(allLines.length, offset, effectiveLimit)
+              val pagination = formatPagination(ordered.length, offset, effectiveLimit)
               Right(result + pagination)
 
             case "count" =>
@@ -250,5 +267,22 @@ Usage:
       if truncated then parts += s"limit: $limit"
       if offset > 0 then parts += s"offset: $offset"
       s"\n\n[Showing results with pagination = ${parts.mkString(", ")}]"
+
+  /** `rg --count-matches` 行 `path:count` → (path, count)；无冒号/非数字尾段 ⇒ None。 */
+  private[tools] def parseCountLine(line: String): Option[(String, Int)] =
+    val idx = line.lastIndexOf(':')
+    if idx <= 0 then None
+    else line.substring(idx + 1).trim.toIntOption.map(c => (line.substring(0, idx), c))
+
+  /**
+   * 命中计数降序稳定排序（同计数保持 rg 原序 = walk order tiebreak），
+   * 输出剥回纯路径。非 `path:count` 形态的行置尾保留原相对序（防御 rg 版本差异，
+   * 不参与排序也不丢弃）。
+   */
+  private[tools] def rankCountLines(lines: List[String]): List[String] =
+    val decorated = lines.zipWithIndex.map { case (l, i) =>
+      parseCountLine(l).fold((Int.MaxValue, i, l)) { case (p, c) => (-c, i, p) }
+    }
+    decorated.sortBy(d => (d._1, d._2)).map(_._3)
 
 end GrepTool

@@ -1,0 +1,626 @@
+#!/usr/bin/env python3
+# stand-recall — 对话历史建库+检索 CLI（stand 仓 tools/）
+#
+# 用途：把「主 agent（Nebula 根会话）」的存量对话历史建成为可检索库，
+#       缺上下文时直接 `stand-recall "关键词"` 回溯，替代手写记忆文件。
+#
+# 语料口径（作者令 2026-10-21，严格收紧）：
+#   - 只收主 agent 会话：当前 Nebula 根会话（_index.json agentName=='Nebula'）
+#     + 多会话时代的用户↔主 agent 聊天会话（main-legacy / main-compacted）；
+#     teams / nodes / delegate / kernel / flow / 外部执行器会话一律不收。
+#   - 收录：用户消息、主 agent 文本消息、附件标记（[用户附加文件: …] /
+#     [用户附加图片: …] → attachments 登记表）。
+#   - 排除：一切工具结果（tool_use / tool_result 块）、thinking 块、
+#     <system-reminder> 注入、source 注入消息（mail/delegate/subtask/flow/skill/tool）、
+#     <context-compact> 压缩摘要（真历史由 compaction/*-before.json 快照承载）。
+#   - 数据源只读：绝不写 ~/.stand/sessions/**；只写 ~/.stand/memory-db/**。
+#
+# xerj（xerj-org/xerj，local-first 检索引擎）成果复用（详见 reports/ 提案）：
+#   - CJK bigram 分词（xerj-fts/src/analyzer.rs:797-870 CJK bigram tokenizer，
+#     Lucene CJKAnalyzer 同款）→ 本工具以「bigram 影子列 + 同变换查询」在
+#     SQLite FTS5 unicode61 上仿真（FTS5 无自定义 tokenizer，trigram 需 ≥3 字查询，
+#     中文 2 字词查询退化，故采 xerj bigram 路线）。
+#   - BM25 相关性排序（xerj-fts/src/bm25.rs，k1=1.2/b=0.75 与 Lucene 一致）
+#     → FTS5 内置 bm25() 同公式，直接复用；并列时新消息优先。
+#   - 相邻片段召回（xerj 返回 ranked passages 而非裸行号）→ 命中消息 ±N 上下文邻句。
+#   - 增量重索引（xerj LIVE_REINDEXING 思路）→ --update 幂等 upsert
+#     （UNIQUE(session,ts,role,hash) + INSERT OR IGNORE），无守护进程。
+#   - 未采用：向量/神经检索（~90MB 模型 + 超出零依赖约束）、rerank 外判
+#     （数据出机）、ES 兼容 API/MCP server/集群（服务形态，作者令禁驻守护进程）。
+#
+# 用法：
+#   stand-recall "关键词 [更多词]"          # 检索（默认输出 top10 命中+邻句+附件）
+#   stand-recall --update                   # 增量索引（幂等，秒级）
+#   stand-recall --rebuild                  # 全量重建
+#   stand-recall --stats                    # 库概况
+#   stand-recall --doctor                   # 会话分类明细（含排除原因）
+# 选项：-n N 命中数(10) | --context N 邻句数(1) | --session ID | --role user|assistant
+#       --since/--until "YYYY-MM-DD[ HH:MM]" | --json | --db PATH | --data-root PATH
+#
+# 零第三方依赖：Python3 标准库（sqlite3/json/re/argparse/hashlib）。
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import sqlite3
+import sys
+from datetime import datetime
+
+SCHEMA_VERSION = 1
+
+# ── 语料分类规则 ──────────────────────────────────────────────────────────────
+
+# 索引外会话（引擎形态，非主 agent 对话）：id 前缀 / 会话名前缀
+EXCLUDE_ID_PREFIXES = ("external-",)  # 外部执行器（zcode/codex）会话
+EXCLUDE_NAME_PREFIXES = (
+    "Recovered Session",  # 引擎孤儿恢复（实测均为空文件）
+    "=== Flow",           # flow 节点通信会话
+    "📬 Mail from",       # 收信侧 sub-agent 会话
+)
+# 首条「真实用户文本」命中即判派发/节点/广播会话（inter-agent 工件，非用户闲聊）
+# 注意：匹配前先 strip()——「\n## 物理分析完成」这类前导换行的报告件也要命中。
+TASK_DISPATCH_RE = re.compile(
+    r"^(You are |You're |你是|## |\[TASK\]|\[RESULT\]|\[INTERRUPT\]|"
+    r"\[chain:|\[Background task|Start working|Test run|Test:|Quick test|Consolidation|"
+    r"Inventory the |Analyze the |Read these |Compare the |Create the file |Here is the |"
+    r"EntityBuilder|代码分析完成|物理分析完成|请修复以下|请分析 Team|对 Nebflow 项目当前|"
+    r"审查本次架构重构|【新 bug|B6-A9|请为 ~/|<task-board>|Fix the |用户要求|测试通信)"
+)
+
+OVERRIDES = {
+    # id: (include?, reason) — 规则外人工裁定（分类透明化，manifest 落盘）
+}
+
+SKIP_TEXT_PREFIXES = (
+    "<system-reminder>",
+    "<context-compact",
+    "[Request interrupted",
+    "<context-compa",  # 历史截断形态
+)
+INJECTED_SOURCES = {"mail", "delegate", "subtask", "flow", "skill", "tool"}
+
+ATTACH_RE = re.compile(r"\[(用户附加文件|用户附加图片):\s*([^\]]+)\]")
+
+CJK_RANGES = (
+    (0x4E00, 0x9FFF),  # CJK 统一表意文字
+    (0x3400, 0x4DBF),  # 扩展 A
+    (0x3040, 0x30FF),  # 平假名/片假名
+    (0xAC00, 0xD7AF),  # 谚文
+    (0xF900, 0xFAFF),  # 兼容表意文字
+)
+
+
+def _is_cjk(ch: str) -> bool:
+    o = ord(ch)
+    return any(lo <= o <= hi for lo, hi in CJK_RANGES)
+
+
+def cjk_bigram_text(text: str) -> str:
+    """xerj CJK bigram 分词仿真：CJK 连续串→交叠 bigram；其余原样交还
+    unicode61 二次切分。索引与查询两侧必须用同一变换（口径单点）。"""
+    out = []
+    run = []
+
+    def flush():
+        if not run:
+            return
+        if len(run) == 1:
+            out.append(run[0])  # 单字 run 原样保留（xerj 同款：单 CJK 字独立成 token）
+        else:
+            out.extend(run[i] + run[i + 1] for i in range(len(run) - 1))
+        run.clear()
+
+    for ch in text:
+        if _is_cjk(ch):
+            run.append(ch)
+        else:
+            flush()
+            out.append(ch)
+    flush()
+    return " ".join(out)
+
+
+def cjk_runs(query: str):
+    """查询侧切分：返回 [(kind, payload)]，kind='cjk'（bigram 串）| 'ascii'（词）。"""
+    runs = []
+    run = []
+    buf = []
+
+    def flush_ascii():
+        if buf:
+            runs.append(("ascii", "".join(buf)))
+            buf.clear()
+
+    def flush_cjk():
+        if run:
+            runs.append(("cjk", "".join(run)))
+            run.clear()
+
+    for ch in query:
+        if ch.isspace():
+            flush_ascii()
+            flush_cjk()
+        elif _is_cjk(ch):
+            flush_ascii()
+            run.append(ch)
+        else:
+            flush_cjk()
+            buf.append(ch)
+    flush_ascii()
+    flush_cjk()
+    return runs
+
+
+def fts_query(query: str):
+    """构造 FTS5 MATCH 表达式（渐进放宽：AND → OR）。
+    CJK 串→bigram 序列的单引号 phrase（保序邻接，xerj positions 语义）；
+    ASCII 词→引号 term。返回 (and_expr, or_expr, like_pattern)：
+      - like_pattern 仅当查询含**单字 CJK** 且无其他可索引词（bigram 索引无
+        unigram 谓词）时非空 → 调用方退化 LIKE 扫描；查询混有其他词时单字
+        CJK 直接丢弃（索引口径限制，不拖垮整体召回）。"""
+    parts = []
+    single_chars = []
+    for kind, payload in cjk_runs(query):
+        if kind == "cjk":
+            if len(payload) == 1:
+                single_chars.append(payload)  # 单字：索引无 unigram，可索引面丢弃
+                continue
+            toks = [payload[i] + payload[i + 1] for i in range(len(payload) - 1)]
+            parts.append('"' + " ".join(toks) + '"')  # 单个 quoted phrase = 邻接保序
+        else:
+            tok = payload.strip()
+            if tok:
+                parts.append('"' + tok.replace('"', '""') + '"')
+    and_expr = " ".join(parts)
+    or_expr = " OR ".join(parts) if len(parts) > 1 else ""
+    # 单字 CJK 且无其他可索引词 → LIKE 兜底（多字按序 %串接）
+    like_pattern = "%" + "%".join(single_chars) + "%" if (single_chars and not parts) else ""
+    return (and_expr, or_expr, like_pattern)
+
+
+# ── 语料抽取（sessions/ 只读）───────────────────────────────────────────────
+
+
+def load_index(data_root: str):
+    p = os.path.join(data_root, "sessions", "_index.json")
+    with open(p, encoding="utf-8") as f:
+        return json.load(f).get("sessions", [])
+
+
+def classify_sessions(index_sessions, data_root: str):
+    """→ [(meta, kind|None, reason)]；kind None = 不收录。"""
+    out = []
+    for s in index_sessions:
+        sid = s.get("id", "")
+        name = s.get("name") or ""
+        agent = s.get("agentName")
+        if sid in OVERRIDES:
+            inc, why = OVERRIDES[sid]
+            out.append((s, "override" if inc else None, why))
+            continue
+        if agent == "Nebula":
+            out.append((s, "main-current", "agentName=Nebula（当前根会话）"))
+            continue
+        if agent is not None:
+            out.append((s, None, f"agentName={agent}（team/子 agent 会话）"))
+            continue
+        if sid.startswith(EXCLUDE_ID_PREFIXES):
+            out.append((s, None, "外部执行器会话"))
+            continue
+        if name.startswith(EXCLUDE_NAME_PREFIXES):
+            out.append((s, None, f"排除名前缀「{next(p for p in EXCLUDE_NAME_PREFIXES if name.startswith(p))}」"))
+            continue
+        if name.startswith("<context-compact"):
+            out.append((s, "main-compacted", "主会话压缩续篇（采样验证为主 agent 对话）"))
+            continue
+        first_user = first_real_user_text(sid, data_root)
+        if first_user is None:
+            out.append((s, None, "无真实用户文本（工具结果/思考碎片或空会话）"))
+            continue
+        m = TASK_DISPATCH_RE.match(first_user.strip())
+        if m:
+            out.append((s, None, f"派发/节点/广播工件（首用户文本命中「{m.group(0)[:12]}…」）"))
+            continue
+        out.append((s, "main-legacy", "多会话时代用户↔主 agent 聊天"))
+    return out
+
+
+def first_real_user_text(sid: str, data_root: str):
+    """首条真实用户文本（跳 system-reminder / context-compact / 注入 / 纯工具结果）。"""
+    path = os.path.join(data_root, "sessions", f"{sid}.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            msgs = json.load(f)
+    except Exception:
+        return None
+    for m in msgs:
+        if m.get("role") != "user":
+            continue
+        if m.get("source"):
+            continue
+        t = text_of(m)
+        if not t or t.startswith(SKIP_TEXT_PREFIXES):
+            continue
+        return t
+    return None
+
+
+def text_of(m: dict) -> str:
+    c = m.get("content")
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return "\n".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
+    return ""
+
+
+def blocks_of(m: dict):
+    c = m.get("content")
+    return c if isinstance(c, list) else []
+
+
+def extract_messages(msgs, sid, sname, kind):
+    """消息 → (rows, attachments)；行=(ts, role, text)。工具结果/thinking/注入全排除。"""
+    rows, atts = [], []
+    for m in msgs:
+        role = m.get("role")
+        ts = m.get("timestamp", 0)
+        if role == "user":
+            if m.get("source") in INJECTED_SOURCES:
+                continue
+            t = text_of(m)
+            if not t or t.startswith(SKIP_TEXT_PREFIXES):
+                # 纯附件/图片块消息也可能落在 skip 前缀外——附件登记独立于文本收录
+                for b in blocks_of(m):
+                    if b.get("type") == "image":
+                        atts.append((ts, "image-inline", f"<inline {b.get('mediaType', '?')}>"))
+                continue
+            for path, kind2 in ((k2, "file" if k1 == "用户附加文件" else "image") for k1, k2 in ATTACH_RE.findall(t)):
+                atts.append((ts, kind2, path.strip()))
+            for b in blocks_of(m):
+                if b.get("type") == "image":
+                    atts.append((ts, "image-inline", f"<inline {b.get('mediaType', '?')}>"))
+            rows.append((ts, "user", t))
+        elif role == "assistant":
+            t = text_of(m)
+            if t.strip():
+                rows.append((ts, "assistant", t))
+                for path, kind2 in ((k2, "file" if k1 == "用户附加文件" else "image") for k1, k2 in ATTACH_RE.findall(t)):
+                    atts.append((ts, kind2, path.strip()))
+        # role == system / 其他：不收
+    return rows, atts
+
+
+def iter_session_sources(sid: str, data_root: str):
+    """会话的全部消息来源：主文件 + compaction/*-before.json（压缩掉的真历史）。"""
+    yield os.path.join(data_root, "sessions", f"{sid}.json"), "main"
+    comp = os.path.join(data_root, "sessions", sid, "compaction")
+    if os.path.isdir(comp):
+        for fn in sorted(os.listdir(comp)):
+            if fn.endswith("-before.json"):
+                yield os.path.join(comp, fn), f"compaction/{fn}"
+
+
+def iter_messages_file(path: str):
+    try:
+        with open(path, encoding="utf-8") as f:
+            msgs = json.load(f)
+    except Exception as e:
+        sys.stderr.write(f"stand-recall: skip unreadable {path}: {e}\n")
+        return
+    if isinstance(msgs, list):
+        yield from msgs
+
+
+# ── 索引 ─────────────────────────────────────────────────────────────────────
+
+DDL = """
+PRAGMA journal_mode=WAL;
+CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS sessions(
+  session_id TEXT PRIMARY KEY, name TEXT, kind TEXT, reason TEXT,
+  agent_name TEXT, created_at INTEGER, updated_at INTEGER,
+  msg_count INTEGER DEFAULT 0, first_ts INTEGER, last_ts INTEGER);
+CREATE TABLE IF NOT EXISTS messages(
+  id INTEGER PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(session_id),
+  ts INTEGER NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL,
+  idx_text TEXT NOT NULL, hash TEXT NOT NULL,
+  UNIQUE(session_id, ts, role, hash));
+CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, ts, id);
+CREATE TABLE IF NOT EXISTS attachments(
+  id INTEGER PRIMARY KEY,
+  session_id TEXT NOT NULL, message_id INTEGER, ts INTEGER,
+  kind TEXT NOT NULL, path TEXT NOT NULL,
+  UNIQUE(session_id, ts, kind, path));
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+  idx_text, content='messages', content_rowid='id',
+  tokenize='unicode61 remove_diacritics 2');
+"""
+
+
+def open_db(db_path: str) -> sqlite3.Connection:
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    con = sqlite3.connect(db_path, timeout=10)
+    con.row_factory = sqlite3.Row
+    con.executescript(DDL)
+    con.execute("PRAGMA busy_timeout=10000")
+    return con
+
+
+def reindex(con: sqlite3.Connection, data_root: str, db_path: str) -> dict:
+    """全量扫（INSERT OR IGNORE 幂等）——--update 与 --rebuild 共用主体。"""
+    classified = classify_sessions(load_index(data_root), data_root)
+    stats = {"sessions": 0, "messages": 0, "attachments": 0, "excluded": 0, "by_kind": {}}
+    manifest = []
+    for s, kind, reason in classified:
+        sid, name = s.get("id", ""), s.get("name") or ""
+        entry = {"id": sid, "name": name[:80], "kind": kind, "reason": reason}
+        if kind is None:
+            stats["excluded"] += 1
+            manifest.append(entry)
+            continue
+        rows, atts = [], []
+        for path, _src in iter_session_sources(sid, data_root):
+            r2, a2 = extract_messages(list(iter_messages_file(path)), sid, name, kind)
+            rows.extend(r2)
+            atts.extend(a2)
+        if not rows:
+            entry["note"] = "0 条可收录消息（空/纯工件）"
+            stats["excluded"] += 1
+            manifest.append(entry)
+            continue
+        con.execute(
+            "INSERT OR IGNORE INTO sessions VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (sid, name, kind, reason, s.get("agentName"), s.get("createdAt", 0), s.get("updatedAt", 0), len(rows),
+             min(r[0] for r in rows), max(r[0] for r in rows)),
+        )
+        n_new = 0
+        for ts, role, text in rows:
+            h = hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()[:16]
+            cur = con.execute(
+                "INSERT OR IGNORE INTO messages(session_id,ts,role,text,idx_text,hash) VALUES(?,?,?,?,?,?)",
+                (sid, ts, role, text, cjk_bigram_text(text), h),
+            )
+            n_new += cur.rowcount
+        # 附件挂到命中消息（按 session+ts+role 找回 rowid；找不到挂 message_id=NULL）
+        for ts, kind2, path in atts:
+            mid = con.execute(
+                "SELECT id FROM messages WHERE session_id=? AND ts=? AND role='user' ORDER BY id LIMIT 1",
+                (sid, ts),
+            ).fetchone()
+            con.execute(
+                "INSERT OR IGNORE INTO attachments(session_id,message_id,ts,kind,path) VALUES(?,?,?,?,?)",
+                (sid, mid["id"] if mid else None, ts, kind2, path),
+            )
+        con.execute(
+            "UPDATE sessions SET msg_count=? WHERE session_id=?",
+            (con.execute("SELECT COUNT(*) c FROM messages WHERE session_id=?", (sid,)).fetchone()["c"], sid),
+        )
+        stats["sessions"] += 1
+        stats["messages"] += n_new
+        stats["attachments"] += len(atts)
+        stats["by_kind"][kind] = stats["by_kind"].get(kind, 0) + 1
+        entry["indexed_messages"] = len(rows)
+        manifest.append(entry)
+    con.execute(
+        "INSERT OR REPLACE INTO meta VALUES('schema_version',?)", (str(SCHEMA_VERSION),)
+    )
+    con.execute(
+        "INSERT OR REPLACE INTO meta VALUES('last_update',?)",
+        (datetime.now().isoformat(timespec="seconds"),),
+    )
+    # external-content FTS5 同步：messages 为内容表，FTS 由 'rebuild' 命令全量
+    # 重导（幂等，量级秒级；顺带免疫 INSERT OR IGNORE 造成的索引重复）。
+    con.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+    con.commit()
+    with open(os.path.join(os.path.dirname(db_path), "index-manifest.json"), "w", encoding="utf-8") as f:
+        json.dump({"schema_version": SCHEMA_VERSION, "stats": stats, "sessions": manifest}, f, ensure_ascii=False, indent=1)
+    return stats
+
+
+# ── 检索 ─────────────────────────────────────────────────────────────────────
+
+
+def fmt_ts(ms: int) -> str:
+    return datetime.fromtimestamp(ms / 1000).strftime("%Y-%m-%d %H:%M") if ms else "?"
+
+
+def search(con, args, query: str):
+    and_expr, or_expr, like_pattern = fts_query(query)
+    hits = []
+    if and_expr:
+        # 渐进放宽（xerj retrieval-then-rank 同思路）：AND 全词 → OR 放宽 → BM25 排序
+        for expr in (and_expr, or_expr):
+            if not expr:
+                continue
+            hits = fts_search(con, args, expr, args.n * 3)
+            if hits:
+                break
+    if not hits and like_pattern:
+        # 单字 CJK：bigram 索引无谓词 → LIKE 子串扫描
+        hits = like_search(con, args, like_pattern, args.n)
+    return hits[: args.n]
+
+
+def _filters(args, alias: str = "m"):
+    sql, params = "", []
+    if args.role:
+        sql += f" AND {alias}.role=?"
+        params.append(args.role)
+    if args.session:
+        sql += f" AND {alias}.session_id LIKE ?"
+        params.append(args.session + "%")
+    if args.since:
+        sql += f" AND {alias}.ts>=?"
+        params.append(parse_time(args.since))
+    if args.until:
+        sql += f" AND {alias}.ts<=?"
+        params.append(parse_time(args.until))
+    return sql, params
+
+
+def fts_search(con, args, match_expr: str, limit: int):
+    sql = (
+        "SELECT m.id, m.session_id, m.ts, m.role, m.text, s.name sname, s.kind, bm25(messages_fts) score "
+        "FROM messages_fts JOIN messages m ON m.id=messages_fts.rowid "
+        "JOIN sessions s ON s.session_id=m.session_id WHERE messages_fts MATCH ?"
+    )
+    params = [match_expr]
+    extra, eparams = _filters(args)
+    sql += extra + " ORDER BY score, m.ts DESC LIMIT ?"
+    params.extend(eparams)
+    params.append(limit)
+    return [dict(r) for r in con.execute(sql, params)]
+
+
+def like_search(con, args, like_pat: str, limit: int):
+    sql = (
+        "SELECT m.id, m.session_id, m.ts, m.role, m.text, s.name sname, s.kind, 0.0 score "
+        "FROM messages m JOIN sessions s ON s.session_id=m.session_id WHERE m.text LIKE ?"
+    )
+    params = [like_pat]
+    extra, eparams = _filters(args)
+    sql += extra + " ORDER BY m.ts DESC LIMIT ?"
+    params.extend(eparams)
+    params.append(limit)
+    return [dict(r) for r in con.execute(sql, params)]
+
+
+def neighbors(con, session_id: str, hit_id: int, n: int):
+    seq_of = (
+        "WITH ord AS (SELECT id, ts, role, text, ROW_NUMBER() OVER "
+        "(PARTITION BY session_id ORDER BY ts, id) seq FROM messages WHERE session_id=?) "
+        "SELECT id, ts, role, text, seq FROM ord WHERE id=?"
+    )
+    hit = con.execute(seq_of, (session_id, hit_id)).fetchone()
+    if not hit:
+        return []
+    by_seq = seq_of.replace("WHERE id=?", "WHERE seq=?")
+    seq = hit["seq"]
+    out = []
+    for d in range(1, n + 1):
+        for sign in (-1, 1):
+            r = con.execute(by_seq, (session_id, seq + sign * d)).fetchone()
+            if r:
+                out.append((d, sign, dict(r)))
+    out.sort(key=lambda x: (x[0], x[1]))
+    return out
+
+
+def attachments_for(con, session_id: str, ts: int, window_ms: int = 1000):
+    return con.execute(
+        "SELECT kind, path FROM attachments WHERE session_id=? AND ts BETWEEN ? AND ?",
+        (session_id, ts - window_ms, ts + window_ms),
+    ).fetchall()
+
+
+def parse_time(s: str) -> int:
+    s = s.strip()
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return int(datetime.strptime(s, fmt).timestamp() * 1000)
+        except ValueError:
+            pass
+    return int(s)  # 裸 epoch ms
+
+
+def trim(t: str, width: int = 240) -> str:
+    t = re.sub(r"\s+", " ", t).strip()
+    return t if len(t) <= width else t[:width] + "…"
+
+
+def print_hits(con, hits, args):
+    if args.json:
+        out = []
+        for h in hits:
+            nb = [
+                {"delta": d * sgn, "role": r["role"], "ts": r["ts"], "text": r["text"]}
+                for d, sgn, r in neighbors(con, h["session_id"], h["id"], args.context)
+            ]
+            out.append({
+                "score": round(h["score"], 4), "ts": h["ts"], "role": h["role"],
+                "session_id": h["session_id"], "session_name": h["sname"], "kind": h["kind"],
+                "text": h["text"], "neighbors": nb,
+                "attachments": [dict(a) for a in attachments_for(con, h["session_id"], h["ts"])],
+            })
+        print(json.dumps(out, ensure_ascii=False, indent=1))
+        return
+    if not hits:
+        print("(no hits)")
+        return
+    for i, h in enumerate(hits, 1):
+        print(f"#{i} [{h['score']:.3f}] {fmt_ts(h['ts'])} · {h['role']} · {h['kind']}「{trim(h['sname'], 48)}」 ({h['session_id'][:8]})")
+        print(f"   {h['role']}: {trim(h['text'], 300)}")
+        for d, sgn, r in neighbors(con, h["session_id"], h["id"], args.context):
+            arrow = "→" if sgn > 0 else "←"
+            print(f"   {arrow}{'' if d == 1 else d} {r['role']}: {trim(r['text'], 160)}")
+        for a in attachments_for(con, h["session_id"], h["ts"]):
+            print(f"   📎 [{a['kind']}] {a['path']}")
+        print()
+
+
+# ── CLI ──────────────────────────────────────────────────────────────────────
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="stand-recall", description="主 agent 对话历史检索（建库+回溯）")
+    ap.add_argument("query", nargs="*", help="检索关键词")
+    ap.add_argument("--update", action="store_true", help="增量索引（幂等）")
+    ap.add_argument("--rebuild", action="store_true", help="全量重建")
+    ap.add_argument("--stats", action="store_true", help="库概况")
+    ap.add_argument("--doctor", action="store_true", help="会话分类明细")
+    ap.add_argument("-n", type=int, default=10, help="最大命中数（默认10）")
+    ap.add_argument("--context", type=int, default=1, help="每命中邻句数（默认1）")
+    ap.add_argument("--session", help="限定会话（id 前缀）")
+    ap.add_argument("--role", choices=["user", "assistant"])
+    ap.add_argument("--since", help="起始时间 YYYY-MM-DD[ HH:MM]")
+    ap.add_argument("--until", help="截止时间")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--db", help="库路径（默认 <data-root>/memory-db/memory.db）")
+    ap.add_argument("--data-root", help="数据根（默认 ~/.stand）")
+    args = ap.parse_args(argv)
+
+    data_root = os.path.expanduser(args.data_root) if args.data_root else os.path.expanduser("~/.stand")
+    db_path = os.path.expanduser(args.db) if args.db else os.path.join(data_root, "memory-db", "memory.db")
+    con = open_db(db_path)
+    try:
+        if args.rebuild or args.update:
+            if args.rebuild:
+                con.executescript("DROP TABLE IF EXISTS messages_fts; DROP TABLE IF EXISTS attachments; "
+                                  "DROP TABLE IF EXISTS messages; DROP TABLE IF EXISTS sessions;")
+                con.executescript(DDL)
+            st = reindex(con, data_root, db_path)
+            tot = con.execute("SELECT COUNT(*) c FROM messages").fetchone()["c"]
+            att = con.execute("SELECT COUNT(*) c FROM attachments").fetchone()["c"]
+            print(f"indexed: +{st['messages']} msgs ({tot} total), {st['sessions']} sessions, "
+                  f"{att} attachments, excluded {st['excluded']} sessions; by_kind={st['by_kind']}")
+            return 0
+        if args.stats:
+            for r in con.execute(
+                "SELECT kind, COUNT(*) n, SUM(msg_count) msgs, MIN(first_ts) a, MAX(last_ts) b "
+                "FROM sessions GROUP BY kind"
+            ):
+                print(f"{r['kind']}: {r['n']} sessions, {r['msgs']} msgs, {fmt_ts(r['a'])} → {fmt_ts(r['b'])}")
+            print(f"attachments: {con.execute('SELECT COUNT(*) c FROM attachments').fetchone()['c']}")
+            print(f"messages total: {con.execute('SELECT COUNT(*) c FROM messages').fetchone()['c']}")
+            lv = con.execute("SELECT value FROM meta WHERE key='last_update'").fetchone()
+            print(f"last_update: {lv['value'] if lv else 'never'}")
+            return 0
+        if args.doctor:
+            for s, kind, reason in classify_sessions(load_index(data_root), data_root):
+                print(f"{'✓' if kind else '✗'} [{kind or 'excluded'}] {s['id'][:8]} {reason} | {(s.get('name') or '')[:60]}")
+            return 0
+        q = " ".join(args.query).strip()
+        if not q:
+            ap.error("需要检索词，或 --update/--rebuild/--stats/--doctor")
+        print_hits(con, search(con, args, q), args)
+        return 0
+    finally:
+        con.close()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
