@@ -950,6 +950,136 @@ private[gateway] object PresenceRoutes:
             )
         }
 
+      // ── Agent display face（2026-10-21 诊断批症状⑧「头像/名称跨设备不同步」）──────
+      // profile 面板「名称回车即存 / 头像登录后随账号同步」承诺的落盘与同步腿。定位：
+      // **display 面**，不在 2026-09-06 skills/flows 退役射程内——那次退役针对的是
+      // 「面板写能力配置」（tools/skills/flows 由 definition/plugin 管理），本组只写
+      // 展示面（displayName + 头像字节），能力字段本表仍一字不写。前端写穿点 =
+      // agentProfile.js（内存先写 + 事件刷新照旧，此组是持久/跨设备同步腿）；读取侧
+      // agentsData 行（handleListAgents 折叠 agent.json）与 rootName 探针（静态
+      // agents/<name>/agent.json）同源 ⇒ 同引擎多端天然收敛。
+      //
+      // 🔴 出生即包鉴权闸（新路由禁裸奔过夜）：全部三面 withAuth（ApiFull 会话/Bearer），
+      //    与 GET /agents/:name 同 rail；agentName 白名单校验（拒路径穿越形态）。
+
+      // PUT /agents/:name/display-name —— {"displayName": "..."}（trim 后 1–64 字）。
+      // 写 agents/<name>/agent.json 的 displayName（AtomicJson 原子合并；root 沿用
+      // OnboardingArtifacts.writeDisplayName 同款 name 键补底纪律，非 root 不补——其
+      // agent.json 恒有 name 键）。空值不做「清名」：显示名缺失的合法形态 = 从未起名
+      // （onboarding 语义），面板侧置空走「还原机制名」= 不写盘。
+      case req @ PUT -> Root / "agents" / agentName / "display-name" =>
+        withAuth(req) {
+          if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+          else
+            req.as[Json].attempt.map(_.getOrElse(Json.obj())).flatMap { body =>
+              val next = body.hcursor.downField("displayName").as[String].toOption.getOrElse("").trim
+              if next.isEmpty || next.length > 64 then
+                BadRequest(Json.obj("error" -> "displayName must be 1-64 chars".asJson))
+              else
+                IO.blocking {
+                  val dir = PathUtil.dataRoot / "agents" / agentName
+                  val jsonPath = dir / "agent.json"
+                  os.makeDir.all(dir)
+                  val existing =
+                    if os.exists(jsonPath) then
+                      io.circe.parser.parse(os.read(jsonPath)).toOption.getOrElse(io.circe.Json.obj())
+                    else io.circe.Json.obj()
+                  val base =
+                    if agentName == nebflow.actor.RootAgentIdentity.Name && !existing.asObject.exists(
+                        _.contains("name")
+                      )
+                    then existing.deepMerge(Json.obj("name" -> agentName.asJson))
+                    else existing
+                  AtomicJson.writeSync(
+                    jsonPath,
+                    base.deepMerge(Json.obj("displayName" -> next.asJson)).noSpaces
+                  )
+                }.flatMap(_ => Ok(Json.obj("saved" -> true.asJson, "displayName" -> next.asJson)))
+              end if
+            }
+        }
+
+      // PUT /agents/:name/avatar —— {"dataUrl": "data:image/(png|jpeg|jpg|webp);base64,…"}
+      // （前端已 ≤256px 降采样；此处字节闸 ≤200KB）。落 agents/<name>/avatar（扩展名
+      // 无关的内容文件——GET 回显带 X-Avatar-Content-Type）。
+      case req @ PUT -> Root / "agents" / agentName / "avatar" =>
+        withAuth(req) {
+          if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+          else
+            req.as[Json].attempt.map(_.getOrElse(Json.obj())).flatMap { body =>
+              val dataUrl = body.hcursor.downField("dataUrl").as[String].toOption.getOrElse("")
+              val Decoded = """^data:image/(png|jpeg|jpg|webp);base64,([A-Za-z0-9+/=]+)$""".r
+              dataUrl match
+                case Decoded(contentType, b64) =>
+                  scala.util.Try(java.util.Base64.getDecoder.decode(b64)).toOption match
+                    case Some(bytes) if bytes.nonEmpty && bytes.length <= 200_000 =>
+                      IO.blocking {
+                        val dir = PathUtil.dataRoot / "agents" / agentName
+                        os.makeDir.all(dir)
+                        os.write.over(dir / "avatar", bytes)
+                      }.flatMap(_ => Ok(Json.obj("saved" -> true.asJson, "bytes" -> bytes.length.asJson)))
+                    case Some(_) =>
+                      BadRequest(Json.obj("error" -> "avatar must be 1-200KB".asJson))
+                    case None =>
+                      BadRequest(Json.obj("error" -> "dataUrl is not valid base64".asJson))
+                case _ =>
+                  BadRequest(Json.obj("error" -> "dataUrl must be a base64 image data URL".asJson))
+              end match
+            }
+        }
+
+      // GET /agents/:name/avatar —— 字节回显（fs2.Stream 显式实体：裸 Ok(Array[Byte])
+      // 会命中 circe byte 数组编码器——/neblink/avatar 同款教训）；强 ETag=内容 sha256 +
+      // If-None-Match 304（零重传）+ Cache-Control private（会话门后面）。
+      case req @ GET -> Root / "agents" / agentName / "avatar" =>
+        withAuth(req) {
+          if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+          else
+            IO.blocking {
+              val p = PathUtil.dataRoot / "agents" / agentName / "avatar"
+              if os.exists(p) && os.isFile(p) then Some(os.read.bytes(p)) else None
+            }.flatMap {
+              case None => NotFound(Json.obj("error" -> "no custom avatar".asJson))
+              case Some(bytes) =>
+                val sha = nebflow.neblink.AvatarProxy.sha256Hex(bytes)
+                val etag = "\"" + sha + "\""
+                val inm = req.headers.get(CIString("If-None-Match")).map(_.head.value.trim).getOrElse("")
+                if inm.nonEmpty && inm.contains(sha) then
+                  IO.pure(
+                    Response[IO](Status.NotModified)
+                      .withHeaders(Headers(Header.Raw(CIString("ETag"), etag)))
+                  )
+                else
+                  IO.pure(
+                    Response[IO](Status.Ok)
+                      .withEntity(fs2.Stream.emits(bytes).covary[IO])
+                      .withHeaders(
+                        Headers(
+                          Header.Raw(CIString("Content-Type"), "application/octet-stream"),
+                          Header.Raw(CIString("X-Avatar-Sha256"), sha),
+                          Header.Raw(CIString("X-Avatar-Content-Type"), "image/*"),
+                          Header.Raw(CIString("ETag"), etag),
+                          Header.Raw(CIString("Cache-Control"), "private, max-age=300")
+                        )
+                      )
+                  )
+                end if
+            }
+        }
+
+      // DELETE /agents/:name/avatar —— reset 面（面板「还原默认」走这里 + 本地键清除）。
+      // 幂等：无头像也 200（跨端收敛语义——「哪端先清哪端生效」，另一端本地键仍优先生效
+      // 直到其本地也清/或 localStorage 缺键走服务端读——v1 已知限制，见诊断报告）。
+      case req @ DELETE -> Root / "agents" / agentName / "avatar" =>
+        withAuth(req) {
+          if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+          else
+            IO.blocking {
+              val p = PathUtil.dataRoot / "agents" / agentName / "avatar"
+              if os.exists(p) then os.remove(p)
+            }.flatMap(_ => Ok(Json.obj("cleared" -> true.asJson)))
+        }
+
       // (2026-09-20 device-face hardening batch) 11-route takedown: GET /skills was
       // RETIRED here — 仓内零调用点 (the plugins page has asserted since the unified
       // plugin system that it must NOT call it: tests/sidebar-plugins.spec.mjs:396).

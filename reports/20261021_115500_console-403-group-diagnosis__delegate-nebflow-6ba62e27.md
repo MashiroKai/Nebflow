@@ -15,6 +15,7 @@
 | ⑤ | 搜索聊天记录 403 | **403 群下游**：/api/sessions（搜索/历史）同一宿主会话门，curl 带有效会话 200 实证。 |
 | ⑥ | 心跳进程（daemons 面板）空 | **403 群下游**：面板数据 = GET /api/daemons 同一宿主会话门，curl 带有效会话 200 实证（空态=拉不到）。附带观察：'Nebflow Website' daemon 凌晨 01:39–06:19 曾 crash-loop（exit 1）后自稳，与本症状无关。 |
 | ⑦ | 均在 link.mystand.space | **与 ingress 平面解释自洽**：静态面由 SW 缓存秒开（sw.js 对 /api 零接触），API/WS 全在 ingress 平面被拒 ⇒ 静好 API 全挂、宿主侧零日志。 |
+| ⑧ | 智能体头像/名称跨设备不同步 | **双实现缺口（非 403 群，与隧道无关）**：①头像只有 localStorage 本地腿（agentProfile.js `writeStored`=纯本地，全仓无任何服务端头像面）——「登录后可随账号同步」从未实现；②名称「回车即存」更是纯内存（saveName 只写 state/agentsData 行+事件，**连本机刷新都会还原**；唯一落盘写点是一次性 onboarding 的 agent.json 腿，面板写回 2026-09-06 已退役）。**本批已补齐双腿**（见下「症状⑧修复」），候重启窗生效。 |
 
 ## 403 群主攻：判定与证据
 
@@ -51,10 +52,28 @@ curl -I https://link.mystand.space/api/auth/login?return_to=%2F → 303 auth.mys
 - 修后：盘上 digest 复算 = `f0b97c9f90ccb4…`（与运行引擎允许列表逐字相等）；30s 重扫闸后 `GET /api/plugins` → **creator loaded: True, rejected: []**（2026-10-21 11:34 实测）；11:33 之后日志零新增拒载行。
 - **候选保留的用户改动面：无**——盘上包与 10-14 出厂版（eef4c9119）逐字节相同，零用户定制可裁。
 
+## 症状⑧修复：智能体头像/名称的持久与跨设备同步腿（候重启窗）
+
+**诊断细节**：双设备连的是**同一引擎**（link.mystand.space 隧道），同引擎本应同状态——不同步的根因是**保存腿根本没落到引擎共享存储**：
+- **头像**：`agentProfile.js` 写 localStorage（branding 命名空间 `agent_avatar_<name>` 键，256px dataURL）——纯浏览器本地，引擎侧零存储零路由；`/api/neblink/avatar`、`/api/avatars/{userId}` 是 neblink **联系人**头像面，与此无关。承诺的「随账号同步」腿不存在 ⇒ 实现缺口。
+- **名称**：`saveName()` 只写内存（state.rootDisplayName / agentsData 行 / 事件）；持久名唯一写点 = 一次性 onboarding 流（`OnboardingArtifacts.writeDisplayName` → agents/<root>/agent.json）；面板通用写回（PUT /agents/:name）2026-09-06 以「能力配置 definition/plugin-managed」为由退役（410）。⇒「回车即存」既不跨设备、也不跨刷新。
+
+**本批修复**（display 面定位——只写展示字段，不触能力配置，退役裁决不被复活）：
+
+| 面 | 实现 |
+|---|---|
+| 名称落盘+同步 | 引擎 `PUT /api/agents/:name/display-name`（trim 1–64 字，AtomicJson 合并写 agents/<name>/agent.json 的 displayName；root 沿用 OnboardingArtifacts 的 name 键补底纪律，非 root 不补、既有字段零抹除）+ 前端 saveName fire-and-forget 写穿（内存先写+事件照旧，UI 零阻塞）。agentsData 行（handleListAgents 折叠 agent.json）与 rootName 探针同源此文件 ⇒ 同引擎多端下次 list/探针即收敛。 |
+| 头像落盘+同步 | 引擎 `PUT /api/agents/:name/avatar`（base64 dataURL，png/jpeg/webp，字节闸 ≤200KB，落 agents/<name>/avatar）+ `GET`（**fs2.Stream 显式字节实体**——裸 Ok(Array[Byte]) 会命中 circe byte 数组编码器把图片变 JSON 数字数组，/neblink/avatar 同款教训；内容 sha256 强 ETag + If-None-Match 304 + Cache-Control private）+ `DELETE`（幂等 reset）。前端：上传/reset fire-and-forget 写穿；读腿「本地优先」照旧（localStorage 先），**缺键回填**（本地空 → GET 引擎 → 命中写回本地键+重绘，按 agentName 在飞去重）——另一端经回填/下次拉取收敛。 |
+| 文案校直 | `profile.note`：「登录后可随账号同步」→「保存后同步到本引擎的所有登录设备；名称回车即存（跨设备生效）」（zh-CN + en 同步；新文案与实现逐字对齐）。 |
+| 定位纪律 | 三面全部 withAuth（ApiFull 会话/Bearer，与 GET /agents/:name 同 rail，**新路由禁裸奔过夜**口径）；agentName 白名单校验拒路径穿越；2026-09-06 退役臂（PUT /agents/:name ⇒ 410）保持钉住——display 面不在其射程内。 |
+
+**验收**：`AgentDisplayFaceRoutesSpec` 7/7 绿（worktree）——displayName 写入/合并/校验三例、avatar 字节闸/回显/304/404/DELETE 幂等、全部三面裸请求 403 + 退役 sibling 仍 410。质量闸：checkJs agentProfile.js 清零（顺带把该文件既有 4 处 TS2339 收掉，全库回到基线 273=273）；build-web 175 源 orphans:0；DeviceFaceHardeningRoutesSpec 7/7（同表 sibling 零误伤）。**跨设备实链验收候重启窗后由作者两步操作**：设备 A 改头像/名称 → 设备 B 刷新控制台即见（头像 B 端本地若有旧键，以 B 端 localStorage 旧值优先——v1 已知限制：reset 只对「本地也清/缺键」的端收敛，见 agentProfile.js 头注）。
+
 ## 引擎侧改动（候重启窗照旧注记）
 
 1. **SeedService 官方 namespace 死锁修复**（`core/seed/SeedService.scala`）：保留 `nebflow-` 前缀包 runtime ≠ seed 时不再「用户改过保留」，一律出厂字节赢（pre-sync 备份 + 镜像 + 重审），与装载层官方闸「只认当前分发出厂 digest」对齐；非保留名包「用户版保留」语义逐字不变。随附：`SeedPluginReconcileSpec` 新增 ②b 死锁回归钉；`SeedPluginDeletionMarkerSpec` ③ 内容面合同翻转（官方包手动装回+用户附件 ⇒ 镜像回出厂、附件进备份；标记清理/重护生命周期不变）。**此改动候下次重启窗生效**（生效前若出厂再前进，需重跑本批的手工恢复步骤）。
 2. **ws.js 兜底登录双平面化**（`web/js/ws.js`）：remint 失败且 `/api/portal/status` 被拒时，探测公开面 `/api/auth/login-config`，命中即导航中继自己的登录腿 `/api/auth/login?return_to=<当前页>`（已登录者服务端直弹 return_to，无 provider 往返）；直连 LAN 控制台（无中继）保持原 PKCE 兜底。**web 静态树随 jar 走，候重启窗生效**（SW 索引指纹会在重启后的首次刷新拉到新壳）。质量闸：reconnect-collapse + ws-card-lock 20/20 绿；checkJs ws.js 0 错；build-web 175 源 orphans:0；devpanelname U3Pd 头像断言红经 HEAD A/B 定谳存量（与本批无关）。
+3. **智能体 display 面（症状⑧）**（`gateway/PresenceRoutes.scala` + `web/js/agentProfile.js` + locales）：PUT display-name / PUT-GET-DELETE avatar 三面 + 前端写穿/回填双腿 + 文案校直，详见上节「症状⑧修复」。规格：`AgentDisplayFaceRoutesSpec` 7/7。**候重启窗**（引擎面与 web 树均随 jar）。
 
 ## 需作者操作的两步卡（立即可用，不等重启）
 

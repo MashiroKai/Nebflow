@@ -2380,7 +2380,7 @@ export default {
   'profile.reset': 'Reset',
   'profile.nameLabel': 'Name',
   'profile.namePlaceholder': 'Type a name, press Enter to save',
-  'profile.note': 'Avatars are saved locally first (per agent), and can sync with your account after sign-in; names save on Enter.',
+  'profile.note': 'Avatars are saved locally first (per agent), then synced to every signed-in device of this engine; names save on Enter (across devices).',
   // Task panel (v3.5: secondary-liquid task surface)
   'taskpanel.title': 'Tasks',
   'taskpanel.collapse': 'Collapse',
