@@ -6,7 +6,7 @@ import io.circe.Json
 import nebflow.core.delegate.DelegateJudge
 import nebflow.core.delegate.DelegateJudge.{DelegateJudgePort, TerminalInput, Verdict}
 import nebflow.llm.{ProviderRegistry, SendMessageParams}
-import nebflow.shared.{Config, Message, MessageRole, NebflowLogger}
+import nebflow.shared.{Config, Defaults, Message, MessageRole, NebflowLogger}
 
 import scala.concurrent.duration.*
 
@@ -260,7 +260,10 @@ object DelegateJudgeMachine:
           ),
           model = c.model,
           sessionId = Some(JudgeSessionId),
-          agentId = Some(JudgeSessionId)
+          agentId = Some(JudgeSessionId),
+          // 辅面钉旧值（钳制批 2026-10-21）：小判官是单 JSON 短答调用，钉
+          // ProbeMaxTokens（16384，升额前服务值）——128000 常量不再随主面上线。
+          maxTokensOverride = Some(Defaults.ProbeMaxTokens)
         )
         singleCall(registry, c.providerId, params).map(_.flatMap(parseWorktree))
     }
@@ -291,7 +294,9 @@ object DelegateJudgeMachine:
           ),
           model = c.model,
           sessionId = Some(JudgeSessionId),
-          agentId = Some(JudgeSessionId)
+          agentId = Some(JudgeSessionId),
+          // 同上（钳制批 2026-10-21）：辅面钉 ProbeMaxTokens。
+          maxTokensOverride = Some(Defaults.ProbeMaxTokens)
         )
         singleCall(registry, c.providerId, params).flatMap {
           // 四修③：parseVerdict 失败不再静默——回文在案（原文头部 160 字符，

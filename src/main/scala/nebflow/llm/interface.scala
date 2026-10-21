@@ -535,7 +535,10 @@ object LlmInterface extends LlmRuntime:
                           req.systemDynamic,
                           Some(req.sessionId),
                           Some(req.agentId),
-                          searchInjectionFor(req, candidate)
+                          searchInjectionFor(req, candidate),
+                          // 输出上限钳制批（2026-10-21）：候选生效窗口随行，适配器
+                          // 据此给 max_tokens 留输入余量（128000 不再原样上线路）。
+                          contextWindow = Some(candidate.contextWindow)
                         )
                       )
                     yield resp
@@ -809,6 +812,9 @@ object LlmInterface extends LlmRuntime:
                                               Some(req.sessionId),
                                               Some(req.agentId),
                                               searchInjectionFor(req, candidate),
+                                              // 输出上限钳制批（2026-10-21）：同非流面——
+                                              // 窗口随行，适配器钳 max_tokens 留输入余量。
+                                              contextWindow = Some(candidate.contextWindow),
                                               attemptBackend = transportOpt.map(_.backend)
                                             )
                                           )

@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import io.circe.Json
 import nebflow.core.jev.{CatalogEntry, JevAllocation, JevFallback, JevFallbackKind}
 import nebflow.llm.{ModelCandidate, ProviderRegistry, SendMessageParams}
-import nebflow.shared.{Message, MessageRole, NebflowLogger}
+import nebflow.shared.{Defaults, Message, MessageRole, NebflowLogger}
 
 /**
  * LlmAllocator —— **LLM 兜底分配腿**（jev-plugins 批 #1226；原文「未配 Jev → 新
@@ -64,7 +64,10 @@ final class LlmAllocator(
             messages = List(Message(MessageRole.User, Left(prompt(taskText, catalog)))),
             model = c.model,
             sessionId = Some(AllocSessionId),
-            agentId = Some(AllocSessionId)
+            agentId = Some(AllocSessionId),
+            // 辅面钉旧值（钳制批 2026-10-21）：同 HealthMonitor/小判官——
+            // ProbeMaxTokens（16384）零行为变化，128000 主面值不上此线。
+            maxTokensOverride = Some(Defaults.ProbeMaxTokens)
           )
           singleCall(params).attempt
             .flatMap {

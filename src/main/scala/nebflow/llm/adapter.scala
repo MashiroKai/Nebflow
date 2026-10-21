@@ -26,6 +26,26 @@ case class SendMessageParams(
    */
   providerSearch: Option[ProviderSearchKind] = None,
   /**
+   * Output-cap clamp batch (2026-10-21): the candidate's effective context
+   * window (`ModelCandidate.contextWindow` — already min(configured,
+   * modelMaxContext) at the registry). AnthropicAdapter subtracts the
+   * estimated input volume from it before sending `max_tokens`, so a 128000
+   * output allowance is never handed to an endpoint whose window must also
+   * hold the input. None = clamp dormant (sends `Defaults.MaxTokens`
+   * verbatim); auxiliary faces that pin `maxTokensOverride` need not set it.
+   */
+  contextWindow: Option[Int] = None,
+  /**
+   * Output-cap clamp batch (2026-10-21): engine-internal override for
+   * auxiliary faces — health probe / small-judge / allocator pin
+   * `Defaults.ProbeMaxTokens` (16384, the pre-raise serving value) so their
+   * single-token / tiny-JSON calls keep the years-proven small request shape.
+   * Sent verbatim, NO clamp leg (already known-safe; keeps probes identical to
+   * pre-batch behaviour on tiny-window configs). None = the serving-face
+   * derivation (`Defaults.MaxTokens` + thinking raise + per-model clamp).
+   */
+  maxTokensOverride: Option[Int] = None,
+  /**
    * Hard-recovery P1 (2026-09-07, 设计 D-1 方案 A): per-attempt backend for
    * STREAMING requests — a dedicated HttpClient whose shutdownNow() aborts
    * exactly this request (the only primitive proven to unblock a parked body

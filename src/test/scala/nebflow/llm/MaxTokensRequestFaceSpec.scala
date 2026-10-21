@@ -17,7 +17,9 @@ import scala.concurrent.duration.*
 /**
  * maxcfg batch (2026-09-16, author ruling "我觉得直接去掉这个参数，以后少一个配置项")
  * — outbound request-body pins for the removal of the user-configurable
- * `llm.providers.*.models[].maxTokens`.
+ * `llm.providers.*.models[].maxTokens`. Updated by the output-cap raise batch
+ * (2026-10-21, author ruling 「总输出上限改为128000」— the old 16384 could be
+ * burned entirely on thinking, leaving zero visible output).
  *
  * These are WIRE-level pins: a real `HttpServer` capture mock records the body
  * the engine actually sends, for both faces and both request paths
@@ -28,16 +30,23 @@ import scala.concurrent.duration.*
  *   P1/P2  OpenAI face sends NO `max_tokens` key at all (o-series / GPT-5
  *          reject the deprecated field with a 400).
  *   P3/P4  Anthropic face still sends a LEGAL `max_tokens` (the API requires
- *          it) — 16384 with thinking off = the old default of the removed key.
+ *          it) — 128000 with thinking off = `Defaults.MaxTokens` verbatim.
+ *          The fixture window is 1000000 (live zhipu/kimi shape) so the
+ *          adapter's clamp legs stay dormant and the constant reaches the
+ *          wire unclamped; the clamp arithmetic itself is pinned in
+ *          `MaxTokensClampSpec`.
  *   P5     "high" thinking (budget 32768) survives unclamped AND the Anthropic
- *          output cap is raised above it, keeping the API invariant
- *          `budget_tokens < max_tokens` (the old `maxTokens / 2` clamp used to
- *          cut the budget to 8192 instead).
+ *          output cap is raised above it (32768 + 128000 = 160768), keeping
+ *          the API invariant `budget_tokens < max_tokens` (the old
+ *          `maxTokens / 2` clamp used to cut the budget to 8192 instead).
  *   P6     The clamp still bounds pathological / legacy budgets (100000 →
  *          32768) — and a legacy budget no longer downgrades the OpenAI
  *          `reasoning_effort` class (8192 used to read as "medium").
  *   P7     A legacy config JSON still carrying the `maxTokens` key decodes
  *          without error and no longer steers the output cap.
+ *   P8     A legacy model entry with `maxTokens:4096` on a tiny window
+ *          (contextWindow=8192) → cap = 16384 — the window-clamp floor (the
+ *          pre-raise serving value), NOT the legacy key: the key stays dead.
  *
  * Reverting this batch (see the maxcfg evidence bundle: the same spec run
  * against the pre-change tree) turns P1/P2/P3/P5/P6 red — that is the
@@ -56,11 +65,19 @@ class MaxTokensRequestFaceSpec extends CatsEffectSuite:
     Some(Json.obj("type" -> "enabled".asJson, "budget_tokens" -> 100000.asJson))
 
   /**
-   * The Anthropic output cap expected with thinking off (old default of the
-   * removed key) and with a 32768 budget (raised to keep budget < max_tokens).
+   * The Anthropic output cap expected with thinking off (`Defaults.MaxTokens`
+   * verbatim — clamp legs dormant on the 1M fixture window) and with a 32768
+   * budget (raised by a full allowance above it: 32768 + 128000).
    */
-  private val ExpectedAnthropicCapNoThinking = 16384
-  private val ExpectedAnthropicCapHighThinking = 49152
+  private val ExpectedAnthropicCapNoThinking = 128000
+  private val ExpectedAnthropicCapHighThinking = 160768
+
+  /**
+   * P8's fixture window (8192) is too small for any meaningful output
+   * allowance: the window-clamp floor (the pre-raise serving value, 16384)
+   * is what reaches the wire — NOT the serving constant.
+   */
+  private val ExpectedAnthropicCapWindowFloor = 16384
 
   // ── capture mocks ────────────────────────────────────────────────────────
 
@@ -139,7 +156,10 @@ class MaxTokensRequestFaceSpec extends CatsEffectSuite:
           baseUrl = baseUrl,
           apiKey = "test",
           protocol = protocol,
-          models = List(ModelConfig("m1", contextWindow = 128000))
+          // 1000000 = live zhipu/kimi window shape: keeps the adapter's clamp
+          // legs dormant so these pins read the VERBATIM serving constant
+          // (clamp arithmetic is pinned in MaxTokensClampSpec).
+          models = List(ModelConfig("m1", contextWindow = 1000000))
         )
     NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map("p" -> provider)))
 
@@ -254,7 +274,7 @@ class MaxTokensRequestFaceSpec extends CatsEffectSuite:
 
   // ── P3/P4: Anthropic face keeps a legal max_tokens ───────────────────────
 
-  test("P3/P4: Anthropic face sends a legal max_tokens = old default (16384) with thinking off") {
+  test("P3/P4: Anthropic face sends a legal max_tokens = Defaults.MaxTokens (128000) with thinking off") {
     capture(
       "anthropic/thinking-off",
       LlmProtocol.Anthropic,
@@ -355,7 +375,7 @@ class MaxTokensRequestFaceSpec extends CatsEffectSuite:
 
   // ── P8: a legacy `maxTokens` value must not reach the wire any more ─────
 
-  test("P8: legacy model entry with maxTokens:4096 → cap stays 16384 (key ignored, no error)") {
+  test("P8: legacy maxTokens:4096 entry on a tiny window → cap = 16384 window-clamp floor (key dead)") {
     val legacyJson =
       """{"baseUrl":"https://x.example.com/v1","apiKey":"k","protocol":"anthropic",""" +
         """"models":[{"id":"m1","maxTokens":4096,"contextWindow":8192,"vision":false}]}"""
@@ -374,8 +394,8 @@ class MaxTokensRequestFaceSpec extends CatsEffectSuite:
       bodies.foreach { b =>
         assertEquals(
           field(b, "max_tokens").flatMap(_.asNumber).flatMap(_.toInt),
-          Some(ExpectedAnthropicCapNoThinking),
-          s"a legacy maxTokens key must no longer steer the output cap: $b"
+          Some(ExpectedAnthropicCapWindowFloor),
+          s"a legacy maxTokens key must no longer steer the output cap; the window-clamp floor rules instead: $b"
         )
       }
     }
