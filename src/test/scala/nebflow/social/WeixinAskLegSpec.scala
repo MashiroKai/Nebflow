@@ -50,6 +50,9 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     val injected: Ref[IO, List[(String, String)]] = Ref.unsafe[IO, List[(String, String)]](Nil)
     val forwarded: Ref[IO, List[(String, String, Json)]] = Ref.unsafe[IO, List[(String, String, Json)]](Nil)
     val closed: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+    val mediaInjected
+      : Ref[IO, List[(String, List[nebflow.bridge.BridgeAttachment], Option[nebflow.bridge.BridgeOrigin])]] =
+      Ref.unsafe[IO, List[(String, List[nebflow.bridge.BridgeAttachment], Option[nebflow.bridge.BridgeOrigin])]](Nil)
 
     def injectMessage(
       sessionId: String,
@@ -58,6 +61,17 @@ class WeixinAskLegSpec extends CatsEffectSuite:
       origin: Option[nebflow.bridge.BridgeOrigin] = None
     ): IO[Unit] =
       injected.update(_ :+ ((sessionId, content)))
+
+    // 生产装配覆盖语义（社交通道入站媒体统一适配批 2026-10-20）：媒体指针走媒体缝
+    // （不再降级为纯文本 injectMessage）——与 WeixinIlinkBridgeSpec 同习语。
+    override def injectMessageWithMedia(
+      sessionId: String,
+      content: String,
+      senderId: Option[String],
+      origin: Option[nebflow.bridge.BridgeOrigin] = None,
+      attachments: List[nebflow.bridge.BridgeAttachment] = Nil
+    ): IO[Unit] =
+      mediaInjected.update(_ :+ ((sessionId, attachments, origin)))
     override def listPendingAsks: IO[List[Json]] = IO.pure(Nil)
 
     override def forwardInteractionAnswer(requestId: String, rootSessionId: String, payload: Json): IO[Unit] =
@@ -696,11 +710,20 @@ class WeixinAskLegSpec extends CatsEffectSuite:
       )
       fw <- ctx.forwarded.get
       injected <- ctx.injected.get
+      mediaInjected <- ctx.mediaInjected.get
       receipt <- AskAnswerReceipt.peek("rid-img")
     yield
       assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Injected("s1"), "媒体消息恒走媒体臂，不进 ask 臂")
       assertEquals(fw, List.empty, "占位标签不得被消费成作答（零混入）")
-      assert(injected.exists(_._2.contains(png.toString)), s"媒体臂注入落地路径行：$injected")
+      // 媒体统一适配批（2026-10-20）改缝：媒体指针走 injectMessageWithMedia（媒体缝），
+      // 不再走纯文本 injectMessage 落「路径行」——路径随 attachments 送达，标签线/媒体行
+      // 由网关缝组装。ask 臂守卫不变：占位标签不消费、无回执。
+      assert(
+        mediaInjected.exists(_._2.exists(_.path == png.toString)),
+        s"媒体臂经媒体缝落地路径：$mediaInjected"
+      )
+      assert(mediaInjected.forall(_._1 == "s1"), s"媒体缝只落目标会话：$mediaInjected")
+      assertEquals(injected, List.empty, "媒体不再走纯文本缝（改缝钉：路径行文本已废）")
       assertEquals(receipt, None, "未作答 ⇒ 无回执登记")
     end for
   }
