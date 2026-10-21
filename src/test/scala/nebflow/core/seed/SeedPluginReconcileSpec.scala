@@ -79,7 +79,10 @@ class SeedPluginReconcileSpec extends FunSuite:
    * 信任记录落库 sha256（approve 时刻基准；目录漂移不影响记录本身）。
    * 注意不用 TrustStatus/resolve——漂移即 untrusted，取不到基准。
    */
-  private def recordSha: Option[String] =
+  private def recordSha: Option[String] = recordShaOf("slideblocks")
+
+  /** 同上，任意包名的读面（②b 官方 namespace 用例用 nebflow-plugin-creator）。 */
+  private def recordShaOf(name: String): Option[String] =
     val cfg = PathUtil.configJsonReadPath(home)
     if !os.exists(cfg) then None
     else
@@ -90,12 +93,12 @@ class SeedPluginReconcileSpec extends FunSuite:
           _.hcursor
             .downField("plugins")
             .downField("trust")
-            .downField("slideblocks")
+            .downField(name)
             .downField("sha256")
             .as[String]
             .toOption
         )
-  end recordSha
+  end recordShaOf
 
   private def dirDigest(d: os.Path): String = PluginRegistry.computeDigest(d).toOption.get._1
 
@@ -251,6 +254,59 @@ class SeedPluginReconcileSpec extends FunSuite:
     assert(os.read(skillPath).contains("user edit marker"), "user edit preserved (用户编辑 > 种子)")
     assert(recordSha.contains(pristine), "trust record untouched (no re-approve)")
     assert(dirDigest(pluginDir) == userDigest, "runtime content untouched by seed")
+
+  // ── ②b 官方保留 namespace + 陈旧信任记录 → 出厂字节赢（2026-10-21 诊断批）──
+  /**
+   * 死锁回归钉（作者 home 实录 2026-10-14/10-20 两次重演）：runtime == 旧出厂、
+   * seed == 新出厂、信任记录 == 更旧的 approve 时刻 digest ⇒ 修前走「用户改过保留」
+   * （信任记录陈旧 ⇒ 判用户版），而装载层 OfficialPackages 只认**当前 jar** 出厂
+   * digest ⇒ 包被判死且永不自愈（SeedService 刷新腿要求 runtime==trusted，永不触发）。
+   * 修后：保留 `nebflow-` 前缀包 runtime ≠ seed 一律种子镜像覆盖 + 重审（备份在位）。
+   */
+  test("official reserved-namespace package with a stale trust record is refreshed from seed, not kept"):
+    makeIsolatedHome()
+    val creator = "nebflow-plugin-creator"
+    val creatorDir = home / "plugins" / creator
+    // 先在位**出厂原样**并 approve（记录 = 当时出厂 digest；实录里 e885 记录的等价时刻），
+    // 再把 runtime 漂成旧出厂形态（等价实录 0621）、把记录改写成陈旧假 digest——
+    // 直接对漂移态 approve 是不可达路径（官方闸已在 scan 拒掉漂移的保留名包）。
+    copySeedPlugin(creator)
+    PluginRegistry.approve(creator).unsafeRunSync()
+    // runtime = 旧出厂形态（对 seed 有差异；等价实录里的 0621 旧出厂版）
+    val skillPath = creatorDir / "skills" / "plugin-packaging" / "SKILL.md"
+    os.write.append(skillPath, "\n<!-- stale-factory marker -->")
+    val runtimeDigest = dirDigest(creatorDir)
+    assert(runtimeDigest != dirDigest(seedDirOf(creator)), "precondition: runtime != seed")
+    val cfgPath = PathUtil.configJsonReadPath(home)
+    val stale = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    val patched = io.circe.parser
+      .parse(os.read(cfgPath))
+      .toOption
+      .get
+      .hcursor
+      .downField("plugins")
+      .downField("trust")
+      .downField(creator)
+      .downField("sha256")
+      .set(io.circe.Json.fromString(stale))
+      .top
+      .get
+    os.write.over(cfgPath, patched.noSpaces)
+    assert(recordShaOf(creator).contains(stale), "precondition: trust record is the stale fake digest")
+
+    ensure()
+
+    // 出厂字节赢：镜像覆盖 + 重审（修前此处 = 「keeping user version」死包）
+    assert(
+      treeAsText(creatorDir) == treeAsText(seedDirOf(creator)),
+      "official package mirrored back to the shipped factory tree (byte-level)"
+    )
+    assert(recordShaOf(creator).contains(dirDigest(creatorDir)), "re-approved on the factory digest")
+    val backups = os.list(home / "plugins-backups").filter(os.isDir).toList
+    assert(
+      backups.exists(_.last.endsWith(s"_pre-sync-$creator")),
+      s"pre-sync backup holds the overwritten stale-factory content: ${backups.map(_.last)}"
+    )
 
   // ── ③ seed == runtime 一致 → 无动作 ├──────────────────────
   test("consistent runtime (seed==runtime) results in no action"):

@@ -496,10 +496,22 @@ function showTicketEntry() {
 // same-origin: mint a fresh one-time ticket for the bound host (the relay
 // issues it over the live tunnel) and navigate to its consoleUrl — the host
 // redeems the ticket and the relayed Set-Cookie re-seats the host session;
-// the reload then connects on its own. Any refusal (relay session expired /
-// no binding / host offline / rate limit) returns false and the caller falls
-// back to the login gate. Once-per-page-life guard (sessionStorage): a
-// persistently failing host must not turn this into a reload loop.
+// the reload then connects on its own.
+//
+// Two-plane discipline (2026-10-21 诊断修复批): a tunneled console answers to
+// TWO independent session planes — the relay ingress (every /api/* and /ws
+// admission is gated by the relay's own login; a dead relay session 403s at
+// the ingress BEFORE the host is ever reached) and the host session store
+// (wiped by every host restart). A refusal here can therefore mean either
+// plane. When the portal-status leg itself is refused, probe the relay's
+// PUBLIC /api/auth/login-config: on a hit, navigate to the relay's own login
+// leg (/api/auth/login?return_to=<here>) — that is the ONLY login that can
+// restore the ingress plane; the host-PKCE account entry cannot (it mints a
+// host session the ingress still refuses), so falling through to it here
+// produced the "logged in but everything still 403" trap. Direct-LAN consoles
+// have no relay (login-config absent) and keep the existing fall-through to
+// the login gate. Once-per-page-life guard (sessionStorage): a persistently
+// failing host must not turn this into a reload loop.
 async function remintHostSessionAndReload() {
   // #522 键盘点收尾：GUARD 原 `nebflow_ws_remint_at` 裸字面随品牌迁移失效——
   // 与 #500 同族迁 `key()`（branding.js 单一真源）。sessionStorage 30s 防
@@ -511,7 +523,21 @@ async function remintHostSessionAndReload() {
   try { sessionStorage.setItem(GUARD, String(Date.now())); } catch (_) {}
   try {
     const status = await fetch('/api/portal/status', { credentials: 'same-origin' });
-    if (!status.ok) return false;
+    if (!status.ok) {
+      // Ingress-plane refusal (relay session dead/expired): hand the page to
+      // the relay's own login leg when this origin serves one. return_to is
+      // same-origin validated server-side; an already-logged-in caller is
+      // bounced straight back with no provider round trip.
+      try {
+        const cfg = await fetch('/api/auth/login-config', { credentials: 'same-origin' });
+        if (cfg.ok) {
+          const back = encodeURIComponent(location.pathname + location.search);
+          window.location.href = `/api/auth/login?return_to=${back}`;
+          return true;
+        }
+      } catch (_) { /* not a relay-served origin — keep the legacy fallback */ }
+      return false;
+    }
     const deviceId = (await status.json())?.boundHost?.deviceId;
     if (typeof deviceId !== 'string' || deviceId === '') return false;
     const mint = await fetch('/api/portal/console-ticket', {

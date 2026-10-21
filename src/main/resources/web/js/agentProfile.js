@@ -16,6 +16,15 @@
 // 其余消费点、以及名称的服务端持久化写路径（onboarding 的 agent.json 腿）不在本批。
 // 功能逻辑零重造：存储/avatarCache 同键位精神、渲染/avatarRender 同池、名称/既有
 // display-name 机制同写点，本模块只是把三件既有设施接到会话头这一个面上。
+//
+// 持久/同步腿（2026-10-21 诊断批症状⑧「头像/名称跨设备不同步」）：面板的
+// 「名称回车即存 / 头像登录后可随账号同步」此前只有本地与内存腿——localStorage
+// 只落本浏览器（跨设备必不同步），名称更是纯内存（刷新即还原）。本批接上引擎
+// display 面（PresenceRoutes：PUT /api/agents/:name/display-name、PUT/GET/DELETE
+// /api/agents/:name/avatar）：**本地优先照旧**（读先 localStorage，服务端作缺键
+// 回填 + 跨端载体），写入 fire-and-forget 写穿（失败静默——内存态已成立，下次
+// list/探针以服务端为准自纠）。reset 走 DELETE；跨端 reset 收敛的 v1 已知限制
+// 见诊断报告（另一端 localStorage 旧键仍优先，直至其本地也清或缺键）。
 
 import { key } from './branding.js';
 import state from './state.js';
@@ -27,8 +36,12 @@ import { t } from './i18n.js';
 /** 头像存储键（镜像 avatarCache.js：branding 命名空间 + 按身份键一条目）。 */
 function avatarKey(agentName) { return key(`agent_avatar_${agentName || 'Nebula'}`); }
 
-/** 上传图降采样上限（px）：localStorage 配额友好（avatarCache.js 同款配额纪律）。 */
-const MAX_DIM = 256;
+/** Bearer 文件令牌头（agentManager.js 同款镜像；控制台会话腿同源 cookie，双保险）。 */
+function authHeaders() {
+  let tok = '';
+  try { tok = localStorage.getItem(key('token')) || ''; } catch { /* 隐私模式：裸 cookie */ }
+  return tok ? { Authorization: `Bearer ${tok}` } : {};
+}
 
 function readStored(agentName) {
   try { return localStorage.getItem(avatarKey(agentName)) || ''; } catch { return ''; }
@@ -40,6 +53,49 @@ function writeStored(agentName, dataUrl) {
     else localStorage.removeItem(avatarKey(agentName));
   } catch { /* 隐私模式/配额满：本地头像为尽力而为（回落首字母圆牌） */ }
 }
+
+/** 服务端写穿（fire-and-forget）：上传/清除头像到引擎共享存储（跨设备同步载体）。 */
+function pushAvatar(agentName, dataUrl) {
+  const path = `/api/agents/${encodeURIComponent(agentName || 'Nebula')}/avatar`;
+  const opts = dataUrl
+    ? { method: 'PUT', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify({ dataUrl }) }
+    : { method: 'DELETE', headers: authHeaders() };
+  fetch(path, opts).catch(() => { /* 离线/未落座：本地态照旧，服务端待下次写入收敛 */ });
+}
+
+/** 服务端缺键回填（「本地优先」的另一半）：localStorage 无头像时向引擎取一次，
+ *  命中即写回本地键并触发重绘。按 agentName 去重（一次在飞）；404 = 引擎也无
+ *  自定义头像（首字母圆牌口径），静默。 */
+const avatarSyncInFlight = new Set();
+function pullAvatarIfMissing(agentName, repaint) {
+  const name = agentName || 'Nebula';
+  if (avatarSyncInFlight.has(name)) return;
+  avatarSyncInFlight.add(name);
+  fetch(`/api/agents/${encodeURIComponent(name)}/avatar`, { headers: authHeaders() })
+    .then(async (r) => {
+      if (!r.ok) return;
+      const buf = await r.arrayBuffer();
+      if (!buf.byteLength) return;
+      // 引擎只回字节（X-Avatar-Content-Type 是通配）；回填 dataURL 用通用 jpeg
+      // 前缀不可靠 ⇒ 以浏览器嗅探（Blob type）为准，回落 jpeg。
+      const blob = new Blob([buf]);
+      const mime = blob.type || 'image/jpeg';
+      const dataUrl = await new Promise((resolve) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(String(fr.result || ''));
+        fr.onerror = () => resolve('');
+        fr.readAsDataURL(blob);
+      });
+      if (!dataUrl) return;
+      writeStored(name, dataUrl);
+      repaint();
+    })
+    .catch(() => { /* 离线/未落座：维持本地/首字母口径 */ })
+    .finally(() => avatarSyncInFlight.delete(name));
+}
+
+/** 上传图降采样上限（px）：localStorage 配额友好（avatarCache.js 同款配额纪律）。 */
+const MAX_DIM = 256;
 
 /** 当前会话头身份 = 活动会话的 agent（root 会话恒 'Nebula' 机制名）。 */
 export function currentAgentName() {
@@ -83,7 +139,8 @@ function paintSlot() {
   const label = headerLabel(agentName);
   slot.setAttribute('aria-label', t('profile.openAria'));
   slot.title = t('profile.openAria');
-  const dataUrl = readStored(agentName);
+  let dataUrl = readStored(agentName);
+  if (!dataUrl) pullAvatarIfMissing(agentName, paintSlot); // 本地缺键 → 引擎回填（跨端同步读腿）
   const img = dataUrl ? avatarImgNode(dataUrl) : null; // 复用池：同 dataURL 零重解码
   if (img) {
     img.className = 'agent-avatar-img';
@@ -114,7 +171,9 @@ function paintSlot() {
 
 /** @type {HTMLElement|null} */
 let panel = null;
-/** @type {HTMLElement|null} */
+// HTMLInputElement（非 HTMLElement）：面板存 .type/.value/.placeholder 直写点
+// （症状⑧批 touched-file checkJs 清零时补注——四处 TS2339 皆此根因）。
+/** @type {HTMLInputElement|null} */
 let nameInput = null;
 /** @type {HTMLInputElement|null} */
 let fileInput = null;
@@ -160,7 +219,9 @@ function ensurePanel() {
   reset.className = 'ap-btn ap-btn-ghost';
   reset.innerHTML = `<i data-lucide="rotate-ccw"></i><span>${t('profile.reset')}</span>`;
   reset.addEventListener('click', () => {
-    writeStored(currentAgentName(), '');
+    const name = currentAgentName();
+    writeStored(name, '');
+    pushAvatar(name, ''); // 引擎侧同步清除（跨端载体；v1 另一端本地旧键仍优先，见头注）
     paintSlot();
     paintPreview();
   });
@@ -177,7 +238,9 @@ function ensurePanel() {
     if (!f || !f.type.startsWith('image/')) return;
     downscaleToFile(f).then((dataUrl) => {
       if (!dataUrl) return;
-      writeStored(currentAgentName(), dataUrl);
+      const name = currentAgentName();
+      writeStored(name, dataUrl);
+      pushAvatar(name, dataUrl); // 引擎写穿：另一端经缺键回填/下次拉取收敛
       paintSlot();
       paintPreview();
     }).catch(() => { /* 读取失败：维持现状 */ });
@@ -242,7 +305,8 @@ function paintPreview() {
   if (!previewBox) return;
   const agentName = currentAgentName();
   const label = headerLabel(agentName);
-  const dataUrl = readStored(agentName);
+  let dataUrl = readStored(agentName);
+  if (!dataUrl) pullAvatarIfMissing(agentName, paintPreview); // 同 paintSlot：缺键回填
   const img = dataUrl ? avatarImgNode(dataUrl) : null;
   if (img) {
     img.className = 'ap-avatar-img';
@@ -266,7 +330,12 @@ function fillName() {
 
 /** 名称就地编辑保存（回车）：写穿既有 display-name 机制 —— root 与 onboarding
  *  renameEverywhere 同三写（override + agentsData 行 + 事件）；非 root 写 agentsData
- *  行 + 事件。空值 = 还原为机制名行（root：清 override，头名按未命名口径留空）。 */
+ *  行 + 事件。空值 = 还原为机制名行（root：清 override，头名按未命名口径留空）。
+ *  持久/跨设备腿（症状⑧）：非空值 fire-and-forget 写引擎 display 面（PUT
+ *  /api/agents/:name/display-name → agents/<name>/agent.json displayName）——
+ *  agentsData 行与 rootName 探针同源此文件，另一端下次 list/探针即收敛；此前
+ *  本面板只落内存（刷新即还原，「回车即存」承诺无落盘腿）。失败静默：内存态已
+ *  成立，服务端自纠不阻塞 UI。 */
 function saveName() {
   if (!nameInput) return;
   const agentName = currentAgentName();
@@ -278,6 +347,13 @@ function saveName() {
   } else {
     const row = (state.agentsData || []).find((a) => a.name === agentName);
     if (row) row.displayName = next;
+  }
+  if (next) {
+    fetch(`/api/agents/${encodeURIComponent(agentName)}/display-name`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ displayName: next }),
+    }).catch(() => { /* 离线/未落座：内存态照旧 */ });
   }
   window.dispatchEvent(new CustomEvent('nebflow-root-name-change'));
   paintSlot();
