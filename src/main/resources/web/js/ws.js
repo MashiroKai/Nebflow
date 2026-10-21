@@ -3,6 +3,7 @@ import { findViewBySessionId, setActiveView, activeView, chatViews } from './cha
 import { isBgAgentId } from './utils.js';
 import { addNotification } from './notificationBanner.js';
 import { brand, getWebsiteLoginUrl } from './brand.js';
+import { armSessionKeepalive } from './sessionGate.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
 
@@ -439,6 +440,11 @@ function probeCookieAuth() {
       // deliberately not consumed.
       if (resp.headers.get(`x-${brand.lowerName}-credential`) === 'session') {
         purgeLongLivedCopies();
+        // 会话保活腿（session TTL 批 2026-10-21）：首次证实已入座（204 +
+        // rail=session）即武装 12h 一拍的 authcheck 保活——健康长命标签页在
+        // 零 reload 期间也持续拉动服务端滑动窗与浏览器 cookie Max-Age 双续
+        //（30d 绝对上限 / 7d 闲置窗，GatewaySessionStore）。幂等。
+        armSessionKeepalive();
       }
     }
   }).catch(() => { /* inconclusive - proceed */ });

@@ -319,6 +319,17 @@ object NfFileRoutes:
    * is the rail name that hit — the B' frontend purge hook consumes ONLY the
    * `session` value ("the HttpOnly session cookie is verified working");
    * the status-code contract is unchanged.
+   *
+   * Session TTL batch (2026-10-21): a SESSION-rail hit also slides the
+   * BROWSER cookie — the 204 re-emits the same session id with a fresh
+   * `Max-Age=<absolute TTL>` (GatewaySessionStore.newCookie, the frozen
+   * attribute set). The value never changes (sliding renewal is
+   * server-side); this refreshes the jar's expiry so an actively used
+   * console never hits the cookie's fixed 30d cliff. Bearer hits (CLI /
+   * scripts) deliberately emit nothing — there is no session record behind
+   * them. `secure` recomputed per #522 from the consuming origin (https or
+   * tunnel-marked), never from a stored flag — the exact mint-site
+   * expression, so a slid cookie can never disagree with the jar's leg.
    */
   def nfAuthcheckRoutes(tokenRef: cats.effect.Ref[IO, String], sessions: GatewaySessionStore): HttpRoutes[IO] =
     HttpRoutes.of[IO] { case req @ GET -> Root / "api" / "nf-authcheck" =>
@@ -327,8 +338,18 @@ object NfFileRoutes:
         .flatMap {
           case None => Forbidden("Invalid token")
           case Some(cred) =>
-            NoContent().map(
-              _.putHeaders(
+            // Session TTL batch (2026-10-21): slide the browser cookie on a
+            // session-rail hit (same id, fresh Max-Age; see the doc above).
+            // `secure` recomputed from the consuming origin, the mint-site
+            // expression verbatim (#522) — never from a stored flag.
+            val secure =
+              req.uri.scheme.exists(_.value.equalsIgnoreCase("https")) ||
+                nebflow.shared.TunnelOriginMark.isMarked(req)
+            val slid = cred match
+              case Credential.ViaSession(rec) => Some(GatewaySessionStore.newCookie(rec.sessionId, secure = secure))
+              case _                          => None
+            NoContent().map(resp =>
+              slid.fold(resp)(resp.addCookie).putHeaders(
                 Header.Raw(org.typelevel.ci.CIString(GatewayAuth.CredentialHeader), cred.railName)
               )
             )

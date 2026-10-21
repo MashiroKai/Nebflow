@@ -6,7 +6,8 @@
 //   §7.2 bootstrap   POST /api/auth/console-ticket (file-token Bearer) -> one
 //                    ticket -> GET /?ticket= => 303 + the FROZEN Set-Cookie
 //                    attribute set (HttpOnly / Secure / SameSite=Lax / Path=/
-//                    / Max-Age=43200 / host-only, criterion 4)
+//                    / Max-Age=2592000=30d / host-only, criterion 4;
+//                    session TTL batch 2026-10-21: was 43200=12h)
 //   §7.2(4) JS face  the landed page cannot READ the session cookie
 //                    (document.cookie, HttpOnly), yet /api/nf-authcheck
 //                    answers 204 with x-<brand>-credential: session (the
@@ -105,7 +106,7 @@ async function main() {
   check('Set-Cookie is Secure', /secure/i.test(setc), setc);
   check('Set-Cookie is SameSite=Lax', /samesite=lax/i.test(setc), setc);
   check('Set-Cookie Path=/', /path=\//i.test(setc), setc);
-  check('Set-Cookie Max-Age=43200', /max-age=43200/i.test(setc), setc);
+  check('Set-Cookie Max-Age=2592000 (30d absolute ceiling)', /max-age=2592000/i.test(setc), setc);
   check('Set-Cookie is host-only (no Domain=)', !/domain=/i.test(setc), setc);
 
   // ── §7.2(5)/criterion 3: second use of the SAME ticket ──────────────────
@@ -141,10 +142,19 @@ async function main() {
 
   const authcheck = await page.evaluate(async () => {
     const r = await fetch('/api/nf-authcheck', { credentials: 'same-origin', cache: 'no-store' });
-    return { status: r.status, rail: r.headers.get(`x-${(window.__BRAND__ ?? { lowerName: 'nebflow' }).lowerName}-credential`) };
+    return {
+      status: r.status,
+      rail: r.headers.get(`x-${(window.__BRAND__ ?? { lowerName: 'nebflow' }).lowerName}-credential`),
+      // Session TTL batch (2026-10-21): a session-rail 204 SLIDES the browser
+      // cookie — same id, fresh Max-Age = the 30d absolute TTL.
+      slid: (typeof r.headers.getSetCookie === 'function' ? r.headers.getSetCookie() : [])
+        .find((c) => c.startsWith(`${(window.__BRAND__ ?? { lowerName: 'nebflow' }).lowerName}_session=`)) ?? '',
+    };
   });
   check('the landed page authenticates to /api/nf-authcheck (204)', authcheck.status === 204, `status=${authcheck.status}`);
   check('the rail header names the session rail', authcheck.rail === 'session', `rail=${authcheck.rail}`);
+  check('the authcheck 204 slides the session cookie (same sid, Max-Age=2592000)',
+    /max-age=2592000/i.test(authcheck.slid) && /httponly/i.test(authcheck.slid), authcheck.slid || 'NO SET-COOKIE');
 
   // ── B' purge: the long-lived copies are gone after a session-rail landing ──
   const purge = await page.evaluate(() => ({

@@ -36,6 +36,59 @@ let fired = false;
 /** 测试缝（specs 换掉 reload，断言「自愈腿被拉动」而不真导航）。 */
 let reloadImpl = () => window.location.reload();
 
+// ---- 会话保活腿（session TTL 批 2026-10-21）----
+//
+// 引擎侧会话 = 30d 绝对上限 + 7d 滑动闲置窗（GatewaySessionStore 2592000/604800）；
+// 服务端滑动续期长在每个鉴权请求（verifyAndTouch），浏览器 cookie 的 Max-Age 由
+// /api/nf-authcheck 的 204 重签（同 sid、全新 Max-Age——NfFileRoutes A15-slide）。
+// 本腿补足最后一块：**健康长命标签页**。全 WS 通信的页面在零 reload 期间一个
+// HTTP 请求都不发 ⇒ 两处滑动都不发生 ⇒ 7d 闲置窗到期、下一个 HTTP 调用触发
+// sessionGate reload 重排。12h 一拍的 authcheck 同时拉动两处滑动（服务端
+// verifyAndTouch + 204 Set-Cookie），令「开着就常驻」字面成立。
+//
+// 武装条件（防误报）：仅在**首次证实已入座**（204 + rail=session）后调用——
+// 未入座页面（本地源未登录卡）永不武装，12h 一拍的 403 不会对故意未登录的
+// 页面刷「登录已过期」横幅。拍间 403 ⇒ noteAuthRejected（既有单飞+冷却纪律）；
+// 网络错/超时 ⇒ 静默跳过（离线抖动不是会话死亡，reload 救不了断网）。
+
+/** 保活拍间隔：12h。远小于 7d 闲置窗（48 拍裕量），大于后台标签页节流窗。 */
+export const KEEPALIVE_INTERVAL_MS = 12 * 60 * 60 * 1000;
+
+let keepaliveArmed = false;
+
+/** 测试缝：换掉保活的 fetch 与定时器实现 / 复位（仅 specs 使用）。 */
+let keepaliveFetchImpl = () =>
+  fetch('/api/nf-authcheck', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(3000) });
+let keepaliveScheduleImpl = (fn, ms) => setInterval(fn, ms);
+
+export function _keepaliveTestHooks() {
+  return {
+    setFetch(fn) { keepaliveFetchImpl = fn; },
+    setSchedule(fn) { keepaliveScheduleImpl = fn; },
+    reset() { keepaliveArmed = false; },
+    isArmed() { return keepaliveArmed; },
+  };
+}
+
+/**
+ * 武装会话保活（幂等）：由 ws.js 的入座证实点（authcheck 204 + rail=session）
+ * 调用。此后每 12h 拍一次 authcheck：204 ⇒ 服务端滑动窗 + 浏览器 cookie
+ * Max-Age 双续；403 ⇒ 走既有 noteAuthRejected 自愈腿；其余（网络错/超时）⇒
+ * 静默跳过等下一拍。
+ */
+export function armSessionKeepalive() {
+  if (keepaliveArmed) return;
+  keepaliveArmed = true;
+  keepaliveScheduleImpl(() => {
+    keepaliveFetchImpl()
+      .then((resp) => {
+        if (resp.status === 403) noteAuthRejected('keepalive');
+        // 204（或其他 2xx）= 活着：服务端与浏览器两侧的滑动都已在拍内发生。
+      })
+      .catch(() => { /* 网络错/超时：静默跳过，非会话死亡 */ });
+  }, KEEPALIVE_INTERVAL_MS);
+}
+
 /**
  * 汇报一次同源鉴权拒绝。首个调用拉起可见横幅 + 自愈 reload；同页后续调用
  * 与冷却窗内的调用一律无害化（幂等）。

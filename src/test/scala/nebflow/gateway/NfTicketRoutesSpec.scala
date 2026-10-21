@@ -370,6 +370,53 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
     }
   }
 
+  // ── Session TTL batch (2026-10-21): the authcheck 204 slides the browser
+  //    cookie on a SESSION-rail hit (same id, fresh Max-Age = absolute TTL);
+  //    Bearer hits emit nothing; #522 secure-per-origin on the slide too.
+  test("A15-slide: a session-rail authcheck re-emits the cookie with a fresh Max-Age; Bearer hits emit nothing") {
+    withEnv { _ =>
+      IO {
+        def probe(uri: String, cookie: Option[(String, String)] = None, bearer: Option[String] = None) =
+          val base = Request[IO](Method.GET, Uri.unsafeFromString(uri))
+          val authed = cookie.fold(base)(c => base.addCookie(c._1, c._2))
+          val withBearer = bearer.fold(authed)(t => authed.putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, t))))
+          NfFileRoutes
+            .nfAuthcheckRoutes(TokenRef, Sessions)(
+              SpecRequests.withRemote(withBearer, Some(SpecRequests.LoopbackV4))
+            )
+            .value
+            .unsafeRunSync()
+            .get
+
+        val sid = Sessions.create("logto|u", GatewaySessionStore.OriginRelayMint, "net").unsafeRunSync().sessionId
+        val name = GatewaySessionStore.CookieName
+
+        // Session rail, plain-http direct leg: slid cookie present, Secure omitted (#522).
+        val plain = probe("/api/nf-authcheck", cookie = Some((name, sid)))
+        assertEquals(plain.status, Status.NoContent)
+        val plainCookie = plain.cookies.find(_.name == name)
+        assert(plainCookie.isDefined, "a session-rail hit must slide the browser cookie")
+        val pc = plainCookie.get
+        assertEquals(pc.content, sid, "the slide re-emits the SAME session id — the value never changes")
+        assertEquals(pc.maxAge, Some(GatewaySessionStore.AbsoluteTtlSeconds), "fresh Max-Age = 30d absolute TTL")
+        assert(pc.httpOnly && pc.sameSite.contains(org.http4s.SameSite.Lax), "frozen attrs unchanged")
+        assert(!pc.secure, "#522: plain-http direct leg slide omits Secure")
+        assertEquals(pc.domain, None, "still host-only")
+        assertEquals(pc.path, Some("/"), "still Path=/")
+
+        // Session rail, https leg: the slide carries Secure.
+        val https = probe("https://console.example.test/api/nf-authcheck", cookie = Some((name, sid)))
+        val hc = https.cookies.find(_.name == name)
+        assert(hc.exists(_.secure), "https leg slide keeps Secure")
+
+        // Bearer rail: NO cookie slide (there is no session record behind it).
+        val bearerHit = probe("/api/nf-authcheck", bearer = Some(gatewayToken))
+        assertEquals(bearerHit.status, Status.NoContent)
+        assertEquals(bearerHit.cookies.find(_.name == name), None, "Bearer hits must not emit a cookie")
+      }
+    }
+  }
+
   // ── A14 lives in nebflow.core.tools.FileRefsWhitelistSpec (FileRefs is
   //    private[tools]; the gateway package cannot see it).
 

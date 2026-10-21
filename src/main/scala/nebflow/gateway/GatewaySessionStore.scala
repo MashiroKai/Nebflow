@@ -29,7 +29,7 @@ final case class SessionRecord(
   origin: String,
   boundNetworkId: String,
   createdAt: Long,
-  /** Hard ceiling, never extended (v3 :145 freezes 12h). */
+  /** Hard ceiling, never extended (30d — session TTL batch 2026-10-21, was v3 :145's 12h). */
   absoluteExpiresAt: Long,
   lastSeenAt: Long,
   /** `lastSeen + idle`; expiry is `min(absolute, sliding)`. */
@@ -69,9 +69,10 @@ final case class SessionView(
  *
  * Constant-time comparison (the `Auth.validateToken` `MessageDigest.isEqual`
  * discipline) is NOT used here, on purpose: session ids are 256-bit random
- * values living at most 12h, and the lookup is a plain `Map` hit (same as the
- * ticket stores) — there is no long-lived secret to compare against. The
- * lookup failure mode is a Map miss, not a byte comparison loop.
+ * values living at most 30d (originally 12h — the lookup-failure argument is
+ * entropy-bound, not lifetime-bound), and the lookup is a plain `Map` hit
+ * (same as the ticket stores) — there is no long-lived secret to compare
+ * against. The lookup failure mode is a Map miss, not a byte comparison loop.
  */
 class GatewaySessionStore private (
   sessionsRef: Ref[IO, Map[String, SessionRecord]],
@@ -171,11 +172,25 @@ end GatewaySessionStore
 
 object GatewaySessionStore:
 
-  /** Absolute TTL: 12h hard ceiling (v3 :145), never renewed. */
-  val AbsoluteTtlSeconds: Long = 43200L
+  /**
+   * Absolute TTL: the 30d hard ceiling (session TTL batch 2026-10-21, was
+   * v3 :145's 12h), never renewed. The value aligns with the chain's other
+   * 30d anchors — the Logto SSO `_session` cookie and the relay refresh
+   * cookie both live 30d, so an engine cookie outliving them would buy zero
+   * usability while extending the stolen-cookie exposure.
+   */
+  val AbsoluteTtlSeconds: Long = 2592000L
 
-  /** Sliding idle window (plan §2.3); capped by the absolute ceiling. */
-  val IdleTimeoutSeconds: Long = 7200L
+  /**
+   * Sliding idle window (plan §2.3), capped by the absolute ceiling. 7d
+   * (was 2h): every verified request renews it (`verifyAndTouch`), so an
+   * actively used console is never idle-kicked; a week of total inactivity
+   * is still a hard stop. The 30d − 7d gap is deliberate defense-in-depth:
+   * a session that died quietly from disuse cannot be resurrected by an
+   * attacker who later finds the stale cookie (the browser already dropped
+   * it, and the store row expired-then-gone).
+   */
+  val IdleTimeoutSeconds: Long = 604800L
 
   /** Session origins, carried verbatim from the redeemed ticket. */
   val OriginRelayMint: String = "relay-mint"
@@ -193,17 +208,24 @@ object GatewaySessionStore:
 
   /**
    * The session cookie, with the frozen attribute set (v3 :145): HttpOnly +
-   * SameSite=Lax + host-only (no `domain`) + `Path=/` + `Max-Age=43200`,
-   * plus `Secure` on the faces where the consuming browser origin is HTTPS
-   * (tunnel-marked relay legs and direct https). #522: on a plain-http
-   * direct leg (the local console, e.g. Safari at http://127.0.0.1:8080) the
-   * `Secure` flag MUST be omitted — WebKit drops Secure cookies delivered
-   * over plain http (no localhost exemption, unlike Chrome/Firefox), which
-   * silently bricked session seating on the local console: every later
-   * request (WS handshake + REST) answered 403 while the user was in fact
-   * seated. The value never changes over the session's life (sliding renewal
-   * is server-side only), so this is emitted exactly once — on the 303
-   * redemption response.
+   * SameSite=Lax + host-only (no `domain`) + `Path=/` + `Max-Age=<absolute
+   * TTL>` (today 2592000 = 30d), plus `Secure` on the faces where the
+   * consuming browser origin is HTTPS (tunnel-marked relay legs and direct
+   * https). #522: on a plain-http direct leg (the local console, e.g. Safari
+   * at http://127.0.0.1:8080) the `Secure` flag MUST be omitted — WebKit
+   * drops Secure cookies delivered over plain http (no localhost exemption,
+   * unlike Chrome/Firefox), which silently bricked session seating on the
+   * local console: every later request (WS handshake + REST) answered 403
+   * while the user was in fact seated.
+   *
+   * Emission points (session TTL batch 2026-10-21): the 303 redemption
+   * response (mint, [[nebflow.gateway.ConsoleTicketRoutes]]) AND the
+   * `GET /api/nf-authcheck` 204 when the session rail hit (the browser-side
+   * slide). The VALUE never changes over the session's life (sliding renewal
+   * is server-side) — the re-emissions only refresh the browser jar's
+   * `Max-Age`, so an actively used console never hits the cookie's fixed
+   * expiry. Both faces recompute `secure` from the consuming origin, never
+   * from a stored flag.
    */
   def newCookie(sessionId: String, secure: Boolean = true): ResponseCookie =
     ResponseCookie(
