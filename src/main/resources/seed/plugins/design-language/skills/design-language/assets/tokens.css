@@ -1,0 +1,143 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   design-language tokens.css — Stand 设计语言 token 账本
+   基准：mystand.space 官网（stand-website app/globals.css @theme + 双主题）
+   × 客户端 Sapphire Glass（web/css/base.css / sapphire.css 运行时单源）。
+
+   🔴 本文件是账本（同值镜像），不是运行时依赖：客户端 CSS 里已有同名
+   token（--color-* / --glass-* / --sapphire / --status-* / --dur-*），运行
+   时以客户端为单源；改值先改客户端，再回填本文件。--dl-* 前缀供独立
+   场景（HTML 卡、demo 页）整包引用。
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── ① 配色 · 品牌绿（官网 --color-pixel #07c160 同源；交互主色） ── */
+  --dl-primary: #07c160;          /* 主实底：发送/保存/确认/开关 on。反例：大面积装饰底 */
+  --dl-primary-hover: #06ad56;    /* 主实底 hover。反例：用 opacity 代替 */
+
+  /* ── ① 配色 · 蓝宝石（次级强调，tint 拼色底数） ── */
+  --dl-sapphire: 91 127 191;      /* rgb(var(--dl-sapphire) / α)。反例：裸写 #5b7fbf */
+
+  /* ── ① 配色 · 语义载体（只上图标/描边/底纹，不上正文字） ── */
+  --dl-error-icon: #d64545;       /* 危险。反例：红字正文 */
+  --dl-warn-icon: #b45309;        /* 警示 */
+  --dl-success-icon: #2e7d32;     /* 成功 */
+  /* 状态词字色 = --dl-text-muted（中性），禁染语义色 */
+
+  /* ── ① 配色 · 中性阶（亮；暗档在下方 media 内成对覆盖） ── */
+  --dl-bg: #f5f6f8;               /* 页面底 */
+  --dl-surface: #ffffff;          /* 卡片/弹窗实底 */
+  --dl-text-bright: #1b1e26;      /* 标题/行名。反例：color:#fff */
+  --dl-text: #3a3d45;             /* 正文/表单标签 */
+  --dl-text-muted: #717379;       /* hint/meta/占位/状态词 */
+  --dl-text-dim: #aaacb3;         /* 仅幽灵钮静息字 */
+  --dl-border: #e0e1e4;           /* hairline 边 */
+  --dl-border-light: #eeeff1;     /* 行分隔 */
+
+  /* ── ① 配色 · 玻璃 ── */
+  --dl-glass-bg: rgba(255, 255, 255, 0.55);   /* 面板底 + blur(24px) saturate(1.15) */
+  --dl-glass-blur: 24px;
+  --dl-etched-bg: rgba(0, 0, 0, 0.025);       /* 输入/嵌入面 */
+  --dl-etched-border: rgba(91, 127, 191, 0.10);
+  --dl-overlay: transparent;                  /* 弹窗背层恒透明。反例：暗化/模糊背层 */
+
+  /* ── ② 字体 ── */
+  --dl-font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif; /* 官网同栈 */
+  --dl-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* ── ② 字号阶梯（5 档；场景表见 SKILL.md §2） ── */
+  --dl-fs-title: 15px;    /* 面板标题/卡片问题行，600 */
+  --dl-fs-body: 13px;     /* 正文/标签/输入/选项，400 */
+  --dl-fs-btn: 12px;      /* 按钮，500 */
+  --dl-fs-hint: 12px;     /* hint/caption，400。反例：10px+opacity.6 */
+  --dl-fs-meta: 11px;     /* meta/徽标/小节标签，400-600。反例：10px */
+  --dl-fs-display: 20px;  /* 页面级大标题，600，-0.01em */
+
+  /* ── ③ 行高/字距 ── */
+  --dl-lh-body: 1.5;            /* 聊天/选项 1.55 */
+  --dl-lh-title: 1.3;
+  --dl-ls-label: 0.5px;         /* 11px uppercase 小节标签 */
+  --dl-ls-display: -0.01em;     /* ≥20px 标题；正文恒 0 */
+
+  /* ── ④ 圆角阶梯（8 档） ── */
+  --dl-r-badge: 4px;    /* 徽标 pill */
+  --dl-r-chip: 6px;     /* 图标钮/小 chip */
+  --dl-r-input: 8px;    /* 输入 + 面板档按钮。反例：5px 按钮 */
+  --dl-r-button: 10px;  /* 对话档按钮（发送族裁定值）/列表行面 */
+  --dl-r-card-sm: 10px; /* 行卡 */
+  --dl-r-card-md: 14px; /* 面板内卡 */
+  --dl-r-card-lg: 16px; /* 聊天浮层卡 */
+  --dl-r-shell: 20px;   /* 弹窗外壳（全站唯一弹窗圆角） */
+  --dl-r-pill: 999px;
+
+  /* ── ④ 阴影三族 ── */
+  --dl-shadow-panel:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    0 2px 8px rgba(0, 0, 0, 0.04),
+    0 8px 24px rgba(0, 0, 0, 0.06);            /* 弹窗/浮层卡。反例：单枚大 drop-shadow */
+  --dl-shadow-control:
+    inset 0 1px 0 rgba(255, 255, 255, 0.50),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
+    0 1px 3px rgba(0, 0, 0, 0.06),
+    0 2px 8px rgba(0, 0, 0, 0.04);             /* 玻璃控件（与 --glass-control-* 同构成） */
+  --dl-shadow-flat: none;                      /* 平面卡：1px hairline 承担边界 */
+
+  /* ── ⑤ 间距栅格（合法值 4/8/12/16/20/24/32） ── */
+  --dl-sp-1: 4px;
+  --dl-sp-2: 8px;     /* 控件间 gap/行内距 */
+  --dl-sp-3: 12px;    /* 卡内块距/行横距 */
+  --dl-sp-4: 16px;    /* 节间距/弹窗头横距 */
+  --dl-sp-5: 20px;    /* 弹窗体左右留白 */
+  --dl-sp-6: 24px;
+  --dl-sp-8: 32px;
+
+  /* ── ⑥ 动画 ── */
+  --dl-dur-1: 120ms;   /* 微变换（icon scale/按下） */
+  --dl-dur-2: 160ms;   /* hover 色彩/边框/底纹 */
+  --dl-dur-3: 240ms;   /* 主题/表面切换 */
+  --dl-dur-enter: 200ms;
+  --dl-ease-enter: cubic-bezier(0.16, 1, 0.3, 1); /* 入场（modalIn 家族） */
+  --dl-ease-std: cubic-bezier(0.4, 0, 0.2, 1);    /* 几何属性 */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* 中性阶暗档（GitHub-dark 同族；官网 #0d1117/#161b22/#e6edf3 为跨端参照） */
+    --dl-bg: #13161c;
+    --dl-surface: #1c1f27;
+    --dl-text-bright: #e8eaed;
+    --dl-text: #c8cad0;
+    --dl-text-muted: #81838a;
+    --dl-text-dim: #7b7e88;
+    --dl-border: #282b33;
+    --dl-border-light: #1c1f27;
+
+    --dl-glass-bg: rgba(24, 28, 38, 0.68);
+    --dl-etched-bg: rgba(255, 255, 255, 0.04);
+    --dl-etched-border: rgba(91, 127, 191, 0.08);
+
+    /* 语义载体暗档（提亮方向） */
+    --dl-error-icon: #f26b6b;
+    --dl-warn-icon: #ffa83c;
+    --dl-success-icon: #66bb6a;
+
+    /* 阴影暗档加深 */
+    --dl-shadow-panel:
+      inset 0 1px 0 rgba(255, 255, 255, 0.06),
+      0 2px 8px rgba(0, 0, 0, 0.20),
+      0 8px 24px rgba(0, 0, 0, 0.35);
+    --dl-shadow-control:
+      inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.25),
+      0 1px 3px rgba(0, 0, 0, 0.20),
+      0 2px 8px rgba(0, 0, 0, 0.15);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dl-dur-1: 0.01ms;
+    --dl-dur-2: 0.01ms;
+    --dl-dur-3: 0.01ms;
+    --dl-dur-enter: 0.01ms;
+  }
+}

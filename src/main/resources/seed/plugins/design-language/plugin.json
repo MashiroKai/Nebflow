@@ -1,0 +1,7 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "design-language",
+  "version": "1.0.0",
+  "description": "Stand 统一设计语言包——节点获得以 mystand.space 官网真实 design tokens 为基准的完整视觉规范与固定尺寸组件原型（tokens.css + components.css），任何 UI 面按档取值一次成型不跑偏。适用于开发或整改 web/ 前端页面、面板、弹窗、卡片、按钮、输入框、列表、动效、界面文案等任务；按 token 用途表取值，按组件尺寸档（sm/md/lg）取形。内含 skill：design-language（设计语言规范：配色/字体阶梯/圆角阴影/间距栅格/动画/组件原型/文案 tone，逐 token 给值+用途+反例）。不适用于后端接口与 Scala 服务端；只设计不实现的规格书流程另配 design-spec。组件面：无 mcp.json、无工具扩展。",
+  "author": {"name": "Nebflow"}
+}

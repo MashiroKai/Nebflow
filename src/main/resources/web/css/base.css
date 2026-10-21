@@ -147,6 +147,18 @@ body {
 :root {
   --panel-ease: cubic-bezier(0.32, 0.72, 0, 1);
   --panel-duration: 0.32s;
+
+  /* ── 设计语言动效 token（design-language 批 2026-10-21；账本：
+     seed/plugins/design-language/skills/design-language/）──
+     --dur-1 微变换（icon scale/按下）· --dur-2 hover 色彩/边框/底纹（官网
+     160ms 同源）· --dur-3 主题与表面切换（官网 240ms 同源）· 入场 200ms
+     modalIn 家族（--ease-enter）· 几何属性用 --ease-std（官网
+     cubic-bezier(0.4,0,0.2,1) 同源）。transition 禁 all、逐属性列出。 */
+  --dur-1: 120ms;
+  --dur-2: 160ms;
+  --dur-3: 240ms;
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-std: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* ---------- Sidebar Collapse ---------- */

@@ -501,7 +501,10 @@
   height: 16px;
 }
 
-/* ---------- Settings Modal (centered popup, replaces the sidebar panel) -- */
+/* ---------- Settings Modal (centered popup, replaces the sidebar panel) --
+   设计语言批 2026-10-21：宽度 560 = 弹窗 md 档（账本 design-language §7）；
+   头部内距归栅格 12/16/20（与 #secrets-modal / #search-modal 同值——弹窗头
+   全站一档），标题 15px/600 = 面板标题档。 */
 #settings-modal {
   display: none;
   border-radius: 20px;
@@ -510,7 +513,7 @@
   max-height: 85vh;
   padding: 0;
   overflow: hidden;
-  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: modalIn 0.2s var(--ease-enter);
 }
 #settings-overlay.on #settings-modal {
   display: flex;
@@ -520,7 +523,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 14px 12px 20px;
+  padding: 12px 16px 12px 20px;
   border-bottom: 1px solid var(--glass-border);
   flex-shrink: 0;
 }
@@ -553,7 +556,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 14px 12px 20px;
+  padding: 12px 16px 12px 20px;
   border-bottom: 1px solid var(--glass-border);
   flex-shrink: 0;
 }
