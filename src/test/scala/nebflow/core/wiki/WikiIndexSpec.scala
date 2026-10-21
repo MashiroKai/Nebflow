@@ -190,4 +190,64 @@ body links [[real]]"""
     assertEquals(WikiIndex.extOf("paper.PDF"), ".pdf")
     assertEquals(WikiIndex.extOf("noext"), "")
   }
+
+  // ───────────── graph summary (wiki-graph redesign §5) ─────────────
+
+  test("WI-14 summary: first paragraph after H1, inline markup stripped, links to text") {
+    val doc = WikiIndex.parseDoc(
+      "a.md",
+      """# Auth review
+        |
+        |Read **this** note and `code`, see [[glossary|the glossary]] and [md link](x.md) and ![[pic.png]].
+        |
+        |## Next section
+        |Not the first paragraph — the heading above bounded the scan window.
+        |""".stripMargin
+    )
+    assertEquals(
+      doc.summary,
+      Some("Read this note and code, see the glossary and md link and pic.png.")
+    )
+  }
+
+  test("WI-15 summary: quoted/list paragraphs read like prose; fenced code never contributes") {
+    val doc = WikiIndex.parseDoc(
+      "a.md",
+      """# T
+        |> Quoted first line
+        |> second quoted line
+        |
+        |```scala
+        |val insideFence = "[[not-a-summary]]"
+        |```
+        |after fence paragraph""".stripMargin
+    )
+    assertEquals(doc.summary, Some("Quoted first line second quoted line"))
+  }
+
+  test("WI-16 summary: no H1 ⇒ none; truncated at 140 chars without splitting a code point") {
+    val noH1 = WikiIndex.parseDoc("a.md", "plain text, no heading at all")
+    assertEquals(noH1.summary, None)
+    val long = "# T\n\n" + "字" * 200
+    val doc = WikiIndex.parseDoc("a.md", long)
+    val s = doc.summary.get
+    assertEquals(s.length, 140) // 139 kept chars + ellipsis, all inside the cap
+    assert(s.endsWith("…"))
+    assertEquals(WikiIndex.SummaryMaxChars, 140)
+  }
+
+  test("WI-17 nodeJson carries summary; nodes without one emit null") {
+    val scan = WikiIndex.buildVaultScan(
+      "proj", "self",
+      List(
+        "a.md" -> "# A\n\nFirst paragraph here with [[b]] reference.",
+        "b.md" -> "no heading in b"
+      )
+    )
+    val jsons = scan.nodes.map(WikiIndex.nodeJson)
+    val a = jsons.find(_.hcursor.get[String]("rel").toOption.contains("a.md")).get
+    assertEquals(a.hcursor.get[String]("summary").toOption, Some("First paragraph here with b reference."))
+    val b = jsons.find(_.hcursor.get[String]("rel").toOption.contains("b.md")).get
+    assertEquals(b.hcursor.get[Option[String]]("summary").toOption, Some(None))
+  }
 end WikiIndexSpec
