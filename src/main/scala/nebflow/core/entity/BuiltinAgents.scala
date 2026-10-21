@@ -239,6 +239,11 @@ object BuiltinAgents:
 - Report visually: use Card for status and results instead of prose.
 - Keep the text part of a report terse - facts and decisions only.
 
+## Plugins
+- What: a plugin is a packaged capability installed on the instance and mounted by project dispatchers - skill knowledge injected into dispatched node briefs, plus optional MCP servers and tool grants. You never invoke a plugin directly; you declare the capability in the dispatch text and the project side mounts it.
+- When (documents): deliverables that belong to a project's knowledge base (reports, reviews, design docs, investigation records) go out under visual-report and its wiki-docs discipline - Obsidian-format vault documents with cross-document citations, every concept explained or cited at first occurrence; charts, diagrams and data visualizations route to visual-report's scene skills. Name the capability in the dispatch text (e.g. "visual-report / wiki-docs discipline") - never restate the discipline's rules in the brief.
+- Boundary: plugins live in project sessions only - your own session has no plugin face, a contextless delegate cannot mount any, and engine built-ins (auth, sessions, routing) are never replaced by a plugin.
+
 ## Lifecycle
 1. Intent understood => an existing project (workspace path aligned with the intent) gets a Delegate dispatch (project=<name>); none => Project first.
 2. Deliverable-producing tasks (deck / video / image set / doc layout / finished report) MUST land in a project with the matching capability - never a one-off dispatch (no project face, no plugins, nowhere to archive). Name the required plugin capability in the dispatch text (e.g. deck / doc layout / video); the project side mounts it, you only declare the intent.

@@ -1,14 +1,15 @@
 # visual-report — 插件使用指导（Plugin.md）
 
-> 本文件是 visual-report 插件的**包根使用指导件**（Plugin.md）：**插件分配时注入给 agent 的提示词 = 本文件内容**（作者令 2026-10-21「plugin.md = 插件必要文件机制」批；SKILL.md 回归按需查阅件——面板胶囊点击打开，不再随分配整文注入）。选配判定仍看 plugin.json 的 description；逐 skill 作业指令见各 `skills/<skill>/SKILL.md`（按需查阅）。文内路径均为**自包根的文件相对形式**（不使用 `${SKILL_DIR}`）。
+> 本文件是 visual-report 插件的**包根使用指导件**（Plugin.md）：装载器不注入本文件、不参与选配；维护者与按需 Read 的节点/用户以此为包内地图（用户＋模型可见的按需 Read 面）。选配判定只看 plugin.json 的 description；作业指令在各 `skills/<skill>/SKILL.md`（spawn 时全文注入）。文内路径均为**自包根的文件相对形式**（不使用 `${SKILL_DIR}`，该替换仅发生在 SKILL.md 注入文本）。
 
 ## 1. 速览
 
-visual-report 是可视化报告包：节点按场景出图与人读报告。共 **17 个场景 skill**，外加注入面体例件 `skills/visual-report/SKILL.md`、全场景公共规范 `skills/core/SKILL.md` 与共享动效模块 `skills/motion-toolkit/`。
+visual-report 是可视化报告包：节点按场景出图与人读报告。共 **17 个场景 skill**，外加注入面体例件 `skills/visual-report/SKILL.md`、全场景公共规范 `skills/core/SKILL.md`、共享动效模块 `skills/motion-toolkit/` 与项目文档库纪律 skill `skills/wiki-docs/`（含条款校验器 scripts/）。
 
 - **选场景**：先查 §5 总目录表 ＋ §6 决策树（拿到任务先做出口判定，不为图而图）。
 - **公共规范**：`skills/core/SKILL.md`（场景 skill 必读；通用规则的唯一来源）。
 - **样张与验收基准**：`skills/core/references/demos/`（场景示例落此）。
+- **文档批纪律**：凡交付属于项目知识库的 markdown/HTML 文档（报告/设计稿/复盘），必读 `skills/wiki-docs/SKILL.md` 三条强制条款，交付前跑 `skills/wiki-docs/scripts/check_wiki_docs.py` 校验。
 - **冲突裁决**：图表生成层各场景表述不一致时以 `skills/core/SKILL.md` 为准；人读交付体例以既有 visual-report skill 为准。
 
 ## 2. 安装与启用
@@ -44,8 +45,9 @@ visual-report/           （包根）
     geo-map/
     astronomy/
     finance/
-    network/
+    network/             ← 场景 skill
     motion-toolkit/      ← 共享动效模块（Remotion 视频 / three.js 交互 / mpl_anim 降级；SKILL.md + scripts/）
+    wiki-docs/           ← 项目文档库纪律（docs/ vault、三条强制条款、五套编排包；SKILL.md + scripts/check_wiki_docs.py 校验器）
 ```
 
 ## 4. 工具验证
@@ -76,6 +78,7 @@ visual-report/           （包根）
 | finance 金融行情 | finance/SKILL.md | mplfinance（K线/量价/MA）· pandas · matplotlib | 行情复盘报告（K线主图 + 辅助图；模拟数据「首屏+图内」双声明） | core/references/demos/finance.md |
 | network 图网络 | network/SKILL.md | networkx（建图/度量）· pyvis（交互 HTML，`in_line` 内联）· matplotlib | 网络分析报告（静态布局 + 结构度量 + 交互探索） | core/references/demos/network.md |
 | **motion-toolkit**（共享动效模块，非场景） | motion-toolkit/SKILL.md | Remotion（视频栈）· three.js（交互栈）· mpl_anim + imageio-ffmpeg（降级动画栈） | 非场景：MP4 视频 / 自包含交互 HTML / MP4·GIF 动画的**统一渲染封装与降级链**（环境说明唯一来源） | 样张 core/references/demos/education-motion.md |
+| **wiki-docs**（项目文档库纪律，非场景） | wiki-docs/SKILL.md | check_wiki_docs.py（Python 3 stdlib，零依赖；`--graph` 导出图谱数据） | 项目知识库文档批的强制条款（Obsidian 格式 / 论文式引用 / 概念首现必释或必引用）＋ vault/附件/五套编排包体例 | — |
 
 > **motion-toolkit 被引用方**：education（动效层三形态）、mathematics（mpl_anim 出片）、architecture（three.js 体块交互）；其余场景出现动效/交互 3D 需求时同样只引用不复制。
 
