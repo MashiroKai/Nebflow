@@ -1385,42 +1385,13 @@ body.mobile-layer #usage-close {
   display: none !important;
 }
 
-/* ── 附件条 v3：in-flow 独立流内行（样张 v2 p5 已批「很好」，v3 沿用）──
-   附件 chip 不再 overlay 叠字（44px 让位带退役）：#attachment-preview 在
-   #input-wrap（column flex）内改 static 首行 —— chip 恒完整显示，溢出收
-   「+N」（floatController 折叠腿），与输入文字零重叠零补偿耦合。 */
-body.mobile-layer #input-wrap #attachment-preview {
-  position: static;
-  top: auto;
-  left: auto;
-  right: auto;
-  max-height: none;
-  overflow: hidden; /* 折叠态裁溢出（+N 计数腿展开后改横向滚动） */
-  flex-wrap: nowrap;
-  margin-bottom: 6px;
-  pointer-events: auto;
-}
-body.mobile-layer #input-wrap.has-attachments #input { padding-top: 0; }
-body.mobile-layer #input-wrap #attachment-preview.mh-att-expanded {
-  overflow-x: auto;
-}
-body.mobile-layer .mh-att-more {
-  flex: none;
-  min-width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--glass-etched-bg, rgba(0, 0, 0, 0.025));
-  border: 1px solid var(--glass-border);
-  color: var(--color-text-muted, #8b8e96);
-  font-size: 11px;
-  padding: 0 7px;
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-}
-body.mobile-layer .mh-att-collapsed { display: none; }
+/* ── 附件条 v4（uifix 批 2026-10-22）：基座上移 input.css，手机层只留差异 ──
+   基座 = in-flow 独立行 + 28px 统一 chip 语言 + .mh-att-more/.mh-att-collapsed
+   （input.css 同批；作者令「附件放在对话框上面，不要遮挡文字」桌面层同形态）。
+   手机层差异只剩一条：**单行 + 「+N」折叠**（v3 已批形态，纵向空间稀缺 ——
+   桌面层为换行多行）。折叠腿单点 = js/attachStripFold.js（观察链桌面启动即挂、
+   两层共用；手机层拆装零接管，floatController 批注同源）。 */
+body.mobile-layer #attachment-preview { flex-wrap: nowrap; }
 
 /* ── v3 任务带退场：#task-list 自动浮条由任务浮层接替（v3⑤）────────────
    面板 face = mh-tpanel（数据面同源），r4 的顶部自动浮条不再显示。 */

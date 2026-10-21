@@ -5,7 +5,7 @@ import state, { LS_HISTORY_KEY } from './state.js';
 import { key } from './branding.js';
 import { activeView, setActiveView, chatViews, findViewBySessionId } from './chatView.js';
 import { sendWs, onReconnect, onMessage } from './ws.js';
-import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview, renderAskBubble, renderSkillBubble, cancelToolStreamRAF, refreshSendButtonState } from './chat.js';
+import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview, renderAskBubble, renderSkillBubble, cancelToolStreamRAF, refreshSendButtonState, clearAttachmentStripAnimated } from './chat.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll } from './utils.js';
 import { saveMsg } from './persistence.js';
 import { saveInputDraft } from './sidebar.js';
@@ -251,7 +251,10 @@ export function send(resendId) {
     input.value = '';
     input.style.height = 'auto';
     v.pendingAttachments = [];
-    v.dom.attPreview.innerHTML = '';
+    // uifix 批 2026-10-22：发送族清空 = 渐隐退场动画（chat.js 清空动画单点；
+    // 旧 innerHTML='' 瞬时蒸发退役）。随后的 renderQuoteStrip（同空数组）在
+    // renderAttachmentPreview 内命中「清空动画在播 + 空数据」闸，不打断动画。
+    clearAttachmentStripAnimated({ attPreviewEl: v.dom.attPreview });
     renderQuoteStrip({ attPreviewEl: v.dom.attPreview, attachments: v.pendingAttachments }); // quote-message 一期：排队后引用 chip 随 pending 清空
     saveInputDraft(v.sessionId);
     setTimeout(() => { v.isSending = false; }, 300);
@@ -371,7 +374,9 @@ export function send(resendId) {
   input.value = '';
   input.style.height = 'auto';
   v.pendingAttachments = [];
-  v.dom.attPreview.innerHTML = '';
+  // uifix 批 2026-10-22：发送消费 = 渐隐退场动画（同排队腿；renderQuoteStrip 的
+  // 空数据重渲染在 renderAttachmentPreview 内命中「动画在播」闸不打断）。
+  clearAttachmentStripAnimated({ attPreviewEl: v.dom.attPreview });
   renderQuoteStrip({ attPreviewEl: v.dom.attPreview, attachments: v.pendingAttachments }); // quote-message 一期：发送完成 = 引用态消费（清空时机之一，spec §2.2）
   // Immediately clear the draft for this session so it is not restored after refresh
   saveInputDraft(v.sessionId);
@@ -733,7 +738,8 @@ function enqueueOfflineMessage(v, text) {
   input.value = '';
   input.style.height = 'auto';
   v.pendingAttachments = [];
-  v.dom.attPreview.innerHTML = '';
+  // uifix 批 2026-10-22：离线入队消费 = 渐隐退场动画（同发送腿）。
+  clearAttachmentStripAnimated({ attPreviewEl: v.dom.attPreview });
   renderQuoteStrip({ attPreviewEl: v.dom.attPreview, attachments: v.pendingAttachments }); // 引用 chip 随 pending 清空（同发送/排队腿）
   saveInputDraft(v.sessionId);
   setTimeout(() => { v.isSending = false; }, 300);
@@ -1296,10 +1302,9 @@ export function initInput(view) {
   // 纯引用帧闸的提示**不再设独立提示行**：旧实现插入 .ref-gate-hint div（#input
   // 之前的文档流位），blocked 时在附件 chip 下方另起一行渲染「请附一句话后发送」
   // ——作者裁定提示应落在**原输入框自己的 placeholder 位**（updateInputPlaceholder
-  // 的 isRefOnlyFrame 分支），本元素整个移除。原流位的结构角色（把 textarea 盒压到
-  // 附件条 chip 命中带之下，防全宽引用 chip 吃掉输入框中央点击，fwdguard B1/B2 实测
-  // 回归面）由既有 `#input-wrap.has-attachments #input { padding-top: 44px }`
-  // （css/input.css）承担——blocked 时 chip 必在场 ⇒ has-attachments 必开，几何等价。
+  // 的 isRefOnlyFrame 分支），本元素整个移除。（旧注里「结构角色由 44px 让位带
+  // 承担」一段已随 uifix 批 2026-10-22 附件条改 in-flow 独立行失效 —— overlay
+  // 命中带不复存在，chip 与文字区完全分离，无点击吃面问题。）
   // 闸的视觉态 = 发送键禁用（syncRefOnlyGate）+ placeholder 文案（下方两个 helper）。
 
   // Auto-resize textarea + 同步纯引用帧闸（文本变化会改变闸判据）。
@@ -1345,9 +1350,11 @@ export function initInput(view) {
    *  pendingAttCount in-flight counter: this runs from the attPreview
    *  MutationObserver, which fires after addFileAttachment has already
    *  decremented the counter back to 0, so the counter can never drive the
-   *  has-attachments class at steady state — the padding-top compensation
-   *  stayed dead and the overlay strip swallowed every click aimed at the
-   *  textarea (composer-typing fix 2026-10-18). */
+   *  has-attachments class at steady state (composer-typing fix 2026-10-18).
+   *  uifix 批 2026-10-22：strip 改 in-flow 独立行后 44px padding 补偿随 overlay
+   *  退役，本函数仍是 strip 重建的**占位符/类同步单点**（has-attachments 类保留
+   *  为状态钩子，CSS 消费面已零）。发送清空动画窗内（chat.js，~160ms）计数含
+   *  退场 chip，落定后由本观察器再同步一次 —— 短暂窗口零行为影响。 */
   function updateInputPlaceholder() {
     if (voiceActive) { input.placeholder = t('input.ph.listening'); return; }
     const n = view.dom.attPreview ? view.dom.attPreview.childElementCount : 0;
