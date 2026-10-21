@@ -608,25 +608,82 @@ body.canvas-open.canvas-overlay #canvas-panel {
 /* Canvas header — sits inside the glass panel container.
    No border/margin of its own; the panel provides the glass card.
    A bottom border separates header from tab content, like sidebar-divider. */
+/* ── UI 批⑨：卡头毛玻璃胶囊（作者令 2026-10-21 第九件）────────────────
+   标题头从「实条」改「悬浮胶囊 frosted pill」：
+   · 浮层化 —— absolute 悬于面板顶部居中，#canvas-content 不再为 header 预留
+     高度（顶满 #canvas-slide），文字全高滚动、从胶囊底下穿过；
+   · 穿底渐隐 —— 复用 .scroll-under-glass 裙边（index.html 类挂在 header 上），
+     几何按胶囊放宽（左右各外延 18px 盖住圆角端），tint/暗色沿用工具类缺省；
+   · 手势面 —— 胶囊本体 touch-action:none + JS 指针手势（换卡/关卡/右键引用，
+     canvas.js initCardHeadGestures），跟手位移/按压形走 --head-* 变量；
+   · 层关系 —— 胶囊 = canvas 面板内浮层（面板裁剪盒内 z-30），与消息区 header
+     裁剪契约（uifix ⑦ #chat margin-top）无涉；与 deck 环卡层/fab（body 级
+     z-250）正交；③④快照/翻动手感作用于 deck-layer，互不触碰。
+   布局统筹（与⑧并存）：胶囊内 = [t-icon][t-dot][t-name][pop 钮]；deck fab =
+   右缘独立 body 级浮钮（top 10 / right 12 不动）；手机卡头胶囊 = 通栏变体
+   （mobileLayer.css §⑨：[title][count][pop][close]）。 */
 .canvas-header {
-  position: relative;
+  position: absolute;
+  top: 10px;
+  left: 50%;
   z-index: 30;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 16px;
+  justify-content: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: min(76%, calc(100% - 124px));   /* 右缘给 deck fab 留位 */
+  padding: 6px 8px 6px 14px;
   margin: 0;
-  border-radius: 0;
-  border: none;
-  border-bottom: 1px solid var(--glass-border);
-  background: transparent;
+  border-radius: 999px;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   color: var(--color-frame-text-bright);
   font-size: 14px;
   font-weight: 500;
-  flex-shrink: 0;
-  box-shadow: none;
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),
+    0 2px 8px var(--glass-control-shadow);
+  /* 手势跟手位移/按压形（JS 写变量；静止恒等）。 */
+  --head-dx: 0px;
+  --head-dy: 0px;
+  --head-scale: 1;
+  transform: translateX(-50%) translate3d(var(--head-dx), var(--head-dy), 0) scale(var(--head-scale));
+  transition: transform 0.18s ease, filter 0.18s ease, box-shadow 0.18s ease;
+  touch-action: none;   /* 分区契约：胶囊手势面不劫持内容滚动（spec CC7） */
 }
+/* 按压触感（B：按住即有）——scale + 亮度反馈 */
+.canvas-header.is-pressed {
+  --head-scale: 0.97;
+  filter: brightness(0.9);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 2px var(--glass-control-glow),
+    0 1px 4px var(--glass-control-shadow);
+}
+/* 拖动中：位移 1:1 跟手（松手回弹走上面的 transition） */
+.canvas-header.is-dragging { transition: none; }
+
+/* ⑨ 穿底渐隐：胶囊裙边几何按胶囊放宽（工具类 left/right:0 → 外延 18px），
+   裙高收 24px（贴胶囊矮身）；tint/暗色档沿用 scrollUnderGlass.css 缺省。 */
+.canvas-header.scroll-under-glass { --sug-fade: 24px; --sug-blur: 10px; }
+.canvas-header.scroll-under-glass::after { left: -18px; right: -18px; }
+
+/* 桌面态胶囊内容（原 46px 实条规则退役）：高度由内容撑，pop 钮随行。 */
+body:not(.mobile-layer) .canvas-header {
+  height: auto;
+  padding: 6px 8px 6px 14px;
+}
+body:not(.mobile-layer) .canvas-header .canvas-tab-bar,
+body:not(.mobile-layer) .canvas-header .canvas-close-btn {
+  display: none;
+}
+/* .canvas-title 族规则在原位（下方「常态头 v2①」段），本段不重复。 */
 /* (Header ::before bump is defined later with the panel drag-handle styles) */
 
 /* Canvas close button */
@@ -653,12 +710,13 @@ body.canvas-open.canvas-overlay #canvas-panel {
   height: 10px;
 }
 
-/* Canvas content area — follows header in normal flow.
-   No margin-top hack needed — flex stacking handles spacing. */
+/* Canvas content area — fills the whole slide.
+   UI 批⑨：header 已浮层胶囊化，内容区不再为 header 预留高度（margin-top 归零），
+   文字全高滚动、从胶囊底下穿过 + 裙边渐隐。 */
 #canvas-content {
   flex: 1;
   overflow: hidden;
-  margin-top: 4px;
+  margin-top: 0;
   padding: 0 0 8px;
   display: flex;
   flex-direction: column;
@@ -1109,16 +1167,8 @@ body.deck-look-v3 {
 
 /* ── 常态头（v2①）：桌面态标签行退役 → 居中标题（兼作叠卡前卡的卡顶名称条）。
    标签条/关闭钮 DOM 保留（数据模型、恢复管线与移动层仍引用），仅桌面隐藏。
-   移动层（body.mobile-layer）有自己的头部形态，零触碰。 */
-body:not(.mobile-layer) .canvas-header {
-  justify-content: center;
-  height: 46px;
-  padding: 0 16px;
-}
-body:not(.mobile-layer) .canvas-header .canvas-tab-bar,
-body:not(.mobile-layer) .canvas-header .canvas-close-btn {
-  display: none;
-}
+   移动层（body.mobile-layer）有自己的头部形态，零触碰。
+   UI 批⑨：46px 实条规则整块退役 —— 胶囊化形态/桌面显隐并入 L611 §⑨ 单一来源。 */
 .canvas-title {
   display: flex;
   align-items: center;

@@ -1301,6 +1301,50 @@ body.mobile-layer .mobile-card-close svg {
 body.mobile-layer .mobile-card-close:active {
   transform: scale(0.9);
 }
+/* ── UI 批⑨：手机卡头胶囊（通栏变体）+ 长按触感 + 浮出引用钮（作者令 2026-10-21）
+   桌面胶囊（split.css §⑨）为居中小胶囊；手机卡片层通栏化（left/right 定位，
+   保留 --head-* 跟手位移变量链）。手势（navController）：无按压前置 —— 头上
+   直滑换卡（纵）/关卡（横）；长按 450ms 触感（is-longpress）+ 浮出引用钮
+   （.mobile-card-ref-btn，点击走 canvas.js quoteActiveCardRef 同一引用通路）。 */
+body.mobile-layer #canvas-panel .canvas-header {
+  left: 10px;
+  right: 10px;
+  width: auto;
+  max-width: none;
+  top: 8px;
+  padding: 6px 8px 6px 12px;
+  transform: translate3d(var(--head-dx, 0px), var(--head-dy, 0px), 0) scale(var(--head-scale, 1));
+}
+body.mobile-layer #canvas-panel .canvas-header.is-longpress,
+body.mobile-layer #canvas-panel .canvas-header.is-pressed {
+  --head-scale: 0.97;
+  filter: brightness(0.9);
+}
+/* 长按浮出引用钮：固定定位（视口坐标，JS 落点），玻璃胶囊钮 + 弹入动画。 */
+body.mobile-layer .mobile-card-ref-btn {
+  position: fixed;
+  z-index: 260;
+  padding: 8px 18px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    0 4px 14px rgba(0, 0, 0, 0.22);
+  color: var(--color-frame-text, #e6e9ef);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  animation: nf-cardref-pop 0.16s ease;
+  touch-action: manipulation;
+}
+body.mobile-layer .mobile-card-ref-btn:active { transform: scale(0.94); }
+@keyframes nf-cardref-pop {
+  from { opacity: 0; transform: translateY(6px) scale(0.9); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
 /* 页签栏区/底缘带：手势触控面（见 canvasGestures.js 三带划分）。 */
 body.mobile-layer #canvas-panel .mobile-canvas-edgezone {
   position: absolute;

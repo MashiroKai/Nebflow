@@ -5,13 +5,18 @@
 // 相应代码（openCardView / closeCardView / 长按事件 nf:mobile-canvas-longpress）
 // 已删净。r2 手势面：
 //   · 横滑（|dx| 越阈、横意图占优）→ 文档卡片间切换（docTabs 相邻激活）；
-//   · 页签栏带 / 底缘带上滑 → 收起整叠卡片层（closeCanvas —— 文档保留在页签
-//     数据模型里，bar「画板」键或再次 pop 文档即可重现；最后一张卡经卡片头 X
-//     关闭时由 closeTab 的末页签语义自动收层）；
+//   · 底缘带上滑 → 收起整叠卡片层（closeCanvas —— 文档保留在页签数据模型里，
+//     bar「画板」键或再次 pop 文档即可重现；最后一张卡经卡片头 X 关闭时由
+//     closeTab 的末页签语义自动收层）；
 //   · 单卡关闭 = 卡片头 X（navController.closeCard）。
+// UI 批⑨（作者令 2026-10-21）：卡片头带（.canvas-header 胶囊）手势整带移交
+// navController 卡头胶囊 —— 直滑上下=换卡、左右=关卡、长按=引用钮（无按压
+// 前置）。本控制器对 header 带全面让位（不收层、不切卡、不跟手位移），
+// 「上滑收层」只剩底缘带一条通路；⑨ 胶囊换卡取代了旧「头上滑收层」语义。
 //
 // 实现取 Pointer Events（触屏/鼠标统一）。手势区分三带，互不劫持（r1 口径不变）：
-//   1. 卡片头带（.canvas-header）            → touch-action:none；上滑＝收层。
+//   1. 卡片头带（.canvas-header）            → touch-action:none；⑨ 起整带移交
+//      卡头胶囊手势（navController：直滑换卡/关卡/长按引用钮），本控制器不碰。
 //   2. 底缘上滑带（面板底部 40px，iOS home-indicator 同位）→ touch-action:none。
 //   3. 内容区（#canvas-content）             → touch-action:pan-y：纵向滚动归
 //      浏览器，横向意图交给本控制器切卡片（不抢纵向滚动）。
@@ -92,8 +97,8 @@ function bindGestures() {
         g.intent = Math.abs(dx) > Math.abs(dy) * 1.4 ? 'h' : 'v';
       }
     }
-    // 上滑跟手（卡片头/底缘两带）：面板整体上移，松手判定。
-    if (g.intent === 'v' && dy < 0 && (g.zone === 'header' || g.zone === 'edge')) {
+    // 上滑跟手（底缘带；⑨ 起卡头带让位给胶囊换卡手势）：面板整体上移，松手判定。
+    if (g.intent === 'v' && dy < 0 && g.zone === 'edge') {
       const follow = Math.max(-MAX_FOLLOW, dy);
       const slide = slideEl();
       if (slide) {
@@ -123,16 +128,17 @@ function bindGestures() {
     g = null;
     resetSlide();
 
-    // 上滑收层：卡片头带或底缘带，纵向意图，位移越阈（快速轻扫或长距拖拽）。
-    if ((zone === 'header' || zone === 'edge') && intent === 'v' && dy < -CLOSE_THRESHOLD) {
+    // 上滑收层：底缘带（⑨ 起卡头带移交胶囊换卡手势，不再收层）。
+    if (zone === 'edge' && intent === 'v' && dy < -CLOSE_THRESHOLD) {
       logEvent('cards-collapse', { via: 'swipe' });
       closeCanvas();
       return;
     }
     // 横滑切卡片：横意图、位移越阈、时限内；内容区起步且目标非交互控件。
+    // 卡头带整带让位（⑨ 胶囊手势 owns：横滑=关卡，navController）。
     // pointercancel（纵向滚动接管）时若横意图已定且位移足额，同样判切 ——
     // 浏览器吞掉后续 move 不影响已成立的横滑判定。
-    if (intent === 'h' && Math.abs(dx) >= CARD_SWITCH_PX && (dt < 900 || cancelled) && !isInteractiveTarget(e.target)) {
+    if (zone !== 'header' && intent === 'h' && Math.abs(dx) >= CARD_SWITCH_PX && (dt < 900 || cancelled) && !isInteractiveTarget(e.target)) {
       switchCard(dx < 0 ? 1 : -1); // 左滑＝下一张卡，右滑＝上一张卡（iOS 同向）
     }
   };

@@ -2929,6 +2929,125 @@ function bindDeckInput() {
 
 // ── Initialization ─────────────────────────────────────────
 
+// ═════════════════════════════════════════════════════════════════════════
+// UI 批⑨（作者令 2026-10-21）卡头毛玻璃胶囊 · 桌面手势集
+//
+// 形态（split.css §⑨）：.canvas-header 浮层胶囊（absolute top 10 居中 + 玻璃
+// backdrop + .scroll-under-glass 裙边），#canvas-content 顶满全高 —— 文字从
+// 胶囊底下穿过渐隐。胶囊手势面 touch-action:none，与内容区滚动天然分区
+// （手势只绑在胶囊元素上；内容滚动发生在 pane 内部滚动器，互不劫持，CC7）。
+//
+// 四链路（B）：
+//   按住 = 按压触感（.is-pressed → scale .97 + brightness，CSS）；
+//   按住上滑/下滑 = 换卡 —— 与堆叠视图换卡同语义：同环（deckBuildRing，
+//     ring[0]=active）、同向（下滑 dy>0 = 下一张，deck 竖拖/滚轮同规）、
+//     同阈（轴锁 8px 同 DECK_AXIS_LOCK_PX 档；释放 |dy|>48 换一张）；
+//   左右滑 = 关闭卡片 —— 与 deck 划走关闭同语义（closeTab 共核），释放
+//     |dx|>64 关活动页签；
+//   右键 = 引用 —— 复用既有 canvas-tab-context-menu 形态（showCanvasRefMenu）；
+//     deck 开着时与面板菜单同款 actions（关闭/关闭其他），stopPropagation 防
+//     面板级菜单重复弹。
+// 跟手反馈：--head-dx/--head-dy 变量（CSS transform 消费），拖动中 is-dragging
+// 关过渡 1:1 跟手，松手回弹 + 评估阈值。钮群（pop/close/merge/fab）closest
+// 直通，永不吞点击。
+// ═════════════════════════════════════════════════════════════════════════
+
+/** 胶囊手势阈值（轴锁与 deck 同档；换卡/关卡阈给手势释放档）。 */
+const CARDHEAD_AXIS_LOCK_PX = 8;
+const CARDHEAD_SWITCH_PX = 48;
+const CARDHEAD_CLOSE_PX = 64;
+
+/** 换卡邻位：deck 同环同序（ring[0]=active）——下滑(+1)=下一张、上滑(-1)=上一张
+ *  （环绕）。单页签（环长 1）不换。 */
+function cardHeadRingNeighbor(delta) {
+  const ring = deckBuildRing();
+  if (ring.length < 2) return null;
+  return delta > 0 ? ring[1] : ring[ring.length - 1];
+}
+
+/** 桌面胶囊手势装配（initCanvas 一次；卡窗态同挂 —— 卡头=卡窗「合并」钮行）。
+ *  手机层（body.mobile-layer）整腿让位：卡头手势归 navController 卡头胶囊
+ *  （直滑换卡/关卡 + 长按引用钮），双绑会互相覆盖激活页签（首轮实测）。 */
+function initCardHeadGestures() {
+  const hdr = /** @type {HTMLElement|null} */ (document.querySelector('#canvas-panel .canvas-header'));
+  if (!hdr) return;
+  const flags = /** @type {any} */ (hdr);
+  if (flags._cardheadGestures) return;
+  flags._cardheadGestures = true;
+  const isMobileLayer = () => document.body.classList.contains('mobile-layer');
+  /** @type {{id: number, x0: number, y0: number, dx: number, dy: number, axis: string|null, moved: boolean}|null} */
+  let g = null;
+  const reset = () => {
+    hdr.classList.remove('is-pressed', 'is-dragging');
+    hdr.style.setProperty('--head-dx', '0px');
+    hdr.style.setProperty('--head-dy', '0px');
+  };
+  hdr.addEventListener('pointerdown', (e) => {
+    if (isMobileLayer()) return;
+    if (e.button !== 0) return;
+    if (/** @type {Element} */ (e.target).closest('button')) return;   // 钮群直通
+    g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0, axis: null, moved: false };
+    try { hdr.setPointerCapture(e.pointerId); } catch { /* 已释放 */ }
+    hdr.classList.add('is-pressed');                                   // 按压触感（按住即有）
+  });
+  hdr.addEventListener('pointermove', (e) => {
+    if (isMobileLayer() || !g || e.pointerId !== g.id) return;
+    g.dx = e.clientX - g.x0;
+    g.dy = e.clientY - g.y0;
+    if (!g.axis && (Math.abs(g.dx) > CARDHEAD_AXIS_LOCK_PX || Math.abs(g.dy) > CARDHEAD_AXIS_LOCK_PX)) {
+      // 主导轴锁（deck 同规：|dx|>|dy| 取横，平局取纵 —— 纵=非破坏换卡）
+      g.axis = Math.abs(g.dx) > Math.abs(g.dy) ? 'x' : 'y';
+      g.moved = true;
+      hdr.classList.remove('is-pressed');   // 拖动态松开按压形（跟手位移接管）
+      hdr.classList.add('is-dragging');
+    }
+    if (g.axis === 'x') hdr.style.setProperty('--head-dx', Math.max(-18, Math.min(18, g.dx)) + 'px');
+    else if (g.axis === 'y') hdr.style.setProperty('--head-dy', Math.max(-12, Math.min(12, g.dy)) + 'px');
+  });
+  const finish = (e) => {
+    if (isMobileLayer() || !g || e.pointerId !== g.id) return;
+    const { dx, dy, axis, moved } = g;
+    g = null;
+    reset();
+    if (!moved) return;                                   // 点击界内：零动作（钮群已在直通）
+    const entry = activeTabId ? tabs.get(activeTabId) : null;
+    if (!entry) return;
+    if (axis === 'y' && Math.abs(dy) > CARDHEAD_SWITCH_PX) {
+      const nb = cardHeadRingNeighbor(dy > 0 ? 1 : -1);   // 下滑=下一张（deck 同语义）
+      if (nb && nb.id !== entry.id) setActiveTab(nb.id);
+    } else if (axis === 'x' && Math.abs(dx) > CARDHEAD_CLOSE_PX) {
+      closeTab(entry.id);                                 // 划走关闭（closeTab 共核）
+    }
+  };
+  hdr.addEventListener('pointerup', finish);
+  hdr.addEventListener('pointercancel', finish);
+  // 右键 = 引用（复用既有 canvas-tab-context-menu；deck 态与面板菜单同款 actions）
+  hdr.addEventListener('contextmenu', (e) => {
+    if (isMobileLayer()) return;   // 手机长按引用钮 = navController 腿（Android 长按会派发 contextmenu）
+    const entry = activeTabId ? tabs.get(activeTabId) : null;
+    if (!entry) return;
+    e.preventDefault();
+    e.stopPropagation();   // 面板级 contextmenu（deck 态）不再重复弹
+    showCanvasRefMenu(e.clientX, e.clientY, entry, deck.open && !deckBusy() ? {
+      allowNoRef: true,
+      onClose: () => deckRequestClose(entry.id),
+      onCloseOthers: () => deckCloseOthers(entry.id),
+    } : null);
+  });
+}
+
+/** 手机长按引用通路（navController 卡头长按钮消费）：引用当前活动卡片进聊天，
+ *  与桌面右键菜单「引用当前页」同一 appendRefToActiveView 通路（动态 import
+ *  防 input.js 静态回边）。无文件可引（面板页签等）toast 与菜单同文案。 */
+export function quoteActiveCardRef() {
+  const entry = activeTabId ? tabs.get(activeTabId) : null;
+  if (!entry) return false;
+  const ref = refForTab(entry);
+  if (!ref) { window.__showToast?.(t('canvas.noRef'), 'info'); return false; }
+  import('./input.js').then(({ appendRefToActiveView }) => appendRefToActiveView(ref));
+  return true;
+}
+
 /** Initialize canvas event listeners. Call on DOM ready. */
 export function initCanvas() {
   // UI 批⑧：独立卡窗模式引导（?card-window=1）—— 必须先于 restoreTabs（main.js
@@ -3030,6 +3149,8 @@ export function initCanvas() {
   // body 级固定元素，见 initDeck）。移动层有自己的卡片形态，引擎在其下不激活。
   renderCanvasHeader();
   initDeck();
+  // UI 批⑨：卡头胶囊手势（桌面腿：按压触感/竖滑换卡/横滑关卡/右键引用）。
+  initCardHeadGestures();
 
   // Window-focus refresh (dispatched by explorer.js after reloading the tree):
   // re-check the active file tab for external edits. Dirty-guarded, debounced,

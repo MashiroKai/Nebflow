@@ -42,7 +42,7 @@
 
 import {
   openCanvas, closeCanvas, isCanvasOpen, getTabPane, setActiveTab, closeTab,
-  mobileCardToggle, isCardIndependent, cardCanPop,
+  mobileCardToggle, isCardIndependent, cardCanPop, quoteActiveCardRef,
 } from '../canvas.js';
 import { key } from '../branding.js';
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '../sidebar.js';
@@ -313,6 +313,127 @@ function watchCanvasContent() {
 
 // ── 文档卡片（③：画板层只承载 pop 出来的文档，以卡片呈现）───────────
 
+// ── UI 批⑨：手机卡头胶囊手势（无按压前置，作者令 C）─────────────────
+// 胶囊（.canvas-header，split.css §⑨ / mobileLayer §⑨ 通栏变体）上手势：
+//   直滑上下 = 换文档卡（环 = docTabs() 卡片层序，下滑(+1)=下一张，deck 同语义，
+//     释放 |dy|>48）；
+//   直滑左右 = 关卡（closeCard 既有邻卡落位，释放 |dx|>64）；
+//   长按 450ms（未锁轴未抬起）= 触感（is-longpress → scale/亮度）+ 浮出
+//     .mobile-card-ref-btn 引用钮（视口坐标落点），点击走 quoteActiveCardRef
+//     （canvas.js 导出，与桌面右键「引用当前页」同一 appendRefToActiveView 通路）；
+//   任意外部按下/滚动/换卡即收引用钮。
+// 与滚动冲突消解（分区契约）：.canvas-header 手机端 touch-action:none（既有），
+//   手势只绑卡头元素；内容区滚动发生在 pane 内部滚动器，零劫持。轴锁 8px 与
+//   桌面胶囊/deck 同档；跟手位移走 --head-dx/--head-dy 变量链（CSS transform）。
+const CARDHEAD_AXIS_LOCK_PX = 8;
+const CARDHEAD_SWITCH_PX = 48;
+const CARDHEAD_CLOSE_PX = 64;
+const CARDHEAD_LONGPRESS_MS = 450;
+
+/** 文档卡邻位切换（环绕；单卡不换）。 */
+function switchDocCard(delta) {
+  const docs = docTabs();
+  const id = activeDocId();
+  const idx = docs.findIndex((d) => d.id === id);
+  if (docs.length < 2 || idx < 0) return;
+  const nb = docs[(idx + delta + docs.length) % docs.length];
+  if (nb && nb.id !== id) setActiveTab(nb.id);
+}
+
+/** 卡头触屏手势装配（ensureCardHead 建购后一次）。 */
+function initCardHeadTouch(head) {
+  const flags = /** @type {any} */ (head);
+  if (flags._nf9Touch) return;
+  flags._nf9Touch = true;
+  const pill = /** @type {HTMLElement|null} */ (head.closest('.canvas-header'));
+  /** @type {{id: number, x0: number, y0: number, dx: number, dy: number, axis: string|null, longpressed: boolean}|null} */
+  let g = null;
+  let lpTimer = 0;
+  /** @type {HTMLButtonElement|null} */
+  let refBtn = null;
+  const clearLp = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = 0; } };
+  const dismissRef = () => {
+    if (refBtn) { refBtn.remove(); refBtn = null; }
+    head.classList.remove('is-longpress');
+    if (pill) pill.classList.remove('is-longpress');
+  };
+  head.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (/** @type {Element} */ (e.target).closest('button')) return;   // 钮群直通
+    dismissRef();
+    clearLp();
+    g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0, axis: null, longpressed: false };
+    // 长按 450ms：未锁轴未抬起 → 触感 + 浮出引用钮
+    lpTimer = window.setTimeout(() => {
+      if (!g || g.axis) return;
+      g.longpressed = true;
+      head.classList.add('is-longpress');
+      if (pill) pill.classList.add('is-longpress');
+      if (navigator.vibrate) navigator.vibrate(8);
+      const headRect = head.getBoundingClientRect();
+      refBtn = document.createElement('button');
+      refBtn.type = 'button';
+      refBtn.className = 'mobile-card-ref-btn';
+      refBtn.textContent = tt('引用', 'Reference');
+      refBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        quoteActiveCardRef();
+        dismissRef();
+      });
+      document.body.appendChild(refBtn);
+      const bw = refBtn.getBoundingClientRect().width || 76;
+      refBtn.style.left = Math.min(Math.max(e.clientX - bw / 2, 10), window.innerWidth - bw - 10) + 'px';
+      refBtn.style.top = Math.min(headRect.bottom + 10, window.innerHeight - 48) + 'px';
+      // 下一拍挂外部收臂器（放过本次触点；引用钮自身点击不收）
+      setTimeout(() => {
+        const outside = (ev) => {
+          const t = /** @type {Node|null} */ (ev.target);
+          if (refBtn && t && refBtn.contains(t)) return;
+          dismissRef();
+          document.removeEventListener('pointerdown', outside, true);
+        };
+        document.addEventListener('pointerdown', outside, true);
+      }, 0);
+    }, CARDHEAD_LONGPRESS_MS);
+  });
+  head.addEventListener('pointermove', (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    g.dx = e.clientX - g.x0;
+    g.dy = e.clientY - g.y0;
+    if (!g.axis && (Math.abs(g.dx) > CARDHEAD_AXIS_LOCK_PX || Math.abs(g.dy) > CARDHEAD_AXIS_LOCK_PX)) {
+      g.axis = Math.abs(g.dx) > Math.abs(g.dy) ? 'x' : 'y';   // 平局取纵（deck 同规）
+      clearLp();                                              // 动了 = 非长按，直滑接管
+    }
+    if (g.axis && pill) {                                     // 跟手位移（变量链同桌面）
+      pill.classList.add('is-dragging');
+      pill.style.setProperty('--head-dx', (g.axis === 'x' ? Math.max(-18, Math.min(18, g.dx)) : 0) + 'px');
+      pill.style.setProperty('--head-dy', (g.axis === 'y' ? Math.max(-12, Math.min(12, g.dy)) : 0) + 'px');
+    }
+  });
+  const finish = (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    const { dx, dy, axis, longpressed } = g;
+    g = null;
+    clearLp();
+    if (pill) {
+      pill.classList.remove('is-dragging');
+      pill.style.setProperty('--head-dx', '0px');
+      pill.style.setProperty('--head-dy', '0px');
+    }
+    if (longpressed) return;            // 长按已交引用钮接管，不判滑
+    const id = activeDocId();
+    if (!id) return;
+    if (axis === 'y' && Math.abs(dy) > CARDHEAD_SWITCH_PX) switchDocCard(dy > 0 ? 1 : -1);
+    else if (axis === 'x' && Math.abs(dx) > CARDHEAD_CLOSE_PX) closeCard();
+  };
+  head.addEventListener('pointerup', finish);
+  head.addEventListener('pointercancel', finish);
+  // 滚动即收（引用钮/长按态不与内容滚动并存）
+  document.addEventListener('scroll', () => {
+    if (refBtn || head.classList.contains('is-longpress')) dismissRef();
+  }, true);
+}
+
 function activeTabId() {
   const el = /** @type {HTMLElement|null} */ (document.querySelector('#canvas-tab-bar .canvas-tab.active'));
   return el ? el.dataset.tabId : null;
@@ -381,6 +502,8 @@ function ensureCardHead() {
   cardHead.append(title, count, pop, close);
   header.insertBefore(cardHead, header.firstChild);
   if (typeof lucide !== 'undefined') createIconsIn(cardHead);
+  // UI 批⑨：卡头胶囊手势（直滑换卡/关卡 + 长按引用钮）。
+  initCardHeadTouch(cardHead);
   return cardHead;
 }
 
