@@ -3425,7 +3425,20 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
     // （页面滚过表头即触发），观察器自此永久静默——带改 overlay 后 chat 顶回到
     // #main 顶，滚动态下 top=0 是常态，守卫改判零尺寸盒。
     if (!chatBox.width && !chatBox.height) return;
-    const chatTop = chatBox.top;
+    /* UI 批⑦（2026-10-21 作者令）：桌面端消息列表最顶部不得超过 header —— #chat
+       盒顶钉到 header 盒底（margin-top 按实测写入，滚动裁剪线 = header 下沿，
+       任何内容不高于 header；作者截图实证消息文字滚到 header 上方/穿过头顶可见）。
+       手机层维持「内容直顶穿栏 + 裙边渐隐」现状（scrollUnderGlass.css
+       body.mobile-layer #header::after 顶部渐隐），margin 恒 0 不参与裁剪。
+       先写 margin 再量 reserve：chatTop 随盒顶移动，让位算式仍自洽。 */
+    const mobile = document.body.classList.contains('mobile-layer');
+    const mainEl = document.getElementById('main');
+    const wantMargin = mobile || !mainEl ? 0
+      : Math.max(0, Math.ceil(header.getBoundingClientRect().bottom - mainEl.getBoundingClientRect().top));
+    if ((parseFloat(chat.style.marginTop) || 0) !== wantMargin) {
+      chat.style.setProperty('margin-top', wantMargin + 'px', 'important');
+    }
+    const chatTop = chat.getBoundingClientRect().top;
     const reserve = Math.max(BASE_TOP_PAD, Math.ceil(bandBottom() - chatTop) + BASE_TOP_PAD);
     const prev = parseFloat(getComputedStyle(chat).paddingTop) || BASE_TOP_PAD;
     if (Math.abs(prev - reserve) < 0.5) return;
@@ -3451,6 +3464,9 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
   const ro = new ResizeObserver(syncTopReserve);
   ro.observe(header);
   ro.observe(overlays);
+  // UI 批⑦：桌面⇄手机层翻转（matchMedia 768px，mobile/bootstrap.js）走窗口
+  // resize 兜底重算 margin——層翻转时 header 尺寸恰好不变也不漏（幂等轻写）。
+  window.addEventListener('resize', syncTopReserve, { passive: true });
   syncTopReserve();
 })();
 

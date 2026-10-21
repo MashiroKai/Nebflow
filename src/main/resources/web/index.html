@@ -357,10 +357,12 @@
   <!-- Canvas Panel — generic display container (画板).
        叠卡批（canvas-stack v5 落地）：桌面态标签行退役 → 常态头只留居中标题
        （.canvas-title，兼作叠卡前卡的卡顶名称条）；标签条/关闭钮 DOM 保留
-       （数据模型与移动层仍引用），桌面由 split.css 隐藏。 -->
+       （数据模型与移动层仍引用），桌面由 split.css 隐藏。
+       UI 批⑨：标题头浮层毛玻璃胶囊化（.canvas-header absolute + 玻璃胶囊），
+       .scroll-under-glass 挂裙边 —— 内容全高滚动、从胶囊底下穿过渐隐。 -->
   <div id="canvas-panel">
     <div id="canvas-slide">
-      <div class="canvas-header">
+      <div class="canvas-header scroll-under-glass">
         <div class="canvas-title" id="canvas-title">
           <span class="t-inner">
             <span class="t-icon" id="canvas-title-icon"></span>
