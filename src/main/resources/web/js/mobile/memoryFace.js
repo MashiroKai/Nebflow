@@ -22,7 +22,7 @@ import { t } from '../i18n.js';
 
 /** @type {HTMLElement|null} 卡读态容器。 */
 let cardsEl = null;
-/** @type {HTMLElement|null} 头部「编辑/完成」钮。 */
+/** @type {HTMLButtonElement|null} 头部「编辑/完成」钮。 */
 let editBtn = null;
 /** @type {string[]} 拆层还原用的桌面 tab 原文案。 */
 const tabOriginal = [];

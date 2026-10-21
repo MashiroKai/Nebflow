@@ -92,7 +92,7 @@ export function activateBgStatusFace() {
   // 「智能体」分组签 + 列表收编（幂等；拆层原位归还）。第一分组题 = 载体
   // 桌面头（bg-dropdown-header「后台任务」）零触碰，不另设签。
   const cList = c.querySelector('.bg-dropdown-list');
-  const gList = g.querySelector('.bg-dropdown-list');
+  const gList = /** @type {HTMLElement|null} */ (g.querySelector('.bg-dropdown-list'));
   if (cList && gList && gList.parentElement !== c) {
     adoptAnchor = { parent: gList.parentElement, next: gList.nextSibling };
     c.appendChild(grpLabel('bg.sectionAgents'));

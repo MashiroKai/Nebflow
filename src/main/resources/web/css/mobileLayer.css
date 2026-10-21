@@ -377,6 +377,29 @@ body.mobile-layer .mh-dd-bd > #pending-asks-indicator {
   position: relative;
   gap: 0;
 }
+/* 手机小批（作者令 2026-10-21「与桌面端做区分」）：bg/bgagent 键改**图标常驻
+   + 角标计数**。桌面 count=0 → .hidden toggle 是既有计数信号源（WS 事件驱动
+   —— agentStart/agentDone/activeAgents/backgroundTaskUpdate 落在
+   updateBgAgentIndicator / updateBgTasksUI，零新轮询零新监听）；手机层只反转
+   呈现语义：键本体常驻（图标不随空态/加载态隐藏），角标随 .hidden 隐藏
+   （0 时藏数、图标保留 —— 常规平台惯例，作者可改）。列高/stagger 占位由
+   data-mh-persist 声明（headerController observeList 对位），注入图标见
+   floatController（拆层摘除）。ID 选择器全部锚在 body.mobile-layer .mh-dd-bd
+   列内作用域 —— 桌面端零触碰。 */
+body.mobile-layer .mh-dd-bd > #bg-indicator.hidden,
+body.mobile-layer .mh-dd-bd > #bgagent-indicator.hidden {
+  display: flex;
+}
+body.mobile-layer .mh-dd-bd > #bg-indicator.hidden .bg-count,
+body.mobile-layer .mh-dd-bd > #bgagent-indicator.hidden .bgagent-count {
+  display: none;
+}
+/* 注入图标键（mh-persist-ico）：键内图标随 mh-key 既有 svg 尺寸规则（17px），
+   currentColor = 桌面胶囊色语义（绿=后台任务 / sapphire=子智能体）原样保留。 */
+body.mobile-layer .mh-dd-bd > #bg-indicator .mh-persist-ico,
+body.mobile-layer .mh-dd-bd > #bgagent-indicator .mh-persist-ico {
+  flex: none;
+}
 body.mobile-layer .mh-dd-bd .bg-dot,
 body.mobile-layer .mh-dd-bd .bgagent-dot,
 body.mobile-layer .mh-dd-bd .pa-dot { display: none; }
