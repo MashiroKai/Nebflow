@@ -1,11 +1,11 @@
-# 发版批 v2026.10.21-beta.2 + CI 自托管落地 + 勤发机制设计 · 批报告
+# 发版批 v2026.10.21-beta.2 + CI 自托管落地 · 批报告
 
-> 批次：作者令 2026-10-21 三件——①发新测试版（勤发政策首拍）②GitHub Actions 额度耗尽→CI 挪自有设备 ③勤发机制落成日常（候批设计）
+> 批次：作者令 2026-10-21 两件——①发新测试版 v2026.10.21-beta.2 ②GitHub Actions 额度耗尽→CI 挪自有设备。（原第③项「勤发机制设计」经**作者修正令 2026-10-21 取消**：不搞每日自动 beta，**发布一律由作者明令触发**——本批不含任何勤发设计/定时落盘，设计文档已撤出分支。）
 > 分支：`delegate/delegate-nebflow-4e75e4bc` · 执行窗 2026-10-21 22:40–23:40 (+0800)
 
 ## 0. TL;DR
 
-**①beta.2 已发：全链十环零断**（bump → tag → 构建 → sha256 → OSS → 回读核验 → manifest 入册 → 指针 in sync → GitHub prerelease 挂 jar → staging 部署 + 版本显示验证），**staging 验收终跑 GREEN-PARTIAL 33/0/2 收口**（唯二 skip = IdP 人工臂，逐条交代）。**②CI 选型唯一推荐 = 方案 B（本机 Mac self-hosted runner）**——已全量落地：runner 2.338.0 在线（labels self-hosted/macOS/ARM64）+ LaunchAgent 常驻 + pilot workflow 入分支；Windows 线（方案 A）实测受阻于该机 Clash 未运行（github 大文件传输 1h 超时 ×2），工具链已备、网络卡已给。**③勤发机制设计候批文档已落**，未挂任何定时。
+**①beta.2 已发：全链十环零断**（bump → tag → 构建 → sha256 → OSS → 回读核验 → manifest 入册 → 指针 in sync → GitHub prerelease 挂 jar → staging 部署 + 版本显示验证），**staging 验收终跑 GREEN-PARTIAL 33/0/2 收口**（唯二 skip = IdP 人工臂，逐条交代）。**②CI 选型唯一推荐 = 方案 B（本机 Mac self-hosted runner）**——已全量落地：runner 2.338.0 在线（labels self-hosted/macOS/ARM64）+ LaunchAgent 常驻 + pilot workflow 入分支；Windows 线（方案 A）实测受阻于该机 Clash 未运行（github 大文件传输 1h 超时 ×2），工具链已备、网络卡已给。（原第③项经作者修正令取消，见批头注。）
 
 ## 1. ①发布全链（证据逐环，详见 evidence/20261021_2329_release-beta2/chain-log.md）
 
@@ -36,7 +36,7 @@
 |---|---|---|
 | **B. Mac 本机 runner** | **✓ 本批双证**：beta.2 jar 就是本机构建（93s）；runner 已装+在线 | **推荐并已落地** |
 | A. DESKTOP-IJBBEOT runner | 工具链 ✓（JDK 21.0.11 Temurin 已装=repo 基线；node20+sbt 本批已装）；**网络 ✗**：Clash 未运行（无进程/无监听端口，实查）→ github.com 直连龟速（克隆探针 25min 走了 5.6MB）、runner 包下载 1h 超时、objects.githubusercontent.com 超时 | **升级线**：该机 Clash 开起来（或 git 配置可用代理腿）后迁，操作卡已给 |
-| C. 不依赖 GitHub 自建 CI | ✓（本批发布链即脚本化全链） | 备选不推荐：重造 runner（PR check/重试/并发全自管），勤发机制（§3）已覆盖其发布价值 |
+| C. 不依赖 GitHub 自建 CI | ✓（本批发布链即脚本化全链） | 备选不推荐：重造 runner（PR check/重试/并发全自管）；发布全链命令面已在 evidence 留档，作者明令触发时可照单重放 |
 
 **已落地清单（零手动）**：
 1. runner 2.338.0 (osx-arm64) 装于 `~/actions-runner`——包 sha256 `df4cebda…df9df2` 与官方 release 注记逐字核对
@@ -53,9 +53,9 @@
 
 `ci.yml` 重 job（compile/test/assembly/smoke-test）`runs-on` 换 `[self-hosted, macOS, ARM64]` → pilot 全绿观察一周 → release.yml `build-jar` 同法。四个月前 FROZEN 的三平台打包 job **维持封印**，不因迁移解冻。
 
-## 3. ③勤发机制设计（候批，未挂定时）
+## 3. （原第③项已取消）
 
-设计文档：`reports/20261021_230500_daily-beta-cadence-design__*.md`。要点：每日一检查点（建议 10:00 CST）；「main 有未发新提交」为唯一实质触发判据（`manifest-beta.build` ≠ main HEAD）；三层防重（tag 闸/build 闸/指针闸）；构建类失败自动重试 1 次、发布面失败绝不自动重试（部分完成态须人工盘点五件套）；告警一次一轮带五件套状态盘点。**待作者拍板三个参数**：检查时刻 / 执行宿主（建议本机 Nebflow scheduled-tasks）/ 告警静默窗。点头后挂定时，本批零调度落盘。
+作者修正令 2026-10-21：取消「勤发机制设计」——**不搞每日自动 beta，发布一律由作者明令触发**。本批不落任何定时/自动化发布机制；设计文档已撤出分支。发布操作面保留为人工明令形态：全链命令与证据在 `evidence/20261021_2329_release-beta2/chain-log.md`，下次发版照单重放。
 
 ## 4. 关键决策注记
 
@@ -68,9 +68,8 @@
 | 件 | 路径 |
 |---|---|
 | 发版 commit + tag | `1ab024df2`（VERSION）+ `v2026.10.21-beta.2` |
-| 发布链证据 | `evidence/20261021_2329_release-beta2/`（chain-log.md + 两轮 gate JSON，终跑 GREEN 待补） |
+| 发布链证据 | `evidence/20261021_2329_release-beta2/`（chain-log.md + 三轮 gate JSON，终跑 GREEN-PARTIAL 已收口） |
 | CI 选型结论+操作卡 | `reports/20261021_230000_ci-selfhosted-selection__delegate-nebflow-4e75e4bc.md` |
-| 勤发机制设计（候批） | `reports/20261021_230500_daily-beta-cadence-design__delegate-nebflow-4e75e4bc.md` |
 | 本批报告 | `reports/20261021_233000_release-beta2-batch__delegate-nebflow-4e75e4bc.md`（即本文） |
 | pilot workflow | `.github/workflows/ci-selfhosted.yml` |
 
