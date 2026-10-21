@@ -16,7 +16,8 @@
 //   T7 S1 展开：已落三行族解读渲染＋候定集透传不解读；折叠记忆跨重渲；外部行守卫
 //   T8 S10 per-task 链视图：ChainNode 卡（fmNodeCard 单源渲染）＋返回钮键2＋fail-soft 键7 重试
 //   T8b #523 分配可见面：root 卡副行 plugins/allocation ＋ fm-detail 分配方式行（#504 同点位）；旧行缺键零渲染
-//   T9 S11 结构总视图：头键3＋FIFO 泳道键4 readyAt 序＋worktree 座键5＋链卡点进
+//   T9 全景接位（S11 平铺面退役 · 视图重设计实施批 2026-10-21）：FAB→全景根
+//      ＋归档 FAB 抽屉续挂＋带/卡结构＋卡点进 L1
 //   T10 S16 外部行：openNative 出口（POST 断言）＋进度 offset 增量＋展开守卫
 //   ── N1 刀3 真源换源（A8 REST provider）扩例 ──
 //   T11 换源生效：/api/chains 路由 ⇒ 零夹具行渲染自 live provider（live/verdict 投影）
@@ -442,9 +443,9 @@ const chainAlloc = {
   frames: [],
 };
 
-/** 进 per-task 链视图的 UI 路径（树批 2026-10-09 后）：任务列表行内零 L1 入口钮
- *  （内部行行尾 workflow 钮退役）——项目面板「项目流程图」圆钮（方案 A2）→ L2 →
- *  点该 delegate 链卡。 */
+/** 进 per-task 链视图的 UI 路径（视图重设计实施批 2026-10-21 后）：任务列表行内零
+ *  L1 入口钮——项目面板「项目流程图」圆钮 → 全景（S11 平铺面退役，同 FAB 同组件）
+ *  → 点该项目带内的 delegate 卡 → L1。 */
 async function openChainViewViaProjects(page, taskNo) {
   await page.evaluate(async () => {
     const m = await import('/js/projectTab.js');
@@ -453,7 +454,8 @@ async function openChainViewViaProjects(page, taskNo) {
   const pane = page.locator('.canvas-tab-pane[data-tab-id="projects"]');
   await pane.locator('.proj-flowmap-fab').click();
   await expect(pane).toHaveAttribute('data-projects-view', 'delegate-chain');
-  await pane.locator('.delegate-chain-list .solar-node.fm-node', { hasText: `#${taskNo}` }).first().click();
+  await expect(pane.locator('[data-view="delegate-panorama"]')).toBeVisible();
+  await pane.locator('.dvp-band .dvp-nd[data-delegate-id]', { hasText: `#${taskNo}` }).first().click();
   await expect(pane).toHaveAttribute('data-delegate-mode', 'task');
   await page.waitForTimeout(250);
 }
@@ -672,7 +674,7 @@ test('T8b #523 分配可见面：root 卡副行 plugins/allocation ＋ fm-detail
   expect(pageErrors).toEqual([]);
 });
 
-test('T9 S11 结构总视图：头键3＋worktree 座键5＋链卡点进＋九点②④⑧（FIFO 泳道撤·名次 chip·归档 FAB）', async ({ page }) => {
+test('T9 全景接位（S11 平铺面退役）：FAB→全景根＋归档 FAB 抽屉续挂＋带/卡结构＋卡点进 L1', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
 
@@ -680,10 +682,9 @@ test('T9 S11 结构总视图：头键3＋worktree 座键5＋链卡点进＋九�
   // 归档历史窗路由（FAB 徽章/抽屉清单源；后注册 = 优先命中）：空归档 = 徽章缺席。
   await page.route('**/api/chains?archived=1', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ rows: [] }) }));
-  // 行集：#31 内部行 ＋ #34/#33 外部行（merge-queue 夹具在链上，乱序 readyAt——
-  // #34 T0-10s 在前、#33 T0-50s 在后 ⇒ 名次回落臂按 readyAt 重排）。
+  // 行集：#31 内部行 ＋ #34/#33 外部行（项目带三座：'' / Nebflow / docs——活跃度倒序）。
   await setFixture(page, { rows: [row31, row34, row33], chains: [chain31, chain34, chain33] });
-  // 树批（2026-10-09）入口迁移：进 L2 = 项目面板「项目流程图」圆钮（方案 A2）。
+  // 入口迁移（视图重设计实施批 2026-10-21）：进全景 = 项目面板「项目流程图」圆钮。
   await page.evaluate(async () => {
     const m = await import('/js/projectTab.js');
     await m.openProjectsTab();
@@ -691,47 +692,22 @@ test('T9 S11 结构总视图：头键3＋worktree 座键5＋链卡点进＋九�
   const pane = page.locator('.canvas-tab-pane[data-tab-id="projects"]');
   await pane.locator('.proj-flowmap-fab').click();
   await expect(pane).toHaveAttribute('data-projects-view', 'delegate-chain');
+  await expect(pane.locator('[data-view="delegate-panorama"]')).toBeVisible();
 
-  // 头 = 两层架构批 §D L2 标题（多项目行集 → 裸「项目流程图」）；worktree 座 = 键 5；
-  // 九点②④⑧（2026-10-09）：FIFO 泳道撤销（合并态不显示 FIFO、不连线、零明细行）
-  // ——唯一可见面 = 待合并链卡旁名次 chip。
-  await expect(pane.locator('.delegate-structure-head')).toHaveText('项目流程图');
-  const sections = pane.locator('.delegate-structure-section');
-  await expect(sections).toHaveCount(1);
-  await expect(sections.nth(0).locator('.delegate-structure-label')).toHaveText('工作树');
-  await expect(pane.locator('.delegate-structure-lane')).toHaveCount(0);
+  // 项目带 = 按项目去重三座（'' 缺省座位 / Nebflow / docs），带内六泳道画布在场。
+  const bands = pane.locator('.dvp-band');
+  await expect(bands).toHaveCount(3);
+  await expect(pane.locator('.dvp-canvas').first()).toBeVisible();
 
-  // worktree 座：三行链中 #31/#33 有 worktree 投影（#34 null）⇒ 两座（行序）。
-  const seats = sections.nth(0).locator('.delegate-structure-seat');
-  await expect(seats).toHaveCount(2);
-  await expect(seats.nth(0).locator('.delegate-chain-mono')).toContainText('delegate/task-31');
-  await expect(seats.nth(1).locator('.delegate-chain-mono')).toContainText('delegate/task-33');
+  // 三行各归其位：#34（运行）/#31（运行）→ run 泳道卡；#33（待合并）→ rtm 卡带
+  // 状态词「待合并」（三重编码详钉在 delegate-panorama.spec.mjs，此处只钉接位）。
+  await expect(pane.locator('.dvp-nd[data-delegate-id="delegate-zcode-run44"]')).toHaveCount(1);
+  await expect(pane.locator('.dvp-nd[data-delegate-id="delegate-nebflow-aa11"]')).toHaveCount(1);
+  const rtm = pane.locator('.dvp-nd[data-delegate-id="delegate-claude-cc33"]');
+  await expect(rtm).toHaveClass(/st-rtm/);
+  await expect(rtm.locator('.dvp-st-word')).toHaveText('待合并');
 
-  // §D WF-05 三段分组（组序 = 生命周期，段内序 = 行序首现）：运行中(#31,#34) →
-  // 待合并(#33)；「已完成」段空 ⇒ 组头不渲染（零空段）。名次 chip（九点④口径）只
-  // 属待合并段，位次回落臂 = mergeQueueFifo 全局序（#33 T0-50s ⇒ #1；#34 运行段
-  // 不显名次）。外部行（#33/#34）卡无下钻（G7 守卫）；内部行 #31 点卡 → 该链 L1。
-  const groups = pane.locator('.delegate-structure-group');
-  await expect(groups).toHaveCount(2);
-  await expect(groups).toHaveText(['进行中', '待合并']);
-  const card = pane.locator('.delegate-chain-list .solar-node.fm-node');
-  await expect(card).toHaveCount(3);
-  await expect(card.nth(0).locator('.solar-node-label')).toHaveText('#31 重构任务面板数据源');
-  await expect(card.nth(1).locator('.solar-node-label')).toHaveText('#34 zcode 跑长任务');
-  await expect(card.nth(2).locator('.solar-node-label')).toHaveText('#33 claude 文案批');
-  await expect(card.nth(2).locator('.fm-st-word')).toHaveText('待合并');
-  await expect(card.nth(2).locator('.delegate-card-rank')).toHaveText('#1');
-  await expect(card.nth(0).locator('.delegate-card-rank')).toHaveCount(0); // 运行段无名次
-  await expect(card.nth(1).locator('.delegate-card-rank')).toHaveCount(0);
-  // L2 卡面徽标（§D 与 §B 行内徽标同件）：夹具零 children/零 flow-step ⇒ 徽标缺席。
-  await expect(card.locator('.delegate-card-kids')).toHaveCount(0);
-  await expect(card.locator('.delegate-card-flow')).toHaveCount(0);
-  await expect(card.nth(0)).toHaveAttribute('role', 'button');
-  await expect(card.nth(1)).not.toHaveAttribute('role', 'button');
-  await expect(card.nth(1)).toHaveAttribute('data-external-card', '1');
-  await expect(card.nth(2)).not.toHaveAttribute('role', 'button');
-  await expect(card.nth(2)).toHaveAttribute('data-external-card', '1');
-  // §D WF-07：右上角归档件 = FAB（flowmap fm-fab 同语言）→ 抽屉（唯一归档视图）。
+  // 归档面随全景续挂：FAB（§D 同件）→ 抽屉（唯一归档视图）；空归档 = 徽章缺席。
   const fab = pane.locator('.delegate-archive-fab');
   await expect(fab).toHaveCount(1);
   await expect(fab).toHaveAttribute('aria-expanded', 'false');
@@ -744,7 +720,9 @@ test('T9 S11 结构总视图：头键3＋worktree 座键5＋链卡点进＋九�
   await drawer.locator('.delegate-archive-drawer-close').click();
   await expect(drawer).toBeHidden();
   await expect(fab).toHaveAttribute('aria-expanded', 'false');
-  await card.nth(0).click();
+
+  // 卡点进 = L1 该 delegate 流程图（pane 分流 task 模式，链视图体单卡）。
+  await pane.locator('.dvp-nd[data-delegate-id="delegate-nebflow-aa11"]').click();
   await expect(pane).toHaveAttribute('data-delegate-mode', 'task');
   await expect(pane).toHaveAttribute('data-delegate-key', '31');
   await expect(pane.locator('.delegate-chain-view-body .solar-node.fm-node')).toHaveCount(1);

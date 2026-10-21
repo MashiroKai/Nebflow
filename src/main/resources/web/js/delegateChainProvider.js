@@ -33,7 +33,11 @@ import { DELEGATE_API } from './delegateApi.js';
 
 /** 端点表（与 PresenceRoutes 挂载路径逐字对齐；Router("/api") 前缀）。 */
 export const CHAINS_API = {
-  rows: () => '/api/chains',
+  // 行面（delegate 视图重设计实施批 2026-10-21 换源）：/api/delegates 列表读面 =
+  // /api/chains 行投影同源加宽臂（同 rowsJson 单点：live/verdict/taskStatus 含 G1
+  // `merging` 覆写/mergeQueue/mergeQueuePos）+ 行内 `topology` 子过程拓扑载荷。
+  // 旧端点 /api/chains 保留（归档窗与既有消费面不动），行集权威自此单缝走本端点。
+  rows: () => '/api/delegates',
   chain: (key) => `/api/chains/${encodeURIComponent(String(key || ''))}`,
 };
 
@@ -56,15 +60,67 @@ async function fetchJson(url) {
   return await r.json();
 }
 
-/** 行投影：record×live×verdict → rowFromRegistry（原样）→ ready-to-merge 覆写单点。 */
+/** 行投影：record×live×verdict → rowFromRegistry（原样）→ ready-to-merge 覆写单点
+ *  → 全景载荷加宽（delegate 视图重设计实施批 2026-10-21）：全景视图需要的原始键
+ *  原样随行透传（schema 加宽、缺键容忍零臆造——stub 契约「只加宽」纪律）：
+ *    `taskStatus`（含 G1 `merging` 一等态——行 status 语义不折叠：任务列表继续按
+ *    active 渲染，全景视图按 mergePhase 分泳道）、`branch`/`baseBranch`/`worktree`/
+ *    `projectWorkspace`（泳道 chip 与汇点 base 分支）、`reportStatus`/`reportDetail`
+ *    （报告条）、`verdict`（判词行原文：{verdict,reason,source,at}）、`topology`
+ *    （子过程拓扑：{mode,children[],steps[]}；single 行缺键）。
+ *  🔴 前端零派生：merging 判据 = 引擎 taskStatus 原值，本地不复算 holder。 */
 function projectRow(entry) {
   const src = entry && typeof entry === 'object' ? entry : {};
   const row = rowFromRegistry(src, src.live);
   const v = src.verdict;
+  const out = {
+    ...row,
+    taskStatus: String(src.taskStatus || ''),
+    branch: String(src.branch || ''),
+    baseBranch: String(src.baseBranch || ''),
+    worktreePath: String(src.worktree || ''),
+    projectWorkspace: String(src.projectWorkspace || ''),
+    reportStatus: String(src.reportStatus || ''),
+    reportDetail: String(src.reportDetail || ''),
+    topology: normalizeTopology(src.topology),
+  };
   if (v && typeof v === 'object' && String(v.verdict || '') === 'ready-to-merge') {
-    return { ...row, status: 'ready-to-merge' };
+    out.status = 'ready-to-merge';
   }
-  return row;
+  out.verdict =
+    v && typeof v === 'object'
+      ? {
+          verdict: String(v.verdict || ''),
+          reason: String(v.reason || ''),
+          source: String(v.source || ''),
+          at: typeof v.at === 'number' ? v.at : 0,
+        }
+      : null;
+  return out;
+}
+
+/** 子过程拓扑归一（缺键/坏形 = null——全景按「无子过程」渲染，零臆造）。 */
+function normalizeTopology(t) {
+  if (!t || typeof t !== 'object' || Array.isArray(t)) return null;
+  const kids = Array.isArray(t.children) ? t.children : [];
+  const steps = Array.isArray(t.steps) ? t.steps : [];
+  return {
+    mode: String(t.mode || ''),
+    children: kids.map((c) => ({
+      taskId: String((c && c.taskId) || ''),
+      agentName: String((c && c.agentName) || ''),
+      description: String((c && c.description) || ''),
+      status: String((c && c.status) || ''),
+      spawnedAt: c && typeof c.spawnedAt === 'number' ? c.spawnedAt : 0,
+      completedAt: c && typeof c.completedAt === 'number' ? c.completedAt : null,
+    })),
+    steps: steps.map((s) => ({
+      id: String((s && s.id) || ''),
+      label: String((s && s.label) || ''),
+      status: String((s && s.status) || ''),
+      deps: s && Array.isArray(s.deps) ? s.deps.map((d) => String(d || '')) : [],
+    })),
+  };
 }
 
 /** 链视图投影：三行族经 chainFromStoreRecord（原样）+ 作用域 FlowMap 节点整组替换。 */
@@ -126,8 +182,14 @@ async function refreshChildren(delegateId) {
  *  事件零载荷、零帧解读（「帧只当触发器」纪律不变）。 */
 async function refresh() {
   const seq = ++mirror.seq;
-  const body = await fetchJson(CHAINS_API.rows());
-  if (!body || seq !== mirror.seq) return; // 已有更新刷新在途，丢弃旧结果
+  let body = await fetchJson(CHAINS_API.rows());
+  // 形状判据：行面载荷必须带 rows 数组——404/空壳 200（旧引擎无 /api/delegates 路由，
+  // 或同前缀异面响应）一律回落 /api/chains（行投影同源；缺 topology/merging 两键，
+  // 全景子过程面走镜像组合臂，零崩面）。两臂都无形状 = 空刷新（fail-soft 保旧值）。
+  if (!body || !Array.isArray(body.rows)) {
+    body = await fetchJson('/api/chains');
+  }
+  if (!body || !Array.isArray(body.rows) || seq !== mirror.seq) return; // 已有更新刷新在途，丢弃旧结果
   const rows = (Array.isArray(body.rows) ? body.rows : []).map(projectRow);
   // 两层架构批（§D 自动归档到达侦测）：记录面零删除（归档只加 archivedAt 旗），
   // 在册窗消失的行 = 已归档（引擎终态单点写旗）。差集行细节随 delegate-archived

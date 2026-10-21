@@ -1,0 +1,600 @@
+/* delegatePanorama.css — delegate 全景视图（delegate 视图重设计实施批 · 2026-10-21）
+ *
+ * 视觉语言复用 9.19「无边 DAG」（flowMap.css / flowCss.js .solar-node / fmNodeCard.js）：
+ *   · 节点卡 = 玻璃材质浮动卡（--glass-bg + blur+saturate），层次靠明暗差，不画
+ *     传统流程图框；任务根/汇点 = 幽卡（虚线描边弱玻璃）；子过程卡 = 浅一档
+ *   · 连线 = SVG 状态化：已投递=蓝晶实线 / 进行中=行军蚁 / 待上游=灰实线 /
+ *     候合并=琥珀虚线 / 合并窗=蓝晶行军蚁（flowMap.css:406-472 三态语义同源）
+ *   · 零新色值：全部 var token（base.css / sapphire.css），唯一语义色 = 琥珀/蓝晶/
+ *     brand-green/状态色的既有 rgb 三元组透明度变体（铁律⑤：状态词恒中性字，
+ *     语义色只上点/环/徽标/字形）
+ *   · 亮暗双主题 = 生产 token 自带（prefers-color-scheme），本文件零主题分叉
+ */
+
+/* ── 顶栏工具行（全景计数 + 项目过滤 pills + 入口统一徽标）──────────────────── */
+.dvp-root {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.dvp-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.dvp-stats {
+  font: 400 11.5px/1.4 var(--font-ui, -apple-system, sans-serif);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+.dvp-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+.dvp-pill {
+  height: 26px;
+  padding: 0 12px;
+  border-radius: var(--r-pill, 999px);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: 500 11.5px/1 var(--font-ui, -apple-system, sans-serif);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.dvp-pill:hover { background: var(--glass-control-bg-hover); color: var(--color-text); }
+.dvp-pill[aria-pressed="true"] {
+  background: var(--glass-control-bg);
+  border-color: var(--glass-control-border);
+  color: var(--color-text);
+  box-shadow: inset 0 1px 0 var(--glass-control-highlight);
+}
+.dvp-pill:focus-visible { box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.45); outline: none; }
+.dvp-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 400 10.5px/1 var(--font-ui, -apple-system, sans-serif);
+  color: var(--color-text-muted);
+  padding: 5px 10px;
+  border-radius: var(--r-pill, 999px);
+  border: 1px solid var(--glass-etched-border);
+  background: var(--glass-etched-bg);
+  white-space: nowrap;
+}
+.dvp-entry kbd {
+  font: 500 9.5px/1 var(--font-mono, ui-monospace, monospace);
+  color: var(--color-text-dim);
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+}
+
+/* ── 主体：项目带 ──────────────────────────────────────────────────────────── */
+.dvp-main {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 1408px;
+}
+.dvp-band {
+  border-radius: 18px;
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-border);
+  overflow: hidden;
+}
+.dvp-band[hidden] { display: none; }
+.dvp-band-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 18px 11px;
+  border-bottom: 1px solid var(--glass-border);
+  min-width: 0;
+}
+.dvp-band-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgb(var(--sapphire) / 0.9);
+  box-shadow: 0 0 0 3px rgb(var(--sapphire) / 0.14);
+  flex: 0 0 auto;
+}
+.dvp-band-name { font: 600 14px/1.3 var(--font-ui, -apple-system, sans-serif); }
+.dvp-band-ws {
+  font: 400 10.5px/1 var(--font-mono, ui-monospace, monospace);
+  color: var(--color-text-muted);
+  padding: 3px 8px;
+  border-radius: var(--r-sm, 6px);
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dvp-band-counts { display: flex; gap: 5px; margin-left: 6px; flex: 0 0 auto; }
+.dvp-cnt {
+  font: 500 10px/1 var(--font-ui, -apple-system, sans-serif);
+  color: var(--color-text-muted);
+  padding: 3px 8px;
+  border-radius: var(--r-pill, 999px);
+  border: 1px solid var(--glass-etched-border);
+  background: var(--glass-etched-bg);
+  white-space: nowrap;
+}
+.dvp-cnt i { font-style: normal; }
+.dvp-cnt i.run { color: rgb(var(--brand-green)); }
+.dvp-cnt i.rtm { color: rgb(var(--amber)); }
+.dvp-cnt i.mrg { color: rgb(var(--sapphire-glow, var(--sapphire))); }
+.dvp-cnt i.end { color: var(--color-text-dim); }
+.dvp-band-spacer { flex: 1 1 auto; }
+.dvp-band-n {
+  font: 400 10.5px/1 var(--font-ui, -apple-system, sans-serif);
+  color: var(--color-text-muted);
+  margin-left: 12px;
+  white-space: nowrap;
+}
+
+/* 批次推进带（带头右侧：五阶段点线，cur 蓝晶高亮） */
+.dvp-ribbon { display: flex; align-items: center; flex: 0 0 auto; }
+.dvp-rb-st { display: flex; align-items: center; }
+.dvp-rb-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-border);
+  background: transparent;
+}
+.dvp-rb-st.past .dvp-rb-dot {
+  background: var(--color-text-muted);
+  border-color: var(--color-text-muted);
+  opacity: 0.55;
+}
+.dvp-rb-st.cur .dvp-rb-dot {
+  background: rgb(var(--sapphire));
+  border-color: rgb(var(--sapphire));
+  box-shadow: 0 0 0 3px rgb(var(--sapphire) / 0.18);
+}
+.dvp-rb-line { width: 16px; height: 1px; background: var(--color-border); margin: 0 3px; }
+.dvp-rb-word {
+  font: 500 9px/1 var(--font-ui, -apple-system, sans-serif);
+  color: var(--color-text-muted);
+  margin-left: 4px;
+  letter-spacing: 0.02em;
+}
+.dvp-rb-st.cur .dvp-rb-word { color: rgb(var(--sapphire-glow, var(--sapphire))); }
+.dvp-rb-st:not(.cur):not(.past) .dvp-rb-word { opacity: 0.55; }
+
+/* ── 泳道画布（无边；列头小字 + 极淡分列线）────────────────────────────────── */
+.dvp-canvas {
+  position: relative;
+  user-select: none;
+  -webkit-user-select: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.dvp-lane-label {
+  position: absolute;
+  top: 10px;
+  font: 600 9.5px/1 var(--font-ui, -apple-system, sans-serif);
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+  opacity: 0.75;
+  z-index: 2;
+}
+.dvp-lane-sep {
+  position: absolute;
+  top: 26px;
+  width: 1px;
+  background: var(--glass-border);
+  z-index: 1;
+}
+.dvp-zone-sep {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  height: 1px;
+  background: var(--color-border);
+  opacity: 0.5;
+  z-index: 1;
+}
+.dvp-zone-tag {
+  position: absolute;
+  font: 500 9px/1 var(--font-ui, -apple-system, sans-serif);
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  padding: 3px 8px;
+  border-radius: var(--r-pill, 999px);
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+  z-index: 2;
+}
+.dvp-zone-toggle {
+  position: absolute;
+  right: 14px;
+  height: 20px;
+  padding: 0 10px;
+  border-radius: var(--r-pill, 999px);
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  color: var(--color-text-muted);
+  font: 500 9.5px/1 var(--font-ui, -apple-system, sans-serif);
+  cursor: pointer;
+  z-index: 2;
+}
+.dvp-zone-toggle:hover { background: var(--glass-control-bg-hover); color: var(--color-text); }
+.dvp-zone-toggle:focus-visible { box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.45); outline: none; }
+
+/* ── 节点卡 · 通用（无边玻璃；层次靠明暗差，状态只上点/环/徽标）────────────── */
+.dvp-nd {
+  position: absolute;
+  border-radius: 14px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.06),
+    0 4px 16px rgba(0, 0, 0, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: filter 0.15s, box-shadow 0.15s;
+  z-index: 5;
+  overflow: hidden;
+}
+.dvp-nd:hover { filter: brightness(1.05); z-index: 8; }
+.dvp-nd:focus-visible { box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.45); outline: none; }
+/* 任务根 / 汇点 = 幽卡（虚线描边弱玻璃：是参照点不是过程盒） */
+.dvp-ghost {
+  background: var(--glass-etched-bg);
+  border: 1px dashed var(--color-border);
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  cursor: default;
+}
+.dvp-ghost:hover { filter: none; }
+/* 子过程卡 = 浅一档（降透明度 + 小圆角 + 小投影：明暗差分层） */
+.dvp-sub {
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.05);
+  border-radius: 11px;
+  padding: 8px 10px;
+  gap: 3px;
+}
+/* 汇点合并窗活跃：蓝晶呼吸 */
+.dvp-sink.live { border-color: rgb(var(--sapphire) / 0.35); animation: dvp-sink-pulse 1.8s ease-in-out infinite; }
+@keyframes dvp-sink-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(var(--sapphire) / 0); }
+  50% { box-shadow: 0 0 0 5px rgb(var(--sapphire) / 0.1); }
+}
+
+/* 卡内结构 */
+.dvp-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.dvp-exec {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: 600 8.5px/1 var(--font-mono, ui-monospace, monospace);
+  color: var(--color-text);
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+}
+.dvp-exec-sm { width: 14px; height: 14px; font-size: 8px; }
+.dvp-title {
+  font: 600 12.5px/1.25 var(--font-ui, -apple-system, sans-serif);
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.dvp-st { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.dvp-st-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-text-muted); }
+.dvp-st-dot.run { background: rgb(var(--brand-green)); }
+.dvp-st-dot.done { background: var(--status-success-icon); }
+.dvp-st-dot.fail { background: var(--status-error-icon); }
+.dvp-st-word {
+  font: 500 10px/1 var(--font-ui, -apple-system, sans-serif);
+  color: var(--status-word, var(--color-text-muted));
+}
+.dvp-meta { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.dvp-chip {
+  font: 500 9px/1.4 var(--font-mono, ui-monospace, monospace);
+  color: var(--color-text-dim);
+  padding: 2.5px 6px;
+  border-radius: 5px;
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dvp-chip.time { font-family: var(--font-ui, -apple-system, sans-serif); color: var(--color-text-muted); }
+.dvp-chip.mode {
+  color: rgb(var(--sapphire-glow, var(--sapphire)));
+  border-color: rgb(var(--sapphire) / 0.16);
+}
+.dvp-report {
+  font: 400 10px/1.45 var(--font-ui, -apple-system, sans-serif);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  padding: 4px 7px;
+  border-radius: 6px;
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+}
+.dvp-report b { font-weight: 500; color: var(--color-text-dim); }
+
+/* 任务根幽卡内结构 */
+.dvp-task-top { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.dvp-task-title {
+  font: 600 12px/1.3 var(--font-ui, -apple-system, sans-serif);
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 4px;
+}
+/* 汇点 */
+.dvp-sink-name {
+  font: 600 12px/1 var(--font-mono, ui-monospace, monospace);
+  color: var(--color-text);
+}
+.dvp-sink-sub {
+  font: 400 9px/1.4 var(--font-ui, -apple-system, sans-serif);
+  color: var(--color-text-muted);
+  margin-top: 5px;
+}
+/* 子过程卡 */
+.dvp-sub-title {
+  font: 600 11px/1.2 var(--font-ui, -apple-system, sans-serif);
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.dvp-sub-num {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: 600 8.5px/1 var(--font-mono, ui-monospace, monospace);
+  color: var(--color-text-dim);
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+}
+
+/* 队列/合并窗徽标（候合并/合并中专用：状态徽标三件套之一） */
+.dvp-qbadge {
+  position: absolute;
+  top: -9px;
+  left: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 8px;
+  border-radius: var(--r-pill, 999px);
+  font: 600 9.5px/1 var(--font-ui, -apple-system, sans-serif);
+  letter-spacing: 0.02em;
+  z-index: 6;
+  white-space: nowrap;
+}
+.dvp-qbadge.rtm {
+  color: rgb(var(--amber));
+  background: var(--color-bg);
+  border: 1px solid rgb(var(--amber) / 0.45);
+}
+.dvp-qbadge.mrg {
+  color: rgb(var(--sapphire-glow, var(--sapphire)));
+  background: var(--color-bg);
+  border: 1px solid rgb(var(--sapphire) / 0.55);
+}
+
+/* ── 状态 → 卡视觉映射（环=边框着色，点/字形=语义色，词=中性）──────────────── */
+/* 运行中：绿点脉动（语义色=primary 绿，词中性） */
+.dvp-nd.st-run .dvp-st-dot { background: rgb(var(--brand-green)); animation: dvp-run-pulse 1.6s ease-out infinite; }
+@keyframes dvp-run-pulse {
+  0% { box-shadow: 0 0 0 0 rgb(var(--brand-green) / 0.45); }
+  100% { box-shadow: 0 0 0 7px rgb(var(--brand-green) / 0); }
+}
+/* 重启中：灰点脉动 */
+.dvp-nd.st-restart .dvp-st-dot { background: var(--color-text-muted); animation: dvp-run-pulse 1.6s ease-out infinite; }
+/* 候合并：琥珀环 + 琥珀点（停在队列里，弱警示、强醒目） */
+.dvp-nd.st-rtm {
+  border-color: rgb(var(--amber) / 0.55);
+  box-shadow: 0 0 0 1px rgb(var(--amber) / 0.22), 0 2px 14px rgb(var(--amber) / 0.1);
+}
+.dvp-nd.st-rtm .dvp-st-dot { background: rgb(var(--amber)); }
+/* 合并中：蓝晶环 + 蓝晶呼吸（引擎动作进行时） */
+.dvp-nd.st-merge {
+  border-color: rgb(var(--sapphire) / 0.65);
+  animation: dvp-merge-pulse 1.8s ease-in-out infinite;
+}
+@keyframes dvp-merge-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(var(--sapphire) / 0), 0 2px 8px rgba(0, 0, 0, 0.06); }
+  50% { box-shadow: 0 0 0 6px rgb(var(--sapphire) / 0.12), 0 2px 8px rgba(0, 0, 0, 0.06); }
+}
+.dvp-nd.st-merge .dvp-st-dot { background: rgb(var(--sapphire)); }
+/* 失败：红环 + 红点 + 报告条红染（代审裁定③：红染不用白描边）。
+   🔴 --status-error-icon 是 hex 档 token——`rgb(hex / α)` 形参非法（整条声明被丢，
+   边回落 currentColor = 白/黑描边事故）；hex 档调 α 用 color-mix（sapphire.css 同款）。 */
+.dvp-nd.st-fail {
+  border-color: color-mix(in srgb, var(--status-error-icon) 50%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--status-error-icon) 16%, transparent), 0 2px 14px rgba(0, 0, 0, 0.06);
+}
+.dvp-nd.st-fail .dvp-st-dot { background: var(--status-error-icon); }
+.dvp-nd.st-fail .dvp-report {
+  background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
+  border-color: color-mix(in srgb, var(--status-error-icon) 22%, transparent);
+  color: var(--status-error-icon);
+}
+.dvp-nd.st-fail .dvp-report b { color: var(--status-error-icon); }
+/* 完成：中性卡 + 绿点（语义色只在字形/点） */
+.dvp-nd.st-done .dvp-st-dot { background: var(--status-success-icon); }
+/* 取消：中性点（减号语义由词承担——状态词恒中性字） */
+.dvp-nd.st-cancel .dvp-st-dot { background: var(--color-text-muted); }
+
+/* 落位高亮（任务列表行入口 focus；蓝晶短闪一次性） */
+@keyframes dvp-focus-flash {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(var(--sapphire) / 0); }
+  25%, 65% { box-shadow: 0 0 0 3px rgb(var(--sapphire) / 0.55); }
+}
+.dvp-nd.dvp-focus { animation: dvp-focus-flash 1.2s ease-in-out 2; z-index: 9; }
+
+/* ── 连线（SVG 下垫层）：状态化 + 合并管线三态 ─────────────────────────────── */
+.dvp-edges {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.dvp-edges .e-idle { stroke: var(--color-border); stroke-width: 1.25; fill: none; opacity: 0.9; }
+.dvp-edges .e-inflight {
+  stroke: var(--color-text-muted);
+  stroke-width: 1.5;
+  fill: none;
+  stroke-dasharray: 5 4;
+  animation: dvp-e-dash 1.2s linear infinite;
+  opacity: 0.7;
+}
+@keyframes dvp-e-dash { to { stroke-dashoffset: -9; } }
+.dvp-edges .e-del { stroke: rgb(var(--sapphire) / 0.75); stroke-width: 2; fill: none; }
+.dvp-edges .e-rtm { stroke: rgb(var(--amber) / 0.6); stroke-width: 1.5; fill: none; stroke-dasharray: 6 5; }
+.dvp-edges .e-merge {
+  stroke: rgb(var(--sapphire) / 0.8);
+  stroke-width: 2;
+  fill: none;
+  stroke-dasharray: 7 5;
+  animation: dvp-e-dash 1s linear infinite;
+}
+/* 箭头 marker 填充（走 CSS var——零字面色值） */
+.dvp-mk-idle { fill: var(--color-border); }
+.dvp-mk-inflight { fill: var(--color-text-muted); }
+.dvp-mk-del { fill: rgb(var(--sapphire) / 0.75); }
+.dvp-mk-amb { fill: rgb(var(--amber) / 0.7); }
+.dvp-mk-mrg { fill: rgb(var(--sapphire) / 0.85); }
+
+/* 边中点徽标（FIFO 位次贴琥珀线 / 合并窗贴蓝晶线） */
+.dvp-e-chip {
+  position: absolute;
+  z-index: 6;
+  font: 600 9px/1.4 var(--font-mono, ui-monospace, monospace);
+  padding: 2.5px 7px;
+  border-radius: var(--r-pill, 999px);
+  background: var(--color-bg);
+  border: 1px solid rgb(var(--amber) / 0.45);
+  color: rgb(var(--amber));
+  white-space: nowrap;
+}
+.dvp-e-chip.mrgc {
+  border-color: rgb(var(--sapphire) / 0.55);
+  color: rgb(var(--sapphire-glow, var(--sapphire)));
+}
+
+/* 终态泳道拥挤计数块 */
+.dvp-done-block {
+  align-items: center;
+  justify-content: center;
+  font: 500 11px/1.4 var(--font-ui, -apple-system, sans-serif);
+  color: var(--color-text-muted);
+  border-radius: 14px;
+}
+.dvp-done-block:hover { color: var(--color-text); }
+
+/* ── 空态 ──────────────────────────────────────────────────────────────────── */
+.dvp-empty {
+  padding: 48px 20px;
+  text-align: center;
+  font: 400 12.5px/1.6 var(--font-ui, -apple-system, sans-serif);
+  color: var(--color-text-muted);
+  border-radius: 18px;
+  border: 1px dashed var(--color-border);
+  background: var(--glass-etched-bg);
+}
+
+/* ── 图例（页脚玻璃条）──────────────────────────────────────────────────────── */
+.dvp-legend {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 11px 18px;
+  border-radius: 18px;
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-border);
+  flex-wrap: wrap;
+  max-width: 1408px;
+}
+.dvp-lg-group { display: flex; align-items: center; gap: 9px; }
+.dvp-lg-h {
+  font: 600 9.5px/1 var(--font-ui, -apple-system, sans-serif);
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  margin-right: 2px;
+}
+.dvp-lg-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font: 400 10.5px/1 var(--font-ui, -apple-system, sans-serif);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+.dvp-lg-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+.dvp-lg-dot.lg-run { background: rgb(var(--brand-green)); }
+.dvp-lg-dot.lg-rtm { background: rgb(var(--amber)); }
+.dvp-lg-dot.lg-mrg { background: rgb(var(--sapphire)); }
+.dvp-lg-dot.lg-fail { background: var(--status-error-icon); }
+.dvp-lg-glyph { font: 600 11px/1 var(--font-ui, -apple-system, sans-serif); flex: 0 0 auto; }
+.dvp-lg-glyph.lg-done { color: var(--status-success-icon); }
+.dvp-lg-glyph.lg-mut { color: var(--color-text-muted); }
+.dvp-lg-line { width: 24px; height: 0; flex: 0 0 auto; }
+.dvp-lg-line.lg-idle { border-top: 1.5px solid var(--color-border); }
+.dvp-lg-line.lg-inflight { border-top: 1.5px dashed var(--color-text-muted); }
+.dvp-lg-line.lg-del { border-top: 2px solid rgb(var(--sapphire) / 0.75); }
+.dvp-lg-line.lg-rtm { border-top: 1.5px dashed rgb(var(--amber) / 0.6); }
+.dvp-lg-line.lg-merge { border-top: 2px dashed rgb(var(--sapphire) / 0.8); }
+.dvp-lg-shape {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  flex: 0 0 auto;
+}
+.dvp-lg-shape.sh-root { border: 1px dashed var(--color-border); }
+.dvp-lg-shape.sh-delegate { border: 1px solid var(--glass-border); background: var(--glass-bg); }
+.dvp-lg-shape.sh-sub { border: 1px solid var(--glass-border); background: var(--glass-etched-bg); }
+.dvp-lg-shape.sh-sink { border: 1px dashed var(--color-border); }
+
+/* ── 响应式（设计 §7：带头 chips ≤900px 逐级收纳）──────────────────────────── */
+@media (max-width: 900px) {
+  .dvp-band-counts, .dvp-entry { display: none; }
+  .dvp-band-ws { max-width: 160px; }
+}
+
+/* ── 减动效（设计 §5：一律关停）────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .dvp-root *, .dvp-root *::before, .dvp-root *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
