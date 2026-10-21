@@ -463,7 +463,16 @@ private[gateway] object PresenceRoutes:
               .findAllTasks()
               .map(tasks => tasks.collect { case t if t.taskId.nonEmpty => t.taskId -> t.status }.toMap)
               .handleErrorWith(_ => IO.pure(Map.empty[String, String]))
-              .flatMap(statuses => ChainsReadFace.rowsJson(reg, archived, statuses).flatMap(Ok(_)))
+              .flatMap(statuses =>
+                ChainsReadFace.rowsJson(reg, archived, statuses).flatMap { body =>
+                  // M2 缓存语义小刀（v2 §3.1 ① · 链集合行）：ETag = 载荷内容寻址。
+                  // 行投影由不可变事实流组成（DelegateRegistry 落盘记录 × 台账判词行 ×
+                  // 任务状态读数）——`live` 只是 {status:"running"}|null 的活性提示位
+                  // （ChainsReadFace delegateJson 同源），无逐秒漂移字段 ⇒ 内容 hash
+                  // 稳定（服务端本无 gen 计数器——flowMapTab.bumpGen 是前端概念）。
+                  HttpCache.conditionalOk(req, body, HttpCache.ofJson(body))
+                }
+              )
           }
         }
 
@@ -594,8 +603,19 @@ private[gateway] object PresenceRoutes:
                     NotFound(Json.obj("error" -> s"no delegate record for id '$id'".asJson))
                   case Some(core) =>
                     nebflow.core.executor.ExternalOutputStore.read(id, 0L).flatMap {
-                      case None => Ok(core.deepMerge(Json.obj("output" -> Json.Null)))
-                      case Some(o) => Ok(core.deepMerge(Json.obj("output" -> externalOutputJson(o))))
+                      case None =>
+                        HttpCache.conditionalOk(
+                          req,
+                          core.deepMerge(Json.obj("output" -> Json.Null)),
+                          HttpCache.ofJson(core.deepMerge(Json.obj("output" -> Json.Null)))
+                        )
+                      case Some(o) =>
+                        val body = core.deepMerge(Json.obj("output" -> externalOutputJson(o)))
+                        // M2 缓存语义小刀（v2 §3.1 ① · 台账行）：ETag = 载荷内容寻址。
+                        // 台账 = 不可变事实流（TaskLedger/ChainStore 条目只增不改；
+                        // output 为留存首窗只增）⇒ 未追加时载荷逐字节稳定。`live` 同
+                        // `/api/chains` 行（{status:"running"}|null，无逐秒漂移）。
+                        HttpCache.conditionalOk(req, body, HttpCache.ofJson(body))
                     }
                 }
               }

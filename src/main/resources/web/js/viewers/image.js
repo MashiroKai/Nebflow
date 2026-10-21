@@ -3,7 +3,8 @@
 // shared viewers/zoom.js engine; pan via pointer drag.
 
 import { escapeHtml, formatSize } from './shared.js';
-import { ticketUrl, reMint } from '../nfTicket.js';
+import { reMint } from '../nfTicket.js';
+import { nfViewerUrl } from '../nfFileCache.js';
 import { enableViewerZoom } from './zoom.js';
 
 /** Image viewer — <img> served via /api/nf-file, pannable + zoomable.
@@ -159,7 +160,10 @@ async function viewImage(pane, { absPath, fileName, size, objectUrl }) {
       else applyScale(1, pivot);
     });
   };
-  img.src = objectUrl || await ticketUrl(absPath);
+  // M2 账本接缝（imgdoor #542 推广批 · 设计 v1 §7 M1-2）：票据腿经 `nfViewerUrl`
+  // ——`nf:<absPath>` 账本命中 = blob URL 直渲染（第二次打开零取数）；未命中走既有
+  // 票据链并入账。`objectUrl` 腿（字节已在手）原样透传，零行为变化。
+  img.src = await nfViewerUrl({ absPath, objectUrl, pane });
 }
 
 export default {

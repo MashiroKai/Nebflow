@@ -2,7 +2,8 @@
 // Migrated verbatim from fileViewers.js (viewXlsx).
 
 import { escapeHtml } from './shared.js';
-import { ticketUrl, reMint } from '../nfTicket.js';
+import { reMint } from '../nfTicket.js';
+import { nfViewerUrl } from '../nfFileCache.js';
 
 /** XLSX viewer — fetch binary, parse with SheetJS, render first sheet as table
  *
@@ -27,7 +28,9 @@ async function viewXlsx(pane, { absPath, fileName, objectUrl }) {
   try {
     let arrayBuffer;
     try {
-      arrayBuffer = await fetchBytes(objectUrl || await ticketUrl(absPath));
+      // M2 账本接缝（imgdoor #542 推广批）：票据腿经 nfViewerUrl——账本命中 = blob
+      // URL 直开（第二次打开零取数），未命中走既有票据链并入账 `nf:<absPath>`。
+      arrayBuffer = await fetchBytes(await nfViewerUrl({ absPath, objectUrl, pane }));
     } catch (err) {
       if (retried || !absPath || objectUrl) throw err;
       retried = true;

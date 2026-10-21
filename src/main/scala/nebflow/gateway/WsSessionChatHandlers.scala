@@ -1107,7 +1107,10 @@ private[gateway] object WsSessionChatHandlers:
                 "messages" -> msgs.asJson,
                 "total" -> total.asJson,
                 "offset" -> offset.asJson,
-                "hasMore" -> hasMore.asJson
+                "hasMore" -> hasMore.asJson,
+                // M2 缓存语义小刀（v2 §3.1 ① · 历史页行）：页指纹（append-only 历史
+                // 的对账键；语义与「候作者裁」边界见 HistoryPageFingerprint 头注）。
+                "pageFingerprint" -> HistoryPageFingerprint.of(msgs, total, offset)
               )
             )
           case Left(_) =>
@@ -1119,7 +1122,8 @@ private[gateway] object WsSessionChatHandlers:
                 "messages" -> List.empty[io.circe.Json].asJson,
                 "total" -> 0.asJson,
                 "offset" -> 0.asJson,
-                "hasMore" -> false.asJson
+                "hasMore" -> false.asJson,
+                "pageFingerprint" -> HistoryPageFingerprint.of(List.empty, 0L, 0L)
               )
             )
         })

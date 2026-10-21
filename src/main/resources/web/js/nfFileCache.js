@@ -1,39 +1,56 @@
-// nfFileCache.js — 设备侧（浏览器端）已取文件的 blob 缓存（imgdoor #542 档2）。
+// nfFileCache.js — 设备侧（浏览器端）已取文件的 blob 缓存账本（imgdoor #542 档2；
+// M2 全数据面推广 · 设计 v1 §6）。
 //
 // 作者令 2026-10-20 逐字：「已点击下载过的文件（存在本机），应该也打开要很快。」
 // ⇒ 档2：同一件文件第二次打开（新标签 / 刷新页面后重开）**零取数**直接渲染，
-//   速度 = 档1（本机直读）体感。
+//   速度 = 档1（本机直读）体感。M2 把账本从 nf-file 两条腿推广为全数据面共享
+//   （canvas 七 viewer / 设备取件 hash 副键 / 事件失效）。
 //
-// 形态：
-//   · 字节存 Cache Storage（`caches`，同源持久，刷新页面仍在）；`caches` 不可用
-//     （非安全上下文 / 老引擎）⇒ 退化为**会话级内存 Map**（同一刷新周期内仍命中，
-//     报告申报的降级面，非静默失败）。
-//   · 索引（LRU 序 + 字节数 + 时间戳）存 localStorage —— 键值都是小整数/短串，
-//     与 5MB 配额相比可忽略；多标签并发写同一索引是**可容忍竞态**（最坏情形 =
-//     少记一次 LRU touch，字节上限由下次 put 重新收敛），报告申报。
-//   · 淘汰 = LRU + 字节预算（默认 256 MiB）；过期 = TTL（默认 30min，与 nf-ticket
-//     TTL 同族）——TTL 过后视为未命中，重取即刷新。**命中不做服务端再验证**
-//     （nf-file 无条件 GET，再验证 = 全量重下，违背档2 目标）：陈旧窗 ≤ TTL，
-//     与浏览器 HTTP 缓存同级的陈旧语义，报告申报。
-//   · 配置（本批新增键，缺席 = 缺省值）：<home>/nebflow.json
-//       "nfFileCache": { "enabled": true, "maxBytes": 268435456, "ttlMs": 1800000 }
-//     经既有 configData 通道 → `state.parsedConfig` 原样到达（featureFlags.js 同款
-//     机制，零新机制）；改动刷新页面生效。清缓存入口本批**不做**（候作者示）。
+// 形态（M2 起）：
+//   · 字节存 Cache Storage（`caches`，同源持久，刷新页面仍在），**字节键 = 内容 id
+//     （cid = 整件 sha256 前 16 hex；无 hash 条目回落取数键）**——同一份文件多设备
+//     /多取数键只存一份字节（v1 §6.3 多设备去重；索引多键指向同一 Cache 条目，
+//     引用计数淘汰：全部键出局才删字节）。`caches` 不可用（非安全上下文 / 老引擎）
+//     ⇒ 退化为**会话级内存 Map**（同一刷新周期内仍命中，申报降级面，非静默失败）。
+//   · 索引（LRU 序 + meta + 内容表）存 localStorage —— 键值都是小整数/短串；多标签
+//     并发写同一索引是**可容忍竞态**（最坏 = 少记一次 LRU touch，字节上限由下次
+//     put 重新收敛，v1 §6.4 申报保留）。v1 索引（无 cid/contents）读入即迁移。
+//   · 淘汰 = **分桶预算**（v1 §6.2：local 128MiB / device 96MiB / server 32MiB，可配）
+//     + 桶内 LRU——防一类大件把别桶全挤出局；**TTL 兜底不变**（默认 30min，与
+//     nf-ticket TTL 同族）。**命中不做服务端再验证**（nf-file 无条件 GET，再验证 =
+//     全量重下，违背档2 目标）：陈旧窗 ≤ TTL + 事件失效收敛（下条）。
+//   · **事件失效**（v1 §6.1）：引擎侧写路径（Write/Edit/编辑器保存/删除/移动）广播
+//     `nf-cache-invalidate {path}` ⇒ `nfCacheInvalidatePath` 精确淘汰；列目录的
+//     size+mtime 读数 ⇒ `nfCacheReconcile` 顺带比对（version = `size:mtimeMs`），
+//     不一致静默淘汰。TTL 是事件丢失时的兜底，语义不变。
+//   · 配置（缺席 = 缺省值）：<home>/nebflow.json
+//       "nfFileCache": { "enabled": true, "maxBytes": 268435456, "ttlMs": 1800000,
+//                        "buckets": { "localBytes": 134217728, "deviceBytes": 100663296, "serverBytes": 33554432 } }
+//     经既有 configData 通道 → `state.parsedConfig` 原样到达；改动刷新页面生效。
+//     `maxBytes` = 全局硬顶（分桶预算各自再被它夹顶）；清缓存用户入口仍候作者示
+//     （`nfCacheReset()` 测试 seam 在）。
 //
-// 放置/依赖纪律：本模块只 import `state.js`（config 读数）与 `branding.js`
-// （localStorage 命名空间），**不** import canvas/attachmentPreview/messages ⇒
-// 不入任何环（scripts/check-circular.mjs 面）。
-// 本模块**不取数**：`fetchBlobWithProgress` 只是调用方自带的**既有路由 URL**
-// （nf-ticket 票据路 / friendsApi 鉴权路）的流式读出器，禁第三条取字节路。
+// 放置/依赖纪律：本模块只 import `state.js` 与 `branding.js`（localStorage 命名
+// 空间），**不** import canvas/attachmentPreview/messages/nfTicket（不入任何环，
+// scripts/check-circular.mjs 面；nfTicket 用**动态 import** 在取数腿内解——动态边
+// 不进静态环）。本模块**不新增取字节路**：`fetchBlobWithProgress` 只是调用方自带
+// 的**既有路由 URL**（nf-ticket 票据路 / friendsApi 鉴权路）的流式读出器；
+// `nfViewerSource` 同理——URL 仍由 nfTicket 票据链铸造，账本只做「查→取→入账」。
 
 import state from './state.js';
 import { key } from './branding.js';
 
 const CACHE_NAME = 'nf-file-cache-v1';
-/** 缺省字节预算 256 MiB（报告申报值；nebflow.json `nfFileCache.maxBytes` 可改）。 */
+/** 全局硬顶缺省 256 MiB（v1 §2.2 既有值；nebflow.json `nfFileCache.maxBytes` 可改）。 */
 const DEFAULT_MAX_BYTES = 256 * 1024 * 1024;
 /** 缺省 TTL 30 分钟（与 nf-ticket TTL 同族；`nfFileCache.ttlMs` 可改）。 */
 const DEFAULT_TTL_MS = 30 * 60 * 1000;
+/** 分桶预算缺省（v1 §6.2 推荐值：local 128 / device 96 / server 32 MiB，可配）。 */
+const DEFAULT_BUCKET_BYTES = {
+  local: 128 * 1024 * 1024,
+  device: 96 * 1024 * 1024,
+  server: 32 * 1024 * 1024,
+};
 /** 配置下限保护：预算至少 1 MiB、TTL 至少 10s（防手误 0/负数把缓存打穿）。 */
 const MIN_MAX_BYTES = 1024 * 1024;
 const MIN_TTL_MS = 10 * 1000;
@@ -42,12 +59,15 @@ const INDEX_STORAGE_KEY = 'nfFileCacheV1';
 /** Cache Storage 里的哑 URL 前缀（Cache.put 需要 http(s) Request；.invalid 保留 TLD）。 */
 const DUMMY_URL_PREFIX = 'https://nf-cache.invalid/';
 
-/** @typedef {{ size: number, at: number, last: number, ver: string }} NfCacheMeta */
-/** @typedef {{ v: number, bytes: number, order: string[], meta: Record<string, NfCacheMeta> }} NfCacheIndex */
+/** @typedef {{ size: number, at: number, last: number, ver: string, hash: string, cid: string, bucket: 'local'|'device'|'server', srcPath: string }} NfCacheMeta */
+/** @typedef {{ size: number, refs: number }} NfCacheContent */
+/** @typedef {{ v: number, bytes: number, order: string[], meta: Record<string, NfCacheMeta>, contents: Record<string, NfCacheContent> }} NfCacheIndex */
 
 /** @type {NfCacheIndex} */
-const index = { v: 1, bytes: 0, order: [], meta: {} };
-/** @type {Map<string, Blob>} 会话级内存退化面（`caches` 不可用时）。 */
+const index = { v: 2, bytes: 0, order: [], meta: {}, contents: {} };
+/** 桶占用读数（增量维护；loadIndex 时重建）。 */
+const bucketBytesMap = { local: 0, device: 0, server: 0 };
+/** @type {Map<string, Blob>} 会话级内存退化面（`caches` 不可用时），键 = cid。 */
 const memoryBlobs = new Map();
 let indexLoaded = false;
 /** @type {Promise<Cache>|null} caches.open 的单飞（不可用 ⇒ 恒 null）。 */
@@ -57,6 +77,11 @@ function configNow() {
   const c = /** @type {any} */ (state.parsedConfig)?.nfFileCache;
   const maxBytesRaw = Number(c && c.maxBytes);
   const ttlRaw = Number(c && c.ttlMs);
+  const b = c && c.buckets ? c.buckets : {};
+  const clampBucket = (v, dflt) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? Math.max(MIN_MAX_BYTES, n) : dflt;
+  };
   return {
     enabled: !c || c.enabled !== false,
     maxBytes: Number.isFinite(maxBytesRaw) && maxBytesRaw > 0
@@ -65,10 +90,23 @@ function configNow() {
     ttlMs: Number.isFinite(ttlRaw) && ttlRaw > 0
       ? Math.max(MIN_TTL_MS, ttlRaw)
       : DEFAULT_TTL_MS,
+    buckets: {
+      local: clampBucket(b.localBytes, DEFAULT_BUCKET_BYTES.local),
+      device: clampBucket(b.deviceBytes, DEFAULT_BUCKET_BYTES.device),
+      server: clampBucket(b.serverBytes, DEFAULT_BUCKET_BYTES.server),
+    },
   };
 }
 
-/** 索引惰性加载（首次使用时一次读 localStorage）。 */
+/** 取数键 → 分桶（v1 §6.2 locality 分桶；显式桶参数胜，缺省按键前缀判）。 */
+export function bucketOfKey(cacheKey, explicit) {
+  if (explicit === 'local' || explicit === 'device' || explicit === 'server') return explicit;
+  if (typeof cacheKey === 'string' && cacheKey.startsWith('dev:')) return 'device';
+  if (typeof cacheKey === 'string' && cacheKey.startsWith('nf:')) return 'local';
+  return 'server';
+}
+
+/** 索引惰性加载（首次使用时一次读 localStorage；v1 索引读入即迁移 v2）。 */
 function loadIndex() {
   if (indexLoaded) return;
   indexLoaded = true;
@@ -76,12 +114,44 @@ function loadIndex() {
     const raw = localStorage.getItem(key(INDEX_STORAGE_KEY));
     if (!raw) return;
     const parsed = JSON.parse(raw);
-    if (parsed && parsed.v === 1 && typeof parsed.bytes === 'number' && Array.isArray(parsed.order) && parsed.meta) {
+    if (!parsed || !Array.isArray(parsed.order) || !parsed.meta) return;
+    if (parsed.v === 1) {
+      // v1 → v2 迁移：每键自持内容（cid = 键），桶按键前缀判。
+      index.order = parsed.order;
+      index.bytes = 0;
+      for (const k of parsed.order) {
+        const old = parsed.meta[k];
+        if (!old) continue;
+        const cid = k;
+        const bucket = bucketOfKey(k);
+        index.meta[k] = {
+          size: old.size, at: old.at, last: old.last, ver: old.ver || '',
+          hash: old.hash || '', cid, bucket, srcPath: '',
+        };
+        index.contents[cid] = { size: old.size, refs: 1 };
+        index.bytes += old.size;
+      }
+      recomputeBucketBytes();
+      saveIndex();
+      return;
+    }
+    if (parsed.v === 2 && typeof parsed.bytes === 'number' && parsed.contents) {
       index.bytes = parsed.bytes;
       index.order = parsed.order;
       index.meta = parsed.meta;
+      index.contents = parsed.contents;
+      recomputeBucketBytes();
     }
   } catch { /* 损坏索引 = 无缓存起步（下次 put 重建） */ }
+}
+
+function recomputeBucketBytes() {
+  bucketBytesMap.local = 0; bucketBytesMap.device = 0; bucketBytesMap.server = 0;
+  for (const k of index.order) {
+    const meta = index.meta[k];
+    const c = meta && index.contents[meta.cid];
+    if (meta && c) bucketBytesMap[meta.bucket] = (bucketBytesMap[meta.bucket] || 0) + c.size;
+  }
 }
 
 function saveIndex() {
@@ -117,43 +187,70 @@ function touch(cacheKey, now) {
   saveIndex();
 }
 
-/** 按 LRU 淘汰到预算内（`keep` = 刚写入、不许淘的键）。 */
-async function evictToBudget(keep) {
-  const budget = configNow().maxBytes;
-  while (index.bytes > budget && index.order.length > 0) {
-    const victim = index.order[0];
-    if (victim === keep && index.order.length > 1) {
-      // 唯一幸存者也超预算：不自我淘汰（超预算由下一个 put 收敛）。
-      index.order.push(index.order.shift());
-      if (index.order[0] !== victim) continue;
-      break;
-    }
-    index.order.shift();
-    const meta = index.meta[victim];
-    if (meta) index.bytes = Math.max(0, index.bytes - meta.size);
-    delete index.meta[victim];
-    const store = await cacheStore();
-    if (store) { try { await store.delete(dummyUrl(victim)); } catch { /* 忽略单条删除失败 */ } }
-    memoryBlobs.delete(victim);
-    saveIndex();
-  }
+/**
+ * 内容引用减一：refs 归零 ⇒ 删字节（Cache Storage + 内存面）并扣全局字节账。
+ * 多键指向同一 cid 时字节不动（v1 §6.3 引用计数淘汰纪律）。返回释放的字节数
+ * （0 = 内容仍被其他键引用——桶账不扣，由调用方据此记账）。
+ */
+async function unrefContent(cid) {
+  const c = index.contents[cid];
+  if (!c) return 0;
+  c.refs -= 1;
+  if (c.refs > 0) return 0;
+  delete index.contents[cid];
+  index.bytes = Math.max(0, index.bytes - c.size);
+  const store = await cacheStore();
+  if (store) { try { await store.delete(dummyUrl(cid)); } catch { /* 忽略单条删除失败 */ } }
+  memoryBlobs.delete(cid);
+  return c.size;
 }
 
+/** 删一个键（引用计数感知）：摘序 + 摘 meta + 内容引用减一（内容真死才扣桶账）。 */
 async function dropEntry(cacheKey) {
   const i = index.order.indexOf(cacheKey);
   if (i >= 0) index.order.splice(i, 1);
   const meta = index.meta[cacheKey];
-  if (meta) index.bytes = Math.max(0, index.bytes - meta.size);
   delete index.meta[cacheKey];
-  const store = await cacheStore();
-  if (store) { try { await store.delete(dummyUrl(cacheKey)); } catch { /* 同上 */ } }
-  memoryBlobs.delete(cacheKey);
+  if (meta) {
+    const freed = await unrefContent(meta.cid);
+    if (freed > 0) bucketBytesMap[meta.bucket] = Math.max(0, (bucketBytesMap[meta.bucket] || 0) - freed);
+  }
   saveIndex();
 }
 
 /**
- * 命中读数：键在场且未过 TTL ⇒ Blob（LRU touch）；否则按未命中处理并**顺手清掉**
- * 过期/孤儿条目。绝不抛（缓存故障 ⇒ 未命中，回到档3 取数腿）。
+ * 按分桶预算淘汰（v1 §6.2）：只在**超预算的桶内**选 LRU 受害者（`keep` = 刚写入、
+ * 不许淘的键；桶内只剩 keep 时不再自我淘汰，超预算由下一个 put 收敛——同全局版语义）。
+ */
+async function evictToBudget(keep, bucket) {
+  const cfg = configNow();
+  const budget = Math.min(cfg.buckets[bucket], cfg.maxBytes);
+  for (;;) {
+    if ((bucketBytesMap[bucket] || 0) <= budget) break;
+    let victim = '';
+    for (const k of index.order) {
+      const meta = index.meta[k];
+      if (!meta || meta.bucket !== bucket) continue;
+      if (k === keep) continue;
+      victim = k;
+      break; // order[0] = 最旧
+    }
+    if (!victim) break; // 桶内只剩 keep（或空表）：不自我淘汰
+    index.order.splice(index.order.indexOf(victim), 1);
+    const meta = index.meta[victim];
+    delete index.meta[victim];
+    if (meta) {
+      const freed = await unrefContent(meta.cid);
+      if (freed > 0) bucketBytesMap[bucket] = Math.max(0, (bucketBytesMap[bucket] || 0) - freed);
+    }
+    saveIndex();
+  }
+}
+
+/**
+ * 命中读数：键在场且未过 TTL ⇒ Blob（LRU touch；字节按 cid 取——多键同内容共享
+ * 一份）。否则按未命中处理并**顺手清掉**过期/孤儿条目。绝不抛（缓存故障 ⇒ 未命中，
+ * 回到档3 取数腿）。
  * @param {string} cacheKey @returns {Promise<Blob|null>}
  */
 export async function nfCachedBlob(cacheKey) {
@@ -169,12 +266,12 @@ export async function nfCachedBlob(cacheKey) {
   const store = await cacheStore();
   if (store) {
     try {
-      const hit = await store.match(dummyUrl(cacheKey));
+      const hit = await store.match(dummyUrl(meta.cid));
       const blob = hit ? await hit.blob() : null;
       if (blob) { touch(cacheKey, now); return blob; }
     } catch { /* 读失败 ⇒ 未命中 */ }
   }
-  const mem = memoryBlobs.get(cacheKey);
+  const mem = memoryBlobs.get(meta.cid);
   if (mem) { touch(cacheKey, now); return mem; }
   // 索引在、字节不在（他端清了 Cache / 存储被逐）：清孤儿索引，按未命中。
   await dropEntry(cacheKey);
@@ -182,68 +279,315 @@ export async function nfCachedBlob(cacheKey) {
 }
 
 /**
- * 写入（成功取数后调用；`void`-able，失败只降级为「下次重取」）。超出预算按
- * LRU 淘汰旧条目（刚写入的键本身不淘）。
- * @param {string} cacheKey @param {Blob} blob @param {string} [version] 取数时
- *   顺手拿到的版本读数（size:lastModified 或调用方自定义；仅记录，命中判据 = TTL）
+ * **hash 副键命中**（v1 §6.3 多设备同文件去重）：主键未命中时，用取件腿免费带回的
+ * 整件 sha256 前 16 hex 查账——另一设备/另一键已缓存的**同内容**字节直接复用（字节
+ * 已在浏览器，与它从哪台设备来无关）。命中即 touch 该条（LRU 记账）。
+ * @param {string} hash16 @returns {Promise<Blob|null>}
+ */
+export async function nfCacheLookupByHash(hash16) {
+  if (!hash16 || !configNow().enabled) return null;
+  loadIndex();
+  const now = Date.now();
+  // 新→旧扫（LRU 尾部优先），找同内容且未过 TTL 的任何键。
+  for (let i = index.order.length - 1; i >= 0; i--) {
+    const k = index.order[i];
+    const meta = index.meta[k];
+    if (!meta) continue;
+    if (meta.hash !== hash16 && meta.cid !== hash16) continue;
+    if (now - meta.at >= configNow().ttlMs) continue; // 过期条目不作副键源
+    const blob = await nfCachedBlob(k);
+    if (blob) return blob;
+  }
+  return null;
+}
+
+/**
+ * 写入（成功取数后调用；`void`-able，失败只降级为「下次重取」）。
+ *
+ * M2 内容寻址：`opts.hash`（整件 sha256 前 16 hex，设备分块取件腿免费副产品）在场
+ * ⇒ cid = hash——**同内容多键只存一份字节**（再次 put 同 cid 仅加引用，零重复写）；
+ * 无 hash ⇒ cid = 键（行为与 v1 等价）。超出**所在桶**预算的单件不缓存（永远淘不进）。
+ *
+ * @param {string} cacheKey @param {Blob} blob @param {string} [version]
+ *   取数时顺手拿到的版本读数（`size:mtimeMs`；仅记录，命中判据 = TTL）
+ * @param {{ hash?: string, srcPath?: string, bucket?: 'local'|'device'|'server' }} [opts]
  * @returns {Promise<void>}
  */
-export async function nfCachePut(cacheKey, blob, version) {
+export async function nfCachePut(cacheKey, blob, version, opts) {
   if (!cacheKey || !blob || typeof blob.size !== 'number' || !(blob.size > 0)) return;
   if (!configNow().enabled) return;
   loadIndex();
-  // 大于整个预算的单件不缓存（永远淘不进预算，只会反复触发淘汰）。
-  if (blob.size > configNow().maxBytes) return;
+  const bucket = bucketOfKey(cacheKey, opts && opts.bucket);
+  const budget = Math.min(configNow().buckets[bucket], configNow().maxBytes);
+  if (blob.size > budget) return; // 大于整个桶预算的单件不缓存
   const now = Date.now();
   const prev = index.meta[cacheKey];
-  index.meta[cacheKey] = { size: blob.size, at: now, last: now, ver: String(version || '') };
-  index.bytes = Math.max(0, index.bytes + blob.size - (prev ? prev.size : 0));
+  const cid = (opts && opts.hash) || (prev && prev.cid) || cacheKey;
+  const existing = index.contents[cid];
+  if (!existing) {
+    // 新内容：写字节（Cache Storage，失败退化内存面）+ 记账（refs = 本键 1 个引用）。
+    const store = await cacheStore();
+    if (store) {
+      try {
+        await store.put(
+          new Request(dummyUrl(cid)),
+          new Response(blob, { headers: { 'Content-Type': blob.type || 'application/octet-stream' } })
+        );
+      } catch { /* Cache 写失败 ⇒ 退化到内存面 */ }
+    }
+    index.contents[cid] = { size: blob.size, refs: 1 };
+    index.bytes += blob.size;
+    bucketBytesMap[bucket] = (bucketBytesMap[bucket] || 0) + blob.size;
+  } else if (!prev || prev.cid !== cid) {
+    // 既有内容被一个**新键**链接：引用加一（同键重放同内容 = 已计过，不重复加）。
+    index.contents[cid].refs += 1;
+  }
+  if (prev && prev.cid && prev.cid !== cid) await unrefContent(prev.cid); // 键换内容：旧引用减一
+  index.meta[cacheKey] = {
+    size: blob.size, at: now, last: now, ver: String(version || ''),
+    hash: (opts && opts.hash) || '', cid, bucket, srcPath: (opts && opts.srcPath) || '',
+  };
   const i = index.order.indexOf(cacheKey);
   if (i >= 0) index.order.splice(i, 1);
   index.order.push(cacheKey);
-  const store = await cacheStore();
-  if (store) {
-    try {
-      await store.put(
-        new Request(dummyUrl(cacheKey)),
-        new Response(blob, { headers: { 'Content-Type': blob.type || 'application/octet-stream' } })
-      );
-    } catch { /* Cache 写失败 ⇒ 退化到内存面 */ }
-  }
-  memoryBlobs.set(cacheKey, blob); // 内存面恒有（命中第二读数 + 无 caches 引擎的退化面）
+  if (!existing) memoryBlobs.set(cid, blob); // 内存面恒有（命中第二读数 + 无 caches 引擎的退化面）
   saveIndex();
-  await evictToBudget(cacheKey);
+  await evictToBudget(cacheKey, bucket);
+}
+
+/**
+ * 单键淘汰（引用计数感知；410 对账 / 事件失效共用）：字节还有别的键引用 ⇒ 只摘键；
+ * 最后一个引用出局 ⇒ 删字节。
+ * @param {string} cacheKey @returns {Promise<boolean>} true = 确有一条被摘。
+ */
+export async function nfCacheDrop(cacheKey) {
+  if (!cacheKey) return false;
+  loadIndex();
+  if (!index.meta[cacheKey]) return false;
+  await dropEntry(cacheKey);
+  return true;
+}
+
+/**
+ * 事件失效（v1 §6.1）：引擎广播 `nf-cache-invalidate {path}` ⇒ 精确淘汰——
+ * ① 主键恰为 `nf:<path>` 的条目；② `srcPath` 记录了该路径的条目（设备取件等
+ * 间接键）。返回被淘汰键数（诊断读数）。
+ * @param {string} path @returns {Promise<number>}
+ */
+export async function nfCacheInvalidatePath(path) {
+  if (!path) return 0;
+  loadIndex();
+  /** @type {string[]} */
+  const hits = [];
+  const direct = 'nf:' + path;
+  if (index.meta[direct]) hits.push(direct);
+  for (const k of index.order) {
+    const meta = index.meta[k];
+    if (meta && meta.srcPath && meta.srcPath === path && !hits.includes(k)) hits.push(k);
+  }
+  for (const k of hits) await dropEntry(k);
+  return hits.length;
+}
+
+/**
+ * 顺带对账（v1 §6.1「取数时顺带比对」腿）：消费**本来就流动着**的元数据
+ * （列目录条目 `[{path,size,mtimeMs}]`），与账本 version（`size:mtimeMs`）不一致 ⇒
+ * 静默淘汰该条（下次打开按未命中走）。命中零取数纪律不受影响——本函数只在
+ * 「其他原因到达服务端的往返」里被动消费数据，零新增请求。
+ * @param {{ path: string, size: number, mtimeMs?: number }[]} entries
+ * @returns {Promise<number>} 被淘汰键数（诊断读数）。
+ */
+export async function nfCacheReconcile(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) return 0;
+  loadIndex();
+  /** @type {string[]} */
+  const hits = [];
+  for (const e of entries) {
+    if (!e || !e.path) continue;
+    const k = 'nf:' + e.path;
+    const meta = index.meta[k];
+    if (!meta || !meta.ver) continue;
+    const mtime = Number(e.mtimeMs) || 0;
+    if (!mtime) continue; // 无 mtime 读数不比对（保守：宁可放过不可误杀）
+    const current = `${Number(e.size) || 0}:${mtime}`;
+    if (meta.ver !== current) hits.push(k);
+  }
+  for (const k of hits) await dropEntry(k);
+  return hits.length;
 }
 
 /**
  * 读数面（测试/诊断 seam）：引擎面板、spec 断言用。
- * @returns {{ enabled: boolean, backend: 'caches'|'memory', entries: number, bytes: number, maxBytes: number, ttlMs: number }}
+ * @returns {{ enabled: boolean, backend: 'caches'|'memory', entries: number, bytes: number,
+ *   maxBytes: number, ttlMs: number, buckets: {local: number, device: number, server: number},
+ *   bucketBudgets: {local: number, device: number, server: number} }}
  */
 export function nfCacheStats() {
   loadIndex();
+  const cfg = configNow();
   return {
-    enabled: configNow().enabled,
+    enabled: cfg.enabled,
     backend: backendAvailable() ? 'caches' : 'memory',
     entries: index.order.length,
     bytes: index.bytes,
-    maxBytes: configNow().maxBytes,
-    ttlMs: configNow().ttlMs,
+    maxBytes: cfg.maxBytes,
+    ttlMs: cfg.ttlMs,
+    buckets: { local: bucketBytesMap.local || 0, device: bucketBytesMap.device || 0, server: bucketBytesMap.server || 0 },
+    bucketBudgets: cfg.buckets,
   };
 }
 
-/** 测试 seam：清空索引 + 字节（清缓存**用户入口**本批不做，候作者示）。 */
+/** 测试 seam：清空索引 + 字节（清缓存**用户入口**候作者示，v1 §6.4 申报）。 */
 export async function nfCacheReset() {
   loadIndex();
   const store = await cacheStore();
-  if (store) { try { await store.delete(dummyUrl('**')); } catch { /* 逐条删 */ } }
-  for (const k of [...index.order]) {
-    if (store) { try { await store.delete(dummyUrl(k)); } catch { /* 同上 */ } }
+  for (const cid of Object.keys(index.contents)) {
+    if (store) { try { await store.delete(dummyUrl(cid)); } catch { /* 逐条删 */ } }
   }
   index.order = [];
   index.meta = {};
+  index.contents = {};
   index.bytes = 0;
+  bucketBytesMap.local = 0; bucketBytesMap.device = 0; bucketBytesMap.server = 0;
   memoryBlobs.clear();
   saveIndex();
+}
+
+// ── canvas viewer 接账本（M2 · 设计 v1 §7 M1-2 本批落地）────────────────────
+// 七个 viewer（image/pdf/docx/xlsx/pptx/epub/video）的既有取数形态 =
+// `objectUrl || await ticketUrl(absPath)`：objectUrl 腿（字节已在手的附件/Pop 面）
+// 原样；票据腿接账本——`nf:<absPath>` 命中零取数（blob URL 直渲染），未命中走
+// **既有票据链**（动态 import nfTicket，URL 铸造不归账本）并 `nfCachePut` 入账。
+// 第二次打开（新标签/刷新后重开）= 零取数直渲染。
+
+/** paneEl → blob URL 登记表：tab 关闭（canvas-tab-closed 广播）后 pane 已断连 ⇒
+ *  撤 URL（禁泄漏；attachmentPreview.js 同款事件，零 import——document 级监听）。
+ *  同 pane 多 URL（重试/重渲）全登记，断连一并撤。 */
+/** @type {Map<Element, Set<string>>} */
+const viewerUrls = new Map();
+let viewerRevokeBound = false;
+
+/** 会话内已知的路径→整件 hash 读数（设备取件腿 fileContent 帧免费带回；viewer
+ *  取数入账时作 cid——同内容跨设备/跨键只存一份字节，v1 §6.3）。 */
+/** @type {Map<string, string>} 键 = 'nf:<absPath>' → hash16 */
+const knownHashes = new Map();
+
+/**
+ * 记一条路径的整件 hash（explorer.js `fileContent` 成功腿调用；会话级，无持久化）。
+ * @param {string} absPath @param {string} hash16
+ */
+export function nfCacheNoteHash(absPath, hash16) {
+  if (absPath && hash16 && typeof hash16 === 'string') knownHashes.set('nf:' + absPath, hash16.slice(0, 16));
+}
+
+function trackViewerUrl(pane, url) {
+  let set = viewerUrls.get(pane);
+  if (!set) { set = new Set(); viewerUrls.set(pane, set); }
+  set.add(url);
+  if (!viewerRevokeBound) {
+    viewerRevokeBound = true;
+    document.addEventListener('canvas-tab-closed', () => {
+      for (const [paneEl, urls] of [...viewerUrls]) {
+        if (!paneEl.isConnected) {
+          viewerUrls.delete(paneEl);
+          for (const u of urls) setTimeout(() => URL.revokeObjectURL(u), 1000);
+        }
+      }
+    });
+  }
+  return url;
+}
+
+/**
+ * viewer 取数单点（**字节路由零新增**：票据腿仍走 `/api/nf-file?path&ticket`）。
+ * @param {{ absPath: ?string, objectUrl: ?string, onProgress?: ((loaded: number, total: number) => void)|null, pane?: Element }} p
+ * @returns {Promise<{ url: string, cached: boolean }>} `url` = objectUrl（腿A 原样 /
+ *   账本命中新建 / 票据腿取回新建）；`cached` = 本次是否走了账本字节（诊断读数）。
+ */
+export async function nfViewerSource(p) {
+  const { absPath, objectUrl, onProgress, pane } = p || {};
+  if (objectUrl) return { url: objectUrl, cached: false };
+  if (!absPath) return { url: '', cached: false };
+  const cacheKey = 'nf:' + absPath;
+  const hit = await nfCachedBlob(cacheKey);
+  if (hit) {
+    const url = trackViewerUrl(pane || document.body, URL.createObjectURL(hit));
+    return { url, cached: true };
+  }
+  // 未命中：票据链（动态 import——静态边会成环：nfTicket ← viewers/shared ← …）。
+  const nfTicket = await import('./nfTicket.js');
+  const res = await fetchBlobWithProgress(await nfTicket.ticketUrl(absPath), onProgress || null);
+  // 入账带 hash（设备取件腿已知时）+ srcPath（事件失效/对账的路径锚）。
+  void nfCachePut(cacheKey, res.blob, res.version, {
+    hash: knownHashes.get(cacheKey) || '',
+    srcPath: absPath,
+  });
+  const url = trackViewerUrl(pane || document.body, URL.createObjectURL(res.blob));
+  return { url, cached: false };
+}
+
+/**
+ * viewer URL 简形（七个 viewer 的 `objectUrl || await ticketUrl(absPath)` 直换形态；
+ * 语义 = [[nfViewerSource]] 只取 url）。`maxBytes` 在场且声明尺寸超限 ⇒ 不走账本
+ * （保持票据 URL 流式/Range 原状——视频 seek 依赖 Range，大件整收是 UX 回归；
+ * 阈值 64 MiB 与 96MiB device 桶/128MiB local 桶留距，超预算本也不可缓存）。
+ * @param {{ absPath: ?string, objectUrl: ?string, pane?: Element, size?: number, maxBytes?: number }} p
+ * @returns {Promise<string>}
+ */
+export async function nfViewerUrl(p) {
+  const sizeOk = !p.size || !p.maxBytes || p.size <= p.maxBytes;
+  const src = sizeOk
+    ? await nfViewerSource(p)
+    : { url: p.objectUrl || await (await import('./nfTicket.js')).ticketUrl(/** @type {string} */ (p.absPath)), cached: false };
+  return src.url;
+}
+
+// ── 历史页指纹账（M2 · 设计 v2 §3.1 ② 键族扩展）────────────────────────────
+// `hist:<sessionId>` → 最近一次 historyPage 帧的页指纹 `{total, offset, pageLen,
+// last, lastAt, at}`。**只存键不存渲染**（载荷小——文本页不入 256MiB 字节预算，决策
+// 记录在案防过度设计，v2 §3.1 ② 原注）；「本地先行渲染」的渲染语义 = 设计件开放
+// 问题 Q18（候作者裁），本账只提供重连/翻页「同页否」的对账基础。LRU 上限 40 会话。
+
+const HIST_FP_KEY = 'nfHistoryFingerprintsV1';
+const HIST_FP_CAP = 40;
+
+/** @returns {{ fps: Record<string, any>, order: string[] }} */
+function loadHistFps() {
+  try {
+    const raw = localStorage.getItem(key(HIST_FP_KEY));
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.fps && Array.isArray(parsed.order)) return parsed;
+    }
+  } catch { /* 损坏 = 空账起步 */ }
+  return { fps: {}, order: [] };
+}
+
+/**
+ * 记一帧页指纹（main.js `historyPage` 订阅点调用；失败不响——读数面纪律）。
+ * @param {string} sessionId @param {any} fp
+ */
+export function noteHistoryFingerprint(sessionId, fp) {
+  if (!sessionId || !fp || typeof fp !== 'object') return;
+  const { fps, order } = loadHistFps();
+  const i = order.indexOf(sessionId);
+  if (i >= 0) order.splice(i, 1);
+  order.push(sessionId);
+  while (order.length > HIST_FP_CAP) {
+    const evict = order.shift();
+    if (evict) delete fps[evict];
+  }
+  fps[sessionId] = { total: fp.total || 0, offset: fp.offset || 0, pageLen: fp.pageLen || 0, last: fp.last ?? -1, lastAt: fp.lastAt || 0, at: Date.now() };
+  try { localStorage.setItem(key(HIST_FP_KEY), JSON.stringify({ fps, order })); } catch { /* 配额：账不落盘，会话内仍有效 */ }
+}
+
+/**
+ * 读一帧页指纹（重连/翻页对账用；本批消费方 = spec + 后续 Q18 裁定后的本地先行腿）。
+ * @param {string} sessionId @returns {any|null}
+ */
+export function getHistoryFingerprint(sessionId) {
+  const { fps } = loadHistFps();
+  return fps[sessionId] || null;
 }
 
 /**
@@ -252,8 +596,8 @@ export async function nfCacheReset() {
  * 缺席 = 0 ⇒ 调用方转不定态转圈）。失败抛错（status 挂在 error.status 上），
  * 调用方出**可见**失败态（档3 可见面，禁静默）。
  *
- * 返回 `version` = `size:lastModified`（响应头可得时）——档2 条目的版本读数
- * （记录用；命中判据见上「TTL」）。
+ * 返回 `version` = `size:mtimeMs`（Last-Modified 头可得时；不可得 = `size:0`）——
+ * 档2 条目的版本读数（`nfCacheReconcile` 对账用；命中判据见上「TTL」）。
  * @param {string} url
  * @param {((loaded: number, total: number) => void)|null} [onProgress]
  * @returns {Promise<{blob: Blob, total: number, lastModified: string, version: string}>}
@@ -266,6 +610,7 @@ export async function fetchBlobWithProgress(url, onProgress) {
     throw err;
   }
   const lastModified = resp.headers.get('Last-Modified') || '';
+  const lmMs = Date.parse(lastModified) || 0; // HTTP-date → epoch ms（对账口径与列目录 mtime 同轴）
   const lenHeader = Number(resp.headers.get('Content-Length'));
   const total = Number.isFinite(lenHeader) && lenHeader > 0 ? lenHeader : 0;
   /** @type {Blob} */
@@ -287,5 +632,5 @@ export async function fetchBlobWithProgress(url, onProgress) {
     if (onProgress) onProgress(blob.size, blob.size || total);
   }
   const finalTotal = total || blob.size;
-  return { blob, total: finalTotal, lastModified, version: finalTotal + ':' + lastModified };
+  return { blob, total: finalTotal, lastModified, version: finalTotal + ':' + lmMs };
 }

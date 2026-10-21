@@ -104,7 +104,11 @@ private[gateway] object HealthRoutes:
           val agent = params.get("agent").flatMap(_.headOption).filter(_.nonEmpty)
           sharedResources.usageRecordStore
             .aggregate(dim, from, to, provider, model, agent)
-            .flatMap(agg => Ok(agg.asJson))
+            // M2 缓存语义小刀（v2 §3.1 ① · 用量聚合行）：ETag = 载荷内容寻址——窗口
+            // 与过滤参数决定聚合输入，已完结小时的聚合输出不可变（UsageAggCache 小时
+            // 粒度 cell），窗口不变 + 未进新数据 ⇒ 载荷逐字节稳定 ⇒ 内容 hash 命中
+            // 304（条件往返 ≈2ms，v1 §A.1 实测锚）。`private`：withAuth 之后（#538 同规）。
+            .flatMap(agg => HttpCache.conditionalOk(req, agg.asJson, HttpCache.ofJson(agg.asJson)))
         }
 
       // TTS 语音合成。门控（2026-09-20 收尾批）：原注记「无需 auth，内部调用」**已作废** ——

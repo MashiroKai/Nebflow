@@ -200,6 +200,8 @@ Example edits[0]: {"old_string": "val a = 1", "new_string": "val a = 2"}"""
                         result
                       )
                     ) *>
+                    // M2 缓存一致性（v1 §6.1）：本机文件被引擎改写 ⇒ 广播失效。
+                    NfCacheInvalidator.invalidated(filePath.toString) *>
                     MemoryChangeNotifier.notifyIfMemoryFile(filePath.toString, ctx)
                   record.as(Right(result))
                 case left => IO.pure(left)

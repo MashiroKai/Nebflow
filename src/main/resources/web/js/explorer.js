@@ -857,6 +857,142 @@ function hidePickupFailureBar() {
   document.querySelector('.explorer-pickup-bar')?.remove();
 }
 
+// ── 取件进度条（M2 · 设计 v1 §4.4 统一进度面契约 + §7 M2-1）─────────────────
+// 作者令「Windows 下载进度条」的前端面：设备腿取件改分块拉取后，每块落盘回一帧
+// `fileProgress`（权威读数 = 落盘长度，禁假进度）。本条按契约五条实现：
+//   · 定界：totalBytes 可得 ⇒ 百分比；缺席 ⇒ 不定态转圈（禁假进度）；
+//   · 速度：滑动窗口均值（4s 窗，1s 刷新）；
+//   · 可取消：常驻「取消」键 ⇒ `fileTransferCancel` 帧（后端翻旗标，块间停发）；
+//   · 失败：既有失败浮条 + 重试（重试 = 重发 readFile ⇒ **从续传点继续**，落盘件
+//     幂等对齐——续传语义在后端 BrowseGetCursor）；
+//   · 健康可见（零超时纪律）：>max(10s, 2×上块耗时) 无字节推进 ⇒ 转黄「停滞」态
+//     提示可取消——**纯视觉**，永不定时杀传输（后端无整体超时，慢 = 块小 + 可见）。
+
+/** @typedef {{ bytes: number, total: number, lastChunkMs: number, lastAt: number, samples: Array<{t: number, bytes: number}>, timer: number|null }} PickupProgress */
+/** @type {Map<string, PickupProgress>} path → 进行中取件的进度读数 */
+const pickupProgress = new Map();
+
+const PROGRESS_SAMPLE_WINDOW_MS = 4000;
+const PROGRESS_STALL_BASE_MS = 10000;
+
+function formatMb(n) {
+  const v = Number(n) || 0;
+  if (v >= 1024 * 1024 * 1024) return (v / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+  if (v >= 1024 * 1024) return (v / 1024 / 1024).toFixed(1) + ' MB';
+  return Math.max(1, Math.round(v / 1024)) + ' KB';
+}
+
+/** 进度浮条（单例——同失败浮条族；新取件覆盖旧条）。 */
+function showPickupProgress(path, device) {
+  hidePickupFailureBar();
+  const section = document.getElementById('explorer-section');
+  if (!section) return;
+  let bar = /** @type {HTMLElement|null} */ (document.querySelector('.explorer-pickup-bar.explorer-pickup-progress'));
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'explorer-pickup-bar explorer-pickup-progress';
+    bar.innerHTML =
+      '<svg class="bar-ic spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>' +
+      `<span class="bar-msg"></span>` +
+      '<span class="pickup-pct" data-pickup-pct></span>' +
+      '<span class="pickup-speed" data-pickup-speed></span>';
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'bar-act';
+    cancel.setAttribute('data-pickup-cancel', '1');
+    cancel.textContent = t('explorer.pickupCancel');
+    bar.appendChild(cancel);
+    section.appendChild(bar);
+  }
+  bar.setAttribute('data-pickup-path', path);
+  bar.removeAttribute('data-stalled');
+  /** @type {HTMLElement|null} */ (bar.querySelector('[data-pickup-cancel]'))?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    // 取消信令（Q2 推荐默认 = 拉取形态本地旗标）：后端翻旗标、块间停发，回
+    // fileContent(cancelled) 终态帧 → clearPickupProgress。无在途 = 幂等 no-op。
+    sendWs({ type: 'fileTransferCancel', path, ...(device ? { device } : {}) });
+  });
+  if (!pickupProgress.has(path)) {
+    pickupProgress.set(path, { bytes: 0, total: 0, lastChunkMs: 0, lastAt: Date.now(), samples: [], timer: null });
+  }
+  startStallWatch(path);
+}
+
+/** 停滞看护（纯视觉，1s 一拍）：超阈值无推进 ⇒ 条转黄 + 提示；推进恢复即摘。 */
+function startStallWatch(path) {
+  const st = pickupProgress.get(path);
+  if (!st || st.timer !== null) return;
+  st.timer = window.setInterval(() => {
+    const s = pickupProgress.get(path);
+    const bar = /** @type {HTMLElement|null} */ (document.querySelector('.explorer-pickup-bar.explorer-pickup-progress'));
+    if (!s || !bar || bar.getAttribute('data-pickup-path') !== path) {
+      if (s && s.timer !== null) { clearInterval(s.timer); s.timer = null; }
+      return;
+    }
+    const threshold = Math.max(PROGRESS_STALL_BASE_MS, 2 * (s.lastChunkMs || 0));
+    if (Date.now() - s.lastAt > threshold) {
+      bar.setAttribute('data-stalled', '1');
+      const speed = /** @type {HTMLElement|null} */ (bar.querySelector('[data-pickup-speed]'));
+      if (speed) speed.textContent = t('explorer.pickupStalled');
+    }
+  }, 1000);
+}
+
+/** 每块进度帧：权威读数直接入条（bytes/total 来自后端落盘确认）。 */
+function updatePickupProgress(path, bytesReceived, totalBytes, chunkMs) {
+  let st = pickupProgress.get(path);
+  if (!st) { showPickupProgress(path, explorerRootDevice || ''); st = pickupProgress.get(path); }
+  if (!st) return;
+  const now = Date.now();
+  st.samples.push({ t: now, bytes: bytesReceived });
+  while (st.samples.length > 2 && now - st.samples[0].t > PROGRESS_SAMPLE_WINDOW_MS) st.samples.shift();
+  st.bytes = bytesReceived;
+  st.total = totalBytes;
+  st.lastChunkMs = chunkMs || st.lastChunkMs;
+  st.lastAt = now;
+  const bar = /** @type {HTMLElement|null} */ (document.querySelector('.explorer-pickup-bar.explorer-pickup-progress'));
+  if (!bar || bar.getAttribute('data-pickup-path') !== path) return;
+  bar.removeAttribute('data-stalled');
+  const pctEl = /** @type {HTMLElement|null} */ (bar.querySelector('[data-pickup-pct]'));
+  const speedEl = /** @type {HTMLElement|null} */ (bar.querySelector('[data-pickup-speed]'));
+  const msgEl = /** @type {HTMLElement|null} */ (bar.querySelector('.bar-msg'));
+  if (msgEl) msgEl.textContent = path.split('/').pop() || path;
+  if (totalBytes > 0 && pctEl) {
+    const pct = Math.max(0, Math.min(100, Math.round((bytesReceived / totalBytes) * 100)));
+    pctEl.textContent = `${pct}% · ${formatMb(bytesReceived)} / ${formatMb(totalBytes)}`;
+    bar.setAttribute('data-pickup-pct', String(pct));
+  } else if (pctEl) {
+    pctEl.textContent = formatMb(bytesReceived);
+  }
+  if (speedEl) {
+    // 滑动窗口速度（首尾样本差 / 时间差；窗口内只有一拍 ⇒ 不显速度，避免假读数）。
+    const first = st.samples[0];
+    const last = st.samples[st.samples.length - 1];
+    const dt = last.t - first.t;
+    if (first && last && dt > 250 && last.bytes > first.bytes) {
+      const rate = (last.bytes - first.bytes) / (dt / 1000);
+      speedEl.textContent = formatMb(rate) + '/s';
+    }
+  }
+}
+
+/** 终态清理（成功/失败/取消三态共用）：摘条 + 停看护。 */
+function clearPickupProgress(path) {
+  const st = pickupProgress.get(path);
+  if (st && st.timer !== null) clearInterval(st.timer);
+  pickupProgress.delete(path);
+  const bar = /** @type {HTMLElement|null} */ (document.querySelector('.explorer-pickup-bar.explorer-pickup-progress'));
+  if (bar && (!path || bar.getAttribute('data-pickup-path') === path)) bar.remove();
+}
+
+// 逐块进度帧（后端 readRemoteFile 分块拉取腿；GLOBAL 类型——进度不切视图）。
+onMessage('fileProgress', (msg) => {
+  if (!msg || typeof msg.path !== 'string' || !msg.path) return;
+  if (!explorerRootDevice || msg.device !== explorerRootDevice) return; // 他设备的进度不接
+  if (!pendingPickups.has(msg.path)) return; // 不是本窗发起的取件（防串扰）
+  updatePickupProgress(msg.path, Number(msg.bytesReceived) || 0, Number(msg.totalBytes) || 0, Number(msg.chunkMs) || 0);
+});
+
 /** 失败行复原（[关闭]/[重试] 共用）：摘失败叹号 + 摘 data-pickup。 */
 function rowFailState(path, clear) {
   const row = /** @type {HTMLElement | null} */ (document.querySelector(`.explorer-item.explorer-file[data-path="${CSS.escape(path)}"]`));
@@ -964,6 +1100,22 @@ onMessage('dirListing', (msg) => {
   const entries = msg.entries || [];
   const depth = pending.depth + 1;
 
+  // M2 顺带对账（v1 §6.1「取数时顺带比对」腿 · 本机腿）：列目录本来就带回每件的
+  // size+mtime——与账本 version（size:mtimeMs）不一致的条目静默淘汰（下次打开按
+  // 未命中走）。零新增请求（数据已在此次往返里）；设备腿不比（对端清单非本机真值）。
+  if (!explorerRootDevice && msg.resolvedPath && entries.length) {
+    const reconciles = entries
+      .filter((/** @type {any} */ e) => e && e.type !== 'dir')
+      .map((/** @type {any} */ e) => ({
+        path: `${msg.resolvedPath}/${e.name}`,
+        size: Number(e.size) || 0,
+        mtimeMs: Number(e.mtime) || 0,
+      }));
+    if (reconciles.length) {
+      void import('./nfFileCache.js').then(({ nfCacheReconcile }) => nfCacheReconcile(reconciles)).catch(() => {});
+    }
+  }
+
   let hasVisible = false;
   for (const entry of entries) {
     if (shouldHide(entry.name, entry.type === 'dir')) continue;
@@ -1039,6 +1191,17 @@ onMessage('fileContent', (msg) => {
     // 面B B5（ui-device-faces 批）：远端单文件取件失败 —— 失败**绝不静默、绝不换源**
     // （G.12：离线就是错误，不落本机路径）：行复原为 failed 标记 + 底部玻璃浮条
     // （可读原因 + [重试][关闭]）。本机腿维持既有「骨架标签」纪律（F3）零变化。
+    clearPickupProgress(msg.path || '');
+    if (msg.cancelled) {
+      // M2 取件取消终态（v1 §4.4）：用户主动取消 ≠ 传输失败——行静默复原 +
+      // 简短可读提示（摘条即确认；不落失败浮条、不进重试链）。
+      if (pendingPickups.has(msg.path)) {
+        pendingPickups.delete(msg.path);
+        setPickupState(msg.path, null);
+      }
+      console.info('pickup cancelled:', msg.path);
+      return;
+    }
     if (pendingPickups.has(msg.path)) {
       pendingPickups.delete(msg.path);
       setPickupState(msg.path, 'failed');
@@ -1068,10 +1231,18 @@ onMessage('fileContent', (msg) => {
   // Open in canvas
   // 面B B5 成功腿：行复原（摘 loading 态）——既有查看器直开流程原样（文本内联 /
   // 二进制经 /api/nf-file 取本地 pickup 件，absPath = uploads 白名单子树）。
+  clearPickupProgress(msg.path || '');
   if (pendingPickups.has(msg.path)) {
     pendingPickups.delete(msg.path);
     setPickupState(msg.path, null);
     hidePickupFailureBar();
+  }
+  // M2 hash 副键（v1 §6.3 多设备同文件去重）：分块腿整件 sha256 的免费副产品随帧
+  // 送达——记进账本（viewer 取数入账时带上，同内容跨设备只存一份字节）。
+  if (msg.absPath && msg.wholeSha256) {
+    void import('./nfFileCache.js').then(({ nfCacheNoteHash }) => {
+      nfCacheNoteHash(msg.absPath, String(msg.wholeSha256));
+    }).catch(() => {});
   }
   const tabId = `file:${msg.path}`;
   const pinned = pendingPinned.get(msg.path) || false;

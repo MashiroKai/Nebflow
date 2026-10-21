@@ -2117,6 +2117,8 @@ export default {
   'explorer.pickupLoading': 'Fetching…',
   'explorer.pickupFailed': 'Fetch failed',
   'explorer.pickupClose': 'Close',
+  'explorer.pickupCancel': 'Cancel',
+  'explorer.pickupStalled': 'Stalled — cancellable',
   'explorer.remoteReadonly': 'Remote directories are read-only; write actions are unavailable.',
   'daemons.delete': 'Delete',
   // === Workspace picker card + in-app directory browser (workspace-picker batch) ===

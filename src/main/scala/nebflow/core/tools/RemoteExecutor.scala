@@ -594,8 +594,66 @@ class RemoteExecutor(
         }
     }
 
-  /** 浏览面单件大小闸（dropbox 大件通道引导线之上的硬闸；与 10MiB capture 闸分档）。 */
-  val MaxScopedFetchBytes: Long = 50L * 1024 * 1024
+  /** 浏览面单件大小闸（dropbox 大件通道引导线之上的硬闸；与 10MiB capture 闸分档）。
+    * M2 起真源在伴生对象（BrowseGetLoop 的首响应闸与实例腿同参一处，禁两处漂移）。 */
+  def MaxScopedFetchBytes: Long = RemoteExecutor.MaxScopedFetchBytes
+
+  // ---- M2（2026-10-20）：浏览取件分块拉取腿（进度/取消/续传/逐块校验） ----
+
+  final case class ScopedFetchResult(path: os.Path, size: Long, wholeSha256: String)
+
+  /**
+   * 浏览面**单件取件 · 分块拉取腿**（设计 v1 §7 M2-1）：改前 `transferGetScoped` 单请求
+   * 整件 base64（无分块/无进度/无断点/无整件校验）；本方法改为 [[BrowseGetLoop]] 驱动的
+   * 逐块拉取——4MiB 级块 + 逐块自算摘要校验 + 落盘断点续传（`PointerPickup` 落点幂等，
+    * 重试从续传点继续）+ 整件 sha256 收口 + 每块进度回调 + 块间取消旗标。
+   *
+   * 大小闸不变（[[MaxScopedFetchBytes]]，首响应的整件读数把门）——超限显式报错引导
+   * dropbox 通道，行为与改前同判。旧对端（无分块键响应）⇒ legacy 整件消费，零回归。
+   *
+   * 取消账：`BrowseFetchRegistry.register` 会话周期登记（guarantee 注销）；WS
+   * `fileTransferCancel` 经 [[cancelScopedFetch]] 翻旗标。取消返回
+   * `Left(BrowseGetCursor.Cancelled)`（区别于传输失败的终态哨兵）。
+   *
+   * @param onProgress (bytesReceived, totalBytes, lastChunkMs)——每块落盘后回调（权威
+   *   读数 = 落盘长度，禁假进度）；`lastChunkMs` = 刚落那块的往返耗时（前端停滞阈依据）。
+   */
+  def transferGetScopedChunked(
+    peer: PeerInfo,
+    remotePath: String,
+    onProgress: (Long, Long, Long) => IO[Unit]
+  ): IO[Either[String, ScopedFetchResult]] =
+    val target = PointerPickup.pickupPath(peer.deviceId, remotePath)
+    val (flag, unregister) = BrowseFetchRegistry.register(peer.deviceId, remotePath)
+    def fetchChunk(index: Int, chunkSize: Int, wantWholeSha: Boolean): IO[Either[String, BrowseGetCursor.ChunkReply]] =
+      val params = JsonObject(
+        "direction" -> "get".asJson,
+        "path" -> remotePath.asJson,
+        "scope" -> "browse".asJson,
+        "chunkIndex" -> index.asJson,
+        "chunkSize" -> chunkSize.asJson,
+        "wantWholeSha256" -> wantWholeSha.asJson
+      )
+      dispatchBrowse(peer, "FileTransfer", params).flatMap {
+        case Right(out) =>
+          IO.blocking(decode[Json](out) match
+            case Right(json) => BrowseGetCursor.parseReply(json)
+            case Left(err)   => Left(s"decode: ${err.getMessage}")
+          )
+        case Left(err) => IO.pure(Left(err))
+      }
+    val progress: (Long, Long, Long) => IO[Unit] = (bytes, total, ms) =>
+      if flag.get then IO.unit // 已叫停：不再外发进度帧（终态帧随后）
+      else onProgress(bytes, total, ms)
+    BrowseGetLoop
+      .run(target, fetchChunk, progress, flag)
+      .guarantee(unregister)
+      .map {
+        case Right((path, size, sha)) => Right(ScopedFetchResult(path, size, sha))
+        case Left(err)                => Left(err)
+      }
+
+  end transferGetScopedChunked
 
   /**
    * 远端**单文件 Write**（v2.1 §A.5 远端创建脚手架腿的唯一落笔口）：走既有
@@ -1351,6 +1409,16 @@ object RemoteExecutor:
   private val logger = NebflowLogger.forName("nebflow.remote-executor")
 
   @volatile private var instance: Option[RemoteExecutor] = None
+
+  /** 浏览面单件大小闸（dropbox 大件通道引导线之上的硬闸；与 10MiB capture 闸分档）。
+    * M2 起真源在伴生对象（BrowseGetLoop 首响应闸与实例腿同参一处，禁两处漂移）。 */
+  val MaxScopedFetchBytes: Long = 50L * 1024 * 1024
+
+  /** 浏览取件取消（WS `fileTransferCancel` 的单一入口）：翻在途旗标，取件腿在块间
+    * 停止。true = 有一条在途取件被叫停（旗标表 = `BrowseFetchRegistry`，进程级，
+    * 无需实例在场——实例未初始化时无在途取件，恒 false）。 */
+  def cancelScopedFetch(deviceId: String, remotePath: String): Boolean =
+    BrowseFetchRegistry.cancel(deviceId, remotePath)
 
   /** Wire the RemoteExecutor with a NeblinkService, Dispatcher, and optional relay client. Called on startup. */
   def initialize(

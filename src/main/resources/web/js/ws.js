@@ -206,6 +206,16 @@ const GLOBAL_MSG_TYPES = new Set([
   // 的非 GLOBAL 帧会被 :485-494 当会话内事件 ⇒ setActiveView(primary)，取消一张
   // 后台问题的卡也会把用户正在看的视图抢走。消费点 = main.js（仅 !ok → toast）。
   'askUserCancelResult',
+  // M2 本地加速批（2026-10-20 · 设计 v1 §6.1/§4.4）：三条无 sessionId 的引擎广播/
+  // 直回帧。🔴 必须入 GLOBAL：无 sessionId 的非 GLOBAL 帧会被 :485-494 当会话内
+  // 事件 ⇒ setActiveView(primary)，把用户正在看的视图抢走。
+  //   nf-cache-invalidate {type,path} —— 引擎写路径广播（本机文件被改/删/移），前端
+  //     账本按 path 淘汰（main.js 订阅 → nfFileCache.nfCacheInvalidatePath）。
+  //   fileProgress {type,path,device,bytesReceived,totalBytes,chunkMs} —— 设备取件
+  //     分块拉取腿逐块进度（explorer.js 订阅 → 取件进度条）；进度**不得**切视图。
+  //   fileTransferCancelResult {type,path,device,active} —— fileTransferCancel 的
+  //     直回帧（无在途 = active:false，前端静默清理）。
+  'nf-cache-invalidate', 'fileProgress', 'fileTransferCancelResult',
 ]);
 const TERMINAL_MSG_TYPES = new Set([
   'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',

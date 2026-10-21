@@ -25,7 +25,8 @@
 // can never be served — claiming it would promise an unplayable render.
 
 import { escapeHtml, formatSize } from './shared.js';
-import { ticketUrl, reMint } from '../nfTicket.js';
+import { reMint } from '../nfTicket.js';
+import { nfViewerUrl } from '../nfFileCache.js';
 
 /** Video viewer — <video controls> served via /api/nf-file (native controls only). */
 async function viewVideo(pane, { absPath, fileName, size, objectUrl }) {
@@ -75,7 +76,11 @@ async function viewVideo(pane, { absPath, fileName, size, objectUrl }) {
   wrap.appendChild(video);
   pane.appendChild(wrap);
 
-  video.src = objectUrl || await ticketUrl(absPath);
+  // M2 账本接缝（imgdoor #542 推广批，**带尺寸闸**）：≤64MiB 的视频走账本——命中 =
+  // blob URL 直开（第二次打开零取数，seek 在 blob 内本地解析）；超限视频**保持票据
+  // URL 流式**（Range seek 是既有语义，大件整收等全量是 UX 回归；64MiB 阈与
+  // nfFileCache 桶预算留距，超预算本也不可缓存——申报于实施报告）。
+  video.src = await nfViewerUrl({ absPath, objectUrl, pane, size, maxBytes: 64 * 1024 * 1024 });
 }
 
 export default {

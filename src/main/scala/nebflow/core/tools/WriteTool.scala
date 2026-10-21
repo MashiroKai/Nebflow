@@ -163,6 +163,9 @@ Usage:
           ctx.fileChangeLedger.traverse_(
             _.recordToolResult(ctx.sessionId, ctx.flowNodeId, ctx.taskId, "Write", filePath.toString, result)
           ) *>
+          // M2 缓存一致性（v1 §6.1）：本机文件被引擎改写 ⇒ 广播失效（浏览器账本
+          // 按 path 淘汰——「命中零取数」的陈旧窗从 TTL 级收敛为一次事件）。
+          NfCacheInvalidator.invalidated(filePath.toString) *>
           MemoryChangeNotifier.notifyIfMemoryFile(filePath.toString, ctx)
         // Memory-layer over-budget reminder (govmemory batch): append a
         // <system-reminder> to the tool result when the file sits over its

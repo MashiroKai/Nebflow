@@ -84,6 +84,9 @@ import { addNotification } from './notificationBanner.js';
 import { handleRulesData, handleRulesSaved, handleRulesDeleted, initRulesModal } from './sidebar.js';
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
+// M2 本地加速批：引擎侧文件失效广播 → 账本精确淘汰（v1 §6.1 事件失效腿）；
+// 历史页指纹账（v2 §3.1 ① 历史页行——对账基础，渲染语义候 Q18 裁）。
+import { nfCacheInvalidatePath, noteHistoryFingerprint } from './nfFileCache.js';
 // #27 Project 标签页 + Flow Map 标签页（方向调整：均为 Canvas 标签页形态）
 import { registerCanvasPanelButton } from './canvas.js';
 import { openProjectsTab } from './projectTab.js';
@@ -1668,6 +1671,17 @@ onMessage('permissionExpired', (msg, view) => {
   setSessionAttention(sid, false);
 });
 
+// --- M2 缓存失效广播（v1 §6.1 事件失效腿 · 设计 §7 M2-3）---
+// 引擎侧文件被改/删/移（Write/Edit 工具、编辑器保存、资源管理器删除/移动）⇒
+// `nf-cache-invalidate {path}` 广播 ⇒ 账本按 path 精确淘汰——「命中零取数」的陈旧窗
+// 从 TTL 级收敛为一次事件。失败不响（缓存故障 ⇒ 未命中，回取数腿）。
+onMessage('nf-cache-invalidate', (msg) => {
+  const p = msg && msg.path;
+  if (typeof p === 'string' && p) {
+    void nfCacheInvalidatePath(p).catch(() => {});
+  }
+});
+
 // --- Session list (global) ---
 let restoredSessionId = null;
 onMessage('sessionList', (msg, view) => {
@@ -1716,6 +1730,12 @@ onMessage('sessionList', (msg, view) => {
 // For initial load: replaces chat content.
 // For scroll-up pagination: prepends older messages before existing content.
 onMessage('historyPage', (msg, view) => {
+  // M2 缓存语义小刀（v2 §3.1 ① · 历史页行）：页指纹入账（`hist:<sid>` localStorage，
+  // LRU 上限 40 会话）。只存键不存渲染——「本地先行渲染」语义是设计件登记的开放
+  // 问题 Q18（候作者裁）；本批只把对账基础（total/offset/last/lastAt）留在本地。
+  if (msg && msg.sessionId && msg.pageFingerprint) {
+    try { noteHistoryFingerprint(msg.sessionId, msg.pageFingerprint); } catch { /* 读数面，失败不响 */ }
+  }
   // Background sub-agent sessions are handled by the bg-agent popup viewer.
   if (handleBgAgentHistory(msg)) return;
   // Flow agent sessions are handled by the popup viewer, not the primary chat.

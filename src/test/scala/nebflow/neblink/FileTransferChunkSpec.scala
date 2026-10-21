@@ -425,4 +425,100 @@ class FileTransferChunkSpec extends CatsEffectSuite:
       end for
     }
 
+  // ===== M2（2026-10-20）：chunkedGet —— 浏览取件分块拉取腿的服务端 ================
+  // 收端 = RemoteExecutor BrowseGetLoop（BrowseGetSpec 驱动替身循环）；本节钉服务端
+  // 侧契约：切片正确、块摘要服务端自算、wantWholeSha256 会话一次付清、越界显式
+  // 结构化错误、块长夹取 [1KiB, MaxChunkSize]（防对端 0/负/巨值把本端读爆）。
+
+  private def getParams(path: String, index: Int, chunkSize: Int, wantWholeSha256: Boolean = false): JsonObject =
+    JsonObject(
+      "direction" -> "get".asJson,
+      "path" -> path.asJson,
+      "chunkIndex" -> index.asJson,
+      "chunkSize" -> chunkSize.asJson,
+      "wantWholeSha256" -> wantWholeSha256.asJson
+    )
+
+  private def decodedContent(j: Json): Array[Byte] =
+    java.util.Base64.getDecoder.decode(j.hcursor.downField("content").as[String].toOption.getOrElse(""))
+
+  test("M2 chunkedGet：逐块切片 + 服务端自算块摘要 + wantWholeSha256 整件摘要一次付清") {
+    withTmp { dir =>
+      val p = dir / "m2.bin"
+      // 块长 = 1KiB（服务端把 sub-1KiB 请示夹到 1KiB 下限——对端块长不在 [1KiB, 4MiB] 时
+      // 实际切片按夹取值走）。2560B ⇒ 3 块（1024 + 1024 + 512）。
+      val Cs = 1024
+      val total = Array.tabulate(2560)(i => (i % 251).toByte)
+      os.write.over(p, total)
+      val whole = ChunkedTransfer.hashFileStreaming(p)
+      for
+        r0 <- FileTransferAction.handle(getParams(p.toString, 0, Cs, wantWholeSha256 = true))
+        r1 <- FileTransferAction.handle(getParams(p.toString, 1, Cs))
+        r2 <- FileTransferAction.handle(getParams(p.toString, 2, Cs))
+      yield
+        assert(r0.isRight && r1.isRight && r2.isRight, s"$r0 / $r1 / $r2")
+        val j0 = r0.toOption.get
+        assertEquals(decodedContent(j0).toSeq, total.take(Cs).toSeq, "chunk 0 slice must be exact")
+        assertEquals(j0.hcursor.downField("size").as[Long].toOption, Some(2560L), "size = whole-file bytes")
+        assertEquals(j0.hcursor.downField("chunkIndex").as[Int].toOption, Some(0))
+        assertEquals(j0.hcursor.downField("chunkBytes").as[Int].toOption, Some(Cs))
+        assertEquals(
+          j0.hcursor.downField("chunkSha256").as[String].toOption,
+          Some(ChunkedTransfer.sha256Hex(total.take(Cs))),
+          "chunk digest must be server-computed (receiver re-verifies — no self-certification)"
+        )
+        assertEquals(j0.hcursor.downField("totalChunks").as[Long].toOption, Some(3L))
+        assertEquals(
+          j0.hcursor.downField("wholeSha256").as[String].toOption,
+          Some(whole),
+          "wantWholeSha256 => streaming whole digest in the session's first reply"
+        )
+        assertEquals(
+          r1.toOption.get.hcursor.downField("wholeSha256").as[String].toOption,
+          None,
+          "later replies skip the whole digest (O(file) once per session, not per chunk)"
+        )
+        // 末块 = 短块（2048..2560），切片与长度都精确。
+        val j2 = r2.toOption.get
+        assertEquals(decodedContent(j2).toSeq, total.drop(2 * Cs).toSeq)
+        assertEquals(decodedContent(j2).length, 2560 - 2 * Cs)
+      end for
+    }
+  }
+
+  test("M2 chunkedGet：offset 越界 ⇒ OFFSET_OUT_OF_RANGE 结构化错误（带 expectedIndex，禁静默）") {
+    withTmp { dir =>
+      val p = dir / "oob.bin"
+      os.write.over(p, Array.tabulate(50)(i => i.toByte))
+      FileTransferAction
+        .handle(getParams(p.toString, 4, Chunk)) // offset 64 ≥ 50
+        .map { r =>
+          val err = r.left.toOption.getOrElse(fail(s"expected Left, got $r"))
+          assert(err.contains("OFFSET_OUT_OF_RANGE"), s"structured out-of-range error expected: $err")
+          assert(err.contains("\"expectedIndex\""), s"expectedIndex must guide the receiver's resume: $err")
+        }
+    }
+  }
+
+  test("M2 chunkedGet：chunkSize 夹取 [1KiB, MaxChunkSize]——小/负值不切片爆炸、巨值不放大线上块长") {
+    withTmp { dir =>
+      val p = dir / "clamp.bin"
+      os.write.over(p, Array.fill(6 * 1024 * 1024)(7.toByte)) // 6 MiB
+      for
+        tiny <- FileTransferAction.handle(getParams(p.toString, 0, 1)) // < 1KiB ⇒ 夹到 1KiB
+        negative <- FileTransferAction.handle(getParams(p.toString, 0, -1)) // 负值同判
+        huge <- FileTransferAction.handle(getParams(p.toString, 0, 100 * 1024 * 1024)) // > 4MiB ⇒ 夹到 MaxChunkSize
+      yield
+        val chunks1KiB = ((6L * 1024 * 1024) + 1023) / 1024
+        assertEquals(tiny.toOption.get.hcursor.downField("totalChunks").as[Long].toOption, Some(chunks1KiB), "sub-1KiB ask clamps up to 1KiB")
+        assertEquals(negative.toOption.get.hcursor.downField("totalChunks").as[Long].toOption, Some(chunks1KiB), "negative ask clamps up to 1KiB")
+        assertEquals(
+          huge.toOption.get.hcursor.downField("totalChunks").as[Long].toOption,
+          Some(2L),
+          "6MiB file with a 100MiB ask clamps to MaxChunkSize(4MiB) => 2 chunks (never 1)"
+        )
+      end for
+    }
+  }
+
 end FileTransferChunkSpec
