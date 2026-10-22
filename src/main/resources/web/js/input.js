@@ -247,7 +247,15 @@ export function send(resendId) {
   // 同 id 重发不入本地队（入队会在 drain 时另派一帧；重发的幂等性靠同 id + 服务端
   // 去重，不靠队列）。
   if (isBusy && !isResend && !state.frozenSessions.has(v.sessionId)) {
-    queueMessage(v, text, v.pendingAttachments);
+    // 并泡诊断批（2026-10-22）：busy 排队腿补**乐观气泡**（f1-send-queue 离线腿同款
+    // 形态）。修前本腿零会话流呈现——消息只落在输入框上方的排队条里，作者看不到
+    // 「这条已作为独立气泡在场」，继续在空输入框里打下一条 ⇒ 观感即「两次发送并成
+    // 一个气泡」（取证实录：ui.json 744 行 = 终端粘贴+提问同一帧出线，compose 时
+    // 已同文；服务端/传输/渲染三层均无合并机制）。修后每次发送 = 立即自己的独立
+    // 气泡（data-msg-id = 入队钉死的 clientMessageId + 「待发送」时钟小标）；drain
+    // 腿的 item.rendered 分支只摘小标不重渲 ⇒ 全链恰一气泡。
+    const item = queueMessage(v, text, v.pendingAttachments, null, null, { rendered: true });
+    renderUserBubble(text, v.pendingAttachments, undefined, { msgId: item.clientMessageId, pending: true });
     input.value = '';
     input.style.height = 'auto';
     v.pendingAttachments = [];
@@ -459,6 +467,8 @@ export function persistQueue() {
         mode: it.mode || null,
         // resend-dedup 批：幂等键随队列项跨刷新存活（drain 腿同 id 复用的前提）。
         clientMessageId: it.clientMessageId || null,
+        // 并泡诊断批：入队时刻随项跨刷新存活（drain 补渲腿的气泡时间戳真值源）。
+        ts: it.ts || null,
         // qattachvault 批：载荷丢失的显式失败态随队列跨刷新存活（刷新后失败面不丢）。
         failed: it.failed === true,
         failCode: it.failCode || null,
@@ -690,6 +700,10 @@ function queueMessage(view, text, attachments, skillName, mode, extra) {
     skillName,
     mode,
     clientMessageId: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    // 并泡诊断批：入队时刻随项钉死 —— drain/补渲腿的气泡时间戳用它（修前
+    // drain 渲染取 Date.now() ⇒ 排队项的呈现时刻 ≠ 发送时刻，同一批 drain
+    // 的气泡还被标成同一时刻）。
+    ts: Date.now(),
     ...(extra || {})
   };
   if (!state.messageQueue[sid]) state.messageQueue[sid] = [];
@@ -967,7 +981,8 @@ function sendImmediate(sessionId, item) {
     } else if (item.skillName) {
       renderSkillBubble(item.skillName, item.text);
     } else {
-      renderUserBubble(item.text, item.attachments, undefined, { msgId: itemMsgId });
+      // 并泡诊断批：时间戳 = 入队时刻（item.ts），非补渲时刻。
+      renderUserBubble(item.text, item.attachments, item.ts, { msgId: itemMsgId });
     }
   }
   saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => a.type === 'taskRef'
@@ -1119,7 +1134,8 @@ function drainMessageQueueNow(sessionId) {
     } else if (item.skillName) {
       renderSkillBubble(item.skillName, item.text);
     } else {
-      renderUserBubble(item.text, item.attachments);
+      // 并泡诊断批：时间戳 = 入队时刻（item.ts），非 drain 渲染时刻。
+      renderUserBubble(item.text, item.attachments, item.ts);
     }
   }
 

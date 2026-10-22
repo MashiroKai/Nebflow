@@ -2,21 +2,29 @@
 // author ruling 「我发的图片/文件附件卡统一到用户消息气泡的同套设计语言——同圆角/
 // 同底色/同对齐/同宽度约束，微信式：附件是气泡的一部分而非独立异形卡」).
 //
+// 2026-10-22 修订（作者令「聊天输入两缺陷批」）：**文件附件卡**脱离气泡语言，改入
+// 统一 chip 族（与 AskUser 附件卡/Pop 文件卡同族：中性灰玻璃底 + 细边框 + 10px
+// 圆角 + 28px 图标档；修前「气泡绿底无边框大卡 = 大绿块」形态退役）。图片/视频
+// 媒体面**不受本批影响**，继续钉气泡剪影（U1/U2 的 flat/stack 腿原样保留）。
+//
 // What the ruling pins (each assertion below is one of these, binary):
-//   U1 同圆角 — the user side's media faces (flat image/video, stack layers)
-//        and file cards carry the USER BUBBLE silhouette: border-radius 16px +
-//        the 4px bottom-right tail (.bubble / .bubble.user, chat.css:848-862).
-//   U2 同底色 — the same faces back on var(--color-bubble-user) (#95ec69, the
-//        user bubble token; no dark override in base.css ⇒ both themes green,
-//        identical to the text bubble); the media element itself goes
-//        transparent so the bubble color carries.
+//   U1 同圆角 — media faces (flat image/video, stack layers) carry the USER
+//        BUBBLE silhouette: border-radius 16px + the 4px bottom-right tail.
+//   U2 同底色 — the same media faces back on var(--color-bubble-user); the
+//        media element itself goes transparent so the bubble color carries.
+//        🔴 2026-10-22 起 **仅媒体面**：file card 不再落 bubble-user（见 F1/F2）。
+//   F1 chip 族 — the user file card rides the unified chip family: neutral
+//        glass backing (AskUser 同款 --color-surface-2 面)、fine etched border、
+//        10px radius、28px icon tier、max-width 264px（紧凑，非满宽）。
+//   F2 零气泡绿 — the file card's backing is NOT the bubble green in EITHER
+//        theme (computed-style, both colorSchemes).
 //   U3 同对齐 — unchanged (attach-side-align 2026-10-06 already pins the user
 //        row to .row.user's flex-end side); re-asserted here as the regression
 //        guard: the media row still follows the user row, right-flush.
 //   U4 同宽度约束 — .row.user-media .pop-group caps at 80% (the .bubble cap),
 //        not the artifact family's 78%.
-//   U5 去异形卡 chrome — no standing border / drop shadow on the user faces
-//        (bubbles carry none); hover keeps the artifact family's shadow
+//   U5 去异形卡 chrome — no standing border / drop shadow on the user MEDIA
+//        faces (bubbles carry none); hover keeps the artifact family's shadow
 //        feedback as the click affordance.
 //   A0 agent 不动 — the LLM Pop faces (.row.pop-artifact WITHOUT .user) keep
 //        their verbatim design: radius 14px/12px, #17191f / surface backing,
@@ -126,7 +134,7 @@ test.describe('CSS source assertions (chat.css)', () => {
     return m ? m[1] : null;
   };
 
-  test('U1/U2/U5 — user media faces scoped to the bubble language', () => {
+  test('U1/U2 — user MEDIA faces scoped to the bubble language (flat + stack only)', () => {
     const flat = ruleBody('.row.user-media .pop-media-flat');
     expect(flat, 'scoped flat-face rule exists').toBeTruthy();
     expect(flat).toContain('border-radius: 16px');
@@ -140,14 +148,30 @@ test.describe('CSS source assertions (chat.css)', () => {
     expect(layer).toContain('border-bottom-right-radius: 4px');
     expect(layer).toContain('box-shadow: none');
     expect(layer).toContain('background: var(--color-bubble-user)');
+  });
 
+  test('F1 — user file card rides the unified chip family (2026-10-22 author ruling)', () => {
     const card = ruleBody('.row.user-media .file-card');
     expect(card, 'scoped file-card rule exists').toBeTruthy();
-    expect(card).toContain('background: var(--color-bubble-user)');
-    expect(card).toContain('border: none');
-    expect(card).toContain('border-radius: 16px');
-    expect(card).toContain('border-bottom-right-radius: 4px');
-    expect(card).toContain('box-shadow: none');
+    // chip 族面：中性玻璃底（AskUser 同款 token 面）+ 细边框 + 紧凑。
+    expect(card).toContain('background: var(--color-surface-2');
+    expect(card).toContain('border: 1px solid');
+    expect(card).toContain('border-radius: 10px');
+    expect(card).toContain('max-width: 264px');
+    expect(card).toContain('width: auto');
+    // 修前形态逐项禁入（大绿块四件）：
+    expect(card).not.toContain('var(--color-bubble-user)');
+    expect(card).not.toContain('border: none');
+    expect(card).not.toContain('border-radius: 16px');
+    expect(card).not.toContain('width: 300px');
+    // 28px 图标档（统一 chip 语言尺寸档）。
+    const icon = ruleBody('.row.user-media .file-card .fc-icon');
+    expect(icon, 'scoped icon-tier rule exists').toBeTruthy();
+    expect(icon).toContain('width: 28px');
+    expect(icon).toContain('height: 28px');
+    // 墨水回归 token（修前 #111 硬编码随绿底退役）。
+    expect(ruleBody('.row.user-media .fc-name')).toContain('var(--color-text)');
+    expect(ruleBody('.row.user-media .fc-sub')).toContain('var(--color-text-muted)');
   });
 
   test('U4 — user media group caps at the bubble width (80%)', () => {
@@ -251,7 +275,7 @@ test.describe('computed paint — light theme', () => {
     await context.close();
   });
 
-  test('U1/U2/U5 — user file card: bubble-colored, borderless, tail corner', async ({ browser }) => {
+  test('F1/F2 — user file card: unified chip family, zero bubble green (light)', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => { window.__clearChat(); window.__userFileLive(); });
     const read = await page.evaluate(() => {
@@ -260,7 +284,9 @@ test.describe('computed paint — light theme', () => {
         if (!el) return null;
         const cs = getComputedStyle(el);
         return { borderRadius: cs.borderTopLeftRadius, tailRadius: cs.borderBottomRightRadius,
-          bg: cs.backgroundColor, shadow: cs.boxShadow, borderStyle: cs.borderLeftStyle };
+          bg: cs.backgroundColor, shadow: cs.boxShadow, borderStyle: cs.borderLeftStyle,
+          borderWidth: cs.borderLeftWidth, maxWidth: cs.maxWidth,
+          iconW: el.querySelector('.fc-icon') ? getComputedStyle(el.querySelector('.fc-icon')).width : '' };
       };
       const color = (sel) => {
         const el = document.querySelector(sel);
@@ -272,13 +298,19 @@ test.describe('computed paint — light theme', () => {
         sub: color('#chat > .row.user-media .fc-sub'),
       };
     });
-    expect(read.card.borderRadius).toBe('16px');
-    expect(read.card.tailRadius).toBe('4px');
-    expect(read.card.bg).toBe(GREEN);
-    expect(read.card.borderStyle, 'border: none').toBe('none');
+    // chip 族（F1）：细边框 + 10px 圆角 + 紧凑帽 + 28px 图标档。
+    expect(read.card.borderStyle, 'fine chip border').toBe('solid');
+    expect(read.card.borderWidth).toBe('1px');
+    expect(read.card.borderRadius).toBe('10px');
+    expect(read.card.maxWidth).toBe('264px');
+    expect(read.card.iconW).toBe('28px');
     expect(read.card.shadow).toBe('none');
-    expect(read.name, 'ink = the near-black the bubble family uses on green').toBe('rgb(17, 17, 17)');
-    expect(read.sub, 'sub line rides the alpha-black muted ink').toBe('rgba(0, 0, 0, 0.6)');
+    // F2 零气泡绿：底 = 中性玻璃（AskUser 面 token），亮主题也非绿。
+    expect(read.card.bg).not.toBe(GREEN);
+    expect(read.card.bg, 'AskUser family neutral glass face').toBe('rgba(127, 127, 127, 0.08)');
+    // 墨水 = token（修前 #111 / alpha-black 随绿底退役）。
+    expect(read.name, 'ink = text token').toBe('rgb(27, 30, 38)');
+    expect(read.sub, 'sub line = muted token').toBe('rgb(139, 142, 150)');
     expect(pageErrors).toEqual([]);
     await context.close();
   });
@@ -354,14 +386,13 @@ test.describe('computed paint — dark theme', () => {
     await context.close();
   });
 
-  test('user file card in dark: same green bubble card', async ({ browser }) => {
+  test('F2 — user file card in dark: same chip family, zero bubble green', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser, 'dark');
     await page.evaluate(() => { window.__clearChat(); window.__userFileLive(); });
     const read = await page.evaluate(readFacesInPage, { card: '#chat > .row.user-media .file-card' });
-    expect(read.card.bg).toBe(GREEN);
-    expect(read.card.borderStyle).toBe('none');
-    expect(read.card.borderRadius).toBe('16px');
-    expect(read.card.tailRadius).toBe('4px');
+    expect(read.card.bg, 'dark chip face stays neutral glass — never the bubble green').not.toBe(GREEN);
+    expect(read.card.borderStyle, 'fine chip border survives dark').toBe('solid');
+    expect(read.card.borderRadius).toBe('10px');
     expect(pageErrors).toEqual([]);
     await context.close();
   });

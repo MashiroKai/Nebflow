@@ -4631,19 +4631,34 @@
   background: var(--color-bubble-user);
 }
 
-/* File card — bubble-colored, borderless, tail corner: the file message IS a
-   user bubble (WeChat form), 同圆角/同底色. Ink = the near-black the bubble
-   family already puts on green (chat.css dark-theme `.bubble.user{color:#111}`);
-   the muted sub line rides a 60% black alpha (≈5.1:1 on #95ec69 — AA at 11px). */
+/* File card — 统一 chip 族（2026-10-22 作者令「附件卡=统一 chip 族」：与 AskUser
+   附件卡 / Pop 文件卡同族的紧凑 chip——底 = AskUser 附件卡同款 --color-surface-2
+   （缺省中性灰玻璃，亮暗双主题自适应）、细边框 = chip 语言正典 --glass-etched-border
+   token、10px 圆角、28px 类型图标档（统一 chip 语言尺寸档，同 input.css
+   .att-thumb/.att-file）、文件名+大小。修前形态（#491 主题三的气泡绿底无边框
+   大卡 = 大绿块）随本令退役；用户文本气泡本体颜色不在本批范围（媒体图片/视频面
+   保持既有气泡剪影不动）。 */
 .row.user-media .file-card {
-  background: var(--color-bubble-user);
-  border: none;
-  border-radius: 16px;
-  border-bottom-right-radius: 4px;
+  width: auto;
+  max-width: 264px;
+  gap: 9px;
+  padding: 7px 10px 7px 7px;
+  background: var(--color-surface-2, rgba(127, 127, 127, 0.08));
+  border: 1px solid var(--glass-etched-border, rgba(91, 127, 191, 0.10));
+  border-radius: 10px;
   box-shadow: none;
 }
-.row.user-media .fc-name { color: #111; }
-.row.user-media .fc-sub { color: rgba(0, 0, 0, 0.6); }
+.row.user-media .file-card .fc-icon {
+  width: 28px; height: 28px;
+  border-radius: 8px;
+  font-size: 8.5px;
+}
+.row.user-media .fc-name {
+  color: var(--color-text);
+  font-size: 12.5px;
+  max-width: 150px;
+}
+.row.user-media .fc-sub { color: var(--color-text-muted); font-size: 10.5px; margin-top: 2px; }
 /* Click affordance survives the de-chrome: the standing shadow is gone, the
    hover shadow stays (matches the artifact family's hover feedback). */
 .row.user-media .file-card:hover { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); }
