@@ -169,7 +169,8 @@ case class AgentRecord(
    * 会话展示名（刷新恢复路径专用，20260907 节点名刷新持久化批）：Project 域注册点
    * （NodeEngine 节点 / ProjectActor 分发器）写 Flow Map 节点名 / "dispatcher/<project>"；
    * 其余域 None（默认 = 既有注册点零改动）。activeAgentEntryJson 恢复链消费：
-   * meta.agentName → displayName → sessionId 三档。
+   * meta.agentName → displayName → delegateTitle（显示名契约批 2026-10-22 新增档，
+   * delegate/SubTask 恢复行批次标题，见 WebSocketRoutes.delegateDisplayTitle）→ sessionId。
    */
   displayName: Option[String] = None,
   /**

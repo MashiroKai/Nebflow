@@ -1060,13 +1060,38 @@ private[gateway] object WsSessionChatHandlers:
                 // retryCount 来自 taskStore（2026-08-22 缺口 2：快照自带三
                 // 字段之一；Ephemeral/无任务记录 → 0）
                 sharedResources.subAgentTaskStore.findByTaskId(rec.sessionId).flatMap { taskOpt =>
-                  sessionStore.getSessionMeta(rec.sessionId).map { meta =>
-                    WebSocketRoutes.activeAgentEntryJson(
-                      rec,
-                      meta,
-                      taskOpt.map(_.retryCount),
-                      taskTitle = rec.taskId.flatMap(titles.get)
-                    )
+                  // 显示名契约批（2026-10-22 · 子智能体面板行显示名修复）：快照面
+                  // 的 delegate/SubTask 行名**不再回落 sessionId**——权威主源 =
+                  // DelegateRegistry.Record.title（spawn 落盘、跨重启存活）；任务
+                  // 记录 description 为回填源（`delegateDisplayTitle` 单一解析缝，
+                  // 纯函数可单测）。不命中 = None（既有三档链逐字不动）。
+                  val delegateTitleIO: IO[Option[String]] =
+                    IO
+                      .blocking {
+                        val registryTitle =
+                          if rec.kind == AgentKind.Delegate then
+                            nebflow.core.delegate.DelegateRegistry
+                              .find(rec.sessionId)
+                              .map(_.title)
+                              .filter(_.trim.nonEmpty)
+                          else None
+                        WebSocketRoutes.delegateDisplayTitle(
+                          rec.kind,
+                          registryTitle,
+                          taskOpt.map(_.description).filter(_.trim.nonEmpty)
+                        )
+                      }
+                      .handleErrorWith(_ => IO.pure(None))
+                  delegateTitleIO.flatMap { delegateTitle =>
+                    sessionStore.getSessionMeta(rec.sessionId).map { meta =>
+                      WebSocketRoutes.activeAgentEntryJson(
+                        rec,
+                        meta,
+                        taskOpt.map(_.retryCount),
+                        taskTitle = rec.taskId.flatMap(titles.get),
+                        delegateTitle = delegateTitle
+                      )
+                    }
                   }
                 }
               }
