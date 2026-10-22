@@ -2,6 +2,11 @@
 //
 // 症状①：内容区渐隐未退役（气泡边缘渐变淡出）。症状②：消失点应锚定 Header 顶缘
 // （文字从 Header 下穿过），Header 下缘硬切/极窄过渡 —— 滚动遮罩锚点 = Header 顶缘。
+// 症状③（2026-10-22 作者回访裁定「不允许任何渐变蒙层盖在气泡内容上」）：穿顶首行
+// 上的灰蒙渐变条 = #top-overlays 的 .scroll-under-glass::after 裙边（带空也画，
+// 28px tint+blur 压在带下首行上；归因探针 tests/tmp-topclip-band-probe.mjs 四连拍
+// 实证：仅隐藏该元素带区均色即回亮）—— 裙边随顶带裙边退役批整组摘除，本契约加
+// 「无蒙层压字」双腿：DOM（不挂类/伪元素不在）+ 像素（隐藏该元素前后带区零差）。
 //
 // 用法：node tests/chat-header-crossing-shots.mjs <evidenceSubdir> [light|dark|both]
 // 产物 = evidence/<subdir>/C-*.png + stdout 断言清单（真 web 树 + 真 WS 桩）。
@@ -150,6 +155,44 @@ for (const scheme of SCHEMES) {
   const bAlpha = bm ? Math.max(...bm[1].split(',').map(Number)) : 1;
   ok(`[${tag}] 底缘零边界②：底边框不可见（transparent 或 1px 透明占位）`,
     geo.borderBottom.width === '0px' || bAlpha === 0, JSON.stringify(geo.borderBottom));
+
+  // 症状③（2026-10-22 作者回访裁定）：无蒙层压字 —— DOM 腿：顶带不挂裙边类、
+  // ::after 伪元素不存在（带空时 28px tint+blur 裙边恰压穿顶首行 = 作者所指渐变条）。
+  const bandSkirt = await page.evaluate(() => {
+    const to = document.getElementById('top-overlays');
+    const af = getComputedStyle(to, '::after');
+    return { hasClass: to.classList.contains('scroll-under-glass'), content: af.content, mask: af.maskImage || af.webkitMaskImage || '' };
+  });
+  ok(`[${tag}] 无蒙层压字①：#top-overlays 裙边退役（不挂类 + ::after 不存在）`,
+    !bandSkirt.hasClass && /none|normal/.test(bandSkirt.content) && !/linear-gradient/.test(bandSkirt.mask),
+    JSON.stringify(bandSkirt));
+
+  // 症状③像素腿：header 底缘下首行区（裙边带原位）截图 → 隐藏 #top-overlays →
+  // 再截 —— 蒙层若在，两拍必异；退役后两拍逐通道均色差 ≤2（零贡献实证）。
+  const avgOf = async (buf) => {
+    const b64 = buf.toString('base64');
+    return page.evaluate(async (b64) => {
+      const img = new Image();
+      img.src = 'data:image/png;base64,' + b64;
+      await img.decode();
+      const cv = document.createElement('canvas');
+      cv.width = img.width; cv.height = img.height;
+      const c2 = cv.getContext('2d');
+      c2.drawImage(img, 0, 0);
+      const d = c2.getImageData(0, 0, cv.width, cv.height).data;
+      let r = 0, g = 0, b = 0; const n = d.length / 4;
+      for (let i = 0; i < n; i++) { r += d[i * 4]; g += d[i * 4 + 1]; b += d[i * 4 + 2]; }
+      return [r / n, g / n, b / n];
+    }, b64);
+  };
+  const bandClip = { x: 470, y: Math.round(geo.headerBottomRel + 2), width: 360, height: 26 }; // header 底缘下 2..28px（原裙边带位）
+  const withOverlay = await avgOf(await page.screenshot({ clip: bandClip }));
+  await page.evaluate(() => { document.getElementById('top-overlays').style.visibility = 'hidden'; });
+  const withoutOverlay = await avgOf(await page.screenshot({ clip: bandClip }));
+  await page.evaluate(() => { document.getElementById('top-overlays').style.visibility = ''; });
+  const drift = Math.max(...withOverlay.map((v, i) => Math.abs(v - withoutOverlay[i])));
+  ok(`[${tag}] 无蒙层压字②：顶带对穿顶首行零像素贡献（隐藏前后均色差 ≤2）`,
+    drift <= 2, `drift=${drift.toFixed(2)} with=[${withOverlay.map(v => v.toFixed(0))}] without=[${withoutOverlay.map(v => v.toFixed(0))}]`);
 
   await page.screenshot({ path: join(OUT, `C-header-crossing-${tag}.png`) });
   // 顶部特写：header 带 ± 60px。

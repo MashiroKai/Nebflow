@@ -41,23 +41,25 @@ for (const scheme of ['light', 'dark']) {
   await page.goto('http://127.0.0.1:8167/index.html');
   await page.waitForSelector('#chat', { timeout: 15000 });
   await new Promise((r) => setTimeout(r, 700));
-  // 布景：任务带 + 高对比消息层（穿帮可见）
+  // 布景：reminder 面板（顶带裙边退役批 2026-10-22：#top-overlays 摘类，裙边像素
+  // 契约改证于同工具类的面板面）+ 高对比消息层（穿帮可见；标尺条对齐面板投影区）
   await page.evaluate(() => {
-    const tl = document.getElementById('task-list');
-    tl.classList.add('has-tasks');
-    tl.innerHTML = '<div class="task-card" style="height:64px"><div class="task-header" style="height:28px;padding:0 12px;font-weight:600"></div></div>';
-    document.getElementById('top-overlays').style.width = 'min(520px, 92%)';
-    document.getElementById('top-overlays').style.alignSelf = 'flex-start';
+    const p = document.getElementById('reminder-panel');
+    p.querySelector('.reminder-panel-body').innerHTML = '<div style="height:72px"></div>';
+    p.classList.add('open');
     const main = document.getElementById('main');
+    const m = main.getBoundingClientRect();
+    const r = p.getBoundingClientRect();
     const strip = document.createElement('div');
-    strip.style.cssText = 'position:absolute;z-index:5;left:24px;width:60%;top:120px;height:300px;' +
+    strip.style.cssText = `position:absolute;z-index:5;left:${Math.round(r.left - m.left) - 20}px;` +
+      `width:${Math.round(r.width) + 40}px;top:${Math.round(r.bottom - m.top) - 60}px;height:300px;` +
       'background:repeating-linear-gradient(90deg,#111 0 10px,#f8f8f8 10px 20px);border-radius:10px;';
     main.appendChild(strip);
   });
   await new Promise((r) => setTimeout(r, 900));
   const clip = await page.evaluate(() => {
-    const r = document.getElementById('top-overlays').getBoundingClientRect();
-    return { x: 8, y: Math.max(0, r.top - 30), width: 560, height: 170 };
+    const r = document.getElementById('reminder-panel').getBoundingClientRect();
+    return { x: Math.max(0, r.left - 40), y: Math.max(0, r.top - 30), width: Math.min(560, r.width + 80), height: r.height + 130 };
   });
   await page.screenshot({ path: join(OUT, `glass-${scheme}-frosted.png`), clip });
   await page.evaluate(() => window.__scrollUnderGlass.degrade(true));
