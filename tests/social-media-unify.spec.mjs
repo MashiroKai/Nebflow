@@ -7,8 +7,10 @@
 //        媒体气泡面接管（图=Pop 媒体面 / 文件=文件卡 / 混排同行），与控制台
 //        纯图发送同形（空随文 ⇒ 零文本气泡）。
 //   B2 字节腿同一 — media 根指针路径（uploads 族之外）走**同一** nf-file 票腿：
-//        hydrateMedia 的 resolver 拒答（null）回落票腿（铸票请求可见），uploads
-//        族路径仍由 resolver 命中（零票腿请求 = 逐字现状）。
+//        hydrateMedia 的 resolver 拒答（null）回落票腿（铸票请求可见）；uploads
+//        族路径 resolver 命中但 URL 出错（本 harness 缺件 404）**同样回落票腿**
+//        （mediaface-resolver-fallback 批 2026-10-22：修前为终态死脸）——双腿
+//        都败才终态（本 harness 无票腿字节面 ⇒ 失败注记可见 = 禁静默契约不破）。
 //   B3 存量「已存至」兼容渲染 — mediaLine 两种拼装严格识别（带/不带原始文件名；
 //        图片/视频/文件三 kind）：识别命中 ⇒ 媒体行接管 + 文本气泡隐去；不匹配
 //        （含截断/缺尾/路径越界）⇒ 原文本行渲染（fail-open，零回归）。
@@ -129,10 +131,10 @@ test.describe('B1 — bridgeUser 帧的媒体行（三同一 · 显示同一）'
   });
 });
 
-/* ═══════════ B2 — 字节腿同一：票腿回落（uploads 族零变化）═══════════ */
+/* ═══════════ B2 — 字节腿同一：票腿回落（resolver 出错同回落）═══════════ */
 
-test.describe('B2 — hydrateMedia 的 resolver 拒答回落同一票腿', () => {
-  test('media 根路径（uploads 族外）⇒ 铸票请求可见（不再终态死脸）；uploads 路径仍走 resolver', async ({ browser }) => {
+test.describe('B2 — hydrateMedia 的 resolver 拒答/出错回落同一票腿', () => {
+  test('media 根路径（uploads 族外）⇒ 铸票请求可见（不再终态死脸）；uploads 路径出错也回落票腿', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate((atts) => window.__restoreRows(atts), [
       { name: 'm1-pic.png', type: 'image', path: `${MEDIA_ROOT}/m1-pic.png` },
@@ -140,13 +142,16 @@ test.describe('B2 — hydrateMedia 的 resolver 拒答回落同一票腿', () =>
     let reqs = await page.evaluate(() => window.__nfRequests);
     expect(reqs.some(u => u.includes('/api/nf-ticket')), 'resolver 拒答 ⇒ 同一票腿铸票（fallback 可观察）').toBe(true);
 
-    // 清空观察窗，再走 uploads 族路径（resolver 命中 ⇒ 零票腿请求）。
+    // uploads 族路径、静态根缺件 ⇒ resolver URL 404。mediaface-resolver-fallback
+    // 批（2026-10-22）前 = 终态死脸（零票腿请求）；批后 = 回落同一票腿（铸票请求
+    // 可见）。本 harness 的票腿无字节面（python 静态服）⇒ 双腿都败 ⇒ 失败注记
+    // 恰一次（终态闩）——治愈面由 media-resolver-fallback.spec A1 精钉。
     await page.evaluate(() => { window.__nfRequests = []; });
     await page.evaluate((atts) => window.__restoreRows(atts), [
       { name: 'c1.png', type: 'image', path: '/uploads/pop-harness/c1.png' },
     ]);
     reqs = await page.evaluate(() => window.__nfRequests.filter(u => u.includes('/api/nf-ticket')));
-    expect(reqs, 'uploads 族路径仍由 resolver 直接命中（零票腿请求 = 逐字现状）').toEqual([]);
+    expect(reqs.length, 'uploads 族 resolver 404 ⇒ 回落票腿（铸票请求可见）').toBeGreaterThan(0);
     expect(pageErrors).toEqual([]);
     await context.close();
   });

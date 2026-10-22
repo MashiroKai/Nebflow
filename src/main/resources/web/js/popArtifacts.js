@@ -158,7 +158,17 @@ const FWD_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true
  *  `dataset.nfMediaFailed`) and `onFail` runs — the .pop-img/.pop-video family
  *  carries its own placeholder style now (the neighbouring `.bubble.ai img`
  *  rule never applied to a Pop row, which is the 缺陷 D this fixes), and the
- *  caller appends the plain-text note line once the face is assembled. */
+ *  caller appends the plain-text note line once the face is assembled.
+ *
+ *  两条腿的分工与回落（mediaface-resolver-fallback 批 2026-10-22，#665 续）：
+ *  - resolver 腿（用户附件面，uploads 路由）= 快路；**URL 出错不再是终态** ——
+ *    旧标签页会话 cookie 滑动窗过期时 StaticAuth（session-only 轨）对 /uploads/
+ *    一律 403（WS 长链不回签 ⇒ 页面看着在线、媒体全灭）；网关重启窗 404/连接错
+ *    同理。此前此处直接 fail()，自愈腿永远等不到出场。
+ *  - 票腿（nf-file 铸票）= 自愈路：自带 reMint 一次 + 铸票 401/403 的 Bearer
+ *    真令牌重试（nfTicket.js）+ 旧根字面路径双读（NfFilePolicy.scala,
+ *    b9ed91bb6）。**双腿都败**才落终态 fail —— 与 媒体统一适配批「resolver
+ *    拒答（null）回落票腿；票腿也 404 才是终态」的既定语义补全成同一形状。 */
 function hydrateMedia(el, item, onFail) {
   if (item.src) {
     el.src = item.src;
@@ -166,6 +176,9 @@ function hydrateMedia(el, item, onFail) {
   }
   const path = item.path;
   const fail = () => {
+    // 终态闩：双腿各有一次出场机会，fail 只落一次（appendFailureNote 已有
+    // 幂等守卫，这里是 class/dataset 面的同款保险）。
+    if (el.dataset.nfMediaFailed === '1') return;
     el.classList.add('nf-img-failed');
     el.dataset.nfMediaFailed = '1';
     if (typeof onFail === 'function') onFail(el);
@@ -180,24 +193,35 @@ function hydrateMedia(el, item, onFail) {
     let url = null;
     try { url = item.resolver(path); } catch { url = null; }
     if (url) {
-      el.addEventListener('error', () => fail());
+      // resolver URL 出错 ⇒ 摘本监听、进票腿（见函数头注）。不用 `once`：
+      // 票腿自己要接 error 事件链；本监听出手后必须让位，否则同一 error
+      // 会串两条监听（回落票腿后再触发 fail 的终态误伤）。
+      const onResolverError = () => {
+        el.removeEventListener('error', onResolverError);
+        startTicketLeg();
+      };
+      el.addEventListener('error', onResolverError);
       el.src = url;
       return;
     }
   }
-  // No `once` on the error listener: the FIRST error arms the re-mint, and a
-  // second error (re-mint also failed, or the re-minted URL 404s) must reach
-  // the terminal branch — with `once` that case left the element blank.
-  el.addEventListener('error', () => {
-    if (el.dataset.nfReminted === '1') { fail(); return; }
-    el.dataset.nfReminted = '1';
-    reMint(path)
+  startTicketLeg();
+
+  function startTicketLeg() {
+    // No `once` on the error listener: the FIRST error arms the re-mint, and a
+    // second error (re-mint also failed, or the re-minted URL 404s) must reach
+    // the terminal branch — with `once` that case left the element blank.
+    el.addEventListener('error', () => {
+      if (el.dataset.nfReminted === '1') { fail(); return; }
+      el.dataset.nfReminted = '1';
+      reMint(path)
+        .then(url => { if (el.isConnected) el.src = url; })
+        .catch(() => fail());
+    });
+    ticketUrl(path)
       .then(url => { if (el.isConnected) el.src = url; })
       .catch(() => fail());
-  });
-  ticketUrl(path)
-    .then(url => { if (el.isConnected) el.src = url; })
-    .catch(() => fail());
+  }
 }
 
 /* ─────────────── media face ─────────────── */
