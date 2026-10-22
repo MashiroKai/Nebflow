@@ -63,8 +63,14 @@ object InteractionHub:
    *   问题 #3 推荐默认采纳）：`sourceSession → 注册表在册?`。`None`（缺省）=
    *   未接线 ⇒ 快照帧逐字节不改（既有测试构造零改动）；GatewayMain 接线
    *   `sharedResources.agentRegistry` 读数。
+   * @param ledger 重启孤儿对账台账（2026-10-22「Header 待答徽标僵尸态」批）：槽位
+   *   创建/收口随行记账；引擎 boot 时由 GatewayMain 清点过期关闭。`None`（缺省）=
+   *   未接线 ⇒ 零记账（既有测试构造零改动，同 liveness 先例）。
    */
-  def apply(liveness: Option[String => IO[Boolean]] = None): Behavior[InteractionHubCommand] =
+  def apply(
+    liveness: Option[String => IO[Boolean]] = None,
+    ledger: Option[PendingAskLedger] = None
+  ): Behavior[InteractionHubCommand] =
     Behaviors.setup { ctx =>
       val pending: Ref[IO, Map[String, PendingRequest]] = Ref.unsafe(Map.empty)
       val rootWsSend: Ref[IO, Map[String, Json => IO[Unit]]] = Ref.unsafe(Map.empty)
@@ -78,9 +84,13 @@ object InteractionHub:
             case InteractionHubCommand.UnregisterRoot(rootSessionId) =>
               rootWsSend.update(_ - rootSessionId) *> IO.pure(behavior)
             case InteractionHubCommand.Request(req) =>
-              ctx.forkTurn(handleRequest(pending, rootWsSend, req)) *> IO.pure(behavior)
+              // 重启孤儿对账批：槽位注册随行记账（best-effort，绝不阻断提问链）。
+              val ledgerRecord = ledger.fold(IO.unit)(l =>
+                l.record(PendingAskLedger.Entry.of(req, firstQuestionExcerpt(req.payload)))
+              )
+              ctx.forkTurn(handleRequest(pending, rootWsSend, req) *> ledgerRecord) *> IO.pure(behavior)
             case InteractionHubCommand.Answered(ans) =>
-              ctx.forkTurn(handleAnswered(pending, rootWsSend, ans)) *> IO.pure(behavior)
+              ctx.forkTurn(handleAnswered(pending, rootWsSend, ans, ledger)) *> IO.pure(behavior)
             case InteractionHubCommand.ListPendingAsks(rootSessionId, reply) =>
               // 刷新存活 (2026-09-03): read-only snapshot for reconnect replay.
               ctx.forkTurn(handleListPendingAsks(pending, liveness, rootSessionId, reply)) *> IO.pure(behavior)
@@ -102,19 +112,19 @@ object InteractionHub:
               // #250 第②项：同一命令新增 `reason`（缺省 ""）——turn 被用户中断时
               // root 会话没有清理入口，是同一「等待方已死、槽位仍在」面（见
               // handleCleanupForSession 注释）。
-              ctx.forkTurn(handleCleanupForSession(pending, rootWsSend, sessionId, reason)) *> IO.pure(behavior)
+              ctx.forkTurn(handleCleanupForSession(pending, rootWsSend, sessionId, reason, ledger)) *> IO.pure(behavior)
             case InteractionHubCommand.CloseRequest(requestId) =>
               // 调用侧撤回（#147 接线段 2026-09-12）：请求方自己不等了（确认超时）
               // ⇒ 精确回收**这一个**槽位并关掉卡片。与 CleanupForSession 的区别是
               // 粒度：那条按 sourceSession 批量回收（源会话死亡），这条按 requestId
               // 精确回收 —— 同一会话同时挂着别的 ask 时不得被误伤（超时撤回若走
               // CleanupForSession 就会误杀同会话的其它 pending 卡）。
-              ctx.forkTurn(handleCloseRequest(pending, rootWsSend, requestId)) *> IO.pure(behavior)
+              ctx.forkTurn(handleCloseRequest(pending, rootWsSend, requestId, ledger)) *> IO.pure(behavior)
             case InteractionHubCommand.CancelRequest(requestId, reason, by, reply) =>
               // askucancel 批（2026-10-08）：用户发起的取消——按 requestId 精确终结
               // 一个 AskUser 槽位。与上一条（调用侧撤回，#147）的差别 = kind 闸 +
               // 发起方终结通知 + 显式裁决（见 InteractionHubCommand.CancelRequest 注）。
-              ctx.forkTurn(handleCancelRequest(pending, rootWsSend, requestId, reason, by, reply)) *> IO.pure(behavior)
+              ctx.forkTurn(handleCancelRequest(pending, rootWsSend, requestId, reason, by, reply, ledger)) *> IO.pure(behavior)
             case InteractionHubCommand.SecretSlotsOf(requestId, reply) =>
               // askuser-secret 批（2026-10-08）：只读 secret 槽位查询（网关作答闸的
               // 判据来源）——见 InteractionHubCommand.SecretSlotsOf 注。
@@ -522,13 +532,17 @@ object InteractionHub:
   private def handleAnswered(
     pending: Ref[IO, Map[String, PendingRequest]],
     rootWsSend: Ref[IO, Map[String, Json => IO[Unit]]],
-    ans: InteractionAnswered
+    ans: InteractionAnswered,
+    ledger: Option[PendingAskLedger] = None
   ): IO[Unit] =
+    // 重启孤儿对账批：消费槽位随行销账（两条消费路同源——requestId 精确路 + 旧前端
+    // FIFO 兜底路）。best-effort，绝不影响答复链。
+    def ledgerRemove(rid: String): IO[Unit] = ledger.fold(IO.unit)(_.remove(rid))
     pending.modify { m =>
       if ans.requestId.nonEmpty then
         m.get(ans.requestId) match
           case Some(p) =>
-            if answerCompletes(p, ans) then (m - ans.requestId, complete(p, ans))
+            if answerCompletes(p, ans) then (m - ans.requestId, complete(p, ans) *> ledgerRemove(ans.requestId))
             else
               // #12: a malformed answer must NOT consume the card — eating it
               // would strand the pending deferred forever with
@@ -579,7 +593,7 @@ object InteractionHub:
             )
           else IO.unit
         candidates.find { case (_, p) => answerCompletes(p, ans) } match
-          case Some((rid, p)) => (m - rid, multiWarn *> complete(p, ans))
+          case Some((rid, p)) => (m - rid, multiWarn *> complete(p, ans) *> ledgerRemove(rid))
           case None =>
             (
               m,
@@ -695,7 +709,8 @@ object InteractionHub:
     pending: Ref[IO, Map[String, PendingRequest]],
     rootWsSend: Ref[IO, Map[String, Json => IO[Unit]]],
     sessionId: String,
-    reason: String = ""
+    reason: String = "",
+    ledger: Option[PendingAskLedger] = None
   ): IO[Unit] =
     pending.modify { m =>
       val victims = m.toList.collect { case (rid, p) if p.sourceSession == sessionId => rid -> p }
@@ -707,6 +722,8 @@ object InteractionHub:
             _ <- logger.info(
               s"CleanupForSession $sessionId: closing ${victims.size} pending ask(s) (source session died)"
             )
+            // 重启孤儿对账批：批量回收随行销账（best-effort）。
+            _ <- victims.traverse_ { case (rid, _) => ledger.fold(IO.unit)(_.remove(rid)) }
             sends <- rootWsSend.get
             _ <- victims.traverse_ { case (rid, p) =>
               sends.toList.traverse_ { case (sid, ws) =>
@@ -746,7 +763,8 @@ object InteractionHub:
   private def handleCloseRequest(
     pending: Ref[IO, Map[String, PendingRequest]],
     rootWsSend: Ref[IO, Map[String, Json => IO[Unit]]],
-    requestId: String
+    requestId: String,
+    ledger: Option[PendingAskLedger] = None
   ): IO[Unit] =
     pending.modify { m =>
       m.get(requestId) match
@@ -760,6 +778,8 @@ object InteractionHub:
               _ <- logger.info(
                 s"CloseRequest $requestId (kind=${p.kind}) — caller withdrew; closing the card"
               )
+              // 重启孤儿对账批：精确回收随行销账（best-effort）。
+              _ <- ledger.fold(IO.unit)(_.remove(requestId))
               sends <- rootWsSend.get
               _ <- sends.toList.traverse_ { case (sid, ws) =>
                 ws(
@@ -804,7 +824,8 @@ object InteractionHub:
     requestId: String,
     reason: String,
     by: String,
-    reply: Option[ActorRef[AskCancelOutcome]]
+    reply: Option[ActorRef[AskCancelOutcome]],
+    ledger: Option[PendingAskLedger] = None
   ): IO[Unit] =
     val effectiveReason = if reason.nonEmpty then reason else "user-cancelled"
     def respond(outcome: AskCancelOutcome): IO[Unit] =
@@ -843,6 +864,8 @@ object InteractionHub:
                     s"rootSessionId=${p.rootSessionId} kind=${p.kind} by=$by reason=$effectiveReason"
                 )
                 .handleErrorWith(_ => IO.unit)
+              // 重启孤儿对账批：用户取消终结随行销账（best-effort）。
+              _ <- ledger.fold(IO.unit)(_.remove(requestId))
               // ② 发起方终结通知（先于广播：会话侧先拿到结论，前端关卡帧随后在途）。
               _ <- p.reply match
                 case InteractionReply.AskUserReply(replyToOpt) =>

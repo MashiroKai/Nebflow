@@ -145,6 +145,31 @@ export function pendingSnapshotFailed() {
 
 export function pendingAskCount() { return pending.size; }
 
+// ---------- 超龄自愈（重启孤儿对账批 2026-10-22） ----------
+
+/** Mirror 条目寿限（作者令「超龄（如 >24h）自动过期」）：24h。镜像只是**待办
+ *  信号**，不是卡片的权威——权威在 hub（运行中槽位的收口走既有 askUserClosed
+ *  级联；跨重启残留走引擎 boot 对账 PendingAskLedger.bootReconcile 广播）。
+ *  本上限只兜「两个权威都够不着」的最后一种形态：**久未重连的标签页**——WS 半开
+ *  （宿主睡眠/断网）时既收不到关卡帧也跑不了快照对账，镜像条目会无限期存续，
+ *  徽标对着一个早已死亡的槽位说谎（实测 asknb-6554022b93bb4aa7 计数存活 46h+
+ *  跨三次重启）。条目超龄即在任一渲染/对账点被摘除（renderBar 单点），计数与
+ *  待办条同步收口；对应卡片若仍在（hub 槽位真活着的病态长挂）不受本摘除影响
+ *  ——卡片自己的收口是引擎侧机制的事，镜像退场不制造「有卡无数」以外的第二张
+ *  谎言面（该形态归 askerAlive 标注与 boot 对账管）。 */
+const MAX_ENTRY_AGE_MS = 24 * 60 * 60 * 1000;
+
+/** 摘除超龄条目。renderBar 的头部单点调用 ⇒ 任何渲染/对账路径都自愈。 */
+function sweepAged() {
+  const cutoff = Date.now() - MAX_ENTRY_AGE_MS;
+  for (const [rid, entry] of [...pending]) {
+    if (entry.ts <= cutoff) {
+      pending.delete(rid);
+      if (lastFocusedRequestId === rid) lastFocusedRequestId = null;
+    }
+  }
+}
+
 // ---------- Rendering ----------
 
 function barEl() { return document.getElementById('ask-pending-bar'); }
@@ -167,6 +192,7 @@ function nextEntry() {
 function renderBar() {
   const bar = barEl();
   const badge = badgeEl();
+  sweepAged(); // 超龄自愈（重启孤儿对账批）：任何渲染/对账点先摘僵尸条目再出数
   const entries = orderedEntries();
   if (badge) {
     badge.classList.toggle('hidden', entries.length === 0);

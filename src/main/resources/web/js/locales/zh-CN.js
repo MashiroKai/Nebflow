@@ -1266,6 +1266,9 @@ export default {
   'heldReceipts.unread': '{n} 条未投递（重试已穷尽）',
 
   'askUser.sourceClosed': '来源已关闭（节点已取消）',
+  // 重启孤儿对账批（2026-10-22）：引擎 boot 清点跨重启残留挂起提问的过期关闭终态
+  // （PendingAskLedger.bootReconcile → askUserClosed{reason:"expired-orphan"}）。
+  'askUser.expiredOrphan': '问题已过期（引擎重启，提问方已结束）',
   // 双开缺陷批（chain-askuserdup 案 A①）：历史里的提问行**无作答记录**时的显式标注
   // （改前这种卡被画成「已作答」= 一行假的 `-> `）—— 死卡显式标注优于静默死亡。
   'askUser.historyUnanswered': '历史无作答记录（待定）',
