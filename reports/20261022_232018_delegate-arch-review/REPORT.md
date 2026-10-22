@@ -8,7 +8,7 @@
 
 ## 0. 结论（一段话）
 
-delegate 生命周期主干（spawn→监督→终判→投递→清理）结构完整、清账纪律好（终态三清、幂等、诚实失败），但存在**四类系统性缺口**：①通知面单通道——后台任务完成通知只投向 child actor 引用，会话一死通知即丢（案例④根因）；②资源面零闸——后台任务注册与 delegate 扇出全无速率/并发上限（案例①根因）；③等待语义只有一半——合并停靠有 Waiting 状态+面板帧，bg-wait 停靠只有一行日志+一个前端没注册的 WS 帧（案例⑤根因）；④显示面对账是单调累积的——「重启打断」灰旗只落不清，注册表零删除（案例⑥根因）。在飞的平台修复批（HeldReceiptStore/HeldDeliveryWatchdog/DrainHeldReceipts/Waiting 停靠）已把案例③（barrier 幻影槽）的治本件落进本树，本报告与其衔接见 §5。**未发现「必死螺旋」**：会话内各熔断都有预算上限并落到诚实终态；唯一无界循环在**父会话层的 re-delegate 决策**（引擎侧零预算，见 D6）。
+delegate 生命周期主干（spawn→监督→终判→投递→清理）结构完整、清账纪律好（终态三清、幂等、诚实失败），但存在**五类系统性缺口**：①通知面单通道——后台任务完成通知只投向 child actor 引用，会话一死通知即丢（案例④根因）；②资源面零闸——后台任务注册与 delegate 扇出全无速率/并发上限（案例①根因）；③等待语义只有一半——合并停靠有 Waiting 状态+面板帧，bg-wait 停靠只有一行日志+一个前端没注册的 WS 帧（案例⑤根因）；④显示面对账是单调累积的——「重启打断」灰旗只落不清，注册表零删除（案例⑥根因）；⑤清账时序与座位交叠——worktree 在 child Stop 前被移除（案例⑦ T1）、auto-all 默认档对 reset 系零闸（案例⑦ T2）。在飞的平台修复批（HeldReceiptStore/HeldDeliveryWatchdog/DrainHeldReceipts/Waiting 停靠）已把案例③（barrier 幻影槽）的治本件落进本树，本报告与其衔接见 §5。**未发现「必死螺旋」**：会话内各熔断都有预算上限并落到诚实终态；唯一无界循环在**父会话层的 re-delegate 决策**（引擎侧零预算，见 D6）。
 
 ---
 
@@ -198,6 +198,27 @@ child turn 结束 → AgentEvent.Completed → supervisor
 
 **修法**：见 D5（历史存量一次性迁入历史窗/或给灰旗行加自动归档龄期）。
 
+### ⑦ 案例七（追加批 · 作者观测第六案例）：delegate worktree 被外部 `git reset` 清盘（今夜第二例，#566 批同款先例）
+
+**排查结论（先给硬事实）**：**引擎自身全仓零 `git reset`**。全部 git 子进程用户清单穷举核实：`GitWorktrees`（add / remove 无 --force / branch -d 小写 / 只读面，`GitWorktrees.scala:63-67, 109-138, 253-267`）、`DelegateAutoMerge`（merge --no-ff / merge --abort / status / diff，`DelegateAutoMerge.scala:235-303`）、`NodeEditTool`（node abandon 的 worktree remove + branch -d，`NodeEditTool.scala:1681-1722`）、`NodeRecovery`（只读分类）、`InstallLayout`/`PluginRegistry`（装机面）——无任何 reset/checkout/restore/stash/clean 调用点；`worktree prune` 全仓零生产调用（仅 TaskStuckWatcher:1876-1877 与 NodeRecovery:584-585 的文档引用）。**「平台对外部在用 worktree 执行 reset」在代码面不成立**；真实可触发面有三条，按可能性排序：
+
+**T1（平台邻近，首选归因）：终态清账时序把「仍在用的 worktree」移除在 child Stop 之前。**
+- 移除点与顺序：合并轮完成的判定链内 `PostMergeCleanup.run` 执行 `git worktree remove`（无 --force）+ `branch -d`（`DelegateTerminal.scala:276-278`；守卫 = 零领先 + 祖先真 + git 本体拒绝脏树，`PostMergeCleanup.scala:44-78`）——此调用发生在 `DelegateTerminal.onCompleted` **内部**；而 delegate 会话的真正终结（child Stop）在 `notifyParentAndStop` 清理链的**最后一环**（`BS:821-826`：onTerminalCleanup → 父通知 → 任务行 → hub → registry → child Stop）。**两阵之间隔着 LLM 判定机调用与全套文件 IO**，期间 child actor 处于 idle、照常收消息开新回合（Mail 续命——恰是案例④的人工处置；bg 唤醒——恰是案例①的形态）。
+- 结果形态：delegate 活着，cwd 锚定的工作树目录**已消失**——其后任何回合的文件/git 操作看到的都是「空盘/目录不存在/分支消失（branch -d 同步删了 `delegate/<id>` ref）」。LLM 对「文件全没 + HEAD 分支不在」的自然归因正是「被外部 git reset 清盘」。`PostMergeCleanup` 头注（`:30-31`）明言「delegate 的 actor/cwd 尚在 worktree 内时移除目录是安全的」——**对引擎安全（陈旧 cwd 句柄），对 delegate 的文件工具现实不成立**，该假设是本次异象的认知缺口。
+- 损害边界（重要澄清）：零领先守卫保证**已提交工作已并入基分支**、git 拒绝移除脏树 ⇒ **实际工作不丢**，丢的是会话的「工作区现实」与心理模型——异象是真实的观感、虚假的损失定性。
+- boot 腿同款：`MergeQueueBootSweep` recovered-merged 分支同样跑 PostMergeCleanup（`MergeQueueBootSweep.scala:171`），但彼时 delegate 已死，非在用窗口。
+
+**T2（活 reset 向量，默认档放行）：auto-all 默认档下任意会话可零审批执行 `git reset --hard`。**
+- `ToolReversibility.isReversible`: `case SafetyMode.AutoAll => true` **无条件放行一切**（`src/main/scala/nebflow/core/permissions.scala:173-176`）；`BashTool.isDangerous`（含 `git reset --hard` 模式，`BashTool.scala:125`）只在 auto-edits/confirm-edits 分支被消费（`permissions.scala:181, 188, 192-195`）。启动默认 = AutoAll（2026-09-12 作者令「启动即顶档」，`permissions.scala:21, 123-131`；连配置缺失都归 AutoAll）。`RelayExecAudit` 头注自证：「`dangerLevel` 只在 confirm-edits / auto-edits 下渲染权限卡；**auto-all 下不参与任何决策**」（`src/main/scala/nebflow/core/tools/RelayExecAudit.scala:19-20`）。⇒ BashTool:119 「Security rules: patterns that require user approval」的清单在**默认档是死信**。
+- 座位交叠面：**就地腿（建败回落）delegate 直接坐在共享检出区**（`inPlaceBinding`: `cwd = workspace`，`DelegateWorkspace.scala:149-179`）——与根会话/作者/其他 delegate 同 seat。共享 checkout 里任何一次外部 `git reset --hard`（根会话清自己的失败合并、另一 delegate 的越权「修正」）对就地腿 delegate 的观测即「工作树被外部 reset 清盘」。引擎自己的漂移闸文档已登记该误伤类：「共享检出区座位 × 窗口内基分支第三方直写（人/根会话/其他非 delegate 会话）」（`DelegateTerminal.scala:410-412`）——同一交叠面的官方在案记录。
+
+**T3（引擎外行为）**：人/IDE/其他进程的 git 操作。`NodeRecovery.scala:584-701` 已把「git 之外的、未经注册的递归删除」正式分类为「无责任方可指认」——引擎此前已观测过同类异象并诚实标注不可归因。
+
+**触发条件汇总**：T1 = delegate 进过合并轮（或判词 completed 且引擎代并/自并成功）∧ 清账链执行期间该 delegate 仍收到并处理了新消息（Mail/bg 唤醒/用户输入）；T2 = 实例处于 auto-all（启动默认）∧ 任一会话对共享检出区/该 worktree 执行 reset 系命令。
+**验证判据（数据盘面，仓外）**：对两例 delegateId 对账 ChainStore `worktree-cleanup` 行（`PostMergeCleanup.scala:85-96`）时间戳 vs 会话「清盘」记录时刻——命中 T1；查 nebflow 日志/relay-exec-audit.jsonl 中的 reset 命令痕迹与执行会话——命中 T2；两者皆无——落 T3（引用 NodeRecovery 的无责任方分类）。
+
+**修法建议**（详见 §3 D11/D12）：T1 = 清账时序后置（worktree 移除挪到 child Stop 之后）+ 移除前给仍活会话注入通告 reminder；T2 = auto-all 下对 reset 系保留最小硬闸/审计行（作者裁定面，需征裁）。
+
 ---
 
 ## 3. 缺陷清单（按严重度排序；S<1 天 / M=1-3 天 / L>3 天，含回归面）
@@ -214,8 +235,10 @@ child turn 结束 → AgentEvent.Completed → supervisor
 | D8 | **P2** | HeldDeliveryWatchdog 只扫 Idle：Processing/Frozen/Waiting 期扣留的回执不催注，幻影槽归还依赖「会话还有下一拍」 | `HeldDeliveryWatchdog.scala:92`（Idle 过滤） | 扩候选 = Idle ∪ Frozen ∪ Waiting（Frozen/Waiting 的催注走「queued 不唤醒」语义需 agent 侧配套 no-op 分支，AgentFrozen 已有 queued 腿 `AgentFrozen.scala:553-578` 可挂）；或维持现状但在 AgentControl status 里把 held>0 的非 Idle 会话标 ⚠（零风险可见化） | S |
 | D9 | **P3** | AgentControl 动作基本无审计：普通 cancel/restart/list 无事件行（唯一 AUDIT 是 Team 目标），事后归因只能翻散落 WARN | `AgentControlTool.scala:936, 1035`（仅两处失败 WARN）；`:444-460`（Team 专用 audit） | 对 cancel/restart 补 FlowMapEventLog.append（bg-slow 审计腿同款先例 `BashTool.scala:1164-1181`）或 nebflow.audit AUDIT 行复用 auditTeamAction 形态 | S |
 | D10 | **P3** | 台账↔面板 join 不对称：registry 有行而任务记录缺失 ⇒ 永远兜底 running（前 #566 形态的残余）；AgentStatus 与 ROW_STATUS 两套词表仅靠 live 布尔桥接 | `ChainsReadFace.scala:44-49, 204`；`delegateChainStub.js:212-215` | 注册行缺任务记录且超龄 ⇒ 投影为 interrupted（或直接要求 spawn 时两库同写已成立——补一个 boot 对账把「无任务记录的活行」落一次 failed 对账） | S |
+| D11 | **P1** | 终态清账时序：worktree 移除（+branch -d）执行于 child Stop **之前**（onCompleted 内部 vs notifyParentAndStop 尾部），中间隔着 LLM 判定机与全套清理 IO——期间 child 照常收消息开回合，delegate 在已删除的工作树里继续干活（案例⑦ T1；PostMergeCleanup 头注「安全」断言只对引擎成立，对 delegate 的文件工具现实不成立） | `DelegateTerminal.scala:276-278`（移除点）；`BS:821-826`（Stop 在链尾）；`PostMergeCleanup.scala:30-31`（安全性断言） | ①时序后置：worktree remove/branch -d 挪到 child Stop 落地之后（或监听 stopped 信号后再执行）；②移除前给仍活会话注入一行 system-reminder（「workspace 已回收、原因、产物在 base 分支」）——消灭「异象误录」；③worktree-cleanup 行补 `sessionAliveAtRemoval` 布尔（对账证据面） | S |
+| D12 | **P2** | auto-all 默认档下危险 git 命令零闸：`git reset --hard`/`checkout .`/`clean -f`/`branch -D` 的「需用户批准」清单在 AutoAll 是死信（无条件放行），就地腿 delegate 与根会话/人共享检出区座位 ⇒ 任意一方一次 reset 即他方观测为「清盘」（案例⑦ T2） | `permissions.scala:173-176`（AutoAll ⇒ true）；`BashTool.scala:119-125`（死信清单）；`RelayExecAudit.scala:19-20`（自证注释）；`DelegateTerminal.scala:410-412`（交叠面在案） | 🔴 动作者令面（auto-all 全放行是 2026-09-12 作者令）——先征裁再动。选项 a：AutoAll 下对 reset 系 fp 保留最小硬闸（出 Decision 卡——与案例①的 waiter 机制天然合流）；选项 b（保守）：只落审计——reset 系命令逐条 RelayExecAudit 同款 JSONL + 会话内广播行，保留「全放行」语义但消灭「无人知晓」；两案都附带：就地腿 brief 增补「共享检出区有其他会话在场，禁 reset/checkout 系」一行 | S(b) / M(a) |
 
-**工作量总览**：S×6、M×4；无 L。D1+D2 是本批最高收益对（直接消除案例①④的复发面）；D3/D4 填监督链最后两个无界角落；D5-D10 全是止血/可见化级。
+**工作量总览**：S×8、M×4；无 L。D1+D2 是本批最高收益对（直接消除案例①④的复发面）；D3/D4/D11 填监督链与清账链的最后三个无界角落；D5-D10、D12 全是止血/可见化级（D12 选项 a 除外——触及权限模型需作者裁定）。
 
 ---
 
@@ -227,6 +250,7 @@ child turn 结束 → AgentEvent.Completed → supervisor
 4. **台账↔面板**：§1.7 + 案例⑥。672 成因 = 灰旗单调累积 + 零删除注册表 + 历史回溯补旗（**假设**：主体为存量翻出，验证判据已给）。
 5. **资源模型**：案例① + D2。后台任务与 delegate 双零闸是明确的作者裁定遗产（`DelegateTool.scala:31-33`），建议以「软上限+可读拒绝」形态落闸而非复活硬预算，与「无超时」哲学相容。
 6. **AgentControl 权限/可观测面**：§1.6 + D9。权限面完备（RootExclusive 工具 + 桶匹配 + kind 矩阵 + Manager 子树链 maxDepth=8 + 自杀守卫 + external 根桶守卫，`AgentControlTool.scala:101-120, 151-192, 241-242, 355-377, 405-433`；面板路径守卫弱化已注释声明 `WsSessionChatHandlers.scala:535-536`）；观测面缺口 = 动作无审计行。
+7. **【追加批】worktree 管理器对外部在用 worktree 的 reset 排查**：案例⑦。结论 = 引擎零 reset（穷举核实）；真实面 = T1 清账时序（移除先于 child Stop，D11）∪ T2 auto-all 零闸下的会话级 reset（D12）∪ T3 引擎外行为（NodeRecovery 无责任方分类在案）。三候选的对账判据已给（ChainStore worktree-cleanup 行 × 清盘记录时刻 × reset 日志痕迹）。
 
 ---
 
@@ -242,4 +266,5 @@ child turn 结束 → AgentEvent.Completed → supervisor
 ## 6. 审查方法与覆盖声明
 
 - 读点：BackoffSupervisor(全)、DelegateTerminal(全)、DelegateRegistry(全)、DelegateBudget(全)、SubAgentStartupRecovery(全)、HeldDeliveryWatchdog/HeldReceiptStore(全)、LoopGuard(全)、AgentIdle(全)、SessionChildCascade(全)、TurnBoundaryDrains(全)、BgTaskRegistry(全)、AgentFinishTurn/AgentProcessing/AgentSessionExecution/AgentActor/BashTool/TaskStuckWatcher/AgentControlTool/Defaults（定点段）；delegate 链读面与前端映射经三路只读子代理核查（ChainsReadFace/delegateChainStub/bgAgents/PresenceRoutes/WebSocketRoutes/AgentFrozen/MergeQueue/NodeCanceller）。
-- 未覆盖（声明）：外部执行器腿（ExternalSessionRunner/ExternalJudgeHook）仅经子代理转述，未逐行读；LLM 判定机内部（DelegateJudgeMachine）只读到端口层；前端 turnActivity/mobile 侧仅锚点级。案例①②的现场会话日志未取（仓外数据根），相关归因已标**假设**并给出日志判据（`loop-detected`/`loop-freeze`/`delegateBgWait`/`background job .* callback` 日志行）。
+- **追加批（案例⑦）读点**：GitWorktrees(全)、PostMergeCleanup(全)、DelegateAutoMerge(全)、MergeQueue(全)、MergeQueueBootSweep(全)、DelegateWorkspace(全)、MergeAcceptance(签名面)、NodeEditTool worktree 段、NodeRecovery worktree 分类段、permissions.scala(全)、RelayExecAudit(头注面)、BashTool 危险模式/交互/注入三清单段；git reset 系全仓穷举（零命中）。
+- 未覆盖（声明）：外部执行器腿（ExternalSessionRunner/ExternalJudgeHook）仅经子代理转述，未逐行读；LLM 判定机内部（DelegateJudgeMachine）只读到端口层；前端 turnActivity/mobile 侧仅锚点级。案例①②⑦的现场会话日志未取（仓外数据根），相关归因已标**假设/三候选**并给出对账判据（`loop-detected`/`loop-freeze`/`delegateBgWait`/`background job .* callback` 日志行；案例⑦ = ChainStore `worktree-cleanup` 行时间戳 × 会话清盘记录时刻 × reset 命令日志痕迹三维对账）。
