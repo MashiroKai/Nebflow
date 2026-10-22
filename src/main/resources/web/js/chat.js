@@ -443,15 +443,31 @@ function createPendingSendMark() {
   return mark;
 }
 
+/** 插话即时确认标（对话层活性批 2026-10-22）—— busy 排队腿乐观气泡的 footer
+ *  标注，逐字回执「已收到 · 排队第 N 位」。与离线腿的时钟标同族同档（小标不
+ *  改布局）；drain/立即发送时由 flipOfflineMark 一并摘除（翻「已派发」态）。
+ *  @param {string} note */
+function createQueuedAckMark(note) {
+  const mark = document.createElement('span');
+  mark.className = 'msg-queued-mark';
+  mark.title = note;
+  mark.setAttribute('aria-label', note);
+  mark.textContent = note;
+  return mark;
+}
+
 /**
  * Render the user's own message row.
  * @param {string} text
  * @param {Array} attachments
  * @param {number} [timestamp]
- * @param {{msgId?: string, pending?: boolean}} [opts]  quote-message 一期（spec §3.6/§3.4）：
+ * @param {{msgId?: string, pending?: boolean, queueNote?: string}} [opts]  quote-message 一期（spec §3.6/§3.4）：
  *   msgId = 本行的稳定 id（用户发送腿传 clientMessageId，与引擎帧同键；其余调用点缺省
  *   生成 c-<rand>）。行挂 data-msg-id = 引用跳转的唯一寻址面。
  *   f1-send-queue：pending = true ⇒ footer 前置「待送达」时钟小标（离线入队的乐观气泡）。
+ *   插话即时确认批（2026-10-22）：queueNote ⇒ footer 前置「已收到 · 排队第 N 位」
+ *   文字小标（busy 排队腿的乐观气泡；与 pending 互斥时 queueNote 优先——两腿
+ *   不会同时入队）。
  */
 export function renderUserBubble(text, attachments, timestamp, opts) {
   const chat = activeView.dom.chat;
@@ -535,6 +551,7 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
   // f1-send-queue：待送达小标前置（badge 为 inline-flex gap:6px，前置即有自然间距，
   // 不动 time/copy 与分隔符的既有序）。
   if (opts && opts.pending) badge.prepend(createPendingSendMark());
+  if (opts && opts.queueNote) badge.prepend(createQueuedAckMark(opts.queueNote));
   row.appendChild(badge);
   // quote-message 一期（spec §2.1）：用户文本行右键 = 复制 + 引用（好友窗 msgmenu
   // 同壳 showPopupMenu；引用走 msgQuote.startQuote 替换语义）。

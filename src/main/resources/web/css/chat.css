@@ -854,6 +854,19 @@
 }
 .duration-badge .msg-pending-mark svg { width: 11px; height: 11px; }
 
+/* 插话即时确认标（对话层活性批 2026-10-22）：busy 排队腿乐观气泡 footer 的
+   「已收到 · 排队第 N 位」文字小标。与待送达时钟标同槽同档（首子项、不改布局）；
+   drain/立即发送翻面时由 flipOfflineMark 一并摘除。 */
+.duration-badge .msg-queued-mark {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.55;
+  padding: 1px;
+  color: var(--color-text);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 /* qattachvault 批：载荷丢失翻面标（红 !）—— input.js markQueueItemPayloadLost 把
    在场气泡的待送达时钟标原地改型（同一槽位、不新增元素）；title = 可判读原因。 */
 .duration-badge .msg-failed-mark {

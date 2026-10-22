@@ -247,7 +247,18 @@ export function send(resendId) {
   // 同 id 重发不入本地队（入队会在 drain 时另派一帧；重发的幂等性靠同 id + 服务端
   // 去重，不靠队列）。
   if (isBusy && !isResend && !state.frozenSessions.has(v.sessionId)) {
-    queueMessage(v, text, v.pendingAttachments);
+    // 插话即时确认（对话层活性批 2026-10-22）：排队腿不再只把消息收进底部队列
+    // 条（长对话里滚离视口 = 「界面无活动迹象」的另一半体感）——乐观气泡照常
+    // 上屏，footer 前置「已收到 · 排队第 N 位」确认标；drain/立即发送时由既有
+    // rendered 腿原位摘标翻「已派发」（零新增呈现、零重复气泡）。rendered=true
+    // = 与离线腿同一套撤回/移除收泡寻址面（removeOfflineBubble 按 data-msg-id）。
+    const item = queueMessage(v, text, v.pendingAttachments);
+    item.rendered = true;
+    const queuedAt = (state.messageQueue[v.sessionId] || []).length;
+    renderUserBubble(text, v.pendingAttachments, undefined, {
+      msgId: item.clientMessageId,
+      queueNote: t('input.queueAck', { n: queuedAt }),
+    });
     input.value = '';
     input.style.height = 'auto';
     v.pendingAttachments = [];
@@ -524,6 +535,8 @@ export function restoreQueue() {
     // qattachvault：骨架落位后立即水合载荷库（字节灌回内存项）；boot 时 WS 尚未连接，
     // 派发闸（flushOfflineQueue 等）一律 `afterQueueHydration` 挂在水合之后 ⇒ 无竞态。
     void hydrateQueueFromVault();
+    // conn-liveness（对话层活性批 2026-10-22）：刷新恢复的滞留项立即进横幅计数。
+    state.updateConnBanner?.();
   } catch (e) { /* corrupt data — ignore */ }
 }
 
@@ -648,7 +661,7 @@ function markQueueItemPayloadLost(sid, item) {
     const mapped = sid === 'null' ? null : sid;
     const view = (mapped && findViewBySessionId(mapped)) || activeView;
     const row = view?.dom?.chat?.querySelector(`.row.user[data-msg-id="${item.clientMessageId}"]`);
-    const mark = row && row.querySelector('.msg-pending-mark');
+    const mark = row && (row.querySelector('.msg-pending-mark') || row.querySelector('.msg-queued-mark'));
     if (mark) {
       mark.classList.remove('msg-pending-mark');
       mark.classList.add('msg-failed-mark');
@@ -734,6 +747,8 @@ function queueMessage(view, text, attachments, skillName, mode, extra) {
 function enqueueOfflineMessage(v, text) {
   const item = queueMessage(v, text, v.pendingAttachments, null, null, { offline: true, rendered: true });
   renderUserBubble(text, v.pendingAttachments, undefined, { msgId: item.clientMessageId, pending: true });
+  // conn-liveness（对话层活性批 2026-10-22）：滞留计数变化 ⇒ 顶栏横幅立即重读。
+  state.updateConnBanner?.();
   const input = v.dom.input;
   input.value = '';
   input.style.height = 'auto';
@@ -745,7 +760,10 @@ function enqueueOfflineMessage(v, text) {
   setTimeout(() => { v.isSending = false; }, 300);
 }
 
-/** 摘掉待送达小标（翻已送达态）。同页命内乐观气泡的寻址面 = 行 data-msg-id。
+/** 摘掉待送达/排队确认小标（翻已送达态）。同页命内乐观气泡的寻址面 = 行
+ *  data-msg-id。两枚小标：`.msg-pending-mark`（离线入队腿，时钟标）与
+ *  `.msg-queued-mark`（busy 排队确认腿，插话即时确认批 2026-10-22）——两腿的
+ *  乐观气泡共用本单点翻面。
  *  返回行是否在场（不在场 = 已被 historyPage 整替抹掉，调用方走补渲台）。 */
 function flipOfflineMark(sid, msgId) {
   if (!msgId) return false;
@@ -753,6 +771,7 @@ function flipOfflineMark(sid, msgId) {
   const row = view?.dom?.chat?.querySelector(`.row.user[data-msg-id="${msgId}"]`);
   if (!row) return false;
   row.querySelector('.msg-pending-mark')?.remove();
+  row.querySelector('.msg-queued-mark')?.remove();
   return true;
 }
 
@@ -848,6 +867,8 @@ function dispatchOfflineItem(sid, item) {
     chatWidth: view?.dom?.chat?.clientWidth || 0
   });
   if (!sent) return false; // 帧在 ws.js pendingSends 内存轨；项留队，下次 open 同 id 再补
+  // conn-liveness（对话层活性批 2026-10-22）：项已派发 ⇒ 滞留计数变化 ⇒ 横幅重读。
+  state.updateConnBanner?.();
   // 写出成功 ⇒ 出队 + 持久化（先出队 = 「移出即已派发」口径，同 sendImmediate）
   const q = state.messageQueue[sid];
   if (q) { const idx = q.indexOf(item); if (idx >= 0) q.splice(idx, 1); }
@@ -957,10 +978,14 @@ function sendImmediate(sessionId, item) {
   }
   // Render in chat
   // resend-dedup 批：renderUserBubble 落 data-msg-id = 幂等键（与普通发送同键）。
-  // f1-send-queue：rendered 项（离线入队的乐观气泡已在场）零新增呈现 —— 摘掉
-  // 待送达小标即「已送达」翻面；重渲一份就是重复气泡。
+  // f1-send-queue：rendered 项（离线入队/busy 排队确认的乐观气泡已在场）零新增
+  // 呈现 —— 摘掉小标即「已送达」翻面；重渲一份就是重复气泡。
+  // 翻面落空（行不在场：刷新后 / historyPage 整替）⇒ 补渲一次已送达态气泡 ——
+  // 消息此刻已被受理，界面上不能凭空消失（对话层活性批 2026-10-22 收口）。
   if (item.rendered) {
-    flipOfflineMark(sessionId, itemMsgId);
+    if (!flipOfflineMark(sessionId, itemMsgId) && activeView && activeView.sessionId === sessionId) {
+      renderUserBubble(item.text, item.attachments);
+    }
   } else if (activeView && activeView.sessionId === sessionId) {
     if (item.mode === 'compact') {
       renderSystemBubble(item.text ? t('slash.compactDone') + ' — ' + item.text : t('slash.compactDone'));
@@ -1109,10 +1134,14 @@ function drainMessageQueueNow(sessionId) {
   purgeVaultItem(sessionId, item); // qattachvault：载荷已随帧出线 ⇒ 载荷库清账
 
   // Render in chat (only if this session is the active view)
-  // f1-send-queue：rendered 项（离线入队的乐观气泡已在场）零新增呈现 —— 摘掉
-  // 待送达小标即可；重渲一份就是重复气泡（与 sendImmediate 同律）。
+  // f1-send-queue：rendered 项（离线入队/busy 排队确认的乐观气泡已在场）零新增
+  // 呈现 —— 摘掉小标即可；重渲一份就是重复气泡（与 sendImmediate 同律）。
+  // 翻面落空（行不在场：刷新后 / historyPage 整替）⇒ 补渲已送达态气泡（同
+  // sendImmediate 的收口——消息已受理，不能凭空消失）。
   if (item.rendered) {
-    flipOfflineMark(sessionId, item.clientMessageId);
+    if (!flipOfflineMark(sessionId, item.clientMessageId) && view && activeView && activeView.sessionId === sessionId) {
+      renderUserBubble(item.text, item.attachments);
+    }
   } else if (view && activeView && activeView.sessionId === sessionId) {
     if (item.mode === 'compact') {
       renderSystemBubble(item.text ? t('slash.compactDone') + ' — ' + item.text : t('slash.compactDone'));

@@ -125,7 +125,60 @@ function syncSendButtonConnState() {
   // §4 (todo-panel-spec): circle completion controls dim/disable while offline
   const taskList = document.getElementById('task-list');
   if (taskList) taskList.classList.toggle('task-ws-down', !state.connected);
+  // conn-liveness（对话层活性批 2026-10-22）：连接态每一次翻转都同步顶栏横幅。
+  updateConnBanner();
 }
+
+// ── conn-liveness：断连/重连顶栏横幅（对话层活性批 2026-10-22）─────────────
+// 传输层问题不许再伪装成卡死：此前断连的唯一可见面 = 发送按钮变灰（触屏/远看
+// 等同不可见），长回合期间断网 ⇒ 界面静止 + 用户消息滞留，体感死机。本横幅 =
+// 固定顶栏（不推挤布局）：断开 ⇒ 「连接断开 · 正在重连」；离线排队消息在场
+// ⇒ 追加「N 条待送达」（滞留状态可见）；重连成功 ⇒ 收起（冲刷由既有
+// flushOfflineQueue / flushPendingSends 承担，onReconnect 已注册）。
+//
+// 渲染单点 = 本函数；写宿主 = #conn-banner（index.html body 顶部）。离线计数
+// 读 state.messageQueue 的 offline 项（input.js 的入队/派发腿在变更后经
+// state.updateConnBanner?.() 主动触发一次刷新）。
+const CONN_BANNER_GLYPH =
+  '<span class="conn-banner-glyph">' +
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<line x1="2" y1="2" x2="22" y2="22"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/>' +
+  '<path d="M2 8.8a15 15 0 0 1 4.2-2.8"/><path d="M22 8.8a15 15 0 0 0-4.2-2.8"/>' +
+  '<path d="M5 12.5a10 10 0 0 1 3-1.9"/><path d="M19 12.5a10 10 0 0 0-3-1.9"/>' +
+  '<line x1="12" y1="20" x2="12.01" y2="20"/></svg></span>';
+
+/** 离线排队消息计数（offline 项 = 断线入队、补发前；failed 项已有显式失败面，
+ *  不计入「待送达」）。 */
+function offlineQueuedCount() {
+  let n = 0;
+  for (const items of Object.values(state.messageQueue || {})) {
+    if (!Array.isArray(items)) continue;
+    for (const it of items) {
+      if (it && it.offline && !it.failed) n++;
+    }
+  }
+  return n;
+}
+
+function updateConnBanner() {
+  const el = document.getElementById('conn-banner');
+  if (!el) return;
+  if (state.connected) {
+    el.classList.remove('show');
+    el.classList.add('hidden');
+    return;
+  }
+  const pending = offlineQueuedCount();
+  const text = pending > 0 ? t('ws.connBanner.pending', { n: pending }) : t('ws.connBanner.reconnecting');
+  el.innerHTML = CONN_BANNER_GLYPH + '<span class="conn-banner-text"></span>';
+  const span = el.querySelector('.conn-banner-text');
+  if (span) span.textContent = text;
+  el.classList.remove('hidden');
+  el.classList.add('show');
+}
+// input.js 的离线入队/派发腿在队列变更后调用（模块图上 input.js 已 import ws.js，
+// 反向 import 成环 ⇒ 走 state 槽，与 updateBgTasksUI 同款机制）。
+state.updateConnBanner = updateConnBanner;
 
 // ---------- Handler registry (supports multiple handlers per type) ----------
 const handlers = {};
@@ -237,6 +290,11 @@ const TERMINAL_MSG_TYPES = new Set([
   'frozen', 'resumed', 'agentFrozen', 'agentResumed',
   'errorEscalated', // error-recovery escalation → parent/user decision card
   'taskStuck', // sub-agent management panel (2026-08-22): stuck visibility for any session
+  // 子代理/父会话生命周期状态帧（sessionId = 委派子会话自身 / 持有积压的父会话，
+  // 往往不是用户正在看的会话）——不入门面过滤集就会被入口过滤器静默丢弃，
+  // 处理器饥饿。taskStuck 同律先例。
+  'delegateWaiting', // delegate ready-to-merge 停靠态（平台修复批 fix 4；对话层活性批 2026-10-22 补路由）
+  'heldReceipts', // held-receipt 投递可靠性批（2026-10-21）：父会话积压/未读计数
   'cancelAgentResult', // management panel stop action result (2026-08-23 upgrade)
   'historyPage' // flow agent popups receive historyPage with their own sessionId
 ]);
