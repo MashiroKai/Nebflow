@@ -1,0 +1,40 @@
+// 监督层级图 —— ADDITION.md §7.3.2（多设备算力分摊 · actor 补充批）
+// 渲染：dot -Tsvg topology-actor.dot -o topology-actor.svg
+digraph actorTopo {
+  rankdir=TB;
+  fontname="PingFang SC";
+  node [shape=box, style="rounded,filled", fillcolor="#f5f7fa", fontname="PingFang SC", fontsize=11];
+  edge [fontname="PingFang SC", fontsize=9, color="#44546a"];
+
+  sup [label="ComputeSupervisor\n（网关进程内顶层 behavior，Scheduler.scala）",
+       fillcolor="#e8eef7", penwidth=1.6];
+  q   [label="queue.jsonl 中央台账\n任务体唯一居所 · 审计即状态",
+       shape=note, fillcolor="#fff8e6"];
+
+  da1 [label="DeviceActor «DESKTOP-IJBBEOT»\nstate = cap + leases + suspect"];
+  da2 [label="DeviceActor «dongfeng»\n（同构，每设备一枚）"];
+  da3 [label="DeviceActor «fpga»\n（同构）"];
+
+  leg1 [label="forkTurn 派发/回捞腿\ndevice: remote-exec ∨ ssh",
+        shape=ellipse, style="dashed,filled", fillcolor="#eef7ee"];
+  peer [label="对端引擎＝另一个 ActorSystem\n（腿的另一端，非 actor 节点）\nnb_job_run.sh + RESULT.json",
+        style="dashed,filled", fillcolor="#fbeeea"];
+  hb [label="presence/心跳\n30s 心跳 · 45s presence 拍",
+      shape=ellipse, fillcolor="#eef7ee"];
+
+  sup -> da1 [label="第一级：watch/Terminated\n进程内 crash → 指数退避重建\n（queue.jsonl 重放＝断点恢复）", penwidth=1.4];
+  sup -> da2 [label="同左"];
+  sup -> da3 [label="同左"];
+  sup -> q  [label="第二级：tick 租约 TTL 180s = 3×心跳 判死（K=3）\nidempotent → 同 id 重派 / 否则 blocked\n（零超时纪律：判失联，永不 kill 远端）",
+             penwidth=1.8, color="#b45309", fontcolor="#b45309"];
+
+  q -> da1 [label="授约记账 · 重启唤醒", style=dashed];
+  da1 -> q [label="JobFinished 入账 / Claim 记账", style=dashed];
+
+  da1 -> leg1 [label="ctx.forkTurn\n错误必须自投 JobLost"];
+  leg1 -> peer [label="HMAC remote-exec / ssh 管道"];
+  peer -> da1 [label="NEBFLOW_PULL / RESULT.json 回流", style=dashed];
+  hb -> da1 [label="Heartbeat 刷 lastHeartbeatAt"];
+
+  { rank=same; da1; da2; da3; }
+}
