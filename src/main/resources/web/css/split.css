@@ -620,14 +620,15 @@ body.canvas-open.canvas-overlay #canvas-panel {
    裁剪契约（uifix ⑦ #chat margin-top）无涉；与 deck 环卡层/fab（body 级
    z-250）正交；③④快照/翻动手感作用于 deck-layer，互不触碰。
    布局统筹（与⑧并存 + 移位批 2026-10-22）：胶囊内 = [t-icon][t-dot][t-name]
-   [pop 钮]；deck fab = 右下角独立 body 级浮钮（bottom 16 / right 12，与内容区
-   底右 chrome 簇同排）；手机卡头胶囊 = 通栏变体（mobileLayer.css §⑨：
-   [title][count][pop][close]）。
+   [pop 钮]；deck fab = 右缘独立 body 级浮钮（回退批 2026-10-22 回访裁定迁回
+   顶右原位 top 10 / right 12，与居左胶囊分居面板顶行两端）；手机卡头胶囊 =
+   通栏变体（mobileLayer.css §⑨：[title][count][pop][close]）。
    移位批（作者令 2026-10-22 ②）：胶囊从「顶部居中」改「顶部居左」——修前居中
    胶囊 + 图片 pane 顶右缩放条 + 顶右 fab 三件在顶行互相打架（作者截图）；缩放
-   控件与 fab 移右下角后胶囊独占顶行，锚定左缘（14px），transform 不再携带
+   控件迁右下角后胶囊独占顶行，锚定左缘（14px），transform 不再携带
    translateX(-50%)（手势变量语义不变：--head-dx/dy 仍是位移量）。右缘保留
-   170px 给 nf-findbar（顶右 14px，find 态才出现）让位。 */
+   170px 给 nf-findbar（顶右 14px，find 态才出现）让位；fab 回顶右（回退批）
+   仍在此让位带内，分居两端不冲突。 */
 .canvas-header {
   position: absolute;
   top: 10px;
@@ -1213,18 +1214,19 @@ body.canvas-deck-narrow .canvas-title { max-width: 46%; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
 }
 
-/* ── 层叠浮钮（v5②）：body 层固定元素，JS 逐帧同步面板盒。移位批（作者令
-   2026-10-22 ②）：钉区从「顶右 top10/right12」迁「右下角 bottom16/right12」
-   ——修前顶右与图片 pane 缩放条（已同迁底右）叠印、又挤居中文件名胶囊的顶行
-   （作者截图三件打架）。JS 同步式同步改写（canvas.js syncDeckBox：top =
-   面板底 − 56 = 40px 钮 + 16px 底缝），本 CSS 底锚为 JS 前的缺省姿。
+/* ── 层叠浮钮（v5②）：body 层固定元素，JS 逐帧同步面板盒（top 10 / right 12 /
+   40px 玻璃钮语言逐字不动）。钉区历史：移位批（作者令 2026-10-22 ②）曾迁
+   「右下角 bottom16/right12」；回退批（作者令 2026-10-22 回访裁定）迁回顶右
+   原位——作者只要求图片查看器缩放控件迁右下，fab 属移位范围过宽；缩放条既已
+   居底右、文件名胶囊居左，原「顶行三件打架」的叠印前提消失，顶右回移安全
+   （顶右 fab 与居左胶囊分居面板顶行两端）。JS 同步式（canvas.js syncDeckBox：
+   top = 面板顶 + 10），本 CSS 顶锚为 JS 前的缺省姿。
    不在面板子树（panel.contains(fab)===false），不随整区缩放/前景轮换移动；
    z-250 恒高于 deck-layer（auto/.over 60/245）与面板（docked auto / overlay
    240），低于模态族（300+）。 */
 #deck-fab {
   position: fixed;
-  top: auto;
-  bottom: 16px;
+  top: 10px;
   right: 12px;
   z-index: 250;
   width: 40px;
@@ -1564,8 +1566,10 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
 }
 
 /* Floating rendered↔source toggle (markdown & HTML viewers)
-   移位批（2026-10-22）：右锚 16 → 64 —— body 级 deck fab 迁底右角（right:12）
-   后，全 pane 底右圆钮簇整体 +48px 让位（fab · source · ref · find · graph）。 */
+   移位批（2026-10-22）：右锚 16 → 64 —— 底右圆钮簇整体 +48px（source · ref ·
+   find · graph；当时 body 级 deck fab 同迁底右 right:12 占首槽）。回退批
+   （作者令 2026-10-22 回访裁定）：fab 迁回顶右原位，簇槽位维持 +48 现状不动
+   （作者仅令 fab 回移，缩放控件与簇不在回退范围）。 */
 .canvas-source-toggle {
   position: absolute;
   bottom: 16px;
@@ -1938,9 +1942,10 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
 
 /* ── Shared viewer zoom bar (viewers/zoom.js) ── */
 /* 移位批（作者令 2026-10-22 ②）：默认位从「顶右 10/12」迁「右下角」——修前顶右
-   与 body 级 deck fab（现同排右下 right:12）叠印、又与居中文件名胶囊挤同行
-   （作者截图）。新位 = fab 左侧第一槽（64 = 12 + 40 fab + 12 缝），底边 18px
-   与圆钮簇（bottom:16，40px 高）视觉对中线；图片/PDF pane 同享。 */
+   与顶右 deck fab、居中文件名胶囊三件在顶行打架（作者截图）。fab 已由回退批
+   （作者令 2026-10-22 回访裁定）迁回顶右原位，缩放控件按裁定留在右下不动
+   （64 = 移位批簇 +48 的首槽位），底边 18px 与圆钮簇（bottom:16，40px 高）
+   视觉对中线；图片/PDF pane 同享。 */
 .canvas-zoom-bar {
   position: absolute;
   top: auto;
@@ -1979,8 +1984,8 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
    spot floats over arbitrary HTML content — posters put interactive
    headers exactly there, blocking clicks on both sides. Scoped to html panes;
    image/PDF keep the default bottom-right spot.
-   Cluster slots (48px pitch, 40px circles, 移位批 2026-10-22 全簇 +48 给 fab
-   让位——fab 本体钉 right:12)：fab 12 · source 64 · ref-select 112 ·
+   Cluster slots (48px pitch, 40px circles, 移位批 2026-10-22 全簇 +48；回退批
+   同日 fab 迁回顶右原位、簇 +48 槽位维持不动)：source 64 · ref-select 112 ·
    find 160 (html.js addFindToggle(pane, 160)) · zoom bar 208. The zoom bar
    used to sit at right:160 — the find toggle's slot since the wiki-graph
    batch — so the circle printed on top of the bar's Fit button (screenshot
@@ -2258,9 +2263,10 @@ body.col-resizing #canvas-panel { transition: none; }
    ═══════════════════════════════════════════════════════════════════════ */
 
 /* Floating glass toggles — same material family as .canvas-source-toggle;
-   each stacked button keeps a 48px slot (移位批 2026-10-22 簇 +48：fab 12 ·
-   source 64 · ref-select 112 · find 112/160 · graph 160 —— JS 写 right 的
-   槽位同步 +48，见 markdown.js / html.js / shared.js 缺省)。 */
+   each stacked button keeps a 48px slot (移位批 2026-10-22 簇 +48：source 64 ·
+   ref-select 112 · find 112/160 · graph 160 —— JS 写 right 的槽位同步 +48，
+   见 markdown.js / html.js / shared.js 缺省；回退批同日 fab 迁回顶右原位，
+   簇 +48 槽位维持不动)。 */
 .canvas-find-toggle,
 .canvas-graph-toggle {
   position: absolute; bottom: 16px;

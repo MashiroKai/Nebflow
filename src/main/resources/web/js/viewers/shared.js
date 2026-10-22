@@ -757,7 +757,8 @@ const GRAPH_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="no
  * editor's own find widget, rendered md/html tabs get the glass find bar.
  *  @param {HTMLElement} pane — canvas tab pane
  *  @param {number} [right] - offset from the pane's right edge (default 112;
- *    移位批 2026-10-22 簇 +48：body 级 deck fab 迁底右 right:12，圆钮簇整体让位)
+ *    移位批 2026-10-22 簇 +48，圆钮簇整体让位；回退批同日 fab 迁回顶右原位、
+ *    簇 +48 槽位维持不动)
  */
 export function addFindToggle(pane, right = 112) {
   pane.querySelector('.canvas-find-toggle')?.remove();
