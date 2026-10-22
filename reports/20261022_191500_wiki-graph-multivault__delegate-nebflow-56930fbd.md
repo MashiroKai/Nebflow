@@ -2,7 +2,7 @@
 
 - 台账：#744-B 图谱演进 B 批（stand 内置 wiki-graph 多项目图谱）
 - 分支：delegate/delegate-nebflow-56930fbd
-- 提交序列：设计 3a62eb696 → 实现 675889ee3 → spec+证据 edf90e75f → 门禁微修 <final>
+- 提交序列：设计 3a62eb696 → 实现 675889ee3 → spec+证据 edf90e75f → 门禁微修 8eb9abfef → 报告 4adf3a7fa → 命名空间修复 2f10ffd63
 - 设计正本：design/20261022_190000_multivault-wiki-graph__delegate-nebflow-56930fbd.md
 - 验收报告：evidence/20261022_wiki-graph-multivault__delegate-nebflow-56930fbd/验收报告.md
 - 截图证据：evidence/20261022_wiki-graph-multivault__delegate-nebflow-56930fbd/shots/（12 张，亮暗 × 5 态）
@@ -42,9 +42,14 @@
 
 ## 验证读数
 
-- Scala：WikiIndexSpec WI-1..19 + WikiServiceSpec WS-1..6（临时 dataRoot
-  双项目 + 子 vault 夹具：隔离/external 分类/面包屑/清单/__user__ 占位/
-  非法 vault rel 拒绝）→ 读数见终表（sbt 后台跑，落地后补录验收报告）。
+- Scala：**WikiIndexSpec + WikiServiceSpec 25/25 全绿**（WI-1..19 + WS-1..6，
+  临时 dataRoot 双项目 + 子 vault 夹具：隔离/external 分类/面包屑/清单/
+  __user__ 占位/非法 vault rel 拒绝）。spec 过程揪出两处实现缺陷并修复
+  （2f10ffd63）：① 单视图 vaultRel 被当 workspace 相对折叠（"sub/docs" 错指
+  `<workspace>/sub/docs`）——统一为根 vault 相对 + vaultRelSegments 单点折叠
+  （本地 vault/sibling 与远端 joinRemote 三处）；② 根视图 children 深度公式
+  对根错 1（根 "docs" 本身是 pair 尾段）——改为 below-段前缀匹配 + 差恰一对。
+  另降级错误补 logger.errorSync（不再静默吞进空视图）。
 - 前端契约：tests/wiki-graph-multivault.spec.mjs 3/3（切换器默认合并视图/
   切项目隔离/聚合节点→详情卡→下钻→面包屑回父级/统计跨库口径/合并兼容）。
 - 邻族回归：tests/wiki-graph-ux.spec.mjs 12/13——§F frosted 同败 main HEAD
