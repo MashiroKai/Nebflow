@@ -130,6 +130,18 @@ enum FreezeReason:
   case RestartRecovery // 崩溃/进程重启后重建，恢复条件=条件检查通过后立即续跑
   case Loop // Block 3 循环检测器 L2（supervision trio §D3）：恢复条件=仅人工（用户输入唤醒 / AgentControl restart / cancel）——不自动续跑
 
+  /**
+   * #692（网络不可达退避等待修批，2026-10-21 作者令）：网络/供应商不可达的**指数
+   * 退避等待**——网络级失败不进终态，5s→15s→45s→…封顶 5min 逐轮加长，直到恢复
+   * 或作者取消。与 Network 的分界：Network = 短退避（10-30s）后自动重试 1-2 次
+   * 的抖动形态；WaitingNetwork = 明确「等网络回来」的长等待形态（状态显式暴露
+   * 「等待网络/供应商恢复」，面板可见）。不参与升级链（等待无父干预语义——作者
+   * 面前的取消按钮就是出口）。
+   */
+  case WaitingNetwork
+
+end FreezeReason
+
 /**
  * 升级链状态（v2 §5.2）：同 reason 连续冻结 ≥3 次进入——挂 AgentRecord（P0 内存态）。
  * level=当前升级层级（1 起）；escalateAt=本层等待父决策的截止时间；awaitedParentSessionId=等待的父会话。
@@ -427,6 +439,7 @@ enum AgentStreamEvent:
           case FreezeReason.ProviderDown => "provider-down"
           case FreezeReason.RestartRecovery => "restart-recovery"
           case FreezeReason.Loop => "loop"
+          case FreezeReason.WaitingNetwork => "waiting-network" // #692 退避等待批
         val withReason = withResume.deepMerge(Json.obj("reason" -> reasonStr.asJson))
         val withDetail = detail.fold(withReason)(d => withReason.deepMerge(Json.obj("detail" -> d.asJson)))
         val withRetry =

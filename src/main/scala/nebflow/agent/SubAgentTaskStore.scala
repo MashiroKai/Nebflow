@@ -103,7 +103,11 @@ class SubAgentTaskStore(baseDir: os.Path) extends SubAgentTaskStorePort:
   /** Record a new task at spawn time. */
   def recordTask(task: SubAgentTask): IO[Unit] =
     withLock {
-      writeTasksSync(task.parentSessionId, readTasksSync(task.parentSessionId) :+ task)
+      // #692：statusAt 缺省 = spawnedAt（新行从落盘起就有 watchdog 判据输入）。
+      writeTasksSync(
+        task.parentSessionId,
+        readTasksSync(task.parentSessionId) :+ task.copy(statusAt = task.statusAt.orElse(Some(task.spawnedAt)))
+      )
       upgradeParentOrchestrationMode(task.parentSessionId)
     }
 
@@ -123,7 +127,10 @@ class SubAgentTaskStore(baseDir: os.Path) extends SubAgentTaskStorePort:
         case Left(err) =>
           logger.warnSync(s"orchestrationMode upgrade skipped for '$parentSessionId': $err")
 
-  /** Update a task's status. */
+  /**
+   * Update a task's status. #692：每次状态写入都刷新 statusAt = now——它是重启
+   * 屏障 watchdog 的「当前状态已持续多久」判据输入（restarting 行超龄判读）。
+   */
   def updateStatus(
     parentSessionId: String,
     taskId: String,
@@ -133,13 +140,15 @@ class SubAgentTaskStore(baseDir: os.Path) extends SubAgentTaskStorePort:
     completedAt: Option[Long] = None
   ): IO[Unit] =
     withLock {
+      val now = System.currentTimeMillis()
       val updated = readTasksSync(parentSessionId).map { t =>
         if t.taskId == taskId then
           t.copy(
             status = status,
             retryCount = retryCount.getOrElse(t.retryCount),
             lastError = lastError.orElse(t.lastError),
-            completedAt = completedAt.orElse(t.completedAt)
+            completedAt = completedAt.orElse(t.completedAt),
+            statusAt = Some(now)
           )
         else t
       }
@@ -176,7 +185,13 @@ class SubAgentTaskStore(baseDir: os.Path) extends SubAgentTaskStorePort:
         inFlight.map(_.taskId)
     }
 
-  /** Find all tasks in "running" status (for startup recovery). */
+  /**
+   * Find all in-flight tasks ("running" ∪ "restarting" — #692 修批：restarting 行
+   * 同样在飞，10-21 实测僵尸正是「respawn 半途引擎重启 → restarting 行既不在
+   * running 清单里被启动清扫捞到、又无 actor 接管」卡死 7.5h)。消费方 = 启动
+   * 恢复清扫（SubAgentStartupRecovery）与热重启在飞判定——两处都需要「还有没
+   * 收尾的活」，restarting 理应同票。
+   */
   def findRunningTasks: IO[List[SubAgentTask]] = IO
     .blocking {
       if !os.exists(baseDir) then Nil
@@ -185,7 +200,7 @@ class SubAgentTaskStore(baseDir: os.Path) extends SubAgentTaskStorePort:
           .flatMap { f =>
             if f.toString.endsWith(".json") then
               decode[List[SubAgentTask]](os.read(f)) match
-                case Right(list) => list.filter(_.status == "running")
+                case Right(list) => list.filter(t => t.status == "running" || t.status == "restarting")
                 case Left(_) => Nil
             else Nil
           }

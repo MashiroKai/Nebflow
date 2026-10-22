@@ -158,6 +158,89 @@ object Fallback:
       classified.copy(permanence = ErrorPermanence.Permanent, quota = true)
     else classified
 
+  /**
+   * #692（网络不可达退避等待修批，2026-10-21 作者令）：异常链上任一环是否为
+   * **网络级不可达**——连接被拒 / DNS 解析失败 / 无路由 / 端口不可达 / 本机
+   * "Network is unreachable" socket 错误 / 连接超时（SocketTimeoutException，
+   * sttp 建连段的超时形态）。判据 = 类型化 JDK 异常沿 cause 链下钻（sttp 的
+   * `SttpClientException.ConnectException` 等包装层如实携带 JDK 根因），**不是**
+   * message 关键词——「等得来」的判定不允许凭文本形状编造。唯一例外 = 裸
+   * SocketException 的 message 分流（"Connection reset" 是流中断 flap，不属
+   * 不可达——见 [[socketUnreachableByMessage]] 分流注释）。
+   *
+   * 刻意**不含** `java.util.concurrent.TimeoutException`（cats-effect 请求级
+   * 超时，保持既有 Permanent fail-fast 语义 0bf832c0）——它无法区分「网络断了」
+   * 与「provider 挂了」；网络断的可等待性由 exhaustion 级判据
+   * （[[isNetworkUnreachableExhaustion]]，看全链 attempt 形状）裁决，单 provider
+   * 超时不在这里等待。
+   */
+  def isNetworkUnreachableThrowable(error: Throwable): Boolean =
+    val sttpConnect = "sttp.client4.SttpClientException$ConnectException"
+    // SocketException 双面性分流：message 带**不可达措辞**（"Network is
+    // unreachable" / "Network is down" / "No route to host"）= 本机出网断（等待）；
+    // 裸 "Connection reset" = 已建连接的流中断 flap（既有 10-30s 短冻结语义不变，
+    // #692 不收编）。
+    def socketUnreachableByMessage(t: Throwable): Boolean =
+      val m = Option(t.getMessage).map(_.toLowerCase).getOrElse("")
+      m.contains("network is unreachable") || m.contains("network is down") || m.contains("no route to host")
+    def loop(t: Throwable, depth: Int): Boolean =
+      if depth <= 0 then false
+      else
+        t match
+          case _: java.net.ConnectException | _: java.net.UnknownHostException | _: java.net.NoRouteToHostException |
+              _: java.net.PortUnreachableException | _: java.net.SocketTimeoutException =>
+            true
+          case e: java.net.SocketException => socketUnreachableByMessage(e)
+          case _ =>
+            t.getClass.getName == sttpConnect || {
+              val cause = t.getCause
+              cause != null && !((cause eq t)) && loop(cause, depth - 1)
+            }
+    loop(error, 6)
+
+  end isNetworkUnreachableThrowable
+
+  /**
+   * #692 单 attempt 面：该次失败是否为「网络/链路类」——等一等可能自己好的形状。
+   * 含：类型化网络不可达（[[isNetworkUnreachableThrowable]] 的分类产物）、连接
+   * 被重置、请求级超时（网络断时 zhipu 的实测形态：cats-effect 包装超时，
+   * Permanent，但**等得来**）、未知瞬态（DNS 失败等无关键词 IO 错误的兜底桶，
+   * 10-21 kimi 实测形态）。排除面见 [[isExplicitRejectionAttempt]]。
+   */
+  private[llm] def isNetworkClassAttempt(a: FallbackAttempt): Boolean =
+    a.reason.exists(r =>
+      r == FailoverReason.NetworkUnreachable || r == FailoverReason.ConnectionReset || r == FailoverReason.Timeout
+    ) || (a.reason.contains(FailoverReason.Unknown) && a.permanence.contains(ErrorPermanence.Transient))
+
+  /**
+   * #692 单 attempt 面：该次失败是否为**供应商明确拒绝**——等不来的形状（作者令：
+   * 「401/403 配置错 = 真失败进 failed，这类等不来」）。含认证错误（401/403 含
+   * 配额闸）、请求格式错误（400，provider 契约拒绝）、模型不存在（404）。混合链
+   * 中任一 attempt 命中 ⇒ 整链不等（等不来的是配置，不是网络）。
+   */
+  private[llm] def isExplicitRejectionAttempt(a: FallbackAttempt): Boolean =
+    a.reason.exists(r => r == FailoverReason.Auth || r == FailoverReason.Format || r == FailoverReason.ModelNotFound)
+
+  /**
+   * #692 核心判据（agent 层等待语义的单点来源）：本次 LLM 失败是否为**网络不可达
+   * 型可等待失败**。判据（按序）：
+   *   1. 类型化网络异常直抛（未进链穷尽包装的残余路径）⇒ 可等待；
+   *   2. 链穷尽（FallbackExhaustedError）：链上**存在**网络类 attempt 且**不含任何**
+   *      明确拒绝 attempt ⇒ 可等待——[zhipu Timeout(Permanent), kimi Unknown(Transient)]
+   *      正是 10-21 断网实测形态（旧语义在此终态判死）。
+   *
+   * 混合链 [Timeout, Auth] ⇒ **不可**等待（401 等不来）；全 overload 链 ⇒ 不可等待
+   * （走既有 LlmTransient 冻结恢复，语义不变）；AllProvidersDownTimeout ⇒ 不经此
+   * 判据（既有 ProviderDown 冻结恢复已覆盖全灭等待）。
+   */
+  def isNetworkUnreachableExhaustion(error: Throwable): Boolean =
+    error match
+      case e: FallbackExhaustedError =>
+        e.attempts.nonEmpty && e.attempts.exists(isNetworkClassAttempt) && !e.attempts.exists(
+          isExplicitRejectionAttempt
+        )
+      case e => isNetworkUnreachableThrowable(e)
+
   private def classifyBase(error: Throwable): ErrorClassification =
     // Check for structured sttp4 HttpError first
     error match
@@ -196,6 +279,17 @@ object Fallback:
         else ErrorClassification(reason, permanence, Some(c), Some(error.getMessage), evict)
       case e: AllProvidersDownTimeout =>
         ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Transient, message = Some(e.getMessage))
+      case e if isNetworkUnreachableThrowable(e) =>
+        // #692（网络不可达退避等待修批）：连接被拒 / DNS / 无路由等**本机出网失败**
+        // ——类型化判定（非关键词）。Transient + evict=true（下游探测在恢复后自然
+        // markUp）；agent 层据 [[isNetworkUnreachableExhaustion]] 据此进退避等待，
+        // 不再终态判死。注意顺序：必须在关键词匹配器**之前**（"Network is
+        // unreachable" 文本会落进 Unknown 兜底桶，丢掉可等待信号）。
+        ErrorClassification(
+          FailoverReason.NetworkUnreachable,
+          ErrorPermanence.Transient,
+          message = Option(e.getMessage).orElse(Some(e.toString))
+        )
       case e: TurnBudgetExceeded =>
         // Turn LLM budget exhausted — the llm-fail retry loop must NOT fire
         // again (it would re-send the same full context and defeat the budget).

@@ -17,6 +17,16 @@ enum FailoverReason:
   case Auth, RateLimit, Overloaded, ServerError, ModelNotFound, ProviderError, Format, ConnectionReset, Timeout,
     EmptyStream, Unknown
 
+  /**
+   * 网络级不可达（#692 网络不可达退避等待修批，2026-10-21 作者令）：连接被拒 /
+   * DNS 解析失败 / 无路由 / "Network is unreachable" 等**本机出网失败**。与
+   * ConnectionReset（连接建立后被重置）分立——本类意味着请求根本没出网，换
+   * provider 无意义（全链都会同样失败），正确动作 = 退避等待网络恢复，而不是
+   * 终态判死。判据 = 类型化 JDK 异常（isNetworkUnreachableThrowable），非关键词。
+   */
+  case NetworkUnreachable
+end FailoverReason
+
 enum ErrorPermanence:
   case Transient, Permanent, Fatal
 

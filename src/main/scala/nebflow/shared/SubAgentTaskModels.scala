@@ -22,14 +22,59 @@ case class SubAgentTask(
   agentName: String,
   prompt: String,
   description: String,
-  status: String, // "running" | "completed" | "failed" | "restarting"
+  status: String, // "running" | "completed" | "failed" | "restarting" | "ready-to-merge" | "cancelled"
   retryCount: Int, // how many times restarted by supervisor
   spawnedAt: Long, // epoch millis
   completedAt: Option[Long], // epoch millis
   lastError: Option[String], // last error message if failed
-  source: String // "delegate" | "subtask"
+  source: String, // "delegate" | "subtask"
+  /**
+   * #692（网络不可达退避等待修批，2026-10-21 作者令）：**当前 status 的写入时刻**
+   * （epoch millis）。重启屏障 watchdog 的判据输入——status=restarting 且 statusAt
+   * 距今超阈值且 registry 无活体 ⇒ 重启屏障僵死（10-21 实测 7.5h 僵尸：引擎在
+   * respawn 半途重启，"restarting" 行既无 actor 接管也无人终态化）。每次
+   * updateStatus 刷新。Option + 缺键容忍解码（旧盘文件无此键 = None ⇒ watchdog
+   * 跳过该行，保守不误杀）。
+   */
+  statusAt: Option[Long] = None
 )
 
 object SubAgentTask:
   given Encoder[SubAgentTask] = Encoder.derived
-  given Decoder[SubAgentTask] = Decoder.derived
+
+  /**
+   * 手写 Decoder（不用 derived）：`statusAt` 是后加字段，derived 解码对**缺键**
+   * 会判失败（circe Scala 3 派生不吃 Scala 默认值）⇒ 旧盘任务文件整文件解析失败
+   * = 该父会话全部任务行被静默丢弃（readTasksSync 失败回 Nil）。`c.get[Option[...]]`
+   * 对缺键天然得 None（DelegateRegistry 手写游标同款先例）——旧文件零迁移照读。
+   */
+  given Decoder[SubAgentTask] = Decoder.instance { c =>
+    for
+      taskId <- c.get[String]("taskId")
+      parentSessionId <- c.get[String]("parentSessionId")
+      agentName <- c.get[String]("agentName")
+      prompt <- c.get[String]("prompt")
+      description <- c.get[String]("description")
+      status <- c.get[String]("status")
+      retryCount <- c.get[Int]("retryCount")
+      spawnedAt <- c.get[Long]("spawnedAt")
+      completedAt <- c.get[Option[Long]]("completedAt")
+      lastError <- c.get[Option[String]]("lastError")
+      source <- c.get[String]("source")
+      statusAt <- c.get[Option[Long]]("statusAt")
+    yield SubAgentTask(
+      taskId,
+      parentSessionId,
+      agentName,
+      prompt,
+      description,
+      status,
+      retryCount,
+      spawnedAt,
+      completedAt,
+      lastError,
+      source,
+      statusAt
+    )
+  }
+end SubAgentTask

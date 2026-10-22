@@ -36,7 +36,11 @@ import { findViewBySessionId } from './chatView.js';
 // composer, "跳过本次" button — itself a backend no-op for loop) and never got
 // the retry/abandon affordances, i.e. the "why did it stop" was unanswerable
 // and the family's only exits were invisible.
-const ERROR_REASONS = ['llm-transient', 'network', 'provider-down', 'restart-recovery', 'loop'];
+// 'waiting-network' (#692 修批 2026-10-21): 网络不可达退避等待 —— 后端对网络级
+// LLM 失败不再终态判死，进入 5s→15s→45s→…封顶 5min 的指数退避等待（ErrorFrozen
+// 机制），reason=waiting-network，直到网络恢复或作者取消。同一错误族 UI（amber），
+// 专属文案「等待网络/供应商恢复」——等待是显式状态，不是静默卡死（监测面表达）。
+const ERROR_REASONS = ['llm-transient', 'network', 'provider-down', 'restart-recovery', 'loop', 'waiting-network'];
 
 /** True when the frozen reason is an error-family reason (not 'schedule'). */
 export function isErrorReason(reason) {
@@ -56,6 +60,7 @@ const REASON_KEYS = {
   'provider-down': 'chat.errorRecovering.providerDown',
   'restart-recovery': 'chat.errorRecovering.restartRecovery',
   'loop': 'chat.errorRecovering.loop',
+  'waiting-network': 'chat.errorRecovering.waitingNetwork',
 };
 
 /** Human label for a reason (already translated, via t()). */
@@ -85,6 +90,9 @@ const ICON_SHAPES = {
   'loop':
     '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/>' +
     '<path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
+  // circled slash (same as 'network') — "waiting for network/provider recovery"
+  'waiting-network':
+    '<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>',
 };
 
 /** 18px warning SVG for a reason. Static shape (pulse via CSS, not rotation). */
