@@ -69,6 +69,14 @@ html.glass-degraded body.mobile-layer #header::after {
   mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
 }
 
+/* UI 批（2026-10-22 作者令·与聊天窗口渐隐同令）：canvas 标题胶囊的裙边渐隐
+   **桌面退役** —— 画布内容（图谱节点/连线、文档文字）不做穿胶囊渐变淡出，
+   胶囊本体毛玻璃按 frosted 标准保留。手机层维持现状（与上方 UI 批⑥⑦
+   「顶部渐隐穿顶 = 手机层唯一」同一条桌面/手机分界线）。 */
+body:not(.mobile-layer) .canvas-header.scroll-under-glass::after {
+  display: none;
+}
+
 /* 暗色：tint 换暗玻璃底色（两态同构，仅配色） */
 @media (prefers-color-scheme: dark) {
   .scroll-under-glass,

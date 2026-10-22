@@ -20,6 +20,15 @@
 //      目录 chip/断链行/搜索 → canvas 过滤聚焦；Esc 逐层退出（选中→过滤）；
 //   §D 控制面内容契约：统计行口径（N docs · M references · K unresolved）；
 //      断链清单 = 面板内固定区块（position:static，非浮层）；详情卡空态；
+//   §E 画布手感（追加批 2026-10-22·作者令：excalidraw/figma 式画布手感）：
+//      滚轮/双指滚动 = 平移（shift+纵滚 = 横移）；捏合（ctrlKey wheel）=
+//      光标锚点阻尼缩放——exp 累积 + 25%/帧追帧，逐帧步进 ≤0.06 不跳变、
+//      锚点世界坐标保持（<2px）、收敛 zoomTarget；约定在左栏 .wg-hint 图例注明；
+//   §F frosted 统一（追加批 2026-10-22）：canvas 胶囊 / 左栏搜索框 / chips 的
+//      材质（bg/blur/border/shadow）与 chat header 逐项相等（--glass-bg /
+//      --glass-blur saturate(1.15) / --glass-border / --frost-shadow 单源）；
+//      canvas 胶囊裙边渐隐桌面退役（.scroll-under-glass::after display:none，
+//      与聊天窗口渐隐同令；手机层维持现状，不在本 spec 视口内）；
 //   R0 全流程 console 零错误（每个用例尾部断言）。
 
 import { test, expect } from '@playwright/test';
@@ -134,6 +143,53 @@ async function openGraph(page) {
 
 const bodyNotCollapsed = (page) => page.evaluate(() => !document.body.classList.contains('sidebar-collapsed'));
 const bodyCollapsed = (page) => page.evaluate(() => document.body.classList.contains('sidebar-collapsed'));
+
+/** Settled probe — waits out the late tab-refetch rebuild race before any
+ *  coordinate-based canvas interaction (canvas.js panelTabRefresh →
+ *  rerenderWikiGraph: debounced 200ms refetch + rebuildSim re-lays the graph,
+ *  so a probe read too early can be stale by the time the click lands).
+ *  Holds until two probes ≥400ms apart agree (layout frozen, no rebuild in
+ *  flight), then returns a fresh probe snapshot. */
+async function settledProbe(page) {
+  await expect.poll(() => page.evaluate(async () => {
+    const a = window.__wikiGraphProbe();
+    await new Promise((r) => setTimeout(r, 400));
+    const b = window.__wikiGraphProbe();
+    const frozen = (p) => JSON.stringify(p.nodes.map((n) => [n.id, Math.round(n.x), Math.round(n.y)]));
+    return a.alpha < 0.02 && b.alpha < 0.02 &&
+      a.scale === b.scale && a.vx === b.vx && a.vy === b.vy &&
+      frozen(a) === frozen(b);
+  }), { timeout: 15000 }).toBe(true);
+  return page.evaluate(() => window.__wikiGraphProbe());
+}
+
+/** Bring a node to the canvas center with a REAL wheel pan (two-finger swipe —
+ *  wikiGraph pans vx += deltaX 1:1, no sim wake). The mock layout is unseeded:
+ *  a node can settle a few px off the canvas edge (past the sidebar col-
+ *  resizer), where pointer clicks land on the resizer instead of the canvas.
+ *  Centering puts the target ~W/2 px inside the clickable area, deterministically. */
+async function centerNodeOn(page, nodeId) {
+  await page.evaluate((id) => {
+    const p = window.__wikiGraphProbe();
+    const c = document.querySelector('.wiki-canvas');
+    const r = c.getBoundingClientRect();
+    const n = p.nodes.find((m) => m.id === id);
+    const sx = (n.x - p.W / 2) * p.scale + p.W / 2 + p.vx; // canvas-local px
+    const sy = (n.y - p.H / 2) * p.scale + p.H / 2 + p.vy;
+    c.dispatchEvent(new WheelEvent('wheel', {
+      deltaX: p.W / 2 - sx, deltaY: p.H / 2 - sy,
+      clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+      bubbles: true, cancelable: true,
+    }));
+  }, nodeId);
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const off = await page.evaluate((id) => {
+    const p = window.__wikiGraphProbe();
+    const n = p.nodes.find((m) => m.id === id);
+    return Math.max(Math.abs((n.x - p.W / 2) * p.scale + p.vx), Math.abs((n.y - p.H / 2) * p.scale + p.vy));
+  }, nodeId);
+  if (off > 2) throw new Error(`centerNodeOn(${nodeId}) missed: ${off}px off-center`);
+}
 
 /** One-shot read of the whole side-face contract surface (page context). */
 const readFace = (page) => page.evaluate(() => {
@@ -297,14 +353,25 @@ test('R8 mobile viewport never auto-expands; the in-pane bar rides with the pane
 test('§C canvas click → detail card refresh; sidebar entry click → canvas refocus', async ({ page }) => {
   const errors = await boot(page);
   await openGraph(page);
-  // canvas 点节点（探针读布局坐标 → 真实 mouse 路径）
-  const p1 = await page.evaluate(() => window.__wikiGraphProbe());
-  const hub = p1.nodes.find(n => n.id === 'gamma:docs/g.md');
-  const box = await page.locator('.wiki-canvas').boundingBox();
-  const sx = box.x + (hub.x - p1.W / 2) * p1.scale + p1.W / 2 + p1.vx;
-  const sy = box.y + (hub.y - p1.H / 2) * p1.scale + p1.H / 2 + p1.vy;
-  await page.mouse.click(sx, sy);
-  await expect.poll(() => page.evaluate(() => window.__wikiGraphProbe().selected)).toBe('gamma:docs/g.md');
+  // canvas 点节点（探针读布局坐标 → 真实 mouse 路径）；先把目标摇到画布中心
+  // （mock 布局无种子，节点可能停在画布边缘外/col-resizer 下方），再等 rebuild
+  // 竞态窗口过去；点击未命中则按当前布局重算重试一次。
+  await centerNodeOn(page, 'gamma:docs/g.md');
+  let selected = null;
+  for (let attempt = 0; attempt < 2 && !selected; attempt++) {
+    const p1 = await settledProbe(page);
+    const hub = p1.nodes.find(n => n.id === 'gamma:docs/g.md');
+    const box = await page.locator('.wiki-canvas').boundingBox();
+    const sx = box.x + (hub.x - p1.W / 2) * p1.scale + p1.W / 2 + p1.vx;
+    const sy = box.y + (hub.y - p1.H / 2) * p1.scale + p1.H / 2 + p1.vy;
+    await page.mouse.click(sx, sy);
+    try {
+      await expect.poll(() => page.evaluate(() => window.__wikiGraphProbe().selected), { timeout: 1500 })
+        .toBe('gamma:docs/g.md');
+      selected = 'gamma:docs/g.md';
+    } catch { /* rebuild raced the click — recompute from the fresh layout */ }
+  }
+  expect(selected).toBe('gamma:docs/g.md');
   await expect(page.locator('#wiki-graph-side .wg-detail-body h2')).toHaveText('Gamma Note');
   expect(await page.locator('#wiki-graph-side .wg-detail-body .ref').count()).toBeGreaterThan(0);
   // 左栏词条点击 → canvas 换选
@@ -335,9 +402,10 @@ test('§C chips + search drive the canvas filter; Esc peels selection then filte
   await expect.poll(() => page.evaluate(() => window.__wikiGraphProbe().filter)).toBe('alpha');
   await page.fill('#wiki-graph-side .wg-search-input', '');
   await expect.poll(() => page.evaluate(() => window.__wikiGraphProbe().filter)).toBe('');
-  // Esc 顺序：先选中、后过滤
+  // Esc 顺序：先选中、后过滤（目标先摇到画布中心 —— 布局无种子，见 centerNodeOn）
   await page.fill('#wiki-graph-side .wg-search-input', 'gamma');
-  const g = await page.evaluate(() => window.__wikiGraphProbe());
+  await centerNodeOn(page, 'gamma:docs/g.md');
+  const g = await settledProbe(page);
   const node = g.nodes.find(n => n.id === 'gamma:docs/g.md');
   const box = await page.locator('.wiki-canvas').boundingBox();
   await page.mouse.click(
@@ -374,8 +442,9 @@ test('§D face contract: stats line wording, broken block fixed in-panel, row se
   await expect(page.locator('#wiki-graph-side .wg-detail-body h2')).toHaveText('Alpha One');
   // 详情卡按钮契约：打开文档（唯一离开图谱的路）
   await expect(page.locator('#wiki-graph-side .wg-detail-body .openbtn')).toHaveText('Open document');
-  // 悬停 tooltip 仍是 canvas 面的交互面（title 行非空）
-  const p = await page.evaluate(() => window.__wikiGraphProbe());
+  // 悬停 tooltip 仍是 canvas 面的交互面（title 行非空）——同样先把目标摇到中心
+  await centerNodeOn(page, 'alpha:docs/a.md');
+  const p = await settledProbe(page);
   const node = p.nodes.find(n => n.id === 'alpha:docs/a.md');
   const box = await page.locator('.wiki-canvas').boundingBox();
   await page.mouse.move(
@@ -387,5 +456,113 @@ test('§D face contract: stats line wording, broken block fixed in-panel, row se
     const tip = document.querySelector('.wiki-graph-pane .wg-tip');
     return tip && tip.style.display === 'block' && tip.querySelector('.tt').textContent.length > 0;
   })).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+// ── §E 画布手感（追加批 2026-10-22）＋ §F frosted 统一／裙边退役 ───────
+
+test('§E wheel = pan (shift = horizontal), pinch = damped anchored zoom that converges smoothly', async ({ page }) => {
+  const errors = await boot(page);
+  await openGraph(page);
+  const N_PINCH = 24;   // 连续捏合帧数（每帧 Δ-8）
+  const PINCH_K = 0.0015; // 必须与 wikiGraph.js 的 PINCH_K 同值
+  const STEP = 8;
+  await settledProbe(page); // 等 rerenderWikiGraph 的 debounce rebuild 窗口过去
+
+  // 图例：左栏 .wg-hint 注明滚轮/捏合约定（canvas 保纯，图例进左栏）。
+  const hint = await page.textContent('#wiki-graph-side .wg-hint');
+  expect(hint.trim().length).toBeGreaterThan(0);
+
+  // 双指滚动/滚轮 = 平移：vy+120、vx/scale 不动；shift+纵滚 = 横移。
+  const pan = await page.evaluate(() => {
+    const c = document.querySelector('.wiki-canvas');
+    const r = c.getBoundingClientRect();
+    const ev = (dy, mods = {}) => c.dispatchEvent(new WheelEvent('wheel', {
+      deltaY: dy, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true, ...mods,
+    }));
+    const a = window.__wikiGraphProbe();
+    ev(120);
+    const b = window.__wikiGraphProbe();
+    ev(-120, { shiftKey: true });   // shift+纵滚：符号直通（-120 → vx-120）
+    const c2 = window.__wikiGraphProbe();
+    return {
+      dvy: Math.round(b.vy - a.vy), dvx1: Math.round(b.vx - a.vx), dscale: +(b.scale - a.scale).toFixed(6),
+      dvx2: Math.round(c2.vx - b.vx), dvy2: Math.round(c2.vy - b.vy),
+    };
+  });
+  expect(pan).toMatchObject({ dvy: 120, dvx1: 0, dscale: 0, dvx2: -120, dvy2: 0 });
+
+  // 连续捏合：逐帧 ctrl+wheel（rAF 交错派发——同步整批会让追帧一帧吃完全部
+  // 累积，无法验证平滑契约），同时逐帧采样 scale；再追 40 帧确认收敛。
+  const pinch = await page.evaluate(({ N, K, step }) => new Promise((resolve) => {
+    const c = document.querySelector('.wiki-canvas');
+    const r = c.getBoundingClientRect();
+    const ax = r.left + r.width / 2, ay = r.top + r.height / 2;
+    const before = window.__wikiGraphProbe();
+    const wOf = (p) => ({
+      x: ((ax - r.left) - p.vx) / p.scale + p.W / 2,
+      y: ((ay - r.top) - p.vy) / p.scale + p.H / 2,
+    });
+    const wBefore = wOf(before);
+    const seen = [];
+    let i = 0;
+    const tick = () => {
+      if (i < N) {
+        c.dispatchEvent(new WheelEvent('wheel', {
+          deltaY: -step, ctrlKey: true, clientX: ax, clientY: ay, bubbles: true, cancelable: true,
+        }));
+        i++;
+      }
+      seen.push(window.__wikiGraphProbe().scale);
+      if (seen.length >= N + 40) resolve({ seen, zoomTarget: before.zoomTarget, target: before.zoomTarget * Math.exp(N * step * K), wBefore, r: { left: r.left, top: r.top } });
+      else requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }), { N: N_PINCH, K: PINCH_K, step: STEP });
+
+  const final = pinch.seen[pinch.seen.length - 1];
+  let maxStep = 0;
+  for (let i = 1; i < pinch.seen.length; i++) maxStep = Math.max(maxStep, Math.abs(pinch.seen[i] - pinch.seen[i - 1]));
+  expect(maxStep).toBeGreaterThan(0);            // 缩放确实发生了
+  expect(maxStep).toBeLessThanOrEqual(0.06);     // 逐帧步进有界（阻尼不跳变）
+  expect(Math.abs(final - pinch.target)).toBeLessThan(0.02); // 收敛 zoomTarget
+  // 光标锚点几何保持：锚点（canvas 中心）下的世界坐标漂移 < 2px。
+  const drift = await page.evaluate(({ wBefore, rect }) => {
+    const p = window.__wikiGraphProbe();
+    const ax = rect.left + (document.querySelector('.wiki-canvas').getBoundingClientRect().width / 2);
+    const ay = rect.top + (document.querySelector('.wiki-canvas').getBoundingClientRect().height / 2);
+    const w = { x: (ax - rect.left - p.vx) / p.scale + p.W / 2, y: (ay - rect.top - p.vy) / p.scale + p.H / 2 };
+    return Math.hypot(w.x - wBefore.x, w.y - wBefore.y);
+  }, { wBefore: pinch.wBefore, rect: pinch.r });
+  expect(drift).toBeLessThan(2);
+  expect(errors).toEqual([]);
+});
+
+test('§F frosted: capsule ≡ search ≡ chips ≡ chat header material; capsule skirt fade retired on desktop', async ({ page }) => {
+  const errors = await boot(page);
+  await openGraph(page);
+  const mat = await page.evaluate(() => {
+    const pick = (sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return null;
+      const cs = getComputedStyle(el);
+      return { bg: cs.backgroundColor, blur: cs.backdropFilter || cs.webkitBackdropFilter, border: cs.borderColor, shadow: cs.boxShadow };
+    };
+    return { header: pick('#header'), capsule: pick('.canvas-header'), search: pick('.wg-search'), chip: pick('.wg-chip:not(.on)') };
+  });
+  // chips 契约取「静息片」：无过滤时首片（全部）恒为 .on 选中态 accent 材质，
+  // 不在本契约内（同 chat header 的 hover 控件）。
+  expect(mat.header && mat.capsule && mat.search && mat.chip).toBeTruthy();
+  expect(mat.capsule).toEqual(mat.header);
+  expect(mat.search).toEqual(mat.header);
+  expect(mat.chip).toEqual(mat.header);
+  // ③ canvas 胶囊裙边渐隐桌面退役：类仍挂（手机层共用样式表），桌面 ::after
+  // display:none —— 画布内容不再穿胶囊渐变淡出。
+  const skirt = await page.evaluate(() => {
+    const hdr = document.querySelector('.canvas-header');
+    return { cls: hdr.classList.contains('scroll-under-glass'), after: getComputedStyle(hdr, '::after').display };
+  });
+  expect(skirt.cls).toBe(true);
+  expect(skirt.after).toBe('none');
   expect(errors).toEqual([]);
 });

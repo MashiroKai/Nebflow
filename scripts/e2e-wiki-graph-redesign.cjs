@@ -263,6 +263,10 @@ function buildGraph() {
     console.log(`${cond ? 'PASS' : 'FAIL'}: ${name}${extra !== undefined ? '  — ' + extra : ''}`);
   };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // 捏合帧参数（⑧ 连续捏合段）：帧数与单帧 Δy 的 zoom 因子底数（须与
+  // wikiGraph.js 的 PINCH_K 同值——exp(-Δy*0.0015) 每格滚轮 Δ120 ≈ 1.2 档）。
+  const N_PINCH = 24;
+  const PINCH_K = 0.0015;
 
   /** 节点屏幕坐标（探针世界坐标 → 页面像素；canvas 有面板偏移）。
    *  pg = page · pr = 探针读数 · n = 节点。 */
@@ -542,6 +546,117 @@ function buildGraph() {
       ok(`[${theme}] focusWikiNode 入口：选中+详情直显`,
         focused.open && (focused.sel || '').endsWith('glossary.md') && focused.h2 === '词汇表',
         JSON.stringify(focused));
+    }
+
+    // ⑥ 毛玻璃统一标准（作者令 2026-10-22）：canvas 顶部胶囊与左栏控件
+    //    （搜索框/chips）材质 = chat header 同源（--glass-bg/--glass-blur
+    //    saturate(1.15)/--glass-border/--frost-shadow）——解析值逐项相等。
+    {
+      const frost = await page.evaluate(() => {
+        const pick = (sel) => {
+          const el = document.querySelector(sel);
+          if (!el) return null;
+          const cs = getComputedStyle(el);
+          return { bg: cs.backgroundColor, blur: cs.backdropFilter || cs.webkitBackdropFilter, border: cs.borderColor, shadow: cs.boxShadow };
+        };
+        return { header: pick('#header'), capsule: pick('.canvas-header'), search: pick('.wg-search'), chip: pick('.wg-chip:not(.on)') };
+      });
+      const same = (a, b) => !!a && !!b && a.bg === b.bg && a.blur === b.blur && a.border === b.border && a.shadow === b.shadow;
+      ok(`[${theme}] frosted 统一：canvas 胶囊 ≡ chat header（bg/blur/border/shadow 逐项相等）`,
+        same(frost.header, frost.capsule), JSON.stringify({ header: frost.header, capsule: frost.capsule }));
+      ok(`[${theme}] frosted 统一：左栏搜索框/chips ≡ chat header 材质`,
+        same(frost.header, frost.search) && same(frost.header, frost.chip),
+        JSON.stringify({ search: frost.search, chip: frost.chip }));
+    }
+
+    // ⑦ canvas 渐隐退役（作者令 2026-10-22·与聊天窗口渐隐同令）：胶囊裙边
+    //    （scroll-under-glass ::after）桌面不挂载；手机层维持现状（边界在
+    //    移动腿验证）。画布内容不再穿胶囊渐变淡出。
+    {
+      const skirt = await page.evaluate(() => {
+        const hdr = document.querySelector('.canvas-header');
+        return { cls: hdr && hdr.classList.contains('scroll-under-glass'),
+                 after: hdr ? getComputedStyle(hdr, '::after').display : null };
+      });
+      ok(`[${theme}] canvas 胶囊裙边渐隐桌面退役（::after display:none）`,
+        skirt.cls && skirt.after === 'none', JSON.stringify(skirt));
+    }
+
+    // ⑧ 触控板缩放手感（作者令 2026-10-22）：注入 wheel 事件模拟连续捏合帧。
+    {
+      // 平移：双指滚动（无修饰键）→ 只动 vx/vy，scale 不动（不误触缩放）。
+      const pan = await page.evaluate(() => new Promise((resolve) => {
+        const c = document.querySelector('.wiki-canvas');
+        const r = c.getBoundingClientRect();
+        const before = window.__wikiGraphProbe();
+        c.dispatchEvent(new WheelEvent('wheel', { deltaY: 120, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, cancelable: true, bubbles: true }));
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          const after = window.__wikiGraphProbe();
+          resolve({ dvy: Math.round(after.vy - before.vy), dvx: Math.round(after.vx - before.vx), dscale: +(after.scale - before.scale).toFixed(6) });
+        }));
+      }));
+      ok(`[${theme}] 双指滚动/滚轮 = 平移（vy+120·vx 不动·scale 不动）`,
+        pan.dvy === 120 && pan.dvx === 0 && pan.dscale === 0, JSON.stringify(pan));
+      // Shift+纵滚 = 横移。
+      const shift = await page.evaluate(() => new Promise((resolve) => {
+        const c = document.querySelector('.wiki-canvas');
+        const r = c.getBoundingClientRect();
+        const before = window.__wikiGraphProbe();
+        c.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, shiftKey: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, cancelable: true, bubbles: true }));
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          const after = window.__wikiGraphProbe();
+          resolve({ dvx: Math.round(after.vx - before.vx), dvy: Math.round(after.vy - before.vy) });
+        }));
+      }));
+      ok(`[${theme}] Shift+纵滚 = 横移（vx−120·vy 不动）`,
+        shift.dvx === -120 && shift.dvy === 0, JSON.stringify(shift));
+
+      // 连续捏合帧：24 帧 ctrl+wheel（每帧 Δ-8）+ 40 帧追帧收尾，逐帧采样 scale。
+      const pinch = await page.evaluate(() => new Promise((resolve) => {
+        const c = document.querySelector('.wiki-canvas');
+        const r = c.getBoundingClientRect();
+        const ax = r.left + r.width * 0.5, ay = r.top + r.height * 0.5;
+        const before = window.__wikiGraphProbe();
+        // 锚点（屏面中心）下的世界坐标（捏合前）
+        const wBefore = {
+          x: (0.5 * before.W - before.vx) / before.scale + before.W / 2,
+          y: (0.5 * before.H - before.vy) / before.scale + before.H / 2,
+        };
+        const seen = [];
+        let i = 0;
+        const N = 24;
+        const dispatch = () => {
+          if (i >= N) return;
+          c.dispatchEvent(new WheelEvent('wheel', { deltaY: -8, ctrlKey: true, clientX: ax, clientY: ay, cancelable: true, bubbles: true }));
+          i++;
+          requestAnimationFrame(dispatch);
+        };
+        const sample = () => {
+          seen.push(window.__wikiGraphProbe().scale);
+          if (seen.length >= N + 40) resolve({ seen, before, wBefore });
+          else requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(dispatch);
+        requestAnimationFrame(sample);
+      }));
+      const target = pinch.before.zoomTarget * Math.exp(N_PINCH * 8 * PINCH_K);
+      const final = pinch.seen[pinch.seen.length - 1];
+      let maxStep = 0;
+      for (let i = 1; i < pinch.seen.length; i++) maxStep = Math.max(maxStep, Math.abs(pinch.seen[i] - pinch.seen[i - 1]));
+      // 锚点世界坐标保持（光标锚定缩放的几何契约）
+      const after = await page.evaluate(() => window.__wikiGraphProbe());
+      const wAfter = {
+        x: (0.5 * after.W - after.vx) / after.scale + after.W / 2,
+        y: (0.5 * after.H - after.vy) / after.scale + after.H / 2,
+      };
+      const anchorDrift = Math.hypot(wAfter.x - pinch.wBefore.x, wAfter.y - pinch.wBefore.y);
+      ok(`[${theme}] 捏合缩放收敛到目标（target≈${target.toFixed(3)}·final ${final.toFixed(3)}）`,
+        Math.abs(final - target) < 0.02, `final=${final.toFixed(4)} target=${target.toFixed(4)}`);
+      ok(`[${theme}] 连续捏合平滑无跳变（逐帧最大步进 ${maxStep.toFixed(4)} ≤ 0.06）`,
+        maxStep > 0 && maxStep <= 0.06, `maxStep=${maxStep.toFixed(4)}`);
+      ok(`[${theme}] 光标锚点几何保持（世界点漂移 ${anchorDrift.toFixed(2)}px < 2）`,
+        anchorDrift < 2, `drift=${anchorDrift.toFixed(3)}`);
+      if (theme === 'light') await shot('7-pinch');
     }
 
     ok(`[${theme}] 零 page error`, pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));

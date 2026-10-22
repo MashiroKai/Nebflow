@@ -1,4 +1,4 @@
-// wikiGraph.js — Wiki document graph (控制面迁左栏 redesign, 2026-10-21 batch).
+// wikiGraph.js — Wiki document graph (控制面迁左栏 + 触控板手感批, 2026-10-21/22).
 //
 // The Canvas tab `wiki-graph` renders the merged document graph served by
 // GET /api/wiki/graph: one node per markdown document across every project's
@@ -18,6 +18,10 @@
 //     手机层没有左栏，紧凑控制条随 pane 收编进移动页，桌面零渲染）
 //   双向联动：左栏点目录/词条（chips/ref/断链行）→ canvas 过滤聚焦；
 //     canvas 点节点 → 左栏详情卡刷新
+// 作者令 2026-10-22（触控板手感）：滚轮/双指滚动 = 平移（1:1，不误触缩放）；
+//   触控板捏合（ctrl+wheel）/ ⌘(Ctrl)+滚轮 = 以光标为锚点缩放，exp 曲线累积
+//   zoomTarget + rAF 25% 阻尼追帧——连续捏合帧平滑无跳变（excalidraw/figma
+//   手感）；约定在左栏 .wg-hint 图例注明。
 //   亮暗双主题：canvas 沿用 --wg-* 石墨双主题表；左栏面板吃侧栏玻璃卡既有的
 //     --color-frame-* / --glass-* token（prefers-color-scheme 自动双主题）；
 //     窄面板（container query，wgside）压缩内距与徽标
@@ -72,6 +76,8 @@ const MOBILE_MQ = '(max-width: 768px)';
  * @property {number} vx
  * @property {number} vy
  * @property {number} scale
+ * @property {number} zoomTarget — damped pinch target (scale chases it, rAF)
+ * @property {{px: number, py: number} | null} zoomAnchor — cursor anchor while chasing
  * @property {WgNode | null} dragging
  * @property {boolean} panning
  * @property {{px: number, py: number} | null} lastPointer
@@ -212,7 +218,7 @@ async function renderInto(pane) {
            data: null, sim: null,
            raf: 0, focusId: pendingFocus || '', byId: new Map(),
            hover: null, selected: null,
-           vx: 0, vy: 0, scale: 1,
+           vx: 0, vy: 0, scale: 1, zoomTarget: 1, zoomAnchor: null,
            dragging: null, panning: false, lastPointer: null,
            resizeObs: null, W: 0, H: 0, colors: null,
            filter: '', dirFilter: '', dirs: [], unresolved: [], projectErrors: [],
@@ -306,7 +312,12 @@ function ensureSidePanel() {
   const stats = document.createElement('div');
   stats.className = 'wg-stats';
 
-  side.append(head, buildSearchBox(), buildChipsGroup(), detail, broken, stats);
+  // 图例注明（作者令 2026-10-22：滚轮/捏合约定写进图例——左栏为家，canvas 保纯）。
+  const hint = document.createElement('div');
+  hint.className = 'wg-hint';
+  hint.textContent = t('wiki.inputHint');
+
+  side.append(head, buildSearchBox(), buildChipsGroup(), detail, broken, stats, hint);
   panel.appendChild(side);
   return side;
 }
@@ -559,6 +570,8 @@ function rebuildSim() {
 
   readColors();
   view.scale = 1;
+  view.zoomTarget = 1;
+  view.zoomAnchor = null;
   view.vx = 0; view.vy = 0;
   view.hover = null;
   hideTip();
@@ -738,10 +751,13 @@ function startLoop() {
   const loop = () => {
     if (!view || !view.sim) return;
     tick();
+    // 阻尼缩放追帧（作者令 2026-10-22）：跑在 draw 前，锚点补偿+scale 同帧生效。
+    const chasing = zoomChaseStep();
     draw();
-    // Idle stop: the layout settled and nobody is interacting — zero steady-
-    // state CPU (design §4). Any pointer/zoom/filter interaction restarts it.
-    if (view.sim.alpha < 0.02 && !view.hover && !view.dragging && !view.panning) {
+    // Idle stop: the layout settled, no zoom chase pending and nobody is
+    // interacting — zero steady-state CPU (design §4). Any pointer/zoom/filter
+    // interaction restarts it.
+    if (view.sim.alpha < 0.02 && !chasing && !view.hover && !view.dragging && !view.panning) {
       view.raf = 0;
       return;
     }
@@ -901,6 +917,53 @@ function pick(px, py) {
   return best;
 }
 
+// ── Wheel: trackpad-first zoom/pan (作者令 2026-10-22 · excalidraw/figma 手感) ──
+// 惯例（主流画布约定，Figma/Miro 同款；左栏 .wg-hint 注明）：
+//   双指滚动 / 鼠标滚轮        → 平移（1:1 跟手，Shift+纵滚 = 横移）
+//   触控板捏合 / ⌘(Ctrl)+滚轮  → 以光标为锚点缩放
+// 平滑（阻尼追帧）：捏合不直接写 scale —— 每个事件按 exp 曲线累积进 zoomTarget，
+// rAF 每帧向目标追近 25%（速度∝剩余距离），锚点 = 最近一次指针位置 ⇒ 连续捏合
+// 帧只表现为平滑推进，无 1.12 定步跳变；动量收尾自然滑入目标。
+
+const PINCH_K = 0.0015;   // exp 系数：滚轮一格 Δ≈120 → ≈1.2 档；触控板单帧 Δ≈2 → 微步
+const ZOOM_CHASE = 0.25;  // 每帧向 zoomTarget 追近的比例（阻尼）
+const ZOOM_SNAP = 0.0005; // 剩余差小于此直接贴合（收尾不抖）
+
+/** WheelEvent deltas → pixels（Firefox line 档 ×16、page 档 ×视口高）。 */
+function normalizeWheelDelta(e) {
+  let x = e.deltaX, y = e.deltaY;
+  if (e.deltaMode === 1) { x *= 16; y *= 16; }
+  else if (e.deltaMode === 2) { const h = (view && view.H) || 600; x *= h; y *= h; }
+  return { x, y };
+}
+
+/** One damped chase step toward zoomTarget (cursor-anchored when an anchor is
+ *  live, center-anchored otherwise). @returns {boolean} still chasing */
+function zoomChaseStep() {
+  if (!view) return false;
+  const diff = view.zoomTarget - view.scale;
+  if (Math.abs(diff) <= ZOOM_SNAP) {
+    view.scale = view.zoomTarget;
+    return false;
+  }
+  const next = view.scale + diff * ZOOM_CHASE;
+  if (view.zoomAnchor) {
+    const k = next / view.scale;
+    const { px, py } = view.zoomAnchor;
+    view.vx = px - (px - view.vx) * k;
+    view.vy = py - (py - view.vy) * k;
+  }
+  view.scale = next;
+  return true;
+}
+
+/** Ensure the rAF loop is running WITHOUT re-energizing the layout sim —
+ *  zoom/pan must not make nodes drift (design §4 停帧 semantics preserved). */
+function ensureLoop() {
+  if (!view) return;
+  if (!view.raf) startLoop();
+}
+
 function bindCanvas(canvasEl) {
   let moved = false;
   canvasEl.addEventListener('pointerdown', (e) => {
@@ -969,21 +1032,24 @@ function bindCanvas(canvasEl) {
   canvasEl.addEventListener('wheel', (e) => {
     if (!view) return;
     e.preventDefault();
-    wake(0.15);
     const rect = canvasEl.getBoundingClientRect();
-    zoomAt(e.clientX - rect.left, e.clientY - rect.top, e.deltaY < 0 ? 1.12 : 1 / 1.12);
-    draw();
+    const d = normalizeWheelDelta(e);
+    if (e.ctrlKey || e.metaKey) {
+      // 捏合 / ⌘(Ctrl)+滚轮：光标锚点阻尼缩放（平移/缩放互不复位——平移只动
+      // vx/vy，缩放只动 scale+锚点补偿，两个自由度正交）。
+      view.zoomAnchor = { px: e.clientX - rect.left, py: e.clientY - rect.top };
+      view.zoomTarget = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, view.zoomTarget * Math.exp(-d.y * PINCH_K)));
+      ensureLoop();
+    } else {
+      // 双指滚动 / 鼠标滚轮：平移（不误触缩放）
+      let dx = d.x, dy = d.y;
+      if (e.shiftKey && !dx) { dx = dy; dy = 0; }
+      view.vx += dx; view.vy += dy;
+      view.zoomTarget = view.scale;
+      view.zoomAnchor = null;
+      if (!view.raf) draw();
+    }
   }, { passive: false });
-}
-
-/** Zoom anchored at pane-local (px,py), cursor-anchored (design §3). */
-function zoomAt(px, py, factor) {
-  if (!view) return;
-  const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, view.scale * factor));
-  const k = next / view.scale;
-  view.vx = px - (px - view.vx) * k;
-  view.vy = py - (py - view.vy) * k;
-  view.scale = next;
 }
 
 // ── Tooltip / detail card ─────────────────────────────────────
@@ -1098,7 +1164,9 @@ function select(n, scroll) {
   ensureCanvasVisible();
   if (scroll) {
     // Center the node exactly (the control face lives outside the canvas
-    // pane — no half-width yield anymore).
+    // pane — no half-width yield anymore). A pending damped pinch loses its
+    // cursor anchor (chase continues center-anchored, never fights the recenter).
+    view.zoomAnchor = null;
     view.vx = view.W / 2 - n.x * view.scale;
     view.vy = view.H / 2 - n.y * view.scale;
   }
@@ -1183,6 +1251,7 @@ export function focusWikiNode(project, rel) {
 /** @type {any} */ (window).__wikiGraphProbe = () => view && view.sim ? {
   alpha: view.sim.alpha,
   scale: view.scale,
+  zoomTarget: view.zoomTarget,
   vx: view.vx, vy: view.vy, W: view.W, H: view.H,
   nodes: view.sim.nodes.map(n => ({ id: n.id, x: n.x, y: n.y, degree: n.degree, rank: n.rank, dir: n.dir })),
   unresolved: view.unresolved.length,

@@ -151,6 +151,13 @@ canvas 沿用 §4 的 `--wg-*` 石墨双主题表；左栏控制面穿侧栏玻�
 - `scripts/e2e-wiki-graph-redesign.cjs`：真实 docs 数据 playwright 截图——canvas 纯图态 / 左栏控制面 / 点选联动 / 断链区块 四态 × 亮暗，另含窄面板容器查询与移动层 panebar；证据落 `evidence/20261022_wiki-graph-sidepanel/`。
 - `tests/wiki-graph-ux.spec.mjs`：左栏契约 spec（展开/还原 R 系 + canvas 纯度 + 双向联动 + 内容口径断言）。
 
+### 9.7 追加批（2026-10-22 作者令：触控板手感 / 毛玻璃统一 / 渐隐退役，已实施）
+
+1. **触控板缩放手感（excalidraw/figma 同款约定）**：滚轮/双指滚动 = 平移（1:1 跟手，Shift+纵滚 = 横移）；触控板捏合（ctrl/meta+wheel）/ ⌘(Ctrl)+滚轮 = 以光标为锚点缩放——每事件按 `exp(-Δy·0.0015)` 累积进 zoomTarget，rAF 每帧追近 25%（速度∝剩余距离，剩余差 <0.0005 直接贴合），锚点 = 最近指针位置做几何补偿，追帧不唤醒布局 sim（§4 停帧语义保留）。约定写进左栏 `.wg-hint` 图例行，canvas 保持纯图。
+2. **毛玻璃统一标准（全站一套 frosted）**：canvas 顶部胶囊、左栏搜索框/chips 与 chat header 同材质——`--glass-bg` + `blur(var(--glass-blur)) saturate(1.15)` + `--glass-border` + `--frost-shadow`（新增于 sapphire.css，亮/暗两档，#header 同步改用 token 单源）；chips 无折射线，`.on` 选中片为 accent 态不在契约内。
+3. **canvas 渐隐退役（与聊天窗口渐隐同令）**：`.canvas-header.scroll-under-glass::after` 裙边桌面 `display:none`（胶囊本体 frosted 保留）；画布内容（节点/连线/文档文字）不再穿胶囊渐变淡出。手机层维持现状——与 UI 批⑥⑦「顶部渐隐穿顶 = 手机层唯一」同一条桌面/手机分界线。
+4. **验证**：harness 增 ⑥ frost 逐项相等 / ⑦ 裙边退役 / ⑧ 24 帧连续捏合+40 帧采样（逐帧步进 ≤0.06、锚点世界点漂移 <2px、收敛 zoomTarget）共 16 断言（63/63 过）；spec 增 §E（wheel 平移 vs 捏合阻尼缩放）/ §F（frosted 相等 + 裙边退役）两条契约（12/12 过）。
+
 ## 相关文档
 
 - 样张：[[wiki-graph-redesign-sample.html]]（HTML，双击打开）。
