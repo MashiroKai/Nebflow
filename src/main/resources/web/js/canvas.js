@@ -205,13 +205,24 @@ function showCanvasRefMenu(x, y, entry, actions = null) {
       closeOthersBtn.addEventListener('click', () => { hideCanvasRefMenu(); actions.onCloseOthers(); });
       menu.appendChild(closeOthersBtn);
     }
-    // 在独立窗口打开（作者令 2026-10-22）：文件卡才在挂（独立窗经 absPath
+    // 在独立窗口打开（作者令 2026-10-22）：文件卡才可独立（独立窗经 absPath
     // readFile 重读真容，cardCanPop 门）；独立中 = 合并回主窗（toggle 同位换形，
-    // 与卡头 pop 钮同语义）。
+    // 与卡头 pop 钮同语义）。内容物收口批：非内容物页签 = 禁用态项 + 提示
+    // （title + 点击 toast），边界可见不静默。
     if (actions.onPopout) {
       const popBtn = document.createElement('button');
       popBtn.textContent = actions.popoutLabel || '在独立窗口打开';
-      popBtn.addEventListener('click', () => { hideCanvasRefMenu(); actions.onPopout(); });
+      if (actions.popoutDisabledHint) {
+        popBtn.classList.add('disabled');
+        popBtn.setAttribute('aria-disabled', 'true');
+        popBtn.title = actions.popoutDisabledHint;
+        popBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          window.__showToast?.(actions.popoutDisabledHint, 'info');
+        });
+      } else {
+        popBtn.addEventListener('click', () => { hideCanvasRefMenu(); actions.onPopout(); });
+      }
       menu.appendChild(popBtn);
     }
   }
@@ -227,16 +238,19 @@ function showCanvasRefMenu(x, y, entry, actions = null) {
  *  多开 / 关闭 / 在独立窗口打开，引用项保留）。@param {Object} entry */
 function capsuleMenuActions(entry) {
   const deckOpen = deck.open && !deckBusy();
+  // 内容物收口批（2026-10-22 作者令）：独立窗只承载内容物（文档/文件/图片）。
+  // 非内容物页签（面板：任务列表/图谱/设置/会话列表等）不再静默省略菜单项，
+  // 渲染「禁用态 + 提示」项 —— 边界可见；点击由弹出链内容物门终拒（同文案）。
+  const canPop = cardCanPop(entry.id);
   return {
     allowNoRef: true,
     onMultiOpen: () => deckFabToggle(),
     multiOpenLabel: deck.open ? '收起叠卡' : '多开',
     onClose: () => (deckOpen ? deckRequestClose(entry.id) : closeTab(entry.id)),
     onCloseOthers: deckOpen ? () => deckCloseOthers(entry.id) : null,
-    onPopout: cardCanPop(entry.id)
-      ? () => toggleCardWindow(entry.id)
-      : null,
+    onPopout: () => toggleCardWindow(entry.id),
     popoutLabel: isCardIndependent(entry.id) ? '合并回主窗' : '在独立窗口打开',
+    popoutDisabledHint: canPop ? null : t('canvas.cardwinContentOnly'),
   };
 }
 
@@ -3571,10 +3585,18 @@ function cardWindowRm() {
 }
 
 /** 弹出单卡独立窗（幂等：已在独立 / 在途 / 无 absPath / 弹窗被拦 ⇒ 零状态变化）。
+ *  内容物收口批（2026-10-22 作者令）：独立窗只承载内容物 —— 文档（md/canvas
+ *  文档）、文件、图片等工件视图；功能性面板（任务列表/图谱/设置/会话列表等
+ *  全功能 UI）一律不可独立窗口化。absPath 是内容物的判定单点（面板/url/flow-run
+ *  页签皆无 absPath），本函数是全部入口（卡头胶囊钮/环卡钮/右键菜单/手机卡头）
+ *  的最终弹出腿：门在此收口，无视入口形态，拒绝腿带禁用态提示 toast。
  *  @param {string} id */
 function popoutCardWindow(id) {
   const entry = tabs.get(id);
-  if (!entry || !entry.absPath) return false;
+  if (!entry || !entry.absPath) {
+    window.__showToast?.(t('canvas.cardwinContentOnly'), 'info');
+    return false;
+  }
   if (independentWins.has(id) || cardPopInFlight.has(id)) return false;
   cardPopInFlight.add(id);
   // 卡窗白屏修复批（2026-10-22）：入口必须是 `/` —— 网关静态路由只把 `/`
@@ -3658,6 +3680,8 @@ function cardWindowBootFaceDismiss() {
 
 /** 卡窗引导态面：loading 占位 → 真容即撤 / 失败态卡片（内联样式零依赖面，
  *  同 sessionGate 横幅纪律）。仅 cardWindowMode 调用（initCardWindowMode）。
+ *  返回面句柄（内容物收口批）：无 path 深链的即刻失败腿用它直换失败态，
+ *  不等 12s 轮询超时。
  *  @param {string} fileName */
 function cardWindowBootFace(fileName) {
   const panel = document.getElementById('canvas-panel');
@@ -3720,6 +3744,8 @@ function cardWindowBootFace(fileName) {
       cardWindowBootFail(el, dot, hint, retry, !state.connected);
     }).catch(() => cardWindowBootFail(el, dot, hint, retry, false));
   }, CARDWIN_BOOT_POLL_MS);
+  // 面句柄（内容物收口批）：无 path 深链的即刻失败腿消费。
+  return { el, dot, hint, retry };
 }
 
 /** 引导面换失败态：撤动画、换文案（登录形态 / 一般失败）、亮 [重试]。 */
@@ -3772,7 +3798,9 @@ function initCardWindowMode() {
   if (qs.get('card-window') !== '1') return false;
   cardWindowMode = true;
   document.body.classList.add('card-window');
-  cardWindowBootFace(qs.get('title') || (qs.get('path') || '').split('/').pop() || '');
+  // 引导面句柄存全局（无 path 深链的即刻失败腿消费；内容物收口批）
+  /** @type {any} */ (window).__nfCardwinBootFace =
+    cardWindowBootFace(qs.get('title') || (qs.get('path') || '').split('/').pop() || '');
   ensureCardChannel();
   cardLastMainBeat = Date.now();
   // 主窗心跳看门狗：20s 静默（主窗已关/崩/挂起）→ 自闭，绝无僵尸镜像。
@@ -3798,6 +3826,8 @@ function initCardWindowMode() {
   // workspace-open-item 重派 → renderFile 真容）。freshest 内容，零载荷传递。
   // setTimeout 推后一拍：initCanvas 的 workspace-open-item 监听在本函数之后
   // 同步注册，同步派发会先于监听蒸发（首轮 CW1-3 红：卡窗 tabs=[] 实证）。
+  // 内容物收口批：无 path 的卡窗深链 = 非内容物目标（功能性面板不可独立窗口
+  // 化）——即刻失败卡收口（壳保持隐藏，绝不落全功能 UI），不等 12s 超时轮询。
   const path = qs.get('path') || '';
   if (path) {
     setTimeout(() => {
@@ -3805,6 +3835,14 @@ function initCardWindowMode() {
         detail: { id: 'file:' + path, itemType: '', title: qs.get('title') || '', content: '', absPath: path, pinned: true },
       }));
     }, 0);
+  } else {
+    const face = /** @type {any} */ (/** @type {any} */ (window).__nfCardwinBootFace || null);
+    if (face) {
+      // 失败即停轮（终态卡在挂，后续轮询腿/超时腿全部失效）
+      if (cardWinBootPoll) { clearInterval(cardWinBootPoll); cardWinBootPoll = null; }
+      cardWindowBootFail(face.el, face.dot, face.hint, face.retry, false);
+      face.hint.textContent = t('canvas.cardwinNoPath');
+    }
   }
   return true;
 }

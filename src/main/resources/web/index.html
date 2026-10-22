@@ -10,6 +10,27 @@
      it always runs before the module graph; main.js checks the flag and
      refuses to boot. */
   if (window.self !== window.top) document.documentElement.dataset.nfEmbedded = '1';
+  /* Card-window pre-paint gate (独立窗口内容物收口批, 2026-10-22). ?card-window=1
+     means this window must render a single content card ONLY (document / file /
+     image viewer) — never the full app shell. The mode class used to be added
+     by canvas.js initCardWindowMode(), i.e. only AFTER the whole main.js module
+     graph finished loading: on a cold cache / slow tunnel the popup showed the
+     FULL stand UI for seconds (author-reported「独立窗口打开，打开的是整个
+     stand」), and any boot crash before that line left the full shell up for
+     good. Classic script = runs before first paint and before the module graph:
+     (a) tag <html> so the shell-hide rules in split.css apply from frame zero;
+     (b) normalize a legacy /index.html deep link onto the canonical app URL "/"
+         (same query preserved) so the alias route can never BE the URL of an
+         independent window — the popout chain targets "/" exclusively. */
+  try {
+    var __nfQ = new URLSearchParams(location.search);
+    if (__nfQ.get('card-window') === '1') {
+      document.documentElement.classList.add('card-window-boot');
+      if (location.pathname === '/index.html') {
+        history.replaceState(null, '', '/' + location.search);
+      }
+    }
+  } catch (_) { /* no-history environment: canvas.js boot leg still applies */ }
   </script>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <!-- Neutral initial title: js/brand.js sets the real one from window.__BRAND__. -->

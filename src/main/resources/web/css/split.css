@@ -118,6 +118,20 @@
 .fm-context-menu button:hover {
   background: var(--color-hover, rgba(128,128,128,0.1));
 }
+/* 禁用态菜单项 — 独立窗口内容物收口批（2026-10-22）：非内容物页签的「在独立
+   窗口打开」恒渲染但禁用（边界可见 + title 提示）；muted 面禁 hover 反馈。 */
+.explorer-context-menu button.disabled,
+.canvas-tab-context-menu button.disabled,
+.fm-context-menu button.disabled {
+  color: var(--color-text-muted, #8b8e96);
+  cursor: default;
+  opacity: 0.62;
+}
+.explorer-context-menu button.disabled:hover,
+.canvas-tab-context-menu button.disabled:hover,
+.fm-context-menu button.disabled:hover {
+  background: none;
+}
 /* 危险菜单项 — 2026-09-16 按钮批：本节原字面量红退役，改 `--btn-danger-*`
    具名 token（同语义唯一：红值集合大小 = 1）；描边走 inset 环（本节条目
    `border-width: 0` ⇒ 不引入几何漂移）。 */
@@ -2732,6 +2746,12 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
   transition: background 0.12s ease, color 0.12s ease;
 }
 .canvas-pop-btn:hover { background: var(--glass-control-bg-hover); color: var(--color-text); }
+/* 入口隐藏权威化（独立窗口内容物收口批 2026-10-22）：面板页签的独立钮 =
+   入口隐藏（syncCardHeaderPop / navController syncCardChrome 置 hidden）。
+   族内 display 规则会压过 UA 的 [hidden] 档（hidden 置了钮仍渲染）——两处
+   显式钉死 hidden 即 display:none，面板页签的独立入口真不可见。 */
+.canvas-pop-btn[hidden],
+.mobile-card-pop[hidden] { display: none !important; }
 .canvas-pop-btn .pop-ic-merge { display: none; }
 .canvas-pop-btn.is-independent {
   color: rgb(var(--sapphire));
@@ -2819,24 +2839,45 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
   to { opacity: 0; transform: scale(0.94); }
 }
 
-/* ── 卡窗：壳退役 + 面板全幅 ── */
+/* ── 卡窗：壳退役 + 面板全幅 ──
+   独立窗口内容物收口批（2026-10-22）：`html.card-window-boot` = index.html
+   内联经典脚本的首帧门（先于模块图落类）——壳隐藏从第一帧就生效，主窗闪现
+   （作者报「独立窗口打开，打开的是整个 stand」的可见面）在任何网络/缓存条件下
+   都不可能出现；`body.card-window` = canvas.js initCardWindowMode 既有运行态。
+   两键同条件落（同一 URL 判定），html 键覆盖首帧窗、body 键覆盖模块加载后的
+   既有面；html 键永久保留不摘（与 body 键恒同真，幂等）。 */
+html.card-window-boot #activity-bar,
 body.card-window #activity-bar,
+html.card-window-boot #sidebar,
 body.card-window #sidebar,
+html.card-window-boot #header,
 body.card-window #header,
+html.card-window-boot #chat,
 body.card-window #chat,
+html.card-window-boot #input-area,
 body.card-window #input-area,
+html.card-window-boot #top-overlays,
 body.card-window #top-overlays,
+html.card-window-boot #reminder-panel,
 body.card-window #reminder-panel,
+html.card-window-boot #daemon-panel,
 body.card-window #daemon-panel,
+html.card-window-boot #daemon-config-overlay,
 body.card-window #daemon-config-overlay,
+html.card-window-boot .edge-bar,
 body.card-window .edge-bar,
+html.card-window-boot #deck-fab,
 body.card-window #deck-fab,
+html.card-window-boot #deck-layer,
 body.card-window #deck-layer,
+html.card-window-boot #canvas-close-btn,
 body.card-window #canvas-close-btn { display: none !important; }
+html.card-window-boot body #main,
 body.card-window #main {
   margin: 0 !important;
   --canvas-width: 100vw;
 }
+html.card-window-boot body #canvas-panel,
 body.card-window #canvas-panel {
   position: fixed;
   inset: 0;
@@ -2847,6 +2888,12 @@ body.card-window #canvas-panel {
   border: none;
   box-shadow: none;
   transform: none !important;
+  /* 卡窗面板恒可见（内容物收口批修补）：#canvas-panel 基态 opacity:0（画板
+     关闭态，body.canvas-open 才回 1）。带 path 的弹出腿经 workspace-open-item
+     → openCanvas 补上 open 类；无 path 深链（非内容物目标收口面）永不 open
+     ⇒ 引导面/失败卡整体不可见（入场动画无 fill，放完即回基态 0）。
+     卡窗本身就是「开着」的单一卡面，这里钉死 opacity:1，不再依赖 open 类。 */
+  opacity: 1 !important;
   animation: nf-card-win-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 body.card-window #canvas-panel.stacked { transform: none !important; }

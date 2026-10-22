@@ -1615,6 +1615,9 @@ export default {
   // 卡窗白屏修复批（2026-10-22）：独立卡窗引导态面失败文案（canvas.js cardWindowBootFace）
   'canvas.cardwinFailHint': '卡片内容加载失败，可重试。',
   'canvas.cardwinAuthHint': '登录状态可能已过期——重试会自动续登或弹出登录引导。',
+  // 独立窗口内容物收口批（2026-10-22 作者令）：仅内容物可独立窗口化
+  'canvas.cardwinContentOnly': '仅文档、文件等内容物可独立窗口打开，功能面板不支持。',
+  'canvas.cardwinNoPath': '该独立窗链接未携带内容路径，仅文档、文件等内容物可独立打开。',
 
   // === Tool names (label first line) ===
   'tool.Read': '读取',
