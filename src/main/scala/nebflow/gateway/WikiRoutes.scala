@@ -15,6 +15,11 @@ import org.http4s.dsl.io.*
  *                                projects bound to peer devices are scanned on
  *                                the peer via the scoped browse channel and
  *                                degrade to stub nodes when unreachable.
+ * `GET /api/wiki/paragraph`  — paragraph snapshot for one anchored reference
+ *                                (`project` + `rel` + `anchor`): paragraph
+ *                                index → best-effort stand-recall → doc-level
+ *                                fallback (the xerj integration seam; the
+ *                                graph itself never depends on memory-db).
  * `GET /api/wiki/remote-doc`   — single-file fetch from a peer device
  *                                (`device` + `path` query params) for opening
  *                                remote docs read-only.
@@ -34,6 +39,20 @@ private[gateway] object WikiRoutes:
         withAuth(req) {
           val force = req.params.get("force").exists(v => v == "1" || v.equalsIgnoreCase("true"))
           service.graph(force).flatMap(Ok(_))
+        }
+
+      case req @ GET -> Root / "wiki" / "paragraph" =>
+        withAuth(req) {
+          val project = req.params.getOrElse("project", "")
+          val rel = req.params.getOrElse("rel", "")
+          val anchor = req.params.getOrElse("anchor", "")
+          if project.isBlank || rel.isBlank || anchor.isBlank then
+            BadRequest(Json.obj("error" -> "project, rel and anchor are required".asJson))
+          else
+            service.paragraph(project, rel, anchor).flatMap {
+              case Left(err) => NotFound(Json.obj("error" -> err.asJson))
+              case Right(json) => Ok(json)
+            }
         }
 
       case req @ GET -> Root / "wiki" / "remote-doc" =>

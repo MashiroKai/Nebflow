@@ -252,6 +252,139 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
   private def peers: IO[List[nebflow.shared.PeerInfo]] =
     neblinkService.fold(IO.pure(Nil))(_.peers)
 
+  // ── Paragraph snapshot (wiki-graph 段落级引用批 — xerj 集成边界) ──
+  // Design doc §5 contract, pinned:
+  //   1) paragraph index  — read the doc (local disk / peer channel), parse
+  //      locally with the SAME WikiIndex the graph payload embeds;
+  //   2) best-effort tools/stand-recall — the xerj 按段检索 leg (memory-db).
+  //      Process absent, timeout, zero hits: all silently skipped;
+  //   3) doc-level fallback — {fallback:"doc", summary} — the contract
+  //      floor. The graph NEVER depends on the runtime memory-db.
+  // Malformed params are the only Left (route answers 400/404); content legs
+  // always answer Right (a snapshot or a declared fallback).
+
+  val ParagraphRecallTimeoutMs = 2000L
+  val ParagraphRecallMaxHits = 3
+  val ParagraphRecallTextCap = 200
+
+  def paragraph(project: String, rel: String, anchor: String): IO[Either[String, Json]] =
+    if project.isBlank then IO.pure(Left("project is required"))
+    else if rel.isBlank || rel.contains("..") || rel.contains('\\') then IO.pure(Left("rel must be a vault-relative path"))
+    else if anchor.isBlank then IO.pure(Left("anchor is required"))
+    else
+      ProjectStore.load(project).flatMap {
+        case None => IO.pure(Left(s"project '$project' not found"))
+        case Some(pd) =>
+          readVaultDoc(pd, rel).flatMap {
+            case None => IO.pure(Right(docFallback(rel, anchor, None)))
+            case Some(text) =>
+              IO.blocking {
+                val parsed = WikiIndex.parseDoc(rel, text)
+                val wanted = WikiIndex.edgeAnchorForm(anchor)
+                (parsed.paragraphs.find(_.anchor == wanted).map { p =>
+                  Right(Json.obj(
+                    "fallback" -> "index".asJson,
+                    "project" -> project.asJson,
+                    "rel" -> rel.asJson,
+                    "anchor" -> wanted.asJson,
+                    "paragraph" -> WikiIndex.paragraphJson(p)
+                  ))
+                }, parsed.summary)
+              }.handleErrorWith(e =>
+                IO(logger.warnSync(s"wiki: paragraph parse failed for $project/$rel: ${msgOf(e)}")) *> IO.pure((None, None))
+              ).flatMap {
+                case (Some(r), _) => IO.pure(r)
+                case (None, summary) =>
+                  standRecallParagraph(anchor).map {
+                    case Some(hits) => Right(Json.obj(
+                      "fallback" -> "recall".asJson,
+                      "project" -> project.asJson,
+                      "rel" -> rel.asJson,
+                      "anchor" -> WikiIndex.edgeAnchorForm(anchor).asJson,
+                      "source" -> "stand-recall".asJson,
+                      "hits" -> hits.asJson))
+                    case None => Right(docFallback(rel, anchor, summary))
+                  }
+              }
+          }
+      }
+
+  /** Doc-level contract floor: summary when we have the text, plain fallback
+    * shape when we do not (unreachable peer, unreadable file). */
+  private def docFallback(rel: String, anchor: String, summary: Option[String]): Json =
+    Json.obj(
+      "fallback" -> "doc".asJson,
+      "rel" -> rel.asJson,
+      "anchor" -> WikiIndex.edgeAnchorForm(anchor).asJson,
+      "summary" -> summary.map(_.asJson).getOrElse(Json.Null)
+    )
+
+  /** Read one vault doc's text — local projects straight from disk, remote
+    * projects through the peer browse channel. None = unreadable (degrade,
+    * never fail). */
+  private def readVaultDoc(pd: ProjectDef, rel: String): IO[Option[String]] =
+    val device = deviceOf(pd)
+    if ProjectOrigin.isSelfLiteral(device) then
+      IO.blocking {
+        val segs = rel.split('/').toVector.filter(s => s.nonEmpty && s != "." && s != "..")
+        if segs.isEmpty then None
+        else
+          val f = segs.foldLeft(workspacePath(pd) / WikiIndex.VaultDirName)(_ / os.RelPath(_))
+          if os.isFile(f) && os.size(f) <= WikiIndex.MaxDocBytes then Some(os.read(f)) else None
+      }.handleErrorWith(_ => IO.pure(None))
+    else
+      RemoteExecutor.current match
+        case None => IO.pure(None)
+        case Some(executor) =>
+          peers.flatMap(p => IO(RemoteExecutor.resolvePeer(device, p))).flatMap {
+            case Left(_) => IO.pure(None)
+            case Right(peer) =>
+              val remotePath = joinRemote(joinRemote(pd.origin.map(_.path).getOrElse(pd.workspace), WikiIndex.VaultDirName), rel)
+              executor.transferGetScoped(peer, remotePath).map {
+                case Right(bytes) if bytes.length <= WikiIndex.MaxDocBytes =>
+                  Some(new String(bytes, java.nio.charset.StandardCharsets.UTF_8))
+                case _ => None
+              }.handleErrorWith(_ => IO.pure(None))
+          }
+
+  /** The xerj 按段检索 leg — best-effort `tools/stand-recall` (memory-db).
+    * Locates the CLI via STAND_RECALL_CLI (absolute) or `<cwd>/tools/stand-recall`;
+    * anything absent/late/malformed ⇒ None (the graph must not depend on the
+    * runtime memory-db — design §5 boundary clause 1). */
+  private def standRecallParagraph(anchor: String): IO[Option[List[Json]]] =
+    IO.blocking {
+      val cli = sys.env.get("STAND_RECALL_CLI") match
+        case Some(p) => os.Path(p, PathUtil.dataRoot)
+        case None    => os.Path("tools/stand-recall", os.pwd)
+      if !os.isFile(cli) then None
+      else
+        val query = anchor.stripPrefix("#").stripPrefix("^").take(120)
+        val proc = new java.lang.ProcessBuilder("python3", cli.toString, "--json", "-n", String.valueOf(ParagraphRecallMaxHits), query)
+          .redirectErrorStream(false)
+          .start()
+        try
+          if !proc.waitFor(ParagraphRecallTimeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS) then
+            proc.destroyForcibly()
+            None
+          else
+            val out = new String(proc.getInputStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+            io.circe.parser.decode[List[Json]](out).toOption.map { hits =>
+              hits.map { h =>
+                val c = h.hcursor
+                Json.obj(
+                  "score" -> c.downField("score").as[Double].map(_.asJson).getOrElse(Json.Null),
+                  "ts" -> c.downField("ts").as[String].map(_.asJson).getOrElse(Json.Null),
+                  "role" -> c.downField("role").as[String].map(_.asJson).getOrElse(Json.Null),
+                  "session" -> c.downField("session_name").as[String].map(_.asJson).getOrElse(Json.Null),
+                  "text" -> c.downField("text").as[String].map(t => t.take(ParagraphRecallTextCap).asJson).getOrElse(Json.Null)
+                )
+              }
+            }
+        finally proc.destroyForcibly()
+    }.handleErrorWith { e =>
+      IO(logger.warnSync(s"wiki: stand-recall leg skipped: ${msgOf(e)}")) *> IO.pure(None)
+    }
+
   private def emptyStubScan(project: String, device: String): WikiIndex.VaultScan =
     WikiIndex.VaultScan(
       List(
