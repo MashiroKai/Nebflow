@@ -1524,6 +1524,11 @@ export default {
   'task.inProgressShort': 'In progress',
   'task.nodePending': 'Pending',
   'task.nodeBlocked': 'Blocked',
+  // Restart reconciliation batch 2026-10-22: interrupted-state trio (gray-state
+  // word / inline badge / fold relation word).
+  'task.nodeInterrupted': 'Interrupted',
+  'task.restartBadge': 'Restart interrupted',
+  'task.continuedBy': 'Continued by {session}',
   // === Delegate faces (#1228 换源接线批 · §16 七键 §16-passed verbatim, zh/en paired) ===
   // 🔴 Values are author-approved verbatim (§16 verdict #1228 两裁①) — no rewording.
   // Key names follow the delegate.* family (delegateChainStub/task-delegate namespace).

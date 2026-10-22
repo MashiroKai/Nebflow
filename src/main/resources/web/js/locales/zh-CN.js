@@ -1470,6 +1470,10 @@ export default {
   'task.inProgressShort': '进行中',
   'task.nodePending': '待处理',
   'task.nodeBlocked': '阻塞',
+  // 重启对账批 2026-10-22：打断态三键（灰态词 / 行内徽标 / 折叠关系词）。
+  'task.nodeInterrupted': '已中断',
+  'task.restartBadge': '重启打断',
+  'task.continuedBy': '已由 {session} 接续',
   // === Delegate 面（#1228 换源接线批 · §16 七键逐字过目已过，zh/en 成对）===
   // 🔴 值为作者 §16 裁定逐字（#1228 两裁①），禁改一字。键名按 delegate.* 族
   // （delegateChainStub / .task-delegate 命名空间同族）。

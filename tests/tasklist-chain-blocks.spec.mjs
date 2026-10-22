@@ -455,3 +455,54 @@ test('T7 external row tail guard: stderr/control/fragment lines never render on 
 
   expect(pageErrors).toEqual([]);
 });
+
+// ── T8 重启对账（任务列表行重启对账批 2026-10-22 · 三场景 spec 钉）────────────
+// 夹具 = 今日真实重启孤儿形态（fc5da94a→84a285e5 接续对 + 1cc53dfe 孤悬行）：
+//   场景① 打断灰行：打断行永不渲染 running 活态/完成勾态（灰点 + 「重启打断」
+//          徽标 + 「已中断」词）；
+//   场景② 接续折叠：被打断且已接续的行折进接续者区块（折叠灰腿「已由 #N 接续」
+//          + 徽标），不双行并存；
+//   场景③ 未接续死亡：孤悬打断行独立灰行显形（不再隐行、不再冻结活态）。
+test('T8 重启对账三场景：①打断灰行永不勾态 ②已接续旧行折进新行（不双行并存）③未接续死亡行独立灰行', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  await bootApp(page);
+  const rows = [
+    // 接续者（活态运行行——它的区块承接折叠腿）。
+    { taskNo: '91', delegateId: 'delegate-nebflow-84a285e5', title: '【重离子链修复+662 收口批 · 断点续作】前会话被引擎重启打断', executor: 'nebflow', status: 'running', external: false, project: 'stand', createdAt: T0 - 5_000 },
+    // 被打断且已被接续的旧行（fold 进 #91 区块——不再独占区块）。
+    { taskNo: '90', delegateId: 'delegate-nebflow-fc5da94a', title: '【重离子链修复+662 收口批】旧会话冻结简报', executor: 'nebflow', status: 'interrupted', restartInterruptedAt: T0 - 60_000, continuedBy: 'delegate-nebflow-84a285e5', external: false, project: 'stand', createdAt: T0 - 90_000 },
+    // 被打断、未被接续、确认死亡的孤悬行（独立灰行显形）。
+    { taskNo: '92', delegateId: 'delegate-nebflow-1cc53dfe', title: '【未接续批】重启时死亡无续作', executor: 'nebflow', status: 'interrupted', restartInterruptedAt: T0 - 120_000, continuedBy: '', external: false, project: 'stand', createdAt: T0 - 120_000 },
+  ];
+  await setFixture(page, { rows, chains: [], children: {} });
+  const panel = page.locator('#task-list');
+
+  // 场景② 折叠：被打断+已接续的行不再有独立头行区块（不双行并存）。
+  await expect(panel.locator('.task-chain-head[data-task-no="90"]')).toHaveCount(0);
+  const fold = panel.locator('.task-chain-folded[data-delegate-id="delegate-nebflow-fc5da94a"]');
+  await expect(fold).toHaveCount(1); // 折进 #91 区块的灰腿
+  await expect(fold.locator('.task-delegate-badge-interrupted')).toHaveText('重启打断');
+  await expect(fold.locator('.task-chain-folded-title')).toContainText('旧会话冻结简报');
+  await expect(fold.locator('.task-chain-folded-word')).toHaveText('已由 #91 接续');
+  await expect(fold.locator('.task-chain-mark-done')).toHaveCount(0); // 折叠腿零完成语言（打勾只给真完成）
+
+  // 场景①+③ 打断灰行（未接续孤悬行）：灰点 + 「重启打断」徽标 + 「已中断」词。
+  const dead = panel.locator('.task-chain-head[data-task-no="92"]');
+  await expect(dead).toHaveAttribute('data-delegate-status', 'interrupted');
+  await expect(dead.locator('.task-delegate-badge-interrupted')).toHaveText('重启打断');
+  await expect(dead.locator('.task-node-word')).toHaveText('已中断');
+  await expect(dead.locator('.task-node-dot-neutral')).toHaveCount(1); // 灰态语言（非 spin/非勾绿）
+  await expect(dead.locator('.task-chain-mark-done')).toHaveCount(0);
+  await expect(dead.locator('.task-node-spin')).toHaveCount(0); // 永不冒充活态
+
+  // 真完成行照常被 ACTIVE 闸放行渲染；打断行也在窗（灰态显形，不再隐行）。
+  await expect(panel.locator('.task-chain-head[data-task-no="91"]')).toHaveCount(1);
+  await expect(panel.locator('.task-chain-head[data-task-no="92"]')).toHaveCount(1);
+
+  // 统计 = 独立区块单位数（折腿不计单位——#91 区块 1 + #92 区块 1）。
+  await expect(panel.locator('.task-stats')).toHaveText('2 任务');
+
+  expect(pageErrors).toEqual([]); // 折叠推导/渲染全程零脚本错误（含点击审计腿）
+});

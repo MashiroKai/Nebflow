@@ -90,10 +90,12 @@ export function taskBadgeCount() {
   return collectChains().length;
 }
 
-/** 状态域三分（样张分组序）：运行中（pending/running/blocked）→ 排队（ready-to-merge）→ 已完成（终态）。 */
+/** 状态域三分（样张分组序）：运行中（pending/running/blocked）→ 排队（ready-to-merge）→ 已完成（终态）。
+ *  重启对账批 2026-10-22：interrupted（重启打断灰态）归终态组——灰点（tp-g-stop），
+ *  禁借 done 勾绿（打勾只给真完成）。 */
 function groupOf(status) {
   if (status === 'ready-to-merge') return 'queued';
-  if (['completed', 'failed', 'cancelled'].includes(status)) return 'done';
+  if (['completed', 'failed', 'cancelled', 'interrupted'].includes(status)) return 'done';
   return 'running';
 }
 
@@ -105,7 +107,7 @@ function collectDone() {
     return Number.isFinite(v) ? v : 0;
   };
   return listDelegateRows()
-    .filter((r) => r && !r.archivedAt && ['completed', 'failed', 'cancelled'].includes(String(r.status)))
+    .filter((r) => r && !r.archivedAt && ['completed', 'failed', 'cancelled', 'interrupted'].includes(String(r.status)))
     .sort((a, b) => ts0(b) - ts0(a));
 }
 
@@ -132,7 +134,8 @@ function buildCard(entry) {
 
   const hd = document.createElement('div');
   hd.className = 'tp-c-hd';
-  hd.appendChild(glyph(grp === 'queued' ? 'queue' : grp === 'done' ? (st === 'failed' ? 'fail' : 'done') : 'run'));
+  // 重启对账批 2026-10-22：interrupted = 灰点（stop），永不借 done 勾语言。
+  hd.appendChild(glyph(grp === 'queued' ? 'queue' : grp === 'done' ? (st === 'failed' ? 'fail' : st === 'interrupted' ? 'stop' : 'done') : 'run'));
   const ttl = document.createElement('span');
   ttl.className = 'tp-ttl';
   ttl.textContent = taskNo ? `#${taskNo} ${title}` : title;

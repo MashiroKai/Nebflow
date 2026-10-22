@@ -455,16 +455,18 @@ private[gateway] object PresenceRoutes:
       // 在册）；缺省 = 在册窗（未归档）。两窗互补零重叠。
       // #566 修复批：行投影并挂 `taskStatus`（SubAgentTaskStore 全量单遍扫批量供给
       // ——delegate 终态行的 UI 权威读数；fail-soft 空表 = 旧投影）。
+      // 任务列表行重启对账批 2026-10-22：全量任务原文行随投影下传（接续引用推导
+      // continuationLinks 的文本源——`continuedBy` 键）。
       case req @ GET -> Root / "chains" =>
         withAuth(req) {
           val archived = req.params.get("archived").contains("1")
           sharedResources.agentRegistry.get.flatMap { reg =>
             sharedResources.subAgentTaskStore
               .findAllTasks()
-              .map(tasks => tasks.collect { case t if t.taskId.nonEmpty => t.taskId -> t.status }.toMap)
-              .handleErrorWith(_ => IO.pure(Map.empty[String, String]))
-              .flatMap(statuses =>
-                ChainsReadFace.rowsJson(reg, archived, statuses).flatMap { body =>
+              .map(tasks => tasks -> tasks.collect { case t if t.taskId.nonEmpty => t.taskId -> t.status }.toMap)
+              .handleErrorWith(_ => IO.pure((Nil, Map.empty[String, String])))
+              .flatMap { case (taskRows, statuses) =>
+                ChainsReadFace.rowsJson(reg, archived, statuses, taskRows).flatMap { body =>
                   // M2 缓存语义小刀（v2 §3.1 ① · 链集合行）：ETag = 载荷内容寻址。
                   // 行投影由不可变事实流组成（DelegateRegistry 落盘记录 × 台账判词行 ×
                   // 任务状态读数）——`live` 只是 {status:"running"}|null 的活性提示位
@@ -472,7 +474,7 @@ private[gateway] object PresenceRoutes:
                   // 稳定（服务端本无 gen 计数器——flowMapTab.bumpGen 是前端概念）。
                   HttpCache.conditionalOk(req, body, HttpCache.ofJson(body))
                 }
-              )
+              }
           }
         }
 
@@ -593,6 +595,8 @@ private[gateway] object PresenceRoutes:
       // .findByParent 注入）、steps = agentflow 链节点紧凑形）。`?archived=1` 历史
       // 窗语义沿 /api/chains。投影语义 = ChainsReadFace.delegatesJson（本路由只做
       // 参数解析与 store 注入，零投影逻辑）。ETag = 载荷内容寻址（/api/chains 同款）。
+      // 任务列表行重启对账批 2026-10-22：全量任务原文行随投影下传（`continuedBy`
+      // 接续引用推导的文本源——/api/chains 臂同款）。
       case req @ GET -> Root / "delegates" =>
         withAuth(req) {
           val archived = req.params.get("archived").contains("1")
@@ -600,11 +604,11 @@ private[gateway] object PresenceRoutes:
           sharedResources.agentRegistry.get.flatMap { reg =>
             sharedResources.subAgentTaskStore
               .findAllTasks()
-              .map(tasks => tasks.collect { case t if t.taskId.nonEmpty => t.taskId -> t.status }.toMap)
-              .handleErrorWith(_ => IO.pure(Map.empty[String, String]))
-              .flatMap { statuses =>
+              .map(tasks => tasks -> tasks.collect { case t if t.taskId.nonEmpty => t.taskId -> t.status }.toMap)
+              .handleErrorWith(_ => IO.pure((Nil, Map.empty[String, String])))
+              .flatMap { case (taskRows, statuses) =>
                 ChainsReadFace
-                  .delegatesJson(reg, archived, statuses, project, sharedResources.subAgentTaskStore.findByParent)
+                  .delegatesJson(reg, archived, statuses, project, sharedResources.subAgentTaskStore.findByParent, taskRows)
                   .flatMap(body => HttpCache.conditionalOk(req, body, HttpCache.ofJson(body)))
               }
           }

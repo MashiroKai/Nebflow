@@ -60,19 +60,60 @@ object ChainsReadFace:
    * 面板。历史窗（archived=true）**零过滤**——归档抽屉是记录的全量查看窗，零删除
    * 纪律不破。世界解析失败 = fail-open（不过滤，宁见旧勿丢现役——显示面不因读盘抖动
    * 清空）。
+   *
+   * `taskRows`（任务列表行重启对账批 2026-10-22）：SubAgentTask 全量行（调用方
+   * findAllTasks 单遍扫的**原文行**——rowsJson 内部做接续引用推导 [[continuationLinks]]
+   * 的文本源）。缺席 = 无接续推导（旧行投影，缺键容忍）。
    */
   def rowsJson(
     registry: Map[String, nebflow.actor.AgentRecord],
     archived: Boolean = false,
-    taskStatuses: Map[String, String] = Map.empty
+    taskStatuses: Map[String, String] = Map.empty,
+    taskRows: List[nebflow.shared.SubAgentTask] = Nil
   ): IO[Json] =
     IO.blocking(DelegateRegistry.list()).flatMap { records =>
+      val continuations = continuationLinks(records, taskRows)
       val scoped = records.filter(rec => rec.archivedAt.isDefined == archived)
       val windowed: IO[List[DelegateRegistry.Record]] =
         if archived then IO.pure(scoped) // 历史窗：全量（零删除展示纪律）
         else activeWorldSeatFilter(scoped)
-      windowed.flatMap(_.traverse(rowJson(registry, taskStatuses))).map(rows => Json.obj("rows" -> rows.asJson))
+      windowed.flatMap(_.traverse(rowJson(registry, taskStatuses, continuations))).map(rows =>
+        Json.obj("rows" -> rows.asJson)
+      )
     }
+
+  /**
+   * 接续引用推导（任务列表行重启对账批 2026-10-22 · 纯函数单点）：重启打断记录
+   * （`restartInterruptedAt` 在旗 ∧ 在册未归档）← **后被派发的新 delegate 引用**
+   * （候选记录的 title ∪ 台账任务原文含被打断记录的 id）⇒ oldId → 接续者 id。
+   * 同一被打断记录多个引用者 = 最新者胜（(createdAt, id) 序，确定性收尾）；候选
+   * 时间闸 = 晚于被打断记录的 createdAt（引用必然后于原派发）。这是**读面推导**
+   * 零新存储：接续关系在盘面上只有「新 brief 引用旧 id」这一事实形态（断点续作
+   * 的既有派发纪律），读面把它结构化供前端折叠显示——不改写任何记录。
+   */
+  private[project] def continuationLinks(
+    records: List[DelegateRegistry.Record],
+    taskRows: List[nebflow.shared.SubAgentTask]
+  ): Map[String, String] =
+    val taskText: Map[String, String] = taskRows
+      .groupBy(_.taskId)
+      .view
+      .mapValues(_.map(t => s"${t.description}\n${t.prompt}").mkString("\n"))
+      .toMap
+    val interrupted = records.filter(r => r.restartInterruptedAt.isDefined && r.archivedAt.isEmpty)
+    interrupted.flatMap { r =>
+      val needle = r.id
+      val candidates = records.filter { c =>
+        c.id != r.id && c.createdAt >= r.createdAt && {
+          val hay = s"${c.title}\n${taskText.getOrElse(c.id, "")}"
+          hay.contains(needle)
+        }
+      }
+      candidates
+        .sortBy(c => (c.createdAt, c.id))
+        .lastOption
+        .map(c => r.id -> c.id)
+    }.toMap
 
   /** 记录的「座位」：项目 workspace 优先，回落派发 cwd（scopeProjection 同款取序）。 */
   private[project] def seatOf(rec: DelegateRegistry.Record): String =
@@ -136,11 +177,13 @@ object ChainsReadFace:
    * + G1 mode（Record 字段随 asJson 原样透出，None = null ⇒ 前端过渡启发兜底）+
    * G5 行内排队条件键（`mergeQueue`/`mergeQueuePos`，判据单点 = [[MergeQueue.queueViewOf]]，
    * 未排队缺键）+ #566 `taskStatus`（引擎任务行终态——行状态权威，前端终态判定的
-   * 直接读数；缺席 = 旧投影）。
+   * 直接读数；缺席 = 旧投影）+ 对账批 `continuedBy`（重启打断行**已被接续**的接续者
+   * id——[[continuationLinks]] 推导命中才落键，未被打断/未被接续 = 键缺席）。
    */
   private def rowJson(
     registry: Map[String, nebflow.actor.AgentRecord],
-    taskStatuses: Map[String, String]
+    taskStatuses: Map[String, String],
+    continuations: Map[String, String] = Map.empty
   )(rec: DelegateRegistry.Record): IO[Json] =
     IO.blocking {
       val key = ChainStore.keyFor(rec.taskId, rec.id)
@@ -161,8 +204,11 @@ object ChainsReadFace:
           val withTask = (if merging then Some("merging") else taskStatuses.get(rec.id)).fold(withVerdict) { s =>
             withVerdict.add("taskStatus", s.asJson)
           }
-          val withQueue = queue.fold(withTask) { q =>
-            withTask
+          val withCont = continuations.get(rec.id).fold(withTask) { succ =>
+            withTask.add("continuedBy", succ.asJson)
+          }
+          val withQueue = queue.fold(withCont) { q =>
+            withCont
               .add(
                 "mergeQueue",
                 Json.obj(
@@ -235,9 +281,10 @@ object ChainsReadFace:
     archived: Boolean = false,
     taskStatuses: Map[String, String] = Map.empty,
     project: Option[String] = None,
-    childrenOf: String => IO[List[nebflow.shared.SubAgentTask]] = _ => IO.pure(Nil)
+    childrenOf: String => IO[List[nebflow.shared.SubAgentTask]] = _ => IO.pure(Nil),
+    taskRows: List[nebflow.shared.SubAgentTask] = Nil
   ): IO[Json] =
-    rowsJson(registry, archived, taskStatuses).flatMap { body =>
+    rowsJson(registry, archived, taskStatuses, taskRows).flatMap { body =>
       val rows = body.hcursor.downField("rows").as[List[Json]].getOrElse(Nil)
       val scoped = project.fold(rows)(p => rows.filter(rowProjectOf(_).contains(p)))
       scoped.traverse(withTopology(_, childrenOf)).map(rs => Json.obj("rows" -> rs.asJson))

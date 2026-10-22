@@ -115,7 +115,17 @@ object DelegateRegistry:
      * 的载体，验收 #2 的 `sessions/` 标记读数）。编排侧（host）派发记录 = None。
      * 缺省 None：旧盘面照常解码（cliSessionId 同款纪律）。
      */
-    delegatedBy: Option[String] = None
+    delegatedBy: Option[String] = None,
+    /**
+     * 重启打断标记（任务列表行重启对账批 2026-10-22）：boot 对账（[[nebflow.agent.SubAgentStartupRecovery]]
+     * 的孤儿收殓）判定本会话在进程重启时仍在飞（任务记录 running/restarting，或带
+     * 重启指纹的终态任务记录回溯腿）即落旗 = 打断时刻 epoch millis。**幂等零重写**
+     * （已旗 = 原值返回，与 [[archive]] 同款）。None = 未标记（非重启打断）。显示面
+     * 语义（「重启打断」徽标 /「已中断」灰态 / 接续折叠）由读面投影与前端适配层
+     * 承载——真完成（报告交付/判词终态）照常覆盖显示态，旗不截断复活续聊的真完成。
+     * 缺省 None：旧盘面照常解码（delegatedBy 同款纪律）。
+     */
+    restartInterruptedAt: Option[Long] = None
   )
 
   private def dir: os.Path = PathUtil.dataRoot / "delegates"
@@ -264,6 +274,27 @@ object DelegateRegistry:
       }
 
   /**
+   * 重启打断单写（任务列表行重启对账批 2026-10-22）：`restartInterruptedAt = now`
+   * 单旗，**幂等**（已旗 = 原时间戳零重写，与 [[archive]] 同款）。查无记录 =
+   * `Left`（打断标记只对真实 spawn 生效——与 updateReport 同纪律）。写锁同缝串行。
+   */
+  def markRestartInterrupted(id: String, at: Long): Either[String, Long] =
+    if !validId(id) then Left(s"markRestartInterrupted: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"markRestartInterrupted: no registry record for '$id'")
+          case Some(rec) =>
+            rec.restartInterruptedAt match
+              case Some(ts) => Right(ts) // 幂等：已旗原样返回，零重写
+              case None =>
+                try
+                  put(rec.copy(restartInterruptedAt = Some(at)))
+                  Right(at)
+                catch case e: Throwable => Left(s"markRestartInterrupted: write failed: ${e.getMessage}")
+      }
+
+  /**
    * JSON 编解码（circe）：Encoder = generic 派生；Decoder = **手工容错形态**——
    * 新扩的 Option 字段缺键时按 None 读（存量记录零迁移）。deriveDecoder 缺键即
    * 失败会让 `find`/`list` 把旧记录静默吞掉（catch → None），禁。
@@ -293,6 +324,7 @@ object DelegateRegistry:
       worktreeJudged <- c.get[Option[Boolean]]("worktreeJudged")
       archivedAt <- c.get[Option[Long]]("archivedAt")
       delegatedBy <- c.get[Option[String]]("delegatedBy")
+      restartInterruptedAt <- c.get[Option[Long]]("restartInterruptedAt")
     yield Record(
       id,
       executor,
@@ -314,7 +346,8 @@ object DelegateRegistry:
       orchestrationMode,
       worktreeJudged,
       archivedAt,
-      delegatedBy
+      delegatedBy,
+      restartInterruptedAt
     )
 
 end DelegateRegistry

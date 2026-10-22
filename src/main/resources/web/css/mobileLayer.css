@@ -655,6 +655,8 @@ body.mobile-layer .mh-tpanel .tp-g-run { background: rgb(var(--brand-green)); }
 body.mobile-layer .mh-tpanel .tp-g-done { background: #4caf50; }
 body.mobile-layer .mh-tpanel .tp-g-queue { background: #98a2b3; }
 body.mobile-layer .mh-tpanel .tp-g-fail { background: var(--status-word, #d64545); }
+/* 重启对账批 2026-10-22：已中断灰点（灰态语言——禁借 done 勾绿）。 */
+body.mobile-layer .mh-tpanel .tp-g-stop { background: #98a2b3; opacity: 0.55; }
 body.mobile-layer .mh-tpanel .tp-ttl {
   flex: 1;
   min-width: 0;

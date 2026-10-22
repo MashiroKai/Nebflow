@@ -108,6 +108,8 @@ const PANO_ST = {
   completed: { word: 'flowmap.done', cls: 'st-done' },
   failed: { word: 'flowmap.fail', cls: 'st-fail' },
   cancelled: { word: 'flowmap.st.cancelled', cls: 'st-cancel' },
+  // 重启对账批 2026-10-22：已中断灰态（灰卡降透明 + 琥珀点——禁借 fail 红/done 绿）。
+  interrupted: { word: 'task.nodeInterrupted', cls: 'st-stop' },
 };
 
 /** 子过程节点状态 → 卡点/边态（样张「子态定边态」：completed=已投递蓝晶实线、
@@ -554,7 +556,7 @@ function buildCanvas(name, rows, lanes) {
   // 卡 DOM（绝对定位；落 SVG 之上）。
   for (const [id, g] of geo) {
     const r = rows.find((x) => String(x.delegateId || '') === id);
-    if (r && !(doneCollapsed && lanes.done.includes(r))) canvas.appendChild(delegateCard(r, g, name));
+    if (r && !(doneCollapsed && lanes.done.includes(r))) canvas.appendChild(delegateCard(r, g, name, rows));
   }
   for (const [key, g] of subGeo) {
     const spec = subSpecs.get(key);
@@ -667,7 +669,7 @@ function modeChip(r) {
   return '';
 }
 
-function delegateCard(r, g, bandName) {
+function delegateCard(r, g, bandName, rows) {
   const st = panoStatus(r);
   const meta = PANO_ST[st] || PANO_ST.running;
   const el = document.createElement('div');
@@ -717,6 +719,12 @@ function delegateCard(r, g, bandName) {
     b.className = 'dvp-qbadge mrg';
     b.textContent = t('delegate.view.windowHold');
     el.appendChild(b);
+  } else if (st === 'interrupted') {
+    // 重启对账批 2026-10-22：打断卡顶徽标（琥珀警示——与队列徽标同位同语言）。
+    const b = document.createElement('span');
+    b.className = 'dvp-qbadge rtm';
+    b.textContent = t('task.restartBadge');
+    el.appendChild(b);
   }
   // meta chips（≤3，防溢出；长文本 ellipsis——案例库教训）。
   const metaRow = document.createElement('div');
@@ -741,6 +749,15 @@ function delegateCard(r, g, bandName) {
   } else {
     chip(r.branch ? r.branch.replace(/^delegate\//, '') : '', 'branch');
     chip(ago(r.verdict && r.verdict.at ? r.verdict.at : r.createdAt), 'time');
+  }
+  // 重启对账批 2026-10-22：接续关系 chip（虚线 muted——「已由 #N 接续」；接续者
+  // 的台账号从同带行集查，查无 = 裸 id 降级。全景 = 审计面：卡不折走，关系随身）。
+  if (st === 'interrupted' && String(r.continuedBy || '')) {
+    const succ = String(r.continuedBy);
+    const succRow = Array.isArray(rows)
+      ? rows.find((x) => String(x && x.delegateId || '') === succ)
+      : null;
+    chip(t('task.continuedBy', { session: succRow && succRow.taskNo ? `#${succRow.taskNo}` : succ }), 'continued');
   }
   el.appendChild(metaRow);
   // 报告条（verdict/reportStatus 在场；失败卡红染——样式类承担）。

@@ -356,6 +356,65 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     end for
   }
 
+  // ── C7 重启对账（任务列表行重启对账批 · 2026-10-22）────────────────────────
+
+  test(
+    "C7 (重启对账): restart-interrupted rows carry the flag verbatim; continuedBy lands only when a later record cites them"
+  ) {
+    import nebflow.shared.SubAgentTask
+    val now = System.currentTimeMillis()
+    val oldId = "delegate-general-cc01old1"
+    val loneId = "delegate-general-cc02lone"
+    val succId = "delegate-general-cc03succ"
+    // 打断行两行（其一被接续、其一孤悬）+ 接续者（title 引用旧 id，晚于打断行派发）。
+    DelegateRegistry.put(record(oldId, Some("81")).copy(restartInterruptedAt = Some(now), createdAt = 1000L))
+    DelegateRegistry.put(record(loneId, Some("82")).copy(restartInterruptedAt = Some(now), createdAt = 1001L))
+    DelegateRegistry.put(
+      record(succId, Some("83"))
+        .copy(createdAt = 2000L, title = "【断点续作】前会话（delegate-general-cc01old1）被引擎重启打断")
+    )    // 台账任务原文行（引用文本源——title 截断后仍可命中的兜底腿）。
+    val taskRows = List(
+      SubAgentTask(
+        taskId = loneId,
+        parentSessionId = "p",
+        agentName = "nebflow",
+        prompt = "unrelated prompt text",
+        description = "lone",
+        status = "failed",
+        retryCount = 0,
+        spawnedAt = 1L,
+        completedAt = None,
+        lastError = None,
+        source = "delegate"
+      )
+    )
+    ChainsReadFace.rowsJson(Map.empty, taskStatuses = Map.empty, taskRows = taskRows).map { body =>
+      val rows = body.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil)
+      val byId = (id: String) => rows.find(_.hcursor.get[String]("id").toOption.contains(id)).getOrElse(fail(s"$id missing"))
+      val old = byId(oldId)
+      assertEquals(
+        old.hcursor.get[Long]("restartInterruptedAt").toOption,
+        Some(now),
+        "the flag rides the record verbatim (record asJson passthrough)"
+      )
+      assertEquals(
+        old.hcursor.get[String]("continuedBy").toOption,
+        Some(succId),
+        "a later record citing the interrupted id ⇒ continuedBy (fold pointer)"
+      )
+      val lone = byId(loneId)
+      assert(
+        lone.hcursor.get[String]("continuedBy").toOption.isEmpty,
+        "uncited interrupted row carries NO continuedBy key (missing-key discipline)"
+      )
+      val succ = byId(succId)
+      assert(
+        succ.hcursor.get[String]("continuedBy").toOption.isEmpty,
+        "the continuation itself is not interrupted ⇒ no fold pointer"
+      )
+    }
+  }
+
   // ── C2 链投影 ───────────────────────────────────────────────────────────
 
   test(
