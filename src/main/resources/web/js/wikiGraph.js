@@ -56,7 +56,8 @@ const MOBILE_MQ = '(max-width: 768px)';
 
 /** @typedef {{ref:any, id:string, label:string, dir:string, isAttach:boolean,
  *             x:number, y:number, vx:number, vy:number, degree:number, rank:number,
- *             out:Array<any>, inc:Array<any>, dimmed:boolean}} WgNode */
+ *             out:Array<any>, inc:Array<any>, dimmed:boolean,
+ *             outAnchors:Map<string, string>, inAnchors:Map<string, string>}} WgNode */
 
 /**
  * Live state of the wiki graph tab (one instance at a time).
@@ -67,7 +68,7 @@ const MOBILE_MQ = '(max-width: 768px)';
  * @property {HTMLElement|null} side   — sidebar control face (#wiki-graph-side)
  * @property {HTMLElement|null} panebar — in-pane compact bar (mobile layer only)
  * @property {any} data
- * @property {{nodes: WgNode[], edges: {a:WgNode,b:WgNode}[], alpha: number} | null} sim
+ * @property {{nodes: WgNode[], edges: {a:WgNode,b:WgNode,anchor:string|null}[], alpha: number} | null} sim
  * @property {number} raf
  * @property {string} focusId
  * @property {Map<string, WgNode>} byId

@@ -286,6 +286,37 @@ test.describe('§P6 详情卡引出词条带锚 chip', () => {
   });
 });
 
+test.describe('§P8 点击→高亮 端到端（真 markdown 查看器）', () => {
+  // §P4 钉到载荷为止；本节走完最后一公里：同一 anchor 载荷经 workspace-open-item
+  // 进真 viewMarkdown → applyJumpAnchor → 滚动定位 + .nf-jump-flash 落在 ^vault 段。
+  for (const scheme of ['light', 'dark']) {
+    test(`${scheme} · anchor 载荷 → 滚动+高亮落在那一段`, async ({ browser }) => {
+      const { context, page, pageErrors } = await boot(browser, { colorScheme: scheme });
+      await openGraph(page);
+      const md = [
+        '# 词汇表', '',
+        '前置段落，不在高亮目标内。', '',
+        '文档库（vault） — 项目工作区内 docs/ 目录整体：图谱视图只扫这个目录。 ^vault', '',
+        '尾部段落，不在高亮目标内。',
+      ].join('\n');
+      await page.evaluate((md) => {
+        window.dispatchEvent(new CustomEvent('workspace-open-item', { detail: {
+          id: 'wiki-remote:alpha:g.md', itemType: 'markdown', title: '词汇表',
+          readOnly: true, content: md, anchor: { kind: 'block', id: 'vault' },
+        } }));
+      }, md);
+      await page.waitForSelector('.canvas-md-viewer', { timeout: 10000 });
+      await page.waitForFunction(() => {
+        const el = document.querySelector('.canvas-md-viewer .nf-jump-flash');
+        return el && (el.textContent || '').includes('文档库（vault）');
+      }, null, { timeout: 5000 });
+      await page.screenshot({ path: join(SHOTS_DIR, `paragraph-highlight-${scheme}.png`) });
+      expect(pageErrors).toEqual([]);
+      await context.close();
+    });
+  }
+});
+
 test.describe('§P7 亮暗双主题截图', () => {
   for (const scheme of ['light', 'dark']) {
     test(`${scheme} · 段落快照小窗截图`, async ({ browser }) => {
