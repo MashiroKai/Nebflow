@@ -769,3 +769,280 @@ test("media: getuploadurl ret!==0 ⇒ deterministic 502, no CDN attempt", async 
     },
   );
 });
+
+// ───────────── 媒体合并批 (2026-10-22, 台账 #756): the images[] group face ─────────────
+// 作者令：①「微信上一起发图片好像不会组合一起发送 而是分开发送」②「如果没有文字
+// 内容 要等一下文字再一起发 不要空发图片和文件」。组面 = N 图一次上传 + 一条
+// sendmessage 携 [caption?] + N image_item（探针），任何拒绝自动回落官方逐条序。
+// 全部走本地 stub（egress discipline 不破）。
+
+/**
+ * A group-face pipeline stub: the whole media pipeline PLUS a sendmessage
+ * rets queue (`sendRets`: shifted per sendmessage call, default all 0) and
+ * `destroyFirst` (the first N sendmessage calls get their socket destroyed —
+ * the network-class failure face).
+ */
+function groupPipeline(opts = {}) {
+  const counts = { getuploadurl: 0, cdn: 0, sendmessage: 0 };
+  let port = 0;
+  const rets = [...(opts.sendRets ?? [])];
+  let sends = 0;
+  const stub = stubWire((req, res) => {
+    if (req.url === "/ilink/bot/getuploadurl") {
+      counts.getuploadurl++;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ret: 0, upload_full_url: `http://127.0.0.1:${port}/cdn-upload?ticket=t${counts.getuploadurl}` }));
+    } else if (req.url.startsWith("/cdn-upload")) {
+      counts.cdn++;
+      res.writeHead(200, { "x-encrypted-param": `dlp-${counts.cdn}` });
+      res.end("ok");
+    } else if (req.url === "/ilink/bot/sendmessage") {
+      counts.sendmessage++;
+      sends++;
+      if (opts.destroyFirst && sends <= opts.destroyFirst) {
+        res.destroy();
+        return;
+      }
+      const ret = rets.length ? rets.shift() : 0;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ret, message_id: 900 + sends }));
+    } else {
+      res.writeHead(404);
+      res.end("{}");
+    }
+  });
+  return {
+    seen: stub.seen,
+    counts,
+    sendmessages: () =>
+      stub.seen
+        .filter((e) => e.url === "/ilink/bot/sendmessage")
+        .map((e) => JSON.parse(e.body.toString("utf-8")).msg),
+    listen: async () => {
+      const base = await stub.listen();
+      port = Number(base.split(":").pop());
+      return base;
+    },
+    close: stub.close,
+  };
+}
+
+test("group: 3 images ⇒ ONE sendmessage carrying the 3 image_items in payload order (组合一起发送)", async () => {
+  const a = tempMediaFile("a.png", 24);
+  const b = tempMediaFile("b.png", 48);
+  const c = tempMediaFile("c.png", 72);
+  const stub = groupPipeline();
+  const base = await stub.listen();
+  await withEnv(
+    { WEIXIN_SEND_TOKEN: "t", NEBFLOW_HOME: "/nonexistent-nb-home", WEIXIN_SIDECAR_ILINK_BASE: base },
+    async () => {
+      try {
+        const { ctx } = makeCtx(fakeState(["bot-token"]), base);
+        const handle = makeSendHandler(ctx);
+        const res = await callHandler(handle, {
+          token: "t",
+          body: { to: "wx_alice", images: [a.path, b.path, c.path] },
+        });
+        assert.equal(res.status, 200);
+        assert.equal(res.body.delivered, true);
+        assert.equal(res.body.group, true, "the native group sendmessage is the delivery path");
+        assert.deepEqual(res.body.media, {
+          kind: "images",
+          count: 3,
+          bytes: [a.bytes.length, b.bytes.length, c.bytes.length],
+          names: ["a.png", "b.png", "c.png"],
+        });
+        // exactly 3 uploads and exactly ONE sendmessage
+        assert.equal(stub.counts.getuploadurl, 3);
+        assert.equal(stub.counts.cdn, 3);
+        assert.equal(stub.counts.sendmessage, 1);
+        // payload order: the upload url bodies arrive in request order …
+        const rawsizes = stub.seen
+          .filter((e) => e.url === "/ilink/bot/getuploadurl")
+          .map((e) => JSON.parse(e.body.toString("utf-8")).rawsize);
+        assert.deepEqual(rawsizes, [a.bytes.length, b.bytes.length, c.bytes.length]);
+        // … and the ONE message carries all 3 image items in the same order
+        const msgs = stub.sendmessages();
+        assert.equal(msgs.length, 1);
+        assert.equal(msgs[0].item_list.length, 3);
+        assert.deepEqual(
+          msgs[0].item_list.map((it) => it.image_item.mid_size),
+          [aesEcbPaddedSize(a.bytes.length), aesEcbPaddedSize(b.bytes.length), aesEcbPaddedSize(c.bytes.length)],
+        );
+        assert.equal(msgs[0].message_type, 2);
+        assert.equal(msgs[0].message_state, 2);
+      } finally {
+        await stub.close();
+      }
+    },
+  );
+});
+
+test("group: a caption rides FIRST INSIDE the group message (图文同发 — one message, text + images)", async () => {
+  const a = tempMediaFile("a.png", 16);
+  const b = tempMediaFile("b.png", 32);
+  const stub = groupPipeline();
+  const base = await stub.listen();
+  await withEnv(
+    { WEIXIN_SEND_TOKEN: "t", NEBFLOW_HOME: "/nonexistent-nb-home", WEIXIN_SIDECAR_ILINK_BASE: base },
+    async () => {
+      try {
+        const { ctx } = makeCtx(fakeState(["bot-token"]), base);
+        const handle = makeSendHandler(ctx);
+        const res = await callHandler(handle, {
+          token: "t",
+          body: { to: "wx_alice", text: "这两张图如下", images: [a.path, b.path] },
+        });
+        assert.equal(res.status, 200);
+        assert.equal(res.body.group, true);
+        assert.equal(stub.counts.sendmessage, 1, "caption + images = ONE message (no separate caption send)");
+        const msgs = stub.sendmessages();
+        assert.equal(msgs[0].item_list.length, 3);
+        assert.equal(msgs[0].item_list[0].type, 1, "the text item rides FIRST in the same item_list");
+        assert.equal(msgs[0].item_list[0].text_item.text, "这两张图如下");
+        assert.equal(msgs[0].item_list[1].type, 2);
+        assert.equal(msgs[0].item_list[2].type, 2);
+      } finally {
+        await stub.close();
+      }
+    },
+  );
+});
+
+test("group: the server refusing the group sendmessage (ret!==0) ⇒ automatic official per-item fallback (caption first, fresh pipelines)", async () => {
+  const a = tempMediaFile("a.png", 16);
+  const b = tempMediaFile("b.png", 32);
+  // rets: group attempt rejected; fallback = caption sendmessage + 2 image sendmessages
+  const stub = groupPipeline({ sendRets: [1, 0, 0, 0] });
+  const base = await stub.listen();
+  await withEnv(
+    { WEIXIN_SEND_TOKEN: "t", NEBFLOW_HOME: "/nonexistent-nb-home", WEIXIN_SIDECAR_ILINK_BASE: base },
+    async () => {
+      try {
+        const { ctx } = makeCtx(fakeState(["bot-token"]), base);
+        const handle = makeSendHandler(ctx);
+        const res = await callHandler(handle, {
+          token: "t",
+          body: { to: "wx_alice", text: "看图", images: [a.path, b.path] },
+        });
+        assert.equal(res.status, 200, "the fallback delivers — the caller sees NO failure");
+        assert.equal(res.body.delivered, true);
+        assert.equal(res.body.group, false, "the response names the actual delivery path");
+        // 2 uploads in the group pipeline + 2 FRESH uploads in the fallback
+        assert.equal(stub.counts.getuploadurl, 4);
+        assert.equal(stub.counts.cdn, 4);
+        assert.equal(stub.counts.sendmessage, 4);
+        const msgs = stub.sendmessages();
+        assert.equal(msgs[0].item_list.length, 3, "call 1 = the rejected group probe");
+        assert.equal(msgs[1].item_list[0].type, 1, "fallback call 1 = the caption text, FIRST");
+        assert.equal(msgs[1].item_list[0].text_item.text, "看图");
+        assert.equal(msgs[2].item_list[0].type, 2, "fallback call 2 = image 1 alone");
+        assert.equal(msgs[3].item_list[0].type, 2, "fallback call 3 = image 2 alone");
+        assert.equal(msgs[2].client_id !== msgs[3].client_id, true, "each fallback request carries its own client_id");
+      } finally {
+        await stub.close();
+      }
+    },
+  );
+});
+
+test("group: WEIXIN_SIDECAR_MEDIA_GROUP=off ⇒ NO group attempt (straight per-item, no wasted uploads)", async () => {
+  const a = tempMediaFile("a.png", 16);
+  const stub = groupPipeline();
+  const base = await stub.listen();
+  await withEnv(
+    { WEIXIN_SEND_TOKEN: "t", NEBFLOW_HOME: "/nonexistent-nb-home", WEIXIN_SIDECAR_ILINK_BASE: base, WEIXIN_SIDECAR_MEDIA_GROUP: "off" },
+    async () => {
+      try {
+        const { ctx } = makeCtx(fakeState(["bot-token"]), base);
+        const handle = makeSendHandler(ctx);
+        const res = await callHandler(handle, { token: "t", body: { to: "wx_alice", images: [a.path] } });
+        assert.equal(res.status, 200);
+        assert.equal(res.body.group, false);
+        assert.equal(stub.counts.getuploadurl, 1, "exactly one upload — no probe upload");
+        assert.equal(stub.counts.sendmessage, 1);
+      } finally {
+        await stub.close();
+      }
+    },
+  );
+});
+
+test("group: a failing fallback item stops the batch ⇒ 502 with delivered_count (partial delivery is honest)", async () => {
+  const a = tempMediaFile("a.png", 16);
+  const b = tempMediaFile("b.png", 32);
+  // rets: group rejected (1); fallback: img1 ok (0), img2 rejected (2)
+  const stub = groupPipeline({ sendRets: [1, 0, 2] });
+  const base = await stub.listen();
+  await withEnv(
+    { WEIXIN_SEND_TOKEN: "t", NEBFLOW_HOME: "/nonexistent-nb-home", WEIXIN_SIDECAR_ILINK_BASE: base },
+    async () => {
+      try {
+        const { ctx } = makeCtx(fakeState(["bot-token"]), base);
+        const handle = makeSendHandler(ctx);
+        const res = await callHandler(handle, { token: "t", body: { to: "wx_alice", images: [a.path, b.path] } });
+        assert.equal(res.status, 502);
+        assert.equal(res.body.delivered_count, 1, "the body names the partial delivery");
+        assert.match(res.body.error, /delivered 1/);
+        assert.equal(stub.counts.sendmessage, 3, "the stop-at-first-failure boundary: no third fallback item");
+      } finally {
+        await stub.close();
+      }
+    },
+  );
+});
+
+test("group: a network-class failure on the group attempt ⇒ the fallback still delivers", async () => {
+  const a = tempMediaFile("a.png", 16);
+  const b = tempMediaFile("b.png", 32);
+  // the first 2 sendmessage calls (the group attempt's retry budget) get destroyed
+  const stub = groupPipeline({ destroyFirst: 2, sendRets: [] });
+  const base = await stub.listen();
+  await withEnv(
+    { WEIXIN_SEND_TOKEN: "t", NEBFLOW_HOME: "/nonexistent-nb-home", WEIXIN_SIDECAR_ILINK_BASE: base, WEIXIN_SIDECAR_SEND_BACKOFF_MS: "10" },
+    async () => {
+      try {
+        const { ctx } = makeCtx(fakeState(["bot-token"]), base);
+        const handle = makeSendHandler(ctx);
+        const res = await callHandler(handle, { token: "t", body: { to: "wx_alice", images: [a.path, b.path] } });
+        assert.equal(res.status, 200);
+        assert.equal(res.body.delivered, true);
+        assert.equal(res.body.group, false);
+        // 2 group uploads + 2 fresh fallback uploads; sendmessage = 2 destroyed attempts + 2 delivered
+        assert.equal(stub.counts.getuploadurl, 4);
+        assert.equal(stub.counts.sendmessage, 4);
+      } finally {
+        await stub.close();
+      }
+    },
+  );
+});
+
+test("group: validation — images + image_path / non-array / empty array / relative / missing ⇒ 400, zero iLink calls", async () => {
+  const img = tempMediaFile("ok.png");
+  await withEnv(
+    { WEIXIN_SEND_TOKEN: "t", NEBFLOW_HOME: "/nonexistent-nb-home", WEIXIN_SIDECAR_ILINK_BASE: "http://127.0.0.1:1" },
+    async () => {
+      const { ctx } = makeCtx(fakeState(["tok"]), "http://127.0.0.1:1");
+      const handle = makeSendHandler(ctx);
+      const bothFaces = await callHandler(handle, { token: "t", body: { to: "a", images: [img.path], image_path: img.path } });
+      assert.equal(bothFaces.status, 400);
+      assert.match(bothFaces.body.error, /mutually exclusive/);
+      const notArray = await callHandler(handle, { token: "t", body: { to: "a", images: "nope" } });
+      assert.equal(notArray.status, 400);
+      assert.match(notArray.body.error, /must be an array/);
+      const empty = await callHandler(handle, { token: "t", body: { to: "a", images: [] } });
+      assert.equal(empty.status, 400);
+      assert.match(empty.body.error, /non-empty/);
+      const rel = await callHandler(handle, { token: "t", body: { to: "a", images: ["relative/a.png"] } });
+      assert.equal(rel.status, 400);
+      assert.match(rel.body.error, /absolute/);
+      const gone = await callHandler(handle, { token: "t", body: { to: "a", images: ["/nonexistent-nb-media/x.png"] } });
+      assert.equal(gone.status, 400);
+      assert.match(gone.body.error, /media_path_unreadable/);
+      const entry = await callHandler(handle, { token: "t", body: { to: "a", images: [123] } });
+      assert.equal(entry.status, 400);
+      assert.match(entry.body.error, /non-empty array/);
+    },
+  );
+});

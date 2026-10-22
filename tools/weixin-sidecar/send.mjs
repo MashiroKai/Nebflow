@@ -21,15 +21,31 @@
 //       token without a shim restart (env-configured values need a restart —
 //       documented).
 //     Body: {"to": "<ilink_user_id>", "text"?: "...", "image_path"?: "<abs path>",
-//            "file_path"?: "<abs path>", "account"?, "client_id"?}
+//            "file_path"?: "<abs path>", "images"?: ["<abs path>", …],
+//            "account"?, "client_id"?}
 //       weixin-media batch (2026-10-08): `image_path` / `file_path` add the
-//       MEDIA leg. At least ONE of text / image_path / file_path is required
-//       (text alone keeps the v1 shape byte-identical); the two paths are
-//       mutually exclusive (one media item per message, the official
-//       sendMediaItems discipline). A media path is read DIRECTLY by this
-//       process (shim and engine are same-host by deployment) and must be
-//       absolute. text + path rides as a caption: the TEXT sendmessage goes
-//       first, the media item second (each its own request, official mirror).
+//       MEDIA leg. At least ONE of text / image_path / file_path / images is
+//       required (text alone keeps the v1 shape byte-identical); the two paths
+//       are mutually exclusive (one media item per message, the official
+//       sendMediaItems discipline), and `images` (媒体合并批 2026-10-22) is
+//       mutually exclusive with BOTH (the group face is image-only). A media
+//       path is read DIRECTLY by this process (shim and engine are same-host
+//       by deployment) and must be absolute. text + path rides as a caption:
+//       the TEXT sendmessage goes first, the media item second (each its own
+//       request, official mirror).
+//
+//       The `images` GROUP face (媒体合并批, 2026-10-22, 台账 #756 — 作者令
+//       「一起发图片…组合一起发送」): N images upload once each, then ONE
+//       sendmessage carries [text_item?] + N image_item entries — one WeChat
+//       message for the group, caption included. The official 2.4.9 client
+//       never sends a multi-entry item_list, so the group sendmessage is a
+//       PROBE with an automatic fallback: any refusal (ret!==0) or exhausted
+//       network budget degrades to the official per-item sequence (caption
+//       text first, then each image, FRESH pipeline each, own client_id),
+//       stopping at the first failing image (the 502 body names
+//       `delivered_count`). `WEIXIN_SIDECAR_MEDIA_GROUP=off` skips the probe
+//       (straight per-item). The response's `group: true|false` tells which
+//       path delivered.
 //
 //       Media pipeline (official 2.4.9 mirror, byte-for-byte wire shapes):
 //         getuploadurl (media_type 1=image / 3=file, no_need_thumb, aeskey
@@ -532,14 +548,16 @@ async function uploadToCdn(cx, { buf, uploadFullUrl, uploadParam, filekey, cdnBa
 }
 
 /**
- * The media leg (weixin-media batch) — the official 2.4.9 pipeline mirrored:
- * read (local, same-host) → hash → gen aeskey → getuploadurl (§0.4 budget) →
- * AES-128-ECB POST CDN (the official 3-attempt budget) → x-encrypted-param →
- * image_item / file_item → sendmessage. A caption TEXT rides FIRST as its own
- * sendmessage (official sendMediaItems: one item per request, own client_id).
- * Resolves {parsed, attempts, kind, bytes, name}; throws on any stage failure.
+ * The media UPLOAD pipeline (weixin-media batch; the upload half was promoted
+ * into this helper by the 媒体合并批, 2026-10-22): read (local, same-host) →
+ * hash → gen aeskey → getuploadurl (§0.4 budget) → AES-128-ECB POST CDN (the
+ * official 3-attempt budget) → x-encrypted-param → the image_item / file_item.
+ * NO sendmessage happens here. Both the single-media face
+ * ([[sendMediaMessage]]) and the `images[]` group face ([[sendImagesMessage]])
+ * build their items through THIS function, so the wire shapes cannot drift.
+ * Resolves {item, rawsize}; throws on any stage failure.
  */
-async function sendMediaMessage(cx, { base, cdnBase, botToken, to, text, kind, mediaPath, clientId, signal }) {
+async function uploadMediaItem(cx, { base, cdnBase, botToken, to, kind, mediaPath, signal }) {
   // ① the local read: absolute path enforced by the route validation; a media
   //    path crossing a gone/stale artifact is a deterministic refusal.
   let plaintext;
@@ -591,6 +609,23 @@ async function sendMediaMessage(cx, { base, cdnBase, botToken, to, text, kind, m
     signal,
   });
 
+  const item =
+    kind === "image"
+      ? buildImageItem({ downloadParam, aeskeyHex, fileSizeCiphertext: filesize })
+      : buildFileItem({ downloadParam, aeskeyHex, fileName: path.basename(mediaPath), md5: rawfilemd5, fileSize: rawsize });
+  return { item, rawsize };
+}
+
+/**
+ * The single-media leg (weixin-media batch) — the official 2.4.9 pipeline
+ * mirrored via [[uploadMediaItem]]: one item, one sendmessage. A caption TEXT
+ * rides FIRST as its own sendmessage (official sendMediaItems: one item per
+ * request, own client_id). Resolves {parsed, attempts, kind, bytes, name};
+ * throws on any stage failure.
+ */
+async function sendMediaMessage(cx, { base, cdnBase, botToken, to, text, kind, mediaPath, clientId, signal }) {
+  const { item, rawsize } = await uploadMediaItem(cx, { base, cdnBase, botToken, to, kind, mediaPath, signal });
+
   // ④ caption first (own request, own id), then the media item
   if (text && text.trim()) {
     await withNetworkRetry(
@@ -608,10 +643,6 @@ async function sendMediaMessage(cx, { base, cdnBase, botToken, to, text, kind, m
       signal,
     );
   }
-  const item =
-    kind === "image"
-      ? buildImageItem({ downloadParam, aeskeyHex, fileSizeCiphertext: filesize })
-      : buildFileItem({ downloadParam, aeskeyHex, fileName: path.basename(mediaPath), md5: rawfilemd5, fileSize: rawsize });
   const { parsed, attempts } = await withNetworkRetry(
     cx,
     "sendmessage",
@@ -623,6 +654,125 @@ async function sendMediaMessage(cx, { base, cdnBase, botToken, to, text, kind, m
     signal,
   );
   return { parsed, attempts, kind, bytes: rawsize, name: path.basename(mediaPath) };
+}
+
+// ───────────── 媒体合并批 (2026-10-22, 台账 #756): the images[] group face ─────────────
+
+/**
+ * The GROUP gate (媒体合并批): `WEIXIN_SIDECAR_MEDIA_GROUP=off` turns the
+ * multi-image merge OFF — `images[]` requests then go straight to the official
+ * per-item sequence below, with no group attempt (and no wasted uploads) at
+ * all. Read PER REQUEST (the token's cold-read discipline): flipping the env
+ * on a running side-car applies from the next send.
+ */
+export function mediaGroupAllowed() {
+  return (process.env.WEIXIN_SIDECAR_MEDIA_GROUP ?? "").trim().toLowerCase() !== "off";
+}
+
+/**
+ * The images[] GROUP face (作者裁定 2026-10-22「微信上一起发图片好像不会组合
+ * 一起发送 而是分开发送」)： N images → N uploads (each through the SAME
+ * [[uploadMediaItem]] pipeline as the single face) → ONE sendmessage whose
+ * item_list carries [caption text_item?] + all N image_item entries — one
+ * WeChat message for the whole group, caption included (图文同发). The official
+ * 2.4.9 client never sends a multi-entry item_list, so the server side is
+ * UNPROVEN: the group sendmessage is a PROBE with an automatic fallback —
+ *   - protocol rejection (ret!==0) or an exhausted network budget on the group
+ *     attempt ⇒ the OFFICIAL per-item sequence runs as the fallback: the
+ *     caption text first (its own sendmessage), then each image in order, each
+ *     with a FRESH full pipeline (no upload-param reuse assumptions — the
+ *     battle-tested path, not a guessed shortcut);
+ *   - the fallback stops at the FIRST failing image (the engine's own per-item
+ *     degrade philosophy); the 502 body carries `delivered_count` so a caller
+ *     can tell a partial delivery from a total one;
+ *   - `mediaGroupAllowed() == false` (the gate) skips ② entirely.
+ * Resolves {parsed, attempts, group, bytes, names, deliveredCount}; throws
+ * (err.deliveredCount set) only when the fallback itself failed.
+ */
+async function sendImagesMessage(cx, { base, cdnBase, botToken, to, text, images, clientId, groupAllowed, signal }) {
+  const total = images.length;
+
+  const sendOne = (itemsOne) =>
+    withNetworkRetry(cx, "sendmessage", (attempt) =>
+      ilinkSendMessage(cx, { base, botToken, to, clientId: generateClientId(), signal, items: itemsOne }).then((p) => ({
+        parsed: p,
+        attempts: attempt,
+      })),
+    );
+
+  // ② the group attempt (probe): N uploads, then ONE sendmessage carrying
+  //    [caption text_item?] + N image_item entries, request clientId. Skipped
+  //    entirely when the gate is off — the gate-off path must not waste the
+  //    uploads either.
+  if (groupAllowed) {
+    const items = [];
+    const bytes = [];
+    const names = [];
+    for (const mediaPath of images) {
+      const up = await uploadMediaItem(cx, { base, cdnBase, botToken, to, kind: "image", mediaPath, signal });
+      items.push(up.item);
+      bytes.push(up.rawsize);
+      names.push(path.basename(mediaPath));
+    }
+    cx.info(`images: uploaded ${total} item(s), group=attempt`);
+    const groupItems =
+      text && text.trim() ? [{ type: ITEM_TYPE_TEXT, text_item: { text } }, ...items] : items;
+    try {
+      const { parsed, attempts } = await withNetworkRetry(
+        cx,
+        "sendmessage",
+        (attempt) =>
+          ilinkSendMessage(cx, { base, botToken, to, clientId, signal, items: groupItems }).then((p) => ({
+            parsed: p,
+            attempts: attempt,
+          })),
+        signal,
+      );
+      return { parsed, attempts, group: true, bytes, names, deliveredCount: total };
+    } catch (err) {
+      if (signal?.aborted) throw err; // the caller is gone — no fallback run
+      cx.warn(`images: group sendmessage failed (${err.message}) — falling back to the official per-item sequence`);
+    }
+  } else {
+    cx.info(`images: group gate off — straight to the official per-item sequence (${total} image(s))`);
+  }
+
+  // ③ the official per-item fallback: caption text FIRST (its own sendmessage),
+  //    then each image in order with a FRESH pipeline and its own client_id.
+  let delivered = 0;
+  let lastParsed = null;
+  const bytes = [];
+  const names = [];
+  try {
+    if (text && text.trim()) {
+      const cap = await sendOne([{ type: ITEM_TYPE_TEXT, text_item: { text } }]);
+      lastParsed = cap.parsed;
+    }
+    for (let i = 0; i < total; i++) {
+      const up = await uploadMediaItem(cx, { base, cdnBase, botToken, to, kind: "image", mediaPath: images[i], signal });
+      const one = await sendOne([up.item]);
+      lastParsed = one.parsed;
+      bytes.push(up.rawsize);
+      names.push(path.basename(images[i]));
+      delivered += 1;
+    }
+  } catch (err) {
+    const e = new Error(
+      `images fallback stopped at item ${Math.min(delivered + 1, total)}/${total} (delivered ${delivered}): ${err.message}`,
+    );
+    if (err.protocol) e.protocol = true;
+    else e.networkClass = err.networkClass ?? classifyFetchError(err);
+    e.deliveredCount = delivered;
+    throw e;
+  }
+  return {
+    parsed: lastParsed,
+    attempts: SEND_ATTEMPTS,
+    group: false,
+    bytes,
+    names,
+    deliveredCount: delivered,
+  };
 }
 
 // ───────────────────────── host account face ─────────────────────────
@@ -743,9 +893,33 @@ export function makeSendHandler(cx) {
     // weixin-media batch: the optional media leg. Trimmed-empty equals absent.
     const imagePath = typeof body?.image_path === "string" ? body.image_path.trim() : "";
     const filePath = typeof body?.file_path === "string" ? body.file_path.trim() : "";
+    // 媒体合并批 (2026-10-22): the optional image GROUP — an array of absolute
+    // local paths, each validated like image_path below. An empty / non-array
+    // value is a 400 (the caller asked for the group face and malformed it);
+    // the key ABSENT means no group. Mutually exclusive with both single-media
+    // paths (the group face is image-only: files keep the official per-item leg).
+    let images = null;
+    if (body?.images !== undefined && body?.images !== null) {
+      if (!Array.isArray(body.images)) {
+        cx.sendJson(res, 400, { error: "invalid_body: 'images' must be an array of absolute image paths" });
+        return;
+      }
+      const arr = body.images.map((v) => (typeof v === "string" ? v.trim() : ""));
+      if (arr.length === 0 || arr.some((v) => !v)) {
+        cx.sendJson(res, 400, { error: "invalid_body: 'images' must be a non-empty array of absolute image paths" });
+        return;
+      }
+      images = arr;
+    }
     const kind = imagePath && !filePath ? "image" : filePath && !imagePath ? "file" : null;
     if (!to) {
       cx.sendJson(res, 400, { error: "invalid_body: 'to' (ilink_user_id) is required" });
+      return;
+    }
+    if (images && (imagePath || filePath)) {
+      cx.sendJson(res, 400, {
+        error: "invalid_body: 'images' (the group face) is mutually exclusive with 'image_path'/'file_path'",
+      });
       return;
     }
     if (imagePath && filePath) {
@@ -754,9 +928,9 @@ export function makeSendHandler(cx) {
       });
       return;
     }
-    if ((text == null || !text.trim()) && !kind) {
+    if ((text == null || !text.trim()) && !kind && !images) {
       cx.sendJson(res, 400, {
-        error: "invalid_body: one of 'text', 'image_path', 'file_path' is required",
+        error: "invalid_body: one of 'text', 'image_path', 'file_path', 'images' is required",
       });
       return;
     }
@@ -764,23 +938,25 @@ export function makeSendHandler(cx) {
       cx.sendJson(res, 400, { error: `invalid_body: text exceeds the ${SEND_TEXT_MAX_CHARS}-char sanity bound` });
       return;
     }
-    if (kind) {
+    if (kind || images) {
       // Same-host direct read: an absolute local path is the contract. A stale
       // artifact is refused HERE (400, before any iLink traffic), not mid-pipeline.
-      const p = kind === "image" ? imagePath : filePath;
-      if (!path.isAbsolute(p)) {
-        cx.sendJson(res, 400, {
-          error: `invalid_body: media path must be absolute (the shim reads the local file directly): ${p}`,
-        });
-        return;
-      }
-      try {
-        const st = fs.statSync(p);
-        if (!st.isFile()) throw new Error("not a regular file");
-        if (st.size > MEDIA_MAX_BYTES) throw new Error(`exceeds the ${MEDIA_MAX_BYTES}-byte sanity bound`);
-      } catch (e) {
-        cx.sendJson(res, 400, { error: `invalid_body: media_path_unreadable: ${p}: ${e.message}` });
-        return;
+      const paths = kind ? [kind === "image" ? imagePath : filePath] : images;
+      for (const p of paths) {
+        if (!path.isAbsolute(p)) {
+          cx.sendJson(res, 400, {
+            error: `invalid_body: media path must be absolute (the shim reads the local file directly): ${p}`,
+          });
+          return;
+        }
+        try {
+          const st = fs.statSync(p);
+          if (!st.isFile()) throw new Error("not a regular file");
+          if (st.size > MEDIA_MAX_BYTES) throw new Error(`exceeds the ${MEDIA_MAX_BYTES}-byte sanity bound`);
+        } catch (e) {
+          cx.sendJson(res, 400, { error: `invalid_body: media_path_unreadable: ${p}: ${e.message}` });
+          return;
+        }
       }
     }
 
@@ -813,13 +989,33 @@ export function makeSendHandler(cx) {
 
     cx.info(
       `send: to=${to} account=${acct.id} base=${base} clientId=${clientId} textLen=${text ? text.length : 0}` +
-        (kind ? ` media=${kind}` : ""),
+        (kind ? ` media=${kind}` : "") +
+        (images ? ` images=${images.length}` : ""),
     );
     try {
       let parsed;
       let attempts;
       let mediaInfo;
-      if (kind) {
+      let groupInfo;
+      if (images) {
+        // 媒体合并批: the group face — N uploads, ONE group sendmessage (probe),
+        // automatic official per-item fallback. Delivered either way.
+        const r = await sendImagesMessage(cx, {
+          base,
+          cdnBase,
+          botToken: acct.token,
+          to,
+          text,
+          images,
+          clientId,
+          groupAllowed: mediaGroupAllowed(),
+          signal: ac.signal,
+        });
+        parsed = r.parsed;
+        attempts = r.attempts;
+        groupInfo = r.group;
+        mediaInfo = { kind: "images", count: images.length, bytes: r.bytes, names: r.names };
+      } else if (kind) {
         const r = await sendMediaMessage(cx, {
           base,
           cdnBase,
@@ -847,7 +1043,8 @@ export function makeSendHandler(cx) {
       const messageId = typeof parsed.message_id === "string" ? parsed.message_id : undefined;
       cx.info(
         `send: delivered to=${to} (message_id ${messageId ? `${messageId.length}B` : "absent"}, attempts=${attempts}` +
-          (mediaInfo ? `, media=${mediaInfo.kind}(${mediaInfo.bytes}B)` : "") +
+          (mediaInfo ? `, media=${mediaInfo.kind}(${Array.isArray(mediaInfo.bytes) ? mediaInfo.bytes.join("+") : mediaInfo.bytes}B)` : "") +
+          (groupInfo !== undefined ? `, group=${groupInfo}` : "") +
           ")",
       );
       cx.sendJson(res, 200, {
@@ -858,17 +1055,23 @@ export function makeSendHandler(cx) {
         attempts,
         context_threaded: false,
         ...(mediaInfo ? { media: mediaInfo } : {}),
+        ...(groupInfo !== undefined ? { group: groupInfo } : {}),
       });
     } catch (err) {
       if (err.protocol) {
         cx.error(`send: iLink refused to=${to}: ${err.message}`);
-        cx.sendJson(res, 502, { error: `delivery_failed: ${err.message}`, client_id: clientId });
+        cx.sendJson(res, 502, {
+          error: `delivery_failed: ${err.message}`,
+          client_id: clientId,
+          ...(Number.isInteger(err.deliveredCount) ? { delivered_count: err.deliveredCount } : {}),
+        });
       } else {
         cx.error(`send: network-class failure to=${to} (${err.networkClass ?? classifyFetchError(err)}): ${err.message}`);
         cx.sendJson(res, 502, {
           error: `delivery_failed: network ${err.networkClass ?? classifyFetchError(err)} after retries`,
           client_id: clientId,
           attempts: SEND_ATTEMPTS,
+          ...(Number.isInteger(err.deliveredCount) ? { delivered_count: err.deliveredCount } : {}),
         });
       }
     }
