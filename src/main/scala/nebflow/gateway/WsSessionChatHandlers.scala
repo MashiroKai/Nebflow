@@ -1055,29 +1055,35 @@ private[gateway] object WsSessionChatHandlers:
           ids.map(id => id -> nebflow.core.project.TaskLedgerStore.titleOfSync(Some(id)).getOrElse("")).toMap
         }.handleErrorWith(_ => IO.pure(Map.empty[String, String]))
           .flatMap { titles =>
-            active
-              .traverse { rec =>
-                // retryCount 来自 taskStore（2026-08-22 缺口 2：快照自带三
-                // 字段之一；Ephemeral/无任务记录 → 0）
-                sharedResources.subAgentTaskStore.findByTaskId(rec.sessionId).flatMap { taskOpt =>
-                  sessionStore.getSessionMeta(rec.sessionId).map { meta =>
-                    WebSocketRoutes.activeAgentEntryJson(
-                      rec,
-                      meta,
-                      taskOpt.map(_.retryCount),
-                      taskTitle = rec.taskId.flatMap(titles.get)
-                    )
+            // #752 空闲细分：会话自有等待型后台任务一次全表扫描（waitingBySession
+            // 分组 Map），逐行查表取自有集——快照「在等什么」字段单源。
+            nebflow.core.tools.BgTaskRegistry.waitingBySession.flatMap { waitingBySession =>
+              active
+                .traverse { rec =>
+                  // retryCount 来自 taskStore（2026-08-22 缺口 2：快照自带三
+                  // 字段之一；Ephemeral/无任务记录 → 0）
+                  sharedResources.subAgentTaskStore.findByTaskId(rec.sessionId).flatMap { taskOpt =>
+                    sessionStore.getSessionMeta(rec.sessionId).map { meta =>
+                      WebSocketRoutes.activeAgentEntryJson(
+                        rec,
+                        meta,
+                        taskOpt.map(_.retryCount),
+                        taskTitle = rec.taskId.flatMap(titles.get),
+                        bgWaiting = waitingBySession
+                          .getOrElse(rec.sessionId, Nil)
+                          .map(t => (t.jobId, t.description, t.startedAtMs))
+                      )
+                    }
                   }
                 }
-              }
-              .flatMap { agents =>
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "activeAgents".asJson,
-                    "agents" -> agents.asJson
-                  )
+            }.flatMap { agents =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "activeAgents".asJson,
+                  "agents" -> agents.asJson
                 )
-              }
+              )
+            }
           }
       }
     }

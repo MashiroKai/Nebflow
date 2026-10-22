@@ -592,44 +592,60 @@ Git safety:
                   val bgDescription = desc.getOrElse(firstLine)
                   // 等待型任务的完成回调需带闸记账信息（超时杀 → 节点 failed 注明）。
                   val gateOwned = !persistent && isNodeSession(ctx)
-                  // Policy "backgrounded commands have no limit": waiting-type background jobs have NO time cap —
-                  // the old 30min tier (ctx.bashConfig.hardTimeoutMs) and the node
-                  // 4h tier (BgGateNodeHardTimeoutMs) are both retired from the
-                  // production face. Both the explicit run_in_background path (here)
-                  // and the auto-backgrounded path pass the NoHardTimeout sentinel,
-                  // making the B2 hard-timeout stall kill unreachable — full-class
-                  // exemption, one unified "background = no time limit" semantics.
-                  // B1 stays alert-only; persistent exemption, explicit cancel and
-                  // killSessionProcesses are unchanged. The finite-value parameters
-                  // remain on ShellSession for spec injection (mechanism testability).
-                  val hardTimeoutMs = Defaults.BashBackgroundNoHardTimeoutMs
-                  for
-                    jobId <- IO.randomUUID.map(_.toString.take(8))
-                    onComplete = makeNotifyCallback(command, desc, ctx, jobId, tailN, gateOwned)
-                    // 先建缓冲拿句柄，sink 随
-                    // executeBackground 挂上 JobHealth——运行中逐行入尾窗缓冲，
-                    // 终态后由 onComplete finalizeTask 进留存区（详情卡 REST 读）。
-                    outBuffer <- BgTaskOutputStore.open(jobId)
-                    _ <- shell.executeBackground(
-                      actualCommand,
-                      desc,
-                      onComplete,
-                      onHeartbeat,
-                      Some(jobId),
-                      hardTimeoutMs = hardTimeoutMs,
-                      stuckWindowSec = ctx.bashConfig.stuckWindowSec,
-                      healthCheckIntervalSec = ctx.bashConfig.healthCheckIntervalSec,
-                      persistent = persistent,
-                      outputSink = Some((line: String) => outBuffer.append(line)),
-                      // B1 只提醒腿的审计出口：经 ctx 身份解析
-                      // 项目工作区写 `bg-slow` 事件。无项目上下文 ⇒ None ⇒ 只留 logger.warn。
-                      onSlowDetected = Some((summary: String) => auditBgSlow(ctx, jobId, summary))
+                  // #753 会话级创建速率闸：熔断激活/触发 ⇒ 本拍拒绝（可读错误回执，
+                  // 不建任务）。persistent=true（服务型 server）不设闸——dev server
+                  // 等长驻任务是合法低频创建，闸针对的是 waiter/poller 刷屏族。
+                  def startBg: IO[Either[ToolError, String]] =
+                    // Policy "backgrounded commands have no limit": waiting-type background jobs have NO time cap —
+                    // the old 30min tier (ctx.bashConfig.hardTimeoutMs) and the node
+                    // 4h tier (BgGateNodeHardTimeoutMs) are both retired from the
+                    // production face. Both the explicit run_in_background path (here)
+                    // and the auto-backgrounded path pass the NoHardTimeout sentinel,
+                    // making the B2 hard-timeout stall kill unreachable — full-class
+                    // exemption, one unified "background = no time limit" semantics.
+                    // B1 stays alert-only; persistent exemption, explicit cancel and
+                    // killSessionProcesses are unchanged. The finite-value parameters
+                    // remain on ShellSession for spec injection (mechanism testability).
+                    val hardTimeoutMs = Defaults.BashBackgroundNoHardTimeoutMs
+                    for
+                      jobId <- IO.randomUUID.map(_.toString.take(8))
+                      onComplete = makeNotifyCallback(command, desc, ctx, jobId, tailN, gateOwned)
+                      // 先建缓冲拿句柄，sink 随
+                      // executeBackground 挂上 JobHealth——运行中逐行入尾窗缓冲，
+                      // 终态后由 onComplete finalizeTask 进留存区（详情卡 REST 读）。
+                      outBuffer <- BgTaskOutputStore.open(jobId)
+                      _ <- shell.executeBackground(
+                        actualCommand,
+                        desc,
+                        onComplete,
+                        onHeartbeat,
+                        Some(jobId),
+                        hardTimeoutMs = hardTimeoutMs,
+                        stuckWindowSec = ctx.bashConfig.stuckWindowSec,
+                        healthCheckIntervalSec = ctx.bashConfig.healthCheckIntervalSec,
+                        persistent = persistent,
+                        outputSink = Some((line: String) => outBuffer.append(line)),
+                        // B1 只提醒腿的审计出口：经 ctx 身份解析
+                        // 项目工作区写 `bg-slow` 事件。无项目上下文 ⇒ None ⇒ 只留 logger.warn。
+                        onSlowDetected = Some((summary: String) => auditBgSlow(ctx, jobId, summary))
+                      )
+                      _ <- emitBgTaskStarted(ctx, jobId, bgDescription, persistent)
+                    yield Right(
+                      s"[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn."
                     )
-                    _ <- emitBgTaskStarted(ctx, jobId, bgDescription, persistent)
-                  yield Right(
-                    s"[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn."
-                  )
-                  end for
+                    end for
+                  end startBg
+                  val run =
+                    if persistent then startBg
+                    else
+                      // 告警帧只在熔断**触发沿**发（breakerEngaged）——熔断激活期
+                      // 内的每次拒绝只回工具面错误，不再重复 toast（防告警刷屏）。
+                      BgTaskRegistry.gateCreation(ctx.sessionId.getOrElse("")).flatMap { d =>
+                        if d.breakerEngaged then emitRateAlert(ctx) *> IO.pure(Left(ToolError(d.message.getOrElse(""))))
+                        else if !d.allowed then IO.pure(Left(ToolError(d.message.getOrElse(""))))
+                        else startBg
+                      }
+                  run
                 else if ctx.isRemoteExec then
                   // Remote-exec: run synchronously to completion and return the
                   // real output. The caller (another Nebflow instance via HTTP)
@@ -843,6 +859,12 @@ Git safety:
         onSlowDetected = Some((summary: String) => auditBgSlow(ctx, jobId, summary))
       )
       _ <- emitBgTaskStarted(ctx, jobId, bgDescription, persistent = false)
+      // #753 速率闸：收编计一次创建（本拍可能正好触发熔断——本任务已在前台
+      // 跑着，不能拒；熔断生效后**下一个**创建被拒）。Left 消息在此无消费面
+      // （任务已存在），触发沿告警帧照发。
+      _ <- BgTaskRegistry.gateCreation(ctx.sessionId.getOrElse("")).flatMap { d =>
+        if d.breakerEngaged then emitRateAlert(ctx) else IO.unit
+      }
     // 回执契约（main-agent-nonblocking 批，裁定原文「转后台时给主 agent 的
     // 回执要含：已转后台 + job 标识 + 如何查询」）：① [Background job started]
     // 头 + ② Job ID + ③ 已转后台说明（Auto-backgrounded after … NOT killed）
@@ -1225,6 +1247,27 @@ Git safety:
       })
 
   end emitBgTaskStarted
+
+  /**
+   * #753 速率闸告警帧（熔断触发时发 wsSend）：`bgRateAlert` —
+   * {sessionId, rootSessionId, count, windowSec, cooldownSec}。前端 toast 告警
+   * （作者看得见「某会话在刷屏」），引擎侧同点另有 logger.warn（gateCreation
+   * 内）。无 wsSend（remote 执行）时静默降级——引擎日志仍是告警面。
+   */
+  private def emitRateAlert(ctx: ToolContext): IO[Unit] =
+    ctx.wsSend.fold(IO.unit) { send =>
+      val json = io.circe.Json.obj(
+        "type" -> "bgRateAlert".asJson,
+        "sessionId" -> ctx.sessionId.asJson,
+        "rootSessionId" -> ctx.rootSessionId.orElse(ctx.sessionId).asJson,
+        "count" -> Defaults.BgRateBreakerAfter.asJson,
+        "windowSec" -> (Defaults.BgRateWindowMs / 1000L).asJson,
+        "cooldownSec" -> (Defaults.BgRateBreakerCooldownMs / 1000L).asJson
+      )
+      send(json).handleErrorWith(e => logger.warn(s"bgRateAlert WS send failed: ${e.getMessage}"))
+    }
+
+  end emitRateAlert
 
   /** Build a heartbeat callback that sends WS updates to frontend. */
   private def makeHeartbeatCallback(

@@ -303,6 +303,41 @@ object Defaults:
   /** Background job idle threshold (no output) before flagging as stuck, in seconds. */
   val BgStuckThresholdSec: Int = 600
 
+  // ---- 会话级后台任务创建速率闸（#753 面板刷屏熔断批）----
+  // 实证：delegate-nebflow-59f171d8 八分钟造 88 个 Decision-point waiter 刷爆
+  // 后台任务面板。判据/文案单点 = BgTaskRegistry.BgRateGate（纯判定面），
+  // IO 面 = BgTaskRegistry.gateCreation（BashTool 两条后台创建路径的前置闸）。
+
+  /**
+   * 速率闸滚动窗口（ms）。每 prop 四值同款 I2 缝（BgIdleTimeoutSec 先例）：
+   * `nebflow.bg.rateWindowMs`，默认 10min。
+   */
+  def BgRateWindowMs: Long =
+    sys.props.getOrElse("nebflow.bg.rateWindowMs", (10L * 60L * 1000L).toString).toLong
+
+  /**
+   * 告警档阈值：窗口内创建数达到（本拍计入后 ≥）即引擎告警日志，不拒绝。
+   * `nebflow.bg.rateWarnAfter`，默认 12。
+   */
+  def BgRateWarnAfter: Int =
+    sys.props.getOrElse("nebflow.bg.rateWarnAfter", "12").toInt
+
+  /**
+   * 熔断档阈值：窗口内**既有**创建数达到即熔断 + 拒绝本拍。取值留足合法
+   * 批量作业余量（编译+测试+dev server 一个会话 10min 内远用不到 20 个）；
+   * 实证事故 88 个/8min 远超此档。`nebflow.bg.rateBreakerAfter`，默认 20。
+   */
+  def BgRateBreakerAfter: Int =
+    sys.props.getOrElse("nebflow.bg.rateBreakerAfter", "20").toInt
+
+  /**
+   * 熔断冷却（ms）：熔断触发后该会话新后台任务创建被拒的时长，到期自动解除
+   * （窗口计数照常滚动，解除后从当前计数重新起步）。
+   * `nebflow.bg.rateBreakerCooldownMs`，默认 10min。
+   */
+  def BgRateBreakerCooldownMs: Long =
+    sys.props.getOrElse("nebflow.bg.rateBreakerCooldownMs", (10L * 60L * 1000L).toString).toLong
+
   /**
    * Background job idle timeout — if a background command produces no output
    * for this many seconds, it is automatically cancelled and the agent is

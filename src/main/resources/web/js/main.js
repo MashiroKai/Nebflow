@@ -1907,14 +1907,21 @@ onMessage('agentStart', (msg, view) => {
     // Empty = no attribution → no badge rendered (empty-value contract).
     taskId: msg.taskId || (prev && prev.taskId) || '',
     taskTitle: msg.taskTitle || (prev && prev.taskTitle) || '',
-    startedAt: (prev && prev.startedAt) || Date.now(),
-    status: 'Processing',
-    retryCount: (prev && prev.retryCount) || 0,
-    stuck: null,
-    frozen: false,
-    currentTool: null,
-    done: false,
-  };
+      startedAt: (prev && prev.startedAt) || Date.now(),
+      status: 'Processing',
+      retryCount: (prev && prev.retryCount) || 0,
+      stuck: null,
+      frozen: false,
+      currentTool: null,
+      done: false,
+      // #752 空闲细分（快照恢复字段跨 turn 保留——与 kind/startedAt/retryCount
+      // 同款「实时行更丰富不降级」合并语义；下一拍快照到达后以快照为准刷新）。
+      bgWaiting: (prev && prev.bgWaiting) || [],
+      heldReceipts: (prev && prev.heldReceipts) || 0,
+      unreadReceipts: (prev && prev.unreadReceipts) || 0,
+      outstandingSubagents: (prev && prev.outstandingSubagents) || 0,
+      lastActivityMs: (prev && prev.lastActivityMs) || 0,
+    };
   // 对话层活性批（2026-10-22）：批派发上屏为活动条一行（归属 = rootSessionId，
   // 与上面 sessionBgAgents 落桶同键）。文本 = 批名（+ 任务标题；无标题时截断的
   // 任务描述），who 留空（派发行自身即主体）。
@@ -2746,6 +2753,40 @@ function bgTaskOrigin(task) {
   return { cat, label };
 }
 
+// ── #753 同族任务聚合（waiter N 递增族刷屏治理 · 面板侧）────────────────────
+// 实证：delegate-nebflow-59f171d8 八分钟造 88 个 waiter 刷爆面板（81 条同行）。
+// 同族判据 = description 去数字归一（"background waiter 67" → "background waiter
+// N"；无数字描述原样自成族）——族内 ≥ BG_FAMILY_GROUP_MIN 条即聚合为一行组头，
+// 默认收起（计数+聚合状态一目了然），点击展开成员行（成员行保留既有取消/输出
+// 卡交互）。展开态按 (桶sid, 族键) 记在模块级 Map——重渲不失。
+const BG_FAMILY_GROUP_MIN = 3;
+
+/** 同族键：数字串归一为 N + 空白折叠 + 小写。空描述 → ''（不参与聚合）。 */
+function bgFamilyKey(desc) {
+  const s = String(desc || '').replace(/\d+/g, 'N').replace(/\s+/g, ' ').trim().toLowerCase();
+  return s;
+}
+
+/** 族头显示基名：取首成员描述、去数字（与族键同规，保原大小写/空白单折叠）。 */
+function bgFamilyBaseLabel(members) {
+  const first = members.find((m) => m && (m.description || m.taskId));
+  return String((first && (first.description || first.taskId)) || '')
+    .replace(/\d+/g, 'N')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// 展开态账本：key = `${bucketSid}\u0000${familyKey}` → true（展开）。上限护栏：
+// 超 512 键整表清空（防长会话累积泄漏；收起态是默认态，清零无感）。
+const bgFamilyExpanded = new Map();
+
+function bgAggregateDot(states) {
+  if (states.includes('stuck')) return 'bg-status-stuck';
+  if (states.includes('failed')) return 'bg-status-error';
+  if (states.includes('running') || states.includes('idle') || states.includes('cancelling')) return 'bg-status-active';
+  return 'bg-status-done';
+}
+
 function renderBgDropdown() {
   const tasks = state.sessionBgTasks[activeView?.sessionId] || [];
   const listEl = activeView.dom.bgDropdownListEl;
@@ -2774,7 +2815,25 @@ function renderBgDropdown() {
     return 0;
   }
   const now = Date.now();
-  listEl.innerHTML = visible.map(task => {
+  // ── 同族聚合装配（#753）：族内 ≥ BG_FAMILY_GROUP_MIN 条 → 一行组头（默认收起，
+  //    点击展开成员行）；零散任务照旧单行。装配产出 = 有序 item 流（group/member/
+  //    single），渲染与事件绑定同源走 data-task-id / data-family-key。
+  const bucketSid = activeView?.sessionId || '';
+  const familyByKey = new Map();
+  for (const task of visible) {
+    const key = bgFamilyKey(task.description || task.taskId);
+    if (!key) continue;
+    if (!familyByKey.has(key)) familyByKey.set(key, []);
+    familyByKey.get(key).push(task);
+  }
+  const familyKeys = new Set(
+    [...familyByKey.entries()].filter(([, arr]) => arr.length >= BG_FAMILY_GROUP_MIN).map(([k]) => k)
+  );
+  const famTaskByKey = new Map(); // taskId → task（绑定事件用；同桶内 taskId 唯一）
+  for (const task of visible) famTaskByKey.set(task.taskId, task);
+
+  // 行 HTML 构造（原内联 map 体抽出；extraCls = member 缩进/普通两类）。
+  const taskRowHtml = (task, extraCls = '') => {
     const rowState = bgTaskRowState(task);
     // Terminal labels ride on the authoritative status (completed/failed/
     // cancelled are distinct); running ladder uses the heartbeat-derived state.
@@ -2801,8 +2860,11 @@ function renderBgDropdown() {
       ? '<span class="bg-task-kind">' + escapeHtml((task.kind === 'local' || task.kind === 'remote') ? t('bg.kind.' + task.kind) : task.kind) + '</span>'
       : '';
     const hb = task.heartbeat;
-    const linesPart = (hb && rowState !== 'cancelling' && rowState !== 'done' && rowState !== 'failed')
-      ? '<span class="bg-task-lines">' + escapeHtml(t('bg.lines', { count: hb.outputLines })) + '</span>'
+    // 行数 chip（#753）：实时行用心跳 outputLines；快照恢复行（无心跳）用
+    // activeBgTasks 快照的 outputLines（BgTaskOutputStore 当前总行数）。
+    const lines = (hb && typeof hb.outputLines === 'number') ? hb.outputLines : (typeof task.outputLines === 'number' ? task.outputLines : 0);
+    const linesPart = (rowState !== 'cancelling')
+      ? '<span class="bg-task-lines">' + escapeHtml(t('bg.lines', { count: lines })) + '</span>'
       : '';
     const uptimePart = task.startedAt
       ? '<span class="bg-task-uptime" data-task-id="' + escapeHtml(task.taskId) + '">' + escapeHtml(formatDuration(now - task.startedAt)) + '</span>'
@@ -2814,7 +2876,7 @@ function renderBgDropdown() {
     const cancelPart = (rowState === 'cancelling' || rowState === 'running' || rowState === 'idle' || rowState === 'stuck')
       ? '<button class="bg-task-cancel" type="button">' + escapeHtml(rowState === 'cancelling' ? t('bg.cancelling') : t('bg.cancel')) + '</button>'
       : '';
-    return '<div class="bg-task-row' + (rowState === 'cancelling' ? ' bg-task-cancelling' : '') + endedClass + '" role="listitem" tabindex="0">' +
+    return '<div class="bg-task-row' + (rowState === 'cancelling' ? ' bg-task-cancelling' : '') + endedClass + extraCls + '" role="listitem" tabindex="0" data-task-id="' + escapeHtml(task.taskId) + '">' +
       '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
       '<div class="bg-task-info">' +
         '<div class="bg-task-line bg-task-meta">' +
@@ -2827,12 +2889,89 @@ function renderBgDropdown() {
       '</div>' +
       cancelPart +
     '</div>';
-  }).join('');
+  };
 
-  // Wire cancel buttons (unchanged semantics: optimistic cancelling state +
-  // cancelBackgroundJob WS command — regression red line).
-  listEl.querySelectorAll('.bg-task-row').forEach((row, i) => {
-    const task = visible[i];
+  // 族头 HTML（聚合行：状态聚合点 + 族名 ×N + 运行中计数 + Σ行数 + 族龄）。
+  const familyGroupHtml = (key, members) => {
+    const expanded = bgFamilyExpanded.get(bucketSid + '\u0000' + key) === true;
+    const states = members.map((m) => bgTaskRowState(m));
+    const runningCount = states.filter((s) => s === 'running' || s === 'idle' || s === 'stuck').length;
+    const cancellingCount = states.filter((s) => s === 'cancelling').length;
+    const dotClass = bgAggregateDot(states);
+    const stateWord = runningCount > 0
+      ? t('bg.familyRunning', { count: runningCount })
+      : cancellingCount > 0 ? t('bg.cancelling')
+      : t('bg.familyDone', { count: members.length });
+    const totalLines = members.reduce((acc, m) => {
+      const hb = m.heartbeat;
+      const n = (hb && typeof hb.outputLines === 'number') ? hb.outputLines : (typeof m.outputLines === 'number' ? m.outputLines : 0);
+      return acc + n;
+    }, 0);
+    const linesPart = totalLines > 0
+      ? '<span class="bg-task-lines">' + escapeHtml(t('bg.lines', { count: totalLines })) + '</span>' : '';
+    const startedAts = members.map((m) => m.startedAt).filter((x) => typeof x === 'number' && x > 0);
+    const earliest = startedAts.length ? Math.min(...startedAts) : 0;
+    const uptimePart = earliest
+      ? '<span class="bg-task-uptime">' + escapeHtml(formatDuration(now - earliest)) + '</span>' : '';
+    const base = bgFamilyBaseLabel(members);
+    return '<div class="bg-task-row bg-task-row-family" role="listitem" tabindex="0" aria-expanded="' + (expanded ? 'true' : 'false') + '" data-family-key="' + escapeHtml(key) + '">' +
+      '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
+      '<div class="bg-task-info">' +
+        '<div class="bg-task-line bg-task-meta">' +
+          '<span class="bg-task-state' + (runningCount > 0 ? '' : ' bg-state-done') + '">' + escapeHtml(stateWord) + '</span>' +
+          '<span class="bg-task-kind" title="' + escapeHtml(t('bg.familyTitle', { count: members.length })) + '">' +
+            escapeHtml(t('bg.familyCount', { count: members.length })) + '</span>' +
+          linesPart + uptimePart +
+        '</div>' +
+        '<div class="bg-task-line bg-task-name-line">' +
+          '<span class="bg-task-name" title="' + escapeHtml(base || key) + '">' + escapeHtml(base || key) + '</span>' +
+          '<span class="bg-family-caret" aria-hidden="true">' + (expanded ? '▾' : '▸') + '</span>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  };
+
+  // 装配：visible 序不变——每族只在首个成员位渲染（收起=组头一行；展开=组头+全
+  // 成员），族外任务单行。
+  const htmlParts = [];
+  const emittedFamilies = new Set();
+  for (const task of visible) {
+    const key = bgFamilyKey(task.description || task.taskId);
+    if (key && familyKeys.has(key)) {
+      if (emittedFamilies.has(key)) continue; // 成员行由组头展开承载
+      emittedFamilies.add(key);
+      const members = familyByKey.get(key);
+      const expanded = bgFamilyExpanded.get(bucketSid + '\u0000' + key) === true;
+      htmlParts.push(familyGroupHtml(key, members));
+      if (expanded) for (const m of members) htmlParts.push(taskRowHtml(m, ' bg-task-row-member'));
+    } else {
+      htmlParts.push(taskRowHtml(task));
+    }
+  }
+  listEl.innerHTML = htmlParts.join('');
+
+  // ── 事件绑定（data 属性寻址——分组装配后行序 ≠ visible 序）──────────
+  // 族头：点击/Enter 切换展开态（模块级账本 + 单键翻转 → 整表重渲）。
+  // stopPropagation 必需：重渲会detach被点行，事件继续冒泡到 document 的
+  // 「点击外部关闭」守卫时 contains(已脱离节点)=false ⇒ 面板被误关（展开一帧
+  // 即收起的实测形态）；拦在行级则守卫收不到本次点击。
+  listEl.querySelectorAll('[data-family-key]').forEach((row) => {
+    const key = row.getAttribute('data-family-key');
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (e.target.closest('.bg-task-cancel')) return;
+      const fullKey = bucketSid + '\u0000' + key;
+      if (bgFamilyExpanded.get(fullKey) === true) bgFamilyExpanded.delete(fullKey);
+      else {
+        if (bgFamilyExpanded.size > 512) bgFamilyExpanded.clear(); // 护栏（防累积泄漏）
+        bgFamilyExpanded.set(fullKey, true);
+      }
+      renderBgDropdown();
+    });
+  });
+  // 任务行：取消按钮 + 输出详情卡（与改前逐字节同语义，仅寻址方式改 data 键）。
+  listEl.querySelectorAll('.bg-task-row[data-task-id]').forEach((row) => {
+    const task = famTaskByKey.get(row.getAttribute('data-task-id'));
     if (!task) return;
     const cancelBtn = row.querySelector('.bg-task-cancel');
     if (cancelBtn) {
@@ -2881,6 +3020,13 @@ function renderBgDropdown() {
       const i = rows.indexOf(row);
       const next = rows[e.key === 'ArrowDown' ? i + 1 : i - 1];
       if (next) next.focus();
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      // #753 族头键盘等价（APG listbox 先例，subagent 面板同款）：Enter/Space
+      // 触发行 click（族头 = 展开翻转；任务行走各自 per-row Enter/Space 处理器，
+      // 但本处统一 row.click() 对两类行都是同一语义 —— 任务行的 per-row keydown
+      // 已 stopPropagation，不会双触发）。
+      e.preventDefault();
+      row.click();
     }
   };
   return visible.length;
@@ -3095,6 +3241,19 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
   // the root window's count while the bucket drained (the reported
   // "count>0 but empty dropdown" fork).
   refreshBgBadgeFor(sid);
+});
+
+// #753 速率闸告警（bgRateAlert 帧，引擎熔断触发沿单发）：toast 告警——作者
+// 不点开面板也看得见「某会话在刷后台任务」。msg={sessionId, rootSessionId,
+// count, windowSec, cooldownSec}。静默降级：toast 模块缺席（极端加载序）只丢
+// 提示不丢闸（闸在引擎侧，前端帧只是告警面）。
+onMessage('bgRateAlert', (msg) => {
+  const params = {
+    count: msg.count ?? '?',
+    windowSec: msg.windowSec ?? '?',
+    cooldownSec: msg.cooldownSec ?? '?',
+  };
+  import('./modal.js').then((m) => m.showToast(t('bg.rateAlert', params), 'info')).catch(() => {});
 });
 
 // --- /ask command ---
@@ -3996,13 +4155,25 @@ onMessage('activeAgents', (msg) => {
       status: a.status || '',
       retryCount: typeof a.retryCount === 'number' ? a.retryCount : ((prev && prev.retryCount) || 0),
       // 只由实时帧写入的字段：快照不表态 ⇒ 保留本地值（不降级已渲染行）。
-      currentTool: (prev && prev.currentTool) || null,
+      // currentTool 例外面：实时值优先，实时缺席时快照 currentToolName 兜底
+      // （#752 最近动作摘要在刷新恢复路径可用——旧行为刷新后工具行丢失）。
+      currentTool: (prev && prev.currentTool) || a.currentTool || null,
       stuck: (prev && prev.stuck) || null,
       frozen: (prev && prev.frozen) || false,
       freezeResumeAt: (prev && prev.freezeResumeAt) || null,
       freezeReason: (prev && prev.freezeReason) || null,
       // `done` 单调：本地已收到的终态事件优先于快照行（其 2s 清理随后自会移除）。
       done: !!(prev && prev.done),
+      // #752 空闲细分（快照为权威——引擎 bg-wait 屏障 / actor 回执快照的单点）：
+      // bgWaiting = 会话自有等待型后台任务（等什么）、heldReceipts/unreadReceipts =
+      // 扣留回执、outstandingSubagents = barrier spawn 计数、lastActivityMs = agent
+      // 侧活动戳（长空闲徽标判据）、currentToolName = 快照侧最近工具（实时帧缺席
+      // 时的兜底——prev 实时值优先）。旧后端无字段 → 缺省值（空数组/0），falsy 契约。
+      bgWaiting: Array.isArray(a.bgWaiting) ? a.bgWaiting : [],
+      heldReceipts: typeof a.heldReceipts === 'number' ? a.heldReceipts : ((prev && prev.heldReceipts) || 0),
+      unreadReceipts: typeof a.unreadReceipts === 'number' ? a.unreadReceipts : ((prev && prev.unreadReceipts) || 0),
+      outstandingSubagents: typeof a.outstandingSubagents === 'number' ? a.outstandingSubagents : ((prev && prev.outstandingSubagents) || 0),
+      lastActivityMs: typeof a.lastActivityMs === 'number' ? a.lastActivityMs : ((prev && prev.lastActivityMs) || 0),
       // 本行已被本次快照覆盖 ⇒ 陈旧窗关闭（陈旧判据见下方分类 ③）。
       _missSince: null,
     };

@@ -138,6 +138,17 @@ object BgTaskOutputStore:
           else next0
         case _ => m
     }
+
+  /**
+   * #753 快照行数面（批量）：jobId → 当前 totalLines——activeBgTasks 快照
+   * （BgTaskRegistry.activeTasksJson）单次调用携带全部在册任务的已产出行数，
+   * 页面刷新后前端行数 chip 不再依赖心跳帧的迟到。无缓冲（remote / 已淘汰）
+   * 的任务不入 Map（消费方 getOrElse 0）。
+   */
+  def lineCounts: IO[Map[String, Long]] =
+    entries.get.map { m =>
+      m.view.map { case (id, e) => id -> e.buffer.snapshot(0L).totalLines }.toMap
+    }
 end BgTaskOutputStore
 
 /**

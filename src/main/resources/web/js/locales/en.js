@@ -804,6 +804,10 @@ export default {
   'subagents.status.waiting': 'Waiting',
   'subagents.status.waitingMerge': 'waiting-merge (FIFO)',
   'subagents.status.idle': 'Idle',
+  // #752 idle-subdivision: what an idle delegate is waiting on + long-idle badge.
+  'subagents.waitingBg': 'waiting on {count} bg task(s): {desc} ({dur})',
+  'subagents.waitingReceipts': 'waiting on {count} sub-agent receipt(s)',
+  'subagents.longIdle': 'idle {mins} min, nothing in flight',
   'subagents.status.stuck': 'Stuck',
   'subagents.status.error': 'Failed',
   'subagents.status.frozen': 'Frozen',
@@ -1484,6 +1488,21 @@ export default {
   'bg.stuck': 'No output for 10+ min',
   'bg.lines': '{count} lines',
   'bg.header': 'Background tasks · {count}',
+  // #753 same-family aggregation (collapsed waiter-N family header).
+  'bg.familyRunning': 'running ×{count}',
+  'bg.familyDone': 'finished ×{count}',
+  'bg.familyCount': 'family ×{count}',
+  'bg.familyTitle': '{count} same-family background tasks — click to expand/collapse',
+  // #753 rate-gate breaker toast (bgRateAlert frame).
+  'bg.rateAlert': 'Background task rate limit: this session created {count} background tasks within the window — circuit breaker engaged for {cooldownSec}s (wait for existing tasks to notify on completion)',
+  // #752 delegate popup "what is this session doing" strip.
+  'bgws.aria': 'What this session is doing',
+  'bgws.lastAction': 'Last action',
+  'bgws.activityAgo': 'active {dur} ago',
+  'bgws.thinking': 'thinking / executing…',
+  'bgws.noData': 'no status data (snapshot not covering)',
+  'bgws.noBgTasks': 'no background tasks for this session',
+  'bgws.moreTasks': '{count} more background tasks (see the main window panel)',
   'bg.sectionAgents': 'Sub-agents',
   'bg.empty': 'No background tasks running',
   'bg.kind.local': 'local',
@@ -1495,6 +1514,9 @@ export default {
   'bg.cancelled': 'Cancelled',
   'bg.detail.aria': 'Background task output',
   'bg.detail.empty': 'No output yet',
+  // #753: running-with-no-output liveness note (waiters/pollers legitimately stay silent).
+  'bg.detail.waitingLive': 'Running · no output yet — waiting-style tasks (pollers/listeners) may stay silent on stdout; the process is alive',
+  'bg.detail.uptime': 'up {dur}',
   'bg.detail.remote': 'Output viewing is not available for remote tasks',
   'bg.detail.notFound': 'Task output is no longer available (task ended and was cleaned up)',
   'bg.detail.truncated': 'Large output — showing the tail only',

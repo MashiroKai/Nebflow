@@ -595,6 +595,38 @@
   color: var(--color-frame-text-muted);
   margin-top: 2px;
 }
+/* #752 空闲细分注记（在等什么）：等后台任务名+时长 / 等子代理回执 N 条 ——
+   中性次行；长空闲（>10min 无在飞工作）= 琥珀提醒徽标（timer-off 图标 +
+   status-warn 字色，role=alert）。 */
+.bg-task-idle-detail {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--color-frame-text-muted);
+  margin-top: 2px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bg-task-idle-detail .st-ic { width: 11px; height: 11px; flex-shrink: 0; }
+/* 长空闲徽标字色 = 既有 warn 图标档 token（base.css --status-warn-icon，亮暗双档）。 */
+.bg-task-idle-detail.bg-idle-stale { color: var(--status-warn-icon); font-weight: 500; }
+.bg-task-idle-detail.bg-idle-stale .st-ic { color: var(--status-warn-icon); }
+/* #753 同族聚合行（waiter 族）：组头行 — 收起态默认（计数一目了然）；成员行
+   缩进一格（与 subagent 面板 bg-task-row-child 同款缩进语义）；carets 中性。 */
+.bg-task-row-family { border-top: 1px solid var(--color-frame-border); }
+.bg-task-row-family .bg-task-name { font-weight: 500; }
+.bg-task-row-family .bg-family-caret {
+  margin-left: 6px;
+  font-size: 10px;
+  color: var(--color-frame-text-muted);
+  flex-shrink: 0;
+}
+.bg-task-row-member { padding-left: 18px; border-top: 1px dotted var(--color-frame-border); }
+.bg-task-row-member .bg-task-name { font-size: 12px; }
 /* Frozen is the agent-blue accent: deep sapphire in light theme (agent-light
    token), back to the sapphire triplet in dark. Mirrors #bgagent-indicator. */
 @media (prefers-color-scheme: dark) {
