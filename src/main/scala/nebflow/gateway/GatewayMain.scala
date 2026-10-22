@@ -627,12 +627,19 @@ object GatewayMain extends IOApp:
                                   // sourceSession 现查统一注册表落 `askerAlive`，「发起会话已
                                   // 结束、答复将走重入面」在健康面可见（僵尸 pending 标注，
                                   // 只读不杀）。
+                                  // 重启孤儿对账批（2026-10-22「Header 待答徽标僵尸态」批）：
+                                  // 接线 PendingAskLedger —— 槽位创建/四条收口路径随行记账，
+                                  // boot 清点过期关闭（见下方 pendingAskBootSweep）。
+                                  val pendingAskLedger = new nebflow.agent.PendingAskLedger()
                                   val hubSetup: IO[Unit] =
                                     actorSystem
                                       .spawn(
-                                        nebflow.agent.InteractionHub(Some((sid: String) =>
-                                          sharedResources.agentRegistry.get.map(_.contains(sid))
-                                        )),
+                                        nebflow.agent.InteractionHub(
+                                          Some((sid: String) =>
+                                            sharedResources.agentRegistry.get.map(_.contains(sid))
+                                          ),
+                                          Some(pendingAskLedger)
+                                        ),
                                         "interaction-hub"
                                       )
                                       .flatMap { hubRef =>
@@ -685,6 +692,29 @@ object GatewayMain extends IOApp:
                                   // 未注册 = no-op，故 spec/CLI 场景零副作用。
                                   val nfCacheInvalidatorSetup: IO[Unit] =
                                     IO(nebflow.core.tools.NfCacheInvalidator.register(json => wsHub.broadcast(json)))
+                                  // 重启孤儿对账 boot sweep（2026-10-22「Header 待答徽标僵尸态」批
+                                  // 修复①）：清点 PendingAskLedger 里跨重启残留的挂起提问——
+                                  // 重启后每条的等待方（deferred/发起会话 actor）都已随旧进程
+                                  // 消亡 ⇒ 全部过期关闭：广播 askUserClosed{reason:"expired-orphan"}
+                                  // ＋ root 会话历史追加过期回执行（历史重载的 pending 判据结构性
+                                  // 失效，僵尸卡不再以可作答形态复活）＋审计 event=ask-expired，
+                                  // 随后清账。链位在 startupMount / projectBootWake 之前——boot
+                                  // 触发链可能唤醒会话产生新提问，旧账清点必须先行。失败只 WARN
+                                  // 绝不阻塞启动；零残留 = 零动作（仅一行汇总）。
+                                  val pendingAskBootSweep: IO[Unit] =
+                                    pendingAskLedger
+                                      .bootReconcile(
+                                        broadcast = json => wsHub.broadcast(json),
+                                        appendReceipt = (rootSid, msg) =>
+                                          sessionStore.appendUiMessages(rootSid, List(msg))
+                                      )
+                                      .attempt
+                                      .flatMap {
+                                        case Right(r) =>
+                                          logger.info(s"Pending-ask boot reconcile: ${r.summary}").void
+                                        case Left(e) =>
+                                          logger.warn(s"Pending-ask boot reconcile failed: ${e.getMessage}").void
+                                      }
                                   // #37 启动自动挂载（0b 契约「阶段 1 补自动挂载」）：磁盘已有
                                   // 项目 → 幂等挂载（rootSessionId = 顶层 Nebula 主会话 id，
                                   // 启动期无会话上下文直接传顶层根）。免重启后人工重挂——
@@ -903,7 +933,7 @@ object GatewayMain extends IOApp:
                                       updateOrchestrator = Some(updateOrchestrator),
                                       updateConvergence = Some(updateConvergence)
                                     )
-                                  hubSetup *> nfCacheInvalidatorSetup *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> succeedPortGate(
+                                  hubSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {

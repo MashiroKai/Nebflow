@@ -1325,6 +1325,9 @@ export default {
   'heldReceipts.unread': '{n} undelivered (retry exhausted)',
 
   'askUser.sourceClosed': 'Source closed (node cancelled)',
+  // Restart-orphan reconcile batch (2026-10-22): boot-sweep expiry terminal
+  // state (PendingAskLedger.bootReconcile → askUserClosed{reason:"expired-orphan"}).
+  'askUser.expiredOrphan': 'Question expired (engine restart, asker gone)',
   // AskUser double-card batch (chain-askuserdup plan A①): explicit label for a
   // history question row with NO recorded answer (it used to be painted as
   // answered — a fake `-> ` line). An explicitly labelled dead card beats

@@ -1556,7 +1556,11 @@ onMessage('askUserClosed', (msg) => {
   // ⇒ 卡片转「已取消」锁定态。既有两路零回归：`turn-interrupted` → 本轮中断文案；
   // 缺席（来源死亡，handleCleanupForSession 无 reason 键）与 `caller-withdrew`
   // （#147 调用侧撤回，语义 ≠ 用户取消）→ 历史来源关闭文案。
+  // 重启孤儿对账批（2026-10-22）：`expired-orphan`（引擎 boot 清点跨重启残留
+  // 挂起提问，PendingAskLedger.bootReconcile 广播）→ 专用过期文案——「有数无卡」
+  // 的账面由引擎在对账里收口，卡片锁进与原因相符的终态。
   const note = msg.reason === 'turn-interrupted' ? t('askUser.turnInterrupted')
+    : msg.reason === 'expired-orphan' ? t('askUser.expiredOrphan')
     : (msg.reason && msg.reason !== 'caller-withdrew') ? t('askUser.cancelled')
     : t('askUser.sourceClosed');
   closeAskUserCard(msg.sessionId, msg.requestId, note);
