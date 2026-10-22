@@ -65,6 +65,11 @@
     chatViews.primary.sessionId = SID;
     setActiveView(chatViews.primary);
     state.activeSessionId = SID;
+    // 视图唯一 scroll 监听器（utils.js initScrollFollow · B4 纪律）——主窗
+    // 启动时的同款注册；无 #main 时 pill 宿主早退，latch 刷新不受影响。
+    // 缺了它，重放腿强落的 scrollSnapped=true 在中段钉视口后无法被刷新，
+    // 「重连不劫持视口」的判定面就是脏的。（基线树的 utils.js 同有此函数。）
+    utilsMod.initScrollFollow(chatViews.primary);
 
     // Capture outgoing WS frames — nothing must reach a real socket here.
     window.__captured = [];

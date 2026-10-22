@@ -16,7 +16,7 @@ import { dropDeviceMessageCache } from './fmDropboxCache.js';
 import { evict as evictLocalStore } from './localStore.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
-import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId, shouldFollowBottom } from './utils.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { createDurationBadgeElement, createMsgFooterBadge, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow, sameAskCards, applyThinkingWindowCap } from './chat.js';
 // pop-upgrade 批(2026-10-03):Pop 工件载荷面(叠卡/文件卡片)单一真源——live
@@ -971,6 +971,19 @@ export function restoreFromStorage(opts = {}) {
 export function restoreFromBackendHistory(msgs, opts = {}) {
   const { scrollToBottom = true, busyTail = false } = opts;
   const chat = activeView.dom.chat;
+  // 重连视口不劫持（reconnect-collapse 续作 69e5e2e1，2026-10-21）：真重建腿
+  // 不再无条件把视口拽到底。两个量必须由**调用方在 wipe 之前**采集并随 opts
+  // 传入（historyReplay.js 初载腿）：
+  //   · followBottom —— 跟随意图。wipe 之后的空滚动区对 isNearBottom 恒真
+  //     （「空 = 贴底」），在重放函数内部采集会把「回看中段」误读成「跟随」；
+  //   · anchor.scrollTop —— 视口锚。真重建是**全量替换**：上方行由同一历史
+  //     重放出（高度恒定），恢复绝对 scrollTop 即把用户钉回原阅读位（增长
+  //     发生在下方/视口外时不补偿——分页 prepend 腿另有自管的差值公式）。
+  // 缺省（旧调用方：bg/flow 弹窗首刷等）回退为函数内自采 = 改前行为。
+  const followBottom = scrollToBottom && (typeof opts.followBottom === 'boolean'
+    ? opts.followBottom
+    : shouldFollowBottom(activeView, chat));
+  const prevScrollTop = opts.anchor ? opts.anchor.scrollTop : chat.scrollTop;
   // quote-message 一期：每次恢复换一个 mount token（historyMsgId 的尾巴）——
   // prepend 分页对本函数整页重跑 ⇒ 页内 index 重置，裸 index 会撞号；mount token
   // 同时让「跨重挂载」的旧引用 id 天然失配 ⇒ 引用块退化快照态（无死指针）。
@@ -1409,9 +1422,14 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
   // Scroll to bottom: immediate sync (for stable initial position before any async iframe load)
   // followed by deferred rAF (catches late layout changes from streaming state restoration, etc.).
   // Caller can set scrollToBottom=false (e.g. scroll-up pagination preserves position).
-  if (scrollToBottom) {
+  if (followBottom) {
     chat.scrollTop = chat.scrollHeight;
     if (activeView) activeView.stream.scrollSnapped = true;
+  } else if (scrollToBottom) {
+    // 非跟随（用户回看中段）：绝对锚位恢复——重放上方行与改前同形（同一历史
+    // 重放），scrollTop 回到 prev 即回到原阅读位；不写 scrollSnapped（不劫持
+    // 视口，也不把后续流的跟随手势强扭到底）。
+    chat.scrollTop = prevScrollTop;
   }
   // Batch-upgrade deferred markdown rendering (marked.parse + KaTeX) via rAF.
   // Processes a few elements per frame to avoid blocking the main thread.
@@ -1425,9 +1443,13 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
     }
     if (ri < pendingRenders.length) {
       requestAnimationFrame(upgradeBatch);
-    } else if (scrollToBottom) {
+    } else if (followBottom) {
       chat.scrollTop = chat.scrollHeight;
       if (activeView) activeView.stream.scrollSnapped = true;
+    } else if (scrollToBottom) {
+      // 同上：md 升级批落定后把绝对锚位再落一次（deferMd 先 textContent 后
+      // md 的两相高度差在批间会漂，终相高度与改前同形 ⇒ prev 精确）。
+      chat.scrollTop = prevScrollTop;
     }
   }
   if (pendingRenders.length > 0) {
