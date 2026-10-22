@@ -2279,6 +2279,9 @@ export default {
   'social.weixinIlink.scan.confirmed': '手机已确认，正在写入凭据…',
   'social.weixinIlink.scan.done': '机器人已登录，凭据已写入',
   'social.weixinIlink.scan.failed': '扫码绑定失败：{reason}',
+  // scan-bind 403 族收口（2026-10-22）：401/403 不再误报 'io'，改说登录过期
+  // （sessionGate 横幅 + 自愈 reload 随后接管）。
+  'social.scan.authExpired': '登录已过期，正在重新进入控制台…',
   'social.weixinIlink.scan.userCode': '确认码：{code}',
   'social.weixinIlink.scan.qrFallback': '若二维码未显示，请在手机上打开此链接：',
   'social.weixinIlink.archive.action': '解除绑定',

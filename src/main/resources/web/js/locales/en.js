@@ -2343,6 +2343,10 @@ export default {
   'social.weixinIlink.scan.confirmed': 'Confirmed on the phone — writing the credentials…',
   'social.weixinIlink.scan.done': 'Bot signed in — credentials stored',
   'social.weixinIlink.scan.failed': 'Scan-bind failed: {reason}',
+  // scan-bind 403 family close-out (2026-10-22): 401/403 no longer misreports
+  // 'io' — the card says the session expired (sessionGate banner + heal reload
+  // take over).
+  'social.scan.authExpired': 'Session expired — re-entering the console…',
   'social.weixinIlink.scan.userCode': 'Confirmation code: {code}',
   'social.weixinIlink.scan.qrFallback': 'If the code does not display, open this link on your phone:',
   'social.weixinIlink.archive.action': 'Unbind',

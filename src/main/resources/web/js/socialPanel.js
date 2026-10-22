@@ -236,6 +236,7 @@ import { t } from './i18n.js';
 import { escapeHtml, createIconsIn, statusIcon } from './utils.js';
 import { toggleHTML, bindToggle, setToggleState } from './toggle.js';
 import { getAuthToken } from './neblink.js';
+import { noteAuthRejected } from './sessionGate.js';
 import {
   SOCIAL_CHANNELS, visibleChannels, channelById, storedKey, channelStatus, channelProblem, fieldValues,
 } from './socialChannels.js';
@@ -1535,6 +1536,17 @@ async function beginInlineScan(channelId) {
   let scanId = '';
   try {
     const resp = await api(`/api/social/channels/${encodeURIComponent(channelId)}/scan-bind/begin`, { method: 'POST' });
+    // scan-bind 403 族收口（scan-bind-403 批 2026-10-22）：401/403 = 同源凭据被拒
+    // （relay 门会话过期 / 引擎重启把宿主会话清零）。这是作者实报的
+    // 「扫码绑定失败：io」误导根——403 与真网络错在旧代码里同落 'io' 兜底文案，
+    // 且不拉 sessionGate 的自愈链。现在 401/403 ⇒ 交统一收口（可见横幅 + 静默
+    // 重铸 reload，单飞+60s 冷却防环），卡内文案改说登录过期；其余非 2xx 与
+    // 传输错保持既有 'io' 兜底不动。
+    if (resp.status === 401 || resp.status === 403) {
+      noteAuthRejected('social-scan');
+      setScanStatus(channelId, t(scanKey(channelId, 'failed'), { reason: t('social.scan.authExpired') }));
+      return;
+    }
     if (!resp.ok) throw new Error(`begin ${resp.status}`);
     const data = await resp.json();
     scanId = typeof data.scanId === 'string' ? data.scanId : '';
@@ -1588,6 +1600,10 @@ function tickSession(channelId, session) {
     try {
       const resp = await api(`/api/social/channels/${encodeURIComponent(channelId)}/scan-bind/status?scanId=${encodeURIComponent(session.scanId)}`);
       if (resp.ok) { s = await resp.json(); session.consecutiveErrors = 0; }
+      // scan-bind 403 族收口（同 beginInlineScan）：轮询被 401/403 拒 ⇒ 交
+      // sessionGate 统一自愈；连击计数与 'io' 兜底语义保持不动（横幅 reload
+      // 会先到，轮询随后随页销毁）。
+      else if (resp.status === 401 || resp.status === 403) noteAuthRejected('social-scan');
     } catch { /* transient — counted below */ }
     if (!sessionLive()) { activeScans.delete(channelId); sweepScanPoll(); return; }
     if (!s) {

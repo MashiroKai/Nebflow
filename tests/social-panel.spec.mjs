@@ -338,7 +338,7 @@ const WEB = process.env.SOCIAL_WEB_ROOT ? resolve(process.env.SOCIAL_WEB_ROOT) :
 // is served (the `web=` reading on the mode line below states the tree).
 const SUITE_ENV = String(process.env.SOCIAL_SUITE || '').toLowerCase();
 const MODE = SUITE_ENV === 'after' || SUITE_ENV === 'before' || SUITE_ENV === 'fixture' || SUITE_ENV === 'redfilter'
-  || SUITE_ENV === 'nrs' || SUITE_ENV === 'ilinkred'
+  || SUITE_ENV === 'nrs' || SUITE_ENV === 'ilinkred' || SUITE_ENV === 'scanauth'
   ? SUITE_ENV.toUpperCase()
   : (process.env.SOCIAL_WEB_ROOT ? 'BEFORE'
     : (process.env.SOCIAL_MUTATE === 'adapter-true' ? 'FIXTURE'
@@ -3134,6 +3134,100 @@ async function ilinkRedSuite(browser, base) {
   await ctx.close();
 }
 
+// ── SAG: scan-bind 403 族收口（scan-bind-403 批 2026-10-22）──────────────────
+// 作者实报症状「扫码绑定失败：io」的误导体：begin/status 被 401/403 拒时旧代码
+// 与真网络错同落 'io' 兜底文案，且不拉 sessionGate 自愈链。本套件钉三件事：
+//   SAG-1  begin 403 ⇒ 横幅（data-source="social-scan"）+ 卡内文案改说登录过期
+//          （不再是 'io'）+ 自愈 reload 腿被拉动；
+//   SAG-2  status 轮询中途 403 ⇒ 同一横幅（轮询腿也收口）；
+//   SAG-3  begin 503（真传输错）⇒ 保持既有 'io' 兜底、零横幅零 reload（5xx
+//          静默降级面不变——session-gate.spec ③ 的扫描面镜像）。
+// 每腿独立 context（sessionStorage 冷却与单飞互不串扰）。
+async function scanAuthGateSuite(browser, base) {
+  const AUTH_LINE = ZH['social.scan.authExpired'] || '登录已过期';
+
+  // SAG-1 — begin 403：开面板即触发 auto-begin ⇒ 横幅 + 文案 + reload 腿。
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const page = await ctx.newPage();
+    await boot(page, { locale: 'zh-CN' });
+    await page.route('**/api/social/channels/*/scan-bind/begin*', (r) =>
+      r.request().method() === 'POST'
+        ? r.fulfill({ status: 403, json: { error: 'forbidden' } })
+        : r.fallback());
+    await page.goto(base);
+    await page.evaluate(async () => {
+      const m = await import('/js/sessionGate.js');
+      m._sessionGateTestHooks().setReload(() => { window.__reloads = (window.__reloads || 0) + 1; });
+    });
+    await openPanel(page);
+    await page.waitForSelector('[data-session-gate="1"]', { timeout: 8000 });
+    const src = await page.locator('[data-session-gate="1"]').getAttribute('data-source');
+    const line = await page.evaluate(() => {
+      const el = document.querySelector('.social-card[data-channel="weixin-ilink"] [data-scan-status]');
+      return el ? el.textContent : '';
+    });
+    check('SAG-1 begin 403 ⇒ sessionGate 横幅（触发面读数 social-scan）',
+      src === 'social-scan', `data-source=${JSON.stringify(src)}`);
+    check('SAG-1 卡内文案改说登录过期（不再是 io）',
+      line.includes(AUTH_LINE) && !line.includes('io'), `statusLine=${JSON.stringify(line)}`);
+    await page.waitForFunction(() => (window.__reloads || 0) >= 1, undefined, { timeout: 4000 });
+    check('SAG-1 自愈 reload 腿被拉动', true, '');
+    await ctx.close();
+  }
+
+  // SAG-2 — status 轮询 403：begin 正常拿到 QR，随后把 status 面翻成 403 ⇒ 同一横幅。
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const page = await ctx.newPage();
+    await boot(page, { locale: 'zh-CN' });
+    await page.goto(base);
+    await page.evaluate(async () => {
+      const m = await import('/js/sessionGate.js');
+      m._sessionGateTestHooks().setReload(() => { window.__reloads = (window.__reloads || 0) + 1; });
+    });
+    await openPanel(page);
+    // 会话入座（QR 出现）后再翻 403，确保打中的是轮询腿不是 begin 腿。
+    await waitInlineScanQr(page);
+    let status403 = false;
+    await page.route('**/api/social/channels/*/scan-bind/status*', (r) => {
+      if (status403) return r.fulfill({ status: 403, json: { error: 'forbidden' } });
+      return r.fallback();
+    });
+    status403 = true;
+    await page.waitForSelector('[data-session-gate="1"]', { timeout: 10000 });
+    const src = await page.locator('[data-session-gate="1"]').getAttribute('data-source');
+    check('SAG-2 status 轮询 403 ⇒ 同一横幅（social-scan）',
+      src === 'social-scan', `data-source=${JSON.stringify(src)}`);
+    await ctx.close();
+  }
+
+  // SAG-3 — begin 503（真传输错）：既有 'io' 兜底保持，零横幅零 reload。
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const page = await ctx.newPage();
+    await boot(page, { locale: 'zh-CN' });
+    apiState.scan.failBegin = true;
+    await page.goto(base);
+    await page.evaluate(async () => {
+      const m = await import('/js/sessionGate.js');
+      m._sessionGateTestHooks().setReload(() => { window.__reloads = (window.__reloads || 0) + 1; });
+    });
+    await openPanel(page);
+    await page.waitForFunction(() => {
+      const el = document.querySelector('.social-card[data-channel="weixin-ilink"] [data-scan-status]');
+      return !!el && el.textContent.includes('io');
+    }, undefined, { timeout: 8000 });
+    check('SAG-3 begin 503 ⇒ 卡内仍是 io 兜底（传输错语义不变）', true, '');
+    check('SAG-3 零横幅零 reload（5xx 静默降级面保持）',
+      (await page.locator('[data-session-gate="1"]').count()) === 0
+      && (await page.evaluate(() => window.__reloads || 0)) === 0,
+      `banners=${await page.locator('[data-session-gate="1"]').count()} reloads=${await page.evaluate(() => window.__reloads || 0)}`);
+    apiState.scan.failBegin = false;
+    await ctx.close();
+  }
+}
+
 // ── main ───────────────────────────────────────────────────────────────────
 console.log(`# social-panel.spec.mjs mode=${MODE} web=${WEB} visibleCards=${EXPECTED_CARDS} sealedEntries=${EXPECTED_DEFINITION_CHANNELS} api=${API_BASE || '(mock only)'}`);
 const { server, base } = await startServer();
@@ -3150,7 +3244,15 @@ try {
   // the legs above. Wave-2's minimal-face anchors follow it for the same reason.
   // weixin-binditem's [[bindItemSuite]] runs after THOSE for the same reason in
   // turn: it mutates the shared apiState scan face, so nothing may inherit it.
-  else { await afterSuite(browser, base); await apiSuite(); await minSuite(browser, base); await min2Suite(browser, base); await bindItemSuite(browser, base); }
+  // scanAuthGateSuite runs after EVERYTHING (own contexts, but it registers
+  // begin/status routes on its own pages and flips the shared scan face flag).
+  // SOCIAL_SUITE=scanauth runs ONLY this suite — the full AFTER chain hangs on
+  // the environment's known headless baseline failure (evidence/
+  // 20261020_111006_bind-transactional README 运行安全边界：#social-btn 在
+  // headless 下不可见，A/B 已证与本批无关)，so the 403-family legs need their
+  // own entry point to be runnable in isolation.
+  else if (MODE === 'SCANAUTH') await scanAuthGateSuite(browser, base);
+  else { await afterSuite(browser, base); await apiSuite(); await minSuite(browser, base); await min2Suite(browser, base); await bindItemSuite(browser, base); await scanAuthGateSuite(browser, base); }
 } finally {
   await browser.close();
   await new Promise((r) => server.close(r));

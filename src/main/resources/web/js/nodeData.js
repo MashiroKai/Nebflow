@@ -17,6 +17,7 @@
 //   nodeCreated / nodeUpdated / nodeCompleted / nodeRemoved
 
 import { authHeaders } from './flowHelpers.js';
+import { noteAuthRejected } from './sessionGate.js';
 
 // ── 契约常量（与 Backend #28 0b 对齐）──────────────────────
 export const API = {
@@ -92,7 +93,14 @@ export const NODE_STATUS_CLS = {
  *  @returns {Promise<{projects: Array<any>, raw: string}>} */
 export async function fetchProjectsRaw() {
   const r = await fetch(API.projects, { headers: authHeaders() });
-  if (!r.ok) throw new Error(`projects ${r.status}`);
+  if (!r.ok) {
+    // 403 族收口（scan-bind-403 批 2026-10-22）：作者实报「项目列表加载失败
+    // projects 403」。401/403 = 同源凭据被拒（引擎重启清零宿主会话 / relay 门
+    // 会话过期）⇒ 交 sessionGate 统一可见面 + 自愈 reload（与 nfTicket #520
+    // 同纪律）；错误消息照旧带状态码供面板错误态显示。5xx 保持静默降级。
+    if (r.status === 401 || r.status === 403) noteAuthRejected('projects');
+    throw new Error(`projects ${r.status}`);
+  }
   const raw = await r.text();
   let data = null;
   try { data = JSON.parse(raw); } catch (_) { data = null; }
