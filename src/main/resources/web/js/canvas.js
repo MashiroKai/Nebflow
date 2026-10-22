@@ -149,7 +149,10 @@ function refForTab(tab) {
 // ── Canvas tab context menu (「引用当前页/选区」) ──
 // canvas-stack：叠卡右键菜单在同一张玻璃菜单里追加「关闭 / 关闭其他」（v5 菜单语义，
 // 样张 ctx-menu 三项），经 actions 回调接线到叠卡引擎；标签条旧入口不传 actions，
-// 行为逐字不变。 */
+// 行为逐字不变。
+// 2026-10-22 作者令（胶囊交互重做）菜单契约扩容：多开（铺开叠卡）、关闭、
+// 在独立窗口打开（联动 #717 卡窗链 popoutCardWindow/toggleCardWindow）——
+// 引用项保留在挂（CC4 契约 + 移动层长按同通路）；文案随态（独立中=合并回主窗）。
 let _canvasCtxMenu = null;
 let _ctxMenuBound = false;
 function hideCanvasRefMenu() {
@@ -181,6 +184,14 @@ function showCanvasRefMenu(x, y, entry, actions = null) {
   if (actions) {
     const hr = document.createElement('hr');
     menu.appendChild(hr);
+    // 多开（作者令 2026-10-22）：铺开叠卡环（deck 关闭态）/ 收起（deck 开着，
+    // 文案随态 —— 同一枚菜单项覆盖往返）
+    if (actions.onMultiOpen) {
+      const multiBtn = document.createElement('button');
+      multiBtn.textContent = actions.multiOpenLabel || '多开';
+      multiBtn.addEventListener('click', () => { hideCanvasRefMenu(); actions.onMultiOpen(); });
+      menu.appendChild(multiBtn);
+    }
     if (actions.onClose) {
       const closeBtn = document.createElement('button');
       closeBtn.textContent = '关闭';
@@ -194,6 +205,15 @@ function showCanvasRefMenu(x, y, entry, actions = null) {
       closeOthersBtn.addEventListener('click', () => { hideCanvasRefMenu(); actions.onCloseOthers(); });
       menu.appendChild(closeOthersBtn);
     }
+    // 在独立窗口打开（作者令 2026-10-22）：文件卡才在挂（独立窗经 absPath
+    // readFile 重读真容，cardCanPop 门）；独立中 = 合并回主窗（toggle 同位换形，
+    // 与卡头 pop 钮同语义）。
+    if (actions.onPopout) {
+      const popBtn = document.createElement('button');
+      popBtn.textContent = actions.popoutLabel || '在独立窗口打开';
+      popBtn.addEventListener('click', () => { hideCanvasRefMenu(); actions.onPopout(); });
+      menu.appendChild(popBtn);
+    }
   }
   document.body.appendChild(menu);
   _canvasCtxMenu = menu;
@@ -201,6 +221,23 @@ function showCanvasRefMenu(x, y, entry, actions = null) {
   const rect = menu.getBoundingClientRect();
   if (rect.right > window.innerWidth) menu.style.left = (x - rect.width) + 'px';
   if (rect.bottom > window.innerHeight) menu.style.top = (y - rect.height) + 'px';
+}
+
+/** 胶囊右键 actions 组装（标题头与胶囊环共用一份菜单语义——作者令 2026-10-22：
+ *  多开 / 关闭 / 在独立窗口打开，引用项保留）。@param {Object} entry */
+function capsuleMenuActions(entry) {
+  const deckOpen = deck.open && !deckBusy();
+  return {
+    allowNoRef: true,
+    onMultiOpen: () => deckFabToggle(),
+    multiOpenLabel: deck.open ? '收起叠卡' : '多开',
+    onClose: () => (deckOpen ? deckRequestClose(entry.id) : closeTab(entry.id)),
+    onCloseOthers: deckOpen ? () => deckCloseOthers(entry.id) : null,
+    onPopout: cardCanPop(entry.id)
+      ? () => toggleCardWindow(entry.id)
+      : null,
+    popoutLabel: isCardIndependent(entry.id) ? '合并回主窗' : '在独立窗口打开',
+  };
 }
 
 // ── Drag-to-reorder ────────────────────────────────────────
@@ -3009,7 +3046,8 @@ function initCardHeadGestures() {
     const { dx, dy, axis, moved } = g;
     g = null;
     reset();
-    if (!moved) return;                                   // 点击界内：零动作（钮群已在直通）
+    if (!moved) { ringClickCenter(); return;          // 点击界内：环游标胶囊即切换（游标=激活时零动作）
+    }
     const entry = activeTabId ? tabs.get(activeTabId) : null;
     if (!entry) return;
     if (axis === 'y' && Math.abs(dy) > CARDHEAD_SWITCH_PX) {
@@ -3021,18 +3059,199 @@ function initCardHeadGestures() {
   };
   hdr.addEventListener('pointerup', finish);
   hdr.addEventListener('pointercancel', finish);
-  // 右键 = 引用（复用既有 canvas-tab-context-menu；deck 态与面板菜单同款 actions）
+  // 右键 = 引用 + 胶囊菜单契约（2026-10-22 作者令：多开/关闭/在独立窗口打开；
+  // 引用保留。actions 与胶囊环共用 capsuleMenuActions 一份语义）
   hdr.addEventListener('contextmenu', (e) => {
     if (isMobileLayer()) return;   // 手机长按引用钮 = navController 腿（Android 长按会派发 contextmenu）
     const entry = activeTabId ? tabs.get(activeTabId) : null;
     if (!entry) return;
     e.preventDefault();
     e.stopPropagation();   // 面板级 contextmenu（deck 态）不再重复弹
-    showCanvasRefMenu(e.clientX, e.clientY, entry, deck.open && !deckBusy() ? {
-      allowNoRef: true,
-      onClose: () => deckRequestClose(entry.id),
-      onCloseOthers: () => deckCloseOthers(entry.id),
-    } : null);
+    showCanvasRefMenu(e.clientX, e.clientY, entry, capsuleMenuActions(entry));
+  });
+}
+
+// ── 胶囊环（2026-10-22 作者令追加：hover 态圆环排布 · 横滑换选 · 点击切换）──
+// 作者令：平时态 = 单胶囊（缩小）；hover 态 = 各页签胶囊沿圆环排布、最多同时
+// 可见 3 个；左右滚动（触控板横滑 = wheel deltaX / Shift+纵滚）在环上换选，
+// 点击即切换；两侧缘位沿曲率 rotateY 透视 + 模糊扭曲（cover-flow），材质 =
+// 全站统一 frosted token；右键菜单 = 多开/关闭/在独立窗口打开（capsuleMenu-
+// Actions 共用一份语义）。#716 捏合缩放分区：环上滚轮 preventDefault +
+// stopPropagation 优先消费（缩放/平移只归画布区，环永不外溢）。
+// 按住=按钮语义（作者令③）：胶囊本体 <button> + 全头 user-select:none（CSS）
+// + dragstart preventDefault（拦从胶囊发起的原生拖拽；OS 文件拖入 drop 不受影响）。
+// 实现形态：纯前端组件（.capsule-ring 0×0 锚在标题头中心，胶囊 absolute 沿弧
+// transform），与左栏控制面零共享。手机层/卡窗态整腿让位（各有自己的卡头形态）。
+const RING_WHEEL_STEP = 56;   // 横滑一格步进（≈两指一次横扫的 deltaX 量级）
+const RING_CLOSE_GRACE_MS = 140; // 离环收起宽限（快速掠过不闪收）
+
+/** 环开态单例（{ ids: string[], cursor: number }；null = 环闭）。hdr 重建时随
+ *  initCanvas 重挂，状态本体放模块级 —— 手势 finish() 的 ringClickCenter 同读。 */
+let ringState = /** @type {{ids: string[], cursor: number}|null} */ (null);
+
+/** 中心位（环游标）胶囊的「点击即切换」——标题头手势 finish() 的 !moved 臂
+ *  消费（中心位 pointer 事件被标题头 capture 重定向，click 不达胶囊）。
+ *  游标 = 激活页签时零动作（CC1「点击界内零动作」契约保留）。@returns {boolean} */
+function ringClickCenter() {
+  const id = ringCursorId();
+  if (!id) return true;                              // 环闭：界内零动作（legacy）
+  if (id === activeTabId) return true;               // 界内零动作（态不变）
+  setActiveTab(id);                                  // canvas-tab-switched 收环
+  return true;
+}
+/** 环游标当前指的页签 id（环闭 = null）。@returns {string|null} */
+function ringCursorId() { return ringState ? ringState.ids[ringState.cursor] || null : null; }
+
+function initCapsuleRing() {
+  const hdr = /** @type {HTMLElement|null} */ (document.querySelector('#canvas-panel .canvas-header'));
+  if (!hdr) return;
+  const flags = /** @type {any} */ (hdr);
+  if (flags._capsuleRing) return;
+  flags._capsuleRing = true;
+  if (cardWindowMode) return;                      // 卡窗 = 单卡查看器，无环
+  const isMobileLayer = () => document.body.classList.contains('mobile-layer');
+
+  let acc = 0;                                     // wheel deltaX 累积
+  let leaveTimer = 0;
+
+  const root = document.createElement('div');
+  root.className = 'capsule-ring';
+  root.id = 'canvas-capsule-ring';
+  root.hidden = true;
+  hdr.appendChild(root);
+
+  /** 环序 = 页签插序（tabs Map 序 —— 与标签条/deckBuildRing 源序同源）。 */
+  const build = () => {
+    root.textContent = '';
+    ringState.ids = [...tabs.keys()];
+    for (const id of ringState.ids) {
+      const entry = tabs.get(id);
+      if (!entry) continue;
+      // div[role=button] 而非 <button>：标题头手势按 closest('button') 直通钮群
+      // —— 环胶囊若是 button，环开着时按压/竖滑换卡/横滑关卡全被钮群守卫吞掉
+      // （CC1/CC2/CC3 契约）。中心位事件照旧穿透标题头走手势链（按住=按钮语义），
+      // 缘位 = 纯点击钮（stopPropagation）。切换语义：缘位 click / 中心位
+      // ringClickCenter()（finish !moved 臂）。
+      const b = document.createElement('div');
+      b.className = 'cr-capsule' + (isTabDirty(entry) ? ' is-dirty' : '');
+      b.setAttribute('role', 'button');
+      b.dataset.tabId = id;
+      b.innerHTML = '<span class="cr-icon">' + deckIconOf(deckTypeFamily(entry)) + '</span>' +
+        '<span class="cr-dot"></span><span class="cr-name">' + escapeDeckText(entry.title || entry.id) + '</span>';
+      // 中心位让 pointer 事件穿透标题头（按压触感/竖滑换卡/横滑关卡手势照旧，
+      // 作者令③「按住=交互按钮」）；缘位胶囊 = 纯按钮（不进手势链）。
+      b.addEventListener('pointerdown', (e) => { if (ringState && ringState.ids[ringState.cursor] !== id) e.stopPropagation(); });
+      // 缘位点击即切换（中心位被标题头 pointer capture 重定向 —— 走
+      // ringClickCenter()，见 initCardHeadGestures finish() 的 !moved 臂）。
+      b.addEventListener('click', () => {
+        if (!ringState || ringState.ids[ringState.cursor] === id) return;
+        setActiveTab(id);                          // canvas-tab-switched 收环
+      });
+      b.addEventListener('contextmenu', (e) => {
+        if (isMobileLayer()) return;
+        const entry2 = tabs.get(id);
+        if (!entry2) return;
+        e.preventDefault();
+        e.stopPropagation();                        // 不与标题头/面板级菜单双弹
+        showCanvasRefMenu(e.clientX, e.clientY, entry2, capsuleMenuActions(entry2));
+      });
+      root.appendChild(b);
+    }
+  };
+
+  /** 位姿：rel = 到游标的最短环距（wrap）；0 = 中心清晰、±1 = 缘位 cover-flow
+   *  （rotateY 后仰 + 模糊）、|rel|≥2 = 弧外不可见（保留轨迹）。缘位间距 =
+   *  中心胶囊实宽的几何函数，长名不撞缘。 */
+  const layout = () => {
+    if (!ringState) return;
+    const { ids, cursor } = ringState;
+    const n = ids.length;
+    const kids = /** @type {HTMLElement[]} */ ([...root.children]);
+    const centerKid = cursor >= 0 && cursor < n ? kids[cursor] : null;
+    const w = centerKid ? centerKid.offsetWidth : 120;
+    const edgeX = Math.max(88, Math.min(160, w * 0.86));
+    for (let i = 0; i < kids.length; i++) {
+      let rel = (i - cursor + n) % n;
+      if (rel > n / 2) rel -= n;
+      const ar = Math.abs(rel);
+      const k = kids[i];
+      k.classList.toggle('is-center', rel === 0);
+      k.classList.toggle('is-edge', ar === 1);
+      k.classList.toggle('is-far', ar > 1);
+      k.style.setProperty('--cr-x', (rel * (ar === 1 ? edgeX : edgeX * 2.1)).toFixed(1) + 'px');
+      k.style.setProperty('--cr-z', (ar === 0 ? 0 : ar === 1 ? -110 : -230) + 'px');
+      k.style.setProperty('--cr-ry', String(-rel * (ar === 1 ? 34 : 44)) + 'deg');
+    }
+  };
+
+  /** 环锚 = 标题头实心中心（环收放与常态胶囊同位无缝 morph）。 */
+  const anchor = () => {
+    const title = document.getElementById('canvas-title');
+    if (!title) return;
+    const hr = hdr.getBoundingClientRect();
+    const tr = title.getBoundingClientRect();
+    root.style.left = (tr.left + tr.width / 2 - hr.left) + 'px';
+    root.style.top = (tr.top + tr.height / 2 - hr.top) + 'px';
+  };
+
+  const openRing = () => {
+    if (ringState || isMobileLayer() || cardWindowMode) return;
+    if (tabs.size < 2) return;                     // 单胶囊：平时态即全部，无环可展
+    const all = [...tabs.keys()];
+    ringState = { ids: all, cursor: Math.max(0, all.indexOf(activeTabId)) };
+    acc = 0;
+    build();
+    hdr.classList.add('ring-open');
+    root.hidden = false;
+    anchor();
+    layout();
+  };
+  const closeRing = () => {
+    if (!ringState) return;
+    ringState = null;
+    hdr.classList.remove('ring-open');
+    root.hidden = true;
+    root.textContent = '';
+    acc = 0;
+    if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = 0; }
+  };
+
+  hdr.addEventListener('pointerenter', (e) => {
+    if (isMobileLayer() || e.pointerType === 'touch') return;
+    if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = 0; }
+    openRing();
+  });
+  hdr.addEventListener('pointerleave', () => {
+    if (!ringState || leaveTimer) return;
+    leaveTimer = setTimeout(closeRing, RING_CLOSE_GRACE_MS);
+  });
+  // 环上滚轮：横滑（deltaX）/ Shift+纵滚 = 换选一格；preventDefault + 静默
+  // 其余纵滚 —— 环优先消费，画布区（#716 捏合缩放 / 平移）永不收到。
+  hdr.addEventListener('wheel', (e) => {
+    if (isMobileLayer() || !ringState) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const d = Math.abs(e.deltaX) >= Math.abs(e.deltaY) ? e.deltaX : (e.shiftKey ? e.deltaY : 0);
+    if (!d) return;
+    acc += d;
+    const n = ringState.ids.length;
+    while (acc <= -RING_WHEEL_STEP) { acc += RING_WHEEL_STEP; ringState.cursor = (ringState.cursor - 1 + n) % n; }
+    while (acc >= RING_WHEEL_STEP) { acc -= RING_WHEEL_STEP; ringState.cursor = (ringState.cursor + 1) % n; }
+    layout();
+  }, { passive: false });
+  // 作者令③：从胶囊发起的原生拖拽一律拦下（文字/链接拖拽；OS 文件拖入 =
+  // drop 落区不受影响）。文字多选已被全头 user-select:none 封死（CSS）。
+  hdr.addEventListener('dragstart', (e) => e.preventDefault());
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ringState) closeRing(); });
+  // 生命周期：任何换签收环（环游标语义随激活易主作废）；页签增减重建/收环。
+  document.addEventListener('canvas-tab-switched', () => { if (ringState) closeRing(); });
+  document.addEventListener('canvas-tab-closed', () => {
+    if (!ringState) return;
+    if (tabs.size < 2) { closeRing(); return; }
+    ringState.cursor = Math.min(ringState.cursor, tabs.size - 1);
+    build();
+    anchor();
+    layout();
   });
 }
 
@@ -3151,6 +3370,8 @@ export function initCanvas() {
   initDeck();
   // UI 批⑨：卡头胶囊手势（桌面腿：按压触感/竖滑换卡/横滑关卡/右键引用）。
   initCardHeadGestures();
+  // 2026-10-22 作者令：胶囊环（hover 展开 · 横滑换选 · 点击切换 · 右键菜单扩容）。
+  initCapsuleRing();
 
   // Window-focus refresh (dispatched by explorer.js after reloading the tree):
   // re-check the active file tab for external edits. Dirty-guarded, debounced,

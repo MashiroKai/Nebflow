@@ -672,10 +672,11 @@ body.canvas-open.canvas-overlay #canvas-panel {
 .canvas-header.scroll-under-glass { --sug-fade: 24px; --sug-blur: 10px; }
 .canvas-header.scroll-under-glass::after { left: -18px; right: -18px; }
 
-/* 桌面态胶囊内容（原 46px 实条规则退役）：高度由内容撑，pop 钮随行。 */
+/* 桌面态胶囊内容（原 46px 实条规则退役）：高度由内容撑，pop 钮随行。
+   2026-10-22 作者令「平时态尺寸调小」：padding/字号降一档。 */
 body:not(.mobile-layer) .canvas-header {
   height: auto;
-  padding: 6px 8px 6px 14px;
+  padding: 4px 7px 4px 12px;
 }
 body:not(.mobile-layer) .canvas-header .canvas-tab-bar,
 body:not(.mobile-layer) .canvas-header .canvas-close-btn {
@@ -683,6 +684,18 @@ body:not(.mobile-layer) .canvas-header .canvas-close-btn {
 }
 /* .canvas-title 族规则在原位（下方「常态头 v2①」段），本段不重复。 */
 /* (Header ::before bump is defined later with the panel drag-handle styles) */
+
+/* 2026-10-22 作者令③「按住=交互按钮」：胶囊按下/拖动必须是按钮语义 ——
+   全头 user-select none（严禁进入文字多选/双击选中文本态）；原生拖拽
+   （dragstart）由 canvas.js preventDefault 拦截，OS 文件拖入（drop 落区）
+   不受影响（拦的是从胶囊发起的 drag，不是 drop）。 */
+.canvas-header {
+  user-select: none;
+  -webkit-user-select: none;
+  /* 胶囊环（下方 §ring）的 3D 透视原点 = 胶囊中心 */
+  perspective: 640px;
+  perspective-origin: 50% 50%;
+}
 
 /* Canvas close button */
 .canvas-close-btn {
@@ -1185,17 +1198,103 @@ body.canvas-deck-narrow .canvas-title { max-width: 46%; }
   transition: opacity 0.14s ease, transform 0.14s ease;
 }
 .canvas-title.swap .t-inner { opacity: 0; transform: translateY(-5px); }
-.canvas-title .t-icon { flex: none; width: 16px; height: 16px; color: var(--color-text-muted); display: flex; }
-.canvas-title .t-icon svg { width: 16px; height: 16px; }
+.canvas-title .t-icon { flex: none; width: 14px; height: 14px; color: var(--color-text-muted); display: flex; }
+.canvas-title .t-icon svg { width: 14px; height: 14px; }
 .canvas-title .t-dot {
-  flex: none; width: 6px; height: 6px; border-radius: 50%;
+  flex: none; width: 5px; height: 5px; border-radius: 50%;
   background: var(--color-primary); display: none;
 }
 .canvas-title.is-dirty .t-dot { display: block; }
 .canvas-title .t-name {
-  font-size: 13px; font-weight: 500; color: var(--color-frame-text-bright, var(--color-text));
+  font-size: 12px; font-weight: 500; color: var(--color-frame-text-bright, var(--color-text));
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
 }
+
+/* ── 胶囊环（2026-10-22 作者令追加：hover 态展开为圆环排布）──────────
+   作者令：平时态 = 单胶囊（缩小，上方）；hover 态 = 各页签胶囊沿圆环排布，
+   最多同时可见 3 个（中心 = 环游标 · 两侧邻位沿弧后仰）；左右滚动（触控板
+   横滑 / 滚轮 deltaX / Shift+纵滚）在环上换选，点击即切换页签；两侧缘位胶囊
+   沿曲率 rotateY 透视 + 模糊扭曲（cover-flow），材质 = 全站统一 frosted token
+   （--glass-bg / --glass-blur saturate(1.15) / --glass-border / --frost-shadow，
+   sapphire.css 单源 —— 禁止各画各的）。
+   几何：环容器 0×0 锚在标题头中心（JS 置 left/top px），胶囊 absolute 居中于
+   锚点，transform = translate(-50%,-50%) translateX(--cr-x) translateZ(--cr-z)
+   rotateY(--cr-ry) scale(--cr-press)；透视由 .canvas-header 的 perspective
+   提供。环 = 纯前端组件（本文件 + canvas.js §ring），与左栏控制面零共享。
+   按住=按钮语义（作者令③）：胶囊本体 button + 全头 user-select:none。 */
+.capsule-ring {
+  position: absolute;
+  width: 0;
+  height: 0;
+  z-index: 4;             /* 盖过 .canvas-title（z-auto），pop 钮(5)之上不给 */
+  pointer-events: none;
+}
+.cr-capsule {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 150px;
+  padding: 4px 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  box-shadow: var(--frost-shadow);
+  color: var(--color-frame-text-bright, var(--color-text));
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+  -webkit-user-select: none;
+  opacity: 0;
+  pointer-events: none;                     /* 收起态不拦 hover 命中 */
+  transform: translate(-50%, -50%) translateX(var(--cr-x, 0px)) translateZ(var(--cr-z, 0px))
+    rotateY(var(--cr-ry, 0deg)) scale(var(--cr-press, 1));
+  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.16s ease, filter 0.18s ease;
+}
+.canvas-header.ring-open .cr-capsule { pointer-events: auto; opacity: 1; }
+.cr-capsule .cr-icon { flex: none; width: 14px; height: 14px; color: var(--color-text-muted); display: flex; }
+.cr-capsule .cr-icon svg { width: 14px; height: 14px; }
+.cr-capsule .cr-dot {
+  flex: none; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--color-primary); display: none;
+}
+.cr-capsule.is-dirty .cr-dot { display: block; }
+.cr-capsule .cr-name {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  color: var(--color-frame-text-bright, var(--color-text));
+}
+/* 中心位 = 环游标胶囊：内容-only 覆层（底 = 常态标题头胶囊本体 —— 同位无缝
+   morph；按压触感也由标题头 is-pressed scale 承接），零变换全清晰 */
+.cr-capsule.is-center {
+  z-index: 3;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.cr-capsule.is-center:active { --cr-press: 0.96; filter: brightness(0.92); }
+/* 缘位 = cover-flow：沿弧后仰 + 模糊扭曲 + 半透（毛玻璃照挂 —— 模糊叠加在
+   backdrop 之上，曲率感来自 rotateY 透视） */
+.cr-capsule.is-edge {
+  z-index: 2;
+  opacity: 0.82;
+  filter: blur(1.6px) saturate(1.25);
+}
+.cr-capsule.is-edge:active { --cr-press: 0.96; }
+/* 弧外位（|rel|≥2）：不可见不可点，保留位姿让收放有连续轨迹 */
+.cr-capsule.is-far { opacity: 0 !important; pointer-events: none !important; }
+/* 环开时常态标题让位（同位同容的中心胶囊接班 —— 无缝 morph）；pop 钮浮在环上 */
+.canvas-header.ring-open .canvas-title .t-inner { opacity: 0; pointer-events: none; }
+.canvas-header .canvas-pop-btn { position: relative; z-index: 6; }
 
 /* ── 层叠浮钮（v5②）：body 层固定元素，JS 逐帧同步面板盒（top 10 / right 12 /
    40px 玻璃钮语言逐字不动）。不在面板子树（panel.contains(fab)===false），
@@ -1503,7 +1602,8 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   #canvas-content,
   #deck-layer,
   #deck-fab,
-  .canvas-title .t-inner { transition-duration: 0.01s !important; }
+  .canvas-title .t-inner,
+  .cr-capsule { transition-duration: 0.01s !important; }
 }
 
 /* 精修③补：OS 文件拖到居中标题条 = 开新签（标签条退役后的替代落区，v1 备忘） */

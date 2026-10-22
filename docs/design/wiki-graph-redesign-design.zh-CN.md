@@ -158,6 +158,17 @@ canvas 沿用 §4 的 `--wg-*` 石墨双主题表；左栏控制面穿侧栏玻�
 3. **canvas 渐隐退役（与聊天窗口渐隐同令）**：`.canvas-header.scroll-under-glass::after` 裙边桌面 `display:none`（胶囊本体 frosted 保留）；画布内容（节点/连线/文档文字）不再穿胶囊渐变淡出。手机层维持现状——与 UI 批⑥⑦「顶部渐隐穿顶 = 手机层唯一」同一条桌面/手机分界线。
 4. **验证**：harness 增 ⑥ frost 逐项相等 / ⑦ 裙边退役 / ⑧ 24 帧连续捏合+40 帧采样（逐帧步进 ≤0.06、锚点世界点漂移 <2px、收敛 zoomTarget）共 16 断言（63/63 过）；spec 增 §E（wheel 平移 vs 捏合阻尼缩放）/ §F（frosted 相等 + 裙边退役）两条契约（12/12 过）。
 
+### 9.8 追加批二（2026-10-22 作者令：canvas 顶部胶囊交互重做，已实施）
+
+1. **平时态**：单胶囊（`.canvas-title`），整头缩一档（padding 4/7/12、t-name 12px）；单页签时 hover 不展开（平时态即全部）。
+2. **hover 态 = 胶囊环**（`.capsule-ring`，纯前端组件：CSS 3D 沿弧排布 + backdrop filter，与左栏控制面零共享）：各页签胶囊沿圆环排布、**最多同时可见 3 个**——中心 = 环游标（内容-only 覆层，底 = 标题头胶囊本体，同位无缝 morph），±1 缘位沿曲率 `rotateY(∓34°) translateZ(-110px)` + `blur(1.6px) saturate(1.25)` + opacity .82（cover-flow 透视模糊扭曲），|rel|≥2 弧外不可见；**左右滚动换选**（触控板横滑 wheel deltaX / Shift+纵滚，56px 一格，累加器余量随动、环绕）；**点击即切换**（缘位 click；中心位经标题头手势 finish !moved 臂 `ringClickCenter`）。材质 = 全站统一 frosted token（缘位完整药丸：`--glass-bg/--glass-blur saturate(1.15)/--glass-border/--frost-shadow`，与 chat header computed 逐项相等）。
+3. **按住 = 交互按钮语义**：`.canvas-header` 全头 `user-select:none`（严禁文字多选/双击选中）+ `dragstart` preventDefault（拦从胶囊发起的原生拖拽，OS 文件拖入 drop 落区不受影响）；环胶囊 = `div[role=button]`（`<button>` 会落标题头手势「钮群直通」守卫，环开着时按压/竖滑换卡/横滑关卡手势全灭）；缘位 pointerdown stopPropagation（纯点击钮），中心位事件穿透标题头（CC1 按压触感 / CC2 换卡 / CC3 关卡手势在环开着时照旧）。
+4. **右键菜单**（`capsuleMenuActions` 一份语义，标题头与环胶囊共用）：引用当前页（保留，CC4 契约）＋ **多开**（铺开叠卡环 openDeck；deck 开着换形「收起叠卡」）＋ **关闭**（deck 态 deckRequestClose / 常态 closeTab；deck 态另有「关闭其他」）＋ **在独立窗口打开**（`popoutCardWindow`/`toggleCardWindow` = #717 卡窗链；独立中换形「合并回主窗」；非文件卡不挂）。
+5. **#716 分区（横滑不冲突）**：环上滚轮 preventDefault + stopPropagation 优先消费——胶囊环上横滑 = 环换选，画布区横滑仍 = 平移、捏合仍 = 缩放（wiki spec §G 双侧钉：环上换选时图谱 vx/vy/scale/zoomTarget 逐字不变）。
+6. **边界**：手机层/卡窗态整腿让位；hover 展开（pointerenter，非触针）+ 离环 140ms 宽限收起 + Esc 收环；任何换签收环；页签增减重建/收环（<2 收）。
+7. **验证**：`tests/canvas-capsule-ring.spec.mjs` 24 断言（展开/收起/换选/切换/菜单四项/popout 往返/deck 开收/按钮语义/单胶囊不展开）全绿；`tests/wiki-graph-ux.spec.mjs` 增 §G（13/13）；`tests/canvas-cardhead-capsule.spec.mjs` legacy 契约回归 28/28；证据 `shots/8-capsule-ring-dark.png`。
+
+
 ## 相关文档
 
 - 样张：[[wiki-graph-redesign-sample.html]]（HTML，双击打开）。

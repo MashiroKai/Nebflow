@@ -29,6 +29,9 @@
 //      --glass-blur saturate(1.15) / --glass-border / --frost-shadow 单源）；
 //      canvas 胶囊裙边渐隐桌面退役（.scroll-under-glass::after display:none，
 //      与聊天窗口渐隐同令；手机层维持现状，不在本 spec 视口内）；
+//   §G 胶囊环 × 手感分区（2026-10-22 胶囊交互重做批）：hover 展开的胶囊环上
+//      触控板横滑 = 环换选（环优先消费，vx/vy/scale 纹丝不动）；画布区横滑
+//      仍 = 平移、捏合仍 = 缩放（#716 契约不被环劫持）；
 //   R0 全流程 console 零错误（每个用例尾部断言）。
 
 import { test, expect } from '@playwright/test';
@@ -564,5 +567,88 @@ test('§F frosted: capsule ≡ search ≡ chips ≡ chat header material; capsul
   });
   expect(skirt.cls).toBe(true);
   expect(skirt.after).toBe('none');
+  expect(errors).toEqual([]);
+});
+
+test('§G capsule ring consumes horizontal swipe; canvas keeps pan/pinch (#716 non-conflict)', async ({ page }) => {
+  const errors = await boot(page);
+  await openGraph(page);
+  // 第二页签（环需 ≥2）：开 projects 面板页签再回图谱（boot 自带 plugins 页签
+  // → tabCount 3；环序 = 插序，图谱居中时缘位含 projects）
+  await page.click('#projects-btn');
+  await expect.poll(() => page.evaluate(() => window.__canvasDeck?.state?.()?.tabCount), { timeout: 8000 }).toBe(3);
+  await page.click('#wiki-btn');
+  await expect.poll(() => page.evaluate(() => document.querySelector('.canvas-tab-pane.active')?.dataset.tabId), { timeout: 8000 }).toBe('wiki-graph');
+
+  // hover 标题头 → 环展开：中心 = wiki-graph、缘位 = projects
+  const hp = await page.evaluate(() => {
+    const r = document.querySelector('#canvas-panel .canvas-header').getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  await page.mouse.move(hp.x, hp.y);
+  await page.waitForFunction(() => document.querySelector('#canvas-panel .canvas-header').classList.contains('ring-open'), { timeout: 4000 });
+  const ring = await page.evaluate(() => {
+    const caps = [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule')];
+    const center = caps.find((c) => c.classList.contains('is-center'));
+    const edges = caps.filter((c) => c.classList.contains('is-edge')).map((c) => c.dataset.tabId);
+    return { n: caps.length, center: center?.dataset.tabId || null, edges };
+  });
+  expect(ring.n).toBe(3);                       // 3 页签 = 中心 + 2 缘位（0 弧外，最多可见 3）
+  expect(ring.center).toBe('wiki-graph');
+  expect(ring.edges).toContain('projects');
+
+  // 环上横滑一格（deltaX -56）：环游标移动到 projects；图谱 view 四自由度纹丝不动
+  const viewBefore = await page.evaluate(() => {
+    const p = window.__wikiGraphProbe();
+    return { vx: p.vx, vy: p.vy, scale: p.scale, zoomTarget: p.zoomTarget };
+  });
+  await page.mouse.wheel(56, 0);   // 环序 [plugins, wiki-graph, projects]：+1 格 → projects 居中
+  await page.waitForFunction(() => {
+    const c = document.querySelector('#canvas-capsule-ring .cr-capsule.is-center');
+    return c && c.dataset.tabId === 'projects';
+  }, { timeout: 4000 });
+  const viewAfter = await page.evaluate(() => {
+    const p = window.__wikiGraphProbe();
+    return { vx: p.vx, vy: p.vy, scale: p.scale, zoomTarget: p.zoomTarget };
+  });
+  expect(viewAfter).toEqual(viewBefore);
+
+  // 离环（回画布中心）→ 环收；画布区横滑仍 = 平移、捏合仍 = 缩放（#716 不被劫持）
+  const box = await page.locator('.wiki-canvas').boundingBox();
+  const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+  await page.mouse.move(cx, cy);
+  await expect.poll(() => page.evaluate(() => !document.querySelector('#canvas-panel .canvas-header').classList.contains('ring-open')), { timeout: 4000 }).toBe(true);
+  await page.evaluate(() => new Promise((resolve) => {
+    const c = document.querySelector('.wiki-canvas');
+    const r = c.getBoundingClientRect();
+    let i = 0;
+    const tick = () => {
+      if (i >= 6) { resolve(null); return; }
+      c.dispatchEvent(new WheelEvent('wheel', {
+        deltaY: -10, ctrlKey: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true,
+      }));
+      i++;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }));
+  const pinched = await page.evaluate(() => window.__wikiGraphProbe().scale);
+  expect(pinched).toBeGreaterThan(viewBefore.scale + 0.01);
+  // 追帧收尾（锚点补偿会持续微调 vx）—— 收敛后再测横滑平移，口径才纯
+  await page.waitForFunction(() => {
+    const p = window.__wikiGraphProbe();
+    return Math.abs(p.scale - p.zoomTarget) <= 0.0005;
+  }, { timeout: 8000 });
+  const vxBeforePan = await page.evaluate(() => window.__wikiGraphProbe().vx);
+  await page.evaluate(() => new Promise((resolve) => {
+    const c = document.querySelector('.wiki-canvas');
+    const r = c.getBoundingClientRect();
+    c.dispatchEvent(new WheelEvent('wheel', {
+      deltaX: 120, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true,
+    }));
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  }));
+  const panned = await page.evaluate(() => window.__wikiGraphProbe().vx);
+  expect(Math.round(panned)).toBe(Math.round(vxBeforePan + 120));
   expect(errors).toEqual([]);
 });
