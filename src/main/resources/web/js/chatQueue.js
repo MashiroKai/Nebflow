@@ -1,9 +1,18 @@
 // chatQueue.js — Queue bar rendering for messages typed while LLM is busy.
 // Renders a compact expandable bar above the input area (NOT in the chat flow).
+//
+// 排队信息量批（2026-10-22 作者追加令）：「排队中 (N)」死状态退役 ——
+//   ① 头行有信息量：等待当前回复完成 · 已进行 {elapsed}（活秒表，锚
+//      state.turnStartTimes[sessionId]，与 workline 转轮同源同格式）· N 条排队；
+//   ② 每个排队项带位次标「第 N 位 · 等待当前回复完成」（作者原文形态）；
+//   ③ 每个排队项带「已收到」确认 chip（check 图标 + 可读文本）——排队消息
+//      不许消失在数字里。
+// 位次 = 数组下标 +1（drain 队头先发；重排拖拽后 renderQueueBar 重渲自愈）。
 
 import state from './state.js';
 import { findViewBySessionId } from './chatView.js';
 import { t } from './i18n.js';
+import { formatLive } from './workline.js';
 
 /**
  * Re-render the queue bar for a given session.
@@ -52,8 +61,20 @@ export function renderQueueBar(sessionId, handlers = {}) {
 
   const title = document.createElement('span');
   title.className = 'queue-bar-title';
-  const label = t('input.queued') || '排队中';
-  title.textContent = `${label} (${items.length})`;
+  // 排队信息量批：头行 = 「等待当前回复完成 · N 条排队 · 已进行 Xs」。秒表锚
+  // state.turnStartTimes[sessionId]（main.js/input.js 派发点写入、回合终态删除，
+  // 与 workline 活秒表同源）——锚缺失（busy 标先行、锚未达的窗口）降级为无时长
+  // 形态，禁编造 0s。
+  title.textContent = t('chatQueue.waitingTurn');
+  title.appendChild(document.createTextNode(' · ' + t('chatQueue.queuedCount', { n: String(items.length) })));
+  const turnStart = state.turnStartTimes[sessionId];
+  if (turnStart) {
+    const elapsed = document.createElement('span');
+    elapsed.className = 'queue-bar-elapsed';
+    elapsed.dataset.start = String(turnStart);
+    elapsed.textContent = ' · ' + t('chatQueue.turnElapsed', { t: formatLive(Date.now() - turnStart) });
+    title.appendChild(elapsed);
+  }
   header.appendChild(title);
 
   bar.appendChild(header);
@@ -63,7 +84,7 @@ export function renderQueueBar(sessionId, handlers = {}) {
   //  disappear after a re-render while collapsed — expanding showed nothing.)
 
   // Items
-  items.forEach((item) => {
+  items.forEach((item, qi) => {
     const row = document.createElement('div');
     row.className = 'queue-item' + (item.failed ? ' failed' : '');
     row.dataset.queueId = item.id;
@@ -119,6 +140,13 @@ export function renderQueueBar(sessionId, handlers = {}) {
       renderQueueBar(sessionId, handlers);
     });
 
+    // 排队信息量批：位次标 = 「第 N 位 · 等待当前回复完成」（作者原文形态；
+    // N = 数组下标 +1，队头 = 下一个 drain）。失败项仍占位次（真值：还在队里）。
+    const posEl = document.createElement('span');
+    posEl.className = 'queue-item-pos';
+    posEl.textContent = t('chatQueue.position', { n: String(qi + 1) });
+    row.appendChild(posEl);
+
 	    const textEl = document.createElement('span');
 	    textEl.className = 'queue-item-text';
 	    const fullText = item.mode === 'compact'
@@ -172,6 +200,15 @@ export function renderQueueBar(sessionId, handlers = {}) {
       row.appendChild(note);
     }
 
+    // 排队信息量批：「已收到」确认 chip（check + 可读文本）——排队消息不许消失
+    // 在数字里（作者令）。与气泡上的 .msg-pending-mark.acked 同一语义双呈现。
+    const ackEl = document.createElement('span');
+    ackEl.className = 'queue-item-ack';
+    ackEl.title = t('chat.queuedAckTip');
+    ackEl.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>';
+    ackEl.appendChild(document.createTextNode(t('chat.queuedAck') || '已收到'));
+    row.appendChild(ackEl);
+
     const actions = document.createElement('div');
     actions.className = 'queue-item-actions';
 
@@ -209,4 +246,29 @@ export function renderQueueBar(sessionId, handlers = {}) {
     row.appendChild(actions);
     bar.appendChild(row);
   });
+
+  // 排队信息量批：头行带秒表 ⇒ 上表即武装 1s ticker（无在场秒表节点则本调用
+  // 不武装——ticker 自身在扫空时自停）。
+  if (document.querySelector('.queue-bar-elapsed[data-start]')) ensureElapsedTicker();
+}
+
+// ---------- 排队信息量批：头行活秒表（1s 自走，零外部接线） ----------
+// renderQueueBar 只在队列变化时被调——秒表不能靠它。单例 interval：扫在场
+// .queue-bar-elapsed[data-start]（头行重渲后新节点自动入扫；锚消失 = 回合终态
+// 删 turnStartTimes → 由 renderQueueBar 的降级形态接管，此处只管已挂节点）。
+// 无在场节点即自停（排队条隐藏 = 零周期工作，对齐 workline UI-G 纪律）。
+let _elapsedTimer = 0;
+function ensureElapsedTicker() {
+  if (_elapsedTimer) return;
+  _elapsedTimer = setInterval(() => {
+    const nodes = /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.queue-bar-elapsed[data-start]'));
+    if (!nodes.length) { clearInterval(_elapsedTimer); _elapsedTimer = 0; return; }
+    nodes.forEach((el) => {
+      const start = Number(el.dataset.start);
+      if (!start) return;
+      // 只重写「已进行 Xs」的值段：保留 ' · ' 分隔前缀（首文本节点不动，值在尾部）。
+      const sep = el.textContent.match(/^(\s*·\s*)/);
+      el.textContent = (sep ? sep[1] : '') + t('chatQueue.turnElapsed', { t: formatLive(Date.now() - start) });
+    });
+  }, 1000);
 }

@@ -19,17 +19,14 @@
  * ::after 描画在 #chat 之上；弹窗族（overlay+modal）同理。pointer-events:none，
  * 不拦任何交互。
  *
- * UI 批⑥⑦（2026-10-21 作者令）顶部渐隐契约：**「顶部渐隐穿顶」效果 = 手机层
- * 唯一**（body.mobile-layer #header::after 裙边，v3 悬浮顶栏内容直顶穿栏的现状
- * 渐隐，不动）。桌面端顶部无任何渐隐挂载 —— #header 从不携带 .scroll-under-glass、
- * 也没有 ::after 顶部裙边；桌面消息顶部裁剪线 = header 下沿（main.js syncTopReserve
- * 写 #chat margin-top，⑦），内容根本不进 header 区，无需渐隐。本文件的六面浮层
- * 裙边（面板/任务带/弹窗）桌面照旧挂载 —— 作者明示「面板浮层原样」，勿误伤。 */
+ * 顶部消失点批（2026-10-22 作者追加令）：**内容区渐隐全退役** —— UI 批⑥⑦「手机层
+ * 唯一渐隐穿顶」（body.mobile-layer #header + 其 ::after 裙边，22-27 行旧契约）
+ * 随本令整组移除：手机层渐隐改走 chat.css #chat 的 mask 裁剪（锚点变量
+ * --chat-top-clip，main.js 实测写入，消失点 = Header 顶缘、2px 极窄过渡）。
+ * 本文件六面浮层裙边（面板/任务带/弹窗）照旧挂载 —— 作者明示「面板浮层原样」，
+ * 勿误伤。 */
 
-.scroll-under-glass,
-/* 手机六件①：会话面顶栏（头像 chips 悬浮层）——滚动内容从其下穿过渐隐
-   （仅手机层作用域；桌面 #header 有自己的通栏玻璃底，不适用） */
-body.mobile-layer #header {
+.scroll-under-glass {
   --sug-fade: 28px;   /* 裙边高（= 渐隐过渡带，作者档 24–32px 取中） */
   --sug-blur: 12px;
   --sug-sat: 1.35;
@@ -37,8 +34,7 @@ body.mobile-layer #header {
   position: relative;
 }
 
-.scroll-under-glass::after,
-body.mobile-layer #header::after {
+.scroll-under-glass::after {
   content: '';
   position: absolute;
   top: 100%;
@@ -59,9 +55,7 @@ body.mobile-layer #header::after {
 /* ── 降级态：机制自选（js/scrollUnderGlass.js 探测器 + CSS.supports 特性检测）──
    只摘 backdrop-filter，tint + mask 渐隐原样保留（几何零变）。 */
 html.no-backdrop .scroll-under-glass::after,
-html.glass-degraded .scroll-under-glass::after,
-html.no-backdrop body.mobile-layer #header::after,
-html.glass-degraded body.mobile-layer #header::after {
+html.glass-degraded .scroll-under-glass::after {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   /* mask 显式重申（降级态的本体 = 渐隐过渡；防类切换后伪元素 mask 计算漂移） */
@@ -71,12 +65,10 @@ html.glass-degraded body.mobile-layer #header::after {
 
 /* 暗色：tint 换暗玻璃底色（两态同构，仅配色） */
 @media (prefers-color-scheme: dark) {
-  .scroll-under-glass,
-  body.mobile-layer #header {
+  .scroll-under-glass {
     --sug-tint: rgba(22, 24, 29, 0.46);
   }
-  .scroll-under-glass::after,
-  body.mobile-layer #header::after {
+  .scroll-under-glass::after {
     background: linear-gradient(to bottom, var(--sug-tint), rgba(22, 24, 29, 0));
   }
 }

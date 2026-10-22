@@ -3479,20 +3479,19 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
     // （页面滚过表头即触发），观察器自此永久静默——带改 overlay 后 chat 顶回到
     // #main 顶，滚动态下 top=0 是常态，守卫改判零尺寸盒。
     if (!chatBox.width && !chatBox.height) return;
-    /* UI 批⑦（2026-10-21 作者令）：桌面端消息列表最顶部不得超过 header —— #chat
-       盒顶钉到 header 盒底（margin-top 按实测写入，滚动裁剪线 = header 下沿，
-       任何内容不高于 header；作者截图实证消息文字滚到 header 上方/穿过头顶可见）。
-       手机层维持「内容直顶穿栏 + 裙边渐隐」现状（scrollUnderGlass.css
-       body.mobile-layer #header::after 顶部渐隐），margin 恒 0 不参与裁剪。
-       先写 margin 再量 reserve：chatTop 随盒顶移动，让位算式仍自洽。 */
-    const mobile = document.body.classList.contains('mobile-layer');
-    const mainEl = document.getElementById('main');
-    const wantMargin = mobile || !mainEl ? 0
-      : Math.max(0, Math.ceil(header.getBoundingClientRect().bottom - mainEl.getBoundingClientRect().top));
-    if ((parseFloat(chat.style.marginTop) || 0) !== wantMargin) {
-      chat.style.setProperty('margin-top', wantMargin + 'px', 'important');
+    /* 顶部消失点批（2026-10-22 作者追加令）：UI 批⑦的「#chat 盒顶钉 header 盒底
+       （margin-top 实测写入，内容不可能高于 header）」随本令**退役** —— 新契约 =
+       消失点锚定 **Header 顶缘**：内容滚动时从 Header 玻璃下**穿过**（透出磨砂），
+       在 Header 上缘处消失（#chat 的 mask 裁剪，锚点变量 --chat-top-clip 由本观察器
+       按实测写入；chat.css 的 #chat mask 消费）。margin 恒 0（盒顶回 #top-overlays
+       带底），让位仍由下方 padding reserve 承担（静止态首条消息在 header 之下，
+       滚动态内容上穿）。桌面⇄手机层同规（手机层渐隐裙边同步退役，见
+       scrollUnderGlass.css 契约注记）。 */
+    const chatTop = chatBox.top;
+    const clipTop = Math.max(0, Math.ceil(header.getBoundingClientRect().top - chatTop));
+    if ((parseFloat(chat.style.getPropertyValue('--chat-top-clip')) || 0) !== clipTop) {
+      chat.style.setProperty('--chat-top-clip', clipTop + 'px');
     }
-    const chatTop = chat.getBoundingClientRect().top;
     const reserve = Math.max(BASE_TOP_PAD, Math.ceil(bandBottom() - chatTop) + BASE_TOP_PAD);
     const prev = parseFloat(getComputedStyle(chat).paddingTop) || BASE_TOP_PAD;
     if (Math.abs(prev - reserve) < 0.5) return;
@@ -3518,8 +3517,9 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
   const ro = new ResizeObserver(syncTopReserve);
   ro.observe(header);
   ro.observe(overlays);
-  // UI 批⑦：桌面⇄手机层翻转（matchMedia 768px，mobile/bootstrap.js）走窗口
-  // resize 兜底重算 margin——層翻转时 header 尺寸恰好不变也不漏（幂等轻写）。
+  // 顶部消失点批（2026-10-22，原 UI 批⑦ resize 兜底）：桌面⇄手机层翻转
+  // （matchMedia 768px，mobile/bootstrap.js）走窗口 resize 兜底重算——層翻转时
+  // header 尺寸恰好不变也不漏（幂等轻写）。
   window.addEventListener('resize', syncTopReserve, { passive: true });
   syncTopReserve();
 })();

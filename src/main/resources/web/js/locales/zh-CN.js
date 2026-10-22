@@ -623,6 +623,15 @@ export default {
   // f1-send-queue（2026-10-19）：断线入队的待送达小标 tooltip + 队列溢出告警。
   'chat.pendingSend': '待送达 · 重连后自动补发',
   'input.queueOverflow': '消息队列已满（100 条）：最早的一条已丢弃',
+  // 排队信息量批（2026-10-22 作者追加令）：「排队中 (N)」死状态退役——头行有信息量
+  // （等待当前回复完成 + 活秒表 + 条数）、排队项带位次标（作者原文形态）与
+  // 「已收到」确认 chip、气泡侧同语义 .acked 确认标。
+  'chat.queuedAck': '已收到',
+  'chat.queuedAckTip': '已收到 · 排队等待当前回复完成',
+  'chatQueue.waitingTurn': '等待当前回复完成',
+  'chatQueue.queuedCount': '{n} 条排队',
+  'chatQueue.turnElapsed': '已进行 {t}',
+  'chatQueue.position': '第 {n} 位 · 等待当前回复完成',
   // qattachvault（2026-10-21）：载荷丢失（刷新时未能落盘）的显式失败态 —— 禁静默：
   // 停止自动补发，队列条注记 + 气泡红 ! + toast；撤回重编重新添加附件 = 可重传。
   'input.queueAttachLost': '附件文件已丢失（页面刷新时未能保存），此条已停止自动补发——撤回后重新添加附件再发送',

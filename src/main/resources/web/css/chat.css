@@ -27,6 +27,15 @@
   display: flex;
   flex-direction: column;
   overscroll-behavior: contain;
+  /* 顶部消失点批（2026-10-22 作者追加令）：滚动遮罩锚点 = Header 顶缘 —— 内容
+     从 Header 玻璃下穿过（透出磨砂），在 Header 上缘处消失。锚点变量
+     --chat-top-clip 由 main.js 顶让位观察器按实测写入（header.top - chat.top）；
+     缺省 0px = 无裁剪（boot 首帧/JS 未达时零视觉差）。过渡带 = 2px 极窄渐变
+     （防锯齿抖动，作者档「硬切或极窄过渡」取极窄）；🔴 内容区内不得再挂任何
+     渐隐处理（手机层 header 裙边已随本令退役，见 scrollUnderGlass.css）。 */
+  --chat-top-clip: 0px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent var(--chat-top-clip), #000 calc(var(--chat-top-clip) + 2px));
+  mask-image: linear-gradient(to bottom, transparent 0, transparent var(--chat-top-clip), #000 calc(var(--chat-top-clip) + 2px));
 }
 #header {
   background:
@@ -853,6 +862,24 @@
   color: var(--color-text);
 }
 .duration-badge .msg-pending-mark svg { width: 11px; height: 11px; }
+
+/* 排队信息量批（2026-10-22 作者追加令）：busy 排队腿的「已收到」确认标
+   （.acked = check 图标 + 可读文本，success 绿染）——作者令「排队消息要有明确的
+   已收到视觉（而不是消失在数字里）」。与离线腿时钟标同槽位（drain 翻面时整标
+   摘除，flipOfflineMark 按 .msg-pending-mark 寻址，两变体同契约）。 */
+.duration-badge .msg-pending-mark.acked {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  opacity: 1;
+  color: var(--color-success);
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 600;
+  white-space: nowrap;
+  user-select: none;
+}
+.duration-badge .msg-pending-mark.acked svg { width: 11px; height: 11px; }
 
 /* qattachvault 批：载荷丢失翻面标（红 !）—— input.js markQueueItemPayloadLost 把
    在场气泡的待送达时钟标原地改型（同一槽位、不新增元素）；title = 可判读原因。 */
@@ -4631,19 +4658,34 @@
   background: var(--color-bubble-user);
 }
 
-/* File card — bubble-colored, borderless, tail corner: the file message IS a
-   user bubble (WeChat form), 同圆角/同底色. Ink = the near-black the bubble
-   family already puts on green (chat.css dark-theme `.bubble.user{color:#111}`);
-   the muted sub line rides a 60% black alpha (≈5.1:1 on #95ec69 — AA at 11px). */
+/* File card — 统一 chip 族（2026-10-22 作者令「附件卡=统一 chip 族」：与 AskUser
+   附件卡 / Pop 文件卡同族的紧凑 chip——底 = AskUser 附件卡同款 --color-surface-2
+   （缺省中性灰玻璃，亮暗双主题自适应）、细边框 = chip 语言正典 --glass-etched-border
+   token、10px 圆角、28px 类型图标档（统一 chip 语言尺寸档，同 input.css
+   .att-thumb/.att-file）、文件名+大小。修前形态（#491 主题三的气泡绿底无边框
+   大卡 = 大绿块）随本令退役；用户文本气泡本体颜色不在本批范围（媒体图片/视频面
+   保持既有气泡剪影不动）。 */
 .row.user-media .file-card {
-  background: var(--color-bubble-user);
-  border: none;
-  border-radius: 16px;
-  border-bottom-right-radius: 4px;
+  width: auto;
+  max-width: 264px;
+  gap: 9px;
+  padding: 7px 10px 7px 7px;
+  background: var(--color-surface-2, rgba(127, 127, 127, 0.08));
+  border: 1px solid var(--glass-etched-border, rgba(91, 127, 191, 0.10));
+  border-radius: 10px;
   box-shadow: none;
 }
-.row.user-media .fc-name { color: #111; }
-.row.user-media .fc-sub { color: rgba(0, 0, 0, 0.6); }
+.row.user-media .file-card .fc-icon {
+  width: 28px; height: 28px;
+  border-radius: 8px;
+  font-size: 8.5px;
+}
+.row.user-media .fc-name {
+  color: var(--color-text);
+  font-size: 12.5px;
+  max-width: 150px;
+}
+.row.user-media .fc-sub { color: var(--color-text-muted); font-size: 10.5px; margin-top: 2px; }
 /* Click affordance survives the de-chrome: the standing shadow is gone, the
    hover shadow stays (matches the artifact family's hover feedback). */
 .row.user-media .file-card:hover { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); }
