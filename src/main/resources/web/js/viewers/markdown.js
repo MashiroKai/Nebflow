@@ -382,8 +382,12 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
   // Source analysis BEFORE the guard: the unchanged-content early-return
   // below still applies jump anchors (re-clicking a reference in an open
   // doc must jump), and a block anchor needs this document's ^id → line
-  // map. The content is identical on that path, so one analysis serves both.
-  const analysis = absPath ? analyzeSource(content || '') : { html: content || '', blockStarts: [], blockIds: new Map() };
+  // map. analyzeSource is pure and cheap (fence-aware line walk), and it
+  // MUST run for content-only opens too (no absPath — the remote-doc leg):
+  // without it blockIds stays empty and every `#^id` jump into a remote
+  // doc silently no-ops (段落级引用批 repaired: block jumps are the whole
+  // point of the graph's paragraph-anchored references).
+  const analysis = analyzeSource(content || '');
   if (scroller && /** @type {any} */ (pane)._renderedMdContent === content) {
     const existingViewer = pane.querySelector('.canvas-md-viewer');
     if (existingViewer && jumpAnchor) applyJumpAnchor(existingViewer, jumpAnchor, analysis.blockIds);
