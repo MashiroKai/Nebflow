@@ -137,8 +137,14 @@ private[gateway] object NeblinkRoutes:
         }
 
       // NebLink status — identity, peers, login state
+      // 引导腿·状态读取面（2026-10-22 新设备引导修复批·作者令）：登录发起与回调
+      // 都匿名可达后，零凭据设备上本读点若仍 403，控制台头部恒挂「状态读取失败
+      // （HTTP 403）」（作者实截）、登录成功后 loggedIn 也永远刷不成 true（头像/
+      // 账号面收不了口）——状态读取是引导链的第三条腿。环回腿判据同
+      // RestApiCtx.bootstrapGate；载荷=设备自身状态（本地进程本就可读 auth.json
+      // 文件令牌 ⇒ 全量 API，环回匿名读 status 无新增披露面）。凭据调用逐字不变。
       case req @ GET -> Root / "neblink" / "status" =>
-        withNeblink(req) { ms =>
+        withNeblinkBootstrap(req) { ms =>
           for
             id <- ms.identity
             peersList <- ms.peers
@@ -832,7 +838,14 @@ private[gateway] object NeblinkRoutes:
       // wiring (both providers honored, 303 → /direct/social/<p> with
       // fallback=sign-in graceful degradation).
       case req @ POST -> Root / "neblink" / "auth" / "start" =>
-        gate(req):
+        // 引导腿（2026-10-22 新设备引导修复批·作者令）：登录发起 = 引导面的存在
+        // 意义，**匿名 + 环回腿**放行（判据与防滥用映射见 RestApiCtx.bootstrapGate
+        // 的单点注释）。修前本面在 gate 后面 ⇒ 零凭据的新设备（无会话 cookie、
+        // 无文件令牌 Bearer）永远拿不到 authorizeUrl——登录无法开始（作者 Windows
+        // 实跑 403 实证的鸡生蛋缺陷）。体语义逐字不变（缺体/坏体 = 纯登录）；
+        // 匿名调用与凭据调用同一条 beginPkceLogin（含 switch marker 的显式
+        // disarm——与「新 start 顶替旧待决」同语义，单飞槽本来如此）。
+        bootstrapGate(req):
           neblinkService match
             case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
             case Some(ms) =>
@@ -873,8 +886,13 @@ private[gateway] object NeblinkRoutes:
 
       // Login-state poll for the frontend (pending while the hosted page is
       // open; success/error sticky until the next start).
+      // 引导腿同批（2026-10-22）：发起面（auth/start）匿名放行后，结果轮询若仍
+      // 要凭据，引导方（本机浏览器控制台 / 解锁命令）永远读不到 outcome——start
+      // 与 state 是同一条引导腿的两半，缺一不可。只读单飞槽状态
+      // （idle/pending/success/error + 分类诊断三段式，无凭据面），环回腿判据
+      // 同 RestApiCtx.bootstrapGate。
       case req @ GET -> Root / "neblink" / "auth" / "state" =>
-        gate(req)(AuthRoutes.pkceLogin.statusJson.flatMap(Ok(_)))
+        bootstrapGate(req)(AuthRoutes.pkceLogin.statusJson.flatMap(Ok(_)))
 
       // Switch-account handoff readout (one-window switch, 2026-09-16). The app
       // window watches this after a switch gesture to tell the two cases apart:
@@ -1272,6 +1290,21 @@ private[gateway] object NeblinkRoutes:
     import ctx.*
 
     gate(req):
+      neblinkService match
+        case Some(ms) => f(ms)
+        case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+
+  /**
+   * withNeblink 的引导腿变体（2026-10-22 新设备引导修复批·作者令）：门换成
+   * [[RestApiCtx.bootstrapGate]]——有凭据判据逐字不变；无凭据时仅环回腿放行。
+   * 唯一调用点 = `GET /neblink/status`（引导链的状态读取面，见该路由注释）。
+   */
+  private def withNeblinkBootstrap(req: Request[IO])(f: NeblinkService => IO[Response[IO]])(using
+    ctx: RestApiCtx
+  ): IO[Response[IO]] =
+    import ctx.*
+
+    bootstrapGate(req):
       neblinkService match
         case Some(ms) => f(ms)
         case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
