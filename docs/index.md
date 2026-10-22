@@ -9,14 +9,19 @@ status: current
 
 ## 按目录
 
-- `architecture/` — Jarvis Phase 1 实施规格与架构摘要。
-- `behavior-parity/` — Rust（工作树）vs Scala 行为对比清单与审计指引。
-- `design/` — 设计方案、设计稿与静态样张（样张见 [[glossary#^mockup-sample]]）；含 [[wiki-graph-redesign-design.zh-CN]]（图谱极简化设计稿）。
-- `evidence/` — 缺陷/事件的封存证据记录。
-- `issues/` — 编号 issue（`000` 起步，模板与术语表在 `issues/templates/`）。
-- `reviews/` — 评审与差异清点报告（`scala-rust-diff`、`parity/` 十八个子系统对比）。
+- `architecture/` — Jarvis Phase 1 实施规格与架构摘要：[[architecture/JARVIS_PHASE1_SPEC]]（实施规格书）、[[architecture/JARVIS_PHASE1_SUMMARY]]（架构摘要）。
+- `behavior-parity/` — Rust（工作树）vs Scala 行为对比清单与审计指引：[[behavior-parity/README]]（清单总览与子 agent 作业指引入口）。
+- `design/` — 设计方案、设计稿与静态样张（样张见 [[glossary#^mockup-sample]]）；含 [[wiki-graph-redesign-design.zh-CN]]（图谱极简化设计稿，伴生样张 [[design/wiki-graph-redesign-sample.html]]）、[[plugin-md-required-file-spec.zh-CN]]（plugin.md 必要文件机制 spec）与 [[design/visual-report-gate-plan.zh-CN]]（机械门禁方案）。
+    - 协调与架构：[[design/analysis]]（多 Agent 协调方案·修正版）、[[design/design]]（多 Agent 协调系统设计方案）、[[design/architecture-optimization-proposal]]（架构优化建议）、[[actor-mailbox-pattern-review]]（Actor Mailbox 模式应用建议）。
+    - Flow 与上下文/记忆：[[design/flow-engine]]（Flow Engine 设计）、[[design/flow-tree]]（FlowTree 设计）、[[flow-redesign-plan]]（Flow 架构改造方案）、[[context-memory-analysis]]（上下文管理与记忆系统技术分析）、[[scala-context-management-report]]（Scala 版上下文管理技术报告）、[[design/memory-system]]（记忆系统设计）、[[design-memory-v2]]（记忆系统 V2 设计）。
+    - 界面与工具：[[design/card-rendering-protocol]]（Card 渲染协议）、[[design/multi-view-refactor]]（多窗口状态路由重构）、[[design/20260928_nodeprogress-node-task-card]]（NodeProgress 设计卡）、[[design/cli-design]]（CLI 设计）、[[agent-icon-design-guide]]（Agent 图标设计指南）、[[design/hook-system-demo.html]]（Hook 系统交互样张）。
+    - 子系统与运维：[[design/ci-testing]]（CI/CD 测试与自修复）、[[design/git-management]]（Git 管理协助设计）、[[design/session-reminder]]（Session Reminder 设计）、[[design/telemetry-dashboard]]（遥测与 Dashboard 设计）、[[design/inter-agent-mail]]（Inter-Agent Mail 设计）。
+    - 同步与互联：[[design/sync-design]]（登录与多设备同步 v2）、[[design/sync-mvp]]（Mesh 内置互联方案）、[[design/mesh-sync-v2]]（Mesh Sync v2 全量同步）。
+- `evidence/` — 缺陷/事件的封存证据记录：[[evidence/20260929_0200_brief-transport-silent-truncation]]（brief-transport 静默截断与 HTML 实体转义）。
+- `issues/` — 编号 issue（`000` 起步，模板与术语表在 `issues/templates/`，入口 [[issues/templates/README]]）。存档：[[issues/000-issue-template]]（类型选择）、[[issues/010-plugin-system-architecture]]、[[issues/011-mcp-tool-auto-discovery]]、[[issues/012-extensible-tool-cards]]、[[issues/014-chat-history-persistence-redesign]]、[[issues/015-merge-session-agent-actor]]、[[issues/016-flatten-agent-state]]、[[issues/017-actor-io-async-cleanup]]、[[issues/018-context-manage-bug]]、[[issues/019-edit-tool-single-mode-refactor]]、[[issues/020-slash-ask-command]]、[[issues/021-remove-stagnation-detection]]、[[issues/022-mcp-production-hardening]]、[[issues/023-decouple-core-from-agent]]、[[issues/024-tool-lifecycle-hooks]]、[[issues/025-agent-centric-architecture]]、[[issues/025-external-event-system]]、[[issues/026-unified-agent-registration]]。
+- `reviews/` — 评审与差异清点报告：[[reviews/scala-rust-diff]]（Rust vs Scala 功能差异清点）、[[reviews/arch-refactor-doc-review.html]]（架构重构文档评审）；`parity/` 十八个子系统对比，入口 [[reviews/parity/README]]。
 - `templates/` — 文档批范本：按 wiki-docs 纪律改写的 Obsidian 格式报告模板，见 [[console-403-diagnosis]]（诊断报告范本）与 [[console-load-perf]]（性能验证报告范本）。
-- 根散件 — 运维检查单、并行会话资源规范、上下文管理分析等专项报告。
+- 根散件 — 运维检查单、并行会话资源规范等专项报告：[[production-ops-checklist.zh-CN]]（生产操作检查单）、[[parallel-session-resources.zh-CN]]（并行会话资源预分配规范）。
 
 ## 写作纪律
 

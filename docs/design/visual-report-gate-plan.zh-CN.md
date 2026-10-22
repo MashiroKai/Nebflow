@@ -1,9 +1,14 @@
+---
+type: design-note
+status: open
+---
+
 # visual-report 机械门禁方案（zh-CN · 仅方案，未实现）
 
 - **目标**：把「md/html 产出按图谱编排（论文式 / wiki-docs 规范）」从 **skill 行为约束**升级为**机械可查的检查器**——产出文件静态扫描，逐特征给 PASS/FAIL，可接入判定链作门禁。
 - **背景缺口**：审计 a7a04f4e 遗留 2 在案——「『汇报必须使用插件』是约定级强制：md/html 产出走图谱的保证靠 wiki-docs skill 规则（行为规范），非机械门禁；若要硬约束需后续加 lint/CI 类机制」。本件即该机制的**方案件**：特征清单＋正则草案＋挂点评估＋推荐案。**不含任何实现件**（正则草案写入文档代码块属文档内容，不算实现）。
 - **规范底料**：`~/.nebflow/plugins/visual-report/skills/wiki-docs/SKILL.md`（vault 布局/论文式/引用纪律/frontmatter/场景包）、同插件 `skills/core/SKILL.md`（图预算/嵌入路径/dark-mode）、审计 a7a04f4e M1③（论文式引用、点击跳转＋行级高亮的验收口径）。
-- **配套**：`docs/production-ops-checklist.zh-CN.md`、`docs/parallel-session-resources.zh-CN.md`。
+- **配套**：[[production-ops-checklist.zh-CN]]、[[parallel-session-resources.zh-CN]]。
 
 ---
 
@@ -19,7 +24,7 @@
 
 - 规则：交付文档必须在 `<workspace>/docs/` 内；附件必须在 `docs/attachments/`（wiki-docs「Vault layout」节）。
 - 判法：路径前缀断言（非正则）。
-- 红条件：文档落在 vault 外；`![[...]]`/`[[...]]` 引用的附件不在 `attachments/`。
+- 红条件：文档落在 vault 外；经内嵌附件语法或双链语法（形态见 R4/R5 正则草案）引用的附件不在 `attachments/`。
 
 ### R2 · 首个 H1 即标题
 
@@ -57,11 +62,11 @@ status:[ ]*(open|solved|done|accepted|mastered|published|to-learn|learning|propo
 ```
 
 - 红条件：出现 `[[` 而全文无一段匹配上式的完整 wikilink（残缺链）；或 wikilink 目标段为空/以空白开头。
-- 误报面：嵌套方括号、转义 `\[[...]]`——靠围栏跳过＋残缺链检测兜底。
+- 误报面：嵌套方括号、反斜杠转义的双链记号——靠围栏跳过＋残缺链检测兜底。
 
 ### R5 · embed 目标存在
 
-- 规则：`![[...]]` 嵌入的附件必须实际存在（本地图谱可打开），且按 R1 在 `attachments/`。
+- 规则：内嵌附件语法（叹号前缀的双链记号）嵌入的附件必须实际存在（本地图谱可打开），且按 R1 在 `attachments/`。
 - 正则草案：
 
 ```regex
@@ -83,7 +88,7 @@ status:[ ]*(open|solved|done|accepted|mastered|published|to-learn|learning|propo
 \^[A-Za-z0-9][A-Za-z0-9-]*[ \t]*$
 ```
 
-- 判法：对 R4 捕获的每个 `[[doc#anchor]]`，打开 `doc` 验锚存在；`^id` 形态按 block 锚验。
+- 判法：对 R4 捕获的每个带锚双链（目标 # 锚 形态），打开目标文档验锚存在；`^id` 形态按 block 锚验。
 - 红条件：任一锚解析不到 = 红（与「broken build」同级）。
 - 误报面：标题大小写/全半角差异；标题含 wikilink 或格式记号导致精确匹配失败 → 匹配前做与渲染器一致的归一化（去记号、trim），残留误差进 advisory。
 
@@ -95,7 +100,7 @@ status:[ ]*(open|solved|done|accepted|mastered|published|to-learn|learning|propo
 ### R8 · 图预算 ≤3（硬性）
 
 - 规则：单文档 ≤3 图，n>3 只画权重前 3 且首屏声明「图预算超限」（visual-report core 铁律 3）。
-- 判法：图片引用计数——md 数 `![...](...)` 与 `![[...]]` 中图片扩展名（svg/png/jpg/gif/webp）；html 数 `<img`；>3 且正文无「图预算超限」声明 → 红。
+- 判法：图片引用计数——md 数 `![...](...)` 与内嵌附件语法中图片扩展名（svg/png/jpg/gif/webp）；html 数 `<img`；>3 且正文无「图预算超限」声明 → 红。
 
 ### R9 · 图片路径形态与白名单
 
@@ -120,7 +125,7 @@ status:[ ]*(open|solved|done|accepted|mastered|published|to-learn|learning|propo
 ^.+[ \t]\^[a-z0-9][a-z0-9-]*$      # 每个定义块以 ^kebab-id 结尾
 ```
 
-- 红条件：glossary 存在却零 block-id（术语没法被 `[[glossary#^id]]` 精确引用）。
+- 红条件：glossary 存在却零 block-id（术语没法被「词表名 # ^块锚」形态的引用精确指向）。
 
 ### R11 · html 产出面
 
@@ -130,13 +135,13 @@ status:[ ]*(open|solved|done|accepted|mastered|published|to-learn|learning|propo
 ### R12 · 文献本地副本
 
 - 规则：「Remote-only links (URLs without a local copy) are a defect——文献调研必须产出原件」（wiki-docs research 包纪律）。
-- 判法：`[[x.pdf]]`/`![[x.pdf]]` 引用必须在 `attachments/` 有本地副本；正文文献引用只有外链 URL 无本地件 → 红。
+- 判法：以双链/内嵌附件语法引用的 PDF 必须在 `attachments/` 有本地副本；正文文献引用只有外链 URL 无本地件 → 红。
 - 误报面：许可不允许下载的文献 → 豁免清单登记。
 
 ### R13 · 首现术语有定义或引用（advisory）
 
 - 规则：「Every new concept must be understandable at first mention——inline 定义或链到定义块」（wiki-docs「Document form」节）。
-- 判法：**不做全文 NLP**——只做弱投影：文档引用了 `[[glossary#^...]]` ≥1 条，或正文含 inline 定义形态（`（即...）`/`— ... —` 等草案特征）。完全不沾者标 advisory，不硬红（语义级误报面过大，见 §3 推荐案的灰度策略）。
+- 判法：**不做全文 NLP**——只做弱投影：文档引用了词表块锚（glossary 术语块，形态见 R10）≥1 条，或正文含 inline 定义形态（`（即...）`/`— ... —` 等草案特征）。完全不沾者标 advisory，不硬红（语义级误报面过大，见 §3 推荐案的灰度策略）。
 
 ## 2. 候选挂点评估（三案）
 
