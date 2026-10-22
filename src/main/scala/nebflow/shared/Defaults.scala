@@ -1356,6 +1356,44 @@ object Defaults:
   def LlmConnectTimeoutSec: Int =
     sys.props.getOrElse("nebflow.hardRecovery.connectTimeoutSec", "30").toInt
 
+  // ---- 记忆检索库自动入库（memory-recall 批 2026-10-22）----
+  //
+  // 作者令：「这个进库 应该要是我们使用stand自动的能力」——主 agent 会话消息落盘
+  // 后自动增量进 <dataRoot>/memory-db/（经 tools/stand-recall --update），替代
+  // 旧的人工 `--update` 例行。挂接点 = 独立驻留守护（MemoryRecallDaemon，定时
+  // 探测 + 节流），持久化路径零改动。
+
+  /**
+   * 自动入库总开关（kill-switch）：默认 true（作者令即「自动」）。false = 守护
+   * 不启动（GatewayMain 装配点 IO.unit，零纤维零探测零子进程）——**完全回到
+   * 本批前现状**（人工 `stand-recall --update` 照常可用）。system prop
+   * `nebflow.memoryRecall.enabled`（每次调用现读，`CrashRecoveryEnabled` 同款
+   * kill-switch 先例，测试/运维可即时翻转）。
+   */
+  def MemoryRecallEnabled: Boolean =
+    sys.props.getOrElse("nebflow.memoryRecall.enabled", "true").toBoolean
+
+  /**
+   * 探测节拍（秒）：守护每拍做一次廉价脏探测（sessions/ 目录 stat 指纹对比），
+   * 指纹无变化不花任何子进程开销。30s 拍 × 数百文件 stat = 毫秒级，可忽略。
+   */
+  val MemoryRecallTickSec: Int = 30
+
+  /**
+   * 更新节流窗（毫秒，作者令「如 ≥5 分钟间隔」）：两次真实 `stand-recall
+   * --update` 子进程之间的最小间隔——节流按**尝试**计（失败也占窗，下一窗才
+   * 静默重试 ⇒ 不出重试风暴），单次 --update 实测 ~3s（10140 条库），占空比
+   * ~1%。**测试**经 `MemoryRecallDaemon.launch(tick, minInterval)` 参数注入
+   * 短窗，不经本常量。
+   */
+  val MemoryRecallMinIntervalMs: Long = 5L * 60L * 1000L
+
+  /**
+   * 单次 `stand-recall --update` 子进程超时（秒）。实测 ~3s（10140 条库，低载
+   * mac）；300s = ~100 倍余量，超时即杀进程按失败计（占节流窗，下窗重试）。
+   */
+  val MemoryRecallTimeoutSec: Int = 300
+
   // ---- STT（语音输入，可配置转录服务，#295）----
 
   /** STT 默认模型（OpenAI 兼容音频转录 API 的公共模型名，非用户配置）。 */

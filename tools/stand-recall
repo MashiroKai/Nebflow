@@ -31,11 +31,18 @@
 # 用法：
 #   stand-recall "关键词 [更多词]"          # 检索（默认输出 top10 命中+邻句+附件）
 #   stand-recall --update                   # 增量索引（幂等，秒级）
+#   stand-recall --update --source auto     # 同上，来源标记 auto（引擎守护自动触发）
 #   stand-recall --rebuild                  # 全量重建
-#   stand-recall --stats                    # 库概况
+#   stand-recall --stats                    # 库概况（含 last_update 的来源标记）
 #   stand-recall --doctor                   # 会话分类明细（含排除原因）
 # 选项：-n N 命中数(10) | --context N 邻句数(1) | --session ID | --role user|assistant
 #       --since/--until "YYYY-MM-DD[ HH:MM]" | --json | --db PATH | --data-root PATH
+#
+# 自动入库（引擎守护，2026-10-22）：引擎侧 MemoryRecallDaemon 驻留任务按节流窗
+# （默认 ≥5 分钟）调 `--update --source auto --data-root <实例数据根>`——主会话
+# 消息落盘后无需人工触发即增量入库；本 CLI 的分类/排除语义不变，--source 只是
+# 元数据登记（meta 表 + manifest），--stats 可见。数据根解析顺序：
+#   --data-root 旗标 > STAND_DATA_ROOT env > ~/.stand（与引擎 STAND_HOME 同向）。
 #
 # 零第三方依赖：Python3 标准库（sqlite3/json/re/argparse/hashlib）。
 
@@ -350,7 +357,7 @@ def open_db(db_path: str) -> sqlite3.Connection:
     return con
 
 
-def reindex(con: sqlite3.Connection, data_root: str, db_path: str) -> dict:
+def reindex(con: sqlite3.Connection, data_root: str, db_path: str, source: str = "manual") -> dict:
     """全量扫（INSERT OR IGNORE 幂等）——--update 与 --rebuild 共用主体。"""
     classified = classify_sessions(load_index(data_root), data_root)
     stats = {"sessions": 0, "messages": 0, "attachments": 0, "excluded": 0, "by_kind": {}}
@@ -412,12 +419,19 @@ def reindex(con: sqlite3.Connection, data_root: str, db_path: str) -> dict:
         "INSERT OR REPLACE INTO meta VALUES('last_update',?)",
         (datetime.now().isoformat(timespec="seconds"),),
     )
+    # 来源标记（auto=引擎守护自动触发 / manual=人工）：--stats 可见，纯元数据登记。
+    con.execute(
+        "INSERT OR REPLACE INTO meta VALUES('last_update_source',?)", (source,)
+    )
     # external-content FTS5 同步：messages 为内容表，FTS 由 'rebuild' 命令全量
     # 重导（幂等，量级秒级；顺带免疫 INSERT OR IGNORE 造成的索引重复）。
     con.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
     con.commit()
     with open(os.path.join(os.path.dirname(db_path), "index-manifest.json"), "w", encoding="utf-8") as f:
-        json.dump({"schema_version": SCHEMA_VERSION, "stats": stats, "sessions": manifest}, f, ensure_ascii=False, indent=1)
+        json.dump(
+            {"schema_version": SCHEMA_VERSION, "last_update_source": source, "stats": stats, "sessions": manifest},
+            f, ensure_ascii=False, indent=1,
+        )
     return stats
 
 
@@ -580,10 +594,14 @@ def main(argv=None):
     ap.add_argument("--until", help="截止时间")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--db", help="库路径（默认 <data-root>/memory-db/memory.db）")
-    ap.add_argument("--data-root", help="数据根（默认 ~/.stand）")
+    ap.add_argument("--data-root", help="数据根（默认 STAND_DATA_ROOT env，再默认 ~/.stand）")
+    ap.add_argument("--source", choices=["manual", "auto"], default="manual",
+                    help="更新来源标记（auto=引擎守护自动触发；只写元数据，--stats 可见）")
     args = ap.parse_args(argv)
 
-    data_root = os.path.expanduser(args.data_root) if args.data_root else os.path.expanduser("~/.stand")
+    data_root = os.path.expanduser(
+        args.data_root or os.environ.get("STAND_DATA_ROOT") or "~/.stand"
+    )
     db_path = os.path.expanduser(args.db) if args.db else os.path.join(data_root, "memory-db", "memory.db")
     con = open_db(db_path)
     try:
@@ -592,7 +610,7 @@ def main(argv=None):
                 con.executescript("DROP TABLE IF EXISTS messages_fts; DROP TABLE IF EXISTS attachments; "
                                   "DROP TABLE IF EXISTS messages; DROP TABLE IF EXISTS sessions;")
                 con.executescript(DDL)
-            st = reindex(con, data_root, db_path)
+            st = reindex(con, data_root, db_path, source=args.source)
             tot = con.execute("SELECT COUNT(*) c FROM messages").fetchone()["c"]
             att = con.execute("SELECT COUNT(*) c FROM attachments").fetchone()["c"]
             print(f"indexed: +{st['messages']} msgs ({tot} total), {st['sessions']} sessions, "
@@ -608,6 +626,8 @@ def main(argv=None):
             print(f"messages total: {con.execute('SELECT COUNT(*) c FROM messages').fetchone()['c']}")
             lv = con.execute("SELECT value FROM meta WHERE key='last_update'").fetchone()
             print(f"last_update: {lv['value'] if lv else 'never'}")
+            sv = con.execute("SELECT value FROM meta WHERE key='last_update_source'").fetchone()
+            print(f"source: {sv['value'] if sv else 'manual'}")
             return 0
         if args.doctor:
             for s, kind, reason in classify_sessions(load_index(data_root), data_root):
