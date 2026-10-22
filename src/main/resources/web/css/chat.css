@@ -44,6 +44,11 @@
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
+  /* Header 底缘零边界批（2026-10-22 作者追加令「Header 下面有一个边缘…要移除」）：
+     消息气泡上滑穿入 Header 下时，底缘 1px border 在泡上衬出一条横向灰线。
+     底边框透明化（保留 1px 盒尺寸，布局零移）；顶/侧 border 与顶缘 sapphire
+     折射细线不动（作者只裁底缘）。 */
+  border-bottom-color: transparent;
   color: var(--color-frame-text-bright);
   padding: 10px 16px;
   margin: 16px 0 0 0;
@@ -57,10 +62,12 @@
   left: 0;
   right: 0;
   z-index: 30;
+  /* 同批：外投影全退役 —— 暗档 0 2px 8px .20 / 0 8px 24px .35 在穿入气泡上
+     压出一条紧贴底缘的深色带 + ~20px 渐变裙影（像素实测 #0e1014 对 #87d65f），
+     即作者所指的「裙边/border/阴影」边界线本体；亮档同构较淡。只留顶缘 inset
+     高光（顶缘特征，非底缘）。底缘 = 毛玻璃 tint/blur 自身边界，零附加线。 */
   box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25);
 }
 #header .header-left { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
 #header .header-brand { color: var(--color-frame-text-bright); font-weight: 600; font-size: 15px; }
@@ -1601,11 +1608,11 @@
 
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
+  /* Header 底缘零边界批：暗档外投影（.20/.35 = 穿顶气泡上的深色边界带本体）
+     随亮档一并退役，只留顶缘 inset 高光。 */
   #header {
     box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-      0px 2px 8px rgba(0, 0, 0, 0.20),
-      0px 8px 24px rgba(0, 0, 0, 0.35);
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
   }
 
   .notice-info { background: rgba(91,141,217,0.12); }
