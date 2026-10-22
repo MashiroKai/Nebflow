@@ -92,20 +92,112 @@ object SubAgentStartupRecovery:
   /** 在飞孤儿资格：running ＋ restarting（supervisor 退避态——进程死亡时同样在飞）。 */
   private val InFlightStatuses = Set("running", "restarting")
 
-  /** Run the orphan sweep (＋重启打断标记回溯腿). Returns the terminalized task ids (for boot log). */
+  // ── 监督链自动恢复批（2026-10-22 作者令）：boot 复活腿 ────────────────────
+  //
+  // 孤儿处置从「一律收殓」升级为「先判复活资格，不合格才收殓」（设计
+  // docs/design/delegate-supervision-revival-design.zh-CN.md）：合格孤儿的四件恢复
+  // 现场（任务行/registry 记录/会话转录/座位目录）俱在盘上，由 [[DelegateRevival]]
+  // 同 id 复活续跑，父会话最终收续作结果而非失败通知。复活是慢段 fork（boot 不
+  // 阻塞，ProjectCrashRecovery 慢段同款纪律），spawn 并发信号量护栏；复活失败
+  // （spawn 链错误）的孤儿在 fork 内落回收殓链——绝不静默悬挂。
+
+  /** 复活腿依赖（GatewayMain boot 装配点传入；None = 复活腿整体旁路——legacy 形态，
+    * 既有测试/无 ActorSystem 载体场的诚实缺省）。 */
+  final case class RevivalDeps(
+    resources: SharedResources,
+    system: nebflow.actor.ActorSystem,
+    wsSend: Option[io.circe.Json => IO[Unit]]
+  )
+
+  /** sweep 汇总（boot 日志行 + 测试断言面）。 */
+  final case class Report(
+      terminalized: List[String] = Nil,
+      revived: List[String] = Nil,
+      /** (taskId, 不可复活原因)——资格不满足/预算耗尽/boot cap 超额而走收殓的孤儿。 */
+      revivalSkipped: List[(String, String)] = Nil
+  ):
+    def summary: String =
+      s"terminalized=${terminalized.size} revived=${revived.size} (${revived.mkString(",")}) " +
+        s"revivalSkipped=${revivalSkipped.size}"
+
+  /** Legacy 签名（收殓 id 列表）——零复活依赖形态，既有调用面/测试零改动。 */
   def recoverOrphans(store: SubAgentTaskStore, sessionStore: SessionStore): IO[List[String]] =
+    sweep(store, sessionStore, None).map(_.terminalized)
+
+  /**
+   * boot sweep（＋复活腿）：先逐孤儿判复活资格（kill-switch/seat/记录/父会话/预算），
+   * boot cap 内按 spawnedAt 新者优先取复活集 → 慢段 fork 复活（并发护栏）；其余孤儿
+   * 同步走既有收殓链（recoverOne——lastError 指纹、F2 幂等通知、终态化逐字不变），
+   * 收尾跑标记回溯腿。无复活依赖（deps=None）= 全员收殓（本批前现状逐字节）。
+   * 台账↔面板对账批（增补）：三条路径统一收尾 [[DelegateLedgerReconcile.reconcileInterruptedRecords]]
+   * （假中断候选的逐条裁定——旗先落、对账后收敛；fail-soft 绝不阻断 boot）。
+   */
+  def sweep(store: SubAgentTaskStore, sessionStore: SessionStore, revival: Option[RevivalDeps]): IO[Report] =
+    def settle(): IO[Unit] =
+      markInterruptedRecords(store).void *>
+        nebflow.core.delegate.DelegateLedgerReconcile.reconcileInterruptedRecords(store).void
     inFlightTasks(store).flatMap {
-      case Nil => markInterruptedRecords(store).as(Nil)
+      case Nil => settle().as(Report())
       case orphans =>
-        logger.warn(
-          s"[startup-recovery] ${orphans.size} in-flight delegate task(s) survived a process restart — terminalizing + notifying parent session(s)"
-        ) *> orphans
-          .traverse(t =>
-            recoverOne(store, sessionStore, t).handleErrorWith { e =>
-              logger.warn(s"[startup-recovery] recovery failed for task ${t.taskId}: ${e.getMessage}").as(t.taskId)
-            }
-          )
-          .flatMap(ids => markInterruptedRecords(store).as(ids))
+        def salvageAll(tasks: List[SubAgentTask]): IO[List[String]] =
+          if tasks.isEmpty then IO.pure(Nil)
+          else
+            logger
+              .warn(
+                s"[startup-recovery] ${tasks.size} in-flight delegate task(s) survived a process restart — terminalizing + notifying parent session(s)"
+              )
+              .as(()) *> tasks
+              .traverse(t =>
+                recoverOne(store, sessionStore, t).handleErrorWith { e =>
+                  logger.warn(s"[startup-recovery] recovery failed for task ${t.taskId}: ${e.getMessage}").as(t.taskId)
+                }
+              )
+        revival match
+          case None =>
+            salvageAll(orphans).flatMap(ids => settle().as(Report(terminalized = ids)))
+          case Some(deps) if !Defaults.DelegateRevivalEnabled =>
+            logger
+              .info("[delegate-revival] kill-switch off — all orphans fall through to the salvage chain")
+              .as(())
+              .flatMap(_ =>
+                salvageAll(orphans).flatMap(ids => settle().as(Report(terminalized = ids)))
+              )
+          case Some(deps) =>
+            for
+              judged <- orphans.traverse { t =>
+                DelegateRevival.eligibility(sessionStore, t).map(reason => (t, reason))
+              }
+              eligible = judged.collect { case (t, None) => t }.sortBy(-_.spawnedAt) // 新者优先（设计 §2.2 #8）
+              cap = math.max(0, Defaults.DelegateRevivalBootCap)
+              reviveSet = eligible.take(cap)
+              skipped =
+                judged.collect { case (t, Some(reason)) => (t.taskId, reason) } ++
+                  eligible.drop(cap).map(t => (t.taskId, s"boot revival cap exhausted ($cap)"))
+              _ <-
+                if reviveSet.isEmpty then IO.unit
+                else
+                  logger.info(
+                    s"[delegate-revival] ${reviveSet.size} eligible orphan(s) queued for revival: " +
+                      reviveSet.map(t => s"${t.taskId}(rev=${t.revivalCount.getOrElse(0)})").mkString(", ") +
+                      skipped.map((id, r) => s"; skip $id: $r").mkString
+                  )
+              // 慢段：fork 复活（并发护栏；spawn 失败的单条 fork 内落回收殓链）。
+              revivedRef <-
+                if reviveSet.isEmpty then Ref.of[IO, List[String]](Nil)
+                else
+                  DelegateRevival.reviveAll(
+                    DelegateRevival.Deps(deps.resources, deps.system, deps.wsSend),
+                    reviveSet,
+                    salvage = t => recoverOne(store, sessionStore, t).as(())
+                  )
+              // 同步段：复活集之外的孤儿收殓（F2 队列单写者纪律——复活 fork 零触碰
+              // 队列文件，收殓全部在本同步段串行完成，无并发写）。
+              reviveIds = reviveSet.map(_.taskId).toSet
+              rest = orphans.filterNot(o => reviveIds.contains(o.taskId))
+              terminalized <- salvageAll(rest)
+              _ <- settle()
+              revivedNow <- revivedRef.get
+            yield Report(terminalized = terminalized, revived = revivedNow, revivalSkipped = skipped)
     }
 
   /** 在飞任务全量（running/restarting；单遍 findAllTasks 后过滤——boot 一次性）。

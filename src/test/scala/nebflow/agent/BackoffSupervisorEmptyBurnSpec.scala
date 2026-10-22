@@ -185,7 +185,7 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
   // ── 行为面：delegate 轨两级处置 ─────────────────────────────────────────
 
   test(
-    "delegate track: empty Completed restarts (nudge injected, restarting status); budget exhausted ⇒ terminal verdict blocked (precheck), never a fake completion"
+    "delegate track: empty Completed restarts (nudge injected, restarting status); budget exhausted ⇒ deterministic precheck honest note (#566), never a fake completion"
   ) {
     val system = ActorSystem(s"bsup-eb-1-${scala.util.Random.nextInt(100000)}")
     val tmp = os.temp.dir(prefix = "nb-bsup-eb-")
@@ -253,8 +253,12 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
       val ext = events.collect { case e: AgentCommand.ExternalEvent => e }
       assertEquals(ext.size, 1, s"exactly one terminal notification, got: $events")
       assertEquals(ext.head.eventType, "completed")
+      // #566 判词退役（2026-10-22 对齐；HEAD 基线同红——main 既有漂移，非本批回归）：
+      // 空烧确定性预检的「判未完成」是 CompletedNote 交付注记而非 blocked 状态——wire
+      // 编 completed，诚实性由「预检具名 + judged-incomplete 注记」承担，反假完成不变。
       assert(
-        ext.head.payload.contains("[delegate-judge] verdict: blocked"),
+        ext.head.payload.contains("[delegate-judge] verdict: completed") &&
+          ext.head.payload.contains("judged incomplete"),
         s"honest verdict line must reach the parent: ${ext.head.payload}"
       )
       assert(
@@ -268,7 +272,8 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
       // 审计行：source=precheck
       val precheckLines = chainLines.filter(_.payload.hcursor.get[String]("source").toOption.contains("precheck"))
       assertEquals(precheckLines.size, 1, s"exactly one precheck verdict line, got: $chainLines")
-      assertEquals(precheckLines.head.payload.hcursor.get[String]("verdict").toOption, Some("blocked"))
+      // #566：预检审计行的 verdict 字段同样折 CompletedNote（wire=completed），注记随行。
+      assertEquals(precheckLines.head.payload.hcursor.get[String]("verdict").toOption, Some("completed"))
       // 断点续推痕迹：任务库历经 restarting（retryCount 1→2）后落 completed（blocked 判词行的既有报父语义）
       val task = tasks.find(_.taskId == childSid).get
       assertEquals(task.retryCount, 2, "two empty-burn restarts must be counted")

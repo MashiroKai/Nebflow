@@ -631,7 +631,14 @@ object DelegateTerminal:
           .blocking(DelegateRegistry.archive(delegateId))
           .void
           .handleErrorWith(e => IO(logger.warn(s"delegate auto-archive failed: ${e.getMessage}")))
-    verdictLine *> hostUnmount *> pluginRelease *> MergeQueue.onTerminalIO(delegateId) *> autoArchive
+    // 台账↔面板对账批（2026-10-22 作者补充需求 · 腿 2）：终态交付自动台账记账——
+    // record.taskId 定义时 append 结算 note（复活注记读任务行 revivalCount随行）。
+    // fail-soft：记账失败只 WARN，绝不拖垮终态清理序列（与上方各环同款纪律）。
+    val ledgerNote =
+      DelegateLedgerReconcile
+        .ledgerSettlementNote(resources.subAgentTaskStore, record, delegateId, taskStatus)
+        .handleErrorWith(e => IO(logger.warn(s"delegate settlement note failed: ${e.getMessage}")))
+    verdictLine *> ledgerNote *> hostUnmount *> pluginRelease *> MergeQueue.onTerminalIO(delegateId) *> autoArchive
   end onTerminalCleanup
 
   // ── 内部 ──────────────────────────────────────────────────────────────
