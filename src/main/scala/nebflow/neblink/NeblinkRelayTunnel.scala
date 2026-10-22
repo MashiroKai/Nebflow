@@ -1767,8 +1767,17 @@ private final class RelayWsListener(
               )
               dispatcher.unsafeRunAndForget(tunnel.handleRelayRequest(json, ws))
             case "ping" =>
-              try ws.sendText("""{"type":"pong"}""", true)
-              catch case _: Exception => ()
+              // pong-reliability（2026-10-22「大传输触发重连」诊断修复批）：
+              // 修前此处裸 `ws.sendText(pong)` 且无视返回 future —— JDK 单发位被
+              // bulk 帧占住时 sendText 不同步抛、只回携 ISE("Send pending") 失败
+              // future（NeblinkRelayTunnelHeartbeatSendSpec P1 真 socket 契约钉）
+              // ⇒ bulk 洪峰下 pong 静默丢失 ⇒ relay 侧 2-miss liveness 判死撕隧道
+              // ⇒ 骑隧道的浏览器 WS 全体重连（作者症状；stand.log 形态 = 无
+              // zombie 前兆的「Relay tunnel disconnected after Ns」+ 同秒
+              // 「portal http cycle failed: Output closed」伴生簇）。修后 pong 走
+              // RelayFrameSender（与业务 bulk 同锁：Send pending 重试 + 预算，
+              // 持锁等在飞帧写完即上、不会被洪峰饿死）；失手留痕不撕连接。
+              portalConn.sendControlText("""{"type":"pong"}""", ws)
             case "pong" =>
               tunnel.updateLastPong()
             case "friend_event" =>

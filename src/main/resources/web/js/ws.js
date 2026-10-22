@@ -614,6 +614,76 @@ async function remintHostSessionAndReload() {
   }
 }
 
+// ---------- 本机近路短路（本地回路短路批 2026-10-22 · 诊断修复批）────────────
+// 症状：Mac 本机控制台默认经 portal→relay 链路加载（PortalUrl 缺省开门户），
+// 本机文件字节（readFile 大帧 / /api/nf-file 流）全走隧道——单条有序隧道流上
+// bulk 帧把心跳 pong 饿死 ⇒ 前端 3-miss 自我逐出 ⇒ 「点开大文件就重连」。
+// 修法 = 控制台页自检同机近路，命中即跳回 http://127.0.0.1:<port> 本地直连接口
+// （文件从此零隧道；relay/远端设备场景探测必败 ⇒ 停留现状，一行不多改）。
+//
+// 判定链（每步失败都静默停留现状，绝不影响连接）：
+//   1. /api/portal/status 可达且有 boundHost.deviceId —— 只有经 relay 加载的
+//      控制台才有此面；本地/LAN 直连源 404 ⇒ 跳过（判别源 = 加载路径，不是
+//      hostname——同一 LAN 页也可能想看本机有没有网关，但 relay 腿才需要跳）。
+//   2. /api/health/loopback-info（鉴权）给本机端口锚；
+//   3. 环回探测 http://127.0.0.1:<port>/api/health 并核对 deviceId 一致 ——
+//      跨设备/无网关/PNA 拒答 ⇒ 读不到或不等 ⇒ 停留；
+//   4. 经 relay 铸一次性 console ticket（复用 remint 的端点），把票挪到
+//      环回兑换面跳过去（#522 已保证 http 腿 cookie 不挂 Secure）。
+// 防摆闸：module 一次 + sessionStorage 30s（与 remint 同纪律）。
+let loopbackSwitchAttempted = false;
+
+async function attemptLoopbackNearPath() {
+  if (loopbackSwitchAttempted) return false;
+  loopbackSwitchAttempted = true;
+  const GUARD = key('ws_nearpath_at');
+  let last = 0;
+  try { last = Number(sessionStorage.getItem(GUARD)) || 0; } catch (_) {}
+  if (Date.now() - last < 30000) return false;
+  try { sessionStorage.setItem(GUARD, String(Date.now())); } catch (_) {}
+  try {
+    const status = await fetch('/api/portal/status', {
+      credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(5000),
+    });
+    if (!status.ok) return false;
+    const deviceId = (await status.json())?.boundHost?.deviceId;
+    if (typeof deviceId !== 'string' || deviceId === '') return false;
+    const info = await fetch('/api/health/loopback-info', {
+      credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(5000),
+    });
+    if (!info.ok) return false;
+    const port = (await info.json())?.port;
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) return false;
+    let probe;
+    try {
+      probe = await fetch(`http://127.0.0.1:${port}/api/health`, {
+        signal: AbortSignal.timeout(4000), cache: 'no-store',
+      });
+    } catch (_) {
+      return false; // 本机无网关 / CORS(PNA) 拒答 —— 停留 relay 现状
+    }
+    if (!probe.ok) return false;
+    const probeId = (await probe.json())?.deviceId;
+    if (probeId !== deviceId) return false;
+    const mint = await fetch('/api/portal/console-ticket', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!mint.ok) return false;
+    const consoleUrl = (await mint.json())?.consoleUrl;
+    if (typeof consoleUrl !== 'string' || consoleUrl === '') return false;
+    const ticket = new URL(consoleUrl, location.href).searchParams.get('ticket');
+    if (!ticket) return false;
+    window.location.href = `http://127.0.0.1:${port}/?ticket=${encodeURIComponent(ticket)}`;
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 
 const HB_INTERVAL_MS = 30000;
 const HB_PONG_GRACE_MIN_MS = 5000;
@@ -623,9 +693,59 @@ let hbMisses = 0;          // 连续 miss 计数（收到 pong / 新连接 / 进
 let hbPingAt = 0;          // 最近一次 ping 的发出时刻（算 RTT）
 let hbMaxRttMs = 0;        // 实测 RTT 高点（逐次成功后对折衰减：一次性抖动不会永久放宽）
 
+// ── 传输遮蔽（heartbeat × 大文件传输解耦，本地回路短路批 2026-10-22 兜底腿）──
+// 单条有序 WS 流上，一个大帧（readFile 2MB content / 隧道 bulk body）在途期间
+// pong 必然迟到——这不是 socket 死了，是通道被传输占头。遮蔽语义：传输在途时
+// 本窗 miss 不计入逐出；但有硬上限（HB_TRANSFER_SHELTER_MAX 窗），超限照常判死
+// ——真死连接在传输掩护下也不得永久赖活。遮蔽窗计数在收到 pong / 新连接时清零。
+// 计数字段：/api/nf-file 的 fetch 在途数（window.fetch 单点包装，下面立刻安装）。
+// 只数 fetch 腿：媒体标签（<img>/<video> src）腿走独立浏览器连接，不阻塞 WS。
+// 计数口径：响应**头**到达不落幕——大文件的字节在体里，挂到体消费完成
+// （blob/text/arrayBuffer/json 任一读完）或 5min 泄漏保险到点。
+let activeFileTransfers = 0;
+let shelteredMisses = 0;
+const HB_TRANSFER_SHELTER_MAX = 12;
+
+(function trackFileTransfers() {
+  const rawFetch = window.fetch ? window.fetch.bind(window) : null;
+  if (!rawFetch) return;
+  /** @param {RequestInfo | URL} input @returns {string} */
+  function urlOf(input) {
+    return typeof input === 'string' ? input
+      : input instanceof URL ? input.href
+      : input.url;
+  }
+  window.fetch = function (input, init) {
+    let url = '';
+    try { url = urlOf(input); } catch (_) { /* 奇异 input 按未跟踪处理 */ }
+    if (url.indexOf('/api/nf-file') === -1) return rawFetch(input, init);
+    activeFileTransfers++;
+    let released = false;
+    const release = () => { if (!released) { released = true; activeFileTransfers--; } };
+    // 泄漏保险：调用方若从不读体，计数也不会无限占位（遮蔽另有 12 窗硬上限）。
+    setTimeout(release, 300000);
+    return rawFetch(input, init).then((resp) => {
+      const origBlob = resp.blob.bind(resp);
+      resp.blob = () => origBlob().then((v) => { release(); return v; });
+      const origText = resp.text.bind(resp);
+      resp.text = () => origText().then((v) => { release(); return v; });
+      const origAb = resp.arrayBuffer.bind(resp);
+      resp.arrayBuffer = () => origAb().then((v) => { release(); return v; });
+      const origJson = resp.json.bind(resp);
+      resp.json = () => origJson().then((v) => { release(); return v; });
+      return resp;
+    }, (err) => { release(); throw err; });
+  };
+})();
+
 /** 单次 pong 宽限：max(5s, 3×实测 RTT 高点)，上限 30s。 */
 function hbGraceMs() {
   return Math.min(HB_PONG_GRACE_MAX_MS, Math.max(HB_PONG_GRACE_MIN_MS, hbMaxRttMs * 3));
+}
+
+/** 诊断读数（spec 用）：传输遮蔽窗计数 + 在途大文件传输数。 */
+export function hbTransferStats() {
+  return { activeFileTransfers, shelteredMisses };
 }
 
 /** 发一次 ping 并在宽限内等 pong；未等到记一次 miss —— 连续 HB_MAX_MISSES 次才判死。 */
@@ -640,6 +760,12 @@ function hbProbe() {
     if (document.visibilityState === 'hidden') {                       // 期间进后台 ⇒ 本窗不作数
       state.pendingPong = false;
       hbMisses = 0;
+      return;
+    }
+    // 传输遮蔽：大文件在途 ⇒ 本窗不计入逐出（硬上限内；超限落到正常判死）。
+    if (activeFileTransfers > 0 && shelteredMisses < HB_TRANSFER_SHELTER_MAX) {
+      shelteredMisses++;
+      console.debug(`[ws] heartbeat miss sheltered: file transfer in flight (${shelteredMisses}/${HB_TRANSFER_SHELTER_MAX})`);
       return;
     }
     hbMisses++;
@@ -721,6 +847,9 @@ export function connect() {
     }
     return;
   }
+  // 本机近路短路：模块内一次闸——同机场景随后整页跳走（WS 开路作废也无害），
+  // 非本机/探测失败 ⇒ 正常连 relay，一行不多等（全程不 await）。
+  attemptLoopbackNearPath();
   // Session-only connect: the handshake rides the HttpOnly session cookie
   // (gateway WsAuth). A rejected handshake lands on the paste-ticket entry.
   const wsUrl = `${proto}//${location.host}/ws`;
@@ -738,6 +867,7 @@ export function connect() {
     reconnectAttempts = 0;
     state.connected = true;
     hbMisses = 0;             // freezetimeout B2: 新连接从零计 miss
+    shelteredMisses = 0;      // 传输遮蔽窗计数同清零（本地回路短路批）
     state.pendingPong = false;
     syncSendButtonConnState();
     // 离线期间入队的 WS 命令按序补发（观察项① 收口；先于以下引导命令）。
@@ -816,6 +946,7 @@ export function connect() {
       if (msg.type === 'pong') {
         state.pendingPong = false;
         hbMisses = 0;
+        shelteredMisses = 0;   // 传输遮蔽窗计数随活性证据清零（本地回路短路批）
         if (hbPingAt) {
           const rtt = Date.now() - hbPingAt;
           hbPingAt = 0;
