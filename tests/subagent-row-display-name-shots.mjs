@@ -19,7 +19,10 @@ import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const WEB = join(HERE, '..', 'src', 'main', 'resources', 'web');
+// WEB 可覆写（MODE=before 时指向 HEAD~1 的归档树，复现修前退化形而不动工作树）。
+const WEB = process.env.WEB_DIR
+  ? process.env.WEB_DIR
+  : join(HERE, '..', 'src', 'main', 'resources', 'web');
 const OUT = join(HERE, '..', 'evidence', '20261022_subagent-row-display-name__delegate-nebflow-6aae2fd2', 'shots');
 mkdirSync(OUT, { recursive: true });
 const MODE = process.env.MODE === 'before' ? 'before' : 'after';
@@ -70,7 +73,7 @@ const browser = await chromium.launch();
 
 async function boot() {
   const page = await (await browser.newContext({
-    viewport: { width: 480, height: 640 }, deviceScaleFactor: 2,
+    viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2,
   })).newPage();
   page.on('pageerror', (e) => { console.log('PAGEERROR', e.message); failures++; });
   await page.addInitScript(() => {
