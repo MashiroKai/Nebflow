@@ -247,9 +247,14 @@ const domIds = (read) => read.rows.map((r) => r.taskId);
       ok('L5 bucket retains at most 5 terminal rows', bIds.length === 5, `bucketIds=${JSON.stringify(bIds)}`);
       ok('L5 the OLDEST terminal row (by finishedAt) is the one evicted', bIds.length === 5 && !bIds.includes(ids[0]),
         `evicted=${ids[0]} bucketIds=${JSON.stringify(bIds)}`);
-      ok('L5 list and badge agree with the capped bucket (5/5/5)',
-        r.rows.length === 5 && r.badgeCount === '5' && r.rows.length === bIds.length,
-        `rows=${r.rows.length} badge=${r.badgeCount} bucket=${bIds.length} header=${r.header}`);
+      ok('L5 list and badge agree with the capped bucket (aggregation-aware: 1 family header represents the 5 same-family rows; badge == bucket)',
+        r.rows.length === 1 && r.badgeCount === '5' && bIds.length === 5
+        && r.rows[0].name.includes('终态上限探针 N') && r.rows[0].state.includes('已毕 ×5'),
+        `rows=${r.rows.length} badge=${r.badgeCount} bucket=${bIds.length} header=${r.header} first=${r.rows[0]?.state} ${r.rows[0]?.name}`);
+      // #753 契约变更注记（20261022 面板进展可见化批）：同族任务（描述去数字归一，
+      // 此处 6→5 条「终态上限探针 N」同族）聚合为一行组头——列表行数不再等于桶内
+      // 行数，改钉「组头代表全部桶内任务 + badge == bucket」不变量（展开成员行后
+      // 一一对应，e2e-bg-progress-visibility.cjs B 段钉）。
       const real = errors.filter((e) => !e.url.includes('/api/'));
       ok('zero real console/page errors (cap scenario)', real.length === 0, real.slice(0, 3).map((e) => e.text).join(' ; '));
       await p.close();
