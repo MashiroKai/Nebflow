@@ -79,15 +79,15 @@
 import { t } from './i18n.js';
 import { escapeHtml, createIconsIn, statusIcon } from './utils.js';
 import { getAuthToken } from './neblink.js';
-
-// ── Eye toggle glyphs ────────────────────────────────────────────────────
-// Inline SVG (stroke: currentColor, so the button's colour token drives the
-// ink in both themes). Path data is the vendored lucide set the rest of the
-// app uses (vendor/lucide.min.js, v0.454.0) — `data-lucide` is not usable
-// here because createIconsIn REPLACES the element, which would defeat the
-// two-state swap; sidebar.js draws its eye pair the same way (:69-70).
-const EYE_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>';
-const EYE_OFF_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/></svg>';
+// ── Eye toggle glyphs: SINGLE SOURCE = sidebar/providersUi.js ────────────
+// 小扫尾批 2026-10-22：本文件私有 EYE_SVG/EYE_OFF_SVG 副本（lucide v0.454
+// 眼形）退役，与 chat.js AskUser 密钥卡（设计语言批 2026-10-21 先例）及设置
+// 页 provider 密码域（sidebar.js）收敛到同一枚 providersUi 单源眼（feather
+// 眼形，16px stroke: currentColor——按钮色 token 驱动双色主题墨色）。全应用
+// 眼形自此唯一：换眼形改一处，所有密码域像素级一致（渲染对照证据
+// evidence/20261022_secrets-eye-converge/）。providersUi 单向提供，无环
+// （其依赖 state/ws/i18n/providerModels 均不回指本面板；main.js 顶层装配）。
+import { eyeSvg, eyeOffSvg } from './sidebar/providersUi.js';
 
 // ── State ────────────────────────────────────────────────────────────────
 /** Last list truth read from the backend (metadata only — no value field
@@ -279,7 +279,7 @@ function rowEye(row) {
  */
 function eyeFace(eye, masked) {
   if (!eye) return;
-  eye.innerHTML = masked ? EYE_SVG : EYE_OFF_SVG;
+  eye.innerHTML = masked ? eyeSvg : eyeOffSvg;
   const key = masked ? 'secrets.showValue' : 'secrets.hideValue';
   eye.setAttribute('aria-label', t(key));
   eye.title = t(key);
@@ -446,7 +446,7 @@ function detailHTML(s) {
   // action). data-edit/data-eye carry the NAME for event routing — never a
   // value.
   const field = `<textarea class="secrets-input secrets-value masked" rows="1" data-edit="${name}" placeholder="${escapeHtml(maskPlaceholder(s.size))}" title="${escapeHtml(t('secrets.overwriteHint'))}" aria-label="${escapeHtml(t('secrets.value'))}: ${name}" autocomplete="off" spellcheck="false"></textarea>`;
-  const eye = `<button type="button" class="secrets-value-eye" data-eye="${name}" aria-label="${escapeHtml(t('secrets.showValue'))}" aria-pressed="false" title="${escapeHtml(t('secrets.showValue'))}">${EYE_SVG}</button>`;
+  const eye = `<button type="button" class="secrets-value-eye" data-eye="${name}" aria-label="${escapeHtml(t('secrets.showValue'))}" aria-pressed="false" title="${escapeHtml(t('secrets.showValue'))}">${eyeSvg}</button>`;
   return `<div class="secrets-row-detail" id="secrets-detail-${name}" data-detail="${name}">
       <div class="secrets-row-value">${field}${eye}</div>
       <div class="secrets-row-meta">${metaItems.join('')}</div>
@@ -473,7 +473,7 @@ function draftHTML() {
       <input type="text" class="secrets-input" data-draft-name placeholder="${escapeHtml(t('secrets.nameHint'))}" aria-label="${escapeHtml(t('secrets.name'))}" autocomplete="off" spellcheck="false">
       <div class="secrets-row-value">
         <textarea class="secrets-input secrets-value masked" rows="1" data-draft-value placeholder="${escapeHtml(t('secrets.valuePlaceholder'))}" aria-label="${escapeHtml(t('secrets.value'))}" autocomplete="off" spellcheck="false"></textarea>
-        <button type="button" class="secrets-value-eye" data-draft-eye aria-label="${escapeHtml(t('secrets.showValue'))}" aria-pressed="false" title="${escapeHtml(t('secrets.showValue'))}">${EYE_SVG}</button>
+        <button type="button" class="secrets-value-eye" data-draft-eye aria-label="${escapeHtml(t('secrets.showValue'))}" aria-pressed="false" title="${escapeHtml(t('secrets.showValue'))}">${eyeSvg}</button>
       </div>
       <div class="secrets-add-actions">
         <span class="secrets-draft-error" role="alert" hidden></span>
