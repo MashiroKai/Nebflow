@@ -810,4 +810,35 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
       "an armed mark must expose an injectable (name, value) pair for the loopback handshake"
     )
 
+  // ── pong-reliability 批（2026-10-22「大传输触发重连」）：隧道活性 pong 的可靠
+  //    上行口。修前 case "ping" 裸 sendText + 无视 future —— bulk 占住 JDK 单发
+  //    位时 pong 静默丢失 ⇒ relay 2-miss liveness 撕隧道 ⇒ 浏览器 WS 重连。修后
+  //    pong 过 PortalConnection.sendControlText → RelayFrameSender（与 bulk 同
+  //    锁、Send pending 重试、预算内响亮失败）。本段钉组合面。
+
+  test("pong control uplink: a bound bridge routes the pong through the RelayFrameSender onto the wire"):
+    Dispatcher.parallel[IO].use { dispatcher =>
+      val conn = new PortalConnection(dispatcher)
+      for
+        faces <- IO(new PortalHostFaces(gatewayPort = 1))
+        deps = mkDeps(faces)
+        fake = new FakeWebSocket
+        _ = conn.bind(new PortalTunnelBridge(deps, new RelayFrameSender(fake)))
+        _ <- IO(conn.sendControlText("""{"type":"pong"}""", fake))
+        ok <- waitUntil(5.seconds)(IO(sentTexts(fake).exists(_.contains("\"pong\""))))
+        _ = assert(ok, s"pong must land on the relay socket; sent=${sentTexts(fake)}")
+      yield ()
+    }
+
+  test("pong control uplink: no bridge bound yet (upgrade race window) falls back to the direct best-effort send"):
+    Dispatcher.parallel[IO].use { dispatcher =>
+      val conn = new PortalConnection(dispatcher)
+      val fake = new FakeWebSocket
+      for
+        _ <- IO(conn.sendControlText("""{"type":"pong"}""", fake))
+        ok <- waitUntil(5.seconds)(IO(sentTexts(fake).exists(_.contains("\"pong\""))))
+        _ = assert(ok, s"the fallback must still answer the ping; sent=${sentTexts(fake)}")
+      yield ()
+    }
+
 end PortalTunnelBridgeSpec

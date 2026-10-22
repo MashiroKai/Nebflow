@@ -12,7 +12,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.security.MessageDigest
 import java.util.Base64
-import java.util.concurrent.{CompletableFuture, ConcurrentLinkedQueue, TimeUnit}
+import java.util.concurrent.{CompletableFuture, ConcurrentLinkedQueue, TimeoutException, TimeUnit}
 import scala.concurrent.duration.*
 
 /**
@@ -66,20 +66,28 @@ class NeblinkRelayTunnelHeartbeatSendSpec extends CatsEffectSuite:
     os.remove.all(os.Path(tmpDir, os.pwd))
     super.afterEach(context)
 
-  /** 可编程假 socket：同步抛出 / 异步失败 / 正常完成，出向开关联动。 */
+  /** 可编程假 socket：同步抛出 / 异步失败 / 正常完成，出向开关联动。
+    * Q 段新增 `failFirstN`：前 N 次 sendText 回携 ISE("Send pending") 失败 future
+    * 且**不入队**（JDK 语义：单发位被占 = 帧没上线），之后恢复入队成功。 */
   private final class FakeWebSocket(
     syncThrow: Option[Throwable] = None,
     asyncFail: Option[Throwable] = None,
-    outputClosed: Boolean = false
+    outputClosed: Boolean = false,
+    failFirstN: Int = 0
   ) extends WebSocket:
     val sent = new ConcurrentLinkedQueue[String]()
     @volatile var aborted = false
+    private var remainingRejections = failFirstN
     override def sendText(data: CharSequence, last: Boolean): CompletableFuture[WebSocket] =
       syncThrow.foreach(t => throw t)
-      sent.add(data.toString)
-      asyncFail match
-        case Some(t) => CompletableFuture.failedFuture(t)
-        case None    => CompletableFuture.completedFuture(this)
+      if remainingRejections > 0 then
+        remainingRejections -= 1
+        CompletableFuture.failedFuture(new IllegalStateException("Send pending"))
+      else
+        sent.add(data.toString)
+        asyncFail match
+          case Some(t) => CompletableFuture.failedFuture(t)
+          case None    => CompletableFuture.completedFuture(this)
     override def sendBinary(data: java.nio.ByteBuffer, last: Boolean): CompletableFuture[WebSocket] =
       CompletableFuture.completedFuture(this)
     override def sendClose(code: Int, reason: String): CompletableFuture[WebSocket] =
@@ -338,6 +346,54 @@ class NeblinkRelayTunnelHeartbeatSendSpec extends CatsEffectSuite:
         )
       }
     }
+  }
+
+  // ===== pong-reliability（2026-10-22「大传输触发重连」诊断修复批）＝＝＝＝＝＝＝
+  //
+  // 根因链（stand.log + 代码双证）：bulk 洪峰占住 JDK 单发位 ⇒ relay ping 的
+  // pong（修前裸 sendText + 无视 future）静默丢失 ⇒ relay 侧 2-miss liveness
+  // 判死撕隧道（PortalTunnelBridge mailbox 注释记载的口径）⇒ 骑隧道的浏览器
+  // WS 全体重连。修后 pong 走 RelayFrameSender：Send pending 重试 + 预算，
+  // 持锁等在飞帧写完即上。本段钉修后契约：要么送到，要么诚实地响亮失败——
+  // 绝不「宣称成功而丢帧」；pong 路径永不撕连接。
+
+  test("Q1 pong 撞 Send pending（bulk 占位）⇒ 重试直到送达：恰一条 pong 上线、不撕连接") {
+    // 前 2 次拒收（bulk 占位），第 3 次入队成功 —— 复刻 bulk 帧间释放窗口。
+    val fake = new FakeWebSocket(failFirstN = 2)
+    val sender = new RelayFrameSender(fake, sendTimeoutSec = 5, pendingRetryMillis = 5)
+    sender.send("""{"type":"pong"}""").unsafeRunSync()
+    assertEquals(fake.sent.size(), 1, s"重试后必须恰一条 pong 上线：sent=${fake.sent}")
+    assert(fake.sent.peek().contains("\"pong\""), s"帧形必须是 pong：${fake.sent.peek()}")
+    assertEquals(fake.aborted, false, "Send pending = 饱和拒绝，不是连接死亡；pong 路径永不撕连接")
+  }
+
+  test("Q2 预算耗尽（恒占位）⇒ 诚实地响亮失败（TimeoutException），绝不静默宣称成功、绝不 abort") {
+    val fake = new FakeWebSocket(failFirstN = Int.MaxValue)
+    val sender = new RelayFrameSender(fake, sendTimeoutSec = 1, pendingRetryMillis = 5)
+    val err = intercept[TimeoutException](sender.send("""{"type":"pong"}""").unsafeRunSync())
+    assert(err.getMessage.contains("position not acquired"), s"失败必须是可读的预算语义：${err.getMessage}")
+    assertEquals(fake.sent.size(), 0, "预算内没上线就是没上线：sent 必须为空（不得假成功）")
+    assertEquals(fake.aborted, false, "发送方永不撕 socket——连接生死归隧道 liveness 机械管辖")
+  }
+
+  test("Q3 真 socket 饱和端到端：bulk 钉死单发位时 pong 不得静默丢——必须响亮失败（预算内不可达），连接毫发无损") {
+    val fix = new NeverReadWsFixture()
+    try
+      val ws = realWsTo(fix)
+      try
+        val bulkFut = ws.sendText(BulkFloodPayload, true)
+        Thread.sleep(600)
+        assert(!bulkFut.isDone, "夹具前提失效：bulk 竟已写完，饱和形态不成立")
+        // 修前的 face（对照）：裸 sendText 回携失败 future 被无视 = 静默丢帧，
+        // 调用面还以为发出去了 —— 这正是 relay 判死撕隧道的喂入口。
+        // 修后走 RelayFrameSender：永不读的对端钉死发送位 ⇒ 预算内送达不可能
+        // ⇒ 唯一合法结局 = TimeoutException 响亮失败（绝不假成功、绝不撕）。
+        val sender = new RelayFrameSender(ws, sendTimeoutSec = 1, pendingRetryMillis = 5)
+        intercept[TimeoutException](sender.send("""{"type":"pong"}""").unsafeRunSync())
+        assertEquals(ws.isOutputClosed, false, "饱和重试面绝不撕连接（pong 路径无 abort 权）")
+        assert(!bulkFut.isDone, "bulk 在飞发送必须毫发无损")
+      finally ws.abort()
+    finally fix.close()
   }
 
 end NeblinkRelayTunnelHeartbeatSendSpec

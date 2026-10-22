@@ -65,6 +65,11 @@ private[neblink] final class PortalTunnelBridge(
 
   private val logger = NebflowLogger.forName("nebflow.neblink.relay")
 
+  /** pong-reliability 批（2026-10-22）：隧道活性 pong 的上行口——包内唯一授权
+    * 访问器，供 [[PortalConnection.sendControlText]] 把控制帧路由进与本业务
+    * bulk 同一把单发位锁的发送器（Send pending 重试 + 预算）。 */
+  private[neblink] def controlSender: RelayFrameSender = sender
+
   /** Per-connection state: HTTP body channels + local WS cycles, keyed by requestId. */
   private val bodyChannels = new ConcurrentHashMap[String, BodyChannel]
   /** Test seam (package-private): the self-safe-drop spec registers cycles here directly. */
@@ -1190,5 +1195,39 @@ private[neblink] final class PortalConnection(dispatcher: Dispatcher[IO]):
           }
       )
     }
+
+  /**
+   * pong-reliability 批（2026-10-22「大传输触发重连」诊断修复批）：**隧道活性
+   * pong 的可靠上行口**。修前 relay ping 的应答走 listener 线程裸
+   * `ws.sendText` 且无视返回的 future —— 而 JDK 单发位被 bulk 帧占住时
+   * `sendText` 不同步抛、只回携 `IllegalStateException("Send pending")` 的失败
+   * future（NeblinkRelayTunnelHeartbeatSendSpec P1 真 socket 契约钉）⇒ bulk
+   * 洪峰下 pong **静默丢失** ⇒ relay 侧 2-miss liveness 判死撕隧道（本文件
+   * mailbox 注释记载的口径）⇒ 骑隧道的浏览器 WS 全体重连 = 作者症状。
+   *
+   * 修后：pong 过 [[RelayFrameSender]]（与业务 bulk 同一把单发位锁）——
+   * `send` 内建「Send pending 重试 + 15s 预算」，且持锁等待期间 bulk 泵取不到
+   * 发送位，pong 不会被业务洪峰饿死（等待上界 = 一个在飞帧的写完，有序流上
+   * pong 落在其后的帧之前，线序保持）。发送失败（预算耗尽/socket 真死）在此
+   * 显化留痕后吞掉——连接生死归隧道 liveness 机械管辖，pong 路径永不撕连接。
+   * 桥未绑（升级竞态窗）回落修前裸发语义：尽力而为，不新增失败面。
+   */
+  def sendControlText(text: String, ws: java.net.http.WebSocket): Unit =
+    bridgeRef.get match
+      case Some(bridge) =>
+        dispatcher.unsafeRunAndForget(
+          bridge.controlSender.send(text).handleErrorWith { e =>
+            IO(
+              logger.debug(
+                s"tunnel control frame (pong) not delivered after sender budget: ${NeblinkRelayTunnel.describeErr(e)}"
+              )
+            )
+          }
+        )
+      case None =>
+        // 桥未绑（upgrade 与首帧的竞态窗，此窗内不可能有 bulk 在飞）：修前裸发
+        // 语义兜底——同步异常吞掉，与既有 case "ping" 面逐字同形。
+        try { ws.sendText(text, true); () }
+        catch case _: Exception => ()
 
 end PortalConnection
