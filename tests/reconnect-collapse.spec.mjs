@@ -23,7 +23,10 @@
 //                            （症状①历史腿；旧「无 text 保持展开」例外已废）
 //   D 工具结果体            — 重放/重建的工具卡 body 不自动 .open（症状①工具腿）
 //   E 抽动阈值              — Layout Instability API：重连重放全程 CLS 低于
-//                            阈值；用户停在中段时 scrollTop 不跳（重连不劫持视口）
+//                            阈值（守卫钉；wipe+重建的新元素本就不产 CLS）
+//   E1 真重建腿·视口不劫持    — 高历史（可滚动）+ 签名**变化**（断线期间来新内容）
+//                            ⇒ 真重建腿：用户停在中段时 scrollTop 不得被拽走
+//                            （症状②在「非幂等重建」面的残留；症状钉）
 //   F 幂等重放 + footer 零位移 — 同帧重复重放：DOM 节点身份不变（零重挂载）、
 //                            footer 胶囊矩形逐像素相等（零位移）、子元素计数
 //                            不变（#570 重复气泡家族封口）、用户展开过的
@@ -94,6 +97,19 @@ const HISTORY_BUSY = [
 ];
 
 const RECONNECT_THINKING = '继续思考：第二点需要再核对一遍当前实现细节。';
+
+// E1 腿用：高历史（90 行正文 ⇒ 可滚动，中段钉才非空）。两版重放 busyTail 同值
+//（都 stillBusy），钉的就不是 turn-header 结构差，而是纯重放逐形。
+const E1_LINE = '这一段是用来撑起滚动高度的回看内容，用户停在中段阅读。';
+const HISTORY_TALL = [
+  { type: 'user', text: '长文任务', timestamp: 1750000000000 },
+  {
+    type: 'ai',
+    text: Array.from({ length: 90 }, () => E1_LINE).join('\n'),
+    thinking: '我先梳理：入口在 main.scala，核心逻辑分三层。',
+    timestamp: 1750000001000,
+  },
+];
 
 let srv;
 test.beforeAll(async () => {
@@ -242,6 +258,48 @@ test('E 抽动阈值：重连重放全程 CLS 低于阈值；中段视口不跳'
     // 用户停在中段时，重连不得把视口拉到底（shouldFollowBottom=false 语义）。
     pinGuard(Math.abs(afterScroll - beforeScroll) >= 80,
       `重连把视口拉动了 ${Math.round(afterScroll - beforeScroll)}px（≥80）`);
+  } finally { await context.close(); }
+});
+
+// ── E1. 真重建腿·中段视口不劫持（症状②在签名变化面的残留；症状钉） ──────
+// 幂等 skip（F/G 承载）封的是「同帧循环」；本腿钉的是它没盖住的另一半：
+// 断线期间历史**增长**（签名变化）⇒ 真重建腿跑 wipe+全量重放 —— 旧行为在
+// restoreFromBackendHistory 里无条件 scrollTop=scrollHeight + 强落
+// scrollSnapped（且 wipe 后的空容器对 isNearBottom 恒真，意图采集点必须在
+// wipe 之前）：回看中段的用户被一把拽到底，跟随手势也被污染。
+test('E1 真重建腿：用户停在中段时重连不劫持视口（scrollTop 不跳）', async ({ browser }) => {
+  const { context, page } = await newPage(browser);
+  try {
+    const grow = (extra) => JSON.parse(JSON.stringify([...HISTORY_TALL, ...extra]));
+    // 第一版重放把内容撑到可滚动高度（busyTail 与第二版同值 ⇒ 结构同形）。
+    await page.evaluate(async (history) => {
+      await window.__reconnect(history, { thinkBuf: '', txtBuf: '', stillBusy: true });
+    }, grow([]));
+    const geo = await page.evaluate(() => {
+      const chat = document.getElementById('chat');
+      return { scrollHeight: chat.scrollHeight, clientHeight: chat.clientHeight };
+    });
+    expect(geo.scrollHeight).toBeGreaterThan(geo.clientHeight); // 可滚动是本腿前提
+    // 视口钉在中段（scroll 事件在任务边界派发——等一帧让 latch 刷新落定）。
+    await page.evaluate(async () => {
+      const chat = document.getElementById('chat');
+      chat.scrollTop = Math.max(0, chat.scrollHeight / 2 - chat.clientHeight / 2);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    });
+    const beforeScroll = await page.evaluate(() => document.getElementById('chat').scrollTop);
+    expect(beforeScroll).toBeGreaterThan(0); // 钉必须真离开底部，否则本腿空转
+
+    // 断线期间来了新消息 ⇒ 重放签名变化 ⇒ 真重建腿（用户仍停在中段阅读）。
+    await page.evaluate(async ({ history, thinkBuf }) => {
+      await window.__reconnect(history, { thinkBuf, txtBuf: '', stillBusy: true });
+    }, {
+      history: grow([{ type: 'ai', text: '断线期间模型补发了一条说明。',
+        timestamp: 1750000004000 }]),
+      thinkBuf: RECONNECT_THINKING,
+    });
+    const afterScroll = await page.evaluate(() => document.getElementById('chat').scrollTop);
+    pinDefectAbsent(Math.abs(afterScroll - beforeScroll) >= 80,
+      `真重建腿把视口拉动了 ${Math.round(afterScroll - beforeScroll)}px（≥80）`);
   } finally { await context.close(); }
 });
 
