@@ -874,6 +874,17 @@ object GatewayMain extends IOApp:
                                   // 恒 blocking=false）+ host-wake 审计事件（D-7：仅审计，不揽分发
                                   // 器）。server listen 前就绪；零新调度器、零子进程（A1 纯 JVM）。
                                   val hostWakeSensor: IO[Unit] = nebflow.core.project.WakeSensor.launch
+                                  // 记忆检索库自动入库（memory-recall 批 2026-10-22）：作者令
+                                  // 「这个进库 应该要是我们使用stand自动的能力」——驻留守护按节流窗
+                                  // （默认 ≥5 分钟）对 sessions/ 做脏探测，有增量即调
+                                  // tools/stand-recall --update --source auto（幂等 upsert，实测
+                                  // ~3s/10140 条库），主会话消息落盘后无需人工触发即进
+                                  // <dataRoot>/memory-db/。kill-switch
+                                  // nebflow.memoryRecall.enabled=false ⇒ 零纤维零子进程（完全回到
+                                  // 人工 --update 现状）；失败静默（首败 WARN 连败降 debug，下窗
+                                  // 自愈重试）；排除面（外部执行器/team 子代理不入库）由
+                                  // stand-recall 既有分类规则单点承载，持久化路径零改动。
+                                  val memoryRecallDaemon: IO[Unit] = nebflow.core.MemoryRecallDaemon.launch()
                                   // 冷启动播种（cold-start seed 批 2026-09-07）：fresh home
                                   // 在 startupMount 前就绪默认最小集（project-dispatcher /
                                   // general agents + 4 系统插件 +
@@ -933,7 +944,7 @@ object GatewayMain extends IOApp:
                                       updateOrchestrator = Some(updateOrchestrator),
                                       updateConvergence = Some(updateConvergence)
                                     )
-                                  hubSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> succeedPortGate(
+                                  hubSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {
