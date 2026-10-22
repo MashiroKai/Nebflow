@@ -1,18 +1,17 @@
 // chat.js 拆分(FE组件化批次三 2026-09-27):注入行显示(source 标签表 + 注入行 builder + live 渲染) 可复用模块(行为保持)。
 import { activeView } from '../chatView.js';
 import { t } from '../i18n.js';
-import { renderMarkdownWithMath, shouldFollowBottom } from '../utils.js';
+import { createIconsIn, renderMarkdownWithMath, shouldFollowBottom } from '../utils.js';
 import { parseTaskReturnText, buildTaskRefLine } from '../reference.js';
 // Root agent DISPLAY name（单读点 rootName.js；A 侧 deviceMail 标签批本簇改动随簇迁入）。
 import { rootDisplayName } from '../rootName.js';
 import { bindCollapsibleToggle } from './collapsible.js';
 import { createMsgFooterBadge } from './durationBadges.js';
-// file-diff → 委托结果行（bug #58 修 2026-10-09；展开改 Canvas 为 2026-10-10 裁定；
-// USTC 合并移植 2026-10-10）：注入行展开体的「Changes」段渲染器复用 diffRender.js
-// （零依赖纯 HTML 模块，与 Flow Map 节点详情同一实现）；diff 体在 Canvas 面板打开
-// （diffCanvas.openFileChangesCanvas），样式 = css/diffView.css 既有类。
-import { renderFileChangesHtml } from '../diffRender.js';
-import { openFileChangesCanvas } from '../diffCanvas.js';
+// diff 拆面板批（2026-10-22 作者令「摘要上移+左右分体」）：交付消息顶部摘要条
+// （chip）点击单点 = diffPanel.toggleDiffBatch——左栏 #panel-filechanges 出文件
+// 列表、Canvas 出选中文件 diff（旧 master-detail 一体大面板退役）。本 builder
+// 只建 chip DOM 与点击接线；面板/canvas 两面都在 diffPanel.js 收口。
+import { toggleDiffBatch } from '../diffPanel.js';
 // quote-message 一期（spec §7）：主聊天区右键引用 —— 挂点收口在本 builder
 // （chat.js 只 re-export，不复制逻辑）。
 import { attachQuoteMenu, nextChatMsgId } from '../msgQuote.js';
@@ -195,15 +194,17 @@ function appendDeliveryBadge(label, delivery) {
  *  Absent (old history rows, sources outside the engine KIND vocabulary,
  *  e.g. the in-flight device-mail source) ⇒ falls back to
  *  `injectedSourceLabel` above, byte-identical to before.
- *  fileChanges (optional, file-diff → 委托结果行 bug #58 修 2026-10-09；展开改
- *  Canvas 为 2026-10-10 裁定): the per-batch changed-file diff payload carried
- *  by delegate terminal events (engine `FileChangeReport.delegateBatchMetadata`
- *  — same wire shape as the REST file-changes face). Present with files ⇒ a
- *  collapsed「Changes」section mounts inside the expanded body showing ONLY the
- *  header stats line + per-file rows (badge / +a −r / source tag) — the diff
- *  bodies render in the CANVAS panel (diffCanvas.openFileChangesCanvas), never
- *  inline in the bubble; the collapsed label keeps the quiet `N files +a −r`
- *  hint. Absent (non-delegate rows / old history) ⇒ render unchanged. */
+ *  fileChanges (optional, file-diff → 委托结果行 bug #58 修 2026-10-09；2026-10-10
+ *  展开改 Canvas；2026-10-22 拆面板批「摘要上移+左右分体」换代): the per-batch
+ *  changed-file diff payload carried by delegate terminal events (engine
+ *  `FileChangeReport.delegateBatchMetadata` — same wire shape as the REST
+ *  file-changes face). Present with files ⇒ a compact summary CHIP mounts at
+ *  the TOP of the delivery bubble (folded-state visible; `N files · +a −r`,
+ *  glass pill) — click reveals the diff file list in the LEFT Side Bar panel
+ *  (#panel-filechanges) and the focused file's diff in the Canvas reader
+ *  (diffPanel.js / diffCanvas.js); re-clicking an open batch collapses the
+ *  Side Bar (existing panel toggle semantics). The bubble body keeps zero
+ *  diff rows. Absent (non-delegate rows / old history) ⇒ render unchanged. */
 export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn, delivery, intake, header, fileChanges) {
   const row = document.createElement('div');
   row.className = 'row user';
@@ -247,52 +248,42 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
     (header && String(header).trim()) ? String(header) : injectedSourceLabel(source, eventType, sender, sourceTeam, intake)
   ));
   appendDeliveryBadge(label, delivery);
-  // file-diff → 委托结果行（bug #58 修）：折叠态的安静提示——「N files +a −r」。
-  // 发现性钉子（「为什么我看不到」正是本案的用户报告形态）；缺载荷 ⇒ 零渲染。
+  bubble.appendChild(label);
+  // diff 拆面板批（2026-10-22 作者令「改为在最上面看，而且是一个小的摘要」）：
+  // 交付消息顶部的紧凑摘要条（.glass-control 玻璃 pill）：`N files · +a −r`，
+  // 折叠态即可见——取代原展开体尾部的 Changes 段与标签内安静 hint（摘要上移，
+  // 信息一处呈现，两处占位即信息重复）。点击 → 左栏 #panel-filechanges 出该
+  // 批次文件列表 + Canvas 出选中文件 diff（旧 master-detail 一体大面板退役）；
+  // 本批已在面板时再点 → 收起侧栏（diffPanel.toggleDiffBatch，现有面板 toggle
+  // 语义）。缺载荷（非 delegate 行 / 旧历史）⇒ 零渲染。
   if (Array.isArray(fileChanges?.files) && fileChanges.files.length) {
-    const hint = document.createElement('span');
-    hint.className = 'nf-row-hint';
     const tot = fileChanges.files.reduce((acc, f) => {
       acc.a += Number(f?.added) || 0; acc.r += Number(f?.removed) || 0; return acc;
     }, { a: 0, r: 0 });
-    hint.textContent = ` · ${fileChanges.files.length} file${fileChanges.files.length === 1 ? '' : 's'} +${tot.a} −${tot.r}`;
-    label.appendChild(hint);
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'nf-diff-chip glass-control';
+    chip.setAttribute('aria-pressed', 'false');
+    chip.dataset.fcBatch = String(fileChanges.nodeId || fileChanges.generatedAt || 'adhoc');
+    const icon = document.createElement('i');
+    icon.setAttribute('data-lucide', 'file-diff');
+    const filesLabel = document.createElement('span');
+    filesLabel.textContent = `${fileChanges.files.length} file${fileChanges.files.length === 1 ? '' : 's'}`;
+    const counts = document.createElement('span');
+    counts.className = 'nf-fc-counts';
+    const added = document.createElement('span');
+    added.className = 'nf-fc-added';
+    added.textContent = `+${tot.a}`;
+    const removed = document.createElement('span');
+    removed.className = 'nf-fc-removed';
+    removed.textContent = `−${tot.r}`;
+    counts.append(added, document.createTextNode(' '), removed);
+    chip.append(icon, filesLabel, counts);
+    createIconsIn(chip);
+    chip.addEventListener('click', () => { toggleDiffBatch(fileChanges); });
+    bubble.appendChild(chip);
   }
-  bubble.appendChild(label);
   bubble.appendChild(content);
-  // file-diff → 委托结果行（2026-10-10 裁定）：展开体尾部挂「Changes」段，但只保留
-  // header 统计行 + 文件行（徽标 / +a −r / 来源 tag）——diff 体不再内联展开；
-  // 点头部（聚焦第一个文件）或任一文件行（聚焦该文件）→ Canvas 打开 diff 视图
-  // （diffCanvas.openFileChangesCanvas，复用 diffRender.js 渲染单源）。
-  // 事件委托挂在段根上：一个监听器覆盖头部与全部文件行（键盘 Enter/Space 同效）。
-  if (Array.isArray(fileChanges?.files) && fileChanges.files.length) {
-    const sec = document.createElement('div');
-    sec.innerHTML = renderFileChangesHtml(fileChanges, { mode: 'chat' });
-    const node = sec.firstElementChild;
-    if (node) {
-      const openInCanvas = (row, head) => {
-        const idx = row ? Number(row.dataset.fcFile) : 0;
-        openFileChangesCanvas(fileChanges, { focusIndex: Number.isFinite(idx) ? idx : 0 });
-      };
-      /** @param {MouseEvent} ev */
-      const onFcClick = (ev) => {
-        const el = /** @type {HTMLElement} */ (ev.target);
-        openInCanvas(el.closest('[data-fc-file]'), el.closest('[data-fc-open]'));
-      };
-      /** @param {KeyboardEvent} ev */
-      const onFcKey = (ev) => {
-        if (ev.key !== 'Enter' && ev.key !== ' ') return;
-        const el = /** @type {HTMLElement} */ (ev.target);
-        const target = el.closest('[data-fc-file], [data-fc-open]');
-        if (!target) return;
-        ev.preventDefault();
-        openInCanvas(target.closest('[data-fc-file]'), target);
-      };
-      node.addEventListener('click', onFcClick);
-      node.addEventListener('keydown', onFcKey);
-      content.appendChild(node);
-    }
-  }
   row.appendChild(bubble);
 
   // Timestamp + copy button (unified v1.2 footer pill). History restore may

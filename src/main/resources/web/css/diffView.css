@@ -145,108 +145,15 @@
   font-style: italic;
 }
 
-/* ── chat face (file-diff → 委托结果行, bug #58 修 2026-10-09) ──────────────
-   The same .nf-filechanges section mounts inside an injected bubble's expanded
-   body (chat.js buildInjectedRow). Only container-level adjustments here — the
-   row/diff classes above are shared verbatim. */
-.bubble.injected .nf-filechanges {
-  margin-top: 8px;
-  max-width: 100%;
-  min-width: 0;
-}
-.bubble.injected .nf-fc-path {
-  direction: rtl; /* long paths ellipsize from the LEFT — keep the filename visible */
-  text-align: left;
-}
-.bubble.injected .nf-fc-body {
-  max-height: 280px;
-}
-
-/* Collapsed-row discoverability hint appended to the injected source label:
-   ` · N files +a −r` (quiet muted, same material as the label itself). */
-.nf-row-hint {
-  color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
-  font-size: 11px;
-  white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-/* ── chat card link rows (展开 → Canvas, 2026-10-10 裁定) ───────────────────
-   The chat card's Changes section keeps the row visuals but carries no inline
-   body: rows are buttons routed to the Canvas diff view by chat.js. Same
-   colors/borders as the .nf-fc boxes above — zero new color values. */
-.nf-filechanges-head.is-link {
-  cursor: pointer;
-  user-select: none;
-}
-.nf-filechanges-head.is-link:hover {
-  opacity: 0.85;
-}
-.nf-fc-link .nf-fc-row {
-  cursor: pointer;
-}
-/* the <summary> defaults are irrelevant for link rows — kill the marker gap */
-.nf-fc-link {
-  cursor: pointer;
-}
-
-/* ── Canvas diff view (diffCanvas.js tab, type 'filechanges') ───────────────
-   Recommended form for multi-file batches: master–detail split — a narrow
-   file-navigation column (same row visuals as the chat card) + a full-height
-   reader for the focused file's diff. Palette = existing tokens only. */
-.fcv {
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-.fcv-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--color-border, rgba(128, 128, 128, 0.25));
-  font-size: 12px;
-  min-width: 0;
-}
-.fcv-head-title {
-  white-space: nowrap;
-  font-weight: 600;
-}
-.fcv-head-root {
-  color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-.fcv-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-}
-.fcv-nav {
-  flex: 0 0 280px;
-  width: 280px;
-  overflow-y: auto;
-  border-right: 1px solid var(--color-border, rgba(128, 128, 128, 0.25));
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.fcv-nav .nf-fc {
-  cursor: pointer;
-}
-.fcv-nav .nf-fc.active {
-  background: var(--color-bg-hover, rgba(128, 128, 128, 0.12));
-  border-color: var(--color-info, #58a6ff);
-}
+/* ── Canvas diff reader (diffCanvas.js tab, type 'filechanges') ────────────
+   拆面板批（2026-10-22 作者令「摘要上移+左右分体」）：旧 master-detail 一体
+   大面板（.fcv 分栏 = .fcv-nav 文件导航 + .fcv-view diff 阅读区）退役——文件
+   列表迁往左栏 #panel-filechanges（.nfp-* 规则，同文件尾段），Canvas 只剩
+   **选中文件**的阅读面：.fcv-view（单列滚动）+ .fcv-filehead（粘顶文件头）。
+   Palette = existing tokens only（零新色值）。 */
 .fcv-view {
   flex: 1;
+  min-height: 0;
   min-width: 0;
   overflow: auto;
   padding: 0 0 12px;
@@ -269,4 +176,98 @@
 }
 .fcv-view .nf-diff-body {
   padding: 6px 8px 8px;
+}
+/* 手机层文件条（mobile-layer = 左栏面板退场层，diffCanvas 仅在该层渲染）：
+   pills 横滚，行族 = .nf-fc 复用；选中态与左栏面板同式（背景 + 阴影）。 */
+.fcv-filestrip {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border, rgba(128, 128, 128, 0.2));
+}
+.fcv-filestrip .nf-fc {
+  flex: 0 0 auto;
+  max-width: 240px;
+  cursor: pointer;
+}
+.fcv-filestrip .nf-fc.active {
+  background: var(--color-bg-hover, rgba(128, 128, 128, 0.12));
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+/* ── 交付摘要 chip（交付消息顶部，拆面板批 2026-10-22）────────────────────
+   作者令：「改为在最上面看，而且是一个小的摘要」。紧凑玻璃 pill——材质 =
+   sapphire.css button.glass-control 标准族（rest/hover/active 双主题齐备，
+   本文件只补形状与字重；字重 500 = visual-style 铁律 3 按钮档）。
+   aria-pressed=true = 该批次已在左栏面板承载（sapphire 色系描边，低调不抢眼）。 */
+.nf-diff-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 8px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
+  cursor: pointer;
+  align-self: flex-start;
+  text-align: left;
+}
+.nf-diff-chip svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+}
+.nf-diff-chip[aria-pressed='true'] {
+  color: rgb(var(--sapphire, 88, 166, 255) / 0.95);
+  border-color: rgb(var(--sapphire, 88, 166, 255) / 0.38);
+}
+
+/* ── 左栏「变更文件」面板（#panel-filechanges，拆面板批 2026-10-22）────────
+   面板族语言：.panel/.panel-header/.panel-title 基座 = css/sidebar.css；本段
+   只补内容面（列表行复用 .nf-fc 行族；选中态 = 背景 + 阴影，visual-style
+   铁律 5「侧边栏激活态用阴影，不用竖线」）。 */
+.nfp-meta {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nfp-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.nfp-empty {
+  padding: 10px 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
+}
+.nfp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.nfp-list .nf-fc {
+  cursor: pointer;
+}
+/* 长路径自左省略（文件名恒可见）——原 chat 面同款 RTL 技巧迁到面板行。 */
+.nfp-list .nf-fc-path {
+  direction: rtl;
+  text-align: left;
+}
+.nfp-list .nf-fc.active {
+  background: var(--color-bg-hover, rgba(128, 128, 128, 0.12));
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
 }

@@ -21,11 +21,9 @@ import { attachQuoteMenu, renderQuoteBlock, quoteFromRef, nextChatMsgId, syncQuo
 // 图标眼单源（设计语言批 2026-10-21）：AskUser 密钥题的「显示」眼与设置页
 // provider 密码域（sidebar.js）同一份 SVG——providersUi.js 单向提供，无环。
 import { eyeSvg, eyeOffSvg } from './sidebar/providersUi.js';
-// file-diff → 委托结果行（bug #58 修 2026-10-09）：注入行展开体里的「Changes」段
-// 渲染器复用 diffRender.js（零依赖纯 HTML 模块，与 Flow Map 节点详情同一实现；
-// 样式 = css/diffView.css 既有类，chat 面只追加容器级规则）。
-import { renderFileChangesHtml } from './diffRender.js';
-import { openFileChangesCanvas } from './diffCanvas.js';
+// （file-diff 的 chat.js 死 import 于拆面板批 2026-10-22 摘除：chat 单体时代
+// 的 renderFileChangesHtml/openFileChangesCanvas 引用自 FE 组件化拆分后即无
+// 调用点；委托 diff 现走 injectedRows 摘要 chip → diffPanel.js 单点收口。）
 // 令牌头（2026-09-20 收尾批）：`/api/tts` 服务端已加门 ⇒ 本调用点必须带 Authorization。
 // 复用既存的同族 helper（flowHelpers.authHeaders，全仓 6 处同族实例），**不新造**令牌读取
 // 机制。依赖方向安全：flowHelpers.js 只 import './branding.js'，无环。
