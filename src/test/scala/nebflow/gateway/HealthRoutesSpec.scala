@@ -162,3 +162,40 @@ class HealthRoutesSpec extends FunSuite:
     assertEquals(HealthRoutes.canonicalOrigin("not a url"), None)
     // the whitelist itself must contain the brand portal origin
     assert(HealthRoutes.allowedProbeOrigins.contains(PortalOrigin), s"whitelist must hold the portal origin: ${HealthRoutes.allowedProbeOrigins}")
+
+  // ── 本机近路短路批（2026-10-22 诊断修复批「本地点大文件触发重连」）──────────
+  //
+  //  腿 A：端口锚端点 `GET /api/health/loopback-info`（withAuth 门）——控制台页
+  //        经隧道加载时先拿本机端口，再去环回 /health 探测核对 deviceId；
+  //  腿 B：CORS 白名单并入中继 origin（brand.conf serverUrl）——控制台页
+  //        （托管在中继 origin 下）的环回探测由此可读；其余 origin 照旧零头。
+
+  private val RelayOrigin =
+    HealthRoutes.canonicalOrigin(nebflow.shared.Branding.serverUrl)
+      .getOrElse(sys.error("brand serverUrl must carry an origin"))
+
+  test("loopback-info: bearer token answers the gateway port; no credential 403s"):
+    val authed = serve(
+      req(path = "/api/health/loopback-info")
+        .putHeaders(Header.Raw(CIString("Authorization"), s"Bearer $TestToken"))
+    )
+    assertEquals(authed.status, Status.Ok)
+    assertEquals(
+      bodyJson(authed).hcursor.downField("port").as[Int].toOption,
+      Some(8080),
+      "the near-path switch needs the local port anchor"
+    )
+    val anon = serve(req(path = "/api/health/loopback-info"))
+    assertEquals(anon.status, Status.Forbidden, "the port anchor is session-gated")
+
+  test("CORS whitelist covers the relay origin (the console page probes loopback while served from the relay)"):
+    assert(HealthRoutes.allowedProbeOrigins.contains(RelayOrigin), s"whitelist must hold the relay origin: ${HealthRoutes.allowedProbeOrigins}")
+    val resp = serve(req(origin = Some(RelayOrigin)))
+    assertEquals(resp.status, Status.Ok)
+    assertEquals(header(resp, "Access-Control-Allow-Origin"), Some(RelayOrigin))
+    assertEquals(header(resp, "Access-Control-Allow-Private-Network"), Some("true"))
+
+  test("relay-origin CORS stays loopback-only (a foreign host probing this box gets no probe face)"):
+    val resp = serve(req(origin = Some(RelayOrigin), remote = Some(SpecRequests.Lan)))
+    assertEquals(header(resp, "Access-Control-Allow-Origin"), None)
+    assertEquals(header(resp, "Access-Control-Allow-Private-Network"), None)

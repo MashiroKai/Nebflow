@@ -66,6 +66,19 @@ private[gateway] object HealthRoutes:
       case req @ OPTIONS -> Root / "health" =>
         NoContent().map(_.putHeaders(probeCorsHeaders(req)*))
 
+      // 同机近路探测的「端口锚」腿（本地回路短路批，2026-10-22 诊断修复批——
+      // 「本地点大文件触发重连」：控制台页经隧道加载时，本机文件字节全走
+      // 隧道把心跳 pong 饿死 ⇒ 前端 3-miss 自我逐出。修法 = 控制台页自检
+      // 近路跳回 http://127.0.0.1:<port>，本地文件从此零隧道）。
+      // 经 withAuth 门（会话凭据）：端口不是身份面，但只服务已入座会话；
+      // 身份核对锚仍由环回 /health 的 deviceId 键承担——本端点给端口、
+      // 环回探测给身份，两键合起来才构成「同机确认」。无缓存（no-store 由
+      // 调用方带，此处载荷小、读数随配置）。
+      case req @ GET -> Root / "health" / "loopback-info" =>
+        withAuth(req) {
+          Ok(Json.obj("port" -> ctx.gatewayPort.asJson))
+        }
+
       // 连接面只读读数（R-1b conn-guard 批，设计件 §C④-4）：零凭据面（仅
       // 对端 IP + 计数 + 上限/超时口径 + fd 代理）。与 /health 同级无令牌门
       // （watchdog/作者探视用）；不含任何 header/body/token 内容。
@@ -177,8 +190,12 @@ private[gateway] object HealthRoutes:
   /**
    * CORS 白名单（v2 §3.3 步骤1「网关对本机健康端点回 CORS 白名单，新增一小刀」）。
    *
-   * 白名单源 = 门户 URL 的 origin：brand.conf `portalUrl` + 门户 env 覆盖
-   * （`Branding.env("PORTAL_URL")` 双前缀，同 PortalUrl.livePortalEnv 口径）。
+   * 白名单源 = 门户 URL 的 origin（brand.conf `portalUrl` + 门户 env 覆盖
+   * （`Branding.env("PORTAL_URL")` 双前缀，同 PortalUrl.livePortalEnv 口径））
+   * **＋ 设备中继 origin**（brand.conf `serverUrl`，本地回路短路批 2026-10-22）：
+   * 控制台页本身托管在中继 origin 下，它发起的环回近路探测与中继 consoleUrl
+   * 同族（同为我们控制的 origin）——Mac 本机场景正是这一页需要读到环回探测的
+   * deviceId 才能跳回本地直连接口。
    * **不是 `*`**：载荷含 deviceId/version（本机指纹面），只有门户 origin 配读；
    * 其他一切 origin（含任意 localhost 端口页面）零 CORS 头 ⇒ 浏览器读不到 ⇒
    * 近路判定不成立 = 停留门户（批 ④）。
@@ -210,9 +227,13 @@ private[gateway] object HealthRoutes:
 
   end probeCorsHeaders
 
-  /** 白名单 origin 集（纯函数，spec 直读）：门户 base + 门户 env 覆盖。 */
+  /** 白名单 origin 集（纯函数，spec 直读）：门户 base + 门户 env 覆盖 + 中继 origin。 */
   private[gateway] def allowedProbeOrigins: Set[String] =
-    List(Option(Branding.portalUrl), Branding.env("PORTAL_URL")).flatten
+    List(
+      Option(Branding.portalUrl),
+      Branding.env("PORTAL_URL"),
+      Option(Branding.serverUrl)
+    ).flatten
       .flatMap(u => canonicalOrigin(u))
       .toSet
 
