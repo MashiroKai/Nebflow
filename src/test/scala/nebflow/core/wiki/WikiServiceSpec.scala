@@ -78,7 +78,7 @@ class WikiServiceSpec extends CatsEffectSuite:
     svc.graph(Some("alpha")).map { g =>
       assertEquals(g.hcursor.downField("view").downField("project").as[String].toOption, Some("alpha"))
       val crumbs = g.hcursor.downField("view").downField("breadcrumb").as[List[io.circe.Json]].getOrElse(Nil)
-      assertEquals(crumbs.map(c => str(c, "name")), List("alpha"))
+      assertEquals(crumbs.map(c => str(c, "name")), List(Some("alpha")))
 
       val nodes = g.hcursor.downField("nodes").as[List[io.circe.Json]].getOrElse(Nil)
       val realRels = nodes.filterNot(n => n.hcursor.get[Boolean]("stub").toOption.contains(true))
@@ -86,14 +86,14 @@ class WikiServiceSpec extends CatsEffectSuite:
       assertEquals(realRels, List("a.md", "b.md")) // child.md isolated
 
       val children = g.hcursor.downField("childVaults").as[List[io.circe.Json]].getOrElse(Nil)
-      assertEquals(children.map(c => str(c, "name")), List("sub"))
-      assertEquals(children.map(c => str(c, "rel")), List("sub/docs"))
+      assertEquals(children.map(c => str(c, "name")), List(Some("sub")))
+      assertEquals(children.map(c => str(c, "rel")), List(Some("sub/docs")))
       assertEquals(children.flatMap(c => long(c, "docCount")), List(1L))
 
-      // stats: a→b in-vault edge; a→sub/docs/child.md classified external
+      // stats: a→b and b→a in-vault edges; a→sub/docs/child.md external
       val stats = g.hcursor.downField("stats")
       assertEquals(stats.downField("docs").as[Long].toOption, Some(2L))
-      assertEquals(stats.downField("edges").as[Long].toOption, Some(1L))
+      assertEquals(stats.downField("edges").as[Long].toOption, Some(2L))
       assertEquals(stats.downField("crossVault").as[Long].toOption, Some(1L))
       assertEquals(stats.downField("unresolved").as[Long].toOption, Some(0L))
       // the external placeholder rides the nodes with external=true

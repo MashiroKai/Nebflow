@@ -193,6 +193,14 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
     rel.nonEmpty && !rel.startsWith("/") && !rel.startsWith("\\") &&
       rel.split('/').forall(s => s.nonEmpty && s != "." && s != "..")
 
+  /** Segments of a root-vault-relative vault rel BELOW the root vault:
+    * "docs" → Nil, "sub/docs" → Vector("sub", "docs"), "a/docs/b/docs" →
+    * Vector("a", "docs", "b", "docs"). Single join point for the "docs" root
+    * segment (folder for vault paths, string namespace for rels elsewhere). */
+  private def vaultRelSegments(rel: String): Vector[String] =
+    val r = if rel == WikiIndex.VaultDirName then "" else rel.stripPrefix(WikiIndex.VaultDirName + "/")
+    r.split('/').filter(_.nonEmpty).toVector
+
   // ── Merged view (pre-#744-B shape, byte-compatible) ──────────────
 
   private def buildMerged: IO[Json] =
@@ -249,23 +257,30 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
     val device = deviceOf(pd)
     val ws = workspacePath(pd)
     IO.blocking {
-      val vault = ws / os.RelPath(vaultRel)
+      // vaultRel namespace = ROOT-VAULT-relative ("docs" = the root vault,
+      // "sub/docs" = <workspace>/docs/sub/docs — a sub vault lives INSIDE the
+      // root vault, #744-B 设计 §1). Segments below the root vault (the root
+      // segment itself is already folded in), each validated no-'/' by /.
+      val rootVault = ws / WikiIndex.VaultDirName
+      val vault = vaultRelSegments(vaultRel).foldLeft(rootVault)(_ / _)
       // Sub-vault aggregates: rels are ROOT-vault-relative; the direct children
-      // of THIS vault are the ones one nesting level deeper (each level = a
-      // `<sub>/docs` pair of segments).
+      // of THIS vault are the ones exactly one `<sub>/docs` pair deeper
+      // (root "docs" is itself the pair's tail segment, so its children sit at
+      // below-depth 2; deeper levels add 2 per hop).
       val allChildren =
         if os.isDir(ws / WikiIndex.VaultDirName) then discoverLocalSubVaults(ws / WikiIndex.VaultDirName)
         else Nil
-      val depth = vaultRel.split('/').length
-      val children = allChildren.filter(c =>
-        c.rel.split('/').length == depth + 2 && (vaultRel == WikiIndex.VaultDirName || c.rel.startsWith(vaultRel + "/"))
-      )
+      val below = vaultRelSegments(vaultRel)
+      val children = allChildren.filter { c =>
+        val cBelow = vaultRelSegments(c.rel)
+        cBelow.length == below.length + 2 && cBelow.startsWith(below)
+      }
       // Sibling/ancestor rel sets for external classification (listing only —
-      // only THIS vault's documents are parsed).
+      // only THIS vault's documents are parsed). srel is root-vault-relative.
       val siblingRels = allLocalVaultRels(ws)
         .filterNot(_ == vaultRel)
         .flatMap { srel =>
-          val sv = ws / os.RelPath(srel)
+          val sv = vaultRelSegments(srel).foldLeft(rootVault)(_ / _)
           val rels = listVaultFiles(sv, WikiIndex.DocExtensions)
             .take(WikiIndex.MaxFilesPerVault)
             .map(_.relativeTo(sv).toString.replace('\\', '/'))
@@ -292,11 +307,20 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
         val scan = scanLocalVaultDir(pd.name, device, vault, vaultRel, skipRels)
         val classified = WikiIndex.classifyExternals(scan, siblingRels)
         assembleVaultView(pd, vaultRel, classified, children, None)
-    }.handleErrorWith(e => IO.pure(vaultErrorView(pd, vaultRel, msgOf(e))))
+    }.handleErrorWith(e =>
+      // Swallowed errors must stay visible: the degraded view carries the
+      // message in its `error` field, the log keeps the stack face.
+      IO(logger.errorSync(s"wiki: local vault view '${pd.name}/$vaultRel' degraded: ${msgOf(e)}")) *>
+        IO.pure(vaultErrorView(pd, vaultRel, msgOf(e)))
+    )
 
   private def buildRemoteVaultView(pd: ProjectDef, vaultRel: String): IO[Json] =
     val wsPath = pd.origin.map(_.path).getOrElse(pd.workspace)
-    val vaultPath = joinRemote(wsPath, vaultRel)
+    // vaultRel is root-vault-relative (same namespace as the local face):
+    // "docs" = <origin>/docs, "sub/docs" = <origin>/docs/sub/docs.
+    val vaultPath =
+      if vaultRel == WikiIndex.VaultDirName then joinRemote(wsPath, WikiIndex.VaultDirName)
+      else joinRemote(joinRemote(wsPath, WikiIndex.VaultDirName), vaultRel)
     // Best-effort one-level child-vault probe (design §1); a failed probe means
     // "no sub vaults" — never an error.
     val childrenIO: IO[List[WikiIndex.ChildVault]] =
