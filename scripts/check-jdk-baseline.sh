@@ -9,7 +9,7 @@
 # 字节码 major 65 会让 17 JVM 连 nebflow.Main 都加载不了，于是
 #   · JvmRequirement 的人话报错（`requires Java 21` + 平台升级指引 + Jar:/Java:）
 #     整句不可达 —— 闸根本没机会执行；
-#   · `nebflow update | doctor | version` 这些**自修入口**一起被焊死
+#   · `stand update | doctor | version` 这些**自修入口**一起被焊死
 #     （立项约束：闸放 GatewayMain.run 首行，不放 Main.run）。
 # 目标低一档不会放开 API 面：`-release` 同时钉 API 面与字节码目标，17 的 API 面
 # 是 21 的**子集**，API 漂移从机制上更不可能。Scala 3.5.2 也无法把「API 面 21」
@@ -53,7 +53,8 @@
 #           等于放弃验收 ① —— 已收敛掉。
 #        §2 `version` / `help` / `doctor` / `update` 四条自修入口逐条跑：未超时、
 #           输出非空、输出里**零** `UnsupportedClassVersionError` /
-#           `class file version`、`version` 必须打出 `nebflow <版本号>`。
+#           `class file version`、`version` 必须打出 `<lowerName> <版本号>`
+#           （brand.conf lowerName 驱动；2026-10-22 起断言现读真源，不再硬编码品牌名）。
 #           （断网容器里 `update` 的判据 = 进入自身逻辑并给出它自己的错误，
 #           而非 class-load 失败。）
 #        §3 任一命令超时 = **红** ——「跑起来不结束」既不是拒绝也不是通过。
@@ -111,9 +112,16 @@ PS_FILE=release/install.ps1
 README_FILE=README.md
 DOCKERFILE=Dockerfile
 SBT_FILE=build.sbt
-for f in "$SH_FILE" "$PS_FILE" "$README_FILE" "$DOCKERFILE" "$SBT_FILE"; do
+BRAND_FILE=brand.conf
+for f in "$SH_FILE" "$PS_FILE" "$README_FILE" "$DOCKERFILE" "$SBT_FILE" "$BRAND_FILE"; do
   [ -f "$f" ] || err "missing file: $f — refusing to report a clean gate"
 done
+
+# 品牌值单一真源：version 命令横幅 = `${Branding.productName} ${Version.string}`
+# （CliRouter.scala / SystemCommands.scala），productName 现读 brand.conf —— 断言必须
+# 跟随真源而非硬编码品牌名（2026-10-22 品牌迁移批：nebflow→stand 后此处曾红）。
+BRAND_LOWER="$(sed -n 's/^lowerName[[:space:]]*=[[:space:]]*//p' "$BRAND_FILE" | sed 's/[[:space:]]#.*$//; s/[[:space:]]*$//' | head -1)"
+[ -n "$BRAND_LOWER" ] || err "brand.conf has no lowerName — cannot derive the version banner assertion"
 
 FAILED=0
 pass() { echo "  ✓ $1"; }
@@ -329,8 +337,8 @@ repro_on_java17() {
     elif grep -qE "$LINKAGE_ERE" "$log"; then
       fail "A-6 [$cmd] hit a class-load failure on Java 17 — self-repair path welded shut: $(grep -m1 -E "$LINKAGE_ERE" "$log" | tr -d '\r')"
       indent_log < "$log"
-    elif [ "$cmd" = "version" ] && ! grep -qE 'nebflow [0-9]' "$log"; then
-      fail "A-6 [version] ran on Java 17 (exit=${RC}) but did not print 'nebflow <version>' — first line: ${first}"
+    elif [ "$cmd" = "version" ] && ! grep -qE "${BRAND_LOWER} [0-9]" "$log"; then
+      fail "A-6 [version] ran on Java 17 (exit=${RC}) but did not print '${BRAND_LOWER} <version>' (brand.conf lowerName) — first line: ${first}"
       indent_log < "$log"
     else
       pass "A-6 [$cmd] ran on Java 17 (exit=${RC}, no UnsupportedClassVersionError) — first line: ${first}"

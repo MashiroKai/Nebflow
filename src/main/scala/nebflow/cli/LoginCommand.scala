@@ -100,10 +100,11 @@ private[cli] object LoginCopy:
   // ── H1 / H4 / H5：三命令帮助行（已批逐字，含对齐空格） ──────────────────────
   //
   // 对齐口径现读自作者批件原文（`.nebflow/tasks/n-4dddaea8.md:16/19/20` 与本次任务书
-  // §二逐字同源）：H1 = `stand ` + `login` + 24 空格（描述起始列 37）；H4 = `stand `
-  // + `logout` + 23 空格（同列 37）；H5 = `stand ` + `whoami` + 24 空格（列 38 —— 批件
-  // 原文如此）。🔴 本段按「逐字含空格对齐」纪律**原样保留、不自行校正**；H5 比 H1/H4
-  // 多一空格这一处，在报告 §16 单列呈报（不擅自改成列 37）。
+  // §二逐字同源）：H1 = `stand ` + `login` + 24 空格；H4 = `stand `
+  // + `logout` + 23 空格；H5 = `stand ` + `whoami` + 24 空格（空格数沿批件原文，
+  // 2026-09 stand 微批把前缀 nebflow→stand 后描述起始列为 35/35/36）。🔴 本段按
+  // 「逐字含空格对齐」纪律**原样保留、不自行校正**；H5 比 H1/H4 多一空格这一处，
+  // 在报告 §16 单列呈报（不擅自改成同列）。
   val H1LoginHelp = s"stand login                        Sign in to your ${nebflow.shared.Branding.productName} account"
   val H4LogoutHelp = "stand logout                       Sign out and remove the stored device credential"
   val H5WhoamiHelp = "stand whoami                        Show the signed-in account and device status"

@@ -132,8 +132,24 @@ async function enqueueViaSend(page, text, atts) {
     input.send();
     const q = state.messageQueue[sid] || [];
     const item = q[q.length - 1];
-    return { queueLen: q.length, itemId: item.id };
+    return { queueLen: q.length, itemId: item.id, clientMessageId: item.clientMessageId };
   }, { sid: SID, text, atts });
+}
+
+/** 排队呈现回退批：队列动作的 UI 入口 = 乐观气泡右键菜单（msgQuote.js →
+ *  input.js runQueuedAction）。寻址 = 行 data-msg-id = clientMessageId。
+ *  refreshEquivalent 为页内动作（无 reload），乐观气泡仍在 DOM ⇒ 菜单可点。 */
+async function clickQueueMenu(page, clientMessageId, label) {
+  await page.evaluate(async ({ clientMessageId, label }) => {
+    const row = document.querySelector(`.row.user[data-msg-id="${clientMessageId}"]`);
+    if (!row) throw new Error('no queued bubble row for ' + clientMessageId);
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 400, clientY: 300 }));
+    const btn = [...document.querySelectorAll('.fm-context-menu button[role="menuitem"]')]
+      .find((b) => b.textContent === label);
+    if (!btn) throw new Error('menu item not found: ' + label);
+    btn.click();
+  }, { clientMessageId, label });
+  await page.waitForTimeout(150);
 }
 
 /** 刷新等价动作（msgqueue-recall-attach J6 同款）：persistQueue 已在入队时执行，
@@ -251,9 +267,7 @@ test('K2 刷新等价后重发：载荷库水合回补 data/preview ⇒ drain/�
   expect(it2.attachments[0].mimeType).toBe('image/png');
   expect(it2.attachments[0].data, 'K2b 前提：二次刷新等价同样水合回补').toBe(B64_PNG);
   CAP.frames.length = 0;
-  await page.waitForSelector(`.queue-item[data-queue-id="${enq2.itemId}"] .queue-item-btn.immediate`, { state: 'visible', timeout: 8000 });
-  await page.click(`.queue-item[data-queue-id="${enq2.itemId}"] .queue-item-btn.immediate`);
-  await page.waitForTimeout(150);
+  await clickQueueMenu(page, enq2.clientMessageId, '立即发送');
   const frB = wireFrames();
   expect(frB.length, '立即发送应恰好发出一帧').toBe(1);
   expect(frB[0].attachments[0].mimeType, 'K2b: 刷新后立即发送帧 mimeType 必须存活').toBe('image/png');
@@ -372,9 +386,7 @@ test('K5 撤回：库命中 ⇒ 字节回补原样可重发（无告警）；库
   await refreshEquivalent(page);
   warns.length = 0;
 
-  await page.waitForSelector(`.queue-item[data-queue-id="${enq.itemId}"] .queue-item-btn.recall`, { state: 'visible', timeout: 8000 });
-  await page.click(`.queue-item[data-queue-id="${enq.itemId}"] .queue-item-btn.recall`);
-  await page.waitForTimeout(150);
+  await clickQueueMenu(page, enq.clientMessageId, '撤回');
 
   expect(warns.some((w) => w.includes('lost their payload to page-refresh persistence')),
     'K5a: 载荷已回补 ⇒ 不得再报「载荷丢失」告警').toBe(false);
@@ -409,13 +421,20 @@ test('K5 撤回：库命中 ⇒ 字节回补原样可重发（无告警）；库
   expect(lostAfter.failCode).toBe('payload_lost');
   expect(warns.length === 0 || warns.every((w) => !w.includes('K5b-noise')), 'K5b: 无异常告警').toBe(true);
 
-  // 失败面可见：队列条失败样式 + 注记 + 「立即发送」退场；撤回 = 可重传入口。
-  await page.waitForSelector(`.queue-item[data-queue-id="${enq2.itemId}"].failed`, { state: 'visible', timeout: 8000 });
-  expect(await page.locator(`.queue-item[data-queue-id="${enq2.itemId}"] .queue-item-failed-note`).count()).toBe(1);
-  expect(await page.locator(`.queue-item[data-queue-id="${enq2.itemId}"] .queue-item-btn.immediate`).count()).toBe(0);
+  // 失败面可见（排队呈现回退批重锚）：头行红色失败计数 + 「立即发送」对失败项
+  // 不在菜单给出；撤回 = 可重传入口（气泡右键菜单）。
+  await page.waitForSelector('#queue-bar .queue-bar-failed', { state: 'visible', timeout: 8000 });
+  expect(await page.locator('#queue-bar .queue-bar-failed').textContent()).toContain('1 条发送失败');
+  const failMenuLabels = await page.evaluate(async (clientMessageId) => {
+    const row = document.querySelector(`.row.user[data-msg-id="${clientMessageId}"]`);
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 400, clientY: 300 }));
+    return [...document.querySelectorAll('.fm-context-menu button[role="menuitem"]')].map((b) => b.textContent);
+  }, enq2.clientMessageId);
+  expect(failMenuLabels, 'K5b: 失败项菜单无「立即发送」').not.toContain('立即发送');
+  expect(failMenuLabels).toContain('撤回');
+  await page.evaluate(() => document.querySelector('.fm-context-menu')?.remove());
   warns.length = 0;
-  await page.click(`.queue-item[data-queue-id="${enq2.itemId}"] .queue-item-btn.recall`);
-  await page.waitForTimeout(150);
+  await clickQueueMenu(page, enq2.clientMessageId, '撤回');
   expect(warns.some((w) => w.includes('lost their payload to page-refresh persistence')),
     'K5b: 载荷真丢的撤回 ⇒ 可判读告警照旧（stripped 标记权威支）').toBe(true);
   expect(pageErrors).toEqual([]);

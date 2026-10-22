@@ -150,7 +150,7 @@ async function boot(colorScheme) {
   });
   ok('A1 两连发 = 两个独立用户气泡行', state.bubbles.length === 2, JSON.stringify(state.bubbles));
   ok('A2 任一气泡不含另一条文本（不并泡）', state.mergedBubble === false);
-  ok('A3 两气泡各带待发送小标（busy 排队腿）', state.bubbles.length === 2 && state.bubbles.every(b => b.pending === 1));
+  ok('A3 两气泡裸上屏零小标（busy 排队腿——排队呈现回退批：已收到标退役）', state.bubbles.length === 2 && state.bubbles.every(b => b.pending === 0));
   ok('A4 两气泡 msgId 互异', state.bubbles.length === 2 && state.bubbles[0].msgId && state.bubbles[0].msgId !== state.bubbles[1].msgId);
   await page.screenshot({ path: join(OUT, 'A-two-sends-busy-dark.png') });
 

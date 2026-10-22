@@ -146,6 +146,7 @@ async function enqueueViaSend(page, text, atts) {
     return {
       queueLen: q.length,
       itemId: item.id,
+      clientMessageId: item.clientMessageId,
       enqueued: JSON.parse(JSON.stringify(item.attachments)),
       itemText: item.text,
       pendingAfterEnqueue: view.pendingAttachments.length,
@@ -168,7 +169,7 @@ async function reenqueueCurrent(page, text) {
     input.send();
     const q = state.messageQueue[sid] || [];
     const item = q[q.length - 1];
-    return { itemId: item.id, enqueued: JSON.parse(JSON.stringify(item.attachments || [])), pendingAtEnqueue: pending };
+    return { itemId: item.id, clientMessageId: item.clientMessageId, enqueued: JSON.parse(JSON.stringify(item.attachments || [])), pendingAtEnqueue: pending };
   }, { sid: SID, text });
 }
 
@@ -188,23 +189,48 @@ async function readRecallState(page) {
       domFiles: attPreview.querySelectorAll('.att-file').length,
       domFileNames: Array.from(attPreview.querySelectorAll('.att-file')).map((e) => e.textContent),
       domTotal: attPreview.children.length,
-      queueBarItems: view.dom.queueBar.querySelectorAll('.queue-item[data-queue-id]').length,
-      queueBarThumbs: view.dom.queueBar.querySelectorAll('.queue-item-att-thumb').length,
-      queueBarFiles: view.dom.queueBar.querySelectorAll('.queue-item-att-file').length,
-      queueBarMore: view.dom.queueBar.querySelectorAll('.queue-item-att-more').length,
-      queueBarMoreText: view.dom.queueBar.querySelector('.queue-item-att-more')?.textContent ?? null,
+      // 排队呈现回退批（2026-10-22）：队列条 = 头行-only；附件可见面 = 乐观气泡
+      // 媒体卡行（.row.user-media，全量渲染无 +N 截断）。
+      barHeader: view.dom.queueBar.querySelector('.queue-bar-title')?.textContent ?? '',
+      barRowCount: view.dom.queueBar.querySelectorAll('.queue-item').length,
+      chatMediaRows: document.querySelectorAll('#chat .row.user-media').length,
+      chatMediaImgs: document.querySelectorAll('#chat .row.user-media img').length,
+      // 多图 stack 面（media-layer 每层一项 + pill 计数）——队列条 +N 截断面的
+      // 继任可见面：全量在场（排队呈现回退批重锚）。
+      chatMediaLayers: document.querySelectorAll('#chat .row.user-media .pop-stack-view > .media-layer').length,
+      chatMediaPill: document.querySelector('#chat .row.user-media .pill')?.textContent ?? null,
     };
   }, SID);
 }
 
-/** 走真实 UI 通路撤回：队列条「撤回」按钮（chatQueue.js:172-180 → input.js:804）。 */
-async function clickRecall(page, queueId) {
-  const sel = queueId === undefined
-    ? '.queue-item .queue-item-btn.recall'
-    : `.queue-item[data-queue-id="${queueId}"] .queue-item-btn.recall`;
-  await page.waitForSelector(sel, { state: 'visible', timeout: 8000 });
-  await page.click(sel);
+/** 排队呈现回退批（2026-10-22）：撤回 UI 入口收敛进**乐观气泡右键菜单**
+ *  （msgQuote.js attachQuoteMenu → input.js runQueuedAction('recall')）。
+ *  寻址 = 行 data-msg-id = 入队钉死的 clientMessageId（队列条行按钮已退役）。 */
+async function clickRecall(page, clientMessageId) {
+  await page.evaluate(async ({ clientMessageId }) => {
+    const row = document.querySelector(`.row.user[data-msg-id="${clientMessageId}"]`);
+    if (!row) throw new Error('no queued bubble row for ' + clientMessageId);
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 400, clientY: 300 }));
+    const btn = [...document.querySelectorAll('.fm-context-menu button[role="menuitem"]')]
+      .find((b) => b.textContent === '撤回');
+    if (!btn) throw new Error('menu item not found: 撤回');
+    btn.click();
+  }, { clientMessageId });
   await page.waitForTimeout(120);
+}
+
+/** 同一菜单通道的「立即发送」（J8 回归面）。 */
+async function clickImmediate(page, clientMessageId) {
+  await page.evaluate(async ({ clientMessageId }) => {
+    const row = document.querySelector(`.row.user[data-msg-id="${clientMessageId}"]`);
+    if (!row) throw new Error('no queued bubble row for ' + clientMessageId);
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 400, clientY: 300 }));
+    const btn = [...document.querySelectorAll('.fm-context-menu button[role="menuitem"]')]
+      .find((b) => b.textContent === '立即发送');
+    if (!btn) throw new Error('menu item not found: 立即发送');
+    btn.click();
+  }, { clientMessageId });
+  await page.waitForTimeout(150);
 }
 
 /** 召回后重发（会话已 idle）：走正常 send() ⇒ sendWs 帧（input.js:668-680）。 */
@@ -238,19 +264,18 @@ test('J8 回归对照：sendImmediate(input.js:853) / drainMessageQueue(input.js
   page.on('pageerror', (e) => pageErrors.push(e.message));
   await bootApp(page);
 
-  // (a) 立即发送：队列条 .queue-item-btn.immediate → sendImmediate
+  // (a) 立即发送：气泡右键菜单「立即发送」（回退批入口）→ sendImmediate
   const enqA = await enqueueViaSend(page, 'j8-immediate', ENQ_ATTS);
   expect(enqA.queueLen).toBe(1);
   expect(enqA.pendingAfterEnqueue).toBe(0);              // 入队即清空输入框（input.js:598）
   const qsA = await readRecallState(page);
-  expect(qsA.queueBarItems).toBe(1);
-  expect(qsA.queueBarThumbs).toBe(1);                    // chatQueue.js:139-143
-  expect(qsA.queueBarFiles).toBe(1);                      // chatQueue.js:145-148
+  expect(qsA.barHeader).toContain('1 条排队');           // 头行计数面（回退批）
+  expect(qsA.barRowCount).toBe(0);                       // 零行级明细
+  expect(qsA.chatMediaRows).toBe(1);                     // 附件可见面 = 乐观气泡媒体卡行
+  expect(qsA.chatMediaImgs).toBe(1);
 
   CAP.frames.length = 0;
-  await page.waitForSelector('.queue-item .queue-item-btn.immediate', { state: 'visible' });
-  await page.click('.queue-item .queue-item-btn.immediate');
-  await page.waitForTimeout(150);
+  await clickImmediate(page, enqA.clientMessageId);
   const frA = wireFrames();
   expect(frA.length, 'sendImmediate 应恰好发出一帧带 attachments 的 user-message').toBe(1);
   expect(frA[0].content).toBe('j8-immediate');
@@ -293,17 +318,18 @@ test('J1+J2+J5+J7 撤回回填：附件逐字段恢复 / 预览重绘 / 前后�
   }
   expect(bodyLines).toBeGreaterThan(0);
 
-  // ── 入队（真实通路）→ 队列条可见附件指示（撤回前用户看得见）──
+  // ── 入队（真实通路）→ 附件可见面 = 乐观气泡媒体卡行（撤回前用户看得见）──
   const enq = await enqueueViaSend(page, 'MQ-RECALL-Y', ENQ_ATTS);
   expect(enq.enqueued, 'J1 前提：入队项必须自带 attachments').toStrictEqual(ENQ_ATTS);
   const before = await readRecallState(page);
-  expect(before.queueBarItems).toBe(1);
-  expect(before.queueBarThumbs).toBe(1);
-  expect(before.queueBarFiles).toBe(1);
+  expect(before.barHeader).toContain('1 条排队');
+  expect(before.barRowCount).toBe(0);
+  expect(before.chatMediaRows).toBe(1);
+  expect(before.chatMediaImgs).toBe(1);
 
-  // ── 撤回（真实 UI 通路）──
+  // ── 撤回（真实 UI 通路：气泡右键菜单）──
   warns.length = 0;
-  await clickRecall(page, enq.itemId);
+  await clickRecall(page, enq.clientMessageId);
   const after = await readRecallState(page);
 
   // J2 回填等价：逐字段深相等
@@ -312,7 +338,7 @@ test('J1+J2+J5+J7 撤回回填：附件逐字段恢复 / 预览重绘 / 前后�
   expect(after.inputText).toBe('MQ-RECALL-Y');
   // 队列侧：该项已出队
   expect(after.queue.length).toBe(0);
-  expect(after.queueBarItems).toBe(0);
+  expect(after.barRowCount).toBe(0);
 
   // J7 输入框预览 DOM 锚：1 缩略 + 1 文件条（chat.js:2484 .att-thumb / chat.js:2498 .att-file）
   expect(after.domThumbs, 'J7: 图片附件必须重绘为 .att-thumb').toBe(1);
@@ -336,7 +362,7 @@ test('J1+J2+J5+J7 撤回回填：附件逐字段恢复 / 预览重绘 / 前后�
     view.pendingAttachments = [{ type: 'text', mimeType: 'text/plain', data: 'cHJlLWV4aXN0aW5n', name: 'pre-existing.txt', hash: '', size: 12 }];
   }, SID);
   warns.length = 0;
-  await clickRecall(page, enq3.itemId);
+  await clickRecall(page, enq3.clientMessageId);
   const mixed = await readRecallState(page);
   expect(mixed.pending.length, '混合集合 = 追加：既有侧 + 恢复侧都不丢').toBe(3);
   expect(mixed.pending[0].name, '既有侧保持原位').toBe('pre-existing.txt');
@@ -366,7 +392,7 @@ test('J3+J4 往返幂等：入队(带附件)→撤回→再入队 集合与顺�
   }, SID);
 
   // 撤回第一项（带附件）
-  await clickRecall(page, enq1.itemId);
+  await clickRecall(page, enq1.clientMessageId);
   const afterRecall = await readRecallState(page);
   expect(afterRecall.pending, 'J2（同 J3 前置）：回填逐字段相等').toStrictEqual(enq1.enqueued);
   expect(afterRecall.queue.map((i) => i.text), '撤回只移除目标项，其余项顺序不变').toEqual(['RT-2']);
@@ -383,7 +409,7 @@ test('J3+J4 往返幂等：入队(带附件)→撤回→再入队 集合与顺�
   expect(queueNow, '队列往返：未命中项保持原位，恢复项重新排到队尾').toEqual(['RT-2', 'RT-1']);
 
   // J4 撤回 → 重发：帧 attachments 逐字相等（重发前先撤回第二项，得到干净输入框）
-  await clickRecall(page, re.itemId);
+  await clickRecall(page, re.clientMessageId);
   const back = await readRecallState(page);
   expect(back.pending).toStrictEqual(enq1.enqueued);
   CAP.frames.length = 0;
@@ -438,7 +464,7 @@ test('J6 刷新盲区：库命中 ⇒ 撤回回补完整字节（无告警）；
   // J6a：库命中 ⇒ 撤回 = 原样回补（可重发），无「载荷丢失」告警。
   const qid = restoredPremise.item.id;
   warns.length = 0;
-  await clickRecall(page, qid);
+  await clickRecall(page, restoredPremise.item.clientMessageId);
   let after = await readRecallState(page);
   let w = recallWarns(warns);
   expect(w.some((t) => t.includes('lost their payload to page-refresh persistence')),
@@ -470,7 +496,7 @@ test('J6 刷新盲区：库命中 ⇒ 撤回回补完整字节（无告警）；
   expect(lostPremise.attachments[0].stripped, 'J6b 前提：stripped 保留 = 载荷已失判据').toBe(true);
 
   warns.length = 0;
-  await clickRecall(page, enq2.itemId);
+  await clickRecall(page, enq2.clientMessageId);
   after = await readRecallState(page);
   w = recallWarns(warns);
   expect(w.some((t) => t.includes('lost their payload to page-refresh persistence')),
@@ -504,10 +530,8 @@ test('J5 残余路径：无挂载输入视图时撤回带附件的项 ⇒ 也必
   }, SID);
 
   warns.length = 0;
-  const sel = `.queue-item[data-queue-id="${enq.itemId}"] .queue-item-btn.recall`;
-  await page.waitForSelector(sel, { state: 'visible', timeout: 8000 });
-  await page.click(sel);
-  await page.waitForTimeout(150);
+  // 回退批：同一右键菜单入口（气泡行仍在 DOM——mounted=false 只影响视图查找）。
+  await clickRecall(page, enq.clientMessageId);
 
   const w = recallWarns(warns);
   expect(w.some((t) => t.includes('no mounted input view') && t.includes('2 attachment(s)')),
@@ -521,9 +545,10 @@ test('J5 残余路径：无挂载输入视图时撤回带附件的项 ⇒ 也必
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// J7 · 队列条附件指示锚（3 缩略 + 「+N」；chatQueue.js:136/140/147/153）——两侧均绿
+// J7 · 附件可见面锚（排队呈现回退批重锚：乐观气泡媒体卡行全量渲染、无 +N 截断）
+//      + 撤回后 4 件全绘（修复面）
 // ═══════════════════════════════════════════════════════════════════════════
-test('J7 锚：队列条附件指示 ≤3 缩略 + 「+N」（既有面，两侧均绿）+ 撤回后 4 件全绘（修复面）', async ({ page }) => {
+test('J7 锚：附件可见面 = 气泡媒体卡 stack 全量 4 层（回退批重锚）+ 撤回后 4 件全绘（修复面）', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
   await bootApp(page);
@@ -533,14 +558,16 @@ test('J7 锚：队列条附件指示 ≤3 缩略 + 「+N」（既有面，两侧
   }));
   const enq = await enqueueViaSend(page, 'J7-INDICATOR', four);
   const st = await readRecallState(page);
-  expect(st.queueBarItems).toBe(1);
-  expect(st.queueBarThumbs, 'chatQueue.js:137-143：≤3 个缩略图').toBe(3);
-  expect(st.queueBarMore, 'chatQueue.js:151-156：超出部分标 +N').toBe(1);
-  expect(st.queueBarMoreText).toBe('+1');
+  // 排队呈现回退批：队列条附件指示（≤3 缩略 + +N）随队列行退役；附件可见面 =
+  // 乐观气泡媒体卡行，**全量**渲染 4 图（无 +N 截断面——消息不消失在数字里）。
+  expect(st.barHeader).toContain('1 条排队');
+  expect(st.barRowCount).toBe(0);
+  expect(st.chatMediaRows).toBe(1);
+  expect(st.chatMediaLayers, '气泡媒体卡 stack 全量 4 层（无 +N 截断面）').toBe(4);
+  expect(st.chatMediaPill).toContain('4');
   expect(enq.itemId).toBeGreaterThan(0);
-  // ↑ 以上为「队列条附件指示」既有面（chatQueue.js，本批禁改）：验红侧亦须全绿。
   // ↓ 以下为撤回回填的修复面：验红侧必红。
-  await clickRecall(page, enq.itemId);
+  await clickRecall(page, enq.clientMessageId);
   const after = await readRecallState(page);
   expect(after.domThumbs).toBe(4);
   expect(after.pending.length).toBe(4);

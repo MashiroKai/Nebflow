@@ -70,7 +70,7 @@ object ConsoleTicketRoutes:
               def refuseUnbound: IO[Response[IO]] =
                 IO.pure(resultPage(Status.Forbidden, "Binding revoked",
                   "This host's account binding was revoked, so portal-minted tickets are no longer accepted. " +
-                    "Use a locally minted ticket (nebflow token) to reach the console."))
+                    "Use a locally minted ticket (stand token) to reach the console."))
               (if isRelayMint then face.isUnbound else IO.pure(false)).flatMap { unbound =>
                 if unbound then refuseUnbound
                 else

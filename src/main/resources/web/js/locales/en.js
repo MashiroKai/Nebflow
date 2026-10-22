@@ -666,15 +666,20 @@ export default {
   // f1-send-queue (2026-10-19): pending-mark tooltip for offline-queued bubbles + queue overflow toast.
   'chat.pendingSend': 'Pending - auto-resends on reconnect',
   'input.queueOverflow': 'Message queue full (100): oldest message dropped',
-  // Informative-queue batch (2026-10-22): dead 「Queued (N)」 state retired — header
-  // carries turn-wait + live elapsed + count, rows carry position badge and an
-  // explicit "Received" ack chip, bubbles get the matching .acked mark.
-  'chat.queuedAck': 'Received',
-  'chat.queuedAckTip': 'Received · waiting for the current reply to finish',
+  // Queue-presentation rollback batch (2026-10-22 author ruling: queued messages must
+  // not double-render in the strip / the "Received" mark is redundant): the bar keeps
+  // only the header line (turn-wait + live elapsed + count); row details, position
+  // badge and the ack chip are retired, and queue actions (Send Now / Recall / Remove)
+  // moved into the bubble context menu. The earlier batches' chat.queuedAck /
+  // chat.queuedAckTip / chatQueue.position keys retire with those faces.
   'chatQueue.waitingTurn': 'Waiting for the current reply',
   'chatQueue.queuedCount': '{n} queued',
   'chatQueue.turnElapsed': 'for {t}',
-  'chatQueue.position': 'Position {n} · waiting for the current reply',
+  // Header failure count (qattachvault no-silence face): red count shown while the
+  // queue holds payload-lost (stopped) items.
+  'chatQueue.failedCount': '{n} failed',
+  // Bubble context-menu labels for queue actions (recall = back to the input box).
+  'chat.queueRecall': 'Recall',
   // qattachvault (2026-10-21): explicit failed state for lost attachment payloads —
   // no silent loss: auto-send stops, bar note + red ! bubble mark + toast; recall and
   // re-add the file to resend.
@@ -2140,9 +2145,6 @@ export default {
   'plugins.builtinBadge': 'built-in',
   'plugins.builtinTitle': 'Built-in agent: defined in code (BuiltinAgents); the panel is read-only',
   'plugins.detail': 'Details',
-  'chatQueue.dragReorder': 'Drag to reorder',
-  'chatQueue.clickExpand': 'Click to expand',
-  'chatQueue.clickCollapse': 'Click to collapse',
   'explorer.loading': 'Loading...',
   'explorer.empty': 'Empty',
   'flowViewers.saving': 'Saving…',

@@ -27,6 +27,10 @@ OUT="${1:-/tmp/nb-brand-preview.svg}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+# The block extraction sed range: BRAND-UI markers unchanged. The image
+# protocol path (OSC 1337/sixel, dual-path batch 2026-10-22) is forced OFF
+# here: the ANSI->SVG mapper below only understands SGR sequences, and the
+# degrade matrix documents the ART fallback path.
 BLOCK="$TMP/brand-ui.sh"
 sed -n '/>>> BRAND-UI-BEGIN/,/<<< BRAND-UI-END/p' "$ROOT/release/install.sh" > "$BLOCK"
 grep -q "BRAND-UI-BEGIN" "$BLOCK" || { echo "preview: brand-ui markers not found in install.sh" >&2; exit 1; }
@@ -36,14 +40,14 @@ LEVELS=(3 2 1 0)
 THEMES=(dark light)
 for lvl in "${LEVELS[@]}"; do
   for theme in "${THEMES[@]}"; do
-    NEBFLOW_UI_LEVEL=$lvl NEBFLOW_BANNER_THEME=$theme \
+    NEBFLOW_UI_LEVEL=$lvl NEBFLOW_BANNER_THEME=$theme NEBFLOW_BANNER_IMAGE=off \
       bash -c 'source "$1"; LOWER_NAME=stand; VERSION=2.0.0; CHANNEL=stable; print_banner' \
       _ "$BLOCK" > "$TMP/banner-$lvl-$theme.txt"
   done
 done
 
 # --- progress frames ----------------------------------------------------------
-NEBFLOW_UI_LEVEL=3 NEBFLOW_BANNER_THEME=dark COLUMNS=90 \
+NEBFLOW_UI_LEVEL=3 NEBFLOW_BANNER_THEME=dark COLUMNS=90 NEBFLOW_BANNER_IMAGE=off \
   bash -c '
     source "$1"; ui_detect
     _progress_line 13000000 26100000 "[2/6] encoder_model_quantized.onnx" 3300000 0; echo
@@ -51,7 +55,7 @@ NEBFLOW_UI_LEVEL=3 NEBFLOW_BANNER_THEME=dark COLUMNS=90 \
     _progress_line 26100000 26100000 "[2/6] encoder_model_quantized.onnx" -1 0; echo
   ' _ "$BLOCK" > "$TMP/progress.txt"
 
-NEBFLOW_UI_LEVEL=0 NEBFLOW_BANNER_THEME=dark COLUMNS=80 LC_ALL=C \
+NEBFLOW_UI_LEVEL=0 NEBFLOW_BANNER_THEME=dark COLUMNS=80 LC_ALL=C NEBFLOW_BANNER_IMAGE=off \
   bash -c '
     source "$1"; ui_detect
     _progress_line 13000000 26100000 "[2/6] encoder_model_quantized.onnx" 3300000 0; echo
@@ -182,7 +186,7 @@ LABEL_H = 22
 col_x = [30, 30 + maxw + 24]
 svg = []
 y = 30
-svg.append(f'<text x="30" y="{y}" font-family="{FONT}" font-size="16" fill="{TITLE_C}">Nebflow installer — brand UI degrade matrix (batch 4 redesign)</text>')
+svg.append(f'<text x="30" y="{y}" font-family="{FONT}" font-size="16" fill="{TITLE_C}">Stand installer — official-logo banner degrade matrix (image-protocol batch 2026-10-22)</text>')
 y += 20
 for lvl in (3, 2, 1, 0):
     row_h = 0

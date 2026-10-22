@@ -158,7 +158,17 @@ const FWD_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true
  *  `dataset.nfMediaFailed`) and `onFail` runs — the .pop-img/.pop-video family
  *  carries its own placeholder style now (the neighbouring `.bubble.ai img`
  *  rule never applied to a Pop row, which is the 缺陷 D this fixes), and the
- *  caller appends the plain-text note line once the face is assembled. */
+ *  caller appends the plain-text note line once the face is assembled.
+ *
+ *  两条腿的分工与回落（mediaface-resolver-fallback 批 2026-10-22，#665 续）：
+ *  - resolver 腿（用户附件面，uploads 路由）= 快路；**URL 出错不再是终态** ——
+ *    旧标签页会话 cookie 滑动窗过期时 StaticAuth（session-only 轨）对 /uploads/
+ *    一律 403（WS 长链不回签 ⇒ 页面看着在线、媒体全灭）；网关重启窗 404/连接错
+ *    同理。此前此处直接 fail()，自愈腿永远等不到出场。
+ *  - 票腿（nf-file 铸票）= 自愈路：自带 reMint 一次 + 铸票 401/403 的 Bearer
+ *    真令牌重试（nfTicket.js）+ 旧根字面路径双读（NfFilePolicy.scala,
+ *    b9ed91bb6）。**双腿都败**才落终态 fail —— 与 媒体统一适配批「resolver
+ *    拒答（null）回落票腿；票腿也 404 才是终态」的既定语义补全成同一形状。 */
 function hydrateMedia(el, item, onFail) {
   if (item.src) {
     el.src = item.src;
@@ -166,6 +176,9 @@ function hydrateMedia(el, item, onFail) {
   }
   const path = item.path;
   const fail = () => {
+    // 终态闩：双腿各有一次出场机会，fail 只落一次（appendFailureNote 已有
+    // 幂等守卫，这里是 class/dataset 面的同款保险）。
+    if (el.dataset.nfMediaFailed === '1') return;
     el.classList.add('nf-img-failed');
     el.dataset.nfMediaFailed = '1';
     if (typeof onFail === 'function') onFail(el);
@@ -180,24 +193,35 @@ function hydrateMedia(el, item, onFail) {
     let url = null;
     try { url = item.resolver(path); } catch { url = null; }
     if (url) {
-      el.addEventListener('error', () => fail());
+      // resolver URL 出错 ⇒ 摘本监听、进票腿（见函数头注）。不用 `once`：
+      // 票腿自己要接 error 事件链；本监听出手后必须让位，否则同一 error
+      // 会串两条监听（回落票腿后再触发 fail 的终态误伤）。
+      const onResolverError = () => {
+        el.removeEventListener('error', onResolverError);
+        startTicketLeg();
+      };
+      el.addEventListener('error', onResolverError);
       el.src = url;
       return;
     }
   }
-  // No `once` on the error listener: the FIRST error arms the re-mint, and a
-  // second error (re-mint also failed, or the re-minted URL 404s) must reach
-  // the terminal branch — with `once` that case left the element blank.
-  el.addEventListener('error', () => {
-    if (el.dataset.nfReminted === '1') { fail(); return; }
-    el.dataset.nfReminted = '1';
-    reMint(path)
+  startTicketLeg();
+
+  function startTicketLeg() {
+    // No `once` on the error listener: the FIRST error arms the re-mint, and a
+    // second error (re-mint also failed, or the re-minted URL 404s) must reach
+    // the terminal branch — with `once` that case left the element blank.
+    el.addEventListener('error', () => {
+      if (el.dataset.nfReminted === '1') { fail(); return; }
+      el.dataset.nfReminted = '1';
+      reMint(path)
+        .then(url => { if (el.isConnected) el.src = url; })
+        .catch(() => fail());
+    });
+    ticketUrl(path)
       .then(url => { if (el.isConnected) el.src = url; })
       .catch(() => fail());
-  });
-  ticketUrl(path)
-    .then(url => { if (el.isConnected) el.src = url; })
-    .catch(() => fail());
+  }
 }
 
 /* ─────────────── media face ─────────────── */
@@ -464,10 +488,25 @@ function openMediaItemClick(item) {
   else openMediaLightbox(item);
 }
 
+/* ── 触控板横滑翻页（2026-10-22 作者令「除了长按左右拖动来切换，mac的双指
+   左右滑动也要支持」）——同图谱胶囊环批手法（canvas.js initCapsuleRing 环上滚轮：
+   wheel deltaX 横滑累积 + 阈值步进 + 动量抑制，交互语言全站一致）：
+   · 步进阈值与环同档（两指一次横扫的 deltaX 量级）；
+   · 动量抑制：翻页后进入抑制窗，事件流静默 ≥ POP_SWIPE_QUIET_MS 才重新武装
+     ——惯性滚动尾巴不再重复翻页（一次动量窗口只翻一页；连续慢滚按累积量翻页）；
+   · 纵滚放行：竖向主导不劫持不 preventDefault（叠卡嵌在聊天流里，双指上下滚
+     继续滚聊天列），同时清累积 = 触控板微 deltaX 抖动过滤（竖滚斜漂噪声不攒出
+     误翻）；Shift+纵滚 = 显式横意（环同款仲裁）。 */
+const POP_SWIPE_STEP_PX = 56;    // 横滑一格步进（= canvas.js RING_WHEEL_STEP 同档）
+const POP_SWIPE_QUIET_MS = 160;  // 动量窗：翻页后事件流静默 ≥160ms 才重新武装
+
 /**
  * The stacked media group (≥2 items): pill beside the stack on the sender-side
  * (user rows left / LLM rows right, 三修 ①). A pointer drag of >38px goes
- * next / previous; 「展开 N」 flattens, 「收起」 re-stacks. A click on the
+ * next / previous; a trackpad two-finger horizontal swipe (wheel deltaX,
+ * 2026-10-22 作者令) goes next / previous too — threshold + momentum-window
+ * suppression, coexisting with the drag (separate decision windows); 「展开 N」
+ * flattens, 「收起」 re-stacks. A click on the
  * COLLAPSED stack opens Canvas with the SHOWN (front) card — swipe to the Nth
  * card and the click follows the swipe (复报令 2026-10-06 19:43 A-1); the
  * first card before any swipe (三修 ③). An EXPANDED row's whole-face click
@@ -645,6 +684,39 @@ function buildMediaStack(items) {
   };
   view.addEventListener('pointerup', up);
   view.addEventListener('pointercancel', up);
+
+  // 触控板双指横滑 = 轻扫翻页（wheel 事件流，无按下态——与 pointer 拖动的判定
+  // 窗口天然分开，不打架：拖划进行中（sx 非 null）wheel 直接让路）。方向语义与
+  // 长按拖动一致：mac 自然滚动下双指向左（= 把卡向左翻）deltaX 为正 ⇒ 下一张。
+  // deltaMode 归一化同叠卡引擎滚轮（鼠标 Shift+纵滚的 line/page 模式换算成 px）。
+  let swipeAcc = 0;              // 横滑 deltaX 累积
+  let swipeArmed = true;         // false = 动量尾流抑制中（静默满窗才重新武装）
+  let swipeQuietTimer = 0;       // 事件流静默计时
+  const swipeRearm = () => {
+    swipeQuietTimer = 0;
+    swipeArmed = true;
+    swipeAcc = 0;
+  };
+  view.addEventListener('wheel', (e) => {
+    if (sx !== null) return;                                   // 拖划进行中：让路
+    const k = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 100 : 1;
+    const wx = e.deltaX * k, wy = e.deltaY * k;
+    const d = Math.abs(wx) >= Math.abs(wy) ? wx : (e.shiftKey ? wy : 0);
+    if (!d) { swipeAcc = 0; return; }                          // 纵滚：聊天列原生滚动照旧 + 清抖动累积
+    e.preventDefault();
+    if (swipeQuietTimer) { clearTimeout(swipeQuietTimer); swipeQuietTimer = 0; }
+    if (!swipeArmed) {                                         // 动量尾流：吞 delta，静默满窗再武装
+      swipeQuietTimer = setTimeout(swipeRearm, POP_SWIPE_QUIET_MS);
+      return;
+    }
+    swipeAcc += d;
+    if (Math.abs(swipeAcc) >= POP_SWIPE_STEP_PX) {
+      front = (front + (swipeAcc > 0 ? 1 : -1) + layers.length) % layers.length;
+      applyLayers();
+      swipeArmed = false;                                      // 本次动量窗口只翻一页
+    }
+    swipeQuietTimer = setTimeout(swipeRearm, POP_SWIPE_QUIET_MS);
+  }, { passive: false });
 
   return area;
 }

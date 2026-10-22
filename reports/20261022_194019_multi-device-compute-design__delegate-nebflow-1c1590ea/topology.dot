@@ -1,0 +1,53 @@
+// 多设备算力分摊 · 架构拓扑（C2 目标态）
+// 渲染: dot -Tsvg topology.dot -o topology.svg
+digraph compute_topology {
+  rankdir=TB;
+  bgcolor="white";
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11, color="#5a5a5a"];
+  edge [fontname="Helvetica", fontsize=9, color="#444444"];
+
+  author [label="作者 / 控制台\n（dispatch · 审收）", fillcolor="#f2f2f2"];
+
+  subgraph cluster_t0 {
+    label="T0 · 网关机（Mac 主力 · 生产 Nebflow 实例 + keystore）";
+    fontsize=11; style="rounded,dashed"; color="#b58900"; fontname="Helvetica";
+    sched  [label="C2 调度器\n能力档案 · 亲和矩阵 · 租约队列\n(queue.jsonl · audit jsonl)", fillcolor="#fdf6e3"];
+    secret [label="secrets store (0600)\n秘密步骤只在 T0 执行", fillcolor="#fdf6e3"];
+    engine [label="delegate/worktree 引擎\nMergeQueue · BgTaskRegistry", fillcolor="#fdf6e3"];
+  }
+
+  nls [label="NebLink Server (link-server)\n设备名册 · 心跳 30s · relay 隧道\n（唯一注册事实源，复用）", shape=box, style="rounded,filled", fillcolor="#eee8d5"];
+
+  subgraph cluster_t1 {
+    label="T1 · 已配对 peer（native 腿）";
+    fontsize=11; style="rounded,dashed"; color="#268bd2"; fontname="Helvetica";
+    win [label="DESKTOP-IJBBEOT\nMINGW64 · JDK 21.0.11/sbt/node\ncapture=powershell-dotnet", fillcolor="#e8f1fa"];
+  }
+
+  subgraph cluster_t2 {
+    label="T2 · 未注册算力节点（ssh 腿 → C2 注册为 native）";
+    fontsize=11; style="rounded,dashed"; color="#2aa198"; fontname="Helvetica";
+    df   [label="东风云 Ubuntu 8C16G\n114.214.241.93:10022 · ssh dongfeng\nsbt 重编译/测试 · release 验证\n（生产迁移完成后启用）", fillcolor="#e6f4f2"];
+    fpga [label="FPGA 构建机 Windows\nTailscale 100.92.65.22 · ssh fpga\nVivado 综合（唯一）", fillcolor="#e6f4f2"];
+  }
+
+  author  -> sched   [label="派发/声明 device 约束"];
+  sched   -> engine  [label="算力腿 = 带 device: 的工具调用", style=dashed];
+  secret  -> sched   [label="秘密步骤不出 T0", style=dotted, constraint=false];
+
+  // 执行下行
+  sched -> win  [label="① device: remote-exec\nP2P HMAC → relay 兜底\n(120s/后台3600s)", color="#268bd2", penwidth=1.6];
+  sched -> df   [label="①' ssh 腿：tar 管道同步 + 远程命令", color="#2aa198"];
+  sched -> fpga [label="①' ssh 腿", color="#2aa198"];
+
+  // 产物上行（虚线）
+  win  -> sched [label="② NEBFLOW_PULL ≤10MiB ×3\nChunkTransport 大件(≤1GiB, sha256, 续传)\n→ inbox/<deviceId>/<jobId>/", style=dashed, color="#268bd2"];
+  df   -> sched [label="②' scp / tar 反向管道", style=dashed, color="#2aa198"];
+  fpga -> sched [label="②'", style=dashed, color="#2aa198"];
+
+  // 注册面
+  engine -> nls [label="心跳 30s · presence 45s · 配对 HMAC", color="#839496", style=dotted];
+  nls -> win    [color="#839496", style=dotted, arrowhead=none];
+  nls -> df     [label="注册后同 native 腿", color="#839496", style=dotted];
+  nls -> fpga   [color="#839496", style=dotted, arrowhead=none];
+}

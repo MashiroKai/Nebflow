@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<!-- media-resolver-fallback harness.html — resolver 腿出错回落票腿
+     (mediaface-resolver-fallback 批 2026-10-22, #665 续) 的静态测试 harness。
+
+     驱动**真实前端模块**（persistence.js 的 buildUserAttachmentRows 装配链）：
+       buildUserAttachmentRows(row, atts)
+         → buildUserMediaRow(atts, {resolver: attachmentImageUrl})
+         → hydrateMedia: 无 inline preview ⇒ resolver(path) ⇒ /uploads/<sid>/<file>
+            ⇒ **URL 出错（本 harness 里 = 404）⇒ 回落 nf-file 票腿**
+            ⇒ 双腿都败才 nf-img-failed + nf-media-failed-note（终态闩一次）。
+
+     字节面由 spec 侧的小源服务器提供：/uploads/** 静态根（缺件 ⇒ resolver 404）
+     + POST /api/nf-ticket 铸票 + GET /api/nf-file?path&ticket 取件（票腿）。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>media-resolver-fallback harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #chat { position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+            width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px; overflow-y: auto; }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const state = (await import(`${WEB}/state.js`)).default;
+    state.ws = { readyState: 1, send: () => {} };
+    window.__nfSessionId = 'sess-1';
+
+    const pers = await import(`${WEB}/persistence.js`);
+
+    const settle = async () => {
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      // 票腿是异步铸票（setTimeout 0 合帧 + fetch）+ img error 事件——多等几拍，
+      // 保证回落链与终态注记都落地。
+      await new Promise(r => setTimeout(r, 300));
+    };
+
+    /** 装配一行用户媒体（ui.json/缓存恢复的确切形状：{name,type,path[,preview]}）。 */
+    window.__mount = async (att) => {
+      const row = document.createElement('div');
+      row.className = 'row user';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble user';
+      bubble.textContent = '历史行';
+      row.appendChild(bubble);
+      const mediaRow = pers.buildUserAttachmentRows(row, [att]);
+      const chat = document.getElementById('chat');
+      chat.appendChild(row);
+      if (mediaRow) chat.appendChild(mediaRow);
+      await settle();
+      return mediaRow ? true : false;
+    };
+
+    /** 每张 .pop-img 的读数。 */
+    window.__imgStates = () =>
+      Array.from(document.querySelectorAll('#chat .row.user-media .pop-img')).map(img => ({
+        src: img.src,
+        failed: img.classList.contains('nf-img-failed'),
+        failedFlag: img.dataset.nfMediaFailed === '1',
+        reminted: img.dataset.nfReminted === '1',
+        loaded: img.complete && img.naturalWidth > 0,
+      }));
+
+    /** 失败注记行（appendFailureNote 的读数）。 */
+    window.__failedNotes = () =>
+      Array.from(document.querySelectorAll('#chat .nf-media-failed-note')).map(n => n.textContent);
+
+    window.__clearChat = () => { document.getElementById('chat').innerHTML = ''; };
+    window.__ready = true;
+  </script>
+</body>
+</html>

@@ -14,7 +14,7 @@ if (document.documentElement.dataset.nfEmbedded === '1') {
   // Tab title follows the same uppercase brand-token rule as initBranding().
   document.title = `${brand.lowerName.toUpperCase()} (embedded)`;
   document.addEventListener('DOMContentLoaded', () => {
-    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#888;padding:24px;text-align:center">nebflow 预览已停止——该页面试图在应用内嵌套启动（已防止无限递归）。</div>';
+    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#888;padding:24px;text-align:center">Stand 预览已停止——该页面试图在应用内嵌套启动（已防止无限递归）。</div>';
   });
   throw new Error('[nf] embedded context — boot refused (anti-recursion guard)');
 }

@@ -85,6 +85,15 @@ export function replayHistoryPageInitialLoad(msg, view) {
     return;
   }
 
+  // 重连视口不劫持（续作 69e5e2e1，2026-10-21）：跟随意图 + 视口锚**在 wipe
+  // 之前**采集并随 opts 传入 restoreFromBackendHistory——wipe 后的空滚动区对
+  // isNearBottom 恒真（「空 = 贴底」），函数内部采集会把「回看中段」误读成
+  // 「跟随底部」⇒ 重建腿照旧把用户拽到底 + 强落 scrollSnapped（视口劫持 +
+  // 跟随手势污染，正是本批症状②在「签名有变化」真重建腿的残留面）。
+  // 首载/贴底 ⇒ follow（照旧贴底，行为同形）；回看中段 ⇒ 锚位保持。
+  const followBottom = shouldFollowBottom(view, activeView.dom.chat);
+  const anchor = { scrollTop: activeView.dom.chat.scrollTop };
+
   // Initial load or full refresh — replace
   cleanupCardIframes(activeView.dom.chat);
   activeView.dom.chat.innerHTML = '';
@@ -100,7 +109,7 @@ export function replayHistoryPageInitialLoad(msg, view) {
   // reload/reconnect, the trailing segment must stay flat — grouping it
   // would stamp it 'failed' and strand a zombie group (see turnGroup.js).
   const isStillBusy = state.busySessionIds.has(sid);
-  restoreFromBackendHistory(msg.messages, { busyTail: isStillBusy });
+  restoreFromBackendHistory(msg.messages, { busyTail: isStillBusy, followBottom, anchor });
 
   // Detect if the agent is waiting for AskUser — in that case it's NOT actively streaming.
   // Issue #43 (2026-09-03): agent-injected user bubbles (delegate results,
