@@ -1168,6 +1168,19 @@ class WebSocketRoutes(
         // content generation so validators never diverge between the verbs.
         StaticRoutes.indexResponse.map(_.withBodyStream(Stream.empty))
 
+      // 卡窗白屏修复批（2026-10-22）：/index.html 入口别名 —— 与 `/` 同一
+      // brand 注入应答。独立卡窗（UI 批⑧）曾以 `/index.html?card-window=1`
+      // 开窗：本路由只派 `/`，该 URL 落根文件白名单（sw.js/favicon 族）之外
+      // ⇒ 404 空 Content-Length 体 ⇒ 独立窗整页空白（作者实测根因）。别名让
+      // 一切历史/深链入口落在真应用而非空白体；现役打开链已改 `/`
+      // （canvas.js popoutCardWindow），别名是兜底面。query 原样保留
+      // （http4s 只按 path 匹配），card-window 参数不丢。
+      case GET -> Root / "index.html" =>
+        StaticRoutes.indexResponse
+
+      case HEAD -> Root / "index.html" =>
+        StaticRoutes.indexResponse.map(_.withBodyStream(Stream.empty))
+
       case req @ GET -> Root / "css" / file =>
         StaticFile
           .fromResource(s"web/css/$file", Some(req))

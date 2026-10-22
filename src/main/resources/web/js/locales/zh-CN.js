@@ -1605,6 +1605,9 @@ export default {
   'canvas.loadingFile': '正在打开…',
   'canvas.loadFailed': '打开失败',
   'canvas.retry': '重试',
+  // 卡窗白屏修复批（2026-10-22）：独立卡窗引导态面失败文案（canvas.js cardWindowBootFace）
+  'canvas.cardwinFailHint': '卡片内容加载失败，可重试。',
+  'canvas.cardwinAuthHint': '登录状态可能已过期——重试会自动续登或弹出登录引导。',
 
   // === Tool names (label first line) ===
   'tool.Read': '读取',
