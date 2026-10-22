@@ -252,10 +252,15 @@ export function send(resendId) {
     // 「这条已作为独立气泡在场」，继续在空输入框里打下一条 ⇒ 观感即「两次发送并成
     // 一个气泡」（取证实录：ui.json 744 行 = 终端粘贴+提问同一帧出线，compose 时
     // 已同文；服务端/传输/渲染三层均无合并机制）。修后每次发送 = 立即自己的独立
-    // 气泡（data-msg-id = 入队钉死的 clientMessageId + 「待发送」时钟小标）；drain
-    // 腿的 item.rendered 分支只摘小标不重渲 ⇒ 全链恰一气泡。
+    // 气泡（data-msg-id = 入队钉死的 clientMessageId）；drain 腿的 item.rendered
+    // 分支只摘小标不重渲 ⇒ 全链恰一气泡。
+    // 排队信息量批（2026-10-22 作者追加令）：小标 = 「已收到」确认标（pending:
+    // 'queued'，check 图标 + 可读文本 + 绿染）——不再是离线腿的「待发送」时钟
+    // （本腿帧未出线但应用已收下并排队，作者令：排队消息要有明确的已收到视觉，
+    // 不许消失在排队数字里）。位次信息在排队条行标（第 N 位），气泡不带位次
+    // （位次随 drain 漂移，气泡重渲违「零新增呈现」红线）。
     const item = queueMessage(v, text, v.pendingAttachments, null, null, { rendered: true });
-    renderUserBubble(text, v.pendingAttachments, undefined, { msgId: item.clientMessageId, pending: true });
+    renderUserBubble(text, v.pendingAttachments, undefined, { msgId: item.clientMessageId, pending: 'queued' });
     input.value = '';
     input.style.height = 'auto';
     v.pendingAttachments = [];

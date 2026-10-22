@@ -62,7 +62,9 @@ function chevronSvg() {
 
 /** Live-seconds formatter for the dots item (leaf-local copy of the
  *  chat.js formatLiveDuration shape: `42s` / `1m 03s`). */
-function formatLive(ms) {
+// 排队信息量批（2026-10-22）导出：chatQueue.js 头行秒表复用同一活时长格式
+// （「排队条已进行」与转轮 hint 视觉同律——两处秒表长得一样是作者可感的统一性）。
+export function formatLive(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
   if (s < 60) return s + 's';
   return Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's';

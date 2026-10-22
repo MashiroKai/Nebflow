@@ -8,18 +8,20 @@
 // **一帧出线**（ui.json 744 行 + 引擎日志 10:49:27.840 恰一帧实证）。促成缺陷 =
 // busy 排队腿零会话流呈现：发送后气泡不出现（只落在排队条），作者无从分辨
 // 「这条已独立在场」⇒ 观感即并泡。本批修法 = busy 排队腿补乐观气泡（离线腿同款
-// 形态：data-msg-id = 入队钉死的 clientMessageId + 「待发送」时钟小标），drain 腿
-// rendered 分支只摘小标 ⇒ 全链每条逻辑消息恰一气泡。
+// 形态：data-msg-id = 入队钉死的 clientMessageId），drain 腿 rendered 分支只摘小标
+// ⇒ 全链每条逻辑消息恰一气泡。排队信息量批（2026-10-22 作者追加令）跟进：busy 腿
+// 小标 = 「已收到」确认标（.acked，check + 可读文本；离线腿保持「待送达」时钟）。
 //
 // Pinned here (binary):
 //   S1 两连发（busy 中）⇒ 立即两个独立 .row.user，各含一条文本，任一气泡不并文。
-//   S2 每气泡带一枚 .msg-pending-mark（待发送态）+ 互异 data-msg-id。
+//   S2 每气泡带一枚 .msg-pending-mark.acked（「已收到」确认标，含可读文本）
+//      + 互异 data-msg-id。
 //   S3 drain 后气泡数不变（排队项零新增呈现 = #570 家族「零新增呈现」红线）、
 //      小标摘除（翻已送达态）。
 //   S4 恰两帧出线、clientMessageId 互异（两条逻辑消息两条幂等键）。
 //   S5 入队时刻真值：排队项 drain 补渲的气泡 footer 时间 = 入队时刻（item.ts），
 //      非 drain 时刻（静态钉 input.js 的 item.ts 传递链 + persistQueue 落盘键）。
-//   S6 wire/源面静态钉：busy 腿 renderUserBubble({pending:true}) 在场。
+//   S6 wire/源面静态钉：busy 腿 renderUserBubble({pending:'queued'}) 在场。
 //
 // Run: node tests/send-bubble-independence.spec.mjs
 // 形制同 tests/f1-send-queue.spec.mjs（真 web 树 + 真 WS 桩 + routeWebSocket）。
@@ -131,6 +133,8 @@ try {
       msgId: r.dataset.msgId || '',
       text: (r.querySelector('.bubble.user')?.textContent || ''),
       pending: r.querySelectorAll('.msg-pending-mark').length,
+      acked: r.querySelectorAll('.msg-pending-mark.acked').length,
+      markText: (r.querySelector('.msg-pending-mark')?.textContent || '').trim(),
     }));
   });
 
@@ -151,7 +155,9 @@ try {
     rowsNow.length === 2 &&
     rowsNow[0].text.includes('AAA') && !rowsNow[0].text.includes('第二发') &&
     rowsNow[1].text.includes('第二发') && !rowsNow[1].text.includes('AAA'));
-  ok('S2 各带一枚待发送小标', rowsNow.length === 2 && rowsNow.every(r => r.pending === 1));
+  ok('S2 各带一枚「已收到」确认标（.acked + 可读文本，排队信息量批）',
+    rowsNow.length === 2 && rowsNow.every(r => r.pending === 1 && r.acked === 1 && r.markText.length > 0),
+    JSON.stringify(rowsNow.map(r => ({ acked: r.acked, text: r.markText }))));
   ok('S2b msgId 互异且在场', rowsNow.length === 2 && rowsNow[0].msgId && rowsNow[1].msgId && rowsNow[0].msgId !== rowsNow[1].msgId);
 
   // ── drain：放行 → 两项依次出线 ─────────────────────────────────────
@@ -182,8 +188,8 @@ try {
 {
   const src = readFileSync(join(WEB, 'js', 'input.js'), 'utf8');
   const busyLeg = src.match(/if \(isBusy && !isResend && !state\.frozenSessions\.has\(v\.sessionId\)\) \{([\s\S]*?)\n  \}/);
-  ok('S6 busy 腿乐观气泡（rendered:true + pending 小标）在场',
-    !!busyLeg && busyLeg[1].includes("rendered: true") && busyLeg[1].includes("pending: true"));
+  ok('S6 busy 腿乐观气泡（rendered:true + 已收到小标 pending:\'queued\'）在场',
+    !!busyLeg && busyLeg[1].includes("rendered: true") && busyLeg[1].includes("pending: 'queued'"));
   ok('S5 queueMessage 钉入队时刻（ts）', src.includes('ts: Date.now()'));
   ok('S5b persistQueue 落盘 ts（跨刷新真值源）', src.includes('ts: it.ts || null'));
   ok('S5c drain 补渲用 item.ts（非 Date.now()）',
