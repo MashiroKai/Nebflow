@@ -27,6 +27,15 @@
   display: flex;
   flex-direction: column;
   overscroll-behavior: contain;
+  /* 顶部消失点批（2026-10-22 作者追加令）：滚动遮罩锚点 = Header 顶缘 —— 内容
+     从 Header 玻璃下穿过（透出磨砂），在 Header 上缘处消失。锚点变量
+     --chat-top-clip 由 main.js 顶让位观察器按实测写入（header.top - chat.top）；
+     缺省 0px = 无裁剪（boot 首帧/JS 未达时零视觉差）。过渡带 = 2px 极窄渐变
+     （防锯齿抖动，作者档「硬切或极窄过渡」取极窄）；🔴 内容区内不得再挂任何
+     渐隐处理（手机层 header 裙边已随本令退役，见 scrollUnderGlass.css）。 */
+  --chat-top-clip: 0px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent var(--chat-top-clip), #000 calc(var(--chat-top-clip) + 2px));
+  mask-image: linear-gradient(to bottom, transparent 0, transparent var(--chat-top-clip), #000 calc(var(--chat-top-clip) + 2px));
 }
 #header {
   background:

@@ -17,10 +17,12 @@
 //   G4 暗色 —— 亮暗两套 colorScheme 重复 G1 几何 + G2/G3 像素核心链。
 //   G5 探测器 —— state() 形状 + no-backdrop 特性腿（CSS.supports 恒真环境下
 //      仅验 supported=true 路径；不支持路径由降级类同名腿覆盖）。
-//   G6/G7 UI 批⑥⑦（2026-10-21）顶部渐隐契约 —— 桌面：#chat 盒顶 = header 盒底
-//      （⑦裁剪线，滚动态不动）+ #header 零裙边（⑥顶部渐隐桌面摘除）；手机层：
-//      mobile-layer + #header::after 28px 渐隐裙边在位 + chat 不裁剪（渐隐穿顶
-//      现状不动）。G0 让位算式改锚 #chat 实际盒顶（⑦ margin 钉制后的新几何）。
+//   G6/G7 顶部消失点批（2026-10-22 作者追加令，取代 UI 批⑥⑦旧契约）—— 桌面：
+//      #chat 盒顶 = 顶带下缘（⑦ margin 钉制退役，margin 恒 0）+ 滚动遮罩锚点 =
+//      Header 顶缘（--chat-top-clip 实测 = header.top − chat.top，#chat 挂 mask，
+//      滚动前后锚点不动）+ #header 零裙边；手机层：渐隐穿顶退役（#header::after
+//      裙边不在）+ 同一 mask 变量在位（消失点同为 Header 顶缘）。G0 让位算式仍锚
+//      #chat 实际盒顶。
 //
 // 环境注：任务带内容管线（ws 链）由 taskList 族 spec 自管，此处直接驱动
 // .has-tasks + 注入示意卡（被测面 = 裙边 CSS/几何/像素，与数据管线解耦）。
@@ -292,8 +294,8 @@ for (const scheme of ['light', 'dark']) {
     mainTop: document.getElementById('main').getBoundingClientRect().top,
     chatTop: document.getElementById('chat').getBoundingClientRect().top,
   }));
-  /* 锚 #chat 实际盒顶（UI 批⑦：桌面 #chat 盒顶 = header 下沿 margin 钉制，
-     padding 让位算式仍 = 带底 − chat 顶 + 8——与算式同源测量，不锚 #main 顶） */
+  /* 锚 #chat 实际盒顶（顶部消失点批 2026-10-22：⑦ margin 钉制退役，盒顶 =
+     顶带下缘；padding 让位算式仍 = 带底 − chat 顶 + 8——与算式同源测量） */
   const expectPad = Math.max(8, Math.ceil(g0.bandBottom - g0.chatTop) + 8);
   ok(`G0[${tag}] top-reserve 让位（#chat padding-top = 带底缘让位 + 8）`,
     Math.abs(g0.pad - expectPad) <= 2, `pad=${g0.pad.toFixed(0)} expect=${expectPad} band=${g0.bandBottom.toFixed(0)} chatTop=${g0.chatTop.toFixed(0)} log=${JSON.stringify(await page.evaluate(() => window.__resvLog.slice(-4)))}`);
@@ -319,49 +321,70 @@ for (const scheme of ['light', 'dark']) {
   await ctx.close();
 }
 
-/* ════════ G6/G7 UI 批⑥⑦（2026-10-21 作者令）：顶部渐隐契约对齐 ════════
-   ⑥「毛玻璃渐隐只保留手机端最顶部」+ ⑦「桌面消息最顶部不得超过 header」：
-   桌面 = #chat 盒顶钉 header 下沿（裁剪线，内容不进 header 区）+ #header 无任何
-   顶部裙边；手机 = v3 悬浮顶栏现状不动（内容穿顶 + body.mobile-layer #header::after
-   渐隐裙边在挂）。六面浮层裙边桌面照旧（G1 已证，作者明示浮层原样）。 */
+/* ════════ G6/G7 顶部消失点批（2026-10-22 作者追加令）：消失点锚定 Header 顶缘 ════════
+   症状①内容区渐隐退役 + 症状②消失点 = Header 顶缘（内容从 Header 玻璃下穿过，
+   上缘处消失）：桌面 = ⑦ margin 钉制退役（#chat margin 恒 0，盒顶回顶带下缘）+
+   #chat 挂 mask（--chat-top-clip = header.top − chat.top，滚动前后锚点不动）+
+   #header 无任何顶部裙边；手机层 = body.mobile-layer #header::after 渐隐裙边退役
+   （scrollUnderGlass.css 选择器组摘除）+ 同一 mask 变量在位。六面浮层裙边照旧
+   （G1 已证，作者明示浮层原样）。 */
 {
   const { ctx, page, errors } = await boot('light');
-  const d = await page.evaluate(() => {
+  const readGeo = () => page.evaluate(() => {
     const chat = document.getElementById('chat');
     const header = document.getElementById('header');
     const cr = chat.getBoundingClientRect(), hr = header.getBoundingClientRect();
     const after = getComputedStyle(header, '::after');
+    const cs = getComputedStyle(chat);
     return {
-      chatTop: cr.top, headerBottom: hr.bottom, headerTop: hr.top,
-      chatMargin: parseFloat(getComputedStyle(chat).marginTop) || 0,
+      chatTop: cr.top, headerTop: hr.top, headerBottom: hr.bottom,
+      chatMargin: parseFloat(cs.marginTop) || 0,
+      clipVar: parseFloat(cs.getPropertyValue('--chat-top-clip')) || 0,
+      chatMask: cs.maskImage || cs.webkitMaskImage || '',
       skirtContent: after.content, skirtMask: after.maskImage || after.webkitMaskImage || '',
       headerHasClass: header.classList.contains('scroll-under-glass'),
       mobile: document.body.classList.contains('mobile-layer'),
     };
   });
-  ok('G6[桌面] ⑦裁剪线：#chat 盒顶 = header 盒底（±2px，内容不可能高于 header）',
-    !d.mobile && Math.abs(d.chatTop - d.headerBottom) <= 2,
-    `chatTop=${d.chatTop.toFixed(1)} headerBottom=${d.headerBottom.toFixed(1)} margin=${d.chatMargin}`);
+  const d = await readGeo();
+  ok('G6[桌面] ⑦退役：#chat margin 恒 0（盒顶回顶带下缘，不再钉 header 盒底）',
+    !d.mobile && d.chatMargin === 0,
+    `mobile=${d.mobile} margin=${d.chatMargin}`);
+  ok('G6[桌面] 消失点锚=Header 顶缘：--chat-top-clip ≈ header.top − chat.top（±2px）',
+    Math.abs(d.clipVar - Math.max(0, d.headerTop - d.chatTop)) <= 2 && d.clipVar >= 0,
+    `clip=${d.clipVar} headerTop=${d.headerTop.toFixed(1)} chatTop=${d.chatTop.toFixed(1)}`);
+  ok('G6[桌面] #chat 挂滚动遮罩（mask-image 在场，锚点变量消费）',
+    /linear-gradient/.test(d.chatMask),
+    `mask=${d.chatMask.slice(0, 60)}`);
   ok('G6[桌面] ⑥顶部渐隐摘除：#header 无裙边类、::after 不存在（content none）',
     !d.headerHasClass && /none|normal/.test(d.skirtContent) && !/linear-gradient/.test(d.skirtMask),
     `class=${d.headerHasClass} after=${d.skirtContent} mask=${d.skirtMask.slice(0, 40)}`);
-  /* 滚动态实证：滚到深处后盒顶纹丝不动（裁剪线与滚动位置无关） */
-  const d2 = await page.evaluate(() => {
+  /* 滚动态实证：灌满溢出行后滚到深处——盒顶纹丝不动、锚点变量与滚动位置无关 */
+  const d2 = await page.evaluate(async () => {
     const chat = document.getElementById('chat');
+    for (let i = 0; i < 30; i++) {
+      const row = document.createElement('div');
+      row.className = 'row user';
+      row.style.height = '40px';
+      row.textContent = 'clip-anchor';
+      chat.appendChild(row);
+    }
     chat.scrollTop = chat.scrollHeight;
-    return new Promise((r) => setTimeout(() => {
-      const cr = document.getElementById('chat').getBoundingClientRect();
-      const hr = document.getElementById('header').getBoundingClientRect();
-      r({ chatTop: cr.top, headerBottom: hr.bottom });
-    }, 120));
+    await new Promise((r) => setTimeout(r, 150));
+    const cr = chat.getBoundingClientRect();
+    const hr = document.getElementById('header').getBoundingClientRect();
+    return {
+      clip: parseFloat(getComputedStyle(chat).getPropertyValue('--chat-top-clip')) || 0,
+      chatTop: cr.top, headerTop: hr.top, scrolled: chat.scrollTop,
+    };
   });
-  ok('G6[桌面] ⑦滚动态：裁剪线不动（scrolled chatTop 仍 = header 盒底 ±2px）',
-    Math.abs(d2.chatTop - d2.headerBottom) <= 2,
-    `chatTop=${d2.chatTop.toFixed(1)} headerBottom=${d2.headerBottom.toFixed(1)}`);
+  ok('G6[桌面] 滚动态：锚点不动（clip 恒 = header.top − chat.top ±2px，盒顶不随滚动移动）',
+    Math.abs(d2.clip - Math.max(0, d2.headerTop - d2.chatTop)) <= 2 && Math.abs(d2.chatTop - d.chatTop) <= 1 && d2.scrolled > 0,
+    `clip=${d2.clip} chatTop=${d2.chatTop.toFixed(1)} headerTop=${d2.headerTop.toFixed(1)} scrolled=${d2.scrolled}`);
   ok(`R[G6] 零 JS 运行时错误`, errors.length === 0, errors.slice(0, 2).join(' | '));
   await ctx.close();
 
-  /* G7 手机层：渐隐穿顶现状不动 */
+  /* G7 手机层：渐隐穿顶退役（消失点同锚 Header 顶缘） */
   const mctx = await browser.newContext({ viewport: { width: 375, height: 667 }, colorScheme: 'light', isMobile: true, hasTouch: true });
   await mctx.addInitScript(() => {
     localStorage.setItem('nebflow_token', 't'); localStorage.setItem('neblink_token', 't');
@@ -387,20 +410,22 @@ for (const scheme of ['light', 'dark']) {
     const header = document.getElementById('header');
     const cr = chat.getBoundingClientRect(), hr = header.getBoundingClientRect();
     const after = getComputedStyle(header, '::after');
+    const cs = getComputedStyle(chat);
     return {
       mobile: document.body.classList.contains('mobile-layer'),
-      chatTop: cr.top, headerBottom: hr.bottom,
-      chatMargin: parseFloat(getComputedStyle(chat).marginTop) || 0,
+      chatTop: cr.top, headerTop: hr.top,
+      chatMargin: parseFloat(cs.marginTop) || 0,
+      clipVar: parseFloat(cs.getPropertyValue('--chat-top-clip')) || 0,
+      chatMask: cs.maskImage || cs.webkitMaskImage || '',
       skirtContent: after.content, skirtMask: after.maskImage || after.webkitMaskImage || '',
-      skirtH: parseFloat(after.height) || 0,
     };
   });
-  ok('G7[手机] ⑥渐隐穿顶保持：mobile-layer 在挂 + #header::after 渐隐裙边在位（28px mask 渐变）',
-    m.mobile && m.skirtContent === '""' && /linear-gradient/.test(m.skirtMask) && m.skirtH === 28,
-    `mobile=${m.mobile} after=${m.skirtContent} mask=${m.skirtMask.slice(0, 40)} h=${m.skirtH}`);
-  ok('G7[手机] ⑦不裁剪：chat margin=0 且盒顶高于 header 盒底（内容穿顶现状）',
-    m.chatMargin === 0 && m.chatTop < m.headerBottom,
-    `margin=${m.chatMargin} chatTop=${m.chatTop.toFixed(1)} headerBottom=${m.headerBottom.toFixed(1)}`);
+  ok('G7[手机] ①渐隐退役：mobile-layer 在挂 + #header::after 裙边不存在（content none、无渐变）',
+    m.mobile && /none|normal/.test(m.skirtContent) && !/linear-gradient/.test(m.skirtMask),
+    `mobile=${m.mobile} after=${m.skirtContent} mask=${m.skirtMask.slice(0, 40)}`);
+  ok('G7[手机] ②消失点同锚 Header 顶缘：mask 变量在场（≥0）+ margin 恒 0 + 盒顶高于 header 盒底（内容穿顶）',
+    /linear-gradient/.test(m.chatMask) && m.clipVar >= 0 && m.chatMargin === 0 && m.chatTop < (m.headerTop + 90),
+    `clip=${m.clipVar} mask=${m.chatMask.slice(0, 40)} margin=${m.chatMargin} chatTop=${m.chatTop.toFixed(1)} headerTop=${m.headerTop.toFixed(1)}`);
   ok(`R[G7] 零 JS 运行时错误`, merrors.length === 0, merrors.slice(0, 2).join(' | '));
   await mctx.close();
 }
