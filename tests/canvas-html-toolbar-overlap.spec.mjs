@@ -177,9 +177,10 @@ async function assertCluster(page, tag, { shot = null, expectOverlay = null } = 
     }
   }
   ok(`${tag} O-nolap 两两矩形零交叠`, pairs.length === 0, pairs.join(' ') || 'clean');
-  // 移位批（2026-10-22）：簇 +48 给底右 deck fab 让位后，窄面板（<356px）的
-  // zoom bar 走圆钮行上方第二行（split.css @container nfpane）——间距钉改为
-  // 行感知：同行（矩形纵向相交）要求水平缝 ≥8px；异行要求垂直缝 ≥8px。
+  // 移位批（2026-10-22）：底右圆钮簇整体 +48（回退批同日 deck fab 迁回顶右
+  // 原位、簇槽位维持不动）后，窄面板（<356px）的 zoom bar 走圆钮行上方第二行
+  // （split.css @container nfpane）——间距钉改为行感知：同行（矩形纵向相交）
+  // 要求水平缝 ≥8px；异行要求垂直缝 ≥8px。
   const vOverlap = Math.min(rects.find.y + rects.find.height, rects.bar.y + rects.bar.height) -
     Math.max(rects.find.y, rects.bar.y);
   let gap;

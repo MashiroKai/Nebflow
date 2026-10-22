@@ -1,11 +1,14 @@
-// imgviewer-controls-shots.mjs — 移位批（作者令 2026-10-22 ②）前后对照截图。
+// imgviewer-controls-shots.mjs — 移位批（作者令 2026-10-22 ②）前后对照截图；
+// 回退批（作者令 2026-10-22 回访裁定：deck fab 迁回顶右原位、缩放控件留右下）
+// 断言面沿用（G3 改钉 fab 顶右）。
 //
 // 场景 = 图片 pane（截图1 的肇事面）：文件名胶囊（.canvas-header）+ 图片缩放条
 // （.canvas-zoom-bar）+ 层叠浮钮（#deck-fab）三件同框。改动前后各跑一遍：
 //   SHOTS_DIR=/tmp/.../before node tests/imgviewer-controls-shots.mjs
 //   SHOTS_DIR=/tmp/.../after  node tests/imgviewer-controls-shots.mjs
-// 断言（轻量几何，与截图互补）：胶囊 x 在面板左缘 1/3 内；缩放条、fab 底右；
-// 三件两两矩形零交叠；亮暗双主题各一轮；R0 无运行时错误。
+// 断言（轻量几何，与截图互补）：胶囊 x 在面板左缘 1/3 内；缩放条底右、fab 顶右
+// （回退批：fab 不再随缩放条居底右）；三件两两矩形零交叠；亮暗双主题各一轮；
+// R0 无运行时错误。
 
 import { chromium } from 'playwright';
 import { readFileSync, mkdirSync } from 'node:fs';
@@ -111,8 +114,9 @@ async function runTheme(browser, tag, colorScheme) {
   ok(`${tag} G1 胶囊居左（左缘落面板左侧 1/3）`, geo.header && geo.header.x - P.x < (P.width / 3), `dx=${(geo.header.x - P.x).toFixed(0)} panelW=${P.width.toFixed(0)}`);
   ok(`${tag} G2 缩放条底右（底缘距面板底 <40px）`, geo.zoom && (P.y + P.height) - (geo.zoom.y + geo.zoom.h) < 40 && (P.x + P.width) - (geo.zoom.x + geo.zoom.w) < 200,
     `db=${(P.y + P.height - geo.zoom.y - geo.zoom.h).toFixed(0)} dr=${(P.x + P.width - geo.zoom.x - geo.zoom.w).toFixed(0)}`);
-  ok(`${tag} G3 fab 可见且底右`, geo.fabCS !== 'none' && geo.fab && (P.y + P.height) - (geo.fab.y + geo.fab.h) < 40,
-    `display=${geo.fabCS} db=${geo.fab ? (P.y + P.height - geo.fab.y - geo.fab.h).toFixed(0) : 'n/a'}`);
+  ok(`${tag} G3 fab 可见且顶右（回退批 2026-10-22：移位批右下 → 迁回顶右原位）`,
+    geo.fabCS !== 'none' && geo.fab && (geo.fab.y - P.y) < 40,
+    `display=${geo.fabCS} dt=${geo.fab ? (geo.fab.y - P.y).toFixed(0) : 'n/a'}`);
   const laps = [['header∩zoom', lap(geo.header, geo.zoom)], ['header∩fab', lap(geo.header, geo.fab)], ['zoom∩fab', lap(geo.zoom, geo.fab)]];
   ok(`${tag} G4 三件两两零交叠`, laps.every(([, a]) => a === 0), laps.map(([n, a]) => `${n}=${a.toFixed(0)}`).join(' '));
 

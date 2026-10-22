@@ -1320,8 +1320,8 @@ export async function openWorkspaceItem(item) {
 //     （1/240 增益 + rAF 指数趋近），卡片循环穿过前景位，canvas 本尊经交接窗
 //     与面板交叉淡换（d₀ 驱动位姿/alpha，no-trans 逐帧直写）；
 //   · 浮钮固定（v5②）：fab 是 body 级固定元素（panel.contains(fab)===false），
-//     JS 逐帧同步面板盒（移位批 2026-10-22：右下角 bottom 16 / right 12 / 40px），
-//     z-250 恒在卡组与面板之上；
+//     JS 逐帧同步面板盒（top 10 / right 12 / 40px；移位批 2026-10-22 曾迁右下
+//     bottom16，回退批同日回访裁定迁回顶右原位），z-250 恒在卡组与面板之上；
 //   · 换入（v4④）：点前景卡放大回满幅 → setActiveTab 落位 → 旧 canvas ghost 缩回；
 //   · 划走（v2⑥/v4⑥/v5①）：作用于前景面（canvas 前景=拖面板，环卡前景=拖该卡），
 //     6px 点击界分 / 20% 区宽或 0.55px/ms 速度阈 / 13° 侧旋甩出 / spring 弹回；
@@ -1785,10 +1785,12 @@ function syncDeckBox() {
     deckLayer.style.height = r.height + 'px';
   }
   if (deckFab) {
-    // 移位批（作者令 2026-10-22 ②）：fab 钉区顶右 → 右下角——top = 面板盒底
-    // −（40px 钮 + 16px 底缝），与 pane 底右圆钮簇（bottom:16）同排同中线；
-    // right 语义不变（12px 内缝）。CSS 缺省（bottom:16）与本次式同源。
-    deckFab.style.top = (r.top + r.height - 56) + 'px';
+    // 回退批（作者令 2026-10-22 回访裁定）：fab 钉区回顶右原位（top = 面板顶
+    // + 10）。移位批曾迁右下（top = 面板底 − 56 与圆钮簇同排），但作者只令
+    // 图片查看器缩放控件迁右下，fab 属移位范围过宽；缩放条既已居底右、文件名
+    // 胶囊居左，顶行叠印前提消失，回移安全。right 语义不变（12px 内缝）。
+    // CSS 缺省（top:10）与本次式同源。
+    deckFab.style.top = (r.top + 10) + 'px';
     deckFab.style.right = (window.innerWidth - r.right + 12) + 'px';
   }
 }

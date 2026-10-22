@@ -1,0 +1,466 @@
+════ 1/6 canvas-stack.spec.mjs ════
+PASS  A1-1 卡组层空且未 live  — class=""
+PASS  A1-2 canvas 根无 stacked  — class=""
+PASS  A1-3 deck-layer 非 canvas 根子节点
+PASS  A1-4 浮钮非 canvas 根子节点（v5② 判据）
+PASS  A1-5 浮钮钉区右上 top10/right12/40px（回退批 2026-10-22：移位批右下 → 迁回顶右原位）  — dy=10.0 dr=12.0 40x40
+PASS  A1-6 浮钮 rest 0.6  — op=0.6
+PASS  A1-7 常态无叉（.cv-close 零命中 + 标签条叉不可见，精修③）  — cv-close=0 tabBarCloseVisible=false
+PASS  R0 主文档无 JS 运行时错误（A1）
+PASS  A2-1 根 matrix(0.85,…,8)  — matrix(0.85, 0, 0, 0.85, 0, 8)
+PASS  A2-2 环含全部页签（active 在环首，v5①）  — M=10 tabs=10 ring0=alpha.md
+PASS  A2-3 初始前景位=当前 canvas 卡  — front=alpha.md
+PASS  A2-4 canvas 环卡前景位隐没（op≈0）
+PASS  A2-5 d=1 露边 27px（设计值；④②透视补偿后投影顶=设计顶，±4px）  — peek=27.3
+PASS  A2-6 后卡 = 缩放坡道 d=1 位（0.85 × 近档缩小 × 透视投影，±3%）  — 501 vs 496（面板 537）
+PASS  A2-7 d3 卡更深一档（宽 < d1，且落在坡道公式 ±4%——近大远小连续）  — d1=501 d3=469 exp=457
+PASS  A2-8 canvas 前景时 .over 未抬
+PASS  A2-9 帮助条整行退役（deck-foot/hint/count 零命中 + 文案扫描零命中）  — {"foot":false,"hint":0,"count":0,"anyText":false}
+PASS  A2-10 断言通道 helpRetired=true
+PASS  R0 主文档无 JS 运行时错误（A2）
+PASS  A3-0 中途态采样命中（d₀∈(0.15,0.85)）  — d0=-0.23
+PASS  A3-1 擦洗中途面板 translate3d 正 y（向下翻落）  — dy=26.81
+PASS  A3-2 擦洗中途 rotateX 前倾（正角）  — rx=16.82
+PASS  A3-3 中途 alpha 交叉衰减（<1）  — alpha=0.562
+PASS  A3-4 中途 .over 抬层
+PASS  A3-5 pos 收敛 1.0  — pos=1.000
+PASS  A3-6 前景位易主 bravo.md  — front=bravo.md
+PASS  A3-7 面板隐没（alpha 0 + pointer-events 关断，隐没面板不拦卡组点击）  — alpha=0 pe=none
+PASS  A3-8 环卡前景位 over 保持抬层（盖过隐没 canvas）  — over=true
+PASS  A3-9 前卡落前景基姿（与缩放态 canvas 同位 ≤2px）  — card=(1005.5,97.0) stacked=(1005.4,97.1)
+PASS  A3-10 前卡 .front 可拖划
+PASS  A3-11 计数行退役（轮换态仍可断言：frontName=bravo.md）  — foot=true front=bravo.md
+PASS  A3-12 canvas 本尊翻落收进卡组（op 显著衰减）  — op=0.63
+PASS  A3-13 反向 −1 格可回滚（canvas 回前景）  — pos=0.000 front=alpha.md
+PASS  A3-14 键盘 ↑↓ 同通路（↓ → bravo 前景）  — pos=1.000
+PASS  A3-15 键盘 ↑ 回滚
+PASS  R0 主文档无 JS 运行时错误（A3）
+PASS  A4-1 点 d=3 卡 = 翻到该卡（pos→3）  — pos=3.000
+PASS  A4-2 不换签（v1 回归；active 仍 alpha.md）  — active=file:/tmp/canvas-stack-fixture/alpha.md
+PASS  R0 主文档无 JS 运行时错误（A4）
+PASS  A5-1 activeId 切为该卡  — active=file:/tmp/canvas-stack-fixture/bravo.md
+PASS  A5-2 根回满幅（stacked 解除）  — class=""
+PASS  A5-3 deck 收回清空
+PASS  A5-4 页签数不变  — n=10 base=10
+PASS  A5-5 标题切换为 bravo.md  — title=bravo.md
+PASS  A5-6 重开后新 canvas 在前景位  — front=bravo.md
+PASS  R0 主文档无 JS 运行时错误（A5）
+PASS  A6-1 擦洗轮换中浮钮布局盒逐像素恒定（v5②；offset* 对 hover 缩放免疫）  — r0=(1538,26) rMid=(1538,26) rEnd=(1538,26)
+PASS  A6-2 浮钮 z=250 恒在卡组与面板之上  — z=250
+PASS  A6-3 点浮钮退出（deck 关、根回满幅、内容不变）
+PASS  A6-4 再点进入  — open=true M=10
+PASS  R0 主文档无 JS 运行时错误（A6）
+PASS  A7-1 划走 canvas：页签 −1  — n=9 (base 10)
+PASS  A7-2 邻位接管（alpha→bravo，同 closeTab 右邻优先）  — active=file:/tmp/canvas-stack-fixture/bravo.md
+PASS  A7-3 deck 保持
+PASS  A7-4 新 canvas 顶上（前景位）  — front=bravo.md
+PASS  R0 主文档无 JS 运行时错误（A7）
+PASS  A8-1 划走前景卡：该文件被关（−1）  — n=9 (base 10)
+PASS  A8-2 被关的是 bravo（active 不变）  — tabs=插件,alpha.md,charlie.md,delta.md,echo.md,foxtrot.md,golf.md,hotel.md,india.md
+PASS  A8-3 环流就地收敛：相位保持（pos 未重置）  — pos=1.000
+PASS  A8-4 后继卡顶上（charlie 前景）  — front=charlie.md
+PASS  R0 主文档无 JS 运行时错误（A8）
+PASS  A9-1 右键菜单三项（引用/关闭/关闭其他）  — 引用当前页/选区 | 关闭 | 关闭其他
+PASS  A9-2 深处卡被关（−1）  — n=9
+PASS  A9-3 相位保持（pos 未重置）  — pos=1.000
+PASS  R0 主文档无 JS 运行时错误（A9）
+PASS  A10-0 竖排滑动提示零命中（面板 + 卡面 + 文案扫描）  — {"panel":0,"card":0,"anyText":false}
+PASS  A10-1 卡面 × 钮 = 卡数（每卡一枚；.cv-close 仍零命中）  — {"count":10,"cards":10,"visible":true,"cvClose":0}
+PASS  A10-2 × 点击深处卡 = 关闭该卡（−1 · deck 保持 · 相位收敛）  — n=9/10 open=true
+PASS  A10-3 × 点击不换签（active 仍 alpha.md · closeTab 邻位语义留给后续前景轮换）  — active=file:/tmp/canvas-stack-fixture/alpha.md
+PASS  A10-4 × 钮随环重建补齐（卡数 −1 后仍每卡一枚）  — x=9 M=9
+PASS  A10-5 前景卡 × = 当前页签关闭（−1 · 面板收拢 · 邻位 charlie 顶前景 · deck 保持）  — n=8/9 open=true front=charlie.md
+PASS  R0 主文档无 JS 运行时错误（A10）
+PASS  A11-1 ESC：deck 关
+PASS  A11-2 activeId 不变（alpha.md）  — active=file:/tmp/canvas-stack-fixture/alpha.md
+PASS  A11-3 根回满幅
+PASS  R0 主文档无 JS 运行时错误（A11）
+PASS  A12-1 点 canvas（前景位）= 收回卡组  — open=false
+PASS  A12-2 内容不变  — n=10 active=file:/tmp/canvas-stack-fixture/alpha.md
+PASS  R0 主文档无 JS 运行时错误（A12）
+PASS  A13-1 窄档 340：后卡 = 85% 基 × 近档缩小（±4%）  — area=340 card=270
+PASS  A13-2 露边 27px 仍在（v2 档；④②透视补偿后投影顶=设计顶，±4px）  — peek=27.3
+PASS  A13-3 浮钮仍固定 40px 原位（不缩放不移位；布局盒口径；回退批 2026-10-22 钉区回顶右 top10）  — 40x40 dy=10.0 dr=12.0
+PASS  A13-4 窄档帮助条退役（deck-foot 零命中）
+PASS  R0 主文档无 JS 运行时错误（A13）
+PASS  A14-1 暗档 --card-shadow token 镜像（精修② 0.20/0.24/0.26）  — 0 1px 2px rgba(0, 0, 0, 0.20),
+      0 8px 22px rgba(0, 0, 0, 0.24),
+      0 20px 48px rgba(0, 0, 0, 0.26)
+PASS  A14-2 暗档轮换正常（pos→1）  — pos=1.000
+PASS  A14-3 prefers-reduced-motion 面板过渡 0.01s  — 0.01s
+PASS  A15-1 连滚整圈回到 canvas 前景（pos=M、frontIdx=0）  — pos=10.000 M=10 front=alpha.md
+PASS  A15-2 面板回前景位（alpha 1、over 落下、inline 清空）
+PASS  A15-3 首尾无缝（d₀=0）
+PASS  R0 主文档无 JS 运行时错误（A15）
+PASS  F1-1 rAF 趋近系数 10/7 → 12/9  — scrub=12 spread=9
+PASS  F1-2 翻落曲线收幅 30/40/6/30 → 26/32/5/24  — drop=26 arc=32 tilt=5 tiltArc=24
+PASS  F1-3 FX/morph 时长统一 0.28s 档（fly 0.30 / ghost 0.28 / spring 0.22 / fling 0.24）  — fly=0.3 ghost=0.28 spring=0.22 fling=0.24
+PASS  F1-4 面板 morph 过渡 0.28s（CSS 单一来源 --deck-morph-duration）  — 0.32s, 0.32s, 0.28s, 0.28s
+PASS  R0 主文档无 JS 运行时错误（F1）
+PASS  F2-1 light --card-shadow 三档（0.04/0.07/0.08）且每档 < 样张值  — 0 1px 2px rgba(16, 20, 30, 0.04),
+    0 6px 18px rgba(16, 20, 30, 0.07),
+    0 18px 44px rgba(16, 20, 30, 0.08)
+PASS  F2-2 .stacked 投影锚 UI 批⑤ 羽化前景档（v2 环境晕 0.02 + 0.05/0.10/0.12）  — 0.25,0.02,0.05,0.1,0.12
+PASS  F2-3 卡描边退役 + 投影羽化（边框透明、最大模糊 ≥90px、shade 为纵向渐变）  — {"borderColor":"rgba(0, 0, 0, 0)","maxBlur":110,"shadeBg":"linear-gradient(rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0.28) 34%, rgba(0, 0, 0, 0.14) 68%, rgba(0, 0, 0, 0.22))"}
+PASS  F2-4 三版 look 前景档阴影互异（作者挑版通道 · setLook 热切换）  — {"v1":"0.25,0.016,0.035,0.075,0.086","v2":"0.25,0.02,0.05,0.1,0.12","v3":"0.25,0.024,0.067,0.13,0.16"}
+PASS  R0 主文档无 JS 运行时错误（F2）
+PASS  A16-1 换面后常态头居中标题=bravo.md  — title=bravo.md
+PASS  R0 主文档无 JS 运行时错误（A16）
+PASS  A17-0 竖拖常量单一来源（gain 1/160 · 惯性 90 冲程/±80px 钳 · 轴锁 8px）  — {"scrubApproach":12,"spreadApproach":9,"fallDrop":26,"fallArc":32,"fallTilt":5,"fallTiltArc":24,"flyDur":0.3,"ghostDur":0.28,"springDur":0.22,"flingDur":0.24,"wheelGain":0.004166666666666667,"dragGain":0.00625,"dragInertia":90,"dragInertiaMax":80,"axisLockPx":8,"depthScaleNear":0.055,"depthScaleFar":0.018,"depthZ":26,"fallShrink":0.1,"perspective":1150,"originYK":0.1}
+PASS  A17-0b 提示行退役（UI 批 ①：竖拖换卡交互自学，不再有文案行）  — hint="" foot=false
+PASS  A17-1 拖动中主导轴锁 y（面板面手势上报）  — {"face":"panel","axis":"y","dx":0,"dy":260}
+PASS  A17-2 跟手：target 随 dy 增量增长（>0.5 卡 · 未松手未换签）  — target=1.625 active=file:/tmp/canvas-stack-fixture/alpha.md
+PASS  A17-3 竖拖换卡：pos 贴靠 2、charlie 到前景（惯性钳半卡内，落点确定）  — pos=2.000 front=charlie.md
+PASS  A17-4 是换卡不是关闭（页签数不变 · deck 保持 · 无面板 FX）  — n=10/10 open=true faceFx=null
+PASS  R0 主文档无 JS 运行时错误（A17 鼠标）
+PASS  A17-5 触屏竖拖：touch 指针走同一手势通路（轴锁 y · 跟手）  — {"g":{"face":"panel","axis":"y","dx":0,"dy":260},"target":1.625}
+PASS  A17-6 触屏竖拖换卡（pos 贴靠 2 · charlie 前景 · 不关闭）  — pos=2.000 front=charlie.md n=10
+PASS  R0 主文档无 JS 运行时错误（A17 触屏）
+PASS  A18-1 环卡面纵拖：手势上报 face=card · 轴锁 y  — {"face":"card","axis":"y","dx":0,"dy":260}
+PASS  A18-2 环卡竖拖换卡：pos 贴靠 3、delta 到前景  — pos=3.000 front=delta.md
+PASS  A18-3 纵向主导不触发关闭（页签数不变 · delta 仍在 · 无面板 FX）  — n=10/10 tabs=插件,alpha.md,bravo.md,charlie.md,delta.md,echo.md,foxtrot.md,golf.md,hotel.md,india.md
+PASS  A18-4 横向主导仍是划走关闭：delta 被关（−1）  — n=9 (base 10)
+PASS  A18-5 环流就地收敛保相位：echo 顶上（pos=3）、active 不变  — pos=3.000 front=echo.md active=file:/tmp/canvas-stack-fixture/alpha.md
+PASS  R0 主文档无 JS 运行时错误（A18）
+PASS  A19-1 对角 dy 主导：锁 y（|dx|>|dy| 才横）  — {"face":"panel","axis":"y","dx":0,"dy":260}
+PASS  A19-2 dy 主导对角 = 换卡不关闭（charlie 前景 · 页签数不变）  — pos=2.000 front=charlie.md n=10
+PASS  A19-3 对角 dx 主导：锁 x  — {"face":"panel","axis":"x","dx":312,"dy":0}
+PASS  A19-4 dx 主导对角 = 划走关闭（alpha 被关 · 邻位 bravo 顶上）  — n=9 (base 10) active=file:/tmp/canvas-stack-fixture/bravo.md
+PASS  A19-5 关闭后 deck 保持、新 canvas 前景位（环重置 pos=0）  — open=true front=bravo.md
+PASS  A19-6 死区内不锁轴不驱动（axis null · target 未动）  — {"g":{"face":"panel","axis":null,"dx":0,"dy":0},"target":0}
+PASS  A19-7 死区松手 = 点击语义（deck 收回），换卡/关闭均未发生  — open=false n=9
+PASS  R0 主文档无 JS 运行时错误（A19）
+PASS  A20-1 快速三连点每次计数（终态=开：开→收→排队补发）  — open=true M=10 queued=false
+PASS  A20-2 排队已清空（补发后 fabQueued=false）
+PASS  A20-3 连点后第 4 点照常翻转（终态=关，不粘）
+PASS  A20-4 收场清重入锁（gesture=null · deck 关）  — gesture=null open=false
+PASS  A20-5 泄漏修复后 fab 照常响应（deck 重开）  — open=true M=10
+PASS  R0 主文档无 JS 运行时错误（A20）
+PASS  A21-0 动效层常量单一来源（近档 0.055 / 深档 0.018 / 视差 z 26 / 翻落缩 0.10 / 透视 1150·origin 0.10）  — {"scrubApproach":12,"spreadApproach":9,"fallDrop":26,"fallArc":32,"fallTilt":5,"fallTiltArc":24,"flyDur":0.3,"ghostDur":0.28,"springDur":0.22,"flingDur":0.24,"wheelGain":0.004166666666666667,"dragGain":0.00625,"dragInertia":90,"dragInertiaMax":80,"axisLockPx":8,"depthScaleNear":0.055,"depthScaleFar":0.018,"depthZ":26,"fallShrink":0.1,"perspective":1150,"originYK":0.1}
+PASS  A21-1 前景位基姿不变（d=0 卡与缩放态 canvas 同位同宽——交接窗换手无跳变）  — d1/base=0.932
+PASS  A21-2 近大远小连续（d2 < d1 < 基卡，单调坡道）  — d1=501 d2=485 base=537
+PASS  A21-3 透明度渐变仍在（深处卡 op 随深衰减）  — op1=1 op2=0.88
+PASS  A21-4 翻落支缩小（d=-1 卡宽 < 基卡 × 0.94）  — fallen=486 base=537
+PASS  R0 主文档无 JS 运行时错误（A21）
+PASS  A22-1 全环真容补齐（md 族全克隆零 pending；面板族 mock 回落）  — {"hasSnap":9,"cards":10,"pending":0,"mock":1}
+PASS  A22-2 活性窗 = 可视卡 ±2（环 ≥9 → 窗内 5）  — {"cached":9,"live":9,"pending":0,"mock":1,"liveWindow":5}
+PASS  A22-3 源滚动镜像（缩略 translateY 随 scrollTop 同步）  — translateY(-168.3px) scale(0.8089)
+PASS  A22-4 源变更防抖重截（近卡实时映射）
+PASS  R0 主文档无 JS 运行时错误（A22）
+PASS  A1-1 卡组层空且未 live  — class=""
+PASS  A1-2 canvas 根无 stacked  — class=""
+PASS  A1-3 deck-layer 非 canvas 根子节点
+PASS  A1-4 浮钮非 canvas 根子节点（v5② 判据）
+PASS  A1-5 浮钮钉区右上 top10/right12/40px（回退批 2026-10-22：移位批右下 → 迁回顶右原位）  — dy=10.0 dr=12.0 40x40
+PASS  A1-6 浮钮 rest 0.6  — op=0.6
+PASS  A1-7 常态无叉（.cv-close 零命中 + 标签条叉不可见，精修③）  — cv-close=0 tabBarCloseVisible=false
+PASS  R0 主文档无 JS 运行时错误（A1）
+PASS  A2-1 根 matrix(0.85,…,8)  — matrix(0.85, 0, 0, 0.85, 0, 8)
+PASS  A2-2 环含全部页签（active 在环首，v5①）  — M=10 tabs=10 ring0=alpha.md
+PASS  A2-3 初始前景位=当前 canvas 卡  — front=alpha.md
+PASS  A2-4 canvas 环卡前景位隐没（op≈0）
+PASS  A2-5 d=1 露边 27px（设计值；④②透视补偿后投影顶=设计顶，±4px）  — peek=27.3
+PASS  A2-6 后卡 = 缩放坡道 d=1 位（0.85 × 近档缩小 × 透视投影，±3%）  — 501 vs 496（面板 537）
+PASS  A2-7 d3 卡更深一档（宽 < d1，且落在坡道公式 ±4%——近大远小连续）  — d1=501 d3=469 exp=457
+PASS  A2-8 canvas 前景时 .over 未抬
+PASS  A2-9 帮助条整行退役（deck-foot/hint/count 零命中 + 文案扫描零命中）  — {"foot":false,"hint":0,"count":0,"anyText":false}
+PASS  A2-10 断言通道 helpRetired=true
+PASS  R0 主文档无 JS 运行时错误（A2）
+PASS  A3-0 中途态采样命中（d₀∈(0.15,0.85)）  — d0=-0.23
+PASS  A3-1 擦洗中途面板 translate3d 正 y（向下翻落）  — dy=26.81
+PASS  A3-2 擦洗中途 rotateX 前倾（正角）  — rx=16.82
+PASS  A3-3 中途 alpha 交叉衰减（<1）  — alpha=0.562
+PASS  A3-4 中途 .over 抬层
+PASS  A3-5 pos 收敛 1.0  — pos=1.000
+PASS  A3-6 前景位易主 bravo.md  — front=bravo.md
+PASS  A3-7 面板隐没（alpha 0 + pointer-events 关断，隐没面板不拦卡组点击）  — alpha=0 pe=none
+PASS  A3-8 环卡前景位 over 保持抬层（盖过隐没 canvas）  — over=true
+PASS  A3-9 前卡落前景基姿（与缩放态 canvas 同位 ≤2px）  — card=(1005.5,97.0) stacked=(1005.4,97.1)
+PASS  A3-10 前卡 .front 可拖划
+PASS  A3-11 计数行退役（轮换态仍可断言：frontName=bravo.md）  — foot=true front=bravo.md
+PASS  A3-12 canvas 本尊翻落收进卡组（op 显著衰减）  — op=0.63
+PASS  A3-13 反向 −1 格可回滚（canvas 回前景）  — pos=0.000 front=alpha.md
+PASS  A3-14 键盘 ↑↓ 同通路（↓ → bravo 前景）  — pos=1.000
+PASS  A3-15 键盘 ↑ 回滚
+PASS  R0 主文档无 JS 运行时错误（A3）
+PASS  A4-1 点 d=3 卡 = 翻到该卡（pos→3）  — pos=3.000
+PASS  A4-2 不换签（v1 回归；active 仍 alpha.md）  — active=file:/tmp/canvas-stack-fixture/alpha.md
+PASS  R0 主文档无 JS 运行时错误（A4）
+PASS  A5-1 activeId 切为该卡  — active=file:/tmp/canvas-stack-fixture/bravo.md
+PASS  A5-2 根回满幅（stacked 解除）  — class=""
+PASS  A5-3 deck 收回清空
+PASS  A5-4 页签数不变  — n=10 base=10
+PASS  A5-5 标题切换为 bravo.md  — title=bravo.md
+PASS  A5-6 重开后新 canvas 在前景位  — front=bravo.md
+PASS  R0 主文档无 JS 运行时错误（A5）
+PASS  A6-1 擦洗轮换中浮钮布局盒逐像素恒定（v5②；offset* 对 hover 缩放免疫）  — r0=(1538,26) rMid=(1538,26) rEnd=(1538,26)
+PASS  A6-2 浮钮 z=250 恒在卡组与面板之上  — z=250
+PASS  A6-3 点浮钮退出（deck 关、根回满幅、内容不变）
+PASS  A6-4 再点进入  — open=true M=10
+PASS  R0 主文档无 JS 运行时错误（A6）
+PASS  A7-1 划走 canvas：页签 −1  — n=9 (base 10)
+PASS  A7-2 邻位接管（alpha→bravo，同 closeTab 右邻优先）  — active=file:/tmp/canvas-stack-fixture/bravo.md
+PASS  A7-3 deck 保持
+PASS  A7-4 新 canvas 顶上（前景位）  — front=bravo.md
+PASS  R0 主文档无 JS 运行时错误（A7）
+PASS  A8-1 划走前景卡：该文件被关（−1）  — n=9 (base 10)
+PASS  A8-2 被关的是 bravo（active 不变）  — tabs=插件,alpha.md,charlie.md,delta.md,echo.md,foxtrot.md,golf.md,hotel.md,india.md
+PASS  A8-3 环流就地收敛：相位保持（pos 未重置）  — pos=1.000
+PASS  A8-4 后继卡顶上（charlie 前景）  — front=charlie.md
+PASS  R0 主文档无 JS 运行时错误（A8）
+PASS  A9-1 右键菜单三项（引用/关闭/关闭其他）  — 引用当前页/选区 | 关闭 | 关闭其他
+PASS  A9-2 深处卡被关（−1）  — n=9
+PASS  A9-3 相位保持（pos 未重置）  — pos=1.000
+PASS  R0 主文档无 JS 运行时错误（A9）
+PASS  A10-0 竖排滑动提示零命中（面板 + 卡面 + 文案扫描）  — {"panel":0,"card":0,"anyText":false}
+PASS  A10-1 卡面 × 钮 = 卡数（每卡一枚；.cv-close 仍零命中）  — {"count":10,"cards":10,"visible":true,"cvClose":0}
+PASS  A10-2 × 点击深处卡 = 关闭该卡（−1 · deck 保持 · 相位收敛）  — n=9/10 open=true
+PASS  A10-3 × 点击不换签（active 仍 alpha.md · closeTab 邻位语义留给后续前景轮换）  — active=file:/tmp/canvas-stack-fixture/alpha.md
+PASS  A10-4 × 钮随环重建补齐（卡数 −1 后仍每卡一枚）  — x=9 M=9
+PASS  A10-5 前景卡 × = 当前页签关闭（−1 · 面板收拢 · 邻位 charlie 顶前景 · deck 保持）  — n=8/9 open=true front=charlie.md
+PASS  R0 主文档无 JS 运行时错误（A10）
+PASS  A11-1 ESC：deck 关
+PASS  A11-2 activeId 不变（alpha.md）  — active=file:/tmp/canvas-stack-fixture/alpha.md
+PASS  A11-3 根回满幅
+PASS  R0 主文档无 JS 运行时错误（A11）
+PASS  A12-1 点 canvas（前景位）= 收回卡组  — open=false
+PASS  A12-2 内容不变  — n=10 active=file:/tmp/canvas-stack-fixture/alpha.md
+PASS  R0 主文档无 JS 运行时错误（A12）
+PASS  A13-1 窄档 340：后卡 = 85% 基 × 近档缩小（±4%）  — area=340 card=270
+PASS  A13-2 露边 27px 仍在（v2 档；④②透视补偿后投影顶=设计顶，±4px）  — peek=27.3
+PASS  A13-3 浮钮仍固定 40px 原位（不缩放不移位；布局盒口径；回退批 2026-10-22 钉区回顶右 top10）  — 40x40 dy=10.0 dr=12.0
+PASS  A13-4 窄档帮助条退役（deck-foot 零命中）
+PASS  R0 主文档无 JS 运行时错误（A13）
+PASS  A14-1 暗档 --card-shadow token 镜像（精修② 0.20/0.24/0.26）  — 0 1px 2px rgba(0, 0, 0, 0.20),
+      0 8px 22px rgba(0, 0, 0, 0.24),
+      0 20px 48px rgba(0, 0, 0, 0.26)
+PASS  A14-2 暗档轮换正常（pos→1）  — pos=1.000
+PASS  A14-3 prefers-reduced-motion 面板过渡 0.01s  — 0.01s
+PASS  A15-1 连滚整圈回到 canvas 前景（pos=M、frontIdx=0）  — pos=10.000 M=10 front=alpha.md
+PASS  A15-2 面板回前景位（alpha 1、over 落下、inline 清空）
+PASS  A15-3 首尾无缝（d₀=0）
+PASS  R0 主文档无 JS 运行时错误（A15）
+PASS  F1-1 rAF 趋近系数 10/7 → 12/9  — scrub=12 spread=9
+PASS  F1-2 翻落曲线收幅 30/40/6/30 → 26/32/5/24  — drop=26 arc=32 tilt=5 tiltArc=24
+PASS  F1-3 FX/morph 时长统一 0.28s 档（fly 0.30 / ghost 0.28 / spring 0.22 / fling 0.24）  — fly=0.3 ghost=0.28 spring=0.22 fling=0.24
+PASS  F1-4 面板 morph 过渡 0.28s（CSS 单一来源 --deck-morph-duration）  — 0.32s, 0.32s, 0.28s, 0.28s
+PASS  R0 主文档无 JS 运行时错误（F1）
+PASS  F2-1 light --card-shadow 三档（0.04/0.07/0.08）且每档 < 样张值  — 0 1px 2px rgba(16, 20, 30, 0.04),
+    0 6px 18px rgba(16, 20, 30, 0.07),
+    0 18px 44px rgba(16, 20, 30, 0.08)
+PASS  F2-2 .stacked 投影锚 UI 批⑤ 羽化前景档（v2 环境晕 0.02 + 0.05/0.10/0.12）  — 0.25,0.02,0.05,0.1,0.12
+PASS  F2-3 卡描边退役 + 投影羽化（边框透明、最大模糊 ≥90px、shade 为纵向渐变）  — {"borderColor":"rgba(0, 0, 0, 0)","maxBlur":110,"shadeBg":"linear-gradient(rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0.28) 34%, rgba(0, 0, 0, 0.14) 68%, rgba(0, 0, 0, 0.22))"}
+PASS  F2-4 三版 look 前景档阴影互异（作者挑版通道 · setLook 热切换）  — {"v1":"0.25,0.016,0.035,0.075,0.086","v2":"0.25,0.02,0.05,0.1,0.12","v3":"0.25,0.024,0.067,0.13,0.16"}
+PASS  R0 主文档无 JS 运行时错误（F2）
+PASS  A16-1 换面后常态头居中标题=bravo.md  — title=bravo.md
+PASS  R0 主文档无 JS 运行时错误（A16）
+PASS  A17-0 竖拖常量单一来源（gain 1/160 · 惯性 90 冲程/±80px 钳 · 轴锁 8px）  — {"scrubApproach":12,"spreadApproach":9,"fallDrop":26,"fallArc":32,"fallTilt":5,"fallTiltArc":24,"flyDur":0.3,"ghostDur":0.28,"springDur":0.22,"flingDur":0.24,"wheelGain":0.004166666666666667,"dragGain":0.00625,"dragInertia":90,"dragInertiaMax":80,"axisLockPx":8,"depthScaleNear":0.055,"depthScaleFar":0.018,"depthZ":26,"fallShrink":0.1,"perspective":1150,"originYK":0.1}
+PASS  A17-0b 提示行退役（UI 批 ①：竖拖换卡交互自学，不再有文案行）  — hint="" foot=false
+PASS  A17-1 拖动中主导轴锁 y（面板面手势上报）  — {"face":"panel","axis":"y","dx":0,"dy":260}
+PASS  A17-2 跟手：target 随 dy 增量增长（>0.5 卡 · 未松手未换签）  — target=1.625 active=file:/tmp/canvas-stack-fixture/alpha.md
+PASS  A17-3 竖拖换卡：pos 贴靠 2、charlie 到前景（惯性钳半卡内，落点确定）  — pos=2.000 front=charlie.md
+PASS  A17-4 是换卡不是关闭（页签数不变 · deck 保持 · 无面板 FX）  — n=10/10 open=true faceFx=null
+PASS  R0 主文档无 JS 运行时错误（A17 鼠标）
+PASS  A17-5 触屏竖拖：touch 指针走同一手势通路（轴锁 y · 跟手）  — {"g":{"face":"panel","axis":"y","dx":0,"dy":260},"target":1.625}
+PASS  A17-6 触屏竖拖换卡（pos 贴靠 2 · charlie 前景 · 不关闭）  — pos=2.000 front=charlie.md n=10
+PASS  R0 主文档无 JS 运行时错误（A17 触屏）
+PASS  A18-1 环卡面纵拖：手势上报 face=card · 轴锁 y  — {"face":"card","axis":"y","dx":0,"dy":260}
+PASS  A18-2 环卡竖拖换卡：pos 贴靠 3、delta 到前景  — pos=3.000 front=delta.md
+PASS  A18-3 纵向主导不触发关闭（页签数不变 · delta 仍在 · 无面板 FX）  — n=10/10 tabs=插件,alpha.md,bravo.md,charlie.md,delta.md,echo.md,foxtrot.md,golf.md,hotel.md,india.md
+PASS  A18-4 横向主导仍是划走关闭：delta 被关（−1）  — n=9 (base 10)
+PASS  A18-5 环流就地收敛保相位：echo 顶上（pos=3）、active 不变  — pos=3.000 front=echo.md active=file:/tmp/canvas-stack-fixture/alpha.md
+PASS  R0 主文档无 JS 运行时错误（A18）
+PASS  A19-1 对角 dy 主导：锁 y（|dx|>|dy| 才横）  — {"face":"panel","axis":"y","dx":0,"dy":260}
+PASS  A19-2 dy 主导对角 = 换卡不关闭（charlie 前景 · 页签数不变）  — pos=2.000 front=charlie.md n=10
+PASS  A19-3 对角 dx 主导：锁 x  — {"face":"panel","axis":"x","dx":312,"dy":0}
+PASS  A19-4 dx 主导对角 = 划走关闭（alpha 被关 · 邻位 bravo 顶上）  — n=9 (base 10) active=file:/tmp/canvas-stack-fixture/bravo.md
+PASS  A19-5 关闭后 deck 保持、新 canvas 前景位（环重置 pos=0）  — open=true front=bravo.md
+PASS  A19-6 死区内不锁轴不驱动（axis null · target 未动）  — {"g":{"face":"panel","axis":null,"dx":0,"dy":0},"target":0}
+PASS  A19-7 死区松手 = 点击语义（deck 收回），换卡/关闭均未发生  — open=false n=9
+PASS  R0 主文档无 JS 运行时错误（A19）
+PASS  A20-1 快速三连点每次计数（终态=开：开→收→排队补发）  — open=true M=10 queued=false
+PASS  A20-2 排队已清空（补发后 fabQueued=false）
+PASS  A20-3 连点后第 4 点照常翻转（终态=关，不粘）
+PASS  A20-4 收场清重入锁（gesture=null · deck 关）  — gesture=null open=false
+PASS  A20-5 泄漏修复后 fab 照常响应（deck 重开）  — open=true M=10
+PASS  R0 主文档无 JS 运行时错误（A20）
+PASS  A21-0 动效层常量单一来源（近档 0.055 / 深档 0.018 / 视差 z 26 / 翻落缩 0.10 / 透视 1150·origin 0.10）  — {"scrubApproach":12,"spreadApproach":9,"fallDrop":26,"fallArc":32,"fallTilt":5,"fallTiltArc":24,"flyDur":0.3,"ghostDur":0.28,"springDur":0.22,"flingDur":0.24,"wheelGain":0.004166666666666667,"dragGain":0.00625,"dragInertia":90,"dragInertiaMax":80,"axisLockPx":8,"depthScaleNear":0.055,"depthScaleFar":0.018,"depthZ":26,"fallShrink":0.1,"perspective":1150,"originYK":0.1}
+PASS  A21-1 前景位基姿不变（d=0 卡与缩放态 canvas 同位同宽——交接窗换手无跳变）  — d1/base=0.932
+PASS  A21-2 近大远小连续（d2 < d1 < 基卡，单调坡道）  — d1=501 d2=485 base=537
+PASS  A21-3 透明度渐变仍在（深处卡 op 随深衰减）  — op1=1 op2=0.88
+PASS  A21-4 翻落支缩小（d=-1 卡宽 < 基卡 × 0.94）  — fallen=486 base=537
+PASS  R0 主文档无 JS 运行时错误（A21）
+PASS  A22-1 全环真容补齐（md 族全克隆零 pending；面板族 mock 回落）  — {"hasSnap":9,"cards":10,"pending":0,"mock":1}
+PASS  A22-2 活性窗 = 可视卡 ±2（环 ≥9 → 窗内 5）  — {"cached":9,"live":9,"pending":0,"mock":1,"liveWindow":5}
+PASS  A22-3 源滚动镜像（缩略 translateY 随 scrollTop 同步）  — translateY(-168.3px) scale(0.8089)
+PASS  A22-4 源变更防抖重截（近卡实时映射）
+PASS  R0 主文档无 JS 运行时错误（A22）
+
+canvas-stack: 144 PASS / 0 FAIL
+stack-exit=0
+════ 2/6 canvas-html-toolbar-overlap.spec.mjs ════
+PASS  T-normal O-chrome 四件 chrome 元素齐  — source=40x40 refsel=40x40 find=40x40 bar=140x36
+PASS  T-normal O-nolap 两两矩形零交叠  — clean
+PASS  T-normal O-gap zoom bar → find 圆钮缝 ≥8px（同行水平/异行垂直，48px 槽距节奏）  — gap=8.0px row=same
+PASS  T-normal O-inside zoom bar 完整落在 pane 内  — bar=[1241,927,140x36] pane=630x964
+PASS  T-normal O-hit Fit 钮中心命中 zoom bar  — hit=zoom-bar
+PASS  T-normal O-hit find 圆钮中心命中自身  — hit=find
+PASS  R0 主文档无 JS 运行时错误（normal）
+PASS  T-narrow320 O-chrome 四件 chrome 元素齐  — source=40x40 refsel=40x40 find=40x40 bar=140x36
+PASS  T-narrow320 O-nolap 两两矩形零交叠  — clean
+PASS  T-narrow320 O-gap zoom bar → find 圆钮缝 ≥8px（同行水平/异行垂直，48px 槽距节奏）  — gap=8.0px row=stacked
+PASS  T-narrow320 O-inside zoom bar 完整落在 pane 内  — bar=[1385,881,140x36] pane=318x964
+PASS  T-narrow320 O-hit Fit 钮中心命中 zoom bar  — hit=zoom-bar
+PASS  T-narrow320 O-hit find 圆钮中心命中自身  — hit=find
+PASS  R0 主文档无 JS 运行时错误（narrow320）
+PASS  T-overlay O-chrome 四件 chrome 元素齐  — source=40x40 refsel=40x40 find=40x40 bar=140x36
+PASS  T-overlay O-nolap 两两矩形零交叠  — clean
+PASS  T-overlay O-gap zoom bar → find 圆钮缝 ≥8px（同行水平/异行垂直，48px 槽距节奏）  — gap=8.0px row=stacked
+PASS  T-overlay O-inside zoom bar 完整落在 pane 内  — bar=[645,581,140x36] pane=318x604
+PASS  T-overlay O-hit Fit 钮中心命中 zoom bar  — hit=zoom-bar
+PASS  T-overlay O-hit find 圆钮中心命中自身  — hit=find
+PASS  T-overlay O-mode overlay 形态=true  — overlay=true
+PASS  R0 主文档无 JS 运行时错误（overlay）
+
+═══ canvas-html-toolbar-overlap: 22 PASS / 0 FAIL ═══
+toolbar-exit=0
+════ 3/6 canvas-cardhead-capsule.spec.mjs ════
+PASS  D0 前置：双文件页签开，bravo 活动  — n=2 active=file:/tmp/ch-fixture/bravo.md
+PASS  CC0-1 胶囊定位：absolute + top 10px + 圆角 999px  — absolute/10px/999px
+PASS  CC0-2 毛玻璃：backdrop blur 在挂 + .scroll-under-glass 类在挂  — blur(10px) saturate(1.2)
+PASS  CC0-3 fit-content 胶囊：宽 < 面板宽 + 左缘锚定（移位批 2026-10-22：居中 → 居左，左缝 ≈14px 且小于右缝）  — w=137 slide=550 left=14.0 right=398.8
+PASS  CC0-4 内容全高：#canvas-content 顶贴 slide 顶（不再为 header 预留）  — content.top=17.0 slide.top=17.0
+PASS  CC0-5 穿底结构：内容 pane 顶 ≤ 胶囊顶（文字可进胶囊区）  — pane.top=17.0 hdr.top=27.0
+PASS  CC0-6 裙边在挂：::after 高 24px + pointer-events none（穿底渐隐载体）  — h=24px pe=none
+PASS  CC0-7 手势面分区：胶囊 touch-action:none（不劫持内容滚动）  — none
+PASS  CC1-1 按住 = 按压形（.is-pressed + scale<1）  — cls=true scale=0.973
+PASS  CC1-2 松手即清 + 点击界内零动作（页数/激活不变）
+PASS  CC2-1 下滑 70px 释放 = 下一张（ring 邻位 +1，deck dy>0 同向）  — active=file:/tmp/ch-fixture/alpha.md expect=file:/tmp/ch-fixture/alpha.md
+PASS  CC2-2 上滑 70px 释放 = 上一张（ring 环绕 −1）  — active=file:/tmp/ch-fixture/bravo.md expect=file:/tmp/ch-fixture/bravo.md
+PASS  CC5-0 前置：bravo 长文可滚（scroller scrollTop=40）  — scrollTop=40
+PASS  CC5-1 内容区滚轮正常滚 pane（零劫持，scrollTop 40→>40）  — scrollTop=200
+PASS  CC5-2 胶囊手势零滚动劫持：次阈竖拖后激活不变 + pane scrollTop 不变  — active=file:/tmp/ch-fixture/bravo.md scroll=200 (was 200)
+PASS  CC4-1 胶囊右键 = 既有引用菜单（.canvas-tab-context-menu + 引用当前页）  — btn=1
+PASS  CC4-2 引用当前页点击 → #attachment-preview 出引用 chip（消息引用机制形态复用）  — children=1
+PASS  CC4-3 前置：deck 开  — open=true M=2
+PASS  CC4-4 deck 态胶囊右键：单菜单 + 三项（引用当前页/关闭/关闭其他，stopPropagation 不双弹）  — menus=1 text=引用当前页/选区关闭关闭其他
+PASS  CC3-1 左滑 90px 释放 = 关卡（closeTab 共核，tabCount −1 且落邻位）  — n=1 (was 2) active=file:/tmp/ch-fixture/alpha.md
+PASS  R0 主文档零 JS 错误（桌面腿）
+PASS  CC6-0 前置：手机卡片层 + 卡头胶囊（通栏变体 + touch-action none）  — title=bravo.md touch=none r=999px
+PASS  CC6-1 直滑下滑 = 下一张文档卡（无按压前置，bravo→alpha）  — title=alpha.md
+PASS  CC6-2 直滑上滑 = 上一张（alpha→bravo）  — title=bravo.md
+PASS  CC6-3 直滑左 = 关卡（tabCount 2→1）  — n=1
+PASS  CC6-4 长按触感 + 引用钮浮出（is-longpress + .mobile-card-ref-btn）  — feel=true scale=0.970 btn=true(引用)
+PASS  CC6-5 引用钮点击 → 引用 chip 进 #attachment-preview + 钮收 + 触感清  — chip=1 btnGone=true cleared=true
+PASS  R1 主文档零 JS 错误（手机腿）
+
+canvas-cardhead-capsule: 28 PASS / 0 FAIL
+capsule-exit=0
+════ 4/6 uifix-quad.spec.mjs ════
+PASS  PANEL-0 会话头头像入口在位
+PASS  PANEL-1 头像点击开面板（visible · display:flex）  — {"exists":true,"hidden":false,"display":"flex","visible":true}
+PASS  PANEL-2 X 点击关闭（hidden + display:none + offsetWidth 0 —— 修复前 display 恒 flex「关不掉」）  — {"exists":true,"hidden":true,"display":"none","visible":false}
+PASS  PANEL-3 Esc 关闭（同链路）  — {"exists":true,"hidden":true,"display":"none","visible":false}
+PASS  PANEL-4 开关往返零 JS 错误
+PASS  FAB-1 入口钮存在且可见（canvas-open 态 display:flex）  — {"exists":true,"display":"flex","w":40,"h":40,"pinnedDy":10,"pinnedDr":12,"hitOk":true,"notCanvasChild":true,"disabled":false,"canvasOpen":true}
+PASS  FAB-2 钉区 40×40 · top10/right12 · 命中测试直达  — {"exists":true,"display":"flex","w":40,"h":40,"pinnedDy":10,"pinnedDr":12,"hitOk":true,"notCanvasChild":true,"disabled":false,"canvasOpen":true}
+PASS  FAB-3 有页签时入口可用（disabled=false · body 级非 canvas 子树）  — disabled=false
+PASS  FAB-4 点击入口 = 进入叠卡（deck.open · 环=页签数）  — open=true M=4
+PASS  FAB-5 再点退出（deck 关 · 页签保留）  — open=false n=4
+PASS  FAB-6 入口往返零 JS 错误
+PASS  LOOK-1 默认档 v2（peek 27/9）  — {"peek1":27,"peek2":9,"wheelNotch":2.2}
+PASS  LOOK-2 三版露边档位 22/27/34（v2 默认 + setLook 热切换）  — {"v1":22,"v3":34}
+PASS  LOOK-3 三版前景档阴影互异（作者挑版通道）  — v1/v2/v3 shadow tokens distinct
+PASS  SNAP-1 markdown 页签快照 = 真内容克隆（.canvas-md-viewer 在场 + 正文命中）  — alpha.md
+快照验收正文段落 · quad batch
+
+PASS  SNAP-2 iframe 族页签回落 mock（无克隆）  — mock=2
+PASS  SNAP-3 快照分帧补齐零 pending  — pending=0
+PASS  SNAP-4 零 JS 错误
+PASS  WHEEL-1 触控板连续小 delta 直通 scrub（120px ≈ 0.5 卡，未贴靠连续语义）  — target=0.500
+PASS  WHEEL-2 叠卡面内捕获：页面滚动不被劫持（#chat scrollTop 不变）  — 0 → 0
+PASS  WHEEL-3 叠卡面外双指 = 不驱动擦洗（target 不动）  — 0.500 → 0.500
+PASS  WHEEL-4 鼠标格近一卡（100px × 档位增益 ≈ 0.9 卡）  — pos=0.917
+PASS  WHEEL-5 事件流滑行动量（静默后位置继续漂移）  — pos 1.385 → 1.434
+PASS  WHEEL-6 滚轮全通路零 JS 错误
+PASS  HINT-1 面板 + 卡组 + 脚条内「滑动关闭」文案零命中  — {"panel":0,"card":0}
+PASS  XCLOSE-1 深处卡 × 点击 = 该页签关闭（deck 保持 · 相位保持 pos 不变）  — n=3/4 pos=1.040 (was 1.040)
+PASS  XCLOSE-2 环重建后 × 钮补齐  — x=3 M=3
+PASS  HDR-1 中心列 = 头像 + 名字 + 记忆钮（其余信息退场）  — ["agent-avatar-btn","session-name","memory-btn"]
+PASS  HDR-2 中簇横排（头像+名字同列）
+PASS  HDR-3 头像 28×28 紧凑（原 40 纵排顶 header）  — 28x28
+PASS  HDR-4 header 高度恒定 50px（命名态 · 高度质量闸）  — h=50
+PASS  HDR-5 命名经会话头可见（「星阑」）  — name=星阑
+PASS  HDR-6 header 通路零 JS 错误
+PASS  PANEL-0 会话头头像入口在位
+PASS  PANEL-1 头像点击开面板（visible · display:flex）  — {"exists":true,"hidden":false,"display":"flex","visible":true}
+PASS  PANEL-2 X 点击关闭（hidden + display:none + offsetWidth 0 —— 修复前 display 恒 flex「关不掉」）  — {"exists":true,"hidden":true,"display":"none","visible":false}
+PASS  PANEL-3 Esc 关闭（同链路）  — {"exists":true,"hidden":true,"display":"none","visible":false}
+PASS  PANEL-4 开关往返零 JS 错误
+PASS  FAB-1 入口钮存在且可见（canvas-open 态 display:flex）  — {"exists":true,"display":"flex","w":40,"h":40,"pinnedDy":10,"pinnedDr":12,"hitOk":true,"notCanvasChild":true,"disabled":false,"canvasOpen":true}
+PASS  FAB-2 钉区 40×40 · top10/right12 · 命中测试直达  — {"exists":true,"display":"flex","w":40,"h":40,"pinnedDy":10,"pinnedDr":12,"hitOk":true,"notCanvasChild":true,"disabled":false,"canvasOpen":true}
+PASS  FAB-3 有页签时入口可用（disabled=false · body 级非 canvas 子树）  — disabled=false
+PASS  FAB-4 点击入口 = 进入叠卡（deck.open · 环=页签数）  — open=true M=4
+PASS  FAB-5 再点退出（deck 关 · 页签保留）  — open=false n=4
+PASS  FAB-6 入口往返零 JS 错误
+PASS  LOOK-1 默认档 v2（peek 27/9）  — {"peek1":27,"peek2":9,"wheelNotch":2.2}
+PASS  LOOK-2 三版露边档位 22/27/34（v2 默认 + setLook 热切换）  — {"v1":22,"v3":34}
+PASS  LOOK-3 三版前景档阴影互异（作者挑版通道）  — v1/v2/v3 shadow tokens distinct
+PASS  SNAP-1 markdown 页签快照 = 真内容克隆（.canvas-md-viewer 在场 + 正文命中）  — alpha.md
+快照验收正文段落 · quad batch
+
+PASS  SNAP-2 iframe 族页签回落 mock（无克隆）  — mock=2
+PASS  SNAP-3 快照分帧补齐零 pending  — pending=0
+PASS  SNAP-4 零 JS 错误
+PASS  WHEEL-1 触控板连续小 delta 直通 scrub（120px ≈ 0.5 卡，未贴靠连续语义）  — target=0.500
+PASS  WHEEL-2 叠卡面内捕获：页面滚动不被劫持（#chat scrollTop 不变）  — 0 → 0
+PASS  WHEEL-3 叠卡面外双指 = 不驱动擦洗（target 不动）  — 0.500 → 0.500
+PASS  WHEEL-4 鼠标格近一卡（100px × 档位增益 ≈ 0.9 卡）  — pos=0.917
+PASS  WHEEL-5 事件流滑行动量（静默后位置继续漂移）  — pos 1.385 → 1.434
+PASS  WHEEL-6 滚轮全通路零 JS 错误
+PASS  HINT-1 面板 + 卡组 + 脚条内「滑动关闭」文案零命中  — {"panel":0,"card":0}
+PASS  XCLOSE-1 深处卡 × 点击 = 该页签关闭（deck 保持 · 相位保持 pos 不变）  — n=3/4 pos=1.040 (was 1.040)
+PASS  XCLOSE-2 环重建后 × 钮补齐  — x=3 M=3
+PASS  HDR-1 中心列 = 头像 + 名字 + 记忆钮（其余信息退场）  — ["agent-avatar-btn","session-name","memory-btn"]
+PASS  HDR-2 中簇横排（头像+名字同列）
+PASS  HDR-3 头像 28×28 紧凑（原 40 纵排顶 header）  — 28x28
+PASS  HDR-4 header 高度恒定 50px（命名态 · 高度质量闸）  — h=50
+PASS  HDR-5 命名经会话头可见（「星阑」）  — name=星阑
+PASS  HDR-6 header 通路零 JS 错误
+
+uifix-quad: 33 PASS / 0 FAIL
+uifix-exit=0
+════ 5/6 imgviewer-controls-shots.mjs ════
+PASS  dark G1 胶囊居左（左缘落面板左侧 1/3）  — dx=15 panelW=632
+PASS  dark G2 缩放条底右（底缘距面板底 <40px）  — db=27 dr=65
+PASS  dark G3 fab 可见且顶右（回退批 2026-10-22：移位批右下 → 迁回顶右原位）  — display=flex dt=10
+PASS  dark G4 三件两两零交叠  — header∩zoom=0 header∩fab=0 zoom∩fab=0
+PASS  dark R0 无 JS 运行时错误
+PASS  light G1 胶囊居左（左缘落面板左侧 1/3）  — dx=15 panelW=632
+PASS  light G2 缩放条底右（底缘距面板底 <40px）  — db=27 dr=65
+PASS  light G3 fab 可见且顶右（回退批 2026-10-22：移位批右下 → 迁回顶右原位）  — display=flex dt=10
+PASS  light G4 三件两两零交叠  — header∩zoom=0 header∩fab=0 zoom∩fab=0
+PASS  light R0 无 JS 运行时错误
+
+═══ imgviewer-controls-shots: 10 PASS / 0 FAIL ═══
+imgviewer-exit=0
+════ 6/6 canvas-stack-ui5-shots.mjs（叠卡亮暗截图）════
+CONSOLE: Failed to load resource: the server responded with a status of 404 (Not Found)
+CONSOLE: Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.
+CONSOLE: Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.
+CONSOLE: Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.
+CONSOLE: Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.
+CONSOLE: Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.
+CONSOLE: Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.
+CONSOLE: Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.
+CONSOLE: Blocked script execution in 'about:srcdoc' because the document's frame is sandboxed and the 'allow-scripts' permission is not set.
+desktop-dark errors: none
+CONSOLE: Failed to load resource: the server responded with a status of 404 (Not Found)
+desktop-light errors: none
+CONSOLE: Failed to load resource: the server responded with a status of 404 (Not Found)
+w430 deck-fab hidden(移动层退役): true errors: none
+CONSOLE: Failed to load resource: the server responded with a status of 404 (Not Found)
+w375 deck-fab hidden(移动层退役): true errors: none
+shots → /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-f7d4c37a/evidence/20261022_133900_deckfab-rollback__delegate-nebflow-f7d4c37a/shots/03-deck-snapshots
+ui5shots-exit=0
+════ ALL DONE ════
