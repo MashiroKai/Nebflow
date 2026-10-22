@@ -2500,15 +2500,23 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 .wiki-canvas.grabbing { cursor: grabbing; }
 .wiki-canvas.hovering { cursor: pointer; }
 
-/* Hover tooltip (control surface, not a control): card material, pane-local
-   (position:absolute inside the relative+hidden pane — can never surface over
-   the conversation UI). */
+/* Hover tooltip (control surface, not a control): frosted card material —
+   the same --glass-* / --frost-shadow single source as the left-panel search
+   box and chips (2026-10-22 全站一套毛玻璃 author order; 段落级引用批 moves the
+   tip onto it). Pane-local (position:absolute inside the relative+hidden pane
+   — can never surface over the conversation UI); pointer-events:none keeps
+   the canvas live underneath. Light/dark both ride prefers-color-scheme via
+   the sapphire tokens + the --wg-* pane palette. */
 .wg-tip {
   position: absolute; z-index: 30; display: none; max-width: 320px;
-  background: var(--wg-card); border: 1px solid var(--wg-border);
+  background: var(--glass-bg, var(--wg-card));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.15);
+  border: 1px solid var(--glass-border, var(--wg-border));
   border-radius: 12px; padding: 10px 14px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.10);
+  box-shadow: var(--frost-shadow, 0 8px 28px rgba(0, 0, 0, 0.10));
   pointer-events: none;
+  color: var(--wg-foreground);
 }
 .wg-tip .tt { font-weight: 500; font-size: 13px; margin-bottom: 3px; word-break: break-all; }
 .wg-tip .ts {
@@ -2516,6 +2524,17 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .wg-tip .td { color: var(--wg-muted); font-size: 11px; margin-top: 5px; font-variant-numeric: tabular-nums; }
+
+/* Paragraph-snapshot mode (段落级引用批): the § title + the target PARAGRAPH,
+   not the whole doc — a slightly wider window with a 6-line clamp. */
+.wg-tip.para { max-width: 360px; }
+.wg-tip.para .tt { color: var(--wg-foreground); }
+.wg-tip.para .ts {
+  -webkit-line-clamp: 6;
+  line-height: 1.55;
+  margin-bottom: 2px;
+}
+.wg-tip.para .td { color: var(--color-frame-text-dim, var(--wg-muted)); }
 
 /* ── Compact in-pane bar — MOBILE LAYER ONLY. The phone shell hosts the pane
    full-page and has no left column, so search/chips/stats ride inside the
@@ -2638,6 +2657,10 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
 .wg-detail-body ul { list-style: none; margin: 0; padding: 0; }
 .wg-detail-body li { margin: 3px 0; }
 .wg-detail-body li.ghost { color: var(--color-frame-text-dim); }
+.wg-detail-body .ref-anchor {
+  color: var(--color-frame-text-dim); font-size: 10.5px;
+  margin-left: 6px; font-variant-numeric: tabular-nums; word-break: break-all;
+}
 .wg-detail-body .ref {
   border: 0; background: transparent; padding: 0; font: inherit; font-size: 12px; cursor: pointer;
   color: var(--color-frame-text); text-align: left; display: block; width: 100%;

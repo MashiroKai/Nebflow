@@ -72,6 +72,9 @@ const MOBILE_MQ = '(max-width: 768px)';
  * @property {string} focusId
  * @property {Map<string, WgNode>} byId
  * @property {WgNode | null} hover
+ * @property {{a: WgNode, b: WgNode, anchor: string | null} | null} hoverEdge
+ *             — paragraph-level reference under the cursor (段落级引用批):
+ *               hover shows the TARGET paragraph snapshot, click jumps.
  * @property {WgNode | null} selected
  * @property {number} vx
  * @property {number} vy
@@ -217,7 +220,7 @@ async function renderInto(pane) {
            side: ensureSidePanel(), panebar,
            data: null, sim: null,
            raf: 0, focusId: pendingFocus || '', byId: new Map(),
-           hover: null, selected: null,
+           hover: null, hoverEdge: null, selected: null,
            vx: 0, vy: 0, scale: 1, zoomTarget: 1, zoomAnchor: null,
            dragging: null, panning: false, lastPointer: null,
            resizeObs: null, W: 0, H: 0, colors: null,
@@ -518,19 +521,39 @@ function rebuildSim() {
     })));
   const byId = new Map(nodes.map(n => [n.id, n]));
 
-  // Deduplicated reference edges between real nodes.
+  // Deduplicated reference edges between real nodes. The first non-null
+  // anchor wins the dedupe (段落级引用批: the anchor rides the edge — hover
+  // resolves it against the target node's embedded `paragraphs` index, click
+  // jumps to that paragraph with highlight).
   const seen = new Set();
+  const edgeByKey = new Map();
   const edges = [];
   for (const e of data.edges || []) {
     const a = byId.get(e.from), b = byId.get(e.to);
     if (!a || !b || a === b) continue;
     const key = e.from + '|' + e.to;
-    if (seen.has(key)) continue;
+    if (seen.has(key)) {
+      const ex = edgeByKey.get(key);
+      if (ex && !ex.anchor && e.anchor) ex.anchor = e.anchor;
+      continue;
+    }
     seen.add(key);
-    edges.push({ a, b });
+    const edge = { a, b, anchor: e.anchor || null };
+    edgeByKey.set(key, edge);
+    edges.push(edge);
   }
   for (const e of edges) { e.a.out.push(e.b); e.b.inc.push(e.a); }
   for (const n of nodes) n.degree = n.out.length + n.inc.length;
+  // Paragraph anchors per neighbor (detail card 词条 chip — informational).
+  for (const n of nodes) {
+    n.outAnchors = new Map(); n.inAnchors = new Map();
+  }
+  for (const e of edges) {
+    if (e.anchor) {
+      if (!e.a.outAnchors.has(e.b.id)) e.a.outAnchors.set(e.b.id, e.anchor);
+      if (!e.b.inAnchors.has(e.a.id)) e.b.inAnchors.set(e.a.id, e.anchor);
+    }
+  }
 
   // Unresolved references (edge targets that are stubs) — counted, listed in
   // the broken section, never drawn. Project-level stubs surface as vault
@@ -574,6 +597,7 @@ function rebuildSim() {
   view.zoomAnchor = null;
   view.vx = 0; view.vy = 0;
   view.hover = null;
+  view.hoverEdge = null;
   hideTip();
 
   // Preserve selection across refetches by id (the old node objects die here).
@@ -757,7 +781,8 @@ function startLoop() {
     // Idle stop: the layout settled, no zoom chase pending and nobody is
     // interacting — zero steady-state CPU (design §4). Any pointer/zoom/filter
     // interaction restarts it.
-    if (view.sim.alpha < 0.02 && !chasing && !view.hover && !view.dragging && !view.panning) {
+    if (view.sim.alpha < 0.02 && !chasing && !view.hover && !view.hoverEdge &&
+        !view.dragging && !view.panning) {
       view.raf = 0;
       return;
     }
@@ -782,6 +807,7 @@ function wake(minAlpha = 0.3) {
 function repaintOnActivate() {
   if (!view || !view.canvas || !view.canvas.isConnected) return;
   view.hover = null;
+  view.hoverEdge = null;
   hideTip();
   requestAnimationFrame(() => {
     if (!view || !view.canvas || !view.canvas.isConnected || view.raf) return;
@@ -833,23 +859,43 @@ function draw() {
   ctx.scale(view.scale, view.scale);
   ctx.translate(-W / 2, -H / 2);
 
-  const focus = view.hover || view.selected;
-  const near = focus ? neighborhood(focus) : null;
+  // Focus set: hovered/selected node's neighborhood, or both endpoints of a
+  // hovered reference edge (段落级引用批).
+  const nodeFocus = view.hover || view.selected;
+  let near = null;
+  if (view.hoverEdge) {
+    near = neighborhood(view.hoverEdge.a);
+    near.add(view.hoverEdge.b);
+  } else if (nodeFocus) {
+    near = neighborhood(nodeFocus);
+  }
   const pass = filterPass();
   const labelCount = labelCountAt(view.scale);
 
   // Edges — 1px straight muted lines (design §4: no bows, no accent hue);
-  // the focused neighborhood stays lit, everything else recedes.
+  // the focused neighborhood stays lit, everything else recedes. Anchored
+  // edges (段落级引用) carry a 2.4px graphite midpoint dot — the visual cue
+  // that this reference points at a paragraph, and what to hover.
   for (const e of sim.edges) {
-    const hl = near && (e.a === focus || e.b === focus);
+    const isHover = view.hoverEdge && e === view.hoverEdge;
+    const hl = (near && (e.a === nodeFocus || e.b === nodeFocus)) ||
+      (isHover || (view.hoverEdge && (e.a === view.hoverEdge.a || e.b === view.hoverEdge.b)));
     const dim = !pass(e.a) || !pass(e.b) || (near && !(near.has(e.a) && near.has(e.b)));
     ctx.strokeStyle = C.muted;
-    ctx.globalAlpha = hl ? 0.85 : (dim ? 0.05 : 0.22);
-    ctx.lineWidth = 1;
+    ctx.globalAlpha = isHover ? 0.95 : (hl ? 0.85 : (dim ? 0.05 : 0.22));
+    ctx.lineWidth = isHover ? 1.6 : 1;
     ctx.beginPath();
     ctx.moveTo(e.a.x, e.a.y);
     ctx.lineTo(e.b.x, e.b.y);
     ctx.stroke();
+    if (e.anchor) {
+      const mx = (e.a.x + e.b.x) / 2, my = (e.a.y + e.b.y) / 2;
+      ctx.fillStyle = C.muted;
+      ctx.globalAlpha = isHover ? 1 : (hl ? 0.9 : (dim ? 0.08 : 0.55));
+      ctx.beginPath();
+      ctx.arc(mx, my, isHover ? 3 : 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   // Nodes — solid graphite dots; degree → radius and ink depth (design §4).
@@ -877,7 +923,8 @@ function draw() {
     // hover/selection only.
     let labelAlpha = 0;
     if (!dim) {
-      const isFocusNode = n === view.hover || n === view.selected;
+      const isFocusNode = n === view.hover || n === view.selected ||
+      (view.hoverEdge && (n === view.hoverEdge.a || n === view.hoverEdge.b));
       if (isFocusNode) labelAlpha = 1;
       else if (near && near.has(n)) labelAlpha = 0.62;
       else if (view.filter || view.dirFilter) labelAlpha = 0.62;
@@ -913,6 +960,30 @@ function pick(px, py) {
   for (const n of view.sim.nodes) {
     const d = Math.hypot(n.x - p.x, n.y - p.y);
     if (d < radiusOf(n) + 5 && d < bestD) { best = n; bestD = d; }
+  }
+  return best;
+}
+
+/** Squared distance from point p to segment ab (world coords). */
+function distToSegment2(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) : 0;
+  const cx = ax + t * dx, cy = ay + t * dy;
+  return (px - cx) * (px - cx) + (py - cy) * (py - cy);
+}
+
+/** Nearest reference edge within 6 screen-px of the cursor (段落级引用批:
+ *  the hover surface for paragraph snapshots). Nodes always win — an edge
+ *  under a node is the node's, not the edge's. */
+function pickEdge(px, py) {
+  if (!view || !view.sim) return null;
+  const p = toWorld(px, py);
+  const tol = 6 / view.scale;
+  let best = null, bestD2 = tol * tol;
+  for (const e of view.sim.edges) {
+    const d2 = distToSegment2(p.x, p.y, e.a.x, e.a.y, e.b.x, e.b.y);
+    if (d2 < bestD2) { best = e; bestD2 = d2; }
   }
   return best;
 }
@@ -996,11 +1067,23 @@ function bindCanvas(canvasEl) {
       const hit = pick(px, py);
       if (hit !== view.hover) {
         view.hover = hit;
+        view.hoverEdge = null;
         canvasEl.classList.toggle('hovering', !!hit);
         if (!view.raf) draw();
       }
-      if (hit) showTip(hit, px, py);
-      else hideTip();
+      if (hit) { showTip(hit, px, py); }
+      else {
+        // Edge hover (段落级引用批): nearest edge within 6px shows the target
+        // paragraph snapshot — a plain node pick beats an edge pick.
+        const eh = pickEdge(px, py);
+        if (eh !== view.hoverEdge) {
+          view.hoverEdge = eh;
+          canvasEl.classList.toggle('hovering', !!eh);
+          if (!view.raf) draw();
+        }
+        if (eh) showEdgeTip(eh, px, py);
+        else hideTip();
+      }
     }
     view.lastPointer = { px, py };
   });
@@ -1018,14 +1101,23 @@ function bindCanvas(canvasEl) {
     if (!wasPanning) return;
     const rect = canvasEl.getBoundingClientRect();
     const hit = pick(e.clientX - rect.left, e.clientY - rect.top);
-    if (hit) select(hit, false);
-    else deselect();
+    if (hit) { select(hit, false); return; }
+    // Edge click (段落级引用批): anchored edge → open the target doc at that
+    // paragraph (scroll + flash highlight); plain edge → select its target.
+    const eh = pickEdge(e.clientX - rect.left, e.clientY - rect.top);
+    if (eh) {
+      if (eh.anchor) { void openDoc(eh.b.ref, eh.anchor); return; }
+      select(eh.b, true);
+      return;
+    }
+    deselect();
   };
   canvasEl.addEventListener('pointerup', endDrag);
   canvasEl.addEventListener('pointercancel', endDrag);
   canvasEl.addEventListener('pointerleave', () => {
     if (!view) return;
     view.hover = null;
+    view.hoverEdge = null;
     hideTip();
     if (!view.raf) draw();
   });
@@ -1060,6 +1152,7 @@ function showTip(node, px, py) {
   if (!view || !view.pane) return;
   const tip = /** @type {HTMLElement|null} */ (view.pane.querySelector('.wg-tip'));
   if (!tip) return;
+  tip.classList.remove('para');
   const d = node.ref;
   tip.querySelector('.tt').textContent = d.title || d.rel || '';
   tip.querySelector('.ts').textContent = d.summary
@@ -1067,12 +1160,62 @@ function showTip(node, px, py) {
   tip.querySelector('.td').textContent = dirLabel(node.dir) + ' · ' + t('wiki.tipDegree')
     .replace('{in}', String(node.inc.length))
     .replace('{out}', String(node.out.length));
+  placeTip(tip, px, py, 330, 110);
+}
+
+// ── Paragraph snapshot on reference-edge hover (段落级引用批) ────────
+// Hover data rides the EMBEDDED graph payload (node.paragraphs) — zero
+// requests, no interaction latency (design §5 primary path). An anchor the
+// index doesn't cover degrades to the doc-level summary; the
+// /api/wiki/paragraph seam (index → stand-recall → doc preview) stays a
+// server-side boundary the hover never blocks on.
+
+/** Resolve one edge's target paragraph from the embedded index. */
+function paragraphOf(targetRef, anchor) {
+  if (!anchor || !targetRef || !Array.isArray(targetRef.paragraphs)) return null;
+  return targetRef.paragraphs.find(p => p && p.anchor === anchor) || null;
+}
+
+/** Edge anchor (`#^id` | `#Heading` | `#L42`) → viewer jump payload
+ *  ({kind:'block',id} | {kind:'heading',text} | {kind:'line',line}) — the
+ *  same shape openLocalFileTab dispatches (markdown viewer scroll+flash). */
+function anchorToJumpPayload(anchor) {
+  if (!anchor) return undefined;
+  const raw = anchor.replace(/^#/, '');
+  if (raw.startsWith('^')) return { kind: 'block', id: raw.slice(1) };
+  const lm = raw.match(/^L(\d+)$/);
+  if (lm) return { kind: 'line', line: parseInt(lm[1], 10) };
+  return { kind: 'heading', text: raw };
+}
+
+function showEdgeTip(edge, px, py) {
+  if (!view || !view.pane) return;
+  const tip = /** @type {HTMLElement|null} */ (view.pane.querySelector('.wg-tip'));
+  if (!tip) return;
+  const d = edge.b.ref;
+  const para = paragraphOf(d, edge.anchor);
+  tip.classList.toggle('para', !!para);
+  if (para) {
+    tip.querySelector('.tt').textContent = '§ ' + (para.title || d.title || d.rel || '');
+    tip.querySelector('.ts').textContent = para.text || d.summary || t('wiki.noSummary');
+  } else {
+    tip.querySelector('.tt').textContent = d.title || d.rel || '';
+    tip.querySelector('.ts').textContent = d.summary || t('wiki.noSummary');
+  }
+  tip.querySelector('.td').textContent = (d.title || d.rel || '') +
+    (edge.anchor ? ' · ' + t('wiki.tipJump') : ' · ' + t('wiki.tipDegree')
+      .replace('{in}', String(edge.b.inc.length))
+      .replace('{out}', String(edge.b.out.length)));
+  placeTip(tip, px, py, 360, 150);
+}
+
+/** Shared tip placement — clamp against the MEASURED tip box so it stays
+ *  fully inside the pane. */
+function placeTip(tip, px, py, maxW, estH) {
   tip.style.display = 'block';
-  // Clamp against the MEASURED tip box so it stays fully inside the pane.
-  const maxW = 330;
   let x = px + 14, y = py + 14;
   if (x + maxW > view.pane.clientWidth) x = Math.max(4, px - maxW - 8);
-  if (y + 110 > view.pane.clientHeight) y = Math.max(4, py - 110);
+  if (y + estH > view.pane.clientHeight) y = Math.max(4, py - estH);
   tip.style.left = x + 'px';
   tip.style.top = y + 'px';
 }
@@ -1122,14 +1265,22 @@ function fillDetailCard(root, n) {
   }
   const tocHead = /** @type {HTMLElement|null} */ (toc.previousElementSibling);
   if (tocHead) tocHead.style.display = toc.children.length ? '' : 'none';
-  const refItem = (m) => {
+  const refItem = (m, anchor) => {
     const li = document.createElement('li');
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'ref';
     b.textContent = m.label;
-    b.addEventListener('click', () => select(m, true));
     li.appendChild(b);
+    if (anchor) {
+      // 段落级引用 chip（informational — click stays select, the canvas
+      // edge click is the jump surface; 设计稿 §4 表格）。
+      const s = document.createElement('span');
+      s.className = 'ref-anchor';
+      s.textContent = anchor;
+      li.appendChild(s);
+    }
+    b.addEventListener('click', () => select(m, true));
     return li;
   };
   const ghostItem = (text) => {
@@ -1140,11 +1291,11 @@ function fillDetailCard(root, n) {
   };
   const outL = card.querySelector('.out');
   outL.textContent = '';
-  n.out.slice(0, 5).forEach(m => outL.appendChild(refItem(m)));
+  n.out.slice(0, 5).forEach(m => outL.appendChild(refItem(m, n.outAnchors && n.outAnchors.get(m.id))));
   if (!n.out.length) outL.appendChild(ghostItem(t('wiki.emptyOut')));
   const inL = card.querySelector('.in');
   inL.textContent = '';
-  n.inc.slice(0, 5).forEach(m => inL.appendChild(refItem(m)));
+  n.inc.slice(0, 5).forEach(m => inL.appendChild(refItem(m, n.inAnchors && n.inAnchors.get(m.id))));
   if (!n.inc.length) inL.appendChild(ghostItem(t('wiki.emptyIn')));
   card.querySelector('.path').textContent = (d.project ? d.project + ' · ' : '') + 'docs/' + (d.rel || '');
 }
@@ -1185,12 +1336,14 @@ function deselect() {
 //    uses the same entries — workspace-open-item / openLocalFileTab) ──
 
 /** Open one graph document through the SAME channel every other file open in
- *  the product uses (workspace-open-item → canvas.js openWorkspaceItem →
- *  Canvas tab): local files ride openLocalFileTab — the entry the markdown
- *  viewer's links use — so tab dedupe/switching behave identically; peer-device
- *  docs are fetched read-only through /api/wiki/remote-doc. Fired by the
- *  detail card's 打开文档 button. @param {any} d graph node ref */
-async function openDoc(d) {
+ *  the product uses (workspace-open-item / openLocalFileTab). `anchor` (段落级
+ *  引用批) rides the payload in the viewer jump form — the markdown viewer
+ *  scrolls to the paragraph and flashes it. Fired by the detail card's 打开文档
+ *  button (anchor omitted) and by anchored-edge clicks.
+ *  @param {any} d graph node ref
+ *  @param {string} [anchor] edge-anchor form (`#^id` | `#Heading` | `#L42`) */
+async function openDoc(d, anchor) {
+  const jump = anchorToJumpPayload(anchor);
   const remote = d.device && d.device !== 'self';
   if (!remote) {
     // Local: the graph carries the project vault — rebuild the absolute path.
@@ -1201,7 +1354,7 @@ async function openDoc(d) {
     const sep = proj.vault.includes('\\') ? '\\' : '/';
     const abs = proj.vault.replace(/[\\/]+$/, '') + sep + d.rel.split('/').join(sep);
     const { openLocalFileTab } = await import('./viewers/shared.js');
-    openLocalFileTab(abs);
+    openLocalFileTab(abs, jump);
     return;
   }
   // Remote: fetch read-only content through the peer channel. Binary viewer
@@ -1215,6 +1368,7 @@ async function openDoc(d) {
       title: (d.title || d.rel) + ' · ' + d.device,
       readOnly: true,
     };
+    if (jump) detail.anchor = jump;
     if (body.binary && body.contentBase64) {
       const bin = atob(body.contentBase64);
       const bytes = new Uint8Array(bin.length);
@@ -1254,6 +1408,9 @@ export function focusWikiNode(project, rel) {
   zoomTarget: view.zoomTarget,
   vx: view.vx, vy: view.vy, W: view.W, H: view.H,
   nodes: view.sim.nodes.map(n => ({ id: n.id, x: n.x, y: n.y, degree: n.degree, rank: n.rank, dir: n.dir })),
+  edges: view.sim.edges.map(e => ({ from: e.a.id, to: e.b.id, anchor: e.anchor || null })),
+  anchoredEdges: view.sim.edges.filter(e => e.anchor).length,
+  hoverEdge: view.hoverEdge ? { from: view.hoverEdge.a.id, to: view.hoverEdge.b.id, anchor: view.hoverEdge.anchor } : null,
   unresolved: view.unresolved.length,
   filter: view.filter, dirFilter: view.dirFilter,
   selected: view.selected ? view.selected.id : null,

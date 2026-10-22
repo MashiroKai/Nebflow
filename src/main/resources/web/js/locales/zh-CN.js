@@ -1897,6 +1897,7 @@ export default {
   'wiki.brokenVault': '「{project}」还没有可读的文档库——在工作区建 docs 目录并写入 markdown 即可。',
   'wiki.brokenProject': '「{project}」文档库不可读：{error}',
   'wiki.tipDegree': '被引 {in} · 引出 {out}',
+  'wiki.tipJump': '点击跳转并高亮该段',
   'wiki.noSummary': '（无摘要——首段即标题或列表）',
   'wiki.secToc': '目录',
   'wiki.secOut': '引出',

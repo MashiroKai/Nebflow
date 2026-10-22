@@ -1966,6 +1966,7 @@ export default {
   'wiki.brokenVault': 'No readable docs vault for “{project}” yet — create <workspace>/docs and add markdown files.',
   'wiki.brokenProject': 'Vault of “{project}” unreadable: {error}',
   'wiki.tipDegree': 'cited by {in} · cites {out}',
+  'wiki.tipJump': 'Click to jump · highlight the paragraph',
   'wiki.noSummary': '(no summary — first paragraph is the title or a list)',
   'wiki.secToc': 'Contents',
   'wiki.secOut': 'Cites',
