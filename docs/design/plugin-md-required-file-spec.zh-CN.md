@@ -1,3 +1,8 @@
+---
+type: design-note
+status: done
+---
+
 # plugin.md = 插件必要文件机制 spec（作者令 2026-10-21 批 · 条②）
 
 ## 1. 机制定义
