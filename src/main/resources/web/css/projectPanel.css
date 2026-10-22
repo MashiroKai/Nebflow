@@ -403,6 +403,23 @@
    特异度 (0,3,0) > `.team-scroll` (0,1,0) ⇒ 按特异度胜出，与样式表顺序无关。 */
 .canvas-tab-pane[data-type="projects"] .team-scroll { padding-bottom: 72px; }
 
+/* ── 顶行让位带（2026-10-22 作者追加令「胶囊与标题文字/相邻控件零重叠」）────
+   作者截图：「项目」卡头胶囊（.canvas-header，浮层 absolute top10/left14
+   z-30，实测高 36 ⇒ 底缘 46）叠压住本面板「委托全景」标题与列表卡标题
+   （.team-card-title[data-open-flowmap] 即卡片唯一交互件）——遮查看又遮点击，
+   且 projcreate 两 spec 的点击被胶囊 subtree 拦截超时（基点 5 败实证）。
+   布局层解法 = 面板顶预留 56px 胶囊带（胶囊底缘 46；deck fab fixed top10+40
+   高底缘 50 ⇒ 56 = 全清出 + 4px 基数；手机层卡头通栏底缘 ≈40-46 同带覆盖）：
+   ① in-flow 面（.flowmap-nav-bar 返回钮/链标题/摘要、delegate 视图体）——
+   pane padding-top 直接生效；
+   ② 列表滚动体 .team-scroll 是 **absolute top:0**（flowCss.js 注入的共用壳，
+   锚 padding box ⇒ pane padding 对它无效）——须同带改 `top: 56px`，列表首行
+   卡标题才真正离开胶囊命中区（elementFromPoint/click 双证钉死）。
+   纯定位让位——不改胶囊定位、不动视图结构、零 sticky 面；绝对定位子级
+   （proj-create-fab bottom/right 座、fm-fab 右缘座）不随带移位。 */
+.canvas-tab-pane[data-type="projects"] { padding-top: 56px; }
+.canvas-tab-pane[data-type="projects"] .team-scroll { top: 56px; }
+
 /* 弹层专属布局（材质/玻璃/零暗化全部继承 `.wsp-*` 与共享玻璃卡组，此处只补
    `.wsp-*` 族没有的 textarea 槽位与计数行——材质仍取 `.modal-input`，零新造）。 */
 .proj-create-panel { width: 520px; }

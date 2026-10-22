@@ -3,7 +3,8 @@
 // 作者令五条：
 //   ① 平时态 = 单胶囊（尺寸调小，与现状一致同位）
 //   ② hover 态 = 圆环排布（capsule ring）：各页签胶囊沿弧排布、最多同时可见 3 个；
-//      左右滚动（触控板横滑 wheel deltaX / Shift+纵滚）在环上换选；点击即切换；
+//      滚轮换选（hover 交互改向令 2026-10-22：纵滚 deltaY 主导——鼠标可操作；
+//      触控板横滑 deltaX 保留副手势）；点击即切换；
 //      缘位胶囊沿曲率 rotateY 透视 + 模糊扭曲（cover-flow），材质 = 全站统一
 //      frosted token（--glass-bg/--glass-blur saturate(1.15)/--glass-border/
 //      --frost-shadow，与 chat header 同源逐项相等）
@@ -144,8 +145,9 @@ const ringInfo = (page) => page.evaluate(() => {
     fars: caps.filter((c) => c.classList.contains('is-far')),
     centerMat: caps[0] ? cs(caps[0]) : null,
     centerId: (caps.find((c) => c.classList.contains('is-center')) || {}).dataset?.tabId || null,
-    centerRy: caps.find((c) => c.classList.contains('is-center'))?.style.getPropertyValue('--cr-ry') || null,
-    edgeRy: caps.find((c) => c.classList.contains('is-edge'))?.style.getPropertyValue('--cr-ry') || null,
+    centerRx: caps.find((c) => c.classList.contains('is-center'))?.style.getPropertyValue('--cr-rx') || null,
+    edgeRx: caps.find((c) => c.classList.contains('is-edge'))?.style.getPropertyValue('--cr-rx') || null,
+    edgeYs: caps.filter((c) => c.classList.contains('is-edge')).map((c) => c.style.getPropertyValue('--cr-y')),
     edgeBlur: caps.find((c) => c.classList.contains('is-edge')) ? cs(caps.find((c) => c.classList.contains('is-edge'))).filter : null,
     farCount: caps.filter((c) => c.classList.contains('is-far')).length,
     titleOpacity: getComputedStyle(document.querySelector('.canvas-title .t-inner')).opacity,
@@ -185,10 +187,14 @@ const ringInfo = (page) => page.evaluate(() => {
   ok('CR2-1 hover 展开：ring-open + 3 胶囊挂载（0 弧外 —— 最多同时可见 3 个）',
     hov.open && hov.n === 3 && hov.farCount === 0, `open=${hov.open} n=${hov.n} far=${hov.farCount}`);
   ok('CR2-2 中心 = 激活页签（charlie）+ 零旋转',
-    hov.centerId === 'file:/tmp/cr-fixture/charlie.md' && hov.centerRy === '0deg', `center=${hov.centerId} ry=${hov.centerRy}`);
-  ok('CR2-3 缘位 cover-flow：rotateY 透视（±34°）+ 模糊扭曲（filter blur）',
-    hov.edges.length === 2 && hov.edgeRy && hov.edgeRy !== '0deg' && /blur/.test(hov.edgeBlur || ''),
-    `edges=${hov.edges.length} ry=${hov.edgeRy} filter=${hov.edgeBlur}`);
+    hov.centerId === 'file:/tmp/cr-fixture/charlie.md' && hov.centerRx === '0deg', `center=${hov.centerId} rx=${hov.centerRx}`);
+  ok('CR2-3 缘位竖向 cover-flow（hover 改向令·垂帘竖排）：rotateX 透视（±34°）+ 双缘全下垂（均正、peek<hang 严格序）+ 模糊扭曲',
+    hov.edges.length === 2 && hov.edgeRx && hov.edgeRx !== '0deg'
+    && hov.edgeYs.length === 2
+    && hov.edgeYs.every((y) => parseFloat(y) > 0)
+    && parseFloat(hov.edgeYs[0]) !== parseFloat(hov.edgeYs[1])
+    && /blur/.test(hov.edgeBlur || ''),
+    `edges=${hov.edges.length} rx=${hov.edgeRx} ys=${hov.edgeYs.join('/')} filter=${hov.edgeBlur}`);
   ok('CR2-4 中心位接班：常态标题让位（t-inner opacity 0，同位 morph）',
     hov.titleOpacity === '0', `title=${hov.titleOpacity}`);
 
@@ -206,37 +212,44 @@ const ringInfo = (page) => page.evaluate(() => {
     !!mat.capsule && JSON.stringify(mat.header) === JSON.stringify(mat.capsule),
     JSON.stringify({ header: mat.header, capsule: mat.capsule }).slice(0, 220));
 
-  /* 证据截图：环开态（中心 + 双缘位 cover-flow） */
+  /* 证据截图：环开态（中心 + 上/下缘位竖向 cover-flow——clip 加高容纳纵排） */
   const shotBox = await page.evaluate(() => {
     const p = document.getElementById('canvas-panel').getBoundingClientRect();
-    return { x: Math.max(0, p.left), y: Math.max(0, p.top), width: p.width, height: 130 };
+    return { x: Math.max(0, p.left), y: Math.max(0, p.top), width: p.width, height: 240 };
   });
   await page.screenshot({
     path: join(HERE, '../evidence/20261022_wiki-graph-sidepanel/shots/8-capsule-ring-dark.png'),
     clip: shotBox,
   });
 
-  /* ③ 滚动选择：deltaX 横滑 = 环游标移动（-140 = 退两位 → alpha 居中） */
+  /* ③ 滚动选择（hover 交互改向令）：**纵滚 deltaY 主导**（鼠标滚轮即换选，
+     一格 ≈ 100 → 归一 0.56 × 100 = 56 = 恰好一格）；触控板横滑 deltaX 保留
+     为副手势（-140 = 退两位归一量不变）。 */
   const before = await stateOf(page);
-  await page.mouse.wheel(-140, 0);
+  await page.mouse.wheel(0, -200);                 // 纵滚上滚 2 格 → alpha 居中
   await sleep(300);
   const rolled = await ringInfo(page);
-  ok('CR3-1 触控板横滑换选：deltaX -140 → 游标退两位（alpha 居中），激活不变（滚动≠切换）',
+  ok('CR3-1 纵滚换选（鼠标可操作）：deltaY -200 → 游标退两位（alpha 居中），激活不变（滚动≠切换）',
     rolled.centerId === 'file:/tmp/cr-fixture/alpha.md' && (await stateOf(page)).activeId === before.activeId,
     `center=${rolled.centerId} active=${(await stateOf(page)).activeId}`);
-  await page.mouse.wheel(84, 0);   // -140 余额 -28 + 84 = 56 → 恰好一格（累加器余量随动）
+  await page.mouse.wheel(-112, 0);                 // 横滑副手势：-112 = 退两位（0 环绕 → bravo）
+  await sleep(300);
+  const rolledX = await ringInfo(page);
+  ok('CR3-1b 横滑保留（触控板副手势）：deltaX -112 → bravo 居中（余量清零随动）',
+    rolledX.centerId === 'file:/tmp/cr-fixture/bravo.md', `center=${rolledX.centerId}`);
+  await page.mouse.wheel(0, 100);                  // 纵滚下滚 1 格（一格滚轮 = 一换）→ charlie 居中
   await sleep(300);
   const rolled2 = await ringInfo(page);
-  ok('CR3-2 反向一格：deltaX +84 → bravo 居中（环绕步进 56px/格，累积器余量随动）',
-    rolled2.centerId === 'file:/tmp/cr-fixture/bravo.md', `center=${rolled2.centerId}`);
+  ok('CR3-2 反向一格：deltaY +100 → charlie 居中（环绕步进 100px/格，累积器余量随动）',
+    rolled2.centerId === 'file:/tmp/cr-fixture/charlie.md', `center=${rolled2.centerId}`);
 
-  /* ③ 环上滚轮零外溢：消费于环（游标动），pane 滚动纹丝不动 */
+  /* ③ 环上滚轮零外溢：消费于环（游标随动——纵滚已是主手势），pane 滚动纹丝不动 */
   const scrollTopBefore = await page.evaluate(() => {
     const pane = document.querySelector('.canvas-tab-pane.active');
     const sc = [...pane.querySelectorAll('*')].filter((el) => el.scrollHeight > el.clientHeight + 4);
     return sc.length ? sc[0].scrollTop : -1;
   });
-  await page.mouse.wheel(0, 200);                    // 环上纵滚（无 shift）→ 被环静默消费
+  await page.mouse.wheel(0, 200);                    // 环上纵滚（主手势：游标随动）→ pane 不外溢
   await sleep(250);
   const scrollTopAfter = await page.evaluate(() => {
     const pane = document.querySelector('.canvas-tab-pane.active');

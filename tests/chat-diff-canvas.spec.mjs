@@ -7,6 +7,17 @@
 //  同线微调（2026-10-22 作者令「计数与 COMPLETED 同行」+ 品牌归一 NEBFLOW→STAND）：
 //  header 与 chip 同 flex 行（.nf-diff-headline），常规宽一行、窄面板截断；
 //  夹具项目段 nebflow→stand（夹具即演示数据，与真实项目名无关）。
+//  回访三令（2026-10-22「居中+材质+动画节奏」）：Canvas 粘顶文件头标题胶囊
+//  ①水平居中（sticky 视矩形按滚动容器自身 padding 内缩 ⇒ 水平恒零 padding，
+//  胶囊在无 padding sticky 定心层内居中，T10 钉死居中几何与「钉住偏移随
+//  padding 漂移（前会话实测 112px=56+56）」类回归）②材质走
+//  sapphire.css 单源全量 frosted token（T10 材质断言）③动画节奏 0.3-0.45s
+//  温和缓动、禁生硬瞬变（T10 时长断言 + T11 出现动画中间帧）。
+//  追加判据（2026-10-22 作者截图令「胶囊挡住了其他文字和控件的查看和交互」）：
+//  **胶囊与标题文字/相邻控件零重叠**——布局层面解决（.fcv-view 顶部 56px
+//  有意让位带：卡头胶囊底缘 38 / deck fab 底缘 50 ⇒ 文件头胶囊整行位于
+//  浮动带之下，宽度无关零重叠）+ pointer-events 不拦截下方命中（定心层
+//  none/胶囊 auto，T13 几何不相交 + elementFromPoint 双臂钉死）。
 //  谱系：bug #58 修 2026-10-09（file-diff → 委托结果行）→ 2026-10-10 裁定
 //  （展开改 Canvas master-detail）→ 本批（交付气泡顶部摘要 chip；文件列表迁
 //  左栏 #panel-filechanges；Canvas 只剩选中文件阅读面；旧一体大面板退役））。
@@ -35,7 +46,17 @@
 //      面板恒 1（preview 替换）；chip 激活态随批次走（A false / B true）。
 //   T9 再点收起：已打开批次再点 chip → 侧栏收起（现有面板 toggle 语义）；再点
 //      → 复原（面板激活 + 侧栏展开）。
-//   T10 暗亮两态：翻 light 后 chip/面板/阅读面样式仍成立（全部颜色走既有
+//   T10 粘顶文件头标题胶囊（回访三令）：材质 = 全量 frosted token（glass-bg 底/
+//      blur saturate/描边/frost-shadow/999 圆角；旧全宽实条分隔线+实底退役）；
+//      水平居中（左缝≈右缝 ≤1px）；静止 in-flow 零压首行 + 钉住偏移恒等
+//      （scroll 500px 前后同值，防「padding 撑偏 sticky 约束矩形」回归）；动画
+//      时长 ≥0.3s 慢档（出现 0.36s + 吸顶 scroll 时间线档 + 过渡 0.4s）。
+//   T11 出现动画中间帧：换文件重建头部 ⇒ 0.36s 出现动画重放（窗内采样最小
+//      不透明度 < 0.92 = 确有中间帧、非生硬瞬变）；终态归位 opacity=1。
+//   T13 零重叠（追加令）：文件头胶囊 vs 卡头胶囊（.canvas-header）/deck fab
+//      （#deck-fab）矩形双轴不相交；elementFromPoint 双臂——胶囊中心命中
+//      胶囊自身、定心层空区（pointer-events:none）不拦截下方内容命中。
+//   T12 暗亮两态：翻 light 后 chip/面板/阅读面样式仍成立（全部颜色走既有
 //      --color-* / glass token，零新色值的构造性证明）。
 //
 // 运行：node node_modules/@playwright/test/cli.js test tests/chat-diff-canvas.spec.mjs
@@ -328,7 +349,183 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
     await expect(panel.locator('.nfp-list .nf-fc')).toHaveCount(3);
   });
 
-  test('T10 暗亮两态：翻 light 后 chip / 面板 / 阅读面样式仍成立（零新色值）', async ({ page }) => {
+  test('T10 粘顶文件头标题胶囊：frosted token 材质 + 水平居中 + 钉住几何恒等 + 动画慢档', async ({ page }) => {
+    await bootApp(page);
+    await injectCompletion(page, PAYLOAD_A);
+    await chip(page).click();
+    const pane = page.locator('.canvas-tab-pane[data-type="filechanges"]');
+    const view = pane.locator('.fcv-view');
+    const head = pane.locator('.fcv-filehead');
+    const pill = pane.locator('.fcv-headpill');
+    await expect(pane).toBeVisible();
+    await expect(head).toContainText('src/big.js');
+    await expect(pill).toHaveCount(1);
+    // 出现动画（0.36s，translateY 帧）走完再采几何——rect 采样含自身 transform，
+    // 动画窗内读数失真（实测 offset 会偏成 0）。
+    await page.waitForTimeout(500);
+
+    // 材质（作者令②）：胶囊 = sapphire.css 单源全量 frosted token —— --glass-bg
+    // 底（亮档 rgba(255,255,255,0.55) 直读）+ blur(--glass-blur) saturate(1.15)
+    // + --glass-border 描边 + --frost-shadow 阴影 + 999 胶囊圆角。
+    const mat = await pill.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return {
+        radius: cs.borderRadius,
+        border: cs.borderTopWidth + ' ' + cs.borderTopStyle,
+        borderColor: cs.borderTopColor,
+        bg: cs.backgroundColor,
+        backdrop: cs.backdropFilter || cs.webkitBackdropFilter || '',
+        shadow: cs.boxShadow,
+      };
+    });
+    expect(mat.radius).toBe('999px');
+    expect(mat.border).toBe('1px solid');
+    expect(mat.borderColor).not.toBe('rgba(0, 0, 0, 0)');
+    expect(mat.bg).toBe('rgba(255, 255, 255, 0.55)');
+    expect(mat.backdrop).toContain('blur(24px)');
+    expect(mat.backdrop).toContain('saturate(1.15)');
+    expect(mat.shadow).not.toBe('none');
+    // 旧全宽实条语言退役：定心层零分隔线、零实底、pointer-events 让位。
+    const wrapper = await head.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { bb: cs.borderBottomWidth, bg: cs.backgroundColor, pe: cs.pointerEvents };
+    });
+    expect(wrapper.bb).toBe('0px');
+    expect(wrapper.bg).toBe('rgba(0, 0, 0, 0)');
+    expect(wrapper.pe).toBe('none');
+
+    // 居中几何（作者令①）：胶囊对 .fcv-view 内容盒水平居中（左缝≈右缝 ≤1px）。
+    // sticky 视矩形 = scrollport 按滚动容器自身 padding 内缩 ⇒ .fcv-view 恒零
+    // 水平 padding，前会话「钉住偏移 112px = 56+56 容器 padding 撑偏」类缺陷
+    // 被此断言钉死。clientWidth 不含滚动条 = 真内容盒右缘。
+    const center = await pill.evaluate((el) => {
+      const v = el.closest('.fcv-view');
+      const vr = v.getBoundingClientRect();
+      const pr = el.getBoundingClientRect();
+      return { gapL: pr.left - vr.left, gapR: vr.left + v.clientWidth - pr.right };
+    });
+    expect(Math.abs(center.gapL - center.gapR)).toBeLessThanOrEqual(1);
+
+    // 静止零重叠 + 钉住偏移恒等（作者令①后半 + 追加零重叠令）：胶囊 in-flow，
+    // 静止态不压 diff 首行；滚动 500px 钉住后偏移与静止恒等（= 56px 有意让位带
+    // + 6px 定心层顶 padding，与滚程/容器水平 padding 无关）。
+    const rest = await pill.evaluate((el) => {
+      const v = el.closest('.fcv-view');
+      const first = v.querySelector('.nf-diff-row');
+      return {
+        offset: el.getBoundingClientRect().top - v.getBoundingClientRect().top,
+        overlap: first
+          ? el.getBoundingClientRect().bottom > first.getBoundingClientRect().top
+          : false,
+      };
+    });
+    expect(rest.offset).toBeGreaterThan(50); // 56 带 + 6 定心层内缩（≥56 判段）
+    expect(rest.offset).toBeLessThan(80); // 非 112px 漂移量级
+    expect(rest.overlap).toBe(false);
+    await view.evaluate((el) => { el.scrollTop = 500; });
+    await page.waitForTimeout(80);
+    const stuckOffset = await pill.evaluate((el) =>
+      el.getBoundingClientRect().top - el.closest('.fcv-view').getBoundingClientRect().top);
+    expect(Math.abs(stuckOffset - rest.offset)).toBeLessThanOrEqual(1.5);
+    await view.evaluate((el) => { el.scrollTop = 0; });
+
+    // 动画节奏（作者令③）：出现 = 0.36s 温和缓出；吸顶 = scroll() 时间线阴影
+    // 爬坡档（@supports 档，Playwright Chromium 支持）；过渡 0.4s ≥ 0.3s 慢档。
+    const anim = await pill.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { name: cs.animationName, dur: cs.animationDuration, trans: cs.transitionDuration };
+    });
+    expect(anim.name).toContain('fcv-head-in');
+    expect(anim.name).toContain('fcv-head-stuck');
+    expect(anim.dur.split(',').map((s) => parseFloat(s))).toContain(0.36);
+    const transMs = anim.trans.split(',').map((s) => parseFloat(s));
+    expect(transMs.length).toBeGreaterThan(0);
+    expect(transMs.every((s) => s >= 0.3)).toBe(true);
+  });
+
+  test('T11 出现动画中间帧：换文件重建头部 ⇒ 0.36s 缓入重放（半途帧 + 终态归位）', async ({ page }) => {
+    await bootApp(page);
+    await injectCompletion(page, PAYLOAD_A);
+    await chip(page).click();
+    const pane = page.locator('.canvas-tab-pane[data-type="filechanges"]');
+    await expect(pane.locator('.fcv-filehead')).toContainText('src/big.js');
+    await page.waitForTimeout(600); // 首次出现动画走完，采干净基线
+
+    // 换文件（面板第二行）→ renderReader 重建头部 ⇒ 出现动画重放；在动画窗内
+    // 逐帧采样最小不透明度（rAF 轮询 600ms 覆盖 0.36s 动画全程）。逐帧重查
+    // 元素——点击后头部节点在数十 ms 内才被重建，缓存旧节点会采到已完成的
+    // 旧动画（实测旧节点 opacity 恒 1 ⇒ 假阴）。
+    await page.locator('#panel-filechanges .nfp-list .nf-fc').nth(1).click();
+    const minOpacity = await page.evaluate(() => new Promise((resolve) => {
+      let min = 1;
+      const t0 = performance.now();
+      const step = () => {
+        const pill = document.querySelector('.canvas-tab-pane[data-type="filechanges"] .fcv-headpill');
+        if (pill) {
+          const o = parseFloat(getComputedStyle(pill).opacity);
+          if (Number.isFinite(o)) min = Math.min(min, o);
+        }
+        if (performance.now() - t0 > 600) resolve(min);
+        else requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    }));
+    expect(minOpacity).toBeLessThan(0.92); // 确有「半途」中间帧 = 非生硬瞬变
+    await expect(pane.locator('.fcv-filehead')).toContainText('small.txt');
+    const settled = await pane.locator('.fcv-headpill').evaluate((el) => getComputedStyle(el).opacity);
+    expect(settled).toBe('1'); // 终态归位
+  });
+
+  test('T13 零重叠（作者追加令）：文件头胶囊 vs 卡头胶囊/deck fab 不相交 + 命中穿透', async ({ page }) => {
+    await bootApp(page);
+    await injectCompletion(page, PAYLOAD_A);
+    await chip(page).click();
+    const pane = page.locator('.canvas-tab-pane[data-type="filechanges"]');
+    const pill = pane.locator('.fcv-headpill');
+    await expect(pill).toHaveCount(1);
+    // 出现动画（0.36s，translateY 帧）走完再采几何——rect 采样含自身 transform。
+    await page.waitForTimeout(500);
+
+    // 几何臂：文件头胶囊矩形与卡头胶囊（.canvas-header，浮层 top10/left14）
+    // 及 deck fab（#deck-fab，fixed top10/right12，canvas-open 时在场）双轴
+    // 不相交——56px 让位带的布局层保证（任意路径宽/面板宽成立）。
+    const geo = await page.evaluate(() => {
+      const p = document.querySelector('.canvas-tab-pane[data-type="filechanges"] .fcv-headpill');
+      const cap = document.querySelector('#canvas-panel .canvas-header');
+      const fab = document.getElementById('deck-fab');
+      const hit = (a, b) => !(a.left >= b.right || b.left >= a.right
+        || a.top >= b.bottom || b.top >= a.bottom);
+      const pr = p.getBoundingClientRect();
+      const fabVisible = fab && getComputedStyle(fab).display !== 'none'
+        && fab.getBoundingClientRect().width > 0;
+      return {
+        capOverlap: cap ? hit(pr, cap.getBoundingClientRect()) : false,
+        fabOverlap: fabVisible ? hit(pr, fab.getBoundingClientRect()) : false,
+        fabThere: !!fabVisible,
+      };
+    });
+    expect(geo.capOverlap).toBe(false);
+    expect(geo.fabOverlap).toBe(false);
+
+    // 命中臂：胶囊中心 = 命中胶囊自身（tooltip/文本选择可用）；定心层空区
+    //（pointer-events:none，胶囊左旁 24px 同高度）= 不得命中定心层——遮挡
+    // 元素不得拦截下方内容命中（追加令原文）。
+    const hitTest = await pill.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      const c = document.elementFromPoint(cx, cy);
+      const s = document.elementFromPoint(Math.max(r.left - 24, 1), cy);
+      return {
+        centerIsPill: !!(c && c.closest('.fcv-headpill')),
+        sideHitsWrapper: !!(s && s.closest('.fcv-filehead')),
+      };
+    });
+    expect(hitTest.centerIsPill).toBe(true);
+    expect(hitTest.sideHitsWrapper).toBe(false);
+  });
+
+  test('T12 暗亮两态：翻 light 后 chip / 面板 / 阅读面样式仍成立（零新色值）', async ({ page }) => {
     await bootApp(page);
     await injectCompletion(page, PAYLOAD_A);
     await chip(page).click();
@@ -340,12 +537,14 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
     await expect(chip(page)).toBeVisible();
     await expect(panel).toBeVisible();
     await expect(pane).toBeVisible();
-    const reads = await pane.locator('.fcv-filehead').evaluate((el) => {
+    // 阅读面 = 定心层 + 胶囊：胶囊材质 token 亮档成立（glass-bg 亮值）、定心层
+    // 保持透明零边（旧实条语言不回流）。
+    const reads = await pane.locator('.fcv-headpill').evaluate((el) => {
       const cs = getComputedStyle(el);
-      return { borderBottom: cs.borderBottomWidth, bg: cs.backgroundColor };
+      return { bg: cs.backgroundColor, backdrop: cs.backdropFilter || cs.webkitBackdropFilter || '' };
     });
-    expect(reads.borderBottom).toBe('1px');
-    expect(reads.bg).not.toBe('');
+    expect(reads.bg).toBe('rgba(255, 255, 255, 0.55)');
+    expect(reads.backdrop).toContain('saturate(1.15)');
     // chip 次档描边族仍在（sapphire button.glass-control：1px 描边 + 胶囊圆角 +
     // 非透明描边色；本代次档 = 透明底 + 描边，背景断言不适用）。
     const chipStyles = await chip(page).evaluate((el) => {

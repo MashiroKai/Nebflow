@@ -6,7 +6,8 @@
 //
 // 复用既有 canvas diff 渲染模式：diffRender.js 的 parseUnifiedDiff / diffRowHtml
 // （与 Flow Map 节点详情同一渲染单源），样式沿用 diffView.css 的 .nf-* 行类与
-// .fcv-view/.fcv-filehead 阅读面容器（只用既有 --color-* 变量，零新色值）。
+// .fcv-view/.fcv-filehead（sticky 定心层 + .fcv-headpill 居中胶囊，2026-10-22
+// 作者三令）阅读面容器（只用既有 --color-* / glass token，零新色值）。
 //
 // 超大 diff 的性能兜底（无硬截断）：
 //   ① 分块渐进渲染 —— 每帧最多 CHUNK_ROWS 行，rAF 排空为止，全量内容必达
@@ -87,11 +88,17 @@ function renderReader(pane, payload, focus) {
   const path = String(f?.path || '(unknown)');
   const added = Number(f?.added) || 0;
   const removed = Number(f?.removed) || 0;
+  // 粘顶文件头 = 全宽 sticky 定心层（.fcv-filehead）+ 居中玻璃胶囊
+  // （.fcv-headpill，diffView.css §文件头胶囊批 2026-10-22 作者三令：
+  //   居中 + 全量 frosted token + 动画节奏）。文字断言面不变：
+  //   .fcv-filehead 仍 contains 路径/+/−（胶囊为其子节点）。
   const head = document.createElement('div');
   head.className = 'fcv-filehead';
-  head.innerHTML = `<span class="nf-fc-path" title="${esc(path)}">${esc(path)}</span>` +
+  head.innerHTML = `<div class="fcv-headpill">` +
+    `<span class="nf-fc-path" title="${esc(path)}">${esc(path)}</span>` +
     `<span class="nf-fc-counts"><span class="nf-fc-added">+${added}</span> <span class="nf-fc-removed">−${removed}</span></span>` +
-    (f?.source ? `<span class="nf-fc-src" title="diff source">${esc(String(f.source))}</span>` : '');
+    (f?.source ? `<span class="nf-fc-src" title="diff source">${esc(String(f.source))}</span>` : '') +
+    `</div>`;
   view.appendChild(head);
   // 手机层文件条（桌面不渲染——左栏 #panel-filechanges 承载切换）。
   if (document.body.classList.contains('mobile-layer') && files.length > 1) {

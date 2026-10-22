@@ -9,6 +9,11 @@
 // 数据面 = stub 夹具（rows/chains/children 三读口——harness 缝）；端点臂 = 路由
 // mock（provider 换源 /api/delegates + 旧引擎 404 回落 /api/chains）。零后端、零 sbt。
 //
+// 追加判据（2026-10-22 作者截图令「胶囊挡住了其他文字和控件的查看和交互」，
+// 本 spec 管辖面）：卡头胶囊（.canvas-header）与本视图 .flowmap-nav-bar
+// （返回钮/「委托全景」标题/摘要）零重叠——布局层解法 = projects 面板顶 56px
+// 让位带（projectPanel.css），T6 几何不相交 + elementFromPoint 命中双臂钉死。
+//
 // Run: node node_modules/@playwright/test/cli.js test tests/delegate-panorama.spec.mjs
 
 import { test, expect } from '@playwright/test';
@@ -333,6 +338,52 @@ test('T6 全景样式表零字面 hex 色值（§8.7：全部 var token）', asy
   const css = readFileSync(join(WEB, 'css', 'delegatePanorama.css'), 'utf8');
   const hexHits = css.match(/#[0-9a-fA-F]{3,8}\b/g) || [];
   expect(hexHits, hexHits.join(', ')).toEqual([]);
+});
+
+test('T8 卡头胶囊零重叠（2026-10-22 作者追加令）：让位带后 nav 条标题/返回钮全可见、命中可达', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+  await bootApp(page);
+  await setFixture(page, { rows: fixtureRows, chains: [chainFlow], children: starChildren });
+  await openPanorama(page);
+  const pane = page.locator('.canvas-tab-pane[data-type="projects"]');
+  await expect(pane).toHaveCount(1);
+  await expect(pane.locator('.flowmap-nav-bar .delegate-chain-title')).toHaveText('委托全景');
+  // 过渡/图标渲染 settle 后采几何。
+  await page.waitForTimeout(400);
+
+  // 几何臂：卡头胶囊矩形 vs nav 条可点件（返回钮/链标题/摘要）双轴不相交。
+  const geo = await page.evaluate(() => {
+    const cap = document.querySelector('#canvas-panel .canvas-header');
+    const bar = document.querySelector('.canvas-tab-pane[data-type="projects"] .flowmap-nav-bar');
+    const hit = (a, b) => !(a.left >= b.right || b.left >= a.right
+      || a.top >= b.bottom || b.top >= a.bottom);
+    const out = { hasCap: !!cap, overlaps: {}, hit: {} };
+    if (!cap || !bar) return out;
+    const capR = cap.getBoundingClientRect();
+    for (const [k, sel] of Object.entries({
+      back: '[data-back-to-tasks]', title: '.delegate-chain-title', summary: '.flowmap-summary',
+    })) {
+      const el = bar.querySelector(sel);
+      if (!el) { out.overlaps[k] = null; continue; }
+      out.overlaps[k] = hit(el.getBoundingClientRect(), capR);
+      if (k === 'back') {
+        const r = el.getBoundingClientRect();
+        const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        out.hit.backSelf = !!(at && at.closest('[data-back-to-tasks]'));
+        out.hit.backCap = !!(at && at.closest('.canvas-header'));
+      }
+    }
+    return out;
+  });
+  expect(geo.hasCap).toBe(true);
+  expect(geo.overlaps.back).toBe(false); // 返回钮不被胶囊遮挡
+  expect(geo.overlaps.title).toBe(false); // 「委托全景」标题不被遮挡（作者截图本体）
+  expect(geo.overlaps.summary).toBe(false);
+  expect(geo.hit.backSelf).toBe(true); // 命中测试：返回钮中心 = 按钮自身
+  expect(geo.hit.backCap).toBe(false); // 且不被胶囊命中区拦截
+  await page.waitForTimeout(200);
+  expect(pageErrors, pageErrors.join('\n')).toEqual([]);
 });
 
 test('T7 重启对账（全景审计面）：打断卡灰态（st-stop）+「重启打断」顶徽标+「已由 #N 接续」关系 chip；永不借 fail 红/done 绿', async ({ page }) => {

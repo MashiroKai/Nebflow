@@ -3083,18 +3083,22 @@ function initCardHeadGestures() {
   });
 }
 
-// ── 胶囊环（2026-10-22 作者令追加：hover 态圆环排布 · 横滑换选 · 点击切换）──
-// 作者令：平时态 = 单胶囊（缩小）；hover 态 = 各页签胶囊沿圆环排布、最多同时
-// 可见 3 个；左右滚动（触控板横滑 = wheel deltaX / Shift+纵滚）在环上换选，
-// 点击即切换；两侧缘位沿曲率 rotateY 透视 + 模糊扭曲（cover-flow），材质 =
-// 全站统一 frosted token；右键菜单 = 多开/关闭/在独立窗口打开（capsuleMenu-
-// Actions 共用一份语义）。#716 捏合缩放分区：环上滚轮 preventDefault +
-// stopPropagation 优先消费（缩放/平移只归画布区，环永不外溢）。
+// ── 胶囊环（2026-10-22 作者令追加：hover 态圆环排布 · 滚轮换选 · 点击切换）──
+// 作者令：平时态 = 单胶囊（缩小）；hover 态 = 各页签胶囊沿**竖向**圆环排布、
+// 最多同时可见 3 个；滚轮换选（hover 交互改向令 2026-10-22：「现在…hover 之后
+// 左右滑动…改为上下的，这样才方便 Windows 这样的电脑用鼠标进行操作」——鼠标
+// 滚轮 = 纵向 deltaY，横滑触控板用户无此输入）：**纵滚（deltaY）主导**，触控板
+// 横滑（deltaX）保留为同环副手势，按主导轴取用；点击即切换；上下缘位沿曲率
+// rotateX 透视 + 模糊扭曲（竖向 cover-flow），材质 = 全站统一 frosted token；
+// 右键菜单 = 多开/关闭/在独立窗口打开（capsuleMenuActions 共用一份语义）。
+// #716 捏合缩放分区：环上滚轮 preventDefault + stopPropagation 优先消费
+// （缩放/平移只归画布区，环永不外溢）。
 // 按住=按钮语义（作者令③）：胶囊本体 <button> + 全头 user-select:none（CSS）
 // + dragstart preventDefault（拦从胶囊发起的原生拖拽；OS 文件拖入 drop 不受影响）。
 // 实现形态：纯前端组件（.capsule-ring 0×0 锚在标题头中心，胶囊 absolute 沿弧
 // transform），与左栏控制面零共享。手机层/卡窗态整腿让位（各有自己的卡头形态）。
 const RING_WHEEL_STEP = 56;   // 横滑一格步进（≈两指一次横扫的 deltaX 量级）
+const RING_WHEEL_STEP_Y = 100; // 纵滚一格步进（≈鼠标滚轮一格的 deltaY 量级——一格滚轮 = 一换）
 const RING_CLOSE_GRACE_MS = 140; // 离环收起宽限（快速掠过不闪收）
 
 /** 环开态单例（{ ids: string[], cursor: number }；null = 环闭）。hdr 重建时随
@@ -3123,7 +3127,8 @@ function initCapsuleRing() {
   if (cardWindowMode) return;                      // 卡窗 = 单卡查看器，无环
   const isMobileLayer = () => document.body.classList.contains('mobile-layer');
 
-  let acc = 0;                                     // wheel deltaX 累积
+  let acc = 0;                                     // 横滑游标累加器（deltaX 刻度）
+  let accY = 0;                                    // 纵滚游标累加器（deltaY 刻度，整数步进零浮点）
   let leaveTimer = 0;
 
   const root = document.createElement('div');
@@ -3171,17 +3176,22 @@ function initCapsuleRing() {
     }
   };
 
-  /** 位姿：rel = 到游标的最短环距（wrap）；0 = 中心清晰、±1 = 缘位 cover-flow
-   *  （rotateY 后仰 + 模糊）、|rel|≥2 = 弧外不可见（保留轨迹）。缘位间距 =
-   *  中心胶囊实宽的几何函数，长名不撞缘。 */
+  /** 位姿（垂帘竖排，hover 交互改向令「改为上下的」）：rel = 到游标的最短环距
+   *  （wrap）；0 = 中心清晰（与常态胶囊同位 morph）、±1 = 缘位 cover-flow
+   *  （rotateX 后仰 + 模糊）、|rel|≥2 = 弧外不可见（保留轨迹）。竖向排布但
+   *  **双缘全下垂**：#canvas-panel overflow:hidden + 头锚点距顶仅 ~28px，对称
+   *  竖环的上缘（-72px）会被面板裁掉 —— 近缘（rel<0，上一签）半悬 peek 在中心
+   *  正下 0.58×edgeY，远缘（rel>0，下一签）全垂 1.62×edgeY，纵向从胶囊往下
+   *  垂帘展开，滚轮纵滚即沿帘换选（鼠标可操作的关键几何）。间距 = 中心胶囊
+   *  实高的几何函数。 */
   const layout = () => {
     if (!ringState) return;
     const { ids, cursor } = ringState;
     const n = ids.length;
     const kids = /** @type {HTMLElement[]} */ ([...root.children]);
     const centerKid = cursor >= 0 && cursor < n ? kids[cursor] : null;
-    const w = centerKid ? centerKid.offsetWidth : 120;
-    const edgeX = Math.max(88, Math.min(160, w * 0.86));
+    const h = centerKid ? centerKid.offsetHeight : 28;
+    const edgeY = Math.max(56, Math.min(120, h * 3));
     for (let i = 0; i < kids.length; i++) {
       let rel = (i - cursor + n) % n;
       if (rel > n / 2) rel -= n;
@@ -3190,9 +3200,10 @@ function initCapsuleRing() {
       k.classList.toggle('is-center', rel === 0);
       k.classList.toggle('is-edge', ar === 1);
       k.classList.toggle('is-far', ar > 1);
-      k.style.setProperty('--cr-x', (rel * (ar === 1 ? edgeX : edgeX * 2.1)).toFixed(1) + 'px');
+      const y = rel === 0 ? 0 : rel < 0 ? edgeY * 0.58 : (ar === 1 ? edgeY * 1.62 : edgeY * 2.4);
+      k.style.setProperty('--cr-y', y.toFixed(1) + 'px');
       k.style.setProperty('--cr-z', (ar === 0 ? 0 : ar === 1 ? -110 : -230) + 'px');
-      k.style.setProperty('--cr-ry', String(-rel * (ar === 1 ? 34 : 44)) + 'deg');
+      k.style.setProperty('--cr-rx', String(rel * (ar === 1 ? 34 : 44)) + 'deg');
     }
   };
 
@@ -3212,6 +3223,7 @@ function initCapsuleRing() {
     const all = [...tabs.keys()];
     ringState = { ids: all, cursor: Math.max(0, all.indexOf(activeTabId)) };
     acc = 0;
+    accY = 0;
     build();
     hdr.classList.add('ring-open');
     root.hidden = false;
@@ -3225,6 +3237,7 @@ function initCapsuleRing() {
     root.hidden = true;
     root.textContent = '';
     acc = 0;
+    accY = 0;
     if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = 0; }
   };
 
@@ -3237,18 +3250,25 @@ function initCapsuleRing() {
     if (!ringState || leaveTimer) return;
     leaveTimer = setTimeout(closeRing, RING_CLOSE_GRACE_MS);
   });
-  // 环上滚轮：横滑（deltaX）/ Shift+纵滚 = 换选一格；preventDefault + 静默
-  // 其余纵滚 —— 环优先消费，画布区（#716 捏合缩放 / 平移）永不收到。
+  // 环上滚轮：**纵滚（deltaY）主导**（鼠标滚轮即换选——hover 交互改向令），
+  // 触控板横滑（deltaX）保留为副手势；按主导轴取用，双轴各自整数刻度累加
+  // （Y=100 ≈ 鼠标一格滚轮 = 一换，X=56 ≈ 两指横扫）驱动同一游标；
+  // preventDefault + stopPropagation —— 环优先消费，画布区（#716 捏合缩放 /
+  // 平移）与 pane 滚动永不收到（纵滚不再静默吞掉 = 鼠标可操作的关键）。
   hdr.addEventListener('wheel', (e) => {
     if (isMobileLayer() || !ringState) return;
     e.preventDefault();
     e.stopPropagation();
-    const d = Math.abs(e.deltaX) >= Math.abs(e.deltaY) ? e.deltaX : (e.shiftKey ? e.deltaY : 0);
-    if (!d) return;
-    acc += d;
     const n = ringState.ids.length;
-    while (acc <= -RING_WHEEL_STEP) { acc += RING_WHEEL_STEP; ringState.cursor = (ringState.cursor - 1 + n) % n; }
-    while (acc >= RING_WHEEL_STEP) { acc -= RING_WHEEL_STEP; ringState.cursor = (ringState.cursor + 1) % n; }
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+      acc += e.deltaX;
+      while (acc <= -RING_WHEEL_STEP) { acc += RING_WHEEL_STEP; ringState.cursor = (ringState.cursor - 1 + n) % n; }
+      while (acc >= RING_WHEEL_STEP) { acc -= RING_WHEEL_STEP; ringState.cursor = (ringState.cursor + 1) % n; }
+    } else {
+      accY += e.deltaY;
+      while (accY <= -RING_WHEEL_STEP_Y) { accY += RING_WHEEL_STEP_Y; ringState.cursor = (ringState.cursor - 1 + n) % n; }
+      while (accY >= RING_WHEEL_STEP_Y) { accY -= RING_WHEEL_STEP_Y; ringState.cursor = (ringState.cursor + 1) % n; }
+    }
     layout();
   }, { passive: false });
   // 作者令③：从胶囊发起的原生拖拽一律拦下（文字/链接拖拽；OS 文件拖入 =
