@@ -1,4 +1,4 @@
-// wikiGraph.js — Wiki document graph (极简化 redesign, 2026-10-21 batch).
+// wikiGraph.js — Wiki document graph (控制面迁左栏 + 触控板手感批, 2026-10-21/22).
 //
 // The Canvas tab `wiki-graph` renders the merged document graph served by
 // GET /api/wiki/graph: one node per markdown document across every project's
@@ -6,24 +6,34 @@
 // projects scanned through the NebLink browse channel), one edge per
 // Obsidian wikilink / markdown link / embed.
 //
-// This is the design-doc implementation (docs/design/wiki-graph-redesign-
-// design.zh-CN.md — 批准实施批): the five old parallel channels (facet
-// dropdowns, zoom cluster, explorer-hosted file list, glow/pulse/degree-gray
-// node encodings, direct click-through) are retired in favor of the sample's
-// three-control face — search box, directory chips, info line — plus:
-//   hover   → tooltip (title + summary + degree), neighborhood stays lit
-//   click   → preview card slides in (280px): summary, TOC, in/out refs,
-//             badges, 打开文档 button (the only path that leaves the view)
-//   broken  → unresolved references never become nodes; they are counted in
-//             the info line and listed in a bottom-left overlay
+// 作者令 2026-10-21（图谱布局重构 · 控制面迁左栏）：canvas 只显示图谱本体——
+// 力导向图 + 悬停 tooltip，控件面全部撤出 canvas；激活图谱 tab 时左栏（原文件
+// 浏览器那一栏）内容切换为「图谱控制面」，回到文件浏览态时左栏还原文件浏览器：
+//   左栏 #wiki-graph-side（#panel-sessions 内，#explorer-section 的兄弟节）
+//     搜索框 · 目录 chips 过滤 · 选中节点详情卡（徽标/摘要/目录/引出/被引/
+//     路径/打开文档，替代原浮动预览卡）· 断链清单（固定区块替代浮层）·
+//     统计行（N 篇文档 · N 条引用 · N 条未解析）
+//   canvas pane（.wiki-graph-pane）
+//     <canvas> + 悬停 tooltip；另有 .wg-panebar（仅 body.mobile-layer 显示——
+//     手机层没有左栏，紧凑控制条随 pane 收编进移动页，桌面零渲染）
+//   双向联动：左栏点目录/词条（chips/ref/断链行）→ canvas 过滤聚焦；
+//     canvas 点节点 → 左栏详情卡刷新
+// 作者令 2026-10-22（触控板手感）：滚轮/双指滚动 = 平移（1:1，不误触缩放）；
+//   触控板捏合（ctrl+wheel）/ ⌘(Ctrl)+滚轮 = 以光标为锚点缩放，exp 曲线累积
+//   zoomTarget + rAF 25% 阻尼追帧——连续捏合帧平滑无跳变（excalidraw/figma
+//   手感）；约定在左栏 .wg-hint 图例注明。
+//   亮暗双主题：canvas 沿用 --wg-* 石墨双主题表；左栏面板吃侧栏玻璃卡既有的
+//     --color-frame-* / --glass-* token（prefers-color-scheme 自动双主题）；
+//     窄面板（container query，wgside）压缩内距与徽标
+//   展开 semantics（承 2026-10-19 批 R1-R10）：图谱「变为可见」的跃迁才自动
+//     展开侧栏并激活 files 面板（showSidePanel 既有持久化 API，零新键）；
+//     可见期间手动收起 → 安静；切走再切回 → 再展开；离开绝不自动收起；
+//     移动端 ≤768px 不自动开（抽屉互斥）。
+//
 // Nodes are solid graphite dots (degree → radius 5-11 + ink depth), edges are
 // 1px straight muted lines. No glow, no pulse, no accent hue, no persistent
-// animation (the force loop stops once the layout settles).
-//
-// Label density (代审追加整改): the default state labels ONLY the top-N hub
-// nodes (by reference degree) — the sample's all-labels default overlapped in
-// the dense center. Remaining labels fade in with hover (neighborhood) and
-// zoom (linear ramp up to all labels at LABEL_ALL_AT_SCALE).
+// animation (the force loop stops once the layout settles). Labels: hubs by
+// default, the rest fade in with hover and zoom (LABEL_ALL_AT_SCALE ramp).
 //
 // No new vendor dependencies — the force simulation stays the small
 // velocity-Verlet loop sized for vault-scale graphs (hundreds of nodes).
@@ -41,7 +51,8 @@ const LABEL_ALL_AT_SCALE = 1.5;
 const ZOOM_MIN = 0.08; // design §3: 8%–320%
 const ZOOM_MAX = 3.2;
 const LABEL_MAX_CHARS = 22;   // canvas label truncation (design §4)
-const SUMMARY_TIP_CHARS = 0;  // tooltip summary clamps by CSS line-clamp, not chars
+
+const MOBILE_MQ = '(max-width: 768px)';
 
 /** @typedef {{ref:any, id:string, label:string, dir:string, isAttach:boolean,
  *             x:number, y:number, vx:number, vy:number, degree:number, rank:number,
@@ -53,6 +64,8 @@ const SUMMARY_TIP_CHARS = 0;  // tooltip summary clamps by CSS line-clamp, not c
  * @property {HTMLElement} pane
  * @property {HTMLCanvasElement} canvas
  * @property {CanvasRenderingContext2D} ctx
+ * @property {HTMLElement|null} side   — sidebar control face (#wiki-graph-side)
+ * @property {HTMLElement|null} panebar — in-pane compact bar (mobile layer only)
  * @property {any} data
  * @property {{nodes: WgNode[], edges: {a:WgNode,b:WgNode}[], alpha: number} | null} sim
  * @property {number} raf
@@ -63,6 +76,8 @@ const SUMMARY_TIP_CHARS = 0;  // tooltip summary clamps by CSS line-clamp, not c
  * @property {number} vx
  * @property {number} vy
  * @property {number} scale
+ * @property {number} zoomTarget — damped pinch target (scale chases it, rAF)
+ * @property {{px: number, py: number} | null} zoomAnchor — cursor anchor while chasing
  * @property {WgNode | null} dragging
  * @property {boolean} panning
  * @property {{px: number, py: number} | null} lastPointer
@@ -78,10 +93,15 @@ const SUMMARY_TIP_CHARS = 0;  // tooltip summary clamps by CSS line-clamp, not c
  * @property {MediaQueryList | null} themeMQ
  * @property {(() => void) | null} onThemeChange
  * @property {(() => void) | null} onKey
+ * @property {MutationObserver | null} bodyObs
  */
 
 /** @type {WikiViewState | null} */
 let view = null;
+
+/** Previous "graph is the visible canvas content" value — auto-expand fires
+ *  on the FALSE→TRUE transition only (可见期间手动收起 → 安静，R5/R6/R9). */
+let sideWasVisible = false;
 
 /** Open (or focus) the wiki graph tab and render it. */
 export async function openWikiGraphTab(focusNodeId = '') {
@@ -89,7 +109,7 @@ export async function openWikiGraphTab(focusNodeId = '') {
   const entry = canvas.openTab(TAB_ID, t('wiki.tabTitle'), { type: TAB_ID, closable: true });
   if (!entry) return;
   if (focusNodeId) {
-    // Tab already live: select + center + preview directly (the renderInto
+    // Tab already live: select + center + detail directly (the renderInto
     // idempotence guard would otherwise swallow the focus request).
     if (view && view.pane === entry.paneEl && view.canvas && view.canvas.isConnected) {
       const n = view.byId.get(focusNodeId);
@@ -129,11 +149,33 @@ import('./canvas.js').then(({ getTabPane }) => {
   if (pane && pane.classList.contains('active')) renderInto(pane);
 }).catch(() => { /* canvas unavailable (embedded/test) — skip */ });
 
-// Tab close: stop the animation loop and drop every document-level listener —
-// a closed tab must not keep a rAF cycle (and its CPU) alive.
+// Tab close: stop the animation loop, drop every document-level listener and
+// hand the left column back to the file explorer — a closed tab must not keep
+// a rAF cycle (and its CPU) alive, nor the control face.
 document.addEventListener('canvas-tab-closed', (/** @type {CustomEvent} */ e) => {
   if (e.detail && e.detail.id === TAB_ID) teardown();
 });
+
+/** Tab switching: repaint + side-face sync on activation changes (the hidden
+ *  canvas backing store is dropped while the tab is inactive). */
+document.addEventListener('canvas-tab-switched', (/** @type {CustomEvent} */ e) => {
+  if (!e.detail) return;
+  if (e.detail.id === TAB_ID) repaintOnActivate();
+  if (view) syncSidePanel(e.detail.id === TAB_ID);
+});
+
+// Canvas panel open/close rides the body class (closeCanvas keeps tabs) —
+// observe it so closing the canvas hands the left column back to the explorer
+// even though activeTabId still points at the graph.
+function startBodyObserver() {
+  if (!view || view.bodyObs || !window.MutationObserver) return;
+  view.bodyObs = new MutationObserver(() => {
+    if (!view) return;
+    syncSidePanel(view.pane.classList.contains('active') &&
+      document.body.classList.contains('canvas-open'));
+  });
+  view.bodyObs.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+}
 
 /** Debounced refetch when the tab is re-activated (canvas.js panelTabRefresh). */
 let refetchTimer = 0;
@@ -154,30 +196,7 @@ async function renderInto(pane) {
   pane.innerHTML = '';
   pane.classList.add('wiki-graph-pane');
 
-  // ── The three controls (design §3/§4): search box + directory chips ──
-  const topbar = document.createElement('div');
-  topbar.className = 'wg-topbar';
-  const searchWrap = document.createElement('div');
-  searchWrap.className = 'wg-search';
-  searchWrap.innerHTML =
-    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
-  const search = document.createElement('input');
-  search.type = 'text';
-  search.className = 'wg-search-input';
-  search.placeholder = t('wiki.searchPlaceholder');
-  search.setAttribute('aria-label', t('wiki.searchPlaceholder'));
-  search.addEventListener('input', () => {
-    if (!view) return;
-    view.filter = search.value.trim().toLowerCase();
-    applyFilter();
-    draw();
-  });
-  searchWrap.appendChild(search);
-  const chips = document.createElement('div');
-  chips.className = 'wg-chips';
-  chips.setAttribute('role', 'group');
-  topbar.append(searchWrap, chips);
-
+  // ── Canvas face: graph body + hover tooltip. Nothing else (作者令). ──
   const canvasEl = document.createElement('canvas');
   canvasEl.className = 'wiki-canvas';
 
@@ -188,52 +207,22 @@ async function renderInto(pane) {
   tip.setAttribute('role', 'tooltip');
   tip.innerHTML = '<div class="tt"></div><div class="ts"></div><div class="td"></div>';
 
-  // Preview card (design §3): slides in on node click; 打开文档 is the only
-  // path out of the view.
-  const preview = document.createElement('aside');
-  preview.className = 'wg-preview';
-  preview.setAttribute('aria-label', t('wiki.tabTitle'));
-  preview.innerHTML =
-    '<button class="close" type="button" aria-label="' + t('wiki.closePreview') + '">×</button>' +
-    '<h2></h2><div class="badges"></div><p class="summary"></p>' +
-    '<h3></h3><ul class="toc"></ul>' +
-    '<h3></h3><ul class="out"></ul>' +
-    '<h3></h3><ul class="in"></ul>' +
-    '<div class="path"></div>' +
-    '<button class="openbtn" type="button"></button>';
-  const previewH3s = preview.querySelectorAll('h3');
-  previewH3s[0].textContent = t('wiki.secToc');
-  previewH3s[1].textContent = t('wiki.secOut');
-  previewH3s[2].textContent = t('wiki.secIn');
-  preview.querySelector('.openbtn').textContent = t('wiki.openDoc');
-  preview.querySelector('.close').addEventListener('click', () => deselect());
-  preview.querySelector('.openbtn').addEventListener('click', () => {
-    if (view && view.selected) void openDoc(view.selected.ref);
-  });
+  // Compact in-pane bar for the MOBILE layer only (no left column on phones;
+  // CSS keeps it display:none everywhere else — desktop canvas stays pure).
+  const panebar = buildPaneBar();
 
-  // Info line (bottom-left): counts + the broken-reference toggle that opens
-  // the overlay. Replaces the old count bar + facet rows + file sidebar.
-  const infoline = document.createElement('div');
-  infoline.className = 'wg-infoline';
-  const broken = document.createElement('div');
-  broken.className = 'wg-broken';
-  broken.innerHTML = '<h3></h3><div class="rows"></div>';
-  broken.querySelector('h3').textContent = t('wiki.brokenTitle');
+  pane.append(canvasEl, tip, panebar);
 
-  const legend = document.createElement('div');
-  legend.className = 'wg-legend';
-  legend.textContent = t('wiki.legendLine');
-
-  pane.append(canvasEl, topbar, tip, preview, infoline, broken, legend);
-
-  view = { pane, canvas: canvasEl, ctx: canvasEl.getContext('2d'), data: null, sim: null,
+  view = { pane, canvas: canvasEl, ctx: canvasEl.getContext('2d'),
+           side: ensureSidePanel(), panebar,
+           data: null, sim: null,
            raf: 0, focusId: pendingFocus || '', byId: new Map(),
            hover: null, selected: null,
-           vx: 0, vy: 0, scale: 1,
+           vx: 0, vy: 0, scale: 1, zoomTarget: 1, zoomAnchor: null,
            dragging: null, panning: false, lastPointer: null,
            resizeObs: null, W: 0, H: 0, colors: null,
            filter: '', dirFilter: '', dirs: [], unresolved: [], projectErrors: [],
-           themeMQ: null, onThemeChange: null, onKey: null };
+           themeMQ: null, onThemeChange: null, onKey: null, bodyObs: null };
   pendingFocus = '';
 
   bindCanvas(canvasEl);
@@ -247,26 +236,29 @@ async function renderInto(pane) {
   view.onThemeChange = () => { if (view) { readColors(); draw(); } };
   if (view.themeMQ && view.themeMQ.addEventListener) view.themeMQ.addEventListener('change', view.onThemeChange);
 
-  // Esc — layer-by-layer exit (design §3): broken overlay → preview →
-  // search filter → directory filter.
+  // Esc — layer-by-layer exit (selection → search filter → directory filter).
   view.onKey = (/** @type {KeyboardEvent} */ e) => {
     if (!view || e.key !== 'Escape') return;
-    const brokenEl = view.pane.querySelector('.wg-broken');
-    if (brokenEl && brokenEl.classList.contains('open')) { brokenEl.classList.remove('open'); return; }
     if (view.selected) { deselect(); return; }
     if (view.filter) {
       view.filter = '';
-      const input = /** @type {HTMLInputElement|null} */ (view.pane.querySelector('.wg-search-input'));
-      if (input) input.value = '';
+      for (const input of searchInputs()) input.value = '';
       applyFilter(); draw();
       return;
     }
     if (view.dirFilter) { view.dirFilter = ''; renderChips(); applyFilter(); draw(); }
   };
   document.addEventListener('keydown', view.onKey);
+  startBodyObserver();
 
   await loadData(false);
   rebuildSim();
+
+  // Fresh render lands with the pane active (open) or not (background restore)
+  // — publish the side-face state either way; the transition guard inside
+  // keeps a manually collapsed sidebar quiet.
+  syncSidePanel(view.pane.classList.contains('active') &&
+    document.body.classList.contains('canvas-open'));
 }
 
 function teardown() {
@@ -277,8 +269,197 @@ function teardown() {
     view.themeMQ.removeEventListener('change', view.onThemeChange);
   }
   if (view.onKey) document.removeEventListener('keydown', view.onKey);
+  if (view.bodyObs) { view.bodyObs.disconnect(); view.bodyObs = null; }
+  // Hand the left column back to the file explorer.
+  document.body.classList.remove('wg-side-active');
+  const side = document.getElementById('wiki-graph-side');
+  if (side) side.remove();
+  sideWasVisible = false;
   view = null;
 }
+
+// ── 左栏控制面（#wiki-graph-side — #explorer-section 的兄弟节）───────────
+
+/** Build (once) the graph control face inside the files sidebar panel.
+ *  Returns the section element, or null when the panel is unavailable
+ *  (embedded/test contexts). */
+function ensureSidePanel() {
+  const panel = document.getElementById('panel-sessions');
+  if (!panel) return null;
+  let side = document.getElementById('wiki-graph-side');
+  if (side) return side;
+  side = document.createElement('section');
+  side.id = 'wiki-graph-side';
+  side.className = 'wg-side';
+  side.setAttribute('aria-label', t('wiki.tabTitle'));
+
+  const head = document.createElement('div');
+  head.className = 'wg-side-head';
+  const title = document.createElement('span');
+  title.className = 'wg-side-title';
+  title.textContent = t('wiki.tabTitle');
+  head.appendChild(title);
+
+  const detail = document.createElement('div');
+  detail.className = 'wg-detail';
+  detail.appendChild(buildDetailSkeleton());
+
+  const broken = document.createElement('div');
+  broken.className = 'wg-broken';
+  broken.innerHTML = '<h3></h3><div class="rows"></div>';
+  broken.querySelector('h3').textContent = t('wiki.brokenTitle');
+
+  const stats = document.createElement('div');
+  stats.className = 'wg-stats';
+
+  // 图例注明（作者令 2026-10-22：滚轮/捏合约定写进图例——左栏为家，canvas 保纯）。
+  const hint = document.createElement('div');
+  hint.className = 'wg-hint';
+  hint.textContent = t('wiki.inputHint');
+
+  side.append(head, buildSearchBox(), buildChipsGroup(), detail, broken, stats, hint);
+  panel.appendChild(side);
+  return side;
+}
+
+/** Search box (shared builder — side face and mobile panebar). */
+function buildSearchBox() {
+  const wrap = document.createElement('div');
+  wrap.className = 'wg-search';
+  wrap.innerHTML =
+    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'wg-search-input';
+  input.placeholder = t('wiki.searchPlaceholder');
+  input.setAttribute('aria-label', t('wiki.searchPlaceholder'));
+  input.addEventListener('input', () => {
+    if (!view) return;
+    view.filter = input.value.trim().toLowerCase();
+    for (const other of searchInputs()) { if (other !== input) other.value = input.value; }
+    applyFilter();
+    draw();
+  });
+  wrap.appendChild(input);
+  return wrap;
+}
+
+/** Directory chips group (shared builder). One-click single-select filter. */
+function buildChipsGroup() {
+  const chips = document.createElement('div');
+  chips.className = 'wg-chips';
+  chips.setAttribute('role', 'group');
+  return chips;
+}
+
+/** Detail card skeleton (徽标/摘要/目录/引出/被引/路径/打开文档) — the sidebar
+ *  replacement of the old floating preview card. */
+function buildDetailSkeleton() {
+  const frag = document.createElement('div');
+  frag.className = 'wg-detail-card';
+  const empty = document.createElement('div');
+  empty.className = 'wg-detail-empty';
+  empty.textContent = t('wiki.detailEmpty');
+  const body = document.createElement('div');
+  body.className = 'wg-detail-body';
+  body.hidden = true;
+  body.innerHTML =
+    '<header><h2></h2>' +
+    '<button class="close" type="button" aria-label="' + t('wiki.closePreview') + '">×</button></header>' +
+    '<div class="badges"></div><p class="summary"></p>' +
+    '<h3></h3><ul class="toc"></ul>' +
+    '<h3></h3><ul class="out"></ul>' +
+    '<h3></h3><ul class="in"></ul>' +
+    '<div class="path"></div>' +
+    '<button class="openbtn" type="button"></button>';
+  const h3s = body.querySelectorAll('h3');
+  h3s[0].textContent = t('wiki.secToc');
+  h3s[1].textContent = t('wiki.secOut');
+  h3s[2].textContent = t('wiki.secIn');
+  body.querySelector('.openbtn').textContent = t('wiki.openDoc');
+  body.querySelector('.close').addEventListener('click', () => deselect());
+  body.querySelector('.openbtn').addEventListener('click', () => {
+    if (view && view.selected) void openDoc(view.selected.ref);
+  });
+  frag.append(empty, body);
+  return frag;
+}
+
+/** Compact in-pane control bar — MOBILE LAYER ONLY (display:none elsewhere).
+ *  Search + chips + stats; the phone shell hosts the pane full-page and has
+ *  no left column, so the bar rides inside the pane. */
+function buildPaneBar() {
+  const bar = document.createElement('div');
+  bar.className = 'wg-panebar';
+  const stats = document.createElement('div');
+  stats.className = 'wg-stats';
+  bar.append(buildSearchBox(), buildChipsGroup(), stats);
+  return bar;
+}
+
+/** Every live search input (side face + panebar). @returns {HTMLInputElement[]} */
+function searchInputs() {
+  const out = /** @type {HTMLInputElement[]} */ ([]);
+  if (view && view.side) out.push(/** @type {HTMLInputElement|null} */ (view.side.querySelector('.wg-search-input')));
+  if (view && view.panebar) out.push(/** @type {HTMLInputElement|null} */ (view.panebar.querySelector('.wg-search-input')));
+  return out.filter(Boolean);
+}
+
+/** Every live chips container. */
+function chipsContainers() {
+  const out = [];
+  if (view && view.side) out.push(view.side.querySelector('.wg-chips'));
+  if (view && view.panebar) out.push(view.panebar.querySelector('.wg-chips'));
+  return out.filter(Boolean);
+}
+
+/** Every live detail-card root (currently the side face only). */
+function detailRoots() {
+  const out = [];
+  if (view && view.side) out.push(view.side.querySelector('.wg-detail'));
+  return out.filter(Boolean);
+}
+
+/** Every live stats line. */
+function statsContainers() {
+  const out = [];
+  if (view && view.side) out.push(view.side.querySelector('.wg-stats'));
+  if (view && view.panebar) out.push(view.panebar.querySelector('.wg-stats'));
+  return out.filter(Boolean);
+}
+
+// ── Side-face ↔ canvas visibility sync ────────────────────────────────────
+
+/** Publish "the wiki graph IS the visible canvas content" onto the left
+ *  column: body.wg-side-active swaps the explorer for the control face.
+ *  Auto-expand fires on the FALSE→TRUE transition only (R5/R6/R9 semantics —
+ *  see module header); expanding walks the persisted showSidePanel API so no
+ *  new localStorage key appears. Mobile viewport never auto-expands (drawer
+ *  exclusivity — whoever expands second wins). */
+function syncSidePanel(visible) {
+  const now = !!visible && !!view &&
+    document.body.classList.contains('canvas-open') &&
+    view.pane.isConnected;
+  document.body.classList.toggle('wg-side-active', now);
+  if (now && !sideWasVisible && !isMobileViewport()) {
+    import('./activityBar.js').then((m) => m.showSidePanel('files'))
+      .catch(() => { /* activity bar unavailable — face still swaps */ });
+  }
+  sideWasVisible = now;
+}
+
+function isMobileViewport() {
+  return !!(window.matchMedia && window.matchMedia(MOBILE_MQ).matches);
+}
+
+/** Selection from the control face must land on a visible canvas (mobile
+ *  drawer case: expanding the sidebar closed the canvas — reopen it). */
+function ensureCanvasVisible() {
+  if (document.body.classList.contains('canvas-open')) return;
+  import('./canvas.js').then((m) => m.openCanvas()).catch(() => { /* noop */ });
+}
+
+// ── Data ─────────────────────────────────────────────────────────────────
 
 async function loadData(force) {
   if (!view) return;
@@ -323,7 +504,7 @@ function rebuildSim() {
   const allById = new Map((data.nodes || []).map(n => [n.id, n]));
 
   // Broken references never become nodes (design §3): stubs are dropped and
-  // their edges are counted into the info line instead.
+  // their edges are counted into the stats line instead.
   const nodes = /** @type {WgNode[]} */ ((data.nodes || [])
     .filter(n => !n.stub)
     .map(n => ({
@@ -352,8 +533,8 @@ function rebuildSim() {
   for (const n of nodes) n.degree = n.out.length + n.inc.length;
 
   // Unresolved references (edge targets that are stubs) — counted, listed in
-  // the broken overlay, never drawn. Project-level stubs surface as vault
-  // errors in the same overlay.
+  // the broken section, never drawn. Project-level stubs surface as vault
+  // errors in the same section.
   const unresolvedSeen = new Set();
   const unresolved = [];
   for (const e of data.edges || []) {
@@ -389,6 +570,8 @@ function rebuildSim() {
 
   readColors();
   view.scale = 1;
+  view.zoomTarget = 1;
+  view.zoomAnchor = null;
   view.vx = 0; view.vy = 0;
   view.hover = null;
   hideTip();
@@ -398,9 +581,10 @@ function rebuildSim() {
   view.selected = (selId && byId.get(selId)) || null;
 
   renderChips();
-  renderInfo();
+  renderStats();
+  renderBroken();
   applyFilter();
-  if (view.selected) renderPreview(view.selected);
+  renderDetailAll();
 
   if (view.focusId && byId.has(view.focusId)) {
     const n = byId.get(view.focusId);
@@ -422,54 +606,47 @@ function readColors() {
   };
 }
 
-function updateInfoLineBody() { /* counts render in renderInfo; kept for symmetry */ }
-
 function renderChips() {
-  if (!view || !view.pane) return;
-  const chips = view.pane.querySelector('.wg-chips');
-  if (!chips) return;
-  chips.textContent = '';
-  const mk = (label, value) => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'wg-chip' + (view.dirFilter === value ? ' on' : '');
-    b.textContent = label;
-    b.addEventListener('click', () => {
-      if (!view) return;
-      view.dirFilter = view.dirFilter === value ? '' : value;
-      renderChips();
-      applyFilter();
-      draw();
-    });
-    return b;
-  };
-  chips.appendChild(mk(t('wiki.chipAll'), ''));
-  for (const d of view.dirs) chips.appendChild(mk(d === '.' ? t('wiki.chipRoot') : d + '/', d));
+  if (!view) return;
+  for (const chips of chipsContainers()) {
+    chips.textContent = '';
+    const mk = (label, value) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'wg-chip' + (view.dirFilter === value ? ' on' : '');
+      b.textContent = label;
+      b.addEventListener('click', () => {
+        if (!view) return;
+        view.dirFilter = view.dirFilter === value ? '' : value;
+        renderChips();
+        applyFilter();
+        draw();
+      });
+      return b;
+    };
+    chips.appendChild(mk(t('wiki.chipAll'), ''));
+    for (const d of view.dirs) chips.appendChild(mk(d === '.' ? t('wiki.chipRoot') : d + '/', d));
+  }
 }
 
-function renderInfo() {
-  if (!view || !view.pane) return;
-  const infoline = view.pane.querySelector('.wg-infoline');
-  const broken = view.pane.querySelector('.wg-broken');
-  if (!infoline || !broken) return;
+/** Stats line (bottom of the control face): N 篇文档 · N 条引用 · N 条未解析. */
+function renderStats() {
+  if (!view) return;
   const d = view.data || {};
-  infoline.textContent = '';
-  const span = document.createElement('span');
-  span.textContent = t('wiki.infoDocs')
+  const text = t('wiki.infoDocs')
     .replace('{docs}', String((d.nodes || []).filter(n => !n.stub).length))
-    .replace('{links}', String(view.sim ? view.sim.edges.length : 0));
-  infoline.appendChild(span);
-  const n = view.unresolved.length;
-  if (n > 0 || view.projectErrors.length > 0) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.textContent = t('wiki.infoUnresolved').replace('{n}', String(n));
-    btn.addEventListener('click', () => broken.classList.toggle('open'));
-    infoline.appendChild(btn);
-  }
-  // Broken overlay rows: unreadable vaults first (honesty about missing
-  // projects), then the unresolved reference list. A row re-selects its
-  // SOURCE document in the graph.
+    .replace('{links}', String(view.sim ? view.sim.edges.length : 0)) +
+    t('wiki.infoUnresolved').replace('{n}', String(view.unresolved.length));
+  for (const el of statsContainers()) el.textContent = text;
+}
+
+/** Broken-reference section (fixed block, not an overlay): unreadable vaults
+ *  first, then the unresolved reference list. A row re-selects its SOURCE
+ *  document in the canvas. Hidden entirely when there is nothing broken. */
+function renderBroken() {
+  if (!view || !view.side) return;
+  const broken = view.side.querySelector('.wg-broken');
+  if (!broken) return;
   const rows = broken.querySelector('.rows');
   rows.textContent = '';
   for (const p of view.projectErrors.slice(0, 8)) {
@@ -489,10 +666,10 @@ function renderInfo() {
     row.appendChild(b);
     row.appendChild(document.createTextNode(target));
     row.addEventListener('click', () => {
-      broken.classList.remove('open');
       const srcNode = [...view.byId.values()].find(nn => (nn.ref.rel || '') === from);
       if (srcNode) select(srcNode, true);
     });
+    rows.appendChild(row);
     if (i === 59) {
       const more = document.createElement('div');
       more.className = 'row more';
@@ -500,6 +677,7 @@ function renderInfo() {
       rows.appendChild(more);
     }
   });
+  broken.classList.toggle('none', !rows.childElementCount);
 }
 
 function applyFilter() {
@@ -573,10 +751,13 @@ function startLoop() {
   const loop = () => {
     if (!view || !view.sim) return;
     tick();
+    // 阻尼缩放追帧（作者令 2026-10-22）：跑在 draw 前，锚点补偿+scale 同帧生效。
+    const chasing = zoomChaseStep();
     draw();
-    // Idle stop: the layout settled and nobody is interacting — zero steady-
-    // state CPU (design §4). Any pointer/zoom/filter interaction restarts it.
-    if (view.sim.alpha < 0.02 && !view.hover && !view.dragging && !view.panning) {
+    // Idle stop: the layout settled, no zoom chase pending and nobody is
+    // interacting — zero steady-state CPU (design §4). Any pointer/zoom/filter
+    // interaction restarts it.
+    if (view.sim.alpha < 0.02 && !chasing && !view.hover && !view.dragging && !view.panning) {
       view.raf = 0;
       return;
     }
@@ -608,13 +789,6 @@ function repaintOnActivate() {
     draw();
   });
 }
-
-// Tab switching: repaint on re-activation (the hidden canvas backing store is
-// dropped while the tab is inactive). No explorer-space hosting anymore — the
-// redesign's info line replaced the file list.
-document.addEventListener('canvas-tab-switched', (/** @type {CustomEvent} */ e) => {
-  if (e.detail && e.detail.id === TAB_ID) repaintOnActivate();
-});
 
 // ── Rendering ─────────────────────────────────────────────────
 
@@ -743,6 +917,53 @@ function pick(px, py) {
   return best;
 }
 
+// ── Wheel: trackpad-first zoom/pan (作者令 2026-10-22 · excalidraw/figma 手感) ──
+// 惯例（主流画布约定，Figma/Miro 同款；左栏 .wg-hint 注明）：
+//   双指滚动 / 鼠标滚轮        → 平移（1:1 跟手，Shift+纵滚 = 横移）
+//   触控板捏合 / ⌘(Ctrl)+滚轮  → 以光标为锚点缩放
+// 平滑（阻尼追帧）：捏合不直接写 scale —— 每个事件按 exp 曲线累积进 zoomTarget，
+// rAF 每帧向目标追近 25%（速度∝剩余距离），锚点 = 最近一次指针位置 ⇒ 连续捏合
+// 帧只表现为平滑推进，无 1.12 定步跳变；动量收尾自然滑入目标。
+
+const PINCH_K = 0.0015;   // exp 系数：滚轮一格 Δ≈120 → ≈1.2 档；触控板单帧 Δ≈2 → 微步
+const ZOOM_CHASE = 0.25;  // 每帧向 zoomTarget 追近的比例（阻尼）
+const ZOOM_SNAP = 0.0005; // 剩余差小于此直接贴合（收尾不抖）
+
+/** WheelEvent deltas → pixels（Firefox line 档 ×16、page 档 ×视口高）。 */
+function normalizeWheelDelta(e) {
+  let x = e.deltaX, y = e.deltaY;
+  if (e.deltaMode === 1) { x *= 16; y *= 16; }
+  else if (e.deltaMode === 2) { const h = (view && view.H) || 600; x *= h; y *= h; }
+  return { x, y };
+}
+
+/** One damped chase step toward zoomTarget (cursor-anchored when an anchor is
+ *  live, center-anchored otherwise). @returns {boolean} still chasing */
+function zoomChaseStep() {
+  if (!view) return false;
+  const diff = view.zoomTarget - view.scale;
+  if (Math.abs(diff) <= ZOOM_SNAP) {
+    view.scale = view.zoomTarget;
+    return false;
+  }
+  const next = view.scale + diff * ZOOM_CHASE;
+  if (view.zoomAnchor) {
+    const k = next / view.scale;
+    const { px, py } = view.zoomAnchor;
+    view.vx = px - (px - view.vx) * k;
+    view.vy = py - (py - view.vy) * k;
+  }
+  view.scale = next;
+  return true;
+}
+
+/** Ensure the rAF loop is running WITHOUT re-energizing the layout sim —
+ *  zoom/pan must not make nodes drift (design §4 停帧 semantics preserved). */
+function ensureLoop() {
+  if (!view) return;
+  if (!view.raf) startLoop();
+}
+
 function bindCanvas(canvasEl) {
   let moved = false;
   canvasEl.addEventListener('pointerdown', (e) => {
@@ -811,24 +1032,27 @@ function bindCanvas(canvasEl) {
   canvasEl.addEventListener('wheel', (e) => {
     if (!view) return;
     e.preventDefault();
-    wake(0.15);
     const rect = canvasEl.getBoundingClientRect();
-    zoomAt(e.clientX - rect.left, e.clientY - rect.top, e.deltaY < 0 ? 1.12 : 1 / 1.12);
-    draw();
+    const d = normalizeWheelDelta(e);
+    if (e.ctrlKey || e.metaKey) {
+      // 捏合 / ⌘(Ctrl)+滚轮：光标锚点阻尼缩放（平移/缩放互不复位——平移只动
+      // vx/vy，缩放只动 scale+锚点补偿，两个自由度正交）。
+      view.zoomAnchor = { px: e.clientX - rect.left, py: e.clientY - rect.top };
+      view.zoomTarget = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, view.zoomTarget * Math.exp(-d.y * PINCH_K)));
+      ensureLoop();
+    } else {
+      // 双指滚动 / 鼠标滚轮：平移（不误触缩放）
+      let dx = d.x, dy = d.y;
+      if (e.shiftKey && !dx) { dx = dy; dy = 0; }
+      view.vx += dx; view.vy += dy;
+      view.zoomTarget = view.scale;
+      view.zoomAnchor = null;
+      if (!view.raf) draw();
+    }
   }, { passive: false });
 }
 
-/** Zoom anchored at pane-local (px,py), cursor-anchored (design §3). */
-function zoomAt(px, py, factor) {
-  if (!view) return;
-  const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, view.scale * factor));
-  const k = next / view.scale;
-  view.vx = px - (px - view.vx) * k;
-  view.vy = py - (py - view.vy) * k;
-  view.scale = next;
-}
-
-// ── Tooltip / preview card ────────────────────────────────────
+// ── Tooltip / detail card ─────────────────────────────────────
 
 function dirLabel(dir) { return dir === '.' ? t('wiki.chipRoot') : dir; }
 
@@ -859,12 +1083,17 @@ function hideTip() {
   if (tip) tip.style.display = 'none';
 }
 
-/** Fill the preview card for one node (design §3: title, badges, summary,
- *  TOC ≤5, in/out refs ≤5 clickable, path, 打开文档). */
-function renderPreview(n) {
-  if (!view || !view.pane) return;
-  const card = view.pane.querySelector('.wg-preview');
-  if (!card) return;
+/** Fill one detail card for a node (徽标/摘要/目录 ≤5/引出 ≤5/被引 ≤5/路径). */
+function fillDetailCard(root, n) {
+  const emptyEl = root.querySelector('.wg-detail-empty');
+  const card = root.querySelector('.wg-detail-body');
+  if (!n) {
+    if (emptyEl) emptyEl.hidden = false;
+    if (card) card.hidden = true;
+    return;
+  }
+  if (emptyEl) emptyEl.hidden = true;
+  if (card) card.hidden = false;
   const d = n.ref;
   card.querySelector('h2').textContent = n.label;
   const badges = card.querySelector('.badges');
@@ -920,15 +1149,25 @@ function renderPreview(n) {
   card.querySelector('.path').textContent = (d.project ? d.project + ' · ' : '') + 'docs/' + (d.rel || '');
 }
 
+/** Refresh every detail card from view.selected (canvas click → 左栏详情). */
+function renderDetailAll() {
+  if (!view) return;
+  for (const root of detailRoots()) fillDetailCard(root, view.selected);
+}
+
+/** Select a node: refresh the sidebar detail card, optionally center the
+ *  canvas on it (左栏词条 → canvas 聚焦). */
 function select(n, scroll) {
   if (!view) return;
   view.selected = n;
-  renderPreview(n);
-  const card = view.pane.querySelector('.wg-preview');
-  if (card) card.classList.add('open');
+  renderDetailAll();
+  ensureCanvasVisible();
   if (scroll) {
-    // Center the node, yielding half the preview card's width (sample math).
-    view.vx = view.W / 2 - n.x * view.scale - 140 * view.scale;
+    // Center the node exactly (the control face lives outside the canvas
+    // pane — no half-width yield anymore). A pending damped pinch loses its
+    // cursor anchor (chase continues center-anchored, never fights the recenter).
+    view.zoomAnchor = null;
+    view.vx = view.W / 2 - n.x * view.scale;
     view.vy = view.H / 2 - n.y * view.scale;
   }
   wake(0.15);
@@ -938,8 +1177,7 @@ function select(n, scroll) {
 function deselect() {
   if (!view) return;
   view.selected = null;
-  const card = view.pane.querySelector('.wg-preview');
-  if (card) card.classList.remove('open');
+  renderDetailAll();
   draw();
 }
 
@@ -951,7 +1189,7 @@ function deselect() {
  *  Canvas tab): local files ride openLocalFileTab — the entry the markdown
  *  viewer's links use — so tab dedupe/switching behave identically; peer-device
  *  docs are fetched read-only through /api/wiki/remote-doc. Fired by the
- *  preview card's 打开文档 button. @param {any} d graph node ref */
+ *  detail card's 打开文档 button. @param {any} d graph node ref */
 async function openDoc(d) {
   const remote = d.device && d.device !== 'self';
   if (!remote) {
@@ -1013,9 +1251,11 @@ export function focusWikiNode(project, rel) {
 /** @type {any} */ (window).__wikiGraphProbe = () => view && view.sim ? {
   alpha: view.sim.alpha,
   scale: view.scale,
+  zoomTarget: view.zoomTarget,
   vx: view.vx, vy: view.vy, W: view.W, H: view.H,
   nodes: view.sim.nodes.map(n => ({ id: n.id, x: n.x, y: n.y, degree: n.degree, rank: n.rank, dir: n.dir })),
   unresolved: view.unresolved.length,
   filter: view.filter, dirFilter: view.dirFilter,
   selected: view.selected ? view.selected.id : null,
+  sideMounted: !!(view.side && view.side.isConnected),
 } : null;

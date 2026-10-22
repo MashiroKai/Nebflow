@@ -642,18 +642,20 @@ body.canvas-open.canvas-overlay #canvas-panel {
   padding: 6px 8px 6px 14px;
   margin: 0;
   border-radius: 999px;
-  border: 1px solid var(--glass-control-border);
-  background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  /* ── Frosted 标准（2026-10-22 作者令：全站一套毛玻璃，禁各画各的）──
+     材质 token 对齐 chat header 现实现：--glass-bg 底 + --glass-blur
+     saturate(1.15) + --glass-border + --frost-shadow 阴影 + 顶缘折射线
+     （--sapphire-refraction），原 --glass-control-* 自绘材质退役。 */
+  border: 1px solid var(--glass-border);
+  background:
+    linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
+    var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   color: var(--color-frame-text-bright);
   font-size: 14px;
   font-weight: 500;
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge),
-    0 1px 3px var(--glass-control-glow),
-    0 2px 8px var(--glass-control-shadow);
+  box-shadow: var(--frost-shadow);
   /* 手势跟手位移/按压形（JS 写变量；静止恒等）。 */
   --head-dx: 0px;
   --head-dy: 0px;
@@ -662,28 +664,25 @@ body.canvas-open.canvas-overlay #canvas-panel {
   transition: transform 0.18s ease, filter 0.18s ease, box-shadow 0.18s ease;
   touch-action: none;   /* 分区契约：胶囊手势面不劫持内容滚动（spec CC7） */
 }
-/* 按压触感（B：按住即有）——scale + 亮度反馈 */
+/* 按压触感（B：按住即有）——scale + 亮度反馈；阴影不另画（frosted 标准一份） */
 .canvas-header.is-pressed {
   --head-scale: 0.97;
   filter: brightness(0.9);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge),
-    0 1px 2px var(--glass-control-glow),
-    0 1px 4px var(--glass-control-shadow);
 }
 /* 拖动中：位移 1:1 跟手（松手回弹走上面的 transition） */
 .canvas-header.is-dragging { transition: none; }
 
-/* ⑨ 穿底渐隐：胶囊裙边几何按胶囊放宽（工具类 left/right:0 → 外延 18px），
-   裙高收 24px（贴胶囊矮身）；tint/暗色档沿用 scrollUnderGlass.css 缺省。 */
+/* ⑨ 穿底渐隐：胶囊裙边几何按胶囊放宽（工具类 left/right:0 → 外延 18px）；
+   桌面已随 2026-10-22 作者令整体退役（scrollUnderGlass.css 尾部 display:none），
+   本段几何仅手机层生效。 */
 .canvas-header.scroll-under-glass { --sug-fade: 24px; --sug-blur: 10px; }
 .canvas-header.scroll-under-glass::after { left: -18px; right: -18px; }
 
-/* 桌面态胶囊内容（原 46px 实条规则退役）：高度由内容撑，pop 钮随行。 */
+/* 桌面态胶囊内容（原 46px 实条规则退役）：高度由内容撑，pop 钮随行。
+   2026-10-22 作者令「平时态尺寸调小」：padding/字号降一档。 */
 body:not(.mobile-layer) .canvas-header {
   height: auto;
-  padding: 6px 8px 6px 14px;
+  padding: 4px 7px 4px 12px;
 }
 body:not(.mobile-layer) .canvas-header .canvas-tab-bar,
 body:not(.mobile-layer) .canvas-header .canvas-close-btn {
@@ -691,6 +690,18 @@ body:not(.mobile-layer) .canvas-header .canvas-close-btn {
 }
 /* .canvas-title 族规则在原位（下方「常态头 v2①」段），本段不重复。 */
 /* (Header ::before bump is defined later with the panel drag-handle styles) */
+
+/* 2026-10-22 作者令③「按住=交互按钮」：胶囊按下/拖动必须是按钮语义 ——
+   全头 user-select none（严禁进入文字多选/双击选中文本态）；原生拖拽
+   （dragstart）由 canvas.js preventDefault 拦截，OS 文件拖入（drop 落区）
+   不受影响（拦的是从胶囊发起的 drag，不是 drop）。 */
+.canvas-header {
+  user-select: none;
+  -webkit-user-select: none;
+  /* 胶囊环（下方 §ring）的 3D 透视原点 = 胶囊中心 */
+  perspective: 640px;
+  perspective-origin: 50% 50%;
+}
 
 /* Canvas close button */
 .canvas-close-btn {
@@ -1201,17 +1212,103 @@ body.canvas-deck-narrow .canvas-title { max-width: 46%; }
   transition: opacity 0.14s ease, transform 0.14s ease;
 }
 .canvas-title.swap .t-inner { opacity: 0; transform: translateY(-5px); }
-.canvas-title .t-icon { flex: none; width: 16px; height: 16px; color: var(--color-text-muted); display: flex; }
-.canvas-title .t-icon svg { width: 16px; height: 16px; }
+.canvas-title .t-icon { flex: none; width: 14px; height: 14px; color: var(--color-text-muted); display: flex; }
+.canvas-title .t-icon svg { width: 14px; height: 14px; }
 .canvas-title .t-dot {
-  flex: none; width: 6px; height: 6px; border-radius: 50%;
+  flex: none; width: 5px; height: 5px; border-radius: 50%;
   background: var(--color-primary); display: none;
 }
 .canvas-title.is-dirty .t-dot { display: block; }
 .canvas-title .t-name {
-  font-size: 13px; font-weight: 500; color: var(--color-frame-text-bright, var(--color-text));
+  font-size: 12px; font-weight: 500; color: var(--color-frame-text-bright, var(--color-text));
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
 }
+
+/* ── 胶囊环（2026-10-22 作者令追加：hover 态展开为圆环排布）──────────
+   作者令：平时态 = 单胶囊（缩小，上方）；hover 态 = 各页签胶囊沿圆环排布，
+   最多同时可见 3 个（中心 = 环游标 · 两侧邻位沿弧后仰）；左右滚动（触控板
+   横滑 / 滚轮 deltaX / Shift+纵滚）在环上换选，点击即切换页签；两侧缘位胶囊
+   沿曲率 rotateY 透视 + 模糊扭曲（cover-flow），材质 = 全站统一 frosted token
+   （--glass-bg / --glass-blur saturate(1.15) / --glass-border / --frost-shadow，
+   sapphire.css 单源 —— 禁止各画各的）。
+   几何：环容器 0×0 锚在标题头中心（JS 置 left/top px），胶囊 absolute 居中于
+   锚点，transform = translate(-50%,-50%) translateX(--cr-x) translateZ(--cr-z)
+   rotateY(--cr-ry) scale(--cr-press)；透视由 .canvas-header 的 perspective
+   提供。环 = 纯前端组件（本文件 + canvas.js §ring），与左栏控制面零共享。
+   按住=按钮语义（作者令③）：胶囊本体 button + 全头 user-select:none。 */
+.capsule-ring {
+  position: absolute;
+  width: 0;
+  height: 0;
+  z-index: 4;             /* 盖过 .canvas-title（z-auto），pop 钮(5)之上不给 */
+  pointer-events: none;
+}
+.cr-capsule {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 150px;
+  padding: 4px 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  box-shadow: var(--frost-shadow);
+  color: var(--color-frame-text-bright, var(--color-text));
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+  -webkit-user-select: none;
+  opacity: 0;
+  pointer-events: none;                     /* 收起态不拦 hover 命中 */
+  transform: translate(-50%, -50%) translateX(var(--cr-x, 0px)) translateZ(var(--cr-z, 0px))
+    rotateY(var(--cr-ry, 0deg)) scale(var(--cr-press, 1));
+  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.16s ease, filter 0.18s ease;
+}
+.canvas-header.ring-open .cr-capsule { pointer-events: auto; opacity: 1; }
+.cr-capsule .cr-icon { flex: none; width: 14px; height: 14px; color: var(--color-text-muted); display: flex; }
+.cr-capsule .cr-icon svg { width: 14px; height: 14px; }
+.cr-capsule .cr-dot {
+  flex: none; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--color-primary); display: none;
+}
+.cr-capsule.is-dirty .cr-dot { display: block; }
+.cr-capsule .cr-name {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  color: var(--color-frame-text-bright, var(--color-text));
+}
+/* 中心位 = 环游标胶囊：内容-only 覆层（底 = 常态标题头胶囊本体 —— 同位无缝
+   morph；按压触感也由标题头 is-pressed scale 承接），零变换全清晰 */
+.cr-capsule.is-center {
+  z-index: 3;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.cr-capsule.is-center:active { --cr-press: 0.96; filter: brightness(0.92); }
+/* 缘位 = cover-flow：沿弧后仰 + 模糊扭曲 + 半透（毛玻璃照挂 —— 模糊叠加在
+   backdrop 之上，曲率感来自 rotateY 透视） */
+.cr-capsule.is-edge {
+  z-index: 2;
+  opacity: 0.82;
+  filter: blur(1.6px) saturate(1.25);
+}
+.cr-capsule.is-edge:active { --cr-press: 0.96; }
+/* 弧外位（|rel|≥2）：不可见不可点，保留位姿让收放有连续轨迹 */
+.cr-capsule.is-far { opacity: 0 !important; pointer-events: none !important; }
+/* 环开时常态标题让位（同位同容的中心胶囊接班 —— 无缝 morph）；pop 钮浮在环上 */
+.canvas-header.ring-open .canvas-title .t-inner { opacity: 0; pointer-events: none; }
+.canvas-header .canvas-pop-btn { position: relative; z-index: 6; }
 
 /* ── 层叠浮钮（v5②）：body 层固定元素，JS 逐帧同步面板盒。移位批（作者令
    2026-10-22 ②）：钉区从「顶右 top10/right12」迁「右下角 bottom16/right12」
@@ -1529,7 +1626,8 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   #canvas-content,
   #deck-layer,
   #deck-fab,
-  .canvas-title .t-inner { transition-duration: 0.01s !important; }
+  .canvas-title .t-inner,
+  .cr-capsule { transition-duration: 0.01s !important; }
 }
 
 /* 精修③补：OS 文件拖到居中标题条 = 开新签（标签条退役后的替代落区，v1 备忘） */
@@ -2347,7 +2445,8 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   100% { background: transparent; box-shadow: none; }
 }
 
-/* ── Wiki graph tab · 极简化 (wiki-graph redesign, 2026-10-21 batch) ── */
+/* ── Wiki graph · canvas face (wiki-graph redesign 2026-10-21 batch;
+      控制面迁左栏 author order: canvas = graph body + hover tooltip ONLY) ── */
 /* The design-doc implementation (docs/design/wiki-graph-redesign-design.
    zh-CN.md §4): a graphite surface aligned with mystand.space — no aurora
    wash, no glass stack, no accent hue. The palette lives in scoped --wg-*
@@ -2355,7 +2454,10 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
    via getComputedStyle, the DOM via var(). Visibility still rides the canvas
    tab mechanism (.canvas-tab-pane / .active) — no display declaration here:
    a display:flex on the bare pane class would win the cascade over
-   .canvas-tab-pane's display:none (same specificity, later in source). */
+   .canvas-tab-pane's display:none (same specificity, later in source).
+   The control face itself lives in the LEFT COLUMN (sidebar.css-adjacent
+   styles further down, #wiki-graph-side) — this block only dresses the
+   canvas pane: canvas + tooltip (+ the mobile-layer panebar). */
 .wiki-graph-pane {
   --wg-background: #f5f6f7;
   --wg-card: #ffffff;
@@ -2367,10 +2469,6 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   overflow: hidden;
   background: var(--wg-background);
   color: var(--wg-foreground);
-  /* Container face: the pane may be a narrow stacked card while the viewport
-     stays wide — legend visibility keys off the PANE width, not the media. */
-  container-type: inline-size;
-  container-name: wgpane;
 }
 @media (prefers-color-scheme: dark) {
   .wiki-graph-pane {
@@ -2382,7 +2480,7 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   }
 }
 
-/* The canvas fills the whole pane — floating layers sit above it. An
+/* The canvas fills the whole pane — the tooltip floats above it. An
    absolutely-positioned REPLACED element keeps its intrinsic height under
    bare `inset: 0`, so the explicit 100%/100% is load-bearing: without it the
    bitmap never learns the pane grew and ResizeObserver never fires. */
@@ -2395,43 +2493,6 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 }
 .wiki-canvas.grabbing { cursor: grabbing; }
 .wiki-canvas.hovering { cursor: pointer; }
-
-/* Top bar (controls 1+2 of 3): search box + directory chips. Sits BELOW the
-   canvas panel's floating glass header capsule (.canvas-header, absolute
-   top:10 ≈58px tall, z-index 30) — the pane runs full height under it.
-   Pointer events stay off the strip itself so canvas pans start under gaps. */
-.wg-topbar {
-  position: absolute; top: 58px; left: 0; right: 0; z-index: 6;
-  display: flex; align-items: center; gap: 16px;
-  padding: 6px 20px 10px;
-  pointer-events: none;
-}
-.wg-topbar > * { pointer-events: auto; }
-.wg-search {
-  display: flex; align-items: center; gap: 8px;
-  background: var(--wg-card);
-  border: 1px solid var(--wg-border);
-  border-radius: 10px; padding: 6px 12px; min-width: 220px;
-}
-.wg-search:focus-within { border-color: var(--wg-muted); }
-.wg-search svg { flex: none; color: var(--wg-muted); }
-.wg-search-input {
-  border: 0; outline: 0; background: transparent;
-  color: var(--wg-foreground); font: inherit; width: 100%;
-}
-.wg-search-input::placeholder { color: var(--wg-muted); }
-.wg-chips { display: flex; gap: 6px; flex-wrap: wrap; }
-.wg-chip {
-  border: 1px solid var(--wg-border); background: var(--wg-card);
-  color: var(--wg-muted); border-radius: 999px; padding: 4px 12px;
-  font: inherit; font-size: 12px; cursor: pointer; outline: none;
-}
-.wg-chip:hover { color: var(--wg-foreground); }
-.wg-chip:focus-visible { border-color: var(--wg-muted); }
-.wg-chip.on {
-  background: var(--wg-foreground); border-color: var(--wg-foreground);
-  color: var(--wg-background);
-}
 
 /* Hover tooltip (control surface, not a control): card material, pane-local
    (position:absolute inside the relative+hidden pane — can never surface over
@@ -2450,116 +2511,196 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 }
 .wg-tip .td { color: var(--wg-muted); font-size: 11px; margin-top: 5px; font-variant-numeric: tabular-nums; }
 
+/* ── Compact in-pane bar — MOBILE LAYER ONLY. The phone shell hosts the pane
+   full-page and has no left column, so search/chips/stats ride inside the
+   pane (wikiGraph.js builds .wg-panebar; display:none everywhere else so the
+   desktop canvas stays a pure graph). */
+.wg-panebar { display: none; }
+body.mobile-layer #mobile-pages .wg-panebar {
+  position: absolute; top: 10px; left: 12px; right: 12px; z-index: 6;
+  display: flex; flex-direction: column; gap: 8px;
+  pointer-events: none;
+}
+body.mobile-layer #mobile-pages .wg-panebar > * { pointer-events: auto; }
+body.mobile-layer #mobile-pages .wg-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+
 @media (prefers-reduced-motion: reduce) {
   .nf-findbar { animation: none; }
   .canvas-md-viewer .nf-jump-flash { animation: none; background: rgba(94, 106, 210, 0.18); }
 }
 
-/* ── Preview card (design §3: click → slide in from the right, 280px) ── */
-.wg-preview {
-  position: absolute; z-index: 20; top: 64px; right: 20px; bottom: 52px; width: 280px;
-  background: var(--wg-card); border: 1px solid var(--wg-border);
-  border-radius: 14px; padding: 18px 18px 14px; overflow-y: auto;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
-  transform: translateX(24px); opacity: 0; visibility: hidden;
-  transition: transform .18s ease, opacity .18s ease, visibility .18s;
+/* ═══════════════════════════════════════════════════════════════════════
+   Wiki graph · LEFT-COLUMN control face (#wiki-graph-side)
+   (控制面迁左栏 author order, 2026-10-21)
+   ═══════════════════════════════════════════════════════════════════════
+   Mounted inside #panel-sessions as #explorer-section's sibling. While the
+   wiki graph is the visible canvas content, body.wg-side-active swaps the
+   explorer for this face; any other state restores the explorer. The face
+   wears the sidebar's own glass material (--color-frame-* / --glass-*)
+   instead of the canvas graphite palette — one glass card, one text family;
+   light/dark rides prefers-color-scheme like every other sidebar face. */
+.wg-side {
+  display: none;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 10px;
+  padding: 2px 12px 10px;
+  overflow: hidden;
+  container-type: inline-size;
+  container-name: wgside;
 }
-.wg-preview.open { transform: none; opacity: 1; visibility: visible; }
-.wg-preview .close {
-  position: absolute; top: 10px; right: 10px; width: 26px; height: 26px;
-  border: 0; background: transparent; color: var(--wg-muted); cursor: pointer;
-  border-radius: 8px; font-size: 15px; line-height: 26px;
+body.wg-side-active #panel-sessions .wg-side { display: flex; }
+body.wg-side-active #panel-sessions #explorer-section { display: none; }
+
+.wg-side-head { flex: none; padding: 2px 2px 0; }
+.wg-side-title {
+  font-size: 11px; font-weight: 600; color: var(--color-frame-text-muted);
+  text-transform: uppercase; letter-spacing: 0.5px;
 }
-.wg-preview .close:hover { color: var(--wg-foreground); background: var(--wg-background); }
-.wg-preview h2 { margin: 2px 24px 4px 0; font-size: 15px; font-weight: 500; line-height: 1.4; }
-.wg-preview .badges { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 10px; }
-.wg-preview .badge {
-  font-size: 11px; color: var(--wg-muted);
-  border: 1px solid var(--wg-border); border-radius: 999px; padding: 1px 9px;
+
+/* Search + chips (shared with the mobile panebar). Material = frosted 标准
+   （2026-10-22 作者令：与 chat header 同一套 --glass-bg/--glass-blur/
+   --glass-border/--frost-shadow，禁各画各的）。 */
+.wg-search {
+  flex: none;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px; padding: 5px 10px;
+  box-shadow: var(--frost-shadow);
 }
-.wg-preview .summary { color: var(--wg-muted); font-size: 12.5px; margin: 0 0 12px; }
-.wg-preview h3 {
-  font-size: 11px; font-weight: 500; color: var(--wg-muted); letter-spacing: .8px;
-  margin: 14px 0 6px; text-transform: uppercase;
+.wg-search:focus-within { border-color: var(--glass-etched-border-focus, var(--color-frame-active)); }
+.wg-search svg { flex: none; color: var(--color-frame-text-muted); }
+.wg-search-input {
+  border: 0; outline: 0; background: transparent;
+  color: var(--color-frame-text); font: inherit; font-size: 12.5px; width: 100%;
 }
-.wg-preview ul { list-style: none; margin: 0; padding: 0; }
-.wg-preview li { margin: 3px 0; }
-.wg-preview li.ghost { color: var(--wg-muted); }
-.wg-preview .ref {
-  border: 0; background: transparent; padding: 0; font: inherit; cursor: pointer;
-  color: var(--wg-foreground); text-align: left; display: block; width: 100%;
+.wg-search-input::placeholder { color: var(--color-frame-text-muted); }
+.wg-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+/* chips 与搜索框同属 frosted 家族（2026-10-22 作者令「全站一套毛玻璃」）：
+   --glass-bg / blur(--glass-blur) saturate(1.15) / --glass-border /
+   --frost-shadow —— 与 chat header 同 token，仅无 sapphire-refraction 顶缘线
+   （小控件不挂折射线）。`.on` = 选中态 accent 材质，不在本契约内。 */
+.wg-chip {
+  border: 1px solid var(--glass-border); background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  box-shadow: var(--frost-shadow);
+  color: var(--color-frame-text-muted); border-radius: 999px; padding: 3px 10px;
+  font: inherit; font-size: 12px; cursor: pointer; outline: none;
+  white-space: nowrap;
+}
+.wg-chip:hover { color: var(--color-frame-text); }
+.wg-chip:focus-visible { border-color: var(--glass-etched-border-focus, var(--color-frame-active)); }
+.wg-chip.on {
+  background: var(--color-frame-active); border-color: var(--color-frame-active);
+  color: var(--color-frame-text-bright);
+}
+
+/* Detail card (选中节点详情卡 — the sidebar replacement of the floating
+   preview card): 徽标 / 摘要 / 目录 / 引出 / 被引 / 路径 / 打开文档. */
+.wg-detail {
+  flex: 1; min-height: 60px;
+  overflow-y: auto; overscroll-behavior: contain;
+  border-top: 1px solid var(--color-frame-border);
+  padding-top: 10px;
+}
+.wg-detail-empty { color: var(--color-frame-text-dim); font-size: 12px; padding: 2px 0 6px; }
+.wg-detail-body header {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
+}
+.wg-detail-body h2 { font-size: 14px; font-weight: 500; line-height: 1.4; word-break: break-all; }
+.wg-detail-body .close {
+  flex: none; width: 22px; height: 22px;
+  border: 0; background: transparent; color: var(--color-frame-text-muted); cursor: pointer;
+  border-radius: 6px; font-size: 14px; line-height: 22px;
+}
+.wg-detail-body .close:hover { color: var(--color-frame-text); background: var(--color-frame-hover); }
+.wg-detail-body .badges { display: flex; gap: 5px; flex-wrap: wrap; margin: 6px 0 9px; }
+.wg-detail-body .badge {
+  font-size: 10.5px; color: var(--color-frame-text-muted);
+  border: 1px solid var(--color-frame-border); border-radius: 999px; padding: 1px 8px;
+}
+.wg-detail-body .summary { color: var(--color-frame-text-muted); font-size: 12px; line-height: 1.5; margin: 0 0 10px; }
+.wg-detail-body h3 {
+  font-size: 10.5px; font-weight: 500; color: var(--color-frame-text-muted); letter-spacing: .8px;
+  margin: 12px 0 5px; text-transform: uppercase;
+}
+.wg-detail-body ul { list-style: none; margin: 0; padding: 0; }
+.wg-detail-body li { margin: 3px 0; }
+.wg-detail-body li.ghost { color: var(--color-frame-text-dim); }
+.wg-detail-body .ref {
+  border: 0; background: transparent; padding: 0; font: inherit; font-size: 12px; cursor: pointer;
+  color: var(--color-frame-text); text-align: left; display: block; width: 100%;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.wg-preview .ref:hover { text-decoration: underline; }
-.wg-preview .path {
-  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: var(--wg-muted); word-break: break-all;
-  background: var(--wg-background); border-radius: 8px; padding: 6px 9px; margin-top: 12px;
+.wg-detail-body .ref:hover { text-decoration: underline; }
+.wg-detail-body .path {
+  font: 10.5px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--color-frame-text-muted); word-break: break-all;
+  background: var(--glass-control-bg); border-radius: 7px; padding: 5px 8px; margin-top: 10px;
 }
-.wg-preview .openbtn {
-  margin-top: 12px; width: 100%; padding: 8px 0;
-  border: 1px solid var(--wg-foreground); border-radius: 10px;
-  background: var(--wg-foreground); color: var(--wg-background);
-  font: inherit; font-weight: 500; cursor: pointer;
+.wg-detail-body .openbtn {
+  margin-top: 10px; width: 100%; padding: 7px 0;
+  border: 1px solid var(--color-frame-text-bright); border-radius: 9px;
+  background: var(--color-frame-text-bright); color: var(--color-surface);
+  font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer;
 }
-.wg-preview .openbtn:hover { opacity: .88; }
+.wg-detail-body .openbtn:hover { opacity: .88; }
 
-/* ── Info line (control 3 of 3, replaces count bar + facets + file list) ── */
-.wg-infoline {
-  position: absolute; left: 20px; bottom: 16px; z-index: 10;
-  max-width: calc(100% - 40px);
-  color: var(--wg-muted); font-size: 12px; pointer-events: none;
-  font-variant-numeric: tabular-nums;
-}
-.wg-infoline button {
-  pointer-events: auto; border: 0; background: transparent; padding: 0;
-  font: inherit; color: var(--wg-muted); text-decoration: underline dotted; cursor: pointer;
-}
-.wg-infoline button:hover { color: var(--wg-foreground); }
-
-/* Legend (bottom-right) — the one-line "what am I looking at" (design §2.1).
-   Hidden while the preview card owns the right edge, and on narrow panes
-   (stacked card) where it would collide with the info line. */
-.wg-legend {
-  position: absolute; right: 20px; bottom: 16px; z-index: 10;
-  max-width: 46%;
-  color: var(--wg-muted); font-size: 11px; text-align: right; pointer-events: none;
-}
-.wg-preview.open ~ .wg-legend { display: none; }
-@container wgpane (max-width: 860px) {
-  .wg-legend { display: none; }
-  .wg-infoline { max-width: calc(100% - 40px); }
-}
-
-/* Broken-reference overlay (design §3: 断链不立节点 — counted in the info
-   line, listed here, never drawn as nodes). */
+/* Broken-reference section (断链清单 — fixed block, not an overlay): vault
+   errors first, then the unresolved list; a row selects its SOURCE document
+   on the canvas. Hidden entirely when nothing is broken. */
 .wg-broken {
-  position: absolute; left: 20px; bottom: 40px; z-index: 25; display: none;
-  width: 380px; max-height: 260px; overflow-y: auto;
-  background: var(--wg-card); border: 1px solid var(--wg-border);
-  border-radius: 12px; padding: 10px 14px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.10);
+  flex: none; max-height: 132px; overflow-y: auto; overscroll-behavior: contain;
+  border-top: 1px dashed var(--color-frame-border);
+  padding-top: 8px;
 }
-.wg-broken.open { display: block; }
-.wg-broken h3 { margin: 2px 0 8px; font-size: 12px; font-weight: 500; }
+.wg-broken.none { display: none; }
+.wg-broken h3 {
+  font-size: 10.5px; font-weight: 500; color: var(--color-frame-text-muted);
+  letter-spacing: .8px; margin: 0 0 5px; text-transform: uppercase;
+}
 .wg-broken .row {
   display: block; width: 100%; text-align: left;
   border: 0; background: transparent; padding: 0; font: inherit;
-  font-size: 11.5px; color: var(--wg-muted); margin: 3px 0;
+  font-size: 11px; color: var(--color-frame-text-muted); margin: 3px 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
 }
-.wg-broken .row b { color: var(--wg-foreground); font-weight: 500; }
+.wg-broken .row b { color: var(--color-frame-text); font-weight: 500; }
 .wg-broken .row:hover b { text-decoration: underline; }
 .wg-broken .row.more { cursor: default; }
 
-@media (max-width: 720px) {
-  .wg-chips { display: none; }
-  .wg-preview { left: 12px; right: 12px; width: auto; top: auto; height: 46vh; bottom: 12px; }
-  .wg-legend { display: none; }
+/* Stats line (统计行): N 篇文档 · N 条引用 · N 条未解析. */
+.wg-stats {
+  flex: none; padding-top: 8px;
+  border-top: 1px solid var(--color-frame-border);
+  color: var(--color-frame-text-muted); font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Input-convention legend line (图例注明, 作者令 2026-10-22): the wheel/pinch
+   contract lives here — the canvas itself stays pure. */
+.wg-hint {
+  flex: none; padding-top: 4px;
+  color: var(--color-frame-text-dim); font-size: 10.5px;
+}
+
+/* Narrow panel (container query — the sidebar column is resizable; the
+   先例 face keyed off the pane width, this one keys off the face width). */
+@container wgside (max-width: 209px) {
+  .wg-side { gap: 8px; padding: 2px 8px 8px; }
+  .wg-chip { padding: 2px 8px; font-size: 11px; }
+  .wg-detail-body h2 { font-size: 13px; }
+  .wg-detail-body .summary { font-size: 11.5px; }
+  .wg-broken .row { font-size: 10.5px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .wg-preview { transition: none; }
+  .wg-detail-body, .wg-broken { scroll-behavior: auto; }
 }
 
 

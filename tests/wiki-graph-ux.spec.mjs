@@ -1,37 +1,42 @@
-// wiki-graph-ux.spec.mjs — 文档图谱三件工整化验收 spec（隔离静态服务器 + 页内
-// mock，真实 UI 代码全量执行；8100+ 端口纪律，永不触碰宿主 8080）。
+// wiki-graph-ux.spec.mjs — 文档图谱「控制面迁左栏」契约 spec（隔离静态服务器 +
+// 页内 mock，真实 UI 代码全量执行；8100+ 端口纪律，永不触碰宿主 8080）。
 //
-// 设计基准 = reports/20261019_203500_wiki-graph-ux-redesign__delegate-nebflow-5ccd5236.html
-// （作者批准样张）。覆盖面：
+// 作者令 2026-10-21（图谱布局重构 · 控制面迁左栏）：canvas 只留图谱本体
+// （力导向图 + 悬停 tooltip）；激活图谱 tab 时左栏切换为「图谱控制面」——
+// 搜索框 / 目录 chips / 选中节点详情卡 / 断链清单（固定区块）/ 统计行；
+// 回到文件浏览态左栏还原文件浏览器。本 spec 锁左栏契约：
 //
-//   §2 行为规则 R1-R10（侧边栏自动开）：
-//     R1 打开图谱 tab → Side Bar 自动展开并激活 files 面板；走既有持久化
-//        API（sidebar_collapsed=false + sidebar_active_panel=files），零新键；
-//     R2 切走再切回 → 再次自动展开；R3 Canvas 折叠后重开（state 4）→ 同样自动展开；
+//   §A 展开与还原（承 2026-10-19 批 R 系语义，面换成控制面）：
+//     R1 打开图谱 tab → Side Bar 自动展开 + files 面板激活 + 控制面挂载可见 +
+//        explorer 让位（隐藏）；走既有持久化 API 零新键（R7）；
 //     R4 刷新 restore 恢复的活动 tab 是图谱 → 首次渲染后自动展开；
-//     R5 图谱可见期间手动收起 → 本查看会话内不再自动弹开（含 Refresh 重渲染后仍安静）；
-//     R6 切走即会话结束（dismissed 清除，R2 复验）；R9 离开绝不自动收起；
-//     R8 移动端 ≤768px 不自动开（与 Canvas 抽屉互斥，谁后开谁赢）；
-//     R10 单面板下 ensure 幂等（files 面板保持激活、无副作用）。
-//   §3 侧边栏排版：计数 meta 行拆分 / 节标题+右挂总计 / 项目行 12.5-500 h26 /
-//      文档行 12-400 h24 缩进 26px / 附件 SVG 图标（⎘ 文本前缀退役）/
-//      0 计数降档 / chips h20+计数右挂 / 图例两列 SVG 网格 / hover .06 /
-//      :focus-visible 蓝晶环 / 筛选空态（含 Clear 链接复通）。
-//   §4 控件映射：Filter documents → 条内无边框输入 + 前置放大镜（条 focus-within
-//      蓝晶环）/ Refresh → button.glass-control 次操作档 h28 / 三个 facet →
-//      自绘下拉（APG 键盘 ↑↓/Enter/Esc/Home/End；原生 select 仍是状态所有者，
-//      侧栏 chips/Clear 的 change 事件镜像回脸面）/ 降级路径 hover:none →
-//      原生 select 换肤（appearance:none + data-URI chevron，零自绘脸）/
-//      缩放钮 → 1.8 线重 SVG、30px r9。
+//     R5 图谱可见期间手动收起 → 安静（不自动弹开）；
+//     R6+R9 切走（explorer 还原）绝不自动收起；切回再次自动展开；
+//     R3 Canvas 折叠 → explorer 还原；state 4 重开 → 再展开；
+//     R8 移动端 ≤768px 不自动展开（抽屉互斥）；
+//   §B canvas 纯图态：pane 子元素只有 canvas + tooltip（+桌面隐藏 panebar），
+//      旧控件面（topbar/预览卡/信息行/图例/断链浮层）零残留；
+//   §C 左栏↔canvas 双向联动：canvas 点节点 → 左栏详情卡刷新；左栏点词条/
+//      目录 chip/断链行/搜索 → canvas 过滤聚焦；Esc 逐层退出（选中→过滤）；
+//   §D 控制面内容契约：统计行口径（N docs · M references · K unresolved）；
+//      断链清单 = 面板内固定区块（position:static，非浮层）；详情卡空态；
+//   §E 画布手感（追加批 2026-10-22·作者令：excalidraw/figma 式画布手感）：
+//      滚轮/双指滚动 = 平移（shift+纵滚 = 横移）；捏合（ctrlKey wheel）=
+//      光标锚点阻尼缩放——exp 累积 + 25%/帧追帧，逐帧步进 ≤0.06 不跳变、
+//      锚点世界坐标保持（<2px）、收敛 zoomTarget；约定在左栏 .wg-hint 图例注明；
+//   §F frosted 统一（追加批 2026-10-22）：canvas 胶囊 / 左栏搜索框 / chips 的
+//      材质（bg/blur/border/shadow）与 chat header 逐项相等（--glass-bg /
+//      --glass-blur saturate(1.15) / --glass-border / --frost-shadow 单源）；
+//      canvas 胶囊裙边渐隐桌面退役（.scroll-under-glass::after display:none，
+//      与聊天窗口渐隐同令；手机层维持现状，不在本 spec 视口内）；
+//   §G 胶囊环 × 手感分区（2026-10-22 胶囊交互重做批）：hover 展开的胶囊环上
+//      触控板横滑 = 环换选（环优先消费，vx/vy/scale 纹丝不动）；画布区横滑
+//      仍 = 平移、捏合仍 = 缩放（#716 契约不被环劫持）；
 //   R0 全流程 console 零错误（每个用例尾部断言）。
-//
-// 截图：WIKI_SHOTS_DIR 存在时产出深亮双主题 + 下拉展开 + 筛选空态四张
-//（验收 ③ 的 evidence 目录由运行方以该变量指定）。
 
 import { test, expect } from '@playwright/test';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { mkdirSync } from 'node:fs';
 import { join, dirname, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -39,7 +44,6 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = resolve(HERE, '..', 'src', 'main', 'resources', 'web');
 const PORT = 8193; // fixed, 8100+ — never the host 8080
 const MIME = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml' };
-const SHOT_DIR = process.env.WIKI_SHOTS_DIR || '';
 
 const WIKI_GRAPH = {
   projects: [
@@ -51,8 +55,12 @@ const WIKI_GRAPH = {
     { id: 'alpha:docs/a.md', project: 'alpha', rel: 'docs/a.md', title: 'Alpha One', kind: 'doc', type: 'spec', status: 'solved' },
     { id: 'alpha:docs/fig.svg', project: 'alpha', rel: 'docs/fig.svg', title: 'Alpha Fig', kind: 'attachment' },
     { id: 'gamma:docs/g.md', project: 'gamma', rel: 'docs/g.md', title: 'Gamma Note', kind: 'doc', type: 'spec' },
+    { id: 'alpha:docs/ghost.md', project: 'alpha', rel: 'docs/ghost.md', title: 'ghost', kind: 'doc', stub: true },
   ],
-  edges: [{ from: 'alpha:docs/a.md', to: 'gamma:docs/g.md' }],
+  edges: [
+    { from: 'alpha:docs/a.md', to: 'gamma:docs/g.md' },
+    { from: 'alpha:docs/a.md', to: 'alpha:docs/ghost.md' },
+  ],
 };
 
 function startServer() {
@@ -78,15 +86,14 @@ function startServer() {
 let server;
 const base = `http://127.0.0.1:${PORT}`;
 
-
 /** Shared page boot. Playwright route matching is LIFO — the catch-all
  *  registers FIRST, the specific wiki-graph route AFTER it.
  *  @param {import('@playwright/test').Page} page
- *  @param {{ collapsed?: boolean, canvasTabs?: object, hoverNone?: boolean }} preset */
+ *  @param {{ collapsed?: boolean, canvasTabsApi?: object }} preset */
 async function boot(page, preset = {}) {
   await page.setViewportSize(preset.viewport || { width: 1440, height: 900 });
   await page.emulateMedia({ colorScheme: 'dark' });
-  await page.addInitScript(({ collapsed, canvasTabs, hoverNone }) => {
+  await page.addInitScript(({ collapsed }) => {
     localStorage.setItem('nebflow_token', 't');
     localStorage.setItem('neblink_token', 't');
     // 静态服务无 gateway 注入 → brand.lowerName 走 brand.js 的 'stand' 兜底；
@@ -95,22 +102,8 @@ async function boot(page, preset = {}) {
       localStorage.setItem('stand_sidebar_collapsed', 'true');
       localStorage.setItem('nebflow_sidebar_collapsed', 'true');
     }
-    if (canvasTabs) {
-      localStorage.setItem('stand_canvas_tabs', JSON.stringify(canvasTabs));
-      localStorage.setItem('nebflow_canvas_tabs', JSON.stringify(canvasTabs));
-    }
     localStorage.setItem('stand_locale', 'en');
-    if (hoverNone) {
-      // Scoped matchMedia patch: ONLY '(hover: none)' reports true — the
-      // degrade-path trigger. Everything else delegates to the real matcher
-      // (theme / mobile queries must stay truthful).
-      const orig = window.matchMedia.bind(window);
-      window.matchMedia = (q) => (q === '(hover: none)'
-        ? { matches: true, media: q, onchange: null,
-            addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent() { return false; } }
-        : orig(q));
-    }
-  }, { collapsed: !!preset.collapsed, canvasTabs: preset.canvasTabs || null, hoverNone: !!preset.hoverNone });
+  }, { collapsed: !!preset.collapsed });
   await page.route('**/api/**', r => r.fulfill({ json: {} }));
   await page.route('**/api/wiki/graph', r => r.fulfill({ json: WIKI_GRAPH }));
   // 可选人格档案（app 静默容缺）——静态服务器没有该文件，mock 掉避免 404 噪声进 console 断言。
@@ -140,81 +133,196 @@ async function boot(page, preset = {}) {
 }
 
 /** Open the wiki graph tab through the activity-bar button (state 1 entry)
- *  and wait until the graph file list is hosted in the Side Bar panel space. */
+ *  and wait until the layout settles and the control face is live. */
 async function openGraph(page) {
   await page.click('#wiki-btn');
-  await page.waitForSelector('#wiki-graph-explorer-section', { state: 'attached', timeout: 10000 });
-  await page.waitForSelector('#wiki-graph-explorer-section .wx-proj', { state: 'attached', timeout: 10000 })
-    .catch(async (e) => { throw new Error('R4 state: ' + JSON.stringify(await page.evaluate(() => ({
-      panes: [...document.querySelectorAll('.canvas-tab-pane')].map(p => p.dataset.tabId),
-      active: document.querySelector('.canvas-tab-pane.active')?.dataset.tabId || null,
-      canvasOpen: document.body.classList.contains('canvas-open'),
-    }))) + ' | ' + e.message); });
+  await page.waitForSelector('.wiki-graph-pane', { state: 'attached', timeout: 10000 });
+  await page.waitForFunction(() => {
+    const p = window.__wikiGraphProbe && window.__wikiGraphProbe();
+    return p && p.alpha < 0.02;
+  }, { timeout: 15000 });
+  await page.waitForSelector('#wiki-graph-side', { state: 'attached', timeout: 10000 });
 }
 
 const bodyNotCollapsed = (page) => page.evaluate(() => !document.body.classList.contains('sidebar-collapsed'));
 const bodyCollapsed = (page) => page.evaluate(() => document.body.classList.contains('sidebar-collapsed'));
 
+/** Settled probe — waits out the late tab-refetch rebuild race before any
+ *  coordinate-based canvas interaction (canvas.js panelTabRefresh →
+ *  rerenderWikiGraph: debounced 200ms refetch + rebuildSim re-lays the graph,
+ *  so a probe read too early can be stale by the time the click lands).
+ *  Holds until two probes ≥400ms apart agree (layout frozen, no rebuild in
+ *  flight), then returns a fresh probe snapshot. */
+async function settledProbe(page) {
+  await expect.poll(() => page.evaluate(async () => {
+    const a = window.__wikiGraphProbe();
+    await new Promise((r) => setTimeout(r, 400));
+    const b = window.__wikiGraphProbe();
+    const frozen = (p) => JSON.stringify(p.nodes.map((n) => [n.id, Math.round(n.x), Math.round(n.y)]));
+    return a.alpha < 0.02 && b.alpha < 0.02 &&
+      a.scale === b.scale && a.vx === b.vx && a.vy === b.vy &&
+      frozen(a) === frozen(b);
+  }), { timeout: 15000 }).toBe(true);
+  return page.evaluate(() => window.__wikiGraphProbe());
+}
+
+/** Bring a node to the canvas center with a REAL wheel pan (two-finger swipe —
+ *  wikiGraph pans vx += deltaX 1:1, no sim wake). The mock layout is unseeded:
+ *  a node can settle a few px off the canvas edge (past the sidebar col-
+ *  resizer), where pointer clicks land on the resizer instead of the canvas.
+ *  Centering puts the target ~W/2 px inside the clickable area, deterministically. */
+async function centerNodeOn(page, nodeId) {
+  await page.evaluate((id) => {
+    const p = window.__wikiGraphProbe();
+    const c = document.querySelector('.wiki-canvas');
+    const r = c.getBoundingClientRect();
+    const n = p.nodes.find((m) => m.id === id);
+    const sx = (n.x - p.W / 2) * p.scale + p.W / 2 + p.vx; // canvas-local px
+    const sy = (n.y - p.H / 2) * p.scale + p.H / 2 + p.vy;
+    c.dispatchEvent(new WheelEvent('wheel', {
+      deltaX: p.W / 2 - sx, deltaY: p.H / 2 - sy,
+      clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+      bubbles: true, cancelable: true,
+    }));
+  }, nodeId);
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const off = await page.evaluate((id) => {
+    const p = window.__wikiGraphProbe();
+    const n = p.nodes.find((m) => m.id === id);
+    return Math.max(Math.abs((n.x - p.W / 2) * p.scale + p.vx), Math.abs((n.y - p.H / 2) * p.scale + p.vy));
+  }, nodeId);
+  if (off > 2) throw new Error(`centerNodeOn(${nodeId}) missed: ${off}px off-center`);
+}
+
+/** One-shot read of the whole side-face contract surface (page context). */
+const readFace = (page) => page.evaluate(() => {
+  const face = document.getElementById('wiki-graph-side');
+  const explorer = document.getElementById('explorer-section');
+  const panel = document.getElementById('panel-sessions');
+  const pane = document.querySelector('.wiki-graph-pane');
+  return {
+    mounted: !!face,
+    visible: !!face && getComputedStyle(face).display === 'flex',
+    bodyFlag: document.body.classList.contains('wg-side-active'),
+    sidebarOpen: !document.body.classList.contains('sidebar-collapsed'),
+    panelActive: !!panel && panel.classList.contains('active'),
+    explorerHidden: !!explorer && getComputedStyle(explorer).display === 'none',
+    search: !!face && !!face.querySelector('.wg-search-input'),
+    chips: face ? face.querySelectorAll('.wg-chip').length : -1,
+    stats: face && face.querySelector('.wg-stats') ? face.querySelector('.wg-stats').textContent : '',
+    emptyShown: !!face && !!face.querySelector('.wg-detail-empty') && !face.querySelector('.wg-detail-empty').hidden,
+    brokenVisible: !!face && !!face.querySelector('.wg-broken') &&
+      getComputedStyle(face.querySelector('.wg-broken')).display !== 'none' &&
+      !face.querySelector('.wg-broken').classList.contains('none'),
+    brokenStatic: !!face && !!face.querySelector('.wg-broken') &&
+      getComputedStyle(face.querySelector('.wg-broken')).position === 'static',
+    brokenRows: face ? face.querySelectorAll('.wg-broken .row').length : -1,
+    paneKids: pane ? [...pane.children].map(e => String(e.className)) : [],
+    paneLegacy: pane ? ['.wg-topbar', '.wg-preview', '.wg-infoline', '.wg-legend'].filter(s => pane.querySelector(s)) : [],
+    panebarDisplay: (() => {
+      const bar = pane && pane.querySelector('.wg-panebar');
+      return bar ? getComputedStyle(bar).display : null;
+    })(),
+  };
+});
+
 test.beforeAll(async () => { server = await startServer(); });
 test.afterAll(async () => { server.close(); });
 
-// ── §2 行为规则 R1-R10 ────────────────────────────────────────────────
+// ── §A 展开与还原 ────────────────────────────────────────────────────
 
-test('R1 opens graph tab → Side Bar auto-expands on files via the persisted API, zero new keys', async ({ page }) => {
+test('R1 opens graph tab → Side Bar auto-expands, face swaps in, explorer yields, zero new keys', async ({ page }) => {
   const errors = await boot(page, { collapsed: true });
   await page.waitForFunction(() => document.body.classList.contains('sidebar-collapsed'));
   await openGraph(page);
   await expect.poll(() => bodyNotCollapsed(page), { timeout: 5000 }).toBe(true);
-  // files 面板激活 + R7 既有持久化值（与手动展开同一条 API 写入）。
-  await expect(page.locator('#panel-sessions')).toHaveClass(/active/);
-  const lsGet = (k) => page.evaluate((key) => localStorage.getItem(key), k);
-  expect(await lsGet('stand_sidebar_collapsed')).toBe('false');
-  expect(await lsGet('stand_sidebar_active_panel')).toBe('files');
+  const face = await readFace(page);
+  expect(face.bodyFlag).toBe(true);
+  expect(face.visible).toBe(true);
+  expect(face.panelActive).toBe(true);
+  expect(face.explorerHidden).toBe(true);
   // R7 零新持久化键：localStorage 里不出现任何 wiki 命名空间的新键。
   const wikiKeys = await page.evaluate(() => Object.keys(localStorage).filter(k => /wiki/i.test(k)));
   expect(wikiKeys).toEqual([]);
+  expect(await page.evaluate(() => localStorage.getItem('stand_sidebar_active_panel'))).toBe('files');
   expect(errors).toEqual([]);
 });
 
-test('R5 manual collapse while graph visible → quiet for the session (Refresh re-render stays quiet)', async ({ page }) => {
+test('§B canvas purity: pane holds canvas + tooltip only; desktop panebar hidden', async ({ page }) => {
+  const errors = await boot(page);
+  await openGraph(page);
+  const face = await readFace(page);
+  expect(face.paneKids).toEqual(['wiki-canvas', 'wg-tip', 'wg-panebar']);
+  expect(face.paneLegacy).toEqual([]);
+  expect(face.panebarDisplay).toBe('none');
+  expect(errors).toEqual([]);
+});
+
+test('R4 reload restore with graph as the active tab auto-expands after first render', async ({ page }) => {
+  // F1: 服务端存档是权威介质 — restore 的服务端腿（异步）走 reconcileFromServer →
+  // openPanelTab → canvas-tab-restore（必须在 goto 前注册路由，boot 阶段的 fetch 才吃得到）。
+  const errors = await boot(page, {
+    collapsed: true,
+    canvasTabsApi: { v: 2, tabs: [{ id: 'wiki-graph', type: 'wiki-graph', title: 'Wiki Graph', pinned: true }], activeTabId: 'wiki-graph' },
+  });
+  // 终态轮询（并行跑时中间态会抖）：Canvas 开 + 图谱 pane 激活 + 控制面挂载。
+  await expect.poll(() => page.evaluate(() => ({
+    open: document.body.classList.contains('canvas-open'),
+    active: document.querySelector('.canvas-tab-pane.active')?.dataset.tabId || null,
+    face: !!document.getElementById('wiki-graph-side') && !!window.__wikiGraphProbe?.(),
+  })), { timeout: 15000 }).toEqual({ open: true, active: 'wiki-graph', face: true });
+  await expect.poll(() => bodyNotCollapsed(page), { timeout: 5000 }).toBe(true);
+  expect(await page.evaluate(() => localStorage.getItem('stand_sidebar_active_panel'))).toBe('files');
+  expect(errors).toEqual([]);
+});
+
+test('R5 manual collapse while graph visible stays quiet (no auto re-open)', async ({ page }) => {
   const errors = await boot(page);
   await openGraph(page);
   await expect.poll(() => bodyNotCollapsed(page)).toBe(true);
   // 手动收起（头部开关 — setSideBarCollapsed 的真实入口之一）。
   await page.click('#sidebar-toggle');
   await expect.poll(() => bodyCollapsed(page)).toBe(true);
-  // Refresh → loadData + rebuildSim + 列表重渲染 —— 被收起的 Side Bar 必须保持安静。
-  await page.click('.wiki-toolbar-btn');
-  await page.waitForTimeout(400);
+  // 图谱仍可见：任何自动展开路径都必须保持安静（含数据重渲）。
+  await page.waitForTimeout(900);
   expect(await bodyCollapsed(page)).toBe(true);
-  expect(await page.evaluate(() => !!document.getElementById('wiki-graph-explorer-section'))).toBe(true);
+  // 控制面仍挂载（收起的是栏，不是面）。
+  expect(await page.evaluate(() => !!document.getElementById('wiki-graph-side'))).toBe(true);
   expect(errors).toEqual([]);
 });
 
-test('R6+R9 leaving ends the session WITHOUT collapsing; returning re-expands (R2)', async ({ page }) => {
+test('R6+R9 leaving restores the explorer WITHOUT collapsing; returning re-expands', async ({ page }) => {
   const errors = await boot(page);
   await openGraph(page);
   await expect.poll(() => bodyNotCollapsed(page)).toBe(true);
-  await page.click('#sidebar-toggle');           // R5: dismissed = true
+  await page.click('#sidebar-toggle');           // R5: 图谱可见期间收起
   await expect.poll(() => bodyCollapsed(page)).toBe(true);
   await page.click('#projects-btn');             // 切走（state 1 开 projects tab）
   await page.waitForTimeout(400);
   // R9: 离开图谱绝不自动收起 —— 收起状态原样保留。
   expect(await bodyCollapsed(page)).toBe(true);
-  // R6: 会话已结束（dismissed 清除）；R2: 切回图谱 → 再次自动展开。
+  // explorer 还原：body 标志随可见性熄灭（Canvas 折叠时同样还原）。
+  await page.click('#canvas-toggle-btn');
+  await expect.poll(() => page.evaluate(() => !document.body.classList.contains('canvas-open'))).toBe(true);
+  await expect.poll(() => page.evaluate(() => !document.body.classList.contains('wg-side-active'))).toBe(true);
+  // R6: 会话已结束；R2: 切回图谱 → 再次自动展开 + 控制面回归。
   await page.click('#wiki-btn');
   await expect.poll(() => bodyNotCollapsed(page), { timeout: 5000 }).toBe(true);
-  await expect(page.locator('#panel-sessions')).toHaveClass(/active/);
+  const face = await readFace(page);
+  expect(face.bodyFlag).toBe(true);
+  expect(face.explorerHidden).toBe(true);
   expect(errors).toEqual([]);
 });
 
-test('R3 Canvas reopen (state 4) re-triggers the auto-expand', async ({ page }) => {
+test('R3 canvas close hands the column back; state-4 reopen re-expands', async ({ page }) => {
   const errors = await boot(page);
   await openGraph(page);
   await expect.poll(() => bodyNotCollapsed(page)).toBe(true);
   await page.click('#canvas-toggle-btn');        // 折叠 Canvas（tab 保留）
-  await expect.poll(() => page.evaluate(() => !document.body.classList.contains('canvas-open'))).toBe(true);
-  await page.click('#sidebar-toggle');           // 收起（此时图谱不可见 ⇒ 不产生 dismissed）
+  await expect.poll(() => page.evaluate(() => !document.body.classList.contains('wg-side-active'))).toBe(true);
+  // explorer 还原（body 标志熄灭 → 面内显示规则回到文件浏览器）。
+  expect(await page.evaluate(() => getComputedStyle(document.getElementById('explorer-section')).display)).not.toBe('none');
+  await page.click('#sidebar-toggle');           // 收起（此时图谱不可见 ⇒ 不产生新的可见跃迁）
   await expect.poll(() => bodyCollapsed(page)).toBe(true);
   await page.click('#wiki-btn');                 // state 4: openCanvas + setActiveTab
   await expect.poll(() => page.evaluate(() => document.body.classList.contains('canvas-open'))).toBe(true);
@@ -222,262 +330,325 @@ test('R3 Canvas reopen (state 4) re-triggers the auto-expand', async ({ page }) 
   expect(errors).toEqual([]);
 });
 
-test('R4 reload restore with graph as the active tab auto-expands after first render', async ({ page }) => {
-  // F1: 服务端存档是权威介质 — restore 的服务端腿（异步）走 reconcileFromServer →
-  // openPanelTab → canvas-tab-restore。设计基准 §2 R4 即此路径（必须在 goto 前
-  // 注册路由，boot 阶段的 fetch 才吃得到）。
-  const errors = await boot(page, {
-    collapsed: true,
-    canvasTabsApi: { v: 2, tabs: [{ id: 'wiki-graph', type: 'wiki-graph', title: 'Wiki Graph', pinned: true }], activeTabId: 'wiki-graph' },
-  });
-  // restoreTabs → canvas-tab-restore → renderInto → ensure（服务端存档 mock 返回
-  // 空 {}，parseTabsData 判非法 → 本地存档生效）。
-  // 终态轮询（并行跑时中间态会抖）：Canvas 开 + 图谱 pane 激活 + 列表已挂载。
-  await expect.poll(() => page.evaluate(() => ({
-    open: document.body.classList.contains('canvas-open'),
-    active: document.querySelector('.canvas-tab-pane.active')?.dataset.tabId || null,
-    rows: !!document.querySelector('#wiki-graph-explorer-section .wx-proj'),
-  })), { timeout: 15000 }).toEqual({ open: true, active: 'wiki-graph', rows: true });
-  await expect.poll(() => bodyNotCollapsed(page), { timeout: 5000 }).toBe(true);
-  const lsGet2 = (k) => page.evaluate((key) => localStorage.getItem(key), k);
-  expect(await lsGet2('stand_sidebar_active_panel')).toBe('files');
-  expect(errors).toEqual([]);
-});
-
-test('R8 mobile viewport never auto-opens (drawer exclusivity wins)', async ({ page }) => {
+test('R8 mobile viewport never auto-expands; the in-pane bar rides with the pane', async ({ page }) => {
   const errors = await boot(page, { viewport: { width: 375, height: 812 } });
-  // ≤768 移动层会抑制一切启动/程序化画板展开（watchBootAutoOpen）。真实用户
-  // 路径（v3 批更新）：顶栏右圆钮液态下拉列的 graph face（onKeyClick：
-  // touchLayer + navigateTo('graph')；r4 底部 bar 已随 v3③ 退役）。
-  // 程序化 click 同样触发绑定的 click handler，且 touchLayer 同步抬除抑制。
-  await page.waitForSelector('.mh-dd[data-dd="right"] [data-face="graph"]', { state: 'attached', timeout: 10000 }); // 移动层异步装配
+  // 真实用户路径：顶栏右圆钮液态下拉列的 graph face（navController navigateTo）。
+  await page.waitForSelector('.mh-dd[data-dd="right"] [data-face="graph"]', { state: 'attached', timeout: 10000 });
   await page.evaluate(() => document.querySelector('.mh-dd[data-dd="right"] [data-face="graph"]').click());
-  // 前提成立：图谱 pane 已是激活内容（移动层接管了桌面侧栏槽位，explorer
-  // 槽位不再承载图谱列表 —— R8 的被测面是 Side Bar 不自动开）。
   await expect.poll(() => page.evaluate(() => document.querySelector('.canvas-tab-pane.active')?.dataset.tabId), { timeout: 10000 }).toBe('wiki-graph');
   await page.waitForTimeout(600);               // 给任何（不应发生的）自动展开留窗口
   // R8: Side Bar 抽屉保持收起 —— 自动开被拦下；files 面板不激活。
   expect(await bodyCollapsed(page)).toBe(true);
   expect(await page.evaluate(() => !document.getElementById('panel-sessions').classList.contains('active'))).toBe(true);
+  // 移动层无左栏 → panebar 随 pane 收编（display:flex + 搜索可用）。
+  const bar = await page.evaluate(() => {
+    const el = document.querySelector('.wiki-graph-pane .wg-panebar');
+    const input = el && el.querySelector('.wg-search-input');
+    return { display: el ? getComputedStyle(el).display : null, inputH: input ? input.getBoundingClientRect().height : 0 };
+  });
+  expect(bar.display).toBe('flex');
+  expect(bar.inputH).toBeGreaterThan(0);
   expect(errors).toEqual([]);
 });
 
-test('R10 ensure is idempotent with the files panel already active', async ({ page }) => {
+// ── §C 双向联动 + §D 内容契约 ─────────────────────────────────────────
+
+test('§C canvas click → detail card refresh; sidebar entry click → canvas refocus', async ({ page }) => {
   const errors = await boot(page);
   await openGraph(page);
-  await expect.poll(() => bodyNotCollapsed(page)).toBe(true);
-  await expect(page.locator('#panel-sessions')).toHaveClass(/active/);
-  // 再走一次 tab 离开/回归（ensure 幂等路径）——面板保持 files，无翻转。
-  await page.click('#projects-btn');
-  await page.waitForTimeout(250);
-  await page.click('#wiki-btn');
-  await expect.poll(() => bodyNotCollapsed(page)).toBe(true);
-  await expect(page.locator('#panel-sessions')).toHaveClass(/active/);
-  expect(await page.evaluate(() => localStorage.getItem('stand_sidebar_active_panel'))).toBe('files');
-  expect(errors).toEqual([]);
-});
-
-// ── §3 侧边栏排版 ─────────────────────────────────────────────────────
-
-test('§3 sidebar typography: meta row, label+total, row metrics, zero demotion, chips, legend, hover', async ({ page }) => {
-  const errors = await boot(page);
-  await openGraph(page);
-  // 计数 meta 行（计数移出节标题）：3 项目 · 3 文档 · 1 链接。
-  await expect(page.locator('.wx-sb-meta')).toHaveText('3 projects · 3 docs · 1 links');
-  // 节标题只留名 + 右挂总计。
-  await expect(page.locator('.wx-sb-proj-title span').first()).toHaveText('Projects');
-  await expect(page.locator('.wx-sb-proj-title .wx-sb-tot')).toHaveText('3');
-  // 项目组头行：h26 / 12.5px / 500。
-  const proj = page.locator('.wx-proj').first();
-  await expect(proj).toHaveAttribute('tabindex', '0');
-  expect(await proj.evaluate(el => getComputedStyle(el).height)).toBe('26px');
-  expect(await proj.locator('.wx-proj-name').evaluate(el => getComputedStyle(el).fontSize)).toBe('12.5px');
-  expect(await proj.locator('.wx-proj-name').evaluate(el => getComputedStyle(el).fontWeight)).toBe('500');
-  // 0 计数降档 + (remote) 后缀弱化。
-  const betaRow = page.locator('.wx-proj', { hasText: 'beta' });
-  await expect(betaRow.locator('.wx-count')).toHaveText('0');
-  expect(await betaRow.locator('.wx-count').evaluate(el => el.classList.contains('zero'))).toBe(true);
-  await expect(betaRow.locator('.wx-proj-remote')).toHaveText(' (remote)');
-  // 文档行：h24 / 缩进 26px / 12px 400。
-  const doc = page.locator('.wx-doc', { hasText: 'Alpha One' });
-  expect(await doc.evaluate(el => getComputedStyle(el).height)).toBe('24px');
-  expect(await doc.evaluate(el => getComputedStyle(el).paddingLeft)).toBe('26px');
-  expect(await doc.locator('.wx-doc-name').evaluate(el => getComputedStyle(el).fontSize)).toBe('12px');
-  expect(await doc.locator('.wx-doc-name').evaluate(el => getComputedStyle(el).fontWeight)).toBe('400');
-  // 附件行：SVG 图标进缩进槽；「⎘ 」文本前缀退役。
-  const att = page.locator('.wx-doc', { hasText: 'Alpha Fig' });
-  await expect(att.locator('svg.wx-doc-icon')).toHaveCount(1);
-  await expect(att.locator('.wx-doc-name')).toHaveText('Alpha Fig');
-  // chips：真 button + 计数右挂 .n。
-  const chip = page.locator('.wx-chip', { hasText: 'spec' });
-  expect(await chip.evaluate(el => el.tagName)).toBe('BUTTON');
-  await expect(chip.locator('.wx-chip-n')).toHaveText('2');
-  expect(await chip.evaluate(el => getComputedStyle(el).height)).toBe('20px');
-  // 图例：两列 grid + 4 枚 SVG 形状（字符符号退役）。
-  const legend = page.locator('.wx-sb-legend');
-  expect(await legend.evaluate(el => getComputedStyle(el).display)).toBe('grid');
-  expect((await legend.evaluate(el => getComputedStyle(el).gridTemplateColumns)).trim().split(/\s+/).length).toBe(2);
-  await expect(legend.locator('.wx-lg-item svg')).toHaveCount(4);
-  await expect(legend.locator('.wx-lg-docs')).toHaveText('Document');
-  // hover 降到 .06（行多时不燥）；active 保持 tint-15（点击后）。
-  await proj.hover();
-  expect(await proj.evaluate(el => getComputedStyle(el).backgroundColor)).toBe('rgba(91, 127, 191, 0.06)');
-  await proj.click();
-  expect(await proj.evaluate(el => getComputedStyle(el).backgroundColor)).toBe('rgba(91, 127, 191, 0.15)');
-  // :focus-visible 蓝晶环（先按一次 Tab 建立键盘输入模态，脚本聚焦才命中）。
-  await page.keyboard.press('Tab');
-  await doc.focus();
-  expect(await doc.evaluate(el => getComputedStyle(el).boxShadow)).toContain('91, 127, 191');
-  // 列表随筛选镜像：筛选框输入 ⇒ 不匹配的行隐藏（上一次 click 已把 active
-  // 翻回 off，正好回到无筛选基线）。
-  await page.fill('.wiki-toolbar-search', 'alpha');
-  await page.waitForTimeout(120);
-  expect(await page.locator('.wx-doc', { hasText: 'Gamma Note' }).evaluate(el => el.style.display)).toBe('none');
-  expect(await page.locator('.wx-doc', { hasText: 'Alpha One' }).evaluate(el => el.style.display)).toBe('');
-  expect(errors).toEqual([]);
-});
-
-test('§3 filter empty state shows on no match; the Clear link restores', async ({ page }) => {
-  const errors = await boot(page);
-  await openGraph(page);
-  await page.fill('.wiki-toolbar-search', 'zzz');
-  await expect(page.locator('.wx-sb-empty')).toHaveClass(/show/);
-  await expect(page.locator('.wx-sb-empty-big')).toHaveText('No matching documents');
-  expect(await page.locator('.wx-proj').first().evaluate(el => el.style.display)).toBe('none');
-  // 空态里的 Clear 链接复通：清搜索 + facets + 行隐藏。
-  await page.click('.wx-sb-empty a');
-  await expect(page.locator('.wx-sb-empty')).not.toHaveClass(/show/);
-  expect(await page.locator('.wx-proj').first().evaluate(el => el.style.display)).toBe('');
-  expect(await page.evaluate(() => document.querySelector('.wiki-toolbar-search').value)).toBe('');
-  expect(errors).toEqual([]);
-});
-
-// ── §4 控件映射 ───────────────────────────────────────────────────────
-
-test('§4 Filter documents → borderless findbar input + bar focus-within ring; Refresh secondary tier; zoom SVG buttons', async ({ page }) => {
-  const errors = await boot(page);
-  await openGraph(page);
-  // 前置放大镜 + 无边框透明输入 h28。
-  await expect(page.locator('.wiki-search > svg')).toHaveCount(1);
-  const input = page.locator('.wiki-toolbar-search');
-  expect(await input.evaluate(el => getComputedStyle(el).borderStyle)).toBe('none');
-  expect(await input.evaluate(el => getComputedStyle(el).borderWidth)).toBe('0px');
-  expect(await input.evaluate(el => getComputedStyle(el).backgroundColor)).toBe('rgba(0, 0, 0, 0)');
-  expect(await input.evaluate(el => getComputedStyle(el).height)).toBe('28px');
-  // 条 :focus-within → 蓝晶描边环（--glass-etched-border-focus）。
-  const bar = page.locator('.wiki-toolbar');
-  await input.click();
-  expect(await bar.evaluate(el => getComputedStyle(el).borderColor)).toContain('91, 127, 191');
-  await page.evaluate(() => document.activeElement?.blur());
-  // Refresh = button.glass-control 次操作档 · h28 · 带自旋图标。
-  const refresh = page.locator('.wiki-toolbar-btn');
-  expect(await refresh.evaluate(el => el.classList.contains('glass-control'))).toBe(true);
-  expect(await refresh.evaluate(el => getComputedStyle(el).height)).toBe('28px');
-  await expect(refresh.locator('svg')).toHaveCount(1);
-  // 缩放钮：3 枚全 SVG（文本字形退役）、30×30。
-  const zbtns = page.locator('.wx-zoom button');
-  await expect(zbtns).toHaveCount(3);
-  for (let i = 0; i < 3; i++) {
-    const b = zbtns.nth(i);
-    await expect(b.locator('svg')).toHaveCount(1);
-    const box = await b.boundingBox();
-    expect(Math.round(box.width)).toBe(30);
-    expect(Math.round(box.height)).toBe(30);
+  // canvas 点节点（探针读布局坐标 → 真实 mouse 路径）；先把目标摇到画布中心
+  // （mock 布局无种子，节点可能停在画布边缘外/col-resizer 下方），再等 rebuild
+  // 竞态窗口过去；点击未命中则按当前布局重算重试一次。
+  await centerNodeOn(page, 'gamma:docs/g.md');
+  let selected = null;
+  for (let attempt = 0; attempt < 2 && !selected; attempt++) {
+    const p1 = await settledProbe(page);
+    const hub = p1.nodes.find(n => n.id === 'gamma:docs/g.md');
+    const box = await page.locator('.wiki-canvas').boundingBox();
+    const sx = box.x + (hub.x - p1.W / 2) * p1.scale + p1.W / 2 + p1.vx;
+    const sy = box.y + (hub.y - p1.H / 2) * p1.scale + p1.H / 2 + p1.vy;
+    await page.mouse.click(sx, sy);
+    try {
+      await expect.poll(() => page.evaluate(() => window.__wikiGraphProbe().selected), { timeout: 1500 })
+        .toBe('gamma:docs/g.md');
+      selected = 'gamma:docs/g.md';
+    } catch { /* rebuild raced the click — recompute from the fresh layout */ }
   }
-  expect((await zbtns.nth(0).textContent()).trim()).toBe('');
+  expect(selected).toBe('gamma:docs/g.md');
+  await expect(page.locator('#wiki-graph-side .wg-detail-body h2')).toHaveText('Gamma Note');
+  expect(await page.locator('#wiki-graph-side .wg-detail-body .ref').count()).toBeGreaterThan(0);
+  // 左栏词条点击 → canvas 换选
+  await page.click('#wiki-graph-side .wg-detail-body .ref');
+  await expect.poll(() => page.evaluate(() => window.__wikiGraphProbe().selected)).toBe('alpha:docs/a.md');
+  await expect(page.locator('#wiki-graph-side .wg-detail-body h2')).toHaveText('Alpha One');
+  // Esc 逐层退出：选中 → 无
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => window.__wikiGraphProbe().selected)).toBe(null);
+  await expect(page.locator('#wiki-graph-side .wg-detail-empty')).toBeVisible();
   expect(errors).toEqual([]);
 });
 
-test('§4 self-drawn facet dropdown: APG keyboard face, select stays the state owner, chips mirror back', async ({ page }) => {
+test('§C chips + search drive the canvas filter; Esc peels selection then filter', async ({ page }) => {
   const errors = await boot(page);
   await openGraph(page);
-  const dds = page.locator('.wiki-facets .wiki-dd');
-  await expect(dds).toHaveCount(3);
-  const kind = dds.nth(0);
-  const face = kind.locator('.wiki-dd-face');
-  // 脸面 ARIA + 原生 select 仍为状态所有者（被视觉遮蔽）。
-  await expect(face).toHaveAttribute('aria-haspopup', 'listbox');
-  await expect(face).toHaveAttribute('aria-expanded', 'false');
-  const kindSel = page.locator('select.wiki-facet-kind');
-  expect(await kindSel.evaluate(el => el.classList.contains('wiki-facet-veiled'))).toBe(true);
-  expect(await kindSel.evaluate(el => Math.round(el.getBoundingClientRect().width))).toBeLessThanOrEqual(1);
-  // 点击展开 → listbox/option/aria-selected。
-  await face.click();
-  await expect(face).toHaveAttribute('aria-expanded', 'true');
-  const pop = kind.locator('.wiki-dd-pop');
-  await expect(pop).toBeVisible();
-  await expect(pop).toHaveAttribute('role', 'listbox');
-  const firstOpt = pop.locator('.wiki-dd-opt').first();
-  await expect(firstOpt).toHaveAttribute('role', 'option');
-  await expect(firstOpt).toHaveAttribute('aria-selected', 'true');
-  // 键盘：↓ 展开（hl=当前选中）→ ↓ 移动 → Enter 选中（写回 select + change）。
-  await page.keyboard.press('Escape');           // 先关上（click 已展开）
-  await expect(face).toHaveAttribute('aria-expanded', 'false');
-  await face.focus();
-  await page.keyboard.press('ArrowDown');        // 关着时 ↓ = 展开（hl=选中项）
-  await page.keyboard.press('ArrowDown');        // 移动到 Documents
-  const hl = pop.locator('.wiki-dd-opt.hl');
-  await expect(hl).toHaveCount(1);
-  const hlText = await hl.textContent();
-  await page.keyboard.press('Enter');
-  await expect(face).toHaveAttribute('aria-expanded', 'false');
-  await expect(face.locator('.wiki-dd-label')).toHaveText(hlText.trim());
-  expect(await kindSel.evaluate(el => el.value)).toBe('doc');
-  // Esc 关闭。
-  await face.click();
+  // 目录 chips 单选（全部/根目录 + dirs：三节点全在 docs/ → 2 片）
+  const chips = page.locator('#wiki-graph-side .wg-chips .wg-chip');
+  await expect(chips).toHaveCount(2);
+  await chips.nth(1).click();                    // 「docs/」
+  await expect.poll(() => page.evaluate(() => window.__wikiGraphProbe().dirFilter)).toBe('docs');
+  await expect(page.locator('#wiki-graph-side .wg-chip.on')).toHaveCount(1);
+  // 再点同片 = 取消（回「全部」）
+  await chips.nth(1).click();
+  await expect.poll(() => page.evaluate(() => window.__wikiGraphProbe().dirFilter)).toBe('');
+  // 搜索框 → canvas 过滤（可清空）
+  await page.fill('#wiki-graph-side .wg-search-input', 'alpha');
+  await expect.poll(() => page.evaluate(() => window.__wikiGraphProbe().filter)).toBe('alpha');
+  await page.fill('#wiki-graph-side .wg-search-input', '');
+  await expect.poll(() => page.evaluate(() => window.__wikiGraphProbe().filter)).toBe('');
+  // Esc 顺序：先选中、后过滤（目标先摇到画布中心 —— 布局无种子，见 centerNodeOn）
+  await page.fill('#wiki-graph-side .wg-search-input', 'gamma');
+  await centerNodeOn(page, 'gamma:docs/g.md');
+  const g = await settledProbe(page);
+  const node = g.nodes.find(n => n.id === 'gamma:docs/g.md');
+  const box = await page.locator('.wiki-canvas').boundingBox();
+  await page.mouse.click(
+    box.x + (node.x - g.W / 2) * g.scale + g.W / 2 + g.vx,
+    box.y + (node.y - g.H / 2) * g.scale + g.H / 2 + g.vy,
+  );
+  await expect.poll(() => page.evaluate(() => window.__wikiGraphProbe().selected)).toBe('gamma:docs/g.md');
   await page.keyboard.press('Escape');
-  await expect(face).toHaveAttribute('aria-expanded', 'false');
-  await expect(pop).not.toBeVisible();
-  // Home/End：End → 末项高亮 → Enter 选中。
-  await face.focus();
-  await page.keyboard.press('ArrowDown');
-  await page.keyboard.press('End');
-  await page.keyboard.press('Enter');
-  await expect(face.locator('.wiki-dd-label')).toHaveText('Attachments');
-  expect(await kindSel.evaluate(el => el.value)).toBe('attachment');
-  // 外部 change 事件镜像回脸面：侧栏 chip 点击 → type select 写值 → 脸面跟随。
-  await page.locator('.wx-chip', { hasText: 'spec' }).click();
-  const typeFaceLabel = dds.nth(1).locator('.wiki-dd-label');
-  await expect(typeFaceLabel).toHaveText('spec');
-  expect(await page.locator('select.wiki-facet-type').evaluate(el => el.value)).toBe('spec');
+  await expect.poll(() => page.evaluate(() => window.__wikiGraphProbe().selected)).toBe(null);
+  await expect.poll(() => page.evaluate(() => window.__wikiGraphProbe().filter)).toBe('gamma');
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => window.__wikiGraphProbe().filter)).toBe('');
   expect(errors).toEqual([]);
 });
 
-test('§4 native degrade path (hover:none) keeps the reskinned select, zero custom faces', async ({ page }) => {
-  const errors = await boot(page, { hoverNone: true });
-  await openGraph(page);
-  await expect(page.locator('.wiki-facets .wiki-dd')).toHaveCount(0);
-  const kindSel = page.locator('select.wiki-facet-kind');
-  expect(await kindSel.evaluate(el => el.classList.contains('wiki-facet-veiled'))).toBe(false);
-  await expect(kindSel).toBeVisible();
-  expect(await kindSel.evaluate(el => getComputedStyle(el).appearance)).toBe('none');
-  expect(await kindSel.evaluate(el => getComputedStyle(el).backgroundImage)).toContain('data:image/svg+xml');
-  expect(errors).toEqual([]);
-});
-
-// ── 验收 ③ 深亮双主题截图（WIKI_SHOTS_DIR 指定 evidence 目录时产出）──────
-
-test('dual-theme screenshots for the evidence directory', async ({ page }) => {
-  test.skip(!SHOT_DIR, 'WIKI_SHOTS_DIR not set — evidence run only');
-  mkdirSync(SHOT_DIR, { recursive: true });
+test('§D face contract: stats line wording, broken block fixed in-panel, row selects source, open button', async ({ page }) => {
   const errors = await boot(page);
   await openGraph(page);
-  await expect.poll(() => bodyNotCollapsed(page)).toBe(true);
-  await page.waitForTimeout(900); // force sim settle
-  await page.screenshot({ path: join(SHOT_DIR, 'dark-main.png') });
-  // 下拉展开态（深）。
-  await page.locator('.wiki-facets .wiki-dd').nth(0).locator('.wiki-dd-face').click();
-  await page.waitForTimeout(300);
-  await page.screenshot({ path: join(SHOT_DIR, 'dark-dropdown-open.png') });
-  await page.keyboard.press('Escape');
-  // 筛选空态（深）。
-  await page.fill('.wiki-toolbar-search', 'zzz');
-  await page.waitForTimeout(200);
-  await page.screenshot({ path: join(SHOT_DIR, 'dark-empty-filter.png') });
-  await page.fill('.wiki-toolbar-search', '');
-  // 亮档主视图。
-  await page.emulateMedia({ colorScheme: 'light' });
-  await page.waitForTimeout(500);
-  await page.screenshot({ path: join(SHOT_DIR, 'light-main.png') });
+  const face = await readFace(page);
+  // 统计行口径：3 docs · 1 references · 1 unresolved（stub 不计 docs，断链不立节点）
+  expect(face.stats).toBe('3 docs · 1 references · 1 unresolved');
+  // 目录 chips = 全部 + dirs（a.md/fig.svg → docs；g.md → docs）= 2 片
+  expect(face.chips).toBe(2);
+  // 详情空态在场
+  expect(face.emptyShown).toBe(true);
+  // 断链清单 = 面板内固定区块（非浮层）：display 打开 + position static + 有行
+  //   （2 行 = beta 不可读文档库行 + a.md → ghost.md 未解析引用行）
+  expect(face.brokenVisible).toBe(true);
+  expect(face.brokenStatic).toBe(true);
+  expect(face.brokenRows).toBe(2);
+  // 断链行点击 → 源文档选中 + 详情刷新（vault 错误行是 div；引用行是 button）
+  await page.click('#wiki-graph-side .wg-broken button.row');
+  await expect.poll(() => page.evaluate(() => window.__wikiGraphProbe().selected)).toBe('alpha:docs/a.md');
+  await expect(page.locator('#wiki-graph-side .wg-detail-body h2')).toHaveText('Alpha One');
+  // 详情卡按钮契约：打开文档（唯一离开图谱的路）
+  await expect(page.locator('#wiki-graph-side .wg-detail-body .openbtn')).toHaveText('Open document');
+  // 悬停 tooltip 仍是 canvas 面的交互面（title 行非空）——同样先把目标摇到中心
+  await centerNodeOn(page, 'alpha:docs/a.md');
+  const p = await settledProbe(page);
+  const node = p.nodes.find(n => n.id === 'alpha:docs/a.md');
+  const box = await page.locator('.wiki-canvas').boundingBox();
+  await page.mouse.move(
+    box.x + (node.x - p.W / 2) * p.scale + p.W / 2 + p.vx,
+    box.y + (node.y - p.H / 2) * p.scale + p.H / 2 + p.vy,
+    { steps: 6 },
+  );
+  await expect.poll(() => page.evaluate(() => {
+    const tip = document.querySelector('.wiki-graph-pane .wg-tip');
+    return tip && tip.style.display === 'block' && tip.querySelector('.tt').textContent.length > 0;
+  })).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+// ── §E 画布手感（追加批 2026-10-22）＋ §F frosted 统一／裙边退役 ───────
+
+test('§E wheel = pan (shift = horizontal), pinch = damped anchored zoom that converges smoothly', async ({ page }) => {
+  const errors = await boot(page);
+  await openGraph(page);
+  const N_PINCH = 24;   // 连续捏合帧数（每帧 Δ-8）
+  const PINCH_K = 0.0015; // 必须与 wikiGraph.js 的 PINCH_K 同值
+  const STEP = 8;
+  await settledProbe(page); // 等 rerenderWikiGraph 的 debounce rebuild 窗口过去
+
+  // 图例：左栏 .wg-hint 注明滚轮/捏合约定（canvas 保纯，图例进左栏）。
+  const hint = await page.textContent('#wiki-graph-side .wg-hint');
+  expect(hint.trim().length).toBeGreaterThan(0);
+
+  // 双指滚动/滚轮 = 平移：vy+120、vx/scale 不动；shift+纵滚 = 横移。
+  const pan = await page.evaluate(() => {
+    const c = document.querySelector('.wiki-canvas');
+    const r = c.getBoundingClientRect();
+    const ev = (dy, mods = {}) => c.dispatchEvent(new WheelEvent('wheel', {
+      deltaY: dy, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true, ...mods,
+    }));
+    const a = window.__wikiGraphProbe();
+    ev(120);
+    const b = window.__wikiGraphProbe();
+    ev(-120, { shiftKey: true });   // shift+纵滚：符号直通（-120 → vx-120）
+    const c2 = window.__wikiGraphProbe();
+    return {
+      dvy: Math.round(b.vy - a.vy), dvx1: Math.round(b.vx - a.vx), dscale: +(b.scale - a.scale).toFixed(6),
+      dvx2: Math.round(c2.vx - b.vx), dvy2: Math.round(c2.vy - b.vy),
+    };
+  });
+  expect(pan).toMatchObject({ dvy: 120, dvx1: 0, dscale: 0, dvx2: -120, dvy2: 0 });
+
+  // 连续捏合：逐帧 ctrl+wheel（rAF 交错派发——同步整批会让追帧一帧吃完全部
+  // 累积，无法验证平滑契约），同时逐帧采样 scale；再追 40 帧确认收敛。
+  const pinch = await page.evaluate(({ N, K, step }) => new Promise((resolve) => {
+    const c = document.querySelector('.wiki-canvas');
+    const r = c.getBoundingClientRect();
+    const ax = r.left + r.width / 2, ay = r.top + r.height / 2;
+    const before = window.__wikiGraphProbe();
+    const wOf = (p) => ({
+      x: ((ax - r.left) - p.vx) / p.scale + p.W / 2,
+      y: ((ay - r.top) - p.vy) / p.scale + p.H / 2,
+    });
+    const wBefore = wOf(before);
+    const seen = [];
+    let i = 0;
+    const tick = () => {
+      if (i < N) {
+        c.dispatchEvent(new WheelEvent('wheel', {
+          deltaY: -step, ctrlKey: true, clientX: ax, clientY: ay, bubbles: true, cancelable: true,
+        }));
+        i++;
+      }
+      seen.push(window.__wikiGraphProbe().scale);
+      if (seen.length >= N + 40) resolve({ seen, zoomTarget: before.zoomTarget, target: before.zoomTarget * Math.exp(N * step * K), wBefore, r: { left: r.left, top: r.top } });
+      else requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }), { N: N_PINCH, K: PINCH_K, step: STEP });
+
+  const final = pinch.seen[pinch.seen.length - 1];
+  let maxStep = 0;
+  for (let i = 1; i < pinch.seen.length; i++) maxStep = Math.max(maxStep, Math.abs(pinch.seen[i] - pinch.seen[i - 1]));
+  expect(maxStep).toBeGreaterThan(0);            // 缩放确实发生了
+  expect(maxStep).toBeLessThanOrEqual(0.06);     // 逐帧步进有界（阻尼不跳变）
+  expect(Math.abs(final - pinch.target)).toBeLessThan(0.02); // 收敛 zoomTarget
+  // 光标锚点几何保持：锚点（canvas 中心）下的世界坐标漂移 < 2px。
+  const drift = await page.evaluate(({ wBefore, rect }) => {
+    const p = window.__wikiGraphProbe();
+    const ax = rect.left + (document.querySelector('.wiki-canvas').getBoundingClientRect().width / 2);
+    const ay = rect.top + (document.querySelector('.wiki-canvas').getBoundingClientRect().height / 2);
+    const w = { x: (ax - rect.left - p.vx) / p.scale + p.W / 2, y: (ay - rect.top - p.vy) / p.scale + p.H / 2 };
+    return Math.hypot(w.x - wBefore.x, w.y - wBefore.y);
+  }, { wBefore: pinch.wBefore, rect: pinch.r });
+  expect(drift).toBeLessThan(2);
+  expect(errors).toEqual([]);
+});
+
+test('§F frosted: capsule ≡ search ≡ chips ≡ chat header material; capsule skirt fade retired on desktop', async ({ page }) => {
+  const errors = await boot(page);
+  await openGraph(page);
+  const mat = await page.evaluate(() => {
+    const pick = (sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return null;
+      const cs = getComputedStyle(el);
+      return { bg: cs.backgroundColor, blur: cs.backdropFilter || cs.webkitBackdropFilter, border: cs.borderColor, shadow: cs.boxShadow };
+    };
+    return { header: pick('#header'), capsule: pick('.canvas-header'), search: pick('.wg-search'), chip: pick('.wg-chip:not(.on)') };
+  });
+  // chips 契约取「静息片」：无过滤时首片（全部）恒为 .on 选中态 accent 材质，
+  // 不在本契约内（同 chat header 的 hover 控件）。
+  expect(mat.header && mat.capsule && mat.search && mat.chip).toBeTruthy();
+  expect(mat.capsule).toEqual(mat.header);
+  expect(mat.search).toEqual(mat.header);
+  expect(mat.chip).toEqual(mat.header);
+  // ③ canvas 胶囊裙边渐隐桌面退役：类仍挂（手机层共用样式表），桌面 ::after
+  // display:none —— 画布内容不再穿胶囊渐变淡出。
+  const skirt = await page.evaluate(() => {
+    const hdr = document.querySelector('.canvas-header');
+    return { cls: hdr.classList.contains('scroll-under-glass'), after: getComputedStyle(hdr, '::after').display };
+  });
+  expect(skirt.cls).toBe(true);
+  expect(skirt.after).toBe('none');
+  expect(errors).toEqual([]);
+});
+
+test('§G capsule ring consumes horizontal swipe; canvas keeps pan/pinch (#716 non-conflict)', async ({ page }) => {
+  const errors = await boot(page);
+  await openGraph(page);
+  // 第二页签（环需 ≥2）：开 projects 面板页签再回图谱（boot 自带 plugins 页签
+  // → tabCount 3；环序 = 插序，图谱居中时缘位含 projects）
+  await page.click('#projects-btn');
+  await expect.poll(() => page.evaluate(() => window.__canvasDeck?.state?.()?.tabCount), { timeout: 8000 }).toBe(3);
+  await page.click('#wiki-btn');
+  await expect.poll(() => page.evaluate(() => document.querySelector('.canvas-tab-pane.active')?.dataset.tabId), { timeout: 8000 }).toBe('wiki-graph');
+
+  // hover 标题头 → 环展开：中心 = wiki-graph、缘位 = projects
+  const hp = await page.evaluate(() => {
+    const r = document.querySelector('#canvas-panel .canvas-header').getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  await page.mouse.move(hp.x, hp.y);
+  await page.waitForFunction(() => document.querySelector('#canvas-panel .canvas-header').classList.contains('ring-open'), { timeout: 4000 });
+  const ring = await page.evaluate(() => {
+    const caps = [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule')];
+    const center = caps.find((c) => c.classList.contains('is-center'));
+    const edges = caps.filter((c) => c.classList.contains('is-edge')).map((c) => c.dataset.tabId);
+    return { n: caps.length, center: center?.dataset.tabId || null, edges };
+  });
+  expect(ring.n).toBe(3);                       // 3 页签 = 中心 + 2 缘位（0 弧外，最多可见 3）
+  expect(ring.center).toBe('wiki-graph');
+  expect(ring.edges).toContain('projects');
+
+  // 环上横滑一格（deltaX -56）：环游标移动到 projects；图谱 view 四自由度纹丝不动
+  const viewBefore = await page.evaluate(() => {
+    const p = window.__wikiGraphProbe();
+    return { vx: p.vx, vy: p.vy, scale: p.scale, zoomTarget: p.zoomTarget };
+  });
+  await page.mouse.wheel(56, 0);   // 环序 [plugins, wiki-graph, projects]：+1 格 → projects 居中
+  await page.waitForFunction(() => {
+    const c = document.querySelector('#canvas-capsule-ring .cr-capsule.is-center');
+    return c && c.dataset.tabId === 'projects';
+  }, { timeout: 4000 });
+  const viewAfter = await page.evaluate(() => {
+    const p = window.__wikiGraphProbe();
+    return { vx: p.vx, vy: p.vy, scale: p.scale, zoomTarget: p.zoomTarget };
+  });
+  expect(viewAfter).toEqual(viewBefore);
+
+  // 离环（回画布中心）→ 环收；画布区横滑仍 = 平移、捏合仍 = 缩放（#716 不被劫持）
+  const box = await page.locator('.wiki-canvas').boundingBox();
+  const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
+  await page.mouse.move(cx, cy);
+  await expect.poll(() => page.evaluate(() => !document.querySelector('#canvas-panel .canvas-header').classList.contains('ring-open')), { timeout: 4000 }).toBe(true);
+  await page.evaluate(() => new Promise((resolve) => {
+    const c = document.querySelector('.wiki-canvas');
+    const r = c.getBoundingClientRect();
+    let i = 0;
+    const tick = () => {
+      if (i >= 6) { resolve(null); return; }
+      c.dispatchEvent(new WheelEvent('wheel', {
+        deltaY: -10, ctrlKey: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true,
+      }));
+      i++;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }));
+  const pinched = await page.evaluate(() => window.__wikiGraphProbe().scale);
+  expect(pinched).toBeGreaterThan(viewBefore.scale + 0.01);
+  // 追帧收尾（锚点补偿会持续微调 vx）—— 收敛后再测横滑平移，口径才纯
+  await page.waitForFunction(() => {
+    const p = window.__wikiGraphProbe();
+    return Math.abs(p.scale - p.zoomTarget) <= 0.0005;
+  }, { timeout: 8000 });
+  const vxBeforePan = await page.evaluate(() => window.__wikiGraphProbe().vx);
+  await page.evaluate(() => new Promise((resolve) => {
+    const c = document.querySelector('.wiki-canvas');
+    const r = c.getBoundingClientRect();
+    c.dispatchEvent(new WheelEvent('wheel', {
+      deltaX: 120, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true,
+    }));
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  }));
+  const panned = await page.evaluate(() => window.__wikiGraphProbe().vx);
+  expect(Math.round(panned)).toBe(Math.round(vxBeforePan + 120));
   expect(errors).toEqual([]);
 });

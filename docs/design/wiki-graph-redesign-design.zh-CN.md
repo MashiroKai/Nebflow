@@ -117,6 +117,58 @@ GET /api/wiki/graph ──▶ 前端 wikiGraph.js 渲染
 - [ ] 布局稳定后动画停帧（无常驻 CPU 占用）。
 - [ ] 断链不立节点，信息行计数可展开清单。
 
+## 9. 左栏控制面契约（2026-10-21 作者令追加批，已实施）
+
+作者令：图谱功能所有按钮和交互不要堆在 canvas 上——canvas 只显示简单的图谱本体；激活图谱视图时，把左侧栏（原文件浏览器那一栏）的空间利用起来放控制面。本节是 §3 交互表的**取代性修订**（§3 的画布顶栏/浮动预览卡/断链浮层随之退役），力导向内核与 §4 视觉规格不变。
+
+### 9.1 面的划分
+
+| 面 | 内容 |
+|----|------|
+| canvas（`.wiki-graph-pane`） | 力导向图 + 悬停 tooltip，**仅此两件**；顶栏（搜索+chips）、预览卡、信息行、图例、断链浮层全部撤出 |
+| 左栏（`#wiki-graph-side`，挂在 `#panel-sessions` 内、`#explorer-section` 的兄弟位） | 搜索框 · 目录 chips 过滤 · 选中节点详情卡（徽标/摘要/目录/引出/被引/路径/打开文档——替代浮动预览卡）· 断链清单（固定区块，替代浮层）· 统计行（N 篇文档 · N 条引用 · N 条未解析） |
+
+### 9.2 双向联动
+
+- 左栏 → canvas：目录 chips 单选过滤；详情卡词条（引出/被引）点击 = 换选并居中；断链清单行点击 = 选中源文档；搜索框实时过滤。
+- canvas → 左栏：单击节点 → 详情卡刷新（Esc 或空白单击退选回空态）；悬停 tooltip 不变。
+- Esc 逐层退出：选中 → 搜索过滤 → 目录过滤。
+
+### 9.3 展开/还原（承接 2026-10-19 批 R 系语义）
+
+图谱「变为可见」的**跃迁**才驱动左栏：打开 tab / 切回 tab / Canvas 重开 / 刷新 restore → 自动展开 Side Bar 并激活 files 面板（走 `showSidePanel` 既有持久化 API，零新键）；图谱可见期间手动收起 → 本查看会话安静；切走/关 tab/收 Canvas → 左栏还原文件浏览器，且**绝不自动收起**；移动端 ≤768px 不自动展开（抽屉互斥）。
+
+### 9.4 主题与窄面板
+
+canvas 沿用 §4 的 `--wg-*` 石墨双主题表；左栏控制面穿侧栏玻璃卡既有 token（`--color-frame-*` / `--glass-*`），亮暗随 `prefers-color-scheme` 自动。窄面板走 container query（`wgside`，≤209px 紧凑档：收紧内距、chips 与行字号降档）——面板宽度由拖拽手柄决定，与视口无关。
+
+### 9.5 移动层
+
+手机壳没有左栏：`.wg-panebar`（搜索 + chips + 统计行）随 pane 收编进移动页，仅 `body.mobile-layer` 显示——桌面 canvas 保持零控件。断链清单在移动层不给（计数仍在统计行）。
+
+### 9.6 验证
+
+- `scripts/e2e-wiki-graph-redesign.cjs`：真实 docs 数据 playwright 截图——canvas 纯图态 / 左栏控制面 / 点选联动 / 断链区块 四态 × 亮暗，另含窄面板容器查询与移动层 panebar；证据落 `evidence/20261022_wiki-graph-sidepanel/`。
+- `tests/wiki-graph-ux.spec.mjs`：左栏契约 spec（展开/还原 R 系 + canvas 纯度 + 双向联动 + 内容口径断言）。
+
+### 9.7 追加批（2026-10-22 作者令：触控板手感 / 毛玻璃统一 / 渐隐退役，已实施）
+
+1. **触控板缩放手感（excalidraw/figma 同款约定）**：滚轮/双指滚动 = 平移（1:1 跟手，Shift+纵滚 = 横移）；触控板捏合（ctrl/meta+wheel）/ ⌘(Ctrl)+滚轮 = 以光标为锚点缩放——每事件按 `exp(-Δy·0.0015)` 累积进 zoomTarget，rAF 每帧追近 25%（速度∝剩余距离，剩余差 <0.0005 直接贴合），锚点 = 最近指针位置做几何补偿，追帧不唤醒布局 sim（§4 停帧语义保留）。约定写进左栏 `.wg-hint` 图例行，canvas 保持纯图。
+2. **毛玻璃统一标准（全站一套 frosted）**：canvas 顶部胶囊、左栏搜索框/chips 与 chat header 同材质——`--glass-bg` + `blur(var(--glass-blur)) saturate(1.15)` + `--glass-border` + `--frost-shadow`（新增于 sapphire.css，亮/暗两档，#header 同步改用 token 单源）；chips 无折射线，`.on` 选中片为 accent 态不在契约内。
+3. **canvas 渐隐退役（与聊天窗口渐隐同令）**：`.canvas-header.scroll-under-glass::after` 裙边桌面 `display:none`（胶囊本体 frosted 保留）；画布内容（节点/连线/文档文字）不再穿胶囊渐变淡出。手机层维持现状——与 UI 批⑥⑦「顶部渐隐穿顶 = 手机层唯一」同一条桌面/手机分界线。
+4. **验证**：harness 增 ⑥ frost 逐项相等 / ⑦ 裙边退役 / ⑧ 24 帧连续捏合+40 帧采样（逐帧步进 ≤0.06、锚点世界点漂移 <2px、收敛 zoomTarget）共 16 断言（63/63 过）；spec 增 §E（wheel 平移 vs 捏合阻尼缩放）/ §F（frosted 相等 + 裙边退役）两条契约（12/12 过）。
+
+### 9.8 追加批二（2026-10-22 作者令：canvas 顶部胶囊交互重做，已实施）
+
+1. **平时态**：单胶囊（`.canvas-title`），整头缩一档（padding 4/7/12、t-name 12px）；单页签时 hover 不展开（平时态即全部）。
+2. **hover 态 = 胶囊环**（`.capsule-ring`，纯前端组件：CSS 3D 沿弧排布 + backdrop filter，与左栏控制面零共享）：各页签胶囊沿圆环排布、**最多同时可见 3 个**——中心 = 环游标（内容-only 覆层，底 = 标题头胶囊本体，同位无缝 morph），±1 缘位沿曲率 `rotateY(∓34°) translateZ(-110px)` + `blur(1.6px) saturate(1.25)` + opacity .82（cover-flow 透视模糊扭曲），|rel|≥2 弧外不可见；**左右滚动换选**（触控板横滑 wheel deltaX / Shift+纵滚，56px 一格，累加器余量随动、环绕）；**点击即切换**（缘位 click；中心位经标题头手势 finish !moved 臂 `ringClickCenter`）。材质 = 全站统一 frosted token（缘位完整药丸：`--glass-bg/--glass-blur saturate(1.15)/--glass-border/--frost-shadow`，与 chat header computed 逐项相等）。
+3. **按住 = 交互按钮语义**：`.canvas-header` 全头 `user-select:none`（严禁文字多选/双击选中）+ `dragstart` preventDefault（拦从胶囊发起的原生拖拽，OS 文件拖入 drop 落区不受影响）；环胶囊 = `div[role=button]`（`<button>` 会落标题头手势「钮群直通」守卫，环开着时按压/竖滑换卡/横滑关卡手势全灭）；缘位 pointerdown stopPropagation（纯点击钮），中心位事件穿透标题头（CC1 按压触感 / CC2 换卡 / CC3 关卡手势在环开着时照旧）。
+4. **右键菜单**（`capsuleMenuActions` 一份语义，标题头与环胶囊共用）：引用当前页（保留，CC4 契约）＋ **多开**（铺开叠卡环 openDeck；deck 开着换形「收起叠卡」）＋ **关闭**（deck 态 deckRequestClose / 常态 closeTab；deck 态另有「关闭其他」）＋ **在独立窗口打开**（`popoutCardWindow`/`toggleCardWindow` = #717 卡窗链；独立中换形「合并回主窗」；非文件卡不挂）。
+5. **#716 分区（横滑不冲突）**：环上滚轮 preventDefault + stopPropagation 优先消费——胶囊环上横滑 = 环换选，画布区横滑仍 = 平移、捏合仍 = 缩放（wiki spec §G 双侧钉：环上换选时图谱 vx/vy/scale/zoomTarget 逐字不变）。
+6. **边界**：手机层/卡窗态整腿让位；hover 展开（pointerenter，非触针）+ 离环 140ms 宽限收起 + Esc 收环；任何换签收环；页签增减重建/收环（<2 收）。
+7. **验证**：`tests/canvas-capsule-ring.spec.mjs` 24 断言（展开/收起/换选/切换/菜单四项/popout 往返/deck 开收/按钮语义/单胶囊不展开）全绿；`tests/wiki-graph-ux.spec.mjs` 增 §G（13/13）；`tests/canvas-cardhead-capsule.spec.mjs` legacy 契约回归 28/28；证据 `shots/8-capsule-ring-dark.png`。
+
+
 ## 相关文档
 
 - 样张：[[wiki-graph-redesign-sample.html]]（HTML，双击打开）。
