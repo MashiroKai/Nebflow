@@ -1,13 +1,22 @@
-// busy-queue-ack.spec.mjs — 对话层活性批②：插话即时确认「已收到 · 排队第 N 位」
+// busy-queue-ack.spec.mjs — 对话层活性批②的**回退换代**（排队呈现回退批
+// 2026-10-22 作者令「怎么还出现了发送了的消息还在队列里的问题。我觉得这个可能
+// 需要回退，已收到的标记也是多余的。」）。
 //
-// 症状：长回合期间用户插话，消息只收进底部队列条（长对话里滚离视口），对话面
-// 零反馈——「界面无任何活动迹象」的另一半体感。本 spec 钉：busy 中发送 ⇒ 乐观
-// 气泡立即上屏 + footer「已收到 · 排队第 N 位」确认标 + 队列条同步计数；done 后
-// drain ⇒ 确认标原位摘除（翻已派发态）、气泡恰一份（零重复）；撤回 ⇒ 气泡随项
-// 收掉。
+// 原契约（插话即时确认「已收到 · 排队第 N 位」+ 队列条行按钮）已整面退役：
+//   · 乐观气泡保留（上屏可见性是好的），但**裸上屏**——零「已收到」标；
+//   · 队列条只保留头行「等待当前回复完成 · N 条排队」（活秒表）——消息文本/
+//     位次/按钮不再双呈现；
+//   · 撤回/移除能力收敛进**气泡右键菜单**（立即发送/撤回/移除 +
+//     既有 复制/引用），执行面 = input.js runQueuedAction。
 //
-// harness = chat-autoscroll-follow.spec.mjs 同一套（静态路由 + routeWebSocket +
-// 真实 ws.js 分发路径）。零后端、零 sbt、零构建。
+// 本 spec 钉（新契约）：
+//   A busy 中插话 ⇒ 乐观气泡上屏（零标）+ 头行计数 1 + 零行级明细 + 输入清空；
+//   B 第二条 ⇒ 头行计数 2，气泡 ×2 各自独立；
+//   C drain（队首派发）⇒ 头泡无标可翻仍恰一份、尾项留队计数 1、busy 重新武装；
+//   D 右键「移除」⇒ 尾泡随项收掉、队列条隐藏。
+//
+// harness = 原文件同一套（静态路由 + routeWebSocket + 真实 ws.js 分发路径）。
+// 零后端、零 sbt、零构建。
 //
 // Run: node tests/busy-queue-ack.spec.mjs
 
@@ -84,16 +93,30 @@ async function chatGeo(page) {
     const rows = [...chat.querySelectorAll('.row.user[data-msg-id]')].map((r) => ({
       msgId: r.dataset.msgId,
       text: r.querySelector('.bubble')?.textContent || '',
-      hasQueueMark: !!r.querySelector('.msg-queued-mark'),
-      queueMarkText: r.querySelector('.msg-queued-mark')?.textContent || '',
+      pendingMarks: r.querySelectorAll('.msg-pending-mark').length,
+      ackedMarks: r.querySelectorAll('.msg-pending-mark.acked').length,
     }));
     const bar = document.getElementById('queue-bar');
     return {
       rows,
       queueVisible: bar.classList.contains('visible'),
-      queueItems: [...bar.querySelectorAll('.queue-item')].map((q) => q.querySelector('.queue-item-text')?.textContent || ''),
+      headerText: bar.querySelector('.queue-bar-title')?.textContent || '',
+      queueRowCount: bar.querySelectorAll('.queue-item').length,
     };
   });
+}
+
+/** 排队呈现回退批：右键菜单驱动（队列条行按钮退役后的唯一入口）。 */
+async function clickQueueMenu(page, rowIndex, label) {
+  await page.evaluate(({ rowIndex, label }) => {
+    const row = [...document.querySelectorAll('#chat .row.user[data-msg-id]')][rowIndex];
+    if (!row) throw new Error('no row at ' + rowIndex);
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 400, clientY: 300 }));
+    const btn = [...document.querySelectorAll('.fm-context-menu button[role="menuitem"]')]
+      .find((b) => b.textContent === label);
+    if (!btn) throw new Error('menu item not found: ' + label);
+    btn.click();
+  }, { rowIndex, label });
 }
 
 const ok = (name, cond, detail) => {
@@ -115,27 +138,31 @@ try {
     s.busySessionIds.add(sid);
   }, SID);
 
-  // 腿 1 — busy 中插话 ⇒ 乐观气泡 + 「已收到 · 排队第 1 位」确认标 + 队列条。
+  // 腿 1 — busy 中插话 ⇒ 乐观气泡（零标）+ 头行计数。
   await page.fill('#input', '插话：先看看 ws 事件面');
   await page.evaluate(async () => { (await import('/js/input.js')).send(); });
   await sleep(200);
   let g = await chatGeo(page);
   ok('A1 optimistic bubble rendered', g.rows.length === 1 && g.rows[0].text.includes('插话：先看看 ws 事件面'), g.rows);
-  ok('A2 ack mark present', g.rows[0].hasQueueMark === true);
-  ok('A3 ack text reads 已收到 · 排队第 1 位', g.rows[0].queueMarkText.includes('已收到') && g.rows[0].queueMarkText.includes('第 1 位'), { mark: g.rows[0].queueMarkText });
-  ok('A4 queue bar shows the item', g.queueVisible === true && g.queueItems.length === 1, g.queueItems);
-  ok('A5 input cleared', (await page.inputValue('#input')) === '');
+  ok('A2 裸上屏：零 pending 标零 .acked（已收到标退役）',
+    g.rows[0].pendingMarks === 0 && g.rows[0].ackedMarks === 0,
+    { pending: g.rows[0].pendingMarks, acked: g.rows[0].ackedMarks });
+  ok('A3 队列条 = 头行计数（1 条排队）且零行级明细',
+    g.queueVisible === true && g.headerText.includes('等待当前回复完成') && g.headerText.includes('1 条排队') && g.queueRowCount === 0,
+    { header: g.headerText, rows: g.queueRowCount });
+  ok('A4 input cleared', (await page.inputValue('#input')) === '');
 
-  // 腿 2 — 第二条插话 ⇒ 排队第 2 位。
+  // 腿 2 — 第二条插话 ⇒ 头行计数 2。
   await page.fill('#input', '插话二：还有一条');
   await page.evaluate(async () => { (await import('/js/input.js')).send(); });
   await sleep(200);
   g = await chatGeo(page);
-  ok('B1 second ack reads 排队第 2 位', g.rows[1] && g.rows[1].queueMarkText.includes('第 2 位'), { rows: g.rows.map(r => r.queueMarkText) });
-  ok('B2 queue bar counts 2', g.queueItems.length === 2, g.queueItems);
+  ok('B1 头行计数 2 且零行级明细', g.headerText.includes('2 条排队') && g.queueRowCount === 0, { header: g.headerText });
+  ok('B2 两个独立气泡各自完整',
+    g.rows.length === 2 && g.rows.every((r) => r.pendingMarks === 0 && r.ackedMarks === 0),
+    g.rows.map((r) => r.text.slice(0, 12)));
 
-  // 腿 3 — 回合终态后 drain：队首确认标摘除、气泡恰一份、其余留队（drain 每次
-  // 派发一条 = 一个新回合；其余项等下一轮 done）。
+  // 腿 3 — drain（队首派发）：气泡恰一份零标、尾项留队、busy 重新武装。
   await page.evaluate(async (sid) => {
     const s = (await import('/js/state.js')).default;
     s.busySessionIds.delete(sid);
@@ -144,21 +171,30 @@ try {
   }, SID);
   await sleep(400);
   g = await chatGeo(page);
-  ok('C1 head mark flipped off after drain', g.rows[0] && g.rows[0].hasQueueMark === false, g.rows);
-  ok('C2 both bubbles still present exactly once', g.rows.length === 2, { n: g.rows.length });
-  ok('C3 tail stays queued (one message per turn)', g.queueVisible === true && g.queueItems.length === 1, g.queueItems);
+  ok('C1 head bubble present exactly once, zero marks',
+    g.rows.length === 2 && g.rows[0].pendingMarks === 0 && g.rows[0].ackedMarks === 0, g.rows);
+  ok('C2 tail stays queued (one message per turn)',
+    g.queueVisible === true && g.headerText.includes('1 条排队') && g.queueRowCount === 0,
+    { header: g.headerText });
   const queueState = await page.evaluate(async (sid) => {
     const s = (await import('/js/state.js')).default;
     return { q: (s.messageQueue[sid] || []).length, expecting: !!s.turnExpecting[sid], busy: s.busySessionIds.has(sid) };
   }, SID);
-  ok('C4 drain re-armed the turn (busy + expecting)', queueState.busy === true && queueState.expecting === true, queueState);
-  ok('C5 queue holds the tail item', queueState.q === 1, queueState);
+  ok('C3 drain re-armed the turn (busy + expecting)', queueState.busy === true && queueState.expecting === true, queueState);
+  ok('C4 queue holds the tail item', queueState.q === 1, queueState);
 
-  // 腿 4 — 撤回：第二条还在队里（drain 只发第一条）⇒ 移除 ⇒ 气泡随项收掉。
-  await page.click('#queue-bar .queue-item .queue-item-btn.remove');
-  await sleep(200);
+  // 腿 4 — 右键「移除」：尾泡随项收掉、队列条隐藏（行按钮退役后的菜单入口）。
+  await clickQueueMenu(page, 1, '移除');
+  await sleep(250);
   g = await chatGeo(page);
-  ok('D1 recall removes the queued bubble', g.rows.length === 1, { n: g.rows.length });
+  ok('D1 remove via bubble menu removes the queued bubble', g.rows.length === 1, { n: g.rows.length });
+  ok('D2 bar hidden when queue drained by removal', g.queueVisible === false, { header: g.headerText });
+
+  // 腿 5 — 静态钉：右键菜单通道在场（runQueuedAction + 三动作）。
+  const src = readFileSync(join(WEB, 'js', 'input.js'), 'utf8');
+  ok('D3 runQueuedAction 执行面导出在场', /export function runQueuedAction\(sessionId, clientMessageId, action\)/.test(src));
+  const mq = readFileSync(join(WEB, 'js', 'msgQuote.js'), 'utf8');
+  ok('D4 菜单三动作项在场', mq.includes("run('immediate')") && mq.includes("run('recall')") && mq.includes("run('remove')"));
 
   console.log('\nbusy-queue-ack.spec done');
 } finally {

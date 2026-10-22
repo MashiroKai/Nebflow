@@ -873,26 +873,10 @@
 }
 .duration-badge .msg-pending-mark svg { width: 11px; height: 11px; }
 
-/* 排队信息量批（2026-10-22 作者追加令）：busy 排队腿的「已收到」确认标
-   （.acked = check 图标 + 可读文本，success 绿染）——作者令「排队消息要有明确的
-   已收到视觉（而不是消失在数字里）」。与离线腿时钟标同槽位（drain 翻面时整标
-   摘除，flipOfflineMark 按 .msg-pending-mark 寻址，两变体同契约）。
-   [合并裁定 2026-10-22] 对话层活性批的重复实现（.msg-queued-mark + queueNote
-   带位次小标）退役：位次只在排队条行标，气泡不上位次（位次随 drain 漂移，
-   气泡重渲违「零新增呈现」红线——#714 排队信息量批裁定，后出优先）。 */
-.duration-badge .msg-pending-mark.acked {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  opacity: 1;
-  color: var(--color-success);
-  font-size: 10px;
-  line-height: 1;
-  font-weight: 600;
-  white-space: nowrap;
-  user-select: none;
-}
-.duration-badge .msg-pending-mark.acked svg { width: 11px; height: 11px; }
+/* 排队呈现回退批（2026-10-22 作者令「已收到的标记也是多余的」）：busy 排队腿的
+   .acked 绿✓确认标随队列行 ack chip 一并退役——消息上屏本身即收到，不用标。
+   离线腿「待送达」时钟标（上）保留：语义不同（真离线未出线）。flipOfflineMark
+   仍按 .msg-pending-mark 寻址，drain 翻面机制不动。 */
 
 /* qattachvault 批：载荷丢失翻面标（红 !）—— input.js markQueueItemPayloadLost 把
    在场气泡的待送达时钟标原地改型（同一槽位、不新增元素）；title = 可判读原因。 */

@@ -107,7 +107,8 @@ const READ = (m) => {
     lockCount: c ? c.querySelectorAll('.option-answer').length : -1,
     cardDisabled: c ? [...c.querySelectorAll('.option-btn')].every((b) => b.disabled) : null,
     userHasMark: users.some((t) => t.includes(m)),
-    queueHasMark: [...document.querySelectorAll('.queue-item')].some((r) => (r.innerText || '').includes(m)),
+    // 排队呈现回退批：队列条 = 头行-only——「消息在队」面 = 头行计数 + 乐观气泡。
+    queueHasMark: !!document.querySelector('#queue-bar.visible .queue-bar-title'),
     aiText: ai.join('\n').slice(-600),
   };
 };
@@ -119,12 +120,17 @@ async function sendImmediate(page, text) {
     await page.fill('#input', text);
     await page.press('#input', 'Enter');
     await page.waitForTimeout(1500);
-    // 会话 busy ⇒ 只进本地队列；点「立即发送」把文本真正推出去（否则判据无判别力）
+    // 会话 busy ⇒ 只进本地队列；右键乐观气泡菜单「立即发送」把文本真正推出去
+    // （排队呈现回退批：队列条行按钮退役，动作入口收敛进气泡右键菜单）。
     const st = await page.evaluate((mk) => {
-      const row = [...document.querySelectorAll('.queue-item')].find((r) => (r.innerText || '').includes(mk));
-      const btn = row?.querySelector('.queue-item-btn.immediate');
-      if (btn) { btn.click(); return { clicked: true, queued: true }; }
-      const bubbled = [...document.querySelectorAll('.row.user')].some((r) => (r.innerText || '').includes(mk));
+      const row = [...document.querySelectorAll('.row.user')].find((r) => (r.innerText || '').includes(mk));
+      if (row) {
+        row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 400, clientY: 300 }));
+        const btn = [...document.querySelectorAll('.fm-context-menu button[role="menuitem"]')]
+          .find((b) => b.textContent === '立即发送');
+        if (btn) { btn.click(); return { clicked: true, queued: true }; }
+      }
+      const bubbled = !!row;
       return { clicked: false, queued: false, bubbled, inputValue: document.querySelector('#input')?.value || '' };
     }, text);
     clicked = st.clicked;

@@ -254,15 +254,15 @@ export function send(resendId) {
     // 已同文；服务端/传输/渲染三层均无合并机制）。修后每次发送 = 立即自己的独立
     // 气泡（data-msg-id = 入队钉死的 clientMessageId）；drain 腿的 item.rendered
     // 分支只摘小标不重渲 ⇒ 全链恰一气泡。
-    // 排队信息量批（2026-10-22 作者追加令）：小标 = 「已收到」确认标（pending:
-    // 'queued'，check 图标 + 可读文本 + 绿染）——不再是离线腿的「待发送」时钟
-    // （本腿帧未出线但应用已收下并排队，作者令：排队消息要有明确的已收到视觉，
-    // 不许消失在排队数字里）。位次信息在排队条行标（第 N 位），气泡不带位次
-    // （位次随 drain 漂移，气泡重渲违「零新增呈现」红线）。
-    // [合并裁定 2026-10-22] 活性流式批同位重复实现（queueNote 带位次小标）退役，
-    // 确认标统一 pending='queued' 单通道——本段即两批合流的保留版。
+    // 排队呈现回退批（2026-10-22 作者令「发送了的消息还在队列里」「已收到的标记
+    // 也是多余的」）：乐观气泡**裸上屏**——footer 不带「已收到」确认标（排队信息量
+    // 批的 queued 确认标小标随 .acked 一并退役：消息上屏本身即收到，不用标；
+    // 离线腿「待送达」时钟标语义不同——真离线未出线，保留）。队列条只留头行计数
+    // （chatQueue.js），本条的内容面 = 就是这颗气泡，零双呈现。位次/已收到 chip/
+    // 行按钮全退役；队列动作（立即发送/撤回/移除）收敛进气泡右键菜单
+    // （msgQuote.js 挂点 → runQueuedAction 执行面）。
     const item = queueMessage(v, text, v.pendingAttachments, null, null, { rendered: true });
-    renderUserBubble(text, v.pendingAttachments, undefined, { msgId: item.clientMessageId, pending: 'queued' });
+    renderUserBubble(text, v.pendingAttachments, undefined, { msgId: item.clientMessageId });
     input.value = '';
     input.style.height = 'auto';
     v.pendingAttachments = [];
@@ -682,13 +682,11 @@ function markQueueItemPayloadLost(sid, item) {
   }
 }
 
-/** Helper: re-render the queue bar for a session with standard handlers. */
+/** Helper: re-render the queue bar for a session.
+ *  排队呈现回退批：队列条 = 纯头行状态条（行级明细与按钮全退役，见 chatQueue.js
+ *  头注）——不再传任何行按钮 handler；队列动作走气泡右键菜单 runQueuedAction。 */
 function refreshQueue(sessionId) {
-  renderQueueBar(sessionId, {
-    onImmediate: (item) => sendImmediate(sessionId, item),
-    onRecall: (item) => recallQueuedItem(sessionId, item),
-    onRemove: (item) => removeQueuedItem(sessionId, item)
-  });
+  renderQueueBar(sessionId);
 }
 
 // Re-render queue bar when user switches to a different session
@@ -770,11 +768,10 @@ function enqueueOfflineMessage(v, text) {
   setTimeout(() => { v.isSending = false; }, 300);
 }
 
-/** 摘掉待送达/排队确认小标（翻已送达态）。同页命内乐观气泡的寻址面 = 行
- *  data-msg-id。两变体同挂 `.msg-pending-mark`（时钟标 / .acked 确认标，
- *  排队信息量批）——两腿的乐观气泡共用本单点翻面。
- *  [合并裁定 2026-10-22] 活性流式批的 `.msg-queued-mark` 独立类退役，确认标
- *  统一 .msg-pending-mark.acked 单通道。
+/** 摘掉待送达小标（翻已送达态）。同页命内乐观气泡的寻址面 = 行
+ *  data-msg-id。排队呈现回退批（2026-10-22）后 .msg-pending-mark 只剩离线腿
+ *  时钟标单形态（busy 排队腿裸上屏不带标，「已收到」确认标已退役）——两腿的
+ *  乐观气泡仍共用本单点翻面（drain/补发后调用，标缺席时 no-op 无害）。
  *  返回行是否在场（不在场 = 已被 historyPage 整替抹掉，调用方走补渲台）。 */
 function flipOfflineMark(sid, msgId) {
   if (!msgId) return false;
@@ -931,6 +928,37 @@ onMessage('historyPage', (msg) => {
     try { materializeOfflineBubbles(sid || '', msg && msg.messages); } catch (e) { /* 呈现兜底不炸处理器 */ }
   }, 0);
 });
+
+// ---------- 排队呈现回退批：队列动作的气泡右键菜单执行面 ----------
+// 队列条行按钮退役后，立即发送/撤回/移除三个动作收敛进气泡右键菜单
+// （msgQuote.js attachQuoteMenu 挂点）。msgQuote 侧动态 import 本模块调用
+// （input.js 静态依赖 msgQuote ⇒ 禁静态环；同 msgQuote.renderQuoteStrip 动态
+// import chat.js 的既有先例）。寻址 = 入队钉死的 clientMessageId（乐观气泡行
+// data-msg-id 同键——数据层寻址不动，只换 UI 入口）。
+
+/** 按 clientMessageId 查队列项；找不到（已派发/已离队/非队列帧）⇒ null——
+ *  菜单打开后状态漂移的收口，动作不得落到空气上。 */
+export function queuedItemByClientId(sessionId, clientMessageId) {
+  if (!clientMessageId) return null;
+  const q = state.messageQueue[sessionId];
+  if (!Array.isArray(q)) return null;
+  return q.find(it => it && it.clientMessageId === clientMessageId) || null;
+}
+
+/** 队列动作统一执行面。'immediate' 仅对未失败项（sendImmediate 自身还要求
+ *  WS 在线；离线项走重连补发轨不动它）；'recall'/'remove' 对一切队列项可用。 */
+export function runQueuedAction(sessionId, clientMessageId, action) {
+  const item = queuedItemByClientId(sessionId, clientMessageId);
+  if (!item) return false;
+  if (action === 'immediate') {
+    if (item.failed) return false;
+    sendImmediate(sessionId, item);
+    return true;
+  }
+  if (action === 'recall') { recallQueuedItem(sessionId, item); return true; }
+  if (action === 'remove') { removeQueuedItem(sessionId, item); return true; }
+  return false;
+}
 
 function sendImmediate(sessionId, item) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;

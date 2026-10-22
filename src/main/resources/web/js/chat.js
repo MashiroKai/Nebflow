@@ -432,24 +432,12 @@ export function clearBusy(sessionId) {
 /** f1-send-queue：待送达小标（时钟）—— 离线入队乐观气泡的 footer 标注。
  *  视觉对齐 meta 行既有语言（与 .msg-copy/.msg-recall 同档 11px 灰小标），
  *  只加小标不改布局；补发送达后由 input.js flipOfflineMark 摘除。
- *  排队信息量批（2026-10-22 作者追加令）：kind = 'queued'（busy 排队腿）⇒ 「已收到」
- *  确认标（check 图标 + 可读文本，.acked 绿染）——作者令「排队消息要有明确的已收到
- *  视觉（而不是消失在数字里）」；帧尚未出线（drain 才发），「已收到」语义 =
- *  应用已收下并排队（与离线腿「待送达」= 帧未出线且断线，语义互斥不混用）。 */
-function createPendingSendMark(kind) {
+ *  排队呈现回退批（2026-10-22）：busy 排队腿的「已收到」确认标（.acked 变体）
+ *  退役——消息上屏本身即收到，不用标（作者令「已收到的标记也是多余的」）；
+ *  本函数回归单形态（离线腿时钟标，pending:true 唯一调用形态）。 */
+function createPendingSendMark() {
   const mark = document.createElement('span');
-  mark.className = 'msg-pending-mark' + (kind === 'queued' ? ' acked' : '');
-  if (kind === 'queued') {
-    const label = t('chat.queuedAck') || '已收到';
-    mark.title = t('chat.queuedAckTip');
-    mark.setAttribute('aria-label', label);
-    // 手写 check-circle SVG（不走 statusIcon/lucide：小标 11px 档不赌 vendored
-    // lucide 图标名漂移，与 chatQueue.js 折叠钮同法内联）。
-    mark.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>' +
-      '<span class="msg-pending-mark-text"></span>';
-    mark.querySelector('.msg-pending-mark-text').textContent = label;
-    return mark;
-  }
+  mark.className = 'msg-pending-mark';
   mark.title = t('chat.pendingSend');
   mark.setAttribute('aria-label', t('chat.pendingSend'));
   mark.innerHTML = statusIcon('clock', 11, '');
@@ -461,13 +449,14 @@ function createPendingSendMark(kind) {
  * @param {string} text
  * @param {Array} attachments
  * @param {number} [timestamp]
- * @param {{msgId?: string, pending?: boolean | 'queued'}} [opts]  quote-message 一期（spec §3.6/§3.4）：
+ * @param {{msgId?: string, pending?: boolean}} [opts]  quote-message 一期（spec §3.6/§3.4）：
  *   msgId = 本行的稳定 id（用户发送腿传 clientMessageId，与引擎帧同键；其余调用点缺省
  *   生成 c-<rand>）。行挂 data-msg-id = 引用跳转的唯一寻址面。
  *   f1-send-queue：pending = true ⇒ footer 前置「待送达」时钟小标（离线入队的乐观
- *   气泡）；pending = 'queued' ⇒ 「已收到」确认标（busy 排队腿，排队信息量批）。
- *   [合并裁定 2026-10-22] 活性流式批的 queueNote 重复实现退役（见 chat.css
- *   .acked 合并注）：确认标统一走 pending='queued' 单通道。
+ *   气泡）。排队呈现回退批（2026-10-22）：busy 排队腿的乐观气泡**裸上屏**不带
+ *   小标（「已收到」确认标退役——上屏即收到，不用标）；行 data-msg-id 同时是
+ *   队列动作（立即发送/撤回/移除）右键菜单的寻址键（input.js queuedItemByClientId
+ *   同键查询）。
  */
 export function renderUserBubble(text, attachments, timestamp, opts) {
   const chat = activeView.dom.chat;
@@ -549,8 +538,9 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
   const ts = timestamp || Date.now();
   const badge = createMsgFooterBadge(ts, text);
   // f1-send-queue：待送达小标前置（badge 为 inline-flex gap:6px，前置即有自然间距，
-  // 不动 time/copy 与分隔符的既有序）。
-  if (opts && opts.pending) badge.prepend(createPendingSendMark(opts.pending === 'queued' ? 'queued' : undefined));
+  // 不动 time/copy 与分隔符的既有序）。排队呈现回退批：busy 排队腿裸上屏无小标
+  // （离线腿 pending:true 是唯一带标形态）。
+  if (opts && opts.pending === true) badge.prepend(createPendingSendMark());
   row.appendChild(badge);
   // quote-message 一期（spec §2.1）：用户文本行右键 = 复制 + 引用（好友窗 msgmenu
   // 同壳 showPopupMenu；引用走 msgQuote.startQuote 替换语义）。
