@@ -4,6 +4,9 @@
 //  这个面板拆为了左右两个面板」。
 //  回访微调（2026-10-22 作者令「把diff胶囊靠右对齐」）：摘要 chip 靠右对齐，
 //  右缘贴交付气泡内容右缘（T1 几何断言）。
+//  同线微调（2026-10-22 作者令「计数与 COMPLETED 同行」+ 品牌归一 NEBFLOW→STAND）：
+//  header 与 chip 同 flex 行（.nf-diff-headline），常规宽一行、窄面板截断；
+//  夹具项目段 nebflow→stand（夹具即演示数据，与真实项目名无关）。
 //  谱系：bug #58 修 2026-10-09（file-diff → 委托结果行）→ 2026-10-10 裁定
 //  （展开改 Canvas master-detail）→ 本批（交付气泡顶部摘要 chip；文件列表迁
 //  左栏 #panel-filechanges；Canvas 只剩选中文件阅读面；旧一体大面板退役））。
@@ -143,7 +146,7 @@ async function injectCompletion(page, payload, header) {
         fileChanges: payload,
       }),
     });
-  }, { payload, header: header || 'DELEGATE · nebflow · diff-batch · COMPLETED' });
+  }, { payload, header: header || 'DELEGATE · stand · diff-batch · COMPLETED' });
 }
 
 /** 批次 chip 的统一取用器（第 n 个交付摘要条）。 */
@@ -166,9 +169,34 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
     await expect(c).toHaveAttribute('aria-pressed', 'false');
     // chip 位于交付气泡顶部（label 之后、正文 content 之前的同 bubble 内）。
     await expect(bubble.locator('.nf-diff-chip')).toHaveCount(1);
-    await expect(bubble.locator('.injected-source-label')).toHaveText('DELEGATE · nebflow · diff-batch · COMPLETED');
-    // chip 靠右对齐（2026-10-22 回访令「把diff胶囊靠右对齐」）：气泡 = block
-    // 容器，chip 块级 flex + fit-content + margin-left:auto ⇒ 右缘贴气泡内容
+    await expect(bubble.locator('.injected-source-label')).toHaveText('DELEGATE · stand · diff-batch · COMPLETED');
+    // 同线（2026-10-22 回访令「计数与 COMPLETED 同行」）：header + chip 装进
+    // 同一 .nf-diff-headline flex 行——chip 接在 COMPLETED 段之后、右缘贴行右缘
+    // （右对齐批语义由 label 弹性占满自由空间天然成立，rightGap < 1px）；
+    // 常规宽必一行（label flex:1 + nowrap + ellipsis，行高 = chip 高）。
+    await expect(bubble.locator('.nf-diff-headline')).toHaveCount(1);
+    const geo = await c.evaluate((el) => {
+      const row = el.closest('.nf-diff-headline');
+      const label = row.querySelector('.injected-source-label');
+      const lr = label.getBoundingClientRect();
+      const cr = el.getBoundingClientRect();
+      const rr = row.getBoundingClientRect();
+      const bubbleEl = el.closest('.bubble');
+      const bcs = getComputedStyle(bubbleEl);
+      const ls = getComputedStyle(label);
+      return {
+        sameLineCenterDelta: Math.abs((lr.top + lr.height / 2) - (cr.top + cr.height / 2)),
+        rowOneLine: Math.abs(rr.height - cr.height) < 1,
+        chipAfterLabel: cr.left > lr.left,
+        rightGap: bubbleEl.getBoundingClientRect().right - parseFloat(bcs.paddingRight) - cr.right,
+        labelTruncatable: ls.whiteSpace === 'nowrap' && ls.textOverflow === 'ellipsis',
+      };
+    });
+    expect(geo.sameLineCenterDelta).toBeLessThan(3);
+    expect(geo.rowOneLine).toBe(true);
+    expect(geo.chipAfterLabel).toBe(true);
+    expect(geo.labelTruncatable).toBe(true);
+    // chip 靠右对齐（2026-10-22 回访令「把diff胶囊靠右对齐」）：右缘贴气泡内容
     // 右缘（rightGap < 1px），左缘留白 > 0（非撑满、非居中）。
     const align = await c.evaluate((el) => {
       const bubbleEl = el.closest('.bubble');
@@ -255,7 +283,7 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
   test('T8 多委托切换：面板换批、Canvas 换焦点、chip 激活态随批走、面板数恒 1', async ({ page }) => {
     await bootApp(page);
     await injectCompletion(page, PAYLOAD_A);
-    await injectCompletion(page, PAYLOAD_B, 'DELEGATE · nebflow · batch-b · COMPLETED');
+    await injectCompletion(page, PAYLOAD_B, 'DELEGATE · stand · batch-b · COMPLETED');
     await expect(page.locator('.bubble.injected .nf-diff-chip')).toHaveCount(2);
 
     // 打开批次 A → 面板 3 行、chip A 激活。
