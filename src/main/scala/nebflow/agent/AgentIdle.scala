@@ -436,10 +436,20 @@ private[agent] object AgentIdle:
         else if isSubagentResult && held.nonEmpty then
           // Batch complete: inject ALL held results (plus this one) together.
           val batchMessage = buildEventReminder(held :+ event)
+          // F2 补漏批（2026-10-22）：汇聚腿清空队列后必须重写磁盘快照——入队面
+          // 全量快照过 held 回执（AgentProcessing:1239），此处不持久 ⇒ 已消费回执
+          // 残留 injection-queues.json ⇒ respawn 重放为幽灵回执（10-22 10:36/17:13
+          // 两次重启恢复 events=5/11 的构成面之一）。
+          val cleanedExec =
+            state.execution.copy(
+              outstandingSubagentResults = 0,
+              pendingEvents = Nil
+            )
           for
             _ <- sessionBusyIO
             _ <- receiveVisibility(waiting = false)
             _ <- touchBarrierSnapshot(resources, state.sessionId, 0, 0)
+            _ <- persistQueues(state.sessionId, cleanedExec)
             // 台账对账（平台修复批 fix 1）：held 全量投递 ⇒ 台账清空 + 徽标帧归零。
             _ <- syncHeldReceipts(resources, state.sessionId, Nil).flatMap((h, u) =>
               emitHeldReceiptsBadge(state, h, u)
@@ -450,12 +460,7 @@ private[agent] object AgentIdle:
               depth,
               parentRef,
               state
-                .copy(execution =
-                  state.execution.copy(
-                    outstandingSubagentResults = 0,
-                    pendingEvents = Nil
-                  )
-                )
+                .copy(execution = cleanedExec)
                 .withMessages(state.messages :+ batchMessage)
                 .withNextLoopTurn, // Block 3：批次汇聚唤醒 = 新 turn
               None
@@ -603,7 +608,14 @@ private[agent] object AgentIdle:
               pendingImmediateInputs = q.imms ++ state.execution.pendingImmediateInputs,
               pendingEvents = q.events ++ state.execution.pendingEvents
             )
-            IO.pure(idle(agentDef, resources, depth, parentRef, state.copy(execution = exec)))
+            // 台账对账 + 徽标帧（fix 1 补漏批，2026-10-22）：恢复的回执必须落账——
+            // 此前恢复面不同步台账 ⇒ 无 producedAt ⇒ watchdog 对重启恢复回执致盲
+            // （nudge 文本整天数「1 条」而实际队列 5/11 条），只能等下一次输入触
+            // 发 fix-1 腿才投递（实证 2026-10-22 10:36/17:13 两次重启恢复）。
+            syncHeldReceipts(resources, state.sessionId, exec.pendingEvents).flatMap((h, u) =>
+              emitHeldReceiptsBadge(state, h, u)
+            ) *>
+              IO.pure(idle(agentDef, resources, depth, parentRef, state.copy(execution = exec)))
           case _ => IO.pure(idle(agentDef, resources, depth, parentRef, state))
         }
 

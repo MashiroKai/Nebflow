@@ -395,21 +395,63 @@ object AgentActor extends AgentCore with AgentSession:
       ) *>
       persistQueues(plan.state.sessionId, plan.state.execution)
 
-  /** 催注强补投递（fix 2 动作面）：全部 held 回执合批注入一 turn。 */
+  /**
+   * force-drain 补投注记（fix 2 可见化面，2026-10-22 身份补全批）：除条数外逐条带
+   * 回执身份（source·eventType·payload 头）+ 台账等待时长——作者实测原气泡只有
+   * 条数 + 悬空冒号，回执本体只进 LLM reminder（LLM 历史面），作者面零可核对信息。
+   * 台账读取失败（恢复语义，2026-10-22 诊断批）：降级为「无时长」版本，身份行仍在
+   * （持久层故障绝不阻断主路径——同 syncHeldReceipts 簿记面纪律）。
+   */
   private[agent] def emitForceDrainVisibility(
     resources: SharedResources,
     state: AgentState,
     held: List[AgentCommand.ExternalEvent]
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
-    emitInjectedUserEvent(
-      resources,
-      state.wsSend,
-      state.sessionId,
-      s"[投递补注] ${held.size} 条回执此前被子代理批屏障扣留未注入（屏障槽位已归还），现随本回合补投:",
-      "system",
-      Some("force-drain"),
-      sessionProject = state.projectName
-    )
+    val now = System.currentTimeMillis()
+    val plainBubble: IO[Unit] =
+      emitInjectedUserEvent(
+        resources,
+        state.wsSend,
+        state.sessionId,
+        s"[投递补注] ${held.size} 条回执此前被子代理批屏障扣留未注入（屏障槽位已归还），现随本回合补投:" +
+          held.zipWithIndex
+            .map((e, i) => s"\n${i + 1}. [${e.source}·${e.eventType}] ${oneLine(e.payload).take(80)}")
+            .mkString,
+        "system",
+        Some("force-drain"),
+        sessionProject = state.projectName
+      )
+    state.sessionId.fold(plainBubble) { sid =>
+      nebflow.core.processor.HeldReceiptStore
+        .load(sid)
+        .map(_.map(e => e.id -> e).toMap)
+        .flatMap { ledger =>
+          emitInjectedUserEvent(
+            resources,
+            state.wsSend,
+            state.sessionId,
+            s"[投递补注] ${held.size} 条回执此前被子代理批屏障扣留未注入（屏障槽位已归还），现随本回合补投:" +
+              held.zipWithIndex
+                .map { (e, i) =>
+                  val ageMin = ledger.get(nebflow.core.processor.HeldDeliveryPolicy.receiptId(e)).map(r =>
+                    (now - r.producedAt) / 60000L
+                  )
+                  val age = ageMin.fold("")(m => s" · 已等待${m}分钟")
+                  s"\n${i + 1}. [${e.source}·${e.eventType}$age] ${oneLine(e.payload).take(80)}"
+                }
+                .mkString,
+            "system",
+            Some("force-drain"),
+            sessionProject = state.projectName
+          )
+        }
+        .handleErrorWith(_ => plainBubble)
+    }
+  end emitForceDrainVisibility
+
+  /** 回执 payload 单行长条化（气泡内展示用；缩进/换行压成单空格）。 */
+  private def oneLine(s: String): String =
+    s.replaceAll("\\s+", " ").trim
 
   // ============================================================
   // F1 (2026-08-30, compact-injection-shield G1): unified post-compaction
