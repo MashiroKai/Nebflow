@@ -34,6 +34,10 @@ $ProductName = "stand"
 $LowerName = "stand"
 $CosBucket = "nebflow-releases"
 $HomeDir = ".stand"
+# Install base (再生治本批 2026-10-22): STAND_HOME is the first-priority base;
+# default is USERPROFILE + brand home. NEBFLOW_HOME is never consulted here -
+# the installer never writes the legacy root (legacy read-only is runtime-only).
+$StandBase = if ($env:STAND_HOME) { $env:STAND_HOME } else { Join-Path $env:USERPROFILE $HomeDir }
 $ConfigFile = "nebflow.json"
 $WrapperName = "stand"
 $CosBaseCn = "https://$CosBucket.oss-cn-hangzhou.aliyuncs.com"
@@ -764,7 +768,7 @@ if (Get-Command "rg" -ErrorAction SilentlyContinue) {
 
 # --- [5/7] Whisper voice model (best-effort) ---
 Write-Stage 5 7 "Voice model (Whisper, ~75MB one-time)..."
-$modelDir = Join-Path $env:USERPROFILE "$HomeDir\voice-models\onnx-community\whisper-base"
+$modelDir = Join-Path $StandBase "voice-models\onnx-community\whisper-base"
 $onnxEncPath = Join-Path $modelDir "onnx\encoder_model_quantized.onnx"
 
 if (Test-Path $onnxEncPath) {
@@ -1045,7 +1049,7 @@ if ($userPath -notlike "*$InstallDir*") {
 # --- [7/7] Config + install manifest ---
 Write-Stage 7 7 "Setting up config..."
 
-$configDir = Join-Path $env:USERPROFILE "$HomeDir"
+$configDir = $StandBase
 $configPath = Join-Path $configDir "$ConfigFile"
 if (-not (Test-Path $configPath)) {
     New-Item -ItemType Directory -Force -Path $configDir | Out-Null
@@ -1085,7 +1089,7 @@ Write-Host "  Commands:" -ForegroundColor White
 Write-Host "    $WrapperName --help" -ForegroundColor Cyan
 Write-Host "    $WrapperName start" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  Config: $env:USERPROFILE\$HomeDir\$ConfigFile" -ForegroundColor DarkGray
+Write-Host "  Config: $StandBase\$ConfigFile" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "  NOTE: Restart your terminal for PATH to take effect." -ForegroundColor Yellow
 Write-Host ""
