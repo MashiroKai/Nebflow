@@ -827,7 +827,10 @@ async function fetchHistory(sessionId, signal, cursor = {}) {
   //   · 2xx 但体损坏（messages 缺失/非数组 = 截断体）⇒ 同样抛。
   if (resp.status === 404) return [];
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  const data = await resp.json().catch(() => null);
+  const data = await resp.json().catch((e) => {
+    if (e && e.name === 'AbortError') throw e;
+    return null;
+  });
   if (!data || !Array.isArray(data.messages)) throw new Error('malformed history payload');
   return data.messages;
 }
