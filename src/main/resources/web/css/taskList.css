@@ -282,6 +282,66 @@
 }
 .task-node-group .task-node { margin-left: 10px; }
 
+/* ── 重启对账（2026-10-22）：打断徽标 + 折叠前会话灰腿 ─────────────────────
+   徽标 = 行内首槽小胶囊（与 word 槽同 muted 语言，橙警示描边——打断 ≠ 失败红、
+   ≠ 完成绿，中性警示色）；灰腿 = 折进接续者区块的一行 muted（替代旧的双行并存），
+   标题省略号 + 「已由 #N 接续」关系词，点击 = 旧会话 L1（审计可达）。 */
+.task-delegate-badge {
+  flex-shrink: 0;
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: 6px;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 14px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.task-delegate-badge-interrupted {
+  color: var(--color-warning, #ff9800);
+  background: color-mix(in srgb, var(--color-warning, #ff9800) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning, #ff9800) 35%, transparent);
+}
+
+.task-chain-folds { display: block; }
+
+.task-chain-folded {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  margin: 1px 0 1px 18px; /* 头行缩进（与成员行 nest 首级同节奏） */
+  padding-right: 6px;
+  cursor: pointer;
+  opacity: 0.72;
+}
+.task-chain-folded:hover { opacity: 1; }
+.task-chain-folded-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--color-text-muted, #888);
+}
+.task-chain-folded-word {
+  flex-shrink: 0;
+  margin-left: auto;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--color-text-muted, #888);
+}
+.task-chain-folded.task-node-entering {
+  animation: task-node-enter 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .task-chain-folded.task-node-entering { animation: none; }
+}
+
 /* 新行入场（任务行同款位移淡入；动画名独立——删任务行 keyframes 不相干）
    delegate 行沿用本动画槽（比较键含 data-delegate-key，重渲不重播）。 */
 .task-node.task-node-entering {

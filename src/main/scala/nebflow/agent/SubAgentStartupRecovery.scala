@@ -6,6 +6,7 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.actor.AgentCommand
 import nebflow.core.SessionStore
+import nebflow.core.delegate.DelegateRegistry
 import nebflow.shared.*
 
 /**
@@ -47,23 +48,92 @@ import nebflow.shared.*
  *  - A parent session that no longer exists (deleted while the child ran) is
  *    skipped for notification — injecting into a deleted session's queue file
  *    would only create unread garbage. The task is still terminalized.
+ *
+ * == 重启打断标记腿（任务列表行重启对账批 2026-10-22）==
+ *
+ * 孤儿收殓只终态化任务记录（running → failed），delegate 行（DelegateRegistry
+ * 记录）本身不带任何「死于重启」痕迹——行投影回落 running/failed，任务列表出现
+ * 「死会话尸体系」（冻结简报 + 错误活态/勾态）。本批在孤儿收殓之后追加**回溯标记
+ * 腿**：凡任务记录带 [[RestartLossFingerprint]]（本 sweep 终态化时的 lastError
+ * 前缀——含历史 boot 落下的）且记录行未交付报告（reportStatus 缺席）、在册未归档、
+ * 尚未标记 ⇒ [[DelegateRegistry.markRestartInterrupted]] 落旗（幂等零重写）。旗是
+ * 显示面对账的字段基座：「重启打断」徽标 /「已中断」灰态 / 接续折叠（continuedBy
+ * 推导在 ChainsReadFace 读面）都从它读起。在飞资格同步收宽：`restarting`（supervisor
+ * 退避态）与 `running` 同判——进程死亡时退避中的任务同样是孤儿（旧 sweep 只认
+ * running，退避态记录死后永远躺在 restart-tasks 盘面上，行投影永远回落 running）。
  */
 object SubAgentStartupRecovery:
   private val logger = NebflowLogger.forName("nebflow.agent.startup-recovery")
 
-  /** Run the orphan sweep. Returns the terminalized task ids (for boot log). */
+  /** 重启打断指纹（[[recoverOne]] 终态化写下的 lastError 前缀；回溯标记腿的判据）。 */
+  val RestartLossFingerprint = "process restart during in-flight task"
+
+  /** 在飞孤儿资格：running ＋ restarting（supervisor 退避态——进程死亡时同样在飞）。 */
+  private val InFlightStatuses = Set("running", "restarting")
+
+  /** Run the orphan sweep (＋重启打断标记回溯腿). Returns the terminalized task ids (for boot log). */
   def recoverOrphans(store: SubAgentTaskStore, sessionStore: SessionStore): IO[List[String]] =
-    store.findRunningTasks.flatMap {
-      case Nil => IO.pure(Nil)
+    inFlightTasks(store).flatMap {
+      case Nil => markInterruptedRecords(store).as(Nil)
       case orphans =>
         logger.warn(
           s"[startup-recovery] ${orphans.size} in-flight delegate task(s) survived a process restart — terminalizing + notifying parent session(s)"
-        ) *> orphans.traverse(t =>
-          recoverOne(store, sessionStore, t).handleErrorWith { e =>
-            logger.warn(s"[startup-recovery] recovery failed for task ${t.taskId}: ${e.getMessage}").as(t.taskId)
-          }
-        )
+        ) *> orphans
+          .traverse(t =>
+            recoverOne(store, sessionStore, t).handleErrorWith { e =>
+              logger.warn(s"[startup-recovery] recovery failed for task ${t.taskId}: ${e.getMessage}").as(t.taskId)
+            }
+          )
+          .flatMap(ids => markInterruptedRecords(store).as(ids))
     }
+
+  /** 在飞任务全量（running/restarting；单遍 findAllTasks 后过滤——boot 一次性）。 */
+  private def inFlightTasks(store: SubAgentTaskStore): IO[List[SubAgentTask]] =
+    store.findAllTasks()
+      .map(_.filter(t => InFlightStatuses.contains(t.status)))
+      .handleErrorWith(e => logger.warn(s"[startup-recovery] in-flight scan failed: ${e.getMessage}").as(Nil))
+
+  /**
+   * 重启打断标记回溯腿（幂等，boot 恰一次）：任务记录带重启指纹（本 boot 终态化的
+   * 或历史 boot 落下的）⇒ 对应 registry 记录落 `restartInterruptedAt` 旗。守卫三闸：
+   * 未旗（幂等）/ 在册未归档（归档尸体零触碰）/ 未交付报告（真完成不被旗截断）。
+   * 单条失败只 WARN，绝不阻断 boot。
+   */
+  private def markInterruptedRecords(store: SubAgentTaskStore): IO[Int] =
+    for
+      tasks <- store.findAllTasks()
+        .map(_.filter(t => t.lastError.exists(_.startsWith(RestartLossFingerprint))))
+        .handleErrorWith(e => logger.warn(s"[startup-recovery] fingerprint scan failed: ${e.getMessage}").as(Nil))
+      lostIds = tasks.map(_.taskId).collect { case id if id.nonEmpty => id }.toSet
+      marked <-
+        if lostIds.isEmpty then IO.pure(0)
+        else
+          IO.blocking(DelegateRegistry.list())
+            .handleErrorWith(e => logger.warn(s"[startup-recovery] registry read failed: ${e.getMessage}").as(Nil))
+            .flatMap { records =>
+              val now = System.currentTimeMillis()
+              records
+                .filter(r =>
+                  r.restartInterruptedAt.isEmpty && r.archivedAt.isEmpty && r.reportStatus.isEmpty && lostIds.contains(
+                    r.id
+                  )
+                )
+                .traverse { r =>
+                  IO.blocking(DelegateRegistry.markRestartInterrupted(r.id, now)).attempt.flatMap {
+                    case Right(_) => IO.pure(true)
+                    case Left(err) =>
+                      logger
+                        .warn(s"[startup-recovery] restart-interrupted mark failed for ${r.id}: $err")
+                        .as(false)
+                  }
+                }
+                .map(_.count(identity))
+            }
+      _ <-
+        if marked > 0 then
+          logger.info(s"[startup-recovery] restart-interruption marked on $marked delegate record(s)")
+        else IO.unit
+    yield marked
 
   private def recoverOne(store: SubAgentTaskStore, sessionStore: SessionStore, task: SubAgentTask): IO[String] =
     for

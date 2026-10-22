@@ -253,4 +253,84 @@ class OrphanDelegateRecoverySpec extends FunSuite:
     }
   }
 
+  /** registry 记录夹具（重启打断标记腿的行面）。 */
+  private def mkRecord(id: String, createdAt: Long): nebflow.core.delegate.DelegateRegistry.Record =
+    nebflow.core.delegate.DelegateRegistry.Record(
+      id = id,
+      executor = "nebflow",
+      cwd = "/tmp/spec-cwd",
+      project = None,
+      taskId = None,
+      parentSessionId = "spec-root",
+      title = "spec interrupted row",
+      createdAt = createdAt
+    )
+
+  test(
+    "R6 (重启对账): a 'restarting' (supervisor backoff) orphan is terminalized AND its registry row gets the restart-interrupted flag"
+  ) {
+    withFixture("r6") { (store, sessionStore, tmp) =>
+      val io = for
+        parent <- sessionStore.createSession("Nebula", agentName = Some("Nebula"))
+        child = "delegate-explorer-g7"
+        _ <- store.recordTask(mkTask(child, parent.id, status = "restarting")) // 旧 sweep 只认 running——漏收形态
+        _ <- IO(nebflow.core.delegate.DelegateRegistry.put(mkRecord(child, createdAt = 1L)))
+        _ <- SubAgentStartupRecovery.recoverOrphans(store, sessionStore)
+        running <- store.findRunningTasks
+        tasks <- store.loadTasks(parent.id)
+        rec <- nebflow.core.delegate.DelegateRegistry.find(child) match
+          case Some(r) => IO.pure(r)
+          case None    => IO.raiseError[nebflow.core.delegate.DelegateRegistry.Record](new AssertionError("registry row missing"))
+      yield (running, tasks, rec)
+
+      val (running, tasks, rec) = io.unsafeRunSync()
+      assert(clue(running).isEmpty, "restarting-state orphans are in-flight too — terminalized")
+      assert(clue(tasks).forall(_.status == "failed"), "restarting → failed terminalize")
+      assert(
+        clue(rec.restartInterruptedAt).isDefined,
+        "the restart-interrupted flag lands on the registry row (badge/gray-state basis)"
+      )
+    }
+  }
+
+  test(
+    "R7 (重启对账): fingerprint backfill flags historical restart-lost rows — skipped for reported/archived rows, idempotent on re-run"
+  ) {
+    withFixture("r7") { (store, sessionStore, tmp) =>
+      val fp = SubAgentStartupRecovery.RestartLossFingerprint
+      val lostTask = mkTask("delegate-explorer-h8", "p-h8").copy(
+        status = "failed",
+        lastError = Some(s"$fp — partial result salvaged and delivered to parent (startup recovery V2)")
+      )
+      val doneTask = mkTask("delegate-explorer-i9", "p-i9").copy(
+        status = "failed",
+        lastError = Some("ordinary failure — not a restart loss")
+      )
+      store.saveTasks("p-h8", List(lostTask)).unsafeRunSync()
+      store.saveTasks("p-i9", List(doneTask)).unsafeRunSync()
+      val io = for
+        _ <- IO(nebflow.core.delegate.DelegateRegistry.put(mkRecord("delegate-explorer-h8", createdAt = 1L))) // 重启丢失
+        _ <- IO(nebflow.core.delegate.DelegateRegistry.put(mkRecord("delegate-explorer-i9", createdAt = 2L))) // 常规失败
+        _ <- IO(nebflow.core.delegate.DelegateRegistry.put(mkRecord("delegate-explorer-j10", createdAt = 3L).copy(reportStatus = Some("finish"))))
+        _ <- IO(nebflow.core.delegate.DelegateRegistry.put(mkRecord("delegate-explorer-k11", createdAt = 4L).copy(archivedAt = Some(5L))))
+        flagged0 <- IO(nebflow.core.delegate.DelegateRegistry.find("delegate-explorer-h8").flatMap(_.restartInterruptedAt))
+        _ <- SubAgentStartupRecovery.recoverOrphans(store, sessionStore) // 无 running 孤儿——只跑标记回溯腿
+        h8 <- IO(nebflow.core.delegate.DelegateRegistry.find("delegate-explorer-h8").flatMap(_.restartInterruptedAt))
+        i9 <- IO(nebflow.core.delegate.DelegateRegistry.find("delegate-explorer-i9").flatMap(_.restartInterruptedAt))
+        j10 <- IO(nebflow.core.delegate.DelegateRegistry.find("delegate-explorer-j10").flatMap(_.restartInterruptedAt))
+        k11 <- IO(nebflow.core.delegate.DelegateRegistry.find("delegate-explorer-k11").flatMap(_.restartInterruptedAt))
+        _ <- SubAgentStartupRecovery.recoverOrphans(store, sessionStore) // "second boot" 幂等
+        h8again <- IO(nebflow.core.delegate.DelegateRegistry.find("delegate-explorer-h8").flatMap(_.restartInterruptedAt))
+      yield (flagged0, h8, h8again, i9, j10, k11)
+
+      val (flagged0, h8, h8again, i9, j10, k11) = io.unsafeRunSync()
+      assert(clue(flagged0).isEmpty, "no flag before the sweep")
+      assert(clue(h8).isDefined, "fingerprint task ⇒ registry row flagged (historical backfill)")
+      assertEquals(clue(h8again), h8, "idempotent: second boot never rewrites the flag")
+      assert(clue(i9).isEmpty, "ordinary failure without the fingerprint stays unflagged")
+      assert(clue(j10).isEmpty, "a reported (finish) row is never flagged — true completion wins")
+      assert(clue(k11).isEmpty, "archived rows are untouched (zero-touch archive discipline)")
+    }
+  }
+
 end OrphanDelegateRecoverySpec

@@ -454,6 +454,15 @@
 .dvp-nd.st-done .dvp-st-dot { background: var(--status-success-icon); }
 /* 取消：中性点（减号语义由词承担——状态词恒中性字） */
 .dvp-nd.st-cancel .dvp-st-dot { background: var(--color-text-muted); }
+/* 重启打断（重启对账批 2026-10-22）：灰态卡 + 琥珀点 + 整卡降透明（尸体系诚实化
+   ——禁借 failed 红环 / done 绿点；接续关系由卡内 continued chip 承担）。 */
+.dvp-nd.st-stop { opacity: 0.62; }
+.dvp-nd.st-stop .dvp-st-dot { background: rgb(var(--amber)); }
+.dvp-chip.continued {
+  color: var(--color-text-muted);
+  border-style: dashed;
+  opacity: 0.9;
+}
 
 /* 落位高亮（任务列表行入口 focus；蓝晶短闪一次性） */
 @keyframes dvp-focus-flash {

@@ -350,6 +350,52 @@ test('T4b #566 行状态权威（taskStatus）：引擎终态直映 + 退役 blo
   expect(pageErrors).toEqual([]);
 });
 
+test('T4c 重启对账（适配层推导）：打断态三序钉——真完成 > 打断旗 > failed；continuedBy 缺键容忍透传', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  await bootApp(page);
+  const out = await page.evaluate(async () => {
+    const stub = await import('/js/delegateChainStub.js');
+    const base = { id: 'delegate-nebflow-old', executor: 'nebflow', cwd: '/w', project: '', taskId: '71', parentSessionId: 's', title: 'T-old', createdAt: 1 };
+    return {
+      // ① 打断旗压过 failed/running 回落（灰态——死会话冻结活态根因修补）。
+      flaggedFailed: stub.rowFromRegistry({ ...base, taskStatus: 'failed', restartInterruptedAt: 123 }).status,
+      flaggedBare: stub.rowFromRegistry({ ...base, restartInterruptedAt: 123 }).status,
+      // ② live 实时态先行（旗后复活：Mail 续起同 id 重进 agentRegistry → 行状态
+      //    真源绑定 live 会话，旗让位——「不复用死会话冻结文本/状态」的真源钉）。
+      revivedLive: stub.rowFromRegistry({ ...base, restartInterruptedAt: 123 }, { status: 'running' }).status,
+      // ② 真完成压过打断旗（续聊复活后交付/判词完成 = 真完成，旗不截断）。
+      revivedReported: stub.rowFromRegistry({ ...base, taskStatus: 'failed', restartInterruptedAt: 123, reportStatus: 'finish' }).status,
+      revivedDone: stub.rowFromRegistry({ ...base, taskStatus: 'completed', restartInterruptedAt: 123 }).status,
+      revivedQueued: stub.rowFromRegistry({ ...base, taskStatus: 'ready-to-merge', restartInterruptedAt: 123 }).status,
+      // ③ 显式取消 = 真终态，不被旗覆写。
+      cancelledWins: stub.rowFromRegistry({ ...base, taskStatus: 'cancelled', restartInterruptedAt: 123 }).status,
+      // ④ 无旗 = 旧推导原样（failed 直映——#566 权威不回归）。
+      plainFailed: stub.rowFromRegistry({ ...base, taskStatus: 'failed' }).status,
+      // ⑤ 字段加宽：旗/指针透传；旧盘缺键 → null/''。
+      fields: stub.rowFromRegistry({ ...base, restartInterruptedAt: 456, continuedBy: 'delegate-nebflow-new' }),
+      legacyFields: stub.rowFromRegistry({ ...base }),
+      zeroFlag: stub.rowFromRegistry({ ...base, restartInterruptedAt: 0 }).status,
+      consts: stub.ROW_STATUS.INTERRUPTED,
+    };
+  });
+  expect(out.flaggedFailed).toBe('interrupted');
+  expect(out.flaggedBare).toBe('interrupted');
+  expect(out.revivedLive).toBe('running'); // live 实时态 > 打断旗（复活行不做尸体态）
+  expect(out.revivedReported).toBe('completed'); // 报告交付 = 真完成
+  expect(out.revivedDone).toBe('completed');
+  expect(out.revivedQueued).toBe('ready-to-merge');
+  expect(out.cancelledWins).toBe('cancelled');
+  expect(out.plainFailed).toBe('failed'); // 无旗常规失败不灰化（#566 不回归）
+  expect(out.fields).toMatchObject({ restartInterruptedAt: 456, continuedBy: 'delegate-nebflow-new', status: 'interrupted' });
+  expect(out.legacyFields).toMatchObject({ restartInterruptedAt: null, continuedBy: '' });
+  expect(out.zeroFlag).toBe('running'); // 0/负值旗 = 缺键（零臆造）
+  expect(out.consts).toBe('interrupted'); // 值域加宽钉（跨批契约键）
+
+  expect(pageErrors).toEqual([]);
+});
+
 test('T5 读取口 null 安全：查无链 → null；行清单默认空；reset 归零', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));

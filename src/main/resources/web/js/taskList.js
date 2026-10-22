@@ -124,11 +124,15 @@ const REDUCED_MOTION = typeof matchMedia === 'function' &&
 // ready-to-merge stays — queued merges are still active work.
 // #566 修复批：blocked 从 delegate 行值域退役（作者令「blocked 是给 agentflow
 // 用的」）——delegate 根行永不 blocked；chain 成员（agentflow 节点）仍可 blocked。
-const ACTIVE_ROW_STATUSES = new Set(['pending', 'running', 'ready-to-merge']);
+// 重启对账批 2026-10-22：interrupted（重启打断灰态）入列——尸体系以「已中断」
+// 灰态显形（替代旧推导的 running/勾态误报），不再隐行。
+const ACTIVE_ROW_STATUSES = new Set(['pending', 'running', 'ready-to-merge', 'interrupted']);
 
 /**
  * Status glyph, shared row language: running = orbit, terminal = solid color
- * dot, wiring|pending = box, unknown = neutral dot (graceful degradation).
+ * dot, wiring|pending = box, interrupted = neutral (gray) dot — 重启打断永不
+ * 借用终态/完成语言（打勾只给真完成），unknown = neutral dot (graceful
+ * degradation).
  * (#566: the blocked branch retired from the delegate header — flow-step
  * member rows render their own marks.)
  * @param {string} st @param {string} cls @returns {HTMLElement} */
@@ -145,6 +149,7 @@ function buildNodeGlyph(st, cls) {
   } else if (st === 'wiring' || st === 'pending') {
     g.className = 'task-node-box';
   } else {
+    // interrupted（重启打断）与未知态同走中性灰点——灰态 = 已中断的唯一语言。
     g.className = 'task-node-dot task-node-dot-neutral';
   }
   return g;
@@ -161,6 +166,7 @@ export const DELEGATE_WORD_KEY = {
   failed: 'flowmap.fail',
   cancelled: 'flowmap.st.cancelled',
   'ready-to-merge': 'delegate.readyToMerge',
+  interrupted: 'task.nodeInterrupted',
 };
 
 /** Star-child store status → row status domain (conservative: unknown = running). */
@@ -338,11 +344,47 @@ function chainMembersOf(r, chain) {
 }
 
 /**
+ * 重启对账折叠推导（重启对账批 2026-10-22 · 渲染层单点）：被打断且已有接续者的行
+ * 不再独占区块——并入接续者的区块作为 `folded` 腿（灰行 + 「已由 <新会话> 接续」
+ * 关系行），不双行并存。接续者沿 continuedBy 链走到终点（接续者自身也被打断时，
+ * 折进链尾；环/断链守卫 = 独立灰行降级）。未被接续的打断行 = 独立灰行（已中断态）。
+ * @param {any[]} rows 活性行集（activity 倒序）
+ * @returns {Map<string, any[]>} 接续者 delegateId → 折入的前会话行集
+ */
+function foldedRowsOf(rows) {
+  const byId = new Map(rows.map((r) => [String(r.delegateId || ''), r]));
+  const foldedBy = new Map();
+  const foldedIds = new Set();
+  for (const r of rows) {
+    if (String(r.status) !== 'interrupted') continue;
+    const startId = String(r.delegateId || '');
+    const nxt = String(r.continuedBy || '');
+    if (!nxt || !byId.has(nxt) || nxt === startId) continue; // 未接续/接续者不在窗/自环 = 独立灰行
+    let cur = byId.get(nxt);
+    const seen = new Set([startId, nxt]);
+    // 沿接续链走到终点（接续者自身也被打断且有下家时跟下去；环/断链 = 就地收束）。
+    for (let i = 0; i < 8; i++) {
+      const step = String(cur.continuedBy || '');
+      if (String(cur.status) !== 'interrupted' || !step || !byId.has(step) || seen.has(step)) break;
+      seen.add(step);
+      cur = byId.get(step);
+    }
+    const k = String(cur.delegateId || '');
+    if (!k || k === startId) continue;
+    if (!foldedBy.has(k)) foldedBy.set(k, []);
+    foldedBy.get(k).push(r);
+    foldedIds.add(startId);
+  }
+  return foldedBy;
+}
+
+/**
  * Collect the chain blocks from the delegate read port: every live delegate
  * root plus its members. Order = most-recent root activity first (roots sort
  * by createdAt; members keep topological order inside their block).
+ * 重启对账批 2026-10-22：已接续的打断行折进接续者区块（folded 腿），不占区块。
  * @returns {Array<{key: string, project: string, row: any, members: any[],
- *          allCount: number,
+ *          folded: any[], allCount: number,
  *          view: {ordered: any[], edges: any, depths: Map<string, number>, seqs: Map<string, string>}}>} */
 /** 导出 = 手机层 v3 任务面板的同源数据面（mobile/taskPanel.js 只换呈现不换数据面）。
  *  返回 collectChains 现值（active rows only，activity 倒序）；字段与面板行渲染
@@ -355,23 +397,29 @@ export function collectChains() {
     return Number.isFinite(v) ? v : 0;
   };
   rows.sort((a, b) => ts0(b) - ts0(a));
-  return rows.map((r) => {
-    const key = delegateRowKey(r);
-    // External executors carry no platform children/chains — the block is the
-    // root stub alone (leaf header row; stats still count it as one unit).
-    const chain = r.external === true ? null : getChainByTask(key);
-    const members = chainMembersOf(r, chain);
-    // ready-to-merge rows stay display-only (queue rank only): members hidden.
-    const visibleMembers = String(r.status) === 'ready-to-merge'
-      ? members.slice(0, 1)
-      : members;
-    return {
-      key, project: String(r.project || ''), row: r,
-      members: visibleMembers,
-      view: chainViewOf(visibleMembers),
-      allCount: members.length,
-    };
-  }).filter((c) => c.key);
+  const foldedBy = foldedRowsOf(rows);
+  const foldedIds = new Set([...foldedBy.values()].flat().map((r) => String(r.delegateId || '')));
+  return rows
+    .filter((r) => !foldedIds.has(String(r.delegateId || '')))
+    .map((r) => {
+      const key = delegateRowKey(r);
+      // External executors carry no platform children/chains — the block is the
+      // root stub alone (leaf header row; stats still count it as one unit).
+      const chain = r.external === true ? null : getChainByTask(key);
+      const members = chainMembersOf(r, chain);
+      // ready-to-merge rows stay display-only (queue rank only): members hidden.
+      const visibleMembers = String(r.status) === 'ready-to-merge'
+        ? members.slice(0, 1)
+        : members;
+      return {
+        key, project: String(r.project || ''), row: r,
+        members: visibleMembers,
+        folded: foldedBy.get(String(r.delegateId || '')) || [],
+        view: chainViewOf(visibleMembers),
+        allCount: members.length,
+      };
+    })
+    .filter((c) => c.key);
 }
 
 // ── Fold state + frame-diff animation memory (render-layer, refresh resets) ─
@@ -533,6 +581,15 @@ function buildChainHeaderRow(block) {
   label.className = 'task-node-label';
   label.textContent = title || delegateId; // raw data fallback, not copy
   labelRow.appendChild(label);
+  // 重启对账批 2026-10-22：「重启打断」徽标（被打断行的行内首徽标——徽标三件套
+  // 语义：行状态词仍由 word 槽承担「已中断」灰态）。
+  if (st === 'interrupted') {
+    const badge = document.createElement('span');
+    badge.className = 'task-delegate-badge task-delegate-badge-interrupted';
+    badge.setAttribute('aria-hidden', 'true');
+    badge.textContent = t('task.restartBadge');
+    labelRow.appendChild(badge);
+  }
   text.appendChild(labelRow);
   if (external) {
     // S16 coarse progress leg: buffered output tail line (raw data).
@@ -628,6 +685,46 @@ function buildChainHeaderRow(block) {
 }
 
 // ── Member rows (expanded blocks): the classic 22px chain-member language ──
+
+/**
+ * 折叠前会话行（重启对账批 2026-10-22）：被打断且已接续的旧行以**一行灰腿**折进
+ * 接续者区块——`[重启打断 徽标][旧标题（muted）][已由 <新会话> 接续]`，点击 =
+ * 旧会话的 L1（审计可达）。零完成语言（无勾、无终态词）——打勾只给真完成。
+ * @param {any} fr 折入的前会话行 @param {any} block 接续者区块 @returns {HTMLElement} */
+function buildFoldedRow(fr, block) {
+  const frKey = delegateRowKey(fr);
+  const row = document.createElement('div');
+  row.className = 'task-chain-folded';
+  row.dataset.nodeKey = `fold:${frKey}`;
+  row.dataset.delegateId = String(fr.delegateId || '');
+  row.setAttribute('role', 'button');
+  row.setAttribute('aria-label', `${String(fr.title || fr.delegateId || '')} — ${t('task.restartBadge')} · ${t('task.continuedBy', { session: `#${block.row.taskNo || block.key}` })}`);
+  row.title = String(fr.title || fr.delegateId || '');
+
+  const badge = document.createElement('span');
+  badge.className = 'task-delegate-badge task-delegate-badge-interrupted';
+  badge.setAttribute('aria-hidden', 'true');
+  badge.textContent = t('task.restartBadge');
+  row.appendChild(badge);
+
+  const label = document.createElement('span');
+  label.className = 'task-chain-folded-title';
+  label.textContent = String(fr.title || fr.delegateId || '');
+  row.appendChild(label);
+
+  const word = document.createElement('span');
+  word.className = 'task-chain-folded-word';
+  word.setAttribute('aria-hidden', 'true');
+  word.textContent = t('task.continuedBy', { session: `#${block.row.taskNo || block.key}` });
+  row.appendChild(word);
+
+  const meta = rowMetaOf(fr);
+  row.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openL1(frKey, meta);
+  });
+  return row;
+}
 
 const CHECK_SVG = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="5" class="ring"/><path d="M3.6 6.2l1.7 1.7 3.1-3.6" class="tick"/></svg>';
 const CROSS_SVG = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="5" class="ring"/><path d="M4.2 4.2l3.6 3.6M7.8 4.2L4.2 7.8" class="tick"/></svg>';
@@ -727,8 +824,11 @@ function buildChainMemberRow(m, block) {
 }
 
 /**
- * One chain block: header row + (when expanded) member rows in topological
- * order. First appearance pops (frame-diff memory; repaints stay silent).
+ * One chain block: header row + (重启对账折叠腿) + (when expanded) member rows in
+ * topological order. First appearance pops (frame-diff memory; repaints stay
+ * silent). The folded legs render ALWAYS (not fold-gated) — they replace what
+ * would have been a second parallel block (「不双行并存」), so the continuation
+ * relation stays visible at a glance.
  * @param {any} block @returns {HTMLElement} */
 function buildChainBlock(block) {
   const el = document.createElement('div');
@@ -737,6 +837,12 @@ function buildChainBlock(block) {
   if (!chainSeenPrev.has(seenKey) && !REDUCED_MOTION) el.classList.add('task-chain-enter');
   chainSeenNext.add(seenKey);
   el.appendChild(buildChainHeaderRow(block));
+  if (block.folded && block.folded.length) {
+    const folds = document.createElement('div');
+    folds.className = 'task-chain-folds';
+    block.folded.forEach((fr) => folds.appendChild(buildFoldedRow(fr, block)));
+    el.appendChild(folds);
+  }
   if (expandedChains.has(block.key)) {
     const body = document.createElement('div');
     body.className = 'task-chain-body';

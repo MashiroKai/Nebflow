@@ -334,3 +334,30 @@ test('T6 全景样式表零字面 hex 色值（§8.7：全部 var token）', asy
   const hexHits = css.match(/#[0-9a-fA-F]{3,8}\b/g) || [];
   expect(hexHits, hexHits.join(', ')).toEqual([]);
 });
+
+test('T7 重启对账（全景审计面）：打断卡灰态（st-stop）+「重启打断」顶徽标+「已由 #N 接续」关系 chip；永不借 fail 红/done 绿', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+  await bootApp(page);
+  const rowInterrupted = base({
+    taskNo: '90', delegateId: 'delegate-nebflow-pano-int', title: '【断点批】旧会话',
+    status: 'interrupted', restartInterruptedAt: T0 - 60_000,
+    continuedBy: 'delegate-nebflow-pano-succ', createdAt: T0 - 90_000,
+  });
+  const rowSucc = base({
+    taskNo: '91', delegateId: 'delegate-nebflow-pano-succ', title: '【断点批 · 断点续作】新会话',
+    createdAt: T0 - 5_000,
+  });
+  await setFixture(page, { rows: [rowInterrupted, rowSucc], chains: [], children: {} });
+  await openPanorama(page);
+  const card = page.locator('[data-view="delegate-panorama"] .dvp-nd[data-status="interrupted"]');
+  await expect(card).toHaveCount(1);
+  await expect(card).toHaveClass(/st-stop/); // 灰态卡（非 st-fail 红 / 非 st-done 绿）
+  await expect(card.locator('.dvp-qbadge')).toHaveText('重启打断');
+  await expect(card.locator('.dvp-chip.continued')).toHaveText('已由 #91 接续');
+  // 接续者卡本体零打断语言。
+  const succ = page.locator('[data-view="delegate-panorama"] .dvp-nd[data-delegate-id="delegate-nebflow-pano-succ"]');
+  await expect(succ.locator('.dvp-qbadge')).toHaveCount(0);
+  await page.waitForTimeout(150);
+  expect(pageErrors, pageErrors.join('\n')).toEqual([]);
+});

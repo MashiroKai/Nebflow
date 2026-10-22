@@ -83,6 +83,11 @@ function projectRow(entry) {
     reportStatus: String(src.reportStatus || ''),
     reportDetail: String(src.reportDetail || ''),
     topology: normalizeTopology(src.topology),
+    // 重启对账批 2026-10-22：打断旗 + 接续指针透传（缺键容忍，零臆造）。
+    restartInterruptedAt: typeof src.restartInterruptedAt === 'number' && src.restartInterruptedAt > 0
+      ? src.restartInterruptedAt
+      : null,
+    continuedBy: String(src.continuedBy || ''),
   };
   if (v && typeof v === 'object' && String(v.verdict || '') === 'ready-to-merge') {
     out.status = 'ready-to-merge';

@@ -48,6 +48,9 @@ export const ROW_STATUS = {
   COMPLETED: 'completed',
   FAILED: 'failed',
   CANCELLED: 'cancelled',
+  // 重启打断（任务列表行重启对账批 2026-10-22）：boot 对账判定「在飞时进程死亡」
+  // 的行——灰态显示，非终态非活态（打勾只给真完成，本态永不渲染完成语言）。
+  INTERRUPTED: 'interrupted',
 };
 
 /** 合法值域（归一白名单；未知值 → RUNNING 由调用方降级，本表只声明）。 */
@@ -102,6 +105,11 @@ const PENDING_N1_KINDS = new Set([FRAME_KINDS.CHAIN_REGISTERED, FRAME_KINDS.CHAI
  *                                      G5 行内排队可见性槽（引擎闸透传；未排队 = null）
  * @property {{position: number, total: number, readyAt: number, branch: string, baseBranch: string}|null} mergeQueuePos
  *                                      G5 行内排队位次（引擎自排序透传；未排队 = null）
+ * @property {number|null} restartInterruptedAt  重启打断旗（对账批 2026-10-22，epoch ms；
+ *                                      null = 未打断）——引擎 boot 对账单写，行显示态
+ *                                      （徽标/灰态/折叠）的判据字段
+ * @property {string} continuedBy       接续者 delegateId（引擎读面 continuationLinks
+ *                                      推导；'' = 未被接续）——旧行折叠进新行的指针
  */
 
 /**
@@ -168,14 +176,20 @@ export function normalizeStatus(s) {
  *
  * 状态推导（适配层单点，权威仍在后端；#566 修复批 2026-10-19）：
  *   ① `taskStatus`（行投影新键——引擎任务行终态，SubAgentTaskStore 值域）＝
- *      **终态权威**：completed / failed / cancelled / ready-to-merge 直映（delegate
- *      终态后行必须在 UI 反映终态——reportStatus/live 双缺席时旧推导回落 running
- *      的陈旧行根因修补）；running/restarting 非终态 → 落后续推导。
+ *      **真完成权威**：completed / ready-to-merge / cancelled 直映（delegate 终态后
+ *      行必须在 UI 反映终态——reportStatus/live 双缺席时旧推导回落 running 的陈旧行
+ *      根因修补）。failed 降级到⑤（重启打断旗可覆写——见④）。
  *   ② record.reportStatus 引擎状态槽（'finish' | 'merge' | 退役前 'blocked'）——
  *      finish → completed；**blocked → completed**（#566：delegate 面无 blocked
  *      状态——申报 blocked 的行按 completed 交付，阻塞事实是报告注记）。
- *   ③ 缺省读 `live.status` 提示（stub/换源 provider 供给的活性态）；两者皆无
- *      → 'running'。
+ *   ③ 缺省读 `live.status` 提示（stub/换源 provider 供给的活性态）＝**行状态真源
+ *      绑定 live 会话实时态**：旗后复活（Mail 续起同 id 重进 agentRegistry）的行按
+ *      live 面——打断旗（④）只管死了没人接的尸体行，live 在场时旗让位。
+ *   ④ `restartInterruptedAt`（重启对账批 2026-10-22）＝ boot 对账判定「在飞时进程
+ *      死亡」→ **'interrupted' 灰态**：打勾只给真完成（①②），打断态永不渲染完成
+ *      语言；覆写 failed 与 running 回落（死会话冻结活态/勾态的根因修补）。
+ *   ⑤ 其余引擎终态 failed（无打断旗的常规失败——#566 终态权威原样）。
+ *   ⑥ running 兜底。
  * external = executor 非空且 ≠ 'nebflow'（内置执行器唯一
  * id，ExecutorRegistry.Definitions 同口径）⇒ S16 粗粒度行。
  * @param {Record<string, any>} record DelegateRegistry.Record 形 JSON（缺键容忍）
@@ -188,11 +202,16 @@ export function rowFromRegistry(record, live) {
   const reported = String(r.reportStatus || '');
   const engine = String(r.taskStatus || '');
   const ENGINE_TERMINAL = new Set(['completed', 'failed', 'cancelled', 'ready-to-merge']);
+  const restartInterruptedAt = typeof r.restartInterruptedAt === 'number' && r.restartInterruptedAt > 0
+    ? r.restartInterruptedAt
+    : null;
   let status;
-  if (ENGINE_TERMINAL.has(engine)) status = engine; // ① 引擎终态权威（#566）
-  else if (reported === 'finish') status = ROW_STATUS.COMPLETED;
+  if (engine === 'completed' || engine === 'ready-to-merge' || engine === 'cancelled') status = engine; // ① 真完成/真取消
+  else if (reported === 'finish') status = ROW_STATUS.COMPLETED; // ② 报告交付
   else if (reported === 'blocked') status = ROW_STATUS.COMPLETED; // ② 退役词 → completed（注记在报告）
-  else if (live && live.status) status = normalizeStatus(live.status);
+  else if (live && live.status) status = normalizeStatus(live.status); // ③ live 实时态（旗后复活先行）
+  else if (restartInterruptedAt != null) status = ROW_STATUS.INTERRUPTED; // ④ 重启打断（灰态）
+  else if (ENGINE_TERMINAL.has(engine)) status = engine; // ⑤ 常规失败（#566 终态权威）
   else status = ROW_STATUS.RUNNING;
   // G1/G5/G6 加宽（delegate-ui 批）：缺键容忍——旧盘 null → mode '' / archivedAt
   // null / 队列两键 null（读面禁折叠 None→single；未排队缺键纪律在引擎侧）。
@@ -209,6 +228,9 @@ export function rowFromRegistry(record, live) {
     createdAt: typeof r.createdAt === 'number' ? r.createdAt : 0,
     orchestrationMode: String(r.orchestrationMode || ''),
     archivedAt: typeof r.archivedAt === 'number' ? r.archivedAt : null,
+    // 重启对账批 2026-10-22：打断旗 + 接续指针（缺键容忍——旧引擎行 = null/''）。
+    restartInterruptedAt,
+    continuedBy: String(r.continuedBy || ''),
     mergeQueue: q ? {
       projectKey: String(q.projectKey || ''),
       ahead: Array.isArray(q.ahead) ? q.ahead.map((x) => String(x || '')) : [],
