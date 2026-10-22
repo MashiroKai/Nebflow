@@ -22,6 +22,19 @@
 #     中文 2 字词查询退化，故采 xerj bigram 路线）。
 #   - BM25 相关性排序（xerj-fts/src/bm25.rs，k1=1.2/b=0.75 与 Lucene 一致）
 #     → FTS5 内置 bm25() 同公式，直接复用；并列时新消息优先。
+#
+# 近因加权（recency boost，作者令 2026-10-22）：
+#   - 痛点：无过滤查询时旧消息关键词密度高、BM25 压住新近讨论——而主用途恰恰是
+#     「回忆最近怎么裁定的」（实证：查 triple-star 可行性 top5 全是 7-9 月旧命中）。
+#   - 修法：score_final = rel × exp(-age_days/τ)，rel=-bm25（正相关），τ 默认 30 天
+#     （--tau 可调，≤0 关闭；半衰期 ≈ 21 天：一个月前半价、三个月前 ~1/8、半年 ~1/120）。
+#     τ=30 的两难平衡：近因话题（当日命中 vs 3 个月前 ≈ 24× 优势，足够顶开密度更高的
+#     旧命中）；老话题（同为 7 月龄的候选衰减同权，相对序不变，纯历史查询不受损——
+#     实测 Tailscale 合法性 7 月原件 τ=30 时仍稳居前列）。
+#   - 绝对时间锚定（--since/--until）时衰减自动失效：时间窗本身就是排序意图；
+#     --no-recency 手动关闭（A/B 对照用）。
+#   - 候选池：先按 BM25 取 pool（max(20n,200)，上限 2000）再衰权重排——池内
+#     lexical 最强的 200 条已覆盖任何实际重排幅度。
 #   - 相邻片段召回（xerj 返回 ranked passages 而非裸行号）→ 命中消息 ±N 上下文邻句。
 #   - 增量重索引（xerj LIVE_REINDEXING 思路）→ --update 幂等 upsert
 #     （UNIQUE(session,ts,role,hash) + INSERT OR IGNORE），无守护进程。
@@ -35,17 +48,20 @@
 #   stand-recall --stats                    # 库概况
 #   stand-recall --doctor                   # 会话分类明细（含排除原因）
 # 选项：-n N 命中数(10) | --context N 邻句数(1) | --session ID | --role user|assistant
-#       --since/--until "YYYY-MM-DD[ HH:MM]" | --json | --db PATH | --data-root PATH
+#       --since/--until "YYYY-MM-DD[ HH:MM]" | --tau 天数(30, 近因衰减) | --no-recency
+#       --json | --db PATH | --data-root PATH
 #
 # 零第三方依赖：Python3 标准库（sqlite3/json/re/argparse/hashlib）。
 
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
 import sys
+import time
 from datetime import datetime
 
 SCHEMA_VERSION = 1
@@ -428,21 +444,51 @@ def fmt_ts(ms: int) -> str:
     return datetime.fromtimestamp(ms / 1000).strftime("%Y-%m-%d %H:%M") if ms else "?"
 
 
+POOL_MIN = 200     # 重排候选池下限
+POOL_MAX = 2000    # 重排候选池上限（lexical 预排后取前 pool 再衰权重排）
+
+
+def recency_on(args) -> bool:
+    """近因衰减开关：未手动关闭、τ>0，且查询未经 --since/--until 绝对时间锚定
+    （时间窗本身就是排序意图，衰减只服务无锚定查询）。"""
+    return (not args.no_recency) and args.tau > 0 and not (args.since or args.until)
+
+
+def annotate_hits(hits, args, now_ms):
+    """补 rel/age_days/score_final；开启衰减时按 score_final 降序重排
+    （同 final 时 ts 新者先——「并列时新消息优先」由衰减天然承载）。"""
+    on = recency_on(args)
+    for h in hits:
+        h["age_days"] = max(0.0, (now_ms - h["ts"]) / 86400000.0)
+        h["rel"] = 0.0 - h["score"]  # bm25 越负匹配越强 → 转正相关（0.0- 免 IEEE 负零）
+        h["score_final"] = h["rel"] * math.exp(-h["age_days"] / args.tau) if on else h["rel"]
+    if on:
+        hits.sort(key=lambda h: (-h["score_final"], -h["ts"]))
+    return hits
+
+
+def _median(vals):
+    s = sorted(vals)
+    n = len(s)
+    return 0.0 if not n else (s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2)
+
+
 def search(con, args, query: str):
     and_expr, or_expr, like_pattern = fts_query(query)
+    pool = min(max(args.n * 20, POOL_MIN), POOL_MAX)
     hits = []
     if and_expr:
         # 渐进放宽（xerj retrieval-then-rank 同思路）：AND 全词 → OR 放宽 → BM25 排序
         for expr in (and_expr, or_expr):
             if not expr:
                 continue
-            hits = fts_search(con, args, expr, args.n * 3)
+            hits = fts_search(con, args, expr, pool)
             if hits:
                 break
     if not hits and like_pattern:
         # 单字 CJK：bigram 索引无谓词 → LIKE 子串扫描
-        hits = like_search(con, args, like_pattern, args.n)
-    return hits[: args.n]
+        hits = like_search(con, args, like_pattern, pool)
+    return annotate_hits(hits, args, time.time() * 1000)[: args.n]
 
 
 def _filters(args, alias: str = "m"):
@@ -541,7 +587,9 @@ def print_hits(con, hits, args):
                 for d, sgn, r in neighbors(con, h["session_id"], h["id"], args.context)
             ]
             out.append({
-                "score": round(h["score"], 4), "ts": h["ts"], "role": h["role"],
+                "score": round(h["score"], 4), "rel": round(h["rel"], 4),
+                "age_days": round(h["age_days"], 2), "score_final": round(h["score_final"], 4),
+                "ts": h["ts"], "role": h["role"],
                 "session_id": h["session_id"], "session_name": h["sname"], "kind": h["kind"],
                 "text": h["text"], "neighbors": nb,
                 "attachments": [dict(a) for a in attachments_for(con, h["session_id"], h["ts"])],
@@ -551,8 +599,11 @@ def print_hits(con, hits, args):
     if not hits:
         print("(no hits)")
         return
+    on = recency_on(args)
     for i, h in enumerate(hits, 1):
-        print(f"#{i} [{h['score']:.3f}] {fmt_ts(h['ts'])} · {h['role']} · {h['kind']}「{trim(h['sname'], 48)}」 ({h['session_id'][:8]})")
+        tag = (f"[{h['score_final']:.3f} · lex {h['rel']:.3f} · {h['age_days']:.1f}d]"
+               if on else f"[{h['rel']:.3f}]")
+        print(f"#{i} {tag} {fmt_ts(h['ts'])} · {h['role']} · {h['kind']}「{trim(h['sname'], 48)}」 ({h['session_id'][:8]})")
         print(f"   {h['role']}: {trim(h['text'], 300)}")
         for d, sgn, r in neighbors(con, h["session_id"], h["id"], args.context):
             arrow = "→" if sgn > 0 else "←"
@@ -560,6 +611,9 @@ def print_hits(con, hits, args):
         for a in attachments_for(con, h["session_id"], h["ts"]):
             print(f"   📎 [{a['kind']}] {a['path']}")
         print()
+    ages = [h["age_days"] for h in hits]
+    print(f"— avg hit age: {sum(ages) / len(ages):.1f}d (median {_median(ages):.1f}d, n={len(hits)}, "
+          f"tau={args.tau if on else 'off'})")
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -578,6 +632,10 @@ def main(argv=None):
     ap.add_argument("--role", choices=["user", "assistant"])
     ap.add_argument("--since", help="起始时间 YYYY-MM-DD[ HH:MM]")
     ap.add_argument("--until", help="截止时间")
+    ap.add_argument("--tau", type=float, default=30.0,
+                    help="近因衰减 τ（天，默认30）；≤0 关闭衰减")
+    ap.add_argument("--no-recency", action="store_true",
+                    help="关闭近因加权（纯 BM25 排序，A/B 对照用）")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--db", help="库路径（默认 <data-root>/memory-db/memory.db）")
     ap.add_argument("--data-root", help="数据根（默认 ~/.stand）")
@@ -605,7 +663,17 @@ def main(argv=None):
             ):
                 print(f"{r['kind']}: {r['n']} sessions, {r['msgs']} msgs, {fmt_ts(r['a'])} → {fmt_ts(r['b'])}")
             print(f"attachments: {con.execute('SELECT COUNT(*) c FROM attachments').fetchone()['c']}")
-            print(f"messages total: {con.execute('SELECT COUNT(*) c FROM messages').fetchone()['c']}")
+            tot = con.execute("SELECT COUNT(*) c, AVG(ts) a FROM messages").fetchone()
+            print(f"messages total: {tot['c']}")
+            if tot["c"]:
+                now_ms = time.time() * 1000
+                off = (tot["c"] - 1) // 2
+                mrows = con.execute(
+                    "SELECT ts FROM messages ORDER BY ts LIMIT 2 OFFSET ?", (off,)
+                ).fetchall()
+                med = sum(r["ts"] for r in mrows) / len(mrows)
+                print(f"messages age: avg {(now_ms - tot['a']) / 86400000:.1f}d, "
+                      f"median {(now_ms - med) / 86400000:.1f}d")
             lv = con.execute("SELECT value FROM meta WHERE key='last_update'").fetchone()
             print(f"last_update: {lv['value'] if lv else 'never'}")
             return 0
