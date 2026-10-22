@@ -58,7 +58,7 @@ $t = Get-Content "$env:USERPROFILE\.stand\auth.json" | ConvertFrom-Json; Start-P
 | `src/main/scala/nebflow/gateway/NeblinkRoutes.scala` | `auth/start` / `auth/state` 换 `bootstrapGate`；`neblink/status` 换 `withNeblinkBootstrap`；各带引导腿注释 |
 | `src/test/scala/nebflow/gateway/NeblinkBootstrapLegSpec.scala` | 新增 12 例：匿名环回（v4 + v4-mapped）start/state/status 全通；LAN、隧道形态（remote=None）全 403 逐字体；凭据调用（LAN/隧道 + Bearer）零回归 |
 
-测试：`NeblinkBootstrapLegSpec` 12/12 绿；`sbt compile` + `Test/compile` 绿；`nebflow.gateway.*` + `nebflow.neblink.*` 回归套结果见提交信息。
+测试：`NeblinkBootstrapLegSpec` 12/12 绿；`sbt compile` + `Test/compile` 绿；`nebflow.gateway.*` + `nebflow.neblink.*` 回归套结果见提交信息。合并前终验复跑（2026-10-23 00:17，sbt 前台）：`Test/testOnly nebflow.gateway.* nebflow.neblink.*` = **1615 total / 0 failed / 0 errors / 2 skipped（既有 skip）**，950s 全绿，与提交信息基线一致。
 
 ## ④ 缺陷定性（按作者「登录即绑定」裁定 = 主流程一号缺陷）
 
