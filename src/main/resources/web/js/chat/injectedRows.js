@@ -248,7 +248,6 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
     (header && String(header).trim()) ? String(header) : injectedSourceLabel(source, eventType, sender, sourceTeam, intake)
   ));
   appendDeliveryBadge(label, delivery);
-  bubble.appendChild(label);
   // diff 拆面板批（2026-10-22 作者令「改为在最上面看，而且是一个小的摘要」）：
   // 交付消息顶部的紧凑摘要条（.glass-control 玻璃 pill）：`N files · +a −r`，
   // 折叠态即可见——取代原展开体尾部的 Changes 段与标签内安静 hint（摘要上移，
@@ -256,6 +255,10 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   // 批次文件列表 + Canvas 出选中文件 diff（旧 master-detail 一体大面板退役）；
   // 本批已在面板时再点 → 收起侧栏（diffPanel.toggleDiffBatch，现有面板 toggle
   // 语义）。缺载荷（非 delegate 行 / 旧历史）⇒ 零渲染。
+  // 同线批（2026-10-22 作者令「计数与 COMPLETED 同行」）：chip 不再独占一行，
+  // 与 header（… · COMPLETED 段）装进同一 flex 行（.nf-diff-headline）——chip
+  // 接在 COMPLETED 段之后同行右缘呈现；常规宽必一行（label 弹性收缩 + 省略号
+  // 截断），窄面板允许截断策略。缺载荷 ⇒ label 原位直挂（逐字节不变）。
   if (Array.isArray(fileChanges?.files) && fileChanges.files.length) {
     const tot = fileChanges.files.reduce((acc, f) => {
       acc.a += Number(f?.added) || 0; acc.r += Number(f?.removed) || 0; return acc;
@@ -281,7 +284,12 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
     chip.append(icon, filesLabel, counts);
     createIconsIn(chip);
     chip.addEventListener('click', () => { toggleDiffBatch(fileChanges); });
-    bubble.appendChild(chip);
+    const headline = document.createElement('div');
+    headline.className = 'nf-diff-headline';
+    headline.append(label, chip);
+    bubble.appendChild(headline);
+  } else {
+    bubble.appendChild(label);
   }
   bubble.appendChild(content);
   row.appendChild(bubble);
