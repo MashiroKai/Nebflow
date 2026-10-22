@@ -1847,8 +1847,8 @@ export default {
   'canvas.largeTextPrevHit': '上一处命中',
   'canvas.largeTextNextHit': '下一处命中',
   'canvas.largeTextGoToLine': '跳转到行',
-  // === 文档图谱（wiki-graph 极简化重设计批，2026-10-21：控件面 = 搜索框 +
-  // 目录 chips + 信息行；悬停 tooltip / 单击预览卡 / 断链计数）===
+  // === 文档图谱（wiki-graph 控制面迁左栏批，2026-10-21 作者令：canvas 只留
+  // 图谱本体+悬停 tooltip；左栏控制面 = 搜索框+目录 chips+详情卡+断链清单+统计行）===
   'wiki.tabTitle': '文档图谱',
   'wiki.searchPlaceholder': '搜索标题或路径',
   'wiki.remoteDevice': '位于设备：{device}',
@@ -1858,13 +1858,13 @@ export default {
   'wiki.graphUnavailable': '文档图谱不可用',
   'wiki.kindAttachment': '附件',
   'wiki.unresolved': '未解析的引用——所有项目文档库中都没有这个名字的文档',
-  // 三控件 + 悬停/预览/断链面
+  // 左栏控制面（搜索/chips/详情卡/断链清单/统计行）
   'wiki.chipAll': '全部',
   'wiki.chipRoot': '根目录',
   'wiki.infoDocs': '{docs} 篇文档 · {links} 条引用 · ',
-  'wiki.infoUnresolved': '{n} 条未解析引用',
-  'wiki.legendLine': '节点大小 = 被引＋引出 · 边 = 文档间引用 · 悬停看摘要 · 单击出预览',
-  'wiki.brokenTitle': '未解析引用（断链不立节点，仅在此列出）',
+  'wiki.infoUnresolved': '{n} 条未解析',
+  'wiki.detailEmpty': '在图谱中单击一个节点，这里显示它的详情。',
+  'wiki.brokenTitle': '断链清单',
   'wiki.brokenVault': '「{project}」还没有可读的文档库——在工作区建 docs 目录并写入 markdown 即可。',
   'wiki.brokenProject': '「{project}」文档库不可读：{error}',
   'wiki.tipDegree': '被引 {in} · 引出 {out}',
@@ -1875,7 +1875,7 @@ export default {
   'wiki.emptyOut': '无出链',
   'wiki.emptyIn': '无入链',
   'wiki.openDoc': '打开文档',
-  'wiki.closePreview': '关闭预览',
+  'wiki.closePreview': '关闭详情',
   'wiki.badgeDevice': '设备：{device}',
   'find.placeholder': '在文件内查找',
   'find.previous': '上一处（Shift+Enter）',

@@ -1910,9 +1910,10 @@ export default {
   'canvas.largeTextPrevHit': 'Previous match',
   'canvas.largeTextNextHit': 'Next match',
   'canvas.largeTextGoToLine': 'Go to line',
-  // === Wiki document graph (wiki-graph minimal redesign, 2026-10-21:
-  // controls = search box + directory chips + info line; hover tooltip /
-  // click preview card / broken-reference count) ===
+  // === Wiki document graph (wiki-graph side-panel batch, 2026-10-21 author
+  // order: canvas keeps the graph body + hover tooltip only; the LEFT COLUMN
+  // hosts the control face = search + dir chips + detail card + broken list
+  // + stats line) ===
   'wiki.tabTitle': 'Wiki Graph',
   'wiki.searchPlaceholder': 'Search titles or paths',
   'wiki.remoteDevice': 'Lives on device: {device}',
@@ -1922,13 +1923,13 @@ export default {
   'wiki.graphUnavailable': 'Wiki graph unavailable',
   'wiki.kindAttachment': 'attachment',
   'wiki.unresolved': 'Unresolved reference — no document with this name in any project vault',
-  // Three controls + hover/preview/broken faces
+  // Side control face (search/chips/detail card/broken list/stats line)
   'wiki.chipAll': 'All',
   'wiki.chipRoot': 'Root',
   'wiki.infoDocs': '{docs} docs · {links} references · ',
-  'wiki.infoUnresolved': '{n} unresolved references',
-  'wiki.legendLine': 'node size = refs in＋out · edge = document reference · hover for summary · click for preview',
-  'wiki.brokenTitle': 'Unresolved references (counted only — never drawn as nodes)',
+  'wiki.infoUnresolved': '{n} unresolved',
+  'wiki.detailEmpty': 'Click a node in the graph to see its details here.',
+  'wiki.brokenTitle': 'Broken references',
   'wiki.brokenVault': 'No readable docs vault for “{project}” yet — create <workspace>/docs and add markdown files.',
   'wiki.brokenProject': 'Vault of “{project}” unreadable: {error}',
   'wiki.tipDegree': 'cited by {in} · cites {out}',
@@ -1939,7 +1940,7 @@ export default {
   'wiki.emptyOut': 'No outgoing references',
   'wiki.emptyIn': 'No incoming references',
   'wiki.openDoc': 'Open document',
-  'wiki.closePreview': 'Close preview',
+  'wiki.closePreview': 'Close details',
   'wiki.badgeDevice': 'Device: {device}',
   'find.placeholder': 'Find in file',
   'find.previous': 'Previous match (Shift+Enter)',
