@@ -756,9 +756,10 @@ const GRAPH_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="no
  * Ctrl/Cmd+F binding) routes through fileSearch.js: Monaco tabs get the
  * editor's own find widget, rendered md/html tabs get the glass find bar.
  *  @param {HTMLElement} pane — canvas tab pane
- *  @param {number} [right] - offset from the pane's right edge (default 64)
+ *  @param {number} [right] - offset from the pane's right edge (default 112;
+ *    移位批 2026-10-22 簇 +48：body 级 deck fab 迁底右 right:12，圆钮簇整体让位)
  */
-export function addFindToggle(pane, right = 64) {
+export function addFindToggle(pane, right = 112) {
   pane.querySelector('.canvas-find-toggle')?.remove();
   if (getComputedStyle(pane).position === 'static') pane.style.position = 'relative';
 
@@ -784,7 +785,7 @@ export function addFindToggle(pane, right = 64) {
  *  @param {string} [absPath] - absolute path of the open document
  *  @param {number} [right] - offset from the pane's right edge
  */
-export function addGraphToggle(pane, absPath, right = 112) {
+export function addGraphToggle(pane, absPath, right = 160) {
   pane.querySelector('.canvas-graph-toggle')?.remove();
   if (getComputedStyle(pane).position === 'static') pane.style.position = 'relative';
 

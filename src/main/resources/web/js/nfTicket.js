@@ -17,7 +17,6 @@
 // same-origin cookie, with a Bearer retry as the fallback.
 
 import { key } from './branding.js';
-import { noteAuthRejected } from './sessionGate.js';
 
 /** @typedef {{ t: string, exp: number }} CachedTicket */
 
@@ -31,12 +30,32 @@ const BREAKER_WINDOW_MS = 15000;
 /** Re-mint a little before the server-side expiry so an in-flight use wins. */
 const EXPIRY_SKEW_MS = 5000;
 
+// ── 鉴权拒绝静默退避（authgate 批 2026-10-22 · 作者报障登出级 bug）──────────
+//
+// 修前形态：mint 终态 401/403 ⇒ `noteAuthRejected('nf-ticket')` ⇒ sessionGate
+// 横幅「登录状态已过期」+ 1.5s 后 `location.reload()`。触发面里最重的一条：
+// **聊天向上滚动加载历史**——getHistory 本体走早已建立的 WS（不 401），但补进来的
+// 旧行携带 `/api/nf-file` 资产 ⇒ 渲染即铸票 ⇒ relay 源 15min 会话 cookie 过期
+// （或本地源 host 会话失效）⇒ 首个铸票 401/403 就把整页拉去重登——
+// 「上滑看历史 → 被迫重登」。作者令：**历史/资产拉取失败一律静默重试（带退避），
+// 绝不登出会话**；#520 的可见面 + 自愈 reload 职责整体归还 12h 保活腿
+// （sessionGate.armSessionKeepalive，闲置拍点，不打断阅读）。
+//
+// 本批之后 mint 面对鉴权拒绝的行为 = **指数退避静默重试**：0.5s 起拍、每次 ×2、
+// 30s 封顶；退避窗内 `mintTickets` 直接吃缓存降级（无票 URL ⇒ 端点 401 ⇒ 既有
+// 逐元素失败面），绝不 reload、绝不横幅。成功一手即清零。
+const AUTH_BACKOFF_BASE_MS = 500;
+const AUTH_BACKOFF_MAX_MS = 30000;
+
 /** @type {Map<string, CachedTicket>} */
 const cache = new Map();
 /** @type {Promise<unknown>|null} in-flight mint round (dedupe, §4.3 F4) */
 let inFlight = null;
 let consecutiveFailures = 0;
 let breakerUntil = 0;
+/** 连续鉴权失败计数 + 当前退避窗（见上方 authgate 批注释）。 */
+let authFails = 0;
+let authBackoffUntil = 0;
 
 /**
  * Remove the credential-bearing parameters (`token` / `ticket`) from a URL.
@@ -204,10 +223,16 @@ async function mintRound(paths) {
       if (tok) resp = await send({ Authorization: 'Bearer ' + tok });
     }
     if (!resp.ok) {
-      // #520（2026-10-18）：401/403 = 同源凭据被拒（relay 门 15min 票过期 /
-      // host 会话失效）。这是「点了零反应」的静默根，交给 sessionGate 出
-      // 可见面 + 自愈 reload；其余状态照旧走熔断计数。
-      if (resp.status === 401 || resp.status === 403) noteAuthRejected('nf-ticket');
+      // authgate 批（2026-10-22）：401/403 = 同源凭据被拒（relay 门 15min 票过期 /
+      // host 会话失效）。**不再**拉 sessionGate（登出级 bug：上滑历史渲染铸票一发
+      // 401 就整页重登）——记一次退避后静默返回，走既有逐元素降级面；重试节奏由
+      // authBackoffUntil 把关（下方 mintTickets），绝不登出会话。其余状态照旧走
+      // 熔断计数。
+      if (resp.status === 401 || resp.status === 403) {
+        authFails += 1;
+        authBackoffUntil = Date.now() +
+          Math.min(AUTH_BACKOFF_BASE_MS * Math.pow(2, authFails - 1), AUTH_BACKOFF_MAX_MS);
+      }
       throw new Error('mint HTTP ' + resp.status);
     }
     const data = await resp.json();
@@ -228,6 +253,8 @@ async function mintRound(paths) {
     }
     consecutiveFailures = 0;
     breakerUntil = 0;
+    authFails = 0;
+    authBackoffUntil = 0;
   } catch (e) {
     consecutiveFailures += 1;
     if (consecutiveFailures >= FAILURE_BREAKER) breakerUntil = Date.now() + BREAKER_WINDOW_MS;
@@ -261,6 +288,9 @@ export async function mintTickets(paths) {
   const fresh = wanted.filter((p) => !isFresh(p));
   if (fresh.length === 0) return collected(wanted);
   if (Date.now() < breakerUntil) return collected(wanted); // F6
+  // authgate 批：鉴权退避窗内零请求（静默重试的「退避」半边）——直接吃缓存
+  // 降级，绝不抛、绝不登出；窗开（0.5s→30s 指数）后下一轮自然重试。
+  if (Date.now() < authBackoffUntil) return collected(wanted);
   const round = mintRound(fresh);
   inFlight = round;
   try {
@@ -312,9 +342,12 @@ export async function reMintAll(paths) {
   for (const p of list) cache.delete(p);
   // A deliberate re-mint is a new round: clear the failure breaker so a
   // recovery attempt is not short-circuited by an earlier outage (§4.3 F6 is
-  // round-scoped by design).
+  // round-scoped by design) — and the auth backoff with it (authgate 批：用户
+  // 手动重试/开图重铸是明确的新一轮，不吃上一轮的退避窗)。
   consecutiveFailures = 0;
   breakerUntil = 0;
+  authFails = 0;
+  authBackoffUntil = 0;
   return mintTickets(list);
 }
 
@@ -347,6 +380,8 @@ export function resetTickets() {
   inFlight = null;
   consecutiveFailures = 0;
   breakerUntil = 0;
+  authFails = 0;
+  authBackoffUntil = 0;
 }
 
 // ── 合帧批量铸票（imgdoor #542 · 档1 + 票据计数面）───────────────────────────

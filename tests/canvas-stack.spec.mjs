@@ -281,9 +281,9 @@ const browser = await chromium.launch();
     const r = el.getBoundingClientRect();
     return { x: r.x, y: r.y, w: r.width, h: r.height, op: getComputedStyle(el).opacity };
   });
-  ok('A1-5 浮钮钉区右上 top10/right12/40px',
-    approx(fab.y - pr.y, 10, 1.5) && approx(pr.right - (fab.x + fab.w), 12, 1.5) && fab.w === 40 && fab.h === 40,
-    `dy=${(fab.y - pr.y).toFixed(1)} dr=${(pr.right - fab.x - fab.w).toFixed(1)} ${fab.w}x${fab.h}`);
+  ok('A1-5 浮钮钉区右下 bottom16/right12/40px（移位批 2026-10-22：顶右 → 右下角）',
+    approx(pr.bottom - (fab.y + fab.h), 16, 1.5) && approx(pr.right - (fab.x + fab.w), 12, 1.5) && fab.w === 40 && fab.h === 40,
+    `db=${(pr.bottom - fab.y - fab.h).toFixed(1)} dr=${(pr.right - fab.x - fab.w).toFixed(1)} ${fab.w}x${fab.h}`);
   ok('A1-6 浮钮 rest 0.6', fab.op === '0.6', `op=${fab.op}`);
   const noX = await page.evaluate(() => ({
     cvClose: document.querySelectorAll('.cv-close').length,
@@ -686,9 +686,9 @@ const browser = await chromium.launch();
     const el = document.getElementById('deck-fab');
     return { w: el.offsetWidth, h: el.offsetHeight, x: el.offsetLeft, y: el.offsetTop };  // 布局盒对 transform 免疫
   });
-  ok('A13-3 浮钮仍固定 40px 原位（不缩放不移位；布局盒口径）',
-    fab.w === 40 && fab.h === 40 && approx(fab.y - pr.y, 10, 1.5) && approx(pr.right - (fab.x + fab.w), 12, 1.5),
-    `${fab.w}x${fab.h} dy=${(fab.y - pr.y).toFixed(1)} dr=${(pr.right - fab.x - fab.w).toFixed(1)}`);
+  ok('A13-3 浮钮仍固定 40px 原位（不缩放不移位；布局盒口径；移位批 2026-10-22 钉区右下 bottom16）',
+    fab.w === 40 && fab.h === 40 && approx(pr.bottom - (fab.y + fab.h), 16, 1.5) && approx(pr.right - (fab.x + fab.w), 12, 1.5),
+    `${fab.w}x${fab.h} db=${(pr.bottom - fab.y - fab.h).toFixed(1)} dr=${(pr.right - fab.x - fab.w).toFixed(1)}`);
   /* UI 批 ①：窄档不再有提示行可藏——deck-foot 整体退役（几何与宽档同规）。 */
   const footGoneNarrow = await page.evaluate(() => !document.getElementById('deck-foot'));
   ok('A13-4 窄档帮助条退役（deck-foot 零命中）', footGoneNarrow === true);

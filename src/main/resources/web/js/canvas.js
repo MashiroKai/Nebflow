@@ -1283,7 +1283,8 @@ export async function openWorkspaceItem(item) {
 //     （1/240 增益 + rAF 指数趋近），卡片循环穿过前景位，canvas 本尊经交接窗
 //     与面板交叉淡换（d₀ 驱动位姿/alpha，no-trans 逐帧直写）；
 //   · 浮钮固定（v5②）：fab 是 body 级固定元素（panel.contains(fab)===false），
-//     JS 逐帧同步面板盒（top 10 / right 12 / 40px），z-250 恒在卡组与面板之上；
+//     JS 逐帧同步面板盒（移位批 2026-10-22：右下角 bottom 16 / right 12 / 40px），
+//     z-250 恒在卡组与面板之上；
 //   · 换入（v4④）：点前景卡放大回满幅 → setActiveTab 落位 → 旧 canvas ghost 缩回；
 //   · 划走（v2⑥/v4⑥/v5①）：作用于前景面（canvas 前景=拖面板，环卡前景=拖该卡），
 //     6px 点击界分 / 20% 区宽或 0.55px/ms 速度阈 / 13° 侧旋甩出 / spring 弹回；
@@ -1747,7 +1748,10 @@ function syncDeckBox() {
     deckLayer.style.height = r.height + 'px';
   }
   if (deckFab) {
-    deckFab.style.top = (r.top + 10) + 'px';
+    // 移位批（作者令 2026-10-22 ②）：fab 钉区顶右 → 右下角——top = 面板盒底
+    // −（40px 钮 + 16px 底缝），与 pane 底右圆钮簇（bottom:16）同排同中线；
+    // right 语义不变（12px 内缝）。CSS 缺省（bottom:16）与本次式同源。
+    deckFab.style.top = (r.top + r.height - 56) + 'px';
     deckFab.style.right = (window.innerWidth - r.right + 12) + 'px';
   }
 }
@@ -2172,15 +2176,21 @@ function deckPoseOf(d) {
              op, shade: Math.min(0.30, a * 0.12) };
   }
   /* uifix ③a：间距拉开档位（v1 收敛 / v2 均衡 / v3 拉开，deckPeekStep 同源）。
-     UI 批 ④：近卡放大/远卡缩小（缩放坡道两段）+ 视差 translateZ（透视后撤）
-     + 透明度渐变；d=0 → scale 1 / z 0（前景基姿与 .stacked 严丝合缝）。 */
+     UI 批 ④：近卡放大/远卡缩小（缩放坡道两段）+ 视差 translateZ（透视后撤）；
+     d=0 → scale 1 / z 0（前景基姿与 .stacked 严丝合缝）。
+     snapfix 批（作者令 2026-10-22 ③「堆叠快照不可见」）：透明度坡道重修——
+     修前 `1 − (dd−1.2)×0.30` 无底：d=3 → 0.54、d=4 → 0.16、深处趋 0，暗色
+     背景下深处卡直接沉底成「一片暗影」（作者截图：图谱面板后两层只余黑影）。
+     现改带底坡道：d≤1 恒 1，此后每层 −0.12、0.62 封底 ⇒ 1 → 0.88(d2) →
+     0.76(d3) → 0.64(d4+)，≥3 层逐层递暗有梯度、层层面容可辨（暗但不糊，
+     9.19 无边语言：层次仍靠明暗差 + shade 渐变，不靠消失）。 */
   const step = deckPeekStep();
   const dd = Math.max(0, d);
   const a1 = Math.min(dd, 1);
   const a2 = Math.max(0, Math.min(dd, 4.5) - 1);
   const y = DECK_SHIFT - (step.peek1 * a1 + step.peek2 * a2) * deck.sizeK;
   const tilt = -1.6 * Math.min(dd, 4) * deck.sizeK;
-  const op = dd <= 1.2 ? 1 : Math.max(0, 1 - (dd - 1.2) * 0.30);
+  const op = dd <= 1 ? 1 : Math.max(0.62, 1 - (dd - 1) * 0.12);
   return { y, z: -DECK_DEPTH_Z * Math.min(dd, 4.5) * deck.sizeK,
            tilt, scale: 1 - DECK_DEPTH_SCALE_NEAR * a1 - DECK_DEPTH_SCALE_FAR * a2,
            op, shade: Math.min(0.30, 0.11 * dd) };

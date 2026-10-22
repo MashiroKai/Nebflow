@@ -568,10 +568,10 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
   }
 
   addSourceToggle(pane, viewMarkdown, { content, absPath, fileName, readOnly: readOnly === true });
-  // Glass toggles — stacked with the source toggle (48px per slot):
-  // find at 64px, graph at 112px.
-  addFindToggle(pane, 64);
-  addGraphToggle(pane, absPath || '', 112);
+  // Glass toggles — stacked with the source toggle (48px per slot; 移位批
+  // 2026-10-22 簇 +48 给底右 deck fab 让位): find at 112px, graph at 160px.
+  addFindToggle(pane, 112);
+  addGraphToggle(pane, absPath || '', 160);
 }
 
 export default {
