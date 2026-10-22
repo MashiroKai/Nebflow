@@ -1,276 +1,235 @@
 #!/usr/bin/env python3
-"""check-logo-matrix.py -- anti-drift gate for the installer banner logo matrix.
+"""check-logo-matrix.py -- anti-drift gate for the installer banner artwork.
 
-Single source of truth: the pixil design file's embedded layer PNG
-(.nebflow/uploads/bright-4.pixil, canvas declared 6x5; its layer content is
-the 4x3 mark below -- canvas row 0/4 and col 0/5 are transparent padding,
-NOT rendered: zero phantom rows/columns, author ruling 2026-09-06 v2).
-
-Cross-validation on record (scripts run 2026-09-06, pixel-exact):
-  - dark.png / bright.png   ink = exact 4x3 grid of 48px cells, origin (16,40)
-  - dark-4.png / bright-4.png ink = exact 4x3 grid of 56px cells, origin (0,28)
-  - all four agree with the pixil content shape cell-for-cell.
+Single source of truth (official-logo batch, author mandate 2026-10-22): the
+Illustrator-kit vector assets vendored at
+  src/main/resources/web/brand/stand/illustrator/svg/
+(byte-identical to the website's public/brand/stand/ set -- the sha256-verified
+publication of the 2026-10-19 official-logo batch). The banner art is the
+stand-horizontal lockup (symbol + wordmark), auto-sampled by
+scripts/render-install-banner.py into a 1-bit half-block payload
+(BANNER_ART / $BannerArt) plus the two ink variants' true fill values
+(BANNER_INK_DARK / BANNER_INK_LIGHT). The retired 2026-10-20 4x3 green-pixel
+"S" mask (pixil-era BANNER_MASK / $BannerMask, design/stand-mark.pixil) is
+GONE from the installers; this gate fails if any of it ever comes back.
 
 The gate:
-  1. derives the truth matrix from the pixil artifact when present
-     (stdlib-only PNG decode: base64 -> zlib -> unfilter) and asserts it
-     equals the embedded TRUTH constant;
-  2. parses BANNER_MASK out of release/install.sh and $BannerMask out of
-     release/install.ps1 and asserts both equal TRUTH;
-  3. asserts scripts/preview-brand-ui.sh defines NO mask of its own (it
-     must extract the BRAND-UI block from install.sh -> single source);
-  4. with PIL available, re-derives the shape from the four PNG exports
-     and asserts agreement (skipped gracefully when PIL/files absent).
+  1. (stdlib) parses the embedded payloads out of BOTH release/install.sh
+     and release/install.ps1 and asserts the art + ink constants equal the
+     TRUTH constants below and ALL SEVEN payloads (art, 2 inks, 2 base64
+     PNGs, 2 sixel bodies) are byte-identical across the two installers -
+     installer-vs-installer drift is caught with zero dependencies;
+  2. (stdlib) asserts the ink constants match the actual `fill="#..."` values
+     in the black-ink / white-ink kit SVGs (the "official true color" rule);
+  3. (stdlib) asserts no retired pixil-era face (BANNER_MASK / $BannerMask /
+     _px / Write-LogoPixel / design/stand-mark.pixil TRUTH) reappears in the
+     installers;
+  4. (needs rsvg-convert + PIL, skipped gracefully when absent) re-derives
+     ALL payloads from the kit SVGs via scripts/render-install-banner.py and
+     asserts they equal both installers' embedded sets - catches the
+     constants and the sampler drifting together;
+  5. (stdlib) asserts scripts/preview-brand-ui.sh still extracts the
+     BRAND-UI block from install.sh and defines NO art payload of its own
+     (single-source chain).
 
-Exit 0 = all green, 1 = drift detected (prints per-cell diff).
+Exit 0 = all green, 1 = drift detected (prints what moved), 2 = missing file.
 """
-import base64
-import json
 import os
 import re
-import struct
+import subprocess
 import sys
-import zlib
-
-# ---------------------------------------------------------------------------
-# TRUTH -- embedded constant, kept byte-identical to the pixil layer content.
-# Update ONLY together with the pixil source, never by hand-editing here.
-# 2026-10-20 rebrand: mark is the STAND "S" symbol (7-seg S, 4-col grid,
-# green accent pixel top-left; stand-symbol.svg is the vector source of
-# record). The pixil layer for the retired N mark has no S successor yet -
-# the pixil re-derivation leg stays a skip until that design source exists.
-# ---------------------------------------------------------------------------
-TRUTH = ["GWWW", "W...", "WWWW", "...W", "WWWW"]
-
-GREEN_RGB = {(7, 193, 96), (76, 175, 80)}  # #07C160 (exports) / #4CAF50 (pixil)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INSTALL_SH = os.path.join(ROOT, "release", "install.sh")
 INSTALL_PS1 = os.path.join(ROOT, "release", "install.ps1")
 PREVIEW_SH = os.path.join(ROOT, "scripts", "preview-brand-ui.sh")
-LOGO_DIR = os.path.expanduser(
-    "~/.nebflow/docs/Nebflow/assets/logo")
+SVG_DIR = os.path.join(
+    ROOT, "src", "main", "resources", "web", "brand", "stand", "illustrator", "svg")
+SAMPLER = os.path.join(ROOT, "scripts", "render-install-banner.py")
+
+BLACK_SVG = os.path.join(SVG_DIR, "stand-horizontal-black.svg")
+WHITE_SVG = os.path.join(SVG_DIR, "stand-horizontal-white.svg")
+
+# ---------------------------------------------------------------------------
+# TRUTH -- embedded constants, regenerated ONLY via
+#   python3 scripts/render-install-banner.py --update
+# never by hand. Keep byte-identical to the installers' BANNER-ART blocks.
+# ---------------------------------------------------------------------------
+TRUTH_ART = ("15.5n52.;9.3n5#2u53.;5.2n4#3u11.7n2.8n3.2n5.1n6.2n1.8n2.;"
+             "2.1n5#1u15.2#5u2.3u2#3u2.1n3#1n4.3#1n3.2#1.2#5u2#1.;"
+             "2.5#3.3u4#2n5.6u2#1n3.2#4.2#1u2.2#1n2.2#2u1#2n2#1.2#5.2#1.;"
+             "3.7u3.1n5#4.2n7#1u3.2#2.1n1#1u5.1u1#1n1.2#3.1u3#1.8#1u1.;"
+             "9.2n5#2u54.;3.2n6#3u58.;2.5u65.")
+TRUTH_INK_DARK = "255;255;255"   # white-ink kit variant (dark terminals)
+TRUTH_INK_LIGHT = "0;0;0"        # black-ink kit variant (light terminals)
+
+RETIRED_FACES = ("BANNER_MASK", "BannerMask", "Write-LogoPixel")
+
+# Logical payload keys, in sh-name / ps1-name order (both installers MUST
+# agree byte-for-byte on every one - the dual-path batch invariant).
+PAYLOAD_KEYS = ("art", "ink_dark", "ink_light",
+                "png_dark", "png_light", "sixel_dark", "sixel_light")
 
 
-def find_pixil():
-    """Locate the design source of record. 2026-10-20 rebrand: the mark is the
-    STAND "S" symbol - repo-local design/stand-mark.pixil is versioned with
-    the code and wins. Falls back to the legacy bright-4.pixil chain (repo
-    .nebflow/uploads, then parent dirs) only for pre-S checkouts."""
-    cand = os.path.join(ROOT, "design", "stand-mark.pixil")
-    if os.path.exists(cand):
-        return cand
-    d = ROOT
-    while True:
-        cand = os.path.join(d, ".nebflow", "uploads", "bright-4.pixil")
-        if os.path.exists(cand):
-            return cand
-        parent = os.path.dirname(d)
-        if parent == d:
-            return None
-        d = parent
+def read(path, bom=False):
+    with open(path, "r", encoding="utf-8-sig" if bom else "utf-8") as f:
+        return f.read()
 
 
-PIXIL = find_pixil()
+def parse_sh(text):
+    def val(name):
+        m = re.search(rf'^{name}=(["\'])(.*?)\1', text, re.M)
+        return m.group(2) if m else None
+    return {k: val(n) for k, n in zip(
+        PAYLOAD_KEYS,
+        ("BANNER_ART", "BANNER_INK_DARK", "BANNER_INK_LIGHT",
+         "BANNER_PNG_DARK", "BANNER_PNG_LIGHT",
+         "BANNER_SIXEL_DARK", "BANNER_SIXEL_LIGHT"))}
 
 
-# --- minimal stdlib PNG decode (enough for small 8-bit RGBA images) --------
-def _paeth(a, b, c):
-    p = a + b - c
-    pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
-    if pa <= pb and pa <= pc:
-        return a
-    return b if pb <= pc else c
+def parse_ps1(text):
+    def val(name):
+        m = re.search(rf'^\${name} = (["\'])(.*?)\1', text, re.M)
+        return m.group(2) if m else None
+    return {k: val(n) for k, n in zip(
+        PAYLOAD_KEYS,
+        ("BannerArt", "BannerInkDark", "BannerInkLight",
+         "BannerPngDark", "BannerPngLight",
+         "BannerSixelDark", "BannerSixelLight"))}
 
 
-def decode_png_rgba(data):
-    """Decode an 8-bit non-interlaced RGBA or RGB PNG to (width, height, pixels)."""
-    if data[:8] != b"\x89PNG\r\n\x1a\n":
-        raise ValueError("not a PNG")
-    pos, idat, meta = 8, b"", None
-    while pos + 8 <= len(data):
-        (length,) = struct.unpack(">I", data[pos:pos + 4])
-        ctype = data[pos + 4:pos + 8]
-        body = data[pos + 8:pos + 8 + length]
-        if ctype == b"IHDR":
-            w, h, depth, color = struct.unpack(">IIBB", body[:10])
-            meta = (w, h, depth, color)
-        elif ctype == b"IDAT":
-            idat += body
-        elif ctype == b"IEND":
-            break
-        pos += 12 + length
-    w, h, depth, color = meta
-    if depth != 8 or color not in (2, 6):
-        raise ValueError(f"unsupported PNG: depth={depth} colortype={color}")
-    bpp = 4 if color == 6 else 3
-    raw = zlib.decompress(idat)
-    stride = w * bpp
-    out = bytearray()
-    prev = bytearray(stride)
-    i = 0
-    for _ in range(h):
-        f = raw[i]
-        i += 1
-        line = bytearray(raw[i:i + stride])
-        i += stride
-        if f == 1:
-            for x in range(bpp, stride):
-                line[x] = (line[x] + line[x - bpp]) & 0xFF
-        elif f == 2:
-            for x in range(stride):
-                line[x] = (line[x] + prev[x]) & 0xFF
-        elif f == 3:
-            for x in range(stride):
-                left = line[x - bpp] if x >= bpp else 0
-                line[x] = (line[x] + ((left + prev[x]) >> 1)) & 0xFF
-        elif f == 4:
-            for x in range(stride):
-                left = line[x - bpp] if x >= bpp else 0
-                ul = prev[x - bpp] if x >= bpp else 0
-                line[x] = (line[x] + _paeth(left, prev[x], ul)) & 0xFF
-        elif f != 0:
-            raise ValueError(f"bad filter {f}")
-        out += line
-        prev = line
-    px = []
-    for y in range(h):
-        row = []
-        for x in range(w):
-            o = (y * w + x) * bpp
-            row.append(tuple(out[o:o + 3]) + ((out[o + 3],) if bpp == 4 else (255,)))
-        px.append(row)
-    return w, h, px
-
-
-def classify(r, g, b, a):
-    if a == 0:
-        return "."
-    if (r, g, b) in GREEN_RGB:
-        return "G"
-    return "W"
-
-
-def truth_from_pixil(path):
-    """Derive the truth matrix from the pixil JSON's embedded layer PNG."""
-    with open(path, "rb") as f:
-        doc = json.loads(f.read())
-    w, h = doc["width"], doc["height"]
-    src = doc["frames"][0]["layers"][0]["src"]
-    # scheme string is corrupted in the wild; payload after the first comma
-    # is an intact base64 PNG (iVBORw0KGgo...).
-    png = base64.b64decode(src[src.find(",") + 1:])
-    lw, lh, px = decode_png_rgba(png)
-    if (lw, lh) != (w, h):
-        raise ValueError(f"layer size {lw}x{lh} != declared canvas {w}x{h}")
-    grid = ["".join(classify(*px[y][x]) for x in range(w)) for y in range(h)]
-    # crop transparent border rows/cols -> the content mark, zero padding
-    rows = [r for r in grid if r.strip(".")]
-    if not rows:
-        raise ValueError("pixil layer is empty")
-    cols = [i for i in range(w) if any(r[i] != "." for r in grid)]
-    return [r[min(cols):max(cols) + 1] for r in rows], grid
-
-
-# --- mask extraction from the three files ----------------------------------
-def parse_bash_mask(text):
-    # 2026-09 scalar refactor: the mask lives in plain scalars
-    # BANNER_MASK_0..N (dash has no `NAME=(` arrays), not one array literal.
-    rows = re.findall(r'^BANNER_MASK_\d+="([GW.]+)"\s*$', text, re.M)
-    if not rows:
-        raise ValueError("BANNER_MASK_0..N scalars not found in install.sh")
-    return rows
-
-
-def parse_ps1_mask(text):
-    m = re.search(r"\$BannerMask = @\(\n((?:\s*\"[^\"]*\",?\n)+)\s*\)", text)
+def svg_fill(path):
+    m = re.search(r'fill="#([0-9A-Fa-f]{6})"', read(path))
     if not m:
-        raise ValueError("$BannerMask = @( ... ) not found in install.ps1")
-    return re.findall(r"\"([^\"]*)\"", m.group(1))
-
-
-def diff(got, want):
-    lines = []
-    for r in range(max(len(got), len(want))):
-        g = got[r] if r < len(got) else "<missing row>"
-        w = want[r] if r < len(want) else "<missing row>"
-        if g == w:
-            lines.append(f"    row{r}: '{g}'  ok")
-            continue
-        lines.append(f"    row{r}: got '{g}'  want '{w}'")
-        for c in range(max(len(g), len(w))):
-            gc = g[c] if c < len(g) else "<none>"
-            wc = w[c] if c < len(w) else "<none>"
-            if gc != wc:
-                lines.append(f"      (row{r},col{c}): got '{gc}' want '{wc}'")
-    return lines
+        return None
+    v = m.group(1)
+    return "%d;%d;%d" % (int(v[0:2], 16), int(v[2:4], 16), int(v[4:6], 16))
 
 
 def main():
+    if not all(os.path.exists(p) for p in (INSTALL_SH, INSTALL_PS1, PREVIEW_SH)):
+        print("gate input file missing", file=sys.stderr)
+        return 2
     failures = []
 
-    # 1. pixil artifact -> truth (when present)
-    if PIXIL:
-        try:
-            derived, grid6x5 = truth_from_pixil(PIXIL)
-            print(f"[pixil] {os.path.relpath(PIXIL, ROOT)} canvas 6x5 verbatim:")
-            for r in grid6x5:
-                print(f"    {r.replace('.', chr(0xB7)).replace('W', chr(0x2588)).replace('G', 'G')}")
-            print(f"[pixil] content mark: {derived}")
-            if derived != TRUTH:
-                failures.append("[pixil] derived content != embedded TRUTH:\n" +
-                                "\n".join(diff(derived, TRUTH)))
-            else:
-                print("[pixil] derived == TRUTH  [OK]")
-        except Exception as e:  # noqa: BLE001 - gate must report, not crash
-            failures.append(f"[pixil] decode failed: {e}")
-    else:
-        print(f"[pixil] artifact not found ({PIXIL}) - skipping re-derivation, "
-              "TRUTH constant used as-is")
-
-    # 2. installers
-    for label, path, parser in (
-            ("install.sh", INSTALL_SH, parse_bash_mask),
-            ("install.ps1", INSTALL_PS1, parse_ps1_mask)):
-        with open(path, "r", encoding="utf-8-sig" if label.endswith(".ps1") else "utf-8") as f:
-            mask = parser(f.read())
-        if mask is None:
-            print(f"[{label}] renders no banner (no mask face) - skipping  [SKIP]")
-        elif mask == TRUTH:
-            print(f"[{label}] mask == TRUTH  [OK]  {mask}")
+    # ---- leg 1: both installers == TRUTH (stdlib) --------------------------
+    embedded = {}
+    for label, path, parser in (("install.sh", INSTALL_SH, parse_sh),
+                                ("install.ps1", INSTALL_PS1, parse_ps1)):
+        got = parser(read(path, bom=(label == "install.ps1")))
+        embedded[label] = got
+        problems = []
+        if got["art"] is None or got["ink_dark"] is None or got["ink_light"] is None:
+            problems.append("art/ink constants unparsable")
+        elif (got["art"], got["ink_dark"], got["ink_light"]) != \
+                (TRUTH_ART, TRUTH_INK_DARK, TRUTH_INK_LIGHT):
+            problems.append("art/ink drift vs TRUTH")
+        for k in ("png_dark", "png_light", "sixel_dark", "sixel_light"):
+            if got[k] is None:
+                problems.append(f"{k} unparsable")
+        if problems:
+            failures.append(f"[{label}] {'; '.join(problems)}:\n"
+                            f"    -> regenerate: python3 scripts/render-install-banner.py --update")
         else:
-            failures.append(f"[{label}] mask drift:\n" + "\n".join(diff(mask, TRUTH)))
+            print(f"[{label}] art/inks == TRUTH, image payloads parse  [OK]")
+    # cross-installer byte-identity: every payload the dual-path batch ships
+    # must be the SAME bytes in sh and ps1 (independent of the sampler).
+    if all(embedded[l][k] is not None for l in embedded for k in PAYLOAD_KEYS):
+        drifted = [k for k in PAYLOAD_KEYS
+                   if embedded["install.sh"][k] != embedded["install.ps1"][k]]
+        if drifted:
+            failures.append(f"[cross] sh vs ps1 payload drift: {drifted}")
+        else:
+            print("[cross] all 7 payloads byte-identical sh == ps1  [OK]")
 
-    # 3. preview-brand-ui.sh must not carry its own matrix
-    with open(PREVIEW_SH, "r", encoding="utf-8") as f:
-        prev = f.read()
+    # ---- leg 2: ink constants == kit SVG fills (stdlib) --------------------
+    try:
+        black_fill, white_fill = svg_fill(BLACK_SVG), svg_fill(WHITE_SVG)
+    except OSError as e:
+        black_fill = white_fill = None
+        failures.append(f"[svg] kit SVG unreadable: {e}")
+    if black_fill != TRUTH_INK_LIGHT:
+        failures.append(f"[svg] black-ink fill {black_fill!r} != "
+                        f"BANNER_INK_LIGHT {TRUTH_INK_LIGHT!r}")
+    else:
+        print(f"[svg] black-ink fill == BANNER_INK_LIGHT ({TRUTH_INK_LIGHT})  [OK]")
+    if white_fill != TRUTH_INK_DARK:
+        failures.append(f"[svg] white-ink fill {white_fill!r} != "
+                        f"BANNER_INK_DARK {TRUTH_INK_DARK!r}")
+    else:
+        print(f"[svg] white-ink fill == BANNER_INK_DARK ({TRUTH_INK_DARK})  [OK]")
+
+    # ---- leg 3: retired pixil-era faces stay retired -----------------------
+    for label, path, bom in (("install.sh", INSTALL_SH, False),
+                             ("install.ps1", INSTALL_PS1, True)):
+        text = read(path, bom=bom)
+        back = [face for face in RETIRED_FACES if face in text]
+        if back:
+            failures.append(f"[{label}] retired pixil-era face(s) reappeared: {back}")
+        else:
+            print(f"[{label}] no retired mask face  [OK]")
+    if os.path.exists(os.path.join(ROOT, "design", "stand-mark.pixil")):
+        print("[pixil] design/stand-mark.pixil still present but unreferenced "
+              "- the vector pipeline is the logo truth (informational)")
+
+    # ---- leg 4: re-derive from the kit SVGs (needs rsvg-convert + PIL) -----
+    try:
+        proc = subprocess.run(
+            [sys.executable, SAMPLER, "--svgdir", SVG_DIR],
+            capture_output=True, text=True, timeout=120)
+    except FileNotFoundError:
+        proc = None
+    if proc is None:
+        print("[regen] python unavailable - skipped")
+    elif proc.returncode != 0:
+        # rsvg-convert missing -> the sampler exits 2 with a clear message;
+        # degrade to a skip (the same policy as the retired pixil leg), never
+        # a false red.
+        if "rsvg-convert" in proc.stderr:
+            print("[regen] rsvg-convert not available - re-derivation skipped")
+        else:
+            failures.append(f"[regen] sampler failed: {proc.stderr.strip()}")
+    else:
+        # parse the regenerated set out of the sampler's printed sh block
+        # (quote-flexible: png/base64 double-quoted, sixel bodies single-)
+        def sampler_val(name):
+            m = re.search(rf'^{name}=(["\'])(.*?)\1', proc.stdout, re.M)
+            return m.group(2) if m else None
+        regen = {k: sampler_val(n) for k, n in zip(
+            PAYLOAD_KEYS,
+            ("BANNER_ART", "BANNER_INK_DARK", "BANNER_INK_LIGHT",
+             "BANNER_PNG_DARK", "BANNER_PNG_LIGHT",
+             "BANNER_SIXEL_DARK", "BANNER_SIXEL_LIGHT"))}
+        missing = [k for k, v in regen.items() if v is None]
+        if missing:
+            failures.append(f"[regen] sampler produced no {missing}")
+        else:
+            bad = []
+            if (regen["art"], regen["ink_dark"], regen["ink_light"]) != \
+                    (TRUTH_ART, TRUTH_INK_DARK, TRUTH_INK_LIGHT):
+                bad.append("art/inks vs TRUTH")
+            for label in embedded:
+                bad += [f"{label}:{k}" for k in PAYLOAD_KEYS
+                        if embedded[label][k] != regen[k]]
+            if bad:
+                failures.append("[regen] drift: " + ", ".join(bad) +
+                                " (rerun 'python3 scripts/render-install-banner.py"
+                                " --update' and review the diff)")
+            else:
+                print("[regen] all 7 payloads re-derived from kit SVGs == TRUTH == both installers  [OK]")
+
+    # ---- leg 5: preview script single-source -------------------------------
+    prev = read(PREVIEW_SH)
     if "BRAND-UI-BEGIN" not in prev:
         failures.append("[preview-brand-ui.sh] does not extract the BRAND-UI block "
                         "from install.sh (single-source chain broken)")
     else:
         print("[preview-brand-ui.sh] extracts BRAND-UI block from install.sh  [OK]")
-    embedded = re.findall(r"[\"']([GW.]{3,})[\"']", prev)
-    if embedded:
-        failures.append(f"[preview-brand-ui.sh] embeds its own mask literal(s): {embedded}")
+    if re.search(r'BANNER_ART\s*=', prev):
+        failures.append("[preview-brand-ui.sh] embeds its own banner payload - "
+                        "it must source the BRAND-UI block only")
     else:
-        print("[preview-brand-ui.sh] no independent mask literal  [OK]")
-
-    # 4. home-dir PNG cross-check - RETIRED 2026-10-20 (S rebrand)
-    # The leg compared pixil-era pixel-art logo PNGs (hardcoded 4x3 grid
-    # geometry) against TRUTH. Two structural breaks: (a) those assets live in
-    # the runtime home (~/.nebflow/...), out of rename-batch scope; (b) the
-    # brand's logo truth moved to the vector pipeline (brand.conf activeLogo +
-    # logos.json, stand-illustrator source) - the pixel mark now lives ONLY in
-    # the installer banners, fully governed by legs 1-2 above
-    # (design/stand-mark.pixil -> TRUTH -> install.sh/install.ps1 masks).
-    try:
-        from PIL import Image  # noqa: PLC0415 - optional dependency (kept for
-        # any future home-asset leg; unused until then)
-        del Image
-        print("[png] pixil-era home-asset leg retired (vector pipeline is the "
-              "logo truth) - skipped")
-    except ImportError:
-        print("[png] PIL unavailable - cross-check skipped")
+        print("[preview-brand-ui.sh] no independent payload literal  [OK]")
 
     if failures:
         print("\n== LOGO MATRIX GATE: FAIL ==")

@@ -10,9 +10,11 @@ set -e
 #                  [6/6] done.
 # Idempotent     : safe to re-run; installed/satisfied deps are detected
 #                  and skipped.
-# Flags          : --beta | --channel=beta | --cn | --global | --verbose
+# Flags          : --beta | --channel=beta | --cn | --global | --verbose |
+#                  --banner-only (dry: print the brand banner and exit)
 #                  (curl|bash pipe: env CHANNEL=beta / REGION=cn /
-#                  NEBFLOW_VERBOSE=1)
+#                  NEBFLOW_VERBOSE=1 / NEBFLOW_BANNER_IMAGE=off|osc|sixel /
+#                  NEBFLOW_BANNER_THEME=dark|light / NEBFLOW_UI_LEVEL=0..3)
 # Exit codes     : 0 ok | 10 version resolve | 11 java install |
 #                  12 jar download | 13 no curl/wget
 # ---------------------------------------------------------------
@@ -83,6 +85,7 @@ for arg in "$@"; do
         --cn) REGION="cn" ;;
         --global) REGION="global" ;;
         --verbose) VERBOSE=1 ;;
+        --banner-only) BANNER_ONLY=1 ;;
     esac
 done
 
@@ -137,48 +140,79 @@ resolve_version() {
 STAND_BASE="${STAND_HOME:-${HOME}/${HOME_DIR}}"
 INSTALL_DIR="${INSTALL_DIR:-${STAND_BASE}/bin}"
 
-# >>> BRAND-UI-BEGIN (batch 4 redesign: pixel logo + progress bar) >>>
-# Brand banner: the Nebflow pixel logo rendered as terminal color blocks.
-# The matrix is the AUTHORITATIVE logo grid taken from the pixil design
-# source (.nebflow/uploads/bright-4.pixil: canvas declared 6x5, layer
-# content = the 4x3 mark below - canvas row 0/4 and col 0/5 are
-# transparent padding and are NOT rendered: zero phantom rows/columns,
-# author ruling 2026-09-06 v2 "ratio reshape"). Cross-checked against the
-# PNG exports: dark/bright.png ink sits on an exact 4x3 grid of 48px
-# cells (origin 16,40 inside the 224x224 canvas), dark-4/bright-4.png on
-# an exact 4x3 grid of 56px cells (origin 0,28) - identical shape. The
-# old 7x7 mask was a distorted 32px-lattice sampling of that 4x3 mark
-# (square frame + phantom padding = the aspect mismatch). Embedded as
-# constant data: zero image files, zero python, zero network at runtime.
-# scripts/check-logo-matrix.py asserts mask == pixil truth (anti-drift).
-# G = brand green #07C160, W = white (dark terminals) or black (light
-# terminals). No ASCII-art/figlet wordmark: the logo blocks carry the
-# brand, the wordmark is plain lowercase text.
+# >>> BRAND-UI-BEGIN (official-logo banner: stand-horizontal lockup + progress bar) >>>
+# Brand banner: the OFFICIAL stand-horizontal lockup (symbol + wordmark, the
+# composition the website navbar renders) reproduced in the terminal. DUAL
+# PATH (2026-10-22 image-protocol batch), same official payloads on both:
 #
-# Color degrade chain: truecolor (3) -> xterm-256 (2) -> 8-color (1) ->
-# mono # mask (0), every level keeps the shape intact. Width discipline
-# (author ruling 2026-09-06): ONE pixel = TWO character cells at every
-# level - a terminal glyph is ~2x taller than wide, so each pixel spans
-# 2 columns and the logo keeps its source aspect (4:3). Mono renders "##"
-# per pixel, color levels render a 2-column background block, empty
-# pixels are 2 plain spaces; adjacent solid pixels touch with no gap
-# (e.g. mask row "G.WW" -> "##  ####", 8 columns per logo row).
-#   guards: NO_COLOR / CI / non-TTY / TERM=dumb -> mono (plain text)
+#   image path  - the REAL logo raster when the terminal speaks an inline-
+#                 image protocol: OSC 1337 (iTerm2 / WezTerm / mintty /
+#                 Konsole >= 22.04) via BANNER_PNG_DARK/LIGHT (base64 PNG,
+#                 width/height declared in CELLS pins it onto the art grid),
+#                 or SIXEL (Windows Terminal >= 1.22 via WT_SESSION, foot,
+#                 xterm) via BANNER_SIXEL_DARK/LIGHT (pre-encoded body, DCS/
+#                 ST framing added at runtime - pure printable ASCII in the
+#                 file). P2=1 keeps unpainted pixels transparent.
+#   art fallback - U+2580/U+2584/U+2588 half-block glyphs driven by
+#                 BANNER_ART (auto-sampled from the authoritative
+#                 Illustrator-kit SVGs by scripts/render-install-banner.py -
+#                 rasterize -> alpha-coverage threshold -> half-block cells ->
+#                 RLE; no hand-drawn approximation, author mandate
+#                 2026-10-22: the retired 4x3 green-pixel "S" mask did not
+#                 match the brand - no green remains; the kit is pure
+#                 monochrome ink). Old conhost / dumb pipes / every terminal
+#                 without an image protocol render this path.
+#
+# BANNER_ART is a 1-bit coverage grid of the lockup, run-length encoded as
+# <count><cell> tokens with rows joined ';'. Cell codes: '.' empty, 'u' ink
+# upper half, 'n' ink lower half, '#' ink full cell. Ink is painted with the
+# FOREGROUND color so the terminal's own background shows through - the art
+# keeps the kit's transparency on every terminal. BANNER_INK_DARK/LIGHT are
+# the two kit variants' true fill values (24-bit truecolor): white-ink variant
+# on dark terminals, black-ink variant on light terminals.
+# Anti-drift: scripts/check-logo-matrix.py re-derives ALL embedded payloads
+# from the SVGs and asserts both installers embed them byte-identically.
+#
+# Degrade chain (art path): truecolor fg (3) -> xterm-256 fg (2) -> 16-color
+# fg (1) -> mono # mask (0), every level keeps the shape. The half-block
+# glyphs are UTF-8 (U+2580/84/88): without a UTF-8 locale the banner degrades
+# to mono, the same rule the progress bar's eighth-blocks follow.
+# Width discipline: 72 cells + 2-space indent = 74 columns, inside the
+# 80-column terminal floor. The grid is 72 columns x 9 half-block rows (each
+# cell carries two pixel rows), physically 4:1 - a terminal cell is ~2x taller
+# than wide - which reproduces the lockup's 4.007:1 aspect. The image payloads
+# target the same footprint (OSC 1337 declares 72x9 CELLS; the sixel canvas
+# is 576x~144 px = 72x9 cells at an ~8x16 cell raster).
+#   guards: NO_COLOR / CI / non-TTY / TERM=dumb -> art path, mono (plain text)
+#   image : NEBFLOW_BANNER_IMAGE=off -> force art; =osc|sixel -> force that
+#           protocol (testing; bypasses every guard); unset -> auto-detect.
+#           Auto honors the same guards as the color levels - a redirected
+#           pipe never swallows sixel/OSC bytes.
 #   theme : NEBFLOW_BANNER_THEME=dark|light overrides; else COLORFGBG's
 #           background field (>=7 means a light background); default dark
 #   level : NEBFLOW_UI_LEVEL=0..3 forces a level (preview/testing)
+#   dry   : --banner-only / NEBFLOW_BANNER_ONLY=1 prints the banner and exits
+#           (renders with VERSION=${VERSION:-dev}; zero network, zero install
+#           side effects - the render-function-standalone testability rule)
 
-# POSIX: indexed arrays are a bash extension (dash rejects the `NAME=(` form),
-# so the five mask rows below are plain scalars in the same order; the row is
-# selected from BANNER_MASK_0..4 in print_banner. Same grid, zero data change.
-# 2026-10-20 rebrand: the mark is the STAND "S" symbol (7-seg S in the 4-col
-# grid; stand-symbol.svg is the vector source of record) - green accent pixel
-# stays at the top-left corner of the mark.
-BANNER_MASK_0="GWWW"
-BANNER_MASK_1="W..."
-BANNER_MASK_2="WWWW"
-BANNER_MASK_3="...W"
-BANNER_MASK_4="WWWW"
+# >>> BANNER-ART-BEGIN (generated by scripts/render-install-banner.py -- do not hand-edit) >>>
+# Official stand-horizontal lockup (symbol + wordmark), auto-sampled
+# from src/main/resources/web/brand/stand/illustrator/svg/ by
+# scripts/render-install-banner.py (1-bit coverage, RLE cells:
+# '.' empty | 'u' ▀ top | 'n' ▄ bottom | '#' █ full; rows joined ';').
+BANNER_ART="15.5n52.;9.3n5#2u53.;5.2n4#3u11.7n2.8n3.2n5.1n6.2n1.8n2.;2.1n5#1u15.2#5u2.3u2#3u2.1n3#1n4.3#1n3.2#1.2#5u2#1.;2.5#3.3u4#2n5.6u2#1n3.2#4.2#1u2.2#1n2.2#2u1#2n2#1.2#5.2#1.;3.7u3.1n5#4.2n7#1u3.2#2.1n1#1u5.1u1#1n1.2#3.1u3#1.8#1u1.;9.2n5#2u54.;3.2n6#3u58.;2.5u65."
+BANNER_INK_DARK="255;255;255"    # white-ink kit variant (dark terminals)
+BANNER_INK_LIGHT="0;0;0"      # black-ink kit variant (light terminals)
+# image path payloads (iTerm2/WezTerm/mintty/konsole OSC 1337 + sixel:
+# Windows Terminal 1.22+/foot/...; old conhost never sees them - the
+# block art above is its fallback). Single-quoted: the sixel charset
+# (0x3F-0x7E) can never hold a quote, the DCS/ST framing is added at
+# runtime so this file stays pure printable ASCII.
+BANNER_PNG_DARK="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"
+BANNER_PNG_LIGHT="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"
+BANNER_SIXEL_DARK='"1;1;576;144#1;2;100;100;100-!576?-!126?!5_!5o!5w!7{!11}~~~^NNFB@!408?-!104?___ooo!4w!4{!4}!33~^NFBB@!415?-!85?___ooowww{{{!4}!44~^^^NFFB@!423?-!70?__oooww{{{}}}!43~^^^NNN!4FBBB@@@!434?-!56?___ooww{{}}!42~^^^NNNFFFBBB@@!453?-!45?_ooww{{}}!40~^^NNNFFBBB@@!470?-!35?_oow{{}}!38~^^NNFFBB@@@!104?_oowww!55{[KC!5?_ow!66{[KC!19?_o!16{o_!39?!13{wo__!42?!13{!5?CK!65{wwoo_!12?-!27?_ow{{}!37~^^NFFBB@@!112?_o{}!54~^NNFB@!5?_ow{}!63~^NFB@!18?_ow}!22~{w_!35?!18~}{{wo_!35?!13~!8?@BF!67~}wo!8?-!20?_ow{}!37~^NFBB@!122?w!14~NBB!40@!11?!31@B!13~!23@!19?_ow}!13~^NFN!14~}wo_!30?!26~}{woo_!27?!13~!11?!14~!36@BBBFN^!15~{!6?-!16?_o{}!36~^FB@!27?!5_!5o!25w!4o!5_!59?N!14~}{w!43o__!38?!13~!37?_ow{!14~NFB@!5?@BN^!13~}{w_!26?!13~BFNN^!15~}}{wo__!19?!13~!11?!14~!43?!15~!6?-!15?{!37~^B!18?_ooWW[[[]]M!10N!7^!34~}}{{{wwo__!46?@FN^!60~}{w_!32?!13~!33?ow{}!13~^NB@!15?BFN!14~{wo!22?!13~!6?@@BFNN^!15~}{wwo_!12?!13~!11?!14~!43?!15~!6?-!15?N!37~{_!49?@@BFFN!36~}{wo!46?@BBB!42FNN^!14~}!31?!13~!28?ow{}!13~^NF@!24?@BN^!13~}{o_!17?!13~!14?@@BFNN^!15~}{woo_!4?!13~!11?!14~!43?!15~!6?-!17?@BNN^!34~}}{wwwooo!6_!12?!7_oOO!18?v!39~w!91?_o!15~!31?!13~!23?_w{}!13~^NFB!34?BFN!13~}{w_!13?!13~!22?@@BFNN^!14~}{{!13~!11?!14~!38?__ow}!14~^!6?-!24?@BBBFFNNN!5^!35~!4^!4NFFFBBB@@!18?_ow}!38~^N!40?__ow{{}!59~^NB!31?!12~^!18?_o{}!14~NFB@!42?@BN^!13~}wo_!8?!13~!30?@@BFNN^!22~!11?!67~^NF@!7?-!43?!23@!33?__oow{}!39~^NF@!34?_oow{}}!58~^^^NNFB@@!34?!5~^NNFB@!15?ow{}!14~^FB@!52?BFN^!12~}{o_!4?!13~!38?@BBFN^^!14~!11?^!56~^^^NNFBB@!12?-!88?__ooww{{}!41~^NFFB@!147?NFB@!281?-!72?___oooww{{{}}!43~^NNFFBB@!440?-!53?!4_ooowww{{{}}}!46~^^NNFFBB@@@!450?-!33?___!4owww!4{}}}!49~^^^NNFFFBBB@@!464?-!21?_oww{}}}!50~^^^!4NFFFBBB@@@!481?-!13?__ow{}}!35~!4^!4N!4F!5B@@@!501?-!7?oow{}~~!12^!7N!7F!5B!5@!526?-!576?'
+BANNER_SIXEL_LIGHT='"1;1;576;144#1;2;0;0;0-!576?-!126?!5_!5o!5w!7{!11}~~~^NNFB@!408?-!104?___ooo!4w!4{!4}!33~^NFBB@!415?-!85?___ooowww{{{!4}!44~^^^NFFB@!423?-!70?__oooww{{{}}}!43~^^^NNN!4FBBB@@@!434?-!56?___ooww{{}}!42~^^^NNNFFFBBB@@!453?-!45?_ooww{{}}!40~^^NNNFFBBB@@!470?-!35?_oow{{}}!38~^^NNFFBB@@@!104?_oowww!55{[KC!5?_ow!66{[KC!19?_o!16{o_!39?!13{wo__!42?!13{!5?CK!65{wwoo_!12?-!27?_ow{{}!37~^^NFFBB@@!112?_o{}!54~^NNFB@!5?_ow{}!63~^NFB@!18?_ow}!22~{w_!35?!18~}{{wo_!35?!13~!8?@BF!67~}wo!8?-!20?_ow{}!37~^NFBB@!122?w!14~NBB!40@!11?!31@B!13~!23@!19?_ow}!13~^NFN!14~}wo_!30?!26~}{woo_!27?!13~!11?!14~!36@BBBFN^!15~{!6?-!16?_o{}!36~^FB@!27?!5_!5o!25w!4o!5_!59?N!14~}{w!43o__!38?!13~!37?_ow{!14~NFB@!5?@BN^!13~}{w_!26?!13~BFNN^!15~}}{wo__!19?!13~!11?!14~!43?!15~!6?-!15?{!37~^B!18?_ooWW[[[]]M!10N!7^!34~}}{{{wwo__!46?@FN^!60~}{w_!32?!13~!33?ow{}!13~^NB@!15?BFN!14~{wo!22?!13~!6?@@BFNN^!15~}{wwo_!12?!13~!11?!14~!43?!15~!6?-!15?N!37~{_!49?@@BFFN!36~}{wo!46?@BBB!42FNN^!14~}!31?!13~!28?ow{}!13~^NF@!24?@BN^!13~}{o_!17?!13~!14?@@BFNN^!15~}{woo_!4?!13~!11?!14~!43?!15~!6?-!17?@BNN^!34~}}{wwwooo!6_!12?!7_oOO!18?v!39~w!91?_o!15~!31?!13~!23?_w{}!13~^NFB!34?BFN!13~}{w_!13?!13~!22?@@BFNN^!14~}{{!13~!11?!14~!38?__ow}!14~^!6?-!24?@BBBFFNNN!5^!35~!4^!4NFFFBBB@@!18?_ow}!38~^N!40?__ow{{}!59~^NB!31?!12~^!18?_o{}!14~NFB@!42?@BN^!13~}wo_!8?!13~!30?@@BFNN^!22~!11?!67~^NF@!7?-!43?!23@!33?__oow{}!39~^NF@!34?_oow{}}!58~^^^NNFB@@!34?!5~^NNFB@!15?ow{}!14~^FB@!52?BFN^!12~}{o_!4?!13~!38?@BBFN^^!14~!11?^!56~^^^NNFBB@!12?-!88?__ooww{{}!41~^NFFB@!147?NFB@!281?-!72?___oooww{{{}}!43~^NNFFBB@!440?-!53?!4_ooowww{{{}}}!46~^^NNFFBB@@@!450?-!33?___!4owww!4{}}}!49~^^^NNFFFBBB@@!464?-!21?_oww{}}}!50~^^^!4NFFFBBB@@@!481?-!13?__ow{}}!35~!4^!4N!4F!5B@@@!501?-!7?oow{}~~!12^!7N!7F!5B!5@!526?-!576?'
+# <<< BANNER-ART-END
 
 _ui_level=0
 _ui_theme="dark"
@@ -218,72 +252,171 @@ ui_detect() {
     esac
 }
 
-# -- low-level painters -------------------------------------------------------
-# One logo pixel = TWO character cells at every color level (author ruling
-# 2026-09-06, revised): "##" in mono, a 2-column bg block in color levels;
-# transparent pixels are two plain spaces. Adjacent solid pixels connect
-# with no separator.
-_px() {  # <G|W|.>
-    case "$1" in
-        .) printf '  '; return 0 ;;
+# -- banner image path ----------------------------------------------------------
+# Dual-path (2026-10-22 batch): a terminal that speaks an inline-image
+# protocol renders the REAL official raster instead of the block art. Every
+# escape byte is produced here; the embedded payloads stay pure printable
+# ASCII (the sixel bodies are single-quoted - their 0x3F-0x7E charset can
+# never hold a quote).
+
+_banner_image_mode() {  # -> _b_img="off"|"osc"|"sixel"; fail-closed
+    _b_img="off"
+    case "${NEBFLOW_BANNER_IMAGE:-auto}" in
+        off|0|no) return ;;
+        osc|iterm) _b_img="osc"; return ;;   # forced: testing overrides guards
+        sixel|wt)  _b_img="sixel"; return ;;
+        auto|""|yes|1|on) : ;;
+        *) return ;;                          # unknown value: fail closed
     esac
-    case "$_ui_level" in
-        3)
-            if [ "$1" = "G" ]; then printf '\033[48;2;7;193;96m  \033[0m'
-            elif [ "$_ui_theme" = "dark" ]; then printf '\033[48;2;255;255;255m  \033[0m'
-            else printf '\033[48;2;0;0;0m  \033[0m'; fi
-            ;;
-        2)  # nearest xterm-256: #07C160 -> 35 (#00af5f); white 231; black 16
-            if [ "$1" = "G" ]; then printf '\033[48;5;35m  \033[0m'
-            elif [ "$_ui_theme" = "dark" ]; then printf '\033[48;5;231m  \033[0m'
-            else printf '\033[48;5;16m  \033[0m'; fi
-            ;;
-        1)
-            if [ "$1" = "G" ]; then printf '\033[42m  \033[0m'
-            elif [ "$_ui_theme" = "dark" ]; then printf '\033[47m  \033[0m'
-            else printf '\033[40m  \033[0m'; fi
-            ;;
-        *)  printf '##' ;;
+    # auto honors the same guards as the color levels: a redirected pipe or
+    # a no-color contract must never receive sixel/OSC bytes.
+    if [ -n "${NO_COLOR:-}" ] || [ -n "${CI:-}" ] \
+        || [ "${TERM:-dumb}" = "dumb" ] || ! [ -t 1 ]; then
+        return
+    fi
+    case "${TERM_PROGRAM:-}" in
+        iTerm.app|WezTerm|mintty) _b_img="osc"; return ;;
+    esac
+    if [ "${KONSOLE_VERSION:-0}" -ge 220401 ] 2>/dev/null; then
+        _b_img="osc"; return                 # Konsole >= 22.04 renders OSC 1337
+    fi
+    case "${WT_SESSION:-}" in
+        '') : ;;
+        *) _b_img="sixel" ;;                 # Windows Terminal >= 1.22 (2025-04+)
     esac
 }
 
-_fg_green() {
+_banner_emit_image() {  # one-shot: the official raster in _b_img's protocol
+    if [ "$_ui_theme" = "light" ]; then
+        _b_png="$BANNER_PNG_LIGHT"; _b_sx="$BANNER_SIXEL_LIGHT"
+    else
+        _b_png="$BANNER_PNG_DARK";  _b_sx="$BANNER_SIXEL_DARK"
+    fi
+    if [ "$_b_img" = "osc" ]; then
+        # OSC 1337 inline image; width/height in CELLS. 72x9 cells is
+        # physically 4:1 (a cell is ~1:2 w:h) = the lockup's own aspect, on
+        # the same footprint as the half-block art (72 cols x 9 half-block
+        # rows). name= (base64 per the spec) is not decorative: iTerm2's
+        # "allow terminal to display this file?" approval keys on it - a
+        # named file is remembered once, an unnamed one can prompt again on
+        # every run.
+        printf '\033]1337;File=name=c3RhbmQtbG9nby5wbmc=;inline=1;width=72;height=9:%s\007' "$_b_png"
+    else
+        # sixel: DCS (aspect default; P2=1 transparent; grid default), the
+        # pre-encoded body (raster attrs + palette + RLE bands, canvas
+        # 576 x ~144 px = the same 72x9-cell footprint at an ~8x16 cell),
+        # ST.
+        printf '\033P0;1;0q'
+        printf '%s' "$_b_sx"
+        printf '\033\\'
+    fi
+}
+
+# -- banner painters (art fallback path) ---------------------------------------
+# Glyph bytes are produced with printf octal escapes (POSIX: dash has neither
+# $'\u' nor \u in printf): U+2580 upper half = \342\226\200, U+2584 lower
+# half = \342\226\204, U+2588 full = \342\226\210. Ink is painted with the
+# FOREGROUND color (empty cells stay untouched terminal background), one
+# printf per row.
+
+_banner_glyph_init() {
+    _g_u=$(printf '\342\226\200')
+    _g_n=$(printf '\342\226\204')
+    _g_f=$(printf '\342\226\210')
+}
+
+_banner_fg_init() {
+    _b_rst=""
+    _b_dim=""
+    _b_fg=""
     case "$_ui_level" in
-        3) printf '\033[1;38;2;7;193;96m' ;;
-        2) printf '\033[1;38;5;35m' ;;
-        1) printf '\033[1;32m' ;;
+        3)
+            if [ "$_ui_theme" = "dark" ]; then _b_ink="$BANNER_INK_DARK"
+            else _b_ink="$BANNER_INK_LIGHT"; fi
+            _b_fg=$(printf '\033[38;2;%sm' "$_b_ink")
+            _b_rst=$(printf '\033[0m'); _b_dim=$(printf '\033[2m') ;;
+        2)  # nearest xterm-256: white 231, black 16
+            if [ "$_ui_theme" = "dark" ]; then _b_fg=$(printf '\033[38;5;231m')
+            else _b_fg=$(printf '\033[38;5;16m'); fi
+            _b_rst=$(printf '\033[0m'); _b_dim=$(printf '\033[2m') ;;
+        1)  # 16-color nearest: bright white 97 / black 30
+            if [ "$_ui_theme" = "dark" ]; then _b_fg=$(printf '\033[97m')
+            else _b_fg=$(printf '\033[30m'); fi
+            _b_rst=$(printf '\033[0m'); _b_dim=$(printf '\033[2m') ;;
     esac
 }
-_dim() { [ "$_ui_level" -ge 1 ] && printf '\033[2m' || true; }
-_rst() { [ "$_ui_level" -ge 1 ] && printf '\033[0m' || true; }
+
+_banner_row() {  # <rle-row> -> stdout: one visible banner row
+    _b_rest="$1"
+    _b_out=""
+    _b_num=""
+    while [ -n "$_b_rest" ]; do
+        _b_c="${_b_rest%"${_b_rest#?}"}"
+        _b_rest="${_b_rest#?}"
+        case "$_b_c" in
+            [0-9]) _b_num="${_b_num}${_b_c}" ;;
+            [un#.])
+                if [ "$_ui_level" = 0 ]; then
+                    if [ "$_b_c" = "." ]; then _b_g=" "; else _b_g="#"; fi
+                else
+                    case "$_b_c" in
+                        "u") _b_g="$_g_u" ;;
+                        "n") _b_g="$_g_n" ;;
+                        "#") _b_g="$_g_f" ;;
+                        *)   _b_g=" " ;;
+                    esac
+                fi
+                _b_i=0
+                while [ "$_b_i" -lt "$_b_num" ]; do
+                    _b_out="${_b_out}${_b_g}"
+                    _b_i=$((_b_i+1))
+                done
+                _b_num="" ;;
+        esac
+    done
+    printf '%s' "$_b_out"
+}
 
 print_banner() {
     ui_detect
+    # The half-block glyphs are UTF-8 (U+2580/U+2584/U+2588): without a UTF-8
+    # locale the banner degrades to mono, the same rule the progress bar's
+    # eighth-blocks follow. (A NEBFLOW_UI_LEVEL override re-enables color
+    # explicitly - preview/testing wins over the locale heuristic.)
+    if [ "$_ui_utf8" != 1 ] && [ -z "${NEBFLOW_UI_LEVEL:-}" ]; then
+        _ui_level=0
+    fi
+    _banner_image_mode
     printf '\n'
-    local _i _row _ch
-    for _i in 0 1 2 3 4; do
-        case "$_i" in
-            0) _row="$BANNER_MASK_0" ;;
-            1) _row="$BANNER_MASK_1" ;;
-            2) _row="$BANNER_MASK_2" ;;
-            3) _row="$BANNER_MASK_3" ;;
-            *) _row="$BANNER_MASK_4" ;;
-        esac
-        printf '  '
-        # POSIX: no arithmetic for-loop and no ${var:off:len} in dash - walk the
-        # row by consuming one character at a time (${s#?} drops the first char,
-        # ${s%"${s#?}"} keeps exactly it), emitting the SAME _px call sequence.
-        while [ -n "$_row" ]; do
-            _ch="${_row%"${_row#?}"}"
-            _px "$_ch"
-            _row="${_row#?}"
-        done
-        case "$_i" in
-            2) printf '  '; _fg_green; printf '%s' "${LOWER_NAME}"; _rst ;;
-            3) printf '  '; _dim; printf '%s installer (%s)' "${VERSION:-dev}" "${CHANNEL}"; _rst ;;
-        esac
+    if [ "$_b_img" != "off" ]; then
+        # Image path: the REAL logo raster replaces the block art. The
+        # version line still sits under the mark, subordinate typography.
+        _banner_emit_image
+        if [ "$_ui_level" -ge 1 ]; then
+            printf '  \033[2m%s installer (%s)\033[0m\n' "${VERSION:-dev}" "${CHANNEL:-stable}"
+        else
+            printf '  %s installer (%s)\n' "${VERSION:-dev}" "${CHANNEL:-stable}"
+        fi
         printf '\n'
+        return
+    fi
+    _banner_glyph_init
+    _banner_fg_init
+    _b_rest="$BANNER_ART"
+    while [ -n "$_b_rest" ]; do
+        case "$_b_rest" in
+            *';'*) _b_row="${_b_rest%%;*}"; _b_rest="${_b_rest#*;}" ;;
+            *)     _b_row="$_b_rest"; _b_rest="" ;;
+        esac
+        if [ "$_ui_level" -ge 1 ]; then
+            printf '  %s%s%s\n' "$_b_fg" "$(_banner_row "$_b_row")" "$_b_rst"
+        else
+            printf '  %s\n' "$(_banner_row "$_b_row")"
+        fi
     done
+    # Version line sits under the art, dim, left-aligned to the lockup edge -
+    # typography stays subordinate to the official mark (batch mandate).
+    printf '  %s%s installer (%s)%s\n' "$_b_dim" "${VERSION:-dev}" "${CHANNEL:-stable}" "$_b_rst"
     printf '\n'
 }
 
@@ -1722,6 +1855,13 @@ stage_finish() {
 }
 
 # ---- pipeline -------------------------------------------------------------
+# --banner-only dry mode: render the banner and exit BEFORE any network or
+# install side effect (standalone render-function verification path; the
+# normal install flow below is byte-identical to pre-batch behaviour).
+if [ "${BANNER_ONLY:-0}" = "1" ] || [ "${NEBFLOW_BANNER_ONLY:-0}" = "1" ]; then
+    print_banner
+    exit 0
+fi
 resolve_version
 print_banner
 stage_env
