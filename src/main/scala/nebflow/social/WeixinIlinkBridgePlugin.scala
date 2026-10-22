@@ -43,9 +43,16 @@ import scala.util.Try
  *     address and its flush says so (WARN). Send failures are contained (one
  *     WARN line, no retry, no queue — design §0.4). weixin-media batch
  *     (2026-10-08): `toolEnd` additionally remembers the turn's rich product
- *     (a Pop payload's image/file item) and `done` flushes it ADDITIVELY
- *     through the media seam (`image_path` / `file_path`), degrading to a
- *     one-line text notice on failure — the text reply is never suppressed;
+ *     (a Pop payload's image/file item) and `done` flushes it ADDITIVELY,
+ *     degrading to a one-line text notice on failure — the text reply is never
+ *     suppressed. 媒体合并批 (2026-10-22, 台账 #756): the turn-end order is
+ *     text FIRST (the media must never outrun the text it belongs to — 作者令
+ *     「等一下文字再一起发 不要空发图片和文件」), a short tail rides the first
+ *     image group as its caption (图文同发), and consecutive images deliver as
+ *     ONE group message ([[WeixinOutboundAdapter.sendMediaGroupLive]] — 作者令
+ *     「一起发图片…组合一起发送」); the side-car probes the native multi-image
+ *     sendmessage and falls back to the official per-item sequence on any
+ *     refusal;
  *   - lifecycle: `start` / `stop` / `refreshRoutes` plus the [[WeixinIlinkBridgePlugin.sync]]
  *     companion — the same activation shape [[FeishuBridgePlugin]] uses.
  *
@@ -96,6 +103,14 @@ final class WeixinIlinkBridgePlugin(
    */
   sendMedia: (os.Path => WeixinIlinkBridgePlugin.SendMedia) = WeixinOutboundAdapter.sendMediaLive,
   /**
+   * Outbound image-GROUP send seam factory (媒体合并批, 2026-10-22, 台账 #756).
+   * Production = [[WeixinOutboundAdapter.sendMediaGroupLive]] (the side-car
+   * group face: N images + an optional caption → one group message, automatic
+   * per-item fallback server-side); the offline spec injects a recorder. Same
+   * root-passing shape as [[send]].
+   */
+  sendMediaGroup: (os.Path => WeixinIlinkBridgePlugin.SendGroup) = WeixinOutboundAdapter.sendMediaGroupLive,
+  /**
    * The DOCUMENT extension authority for the rich classification — the
    * single-authority rule ([[RichKind]]'s file header): the table is NEVER
    * copied into this channel; the default surfaces the one repo table the
@@ -128,6 +143,9 @@ final class WeixinIlinkBridgePlugin(
 
   /** The outbound MEDIA leg resolved for THIS root (weixin-media batch). */
   private val outboundMedia: SendMedia = sendMedia(root)
+
+  /** The outbound image-GROUP leg resolved for THIS root (媒体合并批). */
+  private val outboundGroup: SendGroup = sendMediaGroup(root)
 
   def name: String = Name
 
@@ -947,9 +965,10 @@ final class WeixinIlinkBridgePlugin(
    * rich product when it was NOT an error, and a Pop payload's `items[]`
    * carry the resolved artifact paths — ALL carriable ones, in payload order
    * (pop batch-media fix; the channel-agnostic parser's authority). On `done`
-   * the remembered product rides [[deliverRichMedia]] (image → `image_path`,
-   * document → `file_path` through the side-car's media leg), ADDITIVELY: the
-   * text reply is never suppressed.
+   * the remembered products ride [[flushTurnEnd]] (媒体合并批, 2026-10-22:
+   * text first, consecutive images grouped into one group send, a short tail
+   * riding the first group as its caption — ADDITIVELY: the text reply is
+   * never suppressed).
    *
    * 🔴 The reply target is the REVERSE read of the same routing table the
    * inbound leg builds (contract ③: one binding source): session → the bound
@@ -993,16 +1012,14 @@ final class WeixinIlinkBridgePlugin(
           pendingRef.modify { m => (m - sessionId, m.getOrElse(sessionId, "")) },
           richRef.modify { m => (m - sessionId, m.getOrElse(sessionId, Nil)) }
         ).tupled.flatMap { case (text, richs) =>
-          // 逐段即时批（2026-10-10）：轮终只补发「最后一段尾巴」（边界已把
-          // 前段逐条推走并清空缓冲 ⇒ 天然无整轮重发）。媒体腿进同一节流队列、
-          // 排在尾段之前：媒体先行、正文殿后的轮终秩序保持。pop multi-group
-          // fix：同一 pacer 槽内把本轮记住的每一张组卡都发完（组序 = toolEnd
-          // 序，组内载荷序），再发尾段。
-          val richLeg = richs match
-            case Nil => IO.unit
-            case rs  => pacer.enqueue(deliverRichAll(sessionId, rs))
-          val textLeg = if text.trim.isEmpty then IO.unit else pacer.enqueue(reply(sessionId, text))
-          richLeg *> textLeg
+          // 媒体合并批（2026-10-22，台账 #756）：轮终合流收口进 [[flushTurnEnd]]
+          // ——文字先行、短尾文字依附首个图片组作 caption、连续图片并组成组
+          // （作者令「等一下文字再一起发 不要空发图片和文件」「一起发图片…
+          // 组合一起发送」）。逐段即时批（2026-10-10）的原状保持：轮终只补发
+          // 「最后一段尾巴」，边界已把前段逐条推走 ⇒ 天然无整轮重发；pop
+          // multi-group fix 的「每张组卡都发完、组序 = toolEnd 序」由 runs 的
+          // payload 序接管。
+          flushTurnEnd(sessionId, text, richs)
         }
       // 逐段即时批：接桌面端的分段提交源（SessionRecorder 在 toolStart /
       // roundComplete 帧 flush textBuf 成一条气泡）——缓冲段即推即清，不等
@@ -1215,151 +1232,263 @@ final class WeixinIlinkBridgePlugin(
             }
     }
 
-  // ───────────── weixin-media batch: the rich-media flush leg ─────────────
+  // ───────────── 媒体合并批 (2026-10-22): the turn-end flush + runs ─────────────
 
   /**
-   * The rich-media leg (weixin-media batch, 2026-10-08): the remembered
-   * product's items are classified through the channel-agnostic [[RichKind.of]]
-   * and carried image → `image_path`, document → `file_path` — every failure
-   * degrades to a ONE-line text notice ([[deliverMedia]], the 保底 rule), the
-   * turn's text reply is NEVER suppressed (the additive rich-leg rule).
-   *
-   * Batch carrying (pop batch-media fix, 2026-10-08): a Pop of N artifacts is
-   * remembered as N media items, and this leg sends ALL of them, in list order
-   * (媒体先行、正文殿后 — the media-first / caption-after order the `done` arm
-   * fixes). The 保底 degrade stays PER ITEM: one failed send puts out its own
-   * notice and the loop moves on to the next item, so a single failure never
-   * swallows the rest of the batch.
-   *
-   * The other kinds:
-   *
-   *   - CARD — the card payload is HTML for the feishu renderer; the weixin
-   *     leg cannot transcode it, so nothing goes out but the text reply;
-   *   - UNKNOWN — since the pop-social-files batch (2026-10-20) an EXISTING
-   *     md/markdown/html/htm item rides the LONG-SHOT leg FIRST ([[FileLongShot]]:
-   *     the file is converted to one full-height PNG and sent on `image_path`,
-   *     with a companion note carrying the original path). A duplicate of the
-   *     SAME bytes is suppressed (dedup). Conversion failure degrades to the
-   *     「文件名+本地路径+一句话摘要」text card. Since the pop-file-leg batch
-   *     (2026-10-21, 作者令「pop 把这个文件发给我，就自动传过来了呀」) a
-   *     pushable ARCHIVE item ([[FileLeg.ArchiveExtensions]] — the file class
-   *     both authority tables never carried) rides the FILE leg directly
-   *     ([[deliverFileMedia]]: dedup + size gate + `file_path`). The rest
-   *     (non-existent path, extension in neither table nor the archive class,
-   *     video-only payload…) stays log-only — the text reply carries the turn,
-   *     and no mechanism wording ever reached a weixin user.
-   *   - DOCUMENT — since the same pop-file-leg batch the document arm goes
-   *     through [[deliverFileMedia]] too (dedup + size gate before the
-   *     `file_path` send); 2026-10-09's "file messages never arrived"
-   *     observation is superseded by the author's order and the same-day
-   *     manual file-leg curl that DID arrive.
-   *
-   * 🔴 A session with no bound sender has no return address — same rule as the
-   * text leg; the text leg's own WARN covers the turn, so this leg passes.
-   *
-   * 🔴 pop multi-group fix (2026-10-09): the per-item loop is now ALSO
-   * raise-contained at this layer — an unexpected throw inside one item's arm
-   * degrades THAT item to one visible `[未送达]` line through the bridge's own
-   * text seam ([[outbound]]) and the loop moves on. Before this, a raise
-   * escaped the fold and killed the remaining items (and, via the `done` arm's
-   * `richLeg *> textLeg`, the turn's text tail with them).
+   * One classified deliverable of the turn's remembered media, in payload
+   * order (媒体合并批): consecutive image items fold into an [[ImageRun]] —
+   * ONE group send per contiguous image stretch (作者令「一起发图片…组合一起
+   * 发送」) — and every other classified item stays its own [[ItemRun]] on its
+   * pre-existing per-item leg (Document → the file leg, Unknown → the
+   * long-shot / archive / log faces, the pop-social-files + pop-file-leg
+   * faces verbatim).
    */
-  private[social] def deliverRichMedia(sessionId: String, rich: RichProduct): IO[Unit] =
-    routesRef.get.flatMap { routes =>
-      routes.collectFirst { case (sender, sid) if sid == sessionId => sender } match
-        case None => IO.unit // the text reply logs the same WARN for this session
-        case Some(sender) =>
-          if RichKind.isCardContent(rich.content) then
-            IO(
-              logger.info(
-                "weixin-ilink bridge: rich CARD observed — the weixin v1 media leg carries image/file only " +
-                  "(a card payload is not transcodable); the text reply carries the turn"
-              )
+  private sealed trait MediaRun
+  private final case class ImageRun(paths: List[os.Path]) extends MediaRun
+  private final case class ItemRun(path: os.Path, kind: RichKind) extends MediaRun
+
+  /**
+   * Classify every remembered item ONCE — the SAME [[RichKind.of]] rule the
+   * pre-group per-item loop applied (same content-less read, same exists
+   * probe, same authority tables) — and fold consecutive images into runs.
+   * The fold is PER 组卡: two Pop cards never merge into one group even when
+   * adjacent (the card boundary is the author's own grouping unit — 组卡序 =
+   * toolEnd 序 stays visible on the wire); runs of different cards concatenate.
+   */
+  private def mediaRuns(richs: List[RichProduct]): IO[List[MediaRun]] =
+    IO {
+      richs.flatMap { rich =>
+        rich.media
+          .foldLeft(List.empty[MediaRun]) { (runs, p) =>
+            val kind = RichKind.of(
+              content = "",
+              path = Some(p.toString),
+              exists = Try(os.isFile(p)).getOrElse(false),
+              documentExtensions = documentExtensions
             )
-          else
-            rich.media.foldLeft(IO.unit) { (acc, p) =>
-              acc.flatMap { _ =>
-                val kind = RichKind.of(
-                  content = "",
-                  path = Some(p.toString),
-                  exists = Try(os.isFile(p)).getOrElse(false),
-                  documentExtensions = documentExtensions
-                )
-                val leg = kind match
-                  case RichKind.Image =>
-                    deliverMedia(sender, WeixinOutboundAdapter.WeixinMedia.image(p.toString), "image")
-                  case RichKind.Document =>
-                    // pop-file-leg batch（2026-10-21 作者令「pop 把这个文件发给我，
-                    // 就自动传过来了」）：文件腿直推，前置去重 + 体积闸
-                    // （[[deliverFileMedia]]）。PDF/办公件本就在文档权威表——
-                    // 2026-10-09 实测的「文件消息零到达」被本批作者令接管（当日
-                    // 手动 curl 文件腿实达），直推为口径。
-                    deliverFileMedia(sender, p)
-                  case RichKind.Unknown(reason) =>
-                    // pop-social-files batch（2026-10-20 作者令）：文件类可转换
-                    // 形态（md/markdown/html/htm 且原件在盘上）→ 单张长图 PNG 走
-                    // image_path 腿 + 原件路径伴行注（[[deliverLongShotMedia]]，
-                    // 同字节重复 Pop 去重抑制；转不动降文本卡）。
-                    // pop-file-leg batch（2026-10-21 作者令）：压缩包类（两张权
-                    // 威表都不收的文件交付物缺口，[[FileLeg.ArchiveExtensions]]）
-                    // → 文件腿直推（同款去重 + 体积闸）。其余保持 v1 边界（日志
-                    // 一行，正文腿带回合——机制词汇从未到过微信用户眼前）。
-                    if Try(os.isFile(p)).getOrElse(false) && FileLongShot.isConvertible(p) then
-                      deliverLongShotMedia(sender, p)
-                    else if Try(os.isFile(p)).getOrElse(false) && FileLeg.isPushable(p) then
-                      deliverFileMedia(sender, p)
-                    else
-                      // 逐字一行即 IO（pop multi-group fix 顺手修正）：原
-                      // `IO(logger.info(...))` 是 IO[IO[Unit]] 死日志（内层
-                      // logback 永不执行 —— WeixinIlinkBridgeSpec 头注点名的
-                      // 同款 built-but-discarded 隐患），靠期望类型 unit-giving
-                      // 才过编译；绑定 val leg 后类型现形，直落 IO[Unit]。
-                      logger.info(
-                        s"weixin-ilink bridge: rich item not carriable ($reason) — the text reply carries the turn"
-                      )
-                  case RichKind.Card =>
-                    // Unreachable on this branch (the content is not a card
-                    // here, and the per-item classification reads no content) —
-                    // the total-function backstop.
-                    IO.unit
-                // pop multi-group fix: one item's RAISE is contained to that
-                // item (visible line + WARN); the remaining items keep going.
-                // pop-file-leg batch：deliverMedia 返回 reading（文件腿落账面要
-                // 读它）⇒ 本臂也产出同型 reading——leg 已 raise，无真实读数，
-                // 合成 failed reading（code=-1 contained）即本臂的诚实语义。
-                leg.handleErrorWith { e =>
-                  val name = p.last
-                  for
-                    _ <- IO(logger.warnSync(
-                      s"weixin-ilink bridge: rich item delivery raised for $p " +
-                        s"(${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}) — degrading to a visible line"
-                    ))
-                    r2 <- outbound(sender, s"[未送达] $name — 这一项发送时出现异常，其余内容照常")
-                    _ <- if r2.ok then IO.unit
-                         else
-                           IO(logger.warnSync(
-                             s"weixin-ilink bridge: degrade notice send failed code=${r2.code} reason=${r2.reason}"
-                           ))
-                  yield WeixinOutboundAdapter.SendResult(
-                    false,
-                    false,
-                    None,
-                    -1,
-                    s"contained raise: ${e.getClass.getSimpleName}"
-                  )
-                }.void
-              }
-            }
+            (runs.lastOption, kind) match
+              case (Some(ImageRun(ps)), RichKind.Image) => runs.init :+ ImageRun(ps :+ p)
+              case (_, RichKind.Image)                  => runs :+ ImageRun(List(p))
+              case (_, other)                           => runs :+ ItemRun(p, other)
+          }
+      }
     }
 
   /**
-   * pop multi-group fix (2026-10-09): send EVERY 组卡 the turn remembered, in
-   * toolEnd order — one pacer slot for the whole list, so the text tail still
-   * follows all media. A raise inside one group is contained by that group's
-   * own per-item guards, never by re-raising here.
+   * The turn-end flush (媒体合并批, 2026-10-22, 台账 #756 — 作者令「改动一下
+   * 微信上发文件和图片 如果没有文字内容 要等一下文字再一起发 不要空发图片和
+   * 文件」「微信上一起发图片好像不会组合一起发送 而是分开发送」). The old
+   * 媒体先行、正文殿后 order is REVERSED, and the media itself is grouped.
+   * Three faces on one pacer chain (the chain order IS the wire order):
+   *
+   *   - 文字先行 (sequential form): the tail text goes out FIRST, the media
+   *     follows — the text never lags the media it describes;
+   *   - 图文同发 (caption form): a SHORT tail (≤ [[WeixinAskLeg.FullTextThreshold]],
+   *     the same first tier the text leg delivers under) rides INSIDE the
+   *     first image group as its caption — one WeChat message carrying
+   *     text+images — when the turn's first deliverable is a ≥2-image group.
+   *     A long-text tail keeps its own 摘要+拉取 flow and goes out first,
+   *     caption-less;
+   *   - 成组 (group form): each [[ImageRun]] of ≥2 delivers as ONE group call;
+   *     single images and non-image items keep their exact per-item legs.
+   *
+   * The merge window itself needs NO timer: media is remembered at `toolEnd`
+   * and only ever flushed here at `done` — the turn end IS the window's close
+   * (媒体等满整轮；纯媒体轮照发，无文字可等也不空等). A session with no bound
+   * sender keeps the text leg (its [no-return-address] machinery) and drops
+   * the media exactly as the pre-group leg did.
    */
-  private def deliverRichAll(sessionId: String, richs: List[RichProduct]): IO[Unit] =
-    richs.foldLeft(IO.unit)((acc, rich) => acc *> deliverRichMedia(sessionId, rich))
+  private def flushTurnEnd(sessionId: String, text: String, richs: List[RichProduct]): IO[Unit] =
+    if richs.isEmpty then
+      val textLeg = if text.trim.isEmpty then IO.unit else pacer.enqueue(reply(sessionId, text))
+      textLeg
+    else
+      routesRef.get.flatMap { routes =>
+        routes.collectFirst { case (sender, sid) if sid == sessionId => sender } match
+          case None =>
+            // No return address: the text leg owns the WARN/strike/redelivery
+            // machinery; the media passes (the pre-group leg's own rule — the
+            // text reply logs the same WARN for this session).
+            val textLeg = if text.trim.isEmpty then IO.unit else pacer.enqueue(reply(sessionId, text))
+            textLeg
+          case Some(sender) =>
+            // CARD 产品的 v1 边界日志（内容承载卡 HTML，媒体腿不可转码——正文
+            // 腿带回合）：runs 收口后空 media 的卡产品不再进逐 item 循环，日志
+            // 就地保留一行。
+            richs.foreach { rich =>
+              if RichKind.isCardContent(rich.content) then
+                logger.info(
+                  "weixin-ilink bridge: rich CARD observed — the weixin v1 media leg carries image/file only " +
+                    "(a card payload is not transcodable); the text reply carries the turn"
+                )
+            }
+            val plain = nebflow.social.outbound.OutboundText.toPlain(text)
+            mediaRuns(richs).flatMap { runs =>
+              val captionMode =
+                plain.trim.nonEmpty && plain.length <= WeixinAskLeg.FullTextThreshold &&
+                  runs.headOption.exists {
+                    case ImageRun(ps)  => ps.size >= 2
+                    case ItemRun(_, _) => false
+                  }
+              val textLeg =
+                if captionMode || text.trim.isEmpty then IO.unit
+                else pacer.enqueue(reply(sessionId, text))
+              val mediaLeg =
+                pacer.enqueue(deliverRuns(sender, runs, caption = if captionMode then Some(plain) else None))
+              textLeg *> mediaLeg
+            }
+      }
+
+  /**
+   * The turn's media runs, in payload order, inside ONE pacer slot — the whole
+   * sequence sits between the text leg and whatever the next turn enqueues,
+   * so a multi-run turn can never interleave with another flush. The caption
+   * (caption mode) rides the FIRST [[ImageRun]] and is spent there. Every run
+   * leg is raise-contained (the pop multi-group fix's per-item guard,
+   * promoted to per-run): one run's unexpected fault degrades to its own
+   * visible line and the remaining runs keep going.
+   */
+  private def deliverRuns(sender: String, runs: List[MediaRun], caption: Option[String]): IO[Unit] =
+    runs
+      .foldLeft((IO.unit: IO[Unit], caption)) { case ((acc, cap), run) =>
+        val leg = run match
+          case ImageRun(single :: Nil) =>
+            // A single image keeps the pre-group face byte-identical (the
+            // [图片发送失败 code=…] 保底 wording included) — grouping is for
+            // stretches, not for solos.
+            deliverMedia(sender, WeixinOutboundAdapter.WeixinMedia.image(single.toString), "image").void
+          case ImageRun(ps) => deliverImageGroup(sender, ps, cap)
+          case ItemRun(p, kind) => deliverClassifiedItem(sender, p, kind)
+        val spent = run match
+          case ImageRun(single :: Nil) => cap
+          case ImageRun(_)             => None
+          case ItemRun(_, _)           => cap
+        (acc *> leg.handleErrorWith(e => deliverRunFault(sender, runLabel(run), e)), spent)
+      }
+      ._1
+
+  /** The visible label a faulted run degrades under: a group shows its size,
+    * a solo item its file name (the [未送达] line's subject). */
+  private def runLabel(run: MediaRun): String = run match
+    case ImageRun(ps)  => if ps.sizeIs == 1 then ps.head.last else s"图片组(${ps.size}张)"
+    case ItemRun(p, _) => p.last
+
+  /**
+   * One run's unexpected RAISE degrades to ONE visible line (the pop
+   * multi-group fix's containment arm, promoted to per-run); never rethrows —
+   * the remaining runs and the turn keep going.
+   */
+  private def deliverRunFault(sender: String, label: String, e: Throwable): IO[Unit] =
+    for
+      _ <- IO(
+        logger.warnSync(
+          s"weixin-ilink bridge: rich run delivery raised for $label " +
+            s"(${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}) — degrading to a visible line"
+        )
+      )
+      r2 <- outbound(sender, s"[未送达] $label — 这一项发送时出现异常，其余内容照常")
+      _ <- if r2.ok then IO.unit
+           else
+             IO(
+               logger.warnSync(
+                 s"weixin-ilink bridge: degrade notice send failed code=${r2.code} reason=${r2.reason}"
+               )
+             )
+    yield ()
+
+  /**
+   * The non-image per-item legs, verbatim from the pre-group per-item loop
+   * (the pop-social-files + pop-file-leg faces): Document → the file leg
+   * ([[deliverFileMedia]]: dedup + size gate + `file_path`); Unknown → the
+   * long-shot leg for convertible files ([[deliverLongShotMedia]]), the file
+   * leg for pushable archives, else the v1 log-only boundary. The Image and
+   * Card arms are unreachable here ([[mediaRuns]] folds images into
+   * [[ImageRun]]; per-item classification reads no content, so no Card ever
+   * arises) — the total-function backstops stay explicit.
+   */
+  private def deliverClassifiedItem(sender: String, p: os.Path, kind: RichKind): IO[Unit] =
+    kind match
+      case RichKind.Document =>
+        // pop-file-leg batch（2026-10-21 作者令「pop 把这个文件发给我，
+        // 就自动传过来了」）：文件腿直推，前置去重 + 体积闸
+        // （[[deliverFileMedia]]）。PDF/办公件本就在文档权威表——
+        // 2026-10-09 实测的「文件消息零到达」被本批作者令接管（当日
+        // 手动 curl 文件腿实达），直推为口径。
+        deliverFileMedia(sender, p)
+      case RichKind.Unknown(reason) =>
+        // pop-social-files batch（2026-10-20 作者令）：文件类可转换形态
+        // （md/markdown/html/htm 且原件在盘上）→ 单张长图 PNG 走 image_path 腿
+        // + 原件路径伴行注（[[deliverLongShotMedia]]，同字节重复 Pop 去重抑制；
+        // 转不动降文本卡）。pop-file-leg batch（2026-10-21 作者令）：压缩包类
+        // （[[FileLeg.ArchiveExtensions]]）→ 文件腿直推。其余保持 v1 边界。
+        if Try(os.isFile(p)).getOrElse(false) && FileLongShot.isConvertible(p) then deliverLongShotMedia(sender, p)
+        else if Try(os.isFile(p)).getOrElse(false) && FileLeg.isPushable(p) then deliverFileMedia(sender, p)
+        else
+          logger.info(
+            s"weixin-ilink bridge: rich item not carriable ($reason) — the text reply carries the turn"
+          )
+      case RichKind.Card => IO.unit // unreachable on this branch — the total-function backstop
+      case RichKind.Image => IO.unit // unreachable: images fold into ImageRun
+
+  /**
+   * One image-RUN send (媒体合并批): the whole contiguous image stretch rides
+   * ONE group call — N images + the optional caption → ONE WeChat message
+   * (the side-car probes the native multi-image sendmessage and falls back to
+   * the official per-item sequence on any refusal, so a delivered reading
+   * needs no engine-side retry and no engine-side fallback logic). Failure
+   * containment: the turn text never rides a media failure — a FAILED
+   * captioned group recovers its caption through the proven text seam FIRST
+   * (作者令：文字不许被媒体失败连坐), then ONE count-aware 保底 notice goes
+   * out; an uncaptioned failure puts out the notice alone. Never a raise,
+   * never an engine retry (design §0.4 unchanged).
+   */
+  private def deliverImageGroup(sender: String, paths: List[os.Path], caption: Option[String]): IO[Unit] =
+    outboundGroup(sender, paths.map(_.toString), caption)
+      // The group leg is TOTAL: an unexpected raise becomes a synthetic failed
+      // reading so the caption-recovery + notice arm below always runs (the
+      // turn text must never die with a media fault, raise or refusal alike).
+      .handleErrorWith(e =>
+        IO(
+          logger.warnSync(
+            s"weixin-ilink bridge: image group delivery raised (${e.getClass.getSimpleName}: " +
+              s"${Option(e.getMessage).getOrElse("")}) — degrading to the notice face"
+          )
+        ).as(
+          WeixinOutboundAdapter.SendResult(false, false, None, -1, s"contained raise: ${e.getClass.getSimpleName}")
+        )
+      )
+      .flatMap {
+      case res if res.ok =>
+        IO(
+          logger.info(
+            s"weixin-ilink bridge: image group delivered to sender $sender (${paths.size} images, id=${res.messageId.getOrElse("-")})"
+          )
+        )
+      case res =>
+        val recover = caption.fold(IO.unit) { t =>
+          deliverText(sender, t).flatMap { r =>
+            if r.ok then IO.unit
+            else
+              IO(
+                logger.warn(
+                  s"weixin-ilink bridge: caption recovery send failed code=${r.code} reason=${r.reason}"
+                )
+              )
+          }
+        }
+        val line = s"[${paths.size} 张图片发送失败 code=${res.code}] ${res.reason}"
+        logger.warn(
+          s"weixin-ilink bridge: image group send failed (${paths.size} images) code=${res.code} reason=${res.reason} " +
+            "— recovering the caption through the text seam, then the text notice"
+        ) *> recover *>
+          outbound(sender, line).flatMap { r2 =>
+            if r2.ok then IO.unit
+            else
+              logger.warn(
+                s"weixin-ilink bridge: degrade notice send failed code=${r2.code} reason=${r2.reason}"
+              )
+          }
+    }
 
   /**
    * 文件类长图腿（pop-social-files batch, 2026-10-20；作者裁定「文件类产物投递
@@ -1541,6 +1670,15 @@ object WeixinIlinkBridgePlugin:
    * [[WeixinOutboundAdapter.WeixinMedia]] (exactly one of image/file).
    */
   type SendMedia = (String, WeixinOutboundAdapter.WeixinMedia) => IO[WeixinOutboundAdapter.SendResult]
+
+  /**
+   * The outbound image-GROUP send seam (媒体合并批, 2026-10-22): `(to, images,
+   * caption) → reading` — N absolute image paths + the optional caption text,
+   * one contained reading for the whole batch (the side-car owns the
+   * group-probe + official per-item fallback, so `delivered` needs no
+   * caller-side fallback).
+   */
+  type SendGroup = (String, List[String], Option[String]) => IO[WeixinOutboundAdapter.SendResult]
 
   /**
    * The outbound drop reason for a session with no bound sender: stable

@@ -79,6 +79,19 @@ object WeixinOutboundAdapter:
   val MediaReadTimeout: FiniteDuration = 240.seconds
 
   /**
+   * The GROUP-flush HTTP read timeout (媒体合并批): the group pipeline scales
+   * with the image count — N uploads (each the ≤214s theoretical worst) + the
+   * group sendmessage, and a server-refused probe adds the WHOLE official
+   * per-item fallback (another N pipelines + N+1 sendmessages). The budget is
+   * therefore `MediaReadTimeout × (N+1)`, capped at 30min so an absurd batch
+   * can never pin a caller fiber for hours. Like every timeout here it is a
+   * ceiling over the theoretical worst, not a wait: realistic uploads are
+   * seconds.
+   */
+  def groupReadTimeout(images: Int): FiniteDuration =
+    (MediaReadTimeout * (math.max(images, 0) + 1)).min(1800.seconds)
+
+  /**
    * Secret file holding the shared token for THIS leg. Family-aligned with
    * the inbound batch's landed `weixin-ilink-ingress-token`
    * ([[WeixinIngressToken]] — the credential-face DEFINER): one mint/storage/
@@ -123,6 +136,20 @@ object WeixinOutboundAdapter:
    * the offline spec substitutes a recorder.
    */
   type SendMedia = (String, WeixinMedia) => IO[SendResult]
+
+  /**
+   * The image-GROUP send seam (媒体合并批, 2026-10-22, 台账 #756 — 作者令
+   * 「一起发图片…组合一起发送」「等一下文字再一起发 不要空发」): `(to, images,
+   * caption) → reading`. N absolute image paths + an optional caption text go
+   * out as ONE side-car call; the side-car uploads each image, then attempts
+   * ONE iLink sendmessage whose item_list carries the caption text_item (when
+   * present) plus all N image_item entries — one WeChat message for the whole
+   * group (图文同发) — and falls back to the official per-item sequence on any
+   * refusal, so this seam's reading is `delivered` either way (the caller
+   * needs no fallback logic of its own). Production = [[sendMediaGroupLive]];
+   * the offline spec substitutes a recorder.
+   */
+  type SendGroup = (String, List[String], Option[String]) => IO[SendResult]
 
   // ───────────────────────── shared token face ─────────────────────────
 
@@ -232,6 +259,25 @@ object WeixinOutboundAdapter:
       case None => Json.obj("to" -> to.asJson, mediaField)
 
   /**
+   * The `/send` GROUP body (媒体合并批): `to` + `images` (the abs-path list, in
+   * payload order) + the optional `text` (the caption riding INSIDE the group
+   * message) under the SAME verbatim-raw-bot-id `account` rule. Keys are
+   * exactly the ones the caller supplied — no `text` key when the caption is
+   * absent, no `account` key without a hint (the same absent-not-null rule as
+   * [[buildSendJson]]).
+   */
+  def buildMediaGroupSendJson(
+      to: String,
+      images: List[String],
+      caption: Option[String] = None,
+      account: Option[String] = None
+  ): Json =
+    val base = List("to" -> to.asJson, "images" -> images.asJson) ++
+      caption.map(c => "text" -> c.asJson).toList ++
+      account.map(a => "account" -> a.asJson).toList
+    Json.obj(base*)
+
+  /**
    * The sidecar base for one send: the card's stored `sidecar_url`, else the
    * default the scan-bind control leg also uses. Cold read — one small file
    * read per completed turn.
@@ -314,8 +360,10 @@ object WeixinOutboundAdapter:
   /**
    * The message identifier the failure WARN carries: for a text send the
    * first 50 chars (all whitespace flattened so the log stays one line), for
-   * a media send the media path verbatim. Never a credential — the body keys
-   * read here are `text` / `image_path` / `file_path` only.
+   * a media send the media path verbatim, for a group send the count + the
+   * first path (媒体合并批: a one-line digest never lists every artifact).
+   * Never a credential — the body keys read here are `text` / `image_path` /
+   * `file_path` / `images` only.
    */
   private def sendDigest(body: Json): String =
     body.hcursor.downField("text").as[String].toOption match
@@ -328,6 +376,13 @@ object WeixinOutboundAdapter:
           .as[String]
           .toOption
           .orElse(body.hcursor.downField("file_path").as[String].toOption)
+          .orElse(
+            // 媒体合并批: `images` digest = "<first path>…(N images)" — the log
+            // stays one line, the batch is still identifiable.
+            body.hcursor.downField("images").as[List[String]].toOption.collect {
+              case ps if ps.nonEmpty => s"${ps.head}…(${ps.size} images)"
+            }
+          )
           .getOrElse("-")
 
   /**
@@ -426,5 +481,15 @@ object WeixinOutboundAdapter:
    */
   def sendMediaLive(root: os.Path): SendMedia =
     (to, media) => postLive(root, MediaReadTimeout)(to, hint => buildMediaSendJson(to, media, hint))
+
+  /**
+   * The production image-GROUP send (媒体合并批): the same side-car face, the
+   * body carrying `images` (+ the optional caption `text`), the count-scaled
+   * [[groupReadTimeout]] budget (N upload pipelines ride inside, and a refused
+   * probe adds the whole official per-item fallback on the side-car side).
+   */
+  def sendMediaGroupLive(root: os.Path): SendGroup =
+    (to, images, caption) =>
+      postLive(root, groupReadTimeout(images.size))(to, hint => buildMediaGroupSendJson(to, images, caption, hint))
 
 end WeixinOutboundAdapter
