@@ -1,0 +1,52 @@
+[seed] .zshrc seeded with legacy .nebflow PATH line
+[i] Resolving latest beta version...
+
+  ########
+  ##      
+  ########  stand
+        ##  2026.10.21-beta.2 installer (beta)
+  ########
+
+
+==> [1/6] Checking environment...
+[i] OS: mac (arm64)
+[i] Region: cn (use --cn or --global to override)
+
+==> [2/6] Checking dependencies...
+[ok] Java: openjdk version "23.0.1" 2024-10-15
+[ok] rg: cached at /tmp/stand-fresh-homeA-wPDV/.stand/bin/rg
+
+==> [3/6] Downloading stand 2026.10.21-beta.2...
+[ok] Already up-to-date (2026.10.21-beta.2).
+
+==> [4/6] Writing launcher and PATH...
+[i] Creating wrapper script...
+[ok] Wrapper created: /tmp/stand-fresh-homeA-wPDV/.stand/bin/stand
+[ok] Legacy shim created: /tmp/stand-fresh-homeA-wPDV/.stand/bin/nebflow (deprecation notice, forwards to stand)
+[i] Retired legacy ~/.nebflow/bin PATH entry in /tmp/stand-fresh-homeA-wPDV/.zshrc (backup: /tmp/stand-fresh-homeA-wPDV/.zshrc.bak-nebflow-path)
+[i] Added /tmp/stand-fresh-homeA-wPDV/.stand/bin to PATH in /tmp/stand-fresh-homeA-wPDV/.zshrc
+
+==> [5/6] Setting up config...
+
+==> [6/6] Done!
+
+[ok] stand 2026.10.21-beta.2 installed.
+     Run: stand
+     Config: ~/.stand/nebflow.json
+     Please restart your terminal or run: export PATH="$HOME/.stand/bin:$PATH"
+installer exit=0
+--- .zshrc after reinstall ---
+eval "$(direnv hook zsh)"
+# retired legacy home PATH entry (default home moved to ~/.stand): export PATH="$HOME/.nebflow/bin:$PATH"
+alias ll='ls -la'
+
+# Added by stand installer
+export PATH="/tmp/stand-fresh-homeA-wPDV/.stand/bin:$PATH"
+--- assertions ---
+[R] OK: legacy line retired in place (commented, history preserved)
+[R] OK: backup .zshrc.bak-nebflow-path created
+[R] OK: new PATH line derives from STAND_BASE
+[R] OK: user lines preserved
+[R] OK: no ACTIVE legacy PATH line remains
+[R] OK: still zero .nebflow after reinstall
+RESULT_R=PASS
