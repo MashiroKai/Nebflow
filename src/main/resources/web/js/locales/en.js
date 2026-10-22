@@ -1114,6 +1114,10 @@ export default {
   // existing 'restart' WS command; the UI confirms in two steps (2nd click = confirm bit).
   'settings.restart': 'Restart Service',
   'settings.restartConfirm': 'Confirm restart?',
+  'settings.fileCache': 'File cache',
+  'settings.fileCacheClear': 'Clear file cache',
+  'settings.fileCacheClearConfirm': 'Confirm clear?',
+  'settings.fileCacheEntries': 'items',
   'settings.restartAccepted': 'Restart admitted — the UI reconnects automatically once it is up',
   'settings.restartFailed': 'Restart not admitted: {error}',
 

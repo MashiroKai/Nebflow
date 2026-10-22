@@ -1076,6 +1076,10 @@ export default {
   // 界面侧两段式确认（第二击即确认位）。
   'settings.restart': '重启服务',
   'settings.restartConfirm': '确认重启？',
+  'settings.fileCache': '文件缓存',
+  'settings.fileCacheClear': '清空文件缓存',
+  'settings.fileCacheClearConfirm': '确认清空？',
+  'settings.fileCacheEntries': '条',
   'settings.restartAccepted': '重启已受理——完成后界面会自动重连',
   'settings.restartFailed': '重启未受理：{error}',
 

@@ -33,6 +33,9 @@ import { bindImeGuard, isImeComposing } from './imeGuard.js';
 // Root agent's DISPLAY name — the single read point shared with onboarding /
 // micOrb / chat / modelPanel (leaf module; no cycle risk).
 import { rootDisplayName, isRootNamed } from './rootName.js';
+// 文件缓存设置行（M2 · 设计 v1 §6.4/§7 表5）：占用读数/清空 seam 单源 = nfFileCache.js。
+// 依赖纪律安全：nfFileCache 只 import state.js/branding.js（后者为叶子），本边不成环。
+import { nfCacheStats, nfCacheReset } from './nfFileCache.js';
 // uifix3 ② (2026-10-06 21:36 author order): the provider model-list probe is
 // SHARED with the onboarding model question — implementation lives in
 // providerModels.js (moved verbatim from here), one probe, no second copy.
@@ -927,6 +930,17 @@ export function renderSettings() {
       <div class="settings-section-title">${t('settings.advanced')}</div>
       <button class="cfg-btn" id="btn-toggle-json">${t('settings.editRawJson')}</button>
       ${SHOW_RERUN_ONBOARDING ? `<button class="cfg-btn" id="btn-rerun-onboarding" style="margin-left:8px">${t('settings.rerunOnboarding')}</button>` : ''}
+      <!-- 文件缓存行（M2 · 设计 v1 §6.4/§7 表5）：占用读数（nfCacheStats 同步 seam，
+           分桶明细进 title）+ 清空键（nfCacheReset seam，两段式确认 = 按钮第二击
+           即确认位，同 btn-restart-gateway 先例——共用 #delete-box 弹窗其确认键
+           文案是「删除」，复用会把本键错标成删除）。 -->
+      <div class="settings-row" id="nf-cache-row">
+        <span class="settings-label">${t('settings.fileCache')}</span>
+        <span style="display:flex;align-items:center;gap:8px">
+          <span id="nf-cache-usage" role="status" style="font-size:12px;color:var(--color-text-secondary)">…</span>
+          <button class="cfg-btn cfg-btn-sm" id="btn-clear-nf-cache" type="button">${t('settings.fileCacheClear')}</button>
+        </span>
+      </div>
     </div>
     <div class="settings-section" id="json-editor-section" style="display:${state.settingsShowJson ? 'block' : 'none'}">
       <div class="config-editor-wrap">
@@ -1155,6 +1169,27 @@ function refreshSecretsEntryCount() {
 }
 if (typeof window !== 'undefined') {
   window.addEventListener('secrets-changed', () => { secretsCountCache.at = 0; refreshSecretsEntryCount(); });
+}
+
+// ── 文件缓存设置行（M2 · 设计 v1 §6.4/§7 表5）：占用读数 + 清空入口 ─────────
+// 读数/清空 seam 单源 = nfFileCache.js（nfCacheStats/nfCacheReset）；模块头注已声明
+// 依赖纪律（nfFileCache 只 import state/branding 叶子，本边不成环）。
+// MB 读数格式与 explorer.js formatMb 同式（本地小助手，禁为四行跨模块新增公共面；
+// 一处刻意偏差：explorer 版对 0 字节下限取 1 KB，本行读数要如实出「0 KB」）。
+function nfCacheFormatMb(n) {
+  const v = Number(n) || 0;
+  if (v >= 1024 * 1024 * 1024) return (v / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+  if (v >= 1024 * 1024) return (v / 1024 / 1024).toFixed(1) + ' MB';
+  return Math.max(0, Math.round(v / 1024)) + ' KB';
+}
+
+/** 占用读数入画：`N 条 · 大小`；title = 分桶明细（local/device/server，占/预算）。 */
+function paintNfCacheUsage(el) {
+  const s = nfCacheStats();
+  el.textContent = `${s.entries} ${t('settings.fileCacheEntries')} · ${nfCacheFormatMb(s.bytes)}`;
+  el.title = `local ${nfCacheFormatMb(s.buckets.local)}/${nfCacheFormatMb(s.bucketBudgets.local)}` +
+    ` · device ${nfCacheFormatMb(s.buckets.device)}/${nfCacheFormatMb(s.bucketBudgets.device)}` +
+    ` · server ${nfCacheFormatMb(s.buckets.server)}/${nfCacheFormatMb(s.bucketBudgets.server)}`;
 }
 
 function bindSettingsEvents(content, cfg) {
@@ -1555,6 +1590,37 @@ function bindSettingsEvents(content, cfg) {
       }
       disarm();
       sendWs({ type: 'restart', confirm: true });
+    });
+  }
+
+  // --- 文件缓存：占用读数入画 + 清空入口（M2 · 设计 v1 §6.4/§7 表5） ---
+  // 清空 = nfCacheReset()（索引 + Cache Storage 字节 + 会话内存 blob 全清；已铸的
+  // blob URL 不受影响——URL 与字节源解耦，活动 viewer 继续渲染，下轮打开重新取数
+  // 入账）。确认形态 = 两段式（按钮第二击即确认位，5 秒无第二击自动复位），同上方
+  // btn-restart-gateway 先例：共用 #delete-box 弹窗其确认键文案是「删除」，复用会
+  // 把「清空缓存」错标成删除。清空后读数即现「0 条 · 0 KB」= 清空反馈（诚实读数）。
+  const cacheUsageEl = /** @type {HTMLElement|null} */ (document.getElementById('nf-cache-usage'));
+  if (cacheUsageEl) paintNfCacheUsage(cacheUsageEl);
+  const clearCacheBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('btn-clear-nf-cache'));
+  if (clearCacheBtn && cacheUsageEl) {
+    let cacheArmed = false;
+    let cacheArmTimer = null;
+    const cacheDisarm = () => {
+      cacheArmed = false;
+      if (cacheArmTimer) { clearTimeout(cacheArmTimer); cacheArmTimer = null; }
+      clearCacheBtn.textContent = t('settings.fileCacheClear');
+    };
+    clearCacheBtn.addEventListener('click', async () => {
+      if (!cacheArmed) {
+        cacheArmed = true;
+        clearCacheBtn.textContent = t('settings.fileCacheClearConfirm');
+        cacheArmTimer = setTimeout(cacheDisarm, 5000);
+        return;
+      }
+      cacheDisarm();
+      clearCacheBtn.disabled = true;
+      try { await nfCacheReset(); } finally { clearCacheBtn.disabled = false; }
+      paintNfCacheUsage(cacheUsageEl);
     });
   }
 }
