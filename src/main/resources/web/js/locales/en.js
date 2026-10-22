@@ -1287,6 +1287,10 @@ export default {
   'chat.errorRecovering.providerDown': 'All model services unavailable',
   'chat.errorRecovering.restartRecovery': 'Previous run interrupted',
   'chat.errorRecovering.loop': 'loop detected',
+  /* #692 (2026-10-21): waiting-network = exponential-backoff wait for network /
+     provider recovery (5s→15s→45s→… capped 5min, never terminal). Say what we
+     are waiting FOR — this is an explicit state, not a silent stall. */
+  'chat.errorRecovering.waitingNetwork': 'Waiting for network/provider recovery',
   'chat.loopFrozenStrip': 'Loop detected · the same action kept failing — no auto-recovery, retry or cancel the task',
   'chat.errorRecoveringStrip': 'Recovering · {reason} · {retry}',
   'chat.errorRecoveringStripNoRetry': 'Recovering · {reason}',

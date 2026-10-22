@@ -1026,6 +1026,29 @@ class FreezeGateSpec extends CatsEffectSuite:
       Stream.eval(counter.update(_ + 1)) >>
         Stream.raiseError[IO](new RuntimeException("connection timeout after 30s"))
 
+  /**
+   * #692 场景① mock：前 failCount 次抛**类型化**网络不可达（ConnectException，
+   * isNetworkUnreachableThrowable 直判），之后成功——「断网注入 → 存活 → 恢复续跑」。
+   */
+  private class NetworkFailNThenOkLlm(
+    counter: cats.effect.Ref[IO, Int],
+    failCount: Int
+  ) extends LlmHandle[IO]:
+
+    def send(req: LlmRequest): IO[LlmResponse] =
+      IO.raiseError(new RuntimeException("send not expected in this test"))
+
+    def sendStream(
+      req: LlmRequest,
+      onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+    ): Stream[IO, StreamChunk] =
+      Stream.eval(counter.update(_ + 1)) >> Stream.eval(counter.get).flatMap { n =>
+        if n <= failCount then Stream.raiseError[IO](new java.net.ConnectException("Connection refused"))
+        else Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
+      }
+
+  end NetworkFailNThenOkLlm
+
   private def frozenEventOf(events: List[Json]): Option[Json] =
     events.find(_.hcursor.downField("type").as[String].contains("frozen"))
 
@@ -1324,6 +1347,84 @@ class FreezeGateSpec extends CatsEffectSuite:
         _ <- schedRef.set(openConfig)
         _ <- ref ! AgentCommand.CheckFreezeGate
         _ <- waitUntil(System.currentTimeMillis() + 8000)(counter.get.map(_ >= 1))
+      yield ()
+      program.unsafeRunSync()
+    finally
+      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+    end try
+  }
+
+  test(
+    "ER-7: #692 network-unreachable → waiting-network freeze (survives, no terminal), recovery resumes to completion"
+  ) {
+    val system = ActorSystem("freeze-er7")
+    val tmp = os.temp.dir()
+    val prevRoot = PathUtil.dataRoot
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val program = for
+        counter <- IO.ref(0)
+        requests <- IO.ref(List.empty[LlmRequest])
+        events <- IO.ref(List.empty[Json])
+        schedRef <- IO.ref(openConfig)
+        // #692 首败语义：网络级失败**第 1 次**即入退避等待（不烧重试预算——
+        // networkWaitable 分支先于 overload-retry），恢复后第 2 次调用成功。
+        resources <- mkResources(system, tmp, NetworkFailNThenOkLlm(counter, failCount = 1), schedRef)
+        sid = "freeze-er7-agent"
+        ref <- system.spawn(
+          AgentActor(
+            agentDef = rootDef(),
+            resources = resources,
+            wsSend = json => events.update(_ :+ json),
+            depth = 0,
+            sessionId = Some(sid),
+            sessionName = Some("er7")
+          ),
+          sid
+        )
+        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Root, sid, None)))
+        _ <- ref ! AgentCommand.UserInput("network outage then recovery")
+        // 断网注入：一次网络级失败 → waiting-network 冻结（不进终态、不烧重试预算）
+        _ <- waitUntil(System.currentTimeMillis() + 15000)(counter.get.map(_ >= 1))
+        _ <- waitUntil(System.currentTimeMillis() + 15000)(
+          resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Frozen))
+        )
+        reg <- resources.agentRegistry.get.map(_.get(sid))
+        _ = assertEquals(reg.flatMap(_.frozenReason), Some("waiting-network"), "frozenReason must be waiting-network")
+        _ = assert(reg.exists(_.escalation.isEmpty), "waiting-network never enters the escalation chain (等待无父干预语义)")
+        evs <- events.get
+        fz = frozenEventOf(evs)
+        _ = assert(fz.isDefined, "must emit frozen WS event")
+        _ = assert(
+          fz.exists(_.hcursor.downField("reason").as[String].toOption.contains("waiting-network")),
+          s"frozen event must carry reason=waiting-network, got ${fz.flatMap(_.hcursor.downField("reason").as[String].toOption)}"
+        )
+        countAtFreeze <- counter.get
+        _ <- IO.sleep(800.millis)
+        countAfter <- counter.get
+        _ = assert(
+          countAtFreeze == countAfter,
+          s"waiting-network freeze must be zero-token ($countAtFreeze vs $countAfter)"
+        )
+        // 「恢复」：退避（5s+抖动）到期后 CheckFreezeGate → resumed → 第 2 次调用成功 → turn 完成
+        _ <- IO.sleep(6500.millis)
+        _ <- ref ! AgentCommand.CheckFreezeGate
+        _ <- waitUntil(System.currentTimeMillis() + 15000)(counter.get.map(_ >= 2))
+        resumedSeen <- hasEvent(events, "resumed")
+        _ = assert(resumedSeen, "must emit resumed WS event when backoff elapsed")
+        _ <- waitUntil(System.currentTimeMillis() + 10000)(
+          resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Idle))
+        )
+        evsFinal <- events.get
+        _ = assert(
+          !evsFinal.exists(_.hcursor.downField("type").as[String].contains("error")),
+          "network outage must NEVER terminalize the turn (no error event — 网络不可达≠任务失败)"
+        )
       yield ()
       program.unsafeRunSync()
     finally

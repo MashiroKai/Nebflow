@@ -182,6 +182,21 @@ private[agent] object AgentProcessing:
           // never violated. Single source: AgentActor.llmFailureRetryable.
           val isStreamInactivity = AgentActor.llmFailureInactivityClass(error)
           val retryable = AgentActor.llmFailureRetryable(error)
+          // ── #692 网络不可达退避等待（2026-10-21 作者令）──────────────────
+          // 网络级失败（连接被拒/DNS/超时/未知瞬态的链穷尽形态，判据单点
+          // Fallback.isNetworkUnreachableExhaustion）≠ 任务失败：**不进终态、不烧
+          // 重试预算**，进指数退避等待循环（5s→15s→45s→…封顶 5min，走既有
+          // ErrorFrozen 恢复机制：冻结零 LLM 调用，CheckFreezeGate 到期续跑，条件
+          // 未消除再入等待——天然闭环），直到网络恢复（turn 成功，计数随 idle 清零）
+          // 或作者取消（frozen 态的 Interrupt/Stop/AgentControl cancel 全部在位）。
+          // 10-21 断网实测 [zhipu Timeout(Permanent), kimi Unknown(Transient)] 在
+          // 旧语义下走 fatal 判死——本分支是那次两批阵亡的直接堵点。
+          // 供应商明确拒绝（401/403/404/400）不命中判据 ⇒ 照旧走 fatal（这类等不
+          // 来）；flow 节点豁免（确定性执行，失败由 flow executor Restart 链处置，
+          // 同 shouldErrorFreeze 的豁免判据）。
+          // 状态可见面：registry Frozen + frozenReason="waiting-network" +
+          // agentFrozen WS 帧（reason=waiting-network, retryCount=等待轮数）——
+          // 对齐「正确性靠监测手段表达」：等待是显式状态，不是静默卡死。
           // Hard-recovery P4 (设计 §2.5「用户意图优先」): a transport-aborted turn
           // with QUEUED user input must NOT blindly retry — the abort happened
           // precisely BECAUSE a user message could not get in (wedged turn).
@@ -190,7 +205,25 @@ private[agent] object AgentProcessing:
           // (VPN mid-stream flap) keeps the bounded auto-retry (增量#1 验收).
           val recoverableAbortYieldsToQueued = error.isInstanceOf[RecoverableAbort] &&
             state.execution.pendingImmediateInputs.nonEmpty
-          if retryable && !recoverableAbortYieldsToQueued && state.llmFailRetries < OverloadRetryMax then
+          val networkWaitable = !state.isFlowNode && Fallback.isNetworkUnreachableExhaustion(error)
+          if networkWaitable then
+            val reason = FreezeReason.WaitingNetwork
+            val waitRound = AgentActor.nextErrorFreezeCount(state, reason)
+            val resumeInMs =
+              AgentActor.waitingNetworkBackoffMs(waitRound) + java.util.concurrent.ThreadLocalRandom
+                .current()
+                .nextLong(0, 1_000L)
+            logAgentEvent(
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "network-wait",
+              s"err=${error.getMessage.take(80)} round=$waitRound resumeIn=${resumeInMs}ms " +
+                "(waiting for network/provider recovery — exponential backoff, no terminal)"
+            )
+            enterErrorFrozen(agentDef, resources, depth, parentRef, state, replyTo, reason, resumeInMs, error)
+          else if retryable && !recoverableAbortYieldsToQueued && state.llmFailRetries < OverloadRetryMax then
             // 方案 C（2026-08-18 误杀修复）：预算只在重试路径递增——llmCallsThisTurn
             // 与 llmFailRetries 的区别：后者成功即重置（只限连续重试），前者 turn 内
             // 单调累计（限全 turn 重试总量，正常工具循环的成功调用不计入）。

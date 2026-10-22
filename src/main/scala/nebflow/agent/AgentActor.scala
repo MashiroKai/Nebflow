@@ -138,6 +138,40 @@ object AgentActor extends AgentCore with AgentSession:
     case FreezeReason.ProviderDown => "provider-down"
     case FreezeReason.RestartRecovery => "restart-recovery"
     case FreezeReason.Loop => "loop"
+    case FreezeReason.WaitingNetwork => "waiting-network"
+
+  // ── #692 网络不可达退避等待（2026-10-21 作者令）────────────────────────
+  /**
+   * 等待退避基值：首轮等 5s，之后每轮 ×3（5s/15s/45s/135s/405s），封顶 5min。
+   * 语义 = 「等网络/供应商恢复」，不是「重试 N 次后放弃」——没有放弃轮，唯一
+   * 出口是恢复成功或作者取消（面板可见的 waiting-network 状态即监测面）。
+   */
+  private[agent] val WaitingNetworkBackoffBaseMs = 5_000L
+
+  /**
+   * 等待退避封顶：5min（作者的「恢复重启屏障僵死 7.5h」教训 —— 等待要有节律，
+   * 但绝不终态化）。
+   */
+  private[agent] val WaitingNetworkBackoffMaxMs = 300_000L
+
+  /**
+   * 等待退避阶梯（纯函数，spec 锚）：`min(base × 3^(round-1), max)`——第 1 轮
+   * 5s、第 2 轮 15s、第 3 轮 45s、第 4 轮 135s、第 5 轮起封顶 300s。round 由
+   * 同 reason 连续冻结计数驱动（[[nextErrorFreezeCount]]），跨恢复累计、turn
+   * 成功完成自动清零（ExecutionContext.idle 重建）。
+   */
+  private[agent] def waitingNetworkBackoffMs(round: Int): Long =
+    val clamped = math.max(round, 1)
+    // 迭代累乘、每步封顶（round 再大也无溢出面——收敛在 max 后不再增长）。
+    (1 until clamped).foldLeft(WaitingNetworkBackoffBaseMs)((acc, _) => math.min(acc * 3, WaitingNetworkBackoffMaxMs))
+  end waitingNetworkBackoffMs
+
+  /**
+   * 同 reason 连续错误冻结的下一轮计数（enterFrozen 的计数规则单点镜像——
+   * AgentProcessing 需要在计数写回**前**算退避，与 enterFrozen 保持同判据）。
+   */
+  private[agent] def nextErrorFreezeCount(state: AgentState, reason: FreezeReason): Int =
+    if state.lastErrorFreezeReason.contains(reason) then state.errorFreezeCount + 1 else 1
 
   /** Overload-class reasons: provider saturated, backoff can heal it. */
   private def isOverloadClass(r: FailoverReason): Boolean = AgentActor.isOverloadReason(r)

@@ -1,6 +1,6 @@
 package nebflow.agent
 
-import cats.effect.IO
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.JsonObject
 import io.circe.syntax.*
@@ -8,6 +8,8 @@ import nebflow.actor.AgentCommand
 import nebflow.core.SessionStore
 import nebflow.core.delegate.DelegateRegistry
 import nebflow.shared.*
+
+import scala.concurrent.duration.*
 
 /**
  * V2 (2026-09-03, 结果投递链丢失向量修复): startup recovery for orphan
@@ -61,6 +63,25 @@ import nebflow.shared.*
  * 推导在 ChainsReadFace 读面）都从它读起。在飞资格同步收宽：`restarting`（supervisor
  * 退避态）与 `running` 同判——进程死亡时退避中的任务同样是孤儿（旧 sweep 只认
  * running，退避态记录死后永远躺在 restart-tasks 盘面上，行投影永远回落 running）。
+ *
+ * ── #692 修批（2026-10-21 作者令）两件新增（合并融合 2026-10-22）──────────
+ *
+ * ① findRunningTasks 语义加宽（running ∪ restarting）：10-21 实测 7.5h 僵尸的
+ *    直接成因——respawn 半途（"restarting" 已写、新 child 未起）引擎重启，该行
+ *    不在旧「只扫 running」的启动清扫视野里，永远无人终态化。restarting 行同样
+ *    在飞，本清扫照单全收（ Salvage/Notify/Terminalize 链对状态值无感知）。
+ *    [合并注] 与标记腿的私有 inFlightTasks 收宽语义同向重叠——boot sweep 走
+ *    私有 inFlightTasks（InFlightStatuses 过滤），findRunningTasks 的加宽服务
+ *    ② 的运行期视野与热重启在飞判定；两调用点并存，无重复执行。
+ *
+ * ② 运行期 watchdog（watchdogSweep / run）：重启屏障僵死的兜底闸。判据 = 任务行
+ *    在飞（running/restarting）∧ registry 无活体行（actor 与 supervisor 都不在）
+ *    ∧ 该状态已持续 ≥ stallMs（默认 10min ≈ 10× respawn 最大退避 60s）⇒ 强制
+ *    诚实终态化（failed + partial-salvage）+ F2 队列通知父（幂等，同 correlationId
+ *    守卫）。「强推重新 respawn」由父会话的 re-delegate 机制承接（failed 事件自带
+ *    retryable 语义）——引擎侧裸 respawn 需要父上下文（barrier/worktree 记账），
+ *    直驾会绕过既有治理面。周期循环 run 由 GatewayMain 以 fiber 启动（错误自愈 +
+ *    `>>` 递归，FreezeScheduler/TaskStuckWatcher 同款纪律）。
  */
 object SubAgentStartupRecovery:
   private val logger = NebflowLogger.forName("nebflow.agent.startup-recovery")
@@ -87,7 +108,9 @@ object SubAgentStartupRecovery:
           .flatMap(ids => markInterruptedRecords(store).as(ids))
     }
 
-  /** 在飞任务全量（running/restarting；单遍 findAllTasks 后过滤——boot 一次性）。 */
+  /** 在飞任务全量（running/restarting；单遍 findAllTasks 后过滤——boot 一次性）。
+    * [合并融合] 标记腿与 #692 收宽同向：本 helper 服务 boot sweep（一次性全量），
+    * 运行期视野走 watchdogSweep 的 findRunningTasks（已加宽 running∨restarting）。 */
   private def inFlightTasks(store: SubAgentTaskStore): IO[List[SubAgentTask]] =
     store.findAllTasks()
       .map(_.filter(t => InFlightStatuses.contains(t.status)))
@@ -135,7 +158,67 @@ object SubAgentStartupRecovery:
         else IO.unit
     yield marked
 
+  /**
+   * #692 运行期重启屏障 watchdog 单轮清扫。返回本轮被强制终态化的任务 id。
+   * @param stallMs 状态无进展判读阈值（statusAt 距今）；registry 活体行存在 ⇒ 永不判（活着的任务不受阈值约束——有 actor 在，就没有僵尸）。
+   */
+  def watchdogSweep(
+    store: SubAgentTaskStore,
+    agentRegistry: Ref[IO, Map[String, nebflow.actor.AgentRecord]],
+    sessionStore: SessionStore,
+    stallMs: Long
+  ): IO[List[String]] =
+    for
+      inFlight <- store.findRunningTasks
+      registry <- agentRegistry.get
+      now <- IO(System.currentTimeMillis())
+      zombies = inFlight.filter { t =>
+        !registry.contains(t.taskId) && now - t.statusAt.getOrElse(t.spawnedAt) >= stallMs
+      }
+      _ <-
+        if zombies.isEmpty then IO.unit
+        else
+          logger.warn(
+            s"[restarting-watchdog] ${zombies.size} orphaned in-flight task row(s) stalled ≥${stallMs}ms with no live actor — force-terminalizing: " +
+              zombies.map(t => s"${t.taskId}(${t.status},retry=${t.retryCount})").mkString(", ")
+          )
+      reaped <- zombies.traverse { t =>
+        val head =
+          s"[task lost: restarting-watchdog] Delegate \"${t.description}\" (agent=${t.agentName}, session=${t.taskId}) " +
+            s"had an in-flight task row (status=${t.status}, retryCount=${t.retryCount}) but NO live actor for it " +
+            s"for over ${stallMs / 1000}s — the restart-barrier watchdog is force-terminalizing it (the " +
+            s"respawn barrier stalled or the actor was lost without a terminal event). You may re-delegate this task."
+        recoverOne(store, sessionStore, t, head, "lostToWatchdog").handleErrorWith { e =>
+          logger.warn(s"[restarting-watchdog] reap failed for task ${t.taskId}: ${e.getMessage}").as(t.taskId)
+        }
+      }
+    yield reaped
+
+  /**
+   * watchdog 周期循环：sweep → sleep(interval) → 递归（`>>` by-name 防栈溢出，
+   * 错误自愈——扫描器必须活着）。由 GatewayMain 以 fiber 启动。
+   */
+  def run(resources: SharedResources, interval: FiniteDuration, stallMs: Long): IO[Unit] =
+    def loop: IO[Unit] =
+      watchdogSweep(resources.subAgentTaskStore, resources.agentRegistry, resources.sessionStore, stallMs)
+        .handleErrorWith(e =>
+          logger.warn(s"[restarting-watchdog] sweep failed (will retry next cycle): ${e.getMessage}").as(Nil)
+        ) *> IO.sleep(interval) >> loop
+    loop
+
   private def recoverOne(store: SubAgentTaskStore, sessionStore: SessionStore, task: SubAgentTask): IO[String] =
+    val head =
+      s"[task lost: crash] Delegate \"${task.description}\" (agent=${task.agentName}, session=${task.taskId}) " +
+        s"was still in flight when the process restarted."
+    recoverOne(store, sessionStore, task, head, "lostToCrash")
+
+  private def recoverOne(
+    store: SubAgentTaskStore,
+    sessionStore: SessionStore,
+    task: SubAgentTask,
+    head: String,
+    lostMarkerKey: String
+  ): IO[String] =
     for
       now <- IO(System.currentTimeMillis())
       // 1. Salvage: partial result from the child's own persisted transcript.
@@ -145,9 +228,6 @@ object SubAgentStartupRecovery:
         .handleErrorWith(_ => IO.pure(None))
       parentExists <- sessionStore.listSessions.map(_.exists(_.id == task.parentSessionId))
       payload =
-        val head =
-          s"[task lost: crash] Delegate \"${task.description}\" (agent=${task.agentName}, session=${task.taskId}) " +
-            s"was still in flight when the process restarted."
         partial match
           case Some(text) =>
             s"$head Partial result recovered from the child's disk transcript:\n$text"
@@ -162,7 +242,7 @@ object SubAgentStartupRecovery:
           "taskId" -> task.taskId.asJson,
           "agentName" -> task.agentName.asJson,
           "description" -> task.description.asJson,
-          "lostToCrash" -> true.asJson,
+          lostMarkerKey -> true.asJson,
           "recoveredBy" -> "startup-recovery".asJson
         ),
         correlationId = Some(task.taskId)
@@ -180,8 +260,14 @@ object SubAgentStartupRecovery:
         lastError = Some(
           partial match
             case Some(_) =>
-              "process restart during in-flight task — partial result salvaged and delivered to parent (startup recovery V2)"
-            case None => "process restart during in-flight task — result lost, parent notified (startup recovery V2)"
+              if lostMarkerKey == "lostToWatchdog" then
+                "restarting-barrier stall: no live actor for the in-flight task — watchdog force-terminalized, partial result salvaged and delivered to parent"
+              else
+                "process restart during in-flight task — partial result salvaged and delivered to parent (startup recovery V2)"
+            case None =>
+              if lostMarkerKey == "lostToWatchdog" then
+                "restarting-barrier stall: no live actor for the in-flight task — watchdog force-terminalized, result lost, parent notified"
+              else "process restart during in-flight task — result lost, parent notified (startup recovery V2)"
         ),
         completedAt = Some(now)
       )

@@ -1242,6 +1242,9 @@ export default {
   'chat.errorRecovering.providerDown': '所有模型服务暂不可用',
   'chat.errorRecovering.restartRecovery': '上次运行被中断',
   'chat.errorRecovering.loop': '循环检测',
+  /* #692 修批（2026-10-21）：waiting-network = 网络不可达退避等待（5s→15s→45s→…
+     封顶 5min，不终态）。文案直说「等什么」，不写「恢复中」——等待是显式状态。 */
+  'chat.errorRecovering.waitingNetwork': '等待网络/供应商恢复',
   'chat.loopFrozenStrip': '循环检测暂停 · 同一操作重复失败，不会自动恢复，请重试或取消任务',
   'chat.errorRecoveringStrip': '错误恢复中 · {reason} · {retry}',
   'chat.errorRecoveringStripNoRetry': '错误恢复中 · {reason}',

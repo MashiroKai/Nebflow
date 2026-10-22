@@ -1373,6 +1373,16 @@ object Defaults:
   val FreezeCheckIntervalSec: Int = 30
 
   /**
+   * #692（网络不可达退避等待修批，2026-10-21 作者令）：重启屏障 watchdog 的
+   * 「无进展」判读阈值——任务行在飞（running/restarting）∧ registry 无活体 ∧
+   * 当前状态已持续 ≥ 本值 ⇒ 判重启屏障僵死，强制诚实终态化（restarting-watchdog）。
+   * 取值 10min ≈ 10× respawn 最大退避（60s+抖动）+ spawn 时长——健康 respawn 链
+   * 无论如何跑不完这个窗口（写库态后行要么回到活体、要么已终态化）。10-21 实测
+   * 僵尸窗 = 7.5h，本阈值把它压到 10min 量级。
+   */
+  val RestartingStallWatchdogMs: Long = 600_000L
+
+  /**
    * v2 冻结式错误恢复升级链（§5.1-5.2）：进入升级链后等待父决策的窗口。
    * 每级窗口相同（从升级链启动算起逐级顺延）；用户级不设超时（最终仲裁，
    * 卡片持久化等待）。与 TaskStuckWatcher 卡死阈值同量级（用户有合理决策窗口）。

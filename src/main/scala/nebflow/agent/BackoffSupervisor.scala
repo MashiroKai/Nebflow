@@ -429,7 +429,7 @@ object BackoffSupervisor:
                   s"BackoffSupervisor: child $childName completed EMPTY (no text, zero tool calls — empty burn), " +
                     s"restarting #${recent.length + 1}/$maxRestarts instead of reporting completion"
                 )
-                respawn(ctx, "empty-completion", now, recent)
+                respawnSafely(ctx, "empty-completion", now, recent)
               else if source == "delegate" then
                 logger.warn(
                   s"BackoffSupervisor: child $childName completed EMPTY with restart budget exhausted ($maxRestarts) — terminal verdict left to the deterministic precheck (blocked)"
@@ -501,7 +501,7 @@ object BackoffSupervisor:
               logger.info(
                 s"BackoffSupervisor: child $childName crashed, restarting #${recentRestarts.length + 1}/$maxRestarts"
               )
-              respawn(ctx, "crashed", now, recentRestarts)
+              respawnSafely(ctx, "crashed", now, recentRestarts)
             else
               logger.warn(
                 s"BackoffSupervisor: child $childName exceeded maxRestarts " +
@@ -517,6 +517,41 @@ object BackoffSupervisor:
                   )
                 )
             end if
+
+      /**
+       * #692 修批（重启屏障健壮化）：respawn 链的崩溃安全壳。respawn 本体是长
+       * for-comprehension（写库态 → 退避 sleep → spawn → registry 回写 → 注入
+       * continue → 预算重挂），中途任何一步失败（spawn 工厂异常 / session store
+       * 读炸 / registry 写失败）原来会**静默炸掉本 actor**——"restarting" 任务行
+       * 已写、无人终态化，正是 10-21 实测 7.5h 僵尸（retryCount=1 卡 restarting）
+       * 的源头形态之一。兜底 = 失败转诚实 failed 终态（照常走 notifyParentAndStop
+       * 的全套清理链），宁可响亮失败、绝不留无主行。行内已有局部
+       * handleErrorWith 的步骤（库态写/消息加载）不受影响；本壳只接真正的意外。
+       */
+      private def respawnSafely(
+        ctx: ActorContext[AgentEvent],
+        trigger: String,
+        now: Long,
+        recentRestarts: List[Long]
+      ): IO[Behavior[AgentEvent]] =
+        respawn(ctx, trigger, now, recentRestarts).handleErrorWith { e =>
+          logger
+            .error(
+              s"BackoffSupervisor: respawn chain FAILED for $childName ($trigger): ${e.getMessage} — " +
+                "falling back to an honest failed terminal (a stuck 'restarting' row is never left behind)"
+            )
+            .as(()) *>
+            notifyParentAndStop(
+              "failed",
+              s""""$description": supervisor respawn failed mid-restart ($trigger): ${Option(e.getMessage)
+                  .getOrElse(e.getClass.getSimpleName)} — task force-failed instead of stalling in 'restarting'""",
+              JsonObject(
+                "failedSessionId" -> subagentId.asJson,
+                "retryable" -> true.asJson,
+                "failureType" -> "respawn-failed".asJson
+              )
+            )
+        }
 
       /**
        * 共享 respawn 链（四修① 提取；原 Terminated 腿逐字迁移，行为保持）：

@@ -93,7 +93,12 @@ private[agent] object AgentFrozen:
       else 0
     // 升级链进入判定（§5.1）：连续 ≥3 且尚未在升级链中（幂等——不重复通知）
     val (escalation, escalateNotify): (Option[EscalationInfo], IO[Unit]) =
-      if isErrorFamily && count >= ErrorFreezeEscalationThreshold && state.escalation.isEmpty then
+      // #692（网络不可达退避等待批）：WaitingNetwork 不参与升级链——等待语义没有
+      // 「父干预」出口（作者令：等网络恢复或作者取消；作者面前的取消按钮就是出口，
+      // 面板 waiting-network 状态即监测面）。计数照常累计（等待退避阶梯的轮次驱动），
+      // 只是到阈值不升级、不通知父。
+      if isErrorFamily && reason != FreezeReason.WaitingNetwork && count >= ErrorFreezeEscalationThreshold && state.escalation.isEmpty
+      then
         val now = System.currentTimeMillis()
         val esc = EscalationInfo(
           level = 1,

@@ -1792,6 +1792,19 @@ object GatewayMain extends IOApp:
                                                                 nebflow.shared.Defaults.FreezeCheckIntervalSec.seconds
                                                             )
                                                             .start
+                                                          // --- Background: RestartingWatchdog (#692 修批 2026-10-21) ---
+                                                          // 重启屏障僵死兜底闸：周期扫任务库，在飞行（running/
+                                                          // restarting）∧ registry 无活体 ∧ 状态超龄（默认 10min）
+                                                          // ⇒ 强制诚实终态化 + F2 队列通知父（父可 re-delegate）。
+                                                          // 10-21 实测「retryCount=1 卡 restarting 7.5h」不再可能。
+                                                          _ <- nebflow.agent.SubAgentStartupRecovery
+                                                            .run(
+                                                              sharedResourcesWithDaemon,
+                                                              interval = 60.seconds,
+                                                              stallMs =
+                                                                nebflow.shared.Defaults.RestartingStallWatchdogMs
+                                                            )
+                                                            .start
                                                           // --- Background: HeldDeliveryWatchdog (平台修复批 2026-10-21) ---
                                                           // held 回执投递可靠性自检：周期扫 idle 会话的 held-receipts
                                                           // 台账，到期未注入的回执催注（DrainHeldReceipts，指数退避）、
