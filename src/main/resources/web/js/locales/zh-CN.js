@@ -18,6 +18,9 @@ export default {
   'panel.explorer': '文件浏览器',
   'panel.messages': '消息',
   'panel.contacts': '联系人和设备',
+  // diff 拆面板批（2026-10-22）：左栏「变更文件」面板（委托 diff 摘要条唤起）。
+  'panel.diff': '变更文件',
+  'panel.diffEmpty': '尚未打开 diff。点击委托交付消息上的变更摘要查看文件列表。',
   // #27 Project 标签页 + Flow Map 标签页（方向调整：Canvas 标签页形态，参考 team 面板）
   'project.title': '项目',
   'project.loading': '加载项目…',

@@ -76,14 +76,13 @@ function sourceTag(source) {
   return `<span class="nf-fc-src" title="diff source">${esc(s)}</span>`;
 }
 
-/** One file entry.
- *  Default (Flow Map node detail): a <details> row — click expands the diff
- *  inline (that face keeps its in-place reader).
- *  `opts.mode === 'chat'` (聊天卡 2026-10-10 ruling): a link row — same visuals
- *  (badge / path / +a −r / source tag), no <details>, no inline diff body; the
- *  click is routed by the host (chat.js) to the Canvas diff view via the
- *  data-fc-file index. Render-only module: no DOM listeners here. */
-function fileEntryHtml(f, index, opts) {
+/** One file entry: a <details> row — click expands the diff inline (the Flow
+ *  Map node detail face keeps its in-place reader).
+ *  （2026-10-22 拆面板批：chat 链接行形态（opts.mode==='chat'）随其唯一消费者
+ *  退役——聊天面现在只渲染交付气泡顶部的摘要 chip（injectedRows.js），文件列表
+ *  迁往左栏面板（diffPanel.js 自建行 DOM）。本函数回到唯一现存面 = 节点详情。）
+ *  Render-only module: no DOM listeners here. */
+function fileEntryHtml(f) {
   const path = String(f?.path || '(unknown)');
   const added = Number(f?.added) || 0;
   const removed = Number(f?.removed) || 0;
@@ -95,10 +94,6 @@ function fileEntryHtml(f, index, opts) {
         ${counts}
         ${sourceTag(f?.source)}
       </summary>`;
-  if (opts?.mode === 'chat') {
-    return `
-    <div class="nf-fc nf-fc-link" data-fc-file="${index}" role="button" tabindex="0">${row}</div>`;
-  }
   let body;
   if (typeof f?.diffText === 'string' && f.diffText.length > 0) {
     body = renderDiffHtml(f.diffText);
@@ -119,10 +114,10 @@ function fileEntryHtml(f, index, opts) {
 /**
  * Render the whole file-changes section (header + file list).
  * Returns '' for payloads without files, so callers can skip mounting.
- * `opts.mode === 'chat'`: link-row shape for the delegate-completion chat
- * card (expand → Canvas, see fileEntryHtml).
+ * （消费者 = Flow Map 节点详情内联阅读面（diffView.js）；聊天卡面已于
+ * 2026-10-22 拆面板批改走摘要 chip + 左栏面板 + Canvas 阅读器。）
  */
-export function renderFileChangesHtml(payload, opts) {
+export function renderFileChangesHtml(payload) {
   const files = Array.isArray(payload?.files) ? payload.files : [];
   if (files.length === 0) return '';
   const totals = files.reduce((acc, f) => {
@@ -131,12 +126,9 @@ export function renderFileChangesHtml(payload, opts) {
     return acc;
   }, { a: 0, r: 0 });
   const head = `Changes · ${files.length} file${files.length === 1 ? '' : 's'} <span class="nf-fc-counts"><span class="nf-fc-added">+${totals.a}</span> <span class="nf-fc-removed">−${totals.r}</span></span>`;
-  const headCls = opts?.mode === 'chat'
-    ? 'fm-detail-sec nf-filechanges-head is-link'
-    : 'fm-detail-sec nf-filechanges-head';
   return `
     <div class="nf-filechanges">
-      <div class="${headCls}" data-fc-open="1"${opts?.mode === 'chat' ? ' role="button" tabindex="0"' : ''}>${head}</div>
-      <div class="nf-filechanges-list">${files.map((f, i) => fileEntryHtml(f, i, opts)).join('')}</div>
+      <div class="fm-detail-sec nf-filechanges-head" data-fc-open="1">${head}</div>
+      <div class="nf-filechanges-list">${files.map((f) => fileEntryHtml(f)).join('')}</div>
     </div>`;
 }

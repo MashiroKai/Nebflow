@@ -18,6 +18,9 @@ export default {
   'panel.explorer': 'Explorer',
   'panel.messages': 'Messages',
   'panel.contacts': 'Contacts & Devices',
+  // diff 拆面板批（2026-10-22）：左栏「变更文件」面板（委托 diff 摘要条唤起）。
+  'panel.diff': 'Changed Files',
+  'panel.diffEmpty': 'No diff open. Click the changes summary on a delegate delivery message.',
   // #27 Project tab + Flow Map tab (direction adjustment: Canvas tab form, team-panel paradigm)
   'project.title': 'Projects',
   'project.loading': 'Loading projects…',

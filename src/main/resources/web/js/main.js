@@ -127,6 +127,10 @@ import './agentManager.js';
 import { openPlugins } from './plugins.js';
 import { initColResizers } from './colResizer.js';
 import { initActivityBar, toggleSideBar, enableFriendPanels } from './activityBar.js';
+// diff 拆面板批（2026-10-22）：左栏「变更文件」面板 boot 挂点（面板 DOM + 注册；
+// 调用时序在 initActivityBar 之后——持久化的陈旧面板 id 先行回落 files，diff
+// 面板是瞬态视图，由交付消息上的摘要条按需唤起）。
+import { initDiffPanel } from './diffPanel.js';
 import { initAgentProfile } from './agentProfile.js';
 // Social interface cards (socpanel batch, 2026-09-19): entry #social-btn +
 // config dialog. Wiring is document-level, so it survives the friends gate
@@ -3631,6 +3635,8 @@ requestAnimationFrame(() => {
 });
 
 initActivityBar();
+// diff 拆面板批（2026-10-22）：注册态须在 boot 即就位（首个交付摘要条点击前）。
+initDiffPanel();
 document.getElementById('canvas-toggle-btn')?.addEventListener('click', () => {
   // Toggle Canvas open/close — closing does NOT clear tabs.
   if (document.body.classList.contains('canvas-open')) {
