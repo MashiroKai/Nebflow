@@ -302,7 +302,7 @@ object PluginRegistry:
                      else if PluginDispatchPolicy.effective(p.name, trusted = true) then ""
                      else
                        "Disabled for new dispatches by the author — in-flight nodes keep their plugin grant. " +
-                         s"Re-enable via the panel switch, POST /api/plugins/${p.name}/enable, or CLI 'nebflow plugin enable ${p.name}'."
+                         s"Re-enable via the panel switch, POST /api/plugins/${p.name}/enable, or CLI 'stand plugin enable ${p.name}'."
         ) .asJson
       ),
       "skills" -> p.skills
@@ -557,7 +557,7 @@ object PluginRegistry:
             s"Plugin '$name' is BLOCKED (deny-list: $reason). " +
               s"A blocked package is refused everywhere (no load, no dispatch, in-flight MCP stopped). " +
               s"Unblock it if intended: Plugin panel, REST POST /api/plugins/$name/unblock, " +
-              "or CLI 'nebflow plugin unblock $name'. (PLUGIN_BLOCKED)"
+              "or CLI 'stand plugin unblock $name'. (PLUGIN_BLOCKED)"
           )
         case Some(p) => Right(p)
     }
@@ -1193,7 +1193,7 @@ object PluginRegistry:
 
   /**
    * §B.3 外部导入（协议符合度批补齐；无审批批 2026-09-13 口径更新）：
-   * `nebflow plugin add <git-url|本地路径>` → clone/copy 进 `~/.nebflow/plugins/<manifest name>/`
+   * `stand plugin add <git-url|本地路径>` → clone/copy 进 `~/.nebflow/plugins/<manifest name>/`
    * → **落盘即生效**（在位即信任：下个扫描周期即可派发，无需审批动作）。
    * 同名已存在 → 拒绝（不覆盖）。
    * git 来源（http(s) 开头、git@ 开头或以 .git 结尾）走 `git clone --depth 1`；
@@ -1230,7 +1230,7 @@ object PluginRegistry:
               Left(
                 s"refusing to install from '$source': it resolves to the current working directory (${os.pwd}) or one of its " +
                   s"parents — installing it would recursively copy the whole workspace into a temp dir. Pass the plugin package " +
-                  "itself: a subdirectory (e.g. 'nebflow plugin add ./my-plugin') or an absolute path (e.g. '/path/to/my-plugin')."
+                  "itself: a subdirectory (e.g. 'stand plugin add ./my-plugin') or an absolute path (e.g. '/path/to/my-plugin')."
               )
             else
               os.copy(src, staged, createFolders = true, mergeFolders = true, replaceExisting = true)
@@ -1262,7 +1262,7 @@ object PluginRegistry:
                     )
                     Right(
                       s"Plugin '$pname' installed to $target — active on the next scan (presence = trust: no approval step). " +
-                        s"Block it if intended: Plugin panel, REST POST /api/plugins/$pname/revoke, or CLI 'nebflow plugin revoke $pname'."
+                        s"Block it if intended: Plugin panel, REST POST /api/plugins/$pname/revoke, or CLI 'stand plugin revoke $pname'."
                     )
               end match
         end if

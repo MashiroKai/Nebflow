@@ -20,25 +20,25 @@ class LoginCommandSpec extends FunSuite:
   test("H1/H4/H5 逐字节 == 批件逐字（期望值独立于实现件的第二份副本）") {
     // 2026-09 stand 微批：H1 描述位品牌词 Nebflow → Branding.productName（brand.conf
     // 现值 stand）渲染后的逐字；命令位/对齐空格不变。
-    assertEquals(LoginCopy.H1LoginHelp, "nebflow login                        Sign in to your stand account")
+    assertEquals(LoginCopy.H1LoginHelp, "stand login                        Sign in to your stand account")
     assertEquals(
       LoginCopy.H4LogoutHelp,
-      "nebflow logout                       Sign out and remove the stored device credential"
+      "stand logout                       Sign out and remove the stored device credential"
     )
     assertEquals(
       LoginCopy.H5WhoamiHelp,
-      "nebflow whoami                        Show the signed-in account and device status"
+      "stand whoami                        Show the signed-in account and device status"
     )
   }
 
-  test("H 行 = `nebflow <cmd>` + 批件对齐空格 + 描述位（列 37/37/38，批件原文）") {
-    assertEquals(LoginCopy.H1LoginHelp, "nebflow login" + " " * 24 + LoginCopy.SignInDesc)
-    assertEquals(LoginCopy.H4LogoutHelp, "nebflow logout" + " " * 23 + LoginCopy.SignOutDesc)
-    assertEquals(LoginCopy.H5WhoamiHelp, "nebflow whoami" + " " * 24 + LoginCopy.WhoamiDesc)
-    // H5 比 H1/H4 多一空格 = 批件原文如此，此前已按「逐字不校正」保留并在报告单列呈报
-    assertEquals(LoginCopy.H1LoginHelp.length - LoginCopy.SignInDesc.length, 37)
-    assertEquals(LoginCopy.H4LogoutHelp.length - LoginCopy.SignOutDesc.length, 37)
-    assertEquals(LoginCopy.H5WhoamiHelp.length - LoginCopy.WhoamiDesc.length, 38)
+  test("H 行 = `stand <cmd>` + 批件对齐空格 + 描述位（2026-09 stand 微批后列 35/35/36）") {
+    assertEquals(LoginCopy.H1LoginHelp, "stand login" + " " * 24 + LoginCopy.SignInDesc)
+    assertEquals(LoginCopy.H4LogoutHelp, "stand logout" + " " * 23 + LoginCopy.SignOutDesc)
+    assertEquals(LoginCopy.H5WhoamiHelp, "stand whoami" + " " * 24 + LoginCopy.WhoamiDesc)
+    // 空格数沿批件原文不变（24/23/24）；前缀 nebflow→stand 后描述位列宽 37/37/38 → 35/35/36
+    assertEquals(LoginCopy.H1LoginHelp.length - LoginCopy.SignInDesc.length, 35)
+    assertEquals(LoginCopy.H4LogoutHelp.length - LoginCopy.SignOutDesc.length, 35)
+    assertEquals(LoginCopy.H5WhoamiHelp.length - LoginCopy.WhoamiDesc.length, 36)
   }
 
   test("描述位无首尾空白、非空（防把对齐空格串进 description）") {
@@ -55,7 +55,7 @@ class LoginCommandSpec extends FunSuite:
     assertEquals(CommandRegistry.get("whoami").map(_.description), Some(LoginCopy.WhoamiDesc))
   }
 
-  test("三命令各恰一个子命令（裸 `nebflow login` 因此可直接执行，不需子命令名）") {
+  test("三命令各恰一个子命令（裸 `stand login` 因此可直接执行，不需子命令名）") {
     for n <- List("login", "logout", "whoami") do assertEquals(CommandRegistry.get(n).map(_.subcommands.size), Some(1))
   }
 
@@ -89,10 +89,10 @@ class LoginCommandSpec extends FunSuite:
   test("H3 失败行逐字（含稳定码位）") {
     assertEquals(
       LoginCopy.signInFailedLine(SignInFailure.ExpiredToken.reason, SignInFailure.ExpiredToken.code),
-      "Sign-in failed: the code expired before it was approved (code: expired_token) — run 'nebflow login' to retry."
+      "Sign-in failed: the code expired before it was approved (code: expired_token) — run 'stand login' to retry."
     )
     val line = LoginCopy.signInFailedLine("x", "y")
-    assertEquals(line, "Sign-in failed: x (code: y) — run 'nebflow login' to retry.")
+    assertEquals(line, "Sign-in failed: x (code: y) — run 'stand login' to retry.")
     assert(line.contains("\u2014"), "em dash 必须是 U+2014")
   }
 
@@ -270,8 +270,8 @@ class LoginCommandSpec extends FunSuite:
 
   // ── J. 其余两个命令的行面 ────────────────────────────────────────────────
 
-  test("whoami 未登录文案可行动（含 `nebflow login`）、logout 行非空、设备行有空值兜底") {
-    assert(LoginCopy.NotSignedIn.contains("nebflow login"))
+  test("whoami 未登录文案可行动（含 `stand login`）、logout 行非空、设备行有空值兜底") {
+    assert(LoginCopy.NotSignedIn.contains("stand login"))
     assert(LoginCopy.SignedOut.nonEmpty)
     assertEquals(LoginCopy.deviceLine("host-a", "linux"), "Device: host-a (linux)")
     assertEquals(LoginCopy.deviceLine("", ""), "Device: unknown (unknown)")

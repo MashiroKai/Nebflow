@@ -3,7 +3,7 @@ FROM eclipse-temurin:21-jre-alpine
 # L2 rebrand: brand values from repo-root brand.conf — pass them as build
 # args so the jar glob follows the assembly name without editing this file:
 #   docker build --build-arg lower_name=$(...) -t ... .
-ARG lower_name=nebflow
+ARG lower_name=stand
 
 WORKDIR /workspace
 

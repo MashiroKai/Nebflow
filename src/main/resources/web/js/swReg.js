@@ -16,7 +16,7 @@ export function initServiceWorker() {
   try {
     if (!('serviceWorker' in navigator)) return;
     if (location.protocol !== 'http:' && location.protocol !== 'https:') return;
-    const lower = (/** @type {Window & { __BRAND__?: { lowerName?: string } }} */ (window).__BRAND__?.lowerName) || 'nebflow';
+    const lower = (/** @type {Window & { __BRAND__?: { lowerName?: string } }} */ (window).__BRAND__?.lowerName) || 'stand';
     const flagKey = lower + '_sw';
     if (localStorage.getItem(flagKey) === '0') {
       navigator.serviceWorker.getRegistration().then((reg) => reg && reg.unregister()).catch(() => {});

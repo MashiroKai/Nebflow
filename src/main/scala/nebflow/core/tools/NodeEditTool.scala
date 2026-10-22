@@ -870,13 +870,13 @@ object NodeEditTool extends Tool:
               Left(
                 s"Plugin '$n' is BLOCKED (deny-list) — a blocked package is refused on every path " +
                   s"(no dispatch, no load, in-flight MCP stopped). Unblock it if intended: Plugin panel, " +
-                  s"REST POST /api/plugins/$n/unblock, or CLI 'nebflow plugin unblock $n'. (PLUGIN_BLOCKED)"
+                  s"REST POST /api/plugins/$n/unblock, or CLI 'stand plugin unblock $n'. (PLUGIN_BLOCKED)"
               )
             else
               Left(
                 s"Plugin '$n' is disabled for new dispatches by the author (dispatch switch is OFF). " +
                   "It affects FUTURE dispatches only — nodes already dispatched keep their plugin grant. " +
-                  s"To use it again either re-enable it (panel switch, POST /api/plugins/$n/enable, or CLI 'nebflow plugin enable $n'), " +
+                  s"To use it again either re-enable it (panel switch, POST /api/plugins/$n/enable, or CLI 'stand plugin enable $n'), " +
                   s"or grant a temporary dispatch transition (POST /api/plugins/$n/dispatch/grant). (PLUGIN_DISPATCH_DISABLED)"
               )
           }
