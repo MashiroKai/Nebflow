@@ -259,6 +259,8 @@ export function send(resendId) {
     // （本腿帧未出线但应用已收下并排队，作者令：排队消息要有明确的已收到视觉，
     // 不许消失在排队数字里）。位次信息在排队条行标（第 N 位），气泡不带位次
     // （位次随 drain 漂移，气泡重渲违「零新增呈现」红线）。
+    // [合并裁定 2026-10-22] 活性流式批同位重复实现（queueNote 带位次小标）退役，
+    // 确认标统一 pending='queued' 单通道——本段即两批合流的保留版。
     const item = queueMessage(v, text, v.pendingAttachments, null, null, { rendered: true });
     renderUserBubble(text, v.pendingAttachments, undefined, { msgId: item.clientMessageId, pending: 'queued' });
     input.value = '';
@@ -539,6 +541,8 @@ export function restoreQueue() {
     // qattachvault：骨架落位后立即水合载荷库（字节灌回内存项）；boot 时 WS 尚未连接，
     // 派发闸（flushOfflineQueue 等）一律 `afterQueueHydration` 挂在水合之后 ⇒ 无竞态。
     void hydrateQueueFromVault();
+    // conn-liveness（对话层活性批 2026-10-22）：刷新恢复的滞留项立即进横幅计数。
+    state.updateConnBanner?.();
   } catch (e) { /* corrupt data — ignore */ }
 }
 
@@ -753,6 +757,8 @@ function queueMessage(view, text, attachments, skillName, mode, extra) {
 function enqueueOfflineMessage(v, text) {
   const item = queueMessage(v, text, v.pendingAttachments, null, null, { offline: true, rendered: true });
   renderUserBubble(text, v.pendingAttachments, undefined, { msgId: item.clientMessageId, pending: true });
+  // conn-liveness（对话层活性批 2026-10-22）：滞留计数变化 ⇒ 顶栏横幅立即重读。
+  state.updateConnBanner?.();
   const input = v.dom.input;
   input.value = '';
   input.style.height = 'auto';
@@ -764,7 +770,11 @@ function enqueueOfflineMessage(v, text) {
   setTimeout(() => { v.isSending = false; }, 300);
 }
 
-/** 摘掉待送达小标（翻已送达态）。同页命内乐观气泡的寻址面 = 行 data-msg-id。
+/** 摘掉待送达/排队确认小标（翻已送达态）。同页命内乐观气泡的寻址面 = 行
+ *  data-msg-id。两变体同挂 `.msg-pending-mark`（时钟标 / .acked 确认标，
+ *  排队信息量批）——两腿的乐观气泡共用本单点翻面。
+ *  [合并裁定 2026-10-22] 活性流式批的 `.msg-queued-mark` 独立类退役，确认标
+ *  统一 .msg-pending-mark.acked 单通道。
  *  返回行是否在场（不在场 = 已被 historyPage 整替抹掉，调用方走补渲台）。 */
 function flipOfflineMark(sid, msgId) {
   if (!msgId) return false;
@@ -867,6 +877,8 @@ function dispatchOfflineItem(sid, item) {
     chatWidth: view?.dom?.chat?.clientWidth || 0
   });
   if (!sent) return false; // 帧在 ws.js pendingSends 内存轨；项留队，下次 open 同 id 再补
+  // conn-liveness（对话层活性批 2026-10-22）：项已派发 ⇒ 滞留计数变化 ⇒ 横幅重读。
+  state.updateConnBanner?.();
   // 写出成功 ⇒ 出队 + 持久化（先出队 = 「移出即已派发」口径，同 sendImmediate）
   const q = state.messageQueue[sid];
   if (q) { const idx = q.indexOf(item); if (idx >= 0) q.splice(idx, 1); }
@@ -976,10 +988,14 @@ function sendImmediate(sessionId, item) {
   }
   // Render in chat
   // resend-dedup 批：renderUserBubble 落 data-msg-id = 幂等键（与普通发送同键）。
-  // f1-send-queue：rendered 项（离线入队的乐观气泡已在场）零新增呈现 —— 摘掉
-  // 待送达小标即「已送达」翻面；重渲一份就是重复气泡。
+  // f1-send-queue：rendered 项（离线入队/busy 排队确认的乐观气泡已在场）零新增
+  // 呈现 —— 摘掉小标即「已送达」翻面；重渲一份就是重复气泡。
+  // 翻面落空（行不在场：刷新后 / historyPage 整替）⇒ 补渲一次已送达态气泡 ——
+  // 消息此刻已被受理，界面上不能凭空消失（对话层活性批 2026-10-22 收口）。
   if (item.rendered) {
-    flipOfflineMark(sessionId, itemMsgId);
+    if (!flipOfflineMark(sessionId, itemMsgId) && activeView && activeView.sessionId === sessionId) {
+      renderUserBubble(item.text, item.attachments);
+    }
   } else if (activeView && activeView.sessionId === sessionId) {
     if (item.mode === 'compact') {
       renderSystemBubble(item.text ? t('slash.compactDone') + ' — ' + item.text : t('slash.compactDone'));
@@ -1129,10 +1145,14 @@ function drainMessageQueueNow(sessionId) {
   purgeVaultItem(sessionId, item); // qattachvault：载荷已随帧出线 ⇒ 载荷库清账
 
   // Render in chat (only if this session is the active view)
-  // f1-send-queue：rendered 项（离线入队的乐观气泡已在场）零新增呈现 —— 摘掉
-  // 待送达小标即可；重渲一份就是重复气泡（与 sendImmediate 同律）。
+  // f1-send-queue：rendered 项（离线入队/busy 排队确认的乐观气泡已在场）零新增
+  // 呈现 —— 摘掉小标即可；重渲一份就是重复气泡（与 sendImmediate 同律）。
+  // 翻面落空（行不在场：刷新后 / historyPage 整替）⇒ 补渲已送达态气泡（同
+  // sendImmediate 的收口——消息已受理，不能凭空消失）。
   if (item.rendered) {
-    flipOfflineMark(sessionId, item.clientMessageId);
+    if (!flipOfflineMark(sessionId, item.clientMessageId) && view && activeView && activeView.sessionId === sessionId) {
+      renderUserBubble(item.text, item.attachments);
+    }
   } else if (view && activeView && activeView.sessionId === sessionId) {
     if (item.mode === 'compact') {
       renderSystemBubble(item.text ? t('slash.compactDone') + ' — ' + item.text : t('slash.compactDone'));

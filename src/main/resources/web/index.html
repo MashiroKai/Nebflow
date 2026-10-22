@@ -72,8 +72,15 @@
        script。层样式落 css/（/css/<file> 单段路由服务），控制器落 js/mobile/
        （jsRoutes 任意深度服务）—— 均为既有静态路由面，零引擎改动。 -->
   <link rel="stylesheet" href="css/mobileLayer.css">
+  <!-- 对话层活性批（2026-10-22）：回合活动流条 + 断连横幅 -->
+  <link rel="stylesheet" href="css/liveness.css">
 </head>
 <body>
+  <!-- conn-liveness（对话层活性批 2026-10-22）：ws 断连/重连顶栏横幅。传输层
+       问题不再伪装成卡死：断开 ⇒ 顶栏「连接断开 · 正在重连」（离线排队消息
+       在场时追加「N 条待送达」）；重连成功 ⇒ 横幅收起，队列由 flushOfflineQueue
+       自动冲刷。固定定位不推挤布局；生产者 = ws.js updateConnBanner。 -->
+  <div id="conn-banner" class="hidden" role="status" aria-live="polite"></div>
   <script>document.documentElement.classList.add('ui-init');</script>
   <script>/* Classic script: cannot import branding.js. Read the brand-namespaced key first, fall back to the legacy nebflow_ spelling. */var __b=(window.__BRAND__&&window.__BRAND__.lowerName)||'nebflow';if(localStorage.getItem(__b+'_sidebar_collapsed')==='true'||localStorage.getItem('nebflow_sidebar_collapsed')==='true'||window.matchMedia('(max-width: 768px)').matches)document.body.classList.add('sidebar-collapsed');window.__sidebarRestore={collapsed:document.body.classList.contains('sidebar-collapsed'),panel:localStorage.getItem(__b+'_sidebar_active_panel')||localStorage.getItem('nebflow_sidebar_active_panel')||'files'};</script>
   <!-- Activity Bar — vertical icon strip (independent glass card).
@@ -320,6 +327,10 @@
       </div>
       <!-- Moved outside #input-bar so backdrop-filter can blur chat content -->
       <div id="slash-dropdown"></div>
+      <!-- turn-liveness（对话层活性批 2026-10-22）：回合活动流条（生产者 =
+           js/main/turnActivity.js，账本 = state.sessionActivity）。默认收起 =
+           一行滚动摘要；点击展开最近 N 条。 -->
+      <div id="activity-strip"></div>
       <div id="queue-bar"></div>
       <div id="input-bar">
         <!-- 语音输入 = micOrb 液态光球（voicefix 批，作者 2026-09-21 14:0x ③：

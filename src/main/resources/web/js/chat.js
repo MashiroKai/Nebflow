@@ -468,6 +468,8 @@ function createPendingSendMark(kind) {
  *   生成 c-<rand>）。行挂 data-msg-id = 引用跳转的唯一寻址面。
  *   f1-send-queue：pending = true ⇒ footer 前置「待送达」时钟小标（离线入队的乐观
  *   气泡）；pending = 'queued' ⇒ 「已收到」确认标（busy 排队腿，排队信息量批）。
+ *   [合并裁定 2026-10-22] 活性流式批的 queueNote 重复实现退役（见 chat.css
+ *   .acked 合并注）：确认标统一走 pending='queued' 单通道。
  */
 export function renderUserBubble(text, attachments, timestamp, opts) {
   const chat = activeView.dom.chat;

@@ -656,6 +656,10 @@ export default {
   'input.voiceError': 'Voice input not supported in this browser. Try Chrome.',
   'input.queued': 'Queued',
   'input.sendImmediate': 'Send Now',
+  // Conversation-liveness batch (2026-10-22): instant ack mark for busy-queued
+  // interjections + disconnect banner texts.
+  'ws.connBanner.reconnecting': 'Connection lost · reconnecting…',
+  'ws.connBanner.pending': 'Connection lost · reconnecting… {n} message(s) waiting to send',
   // f1-send-queue (2026-10-19): pending-mark tooltip for offline-queued bubbles + queue overflow toast.
   'chat.pendingSend': 'Pending - auto-resends on reconnect',
   'input.queueOverflow': 'Message queue full (100): oldest message dropped',
@@ -2427,6 +2431,10 @@ export default {
   // one-time console ticket (CLI: `nebflow token`); the redemption face
   // (?ticket=) exchanges it for an HttpOnly session cookie.
   'ws.ticketEntry.notify': 'Sign-in required — click the sign-in button to continue with your {lowerBrand} account',
+  // Conversation-liveness batch (2026-10-22): turn activity strip (delegate /
+  // background-task in-turn activity as one collapsible light strip).
+  'activity.title': 'Activity',
+  'activity.count': '{n} events',
   // === mobile-mockup-375 v3 implementation batch (mockup 20261020_214500) ===
   // Profile panel (extension 3: header avatar entry + avatar/name quick settings)
   'profile.title': 'Agent',

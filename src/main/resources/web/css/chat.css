@@ -876,7 +876,10 @@
 /* 排队信息量批（2026-10-22 作者追加令）：busy 排队腿的「已收到」确认标
    （.acked = check 图标 + 可读文本，success 绿染）——作者令「排队消息要有明确的
    已收到视觉（而不是消失在数字里）」。与离线腿时钟标同槽位（drain 翻面时整标
-   摘除，flipOfflineMark 按 .msg-pending-mark 寻址，两变体同契约）。 */
+   摘除，flipOfflineMark 按 .msg-pending-mark 寻址，两变体同契约）。
+   [合并裁定 2026-10-22] 对话层活性批的重复实现（.msg-queued-mark + queueNote
+   带位次小标）退役：位次只在排队条行标，气泡不上位次（位次随 drain 漂移，
+   气泡重渲违「零新增呈现」红线——#714 排队信息量批裁定，后出优先）。 */
 .duration-badge .msg-pending-mark.acked {
   display: inline-flex;
   align-items: center;

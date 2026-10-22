@@ -97,6 +97,9 @@ import { initFileSearch } from './fileSearch.js';
 import { initUsageDashboard } from './usageDashboard.js';
 import { initExplorer, refreshExplorer } from './explorer.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
+// 对话层活性批（2026-10-22）：回合活动流条 —— 委派/后台任务的回合内活动
+// （批派发/子代理工具调用/待合并/后台任务状态）上屏为轻量可折叠活动行。
+import { noteActivity, clearActivity } from './main/turnActivity.js';
 import { isErrorReason, normalizeReason, applyErrorFrozen, clearErrorFrozen, renderEscalationCard } from './errorRecovery.js';
 import { handleFlowAgentHistory, openStepPopup as openFlowStepPopup } from './flowAgentPopup.js';
 import { handleBgAgentHistory, openStepPopup as openBgAgentPopup, cleanupBgAgentView } from './bgAgentPopup.js';
@@ -1125,6 +1128,9 @@ onMessage('done', (msg, view) => {
   }
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
+  // 对话层活性批（2026-10-22）：回合终态 ⇒ 活动条收口清空（「进行中看得见在动」
+  // 的面只服务进行中；终态摘要由 turn-header 徽标承担）。非在场的会话只清账本。
+  if (sid) clearActivity(sid);
   // Defensive: clear attention when turn ends (in case answer callback didn't fire)
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   const durationMs = consumeTurnDuration(sid);
@@ -1901,6 +1907,19 @@ onMessage('agentStart', (msg, view) => {
     currentTool: null,
     done: false,
   };
+  // 对话层活性批（2026-10-22）：批派发上屏为活动条一行（归属 = rootSessionId，
+  // 与上面 sessionBgAgents 落桶同键）。文本 = 批名（+ 任务标题；无标题时截断的
+  // 任务描述），who 留空（派发行自身即主体）。
+  {
+    const dispatchName = msg.name || aid || '';
+    const title = msg.taskTitle || '';
+    const desc = typeof msg.taskDescription === 'string' ? msg.taskDescription : '';
+    const dispatchText = title || (desc ? desc.slice(0, 60) : '');
+    noteActivity(sid, {
+      kind: 'dispatch',
+      text: dispatchText ? `${dispatchName} — ${dispatchText}` : dispatchName,
+    });
+  }
   // Always refresh the badge of the view displaying the OWNING session (sid),
   // regardless of which view this event was routed through (popup views have
   // no indicator; activeView-based updates silently no-op'd).
@@ -1923,6 +1942,11 @@ onMessage('agentToolStart', (msg, view) => {
     state.sessionBgAgents[sid][aid]._missSince = null;
     if (view) renderBgAgentDropdown();
   }
+  // 对话层活性批（2026-10-22）：子代理工具调用上屏为活动条一行。label =
+  // 后端 summarizeToolCall 摘要（工具名 + 关键参数）；who = 批短名（sessionBgAgents
+  // 登记的 name，agentStart 先行落桶）——多批并跑时行可归属。
+  const who = (aid && state.sessionBgAgents[sid] && state.sessionBgAgents[sid][aid]?.name) || '';
+  noteActivity(sid, { kind: 'tool', text: msg.label || '', who });
 });
 
 onMessage('agentToolEnd', (msg, view) => { resetStreamTimeout(msg.sessionId); });
@@ -2012,6 +2036,9 @@ onMessage('delegateWaiting', (msg) => {
       const entrySid = (info.sessionId || '').replace(/^team-/, '');
       if (entrySid !== bare) continue;
       info.waiting = { mode: msg.mode || 'merge' };
+      // 对话层活性批（2026-10-22）：待合并上屏（「某批刚合并/正待合并」的
+      // 对话面见证——此前只在 Sub-Agents 行上有态）。
+      noteActivity(rootSid, { kind: 'waiting', text: info.name || bare });
       updateBgAgentIndicator(rootSid);
     }
   }
@@ -2022,6 +2049,12 @@ onMessage('agentDone', (msg, view) => {
   const sid = msg.rootSessionId || msg.sessionId || state.activeSessionId;
   if (!sid) return;
   const aid = msg.agentId || (view && view.stream.activeAgentId);
+  // 对话层活性批（2026-10-22）：批完成上屏（批报告本体 = 注入气泡的既有面；
+  // 本行只是活动条上的「收工」见证）。批短名取自登记行（此刻尚未清）。
+  {
+    const entry = aid && state.sessionBgAgents[sid] ? state.sessionBgAgents[sid][aid] : null;
+    noteActivity(sid, { kind: 'done', text: (entry && entry.name) || aid || '' });
+  }
   // W1-d dual-key cleanup: live events key sessionBgAgents entries on the
   // actor-path agentId, but entries rebuilt from the activeAgents snapshot
   // after a refresh key on the agent's SESSION id (backend pins agentId ==
@@ -3042,6 +3075,12 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
   // unbounded-until-refresh either. Sweep once right here so a burst of terminal
   // frames cannot leave the bucket over the cap until the next tick.
   sweepBgTerminalRows(tasks, Date.now());
+  // 对话层活性批（2026-10-22）：后台任务状态变化上屏一行（status 变化才算——
+  // 同状态心跳帧由 noteActivity 的 1.5s 同文聚合窗兜住，不刷屏）。
+  {
+    const desc = msg.description || msg.taskId || '';
+    noteActivity(sid, { kind: 'bgtask', text: `${desc} → ${msg.status || ''}` });
+  }
   // Refresh the OWNING view's badge (findViewBySessionId(sid)), not the
   // ws.js-routed activeView: sub-agent events arrive with view=null (no popup)
   // or a popup ChatView, and skipping/retargeting the refresh is what froze
