@@ -244,6 +244,16 @@ const BG_FLOW_WORD_KEY = {
   cancelled: 'flowmap.st.cancelled',
 };
 
+/** 显示名契约批（2026-10-22 · 子智能体面板行显示名修复）：取文本首行（批次标题/
+ *  任务描述均为多行全文，行主名只用首行——CSS 单行截断省略号 + title tooltip
+ *  承载完整名）。空白文本 → ''（绝不产出空白主名）。 */
+function bgFirstLine(text) {
+  const s = String(text || '').trim();
+  if (!s) return '';
+  const nl = s.indexOf('\n');
+  return (nl === -1 ? s : s.slice(0, nl)).trim();
+}
+
 /**
  * 两级结构组装（C2）：groups = delegate 组头（含子行三源）；leftovers = 未被认领的
  * 非 delegate 行（原序）。子行三源：
@@ -315,7 +325,11 @@ function bgDelegateGroups(entries) {
 /**
  * 面板行 HTML（原 renderBgAgentDropdown map 体原样抽出——行渲染语义零改动；新增
  * opts.childLevel/headLevel 两级锚与 opts.badgeWord 徽标覆写两个纯呈现参数）。
- * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, badgeWord?: string}} [opts]
+ * 显示名契约批（2026-10-22）：delegate 组头行（opts.headLevel）新增
+ * opts.rowTitle（DelegateRegistry.Record.title 的 provider 镜像——spawn 落盘、
+ * 跨重启存活），主名 = 批次标题/任务描述首行（全生命周期稳定，不再收缩成
+ * sessionId）；session id 降为 title tooltip 次要信息。
+ * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, badgeWord?: string, rowTitle?: string}} [opts]
  * @returns {string}
  */
 function bgTaskRowHtml(id, info, opts = {}) {
@@ -352,9 +366,29 @@ function bgTaskRowHtml(id, info, opts = {}) {
     ? '<span class="bg-task-badge" title="' + escapeHtml(t('subagents.taskBadge', { text: taskBadgeText })) + '">'
       + escapeHtml(taskBadgeText) + '</span>'
     : '';
-  const displayName = info.name || id;
-  const taskText = info.task ? displayName + ' · ' + info.task : displayName;
-  const namePart = '<span class="bg-task-name" title="' + escapeHtml(taskText) + '">' + escapeHtml(taskText) + '</span>';
+  // ── 显示名契约（2026-10-22 · 作者「先长名后收缩成 sessionId」批）────────────
+  // 症状根因：恢复脸（activeAgents 快照）对 delegate 会话 meta/displayName 恒缺席
+  // ⇒ agentName 回落 sessionId；live 脸 agentId == sessionId，同 key 合并「快照为准」
+  // 每次开面板都把 live 长名行覆盖成短 id；重启后只剩快照脸 ⇒ 全行 id。
+  // 主名数据链（全生命周期稳定 = 批次标题/任务描述首行）：
+  //   rowTitle（DelegateRegistry.Record.title 的 provider 镜像——spawn 落盘、
+  //   跨重启存活，含存量记录回填）→ 快照/实时 task 首行（live 脸的 taskDescription =
+  //   批次标题；恢复脸后端已把标题回填进 agentName）→ name（≠ sid 时——后端恢复脸
+  //   已把标题写入本档）→ sid → 桶 id。session id 一律降级为 title tooltip 次要
+  //   信息（完整名兜底）。非组头行（子行/leftover 非 delegate 行）逐字走旧形态。
+  const sid = String((info && info.sessionId) || id || '').replace(/^team-/, '');
+  let displayName;
+  let nameTooltip;
+  if (opts.headLevel) {
+    const fromName = (info.name && String(info.name) !== sid) ? String(info.name) : '';
+    const fullTitle = String(opts.rowTitle || '').trim() || bgFirstLine(info.task) || fromName;
+    displayName = bgFirstLine(fullTitle) || info.name || sid || id;
+    nameTooltip = displayName + (sid && sid !== displayName ? ' · ' + sid : '');
+  } else {
+    displayName = info.name || id;
+    nameTooltip = info.task ? displayName + ' · ' + info.task : displayName;
+  }
+  const namePart = '<span class="bg-task-name" title="' + escapeHtml(nameTooltip) + '">' + escapeHtml(displayName) + '</span>';
   // Uptime (spec §2.2): relative duration while non-terminal; hidden once done.
   const uptimePart = (!terminal && info.startedAt)
     ? '<span class="bg-task-uptime" data-started-at="' + info.startedAt + '">' + escapeHtml(fmtUptime(Date.now() - info.startedAt)) + '</span>'
@@ -509,6 +543,9 @@ export function renderBgAgentDropdown() {
     htmlParts.push(bgTaskRowHtml(g.id, g.info, {
       headLevel: true,
       badgeWord: bgDelegateBadgeWord(g.info, g.row),
+      // 显示名契约批（2026-10-22）：组头注册行标题（DelegateRegistry.Record.title
+      // 的 provider 镜像——跨重启存活，存量记录自带）透传为主名第一源。
+      rowTitle: (g.row && g.row.title) || '',
     }));
     for (const c of g.children) {
       if (c.type === 'live') htmlParts.push(bgTaskRowHtml(c.id, c.info, { childLevel: true }));

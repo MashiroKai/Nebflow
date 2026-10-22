@@ -145,4 +145,68 @@ class ActiveAgentsEntrySpec extends FunSuite:
     assertEquals(json.hcursor.get[String]("agentName"), Right("dispatcher/e2e-proj"))
   }
 
+  // ── 显示名契约批（2026-10-22 · 子智能体面板行显示名修复）：delegateTitle 第四档 ──
+  // 症状：面板行「先批次长名、某时刻收缩成 delegate-nebflow-2c2db017 短 id」——
+  // 恢复脸（activeAgentEntryJson）对 delegate 会话 meta/displayName 恒缺席 ⇒ 直落
+  // sessionId；live 脸 agentId == sessionId，同 key 合并「快照为准」每次把 live
+  // 长名行覆盖成短 id（每次开面板 getActiveAgents 即触发，重启后全行 id）。
+
+  test("display-name contract: delegate row restores agentName = delegateTitle (batch title), not sessionId") {
+    // DelegateRegistry.Record.title / SubAgentTask.description 解析产物（handleGetActiveAgents 薄调用）。
+    val json = WebSocketRoutes.activeAgentEntryJson(
+      rec("delegate-nebflow-2c2db017", AgentKind.Delegate),
+      None,
+      delegateTitle = Some("【delegate 监督链自动恢复机制批】（作者令，引擎机制补全）")
+    )
+    assertEquals(
+      json.hcursor.get[String]("agentName"),
+      Right("【delegate 监督链自动恢复机制批】（作者令，引擎机制补全）")
+    )
+    // task 保持空（meta 缺席）——行渲染纯标题，无「标题 · 标题」重复。
+    assertEquals(json.hcursor.get[String]("task"), Right(""))
+  }
+
+  test("display-name contract: precedence meta > displayName > delegateTitle > sessionId (node/team face untouched)") {
+    val m = meta("sid-team", "nebflow-project/Frontend", Some("Frontend"))
+    val r = rec("sid-team", AgentKind.Team).copy(displayName = Some("不应胜出"))
+    val json = WebSocketRoutes.activeAgentEntryJson(r, Some(m), delegateTitle = Some("也不应胜出"))
+    assertEquals(json.hcursor.get[String]("agentName"), Right("Frontend"))
+    // displayName 档仍压 delegateTitle（Project 域行零回归）
+    val r2 = rec("node-ab12cd34", AgentKind.Flow).copy(displayName = Some("实施-节点命名验证"))
+    val json2 = WebSocketRoutes.activeAgentEntryJson(r2, None, delegateTitle = Some("不应胜出"))
+    assertEquals(json2.hcursor.get[String]("agentName"), Right("实施-节点命名验证"))
+  }
+
+  test("display-name contract: delegateTitle absent → sessionId fallback intact (legacy rows)") {
+    // 缺省 delegateTitle = None：既有「no meta + no displayName → sessionId」行为逐字节不变。
+    val json = WebSocketRoutes.activeAgentEntryJson(rec("delegate-x-12345678", AgentKind.Delegate), None)
+    assertEquals(json.hcursor.get[String]("agentName"), Right("delegate-x-12345678"))
+  }
+
+  // ── delegateDisplayTitle 解析缝（纯函数）：DelegateRegistry 主源 → 任务记录回填 ──
+
+  test("delegateDisplayTitle: Delegate kind — registry title wins, store description backfills") {
+    assertEquals(
+      WebSocketRoutes.delegateDisplayTitle(AgentKind.Delegate, Some("注册表批名"), Some("任务记录批名")),
+      Some("注册表批名")
+    )
+    assertEquals(
+      WebSocketRoutes.delegateDisplayTitle(AgentKind.Delegate, None, Some("任务记录批名")),
+      Some("任务记录批名")
+    )
+  }
+
+  test("delegateDisplayTitle: blank values never surface; SubTask takes store description only") {
+    assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Delegate, Some("   "), Some("任务记录批名")), Some("任务记录批名"))
+    assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Delegate, Some(""), None), None)
+    assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.SubTask, Some("注册表批名"), Some("任务记录批名")), Some("任务记录批名"))
+    assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.SubTask, None, None), None)
+  }
+
+  test("delegateDisplayTitle: non-task kinds untouched (Team/Flow/Ephemeral → None)") {
+    assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Team, Some("X"), Some("Y")), None)
+    assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Flow, Some("X"), Some("Y")), None)
+    assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Ephemeral, Some("X"), Some("Y")), None)
+  }
+
 end ActiveAgentsEntrySpec

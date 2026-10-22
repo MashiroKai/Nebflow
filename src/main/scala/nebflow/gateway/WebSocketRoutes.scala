@@ -2869,6 +2869,35 @@ object WebSocketRoutes:
       .map(_ ++ inFlight)
 
   /**
+   * 显示名契约批（2026-10-22 · 子智能体面板行显示名修复）：activeAgents 快照面
+   * 的 delegate/SubTask 行名解析链——**DelegateRegistry.Record.title（主源，spawn
+   * 落盘、跨重启存活）→ SubAgentTask.description（任务记录回填源）→ None**。
+   *
+   * 背景（作者实测批）：面板行「先长名后收缩成 session id」的根因 = 恢复脸
+   * （`activeAgentEntryJson`）对 delegate 会话既不查 meta（delegate 从不过
+   * createSession，index 恒无条目）也不查 displayName（注册点不设）⇒ 直落
+   * sessionId 兜底；而 live 脸 agentId == sessionId，同 key 合并「快照为准」
+   * 每次都把 live 长名行覆盖成短 id。两处持久面（DelegateRegistry / SubAgentTaskStore）
+   * 本就持有批次标题，此处对齐为单一解析缝。
+   *
+   * - `AgentKind.Delegate`：registryTitle 优先（跨重启权威），storeDescription 回填。
+   * - `AgentKind.SubTask`：DelegateRegistry 只装 delegate——只走 storeDescription。
+   * - 其余 kind：None（既有三档链逐字不动）。
+   *
+   * 纯函数、零类依赖（`handleGetActiveAgents` 薄调用；IO 包装在调用方）。
+   * Standalone（zero class deps）so the chain is directly unit-testable.
+   */
+  def delegateDisplayTitle(
+    kind: AgentKind,
+    registryTitle: Option[String],
+    storeDescription: Option[String]
+  ): Option[String] =
+    val store = storeDescription.filter(_.trim.nonEmpty)
+    if kind == AgentKind.Delegate then registryTitle.filter(_.trim.nonEmpty).orElse(store)
+    else if kind == AgentKind.SubTask then store
+    else None
+
+  /**
    * One entry of the getActiveAgents ("activeAgents") restore reply.
    *
    * Contract: agentId == sessionId. The frontend keys its bg-agent map by
@@ -2881,6 +2910,12 @@ object WebSocketRoutes:
    * mounted team sessions) so restored rows render with the same team
    * attribution as live ones.
    *
+   * `delegateTitle`（显示名契约批 2026-10-22）：delegate/SubTask 恢复行的
+   * 批次标题（由调用方经 [[delegateDisplayTitle]] 解析）；注入 agentName 链的
+   * sessionId 兜底**之前**——delegate 会话的 meta/displayName 恒缺席，无此档则
+   * 面板恢复行退化成 sessionId（作者「收缩」症状）。缺省 None = 行为与旧版逐字节
+   * 一致（向后兼容；node/team 域不受影响——其 meta/displayName 优先于本档）。
+   *
    * Standalone (zero class deps) so the contract is directly unit-testable
    * (ActiveAgentsEntrySpec).
    */
@@ -2888,17 +2923,25 @@ object WebSocketRoutes:
     rec: AgentRecord,
     meta: Option[SessionMeta],
     retryCount: Option[Int] = None,
-    taskTitle: Option[String] = None // taskbadge batch (main-side): title resolved by the caller via the ledger
+    taskTitle: Option[String] = None, // taskbadge batch (main-side): title resolved by the caller via the ledger
+    delegateTitle: Option[String] = None // 显示名契约批 2026-10-22: delegate/SubTask 行批次标题（delegateDisplayTitle 解析）
   ): Json =
     Json.obj(
       "sessionId" -> rec.sessionId.asJson,
       "agentId" -> rec.sessionId.asJson,
-      // agentName 三档链（20260907 节点名刷新持久化批）：indexed meta（team/主会话既有
+      // agentName 四档链（显示名契约批 2026-10-22 扩为四档）：indexed meta（team/主会话既有
       // 归属）→ AgentRecord.displayName（Project 域注册点写入的 Flow Map 节点名 /
       // "dispatcher/<project>"——node-/dispatcher- 会话从不过 SessionStore.createSession，
       // index 恒无条目，缺此档刷新后 subagent 面板行回退 sessionId「node-xx 默认名」）
+      // → delegateTitle（delegate/SubTask 恢复行的批次标题——DelegateRegistry.Record.title
+      // 主源 / SubAgentTask.description 回填；修前此处直落 sessionId，面板行「收缩」根因）
       // → sessionId 兜底（既有行为）。
-      "agentName" -> meta.flatMap(_.agentName).orElse(rec.displayName).getOrElse(rec.sessionId).asJson,
+      "agentName" -> meta
+        .flatMap(_.agentName)
+        .orElse(rec.displayName)
+        .orElse(delegateTitle)
+        .getOrElse(rec.sessionId)
+        .asJson,
       "rootSessionId" -> rec.rootSessionId.asJson,
       "kind" -> rec.kind.toString.asJson,
       "task" -> meta.map(_.name).getOrElse("").asJson,
