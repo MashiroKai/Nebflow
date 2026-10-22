@@ -2,6 +2,8 @@
 // （2026-10-22 作者令：「改为在最上面看，而且是一个小的摘要，点击了之后，在
 //  左侧面板出现，diff的文件列表，在canvas显示选中文件的diff。等于是把目前的
 //  这个面板拆为了左右两个面板」。
+//  回访微调（2026-10-22 作者令「把diff胶囊靠右对齐」）：摘要 chip 靠右对齐，
+//  右缘贴交付气泡内容右缘（T1 几何断言）。
 //  谱系：bug #58 修 2026-10-09（file-diff → 委托结果行）→ 2026-10-10 裁定
 //  （展开改 Canvas master-detail）→ 本批（交付气泡顶部摘要 chip；文件列表迁
 //  左栏 #panel-filechanges；Canvas 只剩选中文件阅读面；旧一体大面板退役））。
@@ -14,7 +16,8 @@
 //
 // 断言面：
 //   T1 摘要条渲染：折叠态交付气泡顶部 chip（`3 files · +20001 −5`、aria-pressed
-//     =false）；标签行不再携带旧 hint（信息一处呈现）。
+//     =false）；chip **靠右对齐**（右缘贴气泡内容右缘，2026-10-22 回访令）；
+//     标签行不再携带旧 hint（信息一处呈现）。
 //   T2 气泡内零 diff 面：展开体零 .nf-filechanges / 零 details / 零 .nf-diff
 //      （旧展开体 Changes 段退役）。
 //   T3 点击联动：点 chip → #panel-filechanges 激活（3 行：徽标/路径/+/−/来源；
@@ -164,6 +167,20 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
     // chip 位于交付气泡顶部（label 之后、正文 content 之前的同 bubble 内）。
     await expect(bubble.locator('.nf-diff-chip')).toHaveCount(1);
     await expect(bubble.locator('.injected-source-label')).toHaveText('DELEGATE · nebflow · diff-batch · COMPLETED');
+    // chip 靠右对齐（2026-10-22 回访令「把diff胶囊靠右对齐」）：气泡 = block
+    // 容器，chip 块级 flex + fit-content + margin-left:auto ⇒ 右缘贴气泡内容
+    // 右缘（rightGap < 1px），左缘留白 > 0（非撑满、非居中）。
+    const align = await c.evaluate((el) => {
+      const bubbleEl = el.closest('.bubble');
+      const cs = getComputedStyle(el);
+      const gap = bubbleEl.getBoundingClientRect().right
+        - parseFloat(getComputedStyle(bubbleEl).paddingRight)
+        - el.getBoundingClientRect().right;
+      return { rightGap: gap, display: cs.display, width: cs.width };
+    });
+    expect(align.rightGap).toBeLessThan(1);
+    expect(align.display).toBe('flex');
+    expect(parseFloat(align.width)).toBeGreaterThan(0);
 
     // T2 — 展开体内零 diff 面（旧 Changes 段退役）。
     await bubble.locator('.injected-source-label').click();
