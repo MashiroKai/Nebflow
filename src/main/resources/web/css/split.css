@@ -617,22 +617,28 @@ body.canvas-open.canvas-overlay #canvas-panel {
    · 手势面 —— 胶囊本体 touch-action:none + JS 指针手势（换卡/关卡/右键引用，
      canvas.js initCardHeadGestures），跟手位移/按压形走 --head-* 变量；
    · 层关系 —— 胶囊 = canvas 面板内浮层（面板裁剪盒内 z-30），与消息区 header
-     裁剪契约（uifix ⑦ #chat margin-top）无涉；与 deck 环卡层/fab（body 级
-     z-250）正交；③④快照/翻动手感作用于 deck-layer，互不触碰。
-   布局统筹（与⑧并存）：胶囊内 = [t-icon][t-dot][t-name][pop 钮]；deck fab =
-   右缘独立 body 级浮钮（top 10 / right 12 不动）；手机卡头胶囊 = 通栏变体
-   （mobileLayer.css §⑨：[title][count][pop][close]）。 */
+   裁剪契约（uifix ⑦ #chat margin-top）无涉；与 deck 环卡层/fab（body 级
+   z-250）正交；③④快照/翻动手感作用于 deck-layer，互不触碰。
+   布局统筹（与⑧并存 + 移位批 2026-10-22）：胶囊内 = [t-icon][t-dot][t-name]
+   [pop 钮]；deck fab = 右下角独立 body 级浮钮（bottom 16 / right 12，与内容区
+   底右 chrome 簇同排）；手机卡头胶囊 = 通栏变体（mobileLayer.css §⑨：
+   [title][count][pop][close]）。
+   移位批（作者令 2026-10-22 ②）：胶囊从「顶部居中」改「顶部居左」——修前居中
+   胶囊 + 图片 pane 顶右缩放条 + 顶右 fab 三件在顶行互相打架（作者截图）；缩放
+   控件与 fab 移右下角后胶囊独占顶行，锚定左缘（14px），transform 不再携带
+   translateX(-50%)（手势变量语义不变：--head-dx/dy 仍是位移量）。右缘保留
+   170px 给 nf-findbar（顶右 14px，find 态才出现）让位。 */
 .canvas-header {
   position: absolute;
   top: 10px;
-  left: 50%;
+  left: 14px;
   z-index: 30;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   width: fit-content;
-  max-width: min(76%, calc(100% - 124px));   /* 右缘给 deck fab 留位 */
+  max-width: min(76%, calc(100% - 184px));
   padding: 6px 8px 6px 14px;
   margin: 0;
   border-radius: 999px;
@@ -652,7 +658,7 @@ body.canvas-open.canvas-overlay #canvas-panel {
   --head-dx: 0px;
   --head-dy: 0px;
   --head-scale: 1;
-  transform: translateX(-50%) translate3d(var(--head-dx), var(--head-dy), 0) scale(var(--head-scale));
+  transform: translate3d(var(--head-dx), var(--head-dy), 0) scale(var(--head-scale));
   transition: transform 0.18s ease, filter 0.18s ease, box-shadow 0.18s ease;
   touch-action: none;   /* 分区契约：胶囊手势面不劫持内容滚动（spec CC7） */
 }
@@ -911,6 +917,10 @@ body:not(.mobile-layer) .canvas-header .canvas-close-btn {
   background: transparent;
   border: none;
   border-radius: 0;
+  /* 底右 chrome 簇响应位（移位批 2026-10-22）：pane 即容器，簇槽位窄面板
+     二行回落按下方面 @container 规则。pane 本就 position:relative（绝对定位
+     子树的既有包含块），inline-size 容器化不改变任何包含块关系。 */
+  container: nfpane / inline-size;
 }
 .canvas-tab-pane.active {
   display: flex;
@@ -1099,11 +1109,15 @@ body.deck-look-v3 {
       0 2px 8px rgba(0, 0, 0, 0.20),
       0 22px 50px rgba(0, 0, 0, 0.26),
       0 54px 116px rgba(0, 0, 0, 0.30);
-    --th-bg: rgba(255, 255, 255, 0.045);
-    --th-border: rgba(255, 255, 255, 0.06);
-    --bar-1: rgba(232, 234, 237, 0.20);
-    --bar-2: rgba(232, 234, 237, 0.11);
-    --bar-3: rgba(232, 234, 237, 0.06);
+    /* snapfix 批（作者令 2026-10-22 ③「堆叠快照不可见」）：名称条/骨架 mock
+       对比度抬一档——修前 0.045 的名称条底与 0.20/0.11/0.06 的骨架白在暗背景
+       上几近不可辨（作者截图：深处卡只余暗影）；0.07/0.30/0.17/0.10 让标题
+       条读作一条可辨的带、骨架行条有形（mock 兜底面同样「可辨」）。 */
+    --th-bg: rgba(255, 255, 255, 0.07);
+    --th-border: rgba(255, 255, 255, 0.09);
+    --bar-1: rgba(232, 234, 237, 0.30);
+    --bar-2: rgba(232, 234, 237, 0.17);
+    --bar-3: rgba(232, 234, 237, 0.10);
     --menu-bg: rgba(32, 36, 47, 0.94);
     --card-inset-hi: rgba(255, 255, 255, 0.06);
   }
@@ -1199,13 +1213,18 @@ body.canvas-deck-narrow .canvas-title { max-width: 46%; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
 }
 
-/* ── 层叠浮钮（v5②）：body 层固定元素，JS 逐帧同步面板盒（top 10 / right 12 /
-   40px 玻璃钮语言逐字不动）。不在面板子树（panel.contains(fab)===false），
-   不随整区缩放/前景轮换移动；z-250 恒高于 deck-layer（auto/.over 60/245）与
-   面板（docked auto / overlay 240），低于模态族（300+）。 */
+/* ── 层叠浮钮（v5②）：body 层固定元素，JS 逐帧同步面板盒。移位批（作者令
+   2026-10-22 ②）：钉区从「顶右 top10/right12」迁「右下角 bottom16/right12」
+   ——修前顶右与图片 pane 缩放条（已同迁底右）叠印、又挤居中文件名胶囊的顶行
+   （作者截图三件打架）。JS 同步式同步改写（canvas.js syncDeckBox：top =
+   面板底 − 56 = 40px 钮 + 16px 底缝），本 CSS 底锚为 JS 前的缺省姿。
+   不在面板子树（panel.contains(fab)===false），不随整区缩放/前景轮换移动；
+   z-250 恒高于 deck-layer（auto/.over 60/245）与面板（docked auto / overlay
+   240），低于模态族（300+）。 */
 #deck-fab {
   position: fixed;
-  top: 10px;
+  top: auto;
+  bottom: 16px;
   right: 12px;
   z-index: 250;
   width: 40px;
@@ -1325,16 +1344,21 @@ body.mobile-layer #deck-fab { display: none !important; }
 .deck-card.front { cursor: grab; }                          /* 前景卡可拖划（划走=关闭） */
 .deck-card.front:active { cursor: grabbing; }
 /* UI 批 ⑤：压暗层改纵向渐变——堆叠层次靠明暗差（近卡亮、深处渐沉），与背景
-   融合过渡，不再是整面等强黑罩。透明度仍由 JS 按环深逐帧写。 */
+   融合过渡，不再是整面等强黑罩。透明度仍由 JS 按环深逐帧写。
+   snapfix 批（作者令 2026-10-22 ③）：渐变停点整体收幅——修前停点 0.9/0.62/
+   0.46/0.56（顶缘近全黑），配合 JS shade（深处 0.30）= 卡顶名称条上先压一层
+   0.27 黑、内容带 0.14 黑，再叠旧透明度坡道的沉底，深处卡只剩「一片暗影」。
+   现停点 0.40/0.28/0.14/0.22 ⇒ 即便深处（shade=0.30）顶缘实压 ≤0.12、内容带
+   ≤0.04：层次仍逐层递暗（明暗差），标题栏与快照内容保持可辨（暗但不糊）。 */
 .deck-card .card-shade {
   position: absolute;
   inset: 0;
   border-radius: inherit;
   background: linear-gradient(180deg,
-    rgb(0 0 0 / 0.9),
-    rgb(0 0 0 / 0.62) 34%,
-    rgb(0 0 0 / 0.46) 68%,
-    rgb(0 0 0 / 0.56));
+    rgb(0 0 0 / 0.40),
+    rgb(0 0 0 / 0.28) 34%,
+    rgb(0 0 0 / 0.14) 68%,
+    rgb(0 0 0 / 0.22));
   opacity: 0;
   pointer-events: none;
 }
@@ -1539,11 +1563,13 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   font-weight: 500;
 }
 
-/* Floating rendered↔source toggle (markdown & HTML viewers) */
+/* Floating rendered↔source toggle (markdown & HTML viewers)
+   移位批（2026-10-22）：右锚 16 → 64 —— body 级 deck fab 迁底右角（right:12）
+   后，全 pane 底右圆钮簇整体 +48px 让位（fab · source · ref · find · graph）。 */
 .canvas-source-toggle {
   position: absolute;
   bottom: 16px;
-  right: 16px;
+  right: 64px;
   width: 40px;
   height: 40px;
   border-radius: 50%;
@@ -1570,11 +1596,12 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
 }
 
 /* #303 B6: element-select toggle — same floating-glass style as the source
-   toggle, seated 8px to its left. */
+   toggle, seated 8px to its left.
+   移位批（2026-10-22）：右锚 64 → 112（簇整体 +48，见 .canvas-source-toggle）。 */
 .canvas-ref-select {
   position: absolute;
   bottom: 16px;
-  right: 64px;
+  right: 112px;
   width: 40px;
   height: 40px;
   border-radius: 50%;
@@ -1619,6 +1646,11 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   position: absolute;
   inset: 0;
   overflow-y: auto;
+  /* 移位批（作者令 2026-10-22 ②）：卡头胶囊从顶部居中改顶部居左后，md 首行
+     （H1 落左上）正好顶进胶囊带（top 10 + 胶囊高 ≈36px ⇒ 底缘 ~46px）。scroller
+     内让出这段带头：内容起笔在胶囊下方，首行不再被罩；滚动穿底语义不变
+     （内容照旧从胶囊底下穿过、scroll-under-glass 裙边照旧渐隐）。 */
+  padding-top: 46px;
   /* 2026-09-20 (mdscroll batch, author report 2026-09-20 22:56「这个滚动有泄露」).
      Wording and citations corrected 2026-09-20 (mdscroll r2, errata after the
      verify read): this declaration was described as covering "the ONE
@@ -1905,10 +1937,15 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
 }
 
 /* ── Shared viewer zoom bar (viewers/zoom.js) ── */
+/* 移位批（作者令 2026-10-22 ②）：默认位从「顶右 10/12」迁「右下角」——修前顶右
+   与 body 级 deck fab（现同排右下 right:12）叠印、又与居中文件名胶囊挤同行
+   （作者截图）。新位 = fab 左侧第一槽（64 = 12 + 40 fab + 12 缝），底边 18px
+   与圆钮簇（bottom:16，40px 高）视觉对中线；图片/PDF pane 同享。 */
 .canvas-zoom-bar {
   position: absolute;
-  top: 10px;
-  right: 12px;
+  top: auto;
+  bottom: 18px;
+  right: 64px;
   z-index: 5;
   display: flex;
   align-items: center;
@@ -1939,18 +1976,27 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   color: var(--color-text-muted);
 }
 /* HTML viewer: zoom bar joins the bottom-right chrome cluster. The default
-   top-right spot floats over arbitrary HTML content — posters put interactive
+   spot floats over arbitrary HTML content — posters put interactive
    headers exactly there, blocking clicks on both sides. Scoped to html panes;
-   image/PDF keep top-right.
-   Cluster slots (48px pitch, 40px circles): source 16 · ref-select 64 ·
-   find 112 (html.js addFindToggle(pane, 112)) · zoom bar 160. The zoom bar
-   used to sit at right:112 — the find toggle's slot since the wiki-graph
+   image/PDF keep the default bottom-right spot.
+   Cluster slots (48px pitch, 40px circles, 移位批 2026-10-22 全簇 +48 给 fab
+   让位——fab 本体钉 right:12)：fab 12 · source 64 · ref-select 112 ·
+   find 160 (html.js addFindToggle(pane, 160)) · zoom bar 208. The zoom bar
+   used to sit at right:160 — the find toggle's slot since the wiki-graph
    batch — so the circle printed on top of the bar's Fit button (screenshot
-   2026-10-19). 160 keeps the 8px gap after the find circle (ends at 152). */
+   2026-10-19). 208 keeps the 8px gap after the find circle (ends at 200). */
 .canvas-tab-pane[data-type="html"] .canvas-zoom-bar {
   top: auto;
-  right: 160px;
+  right: 208px;
   bottom: 18px;
+}
+/* 窄面板（<356px 装不下 208 槽 + 140 条宽，拖拽下限 320）：条升到圆钮行上方
+   第二行（右 64 槽、行距 8px），与圆钮簇零交叠、完整落在 pane 内。 */
+@container nfpane (max-width: 355px) {
+  .canvas-tab-pane[data-type="html"] .canvas-zoom-bar {
+    right: 64px;
+    bottom: 64px;
+  }
 }
 
 /* ── XLSX viewer ── */
@@ -2212,8 +2258,9 @@ body.col-resizing #canvas-panel { transition: none; }
    ═══════════════════════════════════════════════════════════════════════ */
 
 /* Floating glass toggles — same material family as .canvas-source-toggle;
-   each stacked button keeps a 48px slot (source 16 · ref-select 64 ·
-   find 64/112 · graph 112). */
+   each stacked button keeps a 48px slot (移位批 2026-10-22 簇 +48：fab 12 ·
+   source 64 · ref-select 112 · find 112/160 · graph 160 —— JS 写 right 的
+   槽位同步 +48，见 markdown.js / html.js / shared.js 缺省)。 */
 .canvas-find-toggle,
 .canvas-graph-toggle {
   position: absolute; bottom: 16px;

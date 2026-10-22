@@ -1,7 +1,8 @@
 // canvas-cardhead-capsule.spec.mjs — UI 批⑨ 卡头毛玻璃胶囊 + 手势集验收（作者令 2026-10-21）
 //
 // 作者令 A/B/C/D 四链路 spec 钉：
-//   CC0 胶囊形态 —— .canvas-header 浮层胶囊：absolute top 10 居中、border-radius
+//   CC0 胶囊形态 —— .canvas-header 浮层胶囊：absolute top 10 左缘锚定（移位批
+//        2026-10-22：居中 → 居左，左缝 14px）、border-radius
 //        999px、backdrop blur 玻璃、fit-content（< 面板宽）；#canvas-content 顶满
 //        全高（rect.top === slide top，内容不再为 header 预留）；.scroll-under-glass
 //        裙边在挂（::after 24px + pointer-events none）；穿底 = 内容 pane 从面板顶
@@ -199,9 +200,9 @@ const headerInfo = (page) => page.evaluate(() => {
     h.position === 'absolute' && h.top === '10px' && (h.radius === '999px' || h.radius === '9999px'), `${h.position}/${h.top}/${h.radius}`);
   ok('CC0-2 毛玻璃：backdrop blur 在挂 + .scroll-under-glass 类在挂',
     h.blur !== 'none' && h.hClass.includes('scroll-under-glass'), `${h.blur}`);
-  ok('CC0-3 fit-content 胶囊：宽 < 面板宽 + 水平居中（±6px）',
-    h.width < h.slideW - 40 && approx(h.hdrL - h.slideL, h.slideR - (h.hdrL + h.width), 6),
-    `w=${h.width.toFixed(0)} slide=${h.slideW.toFixed(0)} off=${(h.hdrL - h.slideL).toFixed(1)}/${(h.slideR - h.hdrL - h.width).toFixed(1)}`);
+  ok('CC0-3 fit-content 胶囊：宽 < 面板宽 + 左缘锚定（移位批 2026-10-22：居中 → 居左，左缝 ≈14px 且小于右缝）',
+    h.width < h.slideW - 40 && approx(h.hdrL - h.slideL, 14, 6) && (h.hdrL - h.slideL) < (h.slideR - (h.hdrL + h.width)),
+    `w=${h.width.toFixed(0)} slide=${h.slideW.toFixed(0)} left=${(h.hdrL - h.slideL).toFixed(1)} right=${(h.slideR - h.hdrL - h.width).toFixed(1)}`);
   ok('CC0-4 内容全高：#canvas-content 顶贴 slide 顶（不再为 header 预留）',
     approx(h.contentT, h.slideT, 1), `content.top=${h.contentT.toFixed(1)} slide.top=${h.slideT.toFixed(1)}`);
   ok('CC0-5 穿底结构：内容 pane 顶 ≤ 胶囊顶（文字可进胶囊区）',

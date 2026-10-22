@@ -177,8 +177,16 @@ async function assertCluster(page, tag, { shot = null, expectOverlay = null } = 
     }
   }
   ok(`${tag} O-nolap 两两矩形零交叠`, pairs.length === 0, pairs.join(' ') || 'clean');
-  const gap = rects.find.x - (rects.bar.x + rects.bar.width);
-  ok(`${tag} O-gap zoom bar 右缘 → find 圆钮间距 ≥8px（48px 槽距节奏）`, gap >= 7.5, `gap=${gap.toFixed(1)}px`);
+  // 移位批（2026-10-22）：簇 +48 给底右 deck fab 让位后，窄面板（<356px）的
+  // zoom bar 走圆钮行上方第二行（split.css @container nfpane）——间距钉改为
+  // 行感知：同行（矩形纵向相交）要求水平缝 ≥8px；异行要求垂直缝 ≥8px。
+  const vOverlap = Math.min(rects.find.y + rects.find.height, rects.bar.y + rects.bar.height) -
+    Math.max(rects.find.y, rects.bar.y);
+  let gap;
+  if (vOverlap > 0) gap = rects.find.x - (rects.bar.x + rects.bar.width);
+  else gap = rects.find.y - (rects.bar.y + rects.bar.height);
+  ok(`${tag} O-gap zoom bar → find 圆钮缝 ≥8px（同行水平/异行垂直，48px 槽距节奏）`,
+    gap >= 7.5, `gap=${gap.toFixed(1)}px row=${vOverlap > 0 ? 'same' : 'stacked'}`);
   // pane 内完整可见
   const pane = await page.evaluate(() => {
     const r = document.querySelector('.canvas-tab-pane.active').getBoundingClientRect();
