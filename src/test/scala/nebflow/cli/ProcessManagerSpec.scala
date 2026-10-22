@@ -56,7 +56,10 @@ class ProcessManagerSpec extends FunSuite:
       readCmd: Long => Option[String] = _ => Some(NebCmd),
       portsOf: Long => List[Int] = _ => Nil,
       listenerAliveResult: Boolean = false,
-      isAliveOverride: Option[Long => Boolean] = None
+      isAliveOverride: Option[Long => Boolean] = None,
+      metaRead: () => Option[PidMeta.Meta] = () => None,
+      startInstantMs: Long => Option[Long] = _ => None,
+      gatewayPortOverride: Option[Int] = Some(18108)
   ): (ProcessManager.StopDeps, Recorder) =
     val rec = new Recorder
     val deps = ProcessManager.StopDeps(
@@ -71,7 +74,10 @@ class ProcessManagerSpec extends FunSuite:
       graceTimeoutMs = 0L,
       forceTimeoutMs = 0L,
       drainTimeoutMs = 200L,
-      pollMs = 0L
+      pollMs = 0L,
+      metaRead = metaRead,
+      startInstantMs = startInstantMs,
+      gatewayPortOverride = gatewayPortOverride
     )
     (deps, rec)
 
@@ -118,13 +124,19 @@ class ProcessManagerSpec extends FunSuite:
     }
   }
 
-  test("unreadable command line ⇒ Refused with zero destroy") {
+  test("unreadable command line ⇒ degraded chain runs; no identity proof ⇒ Refused, zero destroy") {
     withTempRoot {
       ProcessManager.writePid(selfPid())
+      // stubDeps defaults: no meta, no start instant, no listeners ⇒ every
+      // degraded layer fails — the refusal now carries the chain's detail.
       val (deps, rec) = stubDeps(readCmd = _ => None)
-      val out = runStop(ProcessManager.StopOptions(), deps)
-      assert(out.isInstanceOf[ProcessManager.StopOutcome.Refused])
+      runStop(ProcessManager.StopOptions(), deps) match
+        case ProcessManager.StopOutcome.Refused(reason) =>
+          assert(reason.contains("command line unreadable"), reason)
+          assert(reason.contains("degraded checks"), reason)
+        case other => fail(s"expected Refused, got $other")
       assert(rec.destroyed.isEmpty)
+      assert(rec.destroyedForcibly.isEmpty)
     }
   }
 
@@ -305,6 +317,193 @@ class ProcessManagerSpec extends FunSuite:
       val out = runStop(ProcessManager.StopOptions(), deps)
       assert(out.isInstanceOf[ProcessManager.StopOutcome.Failed], out.toString)
       assert(rec.probedPorts.contains(8110))
+    }
+  }
+
+  // ── degraded identity chain (新设备首用批 2026-10-22 §1b) ──────────────
+  //
+  // Windows JDKs return an EMPTY command line for every process the JVM did
+  // not spawn (measured: Temurin 21 on the author's Windows machine — the
+  // `stand start` daemon child is always such a process to a later
+  // `stand stop` JVM). The chain only passes on (A) pid-meta + start-time
+  // match or (B) a same-source port-listener proof; a READABLE foreign
+  // command line still refuses exactly as before (spec above).
+
+  test("degraded layer A: launcher meta + start-time match ⇒ Stopped, layer named") {
+    withTempRoot {
+      val pid = selfPid()
+      ProcessManager.writePid(pid)
+      // Real meta on disk (startedAt = now, pid = pid, startedBy = launcher);
+      // metaRead points at the real file (the default stub ignores disk).
+      PidMeta.writeFreshFor(PidMeta.StartedByLauncher, PidMeta.ModeDaemon, pid)
+      val (deps, rec) = stubDeps(
+        readCmd = _ => None,
+        startInstantMs = _ => Some(System.currentTimeMillis()), // matches meta.startedAt
+        metaRead = () => PidMeta.read()
+      )
+      runStop(ProcessManager.StopOptions(), deps) match
+        case ProcessManager.StopOutcome.Stopped(msg) =>
+          assert(msg.contains("identity via degraded chain"), msg)
+          assert(msg.contains("pid-meta + start-time match"), msg)
+        case other => fail(s"expected Stopped, got $other")
+      assertEquals(rec.destroyed.toList, List(pid))
+      assert(!os.exists(PathUtil.dataRoot / ".pid"))
+      assert(!os.exists(PathUtil.dataRoot / ".pid.meta"))
+    }
+  }
+
+  test("degraded layer B: port-only proof does NOT unlock the ownership gate; --force completes") {
+    withTempRoot {
+      val pid = selfPid()
+      ProcessManager.writePid(pid)
+      val (deps, rec) = stubDeps(
+        readCmd = _ => None,
+        portsOf = _ => List(18108), // stub's gatewayPortOverride default
+        metaRead = () => None
+      )
+      // Default: layer B passes identity, but the ownership gate (real meta
+      // absent ⇒ unknown owner) still refuses — B is weaker evidence than A
+      // (no launcher-written meta backing), by-design conservative.
+      runStop(ProcessManager.StopOptions(), deps) match
+        case ProcessManager.StopOutcome.Refused(reason) =>
+          assert(reason.contains("ownership is unknown"), reason)
+        case other => fail(s"expected Refused, got $other")
+      assert(rec.destroyed.isEmpty)
+      // --force skips ONLY the ownership gate — the stop now completes and
+      // the declaration names the port layer.
+      val (deps2, rec2) = stubDeps(
+        readCmd = _ => None,
+        portsOf = _ => List(18108),
+        metaRead = () => None
+      )
+      runStop(ProcessManager.StopOptions(force = true), deps2) match
+        case ProcessManager.StopOutcome.Stopped(msg) =>
+          assert(msg.contains("identity via degraded chain"), msg)
+          assert(msg.contains("port listener (same source as pid)"), msg)
+        case other => fail(s"expected Stopped, got $other")
+      assertEquals(rec2.destroyed.toList, List(pid))
+    }
+  }
+
+  test("degraded layer A refuses on pid mismatch; no port proof ⇒ Refused with detail, zero destroy") {
+    withTempRoot {
+      ProcessManager.writePid(selfPid())
+      val nowIso = java.time.Instant.ofEpochMilli(System.currentTimeMillis()).toString
+      val (deps, rec) = stubDeps(
+        readCmd = _ => None,
+        metaRead = () => Some(
+          PidMeta.Meta(
+            startedBy = PidMeta.StartedByLauncher,
+            mode = Some(PidMeta.ModeDaemon),
+            startedAt = Some(nowIso),
+            pid = Some(999999L), // names ANOTHER pid
+            cmdlineSha256 = None,
+            cmdline = None
+          )
+        ),
+        startInstantMs = _ => Some(System.currentTimeMillis()),
+        portsOf = _ => Nil
+      )
+      runStop(ProcessManager.StopOptions(), deps) match
+        case ProcessManager.StopOutcome.Refused(reason) =>
+          assert(reason.contains("names pid 999999"), reason)
+          assert(reason.contains("degraded checks"), reason)
+        case other => fail(s"expected Refused, got $other")
+      assert(rec.destroyed.isEmpty)
+    }
+  }
+
+  test("degraded layer A refuses on start-time skew (pid reuse); layer B needs the port ⇒ Refused") {
+    withTempRoot {
+      val pid = selfPid()
+      ProcessManager.writePid(pid)
+      val twoHoursAgo = java.time.Instant.ofEpochMilli(System.currentTimeMillis() - 7_200_000L).toString
+      val (deps, rec) = stubDeps(
+        readCmd = _ => None,
+        metaRead = () => Some(
+          PidMeta.Meta(
+            startedBy = PidMeta.StartedByLauncher,
+            mode = Some(PidMeta.ModeDaemon),
+            startedAt = Some(twoHoursAgo), // meta written ≫ 10 min before the live start instant
+            pid = Some(pid),
+            cmdlineSha256 = None,
+            cmdline = None
+          )
+        ),
+        startInstantMs = _ => Some(System.currentTimeMillis()),
+        portsOf = _ => Nil
+      )
+      runStop(ProcessManager.StopOptions(), deps) match
+        case ProcessManager.StopOutcome.Refused(reason) =>
+          assert(reason.contains("no pid-meta/start-time identity"), reason)
+        case other => fail(s"expected Refused, got $other")
+      assert(rec.destroyed.isEmpty)
+    }
+  }
+
+  test("degraded: meta=sbt NEVER passes layer A even with matching pid+time ⇒ Refused") {
+    withTempRoot {
+      val pid = selfPid()
+      ProcessManager.writePid(pid)
+      val nowIso = java.time.Instant.ofEpochMilli(System.currentTimeMillis()).toString
+      val (deps, rec) = stubDeps(
+        readCmd = _ => None,
+        metaRead = () => Some(
+          PidMeta.Meta(
+            startedBy = PidMeta.StartedBySbt,
+            mode = Some(PidMeta.ModeForeground),
+            startedAt = Some(nowIso),
+            pid = Some(pid),
+            cmdlineSha256 = None,
+            cmdline = None
+          )
+        ),
+        startInstantMs = _ => Some(System.currentTimeMillis()),
+        portsOf = _ => Nil
+      )
+      runStop(ProcessManager.StopOptions(), deps) match
+        case ProcessManager.StopOutcome.Refused(reason) =>
+          assert(reason.contains("startedBy=sbt"), reason)
+          assert(reason.contains("degraded checks"), reason)
+        case other => fail(s"expected Refused, got $other")
+      assert(rec.destroyed.isEmpty)
+    }
+  }
+
+  test("degraded layer B refuses a protected port (8080): dev-host gate unevaluable ⇒ Refused") {
+    withTempRoot {
+      val pid = selfPid()
+      ProcessManager.writePid(pid)
+      val (deps, rec) = stubDeps(
+        readCmd = _ => None,
+        portsOf = _ => List(8080),
+        metaRead = () => None,
+        gatewayPortOverride = Some(8080)
+      )
+      runStop(ProcessManager.StopOptions(), deps) match
+        case ProcessManager.StopOutcome.Refused(reason) =>
+          assert(reason.contains("protected port (8080)"), reason)
+          assert(reason.contains("dev-host gate cannot be evaluated"), reason)
+        case other => fail(s"expected Refused, got $other")
+      assert(rec.destroyed.isEmpty)
+    }
+  }
+
+  test("degraded layer A pass does NOT unlock the ownership gate (restart-script meta ⇒ still Refused)") {
+    withTempRoot {
+      val pid = selfPid()
+      ProcessManager.writePid(pid)
+      PidMeta.writeFreshFor(PidMeta.StartedByRestartScript, PidMeta.ModeDaemon, pid)
+      val (deps, rec) = stubDeps(
+        readCmd = _ => None,
+        startInstantMs = _ => Some(System.currentTimeMillis()),
+        metaRead = () => PidMeta.read()
+      )
+      runStop(ProcessManager.StopOptions(), deps) match
+        case ProcessManager.StopOutcome.Refused(reason) =>
+          assert(reason.contains("restart.sh"), reason) // piece 2 hint, unchanged face
+        case other => fail(s"expected Refused, got $other")
+      assert(rec.destroyed.isEmpty)
     }
   }
 
