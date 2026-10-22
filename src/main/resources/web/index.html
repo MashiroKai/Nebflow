@@ -305,7 +305,12 @@
       <div class="daemon-panel-body"></div>
       <div class="daemon-panel-footer"></div>
     </div>
-    <div id="top-overlays" class="scroll-under-glass">
+    <!-- 顶带裙边退役批（2026-10-22 作者回访裁定「不允许任何渐变蒙层盖在气泡内容上」）：
+         scroll-under-glass 不再挂本带 —— 带空时 28px tint+blur 裙边照画在穿顶首行上
+         （归因探针 tests/tmp-topclip-band-probe.mjs：隐藏本元素带区均色即回亮）。
+         穿顶内容 = Header 玻璃自身磨砂（盒内）+ 带下零蒙层；带下过渡 = 纯硬边界
+         （任务卡玻璃 blur 仍在卡上，裙边渐隐本体退役）。五面浮层面板裙边照旧。 -->
+    <div id="top-overlays">
       <div id="task-list"></div>
       <!-- D6 批 F2: pending-AskUser persistent bar (one row per unanswered
            question: source · summary, click = scroll to card + highlight) -->

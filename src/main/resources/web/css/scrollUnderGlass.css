@@ -23,8 +23,14 @@
  * 唯一渐隐穿顶」（body.mobile-layer #header + 其 ::after 裙边，22-27 行旧契约）
  * 随本令整组移除：手机层渐隐改走 chat.css #chat 的 mask 裁剪（锚点变量
  * --chat-top-clip，main.js 实测写入，消失点 = Header 顶缘、2px 极窄过渡）。
- * 本文件六面浮层裙边（面板/任务带/弹窗）照旧挂载 —— 作者明示「面板浮层原样」，
- * 勿误伤。 */
+ *
+ * 顶带裙边退役批（2026-10-22 作者回访裁定「气泡穿顶时所有文字必须清晰可读，
+ * 不允许任何渐变蒙层盖在气泡内容上」）：**#top-overlays 摘除本类**（index.html）——
+ * 带空（height 0-8px）时 ::after 裙边照画在带下 28px（top:100%），恰压穿顶首行
+ * （归因探针 tests/tmp-topclip-band-probe.mjs 四连拍：仅隐藏本元素带区均色即回亮，
+ * 去 #chat mask 无变化）。带下过渡自此 = 纯硬边界（任务卡自身玻璃 blur 不动）。
+ * 五面浮层裙边（reminder/daemon 面板、settings/memory/rules 弹窗、canvas-header）
+ * 照旧挂载 —— 作者明示「面板浮层原样」，勿误伤。 */
 
 .scroll-under-glass {
   --sug-fade: 28px;   /* 裙边高（= 渐隐过渡带，作者档 24–32px 取中） */

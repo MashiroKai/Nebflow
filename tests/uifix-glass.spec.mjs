@@ -6,10 +6,13 @@
 // 裙边方案：面板本体零触碰，::after 裙边 = blur+saturate+tint 渐变+mask 渐隐 28px）。
 //
 // 断言面：
-//   G1 套用清点 —— #六面挂类（#top-overlays / #reminder-panel / #daemon-panel /
+//   G1 套用清点 —— #五面挂类（#reminder-panel / #daemon-panel /
 //      #settings-modal / #memory-modal / #rules-modal；项目/插件为 canvas 页签、
 //      桌面态不压滚动内容，不在清单——假设已在报告声明）+ ::after 几何
 //      （backdrop-filter blur / mask linear-gradient / 高 28px）。
+//      顶带退役腿（2026-10-22 作者回访裁定「不允许任何渐变蒙层盖在气泡内容上」）：
+//      #top-overlays 不挂类、::after 不存在 —— 带空时裙边恰压穿顶首行（归因探针
+//      tests/tmp-topclip-band-probe.mjs 实证），随顶带裙边退役批整组摘除。
 //   G2 像素·主态 —— 高对比消息条穿过裙边带：带内高频能量（邻差）≪ 带下原生行
 //      （blur 磨砂实证），且纵向存在渐隐梯度（逐行能量递增曲线）。
 //   G3 降级态 —— __scrollUnderGlass.degrade(true)（与自动判定同腿）：::after
@@ -24,8 +27,9 @@
 //      裙边不在）+ 同一 mask 变量在位（消失点同为 Header 顶缘）。G0 让位算式仍锚
 //      #chat 实际盒顶。
 //
-// 环境注：任务带内容管线（ws 链）由 taskList 族 spec 自管，此处直接驱动
-// .has-tasks + 注入示意卡（被测面 = 裙边 CSS/几何/像素，与数据管线解耦）。
+// 环境注：被测像素面原为 #top-overlays 任务带 —— 顶带裙边退役批（2026-10-22
+// 作者回访裁定）摘除带的挂类后，裙边像素契约改证于裸挂 .scroll-under-glass 台面
+// （几何与原带 1:1；现役五面均 overflow:hidden 裁剪自身裙边，属史前现状另案）。
 //
 // 运行：node tests/uifix-glass.spec.mjs
 
@@ -181,32 +185,40 @@ async function boot(colorScheme) {
   return { ctx, page, errors };
 }
 
-/** 高对比条纹标尺穿帮布景：任务带（has-tasks + 示意卡）+ fixed 定位黑白栅条。
- *  栅条 z=5（低于带 z-25 的裙边堆叠上下文、高于页面底色），上段 40px 没入带本
- *  体之下（被不透明卡遮住），中段 28px 落在裙边带，其余裸露 = 原生参照。
- *  返回带底缘 y（= 裙边起点）。 */
+/** 高对比条纹标尺穿帮布景：裸挂 .scroll-under-glass 台面（工具类契约被测面，
+ *  几何 = 原任务带台面 1:1：absolute + 64px 内容盒，::after 裙边 top:100%）+
+ *  fixed 定位黑白栅条。栅条 z=5（低于台面 z-25 的裙边堆叠上下文、高于页面底色），
+ *  上段 40px 没入台面本体之下（被内容盒遮住），中段 28px 落在裙边带，其余裸露
+ *  = 原生参照。返回带底缘 y（= 裙边起点）。
+ *  （顶带裙边退役批 2026-10-22：原被测面 #top-overlays 摘类退役；现役五面中
+ *  reminder/daemon/settings/memory 均 overflow:hidden —— 裙边 ::after 的包含块
+ *  = 面板自身，被面板裁剪（史前现状，另案），故像素契约以裸台面证工具类本体，
+ *  真实面孔由 G1 清点腿 + crossing-shots 无蒙层压字腿分管。） */
 async function stageScene(page) {
   await page.evaluate(() => {
-    const tl = document.getElementById('task-list');
-    tl.classList.add('has-tasks');
-    tl.innerHTML = '<div class="task-card" style="height:64px"><div class="task-header" style="height:28px"></div></div>';
-    const r = document.getElementById('top-overlays').getBoundingClientRect();
+    const stage = document.createElement('div');
+    stage.id = 'sug-probe-stage';
+    stage.className = 'scroll-under-glass';
+    stage.style.cssText = 'position:absolute;z-index:25;left:60px;top:80px;width:400px;height:64px;';
+    stage.innerHTML = '<div style="height:64px"></div>';
     const strip = document.createElement('div');
     strip.id = 'sug-probe-strip';
-    // 挂 #main（带 z-25 的同上下文）：z-5 = 带下、页面底色上——模拟真实消息层
+    // 挂 #main（台面 z-25 同上下文）：z-5 = 台面下、页面底色上——模拟真实消息层
     strip.style.cssText = 'position:absolute;z-index:5;left:60px;width:400px;' +
-      `top:${r.bottom - 40}px;height:220px;` +
+      `top:${80 + 64 - 40}px;height:220px;` +
       'background:repeating-linear-gradient(90deg,#000 0 10px,#fff 10px 20px)';
-    document.getElementById('main').appendChild(strip);
+    const main = document.getElementById('main');
+    main.appendChild(stage);
+    main.appendChild(strip);
     return true;
   });
-  await sleep(150);
+  await sleep(250);
 }
 
 async function geometry(page, tag) {
   const g = await page.evaluate(() => {
-    const ids = ['top-overlays', 'reminder-panel', 'daemon-panel', 'settings-modal', 'memory-modal', 'rules-modal'];
-    const out = { ids: [], extra: [] };
+    const ids = ['reminder-panel', 'daemon-panel', 'settings-modal', 'memory-modal', 'rules-modal'];
+    const out = { ids: [], band: null, extra: [] };
     for (const id of ids) {
       const el = document.getElementById(id);
       const cs = el ? getComputedStyle(el, '::after') : null;
@@ -217,21 +229,32 @@ async function geometry(page, tag) {
         h: cs ? cs.height : '',
       });
     }
+    // 顶带退役腿：不挂类 + ::after 不存在（content none/normal = 无伪元素盒）
+    const band = document.getElementById('top-overlays');
+    const bcs = band ? getComputedStyle(band, '::after') : null;
+    out.band = {
+      hasClass: !!band && band.classList.contains('scroll-under-glass'),
+      content: bcs ? bcs.content : '(no-el)',
+      mask: bcs ? (bcs.maskImage || bcs.webkitMaskImage || '') : '',
+    };
     const sug = window.__scrollUnderGlass;
     return { ...out, sug: sug ? sug.state() : null };
   });
-  ok(`G1[${tag}] 六面套用清点（挂类 + ::after blur + mask 渐变 + 28px）`,
+  ok(`G1[${tag}] 五面套用清点（挂类 + ::after blur + mask 渐变 + 28px）`,
     g.ids.every((x) => x.present && /blur/.test(x.blur) && /linear-gradient/.test(x.mask) && approx(parseFloat(x.h), 28, 0.5)),
     g.ids.map((x) => `${x.id}:${x.present ? '✓' : '✗'}/blur=${/blur/.test(x.blur) ? '✓' : '✗'}/mask=${/linear-gradient/.test(x.mask) ? '✓' : '✗'}/h=${x.h}`).join(' '));
+  ok(`G1[${tag}] 顶带裙边退役：#top-overlays 不挂类、::after 不存在（穿顶首行零蒙层）`,
+    g.band && !g.band.hasClass && /none|normal/.test(g.band.content) && !/linear-gradient/.test(g.band.mask),
+    JSON.stringify(g.band));
   ok(`G5[${tag}] 探测器 state()（supported + 未降级初态）`, !!g.sug && g.sug.supported === true && g.sug.degraded === false,
     JSON.stringify(g.sug));
   return g;
 }
 
 async function pixelRound(page, tag, degraded) {
-  // 带底缘 y（#task-list 底 = 裙边顶）
+  // 台面底缘 y（裸挂 .scroll-under-glass 台面底 = 裙边顶）；x 对齐标尺条
   const boundary = await page.evaluate(() =>
-    document.getElementById('top-overlays').getBoundingClientRect().bottom);
+    document.getElementById('sug-probe-stage').getBoundingClientRect().bottom);
   await sleep(100);
   const clip = { x: 60, y: boundary - 6, width: 400, height: 64 };
   const shot = await rowEnergy(page, clip);
@@ -307,7 +330,7 @@ for (const scheme of ['light', 'dark']) {
   await page.evaluate(() => window.__scrollUnderGlass.degrade(true));
   await sleep(120);
   const degCs = await page.evaluate(() => {
-    const cs = getComputedStyle(document.getElementById('task-list'), '::after');
+    const cs = getComputedStyle(document.getElementById('sug-probe-stage'), '::after');
     return { blur: cs.backdropFilter || cs.webkitBackdropFilter || '', mask: cs.maskImage || cs.webkitMaskImage || '' };
   });
   /* mask 保留由 G3 像素腿实证（条纹边数保全 = 渐隐 mask 仍在工作）；

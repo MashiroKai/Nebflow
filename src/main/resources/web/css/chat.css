@@ -2668,8 +2668,11 @@
 /* uifix ⑤（2026-10-20 作者令第五件）：带改 overlay —— 「消息应从面板下方穿过
    并有毛玻璃效果透出下层」。原 in-flow 布局（uifix-taskbar-flow 2026-10-09）让
    #chat 在带底缘硬裁滚动内容（作者截图症状）；改绝对定位后 chat 顶回到 #main 顶，
-   内容上滚即从带下穿过（卡片玻璃 backdrop blur + .scroll-under-glass 裙边渐隐透
-   出）。首屏让位由 main.js top-reserve 观察器按带实测高度自动写 #chat padding-top
+   内容上滚即从带下穿过（卡片玻璃 backdrop blur 透出）。
+   顶带裙边退役批（2026-10-22 作者回访裁定「不允许任何渐变蒙层盖在气泡内容上」）：
+   带的 .scroll-under-glass 裙边摘除（index.html）—— 带空时 28px tint+blur 裙边
+   恰压穿顶首行（归因探针实证）；带下过渡 = 纯硬边界，卡上玻璃 blur 不动。
+   首屏让位由 main.js top-reserve 观察器按带实测高度自动写 #chat padding-top
    （该机制本为 overlay 设计，in-flow 年代自泊 8px 基线，现恢复现役）。 */
 #top-overlays {
   position: absolute;
