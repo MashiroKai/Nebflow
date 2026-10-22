@@ -250,4 +250,33 @@ body links [[real]]"""
     val b = jsons.find(_.hcursor.get[String]("rel").toOption.contains("b.md")).get
     assertEquals(b.hcursor.get[Option[String]]("summary").toOption, Some(None))
   }
+
+  // ───────────────────── #744-B multi-vault ─────────────────────
+
+  test("WI-18 classifyExternals flips only cross-vault phantoms; true broken links stay broken") {
+    val scan = WikiIndex.buildVaultScan(
+      "proj", "self",
+      List(
+        "a.md" -> "# A\n\nSee [[sub/docs/c.md]] and [[ghost.md]].",
+        "glossary.md" -> "# G\n\ndefinition. ^x"
+      )
+    )
+    // "sub/docs/c.md" resolves into another vault of the same project (both the
+    // vault-qualified form and plain sibling forms ride foreignRels).
+    val classified = WikiIndex.classifyExternals(scan, Set("sub/docs/c.md"))
+    assertEquals(classified.nodes.filter(_.external).map(_.rel), List("sub/docs/c.md"))
+    assertEquals(classified.nodes.filter(n => n.stub && !n.external).map(_.rel), List("ghost.md"))
+    // Empty foreign set ⇒ no-op (merged view / remote views keep legacy semantics).
+    val untouched = WikiIndex.classifyExternals(scan, Set.empty)
+    assertEquals(untouched.nodes.filter(_.external), Nil)
+  }
+
+  test("WI-19 nodeJson carries the external flag (default false); externalNode is stub+external") {
+    val scan = WikiIndex.buildVaultScan("proj", "self", List("a.md" -> "# A"))
+    val doc = scan.nodes.find(_.rel == "a.md").get
+    assertEquals(WikiIndex.nodeJson(doc).hcursor.get[Boolean]("external").toOption, Some(false))
+    val ext = WikiIndex.externalNode("proj", "self", "sub/docs/x.md")
+    assertEquals(WikiIndex.nodeJson(ext).hcursor.get[Boolean]("external").toOption, Some(true))
+    assertEquals(WikiIndex.nodeJson(ext).hcursor.get[Boolean]("stub").toOption, Some(true))
+  }
 end WikiIndexSpec

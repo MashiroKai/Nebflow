@@ -10,16 +10,24 @@ import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
 
 /**
- * `GET /api/wiki/graph`        — merged document graph over every project's
- *                                `<workspace>/docs` vault (Obsidian-compatible);
- *                                projects bound to peer devices are scanned on
- *                                the peer via the scoped browse channel and
- *                                degrade to stub nodes when unreachable.
- * `GET /api/wiki/remote-doc`   — single-file fetch from a peer device
- *                                (`device` + `path` query params) for opening
- *                                remote docs read-only.
- * `POST /api/wiki/vault`       — idempotently scaffold `<workspace>/docs/attachments`
- *                                for a local project (`{"project": name}`).
+ * `GET /api/wiki/graph`                — merged document graph over every project's
+ *                                        `<workspace>/docs` ROOT vault (pre-#744-B
+ *                                        shape, byte-compatible).
+ * `GET /api/wiki/graph?project=X`      — project X's isolated vault graph (#744-B),
+ *                                        with `childVaults` aggregates for sub
+ *                                        projects (`SUB/docs` dirs inside the vault).
+ * `GET /api/wiki/graph?project=X&vault=sub/docs` — drill-in to a sub vault
+ *                                        (breadcrumb back to the root in `view`).
+ * `GET /api/wiki/graph?project=__user__` — C-batch reserved (user history graph);
+ *                                        returns an empty placeholder view.
+ * `GET /api/wiki/vaults`               — lightweight manifest (project → vault
+ *                                        path + local presence) for the panel
+ *                                        project switcher; no content scan.
+ * `GET /api/wiki/remote-doc`           — single-file fetch from a peer device
+ *                                        (`device` + `path` query params) for opening
+ *                                        remote docs read-only.
+ * `POST /api/wiki/vault`               — idempotently scaffold `<workspace>/docs/attachments`
+ *                                        for a local project (`{"project": name}`).
  *
  * All routes need auth (withAuth). Mounted via RestApiRoutes.routes; the first
  * path segment ("wiki") is disjoint from every sibling domain.
@@ -33,7 +41,14 @@ private[gateway] object WikiRoutes:
       case req @ GET -> Root / "wiki" / "graph" =>
         withAuth(req) {
           val force = req.params.get("force").exists(v => v == "1" || v.equalsIgnoreCase("true"))
-          service.graph(force).flatMap(Ok(_))
+          val project = req.params.get("project").map(_.trim).filter(_.nonEmpty)
+          val vault = req.params.get("vault").map(_.trim).filter(_.nonEmpty)
+          service.graph(project, vault, force).flatMap(Ok(_))
+        }
+
+      case req @ GET -> Root / "wiki" / "vaults" =>
+        withAuth(req) {
+          service.vaults.flatMap(Ok(_))
         }
 
       case req @ GET -> Root / "wiki" / "remote-doc" =>

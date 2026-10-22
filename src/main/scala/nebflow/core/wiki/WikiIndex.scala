@@ -46,8 +46,16 @@ object WikiIndex:
     kind: String = "doc",         // "doc" | "attachment"
     docType: Option[String] = None, // YAML frontmatter `type:` (scenario pack)
     status: Option[String] = None,  // YAML frontmatter `status:` (open/solved/…)
-    summary: Option[String] = None  // graph-preview summary (summaryOf — wiki-graph redesign)
+    summary: Option[String] = None,  // graph-preview summary (summaryOf — wiki-graph redesign)
+    external: Boolean = false      // true = cross-vault placeholder (#744-B): the target
+                                   // lives in ANOTHER vault of the same project — counted
+                                   // in stats, never drawn, never a broken-link entry
   )
+
+  /** A sub-vault discovered inside a vault (#744-B hierarchy): `rel` is the
+    * vault-relative path of the sub vault root (e.g. "sub/docs"), `name` the
+    * sub-project label, `docCount` a listing-level file count (no parsing). */
+  final case class ChildVault(name: String, rel: String, docCount: Int)
 
   final case class WikiHeading(text: String, line: Int)
 
@@ -338,6 +346,28 @@ object WikiIndex:
   def phantomNode(project: String, device: String, rel: String): WikiDocNode =
     WikiDocNode(nodeId(project, rel), project, device, rel, basename(rel).stripSuffix(".md"), Nil, Nil, stub = true)
 
+  /** Cross-vault placeholder (#744-B): same shape as a phantom, but flagged
+    * `external` so consumers count it as a cross-vault reference instead of a
+    * broken link. `rel` is the target AS AUTHORED (vault-relative to the source
+    * vault, e.g. "sub/docs/x.md" or a sibling vault's "glossary.md"). */
+  def externalNode(project: String, device: String, rel: String): WikiDocNode =
+    phantomNode(project, device, rel).copy(external = true)
+
+  /**
+   * Classify a single-vault scan's phantom targets into cross-vault references
+   * vs true broken links (#744-B). `foreignRels` = every rel reachable in OTHER
+   * vaults of the same project, in BOTH forms: vault-relative ("glossary.md")
+   * and vault-qualified ("sub/docs/x.md"). Phantom nodes whose authored rel
+   * matches either form flip to `external=true`; the rest stay broken.
+   */
+  def classifyExternals(scan: VaultScan, foreignRels: Set[String]): VaultScan =
+    if foreignRels.isEmpty then scan
+    else
+      val nodes = scan.nodes.map(n =>
+        if n.stub && !n.external && foreignRels.contains(n.rel) then n.copy(external = true) else n
+      )
+      scan.copy(nodes = nodes)
+
   /** Build a full vault scan from (rel -> raw text) document pairs plus the
     * vault's attachment files (rel paths; content is never read). Attachments
     * join the resolution namespace so `[[paper.pdf]]` cites resolve like any
@@ -401,7 +431,8 @@ object WikiIndex:
       "kind" -> n.kind.asJson,
       "type" -> n.docType.map(_.asJson).getOrElse(Json.Null),
       "status" -> n.status.map(_.asJson).getOrElse(Json.Null),
-      "summary" -> n.summary.map(_.asJson).getOrElse(Json.Null)
+      "summary" -> n.summary.map(_.asJson).getOrElse(Json.Null),
+      "external" -> n.external.asJson
     )
 
   def edgeJson(e: WikiEdge): Json =

@@ -18,6 +18,11 @@ wiki-docs SKILL.md 强制条款的机器面（条款与检查一一对应，见 
   python3 check_wiki_docs.py --root docs                 # 校验，人读清单到 stdout
   python3 check_wiki_docs.py --root docs --json          # 校验，机器读 JSON
   python3 check_wiki_docs.py --root docs --graph out.json --project stand
+  python3 check_wiki_docs.py --root docs --include-subvaults
+                                                         # 子项目图谱批（#744-B）：
+                                                         # 发现 <sub>/docs 子 vault 后
+                                                         # 逐 vault 独立跑 R1-R3；
+                                                         # 跨 vault 引用 = info 不计违规
   python3 check_wiki_docs.py --rules                     # 打印规则与检查的对照表
 
 退出码：0 = 无违规；1 = 有违规；2 = 用法/环境错误。仅依赖 Python 3 标准库。
@@ -431,16 +436,24 @@ def build_graph(docs, resolve, project):
 
 # ── 主流程 ───────────────────────────────────────────────────────────
 
-def collect_docs(root, excludes):
+def collect_docs(root, excludes, skip_dirs=()):
     """返回 (docs, attachments)。docs = 解析过的文档（.md/.markdown/.html）；
     attachments = 其余文件的 vault 相对路径（同 WikiIndex：附件在解析命名空间内，
-    被引用即图谱附件节点；只有文档扩展名进 front-matter/概念等文档级检查）。"""
+    被引用即图谱附件节点；只有文档扩展名进 front-matter/概念等文档级检查）。
+    skip_dirs = vault 相对目录（子 vault 根，#744-B）——子 vault 是独立图谱，
+    父 vault 收集时整枝剪掉，绝不吸收子 vault 文档。"""
     docs = {}
     attachments = []
+
+    def skipped(rel):
+        return any(rel == d or rel.startswith(d + "/") for d in skip_dirs)
+
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
         rel = path.relative_to(root).as_posix()
+        if skipped(rel):
+            continue
         if path.suffix.lower() not in DOC_EXTENSIONS:
             attachments.append(rel)
             continue
@@ -457,6 +470,52 @@ def collect_docs(root, excludes):
     return docs, attachments
 
 
+# ── 子 vault（#744-B 多项目图谱批） ─────────────────────────────────
+
+MAX_SUBVAULT_DEPTH = 3
+MAX_SUBVAULTS = 32
+
+
+def discover_subvaults(root, max_depth=MAX_SUBVAULT_DEPTH, max_n=MAX_SUBVAULTS):
+    """发现 root vault 下的子 vault：直接子目录里的 <sub>/docs（递归）。
+
+    与引擎 WikiService.discoverLocalSubVaults 同约定（#744-B 设计 §1）：
+    每个 `<sub>/docs` 目录自成一张图谱，逐 vault 独立校验。
+    返回 [(name, rel, path)]，rel 相对 root（如 "sub/docs"）。
+    """
+    out = []
+
+    def walk(vault, prefix, depth):
+        if depth >= max_depth or len(out) >= max_n or not vault.is_dir():
+            return
+        for child in sorted(vault.iterdir()):
+            if len(out) >= max_n or not child.is_dir():
+                continue
+            docs = child / "docs"
+            if docs.is_dir():
+                rel = prefix + child.name + "/docs"
+                out.append((child.name, rel, docs))
+                walk(docs, rel + "/", depth + 1)
+
+    walk(root, "", 0)
+    return out
+
+
+def resolve_cross_vault(resolver_by_vault, target):
+    """target 在其它 vault 中能否解析（exact/大小写/唯一 basename，同 make_resolver）。
+
+    返回 (vault_rel, resolved_rel) 或 None。只做提示级判定——跨 vault 引用
+    不是违规（各 vault 图谱独立，引用别的 vault = 跨库引用面）。"""
+    if not target.strip():
+        return None
+    t = normalize_target(target)
+    for vrel, resolver in resolver_by_vault.items():
+        hit = resolver(t)
+        if hit:
+            return (vrel, hit)
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser(description="wiki-docs 文档纪律校验器 + 图谱数据导出")
     ap.add_argument("--root", default="docs", help="vault 根目录（默认 docs）")
@@ -468,6 +527,9 @@ def main():
                     help="排除 glob（vault 相对，可多次；默认排除 assets/**）")
     ap.add_argument("--rules", action="store_true", help="打印规则与检查对照表后退出")
     ap.add_argument("--skip-concepts", action="store_true", help="跳过 R3 概念首现检查（词表缺席时自动跳过）")
+    ap.add_argument("--include-subvaults", action="store_true",
+                    help="#744-B：发现 <sub>/docs 子 vault 并逐 vault 独立校验（R1-R3 各自跑；"
+                         "跨 vault 引用记 cross-vault-link 提示，不计违规、不影响退出码）")
     args = ap.parse_args()
 
     if args.rules:
@@ -481,28 +543,75 @@ def main():
         return 2
 
     excludes = args.exclude or []
-    docs, attachments = collect_docs(root, excludes)
+
+    def prepare(vroot):
+        """收集 + 解析器 + 词表探测（单 vault 一套，互不掺和；本 vault 的
+        子 vault 目录整枝剪掉——独立图谱，#744-B）。"""
+        # 剪枝只在 --include-subvaults 生效（无旗标的调用零变化——历史行为里
+        # 子 vault 文档本来就并入父 vault 扫描）。
+        vskip = [s[1] for s in discover_subvaults(vroot)] if args.include_subvaults else []
+        vdocs, vatts = collect_docs(vroot, excludes, skip_dirs=vskip)
+        vgloss = args.glossary
+        if not vgloss:
+            candidates = [rel for rel in vdocs if "glossary" in Path(rel).stem.lower()]
+            vgloss = candidates[0] if candidates else ""
+        return vdocs, vatts, vgloss, make_resolver(list(vdocs.keys()) + vatts)
+
+    docs, attachments, glossary_rel, resolve = prepare(root)
     if not docs:
         print(f"ERROR: {root} 下未发现任何文档", file=sys.stderr)
         return 2
-
-    glossary_rel = args.glossary
-    if not glossary_rel:
-        candidates = [rel for rel in docs if "glossary" in Path(rel).stem.lower()]
-        glossary_rel = candidates[0] if candidates else ""
-    resolve = make_resolver(list(docs.keys()) + attachments)
 
     if args.graph:
         data = build_graph(docs, resolve, args.project)
         Path(args.graph).write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
         print(f"graph → {args.graph}（nodes={len(data['nodes'])} edges={len(data['edges'])} unresolved={len(data['unresolved'])}）")
 
-    violations = check(root, docs, resolve, glossary_rel, exclude_glossary_check=args.skip_concepts)
+    # 逐 vault 独立校验（#744-B）：根 vault 恒跑；--include-subvaults 时每个
+    # <sub>/docs 子 vault 用自己的 docs/词表/解析器独立跑一遍。
+    subvaults = discover_subvaults(root) if args.include_subvaults else []
+    vault_results = [("docs", root, docs, glossary_rel, resolve, attachments)]
+    for name, rel, vpath in subvaults:
+        vdocs, vatts, vgloss, vresolve = prepare(vpath)
+        if vdocs:
+            vault_results.append((rel, vpath, vdocs, vgloss, vresolve, vatts))
+
+    per_vault = []
+    cross_links = []
+    for rel, vpath, vdocs, vgloss, vresolve, vatts in vault_results:
+        violations = check(vpath, vdocs, vresolve, vgloss, exclude_glossary_check=args.skip_concepts)
+        per_vault.append({"vault": rel, "docs": len(vdocs), "violations": violations,
+                          "counts": summarise(violations)})
+        # 跨 vault 引用（info）：本 vault 未解析、但能在其它 vault 解析的链接。
+        if len(vault_results) > 1:
+            others = {orel: ores for orel, _op, _od, _og, ores, _oa in vault_results if orel != rel}
+            for vrel, doc in vdocs.items():
+                for target, _anchor, _kind, line_no in doc.links:
+                    if vresolve(target, from_rel=vrel):
+                        continue
+                    hit = resolve_cross_vault(others, target)
+                    if hit:
+                        cross_links.append({"from": f"{rel}/{vrel}", "line": line_no,
+                                            "target": target, "inVault": hit[0], "resolved": hit[1]})
+
+    total_violations = sum(len(r["violations"]) for r in per_vault)
 
     if args.json:
-        print(json.dumps({"root": str(root), "violations": violations,
-                          "counts": summarise(violations)}, ensure_ascii=False, indent=1))
-    else:
+        if len(per_vault) == 1:
+            # 无 --include-subvaults：--json 形状与历史逐字节同（机读契约不破）。
+            print(json.dumps({"root": str(root), "violations": per_vault[0]["violations"],
+                              "counts": per_vault[0]["counts"]}, ensure_ascii=False, indent=1))
+        else:
+            print(json.dumps({"root": str(root), "vaults": per_vault,
+                              "crossVaultLinks": cross_links,
+                              "violations": [v for r in per_vault for v in r["violations"]],
+                              "counts": summarise([v for r in per_vault for v in r["violations"]])},
+                             ensure_ascii=False, indent=1))
+        return 1 if total_violations else 0
+
+    if len(per_vault) == 1:
+        # 单 vault：输出与历史逐字节同形（不带 --include-subvaults 的调用零变化）。
+        violations = per_vault[0]["violations"]
         if violations:
             print(f"wiki-docs 校验：{len(violations)} 条违规（{root}）\n")
             by_rule = {}
@@ -525,8 +634,21 @@ def main():
             print(f"wiki-docs 校验：通过（{root}，{len(docs)} 篇文档，零违规）")
         if not glossary_rel:
             print("提示：未发现词表（glossary）——R3 概念首现检查未启用。建 vault 词表：docs/glossary.md")
+    else:
+        print(f"wiki-docs 校验（逐 vault，#744-B）：{len(per_vault)} 个 vault，{total_violations} 条违规（{root}）\n")
+        for r in per_vault:
+            head = f"── vault {r['vault']}（{r['docs']} 篇，{len(r['violations'])} 条违规）──"
+            print(head)
+            for v in r["violations"]:
+                print(f"  {v['rule']}  {v['file']}:{v['line']}  {v['detail']}")
+            print()
+        if cross_links:
+            print(f"── 跨 vault 引用（info，{len(cross_links)} 条，不计违规）──")
+            for c in cross_links:
+                print(f"  {c['from']}:{c['line']}  [[{c['target']}]] → {c['inVault']}/{c['resolved']}")
+            print()
 
-    return 1 if violations else 0
+    return 1 if total_violations else 0
 
 
 def summarise(violations):

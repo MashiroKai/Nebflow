@@ -2565,6 +2565,31 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
   text-transform: uppercase; letter-spacing: 0.5px;
 }
 
+/* Project switcher (#744-B): one vault = one graph; glass-chip material —
+   same --glass-* family as .wg-search below (禁各画各的). */
+.wg-switch { margin-top: 6px; }
+.wg-switch-select {
+  width: 100%;
+  border: 1px solid var(--glass-border); background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  box-shadow: var(--frost-shadow);
+  color: var(--color-frame-text); font: inherit; font-size: 12.5px;
+  border-radius: 10px; padding: 5px 8px; outline: none; cursor: pointer;
+  appearance: none;
+}
+.wg-switch-select:focus-visible { border-color: var(--glass-etched-border-focus, var(--color-frame-active)); }
+.wg-switch-select option { color: var(--color-frame-text); background: var(--color-surface, #fff); }
+
+/* Breadcrumb row (#744-B drill-in views): X › sub › …, last crumb static. */
+.wg-crumbs { flex: none; font-size: 11.5px; color: var(--color-frame-text-muted); padding: 0 2px; }
+.wg-crumbs .crumb {
+  border: 0; background: transparent; padding: 0; font: inherit; font-size: 11.5px;
+  color: var(--color-frame-text-muted); cursor: pointer;
+}
+.wg-crumbs button.crumb:hover { color: var(--color-frame-text); text-decoration: underline; }
+.wg-crumbs .crumb.cur { color: var(--color-frame-text); font-weight: 500; cursor: default; }
+
 /* Search + chips (shared with the mobile panebar). Material = frosted 标准
    （2026-10-22 作者令：与 chat header 同一套 --glass-bg/--glass-blur/
    --glass-border/--frost-shadow，禁各画各的）。 */

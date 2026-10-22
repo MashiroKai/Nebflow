@@ -60,6 +60,18 @@ python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --root <workspace>/docs --glossa
 - One document = one topic. The file name is the document identity; prefer
   short kebab-case names (`auth-flow-review.md`), because other documents cite
   the file name.
+- **Sub-project vaults (multi-project graph, #744-B)**: any `<sub>/docs/`
+  directory inside the vault is its own sub-graph — a sub-project keeps the
+  same vault convention one level down (`docs/<sub>/docs/`). Sub-vault
+  documents are ISOLATED per vault (the parent graph shows them as one
+  aggregate node that drills into the child graph), so:
+  - keep each sub-vault self-contained (its own glossary/index when it grows
+    past a handful of documents);
+  - cite across vaults by the path form the target vault uses
+    (`[[<sub>/docs/topic.md]]`) — cross-vault references are counted as
+    cross-vault links, never silently broken.
+  Validate every level independently:
+  `python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --root <workspace>/docs --include-subvaults`
 
 ## Document form (paper style)
 
