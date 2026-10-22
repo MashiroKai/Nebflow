@@ -817,9 +817,24 @@ async function fetchHistory(sessionId, signal, cursor = {}) {
   const resp = await fetch(
     `/api/sessions/${encodeURIComponent(sessionId)}/history${qs ? `?${qs}` : ''}`,
     { headers: authHeaders(), signal });
-  if (!resp.ok) return [];
-  const data = await resp.json();
-  return data.messages || [];
+  // 2026-10-20 搜索空结果修复批：非 2xx 不再吞成 [] —— 中继隧道抖动窗（实测
+  // 2026-10-20 16:50 隧道断连，28 条在途 portal http cycle 同时 "Output closed"，
+  // 控制台收 502/504/截断体）曾把 fetchHistory 吞成 [] ⇒ 搜索面假装「0 条结果」，
+  // 传输故障与真空数据不可分辨（作者报障「搜消息记录零结果」的机制）。
+  //   · 404 = 会话已删 ⇒ 合法空（scope=all 扫 6345 会话时单会话消失不炸全队）；
+  //   · 其余非 2xx ⇒ 抛（fetchSessionList/chatSearchFloat 同律）⇒ runSearch/
+  //     runStream 既有 catch ⇒ showError 渲染「加载失败: … + 重试」钮；
+  //   · 2xx 但体损坏（messages 缺失/非数组 = 截断体）⇒ 同样抛。
+  if (resp.status === 404) return [];
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  // json() mid-abort (panel closed / newer query) must stay an AbortError —
+  // masking it into 'malformed' would paint an error face on an aborted run.
+  const data = await resp.json().catch((e) => {
+    if (e && e.name === 'AbortError') throw e;
+    return null;
+  });
+  if (!data || !Array.isArray(data.messages)) throw new Error('malformed history payload');
+  return data.messages;
 }
 
 /** Run async tasks with a concurrency limit. */
