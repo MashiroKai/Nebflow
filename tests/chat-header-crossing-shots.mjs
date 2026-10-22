@@ -108,6 +108,7 @@ for (const scheme of SCHEMES) {
     const header = document.getElementById('header');
     const chat = document.getElementById('chat');
     const cs = getComputedStyle(chat);
+    const hcs = getComputedStyle(header);
     const hRect = header.getBoundingClientRect();
     const cRect = chat.getBoundingClientRect();
     return {
@@ -123,6 +124,9 @@ for (const scheme of SCHEMES) {
         const af = getComputedStyle(header, '::after');
         return { content: af.content, height: af.height, mask: (af.maskImage || af.webkitMaskImage || '').slice(0, 60) };
       })(),
+      // Header 底缘零边界批：外投影退役 + 底边框透明化（作者令 2026-10-22）。
+      headerBoxShadow: hcs.boxShadow,
+      borderBottom: { color: hcs.borderBottomColor, width: hcs.borderBottomWidth },
     };
   });
   const tag = `${scheme}${geo.mobile ? '-mobile' : ''}`;
@@ -135,6 +139,17 @@ for (const scheme of SCHEMES) {
   ok(`[${tag}] 内容区渐隐退役：#header 无 ::after 裙边`, geo.mobileHeaderSkirt.content === 'none' || geo.mobileHeaderSkirt.content === 'normal',
     JSON.stringify(geo.mobileHeaderSkirt));
   ok(`[${tag}] 滚动态（内容确已越过 header 带）`, geo.scrolled > 200, `scrollTop=${geo.scrolled}`);
+  // Header 底缘零边界批（2026-10-22 作者追加令「Header 下面有一个边缘…要移除」）：
+  // 穿顶气泡上的横向边界线 = #header 外投影（暗档 .20/.35 深色带）+ 底缘 1px
+  // border。契约：box-shadow 只剩 inset 层（无外投影）+ 底边框不可见
+  // （transparent / 零 alpha）——底缘只许剩毛玻璃 tint/blur 自身边界。
+  const shadowLayers = geo.headerBoxShadow && geo.headerBoxShadow !== 'none' ? geo.headerBoxShadow.split(/,(?![^(]*\))/).map(s => s.trim()) : [];
+  ok(`[${tag}] 底缘零边界①：#header 外投影退役（box-shadow 仅 inset 层）`,
+    shadowLayers.length > 0 && shadowLayers.every(s => /\binset\b/.test(s)), geo.headerBoxShadow);
+  const bm = /rgba?\(([^)]*)\)/.exec(geo.borderBottom.color);
+  const bAlpha = bm ? Math.max(...bm[1].split(',').map(Number)) : 1;
+  ok(`[${tag}] 底缘零边界②：底边框不可见（transparent 或 1px 透明占位）`,
+    geo.borderBottom.width === '0px' || bAlpha === 0, JSON.stringify(geo.borderBottom));
 
   await page.screenshot({ path: join(OUT, `C-header-crossing-${tag}.png`) });
   // 顶部特写：header 带 ± 60px。
