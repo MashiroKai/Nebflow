@@ -44,8 +44,16 @@ python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --root <workspace>/docs --glossa
   legacy violations in the vault are not a pass for this batch — fix what you
   touch.
 - `--graph out.json` exports a WikiIndex-semantics `{nodes, edges}` JSON
-  (graph samples / offline analysis); `--json` machine-reads the violation
-  list; exit codes: 0 clean, 1 violations, 2 usage error.
+  (graph samples / offline analysis); each doc node embeds its paragraph
+  index (`paragraphs`: edge-form anchor / line range / ≤280-char excerpt —
+  the wiki-graph hover-snapshot surface, isomorphic with WikiIndex.scala);
+  `--json` machine-reads the violation list; exit codes: 0 clean,
+  1 violations, 2 usage error.
+- Paragraph-level references use the two in-vault anchor forms (validated by
+  the same broken-anchor/broken-block checks): `[[doc#^block-id]]` addresses
+  ONE paragraph (the glossary-entry face — noun explanations), `[[doc#heading]]`
+  addresses a section. No `§` syntax exists — that glyph is a hover-overlay
+  marker only.
 - Syntax examples with literal double brackets must live inside fenced code
   blocks — a bare `[[...]]` in prose is parsed as a real link (same semantics
   as the engine's WikiIndex parser).
