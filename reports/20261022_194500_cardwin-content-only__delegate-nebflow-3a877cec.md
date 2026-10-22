@@ -43,8 +43,8 @@
   - P1 功能面板无独立窗入口（plugins 页签）：卡头 pop 钮 hidden+display:none、环卡不建 pop 钮、右键菜单禁用态项（title 带提示）、点击禁用项 = toast + **零弹窗**；
   - P2 别名不得作为独立窗 URL：`/index.html?card-window=1…` 落地即归一 pathname=`/`（query 原样），落点 = 内容物真容；
   - P3 无 path 深链（亮暗双腿）：即刻失败卡（<3s）+ 专用文案 + 壳隐藏 + 零 JS 错。
-- **邻族回归**：`canvas-card-window` 22/22、`canvas-cardhead-capsule` 28/28、`canvas-cardwin-shots` 三端重生成（popup closed=true）、`cardwin-whitepage-shots` 重生成（after content ok）。`cardwin-session-scenarios` 9 pass/2 fail——S2 两腿（无会话 relay 登录引导导航）**干净 HEAD 逐位同败**（git stash 对照实证，本批未触碰 ws.js/登录链，既有漂移非本批）；`msg-search-v3-smoke` TimeoutError 同为 HEAD 逐位同败（环境级，先例：pop-artifacts P7、mobile-p8 判例）。
-- **checkJs**：254 < 基线 257（-3），零新增；`check-circular` 与 HEAD 逐字节同。
+- **邻族回归**：`canvas-card-window` 22/22、`canvas-cardhead-capsule` 28/28、**`canvas-stack` 144/0**（canvas 大族全绿）、`canvas-cardwin-shots` 三端重生成（popup closed=true）、`cardwin-whitepage-shots` 重生成（after content ok）。`cardwin-session-scenarios` 9 pass/2 fail——S2 两腿（无会话 relay 登录引导导航）**干净 HEAD 逐位同败**（git stash 对照实证，本批未触碰 ws.js/登录链，既有漂移非本批）；`msg-search-v3-smoke` TimeoutError 同为 HEAD 逐位同败（环境级，先例：pop-artifacts P7、mobile-p8 判例）。
+- **checkJs**：254 < 基线 257（-3），零新增；`check-circular` 与 HEAD 逐字节同；**build**：179 sources 全入 bundle 图（orphans 0，exemptions 5），180 lazy chunks。
 - **截图**：`evidence/20261022_cardwin-content-only/shots/` 亮暗×{内容物真容、面板入口禁用态、无 path 失败卡} 6 拍。
 
 ## 五、生效口径
