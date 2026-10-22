@@ -629,15 +629,19 @@ export default {
   // f1-send-queue（2026-10-19）：断线入队的待送达小标 tooltip + 队列溢出告警。
   'chat.pendingSend': '待送达 · 重连后自动补发',
   'input.queueOverflow': '消息队列已满（100 条）：最早的一条已丢弃',
-  // 排队信息量批（2026-10-22 作者追加令）：「排队中 (N)」死状态退役——头行有信息量
-  // （等待当前回复完成 + 活秒表 + 条数）、排队项带位次标（作者原文形态）与
-  // 「已收到」确认 chip、气泡侧同语义 .acked 确认标。
-  'chat.queuedAck': '已收到',
-  'chat.queuedAckTip': '已收到 · 排队等待当前回复完成',
+  // 排队呈现回退批（2026-10-22 作者令「发送了的消息还在队列里」「已收到的标记
+  // 也是多余的」）：队列条只留头行（等待当前回复完成 + 活秒表 + 条数），行级
+  // 明细/位次标/已收到 chip 全退役；队列动作（立即发送/撤回/移除）收敛进气泡
+  // 右键菜单。今日早些时候批次的 chat.queuedAck/chat.queuedAckTip/chatQueue.position
+  // 等键随呈现面一并退役。
   'chatQueue.waitingTurn': '等待当前回复完成',
   'chatQueue.queuedCount': '{n} 条排队',
   'chatQueue.turnElapsed': '已进行 {t}',
-  'chatQueue.position': '第 {n} 位 · 等待当前回复完成',
+  // 头行失败计数（qattachvault 禁静默面）：队列含载荷丢失项 ⇒ 红色计数在场。
+  'chatQueue.failedCount': '{n} 条发送失败',
+  // 排队动作右键菜单文案（撤回 = 回输入框重编；键名不沿用旧 chat.recall——
+  // 该键从未存在过，旧按钮 title 一直是字面 fallback）。
+  'chat.queueRecall': '撤回',
   // qattachvault（2026-10-21）：载荷丢失（刷新时未能落盘）的显式失败态 —— 禁静默：
   // 停止自动补发，队列条注记 + 气泡红 ! + toast；撤回重编重新添加附件 = 可重传。
   'input.queueAttachLost': '附件文件已丢失（页面刷新时未能保存），此条已停止自动补发——撤回后重新添加附件再发送',
@@ -2066,9 +2070,6 @@ export default {
   'plugins.builtinBadge': '内置',
   'plugins.builtinTitle': '内置 agent：定义在代码中（BuiltinAgents），面板只读',
   'plugins.detail': '详情',
-  'chatQueue.dragReorder': '拖动以排序',
-  'chatQueue.clickExpand': '点击展开',
-  'chatQueue.clickCollapse': '点击收起',
   'explorer.loading': '加载中...',
   'explorer.empty': '空',
   'flowViewers.saving': '保存中…',

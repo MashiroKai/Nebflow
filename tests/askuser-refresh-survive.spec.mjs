@@ -258,18 +258,25 @@ test.describe('AskUser pending 刷新存活（作者验收）', () => {
     const MARK_T2 = '直通退役后普通文本-xyz';
     await sendUserText(page, MARK_T2);
     await page.waitForTimeout(1200);
-    // ① 不吞：文本落在本地「排队中」条（会话 busy ⇒ 尚未发帧）
-    const queued = await page.locator('.queue-item', { hasText: MARK_T2 }).count();
-    expect(queued, 'pending 期间回车 ⇒ 文本进本地队列，不得静默丢弃').toBeGreaterThan(0);
-    // ② 「立即发送」把它真的推出去 ⇒ 以普通用户消息入流
+    // ① 不吞：文本 = 乐观气泡上屏 + 队列条头行计数（会话 busy ⇒ 尚未发帧）。
+    //    排队呈现回退批（2026-10-22）：队列条行级明细退役——「在队」面 = 头行 +
+    //    气泡，动作入口 = 气泡右键菜单。
+    const queuedBubble = await page.locator('.row.user', { hasText: MARK_T2 }).count();
+    const barVisible = await page.locator('#queue-bar.visible').count();
+    expect(queuedBubble, 'pending 期间回车 ⇒ 乐观气泡上屏，不得静默丢弃').toBeGreaterThan(0);
+    expect(barVisible, '队列条头行计数在场').toBeGreaterThan(0);
+    // ② 右键菜单「立即发送」把它真的推出去 ⇒ 以普通用户消息入流
     const pushed = await page.evaluate((mk) => {
-      const row = [...document.querySelectorAll('.queue-item')].find((r) => (r.innerText || '').includes(mk));
-      const btn = row?.querySelector('.queue-item-btn.immediate');
+      const row = [...document.querySelectorAll('.row.user')].find((r) => (r.innerText || '').includes(mk));
+      if (!row) return false;
+      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 400, clientY: 300 }));
+      const btn = [...document.querySelectorAll('.fm-context-menu button[role="menuitem"]')]
+        .find((b) => b.textContent === '立即发送');
       if (!btn) return false;
       btn.click();
       return true;
     }, MARK_T2);
-    expect(pushed, '「立即发送」控件可点（把排队文本推出）').toBe(true);
+    expect(pushed, '「立即发送」菜单项可点（把排队文本推出）').toBe(true);
     await page.waitForFunction(
       (mk) => [...document.querySelectorAll('.row.user')].some((r) => (r.innerText || '').includes(mk)),
       MARK_T2,

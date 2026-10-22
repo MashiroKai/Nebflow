@@ -239,13 +239,16 @@ const READ_DOM = (m) => {
   const users = [...document.querySelectorAll('.row.user')].map((r) => r.innerText || '');
   const box = document.querySelector('.option-box[data-request-id]');
   const btns = box ? [...box.querySelectorAll('.option-btn')] : [];
-  const qitems = [...document.querySelectorAll('.queue-item')].map((r) => r.innerText || '');
+  // 排队呈现回退批（2026-10-22）：队列条 = 头行-only——行级文本面退役，
+  // 「在队」判据 = 头行计数在场（消息本体 = 乐观气泡，不双呈现）。
+  const qbar = document.getElementById('queue-bar');
+  const qhead = qbar?.classList.contains('visible') ? (qbar.querySelector('.queue-bar-title')?.textContent || '') : '';
   return {
     userBubbles: users,
     userBubbleHasMarker: users.some((t) => t.includes(m)),
     userBubbleCount: users.length,
-    queueHasMarker: qitems.some((t) => t.includes(m)),
-    queueLen: qitems.length,
+    queueHasMarker: qhead.includes('条排队'),
+    queueLen: qbar?.querySelectorAll('.queue-item').length ?? 0,
     cardPresent: !!box,
     cardRid: box?.dataset.requestId || null,
     cardDisabled: btns.length ? btns.every((b) => b.disabled) : null,
@@ -310,10 +313,14 @@ async function phaseB(sid) {
       // B2：**立即发送**把文本真正推出去（前端 busy ⇒ 打字只进本地队列；不发帧则两侧
       // 都「绿」而毫无判别力 —— 见文件头「前端队列面的坑」）
       const hadBtn = await page.evaluate(() => {
-        const row = [...document.querySelectorAll('.queue-item')].find((r) => (r.innerText || '').includes('ASKTEXT'));
-        const btn = row?.querySelector('.queue-item-btn.immediate');
-        if (btn) { btn.click(); return true; }
-        return false;
+        const row = [...document.querySelectorAll('.row.user')].find((r) => (r.innerText || '').includes('ASKTEXT'));
+        if (!row) return false;
+        row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 400, clientY: 300 }));
+        const btn = [...document.querySelectorAll('.fm-context-menu button[role="menuitem"]')]
+          .find((b) => b.textContent === '立即发送');
+        if (!btn) return false;
+        btn.click();
+        return true;
       });
       await page.waitForTimeout(3000);
       const d2 = await page.evaluate(READ_DOM, marker);
