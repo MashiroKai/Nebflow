@@ -150,7 +150,7 @@ object RichDegrade:
     val mb = (n: Long) => f"${n / 1_000_000.0}%.1fMB"
     val head = s"$OversizePrefix ${p.last}（${Reason.FileOversize}：上限 ${mb(limit)}" +
       bytes.fold("")(b => s"，本件 ${mb(b)}") + "）"
-    s"$head\n原件在桌面端：$p\n微信里收不了这么大的文件，请到 Nebflow 控制台该会话取件（卡片可下载）。"
+    s"$head\n原件在桌面端：$p\n微信里收不了这么大的文件，请到 Stand 控制台该会话取件（卡片可下载）。"
 
   /** `[[oversizeFile]]` 的机器可匹配占位符。 */
   val OversizePrefix: String = "[文件过大]"

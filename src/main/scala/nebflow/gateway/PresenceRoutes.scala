@@ -1171,7 +1171,7 @@ private[gateway] object PresenceRoutes:
                     ApiJson.okMessage(
                       s"Plugin '$name' is now BLOCKED (deny-list) — it leaves the catalog, is refused on " +
                         "new dispatches and at node start, and its in-flight MCP servers are stopped within 30s. " +
-                        s"Unblock with POST /api/plugins/$name/unblock or CLI 'nebflow plugin unblock $name'."
+                        s"Unblock with POST /api/plugins/$name/unblock or CLI 'stand plugin unblock $name'."
                     )
                   )
                 case Left(err) => BadRequest(Json.obj("error" -> err.asJson))

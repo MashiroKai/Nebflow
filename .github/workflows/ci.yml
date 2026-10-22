@@ -518,9 +518,10 @@ jobs:
         #         Accepting a bare UnsupportedClassVersionError here would mean
         #         the gate never ran — that form is now a FAILURE.
         #   A-6 §2 version/help/doctor/update must each RUN (non-empty output, no
-        #         UnsupportedClassVersionError, version prints "nebflow <version>") —
-        #         the self-repair entries must survive on the machine that needs
-        #         upgrading. `update` in an offline container is judged by
+        #         UnsupportedClassVersionError, version prints "<lowerName> <version>"
+        #         with lowerName from brand.conf) — the self-repair entries must
+        #         survive on the machine that needs upgrading. `update` in an offline
+        #         container is judged by
         #         reaching its own logic (its own error), not by class loading.
         #   Any command still running after 90s = FAILURE (never a hang, never
         #   a pass).

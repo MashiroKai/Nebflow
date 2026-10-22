@@ -8,8 +8,8 @@
 
 /**
  * @typedef {Object} Brand
- * @property {string} productName  Display name, e.g. "Nebflow"
- * @property {string} lowerName    Lowercase identifier, e.g. "nebflow"
+ * @property {string} productName  Display name, e.g. "Stand"
+ * @property {string} lowerName    Lowercase identifier, e.g. "stand"
  * @property {string} domain       Display-only product domain. NEVER build a
  *   URL from this: brand.conf ships the placeholder `neblink.example` and the
  *   server contract (StaticRoutes.brandScriptTag) declares the field

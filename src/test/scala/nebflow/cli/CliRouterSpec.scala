@@ -212,8 +212,8 @@ class CliRouterSpec extends FunSuite:
     val (outShort, codeShort) = runCaptured("-h")
     assertEquals(codeLong, 0)
     assertEquals(codeShort, 0)
-    assert(outLong.contains("Usage: nebflow <command>"), outLong)
-    assert(outShort.contains("Usage: nebflow <command>"), outShort)
+    assert(outLong.contains("Usage: stand <command>"), outLong)
+    assert(outShort.contains("Usage: stand <command>"), outShort)
   }
 
   // ===== 4. help rendering (T1/T3/T4/T5/T6/T13, A9/T10) =====
@@ -240,7 +240,7 @@ class CliRouterSpec extends FunSuite:
   test("T1/T3/T4/T13: the top-level help carries every new line") {
     val (out, code) = runCaptured("help")
     assertEquals(code, 0)
-    assert(out.contains("Start the Gateway (same as 'nebflow start')"), out)
+    assert(out.contains("Start the Gateway (same as 'stand start')"), out)
     assert(out.contains("Starting / stopping:"), out)
     assert(out.contains("Global flags: --json, --quiet, --home <dir>, --port <n>, --no-browser, --foreground"), out)
     assert(
@@ -249,7 +249,7 @@ class CliRouterSpec extends FunSuite:
     )
     // pin updated to the current wording ("(alias)" since the product-face
     // hygiene sweep renamed it; the old "(legacy)" pin was a pre-existing red)
-    assert(out.contains("(alias) same as 'nebflow start'"), out)
+    assert(out.contains("(alias) same as 'stand start'"), out)
   }
 
   test("T5/T6: a parameter line renders the flag pair plus annotations") {

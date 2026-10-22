@@ -199,7 +199,7 @@ class PluginMcpManager private (
                   s"[plugin-block] Plugin '${entry.pluginName}' $why — " +
                     "its MCP server has been stopped. " +
                     s"Unblock it if intended (Plugin panel, REST POST /api/plugins/${entry.pluginName}/unblock, " +
-                    s"or CLI 'nebflow plugin unblock ${entry.pluginName}'); this session's tool calls to it will now fail."
+                    s"or CLI 'stand plugin unblock ${entry.pluginName}'); this session's tool calls to it will now fail."
                 )
               }
               _ <- logger.warn(s"Plugin '${entry.pluginName}' MCP '$sid' stopped by content-face revalidation: $why")
