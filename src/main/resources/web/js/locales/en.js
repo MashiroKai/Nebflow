@@ -1641,6 +1641,10 @@ export default {
   'canvas.loadingFile': 'Opening…',
   'canvas.loadFailed': 'Failed to open',
   'canvas.retry': 'Retry',
+  // cardwin-whitepage fix batch (2026-10-22): standalone card-window boot-face
+  // failure copy (canvas.js cardWindowBootFace)
+  'canvas.cardwinFailHint': 'Failed to load the card content — you can retry.',
+  'canvas.cardwinAuthHint': 'Your session may have expired — retrying re-establishes it or shows the sign-in guide.',
 
   // === Tool names (label first line) ===
   'tool.Read': 'Read',

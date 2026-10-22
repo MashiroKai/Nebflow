@@ -3344,7 +3344,13 @@ function popoutCardWindow(id) {
   if (!entry || !entry.absPath) return false;
   if (independentWins.has(id) || cardPopInFlight.has(id)) return false;
   cardPopInFlight.add(id);
-  const url = '/index.html?card-window=1&path=' + encodeURIComponent(entry.absPath) +
+  // 卡窗白屏修复批（2026-10-22）：入口必须是 `/` —— 网关静态路由只把 `/`
+  // 派给 index（WebSocketRoutes `GET -> Root`），`/index.html` 落根文件白名单
+  // （sw.js/favicon 族）之外 ⇒ 404 空 Content-Length 体，独立窗整页空白
+  // （作者实测 link.mystand.space 白窗根因；旧批 spec 静态服 `/`→index 掩盖了
+  // 网关路由差异）。同源开窗自带 cookie 会话，无凭据注入面；死会话形态由
+  // WS 层自愈链收口（ws.js onclose → remint/登录引导）。
+  const url = '/?card-window=1&path=' + encodeURIComponent(entry.absPath) +
     '&title=' + encodeURIComponent(entry.title || '');
   const winId = 'nf-card-' + id.replace(/[^a-zA-Z0-9_-]/g, '_');
   const mobile = isMobileViewport() || document.body.classList.contains('mobile-layer');
@@ -3399,6 +3405,101 @@ function notifyCardUpdate(id) {
 }
 
 /* ── 卡窗侧 ─────────────────────────────────────────────────────────── */
+// ── 卡窗引导态面（卡窗白屏修复批 2026-10-22）──
+// 开窗即见「正在打开…」占位（面板真容挂载前的不空白承诺）；首张页签 pane
+// 挂出子节点（renderFile 真容 / F3 不可读骨架，二者皆非白）即撤。超时或
+// WS 握手被拒（nebflow-ws-rejected 事件，ws.js onclose 同步派发）⇒ 错误态
+// 卡片：WS 从未连上 ⇒ 提示登录过期 + [重试]（reload 重走 ws.js remint /
+// 登录引导既有链）；其余 ⇒ 加载失败 + [重试]。未认证/加载失败态永不白屏。
+const CARDWIN_BOOT_POLL_MS = 400;
+const CARDWIN_BOOT_TIMEOUT_MS = 12000;
+const CARDWIN_REJECT_GRACE_MS = 2000;
+/** @type {number|null} 引导面轮询句柄（撤面/换态后清零）。 */
+let cardWinBootPoll = null;
+
+/** 撤除引导面（成功或关窗后；幂等）。 */
+function cardWindowBootFaceDismiss() {
+  if (cardWinBootPoll) { clearInterval(cardWinBootPoll); cardWinBootPoll = null; }
+  document.getElementById('nf-cardwin-boot')?.remove();
+}
+
+/** 卡窗引导态面：loading 占位 → 真容即撤 / 失败态卡片（内联样式零依赖面，
+ *  同 sessionGate 横幅纪律）。仅 cardWindowMode 调用（initCardWindowMode）。
+ *  @param {string} fileName */
+function cardWindowBootFace(fileName) {
+  const panel = document.getElementById('canvas-panel');
+  if (!panel) return;
+  const el = document.createElement('div');
+  el.id = 'nf-cardwin-boot';
+  el.setAttribute('data-state', 'loading');
+  el.style.cssText =
+    'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;' +
+    'display:flex;flex-direction:column;align-items:center;gap:10px;padding:22px 30px;' +
+    'border:1px solid var(--glass-border,#e0e1e4);border-radius:14px;' +
+    'background:var(--glass-bg,#fff);color:var(--color-text,#1b1e26);' +
+    "font:13px/1.6 -apple-system,'Segoe UI',sans-serif;text-align:center;max-width:78vw;";
+  const dot = document.createElement('div');
+  dot.className = 'nf-cw-dot';
+  dot.style.cssText =
+    'width:22px;height:22px;border-radius:50%;flex:none;' +
+    'border:2.5px solid var(--color-frame-border,#e0e1e4);border-top-color:rgb(var(--sapphire,80,120,255));' +
+    'animation:nf-cardwin-spin 0.9s linear infinite;';
+  const title = document.createElement('div');
+  title.className = 'nf-cw-title';
+  title.style.cssText = 'font-weight:600;font-size:13px;max-width:52vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+  title.textContent = fileName || t('canvas.loadingFile');
+  const hint = document.createElement('div');
+  hint.className = 'nf-cw-hint';
+  hint.style.cssText = 'font-size:12px;color:var(--color-text-muted,#8b8e96);display:none;';
+  const retry = document.createElement('button');
+  retry.className = 'nf-cw-retry';
+  retry.textContent = t('canvas.retry');
+  retry.style.cssText =
+    'display:none;margin-top:2px;padding:5px 16px;border-radius:8px;cursor:pointer;' +
+    'border:1px solid var(--glass-control-border,#d8d9dd);background:var(--glass-control-bg,transparent);' +
+    'color:inherit;font-size:12px;';
+  retry.addEventListener('click', () => { try { location.reload(); } catch { /* 无历环境 */ } });
+  el.append(dot, title, hint, retry);
+  const style = document.createElement('style');
+  style.textContent = '@keyframes nf-cardwin-spin{to{transform:rotate(360deg)}}';
+  el.appendChild(style);
+  panel.appendChild(el);
+
+  let wsRejectedAt = 0;
+  const onRejected = () => { wsRejectedAt = wsRejectedAt || Date.now(); };
+  document.addEventListener('nebflow-ws-rejected', onRejected, { once: true });
+  window.addEventListener('pagehide', cardWindowBootFaceDismiss, { once: true });
+
+  const started = Date.now();
+  cardWinBootPoll = setInterval(() => {
+    // 真容已挂（renderFile 内容或 F3 骨架任一子节点）⇒ 引导使命完成。
+    const pane = panel.querySelector('#canvas-content .canvas-tab-pane');
+    if (pane && pane.childElementCount > 0) { cardWindowBootFaceDismiss(); return; }
+    const waited = Date.now() - started;
+    // WS 握手被拒：宽限 2s（让 ws.js remint/登录导航先走 —— 若页面将被
+    // 引去登录腿，这里不必闪错误卡），仍在 ⇒ 失败态（登录形态文案）。
+    if (wsRejectedAt && Date.now() - wsRejectedAt >= CARDWIN_REJECT_GRACE_MS) {
+      cardWindowBootFail(el, dot, hint, retry, true);
+      return;
+    }
+    if (waited < CARDWIN_BOOT_TIMEOUT_MS) return;
+    import('./state.js').then(({ default: state }) => {
+      cardWindowBootFail(el, dot, hint, retry, !state.connected);
+    }).catch(() => cardWindowBootFail(el, dot, hint, retry, false));
+  }, CARDWIN_BOOT_POLL_MS);
+}
+
+/** 引导面换失败态：撤动画、换文案（登录形态 / 一般失败）、亮 [重试]。 */
+function cardWindowBootFail(el, dot, hint, retry, authLike) {
+  if (el.getAttribute('data-state') === 'failed') return;
+  el.setAttribute('data-state', 'failed');
+  dot.style.animation = 'none';
+  dot.style.borderTopColor = 'var(--status-error-icon,#d64545)';
+  hint.style.display = 'block';
+  hint.textContent = authLike ? t('canvas.cardwinAuthHint') : t('canvas.cardwinFailHint');
+  retry.style.display = 'inline-flex';
+}
+
 /** 卡窗「合并」自请求：out 动画 → bye → close（主窗 closed 轮询/bye 双腿等价）。 */
 function requestMergeSelf(o = {}) {
   if (!cardWindowMode) return;
@@ -3438,6 +3539,7 @@ function initCardWindowMode() {
   if (qs.get('card-window') !== '1') return false;
   cardWindowMode = true;
   document.body.classList.add('card-window');
+  cardWindowBootFace(qs.get('title') || (qs.get('path') || '').split('/').pop() || '');
   ensureCardChannel();
   cardLastMainBeat = Date.now();
   // 主窗心跳看门狗：20s 静默（主窗已关/崩/挂起）→ 自闭，绝无僵尸镜像。

@@ -728,6 +728,9 @@ export function connect() {
       // doesn't serve the portal routes — direct-LAN consoles) does the
       // unified login entry appear; the reconnect loop continues behind it.
       console.warn('[ws] connect failed - attempting silent console-session re-establishment');
+      // 卡窗白屏修复批（2026-10-22）：握手拒绝即广播（卡窗引导态面的快失败
+      // 钩子 —— 无会话开窗在秒级落「登录过期」引导卡，不等 12s 通用超时）。
+      try { document.dispatchEvent(new CustomEvent('nebflow-ws-rejected')); } catch (_) { /* 早于 document 就绪等 */ }
       remintHostSessionAndReload().then((navigating) => {
         if (navigating) return;
         addNotification('conn', t('ws.ticketEntry.notify'));
