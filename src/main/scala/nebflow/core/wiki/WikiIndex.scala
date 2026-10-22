@@ -343,21 +343,29 @@ object WikiIndex:
     candidate
 
   /** Content runs of the body (fenced lines masked out, blanks/headings break
-    * runs) as (bodyIdx, text) groups in document order. */
+    * runs) as (bodyIdx, text) groups in document order. A NON-CONTENT line
+    * always flushes the open run — an intervening blank/fence/heading ends the
+    * paragraph even if the next content line is index-adjacent (the Python
+    * exporter breaks the same way; keep the two isomorphic). */
   private def contentRuns(lines: Vector[String], mask: Vector[Boolean]): List[List[(Int, String)]] =
     val runs = ListBuffer.empty[List[(Int, String)]]
     var cur = ListBuffer.empty[(Int, String)]
     var prevIdx = -2
+    def flush(): Unit =
+      if cur.nonEmpty then
+        runs += cur.toList
+        cur = ListBuffer.empty[(Int, String)]
     for i <- lines.indices do
       val line = lines(i)
       val content = !mask(i) && line.trim.nonEmpty && HeadingRe.findFirstMatchIn(line).isEmpty
       if content then
         if cur.nonEmpty && i == prevIdx + 1 then cur += ((i, line))
         else
-          if cur.nonEmpty then runs += cur.toList
+          flush()
           cur = ListBuffer((i, line))
+      else flush() // blank / fence / heading — run boundary (parity with check_wiki_docs.py)
       prevIdx = i
-    if cur.nonEmpty then runs += cur.toList
+    flush()
     runs.toList
 
   /** Block paragraphs: content runs whose LAST line carries a `^blockid`. */
