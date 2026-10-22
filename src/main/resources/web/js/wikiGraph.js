@@ -406,7 +406,7 @@ function renderVaultSwitch() {
  *  switches back to that vault level; the LAST crumb is static (current). */
 function renderCrumbs() {
   if (!view || !view.side) return;
-  const el = view.side.querySelector('.wg-crumbs');
+  const el = /** @type {HTMLElement|null} */ (view.side.querySelector('.wg-crumbs'));
   if (!el) return;
   const crumbs = (view.data && view.data.view && view.data.view.breadcrumb) || [];
   const single = crumbs.length <= 1;
@@ -1503,7 +1503,7 @@ export function focusWikiNode(project, rel) {
   unresolved: view.unresolved.length,
   crossVault: view.crossVault,
   selProject: view.selProject, selVault: view.selVault,
-  vaultOptions: [...(view.side ? view.side.querySelectorAll('.wg-switch-select option') : [])].map(o => o.value),
+  vaultOptions: [...(view.side ? /** @type {NodeListOf<HTMLOptionElement>} */ (view.side.querySelectorAll('.wg-switch-select option')) : [])].map(o => o.value),
   crumbs: (view.data && view.data.view && view.data.view.breadcrumb) || null,
   filter: view.filter, dirFilter: view.dirFilter,
   selected: view.selected ? view.selected.id : null,
