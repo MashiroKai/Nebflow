@@ -1,7 +1,9 @@
 #!/bin/sh
 # zcode shim — expose ZCode.app embedded CLI on PATH (晨裁① 2026-10-07, node n-b4788890)
 # Target: /Applications/ZCode.app/Contents/Resources/glm/zcode.cjs (self-shebang #!/usr/bin/env node, +x)
-# Remove: rm /Users/kaiyu/.nebflow/bin/zcode
+# Install location: ~/.stand/bin/zcode (default home is ~/.stand since the
+# data-root switch; the installer never writes ~/.nebflow — 再生治本批 2026-10-22).
+# Remove: rm ~/.stand/bin/zcode
 export ZCODE_BUILTIN_PROVIDER_CONFIG_FILE="/Applications/ZCode.app/Contents/Resources/config/provider/zcode-builtin.json"
 export ZCODE_PERSONAL_PROVIDER_CONFIG_FILE="$HOME/.zcode/v2/provider_config.json"
 exec /Applications/ZCode.app/Contents/Resources/glm/zcode.cjs "$@"
