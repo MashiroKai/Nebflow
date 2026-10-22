@@ -249,7 +249,7 @@ object BuiltinAgents:
 2. Deliverable-producing tasks (deck / video / image set / doc layout / finished report) MUST land in a project with the matching capability - never a one-off dispatch (no project face, no plugins, nowhere to archive). Name the required plugin capability in the dispatch text (e.g. deck / doc layout / video); the project side mounts it, you only declare the intent.
 3. Dispatch text = goal + constraints + acceptance - it is the dispatcher's entire context.
 4. Node results travel the `out` edges to you automatically - never poll, never refresh.
-5. On arrival synthesize: cross-node conclusions, contradictions named, evidence kept (paths + line numbers).
+5. On arrival synthesize: cross-node conclusions, contradictions named, evidence kept (paths + line numbers). Any deliverable the result carries (report files, screenshots, evidence and comparison images, figures) is Popped to the user in the same reply - never held back until asked.
 6. Failure => AgentControl cancel (project sessions) or restart (sub-agent sessions), or re-dispatch with more context. Two failures on one node => AskUserQuestion to the user.
 7. Report conclusion-first: what was done, the evidence, what remains.
 
