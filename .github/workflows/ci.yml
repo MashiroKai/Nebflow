@@ -133,6 +133,21 @@ jobs:
       - name: Assert JDK 21 across every declaration surface (+ bytecode target below the floor)
         run: bash scripts/check-jdk-baseline.sh
 
+  installer-home-gate:
+    name: Installer Default Home Gate (~/.stand)
+    # Fail-fast static gate (再生治本批 2026-10-22): the installer/shim default
+    # home is STAND_HOME env first, then brand homeDirName (~/.stand) — the
+    # installer NEVER writes the legacy ~/.nebflow root and setup_path retires
+    # leftover legacy PATH entries. History: a stale default-home installer
+    # re-seeded 153M of ~/.nebflow scaffolding on 10-20 after the data-root
+    # migration; this gate pins the switch shut.
+    # Same logic locally: bash scripts/check-installer-home.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert installer default home derives from STAND_HOME / brand homeDirName
+        run: bash scripts/check-installer-home.sh
+
   lint:
     name: Lint (scalafmt + scalafix)
     # Format gate: `make lint` / `make check` existed but were never wired into

@@ -1,0 +1,112 @@
+=========== VARIANT A: default (STAND_HOME unset) ==========
+sandbox HOME_A: /tmp/stand-fresh-homeA-wPDV
+[i] Resolving latest beta version...
+
+  ########
+  ##      
+  ########  stand
+        ##  2026.10.21-beta.2 installer (beta)
+  ########
+
+
+==> [1/6] Checking environment...
+[i] OS: mac (arm64)
+[i] Region: cn (use --cn or --global to override)
+
+==> [2/6] Checking dependencies...
+[ok] Java: openjdk version "23.0.1" 2024-10-15
+[ok] rg: seeded /Users/kaiyu/.stand/bin/rg -> /tmp/stand-fresh-homeA-wPDV/.stand/bin/rg
+[i] Downloading Whisper voice model (~75MB, one-time)...
+[i] Downloading [1/6] config.json...
+[i] Downloading [2/6] tokenizer.json...
+[i] Downloading [3/6] generation_config.json...
+[i] Downloading [4/6] preprocessor_config.json...
+[i] Downloading [5/6] encoder_model_quantized.onnx...
+[i] Downloading [6/6] decoder_model_merged_quantized.onnx...
+[ok] Voice model installed.
+
+==> [3/6] Downloading stand 2026.10.21-beta.2...
+[i] Downloading stand-assembly-2026.10.21-beta.2.jar...
+[ok] Downloaded stand-assembly-2026.10.21-beta.2.jar from COS.
+
+==> [4/6] Writing launcher and PATH...
+[i] Creating wrapper script...
+[ok] Wrapper created: /tmp/stand-fresh-homeA-wPDV/.stand/bin/stand
+[ok] Legacy shim created: /tmp/stand-fresh-homeA-wPDV/.stand/bin/nebflow (deprecation notice, forwards to stand)
+
+==> [5/6] Setting up config...
+[i] Creating default config at /tmp/stand-fresh-homeA-wPDV/.stand/nebflow.json...
+[ok] Config created: /tmp/stand-fresh-homeA-wPDV/.stand/nebflow.json
+
+==> [6/6] Done!
+
+[ok] stand 2026.10.21-beta.2 installed.
+     Run: stand
+     Config: ~/.stand/nebflow.json
+     Please restart your terminal or run: export PATH="$HOME/.stand/bin:$PATH"
+installer exit(A)=0
+--- ASSERT A ---
+[A] OK: stand staged
+[A] OK: nebflow staged
+[A] OK: nebflow.json staged
+[A] OK: install-manifest.json staged
+[A] OK: manifest installDir derives from sandbox base
+--- run staged CLI (version) then re-assert ---
+[A] CLI version output: WARN: stand pinned JDK missing at /tmp/stand-fresh-homeA-wPDV/.stand/jdk-21/bin/java - falling back to PATH java.
+      Repair: re-run the stand installer (it restores jdk-21 under /tmp/stand-fresh-homeA-wPDV/.stand).
+stand 2026.10.21-beta.2
+RESULT_A=FAIL
+
+=========== VARIANT B: STAND_HOME override ==========
+sandbox HOME_B: /tmp/stand-fresh-homeB-V6lr (STAND_HOME=/tmp/stand-fresh-homeB-V6lr/base)
+[i] Resolving latest beta version...
+
+  ########
+  ##      
+  ########  stand
+        ##  2026.10.21-beta.2 installer (beta)
+  ########
+
+
+==> [1/6] Checking environment...
+[i] OS: mac (arm64)
+[i] Region: cn (use --cn or --global to override)
+
+==> [2/6] Checking dependencies...
+[ok] Java: openjdk version "23.0.1" 2024-10-15
+[ok] rg: seeded /Users/kaiyu/.stand/bin/rg -> /tmp/stand-fresh-homeB-V6lr/base/bin/rg
+[i] Downloading Whisper voice model (~75MB, one-time)...
+[i] Downloading [1/6] config.json...
+[i] Downloading [2/6] tokenizer.json...
+[i] Downloading [3/6] generation_config.json...
+[i] Downloading [4/6] preprocessor_config.json...
+[i] Downloading [5/6] encoder_model_quantized.onnx...
+[i] Downloading [6/6] decoder_model_merged_quantized.onnx...
+[ok] Voice model installed.
+
+==> [3/6] Downloading stand 2026.10.21-beta.2...
+[i] Downloading stand-assembly-2026.10.21-beta.2.jar...
+[ok] Downloaded stand-assembly-2026.10.21-beta.2.jar from COS.
+
+==> [4/6] Writing launcher and PATH...
+[i] Creating wrapper script...
+[ok] Wrapper created: /tmp/stand-fresh-homeB-V6lr/base/bin/stand
+[ok] Legacy shim created: /tmp/stand-fresh-homeB-V6lr/base/bin/nebflow (deprecation notice, forwards to stand)
+
+==> [5/6] Setting up config...
+[i] Creating default config at /tmp/stand-fresh-homeB-V6lr/base/nebflow.json...
+[ok] Config created: /tmp/stand-fresh-homeB-V6lr/base/nebflow.json
+
+==> [6/6] Done!
+
+[ok] stand 2026.10.21-beta.2 installed.
+     Run: stand
+     Config: /tmp/stand-fresh-homeB-V6lr/base/nebflow.json
+     Please restart your terminal or run: export PATH="/tmp/stand-fresh-homeB-V6lr/base/bin:$PATH"
+installer exit(B)=0
+--- ASSERT B ---
+[B] OK: stand staged under $STAND_HOME/bin
+RESULT_B=FAIL
+
+=========== FINAL ==========
+rcA=0 rcB=0 RESULT_A=FAIL RESULT_B=FAIL

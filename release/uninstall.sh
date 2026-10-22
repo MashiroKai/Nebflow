@@ -8,8 +8,12 @@ HOME_DIR=.stand
 WRAPPER_NAME=stand
 set -e
 
-INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
-CONFIG_DIR="${HOME}/${HOME_DIR}"
+# Install base (再生治本批 2026-10-22): STAND_HOME first-priority, same rule as
+# install.sh - the uninstaller never touches a NEBFLOW_HOME-pointed legacy root.
+STAND_BASE="${STAND_HOME:-${HOME}/${HOME_DIR}}"
+
+INSTALL_DIR="${INSTALL_DIR:-${STAND_BASE}/bin}"
+CONFIG_DIR="${STAND_BASE}"
 
 echo ""
 echo "  ${PRODUCT_NAME} Uninstaller"

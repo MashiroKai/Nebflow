@@ -128,7 +128,14 @@ resolve_version() {
     log_v "Resolved VERSION=${VERSION} (channel=${CHANNEL})"
 }
 
-INSTALL_DIR="${INSTALL_DIR:-${HOME}/${HOME_DIR}/bin}"
+# Install base (再生治本批 2026-10-22): STAND_HOME is the first-priority base,
+# default is the brand home (~/.stand). NEBFLOW_HOME is deliberately NOT
+# consulted here - the installer NEVER writes the legacy ~/.nebflow root; the
+# legacy name is read-only compat handled by the runtime (nebflow.shared.paths
+# resolveDefaultDataRoot), never by installation. A fresh install therefore
+# touches zero ~/.nebflow paths.
+STAND_BASE="${STAND_HOME:-${HOME}/${HOME_DIR}}"
+INSTALL_DIR="${INSTALL_DIR:-${STAND_BASE}/bin}"
 
 # >>> BRAND-UI-BEGIN (batch 4 redesign: pixel logo + progress bar) >>>
 # Brand banner: the Nebflow pixel logo rendered as terminal color blocks.
@@ -645,14 +652,14 @@ link_brew_jdk() {
 ensure_java_mac_tarball() {
     # macOS twin of ensure_java_linux_tarball: deps/ mirror -> TUNA -> Adoptium
     # API, sha256 via deps/checksums.txt. Mac tarballs nest the JDK under
-    # Contents/Home - normalize into the pinned layout ${HOME}/${HOME_DIR}/jdk-21
+    # Contents/Home - normalize into the pinned layout ${STAND_BASE}/jdk-21
     # (staging swap: a corrupt/truncated download never replaces the pin slot).
     local jdk_arch="aarch64"
     [ "$ARCH" = "x64" ] && jdk_arch="x64"
     local jdk_ver="21.0.12.1_1"
     local tarball_name="OpenJDK21U-jdk_${jdk_arch}_mac_hotspot_${jdk_ver}.tar.gz"
-    local jdk_dir="${HOME}/${HOME_DIR}/jdk-21"
-    mkdir -p "${HOME}/${HOME_DIR}" || return 1
+    local jdk_dir="${STAND_BASE}/jdk-21"
+    mkdir -p "${STAND_BASE}" || return 1
     local tmp_tar tmp_dir
     # NOTE (siteinstall-exec acceptance fix): no .tar.gz suffix on the mktemp
     # template - BSD mktemp (macOS) only randomizes TRAILING X's; with a
@@ -740,15 +747,15 @@ ensure_java_linux_tarball() {
     [ "$ARCH" = "arm64" ] && jdk_arch="aarch64"
     local jdk_ver="21.0.12.1_1"
     local tarball_name="OpenJDK21U-jdk_${jdk_arch}_linux_hotspot_${jdk_ver}.tar.gz"
-    local jdk_dir="${HOME}/${HOME_DIR}/jdk-21"
-    mkdir -p "${HOME}/${HOME_DIR}"
+    local jdk_dir="${STAND_BASE}/jdk-21"
+    mkdir -p "${STAND_BASE}"
     local tmp_tar
     tmp_tar=$(mktemp /tmp/${LOWER_NAME}-jdk-XXXXXX.tar.gz)
     local tuna_url="https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jdk/${jdk_arch}/linux/${tarball_name}"
     local jdk_url="https://api.adoptium.net/v3/binary/latest/21/ga/linux/${jdk_arch}/jdk/hotspot/normal/eclipse"
     if download_file "$tmp_tar" "$tarball_name" "$tarball_name" \
         "${COS_DEPS_BASE}/${tarball_name}" "$tuna_url" "$jdk_url"; then
-        tar xzf "$tmp_tar" -C "${HOME}/${HOME_DIR}" 2>/dev/null
+        tar xzf "$tmp_tar" -C "${STAND_BASE}" 2>/dev/null
         rm -f "$tmp_tar"
         local extracted
         extracted=$(ls -d "${HOME}"/${HOME_DIR}/jdk-21* 2>/dev/null | head -1)
@@ -1004,7 +1011,7 @@ ensure_rg() {
 
 # Download Whisper voice model for offline speech recognition (best-effort)
 install_voice_model() {
-    local model_dir="${HOME}/${HOME_DIR}/voice-models/onnx-community/whisper-base"
+    local model_dir="${STAND_BASE}/voice-models/onnx-community/whisper-base"
     if [ -f "$model_dir/onnx/encoder_model_quantized.onnx" ]; then
         log_v "Voice model already installed."
         return 0
@@ -1471,10 +1478,10 @@ SCRIPT_DIR="\$(cd "\$(dirname "\$0")" && pwd)"
 # Java selection: the pinned JDK (jdk-21) wins; PATH java is only a fallback.
 # A missing pinned JDK must NEVER degrade silently (author ruling 2026-09-21,
 # envfix batch): warn loudly to stderr first, then fall back.
-JAVA_BIN="\$HOME/${HOME_DIR}/jdk-21/bin/java"
+JAVA_BIN="${STAND_BASE}/jdk-21/bin/java"
 if [ ! -x "\$JAVA_BIN" ]; then
     echo "WARN: ${PRODUCT_NAME} pinned JDK missing at \$JAVA_BIN - falling back to PATH java." >&2
-    echo "      Repair: re-run the ${PRODUCT_NAME} installer (it restores ${HOME_DIR}/jdk-21)." >&2
+    echo "      Repair: re-run the ${PRODUCT_NAME} installer (it restores jdk-21 under ${STAND_BASE})." >&2
     JAVA_BIN="\$(command -v java || true)"
 fi
 java_hint() {
@@ -1600,11 +1607,23 @@ setup_path() {
     elif [ -f "${HOME}/.bash_profile" ]; then
         profile="${HOME}/.bash_profile"
     fi
-    if [ -n "$profile" ] && ! grep -qF "/${HOME_DIR}/bin" "$profile" 2>/dev/null; then
+    # Retire legacy ~/.nebflow/bin PATH entries (再生治本批 2026-10-22): the
+    # pre-switch default-home installer added them, and they keep shadowing the
+    # new install dir (a leftover old wrapper keeps regenerating ~/.nebflow
+    # state on every CLI run). Comment the entry out in place - user history is
+    # preserved, nothing is deleted. The new line below is appended separately.
+    if [ -n "$profile" ] && grep -q '^[[:space:]]*export PATH=.*\.nebflow/bin' "$profile" 2>/dev/null; then
+        sed -i.bak-nebflow-path \
+            's|^\([[:space:]]*export PATH=.*\.nebflow/bin.*\)$|# retired legacy home PATH entry (default home moved to ~/'"${HOME_DIR}"'): \1|' \
+            "$profile" 2>/dev/null || true
+        log_i "Retired legacy ~/.nebflow/bin PATH entry in $profile (backup: $profile.bak-nebflow-path)"
+    fi
+    local path_entry="${STAND_BASE}/bin"
+    if [ -n "$profile" ] && ! grep -qF "${path_entry}" "$profile" 2>/dev/null; then
         echo "" >> "$profile"
         echo "# Added by ${PRODUCT_NAME} installer" >> "$profile"
-        echo "export PATH=\"\$HOME/${HOME_DIR}/bin:\$PATH\"" >> "$profile"
-        log_i "Added ~/${HOME_DIR}/bin to PATH in $profile"
+        echo "export PATH=\"${path_entry}:\$PATH\"" >> "$profile"
+        log_i "Added ${path_entry} to PATH in $profile"
     else
         log_v "PATH already configured."
     fi
@@ -1620,7 +1639,7 @@ stage_wrapper() {
 
 # Create config template
 create_config() {
-    local config_dir="${HOME}/${HOME_DIR}"
+    local config_dir="${STAND_BASE}"
     local config_file="${config_dir}/${CONFIG_FILE}"
     if [ ! -f "${config_file}" ]; then
         log_i "Creating default config at ${config_file}..."
@@ -1635,8 +1654,8 @@ create_config() {
 # Installer manifest (SCRIPT_VERSION + environment) for `nebflow update`
 # and diagnostics. Overwritten on each (re)install.
 write_manifest() {
-    local manifest="${HOME}/${HOME_DIR}/install-manifest.json"
-    mkdir -p "${HOME}/${HOME_DIR}"
+    local manifest="${STAND_BASE}/install-manifest.json"
+    mkdir -p "${STAND_BASE}"
     cat > "${manifest}" << MANIFEST
 {
   "scriptVersion": "${SCRIPT_VERSION}",
@@ -1665,7 +1684,7 @@ stage_config() {
 # jdk-21 first, PATH java as fallback); prints nothing when none is usable.
 # Mirrors the resolution order written into the wrapper by create_wrapper().
 _launcher_java_major() {
-    local java_bin="${HOME}/${HOME_DIR}/jdk-21/bin/java"
+    local java_bin="${STAND_BASE}/jdk-21/bin/java"
     [ -x "$java_bin" ] || java_bin="$(command -v java 2>/dev/null || true)"
     [ -n "$java_bin" ] || return 0
     local v
@@ -1691,8 +1710,15 @@ stage_finish() {
     echo ""
     echo "[ok] ${PRODUCT_NAME} ${VERSION} installed."
     echo "     Run: ${WRAPPER_NAME}"
-    echo "     Config: ~/${HOME_DIR}/${CONFIG_FILE}"
-    echo "     Please restart your terminal or run: export PATH=\"\$HOME/${HOME_DIR}/bin:\$PATH\""
+    # Base display: keep the byte-stable "~/.stand" form for default installs;
+    # a STAND_HOME-pinned base shows its absolute path (never the legacy root).
+    if [ -n "${STAND_HOME:-}" ]; then
+        echo "     Config: ${STAND_BASE}/${CONFIG_FILE}"
+        echo "     Please restart your terminal or run: export PATH=\"${STAND_BASE}/bin:\$PATH\""
+    else
+        echo "     Config: ~/${HOME_DIR}/${CONFIG_FILE}"
+        echo "     Please restart your terminal or run: export PATH=\"\$HOME/${HOME_DIR}/bin:\$PATH\""
+    fi
 }
 
 # ---- pipeline -------------------------------------------------------------
