@@ -1227,14 +1227,19 @@ body.canvas-deck-narrow .canvas-title { max-width: 46%; }
 
 /* ── 胶囊环（2026-10-22 作者令追加：hover 态展开为圆环排布）──────────
    作者令：平时态 = 单胶囊（缩小，上方）；hover 态 = 各页签胶囊沿圆环排布，
-   最多同时可见 3 个（中心 = 环游标 · 两侧邻位沿弧后仰）；左右滚动（触控板
-   横滑 / 滚轮 deltaX / Shift+纵滚）在环上换选，点击即切换页签；两侧缘位胶囊
-   沿曲率 rotateY 透视 + 模糊扭曲（cover-flow），材质 = 全站统一 frosted token
-   （--glass-bg / --glass-blur saturate(1.15) / --glass-border / --frost-shadow，
-   sapphire.css 单源 —— 禁止各画各的）。
+   最多同时可见 3 个（中心 = 环游标 · 上下邻位沿弧后仰）；滚轮换选（hover
+   交互改向令 2026-10-22「改为上下的，这样才方便 Windows 这样的电脑用鼠标
+   进行操作」——鼠标滚轮 = 纵向，横滑触控板用户才有的输入不再是一等手势）：
+   **纵滚 deltaY 主导**（一格滚轮 = 一换），触控板横滑 deltaX 保留为副手势，
+   点击即切换页签；邻位胶囊沿曲率 rotateX 透视 + 模糊扭曲（竖向 cover-flow，
+   几何 = 垂帘竖排：#canvas-panel overflow:hidden 裁切盒 + 头锚距顶 ~28px，
+   对称竖环上缘必被裁 —— 双缘全下垂：近缘 peek 0.58× / 远缘全垂 1.62×，
+   见 canvas.js layout()），材质 = 全站统一 frosted token（--glass-bg /
+   --glass-blur saturate(1.15) / --glass-border / --frost-shadow，sapphire.css
+   单源 —— 禁止各画各的）。
    几何：环容器 0×0 锚在标题头中心（JS 置 left/top px），胶囊 absolute 居中于
-   锚点，transform = translate(-50%,-50%) translateX(--cr-x) translateZ(--cr-z)
-   rotateY(--cr-ry) scale(--cr-press)；透视由 .canvas-header 的 perspective
+   锚点，transform = translate(-50%,-50%) translateY(--cr-y) translateZ(--cr-z)
+   rotateX(--cr-rx) scale(--cr-press)；透视由 .canvas-header 的 perspective
    提供。环 = 纯前端组件（本文件 + canvas.js §ring），与左栏控制面零共享。
    按住=按钮语义（作者令③）：胶囊本体 button + 全头 user-select:none。 */
 .capsule-ring {
@@ -1270,9 +1275,12 @@ body.canvas-deck-narrow .canvas-title { max-width: 46%; }
   -webkit-user-select: none;
   opacity: 0;
   pointer-events: none;                     /* 收起态不拦 hover 命中 */
-  transform: translate(-50%, -50%) translateX(var(--cr-x, 0px)) translateZ(var(--cr-z, 0px))
-    rotateY(var(--cr-ry, 0deg)) scale(var(--cr-press, 1));
-  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.16s ease, filter 0.18s ease;
+  transform: translate(-50%, -50%) translateY(var(--cr-y, 0px)) translateZ(var(--cr-z, 0px))
+    rotateX(var(--cr-rx, 0deg)) scale(var(--cr-press, 1));
+  /* 作者令「动画放慢、自然、流畅」与本批缓动族一致：0.36s 温和缓出
+     （cubic-bezier(0.22,0.61,0.36,1)），透明度 0.32s —— 竖向换选的位姿迁移
+     不再是旧 0.22s 硬切。 */
+  transition: transform 0.36s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.32s ease, filter 0.36s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 .canvas-header.ring-open .cr-capsule { pointer-events: auto; opacity: 1; }
 .cr-capsule .cr-icon { flex: none; width: 14px; height: 14px; color: var(--color-text-muted); display: flex; }
@@ -1297,8 +1305,9 @@ body.canvas-deck-narrow .canvas-title { max-width: 46%; }
   backdrop-filter: none;
 }
 .cr-capsule.is-center:active { --cr-press: 0.96; filter: brightness(0.92); }
-/* 缘位 = cover-flow：沿弧后仰 + 模糊扭曲 + 半透（毛玻璃照挂 —— 模糊叠加在
-   backdrop 之上，曲率感来自 rotateY 透视） */
+/* 缘位 = 竖向 cover-flow（hover 交互改向令「改为上下的」；几何 = 垂帘竖排，
+   双缘全下垂避 #canvas-panel 裁切盒）：沿弧后仰 + 模糊扭曲 +
+   半透（毛玻璃照挂 —— 模糊叠加在 backdrop 之上，曲率感来自 rotateX 透视） */
 .cr-capsule.is-edge {
   z-index: 2;
   opacity: 0.82;

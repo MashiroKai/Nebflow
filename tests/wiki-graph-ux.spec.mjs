@@ -597,12 +597,13 @@ test('§G capsule ring consumes horizontal swipe; canvas keeps pan/pinch (#716 n
   expect(ring.center).toBe('wiki-graph');
   expect(ring.edges).toContain('projects');
 
-  // 环上横滑一格（deltaX -56）：环游标移动到 projects；图谱 view 四自由度纹丝不动
+  // 环上纵滚一格（hover 交互改向令：deltaY 主导，100 = 一格）：环游标移动到
+  // projects；图谱 view 四自由度纹丝不动
   const viewBefore = await page.evaluate(() => {
     const p = window.__wikiGraphProbe();
     return { vx: p.vx, vy: p.vy, scale: p.scale, zoomTarget: p.zoomTarget };
   });
-  await page.mouse.wheel(56, 0);   // 环序 [plugins, wiki-graph, projects]：+1 格 → projects 居中
+  await page.mouse.wheel(0, 100);  // 环序 [plugins, wiki-graph, projects]：+1 格 → projects 居中
   await page.waitForFunction(() => {
     const c = document.querySelector('#canvas-capsule-ring .cr-capsule.is-center');
     return c && c.dataset.tabId === 'projects';

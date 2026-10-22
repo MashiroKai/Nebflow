@@ -149,30 +149,112 @@
    拆面板批（2026-10-22 作者令「摘要上移+左右分体」）：旧 master-detail 一体
    大面板（.fcv 分栏 = .fcv-nav 文件导航 + .fcv-view diff 阅读区）退役——文件
    列表迁往左栏 #panel-filechanges（.nfp-* 规则，同文件尾段），Canvas 只剩
-   **选中文件**的阅读面：.fcv-view（单列滚动）+ .fcv-filehead（粘顶文件头）。
-   Palette = existing tokens only（零新色值）。 */
+   **选中文件**的阅读面：.fcv-view（单列滚动）+ .fcv-filehead（粘顶定心层，
+   其内 .fcv-headpill 居中标题胶囊——2026-10-22 作者三令批 + 追加零重叠令，
+   见下两段）。
+   Palette = existing tokens only（零新色值）。
+   滚动容器纪律：①水平 padding 恒零——sticky 视矩形按滚动容器自身 padding
+   内缩，零水平 padding 是「胶囊居中不漂移」的前提（文件头胶囊段详注）；
+   ②顶部 padding = 56px 卡头胶囊让位带（追加令「胶囊与标题文字/相邻控件
+   零重叠」）：卡头胶囊 .canvas-header（浮层 top10/left14）底缘 ≈38 与
+   deck fab（fixed top10+40 高）底缘 50 ⇒ 56 = 全清出 + 4px 基数。sticky
+   视矩形随此常量内缩 ⇒ 文件头胶囊钉住位 = 带底，静止态 = 钉住态同一几何
+   （本带恒定、与滚程无关——前会话「钉住偏移随 padding 漂移」坑的正面用法：
+   漂移来自**意外** padding；此处是**有意**常量带，两态恒等被 spec 钉死）。 */
 .fcv-view {
   flex: 1;
   min-height: 0;
   min-width: 0;
   overflow: auto;
-  padding: 0 0 12px;
+  padding: 56px 0 12px;
 }
+/* ── 粘顶文件头标题胶囊（2026-10-22 作者三令批）────────────────────────────
+   作者令①居中 ②全量 frosted token ③动画节奏放慢（慢一点/自然一点/流畅一点，
+   参考 0.3-0.45s + 温和缓动）。旧全宽实条（border-bottom 分隔线 + color-bg 底
+   + 左贴边内容）退役；新形态 = 两层：
+   · .fcv-filehead —— sticky 全宽「定心层」：零背景/零边框/零水平 padding，
+     只负责 justify-content: center 把胶囊定中 + sticky 钉住。pointer-events
+     none 让位（胶囊两侧的 diff 文本照常可选中），胶囊本体 pointer-events auto。
+   · .fcv-headpill —— 居中玻璃胶囊，材质 = sapphire.css 单源全量 frosted
+     token（--glass-bg / blur(--glass-blur) saturate(1.15) / --glass-border /
+     --frost-shadow + 顶缘折射线 --sapphire-refraction），与 .canvas-header
+     同式（split.css §⑨）；#header 的底缘零边界豁免先例不适用，本胶囊走全量。
+
+   为什么居中/钉住必须「无水平 padding 定心层」方案（前会话实测坑，作者令原文：
+   「钉住偏移 112px 而非预期 56px」）：CSS Position 的 sticky 视矩形 = 滚动
+   容器 scrollport（padding box）按**其自身 padding** 内缩——若水平方向带
+   padding，钉住几何整体被 padding 撑偏（左右 56+56=112px 的水平偏斜即此
+   机制），且带 top padding 的滚动容器会让钉住的元素悬在 padding 带里、
+   内容从其上穿行。修法：.fcv-view **水平** padding 恒零（diff 行自带内缩，
+   见 .nf-diff-row / .nf-diff-body），胶囊在定心层内居中 ⇒ 水平约束矩形恒
+   等于面板可视宽，静止态与钉住态同一几何；胶囊始终 in-flow（sticky 只在
+   滚动越界时偏移），静止态不存在「下推压 diff 首行」。
+   垂直方向 = 顶部 56px 有意让位带（见 .fcv-view 段注）⇒ 文件头胶囊整体位于
+   卡头胶囊/deck fab 的浮动带之下，**任意路径宽度、任意面板宽度**零重叠
+   （2026-10-22 作者追加判据「胶囊与标题文字/相邻控件零重叠——布局层面解决」
+   ——水平走廊方案受制于卡头胶囊 fit-content 动态宽度，垂直让位是宽度无关
+   的唯一确定性解）；定心层自身 6px 顶 padding 属胶囊盒内部几何，静止/钉住
+   两态恒等，不产生任何状态切换瞬变。 */
 .fcv-filehead {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 2;
+  display: flex;
+  justify-content: center;
+  padding: 6px 12px 4px;
+  font-size: 12px;
+  min-width: 0;
+  pointer-events: none;
+}
+.fcv-headpill {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 12px;
-  border-bottom: 1px solid var(--color-border, rgba(128, 128, 128, 0.2));
-  background: var(--color-bg, transparent);
-  font-size: 12px;
+  width: fit-content;
+  max-width: 100%;
   min-width: 0;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background:
+    linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
+    var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  box-shadow: var(--frost-shadow);
+  color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
+  pointer-events: auto;
+  /* 作者令③：出现 = 0.36s 温和缓出（轻位移 + 淡入，ease-out 家族曲线）；
+     每次渲染（开 tab / 换文件）重建头部 ⇒ 出现动画自然重放 = 状态切换过渡。 */
+  animation: fcv-head-in 0.36s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  transition: background-color 0.4s cubic-bezier(0.22, 0.61, 0.36, 1),
+              color 0.4s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
-.fcv-filehead .nf-fc-path {
+.fcv-headpill .nf-fc-path {
   flex: 0 1 auto;
+  color: var(--color-text, rgba(128, 128, 128, 0.95));
+  font-weight: 500; /* visual-style 铁律 3：标题档 500 封顶 */
+}
+/* 吸顶（作者令③）：钉住瞬间零瞬变——吸顶深度用 scroll() 时间线在前 48px
+   滚程内渐进爬坡（附加一档投影渐显，纯加深无位移/无缩放）；回滚对称渐退。
+   不支持 scroll-driven animations 的引擎经 @supports 静默跳过 = 常态基础档
+   （--frost-shadow），同样无突变。box-shadow 由此动画全程接管，故不进
+   transition 清单。 */
+@supports (animation-timeline: scroll()) {
+  .fcv-headpill {
+    animation: fcv-head-in 0.36s cubic-bezier(0.22, 0.61, 0.36, 1) both,
+               fcv-head-stuck 0.4s linear both;
+    animation-timeline: auto, scroll(nearest block);
+    animation-range: normal, 0px 48px;
+  }
+}
+@keyframes fcv-head-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes fcv-head-stuck {
+  from { box-shadow: var(--frost-shadow), 0 0 0 0 rgba(0, 0, 0, 0); }
+  to   { box-shadow: var(--frost-shadow), 0 4px 14px rgba(0, 0, 0, 0.10); }
 }
 .fcv-view .nf-diff-body {
   padding: 6px 8px 8px;
