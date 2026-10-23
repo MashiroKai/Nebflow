@@ -257,10 +257,8 @@ export function renderQuoteStrip(target) {
  *  🔴 messageId/sessionId 单点注入：所有挂点（chat.js/persistence.js/popArtifacts.js）
  *  只描述「行内容」，行身份统一从 rowEl.dataset.msgId 取（缺席时回落 activeView
  *  的 sessionId）——挂点漏传 id 不会产生无锚引用。
- *  排队呈现回退批（2026-10-22）：行若对应本地队列项（乐观气泡，data-msg-id =
- *  入队钉死的 clientMessageId）⇒ 菜单头部追加队列动作（立即发送/撤回/移除）——
- *  队列条行按钮退役后的能力收敛入口（input.js runQueuedAction 执行面，动态
- *  import 破静态环）。立即发送仅对未失败项给出（离线项走重连补发轨）。 */
+ *  （输入消息排队回退批 2026-10-23：气泡右键菜单队列动作（立即发送/撤回/移除）
+ *  随 10-21 排队面回归一并退役——队列动作回到排队条行按钮，见 chatQueue.js。） */
 export function attachQuoteMenu(rowEl, d) {
   if (!rowEl || !d) return;
   // footer 引用按钮与右键菜单同一挂点（「右键在哪可用」单收口）：描述符存行上
@@ -270,23 +268,6 @@ export function attachQuoteMenu(rowEl, d) {
   rowEl.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     const items = [];
-    // 排队呈现回退批：队列项动作（行身份 = data-msg-id，与队列项 clientMessageId
-    // 同键；非队列行查询落空 ⇒ 无动作项，零污染普通消息菜单）。
-    const view = state.getActiveView && state.getActiveView();
-    const qSid = d.sessionId || (view && view.sessionId) || '';
-    const qItem = qSid ? state.messageQueue?.[qSid]?.find(it => it && it.clientMessageId === rowEl.dataset.msgId) : null;
-    if (qItem) {
-      const run = (action) => {
-        import('./input.js').then(({ runQueuedAction }) => {
-          runQueuedAction(qSid, rowEl.dataset.msgId, action);
-        }).catch(() => {});
-      };
-      if (!qItem.failed) {
-        items.push({ label: t('input.sendImmediate') || '立即发送', onClick: () => run('immediate') });
-      }
-      items.push({ label: t('chat.queueRecall') || '撤回', onClick: () => run('recall') });
-      items.push({ label: t('input.removeQueued') || '移除', onClick: () => run('remove') });
-    }
     const body = String(d.text || '');
     if (body.trim()) {
       items.push({ label: t('messages.copy'), onClick: () => { navigator.clipboard?.writeText(body).catch(() => {}); } });

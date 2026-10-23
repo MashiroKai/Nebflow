@@ -16,10 +16,9 @@
 //   A · 断线带图入队 → 整页刷新 → 重连自动补发：帧带**全量图片字节**（跨刷新字节
 //      存活）+ 后端落库镜像 = type:image + uploads path 真值；再刷新一次走真历史
 //      重放（type:image+path ⇒ .user-media <img>）⇒ **图片可加载断言**（真解码）。
-//   B · 载荷真丢（库被清）→ 刷新 → 重连：**拒绝出线**（零空心帧）+ 显式失败态
-//      （头行红色失败计数——排队呈现回退批重锚：行级失败注记随队列行退役）+
-//      failed 随 persistQueue 落盘；撤回 = 可判读告警 + 附件元数据回输入框；
-//      重新添加附件后发送 = **可重传闭环**（帧带全量字节）。
+//   B · 载荷真丢（库被清）→ 刷新 → 重连：**拒绝出线**（零空心帧）+ 队列条显式失败态
+//      （.failed + 失败注记 + 立即发送退场）+ failed 随 persistQueue 落盘；撤回 =
+//      可判读告警 + 附件元数据回输入框；重新添加附件后发送 = **可重传闭环**（帧带全量字节）。
 //   C · 在线零回归：正常在线发图即时出线、队列恒空。
 //   D · 源面静态钉：入队写字节 / 补发循环跳过 failed / failed 随持久化落盘。
 //
@@ -267,29 +266,20 @@ try {
     (await queuedItems()).length === 1 && (await queuedItems())[0].failed === true
     && (await queuedItems())[0].failCode === 'payload_lost',
     JSON.stringify(await queuedItems().then(q => q.map(i => ({ failed: i.failed, code: i.failCode })))));
-  ok('B4 失败面（排队呈现回退批重锚）：头行红色失败计数 + 项留队标 failed',
+  ok('B4 队列条失败面：.failed 行 + 失败注记 + 「立即发送」退场',
     await page.evaluate(() => {
-      const title = document.querySelector('#queue-bar .queue-bar-title');
-      const failed = document.querySelector('#queue-bar .queue-bar-failed');
-      return !!title && title.textContent.includes('1 条排队')
-        && !!failed && failed.textContent.includes('1 条发送失败');
+      const row = document.querySelector('.queue-item.failed');
+      return !!row && row.dataset.queueFailCode === 'payload_lost'
+        && !!row.querySelector('.queue-item-failed-note')
+        && row.querySelector('.queue-item-btn.immediate') === null;
     }));
   ok('B5 失败项不被补发楔死（跳过 failed，队首无假「待送达」补渲）',
     (await page.evaluate(() => document.querySelectorAll('.msg-pending-mark').length)) === 0);
 
   // 撤回 = 可重传入口：可判读告警 + 附件元数据回输入框。
-  // 排队呈现回退批：撤回 UI 入口收敛进气泡右键菜单——但**乐观气泡不跨刷新**
-  // （本腿在整页刷新后，气泡已不在 DOM，无行可右键）。菜单入口的 E2E 由
-  // busy-queue-ack / queuebar-informative（气泡在场场景）钉死；本腿验的是
-  // 撤回**执行面**数据流（告警 + 附件回填），走 runQueuedAction 同一入口。
   const warns = [];
   page.on('console', m => { if (m.type() === 'warning') warns.push(m.text()); });
-  await page.evaluate(async (sid) => {
-    const input = await import('/js/input.js');
-    const s = (await import('/js/state.js')).default;
-    const item = (s.messageQueue[sid] || [])[0];
-    input.runQueuedAction(sid, item && item.clientMessageId, 'recall');
-  }, SID);
+  await page.click('.queue-item.failed .queue-item-btn.recall');
   await sleep(400);
   ok('B6 撤回：可判读告警（载荷丢失不静默）',
     warns.some(w => w.includes('lost their payload to page-refresh persistence')), JSON.stringify(warns));

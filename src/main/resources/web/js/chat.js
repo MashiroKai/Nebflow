@@ -432,9 +432,8 @@ export function clearBusy(sessionId) {
 /** f1-send-queue：待送达小标（时钟）—— 离线入队乐观气泡的 footer 标注。
  *  视觉对齐 meta 行既有语言（与 .msg-copy/.msg-recall 同档 11px 灰小标），
  *  只加小标不改布局；补发送达后由 input.js flipOfflineMark 摘除。
- *  排队呈现回退批（2026-10-22）：busy 排队腿的「已收到」确认标（.acked 变体）
- *  退役——消息上屏本身即收到，不用标（作者令「已收到的标记也是多余的」）；
- *  本函数回归单形态（离线腿时钟标，pending:true 唯一调用形态）。 */
+ *  （输入消息排队回退批 2026-10-23：busy 排队腿回归零气泡呈现面——排队消息
+ *  只在排队条行，本函数维持单形态：离线腿时钟标，pending:true 唯一调用形态。） */
 function createPendingSendMark() {
   const mark = document.createElement('span');
   mark.className = 'msg-pending-mark';
@@ -453,10 +452,9 @@ function createPendingSendMark() {
  *   msgId = 本行的稳定 id（用户发送腿传 clientMessageId，与引擎帧同键；其余调用点缺省
  *   生成 c-<rand>）。行挂 data-msg-id = 引用跳转的唯一寻址面。
  *   f1-send-queue：pending = true ⇒ footer 前置「待送达」时钟小标（离线入队的乐观
- *   气泡）。排队呈现回退批（2026-10-22）：busy 排队腿的乐观气泡**裸上屏**不带
- *   小标（「已收到」确认标退役——上屏即收到，不用标）；行 data-msg-id 同时是
- *   队列动作（立即发送/撤回/移除）右键菜单的寻址键（input.js queuedItemByClientId
- *   同键查询）。
+ *   气泡）。（输入消息排队回退批 2026-10-23：busy 排队腿回归零气泡呈现面——排队
+ *   消息只在排队条行，drain 后由 input.js 补渲本气泡；排队条行按钮 = 队列动作
+ *   唯一入口。）
  */
 export function renderUserBubble(text, attachments, timestamp, opts) {
   const chat = activeView.dom.chat;
