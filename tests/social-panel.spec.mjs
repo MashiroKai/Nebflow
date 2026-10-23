@@ -1526,9 +1526,15 @@ async function afterSuite(browser, base) {
     await page.goto(base);
     await page.waitForFunction(() => !!document.querySelector('#social-btn svg'), undefined, { timeout: 8000 });
 
-    // B-5 is an ENTRY-side anchor (「`#social-btn` 可点」), so it is read with the
-    // dialog CLOSED: while the dialog is open its overlay legitimately owns the
-    // pointer, and reading the entry then would measure the overlay, not the entry.
+    // B-5 is an ENTRY-side anchor, so it is read with the dialog CLOSED: while
+    // the dialog is open its overlay legitimately owns the pointer, and reading
+    // the entry then would measure the overlay, not the entry.
+    // mobile-ui-refactor v3（≤768 ⇒ body.mobile-layer）：桌面活动栏整体
+    // display:none !important（mobileLayer.css 桌面壳退场段），#social-btn 随栏
+    // 退场（0×0）。旧判据「375 下入口可点」钉的是手机层诞生前的桌面壳形态 ——
+    // 换代为退役防复活钉：手机层上入口恒不可点（探针实证 ml:true / bar:none
+    // 自首采样起恒定）。
+    await page.waitForFunction(() => document.body.classList.contains('mobile-layer'), undefined, { timeout: 8000 });
     const closed = await page.evaluate(() => {
       // Canvas panel: closed through its own control (the design's configuration).
       const canvasWasOpen = document.body.classList.contains('canvas-open');
@@ -1542,6 +1548,7 @@ async function afterSuite(browser, base) {
       }).length;
       return {
         canvasWasOpen,
+        mobileLayer: document.body.classList.contains('mobile-layer'),
         sidebarCollapsed: document.body.classList.contains('sidebar-collapsed'),
         entry: {
           left: Math.round(btn.left), top: Math.round(btn.top), right: Math.round(btn.right), bottom: Math.round(btn.bottom),
@@ -1556,67 +1563,34 @@ async function afterSuite(browser, base) {
         scrollWidth: document.documentElement.scrollWidth,
       };
     });
-    check(`W16 B-5 entry clickable at 375 (${theme})`, closed.entry.hit && closed.entry.inViewport,
-      `${JSON.stringify(closed.entry)} — elementFromPoint lands inside the entry (${closed.entry.hitTag})`);
+    check(`W16 B-5 entry retired on mobile layer at 375 (${theme})`,
+      closed.mobileLayer && closed.entry.right - closed.entry.left === 0 && closed.entry.bottom - closed.entry.top === 0 && !closed.entry.hit,
+      `${JSON.stringify(closed.entry)} — 期望手机层上桌面入口随活动栏整体退场（0×0 且 elementFromPoint 不命中）`);
 
-    await openPanel(page);
-    // social-fix: the fillable state no longer exists (manual form retired);
-    // the measured face is the not-created card with its in-card QR.
-    await waitInlineScanQr(page);
-    // 🔴 weixin-binditem-3cuts ③: the feishu card joined the item face, so the
-    //    in-card QR now lives in the row's HIDDEN body — measuring it collapsed
-    //    would read a 0-width canvas and the geometry anchor would pass
-    //    vacuously. B-6 therefore expands the row first (guarded: on a
-    //    pre-change tree there is no row, and the collapsed-canvas reading is
-    //    what that tree legitimately measures).
-    const feishuRow375 = await page.$('[data-item-toggle="feishu"]');
-    if (feishuRow375) {
-      await feishuRow375.click();
-      await page.waitForFunction(() => {
-        const b = document.querySelector('.social-card[data-channel="feishu"] [data-item-body]');
-        return !!b && !b.hasAttribute('hidden');
-      }, undefined, { timeout: 4000 });
-    }
+    // mobile-ui-refactor v3：手机层上 #social-btn 随桌面活动栏整体退役（B-5），
+    // 375 配置下社交对话框**无入口可开**（openPanel 的真鼠标点落空——afterSuite
+    // 曾在此处 TimeoutError 崩溃）。旧 B-6/B-1..B-4 open-state 几何判据（对话框
+    // 开合溢出/模态贴边/控件裁剪/卡溢出/in-card QR）钉的是手机层诞生前的桌面壳
+    // 形态 —— 整块换代为防复活钉：手机层上社交对话框面不得存在（栏 display:none
+    // 保持 + overlay 不亮 + 对话框几何无测量面）。桌面视口的对话框几何由 W 块
+    // 其余腿（1280 配置）覆盖，不随本换代减面。
     const geo = await page.evaluate(() => {
-      const vw = window.innerWidth;
-      const m = document.getElementById('social-modal').getBoundingClientRect();
-      const controls = [...document.querySelectorAll('#social-modal input, #social-modal select, #social-modal button')]
-        .map((el) => el.getBoundingClientRect());
-      const cards = [...document.querySelectorAll('.social-card')].map((c) => ({ sw: c.scrollWidth, cw: c.clientWidth }));
-      // socialhide: read on the FEISHU card (the only production-visible one;
-      // the sealed telegram card no longer has a DOM face).
-      const card = document.querySelector('.social-card[data-channel="feishu"]');
-      const canvas = card ? card.querySelector('[data-scan-qr] canvas') : null;
-      const cardBox = card ? card.getBoundingClientRect() : null;
-      const panel = document.getElementById('social-modal');
+      const bar = getComputedStyle(document.getElementById('activity-bar')).display;
       const overlay = document.getElementById('social-overlay');
-      const offenders = [...document.querySelectorAll('body *')].filter((el) => {
-        const r = el.getBoundingClientRect();
-        return r.width > 0 && (r.right > vw + 1 || r.left < -1);
-      });
+      const modal = document.getElementById('social-modal');
       return {
-        collapsed: document.body.classList.contains('sidebar-collapsed'),
+        barDisplay: bar,
+        overlayOn: overlay ? overlay.classList.contains('on') : false,
+        modalOpen: modal ? getComputedStyle(modal).display !== 'none' : false,
         scrollWidth: document.documentElement.scrollWidth,
-        modal: { left: Math.round(m.left), right: Math.round(m.right), top: Math.round(m.top), bottom: Math.round(m.bottom) },
-        clipped: controls.filter((r) => r.width <= 0 || r.right > vw).length,
-        overflowCards: cards.filter((c) => c.sw > c.cw + 1).length,
-        canvasFits: !!canvas && !!cardBox && canvas.getBoundingClientRect().width <= cardBox.width + 1,
-        offenders: offenders.length,
-        offendersInPanel: offenders.filter((el) => panel.contains(el) || overlay.contains(el)).length,
+        collapsed: document.body.classList.contains('sidebar-collapsed'),
       };
     });
+    check(`W16 B-6 dialog face retired on mobile layer at 375 (${theme})`,
+      geo.barDisplay === 'none' && !geo.overlayOn && !geo.modalOpen, JSON.stringify(geo));
     check(`W16 B-1 no horizontal overflow at 375 (${theme})`,
       geo.scrollWidth <= 375 && geo.collapsed,
-      `sidebar-collapsed=${geo.collapsed} canvas=${closed.canvasWasOpen ? 'closed by the probe via #canvas-close-btn' : 'already closed'} scrollWidth=${geo.scrollWidth} (viewport 375)`);
-    check(`W16 B-1(in-face) opening the panel changes no overflow reading (${theme})`,
-      geo.scrollWidth === closed.scrollWidth && geo.offendersInPanel === 0,
-      `document.scrollWidth closed=${closed.scrollWidth} open=${geo.scrollWidth}; elements sticking out INSIDE the panel/overlay=${geo.offendersInPanel} (whole-document offenders, incl. the shell's own off-screen sliders: closed=${closed.offenders} open=${geo.offenders})`);
-    check(`W16 B-2 modal inside the viewport (${theme})`,
-      geo.modal.left >= 0 && geo.modal.right <= 375 && geo.modal.top >= 0 && geo.modal.bottom <= 812, JSON.stringify(geo.modal));
-    check(`W16 B-3 no clipped control (${theme})`, geo.clipped === 0, `clipped=${geo.clipped}`);
-    check(`W16 B-4 no card overflow (${theme})`, geo.overflowCards === 0, `overflowCards=${geo.overflowCards}`);
-    check(`W16 B-6 (re-anchored, social-fix) in-card QR fits its card (${theme})`,
-      geo.canvasFits, `canvasFits=${geo.canvasFits}`);
+      `sidebar-collapsed=${geo.collapsed} scrollWidth=${geo.scrollWidth} (viewport 375)`);
     // context readings (never assertions): the two configurations the design's
     // probe did NOT measure, printed so the deviation is on the record.
     if (theme === 'light') await shot(page, 'after-375-light');
