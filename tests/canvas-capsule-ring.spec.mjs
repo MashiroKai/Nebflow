@@ -1,6 +1,6 @@
-// canvas-capsule-ring.spec.mjs — canvas 顶部胶囊交互重做（作者令 2026-10-22）spec 钉
+// canvas-capsule-ring.spec.mjs — canvas 顶部胶囊交互重做（作者令 2026-10-22）+ 对称修复批（作者令 2026-10-23）spec 钉
 //
-// 作者令五条：
+// 作者令五条（2026-10-22）：
 //   ① 平时态 = 单胶囊（尺寸调小，与现状一致同位）
 //   ② hover 态 = 圆环排布（capsule ring）：各页签胶囊沿弧排布、最多同时可见 3 个；
 //      滚轮换选（hover 交互改向令 2026-10-22：纵滚 deltaY 主导——鼠标可操作；
@@ -14,6 +14,14 @@
 //      popoutCardWindow；独立中 = 合并回主窗）——引用项保留（CC4 契约）
 //   ⑤ 环上横滑优先消费（preventDefault + stopPropagation），画布区归 #716
 //      捏合缩放/平移（不冲突钉在 wiki spec §G 双侧验证）
+//
+// 修复批三令（作者 2026-10-23 逐字「这个胶囊的hover要在上下显示，这样才有滚动
+// 的感觉，现在全在下面。另外，胶囊的大小要保持固定，而且相对与canvas居中显示」）：
+//   A 上下真对称 —— 胶囊常驻 canvas 双轴居中（split.css §⑨ 居中规则），缘位
+//     一上一下 |y| 严格相等（−edgeY / +edgeY），rotateX 反号等幅；双缘全下垂
+//     （peek 0.58×/hang 1.62×）避裁妥协退役；不裁切（overflow:hidden 盒内完整）
+//   B 尺寸恒定 —— 胶囊本体（常态/hover 展开/环滚动中）宽高相等，零缩放
+//   C canvas 居中 —— 胶囊中心 = #canvas-slide 中心（双轴，桌面主窗腿）
 //
 // 运行：node tests/canvas-capsule-ring.spec.mjs
 // （boot 同 canvas-cardhead-capsule.spec.mjs：隔离静态服务器 + workspace-open-item
@@ -122,12 +130,12 @@ async function capsulePoint(page) {
 async function hoverCapsule(page) {
   const p = await capsulePoint(page);
   await page.mouse.move(p.x, p.y);
-  await sleep(260);                                 // pointerenter 开环 + 过渡
+  await sleep(520);                                 // pointerenter 开环 + 沉降过渡（0.36s）走完
 }
 async function unhover(page) {
   const p = await capsulePoint(page);
-  await page.mouse.move(p.x, p.y + 320);            // 离开标题头子树
-  await sleep(450);                                 // 140ms 宽限 + 过渡
+  await page.mouse.move(p.x, p.y + 320);            // 离开 hover 区（环开点 ∪ 走廊 ∪ 环胶囊）
+  await sleep(450);                                 // 140ms 宽限 + 收环回顶过渡
 }
 const ringInfo = (page) => page.evaluate(() => {
   const hdr = document.querySelector('#canvas-panel .canvas-header');
@@ -147,6 +155,7 @@ const ringInfo = (page) => page.evaluate(() => {
     centerId: (caps.find((c) => c.classList.contains('is-center')) || {}).dataset?.tabId || null,
     centerRx: caps.find((c) => c.classList.contains('is-center'))?.style.getPropertyValue('--cr-rx') || null,
     edgeRx: caps.find((c) => c.classList.contains('is-edge'))?.style.getPropertyValue('--cr-rx') || null,
+    edgeRxs: caps.filter((c) => c.classList.contains('is-edge')).map((c) => c.style.getPropertyValue('--cr-rx')),
     edgeYs: caps.filter((c) => c.classList.contains('is-edge')).map((c) => c.style.getPropertyValue('--cr-y')),
     edgeBlur: caps.find((c) => c.classList.contains('is-edge')) ? cs(caps.find((c) => c.classList.contains('is-edge'))).filter : null,
     farCount: caps.filter((c) => c.classList.contains('is-far')).length,
@@ -173,8 +182,12 @@ const ringInfo = (page) => page.evaluate(() => {
   const restStyle = await page.evaluate(() => {
     const name = document.querySelector('.canvas-title .t-name');
     const hdr = document.querySelector('#canvas-panel .canvas-header');
+    const slide = document.getElementById('canvas-slide').getBoundingClientRect();
+    const hr = hdr.getBoundingClientRect();
     return { font: getComputedStyle(name).fontSize, pad: getComputedStyle(hdr).paddingTop,
-             select: getComputedStyle(hdr).userSelect || getComputedStyle(hdr).webkitUserSelect };
+             select: getComputedStyle(hdr).userSelect || getComputedStyle(hdr).webkitUserSelect,
+             w: hr.width, h: hr.height, cx: hr.left + hr.width / 2, cy: hr.top + hr.height / 2,
+             slideCx: slide.left + slide.width / 2, slideCy: slide.top + slide.height / 2 };
   });
   ok('CR1-0 平时态：环闭 + 标题可见', !rest.open && rest.n === 0 && rest.titleOpacity === '1' && rest.ringHidden === true,
     `open=${rest.open} n=${rest.n} title=${rest.titleOpacity}`);
@@ -188,13 +201,53 @@ const ringInfo = (page) => page.evaluate(() => {
     hov.open && hov.n === 3 && hov.farCount === 0, `open=${hov.open} n=${hov.n} far=${hov.farCount}`);
   ok('CR2-2 中心 = 激活页签（charlie）+ 零旋转',
     hov.centerId === 'file:/tmp/cr-fixture/charlie.md' && hov.centerRx === '0deg', `center=${hov.centerId} rx=${hov.centerRx}`);
-  ok('CR2-3 缘位竖向 cover-flow（hover 改向令·垂帘竖排）：rotateX 透视（±34°）+ 双缘全下垂（均正、peek<hang 严格序）+ 模糊扭曲',
-    hov.edges.length === 2 && hov.edgeRx && hov.edgeRx !== '0deg'
-    && hov.edgeYs.length === 2
-    && hov.edgeYs.every((y) => parseFloat(y) > 0)
-    && parseFloat(hov.edgeYs[0]) !== parseFloat(hov.edgeYs[1])
+  const eysSorted = hov.edgeYs.map(parseFloat).sort((a, b) => a - b);   // [上(负), 下(正)]
+  const rxsSorted = hov.edgeRxs.map(parseFloat).sort((a, b) => a - b);  // [下(负), 上(正)]
+  ok('CR2-3 缘位上下真对称（作者令 2026-10-23）：一上一下、|y| 严格相等、rotateX 反号等幅（±34°）+ 模糊扭曲',
+    hov.edges.length === 2 && eysSorted.length === 2
+    && eysSorted[0] < 0 && eysSorted[1] > 0
+    && approx(-eysSorted[0], eysSorted[1], 0.5)
+    && approx(Math.abs(rxsSorted[0]), rxsSorted[1], 0.5) && Math.abs(rxsSorted[1]) === 34
     && /blur/.test(hov.edgeBlur || ''),
-    `edges=${hov.edges.length} rx=${hov.edgeRx} ys=${hov.edgeYs.join('/')} filter=${hov.edgeBlur}`);
+    `ys=${hov.edgeYs.join('/')} rxs=${hov.edgeRxs.join('/')} filter=${hov.edgeBlur}`);
+
+  /* ② A 令·不裁切：缘位完整可见（overflow:hidden 盒内，上缘不顶裁、下缘不底裁） */
+  const clip = await page.evaluate(() => {
+    const p = document.getElementById('canvas-panel').getBoundingClientRect();
+    const rs = [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule.is-edge')]
+      .map((c) => c.getBoundingClientRect());
+    return { pTop: p.top, pBottom: p.bottom, minTop: Math.min(...rs.map((r) => r.top)),
+             maxBottom: Math.max(...rs.map((r) => r.bottom)), n: rs.length };
+  });
+  ok('CR2-6 不裁切：上缘位顶 ≥ 面板顶 + 下缘位底 ≤ 面板底（对称环零裁）',
+    clip.n === 2 && clip.minTop >= clip.pTop + 1 && clip.maxBottom <= clip.pBottom - 1,
+    `minTop=${clip.minTop.toFixed(1)} vs ${clip.pTop.toFixed(1)} / maxBottom=${clip.maxBottom.toFixed(1)} vs ${clip.pBottom.toFixed(1)}`);
+
+  /* ② B 令·尺寸恒定：常态 → hover 展开 → 环滚动中，胶囊本体宽高全等 + 零缩放 */
+  const openRect = await page.evaluate(() => {
+    const hdr = document.querySelector('#canvas-panel .canvas-header');
+    const m = new DOMMatrixReadOnly(getComputedStyle(hdr).transform === 'none' ? undefined : getComputedStyle(hdr).transform);
+    const r = hdr.getBoundingClientRect();
+    return { w: r.width, h: r.height, scale: Math.hypot(m.a, m.b) };
+  });
+  ok('CR2-7 尺寸恒定（hover 展开）：胶囊宽高 = 常态（±1px）+ transform 零缩放',
+    approx(openRect.w, restStyle.w, 1) && approx(openRect.h, restStyle.h, 1) && approx(openRect.scale, 1, 0.001),
+    `rest=${restStyle.w.toFixed(1)}x${restStyle.h.toFixed(1)} open=${openRect.w.toFixed(1)}x${openRect.h.toFixed(1)} scale=${openRect.scale.toFixed(3)}`);
+
+  /* ② C 令·canvas 居中：常态横轴 = 面板中线（顶带，不挡画布中心命中）；
+     环开态沉降后胶囊中心 = 面板中心（双轴 ±2px —— 竖环对称空间的几何前提） */
+  ok('CR2-8a canvas 居中（常态·横轴）：胶囊中心 x = 面板中线（±2px）+ 纵轴在顶带',
+    Math.abs(restStyle.cx - restStyle.slideCx) <= 2 && restStyle.cy < restStyle.slideCy,
+    `dx=${(restStyle.cx - restStyle.slideCx).toFixed(1)} cy=${restStyle.cy.toFixed(1)} vs slideCy=${restStyle.slideCy.toFixed(1)}`);
+  const centered = await page.evaluate(() => {
+    const hdr = document.querySelector('#canvas-panel .canvas-header').getBoundingClientRect();
+    const slide = document.getElementById('canvas-slide').getBoundingClientRect();
+    return { dx: (hdr.left + hdr.width / 2) - (slide.left + slide.width / 2),
+             dy: (hdr.top + hdr.height / 2) - (slide.top + slide.height / 2) };
+  });
+  ok('CR2-8b canvas 居中（环开·沉降）：胶囊中心 = 面板中心（双轴 ±2px）',
+    Math.abs(centered.dx) <= 2 && Math.abs(centered.dy) <= 2,
+    `dx=${centered.dx.toFixed(1)} dy=${centered.dy.toFixed(1)}`);
   ok('CR2-4 中心位接班：常态标题让位（t-inner opacity 0，同位 morph）',
     hov.titleOpacity === '0', `title=${hov.titleOpacity}`);
 
@@ -212,13 +265,14 @@ const ringInfo = (page) => page.evaluate(() => {
     !!mat.capsule && JSON.stringify(mat.header) === JSON.stringify(mat.capsule),
     JSON.stringify({ header: mat.header, capsule: mat.capsule }).slice(0, 220));
 
-  /* 证据截图：环开态（中心 + 上/下缘位竖向 cover-flow——clip 加高容纳纵排） */
+  /* 证据截图：环开态（中心 + 上/下缘位对称 cover-flow——clip 取面板中段环幅） */
   const shotBox = await page.evaluate(() => {
     const p = document.getElementById('canvas-panel').getBoundingClientRect();
-    return { x: Math.max(0, p.left), y: Math.max(0, p.top), width: p.width, height: 240 };
+    const cy = p.top + p.height / 2;
+    return { x: Math.max(0, p.left), y: Math.max(0, cy - 190), width: p.width, height: 380 };
   });
   await page.screenshot({
-    path: join(HERE, '../evidence/20261022_wiki-graph-sidepanel/shots/8-capsule-ring-dark.png'),
+    path: join(HERE, '../evidence/20261023_capsule-ring-symmetric/shots/1-ring-open-dark.png'),
     clip: shotBox,
   });
 
@@ -242,6 +296,17 @@ const ringInfo = (page) => page.evaluate(() => {
   const rolled2 = await ringInfo(page);
   ok('CR3-2 反向一格：deltaY +100 → charlie 居中（环绕步进 100px/格，累积器余量随动）',
     rolled2.centerId === 'file:/tmp/cr-fixture/charlie.md', `center=${rolled2.centerId}`);
+
+  /* ② B 令·尺寸恒定（环滚动中）：换选发生后的胶囊本体仍与常态全等 */
+  const scrollRect = await page.evaluate(() => {
+    const hdr = document.querySelector('#canvas-panel .canvas-header');
+    const m = new DOMMatrixReadOnly(getComputedStyle(hdr).transform === 'none' ? undefined : getComputedStyle(hdr).transform);
+    const r = hdr.getBoundingClientRect();
+    return { w: r.width, h: r.height, scale: Math.hypot(m.a, m.b) };
+  });
+  ok('CR2-7b 尺寸恒定（环滚动中）：换选进行中胶囊宽高仍 = 常态 + 零缩放',
+    approx(scrollRect.w, restStyle.w, 1) && approx(scrollRect.h, restStyle.h, 1) && approx(scrollRect.scale, 1, 0.001),
+    `scroll=${scrollRect.w.toFixed(1)}x${scrollRect.h.toFixed(1)} scale=${scrollRect.scale.toFixed(3)}`);
 
   /* ③ 环上滚轮零外溢：消费于环（游标随动——纵滚已是主手势），pane 滚动纹丝不动 */
   const scrollTopBefore = await page.evaluate(() => {
@@ -281,6 +346,16 @@ const ringInfo = (page) => page.evaluate(() => {
   ok('CR5 hover 收起：离环后 ring-open 清 + 胶囊清 + 标题回位',
     hov2.open && !closed.open && closed.n === 0 && closed.titleOpacity === '1',
     `open ${hov2.open} → ${closed.open} n=${closed.n}`);
+
+  /* 证据截图：平时态（收起）——胶囊回顶带横轴居中、零环（顶带 clip） */
+  const restBox = await page.evaluate(() => {
+    const p = document.getElementById('canvas-panel').getBoundingClientRect();
+    return { x: Math.max(0, p.left), y: Math.max(0, p.top), width: p.width, height: 120 };
+  });
+  await page.screenshot({
+    path: join(HERE, '../evidence/20261023_capsule-ring-symmetric/shots/2-rest-dark.png'),
+    clip: restBox,
+  });
 
   /* ④ 右键菜单：多开 / 关闭 / 在独立窗口打开（+ 引用项保留） */
   await hoverCapsule(page);
@@ -424,6 +499,50 @@ const ringInfo = (page) => page.evaluate(() => {
 
   ok('R0 主文档零 JS 错误', errors.length === 0, errors.slice(0, 2).join(' | '));
   await page.evaluate(() => { if (window.__rawOpen) window.open = window.__rawOpen; });
+  await ctx.close();
+}
+
+/* ════════ 亮色腿：对称环展开/收起证据（亮主题 × 2 面）════════ */
+{
+  const { ctx, page, errors } = await boot({ colorScheme: 'light' });
+  await openFile(page, '/tmp/cr-fixture/alpha.md');
+  await openFile(page, '/tmp/cr-fixture/bravo.md');
+  await openFile(page, '/tmp/cr-fixture/charlie.md');
+  await page.evaluate(() => document.querySelector('.canvas-tab[data-tab-id="plugins"] .canvas-tab-close')?.click());
+  await sleep(400);
+  const shotBoxL = await page.evaluate(() => {
+    const p = document.getElementById('canvas-panel').getBoundingClientRect();
+    const cy = p.top + p.height / 2;
+    return { x: Math.max(0, p.left), y: Math.max(0, cy - 190), width: p.width, height: 380 };
+  });
+  await hoverCapsule(page);
+  const hovL = await ringInfo(page);
+  const eys = hovL.edgeYs.map(parseFloat).sort((a, b) => a - b);
+  ok('L1 亮色：环展开上下对称（|y| 相等一上一下）+ 胶囊居中',
+    hovL.open && hovL.n === 3 && eys[0] < 0 && eys[1] > 0 && approx(-eys[0], eys[1], 0.5)
+    && await page.evaluate(() => {
+      const hdr = document.querySelector('#canvas-panel .canvas-header').getBoundingClientRect();
+      const slide = document.getElementById('canvas-slide').getBoundingClientRect();
+      return Math.abs((hdr.left + hdr.width / 2) - (slide.left + slide.width / 2)) <= 2
+        && Math.abs((hdr.top + hdr.height / 2) - (slide.top + slide.height / 2)) <= 2;
+    }),
+    `ys=${hovL.edgeYs.join('/')}`);
+  await page.screenshot({
+    path: join(HERE, '../evidence/20261023_capsule-ring-symmetric/shots/3-ring-open-light.png'),
+    clip: shotBoxL,
+  });
+  await unhover(page);
+  const closedL = await ringInfo(page);
+  ok('L2 亮色：收起回单胶囊（环清 + 标题回位 + 回顶带）', !closedL.open && closedL.n === 0 && closedL.titleOpacity === '1',
+    `open=${closedL.open} n=${closedL.n}`);
+  await page.screenshot({
+    path: join(HERE, '../evidence/20261023_capsule-ring-symmetric/shots/4-rest-light.png'),
+    clip: await page.evaluate(() => {
+      const p = document.getElementById('canvas-panel').getBoundingClientRect();
+      return { x: Math.max(0, p.left), y: Math.max(0, p.top), width: p.width, height: 120 };
+    }),
+  });
+  ok('R0b 亮色腿零 JS 错误', errors.length === 0, errors.slice(0, 2).join(' | '));
   await ctx.close();
 }
 
