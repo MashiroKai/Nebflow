@@ -13,6 +13,7 @@
 
 import { addSourceToggle, addFindToggle, addGraphToggle, routeLocalHref, openLocalFileTab, openExternalUrlTab } from './shared.js';
 import { mintTickets, stripCredentialParams } from '../nfTicket.js';
+import { noteAuthRejected } from '../sessionGate.js';
 import { t } from '../i18n.js';
 
 /** Scroll one heading to the TOP of the markdown content scroller — and of nothing
@@ -202,7 +203,16 @@ async function wikiGraph() {
   if (wikiIndexCache && Date.now() - wikiIndexCache.at < WIKI_INDEX_TTL) return wikiIndexCache.data;
   const { authHeaders } = await import('../flowHelpers.js');
   const res = await fetch('/api/wiki/graph', { headers: { ...authHeaders() } });
-  if (!res.ok) throw new Error('wiki graph unavailable: ' + res.status);
+  if (!res.ok) {
+    // #762 图谱 403 族：本函数有两条腿，纪律按 authgate 批（2026-10-22）分流——
+    //   · 渲染腿（renderWikilinks，文档打开即跑）= 背景面：静默降级（链接留待
+    //     点击时重解析），绝不拉重登（nfTicket authgate 批「渲染即重登」禁令同源）；
+    //   · 点击腿（onWikilinkClick，用户主动点链接）= 用户面：401/403 交
+    //     sessionGate 重认证伞（下方调用点）。err.status 供调用点分流。
+    const err = new Error('wiki graph unavailable: ' + res.status);
+    /** @type {any} */ (err).status = res.status;
+    throw err;
+  }
   const data = await res.json();
   wikiIndexCache = { at: Date.now(), data };
   return data;
@@ -337,7 +347,15 @@ async function onWikilinkClick(a, mdViewer) {
   let resolved = null;
   try { resolved = a.dataset.wikiResolved ? JSON.parse(a.dataset.wikiResolved) : null; } catch (e) { resolved = null; }
   if (!resolved) {
-    try { resolved = resolveWikiTarget(target, '', await wikiGraph()); } catch (e) { resolved = null; }
+    try { resolved = resolveWikiTarget(target, '', await wikiGraph()); } catch (e) {
+      // #762：点击腿是用户主动面——401/403（会话被拒）交 sessionGate 重认证伞，
+      // 不再误报「无法解析该链接」；其余错误照旧落 unresolved 提示。
+      if (e && (/** @type {any} */ (e).status === 401 || /** @type {any} */ (e).status === 403)) {
+        noteAuthRejected('wiki-link');
+        return;
+      }
+      resolved = null;
+    }
   }
   if (!resolved) { window.__showToast?.(t('wiki.unresolved'), 'info'); return; }
   if (resolved.absPath) {
@@ -349,6 +367,12 @@ async function onWikilinkClick(a, mdViewer) {
       const { authHeaders } = await import('../flowHelpers.js');
       const url = `/api/wiki/remote-doc?device=${encodeURIComponent(resolved.remote.device)}&path=${encodeURIComponent(resolved.remote.vault + '/' + resolved.remote.rel)}`;
       const res = await fetch(url, { headers: { ...authHeaders() } });
+      // #762：远端文档腿同属图谱族用户主动面——401/403 交重认证伞，不再裸
+      // remoteFetchFailed toast；其余非 2xx 照旧。
+      if (res.status === 401 || res.status === 403) {
+        noteAuthRejected('wiki-remote-doc');
+        return;
+      }
       if (!res.ok) throw new Error(String(res.status));
       const body = await res.json();
       window.dispatchEvent(new CustomEvent('workspace-open-item', {

@@ -3,6 +3,7 @@
 // ZIP parsing lives in ./shared.js (parseZipEntries / decompressZipEntry).
 
 import { escapeHtml, parseZipEntries, decompressZipEntry } from './shared.js';
+import { reMint } from '../nfTicket.js';
 import { nfViewerUrl } from '../nfFileCache.js';
 
 /** EPUB viewer — paginated reader with chapter navigation.
@@ -20,14 +21,30 @@ async function viewEpub(pane, { absPath, fileName, size, objectUrl }) {
   }
   // M2 账本接缝（imgdoor #542 推广批）：票据腿经 nfViewerUrl——账本命中 = blob URL
   // 直开（第二次打开零取数），未命中走既有票据链并入账 `nf:<absPath>`。
-  const url = await nfViewerUrl({ absPath, objectUrl, pane });
-  try {
-    const resp = await fetch(url);
+  // #762 同族盘点批：本 viewer 是 office 族里最后一个**裸取件**（无 reMint 自愈）
+  // 的票据腿。修 = 镜像 xlsx.js/docx.js 的 T3 形态：nfViewerUrl（账本未命中时内部
+  // 就地取件，401/403 在此抛出）进 try ⇒ 取件失败恰好一次重取票＋重试；第二败即
+  // 定局，落下方既有错误面板。blob 腿（objectUrl）无可刷新的凭据 ⇒ 不重试
+  // （image.js 同守卫）。
+  const fetchBytes = async (/** @type {string} */ u) => {
+    const resp = await fetch(u);
     if (!resp.ok) {
       const detail = await resp.text().catch(() => '');
       throw new Error(`HTTP ${resp.status}${detail ? ': ' + detail : ''}`);
     }
-    const buffer = await resp.arrayBuffer();
+    return resp.arrayBuffer();
+  };
+  let retried = false;
+  try {
+    /** @type {ArrayBuffer} */
+    let buffer;
+    try {
+      buffer = await fetchBytes(await nfViewerUrl({ absPath, objectUrl, pane }));
+    } catch (err) {
+      if (retried || !absPath || objectUrl) throw err;
+      retried = true;
+      buffer = await fetchBytes(await reMint(absPath));
+    }
 
     const entries = parseZipEntries(buffer);
     if (!entries['META-INF/container.xml']) throw new Error('Not a valid EPUB file');
