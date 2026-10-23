@@ -55,6 +55,17 @@ object DelegateTool extends Tool:
   val BriefReportLine: String =
     """[report] when your work reaches its end state, call delegate_report(category="finish"|"merge", detail=…) right before your final text — "merge" = your deliverable commits sit on your working branch and need the merge queue (you keep working until the merge reminder arrives); "finish" = done for good (pure read / no file changes, the merge has landed, or the task could not be completed — state the blocker plainly in your final text; there is no separate blocked state). The report updates your status record; your final text remains the deliverable."""
 
+  /**
+   * D12-b reset 警示行（delegate reset 零闸治理，作者裁定 2026-10-23）：就地腿
+   * delegate 与根会话/人/其他会话共享检出区座位，任意一方一条 reset 系命令即
+   * 清掉**未持久化**的进行中工作（auto-all 顶档下危险命令清单是死信——闸面
+   * 不拦，只审计 + 本警示行，消灭「无人知晓」）。brief 头部位形：工作座行之后、
+   * [[BriefReportLine]] 之前——单 turn 会话的第一屏即见（[[assembleBrief]]
+   * 布局钉由 spec 承重）。
+   */
+  val ResetHazardLine: String =
+    "[reset hazard] This checkout is shared with other live sessions (root, other delegates) — any party's `git reset --hard` / `checkout .` / `clean -f` / `branch -D` instantly discards every session's unpersisted in-progress work here (each one is written to the audit log). Work already committed or otherwise persisted to disk is unaffected. Never run reset-family commands in this workspace."
+
   val name = "Delegate"
 
   // 模型可见文案（executor 选择反转——S14 运行时半，external-executors 批
@@ -105,8 +116,9 @@ object DelegateTool extends Tool:
 
   /**
    * delegate brief 装配单点（sleep-poll 禁令批 C 段抽纯函数——spec 判红锚）。
-   * 布局：工作座行（+ 绑定行）→ delegate_report 纪律行 → 等待纪律铁律
-   * （[[Defaults.NoSleepPollRule]]）→ 空行 → 任务全文（→ 插件注入块）。
+   * 布局：工作座行（+ 绑定行）→ reset 警示行（D12-b）→ delegate_report 纪律行
+   * （[[BriefReportLine]]）→ 等待纪律铁律（[[Defaults.NoSleepPollRule]]）→
+   * 空行 → 任务全文（→ 插件注入块）。
    * 铁律置于任务正文之前：单 turn 会话的第一屏即见（747cd36a 形态的启动面
    * 防线——与其在长轮询后靠 LoopGuard 兜底，不如开局立规）。
    */
@@ -117,6 +129,8 @@ object DelegateTool extends Tool:
     injectedBlock: String
   ): String =
     s"""$workspaceLine${bindingLine.map(l => s"\n$l").getOrElse("")}
+${ResetHazardLine}
+
 ${BriefReportLine}
 
 ${Defaults.NoSleepPollRule}

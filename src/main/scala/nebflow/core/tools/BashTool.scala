@@ -578,7 +578,17 @@ Git safety:
               )
             )
           else
-            ShellSession
+            // D12-b（delegate reset 零闸治理，作者裁定 2026-10-23）：reset 系命令
+            // 审计事件——auto-all 顶档下危险命令清单是死信（ToolReversibility
+            // AutoAll ⇒ true），就地腿 delegate 与他方共享检出区，一次 reset 即
+            // 清掉他方未持久化的进行中工作且无痕。此处（权限闸之后、进程起跑之前）
+            // 落至少一行审计（谁/何时/命令/受波及的 live delegate 及其当时状态/任务）。
+            // best-effort：审计失败只 WARN，绝不影响命令执行（RelayExecAudit 同款
+            // 失败语义）；零超时设计——非 reset 命令零开销透传（一组正则判别）。
+            val resetAuditIo =
+              if ResetAudit.isResetCommand(command) then ResetAudit.record(command, ctx, ctx.sharedResources)
+              else IO.unit
+            resetAuditIo *> ShellSession
               .forSession(
                 sessionId,
                 initialDir = sessionInitialDir,
