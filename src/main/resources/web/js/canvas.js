@@ -1657,8 +1657,12 @@ function initDeck() {
   panel.after(deckFab);
 
   // 整区缩放基姿常量单一来源（样张 v4②）：CSS .stacked / 飞行落点 / ghost 起点 / 面板驱动位姿同源
+  // 尺寸统一批（2026-10-23 六项⑤）：--stack-scale-inv = 1/0.85 反量随同注入 ——
+  // .stacked 态胶囊（.canvas-header = 前卡名称条）按反量回乘，视觉尺寸与常态
+  // 主胶囊同基准（134.9×36.0 档；面板整区 0.85 不动，只抵胶囊自身的缩）。
   panel.style.setProperty('--stack-scale', String(DECK_SCALE));
   panel.style.setProperty('--stack-shift', DECK_SHIFT + 'px');
+  panel.style.setProperty('--stack-scale-inv', String(Number((1 / DECK_SCALE).toFixed(5))));
 
   // uifix ③a：默认层叠 look 档位（作者挑版后可经 __canvasDeck.setLook 热切换）
   if (![...document.body.classList].some((c) => c.indexOf('deck-look-') === 0)) {
@@ -1787,25 +1791,35 @@ function layoutDeck() {
   deckLayer.style.setProperty('--card-h', deck.cardH.toFixed(0) + 'px');
   document.body.classList.toggle('canvas-deck-narrow', r.width < 400);
 }
-/** body 层两件的盒同步（逐帧驱动；面板盒 = canvas 区）。 */
+/** body 层两件的盒同步（逐帧驱动；面板盒 = canvas 区）。
+ *  滑删顺滑批（2026-10-23 六项⑥b）：盒未变零写 —— 逐帧直写 left/top/width/
+ *  height 是布局属性，每帧写脏布局、下一帧 offset 读数强制重排（拖划期间
+ *  读-写-读抖动 = 卡顿主源之一）。缓存上帧盒，四元全等即整段跳过（写不发生，
+ *  读保持干净，帧内不再有强制重排）；盒真变（开合/拖拽分栏/缩放）才落笔。 */
+let deckBoxLast = /** @type {{l: number, t: number, w: number, h: number}|null} */ (null);
 function syncDeckBox() {
   const r = deckPanelRect();
   if (!r || !r.width) return;
   deck.areaH = r.height;               // ④②：透视 y 补偿的层高基准（deckProjectYComp）
-  if (deckLayer) {
-    deckLayer.style.left = r.left + 'px';
-    deckLayer.style.top = r.top + 'px';
-    deckLayer.style.width = r.width + 'px';
-    deckLayer.style.height = r.height + 'px';
-  }
-  if (deckFab) {
-    // 回退批（作者令 2026-10-22 回访裁定）：fab 钉区回顶右原位（top = 面板顶
-    // + 10）。移位批曾迁右下（top = 面板底 − 56 与圆钮簇同排），但作者只令
-    // 图片查看器缩放控件迁右下，fab 属移位范围过宽；缩放条既已居底右、文件名
-    // 胶囊居左，顶行叠印前提消失，回移安全。right 语义不变（12px 内缝）。
-    // CSS 缺省（top:10）与本次式同源。
-    deckFab.style.top = (r.top + 10) + 'px';
-    deckFab.style.right = (window.innerWidth - r.right + 12) + 'px';
+  const same = deckBoxLast && deckBoxLast.l === r.left && deckBoxLast.t === r.top &&
+    deckBoxLast.w === r.width && deckBoxLast.h === r.height;
+  if (!same) {
+    deckBoxLast = { l: r.left, t: r.top, w: r.width, h: r.height };
+    if (deckLayer) {
+      deckLayer.style.left = r.left + 'px';
+      deckLayer.style.top = r.top + 'px';
+      deckLayer.style.width = r.width + 'px';
+      deckLayer.style.height = r.height + 'px';
+    }
+    if (deckFab) {
+      // 回退批（作者令 2026-10-22 回访裁定）：fab 钉区回顶右原位（top = 面板顶
+      // + 10）。移位批曾迁右下（top = 面板底 − 56 与圆钮簇同排），但作者只令
+      // 图片查看器缩放控件迁右下，fab 属移位范围过宽；缩放条既已居底右、文件名
+      // 胶囊居左，顶行叠印前提消失，回移安全。right 语义不变（12px 内缝）。
+      // CSS 缺省（top:10）与本次式同源。
+      deckFab.style.top = (r.top + 10) + 'px';
+      deckFab.style.right = (window.innerWidth - r.right + 12) + 'px';
+    }
   }
 }
 
@@ -2421,8 +2435,28 @@ function deckFrame(t) {
         if (done.mode !== 'spring') deckSettleClose(done.tabId, done.mode === 'fling' ? done : null);
       }
     }
-    deckPaintCard(el, p, String(100 - Math.round(Math.abs(d) * 10)));
-    if (extra) el.style.transform += extra;
+    /* 滑删顺滑批（2026-10-23 六项⑥b）：位姿签名去重 —— 拼一次完整串
+     *  （z/opacity/transform 含拖划 extra/shade），与上帧全等即零写。横划
+     *  跟手段 deck.pos 不动 ⇒ 非拖卡位姿恒定：修前每帧 4 写/卡（z-index 每
+     *  帧重写还会触发叠层重算），修后只有拖卡自己写 —— 合成层内插值，
+     *  主线程只剩一次字符串比较（滑删跟手不掉帧的主修）。 */
+    const zi = String(100 - Math.round(Math.abs(d) * 10));
+    const tf = 'translate(-50%,-50%)' +
+      ' translate3d(0,' + p.y.toFixed(2) + 'px,' + p.z.toFixed(2) + 'px)' +
+      ' rotateX(' + p.tilt.toFixed(2) + 'deg)' +
+      (p.scale && p.scale !== 1 ? ' scale(' + p.scale.toFixed(4) + ')' : '') + extra;
+    const opS = p.op.toFixed(3);
+    const shadeEl = /** @type {HTMLElement|null} */ (el.querySelector('.card-shade'));
+    const shadeS = (p.shade != null ? p.shade : 0).toFixed(3);
+    const sig = zi + '|' + opS + '|' + tf + '|' + shadeS;
+    const anyEl = /** @type {any} */ (el);
+    if (anyEl._deckSig !== sig) {
+      anyEl._deckSig = sig;
+      el.style.zIndex = zi;
+      el.style.opacity = opS;
+      el.style.transform = tf;
+      if (shadeEl) shadeEl.style.opacity = shadeS;
+    }
     el.classList.toggle('front', Math.abs(d) < 0.5);
     el.style.pointerEvents = (p.op > 0.05 && !deck.selFly && !deck.finalizing) ? 'auto' : 'none';
   }
@@ -3006,19 +3040,31 @@ function bindDeckInput() {
 //     ring[0]=active）、同向（下滑 dy>0 = 下一张，deck 竖拖/滚轮同规）、
 //     同阈（轴锁 8px 同 DECK_AXIS_LOCK_PX 档；释放 |dy|>48 换一张）；
 //   左右滑 = 关闭卡片 —— 与 deck 划走关闭同语义（closeTab 共核），释放
-//     |dx|>64 关活动页签；
+//     |dx|>64 关活动页签；滑删动画批（2026-10-23 六项⑥a）：跟手 1:1（净空内
+//     不出面板）+ rotateZ 微倾（deck 同斜率 0.028），释放过阈 = 甩出 fling
+//     （0.6×面板宽+240 与出板行程取小、13deg、快淡出）→ 过渡完 closeTab ——
+//     仿堆叠视角左右滑动删卡的动效；不足阈松手照旧回弹；
 //   右键 = 引用 —— 复用既有 canvas-tab-context-menu 形态（showCanvasRefMenu）；
 //     deck 开着时与面板菜单同款 actions（关闭/关闭其他），stopPropagation 防
 //     面板级菜单重复弹。
-// 跟手反馈：--head-dx/--head-dy 变量（CSS transform 消费），拖动中 is-dragging
-// 关过渡 1:1 跟手，松手回弹 + 评估阈值。钮群（pop/close/merge/fab）closest
-// 直通，永不吞点击。
+// 跟手反馈：--head-dx/--head-dy/--head-rot 变量（CSS transform 消费），拖动中
+// is-dragging 关过渡 1:1 跟手，松手回弹 + 评估阈值；甩出走 .is-swipe-out
+// （过渡重挂）。钮群（pop/close/merge/fab）closest 直通，永不吞点击。
 // ═════════════════════════════════════════════════════════════════════════
 
 /** 胶囊手势阈值（轴锁与 deck 同档；换卡/关卡阈给手势释放档）。 */
 const CARDHEAD_AXIS_LOCK_PX = 8;
 const CARDHEAD_SWITCH_PX = 48;
 const CARDHEAD_CLOSE_PX = 64;
+/** 划删跟手/甩出档（滑删动画批 2026-10-23 六项⑥a，仿 deck 环卡划走）：
+ *  跟手 1:1 但不出面板（按可用净空钳制，防 panel overflow 硬裁切线）；
+ *  甩出行程 = deck fling 档（0.6×面板宽 + 240）与「净空 + 半宽 + 80」取小
+ *  —— 甩过面板缘即没，快淡出先于行程走完；rotateZ 斜率与 deck 同源
+ *  （dx×0.028deg，甩出定值 13deg）。 */
+const CARDHEAD_FOLLOW_CAP_PX = 140;
+const CARDHEAD_SWIPE_ROT_K = 0.028;
+const CARDHEAD_SWIPE_ROT_CAP = 6;
+const CARDHEAD_FLING_MS = 240;
 
 /** 换卡邻位：deck 同环同序（ring[0]=active）——下滑(+1)=下一张、上滑(-1)=上一张
  *  （环绕）。单页签（环长 1）不换。 */
@@ -3038,18 +3084,31 @@ function initCardHeadGestures() {
   if (flags._cardheadGestures) return;
   flags._cardheadGestures = true;
   const isMobileLayer = () => document.body.classList.contains('mobile-layer');
-  /** @type {{id: number, x0: number, y0: number, dx: number, dy: number, axis: string|null, moved: boolean}|null} */
+  /** @type {{id: number, x0: number, y0: number, dx: number, dy: number, axis: string|null, moved: boolean, roomL: number, roomR: number}|null} */
   let g = null;
+  /** 甩出动画在途旗（滑删动画批）：在途封锁新手势，收场统一清。 */
+  let swipeFx = false;
   const reset = () => {
     hdr.classList.remove('is-pressed', 'is-dragging');
     hdr.style.setProperty('--head-dx', '0px');
     hdr.style.setProperty('--head-dy', '0px');
+    hdr.style.setProperty('--head-rot', '0deg');
+  };
+  /** 跟手净空（滑删动画批）：拖动起点时量一次左右可用行程（面板缘 − 胶囊缘
+   *  − 8px 缝），跟手钳制不出面板 —— 不给 overflow:hidden 留硬裁切面。 */
+  const measureRoom = () => {
+    const panel = document.getElementById('canvas-panel');
+    const hr = hdr.getBoundingClientRect();
+    const pr = panel ? panel.getBoundingClientRect() : hr;
+    g.roomL = Math.max(0, hr.left - pr.left - 8);
+    g.roomR = Math.max(0, pr.right - hr.right - 8);
   };
   hdr.addEventListener('pointerdown', (e) => {
-    if (isMobileLayer()) return;
+    if (isMobileLayer() || swipeFx) return;
     if (e.button !== 0) return;
     if (/** @type {Element} */ (e.target).closest('button')) return;   // 钮群直通
-    g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0, axis: null, moved: false };
+    g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0, axis: null, moved: false, roomL: 0, roomR: 0 };
+    measureRoom();
     try { hdr.setPointerCapture(e.pointerId); } catch { /* 已释放 */ }
     hdr.classList.add('is-pressed');                                   // 按压触感（按住即有）
   });
@@ -3064,12 +3123,41 @@ function initCardHeadGestures() {
       hdr.classList.remove('is-pressed');   // 拖动态松开按压形（跟手位移接管）
       hdr.classList.add('is-dragging');
     }
-    if (g.axis === 'x') hdr.style.setProperty('--head-dx', Math.max(-18, Math.min(18, g.dx)) + 'px');
-    else if (g.axis === 'y') hdr.style.setProperty('--head-dy', Math.max(-12, Math.min(12, g.dy)) + 'px');
+    if (g.axis === 'x') {
+      // 滑删动画批：跟手 1:1（净空内）+ 轻微 rotateZ 倾斜（deck 同斜率）
+      const room = g.dx < 0 ? g.roomL : g.roomR;
+      const dx = Math.max(-room, Math.min(room, g.dx));
+      hdr.style.setProperty('--head-dx', dx.toFixed(1) + 'px');
+      hdr.style.setProperty('--head-rot',
+        (Math.max(-CARDHEAD_SWIPE_ROT_CAP, Math.min(CARDHEAD_SWIPE_ROT_CAP, g.dx * CARDHEAD_SWIPE_ROT_K))).toFixed(2) + 'deg');
+    } else if (g.axis === 'y') hdr.style.setProperty('--head-dy', Math.max(-12, Math.min(12, g.dy)) + 'px');
   });
+  /** 横滑甩出（滑删动画批六项⑥a，仿 deck 环卡划走 fling）：行程朝拖向甩过
+   *  面板缘 + 13deg 旋转 + 快淡出（透明度先行，过渡完再关页签 —— 名称换装
+   *  藏在不可见段）；0.24s 与 deck DECK_FLING_DUR 同档。reduce-motion 直关。 */
+  const swipeOutFly = (dir, room) => {
+    swipeFx = true;
+    const panel = document.getElementById('canvas-panel');
+    const pw = panel ? panel.getBoundingClientRect().width : 700;
+    const dist = Math.min(pw * 0.6 + 240, room + hdr.offsetWidth / 2 + 80);
+    hdr.classList.remove('is-dragging');
+    hdr.classList.add('is-swipe-out');
+    hdr.style.setProperty('--head-dx', (dir * dist).toFixed(1) + 'px');
+    hdr.style.setProperty('--head-rot', (dir * 13).toFixed(2) + 'deg');
+    hdr.style.opacity = '0';
+    const entry = activeTabId ? tabs.get(activeTabId) : null;
+    setTimeout(() => {
+      reset();
+      hdr.classList.remove('is-swipe-out');
+      hdr.style.opacity = '';
+      swipeFx = false;
+      if (entry) closeTab(entry.id);
+    }, deckRm.matches ? 0 : CARDHEAD_FLING_MS);
+  };
   const finish = (e) => {
     if (isMobileLayer() || !g || e.pointerId !== g.id) return;
     const { dx, dy, axis, moved } = g;
+    const room = g ? (dx < 0 ? g.roomL : g.roomR) : 0;
     g = null;
     reset();
     if (!moved) { ringClickCenter(); return;          // 点击界内：环游标胶囊即切换（游标=激活时零动作）
@@ -3080,7 +3168,7 @@ function initCardHeadGestures() {
       const nb = cardHeadRingNeighbor(dy > 0 ? 1 : -1);   // 下滑=下一张（deck 同语义）
       if (nb && nb.id !== entry.id) setActiveTab(nb.id);
     } else if (axis === 'x' && Math.abs(dx) > CARDHEAD_CLOSE_PX) {
-      closeTab(entry.id);                                 // 划走关闭（closeTab 共核）
+      swipeOutFly(dx >= 0 ? 1 : -1, room);                // 划走关闭：先甩出动画再 closeTab（共核不变）
     }
   };
   hdr.addEventListener('pointerup', finish);
@@ -3113,8 +3201,9 @@ function initCardHeadGestures() {
 // 对称批的「hover 沉降 canvas 垂直中点」（.ring-open + --ring-dy）撤销 —— 环锚
 // 常驻顶带，横轴中线居中不变；缘位仍上下对称（上一签上展 −edgeY、下一签下垂
 // +edgeY，|y| 严格相等；rotateX 反号等幅），上缘位允许**略微越出面板顶缘**
-// （负向超出正常且允许 —— 面板 overflow:hidden 裁掉探出段），越出量克制 =
-// 胶囊自身高度的一小部分（RING_TOP_OUT ≈ 0.4×h），绝不沉向 canvas 中部。
+// （负向超出正常且允许 —— 真越出批六项②：环层挂 body，探出段真实渲染在
+// canvas 顶缘外，不再被面板 overflow:hidden 裁切；越出量克制 = 胶囊自身高度的
+// 一小部分（RING_TOP_OUT），绝不沉向 canvas 中部）。
 // 胶囊本体任何状态尺寸恒定（零缩放零呼吸）。
 // 收环判定 = **hover 区联合盒**（环开点 ∪ 胶囊本体 ∪ 上下缘位胶囊，各外扩
 // 14px）：竖环几何下「中心→缘位」有 ~edgeY 间隙，pointerleave 单源会立即误收
@@ -3127,25 +3216,38 @@ function initCardHeadGestures() {
 // 缩放/平移与 pane 滚动在环开期间让位（Escape/离区即还）。
 // 按住=按钮语义（作者令③）：胶囊本体 <button> + 全头 user-select:none（CSS）
 // + dragstart preventDefault（拦从胶囊发起的原生拖拽；OS 文件拖入 drop 不受影响）。
-// 实现形态：纯前端组件（.capsule-ring 0×0 锚在标题头中心 = 胶囊中心，环锚
-// 常驻顶带 —— 顶部修正批撤销沉降；胶囊 absolute 沿弧 transform），与左栏
-// 控制面零共享。手机层/卡窗态整腿让位（各有自己的卡头形态）；deck 叠卡态不开环
-// （叠卡有自己的环卡滚轮语义，双环互搏）。
+// 实现形态：纯前端组件（真越出批六项②：#canvas-capsule-ring 挂 body 层，
+// position:fixed 0×0 锚在标题头中心视口点 = 胶囊中心 —— 面板裁剪盒够不到，
+// 上缘位真实越出顶缘渲染；环锚常驻顶带 —— 顶部修正批撤销沉降；胶囊 absolute
+// 沿弧 transform），与左栏控制面零共享。手机层/卡窗态整腿让位（各有自己的
+// 卡头形态）；deck 叠卡态不开环（叠卡有自己的环卡滚轮语义，双环互搏）。
 const RING_WHEEL_STEP = 56;   // 横滑一格步进（≈两指一次横扫的 deltaX 量级）
 const RING_WHEEL_STEP_Y = 100; // 纵滚一格步进（≈鼠标滚轮一格的 deltaY 量级——一格滚轮 = 一换）
 const RING_CLOSE_GRACE_MS = 140; // 离环收起宽限（快速掠过不闪收）
 const RING_ZONE_PAD_PX = 14;  // hover 区外扩（缘位胶囊 hit 盒外缘，穿越不闪收）
+const RING_STEADY_MS = 370;   // 真越出批：展开过渡（0.36s）后缘位才接 pointer 的稳态门
 /** 环开上缘位越出面板顶缘的量（顶部修正批 2026-10-23 作者令「顶部有些超出是
  *  正常且允许的。但是不要太多」）：**布局空间**系数 × 胶囊高（clamp 8–24px）。
  *  缘位胶囊带 rotateX(34°)+translateZ(-110)（perspective 640）投影把角点向
  *  锚收回 —— 视觉越出 ≈ 布局越出的 0.4 倍（实测 1440×900：布局 19.2px →
- *  视觉 ~8px ≈ 胶囊高 1/3，即「自身高度的一小部分量级」）；探出段被面板
- *  overflow:hidden 裁掉。下缘位 |y| 对称下垂（上下对称裁定保持）。 */
+ *  视觉 ~8px ≈ 胶囊高 1/3，即「自身高度的一小部分量级」）。真越出批
+ *  （2026-10-23 六项②）：环层挂 body 后探出段**真实渲染**在 canvas 顶缘外
+ *  （修前面板 overflow:hidden 硬裁切线退役），越出量保持本克制档不变。
+ *  下缘位 |y| 对称下垂（上下对称裁定保持）。 */
 const RING_TOP_OUT = 0.8;
 
 /** 环开态单例（{ ids: string[], cursor: number }；null = 环闭）。hdr 重建时随
  *  initCanvas 重挂，状态本体放模块级 —— 手势 finish() 的 ringClickCenter 同读。 */
 let ringState = /** @type {{ids: string[], cursor: number}|null} */ (null);
+
+/* 真越出批（作者令 2026-10-23 六项②）：环层挂 body（#canvas-capsule-ring
+ *  position:fixed，z-246 —— overlay 面板 240 之上、fab 250 之下、模态 300+ 之下），
+ *  不再是面板子树 —— 面板 overflow:hidden 裁不到它，上缘位探出段**真实渲染**在
+ *  canvas 顶缘外（硬裁切线消灭；越出量仍走 RING_TOP_OUT 克制档不变）。锚定与
+ *  几何随之改视口坐标：anchor() 直写视口点，layout() 的 edgeY 反解改
+ *  「锚视口 y − 面板视口顶 − h/2 + out」（与旧 offsetTop 链同义，对 offsetParent
+ *  链免疫）。中心位胶囊 pointer-events:none（split.css）—— 环层如今在标题头
+ *  之上，放行事件才能照旧落到标题头手势链（按压/竖滑/横滑/右键契约不变）。 */
 
 /** 中心位（环游标）胶囊的「点击即切换」——标题头手势 finish() 的 !moved 臂
  *  消费（中心位 pointer 事件被标题头 capture 重定向，click 不达胶囊）。
@@ -3168,16 +3270,20 @@ function initCapsuleRing() {
   flags._capsuleRing = true;
   if (cardWindowMode) return;                      // 卡窗 = 单卡查看器，无环
   const isMobileLayer = () => document.body.classList.contains('mobile-layer');
+  const panelEl = /** @type {HTMLElement} */ (hdr.closest('#canvas-panel'));
 
   let acc = 0;                                     // 横滑游标累加器（deltaX 刻度）
   let accY = 0;                                    // 纵滚游标累加器（deltaY 刻度，整数步进零浮点）
   let leaveTimer = 0;
+  let steadyTimer = 0;                             // 真越出批：稳态门定时（展开过渡后缘位才可点）
 
   const root = document.createElement('div');
   root.className = 'capsule-ring';
   root.id = 'canvas-capsule-ring';
   root.hidden = true;
-  hdr.appendChild(root);
+  // 真越出批：环层挂 body（fixed + z-246）—— 面板 overflow:hidden 裁不到，
+  // 上缘位探出段真实渲染在 canvas 顶缘外（split.css §ring 注详）。
+  document.body.appendChild(root);
 
   /** 环序 = 页签插序（tabs Map 序 —— 与标签条/deckBuildRing 源序同源）。 */
   const build = () => {
@@ -3226,22 +3332,25 @@ function initCapsuleRing() {
    *  下缘位 −34° 底边后仰 —— 竖圆柱同侧曲率）；透视由 .capsule-ring 自身
    *  perspective 提供（原点 = 环锚 = 胶囊中心）；模糊扭曲（CSS is-edge）。
    *  |rel|≥2 = 弧外不可见（±2× 对称轨迹保留，收放有连续感）。
-   *  间距 = 环锚面板几何反解（顶部修正批）：edgeY 令上缘位顶越过面板顶缘
-   *  RING_TOP_OUT×h（胶囊高的一小部分 —— 作者令「顶部有些超出…不要太多」，
-   *  越出段被面板 overflow:hidden 裁掉），下缘位对称下垂；h + 2 下限兜底防
-   *  退化叠置。本体尺寸恒定 ⇒ 间距恒定。 */
+   *  间距 = 环锚面板几何反解（顶部修正批 + 真越出批六项②视口版）：edgeY 令
+   *  上缘位顶越过面板顶缘 RING_TOP_OUT×h（胶囊高的一小部分 —— 作者令「顶部
+   *  有些超出…不要太多」，探出段真实渲染在顶缘外 —— 环层挂 body 裁切盒失效），
+   *  下缘位对称下垂；h + 2 下限兜底防退化叠置。本体尺寸恒定 ⇒ 间距恒定。 */
   const layout = () => {
     if (!ringState) return;
+    anchor();                                        // 真越出批：先回锚（环开中窗口尺寸变化随动）
     const { ids, cursor } = ringState;
     const n = ids.length;
     const kids = /** @type {HTMLElement[]} */ ([...root.children]);
     const centerKid = cursor >= 0 && cursor < n ? kids[cursor] : null;
     const h = centerKid ? centerKid.offsetHeight : 28;
     const out = Math.max(8, Math.min(24, h * RING_TOP_OUT));
-    // 环锚面板纵深 = 头顶带偏移（hdr.offsetTop，面板为 offsetParent）+ 锚在
-    // 头内深度（root.offsetTop，anchor() 置 title 中心）；edgeY 反解自
-    // 「上缘位顶 = 锚 − edgeY − h/2 = −out」（面板相对，顶缘为 0）。
-    const edgeY = Math.max(h + 2, hdr.offsetTop + root.offsetTop - h / 2 + out);
+    // 环锚面板纵深（真越出批视口版）= 锚视口 y − 面板视口顶（getBoundingClientRect，
+    // 对 offsetParent 链免疫，语义与旧 hdr.offsetTop + root.offsetTop 同一）；
+    // edgeY 反解自「上缘位顶 = 锚 − edgeY − h/2 = 面板顶 − out」。
+    const pr = panelEl.getBoundingClientRect();
+    const ay = parseFloat(root.style.top) || 0;
+    const edgeY = Math.max(h + 2, ay - pr.top - h / 2 + out);
     for (let i = 0; i < kids.length; i++) {
       let rel = (i - cursor + n) % n;
       if (rel > n / 2) rel -= n;
@@ -3261,14 +3370,14 @@ function initCapsuleRing() {
     }
   };
 
-  /** 环锚 = 标题头实心中心（环收放与常态胶囊同位无缝 morph）。 */
+  /** 环锚 = 标题头实心中心（环收放与常态胶囊同位无缝 morph）。真越出批：环层
+   *  已挂 body（position:fixed），锚点直写**视口坐标**。 */
   const anchor = () => {
     const title = document.getElementById('canvas-title');
     if (!title) return;
-    const hr = hdr.getBoundingClientRect();
     const tr = title.getBoundingClientRect();
-    root.style.left = (tr.left + tr.width / 2 - hr.left) + 'px';
-    root.style.top = (tr.top + tr.height / 2 - hr.top) + 'px';
+    root.style.left = (tr.left + tr.width / 2) + 'px';
+    root.style.top = (tr.top + tr.height / 2) + 'px';
   };
 
   /* ── hover 区（环开态收环判定）──：环开点（顶带胶囊处）∪ 胶囊本体 ∪ 非弧外
@@ -3337,6 +3446,12 @@ function initCapsuleRing() {
     lastPtr = null;
     build();
     hdr.classList.add('ring-open');
+    // 真越出批：显隐随环层本位；可点性 = 稳态门（0.36s 展开过渡后缘位才接
+    // pointer —— 展开中胶囊从指针位掠过会抢标题头按压/拖划，见 split.css 注）。
+    root.classList.add('open');
+    root.classList.remove('steady');
+    if (steadyTimer) clearTimeout(steadyTimer);
+    steadyTimer = setTimeout(() => { root.classList.add('steady'); steadyTimer = 0; }, RING_STEADY_MS);
     root.hidden = false;
     anchor();
     layout();
@@ -3348,6 +3463,9 @@ function initCapsuleRing() {
     if (!ringState) return;
     ringState = null;
     hdr.classList.remove('ring-open');
+    root.classList.remove('open');
+    root.classList.remove('steady');
+    if (steadyTimer) { clearTimeout(steadyTimer); steadyTimer = 0; }
     root.hidden = true;
     root.textContent = '';
     acc = 0;
@@ -3387,6 +3505,10 @@ function initCapsuleRing() {
       build();
       anchor();
       layout();
+      // 重建环 = 胶囊重新展开过渡：稳态门重走一遍（新胶囊从中心位掠出，同 race）
+      root.classList.remove('steady');
+      if (steadyTimer) clearTimeout(steadyTimer);
+      steadyTimer = setTimeout(() => { root.classList.add('steady'); steadyTimer = 0; }, RING_STEADY_MS);
     }, 0);
   });
 }

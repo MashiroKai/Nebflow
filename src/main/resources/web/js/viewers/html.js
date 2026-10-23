@@ -707,7 +707,7 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
   // wiki-graph batch: in-file find toggle, seated left of the element-select
   // toggle (find searches INSIDE the frame via the injected script above).
   // 移位批（2026-10-22）：112 → 160（簇 +48 给底右 deck fab 让位）。
-  addFindToggle(pane, 160);
+  addFindToggle(pane, 112);
   // Cache the rendered content for the unchanged-guard at the top. Set after
   // the pane is fully assembled; the guard also requires a live iframe, so a
   // stale marker after a navigation-away replacement is harmless (no iframe →

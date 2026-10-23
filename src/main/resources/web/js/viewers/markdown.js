@@ -392,6 +392,22 @@ async function onWikilinkClick(a, mdViewer) {
 }
 
 /** Markdown viewer - render formatted markdown (read-only preview) */
+/** 名称双显去重（作者令 2026-10-23 六项①「胶囊内已有文件名…只保留胶囊内一处」）：
+ *  笔记类文档惯以 `# 与文件名相同的标题` 起笔 —— 阅读面里卡头胶囊（文件名）之下
+ *  再渲染同一份名称，作者读作「底层旧名称元素残留」。此处在阅读渲染面去重：
+ *  首个块级元素为 H1 且文本与文件名（去扩展名或全名）逐字相等 ⇒ 隐藏该标题
+ *  （display:none，DOM 与源码不动 —— 源码态/导出零影响；锚点/TOC 结构保留）。
+ *  仅认首个块级 H1 逐字相等：正文同名标题、不同名标题一律不动。 */
+function dedupeTitleHeading(viewer, fileName) {
+  if (!viewer || !fileName) return;
+  const first = /** @type {HTMLElement|null} */ (viewer.firstElementChild);
+  if (!first || first.tagName !== 'H1') return;
+  const text = (first.textContent || '').trim();
+  if (!text) return;
+  const base = fileName.replace(/\.[^.]*$/, '');
+  if (text === base || text === fileName) first.style.display = 'none';
+}
+
 async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnchor, readOnly }) {
   // Content-unchanged guard. Focus/visibility refreshes re-fetch the same
   // file and re-render every open tab; rebuilding .canvas-md-scroll via
@@ -501,6 +517,7 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
 
   pane.classList.remove('scrollable');
   pane.innerHTML = `<div class="canvas-md-scroll"><div class="canvas-md-viewer">${html}</div></div>`;
+  dedupeTitleHeading(pane.querySelector('.canvas-md-viewer'), fileName);
   /** @type {any} */ (pane)._renderedMdContent = content;
   // Jump face: the live analysis stays on the pane so a reference click into
   // an ALREADY-OPEN tab (canvas.js switches without re-rendering) can still
@@ -598,8 +615,8 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
   addSourceToggle(pane, viewMarkdown, { content, absPath, fileName, readOnly: readOnly === true });
   // Glass toggles — stacked with the source toggle (48px per slot; 移位批
   // 2026-10-22 簇 +48 给底右 deck fab 让位): find at 112px, graph at 160px.
-  addFindToggle(pane, 112);
-  addGraphToggle(pane, absPath || '', 160);
+  addFindToggle(pane, 64);
+  addGraphToggle(pane, absPath || '', 112);
 }
 
 export default {
