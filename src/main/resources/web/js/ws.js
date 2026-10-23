@@ -741,7 +741,8 @@ async function attemptLanNearPathJump() {
 }
 
 
-const HB_INTERVAL_MS = 30000;const HB_PONG_GRACE_MIN_MS = 5000;
+const HB_INTERVAL_MS = 30000;
+const HB_PONG_GRACE_MIN_MS = 5000;
 const HB_PONG_GRACE_MAX_MS = 30000;
 const HB_MAX_MISSES = 3;
 let hbMisses = 0;          // 连续 miss 计数（收到 pong / 新连接 / 进后台即归零）
