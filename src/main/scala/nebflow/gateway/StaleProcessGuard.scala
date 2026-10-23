@@ -66,14 +66,27 @@ object StaleProcessGuard:
     def detail: String = s"pid $pid, command: ${truncate(cmdline)}"
 
   /**
-   * Full command line of a pid. Primary: JDK ProcessHandle (sysctl on
-   * macOS / procfs on Linux — no binary exec, so it still works inside
-   * exec-restricted sandboxes that deny spawning `ps`); fallback: `ps -p`.
-   * None when neither can read it — an unreadable process is never killed
-   * and never blocks startup on its own.
+   * Full command line of a pid. Legs in order:
+   *   1. JDK ProcessHandle (sysctl on macOS / procfs on Linux — no binary
+   *      exec, so it still works inside exec-restricted sandboxes that deny
+   *      spawning `ps`); on Windows this leg is EMPTY for every process the
+   *      current JVM did not spawn (measured: Temurin 21, foreign java pids
+   *      — `commandLine: Optional.empty` while `command` reads) — which is
+   *      exactly the `stand start` daemon child a later `stand stop` JVM
+   *      must verify;
+   *   2. Windows fallback: PowerShell CIM (`Get-CimInstance Win32_Process`),
+   *      which reads the real command line of same-visibility processes;
+   *   3. POSIX fallback: `ps -p`.
+   * None when no leg can read it — an unreadable process is never killed and
+   * never blocks startup on its own (the stop face's degraded identity chain
+   * takes over for the stop decision).
    */
   def readCommandLine(pid: Long): Option[String] =
-    viaProcessHandle(pid).orElse(viaPs(pid))
+    viaProcessHandle(pid).orElse(viaPowershellCim(pid)).orElse(viaPs(pid))
+
+  /** Windows-only CIM leg; no-op (None) elsewhere. */
+  private def viaPowershellCim(pid: Long): Option[String] =
+    WindowsProcs.commandLineViaCim(pid)
 
   private def viaProcessHandle(pid: Long): Option[String] =
     try
@@ -99,17 +112,22 @@ object StaleProcessGuard:
     catch case _: Exception => None
 
   /**
-   * Pids LISTENING on the port (lsof). Empty on any failure — the caller
-   * then boots and lets the bind surface a real error instead of guessing.
+   * Pids LISTENING on the port. POSIX: lsof. Windows: `netstat -ano -p tcp`
+   * rows parsed by [[WindowsProcs.parseNetstatListenerPids]] (lsof is absent
+   * there; the state column is always English). Empty on any failure — the
+   * caller then boots and lets the bind surface a real error instead of
+   * guessing.
    */
   def portListenerPids(port: Int): List[Long] =
-    try
-      val pb = new ProcessBuilder("lsof", "-i", s":$port", "-t", "-sTCP:LISTEN")
-      val p = pb.redirectErrorStream(true).start()
-      val out = new String(p.getInputStream.readAllBytes(), "UTF-8").trim
-      p.waitFor()
-      out.split("\\s+").filter(_.matches("\\d+")).map(_.toLong).toList
-    catch case _: Exception => List.empty
+    if WindowsProcs.isWindows then WindowsProcs.listenerPidsOf(port)
+    else
+      try
+        val pb = new ProcessBuilder("lsof", "-i", s":$port", "-t", "-sTCP:LISTEN")
+        val p = pb.redirectErrorStream(true).start()
+        val out = new String(p.getInputStream.readAllBytes(), "UTF-8").trim
+        p.waitFor()
+        out.split("\\s+").filter(_.matches("\\d+")).map(_.toLong).toList
+      catch case _: Exception => List.empty
 
   /**
    * The kill-side verdict for the processes listening on the gateway port.

@@ -38,44 +38,48 @@ object GatewayMain extends IOApp:
   /**
    * Kill stale Nebflow processes before starting — but ONLY verified Nebflow
    * processes (P0 2026-09-06 host-kill hardening). Port-based detection
-   * (lsof) plus a per-pid identity check (JDK ProcessHandle command line,
-   * ps fallback): every listener's command line must carry a Nebflow marker
-   * before it may be destroyed (see [[StaleProcessGuard]] — restart flows
-   * still clear their stale instance).
+   * plus a per-pid identity check (JDK ProcessHandle command line, Windows
+   * PowerShell CIM fallback, ps fallback): every listener's command line
+   * must carry a Nebflow marker before it may be destroyed (see
+   * [[StaleProcessGuard]] — restart flows still clear their stale instance).
    * A foreign occupant refuses startup loudly; it is NEVER killed.
+   *
+   * 新设备首用批 2026-10-22: the mac/linux-only gate is retired — Windows
+   * now has both legs (netstat-based portListenerPids +
+   * PowerShell-CIM command lines, [[WindowsProcs]]), so a stale instance
+   * there is cleared and a foreign occupant refused, same semantics as
+   * POSIX. Before this批 the Windows face did nothing, letting a stale
+   * instance block the port until a manual kill.
    */
   private def ensureSingleInstance(port: Int): IO[Unit] =
     IO.blocking {
-      val os = sys.props.getOrElse("os.name", "").toLowerCase
-      if os.contains("mac") || os.contains("linux") then
-        StaleProcessGuard.classify(
-          StaleProcessGuard.portListenerPids(port),
-          ProcessHandle.current.pid
-        ) match
-          case Right(stalePids) =>
-            if stalePids.nonEmpty then
-              logger
-                .warn(
-                  s"[startup] killing verified stale ${Branding.productName} processes on port $port: " +
-                    s"${stalePids.mkString(", ")}"
-                )
-                .unsafeRunSync()
-              for pid <- stalePids do
-                try ProcessHandle.of(pid).ifPresent(_.destroyForcibly())
-                catch case _: Exception => ()
-              Thread.sleep(1000)
-          case Left(foreign) =>
-            // P0 2026-09-06 (09:07 incident class): a NON-nebflow process
-            // holds the port. NEVER destroy it — refuse startup loudly; the
-            // boot dies here instead of killing someone else's process.
-            val detail =
-              s"[startup] REFUSING to start: port $port is held by a non-${Branding.productName} " +
-                s"process (${foreign.detail}) — stop it or pick another port " +
-                "(--port / NEBFLOW_GATEWAY_PORT)"
-            logger.error(detail).unsafeRunSync()
-            throw new IllegalStateException(detail)
-        end match
-      end if
+      StaleProcessGuard.classify(
+        StaleProcessGuard.portListenerPids(port),
+        ProcessHandle.current.pid
+      ) match
+        case Right(stalePids) =>
+          if stalePids.nonEmpty then
+            logger
+              .warn(
+                s"[startup] killing verified stale ${Branding.productName} processes on port $port: " +
+                  s"${stalePids.mkString(", ")}"
+              )
+              .unsafeRunSync()
+            for pid <- stalePids do
+              try ProcessHandle.of(pid).ifPresent(_.destroyForcibly())
+              catch case _: Exception => ()
+            Thread.sleep(1000)
+        case Left(foreign) =>
+          // P0 2026-09-06 (09:07 incident class): a NON-nebflow process
+          // holds the port. NEVER destroy it — refuse startup loudly; the
+          // boot dies here instead of killing someone else's process.
+          val detail =
+            s"[startup] REFUSING to start: port $port is held by a non-${Branding.productName} " +
+              s"process (${foreign.detail}) — stop it or pick another port " +
+              "(--port / NEBFLOW_GATEWAY_PORT)"
+          logger.error(detail).unsafeRunSync()
+          throw new IllegalStateException(detail)
+      end match
     }
 
   // ===== 热重启引导闸（hot-restart 批设计 §3.3）=====

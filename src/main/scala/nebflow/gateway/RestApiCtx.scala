@@ -68,6 +68,35 @@ final class RestApiCtx(
   def gate(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =
     checkAuth(req).flatMap(ok => if ok then f else Forbidden(Json.obj("error" -> "Unauthorized".asJson)))
 
+  // ── 引导腿门（bootstrap-leg gate，2026-10-22 新设备引导修复批·作者令）──────
+  //
+  // 登录发起面（POST /neblink/auth/start）与其结果轮询（GET
+  // /neblink/auth/state）对**无凭据调用**放行。新设备引导恰是「零会话、
+  // 零令牌」时的场景——登录发起端点若要求已登录会话，登录就永远无法开始
+  // （鸡生蛋缺陷；作者 Windows 机实跑 `POST /api/neblink/auth/start` 得
+  // 403 {"error":"Unauthorized"} 实证）。按作者「登录即绑定」裁定，这两条
+  // 是主流程必修的引导腿：发起面给 authorizeUrl，轮询面让发起方读到
+  // outcome——只开一半，引导照样走不通。
+  //
+  // 放行判据 = [[LoopbackLeg.isLoopback]]（机械 socket 对端地址，与
+  // [[GatewayAuth.localTicketOnLeg]] 同一单点判据，客户端不可伪造）：LAN /
+  // 公网 / 隧道桥（in-process，remote=None）腿一律不放行——引导只发生在
+  // 本机键盘、本机浏览器上；远端腿有自己的门户会话（relay 门）在前面。
+  //
+  // 防滥用 = 既有机制，零新轮子（作者令「一次性 nonce/短时限即可」的映射）：
+  // PKCE `state` 是一次性 nonce（`take` 单次消费）、待决登录 15min 短时限
+  // （PkceLoginSession.ExpiryMs）、进程内单飞槽（新 start 顶替旧 attempt，
+  // 无资源放大）；authorize URL 本身不绑定任何凭据——绑定只发生在真人完成
+  // 托管登录且回调 state 命中之后（登录即绑定）。有凭据调用的判据逐字不变：
+  // session/Bearer 优先，任何腿都通（本 helper 只在判 None 时开引导腿）。
+  def bootstrapGate(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =
+    checkAuth(req).flatMap {
+      case true => f
+      case false =>
+        if LoopbackLeg.isLoopback(req) then f
+        else Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+    }
+
   // 设备互联域(NeblinkRoutes,E 步)所需的鉴权判据:checkAuth 同时服务本处
   // withAuth 与 NeblinkRoutes 的免门控普查条目直调。
   //
