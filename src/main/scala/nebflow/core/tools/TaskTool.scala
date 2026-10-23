@@ -324,28 +324,42 @@ Ids are NEVER reused: the ledger keeps a monotonic id watermark, so even after a
       val project = input("project").flatMap(_.asString)
       (action, title, id, assignee, nodeId, links, blocks, parentId, project)
     }.map { case (action, title, id, assignee, nodeId, links, blocks, parentId, project) =>
-      TaskTool.dispatchSync(
-        TaskLedgerStore.open(),
-        nodeTerminalMapOf(),
-        ctx,
+      (
+        TaskTool.dispatchSync(
+          TaskLedgerStore.open(),
+          nodeTerminalMapOf(),
+          ctx,
+          action,
+          title = title,
+          id = id,
+          assignee = assignee,
+          nodeId = nodeId,
+          links = links,
+          blocks = blocks,
+          parentId = parentId,
+          project = project
+        ),
         action,
-        title = title,
-        id = id,
-        assignee = assignee,
-        nodeId = nodeId,
-        links = links,
-        blocks = blocks,
-        parentId = parentId,
-        project = project
+        id
       )
     }.flatTap {
       // task-rag 批（#1227 / §Batch 7）：账本写后增量索引（task 创建/完成/revive
       // 的落地触发面——三态账本无独立 revive 动作，update 覆盖重开、complete 覆盖
       // closed→completed，故写成功即 upkeep）。fire-and-forget（在飞合流 + 异常
       // 内吞），绝不影响工具结果。
-      case Right(_) => nebflow.core.index.TaskSearchIndex.upkeepFireAndForget()
-      case Left(_) => IO.unit
-    }
+      case (Right(_), _, _) => nebflow.core.index.TaskSearchIndex.upkeepFireAndForget()
+      case _                => IO.unit
+    }.flatTap {
+      // 台账↔面板对账批（2026-10-22 作者补充需求 · 腿 1）：complete/close 成功后
+      // 面板联动——关联 delegate 记录（taskId 命中）且任务行已终态者归档折叠；
+      // 在飞（running/restarting/ready-to-merge）不替它收尸。fail-soft 内吞，
+      // 绝不影响工具结果（台账写已成功，面板收敛是观测面补强）。
+      case (Right(_), action, Some(entryId)) if action == "complete" || action == "close" =>
+        ctx.sharedResources match
+          case Some(res) => nebflow.core.delegate.DelegateLedgerReconcile.onLedgerTerminal(res.subAgentTaskStore, entryId)
+          case None      => IO.unit
+      case _ => IO.unit
+    }.map(_._1)
 
   /**
    * The mapping for the ⚠node-done join: read live from the Flow Map of the workspace

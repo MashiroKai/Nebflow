@@ -778,15 +778,15 @@ object BackoffSupervisor:
           )
           .handleErrorWith(e => logger.warn(s"subAgentTaskStore update failed: ${e.getMessage}"))
 
+        val terminalEvent = AgentCommand.ExternalEvent(
+          source = source,
+          eventType = eventType,
+          payload = payload,
+          metadata = metadata,
+          correlationId = Some(subagentId)
+        )
         val notify = parentRef match
-          case Some(ref) =>
-            ref ! AgentCommand.ExternalEvent(
-              source = source,
-              eventType = eventType,
-              payload = payload,
-              metadata = metadata,
-              correlationId = Some(subagentId)
-            )
+          case Some(ref) => ref ! terminalEvent
           case None =>
             // mail-continuation delivery backstop（2026-10-09）：parentRef=None ⇒
             // 本终态结果**没有任何投递对象**——历史分支是裸 IO.unit，结果在回传
@@ -795,6 +795,13 @@ object BackoffSupervisor:
             // 显式终态事件。taskStore 状态写入（上方）照常落盘 ⇒ 面板仍见终态。
             // 正常派发腿恒传活父引用（ctx.agentActorRef），本分支只在「Mail 续接
             // 时父已不 live」或未来调用方漏传时触发——低频、且正是必须出声的形态。
+            // 监督链自动恢复批（2026-10-22）：WARN 之后追加**F2 注入队持久兜底**
+            // （correlationId 幂等，SubAgentStartupRecovery.notifyOnce 同机制）——
+            // 终态事件进父会话持久注入队，父会话下次 spawn 时
+            // RecoverPersistedQueues 重放。「结果不可投递」升级为「结果延迟可达」：
+            // boot 复活腿（DelegateRevival）重建的 delegate 在父会话尚未 live 时
+            // 完成工作，结果不再丢失。父会话已删 = 跳过（不产生无人读的垃圾文件，
+            // V2 收殓同款守卫）。
             logger.warn(
               s"[terminal-result-undelivered] $source session '$subagentId' reached '$eventType' but no parent ref exists " +
                 s"(parent session '$parentSessionId' not live at spawn) — the result was NOT delivered to any session. " +
@@ -812,7 +819,10 @@ object BackoffSupervisor:
                       "description" -> description.asJson
                     )
                   ).handleErrorWith(e => logger.warn(s"delegateResultUndelivered WS frame failed: ${e.getMessage}"))
-                case None => IO.unit)
+                case None => IO.unit) *>
+              // F2 持久兜底（监督链自动恢复批 2026-10-22，见上注）——WARN 之后
+              // 事件照常持久投递；append 失败只 WARN（父队列面故障不拖垮终态三清）。
+              f2DeliveryBackstop(terminalEvent)
 
         // 终态三清（R2-c §7#4 + 本设计）：① hub 槽（僵尸 ask 卡：内核已死，
         // 卡片再没人能接——全仓唯一的其它清理入口是项目引擎，触及不到内核这种
@@ -826,6 +836,31 @@ object BackoffSupervisor:
           .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
 
       end notifyParentAndStop
+
+      /**
+       * 终态事件 F2 注入队持久兜底（监督链自动恢复批 2026-10-22）：parentRef=None
+       * 时把终态 ExternalEvent append 进父会话持久注入队文件（correlationId=subagentId
+       * 幂等——[[SubAgentStartupRecovery.notifyOnce]] 同机制），父会话下次 spawn 时
+       * RecoverPersistedQueues 重放。父会话已删 = 跳过（不产生无人读的垃圾文件）。
+       * fail-soft：append 失败只 WARN——投递兜底绝不拖垮终态三清链。
+       */
+      private def f2DeliveryBackstop(event: AgentCommand.ExternalEvent): IO[Unit] =
+        if parentSessionId.isEmpty then IO.unit
+        else
+          CompactionQueueStore.load(parentSessionId).flatMap { existing =>
+            val already =
+              existing.exists(_.events.exists(_.correlationId.contains(event.correlationId.getOrElse(""))))
+            if already then IO.unit
+            else
+              resources.sessionStore.listSessions.flatMap { sessions =>
+                if !sessions.exists(_.id == parentSessionId) then IO.unit
+                else
+                  val q = existing.getOrElse(CompactionQueueStore.PersistedQueues())
+                  CompactionQueueStore.save(parentSessionId, q.copy(events = q.events :+ event))
+              }
+          }.handleErrorWith(e =>
+            logger.warn(s"[terminal-f2-backstop] append failed for parent '$parentSessionId': ${e.getMessage}")
+          )
 
       /**
        * source-death 清理（InteractionHub.CleanupForSession 的第二个调用点；

@@ -661,23 +661,6 @@ object GatewayMain extends IOApp:
                                   // 永不阻塞启动；失败在 upkeep 内部记 WARN 吞掉。
                                   val taskIndexBackfill: IO[Unit] =
                                     nebflow.core.index.TaskSearchIndex.upkeep().start.void
-                                  // V2 (2026-09-03) 孤儿 delegate 启动收殓：崩溃时在飞的
-                                  // SubTask/Delegate 任务——部分结果抢救 + 父会话 F2 队列
-                                  // 通知（correlationId 幂等）+ 任务记录终态化。挂在启动
-                                  // 装配点（任何会话 actor spawn 之前 → 队列文件单写者），
-                                  // 多次重启幂等（终态化后 findRunningTasks 不再命中）。
-                                  // Best-effort：永不阻塞启动。
-                                  val subagentCrashSweep: IO[Unit] =
-                                    nebflow.agent.SubAgentStartupRecovery
-                                      .recoverOrphans(sharedResources.subAgentTaskStore, sessionStore)
-                                      .attempt
-                                      .flatMap {
-                                        case Right(ids) if ids.nonEmpty =>
-                                          logger
-                                            .info(s"Subagent crash sweep: ${ids.size} orphan task(s) recovered")
-                                            .void
-                                        case _ => IO.unit
-                                      }
                                   // wsHub 提前到 startupMount 之前创建：启动挂载的项目
                                   // engine 需要持有一个真实广播 wsSend（节点/分发器 agent
                                   // 事件 + nodeUpdated/nodeCompleted 等 Flow Map 事件）。
@@ -685,7 +668,45 @@ object GatewayMain extends IOApp:
                                   // wsSendFn 为 no-op，节点/分发器事件永远到不了前端
                                   // （#28 可观测缺口根因之一）。wsHub 本身无依赖，提前
                                   // 构造零副作用（无连接时 broadcast 空转）。
+                                  // 监督链自动恢复批（2026-10-22）：再提前到
+                                  // subagentCrashSweep 之前——复活腿（DelegateRevival）
+                                  // 的子会话 WS 事件面同源接入（routeWsSendFor 注
+                                  // rootSessionId/sessionId 后走 broadcast）。
                                   val wsHub = new WsHub()
+                                  // V2 (2026-09-03) 孤儿 delegate 启动收殓：崩溃时在飞的
+                                  // SubTask/Delegate 任务——部分结果抢救 + 父会话 F2 队列
+                                  // 通知（correlationId 幂等）+ 任务记录终态化。挂在启动
+                                  // 装配点（任何会话 actor spawn 之前 → 队列文件单写者），
+                                  // 多次重启幂等（终态化后 findRunningTasks 不再命中）。
+                                  // Best-effort：永不阻塞启动。
+                                  // 监督链自动恢复批（2026-10-22）：收殓升级为「先判复活
+                                  // 资格，不合格才收殓」——合格孤儿（内置执行器 delegate，
+                                  // 记录/座位/转录/预算俱在）由 DelegateRevival 同 id 从
+                                  // transcript checkpoint 续跑，父会话最终收续作结果；
+                                  // 复活慢段 fork（并发护栏），收殓同步段不变。
+                                  val subagentCrashSweep: IO[Unit] =
+                                    nebflow.agent.SubAgentStartupRecovery
+                                      .sweep(
+                                        sharedResources.subAgentTaskStore,
+                                        sessionStore,
+                                        Some(
+                                          nebflow.agent.SubAgentStartupRecovery.RevivalDeps(
+                                            resources = sharedResources,
+                                            system = actorSystem,
+                                            wsSend = Some(json => wsHub.broadcast(json))
+                                          )
+                                        )
+                                      )
+                                      .attempt
+                                      .flatMap {
+                                        case Right(report) if report.terminalized.nonEmpty || report.revived.nonEmpty =>
+                                          logger
+                                            .info(
+                                              s"Subagent crash sweep: ${report.summary} — terminalized: ${report.terminalized.mkString(",")}"
+                                            )
+                                            .void
+                                        case _ => IO.unit
+                                      }
                                   // M2 缓存一致性（v1 §6.1）：注册引擎侧失效广播面
                                   // （core 写路径工具 / WS 文件操作经 NfCacheInvalidator
                                   // 发射，此处注入 wsHub.broadcast——窄端口倒置先例同款）。

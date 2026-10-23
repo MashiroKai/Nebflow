@@ -13,7 +13,7 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk, ThinkingConfig, SubAgentTask}
+import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig, SubAgentTask}
 
 import scala.concurrent.duration.*
 
@@ -28,6 +28,13 @@ import scala.concurrent.duration.*
  * under the correct parent session transitions out of "running".
  */
 class SubAgentTaskStatusSpec extends CatsEffectSuite:
+
+  // 数据根隔离（监督链自动恢复批 2026-10-22 收口）：终态清理链与 F2 兜底（ChainStore /
+  // DelegateRegistry / CompactionQueueStore）都走全局 dataRoot——本套件此前跑在真实数据
+  // 根上（HEAD 起 ChainStore 即泄漏，F2 兜底新增写面），同 JVM 内邻套件的全局根切换/
+  // 遗留纤维会挤压 3s 等待窗。每件用例换上自己的 tmp 根，套件尾恢复。
+  private val originalRoot = PathUtil.dataRoot
+  override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
 
   // Never called on the code paths under test — the supervisor only touches
   // subAgentTaskStore / agentRegistry / wsSend.
@@ -46,6 +53,7 @@ class SubAgentTaskStatusSpec extends CatsEffectSuite:
 
   private def mkResources(system: ActorSystem, tmp: os.Path): IO[SharedResources] =
     for
+      _ <- IO(PathUtil.setDataRoot(tmp / "data"))
       dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
       rateLimiter <- RateLimiter.create()
       tracker <- FileChangeTracker.create(os.pwd.toString)

@@ -155,6 +155,34 @@ class SubAgentTaskStore(baseDir: os.Path) extends SubAgentTaskStorePort:
       writeTasksSync(parentSessionId, updated)
     }
 
+  /**
+   * 监督链自动恢复批（2026-10-22）：**boot 复活记账**（专面专名——updateStatus
+   * 签名零扩，避免 defaulted 参数前缀重载的二义性）。行翻 running + 复活预算
+   * +1 + 复活时刻 + `clearLastError` 清掉旧错误（复活 = 新执行窗口，旧错不随行）。
+   */
+  def markRevived(
+    parentSessionId: String,
+    taskId: String,
+    revivalCount: Int,
+    revivedAt: Long
+  ): IO[Unit] =
+    withLock {
+      val now = System.currentTimeMillis()
+      val updated = readTasksSync(parentSessionId).map { t =>
+        if t.taskId == taskId then
+          t.copy(
+            status = "running",
+            revivalCount = Some(revivalCount),
+            revivedAt = Some(revivedAt),
+            lastError = None,
+            completedAt = None,
+            statusAt = Some(now)
+          )
+        else t
+      }
+      writeTasksSync(parentSessionId, updated)
+    }
+
   /** Remove a task (called after successful completion + grace period). */
   def removeTask(parentSessionId: String, taskId: String): IO[Unit] =
     withLock {

@@ -1062,6 +1062,43 @@ object Defaults:
       .filter(_.nonEmpty)
       .toSet
 
+  // ---- delegate 监督链自动恢复（boot 复活腿，2026-10-22 作者令）----
+
+  /**
+   * delegate boot 复活总开关（监督链自动恢复批，设计
+   * `docs/design/delegate-supervision-revival-design.zh-CN.md` §2.2 #1）：默认
+   * true——引擎重启时在飞的内置执行器 delegate 由 SubAgentStartupRecovery 复活腿从
+   * transcript checkpoint 续跑（同 id），父会话最终收续作结果而非收殓通知。
+   * false = 复活腿整体旁路，全部孤儿落既有收殓链（**逐字节回本批前现状**——收殓、
+   * F2 幂等通知、重启打断标记腿零变化）。system prop
+   * `nebflow.delegate.revival.enabled`（每次调用现读，`CrashRecoveryEnabled`
+   * 同款 kill-switch 先例，测试可即时翻转）。
+   */
+  def DelegateRevivalEnabled: Boolean =
+    sys.props.getOrElse("nebflow.delegate.revival.enabled", "true").toBoolean
+
+  /** 单 delegate 复活次数上限（判据 §2.2 #6）：达限后不再复活、落收殓链。
+    * system prop `nebflow.delegate.revival.maxPerTask` 可调。 */
+  def DelegateRevivalMaxPerTask: Int =
+    sys.props.getOrElse("nebflow.delegate.revival.maxPerTask", "2").toInt
+
+  /** 复活年龄预算（毫秒，判据 §2.2 #7）：spawnedAt 距今超龄的孤儿不诈尸（陈年
+    * 孤儿复活多半派发意图已过期）。默认 7 天。system prop
+    * `nebflow.delegate.revival.maxAgeMs` 可调。 */
+  def DelegateRevivalMaxAgeMs: Long =
+    sys.props.getOrElse("nebflow.delegate.revival.maxAgeMs", (7L * 24 * 3600 * 1000).toString).toLong
+
+  /** 单 boot 复活总数上限（判据 §2.2 #8）：按 spawnedAt 新者优先，超额者走收殓——
+    * 病态转录批量复活的 LLM 洪峰护栏。system prop
+    * `nebflow.delegate.revival.bootCap` 可调。 */
+  def DelegateRevivalBootCap: Int =
+    sys.props.getOrElse("nebflow.delegate.revival.bootCap", "8").toInt
+
+  /** 复活 spawn 并发上限（慢段信号量，`ProjectCrashRecovery` 慢段同款护栏）。
+    * system prop `nebflow.delegate.revival.concurrency` 可调。 */
+  def DelegateRevivalConcurrency: Int =
+    sys.props.getOrElse("nebflow.delegate.revival.concurrency", "2").toInt
+
   // ---- 优雅关机 interrupted 非终态（中断恢复语义批 2026-09-13，spec
   //      `20260908_interrupt-recovery-semantics.md` §2.3/§2.7，作者裁定方案 A）----
 
