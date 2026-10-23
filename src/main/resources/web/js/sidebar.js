@@ -830,6 +830,7 @@ export function renderSettings() {
         ${toggleHTML({ on: !!(state.autostartStatus && state.autostartStatus.enabled), id: 'toggle-autostart', label: t('settings.autostart'), disabled: !!(state.autostartStatus && !state.autostartStatus.supported) })}
       </div>
       <div class="cfg-hint" id="autostart-hint" style="display:${state.autostartStatus && !state.autostartStatus.supported ? 'block' : 'none'};margin-top:-4px">${escapeHtml(state.autostartStatus?.reason || t('settings.autostartUnsupported'))}</div>
+      <div id="device-stamp-section"></div>
     </div>
     ${ORB_SETTINGS_VISIBLE ? `
     <div class="settings-section">
@@ -982,6 +983,13 @@ export function renderSettings() {
   const devicesSlot = document.getElementById('settings-devices-slot');
   if (devicesSlot) {
     import('./messages.js').then((m) => m.mountSettingsDevices(devicesSlot)).catch(() => {});
+  }
+
+  // device-provenance 批（2026-10-23）：「消息设备标记」区（命名 + 绑定到设备
+  // 列表）——懒挂载（叶子模块 deviceIdentity.js，roster 读数在其内异步拉）。
+  const stampSlot = document.getElementById('device-stamp-section');
+  if (stampSlot) {
+    import('./deviceIdentity.js').then((m) => m.mountDeviceStampSettings(stampSlot)).catch(() => {});
   }
 
   // Pre-fetch model capabilities, then refresh badges on provider cards

@@ -130,7 +130,9 @@ final class WsDispatchCtx(
   browseEntryCapImpl: Int,
   resolveExplorerBaseRootImpl: (String, Option[String]) => IO[String],
   admitWorkOrRefuseImpl: (io.circe.Json => IO[Unit]) => IO[Unit] => IO[Unit],
-  handleUserTextImpl: (String, String, String, Boolean) => IO[Unit],
+  handleUserTextImpl: (String, String, String, Boolean, Option[nebflow.bridge.ResolvedDevice]) => IO[Unit],
+  /** device-provenance 批：帧 `device` 键 → 花名册解析读数（缺席 ⇒ None ⇒ 不标注）。 */
+  deviceProvenanceImpl: io.circe.Json => IO[Option[nebflow.bridge.ResolvedDevice]],
   skipCurrentFreezeWindowImpl: () => IO[Unit],
   executeAskImpl: (String, String, io.circe.Json => IO[Unit]) => IO[Unit],
   executeSkillImpl: (String, String, String, io.circe.Json => IO[Unit]) => IO[Unit],
@@ -245,9 +247,15 @@ final class WsDispatchCtx(
     sessionId: String,
     content: String,
     source: String,
-    fromUser: Boolean
+    fromUser: Boolean,
+    device: Option[nebflow.bridge.ResolvedDevice] = None
   ): IO[Unit] =
-    handleUserTextImpl(sessionId, content, source, fromUser)
+    handleUserTextImpl(sessionId, content, source, fromUser, device)
+
+  /** device-provenance 批：帧 `device` 键的来源设备解析（见 WebSocketRoutes.deviceProvenanceOf）。 */
+  def deviceProvenance(json: io.circe.Json): IO[Option[nebflow.bridge.ResolvedDevice]] =
+    deviceProvenanceImpl(json)
+
   def skipCurrentFreezeWindow: IO[Unit] = skipCurrentFreezeWindowImpl()
 
   def executeAsk(

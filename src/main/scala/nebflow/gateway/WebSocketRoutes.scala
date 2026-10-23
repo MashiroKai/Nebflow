@@ -1757,6 +1757,9 @@ class WebSocketRoutes(
                   // in AgentActor makes a client resend idempotent.
                   IO.uncancelable(_ =>
                     // Resolve projectRoot for local file search before processing attachments
+                    // device-provenance 批：帧 `device` 键解析（缺席 ⇒ None ⇒ 下方
+                    // 构块/派发逐字节不变；解析面 fail-open，绝不阻塞消息本身）。
+                    deviceProvenanceOf(json).flatMap { deviceResolved =>
                     (for
                       metaOpt <- sessionStore.getSessionMeta(msgSessionId)
                       folderId = metaOpt.flatMap(_.folderId)
@@ -1932,7 +1935,12 @@ class WebSocketRoutes(
                           // (file/document/html-element) into [引用: …]
                           // injection blocks; refType=task fail-open 跳过。
                           processRefs(json, blocks).flatMap { _ =>
-                            val blocksList = blocks.toList
+                            // device-provenance 批：标记块前插为首块（正文块逐字不动；
+                            // 会话显示面已在上方 appendUiMessages 落裸正文）。None =
+                            // 未声明设备 ⇒ 逐字节现状。
+                            val blocksList = deviceResolved.fold(blocks.toList)(
+                              nebflow.bridge.DeviceProvenance.prependMarker(_, blocks.toList)
+                            )
                             // 输入框直通退役（2026-09-14 作者令）：typeless 帧不再探
                             // hub 的 pending AskUser 槽位 —— 文本一律按普通消息投
                             // AgentCommand.UserInput（= 引入直通之前的既有通道）。
@@ -1952,6 +1960,7 @@ class WebSocketRoutes(
                           }
                         }
                     }
+                      } // end deviceResolved flatMap (device-provenance 批)
                   ) // end IO.uncancelable
               }
             else
@@ -2024,6 +2033,7 @@ class WebSocketRoutes(
       resolveExplorerBaseRootImpl = resolveExplorerBaseRoot,
       admitWorkOrRefuseImpl = admitWorkOrRefuse,
       handleUserTextImpl = handleUserText,
+      deviceProvenanceImpl = deviceProvenanceOf,
       skipCurrentFreezeWindowImpl = () => skipCurrentFreezeWindow,
       executeAskImpl = executeAsk,
       executeSkillImpl = executeSkill,
@@ -2031,6 +2041,56 @@ class WebSocketRoutes(
       projectCreateBroadcastImpl = (json: io.circe.Json) => wsHub.broadcast(json)
     )
   end wsDispatchContext
+
+  // ─────────── 来源设备标记（device-provenance 批，2026-10-23 作者令）───────────
+  //
+  // 作者令：消息来源标记从渠道级（微信/飞书）细化到设备级——「让你能知道是哪台
+  // 设备来的，是否为我们设备列表里的设备」。本类是控制台腿的**唯一注入点**：
+  //
+  //   - 无 type 帧（输入框/队列/插件卡直投）与 `immediateInput` 帧（队列「立即
+  //     发送」）两条腿在派发前经 [[deviceProvenanceOf]] 解析帧 `device` 键；
+  //   - 标记只进模型面（`UserInput` blocks 首块 / `ImmediateInput` text 前缀），
+  //     会话显示面（`.ui.json` 行、气泡）保持裸正文——source-marker relocation
+  //     批（2026-10-01）的两 face 分离原样适用；
+  //   - 帧不带 `device`（CLI `userMessage` / REST headless / 旧前端）⇒ None ⇒
+  //     全部 face 逐字节不变（不声明不标注，不猜）。
+  //
+  // 纯函数面（解码/解析/渲染）在 [[nebflow.bridge.DeviceProvenance]]；本类只做
+  // 花名册取数（neblink self + peers，Ref 读内存价）与接线。
+
+  /** 花名册读数：self 身份 + peers 列表，映射为纯结构行。取数失败降级空册（未登记兜底，绝不冒认已登记）。 */
+  private def deviceRosterEntries: IO[(Option[nebflow.bridge.DeviceRosterEntry], List[nebflow.bridge.DeviceRosterEntry])] =
+    sharedResources.neblinkService match
+      case None => IO.pure((None, Nil))
+      case Some(svc) =>
+        (
+          svc.identity.map(i => Some(nebflow.bridge.DeviceRosterEntry(i.deviceId, i.deviceName))).attempt,
+          svc.peers
+            .map(ps => ps.map(p => nebflow.bridge.DeviceRosterEntry(p.deviceId, p.deviceName)))
+            .attempt
+        ).mapN((self, peers) =>
+          (
+            self.toOption.flatten,
+            peers.getOrElse(Nil)
+          )
+        )
+
+  /**
+   * 帧的来源设备解析：`device` 键缺席/无 clientId ⇒ None（不标注）；在场 ⇒ 对照
+   * 花名册出 [[ResolvedDevice]]。任何花名册异常都 fail-open 为空册（未登记），
+   * 绝不影响消息本身的派发。
+   */
+  private def deviceProvenanceOf(json: io.circe.Json): IO[Option[nebflow.bridge.ResolvedDevice]] =
+    nebflow.bridge.ClientDevice.fromFrame(json) match
+      case None => IO.pure(None)
+      case Some(client) =>
+        deviceRosterEntries.map { (self, peers) =>
+          val resolved = nebflow.bridge.DeviceProvenance.resolve(client, self, peers)
+          logger.info(
+            s"Device provenance: '${resolved.display}' (enrolled=${resolved.enrolled}) clientId=${client.clientId.take(8)}…"
+          )
+          Some(resolved)
+        }
 
   /**
    * 热重启 draining 工作准入闸（hot-restart 批设计 §3.3，WS 侧 choke 点）：包裹
@@ -2076,14 +2136,24 @@ class WebSocketRoutes(
    *   [[dispatchUserText]] → `AgentCommand.ImmediateInput(fromUser = …)` so the
    *   idle judgement (`clientMessageId.isDefined || fromUser`) keeps the
    *   human turn free of an injection source.
+   * @param device
+   *   来源设备解析读数（device-provenance 批，2026-10-23）：帧 `device` 键对照
+   *   花名册的读数；`None`（默认）= 客户端未声明 ⇒ 全部 face 逐字节不变。在场时
+   *   标记只进模型面（ImmediateInput text 前缀），UiMessage 行保持裸正文。
    */
-  private def handleUserText(sessionId: String, content: String, source: String, fromUser: Boolean): IO[Unit] =
+  private def handleUserText(
+    sessionId: String,
+    content: String,
+    source: String,
+    fromUser: Boolean,
+    device: Option[nebflow.bridge.ResolvedDevice] = None
+  ): IO[Unit] =
     if sessionId.nonEmpty && content.nonEmpty then
       // 输入框直通退役（2026-09-14 作者令）：输入框文本一律按普通消息投递 ——
       // 不再探 hub 的 pending AskUser 槽位，文本也不再成为卡片答案
       // （[[dispatchUserText]] = 唯一入队路径）。pending 卡保持 pending，
       // 只能在卡片上作答；headless REST (`rest-turn`) 与输入框同腿，形态不变。
-      dispatchUserText(sessionId, content, source, fromUser)
+      dispatchUserText(sessionId, content, source, fromUser, device)
     else
       // P1 2026-08-27 (frontend c1d57710): the queue "send-now" branch emitted an
       // empty-content frame (attachments dropped), which reached this path and was
@@ -2110,7 +2180,13 @@ class WebSocketRoutes(
    * renders as a bogus TOOL card. `fromUser` is a required parameter so no
    * caller can silently inherit the wrong origin.
    */
-  private def dispatchUserText(sessionId: String, content: String, source: String, fromUser: Boolean): IO[Unit] =
+  private def dispatchUserText(
+    sessionId: String,
+    content: String,
+    source: String,
+    fromUser: Boolean,
+    device: Option[nebflow.bridge.ResolvedDevice] = None
+  ): IO[Unit] =
     logger.info(s"User text ($source) for session $sessionId (${content.length} chars)") *>
       sessionStore.appendUiMessages(
         sessionId,
@@ -2120,7 +2196,14 @@ class WebSocketRoutes(
       // SessionKickIdleSec), break it BEFORE queueing — the queued message
       // injects at the turn boundary the kick creates (user intent first).
       maybeSessionKick(sessionId, s"userMessage:$source") *>
-      ensureAgent(sessionId)(ref => ref ! AgentCommand.ImmediateInput(content, fromUser = fromUser))
+      // device-provenance 批：标记只进模型面（text 前缀，BridgeOrigin.compose 同序
+      // ——标记块、空行、正文）；上方 UiMessage 行保持裸正文（两 face 分离原律）。
+      ensureAgent(sessionId)(ref =>
+        ref ! AgentCommand.ImmediateInput(
+          device.fold(content)(nebflow.bridge.DeviceProvenance.compose(_, content)),
+          fromUser = fromUser
+        )
+      )
 
   /**
    * 冻结「跳过本次」唯一入口（2026-08-25 22:28 裁定）：前端冻结按钮发
