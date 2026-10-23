@@ -278,12 +278,6 @@ export default {
   // parent session isn't currently displayed, preventing stale indicators.
   sessionBgAgents: {},
 
-  // 对话层活性批（2026-10-22）：Per-session 回合活动流（turnActivity.js 的账本）：
-  // sessionId -> [{ kind, text, who, ts, count }]。委派/后台任务的回合内活动
-  // （批派发/子代理工具调用/待合并/后台任务状态）按 rootSessionId 落桶；非激活
-  // 会话照收（切回重放），done 终态清空（turnActivity.clearActivity）。
-  sessionActivity: {},
-
   // Per-agent aggregate state: agentName -> 'working' | 'waiting' | 'compressing' | 'complete' | 'idle'
   agentStates: {},
   // Debounce timer for complete state

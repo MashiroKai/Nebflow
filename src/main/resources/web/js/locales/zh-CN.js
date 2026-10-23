@@ -2407,10 +2407,9 @@ export default {
   'secrets.error.io': '密钥请求失败（{code}）。请检查网关连接后重试。',
   // === Phase 3b session rail: paste-ticket entry (ws.js stage B) ===
   'ws.ticketEntry.notify': '需要登录——点击登录按钮，通过 {lowerBrand} 账号继续',
-  // 对话层活性批（2026-10-22）：回合活动流条（委派/后台任务的回合内活动，
-  // 一条轻量可折叠活动行）。
-  'activity.title': '活动',
-  'activity.count': '{n} 条',
+  // 回合活动流条（activity.title/activity.count，对话层活性批 2026-10-22）已整链
+  // 退役 —— 2026-10-23 作者令逐字「这个活动面板我不是让删掉吗，就是对话框上面
+  // 这个」。防复活钉：tests/turn-activity-stream.spec.mjs。
   // === mobile-mockup-375 v3 实施批（20261020_214500 样张落地）===
   // profile 面板（扩展③：会话头头像入口 + 头像/名称便捷设置）
   'profile.title': '智能体',
