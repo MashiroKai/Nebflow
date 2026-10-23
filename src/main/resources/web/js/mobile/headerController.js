@@ -14,7 +14,8 @@
 //     两列的子钮归属权在各键主（float/layout），本文件只建列壳与开合/排列。
 //   · 中簇 = 会话头（头像 + 名称胶囊，agentProfile.js 插入的同一节点），CSS 网格
 //     居中；时间戳本就不在顶栏（v3① 口径 = 顶栏不出现时间，spec 断言守护）。
-//   · 点空白全收（scrim 一件：收两列 + 任务浮层 + profile 面板）。
+//   · 点空白全收（scrim 一件：收两列 + 任务浮层；合并面板走 overlay 自带点外
+//     关闭，见 collapseAll 注）。
 //
 // 结构：本文件不搬移任何既有节点 —— 只向 #header 追加左右两个 `.mh-dd` 列壳
 // （桌面视口永不激活 ⇒ 零桌面痕迹）；#header 既有子节点的 v3 摆放全部在
@@ -23,7 +24,6 @@
 import { createIconsIn } from '../utils.js';
 import { logEvent, touchLayer } from './navController.js';
 import { closeTaskPanel, isTaskPanelOpen } from './taskPanel.js';
-import { closeProfilePanel } from '../agentProfile.js';
 
 const HD_ICON = 'sliders-horizontal'; // 左钮（会话功能）
 const NAV_ICON = 'layers';            // 右钮（前往）
@@ -104,8 +104,7 @@ function observeList(dd) {
 function anySurfaceOpen() {
   return (ddL && ddL.classList.contains('open'))
     || (ddR && ddR.classList.contains('open'))
-    || isTaskPanelOpen()
-    || document.body.classList.contains('ap-open');
+    || isTaskPanelOpen();
 }
 
 function syncScrim() {
@@ -113,17 +112,19 @@ function syncScrim() {
   scrim.classList.toggle('open', !!anySurfaceOpen());
 }
 
-/** 收两列（子钮沉回）；不动任务浮层/profile（各自的 X / scrim 统一收口在此）。 */
+/** 收两列（子钮沉回）；不动任务浮层（其 X / scrim 统一收口在此）。 */
 export function collapseDDs() {
   setDD(ddL, false);
   setDD(ddR, false);
 }
 
-/** 点空白全收（样张：scrim click → closeDD + closeTPanel）。 */
+/** 点空白全收（样张：scrim click → closeDD + closeTPanel）。
+ *  面板合并批（2026-10-23 ①）：profile 弹窗语义退役 —— 合并面板走
+ *  memory-overlay 自带的点外关闭（overlay 310 盖过 scrim 39，点幕路径
+ *  天然不可达），scrim 不再代管。 */
 function collapseAll() {
   collapseDDs();
   closeTaskPanel(true);
-  closeProfilePanel();
   syncScrim();
 }
 

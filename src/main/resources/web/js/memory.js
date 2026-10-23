@@ -1,10 +1,25 @@
 // memory.js — Memory modal with Agent / User tabs
+//
+// 面板合并批（2026-10-23 作者令①②）：本 modal 升级为「智能体 + 记忆」合并面板
+// 的唯一载体 —— 顶层两枚页签（智能体 / 记忆，文案复用 profile.title /
+// memory.title 既有键）切换两个分区：
+//   · 智能体分区 = agentProfile.js buildProfilePane() 注入的 .ap-pane
+//     （头像点击即换头像 + 名称就地编辑 + 说明行）；
+//   · 记忆分区 = 既有 Agent/User scope tabs + 内容面 + Save/Cancel（零变化）。
+// 旧独立 #agent-profile-panel（body 级弹窗）退役：桌面会话头头像与 #memory-btn
+// 都指向本面板（openMergedPanel('agent'|'memory')）；分区分显由
+// `#memory-modal[data-pane]` 属性 + CSS 驱动（桌面/手机同一套）。
 
 import state from './state.js';
 import { sendWs } from './ws.js';
+import { t } from './i18n.js';
+import { buildProfilePane } from './agentProfile.js';
 
 /** Currently active tab scope. */
 let activeScope = 'agent';
+
+/** Currently active top-level pane: 'agent'（智能体）| 'memory'（记忆）. */
+let activePane = 'agent';
 
 /** Cache per-scope content so tab switches don't re-fetch within same modal open. */
 const cache = { user: null, agent: null };
@@ -29,13 +44,28 @@ export function clearMemoryCache() {
   cache.agent = null;
 }
 
-/** Open the memory modal, fetch active tab content. */
-export function openMemoryModal(event) {
+/** Switch top-level pane（智能体 ⇄ 记忆）：data-pane 属性驱动 CSS 分区显隐。 */
+function switchPane(pane) {
+  activePane = pane;
+  const modal = /** @type {HTMLElement|null} */ (document.getElementById('memory-modal'));
+  if (modal) modal.dataset.pane = pane;
+  document.querySelectorAll('.merged-tab').forEach((tab) => {
+    const on = /** @type {HTMLElement} */ (tab).dataset.pane === pane;
+    tab.classList.toggle('active', on);
+    tab.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  const title = document.getElementById('memory-modal-title');
+  if (title) title.textContent = t(pane === 'agent' ? 'profile.title' : 'memory.title');
+  if (pane === 'memory') loadTab(activeScope);
+}
+
+/** Open the merged panel on a pane ('agent' | 'memory'), fetch active content. */
+export function openMergedPanel(pane = 'memory') {
   memorySessionId = state.activeSessionId;
   clearMemoryCache();
   document.getElementById('memory-modal').classList.add('show');
   document.getElementById('memory-overlay').classList.add('on');
-  loadTab(activeScope);
+  switchPane(pane);
 }
 
 /** Close the memory modal. */
@@ -116,9 +146,50 @@ export function saveMemory() {
   sendWs({ type: 'saveMemory', scope: activeScope, content, sessionId: memorySessionId });
 }
 
+/** 顶层页签行（智能体 / 记忆）：幂等一件；文案走既有键，locale 切换跟随。 */
+function ensureMergedChrome() {
+  const modal = document.getElementById('memory-modal');
+  if (!modal || modal.querySelector('.merged-tabs')) return;
+  const title = document.getElementById('memory-modal-title');
+
+  const tabsRow = document.createElement('div');
+  tabsRow.className = 'merged-tabs';
+  tabsRow.setAttribute('role', 'tablist');
+  tabsRow.setAttribute('aria-label', t('memory.title'));
+  for (const pane of ['agent', 'memory']) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'merged-tab';
+    b.dataset.pane = pane;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', 'false');
+    b.textContent = t(pane === 'agent' ? 'profile.title' : 'memory.title');
+    b.addEventListener('click', () => switchPane(pane));
+    tabsRow.appendChild(b);
+  }
+  if (title) modal.insertBefore(tabsRow, title);
+  else modal.insertBefore(tabsRow, modal.firstChild);
+
+  // 智能体分区（agentProfile.js 的一件式 .ap-pane）：插在记忆 scope tabs 之前。
+  const memoryTabs = modal.querySelector('.memory-tabs');
+  const paneEl = buildProfilePane();
+  if (memoryTabs) modal.insertBefore(paneEl, memoryTabs);
+  else modal.appendChild(paneEl);
+
+  window.addEventListener('locale-changed', () => {
+    tabsRow.querySelectorAll('.merged-tab').forEach((tab) => {
+      const pane = /** @type {HTMLElement} */ (tab).dataset.pane;
+      tab.textContent = t(pane === 'agent' ? 'profile.title' : 'memory.title');
+    });
+    const titleNow = document.getElementById('memory-modal-title');
+    if (titleNow) titleNow.textContent = t(activePane === 'agent' ? 'profile.title' : 'memory.title');
+  });
+}
+
 /** Initialize memory UI — bind button, tabs, modal buttons, overlay dismiss. */
 export function initMemory() {
-  document.getElementById('memory-btn')?.addEventListener('click', openMemoryModal);
+  ensureMergedChrome();
+  document.getElementById('memory-btn')?.addEventListener('click', () => openMergedPanel('memory'));
   document.querySelectorAll('.memory-tab').forEach(tab => {
     tab.addEventListener('click', () => switchTab(tab.dataset.scope));
   });

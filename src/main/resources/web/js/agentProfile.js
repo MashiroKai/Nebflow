@@ -1,30 +1,20 @@
-// agentProfile.js — 会话头头像 + profile 面板（mobile-mockup-375 v3 实施批 · 扩展③）。
+// agentProfile.js — 会话头头像 + 智能体分区（面板合并批 2026-10-23 重构）。
 //
-// 作者已批形态（v2④ 提案 + v3 现场三条扩展之三）：
-//   · 入口改道：**不要**右下角小相机角标 —— 点击会话头头像直接进 profile 面板；
-//   · 面板内便捷设置**头像与名称**：头像上传走 local-first（localStorage dataURL
+// 作者已批形态（v2④ 提案 + v3 现场三条扩展之三 + 面板合并批两令）：
+//   · 面板合并（作者令 2026-10-23 ①）：本模块不再持有 body 级独立面板
+//     （#agent-profile-panel 退役）—— 头像/名称内容以 .ap-pane 一件式分区注入
+//     「智能体 + 记忆」合并面板（memory.js ensureMergedChrome 调 buildProfilePane）；
+//     点击会话头头像 = 打开合并面板的智能体分区（openMergedPanel('agent')）。
+//   · 头像设置交互（作者令 ②）：**没有**单独的「设置头像」按钮 —— 点击面板内
+//     头像本体即唤起文件选择换头像；「重置头像」按钮**删除**（恢复默认 = 换回
+//     引擎缺省头像的路径不再提供 UI 入口）。
+//   · 面板内便捷设置头像与名称：头像上传走 local-first（localStorage dataURL
 //     按 agentId 键，镜像 avatarCache.js 的 branding 命名空间键位）；名称就地编辑
-//     （回车保存，写穿既有 display-name 机制 —— root 走 rootName 单读点同款写点，
-//     非 root 写 agentsData 行，二者都以 `nebflow-root-name-change` 事件刷新 Header）；
-//   · 渲染走 avatarRender.js 复用池（avatarImgNode）防闪：同 dataURL 命中池内已解码
-//     节点 ⇒ 重挂载零重解码零空白帧；缺省回落首字母圆牌；
-//   · 会话头两端同款：桌面 = 头像居中 + 名称在下（v2/v3 已批形态，css/chat.css）；
-//     手机 375 = 悬浮顶栏中簇（css/mobileLayer.css v3 段）。同一 DOM 节点两端共用，
-//     本文件不区分视口 —— 形态差异全部在 CSS 层。
+//     （回车保存，写穿既有 display-name 机制）；渲染走 avatarRender.js 复用池。
 //
-// 边界（任务书）：本批只做会话头/头像两端同款 + profile 面板适肤；列表行/抽层等
-// 其余消费点、以及名称的服务端持久化写路径（onboarding 的 agent.json 腿）不在本批。
-// 功能逻辑零重造：存储/avatarCache 同键位精神、渲染/avatarRender 同池、名称/既有
-// display-name 机制同写点，本模块只是把三件既有设施接到会话头这一个面上。
-//
-// 持久/同步腿（2026-10-21 诊断批症状⑧「头像/名称跨设备不同步」）：面板的
-// 「名称回车即存 / 头像登录后可随账号同步」此前只有本地与内存腿——localStorage
-// 只落本浏览器（跨设备必不同步），名称更是纯内存（刷新即还原）。本批接上引擎
-// display 面（PresenceRoutes：PUT /api/agents/:name/display-name、PUT/GET/DELETE
-// /api/agents/:name/avatar）：**本地优先照旧**（读先 localStorage，服务端作缺键
-// 回填 + 跨端载体），写入 fire-and-forget 写穿（失败静默——内存态已成立，下次
-// list/探针以服务端为准自纠）。reset 走 DELETE；跨端 reset 收敛的 v1 已知限制
-// 见诊断报告（另一端 localStorage 旧键仍优先，直至其本地也清或缺键）。
+// 持久/同步腿（2026-10-21 诊断批症状⑧）：本地优先照旧（读先 localStorage，服务端
+// 作缺键回填 + 跨端载体），写入 fire-and-forget 写穿（失败静默）；上传路径 PUT
+// /api/agents/:name/avatar，reset 的 DELETE 腿随按钮一并退役（upload 仍写穿）。
 
 import { key } from './branding.js';
 import state from './state.js';
@@ -167,65 +157,35 @@ function paintSlot() {
   }
 }
 
-// ── profile 面板（body 级一件；桌面居中卡 / 手机 v3 悬浮卡，几何在 CSS 层）──
+// ── 智能体分区（.ap-pane 一件式；注入合并面板 memory-modal，见 memory.js）──
 
-/** @type {HTMLElement|null} */
-let panel = null;
 // HTMLInputElement（非 HTMLElement）：面板存 .type/.value/.placeholder 直写点
 // （症状⑧批 touched-file checkJs 清零时补注——四处 TS2339 皆此根因）。
 /** @type {HTMLInputElement|null} */
 let nameInput = null;
 /** @type {HTMLInputElement|null} */
 let fileInput = null;
-/** @type {HTMLElement|null} */
+/** @type {HTMLButtonElement|null} 头像预览盒（点击 = 换头像，作者令②：无独立
+ *  设置按钮；面板存 .type 直写点 —— checkJs 对位，同 nameInput 根因）。 */
 let previewBox = null;
+/** @type {HTMLElement|null} 分区根（locale 切换重刷文案用）。 */
+let paneRoot = null;
 
-function ensurePanel() {
-  if (panel) return panel;
-  panel = document.createElement('div');
-  panel.id = 'agent-profile-panel';
-  panel.className = 'agent-profile-panel';
-  panel.setAttribute('role', 'dialog');
-  panel.setAttribute('aria-modal', 'false');
-  panel.hidden = true;
+/**
+ * 构建智能体分区（一件式；memory.js 合并面板初始化时调用一次）。
+ * 结构：头像预览盒（点击即换头像）+ 名称就地编辑行 + 说明行 + 隐藏 file input。
+ */
+export function buildProfilePane() {
+  if (paneRoot) return paneRoot;
+  const section = document.createElement('section');
+  section.className = 'ap-pane';
+  section.dataset.paneFace = 'agent';
 
-  const head = document.createElement('div');
-  head.className = 'ap-head';
-  const icon = document.createElement('i');
-  icon.setAttribute('data-lucide', 'user');
-  const title = document.createElement('span');
-  title.className = 'ap-title';
-  title.textContent = t('profile.title');
-  const close = document.createElement('button');
-  close.type = 'button';
-  close.className = 'ap-close glass-control';
-  close.setAttribute('aria-label', t('profile.closeAria'));
-  close.innerHTML = '<i data-lucide="x"></i>';
-  close.addEventListener('click', () => closeProfilePanel());
-  head.append(icon, title, close);
-
-  previewBox = document.createElement('div');
+  previewBox = document.createElement('button');
+  previewBox.type = 'button';
   previewBox.className = 'ap-avatar-box';
-
-  const btnRow = document.createElement('div');
-  btnRow.className = 'ap-btnrow';
-  const upload = document.createElement('button');
-  upload.type = 'button';
-  upload.className = 'ap-btn ap-btn-primary';
-  upload.innerHTML = `<i data-lucide="image"></i><span>${t('profile.upload')}</span>`;
-  upload.addEventListener('click', () => fileInput && fileInput.click());
-  const reset = document.createElement('button');
-  reset.type = 'button';
-  reset.className = 'ap-btn ap-btn-ghost';
-  reset.innerHTML = `<i data-lucide="rotate-ccw"></i><span>${t('profile.reset')}</span>`;
-  reset.addEventListener('click', () => {
-    const name = currentAgentName();
-    writeStored(name, '');
-    pushAvatar(name, ''); // 引擎侧同步清除（跨端载体；v1 另一端本地旧键仍优先，见头注）
-    paintSlot();
-    paintPreview();
-  });
-  btnRow.append(upload, reset);
+  // 作者令②：点击头像本体 = 换头像（整盒为按钮；aria 走「上传头像」既有键）。
+  previewBox.addEventListener('click', () => fileInput && fileInput.click());
 
   fileInput = document.createElement('input');
   fileInput.type = 'file';
@@ -250,11 +210,9 @@ function ensurePanel() {
   nameRow.className = 'ap-namerow';
   const nameLab = document.createElement('span');
   nameLab.className = 'ap-name-label';
-  nameLab.textContent = t('profile.nameLabel');
   nameInput = document.createElement('input');
   nameInput.type = 'text';
   nameInput.className = 'ap-name-input';
-  nameInput.setAttribute('aria-label', t('profile.nameLabel'));
   // 就地编辑：回车保存（写穿既有 display-name 机制），Esc 还原。
   nameInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); saveName(); nameInput.blur(); }
@@ -265,15 +223,26 @@ function ensurePanel() {
 
   const note = document.createElement('div');
   note.className = 'ap-note';
-  note.textContent = t('profile.note');
 
-  panel.append(head, previewBox, btnRow, nameRow, note, fileInput);
-  document.body.appendChild(panel);
-  if (typeof lucide !== 'undefined') createIconsIn(panel);
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && panel && !panel.hidden) closeProfilePanel();
-  });
-  return panel;
+  section.append(previewBox, nameRow, note, fileInput);
+  paneRoot = section;
+  syncPaneLocale();
+  fillName();
+  paintPreview();
+  return section;
+}
+
+/** 分区文案刷新（构建时 + locale-changed）。 */
+function syncPaneLocale() {
+  if (!paneRoot) return;
+  const lab = paneRoot.querySelector('.ap-name-label');
+  if (lab) lab.textContent = t('profile.nameLabel');
+  if (previewBox) {
+    previewBox.setAttribute('aria-label', t('profile.upload'));
+    previewBox.title = t('profile.upload');
+  }
+  const note = paneRoot.querySelector('.ap-note');
+  if (note) note.textContent = t('profile.note');
 }
 
 /** 上传图降采样到 ≤MAX_DIM 方形 dataURL（非图/读失败 resolve null）。 */
@@ -316,7 +285,7 @@ function paintPreview() {
   }
   previewBox.classList.remove('has-img');
   previewBox.replaceChildren();
-  const plate = document.createElement('div');
+  const plate = document.createElement('span');
   plate.className = 'ap-avatar-initial';
   plate.textContent = initialOf(label) || '·';
   previewBox.appendChild(plate);
@@ -333,9 +302,8 @@ function fillName() {
  *  行 + 事件。空值 = 还原为机制名行（root：清 override，头名按未命名口径留空）。
  *  持久/跨设备腿（症状⑧）：非空值 fire-and-forget 写引擎 display 面（PUT
  *  /api/agents/:name/display-name → agents/<name>/agent.json displayName）——
- *  agentsData 行与 rootName 探针同源此文件，另一端下次 list/探针即收敛；此前
- *  本面板只落内存（刷新即还原，「回车即存」承诺无落盘腿）。失败静默：内存态已
- *  成立，服务端自纠不阻塞 UI。 */
+ *  agentsData 行与 rootName 探针同源此文件，另一端下次 list/探针即收敛。失败
+ *  静默：内存态已成立，服务端自纠不阻塞 UI。 */
 function saveName() {
   if (!nameInput) return;
   const agentName = currentAgentName();
@@ -360,44 +328,11 @@ function saveName() {
   paintPreview();
 }
 
-/** 打开 profile 面板。手机视口由 mobileLayer 接管几何（morph 形态）；桌面居中卡。 */
+/** 打开智能体分区（会话头头像点击）：动态 import 断依赖环
+ *  （memory.js 静态 import 本模块的 buildProfilePane；本模块只在事件时回调）。
+ *  手机视口由 floatController 的 PANEL_FACE 从头像圆钮播二级液态 morph。 */
 export function openProfilePanel() {
-  if (docked) return; // P12：已作设置页置顶块常显 —— 弹窗语义（scrim/X）让位
-  const p = ensurePanel();
-  fillName();
-  paintPreview();
-  p.hidden = false;
-  document.body.classList.add('ap-open');
-}
-
-export function closeProfilePanel() {
-  if (docked) return; // 停靠态块不可被 Esc/scrim 收走（收口 = 出设置页）
-  if (!panel) return;
-  document.body.classList.remove('ap-open');
-  panel.hidden = true;
-}
-
-// ── P12 设置页置顶块（mobile-secondary-screens 批：停靠/拆铺一对缝）──────
-// 设置页 live 时面板被 navController 收编为页体首块（head 关闭钮 CSS 隐藏），
-// 停靠期间弹窗语义整体让位（open/close 早退）；出页拆铺归位并恢复弹窗语义。
-let docked = false;
-
-/** 停靠为设置页置顶块：常显（不走 ap-open scrim 语义），返回面板节点供收编。 */
-export function dockProfileBlock() {
-  const p = ensurePanel();
-  docked = true;
-  fillName();
-  paintPreview();
-  p.hidden = false;
-  return p;
-}
-
-/** 拆铺：归还弹窗语义（隐藏 + 清 scrim 态；scrim 若因停靠前弹窗残留一并清）。 */
-export function undockProfileBlock() {
-  docked = false;
-  if (!panel) return;
-  document.body.classList.remove('ap-open');
-  panel.hidden = true;
+  import('./memory.js').then((m) => m.openMergedPanel('agent')).catch(() => { /* 模块未就绪：下次点击重试 */ });
 }
 
 // ── 初始化（main.js 组装根调用一次；桌面/手机共此一件）────────────────────
@@ -413,7 +348,11 @@ export function initAgentProfile() {
   }
   paintSlot();
   // 身份/名字变化 → 重绘（会话切换、起名事件、agentsData 到达）。
-  window.addEventListener('nebflow-session-change', paintSlot);
+  window.addEventListener('nebflow-session-change', () => { paintSlot(); paintPreview(); });
   window.addEventListener('nebflow-root-name-change', () => { paintSlot(); });
-  window.addEventListener('locale-changed', () => { paintSlot(); if (panel && !panel.hidden) { fillName(); } });
+  window.addEventListener('locale-changed', () => {
+    paintSlot();
+    syncPaneLocale();
+    fillName();
+  });
 }

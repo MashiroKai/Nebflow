@@ -2416,7 +2416,6 @@ export default {
   'profile.openAria': '智能体资料',
   'profile.closeAria': '关闭',
   'profile.upload': '上传头像',
-  'profile.reset': '恢复默认',
   'profile.nameLabel': '名称',
   'profile.namePlaceholder': '输入名称，回车保存',
   'profile.note': '头像本地优先保存（按智能体各自记忆），保存后同步到本引擎的所有登录设备；名称回车即存（跨设备生效）。',

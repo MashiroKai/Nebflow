@@ -46,7 +46,6 @@ import {
 } from '../canvas.js';
 import { key } from '../branding.js';
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '../sidebar.js';
-import { openProfilePanel, undockProfileBlock } from '../agentProfile.js';
 import { createIconsIn } from '../utils.js';
 
 /** 页面注册表（root 之外）。route id 稳定 = App 深链/壳映射留缝点。 */
@@ -206,39 +205,6 @@ const overlayFaceByPage = {
   usage: '#usage-dashboard',
 };
 
-/** P12 设置页 profile 块（六件④重做：不再停靠常显 —— 手机实测反馈「进入设置页
- *  自动弹出『智能体』模态」。面板保持隐藏挂 body，栈顶=设置时页体首块注入一条
- *  显式入口行，点击才 openProfilePanel() 弹窗形态；出栈移除入口行并 undock
- *  清残面（保 dock 残留态兜底清理，幂等无副作用）。 */
-const profileEntry = { btn: null };
-
-function syncProfileBlock() {
-  const body = bodyOf('settings');
-  if (!body) return;
-  const live = stack.includes('settings');
-  if (live) {
-    if (!profileEntry.btn || !profileEntry.btn.isConnected) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'profile-entry';
-      btn.innerHTML =
-        '<i data-lucide="bot" class="profile-entry-ico"></i>' +
-        `<span>${tt('智能体', 'Agent profile')}</span>` +
-        '<i data-lucide="chevron-right" class="profile-entry-arrow"></i>';
-      btn.addEventListener('click', () => openProfilePanel());
-      body.insertBefore(btn, body.firstChild);
-      if (typeof lucide !== 'undefined') createIconsIn(btn);
-      profileEntry.btn = btn;
-      logEvent('pane-entry-add', { page: 'settings', face: '#agent-profile-panel' });
-    }
-  } else if (profileEntry.btn) {
-    profileEntry.btn.remove();
-    profileEntry.btn = null;
-    undockProfileBlock(); // 兜底：dock 语义已退役，仅清可能的历史残面/scrim 态
-    logEvent('pane-entry-remove', { page: 'settings', face: '#agent-profile-panel' });
-  }
-}
-
 /** 把 overlay 内容面移入页面体（幂等；锚点照 paneAnchors 惯例记录）。 */
 function adoptOverlayFace(pageId) {
   const sel = overlayFaceByPage[pageId];
@@ -313,18 +279,23 @@ function watchCanvasContent() {
 
 // ── 文档卡片（③：画板层只承载 pop 出来的文档，以卡片呈现）───────────
 
-// ── UI 批⑨：手机卡头胶囊手势（无按压前置，作者令 C）─────────────────
-// 胶囊（.canvas-header，split.css §⑨ / mobileLayer §⑨ 通栏变体）上手势：
-//   直滑上下 = 换文档卡（环 = docTabs() 卡片层序，下滑(+1)=下一张，deck 同语义，
+// ── UI 批⑨ → 画板底卡批（作者令 2026-10-23 ⑦）：卡头胶囊 = bottom sheet 顶缘──
+// 胶囊（.canvas-header，split.css §⑨ / mobileLayer §⑨ 通栏变体）上手势（无按压
+// 前置，作者令 C；⑦ 令改写纵滑语义）：
+//   直滑**下滑** = 收起整叠 bottom sheet（closeCanvas —— 文档保留在页签数据模型，
+//     保留状态不销毁；⑦ 令「顶部边缘下滑 = 收起」，取代批⑨的纵滑换卡下半向）；
+//   直滑**上滑** = 换下一张文档卡（批⑨换卡语义保留上向；环 = docTabs() 卡片层序，
 //     释放 |dy|>48）；
-//   直滑左右 = 关卡（closeCard 既有邻卡落位，释放 |dx|>64）；
+//   直滑左右 = 关卡（closeCard 既有邻卡落位，释放 |dx|>64；⑦ 令「左右滑 = 关闭
+//     该卡片」在卡头缘的同向落点）；
 //   长按 450ms（未锁轴未抬起）= 触感（is-longpress → scale/亮度）+ 浮出
 //     .mobile-card-ref-btn 引用钮（视口坐标落点），点击走 quoteActiveCardRef
 //     （canvas.js 导出，与桌面右键「引用当前页」同一 appendRefToActiveView 通路）；
 //   任意外部按下/滚动/换卡即收引用钮。
-// 与滚动冲突消解（分区契约）：.canvas-header 手机端 touch-action:none（既有），
-//   手势只绑卡头元素；内容区滚动发生在 pane 内部滚动器，零劫持。轴锁 8px 与
-//   桌面胶囊/deck 同档；跟手位移走 --head-dx/--head-dy 变量链（CSS transform）。
+// 与滚动冲突消解（分区契约，⑦ 令「canvas 内部手势优先」）：.canvas-header 手机端
+//   touch-action:none（既有），手势只绑卡头元素；内容区滚动发生在 pane 内部滚动器
+//   （canvasGestures 侧边/底缘带外的区域零劫持）。轴锁 8px 与桌面胶囊/deck 同档；
+//   跟手位移走 --head-dx/--head-dy 变量链（CSS transform）。
 const CARDHEAD_AXIS_LOCK_PX = 8;
 const CARDHEAD_SWITCH_PX = 48;
 const CARDHEAD_CLOSE_PX = 64;
@@ -363,6 +334,9 @@ function initCardHeadTouch(head) {
     dismissRef();
     clearLp();
     g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0, axis: null, longpressed: false };
+    // 显式指针捕获：touch 隐式捕获已有，mouse 管线（桌面窄窗/自动化）不捕获则
+    // 拖离卡头后 move/up 不再经过 head，手势流断（缘带手势同批修法）。
+    try { head.setPointerCapture(e.pointerId); } catch (_) {}
     // 长按 450ms：未锁轴未抬起 → 触感 + 浮出引用钮
     lpTimer = window.setTimeout(() => {
       if (!g || g.axis) return;
@@ -423,7 +397,12 @@ function initCardHeadTouch(head) {
     if (longpressed) return;            // 长按已交引用钮接管，不判滑
     const id = activeDocId();
     if (!id) return;
-    if (axis === 'y' && Math.abs(dy) > CARDHEAD_SWITCH_PX) switchDocCard(dy > 0 ? 1 : -1);
+    // ⑦ 令纵滑语义：顶部边缘（卡头胶囊）下滑 = 收起整叠（状态保留，可再开）；
+    //   上滑 = 换下一张（批⑨保留上向）。横滑 = 关卡（邻卡落位既有）。
+    if (axis === 'y' && dy > CARDHEAD_SWITCH_PX) {
+      logEvent('cards-collapse', { via: 'head-edge' });
+      closeCanvas();
+    } else if (axis === 'y' && dy < -CARDHEAD_SWITCH_PX) switchDocCard(1);
     else if (axis === 'x' && Math.abs(dx) > CARDHEAD_CLOSE_PX) closeCard();
   };
   head.addEventListener('pointerup', finish);
@@ -611,7 +590,6 @@ function renderPages() {
   }
   document.body.classList.toggle('mf-page-open', PAGE_BY_ID.has(top));
   syncOverlayFaces(); // usage/settings 面随栈收编/归还（外部关闭对账路径同此汇合）
-  syncProfileBlock(); // P12：设置页 profile 置顶块随栈停靠/拆铺
 }
 
 /** 页面面关闭（overlay 升格的 usage/settings 与栈同步；面板页由 renderPages 收）。
@@ -820,12 +798,6 @@ export function activateNav() {
     // 视口跨越回桌面时正在看的设置/用量页直接以桌面形态续显）。
     for (const id of [...overlayAnchors.keys()].reverse()) restoreOverlayFace(id);
     overlayAnchors.clear();
-    // P12 profile 入口行拆铺（面板本体一直挂 body 未动；清入口行 + 弹窗语义还原）。
-    if (profileEntry.btn) {
-      profileEntry.btn.remove();
-      profileEntry.btn = null;
-    }
-    undockProfileBlock();
     if (cardHead) { cardHead.remove(); cardHead = null; }
     for (const b of injectedBacks.splice(0)) b.remove();
     document.body.classList.remove('mf-cards-live', 'mf-page-open');

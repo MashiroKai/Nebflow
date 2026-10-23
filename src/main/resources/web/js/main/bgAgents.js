@@ -204,12 +204,14 @@ function visibleBgAgentEntries(bgAgents) {
 // Uptime tick: while the dropdown is open, refresh .bg-task-uptime text in
 // place every 15s (no full re-render — keeps keyboard focus). Self-terminates
 // once the dropdown hides, regardless of which close path ran.
+// 后台合并批（2026-10-23 ⑥）：子智能体行现居合并载体 #bg-dropdown —— 在开判据
+// 随行落点改读载体（旧幽灵面恒 display:none，读它会让 uptimes 永停）。
 let bgUptimeTick = null;
 export function armBgUptimeTick(view) {
   if (bgUptimeTick) clearTimeout(bgUptimeTick);
   bgUptimeTick = setTimeout(() => {
     bgUptimeTick = null;
-    const dd = view && view.dom.bgagentDropdownEl;
+    const dd = view && view.dom.bgDropdownEl;
     if (dd && !dd.classList.contains('hidden')) {
       dd.querySelectorAll('.bg-task-uptime[data-started-at]').forEach(el => {
         const started = Number(el.getAttribute('data-started-at'));
@@ -613,7 +615,8 @@ export function renderBgAgentDropdown() {
       if (info && rawSessionId) {
         // Capture the dropdown BEFORE opening the popup — openStepPopup
         // switches activeView to the popup view whose fakeDom has no dropdown.
-        const dropdown = activeView.dom.bgagentDropdownEl;
+        // 后台合并批（2026-10-23 ⑥）：行所在面 = 合并载体 #bg-dropdown。
+        const dropdown = activeView.dom.bgDropdownEl;
         // team-<sid> wraps the agent's bare session id (its ui.json key) —
         // strip it, matching how the retired Team panel used to open these
         // popups; live team-agent events keep flowing into the same view.
@@ -649,7 +652,7 @@ export function renderBgAgentDropdown() {
       const sid = row.getAttribute('data-child-session');
       const c = sid ? storeChildBySid.get(sid) : null;
       if (c) {
-        const dropdown = activeView.dom.bgagentDropdownEl;
+        const dropdown = activeView.dom.bgDropdownEl;
         openBgAgentPopup(sid, String(c.agentName || '') || sid, String(c.description || c.prompt || ''));
         if (dropdown) dropdown.classList.add('hidden');
       }
@@ -660,7 +663,7 @@ export function renderBgAgentDropdown() {
       e.stopPropagation();
       const key = row.getAttribute('data-flow-delegate-key');
       if (!key) return;
-      const dropdown = activeView.dom.bgagentDropdownEl;
+      const dropdown = activeView.dom.bgDropdownEl;
       import('../delegateChainView.js').then(({ openDelegateChainTask }) => {
         openDelegateChainTask(key, {});
       }).catch(() => {});

@@ -125,12 +125,12 @@ test.beforeEach(async ({ page }) => {
   await bootApp(page);
 });
 
-test('T1 panel geometry: top-hung 308×560, left 6, radius 16 (§8-1 landed mapping)', async ({ page }) => {
+test('T1 panel geometry: top-hung 308×560, centered, radius 16 (§8-1 landed mapping; 面板合并批⑤居中)', async ({ page }) => {
   const errors = watchErrors(page);
   await openPanel(page);
   const box = await page.locator('#search-modal').boundingBox();
   expect(box).toBeTruthy();
-  expect(box.x).toBe(6);
+  expect(box.x).toBe(33.5); // 面板合并批⑤：居中 = (375-308)/2（原 left 6 退役）
   expect(box.width).toBe(308);
   expect(box.height).toBe(560);
   const radius = await page.locator('#search-modal').evaluate((el) => getComputedStyle(el).borderRadius);

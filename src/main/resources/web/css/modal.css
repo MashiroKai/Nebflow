@@ -387,6 +387,40 @@
   margin-bottom: 12px;
 }
 
+/* ── 合并面板（面板合并批 2026-10-23）：顶层两分区页签（智能体 / 记忆）────
+   分区显隐 = #memory-modal[data-pane] 属性 + CSS（memory.js switchPane 写）；
+   视觉语言 = .memory-tab 同族（字阶/下划线激活态），零新 token。 */
+.merged-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--glass-border);
+}
+.merged-tab {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border: none;
+  background: none;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+  font-family: inherit;
+  margin-bottom: -1px;
+}
+.merged-tab:hover { color: var(--color-frame-text); }
+.merged-tab.active {
+  color: rgb(91, 127, 191);
+  border-bottom-color: rgb(91, 127, 191);
+}
+/* 智能体分区在场时收起记忆分区的 scope 行/内容面/动作行（反之 .ap-pane 由
+   chat.css 的 data-pane 规则收起）。手机层的读态卡/编辑钮同维收起见
+   mobileLayer.css（.mh-memory-cards / .mh-memory-edit）。 */
+#memory-modal[data-pane='agent'] .memory-tabs,
+#memory-modal[data-pane='agent'] #memory-modal-body,
+#memory-modal[data-pane='agent'] #memory-modal-actions { display: none; }
+
 /* Memory Tabs */
 .memory-tabs {
   display: flex;

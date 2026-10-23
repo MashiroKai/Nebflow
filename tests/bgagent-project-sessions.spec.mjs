@@ -269,10 +269,10 @@ test('node/dispatcher rows stay OUT of the dropdown (C1 过渡纪律 · delegate
   });
   // C1 过渡呈现纪律（delegate-ui 批 2026-10-08 · 定稿蓝本 §1.2）：node-*/dispatcher-*
   // 是 delegate 编排的引擎内部件——过渡期在册但不入一等陈列面：行零渲染、badge 零计数。
-  const rows = page.locator('#bgagent-dropdown .bg-task-row');
+  const rows = page.locator('#bg-dropdown > .bg-dropdown-list:last-child .bg-task-row');
   await expect(rows).toHaveCount(0);
   // 修订批九点⑤（2026-10-09）：空态自动收起——无内容不渲染空态区块（头计数 ·0 即真值）。
-  await expect(page.locator('#bgagent-dropdown .bg-dropdown-empty')).toHaveCount(0);
+  await expect(page.locator('#bg-dropdown > .bg-dropdown-list:last-child .bg-dropdown-empty')).toHaveCount(0);
   // 数据侧在册不变（快照/管理面照读全量桶）
   const bucketHas = await page.evaluate(async (sid) => {
     const s = (await import('/js/state.js')).default;

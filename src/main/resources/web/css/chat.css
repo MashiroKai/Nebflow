@@ -302,9 +302,11 @@
 /* 2026-09-05 旧 UI 退役：旧「运行中工作流」顶栏徽章与下拉整段样式
    已随对应 DOM 删除。 */
 
-/* Background sub-agent dropdown — sapphire glass.
-   Positioned relative to #main (not .header-right) so backdrop-filter
-   can blur chat content instead of being trapped inside #header's backdrop root. */
+/* Background sub-agent dropdown — GHOST SURFACE (后台合并批 2026-10-23 ⑥).
+   两面板归并为一个后台面板后，#bgagent-dropdown 不再作为可见面存在：
+   其列表节点被 bgMergedPanel.js re-parent 进 #bg-dropdown（「智能体」分组签下），
+   节点本体原地保留 —— 只是渲染/显隐状态载体（.hidden 语义与旧脚本相容）。 */
+#bgagent-dropdown { display: none; }
 #bgagent-dropdown {
   position: absolute;
   top: 50px;
@@ -354,7 +356,34 @@
    State ladder: active=green+pulse, idle=amber, stuck=red+blink,
    error=red solid, frozen=sapphire, done=neutral muted. Color is ALWAYS
    paired with a text label (Carbon status-indicator / spec §7). */
-.bg-dropdown-list { max-height: 60vh; overflow-y: auto; }
+/* 后台合并批（2026-10-23 ⑥）：#bg-dropdown = 后台任务 + 子智能体 单面板。
+   面板纵排两节（任务列表 → 「智能体」分组签 → 子智能体列表，后者由
+   bgMergedPanel.js re-parent 进场），容器限高 60vh，两列表各自滚动、
+   按内容收缩（内容少时面板不被拉满 —— 与手机端紧凑化同语义）。 */
+#bg-dropdown {
+  display: flex;
+  flex-direction: column;
+  max-height: 60vh;
+}
+.bg-dropdown-list {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.bg-dropdown-header { flex: none; }
+/* 分组签（子智能体节题；= bg-dropdown-header 同族小写字号语言）。
+   空节整签隐藏（bgMergedPanel.js MutationObserver 置 hidden）。 */
+#bg-dropdown .mh-bg-grp {
+  flex: none;
+  padding: 8px 12px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-frame-text-muted);
+  border-top: 1px solid var(--color-frame-border-light);
+}
+#bg-dropdown .mh-bg-grp[hidden] { display: none; }
 .bg-dropdown-empty {
   padding: 14px 12px;
   font-size: 12px;
@@ -4953,89 +4982,36 @@ body:not(.mobile-layer) #header .header-center {
 }
 #agent-avatar-btn svg { width: 15px; height: 15px; }
 
-/* profile 面板（body 级一件；桌面 = 居中玻璃卡，无遮罩暗化 —— 视觉铁律 1）。
-   面板材质/控件 = glass-control token 族（sapphire.css）；手机几何改写 +
-   morph 形变在 mobileLayer.css。 */
-/* uifix 批（四件之一「面板关不掉」根因修复）：桌面态缺本条 —
-   上方 display:flex 按级联来源压过 UA 的 [hidden]{display:none}（同特异级
-   别作者源后出），X/Esc 设了 hidden 属性面板仍渲染 ⇒ 「关不掉」。
-   同坑先例：.wsp-err[hidden]（本文件）/ .mic-orb-wrap[hidden]（input.css）。
-   手机面已有 mobileLayer.css 同款守卫，此处补齐桌面。 */
-.agent-profile-panel[hidden] { display: none; }
-.agent-profile-panel {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 300px;
-  z-index: 1000;
+/* 智能体分区（.ap-pane 一件式；面板合并批 2026-10-23）：旧 body 级独立面板
+   #agent-profile-panel 退役 —— 本分区由 agentProfile.js buildProfilePane() 构建、
+   memory.js 注入「智能体 + 记忆」合并面板（#memory-modal）。分区本体 = 合并面板
+   的文档流内一段（几何归 modal.css / mobileLayer.css），此处只管内容形态；
+   材质/控件 = glass-control token 族（sapphire.css）。
+   头像交互（作者令 2026-10-23 ②）：预览盒本体即按钮 —— 点击 = 换头像；
+   「设置头像 / 重置头像」两钮不存在（.ap-btnrow 族随面板一并退役）。 */
+.ap-pane {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 16px 16px 14px;
-  background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  border: 1px solid var(--glass-control-border);
-  border-radius: 16px;
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge),
-    0 1px 3px var(--glass-control-glow),
-    0 2px 8px var(--glass-control-shadow),
-    0 4px 16px rgba(0, 0, 0, 0.10);
-  animation: agentProfileIn 0.2s ease;
 }
-@media (prefers-color-scheme: dark) {
-  .agent-profile-panel {
-    box-shadow:
-      inset 0 1px 0 var(--glass-control-highlight),
-      inset 0 -1px 0 var(--glass-control-underedge),
-      0 1px 3px var(--glass-control-glow),
-      0 2px 8px var(--glass-control-shadow),
-      0 4px 16px rgba(0, 0, 0, 0.35);
-  }
-}
-@keyframes agentProfileIn {
-  from { opacity: 0; transform: translate(-50%, -50%) scale(0.96); }
-  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-}
-.agent-profile-panel .ap-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-frame-text-bright, var(--color-frame-text));
-}
-.agent-profile-panel .ap-head > svg,
-.agent-profile-panel .ap-head > i svg {
-  width: 15px;
-  height: 15px;
-  color: var(--color-frame-text-muted, #98a2b3);
-}
-.agent-profile-panel .ap-close {
-  margin-left: auto;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  flex: none;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-frame-text, #e6e9ef);
-  cursor: pointer;
-}
-.agent-profile-panel .ap-close svg { width: 13px; height: 13px; }
-.agent-profile-panel .ap-avatar-box {
+#memory-modal[data-pane='memory'] .ap-pane { display: none; }
+.ap-pane .ap-avatar-box {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
   padding: 8px 0 2px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font: inherit;
 }
-.agent-profile-panel .ap-avatar-img {
+.ap-pane .ap-avatar-box:focus-visible {
+  outline: 2px solid rgba(91, 127, 191, 0.45);
+  outline-offset: 2px;
+  border-radius: 12px;
+}
+.ap-pane .ap-avatar-img {
   width: 72px;
   height: 72px;
   border-radius: 50%;
@@ -5046,7 +5022,7 @@ body:not(.mobile-layer) #header .header-center {
     inset 0 1px 0 var(--glass-control-highlight),
     0 2px 8px var(--glass-control-shadow);
 }
-.agent-profile-panel .ap-avatar-initial {
+.ap-pane .ap-avatar-initial {
   width: 72px;
   height: 72px;
   border-radius: 50%;
@@ -5062,50 +5038,17 @@ body:not(.mobile-layer) #header .header-center {
     inset 0 1px 0 var(--glass-control-highlight),
     0 2px 8px var(--glass-control-shadow);
 }
-.agent-profile-panel .ap-btnrow {
-  display: flex;
-  gap: 8px;
-  padding: 2px 0;
-}
-.agent-profile-panel .ap-btn {
-  flex: 1;
-  height: 38px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  font-size: 13px;
-  cursor: pointer;
-  background: var(--glass-control-bg);
-  border: 1px solid var(--glass-control-border);
-  color: var(--color-frame-text, #e6e9ef);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
-}
-.agent-profile-panel .ap-btn svg { width: 15px; height: 15px; }
-.agent-profile-panel .ap-btn-primary {
-  background: rgb(var(--brand-green));
-  color: #fff;
-  border-color: transparent;
-  font-weight: 600;
-  box-shadow: 0 2px 8px rgba(7, 193, 96, 0.28);
-}
-.agent-profile-panel .ap-btn-ghost {
-  color: var(--color-frame-text-muted, #98a2b3);
-}
-.agent-profile-panel .ap-namerow {
+.ap-pane .ap-namerow {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.agent-profile-panel .ap-name-label {
+.ap-pane .ap-name-label {
   flex: none;
   font-size: 12px;
   color: var(--color-frame-text-muted, #98a2b3);
 }
-.agent-profile-panel .ap-name-input {
+.ap-pane .ap-name-input {
   flex: 1;
   min-width: 0;
   height: 34px;
@@ -5117,10 +5060,10 @@ body:not(.mobile-layer) #header .header-center {
   font-size: 13px;
   outline: none;
 }
-.agent-profile-panel .ap-name-input:focus {
+.ap-pane .ap-name-input:focus {
   border-color: var(--glass-etched-border-focus, rgba(91, 127, 191, 0.35));
 }
-.agent-profile-panel .ap-note {
+.ap-pane .ap-note {
   font-size: 11px;
   color: var(--color-frame-text-muted, #98a2b3);
   line-height: 1.65;

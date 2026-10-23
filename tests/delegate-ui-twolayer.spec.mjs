@@ -104,11 +104,13 @@ async function setFixture(page, fx) {
   }, fx);
 }
 
-/** 打开 Sub-Agents 面板（indicator 点击 → renderBgAgentDropdown）。 */
+/** 打开 Sub-Agents 面板（indicator 点击 → renderBgAgentDropdown）。
+ *  后台合并批（2026-10-23 ⑥）：两面板归并为一个后台面板 —— bgagent 键开合并
+ *  载体 #bg-dropdown，子智能体行居载体尾列表（bgMergedPanel.js 收编）。 */
 async function openPanel(page) {
   await page.waitForSelector('#bgagent-indicator:not(.hidden)', { timeout: 8000 });
   await page.click('#bgagent-indicator');
-  await page.waitForSelector('#bgagent-dropdown:not(.hidden)', { timeout: 8000 });
+  await page.waitForSelector('#bg-dropdown:not(.hidden)', { timeout: 8000 });
 }
 
 // ── 夹具行（stub schema 加宽形）──────────────────────────────────────────
@@ -203,24 +205,24 @@ test('T2 面板两级化（C2/R6）：delegate 组头徽标=模式 Subagent；G3
   });
   await openPanel(page);
 
-  const list = page.locator('#bgagent-dropdown-list, #bgagent-dropdown .bg-dropdown-list').first();
-  const rows = page.locator('#bgagent-dropdown .bg-task-row');
+  const list = page.locator('#bg-dropdown > .bg-dropdown-list:last-child');
+  const rows = page.locator('#bg-dropdown > .bg-dropdown-list:last-child .bg-task-row');
   // 两级共 3 行：组头 + live 子 + store 子；dispatcher/node 被 C1 过滤零渲染。
   await expect(rows).toHaveCount(3);
-  await expect(page.locator('#bgagent-dropdown .bg-task-row[data-node-session-id="dispatcher-zz9"]')).toHaveCount(0);
-  await expect(page.locator('#bgagent-dropdown .bg-task-row[data-node-session-id="node-aa8"]')).toHaveCount(0);
+  await expect(page.locator('#bg-dropdown > .bg-dropdown-list:last-child .bg-task-row[data-node-session-id="dispatcher-zz9"]')).toHaveCount(0);
+  await expect(page.locator('#bg-dropdown > .bg-dropdown-list:last-child .bg-task-row[data-node-session-id="node-aa8"]')).toHaveCount(0);
 
   // 一级 = delegate 组头：bg-task-row-head + 徽标跟模式（subagent-star → Subagent）。
-  const head = page.locator('#bgagent-dropdown .bg-task-row.bg-task-row-head');
+  const head = page.locator('#bg-dropdown > .bg-dropdown-list:last-child .bg-task-row.bg-task-row-head');
   await expect(head).toHaveCount(1);
   await expect(head).toHaveAttribute('data-node-session-id', 'delegate-nebflow-w1');
   await expect(head.locator('.bg-task-kind')).toHaveText('Subagent');
 
   // 二级 = 缩进一格子行（live 行原富渲染 + store 行轻渲染）。
-  const liveChild = page.locator('#bgagent-dropdown .bg-task-row.bg-task-row-child[data-node-session-id="subtask-live1"]');
+  const liveChild = page.locator('#bg-dropdown > .bg-dropdown-list:last-child .bg-task-row.bg-task-row-child[data-node-session-id="subtask-live1"]');
   await expect(liveChild).toHaveCount(1);
   await expect(liveChild.locator('.bg-task-name')).toContainText('scout');
-  const storeChild = page.locator('#bgagent-dropdown .bg-task-row.bg-task-row-child[data-child-session="subtask-done2"]');
+  const storeChild = page.locator('#bg-dropdown > .bg-dropdown-list:last-child .bg-task-row.bg-task-row-child[data-child-session="subtask-done2"]');
   await expect(storeChild).toHaveCount(1);
   // 修订批九点②（2026-10-09）：「SubTask」UI 标注更名 delegate 语义（显示词 Delegate）。
   await expect(storeChild.locator('.bg-task-kind')).toHaveText('Delegate');
@@ -240,22 +242,22 @@ test('T3 agentflow（R2/R6）：组头徽标=Flow；chain.nodes flow-step 面板
 
   // ── 面板（视图②）：徽标=Flow，flow 子行缩进一格 ──
   await openPanel(page);
-  const head = page.locator('#bgagent-dropdown .bg-task-row.bg-task-row-head');
+  const head = page.locator('#bg-dropdown > .bg-dropdown-list:last-child .bg-task-row.bg-task-row-head');
   await expect(head).toHaveCount(1);
   await expect(head.locator('.bg-task-kind')).toHaveText('Flow');
-  const flowRows = page.locator('#bgagent-dropdown .bg-task-row.bg-task-row-child[data-flow-delegate-key="72"]');
+  const flowRows = page.locator('#bg-dropdown > .bg-dropdown-list:last-child .bg-task-row.bg-task-row-child[data-flow-delegate-key="72"]');
   await expect(flowRows).toHaveCount(2);
   await expect(flowRows.nth(0).locator('.bg-task-name')).toHaveText('步骤一');
   await expect(flowRows.nth(0).locator('.bg-task-kind')).toHaveText('AgentFlow');
   await expect(flowRows.nth(1).locator('.bg-task-state')).toHaveText('待处理');
   await expect(flowRows.nth(1).locator('.bg-task-project')).toHaveText('← s1');
   // 适配层单 delegate 回退节点（kind=delegate）不入子行层。
-  await expect(page.locator('#bgagent-dropdown .bg-task-row')).toHaveCount(3);
+  await expect(page.locator('#bg-dropdown > .bg-dropdown-list:last-child .bg-task-row')).toHaveCount(3);
 
   // ── 任务列表（视图①）：flow-step 链节点 = 链块成员行（折叠默认 → 头行展开）──
   // 先收起面板下拉（外点关闭 = 既有 UI 路径）——否则浮层截走任务行的点击。
   await page.mouse.click(10, 300);
-  await expect(page.locator('#bgagent-dropdown')).toHaveClass(/hidden/);
+  await expect(page.locator('#bg-dropdown')).toHaveClass(/hidden/);
   await page.evaluate(async (sid) => {
     const { renderTaskList } = await import('/js/taskList.js');
     renderTaskList([], undefined, sid);
