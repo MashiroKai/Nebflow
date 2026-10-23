@@ -143,12 +143,17 @@ async function boot(page) {
 // （verifier F5）同先例第二次重定标：社交入口 social-btn（index.html :92，
 // contacts 之下、spacer 之前，作者 2026-09-19 令①③授权位）入期望表，topBtns
 // 扩为三元——结构全等断言本身不动，只随现行为修期望值。
-const ACTIVITY_ORDER_IDS = ['activity-avatar', 'messages-btn', 'contacts-btn', 'social-btn', 'activity-spacer', 'files-btn', 'projects-btn', 'agents-btn', 'usage-btn', 'settings-btn'];
+// wiki-graph 批后 projects 与 agents 之间挂 wiki-btn（index.html 图谱入口）；
+// activity-avatar 与 messages-btn 之间的匿名 <script> 同辈是 brand-switch-console
+// 批（2026-10-15）的 pre-paint brand slot apply 经典脚本——惰性零交互节点，
+// 结构枚举滤除 SCRIPT（判据意图是钉交互条目结构 + 防 legacy 复活，脚本不构成
+// 结构成员；legacy 复活物都是 button/div，滤除不削弱判据）。
+const ACTIVITY_ORDER_IDS = ['activity-avatar', 'messages-btn', 'contacts-btn', 'social-btn', 'activity-spacer', 'files-btn', 'projects-btn', 'wiki-btn', 'agents-btn', 'usage-btn', 'settings-btn'];
 
 test('T1 § sidebar order: top = avatar+messages+contacts+social; bottom fixed order; no legacy revival', async ({ page }) => {
   await boot(page);
   await page.goto(base);
-  const ids = await page.$$eval('#activity-bar > *', els => els.map(e => e.id || e.className));
+  const ids = await page.$$eval('#activity-bar > *', els => els.filter(e => e.tagName !== 'SCRIPT').map(e => e.id || e.className));
   // Structural equality: exactly the spec elements, in the spec order — any
   // revived legacy entry would break equality.
   expect(ids).toEqual(ACTIVITY_ORDER_IDS);
@@ -244,25 +249,28 @@ test('T2b § cross-panel toggle equality (plugin card dispatch switch vs setting
 });
 
 test('T3 § avatar local-first cache: rebuild-free second load, refetch only on source change', async ({ page }) => {
+  test.slow(); // 收敛窗 = 30s 轮询拍（见下）⇒ 默认 30s 测试预算不够
   await boot(page);
   await page.goto(base);
   // Load 1: cache miss → the <img> falls back to the remote URL (≥1 remote
   // request) while the cache builds through the gateway proxy (≥1 proxy req).
   await page.waitForFunction(() => {
-    const raw = localStorage.getItem('nebflow_avatar_cache');
+    const raw = localStorage.getItem('stand_avatar_cache');
     try { return !!raw && !!JSON.parse(raw).dataUrl; } catch { return false; }
   }, undefined, { timeout: 8000 });
   expect(avatarRequests).toBeGreaterThanOrEqual(1);
   expect(avatarProxyRequests, 'cache build must go through the gateway avatar proxy').toBeGreaterThanOrEqual(1);
-  const entry = await page.evaluate(() => JSON.parse(localStorage.getItem('nebflow_avatar_cache')));
+  const entry = await page.evaluate(() => JSON.parse(localStorage.getItem('stand_avatar_cache')));
   expect(entry.url).toBe(base + '/mock-avatar-a.png');
   expect(entry.dataUrl.startsWith('data:image/png')).toBe(true);
   expect(entry.loggedIn).toBe(true);
   // Poll-driven re-render converges the visible <img> onto the cached dataURL.
+  // perf 批 6b6704a17（cheap polls coalesce）把 STATUS_POLL_MS 节流 10s→30s：
+  // 收敛窗 = 一拍轮询 ⇒ 等 40s（>30s 拍频 + 缓存构建余量）。
   await page.waitForFunction(() => {
     const img = document.querySelector('#activity-avatar .activity-avatar-photo');
     return img && !img.hidden && (img.getAttribute('src') || '').startsWith('data:image/');
-  }, undefined, { timeout: 12000 });
+  }, undefined, { timeout: 40000 });
 
   // Load 2: same source — cache hit renders the dataURL; NEITHER the remote
   // route NOR the gateway proxy may be touched (local-first, rebuild-free).
@@ -284,7 +292,7 @@ test('T3 § avatar local-first cache: rebuild-free second load, refetch only on 
   const beforeProxyB = avatarProxyRequests;
   await page.reload();
   await page.waitForFunction(() => {
-    const raw = localStorage.getItem('nebflow_avatar_cache');
+    const raw = localStorage.getItem('stand_avatar_cache');
     try { return !!raw && JSON.parse(raw).url.endsWith('mock-avatar-b.png') && !!JSON.parse(raw).dataUrl; } catch { return false; }
   }, undefined, { timeout: 10000 });
   expect(avatarProxyRequests).toBeGreaterThan(beforeProxyB); // source marker change → proxy refetch

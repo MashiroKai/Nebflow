@@ -456,22 +456,20 @@ test('⑤ Plugin.md 入口：200 包显形、404 包永缺席；点击经 worksp
   await page.waitForFunction((n) =>
     !document.querySelector(`.plugins-card[data-plugin="${n}"] .plugins-item-detail`)?.hidden, DOC_OK, { timeout: 8000 });
   await page.click(`.plugins-card[data-plugin="${DOC_OK}"] [data-plugin-doc]`);
-  await page.waitForSelector('#canvas-tab-bar .canvas-tab[data-tab-id="plugin-md:doc-ok"]', { timeout: 8000 });
+  // canvas-stack v5 后桌面标签行恒 display:none（split.css body:not(.mobile-layer)）：
+  // 激活形态 = pane active；标签 dataset 读数不受隐藏影响（模型仍在）。
+  await page.waitForSelector('.canvas-tab-pane[data-tab-id="plugin-md:doc-ok"].active', { timeout: 8000 });
   const canvasTab = await page.evaluate(() => {
     const tab = document.querySelector('#canvas-tab-bar .canvas-tab[data-tab-id="plugin-md:doc-ok"]');
-    return { present: !!tab, active: tab?.classList.contains('active') ?? false, title: tab?.querySelector('.canvas-tab-label')?.textContent.trim() };
+    return { present: !!tab, active: tab?.classList.contains('active') ?? false, title: tab?.querySelector('.canvas-tab-label')?.textContent.trim(),
+      barHidden: getComputedStyle(document.getElementById('canvas-tab-bar')).display === 'none' };
   });
-  expect(canvasTab.present, 'Canvas tab 出现（id = plugin-md:<name>）').toBe(true);
+  expect(canvasTab.present, 'Canvas tab 模型在位（id = plugin-md:<name>）').toBe(true);
+  expect(canvasTab.active, '新 tab 即激活').toBe(true);
   expect(canvasTab.title, 'tab 标题 = 文件名').toBe('Plugin.md');
+  expect(canvasTab.barHidden, '桌面标签行退役防复活（display:none）').toBe(true);
   // markdown 内容进 pane（viewer 渲染面）——headings 由 renderMarkdownWithMath 产出
-  await page.waitForFunction(() => {
-    const pane = document.querySelector('#canvas-tab-bar .canvas-tab[data-tab-id="plugin-md:doc-ok"]');
-    return !!pane;
-  });
-  const paneHtml = await page.evaluate(() => {
-    const tabs = document.querySelectorAll('.canvas-tab-content > .canvas-tab-pane, [data-tab-id="plugin-md:doc-ok"]');
-    return document.body.innerHTML.includes('Entry-presentation fixture');
-  });
+  const paneHtml = await page.evaluate(() => document.body.innerHTML.includes('Entry-presentation fixture'));
   expect(paneHtml, 'Plugin.md 正文进 Canvas 渲染面（内容呈现归既有通路，面板不承载）').toBe(true);
   expect(errors, 'pageerror 0').toEqual([]);
 });

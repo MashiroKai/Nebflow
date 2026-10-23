@@ -300,23 +300,28 @@ test('⑥ 胶囊深链：点击 → 取 SKILL.md → Canvas markdown tab（正�
   await expand(page, DOC);
 
   await page.click(`.plugins-card[data-plugin="${DOC}"] [data-skill-id="${DOC}/alpha"]`);
-  await page.waitForSelector('#canvas-tab-bar .canvas-tab[data-tab-id="plugin-skill-md:capsule-doc/alpha"]', { timeout: 8000 });
+  // canvas-stack v5 后桌面标签行恒 display:none：激活形态 = pane active；
+  // 标签 dataset 读数不受隐藏影响。
+  await page.waitForSelector('.canvas-tab-pane[data-tab-id="plugin-skill-md:capsule-doc/alpha"].active', { timeout: 8000 });
   const tab = await page.evaluate(() => {
     const t = document.querySelector('#canvas-tab-bar .canvas-tab[data-tab-id="plugin-skill-md:capsule-doc/alpha"]');
-    return { present: !!t, active: t?.classList.contains('active') ?? false, title: t?.querySelector('.canvas-tab-label')?.textContent.trim() };
+    return { present: !!t, active: t?.classList.contains('active') ?? false, title: t?.querySelector('.canvas-tab-label')?.textContent.trim(),
+      barHidden: getComputedStyle(document.getElementById('canvas-tab-bar')).display === 'none' };
   });
-  expect(tab.present, 'Canvas tab 出现（id = plugin-skill-md:<plugin>/<skill>）').toBe(true);
+  expect(tab.present, 'Canvas tab 模型在位（id = plugin-skill-md:<plugin>/<skill>）').toBe(true);
   expect(tab.active, '新 tab 即激活').toBe(true);
   expect(tab.title, 'tab 标题 = <plugin>/<skill> · SKILL.md').toBe('capsule-doc/alpha · SKILL.md');
+  expect(tab.barHidden, '桌面标签行退役防复活（display:none）').toBe(true);
   expect(skillFetches, 'SKILL.md 经既有 plugin-assets 路由取文').toEqual(['capsule-doc/alpha']);
   const bodySeen = await page.evaluate(() => document.body.innerHTML.includes('Capsule deep-link fixture body.'));
   expect(bodySeen, 'SKILL.md 正文进 Canvas 渲染面（文档全文归 Canvas，面板不承载）').toBe(true);
 
   // 404 腿：beta 胶囊 → toast（零静默）+ 零新 tab。（alpha 打开已把活动 pane 切到
-  // 文档 tab——先切回插件 tab 再点，胶囊在非活动 pane 内不可点。）
-  await page.click('#canvas-tab-bar .canvas-tab[data-tab-id="plugins"]');
+  // 文档 tab——先切回插件 pane 再点，胶囊在非活动 pane 内不可点。桌面标签行
+  // display:none 不可鼠标点击 ⇒ 程序化触发标签激活 handler。）
+  await page.evaluate(() => document.querySelector('#canvas-tab-bar .canvas-tab[data-tab-id="plugins"]')?.click());
   await page.waitForFunction(() =>
-    document.querySelector('#canvas-tab-bar .canvas-tab[data-tab-id="plugins"]')?.classList.contains('active'), null, { timeout: 8000 });
+    document.querySelector('.canvas-tab-pane[data-tab-id="plugins"]')?.classList.contains('active'), null, { timeout: 8000 });
   const tabsBefore = await page.evaluate(() => document.querySelectorAll('#canvas-tab-bar .canvas-tab').length);
   await page.click(`.plugins-card[data-plugin="${DOC}"] [data-skill-id="${DOC}/beta"]`);
   await page.waitForSelector('.nebflow-toast', { timeout: 8000 });
