@@ -1700,6 +1700,10 @@ export default {
   // failure copy (canvas.js cardWindowBootFace)
   'canvas.cardwinFailHint': 'Failed to load the card content — you can retry.',
   'canvas.cardwinAuthHint': 'Your session may have expired — retrying re-establishes it or shows the sign-in guide.',
+  // cardwin content-only fix batch (2026-10-22 author ruling): only content
+  // artifacts may open in a standalone window — functional panels never.
+  'canvas.cardwinContentOnly': 'Only documents and files can open in a standalone window; panels are not supported.',
+  'canvas.cardwinNoPath': 'This standalone link carries no content path — only documents and files can open independently.',
 
   // === Tool names (label first line) ===
   'tool.Read': 'Read',
