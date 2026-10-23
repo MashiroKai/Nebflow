@@ -55,8 +55,10 @@ class DelegateAutoMergeSpec extends FunSuite:
     Try(os.proc("git", "--version").call(check = false, stdout = os.Pipe, stderr = os.Pipe).exitCode == 0)
       .getOrElse(false)
 
-  /** main@init + delegate 分支交付一笔；conflict=true ⇒ main 上同文件再改（冲突形态）；
-    * checkedOut="release" ⇒ 另建 release 分支并被出（目标覆盖形态）。 */
+  /**
+   * main@init + delegate 分支交付一笔；conflict=true ⇒ main 上同文件再改（冲突形态）；
+   * checkedOut="release" ⇒ 另建 release 分支并被出（目标覆盖形态）。
+   */
   private def mkRepo(dir: os.Path, branch: String, conflict: Boolean = false, checkedOut: String = "main"): os.Path =
     os.remove.all(dir)
     os.makeDir.all(dir)
@@ -78,17 +80,32 @@ class DelegateAutoMergeSpec extends FunSuite:
       g("commit", "-m", "main moves the same file")
     dir
 
+  end mkRepo
+
   private def addWorktree(repo: os.Path, branch: String, wt: os.Path): os.Path =
     os.remove.all(wt)
     os.proc("git", "-C", repo.toString, "worktree", "add", wt.toString, branch)
       .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
     wt
 
-  private def rec(id: String, repo: os.Path, branch: String, worktree: Option[os.Path], taskId: Option[String] = None): DelegateRegistry.Record =
+  private def rec(
+    id: String,
+    repo: os.Path,
+    branch: String,
+    worktree: Option[os.Path],
+    taskId: Option[String] = None
+  ): DelegateRegistry.Record =
     DelegateRegistry.Record(
-      id = id, executor = "nebflow", cwd = worktree.map(_.toString).getOrElse(repo.toString),
-      project = None, taskId = taskId, parentSessionId = "nebula-root", title = "t", createdAt = 1L,
-      branch = Some(branch), baseBranch = Some("main"),
+      id = id,
+      executor = "nebflow",
+      cwd = worktree.map(_.toString).getOrElse(repo.toString),
+      project = None,
+      taskId = taskId,
+      parentSessionId = "nebula-root",
+      title = "t",
+      createdAt = 1L,
+      branch = Some(branch),
+      baseBranch = Some("main"),
       projectWorkspace = Some(repo.toString),
       worktree = worktree.map(_.toString)
     )
@@ -111,14 +128,21 @@ class DelegateAutoMergeSpec extends FunSuite:
 
   private def parents(repo: os.Path, ref: String): List[String] =
     os.proc("git", "-C", repo.toString, "log", "-1", "--format=%P", ref)
-      .call(check = true, stdout = os.Pipe).out.trim().split(' ').toList.filter(_.nonEmpty)
+      .call(check = true, stdout = os.Pipe)
+      .out
+      .trim()
+      .split(' ')
+      .toList
+      .filter(_.nonEmpty)
 
-  test("① zero-conflict auto merge: --no-ff into main, two-parent commit, merged audit row with mergeCommit, suffix line") {
+  test(
+    "① zero-conflict auto merge: --no-ff into main, two-parent commit, merged audit row with mergeCommit, suffix line"
+  ) {
     if !gitAvailable then ()
     else
       val repo = mkRepo(tempRoot / "am-clean", branch = "delegate/am-clean")
-      val wt   = addWorktree(repo, "delegate/am-clean", tempRoot / "am-clean-wt")
-      val r    = rec("delegate-am-clean", repo, "delegate/am-clean", Some(wt))
+      val wt = addWorktree(repo, "delegate/am-clean", tempRoot / "am-clean-wt")
+      val r = rec("delegate-am-clean", repo, "delegate/am-clean", Some(wt))
       val mainBefore = headSha(repo, "main")
       val suffix = hook(r, on)
       val mainAfter = headSha(repo, "main")
@@ -127,7 +151,10 @@ class DelegateAutoMergeSpec extends FunSuite:
       val ps = parents(repo, "main")
       assertEquals(ps.size, 2, s"a --no-ff merge must be a two-parent commit: $ps")
       assertEquals(ps(1), headSha(repo, "delegate/am-clean"), "second parent must be the branch tip")
-      assert(GitWorktrees.isAncestor(repo, "delegate/am-clean", "main").contains(true), "branch must be an ancestor of main")
+      assert(
+        GitWorktrees.isAncestor(repo, "delegate/am-clean", "main").contains(true),
+        "branch must be an ancestor of main"
+      )
       // 审计面（⑥）：merged 行携 mergeCommit
       val rows = autoMergeRows("delegate-am-clean")
       val (_, payload) = rows.lastOption.getOrElse(fail("a merged audit row must exist"))
@@ -141,14 +168,17 @@ class DelegateAutoMergeSpec extends FunSuite:
       assert(suffix.exists(_.contains("[auto-merge] branch merged into 'main'")), s"suffix: $suffix")
   }
 
-  test("② conflict ⇒ merge aborted cleanly (no MERGE_HEAD, base & branch intact), conflict-pending row with file list, ledger note, CONFLICT suffix") {
+  test(
+    "② conflict ⇒ merge aborted cleanly (no MERGE_HEAD, base & branch intact), conflict-pending row with file list, ledger note, CONFLICT suffix"
+  ) {
     if !gitAvailable then ()
     else
       val repo = mkRepo(tempRoot / "am-conflict", branch = "delegate/am-conflict", conflict = true)
-      val wt   = addWorktree(repo, "delegate/am-conflict", tempRoot / "am-conflict-wt")
-      val tid  = TaskLedgerStore.open().createSyncReturningId(title = "am-conflict-task").toOption.getOrElse(fail("ledger seed"))
-      val r    = rec("delegate-am-conflict", repo, "delegate/am-conflict", Some(wt), taskId = Some(tid))
-      val mainBefore  = headSha(repo, "main")
+      val wt = addWorktree(repo, "delegate/am-conflict", tempRoot / "am-conflict-wt")
+      val tid =
+        TaskLedgerStore.open().createSyncReturningId(title = "am-conflict-task").toOption.getOrElse(fail("ledger seed"))
+      val r = rec("delegate-am-conflict", repo, "delegate/am-conflict", Some(wt), taskId = Some(tid))
+      val mainBefore = headSha(repo, "main")
       val branchBefore = headSha(repo, "delegate/am-conflict")
       val baseContent = os.read(repo / "deliverable.txt")
       val suffix = hook(r, on)
@@ -156,8 +186,10 @@ class DelegateAutoMergeSpec extends FunSuite:
       assertEquals(headSha(repo, "main"), mainBefore, "main must NOT move on a conflict")
       assertEquals(headSha(repo, "delegate/am-conflict"), branchBefore, "the branch must be preserved")
       assertEquals(os.read(repo / "deliverable.txt"), baseContent, "base file content restored (abort)")
-      val mergeHead = os.proc("git", "-C", repo.toString, "rev-parse", "-q", "--verify", "MERGE_HEAD")
-        .call(check = false, stdout = os.Pipe, stderr = os.Pipe).exitCode
+      val mergeHead = os
+        .proc("git", "-C", repo.toString, "rev-parse", "-q", "--verify", "MERGE_HEAD")
+        .call(check = false, stdout = os.Pipe, stderr = os.Pipe)
+        .exitCode
       assertEquals(mergeHead, 1, "no MERGE_HEAD may survive (merge --abort)")
       assertEquals(GitWorktrees.currentBranch(repo), Some("main"), "base workspace stays on main")
       // 状态 + 冲突文件清单：审计行 + 任务台账 + 尾注三承载面
@@ -173,20 +205,24 @@ class DelegateAutoMergeSpec extends FunSuite:
         .open()
         .readFor(tid)
         .events
-        .filter(e => e.kind == TaskLedgerHistory.Kinds.Note && e.text.exists(_.contains("[auto-merge] conflict pending")))
+        .filter(e =>
+          e.kind == TaskLedgerHistory.Kinds.Note && e.text.exists(_.contains("[auto-merge] conflict pending"))
+        )
       assert(notes.nonEmpty, "the task ledger must carry the pending-adjudication note")
       assert(suffix.exists(_.contains("CONFLICT")), s"suffix: $suffix")
       assert(suffix.exists(_.contains("deliverable.txt")), s"suffix must name the conflicting file: $suffix")
       assert(suffix.exists(_.contains("PENDING")), s"suffix must state the pending adjudication: $suffix")
   }
 
-  test("③ idempotency: re-completion ⇒ already-merged (main sha untouched); a batch-self-merged branch is already-merged on FIRST evaluation") {
+  test(
+    "③ idempotency: re-completion ⇒ already-merged (main sha untouched); a batch-self-merged branch is already-merged on FIRST evaluation"
+  ) {
     if !gitAvailable then ()
     else
       // (a) 重试零重复合并
       val repo = mkRepo(tempRoot / "am-idem", branch = "delegate/am-idem")
-      val wt   = addWorktree(repo, "delegate/am-idem", tempRoot / "am-idem-wt")
-      val r    = rec("delegate-am-idem", repo, "delegate/am-idem", Some(wt))
+      val wt = addWorktree(repo, "delegate/am-idem", tempRoot / "am-idem-wt")
+      val r = rec("delegate-am-idem", repo, "delegate/am-idem", Some(wt))
       assert(hook(r, on).exists(_.contains("merged into 'main'")), "first evaluation merges")
       val afterFirst = headSha(repo, "main")
       val suffix2 = hook(r, on) // 重复完成 / 引擎重试
@@ -204,12 +240,14 @@ class DelegateAutoMergeSpec extends FunSuite:
       assertEquals(headSha(repo2, "main"), mainBefore, "self-merged scene must stay untouched")
   }
 
-  test("④ switch off (enabled=false) ⇒ None suffix, zero audit rows, zero merge — legacy P2-3 note path stays the owner") {
+  test(
+    "④ switch off (enabled=false) ⇒ None suffix, zero audit rows, zero merge — legacy P2-3 note path stays the owner"
+  ) {
     if !gitAvailable then ()
     else
       val repo = mkRepo(tempRoot / "am-off", branch = "delegate/am-off")
-      val wt   = addWorktree(repo, "delegate/am-off", tempRoot / "am-off-wt")
-      val r    = rec("delegate-am-off", repo, "delegate/am-off", Some(wt))
+      val wt = addWorktree(repo, "delegate/am-off", tempRoot / "am-off-wt")
+      val r = rec("delegate-am-off", repo, "delegate/am-off", Some(wt))
       val mainBefore = headSha(repo, "main")
       val suffix = hook(r, off)
       assertEquals(suffix, None, "switch off ⇒ no suffix (caller falls back to the legacy note path)")
@@ -223,7 +261,7 @@ class DelegateAutoMergeSpec extends FunSuite:
     else
       val repo = mkRepo(tempRoot / "am-dirty", branch = "delegate/am-dirty")
       os.write(repo / "uncommitted.txt", "half-done work") // untracked ⇒ porcelain 非空
-      val r    = rec("delegate-am-dirty", repo, "delegate/am-dirty", worktree = None)
+      val r = rec("delegate-am-dirty", repo, "delegate/am-dirty", worktree = None)
       val mainBefore = headSha(repo, "main")
       val suffix = hook(r, on)
       assertEquals(headSha(repo, "main"), mainBefore, "a dirty base must never be merged over")
@@ -236,8 +274,8 @@ class DelegateAutoMergeSpec extends FunSuite:
     if !gitAvailable then ()
     else
       val repo = mkRepo(tempRoot / "am-target", branch = "delegate/am-target", checkedOut = "release")
-      val wt   = addWorktree(repo, "delegate/am-target", tempRoot / "am-target-wt")
-      val r    = rec("delegate-am-target", repo, "delegate/am-target", Some(wt))
+      val wt = addWorktree(repo, "delegate/am-target", tempRoot / "am-target-wt")
+      val r = rec("delegate-am-target", repo, "delegate/am-target", Some(wt))
       val mainBefore = headSha(repo, "main")
       val suffix = hook(r, DelegateAutoMerge.Config(enabled = true, targetBranch = Some("release")))
       assert(suffix.exists(_.contains("merged into 'release'")), s"suffix: $suffix")
@@ -245,7 +283,9 @@ class DelegateAutoMergeSpec extends FunSuite:
       assertEquals(parents(repo, "release").size, 2, "release must receive the two-parent merge")
   }
 
-  test("⑦ FIFO single flight: two concurrent completions on one project serialize — both land, zero failed/refused rows") {
+  test(
+    "⑦ FIFO single flight: two concurrent completions on one project serialize — both land, zero failed/refused rows"
+  ) {
     if !gitAvailable then ()
     else
       val repo = mkRepo(tempRoot / "am-fifo", branch = "delegate/am-fifo-a")
@@ -259,16 +299,22 @@ class DelegateAutoMergeSpec extends FunSuite:
       gf("checkout", "main")
       val ra = rec("delegate-am-fifo-a", repo, "delegate/am-fifo-a", worktree = None)
       val rb = rec("delegate-am-fifo-b", repo, "delegate/am-fifo-b", worktree = None)
-      val io = DelegateAutoMerge.onCompletedHook(Some(ra), Some(on)).both(
-        DelegateAutoMerge.onCompletedHook(Some(rb), Some(on))
-      )
+      val io = DelegateAutoMerge
+        .onCompletedHook(Some(ra), Some(on))
+        .both(
+          DelegateAutoMerge.onCompletedHook(Some(rb), Some(on))
+        )
       val (sa, sb) = io.unsafeRunSync()
       assert(sa.exists(_.contains("merged into 'main'")), s"a suffix: $sa")
       assert(sb.exists(_.contains("merged into 'main'")), s"b suffix: $sb")
       assert(GitWorktrees.isAncestor(repo, "delegate/am-fifo-a", "main").contains(true), "a merged")
       assert(GitWorktrees.isAncestor(repo, "delegate/am-fifo-b", "main").contains(true), "b merged")
       val actions = autoMergeRows("delegate-am-fifo-a").map(_._1) ++ autoMergeRows("delegate-am-fifo-b").map(_._1)
-      assertEquals(actions.filter(a => a == "failed" || a == "refused"), Nil, s"serialization must leave no failure rows: $actions")
+      assertEquals(
+        actions.filter(a => a == "failed" || a == "refused"),
+        Nil,
+        s"serialization must leave no failure rows: $actions"
+      )
       assertEquals(actions.count(_ == "merged"), 2, s"both merges audited: $actions")
   }
 
@@ -276,6 +322,7 @@ class DelegateAutoMergeSpec extends FunSuite:
 
   private class SilentLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -303,17 +350,27 @@ class DelegateAutoMergeSpec extends FunSuite:
   private def withJudgeAbsent[A](io: IO[A]): IO[A] =
     IO { DelegateJudge.DelegateJudgePort.clear() } *> io <* IO { DelegateJudge.DelegateJudgePort.clear() }
 
-  test("⑧ lifecycle hook (internal leg): onCompleted with an ahead branch ⇒ Release payload carries the auto-merge suffix, merge really lands") {
+  test(
+    "⑧ lifecycle hook (internal leg): onCompleted with an ahead branch ⇒ Release payload carries the auto-merge suffix, merge really lands"
+  ) {
     if !gitAvailable then ()
     else
       val repo = mkRepo(tempRoot / "am-wiring", branch = "delegate/am-wiring")
-      val wt   = addWorktree(repo, "delegate/am-wiring", tempRoot / "am-wiring-wt")
+      val wt = addWorktree(repo, "delegate/am-wiring", tempRoot / "am-wiring-wt")
       DelegateRegistry.put(
         DelegateRegistry.Record(
-          id = "delegate-am-wiring", executor = "nebflow", cwd = wt.toString,
-          project = None, taskId = Some("501"), parentSessionId = "nebula-root", title = "wiring", createdAt = 1L,
-          branch = Some("delegate/am-wiring"), baseBranch = Some("main"),
-          projectWorkspace = Some(repo.toString), worktree = Some(wt.toString)
+          id = "delegate-am-wiring",
+          executor = "nebflow",
+          cwd = wt.toString,
+          project = None,
+          taskId = Some("501"),
+          parentSessionId = "nebula-root",
+          title = "wiring",
+          createdAt = 1L,
+          branch = Some("delegate/am-wiring"),
+          baseBranch = Some("main"),
+          projectWorkspace = Some(repo.toString),
+          worktree = Some(wt.toString)
         )
       )
       val system = ActorSystem(s"am-wiring-${scala.util.Random.nextInt(100000)}")
@@ -335,9 +392,12 @@ class DelegateAutoMergeSpec extends FunSuite:
         yield oc
       }.unsafeRunSync()
       outcome match
-        case DelegateTerminal.Outcome.Release(suffix) =>
+        case DelegateTerminal.Outcome.Release(suffix, _) =>
           assert(suffix.contains("[delegate-judge] verdict: completed"), s"verdict line intact: $suffix")
-          assert(suffix.contains("[auto-merge] branch merged into 'main'"), s"auto-merge suffix in the terminal payload: $suffix")
+          assert(
+            suffix.contains("[auto-merge] branch merged into 'main'"),
+            s"auto-merge suffix in the terminal payload: $suffix"
+          )
         case other => fail(s"expected Release, got: $other")
       val mainParents = parents(repo, "main")
       assertEquals(mainParents.size, 2, "the wiring test merge really landed (--no-ff two-parent)")

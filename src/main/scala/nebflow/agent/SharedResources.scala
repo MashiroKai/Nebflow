@@ -485,4 +485,15 @@ case class SharedResources(
       health = Some(decisionHealth)
     )
   )
+
+  // D1（steward 批 2026-10-23）：后台任务通知「持久补投」面注册——BashTool 完成
+  // 回调的改道/补投腿经 BgInboxPort 消费（core 不 import agent 的分层纪律，
+  // DelegateJudgePort 同款 M2 形态）；实现 = 持久注入队 append（CompactionQueueStore，
+  // correlationId 幂等 + 会话已删守卫，复活轮 RecoverPersistedQueues 重放）。
+  BgInboxPort.install(BgInboxBackstop.face(this))
+
+  // D3-②（steward 批 2026-10-23）：MergeQueue 合并提醒注入的活性探针——注入前
+  // 探测目标 childRef 是否活（actor 注册表已退出 = 死 ⇒ 不盲投、不盖章、不持窗，
+  // 条目留队待重试）。未注册（无 SharedResources 场）= 恒活，既有行为零变化。
+  nebflow.core.delegate.MergeQueue.installLivenessProbe(ref => actorSystem.isAlive(ref.path))
 end SharedResources

@@ -337,30 +337,33 @@ Git safety:
    * sleep-poll 护栏包裹（B 段生产面）：判定（含计数落账）→ 分发。
    *   - WarnExecute：命令照常执行，回执首部附警告+指导文案；
    *   - Reject：**不执行**，先升级面板可见帧（taskStuck/action=sleep-poll，
-     *     既有 TERMINAL 帧族，main.js 按 sessionId 标注子代理行）再拒绝。
+   *     既有 TERMINAL 帧族，main.js 按 sessionId 标注子代理行）再拒绝。
    */
   private def sleepPollGate(sessionId: String, commandText: String, ctx: ToolContext)(
     execute: IO[Either[ToolError, String]]
   ): IO[Either[ToolError, String]] =
-    sleepPollCounts.modify { m =>
-      val prev = m.getOrElse(sessionId, SleepPollGuard.State())
-      SleepPollGuard.decide(commandText, prev, System.currentTimeMillis()) match
-        case SleepPollGuard.Verdict.Pass => (m, None)
-        case SleepPollGuard.Verdict.WarnExecute(next, secs) => (m.updated(sessionId, next), Some((next.count, secs, false)))
-        case SleepPollGuard.Verdict.Reject(next, secs) => (m.updated(sessionId, next), Some((next.count, secs, true)))
-    }.flatMap {
-      case None => execute
-      case Some((count, secs, isReject)) =>
-        if isReject then
-          escalateSleepPoll(ctx, sessionId, count, secs).as(
-            Left(ToolError(SleepPollGuard.rejectionText(count, secs)))
-          )
-        else
-          execute.map {
-            case Right(text) => Right(s"${SleepPollGuard.warningText(secs)}\n\n$text")
-            case left => left
-          }
-    }
+    sleepPollCounts
+      .modify { m =>
+        val prev = m.getOrElse(sessionId, SleepPollGuard.State())
+        SleepPollGuard.decide(commandText, prev, System.currentTimeMillis()) match
+          case SleepPollGuard.Verdict.Pass => (m, None)
+          case SleepPollGuard.Verdict.WarnExecute(next, secs) =>
+            (m.updated(sessionId, next), Some((next.count, secs, false)))
+          case SleepPollGuard.Verdict.Reject(next, secs) => (m.updated(sessionId, next), Some((next.count, secs, true)))
+      }
+      .flatMap {
+        case None => execute
+        case Some((count, secs, isReject)) =>
+          if isReject then
+            escalateSleepPoll(ctx, sessionId, count, secs).as(
+              Left(ToolError(SleepPollGuard.rejectionText(count, secs)))
+            )
+          else
+            execute.map {
+              case Right(text) => Right(s"${SleepPollGuard.warningText(secs)}\n\n$text")
+              case left => left
+            }
+      }
 
   /**
    * B 段升级腿（面板可见）：taskStuck 帧（action/kind=sleep-poll——前端
@@ -1127,14 +1130,28 @@ Git safety:
         case _ => IO.unit
 
       // Notify agent via ExternalEvent.
-      // ref ! returns IO[Unit] already — do NOT wrap in IO() or it
+      // D1（steward 批 2026-10-23；作者裁定 09:46「目标会话死了就激活发送，不用发
+      // 给root」）：投递不再盲投「创建时焊死的会话 ActorRef」——`ref !` 是队列 offer
+      // 永不失败，目标会话已死 = 消息进无人消费的队列静默蒸发（bg-wait cap 强制收
+      // 尾后同样投尸）。交付面 = 活性判定 + 激活（复活）目标会话本身（持久化恢复
+      // spawn 同源，通知落其新回合）+ 激活不可用则向**目标会话**注入队落「待补投」
+      // 标记（复活重放补投给它）+ 三态全审计（消灭 WARN 吞掉的静默路径），见
+      // BgNotifyDelivery。无 actorSystem（harness）保持旧行为直投。
+      // ref ! 返回 IO[Unit] already — do NOT wrap in IO() or it
       // becomes IO[IO[Unit]] (double-wrapped, fires at construction time).
-      val notifyAgent = (ref ! AgentCommand.ExternalEvent(
+      val notifyAgent = BgNotifyDelivery.deliverAgentEvent(
+        targetRef = Some(ref),
+        targetSessionId = ctx.sessionId,
+        system = ctx.actorSystem,
+        registry = ctx.sharedResources.map(_.agentRegistry),
+        projectName = ctx.projectName,
+        flowNodeId = ctx.flowNodeId,
+        jobId = jobId,
         source = "background-task",
         eventType = eventType,
         payload = payload,
         metadata = metadata
-      )).handleErrorWith(e => logger.warn(s"Failed to notify agent for background job $jobId: ${e.getMessage}"))
+      )
 
       // Notify frontend via WS so the indicator dismisses
       val notifyFrontend = ctx.wsSend.fold(IO.unit) { send =>

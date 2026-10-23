@@ -16,7 +16,7 @@ import nebflow.core.mcp.McpManager
 import nebflow.core.project.{CancelSource as ChainCancelSource, *}
 import nebflow.core.schedule.FreezeSchedule.given
 import nebflow.core.skill.SkillService
-import nebflow.core.tools.{ToolContext, ToolRegistry}
+import nebflow.core.tools.*
 import nebflow.gateway.NfFilePolicy.*
 import nebflow.gateway.WsDispatch.parsedJson
 import nebflow.llm.*
@@ -290,6 +290,66 @@ class WebSocketRoutes(
 
   end doSpawnRootAgent
 
+  // ── D1 后台通知·目标会话激活面（steward 批 2026-10-23；作者裁定 09:46
+  //    「目标会话死了就激活发送，不用发给root」）────────────────────────────
+
+  /**
+   * 激活（复活）已死的目标会话并把完成通知投给它。复活机制与引擎重启后的会话
+   * 恢复**同源**：[[doSpawnRootAgent]] 持久化恢复 spawn（SessionStore 水合
+   * transcript + spawn 即 `RecoverPersistedQueues` 注入队重放）——WS connect 恢复
+   * 同款，通知经重放落进目标会话新回合。
+   *
+   * 家族分派：
+   *   - registry 行已活（判活→激活竞态合拢）⇒ 直接投该会话（新鲜 ref）；
+   *   - 会话已删（SessionStore 无行）⇒ `UnknownSession`（不落盘、不激活、审计收口）；
+   *   - Delegate/SubTask/Ephemeral/Plan ⇒ `Deferred`（复活归监督者 respawn /
+   *     boot sweep 既有恢复腿所有，不越权重挂——持久标记等自然复活重放补投）；
+   *   - Root/Team/Flow ⇒ 先把标记写进**目标会话**注入队（correlationId 幂等，
+   *     BgInboxBackstop 会话存在守卫双保险），再走恢复 spawn ⇒ 重放交付。
+   */
+  def activateSession(
+    sessionId: String,
+    pendingEvent: AgentCommand.ExternalEvent
+  ): IO[BgSessionActivator.ActivationResult] =
+    sessionStore.getSessionMeta(sessionId).flatMap {
+      case None => IO.pure(BgSessionActivator.UnknownSession) // 已删：无处激活、无处落盘
+      case Some(_) =>
+        sharedResources.agentRegistry.get.flatMap { reg =>
+          reg.get(sessionId) match
+            case Some(rec) =>
+              rootSystem.isAlive(rec.ref.path).flatMap {
+                case true =>
+                  // 激活竞态：判活到激活之间已被别人复活 ⇒ 直投新鲜 ref（零重复落盘）。
+                  (rec.ref ! pendingEvent)
+                    .as(BgSessionActivator.Activated: BgSessionActivator.ActivationResult)
+                case false => activateDeadSession(sessionId, rec.kind, pendingEvent)
+              }
+            case None => activateDeadSession(sessionId, AgentKind.Root, pendingEvent)
+        }
+    }
+
+  private def activateDeadSession(
+    sessionId: String,
+    kind: AgentKind,
+    pendingEvent: AgentCommand.ExternalEvent
+  ): IO[BgSessionActivator.ActivationResult] =
+    kind match
+      case AgentKind.Delegate | AgentKind.SubTask | AgentKind.Ephemeral | AgentKind.Plan =>
+        IO.pure(
+          BgSessionActivator.Deferred(
+            s"session family $kind revival is owned by its supervisor respawn / boot-sweep legs"
+          )
+        )
+      case _ =>
+        // Root | Team | Flow：标记先行（spawn 重放载体），恢复 spawn 同源激活。
+        BgInboxPort.append(sessionId, pendingEvent) *>
+          ensureRootAgent(sessionId)
+            .as(BgSessionActivator.Activated: BgSessionActivator.ActivationResult)
+            .handleErrorWith(e => IO.pure(BgSessionActivator.Deferred(e.getMessage)))
+
+  // 装配（构造一次；install 幂等覆盖）。bg 完成通知的目标会话死亡 ⇒ 激活目标本身。
+  BgSessionActivator.install((sid, ev) => activateSession(sid, ev))
+
   /**
    * P2: register a root session's recording wsSend with the InteractionHub so
    * permission/AskUser cards render in the Nebula window and persist to the
@@ -548,25 +608,27 @@ class WebSocketRoutes(
             // 权威同一形态；查询失败 ⇒ 空集，hub 侧守卫兜底拒收明文回流）。
             secretIdxs <- hub
               .?[Option[List[nebflow.actor.SecretSlotSpec]]](reply =>
-                nebflow.actor.InteractionHubCommand.SecretSlotsOf(requestId, reply))
+                nebflow.actor.InteractionHubCommand.SecretSlotsOf(requestId, reply)
+              )
               .map(_.getOrElse(Nil).map(_.idx).toSet)
               .handleErrorWith(_ => IO.pure(Set.empty[Int]))
             _ <- BridgeAnswerReflection.rowFor(requestId, payload, secretIdxs).traverse_ { row =>
-                  sharedResources.sessionStore
-                    .appendUiMessages(rootSid, List(row))
-                    .handleErrorWith(e =>
-                      logger.warn(
-                        s"bridge answer ui-row append failed requestId=$requestId root=$rootSid: ${e.getMessage}"
-                      )
-                    )
-                }
+              sharedResources.sessionStore
+                .appendUiMessages(rootSid, List(row))
+                .handleErrorWith(e =>
+                  logger.warn(
+                    s"bridge answer ui-row append failed requestId=$requestId root=$rootSid: ${e.getMessage}"
+                  )
+                )
+            }
             _ <- BridgeAnswerReflection.frame(rootSid, requestId, payload, secretIdxs).traverse_ { f =>
-                  wsHub
-                    .broadcast(f)
-                    .handleErrorWith(e =>
-                      logger.warn(s"bridge answer flip broadcast failed requestId=$requestId root=$rootSid: ${e.getMessage}")
-                    )
-                }
+              wsHub
+                .broadcast(f)
+                .handleErrorWith(e =>
+                  logger
+                    .warn(s"bridge answer flip broadcast failed requestId=$requestId root=$rootSid: ${e.getMessage}")
+                )
+            }
             _ <- (hub ! nebflow.actor.InteractionHubCommand.Answered(
               nebflow.actor.InteractionAnswered(requestId, rootSid, payload)
             )).void
@@ -1091,7 +1153,9 @@ class WebSocketRoutes(
                             "mcpServers" -> mcpServers.asJson
                           )
                           // M3 ④：update 快照 additive 挂载（未装配 = 空对象 = 不出现键）
-                          .deepMerge(updateSnapshot.map(u => io.circe.Json.obj("update" -> u)).getOrElse(io.circe.Json.obj()))
+                          .deepMerge(
+                            updateSnapshot.map(u => io.circe.Json.obj("update" -> u)).getOrElse(io.circe.Json.obj())
+                          )
                           .noSpaces
                       )
                     )
@@ -1130,7 +1194,7 @@ class WebSocketRoutes(
         tokenRef.get
           .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
           .flatMap {
-            case None    => Forbidden("Invalid token")
+            case None => Forbidden("Invalid token")
             case Some(_) => handleInject(req)
           }
 
@@ -2925,7 +2989,8 @@ object WebSocketRoutes:
     retryCount: Option[Int] = None,
     taskTitle: Option[String] = None, // taskbadge batch (main-side): title resolved by the caller via the ledger
     delegateTitle: Option[String] = None, // 显示名契约批 2026-10-22: delegate/SubTask 行批次标题（delegateDisplayTitle 解析）
-    bgWaiting: List[(String, String, Long)] = Nil // #752: (jobId, description, startedAtMs) — the session's own waiting-type bg tasks
+    bgWaiting: List[(String, String, Long)] =
+      Nil // #752: (jobId, description, startedAtMs) — the session's own waiting-type bg tasks
   ): Json =
     Json.obj(
       "sessionId" -> rec.sessionId.asJson,
@@ -2982,15 +3047,13 @@ object WebSocketRoutes:
       // #752 空闲细分：「等后台任务」——会话自有等待型任务（BgTaskRegistry
       // waitingBySession，调用方一次全表扫描传入）。[{taskId, description,
       // startedAt}]；空数组 = 无（前端 falsy 判 length）。启动戳毫秒，前端算时长。
-      "bgWaiting" -> bgWaiting
-        .map { case (jobId, description, startedAtMs) =>
-          Json.obj(
-            "taskId" -> jobId.asJson,
-            "description" -> description.asJson,
-            "startedAt" -> startedAtMs.asJson
-          )
-        }
-        .asJson
+      "bgWaiting" -> bgWaiting.map { case (jobId, description, startedAtMs) =>
+        Json.obj(
+          "taskId" -> jobId.asJson,
+          "description" -> description.asJson,
+          "startedAt" -> startedAtMs.asJson
+        )
+      }.asJson
     )
 
   // ============================================================
