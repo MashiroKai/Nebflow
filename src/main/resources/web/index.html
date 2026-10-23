@@ -353,10 +353,9 @@
       </div>
       <!-- Moved outside #input-bar so backdrop-filter can blur chat content -->
       <div id="slash-dropdown"></div>
-      <!-- turn-liveness（对话层活性批 2026-10-22）：回合活动流条（生产者 =
-           js/main/turnActivity.js，账本 = state.sessionActivity）。默认收起 =
-           一行滚动摘要；点击展开最近 N 条。 -->
-      <div id="activity-strip"></div>
+      <!-- 回合活动流条（对话层活性批 2026-10-22）已整链退役 —— 2026-10-23 作者令
+           逐字「这个活动面板我不是让删掉吗，就是对话框上面这个」。本处不留挂载点；
+           防复活钉：tests/turn-activity-stream.spec.mjs。 -->
       <div id="queue-bar"></div>
       <div id="input-bar">
         <!-- 语音输入 = micOrb 液态光球（voicefix 批，作者 2026-09-21 14:0x ③：

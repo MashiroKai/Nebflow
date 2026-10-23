@@ -2485,10 +2485,10 @@ export default {
   // one-time console ticket (CLI: `nebflow token`); the redemption face
   // (?ticket=) exchanges it for an HttpOnly session cookie.
   'ws.ticketEntry.notify': 'Sign-in required — click the sign-in button to continue with your {lowerBrand} account',
-  // Conversation-liveness batch (2026-10-22): turn activity strip (delegate /
-  // background-task in-turn activity as one collapsible light strip).
-  'activity.title': 'Activity',
-  'activity.count': '{n} events',
+  // Turn activity strip (activity.title/activity.count, conversation-liveness
+  // batch 2026-10-22) fully retired — author order 2026-10-23 verbatim
+  // 「这个活动面板我不是让删掉吗，就是对话框上面这个」.
+  // Anti-resurrection pin: tests/turn-activity-stream.spec.mjs.
   // === mobile-mockup-375 v3 implementation batch (mockup 20261020_214500) ===
   // Profile panel (extension 3: header avatar entry + avatar/name quick settings)
   'profile.title': 'Agent',
