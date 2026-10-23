@@ -848,6 +848,14 @@ private[agent] object AgentProcessing:
               ) // F2@tools-complete：drain 后快照队列（崩溃重放禁重复注入已消费队首）
               _ <- immEventIO
               _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, remainingEvents.size)
+              // 台账对账 + 徽标帧（fix 1 补漏批，2026-10-22）：tools-complete 边界
+              // drainBarrier 投递面——与 AgentFinishTurn 的 drainBarrier 对账（:483）
+              // 同形。此前修复批只接了 finishTurn 面、漏本孪生面：边界投递成功的回执
+              // 永挂台账 ⇒ watchdog 对已投递回执假催注直至假穷尽（实证 2026-10-22
+              // 13:42:43 入队/13:42:44 边界投递/13:52–14:14 假催注 5 次/14:15:55 假穷尽）。
+              _ <- syncHeldReceipts(resources, state.sessionId, remainingEvents).flatMap((h, u) =>
+                emitHeldReceiptsBadge(state, h, u)
+              )
               result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, tc.replyTo)
             yield result
         end match
