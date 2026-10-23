@@ -9,7 +9,7 @@
 // 'url' intentionally stays out of the registry - it is handled inline by
 // canvas.js (no file-extension semantics).
 
-import { escapeHtml } from './viewers/shared.js';
+import { t } from './i18n.js';
 import codeViewer, { jsonViewer, csvViewer } from './viewers/monaco.js';
 import markdownViewer from './viewers/markdown.js';
 import yamlViewer from './viewers/yaml.js';
@@ -72,6 +72,37 @@ export function itemTypeForFileName(fileName) {
 }
 
 /**
+ * #750（nf-file 媒体面高载 503 硬失败批）：渲染腿终态错误的**就地重拉**面。
+ * 修前形态：`Failed to render: <err.message>` 一块死文案——过载 503（上游先于
+ * 网关放弃的裸 503）与确定性失败同貌，用户唯一出路是刷新整页。本面板在既有
+ * 同一句话下加「重试」键（`canvas.retry` 既有 i18n 键；`data-nf-retry` 与
+ * attachmentPreview 的失败面板同族）：点击后原 ctx 原样重入 [[renderFile]]——
+ * 票据链/nfViewerUrl 重走（blob 账本命中则零取数直渲染），不刷新整页。
+ * 动态文本（err.message）一律 textContent 防 XSS。
+ */
+function renderViewerError(pane, ctx, err) {
+  pane.classList.add('scrollable');
+  pane.innerHTML = '';
+  const box = document.createElement('div');
+  box.className = 'canvas-error';
+  const msg = document.createElement('div');
+  msg.textContent = `Failed to render: ${err && err.message ? err.message : err}`;
+  box.appendChild(msg);
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.className = 'viewer-retry-btn';
+  retry.textContent = t('canvas.retry');
+  retry.setAttribute('data-nf-retry', '1');
+  retry.addEventListener('click', () => {
+    if (!pane.isConnected) return;
+    pane.innerHTML = '';
+    renderFile(pane, ctx).catch(() => {});
+  });
+  box.appendChild(retry);
+  pane.appendChild(box);
+}
+
+/**
  * Render file content into a Canvas tab pane using the appropriate viewer.
  * Falls back to the code viewer if no viewer matches.
  * @param {HTMLElement} pane - the tab content pane
@@ -90,6 +121,6 @@ export async function renderFile(pane, ctx) {
     await viewer.render(pane, ctx);
   } catch (err) {
     console.warn('Viewer error:', err);
-    pane.innerHTML = `<div class="canvas-error">Failed to render: ${escapeHtml(err.message)}</div>`;
+    renderViewerError(pane, ctx, err);
   }
 }
