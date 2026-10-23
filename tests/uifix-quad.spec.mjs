@@ -143,38 +143,52 @@ const approx = (a, b, tol) => Math.abs(a - b) <= tol;
 mkdirSync(SHOTS_DIR, { recursive: true });
 const browser = await chromium.launch();
 
-/* ════════ ① 智能体面板关闭链路（X / Esc / 重开再关）════════ */
+/* ════════ ① 智能体面板关闭链路（cancel / Esc / 重开再关）════════ */
+/* 判据换代注记（2026-10-23 spec-hygiene 批）：面板合并批作者令 ①（2026-10-23）
+ * 退役 body 级独立面板 #agent-profile-panel —— 头像点击 = openMergedPanel('agent')
+ * 打开「智能体 + 记忆」合并面板（#memory-modal.show + #memory-overlay.on，
+ * .ap-pane 分区由 ensureMergedChrome 一件式注入；agentProfile.js 头注）。
+ * 旧「独立面板 visible/display:flex + .ap-close X 关闭」判据在干净 HEAD 即红，
+ * 随迁到合并面板接缝：开 = show+overlay+.ap-pane；关1 = #memory-modal-cancel
+ * （旧 .ap-close 随面板退役）；关2 = Esc（main.js 全局 ESC 链点 #memory-overlay
+ * → closeMemoryModal）。 */
 {
   const { ctx, page, errors } = await bootPage(browser);
   const probe = () => page.evaluate(() => {
-    const p = document.getElementById('agent-profile-panel');
-    if (!p) return { exists: false };
-    return { exists: true, hidden: p.hidden, display: getComputedStyle(p).display,
-             visible: !!(p.offsetWidth || p.offsetHeight) };
+    const m = document.getElementById('memory-modal');
+    const ov = document.getElementById('memory-overlay');
+    if (!m) return { exists: false };
+    const show = m.classList.contains('show');
+    return { exists: true, show, overlayOn: !!(ov && ov.classList.contains('on')),
+             visible: !!(m.offsetWidth || m.offsetHeight),
+             apPane: !!m.querySelector('.ap-pane'),
+             display: getComputedStyle(m).display };
   });
   const av = await page.evaluate(() => !!document.getElementById('agent-avatar-btn'));
   ok('PANEL-0 会话头头像入口在位', av === true);
   await page.click('#agent-avatar-btn');
   await sleep(350);
   const opened = await probe();
-  ok('PANEL-1 头像点击开面板（visible · display:flex）',
-    opened.exists && opened.hidden === false && opened.display === 'flex' && opened.visible, JSON.stringify(opened));
+  ok('PANEL-1 头像点击开合并面板智能体分区（#memory-modal.show + overlay.on + .ap-pane 在场）',
+    opened.exists && opened.show && opened.overlayOn && opened.visible && opened.apPane, JSON.stringify(opened));
   await page.screenshot({ path: join(SHOTS_DIR, 'panel-open.png') });
-  /* X 关闭（本批修复面：hidden 同伴规则） */
-  await page.click('.agent-profile-panel .ap-close');
+  // 关1：合并面板**背板点击**（overlay 点击处理器 → closeMemoryModal；modal.css 418 行注：
+  // 智能体分区在场时收起记忆分区动作行 —— #memory-modal-cancel 在 agent 窗格被
+  // 设计性隐藏，cancel 接缝不属于本分区脸）。
+  await page.mouse.click(8, 8); // 背板角点（modal 卡外、overlay 内）
   await sleep(350);
   const closedByX = await probe();
-  ok('PANEL-2 X 点击关闭（hidden + display:none + offsetWidth 0 —— 修复前 display 恒 flex「关不掉」）',
-    closedByX.hidden === true && closedByX.display === 'none' && !closedByX.visible, JSON.stringify(closedByX));
+  ok('PANEL-2 背板点击关闭（show 退 + overlay 退 + 不可见）',
+    closedByX.exists && !closedByX.show && !closedByX.overlayOn && !closedByX.visible, JSON.stringify(closedByX));
   await page.screenshot({ path: join(SHOTS_DIR, 'panel-after-x.png') });
-  /* 重开 → Esc 关 */
+  /* 重开 → Esc 关（全局 ESC 链 → #memory-overlay → closeMemoryModal） */
   await page.click('#agent-avatar-btn');
   await sleep(300);
   await page.keyboard.press('Escape');
   await sleep(300);
   const closedByEsc = await probe();
-  ok('PANEL-3 Esc 关闭（同链路）',
-    closedByEsc.hidden === true && closedByEsc.display === 'none' && !closedByEsc.visible, JSON.stringify(closedByEsc));
+  ok('PANEL-3 Esc 关闭（全局 ESC 链 → overlay → closeMemoryModal，同链路）',
+    closedByEsc.exists && !closedByEsc.show && !closedByEsc.overlayOn && !closedByEsc.visible, JSON.stringify(closedByEsc));
   ok('PANEL-4 开关往返零 JS 错误', errors.length === 0, errors.slice(0, 2).join(' | '));
   await ctx.close();
 }

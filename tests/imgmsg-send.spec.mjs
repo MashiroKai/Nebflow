@@ -970,8 +970,11 @@ async function scenarioE() {
         && marker.width === '18px' && marker.height === '18px' && marker.leftOfBubble === true && !marker.belowBubble
         && Math.abs(marker.centerDeltaY) <= 1,
         JSON.stringify(marker));
-      ok('E/B② 字形 = 既有红圈「!」（**非 emoji**）+ `--color-error` 描边',
-        !!marker && marker.glyph === '!' && marker.tag === 'BUTTON' && marker.borderColor === 'rgb(244, 67, 54)' && marker.radius === '50%',
+      ok('E/B② 字形 = 既有红圈「!」（**非 emoji**）+ `--status-error-icon` 描边',
+        // 换代注记：ui-status-redesign 批（盘点 #44）把 `.fm-retry` 取色从
+        // --color-error(#f44336) 归到 --status-error-icon token(#d64545) —— 旧字面
+        // rgb(244, 67, 54) 判据随 token 搬迁换代（暗档随 token 提亮，语义不变）。
+        !!marker && marker.glyph === '!' && marker.tag === 'BUTTON' && marker.borderColor === 'rgb(214, 69, 69)' && marker.radius === '50%',
         JSON.stringify(marker && { glyph: marker.glyph, borderColor: marker.borderColor, radius: marker.radius }));
       ok('E/B② 可点：`elementFromPoint` 命中按钮本体 + hover 出既有 `--color-frame-hover` 底',
         !!marker && /fm-retry/.test(String(marker.hit)) && marker.pointerEvents === 'auto' && marker.cursor === 'pointer'

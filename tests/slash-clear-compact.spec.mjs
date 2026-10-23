@@ -1,7 +1,7 @@
 // slash-clear-compact.spec.mjs — `/clear` + `/compact` **摘除**验收（用户指令 2026-10-09 23:12：
 // 「把/slash命令 /clear /compact删掉」）。前身 = 回挂验收（D1-B 白名单形态，git 历史）。
 //
-// 断言面（**默认面** = 总闸 `nebflow_slash.enabled` 关、白名单 = {`/model`}）：
+// 断言面（**默认面** = 总闸 `stand_slash.enabled` 关、白名单 = {`/model`}）：
 //   S1 默认面命令面：键入 `/` 的列表**恰为** ["/model"]；/clear、/compact 降级为
 //      封存面 —— handleSlash 全 false（纯文本路径），零命令帧；/model 零回归
 //   S2 `/clear` 纯文本路径 ⇒ 照常直发 content 帧、零 command 帧、无「上下文已清除」气泡
@@ -23,7 +23,11 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = resolve(process.env.SLASH_WEB_ROOT || join(HERE, '..', 'src', 'main', 'resources', 'web'));
-const GATE_KEY = 'nebflow_slash.enabled';
+// 换代注记（2026-10-23 spec-hygiene 批）：brand 前缀已随品牌换代 nebflow_ → stand_
+//（branding.js key() = `${brand.lowerName}_<suffix>`；nebflow_ 降级为 legacy 兼容
+// 命名空间，boot 时自动迁移）。门键字面量判据随迁：nebflow_slash.enabled →
+// stand_slash.enabled（判据语义 = 「<当前品牌>_<suffix>」不变）。
+const GATE_KEY = 'stand_slash.enabled';
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml',
   '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.woff2': 'font/woff2',
@@ -132,7 +136,7 @@ const frameOf = (frames, pred) => frames.find(pred);
       bare: m.handleSlash('/'),
     };
   });
-  ok('S1b 门键字面量核对：key("slash.enabled") === "nebflow_slash.enabled"（前缀下划线形态）',
+  ok('S1b 门键字面量核对：key("slash.enabled") === "stand_slash.enabled"（品牌前缀下划线形态）',
     res.gateKeyActual === GATE_KEY, res.gateKeyActual);
   ok('S1c 已摘除：handleSlash("/clear")/("/compact") 均 false（封存面纯文本路径）',
     res.clear === false && res.compact === false, JSON.stringify({ clear: res.clear, compact: res.compact }));

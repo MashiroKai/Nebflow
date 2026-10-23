@@ -1,12 +1,17 @@
-// friends-dev-default-on.spec.mjs — 好友功能构建环境区分·本地 dev 默认开
-// （作者令 2026-09-10：好友功能只在 CI/CD 构建产物剔除/关闭；本地 dev
-// （sbt run 直跑的未剥离构建）好友 flag 默认开，好友入口可见可调试）。
+// friends-dev-default-on.spec.mjs — 好友功能构建环境区分·dev 两态门
+// （判据换代注记：本 spec 初版钉作者令 2026-09-10「dev 默认开」——该前提已被
+// friendseal 批作者裁定 ④（2026-09-25，featureFlags.js friendsEnabled：dev 树
+// 缺席 = 封存 = 默认 OFF，显式 true 才回挂）推翻。旧「空配置 ⇒ 入口回挂可见」
+// 判据在干净 HEAD 即红，换代为钉封存缺省**新形态**（缺席 + 防复活），显式两态
+// 与面板激活契约保留。）
 //
-// 覆盖（featureFlags.js dev 分支语义，源码树直跑 = 无 __NEBFLOW_RELEASE__）：
-//   D1  空配置（configData 不含 features.friends）→ Messages/Contacts 入口回挂可见
-//   D2  点击 Contacts → 面板激活（入口可进，面板注册生效）
+// 覆盖（featureFlags.js friendsEnabled() 语义，源码树直跑 = 无 __NEBFLOW_RELEASE__）：
+//   D1  空配置（configData 不含 features.friends）→ 封存缺省：Messages/Contacts
+//       入口与面板**不在 DOM**（防复活钉）；#social-btn 按 friendseal ④ 明示不随
+//       封存摘挂（社交卡入口 = "Phone access" 配置面板，非好友域）
+//   D2  显式 features.friends:true → 入口回挂（顺序契约 messages → contacts →
+//       social 且在 spacer 之前）+ 点击 Contacts → 面板激活（原 D2/D4 合并）
 //   D3  显式 features.friends:false → 入口缺席（dev 两态调试：关态可达）
-//   D4  显式 features.friends:true → 入口可见（gating 批测试注入口径不变）
 // 自包含：route 拦截静态文件 + mock WS，无后端、无真实端口。
 // Run: node tests/friends-dev-default-on.spec.mjs
 import { chromium } from 'playwright-core';
@@ -64,20 +69,36 @@ async function bootPage({ configJson = '{}' } = {}) {
   return { ctx, page, pageErrors };
 }
 
-// ── D1/D2: 空配置 → dev 默认开，入口可见可进 ──
+// ── D1: 空配置 → 封存缺省（friendseal ④）：入口/面板缺席 + 防复活 ──
 {
   const { ctx, page, pageErrors } = await bootPage({ configJson: '{}' });
-  ok('D1 #messages-btn attached (dev default ON)', await page.locator('#messages-btn').count() === 1 && await page.locator('#messages-btn').evaluate(el => el.isConnected));
-  ok('D1 #contacts-btn attached (dev default ON)', await page.locator('#contacts-btn').count() === 1 && await page.locator('#contacts-btn').evaluate(el => el.isConnected));
-  // 顺序契约：通讯入口在 spacer 之前（index.html 静态位置由 enableFriendPanels 保持）
+  ok('D1 #messages-btn absent (sealed default: dev 树缺席 = OFF，friendseal 2026-09-25 ④)', await page.locator('#messages-btn').count() === 0);
+  ok('D1 #contacts-btn absent (sealed default)', await page.locator('#contacts-btn').count() === 0);
+  // 防复活钉：面板 DOM 也不得在（detachFriendEntries 摘挂的是按钮 + 面板四件套）。
+  ok('D1 #panel-messages/#panel-contacts absent (detach 四件套，防复活)', await page.locator('#panel-messages').count() === 0 && await page.locator('#panel-contacts').count() === 0);
+  // friendseal ④ 明示：#social-btn 不随好友封存摘挂（社交卡配置面板，非好友域）。
+  ok('D1 #social-btn stays mounted (friendseal ④ 不随封存摘挂)', await page.locator('#social-btn').count() === 1 && await page.locator('#social-btn').evaluate(el => el.isConnected));
+  ok('D1 no page errors', pageErrors.length === 0, pageErrors.join('; '));
+  await ctx.close();
+}
+
+// ── D2: 显式 true → 回挂（顺序契约）+ 可进（原 D2/D4 合并） ──
+{
+  const { ctx, page, pageErrors } = await bootPage({ configJson: '{"features":{"friends":true}}' });
+  ok('D2 #messages-btn attached (explicit on)', await page.locator('#messages-btn').count() === 1 && await page.locator('#messages-btn').evaluate(el => el.isConnected));
+  ok('D2 #contacts-btn attached (explicit on)', await page.locator('#contacts-btn').count() === 1 && await page.locator('#contacts-btn').evaluate(el => el.isConnected));
+  // 顺序契约：messages → contacts → social，且通讯入口在 spacer 之前
+  //（enableFriendPanels W1：社交入口的前兄弟保持 contacts）。
   const order = await page.locator('#activity-bar > *').evaluateAll(els => els.map(e => e.id || e.className));
-  ok('D1 entries sit before the spacer', order.indexOf('messages-btn') !== -1 && order.indexOf('contacts-btn') !== -1 &&
-    order.indexOf('contacts-btn') < order.findIndex(c => String(c).includes('activity-spacer')), JSON.stringify(order));
+  const spacerIdx = order.findIndex(c => String(c).includes('activity-spacer'));
+  ok('D2 entries before spacer, messages→contacts→social (W1)', order.indexOf('messages-btn') !== -1 && order.indexOf('contacts-btn') !== -1 &&
+    order.indexOf('contacts-btn') === order.indexOf('messages-btn') + 1 && order.indexOf('contacts-btn') === order.indexOf('social-btn') - 1 &&
+    order.indexOf('contacts-btn') < spacerIdx, JSON.stringify(order));
   await page.click('#contacts-btn');
   await sleep(200);
   ok('D2 #panel-contacts activated on click', await page.locator('#panel-contacts.active').count() === 1 &&
     (await page.locator('#contacts-btn').getAttribute('aria-pressed')) === 'true');
-  ok('D1 no page errors', pageErrors.length === 0, pageErrors.join('; '));
+  ok('D2 no page errors', pageErrors.length === 0, pageErrors.join('; '));
   await ctx.close();
 }
 
@@ -87,15 +108,6 @@ async function bootPage({ configJson = '{}' } = {}) {
   ok('D3 #messages-btn absent (explicit off)', await page.locator('#messages-btn').count() === 0);
   ok('D3 #contacts-btn absent (explicit off)', await page.locator('#contacts-btn').count() === 0);
   ok('D3 no page errors', pageErrors.length === 0, pageErrors.join('; '));
-  await ctx.close();
-}
-
-// ── D4: 显式 true → 开（gating 批 6 个 spec 的注入口径不回归） ──
-{
-  const { ctx, page, pageErrors } = await bootPage({ configJson: '{"features":{"friends":true}}' });
-  ok('D4 #messages-btn attached (explicit on)', await page.locator('#messages-btn').count() === 1);
-  ok('D4 #contacts-btn attached (explicit on)', await page.locator('#contacts-btn').count() === 1);
-  ok('D4 no page errors', pageErrors.length === 0, pageErrors.join('; '));
   await ctx.close();
 }
 

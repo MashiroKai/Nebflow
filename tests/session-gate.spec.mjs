@@ -3,11 +3,20 @@
 // 背景：relay 源控制台的 15min 会话过期后，每个 same-origin /api 被 relay 门
 // 裸 403（不落隧道帧），WS 却照常活着 ⇒ 「图片点了零反应」的静默根。
 // 本件验收 sessionGate 的契约：
-//   ① nfTicket 铸票 401/403 ⇒ 可见横幅出现 + 自愈 reload 腿被拉动（测试缝代真导航）；
+//   ① nfTicket 铸票 401/403 ⇒ **静默退避**（authgate 批 2026-10-22 作者令：铸票
+//      401/403 不再拉 sessionGate —— 修「上滑历史铸票一发 401 就整页重登」的登出级
+//      bug；防复活钉 = 铸票 403 零横幅零 reload）；
+//   ①b 统一入口 noteAuthRejected ⇒ 可见横幅出现 + 自愈 reload 腿被拉动（测试缝代真
+//      导航；触发面读数随 source 属性）；
 //   ② 同页幂等：后续 401/403 不叠横幅、不重复 reload；
 //   ③ 瞬态失败（5xx）不触发（保持既有静默降级面）；
 //   ④ 跨 reload 冷却（sessionStorage 60s）：真 reload 后冷却窗内的 403 不再
-//      横幅不再 reload（防连环刷新）。
+//      横幅不再 reload（防连环刷新；armer = 统一入口）。
+//
+// 判据换代注记（2026-10-23 spec-hygiene 批）：原 ①「铸票 403 ⇒ 横幅」钉的是
+// authgate 批前的旧漏斗，该漏斗已被作者令拆除（nfTicket.js mint 401/403 静默退避），
+// 干净 HEAD 即红 ⇒ 反转为防复活钉；可见面判据迁到统一入口（产品内 keepalive 403 /
+// projects 401/403 走的同一入口，行为面零改动）。
 //
 // 运行：node tests/session-gate.spec.mjs   （PORT 可换）
 
@@ -63,16 +72,23 @@ try {
     });
   });
 
-  // ① 铸票 403 → 横幅 + reload 腿。
+  // ① 铸票 403 ⇒ 静默退避（authgate 批反复活钉）：零横幅零 reload。
   await page.evaluate(async () => {
     const nf = await import('/js/nfTicket.js');
     await nf.mintTickets(['/tmp/gate-probe.png']);
   });
   await sleep(300);
-  ok('① 403 ⇒ 可见横幅出现', await page.locator('[data-session-gate="1"]').count() === 1);
-  ok('① 横幅带触发面读数', (await page.locator('[data-session-gate="1"]').getAttribute('data-source')) === 'nf-ticket');
+  ok('① 铸票 403 ⇒ 静默退避（authgate 批 2026-10-22：不再拉 sessionGate，防复活钉）',
+    await page.locator('[data-session-gate="1"]').count() === 0
+    && !(await page.evaluate(() => window.__reloads > 0)));
+
+  // ①b 统一入口 ⇒ 横幅 + reload 腿（可见面判据迁移点）。
+  await page.evaluate(() => window.__gate.noteAuthRejected('nf-ticket'));
+  await sleep(300);
+  ok('①b 统一入口 403 ⇒ 可见横幅出现', await page.locator('[data-session-gate="1"]').count() === 1);
+  ok('①b 横幅带触发面读数', (await page.locator('[data-session-gate="1"]').getAttribute('data-source')) === 'nf-ticket');
   await sleep(1500); // > RELOAD_DELAY_MS
-  ok('① 自愈 reload 腿被拉动', (await page.evaluate(() => window.__reloads)) === 1);
+  ok('①b 自愈 reload 腿被拉动', (await page.evaluate(() => window.__reloads)) === 1);
 
   // ② 同页幂等：再来一次 403（直接打统一入口）不叠横幅不重复 reload。
   await page.evaluate(() => window.__gate.noteAuthRejected('again'));
@@ -80,8 +96,8 @@ try {
   ok('② 同页不叠横幅', await page.locator('[data-session-gate="1"]').count() === 1);
   ok('② 不重复 reload', (await page.evaluate(() => window.__reloads)) === 1);
 
-  // ③ 瞬态 5xx：复位单飞（同时清冷却）后铸票 500 ⇒ 不新增横幅（① 的横幅按
-  //    设计仍留在 DOM，reload 前随页销毁；断言 = 计数不涨）。
+  // ③ 瞬态 5xx：铸票 500 ⇒ 静默降级面保持（不新增横幅节点、不拉 reload——
+  //    ①b 的横幅按设计仍留在 DOM，reload 前随页销毁；断言 = 计数与 reload 不涨）。
   await page.evaluate(() => window.__gate._sessionGateTestHooks().reset());
   mintStatus = 500;
   await page.evaluate(async () => {
@@ -90,32 +106,30 @@ try {
     await nf.mintTickets(['/tmp/gate-probe-5xx.png']);
   });
   await sleep(300);
-  ok('③ 5xx 不新增横幅（既有静默降级面保持）',
-    await page.locator('[data-session-gate="1"]').count() === 1);
+  ok('③ 5xx 不新增横幅不拉 reload（既有静默降级面保持）',
+    await page.locator('[data-session-gate="1"]').count() === 1
+    && (await page.evaluate(() => window.__reloads)) === 1);
 
-  // ④ 跨 reload 冷却：复位后先打一次真 403（写冷却 + 横幅），真 reload
-  //    （sessionStorage 存活、模块态归零）后再 403 ⇒ 冷却窗内零横幅零 reload。
+  // ④ 跨 reload 冷却：armer = 统一入口（mint 已不再拉闸）。先打一次 403（写冷却 +
+  //    横幅），真 reload（sessionStorage 存活、模块态归零）后再 403 ⇒ 冷却窗内
+  //    零横幅零 reload。
   mintStatus = 403;
   await page.evaluate(() => window.__gate._sessionGateTestHooks().reset());
-  await page.evaluate(async () => {
-    const nf = await import('/js/nfTicket.js');
-    nf.resetTickets();
-    await nf.mintTickets(['/tmp/gate-probe-cd-arm.png']);
-  });
+  await page.evaluate(() => window.__gate.noteAuthRejected('cd-arm'));
   await sleep(300);
-  ok('④ 前置：复位后 403 写入冷却键（横幅 id 单例，不叠节点）',
+  ok('④ 前置：统一入口 403 写入冷却键（横幅 id 单例，不叠节点）',
     await page.evaluate(() =>
       Object.keys(sessionStorage).some((k) => k.includes('auth_gate_at')) &&
       document.querySelectorAll('[data-session-gate="1"]').length === 1));
   await page.reload(); // 真导航：冷却键留在 sessionStorage，单飞/横幅归零
   await page.evaluate(async () => {
-    const nf = await import('/js/nfTicket.js');
-    nf.resetTickets();
-    await nf.mintTickets(['/tmp/gate-probe-cooldown.png']);
+    window.__gate = await import('/js/sessionGate.js');
   });
+  await page.evaluate(() => window.__gate.noteAuthRejected('cooldown'));
   await sleep(200);
-  ok('④ 冷却窗内 reload 后 403 不再横幅（防连环刷新）',
-    await page.locator('[data-session-gate="1"]').count() === 0);
+  ok('④ 冷却窗内 reload 后 403 不再横幅不再 reload（防连环刷新）',
+    await page.locator('[data-session-gate="1"]').count() === 0
+    && !(await page.evaluate(() => window.__reloads > 0)));
 
   // ⑤ 会话保活腿（session TTL 批 2026-10-21）：入座证实后武装 12h 一拍保活；
   //    204 拍零动作（滑动已在拍内发生）、403 拍走自愈腿、网络错拍静默、武装幂等。
