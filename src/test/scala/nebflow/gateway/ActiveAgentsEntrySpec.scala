@@ -207,6 +207,7 @@ class ActiveAgentsEntrySpec extends FunSuite:
     assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Team, Some("X"), Some("Y")), None)
     assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Flow, Some("X"), Some("Y")), None)
     assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Ephemeral, Some("X"), Some("Y")), None)
+  }
 
   // ── #752 空闲细分（在等什么可见化）：快照恢复字段 ──────────────────
 

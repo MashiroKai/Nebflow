@@ -12,7 +12,10 @@ import org.http4s.dsl.io.*
 /**
  * `GET /api/wiki/graph`                — merged document graph over every project's
  *                                        `<workspace>/docs` ROOT vault (pre-#744-B
- *                                        shape, byte-compatible).
+ *                                        shape, byte-compatible). Projects bound to
+ *                                        peer devices are scanned on the peer via the
+ *                                        scoped browse channel and degrade to stub
+ *                                        nodes when unreachable.
  * `GET /api/wiki/graph?project=X`      — project X's isolated vault graph (#744-B),
  *                                        with `childVaults` aggregates for sub
  *                                        projects (`SUB/docs` dirs inside the vault).
@@ -23,6 +26,11 @@ import org.http4s.dsl.io.*
  * `GET /api/wiki/vaults`               — lightweight manifest (project → vault
  *                                        path + local presence) for the panel
  *                                        project switcher; no content scan.
+ * `GET /api/wiki/paragraph`            — paragraph snapshot for one anchored reference
+ *                                        (`project` + `rel` + `anchor`; 段落级引用批):
+ *                                        paragraph index → best-effort stand-recall →
+ *                                        doc-level fallback (the xerj integration seam;
+ *                                        the graph itself never depends on memory-db).
  * `GET /api/wiki/remote-doc`           — single-file fetch from a peer device
  *                                        (`device` + `path` query params) for opening
  *                                        remote docs read-only.
@@ -49,6 +57,20 @@ private[gateway] object WikiRoutes:
       case req @ GET -> Root / "wiki" / "vaults" =>
         withAuth(req) {
           service.vaults.flatMap(Ok(_))
+        }
+
+      case req @ GET -> Root / "wiki" / "paragraph" =>
+        withAuth(req) {
+          val project = req.params.getOrElse("project", "")
+          val rel = req.params.getOrElse("rel", "")
+          val anchor = req.params.getOrElse("anchor", "")
+          if project.isBlank || rel.isBlank || anchor.isBlank then
+            BadRequest(Json.obj("error" -> "project, rel and anchor are required".asJson))
+          else
+            service.paragraph(project, rel, anchor).flatMap {
+              case Left(err) => NotFound(Json.obj("error" -> err.asJson))
+              case Right(json) => Ok(json)
+            }
         }
 
       case req @ GET -> Root / "wiki" / "remote-doc" =>

@@ -5,7 +5,7 @@ status: current
 
 # 文档库索引
 
-本目录（`docs/`）是 Stand 项目仓的文档库（[[glossary#^vault]]）：Obsidian 兼容，图谱视图（[[glossary#^graph-view]]）自动从 wiki-link（[[glossary#^wiki-link]]）抽取引用关系（[[glossary#^citation-edge]]）。新文档从这里挂入。
+本目录（`docs/`）是 Stand 项目仓的文档库（[[glossary#^vault]]）：Obsidian 兼容，图谱视图（[[glossary#^graph-view]]）自动从 wiki-link（[[glossary#^wiki-link]]）抽取引用关系（[[glossary#^citation-edge]]）。引用可精确到段落锚（[[glossary#^paragraph-anchor]]）——名词解释直达词表那一段。新文档从这里挂入。
 
 ## 按目录
 

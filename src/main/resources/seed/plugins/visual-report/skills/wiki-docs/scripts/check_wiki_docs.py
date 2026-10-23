@@ -11,6 +11,12 @@ wiki-docs SKILL.md 强制条款的机器面（条款与检查一一对应，见 
                             括注定义式）又未 [[引用]] 词表 ⇒ 报清单；
                             同一术语在多篇非词表文档各自定义 ⇒ 重复定义清单
 
+段落锚（引用语法，与 R2 校验同源）：`[[doc#^块锚]]` 精确到单个段落（名词解释
+场景主形态，词表条目即块锚段落），`[[doc#标题]]` 精确到整节。--graph 导出
+为每篇文档内嵌段落索引 paragraphs（与 WikiIndex.scala 逐字段同构，设计稿
+docs/design/wiki-graph-paragraph-ref-design.zh-CN.md §3）：hover 小窗按
+edge.anchor 直查目标段落，点击经 markdown 查看器锚点通道跳转高亮。
+
 同一脚本兼任图谱样张/离线分析的数据导出：--graph 按 WikiIndex.scala 的解析语义
 （wikilink/markdown 链接、front-matter、块锚、fence 屏蔽）产出 {nodes, edges} JSON。
 
@@ -208,6 +214,90 @@ def parse_glossary(doc):
             term = re.sub(r"^\*+|\*+$", "", term).strip()
         if term:
             doc.glossary_entries.append((term, block_id, first_no))
+
+
+# ── 段落索引（wiki-graph 段落级引用批；与 WikiIndex.scala 同构） ───────
+
+PARAGRAPH_MAX_CHARS = 280    # text 摘录上限（截断加 …）
+PARAGRAPH_TITLE_MAX = 60     # block 段 title 上限
+PARAGRAPH_MAX_PER_DOC = 64   # 每文档段落条数上限（图谱规模保护）
+
+
+def _para_text(raw):
+    """段内文本：行内标记折叠 + 空白归一 + 截 280（加 … 不劈码点）。"""
+    cleaned = re.sub(r"\s+", " ", strip_inline_markup(raw))
+    if len(cleaned) > PARAGRAPH_MAX_CHARS:
+        cleaned = cleaned[:PARAGRAPH_MAX_CHARS - 1].rstrip() + "…"
+    return cleaned
+
+
+def build_paragraphs(doc):
+    """→ [{anchor, kind, title, line, endLine, text}]（anchor 与 edge 同形，
+    带 # 前缀：块锚 '#^id'、标题 '#标题'）。行号 = 全文件坐标（含 front-matter）。
+    block = 连续非空行组（遇空行/围栏缺口/标题截止，组尾行带 ^id）；
+    heading = 标题行至下一标题行前一行。按行号排序，每文档至多 64 段。"""
+    if not doc.body_lines or not doc.rel.lower().endswith((".md", ".markdown")):
+        return []
+    paras = []
+    # 块锚段落：连续非空行组（body_lines 已剔 fence 行——围栏缺口天然断组）。
+    run = []
+    runs = []
+
+    def flush_run():
+        if not run:
+            return
+        runs.append(list(run))
+        run.clear()
+
+    prev_no = None
+    for line_no, line in doc.body_lines:
+        is_boundary = bool(HEADING_RE.match(line)) or (
+            prev_no is not None and line_no != prev_no + 1) or not line.strip()
+        if is_boundary:
+            flush_run()
+        if line.strip() and not HEADING_RE.match(line):
+            if prev_no is not None and line_no == prev_no + 1 and run:
+                run.append((line_no, line))
+            else:
+                run = [(line_no, line)]
+        else:
+            run = []
+        prev_no = line_no
+    flush_run()
+    for group in runs:
+        bm = BLOCKID_RE.match(group[-1][1])
+        if not bm:
+            continue
+        # title = 段首行的「术语」部分（—/：之前，词表条目约定；无分隔符取前 60 字符）。
+        first = group[0][1]
+        seg = re.split(r"\s*[—–]\s*|\s*[:：]\s*", BLOCKID_RE.sub(r"\1", first), maxsplit=1)
+        title = _para_text(seg[0])[:PARAGRAPH_TITLE_MAX].strip()
+        title = re.sub(r"^[#*-]+\s*", "", title).strip()
+        if not title:
+            title = _para_text(BLOCKID_RE.sub(r"\1", first))[:PARAGRAPH_TITLE_MAX].strip() or bm.group(2)
+        # text 去掉组尾行的 ^id（锚记号不是内容）。
+        body_lines = [BLOCKID_RE.sub(r"\1", t) if i == len(group) - 1 else t
+                      for i, (_, t) in enumerate(group)]
+        paras.append({
+            "anchor": "#^" + bm.group(2),
+            "kind": "block",
+            "title": title,
+            "line": group[0][0], "endLine": group[-1][0],
+            "text": _para_text(" ".join(body_lines)),
+        })
+    # 标题节：标题行 → 下一标题行前一行。
+    for i, (text, line) in enumerate(doc.headings):
+        end_line = doc.headings[i + 1][1] - 1 if i + 1 < len(doc.headings) else doc.body_lines[-1][0]
+        seg = [t for no, t in doc.body_lines if line < no <= end_line and t.strip() and not HEADING_RE.match(t)]
+        paras.append({
+            "anchor": "#" + text,
+            "kind": "heading",
+            "title": text,
+            "line": line, "endLine": end_line,
+            "text": _para_text(" ".join(seg)),
+        })
+    paras.sort(key=lambda p: p["line"])
+    return paras[:PARAGRAPH_MAX_PER_DOC]
 
 
 # ── 链接解析 ─────────────────────────────────────────────────────────
@@ -421,6 +511,7 @@ def build_graph(docs, resolve, project):
             "degree": degree.get(rel, 0),
             "summary": extract_summary(doc) if rel.endswith((".md", ".markdown")) else "",
             "headings": [h for h, _ in doc.headings][:8] if rel.endswith((".md", ".markdown")) else [],
+            "paragraphs": build_paragraphs(doc),
         })
     for rel in attachment_targets:
         top = rel.split("/", 1)[0] if "/" in rel else "."

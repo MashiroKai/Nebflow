@@ -279,4 +279,122 @@ body links [[real]]"""
     assertEquals(WikiIndex.nodeJson(ext).hcursor.get[Boolean]("external").toOption, Some(true))
     assertEquals(WikiIndex.nodeJson(ext).hcursor.get[Boolean]("stub").toOption, Some(true))
   }
+
+  test("WI-23 paragraphs: glossary-style block run → term title, edge-form anchor, ^id stripped from text") {
+    val doc = WikiIndex.parseDoc(
+      "glossary.md",
+      """# 词汇表
+        |
+        |引用语法一览（围栏内不是段落）：
+        |
+        |```
+        |[[目标#^块锚]] 引用某个概念定义块
+        |```
+        |
+        |文档库（vault） — 项目工作区内 `docs/` 目录整体：Obsidian 兼容，图谱视图（[[glossary#^graph-view]]）只扫这个目录。 ^vault
+        |
+        |multi line entry
+        |second line of the entry ^entry-two
+        |""".stripMargin
+    )
+    val paras = doc.paragraphs
+    val vault = paras.find(_.anchor == "#^vault").get
+    assertEquals(vault.kind, "block")
+    assertEquals(vault.title, "文档库（vault）")
+    assertEquals(vault.line, 9)
+    assertEquals(vault.endLine, 9)
+    assertEquals(vault.text, "文档库（vault） — 项目工作区内 docs/ 目录整体：Obsidian 兼容，图谱视图（glossary#^graph-view）只扫这个目录。")
+    // multi-line run: line range covers the whole group; ^id stripped from text only
+    val entry = paras.find(_.anchor == "#^entry-two").get
+    assertEquals((entry.line, entry.endLine), (11, 12))
+    assertEquals(entry.text, "multi line entry second line of the entry")
+    // the fenced code lines never contribute
+    assert(!paras.exists(_.text.contains("块锚]] 引用")))
+  }
+
+  test("WI-24 paragraphs: heading sections span to the next heading; anchor is the edge form") {
+    val doc = WikiIndex.parseDoc(
+      "a.md",
+      """# T
+        |
+        |intro line one
+        |intro line two
+        |
+        |## Section A
+        |body of A
+        |
+        |## Section B
+        |body of B""".stripMargin
+    )
+    val sa = doc.paragraphs.find(_.anchor == "#Section A").get
+    assertEquals(sa.kind, "heading")
+    assertEquals(sa.title, "Section A")
+    assertEquals((sa.line, sa.endLine), (6, 8))
+    assertEquals(sa.text, "body of A")
+    val sb = doc.paragraphs.find(_.anchor == "#Section B").get
+    assertEquals((sb.line, sb.endLine), (9, 10))
+    val t = doc.paragraphs.find(_.anchor == "#T").get
+    assertEquals((t.line, t.endLine), (1, 5))
+    assertEquals(t.text, "intro line one intro line two")
+  }
+
+  test("WI-25 paragraphs: frontmatter offset keeps full-file coordinates; fences break runs") {
+    val doc = WikiIndex.parseDoc(
+      "a.md",
+      """---
+        |type: note
+        |---
+        |# T
+        |
+        |entry one ^one
+        |
+        |```text
+        |fenced ^not-a-block-anchor
+        |```
+        |
+        |entry two ^two""".stripMargin
+    )
+    val one = doc.paragraphs.find(_.anchor == "#^one").get
+    assertEquals(one.line, 6) // 1-based FULL-FILE coords (frontmatter included)
+    val two = doc.paragraphs.find(_.anchor == "#^two").get
+    assertEquals(two.line, 12)
+    assert(!doc.paragraphs.exists(_.anchor == "#^not-a-block-anchor"), "fenced lines never index")
+  }
+
+  test("WI-26 paragraphs: caps and nodeJson wiring; stub/attachment nodes carry none") {
+    // title term-split fallback: no separator → cleaned first-line prefix capped at 60
+    val doc = WikiIndex.parseDoc("a.md", "plain line without separator ^p1\n")
+    val p = doc.paragraphs.find(_.anchor == "#^p1").get
+    assertEquals(p.title, "plain line without separator")
+    // per-doc cap
+    val many = (1 to 70).map(i => s"entry $i text here enough length ^b$i\n\n").mkString
+    assertEquals(WikiIndex.parseDoc("a.md", many).paragraphs.size, WikiIndex.ParagraphMaxPerDoc)
+    assertEquals(WikiIndex.ParagraphMaxPerDoc, 64)
+    assertEquals(WikiIndex.ParagraphMaxChars, 280)
+    // nodeJson carries paragraphs; attachment/phantom nodes carry []
+    val scan = WikiIndex.buildVaultScan(
+      "proj", "self",
+      List("a.md" -> "# A\n\nglossary term — the definition. ^term"),
+      List("fig.png")
+    )
+    val a = scan.nodes.map(WikiIndex.nodeJson).find(_.hcursor.get[String]("rel").toOption.contains("a.md")).get
+    val paras = a.hcursor.downField("paragraphs").as[List[Map[String, io.circe.Json]]].toOption.get
+    assertEquals(paras.find(p => p("anchor").asString.contains("#^term")).map(_("kind").asString.get), Some("block"))
+    val att = scan.nodes.map(WikiIndex.nodeJson).find(_.hcursor.get[String]("rel").toOption.contains("fig.png")).get
+    assertEquals(att.hcursor.downField("paragraphs").as[List[io.circe.Json]].toOption.get, Nil)
+  }
+
+  test("WI-27 edgeAnchorForm: raw anchors normalize to the edge form the paragraphs index uses") {
+    assertEquals(WikiIndex.edgeAnchorForm("^blk"), "#^blk")
+    assertEquals(WikiIndex.edgeAnchorForm("#Heading"), "#Heading")
+    assertEquals(WikiIndex.edgeAnchorForm("Heading"), "#Heading")
+    assertEquals(WikiIndex.edgeAnchorForm("L42"), "#L42")
+    // end-to-end: a block-anchored edge resolves against the target's paragraph index
+    val from = WikiIndex.parseDoc("a.md", "see the [[g#^vault]] entry")
+    val g = WikiIndex.parseDoc("g.md", "文档库（vault） — 定义内容。 ^vault")
+    val edge = WikiIndex.buildEdges("proj", "self", "a.md", from, Set("a.md", "g.md")).head
+    assertEquals(edge.anchor, Some("#^vault"))
+    assert(g.paragraphs.exists(_.anchor == edge.anchor.get), "edge.anchor 直查 node.paragraphs 命中")
+  }
+
 end WikiIndexSpec

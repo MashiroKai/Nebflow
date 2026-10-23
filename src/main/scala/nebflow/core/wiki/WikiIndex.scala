@@ -47,9 +47,10 @@ object WikiIndex:
     docType: Option[String] = None, // YAML frontmatter `type:` (scenario pack)
     status: Option[String] = None,  // YAML frontmatter `status:` (open/solved/…)
     summary: Option[String] = None,  // graph-preview summary (summaryOf — wiki-graph redesign)
-    external: Boolean = false      // true = cross-vault placeholder (#744-B): the target
+    external: Boolean = false,      // true = cross-vault placeholder (#744-B): the target
                                    // lives in ANOTHER vault of the same project — counted
                                    // in stats, never drawn, never a broken-link entry
+    paragraphs: List[WikiParagraph] = Nil // paragraph index (段落级引用批 — docs only)
   )
 
   /** A sub-vault discovered inside a vault (#744-B hierarchy): `rel` is the
@@ -61,6 +62,21 @@ object WikiIndex:
 
   /** A `^blockid` found in a document (line is 1-based, source coordinates). */
   final case class WikiBlockAnchor(id: String, line: Int)
+
+  /** One indexable paragraph of a document (wiki-graph 段落级引用批, 台账
+    * #744-A; design doc `docs/design/wiki-graph-paragraph-ref-design.zh-CN.md`
+    * §3 — the Python exporter `check_wiki_docs.py` mirrors this field by
+    * field). `anchor` is the EDGE-anchor form (`"#^id"` / `"#Heading"`), so a
+    * client resolves `edge.anchor` against `node.paragraphs` with a plain
+    * equality lookup — no transformation. */
+  final case class WikiParagraph(
+    anchor: String,   // edge-anchor form: "#^blk" | "#Heading"
+    kind: String,     // "block" | "heading"
+    title: String,    // term part (block) or heading text
+    line: Int,        // 1-based FULL-FILE coordinates (frontmatter included)
+    endLine: Int,
+    text: String      // inline-markup-stripped excerpt, capped at [[ParagraphMaxChars]]
+  )
 
   final case class WikiEdge(
     from: String,
@@ -204,7 +220,8 @@ object WikiIndex:
     headings: List[WikiHeading],
     blocks: List[WikiBlockAnchor],
     links: List[(String, Option[String], String, Int)], // (target, anchor, kind, line)
-    summary: Option[String]
+    summary: Option[String],
+    paragraphs: List[WikiParagraph] = Nil
   )
 
   /** Parse raw markdown text into headings / block anchors / outgoing links /
@@ -249,7 +266,8 @@ object WikiIndex:
           if target.nonEmpty then links += ((target, anchor, "link", lineNo))
         }
       i += 1
-    ParsedDoc(title, headings.toList, blocks.toList, links.toList, summaryOf(lines, mask, afterFirstH1))
+    ParsedDoc(title, headings.toList, blocks.toList, links.toList, summaryOf(lines, mask, afterFirstH1),
+      paragraphsOf(lines, mask, headings.toList, fmOffset))
 
   // ── Graph summary (wiki-graph redesign §5) ──────────────────────
 
@@ -304,6 +322,118 @@ object WikiIndex:
   private def basename(rel: String): String =
     val norm = rel.replace('\\', '/')
     norm.substring(norm.lastIndexOf('/') + 1)
+
+  // ── Paragraph index (wiki-graph 段落级引用批; design §3) ──────────
+  // Mirrored field-by-field by the Python exporter check_wiki_docs.py —
+  // the two producers MUST stay isomorphic (anchor form, coordinates,
+  // caps). A fence line or a heading always breaks a paragraph run.
+
+  val ParagraphMaxChars = 280
+  val ParagraphTitleMaxChars = 60
+  val ParagraphMaxPerDoc = 64
+
+  private def truncateAt(s: String, max: Int): String =
+    if s.length <= max then s
+    else s.substring(0, s.offsetByCodePoints(0, max - 1)) + "…" // never split a code point
+
+  /** Term-part title of a block paragraph: the text before the first
+    * ` —`/`：` separator (glossary-entry convention), else the cleaned
+    * first-line prefix; falls back to the anchor id when the line is empty. */
+  private def blockTitle(rawFirstLine: String, id: String): String =
+    val base = rawFirstLine.replaceAll(raw"(?s)^(.*\S)\s+\^[A-Za-z0-9][A-Za-z0-9-]*\s*$$", "$1").trim
+    val term = cleanSummaryText(base.split(raw"\s*[—–]\s*|\s*[:：]\s*", 2).head)
+      .replaceAll(raw"^[#*-]+\s*", "").trim
+    val fallback = cleanSummaryText(base)
+    val candidate =
+      if term.nonEmpty && term.length <= ParagraphTitleMaxChars then term
+      else if fallback.nonEmpty then truncateAt(fallback, ParagraphTitleMaxChars)
+      else id
+    candidate
+
+  /** Content runs of the body (fenced lines masked out, blanks/headings break
+    * runs) as (bodyIdx, text) groups in document order. A NON-CONTENT line
+    * always flushes the open run — an intervening blank/fence/heading ends the
+    * paragraph even if the next content line is index-adjacent (the Python
+    * exporter breaks the same way; keep the two isomorphic). */
+  private def contentRuns(lines: Vector[String], mask: Vector[Boolean]): List[List[(Int, String)]] =
+    val runs = ListBuffer.empty[List[(Int, String)]]
+    var cur = ListBuffer.empty[(Int, String)]
+    var prevIdx = -2
+    def flush(): Unit =
+      if cur.nonEmpty then
+        runs += cur.toList
+        cur = ListBuffer.empty[(Int, String)]
+    for i <- lines.indices do
+      val line = lines(i)
+      val content = !mask(i) && line.trim.nonEmpty && HeadingRe.findFirstMatchIn(line).isEmpty
+      if content then
+        if cur.nonEmpty && i == prevIdx + 1 then cur += ((i, line))
+        else
+          flush()
+          cur = ListBuffer((i, line))
+      else flush() // blank / fence / heading — run boundary (parity with check_wiki_docs.py)
+      prevIdx = i
+    flush()
+    runs.toList
+
+  /** Block paragraphs: content runs whose LAST line carries a `^blockid`. */
+  private def blockParagraphs(runs: List[List[(Int, String)]], fmOffset: Int): List[WikiParagraph] =
+    runs.flatMap { group =>
+      val (lastIdx, lastLine) = group.last
+      BlockIdRe.findFirstMatchIn(lastLine).map { m =>
+        val id = m.group(2)
+        val body = group.map { case (idx, t) =>
+          if idx == lastIdx then t.replaceAll(raw"(?s)^(.*\S)\s+\^[A-Za-z0-9][A-Za-z0-9-]*\s*$$", "$1") else t
+        }.mkString(" ")
+        WikiParagraph(
+          anchor = "#^" + id,
+          kind = "block",
+          title = blockTitle(group.head._2, id),
+          line = group.head._1 + 1 + fmOffset,
+          endLine = lastIdx + 1 + fmOffset,
+          text = truncateAt(cleanSummaryText(body), ParagraphMaxChars)
+        )
+      }
+    }
+
+  /** Heading sections: heading line through the line before the next
+    * heading (any level) or end of body. */
+  private def headingParagraphs(lines: Vector[String], mask: Vector[Boolean],
+                                headings: List[WikiHeading], fmOffset: Int): List[WikiParagraph] =
+    headings.zipWithIndex.map { case (h, i) =>
+      val startIdx = h.line - 1 - fmOffset
+      val endIdx = headings.lift(i + 1) match
+        case Some(nh) => math.min(nh.line - 1 - fmOffset - 1, lines.length - 1)
+        case None     => lines.length - 1
+      val text =
+        if startIdx + 1 > endIdx then ""
+        else (startIdx + 1 to endIdx).filter(j => !mask(j) && lines(j).trim.nonEmpty &&
+          HeadingRe.findFirstMatchIn(lines(j)).isEmpty).map(lines).mkString(" ")
+      WikiParagraph(
+        anchor = "#" + h.text,
+        kind = "heading",
+        title = h.text,
+        line = h.line,
+        endLine = endIdx + 1 + fmOffset,
+        text = truncateAt(cleanSummaryText(text), ParagraphMaxChars)
+      )
+    }
+
+  /** Full paragraph index of one document: block paragraphs + heading
+    * sections, line-ordered, capped at [[ParagraphMaxPerDoc]]. */
+  def paragraphsOf(lines: Vector[String], mask: Vector[Boolean],
+                   headings: List[WikiHeading], fmOffset: Int): List[WikiParagraph] =
+    if lines.isEmpty then Nil
+    else
+      val runs = contentRuns(lines, mask)
+      (blockParagraphs(runs, fmOffset) ++ headingParagraphs(lines, mask, headings, fmOffset))
+        .sortBy(_.line)
+        .take(ParagraphMaxPerDoc)
+
+  /** Raw-anchor (`"^blk"` | `"#Heading"` | `"L42"`) → edge-anchor form. */
+  def edgeAnchorForm(anchor: String): String =
+    if anchor.startsWith("#") || anchor.startsWith("^") then "#" + anchor.stripPrefix("#")
+    else "#" + anchor
 
   // ── Graph assembly ───────────────────────────────────────────────
 
@@ -392,7 +522,8 @@ object WikiIndex:
         kind = "doc",
         docType = frontmatter.flatMap(_.get("type")).filter(_.nonEmpty),
         status = frontmatter.flatMap(_.get("status")).filter(_.nonEmpty),
-        summary = parsed.summary
+        summary = parsed.summary,
+        paragraphs = parsed.paragraphs
       )
       edges ++= buildEdges(project, device, rel, parsed, knownRels)
     }
@@ -418,6 +549,16 @@ object WikiIndex:
 
   // ── JSON encoding ────────────────────────────────────────────────
 
+  def paragraphJson(p: WikiParagraph): Json =
+    Json.obj(
+      "anchor" -> p.anchor.asJson,
+      "kind" -> p.kind.asJson,
+      "title" -> p.title.asJson,
+      "line" -> p.line.asJson,
+      "endLine" -> p.endLine.asJson,
+      "text" -> p.text.asJson
+    )
+
   def nodeJson(n: WikiDocNode): Json =
     Json.obj(
       "id" -> n.id.asJson,
@@ -432,7 +573,8 @@ object WikiIndex:
       "type" -> n.docType.map(_.asJson).getOrElse(Json.Null),
       "status" -> n.status.map(_.asJson).getOrElse(Json.Null),
       "summary" -> n.summary.map(_.asJson).getOrElse(Json.Null),
-      "external" -> n.external.asJson
+      "external" -> n.external.asJson,
+      "paragraphs" -> n.paragraphs.map(paragraphJson).asJson
     )
 
   def edgeJson(e: WikiEdge): Json =
