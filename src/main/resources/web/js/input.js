@@ -32,6 +32,9 @@ import {
   available as vaultAvailable, queueVaultKey, put as vaultPut, get as vaultGet,
   del as vaultDel, keys as vaultKeys,
 } from './queueVault.js';
+// device-provenance 批（2026-10-23 作者令）：来源设备声明随用户消息帧上行
+// （`device` 键；网关对照 NebLink 花名册出已登记/未登记标记，只进模型面）。
+import { deviceStamp } from './deviceIdentity.js';
 
 // @-mention project autocomplete (mention-routing batch; mention-cn 2026-09-27):
 // '@' opens the mounted-projects popup unless the character right before it is
@@ -363,6 +366,7 @@ export function send(resendId) {
     if (v.sessionId) state.lastUserSendId[v.sessionId] = clientMessageId;
     sendWs({
       content: frameText,
+      device: deviceStamp(), // device-provenance 批：来源设备声明（网关对照花名册出标记）
       ...(taskRefs.length > 0 ? { taskRefs } : {}),
       ...(refs.length > 0 ? { refs } : {}),
       attachments: (v.pendingAttachments || [])
@@ -859,6 +863,7 @@ function dispatchOfflineItem(sid, item) {
   notifyFriendRefsSent(refs);
   const sent = sendWs({
     content: item.text,
+    device: deviceStamp(), // device-provenance 批：离线补发腿同律随帧声明
     ...(taskRefs.length > 0 ? { taskRefs: taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sid })) } : {}),
     ...(refs.length > 0 ? { refs: refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) })) } : {}),
     attachments: (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref').map(a => ({
@@ -964,6 +969,7 @@ function sendImmediate(sessionId, item) {
     notifyFriendRefsSent(refs);
     sendWs({
       content: item.text,
+      device: deviceStamp(), // device-provenance 批：队列 drain 腿同律随帧声明
       ...(taskRefs.length > 0 ? { taskRefs: taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sessionId })) } : {}),
       ...(refs.length > 0 ? { refs: refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) })) } : {}),
       attachments: (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref').map(a => ({
@@ -976,7 +982,8 @@ function sendImmediate(sessionId, item) {
   } else {
     // resend-dedup 批：immediateInput 帧带客户端唯一 id（gateway 本批不消费该腿的
     // id——ImmediateInput 命令无此字段；wire 先行，候二期命令形状收口）。
-    sendWs({ type: 'immediateInput', content: item.text, clientMessageId: itemMsgId, sessionId });
+    // device-provenance 批：「立即发送」腿同律随帧声明。
+    sendWs({ type: 'immediateInput', content: item.text, device: deviceStamp(), clientMessageId: itemMsgId, sessionId });
   }
   // Render in chat
   // resend-dedup 批：renderUserBubble 落 data-msg-id = 幂等键（与普通发送同键）。
@@ -1197,6 +1204,7 @@ function drainMessageQueueNow(sessionId) {
     notifyFriendRefsSent(refs);
     sendWs({
       content: item.text,
+      device: deviceStamp(), // device-provenance 批：busy 队列 drain 腿同律随帧声明
       ...(taskRefs.length > 0 ? { taskRefs: taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sessionId })) } : {}),
       ...(refs.length > 0 ? { refs: refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) })) } : {}),
       attachments: (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref').map(a => ({
@@ -1280,6 +1288,7 @@ export function injectUserMessage(text, options = {}) {
   const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   sendWs({
     content: trimmed,
+    device: deviceStamp(), // device-provenance 批：插件卡注入腿同律随帧声明
     attachments: [],
     clientMessageId,
     sessionId,

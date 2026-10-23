@@ -25,6 +25,9 @@ import { t } from './i18n.js';
 import { sendWs } from './ws.js';
 import { escapeHtml } from './utils.js';
 import { findViewBySessionId } from './chatView.js';
+// device-provenance 批（2026-10-23）：重发腿同为真人消息帧，随帧声明来源设备
+// （叶子模块，静态 import 无环）。
+import { deviceStamp } from './deviceIdentity.js';
 
 // ── Reason metadata ──────────────────────────────────────────────────────
 // wire names are the FreezeReason enum cases (kebab) emitted by protocol.scala.
@@ -211,7 +214,7 @@ export function sendRetry(sid) {
   }
   const v = findViewBySessionIdSafe(sid);
   const chatWidth = (v && v.dom && v.dom.chat && v.dom.chat.clientWidth) || 0;
-  sendWs({ content: text, clientMessageId: newClientMessageId(), sessionId: sid, chatWidth });
+  sendWs({ content: text, device: deviceStamp(), clientMessageId: newClientMessageId(), sessionId: sid, chatWidth });
 }
 
 /** "取消任务" — abandon recovery → terminal settle (reuses cancelAgent). */

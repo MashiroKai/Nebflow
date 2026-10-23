@@ -102,6 +102,7 @@ class WsBrowseDeviceLegSpec extends CatsEffectSuite:
       resolveExplorerBaseRootImpl = null,
       admitWorkOrRefuseImpl = null,
       handleUserTextImpl = null,
+      deviceProvenanceImpl = null,
       skipCurrentFreezeWindowImpl = null,
       executeAskImpl = null,
       executeSkillImpl = null,

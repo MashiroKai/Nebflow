@@ -785,7 +785,11 @@ private[gateway] object WsSessionChatHandlers:
     val immContent = immJson.hcursor.downField("content").as[String].getOrElse("")
     admitWorkOrRefuse(wsSend)(
       // 真人：用户在客户端点发送（队列条「立即发送」/输入框直投）
-      handleUserText(immSessionId, immContent, source = "immediateInput", fromUser = true)
+      // device-provenance 批：帧 `device` 键 → 来源设备读数（缺席 ⇒ None ⇒
+      // 下方 handleUserText 全 face 逐字节现状）。
+      deviceProvenance(immJson).flatMap(device =>
+        handleUserText(immSessionId, immContent, source = "immediateInput", fromUser = true, device)
+      )
     )
 
   private def handleUserMessage(
