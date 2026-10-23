@@ -55,7 +55,7 @@ import {
   computeAgentStates
 } from './sidebar.js';
 import { initOnboarding } from './onboarding.js';
-import { rootDisplayName, initRootNameProbe } from './rootName.js';
+import { rootDisplayName, initRootNameProbe, reprobeRootName } from './rootName.js';
 import {
   showNewSessionModal, hideModals, confirmNewSession,
   showDeleteModal, confirmDeleteSession,
@@ -2247,6 +2247,16 @@ onMessage('agentList', (msg, view) => {
   }
 });
 
+// --- identity-sync 批（2026-10-23）：智能体名称/头像跨机收敛落地广播 ────────
+// 引擎把另一台机器推来的身份状态 LWW 收敛落盘后，向本端面板推 agentIdentityChanged
+// ——立即重读（rootName 探针重跑 + agentsData 行刷新 + 会话头重绘），不等刷新/重启。
+onMessage('agentIdentityChanged', (msg) => {
+  reprobeRootName();
+  sendWs({ type: 'listAgents' });
+  try { window.dispatchEvent(new CustomEvent('nebflow-agent-identity-changed', { detail: { agent: msg && msg.agent } })); }
+  catch { /* 早于 window 就绪等：探针/agentsData 两腿已覆盖 */ }
+});
+
 onMessage('agentSessionList', (msg, view) => {
   // Unified list — accept all sessions regardless of which agent triggered the request
   const agentName = msg.agentName;
@@ -4009,6 +4019,11 @@ document.getElementById('new-folder-btn')?.addEventListener('click', () => creat
 // while the frontend was disconnected. On reconnect, re-fetch the active
 // session's history so the user sees the latest state.
 onReconnect(() => {
+  // identity-sync 批（2026-10-23）：重连 = 会话恢复 —— 离线期间另一台机器改的
+  // 名称/头像（引擎侧已由跨机收敛通道落盘）在此重读：rootName 探针重跑 +
+  // agentsData 行刷新（会话头重绘由 agentProfile 的重连钩子强制对账补齐）。
+  reprobeRootName();
+  sendWs({ type: 'listAgents' });
   // D6 批 F2 + #250 ③: rebuild the pending-ask mirror from the hub's GLOBAL
   // snapshot (pendingAsksSnapshot) instead of clearing it locally — clearing
   // globally while the backend only replayed for the (re)subscribed session

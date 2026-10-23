@@ -731,7 +731,16 @@ case class SystemStableSnapshot(
    * reminder is the only refresh path for an open session. "" = no plugin face
    * in context (non-dispatcher sessions).
    */
-  pluginCatalog: String = ""
+  pluginCatalog: String = "",
+  /**
+   * Rendered `## Self` identity body at systemStable build time (identity-sync
+   * 批 2026-10-23 change detection): display-name/avatar self-knowledge as the
+   * session last saw it. Delta against the per-turn re-read (AgentIdentityStore
+   * selfSectionText) drives the `identity` change reminder — same shape as the
+   * devices axis. AgentState is never persisted ⇒ adding the field is
+   * restart-safe by construction.
+   */
+  identity: String = ""
 )
 
 case class AgentState(

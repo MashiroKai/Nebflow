@@ -90,6 +90,16 @@ export function initRootNameProbe() {
   return probePromise;
 }
 
+/** Re-arm and re-run the probe (identity-sync 批 2026-10-23): the boot probe is
+ *  once-per-page-load, so a name changed on ANOTHER machine (converged into this
+ *  engine's agent.json by the identity-sync channel) never reached an open panel.
+ *  Fired on WS reconnect and on the engine's `agentIdentityChanged` broadcast —
+ *  the settling dispatch of `nebflow-root-name-change` repaints every consumer. */
+export function reprobeRootName() {
+  probePromise = null;
+  return initRootNameProbe();
+}
+
 /** i18n param bag for strings carrying the agent's name (`{agent}` placeholder). */
 export function rootNameParams() {
   return { agent: rootDisplayName() };

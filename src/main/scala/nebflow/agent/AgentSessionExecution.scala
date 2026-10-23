@@ -607,6 +607,14 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 )
               )
             else IO.pure("")
+          // identity-sync 批（2026-10-23）：展示身份现读（displayName + 头像 sha）——
+          // `## Self` 段体（order 396）与 identity 变更提醒的唯一数据源。空 = 该
+          // agent 无非默认身份（未起名且无自定义头像）= 段不注入、提醒不产生 =
+          // 既有会话字节零变化。SubTask worker 是剥净上下文的叶子管道（同 skill
+          // 目录等其它上下文段的停注判据），不注入。
+          identitySelfText <-
+            if stateForLlm.isSubTaskWorker then IO.pure("")
+            else nebflow.core.entity.AgentIdentityStore.readSelfSection(freshDef.name, freshDef.displayName)
           nowMs = System.currentTimeMillis()
           injectTime = isUserTurn && (isRealUserTurn || nowMs - lastTimeReminderMs >= TimeReminderMinGapMs)
           // Plugin surface live convergence (plugins-live 批 2026-09-12). The Plugin
@@ -666,7 +674,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             stateForLlm.language,
             envInfo,
             mountedProjectsText,
-            pluginSurfaceText
+            pluginSurfaceText,
+            identitySelfText
           )
           promptCtx = PromptContext(
             availableTools = allowedTools,
@@ -693,7 +702,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             isTeamLead = isTeamLead,
             isRootAgent = isRootAgent,
             mountedProjectsText = mountedProjectsText,
-            executorsText = executorsText
+            executorsText = executorsText,
+            identitySelfText = identitySelfText
           )
           // systemStable: rebuilt only at lifecycle nodes; otherwise reuse the
           // cached string byte-for-byte (provider prefix cache stays hit).
@@ -702,6 +712,19 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           // Reminder refactor (2026-08-20): sessions/environment change
           // reminders removed (user ruling) — devices (delta) and language
           // remain as change notifications, plus mounted projects (2026-09-07).
+          // identity 变更差量（identity-sync 批 2026-10-23）：会话上次被告知的身份
+          // （快照轴）vs 现读——变更 ⇒ 提醒文本（真用户轮注入、注入后基线推进，
+          // devices 轴 F-C 同款）；生命周期轮不产提醒（重建的 systemStable 已携带
+          // 新身份段）。AgentState 不持久化 ⇒ 重启即生命周期轮，天然自愈。
+          identityDeltaText =
+            if isLifecycleRebuild then ""
+            else {
+              val prevIdentity = stateForLlm.stableSnapshot
+                .map(_.identity)
+                .getOrElse(currentSnapshot.identity)
+              if prevIdentity == identitySelfText then ""
+              else SystemReminders.renderIdentityChange(prevIdentity, identitySelfText)
+            }
           (systemStable, changeDevices, changeLanguage, changeProjects) =
             if isLifecycleRebuild then (buildSystemPrompt(freshDef, promptCtx), "", Option.empty[String], "")
             else
@@ -728,6 +751,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             injectTime = injectTime,
             mountedProjectsDelta = changeProjects,
             pluginSurfaceChange = pluginSurfaceChange,
+            identityDelta = identityDeltaText,
             // F-2 M2（kaiflap-diag §2.4）：compact / ask 轮的请求级提醒在下面的
             // `contextMsg` 闸处**一律为空** ⇒ 提示对象到不了模型。抑制位让这类轮
             // **不产生提醒对象**（连带不打计数行）——「没交付就不记数」。真变化保持
@@ -810,21 +834,30 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           // **不动** —— provider 前缀缓存零影响。
           devicesDeltaInjected =
             contextMsg.nonEmpty && contextReminders.exists(_.category == "devices")
+          // identity 轴基线推进与 devices 轴同一取舍（F-C）：真播报才推进——本轮
+          // 真把 identity 提醒注入了请求（非 compact / 非 ask 轮且提醒在场）。
+          identityDeltaInjected =
+            contextMsg.nonEmpty && contextReminders.exists(_.category == "identity")
           stateWithCache =
             if isLifecycleRebuild then stateWithReminder.withSystemStableCache(systemStable, currentSnapshot)
             else
               val withPluginBaseline =
                 if pluginSurfaceMsg.nonEmpty then stateWithReminder.withPluginSurfaceBaseline(pluginSurfaceText)
                 else stateWithReminder
-              // 两轴同一轮可各自推进（旧 `else if` 链在「双变更同一轮」时会漏推进 devices 轴）。
-              // 🔴 直接 `copy` 而不在 protocol.scala 加 `withDevicesBaseline` 助手：
-              // 本批实施面限定 `NeblinkClient.scala` + `AgentCore.scala`（P7 零越界），
-              // 语义与既有 `withPluginSurfaceBaseline` 逐字同构（无快照 ⇒ 空转不炸）。
-              if devicesDeltaInjected then
-                withPluginBaseline.copy(
-                  stableSnapshot = withPluginBaseline.stableSnapshot.map(_.copy(devices = devInfo))
+              // 三轴同一轮可各自推进（devices / identity 各自的播报判据独立，
+              // 链式 copy 而非 else-if——「双变更同一轮」不漏轴）。语义与既有
+              // `withPluginSurfaceBaseline` 逐字同构（无快照 ⇒ 空转不炸）。
+              val withDevicesBaseline =
+                if devicesDeltaInjected then
+                  withPluginBaseline.copy(
+                    stableSnapshot = withPluginBaseline.stableSnapshot.map(_.copy(devices = devInfo))
+                  )
+                else withPluginBaseline
+              if identityDeltaInjected then
+                withDevicesBaseline.copy(
+                  stableSnapshot = withDevicesBaseline.stableSnapshot.map(_.copy(identity = identitySelfText))
                 )
-              else withPluginBaseline
+              else withDevicesBaseline
           // Maintenance check: every N delegate/flow calls
           maintenanceMsg =
             if MaintenanceService.shouldTrigger(stateWithReminder, depth, isCompactTurn, isAskTurn) then
