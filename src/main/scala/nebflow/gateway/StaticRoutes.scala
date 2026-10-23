@@ -329,9 +329,24 @@ object StaticRoutes:
   /** CSS 相对 url() 捕获（绝对/http(s)/data/协议相对/锚引用不碰）。 */
   private val CssRelativeUrlRe = """url\(\s*(?!['"]?(?:data:|https?:|//|/|#))([^)]+)\)""".r
 
+  /** 匹配重建助手：绕开 [[scala.util.matching.Regex.replaceAllIn]] 的替换串
+    * 语义（`$` 被当组引用展开——vendor JS 里的 `$` 模板字面量即触发
+    * Illegal group reference）。重建是纯拼接：f 的返回值逐字进结果串。 */
+  private def rebuildMatches(target: String, re: scala.util.matching.Regex)(
+    f: scala.util.matching.Regex.Match => String
+  ): String =
+    val sb = new StringBuilder
+    var last = 0
+    for m <- re.findAllMatchIn(target) do
+      sb.append(target, last, m.start)
+      sb.append(f(m))
+      last = m.end
+    sb.append(target, last, target.length)
+    sb.toString
+
   /** [[packedIndexHtml]] 的 CSS url() 重写（纯函数，spec 直读）。 */
   private[gateway] def rewriteCssUrls(css: String, baseDir: String): String =
-    CssRelativeUrlRe.replaceAllIn(css, m =>
+    rebuildMatches(css, CssRelativeUrlRe) { m =>
       val inner  = m.group(1).trim
       val quote  = if inner.startsWith("\"") then "\"" else if inner.startsWith("'") then "'" else ""
       val bare   = if quote.isEmpty then inner else inner.stripPrefix(quote).stripSuffix(quote)
@@ -339,11 +354,11 @@ object StaticRoutes:
       val (path, suffix) = if cut < 0 then (bare, "") else bare.splitAt(cut)
       if path.isEmpty then m.matched
       else s"""url($quote$baseDir$path$suffix$quote)"""
-    )
+    }
 
   /** 隧道首开打包转换（纯函数）：逐字保留未知形状，单资源失败回落原 tag。 */
   private[gateway] def packedIndexHtml(html: String): String =
-    val afterCss = PackStylesheetRe.replaceAllIn(html, m =>
+    val afterCss = rebuildMatches(html, PackStylesheetRe) { m =>
       val path  = m.group(1)
       val attrs = m.group(2)
       ConsoleAssetBatchRoutes.readCapped(s"web/$path", ConsoleAssetBatchRoutes.MaxBytesPerAsset) match
@@ -358,15 +373,15 @@ object StaticRoutes:
             case Some(mm) => s"""<style media="${mm.group(1)}">"""
             case None     => "<style>"
           open + css + "</style>"
-    )
-    PackVendorScriptRe.replaceAllIn(afterCss, m =>
+    }
+    rebuildMatches(afterCss, PackVendorScriptRe) { m =>
       ConsoleAssetBatchRoutes.readCapped(s"web/${m.group(1)}", ConsoleAssetBatchRoutes.MaxBytesPerAsset) match
         case None => m.matched
         case Some(bytes) =>
           val js = new String(bytes, java.nio.charset.StandardCharsets.UTF_8)
             .replace("</script", "<\\/script")
           "<script>" + js + "</script>"
-    )
+    }
   end packedIndexHtml
 
   private def readClasspathResourceUtf8(name: String): Option[String] =

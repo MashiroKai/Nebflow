@@ -112,14 +112,15 @@ class NfFileLanDirectSpec extends CatsEffectSuite:
     assertEquals(resp.headers.headers.find(_.name.toString.equalsIgnoreCase("Access-Control-Allow-Origin")).map(_.value), Some("*"))
     assert(resp.headers.headers.exists(_.name.toString.equalsIgnoreCase("Access-Control-Allow-Private-Network")))
     // Expose 面（前端进度/seek/退避读数头）在正向上可见。
-    val ok = env.read(s"path=${env.file.getFileName}&ticket=${java.net.URLEncoder.encode(env.store.issue("s", env.file.toRealPath().toString).unsafeRunSync().token, "UTF-8")}")
+    val q = java.net.URLEncoder.encode(env.file.toString, "UTF-8")
+    val ok = env.read(s"path=$q&ticket=${java.net.URLEncoder.encode(env.store.issue("s", env.file.toRealPath().toString).unsafeRunSync().token, "UTF-8")}")
     assertEquals(ok.status, Status.Ok)
     val expose = ok.headers.headers.find(_.name.toString.equalsIgnoreCase("Access-Control-Expose-Headers")).map(_.value).getOrElse("")
     assert(expose.contains("content-length") && expose.contains("content-range"), s"Expose-Headers must carry range/length reads: $expose")
   }
 
   test("③ 鉴权语义零变化：坏票仍 403 + CORS 头在场（CORS 不替代 ticket）") {
-    val resp = env.read(s"path=${env.file.getFileName}&ticket=deadbeef")
+    val resp = env.read(s"path=${java.net.URLEncoder.encode(env.file.toString, "UTF-8")}&ticket=deadbeef")
     assertEquals(resp.status, Status.Forbidden)
     assertEquals(resp.headers.headers.find(_.name.toString.equalsIgnoreCase("Access-Control-Allow-Origin")).map(_.value), Some("*"))
   }
