@@ -2924,7 +2924,8 @@ object WebSocketRoutes:
     meta: Option[SessionMeta],
     retryCount: Option[Int] = None,
     taskTitle: Option[String] = None, // taskbadge batch (main-side): title resolved by the caller via the ledger
-    delegateTitle: Option[String] = None // 显示名契约批 2026-10-22: delegate/SubTask 行批次标题（delegateDisplayTitle 解析）
+    delegateTitle: Option[String] = None, // 显示名契约批 2026-10-22: delegate/SubTask 行批次标题（delegateDisplayTitle 解析）
+    bgWaiting: List[(String, String, Long)] = Nil // #752: (jobId, description, startedAtMs) — the session's own waiting-type bg tasks
   ): Json =
     Json.obj(
       "sessionId" -> rec.sessionId.asJson,
@@ -2953,10 +2954,15 @@ object WebSocketRoutes:
       "status" -> rec.status.toString.asJson,
       "startedAt" -> rec.startedAt.asJson,
       "retryCount" -> retryCount.getOrElse(0).asJson,
-      // 项目归属（2026-09-06 作者裁定：面板 Flow 徽标旁标注项目名）——恢复路径
-      // 数据源。仅 Project 域会话（node- 与 dispatcher- 前缀，注册时写
-      // AgentRecord.project）有值；其余空串（前端 falsy → 不渲染徽标）。实时路径
-      // 不经此字段（agentStart 帧由 routeSubagentWsSend 转发层注入，见 NodeRunner）。
+      // #752 空闲细分（快照恢复路径的数据源；live 行由实时帧写 currentTool，快照
+      // 字段合并时不降级实时值——前端 merge 规则）。currentTool = 在飞/最后工具名
+      // （最近动作摘要）、lastActivityMs = agent 侧最近活动戳（长空闲徽标判据）。
+      "currentTool" -> rec.currentToolName.getOrElse("").asJson,
+      "lastActivityMs" -> rec.lastActivityMs.asJson,
+      // Project attribution (2026-09-06 author ruling): Flow rows carry the
+      // owning project's name next to the kind chip — muted plain text,
+      // visually subordinate to the chip, never competing with the node name.
+      // Absent (Root/direct delegates) → no badge at all.
       "project" -> rec.project.getOrElse("").asJson,
       // taskbadge batch 2026-09-27: sub-agents panel task attribution on the
       // snapshot face; taskId = the registration-time snapshot (dispatcher slot /
@@ -2969,7 +2975,22 @@ object WebSocketRoutes:
       // 的未读终态数（HeldDeliveryWatchdog 独占写）。空 = 0 → 前端 falsy 不渲染
       // （同 project/taskId 徽标契约）。
       "heldReceipts" -> rec.pendingEventCount.asJson,
-      "unreadReceipts" -> rec.unreadReceiptCount.asJson
+      "unreadReceipts" -> rec.unreadReceiptCount.asJson,
+      // #752 空闲细分：「等子代理」判据的另一半——barrier 上的 spawn 计数
+      // （issue #31 Fix D 幻影屏障可见化的既有快照字段，随批补进快照出帧）。
+      "outstandingSubagents" -> rec.outstandingSubagents.asJson,
+      // #752 空闲细分：「等后台任务」——会话自有等待型任务（BgTaskRegistry
+      // waitingBySession，调用方一次全表扫描传入）。[{taskId, description,
+      // startedAt}]；空数组 = 无（前端 falsy 判 length）。启动戳毫秒，前端算时长。
+      "bgWaiting" -> bgWaiting
+        .map { case (jobId, description, startedAtMs) =>
+          Json.obj(
+            "taskId" -> jobId.asJson,
+            "description" -> description.asJson,
+            "startedAt" -> startedAtMs.asJson
+          )
+        }
+        .asJson
     )
 
   // ============================================================

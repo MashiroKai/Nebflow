@@ -24,6 +24,9 @@ import { cleanupCardIframes } from './cardRegistry.js';
 import { fetchDelegateDetail, isDelegateDomainId } from './delegateApi.js';
 // 修订批（九点⑦ · 2026-10-09）：判词→状态映射（结果区词面）——stub 读取口单源。
 import { verdictToStatus } from './delegateChainStub.js';
+// #752 面板进展可见化：弹窗内「会话在做什么」条（最近动作 + 本会话后台任务行，
+// 点击行 = 输出详情卡）。挂载/卸载与 openStepPopup/closeStepPopup 成对。
+import { mountSessionWorkStrip, unmountSessionWorkStrip } from './bgAgentWorkStrip.js';
 
 // P2-4 cycle cut（flowAgentPopup 同款先例）：showToast 动态 import 破环。净化批
 // （2026-10-09）后本文件暂零 toast 消费点（归档入口已迁 L2 抽屉）——常量在册保留
@@ -514,6 +517,13 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   // 子代理显示/归档件为零（净化口径：弹窗 DOM 无「子代理」字样、无归档钮）。
   mountDelegateStrip(nodeSessionId, modal, entry.container);
 
+  // #752「会话在做什么」条：摘要条之下、聊天体之上——最近动作 + 本会话后台
+  // 任务行（15s 自刷新拍，关闭即停）。作者实证「delegate 空闲不理人、看不到
+  // 进展」的弹窗内承载面。instanceof 运行期窄化（chatSearch.js:368 仓内先例）。
+  if (modal instanceof HTMLElement) {
+    mountSessionWorkStrip(nodeSessionId, modal, entry.container);
+  }
+
   // Management panel (2026-08-22 ruling): no input bar — stop/retry + state.
   const v = entry.view;
   const bar = buildManageBar();
@@ -580,6 +590,7 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
 
 export function closeStepPopup() {
   if (!popupOverlay) return;
+  unmountSessionWorkStrip(); // #752「会话在做什么」条随弹窗关闭停拍、摘除（幂等）
   if (currentStepId) {
     const entry = stepViews.get(currentStepId);
     if (entry) {

@@ -109,4 +109,71 @@ class BgTaskRegistrySpec extends FunSuite:
         } *> cleanup(job)
     io.unsafeRunSync()
   }
+
+  // ── #753 快照行数面：activeTasksJson 携带 outputLines（刷新恢复路径的行数 chip）──
+
+  test("activeTasksJson carries outputLines (0 for unbuffered tasks)") {
+    val (job, root) = ("bgtaskspec-lines-1", "main-bgtaskspec-6")
+    val io =
+      BgTaskRegistry.register(job, root, "spec task lines", "local", root) *>
+        BgTaskRegistry.activeTasksJson.flatMap { json =>
+          IO {
+            val t = clue(tasksFor(root, json)).find(_.hcursor.get[String]("taskId").toOption.contains(job)).get
+            assertEquals(t.hcursor.get[Long]("outputLines").toOption, Some(0L))
+          }
+        } *> cleanup(job)
+    io.unsafeRunSync()
+  }
+
+  test("activeTasksJson outputLines reflects BgTaskOutputStore buffered line count") {
+    val (job, root) = ("bgtaskspec-lines-2", "main-bgtaskspec-7")
+    val io =
+      BgTaskOutputStore.open(job).flatMap { buf =>
+        IO {
+          buf.append("line one")
+          buf.append("line two")
+          buf.append("line three")
+        }
+      } *>
+        BgTaskRegistry.register(job, root, "spec task lines buffered", "local", root) *>
+        BgTaskRegistry.activeTasksJson.flatMap { json =>
+          IO {
+            val t = clue(tasksFor(root, json)).find(_.hcursor.get[String]("taskId").toOption.contains(job)).get
+            assertEquals(t.hcursor.get[Long]("outputLines").toOption, Some(3L))
+          }
+        } *> cleanup(job)
+    io.unsafeRunSync()
+  }
+
+  // ── #752 空闲细分数据源：waitingBySession 按**自有 sessionId** 分组 ──
+
+  test("waitingBySession groups own tasks by sessionId (children-rooted stay on the child row)") {
+    val own = s"delegate-waitspec-${System.nanoTime().toString.take(8)}"
+    val (j1, j2, jChild) = ("bgtaskspec-wait-1", "bgtaskspec-wait-2", "bgtaskspec-wait-child")
+    val io =
+      BgTaskRegistry.register(j1, own, "own task A", "local", "root-x") *>
+        BgTaskRegistry.register(j2, own, "own task B", "local", "root-x") *>
+        // 子代理任务：executor = 子会话、root = 本 delegate——不算自有（子行承载）。
+        BgTaskRegistry.register(jChild, "delegate-child-x", "child task", "local", own) *>
+        BgTaskRegistry.waitingBySession.flatMap { m =>
+          IO {
+            val ownTasks = clue(m.getOrElse(own, Nil))
+            assert(ownTasks.exists(_.jobId == j1), "自有任务 A 应入组")
+            assert(ownTasks.exists(_.jobId == j2), "自有任务 B 应入组")
+            assert(!ownTasks.exists(_.jobId == jChild), "子代理任务不入父组（子行承载）")
+          }
+        } *> cleanup(j1, j2, jChild)
+    io.unsafeRunSync()
+  }
+
+  test("waitingBySession filters persistent (service) tasks out of the waiting set") {
+    val own = s"delegate-waitspec-p-${System.nanoTime().toString.take(8)}"
+    val jSrv = "bgtaskspec-wait-srv"
+    val io =
+      BgTaskRegistry.register(jSrv, own, "dev server", "local", own, persistent = true) *>
+        BgTaskRegistry.waitingBySession.flatMap { m =>
+          IO(assertEquals(clue(m.getOrElse(own, Nil)).map(_.jobId), List.empty[String]))
+        } *> cleanup(jSrv)
+    io.unsafeRunSync()
+  }
 end BgTaskRegistrySpec

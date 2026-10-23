@@ -322,7 +322,23 @@ function renderStatus(status, exitCode) {
 function renderMeta(data) {
   if (!cur || cur.closed) return;
   const metaTextEl = overlayEl.querySelector('.bgt-meta-text');
-  if (metaTextEl) metaTextEl.textContent = t('bg.detail.meta', { lines: fmtLines(data.totalLines), bytes: fmtBytes(data.totalBytes) });
+  if (!metaTextEl) return;
+  // #753 运行态活性：meta 段补「已运行」时长（等待型任务整段无 stdout 时，
+  // 行数/字节恒 0——时长是「它还在跑」的唯一可见信号）。startedAt 来自行数据。
+  const running = data.status === 'running' || data.status === 'cancelling';
+  const upPart = running && cur.startedAtMs
+    ? ' · ' + t('bg.detail.uptime', { dur: fmtDuration(Date.now() - cur.startedAtMs) })
+    : '';
+  metaTextEl.textContent = t('bg.detail.meta', { lines: fmtLines(data.totalLines), bytes: fmtBytes(data.totalBytes) }) + upPart;
+}
+
+/** 时长（bg.detail.uptime 陪伴面；轻实现——秒/分/时三档）。 */
+function fmtDuration(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm ' + (s % 60) + 's';
+  return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
 }
 
 // 终端语言 meta（2026-09-10 作者指令③）：终态 → `$` prompt 前缀 + exit 码
@@ -471,7 +487,12 @@ async function pollOnce() {
   cur.gotData = true;
   hidePlaceholder();
   if (data.output) appendOutput(data.output);
-  else if (!cur.text) showPlaceholder(t('bg.detail.empty'));
+  else if (!cur.text) {
+    // #753「点进去永远是空」语义面：运行中且暂无输出 ≠ 空数据——明示「还在跑、
+    // 没产出」（等待型/轮询任务整段无 stdout 是常态）。终态空输出仍走既有空词。
+    const runningEmpty = !data.status || data.status === 'running';
+    showPlaceholder(t(runningEmpty ? 'bg.detail.waitingLive' : 'bg.detail.empty'));
+  }
   if (typeof data.nextOffset === 'number') cur.offset = data.nextOffset;
   renderMeta(data);
   renderStatus(data.status, data.exitCode);
@@ -584,6 +605,8 @@ export function openBgTaskOutput(task) {
     restoreFocus,
     // 行面板乐观态——单次读取模式的判定基准 + 404 时 chip 不谎报的依据
     initialStatus: task.status || 'running',
+    // #753 运行态 meta 的「已运行」时长来源（行数据自带 startedAt；缺省 0 = 不显示）。
+    startedAtMs: Number(task.startedAt) || 0,
     originText: [task.originLabel, task.kind === 'remote' ? t('bg.kind.remote') : (task.kind ? t('bg.kind.local') : '')]
       .filter(Boolean).join(' · ')
   };

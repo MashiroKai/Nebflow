@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.actor.RootAgentIdentity
-import nebflow.shared.NebflowLogger
+import nebflow.shared.{Defaults, NebflowLogger}
 
 /**
  * Global registry of active background tasks (local Bash + remote).
@@ -78,6 +78,95 @@ object BgTaskRegistry:
 
   private val tasks: Ref[IO, Map[String, ActiveTask]] = Ref.unsafe(Map.empty)
   private val failures: Ref[IO, Map[String, FailedBgTask]] = Ref.unsafe(Map.empty)
+
+  // ── 会话级后台任务创建速率闸（#753 面板刷屏熔断批）──────────────────────
+  //
+  // 实证：delegate-nebflow-59f171d8 八分钟造 88 个 waiter 型后台任务刷爆面板
+  // （后台任务 81 条同行族）。闸语义（两档）：
+  //   - 告警档（BgRateWarnAfter）：窗口内创建数达到即 logger.warn（引擎侧告警，
+  //     不拒绝）；
+  //   - 熔断档（BgRateBreakerAfter）：窗口内创建数达到即熔断——本会话
+  //     BgRateBreakerCooldownMs 内的新后台任务创建一律拒绝（可读错误回执给
+  //     LLM），熔断触发时同时向 wsSend 发 `bgRateAlert` 帧（前端 toast 告警）。
+  //
+  // 状态载体 = 单 Ref 双字段（SessionRateState）——判定与记账一次 modify 完成，
+  // 并发创建无竞态双记。进程内存态（重启即清，与 registry 本体同生命周期）。
+  private final case class SessionRateState(
+    creations: Vector[Long] = Vector.empty,
+    breakerUntilMs: Long = 0L
+  )
+
+  private val rateStates: Ref[IO, Map[String, SessionRateState]] = Ref.unsafe(Map.empty)
+
+  /**
+   * 熔断面板告警帧的进程外观察面（#753 验收「超阈值告警」）：熔断触发时
+   * 记录最近一次事件（sessionId / 触发时刻 / 窗口计数）——spec 断言用，
+   * 与 gateCreation 的 IO 面同点写入。
+   */
+  final case class RateAlert(sessionId: String, atMs: Long, windowCount: Int)
+
+  private val lastAlert: Ref[IO, Option[RateAlert]] = Ref.unsafe(Option.empty)
+
+  def lastRateAlert: IO[Option[RateAlert]] = lastAlert.get
+
+  /**
+   * 会话级后台任务创建闸（#753）：每次新后台任务创建（显式 run_in_background /
+   * 前台预算转后台收编）前调用。allowed ⇒ 调用方照常建任务（本拍时间戳已入窗）；
+   * !allowed ⇒ 拒绝（message = 可读错误文案，直接作为工具面错误回执）。判定与
+   * 记账（本拍时间戳入窗、熔断到期翻转）一次 Ref.modify 完成。返回完整 Decision
+   * ——breakerEngaged（触发沿）供调用方发告警帧，熔断激活期的重复拒绝不再重发
+   * （防告警刷屏）。空 sessionId（REST 直调等无主任务）不设闸。
+   */
+  def gateCreation(sessionId: String): IO[BgRateGate.Decision] =
+    val sid = sessionId.trim
+    if sid.isEmpty then IO.pure(BgRateGate.Decision(allowed = true, breakerEngaged = false, warn = false, recentCount = 0, breakerUntilMs = None, message = None))
+    else
+      IO.monotonic.map(_.toMillis).flatMap { _ =>
+        IO.realTime.map(_.toMillis).flatMap { now =>
+          val windowMs = Defaults.BgRateWindowMs
+          rateStates.modify { m =>
+            val st = m.getOrElse(sid, SessionRateState())
+            val prior = st.creations.filter(_ > now - windowMs)
+            val breakerActive = st.breakerUntilMs > now
+            val decision = BgRateGate.decide(
+              prior,
+              if breakerActive then Some(st.breakerUntilMs) else None,
+              now,
+              windowMs,
+              Defaults.BgRateWarnAfter,
+              Defaults.BgRateBreakerAfter,
+              Defaults.BgRateBreakerCooldownMs
+            )
+            val nextState =
+              if decision.allowed then
+                st.copy(
+                  creations = prior :+ now,
+                  breakerUntilMs = decision.breakerUntilMs.getOrElse(0L)
+                )
+              else st.copy(creations = prior, breakerUntilMs = decision.breakerUntilMs.getOrElse(st.breakerUntilMs))
+            (m + (sid -> nextState), decision)
+          }.flatTap { d =>
+            // 告警面：warn 档与熔断档都留引擎侧告警日志；熔断同时记账
+            // lastAlert（spec 观察面）。
+            val logWarn =
+              if d.breakerEngaged then
+                logger.warn(
+                  s"[bg-rate-gate] breaker ENGAGED for session '$sid': ${d.recentCount} background tasks created within " +
+                    s"${Defaults.BgRateWindowMs / 60000}min (cooldown ${Defaults.BgRateBreakerCooldownMs / 60000}min)"
+                )
+              else if d.warn then
+                logger.warn(
+                  s"[bg-rate-gate] warn for session '$sid': ${d.recentCount} background tasks created within " +
+                    s"${Defaults.BgRateWindowMs / 60000}min (breaker at ${Defaults.BgRateBreakerAfter})"
+                )
+              else IO.unit
+            val recordAlert =
+              if d.breakerEngaged then lastAlert.set(Some(RateAlert(sid, now, d.recentCount)))
+              else IO.unit
+            logWarn *> recordAlert
+          }.map(identity)
+        }
+      }
 
   /**
    * 来源推导（后台任务面板重设计）：从注册会话 id 前缀 + 会话名
@@ -291,27 +380,127 @@ object BgTaskRegistry:
    * back to sessionId when absent), as JSON for the frontend.
    */
   def activeTasksJson: IO[io.circe.Json] =
-    tasks.get
-      .map { m =>
-        m.values
-          .groupBy(t => if t.rootSessionId.nonEmpty then t.rootSessionId else t.sessionId)
-          .map { case (sid, taskSet) =>
-            sid -> taskSet.map { t =>
-              io.circe.Json.obj(
-                "taskId" -> t.jobId.asJson,
-                "description" -> t.description.asJson,
-                "status" -> "running".asJson,
-                "startedAt" -> t.startedAtMs.asJson,
-                // 后台任务面板重设计：快照补 kind（local/remote）与
-                // 来源字段（origin 类别 + originLabel 显示名）——前端来源 chip
-                // 与类别样式在刷新恢复路径同样可渲染。
-                "kind" -> t.kind.asJson,
-                "origin" -> t.origin.asJson,
-                "originLabel" -> t.originLabel.asJson
-              )
-            }.toList
-          }
-          .toMap
-      }
-      .map(_.asJson)
+    for
+      m <- tasks.get
+      lineCounts <- BgTaskOutputStore.lineCounts
+    yield
+      m.values
+        .groupBy(t => if t.rootSessionId.nonEmpty then t.rootSessionId else t.sessionId)
+        .map { case (sid, taskSet) =>
+          sid -> taskSet.map { t =>
+            io.circe.Json.obj(
+              "taskId" -> t.jobId.asJson,
+              "description" -> t.description.asJson,
+              "status" -> "running".asJson,
+              "startedAt" -> t.startedAtMs.asJson,
+              // 后台任务面板重设计：快照补 kind（local/remote）与
+              // 来源字段（origin 类别 + originLabel 显示名）——前端来源 chip
+              // 与类别样式在刷新恢复路径同样可渲染。
+              "kind" -> t.kind.asJson,
+              "origin" -> t.origin.asJson,
+              "originLabel" -> t.originLabel.asJson,
+              // #753 行带已产出行数（刷新恢复路径）：实时行由心跳帧携带
+              // outputLines，快照行此前无来源——面板行在页面刷新后行数 chip
+              // 消失。本字段 = BgTaskOutputStore 的当前 totalLines（无缓冲
+              // 任务 = 0，前端 falsy 不渲染）。remote 任务无缓冲，恒 0。
+              "outputLines" -> lineCounts.getOrElse(t.jobId, 0L).asJson
+            )
+          }.toList
+        }
+        .asJson
+
+  /**
+   * #752 空闲 delegate 在等什么（快照面数据源）：按**自有 sessionId** 分组的
+   * 活动等待型任务（每会话一条 = 它自己名下在跑的后台任务）。一次全表扫描
+   * 返回分组 Map——handleGetActiveAgents 快照组装单次调用（禁逐行查表）。
+   * 判据 = t.sessionId（自有任务；不含子代理 root 挂靠——子代理任务由子代理
+   * 自己的行承载，避免父行行数被子任务灌水）。
+   */
+  def waitingBySession: IO[Map[String, List[ActiveTask]]] =
+    tasks.get.map { m =>
+      m.values
+        .filter(!_.persistent)
+        .toList
+        .groupBy(_.sessionId)
+    }
 end BgTaskRegistry
+
+/**
+ * #753 会话级后台任务创建速率闸——纯判定面（零依赖，spec 直测）。
+ *
+ * 两档语义：
+ *   - 熔断激活（breakerUntil > now）→ 拒绝，不动窗口计数（冷却到期自动解除）；
+ *   - 窗口内已有创建数 ≥ breakerAfter → 触发熔断（breakerUntil = now+cooldown）
+ *     并拒绝本拍；
+ *   - 窗口内已有创建数 +1 ≥ warnAfter（未达熔断）→ 放行但告警；
+ *   - 其余 → 放行。
+ *
+ * `recentCount` 语义 = 本拍（含）计入窗口后的创建数——告警/日志文案直接消费。
+ */
+object BgRateGate:
+
+  final case class Decision(
+    allowed: Boolean,
+    breakerEngaged: Boolean,
+    warn: Boolean,
+    recentCount: Int,
+    breakerUntilMs: Option[Long],
+    message: Option[String]
+  )
+
+  end Decision
+
+  private[tools] def rejectMessageActive(remainingSec: Long): String =
+    s"[Background task rate limit] Circuit breaker active for this session — " +
+      s"new background tasks are rejected for another ${math.max(1, remainingSec)}s. " +
+      s"Wait for the existing background tasks to complete (you are notified automatically), " +
+      s"or finish your turn instead of waiting."
+
+  private[tools] def rejectMessageEngaged(count: Int, windowMin: Long, cooldownMin: Long): String =
+    s"[Background task rate limit] This session has created $count background tasks within the last " +
+      s"$windowMin min — circuit breaker engaged for $cooldownMin min. Do NOT spawn more waiters/pollers: " +
+      s"wait for the running tasks to notify on completion, consolidate repeated polling into ONE background task, " +
+      s"or finish your turn instead of waiting."
+
+  def decide(
+    priorCreations: Vector[Long],
+    breakerUntilMs: Option[Long],
+    nowMs: Long,
+    windowMs: Long,
+    warnAfter: Int,
+    breakerAfter: Int,
+    cooldownMs: Long
+  ): Decision =
+    breakerUntilMs.filter(_ > nowMs) match
+      case Some(until) =>
+        Decision(
+          allowed = false,
+          breakerEngaged = false,
+          warn = false,
+          recentCount = priorCreations.size,
+          breakerUntilMs = Some(until),
+          message = Some(rejectMessageActive((until - nowMs) / 1000L))
+        )
+      case None =>
+        val recent = priorCreations.filter(_ > nowMs - windowMs)
+        if recent.size >= breakerAfter then
+          val until = nowMs + cooldownMs
+          Decision(
+            allowed = false,
+            breakerEngaged = true,
+            warn = false,
+            recentCount = recent.size,
+            breakerUntilMs = Some(until),
+            message = Some(rejectMessageEngaged(recent.size, math.max(1, windowMs / 60000L), math.max(1, cooldownMs / 60000L)))
+          )
+        else
+          val count = recent.size + 1
+          Decision(
+            allowed = true,
+            breakerEngaged = false,
+            warn = count >= warnAfter,
+            recentCount = count,
+            breakerUntilMs = None,
+            message = None
+          )
+end BgRateGate

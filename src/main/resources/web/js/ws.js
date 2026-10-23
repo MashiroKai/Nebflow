@@ -295,6 +295,10 @@ const TERMINAL_MSG_TYPES = new Set([
   // 处理器饥饿。taskStuck 同律先例。
   'delegateWaiting', // delegate ready-to-merge 停靠态（平台修复批 fix 4；对话层活性批 2026-10-22 补路由）
   'heldReceipts', // held-receipt 投递可靠性批（2026-10-21）：父会话积压/未读计数
+  // #753 速率闸熔断告警帧：{sessionId, rootSessionId, count, windowSec,
+  // cooldownSec}——sessionId = 被熔断的（往往非活跃）会话。不入门面过滤集会被
+  // 入口过滤器静默丢弃、toast 永不出现（taskStuck/heldReceipts 同律先例）。
+  'bgRateAlert',
   'cancelAgentResult', // management panel stop action result (2026-08-23 upgrade)
   'historyPage' // flow agent popups receive historyPage with their own sessionId
 ]);

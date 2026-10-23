@@ -125,6 +125,43 @@ function bgRowState(info) {
   return 'active';
 }
 
+// ── #752 空闲 delegate 在等什么（可见化批）──────────────────────────────────
+// 判据链（行状态 idle/waiting 时的细分次行；多判据命中全显，顿号连接）：
+//   ① 等后台任务 —— 快照 bgWaiting（BgTaskRegistry waitingBySession，会话自有
+//      等待型任务）非空：任务名 + 已运行时长（首条）+ 计数。数据源 = 引擎
+//      bg-wait 屏障权威（BackoffSupervisor 同判据集的自有子集）。
+//   ② 等子代理回执 —— heldReceipts（被屏障扣留的已产出回执）+ outstandingSubagents
+//      （barrier 上的 spawn 计数）> 0。
+//   ③ 等通知 —— Waiting 显式停靠态（等合并轮），既有 waitingPart 承载。
+// 长空闲提醒徽标（同批）：Idle 且 ①②皆空、lastActivityMs 距今 > 10min、
+// 无在飞工具 —— 琥珀字「空闲 N 分钟」，提示该行无在飞工作（可安全收编/合并）。
+const BG_LONG_IDLE_MS = 10 * 60 * 1000;
+
+/** 空闲/waiting 行的细分注记（null = 无——行保持既有形态）。 */
+function bgIdleDetail(info) {
+  const bgWaiting = Array.isArray(info.bgWaiting) ? info.bgWaiting : [];
+  const receipts = (Number(info.heldReceipts) || 0) + (Number(info.unreadReceipts) || 0)
+    + (Number(info.outstandingSubagents) || 0);
+  const parts = [];
+  if (bgWaiting.length > 0) {
+    const w = bgWaiting[0];
+    const dur = w.startedAt ? fmtUptime(Date.now() - w.startedAt) : '';
+    parts.push(t('subagents.waitingBg', {
+      count: bgWaiting.length,
+      desc: String(w.description || w.taskId || ''),
+      dur,
+    }));
+  }
+  if (receipts > 0) parts.push(t('subagents.waitingReceipts', { count: receipts }));
+  if (parts.length > 0) return { text: parts.join(' · '), stale: false };
+  // 长空闲：无在飞工作（①②皆空）且 agent 侧活动戳距今 > 10min。
+  const idleMs = Number(info.lastActivityMs) > 0 ? Date.now() - Number(info.lastActivityMs) : 0;
+  if (idleMs > BG_LONG_IDLE_MS) {
+    return { text: t('subagents.longIdle', { mins: Math.floor(idleMs / 60000) }), stale: true };
+  }
+  return null;
+}
+
 /** Session-id prefix predicate (single point): `dispatcher-` = Project task
  *  dispatcher session. `node-` = Project Flow Map node session (its panel
  *  visibility口径 is deliberately UNCHANGED by this batch), `delegate-` /
@@ -420,6 +457,14 @@ function bgTaskRowHtml(id, info, opts = {}) {
   const waitingPart = (rowState === 'waiting')
     ? '<span class="bg-task-waiting">' + escapeHtml(t('subagents.status.waitingMerge')) + '</span>'
     : '';
+  // #752 空闲细分注记：idle/waiting 行显示「在等什么」（等后台任务名+时长 /
+  // 等子代理回执 N 条 / 长空闲提醒徽标）。仅在停靠态出现，active 行零变化。
+  const idleDetail = (rowState === 'idle' || rowState === 'waiting') ? bgIdleDetail(info) : null;
+  const idlePart = idleDetail
+    ? '<span class="bg-task-idle-detail' + (idleDetail.stale ? ' bg-idle-stale' : '') + '" role="' + (idleDetail.stale ? 'alert' : 'note') + '">'
+      + (idleDetail.stale ? statusIcon('timer-off', 11, 'st-warn') : '')
+      + escapeHtml(idleDetail.text) + '</span>'
+    : '';
   const toolLabel = info.currentTool || '';
   const toolPart = (toolLabel && !terminal)
     ? '<span class="bgagent-tool" title="' + escapeHtml(toolLabel) + '">↳ ' + escapeHtml(toolLabel) + '</span>'
@@ -454,7 +499,7 @@ function bgTaskRowHtml(id, info, opts = {}) {
           escapeHtml(statusLabel) + '</span>' +
         kindPart + projectPart + namePart + taskPart + retriesPart + uptimePart +
       '</div>' +
-      stuckPart + waitingPart + toolPart +
+      stuckPart + waitingPart + idlePart + toolPart +
     '</div>' +
   '</div>';
 }

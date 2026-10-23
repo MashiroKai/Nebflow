@@ -762,6 +762,10 @@ export default {
   'subagents.status.waiting': '停靠等待',
   'subagents.status.waitingMerge': '等待合并轮',
   'subagents.status.idle': '空闲',
+  // #752 空闲 delegate 在等什么（细分注记 + 长空闲提醒徽标）。
+  'subagents.waitingBg': '等后台任务 ×{count}：{desc}（{dur}）',
+  'subagents.waitingReceipts': '等子代理回执 ×{count}',
+  'subagents.longIdle': '空闲 {mins} 分钟，无在飞工作',
   'subagents.status.stuck': '卡死',
   'subagents.status.error': '失败',
   'subagents.status.frozen': '已冻结',
@@ -1428,6 +1432,21 @@ export default {
   'bg.stuck': '超过 10 分钟无输出',
   'bg.lines': '{count}行',
   'bg.header': '后台任务 · {count}',
+  // #753 同族聚合组头（waiter 递增族收起为一行）。
+  'bg.familyRunning': '运行中 ×{count}',
+  'bg.familyDone': '已毕 ×{count}',
+  'bg.familyCount': '同族 ×{count}',
+  'bg.familyTitle': '{count} 个同族后台任务，点击展开/收起',
+  // #753 速率闸熔断 toast（bgRateAlert 帧）。
+  'bg.rateAlert': '后台任务创建速率超限：该会话在窗口内已创建 {count} 个后台任务，熔断 {cooldownSec} 秒（等待已有任务完成通知）',
+  // #752 delegate 弹窗「会话在做什么」条。
+  'bgws.aria': '会话在做什么',
+  'bgws.lastAction': '最近动作',
+  'bgws.activityAgo': '活动于 {dur} 前',
+  'bgws.thinking': '思考/执行中…',
+  'bgws.noData': '暂无状态数据（快照未覆盖）',
+  'bgws.noBgTasks': '本会话无后台任务',
+  'bgws.moreTasks': '还有 {count} 个后台任务（主窗口面板查看）',
   'bg.sectionAgents': '智能体',
   'bg.empty': '当前无运行中的后台任务',
   'bg.kind.local': '本地',
@@ -1439,6 +1458,9 @@ export default {
   'bg.cancelled': '已取消',
   'bg.detail.aria': '后台任务输出详情',
   'bg.detail.empty': '暂无输出',
+  // #753：运行中且暂无输出的活性明示（等待型/轮询任务整段无 stdout 是常态）。
+  'bg.detail.waitingLive': '运行中 · 暂无输出——等待型任务（轮询/监听）可能整段无 stdout，进程仍在运行',
+  'bg.detail.uptime': '已运行 {dur}',
   'bg.detail.remote': '远端任务暂不支持输出查看',
   'bg.detail.notFound': '任务输出已不可用（任务已结束并被清理）',
   'bg.detail.truncated': '输出过大，仅保留末尾',

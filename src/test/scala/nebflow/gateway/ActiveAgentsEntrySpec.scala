@@ -207,6 +207,46 @@ class ActiveAgentsEntrySpec extends FunSuite:
     assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Team, Some("X"), Some("Y")), None)
     assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Flow, Some("X"), Some("Y")), None)
     assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Ephemeral, Some("X"), Some("Y")), None)
+
+  // ── #752 空闲细分（在等什么可见化）：快照恢复字段 ──────────────────
+
+  test("#752 idle-subdivision fields: defaults empty/zero on a bare record") {
+    val json = WebSocketRoutes.activeAgentEntryJson(rec("delegate-n752-1", AgentKind.Delegate), None)
+    assertEquals(json.hcursor.get[String]("currentTool"), Right(""))
+    assertEquals(json.hcursor.get[Long]("lastActivityMs"), Right(0L))
+    assertEquals(json.hcursor.get[Int]("outstandingSubagents"), Right(0))
+    assertEquals(json.hcursor.get[Vector[Json]]("bgWaiting"), Right(Vector.empty))
+  }
+
+  test("#752 idle-subdivision fields: record fields echo through (currentTool/lastActivityMs/outstanding)") {
+    val r = rec("delegate-n752-2", AgentKind.Delegate).copy(
+      currentToolName = Some("Bash"),
+      lastActivityMs = 1724336000123L,
+      outstandingSubagents = 2,
+      pendingEventCount = 3,
+      unreadReceiptCount = 1
+    )
+    val json = WebSocketRoutes.activeAgentEntryJson(r, None)
+    assertEquals(json.hcursor.get[String]("currentTool"), Right("Bash"))
+    assertEquals(json.hcursor.get[Long]("lastActivityMs"), Right(1724336000123L))
+    assertEquals(json.hcursor.get[Int]("outstandingSubagents"), Right(2))
+    // 回执两族字段（既有批）不被 #752 改动面触碰
+    assertEquals(json.hcursor.get[Int]("heldReceipts"), Right(3))
+    assertEquals(json.hcursor.get[Int]("unreadReceipts"), Right(1))
+  }
+
+  test("#752 bgWaiting carries (taskId, description, startedAt) triples") {
+    val json = WebSocketRoutes.activeAgentEntryJson(
+      rec("delegate-n752-3", AgentKind.Delegate),
+      None,
+      bgWaiting = List(("job-1", "background waiter 67", 1724336000456L), ("job-2", "sbt test", 1724336000789L))
+    )
+    val arr = json.hcursor.downField("bgWaiting").values.map(_.toVector).getOrElse(Vector.empty)
+    assertEquals(arr.size, 2)
+    assertEquals(arr(0).hcursor.get[String]("taskId"), Right("job-1"))
+    assertEquals(arr(0).hcursor.get[String]("description"), Right("background waiter 67"))
+    assertEquals(arr(0).hcursor.get[Long]("startedAt"), Right(1724336000456L))
+    assertEquals(arr(1).hcursor.get[String]("description"), Right("sbt test"))
   }
 
 end ActiveAgentsEntrySpec
