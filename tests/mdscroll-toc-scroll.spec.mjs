@@ -28,6 +28,11 @@
 //   需要**残量条件腿**才可判红；零残量下「帧内跳转零泄露」恒过（本批 r1 的原 R5-b 即同因
 //   假绿，已按判词位 F-1 改为腿②/腿③）。
 //
+//   r3 换代（2026-10-23 spec-hygiene 批，面板合并/移动端批波及面清理）：mobile-ui-refactor
+//   v3 后壳有双形态（桌面 >768px / 手机 ≤768px = body.mobile-layer，桌面壳含 #activity-bar
+//   整体退场）⇒ boot 门改双形态选择器、矩阵 375×812 腿从「窄桌面链清册」改为「手机层形态
+//   钉」（R0-c），清册判据 R0-b 收敛到桌面壳腿 —— 泄露机制判据（R1-R5）零改动。
+//
 // 运行：node tests/mdscroll-toc-scroll.spec.mjs                # Chromium（门禁档）
 //      ENGINE=webkit node tests/mdscroll-toc-scroll.spec.mjs   # WebKit（第二引擎腿）
 // 可选 env：PORT=8161、SHOTS_DIR=<dir>、LEAK_EXTRA_PX=24、HEADLESS=0
@@ -142,7 +147,12 @@ function mkBoot(browser) {
       ws.send(JSON.stringify({ type: 'sessionList', sessions: [{ id: 'sess-1', agentName: 'Nebula', title: 'T', updatedAt: Date.now() }], activeId: 'sess-1', folders: [] }));
     });
     await page.goto(BASE + '/index.html');
-    await page.waitForSelector('#activity-bar', { timeout: 20000 });
+    // Shell-ready 门（2026-10-23 spec-hygiene 换代）：mobile-layer 批后壳有双形态
+    // —— 桌面（>768px）= #activity-bar 可见；手机（≤768px 命中 mobile/bootstrap.js
+    // 的 MOBILE_MQ）= body.mobile-layer 挂类、#activity-bar 随桌面壳退场
+    //（display:none，作者令移动端 v3 面板合并批形态）。逗号选择器 = 任一形态
+    // 就绪即放行；桌面腿只有 #activity-bar 能命中，无假绿面。
+    await page.waitForSelector('body.mobile-layer, #activity-bar', { timeout: 20000 });
     await page.evaluate(() => {
       document.querySelectorAll('.onboarding-overlay').forEach((o) => o.remove());
       document.documentElement.classList.remove('ui-init');
@@ -315,6 +325,25 @@ console.log(`[mdscroll] engine=${ENGINE} port=${PORT} fixture=${MD_PATH} leakExt
   const rows = [];
   for (const m of matrix) {
     const { ctx: c, page: p } = await boot({ viewport: { width: m.w, height: m.h }, deviceScaleFactor: m.dsf });
+    if (m.w <= 768) {
+      /* ≤768px = 手机交互层视口（mobile/bootstrap.js MOBILE_MQ，mobile-ui-refactor
+       * v3 批作者令）：桌面壳整体退场（#activity-bar display:none）、桌面 md 链
+       * （.canvas-tab-pane.active .canvas-md-scroll）在该层不存在 —— 旧判据
+       * 「375 腿跑桌面链残量清册」钉的是手机层诞生前的窄桌面，干净 HEAD 即红
+       * （判据前提已不成立）。换代为**新形态钉**：手机层已激活 + 桌面活动栏
+       * 退役（防复活），不进桌面链残量清册（清册 = 桌面壳判据域，见 R0-b）。 */
+      await p.waitForFunction(() => !!(window.__nfMobileLayer && window.__nfMobileLayer.active === true), { timeout: 10000 });
+      const mob = await p.evaluate(() => ({
+        cls: document.body.classList.contains('mobile-layer'),
+        abDisplay: (() => { const el = document.getElementById('activity-bar'); return el ? getComputedStyle(el).display : 'absent'; })(),
+      }));
+      info(`   [${m.w}x${m.h}@${m.dsf}] 手机层形态腿：mobile-layer=${mob.cls} 桌面活动栏=${mob.abDisplay}（不进桌面清册）`);
+      ok(`R0-c ${m.w}×${m.h} 命中手机交互层：mobile-layer 激活 + 桌面活动栏退役（新形态钉，不进桌面清册）`,
+        mob.cls && mob.abDisplay === 'none',
+        `mobile-layer=${mob.cls} #activity-bar=${mob.abDisplay}`);
+      await c.close();
+      continue;
+    }
     await openMdTab(p);
     const ch = await p.evaluate(READ_CHAIN);
     const outerY = ch.layers.slice(1).filter((l) => l.residualY > 0).map((l) => `${l.sel}Y${l.residualY}`);
@@ -324,8 +353,8 @@ console.log(`[mdscroll] engine=${ENGINE} port=${PORT} fixture=${MD_PATH} leakExt
     if (outerX.length) info(`   [${m.w}x${m.h}@${m.dsf}] 外层水平残量（非本判据轴）：${outerX.join(', ')}`);
     await c.close();
   }
-  info(`   视口/DSF 矩阵外层垂直残量：${rows.join(' | ')}`);
-  ok('R0-b 全矩阵外层垂直残量恒为 0（本机自然态不可判红 —— 已声明，红证走 R2/R3 残量条件腿）',
+  info(`   桌面壳矩阵（>768px 腿）外层垂直残量：${rows.join(' | ')}`);
+  ok('R0-b 桌面壳全矩阵（>768px 腿）外层垂直残量恒为 0（本机自然态不可判红 —— 已声明，红证走 R2/R3 残量条件腿；≤768 腿归手机层形态钉 R0-c）',
     rows.every((r) => r.endsWith('=0')), rows.join(' | '));
 }
 
