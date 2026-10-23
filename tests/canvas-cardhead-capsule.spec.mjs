@@ -3,8 +3,8 @@
 // 作者令 A/B/C/D 四链路 spec 钉：
 //   CC0 胶囊形态 —— .canvas-header 浮层胶囊：absolute top 10 顶带 + 横轴面板
 //        居中（居中批 2026-10-23 作者令「相对与canvas居中显示」：移位批顶左 →
-//        canvas 横轴中线；hover 环开时整体沉降 canvas 垂直中点，见
-//        canvas-capsule-ring.spec.mjs）、border-radius
+//        canvas 横轴中线；环开态环锚常驻顶带不沉降 —— 顶部修正批 2026-10-23
+//        撤销对称批沉降，见 canvas-capsule-ring.spec.mjs）、border-radius
 //        999px、backdrop blur 玻璃、fit-content（< 面板宽）；#canvas-content 顶满
 //        全高（rect.top === slide top，内容不再为 header 预留）；.scroll-under-glass
 //        裙边在挂（::after 24px + pointer-events none）；穿底 = 内容 pane 从面板顶
