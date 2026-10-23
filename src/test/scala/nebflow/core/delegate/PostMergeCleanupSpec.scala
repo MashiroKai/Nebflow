@@ -18,7 +18,9 @@ import scala.util.Try
  *    行 action=kept 且 reason 携 zero-ahead guard；
  *  - ③ 缺锚（无 worktree / 无分支 / 无基分支）= 零动作（false，无行）；
  *  - ④ 基工作区不可读（非 git）= fail-soft 保留现场（绝不抛）；
- *  - ⑤ 无记录 = false（no-op）。
+ *  - ⑤ 无记录 = false（no-op）；
+ *  - ⑥ 抢救守卫（WorktreeRescue）：合并现场有主工作区缺失的报告 ⇒ 移除前
+ *    抢救回主工作区，账本行携带 rescue 摘要（作者令 2026-10-24）。
  */
 class PostMergeCleanupSpec extends FunSuite:
 
@@ -29,8 +31,10 @@ class PostMergeCleanupSpec extends FunSuite:
       .getOrElse(false)
 
   /** main@init + delegate 分支；merge=deliver ⇒ 分支一笔交付提交后 --no-ff 并回
-    * main（验收通过的合并形态）；否则分支带领先提交停在 fork（守卫应拦）。 */
-  private def mkRepo(dir: os.Path, branch: String, merged: Boolean): os.Path =
+    * main（验收通过的合并形态）；否则分支带领先提交停在 fork（守卫应拦）。
+    * extraFile = 分支上随交付提交一起提交的附加文件（报告抢救测试用——文件
+    * 落进合并提交，两侧都被跟踪）。 */
+  private def mkRepo(dir: os.Path, branch: String, merged: Boolean, extraFile: Option[(os.RelPath, String)] = None): os.Path =
     os.remove.all(dir)
     os.makeDir.all(dir)
     os.proc("git", "init", "-b", "main", dir.toString).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
@@ -41,6 +45,10 @@ class PostMergeCleanupSpec extends FunSuite:
     g("commit", "--allow-empty", "-m", "init")
     g("checkout", "-b", branch)
     os.write(dir / "deliverable.txt", "deliverable")
+    extraFile.foreach { case (rel, content) =>
+      os.makeDir.all(dir / rel / os.up)
+      os.write(dir / rel, content)
+    }
     g("add", ".")
     g("commit", "-m", "deliverable")
     g("checkout", "main")
@@ -136,6 +144,31 @@ class PostMergeCleanupSpec extends FunSuite:
 
   test("⑤ no record ⇒ false (no-op)") {
     assert(!PostMergeCleanup.run(None).unsafeRunSync(), "None record ⇒ false")
+  }
+
+  test("⑥ rescue guard: merged scene with a report missing from the main workspace ⇒ rescued before removal, row carries the rescue summary") {
+    if !gitAvailable then ()
+    else
+      val rel = os.rel / "reports" / "20261024_120000_rescued-fix" / "REPORT.md"
+      val repo = mkRepo(
+        tempRoot / "clean-rescue",
+        branch = "delegate/pm-rescue",
+        merged = true,
+        extraFile = Some(rel -> "the rescued report body")
+      )
+      val wt = addWorktree(repo, "delegate/pm-rescue", tempRoot / "wt-rescue")
+      // 「未并报告」的可测形态：文件两侧都被跟踪，主工作区工作树未提交删除
+      // ⇒ 主工作区同相对路径缺失，守卫必须先抢救再移除。
+      os.remove(repo / rel)
+      assert(!os.exists(repo / rel), "fixture sanity: the report is missing from the main workspace")
+      val r       = rec("delegate-pm-rescue", repo, "delegate/pm-rescue", Some(wt))
+      val removed = PostMergeCleanup.run(Some(r)).unsafeRunSync()
+      assert(removed, "the rescue is additive: a git-clean merged scene must still be removed")
+      assertEquals(os.read(repo / rel), "the rescued report body", "the report must be rescued into the main workspace")
+      assert(!os.exists(wt), "the worktree is still gone after the rescue")
+      val rows = cleanupRows("delegate-pm-rescue")
+      val (_, detail) = rows.lastOption.getOrElse(fail("a cleanup row must be audited"))
+      assert(detail.contains("rescue rescued=1"), s"the row must carry the rescue summary: $detail")
   }
 
 end PostMergeCleanupSpec

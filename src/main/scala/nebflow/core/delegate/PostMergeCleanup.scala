@@ -61,6 +61,11 @@ object PostMergeCleanup:
                     s"zero-ahead guard: commitsAhead=$ahead isAncestor=${ancestor.fold("unreadable")(_.toString)} — work kept"
                   )
                 else
+                  // 抢救守卫（作者令 2026-10-24「worktree 清理抢救 reports/
+                  // evidence」，[[WorktreeRescue]]）：删除前把主工作区同相对
+                  // 路径缺失的 reports/evidence 复制回主工作区（已存在的跳过；
+                  // fail-soft，绝不阻断清理）——只挂在移除分支，kept 现场不经此。
+                  val rescue = WorktreeRescue.rescue(ws, wt)
                   val rm      = GitWorktrees.removeWorktree(ws, wt)
                   val bd      = if rm.isRight then GitWorktrees.deleteBranch(ws, branch) else Right("")
                   val removed = rm.isRight && bd.isRight
@@ -69,7 +74,8 @@ object PostMergeCleanup:
                     if removed then "removed" else "kept",
                     s"worktree=$wt branch=$branch base=$baseBranch " +
                       s"worktreeRemove=${rm.fold(e => e.take(160), _ => "ok")} " +
-                      s"branchDelete=${bd.fold(e => e.take(160), _ => "ok")}"
+                      s"branchDelete=${bd.fold(e => e.take(160), _ => "ok")}" +
+                      (if rescue.isEmpty then "" else s" ${rescue.summary}")
                   )
                   removed
           case _ =>
