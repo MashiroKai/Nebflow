@@ -9,9 +9,22 @@
 //      flowNodesAdded/flowMail/mailQueued/mailDequeued/teamList/teamUpdate/
 //      flowUpdate）注入后零 UI 副作用：无报错、无新 canvas 标签、无面板弹出。
 //   T3 新体系面板回归：插件页（boot fallback）、Projects tab、设置面板均可见；
-//      canvas 面板基建（canvas-toggle-btn / tab bar）健在。
+//      canvas 面板基建（canvas-toggle-btn）健在。
 //   T4 代码级：flowCanvas.js 已从静态产物消失（404）；activityBar.js 无
 //      legacy 绑定；ws.js 不再注册旧事件类型。
+//
+// 判据换代注记（2026-10-23 spec-hygiene 批）：
+//   canvas-stack v5（2026-10-22 作者令）桌面态标签行退役 —— 常态头只留居中
+//   标题胶囊（.canvas-title）；标签条/关闭钮 DOM 保留（数据模型 + 手机层仍引
+//   用），桌面由 split.css `body:not(.mobile-layer) … display:none` 隐藏。
+//   ⇒ T2/T3 的「boot 落点 = 标签条里可见的 plugins 标签」旧判据在干净 HEAD
+//   即红（面板合并批 REPORT 开项⑤已申报），换代为钉**新形态**：
+//     · boot 落点 = plugins **pane**（.canvas-tab-pane[data-tab-id].active）
+//       + 内容面（#plugins-content）可见；
+//     · 桌面常态头胶囊标题（#canvas-title-name）随动呈现当前标签名；
+//     · 标签集合对比仍走标签条 dataset（元素在、读数不受 display:none 影响）；
+//     · 旧「标签条可见」判据翻转为**退役脸防复活钉**：桌面壳上标签条必须
+//       保持 display:none。
 //
 // Self-contained: static server on 127.0.0.1:8187 (8100+ per task discipline,
 // never the host 8080); WS/API mocked in-page; server closed at end.
@@ -139,7 +152,9 @@ test('T2: legacy WS events injected → no errors, no tabs, no popovers', async 
   const { consoleErrors, injectFrame } = await loadShell(page, 'zh-CN');
 
   // Boot fallback lands on the plugins tab — record the baseline tab set.
-  await page.waitForSelector('#canvas-tab-bar .canvas-tab[data-tab-id="plugins"]', { timeout: 10000 });
+  // （换代：桌面标签行退役 → boot 落点钉 pane active + 内容面可见；见头注。）
+  await page.waitForSelector('.canvas-tab-pane[data-tab-id="plugins"].active', { timeout: 10000 });
+  await expect(page.locator('#plugins-content')).toBeVisible();
   const tabsBefore = await page.evaluate(() =>
     [...document.querySelectorAll('#canvas-tab-bar .canvas-tab')].map((t) => t.dataset.tabId));
 
@@ -167,6 +182,11 @@ test('T2: legacy WS events injected → no errors, no tabs, no popovers', async 
   expect(after.flowsDropdown, 'flows-dropdown still absent').toBe(false);
   expect(after.anyDropdown, 'no dropdown popped open').toBe(false);
 
+  // 退役脸防复活钉（canvas-stack v5 换代）：桌面壳上标签条必须保持 display:none
+  //（标签条 DOM 为数据模型/手机层保留面，桌面不得复活为可见条）。
+  expect(await page.evaluate(() => getComputedStyle(document.getElementById('canvas-tab-bar')).display),
+    'desktop tab bar stays retired (display:none)').toBe('none');
+
   const fatal = consoleErrors.filter((t) =>
     !t.includes('WebSocket') && !t.includes('fetch') && !t.includes('404') && !t.includes('Failed to load resource'));
   expect(fatal, `console errors: ${JSON.stringify(fatal)}`).toEqual([]);
@@ -177,17 +197,35 @@ test('T2: legacy WS events injected → no errors, no tabs, no popovers', async 
 test('T3: new-system panels intact — plugins boot, projects tab, settings panel', async ({ page }) => {
   await loadShell(page, 'zh-CN');
 
-  // 插件页（boot fallback 自动打开）
-  await page.waitForSelector('#canvas-tab-bar .canvas-tab[data-tab-id="plugins"]', { timeout: 10000 });
+  // 插件页（boot fallback 自动打开）—— 换代判据（见头注）：pane active +
+  // 内容面可见 + 常态头胶囊标题随动呈现当前标签名（标签条隐藏后桌面「当前
+  // 标签」的脸 = .canvas-title）。
+  await page.waitForSelector('.canvas-tab-pane[data-tab-id="plugins"].active', { timeout: 10000 });
   await expect(page.locator('#plugins-content')).toBeVisible();
+  const pluginsTabTitle = await page.evaluate(() =>
+    (document.querySelector('#canvas-tab-bar .canvas-tab[data-tab-id="plugins"]')?.textContent || '').trim());
+  expect(pluginsTabTitle, 'plugins tab keeps its model title').not.toBe('');
+  expect(await page.evaluate(() => (document.getElementById('canvas-title-name')?.textContent || '').trim()),
+    'capsule header title mirrors the active tab name').toBe(pluginsTabTitle);
+  // 退役脸防复活钉：桌面壳上标签条保持 display:none。
+  expect(await page.evaluate(() => getComputedStyle(document.getElementById('canvas-tab-bar')).display),
+    'desktop tab bar stays retired (display:none)').toBe('none');
 
-  // Projects 面板（canvas tab 打开）
+  // Projects 面板（canvas tab 打开）—— 换代：pane active + 胶囊标题随动。
   await page.click('#projects-btn');
-  await page.waitForSelector('#canvas-tab-bar .canvas-tab[data-tab-id="projects"]', { timeout: 5000 });
+  await page.waitForSelector('.canvas-tab-pane[data-tab-id="projects"].active', { timeout: 5000 });
+  const projectsTabTitle = await page.evaluate(() =>
+    (document.querySelector('#canvas-tab-bar .canvas-tab[data-tab-id="projects"]')?.textContent || '').trim());
+  expect(await page.evaluate(() => (document.getElementById('canvas-title-name')?.textContent || '').trim()),
+    'capsule header title follows the projects tab').toBe(projectsTabTitle);
 
   // 设置面板（Side Bar 之上的居中 modal：#settings-overlay.on）
   await page.click('#settings-btn');
   await page.waitForSelector('#settings-overlay.on', { timeout: 5000 });
+  // 面板合并批后设置模态为居中形态（覆盖右下角钮区）—— 走模态文档关闭接缝
+  // （sidebar.js：Esc / 背板 / 关闭钮）关掉后再验 canvas 开合，不再带模态点击。
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('#settings-overlay.on', { state: 'hidden', timeout: 5000 });
 
   // 关掉插件 tab 后 canvas 面板基建仍可开合
   await page.evaluate(() => {

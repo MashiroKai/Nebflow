@@ -295,16 +295,25 @@ try {
         msgPanelAfter === 0 && dialogOpen, `deviceRows=${msgPanelAfter} dialogOpen=${dialogOpen}`);
 
       // ══ ⑤：设备对话框（设备码 / 留存文案 / 描述编辑）══ 复用已开的这一窗 ══
+      // 判据换代注记（2026-10-23 spec-hygiene 批）：devrow 批（作者 2026-09-16 截图令）
+      // 把描述编辑从「常驻只读文本条 + 点击换 input 的行内编辑」整体换成
+      // 「窗头行内小键（.fm-modal-title > .fm-device-desc-btn）+ 点击展开编辑面板」
+      // —— 旧 .fm-device-desc-text 渲染点与规则同批删除（messages.js devrow/R2 注）。
+      // 描述值 = 窗头名/列表行名最高优先位（deviceLabel），收起后照旧一眼可读。
       await shot(page, theme, '05-device-dialog');
       const dlg = await page.evaluate(() => {
         const modal = document.querySelector('.fm-modal');
         const idEl = modal.querySelector('.fm-modal-id');
+        const descRow = modal.querySelector('.fm-device-desc');
+        const descBtn = modal.querySelector('.fm-device-desc-btn');
         return {
           modalId: idEl ? idEl.textContent : null,
           headerText: modal.querySelector('.fm-modal-header').textContent,
           noteCount: modal.querySelectorAll('.fm-device-note').length,
-          descRow: modal.querySelectorAll('.fm-device-desc').length,
-          descText: (modal.querySelector('.fm-device-desc-text') || {}).textContent,
+          descRowPresent: !!descRow && descRow.dataset.deviceDesc === '1',
+          descBtnPresent: !!descBtn,
+          descBtnExpanded: descBtn ? descBtn.getAttribute('aria-expanded') : null,
+          oldInlineTextPresent: !!modal.querySelector('.fm-device-desc-text'),
           docHasRetention: document.body.innerText.includes('云端保留') || document.body.innerText.includes('Cloud keeps messages'),
           title: (modal.querySelector('.fm-modal-name') || {}).textContent,
         };
@@ -315,24 +324,27 @@ try {
       ok('R5b', '对话框零留存期文案（.fm-device-note 0 命中 + 全文无该句）',
         dlg.noteCount === 0 && dlg.docHasRetention === false,
         `notes=${dlg.noteCount} docHasRetention=${dlg.docHasRetention}`);
-      ok('R5c', '对话框有设备描述编辑处（.fm-device-desc 在场）',
-        dlg.descRow === 1, `count=${dlg.descRow} text=${JSON.stringify(dlg.descText)}`);
+      ok('R5c', '对话框有设备描述编辑处（[data-device-desc="1"] 行 + 窗头小键在场、收起态）',
+        dlg.descRowPresent && dlg.descBtnPresent && dlg.descBtnExpanded === 'false',
+        `row=${dlg.descRowPresent} btn=${dlg.descBtnPresent} expanded=${dlg.descBtnExpanded} oldInlineText=${dlg.oldInlineTextPresent}`);
 
-      // ⑤c 真往返：点描述行 → 输入 → Enter ⇒ PUT /api/neblink/peer-description
+      // ⑤c 真往返：点窗头小键展开面板 → 输入 → 保存 ⇒ PUT /api/neblink/peer-description
+      //（新形态：textarea 内裸 Enter = 换行，提交走保存键 / Ctrl+Enter —— devrow 批键盘语义）
       let descRoundTrip = null;
-      if (dlg.descRow === 1) {
-        await page.click('.fm-device-desc-text');
+      if (dlg.descBtnPresent) {
+        await page.click('.fm-device-desc-btn');
         await sleep(250);
         const hasInput = await page.locator('.fm-device-desc-input').count() === 1;
         if (hasInput) {
           await page.fill('.fm-device-desc-input', '桌面机 · 编译用');
-          await page.keyboard.press('Enter');
+          await page.click('.fm-device-desc-save');
           await sleep(600);
           descRoundTrip = await page.evaluate(() => {
             const modal = document.querySelector('.fm-modal');
             return {
               descText: (modal.querySelector('.fm-device-desc-text') || {}).textContent,
               title: (modal.querySelector('.fm-modal-name') || {}).textContent,
+              panelGone: !modal.querySelector('.fm-device-desc-panel'),
             };
           });
         }
@@ -340,7 +352,7 @@ try {
           cap.descPuts.length === 1
           && JSON.parse(cap.descPuts[0].body || '{}').deviceId === PEER
           && JSON.parse(cap.descPuts[0].body || '{}').userDescription === '桌面机 · 编译用'
-          && !!descRoundTrip && descRoundTrip.descText === '桌面机 · 编译用' && descRoundTrip.title === '桌面机 · 编译用',
+          && !!descRoundTrip && descRoundTrip.title === '桌面机 · 编译用' && descRoundTrip.panelGone,
           `puts=${JSON.stringify(cap.descPuts.map(x => x.body))} after=${JSON.stringify(descRoundTrip)}`);
       } else {
         ok('R5c2', '描述编辑往返：PUT 打对端点 + 描述就地生效（名称链 userDescription 生效）', false,

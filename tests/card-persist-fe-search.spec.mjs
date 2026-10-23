@@ -118,6 +118,10 @@ async function bootPage(browser) {
   // card suites).
   await page.route('**/api/**', (r) => r.fulfill({ json: {} }));
   await page.route('**/api/sessions/*/history**', (r) => r.fulfill({ json: HISTORY }));
+  // rootName 显示名探针（identity 批新面）：引擎在生产里于 web 根同层伺服
+  // agents/<name>/agent.json；harness 静态树没有该文件 ⇒ 404 console.error 打红
+  // ③ 零错误判据。mock 缺名回退态（displayName 缺 ⇒ 机制名兜底），零判据语义变化。
+  await page.route('**/agents/*/agent.json', (r) => r.fulfill({ json: {} }));
 
   await page.routeWebSocket(/\/ws/, (ws) => {
     ws.onMessage((raw) => {

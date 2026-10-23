@@ -203,6 +203,10 @@ try {
   const seqB = conns[conns.length - 1].seq;
   await currentWs.close();
   await waitForNewConnection(seqB);
+  // 重连后 main.js onReconnect 已 getHistory ⇒ historyPage 初载**替换**聊天区
+  //（A 腿注记同款）。真时序里看门终态行也落在初载替换**之后** —— 先等替换落定
+  // 再挂终态行，避免行刚渲染就被历史替换冲掉（harness 时序修正，非判据变化）。
+  await sleep(800);
   await page.evaluate(async (sid) => {
     const chat = await import('/js/chat.js');
     chat.renderConnectionLostNotice(sid, 'ws-closed');

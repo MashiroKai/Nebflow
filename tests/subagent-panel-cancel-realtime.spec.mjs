@@ -125,11 +125,12 @@ function inject(page, obj) {
   }, obj);
 }
 
-/** 打开 Sub-Agents 面板（indicator 点击 → dropdown 展开）。 */
+/** 打开 Sub-Agents 面板（indicator 点击 → 下拉展开）。真面 = #bg-dropdown
+ * （面板合并批换代口径；#bgagent-dropdown 为恒 hidden 幽灵面）。 */
 async function openPanel(page) {
   await page.waitForSelector('#bgagent-indicator:not(.hidden)', { timeout: 8000 });
   await page.click('#bgagent-indicator');
-  await page.waitForSelector('#bgagent-dropdown:not(.hidden)', { timeout: 8000 });
+  await page.waitForSelector('#bg-dropdown:not(.hidden)', { timeout: 8000 });
 }
 
 test.describe('Sub-Agents 面板取消/终止实时刷新', () => {

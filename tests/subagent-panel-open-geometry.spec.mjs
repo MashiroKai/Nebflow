@@ -134,20 +134,19 @@ function inject(page, obj) {
   }, obj);
 }
 
+// 面板合并批后真面 = #bg-dropdown（#bgagent-dropdown 为恒 hidden 幽灵面，仅供
+// 手机层引用；同 delegate-ui-twolayer.spec.mjs 的换代口径）。
 const dropdownOpen = (page) => page.evaluate(() => {
-  const d = document.getElementById('bgagent-dropdown');
+  const d = document.getElementById('bg-dropdown');
   return !!d && !d.classList.contains('hidden');
 });
 
-/** 打开 Sub-Agents 面板（indicator 点击 → dropdown 展开）；幂等：已开则不点（再点会 toggle 关闭）。 */
+/** 打开 Sub-Agents 面板（indicator 点击一次 → 下拉展开）；幂等：已开则不点（再点会 toggle 关闭）。 */
 async function openPanel(page) {
   await page.waitForSelector('#bgagent-indicator:not(.hidden)', { timeout: 8000 });
-  for (let i = 0; i < 4; i++) {
-    if (await dropdownOpen(page)) return;
-    await page.click('#bgagent-indicator');
-    await page.waitForTimeout(150);
-  }
-  expect(await dropdownOpen(page), 'Sub-Agents 下拉未能展开').toBe(true);
+  if (await dropdownOpen(page)) return;
+  await page.click('#bgagent-indicator');
+  await page.waitForSelector('#bg-dropdown:not(.hidden)', { timeout: 8000 });
 }
 
 /**

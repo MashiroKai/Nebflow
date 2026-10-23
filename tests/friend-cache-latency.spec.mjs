@@ -356,9 +356,12 @@ async function serverIds(cid) {
     JSON.stringify({ probes: c.filter(x => x.get('limit') === '1').map(x => x.bytes) }));
   console.log(`M6-READOUT tree=${WEB} coldBytes=${bytesOf(c)} coldCalls=${c.length} coldQueries=${JSON.stringify(c.map(x => x.query))}`);
   // ⑨-6 键迁移：裸键存量值启动即迁入 key() 命名空间
+  // （换代注记 2026-10-23 spec-hygiene：brand 前缀 nebflow_ → stand_（branding.js
+  //   key()），迁移目标随 key() 走 —— 判据语义 = 「迁入 <当前品牌>_fm_* 命名空间」
+  //   不变，字面量随迁。）
   const keys = await page.evaluate(() => ({
     legacy: Object.keys(localStorage).filter(k => k === 'fm_trusted' || k === 'fm_seen_requests' || k === 'fm_blocked'),
-    namespaced: Object.keys(localStorage).filter(k => k === 'nebflow_fm_trusted' || k === 'nebflow_fm_seen_requests' || k === 'nebflow_fm_blocked'),
+    namespaced: Object.keys(localStorage).filter(k => k === 'stand_fm_trusted' || k === 'stand_fm_seen_requests' || k === 'stand_fm_blocked'),
   }));
   ok('⑨-6 裸键零残留（迁移后命名空间键存在）', keys.legacy.length === 0, JSON.stringify(keys));
   await page.close();
@@ -386,9 +389,9 @@ async function serverIds(cid) {
   await sleep(600);
   const migrated = await page.evaluate(() => ({
     legacy: ['fm_trusted', 'fm_seen_requests', 'fm_blocked'].filter(k => localStorage.getItem(k) !== null),
-    trusted: localStorage.getItem('nebflow_fm_trusted'),
-    seen: localStorage.getItem('nebflow_fm_seen_requests'),
-    blocked: localStorage.getItem('nebflow_fm_blocked'),
+    trusted: localStorage.getItem('stand_fm_trusted'),
+    seen: localStorage.getItem('stand_fm_seen_requests'),
+    blocked: localStorage.getItem('stand_fm_blocked'),
   }));
   ok('⑨-6 裸键 → key() 命名空间迁移（三键全迁、存量值不丢）',
     migrated.legacy.length === 0 && migrated.trusted === '["u-p"]' && migrated.seen === '["rq-1"]' && migrated.blocked === '["u-z"]',

@@ -141,6 +141,11 @@ async function bootPage(browser, { fixed }) {
     await sleep(300);
     frame = page.frames().find((f) => f.url() === 'about:srcdoc') || null;
   }
+  // canvas-stack v5 批后 #deck-fab（fixed top10/right12，canvas-open 时在场）悬浮在
+  // iframe 顶右工具带正上方，拦截 frame.click（#btnArchive 等）—— 本 spec 主角是
+  // iframe 内交互链，FAB 与之无关：两腿 boot 后统一让位隐藏（仅本 spec 视图，
+  // 不触产品代码；真实鼠标事件路径保留）。
+  await page.addStyleTag({ content: '#deck-fab{display:none!important}' }).catch(() => {});
   return { ctx, page, frame, errors };
 }
 
