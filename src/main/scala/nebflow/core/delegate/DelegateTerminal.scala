@@ -51,8 +51,14 @@ object DelegateTerminal:
   sealed trait Outcome
 
   object Outcome:
-    /** 判词完成（payload 后缀携带判词行——🔴 模型/用户可见文案，§16 待过目）。 */
-    final case class Release(verdictSuffix: String) extends Outcome
+    /**
+     * 判词完成（payload 后缀携带判词行——🔴 模型/用户可见文案，§16 待过目）。
+     * `mergeRoundRefused`（steward 批 D3-③，2026-10-23）：合并轮被拒（机械验收
+     * 拒绝等 CompletedNote 形态）= true ⇒ 清理面把队列条目**留队待重试**而非出队
+     * （`MergeQueue.onTerminal(keepForRetry=true)`——队头被拒不再堵塞后续）。默认
+     * false = 既有出队语义零变化。
+     */
+    final case class Release(verdictSuffix: String, mergeRoundRefused: Boolean = false) extends Outcome
 
     /** ready-to-merge：保活等合并轮（预算重挂由监督者执行）。 */
     case object HoldForMerge extends Outcome
@@ -282,8 +288,15 @@ object DelegateTerminal:
           cleanup *> IO.pure(Outcome.Release(verdictLineCompleted(unjudged) + autoMergeSuffix.getOrElse("")))
         case DelegateJudge.Verdict.CompletedNote(note) =>
           // #566：退役 blocked 的唯一残留出口——completed 判词＋注记交付（注记 =
-          // 报告内容，不是状态）。
-          IO.pure(Outcome.Release(s"${verdictLineCompleted(unjudged = false)}\n[delegate-judge] note: $note"))
+          // 报告内容，不是状态）。合并轮上的注记形 = 合并未干净落地（机械验收
+          // 拒绝等）⇒ 队列条目留队待重试（D3-③ 队头被拒不堵塞后续）；非合并轮
+          // 注记 = 普通完成注记，语义不变。
+          IO.pure(
+            Outcome.Release(
+              s"${verdictLineCompleted(unjudged = false)}\n[delegate-judge] note: $note",
+              mergeRoundRefused = mergeRound && acceptance.exists(!_.ok)
+            )
+          )
     yield outcome
     end for
   end onCompleted
@@ -571,13 +584,16 @@ object DelegateTerminal:
    * 任意终态的统一清理（BackoffSupervisor.notifyParentAndStop 内，gate
    * source="delegate"）：MergeQueue 出队（幂等）＋ failed/cancelled 的补判词行
    * （completed 腿的判词行已由 [[onCompleted]] 写，此处不重复）。
+   * `keepForRetry`（steward 批 D3-③）：合并轮被拒的 Release 腿传 true——条目
+   * 留队待重试而非出队（队头被拒不堵塞后续，见 [[MergeQueue.onTerminal]]）。
    */
   def onTerminalCleanup(
     resources: AgentRuntimePort,
     delegateId: String,
     parentSessionId: String,
     taskStatus: String,
-    eventType: String
+    eventType: String,
+    keepForRetry: Boolean = false
   ): IO[Unit] =
     val record = DelegateRegistry.find(delegateId)
     val taskId = record.flatMap(_.taskId)
@@ -638,7 +654,10 @@ object DelegateTerminal:
       DelegateLedgerReconcile
         .ledgerSettlementNote(resources.subAgentTaskStore, record, delegateId, taskStatus)
         .handleErrorWith(e => IO(logger.warn(s"delegate settlement note failed: ${e.getMessage}")))
-    verdictLine *> ledgerNote *> hostUnmount *> pluginRelease *> MergeQueue.onTerminalIO(delegateId) *> autoArchive
+    verdictLine *> ledgerNote *> hostUnmount *> pluginRelease *> MergeQueue.onTerminalIO(
+      delegateId,
+      keepForRetry
+    ) *> autoArchive
   end onTerminalCleanup
 
   // ── 内部 ──────────────────────────────────────────────────────────────

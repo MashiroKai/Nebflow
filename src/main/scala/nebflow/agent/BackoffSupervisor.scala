@@ -69,8 +69,10 @@ object BackoffSupervisor:
     maxBackoff: FiniteDuration = 60.seconds,
     maxRestarts: Int = 2,
     withinTimeRange: FiniteDuration = 5.minutes,
-    /** A 段等待屏罩兜底计时上限（spec 注入缝——测试 JVM 下 sys.props 不可靠，
-      * NodeEngine.bgWaitCapMs 同款构造器缝先例）。 */
+    /**
+     * A 段等待屏罩兜底计时上限（spec 注入缝——测试 JVM 下 sys.props 不可靠，
+     * NodeEngine.bgWaitCapMs 同款构造器缝先例）。
+     */
     bgWaitCapMs: Long = Defaults.BgGateWaitTimeoutMs
   ): Behavior[AgentEvent] =
     Behaviors.setup { ctx =>
@@ -185,14 +187,23 @@ object BackoffSupervisor:
               )
               .attempt
               .flatMap {
-                case Right(nebflow.core.delegate.DelegateTerminal.Outcome.Release(suffix)) =>
+                case Right(nebflow.core.delegate.DelegateTerminal.Outcome.Release(suffix, mergeRoundRefused)) =>
                   // file-diff → 委托结果行（bug #58 修 2026-10-09）：完成批次携带
                   // 改动文件 diff 载荷（metadata.fileChanges）——父会话注入行的
                   // 产物卡展开即 diff 视图。空报告 = 不带键（行字节形态不变）。
                   // A 段等待屏罩：兜底交付注记（bg-wait cap 到期强制终判时附带
                   // ——诚实标注「交付时仍有未结后台任务，其完成通知将丢失」）。
+                  // D3-③（steward 批 2026-10-23）：合并轮被拒（机械验收拒绝等
+                  // 注记形）⇒ 队列条目留队待重试而非出队（队头被拒不堵塞后续）。
                   val note = bgWaitNote.fold("")(n => s"\n[delegate-bg-wait] $n")
-                  fileChangesMetadata().flatMap(fc => notifyParentAndStop("completed", payload + suffix + note, fc))
+                  fileChangesMetadata().flatMap(fc =>
+                    notifyParentAndStop(
+                      "completed",
+                      payload + suffix + note,
+                      fc,
+                      keepForRetry = mergeRoundRefused
+                    )
+                  )
                 case Right(nebflow.core.delegate.DelegateTerminal.Outcome.HoldForMerge) =>
                   // 合并窗预算重挂（旧窗口随工作相终结释放；DelegateBudget ∈
                   // agent 层——core 钩子只回 Outcome，重挂留在本层，分层纪律）。
@@ -294,7 +305,10 @@ object BackoffSupervisor:
         def disarmBgWaitCap: IO[Unit] =
           bgWaitCapFiber.get.flatMap(_.traverse_(_.cancel).void) *> bgWaitCapFiber.set(None)
 
-        def holdForBgWait(waiting: List[nebflow.core.tools.BgTaskRegistry.ActiveTask], messages: List[Message]): IO[Unit] =
+        def holdForBgWait(
+          waiting: List[nebflow.core.tools.BgTaskRegistry.ActiveTask],
+          messages: List[Message]
+        ): IO[Unit] =
           bgWaitHeld.get.flatMap { already =>
             val emitOnce =
               IO.whenA(!already) {
@@ -672,6 +686,15 @@ object BackoffSupervisor:
           _ <-
             if recoveredMessages.nonEmpty then newChild ! AgentCommand.UserInput(nudgeText, Some(ctx.self))
             else newChild ! AgentCommand.UserInput(initialPrompt, Some(ctx.self))
+          // D3-②（steward 批 2026-10-23）：合并队列条目不再绑活体引用——崩溃重启
+          // 换新子 actor 后把该 delegate 的排队条目原地换绑（事件驱动），待重试
+          // 资格恢复；提醒未发过的条目正巧队首且窗空闲 ⇒ 立即重投。查无条目 = no-op。
+          _ <-
+            if source == "delegate" then
+              nebflow.core.delegate.MergeQueue
+                .reattachIO(subagentId, newChild)
+                .handleErrorWith(e => logger.warn(s"MergeQueue reattach failed for $subagentId: ${e.getMessage}"))
+            else IO.unit
           _ <- logger.info(
             s"BackoffSupervisor: respawned $childName ($trigger), " +
               s"recovered ${recoveredMessages.size} messages" +
@@ -745,7 +768,8 @@ object BackoffSupervisor:
         eventType: String,
         payload: String,
         failureMetadata: JsonObject,
-        taskStatusOverride: Option[String] = None
+        taskStatusOverride: Option[String] = None,
+        keepForRetry: Boolean = false
       ): IO[Behavior[AgentEvent]] =
         val metadata = JsonObject(
           "description" -> description.asJson,
@@ -764,7 +788,7 @@ object BackoffSupervisor:
         val delegateCleanup =
           if source == "delegate" then
             nebflow.core.delegate.DelegateTerminal
-              .onTerminalCleanup(resources, subagentId, parentSessionId, taskStatus, eventType)
+              .onTerminalCleanup(resources, subagentId, parentSessionId, taskStatus, eventType, keepForRetry)
               .handleErrorWith(e => logger.warn(s"delegate terminal cleanup failed: ${e.getMessage}").void)
           else IO.unit
 
@@ -847,20 +871,23 @@ object BackoffSupervisor:
       private def f2DeliveryBackstop(event: AgentCommand.ExternalEvent): IO[Unit] =
         if parentSessionId.isEmpty then IO.unit
         else
-          CompactionQueueStore.load(parentSessionId).flatMap { existing =>
-            val already =
-              existing.exists(_.events.exists(_.correlationId.contains(event.correlationId.getOrElse(""))))
-            if already then IO.unit
-            else
-              resources.sessionStore.listSessions.flatMap { sessions =>
-                if !sessions.exists(_.id == parentSessionId) then IO.unit
-                else
-                  val q = existing.getOrElse(CompactionQueueStore.PersistedQueues())
-                  CompactionQueueStore.save(parentSessionId, q.copy(events = q.events :+ event))
-              }
-          }.handleErrorWith(e =>
-            logger.warn(s"[terminal-f2-backstop] append failed for parent '$parentSessionId': ${e.getMessage}")
-          )
+          CompactionQueueStore
+            .load(parentSessionId)
+            .flatMap { existing =>
+              val already =
+                existing.exists(_.events.exists(_.correlationId.contains(event.correlationId.getOrElse(""))))
+              if already then IO.unit
+              else
+                resources.sessionStore.listSessions.flatMap { sessions =>
+                  if !sessions.exists(_.id == parentSessionId) then IO.unit
+                  else
+                    val q = existing.getOrElse(CompactionQueueStore.PersistedQueues())
+                    CompactionQueueStore.save(parentSessionId, q.copy(events = q.events :+ event))
+                }
+            }
+            .handleErrorWith(e =>
+              logger.warn(s"[terminal-f2-backstop] append failed for parent '$parentSessionId': ${e.getMessage}")
+            )
 
       /**
        * source-death 清理（InteractionHub.CleanupForSession 的第二个调用点；

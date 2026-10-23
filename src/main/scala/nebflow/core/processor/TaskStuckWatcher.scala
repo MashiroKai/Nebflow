@@ -719,6 +719,11 @@ object TaskStuckWatcher:
     // 恢复动作」时序更直观）。
     verifyL3Outcomes(resources, pendingL3, now, l3VerifyDelayMs) *>
       resources.agentRegistry.get.flatMap { registry =>
+        // ── D3-④（steward 批 2026-10-23）：Waiting 停靠态的活性看护 ────────────
+        // 旧整族豁免 ⇒ 停靠会话的死亡（registry 行残留、actor 已退出）永无人管，
+        // 合并队列被尸体持窗整队陪站。判据 = 活性/事件（actor 注册表在否），零时间
+        // 判据——活停靠零动作，死停靠由下方 IO 链首环 careWaitingDock 处置（释放
+        // 合并队列窗 + 台账翻 failed + 事件升级）。
         val candidates = registry.values.toList
           .filter(rec => scannedKinds.contains(rec.kind))
           .filter(rec => rec.status == AgentStatus.Processing)
@@ -735,11 +740,15 @@ object TaskStuckWatcher:
           // Processing with a fresh lastActivityMs — AgentActor AskUser handler
           // / AgentCore.askUserPermission), so true hangs stay reachable.
           .filter(rec => rec.status != AgentStatus.WaitingForUser)
-          // 显式等待停靠态同样豁免（平台修复批 fix 4，2026-10-21）：Waiting =
-          // 「等合并轮提醒」一类引擎停靠（delegate ready-to-merge 被 MergeQueue
-          // 持有）——推进者 = 引擎合并轮转，不是本会话进程；与 WaitingForUser
-          // 同款等待屏障语义。同上为显式守卫（Processing 过滤已排除）。
-          .filter(rec => rec.status != AgentStatus.Waiting)
+        // 显式等待停靠态（平台修复批 fix 4，2026-10-21；steward 批 D3-④
+        // 2026-10-23 改判据）：Waiting =「等合并轮提醒」一类引擎停靠（delegate
+        // ready-to-merge 被 MergeQueue 持有）——推进者 = 引擎合并轮转，不是本
+        // 会话进程。原「整族豁免」显式守卫已删：Waiting 仍不进「无进展卡死」
+        // 候选（上方 Processing 过滤已排除——等待期没有 agent 侧活动是合法态，
+        // 时间判据禁用），但死亡停靠不再无人管：改由本拍 IO 链首环
+        // careWaitingDock 以**活性/事件判据**单列看护（registry 行在、actor
+        // 已死 = 明确死亡事件 ⇒ 释放合并队列窗 + 台账翻 failed + 升级上报）；
+        // alive 停靠零动作（等待屏障语义保持）。
         // 2026-09-10 换轴：判据收敛到 assess（agent 侧事件停滞 ∪ 工具相位超时，
         // 二者都不引用进程 CPU）。旧行 `now - rec.lastActivityMs > thresholdMs`
         // 保留为 assess 的判据 ①，其余语义不变。
@@ -759,7 +768,9 @@ object TaskStuckWatcher:
             def aliveOf(rec: AgentRecord): Option[Boolean] = cwdBySid.getOrElse(rec.sessionId, None)
             // Drop counters for sessions that recovered (fresh activity / different
             // status / gone) so a future stuck episode starts from Stop attempt 1.
-            stopCounts.modify(m => (m.view.filterKeys(stuckIds.contains).toMap, ())) *>
+            // D3-④ 首环：Waiting 死停靠看护（活性/事件判据，见上方头注）。
+            careWaitingDock(resources, wsHub, registry, now) *>
+              stopCounts.modify(m => (m.view.filterKeys(stuckIds.contains).toMap, ())) *>
               // P3（§3.3）：**episode 边界** —— 离开 stuck 候选集的扫描轮复位「本代次恢复
               // 预算」（与 stopCounts 同点、同纪律）；全链预算 / 冷却窗 / 互斥点 2 状态
               // **保留**（它们的语义是跨代次的）。
@@ -817,10 +828,97 @@ object TaskStuckWatcher:
                     )
                   }
                 }
-          }
+          } *>
+          // ── D3-⑤（steward 批 2026-10-23）：合并窗台账事件化看护 ────────────────
+          // DelegateBudget wall-clock 预算退役后的另一半活性替代：合并轮停靠相的
+          // 看护（判据 = 队列台账 × 监督者 actor 活性，事件判据零时间判据）——
+          // 司机死 ⇒ 轮驱动（留队待重试 + 窗释放 + 升级），孤儿条目出队。搭本
+          // 既有扫描拍驱动，零新增定时器；幂等（动作过 = 待重试/出队，零重复）。
+          nebflow.core.delegate.MergeWindowCare
+            .care(resources)
+            .handleErrorWith(e => logger.warn(s"[merge-window-care] sweep failed: ${e.getMessage}").void)
+            .void
       }
 
   end scan
+
+  /**
+   * D3-④ Waiting 停靠态看护（steward 批 2026-10-23；**活性判据，零时间判据**）：
+   * registry 行 status=Waiting（等合并轮停靠）而其 actor 已从系统注册表退出 =
+   * 明确死亡事件 ⇒ ① 合并队列前进（`onTerminal(keepForRetry=true)`——被拒/未投
+   * 条目按语义留队待重试，窗释放轮转下一条）② 任务台账翻 failed（面板可见终态）
+   * ③ taskStuck WS 广播（人可见）④ 事件升级投最终责任方（root 活投 / 持久收件箱
+   * 补投——①落点）。活停靠（等提醒/后台任务唤醒）= 合法态零动作。
+   */
+  private def careWaitingDock(
+    resources: AgentRuntimePort,
+    wsHub: EventSink,
+    registry: Map[String, AgentRecord],
+    now: Long
+  ): IO[Unit] =
+    registry.values.toList
+      .filter(rec => scannedKinds.contains(rec.kind) && rec.status == AgentStatus.Waiting)
+      .traverse_ { rec =>
+        resources.actorSystem.isAlive(rec.ref.path).flatMap {
+          case true => IO.unit
+          case false =>
+            val detail =
+              s"waiting dock orphaned: session '${rec.sessionId}' is docked waiting-merge but its actor has exited"
+            logger.warn(s"[waiting-dock-care] $detail") *>
+              IO.blocking(nebflow.core.delegate.MergeQueue.onTerminal(rec.sessionId, keepForRetry = true))
+                .handleErrorWith(e =>
+                  logger.warn(s"[waiting-dock-care] merge queue advance failed: ${e.getMessage}")
+                ) *>
+              IO
+                .whenA(rec.parentSessionId.trim.nonEmpty)(
+                  resources.subAgentTaskStore
+                    .updateStatus(
+                      rec.parentSessionId,
+                      rec.sessionId,
+                      "failed",
+                      completedAt = Some(now),
+                      lastError = Some(detail)
+                    )
+                    .handleErrorWith(e => logger.warn(s"[waiting-dock-care] task store write failed: ${e.getMessage}"))
+                )
+                .void *>
+              broadcastStuck(wsHub, rec, idleSecs = 0L, action = "waiting-dock-dead", reason = detail) *>
+              escalateDockDeath(resources, rec, detail)
+        }
+      }
+
+  /** ①升级落点（careWaitingDock）：投最终责任方（root 活投 / 持久收件箱补投）。 */
+  private def escalateDockDeath(resources: AgentRuntimePort, rec: AgentRecord, detail: String): IO[Unit] =
+    val fallback = if rec.parentSessionId.trim.nonEmpty then rec.parentSessionId else rec.rootSessionId
+    nebflow.core.tools.BgNotifyDelivery
+      .resolveRootSessionId(Some(resources.agentRegistry), rec.sessionId, fallback)
+      .flatMap { rootId =>
+        if rootId.trim.isEmpty then
+          logger.warn(
+            s"[waiting-dock-care] no responsible session for '${rec.sessionId}' — escalation dropped with this line"
+          )
+          IO.unit
+        else
+          val event = AgentCommand.ExternalEvent(
+            source = "waiting-dock-care",
+            eventType = "failed",
+            payload =
+              s"""[waiting-dock-care] delegate '${rec.sessionId}': $detail. The merge queue moved on (entry kept pending retry) and the task row was marked failed; escalated here because the previous responsible party is not live.""",
+            metadata = io.circe.JsonObject(
+              "delegateId" -> rec.sessionId.asJson,
+              "action" -> "waiting-dock-dead".asJson,
+              "escalatedBy" -> "task-stuck-watcher".asJson
+            ),
+            correlationId = Some(s"waiting-dock-dead-${rec.sessionId}")
+          )
+          nebflow.core.tools.BgNotifyDelivery
+            .deliverToRootOrInbox(Some(resources.actorSystem), Some(resources.agentRegistry), rootId, event)
+            .void
+      }
+      .handleErrorWith(e =>
+        logger.warn(s"[waiting-dock-care] escalation failed for '${rec.sessionId}': ${e.getMessage}")
+      )
+  end escalateDockDeath
 
   /** taskStuck WS 广播（统一 payload：sessionId/kind/idleSecs/action/reason）。 */
   private def broadcastStuck(
