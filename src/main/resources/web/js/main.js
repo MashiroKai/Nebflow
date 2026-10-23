@@ -54,7 +54,6 @@ import { initScrollUnderGlass } from './scrollUnderGlass.js'; // uifix ⑤
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
   deleteSession, formatSessionTime, setSessionAttention,
-  initHeaderModelInfo,
   persistUnread, createNewFolder, getCurrentFolderId,
   resetChatForActiveSession,
   computeAgentStates
@@ -123,9 +122,9 @@ import { initLightbox } from './lightbox.js';
 // The module stays on disk orphan-exempted in scripts/build-web.mjs, pending the
 // #1229 per-project REST/WS retirement batch (tests/fixtures/orbit-anim-harness.html
 // still imports it directly for tests/orbit-anim.spec.mjs).
-// ctxthresh 批（2026-09-15 方案 A）：Header 上下文环 → 压缩阈值面板（自包含
-// 模块：注入 CSS + 把浮层挂成 #header 的兄弟节点 + 绑定环点击 + WS 收发）。
-import './ctxthresh.js';
+// 上下文用量环批（ctxring，2026-09-15 方案 A 起）已整链退役 —— 2026-10-23
+// 作者令逐字「把桌面端的上下文用量显示也去掉」：环渲染器（含压缩阈值环上
+// 拖动的自包含模块）随批删除。防复活钉：tests/remove-context-usage.spec.mjs。
 // Side-effect import: agentManager.js keeps the sealed agents panel +
 // per-agent detail tabs alive (canvas-tab-restore for persisted 'agents'
 // tabs); plugins.js owns the activity-bar entry now (2026-09-04 件 B).
@@ -207,7 +206,7 @@ state.dom = {
   bgDropdownEl: document.getElementById('bg-dropdown'),
   bgDropdownListEl: document.getElementById('bg-dropdown')?.querySelector('.bg-dropdown-list'),
   // Header status indicators — surfaced on state.dom for ws.js indicator updates.
-  headerModelInfoEl: document.getElementById('header-model-info'),
+  // (头部用量环的 dom 槽已随 2026-10-23 退役批移除。)
   bypassToggleEl: document.getElementById('bypass-toggle'),
   bgagentIndicatorEl: document.getElementById('bgagent-indicator'),
   bgagentDropdownEl: document.getElementById('bgagent-dropdown'),
@@ -236,7 +235,6 @@ initChatView(
     voiceBtn: document.getElementById('voice-btn'),
     voiceOverlay: document.getElementById('voice-overlay'),
     voiceText: document.getElementById('voice-text'),
-    headerModelInfoEl: document.getElementById('header-model-info'),
     bgIndicatorEl: document.getElementById('bg-indicator'),
     bgCountEl: document.getElementById('bg-indicator')?.querySelector('.bg-count'),
     bgDropdownEl: document.getElementById('bg-dropdown'),
@@ -1033,99 +1031,10 @@ onMessage('toolArgDelta', (msg, view) => {
 // terminal row is `.row error` (chat.js:1407/1421), which countsAsRealMessage
 // accepts ⇒ the turn is a real message by the same single criterion.
 
-// Header model info display
-if (!state.sessionModelInfo) state.sessionModelInfo = {};
-
-function formatTokens(n) {
-  if (n == null) return '';
-  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-  if (n >= 1000) return Math.round(n / 1000) + 'k';
-  return String(n);
-}
-
-function updateHeaderModelInfo() {
-  // The header element lives in the primary window only (popups pass
-  // headerModelInfo: null), so always render the PRIMARY view's session —
-  // using activeView here dropped repaints whenever a bg-agent/flow popup was
-  // active while the primary session's usageUpdate/done arrived.
-  const el = document.getElementById('header-model-info');
-  if (!el) return;
-  const sid = chatViews.primary?.sessionId || state.activeSessionId;
-  const info = sid ? state.sessionModelInfo[sid] : null;
-  // Header shows the context-usage ring only — the model name label was
-  // removed per user request (#313). The model is still surfaced via the
-  // ring's tooltip so the info isn't lost, just no longer visually present.
-  const hasRing = !!(info && info.contextWindow);
-  if (!hasRing) {
-    el.textContent = '';
-    el.style.display = 'none';
-    el.dataset.mode = '';
-    return;
-  }
-  const mode = 'r';
-
-  const ratio = info.inputTokens != null ? info.inputTokens / info.contextWindow : 0;
-  const pct = Math.min(Math.round(ratio * 100), 100);
-  let barColor = '#4caf50';
-  if (ratio > 0.5) barColor = '#d4a030';
-  // ui-status-redesign（盘点 #49，B 组）：>75% 红档字面量 → 状态 token（环=图案
-  // 载体保留）。CSS 变量经 style.stroke 消费（stroke 属性不支持 var()）。
-  if (ratio > 0.75) barColor = 'var(--status-error-icon)';
-
-  const dragPct = el.dataset.ringDragPreviewPct ? Number(el.dataset.ringDragPreviewPct) : null;  // ctxring S1 (see ctxthresh.js header)
-  const thresholdPct = dragPct != null ? Math.round(dragPct) : Math.round((info.compactThreshold || state.COMPACT_THRESHOLD) * 100);
-  const outPart = info.outputTokens != null ? ` · +${formatTokens(info.outputTokens)} out` : '';
-  const tooltip = [
-    info.model || '',
-    info.inputTokens != null
-      ? `${formatTokens(info.inputTokens)} / ${formatTokens(info.contextWindow)} tokens (${pct}%)${outPart} · threshold ${thresholdPct}%`
-      : `${formatTokens(info.contextWindow)} context window`,
-  ].filter(Boolean).join(' · ');
-
-  const R = 15;
-  const CIRC = 2 * Math.PI * R;
-  const dashLen = CIRC * pct / 100;
-  const thresholdAngle = thresholdPct * 3.6;
-
-  el.style.display = 'inline-flex';
-
-  // In-place update when the rendered structure matches the current mode.
-  if (el.dataset.mode === mode) {
-    const ring = /** @type {HTMLElement|null} */ (el.querySelector('.ctx-ring-wrap'));
-    if (ring) {
-      ring.title = tooltip;
-      const ringFill = /** @type {SVGElement|null} */ (ring.querySelector('circle:nth-child(2)'));
-      if (ringFill) {
-        ringFill.style.stroke = barColor;
-        ringFill.setAttribute('stroke-dasharray', `${dashLen} ${CIRC}`);
-      }
-      const ringLine = ring.querySelector('.ctx-ring-threshold');
-      if (ringLine) ringLine.setAttribute('transform', `rotate(${thresholdAngle} 18 18)`);
-      const ringPct = ring.querySelector('.ctx-ring-pct');
-      if (ringPct) ringPct.textContent = dragPct != null ? String(Math.round(dragPct)) : String(pct);
-    }
-    return;
-  }
-
-  // Structure change (ring appearing or disappearing) — rebuild.
-  el.dataset.mode = mode;
-  el.innerHTML = `
-    <div class="ctx-ring-wrap ctx-compact" title="${tooltip}">
-      <svg width="28" height="28" viewBox="0 0 36 36" class="ctx-ring-svg">
-        <circle cx="18" cy="18" r="${R}" fill="none" stroke="rgba(128,128,128,0.15)" stroke-width="3.5"/>
-        <circle cx="18" cy="18" r="${R}" fill="none" stroke-width="3.5"
-                style="stroke:${barColor};stroke-dasharray:${dashLen} ${CIRC};transition:stroke-dasharray 0.4s ease, stroke 0.4s ease;"
-                stroke-linecap="round"
-                transform="rotate(-90 18 18)"/>
-        <line x1="18" y1="1.5" x2="18" y2="5" stroke="rgba(200,80,80,0.7)" stroke-width="1.5"
-              transform="rotate(${thresholdAngle} 18 18)"
-              class="ctx-ring-threshold"/>
-      </svg>
-      <span class="ctx-ring-pct">${pct}</span>
-    </div>
-  `;
-}
-state.updateHeaderModelInfo = updateHeaderModelInfo;
+// 头部上下文用量环显示已整链退役（2026-10-23 作者令逐字「把桌面端的上下文
+// 用量显示也去掉」）：环渲染器与压缩阈值拖动模块不再存在。
+// state.sessionModelInfo（state.js）管道保留 —— 弹窗模型徽章仍消费 `.model`。
+// 防复活钉：tests/remove-context-usage.spec.mjs。
 
 // Real-time usage update after each LLM round (multi-round tool calling)
 onMessage('usageUpdate', (msg, view) => {
@@ -1142,7 +1051,6 @@ onMessage('usageUpdate', (msg, view) => {
       compactThreshold: msg.compactThreshold
     };
     try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
-    if (view) updateHeaderModelInfo();
   }
 });
 
@@ -1199,7 +1107,6 @@ onMessage('done', (msg, view) => {
       compactThreshold: msg.compactThreshold != null ? msg.compactThreshold : state.sessionModelInfo[sid]?.compactThreshold
     };
     try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
-    if (view) updateHeaderModelInfo();
   }
   // 2026-09-16 msunread: 未读判据必须在下面 flush 删掉会话级缓冲**之前**取 ——
   // 非激活会话没有 DOM，本 turn 的行只活在缓冲里（见 turnProducedRealMessage）；
@@ -1776,7 +1683,6 @@ onMessage('sessionList', (msg, view) => {
   // after a global change until the user switched sessions — the pre-fix code
   // updated state.safetyModes and stopped there.
   state.updateSafetyToggle?.();
-  initHeaderModelInfo();
   // Mark the initial session as restored — getHistory is already sent by
   // resetChatForActiveSession (called inside renderSessionSidebar when activeId changes).
   if (!restoredSessionId && activeId) {
@@ -2185,14 +2091,15 @@ onMessage('compactComplete', (msg, view) => {
   if (!sid) return;
   resetStreamTimeout(sid);
   setCompacting(sid, false);
-  // Compaction shrinks the live context — refresh the usage ring immediately
-  // instead of leaving the pre-compaction (near-threshold) value up until the
-  // next LLM round's usageUpdate. outputTokens is stale per-turn data, drop it.
+  // Compaction shrinks the live context — refresh the stored usage immediately
+  // (popup model badges / future consumers) instead of leaving the
+  // pre-compaction (near-threshold) value up until the next LLM round's
+  // usageUpdate. outputTokens is stale per-turn data, drop it.
+  // (The header usage ring display was retired 2026-10-23.)
   if (msg.after != null) {
     const prev = state.sessionModelInfo[sid] || {};
     state.sessionModelInfo[sid] = { ...prev, inputTokens: msg.after, outputTokens: undefined };
     try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
-    updateHeaderModelInfo();
   }
   // Compaction completes outside the normal done chain — finish any
   // streaming agent bubbles so their cursors don't linger.
@@ -2286,7 +2193,6 @@ onMessage('agentSessionList', (msg, view) => {
   renderSessionSidebar(sessions, state.activeSessionId);
   // F-1: same second arrival path as `sessionList` above (agent-scoped list).
   state.updateSafetyToggle?.();
-  initHeaderModelInfo();
 });
 
 // agentSystemPrompt / agentSystemPromptSaved WS handlers retired 2026-09-06
@@ -2428,8 +2334,8 @@ onMessage('sessionModelSet', (msg, view) => {
 onMessage('modelChanged', (msg, view) => {
   if (msg.newModel) {
     state.currentModel = msg.newModel;
-    // Record the ACTUAL model on the session so the header model label /
-    // tooltip switch from the configured to the used model immediately —
+    // Record the ACTUAL model on the session so consumers (popup model
+    // badges) switch from the configured to the used model immediately —
     // previously this event only set the global currentModel (unread by any
     // UI), so a GLM→deepseek fallback left the display showing the old model.
     const sid = msg.sessionId || state.activeSessionId;
@@ -2437,7 +2343,6 @@ onMessage('modelChanged', (msg, view) => {
       const prev = state.sessionModelInfo[sid] || {};
       state.sessionModelInfo[sid] = { ...prev, model: msg.newModel };
       try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
-      updateHeaderModelInfo();
     }
   }
 });
@@ -3445,9 +3350,11 @@ onMessage('forkComplete', (msg, view) => {
 // v2 (2026-09-09 11:36): ONE survival-priority chain over ALL hideable items,
 // HIGH→LOW — narrowing hides from the tail: the background-task/sub-agent
 // capsules (+ pending-asks, same content-driven capsule family) hide LAST
-// (author ruling: 后台任务/后台agent 优先显示), memory-btn + header-model-info
-// next, then the legacy right-cluster P1→P5 order (bypass → voice → search →
-// reminder → daemon; spec §3.2). Collision volume is fully measured
+// (author ruling: 后台任务/后台agent 优先显示), memory-btn next — the
+// header status: the usage ring held this tier until its 2026-10-23 removal
+// (上下文用量显示整链退役) — then the legacy right-cluster P1→P5 order
+// (bypass → voice → search → reminder → daemon; spec §3.2). Collision volume
+// is fully measured
 // (getBoundingClientRect / offsetWidth / intrinsic center width) — the old
 // empirical constants (memW fallback 28, CS_GAP=8) are gone. A hysteresis dead
 // zone keeps the hide/show cut from oscillating at the critical width.
@@ -3473,7 +3380,6 @@ onMessage('forkComplete', (msg, view) => {
     'pending-asks-indicator',  // v2 tier 1 (same capsule family)
     'held-receipts-indicator', // v2 tier 1 (held-receipt 投递可靠性批 2026-10-21，同胶囊族)
     'memory-btn',              // v2 tier 2
-    'header-model-info',       // v2 tier 2
     'daemon-btn',              // v2 tier 3 — legacy P-order reversed: daemon
     'reminder-btn',            //   survives longest …
     'search-btn',
@@ -3487,8 +3393,8 @@ onMessage('forkComplete', (msg, view) => {
   let raf = null;
 
   // Content-driven visibility: the `hidden` attribute (memory before enable)
-  // or the `hidden` class (bg capsules with 0 tasks, context ring without
-  // data) takes an item OUT of the chain — it occupies no space (0 tasks = no
+  // or the `hidden` class (bg capsules with 0 tasks) takes an item OUT of the
+  // chain — it occupies no space (0 tasks = no
   // badge, unchanged). Same for elements that do not render at all: the
   // shelved TTS entry stays `display:none` via css/voice.css, so its chain
   // slot is dormant (it can never collide; if TTS ships again the slot wakes
@@ -3585,7 +3491,7 @@ onMessage('forkComplete', (msg, view) => {
   // normal resizes, but a direct listener keeps the reflow independent of RO
   // delivery timing (devtools zoom steps, initial programmatic resizes).
   window.addEventListener('resize', layout, { passive: true });
-  // Content-driven items: when one APPEARS (context ring gets data, memory
+  // Content-driven items: when one APPEARS (memory
   // enables, a bg capsule shows, the name arrives via sessionList WS) it grows
   // its cluster WITHOUT resizing #header, so the header alone would miss the
   // reflow and leave a stale (too-loose) clamp (§8 A2). Observing them is
@@ -3593,7 +3499,7 @@ onMessage('forkComplete', (msg, view) => {
   // fires one extra observer pass that converges (a steady-state pass changes
   // nothing → no further observer events).
   ['sidebar-toggle', 'session-name', 'bg-indicator', 'bgagent-indicator',
-    'pending-asks-indicator', 'memory-btn', 'header-model-info', 'canvas-toggle-btn']
+    'pending-asks-indicator', 'memory-btn', 'canvas-toggle-btn']
     .forEach(id => { const el = byId(id); if (el) ro.observe(el); });
   layout();
 })();
