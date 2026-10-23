@@ -72,6 +72,7 @@
 | 17 | plugins-panel-itemize ⑤ | 等/读 `#canvas-tab-bar .canvas-tab[...]` **可见** | pane active（`.canvas-tab-pane[data-tab-id].active`）+ 标签 dataset 读数（隐藏不影响）+ `#canvas-tab-bar` display:none 退役防复活钉 | canvas-stack v5 桌面标签行退役（同 §1.2 家族） |
 | 18 | plugins-panel-pure-plugins ⑥ | 同上可见性钉；404 腿鼠标点隐藏标签切回 plugins | pane active 同款；切回腿改程序化 `.click()`（JS 触发激活 handler，display:none 元素不可鼠标点但可程序点）+ 等 `.canvas-tab-pane[data-tab-id="plugins"].active` | 同上 |
 | 19 | sidebar-restructure T1/T3 | T1：top 顺序表钉 2026-09-22 形态（枚举含全部子节点）；T3：读 `nebflow_avatar_cache` + 12s 收敛窗 | T1：顺序表收编 `wiki-btn`（wiki-graph 批新增，projects 与 agents 间）+ 枚举滤除惰性 `<script>` 同辈（brand-switch-console 批 2026-10-15 pre-paint brand slot apply——非交互结构成员，legacy 复活物均为 button/div，滤除不削弱判据）；T3：键换代 `stand_avatar_cache`（branding key() 命名空间）+ 收敛窗 12s→40s + `test.slow()`（perf 批 6b6704a17 把 STATUS_POLL_MS 节流 10s→30s，收敛=一拍轮询） | T1：wiki-graph 批 + brand-switch-console 批；T3：品牌换代批（同 §2 #5/#6 家族）+ perf coalesce 批 6b6704a17 |
+| 20 | social-panel W16 B-5/B-6 | 「375 下 `#social-btn` 可点（elementFromPoint 命中）」+ open-state 对话框几何（B-1..B-4/B-6：开合溢出/模态贴边/控件裁剪/卡溢出/in-card QR） | 防复活钉：手机层上桌面社交入口随活动栏整体退役——B-5 = 等 `body.mobile-layer` 落定后入口恒 0×0 且 elementFromPoint 不命中；B-6 = 栏 display:none 保持 + #social-overlay 不亮 + #social-modal 无可见面（computed display）。桌面视口对话框几何由 W 块 1280 配置腿覆盖，不随换代减面 | mobile-ui-refactor v3（≤768 ⇒ body.mobile-layer；mobileLayer.css「桌面壳退场」段 `body.mobile-layer #activity-bar { display:none !important }`）——旧判据钉的是手机层诞生前的桌面壳形态；干净树实证 afterSuite 曾因此 TimeoutError 崩溃（375 无入口可开） |
 
 pw 复扫后本命名家族全清：subagent×2（6/6）+ plugins×2（14/14）+ sidebar-restructure（6/6）逐件复跑全绿。
 
@@ -111,8 +112,10 @@ pw 复扫后本命名家族全清：subagent×2（6/6）+ plugins×2（14/14）+
   （8080 实测 OPEN）——跑它们 = 在生产实例上建真实会话，副作用禁手，本批不跑。
 - `queuepos-detail.spec.mjs`：模块级硬门（缺 `target/queuepos-payload.json`，需先
   `sbt testOnly nebflow.core.project.MergeQueuePositionSpec`）——已另行补跑（见 §5）。
-- `social-panel.spec.mjs`：SCOPE 守卫 spec（工作树 vs HEAD 白名单），脏工作树必红——
-  合并点 settle 后树干净时即为绿（本批交付后由合并方复验）。
+- `social-panel.spec.mjs`：~~SCOPE 守卫 spec（工作树 vs HEAD 白名单），脏工作树必红——
+  合并点 settle 后树干净时即为绿~~ **已换代修复**（§2b #20）：红因与守卫无关——
+  mobile v3 后 375 配置下桌面社交入口/对话框面整体退役（作者令），W16 B-5/B-6
+  判据换代为防复活钉；干净树终验 139/139 绿（§5）。
 
 ## 5. 楼层结果汇总
 
@@ -126,6 +129,8 @@ pw 复扫后本命名家族全清：subagent×2（6/6）+ plugins×2（14/14）+
   载体被作者令退役（§3），其余 ~33 腿为其它批次存量红（§3 归批）。
 - queuepos-detail 补跑：sbt 已产出 `target/queuepos-payload.json`，模块级硬门解除后
   pw 全量复扫中**未再失败**（green）。
+- social-panel（§2b #20）：SCOPE 守卫 + 换代后**干净树终验 139/139 checks green，
+  exit=0**（`/tmp/sp-check` @ a64c16f0b 实证，临时 worktree 已清）。
 - 复验命令示例：`node tests/<spec>` / `npx playwright test tests/<spec> --workers=1`。
 - worktree 注：`node_modules` 以符号链接借用主检出（不进提交）；`.nebflow/evidence/
   20261006_pptx-mvp/poc/decks` 按 pptx-mvp 批惯例预置未跟踪 fixture（gitignored）。
