@@ -6,6 +6,10 @@ import { brand, getWebsiteLoginUrl } from './brand.js';
 import { armSessionKeepalive } from './sessionGate.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
+// 设备识别快速通道（console-fastpath 批 2026-10-23·作者令腿①）：nearpath.js
+// 只依赖 deviceIdentity/branding（无 ws.js 回边——零环）；ws.js 负责「何时
+// 探」（onopen 每连）与「跳不跳」（LAN 整页跳腿）。
+import { probeNearPath } from './nearpath.js';
 
 // Long-lived token cookie name follows the brand namespace. This is one of
 // the legacy credential copies the B' hook retires (purgeLongLivedCopies
@@ -689,8 +693,55 @@ async function attemptLoopbackNearPath() {
 }
 
 
-const HB_INTERVAL_MS = 30000;
-const HB_PONG_GRACE_MIN_MS = 5000;
+// ── LAN 近路跳（console-fastpath 批 2026-10-23·作者令腿①）───────────────────
+// 环回短路未命中后的第二腿：probeNearPath() 主动探测（设备识别：boundDeviceId
+// 命中设备列表 ⇒ enrolled ⇒ 服务端才给 LAN 地址清单）——LAN 候选 nf-reach
+// 验证命中 ⇒ 经 relay 铸一次性 console ticket（复用环回跳腿的 mint 面），整页
+// 跳 http://<lan-ip>:<port>/?ticket=…（鉴权等价：兑换链路与环回腿逐字同构，
+// 不绕过任何门；跳过去之后一切请求本就同源直连，大文件不再过隧道 = 腿③的
+// 页面级形态）。未登记/无候选/探测失败 ⇒ 返回 false 停留 relay（静默，一行
+// 不多改）。防摆闸：模块一次闸 + sessionStorage 30s（与环回腿同纪律）。
+let lanSwitchAttempted = false;
+
+async function attemptLanNearPathJump() {
+  if (lanSwitchAttempted) return false;
+  lanSwitchAttempted = true;
+  const GUARD = key('ws_nearpath_lan_at');
+  let last = 0;
+  try { last = Number(sessionStorage.getItem(GUARD)) || 0; } catch (_) {}
+  if (Date.now() - last < 30000) return false;
+  try { sessionStorage.setItem(GUARD, String(Date.now())); } catch (_) {}
+  try {
+    const near = await probeNearPath();
+    if (!near || near.kind !== 'lan') return false; // 仅 LAN 候选走本跳腿；环回由短路链负责
+    // 铸票前置：只有经 relay 加载的控制台才有 /api/portal 面（与环回腿同判别）。
+    const status = await fetch('/api/portal/status', {
+      credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(5000),
+    });
+    if (!status.ok) return false;
+    const deviceId = (await status.json())?.boundHost?.deviceId;
+    if (typeof deviceId !== 'string' || deviceId === '') return false;
+    const mint = await fetch('/api/portal/console-ticket', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!mint.ok) return false;
+    const consoleUrl = (await mint.json())?.consoleUrl;
+    if (typeof consoleUrl !== 'string' || consoleUrl === '') return false;
+    const ticket = new URL(consoleUrl, location.href).searchParams.get('ticket');
+    if (!ticket) return false;
+    window.location.href = `${near.base}/?ticket=${encodeURIComponent(ticket)}`;
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+
+const HB_INTERVAL_MS = 30000;const HB_PONG_GRACE_MIN_MS = 5000;
 const HB_PONG_GRACE_MAX_MS = 30000;
 const HB_MAX_MISSES = 3;
 let hbMisses = 0;          // 连续 miss 计数（收到 pong / 新连接 / 进后台即归零）
@@ -854,6 +905,15 @@ export function connect() {
   // 本机近路短路：模块内一次闸——同机场景随后整页跳走（WS 开路作废也无害），
   // 非本机/探测失败 ⇒ 正常连 relay，一行不多等（全程不 await）。
   attemptLoopbackNearPath();
+
+  // ── LAN 近路跳（console-fastpath 批 2026-10-23·作者令腿①「设备识别快速通道」）──
+  // 环回未命中 ⇒ 主动探测 LAN 候选：识别标记 = 浏览端 device stamp 的
+  // boundDeviceId 命中本实例设备列表（/api/neblink/nearpath enrolled——与
+  // 「消息标记设备」同一判定原理）；命中清单内候选 nf-reach 验证后带
+  // console ticket 整页跳 LAN 直连（鉴权等价：ticket 兑换链路不变，不绕过
+  // 任何门）。未登记/探测失败 ⇒ 停留 relay（作者令「不是就走 relay」）。
+  // 同样全程不 await、30s 防摆闸（与环回腿同纪律）。
+  attemptLanNearPathJump();
   // Session-only connect: the handshake rides the HttpOnly session cookie
   // (gateway WsAuth). A rejected handshake lands on the paste-ticket entry.
   const wsUrl = `${proto}//${location.host}/ws`;
@@ -903,6 +963,10 @@ export function connect() {
     // On (re)connect, notify callbacks so they can fetch state that
     // requires an open WS (e.g. workspace items, scheduled tasks).
     reconnectCallbacks.forEach(cb => { try { cb(); } catch (e) { console.error('[ws] connect callback error:', e); } });
+    // 主动近路探测（console-fastpath 批·腿①）：会话打开/重连即探——记录结论
+    // 到会话（nearpath.js sessionStorage），大文件 LAN 直传腿（腿③）消费它。
+    // 失败静默（停留 relay），绝不拖延 onopen 后续。
+    probeNearPath();
     hasConnectedBefore = true;
   };
 

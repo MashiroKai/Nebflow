@@ -280,6 +280,95 @@ object StaticRoutes:
     case StaticSource.DevTree => indexWithBrand("web/index.html")
   end indexResponse
 
+  // ── 隧道首开内联打包面（console-fastpath 批 2026-10-23·腿②「请求打包」）─────
+  //
+  // 诊断实锤（evidence/20261023_234431）：控制台整页 410 请求走跨境隧道，首开
+  // 瀑布里最大的一段是 index.html 引用的全部 css/vendor（dev 树 ~45 条逐文件
+  // 请求，每条两段跨境 RTT）。本面把**隧道脸**的 index 应答改成内联打包版：
+  // 全部 stylesheet <link> 与 vendor defer <script> 的资源字节直接织进 HTML
+  // （1 个请求 = HTML + 全量 CSS + 5 个 vendor 库），ES module 图（js/main.js
+  // 起）保持逐文件——模块图无法在不引入 bundler 的前提下合并（前端无构建纪律），
+  // 且隧道桥逐请求本就并发（PortalTunnelBridge 每周期独立 fiber）。
+  //
+  // 脸判别 = [[nebflow.shared.TunnelOriginMark.isMarked]]：进程自签标记、直连
+  // 客户无法伪造 ⇒ 直连脸的 `/` 应答逐字节不变（既有 304 校验面不受影响），
+  // 隧道脸拿打包体。dist 树（BundledDisk）不打包：JS 已是 esbuild bundle
+  // （index + /assets 两段即全量）、资产 immutable 缓存，内联无收益。
+  //
+  // 转换纪律（[[packedIndexHtml]] 纯函数、spec 直读）：
+  //   - 只动 `<link rel="stylesheet" href="css|vendor/...">` 与
+  //     `<script defer src="vendor/..."></script>` 两种已知形状，其余标记
+  //     （favicon、module script、brand 注入锚点）逐字保留；
+  //   - 资源读取与 [[ConsoleAssetBatchRoutes]] 同口径（classpath web/ 树、
+  //     单文件上限、缺失/超限 ⇒ 原 tag 原样回落，打包是加速面不是语义面）；
+  //   - `<style>` 保留 media 属性（highlight 双主题 media 查询语义）；
+  //   - CSS 的相对 url() 重写为绝对（内联 <style> 的解析基是文档而非 css
+  //     文件目录——katex.min.css 的 fonts/ 引用必须带 /vendor/ 前缀）；
+  //   - script/style 突破加固：`</script` `</style` 字面量转义（与
+  //     [[brandScriptJson]] 同族纪律；vendor 树实扫无该字面量，纯保险）。
+
+  /** `/` 与 `/index.html` 的请求分派面：隧道脸打包、直连脸原应答。 */
+  def indexResponseFor(req: Request[IO]): IO[Response[IO]] =
+    if nebflow.shared.TunnelOriginMark.isMarked(req) then packedIndexResponse
+    else indexResponse
+
+  private def packedIndexResponse: IO[Response[IO]] =
+    staticSource match
+      case StaticSource.DevTree =>
+        IO.blocking(readClasspathResourceUtf8("web/index.html")).flatMap {
+          case None => NotFound()
+          case Some(html) => brandInjectedResponse(packedIndexHtml(html))
+        }
+      case _ => indexResponse
+  end packedIndexResponse
+
+  private val PackStylesheetRe = """<link rel="stylesheet" href="((?:css|vendor)/[^"]+)"([^>]*)>""".r
+  private val PackVendorScriptRe = """<script defer src="(vendor/[^"]+)"></script>""".r
+  private val PackMediaAttrRe  = """media="([^"]*)"""".r
+
+  /** CSS 相对 url() 捕获（绝对/http(s)/data/协议相对/锚引用不碰）。 */
+  private val CssRelativeUrlRe = """url\(\s*(?!['"]?(?:data:|https?:|//|/|#))([^)]+)\)""".r
+
+  /** [[packedIndexHtml]] 的 CSS url() 重写（纯函数，spec 直读）。 */
+  private[gateway] def rewriteCssUrls(css: String, baseDir: String): String =
+    CssRelativeUrlRe.replaceAllIn(css, m =>
+      val inner  = m.group(1).trim
+      val quote  = if inner.startsWith("\"") then "\"" else if inner.startsWith("'") then "'" else ""
+      val bare   = if quote.isEmpty then inner else inner.stripPrefix(quote).stripSuffix(quote)
+      val cut    = bare.indexWhere(c => c == '?' || c == '#')
+      val (path, suffix) = if cut < 0 then (bare, "") else bare.splitAt(cut)
+      if path.isEmpty then m.matched
+      else s"""url($quote$baseDir$path$suffix$quote)"""
+    )
+
+  /** 隧道首开打包转换（纯函数）：逐字保留未知形状，单资源失败回落原 tag。 */
+  private[gateway] def packedIndexHtml(html: String): String =
+    val afterCss = PackStylesheetRe.replaceAllIn(html, m =>
+      val path  = m.group(1)
+      val attrs = m.group(2)
+      ConsoleAssetBatchRoutes.readCapped(s"web/$path", ConsoleAssetBatchRoutes.MaxBytesPerAsset) match
+        case None => m.matched
+        case Some(bytes) =>
+          val dir = path.substring(0, path.lastIndexOf('/') + 1)
+          val css = rewriteCssUrls(
+            new String(bytes, java.nio.charset.StandardCharsets.UTF_8),
+            "/" + dir
+          ).replace("</style", "<\\/style")
+          val open = PackMediaAttrRe.findFirstMatchIn(attrs) match
+            case Some(mm) => s"""<style media="${mm.group(1)}">"""
+            case None     => "<style>"
+          open + css + "</style>"
+    )
+    PackVendorScriptRe.replaceAllIn(afterCss, m =>
+      ConsoleAssetBatchRoutes.readCapped(s"web/${m.group(1)}", ConsoleAssetBatchRoutes.MaxBytesPerAsset) match
+        case None => m.matched
+        case Some(bytes) =>
+          val js = new String(bytes, java.nio.charset.StandardCharsets.UTF_8)
+            .replace("</script", "<\\/script")
+          "<script>" + js + "</script>"
+    )
+  end packedIndexHtml
+
   private def readClasspathResourceUtf8(name: String): Option[String] =
     Option(getClass.getClassLoader.getResourceAsStream(name)).map { in =>
       val source = Source.fromInputStream(in, "UTF-8")

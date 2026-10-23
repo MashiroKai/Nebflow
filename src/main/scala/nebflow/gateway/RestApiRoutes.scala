@@ -83,6 +83,10 @@ class RestApiRoutes(
       ConfigRoutes.routes(ctx) <+>
       ProjectsRoutes.routes(ctx) <+> WikiRoutes.routes(ctx) <+> RegistryRoutes.routes(ctx) <+>
       NeblinkRoutes.routes(ctx) <+>
+      // 静态资产批量打包面（console-fastpath 批 2026-10-23·腿②请求打包）：
+      // 路径 /api/console-assets 与既有域互不重叠，公开静态字节、无鉴权门
+      // （与静态树同访问语义）。
+      ConsoleAssetBatchRoutes.routes <+>
       SocialRoutes.routes(ctx) <+> SecretsRoutes.routes(ctx) <+>
       // Phase 3b: the AuthAdmin face (break-glass ticket / token rotate /
       // sessions list+revoke), file-token Bearer ONLY (R1-1) — appended last:

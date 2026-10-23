@@ -1204,7 +1204,7 @@ class WebSocketRoutes(
       // 2026-09-03 Canvas interactive-HTML fix: the whitelist (NfFileAllowedExt)
       // now also covers the text asset types (js/css/json) a multi-file HTML
       // deliverable references from the Canvas HTML viewer.
-      case GET -> Root =>
+      case req @ GET -> Root =>
         // W1 single switch point (mobile-quickwins 2026-10-20; supersedes the
         // P1 classpath-only probe): the entry dispatches on
         // StaticRoutes.staticSource — bundled classpath dist (jar), FRESH
@@ -1223,14 +1223,16 @@ class WebSocketRoutes(
         // conditional-request handling (a jar-entry Last-Modified must not
         // vouch for content we mutated) — the response stays no-cache with
         // no validators.
-        StaticRoutes.indexResponse
+        // console-fastpath 批 2026-10-23·腿②：隧道脸（TunnelOriginMark）分发到
+        // 首开内联打包面（[[StaticRoutes.indexResponseFor]]），直连脸逐字原应答。
+        StaticRoutes.indexResponseFor(req)
 
-      case HEAD -> Root =>
+      case req @ HEAD -> Root =>
         // Headers-only parity with the pre-rebrand StaticFile route (curl -I,
         // health/link checkers). The GET case above does not match HEAD
         // requests, and the body-stripped variant must go through the same
         // content generation so validators never diverge between the verbs.
-        StaticRoutes.indexResponse.map(_.withBodyStream(Stream.empty))
+        StaticRoutes.indexResponseFor(req).map(_.withBodyStream(Stream.empty))
 
       // 卡窗白屏修复批（2026-10-22）：/index.html 入口别名 —— 与 `/` 同一
       // brand 注入应答。独立卡窗（UI 批⑧）曾以 `/index.html?card-window=1`
@@ -1239,11 +1241,11 @@ class WebSocketRoutes(
       // 一切历史/深链入口落在真应用而非空白体；现役打开链已改 `/`
       // （canvas.js popoutCardWindow），别名是兜底面。query 原样保留
       // （http4s 只按 path 匹配），card-window 参数不丢。
-      case GET -> Root / "index.html" =>
-        StaticRoutes.indexResponse
+      case req @ GET -> Root / "index.html" =>
+        StaticRoutes.indexResponseFor(req)
 
-      case HEAD -> Root / "index.html" =>
-        StaticRoutes.indexResponse.map(_.withBodyStream(Stream.empty))
+      case req @ HEAD -> Root / "index.html" =>
+        StaticRoutes.indexResponseFor(req).map(_.withBodyStream(Stream.empty))
 
       case req @ GET -> Root / "css" / file =>
         StaticFile

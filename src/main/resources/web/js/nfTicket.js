@@ -18,7 +18,7 @@
 
 import { key } from './branding.js';
 
-/** @typedef {{ t: string, exp: number }} CachedTicket */
+/** @typedef {{ t: string, exp: number, size?: number }} CachedTicket */
 
 const MINT_URL = '/api/nf-ticket';
 const MINT_TIMEOUT_MS = 8000;
@@ -247,8 +247,11 @@ async function mintRound(paths) {
       const v = tickets[p];
       const t = v && typeof v === 'object' ? v.t : null;
       const exp = v && typeof v === 'object' ? v.exp : null;
+      const size = v && typeof v === 'object' && Number.isFinite(v.size) ? v.size : 0;
       if (typeof t === 'string' && t) {
-        cache.set(p, { t, exp: typeof exp === 'number' ? exp : Date.now() + 1800000 });
+        // size 并键（铸票面顺带 stat，2026-10-23 console-fastpath 批·腿③）：
+        // 大文件 LAN 直传阈值判定用；缺席/0 = 未知尺寸（不直传，诚实降级）。
+        cache.set(p, { t, exp: typeof exp === 'number' ? exp : Date.now() + 1800000, size });
       }
     }
     consecutiveFailures = 0;
@@ -372,6 +375,38 @@ export function cachedTicket(path) {
 export function urlWithTicket(path, ticket) {
   const base = '/api/nf-file?path=' + encodeURIComponent(path);
   return ticket ? base + '&ticket=' + encodeURIComponent(ticket) : base;
+}
+
+// ── 大文件 LAN 直传（console-fastpath 批 2026-10-23·作者令腿③）────────────────
+// 阈值判定三键齐备才出直传 URL：① 铸票面已知尺寸 ≥ LAN_DIRECT_MIN_BYTES
+// （4 MiB——nfFileCache 桶预算 32/96/128MiB 的下游、256KiB body_frame 的 16
+// 帧跨境 vs 直传的净赚线）；② 本会话近路探测已验证在册（nearpath.js 的
+// getNearPath——环回/LAN 候选 nf-reach 命中记录）；③ 票据本身有效。
+// 凭据语义与同源腿逐字一致：ticket 在 URL query，服务端 ACAO/PNA 已放
+// （NfFileRoutes NfFileCorsHeaders）——直传是**字节路由**变更，不是鉴权变更。
+
+/** LAN 直传阈值：≥4 MiB 才绕隧道（小文件走 relay 无感，直传预检反而是开销）。 */
+export const LAN_DIRECT_MIN_BYTES = 4 * 1024 * 1024;
+
+/**
+ * 大文件直传绝对 URL；不适用（尺寸未知/低于阈值/无在册近路/无票）⇒ null，
+ * 调用方走原票据腿。动态 import nearpath.js：保持本模块的静态 import 面与
+ * imgdoor 批前逐字一致（placement 纪律——本模块被 viewers/shared 与
+ * cardRegistry 双方导入，静态边只增不减地谨慎）。
+ * @param {string} path
+ * @returns {Promise<string|null>}
+ */
+export async function largeFileDirectUrl(path) {
+  try {
+    const hit = cache.get(path);
+    if (!hit || !(hit.size >= LAN_DIRECT_MIN_BYTES)) return null;
+    const { getNearPath } = await import('./nearpath.js');
+    const near = getNearPath();
+    if (!near || !near.base) return null;
+    return near.base + '/api/nf-file?path=' + encodeURIComponent(path) + '&ticket=' + encodeURIComponent(hit.t);
+  } catch (_) {
+    return null; // 直传面任何意外 = 回落原票据腿（绝不硬失败）
+  }
 }
 
 /** Test seam: forget every cached ticket and breaker state. */
