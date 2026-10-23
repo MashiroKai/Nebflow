@@ -1,0 +1,92 @@
+/* mermaid.css — ```mermaid fenced blocks rendered as diagrams
+   (mermaid-md batch, 2026-10-23). Face-neutral component styles: the shared
+   markdown pipeline (utils.js) emits .nf-mermaid placeholders in EVERY
+   markdown face (canvas md viewer, wiki docs, chat bubbles, flow/report
+   cards); js/mermaidRenderer.js hydrates them lazily. Tokens only — no bare
+   values outside the reserved-height skeleton. */
+
+.nf-mermaid {
+  margin: 6px 0;
+}
+
+.nf-mermaid .nf-mermaid-body {
+  position: relative;
+  min-height: 72px; /* reserved slot: layout never collapses while the
+                       library loads / the diagram renders async */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-x: auto;
+}
+
+/* Skeleton slot (卡形占位 + 复用脉冲 family, projectPanel.css precedent). */
+.nf-mermaid .nf-mermaid-ph {
+  width: 72%;
+  min-height: 56px;
+  border-radius: 8px;
+  background: var(--color-frame-hover);
+  animation: nfMermaidPulse 1.2s ease-in-out infinite;
+}
+@keyframes nfMermaidPulse {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 1; }
+}
+
+/* Rendered diagram: mermaid emits max-width'd svg (useMaxWidth) — keep it
+   inside the reading column and on the app background. */
+.nf-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Error state: quiet message row + inspectable source. Never blank. */
+.nf-mermaid-error .nf-mermaid-body {
+  display: block;
+  border: 1px solid var(--sapphire-edge-strong);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--sapphire-edge);
+  min-height: 0;
+}
+
+.nf-mermaid-errrow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.nf-mermaid-errlabel {
+  color: var(--color-danger);
+  font-weight: 500;
+}
+
+.nf-mermaid-errdetail {
+  color: var(--color-text-muted);
+  word-break: break-all;
+  min-width: 0;
+  flex: 1 1 120px;
+}
+
+.nf-mermaid-srcbtn {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgb(var(--sapphire));
+  cursor: pointer;
+}
+.nf-mermaid-srcbtn:hover { text-decoration: underline; }
+
+.nf-mermaid-src {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--color-frame-hover);
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  max-height: 240px;
+}

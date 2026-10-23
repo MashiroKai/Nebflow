@@ -272,6 +272,11 @@ const RE_PRE_TAG = /<pre[^>]*>|<\/pre>/g;
 const RE_VOICE_RESTORE = /VOICEBLOCK(\d+)END/g;
 const RE_MENTION_RESTORE = /MENTIONBLOCK(\d+)END/g;
 const RE_IMG_TAG = /<img\b(?![^>]*\bclass=)/g;
+// mermaid-md batch: marked v12 emits fenced ```mermaid exactly as this shape
+// (plain `<pre>`, single language class, escaped body). The body is captured
+// as-is (already HTML-escaped by marked) — safe for the double-quoted
+// data-mermaid-src attribute because marked escapes `"` to `&quot;`.
+const RE_MERMAID_BLOCK = /<pre><code class="language-mermaid"[^>]*>([\s\S]*?)<\/code><\/pre>/g;
 
 export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   if (!text) return '';
@@ -343,6 +348,18 @@ function _renderMarkdownInternal(protected_, voiceBlocks) {
     .map((seg, i) => (i % 2 === 1 ? seg : protectMentions(protectMath(seg), mentionBlocks)))
     .join('');
   let html = marked.parse(protected_, { headerIds: false });
+  // Mermaid blocks (mermaid-md batch, 2026-10-23): a ```mermaid fence is a
+  // DIAGRAM, not code — swap marked's `<pre><code class="language-mermaid">`
+  // for a placeholder div BEFORE the copy-button pass below sees it (so no
+  // copy chrome wraps a diagram). The placeholder carries the raw source in
+  // `data-mermaid-src` (marked's HTML escaping survives the attribute; the DOM
+  // hands the decoded source back at hydration) and js/mermaidRenderer.js
+  // renders it asynchronously (lazy viewport, themed, strict-sandboxed). The
+  // reserved-height body keeps layout stable while the library loads/renders,
+  // and every face that shares this pipeline (canvas md viewer, wiki docs,
+  // chat bubbles, flow cards, report cards) gets the same placeholder.
+  html = html.replace(RE_MERMAID_BLOCK, (m, code) =>
+    `<div class="nf-mermaid" data-mermaid-src="${code}"><div class="nf-mermaid-body"><div class="nf-mermaid-ph"></div></div></div>`);
   // Wrap <pre> blocks with a copy button and close the wrapper in the SAME pass
   // (修法 2: one whole-string scan instead of two). The alternation keeps the
   // original per-tag output byte-for-byte: every `<pre…>` gets the wrap opener +

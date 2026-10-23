@@ -1,0 +1,21 @@
+PASS  R1pre 共享管线产出 4 个 .nf-mermaid 占位（实得 4）
+PASS  R1 flowchart SVG 非零尺寸 360x430
+PASS  R1 sequenceDiagram SVG 非零尺寸 422x307
+PASS  R2 错误态落位（state=error）
+PASS  R2 错误文案（图表渲染失败）
+PASS  R2 错误态不残留半成品 SVG
+PASS  R2 源码可查看（hidden=false，含原始行=true）
+PASS  R3 js 代码块未被 mermaid 化
+PASS  R3 js 代码块保留复制按钮
+PASS  R3 js 代码块内容逐字保留
+PASS  R4 普通 md 结构零回归
+PASS  R5 视口外块未渲染（state=pending）
+PASS  R5 滚动到位后底部块完成渲染
+PASS  R6 主题切换后 SVG 配色变化（light≠dark）
+PASS  R6 切换后无悬挂渲染态（states=done,done,error,pending）
+PASS  R7 其它 markdown 面共享管线产出占位（1）
+PASS  R7 全局 observer 对任意挂载面自动完成渲染
+PASS  R4 页面零未捕获异常（0）
+PASS  R4 零新增 console 错误（非 mermaid 噪声 0 条）
+
+ALL PASS
