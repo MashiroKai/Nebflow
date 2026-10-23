@@ -1,7 +1,9 @@
 // chatinput-two-defects-shots.mjs — 聊天输入两缺陷批（2026-10-22）前后对照证据。
 //
-// 症状一（消息并泡）：两连发在会话 busy 时入队 —— 修后每次发送 = 立即自己的独立
-//   气泡（带「待发送」时钟小标），drain 翻面不新增气泡。截图 = 两连发后的即时态。
+// 症状一（消息并泡）：两连发在会话 busy 时入队 —— 输入消息排队回退批（2026-10-23
+//   作者令「输入消息排队功能采用大概两天以前的设计」）换代：busy 排队腿回归
+//   BASE 形态（零乐观气泡，呈现面 = 排队条行级明细），反并泡本体改为钉 drain
+//   补渲链（逐条一行一气泡）。截图 = 两连发后的即时态（排队条行）+ drain 后态。
 // 症状二（附件大绿块）：用户发送的文件附件卡 —— 修前 = 气泡绿底无边框大卡，
 //   修后 = 统一 chip 族（暗玻璃底 / 细边框 / 28px 类型图标档 / 文件名+大小）。
 //   亮暗双主题各一版。
@@ -116,7 +118,7 @@ async function boot(colorScheme) {
   return { ctx, page };
 }
 
-// ── 场景 A：两连发（busy 中）→ 各自独立成泡 ─────────────────────────────
+// ── 场景 A：两连发（busy 中）→ 排队条行承接，drain 逐条成泡 ───────────────
 {
   const { ctx, page } = await boot('dark');
   // 会话置 busy（与引擎受理同形的帧 + 本地确认窗用流活动豁免——直接等 busy 位）。
@@ -136,44 +138,46 @@ async function boot(colorScheme) {
 
   const state = await page.evaluate(() => {
     const rows = [...document.querySelectorAll('#chat .row.user')];
+    const bar = document.getElementById('queue-bar');
+    const rowTexts = [...(bar?.querySelectorAll('.queue-item-text') || [])].map(el => el.textContent || '');
     return {
-      bubbles: rows.map(r => ({
-        msgId: r.dataset.msgId || '',
-        text: (r.querySelector('.bubble.user')?.textContent || '').slice(0, 40),
-        pending: r.querySelectorAll('.msg-pending-mark').length,
-      })),
-      mergedBubble: rows.some(r => {
-        const t = r.querySelector('.bubble.user')?.textContent || '';
-        return t.includes('终端粘贴文本') && t.includes('强制退出');
-      }),
+      userRows: rows.length,
+      pending: rows.reduce((n, r) => n + r.querySelectorAll('.msg-pending-mark').length, 0),
+      barVisible: bar?.classList.contains('visible') || false,
+      rowTexts,
+      mergedText: rowTexts.some(t => t.includes('终端粘贴文本') && t.includes('强制退出')),
     };
   });
-  ok('A1 两连发 = 两个独立用户气泡行', state.bubbles.length === 2, JSON.stringify(state.bubbles));
-  ok('A2 任一气泡不含另一条文本（不并泡）', state.mergedBubble === false);
-  ok('A3 两气泡裸上屏零小标（busy 排队腿——排队呈现回退批：已收到标退役）', state.bubbles.length === 2 && state.bubbles.every(b => b.pending === 0));
-  ok('A4 两气泡 msgId 互异', state.bubbles.length === 2 && state.bubbles[0].msgId && state.bubbles[0].msgId !== state.bubbles[1].msgId);
+  ok('A1 busy 两连发 = 零即时用户气泡（排队条行承接——BASE 形态）', state.userRows === 0 && state.barVisible, `userRows=${state.userRows} bar=${state.barVisible}`);
+  ok('A2 排队条行 ×2 且互不并文', state.rowTexts.length === 2 && !state.mergedText, JSON.stringify(state.rowTexts.map(t => t.slice(0, 18))));
+  ok('A3 busy 排队腿零 .msg-pending-mark（待送达标 = 离线腿专属）', state.pending === 0);
   await page.screenshot({ path: join(OUT, 'A-two-sends-busy-dark.png') });
 
-  // drain：放行 → 桩回 done 两次 ⇒ 两项依次出线；气泡不新增、小标翻面。
+  // drain：放行 → 桩回 done 两次 ⇒ 两项逐条补渲气泡（一行一气泡）。
   await page.evaluate(async () => {
     const ws = await import('/js/ws.js');
     ws.sendWs({ type: '__e2e_release' });
   });
-  await sleep(1800);
+  await sleep(2200);
   const after = await page.evaluate(() => {
     const rows = [...document.querySelectorAll('#chat .row.user')];
     return {
       bubbles: rows.map(r => ({
-        text: (r.querySelector('.bubble.user')?.textContent || '').slice(0, 30),
+        text: (r.querySelector('.bubble.user')?.textContent || '').slice(0, 200),
         pending: r.querySelectorAll('.msg-pending-mark').length,
       })),
+      barVisible: document.getElementById('queue-bar')?.classList.contains('visible') || false,
     };
   });
-  ok('A5 drain 后仍两气泡（排队项零新增呈现）', after.bubbles.length === 2, JSON.stringify(after.bubbles));
-  ok('A6 drain 后小标翻面（已送达态）', after.bubbles.every(b => b.pending === 0));
-  ok('A7 恰两帧出线（两次独立 send = 两帧）', accepted.length === 2, `accepted=${accepted.length}`);
+  ok('A4 drain 后两独立气泡互不并文（反并泡本体：逐条一行一气泡）',
+    after.bubbles.length === 2
+    && after.bubbles[0].text.includes('终端粘贴文本') && !after.bubbles[0].text.includes('强制退出')
+    && after.bubbles[1].text.includes('强制退出') && !after.bubbles[1].text.includes('终端粘贴文本'),
+    JSON.stringify(after.bubbles));
+  ok('A5 drain 后零 pending 标 + 队列条隐藏', after.bubbles.every(b => b.pending === 0) && !after.barVisible);
+  ok('A6 恰两帧出线（两次独立 send = 两帧）', accepted.length === 2, `accepted=${accepted.length}`);
   const ids = new Set(accepted.map(m => m.clientMessageId));
-  ok('A8 两帧 clientMessageId 互异', ids.size === 2);
+  ok('A7 两帧 clientMessageId 互异', ids.size === 2);
   await page.screenshot({ path: join(OUT, 'A-two-sends-after-drain-dark.png') });
   await ctx.close();
 }

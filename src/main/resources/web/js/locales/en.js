@@ -666,20 +666,16 @@ export default {
   // f1-send-queue (2026-10-19): pending-mark tooltip for offline-queued bubbles + queue overflow toast.
   'chat.pendingSend': 'Pending - auto-resends on reconnect',
   'input.queueOverflow': 'Message queue full (100): oldest message dropped',
-  // Queue-presentation rollback batch (2026-10-22 author ruling: queued messages must
-  // not double-render in the strip / the "Received" mark is redundant): the bar keeps
-  // only the header line (turn-wait + live elapsed + count); row details, position
-  // badge and the ack chip are retired, and queue actions (Send Now / Recall / Remove)
-  // moved into the bubble context menu. The earlier batches' chat.queuedAck /
-  // chat.queuedAckTip / chatQueue.position keys retire with those faces.
-  'chatQueue.waitingTurn': 'Waiting for the current reply',
-  'chatQueue.queuedCount': '{n} queued',
-  'chatQueue.turnElapsed': 'for {t}',
-  // Header failure count (qattachvault no-silence face): red count shown while the
-  // queue holds payload-lost (stopped) items.
-  'chatQueue.failedCount': '{n} failed',
-  // Bubble context-menu labels for queue actions (recall = back to the input box).
-  'chat.queueRecall': 'Recall',
+  // Input-message-queue rollback batch (2026-10-23 author ruling: "use our earlier
+  // queue design, from about two days ago"): the queue face is restored to its
+  // 2026-10-21 form — row-level details (text / attachment thumbnails / Send Now /
+  // Recall / Remove / drag reorder / click-to-expand) are back; the 2026-10-22
+  // batches' header stopwatch / count / failure-count / bubble-context-menu action
+  // keys retire with those faces (the recall button title has always been a literal
+  // fallback; no chat.recall key ever existed).
+  'chatQueue.dragReorder': 'Drag to reorder',
+  'chatQueue.clickExpand': 'Click to expand',
+  'chatQueue.clickCollapse': 'Click to collapse',
   // qattachvault (2026-10-21): explicit failed state for lost attachment payloads —
   // no silent loss: auto-send stops, bar note + red ! bubble mark + toast; recall and
   // re-add the file to resend.

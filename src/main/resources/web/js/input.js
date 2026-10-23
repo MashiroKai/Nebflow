@@ -247,22 +247,13 @@ export function send(resendId) {
   // 同 id 重发不入本地队（入队会在 drain 时另派一帧；重发的幂等性靠同 id + 服务端
   // 去重，不靠队列）。
   if (isBusy && !isResend && !state.frozenSessions.has(v.sessionId)) {
-    // 并泡诊断批（2026-10-22）：busy 排队腿补**乐观气泡**（f1-send-queue 离线腿同款
-    // 形态）。修前本腿零会话流呈现——消息只落在输入框上方的排队条里，作者看不到
-    // 「这条已作为独立气泡在场」，继续在空输入框里打下一条 ⇒ 观感即「两次发送并成
-    // 一个气泡」（取证实录：ui.json 744 行 = 终端粘贴+提问同一帧出线，compose 时
-    // 已同文；服务端/传输/渲染三层均无合并机制）。修后每次发送 = 立即自己的独立
-    // 气泡（data-msg-id = 入队钉死的 clientMessageId）；drain 腿的 item.rendered
-    // 分支只摘小标不重渲 ⇒ 全链恰一气泡。
-    // 排队呈现回退批（2026-10-22 作者令「发送了的消息还在队列里」「已收到的标记
-    // 也是多余的」）：乐观气泡**裸上屏**——footer 不带「已收到」确认标（排队信息量
-    // 批的 queued 确认标小标随 .acked 一并退役：消息上屏本身即收到，不用标；
-    // 离线腿「待送达」时钟标语义不同——真离线未出线，保留）。队列条只留头行计数
-    // （chatQueue.js），本条的内容面 = 就是这颗气泡，零双呈现。位次/已收到 chip/
-    // 行按钮全退役；队列动作（立即发送/撤回/移除）收敛进气泡右键菜单
-    // （msgQuote.js 挂点 → runQueuedAction 执行面）。
-    const item = queueMessage(v, text, v.pendingAttachments, null, null, { rendered: true });
-    renderUserBubble(text, v.pendingAttachments, undefined, { msgId: item.clientMessageId });
+    // 输入消息排队回退批（2026-10-23 作者令「我们的输入消息排队功能采用我们的
+    // 之前的。大概两天以前的设计」）：busy 排队腿回归 10-21 形态——消息只入队，
+    // 呈现面 = 输入框上方的排队条行（chatQueue.js 行级明细：文本/附件/立即发送/
+    // 撤回/移除/拖拽排序），会话流内**零乐观气泡**（10-22 并泡诊断批的「入队即
+    // 上屏气泡」随本批退役；当前回复完成后 drain 腿逐条补渲气泡）。离线腿
+    // （WS 未开）的「待送达」乐观气泡不受本批影响，照旧。
+    queueMessage(v, text, v.pendingAttachments);
     input.value = '';
     input.style.height = 'auto';
     v.pendingAttachments = [];
@@ -682,11 +673,15 @@ function markQueueItemPayloadLost(sid, item) {
   }
 }
 
-/** Helper: re-render the queue bar for a session.
- *  排队呈现回退批：队列条 = 纯头行状态条（行级明细与按钮全退役，见 chatQueue.js
- *  头注）——不再传任何行按钮 handler；队列动作走气泡右键菜单 runQueuedAction。 */
+/** Helper: re-render the queue bar for a session with standard handlers.
+ *  （输入消息排队回退批 2026-10-23：行级明细与行按钮随 10-21 形态回归——
+ *  立即发送/撤回/移除走行按钮 handler，气泡右键菜单队列动作已退役。） */
 function refreshQueue(sessionId) {
-  renderQueueBar(sessionId);
+  renderQueueBar(sessionId, {
+    onImmediate: (item) => sendImmediate(sessionId, item),
+    onRecall: (item) => recallQueuedItem(sessionId, item),
+    onRemove: (item) => removeQueuedItem(sessionId, item)
+  });
 }
 
 // Re-render queue bar when user switches to a different session
@@ -769,9 +764,9 @@ function enqueueOfflineMessage(v, text) {
 }
 
 /** 摘掉待送达小标（翻已送达态）。同页命内乐观气泡的寻址面 = 行
- *  data-msg-id。排队呈现回退批（2026-10-22）后 .msg-pending-mark 只剩离线腿
- *  时钟标单形态（busy 排队腿裸上屏不带标，「已收到」确认标已退役）——两腿的
- *  乐观气泡仍共用本单点翻面（drain/补发后调用，标缺席时 no-op 无害）。
+ *  data-msg-id。.msg-pending-mark 只有离线腿时钟标单形态（busy 排队腿回退批
+ *  2026-10-23 后零气泡零标——呈现面只在排队条行）——离线腿乐观气泡经本单点
+ *  翻面（补发后调用，标缺席时 no-op 无害）。
  *  返回行是否在场（不在场 = 已被 historyPage 整替抹掉，调用方走补渲台）。 */
 function flipOfflineMark(sid, msgId) {
   if (!msgId) return false;
@@ -929,37 +924,6 @@ onMessage('historyPage', (msg) => {
   }, 0);
 });
 
-// ---------- 排队呈现回退批：队列动作的气泡右键菜单执行面 ----------
-// 队列条行按钮退役后，立即发送/撤回/移除三个动作收敛进气泡右键菜单
-// （msgQuote.js attachQuoteMenu 挂点）。msgQuote 侧动态 import 本模块调用
-// （input.js 静态依赖 msgQuote ⇒ 禁静态环；同 msgQuote.renderQuoteStrip 动态
-// import chat.js 的既有先例）。寻址 = 入队钉死的 clientMessageId（乐观气泡行
-// data-msg-id 同键——数据层寻址不动，只换 UI 入口）。
-
-/** 按 clientMessageId 查队列项；找不到（已派发/已离队/非队列帧）⇒ null——
- *  菜单打开后状态漂移的收口，动作不得落到空气上。 */
-export function queuedItemByClientId(sessionId, clientMessageId) {
-  if (!clientMessageId) return null;
-  const q = state.messageQueue[sessionId];
-  if (!Array.isArray(q)) return null;
-  return q.find(it => it && it.clientMessageId === clientMessageId) || null;
-}
-
-/** 队列动作统一执行面。'immediate' 仅对未失败项（sendImmediate 自身还要求
- *  WS 在线；离线项走重连补发轨不动它）；'recall'/'remove' 对一切队列项可用。 */
-export function runQueuedAction(sessionId, clientMessageId, action) {
-  const item = queuedItemByClientId(sessionId, clientMessageId);
-  if (!item) return false;
-  if (action === 'immediate') {
-    if (item.failed) return false;
-    sendImmediate(sessionId, item);
-    return true;
-  }
-  if (action === 'recall') { recallQueuedItem(sessionId, item); return true; }
-  if (action === 'remove') { removeQueuedItem(sessionId, item); return true; }
-  return false;
-}
-
 function sendImmediate(sessionId, item) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
   // resend-dedup 批（「已派发还重发」判断修正）：立即发送的第一步就把项移出队列
@@ -1016,8 +980,8 @@ function sendImmediate(sessionId, item) {
   }
   // Render in chat
   // resend-dedup 批：renderUserBubble 落 data-msg-id = 幂等键（与普通发送同键）。
-  // f1-send-queue：rendered 项（离线入队/busy 排队确认的乐观气泡已在场）零新增
-  // 呈现 —— 摘掉小标即「已送达」翻面；重渲一份就是重复气泡。
+  // f1-send-queue：rendered 项（离线入队的乐观气泡已在场）零新增呈现 —— 摘掉
+  // 小标即「已送达」翻面；重渲一份就是重复气泡。
   // 翻面落空（行不在场：刷新后 / historyPage 整替）⇒ 补渲一次已送达态气泡 ——
   // 消息此刻已被受理，界面上不能凭空消失（对话层活性批 2026-10-22 收口）。
   if (item.rendered) {
@@ -1030,7 +994,8 @@ function sendImmediate(sessionId, item) {
     } else if (item.skillName) {
       renderSkillBubble(item.skillName, item.text);
     } else {
-      // 并泡诊断批：时间戳 = 入队时刻（item.ts），非补渲时刻。
+      // 排队项补渲：时间戳 = 入队时刻（item.ts），非补渲时刻（排队回退批保留
+      // 该数据层真值钉）。
       renderUserBubble(item.text, item.attachments, item.ts, { msgId: itemMsgId });
     }
   }
@@ -1173,8 +1138,8 @@ function drainMessageQueueNow(sessionId) {
   purgeVaultItem(sessionId, item); // qattachvault：载荷已随帧出线 ⇒ 载荷库清账
 
   // Render in chat (only if this session is the active view)
-  // f1-send-queue：rendered 项（离线入队/busy 排队确认的乐观气泡已在场）零新增
-  // 呈现 —— 摘掉小标即可；重渲一份就是重复气泡（与 sendImmediate 同律）。
+  // f1-send-queue：rendered 项（离线入队的乐观气泡已在场）零新增呈现 —— 摘掉
+  // 小标即可；重渲一份就是重复气泡（与 sendImmediate 同律）。
   // 翻面落空（行不在场：刷新后 / historyPage 整替）⇒ 补渲已送达态气泡（同
   // sendImmediate 的收口——消息已受理，不能凭空消失）。
   if (item.rendered) {
@@ -1187,7 +1152,8 @@ function drainMessageQueueNow(sessionId) {
     } else if (item.skillName) {
       renderSkillBubble(item.skillName, item.text);
     } else {
-      // 并泡诊断批：时间戳 = 入队时刻（item.ts），非 drain 渲染时刻。
+      // 排队项 drain 补渲：时间戳 = 入队时刻（item.ts），非 drain 渲染时刻
+      // （排队回退批保留该数据层真值钉）。
       renderUserBubble(item.text, item.attachments, item.ts);
     }
   }
