@@ -239,7 +239,9 @@
         <button id="sidebar-toggle" class="panel-toggle-btn">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
         </button>
-        <span id="header-model-info"></span>
+        <!-- 上下文用量环（ctxring 批）已整链退役 —— 2026-10-23 作者令
+             逐字「把桌面端的上下文用量显示也去掉」。本处不留挂载点；
+             防复活钉：tests/remove-context-usage.spec.mjs。 -->
       </div>
       <div class="header-center">
         <span id="session-name"></span>

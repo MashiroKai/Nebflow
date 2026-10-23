@@ -168,7 +168,6 @@ export function switchToSession(sessionId) {
 
   renderSessionSidebar(state.sessions, sessionId);
   // Sync header indicators
-  if (typeof state.updateHeaderModelInfo === 'function') state.updateHeaderModelInfo();
   if (typeof state.updateBgTasksUI === 'function') state.updateBgTasksUI();
   if (typeof state.updateBgAgentIndicator === 'function') state.updateBgAgentIndicator();
   if (typeof state.updateBypassToggle === 'function') state.updateBypassToggle(chatViews.primary);
@@ -2803,12 +2802,9 @@ window.addEventListener('session-compacting', (e) => {
   computeAgentStates();
 });
 
-/** Refresh header model-info bar for the active session. */
-export function initHeaderModelInfo() {
-  if (typeof state.updateHeaderModelInfo === 'function') {
-    state.updateHeaderModelInfo();
-  }
-}
+// 头部用量环刷新入口已随 2026-10-23 上下文用量显示退役批删除
+//（作者令逐字「把桌面端的上下文用量显示也去掉」）。
+// 防复活钉：tests/remove-context-usage.spec.mjs。
 
 
 /** Determine which agent a new session/folder should belong to, based on context.

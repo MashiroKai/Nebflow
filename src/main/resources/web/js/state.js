@@ -302,11 +302,11 @@ export default {
   updateBgTasksUI: null,
 
   // Per-session model info: sessionId -> { model, contextWindow, inputTokens }
+  // (pipeline kept after the 2026-10-23 usage-ring display removal — popup
+  // model badges still consume `.model`.)
   sessionModelInfo: safeParse(localStorage.getItem(key('model_info')), {}),
   updateBypassToggle: null,
   updateSafetyToggle: null,
-  COMPACT_THRESHOLD: 0.90,
-  updateHeaderModelInfo: null,
 
   // Persistent notifications (survive session switches)
   notifications: [],

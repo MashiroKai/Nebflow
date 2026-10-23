@@ -2290,11 +2290,10 @@ export default {
   'contacts.devicesEmpty': 'No other devices',
   'messages.deviceTag': 'Device',
 
-  // === ctxthresh batch: Nebula-window compaction threshold. The small panel was
-  // removed (author ruling 2026-09-16 P1 = replace); the ring drag is the only
-  // entry, so `title` is now the RING's aria-label. save/reset/close/failed went
-  // dangling with the panel and were deleted on both sides. ===
-  'ctxthresh.title': 'Compaction threshold',
+  // === ctxthresh batch (Nebula-window compaction threshold): `ctxthresh.title`
+  // (the ring's aria-label) was removed with the 2026-10-23 context-usage
+  // display retirement — author order verbatim 「把桌面端的上下文用量显示也去掉」.
+  // Anti-revival pin: tests/remove-context-usage.spec.mjs. ===
 
   // === Bundled-content localization (contenti18n batch, 2026-09-15) ===
   // Range = the default install set only (seed/manifest.json items: 3 plugins +

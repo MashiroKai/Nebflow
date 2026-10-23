@@ -99,11 +99,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   color: var(--color-text-muted);
   margin-right: auto; margin-left: 8px;
 }
-.flow-agent-ctx {
-  display: inline-flex; align-items: center; gap: 4px;
-  flex-shrink: 0;
-  margin-right: 8px;
-}
+/* 弹窗头部用量环样式已随 2026-10-23 上下文用量显示退役批删除。 */
 .flow-agent-close {
   cursor: pointer; font-size: 16px; line-height: 1;
   opacity: 0.7; transition: opacity 0.15s;
@@ -413,7 +409,7 @@ function ensureStepView(sessionId) {
     input: null, sendBtn: null, stopBtn: null, attachBtn: null,
     attPreview: null, slashDropdown: null, queueBar: null,
     voiceBtn: null, voiceOverlay: null, voiceText: null,
-    headerModelInfoEl: null, bgIndicatorEl: null, bgCountEl: null,
+    bgIndicatorEl: null, bgCountEl: null,
     bgDropdownEl: null, bgDropdownListEl: null,
     bgagentIndicatorEl: null, bgagentDropdownEl: null, bgagentDropdownListEl: null,
     sessionNameEl: null,
@@ -483,7 +479,6 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
         <span class="flow-agent-name">${esc(agentName || entry.meta.agentName || '')}</span>
         <span class="flow-agent-subtitle">${esc(flowName || '')}</span>
         <span class="flow-agent-model" id="flow-agent-model"></span>
-        <span class="flow-agent-ctx" id="flow-agent-ctx"></span>
         <div class="flow-agent-close" id="flow-agent-close">✕</div>
       </div>
       <div class="flow-agent-footer" id="flow-agent-footer">
@@ -519,9 +514,6 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
 
   // Sync footer with any meta captured before opening
   updateFooterStatus(entry);
-
-  // Render context usage ring (if model info exists for this session)
-  updatePopupCtxRing();
 
   popupOverlay.addEventListener('click', (e) => {
     if (e.target === popupOverlay || e.target.id === 'flow-agent-close') closeStepPopup();
@@ -563,13 +555,7 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
   }
 }
 
-// ── Context usage ring ───────────────────────────────────
-
-function fmtTokens(n) {
-  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-  if (n >= 1000) return Math.round(n / 1000) + 'k';
-  return String(n);
-}
+// ── Model badge (context usage ring retired 2026-10-23) ──
 
 // #308 actual-model display: the header badge shows the model this agent
 // ACTUALLY used on its last LLM round (live from state.sessionModelInfo),
@@ -610,49 +596,11 @@ async function fetchAgentModelBadge(agentName) {
   } catch (e) { /* non-critical */ }
 }
 
-/** Render the context usage ring into the popup header.
- *  Matches the main window's ctx-ring style (same SVG structure, threshold line,
- *  colors, and transitions) for visual consistency. */
-function updatePopupCtxRing() {
-  if (!popupOverlay || !currentStepId) return;
-  const el = popupOverlay.querySelector('#flow-agent-ctx');
-  if (!el) return;
-  const info = state.sessionModelInfo[currentStepId];
-  if (!info || !info.contextWindow) { el.innerHTML = ''; el.style.display = 'none'; return; }
-  const ratio = info.inputTokens != null ? info.inputTokens / info.contextWindow : 0;
-  const pct = Math.min(Math.round(ratio * 100), 100);
-  let color = '#4caf50';
-  if (ratio > 0.5) color = '#d4a030';
-  // ui-status-redesign（盘点 #49，B 组）：字面量 → token（经 style 消费）。
-  if (ratio > 0.75) color = 'var(--status-error-icon)';
-  const R = 15;
-  const CIRC = 2 * Math.PI * R;
-  const dashLen = CIRC * pct / 100;
-  const thresholdPct = Math.round((info.compactThreshold || 0.8) * 100);
-  const thresholdAngle = thresholdPct * 3.6;
-  const tooltip = info.inputTokens != null
-    ? `${fmtTokens(info.inputTokens)} / ${fmtTokens(info.contextWindow)} tokens (${pct}%) · threshold ${thresholdPct}%`
-    : `${fmtTokens(info.contextWindow)} context window`;
-  el.title = tooltip;
-  el.style.display = 'inline-flex';
-  el.innerHTML = `<div class="ctx-ring-wrap ctx-compact" title="${tooltip}">
-    <svg width="28" height="28" viewBox="0 0 36 36" class="ctx-ring-svg">
-      <circle cx="18" cy="18" r="${R}" fill="none" stroke="rgba(128,128,128,0.15)" stroke-width="3.5"/>
-      <circle cx="18" cy="18" r="${R}" fill="none" stroke-width="3.5"
-              style="stroke:${color};stroke-dasharray:${dashLen.toFixed(1)} ${CIRC.toFixed(1)};transition:stroke-dasharray 0.4s ease, stroke 0.4s ease;"
-              stroke-linecap="round"
-              transform="rotate(-90 18 18)"/>
-      <line x1="18" y1="1.5" x2="18" y2="5" stroke="rgba(200,80,80,0.7)" stroke-width="1.5"
-            class="ctx-ring-threshold"
-            transform="rotate(${thresholdAngle.toFixed(1)} 18 18)"/>
-    </svg>
-    <span class="ctx-ring-pct">${pct}</span>
-  </div>`;
-}
-
-// Update popup ring + model badge when model info arrives for any session
-onMessage('usageUpdate', () => { if (popupOverlay) { updatePopupCtxRing(); renderModelBadge(); } });
-onMessage('done', () => { if (popupOverlay) { updatePopupCtxRing(); renderModelBadge(); } });
+// Update the popup model badge when model info arrives for any session.
+// (弹窗头部用量环已随 2026-10-23 上下文用量显示退役批删除 ——
+// 防复活钉：tests/remove-context-usage.spec.mjs。)
+onMessage('usageUpdate', () => { if (popupOverlay) renderModelBadge(); });
+onMessage('done', () => { if (popupOverlay) renderModelBadge(); });
 
 export function closeStepPopup() {
   if (!popupOverlay) return;

@@ -1267,7 +1267,7 @@ export function initContacts() {
   //
   // 口径 = **全站悬浮面板统一惯例**：点面板外即收起（本处「面板」= 搜索块
   // `.fm-search-block`，卡片 `.fm-result-card` 是其子项）。逐字对齐既有先例
-  // `ctxthresh.js:483-493`（用 `mousedown` 而非 `click`：拖动时松手点可能落在面板外，
+  // 「已退役的头部用量环拖动模块」（用 `mousedown` 而非 `click`：拖动时松手点可能落在面板外，
   // click 会把「拖完松手」误判成「点外面」；外加 Escape —— 同族面板同款成对口径）。
   // 🔴 **不引入定时器**：全站面板族无超时惯例（超时只属 toast 族 —— `modal.js:221-224` /
   // `utils.js:880-885`）⇒ 本面板加超时就是自创双标。
