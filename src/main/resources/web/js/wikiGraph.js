@@ -1,10 +1,12 @@
-// wikiGraph.js — Wiki document graph (控制面迁左栏 + 触控板手感批, 2026-10-21/22).
+// wikiGraph.js — Wiki document graph (控制面迁左栏 + 触控板手感 + 多项目图谱批, 2026-10-21/22).
 //
-// The Canvas tab `wiki-graph` renders the merged document graph served by
-// GET /api/wiki/graph: one node per markdown document across every project's
-// `<workspace>/docs` vault (local projects scanned on disk; peer-device
-// projects scanned through the NebLink browse channel), one edge per
-// Obsidian wikilink / markdown link / embed.
+// The Canvas tab `wiki-graph` renders the document graph served by
+// GET /api/wiki/graph. #744-B made the graph MULTI-VAULT: every registered
+// project's `<workspace>/docs` vault is its own graph
+// (`?project=<name>`), sub-vaults (`*/docs/` inside a vault) show up as
+// aggregate nodes that drill into the child graph (`?project=X&vault=sub/docs`,
+// breadcrumb back), and the switcher defaults to the pre-#744-B merged view
+// (`?project=` absent — byte-compatible shape, no stats/view/childVaults keys).
 //
 // 作者令 2026-10-21（图谱布局重构 · 控制面迁左栏）：canvas 只显示图谱本体——
 // 力导向图 + 悬停 tooltip，控件面全部撤出 canvas；激活图谱 tab 时左栏（原文件
@@ -55,7 +57,8 @@ const LABEL_MAX_CHARS = 22;   // canvas label truncation (design §4)
 const MOBILE_MQ = '(max-width: 768px)';
 
 /** @typedef {{ref:any, id:string, label:string, dir:string, isAttach:boolean,
- *             x:number, y:number, vx:number, vy:number, degree:number, rank:number,
+ *             isVault:boolean, x:number, y:number, vx:number, vy:number,
+ *             degree:number, rank:number,
  *             out:Array<any>, inc:Array<any>, dimmed:boolean}} WgNode */
 
 /**
@@ -70,6 +73,10 @@ const MOBILE_MQ = '(max-width: 768px)';
  * @property {{nodes: WgNode[], edges: {a:WgNode,b:WgNode}[], alpha: number} | null} sim
  * @property {number} raf
  * @property {string} focusId
+ * @property {string} selProject — #744-B selected view: '' = merged, else project name
+ * @property {string} selVault   — #744-B drill-in vault rel ('' = root vault)
+ * @property {{project:string, device:string, vault:string, present:boolean|null}[]} vaultList
+ * @property {number} crossVault — #744-B cross-vault reference count (stats line)
  * @property {Map<string, WgNode>} byId
  * @property {WgNode | null} hover
  * @property {WgNode | null} selected
@@ -103,8 +110,14 @@ let view = null;
  *  on the FALSE→TRUE transition only (可见期间手动收起 → 安静，R5/R6/R9). */
 let sideWasVisible = false;
 
-/** Open (or focus) the wiki graph tab and render it. */
-export async function openWikiGraphTab(focusNodeId = '') {
+/** Pending project for a fresh render that must open on a specific vault
+ *  (focusWikiNode passes the node's project; #744-B). */
+let pendingProject = '';
+
+/** Open (or focus) the wiki graph tab and render it. `projectHint` (#744-B)
+ *  opens the named project's vault graph instead of the merged view. */
+export async function openWikiGraphTab(focusNodeId = '', projectHint = '') {
+  if (projectHint && projectHint !== '__user__') pendingProject = projectHint;
   const canvas = await import('./canvas.js');
   const entry = canvas.openTab(TAB_ID, t('wiki.tabTitle'), { type: TAB_ID, closable: true });
   if (!entry) return;
@@ -112,6 +125,15 @@ export async function openWikiGraphTab(focusNodeId = '') {
     // Tab already live: select + center + detail directly (the renderInto
     // idempotence guard would otherwise swallow the focus request).
     if (view && view.pane === entry.paneEl && view.canvas && view.canvas.isConnected) {
+      if (pendingProject && pendingProject !== view.selProject) {
+        // Switch the view first, then focus lands in the rebuild.
+        view.selProject = pendingProject;
+        view.selVault = '';
+        pendingProject = '';
+        await loadData(true);
+        if (view.focusId) rebuildSim();
+        return;
+      }
       const n = view.byId.get(focusNodeId);
       if (n) { select(n, true); return; }
       view.focusId = focusNodeId; // not in the loaded data — retry after refetch
@@ -192,6 +214,8 @@ async function renderInto(pane) {
     if (pendingFocus) { view.focusId = pendingFocus; pendingFocus = ''; rebuildSim(); }
     return;
   }
+  const presetProject = pendingProject; // fresh render opens the hinted vault view
+  pendingProject = '';
   teardown();
   pane.innerHTML = '';
   pane.classList.add('wiki-graph-pane');
@@ -217,6 +241,7 @@ async function renderInto(pane) {
            side: ensureSidePanel(), panebar,
            data: null, sim: null,
            raf: 0, focusId: pendingFocus || '', byId: new Map(),
+           selProject: presetProject, selVault: '', vaultList: [], crossVault: 0,
            hover: null, selected: null,
            vx: 0, vy: 0, scale: 1, zoomTarget: 1, zoomAnchor: null,
            dragging: null, panning: false, lastPointer: null,
@@ -246,13 +271,17 @@ async function renderInto(pane) {
       applyFilter(); draw();
       return;
     }
-    if (view.dirFilter) { view.dirFilter = ''; renderChips(); applyFilter(); draw(); }
+    if (view.dirFilter) { view.dirFilter = ''; renderChips(); applyFilter(); draw(); return; }
+    if (view.selVault) { drillIn(''); return; } // #744-B: leave the drill-in view
   };
   document.addEventListener('keydown', view.onKey);
   startBodyObserver();
 
+  // Hand the left column back to the file explorer.
+  void loadVaultList();
   await loadData(false);
   rebuildSim();
+  renderCrumbs();
 
   // Fresh render lands with the pane active (open) or not (background restore)
   // — publish the side-face state either way; the transition guard inside
@@ -300,6 +329,14 @@ function ensureSidePanel() {
   title.textContent = t('wiki.tabTitle');
   head.appendChild(title);
 
+  // Project switcher (#744-B): one vault = one graph; '' = merged view.
+  head.appendChild(buildVaultSwitch());
+
+  // Breadcrumb row (drill-in views only; hidden in merged/root views).
+  const crumbs = document.createElement('div');
+  crumbs.className = 'wg-crumbs';
+  crumbs.hidden = true;
+
   const detail = document.createElement('div');
   detail.className = 'wg-detail';
   detail.appendChild(buildDetailSkeleton());
@@ -317,9 +354,90 @@ function ensureSidePanel() {
   hint.className = 'wg-hint';
   hint.textContent = t('wiki.inputHint');
 
-  side.append(head, buildSearchBox(), buildChipsGroup(), detail, broken, stats, hint);
+  side.append(head, crumbs, buildSearchBox(), buildChipsGroup(), detail, broken, stats, hint);
   panel.appendChild(side);
   return side;
+}
+
+/** Project switcher select (#744-B, glass-chip family): '' = merged view,
+ *  one option per registered project/vault. Options come from
+ *  GET /api/wiki/vaults (lightweight manifest — presence flag only). */
+function buildVaultSwitch() {
+  const wrap = document.createElement('div');
+  wrap.className = 'wg-switch';
+  const sel = document.createElement('select');
+  sel.className = 'wg-switch-select';
+  sel.setAttribute('aria-label', t('wiki.allProjects'));
+  sel.addEventListener('change', () => {
+    if (!view) return;
+    view.selProject = sel.value;
+    view.selVault = '';
+    view.filter = '';
+    view.dirFilter = '';
+    for (const input of searchInputs()) input.value = '';
+    renderChips();
+    loadData(true).then(() => rebuildSim());
+  });
+  wrap.appendChild(sel);
+  return wrap;
+}
+
+/** (Re)fill every switcher select from view.vaultList + current selection. */
+function renderVaultSwitch() {
+  if (!view) return;
+  const sels = [];
+  if (view.side) sels.push(view.side.querySelector('.wg-switch-select'));
+  if (view.panebar) sels.push(view.panebar.querySelector('.wg-switch-select'));
+  const opts = [{ value: '', label: t('wiki.allProjects') }];
+  for (const v of view.vaultList) opts.push({ value: v.project, label: v.project });
+  for (const sel of sels.filter(Boolean)) {
+    sel.textContent = '';
+    for (const o of opts) {
+      const opt = document.createElement('option');
+      opt.value = o.value;
+      opt.textContent = o.label;
+      if (o.value === view.selProject) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  }
+}
+
+/** Breadcrumb row (drill-in views): X › sub — each crumb is a button that
+ *  switches back to that vault level; the LAST crumb is static (current). */
+function renderCrumbs() {
+  if (!view || !view.side) return;
+  const el = /** @type {HTMLElement|null} */ (view.side.querySelector('.wg-crumbs'));
+  if (!el) return;
+  const crumbs = (view.data && view.data.view && view.data.view.breadcrumb) || [];
+  const single = crumbs.length <= 1;
+  el.hidden = single;
+  if (single) return;
+  el.textContent = '';
+  crumbs.forEach((c, i) => {
+    const isLast = i === crumbs.length - 1;
+    if (i > 0) el.appendChild(document.createTextNode(' › '));
+    if (isLast) {
+      const s = document.createElement('span');
+      s.className = 'crumb cur';
+      s.textContent = c.name;
+      el.appendChild(s);
+      return;
+    }
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'crumb';
+    b.textContent = c.name;
+    b.addEventListener('click', () => {
+      if (!view) return;
+      view.selProject = (view.data && view.data.view && view.data.view.project) || view.selProject;
+      view.selVault = c.vault === 'docs' ? '' : (c.vault || '');
+      view.filter = '';
+      view.dirFilter = '';
+      renderChips();
+      loadData(true).then(() => rebuildSim());
+    });
+    el.appendChild(b);
+  });
 }
 
 /** Search box (shared builder — side face and mobile panebar). */
@@ -379,7 +497,9 @@ function buildDetailSkeleton() {
   body.querySelector('.openbtn').textContent = t('wiki.openDoc');
   body.querySelector('.close').addEventListener('click', () => deselect());
   body.querySelector('.openbtn').addEventListener('click', () => {
-    if (view && view.selected) void openDoc(view.selected.ref);
+    if (!view || !view.selected) return;
+    if (view.selected.isVault) { drillIn(view.selected.ref.rel); return; } // #744-B sub-vault card
+    void openDoc(view.selected.ref);
   });
   frag.append(empty, body);
   return frag;
@@ -393,7 +513,7 @@ function buildPaneBar() {
   bar.className = 'wg-panebar';
   const stats = document.createElement('div');
   stats.className = 'wg-stats';
-  bar.append(buildSearchBox(), buildChipsGroup(), stats);
+  bar.append(buildVaultSwitch(), buildSearchBox(), buildChipsGroup(), stats);
   return bar;
 }
 
@@ -461,15 +581,41 @@ function ensureCanvasVisible() {
 
 // ── Data ─────────────────────────────────────────────────────────────────
 
+/** URL for the current #744-B view: ?project=&vault= appended only when set
+ *  (absent = the pre-#744-B merged view, byte-compatible). */
+function graphUrl(force) {
+  const qs = [];
+  if (force) qs.push('force=1');
+  if (view && view.selProject) {
+    qs.push('project=' + encodeURIComponent(view.selProject));
+    if (view.selVault) qs.push('vault=' + encodeURIComponent(view.selVault));
+  }
+  return GRAPH_API + (qs.length ? '?' + qs.join('&') : '');
+}
+
 async function loadData(force) {
   if (!view) return;
   try {
-    const res = await fetch(GRAPH_API + (force ? '?force=1' : ''), { headers: { ...authHeaders() } });
+    const res = await fetch(graphUrl(force), { headers: { ...authHeaders() } });
     view.data = res.ok ? await res.json() : { projects: [], nodes: [], edges: [] };
   } catch (e) {
     view.data = { projects: [], nodes: [], edges: [], error: String(e && e.message || e) };
   }
   if (view.data.error) window.__showToast?.(String(view.data.error), 'error');
+}
+
+/** Lightweight vault manifest for the switcher (#744-B). Failures keep the
+ *  previous list (the switcher degrades to merged-only, never breaks the tab). */
+async function loadVaultList() {
+  if (!view) return;
+  try {
+    const res = await fetch('/api/wiki/vaults', { headers: { ...authHeaders() } });
+    if (res.ok) {
+      const body = await res.json();
+      view.vaultList = (body && body.vaults) || [];
+    }
+  } catch (e) { /* keep previous list */ }
+  renderVaultSwitch();
 }
 
 // ── Simulation model (design §7: the force kernel survives the redesign) ──
@@ -492,6 +638,7 @@ function dirOfRel(rel) {
 }
 
 function radiusOf(n) {
+  if (n.isVault) return 8; // sub-vault aggregate (#744-B): double-ring glyph
   if (n.isAttach) return 3.5;
   return 5 + Math.min(6, Math.sqrt(n.degree) * 1.9); // design §4: 5–11px
 }
@@ -504,7 +651,9 @@ function rebuildSim() {
   const allById = new Map((data.nodes || []).map(n => [n.id, n]));
 
   // Broken references never become nodes (design §3): stubs are dropped and
-  // their edges are counted into the stats line instead.
+  // their edges are counted into the stats line instead. #744-B: EXTERNAL
+  // stubs (cross-vault references) are also never nodes — they count into a
+  // separate 跨库引用 stat instead of the broken list.
   const nodes = /** @type {WgNode[]} */ ((data.nodes || [])
     .filter(n => !n.stub)
     .map(n => ({
@@ -513,6 +662,7 @@ function rebuildSim() {
       label: n.title || (n.rel || '').split('/').pop(),
       dir: dirOfRel(n.rel || ''),
       isAttach: n.kind === 'attachment',
+      isVault: false,
       x: 0, y: 0, vx: 0, vy: 0,
       degree: 0, rank: 0, out: [], inc: [], dimmed: false,
     })));
@@ -532,23 +682,47 @@ function rebuildSim() {
   for (const e of edges) { e.a.out.push(e.b); e.b.inc.push(e.a); }
   for (const n of nodes) n.degree = n.out.length + n.inc.length;
 
+  // Sub-vault aggregate nodes (#744-B): one per child vault, plain layout
+  // participants (repulsion + gravity, no edges). Label carries the doc count.
+  const vaultNodes = /** @type {WgNode[]} */ ((data.childVaults || []).map(c => ({
+    ref: c,
+    id: '__vault:' + c.rel,
+    label: c.name + ' (' + (c.docCount ?? 0) + ')',
+    dir: '.',
+    isAttach: false,
+    isVault: true,
+    x: 0, y: 0, vx: 0, vy: 0,
+    degree: 0, rank: 0, out: [], inc: [], dimmed: false,
+  })));
+  for (const v of vaultNodes) nodes.push(v);
+
   // Unresolved references (edge targets that are stubs) — counted, listed in
-  // the broken section, never drawn. Project-level stubs surface as vault
-  // errors in the same section.
+  // the broken section, never drawn. EXTERNAL stubs are cross-vault references
+  // (counted separately, never listed as broken). Project-level stubs surface
+  // as vault errors in the same section.
   const unresolvedSeen = new Set();
   const unresolved = [];
+  let cross = 0;
   for (const e of data.edges || []) {
     const from = allById.get(e.from), to = allById.get(e.to);
-    if (!from || !to || !to.stub) continue;
+    if (!from || !to) continue;
+    if (to.external) { cross += 1; continue; }
+    if (!to.stub) continue;
     const key = e.from + '|' + e.to;
     if (unresolvedSeen.has(key)) continue;
     unresolvedSeen.add(key);
     unresolved.push({ from: from.rel || from.title || e.from, target: to.rel || to.title || e.to });
   }
+  view.crossVault = cross;
   view.unresolved = unresolved;
   view.projectErrors = (data.projects || [])
     .filter(p => p.stub || p.error)
     .map(p => ({ name: p.name, error: p.error || '', stub: !!p.stub }));
+  if (data.error) {
+    // Single-view degraded face (vault not found / peer offline): the error
+    // rides the broken section instead of a silent empty canvas.
+    view.projectErrors.unshift({ name: (data.view && data.view.project) || '', error: String(data.error), stub: false });
+  }
 
   // Hub ranks (代审整改): degree-descending order drives the default label set.
   [...nodes].sort((a, b) => b.degree - a.degree).forEach((n, i) => { n.rank = i; });
@@ -581,8 +755,10 @@ function rebuildSim() {
   view.selected = (selId && byId.get(selId)) || null;
 
   renderChips();
+  renderVaultSwitch();
   renderStats();
   renderBroken();
+  renderCrumbs();
   applyFilter();
   renderDetailAll();
 
@@ -629,14 +805,23 @@ function renderChips() {
   }
 }
 
-/** Stats line (bottom of the control face): N 篇文档 · N 条引用 · N 条未解析. */
+/** Stats line (bottom of the control face): N 篇文档 · N 条引用 · N 条未解析
+ *  (+#744-B: · N 条跨库引用; single views read the server-provided stats so
+ *  external placeholders never leak into the in-vault counts). */
 function renderStats() {
   if (!view) return;
   const d = view.data || {};
-  const text = t('wiki.infoDocs')
-    .replace('{docs}', String((d.nodes || []).filter(n => !n.stub).length))
-    .replace('{links}', String(view.sim ? view.sim.edges.length : 0)) +
+  let docs, links;
+  if (d.stats) { docs = d.stats.docs || 0; links = d.stats.edges || 0; }
+  else {
+    docs = (d.nodes || []).filter(n => !n.stub).length;
+    links = view.sim ? view.sim.edges.length : 0;
+  }
+  let text = t('wiki.infoDocs')
+    .replace('{docs}', String(docs))
+    .replace('{links}', String(links)) +
     t('wiki.infoUnresolved').replace('{n}', String(view.unresolved.length));
+  if (view.crossVault > 0) text += ' · ' + t('wiki.crossVault').replace('{n}', String(view.crossVault));
   for (const el of statsContainers()) el.textContent = text;
 }
 
@@ -853,15 +1038,26 @@ function draw() {
   }
 
   // Nodes — solid graphite dots; degree → radius and ink depth (design §4).
+  // Sub-vault aggregates (#744-B) draw as double rings and stay labeled.
   for (const n of sim.nodes) {
     const r = radiusOf(n);
     const dim = n.dimmed || (near && !near.has(n));
     ctx.globalAlpha = dim ? 0.12 : 1;
     const shade = n.isAttach ? 0 : Math.min(1, n.degree / 8);
-    ctx.fillStyle = shade > 0.45 ? C.ink : C.muted;
+    ctx.fillStyle = n.isVault ? C.ink : (shade > 0.45 ? C.ink : C.muted);
     ctx.beginPath();
     ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
     ctx.fill();
+    if (n.isVault) {
+      // double ring: the aggregate marker (no accent hue — graphite only)
+      ctx.strokeStyle = C.ink;
+      ctx.globalAlpha = dim ? 0.2 : 0.75;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r + 4, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = dim ? 0.12 : 1;
+    }
     if (n === view.selected || n === view.hover) {
       ctx.strokeStyle = C.ink;
       ctx.globalAlpha = dim ? 0.2 : 0.9;
@@ -879,6 +1075,7 @@ function draw() {
     if (!dim) {
       const isFocusNode = n === view.hover || n === view.selected;
       if (isFocusNode) labelAlpha = 1;
+      else if (n.isVault) labelAlpha = 0.72; // aggregates stay labeled (#744-B)
       else if (near && near.has(n)) labelAlpha = 0.62;
       else if (view.filter || view.dirFilter) labelAlpha = 0.62;
       else if (!n.isAttach && n.rank < labelCount) labelAlpha = 0.62;
@@ -1061,12 +1258,19 @@ function showTip(node, px, py) {
   const tip = /** @type {HTMLElement|null} */ (view.pane.querySelector('.wg-tip'));
   if (!tip) return;
   const d = node.ref;
-  tip.querySelector('.tt').textContent = d.title || d.rel || '';
-  tip.querySelector('.ts').textContent = d.summary
-    || (node.isAttach ? (d.rel || '') : t('wiki.noSummary'));
-  tip.querySelector('.td').textContent = dirLabel(node.dir) + ' · ' + t('wiki.tipDegree')
-    .replace('{in}', String(node.inc.length))
-    .replace('{out}', String(node.out.length));
+  if (node.isVault) {
+    // Sub-vault aggregate tooltip (#744-B): name + doc count + drill hint.
+    tip.querySelector('.tt').textContent = d.name;
+    tip.querySelector('.ts').textContent = t('wiki.vaultDocCount').replace('{n}', String(d.docCount ?? 0));
+    tip.querySelector('.td').textContent = t('wiki.enterVault');
+  } else {
+    tip.querySelector('.tt').textContent = d.title || d.rel || '';
+    tip.querySelector('.ts').textContent = d.summary
+      || (node.isAttach ? (d.rel || '') : t('wiki.noSummary'));
+    tip.querySelector('.td').textContent = dirLabel(node.dir) + ' · ' + t('wiki.tipDegree')
+      .replace('{in}', String(node.inc.length))
+      .replace('{out}', String(node.out.length));
+  }
   tip.style.display = 'block';
   // Clamp against the MEASURED tip box so it stays fully inside the pane.
   const maxW = 330;
@@ -1083,7 +1287,8 @@ function hideTip() {
   if (tip) tip.style.display = 'none';
 }
 
-/** Fill one detail card for a node (徽标/摘要/目录 ≤5/引出 ≤5/被引 ≤5/路径). */
+/** Fill one detail card for a node (徽标/摘要/目录 ≤5/引出 ≤5/被引 ≤5/路径;
+ *  sub-vault aggregates get the vault card: 名称/文档数/进入子图谱). */
 function fillDetailCard(root, n) {
   const emptyEl = root.querySelector('.wg-detail-empty');
   const card = root.querySelector('.wg-detail-body');
@@ -1094,6 +1299,7 @@ function fillDetailCard(root, n) {
   }
   if (emptyEl) emptyEl.hidden = true;
   if (card) card.hidden = false;
+  if (n.isVault) return fillVaultCard(root, n);
   const d = n.ref;
   card.querySelector('h2').textContent = n.label;
   const badges = card.querySelector('.badges');
@@ -1147,6 +1353,45 @@ function fillDetailCard(root, n) {
   n.inc.slice(0, 5).forEach(m => inL.appendChild(refItem(m)));
   if (!n.inc.length) inL.appendChild(ghostItem(t('wiki.emptyIn')));
   card.querySelector('.path').textContent = (d.project ? d.project + ' · ' : '') + 'docs/' + (d.rel || '');
+}
+
+/** Sub-vault aggregate card (#744-B): name / doc-count badge / drill-in button. */
+function fillVaultCard(root, n) {
+  const card = root.querySelector('.wg-detail-body');
+  const c = n.ref;
+  card.querySelector('h2').textContent = c.name;
+  const badges = card.querySelector('.badges');
+  badges.textContent = '';
+  const s = document.createElement('span');
+  s.className = 'badge';
+  s.textContent = t('wiki.kindVault');
+  badges.appendChild(s);
+  const s2 = document.createElement('span');
+  s2.className = 'badge';
+  s2.textContent = t('wiki.vaultDocCount').replace('{n}', String(c.docCount ?? 0));
+  badges.appendChild(s2);
+  card.querySelector('.summary').textContent = t('wiki.vaultBlurb');
+  card.querySelector('.toc').textContent = '';
+  /** @type {HTMLElement|null} */ (card.querySelector('.toc').previousElementSibling).style.display = 'none';
+  card.querySelector('.out').textContent = '';
+  /** @type {HTMLElement|null} */ (card.querySelector('.out').previousElementSibling).style.display = 'none';
+  card.querySelector('.in').textContent = '';
+  /** @type {HTMLElement|null} */ (card.querySelector('.in').previousElementSibling).style.display = 'none';
+  card.querySelector('.path').textContent = c.rel || '';
+  card.querySelector('.openbtn').textContent = t('wiki.enterVault');
+}
+
+/** Drill into a sub vault (#744-B): switch the view, refetch, rebuild. */
+function drillIn(rel) {
+  if (!view) return;
+  view.selProject = (view.data && view.data.view && view.data.view.project) || view.selProject;
+  view.selVault = rel || '';
+  view.filter = '';
+  view.dirFilter = '';
+  view.selected = null;
+  renderChips();
+  renderVaultSwitch();
+  loadData(true).then(() => rebuildSim());
 }
 
 /** Refresh every detail card from view.selected (canvas click → 左栏详情). */
@@ -1238,10 +1483,11 @@ const REMOTE_MIME = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg
 const REMOTE_ITEM_TYPE = { pdf: 'pdf', docx: 'docx', pptx: 'pptx', xlsx: 'xlsx', epub: 'epub', png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', svg: 'image' };
 
 /** Focus a node (used by the md-viewer graph button): open the tab centered
- *  on that document, identified by project + rel path. */
+ *  on that document, identified by project + rel path. #744-B: opens the
+ *  node's own project vault graph, not the merged view. */
 export function focusWikiNode(project, rel) {
   const id = `${project}:${rel.replace(/\\/g, '/')}`;
-  openWikiGraphTab(id);
+  openWikiGraphTab(id, project);
 }
 
 // ── Harness probe (read-only) ─────────────────────────────────
@@ -1253,8 +1499,12 @@ export function focusWikiNode(project, rel) {
   scale: view.scale,
   zoomTarget: view.zoomTarget,
   vx: view.vx, vy: view.vy, W: view.W, H: view.H,
-  nodes: view.sim.nodes.map(n => ({ id: n.id, x: n.x, y: n.y, degree: n.degree, rank: n.rank, dir: n.dir })),
+  nodes: view.sim.nodes.map(n => ({ id: n.id, x: n.x, y: n.y, degree: n.degree, rank: n.rank, dir: n.dir, isVault: !!n.isVault })),
   unresolved: view.unresolved.length,
+  crossVault: view.crossVault,
+  selProject: view.selProject, selVault: view.selVault,
+  vaultOptions: [...(view.side ? /** @type {NodeListOf<HTMLOptionElement>} */ (view.side.querySelectorAll('.wg-switch-select option')) : [])].map(o => o.value),
+  crumbs: (view.data && view.data.view && view.data.view.breadcrumb) || null,
   filter: view.filter, dirFilter: view.dirFilter,
   selected: view.selected ? view.selected.id : null,
   sideMounted: !!(view.side && view.side.isConnected),
