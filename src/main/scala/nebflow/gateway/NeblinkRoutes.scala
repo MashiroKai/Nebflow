@@ -136,6 +136,45 @@ private[gateway] object NeblinkRoutes:
           }
         }
 
+      // ===== 设备识别快速通道 · 主动探测识别面（console-fastpath 批 2026-10-23，
+      // 作者令腿①：「跟我们检查发送信息的设备应该是同一个原理……是就走快速通道，
+      // 不是就走 relay」）=====
+      //
+      // 浏览端（ws.js/nearpath.js）在会话打开/重连时主动上报 device stamp 的
+      // boundDeviceId（deviceIdentity.js 设置页的绑定面，与消息设备标记
+      // 「消息标记设备」逐字同源）；本端点对照花名册（self + peers，与
+      // WebSocketRoutes.deviceProvenanceOf 的登记判定同一词表）给 enrolled 标记。
+      //   enrolled = true  ⇒ 回 lanAddresses（本机私网 IPv4 枚举，[[LanAddresses]]）
+      //                      + port，浏览端逐个 nf-reach 探测后走 LAN 近路；
+      //   enrolled = false ⇒ lanAddresses 恒空（LAN 拓扑面只给登记设备——作者令
+      //                      「不是就走 relay」的服务端强制执行，前端漂移也兜住）。
+      // 环回候选不走本端点：ws.js 既有近路短路链自带 /api/health 的 deviceId
+      // 锚（本地加速批），同机识别天然成立、不受 enrolled 影响。
+      // 经 gate（会话/Bearer 判据）：LAN 地址枚举虽是低敏拓扑面，仍只服务已入座
+      // 会话；匿名探测一律 401（环回引导腿不开——近路不是引导链的一部分）。
+      case req @ GET -> Root / "neblink" / "nearpath" =>
+        withNeblink(req) { ms =>
+          val bound = req.params.get("bound").map(_.trim).getOrElse("")
+          (for
+            id <- ms.identity
+            peersList <- ms.peers
+            matched =
+              if bound.nonEmpty && bound == id.deviceId then Some(id.deviceId -> id.deviceName)
+              else peersList.find(_.deviceId == bound).map(p => p.deviceId -> p.deviceName)
+            enrolled = matched.nonEmpty
+          yield Ok(
+            Json.obj(
+              "enrolled" -> enrolled.asJson,
+              "matchedDeviceId" -> matched.map(_._1).getOrElse("").asJson,
+              "matchedDeviceName" -> matched.map(_._2).getOrElse("").asJson,
+              "selfId" -> id.deviceId.asJson,
+              "port" -> ctx.gatewayPort.asJson,
+              "lanAddresses" -> (if enrolled then LanAddresses.list() else Nil).asJson
+            )
+          )
+          ).flatten
+        }
+
       // NebLink status — identity, peers, login state
       // 引导腿·状态读取面（2026-10-22 新设备引导修复批·作者令）：登录发起与回调
       // 都匿名可达后，零凭据设备上本读点若仍 403，控制台头部恒挂「状态读取失败

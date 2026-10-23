@@ -194,87 +194,116 @@ object NfFileRoutes:
     policy: NfPathPolicy = NfPathPolicy.memoized(),
     home: java.nio.file.Path = NfFilePolicy.processHome,
     gate: NfServeGate = NfServeGate.fromConfig()
-  ): HttpRoutes[IO] = HttpRoutes.of[IO] { case req @ GET -> Root / "api" / "nf-file" =>
-    val rawPath = req.params.get("path").getOrElse("")
-    val ticket = req.params.get("ticket").getOrElse("")
-    if rawPath.isEmpty then BadRequest("Missing 'path' parameter")
-    else if ticket.isEmpty then
-      // Not the DSL `Unauthorized`: that constructor demands a
-      // WWW-Authenticate challenge, and this route has no auth scheme to
-      // advertise (the ticket is an opaque bearer value, not Basic/Digest).
-      IO.pure(nfText(Status.Unauthorized, "Missing 'ticket' parameter").putHeaders(cacheHeader("no-store")))
-    else
-      gate.tryAcquire.flatMap {
-        case false => IO.pure(nfOverloaded)
-        case true =>
-          nfFileVerdictTolerant(rawPath, policy, home)
-            .flatMap {
-              case denied: NfVerdict.Denied => IO.pure(nfDenied(denied))
-              case NfVerdict.Allowed(real, _) =>
-                store.verifyAndConsume(ticket, real.toString).flatMap {
-                  case Left(reason) =>
-                    IO.pure(nfDenied(NfVerdict.Denied(Status.Forbidden, reason, "ticket rejected")))
-                  case Right(_) =>
-                    val fsReal = fs2.io.file.Path(real.toString)
-                    // Stage 1: syntax probe against MaxValue — separates "carries a
-                    // usable single byte-range" from "no/malformed/multi Range".
-                    val range = requestedRange(req).flatMap(parseByteRange(_, Long.MaxValue))
-                    range match
-                      case Some(_) =>
-                        // Stage 2: satisfiability against the REAL size (the file may
-                        // have changed or vanished since the verdict — re-reading is
-                        // the honest answer, a stale size would corrupt Content-Range).
-                        IO.blocking(java.nio.file.Files.size(real)).attempt.flatMap {
-                          case Left(_) => IO.pure(Response[IO](Status.NotFound))
-                          case Right(size) =>
-                            requestedRange(req).flatMap(parseByteRange(_, size)) match
-                              case Some((start, end)) =>
-                                val base = serveRange(fsReal, size, start, end)
-                                IO.pure(contentTypeFor(fsReal).fold(base)(base.putHeaders(_)))
-                              case None =>
-                                // Well-formed-looking but unsatisfiable against the
-                                // real size → 416 (RFC 9110 §15.5.17).
-                                IO.pure(
-                                  Response[IO](Status.RangeNotSatisfiable)
-                                    .putHeaders(
-                                      Header.Raw(org.typelevel.ci.CIString("Content-Range"), s"bytes */$size")
+  ): HttpRoutes[IO] = HttpRoutes.of[IO] {
+    // LAN 直传预检腿（console-fastpath 批 2026-10-23·腿③大文件 LAN 直传）：
+    // 跨源 fetch（门户 https 页 → http://<lan-ip>:<port>/api/nf-file?…&ticket=…）
+    // 属 Private-Network 请求，Chromium 先发 OPTIONS 预检——此前该路径落空（404）
+    // ⇒ LAN 直传必败。应答 ACAO `*` + PNA 放行 + 读数头暴露面；凭据语义零变化
+    // （ticket 仍是唯一凭据，它在 URL query 里，cookie 跨源本就带不过去）。
+    case OPTIONS -> Root / "api" / "nf-file" =>
+      NoContent().map(_.putHeaders(NfFileCorsHeaders*))
+
+    case req @ GET -> Root / "api" / "nf-file" =>
+      val rawPath = req.params.get("path").getOrElse("")
+      val ticket = req.params.get("ticket").getOrElse("")
+      // 全出向（含 400/401/403/416/429）统一补 CORS/PNA 头：LAN 直传腿的
+      // preflight 只对 OPTIONS 发，但最终响应缺 ACAO 头浏览器照样撕响应——
+      // 出向统一补是唯一不会在某条错误腿上断直传的面。
+      val corsWrap = (io: IO[Response[IO]]) => io.map(_.putHeaders(NfFileCorsHeaders*))
+      corsWrap(
+          if rawPath.isEmpty then BadRequest("Missing 'path' parameter")
+        else if ticket.isEmpty then
+          // Not the DSL `Unauthorized`: that constructor demands a
+          // WWW-Authenticate challenge, and this route has no auth scheme to
+          // advertise (the ticket is an opaque bearer value, not Basic/Digest).
+          IO.pure(nfText(Status.Unauthorized, "Missing 'ticket' parameter").putHeaders(cacheHeader("no-store")))
+        else
+          gate.tryAcquire.flatMap {
+            case false => IO.pure(nfOverloaded)
+            case true =>
+              nfFileVerdictTolerant(rawPath, policy, home)
+                .flatMap {
+                  case denied: NfVerdict.Denied => IO.pure(nfDenied(denied))
+                  case NfVerdict.Allowed(real, _) =>
+                    store.verifyAndConsume(ticket, real.toString).flatMap {
+                      case Left(reason) =>
+                        IO.pure(nfDenied(NfVerdict.Denied(Status.Forbidden, reason, "ticket rejected")))
+                      case Right(_) =>
+                        val fsReal = fs2.io.file.Path(real.toString)
+                        // Stage 1: syntax probe against MaxValue — separates "carries a
+                        // usable single byte-range" from "no/malformed/multi Range".
+                        val range = requestedRange(req).flatMap(parseByteRange(_, Long.MaxValue))
+                        range match
+                          case Some(_) =>
+                            // Stage 2: satisfiability against the REAL size (the file may
+                            // have changed or vanished since the verdict — re-reading is
+                            // the honest answer, a stale size would corrupt Content-Range).
+                            IO.blocking(java.nio.file.Files.size(real)).attempt.flatMap {
+                              case Left(_) => IO.pure(Response[IO](Status.NotFound))
+                              case Right(size) =>
+                                requestedRange(req).flatMap(parseByteRange(_, size)) match
+                                  case Some((start, end)) =>
+                                    val base = serveRange(fsReal, size, start, end)
+                                    IO.pure(contentTypeFor(fsReal).fold(base)(base.putHeaders(_)))
+                                  case None =>
+                                    // Well-formed-looking but unsatisfiable against the
+                                    // real size → 416 (RFC 9110 §15.5.17).
+                                    IO.pure(
+                                      Response[IO](Status.RangeNotSatisfiable)
+                                        .putHeaders(
+                                          Header.Raw(org.typelevel.ci.CIString("Content-Range"), s"bytes */$size")
+                                        )
+                                        .putHeaders(org.http4s.headers.`Accept-Ranges`.bytes)
+                                        .putHeaders(cacheHeader("no-store"))
                                     )
-                                    .putHeaders(org.http4s.headers.`Accept-Ranges`.bytes)
-                                    .putHeaders(cacheHeader("no-store"))
-                                )
-                        }
-                      case None =>
-                        // No (usable single) Range: the unchanged whole-file leg, plus
-                        // the Accept-Ranges advertisement the <video> progress bar
-                        // consults before bothering to seek.
-                        StaticFile
-                          .fromPath(fsReal, Some(req))
-                          .map { r =>
-                            // Cache-Control only on the cacheable positives (200 body /
-                            // 304 revalidation, which must restate the policy); the 404
-                            // leg stays untouched (minimal-diff: pre-#538 shape).
-                            val withCache =
-                              if r.status == Status.Ok || r.status == Status.NotModified then
-                                r.putHeaders(cacheHeader(NfCacheControl))
-                              else r
-                            val withAR = withCache.putHeaders(org.http4s.headers.`Accept-Ranges`.bytes)
-                            contentTypeFor(fsReal).fold(withAR)(withAR.putHeaders(_))
-                          }
-                          .getOrElseF(NotFound())
-                    end match
+                            }
+                          case None =>
+                            // No (usable single) Range: the unchanged whole-file leg, plus
+                            // the Accept-Ranges advertisement the <video> progress bar
+                            // consults before bothering to seek.
+                            StaticFile
+                              .fromPath(fsReal, Some(req))
+                              .map { r =>
+                                // Cache-Control only on the cacheable positives (200 body /
+                                // 304 revalidation, which must restate the policy); the 404
+                                // leg stays untouched (minimal-diff: pre-#538 shape).
+                                val withCache =
+                                  if r.status == Status.Ok || r.status == Status.NotModified then
+                                    r.putHeaders(cacheHeader(NfCacheControl))
+                                  else r
+                                val withAR = withCache.putHeaders(org.http4s.headers.`Accept-Ranges`.bytes)
+                                contentTypeFor(fsReal).fold(withAR)(withAR.putHeaders(_))
+                              }
+                              .getOrElseF(NotFound())
+                        end match
+                    }
                 }
-            }
-            // Permit lifecycle: handler failure ⇒ release + rethrow (the request
-            // never got a body to finalize); a produced response ⇒ release bound
-            // to the body stream's termination (complete / error / client abort).
-            .attempt
-            .flatMap {
-              case Left(e) => gate.release *> IO.raiseError(e)
-              case Right(resp) => IO.pure(resp.withBodyStream(resp.body.onFinalize(gate.release)))
-            }
-      }
-    end if
+                // Permit lifecycle: handler failure ⇒ release + rethrow (the request
+                // never got a body to finalize); a produced response ⇒ release bound
+                // to the body stream's termination (complete / error / client abort).
+                .attempt
+                .flatMap {
+                  case Left(e) => gate.release *> IO.raiseError(e)
+                  case Right(resp) => IO.pure(resp.withBodyStream(resp.body.onFinalize(gate.release)))
+                }
+          }
+    ) // corsWrap(…) — 全出向补 CORS/PNA 头（LAN 直传腿）
   }
+
+  /**
+   * LAN 直传腿的 CORS/PNA 头集（console-fastpath 批 2026-10-23·腿③）：
+   * ACAO `*`（凭据 = URL 内 ticket，与 nf-reach 同族纪律）+ PNA 放行 +
+   * 前端读数面（Content-Length 进度 / Content-Range seek / Retry-After 退避 /
+   * X-Nf-Reason 诊断头都要 Expose 才读得到——跨源默认只暴露 safelist）。
+   */
+  private val NfFileCorsHeaders: List[Header.ToRaw] = List(
+    Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Origin"), "*"),
+    Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Private-Network"), "true"),
+    Header.Raw(
+      org.typelevel.ci.CIString("Access-Control-Expose-Headers"),
+      "content-length, content-range, accept-ranges, last-modified, etag, retry-after, x-nf-reason"
+    )
+  )
 
   /**
    * C2-2: `POST /api/nf-ticket` — mint short-lived, per-path read tickets.
@@ -320,15 +349,23 @@ object NfFileRoutes:
                 .traverse { p =>
                   nfFileVerdictTolerant(p, policy, home).flatMap {
                     case NfVerdict.Allowed(real, _) =>
-                      store.issue(sessionId, real.toString).map { issued =>
-                        Right(
-                          p,
-                          Json.obj(
-                            "t" -> issued.token.asJson,
-                            "exp" -> issued.expiresAt.asJson,
-                            "uses" -> issued.remaining.asJson
-                          )
-                        )
+                      // size 并键（console-fastpath 批 2026-10-23·腿③）：浏览端
+                      // 拿它做 LAN 直传阈值判定（≥4MiB 且近路在册 ⇒ 直连取）。
+                      // verdict 与 stat 之间文件可能消失/变化——stat 失败回 0
+                      // （= 未知尺寸，前端按不直传处理，诚实降级）。
+                      IO.blocking(java.nio.file.Files.size(real)).attempt.map(_.getOrElse(0L)).flatMap {
+                        size =>
+                          store.issue(sessionId, real.toString).map { issued =>
+                            Right(
+                              p,
+                              Json.obj(
+                                "t" -> issued.token.asJson,
+                                "exp" -> issued.expiresAt.asJson,
+                                "uses" -> issued.remaining.asJson,
+                                "size" -> size.asJson
+                              )
+                            )
+                          }
                       }
                     case denied: NfVerdict.Denied =>
                       IO.pure(Left(p, Json.obj("path" -> p.asJson, "reason" -> denied.reason.asJson)))

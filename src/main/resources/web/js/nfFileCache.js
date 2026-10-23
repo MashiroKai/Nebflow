@@ -516,8 +516,11 @@ export async function nfViewerSource(p) {
     return { url, cached: true };
   }
   // 未命中：票据链（动态 import——静态边会成环：nfTicket ← viewers/shared ← …）。
+  // 大文件 LAN 直传腿（console-fastpath 批·腿③）：≥4MiB 且近路在册 ⇒ 绝对
+  // URL 跨源直取（凭据仍 ticket，服务端 CORS/PNA 已放）；否则原票据腿。
   const nfTicket = await import('./nfTicket.js');
-  const res = await fetchBlobWithProgress(await nfTicket.ticketUrl(absPath), onProgress || null);
+  const directUrl = await nfTicket.largeFileDirectUrl(absPath);
+  const res = await fetchBlobWithProgress(directUrl || await nfTicket.ticketUrl(absPath), onProgress || null);
   // 入账带 hash（设备取件腿已知时）+ srcPath（事件失效/对账的路径锚）。
   void nfCachePut(cacheKey, res.blob, res.version, {
     hash: knownHashes.get(cacheKey) || '',
