@@ -1419,7 +1419,17 @@ export function initInput(view) {
       clearTimeout(state.sessionBusyTimeouts[sid]);
       delete state.sessionBusyTimeouts[sid];
     }
-    import('./chat.js').then(({ clearBusy }) => clearBusy(sid));
+    // queue-idle-flush（2026-10-23）：stop = 真实 busy→idle 迁移，排队消息照常触发
+    // 投递（终态 `interrupted` 帧到场会再触发一次——同一 pending 槽去重；帧丢失时本
+    // 腿兜底，队列不再滞留）。🔴 触发必须挂在 clearBusy **之后**（同一回调内）：
+    // clearBusy 走动态 import 异步腿，若触发在同步面先发，定时器 +50ms 可能落在
+    // 「busy 尚未清 + 上次派发后有新轮事实」的窗口里，被运行中事实闸当成本轮仍在
+    // 跑而拦下（无 re-arm = 触发丢失）——正是实测撞到的滞留形态。派发闸的冷却窗/
+    // 运行中事实闸照旧把关。
+    import('./chat.js').then(({ clearBusy }) => {
+      clearBusy(sid);
+      state.scheduleQueueDrain?.(sid);
+    });
   };
 
   // Element-level IME bookkeeping (⑤ 收归) — the keyboard decision below reads

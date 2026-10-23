@@ -151,6 +151,12 @@ export default {
   turnConfirmTimers: {},
   armTurnConfirm: null,
   cancelTurnConfirm: null,
+  // queue-idle-flush (2026-10-23): cross-module seam for the queued-message
+  // drain trigger (owner body scheduleQueueDrain lives in main.js). Stop
+  // button (input.js) and the watchdog true-death close (chat.js) are both
+  // REAL busy→idle transitions — after clearing busy they must trigger the
+  // queue drain, or queued items strand with the UI showing idle.
+  scheduleQueueDrain: null,
   // Confirmation window (ms). A real root-session turn is confirmed by the
   // engine's sessionBusy{busy:true} within RTT of acceptance (AgentIdle emits
   // it before the LLM call). Overridable for spec timing.
