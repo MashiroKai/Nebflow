@@ -12,9 +12,25 @@
 //     按 agentId 键，镜像 avatarCache.js 的 branding 命名空间键位）；名称就地编辑
 //     （回车保存，写穿既有 display-name 机制）；渲染走 avatarRender.js 复用池。
 //
+// 边界（identity 批任务书）：本模块只接会话头/头像两端同款 + profile 面板适肤；
+// 功能逻辑零重造（存储/avatarCache 同键位、渲染/avatarRender 同池、名称/既有
+// display-name 机制同写点）。
+//
 // 持久/同步腿（2026-10-21 诊断批症状⑧）：本地优先照旧（读先 localStorage，服务端
-// 作缺键回填 + 跨端载体），写入 fire-and-forget 写穿（失败静默）；上传路径 PUT
-// /api/agents/:name/avatar，reset 的 DELETE 腿随按钮一并退役（upload 仍写穿）。
+// 作缺键回填 + 跨端载体），写入 fire-and-forget 写穿（失败静默——内存态已成立，
+// 下次 list/探针以服务端为准自纠）；上传 PUT /api/agents/:name/avatar；「重置
+// 头像」按钮已随面板合并批退役（作者令②），DELETE 分支保留供跨端清除收敛语义。
+//
+// identity-sync 批（2026-10-23，作者令「名称和头像还是没有跨机同步」）：v1 的
+// 「本地有值就永不下拉」正是仍不同步的根因——本端 localStorage 旧键永远遮住
+// 服务端新值（另一端写入/清除都看不见）。本批改 **sha 对账收敛**：
+//   · 本地条目升级为 {dataUrl, sha, at}（v1 裸 dataURL 旧值宽容迁移）；
+//   · 收敛探针 GET /api/agents/:name/avatar/meta（引擎新面，零字节）——sha 异/
+//     缺才拉一次字节回填；服务端 404 ⇒ 服务端已清（他端 reset）⇒ 本地键清除；
+//   · 本机写入即知 sha（crypto.subtle）⇒ 写完即收敛态，探针零抖动；
+//   · 本机写后 15s 静默窗（自己的 PUT 在途时探针不误判 404）；
+//   · WS 重连 / `agentIdentityChanged`（引擎跨机收敛落地广播）⇒ 强制对账 + 重绘
+//     ——另一台机器改完，这台在会话恢复/重连后即可见。
 
 import { key } from './branding.js';
 import state from './state.js';
@@ -22,6 +38,7 @@ import { createIconsIn } from './utils.js';
 import { avatarImgNode } from './avatarRender.js';
 import { rootDisplayName, isRootNamed } from './rootName.js';
 import { t } from './i18n.js';
+import { onReconnect } from './ws.js';
 
 /** 头像存储键（镜像 avatarCache.js：branding 命名空间 + 按身份键一条目）。 */
 function avatarKey(agentName) { return key(`agent_avatar_${agentName || 'Nebula'}`); }
@@ -33,18 +50,57 @@ function authHeaders() {
   return tok ? { Authorization: `Bearer ${tok}` } : {};
 }
 
-function readStored(agentName) {
-  try { return localStorage.getItem(avatarKey(agentName)) || ''; } catch { return ''; }
+/**
+ * 读本地条目。v2 形态 = JSON `{dataUrl, sha, at}`；v1 形态 = 裸 dataURL 字符串
+ * （宽容迁移：sha 视为未知 ''，首次对账时补戳）。损坏 ⇒ null（回落首字母圆牌）。
+ */
+function readEntry(agentName) {
+  try {
+    const raw = localStorage.getItem(avatarKey(agentName)) || '';
+    if (!raw) return null;
+    if (raw.startsWith('{')) {
+      const j = JSON.parse(raw);
+      if (j && typeof j.dataUrl === 'string') return { dataUrl: j.dataUrl, sha: typeof j.sha === 'string' ? j.sha : '' };
+      return null;
+    }
+    return { dataUrl: raw, sha: '' }; // v1 裸 dataURL
+  } catch { return null; }
 }
 
-function writeStored(agentName, dataUrl) {
+/** dataURL → 本地条目写盘（含 sha；null dataUrl = 清键）。 */
+function writeEntry(agentName, dataUrl, sha) {
   try {
-    if (dataUrl) localStorage.setItem(avatarKey(agentName), dataUrl);
-    else localStorage.removeItem(avatarKey(agentName));
+    if (dataUrl) {
+      localStorage.setItem(avatarKey(agentName), JSON.stringify({ dataUrl, sha: sha || '', at: Date.now() }));
+    } else {
+      localStorage.removeItem(avatarKey(agentName));
+    }
   } catch { /* 隐私模式/配额满：本地头像为尽力而为（回落首字母圆牌） */ }
 }
 
-/** 服务端写穿（fire-and-forget）：上传/清除头像到引擎共享存储（跨设备同步载体）。 */
+/** dataURL 的 base64 载荷 → sha256 hex（crypto.subtle；引擎侧同算法同值）。 */
+async function sha256OfDataUrl(dataUrl) {
+  try {
+    const b64 = String(dataUrl).split(',')[1] || '';
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  } catch { return ''; }
+}
+
+/** 本机写入时刻（agentName → ts）：静默窗判据（写后 15s 内不对账，防在途 PUT 误判）。 */
+const localWriteAt = new Map();
+const LOCAL_WRITE_GRACE_MS = 15000;
+/** 对账节流（agentName → ts）：常规 paint 30s 至多一次；强制触发绕过。 */
+const lastMetaCheckAt = new Map();
+const META_CHECK_THROTTLE_MS = 30000;
+
+/**
+ * 服务端写穿（fire-and-forget）：上传/清除头像到引擎共享存储（跨设备同步载体）。
+ * 引擎落盘后会外推到全部已配对设备（identity-sync 通道），另一台机器按戳收敛。
+ */
 function pushAvatar(agentName, dataUrl) {
   const path = `/api/agents/${encodeURIComponent(agentName || 'Nebula')}/avatar`;
   const opts = dataUrl
@@ -53,23 +109,40 @@ function pushAvatar(agentName, dataUrl) {
   fetch(path, opts).catch(() => { /* 离线/未落座：本地态照旧，服务端待下次写入收敛 */ });
 }
 
-/** 服务端缺键回填（「本地优先」的另一半）：localStorage 无头像时向引擎取一次，
- *  命中即写回本地键并触发重绘。按 agentName 去重（一次在飞）；404 = 引擎也无
- *  自定义头像（首字母圆牌口径），静默。 */
+/**
+ * sha 对账收敛（identity-sync 批）：meta 探针（零字节）→ sha 异/缺才拉字节回填；
+ * 服务端 404 = 他端已清 ⇒ 本地键清除（v1 跨端 reset 不收敛的闭合）。
+ * force = 绕过节流（重连 / agentIdentityChanged 触发）。
+ */
 const avatarSyncInFlight = new Set();
-function pullAvatarIfMissing(agentName, repaint) {
+function convergeAvatar(agentName, repaint, force) {
   const name = agentName || 'Nebula';
   if (avatarSyncInFlight.has(name)) return;
+  const wrote = localWriteAt.get(name) || 0;
+  if (wrote && Date.now() - wrote < LOCAL_WRITE_GRACE_MS) return; // 自己的 PUT 在途
+  const last = lastMetaCheckAt.get(name) || 0;
+  if (!force && Date.now() - last < META_CHECK_THROTTLE_MS) return;
   avatarSyncInFlight.add(name);
-  fetch(`/api/agents/${encodeURIComponent(name)}/avatar`, { headers: authHeaders() })
+  lastMetaCheckAt.set(name, Date.now());
+  fetch(`/api/agents/${encodeURIComponent(name)}/avatar/meta`, { headers: authHeaders() })
     .then(async (r) => {
+      if (r.status === 404) {
+        // 服务端无自定义头像：本地还有值 ⇒ 他端清除已落引擎，本地收敛清掉。
+        if (readEntry(name)) { writeEntry(name, null, ''); repaint(); }
+        return;
+      }
       if (!r.ok) return;
-      const buf = await r.arrayBuffer();
+      const j = await r.json().catch(() => null);
+      const sha = j && typeof j.sha256 === 'string' ? j.sha256 : '';
+      if (!sha) return;
+      const e = readEntry(name);
+      if (e && e.sha === sha) return; // 已收敛（含 v1 旧值补戳后的常态）
+      // sha 异/缺：拉一次字节回填（引擎回字节；mime 以 Blob 嗅探为准，回落 jpeg）。
+      const resp = await fetch(`/api/agents/${encodeURIComponent(name)}/avatar`, { headers: authHeaders() });
+      if (!resp.ok) return;
+      const buf = await resp.arrayBuffer();
       if (!buf.byteLength) return;
-      // 引擎只回字节（X-Avatar-Content-Type 是通配）；回填 dataURL 用通用 jpeg
-      // 前缀不可靠 ⇒ 以浏览器嗅探（Blob type）为准，回落 jpeg。
       const blob = new Blob([buf]);
-      const mime = blob.type || 'image/jpeg';
       const dataUrl = await new Promise((resolve) => {
         const fr = new FileReader();
         fr.onload = () => resolve(String(fr.result || ''));
@@ -77,10 +150,10 @@ function pullAvatarIfMissing(agentName, repaint) {
         fr.readAsDataURL(blob);
       });
       if (!dataUrl) return;
-      writeStored(name, dataUrl);
+      writeEntry(name, dataUrl, sha);
       repaint();
     })
-    .catch(() => { /* 离线/未落座：维持本地/首字母口径 */ })
+    .catch(() => { /* 离线/未落座：维持本地口径 */ })
     .finally(() => avatarSyncInFlight.delete(name));
 }
 
@@ -129,8 +202,11 @@ function paintSlot() {
   const label = headerLabel(agentName);
   slot.setAttribute('aria-label', t('profile.openAria'));
   slot.title = t('profile.openAria');
-  let dataUrl = readStored(agentName);
-  if (!dataUrl) pullAvatarIfMissing(agentName, paintSlot); // 本地缺键 → 引擎回填（跨端同步读腿）
+  const entry = readEntry(agentName);
+  const dataUrl = (entry && entry.dataUrl) || '';
+  // 收敛探针：本地缺值（跨端首次可见）或旧值未对过账（v1 裸值迁移）——节流内
+  // 不重复发；强制对账走 agentIdentityChanged / 重连钩子。
+  if (!dataUrl || !entry.sha) convergeAvatar(agentName, paintSlot, false);
   const img = dataUrl ? avatarImgNode(dataUrl) : null; // 复用池：同 dataURL 零重解码
   if (img) {
     img.className = 'agent-avatar-img';
@@ -184,7 +260,8 @@ export function buildProfilePane() {
   previewBox = document.createElement('button');
   previewBox.type = 'button';
   previewBox.className = 'ap-avatar-box';
-  // 作者令②：点击头像本体 = 换头像（整盒为按钮；aria 走「上传头像」既有键）。
+  // 作者令②（面板合并批定形）：点击头像本体 = 换头像（整盒为按钮；aria 走
+  // 「上传头像」既有键）——无独立上传/重置按钮；清除收敛走 meta 404 腿。
   previewBox.addEventListener('click', () => fileInput && fileInput.click());
 
   fileInput = document.createElement('input');
@@ -196,11 +273,13 @@ export function buildProfilePane() {
     const f = fileInput.files && fileInput.files[0];
     fileInput.value = '';
     if (!f || !f.type.startsWith('image/')) return;
-    downscaleToFile(f).then((dataUrl) => {
+    downscaleToFile(f).then(async (dataUrl) => {
       if (!dataUrl) return;
       const name = currentAgentName();
-      writeStored(name, dataUrl);
-      pushAvatar(name, dataUrl); // 引擎写穿：另一端经缺键回填/下次拉取收敛
+      const sha = await sha256OfDataUrl(dataUrl); // 写入即收敛态（引擎同算法同值）
+      writeEntry(name, dataUrl, sha);
+      localWriteAt.set(name, Date.now()); // 静默窗：自己的 PUT 在途期间不对账
+      pushAvatar(name, dataUrl); // 引擎写穿：对端按 sha 对账/按 LWW 戳收敛
       paintSlot();
       paintPreview();
     }).catch(() => { /* 读取失败：维持现状 */ });
@@ -274,8 +353,9 @@ function paintPreview() {
   if (!previewBox) return;
   const agentName = currentAgentName();
   const label = headerLabel(agentName);
-  let dataUrl = readStored(agentName);
-  if (!dataUrl) pullAvatarIfMissing(agentName, paintPreview); // 同 paintSlot：缺键回填
+  const entry = readEntry(agentName);
+  const dataUrl = (entry && entry.dataUrl) || '';
+  if (!dataUrl || !entry.sha) convergeAvatar(agentName, paintPreview, false); // 同 paintSlot：缺值/未对账
   const img = dataUrl ? avatarImgNode(dataUrl) : null;
   if (img) {
     img.className = 'ap-avatar-img';
@@ -354,5 +434,24 @@ export function initAgentProfile() {
     paintSlot();
     syncPaneLocale();
     fillName();
+  });
+  // identity-sync 批：引擎跨机收敛落地广播（另一台机器改了名字/头像，本端引擎
+  // 收敛落盘后 wsHub 推 agentIdentityChanged）⇒ 强制对账（绕过节流）+ 全量重绘
+  // （fillName/paintPreview 自带空值守卫——独立面板退役后 panel 变量已不存在）。
+  window.addEventListener('nebflow-agent-identity-changed', () => {
+    const name = currentAgentName();
+    paintSlot();
+    convergeAvatar(name, paintSlot, true);
+    fillName();
+    paintPreview();
+    convergeAvatar(name, paintPreview, true);
+  });
+  // WS 重连 = 会话恢复：强制对账一次（离线期间他端的改名/换头像/清除在此收敛）。
+  onReconnect(() => {
+    const name = currentAgentName();
+    paintSlot();
+    convergeAvatar(name, paintSlot, true);
+    fillName();
+    paintPreview();
   });
 }

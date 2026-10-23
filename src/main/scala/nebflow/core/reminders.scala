@@ -109,6 +109,11 @@ object SystemReminders:
     injectTime: Boolean = true,
     mountedProjectsDelta: String = "",
     pluginSurfaceChange: Option[PluginSurfaceChange] = None,
+    /**
+     * identity-sync 批（2026-10-23）：展示身份（名字/头像）变更的预渲染差量文本
+     * （renderIdentityChange 产物）；空 = 无变化 = 零注入。
+     */
+    identityDelta: String = "",
     /** F-2：true = 本轮的请求级提醒注定不被注入（compact / ask）⇒ 不产生对象、不计数。 */
     suppressContextReminders: Boolean = false,
     /** F-2：device 变化的计数键（成员集合，deviceId 面）；空 = 不参与去重（旧行为）。 */
@@ -131,7 +136,8 @@ object SystemReminders:
               // reminder whenever text is non-empty (schedule stays Nebula-only).
               tasksReminder(taskListText),
               languageReminder(language),
-              projectsReminder(mountedProjectsDelta)
+              projectsReminder(mountedProjectsDelta),
+              identityReminder(identityDelta)
             ).flatten
         reminders = (if injectTime then collectAll(isUserTurn = true) else Nil) ++
           contextReminders ++
@@ -213,6 +219,35 @@ object SystemReminders:
   /** Language setting changed since systemStable was built (cache v2). */
   private def languageReminder(language: Option[String]): Option[SystemReminder] =
     language.map(lang => SystemReminder("language", s"Language changed: respond in $lang"))
+
+  /**
+   * Display identity (name / avatar) changed since systemStable was built
+   * (identity-sync 批 2026-10-23，作者令「对名称的修改要落实到智能体的记忆里，
+   * 让他知道自己的头像和名字」). Caller supplies the pre-rendered delta text
+   * (current values authoritative + what they replace) — empty = no change ⇒
+   * no injection. Same shape as the devices/projects delta channels: the
+   * stable prefix picks the new values up at the next lifecycle rebuild; this
+   * reminder is the mid-session channel.
+   */
+  private def identityReminder(deltaText: String): Option[SystemReminder] =
+    if deltaText.isEmpty then None
+    else Some(SystemReminder("identity", deltaText))
+
+  /**
+   * Render the authoritative identity-change reminder body (pure — spec-testable;
+   * public — the caller is AgentSessionExecution, nebflow.agent).
+   * `current` lines are the freshly re-read `## Self` body; `previous` is what
+   * the session last saw ("" = the session had no identity section before).
+   */
+  def renderIdentityChange(previous: String, current: String): String =
+    val sb = scala.collection.mutable.ListBuffer.empty[String]
+    sb += "Your display identity changed — these are the authoritative values now:"
+    if current.nonEmpty then current.linesIterator.foreach(l => if l.nonEmpty then sb += l.replaceFirst("^- ", "- "))
+    else sb += "- (no display name / no custom avatar — default identity)"
+    sb += s"(Previous: ${if previous.nonEmpty then previous.replace("\n", "; ") else "default identity"})"
+    sb += "Earlier mentions of your name or avatar in this conversation are superseded."
+    sb.mkString("\n")
+  end renderIdentityChange
 
   /**
    * Mounted projects changed since systemStable was built (cache v2,

@@ -107,7 +107,16 @@ object PromptSections:
      * （ExecutorRegistry.availableLine，adapterReady ＋ detected）。仅根代理
      * 渲染；非根会话空串 = 段不注入。
      */
-    executorsText: String = ""
+    executorsText: String = "",
+    /**
+     * Pre-rendered `## Self` section body (identity-sync 批 2026-10-23): the
+     * agent's display name / avatar self-knowledge — rendered by
+     * AgentIdentityStore.selfSectionText from the CURRENT display face. Empty
+     * when the agent carries no non-default identity (no name, no custom
+     * avatar) ⇒ section not injected ⇒ byte-identical prompt for everyone
+     * else (zero prefix-cache impact until identity actually exists).
+     */
+    identitySelfText: String = ""
   )
 
   object PromptContext:
@@ -374,6 +383,18 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
         if ctx.isFlowNode then flowWorkerIdentityBlock(ctx.userFacingNode)
         else if !ctx.isTeamLead && ctx.agentCategory == "team" then teamMemberIdentityBlock
         else ""
+    ),
+
+    // --- identity-sync 批（2026-10-23）：智能体自我认知段（作者令「让他知道
+    // 自己的头像和名字」）。数据 = 展示面现读（AgentIdentityStore：displayName
+    // + 头像文件 sha）；**只在非默认身份时产出**——无名无头像的 agent 返回空串
+    // = 段不注入 = 既有会话字节零变化（前缀缓存零失效）。段体随 systemStable
+    // 在生命周期节点重建；中期改名/换头像由 order-396 同族的 identity 变更提醒
+    // （SystemReminders）即时报，不在此处使缓存失效。
+    PromptSection.dynamic(
+      396,
+      condition = _.identitySelfText.nonEmpty,
+      renderer = ctx => s"## Self\n\n${ctx.identitySelfText}"
     ),
 
     // --- 阶段 2d（§D.1-14/§D.2）：原 order 400/410/415 条件工具指南段已删除

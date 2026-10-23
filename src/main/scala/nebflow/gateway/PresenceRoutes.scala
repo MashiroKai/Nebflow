@@ -11,7 +11,7 @@ import io.circe.{Json, JsonObject, parser}
 import nebflow.agent.{AgentCore, SharedResources}
 import nebflow.core.*
 import nebflow.core.daemon.*
-import nebflow.core.entity.{EntityLoader, NodeRoute}
+import nebflow.core.entity.{AgentIdentityStore, EntityLoader, NodeRoute}
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.core.hotrestart.HealthPayload
 import nebflow.core.project.*
@@ -988,11 +988,16 @@ private[gateway] object PresenceRoutes:
       // agentsData 行（handleListAgents 折叠 agent.json）与 rootName 探针（静态
       // agents/<name>/agent.json）同源 ⇒ 同引擎多端天然收敛。
       //
+      // identity-sync 批（2026-10-23）：落盘单点收拢进 AgentIdentityStore（加
+      // identityUpdatedAt LWW 戳），写成功后经 AgentIdentitySync 把身份态外推到全部
+      // 已配对设备（presence/relay 双腿既有通道）——多机各跑一个引擎实例时的跨机收敛
+      // 腿；Soul.md 自我认知段落盘也由该写面统一触发（落到智能体的记忆）。
+      //
       // 🔴 出生即包鉴权闸（新路由禁裸奔过夜）：全部三面 withAuth（ApiFull 会话/Bearer），
       //    与 GET /agents/:name 同 rail；agentName 白名单校验（拒路径穿越形态）。
 
       // PUT /agents/:name/display-name —— {"displayName": "..."}（trim 后 1–64 字）。
-      // 写 agents/<name>/agent.json 的 displayName（AtomicJson 原子合并；root 沿用
+      // 写 agents/<name>/agent.json 的 displayName（AgentIdentityStore 单点：根名沿用
       // OnboardingArtifacts.writeDisplayName 同款 name 键补底纪律，非 root 不补——其
       // agent.json 恒有 name 键）。空值不做「清名」：显示名缺失的合法形态 = 从未起名
       // （onboarding 语义），面板侧置空走「还原机制名」= 不写盘。
@@ -1005,25 +1010,10 @@ private[gateway] object PresenceRoutes:
               if next.isEmpty || next.length > 64 then
                 BadRequest(Json.obj("error" -> "displayName must be 1-64 chars".asJson))
               else
-                IO.blocking {
-                  val dir = PathUtil.dataRoot / "agents" / agentName
-                  val jsonPath = dir / "agent.json"
-                  os.makeDir.all(dir)
-                  val existing =
-                    if os.exists(jsonPath) then
-                      io.circe.parser.parse(os.read(jsonPath)).toOption.getOrElse(io.circe.Json.obj())
-                    else io.circe.Json.obj()
-                  val base =
-                    if agentName == nebflow.actor.RootAgentIdentity.Name && !existing.asObject.exists(
-                        _.contains("name")
-                      )
-                    then existing.deepMerge(Json.obj("name" -> agentName.asJson))
-                    else existing
-                  AtomicJson.writeSync(
-                    jsonPath,
-                    base.deepMerge(Json.obj("displayName" -> next.asJson)).noSpaces
-                  )
-                }.flatMap(_ => Ok(Json.obj("saved" -> true.asJson, "displayName" -> next.asJson)))
+                AgentIdentityStore
+                  .writeDisplayName(agentName, next)
+                  .flatTap(_ => fireIdentityWriteTail(agentName))
+                  .flatMap(_ => Ok(Json.obj("saved" -> true.asJson, "displayName" -> next.asJson)))
               end if
             }
         }
@@ -1042,11 +1032,10 @@ private[gateway] object PresenceRoutes:
                 case Decoded(contentType, b64) =>
                   scala.util.Try(java.util.Base64.getDecoder.decode(b64)).toOption match
                     case Some(bytes) if bytes.nonEmpty && bytes.length <= 200_000 =>
-                      IO.blocking {
-                        val dir = PathUtil.dataRoot / "agents" / agentName
-                        os.makeDir.all(dir)
-                        os.write.over(dir / "avatar", bytes)
-                      }.flatMap(_ => Ok(Json.obj("saved" -> true.asJson, "bytes" -> bytes.length.asJson)))
+                      AgentIdentityStore
+                        .writeAvatar(agentName, bytes)
+                        .flatTap(_ => fireIdentityWriteTail(agentName))
+                        .flatMap(_ => Ok(Json.obj("saved" -> true.asJson, "bytes" -> bytes.length.asJson)))
                     case Some(_) =>
                       BadRequest(Json.obj("error" -> "avatar must be 1-200KB".asJson))
                     case None =>
@@ -1054,6 +1043,24 @@ private[gateway] object PresenceRoutes:
                 case _ =>
                   BadRequest(Json.obj("error" -> "dataUrl must be a base64 image data URL".asJson))
               end match
+            }
+        }
+
+      // GET /agents/:name/avatar/meta —— 前端收敛探针（identity-sync 批 2026-10-23）：
+      // 只回元数据（sha256 + LWW 戳），零字节——旧本地键遮住服务端新值的根因修复面
+      // （本地有值也从不下拉字节 ⇒ 换 meta 探针对账，sha 异才拉一次字节回填）。
+      case req @ GET -> Root / "agents" / agentName / "avatar" / "meta" =>
+        withAuth(req) {
+          if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+          else
+            IO.blocking(AgentIdentityStore.readRec(agentName)).flatMap { rec =>
+              rec.avatarSha256 match
+                case None => NotFound(Json.obj("error" -> "no custom avatar".asJson))
+                case Some(sha) =>
+                  Ok(
+                    Json.obj("sha256" -> sha.asJson, "updatedAt" -> rec.updatedAt.asJson)
+                      .deepMerge(Json.obj("displayName" -> rec.displayName.asJson))
+                  )
             }
         }
 
@@ -1097,16 +1104,17 @@ private[gateway] object PresenceRoutes:
         }
 
       // DELETE /agents/:name/avatar —— reset 面（面板「还原默认」走这里 + 本地键清除）。
-      // 幂等：无头像也 200（跨端收敛语义——「哪端先清哪端生效」，另一端本地键仍优先生效
-      // 直到其本地也清/或 localStorage 缺键走服务端读——v1 已知限制，见诊断报告）。
+      // 幂等：无头像也 200。identity-sync 批：清除同样加 LWW 戳 + 外推——对端按戳
+      // 收敛清掉自己的头像文件，前端 meta 探针 404 ⇒ 本地键清除（v1「另一端本地
+      // 旧键仍优先」的已知限制就此闭合）。
       case req @ DELETE -> Root / "agents" / agentName / "avatar" =>
         withAuth(req) {
           if !isValidAgentName(agentName) then BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
           else
-            IO.blocking {
-              val p = PathUtil.dataRoot / "agents" / agentName / "avatar"
-              if os.exists(p) then os.remove(p)
-            }.flatMap(_ => Ok(Json.obj("cleared" -> true.asJson)))
+            AgentIdentityStore
+              .clearAvatar(agentName)
+              .flatTap(_ => fireIdentityWriteTail(agentName))
+              .flatMap(_ => Ok(Json.obj("cleared" -> true.asJson)))
         }
 
       // (2026-09-20 device-face hardening batch) 11-route takedown: GET /skills was
@@ -2055,6 +2063,13 @@ private[gateway] object PresenceRoutes:
 
   private def isValidAgentName(name: String): Boolean =
     name.nonEmpty && name.matches("^[a-zA-Z0-9][a-zA-Z0-9._-]*$") && !name.contains("..")
+
+  /**
+   * 身份写面统一收尾（identity-sync 批 2026-10-23）：Soul.md 记忆腿 + 跨机外推，
+   * fire-and-forget（响应不等它；失败只留元数据日志，头像字节不入日志）。
+   */
+  private def fireIdentityWriteTail(agentName: String): IO[Unit] =
+    IO(nebflow.neblink.AgentIdentitySync.afterLocalWrite(agentName).unsafeRunAndForget())
 
   /**
    * 令 1 派发开关的 REST 实现单点（`/plugins/:name/enable|disable`）。写 `plugins

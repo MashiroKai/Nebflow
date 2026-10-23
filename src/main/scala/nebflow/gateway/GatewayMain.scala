@@ -1429,6 +1429,16 @@ object GatewayMain extends IOApp:
                                               // 跳过（DeviceDelegate.initialize 自带 fail-soft 门）。
                                               nebflow.core.delegate.DeviceDelegate.initialize(sharedResourcesFinal)
 
+                                              // identity-sync 批（2026-10-23）：智能体名称/头像
+                                              // 跨引擎收敛通道的收件面装配——数据通道 handler +
+                                              // peer 变化对账推。与 DeviceDelegate 同缝同序；
+                                              // 未接线（NebLink 未配置）⇒ initialize 内显式
+                                              // WARN + 跳过（单机形态零行为）。
+                                              nebflow.neblink.AgentIdentitySync.initialize(
+                                                Some(neblinkService),
+                                                (json: io.circe.Json) => wsHub.broadcast(json)
+                                              )
+
                                               // --- Daemon Service (external process lifecycle) ---
                                               val daemonService = new DaemonService(dispatcher)
                                               val sharedResourcesWithDaemon = sharedResourcesFinal.copy(
