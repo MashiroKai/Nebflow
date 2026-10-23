@@ -27,10 +27,17 @@
 //   D 环锚常驻顶带 —— 对称批的「环开沉降 canvas 垂直中点」（.ring-open
 //     --ring-dy 双轴居中）撤销；横轴中线居中保持，环开态纵轴 = 常态顶带位
 //     （零沉降，绝不落到 canvas 中部）
-//   E 顶部越出克制 —— 上缘位允许略微越出面板顶缘（负向超出正常且允许，越出
-//     段被 overflow:hidden 裁掉），量 = 胶囊自身高度的一小部分（视觉 ~1/3 胶囊
-//     高，canvas.js RING_TOP_OUT 布局系数 0.8 折算）；A 令对称（|y| 相等 +
-//     rotateX 反号等幅）保持
+//   E 顶部越出克制 —— 上缘位允许略微越出面板顶缘（负向超出正常且允许），
+//     量 = 胶囊自身高度的一小部分（视觉 ~1/3 胶囊高，canvas.js RING_TOP_OUT
+//     布局系数 0.8 折算）；A 令对称（|y| 相等 + rotateX 反号等幅）保持
+//
+// 六项批（作者 2026-10-23 15:10 附截图，六项②「顶部越出去掉截断感」逐字
+// 「让胶囊真能渲染超出 canvas 顶缘…消灭硬裁切线」）：
+//   F 真越出 —— 环层挂 body（#canvas-capsule-ring position:fixed z-246），
+//     面板 overflow:hidden 裁切盒失效：上缘位探出段真实渲染在 canvas 顶缘外；
+//     E 令越出量克制档保持不变。配套：缘位可点性走稳态门（展开 0.36s 过渡后
+//     .steady 才接 pointer —— 展开中胶囊从指针位掠过会抢标题头按压/拖划），
+//     中心位恒 pointer-events:none 落穿标题头手势链（CR2-9/CR2-9b 钉）。
 //
 // 运行：node tests/canvas-capsule-ring.spec.mjs
 // （boot 同 canvas-cardhead-capsule.spec.mjs：隔离静态服务器 + workspace-open-item
@@ -221,8 +228,9 @@ const ringInfo = (page) => page.evaluate(() => {
     `ys=${hov.edgeYs.join('/')} rxs=${hov.edgeRxs.join('/')} filter=${hov.edgeBlur}`);
 
   /* ② E 令·顶部越出克制（修正批）：环锚常驻顶带 —— 上缘位允许略微越出面板
-     顶缘（负向超出正常且允许，越出段被 overflow:hidden 裁掉），量 = 胶囊自身
-     高度的一小部分（0 < 越出 ≤ 0.5×胶囊投影高约束）；下缘位仍全在面板内 */
+     顶缘（负向超出正常且允许），量 = 胶囊自身高度的一小部分（0 < 越出 ≤
+     0.5×胶囊投影高约束）；下缘位仍全在面板内（真越出批后探出段真实渲染，
+     数值断言同一几何） */
   const clip = await page.evaluate(() => {
     const p = document.getElementById('canvas-panel').getBoundingClientRect();
     const rs = [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule.is-edge')]
@@ -236,6 +244,30 @@ const ringInfo = (page) => page.evaluate(() => {
   ok('CR2-6 顶部越出克制（修正批）：上缘位越出顶缘 0 < out ≤ 0.5×胶囊高 + 下缘位不越底缘',
     clip.n === 2 && topOut > 0 && topOut <= clip.capH * 0.5 + 2 && clip.maxBottom <= clip.pBottom - 1,
     `out=${topOut.toFixed(1)}px (cap ${clip.capH}px) / maxBottom=${clip.maxBottom.toFixed(1)} vs ${clip.pBottom.toFixed(1)}`);
+
+  /* ② E 令·真越出（六项批 2026-10-23「顶部越出去掉截断感」）：环层挂 body ——
+     面板 overflow:hidden 裁不到，上缘位探出段真实渲染在 canvas 顶缘外（修前
+     硬裁切线退役）；中心位恒 pe:none 落穿标题头手势链，缘位可点性走稳态门。 */
+  const real = await page.evaluate(() => {
+    const panel = document.getElementById('canvas-panel');
+    const ring = document.getElementById('canvas-capsule-ring');
+    const pTop = panel.getBoundingClientRect().top;
+    const edge = [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule.is-edge')]
+      .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0]; // 上缘位（min top），非 DOM 序首 元
+    const er = edge ? edge.getBoundingClientRect() : null;
+    const center = document.querySelector('#canvas-capsule-ring .cr-capsule.is-center');
+    return {
+      ringParent: ring ? ring.parentElement.id || ring.parentElement.tagName : null,
+      panelContainsRing: panel.contains(ring),
+      edgeAbovePanel: er ? er.top < pTop - 0.5 : null,
+      centerPe: center ? getComputedStyle(center).pointerEvents : null,
+    };
+  });
+  ok('CR2-9 真越出（六项②）：环层在面板外（body 层 —— overflow:hidden 裁切盒失效）+ 上缘位 rect 真实高于面板顶缘',
+    real.ringParent === 'BODY' && real.panelContainsRing === false && real.edgeAbovePanel === true,
+    `parent=${real.ringParent} contains=${real.panelContainsRing} edgeAbove=${real.edgeAbovePanel}`);
+  ok('CR2-9b 中心位落穿（六项②配套）：is-center pointer-events none（标题头手势链不受环层遮蔽）',
+    real.centerPe === 'none', `centerPe=${real.centerPe}`);
 
   /* ② B 令·尺寸恒定：常态 → hover 展开 → 环滚动中，胶囊本体宽高全等 + 零缩放 */
   const openRect = await page.evaluate(() => {
@@ -279,14 +311,14 @@ const ringInfo = (page) => page.evaluate(() => {
     !!mat.capsule && JSON.stringify(mat.header) === JSON.stringify(mat.capsule),
     JSON.stringify({ header: mat.header, capsule: mat.capsule }).slice(0, 220));
 
-  /* 证据截图：环开态（环锚顶带 —— 上缘位越出顶缘被裁 + 下缘位下垂；clip 取
-   *  面板顶带含越出段上下文，对比顶缘裁切线） */
+  /* 证据截图：环开态（环锚顶带 —— 上缘位真实越出顶缘渲染（真越出批，无裁切
+   *  线）+ 下缘位下垂；clip 取面板顶外扩，含顶缘外探出段全貌） */
   const shotBox = await page.evaluate(() => {
     const p = document.getElementById('canvas-panel').getBoundingClientRect();
     return { x: Math.max(0, p.left), y: Math.max(0, p.top - 56), width: p.width, height: 260 };
   });
   await page.screenshot({
-    path: join(HERE, '../evidence/20261023_capsule-top-center/shots/1-ring-open-dark.png'),
+    path: join(HERE, '../evidence/20261023_capsule-six/shots/1-ring-open-dark.png'),
     clip: shotBox,
   });
 
@@ -367,7 +399,7 @@ const ringInfo = (page) => page.evaluate(() => {
     return { x: Math.max(0, p.left), y: Math.max(0, p.top), width: p.width, height: 120 };
   });
   await page.screenshot({
-    path: join(HERE, '../evidence/20261023_capsule-top-center/shots/2-rest-dark.png'),
+    path: join(HERE, '../evidence/20261023_capsule-six/shots/2-rest-dark.png'),
     clip: restBox,
   });
 
@@ -555,7 +587,7 @@ const ringInfo = (page) => page.evaluate(() => {
     }),
     `ys=${hovL.edgeYs.join('/')} out=${topOutL.toFixed(1)}px (cap ${clipL.capH}px)`);
   await page.screenshot({
-    path: join(HERE, '../evidence/20261023_capsule-top-center/shots/3-ring-open-light.png'),
+    path: join(HERE, '../evidence/20261023_capsule-six/shots/3-ring-open-light.png'),
     clip: shotBoxL,
   });
   await unhover(page);
@@ -563,7 +595,7 @@ const ringInfo = (page) => page.evaluate(() => {
   ok('L2 亮色：收起回单胶囊（环清 + 标题回位 + 回顶带）', !closedL.open && closedL.n === 0 && closedL.titleOpacity === '1',
     `open=${closedL.open} n=${closedL.n}`);
   await page.screenshot({
-    path: join(HERE, '../evidence/20261023_capsule-top-center/shots/4-rest-light.png'),
+    path: join(HERE, '../evidence/20261023_capsule-six/shots/4-rest-light.png'),
     clip: await page.evaluate(() => {
       const p = document.getElementById('canvas-panel').getBoundingClientRect();
       return { x: Math.max(0, p.left), y: Math.max(0, p.top), width: p.width, height: 120 };

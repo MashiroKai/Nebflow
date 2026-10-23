@@ -685,13 +685,21 @@ body.canvas-open.canvas-overlay #canvas-panel {
   font-size: 14px;
   font-weight: 500;
   box-shadow: var(--frost-shadow);
-  /* 手势跟手位移/按压形（JS 写变量；静止恒等）。 */
+  /* 手势跟手位移/按压形（JS 写变量；静止恒等）。--head-rot：滑删动画批
+     （2026-10-23 六项⑥a）横划跟手微倾变量（deck 同斜率，静止 0deg）。 */
   --head-dx: 0px;
   --head-dy: 0px;
+  --head-rot: 0deg;
   --head-scale: 1;
-  transform: translate3d(var(--head-dx), var(--head-dy), 0) scale(var(--head-scale));
+  transform: translate3d(var(--head-dx), var(--head-dy), 0) scale(var(--head-scale)) rotateZ(var(--head-rot));
   transition: transform 0.18s ease, filter 0.18s ease, box-shadow 0.18s ease;
   touch-action: none;   /* 分区契约：胶囊手势面不劫持内容滚动（spec CC7） */
+}
+/* 滑删动画批（六项⑥a）：横滑甩出态 —— 过渡重挂（跟手段 is-dragging 关过渡，
+   甩出行程/13deg 旋转走 0.24s ease-out 与透明度快淡（0.14s 先行，甩过面板缘
+   前已隐 —— 裁切盒内飞行不露硬切线）；关页签由 JS 在过渡尾消费。 */
+.canvas-header.is-swipe-out {
+  transition: transform 0.24s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.14s ease-out;
 }
 /* 居中批（作者令 2026-10-23）：桌面主窗腿横轴居中 —— -50% 并入 translate3d
    首参（手势 --head-dx 仍是像素位移量，跟手/回弹语义逐字不变）。顶部修正批
@@ -701,7 +709,19 @@ body:not(.mobile-layer):not(.card-window) #canvas-panel .canvas-header {
   top: 10px;
   left: 50%;
   max-width: min(76%, max(220px, calc(100% - 368px)));
-  transform: translate3d(calc(-50% + var(--head-dx, 0px)), var(--head-dy, 0px), 0) scale(var(--head-scale, 1));
+  transform: translate3d(calc(-50% + var(--head-dx, 0px)), var(--head-dy, 0px), 0)
+    scale(var(--head-scale, 1)) rotateZ(var(--head-rot, 0deg));
+}
+/* 尺寸统一批（作者令 2026-10-23 六项⑤「胶囊尺寸跨场景统一」）：deck 叠卡态
+   面板整区 scale(0.85)（--stack-scale），前卡名称条（本胶囊）随之缩到
+   ~30.6px —— 作者实测「面板上的胶囊会小一点」。此处置反量回乘
+   （--stack-scale-inv = 1/0.85，initDeck 注入）：叠卡态胶囊视觉尺寸回到常态
+   主胶囊同一基准（134.9×36.0 档）；基姿（面板盒）不受影响 —— 反量只作用在
+   胶囊自身，手势 --head-dx 仍在最外 translate3d 段，1:1 跟手语义不变。
+   选择器带居中批同款前置（特异性压过上方桌面居中规则）。 */
+body:not(.mobile-layer):not(.card-window) #canvas-panel.stacked .canvas-header {
+  transform: translate3d(calc(-50% + var(--head-dx, 0px)), var(--head-dy, 0px), 0)
+    scale(calc(var(--head-scale, 1) * var(--stack-scale-inv, 1))) rotateZ(var(--head-rot, 0deg));
 }
 /* 按压触感（B：按住即有）——scale + 亮度反馈；阴影不另画（frosted 标准一份） */
 .canvas-header.is-pressed {
@@ -1279,19 +1299,25 @@ body.canvas-deck-narrow .canvas-title { max-width: 46%; }
    太多。」）：胶囊常驻 canvas 顶带横轴中线（§⑨ 居中批，环锚不沉降 —— 对称批
    曾用 hover 沉降 canvas 垂直中点供对称空间，修正批撤销），缘位上下**对称**
    展开（上一签 −edgeY / 下一签 +edgeY，|y| 相等，JS layout()）：上缘位允许
-   略微越出面板顶缘（越出段被 overflow:hidden 裁掉，量克制 = 胶囊自身高度的
-   一小部分 —— canvas.js RING_TOP_OUT），绝不沉向 canvas 中部。胶囊本体尺寸
-   恒定（零缩放零呼吸）；透视由环容器自身 perspective 提供（原点 = 环锚 =
-   胶囊中心 —— .canvas-header 的 perspective 只达直接子级，够不到孙级胶囊）。
-   几何：环容器 0×0 锚在标题头中心（JS 置 left/top px），胶囊 absolute 居中于
-   锚点，transform = translate(-50%,-50%) translateY(--cr-y) translateZ(--cr-z)
-   rotateX(--cr-rx) scale(--cr-press)。
-   按住=按钮语义（作者令③）：胶囊本体 button + 全头 user-select:none。 */
+   略微越出面板顶缘（真越出批 2026-10-23 六项②：环层挂 body —— 裁切盒失效，
+   探出段真实渲染在顶缘外，修前面板 overflow:hidden 的硬裁切线退役；越出量
+   克制 = 胶囊自身高度的一小部分 —— canvas.js RING_TOP_OUT），绝不沉向 canvas
+   中部。胶囊本体尺寸恒定（零缩放零呼吸）；透视由环容器自身 perspective 提供
+   （原点 = 环锚 = 胶囊中心 —— .canvas-header 的 perspective 只达直接子级，
+   够不到孙级胶囊）。
+   几何：环容器 fixed 0×0 锚在标题头中心视口点（JS 置 left/top px），胶囊
+   absolute 居中于锚点，transform = translate(-50%,-50%) translateY(--cr-y)
+   translateZ(--cr-z) rotateX(--cr-rx) scale(--cr-press)。
+   按住=按钮语义（作者令③）：胶囊本体 button + 全头 user-select:none。
+   层序：z-246 —— overlay 面板（240）之上、deck fab（250）与模态族（300+）
+   之下（环只开在非 deck 态，与 fab 不共时）。中心位胶囊 pointer-events:none
+   —— 环层如今叠在标题头之上，中心位事件必须落穿到下方标题头手势链
+   （按压/竖滑/横滑/右键四契约不变；缘位胶囊仍自身可点）。 */
 .capsule-ring {
-  position: absolute;
+  position: fixed;
   width: 0;
   height: 0;
-  z-index: 4;             /* 盖过 .canvas-title（z-auto），pop 钮(5)之上不给 */
+  z-index: 246;
   pointer-events: none;
   perspective: 640px;     /* 透视原点 = 环锚 = 胶囊中心（顶带环锚，不沉降） */
   perspective-origin: 50% 50%;
@@ -1329,7 +1355,17 @@ body.canvas-deck-narrow .canvas-title { max-width: 46%; }
      不再是旧 0.22s 硬切。 */
   transition: transform 0.36s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.32s ease, filter 0.36s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
-.canvas-header.ring-open .cr-capsule { pointer-events: auto; opacity: 1; }
+/* 真越出批：显隐选择器随环层本位（环挂 body，标题头后代选择器够不到）。
+   可点性走 .steady 门（openRing 在 0.36s 展开过渡后加）——环层如今叠在标题头
+   之上，展开动画中的缘位胶囊会从指针位置掠过（起点=中心位），未稳态先拦下
+   按压/拖划会把标题头手势链饿死（CC1/CC2/CC3 实测回归）；稳态后缘位照旧可点
+   （点击切换/右键菜单），中心位恒 pe:none 落穿（见 is-center 块注）。 */
+#canvas-capsule-ring.open .cr-capsule { opacity: 1; }
+#canvas-capsule-ring.open.steady .cr-capsule { pointer-events: auto; }
+/* 中心位落穿（双态全钉，特异性压过上方 steady 全开 (1,3,0)）：环层叠在标题头
+   之上，中心位事件必须落穿到标题头手势链（按压/竖滑换卡/横滑关卡/右键引用）。 */
+#canvas-capsule-ring .cr-capsule.is-center,
+#canvas-capsule-ring.open.steady .cr-capsule.is-center { pointer-events: none; }
 .cr-capsule .cr-icon { flex: none; width: 14px; height: 14px; color: var(--color-text-muted); display: flex; }
 .cr-capsule .cr-icon svg { width: 14px; height: 14px; }
 .cr-capsule .cr-dot {
@@ -1342,7 +1378,9 @@ body.canvas-deck-narrow .canvas-title { max-width: 46%; }
   color: var(--color-frame-text-bright, var(--color-text));
 }
 /* 中心位 = 环游标胶囊：内容-only 覆层（底 = 常态标题头胶囊本体 —— 同位无缝
-   morph；按压触感也由标题头 is-pressed scale 承接），零变换全清晰 */
+   morph；按压触感也由标题头 is-pressed scale 承接），零变换全清晰。
+   真越出批：pointer-events:none 钉死 —— 环层挂 body 后叠在标题头之上，中心
+   位事件必须落穿到标题头手势链（按压/竖滑换卡/横滑关卡/右键引用照旧）。 */
 .cr-capsule.is-center {
   z-index: 3;
   background: transparent;
@@ -1350,6 +1388,7 @@ body.canvas-deck-narrow .canvas-title { max-width: 46%; }
   box-shadow: none;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
+  pointer-events: none;
 }
 .cr-capsule.is-center:active { --cr-press: 0.96; filter: brightness(0.92); }
 /* 缘位 = 竖向 cover-flow（对称批 2026-10-23：上 −edgeY / 下 +edgeY 真对称，
@@ -1720,24 +1759,54 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
 }
 
 /* Floating rendered↔source toggle (markdown & HTML viewers)
-   移位批（2026-10-22）：右锚 16 → 64 —— 底右圆钮簇整体 +48px（source · ref ·
-   find · graph；当时 body 级 deck fab 同迁底右 right:12 占首槽）。回退批
-   （作者令 2026-10-22 回访裁定）：fab 迁回顶右原位，簇槽位维持 +48 现状不动
-   （作者仅令 fab 回移，缩放控件与簇不在回退范围）。 */
+   六项批（作者令 2026-10-23 六项③④）：底右钮组贴齐面板右缘回归原槽（右锚
+   16）——移位批的簇整体 +48（fab 迁底右占首槽）随 fab 回退批已失据，右缘
+   64/112 空缝即作者指的「靠右没贴齐」；缩放条同步回 16（本文件下方）。
+   材质 = frosted 标准 token（--glass-bg/--glass-blur saturate(1.15)/
+   --glass-border/--frost-shadow，sapphire.css 单源，与 chat 对话面板同源
+   ——六项④「毛玻璃加强到与聊天对话框一致」；原 --glass-control-* 自绘
+   （暗档 5% 白 + blur10）太透退役，减淡 opacity 同步撤（材质到位不靠减淡）。 */
 .canvas-source-toggle {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  box-shadow: var(--frost-shadow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 10;
+  color: var(--color-text);
+  transition: all 0.2s ease;
+}
+.canvas-source-toggle:hover {
+  background: var(--glass-control-bg-hover);
+  transform: scale(1.05);
+}
+
+/* #303 B6: element-select toggle — same floating-glass style as the source
+   toggle, seated 8px to its left.
+   六项批（2026-10-23 六项③④）：右锚回原槽 64（= source 16 + 40 + 8 同排 sequel），
+   材质同 source toggle 换 frosted 标准单源。 */
+.canvas-ref-select {
   position: absolute;
   bottom: 16px;
   right: 64px;
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  border: 1px solid var(--glass-control-border);
-  background: var(--glass-control-bg);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  box-shadow: var(--frost-shadow);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1745,39 +1814,6 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   z-index: 10;
   color: var(--color-text);
   transition: all 0.2s ease;
-  opacity: 0.6;
-}
-.canvas-source-toggle:hover {
-  background: var(--glass-control-bg-hover);
-  opacity: 1;
-  transform: scale(1.05);
-}
-
-/* #303 B6: element-select toggle — same floating-glass style as the source
-   toggle, seated 8px to its left.
-   移位批（2026-10-22）：右锚 64 → 112（簇整体 +48，见 .canvas-source-toggle）。 */
-.canvas-ref-select {
-  position: absolute;
-  bottom: 16px;
-  right: 112px;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  border: 1px solid var(--glass-control-border);
-  background: var(--glass-control-bg);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  z-index: 10;
-  color: var(--color-text);
-  transition: all 0.2s ease;
-  opacity: 0.6;
 }
 .canvas-ref-select:hover {
   background: var(--glass-control-bg-hover);
@@ -2095,27 +2131,26 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
 }
 
 /* ── Shared viewer zoom bar (viewers/zoom.js) ── */
-/* 移位批（作者令 2026-10-22 ②）：默认位从「顶右 10/12」迁「右下角」——修前顶右
-   与顶右 deck fab、居中文件名胶囊三件在顶行打架（作者截图）。fab 已由回退批
-   （作者令 2026-10-22 回访裁定）迁回顶右原位，缩放控件按裁定留在右下不动
-   （64 = 移位批簇 +48 的首槽位），底边 18px 与圆钮簇（bottom:16，40px 高）
-   视觉对中线；图片/PDF pane 同享。 */
+/* 六项批（作者令 2026-10-23 六项③④）：右锚回 16 —— 贴齐面板右缘（移位批的
+   +48 槽随簇回退一并失效，见 .canvas-source-toggle 注）；底边 18px 与圆钮簇
+   （bottom:16，40px 高）视觉对中线不变（图片/PDF pane 同享）。
+   材质 = frosted 标准 token（与 source/ref 同批换装，chat 对话面板同源）。 */
 .canvas-zoom-bar {
   position: absolute;
   top: auto;
   bottom: 18px;
-  right: 64px;
+  right: 16px;
   z-index: 5;
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 4px;
   border-radius: 10px;
-  background: var(--glass-control-bg);
-  backdrop-filter: blur(var(--glass-blur, 12px)) saturate(1.15);
-  -webkit-backdrop-filter: blur(var(--glass-blur, 12px)) saturate(1.15);
-  border: 1px solid var(--glass-control-border);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.06);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--frost-shadow);
 }
 .canvas-zoom-btn {
   width: 26px;
@@ -2138,22 +2173,23 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
    spot floats over arbitrary HTML content — posters put interactive
    headers exactly there, blocking clicks on both sides. Scoped to html panes;
    image/PDF keep the default bottom-right spot.
-   Cluster slots (48px pitch, 40px circles, 移位批 2026-10-22 全簇 +48；回退批
-   同日 fab 迁回顶右原位、簇 +48 槽位维持不动)：source 64 · ref-select 112 ·
-   find 160 (html.js addFindToggle(pane, 160)) · zoom bar 208. The zoom bar
-   used to sit at right:160 — the find toggle's slot since the wiki-graph
-   batch — so the circle printed on top of the bar's Fit button (screenshot
-   2026-10-19). 208 keeps the 8px gap after the find circle (ends at 200). */
+   Cluster slots (48px pitch, 40px circles；六项批 2026-10-23 簇回原槽 −48 ——
+   移位批 +48 随 fab 回退一并失效，见 .canvas-source-toggle 注)：source 16 ·
+   ref-select 64 · find 112 (html.js addFindToggle(pane, 112)) · zoom bar 160.
+   The zoom bar used to sit at right:112 — the find toggle's slot since the
+   wiki-graph batch — so the circle printed on top of the bar's Fit button
+   (screenshot 2026-10-19). 160 keeps the 8px gap after the find circle
+   (ends at 152). */
 .canvas-tab-pane[data-type="html"] .canvas-zoom-bar {
   top: auto;
-  right: 208px;
+  right: 160px;
   bottom: 18px;
 }
-/* 窄面板（<356px 装不下 208 槽 + 140 条宽，拖拽下限 320）：条升到圆钮行上方
-   第二行（右 64 槽、行距 8px），与圆钮簇零交叠、完整落在 pane 内。 */
+/* 窄面板（<356px 装不下 160 槽 + 140 条宽，拖拽下限 320）：条升到圆钮行上方
+   第二行（右 16 槽、行距 8px），与圆钮簇零交叠、完整落在 pane 内。 */
 @container nfpane (max-width: 355px) {
   .canvas-tab-pane[data-type="html"] .canvas-zoom-bar {
-    right: 64px;
+    right: 16px;
     bottom: 64px;
   }
 }
