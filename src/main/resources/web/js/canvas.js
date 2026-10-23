@@ -3108,29 +3108,40 @@ function initCardHeadGestures() {
 // 修复批（作者令 2026-10-23「hover 要在上下显示…上下对称；胶囊大小固定；相对
 // canvas 居中」）：胶囊常态回 canvas 顶带横轴居中（split.css 居中批，v2①
 // 「居中标题头」原位 —— 不在画布中央挡内容命中：wiki 图谱/流程图中心区节点
-// 点击实证）；hover 展开时胶囊整体**沉降 canvas 垂直中点**（.ring-open +
-// --ring-dy，0.36s 温和缓出与环族同节奏），环锚上下都有空间 —— 缘位**真对称**：
-// 上一签上展 −edgeY、下一签下垂 +edgeY（|y| 严格相等，取代昨批「双缘全下垂
-// peek 0.58×/hang 1.62×」——那是头锚贴顶时代的避裁妥协）；收环回顶。胶囊本体
-// 任何状态尺寸恒定（沉降只改位移不改大小，零缩放零呼吸）。
-// 收环判定 = **hover 区联合盒**（环开点 ∪ 环开点→沉底胶囊顶走廊 ±90px ∪ 胶囊
-// 本体 ∪ 上下缘位胶囊，各外扩 14px）：胶囊已沉离指针原位、「中心→缘位」又有
-// ~edgeY 间隙，pointerleave 单源会立即误收（甚至开→收振荡）—— 环开期间
-// document pointermove 跟踪指针，离区才调度 140ms 宽限收环。
+// 点击实证）。顶部修正批（作者令 2026-10-23 逐字「canvas的hover要保持在顶部
+// 居中，而不是整个canvas居中，顶部有些超出是正常且允许的。但是不要太多。」）：
+// 对称批的「hover 沉降 canvas 垂直中点」（.ring-open + --ring-dy）撤销 —— 环锚
+// 常驻顶带，横轴中线居中不变；缘位仍上下对称（上一签上展 −edgeY、下一签下垂
+// +edgeY，|y| 严格相等；rotateX 反号等幅），上缘位允许**略微越出面板顶缘**
+// （负向超出正常且允许 —— 面板 overflow:hidden 裁掉探出段），越出量克制 =
+// 胶囊自身高度的一小部分（RING_TOP_OUT ≈ 0.4×h），绝不沉向 canvas 中部。
+// 胶囊本体任何状态尺寸恒定（零缩放零呼吸）。
+// 收环判定 = **hover 区联合盒**（环开点 ∪ 胶囊本体 ∪ 上下缘位胶囊，各外扩
+// 14px）：竖环几何下「中心→缘位」有 ~edgeY 间隙，pointerleave 单源会立即误收
+// （甚至开→收振荡）—— 环开期间 document pointermove 跟踪指针，离区才调度
+// 140ms 宽限收环。（对称批的「环开点→沉底胶囊顶走廊 ±90px」随沉降撤销一并
+// 退役 —— 环锚回顶带，胶囊不再离位，走廊无事可桥。）
 // 滚轮 = 环开期间 document 捕获（capture + preventDefault），**面板矩形内一律
 // 消费为换选**：环开后指针可以停在原地（不必悬在胶囊上）滚动换选；面板外
 // （侧栏/聊天）滚轮不消费零感知。#716 捏合缩放分区：环开 = 环优先，画布区
 // 缩放/平移与 pane 滚动在环开期间让位（Escape/离区即还）。
 // 按住=按钮语义（作者令③）：胶囊本体 <button> + 全头 user-select:none（CSS）
 // + dragstart preventDefault（拦从胶囊发起的原生拖拽；OS 文件拖入 drop 不受影响）。
-// 实现形态：纯前端组件（.capsule-ring 0×0 锚在标题头中心 = 胶囊中心，随胶囊
-// 沉降 —— 环开态环锚 = canvas 中点；胶囊 absolute 沿弧 transform），与左栏
+// 实现形态：纯前端组件（.capsule-ring 0×0 锚在标题头中心 = 胶囊中心，环锚
+// 常驻顶带 —— 顶部修正批撤销沉降；胶囊 absolute 沿弧 transform），与左栏
 // 控制面零共享。手机层/卡窗态整腿让位（各有自己的卡头形态）；deck 叠卡态不开环
 // （叠卡有自己的环卡滚轮语义，双环互搏）。
 const RING_WHEEL_STEP = 56;   // 横滑一格步进（≈两指一次横扫的 deltaX 量级）
 const RING_WHEEL_STEP_Y = 100; // 纵滚一格步进（≈鼠标滚轮一格的 deltaY 量级——一格滚轮 = 一换）
 const RING_CLOSE_GRACE_MS = 140; // 离环收起宽限（快速掠过不闪收）
 const RING_ZONE_PAD_PX = 14;  // hover 区外扩（缘位胶囊 hit 盒外缘，穿越不闪收）
+/** 环开上缘位越出面板顶缘的量（顶部修正批 2026-10-23 作者令「顶部有些超出是
+ *  正常且允许的。但是不要太多」）：**布局空间**系数 × 胶囊高（clamp 8–24px）。
+ *  缘位胶囊带 rotateX(34°)+translateZ(-110)（perspective 640）投影把角点向
+ *  锚收回 —— 视觉越出 ≈ 布局越出的 0.4 倍（实测 1440×900：布局 19.2px →
+ *  视觉 ~8px ≈ 胶囊高 1/3，即「自身高度的一小部分量级」）；探出段被面板
+ *  overflow:hidden 裁掉。下缘位 |y| 对称下垂（上下对称裁定保持）。 */
+const RING_TOP_OUT = 0.8;
 
 /** 环开态单例（{ ids: string[], cursor: number }；null = 环闭）。hdr 重建时随
  *  initCanvas 重挂，状态本体放模块级 —— 手势 finish() 的 ringClickCenter 同读。 */
@@ -3208,15 +3219,17 @@ function initCapsuleRing() {
   };
 
   /** 位姿（2026-10-23 作者令「hover 要在上下显示，这样才有滚动的感觉」——上下
-   *  真对称）：胶囊常态顶带横轴居中、环开态沉降 canvas 垂直中点（split.css
-   *  §⑨ 居中批 + .ring-open --ring-dy），环锚上下都有空间 ——
-   *  rel = 到游标的最短环距（wrap）；0 = 中心清晰（与常态胶囊同位同尺寸，尺寸
-   *  恒定）；±1 = 缘位 cover-flow：上一签（rel<0）上展 −edgeY、下一签（rel>0）
-   *  下垂 +edgeY，**|y| 严格相等**（上下对称断言的几何来源）；rotateX 反号等幅
-   *  （上缘位 +34° 顶边后仰 / 下缘位 −34° 底边后仰 —— 竖圆柱同侧曲率）；透视
-   *  由 .capsule-ring 自身 perspective 提供（原点 = 环锚 = 胶囊中心）；模糊扭曲
-   *  （CSS is-edge）。|rel|≥2 = 弧外不可见（±2× 对称轨迹保留，收放有连续感）。
-   *  间距 = 中心胶囊实高的几何函数（本体尺寸恒定 ⇒ 间距恒定）。 */
+   *  对称；顶部修正批：环锚常驻顶带，不沉降）：rel = 到游标的最短环距（wrap）；
+   *  0 = 中心清晰（与常态胶囊同位同尺寸，尺寸恒定）；±1 = 缘位 cover-flow：
+   *  上一签（rel<0）上展 −edgeY、下一签（rel>0）下垂 +edgeY，**|y| 严格相等**
+   *  （上下对称断言的几何来源）；rotateX 反号等幅（上缘位 +34° 顶边后仰 /
+   *  下缘位 −34° 底边后仰 —— 竖圆柱同侧曲率）；透视由 .capsule-ring 自身
+   *  perspective 提供（原点 = 环锚 = 胶囊中心）；模糊扭曲（CSS is-edge）。
+   *  |rel|≥2 = 弧外不可见（±2× 对称轨迹保留，收放有连续感）。
+   *  间距 = 环锚面板几何反解（顶部修正批）：edgeY 令上缘位顶越过面板顶缘
+   *  RING_TOP_OUT×h（胶囊高的一小部分 —— 作者令「顶部有些超出…不要太多」，
+   *  越出段被面板 overflow:hidden 裁掉），下缘位对称下垂；h + 2 下限兜底防
+   *  退化叠置。本体尺寸恒定 ⇒ 间距恒定。 */
   const layout = () => {
     if (!ringState) return;
     const { ids, cursor } = ringState;
@@ -3224,7 +3237,11 @@ function initCapsuleRing() {
     const kids = /** @type {HTMLElement[]} */ ([...root.children]);
     const centerKid = cursor >= 0 && cursor < n ? kids[cursor] : null;
     const h = centerKid ? centerKid.offsetHeight : 28;
-    const edgeY = Math.max(56, Math.min(120, h * 3));
+    const out = Math.max(8, Math.min(24, h * RING_TOP_OUT));
+    // 环锚面板纵深 = 头顶带偏移（hdr.offsetTop，面板为 offsetParent）+ 锚在
+    // 头内深度（root.offsetTop，anchor() 置 title 中心）；edgeY 反解自
+    // 「上缘位顶 = 锚 − edgeY − h/2 = −out」（面板相对，顶缘为 0）。
+    const edgeY = Math.max(h + 2, hdr.offsetTop + root.offsetTop - h / 2 + out);
     for (let i = 0; i < kids.length; i++) {
       let rel = (i - cursor + n) % n;
       if (rel > n / 2) rel -= n;
@@ -3254,20 +3271,16 @@ function initCapsuleRing() {
     root.style.top = (tr.top + tr.height / 2 - hr.top) + 'px';
   };
 
-  /* ── hover 区（环开态收环判定）──：环开点（resting 胶囊处，沉降后指针滞留
-   *  原地）∪ 走廊（环开点 → 沉底胶囊顶之间的竖带 ±90px，供指针下行至缘位）
-   *  ∪ 胶囊本体 ∪ 非弧外环胶囊，各外扩 RING_ZONE_PAD_PX。竖环几何下中心→缘位
-   *  有 ~edgeY 间隙、胶囊又已沉离指针原位，pointerleave 单源会立即误收（甚至
-   *  开→收振荡）；环开期间 document pointermove 持续跟踪，离区才调度 140ms
-   *  宽限。 */
+  /* ── hover 区（环开态收环判定）──：环开点（顶带胶囊处）∪ 胶囊本体 ∪ 非弧外
+   *  环胶囊，各外扩 RING_ZONE_PAD_PX。竖环几何下中心→缘位有 ~edgeY 间隙，
+   *  pointerleave 单源会立即误收（甚至开→收振荡）；环开期间 document
+   *  pointermove 持续跟踪，离区才调度 140ms 宽限。（对称批「环开点→沉底胶囊
+   *  顶走廊 ±90px」随沉降撤销退役 —— 环锚回顶带，胶囊不再离位，走廊无事可桥。） */
   let openPt = /** @type {{x: number, y: number}|null} */ (null);
   let lastPtr = /** @type {{x: number, y: number}|null} */ (null);
   const inHoverZone = (x, y) => {
     if (openPt) {
       if (Math.hypot(x - openPt.x, y - openPt.y) <= 56) return true;
-      const hr0 = hdr.getBoundingClientRect();
-      if (hr0.top > openPt.y && x >= openPt.x - 90 && x <= openPt.x + 90
-        && y >= openPt.y - 8 && y <= hr0.top) return true;
     }
     const r = hdr.getBoundingClientRect();
     if (x >= r.left - RING_ZONE_PAD_PX && x <= r.right + RING_ZONE_PAD_PX
@@ -3312,18 +3325,6 @@ function initCapsuleRing() {
   };
   const onDocPointerLeft = (e) => { if (ringState && !e.relatedTarget) closeRing(); }; // 离窗即收
 
-  /** 环开沉降量（对称批 2026-10-23）：胶囊整体下沉 canvas 垂直中点 —— 竖环
-   *  上下对称空间的几何来源（split.css .ring-open 消费 --ring-dy，0.36s 温和
-   *  缓出）。以布局位（面板顶 + 10px 顶带）为基，读 offsetHeight 免 transform
-   *  自扰；常态胶囊仍在顶带（不挡画布中心命中），沉降只发生在环开态。 */
-  const syncRingDy = () => {
-    const panel = document.getElementById('canvas-panel');
-    if (!panel) return;
-    const pr = panel.getBoundingClientRect();
-    const dy = (pr.top + pr.height / 2) - (pr.top + 10 + hdr.offsetHeight / 2);
-    hdr.style.setProperty('--ring-dy', Math.max(0, dy).toFixed(1) + 'px');
-  };
-
   const openRing = (pt) => {
     if (ringState || isMobileLayer() || cardWindowMode) return;
     if (deck.open) return;                         // deck 态：叠卡有自己的环卡滚轮语义，不开环
@@ -3336,7 +3337,6 @@ function initCapsuleRing() {
     lastPtr = null;
     build();
     hdr.classList.add('ring-open');
-    syncRingDy();
     root.hidden = false;
     anchor();
     layout();
@@ -3348,7 +3348,6 @@ function initCapsuleRing() {
     if (!ringState) return;
     ringState = null;
     hdr.classList.remove('ring-open');
-    hdr.style.setProperty('--ring-dy', '0px');
     root.hidden = true;
     root.textContent = '';
     acc = 0;

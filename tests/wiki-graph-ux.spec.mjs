@@ -614,8 +614,8 @@ test('§G capsule ring consumes horizontal swipe; canvas keeps pan/pinch (#716 n
   });
   expect(viewAfter).toEqual(viewBefore);
 
-  // 离环（画布中下空区 —— 居中批 2026-10-23 后胶囊常驻 canvas 中心，「回画布
-  // 中心」= 回到胶囊本体反而保持 hover 区；下移 240px 出环区才收）→ 环收；
+  // 离环（画布中下空区 —— 顶部修正批 2026-10-23 后环锚常驻顶带，胶囊不再沉降
+  // canvas 中心，「回画布中心」虽已非胶囊本体，下移 240px 仍稳出环区）→ 环收；
   // 画布区横滑仍 = 平移、捏合仍 = 缩放（#716 不被劫持）
   const box = await page.locator('.wiki-canvas').boundingBox();
   const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
