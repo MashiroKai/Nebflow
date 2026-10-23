@@ -119,6 +119,24 @@ object Defaults:
       |NEVER wait with `sleep` or polling loops — sleeping in the foreground burns the turn, the context and hours of wall-clock. The correct pattern: start the long-running work with Bash `run_in_background: true`, then END YOUR TURN immediately — Nebflow's background-task notification wakes this session automatically with the job's output. Same when waiting for an author-gated event (engine restart, approval, merge reminder): deliver your current report and end your turn; you will be woken when it happens.""".stripMargin
 
   /**
+   * 插件能力查询行（stand-plugins 批，作者令 2026-10-23：像记忆检索一样把插件
+   * 目录做成只读 CLI，在各级提示词里告知用法——「除了自动分配，还能主动获取」）。
+   *
+   * 注入面（同源单点，勿散落复制）：delegate brief（`DelegateTool.assembleBrief`）
+   * 与节点 ProtocolFootnote 前缀（`NodeEngineContract.protocolFootnoteFor`）——两个
+   * **有 Bash** 的启动面。subagent 只读侦察面无 Bash（`BlockingSubagent` 不注入——
+   * 查询通道不可达，注入即纯噪音）；root / 分发器提示词在 BuiltinAgents 各自正文
+   * 接线（决策面自带声明权）。
+   *
+   * 纪律边界（一行两半）：查询人人可用（只读零副作用）；**挂载权仍在派发侧**——
+   * 缺能力时在结果里声明所需插件与用途，由派发面挂载，绝不自挂（安全边界不动）。
+   * 单行形态与 ResetHazardLine 的 `[reset hazard]` 同族（`[plugin discovery]` 前缀戳，
+   * 模型扫读即识别）。
+   */
+  val PluginDiscoveryLine: String =
+    "[plugin discovery] Query installed plugin capabilities anytime (read-only, zero side effects): `tools/stand-plugins list` / `tools/stand-plugins search <keyword>` / `tools/stand-plugins mounts [--project <name>]` (repo-root CLI). If the current task lacks a capability, declare the needed plugin(s) and the intended use in your result — mounting authority stays with the dispatch side (you cannot hot-mount plugins yourself)."
+
+  /**
    * A 段（等待屏障）开关：delegate 会话结束回合时存在未结等待型后台作业 ⇒
    * 不终态化（hold + 完成通知唤醒 + 复检），对齐 Project node 完成闸语义。
    * 默认 **true**（作者令本体行为）；现读 prop `nebflow.delegate.bgWaitHold.enabled`

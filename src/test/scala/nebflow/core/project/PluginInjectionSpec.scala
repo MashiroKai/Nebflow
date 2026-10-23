@@ -150,6 +150,47 @@ class PluginInjectionSpec extends CatsEffectSuite:
       assertEquals(prep.mcpPlugins, Nil, "a skills-only package carries no MCP leg")
   }
 
+  // ── stand-plugins 批（作者令 2026-10-23）：集合语义钉——分配面/声明面一次多挂 ──
+  //
+  // 考古结论（REPORT.md §2）：分配链（JevAllocator 逐包 need_ 问句批 / LlmAllocator
+  // JSON 数组 / NodeEdit plugins string|array / NodeDef.plugins List / resolvePreparation
+  // 逐包 traverse）端到端本就是集合语义，「JeV 只能单选」无结构依据。本组两钉把
+  // 「一次声明两能力都挂上」钉死在 spec 层，防回归为单选形状。
+
+  test("set semantics: one allocation carrying TWO packages mounts both (allocated face)") {
+    setPluginsEnabled(true)
+    writeSkillPlugin("p1", "SET-ALPHA")
+    writeSkillPlugin("p2", "SET-BETA")
+    installStub(List("p1", "p2"))
+    for r <- PluginInjection.allocatePreparation("delegate-set", "task")
+    yield
+      val (prep, set) = r.toOption.get
+      assertEquals(set, PluginInjection.AllocatedSet(List("p1", "p2"), "jev"), "both packages ride one allocation")
+      assert(prep.injectedBlock.contains("SET-ALPHA"), prep.injectedBlock)
+      assert(prep.injectedBlock.contains("SET-BETA"), "the second package is injected in the same block")
+      assert(
+        prep.injectedBlock.indexOf("SET-ALPHA") < prep.injectedBlock.indexOf("SET-BETA"),
+        "catalog order preserved across the set"
+      )
+      assert(prep.injectedBlock.contains("<plugin name=\"p1\">") && prep.injectedBlock.contains("<plugin name=\"p2\">"))
+  }
+
+  test("set semantics: one DECLARATION of two capabilities mounts both without consulting the allocator (declaration face)") {
+    setPluginsEnabled(true)
+    writeSkillPlugin("p1", "DECL-ALPHA")
+    writeSkillPlugin("p2", "DECL-BETA")
+    val calls = installStub(List("p1"))
+    val declared = node.copy(plugins = List("p1", "p2"))
+    for r <- PluginInjection.forNode(declared, delegateScope = true, scopeKey = "delegate-scope-set")
+    yield
+      val prep = r.toOption.get
+      assert(prep.injectedBlock.contains("DECL-ALPHA") && prep.injectedBlock.contains("DECL-BETA"), prep.injectedBlock)
+      assertEquals(calls.size, 0, "the declared set is authoritative — allocation face untouched")
+      // 逐包独立 `<plugin>` 块、声明序保留（注入面形状 = 集合，非单选）。
+      assert(prep.injectedBlock.contains("<plugin name=\"p1\">") && prep.injectedBlock.contains("<plugin name=\"p2\">"))
+      assert(prep.injectedBlock.indexOf("DECL-ALPHA") < prep.injectedBlock.indexOf("DECL-BETA"))
+  }
+
   // ── 作者令「plugin.md = 插件必要文件机制」：注入内容 = Plugin.md，缺文件 = Left ──
 
   test("injection source = Plugin.md: the block wraps Plugin.md (no skill attr) and SKILL.md is no longer injected") {

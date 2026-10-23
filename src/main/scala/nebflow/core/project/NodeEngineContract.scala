@@ -656,13 +656,17 @@ private[project] object NodeEngineContract:
    * 与末行措辞钉（TaskBoardInjectionSpec）。delegate brief（DelegateTool）与
    * subagent/workflow 步首条消息（BlockingSubagent）同源注入本常量——三启动面
    * 单一权威文本。
+   *
+   * stand-plugins 批（作者令 2026-10-23）：铁律之后、基线之前同缝注入插件能力
+   * 查询行（[[Defaults.PluginDiscoveryLine]]）——节点会话有 Bash，可自主查目录；
+   * 仍前缀注入位形（endsWith 断言零波及）。
    */
   def protocolFootnoteFor(role: Option[String]): String =
     val base =
       if NodeRoles.normalize(role.getOrElse("")) == NodeRoles.Verifier then
         ProtocolFootnote + "\n" + VerifierVerdictFootnote
       else ProtocolFootnote
-    Defaults.NoSleepPollRule + "\n\n" + base
+    Defaults.NoSleepPollRule + "\n\n" + Defaults.PluginDiscoveryLine + "\n\n" + base
 
   // ── 链级抽象 P2：链上下文透传（过程文档溯源 §9.2）──
 

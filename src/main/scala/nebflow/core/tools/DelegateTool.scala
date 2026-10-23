@@ -118,6 +118,7 @@ object DelegateTool extends Tool:
    * delegate brief 装配单点（sleep-poll 禁令批 C 段抽纯函数——spec 判红锚）。
    * 布局：工作座行（+ 绑定行）→ reset 警示行（D12-b）→ delegate_report 纪律行
    * （[[BriefReportLine]]）→ 等待纪律铁律（[[Defaults.NoSleepPollRule]]）→
+   * 插件能力查询行（[[Defaults.PluginDiscoveryLine]]，stand-plugins 批）→
    * 空行 → 任务全文（→ 插件注入块）。
    * 铁律置于任务正文之前：单 turn 会话的第一屏即见（747cd36a 形态的启动面
    * 防线——与其在长轮询后靠 LoopGuard 兜底，不如开局立规）。
@@ -134,6 +135,8 @@ ${ResetHazardLine}
 ${BriefReportLine}
 
 ${Defaults.NoSleepPollRule}
+
+${Defaults.PluginDiscoveryLine}
 
 $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
 
