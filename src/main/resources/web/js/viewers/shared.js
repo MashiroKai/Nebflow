@@ -4,6 +4,7 @@
 import { key } from '../branding.js';
 import { t } from '../i18n.js';
 import { mintTickets, nfFilePathsIn, injectTickets, decodePathParam } from '../nfTicket.js';
+import { noteAuthRejected } from '../sessionGate.js';
 export function getToken() {
   return localStorage.getItem(key('token')) || '';
 }
@@ -804,6 +805,15 @@ export function addGraphToggle(pane, absPath, right = 160) {
     try {
       const { authHeaders } = await import('../flowHelpers.js');
       const res = await fetch('/api/wiki/graph', { headers: { ...authHeaders() } });
+      // #762 图谱按钮 403 族（作者 2026-10-22 21:49 实报「文档图谱不可用」死
+      // toast）：长命标签页会话过期 ⇒ REST 直调被裸 403，这里只 toast 不自愈。
+      // 401/403 = 同源凭据被拒 ⇒ 交 sessionGate 统一重认证面（可见横幅 + 自愈
+      // reload，scan-bind-403 批 projects/social-scan 同一条路）；单飞 + 60s
+      // 冷却防环在本体。其余状态照旧落 graphUnavailable toast（真传输错的面）。
+      if (res.status === 401 || res.status === 403) {
+        noteAuthRejected('wiki-graph-toggle');
+        return;
+      }
       if (!res.ok) throw new Error(String(res.status));
       const data = await res.json();
       const norm = String(absPath).replace(/\\/g, '/');
