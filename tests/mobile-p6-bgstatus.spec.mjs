@@ -1,15 +1,20 @@
 // mobile-p6-bgstatus.spec.mjs — P6「运行状态」合并面板验收
-//（mobile-secondary-screens 实施批；样张 v3.5 P6 + 开放点①②④按设计批推荐）。
+//（mobile-secondary-screens 实施批；样张 v3.5 P6 + 开放点①②④按设计批推荐；
+//  后台合并批 2026-10-23 ⑥ 更新：几何改**水平居中**（作者令 ⑤）+ **内容高
+//  自适应紧凑化**（作者令 ⑥「手机端空白太多」，固定 560 高退役）；结构归并
+//  上移桌面共享单点 bgMergedPanel.js，断言语义不变。）
 //
 // 样张→实机 DOM 映射（实施批口径）：
-//   §8-1 盒模型 …… #bg-dropdown（合并载体）：left 6 / top 58+safe / 308×560 / r16。
+//   §8-1 盒模型 …… #bg-dropdown（合并载体）：left/right 0 + margin auto 居中 /
+//        top 58+safe / 宽 308 / 高 = 内容高（max 560 兜底）/ r16。
 //   在飞任务行 …… 桌面 .bg-task-row 全字段沿用：状态点 + 状态词（六档：
 //        running/idle/stuck/cancelling/failed/done，卡死阈值 idle>10min 桌面
 //        既有）+ origin chip + 本地·远程 kind chip + 行数 + 时长。
-//   开放点① 两下拉归并 …… #bgagent-dropdown 幽灵面退场，列表节点收编进载体
+//   开放点① 两下拉归并 …… #bgagent-dropdown 幽灵面退场（chat.css 全局
+//        display:none），列表节点由 bgMergedPanel.js 收编进载体
 //        （载体桌面头「后台任务」= 第一分组题 + 「智能体」分组签）；bgagent 键
-//        capture 拦截，点按自播二级液态 morph（手机层键列收回后键不可二连击，
-//        收口 = 点面板外 —— 桌面 outside-close 同源，见 T3）。
+//        capture 拦截（bgStatusFace.js），点按自播二级液态 morph（手机层键列收回
+//        后键不可二连击，收口 = 点面板外 —— 桌面 outside-close 同源，见 T3）。
 //   开放点④ 远程 chip …… .bg-task-kind（bg.kind.remote = 远程）。
 //   开放点③ 资源占用条 …… 后端无 CPU/内存/网络字段，不实施不伪造（见实施 spec）。
 //
@@ -143,11 +148,11 @@ test.beforeEach(async ({ page }) => {
 /** @type {{sendBg: (tasks: any) => void}|null} */
 let harness = null;
 
-test('T1 merged panel geometry: top-hung 308×560, left 6, radius 16 (bg key path)', async ({ page }) => {
+test('T1 merged panel geometry: centered 308×content-height (≤560), radius 16 (bg key path)', async ({ page }) => {
   const errors = watchErrors(page);
   await openViaBgKey(page);
   // 终态几何用 poll 采样（双读稳定性判据）：spring 过冲会在终值附近穿越
-  // x=6/scale=1（单样可踩中），faceMo 重放也可能晚起第二场形变 —— 要求
+  // x=居中值/scale=1（单样可踩中），faceMo 重放也可能晚起第二场形变 —— 要求
   // 相隔 120ms 两次采样全等 ∧ transform 归位，才算真终态。
   const geo = () => page.evaluate(() => {
     const m = document.getElementById('bg-dropdown');
@@ -156,6 +161,7 @@ test('T1 merged panel geometry: top-hung 308×560, left 6, radius 16 (bg key pat
       return JSON.stringify({
         x: r.x, w: Math.round(r.width), h: Math.round(r.height),
         radius: getComputedStyle(m).borderRadius, tf: getComputedStyle(m).transform,
+        vw: window.innerWidth,
       });
     };
     const a = snap();
@@ -164,9 +170,14 @@ test('T1 merged panel geometry: top-hung 308×560, left 6, radius 16 (bg key pat
       resolve(a === b ? JSON.parse(b) : { x: NaN });
     }, 120));
   });
+  // 后台合并批 ⑥：居中（x = (vw-308)/2）+ 内容高自适应紧凑化（3 行 ≪ 560，
+  // 面板不再撑满固定高 —— 「手机端空白太多」紧凑化断言）。
   await expect.poll(geo, { timeout: 8000 }).toEqual({
-    x: 6, w: 308, h: 560, radius: '16px', tf: 'none',
+    x: (375 - 308) / 2, w: 308, h: expect.any(Number), radius: '16px', tf: 'none', vw: 375,
   });
+  const h = (await page.locator('#bg-dropdown').boundingBox())?.height ?? 0;
+  expect(h, 'compact: content-height, not fixed 560').toBeGreaterThan(80);
+  expect(h).toBeLessThanOrEqual(560);
   // 幽灵面恒退场。
   expect(await page.locator('#bgagent-dropdown').evaluate((el) => getComputedStyle(el).display)).toBe('none');
   expect(errors).toEqual([]);

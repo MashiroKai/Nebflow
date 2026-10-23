@@ -80,6 +80,7 @@ import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { bindDocMarkupLinkBridge } from './viewers/shared.js';
 import { escapeHtml, isBgAgentId } from './utils.js';
 import { showMemoryButton, handleMemoryData, handleMemoryChanged, initMemory, clearMemoryCache } from './memory.js';
+import { initBgMergedPanel } from './bgMergedPanel.js';
 import { addNotification } from './notificationBanner.js';
 import { handleRulesData, handleRulesSaved, handleRulesDeleted, initRulesModal } from './sidebar.js';
 import { t, getLocale } from './i18n.js';
@@ -1857,9 +1858,12 @@ onMessage('historyPage', (msg, view) => {
 state.updateBgAgentIndicator = updateBgAgentIndicator;
 
 // Toggle dropdown on indicator click — register for ALL views
+// 后台合并批（2026-10-23 ⑥）：bgagent 键与 bg 键开**同一个**后台面板
+// （#bg-dropdown，含「智能体」分节 —— bgMergedPanel.js 收编）；
+// 旧幽灵面 #bgagent-dropdown 恒 display:none，不再被解隐。
 Object.values(chatViews).forEach(v => {
   const indicator = v.dom.bgagentIndicatorEl;
-  const dropdown = v.dom.bgagentDropdownEl;
+  const dropdown = v.dom.bgDropdownEl;
   if (!indicator || !dropdown) return;
   const toggle = (e) => {
     e.stopPropagation();
@@ -3778,6 +3782,7 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
   }).observe(overlays);
 })();
 initMemory();
+initBgMergedPanel(); // 后台合并批（2026-10-23 ⑥）：子智能体列表收编进 #bg-dropdown 单面板
 initExplorer();
 initCanvas();
 initColResizers();

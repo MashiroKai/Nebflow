@@ -1,22 +1,19 @@
 // mobile-p12-settings.spec.mjs — P12「设置」右列推送页验收
-//（mobile-secondary-screens 实施批；样张 v3.5 P12 + 开放点①②③④按设计批推荐，
-//  主键规格 = v3.6① 绿键退役裁定字面；六件④ 2026-10-20 停靠常显退役 → 入口行）。
+//（mobile-secondary-screens 实施批；样张 v3.5 P12 + 开放点①②③按设计批推荐，
+//  主键规格 = v3.6① 绿键退役裁定字面。
+//  面板合并批 2026-10-23 ①④⑤ 更新：设置页 profile 入口行**退役**（作者令④
+//  「手机端设置里去掉智能体面板的按钮 —— 入口已由 header 头像承担」）；旧独立
+//  #agent-profile-panel 弹窗退役（智能体内容 = 合并面板 .ap-pane 分区，入口 =
+//  header 头像）；v3.6 非绿键守卫对 .cfg-btn-primary（设置模态保存类主键）延续。）
 //
-// 样张→实机 DOM 映射（实施批口径，六件④ 修订）：
-//   页范式 …… 右列键推入 .mobile-page（壳既有）；内容面 = profile 入口行
-//        （navController syncProfileBlock 注入，点击才 openProfilePanel 弹窗
-//        形态 —— 手机实测「进设置页自动弹『智能体』模态」退役）+ 桌面
-//        #settings-modal（renderSettings 七分组，零重排）。
-//   §2-P12 profile 区 …… 与已实施 agentProfile.js 一一对应：头像预览/上传
-//        头像[主键]/恢复默认/名称行内回车存/同源文案（profile.note i18n 同键）。
-//   v3.6① 非绿主键 …… .ap-btn-primary 手机层 = light #111827/白字 hover
-//        #374151；dark #e8eaed/#13161c hover #fff；box-shadow none；无图标
-//        （应用 DOM 有 lucide svg ⇒ computed display:none 落实「无图标」）；
-//        500 字重。守卫：页内无按钮计算背景 = 品牌绿。
-//   开放点② 分组次序沿用桌面 …… renderSettings 原样（T3 断言首分组在
-//        入口行之后）。
-//   开放点③「重启服务」红字+二次确认【新增提案】④桌面项去留 …… 后端无
-//        重启端点/桌面项为桌面渲染，均不伪造 —— 记报告（不实施）。
+// 样张→实机 DOM 映射（实施批口径，面板合并批修订）：
+//   页范式 …… 右列键推入 .mobile-page（壳既有）；内容面 = 桌面 #settings-modal
+//        （renderSettings 七分组，零重排）—— 页体首块即设置面（无入口行）。
+//   智能体分区 …… .ap-pane 一件式（合并面板内）：头像预览（点击即换头像，
+//        作者令② 无「设置头像」钮）/名称行内回车存/同源文案（profile.note 同键）。
+//   v3.6① 非绿键 …… .cfg-btn-primary 手机层 = light #111827/白字 hover
+//        #374151；dark #e8eaed/#13161c hover #fff；500 字重。守卫：页内无按钮
+//        计算背景 = 品牌绿。
 //
 // Run: node <stand>/node_modules/@playwright/test/cli.js test tests/mobile-p12-settings.spec.mjs
 
@@ -42,6 +39,9 @@ async function bootApp(page, colorScheme = 'dark') {
   await page.addInitScript(() => {
     localStorage.setItem('nebflow_token', 'e2e-token');
     localStorage.setItem('nebflow_locale', 'zh-CN');
+    // harness：stub 掉 SW 注册（swReg.js 在 localhost 安全上下文 register /sw.js；
+    // 404 会记「fetching the script」console error 混进 errors 断言）。
+    Object.defineProperty(navigator.serviceWorker, 'register', { value: () => Promise.resolve() });
   });
   await page.route('**/*', (route) => {
     const url = new URL(route.request().url());
@@ -112,48 +112,44 @@ function watchErrors(page) {
   return errors;
 }
 
-test('T1 settings opens with NO auto profile popup; entry row opens panel on explicit click', async ({ page }) => {
+test('T1 settings opens with NO profile entry row; agent surface lives in the merged panel via header avatar', async ({ page }) => {
   const errors = watchErrors(page);
   await bootApp(page, 'dark');
   await pushSettings(page);
 
-  // 六件④：进设置页零自动弹 —— 面板隐藏、无 ap-open scrim 态。
-  await expect(page.locator('#agent-profile-panel')).toBeHidden();
-  expect(await page.evaluate(() => document.body.classList.contains('ap-open'))).toBe(false);
-
-  // 入口行 = 页体首块（在 #settings-modal 之前）且可见。
+  // 面板合并批 ④：设置页零智能体入口行（页体首块 = 设置面，不是 .profile-entry），
+  // 也无旧独立面板解隐路径。
+  await expect(page.locator('.profile-entry')).toHaveCount(0);
   const body = page.locator('.mobile-page[data-page="settings"] .mobile-page-body');
-  const firstClass = await body.evaluate((el) => el.firstElementChild?.className || '');
-  expect(firstClass).toContain('profile-entry');
-  const entry = page.locator('.mobile-page[data-page="settings"] .profile-entry');
-  await expect(entry).toBeVisible();
-  await expect(entry).toContainText('智能体');
+  const firstId = await body.evaluate((el) => el.firstElementChild?.id || '');
+  expect(firstId).toBe('settings-modal');
 
-  // 显式点击 → 弹窗形态（手机浮层卡 + ap-open scrim 态）。
-  await entry.click();
-  await expect(page.locator('#agent-profile-panel')).toBeVisible();
-  expect(await page.evaluate(() => document.body.classList.contains('ap-open'))).toBe(true);
+  // 出页回根 → header 头像 = 唯一智能体入口：开合并面板（智能体分区）。
+  await page.locator('.mobile-page[data-page="settings"] .mobile-page-header .mobile-back-btn').click();
+  await expect(page.locator('.mobile-page[data-page="settings"]')).not.toHaveClass(/live/);
+  await page.locator('#agent-avatar-btn').click();
+  await expect(page.locator('#memory-overlay')).toHaveClass(/on/);
+  await expect(page.locator('#memory-modal')).toHaveAttribute('data-pane', 'agent');
 
-  // 同源文案（profile.note i18n 同键 = agentProfile.js 渲染面）。
-  await expect(page.locator('#agent-profile-panel .ap-note')).toContainText('头像本地优先保存');
-  await expect(page.locator('#agent-profile-panel .ap-name-input')).toBeVisible();
-  await expect(page.locator('#agent-profile-panel .ap-btn-primary')).toBeVisible();
-  await expect(page.locator('#agent-profile-panel .ap-btn-ghost')).toBeVisible();
-
-  // X 收回（弹窗语义完整：scrim 态清 + 面板隐藏）。
-  await page.locator('#agent-profile-panel .ap-close').click();
-  await expect(page.locator('#agent-profile-panel')).toBeHidden();
-  expect(await page.evaluate(() => document.body.classList.contains('ap-open'))).toBe(false);
+  // 同源文案（profile.note i18n 同键 = agentProfile.js 渲染面）；头像盒 = 按钮
+  //（作者令②：点击头像即换头像，无「设置头像」钮）；旧重置/上传钮不存在。
+  await expect(page.locator('#memory-modal .ap-note')).toContainText('头像本地优先保存');
+  await expect(page.locator('#memory-modal .ap-name-input')).toBeVisible();
+  await expect(page.locator('#memory-modal .ap-avatar-box')).toHaveAttribute('aria-label', '上传头像');
+  await expect(page.locator('#memory-modal .ap-btnrow, #memory-modal .ap-btn-primary, #memory-modal .ap-btn-ghost')).toHaveCount(0);
+  // 旧 body 级独立面板已退役（DOM 不存在）。
+  expect(await page.locator('#agent-profile-panel').count()).toBe(0);
+  // 点外收面（overlay 自带点外关闭 = 弹窗语义完整）。
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#memory-overlay')).not.toHaveClass(/on/);
   expect(errors).toEqual([]);
 });
 
-test('T2 non-green primary key (v3.6①): light/dark surface swap, flat, no icon, 500 weight', async ({ page }) => {
+test('T2 non-green primary key (v3.6①): cfg-btn-primary light/dark surface swap, flat, 500 weight', async ({ page }) => {
   const errors = watchErrors(page);
   await bootApp(page, 'light');
   await pushSettings(page);
-  // 六件④：面板弹窗形态需入口行显式打开。
-  await page.locator('.mobile-page[data-page="settings"] .profile-entry').click();
-  const primary = page.locator('#agent-profile-panel .ap-btn-primary');
+  const primary = page.locator('#settings-modal .cfg-btn-primary').first();
   let cs = await primary.evaluate((el) => {
     const s = getComputedStyle(el);
     return { bg: s.backgroundColor, fg: s.color, shadow: s.boxShadow, fw: s.fontWeight };
@@ -162,7 +158,6 @@ test('T2 non-green primary key (v3.6①): light/dark surface swap, flat, no icon
   expect(cs.fg).toBe('rgb(255, 255, 255)');
   expect(cs.shadow).toBe('none');
   expect(cs.fw).toBe('500');
-  expect(await primary.locator('svg').first().evaluate((el) => getComputedStyle(el).display)).toBe('none');
 
   // dark：前景/背景互换（#e8eaed 底 / #13161c 字）。媒体翻转触发 .18s 背景过渡
   // —— 等过渡收尾再读 computed。
@@ -186,15 +181,18 @@ test('T2 non-green primary key (v3.6①): light/dark surface swap, flat, no icon
   expect(errors).toEqual([]);
 });
 
-test('T3 name inline save on Enter; groups follow desktop order after the entry row; entry removed on pop', async ({ page }) => {
+test('T3 name inline save on Enter via merged panel; settings groups follow desktop order; no entry row residue on pop', async ({ page }) => {
   const errors = watchErrors(page);
   await bootApp(page, 'dark');
   await pushSettings(page);
 
-  // 名称行内回车存（先入口行显式开面板；saveName 写穿 state.rootDisplayName
-  // + 播 root-name-change）。
-  await page.locator('.mobile-page[data-page="settings"] .profile-entry').click();
-  const input = page.locator('#agent-profile-panel .ap-name-input');
+  // 名称行内回车存（入口 = header 头像 → 合并面板智能体分区；saveName 写穿
+  // state.rootDisplayName + 播 root-name-change）。
+  await page.locator('.mobile-page[data-page="settings"] .mobile-page-header .mobile-back-btn').click();
+  await expect(page.locator('.mobile-page[data-page="settings"]')).not.toHaveClass(/live/);
+  await page.locator('#agent-avatar-btn').click();
+  await expect(page.locator('#memory-overlay')).toHaveClass(/on/);
+  const input = page.locator('#memory-modal .ap-name-input');
   await input.fill('笨笨二号');
   await input.press('Enter');
   const named = await page.evaluate(async () => {
@@ -203,19 +201,16 @@ test('T3 name inline save on Enter; groups follow desktop order after the entry 
   });
   expect(named).toBe('笨笨二号');
 
-  // 七分组沿用桌面次序：入口行之后的 #settings-modal 内分组标题在场。
+  // 七分组沿用桌面次序：#settings-modal 内分组标题在场（收编进设置页）。
+  await page.keyboard.press('Escape');
+  await page.locator('.mh-dd[data-dd="right"] .mh-dd-hd').click();
+  await page.locator('.mh-dd[data-dd="right"] [data-face="settings"]').click();
+  await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
   await expect(page.locator('#settings-modal .settings-modal-header')).toBeVisible();
 
-  // 出页清场：入口行移除、面板归位 body 且隐藏（弹窗语义还原）。
-  await page.locator('#agent-profile-panel .ap-close').click();
+  // 出页清场：零入口行残留（面板合并批 ④）。
   await page.locator('.mobile-page[data-page="settings"] .mobile-page-header .mobile-back-btn').click();
   await expect(page.locator('.mobile-page[data-page="settings"]')).not.toHaveClass(/live/);
   expect(await page.locator('.profile-entry').count()).toBe(0);
-  const docked = await page.evaluate(() => {
-    const p = document.getElementById('agent-profile-panel');
-    return { inBody: p.parentElement === document.body, hidden: p.hidden };
-  });
-  expect(docked.inBody).toBe(true);
-  expect(docked.hidden).toBe(true);
   expect(errors).toEqual([]);
 });

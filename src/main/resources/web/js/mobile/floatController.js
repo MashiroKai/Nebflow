@@ -1,24 +1,26 @@
 // mobile/floatController.js — v3「左列液态下拉 + 二级液态面板」（样张
 // 20261020_214500 v3③⑤ 同款 + 作者现场扩展②「其他下拉键同款适配」）。
 //
-// 键位映射对齐真实客户端（任务书）：左列 = 本文件 FLOAT_IDS 六键
+// 键位映射对齐真实客户端（任务书）：左列 = 本文件 FLOAT_IDS 五键
 //   search-btn（搜索聊天记录）/ bg-indicator（后台任务）/ bgagent-indicator（智能体）
-//   / reminder-btn（定时任务）/ daemon-btn（心跳）/ memory-btn（记忆）
+//   / reminder-btn（定时任务）/ daemon-btn（心跳）
 //   + 任务键（v3⑤ 任务浮层入口，本文件建）+ pending-asks-indicator（D6 F2 待答
 //   胶囊 —— 非 FLOAT_IDS 成员，内容驱动显隐，随左列直动作跳最旧待答卡）。
+//   （面板合并批 2026-10-23 ③：记忆键退出左列 —— 记忆分区入口由 header 头像
+//   承担（点头像 → 合并后的智能体+记忆面板，PANEL_FACE 头像腿 morph 同款）。）
 // r4 的「收编 header 右簇 #mobile-float-actions」作废（v3 顶栏=双列液态下拉，
 // 右簇形态退役）。
 //
 // 交互（扩展②口径）：
 //   · 任务键 → 六键收回 → 圆钮原地二级液态形变加宽成任务浮层（taskPanel.js）；
-//   · 其余「点开有面板」的键（搜索/定时/心跳/记忆/后台/智能体）一律同款二级
+//   · 其余「点开有面板」的键（搜索/定时/心跳/后台/智能体）一律同款二级
 //     液态形变（钮变面板）—— 面板显隐仍走各自既有开合路径（零功能重造），
 //     本文件只拦呈现：点键瞬间收列，面板现身即从该键 origin morphIn；
 //   · 无面板承载的键（pending-asks）保持直动作。
 //
 // 实现：把 FLOAT_IDS + pending-asks 节点整体**搬移**进 headerController 的左列
 //（appendChild = move，监听随节点走，桌面归还锚点照旧）；任务键为自建节点。
-// 面板 morph 靠 MutationObserver 盯六个面板载体的显隐类（.open/.on/.hidden），
+// 面板 morph 靠 MutationObserver 盯面板载体的显隐类（.open/.on/.hidden），
 // 零面板 JS 改动。拆层按锚点原样归还 header。
 
 import { t } from '../i18n.js';
@@ -29,8 +31,8 @@ import { openTaskPanel, taskBadgeCount } from './taskPanel.js';
 import { morphIn } from './morphPanel.js';
 import { logEvent, touchLayer } from './navController.js';
 
-/** 收编左列成员（任务键之下，自上而下）：搜索、后台任务、智能体、定时、心跳、记忆、待答。 */
-const FLOAT_IDS = ['search-btn', 'bg-indicator', 'bgagent-indicator', 'reminder-btn', 'daemon-btn', 'memory-btn'];
+/** 收编左列成员（任务键之下，自上而下）：搜索、后台任务、智能体、定时、心跳、待答。 */
+const FLOAT_IDS = ['search-btn', 'bg-indicator', 'bgagent-indicator', 'reminder-btn', 'daemon-btn'];
 const PENDING_ASKS_ID = 'pending-asks-indicator';
 
 /** 图标常驻键（手机小批 2026-10-21 作者令「与桌面端做区分」）：bg/bgagent 键
@@ -46,16 +48,19 @@ const PERSIST_ICONS = {
 };
 
 /** 键 → 面板载体（morph 目标）与「可见」判据。
- *  P6 归并（mobile-secondary-screens 实施批）：bgagent 键的 morph 载体改指
- *  #bg-dropdown（合并面板，bgStatusFace.js 押回幽灵面 + 解隐载体；列表节点
- *  已收编进载体），可见判据仍读 bgagent-dropdown 的 hidden 翻转。 */
+ *  P6/后台合并批（2026-10-23 ⑥）：后台两键 = 同一载体 #bg-dropdown。bg 键腿
+ *  走本表（点键 → recent → 载体现身 morph）；bgagent 键腿由 bgStatusFace.js
+ *  的 capture 拦截自带 morph（桌面 toggle 不落地 + 幽灵面押回）—— 不在本表
+ *  重复登记（同载体双 morph 源会叠影）。
+ *  面板合并批 ③：记忆键腿改挂 header 头像（#agent-avatar-btn 在中簇，不在
+ *  左列）—— 头像点击 = 合并面板（memory-modal）智能体分区，现身即自头像
+ *  origin morphIn（agentProfile.openProfilePanel → memory.openMergedPanel）。 */
 const PANEL_FACE = [
   { keyId: 'search-btn', panel: () => document.getElementById('search-modal'), visible: () => document.getElementById('search-overlay')?.classList.contains('on') === true },
-  { keyId: 'memory-btn', panel: () => document.getElementById('memory-modal'), visible: () => document.getElementById('memory-overlay')?.classList.contains('on') === true },
+  { keyId: 'agent-avatar-btn', panel: () => document.getElementById('memory-modal'), visible: () => document.getElementById('memory-overlay')?.classList.contains('on') === true },
   { keyId: 'reminder-btn', panel: () => document.getElementById('reminder-panel'), visible: () => document.getElementById('reminder-panel')?.classList.contains('open') === true },
   { keyId: 'daemon-btn', panel: () => document.getElementById('daemon-panel'), visible: () => document.getElementById('daemon-panel')?.classList.contains('open') === true },
   { keyId: 'bg-indicator', panel: () => document.getElementById('bg-dropdown'), visible: () => document.getElementById('bg-dropdown')?.classList.contains('hidden') === false },
-  { keyId: 'bgagent-indicator', panel: () => document.getElementById('bg-dropdown'), visible: () => document.getElementById('bgagent-dropdown')?.classList.contains('hidden') === false },
 ];
 
 /** @type {{id:string, parent:Node, next:Node|null}[]} 归还锚点。 */
@@ -112,7 +117,7 @@ function watchPanelFaces() {
   const keyById = (id) => /** @type {HTMLElement|null} */ (document.getElementById(id));
   const recentlyClicked = new Map(); // keyId → ts（仅新开窗 morph，常亮不重播）
   const onKeyCapture = (e) => {
-    const el = e.target instanceof Element ? e.target.closest('.mh-dd-bd > [id]') : null;
+    const el = e.target instanceof Element ? e.target.closest('.mh-dd-bd > [id], #agent-avatar-btn') : null;
     if (el && el.id) {
       recentlyClicked.set(el.id, Date.now());
       // 二级液态第一步（样张⑤口径）：键按下先收列，面板现身即从该键 morph。
@@ -135,7 +140,7 @@ function watchPanelFaces() {
       break; // 一次显隐变化只播一个面
     }
   });
-  for (const id of ['search-overlay', 'memory-overlay', 'reminder-panel', 'daemon-panel', 'bg-dropdown', 'bgagent-dropdown']) {
+  for (const id of ['search-overlay', 'memory-overlay', 'reminder-panel', 'daemon-panel', 'bg-dropdown']) {
     const el = document.getElementById(id);
     if (el) faceMo.observe(el, { attributes: true, attributeFilter: ['class'] });
   }

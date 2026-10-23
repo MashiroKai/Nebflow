@@ -141,9 +141,14 @@ test('snapshot row + live agentStart for same team agent render once (ghost-dup 
   const indicator = page.locator('#bgagent-indicator');
   await expect(indicator).toBeVisible();
   await indicator.click();
-  const rows = page.locator('#bgagent-dropdown .bg-task-row');
+  const rows = page.locator('#bg-dropdown > .bg-dropdown-list:last-child .bg-task-row');
   await expect(rows).toHaveCount(1);
-  await expect(rows.first()).toContainText('running Frontend · nebflow-project/Frontend');
+  // 单行制行渲染（2026-09-27 badge-inline 批，HEAD 上旧两行 meta 断言随之过期——
+  // 干净 HEAD 复跑同样失败，与本批无关，此处改现状形态）：可见文本 = 状态词/
+  // kind chip/名字/uptime（数据词 locale 稳定）；task 落在名字 title tooltip。
+  await expect(rows.first()).toContainText('Team');
+  await expect(rows.first()).toContainText('Frontend');
+  await expect(rows.first().locator('.bg-task-name')).toHaveAttribute('title', /nebflow-project\/Frontend/);
 
   // 4. Turn end clears the row (W1-d dual-key cleanup still intact).
   await inject(page, {

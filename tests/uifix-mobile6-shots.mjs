@@ -102,13 +102,10 @@ for (const width of [375, 430]) {
   await page.waitForSelector('.mobile-page[data-page="settings"].live', { timeout: 8000 });
   await sleep(900);
   await page.screenshot({ path: join(OUT, `mobile6-4-settings-${tag}-${PHASE}.png`) });
-  // after 树附加：入口行点击 → 弹窗形态（证明显式打开可用）。
+  // 面板合并批（2026-10-23 ④）：设置页 profile 入口行退役 —— after 树里
+  // 入口行不应存在（残留即回归）。
   if (await page.locator('.profile-entry').count()) {
-    await page.locator('.profile-entry').click();
-    await sleep(600);
-    await page.screenshot({ path: join(OUT, `mobile6-4b-entry-open-${tag}-${PHASE}.png`) });
-    await page.locator('#agent-profile-panel .ap-close').click().catch(() => {});
-    await sleep(400);
+    console.warn('[mobile6-shots] profile-entry 残留（面板合并批 ④ 违约）');
   }
   await page.locator('.mobile-page[data-page="settings"] .mobile-page-header .mobile-back-btn').click();
   await sleep(600);

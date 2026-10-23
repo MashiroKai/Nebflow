@@ -238,7 +238,7 @@ test('T2 task panel: morph class, badge count, group order (running/queued/done)
   expect(pageErrors).toEqual([]);
 });
 
-test('T3 profile panel: open/close, avatar localStorage persistence, name Enter-save', async ({ page }) => {
+test('T3 merged panel: avatar opens Agent+Memory panel (agent pane), avatar localStorage persistence, name Enter-save', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
 
@@ -253,10 +253,13 @@ test('T3 profile panel: open/close, avatar localStorage persistence, name Enter-
   }, SID, { timeout: 15000 });
   await expect(page.locator('#agent-avatar-btn img.agent-avatar-img')).toHaveCount(1);
 
-  // 进：点头像 → 面板可见 + body.ap-open；面板锚顶栏下右缘（手机几何，不出屏）。
+  // 进：点头像 → 合并面板（面板合并批 ①③：memory-overlay.on + 智能体分区；
+  // 面板锚顶栏下居中（作者令 ⑤），不出屏；旧独立 #agent-profile-panel 不存在）。
   await page.locator('#agent-avatar-btn').click();
-  const panel = page.locator('#agent-profile-panel');
+  await expect(page.locator('#memory-overlay')).toHaveClass(/on/);
+  const panel = page.locator('#memory-modal');
   await expect(panel).toBeVisible();
+  await expect(panel).toHaveAttribute('data-pane', 'agent');
   const pb = await panel.boundingBox();
   const vb = page.viewportSize();
   expect(pb).toBeTruthy();
@@ -278,10 +281,14 @@ test('T3 profile panel: open/close, avatar localStorage persistence, name Enter-
   // agentsData 行：harness 无 agents 清单时仅 override 写入（行缺席 = 合法路径）。
   expect(!check.row || check.row.displayName === '大笨').toBe(true);
 
-  // 出：X 关闭 + body.ap-open 摘除。
-  await panel.locator('.ap-close').click();
-  await expect(panel).toBeHidden();
-  expect(await page.evaluate(() => document.body.classList.contains('ap-open'))).toBe(false);
+  // 头像点击即换（作者令②）：面板头像盒 = 文件选择入口（无「设置头像」钮、
+  // 无「重置头像」钮 —— 按钮族 DOM 不存在）。
+  await expect(panel.locator('.ap-avatar-box')).toHaveAttribute('aria-label', '上传头像');
+  await expect(panel.locator('.ap-btnrow, .ap-btn-primary, .ap-btn-ghost')).toHaveCount(0);
+
+  // 出：点外（Esc → 桌面 overlay 收面路径）关闭 + overlay 态摘除。
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#memory-overlay')).not.toHaveClass(/on/);
   expect(pageErrors).toEqual([]);
 });
 

@@ -132,7 +132,7 @@ test.beforeEach(async ({ page }) => {
 /** @type {{sendTasks: (list: any[]) => void}|null} */
 let harness = null;
 
-test('T1 panel geometry: top-hung 308×560, left 6, radius 16', async ({ page }) => {
+test('T1 panel geometry: top-hung 308×560, centered, radius 16', async ({ page }) => {
   const errors = watchErrors(page);
   await openPanel(page);
   // 终态几何双读 poll（同 P6 T1 口径）：spring 过冲穿越 + faceMo 晚重放
@@ -153,7 +153,7 @@ test('T1 panel geometry: top-hung 308×560, left 6, radius 16', async ({ page })
     }, 120));
   });
   await expect.poll(geo, { timeout: 8000 }).toEqual({
-    x: 6, w: 308, h: 560, radius: '16px', tf: 'none',
+    x: 33.5, w: 308, h: 560, radius: '16px', tf: 'none', // 面板合并批⑤居中（原 left 6 退役）
   });
   expect(errors).toEqual([]);
 });

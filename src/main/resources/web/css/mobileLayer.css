@@ -64,11 +64,11 @@
  *      profile 面板手机形态（morph 自会话头头像；桌面居中卡在 chat.css）。
  *
  * z 层序（手机层内约定，桌面值不被本文件改动）：
- *   聊天 root(桌面默认) < .mh-scrim 44 < #header 悬浮层 40/46(双列)
+ *   聊天 root(桌面默认) < .mh-scrim 39 < #header 悬浮层 40/46(双列)
  *   < #settings-overlay/#usage-overlay 155(状态载体垫层)
- *   < #mobile-pages 156(页面容器，收编面随页面体) < #canvas-panel 170(文档卡片层)
- *   < mh-tpanel 48(任务浮层，root 域) < #agent-profile-panel 60(root 域)
- *   < 桌面模态族 310+/10000/11000(原样)
+ *   < #mobile-pages 156(页面容器，收编面随页面体) < #canvas-panel 170(bottom sheet)
+ *   < mh-tpanel 48(任务浮层，root 域) < 桌面模态族 310+/10000/11000(原样；
+ *     合并面板 = memory-overlay 310 —— 智能体+记忆两分区同一载体)
  */
 
 /* ── ② 视口链 html 层压点（bootstrap.js 同路径加/摘，桌面永不命中）──────
@@ -528,10 +528,15 @@ body.mobile-layer .mh-morph-close {
 }
 
 /* ── v3⑤ 任务浮层（taskPanel.js 建；morph 自左圆钮）─────────────────── */
+/* 面板合并批（2026-10-23 ⑤）：浮层面板水平居中（left/right 0 + margin auto，
+   不用 transform —— 与 morphIn 的 FLIP transform 变量链零冲突）。 */
 body.mobile-layer .mh-tpanel {
   position: fixed;
   top: calc(58px + env(safe-area-inset-top, 0px));
-  left: 6px;
+  left: 0;
+  right: 0;
+  margin-left: auto;
+  margin-right: auto;
   width: min(308px, calc(100vw - 24px));
   height: min(560px, calc(100dvh - 130px));
   border-radius: 16px;
@@ -742,10 +747,13 @@ body.mobile-layer #bgagent-dropdown {
   display: none !important;
 }
 /* 心跳配置浮层（daemonPanel.js 注入样式 + JS 内联定位）：!important 压内联，
-   v3 顶挂同款。 */
+   v3 顶挂同款；面板合并批 ⑤：水平居中（margin auto，transform 保持 none ——
+   daemonPanel 自身定位用的 translate 压平，不用 translate 居中以免回写打架）。 */
 body.mobile-layer #daemon-config-overlay {
-  left: 6px !important;
-  right: auto !important;
+  left: 0 !important;
+  right: 0 !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
   top: calc(58px + env(safe-area-inset-top, 0px)) !important;
   bottom: auto !important;
   transform: none !important;
@@ -794,8 +802,10 @@ body.mobile-layer #search-modal.mh-morph-close {
 body.mobile-layer #search-modal {
   position: fixed;
   top: calc(58px + env(safe-area-inset-top, 0px));
-  left: 6px;
-  right: auto;
+  left: 0;
+  right: 0;
+  margin-left: auto;
+  margin-right: auto;
   width: min(308px, calc(100vw - 24px));
   height: min(560px, calc(100dvh - 130px));
   max-width: none;
@@ -891,8 +901,10 @@ body.mobile-layer .nebflow-login-modal {
 body.mobile-layer #reminder-panel {
   position: fixed;
   top: calc(58px + env(safe-area-inset-top, 0px));
-  left: 6px;
-  right: auto;
+  left: 0;
+  right: 0;
+  margin-left: auto;
+  margin-right: auto;
   width: min(308px, calc(100vw - 24px));
   height: min(560px, calc(100dvh - 130px));
   max-height: none;
@@ -928,8 +940,10 @@ body.mobile-layer .reminder-row.disabled { opacity: 0.72; }
 body.mobile-layer #daemon-panel {
   position: fixed;
   top: calc(58px + env(safe-area-inset-top, 0px));
-  left: 6px;
-  right: auto;
+  left: 0;
+  right: 0;
+  margin-left: auto;
+  margin-right: auto;
   width: min(308px, calc(100vw - 24px));
   height: min(560px, calc(100dvh - 130px));
   max-height: none;
@@ -970,22 +984,25 @@ body.mobile-layer .mh-daemon-foot {
   color: var(--color-frame-text-muted, #98a2b3);
 }
 
-/* ── P6 运行状态：两下拉合并面板（mobile-secondary-screens 实施批）────
-   样张 v3.5 P6 + 开放点①「与桌面两下拉的归并（移动单面板）、子智能体并入」
-   按设计批推荐采纳：载体 = #bg-dropdown 精确顶挂 308×560；#bgagent-dropdown
-   幽灵面退场（上方专节），其列表节点由 bgStatusFace.js 收编进载体（分组签
-   「后台任务 / 智能体」= .mh-rd-grp 同族）。行结构（状态点 + 状态词六档 +
-   origin/kind chip + 行数 + 时长）与取消/输出卡 = 桌面既有零重造。 */
+/* ── P6 运行状态：后台合并面板（后台任务 + 子智能体单面板）────────────
+   后台合并批（2026-10-23 ⑥）：结构归并上移为桌面共享单点（bgMergedPanel.js，
+   两端同构）；手机层本节只管几何：
+   · 居中（作者令 ⑤：left/right 0 + margin auto，不占 transform —— morph 链专用）；
+   · 紧凑化（作者令 ⑥「手机端空白太多」）：固定 560 高改**内容高自适应**，
+     max-height 兜底 —— 行少时面板收缩，不再留大片空玻璃；
+   · 行密度收紧（padding 8→6，签距收紧）。 */
 /* 几何只挂 :not(.hidden) —— chat.css `#bg-dropdown.hidden{display:none}` 是
    开合唯一真源（桌面同一路径），手机层 display:flex 不得压过它。 */
 body.mobile-layer #bg-dropdown:not(.hidden) {
   position: fixed;
   top: calc(58px + env(safe-area-inset-top, 0px));
-  left: 6px;
-  right: auto;
+  left: 0;
+  right: 0;
+  margin-left: auto;
+  margin-right: auto;
   width: min(308px, calc(100vw - 24px));
-  height: min(560px, calc(100dvh - 130px));
-  max-height: none;
+  height: auto;
+  max-height: min(560px, calc(100dvh - 130px));
   border-radius: 16px;
   display: flex;
   flex-direction: column;
@@ -994,22 +1011,35 @@ body.mobile-layer #bg-dropdown .bg-dropdown-header {
   flex: none;
 }
 body.mobile-layer #bg-dropdown .bg-dropdown-list {
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 0;
   overflow-y: auto;
 }
+/* 紧凑行密度（手机端）：行 padding 8→6、空态行收紧；分组签与桌面 .mh-bg-grp
+   同名（chat.css 桌面形），此处只压手机密度。 */
+body.mobile-layer #bg-dropdown .bg-task-row {
+  padding: 6px 12px;
+}
+body.mobile-layer #bg-dropdown .bg-dropdown-empty {
+  padding: 10px 12px;
+}
+body.mobile-layer #bg-dropdown .mh-bg-grp {
+  padding: 6px 12px 2px;
+}
 body.mobile-layer #bg-dropdown [hidden] { display: none; }
 
-/* ── P5 记忆：读态卡 + 编辑态切换（mobile-secondary-screens 实施批）────
-   样张 v3.5 P5：顶挂 308×560；读态 = 「## 标题」分节条目卡（标题 + 摘录两行
-   截断 + scope 文件名脚注）；头部「编辑」钮 ⇄ 桌面原 textarea 编辑态（不做
-   移动编辑器）；scope seg 措辞「智能体 · memory.md / 用户 · User.md」。 */
+/* ── P5 记忆 → 合并面板载体（mobile-secondary-screens 批 + 面板合并批 ①）─
+   面板合并批（2026-10-23 ①）：#memory-modal = 「智能体 + 记忆」合并面板的
+   手机载体（308×560 顶挂语言不变）；几何居中（作者令 ⑤）。分区显隐由
+   #memory-modal[data-pane] 驱动（modal.css 桌面形 + 此处手机读态件同维）。 */
 body.mobile-layer #memory-overlay { padding: 0; }
 body.mobile-layer #memory-modal {
   position: fixed;
   top: calc(58px + env(safe-area-inset-top, 0px));
-  left: 6px;
-  right: auto;
+  left: 0;
+  right: 0;
+  margin-left: auto;
+  margin-right: auto;
   width: min(308px, calc(100vw - 24px));
   height: min(560px, calc(100dvh - 130px));
   max-width: none;
@@ -1046,6 +1076,25 @@ body.mobile-layer #memory-modal #memory-modal-actions { display: none; }
 body.mobile-layer.mh-memory-editing #memory-modal #memory-modal-body,
 body.mobile-layer.mh-memory-editing #memory-modal #memory-modal-actions { display: flex; }
 body.mobile-layer.mh-memory-editing .mh-memory-cards { display: none; }
+/* 合并面板分区（面板合并批 ①）：智能体分区在场时收起手机记忆读态件
+   （卡读态/编辑钮）；记忆分区在场时收起 .ap-pane（chat.css 桌面规则已管，
+   手机同维生效）。 */
+body.mobile-layer #memory-modal[data-pane='agent'] .mh-memory-cards,
+body.mobile-layer #memory-modal[data-pane='agent'] .mh-memory-edit { display: none; }
+/* 智能体分区手机形：分区体吃满余高并自滚（308 宽 + 输入法弹起不留死区）。 */
+body.mobile-layer #memory-modal .ap-pane {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 4px 10px;
+  scrollbar-width: none;
+}
+body.mobile-layer #memory-modal .ap-pane::-webkit-scrollbar { display: none; }
+body.mobile-layer #memory-modal .ap-pane .ap-avatar-img,
+body.mobile-layer #memory-modal .ap-pane .ap-avatar-initial {
+  width: 64px;
+  height: 64px;
+}
 /* 头部「编辑/完成」钮（memoryFace.js 建；glass 小钮）。 */
 body.mobile-layer .mh-memory-edit {
   margin-left: auto;
@@ -1209,28 +1258,28 @@ body.mobile-layer #mobile-pages .canvas-tab-pane {
   min-height: 0;
 }
 
-/* ── ③ 画板 = 文档卡片层：只承载 pop 出来的文档 ───────────────────────
-   非卡片态（未开 / 面板页签被页面接管）一律不可见 —— 画板不再是目的地。
-   r4：visibility:hidden → display:none —— 桌面关闭态盒（flex-basis 0 但
-   margin 16/10/10 + 边框 = 22px 残列）在手机层把 #main 压窄 22px（r3 遗留①
-   的 boot 瞬态），并连带把 header 碰撞链在首帧挤进「藏盾」分支；关闭态整盒
-   退场后 #main 从首帧即满走廊宽（卡片层亮起时本节 fixed 覆盖，不受影响）。 */
+/* ── ③ 画板 = 文档卡片层 → bottom sheet（画板底卡批 · 作者令 2026-10-23 ⑦）
+   手机画板改为**从下方弹出的卡片（bottom sheet）**：底缘锚定（safe-area 之上
+   6px）、顶缘留聊天头一线，四角 20px 圆角玻璃卡；入场 = 自下滑入（mhSheetIn，
+   样张 spring 同族），reduced-motion 压平。
+   手势（canvasGestures.js 同批）：卡头胶囊（顶缘）下滑=收起整叠（保留状态不
+   销毁）、上滑=换卡、左右=关卡、长按=引用钮；底缘带下滑跟手收起；左右缘带
+   内滑关卡；内容区零劫持（滚动/缩放原生优先）。 */
 body.mobile-layer #canvas-panel {
   display: none;
 }
 body.mobile-layer.mf-cards-live #canvas-panel {
   display: flex;
   position: fixed;
-  left: 10px;
-  /* v3：右缘活动栏退役 → 卡片层右缘取视觉边距（10px 悬浮卡语言不变） */
-  right: 10px;
-  top: calc(10px + env(safe-area-inset-top, 0px));
-  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  left: 8px;
+  right: 8px;
+  top: calc(env(safe-area-inset-top, 0px) + 76px);
+  bottom: calc(6px + env(safe-area-inset-bottom, 0px));
   width: auto;
   max-width: none;
   flex: none;
   margin: 0;
-  border-radius: 24px;
+  border-radius: 20px;
   border: 1px solid var(--glass-border);
   z-index: 170;
   visibility: visible;
@@ -1238,6 +1287,7 @@ body.mobile-layer.mf-cards-live #canvas-panel {
   box-shadow:
     0 18px 50px rgba(0, 0, 0, 0.28),
     inset 0 1px 0 0 rgba(255, 255, 255, 0.25);
+  animation: mhSheetIn 0.34s cubic-bezier(0.3, 1.36, 0.45, 1);
 }
 @media (prefers-color-scheme: dark) {
   body.mobile-layer.mf-cards-live #canvas-panel {
@@ -1245,6 +1295,13 @@ body.mobile-layer.mf-cards-live #canvas-panel {
       0 18px 50px rgba(0, 0, 0, 0.5),
       inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
   }
+}
+@keyframes mhSheetIn {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.mobile-layer.mf-cards-live #canvas-panel { animation: none; }
 }
 /* 页签条永久退场（页签形态废除）；桌面关闭钮由卡片头 X 接管。 */
 body.mobile-layer #canvas-panel .canvas-tab-bar,
@@ -1347,7 +1404,9 @@ body.mobile-layer .mobile-card-ref-btn:active { transform: scale(0.94); }
   from { opacity: 0; transform: translateY(6px) scale(0.9); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
-/* 页签栏区/底缘带：手势触控面（见 canvasGestures.js 三带划分）。 */
+/* 底缘带/侧缘带：手势触控面（见 canvasGestures.js 分区契约 —— 画板底卡批）。
+   底缘带 = 下滑收起（可见抓手 = iOS home-indicator 同形线）；侧缘带 = 内滑
+   关卡（无视觉件，避免装饰 —— 贴边意图带）。 */
 body.mobile-layer #canvas-panel .mobile-canvas-edgezone {
   position: absolute;
   left: 0;
@@ -1362,7 +1421,7 @@ body.mobile-layer #canvas-panel .mobile-canvas-edgezone {
   padding-bottom: 5px;
   pointer-events: auto;
 }
-/* iOS home-indicator 同形抓手：上滑收层的可见线索。 */
+/* iOS home-indicator 同形抓手：下滑收起的可见线索。 */
 body.mobile-layer #canvas-panel .mobile-canvas-edgezone::after {
   content: '';
   width: 36px;
@@ -1371,6 +1430,19 @@ body.mobile-layer #canvas-panel .mobile-canvas-edgezone::after {
   background: var(--color-frame-text-muted, #98a2b3);
   opacity: 0.45;
 }
+/* 左右缘带（画板底卡批 ⑦）：内滑 = 关闭该文档卡。窄带（26px）贴边意图，
+   touch-action:none 收割手势，内容区横滚/缩放零劫持。 */
+body.mobile-layer #canvas-panel .mobile-canvas-edgezone-side {
+  position: absolute;
+  top: 64px; /* 卡头胶囊以下（胶囊 touch-action:none 自带，带区不叠触点） */
+  bottom: 40px; /* 底缘带以上 */
+  width: 26px;
+  z-index: 30;
+  touch-action: none;
+  pointer-events: auto;
+}
+body.mobile-layer #canvas-panel .mobile-canvas-edgezone-side[data-side='left'] { left: 0; }
+body.mobile-layer #canvas-panel .mobile-canvas-edgezone-side[data-side='right'] { right: 0; }
 /* 内容区：纵向滚动归浏览器，横向意图让给卡片切换手势。 */
 body.mobile-layer #canvas-content {
   touch-action: pan-y;
@@ -1445,28 +1517,12 @@ body.mobile-layer #task-list {
   display: none !important;
 }
 
-/* ── profile 面板：手机形态（morph 自会话头头像；桌面居中卡见 chat.css）─ */
-body.mobile-layer #agent-profile-panel {
-  position: fixed;
-  top: calc(58px + env(safe-area-inset-top, 0px));
-  right: 6px;
-  left: auto;
-  width: min(300px, calc(100vw - 24px));
-  max-height: min(70vh, calc(100dvh - 160px));
-  overflow-y: auto;
-  border-radius: 16px;
-  z-index: 60;
-  /* 桌面居中卡的 translate(-50%,-50%) 定位 + 入场动画在此失效 —— 手机锚定
-     顶栏下方右缘，带桌面 transform 会半截移出屏左。 */
-  transform: none;
-  animation: none;
-}
-body.mobile-layer #agent-profile-panel[hidden] { display: none; }
-/* 六件④：设置页入口行（.profile-entry）弹窗形态 —— 面板/幕升到页面容器(156)
-   之上（root 域 60 不变：根页 #mobile-pages 不 live，零影响）。幕 158 < 面板 160，
-   点幕收面（collapseAll → closeProfilePanel 缝已在 headerController）。 */
-body.mobile-layer.mf-page-open #agent-profile-panel { z-index: 160; }
-body.mobile-layer.mf-page-open.ap-open .mh-scrim { z-index: 158; }
+/* ── 面板合并批（2026-10-23 ①③）：profile 面板独立面退役 ──────────────
+   #agent-profile-panel（body 级弹窗）不存在了 —— 智能体内容以 .ap-pane 注入
+   「智能体 + 记忆」合并面板（#memory-modal 手机几何见 P5 节）；手机端记忆键
+   退场（#memory-btn 桌面入口保留，手机层 display:none —— 记忆分区入口 =
+   header 头像 → 合并面板 → 记忆页签）。 */
+body.mobile-layer #memory-btn { display: none; }
 
 /* ── 手机层通用补遗（与既有 css/mobile.css 的 ≤768px 规则互补）──────── */
 
@@ -1640,63 +1696,14 @@ body.mobile-layer #mobile-pages .ud-curve {
   overflow: hidden;
 }
 
-/* ── P12 设置：profile 入口行（六件④：停靠常显退役 → 显式入口）────────
-   手机实测反馈「进入设置页自动弹出『智能体』面板模态」——面板不再停靠为页体
-   首块常显，改页体首块一条入口行（navController syncProfileBlock 注入），点击
-   才 openProfilePanel() 弹窗形态（几何 = 1408 行 #agent-profile-panel 手机浮层）。
-   样式与设置面卡同语言：glass 面 + 16px 圆角 + sapphire 图标位 + 尾部 chevron。 */
-body.mobile-layer .mobile-page-body .profile-entry {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: auto;
-  flex-shrink: 0;
-  margin: 12px 12px 0;
-  padding: 12px 14px;
-  border-radius: 16px;
-  border: 1px solid var(--glass-border);
-  background: var(--glass-bg);
-  color: var(--color-text, #1a1d24);
-  font-size: 14px;
-  font-weight: 500;
-  text-align: left;
-  cursor: pointer;
-  transition: background 0.18s ease;
-}
-body.mobile-layer .mobile-page-body .profile-entry:active {
-  background: var(--glass-etched-bg, rgba(0, 0, 0, 0.045));
-}
-body.mobile-layer .mobile-page-body .profile-entry .profile-entry-ico {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  flex-shrink: 0;
-  border-radius: 9px;
-  background: rgb(var(--sapphire));
-  color: #fff;
-}
-body.mobile-layer .mobile-page-body .profile-entry .profile-entry-ico svg {
-  width: 17px;
-  height: 17px;
-}
-body.mobile-layer .mobile-page-body .profile-entry span {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-body.mobile-layer .mobile-page-body .profile-entry .profile-entry-arrow {
-  flex-shrink: 0;
-  width: 16px;
-  height: 16px;
-  color: var(--color-text-muted, #8b8e96);
-}
-/* 上传头像主键 = 官网登录卡同款（v3.6① 绿键退役；值面取 auth 键族字面）：
-   light #111827 底/白字、hover #374151；dark 前景背景互换（#e8eaed/#13161c、
-   hover #fff）；平面单色（box-shadow none）、无图标、500 字重、hover .18s 提阶。
-   作用域 = 手机层（桌面 .ap-btn-primary/.cfg-btn-primary 绿面不动）。cfg-btn-primary =
-   桌面设置模态五枚保存类文本主键 —— v3.6①「绿键全面退役」同规格覆盖。*/
-body.mobile-layer .agent-profile-panel .ap-btn-primary,
+/* ── 面板合并批（2026-10-23 ④）：设置页 profile 入口行退役 ─────────────
+   智能体入口已由 header 头像承担（点头像 → 合并后的智能体+记忆面板）——
+   设置页不再注入 .profile-entry 行（navController syncProfileBlock 删除），
+   旧样式整块退役。 */
+
+/* 设置模态主键同规格覆盖保留（cfg-btn-primary = 桌面设置模态五枚保存类文本
+   主键 —— v3.6①「绿键全面退役」规格；.ap-btn-primary 旧选择器随独立面板退役
+   摘除）。 */
 body.mobile-layer #settings-modal .cfg-btn-primary {
   background: #111827;
   color: #fff;
@@ -1705,21 +1712,14 @@ body.mobile-layer #settings-modal .cfg-btn-primary {
   box-shadow: none;
   transition: background 0.18s ease;
 }
-body.mobile-layer .agent-profile-panel .ap-btn-primary:hover,
 body.mobile-layer #settings-modal .cfg-btn-primary:hover {
   background: #374151;
 }
-body.mobile-layer .agent-profile-panel .ap-btn-primary svg,
-body.mobile-layer .agent-profile-panel .ap-btn-primary i {
-  display: none;
-}
 @media (prefers-color-scheme: dark) {
-  body.mobile-layer .agent-profile-panel .ap-btn-primary,
   body.mobile-layer #settings-modal .cfg-btn-primary {
     background: #e8eaed;
     color: #13161c;
   }
-  body.mobile-layer .agent-profile-panel .ap-btn-primary:hover,
   body.mobile-layer #settings-modal .cfg-btn-primary:hover {
     background: #fff;
   }
