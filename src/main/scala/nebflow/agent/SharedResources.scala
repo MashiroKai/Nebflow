@@ -492,6 +492,28 @@ case class SharedResources(
   // correlationId 幂等 + 会话已删守卫，复活轮 RecoverPersistedQueues 重放）。
   BgInboxPort.install(BgInboxBackstop.face(this))
 
+  // 合并静默搁浅修复批（2026-10-23 作者令腿①，同日裁定纠正版——合并不自动化，
+  // 平台只做排队/通知）：DelegateAutoMerge 的 refused 通知投递面注册
+  // （MergeRefusalCare.EscalationPort，BgInboxPort 同款 M2 注册器形态——core 不
+  // import agent 的分层纪律）。双目标路由（deliverToRootOrInbox 同族：目标活 =
+  // 直投；死 = 持久收件箱补投，复活轮 RecoverPersistedQueues 重放）：
+  //   - delegate 本人 = 主通知（可行动诊断：哪条路径脏、怎么清、重试合并是
+  //     delegate 自己的责任——平台零代跑）；
+  //   - 父会话 = 知会一行（重试责任在 delegate 侧）。
+  // 未装配（无 SharedResources 场）= EscalationPort 响亮 WARN，通知绝不静默蒸发。
+  nebflow.core.delegate.MergeRefusalCare.EscalationPort.install { (delegateId, parentSessionId, delegateEvent, parentEvent) =>
+    def to(sessionId: String, ev: nebflow.actor.AgentCommand.ExternalEvent) =
+      nebflow.core.tools.BgNotifyDelivery
+        .deliverToRootOrInbox(Some(actorSystem), Some(agentRegistry), sessionId, ev)
+        .void
+        .handleErrorWith(e =>
+          nebflow.shared.NebflowLogger
+            .forName("nebflow.merge-refusal-care")
+            .warn(s"[merge-refusal-care] delivery to '$sessionId' failed: ${e.getMessage}")
+        )
+    to(delegateId, delegateEvent) *> to(parentSessionId, parentEvent)
+  }
+
   // D3-②（steward 批 2026-10-23）：MergeQueue 合并提醒注入的活性探针——注入前
   // 探测目标 childRef 是否活（actor 注册表已退出 = 死 ⇒ 不盲投、不盖章、不持窗，
   // 条目留队待重试）。未注册（无 SharedResources 场）= 恒活，既有行为零变化。

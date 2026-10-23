@@ -31,6 +31,16 @@ import scala.util.Try
  *    零 failed/refused 行——绝不并发写同一基工作区）；
  *  - ⑧ 生命周期挂点（内部腿接线）：DelegateTerminal.onCompleted 判词 completed
  *    ⇒ Release payload 携 auto-merge 尾注（delegate 终态承载面）。
+ *
+ * 合并静默搁浅修复批（2026-10-23 作者令三腿；**同日裁定纠正：合并不自动化，
+ * delegate 自己负责合并，平台只做排队/通知——零代跑**）：
+ *  - ⑨ 腿① 脏树拒合并 ⇒ 双通知到达（delegate 本人可行动诊断 + 父会话知会一
+ *    行）；同脏重评 = correlationId 稳定（持久队列幂等键不漂移）；
+ *  - ⑩ delegate 清障后自行重试成功：清障后平台零动作（main 不动），delegate
+ *    自己的重评拍才落地——平台零代跑；
+ *  - ⑪ 腿③ evidence/、reports/ 生成物覆写 ⇒ 自动还原 HEAD + 还原前审计行
+ *    （路径+diff 摘要），树转洁后合并落地；开关 off = 不还原照旧拒；
+ *  - ⑫ 源码路径脏文件 ⇒ 绝不还原（内容原样），refused + dirtyPaths 记录。
  */
 class DelegateAutoMergeSpec extends FunSuite:
 
@@ -48,8 +58,10 @@ class DelegateAutoMergeSpec extends FunSuite:
     os.remove.all(tempRoot / "delegates")
     os.remove.all(tempRoot / "tasks")
 
-  private val on: DelegateAutoMerge.Config = DelegateAutoMerge.Config(enabled = true, targetBranch = None)
-  private val off: DelegateAutoMerge.Config = DelegateAutoMerge.Config(enabled = false, targetBranch = None)
+  private val on: DelegateAutoMerge.Config =
+    DelegateAutoMerge.Config(enabled = true, targetBranch = None, restoreArtifacts = true)
+  private val off: DelegateAutoMerge.Config =
+    DelegateAutoMerge.Config(enabled = false, targetBranch = None, restoreArtifacts = true)
 
   private def gitAvailable: Boolean =
     Try(os.proc("git", "--version").call(check = false, stdout = os.Pipe, stderr = os.Pipe).exitCode == 0)
@@ -277,7 +289,7 @@ class DelegateAutoMergeSpec extends FunSuite:
       val wt = addWorktree(repo, "delegate/am-target", tempRoot / "am-target-wt")
       val r = rec("delegate-am-target", repo, "delegate/am-target", Some(wt))
       val mainBefore = headSha(repo, "main")
-      val suffix = hook(r, DelegateAutoMerge.Config(enabled = true, targetBranch = Some("release")))
+      val suffix = hook(r, DelegateAutoMerge.Config(enabled = true, targetBranch = Some("release"), restoreArtifacts = true))
       assert(suffix.exists(_.contains("merged into 'release'")), s"suffix: $suffix")
       assertEquals(headSha(repo, "main"), mainBefore, "main must stay untouched when the target is overridden")
       assertEquals(parents(repo, "release").size, 2, "release must receive the two-parent merge")
@@ -402,6 +414,199 @@ class DelegateAutoMergeSpec extends FunSuite:
       val mainParents = parents(repo, "main")
       assertEquals(mainParents.size, 2, "the wiring test merge really landed (--no-ff two-parent)")
       assertEquals(autoMergeRows("delegate-am-wiring").lastOption.map(_._1), Some("merged"))
+  }
+
+  // ── 合并静默搁浅修复批（2026-10-23 作者令三腿；同日裁定纠正：合并不自动化，
+  //    delegate 自己负责合并，平台只做排队/通知——零代跑） ─────────────────────
+
+  private final class RecordingFace:
+    private val lock = new Object
+    private val buf =
+      scala.collection.mutable.ListBuffer.empty[(String, String, AgentCommand.ExternalEvent, AgentCommand.ExternalEvent)]
+    val face: MergeRefusalCare.EscalationPort.Face = (delegateId, parentSessionId, delegateEvent, parentEvent) =>
+      IO.blocking(lock.synchronized(buf += ((delegateId, parentSessionId, delegateEvent, parentEvent)))).void
+    def all: List[(String, String, AgentCommand.ExternalEvent, AgentCommand.ExternalEvent)] =
+      lock.synchronized(buf.toList)
+
+  private def installPort(rf: RecordingFace): Unit = MergeRefusalCare.EscalationPort.install(rf.face)
+
+  test(
+    "⑨ leg1 dirty-tree refusal ⇒ BOTH notifications arrive (delegate actionable diagnosis + parent one-line FYI); correlationId stable across same-dirt re-refusals"
+  ) {
+    if !gitAvailable then ()
+    else
+      val rf = RecordingFace()
+      installPort(rf)
+      try
+        val repo = mkRepo(tempRoot / "am-esc", branch = "delegate/am-esc")
+        os.write(repo / "half-done.txt", "human work in progress") // 非还原面的脏（untracked 源文件）
+        val r = rec("delegate-am-esc", repo, "delegate/am-esc", worktree = None)
+        val mainBefore = headSha(repo, "main")
+        val suffix = hook(r, on)
+        assertEquals(headSha(repo, "main"), mainBefore, "refusal must not move main")
+        assertEquals(autoMergeRows("delegate-am-esc").lastOption.map(_._1), Some("refused"))
+        assert(suffix.exists(_.contains("NOT merged")), s"suffix: $suffix")
+        // 双通知到达：delegate 主通知 + 父会话知会一行
+        val got = rf.all
+        assertEquals(got.size, 1, s"exactly one dual-notification on first refusal: ${got.size}")
+        val (delegateId, parentSid, ev, pev) = got.head
+        assertEquals(delegateId, "delegate-am-esc")
+        assertEquals(parentSid, "nebula-root")
+        // delegate 主通知：可行动诊断（路径、清法、责任归属——平台零代跑）
+        assertEquals(ev.source, "auto-merge")
+        assertEquals(ev.eventType, "failed", "failed-shaped event (existing event machinery treats it uniformly)")
+        assert(
+          ev.correlationId.exists(_.startsWith(s"${MergeRefusalCare.CorrelationPrefix}-delegate-am-esc")),
+          s"correlationId must carry the idempotency family: ${ev.correlationId}"
+        )
+        assert(ev.payload.contains("half-done.txt"), "delegate payload names the dirty path (actionable)")
+        assert(ev.payload.contains("Your move"), "delegate payload assigns the action to the delegate itself")
+        assert(ev.payload.contains("clean the dirty paths"), "delegate payload carries the how-to-clean guidance")
+        assert(!ev.payload.toLowerCase.contains("engine retries"), "platform must NOT promise proxy retries (zero proxy-run)")
+        // 父会话知会：一行、责任在 delegate、无需行动
+        assert(pev.correlationId.exists(_.startsWith(MergeRefusalCare.ParentCorrelationPrefix)), s"parent cid: ${pev.correlationId}")
+        assert(pev.payload.contains("delegate-am-esc".take(8)), "parent FYI names the delegate")
+        assert(pev.payload.contains("no action needed"), "parent FYI states no action needed")
+        assert(pev.payload.length < ev.payload.length, "parent line must stay a one-liner (diagnosis lives with the delegate)")
+        // 同脏重评：correlationId 稳定（持久注入队列靠它挡重；诊断不漂移）
+        hook(r, on)
+        val got2 = rf.all
+        assertEquals(got2.size, 2, "the re-evaluation notifies the live channel again…")
+        assertEquals(got2(1)._3.correlationId, got(0)._3.correlationId, "…but with the SAME correlationId — the persistent queue dedups it")
+      finally MergeRefusalCare.EscalationPort.clear()
+  }
+
+  test(
+    "⑩ delegate clears the obstacle then retries ITSELF ⇒ merge lands on the delegate's own re-evaluation; platform takes zero proxy action in between"
+  ) {
+    if !gitAvailable then ()
+    else
+      val rf = RecordingFace()
+      installPort(rf)
+      try
+        val repo = mkRepo(tempRoot / "am-retry", branch = "delegate/am-retry")
+        os.write(repo / "uncommitted.txt", "dirt") // 脏：拒绝（untracked 非还原面）
+        val r = rec("delegate-am-retry", repo, "delegate/am-retry", worktree = None)
+        val s1 = hook(r, on)
+        assertEquals(autoMergeRows("delegate-am-retry").lastOption.map(_._1), Some("refused"), s"s1: $s1")
+        assert(rf.all.nonEmpty, "the delegate was notified of the refusal")
+        // ── delegate 自己清障（它自己的一拍：清理基工作区脏文件）──
+        os.remove(repo / "uncommitted.txt")
+        // 平台零代跑：清障后、delegate 重试前，main 必须原地不动（无任何代跑腿）
+        val mainAfterClean = headSha(repo, "main")
+        val rowsAfterClean = autoMergeRows("delegate-am-retry").map(_._1)
+        assertEquals(rowsAfterClean.count(_ == "merged"), 0, s"platform must not merge on its own: $rowsAfterClean")
+        assertEquals(rowsAfterClean.count(_ == "already-merged"), 0, s"no hidden re-evaluation may run: $rowsAfterClean")
+        // ── delegate 自己的重试拍（重评终态）⇒ 合并落地 ──
+        val s2 = hook(r, on)
+        assert(s2.exists(_.contains("merged into 'main'")), s"delegate's own retry lands: $s2")
+        assert(GitWorktrees.isAncestor(repo, "delegate/am-retry", "main").contains(true), "the branch is merged")
+        assertEquals(
+          autoMergeRows("delegate-am-retry").count(_._1 == "merged"),
+          1,
+          "exactly one merge — run at the delegate's own re-evaluation, never by the platform"
+        )
+        val mainNow = headSha(repo, "main")
+        assert(mainNow != mainAfterClean, "main advanced only at the delegate's own retry beat")
+      finally MergeRefusalCare.EscalationPort.clear()
+  }
+
+  test(
+    "⑪ leg3 evidence/+reports/ artifact overwrite ⇒ auto-restored to HEAD with a PRE-restore audit row (path+diff), merge then lands"
+  ) {
+    if !gitAvailable then ()
+    else
+      val repo = mkRepo(tempRoot / "am-restore", branch = "delegate/am-restore")
+      def g(args: String*): os.CommandResult =
+        os.proc(Seq("git", "-C", repo.toString) ++ args).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+      g("checkout", "main")
+      os.makeDir.all(repo / "evidence")
+      os.makeDir.all(repo / "reports")
+      os.write(repo / "evidence" / "pic.png", "PNGDATA-V1")
+      os.write(repo / "reports" / "note.md", "generated v1\n")
+      g("add", ".")
+      g("commit", "-m", "artifacts v1")
+      // 模拟测试覆写生成物（未提交修改，非人写代码）
+      os.write.over(repo / "evidence" / "pic.png", "PNGDATA-TEST-RUN-OVERWRITE")
+      os.write.over(repo / "reports" / "note.md", "overwritten by the test run\n")
+      val r = rec("delegate-am-restore", repo, "delegate/am-restore", worktree = None)
+      val suffix = hook(r, on)
+      // 还原落地：内容回 HEAD、树转洁、合并照常落地
+      assertEquals(os.read(repo / "evidence" / "pic.png"), "PNGDATA-V1", "evidence artifact restored to HEAD")
+      assertEquals(os.read(repo / "reports" / "note.md"), "generated v1\n", "reports artifact restored to HEAD")
+      assert(suffix.exists(_.contains("merged into 'main'")), s"tree de-clogged ⇒ merge lands: $suffix")
+      assertEquals(parents(repo, "main").size, 2, "the --no-ff merge landed after the restore")
+      // 审计面：还原前审计行（路径 + diff 摘要在案）
+      val actions = autoMergeRows("delegate-am-restore").map(_._1)
+      assert(actions.contains("artifact-restore"), s"an artifact-restore audit row must exist: $actions")
+      val (_, payload) = autoMergeRows("delegate-am-restore").find(_._1 == "artifact-restore").getOrElse(fail("restore row"))
+      val entries = payload.hcursor.downField("plannedRestores").values.map(_.toList).getOrElse(Nil)
+      val paths = entries.map(_.hcursor.get[String]("path").toOption.getOrElse(""))
+      assert(paths.contains("evidence/pic.png"), s"restore row must name evidence/pic.png: $paths")
+      assert(paths.contains("reports/note.md"), s"restore row must name reports/note.md: $paths")
+      val diffs = entries.map(_.hcursor.get[String]("diff").toOption.getOrElse(""))
+      assert(diffs.nonEmpty && diffs.forall(_.nonEmpty), s"each restore entry carries a diff summary: $diffs")
+      assertEquals(actions.lastOption, Some("merged"), "the merge row closes the evaluation")
+  }
+
+  test(
+    "⑪b restoreArtifacts=false ⇒ no restore (dirty stays dirty), refused — the kill-switch returns the legacy semantics"
+  ) {
+    if !gitAvailable then ()
+    else
+      val repo = mkRepo(tempRoot / "am-restore-off", branch = "delegate/am-restore-off")
+      def g(args: String*): os.CommandResult =
+        os.proc(Seq("git", "-C", repo.toString) ++ args).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+      g("checkout", "main")
+      os.makeDir.all(repo / "evidence")
+      os.write(repo / "evidence" / "pic.png", "PNGDATA-V1")
+      g("add", ".")
+      g("commit", "-m", "artifacts v1")
+      os.write.over(repo / "evidence" / "pic.png", "PNGDATA-TEST-RUN-OVERWRITE")
+      val r = rec("delegate-am-restore-off", repo, "delegate/am-restore-off", worktree = None)
+      val cfg = DelegateAutoMerge.Config(enabled = true, targetBranch = None, restoreArtifacts = false)
+      val mainBefore = headSha(repo, "main")
+      val suffix = hook(r, cfg)
+      assertEquals(os.read(repo / "evidence" / "pic.png"), "PNGDATA-TEST-RUN-OVERWRITE", "switch off ⇒ no restore")
+      assertEquals(headSha(repo, "main"), mainBefore, "switch off ⇒ refused, zero merge")
+      assertEquals(autoMergeRows("delegate-am-restore-off").lastOption.map(_._1), Some("refused"))
+      assertEquals(
+        autoMergeRows("delegate-am-restore-off").exists(_._1 == "artifact-restore"),
+        false,
+        "switch off ⇒ no restore audit row"
+      )
+      assert(suffix.exists(_.contains("NOT merged")), s"suffix: $suffix")
+  }
+
+  test(
+    "⑫ source-path dirt is NEVER auto-restored ⇒ refused with the file intact and dirtyPaths recorded"
+  ) {
+    if !gitAvailable then ()
+    else
+      val repo = mkRepo(tempRoot / "am-src", branch = "delegate/am-src")
+      def g(args: String*): os.CommandResult =
+        os.proc(Seq("git", "-C", repo.toString) ++ args).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+      g("checkout", "main")
+      os.makeDir.all(repo / "src")
+      os.write(repo / "src" / "Main.scala", "object Main // original")
+      g("add", ".")
+      g("commit", "-m", "source")
+      os.write.over(repo / "src" / "Main.scala", "object Main // half-done human edit") // 源码脏——还原禁区
+      val r = rec("delegate-am-src", repo, "delegate/am-src", worktree = None)
+      val mainBefore = headSha(repo, "main")
+      val suffix = hook(r, on)
+      assertEquals(
+        os.read(repo / "src" / "Main.scala"),
+        "object Main // half-done human edit",
+        "source files must NEVER be auto-restored — human work is untouchable"
+      )
+      assertEquals(headSha(repo, "main"), mainBefore, "refused ⇒ main untouched")
+      assertEquals(autoMergeRows("delegate-am-src").lastOption.map(_._1), Some("refused"))
+      assertEquals(autoMergeRows("delegate-am-src").exists(_._1 == "artifact-restore"), false, "no restore row for source paths")
+      val (_, payload) = autoMergeRows("delegate-am-src").lastOption.getOrElse(fail("refused row"))
+      val dirty = payload.hcursor.get[List[String]]("dirtyPaths").toOption.getOrElse(Nil)
+      assert(dirty.contains("src/Main.scala"), s"dirtyPaths must record the source path: $dirty")
+      assert(suffix.exists(_.contains("src/Main.scala")), s"suffix must carry the actionable path: $suffix")
   }
 
 end DelegateAutoMergeSpec
