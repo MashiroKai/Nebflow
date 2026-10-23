@@ -15,6 +15,10 @@ import { addSourceToggle, addFindToggle, addGraphToggle, routeLocalHref, openLoc
 import { mintTickets, stripCredentialParams } from '../nfTicket.js';
 import { noteAuthRejected } from '../sessionGate.js';
 import { t } from '../i18n.js';
+// mermaid-md batch (2026-10-23): explicit hydration at the primary document
+// face (this viewer + wiki doc opens). The global observer in main.js covers
+// every other markdown face; this call is idempotent (state-attribute guard).
+import { hydrateMermaidIn } from '../mermaidRenderer.js';
 
 /** Scroll one heading to the TOP of the markdown content scroller — and of nothing
  *  else.
@@ -610,6 +614,9 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
     // Wiki face: wikilinks (async, post-render) + jump anchor.
     if (absPath) renderWikilinks(mdViewer, baseDir);
     if (jumpAnchor) applyJumpAnchor(mdViewer, jumpAnchor, analysis.blockIds);
+    // Mermaid face: hydrate ```mermaid placeholders (lazy viewport render —
+    // js/mermaidRenderer.js). Idempotent; no-op when the doc has no fences.
+    hydrateMermaidIn(mdViewer);
   }
 
   addSourceToggle(pane, viewMarkdown, { content, absPath, fileName, readOnly: readOnly === true });

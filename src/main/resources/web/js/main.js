@@ -20,6 +20,11 @@ if (document.documentElement.dataset.nfEmbedded === '1') {
 }
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
 import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, enhanceMentionSpansInDom } from './utils.js';
+// mermaid-md batch (2026-10-23): ONE global hydration point — every markdown
+// face that shares renderMarkdownWithMath gets its ```mermaid placeholders
+// hydrated by this observer (chat bubbles, flow/report cards, popups). The
+// canvas md viewer additionally hydrates explicitly in viewers/markdown.js.
+import { armMermaidAutoHydrate } from './mermaidRenderer.js';
 import { getProjectsSnapshot, getProjectsListGen, preheatProjects, onProjectsArrival } from './mentionComplete.js';
 import { initServiceWorker } from './swReg.js'; // console-load-perf 批：温访问秒开注册器（load 后注册，降级零影响）
 import { connect, onMessage, sendWs, onReconnect } from './ws.js';
@@ -271,6 +276,7 @@ await waitForGlobals();
 if (typeof marked !== 'undefined') initMarkdown();
 if (typeof lottie !== 'undefined') initSpinner();
 if (typeof lucide !== 'undefined') lucide.createIcons();
+armMermaidAutoHydrate(); // mermaid-md batch: global ```mermaid placeholder hydration
 
 // Mention-render batch (2026-09-27): the message renderer reads the shared
 // project list through this provider — mentionComplete.js owns the single
