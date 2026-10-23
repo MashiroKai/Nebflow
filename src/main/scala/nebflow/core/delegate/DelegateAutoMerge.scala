@@ -1,6 +1,7 @@
 package nebflow.core.delegate
 
 import cats.effect.IO
+import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.GitWorktrees
@@ -59,11 +60,18 @@ object DelegateAutoMerge:
     /** 总开关：false = 引擎不代并（一键回既有 P2-3 注记路径）。缺省 true。 */
     enabled: Boolean,
     /** 显式合并目标覆盖；None = 用 spawn 绑定 baseBranch（标准流程 = main）。 */
-    targetBranch: Option[String]
+    targetBranch: Option[String],
+    /**
+     * 生成物自动还原开关（合并静默搁浅修复批 2026-10-23 三腿之腿③）：评估遇脏
+     * 树先还原 evidence/、reports/ 下「已跟踪文件的未提交修改」（= 测试覆写的
+     * 生成物，非人写代码——去堵源），还原后仍脏才拒。缺省 true；false = 一键回
+     * 「脏即拒」原语义（还原面零动作）。
+     */
+    restoreArtifacts: Boolean
   )
 
   object Config:
-    val Default: Config = Config(enabled = true, targetBranch = None)
+    val Default: Config = Config(enabled = true, targetBranch = None, restoreArtifacts = true)
 
     /** 热读（每次现读盘，零缓存）；absent / 非法 / garbage ⇒ 缺省。 */
     def read: Config =
@@ -79,7 +87,9 @@ object DelegateAutoMerge:
               val target =
                 cur.downField("targetBranch").as[Option[String]].toOption.flatten
                   .map(_.trim).filter(_.nonEmpty)
-              Config(enabled, target)
+              val restoreArtifacts =
+                cur.downField("restoreArtifacts").as[Option[Boolean]].toOption.flatten.getOrElse(true)
+              Config(enabled, target, restoreArtifacts)
       catch case _: Throwable => Default
   end Config
 
@@ -120,11 +130,16 @@ object DelegateAutoMerge:
           s"The merge stays PENDING for human/agent adjudication (state + file list in the task ledger and ChainStore '$EntryKind' rows).$abortNote"
       )
 
-    /** 拒并挂起（脏基工作区 / 目标非检出分支 / git 拒绝且无冲突标记）——不动手。 */
-    final case class Refused(target: String, reason: String) extends Result:
+    /**
+     * 拒并挂起（脏基工作区 / 目标非检出分支 / git 拒绝且无冲突标记）——不动手。
+     * `dirtyPaths` = 拒并时的脏路径清单（脏树拒绝时携带——升级通知与审计行的
+     * 可行动信息面；合并静默搁浅修复批 2026-10-23）。
+     */
+    final case class Refused(target: String, reason: String, dirtyPaths: List[String] = Nil) extends Result:
       val action = "refused"
       val suffix = Some(
-        s"\n\n[auto-merge] branch NOT merged into '$target': $reason Branch preserved — pending adjudication."
+        s"\n\n[auto-merge] branch NOT merged into '$target': $reason Branch preserved — pending adjudication; " +
+          "the delegate has been notified to clear the obstacle and retry the merge on its own (the platform never runs merges for delegates)."
       )
 
     /** 跳过（无锚 / 非 git / 分支 ref 消失）——suffix None（调用方回既有路径）。 */
@@ -162,6 +177,13 @@ object DelegateAutoMerge:
           val projectKey = Try(os.Path(baseWs)).map(GitWorktrees.projectKeyOf).getOrElse(baseWs)
           IO
             .blocking(submit[Result](projectKey, () => evaluate(r, cfg)))
+            // 合并静默搁浅修复批（2026-10-23 作者令腿①，同日裁定纠正版）：refused
+            // ⇒ 通知 delegate 本人（可行动诊断，持久注入）+ 父会话知会一行。平台
+            // 零代跑——重试合并是 delegate 自己的责任（清障后自行重试）。self-
+            // guarded——通知故障绝不污染终态尾注。
+            .flatTap(res => postSettle(r, res).handleErrorWith(e =>
+              logger.warn(s"auto-merge post-settle failed for ${r.id}: ${e.getMessage}")
+            ))
             .map(_.suffix)
             .handleErrorWith(e =>
               IO(Some(s"\n\n[auto-merge] hook error: ${Option(e.getMessage).getOrElse(e.toString).take(200)} — branch left untouched."))
@@ -205,22 +227,42 @@ object DelegateAutoMerge:
               s"target '$target' is not the checked-out branch ('${GitWorktrees.currentBranch(ws).getOrElse("detached HEAD")}') of the base workspace — engine-native merge refuses a non-checked-out target"
             row(rec, "refused", Json.obj("reason" -> reason.asJson, "target" -> target.asJson))
             Result.Refused(target, s"$reason.")
-          else if dirty(ws) then
-            val reason =
-              "base workspace has uncommitted changes — refusing to auto-merge over an unclean tree (fail-closed, nothing staged)"
-            row(rec, "refused", Json.obj("reason" -> reason.asJson, "target" -> target.asJson))
-            Result.Refused(target, s"$reason.")
           else
-            // ④ 幂等闸：commitsAhead==0 ⟺ 目标已含支头（重复完成/引擎重试/批内
-            // 已自行合并——一律零重复合并）。
-            val ahead = GitWorktrees.commitsAhead(ws, target, branch)
-            if ahead == 0 then
-              row(rec, "already-merged", Json.obj("target" -> target.asJson, "commitsAhead" -> 0.asJson))
-              Result.AlreadyMerged(target)
+            // 腿③（生成物自动还原·去堵源，2026-10-23）：树脏先做白名单还原
+            // （evidence/、reports/ 下已跟踪文件的未提交修改 = 测试覆写的生成物；
+            // 源码路径绝不碰），还原后仍脏才拒——拒绝理由携脏路径清单（可行动）。
+            val dirtyNow = dirty(ws)
+            val restored = if dirtyNow then restoreArtifacts(rec, ws, cfg) else Nil
+            if dirtyNow && dirty(ws) then
+              val paths = dirtyPaths(ws)
+              val reason =
+                "base workspace has uncommitted changes — refusing to auto-merge over an unclean tree " +
+                  "(fail-closed, nothing staged)" +
+                  (if paths.nonEmpty then s". Dirty paths: ${paths.mkString(", ")}" else "") +
+                  ". Clean them (commit or restore) to unblock — generated artifacts under evidence/ and " +
+                  "reports/ are auto-restored by the engine."
+              row(
+                rec,
+                "refused",
+                Json.obj(
+                  "reason" -> reason.asJson,
+                  "target" -> target.asJson,
+                  "dirtyPaths" -> paths.asJson,
+                  "artifactsRestored" -> restored.map(_.path).asJson
+                )
+              )
+              Result.Refused(target, s"$reason.", paths)
             else
-              val msg =
-                s"auto-merge: delegate ${rec.id} — merge branch '$branch' into '$target' (engine-native FIFO, #524)"
-              runMerge(ws, rec, target, branch, ahead, msg)
+              // ④ 幂等闸：commitsAhead==0 ⟺ 目标已含支头（重复完成/引擎重试/批内
+              // 已自行合并——一律零重复合并）。
+              val ahead = GitWorktrees.commitsAhead(ws, target, branch)
+              if ahead == 0 then
+                row(rec, "already-merged", Json.obj("target" -> target.asJson, "commitsAhead" -> 0.asJson))
+                Result.AlreadyMerged(target)
+              else
+                val msg =
+                  s"auto-merge: delegate ${rec.id} — merge branch '$branch' into '$target' (engine-native FIFO, #524)"
+                runMerge(ws, rec, target, branch, ahead, msg)
   end attempt
 
   /** ②/③ 合并执行：成功走构造性校验；失败读冲突清单后 --abort 复原（绝不强推）。 */
@@ -293,6 +335,18 @@ object DelegateAutoMerge:
       if res.exitCode != 0 then Left(res.out.trim().take(400)) else Right(res.out.trim())
     catch case e: Throwable => Left(Option(e.getMessage).getOrElse(e.toString).take(400))
 
+  /**
+   * 同 [[git]] 但保留输出原貌（仅剥行尾换行）——porcelain 列对齐解析面专用：
+   * 首行的前导空白是 X/Y 状态位（unstaged 形 ` M path` 的 X 列是空格），
+   * `trim` 会把整段输出的首个字符连同状态位一起吃掉，drop(3) 后路径掉首字。
+   */
+  private def gitRaw(ws: os.Path, args: String*): Either[String, String] =
+    try
+      val res = os.proc(Seq("git", "-C", ws.toString) ++ args).call(cwd = ws, check = false, mergeErrIntoOut = true)
+      if res.exitCode != 0 then Left(res.out.trim().take(400))
+      else Right(String(res.out.bytes, java.nio.charset.StandardCharsets.UTF_8).stripTrailing())
+    catch case e: Throwable => Left(Option(e.getMessage).getOrElse(e.toString).take(400))
+
   /** 基工作区干净判（uncommitted state 零容忍；不可读 = 视同脏，fail-closed 拒并）。 */
   private def dirty(ws: os.Path): Boolean =
     git(ws, "status", "--porcelain").map(_.nonEmpty).getOrElse(true)
@@ -302,6 +356,80 @@ object DelegateAutoMerge:
     git(ws, "diff", "--name-only", "--diff-filter=U")
       .map(_.linesIterator.map(_.trim).filter(_.nonEmpty).toList)
       .getOrElse(Nil)
+
+  // ── 腿③ 生成物自动还原（2026-10-23 作者令：去堵源） ─────────────────────
+
+  /** 单条还原记录（审计行承载：路径 + 还原前 diff 摘要）。 */
+  final case class RestoredArtifact(path: String, diff: String)
+
+  /**
+   * 生成物目录白名单——**严格面**：只这两类目录（引擎测试覆写 delegates 报告/
+   * 证据文件的固定落点），源码路径绝不碰。目录本体与 `目录/` 前缀都命中。
+   */
+  val ArtifactRestoreDirs: List[String] = List("evidence", "reports")
+
+  /**
+   * 白名单内「已跟踪文件的未提交修改」（porcelain X/Y 列 = M，staged/unstaged
+   * 皆算；`??` untracked / D / R 非「修改」语义，一概不碰）自动还原到 HEAD：
+   * `git checkout HEAD -- <path>`（HEAD 形——staged 修改连索引一并复位，比裸
+   * `checkout --` 严格）。还原前逐条备 diff 摘要（`--stat HEAD`）并**先**落
+   * 审计行（还原意图有据），后动手；fail-soft——单条失败只 WARN，绝不阻断
+   * 评估链（还原失败 = 树仍脏 = 走既有 refused 面）。
+   */
+  private def restoreArtifacts(rec: DelegateRegistry.Record, ws: os.Path, cfg: Config): List[RestoredArtifact] =
+    if !cfg.restoreArtifacts then Nil
+    else
+      val candidates = gitRaw(ws, "status", "--porcelain").getOrElse("").linesIterator.flatMap { line =>
+        if line.length <= 3 then None
+        else
+          val xy = line.take(2)
+          val path = line.drop(3).trim
+          val modified = xy.charAt(0) == 'M' || xy.charAt(1) == 'M'
+          val whitelisted =
+            ArtifactRestoreDirs.exists(d => path == d || path.startsWith(s"$d/"))
+          if modified && whitelisted then Some(path) else None
+      }.toList.distinct
+      if candidates.isEmpty then Nil
+      else
+        // 还原前证据：每条路径的 diff 摘要（对 HEAD 的 --stat；二进制 = Bin 字节摘要）。
+        val planned = candidates.map { p =>
+          val diff = git(ws, "diff", "--stat", "HEAD", "--", p).getOrElse("").trim.take(300)
+          p -> diff
+        }
+        // 审计行先落（还原前——任务令「还原前记录审计行（路径+diff 摘要）」）。
+        row(
+          rec,
+          "artifact-restore",
+          Json.obj(
+            "baseWorkspace" -> ws.toString.asJson,
+            "plannedRestores" -> Json.fromValues(planned.map { case (p, d) =>
+              Json.obj("path" -> p.asJson, "diff" -> d.asJson)
+            })
+          )
+        )
+        val restored = planned.flatMap { case (p, d) =>
+          git(ws, "checkout", "HEAD", "--", p) match
+            case Right(_) =>
+              logger.info(s"auto-merge: restored generated artifact to HEAD before merge evaluation: $p")
+              Some(RestoredArtifact(p, d))
+            case Left(e) =>
+              logger.warn(s"auto-merge: artifact restore failed for '$p' (tree stays dirty, refused path): $e")
+              None
+        }
+        if restored.nonEmpty then
+          logger.info(
+            s"auto-merge: ${restored.size} generated artifact(s) auto-restored in the base workspace " +
+              s"(${restored.map(_.path).mkString(", ")})"
+          )
+        restored
+  end restoreArtifacts
+
+  /** 脏路径清单（porcelain `XY<sp>PATH` 形——首行 X 列空白是状态位，必须走
+    * [[gitRaw]] 保内容解析；cap 条后折 「+N more」；不可读 = Nil）。 */
+  private def dirtyPaths(ws: os.Path, cap: Int = 10): List[String] =
+    val all = gitRaw(ws, "status", "--porcelain").getOrElse("")
+      .linesIterator.filter(_.nonEmpty).map(_.drop(3).trim).filter(_.nonEmpty).toList.distinct
+    if all.length <= cap then all else all.take(cap) :+ s"+${all.length - cap} more"
 
   // ── 审计面（⑥ 每条评估路径一行 + 台账 note） ────────────────────────────
 
@@ -398,5 +526,44 @@ object DelegateAutoMerge:
           }
     end while
   end drainLoop
+
+  // ── 腿① 拒绝通知（合并静默搁浅修复批 2026-10-23；同日作者裁定纠正版） ────
+  //
+  // 根因：refused 后拒绝只落在终态尾注 + 审计行里，无人被通知——分支搁浅
+  // （#775 / c2b7661f / a65aba03 三例实锤，作者面板观感 = 「空等」）。
+  // **设计裁定（2026-10-23 作者）：合并不自动化——delegate 自己负责合并，平台只
+  // 把「排队 + 通知」做自动化**。故本段是纯通知面，零代跑语义：
+  //   - refused ⇒ [[MergeRefusalCare]] 双通知：delegate 本人（可行动诊断：哪条
+  //     路径脏、什么原因、怎么清、重试合并是 delegate 自己的责任）持久注入 +
+  //     父会话知会一行。平台不登记、不代跑、不自动重试——delegate 清障后自行
+  //     重试（自己的下一拍重评，本钩子在重评终态再次正常评估）。
+  //   - 同脏重评不重复轰炸：correlationId 按 reason 摘要幂等（持久注入队列挡
+  //     重；脏面变化 = 新诊断照发）。曾落地的「树转洁事件驱动代跑重试」腿已按
+  //     作者裁定撤销（平台不做代跑合并的任何腿）。
+
+  /**
+   * 终态后结算（onCompletedHook 的 submit 返回后调用；self-guarded 由调用方兜）：
+   * 仅 refused 有通知动作，其余终态（merged / already-merged / skipped / failed /
+   * conflict-pending）各自的承载面（尾注、审计行、台账行）已足，零额外动作。
+   */
+  private def postSettle(rec: DelegateRegistry.Record, res: Result): IO[Unit] =
+    res match
+      case ref: Result.Refused =>
+        MergeRefusalCare
+          .escalate(
+            MergeRefusalCare.RefusalNotice(
+              delegateId = rec.id,
+              parentSessionId = rec.parentSessionId,
+              title = rec.title,
+              branch = rec.branch.getOrElse(""),
+              target = ref.target,
+              baseWorkspace = rec.projectWorkspace.getOrElse(rec.cwd),
+              reason = ref.reason,
+              dirtyPaths = ref.dirtyPaths
+            )
+          )
+          .handleErrorWith(e => logger.warn(s"auto-merge refusal notification failed for ${rec.id}: ${e.getMessage}"))
+      case _ => IO.unit
+  end postSettle
 
 end DelegateAutoMerge
