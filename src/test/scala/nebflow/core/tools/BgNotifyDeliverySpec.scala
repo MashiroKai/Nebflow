@@ -4,27 +4,32 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.JsonObject
 import munit.CatsEffectSuite
-import nebflow.actor.{ActorRef, ActorSystem, AgentCommand, AgentKind, AgentRecord, Behavior, Behaviors}
+import nebflow.actor.{ActorRef, ActorSystem, AgentCommand, AgentRecord, Behavior, Behaviors}
 import nebflow.agent.{AgentLibrary, CompactionQueueStore, SharedResources}
 import nebflow.core.{FileChangeTracker, RateLimiter, SessionStore}
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.BgNotifyDelivery.Route
+import nebflow.core.tools.BgSessionActivator.ActivationResult
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
 import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
+import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration.*
 
 /**
- * D1 后台任务通知投递可靠性判读（steward 批 2026-10-23）：
+ * D1 后台任务通知投递可靠性判读（steward 批 2026-10-23；**作者裁定 09:46**
+ * 「目标会话死了就激活发送，不用发给root」——改道投 root 方案已废）：
  *
- *  - ① 路由裁决纯函数四态（Direct / Reroot / Persist / Undeliverable）；
- *  - ② 验收「目标会话已死 → 结果仍到达活会话」：死 target + 活 root ⇒ 改道投
- *    root（metadata 标注改道事实）；
- *  - ③ 验收「重启窗口 → 复活后补投」：死 target + root 不在注册表（重启窗口形态）
- *    ⇒ 事件持久化进 root 会话注入队文件（correlationId 幂等）——该文件正是复活轮
- *    `RecoverPersistedQueues`（AgentIdle）重放的唯一入口，写入即补投契约达成；
- *    重复投递零重复（幂等）；会话已删 ⇒ 跳过（不产生垃圾文件）；
+ *  - ① 路由裁决纯函数四态（Direct / Revive / Persist / Undeliverable）；
+ *  - ② 验收「目标会话已死 → **该会话被激活**且通知注入**该会话**」：死 target +
+ *    激活面装配 ⇒ 激活面被以目标会话 id 调用、标记持久化进**目标会话**注入队
+ *    （correlationId 幂等）、通知进入复活后的该会话（活 target ⇒ 直投零漂移，
+ *    激活面零调用）；
+ *  - ③ 验收「重启窗口 → 复活后补投**到目标会话**」：激活面未装配（重启窗口形态）
+ *    ⇒ 「待补投」标记落**目标会话自己**的注入队文件（复活轮
+ *    `RecoverPersistedQueues` 重放补投给它）；同族恢复腿所有者（Deferred）同腿；
+ *    会话已删 ⇒ 跳过（不产生垃圾文件）+ UnknownSession 审计收口；
  *  - ④ 无 actorSystem（harness）⇒ 旧行为直投（语义零漂移）。
  */
 class BgNotifyDeliverySpec extends CatsEffectSuite:
@@ -43,6 +48,10 @@ class BgNotifyDeliverySpec extends CatsEffectSuite:
   override def beforeEach(context: munit.BeforeEach): Unit =
     os.remove.all(tempRoot / "sessions")
     os.remove.all(tempRoot / "subagent-tasks")
+    BgSessionActivator.clear()
+
+  override def afterEach(context: munit.AfterEach): Unit =
+    BgSessionActivator.clear()
 
   private def fakeLlm: LlmHandle[IO] = new LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("not expected"))
@@ -51,15 +60,6 @@ class BgNotifyDeliverySpec extends CatsEffectSuite:
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
     ): fs2.Stream[IO, StreamChunk] =
       fs2.Stream.raiseError[IO](new RuntimeException("not expected"))
-
-  private def mkRecordingRef(
-    system: ActorSystem,
-    name: String,
-    record: Ref[IO, List[AgentCommand]]
-  ): IO[ActorRef[AgentCommand]] =
-    def loop: Behavior[AgentCommand] =
-      Behaviors.receiveMessage[AgentCommand](cmd => record.update(_ :+ cmd).as(loop))
-    system.spawn(loop, name)
 
   private def mkResources(system: ActorSystem): IO[SharedResources] =
     for
@@ -91,6 +91,15 @@ class BgNotifyDeliverySpec extends CatsEffectSuite:
       voiceMutedRef = voiceMuted
     )
 
+  private def mkRecordingRef(
+    system: ActorSystem,
+    name: String,
+    record: Ref[IO, List[AgentCommand]]
+  ): IO[ActorRef[AgentCommand]] =
+    def loop: Behavior[AgentCommand] =
+      Behaviors.receiveMessage[AgentCommand](cmd => record.update(_ :+ cmd).as(loop))
+    system.spawn(loop, name)
+
   /** 造一个「已死」的会话 ref：真 spawn 再 stop（actor 注册表退出 = isAlive false）。 */
   private def deadRef(system: ActorSystem, name: String): IO[ActorRef[AgentCommand]] =
     def loop: Behavior[AgentCommand] = Behaviors.receiveMessage[AgentCommand](_ => IO.pure(loop))
@@ -101,13 +110,11 @@ class BgNotifyDeliverySpec extends CatsEffectSuite:
     registry: Option[Ref[IO, Map[String, AgentRecord]]],
     targetRef: Option[ActorRef[AgentCommand]],
     jobId: String,
-    rootSessionId: Option[String] = Some("root-1"),
     targetSessionId: Option[String] = Some("dead-1")
   ): IO[Unit] =
     BgNotifyDelivery.deliverAgentEvent(
       targetRef = targetRef,
       targetSessionId = targetSessionId,
-      rootSessionId = rootSessionId,
       system = system,
       registry = registry,
       projectName = None,
@@ -121,59 +128,140 @@ class BgNotifyDeliverySpec extends CatsEffectSuite:
 
   // ── ① 路由裁决纯函数 ─────────────────────────────────────────────────
 
-  test("① route: alive=Direct; dead+live-root=Reroot; dead+dead-root=Persist; dead self-root=Persist; no-root=Undeliverable") {
-    assertEquals(BgNotifyDelivery.route(targetAlive = true, Some("s1"), Some("root"), rootAlive = true), Route.Direct)
-    assertEquals(BgNotifyDelivery.route(targetAlive = false, Some("s1"), Some("root"), rootAlive = true), Route.Reroot("root"))
-    assertEquals(BgNotifyDelivery.route(targetAlive = false, Some("s1"), Some("root"), rootAlive = false), Route.Persist("root"))
-    // root==target（根会话自己的任务）：没有「改道投自己」的语义 ⇒ 直接持久补投
-    assertEquals(BgNotifyDelivery.route(targetAlive = false, Some("root"), Some("root"), rootAlive = true), Route.Persist("root"))
-    assertEquals(BgNotifyDelivery.route(targetAlive = false, Some("s1"), None, rootAlive = false), Route.Undeliverable)
+  test("① route: alive=Direct; dead+activator=Revive; dead+no-activator=Persist; unknown session=Undeliverable") {
+    assertEquals(BgNotifyDelivery.route(targetAlive = true, activatorAvailable = true), Route.Direct)
+    assertEquals(BgNotifyDelivery.route(targetAlive = true, activatorAvailable = false), Route.Direct)
+    // 作者裁定：目标死了激活目标自己——不再有 Reroot 腿。
+    assertEquals(BgNotifyDelivery.route(targetAlive = false, activatorAvailable = true), Route.Revive)
+    assertEquals(BgNotifyDelivery.route(targetAlive = false, activatorAvailable = false), Route.Persist)
+    assertEquals(
+      BgNotifyDelivery.route(targetAlive = false, activatorAvailable = true, sessionKnown = false),
+      Route.Undeliverable
+    )
   }
 
-  // ── ② 验收：目标会话已死 → 结果仍到达活会话 ──────────────────────────
+  // ── ② 验收：目标会话已死 → 该会话被激活且通知注入该会话 ──────────────
 
-  test("② dead target + live root ⇒ the completion notification lands on the LIVE root session (rerouted)") {
+  test("② dead target ⇒ the TARGET session is activated and the notification lands in THAT session (not root)") {
     val system = ActorSystem(s"bg-notify-2-${scala.util.Random.nextInt(100000)}")
+    val activations = ListBuffer.empty[(String, AgentCommand.ExternalEvent)]
     for
       resources <- mkResources(system)
-      target <- deadRef(system, "dead-target")
-      received <- Ref.of[IO, List[AgentCommand]](Nil)
-      root <- mkRecordingRef(system, "root-sink", received)
-      _ <- resources.agentRegistry.update(_ + ("root-1" -> AgentRecord("root-1", root, AgentKind.Root, "root-1")))
-      _ <- deliver(Some(system), Some(resources.agentRegistry), Some(target), jobId = "job-2")
+      target <- deadRef(system, "dead-target-2")
+      // 目标会话真实存在（SessionStore 有行）——激活面的存在性前提。
+      meta <- resources.sessionStore.createSession("bg-target-2")
+      revivedReceived <- Ref.of[IO, List[AgentCommand]](Nil)
+      revived <- mkRecordingRef(system, "revived-target", revivedReceived)
+      // 激活面 fake：生产契约 = 存在守卫 + 标记持久化（correlationId 幂等）+ 恢复
+      // spawn（重放交付）——这里以「append 进目标注入队 + 把事件投给复活会话」模拟。
+      _ = BgSessionActivator.install((sid, ev) =>
+        BgInboxPort.append(sid, ev) *>
+          IO { activations += ((sid, ev)) } *>
+          (revived ! ev).as(BgSessionActivator.Activated: ActivationResult)
+      )
+      _ <- deliver(
+        Some(system),
+        Some(resources.agentRegistry),
+        Some(target),
+        jobId = "job-2",
+        targetSessionId = Some(meta.id)
+      )
       _ <- IO.sleep(100.millis)
+      got <- revivedReceived.get
+      persisted <- CompactionQueueStore.load(meta.id)
+      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
+    yield
+      assertEquals(activations.map(_._1).toList, List(meta.id), "the TARGET session (not root) is what gets activated")
+      val events = got.collect { case e: AgentCommand.ExternalEvent => e }
+      assertEquals(events.size, 1, "the notification lands in the activated target session")
+      assertEquals(events.head.payload.contains("spec-output"), true, "the task output rides the event")
+      assertEquals(
+        events.head.metadata("bgTaskId").flatMap(_.asString),
+        Some("job-2"),
+        "the event carries the job id"
+      )
+      val persistedEvents = persisted.map(_.events).getOrElse(Nil)
+      assertEquals(
+        persistedEvents.length,
+        1,
+        "the activation face persisted the marker into the target queue (spawn replay carries it)"
+      )
+      assertEquals(
+        persistedEvents.head.correlationId,
+        Some("bg-redelivery-job-2"),
+        "idempotence key = bg-redelivery-<jobId>"
+      )
+    end for
+  }
+
+  test("② live target ⇒ direct delivery, zero drift, activator never consulted") {
+    val system = ActorSystem(s"bg-notify-2b-${scala.util.Random.nextInt(100000)}")
+    val activations = ListBuffer.empty[String]
+    for
+      resources <- mkResources(system)
+      received <- Ref.of[IO, List[AgentCommand]](Nil)
+      target <- mkRecordingRef(system, "live-target", received)
+      meta <- resources.sessionStore.createSession("bg-target-live")
+      _ = BgSessionActivator.install((sid, _) =>
+        IO { activations += sid; BgSessionActivator.Activated: ActivationResult }
+      )
+      _ <- deliver(
+        Some(system),
+        Some(resources.agentRegistry),
+        Some(target),
+        jobId = "job-2b",
+        targetSessionId = Some(meta.id)
+      )
+      _ <- IO.sleep(80.millis)
       got <- received.get
+      persisted <- CompactionQueueStore.load(meta.id)
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
       val events = got.collect { case e: AgentCommand.ExternalEvent => e }
-      assertEquals(events.size, 1, "the live root session received exactly one completion event")
-      assertEquals(events.head.eventType, "completed")
-      assertEquals(events.head.payload.contains("spec-output"), true, "the task output rides the rerouted event")
-      assertEquals(
-        events.head.metadata("bgNotifyRerouted").map(_.asBoolean).getOrElse(None),
-        Some(true),
-        "the event is marked as rerouted for consumers"
-      )
-      assertEquals(events.head.metadata("bgTaskId").flatMap(_.asString), Some("job-2"))
+      assertEquals(events.size, 1, "the live target got exactly one direct completion event")
+      assertEquals(events.head.metadata("bgNotifyRedelivered"), None, "no redelivery marks on the direct path")
+      assertEquals(activations.toList, Nil, "the activator is never consulted for a live target")
+      assertEquals(persisted, None, "no pending-redelivery marker for a live target")
+    end for
   }
 
-  // ── ③ 验收：重启窗口 → 复活后补投 ────────────────────────────────────
+  // ── ③ 验收：重启窗口 → 复活后补投到目标会话 ──────────────────────────
 
-  test("③ dead target + root not live (restart window) ⇒ pending-redelivery marker persisted; replay intake sees it; idempotent; deleted session skipped") {
+  test(
+    "③ restart window (no activator) ⇒ pending-redelivery marker persisted to the TARGET session's own queue; idempotent; deleted session skipped"
+  ) {
     val system = ActorSystem(s"bg-notify-3-${scala.util.Random.nextInt(100000)}")
     for
       resources <- mkResources(system)
       target <- deadRef(system, "dead-target-3")
-      // 重启窗口形态：root 会话文件存在（sessionStore 有行）但无活 actor 注册行。
-      meta <- resources.sessionStore.createSession("root-probe")
-      _ <- deliver(Some(system), Some(resources.agentRegistry), Some(target), jobId = "job-3", rootSessionId = Some(meta.id))
+      // 重启窗口形态：目标会话文件存在（sessionStore 有行）但 actor 已死且无激活面。
+      meta <- resources.sessionStore.createSession("bg-target-3")
+      _ <- deliver(
+        Some(system),
+        Some(resources.agentRegistry),
+        Some(target),
+        jobId = "job-3",
+        targetSessionId = Some(meta.id)
+      )
       persisted <- CompactionQueueStore.load(meta.id)
       // 幂等：同 job 二次交付零重复。
-      _ <- deliver(Some(system), Some(resources.agentRegistry), Some(target), jobId = "job-3", rootSessionId = Some(meta.id))
+      _ <- deliver(
+        Some(system),
+        Some(resources.agentRegistry),
+        Some(target),
+        jobId = "job-3",
+        targetSessionId = Some(meta.id)
+      )
       persisted2 <- CompactionQueueStore.load(meta.id)
       // 会话已删：不产生无人读的垃圾文件。
-      _ <- deliver(Some(system), Some(resources.agentRegistry), Some(target), jobId = "job-4", rootSessionId = Some("deleted-root"))
-      deleted <- CompactionQueueStore.load("deleted-root")
+      _ <- deliver(
+        Some(system),
+        Some(resources.agentRegistry),
+        Some(target),
+        jobId = "job-4",
+        targetSessionId = Some("deleted-target")
+      )
+      deleted <- CompactionQueueStore.load("deleted-target")
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
       val events = persisted.map(_.events).getOrElse(Nil)
@@ -182,17 +270,76 @@ class BgNotifyDeliverySpec extends CatsEffectSuite:
       assertEquals(events.head.eventType, "completed", "the persisted marker carries the completion event")
       assertEquals(events.head.payload.contains("spec-output"), true, "the output reference rides the marker")
       assertEquals(
-        events.head.metadata("bgNotifyDeferred").map(_.asBoolean).getOrElse(None),
+        events.head.metadata("bgNotifyRedelivered").map(_.asBoolean).getOrElse(None),
         Some(true),
-        "the marker is marked as deferred (revival replay face)"
+        "the marker is marked as redelivery (target-session revival replay face)"
       )
-      assertEquals(persisted2.map(_.events).getOrElse(Nil).length, 1, "second delivery is a no-op (correlationId idempotent)")
-      assertEquals(deleted, None, "a deleted root session is skipped (no garbage file)")
+      assertEquals(
+        events.head.metadata("bgNotifyToSession").flatMap(_.asString),
+        Some(meta.id),
+        "the marker names the TARGET session as its redelivery destination"
+      )
+      assertEquals(
+        persisted2.map(_.events).getOrElse(Nil).length,
+        1,
+        "second delivery is a no-op (correlationId idempotent)"
+      )
+      assertEquals(deleted, None, "a deleted target session is skipped (no garbage file)")
+    end for
+  }
+
+  test(
+    "③ Deferred (family revival owned by supervisor legs) ⇒ marker persisted by the delivery face; UnknownSession (deleted) ⇒ nothing persisted"
+  ) {
+    val system = ActorSystem(s"bg-notify-3b-${scala.util.Random.nextInt(100000)}")
+    val attempts = ListBuffer.empty[String]
+    for
+      resources <- mkResources(system)
+      target <- deadRef(system, "dead-target-3b")
+      meta <- resources.sessionStore.createSession("bg-target-3b")
+      _ = BgSessionActivator.install((sid, _) =>
+        IO { attempts += sid }.as(
+          if sid == "deleted-target" then BgSessionActivator.UnknownSession: ActivationResult
+          else BgSessionActivator.Deferred("revival owned by supervisor respawn"): ActivationResult
+        )
+      )
+      _ <- deliver(
+        Some(system),
+        Some(resources.agentRegistry),
+        Some(target),
+        jobId = "job-3b",
+        targetSessionId = Some(meta.id)
+      )
+      persisted <- CompactionQueueStore.load(meta.id)
+      _ <- deliver(
+        Some(system),
+        Some(resources.agentRegistry),
+        Some(target),
+        jobId = "job-3c",
+        targetSessionId = Some("deleted-target")
+      )
+      deleted <- CompactionQueueStore.load("deleted-target")
+      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
+    yield
+      val events = persisted.map(_.events).getOrElse(Nil)
+      assertEquals(events.length, 1, "the Deferred leg persists the marker (delivery face owns the write)")
+      assertEquals(
+        events.head.correlationId,
+        Some("bg-redelivery-job-3b"),
+        "the deferred marker keeps the idempotence key"
+      )
+      assertEquals(
+        attempts.toList,
+        List(meta.id, "deleted-target"),
+        "the activator was consulted for both dead targets"
+      )
+      assertEquals(deleted, None, "UnknownSession ⇒ nothing persisted anywhere (no garbage file)")
+    end for
   }
 
   // ── ④ 无 actorSystem（harness）⇒ 旧行为直投 ──────────────────────────
 
-  test("④ no actorSystem (spec harness) ⇒ direct delivery to the target ref, legacy semantics, no reroute marks") {
+  test("④ no actorSystem (spec harness) ⇒ direct delivery to the target ref, legacy semantics, no activation marks") {
     for
       received <- Ref.of[IO, List[AgentCommand]](Nil)
       system = ActorSystem(s"bg-notify-4-${scala.util.Random.nextInt(100000)}")
@@ -204,8 +351,7 @@ class BgNotifyDeliverySpec extends CatsEffectSuite:
     yield
       val events = got.collect { case e: AgentCommand.ExternalEvent => e }
       assertEquals(events.size, 1, "harness (no system) keeps the legacy direct-delivery face")
-      assertEquals(events.head.metadata("bgNotifyRerouted"), None, "no reroute marks on the legacy path")
-      assertEquals(events.head.metadata("bgNotifyDeferred"), None, "no deferred marks on the legacy path")
+      assertEquals(events.head.metadata("bgNotifyRedelivered"), None, "no redelivery marks on the legacy path")
   }
 
 end BgNotifyDeliverySpec

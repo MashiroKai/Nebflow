@@ -1130,17 +1130,18 @@ Git safety:
         case _ => IO.unit
 
       // Notify agent via ExternalEvent.
-      // D1（steward 批 2026-10-23）：投递不再盲投「创建时焊死的会话 ActorRef」——
-      // `ref !` 是队列 offer 永不失败，目标会话已死 = 消息进无人消费的队列静默
-      // 蒸发（bg-wait cap 强制收尾后同样投尸）。交付面 = 活性判定 + 改道投活
-      // root + root 不活则持久补投（复活重放）+ 三态全审计（消灭 WARN 吞掉的
-      // 静默路径），见 BgNotifyDelivery。无 actorSystem（harness）保持旧行为直投。
+      // D1（steward 批 2026-10-23；作者裁定 09:46「目标会话死了就激活发送，不用发
+      // 给root」）：投递不再盲投「创建时焊死的会话 ActorRef」——`ref !` 是队列 offer
+      // 永不失败，目标会话已死 = 消息进无人消费的队列静默蒸发（bg-wait cap 强制收
+      // 尾后同样投尸）。交付面 = 活性判定 + 激活（复活）目标会话本身（持久化恢复
+      // spawn 同源，通知落其新回合）+ 激活不可用则向**目标会话**注入队落「待补投」
+      // 标记（复活重放补投给它）+ 三态全审计（消灭 WARN 吞掉的静默路径），见
+      // BgNotifyDelivery。无 actorSystem（harness）保持旧行为直投。
       // ref ! 返回 IO[Unit] already — do NOT wrap in IO() or it
       // becomes IO[IO[Unit]] (double-wrapped, fires at construction time).
       val notifyAgent = BgNotifyDelivery.deliverAgentEvent(
         targetRef = Some(ref),
         targetSessionId = ctx.sessionId,
-        rootSessionId = ctx.rootSessionId.orElse(ctx.sessionId),
         system = ctx.actorSystem,
         registry = ctx.sharedResources.map(_.agentRegistry),
         projectName = ctx.projectName,
