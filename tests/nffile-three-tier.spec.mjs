@@ -16,6 +16,13 @@
 //       ⇒ 1 次 POST /api/nf-ticket 携 N 路径；ticketUrl 复用 ⇒ 0 追加。
 //   站6 档2 LRU+配置：maxBytes 预算内淘汰（configData 注入 nebflow.json 键）。
 //   站7 接线钉：messages.js 三处消费点（device blob 腿 / 好友腿 / 设备内联合帧）源码钉。
+//   站8 #538 候选吸收钉：NfFileRoutes.scala 缓存头源码钉（引擎契约回归在 Scala spec）。
+//   站9 设置面板清缓存入口（M2 · 设计 v1 §6.4/§7 表5）：占用读数入画（nfCacheStats
+//       seam，分桶明细入 title）+ 清空键两段式确认（nfCacheReset seam，同
+//       btn-restart-gateway 先例）⇒ 账本真空 + 行为缺失实证；static 附接线钉
+//       （sidebar.js seam 单源 / 占位双件 / 两段式 / locale 双语键组）。
+//   harness 纪律：/sw.js 静态 404（「引擎未重启」形态）——SW 活体化会绕过
+//       page.route mock（97fd9e274 存量红根因，见 server 内注）。
 //
 // 运行：node tests/nffile-three-tier.spec.mjs
 
@@ -48,6 +55,11 @@ const MIME = {
 const server = createServer((req, res) => {
   let p = decodeURIComponent(new URL(req.url, BASE).pathname);
   if (p === '/') p = '/index.html';
+  // /sw.js 必须 404：harness = 「引擎未重启」形态（swReg.js 自述口径——注册被拒 ⇒
+  // 静默空转零影响）。97fd9e274（控制台加载提速 A 段）把 sw.js 放进 web 目录后，
+  // 静态服务器会 200 它 ⇒ SW 注册成功并接管 fetch ⇒ **绕过 page.route mock**
+  // （nf-ticket POST/nf-file GET 直落静态服务器 404）——本 spec 站1-6 存量红的根因。
+  if (p === '/sw.js') { res.writeHead(404); res.end('nf'); return; }
   const file = join(WEB_DIR, p);
   if (!file.startsWith(WEB_DIR)) { res.writeHead(403); res.end(); return; }
   try {
@@ -281,6 +293,46 @@ for (const [label, engine] of [['chromium', chromium], ['webkit(Safari引擎族)
     t('6c 页面零 JS 异常', errors.length === 0, errors.join(' | '));
     await browser.close();
   }
+
+  // ── 站9：设置面板清缓存入口（M2 · 设计 v1 §6.4/§7 表5）──
+  // 占用读数（nfCacheStats seam）+ 清空键（nfCacheReset seam，两段式确认）。被测链 =
+  // 真实 sidebar.js renderSettings/bindSettingsEvents（零 mock 替身）；locale 经
+  // addInitScript 钉 zh-CN（读数文案「1 条 · 64 KB」确定性断言）。
+  {
+    const { browser, page, errors } = await bootPage(engine);
+    const seeded = await page.evaluate(async () => {
+      const fc = await import('/js/nfFileCache.js');
+      await fc.nfCacheReset();
+      await fc.nfCachePut('k9seed', new Blob([new Uint8Array(64 * 1024).fill(7)], { type: 'application/octet-stream' }), 'v9');
+      return fc.nfCacheStats();
+    });
+    t('9a 前置：账本已入账一条（entries=1, bytes=64KiB）', seeded.entries === 1 && seeded.bytes === 64 * 1024, JSON.stringify(seeded));
+    await page.click('#settings-btn');
+    await page.waitForSelector('#nf-cache-usage', { timeout: 8000 });
+    const usage0 = await page.textContent('#nf-cache-usage');
+    t('9b 占用读数入画（1 条 · 64 KB）', usage0 && /1\s*条\s*·\s*64\s*KB/.test(usage0), String(usage0));
+    const title0 = await page.getAttribute('#nf-cache-usage', 'title');
+    t('9c 分桶明细入 title（local/预算）', !!title0 && /local \d+ [KM]B\/128\.0 MB/.test(title0), String(title0));
+    // 第一段：进入确认位
+    await page.click('#btn-clear-nf-cache');
+    const armed = await page.textContent('#btn-clear-nf-cache');
+    t('9d 第一击 = 确认位（确认清空？）', armed && armed.includes('确认清空'), String(armed));
+    // 第二段 = 确认位动作：清空落地
+    await page.click('#btn-clear-nf-cache');
+    await page.waitForFunction(() => document.getElementById('nf-cache-usage')?.textContent?.includes('0 条'), null, { timeout: 8000 });
+    const usage1 = await page.textContent('#nf-cache-usage');
+    t('9e 清空后读数归「0 条 · 0 KB」', usage1 && /0\s*条\s*·\s*0\s*KB/.test(usage1), String(usage1));
+    const after = await page.evaluate(async () => {
+      const fc = await import('/js/nfFileCache.js');
+      const stats = fc.nfCacheStats();
+      const blob = await fc.nfCachedBlob('k9seed');
+      return { entries: stats.entries, bytes: stats.bytes, hit: !!blob };
+    });
+    t('9f 账本真空（entries=0, bytes=0）', after.entries === 0 && after.bytes === 0, JSON.stringify(after));
+    t('9g 行为缺失：下轮打开走重新取数', after.hit === false, JSON.stringify(after));
+    t('9h 页面零 JS 异常', errors.length === 0, errors.join(' | '));
+    await browser.close();
+  }
   report[label] = rows;
 }
 
@@ -319,6 +371,21 @@ for (const [label, engine] of [['chromium', chromium], ['webkit(Safari引擎族)
   t('8b 凭据拒绝腿 no-store（401 缺票腿）', /putHeaders\(cacheHeader\("no-store"\)\)/.test(scala));
   t('8c 缓存头只挂可缓存正腿（404 腿不动）', /if r\.status == Status\.Ok \|\| r\.status == Status\.NotModified then/.test(scala));
   report['static(NfFileRoutes.scala 缓存头钉)'] = rows;
+}
+
+// ── 站9（static）：设置面板清缓存入口接线钉（M2 · v1 §6.4/§7 表5）──
+{
+  const rows = {};
+  const t = (name, cond, extra = '') => { rows[name] = cond ? 'PASS' : `FAIL${extra ? ' — ' + extra : ''}`; };
+  const src = readFileSync(join(WEB_DIR, 'js/sidebar.js'), 'utf8');
+  const zh = readFileSync(join(WEB_DIR, 'js/locales/zh-CN.js'), 'utf8');
+  const en = readFileSync(join(WEB_DIR, 'js/locales/en.js'), 'utf8');
+  t('9p1 sidebar.js 接线 seam 单源（nfCacheStats/nfCacheReset ← nfFileCache.js）', /import\s*\{\s*nfCacheStats,\s*nfCacheReset\s*\}\s*from\s*'\.\/nfFileCache\.js'/.test(src));
+  t('9p2 高级区渲染占位双件（#nf-cache-usage + #btn-clear-nf-cache）', src.includes('id="nf-cache-usage"') && src.includes('id="btn-clear-nf-cache"'));
+  t('9p3 两段式确认（btn-restart-gateway 先例：确认文案键 + 5s 自动复位）', /fileCacheClearConfirm/.test(src) && /setTimeout\(cacheDisarm,\s*5000\)/.test(src));
+  t('9p4 locale 双语键组齐备（zh/en 各 4 键）', ['fileCache', 'fileCacheClear', 'fileCacheClearConfirm', 'fileCacheEntries']
+    .every(k => zh.includes(`'settings.${k}'`) && en.includes(`'settings.${k}'`)));
+  report['static(设置清缓存入口接线钉)'] = rows;
 }
 
 server.close();

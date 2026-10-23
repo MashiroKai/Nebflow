@@ -27,8 +27,8 @@
 //       "nfFileCache": { "enabled": true, "maxBytes": 268435456, "ttlMs": 1800000,
 //                        "buckets": { "localBytes": 134217728, "deviceBytes": 100663296, "serverBytes": 33554432 } }
 //     经既有 configData 通道 → `state.parsedConfig` 原样到达；改动刷新页面生效。
-//     `maxBytes` = 全局硬顶（分桶预算各自再被它夹顶）；清缓存用户入口仍候作者示
-//     （`nfCacheReset()` 测试 seam 在）。
+//     `maxBytes` = 全局硬顶（分桶预算各自再被它夹顶）；清缓存用户入口随 M2 表5
+//     落在设置面板「高级」区（占用读数 + 清空键，consumer = sidebar.js）。
 //
 // 放置/依赖纪律：本模块只 import `state.js` 与 `branding.js`（localStorage 命名
 // 空间），**不** import canvas/attachmentPreview/messages/nfTicket（不入任何环，
@@ -437,7 +437,8 @@ export function nfCacheStats() {
   };
 }
 
-/** 测试 seam：清空索引 + 字节（清缓存**用户入口**候作者示，v1 §6.4 申报）。 */
+/** 清空索引 + 字节。用户入口 = 设置面板「清空文件缓存」键（M2 表5，v1 §6.4 建议
+ *  项落地；consumer 唯 sidebar.js；spec seam 同用）。 */
 export async function nfCacheReset() {
   loadIndex();
   const store = await cacheStore();
