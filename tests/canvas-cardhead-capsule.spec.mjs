@@ -1,8 +1,10 @@
 // canvas-cardhead-capsule.spec.mjs — UI 批⑨ 卡头毛玻璃胶囊 + 手势集验收（作者令 2026-10-21）
 //
 // 作者令 A/B/C/D 四链路 spec 钉：
-//   CC0 胶囊形态 —— .canvas-header 浮层胶囊：absolute top 10 左缘锚定（移位批
-//        2026-10-22：居中 → 居左，左缝 14px）、border-radius
+//   CC0 胶囊形态 —— .canvas-header 浮层胶囊：absolute top 10 顶带 + 横轴面板
+//        居中（居中批 2026-10-23 作者令「相对与canvas居中显示」：移位批顶左 →
+//        canvas 横轴中线；hover 环开时整体沉降 canvas 垂直中点，见
+//        canvas-capsule-ring.spec.mjs）、border-radius
 //        999px、backdrop blur 玻璃、fit-content（< 面板宽）；#canvas-content 顶满
 //        全高（rect.top === slide top，内容不再为 header 预留）；.scroll-under-glass
 //        裙边在挂（::after 24px + pointer-events none）；穿底 = 内容 pane 从面板顶
@@ -159,12 +161,13 @@ const headerInfo = (page) => page.evaluate(() => {
   const content = document.getElementById('canvas-content').getBoundingClientRect();
   const pane = document.querySelector('.canvas-tab-pane.active');
   const pr = pane ? pane.getBoundingClientRect() : null;
+  const hr = hdr.getBoundingClientRect();
   return {
     position: cs.position, radius: cs.borderRadius, blur: cs.backdropFilter, top: cs.top,
     hClass: hdr.className,
-    width: hdr.getBoundingClientRect().width,
-    slideW: slide.width, slideL: slide.left, slideR: slide.right, slideT: slide.top,
-    hdrL: hdr.getBoundingClientRect().left, hdrT: hdr.getBoundingClientRect().top, hdrB: hdr.getBoundingClientRect().bottom,
+    width: hr.width,
+    slideW: slide.width, slideL: slide.left, slideR: slide.right, slideT: slide.top, slideH: slide.height,
+    hdrL: hr.left, hdrT: hr.top, hdrB: hr.bottom,
     contentT: content.top, contentB: content.bottom,
     paneT: pr ? pr.top : null,
     skirtH: after.height, skirtPtr: after.pointerEvents,
@@ -196,12 +199,12 @@ const headerInfo = (page) => page.evaluate(() => {
 
   /* ── CC0 胶囊形态 ── */
   const h = await headerInfo(page);
-  ok('CC0-1 胶囊定位：absolute + top 10px + 圆角 999px',
+  ok('CC0-1 胶囊定位：absolute + top 10px 顶带 + 圆角 999px（居中批 2026-10-23：纵轴保持顶带，横轴居中见 CC0-3）',
     h.position === 'absolute' && h.top === '10px' && (h.radius === '999px' || h.radius === '9999px'), `${h.position}/${h.top}/${h.radius}`);
   ok('CC0-2 毛玻璃：backdrop blur 在挂 + .scroll-under-glass 类在挂',
     h.blur !== 'none' && h.hClass.includes('scroll-under-glass'), `${h.blur}`);
-  ok('CC0-3 fit-content 胶囊：宽 < 面板宽 + 左缘锚定（移位批 2026-10-22：居中 → 居左，左缝 ≈14px 且小于右缝）',
-    h.width < h.slideW - 40 && approx(h.hdrL - h.slideL, 14, 6) && (h.hdrL - h.slideL) < (h.slideR - (h.hdrL + h.width)),
+  ok('CC0-3 fit-content 胶囊：宽 < 面板宽 + 横轴面板居中（居中批 2026-10-23 作者令「相对与canvas居中显示」：居左退役，左右缝相等 ±3px）',
+    h.width < h.slideW - 40 && approx(h.hdrL - h.slideL, h.slideR - (h.hdrL + h.width), 3),
     `w=${h.width.toFixed(0)} slide=${h.slideW.toFixed(0)} left=${(h.hdrL - h.slideL).toFixed(1)} right=${(h.slideR - h.hdrL - h.width).toFixed(1)}`);
   ok('CC0-4 内容全高：#canvas-content 顶贴 slide 顶（不再为 header 预留）',
     approx(h.contentT, h.slideT, 1), `content.top=${h.contentT.toFixed(1)} slide.top=${h.slideT.toFixed(1)}`);

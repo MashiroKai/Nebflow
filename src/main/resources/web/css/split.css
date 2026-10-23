@@ -642,7 +642,18 @@ body.canvas-open.canvas-overlay #canvas-panel {
    控件迁右下角后胶囊独占顶行，锚定左缘（14px），transform 不再携带
    translateX(-50%)（手势变量语义不变：--head-dx/dy 仍是位移量）。右缘保留
    170px 给 nf-findbar（顶右 14px，find 态才出现）让位；fab 回顶右（回退批）
-   仍在此让位带内，分居两端不冲突。 */
+   仍在此让位带内，分居两端不冲突。
+   居中批（作者令 2026-10-23「胶囊…相对与canvas居中显示」）：顶左退役，桌面
+   主窗腿横轴回 canvas 平分中线（left 50% + translateX(-50%)，纵轴保持顶带
+   —— v2①「居中标题头」原位；顶行右缘让位（findbar/fab）与居中并存）。环
+   （§ring）的上下对称空间由 hover 沉降提供：环开态胶囊整体下沉 canvas 垂直
+   中点（.ring-open + --ring-dy，JS 置值），环锚上下都有空间、缘位真对称，
+   收环回顶；常态胶囊不在画布中央挡内容命中（wiki 图谱/流程图中心区交互
+   实证 —— 永久纵居中会拦截节点点击，故取「顶带常态 + hover 沉降」解）。
+   max-width 对称让位：右缘 184px（findbar 顶右让位带 + fab 52px）与左缝
+   同宽；窄面板 220px 下限兜底（t-name 自 ellipsis）。手机层（.mobile-layer
+   通栏变体）与卡窗（body.card-window 合并钮行）不受居中规则，保持原位；
+   deck 叠卡态（面板 = 前卡）顶中即 v2① 卡顶名称条位，无需另钉。 */
 .canvas-header {
   position: absolute;
   top: 10px;
@@ -679,6 +690,23 @@ body.canvas-open.canvas-overlay #canvas-panel {
   transition: transform 0.18s ease, filter 0.18s ease, box-shadow 0.18s ease;
   touch-action: none;   /* 分区契约：胶囊手势面不劫持内容滚动（spec CC7） */
 }
+/* 居中批（作者令 2026-10-23）：桌面主窗腿横轴居中 —— -50% 并入 translate3d
+   首参（手势 --head-dx 仍是像素位移量，跟手/回弹语义逐字不变）。 */
+body:not(.mobile-layer):not(.card-window) #canvas-panel .canvas-header {
+  top: 10px;
+  left: 50%;
+  max-width: min(76%, max(220px, calc(100% - 368px)));
+  transform: translate3d(calc(-50% + var(--head-dx, 0px)), var(--head-dy, 0px), 0) scale(var(--head-scale, 1));
+}
+/* 环开态沉降（对称批 2026-10-23）：胶囊整体下沉 canvas 垂直中点（--ring-dy
+   由 canvas.js openRing 置值 = 面板中点 − 胶囊顶带中点），给竖环上下对称
+   空间；0.36s 温和缓出与环族同节奏（放慢·自然·流畅裁定族）；拖动跟手
+   （is-dragging transition:none）优先级不被本规则翻转。收环回顶走基础
+   0.18s ease。尺寸零变化（尺寸恒定令 —— 沉降只改位移不改大小）。 */
+body:not(.mobile-layer):not(.card-window) #canvas-panel .canvas-header.ring-open:not(.is-dragging) {
+  transform: translate3d(calc(-50% + var(--head-dx, 0px)), calc(var(--head-dy, 0px) + var(--ring-dy, 0px)), 0) scale(var(--head-scale, 1));
+  transition: transform 0.36s cubic-bezier(0.22, 0.61, 0.36, 1), filter 0.18s ease, box-shadow 0.18s ease;
+}
 /* 按压触感（B：按住即有）——scale + 亮度反馈；阴影不另画（frosted 标准一份） */
 .canvas-header.is-pressed {
   --head-scale: 0.97;
@@ -713,7 +741,8 @@ body:not(.mobile-layer) .canvas-header .canvas-close-btn {
 .canvas-header {
   user-select: none;
   -webkit-user-select: none;
-  /* 胶囊环（下方 §ring）的 3D 透视原点 = 胶囊中心 */
+  /* 胶囊环（下方 §ring）的 rotateX 透视在环容器自身（perspective 只达直接
+     子级 = 环容器；胶囊是孙级）—— 本处保留历史原点语义（环锚 = 胶囊中心）。 */
   perspective: 640px;
   perspective-origin: 50% 50%;
 }
@@ -1240,21 +1269,25 @@ body.canvas-deck-narrow .canvas-title { max-width: 46%; }
 }
 
 /* ── 胶囊环（2026-10-22 作者令追加：hover 态展开为圆环排布）──────────
-   作者令：平时态 = 单胶囊（缩小，上方）；hover 态 = 各页签胶囊沿圆环排布，
+   作者令：平时态 = 单胶囊（缩小）；hover 态 = 各页签胶囊沿圆环排布，
    最多同时可见 3 个（中心 = 环游标 · 上下邻位沿弧后仰）；滚轮换选（hover
    交互改向令 2026-10-22「改为上下的，这样才方便 Windows 这样的电脑用鼠标
    进行操作」——鼠标滚轮 = 纵向，横滑触控板用户才有的输入不再是一等手势）：
    **纵滚 deltaY 主导**（一格滚轮 = 一换），触控板横滑 deltaX 保留为副手势，
-   点击即切换页签；邻位胶囊沿曲率 rotateX 透视 + 模糊扭曲（竖向 cover-flow，
-   几何 = 垂帘竖排：#canvas-panel overflow:hidden 裁切盒 + 头锚距顶 ~28px，
-   对称竖环上缘必被裁 —— 双缘全下垂：近缘 peek 0.58× / 远缘全垂 1.62×，
-   见 canvas.js layout()），材质 = 全站统一 frosted token（--glass-bg /
-   --glass-blur saturate(1.15) / --glass-border / --frost-shadow，sapphire.css
-   单源 —— 禁止各画各的）。
+   点击即切换页签；邻位胶囊沿曲率 rotateX 透视 + 模糊扭曲（竖向 cover-flow），
+   材质 = 全站统一 frosted token（--glass-bg / --glass-blur saturate(1.15) /
+   --glass-border / --frost-shadow，sapphire.css 单源 —— 禁止各画各的）。
+   对称批（作者令 2026-10-23「hover 要在上下显示…上下对称；大小固定；相对
+   canvas 居中」）：胶囊常态居 canvas 顶带横轴中线（§⑨ 居中批），hover 展开
+   整体**沉降 canvas 垂直中点**（§⑨ .ring-open --ring-dy）⇒ 环锚上下都有
+   空间，缘位**真对称**（上一签 −edgeY / 下一签 +edgeY，|y| 相等，JS layout()）；
+   昨批「双缘全下垂 peek 0.58×/hang 1.62×」避裁妥协随之退役。胶囊本体尺寸
+   恒定（沉降只改位移，零缩放零呼吸）；透视由环容器自身 perspective 提供
+   （原点 = 环锚 = 胶囊中心 —— .canvas-header 的 perspective 只达直接子级，
+   够不到孙级胶囊）。
    几何：环容器 0×0 锚在标题头中心（JS 置 left/top px），胶囊 absolute 居中于
    锚点，transform = translate(-50%,-50%) translateY(--cr-y) translateZ(--cr-z)
-   rotateX(--cr-rx) scale(--cr-press)；透视由 .canvas-header 的 perspective
-   提供。环 = 纯前端组件（本文件 + canvas.js §ring），与左栏控制面零共享。
+   rotateX(--cr-rx) scale(--cr-press)。
    按住=按钮语义（作者令③）：胶囊本体 button + 全头 user-select:none。 */
 .capsule-ring {
   position: absolute;
@@ -1262,6 +1295,8 @@ body.canvas-deck-narrow .canvas-title { max-width: 46%; }
   height: 0;
   z-index: 4;             /* 盖过 .canvas-title（z-auto），pop 钮(5)之上不给 */
   pointer-events: none;
+  perspective: 640px;     /* 透视原点 = 环锚 = 胶囊中心（canvas 中心） */
+  perspective-origin: 50% 50%;
 }
 .cr-capsule {
   position: absolute;
@@ -1319,8 +1354,8 @@ body.canvas-deck-narrow .canvas-title { max-width: 46%; }
   backdrop-filter: none;
 }
 .cr-capsule.is-center:active { --cr-press: 0.96; filter: brightness(0.92); }
-/* 缘位 = 竖向 cover-flow（hover 交互改向令「改为上下的」；几何 = 垂帘竖排，
-   双缘全下垂避 #canvas-panel 裁切盒）：沿弧后仰 + 模糊扭曲 +
+/* 缘位 = 竖向 cover-flow（对称批 2026-10-23：上 −edgeY / 下 +edgeY 真对称，
+   几何值见 canvas.js layout()）：沿弧后仰 + 模糊扭曲 +
    半透（毛玻璃照挂 —— 模糊叠加在 backdrop 之上，曲率感来自 rotateX 透视） */
 .cr-capsule.is-edge {
   z-index: 2;

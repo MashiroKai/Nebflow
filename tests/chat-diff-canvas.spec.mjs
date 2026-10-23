@@ -486,7 +486,8 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
     // 出现动画（0.36s，translateY 帧）走完再采几何——rect 采样含自身 transform。
     await page.waitForTimeout(500);
 
-    // 几何臂：文件头胶囊矩形与卡头胶囊（.canvas-header，浮层 top10/left14）
+    // 几何臂：文件头胶囊矩形与卡头胶囊（.canvas-header，顶带横轴居中 —— 居中批
+    // 2026-10-23；fcv-headpill 在 56px 让位带内 offsetTop ≥50，纵轴错开零重叠）
     // 及 deck fab（#deck-fab，fixed top10/right12，canvas-open 时在场）双轴
     // 不相交——56px 让位带的布局层保证（任意路径宽/面板宽成立）。
     const geo = await page.evaluate(() => {
