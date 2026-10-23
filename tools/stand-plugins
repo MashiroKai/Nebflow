@@ -1,0 +1,585 @@
+#!/usr/bin/env python3
+# stand-plugins — 插件目录只读查询 CLI（stand 仓 tools/）
+#
+# 用途：把「本实例已装插件的能力面」做成可检索目录——agent（delegate / 节点 /
+#       分发器 / root）派发时没被挂上足够的插件时，可自主查询有什么可用
+#       （作者令 2026-10-23：像记忆检索一样做成 cli，在各级提示词里告诉用法；
+#       除了自动分配，还能主动获取）。查询人人可用；**挂载权仍在派发侧**——
+#       本 CLI 只读零副作用，绝不提供挂载/改配置通道（delegate 不能给自己热挂）。
+#
+# 数据源（与引擎 PluginRegistry 一族同盘同源，全部只读）：
+#   - 注册面  <data-root>/plugins/<name>/
+#       plugin.json            根 manifest（Agent Plugins 1.0.0：name/version/
+#                              description/author/keywords…；$schema 须 canonical）
+#       skills/<skill>/SKILL.md  可选——skill id = <plugin>/<skill>，frontmatter
+#                              name+description 参与检索
+#       mcp.json               可选——{"mcpServers":{...}}（MCP 能力面）
+#       org.nebflow/tools.json 可选——{"tools":[...]}（内建工具授予面）
+#       Plugin.md              可选在场——包根使用指导件（分配时注入的提示词本体）
+#   - 配置面  <data-root>/nebflow.json
+#       plugins.revoked.<name>   封禁（deny-list）——blocked + reason（唯一点名止损）
+#       plugins.trust.<name>     审计记录（approvedAt；无审批批 2026-09-13「扫到即
+#                              信任」——本表不决定 trust，只补审批时间戳）
+#       plugins.dispatch.<name>  派发许可（authorEnabled 缺省 true；
+#                              transition.expiresAt 过期自动失效）——dispatchable 判据
+#   - 挂载面  （mounts 子命令）
+#       <data-root>/projects/<name>/project.json   项目定义（workspace 指向）
+#       <workspace>/.nebflow/flow-map.json         活动区声明集（nodes[].plugins）
+#       <workspace>/.nebflow/flow-maps/*/flow-map.json  delegate 作用域活动图
+#       <data-root>/chains/<key>.json              分配台账（delegate-spawn /
+#                              step-plugins 行的 plugins 集 + allocation 模式词）
+#
+# 装载判据（与引擎 PluginRegistry.load 同向的轻量镜像，只报形状不做深校验）：
+#   manifest 可解析 + 有 name + $schema = canonical + skills/ 与 mcp.json 至少其一
+#   → 列入；否则进 rejected 段（name+reason，不中断整表）。
+#
+# 用法：
+#   stand-plugins list                        # 已装插件清单（能力面/技能/MCP/工具授予/状态）
+#   stand-plugins search <关键词> [更多词]      # 按名称/描述/keywords/技能/MCP/工具模糊搜（AND 语义）
+#   stand-plugins mounts [--project X]        # 各项目当前挂载（声明集 + 分配台账；--project 过滤单项目）
+#   选项：--json（机器形状）| --data-root PATH（默认 STAND_DATA_ROOT > STAND_HOME >
+#         NEBFLOW_HOME > ~/.stand，旧机回落 ~/.nebflow）
+#
+# 退出码：0 = 成功（search 无命中也是成功，输出 "(no hits)"）；1 = 显式错误
+#   （如 mounts --project 指到未挂载项目）。
+#
+# 零第三方依赖：Python3 标准库（json/os/re/argparse）；只读：绝不写任何文件。
+
+import argparse
+import json
+import os
+import re
+import sys
+import time
+
+CANONICAL_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
+NOW = None  # 单次进程内的「当前时刻」（秒）；transition 过期判定用
+
+
+# ── 数据根解析（stand-recall 同序；引擎 STAND_HOME 品牌前缀 env 兼容读）────────
+
+
+def resolve_data_root(explicit):
+    # 显式旗标 = 用户意图，原样采纳（存在与否都尊重——缺目录时各命令自行报空态）。
+    if explicit:
+        return os.path.expanduser(explicit)
+    home = os.path.expanduser("~")
+    candidates = []
+    for env in ("STAND_DATA_ROOT", "STAND_HOME", "NEBFLOW_HOME"):
+        if os.environ.get(env):
+            candidates.append(os.path.expanduser(os.environ[env]))
+    candidates.append(os.path.join(home, ".stand"))  # 当前品牌默认
+    candidates.append(os.path.join(home, ".nebflow"))  # legacy 硬编码兜底
+    candidates.append(os.path.join(home, ".stand"))  # 全不存在 = 默认（报错面更可读）
+    seen, ordered = set(), []
+    for c in candidates:
+        if c not in seen:
+            seen.add(c)
+            ordered.append(c)
+    for c in ordered:
+        if os.path.isdir(c):
+            return c
+    return ordered[0]
+
+
+# ── 只读 JSON 帮手 ────────────────────────────────────────────────────────────
+
+
+def read_json(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def cfg_plugins(root):
+    """nebflow.json → plugins 键（缺文件/坏 JSON = 空对象，fail-open 只读）。"""
+    cfg = read_json(os.path.join(root, "nebflow.json")) or {}
+    p = cfg.get("plugins")
+    return p if isinstance(p, dict) else {}
+
+
+def first_text(s):
+    return s if isinstance(s, str) else ""
+
+
+# ── SKILL.md frontmatter（轻量 name/description 抽取，不做 YAML 深解析）───────
+
+FM_RE = re.compile(r"\A---\s*\n(.*?)\n---", re.S)
+KV_RE = re.compile(r"^(name|description):\s*(.+)$", re.M)
+
+
+def skill_meta(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            head = f.read(8192)
+    except Exception:
+        return None, None
+    m = FM_RE.match(head)
+    body = m.group(1) if m else ""
+    kv = dict(KV_RE.findall(body))
+    return kv.get("name"), kv.get("description")
+
+
+# ── 注册面装载（PluginRegistry.load 同向轻量镜像）─────────────────────────────
+
+
+def load_plugin(dirpath):
+    """→ (plugin|None, rejected_reason|None)。plugin = dict（本 CLI 的形状）。"""
+    name = os.path.basename(dirpath.rstrip("/"))
+    manifest = read_json(os.path.join(dirpath, "plugin.json"))
+    if manifest is None:
+        return None, "manifest missing/unparseable"
+    if not first_text(manifest.get("name")).strip():
+        return None, "manifest has no name"
+    if first_text(manifest.get("$schema")) != CANONICAL_SCHEMA:
+        return None, "manifest $schema not canonical"
+    skills_dir = os.path.join(dirpath, "skills")
+    skills = []
+    if os.path.isdir(skills_dir):
+        for sub in sorted(os.listdir(skills_dir)):
+            sp = os.path.join(skills_dir, sub)
+            if os.path.isdir(sp) and os.path.exists(os.path.join(sp, "SKILL.md")):
+                sname, sdesc = skill_meta(os.path.join(sp, "SKILL.md"))
+                skills.append(
+                    {
+                        "id": f"{manifest['name']}/{sub}",
+                        "dir": sub,
+                        "name": sname or sub,
+                        "description": sdesc or "",
+                    }
+                )
+    mcp = read_json(os.path.join(dirpath, "mcp.json")) or {}
+    servers = mcp.get("mcpServers") if isinstance(mcp.get("mcpServers"), dict) else {}
+    tools_ext = read_json(os.path.join(dirpath, "org.nebflow", "tools.json")) or {}
+    tools = tools_ext.get("tools") if isinstance(tools_ext.get("tools"), list) else []
+    if not skills and not servers:
+        return None, "no skills/ and no mcp.json (nothing to load)"
+    author = manifest.get("author")
+    author_name = author.get("name") if isinstance(author, dict) else (author or "")
+    return (
+        {
+            "name": first_text(manifest.get("name")).strip(),
+            "dir_name": name,
+            "version": first_text(manifest.get("version")),
+            "description": first_text(manifest.get("description")),
+            "author": first_text(author_name),
+            "keywords": [k for k in manifest.get("keywords", []) if isinstance(k, str)],
+            "skills": skills,
+            "mcp_servers": [
+                {
+                    "name": n,
+                    "type": first_text((c or {}).get("type")) if isinstance(c, dict) else "",
+                }
+                for n, c in sorted(servers.items())
+            ],
+            "tools": [t for t in tools if isinstance(t, str)],
+            "has_plugin_md": os.path.exists(os.path.join(dirpath, "Plugin.md"))
+            or os.path.exists(os.path.join(dirpath, "plugin.md")),
+            "dir": dirpath,
+        },
+        None,
+    )
+
+
+def status_of(p, plugins_cfg):
+    """→ (trusted, approved_at, blocked, blocked_reason, dispatchable, author_enabled,
+    transition_active)。trusted = 无审批批（2026-09-13）口径：**扫到即信任**（默认
+    放行），封禁（plugins.revoked）是唯一点名止损——plugins.trust 只作审计记录
+    （approvedAt=0 = 无记录，不影响 trust）。"""
+    revoked = plugins_cfg.get("revoked") if isinstance(plugins_cfg.get("revoked"), dict) else {}
+    trust = plugins_cfg.get("trust") if isinstance(plugins_cfg.get("trust"), dict) else {}
+    dispatch = plugins_cfg.get("dispatch") if isinstance(plugins_cfg.get("dispatch"), dict) else {}
+
+    blocked = False
+    reason = None
+    rv = revoked.get(p["name"])
+    if isinstance(rv, dict):
+        blocked = True
+        reason = first_text(rv.get("reason")) or "revoked"
+    rec = trust.get(p["name"])
+    approved_at = rec.get("approvedAt", 0) if isinstance(rec, dict) and isinstance(rec.get("approvedAt"), (int, float)) else 0
+    trusted = not blocked
+
+    de = dispatch.get(p["name"])
+    de = de if isinstance(de, dict) else {}
+    author_enabled = de.get("authorEnabled", True)  # 缺省 = 跟随 trust（零迁移口径）
+    if not isinstance(author_enabled, bool):
+        author_enabled = True
+    tr = de.get("transition") if isinstance(de.get("transition"), dict) else {}
+    transition_active = bool(tr.get("enabled")) and (
+        not isinstance(tr.get("expiresAt"), (int, float)) or tr.get("expiresAt", 0) > (NOW or time.time())
+    )
+    dispatchable = trusted and (author_enabled or transition_active)
+    return trusted, int(approved_at), blocked, reason, dispatchable, author_enabled, transition_active
+
+
+def scan_registry(root):
+    """→ (plugins, rejected, plugins_cfg)。plugins 已按 name 排序。"""
+    plugins_dir = os.path.join(root, "plugins")
+    plugins, rejected = [], []
+    if os.path.isdir(plugins_dir):
+        for sub in sorted(os.listdir(plugins_dir)):
+            d = os.path.join(plugins_dir, sub)
+            if not os.path.isdir(d):
+                continue
+            p, err = load_plugin(d)
+            if p:
+                plugins.append(p)
+            else:
+                rejected.append({"name": sub, "reason": err})
+    cfg = cfg_plugins(root)
+    for p in plugins:
+        (
+            p["trusted"],
+            p["approved_at"],
+            p["blocked"],
+            p["blocked_reason"],
+            p["dispatchable"],
+            p["dispatch_author_enabled"],
+            p["dispatch_transition_active"],
+        ) = status_of(p, cfg)
+    plugins.sort(key=lambda x: x["name"])
+    return plugins, rejected, cfg
+
+
+# ── 渲染（text 形态；--json 走原始 dict）──────────────────────────────────────
+
+
+def status_tag(p):
+    if p["blocked"]:
+        return f"[blocked: {p['blocked_reason']}]"
+    if not p["dispatchable"]:
+        return "[dispatch-off]"
+    return "[dispatchable]"
+
+
+def render_plugin(p, matched=None):
+    lines = [
+        f"{p['name']} {p['version'] or '-'} {status_tag(p)}",
+        f"   {p['description'] or '(no description)'}",
+    ]
+    if p["skills"]:
+        lines.append("   skills: " + " | ".join(s["id"] for s in p["skills"]))
+    else:
+        lines.append("   skills: -")
+    mcp = ", ".join(s["name"] for s in p["mcp_servers"]) or "-"
+    tools = ", ".join(p["tools"]) or "-"
+    lines.append(f"   mcp: {mcp} · tools: {tools}")
+    if matched:
+        lines.append("   matched: " + ", ".join(matched))
+    return "\n".join(lines)
+
+
+# ── 检索（AND 语义：每个词都须命中该插件某个字段）──────────────────────────────
+
+
+def searchable_fields(p):
+    """→ [(field, text)]；field ∈ name/keyword/description/skill/mcp/tool。"""
+    fields = [("name", p["name"]), ("description", p["description"])]
+    fields += [("keyword", k) for k in p["keywords"]]
+    for s in p["skills"]:
+        fields.append(("skill", s["id"]))
+        fields.append(("skill", s["name"]))
+        fields.append(("skill", s["description"]))
+    for m in p["mcp_servers"]:
+        fields.append(("mcp", m["name"]))
+    for t in p["tools"]:
+        fields.append(("tool", t))
+    return fields
+
+
+FIELD_RANK = {"name": 0, "keyword": 1, "description": 2, "skill": 3, "mcp": 4, "tool": 5}
+
+
+def search_plugins(plugins, query):
+    terms = [t for t in re.split(r"\s+", query.strip()) if t]
+    hits = []
+    for p in plugins:
+        fields = searchable_fields(p)
+        matched, ok = [], True
+        for term in terms:
+            tl = term.lower()
+            on = [(f for f in fields if tl in f[1].lower())]
+            found = sorted({f for f in fields if tl in f[1].lower()}, key=lambda f: FIELD_RANK[f[0]])
+            if not found:
+                ok = False
+                break
+            matched.append(f"{found[0][0]}:{found[0][1][:40]}")
+        if ok:
+            hits.append((p, matched))
+    return hits
+
+
+# ── 挂载面（声明集 + 分配台账，全部只读）──────────────────────────────────────
+
+
+def list_projects(root):
+    """→ [(name, workspace)]；来自 <root>/projects/<name>/project.json。"""
+    out = []
+    pdir = os.path.join(root, "projects")
+    if not os.path.isdir(pdir):
+        return out
+    for sub in sorted(os.listdir(pdir)):
+        pj = read_json(os.path.join(pdir, sub, "project.json"))
+        if not isinstance(pj, dict):
+            continue
+        name = first_text(pj.get("name")) or sub
+        ws = first_text(pj.get("workspace")) or os.path.join(pdir, sub)
+        out.append((name, ws))
+    return out
+
+
+def declared_of_workspace(ws):
+    """工作区活动图声明集：主图 + delegate 作用域图。→ [(where, node, plugins)]。"""
+    out = []
+    bases = [os.path.join(ws, ".nebflow", "flow-map.json")]
+    scopes = os.path.join(ws, ".nebflow", "flow-maps")
+    if os.path.isdir(scopes):
+        for sub in sorted(os.listdir(scopes)):
+            sp = os.path.join(scopes, sub, "flow-map.json")
+            if os.path.exists(sp):
+                bases.append(sp)
+    for path in bases:
+        fm = read_json(path)
+        if not isinstance(fm, dict):
+            continue
+        nodes = fm.get("nodes") if isinstance(fm.get("nodes"), dict) else {}
+        where = "flow-map" if path.endswith(os.path.join(".nebflow", "flow-map.json")) else "scope:" + path.split(os.sep)[-2]
+        for nid, node in nodes.items():
+            if isinstance(node, dict) and isinstance(node.get("plugins"), list) and node["plugins"]:
+                out.append((where, nid, [t for t in node["plugins"] if isinstance(t, str)]))
+    return out
+
+
+def allocated_of_chains(root, project=None):
+    """分配台账：<root>/chains/*.json 的 delegate-spawn / step-plugins 行。
+    project=None 返回全部；给定项目名 = delegate-spawn 行按 payload.project 精确
+    匹配；step-plugins 行无项目字段，永不匹配具体项目（归 unattributed 段）。
+    → [(chain_key, kind, subject, allocation, plugins, project)]。"""
+    out = []
+    cdir = os.path.join(root, "chains")
+    if not os.path.isdir(cdir):
+        return out
+    for fn in sorted(os.listdir(cdir)):
+        if not fn.endswith(".json"):
+            continue
+        rec = read_json(os.path.join(cdir, fn))
+        if not isinstance(rec, dict):
+            continue
+        key = first_text(rec.get("taskId")) or fn[: -len(".json")]
+        for e in rec.get("entries") or []:
+            if not isinstance(e, dict):
+                continue
+            kind = first_text(e.get("kind"))
+            if kind not in ("delegate-spawn", "step-plugins"):
+                continue
+            payload = e.get("payload") if isinstance(e.get("payload"), dict) else {}
+            plugins = [t for t in (payload.get("plugins") or []) if isinstance(t, str)]
+            alloc = first_text(payload.get("allocation")) or "-"
+            if kind == "delegate-spawn":
+                subject = first_text(payload.get("delegateId")) or key
+                proj = first_text(payload.get("project"))
+            else:
+                subject = first_text(payload.get("nodeId")) or "-"
+                proj = None  # step 行无项目字段——只落 unattributed 段
+            if project is not None and proj != project:
+                continue
+            out.append((key, kind, subject, alloc, plugins, proj))
+    return out
+
+
+def render_mounts(rows, scanned, project_label=None):
+    lines = []
+    with_mounts = 0
+    for name, ws, declared, allocated in rows:
+        if not declared and not allocated:
+            continue
+        with_mounts += 1
+        lines.append(f"project: {name}  ({ws})")
+        if declared:
+            lines.append("  declared (flow-map):")
+            for where, nid, plugins in declared:
+                tag = f" [{where}]" if where != "flow-map" else ""
+                lines.append(f"    {nid}{tag}: {', '.join(plugins)}")
+        else:
+            lines.append("  declared (flow-map): -")
+        if allocated:
+            lines.append("  allocated (chain ledger):")
+            for key, kind, subject, alloc, plugins, _proj in allocated:
+                lines.append(
+                    f"    {subject} [{kind} · {alloc}]: {', '.join(plugins) if plugins else '-'}"
+                )
+        else:
+            lines.append("  allocated (chain ledger): -")
+    if not lines:
+        print("(no mounts)" if project_label else "(no mounts across scanned projects)")
+        return 0
+    print("\n".join(lines))
+    print(
+        f"— {scanned} projects scanned, {with_mounts} with mounts"
+        + (f" (filtered: {project_label})" if project_label else "")
+    )
+    return 0
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        prog="stand-plugins", description="插件目录只读查询（清单/检索/挂载面）"
+    )
+    ap.add_argument("--json", action="store_true", help="机器形状输出")
+    ap.add_argument("--data-root", help="数据根（默认 STAND_DATA_ROOT > STAND_HOME > ~/.stand）")
+    # 全局旗标的子命令侧别名（`stand-plugins search 关键词 --json` 同解析——
+    # argparse 子解析器不继承主解析器旗标，parents 挂同一份；SUPPRESS 缺省 =
+    # 只在子命令侧真的出现时才覆盖主解析器已解析的值）。
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="机器形状输出")
+    common.add_argument(
+        "--data-root", default=argparse.SUPPRESS,
+        help="数据根（默认 STAND_DATA_ROOT > STAND_HOME > ~/.stand）",
+    )
+    sub = ap.add_subparsers(dest="cmd")
+    sub.add_parser("list", parents=[common], help="已装插件清单")
+    se = sub.add_parser("search", parents=[common], help="按名称/描述/keywords/技能/MCP/工具模糊搜")
+    se.add_argument("query", nargs="+", help="关键词（多词 AND）")
+    mo = sub.add_parser("mounts", parents=[common], help="各项目当前挂载（声明集 + 分配台账）")
+    mo.add_argument("--project", help="只看该项目（精确名）")
+    args = ap.parse_args(argv)
+
+    if not args.cmd:
+        ap.error("需要子命令：list / search / mounts")
+
+    global NOW
+    NOW = time.time()
+    root = resolve_data_root(args.data_root)
+
+    if args.cmd == "list":
+        plugins, rejected, _ = scan_registry(root)
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "data_root": root,
+                        "count": len(plugins),
+                        "plugins": plugins,
+                        "rejected": rejected,
+                    },
+                    ensure_ascii=False,
+                    indent=1,
+                )
+            )
+            return 0
+        if not plugins and not rejected:
+            print(f"(no plugins installed under {root}/plugins)")
+            return 0
+        for p in plugins:
+            print(render_plugin(p))
+        tagline = (
+            f"— {len(plugins)} plugins "
+            f"({sum(1 for p in plugins if p['dispatchable'])} dispatchable, "
+            f"{sum(1 for p in plugins if p['blocked'])} blocked, "
+            f"{sum(1 for p in plugins if not p['dispatchable'] and not p['blocked'])} dispatch-off)"
+        )
+        if rejected:
+            tagline += f"; rejected: " + ", ".join(f"{r['name']}({r['reason']})" for r in rejected)
+        print(tagline)
+        return 0
+
+    if args.cmd == "search":
+        plugins, _, _ = scan_registry(root)
+        hits = search_plugins(plugins, " ".join(args.query))
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "data_root": root,
+                        "query": " ".join(args.query),
+                        "count": len(hits),
+                        "hits": [{"matched_on": m, **p} for p, m in hits],
+                    },
+                    ensure_ascii=False,
+                    indent=1,
+                )
+            )
+            return 0
+        if not hits:
+            print("(no hits)")
+            return 0
+        for p, matched in hits:
+            print(render_plugin(p, matched=matched))
+        print(f"— {len(hits)} hit(s) for {' '.join(args.query)}")
+        return 0
+
+    if args.cmd == "mounts":
+        projects = list_projects(root)
+        if args.project and args.project not in {n for n, _ in projects}:
+            mounted = ", ".join(sorted(n for n, _ in projects)) or "(none)"
+            print(
+                f"stand-plugins: project '{args.project}' is not mounted — "
+                f"mounted projects: {mounted}",
+                file=sys.stderr,
+            )
+            return 1
+        all_alloc = allocated_of_chains(root)
+        rows = []
+        for name, ws in projects:
+            if args.project and name != args.project:
+                continue
+            declared = declared_of_workspace(ws)
+            # 项目桶只收归到本项目的 delegate-spawn 行（payload.project 精确匹配）。
+            allocated = [r for r in all_alloc if r[1] == "delegate-spawn" and r[5] == name]
+            rows.append((name, ws, declared, allocated))
+        # unattributed 段（仅全量视图）：step-plugins 行 + 无项目的 spawn 行——
+        # 无法归入任何项目桶，独立尾桶呈现（--project 过滤视图省略）。
+        unattributed = (
+            [r for r in all_alloc if r[1] == "step-plugins" or (r[1] == "delegate-spawn" and r[5] == "")]
+            if not args.project
+            else []
+        )
+        if unattributed:
+            rows.append(("(unattributed)", "-", [], unattributed))
+        if args.json:
+            def alloc_json(seq):
+                return [
+                    {
+                        "chain": k,
+                        "kind": kind,
+                        "subject": s,
+                        "allocation": a,
+                        "plugins": ps,
+                    }
+                    for k, kind, s, a, ps, _proj in seq
+                ]
+
+            print(
+                json.dumps(
+                    {
+                        "data_root": root,
+                        "projects": [
+                            {
+                                "project": name,
+                                "workspace": ws,
+                                "declared": [
+                                    {"where": w, "node": n, "plugins": ps} for w, n, ps in declared
+                                ],
+                                "allocated": alloc_json(allocated),
+                            }
+                            for name, ws, declared, allocated in rows
+                            if name != "(unattributed)"
+                        ],
+                        **({"unattributed": alloc_json(unattributed)} if unattributed else {}),
+                    },
+                    ensure_ascii=False,
+                    indent=1,
+                )
+            )
+            return 0
+        return render_mounts(rows, scanned=len(projects), project_label=args.project)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

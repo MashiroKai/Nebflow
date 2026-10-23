@@ -13,6 +13,11 @@ import nebflow.shared.Defaults
  * 报告并结束回合」。三消费点：delegate brief（[[DelegateTool.assembleBrief]]）、
  * 节点 ProtocolFootnote（`NodeEngine.protocolFootnoteFor`）、subagent/workflow
  * 步首条消息（[[BlockingSubagent.promptWithRule]]）。
+ *
+ * stand-plugins 批（作者令 2026-10-23）增钉：插件能力查询行
+ * （[[Defaults.PluginDiscoveryLine]]）注入 delegate brief 与节点脚注两个**有
+ * Bash** 的面（铁律之后、任务/基线之前）；subagent 只读侦察面无 Bash，**不**
+ * 注入查询行（promptWithRule 形态不变——查询通道不可达，注入即纯噪音）。
  */
 class SleepPollStartupRuleSpec extends FunSuite:
 
@@ -44,6 +49,36 @@ class SleepPollStartupRuleSpec extends FunSuite:
     // 插件注入块在任务正文之后（既有位形不变）
     val withBlock = DelegateTool.assembleBrief("[workspace] /w", None, "TASK", "<injected-plugins>x</injected-plugins>")
     assert(withBlock.indexOf("TASK") < withBlock.indexOf("<injected-plugins>"), s"plugin block stays last: $withBlock")
+  }
+
+  test("插件能力查询行（PluginDiscoveryLine）：delegate brief 铁律之后、任务正文之前注入（stand-plugins 批接线钉）") {
+    val line = Defaults.PluginDiscoveryLine
+    assert(line.contains("[plugin discovery]"), s"prefix tag required: $line")
+    assert(line.contains("stand-plugins list") && line.contains("search"), s"query usage named: $line")
+    assert(line.contains("mounting authority stays with the dispatch side"), s"boundary clause required: $line")
+    val brief = DelegateTool.assembleBrief(
+      workspaceLine = "[workspace] /tmp/ws",
+      bindingLine = None,
+      task = "Do the thing.",
+      injectedBlock = ""
+    )
+    val ruleAt = brief.indexOf("Waiting discipline")
+    val plugAt = brief.indexOf("[plugin discovery]")
+    val taskAt = brief.indexOf("Do the thing.")
+    assert(ruleAt >= 0 && plugAt > ruleAt && plugAt < taskAt, s"discovery line sits after the rule, before the task: $brief")
+  }
+
+  test("插件能力查询行：节点脚注同源注入（endsWith 身份断言零波及）") {
+    val plain = NodeEngine.protocolFootnoteFor(None)
+    assert(plain.contains(Defaults.PluginDiscoveryLine), "node footnote must carry the discovery line")
+    assert(
+      plain.indexOf(Defaults.PluginDiscoveryLine) > plain.indexOf(Defaults.NoSleepPollRule),
+      "discovery line sits after the iron rule"
+    )
+    assert(plain.endsWith(NodeEngine.ProtocolFootnote), "identity pin intact (NodeChainAttributionSpec anchor)")
+    val verifier = NodeEngine.protocolFootnoteFor(Some("verifier"))
+    assert(verifier.contains(Defaults.PluginDiscoveryLine), "verifier footnote carries it too")
+    assert(verifier.endsWith(NodeEngine.ProtocolFootnote + "\n" + NodeEngine.VerifierVerdictFootnote), "verifier appendix unchanged")
   }
 
   test("节点脚注（protocolFootnoteFor）：铁律前缀注入，endsWith(ProtocolFootnote) 身份保持") {
