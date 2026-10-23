@@ -1719,6 +1719,10 @@ export function onBusyWatchdogDeadline(sid, deadlineAt) {
     clearWatchdogTimer(sid);
     _watchdogRung.delete(sid);
     clearBusy(sid);   // ⇒ removeStillProcessingNotice（chat.js:271）：真死态不留「仍在处理」行
+    // queue-idle-flush（2026-10-23）：真死收口 = busy→idle 迁移，排队消息照常触发
+    // 投递（旧实现只清不排 ⇒ 队列滞留）。WS 已断子案由 drain 自身的 ws 闸挡下，
+    // 重连后的补发轨（flushOfflineQueue）语义不变。
+    state.scheduleQueueDrain?.(sid);
     return;
   }
   // 慢 ≠ 死：只呈现 + 放宽一档 —— 不发 interrupt、不清 busy、不 drain 队列。

@@ -407,21 +407,36 @@ function consumeTurnDuration(sid) {
 // drift apart (the whole point of ①-2: the idle signal had NO drain wiring, so
 // a lost 'done' stranded the local queue forever — 症状① G1/G3).
 //
-// per-turn 幂等闸（2026-09-20 chain-msgqueue 阶段 B · 方案 A，作者令）：原设计逐字
-// 口径 = 「send first queued message as normal UserInput」（input.js:1105-1107，
-// 单数 + first）⇒ 一次 turn 结束只派发 **1** 条；而引擎对每一轮**固定发两帧**终止
-// 信号（`Done *> emitSessionBusy(busy=false)`，AgentFinishTurn.finishTurnCont；
-// 2026-09-25 行号引用修正：原 AgentActor.scala:3176-3185 已随 turn 收尾族迁移漂移）⇒ 同一
-// 窗口内本 helper 被调 2 次、余件被提前捞进对话流（显示态 ≠ 投递态 = 报障本体）。
-// 闸形 = **per-session turn 窗口令牌**：窗口内只放行 1 次**派发**（判定放在定时器
-// 回调里 ⇒ 兄弟帧先到、后到、间隔多久都压得住）；且只有真的派发才关窗（无件 / WS
-// 未开 ⇒ 不关窗，防「队列停摆」= 症状① 复发）。窗口由「新一轮开始」的既有事实复位：
-//   ① 引擎新轮权威信号 sessionBusy{busy:true}（下方 onMessage('sessionBusy') 分支）；
-//   ② 流式帧族（armBusyFromStream 的 5 个入口 = thinkingDelta / textDelta / thinking /
-//      textDone / toolStart）= 本轮正在产出 ⇒ 新一轮事实（depth>0 会话不发 sessionBusy
-//      帧，靠这一支复位 —— 与该函数头注讨论的会话类同源）。
-// 🔴 不按帧类型白名单：'done' 丢帧时 sessionBusy{false} 仍须能派发（①-2 动因）。
-const drainWindowUsed = new Set();
+// per-turn 幂等闸（2026-09-20 chain-msgqueue 阶段 B · 方案 A，作者令；2026-10-23
+// queue-idle-flush 批改造为「派发冷却 + 运行中事实」双条件闸）：原设计逐字口径 =
+// 「send first queued message as normal UserInput」（input.js，单数 + first）⇒ 一次
+// turn 结束只派发 **1** 条；而引擎对每一轮**固定发两帧**终止信号（`Done *>
+// emitSessionBusy(busy=false)`，AgentFinishTurn.finishTurnCont）⇒ 同一窗口内本
+// helper 被调 2 次、余件会被提前捞进对话流（显示态 ≠ 投递态 = 报障本体）。
+//
+// 旧闸形 = per-session 布尔窗口令牌（派发即关窗，「新一轮事实」才开窗）。病史：
+// 关窗后的开窗**只**依赖 sessionBusy{busy:true} / 流帧两族事实——凡派发开启的
+// turn 客户端看不到任何新轮事实（queued /compact 的压缩轮、零流帧轮、幻影派发、
+// 断线丢 busy{true} 帧），窗口就永远关着：之后每个终止帧照样触发 drain 定时器，
+// 却全数卡死在窗口闸上 ⇒ 「回复完成进入空闲了，队列就是不动」（2026-10-23 作者
+// 报障「有时候空闲后不自动投递」的精确条件）。
+//
+// 新闸形（事件驱动 + 幂等，两条件缺一不可地挡重复、绝不滞留触发）：
+//   ① 派发冷却窗（QUEUE_DRAIN_COOLDOWN_MS）：每次**真实派发**起算 C ms 内的触发
+//     一律压下——它只可能是同一 turn 终态对的第二帧（done 与 busy{false} 同刻
+//     发出，帧间隔为调度噪声级）；压下不丢弃：定时器改挂到冷却边界再判（re-arm），
+//     瞬时错误轮（终态落在冷却窗内）到点照常投递。
+//   ② 运行中事实闸：上一次派发后该会话已收到新轮事实（queueTurnFactAt：busy{true}
+//     / 流帧族的时间戳）且 busy 尚未清 ⇒ 被派件开启的 turn 还在跑，等它自己的终态
+//     来触发，不抢跑（终态对的第二帧迟到越窗也一样挡下——旧窗口防「同窗双投」的
+//     职责由 ①+② 共同保留）。**零新轮事实的会话不受 ② 挡**（factAt=0）：压缩轮 /
+//     流哑轮 / 幻影派发 / 丢帧正是不产生事实的形态 —— 空闲即投递，不滞留。
+// 无件可派 / WS 未开 ⇒ 直接返回不落冷却戳（留待后续终止帧，防「队列停摆」）。
+const QUEUE_DRAIN_COOLDOWN_MS = 2000;
+// sid -> 最近一次真实派发时刻（冷却窗起算点）
+const lastQueueDispatchAt = new Map();
+// sid -> 最近一次「引擎新轮」事实（sessionBusy{busy:true} / 流帧族）时刻
+const queueTurnFactAt = new Map();
 // At most ONE in-flight drain timer per session: each turn end emits two
 // terminal frames (done + sessionBusy{busy:false}) and each used to arm its
 // own 50ms timer — the second could fire after a new turn re-opened the
@@ -482,7 +497,7 @@ function armTurnConfirm(sid) {
     }
     clearBusy(sid);
     // 与其他终态路径同律：幻影期间排队的消息照常 flush（红线：修 busy 误判，
-    // 队列语义不动——drain 自身的窗口闸/ws 闸照旧把关）。
+    // 队列语义不动——drain 自身的冷却窗/运行中事实闸/ws 闸照旧把关）。
     scheduleQueueDrain(sid);
   }, budget);
 }
@@ -490,6 +505,10 @@ function armTurnConfirm(sid) {
 // state 槽调用（与 updateSafetyToggle 同款模式，避免新增静态 import 环）。
 state.armTurnConfirm = armTurnConfirm;
 state.cancelTurnConfirm = cancelTurnConfirm;
+// queue-idle-flush：stop 键（input.js）与看门真死收口（chat.js）都是**真实**的
+// busy→idle 迁移，清 busy 后必须触发队列 drain（旧实现两处只清不排 ⇒ 队列滞留）。
+// 同一族：main.js 后台代理对账器直接调本模块函数。
+state.scheduleQueueDrain = scheduleQueueDrain;
 // 本会话流活动戳（全局 lastStreamActivity 的 per-session 孪生，busy-stuck-fix）。
 // 调用点 = 与 armBusyFromStream 同族的流帧处理器 + toolHeartbeat 族（工具执行期
 // 本会话事实上活着，确认网不得在其窗口内走满）。
@@ -497,20 +516,42 @@ function stampSessionStreamActivity(sid) {
   if (sid) state.sessionStreamActivity[sid] = Date.now();
 }
 
+// queue-idle-flush：触发统一走 scheduleQueueDrain ⇒ 定时器体抽成 armQueueDrainTimer
+// （冷却窗内的触发 re-arm 到冷却边界再判，不丢触发——瞬时错误轮的终态落在冷却窗内，
+// 直接丢弃会让队列滞留到下一个无谓的终止帧才有投递机会）。
 function scheduleQueueDrain(sid) {
   if (!sid) return;
   if (pendingDrainTimers.has(sid)) return; // drain timer already armed for this session
   // Delay lets the UI finalize the finished turn first (unchanged 50ms).
+  armQueueDrainTimer(sid, 50);
+}
+
+function armQueueDrainTimer(sid, delay) {
   const t = setTimeout(() => {
     pendingDrainTimers.delete(sid);
-    if (drainWindowUsed.has(sid)) return;   // 本 turn 窗口已派发过 ⇒ 重复帧 / stale 帧在此挡下
-    // 与 input.js:1109-1111 的同两条守卫同义：无件可派 / WS 未开 ⇒ 不关窗（留待后续终止帧）
+    const now = Date.now();
+    const dispatchedAt = lastQueueDispatchAt.get(sid) || 0;
+    // ① 派发冷却窗：C ms 内的触发只可能是同 turn 终态对的第二帧 —— 压下但改挂到
+    //    冷却边界再判（re-arm 占回同一个 pending 槽，后续触发被 has() 去重）。
+    if (now - dispatchedAt < QUEUE_DRAIN_COOLDOWN_MS) {
+      armQueueDrainTimer(sid, dispatchedAt + QUEUE_DRAIN_COOLDOWN_MS - now);
+      return;
+    }
+    // 与 input.js drainMessageQueueNow 的同两条守卫同义：无件可派 / WS 未开 ⇒ 不落
+    // 冷却戳（留待后续终止帧，防「队列停摆」= 症状① 复发）。
     const q = state.messageQueue[sid];
     if (!q || q.length === 0) return;
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
-    drainWindowUsed.add(sid);               // 本次派发 = 新 turn 起点 ⇒ 关窗（待 ①② 复位）
+    // ② 运行中事实闸：上次派发后已有新轮事实且 busy 未清 ⇒ 被派件开启的 turn 还在
+    //    跑，等它自己的终态来触发（终态对迟到第二帧越窗同挡——同窗双投防线）。
+    //    零事实（factAt=0）不受挡：压缩轮 / 流哑轮 / 幻影 / 丢帧形态空闲即投递。
+    if (state.busySessionIds.has(sid)) {
+      const factAt = queueTurnFactAt.get(sid) || 0;
+      if (factAt > dispatchedAt) return;
+    }
+    lastQueueDispatchAt.set(sid, Date.now()); // 本次派发 = 冷却窗起点
     drainMessageQueue(sid);
-  }, 50);
+  }, delay);
   pendingDrainTimers.set(sid, t);
 }
 
@@ -528,10 +569,11 @@ function scheduleQueueDrain(sid) {
 const TERMINAL_ARM_GUARD_MS = 5000;
 function armBusyFromStream(sid) {
   // 2026-09-20 chain-msgqueue 阶段 B：流式帧 = 本轮正在产出 ⇒ 这是「新一轮开始」的
-  // 事实，复位 per-turn drain 闸（新的 turn 窗口）。🔴 必须置于下方 busy 闸**之前**：
-  // 派发后 busy 已被 setBusy(sid) 置 true，放进闸后本支对已 busy 的会话永不执行 ⇒
-  // depth>0 会话（不发 sessionBusy 帧）的队列在第一次派发后即停摆（症状① 复发）。
-  if (sid) drainWindowUsed.delete(sid);
+  // 事实。queue-idle-flush：事实由旧的「开 drain 窗口」改记为 queueTurnFactAt 时间戳
+  // （新闸形的运行中事实闸消费面）。🔴 必须置于下方 busy 闸**之前**：派发后 busy 已被
+  // setBusy(sid) 置 true，放进闸后本支对已 busy 的会话永不执行 ⇒ depth>0 会话（不发
+  // sessionBusy 帧）的队列在第一次派发后即停摆（症状① 复发）。
+  if (sid) queueTurnFactAt.set(sid, Date.now());
   // busy-stuck-fix：本会话流活动戳（确认网的活性对账源）——必须同样置于 busy 闸
   // 之前：busy 中的会话正是确认网在场的会话，它的流帧恰恰是要记账的事实。
   stampSessionStreamActivity(sid);
@@ -1385,7 +1427,9 @@ onMessage('messageDuplicate', (msg) => {
     import('./chat.js').then(({ clearBusy }) => {
       clearBusy(sid);
       // busy-stuck-fix ②：幻影收口照常 drain（与终态帧族同一挂点；drain 自身的
-      // per-turn 窗口闸 / ws 闸照旧把关，队列语义零改动）。
+      // 冷却窗/运行中事实闸 / ws 闸照旧把关，队列语义零改动）。queue-idle-flush：
+      // 幻影派发零新轮事实 ⇒ 运行中事实闸不挡，冷却窗（2s）到界后余件照常投递
+      // ——旧布尔窗口在此永久关死 = 队列滞留缺陷形态之一。
       scheduleQueueDrain(sid);
     }).catch(() => {});
   }
@@ -2519,9 +2563,10 @@ onMessage('sessionBusy', (msg, view) => {
     // busy again (without this the re-arm gate would lock the session out).
     if (sid) delete state.lastTerminalAt[sid];
     // 2026-09-20 chain-msgqueue 阶段 B：同一事实复位 per-turn drain 闸（引擎新轮 ⇒ 新的
-    // turn 窗口；与上一行 lastTerminalAt 的取代口径逐字同源）。与流式帧族那一支
-    // （armBusyFromStream 头注）互补：depth>0 会话只靠后者。
-    if (sid) drainWindowUsed.delete(sid);
+    // turn 窗口；与上一行 lastTerminalAt 的取代口径逐字同源）。queue-idle-flush：旧布尔
+    // 窗口的「开窗」改为 queueTurnFactAt 时间戳（运行中事实闸的事实源；depth>0 会话
+    // 只靠流帧族那一支）。
+    if (sid) queueTurnFactAt.set(sid, Date.now());
     // busy-stuck-fix：引擎权威开turn 信号到场 ⇒ turn-start 确认网撤网（本次置位
     // 不是幻影）。
     cancelTurnConfirm(sid);
@@ -2539,10 +2584,10 @@ onMessage('sessionBusy', (msg, view) => {
     // Two decidable properties of doing it here:
     //   (a) one drain per turn window (2026-09-20 chain-msgqueue 阶段 B): the
     //       'done' + sessionBusy{false} pair the engine emits for EVERY turn
-    //       (AgentFinishTurn.finishTurnCont; 2026-09-25 line-ref fix) now
-    //       collapses to a SINGLE drain — the
-    //       scheduleQueueDrain window token admits the first terminal frame only,
-    //       the second re-enters the same (already used) window and is skipped ⇒
+    //       (AgentFinishTurn.finishTurnCont) now collapses to a SINGLE drain —
+    //       the pair's second frame lands inside the dispatch cooldown window
+    //       (scheduleQueueDrain ①) and is re-armed to the boundary, where the
+    //       running-turn fact gate (②) holds it while the next turn streams ⇒
     //       ONE queued item per turn, the rest stay in `#queue-bar` as 排队中 (N).
     //       Previously the pair delivered two DISTINCT queued items (never the
     //       same one twice — drainMessageQueue shifts the head before sending),
@@ -4215,6 +4260,10 @@ onMessage('activeAgents', (msg) => {
   for (const sid of [...state.busySessionIds]) {
     if (sid !== state.activeSessionId && !activeRootSessions.has(sid)) {
       clearBusy(sid);
+      // queue-idle-flush：对账器清的也是**真实** busy→idle 迁移（后端快照证实该
+      // 会话无活跃 agent）⇒ 与终态帧族同律触发队列 drain；会话若确在跑 turn，
+      // 派发帧由服务端排队闸受理，投递时序不乱。
+      scheduleQueueDrain(sid);
     }
   }
   // 批 dropcol-impl (作者令 2026-09-19 ①): 本处理器是「开面板回填」路径 —— 回包为空
