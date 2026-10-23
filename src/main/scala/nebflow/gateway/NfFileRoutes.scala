@@ -58,6 +58,26 @@ object NfFileRoutes:
   private def cacheHeader(value: String): org.http4s.Header.Raw =
     org.http4s.Header.Raw(org.typelevel.ci.CIString("Cache-Control"), value)
 
+  /**
+   * #750 (2026-10-23, nf-file 媒体面高载 503 硬失败批): the overload refusal —
+   * a RETRYABLE answer instead of a hang. 修前形态：网关对文件腿无限接纳，算力
+   * 被并行构建饿死时请求排队不前，上游（relay ingress）先放弃并向浏览器回裸
+   * 503。现在在飞超预算的请求拿到的是结构化的过载语义：
+   * `429 + Retry-After: 1`（[[NfServeGate.RetryAfterSeconds]]）+ `X-Nf-Reason:
+   * overloaded`（`nfDenied` 的 reason-head 同族）+ `no-store`（过载回答永远
+   * 不可缓存）。429 经 relay 原样转发，前端的取数退避腿（nfFileCache.js）按
+   * 头短退避后恰一次重试。
+   */
+  private def nfOverloaded: Response[IO] =
+    nfText(
+      Status.TooManyRequests,
+      "server busy: the file leg is at its in-flight budget — retry shortly"
+    ).putHeaders(
+      Header.Raw(org.typelevel.ci.CIString("Retry-After"), NfServeGate.RetryAfterSeconds),
+      Header.Raw(org.typelevel.ci.CIString("X-Nf-Reason"), "overloaded"),
+      cacheHeader("no-store")
+    )
+
   private val NfCacheControl: String = "private, max-age=300"
 
   // ────────────────────────────────────────────────────────────────────────
@@ -159,11 +179,21 @@ object NfFileRoutes:
    *
    * 2026-10-06 (video-canvas batch): single byte-range negotiation added
    * (206/Content-Range/Accept-Ranges) — see the Range block comment above.
+   *
+   * 2026-10-23 (#750, nf-file 媒体面高载 503 硬失败批): the serving leg is now
+   * admitted through a bounded in-flight budget ([[NfServeGate]]). 参数快检
+   * (400/401) 在闸外（廉价、不占预算）；获准后才走 verdict/ticket 判据链（既有
+   * ticket-only 鉴权路径逐字节不变——被 429 的请求不铸票不耗票）。预算在飞闸
+   * 的释放点是**响应体终点**（`body.onFinalize`：完整/出错/客户端断开三种终态
+   * 都触发）或 handler 失败（`attempt` 左支）——预算真正约束的是并发字节推送，
+   * 不是 handler 返回时刻。过载回答 = [[nfOverloaded]]（429 + Retry-After），
+   * 永不裸 503。
    */
   def nfFileRoutes(
     store: NfTicketStore,
     policy: NfPathPolicy = NfPathPolicy.memoized(),
-    home: java.nio.file.Path = NfFilePolicy.processHome
+    home: java.nio.file.Path = NfFilePolicy.processHome,
+    gate: NfServeGate = NfServeGate.fromConfig()
   ): HttpRoutes[IO] = HttpRoutes.of[IO] { case req @ GET -> Root / "api" / "nf-file" =>
     val rawPath = req.params.get("path").getOrElse("")
     val ticket = req.params.get("ticket").getOrElse("")
@@ -174,59 +204,74 @@ object NfFileRoutes:
       // advertise (the ticket is an opaque bearer value, not Basic/Digest).
       IO.pure(nfText(Status.Unauthorized, "Missing 'ticket' parameter").putHeaders(cacheHeader("no-store")))
     else
-      nfFileVerdictTolerant(rawPath, policy, home).flatMap {
-        case denied: NfVerdict.Denied => IO.pure(nfDenied(denied))
-        case NfVerdict.Allowed(real, _) =>
-          store.verifyAndConsume(ticket, real.toString).flatMap {
-            case Left(reason) =>
-              IO.pure(nfDenied(NfVerdict.Denied(Status.Forbidden, reason, "ticket rejected")))
-            case Right(_) =>
-              val fsReal = fs2.io.file.Path(real.toString)
-              // Stage 1: syntax probe against MaxValue — separates "carries a
-              // usable single byte-range" from "no/malformed/multi Range".
-              val range = requestedRange(req).flatMap(parseByteRange(_, Long.MaxValue))
-              range match
-                case Some(_) =>
-                  // Stage 2: satisfiability against the REAL size (the file may
-                  // have changed or vanished since the verdict — re-reading is
-                  // the honest answer, a stale size would corrupt Content-Range).
-                  IO.blocking(java.nio.file.Files.size(real)).attempt.flatMap {
-                    case Left(_) => IO.pure(Response[IO](Status.NotFound))
-                    case Right(size) =>
-                      requestedRange(req).flatMap(parseByteRange(_, size)) match
-                        case Some((start, end)) =>
-                          val base = serveRange(fsReal, size, start, end)
-                          IO.pure(contentTypeFor(fsReal).fold(base)(base.putHeaders(_)))
-                        case None =>
-                          // Well-formed-looking but unsatisfiable against the
-                          // real size → 416 (RFC 9110 §15.5.17).
-                          IO.pure(
-                            Response[IO](Status.RangeNotSatisfiable)
-                              .putHeaders(Header.Raw(org.typelevel.ci.CIString("Content-Range"), s"bytes */$size"))
-                              .putHeaders(org.http4s.headers.`Accept-Ranges`.bytes)
-                              .putHeaders(cacheHeader("no-store"))
-                          )
-                  }
-                case None =>
-                  // No (usable single) Range: the unchanged whole-file leg, plus
-                  // the Accept-Ranges advertisement the <video> progress bar
-                  // consults before bothering to seek.
-                  StaticFile
-                    .fromPath(fsReal, Some(req))
-                    .map { r =>
-                      // Cache-Control only on the cacheable positives (200 body /
-                      // 304 revalidation, which must restate the policy); the 404
-                      // leg stays untouched (minimal-diff: pre-#538 shape).
-                      val withCache =
-                        if r.status == Status.Ok || r.status == Status.NotModified then
-                          r.putHeaders(cacheHeader(NfCacheControl))
-                        else r
-                      val withAR = withCache.putHeaders(org.http4s.headers.`Accept-Ranges`.bytes)
-                      contentTypeFor(fsReal).fold(withAR)(withAR.putHeaders(_))
-                    }
-                    .getOrElseF(NotFound())
-              end match
-          }
+      gate.tryAcquire.flatMap {
+        case false => IO.pure(nfOverloaded)
+        case true =>
+          nfFileVerdictTolerant(rawPath, policy, home)
+            .flatMap {
+              case denied: NfVerdict.Denied => IO.pure(nfDenied(denied))
+              case NfVerdict.Allowed(real, _) =>
+                store.verifyAndConsume(ticket, real.toString).flatMap {
+                  case Left(reason) =>
+                    IO.pure(nfDenied(NfVerdict.Denied(Status.Forbidden, reason, "ticket rejected")))
+                  case Right(_) =>
+                    val fsReal = fs2.io.file.Path(real.toString)
+                    // Stage 1: syntax probe against MaxValue — separates "carries a
+                    // usable single byte-range" from "no/malformed/multi Range".
+                    val range = requestedRange(req).flatMap(parseByteRange(_, Long.MaxValue))
+                    range match
+                      case Some(_) =>
+                        // Stage 2: satisfiability against the REAL size (the file may
+                        // have changed or vanished since the verdict — re-reading is
+                        // the honest answer, a stale size would corrupt Content-Range).
+                        IO.blocking(java.nio.file.Files.size(real)).attempt.flatMap {
+                          case Left(_) => IO.pure(Response[IO](Status.NotFound))
+                          case Right(size) =>
+                            requestedRange(req).flatMap(parseByteRange(_, size)) match
+                              case Some((start, end)) =>
+                                val base = serveRange(fsReal, size, start, end)
+                                IO.pure(contentTypeFor(fsReal).fold(base)(base.putHeaders(_)))
+                              case None =>
+                                // Well-formed-looking but unsatisfiable against the
+                                // real size → 416 (RFC 9110 §15.5.17).
+                                IO.pure(
+                                  Response[IO](Status.RangeNotSatisfiable)
+                                    .putHeaders(
+                                      Header.Raw(org.typelevel.ci.CIString("Content-Range"), s"bytes */$size")
+                                    )
+                                    .putHeaders(org.http4s.headers.`Accept-Ranges`.bytes)
+                                    .putHeaders(cacheHeader("no-store"))
+                                )
+                        }
+                      case None =>
+                        // No (usable single) Range: the unchanged whole-file leg, plus
+                        // the Accept-Ranges advertisement the <video> progress bar
+                        // consults before bothering to seek.
+                        StaticFile
+                          .fromPath(fsReal, Some(req))
+                          .map { r =>
+                            // Cache-Control only on the cacheable positives (200 body /
+                            // 304 revalidation, which must restate the policy); the 404
+                            // leg stays untouched (minimal-diff: pre-#538 shape).
+                            val withCache =
+                              if r.status == Status.Ok || r.status == Status.NotModified then
+                                r.putHeaders(cacheHeader(NfCacheControl))
+                              else r
+                            val withAR = withCache.putHeaders(org.http4s.headers.`Accept-Ranges`.bytes)
+                            contentTypeFor(fsReal).fold(withAR)(withAR.putHeaders(_))
+                          }
+                          .getOrElseF(NotFound())
+                    end match
+                }
+            }
+            // Permit lifecycle: handler failure ⇒ release + rethrow (the request
+            // never got a body to finalize); a produced response ⇒ release bound
+            // to the body stream's termination (complete / error / client abort).
+            .attempt
+            .flatMap {
+              case Left(e) => gate.release *> IO.raiseError(e)
+              case Right(resp) => IO.pure(resp.withBodyStream(resp.body.onFinalize(gate.release)))
+            }
       }
     end if
   }

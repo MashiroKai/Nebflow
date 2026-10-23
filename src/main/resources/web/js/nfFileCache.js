@@ -591,11 +591,36 @@ export function getHistoryFingerprint(sessionId) {
   return fps[sessionId] || null;
 }
 
+// ── 过载退避重试（#750 · nf-file 媒体面高载 503 硬失败批）─────────────────────
+// 作者实测（2026-10-22 18:52，五 JVM 并行构建压载）：文档里点图报
+// 「Failed to render: HTTP 503」——网关文件腿过载时上游回裸 503（同源旁证
+// 18:42 relay uplink inbox full），本函数直抛 `HTTP 503` 进 viewer 终态错误，
+// 用户唯一出路是刷新整页。本批给取数腿补**过载退避语义**（服务端对偶腿 =
+// NfServeGate 的 429 + Retry-After）：
+//   · 429/503 = 可重试的过载信号（非确定性失败）⇒ 按 Retry-After（缺席/非法 =
+//     缺省 1s）短退避后**恰一次**重试；
+//   · 第二败即定局（照旧抛 `HTTP <status>` 进各 viewer 既有失败面）；
+//   · 其余状态码照旧直抛（4xx = 确定性失败，重试无意义）。
+// 🔴 红线（零超时设计）：Retry-After 是服务端建议的等待时长（恒定钳在
+// [0.5s, 5s]），不是任何 deadline/超时判据；重试恰一次，不成环不成闸。
+const OVERLOAD_RETRY_STATUSES = new Set([429, 503]);
+const OVERLOAD_RETRY_DEFAULT_MS = 1000;
+const OVERLOAD_RETRY_MIN_MS = 500;
+const OVERLOAD_RETRY_MAX_MS = 5000;
+
+/** Retry-After 头 → 等待毫秒（只认非负整数秒；缺席/非法 = 缺省 1s；钳位见上）。 */
+function overloadRetryDelayMs(resp) {
+  const raw = Number(resp.headers.get('Retry-After'));
+  const ms = Number.isFinite(raw) && raw >= 0 ? raw * 1000 : OVERLOAD_RETRY_DEFAULT_MS;
+  return Math.min(Math.max(ms, OVERLOAD_RETRY_MIN_MS), OVERLOAD_RETRY_MAX_MS);
+}
+
 /**
  * 流式取数器（**字节路由由调用方给定**——既有票据路/鉴权路 URL，禁第三条路）：
  * 边收边报进度（`onProgress(loaded, total)`；`total` 来自 Content-Length，
  * 缺席 = 0 ⇒ 调用方转不定态转圈）。失败抛错（status 挂在 error.status 上），
- * 调用方出**可见**失败态（档3 可见面，禁静默）。
+ * 调用方出**可见**失败态（档3 可见面，禁静默）。过载面例外：429/503 在抛出前
+ * 恰一次短退避重试（见上方块注释）。
  *
  * 返回 `version` = `size:mtimeMs`（Last-Modified 头可得时；不可得 = `size:0`）——
  * 档2 条目的版本读数（`nfCacheReconcile` 对账用；命中判据见上「TTL」）。
@@ -604,7 +629,16 @@ export function getHistoryFingerprint(sessionId) {
  * @returns {Promise<{blob: Blob, total: number, lastModified: string, version: string}>}
  */
 export async function fetchBlobWithProgress(url, onProgress) {
-  const resp = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+  const send = () => fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+  let resp = await send();
+  // #750：过载腿（429/503）退避后恰一次重试。失败 body 先 cancel 归还连接，
+  // 再按 Retry-After 等一拍——等待时长是服务端建议，不是本端测时。
+  if (!resp.ok && OVERLOAD_RETRY_STATUSES.has(resp.status)) {
+    const delayMs = overloadRetryDelayMs(resp);
+    try { if (resp.body) await resp.body.cancel(); } catch { /* 已断的 body 不必收拾 */ }
+    await new Promise((r) => setTimeout(r, delayMs));
+    resp = await send();
+  }
   if (!resp.ok) {
     const err = /** @type {Error & {status?: number}} */ (new Error('HTTP ' + resp.status));
     err.status = resp.status;
