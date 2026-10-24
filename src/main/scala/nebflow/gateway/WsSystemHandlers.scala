@@ -210,12 +210,14 @@ private[gateway] object WsSystemHandlers:
                      logger.warn(s"bg-output finalize (cancel) failed for job $jobId: ${e.getMessage}")
                    )
                else IO.unit) *>
-              // Notify agent so it can process cancellation
+              // Notify agent so it can process cancellation.
+              // 通知详情批（2026-10-24）：取消通知补原因段（旧形态只有 jobId 一行，
+              // 作者无法从通知判断为什么没了）。
               ensureAgent(cancelSessionId) { ref =>
                 ref ! AgentCommand.ExternalEvent(
                   source = "background-task",
                   eventType = "cancelled",
-                  payload = s"[Background task cancelled] Job ID: $jobId",
+                  payload = s"[Background task cancelled] Job ID: $jobId (Cancelled by user)",
                   metadata = io.circe.JsonObject(
                     "jobId" -> jobId.asJson
                   ),

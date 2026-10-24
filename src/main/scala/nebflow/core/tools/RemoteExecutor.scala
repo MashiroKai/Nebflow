@@ -1007,7 +1007,9 @@ class RemoteExecutor(
     ctx: ToolContext,
     jobId: String,
     description: String,
-    status: String
+    status: String,
+    exitCode: Option[Int] = None,
+    durationMs: Option[Long] = None
   ): IO[Unit] =
     ctx.wsSend.fold(IO.unit)(send =>
       send(
@@ -1017,7 +1019,12 @@ class RemoteExecutor(
           "rootSessionId" -> ctx.rootSessionId.orElse(ctx.sessionId).asJson,
           "taskId" -> jobId.asJson,
           "description" -> description.asJson,
-          "status" -> status.asJson
+          "status" -> status.asJson,
+          // 通知详情批（2026-10-24）：终态帧只增键（本地腿同款）——面板行 exit
+          // chip 与冻结时长；远程无进程退出码 ⇒ 恒 null，前端按缺读处理。
+          "exitCode" -> exitCode.asJson,
+          "durationMs" -> durationMs.asJson,
+          "finishedAt" -> System.currentTimeMillis().asJson
         )
       ).handleErrorWith(_ => IO.unit)
     )
@@ -1061,31 +1068,40 @@ class RemoteExecutor(
         )
     fillIo
       .handleErrorWith(e => logger.warn(s"Remote bg fill store failed for $jobId: ${e.getMessage}"))
-      .guarantee(BgTaskRegistry.unregister(jobId))
       .flatMap { _ =>
-        result match
-          case Right(output) =>
-            ctx.agentActorRef.fold(IO.unit)(ref =>
-              ref ! AgentCommand.ExternalEvent(
-                source = "background-task",
-                eventType = "completed",
-                payload = s"[Background task completed] \"$description\":\n$output",
-                metadata = JsonObject("description" -> description.asJson, "output" -> output.asJson)
-              )
-            ) *>
-              emitBgTaskFinished(ctx, jobId, description, "completed") *>
-              logger.info(s"Remote background task $jobId completed")
-          case Left(errMsg) =>
-            ctx.agentActorRef.fold(IO.unit)(ref =>
-              ref ! AgentCommand.ExternalEvent(
-                source = "background-task",
-                eventType = "failed",
-                payload = s"[Background task failed] \"$description\":\n$errMsg",
-                metadata = JsonObject("description" -> description.asJson)
-              )
-            ) *>
-              emitBgTaskFinished(ctx, jobId, description, "failed") *>
-              logger.warn(s"Remote background task $jobId failed: $errMsg")
+        // 通知详情批（作者报障 2026-10-24「后台任务通知很不详细甚至有截断」）：远程腿
+        // 与本地腿同一负载单点（BgNotifyPayload）——耗时（注册→终态）+ 输出/错误尾段
+        // + 零输出占位；远程无进程退出码 ⇒ exitCode=None（耗时段仍在，旧形态连耗时都
+        // 没有）。注销即取回注册行（startedAtMs），一拍原子。
+        val finishedAtMs = System.currentTimeMillis()
+        BgTaskRegistry.unregisterReturning(jobId).flatMap { registered =>
+          val durationMs = registered.map(st => (finishedAtMs - st.startedAtMs).max(0L))
+          result match
+            case Right(output) =>
+              val built = BgNotifyPayload.completed(description, None, durationMs, output, "", jobId)
+              ctx.agentActorRef.fold(IO.unit)(ref =>
+                ref ! AgentCommand.ExternalEvent(
+                  source = "background-task",
+                  eventType = "completed",
+                  payload = built.payload,
+                  metadata = built.metadata
+                )
+              ) *>
+                emitBgTaskFinished(ctx, jobId, description, "completed", None, durationMs) *>
+                logger.info(s"Remote background task $jobId completed${logTagSuffix(built.logTag)}")
+            case Left(errMsg) =>
+              val built = BgNotifyPayload.failed(description, errMsg, durationMs, jobId)
+              ctx.agentActorRef.fold(IO.unit)(ref =>
+                ref ! AgentCommand.ExternalEvent(
+                  source = "background-task",
+                  eventType = "failed",
+                  payload = built.payload,
+                  metadata = built.metadata
+                )
+              ) *>
+                emitBgTaskFinished(ctx, jobId, description, "failed", None, durationMs) *>
+                logger.warn(s"Remote background task $jobId failed: $errMsg")
+        }
       }
 
   /**
@@ -1122,6 +1138,9 @@ class RemoteExecutor(
           case Left(err) => Left(err.message.take(200))
         }
     }
+
+  private def logTagSuffix(tag: String): String =
+    if tag.isEmpty then "" else s" ($tag)"
 
   // ---- P2P Direct ----
 
