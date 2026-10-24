@@ -2717,22 +2717,43 @@ function bgTaskRowState(task) {
 
 /** Resolve the origin chip {cat, label}: backend origin fields are
  *  authoritative; fall back to the registering session-id prefix (old
- *  backend / REST-invoked tools carry no origin). */
+ *  backend / REST-invoked tools carry no origin).
+ *  多设备后台任务可见批（2026-10-25）：cat="device" = 设备通道后台任务
+ *  （Bash device=KAI + run_in_background）——chip 回答「跑在哪台设备」，
+ *  与 nebula/dispatcher/node（谁开启）并列可辨。旧后端快照回退（origin 字段
+ *  缺席）：设备任务描述恒带 `[<设备>] ` 前缀（RemoteExecutor 形态）且
+ *  kind=remote —— 前缀识别优先于会话前缀启发（后者只分得出「谁开启」），
+ *  兜底 'device'。 */
 function bgTaskOrigin(task) {
   let cat = task.origin || '';
   let label = task.originLabel || '';
+  const deviceFromDesc = (!cat || cat === 'device') ? bgDeviceFromDescription(task.description) : '';
   if (!cat) {
-    const s = task.sessionId || '';
-    if (s.startsWith('node-')) cat = 'node';
-    else if (s.startsWith('dispatcher-')) cat = 'dispatcher';
-    else cat = 'nebula';
+    if (deviceFromDesc && task.kind === 'remote') {
+      cat = 'device';
+      label = deviceFromDesc;
+    } else {
+      const s = task.sessionId || '';
+      if (s.startsWith('node-')) cat = 'node';
+      else if (s.startsWith('dispatcher-')) cat = 'dispatcher';
+      else cat = 'nebula';
+    }
   }
   if (!label) {
     label = cat === 'nebula' ? rootDisplayName()
       : cat === 'dispatcher' ? (task.sessionId ? 'dispatcher' : 'dispatcher')
+      : cat === 'device' ? (deviceFromDesc || 'device')
       : (task.sessionId || 'node');
   }
   return { cat, label };
+}
+
+/** Device-name fallback for the origin chip: remote bg descriptions carry a
+ *  `[<device>] ` prefix (RemoteExecutor description shape) — extract it.
+ *  No prefix (local tasks / unknown shape) → '' (caller falls back to 'device'). */
+function bgDeviceFromDescription(desc) {
+  const m = /^\s*\[([^\][\n]{1,64})\]\s/.exec(String(desc || ''));
+  return m ? m[1] : '';
 }
 
 // ── #753 同族任务聚合（waiter N 递增族刷屏治理 · 面板侧）────────────────────
@@ -2836,8 +2857,13 @@ function renderBgDropdown() {
       : rowState === 'cancelling' || rowState === 'done' ? ' bg-state-done' : '';
     const endedClass = (rowState === 'done' || rowState === 'failed') ? ' bg-task-ended' : '';
     const { cat, label } = bgTaskOrigin(task);
+    // Device origin 的语义是「跑在哪」而非「谁开启」——title 用独立词（bg.runsOn），
+    // 其余类别沿用 bg.openedBy。
+    const originTitle = cat === 'device'
+      ? t('bg.runsOn', { origin: label })
+      : t('bg.openedBy', { origin: label });
     const originPart = '<span class="bg-task-origin bg-origin-' + cat + '" title="' +
-      escapeHtml(t('bg.openedBy', { origin: label })) + '">' + escapeHtml(label) + '</span>';
+      escapeHtml(originTitle) + '">' + escapeHtml(label) + '</span>';
     const kindPart = task.kind
       ? '<span class="bg-task-kind">' + escapeHtml((task.kind === 'local' || task.kind === 'remote') ? t('bg.kind.' + task.kind) : task.kind) + '</span>'
       : '';
