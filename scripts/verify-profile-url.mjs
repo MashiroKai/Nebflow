@@ -15,7 +15,7 @@
 //   4. the placeholder domain never appears in the result
 //   5. (2026-09-15, session-handoff 案 3) the result ALWAYS carries the
 //      non-credential landing hint `from=client`, and exactly that spelling —
-//      it is a cross-repo contract with nebflow.space. Re-baselined by the
+//      it is a cross-repo contract with mystand.space. Re-baselined by the
 //      author's "A 案3 全做" ruling; the guard is stricter than before (it now
 //      asserts the parameter, previously only the URL), never weaker.
 //
@@ -32,20 +32,20 @@ import { fileURLToPath } from 'node:url';
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const BRAND_JS = pathToFileURL(join(ROOT, 'src', 'main', 'resources', 'web', 'js', 'brand.js')).href;
 
-const FALLBACK = 'https://nebflow.space/profile?from=client';
+const FALLBACK = 'https://mystand.space/profile?from=client';
 const PLACEHOLDER = 'neblink.example';
 const BASE = { productName: 'Nebflow', lowerName: 'nebflow', domain: PLACEHOLDER };
 
 const cases = [
-  ['gateway injects real URL (default config)', { ...BASE, profileUrl: 'https://nebflow.space/profile' }, FALLBACK],
-  ['env override (nebflow.space)', { ...BASE, domain: 'nebflow.space', profileUrl: 'https://nebflow.space/profile' }, FALLBACK],
+  ['gateway injects real URL (default config)', { ...BASE, profileUrl: 'https://mystand.space/profile' }, FALLBACK],
+  ['env override (live domain)', { ...BASE, domain: 'mystand.space', profileUrl: 'https://mystand.space/profile' }, FALLBACK],
   ['older gateway: field absent', { ...BASE }, FALLBACK],
   ['no __BRAND__ at all (static serve)', null, FALLBACK],
   ['hostile: javascript: scheme', { ...BASE, profileUrl: 'javascript:alert(1)' }, FALLBACK],
   ['hostile: http (not https)', { ...BASE, profileUrl: 'http://evil.example/profile' }, FALLBACK],
   ['hostile: empty string', { ...BASE, profileUrl: '' }, FALLBACK],
   ['configured URL that already carries the hint (idempotent)',
-    { ...BASE, profileUrl: 'https://nebflow.space/profile?from=client' }, FALLBACK],
+    { ...BASE, profileUrl: 'https://mystand.space/profile?from=client' }, FALLBACK],
 ];
 
 let failed = 0;

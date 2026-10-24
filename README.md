@@ -85,13 +85,13 @@ Friends run on your **stand account** — the same sign-in that pairs your machi
 macOS / Linux:
 
 ```bash
-curl -fsSL https://nebflow.space/install.sh | sh
+curl -fsSL https://mystand.space/install.sh | sh
 ```
 
 Windows (PowerShell):
 
 ```powershell
-irm https://nebflow.space/install.ps1 | iex
+irm https://mystand.space/install.ps1 | iex
 ```
 
 Then start the workspace:

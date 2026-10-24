@@ -285,7 +285,7 @@ object CredentialDiagnostics:
   private def detailOf(f: CredentialFailure): String = f match
     case CredentialFailure.EnrollRefusedIsolatedHome =>
       "refused: this instance runs on an isolated data root, so it must not auto-register " +
-        "with the production NebLink server (https://nebflow.space)."
+        "with the production NebLink server (https://link.mystand.space)."
     case _ =>
       "java.nio.file.AccessDeniedException: C:\\Users\\you\\.nebflow\\neblink\\device.json"
 

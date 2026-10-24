@@ -1,6 +1,6 @@
 /**
  * NebLink — P2P device discovery via NebLink Server.
- * Device pairing: nebflow.space login → auto-configure NebLink.
+ * Device pairing: mystand.space login → auto-configure NebLink.
  */
 import state from './state.js';
 import { key } from './branding.js';
@@ -378,7 +378,7 @@ export async function refreshNeblink() {
 
 // ---- Pairing flow ----
 
-// 旧 `checkPairingRedirect`（nebflow.space/connect 重定向 → POST /api/neblink/pair）
+// 旧 `checkPairingRedirect`（旧域 /connect 重定向 → POST /api/neblink/pair）
 // 已随门户 MVP E7 批（2026-10-10）整体删除：后端从未有 /api/neblink/pair 路由
 // （死路径技术债，方案 §6 偏差 #12 顺手清），main.js 初始化流程亦早已摘除调用。
 // 配对码入网卡（E7 引入）已按作者令（2026-10-13「不需要本机配对码」）整体移除：

@@ -121,7 +121,7 @@ private[cli] object LoginCopy:
   // DeviceFlowHandle），但**刻意不打印** —— 保留它只为让「读到了响应值却按裁定选静态
   // 文案」在代码层可核（不是漏读）。
   val DevicePromptAddress =
-    "Open https://nebflow.space/device on any device with a browser, then enter the code below."
+    "Open https://mystand.space/device on any device with a browser, then enter the code below."
   val DevicePromptCodePrefix = "Code: "
   val DevicePromptWaiting = "Waiting for approval... (Ctrl+C to cancel)"
 

@@ -15,7 +15,7 @@
 //      点击胶囊经既有 /api/plugin-assets/<name>/skills/<skill>/SKILL.md 路由取
 //      SKILL.md 原文，走既有 Canvas 通路（workspace-open-item → markdown viewer）
 //      打开文档——旧「id+描述+preview 内联渲染」形态退役。
-//   ⑦ nebflow.space 品牌残留：面板可见文案链（插件 description/skill 描述）随
+//   ⑦ 旧域品牌残留：面板可见文案链（插件 description/skill 描述）随
 //      seed `website` 包文案一并清扫（mystand.space 现役域），本文件零 brand 字面量。
 //
 // 2026-09-13 作者裁定（插件「无审批」批——「装了就是信任」）：

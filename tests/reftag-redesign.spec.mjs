@@ -127,7 +127,7 @@ test('T3 元信息不丢：tooltip 完整元信息 + 点击展开预览行', asy
   expect(chips[0].tooltip).toContain('L12–48');
   expect(chips[1].tooltip).toContain('p.3–7');
   expect(chips[2].tooltip).toContain('session sess_9f2c');
-  expect(chips[3].tooltip).toContain('https://nebflow.space/docs/global-reference');
+  expect(chips[3].tooltip).toContain('https://mystand.space/docs/global-reference');
   expect(chips[3].tooltip).toContain('selector: #spec > section.quota > table');
 
   // 点击展开 → meta 预览行可见，含完整路径等元信息（信息未丢）

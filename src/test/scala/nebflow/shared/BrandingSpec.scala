@@ -45,7 +45,7 @@ class BrandingSpec extends FunSuite:
     assertEquals(Branding.domain, "mystand.space") // 唯一真值（2026-09-07 命名边界裁定；可 env 覆盖）
     assertEquals(Branding.profileUrl, "https://mystand.space/profile")
     assertEquals(Branding.loginUrl, "https://mystand.space/login")
-    assertEquals(Branding.installUrl, "https://nebflow.space/install.sh")
+    assertEquals(Branding.installUrl, "https://mystand.space/install.sh")
     assertEquals(Branding.serverUrl, "https://link.mystand.space")
     assertEquals(Branding.githubOrg, "MashiroKai")
     assertEquals(Branding.githubRepo, "Nebflow")
@@ -69,19 +69,19 @@ class BrandingSpec extends FunSuite:
   test("academicSearchUserAgent derives from the live brand (productName + installUrl host)") {
     assertEquals(
       Branding.academicSearchUserAgent,
-      "stand/academic-search (mailto:research@nebflow.space)"
+      "stand/academic-search (mailto:research@mystand.space)"
     )
   }
 
   test("dualEnv: brand prefix wins, legacy NEBFLOW_ prefix falls back (env 覆盖机制)") {
     // 可选环境覆盖：NEBFLOW_BRAND_DOMAIN / NEBFLOW_PROFILE_URL 覆盖 brand.conf 默认值
     val env = Map(
-      "NEBFLOW_BRAND_DOMAIN" -> "nebflow.space",
-      "NEBFLOW_PROFILE_URL" -> "https://nebflow.space/profile",
+      "NEBFLOW_BRAND_DOMAIN" -> "example.org",
+      "NEBFLOW_PROFILE_URL" -> "https://example.org/profile",
       "NEBFLOW_HOME" -> "/tmp/legacy-home"
     )
-    assertEquals(Branding.dualEnv(env, "NEBFLOW", "BRAND_DOMAIN"), Some("nebflow.space"))
-    assertEquals(Branding.dualEnv(env, "NEBFLOW", "PROFILE_URL"), Some("https://nebflow.space/profile"))
+    assertEquals(Branding.dualEnv(env, "NEBFLOW", "BRAND_DOMAIN"), Some("example.org"))
+    assertEquals(Branding.dualEnv(env, "NEBFLOW", "PROFILE_URL"), Some("https://example.org/profile"))
     assertEquals(Branding.dualEnv(env, "NEBFLOW", "HOME"), Some("/tmp/legacy-home"))
     // 未设 env → None（fallback 到 brand.conf 默认值）
     assertEquals(Branding.dualEnv(Map.empty, "NEBFLOW", "BRAND_DOMAIN"), None)

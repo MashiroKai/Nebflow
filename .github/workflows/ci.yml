@@ -159,6 +159,22 @@ jobs:
       - name: Assert installer default home derives from STAND_HOME / brand homeDirName
         run: bash scripts/check-installer-home.sh
 
+  legacy-domain-gate:
+    name: Legacy Domain Gate (retired bare domain)
+    timeout-minutes: 10
+    # Fail-fast static gate (#831 旧域清扫批 2026-10-25): the RETIRED bare
+    # domain must not reappear as a browser-entry literal — install/portal/
+    # profile/device URLs all point at mystand.space now (brand.conf single
+    # source). Service subdomains (neblink./auth./api. legacy hosts) are
+    # exempt by the bare-domain regex; frozen history/tool/guard paths are
+    # whitelisted IN the script, each entry with a justification.
+    # Same logic locally: node scripts/check-legacy-domain.mjs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert no bare retired-domain literal outside the whitelist
+        run: node scripts/check-legacy-domain.mjs
+
   lint:
     name: Lint (scalafmt + scalafix)
     timeout-minutes: 25

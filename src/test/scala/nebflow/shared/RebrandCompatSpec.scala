@@ -166,9 +166,9 @@ class RebrandCompatSpec extends FunSuite:
   // ── Branding install-script companions ───────────────────────────────────
 
   test("install companions derive from installUrl by basename swap") {
-    assertEquals(Branding.installPs1Url, "https://nebflow.space/install.ps1")
-    assertEquals(Branding.uninstallUrl, "https://nebflow.space/uninstall.sh")
-    assertEquals(Branding.uninstallPs1Url, "https://nebflow.space/uninstall.ps1")
+    assertEquals(Branding.installPs1Url, "https://mystand.space/install.ps1")
+    assertEquals(Branding.uninstallUrl, "https://mystand.space/uninstall.sh")
+    assertEquals(Branding.uninstallPs1Url, "https://mystand.space/uninstall.ps1")
   }
 
   test("install companions degrade to installUrl when the shape doesn't match") {

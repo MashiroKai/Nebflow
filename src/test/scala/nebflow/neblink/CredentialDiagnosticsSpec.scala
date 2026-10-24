@@ -306,7 +306,7 @@ class CredentialDiagnosticsSpec extends FunSuite:
   test("R2b 护栏拒绝的可见文案保留案 C 语义（真因照实透出，且文本本身干净）") {
     val guardReason =
       "refused: this instance runs on an isolated data root, so it must not auto-register " +
-        "with the production NebLink server (https://nebflow.space). Set NEBFLOW_ALLOW_PROD_ENROLL=1 to allow " +
+        "with the production NebLink server (https://link.mystand.space). Set NEBFLOW_ALLOW_PROD_ENROLL=1 to allow " +
         "it explicitly (same account as another instance ⇒ one live session, the older one is kicked)."
     val d = CD.diagnosticOf(CF.EnrollRefusedIsolatedHome, guardReason)
     assert(d.reason.contains("isolated data root"), "案 C：护栏原文必须照实出现在可见原因里")
