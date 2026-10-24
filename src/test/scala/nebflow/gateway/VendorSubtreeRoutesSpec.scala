@@ -33,7 +33,7 @@ class VendorSubtreeRoutesSpec extends FunSuite:
     val req = Request[IO](Method.GET, Uri.unsafeFromString(path))
     StaticRoutes.vendorSubtree(req).unsafeRunSync()
 
-  private def assertServed(path: String, expectedTypePart: String): Unit =
+  private def assertServed(path: String, expectedTypePart: String, expectedCache: String = "no-cache"): Unit =
     val resp = get(path)
     assertEquals(resp.status, Status.Ok, s"expected 200 for $path")
     val contentType = resp.headers.get(CIString("Content-Type")).map(_.head.value)
@@ -41,10 +41,19 @@ class VendorSubtreeRoutesSpec extends FunSuite:
       contentType.exists(_.contains(expectedTypePart)),
       s"expected $expectedTypePart content type for $path, got: $contentType"
     )
-    // no-cache: a rebuilt classpath vendor tree must be picked up by the
-    // browser (ETag revalidation keeps it a cheap 304) — jsRoutes convention.
+    // Bare requests: no-cache (jsRoutes convention). Versioned requests
+    // (index-reference form): the content-addressed immutable policy
+    // (静态资源缓存击穿批 2026-10-25).
     val cacheControl = resp.headers.get(CIString("Cache-Control")).map(_.head.value)
-    assertEquals(cacheControl, Some("no-cache"), s"expected no-cache for $path")
+    assertEquals(cacheControl, Some(expectedCache), s"expected $expectedCache for $path")
+
+  test("versioned request gets the immutable shipped-asset policy (缓存击穿批)") {
+    assertServed(
+      "/vendor/pptx-renderer/aiden0z-pptx-renderer.browser.es.js?v=0123456789abcdef",
+      "javascript",
+      StaticRoutes.ShippedAssetCacheControl
+    )
+  }
 
   test("serves the vendored pptx-renderer assets (the 404 batch)") {
     assertServed("/vendor/pptx-renderer/aiden0z-pptx-renderer.browser.es.js", "javascript")

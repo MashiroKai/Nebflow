@@ -1250,7 +1250,7 @@ class WebSocketRoutes(
       case req @ GET -> Root / "css" / file =>
         StaticFile
           .fromResource(s"web/css/$file", Some(req))
-          .map(_.putHeaders("Cache-Control" -> "no-cache"))
+          .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
           .getOrElseF(NotFound())
 
       // /js/** (any depth) is served by StaticRoutes.jsRoutes — see its
@@ -1268,7 +1268,10 @@ class WebSocketRoutes(
           if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
           else
             val path = relParts.mkString("/")
-            StaticFile.fromResource(s"web/vendor/monaco/$path", Some(req)).getOrElseF(NotFound())
+            StaticFile
+              .fromResource(s"web/vendor/monaco/$path", Some(req))
+              .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
+              .getOrElseF(NotFound())
         end if
 
       case req @ GET -> _ if req.uri.path.renderString.startsWith("/vendor/pdfjs/") =>
@@ -1286,14 +1289,26 @@ class WebSocketRoutes(
           if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
           else
             val path = relParts.mkString("/")
-            StaticFile.fromResource(s"web/vendor/pdfjs/$path", Some(req)).getOrElseF(NotFound())
+            StaticFile
+              .fromResource(s"web/vendor/pdfjs/$path", Some(req))
+              .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
+              .getOrElseF(NotFound())
         end if
 
       case req @ GET -> Root / "vendor" / file =>
-        StaticFile.fromResource(s"web/vendor/$file", Some(req)).getOrElseF(NotFound())
+        // 缓存击穿批 2026-10-25：单段 vendor 此前**无任何 Cache-Control**（浏览器
+        // 按启发式新鲜度缓存，旧 vendor 库可滞留数日）——统一走 assetCacheControl：
+        // 版本化请求 immutable 长效，裸请求显式 no-cache（杀启发式滞留）。
+        StaticFile
+          .fromResource(s"web/vendor/$file", Some(req))
+          .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
+          .getOrElseF(NotFound())
 
       case req @ GET -> Root / "vendor" / "fonts" / file =>
-        StaticFile.fromResource(s"web/vendor/fonts/$file", Some(req)).getOrElseF(NotFound())
+        StaticFile
+          .fromResource(s"web/vendor/fonts/$file", Some(req))
+          .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
+          .getOrElseF(NotFound())
 
       case req @ GET -> _ if req.uri.path.renderString.startsWith("/vendor/") =>
         // Vendor SUBTREE passthrough (canvas-office-render-fix batch,
@@ -1337,7 +1352,10 @@ class WebSocketRoutes(
         if allowed.contains(fileName) then
           StaticFile
             .fromResource(s"web/$fileName", Some(req))
-            .map(_.putHeaders("Cache-Control" -> "no-cache"))
+            // 缓存击穿批 2026-10-25：favicon 族引用自带内容 digest（?v=…，换 logo
+            // 即变）⇒ 版本化请求 immutable 长效；sw.js 等根文件引用不带 v ⇒ 仍
+            // no-cache（SW 更新即时可见语义不动）。
+            .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
             .getOrElseF(NotFound())
         else NotFound()
 

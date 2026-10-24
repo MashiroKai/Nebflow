@@ -33,6 +33,9 @@ const instanceBacked = [
   'workspace-picker.spec.mjs',
   'plugins-panel-redesign.spec.mjs',
   'plugins-panel-two-actions.spec.mjs',
+  // asset-url-versioning：静态资源缓存击穿批（2026-10-25）——驱动真实引擎的
+  // 静态路由面（版本化引用/immutable 头），自足 mock 无法表达引擎行为。
+  'asset-url-versioning.spec.mjs',
   // askuser-refresh-survive：自足任务面排除（需隔离 home + mock-LLM 夹具 runner），
   // CI 也不跑——与 askinput-off-pending-text / askuser-lockline-history 同族重件，
   // 编排成本见 ci.yml frontend-smoke 的说明。
