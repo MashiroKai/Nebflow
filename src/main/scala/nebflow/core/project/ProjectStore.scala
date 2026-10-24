@@ -48,6 +48,34 @@ object ProjectStore:
 
   def projectJsonPath(name: String): os.Path = projectDir(name) / "project.json"
 
+  // ============================================================
+  // 设备项目（跨设备挂载批 2026-10-25）
+  // ============================================================
+
+  /**
+   * 设备归属解析单点：`origin` 在场且 device 非 self 字面 ⇒ Some(origin)——
+   * 该项目的 workspace 本体在**对端设备本盘**，引擎侧一切「把 workspace 当本机
+   * 盘路径读写」的面必须改走 [[brainWorkspace]] 的本机大脑根。None = 本机项目
+   * （现状逐字节）。
+   */
+  def deviceOrigin(pd: ProjectDef): Option[ProjectOrigin] =
+    pd.origin.filter(o => !ProjectOrigin.isSelfLiteral(o.device))
+
+  /**
+   * 引擎侧大脑根（跨设备挂载批 2026-10-25 ·「大脑在引擎，账本一本」）：
+   *   - 本机项目 = `pd.workspace` 本身（现状逐字节，存量零迁移）；
+   *   - 设备项目 = `<dataRoot>/projects/<name>/brain`——FlowMap/TaskBoard/链台账/
+   *     节点结果/事件日志等**全部引擎本机存储**锚在这里，绝不写设备路径（G.12
+   *     路径错觉防护的挂载面落点：挂载存储根若锚在 `C:\...` 这类设备本盘路径，
+   *     本机落笔即在 Mac 数据根下造出第二份假骨架——现场事故 2026-10-24）。
+   *
+   * 单点纪律：任何引擎本机读写面（REST agent.md / file-changes、事件日志、
+   * 分发器会话座位…）一律经本函数取座位；展示面（面板 workspace 字段、文件
+   * 浏览器根）仍用 `pd.workspace` 原值（= 设备本盘真实路径，配 device 通道）。
+   */
+  def brainWorkspace(pd: ProjectDef): String =
+    deviceOrigin(pd).fold(pd.workspace)(_ => (projectDir(pd.name) / "brain").toString)
+
   /**
    * Load a project definition by name. 名称非法（路径穿越）→ None。
    *
@@ -266,10 +294,15 @@ object ProjectStore:
           val remote = origin.exists(o => !ProjectOrigin.isSelfLiteral(o.device))
           val pd =
             if remote then
+              // 跨设备批（2026-10-25）：设备项目的 `workspace` 字段存**设备本盘原样
+              // 路径**（= origin.path），绝不经本机 os.Path 解析——`C:\Users\Kai\stand`
+              // 在 Mac 上经 `os.Path(_, dataRoot)` 会得到数据根下的假名路径（现场
+              // 事故原形）。引擎本机读写面走 [[brainWorkspace]]；展示面与文件浏览器
+              // 设备腿用本值 + origin.device 经设备通道。
               ProjectDef(
                 name = name,
                 description = description,
-                workspace = ws.toString,
+                workspace = origin.get.path,
                 agentFile = s"${origin.get.path}/AGENTS.md",
                 createdAt = now,
                 origin = origin

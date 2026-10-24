@@ -750,6 +750,19 @@ class RemoteExecutor(
           neblinkService.scanNow.map(refreshed => RemoteExecutor.resolvePeer(deviceName, refreshed).toOption)
     }
 
+  /**
+   * 按 **deviceId** 解析 peer（跨设备项目挂载批 2026-10-25 新公开口）：项目
+   * `origin.device` 存的是创建面写入的稳定 deviceId（非显示名），引擎本机写面
+   * （agent.md 推回等）按 id 直查；名册可能陈旧 ⇒ 一次即时扫描重试（与
+   * [[resolvePeerByName]] 同先例）。解析不到 ⇒ None（调用方降级，不报错）。
+   */
+  def peerById(deviceId: String): IO[Option[PeerInfo]] =
+    neblinkService.peers.flatMap { peers =>
+      peers.find(_.deviceId == deviceId) match
+        case Some(p) => IO.pure(Some(p))
+        case None => neblinkService.scanNow.map(_.find(_.deviceId == deviceId))
+    }
+
   // ---- Remote background task: Mac manages lifecycle locally ----
 
   /**

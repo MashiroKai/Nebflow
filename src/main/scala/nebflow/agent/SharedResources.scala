@@ -301,7 +301,9 @@ case class SharedResources(
           sandboxEnabled = p.sandboxEnabled,
           sandboxRoot = p.sandboxRoot,
           sessionCwd = p.sessionCwd,
-          projectSession = p.projectSession
+          projectSession = p.projectSession,
+          sessionDevice = p.sessionDevice,
+          sessionDeviceWorkspace = p.sessionDeviceWorkspace
         ),
         actorName
       )
@@ -387,7 +389,9 @@ case class SharedResources(
     sandboxRoot: Option[String] = None,
     sessionCwd: Option[String] = None,
     projectSession: Boolean = false,
-    compactThresholdRatio: Option[Double] = None
+    compactThresholdRatio: Option[Double] = None,
+    sessionDevice: Option[String] = None,
+    sessionDeviceWorkspace: Option[String] = None
   ): Behavior[AgentCommand] =
     AgentActor(
       agentDef = agentDef,
@@ -423,7 +427,9 @@ case class SharedResources(
       sandboxRoot = sandboxRoot,
       sessionCwd = sessionCwd,
       projectSession = projectSession,
-      compactThresholdRatio = compactThresholdRatio
+      compactThresholdRatio = compactThresholdRatio,
+      sessionDevice = sessionDevice,
+      sessionDeviceWorkspace = sessionDeviceWorkspace
     )
   end agentActorBehavior
 

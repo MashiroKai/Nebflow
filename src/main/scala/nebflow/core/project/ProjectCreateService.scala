@@ -3,7 +3,7 @@ package nebflow.core.project
 import cats.effect.IO
 import io.circe.Json
 import nebflow.actor.ActorSystem
-import nebflow.agent.SharedResources
+import nebflow.core.AgentRuntimePort
 import nebflow.shared.PathUtil
 import nebflow.core.tools.{RemoteExecutor, ToolError}
 
@@ -57,7 +57,11 @@ object ProjectCreateService:
    */
   final case class CreateIdentity(
     actorSystem: Option[ActorSystem],
-    sharedResources: Option[SharedResources],
+    // 跨设备挂载批（2026-10-25）：放宽为 AgentRuntimePort（共享端口 trait）——
+    // 工具面 ToolContext.sharedResources 本就持 AgentRuntimePort（SharedResources
+    // 是其生产实现）；设备腿只读 neblinkService，挂载面吃 AgentRuntimePort，
+    // 具体 SharedResources 调用方照传 conform。
+    sharedResources: Option[AgentRuntimePort],
     rootSessionId: Option[String],
     sessionId: Option[String],
     wsSend: Option[Json => IO[Unit]]
@@ -90,12 +94,16 @@ object ProjectCreateService:
    * ("already exists" + mount); different workspace => explicit error, never a
    * silent re-point of an existing definition.
    *
-   * `device`（v2.1 §A.5，2026-10-09 实施批）：项目放哪台设备的**创建时一次性决定**。
-   * None / 字面 self = 现状逐字节（本机创建 + 幂等挂载）；其余值 = 远端创建腿
-   * （[[createRemote]]）：目录经 direction=list 校验 → 脚手架经 remote-exec Write
-   * 在对端落笔 → 全部成功后**原子写** project.json（G.13 半态回滚序——定义最后落，
-   * 任一步失败 = 本侧零写入的显式失败）；远端项目**不挂载**（挂载面拒绝 remote-
-   * origin，见 ProjectRuntimeRegistry.mount）。
+   * `device`（v2.1 §A.5，2026-10-09 实施批；跨设备挂载批 2026-10-25 语义升级）：
+   * 项目放哪台设备的**创建时一次性决定**。None / 字面 self = 本机创建 + 幂等挂载
+   * ——**挂载预检先行**（[[ProjectMountPreflight.checkLocalWorkspace]]：workspace
+   * 必须在引擎本机真实存在且是目录才准挂；不存在 = 结构化拒绝**零写入**——现场
+   * 事故 2026-10-24「假挂载造骨架」的闸门，铁律：绝不静默造骨架）；其余值 =
+   * 设备腿（[[createRemote]]）：目录经设备通道 stat 校验 → 脚手架经设备通道在
+   * 对端真实路径落笔 → 原子写 project.json（origin={device:D, path}）→ **挂载**
+   * （跨设备批新语义：大脑在引擎侧——FlowMap/台账全锚 [[ProjectStore.brainWorkspace]]
+   * 本机大脑根，见 [[ProjectRuntimeRegistry.mount]]；旧「远端项目不挂载」由挂载
+   * 面的设备分支取代）。
    */
   def create(
     nameOpt: Option[String],
@@ -115,8 +123,18 @@ object ProjectCreateService:
       )
     else
       device.map(_.trim).filter(_.nonEmpty) match
-        case None => emitAndMount(resolvedName, workspace, description, identity)
-        case Some(d) if ProjectOrigin.isSelfLiteral(d) => emitAndMount(resolvedName, workspace, description, identity)
+        case None =>
+          // 本机腿预检（铁律 2026-10-25）：workspace 必须真实存在且是目录——
+          // 在任何磁盘写（含 project.json 定义）之前；拒绝零写入。
+          IO.blocking(ProjectMountPreflight.checkLocalWorkspace(workspace, PathUtil.dataRoot)).flatMap {
+            case Some(refusal) => IO.pure(Left(ToolError(refusal)))
+            case None => emitAndMount(resolvedName, workspace, description, identity)
+          }
+        case Some(d) if ProjectOrigin.isSelfLiteral(d) =>
+          IO.blocking(ProjectMountPreflight.checkLocalWorkspace(workspace, PathUtil.dataRoot)).flatMap {
+            case Some(refusal) => IO.pure(Left(ToolError(refusal)))
+            case None => emitAndMount(resolvedName, workspace, description, identity)
+          }
         case Some(d) => createRemote(resolvedName, workspace, description, d, identity)
   end create
 
@@ -125,16 +143,20 @@ object ProjectCreateService:
   // ============================================================
 
   /**
-   * 远端创建（device = 对端设备 id 或名）。序（G.13 定稿）：
+   * 设备创建+挂载腿（device = 对端设备 id 或名）。序（G.13 定稿 + 跨设备批升级）：
    *   ① 对端可达性 + 解析（按名/按 id 同一解析单点；离线 = 显式失败列在线设备）；
-   *   ② 目录存在性经 `direction=list`（scope=browse）校验；
-   *   ③ 脚手架经 remote-exec Write 在对端补缺（AGENTS.md / .gitignore——缺件即补、
+   *   ② 目录存在性经 `direction=list`（scope=browse）校验（铁律：**必须真实存在
+   *     才准挂**——不可达/非目录 = 结构化拒绝，本侧零写入）；
+   *   ③ 脚手架经设备通道在对端**真实路径**补缺（AGENTS.md / .gitignore——缺件即补、
    *     既有永不覆盖，与本地 ensureScaffold 同纪律；对端已是完整 repo = 全 skipped）；
    *   ④ 全部成功 ⇒ 原子写 project.json（origin={device:D, path}）——**定义最后落**，
-   *     前面任何一步失败 = 本侧零写入（半态回滚 = 「无半态可回滚」）+ 可读失败文案。
-   * 幂等重试安全：目录已存在（含重试残留的脚手架件）= 可续创（Write 缺件才落笔）。
+   *     前面任何一步失败 = 本侧零写入（半态回滚 = 「无半态可回滚」）+ 可读失败文案；
+   *   ⑤ **挂载**（跨设备批 2026-10-25 新语义，取代旧「远端项目不挂载」）：大脑在
+   *     引擎侧——挂载面（ProjectRuntimeRegistry.mount）经设备通道复检存在性并把
+   *     全部引擎存储锚到本机大脑根（[[ProjectStore.brainWorkspace]]），设备路径
+   *     **绝不**作为本机存储根。挂载失败 = 定义已在但未挂载（幂等重试安全）。
    *
-   * 成功 = 定义就绪（**不挂载**——挂载面拒绝 remote-origin）；失败文案给动作。
+   * 幂等重试安全：目录已存在（含重试残留的脚手架件）= 可续创（Write 缺件才落笔）。
    */
   private def createRemote(
     resolvedName: String,
@@ -222,17 +244,38 @@ object ProjectCreateService:
                               )
                               .flatMap {
                                 case Right((pd, _)) =>
-                                  val scaffoldNote =
-                                    if report.createdCount > 0 then s" Scaffold on device: ${report.render}."
-                                    else " Scaffold on device: nothing to do (all pieces already present)."
-                                  IO.pure(
-                                    Right(
-                                      s"Project '${pd.name}' created on device '${peer.deviceName}' at ${pd.origin.map(_.path).getOrElse(workspace)} " +
-                                        "(remote origin — pointer registered in this host's project registry; NOT mounted here). " +
-                                        "Delegate dispatch to this project routes to that device; the panel badge and the file browser list it by metadata only." +
-                                        scaffoldNote
-                                    )
-                                  )
+                                  // ⑤ 挂载（跨设备批新语义）：大脑在引擎侧。挂载面经
+                                  // 设备通道复检 + 全部引擎存储锚本机大脑根。失败 =
+                                  // 定义已在但未挂载（幂等，重试走 create 幂等分支）——
+                                  // 显式降级为带告警的成功（🔴 不抛：定义已落盘，抛错
+                                  // 会让调用方误以为零创建；文本点名重挂路径）。
+                                  mountDefinition(pd, identity, created = true, scaffold = None)
+                                    .handleErrorWith { e =>
+                                      IO.pure(
+                                        Right(
+                                          s"Project '${pd.name}' was created on device '${peer.deviceName}' at " +
+                                            s"${pd.origin.map(_.path).getOrElse(workspace)} (definition on this host), " +
+                                            s"but the mount step FAILED — project is NOT mounted: ${e.getMessage}. " +
+                                            "Re-invoke the same create (idempotent re-mount) once the device is reachable."
+                                        )
+                                      )
+                                    }
+                                    .map {
+                                      case Right(msg) =>
+                                        val scaffoldNote =
+                                          if report.createdCount > 0 then s" Scaffold on device: ${report.render}."
+                                          else " Scaffold on device: nothing to do (all pieces already present)."
+                                        Right(
+                                          msg +
+                                            (if msg.contains("NOT mounted") then ""
+                                             else
+                                               s" Workspace lives on device '${peer.deviceName}' at ${pd.origin.map(_.path).getOrElse(workspace)} " +
+                                                 "(file/Bash tools route there via the device channel; this host's data root " +
+                                                 s"holds only the brain ledgers under projects/${pd.name}/brain).") +
+                                            scaffoldNote
+                                        )
+                                      case l @ Left(_) => l
+                                    }
                                 case Left(err) => IO.pure(Left(ToolError(err)))
                               }
                         }
@@ -300,6 +343,87 @@ object ProjectCreateService:
   // Internals
   // ============================================================
 
+  /**
+   * Mount（单点，跨设备批 2026-10-25 自 emitAndMount 内的闭包提升为对象级方法）：
+   * 本机创建腿与设备创建腿共用——[[ProjectRuntimeRegistry.mount]] 自身幂等（已挂载
+   * 返回既有 runtime）。
+   *
+   * Emit face: ONLY a fresh create (`created=true`) broadcasts a frame; an
+   * idempotent re-mount does not (no visual change). A failed mount throws and
+   * therefore never emits; an absent root key returns Left and also never emits
+   * (a failure frame must not report success) — that gap is covered on the
+   * frontend by the low-frequency fallback re-pull.
+   */
+  private def mountDefinition(
+    pd: ProjectDef,
+    identity: CreateIdentity,
+    created: Boolean,
+    scaffold: Option[ProjectStore.ScaffoldReport]
+  ): IO[Either[ToolError, String]] =
+    // Per-file report (author ruling 2026-09-17 12:09): the success and
+    // idempotent result sentences both carry this run's backfill readings.
+    // The substrings existing consumers match on ("Mail(address='project:",
+    // "already exists") are unchanged — the report is appended at the tail.
+    val scaffoldSuffix: String = scaffold.fold("")(r => s" Scaffold: ${r.render}.")
+    // Project-level realtime event. Goes through the EXISTING push face (never
+    // a second one): the frame shape is produced only by
+    // [[ProjectActor.projectCreatedFrame]] (single frame-shell point).
+    def emitProjectCreated(mounted: Boolean): IO[Unit] =
+      identity.wsSend.fold(IO.unit)(send => send(ProjectActor.projectCreatedFrame(pd, mounted)))
+    (identity.actorSystem, identity.sharedResources) match
+      case (Some(system), Some(res)) =>
+        // Mount receives the UPLINE rootSessionId (the true top level), not the
+        // mounting caller's own session — otherwise out="Nebula" would deliver
+        // to the mounter (e.g. a qa node), creating a self-sustaining loop.
+        //
+        // freshinstall-rootsessionid batch M3 (author 2026-09-14 ruling ②): a
+        // mount with NO session context is ILLEGAL — aligned verbatim with the
+        // existing positive precedent (SendConfirm.scala's "filter non-empty
+        // first, then refuse explicitly"). The `orElse` does NOT filter empty
+        // values (`Some("")` would win and yield an empty delivery bucket), and
+        // the last-ditch placeholder `"default"` would be a fabricated bucket
+        // key — the author explicitly forbids fabricating a root — so both are
+        // rejected and we refuse instead.
+        val rootKey =
+          identity.rootSessionId.filter(_.nonEmpty).orElse(identity.sessionId.filter(_.nonEmpty))
+        rootKey match
+          case None =>
+            IO.pure(
+              Left(
+                ToolError(
+                  "Project refused to mount: this call carries no session context " +
+                    "(both rootSessionId and sessionId are empty or absent), so the project's delivery root " +
+                    "cannot be attributed — and inventing a placeholder root is not allowed. " +
+                    "Re-invoke Project from an agent session (Nebula / project dispatcher / project node)."
+                )
+              )
+            )
+          case Some(root) =>
+            val mountedResult = ProjectRuntimeRegistry
+              .mount(pd, system, res, identity.wsSend, root)
+              .as {
+                val verb = if created then "created" else "already exists"
+                Right(
+                  s"Project '${pd.name}' $verb and mounted. Flow Map ready at ${pd.agentFile}. " +
+                    s"Dispatch work with Mail(address='project:${pd.name}', message=...).$scaffoldSuffix"
+                )
+              }
+            // A fresh create emits BEFORE returning the result (mount succeeded
+            // => mounted=true).
+            if created then mountedResult.flatMap(r => emitProjectCreated(mounted = true).as(r))
+            else mountedResult
+        end match
+      case _ =>
+        // Definition is on disk (only ProjectStore.create's success branch gets
+        // here) but there is no engine context to mount with: the list endpoint
+        // will show it, so the frontend must be told or it stays stale =>
+        // mounted=false. An idempotent re-mount (created=false) does not emit.
+        val ready: Either[ToolError, String] =
+          Right(s"Project '${pd.name}' definition ready. Mount requires an agent session.$scaffoldSuffix")
+        if created then emitProjectCreated(mounted = false).as(ready) else IO.pure(ready)
+    end match
+  end mountDefinition
+
   private def emitAndMount(
     resolvedName: String,
     workspace: String,
@@ -307,99 +431,16 @@ object ProjectCreateService:
     identity: CreateIdentity
   ): IO[Either[ToolError, String]] =
     /**
-     * Project-level realtime event. Goes through the EXISTING push face (never
-     * a second one): the tool face's `ctx.wsSend` is built as
-     * `makeRecordingWsSend(sessionId, (json) => wsHub.broadcast(json))`, so it
-     * is the same channel the node events use. The frame shape is produced only
-     * by [[ProjectActor.projectCreatedFrame]] (single frame-shell point).
-     */
-    def emitProjectCreated(pd: ProjectDef, mounted: Boolean): IO[Unit] =
-      identity.wsSend.fold(IO.unit)(send => send(ProjectActor.projectCreatedFrame(pd, mounted)))
-
-    /**
-     * Mount for both the freshly-created and the already-exists paths.
-     * [[ProjectRuntimeRegistry.mount]] is itself idempotent: an already-mounted
-     * project returns its existing runtime (rootSessionId was wired on the
-     * first mount; re-mounting a live project would need an engine rebuild,
-     * which has no call site).
-     *
-     * Emit face: ONLY a fresh create (`created=true`) broadcasts a frame;
-     * an idempotent re-mount does not (no visual change). A failed mount
-     * throws and therefore never emits; an absent root key returns Left and
-     * also never emits (a failure frame must not report success) — that gap is
-     * covered on the frontend by the low-frequency fallback re-pull.
+     * Mount for both the freshly-created and the already-exists paths — thin
+     * delegate to the object-level [[mountDefinition]]（创建腿与设备腿共用单点，
+     * 跨设备批 2026-10-25：设备创建腿也挂载）。
      */
     def mountProject(
       pd: ProjectDef,
       created: Boolean,
       scaffold: Option[ProjectStore.ScaffoldReport] = None
     ): IO[Either[ToolError, String]] =
-      // Per-file report (author ruling 2026-09-17 12:09): the success and
-      // idempotent result sentences both carry this run's backfill readings.
-      // The substrings existing consumers match on ("Mail(address='project:",
-      // "already exists") are unchanged — the report is appended at the tail.
-      val scaffoldSuffix: String = scaffold.fold("")(r => s" Scaffold: ${r.render}.")
-      (identity.actorSystem, identity.sharedResources) match
-        case (Some(system), Some(res)) =>
-          // Mount receives the UPLINE rootSessionId (the true top level), not the
-          // mounting caller's own session — otherwise out="Nebula" would deliver
-          // to the mounter (e.g. a qa node), creating a self-sustaining loop.
-          //
-          // freshinstall-rootsessionid batch M3 (author 2026-09-14 ruling ②): a
-          // mount with NO session context is ILLEGAL — aligned verbatim with the
-          // existing positive precedent (SendConfirm.scala's "filter non-empty
-          // first, then refuse explicitly"). The `orElse` does NOT filter empty
-          // values (`Some("")` would win and yield an empty delivery bucket), and
-          // the last-ditch placeholder `"default"` would be a fabricated bucket
-          // key — the author explicitly forbids fabricating a root — so both are
-          // rejected and we refuse instead.
-          //
-          // Call-site enumeration: Project (the tool; renamed from ProjectCreate,
-          // N2 2026-10-06)'s ToolContext has 4 production
-          // construction points — the AgentCore session face (has identity), WS
-          // AgentControl (never reaches this tool), and neblink relay /
-          // neblink REST remote-exec (NEITHER carries any session identity:
-          // the request body has only action/params/projectRoot, no sessionId)
-          // => the latter cannot "pass its own identity" without inventing one,
-          // so they hit the explicit refusal.
-          val rootKey =
-            identity.rootSessionId.filter(_.nonEmpty).orElse(identity.sessionId.filter(_.nonEmpty))
-          rootKey match
-            case None =>
-              IO.pure(
-                Left(
-                  ToolError(
-                    "Project refused to mount: this call carries no session context " +
-                      "(both rootSessionId and sessionId are empty or absent), so the project's delivery root " +
-                      "cannot be attributed — and inventing a placeholder root is not allowed. " +
-                      "Re-invoke Project from an agent session (Nebula / project dispatcher / project node)."
-                  )
-                )
-              )
-            case Some(root) =>
-              val mountedResult = ProjectRuntimeRegistry
-                .mount(pd, system, res, identity.wsSend, root)
-                .as {
-                  val verb = if created then "created" else "already exists"
-                  Right(
-                    s"Project '${pd.name}' $verb and mounted. Flow Map ready at ${pd.agentFile}. " +
-                      s"Dispatch work with Mail(address='project:${pd.name}', message=...).$scaffoldSuffix"
-                  )
-                }
-              // A fresh create emits BEFORE returning the result (mount succeeded
-              // => mounted=true).
-              if created then mountedResult.flatMap(r => emitProjectCreated(pd, mounted = true).as(r))
-              else mountedResult
-          end match
-        case _ =>
-          // Definition is on disk (only ProjectStore.create's success branch gets
-          // here) but there is no engine context to mount with: the list endpoint
-          // will show it, so the frontend must be told or it stays stale =>
-          // mounted=false. An idempotent re-mount (created=false) does not emit.
-          val ready: Either[ToolError, String] =
-            Right(s"Project '${pd.name}' definition ready. Mount requires an agent session.$scaffoldSuffix")
-          if created then emitProjectCreated(pd, mounted = false).as(ready) else IO.pure(ready)
-      end match
+      mountDefinition(pd, identity, created, scaffold)
     end mountProject
 
     // ============================================================
@@ -457,14 +498,41 @@ object ProjectCreateService:
                       )
                     )
                   )
+                // N2 project-tool 批单程语义（同 archive 先例形状，2026-10-25 去重收口时
+                // 自 ProjectTool 旧重复体并入服务面——此前 WS 面缺本分支，面板重挂会
+                // 静默复活硬卸载的项目）：幂等重挂不隐式复活硬卸载项目。
+                case Some(pd) if pd.unmounted.contains(true) =>
+                  IO.pure(
+                    Left(
+                      ToolError(
+                        s"Project '$resolvedName' is unmounted (hidden from the Projects panel; its in-flight " +
+                          s"work was stopped when it was unmounted). " +
+                          s"Remove the 'unmounted'/'unmountedAt' keys in ${PathUtil.dataRootRenderValue}/projects/$resolvedName/project.json to restore it first."
+                      )
+                    )
+                  )
                 case None => IO.pure(Left(ToolError(err)))
                 case Some(pd) if sameWorkspace(pd.workspace, workspace) =>
                   // Backfill hangs ONLY on this branch (a successful idempotent
                   // re-mount); the archived and different-workspace branches
                   // stay zero-write.
-                  ProjectStore
-                    .ensureScaffold(os.Path(workspace, PathUtil.dataRoot), AgentMdTemplate)
-                    .flatMap(report => mountProject(pd, created = false, scaffold = Some(report)))
+                  //
+                  // 跨设备批（2026-10-25）：重挂也过预检（铁律对挂载面恒成立）——
+                  // ① 设备项目：**零本机脚手架**（workspace 是设备本盘路径，本机
+                  //    落笔即假骨架事故原形）；存在性 stat + 骨架补缺全在设备通道
+                  //    （mount → DeviceProjectMount.prepare），本分支直挂。
+                  // ② 本机项目：同样必须真实存在（create 时的目录后来被删 = 拒绝
+                  //    重挂，零写入）才补缺脚手架。
+                  if ProjectStore.deviceOrigin(pd).isDefined then
+                    mountProject(pd, created = false)
+                  else
+                    IO.blocking(ProjectMountPreflight.checkLocalWorkspace(workspace, PathUtil.dataRoot)).flatMap {
+                      case Some(refusal) => IO.pure(Left(ToolError(refusal)))
+                      case None =>
+                        ProjectStore
+                          .ensureScaffold(os.Path(workspace, PathUtil.dataRoot), AgentMdTemplate)
+                          .flatMap(report => mountProject(pd, created = false, scaffold = Some(report)))
+                    }
                 case Some(pd) =>
                   IO.pure(
                     Left(

@@ -956,7 +956,19 @@ object AgentActor extends AgentCore with AgentSession:
      * 🔴 唯一注入点 = `WebSocketRoutes.doSpawnRootAgent`（depth=0）；非 root spawn
      * 一律不传 ⇒ None ⇒ 走现值函数（口径③ / §5.3 静态泄漏判据）。
      */
-    compactThresholdRatio: Option[Double] = None
+    compactThresholdRatio: Option[Double] = None,
+    /**
+     * 会话默认设备（跨设备项目挂载批 2026-10-25）：设备项目的节点/loop/分发器
+     * 会话注入 origin 设备，经 AgentCore 透传 ToolContext.sessionDevice——Bash/
+     * Read/Write/Edit/Glob/Grep 未显式带 device 时默认路由到该设备（引擎侧身份，
+     * 不信客户端参数）。None = 本机项目/非项目轨（现状零变化）。
+     */
+    sessionDevice: Option[String] = None,
+    /**
+     * 会话默认设备的 workspace（设备本盘绝对路径）：Bash 设备腿下发时注入为对端
+     * 会话初始 cwd。详见 SessionContext.sessionDeviceWorkspace。
+     */
+    sessionDeviceWorkspace: Option[String] = None
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
       val effectiveRootSessionId =
@@ -1026,7 +1038,9 @@ object AgentActor extends AgentCore with AgentSession:
               sandboxRoot = sandboxRoot,
               sessionCwd = sessionCwd,
               projectSession = projectSession,
-              compactThresholdRatio = compactThresholdRatio
+              compactThresholdRatio = compactThresholdRatio,
+              sessionDevice = sessionDevice,
+              sessionDeviceWorkspace = sessionDeviceWorkspace
             )
           )(using ctx)
         )

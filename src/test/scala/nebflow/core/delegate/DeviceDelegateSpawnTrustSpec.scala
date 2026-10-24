@@ -105,7 +105,9 @@ class DeviceDelegateSpawnTrustSpec extends CatsEffectSuite:
       sandboxRoot: Option[String] = None,
       sessionCwd: Option[String] = None,
       projectSession: Boolean = false,
-      compactThresholdRatio: Option[Double] = None
+      compactThresholdRatio: Option[Double] = None,
+      sessionDevice: Option[String] = None,
+      sessionDeviceWorkspace: Option[String] = None
     ): Behavior[AgentCommand] = throw boom
     def agentRegistry: Ref[IO, Map[String, AgentRecord]] = throw boom
     def processingSessionIds: IO[List[String]] = throw boom

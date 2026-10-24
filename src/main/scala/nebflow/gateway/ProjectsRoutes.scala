@@ -281,8 +281,10 @@ private[gateway] object ProjectsRoutes:
             case None => NotFound(Json.obj("error" -> s"project '$name' not mounted".asJson))
             case Some(rt) =>
               IO.blocking {
+                // 跨设备批（2026-10-25）：引擎本机存储座位（本机项目 = workspace；
+                // 设备项目 = brain 根——设备路径不是本机盘路径）。
                 val f = os.Path(
-                  rt.project.workspace,
+                  ProjectStore.brainWorkspace(rt.project),
                   PathUtil.dataRoot
                 ) / ".nebflow" / FileChangeReport.FileChangesDirName / s"$nodeId.json"
                 if os.exists(f) then Right(os.read(f))
@@ -307,7 +309,10 @@ private[gateway] object ProjectsRoutes:
           ProjectStore.load(name).flatMap {
             case None => NotFound(Json.obj("error" -> s"project '$name' not found".asJson))
             case Some(pd) =>
-              val p = os.Path(pd.workspace, PathUtil.dataRoot) / "AGENTS.md"
+              // 跨设备批（2026-10-25）：读本机大脑根的 AGENTS.md 镜像——设备项目的
+              // 权威件在设备本盘，挂载时经设备通道镜像回 brain 根（编辑面 PUT 推回）。
+              // 本机项目 = workspace 本身（现状逐字节）。
+              val p = os.Path(ProjectStore.brainWorkspace(pd), PathUtil.dataRoot) / "AGENTS.md"
               if os.exists(p) then Ok(Json.obj("content" -> os.read(p).asJson))
               else NotFound(Json.obj("error" -> s"project '$name' has no AGENTS.md".asJson))
           }
@@ -316,6 +321,9 @@ private[gateway] object ProjectsRoutes:
       // PUT /projects/<name>/agent.md — 保存。E.3 双轨移除（裁定 13）：只落工作区根
       // AGENTS.md（canonical）；旧位优先/穿透写逻辑删除（旧位由 ProjectStore.load
       // 迁移——本路由先 load，同请求内迁移先行完成）。响应形状 {saved:true} 不变。
+      // 跨设备批（2026-10-25）：设备项目 = 落本机 brain 镜像 + **设备通道推回**
+      // 设备真实路径（对端 Write 工具覆盖写）；推送失败只 WARN（镜像已是最新，设备
+      // 侧下次挂载拉取对齐），响应仍 {saved:true}（契约零漂移）。
       case req @ PUT -> Root / "projects" / name / "agent.md" =>
         withAuth(req) {
           ProjectStore.load(name).flatMap {
@@ -323,11 +331,44 @@ private[gateway] object ProjectsRoutes:
             case Some(pd) =>
               req.as[Json].flatMap { body =>
                 val content = body.hcursor.downField("content").as[String].getOrElse("")
+                val p = os.Path(ProjectStore.brainWorkspace(pd), PathUtil.dataRoot) / "AGENTS.md"
+                // 设备项目：best-effort 推回设备真实路径（设备通道 Write 覆盖写）；
+                // 本机项目 = 无设备腿（IO.unit，现状逐字节）。
+                val pushToDevice: IO[Unit] =
+                  ProjectStore.deviceOrigin(pd) match
+                    case None => IO.unit
+                    case Some(o) =>
+                      nebflow.core.tools.RemoteExecutor.current.fold(IO.unit)(exec =>
+                        exec.peerById(o.device).flatMap {
+                          case None =>
+                            IO(
+                              nebflow.shared.NebflowLogger.forName("nebflow.projects.routes")
+                                .warnSync(s"[device] agent.md push skipped: device '${o.device}' not online")
+                            )
+                          case Some(peer) =>
+                            exec
+                              .writeRemoteFileForScaffold(
+                                peer,
+                                s"${ProjectCreateService.stripTrailingSlashes(o.path)}/AGENTS.md",
+                                content
+                              )
+                              .handleErrorWith(e => IO.pure(Left(s"push failed: ${e.getMessage}")))
+                              .flatMap {
+                                case Right(_) => IO.unit
+                                case Left(err) =>
+                                  IO(
+                                    nebflow.shared.NebflowLogger.forName("nebflow.projects.routes")
+                                      .warnSync(
+                                        s"[device] agent.md push to '${o.device}' failed: $err (local mirror is authoritative until next mount)"
+                                      )
+                                  )
+                              }
+                        }
+                      )
                 IO.blocking {
-                  val p = os.Path(pd.workspace, PathUtil.dataRoot) / "AGENTS.md"
                   os.makeDir.all(p / os.up)
                   AtomicJson.writeSync(p, content)
-                } *> Ok(Json.obj("saved" -> true.asJson))
+                } *> pushToDevice.handleErrorWith(_ => IO.unit) *> Ok(Json.obj("saved" -> true.asJson))
               }
           }
         }
@@ -364,7 +405,8 @@ private[gateway] object ProjectsRoutes:
               // 台账审计留痕（失败只 WARN——审计面 best-effort，与链族既有写点同纪律）
               FlowMapEventLog
                 .append(
-                  rt.project.workspace,
+                  // 引擎本机存储座位（跨设备批 2026-10-25）：设备项目 = brain 根。
+                  ProjectStore.brainWorkspace(rt.project),
                   rt.project.name,
                   "",
                   auditType,

@@ -61,6 +61,10 @@ object ProjectTool extends Tool:
           "type" -> "string".asJson,
           "description" -> "Absolute path to the project workspace (create only). Omit to pop the interactive path-selection panel (AskUserQuestion-style card).".asJson
         ),
+        "device" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Optional device name/id (create only): mount the project whose workspace lives on that paired device (brain/ledgers stay on this host; the existence check and scaffold run on the device via the device channel). Omit or \"self\" for a local workspace.".asJson
+        ),
         "description" -> Json.obj(
           "type" -> "string".asJson,
           "description" -> "Optional one-line description (create only)".asJson
@@ -84,10 +88,12 @@ object ProjectTool extends Tool:
     val rawName = input("name").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
     val rawWorkspace = input("workspace").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
     val description = input("description").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+    // 跨设备批（2026-10-25）：可选 device = 项目挂载到哪台配对设备（缺省/self = 本机）。
+    val device = input("device").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
     input("action").flatMap(_.asString).map(_.trim.toLowerCase(java.util.Locale.ROOT)).getOrElse("create") match
       // N2 project-tool 批：unmount 面（S17/⑩A 三步序；实施单点 ProjectUnmount）。
       case "unmount" => unmountFace(rawName, ctx)
-      case "create" => createFace(rawName, rawWorkspace, description, ctx)
+      case "create" => createFace(rawName, rawWorkspace, description, device, ctx)
       case other =>
         IO.pure(
           Left(
@@ -104,16 +110,17 @@ object ProjectTool extends Tool:
     rawName: Option[String],
     rawWorkspace: Option[String],
     description: Option[String],
+    device: Option[String],
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
     rawWorkspace match
       // 已知路径直建（口径①，既有路径语义不变，name 缺省改 basename 派生）。
       case Some(ws) =>
         Try(os.Path(ws, PathUtil.dataRoot)) match
-          case scala.util.Success(_) => createChain(rawName, ws, description, ctx)
-          case scala.util.Failure(_) => pathPanel(rawName, description, ctx) // path 不可用 → 面板兜底
+          case scala.util.Success(_) => createChain(rawName, ws, description, device, ctx)
+          case scala.util.Failure(_) => pathPanel(rawName, description, device, ctx) // path 不可用 → 面板兜底
       // 未知/缺省 path（口径②）→ AskUser 式交互面板。
-      case None => pathPanel(rawName, description, ctx)
+      case None => pathPanel(rawName, description, device, ctx)
 
   // ============================================================
   // unmount 面（N2 project-tool 批，S17/⑩A 三步序）
@@ -189,245 +196,35 @@ object ProjectTool extends Tool:
    * 创建 + 幂等挂载。name 缺省 = workspace basename（口径①）。
    * 同名冲突语义（任务口径）：同 workspace → 幂等（"already exists" + 挂载）；
    * 异 workspace → 明确报错（绝不静默改指旧定义）。
+   *
+   * 跨设备批（2026-10-25 · 去重收口）：本方法降为 [[ProjectCreateService.create]]
+   * 的**薄壳**——该服务自 2026-09-24 抽取批起就是双面（工具面 + WS projectCreate）
+   * 的单一实现，但工具面此前仍留有一份**逐行重复**的旧挂载体（占用守卫/幂等分支/
+   * mount 闭包全部双份），两份已现实漂移（服务面缺 unmounted 拒绝、工具面缺设备
+   * 腿与本批挂载预检）。本批统一走服务面：挂载预检（铁律：workspace 必须真实存在
+   * 才准挂，零写入拒绝）、设备创建+挂载腿、unmounted 单程拒绝在两处恒同源。
    */
   private def createChain(
     nameOpt: Option[String],
     workspace: String,
     description: Option[String],
+    device: Option[String],
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
-    val resolvedName = nameOpt.getOrElse(baseName(workspace))
-    if resolvedName.isEmpty then
-      IO.pure(Left(ToolError(s"Cannot derive project name from workspace '$workspace' — pass 'name' explicitly")))
-    else
-      /**
-       * L1 **默认空**：
-       * `NodeEdit` 新建项目写出的工作区 `AGENTS.md` **不再预填任何内容** —— 模板 = 空
-       * （`ensureScaffoldSync` 落盘成 0 字节文件），项目指令由项目方自持。
-       * 语义边界零变化：`ProjectStore`「缺件即补、既有永不覆盖」照旧（本改动只影响
-       * 「缺件补什么」，不动任何写入路径与既有件）；种子项目 general 的文本面属 L2
-       * （`src/main/resources/seed/projects/general/AGENTS.md`），与本 val 不同源。
-       */
-      val agentMdTemplate: String = ""
+    ProjectCreateService.create(
+      nameOpt,
+      workspace,
+      description,
+      ProjectCreateService.CreateIdentity(
+        actorSystem = ctx.actorSystem,
+        sharedResources = ctx.sharedResources,
+        rootSessionId = ctx.rootSessionId,
+        sessionId = ctx.sessionId,
+        wsSend = ctx.wsSend
+      ),
+      device = device
+    )
 
-      /**
-       * 项目级实时事件（两身份事件）。
-       *
-       * 走**既有推送面**（🔴 不自建第二套）：`ctx.wsSend` 在 WS 会话面的构造是
-       * `makeRecordingWsSend(sessionId, (json) => wsHub.broadcast(json))`
-       * （WebSocketRoutes.scala:395）⇒ 与既有 node 事件（ProjectActor.emitNodeEvent）
-       * **同源同通道**，全连接广播（WsHub.scala:27-30）。无 wsSend（远程执行/无连接
-       * 上下文）→ 静默 no-op，与 emitNodeEvent 的 `fold(IO.unit)` 同款语义。
-       * 帧形只由 ProjectActor.projectCreatedFrame 生产（帧外壳单点）。
-       */
-      def emitProjectCreated(pd: ProjectDef, mounted: Boolean): IO[Unit] =
-        ctx.wsSend.fold(IO.unit)(send => send(ProjectActor.projectCreatedFrame(pd, mounted)))
-
-      /**
-       * 挂载（新创建 + 已存在幂等共用）。ProjectRuntimeRegistry.mount 本身幂等：
-       * 已挂载 → 直接返回现有 runtime（不重建不覆盖——rootSessionId 已在首次挂载
-       * 用上链根接线；运行中重挂覆盖需重建 engine，试点期无此场景）。
-       *
-       * emit 面（§D-2 逐字）：**仅新建（created=true）广播一帧**；幂等重挂
-       * （created=false，:2997 分支）**不 emit**（无视觉变化）。挂载失败（IO 失败）
-       * 直接抛出 ⇒ 不 emit；rootKey 缺席的显式拒绝（下 case None 分支）为 Left
-       * ⇒ 亦不 emit（失败帧不报成功）——该边界由前端低频兜底重拉（方案 C）覆盖。
-       */
-      def mountProject(
-        pd: ProjectDef,
-        created: Boolean,
-        scaffold: Option[ProjectStore.ScaffoldReport] = None
-      ): IO[Either[ToolError, String]] =
-        // 逐件报告：成功/幂等两态的结果句统一带
-        // 本次补缺读数（有 created 时含一行摘要）。既有 contains 子串（`Mail(address='project:`、
-        // `already exists`）保持不变，只在句尾追加。
-        val scaffoldSuffix: String = scaffold.fold("")(r => s" Scaffold: ${r.render}.")
-        (ctx.actorSystem, ctx.sharedResources) match
-          case (Some(system), Some(res)) =>
-            // P0 接线修复（Explorer c759e8c）：mount 传**上链 rootSessionId**（真正顶层），
-            // 非挂载者自身会话——否则 out="Nebula" 投递目标是挂载者（如 qa-backend），
-            // 节点完成消息注入执行者形成自维持循环。fallback ctx.sessionId（老调用方）。
-            // **无会话上下文的
-            // 挂载视为非法**——逐字对齐既有正例（SendConfirm.scala 的「先过滤非空、
-            // 再显式拒绝」）：`orElse` 不过滤非空（`Some("")` 取胜 ⇒ 空桶），且末档
-            // 伪造占位 `"default"` 是**凭空造的桶键**（禁伪造兜底）⇒ 两处都走。
-            // 调用面枚举：Project（原 ProjectCreate）的 ToolContext
-            // 生产构造面共 4 处 —— AgentCore 会话面（有身份）/ WS AgentControl（不达本
-            // 工具）/ neblink relay 与 neblink REST remote-exec（**两者都不携带任何会话
-            // 身份**：请求体仅 action/params/projectRoot，无 sessionId 字段）⇒ 后者
-            // 无法「显式传自己的身份」（凭空造身份=伪造）⇒ 走显式拒绝。
-            val rootKey =
-              ctx.rootSessionId.filter(_.nonEmpty).orElse(ctx.sessionId.filter(_.nonEmpty))
-            rootKey match
-              case None =>
-                IO.pure(
-                  Left(
-                    ToolError(
-                      "Project refused to mount: this call carries no session context " +
-                        "(both rootSessionId and sessionId are empty or absent), so the project's delivery root " +
-                        "cannot be attributed — and inventing a placeholder root is not allowed. " +
-                        "Re-invoke Project from an agent session (Nebula / project dispatcher / project node)."
-                    )
-                  )
-                )
-              case Some(root) =>
-                val mountedResult = ProjectRuntimeRegistry
-                  .mount(pd, system, res, ctx.wsSend, root)
-                  .as {
-                    val verb = if created then "created" else "already exists"
-                    Right(
-                      s"Project '${pd.name}' $verb and mounted. Flow Map ready at ${pd.agentFile}. " +
-                        s"Dispatch work with Mail(address='project:${pd.name}', message=...).$scaffoldSuffix"
-                    )
-                  }
-                // 新建成功 → 先发帧再返回结果（挂载成功 ⇒ mounted=true）。
-                if created then mountedResult.flatMap(r => emitProjectCreated(pd, mounted = true).as(r))
-                else mountedResult
-            end match
-          case _ =>
-            // 定义已就绪但无会话上下文（未挂载）：项目**已在磁盘上**（ProjectStore.create
-            // 的成功分支才走到这里）⇒ 列表出口（GET /api/projects）会有它，前端必须收到
-            // 事件才不陈旧 ⇒ mounted=false（§D-2 载荷语义）。幂等重挂（created=false）
-            // 不 emit（无视觉变化）。
-            val ready: Either[ToolError, String] =
-              Right(s"Project '${pd.name}' definition ready. Mount requires an agent session.$scaffoldSuffix")
-            if created then emitProjectCreated(pd, mounted = false).as(ready) else IO.pure(ready)
-        end match
-      end mountProject
-
-      // ============================================================
-      // ④ 反守卫（默认拒绝、宁误拒不误建）
-      // ============================================================
-      // 缺守卫的缺口（设计件项2 基线 3 现取）：创建链原有三类守卫只覆盖
-      // 「同 name 覆盖 / 同 name 同 workspace 幂等 / 同 name 异 workspace 报错」，
-      // **「新 name + 已被别的 name 占用的 workspace」零守卫** ⇒ 静默新建第二个项目
-      // 共享同一 workspace（flow-map / task-board / worktrees 全按 workspace 落位，
-      // 并列挂载必然互写）。
-      //
-      // 判据纪律：
-      // - **前置于任何写盘**：占用检查在 ProjectStore.create 之前 ⇒ 拒绝路径零写盘
-      //   （projects/<newName>/ 不出现、workspace 逐件 sha 不变）。
-      // - **占用判据与幂等判据共用同一函数** `sameWorkspace`（禁两套判据）：同一归一
-      //   函数（绝对化 + 去尾斜杠 + **大小写不敏感**）。
-      // - 🔴 禁引入 realpath/symlink 解析（未授权引入；`/tmp`↔`/private/tmp` 会改变现有语义）。
-      // - 占用扫描源 = ProjectStore.listAll()（**含归档**定义，保守默认：宁误拒不误建；
-      //   该保守面是分发器定的默认）。
-      // - 占用者 name 判等用 sameProjectName（与 ProjectRuntimeRegistry.get 的
-      //   equalsIgnoreCase 兜底同源）：同 name（含仅大小写差）= 同一项目 ⇒ 幂等重挂不被误拒。
-      ProjectStore.listAll().flatMap { defs =>
-        defs.find(d => !sameProjectName(d.name, resolvedName) && sameWorkspace(d.workspace, workspace)) match
-          case Some(occupant) =>
-            IO.pure(Left(ToolError(occupiedWorkspaceError(resolvedName, workspace, occupant))))
-          case None =>
-            ProjectStore.createWithScaffold(resolvedName, workspace, description, agentMdTemplate).flatMap {
-              case Right((pd, report)) => mountProject(pd, created = true, scaffold = Some(report))
-              case Left(err) =>
-                // 幂等挂载（试点重启恢复关键路径）：定义已存在 → 不重建定义；③-8 补缺脚手架
-                // （缺件即补、既有永不覆盖；现行口径取代了此处原先
-                // 「不动脚手架」的口径——它正是「删了 AGENTS.md 永不回、定义已存在的缺件态
-                // 永不修复」的成因）。幂等重挂本就返回成功语义，补缺必须同批，否则静默零写入。
-                // 同名异 workspace → 明确报错（不静默复用旧定义）。
-                // 归档项目例外（迁移方案 v2 §6.1 单程语义）：拒绝挂载——否则出现「已挂载
-                // 但面板不可见」（list 过滤）的僵尸态；恢复须先手工删 project.json 归档两键。
-                ProjectStore.load(resolvedName).flatMap {
-                  case Some(pd) if pd.archived.contains(true) =>
-                    IO.pure(
-                      Left(
-                        ToolError(
-                          s"Project '$resolvedName' is archived (hidden from the Projects panel). " +
-                            s"Remove the 'archived'/'archivedAt' keys in ${PathUtil.dataRootRenderValue}/projects/$resolvedName/project.json to restore it first."
-                        )
-                      )
-                    )
-                  // N2 project-tool 批：unmounted 单程语义（同 archive 先例形状）——
-                  // 幂等重挂不隐式复活硬卸载的项目（挂载面移除必须由人工显式恢复）。
-                  case Some(pd) if pd.unmounted.contains(true) =>
-                    IO.pure(
-                      Left(
-                        ToolError(
-                          s"Project '$resolvedName' is unmounted (hidden from the Projects panel; its in-flight " +
-                            s"work was stopped when it was unmounted). " +
-                            s"Remove the 'unmounted'/'unmountedAt' keys in ${PathUtil.dataRootRenderValue}/projects/$resolvedName/project.json to restore it first."
-                        )
-                      )
-                    )
-                  case None => IO.pure(Left(ToolError(err)))
-                  case Some(pd) if sameWorkspace(pd.workspace, workspace) =>
-                    // 🔴 补缺只挂本分支（成功幂等重挂）；归档分支与异 workspace 分支保持零写入。
-                    ProjectStore
-                      .ensureScaffold(os.Path(workspace, PathUtil.dataRoot), agentMdTemplate)
-                      .flatMap(report => mountProject(pd, created = false, scaffold = Some(report)))
-                  case Some(pd) =>
-                    IO.pure(
-                      Left(
-                        ToolError(
-                          s"Project '$resolvedName' already exists with a different workspace (${pd.workspace}) — " +
-                            "choose another name or reuse the existing workspace"
-                        )
-                      )
-                    )
-                }
-            }
-      }
-
-    end if
-
-  end createChain
-
-  /**
-   * workspace 归一化（绝对化 + 去尾斜杠）——**展示与判据共用的同一归一形态**。
-   * 不可解析 → None（视为不同）。
-   * 🔴 禁把 realpath/symlink 解析并入本函数（未被裁定；`/tmp`↔`/private/tmp` 会改变
-   * 现有语义）。
-   */
-  private def normalizeWorkspace(p: String): Option[String] =
-    Try(os.Path(p, PathUtil.dataRoot).toString).toOption.map(stripTrailingSlashes)
-
-  /**
-   * 同一归一函数的**比较键**（大小写不敏感）——占用判据与幂等判据共用 [[sameWorkspace]]
-   * 这**一条**判据（禁两套）。大小写不敏感归一取定
-   * （「路径语义 + 大小写不敏感归一」，「宁误拒不误建」：在大小写敏感的 FS 上该归一更严）。
-   */
-  private def workspaceKey(p: String): Option[String] =
-    normalizeWorkspace(p).map(_.toLowerCase(java.util.Locale.ROOT))
-
-  private def sameWorkspace(a: String, b: String): Boolean =
-    (workspaceKey(a), workspaceKey(b)) match
-      case (Some(x), Some(y)) => x == y
-      case _ => false
-
-  /**
-   * 项目标识判等（与 `ProjectRuntimeRegistry.get` 的 equalsIgnoreCase 兜底同源：
-   * 项目标识天然大小写不敏感）。同 name（含仅大小写差）= **同一项目**，不是占用者
-   * ⇒ 保证「同 name 同 workspace 幂等重挂不被误拒」（存量先例：name `nebflow` 的
-   * workspace basename 为 `Nebflow`，仅大小写差，现役靠 registry 兜底解析）。
-   */
-  private def sameProjectName(a: String, b: String): Boolean =
-    a == b || a.equalsIgnoreCase(b)
-
-  /** 占用报错（可行动：点名占用者 name + 归档态 + 归一化 workspace + 两条出路）。 */
-  private def occupiedWorkspaceError(newName: String, workspace: String, occupant: ProjectDef): String =
-    val norm = normalizeWorkspace(workspace).getOrElse(workspace)
-    val occupantWs = normalizeWorkspace(occupant.workspace).getOrElse(occupant.workspace)
-    val arch =
-      if occupant.archived.contains(true) then " (archived)"
-      else if occupant.unmounted.contains(true) then " (unmounted)"
-      else ""
-    s"Workspace '$norm' is already used by project '${occupant.name}'$arch " +
-      s"(its project.json workspace = '$occupantWs'). Project default-denies creating '$newName' " +
-      "on an occupied workspace — a second project on the same workspace would silently share its " +
-      "flow-map / task board / worktrees. Two ways out: " +
-      s"(a) reuse the existing project — Project(name='${occupant.name}') to re-mount it, or " +
-      s"Mail(address='project:${occupant.name}', message=...) to dispatch work; " +
-      s"(b) pass a different 'workspace' directory for '$newName'."
-
-  /** 路径 basename（name 派生）；根路径等无 basename → ""（由调用方报错）。 */
-  private def baseName(workspace: String): String =
-    Try(os.Path(workspace, PathUtil.dataRoot)).map(_.last).getOrElse("")
-
-  // ============================================================
-  // 未知路径交互面板（口径②）
-  // ============================================================
 
   /** '~' 展开（仅前缀语义，防 API 差异；非 ~ 开头原样返回）。 */
   def expandTilde(path: String): String =
@@ -448,11 +245,7 @@ object ProjectTool extends Tool:
     /** 合法绝对路径 → 进入创建链。 */
     case class Chosen(path: String) extends PanelAnswer
 
-    /**
-     * 派发失败（承接面缺席）→ 明确报错。载荷 = [[nebflow.shared.AskUserDispatch]]
-     * 失败信号原文（自描述：失败类别 + requestId + sourceAgent）。
-     * **与 `Shelved` 是两回事**：问题从未上卡，用户没有「关闭面板」这一动作。
-     */
+    /** 派发失败信号 → 明确报错（不是用户动作）。 */
     case class Failed(signal: String) extends PanelAnswer
   end PanelAnswer
 
@@ -488,6 +281,7 @@ object ProjectTool extends Tool:
     ans: PanelAnswer,
     nameOpt: Option[String],
     description: Option[String],
+    device: Option[String],
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
     ans match
@@ -517,7 +311,7 @@ object ProjectTool extends Tool:
             )
           )
         )
-      case PanelAnswer.Chosen(path) => createChain(nameOpt, path, description, ctx)
+      case PanelAnswer.Chosen(path) => createChain(nameOpt, path, description, device, ctx)
 
   /**
    * 未知路径分支：复用 AskUser pending 机制（AgentCommand.AskUser →
@@ -539,6 +333,7 @@ object ProjectTool extends Tool:
   private def pathPanel(
     nameOpt: Option[String],
     description: Option[String],
+    device: Option[String],
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
     AskUserQuestionTool.askGuard() match
@@ -581,6 +376,6 @@ object ProjectTool extends Tool:
                   timeout = None
                 )
               _ <- AskUserQuestionTool.answerLanded(ctx)
-              result <- applyPanelAnswer(parsePanelAnswer(answers), nameOpt, description, ctx)
+              result <- applyPanelAnswer(parsePanelAnswer(answers), nameOpt, description, device, ctx)
             yield result
 end ProjectTool

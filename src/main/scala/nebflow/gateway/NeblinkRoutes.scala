@@ -1011,9 +1011,16 @@ private[gateway] object NeblinkRoutes:
                   val toolOpt = nebflow.core.tools.ToolRegistry.TOOL_MAP.get(action)
                   toolOpt match
                     case Some(tool) =>
+                      // 跨设备批（2026-10-25）：Bash 下发的 `cwd`（设备盘 workspace，
+                      // 发送侧会话默认设备上下文注入）→ 对端会话初始 cwd——「派发任务
+                      // 的命令 cwd 指向设备 workspace」。目录不存在 ⇒ BashTool
+                      // resolveCwdOrFail fail-closed。relay 腿同款（NeblinkRelayTunnel）。
+                      val cwdOpt =
+                        params("cwd").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
                       val ctx = nebflow.core.tools.ToolContext(
                         projectRoot = projectRoot,
-                        isRemoteExec = true
+                        isRemoteExec = true,
+                        sessionCwd = cwdOpt
                       )
                       tool.call(params, ctx).attempt.flatMap {
                         case Right(Right(result)) => Ok(Json.obj("output" -> result.asJson))
