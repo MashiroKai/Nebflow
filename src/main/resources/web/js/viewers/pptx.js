@@ -1,6 +1,20 @@
-// viewers/pptx.js — PPTX viewer: 纯前端静态渲染（路线 A MVP，作者 2026-10-06 拍板令）。
+// viewers/pptx.js — PPTX viewer：转换优先（服务端 soffice→PDF / qlmanage 首页 PNG，
+// canvas-pptx-convert 批 2026-10-24 作者令「服务端转换优先」）＋ 纯前端静态渲染兜底
+// （路线 A MVP，作者 2026-10-06 拍板令，结构原样保留）。
 //
-// 架构（任务书七问打包值逐条落）：
+// 渲染腿阶梯（viewPptx 顶层的顺序即阶梯）：
+//   1. 服务端转换腿 GET /api/nf-office（absPath 在场才有）：
+//      soffice→整件 PDF → **复用既有 pdf 面板**（viewers/pdf.js，作者令「PDF 预览
+//      复用既有 pdf 面板」）；qlmanage→首页 PNG → 首页预览卡＋下载链。
+//      票据同族：同一张 `POST /api/nf-ticket` 铸的 per-path 票（零新增凭据面），
+//      服务端缓存命中（X-Nf-Office-Cache: hit）时二次点击零重转。
+//   2. 纯前端渲染腿（下文 ①-⑦，路线 A）：转换器缺席（501）/转换全败（502）/
+//      无 absPath（附件 blob 腿）时的兜底——13MB 级重 deck 实测会触发 staging 30s
+//      渲染超时落降级卡（这正是转换腿成为主腿的原因）。
+//   3. 终态降级卡：「此环境无预览能力」＋下载按钮（不许裸失败——路线 A 的
+//      renderDownloadFallback 承接，文案批内升级）。
+//
+// 路线 A 架构（任务书七问打包值逐条落）：
 //   1. 渲染库 = @aiden0z/pptx-renderer 1.3.0（Apache-2.0，vendor/pptx-renderer/ 台账，
 //      POC 四闸过：保真抽样 6/6、zipLimits 预算闸实测触发、维护度 2026-09 活跃）。
 //      库源码只 fetch 成字符串（单飞 Promise），在 staging 帧内 blob-module import——
@@ -29,9 +43,10 @@
 //      缩略图侧栏/锚点跳页/.ppt 缓存/系统交接 = 增强池另批。
 
 import { escapeHtml, formatSize, ZIP_BUDGET } from './shared.js';
-import { ticketUrl } from '../nfTicket.js';
+import { mintTickets, ticketUrl } from '../nfTicket.js';
 import { nfViewerUrl } from '../nfFileCache.js';
 import { enableViewerZoom } from './zoom.js';
+import pdfViewer from './pdf.js';
 
 /** 渲染闸（与打开闸分工：100MB 闸管进页面，本闸管渲不渲）。派生：单 tab 内存峰值
  *  包络——解压族 128MB + data: 重写 ~1.37× + srcdoc 字符串驻留，源件 50MB 以上
@@ -180,7 +195,9 @@ function stageShellHtml() {
 
 /** 可见降级腿 = 旧占位行为原样保留（信息卡 + 点击铸票下载链），加一行降级原因。
  *  纪律不变（2026-09-11 C batch）：href 不落任何凭据，票据在用户点击时才铸，
- *  blob 腿（objectUrl）天然免票据。 */
+ *  blob 腿（objectUrl）天然免票据。
+ *  canvas-pptx-convert 批：首行升级为作者令原话「此环境无预览能力」——终态降级
+ *  必须显式说人话＋给下载，不许裸失败。 */
 function renderDownloadFallback(pane, { absPath, fileName, size, objectUrl }, reason) {
   pane.innerHTML = `
     <div class="canvas-md-viewer" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--color-text-muted);">
@@ -190,6 +207,7 @@ function renderDownloadFallback(pane, { absPath, fileName, size, objectUrl }, re
       <div style="text-align:center;">
         <div style="font-weight:600;color:var(--color-text);margin-bottom:4px">${escapeHtml(fileName || 'PowerPoint')}</div>
         <div style="font-size:12px;opacity:0.6">${formatSize(size || 0)}</div>
+        <div style="font-size:13px;opacity:0.85;margin-top:6px">此环境无预览能力</div>
         <div style="font-size:12px;opacity:0.75;max-width:420px;margin-top:6px">${escapeHtml(reason)}</div>
       </div>
       <a class="nf-pptx-download" href="#" download="${escapeHtml(fileName || 'presentation.pptx')}" style="font-size:13px;color:var(--color-primary);text-decoration:none;padding:6px 16px;border:1px solid var(--color-primary);border-radius:8px;">Download to view</a>
@@ -209,6 +227,125 @@ function renderDownloadFallback(pane, { absPath, fileName, size, objectUrl }, re
   });
 }
 
+// ── 服务端转换腿（canvas-pptx-convert 批 · 主腿）─────────────────────────────
+// GET /api/nf-office?path=&ticket= —— soffice→整件 PDF / qlmanage→首页 PNG。
+// 票据 = 既有 per-path 铸票（mintTickets），无票 ⇒ 静默回路线 A（鉴权降级面已有
+// 既有口径，本腿绝不登出绝不横幅）。200 → 按 Content-Type 分流（pdf 面板复用 /
+// 首页预览卡）；501/502/415/网络错 ⇒ 回路线 A（原因记 diag，不裸失败）。
+
+/** 转换腿取数超时：服务端单腿 150s ＋ 轮询/启动余量。 */
+const OFFICE_CONVERT_TIMEOUT_MS = 180000;
+
+/** viewer 自铸 blob URL 的 pane 生命周期账（nfFileCache.trackViewerUrl 同形，
+ *  本模块自有小账：转换产物 PDF 不进 nf 账本——键族语义是源件字节）。回收点 =
+ *  同 pane 重渲起点（viewPptx 首行）与转换腿接管前，防多次开文件累积。 */
+const paneBlobUrls = new WeakMap();
+function trackPaneBlobUrl(pane, url) {
+  const urls = paneBlobUrls.get(pane) || [];
+  urls.push(url);
+  paneBlobUrls.set(pane, urls);
+}
+function revokePaneBlobUrls(pane) {
+  const urls = paneBlobUrls.get(pane);
+  if (!urls) return;
+  for (const u of urls) { try { URL.revokeObjectURL(u); } catch (_) { /* 已失效 */ } }
+  paneBlobUrls.delete(pane);
+}
+
+/** 服务端转换腿。返回 true = pane 已被转换产物接管（PDF 面板/首页卡）；
+ *  false = 未转换（调用方落路线 A），失败原因已记 diag.convertSkipped。 */
+async function tryOfficeConvert(pane, ctx, diag) {
+  const { absPath, fileName } = ctx;
+  if (!absPath) { diag.convertSkipped = 'no-absPath'; return false; }
+  diag.convertPhase = 'minting-ticket';
+  let ticket = '';
+  try {
+    const map = await mintTickets([absPath]);
+    ticket = map.get(absPath) || '';
+  } catch (_) { /* mintTickets 契约：绝不 reject——防御性兜底 */ }
+  if (!ticket) { diag.convertSkipped = 'no-ticket'; return false; }
+  diag.convertPhase = 'converting';
+  setLoadingText(pane, 'Converting to PDF for preview (cached after first time)...');
+  let resp;
+  try {
+    resp = await fetch('/api/nf-office?path=' + encodeURIComponent(absPath) +
+      '&ticket=' + encodeURIComponent(ticket), { signal: AbortSignal.timeout(OFFICE_CONVERT_TIMEOUT_MS) });
+  } catch (e) {
+    diag.convertSkipped = 'fetch-failed: ' + String(e && e.message || e);
+    return false;
+  }
+  if (!pane.isConnected) return true; // tab 已关：不再动 pane，也不再落路线 A
+  if (!resp.ok) {
+    diag.convertSkipped = 'HTTP ' + resp.status + ' (' +
+      (resp.headers.get('x-nf-reason') || 'no-reason') + ')';
+    return false; // 501 converter-absent / 502 conversion-failed / 415 … ⇒ 路线 A
+  }
+  const ctype = (resp.headers.get('content-type') || '').toLowerCase();
+  diag.converter = resp.headers.get('x-nf-office-converter') || '';
+  diag.convertCache = resp.headers.get('x-nf-office-cache') || '';
+  const blob = await resp.blob().catch(() => null);
+  if (!blob || !pane.isConnected) return true;
+  if (ctype.includes('pdf') || blob.type === 'application/pdf') {
+    // 整件 PDF → 复用既有 pdf 面板（作者令「PDF 预览复用既有 pdf 面板」）。
+    diag.gateDecision = 'convert-pdf';
+    const url = URL.createObjectURL(blob);
+    trackPaneBlobUrl(pane, url);
+    pane.classList.remove('scrollable');
+    await pdfViewer.render(pane, {
+      absPath,
+      fileName: String(fileName || 'presentation').replace(/\.(pptx?|docx?|xlsx?)$/i, '') + '.pdf',
+      anchor: undefined, // 转换腿无文档引用跳页语义
+      objectUrl: url,
+    });
+    return true;
+  }
+  if (ctype.includes('image') || blob.type.startsWith('image/')) {
+    // qlmanage 首页 PNG → 首页预览卡（如实注明只有首页）＋下载链。
+    diag.gateDecision = 'convert-firstpage';
+    renderFirstPagePreview(pane, ctx, blob, diag);
+    return true;
+  }
+  diag.convertSkipped = 'unexpected content-type: ' + ctype;
+  return false;
+}
+
+/** 首页 PNG 预览卡（qlmanage 兜底腿）：如实「仅首页」＋下载链。 */
+function renderFirstPagePreview(pane, { absPath, fileName, size, objectUrl }, blob, diag) {
+  const url = URL.createObjectURL(blob);
+  trackPaneBlobUrl(pane, url);
+  pane.classList.add('scrollable');
+  pane.innerHTML = `
+    <div class="canvas-md-viewer" style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:24px 0;">
+      <img alt="${escapeHtml(fileName || 'preview')}" src="${url}"
+        style="max-width:min(920px,94%);border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.15);background:#fff;">
+      <div style="font-size:12px;color:var(--color-text-muted);opacity:0.75;text-align:center;">
+        Quick Look preview — first page only (${escapeHtml(diag.converter || 'qlmanage')})<br>
+        ${escapeHtml(fileName || '')} · ${formatSize(size || 0)}
+      </div>
+      <a class="nf-pptx-download" href="#" download="${escapeHtml(fileName || 'presentation.pptx')}"
+        style="font-size:13px;color:var(--color-primary);text-decoration:none;padding:6px 16px;border:1px solid var(--color-primary);border-radius:8px;">Download full file</a>
+    </div>`;
+  const link = /** @type {HTMLAnchorElement|null} */ (pane.querySelector('a.nf-pptx-download'));
+  if (!link || (!absPath && !objectUrl)) return;
+  link.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const dlUrl = objectUrl || await ticketUrl(absPath);
+    const a = document.createElement('a');
+    a.href = dlUrl;
+    a.download = fileName || 'presentation.pptx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  });
+}
+
+/** 转换期加载文案（tryOfficeConvert 各阶段刷新；路线 A 起点会整体重写 pane）。 */
+function setLoadingText(pane, text) {
+  if (!pane.isConnected) return;
+  const box = pane.firstElementChild;
+  if (box && box.textContent !== undefined) box.textContent = text;
+}
+
 /** 壳页（产物帧：宿主壳最小化：一行样式 + 静态产物；无脚本、无外引）。 */
 function buildShell(unitsHtml, slideDims, zoom) {
   const z = zoom;
@@ -224,27 +361,48 @@ function buildShell(unitsHtml, slideDims, zoom) {
     '</style></head><body><div class="deck">' + boxes + '</div></body></html>';
 }
 
-/** PPTX viewer — fetch bytes → 魔数嗅探 → 沙箱 staging 帧渲染（CSP 断网）→ 窄桥回传
- *  产物 → 中和后静态产物进 sandbox="" 产物帧。
+/** PPTX viewer — 腿阶梯：服务端转换（soffice→PDF 复用 pdf 面板 / qlmanage→首页卡）
+ *  → 纯前端沙箱渲染（路线 A：fetch bytes → 魔数嗅探 → staging 帧渲染 → 产物帧）。
  *  blob 双腿纪律同 pdf/docx（`objectUrl || await ticketUrl(absPath)`，点击铸票见降级腿）。
  *  @param {HTMLElement} pane
  *  @param {{absPath?:string, fileName?:string, size?:number, objectUrl?:string}} ctx */
 async function viewPptx(pane, { absPath, fileName, size, objectUrl }) {
-  /** @type {any} */ (pane)._pptxTeardown?.(); // 同 pane 重渲：先清上一轮 staging 帧/桥
+  revokePaneBlobUrls(pane); // 同 pane 重渲：清上一轮 viewer 自铸 blob（含 staging 帧/桥清理）
+  /** @type {any} */ (pane)._pptxTeardown?.();
   pane.classList.remove('scrollable');
   pane.innerHTML = `<div class="canvas-md-viewer" style="display:flex;align-items:center;justify-content:center;color:var(--color-text-muted);opacity:0.5;">Loading presentation...</div>`;
   /** @type {any} */ (pane)._pptxDiag = { gateDecision: 'pending' };
   const diag = /** @type {any} */ (pane)._pptxDiag;
   const ctx = { absPath, fileName, size, objectUrl };
 
+  if (!absPath && !objectUrl) {
+    pane.innerHTML = `<div class="canvas-error">No file path provided for PPTX viewer.</div>`;
+    return;
+  }
+
+  // 主腿：服务端转换（absPath 在场才有；50MB 前端闸**不**拦它——转换在服务端走，
+  // 产物是紧凑 PDF，200MB 服务端闸由端点自持）。
+  if (absPath) {
+    const converted = await tryOfficeConvert(pane, ctx, diag);
+    if (converted || !pane.isConnected) return;
+    // 未转换（转换器缺席/全败/无票）⇒ 落路线 A；convertSkipped 已记因。
+    if (!pane.isConnected) return;
+    pane.classList.remove('scrollable');
+    pane.innerHTML = `<div class="canvas-md-viewer" style="display:flex;align-items:center;justify-content:center;color:var(--color-text-muted);opacity:0.5;">Loading presentation...</div>`;
+  }
+
+  await renderFrontendPptx(pane, ctx, diag);
+}
+
+/** 路线 A 纯前端渲染腿（结构 = 2026-10-06 MVP 原样；本批仅外加 paneBlobUrls 回收
+ *  与 diag 因果记录）。 */
+async function renderFrontendPptx(pane, { absPath, fileName, size, objectUrl }, diag) {
+  const ctx = { absPath, fileName, size, objectUrl };
+
   // 闸 4：源件 >50MB 拒绝渲染（声明尺寸先看，objectUrl 腿的实际尺寸在取字节后复核）
   if (size && size > MAX_SOURCE_BYTES) {
     diag.gateDecision = 'refuse-render:source>50MB';
     renderDownloadFallback(pane, ctx, `Presentation exceeds the ${Math.round(MAX_SOURCE_BYTES / 1048576)}MB in-app render cap — download to view.`);
-    return;
-  }
-  if (!absPath && !objectUrl) {
-    pane.innerHTML = `<div class="canvas-error">No file path provided for PPTX viewer.</div>`;
     return;
   }
 

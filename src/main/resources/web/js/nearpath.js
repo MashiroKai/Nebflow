@@ -71,7 +71,8 @@ async function probeBase(base) {
     });
     if (!r.ok && r.status !== 204) return false;
     // 品牌自证头：与 nf-reach 服务面同族（x-<brand>-gateway）。
-    return r.headers.get(`x-${(window.__BRAND__ && window.__BRAND__.lowerName) || 'stand'}-gateway`) === '1';
+    const lower = (/** @type {Window & { __BRAND__?: { lowerName?: string } }} */ (window).__BRAND__?.lowerName) || 'stand'; // swReg.js:19 同形
+    return r.headers.get(`x-${lower}-gateway`) === '1';
   } catch (_) {
     return false;
   }
@@ -114,6 +115,7 @@ export async function probeNearPath() {
     }
     // 候选拼装：环回恒在（取件兜底）；LAN 仅 enrolled（服务端清单已按
     // 作者令过滤，这里再闸一道防前端漂移）。
+    /** @type {{ base: string, kind: 'loopback' | 'lan' }[]} */
     const candidates = [];
     for (const b of loopbackBases(port)) candidates.push({ base: b, kind: 'loopback' });
     if (data.enrolled === true && Array.isArray(data.lanAddresses)) {
