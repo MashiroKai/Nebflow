@@ -82,7 +82,14 @@ private[project] trait NodeLoopRunner:
      * 链级抽象 P2（§9.2 项 5）：loop 会话链身份（worker/verify 同属该 loop
      * 节点 → 同一 chainId 快照）。详见 SessionContext.flowChainId。
      */
-    flowChainId: Option[String] = None
+    flowChainId: Option[String] = None,
+    /**
+     * 会话默认设备上下文（跨设备批 2026-10-25）：设备项目 loop worker/verify 与
+     * 普通节点同口径——六件工具未显式带 device 默认路由到设备（cwd 注入 = 设备
+     * 盘 workspace）。None = 本机项目（现状零变化）。
+     */
+    sessionDevice: Option[String] = None,
+    sessionDeviceWorkspace: Option[String] = None
   ): IO[LoopSession] =
     for
       initD <- Deferred[IO, Either[String, List[Message]]]
@@ -121,6 +128,9 @@ private[project] trait NodeLoopRunner:
           // 项目会话信号（沙箱拆围栏批 S1/R8 解耦）：loop worker/verify 属项目
           // 节点会话 ⇒ AGENTS.md 注入判据置位（与普通节点 runWithAgent 同款）。
           projectSession = true,
+          // 跨设备批（2026-10-25）：设备项目默认设备上下文（与普通节点同口径）。
+          sessionDevice = sessionDevice,
+          sessionDeviceWorkspace = sessionDeviceWorkspace,
           initialMessages = initialMessages
         )
       )

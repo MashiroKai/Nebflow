@@ -287,6 +287,16 @@ private[project] trait NodeStarter:
     // ——两行同一块（块内不空行，「提示段紧随链头」字面口径），块间仍以空行分隔。
     val chainBlock: List[String] =
       chain.toList.map(c => NodeEngine.chainHeaderLine(c) + "\n" + NodeEngine.DocProvenanceBlock)
+    // 设备项目块（跨设备批 2026-10-25）：节点会话在设备项目里没有本机 workspace
+    // 座椅可看（本机座位 = 引擎大脑根，非项目文件）——真实工作区在设备本盘，且
+    // Bash/文件六件已默认经设备通道路由（sessionDevice）。设备项目才注入（本机
+    // 项目零变化）；一行形态，与 delegate 的 [workspace] 行同族。
+    val deviceBlock: List[String] =
+      (sessionDevice, sessionDeviceWorkspace).mapN((dev, ws) =>
+        s"[device workspace] $ws on device $dev — Bash/Read/Write/Edit/Glob/Grep run on that device " +
+          "by default (paths are device-local absolute paths; the engine host only holds the flow map, " +
+          "task board and this session). Pass device=\"local\" explicitly for a local-engine command."
+      ).toList
     taskBoardNodeBlock(node).flatMap { boardBlock =>
       node.in
         .traverse { upId =>
@@ -304,7 +314,7 @@ private[project] trait NodeStarter:
           }
         }
         .map { upstream =>
-          (chainBlock ++ List(boardBlock, ownTask).filter(_.nonEmpty) ++ upstream)
+          (chainBlock ++ deviceBlock ++ List(boardBlock, ownTask).filter(_.nonEmpty) ++ upstream)
             .mkString("\n\n") + "\n\n" + NodeEngine.protocolFootnoteFor(Some(node.role))
         }
     }
@@ -438,7 +448,10 @@ private[project] trait NodeStarter:
                         flowNodeName = Some(node.name),
                         // 链级抽象 P2（§9.2 项 5）：worker/verify 同属该 loop
                         // 节点 → 同一条链的同一快照（startNode 单点算出）。
-                        flowChainId = chain.map(_.chainId)
+                        flowChainId = chain.map(_.chainId),
+                        // 跨设备批（2026-10-25）：设备项目默认设备上下文（普通节点同款）。
+                        sessionDevice = sessionDevice,
+                        sessionDeviceWorkspace = sessionDeviceWorkspace
                       )
                       verify <- spawnLoopSession(
                         verifyBase,
@@ -451,7 +464,9 @@ private[project] trait NodeStarter:
                         flowNodeId = Some(nodeId),
                         flowNodeRole = Some(node.role),
                         flowNodeName = Some(node.name),
-                        flowChainId = chain.map(_.chainId)
+                        flowChainId = chain.map(_.chainId),
+                        sessionDevice = sessionDevice,
+                        sessionDeviceWorkspace = sessionDeviceWorkspace
                       )
                       _ <- runLoopNode(node, worker, verify, inputText, cancelSig, resume)
                         .guarantee(
@@ -752,7 +767,12 @@ private[project] trait NodeStarter:
           // crash-recovery 批 D3：恢复续跑时水合磁盘 transcript（NodeRunner.
           // initialMessages 通道，BackoffSupervisor respawn 同款）；spawn 时
           // RecoverPersistedQueues 自动重放该会话崩溃前排队中的 F2 注入。
-          initialMessages = resume.fold(List.empty[Message])(_.recoveredMessages)
+          initialMessages = resume.fold(List.empty[Message])(_.recoveredMessages),
+          // 跨设备批（2026-10-25）：设备项目节点会话的默认设备上下文——Bash/文件
+          // 六件未显式带 device 时默认路由到该设备（cwd 注入 = 设备盘 workspace）。
+          // None = 本机项目（现状零变化）。
+          sessionDevice = sessionDevice,
+          sessionDeviceWorkspace = sessionDeviceWorkspace
         )
       )
       // Bridge actor：捕获 Completed/Failed/Cancelled → Deferred（同步 complete，

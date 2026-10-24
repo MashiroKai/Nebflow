@@ -933,7 +933,12 @@ final class NeblinkRelayTunnel(
         case _ =>
           toolOpt match
             case Some(tool) =>
-              val ctx = ToolContext(projectRoot = projectRoot, isRemoteExec = true)
+              // 跨设备批（2026-10-25）：Bash 下发的 `cwd`（设备盘 workspace，发送侧
+              // 会话默认设备上下文注入）→ 对端会话初始 cwd——「派发任务的命令 cwd
+              // 指向设备 workspace」。目录在对端不存在 ⇒ BashTool resolveCwdOrFail
+              // fail-closed（与本地座椅同语义）。P2P 直连腿同款（NeblinkRoutes）。
+              val cwdOpt = params("cwd").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+              val ctx = ToolContext(projectRoot = projectRoot, isRemoteExec = true, sessionCwd = cwdOpt)
               tool.call(params, ctx).attempt.map {
                 case Right(Right(result)) => (result, "")
                 case Right(Left(err)) => ("", err.message)

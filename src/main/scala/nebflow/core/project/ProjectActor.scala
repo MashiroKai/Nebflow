@@ -144,109 +144,153 @@ object ProjectRuntimeRegistry:
   ): IO[ProjectRuntime] =
     get(project.name).flatMap {
       case Some(rt) => IO.pure(rt)
-      // v2.1 阶段 1（G.12 路径错觉防护）：remote-origin 项目**不在编排权威侧挂载**。
-      // 本地挂载的存储根（FlowMap `<workspace>/.nebflow/`、TaskBoard、worktree）
-      // 会写进 origin 设备的本盘路径——本机落笔即「以为在 D 的 workspace、实际在
-      // host 造出第二份」的错误形态。远端项目的执行面整体在 origin 设备（项目
-      // 派生路由）；host 只持 project.json 指针（状态权威单点）。拒绝 = 显式
-      // fail-fast（mountAll 的 #46 fail-soft 会按「单项目 mount 失败」WARN 跳过，
-      // 启动不被拖垮；面板列表不受影响——GET /projects 读 ProjectStore.list）。
-      // 字面 `self` / 缺省（None）= 本机项目，照常挂载（存量零变化）。
-      case None if project.origin.exists(o => !ProjectOrigin.isSelfLiteral(o.device)) =>
-        IO.raiseError(
-          new RuntimeException(
-            s"Project '${project.name}' is bound to a remote device " +
-              s"(origin.device='${project.origin.get.device}', path='${project.origin.get.path}') — " +
-              "remote-origin projects are not mounted on the orchestration host (execution happens " +
-              "on the origin device; delegate dispatch routes there). Project definition stays on this host as a pointer."
+      // 跨设备项目挂载批（2026-10-25 · 作者令「把 stand 项目挂载到设备 KAI」）：
+      // 设备项目（origin.device 绑对端）**在本引擎挂载**——大脑在本机，账本一本。
+      // 挂载序见 [[DeviceProjectMount]]：①通道在场 ②名册解析（离线显式失败列
+      // 在线设备）③设备通道 stat（存在且是目录才准挂——铁律，绝不静默造骨架）
+      // ④骨架落设备真实路径 ⑤AGENTS.md 镜像回本机。随后全部引擎存储锚
+      // [[ProjectStore.brainWorkspace]]（本机大脑根），NodeEngine 携带会话默认
+      // 设备上下文（sessionDevice/sessionDeviceWorkspace——节点会话的 Bash/文件
+      // 六件默认经设备通道在设备 workspace 执行，阶段一语义）。
+      // 旧语义（v2.1 阶段 1 的「remote-origin 一律拒挂」）由本分支取代；DeviceDelegate
+      // 的「整会话派设备」仍服务**未挂载**的 remote-origin 定义（hook 保留）。
+      // 失败 = IO.raiseError（结构化文案）：运行时创建腿显式报错；startupMount 的
+      // #46 fail-soft WARN 跳过（设备离线不拖垮启动，重启/重挂恢复）。
+      case None if ProjectStore.deviceOrigin(project).isDefined =>
+        DeviceProjectMount.prepare(project, resources).flatMap { prepared =>
+          mountAtWorkspace(
+            project,
+            prepared.brainWorkspace,
+            system,
+            resources,
+            wsSend,
+            rootSessionId,
+            ttlDisplayMs,
+            ttlCheckIntervalSec,
+            skipStaleReap,
+            dispatcherIdleWindowMs,
+            dispatcherLifecycleAnchorTaskTerminal,
+            dispatcherMaxConcurrentSessions,
+            sessionDevice = Some(prepared.peer.deviceName),
+            sessionDeviceWorkspace = ProjectStore.deviceOrigin(project).map(_.path)
           )
-        )
-      case None =>
-        for
-          store <- FlowMapStore.open(project.name, project.workspace)
-          // TaskBoard 挂载（批 2 §1f）：与 FlowMapStore.open 同位。open 本体纯
-          // 构造无失败路径，防御式兜底保持 mount 语义一致——板建不起来仅 WARN
-          // 置 None（fail-soft），不拖垮项目挂载。
-          board <- IO(TaskBoardStore.open(project.name, project.workspace))
-            .map(Some.apply: TaskBoardStore => Option[TaskBoardStore])
-            .handleErrorWith(e =>
-              logger
-                .warn(s"Project '${project.name}' task board mount failed (board disabled): ${e.getMessage}")
-                .as(None)
-            )
-          // M4（b64 批 2026-09-13）：`notify.quietMs` 校验单点 —— 缺键 = 缺省 5s；
-          // 超上界（60s）/非正 ⇒ **可行动报错**（键名 + 允许区间 + 当前值）并
-          // **fail-fast 本项目挂载**，禁静默截断到上界（作者裁定 M4）。
-          quietMs <- IO.fromEither(
-            NotifyPolicy
-              .parseQuietMs(project.notifyConfig.flatMap(_.quietMs))
-              .leftMap(msg => new RuntimeException(s"Project '${project.name}' config rejected: $msg"))
-          )
-          engine <- IO.pure(
-            new NodeEngine(
-              store,
-              system,
-              resources,
-              wsSend.getOrElse((_: Json) => IO.unit),
-              project.workspace,
-              rootSessionId,
-              project.name,
-              // blocked 反馈档位（§7.1）：project.json 可选字段 feedbackMode，缺省 auto
-              project.feedbackMode.getOrElse(FeedbackRouter.ModeAuto),
-              emitNodeEvent(project.name, wsSend),
-              // TaskBoard 批 2（§3a）：节点 buildInput 头部板块数据源——板 store
-              // + 项目目标行（ProjectDef.description，None 则目标行省略）。
-              board = board,
-              projectGoal = project.description,
-              // M4（b64 批）：`notify.quietMs` 生效值（上一步已校验；缺省 5s）。
-              notifyQuietMs = Some(quietMs)
-            )
-          )
-          actorRef <- system.spawn(
-            ProjectActor(
-              ProjectActor.ProjectConfig(
-                project = project,
-                engine = engine,
-                system = system,
-                resources = resources,
-                rootSessionId = rootSessionId,
-                ttlDisplayMs = ttlDisplayMs,
-                ttlCheckIntervalSec = ttlCheckIntervalSec,
-                board = board,
-                dispatcherIdleWindowMs = dispatcherIdleWindowMs,
-                dispatcherLifecycleAnchorTaskTerminal = dispatcherLifecycleAnchorTaskTerminal,
-                dispatcherMaxConcurrentSessions = dispatcherMaxConcurrentSessions
-              )
-            ),
-            s"project-${project.name.take(20)}"
-          )
-          // 僵尸 running 对账（trigger-chain-fix §6.4）：重启窗口持久化 status=
-          // running 且无在飞 fiber（本进程内存 running 表空 = 会话已死）的节点 →
-          // reapStaleRunning 收殓（cancelled + reaped 审计；2026-09-07 裁定：无 TTL
-          // 强制清，死亡现场保留主图待上层裁决——同族第三变体「重启后僵尸 running
-          // 只能人工 NodeEdit abandon 收殓」根除）；有在飞 fiber 的活会话节点 Left
-          // 拒绝（误杀防护既有纪律，NodeEngine 硬约束）。
-          // crash-recovery 批：skipStaleReap=true（启动挂载且恢复开启）时跳过——
-          // 崩溃残留 running 留给紧随其后的 ProjectCrashRecovery sweep 认领（快段
-          // 先于 projectTtlScanner 结构性保证，见 GatewayMain boot 链）；sweep 未
-          // 认领的残余仍由 watchdog（TtlTick settleStaleRunningNodes→failed）兜底。
-          _ <-
-            if skipStaleReap then IO.unit
-            else
-              store.snapshot.flatMap { s =>
-                s.nodes.values
-                  .filter(_.status == NodeLifecycle.Running)
-                  .toList
-                  .traverse_(n => engine.reapStaleRunning(n.id).void)
-              }
-          // V8 (2026-09-03): 挂载即扫——项目在运行时挂载（Project 路径，原 ProjectCreate）且根
-          // 会话已活跃时，滞留的 out=Nebula 结果立即补投，不等首个 30s tick。
-          // 启动自动挂载路径根 ref 通常缺失 → 静默跳过，由 TtlTick 周期兜底。
-          _ <- engine.redeliverUnconsumedRootResults().handleErrorWith(_ => IO.unit)
-          rt = ProjectRuntime(project, store, engine, system, resources, Some(actorRef), board)
-          _ <- register(rt)
-        yield rt
+        }
+      case None => mountAtWorkspace(project, project.workspace, system, resources, wsSend, rootSessionId, ttlDisplayMs, ttlCheckIntervalSec, skipStaleReap, dispatcherIdleWindowMs, dispatcherLifecycleAnchorTaskTerminal, dispatcherMaxConcurrentSessions)
     }
+
+  /**
+   * 挂载主体（跨设备批 2026-10-25 自 mount 抽出——本机项目与设备项目共用）：
+   * `workspace` = 全部引擎本机存储的锚点。本机项目传 `project.workspace`（现状
+   * 逐字节）；设备项目传 [[ProjectStore.brainWorkspace]]（本机大脑根）——设备
+   * 路径**绝不**作为本机存储根（G.12：挂载面造假骨架的事故落点）。
+   * `sessionDevice`/`sessionDeviceWorkspace` = 会话默认设备上下文（设备项目由
+   * mount 传入）——NodeEngine 透传给节点/loop 会话，Bash/文件六件默认经设备
+   * 通道在设备 workspace 执行（阶段一挂载语义）；本机项目 None（现状零变化）。
+   */
+  private def mountAtWorkspace(
+    project: ProjectDef,
+    workspace: String,
+    system: ActorSystem,
+    resources: AgentRuntimePort,
+    wsSend: Option[Json => IO[Unit]],
+    rootSessionId: String,
+    ttlDisplayMs: Long,
+    ttlCheckIntervalSec: Int,
+    skipStaleReap: Boolean,
+    dispatcherIdleWindowMs: Option[Long],
+    dispatcherLifecycleAnchorTaskTerminal: Option[Boolean],
+    dispatcherMaxConcurrentSessions: Option[Int],
+    sessionDevice: Option[String] = None,
+    sessionDeviceWorkspace: Option[String] = None
+  ): IO[ProjectRuntime] =
+    for
+      store <- FlowMapStore.open(project.name, workspace)
+      // TaskBoard 挂载（批 2 §1f）：与 FlowMapStore.open 同位。open 本体纯
+      // 构造无失败路径，防御式兜底保持 mount 语义一致——板建不起来仅 WARN
+      // 置 None（fail-soft），不拖垮项目挂载。
+      board <- IO(TaskBoardStore.open(project.name, workspace))
+        .map(Some.apply: TaskBoardStore => Option[TaskBoardStore])
+        .handleErrorWith(e =>
+          logger
+            .warn(s"Project '${project.name}' task board mount failed (board disabled): ${e.getMessage}")
+            .as(None)
+        )
+      // M4（b64 批 2026-09-13）：`notify.quietMs` 校验单点 —— 缺键 = 缺省 5s；
+      // 超上界（60s）/非正 ⇒ **可行动报错**（键名 + 允许区间 + 当前值）并
+      // **fail-fast 本项目挂载**，禁静默截断到上界（作者裁定 M4）。
+      quietMs <- IO.fromEither(
+        NotifyPolicy
+          .parseQuietMs(project.notifyConfig.flatMap(_.quietMs))
+          .leftMap(msg => new RuntimeException(s"Project '${project.name}' config rejected: $msg"))
+      )
+      engine <- IO.pure(
+        new NodeEngine(
+          store,
+          system,
+          resources,
+          wsSend.getOrElse((_: Json) => IO.unit),
+          workspace,
+          rootSessionId,
+          project.name,
+          // blocked 反馈档位（§7.1）：project.json 可选字段 feedbackMode，缺省 auto
+          project.feedbackMode.getOrElse(FeedbackRouter.ModeAuto),
+          emitNodeEvent(project.name, wsSend),
+          // TaskBoard 批 2（§3a）：节点 buildInput 头部板块数据源——板 store
+          // + 项目目标行（ProjectDef.description，None 则目标行省略）。
+          board = board,
+          projectGoal = project.description,
+          // M4（b64 批）：`notify.quietMs` 生效值（上一步已校验；缺省 5s）。
+          notifyQuietMs = Some(quietMs),
+          // 跨设备批：会话默认设备上下文（设备项目 = origin 设备 + 设备盘
+          // workspace；本机项目 None 现状零变化）。
+          sessionDevice = sessionDevice,
+          sessionDeviceWorkspace = sessionDeviceWorkspace
+        )
+      )
+      actorRef <- system.spawn(
+        ProjectActor(
+          ProjectActor.ProjectConfig(
+            project = project,
+            engine = engine,
+            system = system,
+            resources = resources,
+            rootSessionId = rootSessionId,
+            ttlDisplayMs = ttlDisplayMs,
+            ttlCheckIntervalSec = ttlCheckIntervalSec,
+            board = board,
+            dispatcherIdleWindowMs = dispatcherIdleWindowMs,
+            dispatcherLifecycleAnchorTaskTerminal = dispatcherLifecycleAnchorTaskTerminal,
+            dispatcherMaxConcurrentSessions = dispatcherMaxConcurrentSessions
+          )
+        ),
+        s"project-${project.name.take(20)}"
+      )
+      // 僵尸 running 对账（trigger-chain-fix §6.4）：重启窗口持久化 status=
+      // running 且无在飞 fiber（本进程内存 running 表空 = 会话已死）的节点 →
+      // reapStaleRunning 收殓（cancelled + reaped 审计；2026-09-07 裁定：无 TTL
+      // 强制清，死亡现场保留主图待上层裁决——同族第三变体「重启后僵尸 running
+      // 只能人工 NodeEdit abandon 收殓」根除）；有在飞 fiber 的活会话节点 Left
+      // 拒绝（误杀防护既有纪律，NodeEngine 硬约束）。
+      // crash-recovery 批：skipStaleReap=true（启动挂载且恢复开启）时跳过——
+      // 崩溃残留 running 留给紧随其后的 ProjectCrashRecovery sweep 认领（快段
+      // 先于 projectTtlScanner 结构性保证，见 GatewayMain boot 链）；sweep 未
+      // 认领的残余仍由 watchdog（TtlTick settleStaleRunningNodes→failed）兜底。
+      _ <-
+        if skipStaleReap then IO.unit
+        else
+          store.snapshot.flatMap { s =>
+            s.nodes.values
+              .filter(_.status == NodeLifecycle.Running)
+              .toList
+              .traverse_(n => engine.reapStaleRunning(n.id).void)
+          }
+      // V8 (2026-09-03): 挂载即扫——项目在运行时挂载（Project 路径，原 ProjectCreate）且根
+      // 会话已活跃时，滞留的 out=Nebula 结果立即补投，不等首个 30s tick。
+      // 启动自动挂载路径根 ref 通常缺失 → 静默跳过，由 TtlTick 周期兜底。
+      _ <- engine.redeliverUnconsumedRootResults().handleErrorWith(_ => IO.unit)
+      rt = ProjectRuntime(project, store, engine, system, resources, Some(actorRef), board)
+      _ <- register(rt)
+    yield rt
 
   private def emitNodeEvent(
     project: String,
@@ -267,6 +311,15 @@ end ProjectRuntimeRegistry
 
 object ProjectActor:
   private val logger = NebflowLogger.forName("nebflow.project.actor")
+
+  /**
+   * 引擎本机存储座位（跨设备批 2026-10-25）：ProjectActor 内一切「把 workspace
+   * 当本机盘路径读写」的面（事件日志 / DocIndex / WakeSensor / dispatcher 审计）
+   * 统一经此取座位——本机项目 = workspace 本身（现状逐字节），设备项目 = 本机
+   * brain 根（[[ProjectStore.brainWorkspace]]；设备路径不是本机盘路径，写进去
+   * 即 G.12 假骨架事故的引擎面）。展示面（面板行）不用本函数。
+   */
+  private def engineWorkspace(cfg: ProjectConfig): String = ProjectStore.brainWorkspace(cfg.project)
 
   // ============================================================
   // 项目级事件帧（tabrealtime 批 2026-09-17 · 作者裁定 (b) 方案 B / (e) 两身份事件）
@@ -736,7 +789,7 @@ object ProjectActor:
                   val audits = swept.traverse_ { c =>
                     FlowMapEventLog
                       .append(
-                        cfg.project.workspace,
+                        engineWorkspace(cfg),
                         cfg.project.name,
                         c.nodeId,
                         FlowMapEventLog.ChainArchivedType,
@@ -769,7 +822,7 @@ object ProjectActor:
                           else
                             FlowMapEventLog
                               .append(
-                                cfg.project.workspace,
+                                engineWorkspace(cfg),
                                 cfg.project.name,
                                 c.nodeId,
                                 FlowMapEventLog.ChainArchiveHeldType,
@@ -792,11 +845,11 @@ object ProjectActor:
                     if swept.isEmpty then IO.unit
                     else
                       DocIndexConsumer
-                        .applyChainEvents(cfg.project.workspace, DocIndexConsumer.indexRootsFor(cfg.project.workspace))
+                        .applyChainEvents(engineWorkspace(cfg), DocIndexConsumer.indexRootsFor(engineWorkspace(cfg)))
                         .handleErrorWith(e => logger.warn(s"doc-index flip failed: ${e.getMessage}"))
                         .void
                   val reconcile = DocIndexConsumer
-                    .tick(cfg.project.workspace)
+                    .tick(engineWorkspace(cfg))
                     .handleErrorWith(e => logger.warn(s"doc-index reconcile tick failed: ${e.getMessage}").as(None))
                     .void
                   // ④ 链级摘要**降级登记腿**（R6/R7/R8/R11/R15 + M2，b64 批 2026-09-13；
@@ -821,7 +874,7 @@ object ProjectActor:
                     ledgerChanges.traverse_ { ch =>
                       FlowMapEventLog
                         .append(
-                          cfg.project.workspace,
+                          engineWorkspace(cfg),
                           cfg.project.name,
                           ch.nodeId,
                           FlowMapEventLog.ChainMembershipChangedType,
@@ -1697,7 +1750,7 @@ object ProjectActor:
       ) *>
         FlowMapEventLog
           .append(
-            cfg.project.workspace,
+            engineWorkspace(cfg),
             cfg.project.name,
             cfg.project.name,
             FlowMapEventLog.DispatcherConcurrencyRefusedType,
@@ -1924,7 +1977,7 @@ object ProjectActor:
         ) *>
       FlowMapEventLog
         .append(
-          cfg.project.workspace,
+          engineWorkspace(cfg),
           cfg.project.name,
           a.sessionId,
           FlowMapEventLog.DispatcherTaskTerminalType,
@@ -1962,7 +2015,7 @@ object ProjectActor:
         ) *>
       FlowMapEventLog
         .append(
-          cfg.project.workspace,
+          engineWorkspace(cfg),
           cfg.project.name,
           a.sessionId,
           FlowMapEventLog.DispatcherReviveEvictType,
@@ -1993,7 +2046,7 @@ object ProjectActor:
         ) *>
       FlowMapEventLog
         .append(
-          cfg.project.workspace,
+          engineWorkspace(cfg),
           cfg.project.name,
           a.sessionId,
           FlowMapEventLog.DispatcherIdleExpiredType,
@@ -2025,7 +2078,7 @@ object ProjectActor:
       val firstLines = pending.map(_.linesIterator.nextOption().getOrElse("").take(160))
       (FlowMapEventLog
         .append(
-          cfg.project.workspace,
+          engineWorkspace(cfg),
           cfg.project.name,
           sessionId,
           FlowMapEventLog.DispatcherQueueDroppedType,
@@ -2100,7 +2153,11 @@ object ProjectActor:
                 taskId,
                 taskTitle
               ),
-              projectRoot = Some(project.workspace),
+              // 座椅 = 引擎侧大脑根（跨设备批 2026-10-25）：本机项目 = workspace
+              // 本身（现状逐字节）；设备项目 = 本机 brain 根（设备路径不是本机
+              // 盘路径——「分发器会话 cd 进设备路径」即 G.12 假骨架事故的会话面，
+              // 禁）。设备上下文随 SpawnParams 透传：六件工具默认路由设备。
+              projectRoot = Some(ProjectStore.brainWorkspace(project)),
               safetyMode = "confirm-edits",
               rootSessionId = rootSessionId,
               isFlowNode = true,
@@ -2126,7 +2183,11 @@ object ProjectActor:
               // fingerprint is injected at spawn → SessionContext.taskId →
               // ToolContext.taskId, feeding `TaskInfo`'s zero-parameter attribution
               // resolution (a dispatcher resolves to "the task it was created to serve").
-              taskId = taskId
+              taskId = taskId,
+              // 跨设备批（2026-10-25）：设备项目的分发器会话默认设备上下文——
+              // origin 设备 + 设备盘 workspace（与节点/loop 会话同口径）。
+              sessionDevice = ProjectStore.deviceOrigin(project).map(o => o.device),
+              sessionDeviceWorkspace = ProjectStore.deviceOrigin(project).map(_.path)
             )
           )
           // 单次会话观察桥（#28 可观测收尾）：分发器 turn 完成 → 清 registry +

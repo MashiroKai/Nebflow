@@ -127,7 +127,20 @@ object NodeRunner:
      * restart 重建传 false（旧 childSpawnFn 的 AgentActor 不带
      * readTracker/fileHistory，保持行为零变化）。
      */
-    withTracking: Boolean = true
+    withTracking: Boolean = true,
+    /**
+     * 会话默认设备（跨设备项目挂载批 2026-10-25）：设备项目的节点/loop/分发器
+     * 会话注入 origin 设备——Bash/Read/Write/Edit/Glob/Grep 未显式带 `device`
+     * 时默认路由到该设备（消费点 = AgentSessionExecution.executeToolInner；
+     * 显式 `device="local"` 恒本机）。None = 本机项目/非项目轨（现状零变化）。
+     */
+    sessionDevice: Option[String] = None,
+    /**
+     * 会话默认设备的 workspace（设备本盘绝对路径）：Bash 设备腿下发时注入为
+     * 对端会话初始 cwd（对端接收面 params.cwd → ToolContext.sessionCwd）。
+     * None = 无注入（现状零变化）。
+     */
+    sessionDeviceWorkspace: Option[String] = None
   )
 
   /**

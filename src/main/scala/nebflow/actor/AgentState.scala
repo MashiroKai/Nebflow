@@ -387,6 +387,23 @@ case class SessionContext(
    * 详见 design §4.4 S1 / §7 交下游纪律 1。
    */
   projectSession: Boolean = false,
+  /**
+   * 会话默认设备（跨设备项目挂载批 2026-10-25）：设备项目（origin.device 绑对端）
+   * 的节点 / loop / 分发器会话注入 origin 设备——Bash/Read/Write/Edit/Glob/Grep
+   * 六件在调用未显式带 `device` 时**默认路由到该设备**（消费点 =
+   * AgentSessionExecution.executeToolInner；显式 `device="local"` 恒本机）。
+   * 经 AgentActor → SessionContext → ToolContext 全链透传（引擎侧身份，不信客户端
+   * 参数）。None = 本机项目/非项目轨（现状零变化）。
+   */
+  sessionDevice: Option[String] = None,
+  /**
+   * 会话默认设备的 workspace（设备本盘绝对路径，如 `C:\Users\Kai\stand`）：Bash
+   * 经设备通道下发时注入为对端会话初始 cwd——「派发任务的命令 cwd 指向设备
+   * workspace」（对端接收面 params.cwd → ToolContext.sessionCwd → ShellSession
+   * 初 cwd）。同时是节点首条消息 `[device workspace]` 行与 AGENTS.md 镜像语义的
+   * 来源。None = 本机项目（现状零变化）。
+   */
+  sessionDeviceWorkspace: Option[String] = None,
   /** Last experience extraction timestamp. */
   lastExperienceAt: Option[Long] = None,
   /**
@@ -873,6 +890,10 @@ object AgentState:
      * 默认 None = 无覆盖 ⇒ 走现值函数（除 root spawn 外**所有**构造点零改动）。
      */
     compactThresholdRatio: Option[Double] = None,
+    /** 会话默认设备（跨设备批 2026-10-25，详见 SessionContext.sessionDevice）。 */
+    sessionDevice: Option[String] = None,
+    /** 会话默认设备 workspace（设备盘绝对路径，详见 SessionContext.sessionDeviceWorkspace）。 */
+    sessionDeviceWorkspace: Option[String] = None,
     loopTurnKey: Long = 0L,
     /** 乒乓压缩旁车状态（spec §H1-1）：默认空 = 全部既有构造点零改动。 */
     pingpong: PingpongState = PingpongState()
@@ -913,7 +934,9 @@ object AgentState:
         sandboxRoot = sandboxRoot,
         sessionCwd = sessionCwd,
         projectSession = projectSession,
-        compactThresholdRatio = compactThresholdRatio
+        compactThresholdRatio = compactThresholdRatio,
+        sessionDevice = sessionDevice,
+        sessionDeviceWorkspace = sessionDeviceWorkspace
       ),
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),

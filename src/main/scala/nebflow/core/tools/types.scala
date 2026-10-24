@@ -147,7 +147,22 @@ case class ToolContext(
    * None = no attribution (pre-existing nodes / the Nebula root / team / dual-track flow /
    * direct REST calls).
    */
-  taskId: Option[String] = None
+  taskId: Option[String] = None,
+  /**
+   * 会话默认设备（跨设备项目挂载批 2026-10-25）：设备项目的节点/loop/分发器/
+   * delegate 会话注入 origin 设备——Bash/Read/Write/Edit/Glob/Grep（remoteable
+   * 六件）在调用**未显式带 `device`** 时默认路由到该设备（消费单点 =
+   * AgentSessionExecution.executeToolInner；显式 `device="local"` 恒本机）。
+   * 经 SessionContext → AgentCore 透传（引擎侧身份，不信客户端参数）。
+   * None = 本机项目/非项目轨（现状零变化）。
+   */
+  sessionDevice: Option[String] = None,
+  /**
+   * 会话默认设备的 workspace（设备本盘绝对路径）：Bash 经设备通道下发时注入为
+   * 对端会话初始 cwd（「派发任务的命令 cwd 指向设备 workspace」——下发面
+   * params.cwd → 对端接收面 ToolContext.sessionCwd）。None = 无注入。
+   */
+  sessionDeviceWorkspace: Option[String] = None
 ):
   /**
    * 「Nebula 本体根会话」身份判据的**运行期求值面**——**纯委托**给单点 [[nebflow.agent.AgentCore.isRootAgent]]

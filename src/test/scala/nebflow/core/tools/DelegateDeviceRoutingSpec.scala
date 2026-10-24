@@ -37,8 +37,12 @@ class DelegateDeviceRoutingSpec extends CatsEffectSuite:
   test("project omitted = Local default general workspace (existing semantics)") {
     val r = DelegateTool.resolveWorkspace(None, ctx).unsafeRunSync()
     r match
-      case Right(WorkspaceResolution.Local(ws, p)) =>
+      // 跨设备挂载批：Local 座位增 sessionDevice/sessionDeviceWorkspace 两字段
+      // （本机项目恒 None——本断言顺带钉住「一般 workspace 无设备上下文」）。
+      case Right(WorkspaceResolution.Local(ws, p, dev, devWs)) =>
         assertEquals(p, None)
+        assertEquals(dev, None)
+        assertEquals(devWs, None)
         assert(ws.endsWith("/general"))
       case other => fail(s"expected Local resolution, got: $other")
     assertEquals(os.exists(PathUtil.dataRoot / "general"), true)

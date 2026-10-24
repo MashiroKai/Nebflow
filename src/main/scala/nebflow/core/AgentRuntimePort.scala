@@ -146,7 +146,9 @@ trait AgentRuntimePort extends AgentRegistryPort:
     sandboxRoot: Option[String] = None,
     sessionCwd: Option[String] = None,
     projectSession: Boolean = false,
-    compactThresholdRatio: Option[Double] = None
+    compactThresholdRatio: Option[Double] = None,
+    sessionDevice: Option[String] = None,
+    sessionDeviceWorkspace: Option[String] = None
   ): Behavior[AgentCommand]
   end agentActorBehavior
 end AgentRuntimePort

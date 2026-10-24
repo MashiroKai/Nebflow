@@ -1273,6 +1273,11 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         // NodeEngine spawn 点置座椅路径（worktree 节点），其余会话 None。消费单点
         // = BashTool.initialDir（壳层 fail-closed 见 ShellSession.resolveCwdOrFail）。
         sessionCwd = state.session.sessionCwd,
+        // 跨设备批（2026-10-25 透传链第三段）：设备项目的会话默认设备上下文——
+        // 消费单点 = executeToolInner 的 remoteable 六件默认路由 + Bash cwd 注入。
+        // 本机项目/非项目轨 None（现状零变化）。
+        sessionDevice = state.session.sessionDevice,
+        sessionDeviceWorkspace = state.session.sessionDeviceWorkspace,
         sandbox = sandboxPolicy
       )
       freshResults <- filteredCalls.parTraverse { call =>
@@ -1952,13 +1957,33 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 // get the `device` parameter … Other tools (Card, AskUser, Delegate, etc.)
                 // always run locally.」）。此前**不分工具名**：任何工具带 `device` 且
                 // NebLink 在场 ⇒ 整条调用被投到对端（对端 ctx 无 actorSystem ⇒ 必错路径）。
-                val deviceOpt = finalInput("device").flatMap(_.asString).filter(_.nonEmpty).filter(_ != "local")
+                //
+                // 跨设备批（2026-10-25）第三段——**会话默认设备**：设备项目的会话
+                // （SessionContext.sessionDevice，挂载时注入）其 remoteable 六件在调用
+                // 未显式带 `device` 时**默认路由到该设备**（「派发任务的命令 cwd 指向
+                // 设备 workspace 经设备通道执行」的机制面）。判据次序：
+                //   显式 device（模型带参）> 会话默认（引擎身份）> 本机；
+                //   显式 device="local" ⇒ 恒本机（压过会话默认——逃生门）；
+                //   非 remoteable 工具 ⇒ 恒本机（S3 收窄不动；stray 语义下方原样保留）。
+                val explicitDeviceRaw = finalInput("device").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+                val explicitLocal = explicitDeviceRaw.exists(_.equalsIgnoreCase("local"))
+                val deviceOpt = explicitDeviceRaw.filter(_ != "local")
                 val remoteable = RemoteExecutor.remoteableTools.contains(call.name)
-                val remoteDeviceOpt = deviceOpt.filter(_ => remoteable)
+                val sessionDefaultDevice =
+                  if remoteable && !explicitLocal then ctx.sessionDevice.map(_.trim).filter(_.nonEmpty) else None
+                val remoteDeviceOpt = deviceOpt.filter(_ => remoteable).orElse(sessionDefaultDevice)
                 val strayDeviceOpt = deviceOpt.filterNot(_ => remoteable)
                 val execIO: IO[ToolExecResult] = remoteDeviceOpt match
                   case Some(deviceName) if RemoteExecutor.current.isDefined =>
-                    val remoteInput = finalInput.remove("device")
+                    var remoteInput = finalInput.remove("device")
+                    // 「命令 cwd 指向设备 workspace」（跨设备批 2026-10-25）：会话默认
+                    // 设备上下文在场时，Bash 下发注入 `cwd` = 设备盘 workspace——对端
+                    // 接收面（remote-exec/relay 的 params.cwd → ToolContext.sessionCwd）
+                    // 使对端 shell 初 cwd 即设备工作区。模型显式给了 cwd 则不覆盖。
+                    if call.name == "Bash" && !remoteInput.contains("cwd") then
+                      ctx.sessionDeviceWorkspace.map(_.trim).filter(_.nonEmpty).foreach { ws =>
+                        remoteInput = remoteInput.add("cwd", ws.asJson)
+                      }
                     logger.info(s"$logCtx Remote tool: [${deviceName}] ${tool.summarize(remoteInput)}")
                     RemoteExecutor.current.get.execute(deviceName, call.name, remoteInput, Some(ctx)).flatMap {
                       case Right(result) =>

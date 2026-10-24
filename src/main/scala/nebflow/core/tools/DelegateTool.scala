@@ -200,10 +200,23 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
   private[tools] sealed trait WorkspaceResolution
 
   private[tools] object WorkspaceResolution:
-    /** 本机座位（现状形态）：workspace + 挂载项目名（缺省派发 = None）。 */
-    final case class Local(workspace: String, project: Option[String]) extends WorkspaceResolution
+    /**
+     * 本机座位：workspace（**引擎侧本机座位**——设备项目 = 本机 brain 根）+ 挂载
+     * 项目名（缺省派发 = None）+ 会话默认设备上下文（跨设备批 2026-10-25：设备
+     * 项目 = (设备, 设备盘 workspace)，六件工具默认路由设备；本机项目 None）。
+     */
+    final case class Local(
+      workspace: String,
+      project: Option[String],
+      sessionDevice: Option[String] = None,
+      sessionDeviceWorkspace: Option[String] = None
+    ) extends WorkspaceResolution
 
-    /** 远端路由：origin 设备 + 项目名 + origin 盘 workspace（对端本地直达零取件）。 */
+    /**
+     * 远端路由：origin 设备 + 项目名 + origin 盘 workspace（对端本地直达零取件）。
+     * 跨设备批后服务面收窄 = **未挂载**的 remote-origin 定义（DeviceDelegate 整会话
+     * 派设备——hook 保留）；已挂载设备项目走 Local（挂载语义，大脑在引擎侧）。
+     */
     final case class RemoteRoute(peer: PeerInfo, deviceName: String, project: String, workspace: String)
         extends WorkspaceResolution
   end WorkspaceResolution
@@ -223,14 +236,35 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
         def localOf(rt: ProjectRuntime): IO[Either[ToolError, WorkspaceResolution]] =
           val ws = os.Path(rt.project.workspace)
           IO.blocking(os.makeDir.all(ws)).map(_ => Right(WorkspaceResolution.Local(ws.toString, Some(name))))
+        /** 设备显示名解析（deviceId → 名册现查；名册不可用 = 原样 id，防御一致）。 */
+        def deviceNameOf(deviceId: String): IO[String] =
+          ctx.sharedResources.flatMap(_.neblinkService) match
+            case None => IO.pure(deviceId)
+            case Some(neblink) =>
+              neblink.peers.map(_.find(_.deviceId == deviceId).map(_.deviceName).getOrElse(deviceId))
         ProjectRuntimeRegistry.get(name).flatMap {
           case Some(rt) =>
-            // 已挂载项目：origin 缺省/self = 现状；绑对端（手工改写 project.json 的
-            // 形态）= 同样路由（防御性一致——挂载面对该形态本就拒绝，此处只读）。
+            // 已挂载项目：
+            //   - origin 缺省/self = 现状（本机座位 + makeDir）。
+            //   - 绑对端（跨设备批 2026-10-25 语义收口）：**挂载语义** = 引擎侧大脑
+            //     ——座位 = 本机 brain 根（[[ProjectStore.brainWorkspace]]，🔴 零
+            //     makeDir：设备路径不是本机盘路径），会话默认设备上下文随座位（六件
+            //     工具默认路由设备）。不再整会话派设备（那是未挂载 remote-origin 的
+            //     DeviceDelegate 腿；挂载面已接管设备项目）。
             rt.project.origin match
               case None => localOf(rt)
               case Some(o) if ProjectOrigin.isSelfLiteral(o.device) => localOf(rt)
-              case Some(o) => routeRemote(o.device, name, o.path, ctx)
+              case Some(o) =>
+                deviceNameOf(o.device).map { devName =>
+                  Right(
+                    WorkspaceResolution.Local(
+                      nebflow.core.project.ProjectStore.brainWorkspace(rt.project),
+                      Some(name),
+                      sessionDevice = Some(devName),
+                      sessionDeviceWorkspace = Some(o.path)
+                    )
+                  )
+                }
             end match
           case None =>
             // 运行时注册表 miss：查注册表定义（remote-origin 项目不挂载的权威落点）。
@@ -378,7 +412,7 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
   ): IO[Either[ToolError, String]] =
     resolveWorkspace(project, ctx).flatMap {
       case Left(err) => IO.pure(Left(err))
-      case Right(WorkspaceResolution.Local(workspace, resolvedProject)) =>
+      case Right(WorkspaceResolution.Local(workspace, resolvedProject, sessionDevice, sessionDeviceWorkspace)) =>
         (ctx.actorSystem, ctx.sharedResources) match
           case (Some(system), Some(resources)) =>
             for
@@ -401,7 +435,11 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
                 rootSessionId = rootSid,
                 // 新鲜派发腿跑判定机（R6 worktree + S13 分支纪律）；Mail
                 // continue 复活腿（不经此处）保持旧形态。
-                judgeWorkspace = true
+                judgeWorkspace = true,
+                // 跨设备批（2026-10-25）：设备项目的会话默认设备上下文透传——
+                // 六件工具默认路由设备 + brief 设备 workspace 行。
+                sessionDevice = sessionDevice,
+                sessionDeviceWorkspace = sessionDeviceWorkspace
               )
             yield result
           case _ =>
@@ -524,7 +562,7 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
             )
           )
         )
-      case Right(WorkspaceResolution.Local(workspace, resolvedProject)) =>
+      case Right(WorkspaceResolution.Local(workspace, resolvedProject, sessionDevice, sessionDeviceWorkspace)) =>
         ctx.sharedResources match
           case Some(resources) =>
             for
@@ -568,7 +606,10 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
     parentSessionId: Option[String],
     safetyMode: String,
     rootSessionId: String,
-    judgeWorkspace: Boolean = false
+    judgeWorkspace: Boolean = false,
+    /** 跨设备批：会话默认设备上下文（设备项目 delegate）。None = 本机（零变化）。 */
+    sessionDevice: Option[String] = None,
+    sessionDeviceWorkspace: Option[String] = None
   ): IO[Either[ToolError, String]] =
     // 提示词来源拆分批（2026-10-08）：delegate spawn 走 **delegate 面解析路径**
     // `delegateEntry`（= delegate_report 纪律的系统提示词；节点面恒走
@@ -591,7 +632,9 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
           parentSessionId = parentSessionId,
           safetyMode = safetyMode,
           rootSessionId = rootSessionId,
-          judgeWorkspace = judgeWorkspace
+          judgeWorkspace = judgeWorkspace,
+          sessionDevice = sessionDevice,
+          sessionDeviceWorkspace = sessionDeviceWorkspace
         ).map(_.map { case (subagentId, ack) => ack + DelegateRegistry.continuationLine(subagentId) })
     }
 
@@ -630,7 +673,10 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
      * 本地/受控 spawn 腿 = None（缺省，零变化）。唯一非缺省调用方 =
      * [[nebflow.core.delegate.DeviceDelegate.spawnLocalDelegate]]。
      */
-    delegatedBy: Option[String] = None
+    delegatedBy: Option[String] = None,
+    /** 跨设备批（2026-10-25）：会话默认设备上下文（设备项目 delegate）。None = 本机。 */
+    sessionDevice: Option[String] = None,
+    sessionDeviceWorkspace: Option[String] = None
   ): IO[Either[ToolError, (String, String)]] =
     val childDepth = parentDepth + 1
     val agentName = agentDef.name
@@ -678,7 +724,9 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
               subagentId,
               preparation,
               allocated,
-              delegatedBy
+              delegatedBy,
+              sessionDevice,
+              sessionDeviceWorkspace
             )
         }
     }
@@ -709,7 +757,10 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
     subagentId: String,
     preparation: nebflow.core.project.NodeEngine.PluginPreparation,
     allocated: nebflow.core.project.PluginInjection.AllocatedSet,
-    delegatedBy: Option[String] = None
+    delegatedBy: Option[String] = None,
+    /** 跨设备批（2026-10-25）：会话默认设备上下文（设备项目 delegate）。None = 本机。 */
+    sessionDevice: Option[String] = None,
+    sessionDeviceWorkspace: Option[String] = None
   ): IO[Either[ToolError, (String, String)]] =
     val agentName = agentDef.name
     for
@@ -736,7 +787,11 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
         // 判是腿 = worktree（worktree-judge-fifo 批）。任务产物留在任务的工作目录里。
         projectRoot = Some(effectiveWs),
         safetyMode = safetyMode,
-        rootSessionId = resolvedRoot
+        rootSessionId = resolvedRoot,
+        // 跨设备批（2026-10-25）：设备项目 delegate 的会话默认设备上下文——六件
+        // 工具未显式带 device 默认路由设备（cwd 注入 = 设备盘 workspace）。
+        sessionDevice = sessionDevice,
+        sessionDeviceWorkspace = sessionDeviceWorkspace
       )
       // brief：工作座行 + 判定机的 working-branch 申报行（🔴 均模型可见——
       // §16 待过目，最小成稿；无绑定 = 无行，旧 brief 逐字——无绑定 = 非 git
@@ -746,10 +801,20 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
       // 文本——节点脚注/subagent 步同源；747cd36a 实撞：5h16m sleep 570 心跳
       // 轮询的启动面防线）。装配单点 = [[assembleBrief]]（spec 判红锚）。
       reportLine = BriefReportLine
+      // 设备项目 workspace 行（跨设备批）：真实工作区在设备本盘——行里给设备盘
+      // 路径 + 默认路由语义（本机座位 = brain 根仅是引擎侧锚点，非项目文件）。
+      deviceWorkspaceLine =
+        (sessionDevice, sessionDeviceWorkspace) match
+          case (Some(dev), Some(ws)) =>
+            s"[workspace] $ws (on device $dev — Bash/Read/Write/Edit/Glob/Grep run on that device by " +
+              "default; paths are device-local absolute paths. Pass device=\"local\" explicitly for a " +
+              s"local-engine command. This session's local engine seat is $effectiveWs — it holds only " +
+              "the flow map and ledgers, not the project files)"
+          case _ => s"[workspace] $effectiveWs (file tools need absolute paths; Bash cwd is not guaranteed)"
       // jev-plugins 批 #1226：分配集注入 = prepareNodePlugins 等价路径（注入块
       // 追加在 brief 尾部——NodeStarter 首条消息同款位形；空分配 = 旧 brief 逐字）。
       brief = assembleBrief(
-        workspaceLine = s"[workspace] $effectiveWs (file tools need absolute paths; Bash cwd is not guaranteed)",
+        workspaceLine = deviceWorkspaceLine,
         bindingLine = binding.flatMap(_.briefLine),
         task = task,
         injectedBlock = preparation.injectedBlock

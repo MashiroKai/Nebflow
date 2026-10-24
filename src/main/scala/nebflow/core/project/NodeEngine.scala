@@ -69,6 +69,21 @@ class NodeEngine(
   /** 项目目标行来源（TaskBoard 批 2 §3b：ProjectDef.description；None 整行省略）。 */
   val projectGoal: Option[String] = None,
   /**
+   * 会话默认设备（跨设备项目挂载批 2026-10-25）：设备项目挂载时由 mount 注入
+   * （origin 设备名）——节点/loop 会话的 Bash/Read/Write/Edit/Glob/Grep 六件在
+   * 调用未显式带 `device` 时**默认路由到该设备**（消费点 =
+   * AgentSessionExecution.executeToolInner；显式 `device="local"` 恒本机）。
+   * None = 本机项目（现状零变化）。
+   */
+  val sessionDevice: Option[String] = None,
+  /**
+   * 会话默认设备的 workspace（设备本盘绝对路径，如 `C:\Users\Kai\stand`）：Bash
+   * 经设备通道下发时注入为对端会话初始 cwd（「派发任务的命令 cwd 指向设备
+   * workspace」——对端接收面 params.cwd → ToolContext.sessionCwd）。节点首条消息
+   * 的 `[device workspace]` 行同源本值。None = 本机项目（现状零变化）。
+   */
+  val sessionDeviceWorkspace: Option[String] = None,
+  /**
    * dispatch-notify 触发通道覆盖（取消静默死锁修复批 R1，测试接缝）：Some 时取代
    * 真实触发链（ProjectRuntimeRegistry → ProjectActor.TriggerDispatcher）——spec
    * 用它捕获**通知文本原文**断言「cancelled 专属处置指引」。生产调用点零传参
