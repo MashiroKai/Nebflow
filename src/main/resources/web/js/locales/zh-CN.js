@@ -1931,7 +1931,7 @@ export default {
   'wiki.chipRoot': '根目录',
   'wiki.infoDocs': '{docs} 篇文档 · {links} 条引用 · ',
   'wiki.infoUnresolved': '{n} 条未解析',
-  'wiki.inputHint': '双指滚动 / 滚轮 = 平移 · 捏合或 ⌘/Ctrl+滚轮 = 缩放',
+  'wiki.inputHint': '滚轮/捏合 = 缩放（光标锚点）· 中键拖拽·触控板滚动·左键拖空白 = 平移',
   'wiki.detailEmpty': '在图谱中单击一个节点，这里显示它的详情。',
   'wiki.brokenTitle': '断链清单',
   'wiki.brokenVault': '「{project}」还没有可读的文档库——在工作区建 docs 目录并写入 markdown 即可。',

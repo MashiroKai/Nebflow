@@ -190,7 +190,7 @@ for (const scheme of ['dark', 'light']) {
     const n = p.nodes.find((m) => m.isVault);
     const sx = (n.x - p.W / 2) * p.scale + p.W / 2 + p.vx;
     const sy = (n.y - p.H / 2) * p.scale + p.H / 2 + p.vy;
-    c.dispatchEvent(new WheelEvent('wheel', { deltaX: p.W / 2 - sx, deltaY: p.H / 2 - sy, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true }));
+    c.dispatchEvent(new WheelEvent('wheel', { deltaX: p.W / 2 - sx, deltaY: p.H / 2 - sy, shiftKey: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true })); // CAD 批：shift+wheel = 保底平移
   });
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   const box = await page.locator('.wiki-canvas').boundingBox();

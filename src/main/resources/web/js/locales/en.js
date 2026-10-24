@@ -2003,7 +2003,7 @@ export default {
   'wiki.chipRoot': 'Root',
   'wiki.infoDocs': '{docs} docs · {links} references · ',
   'wiki.infoUnresolved': '{n} unresolved',
-  'wiki.inputHint': 'Scroll / two-finger = pan · pinch or ⌘/Ctrl+scroll = zoom',
+  'wiki.inputHint': 'Scroll/pinch = zoom (cursor-anchored) · middle-drag/trackpad scroll/drag empty = pan',
   'wiki.detailEmpty': 'Click a node in the graph to see its details here.',
   'wiki.brokenTitle': 'Broken references',
   'wiki.brokenVault': 'No readable docs vault for “{project}” yet — create <workspace>/docs and add markdown files.',

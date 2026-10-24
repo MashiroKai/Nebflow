@@ -20,10 +20,11 @@
 //      目录 chip/断链行/搜索 → canvas 过滤聚焦；Esc 逐层退出（选中→过滤）；
 //   §D 控制面内容契约：统计行口径（N docs · M references · K unresolved）；
 //      断链清单 = 面板内固定区块（position:static，非浮层）；详情卡空态；
-//   §E 画布手感（追加批 2026-10-22·作者令：excalidraw/figma 式画布手感）：
-//      滚轮/双指滚动 = 平移（shift+纵滚 = 横移）；捏合（ctrlKey wheel）=
-//      光标锚点阻尼缩放——exp 累积 + 25%/帧追帧，逐帧步进 ≤0.06 不跳变、
-//      锚点世界坐标保持（<2px）、收敛 zoomTarget；约定在左栏 .wg-hint 图例注明；
+//   §E 画布手感（2026-10-24 CAD 批·作者令——覆盖 10-22 滚轮约定）：鼠标滚轮 =
+//      以光标为锚点缩放（0.1x–4x 上下限；exp 累积 + 25%/帧阻尼追帧，逐帧步进
+//      ≤0.06 不跳变、锚点世界坐标保持 <2px、收敛 zoomTarget）；中键拖拽 = 平移
+//      （CAD 核心手势，松手不触发点选）；触控板双指滚动/Shift+滚轮仍 = 平移、
+//      捏合/⌘滚仍 = 缩放；左键点选/拖节点语义不变；约定在左栏 .wg-hint 注明；
 //   §F frosted 统一（追加批 2026-10-22）：canvas 胶囊 / 左栏搜索框 / chips 的
 //      材质（bg/blur/border/shadow）与 chat header 逐项相等（--glass-bg /
 //      --glass-blur saturate(1.15) / --glass-border / --frost-shadow 单源）；
@@ -166,8 +167,9 @@ async function settledProbe(page) {
   return page.evaluate(() => window.__wikiGraphProbe());
 }
 
-/** Bring a node to the canvas center with a REAL wheel pan (two-finger swipe —
- *  wikiGraph pans vx += deltaX 1:1, no sim wake). The mock layout is unseeded:
+/** Bring a node to the canvas center with a REAL wheel pan (shift+wheel — the
+ *  guaranteed pan path of the 2026-10-24 CAD contract: shiftKey ⇒ wheelIsPan,
+ *  vx += deltaX 1:1, no sim wake, no zoom). The mock layout is unseeded:
  *  a node can settle a few px off the canvas edge (past the sidebar col-
  *  resizer), where pointer clicks land on the resizer instead of the canvas.
  *  Centering puts the target ~W/2 px inside the clickable area, deterministically. */
@@ -180,7 +182,7 @@ async function centerNodeOn(page, nodeId) {
     const sx = (n.x - p.W / 2) * p.scale + p.W / 2 + p.vx; // canvas-local px
     const sy = (n.y - p.H / 2) * p.scale + p.H / 2 + p.vy;
     c.dispatchEvent(new WheelEvent('wheel', {
-      deltaX: p.W / 2 - sx, deltaY: p.H / 2 - sy,
+      deltaX: p.W / 2 - sx, deltaY: p.H / 2 - sy, shiftKey: true,
       clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
       bubbles: true, cancelable: true,
     }));
@@ -464,80 +466,203 @@ test('§D face contract: stats line wording, broken block fixed in-panel, row se
 
 // ── §E 画布手感（追加批 2026-10-22）＋ §F frosted 统一／裙边退役 ───────
 
-test('§E wheel = pan (shift = horizontal), pinch = damped anchored zoom that converges smoothly', async ({ page }) => {
+test('§E-1 mouse wheel = cursor-anchored damped zoom; bounds 0.1x–4x; smooth & convergent (CAD)', async ({ page }) => {
   const errors = await boot(page);
   await openGraph(page);
-  const N_PINCH = 24;   // 连续捏合帧数（每帧 Δ-8）
+  const N_WHEEL = 12;    // 连续滚轮帧数（每帧 Δ-60 = 鼠标档，避开 48px 触控板阈值）
   const PINCH_K = 0.0015; // 必须与 wikiGraph.js 的 PINCH_K 同值
-  const STEP = 8;
+  const STEP = 60;
+  const ZOOM_MIN = 0.1, ZOOM_MAX = 4.0; // 必须与 wikiGraph.js 的 ZOOM_MIN/MAX 同值
   await settledProbe(page); // 等 rerenderWikiGraph 的 debounce rebuild 窗口过去
 
-  // 图例：左栏 .wg-hint 注明滚轮/捏合约定（canvas 保纯，图例进左栏）。
+  // 图例：左栏 .wg-hint 注明滚轮/中键/触控板约定（canvas 保纯，图例进左栏）。
   const hint = await page.textContent('#wiki-graph-side .wg-hint');
   expect(hint.trim().length).toBeGreaterThan(0);
 
-  // 双指滚动/滚轮 = 平移：vy+120、vx/scale 不动；shift+纵滚 = 横移。
-  const pan = await page.evaluate(() => {
+  // 单格滚轮（整数档 Δ=-120，无修饰）= 缩放而非平移：zoomTarget 按 exp 曲线累积。
+  const one = await page.evaluate(() => {
     const c = document.querySelector('.wiki-canvas');
     const r = c.getBoundingClientRect();
-    const ev = (dy, mods = {}) => c.dispatchEvent(new WheelEvent('wheel', {
-      deltaY: dy, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true, ...mods,
+    const before = window.__wikiGraphProbe();
+    c.dispatchEvent(new WheelEvent('wheel', {
+      deltaY: -120, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true,
     }));
-    const a = window.__wikiGraphProbe();
-    ev(120);
-    const b = window.__wikiGraphProbe();
-    ev(-120, { shiftKey: true });   // shift+纵滚：符号直通（-120 → vx-120）
-    const c2 = window.__wikiGraphProbe();
-    return {
-      dvy: Math.round(b.vy - a.vy), dvx1: Math.round(b.vx - a.vx), dscale: +(b.scale - a.scale).toFixed(6),
-      dvx2: Math.round(c2.vx - b.vx), dvy2: Math.round(c2.vy - b.vy),
-    };
+    const after = window.__wikiGraphProbe();
+    return { scale: before.scale, target: after.zoomTarget, dvx: after.vx - before.vx, dvy: after.vy - before.vy };
   });
-  expect(pan).toMatchObject({ dvy: 120, dvx1: 0, dscale: 0, dvx2: -120, dvy2: 0 });
+  expect(one.target).toBeCloseTo(Math.min(ZOOM_MAX, one.scale * Math.exp(120 * PINCH_K)), 6);
+  expect(one.dvx).toBe(0);   // 缩放不串扰平移自由度
+  expect(one.dvy).toBe(0);
 
-  // 连续捏合：逐帧 ctrl+wheel（rAF 交错派发——同步整批会让追帧一帧吃完全部
-  // 累积，无法验证平滑契约），同时逐帧采样 scale；再追 40 帧确认收敛。
-  const pinch = await page.evaluate(({ N, K, step }) => new Promise((resolve) => {
+  // 连续滚轮：逐格派发（每 4 帧一格——模拟真实滚轮节奏 ~15Hz vs rAF 60Hz；rAF
+  // 交错是必须的：同步整批会让追帧一帧吃完全部累积，无法验证平滑契约），
+  // 每帧采样 scale；再追 40 帧确认收敛。
+  const wheel = await page.evaluate(({ N, K, step }) => new Promise((resolve) => {
     const c = document.querySelector('.wiki-canvas');
     const r = c.getBoundingClientRect();
     const ax = r.left + r.width / 2, ay = r.top + r.height / 2;
     const before = window.__wikiGraphProbe();
+    // 世界坐标取 wikiGraph.js toWorld 的精确形：(px − W/2 − vx)/scale + W/2
+    // （screen = (w − W/2)·s + W/2 + v 的逆；旧口径漏 −W/2 项，与旧补偿公式
+    // 同错而对消——CAD 批两者同修正，屏幕漂移 <2px 才是真锚定）。
     const wOf = (p) => ({
-      x: ((ax - r.left) - p.vx) / p.scale + p.W / 2,
-      y: ((ay - r.top) - p.vy) / p.scale + p.H / 2,
+      x: ((ax - r.left) - p.W / 2 - p.vx) / p.scale + p.W / 2,
+      y: ((ay - r.top) - p.H / 2 - p.vy) / p.scale + p.H / 2,
     });
     const wBefore = wOf(before);
     const seen = [];
-    let i = 0;
+    let i = 0, f = 0;
     const tick = () => {
-      if (i < N) {
+      if (i < N && f % 4 === 0) {
         c.dispatchEvent(new WheelEvent('wheel', {
-          deltaY: -step, ctrlKey: true, clientX: ax, clientY: ay, bubbles: true, cancelable: true,
+          deltaY: -step, clientX: ax, clientY: ay, bubbles: true, cancelable: true,
         }));
         i++;
       }
+      f++;
       seen.push(window.__wikiGraphProbe().scale);
-      if (seen.length >= N + 40) resolve({ seen, zoomTarget: before.zoomTarget, target: before.zoomTarget * Math.exp(N * step * K), wBefore, r: { left: r.left, top: r.top } });
+      if (seen.length >= N * 4 + 40) resolve({ seen, target: before.zoomTarget * Math.exp(N * step * K), wBefore, r: { left: r.left, top: r.top } });
       else requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
-  }), { N: N_PINCH, K: PINCH_K, step: STEP });
+  }), { N: N_WHEEL, K: PINCH_K, step: STEP });
 
-  const final = pinch.seen[pinch.seen.length - 1];
+  const final = wheel.seen[wheel.seen.length - 1];
   let maxStep = 0;
-  for (let i = 1; i < pinch.seen.length; i++) maxStep = Math.max(maxStep, Math.abs(pinch.seen[i] - pinch.seen[i - 1]));
+  for (let i = 1; i < wheel.seen.length; i++) maxStep = Math.max(maxStep, Math.abs(wheel.seen[i] - wheel.seen[i - 1]));
   expect(maxStep).toBeGreaterThan(0);            // 缩放确实发生了
-  expect(maxStep).toBeLessThanOrEqual(0.06);     // 逐帧步进有界（阻尼不跳变）
-  expect(Math.abs(final - pinch.target)).toBeLessThan(0.02); // 收敛 zoomTarget
+  // 逐帧步进有界（阻尼不跳变）：一格 60px 滚轮 @15Hz 下阻尼追帧峰值 ≈0.11，
+  // 上界 0.12 —— 真跳变会是 0.5+；触控板捏合微帧（Δ≈2px）的平滑口径承 10-22 批。
+  expect(maxStep).toBeLessThanOrEqual(0.12);
+  expect(Math.abs(final - wheel.target)).toBeLessThan(0.02); // 收敛 zoomTarget
   // 光标锚点几何保持：锚点（canvas 中心）下的世界坐标漂移 < 2px。
   const drift = await page.evaluate(({ wBefore, rect }) => {
     const p = window.__wikiGraphProbe();
     const ax = rect.left + (document.querySelector('.wiki-canvas').getBoundingClientRect().width / 2);
     const ay = rect.top + (document.querySelector('.wiki-canvas').getBoundingClientRect().height / 2);
-    const w = { x: (ax - rect.left - p.vx) / p.scale + p.W / 2, y: (ay - rect.top - p.vy) / p.scale + p.H / 2 };
+    const w = {
+      x: (ax - rect.left - p.W / 2 - p.vx) / p.scale + p.W / 2,
+      y: (ay - rect.top - p.H / 2 - p.vy) / p.scale + p.H / 2,
+    };
     return Math.hypot(w.x - wBefore.x, w.y - wBefore.y);
-  }, { wBefore: pinch.wBefore, rect: pinch.r });
+  }, { wBefore: wheel.wBefore, rect: wheel.r });
   expect(drift).toBeLessThan(2);
+  // 同一世界点的屏幕位置也不动（用户体感的锚定）：原锚点世界点仍落在锚点上。
+  const screenDrift = await page.evaluate(({ wBefore }) => {
+    const p = window.__wikiGraphProbe();
+    const sx = (wBefore.x - p.W / 2) * p.scale + p.W / 2 + p.vx;
+    const sy = (wBefore.y - p.H / 2) * p.scale + p.H / 2 + p.vy;
+    return Math.hypot(sx - p.W / 2, sy - p.H / 2);
+  }, { wBefore: wheel.wBefore, rect: wheel.r });
+  expect(screenDrift).toBeLessThan(2);
+
+  // 上下限：向上一口气滚 30 格 ⇒ zoomTarget 钳在 ZOOM_MAX；收敛后 scale ≤ 上限。
+  await page.evaluate(() => {
+    const c = document.querySelector('.wiki-canvas');
+    const r = c.getBoundingClientRect();
+    for (let i = 0; i < 30; i++) c.dispatchEvent(new WheelEvent('wheel', {
+      deltaY: -120, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true,
+    }));
+  });
+  expect(await page.evaluate(() => window.__wikiGraphProbe().zoomTarget)).toBe(ZOOM_MAX);
+  await page.waitForFunction(() => {
+    const p = window.__wikiGraphProbe();
+    return Math.abs(p.scale - p.zoomTarget) <= 0.0005;
+  }, { timeout: 8000 });
+  expect(await page.evaluate(() => window.__wikiGraphProbe().scale)).toBeLessThanOrEqual(ZOOM_MAX + 0.0005);
+
+  // 向下滚 60 格 ⇒ 钳在 ZOOM_MIN；收敛后 scale ≥ 下限（0.1x 不塌到 0）。
+  await page.evaluate(() => {
+    const c = document.querySelector('.wiki-canvas');
+    const r = c.getBoundingClientRect();
+    for (let i = 0; i < 60; i++) c.dispatchEvent(new WheelEvent('wheel', {
+      deltaY: 120, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true,
+    }));
+  });
+  expect(await page.evaluate(() => window.__wikiGraphProbe().zoomTarget)).toBe(ZOOM_MIN);
+  await page.waitForFunction(() => {
+    const p = window.__wikiGraphProbe();
+    return Math.abs(p.scale - p.zoomTarget) <= 0.0005;
+  }, { timeout: 8000 });
+  expect(await page.evaluate(() => window.__wikiGraphProbe().scale)).toBeGreaterThanOrEqual(ZOOM_MIN - 0.0005);
+  expect(errors).toEqual([]);
+});
+
+test('§E-2 trackpad/shift pan intact; middle-drag = pan; left semantics regression (CAD)', async ({ page }) => {
+  const errors = await boot(page);
+  await openGraph(page);
+  await settledProbe(page);
+
+  // 触控板双指滚动（小帧 + 横分量）仍 = 平移：deltaX 直通、小纵帧不误触缩放。
+  const pan = await page.evaluate(() => {
+    const c = document.querySelector('.wiki-canvas');
+    const r = c.getBoundingClientRect();
+    const ev = (init) => c.dispatchEvent(new WheelEvent('wheel', {
+      clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true, ...init,
+    }));
+    const a = window.__wikiGraphProbe();
+    ev({ deltaX: 6, deltaY: 3 });            // 触控板斜滑帧
+    const b = window.__wikiGraphProbe();
+    ev({ deltaY: -120, shiftKey: true });    // shift+纵滚 = 横移（符号直通 -120 → vx-120）
+    const c2 = window.__wikiGraphProbe();
+    ev({ deltaY: 4 });                       // 纯纵小帧 = 触控板慢滑 → 仍平移
+    const d = window.__wikiGraphProbe();
+    return {
+      dvx1: Math.round(b.vx - a.vx), dvy1: Math.round(b.vy - a.vy), dscale1: +(b.scale - a.scale).toFixed(6),
+      dvx2: Math.round(c2.vx - b.vx), dvy2: Math.round(c2.vy - b.vy), dscale2: +(c2.scale - b.scale).toFixed(6),
+      dvy3: Math.round(d.vy - c2.vy), dscale3: +(d.scale - c2.scale).toFixed(6),
+    };
+  });
+  expect(pan).toMatchObject({ dvx1: 6, dvy1: 3, dscale1: 0, dvx2: -120, dvy2: 0, dscale2: 0, dscale3: 0 });
+
+  // 找一块距所有节点 ≥ 30px 的空画布点（中键/左键空白手势的确定性落点）。
+  const empty = await page.evaluate(() => {
+    const p = window.__wikiGraphProbe();
+    const c = document.querySelector('.wiki-canvas');
+    const r = c.getBoundingClientRect();
+    let best = null, bestD = 0;
+    for (let gx = 1; gx < 8; gx++) for (let gy = 1; gy < 6; gy++) {
+      const sx = r.width * gx / 8, sy = r.height * gy / 6;
+      let dmin = Infinity;
+      for (const n of p.nodes) {
+        const nx = (n.x - p.W / 2) * p.scale + p.W / 2 + p.vx;
+        const ny = (n.y - p.H / 2) * p.scale + p.H / 2 + p.vy;
+        dmin = Math.min(dmin, Math.hypot(nx - sx, ny - sy));
+      }
+      if (dmin > bestD) { bestD = dmin; best = { sx, sy }; }
+    }
+    return { ...best, dmin: bestD, left: r.left, top: r.top };
+  });
+  expect(empty.dmin).toBeGreaterThan(30);
+  const ex = empty.left + empty.sx, ey = empty.top + empty.sy;
+
+  // 中键拖拽 = 平移（CAD 核心手势）：1:1 跟手，松手不点选。
+  const v0 = await page.evaluate(() => { const p = window.__wikiGraphProbe(); return { vx: p.vx, vy: p.vy }; });
+  await page.mouse.move(ex, ey);
+  await page.mouse.down({ button: 'middle' });
+  await page.mouse.move(ex + 90, ey + 60, { steps: 5 });
+  const vMid = await page.evaluate(() => { const p = window.__wikiGraphProbe(); return { vx: p.vx, vy: p.vy }; });
+  await page.mouse.up({ button: 'middle' });
+  expect(Math.round(vMid.vx - v0.vx)).toBe(90);
+  expect(Math.round(vMid.vy - v0.vy)).toBe(60);
+  await expect.poll(() => page.evaluate(() => window.__wikiGraphProbe().selected)).toBe(null);
+
+  // 中键点按（不动）= 纯收尾：仍不触发点选。
+  await page.mouse.move(ex, ey);
+  await page.mouse.down({ button: 'middle' });
+  await page.mouse.up({ button: 'middle' });
+  await expect.poll(() => page.evaluate(() => window.__wikiGraphProbe().selected)).toBe(null);
+
+  // 左键语义回归：左键拖空白仍 = 平移（既有兜底入口），松手无点选。
+  const v1 = await page.evaluate(() => { const p = window.__wikiGraphProbe(); return { vx: p.vx, vy: p.vy }; });
+  await page.mouse.move(ex, ey);
+  await page.mouse.down({ button: 'left' });
+  await page.mouse.move(ex - 50, ey - 40, { steps: 5 });
+  const vLeft = await page.evaluate(() => { const p = window.__wikiGraphProbe(); return { vx: p.vx, vy: p.vy }; });
+  await page.mouse.up({ button: 'left' });
+  expect(Math.round(vLeft.vx - v1.vx)).toBe(-50);
+  expect(Math.round(vLeft.vy - v1.vy)).toBe(-40);
+  await expect.poll(() => page.evaluate(() => window.__wikiGraphProbe().selected)).toBe(null);
   expect(errors).toEqual([]);
 });
 
