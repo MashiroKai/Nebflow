@@ -15,7 +15,7 @@ import scala.util.Try
  * 卡；去重防轰炸（同一文件多次 Pop 不重复推）；两渠道同口径。
  *
  * 考古结论（三快照 S0=a0f2edfc7 / S1=4c8f79e4c / S2=main）：md 长图转换**从未
- * 实现**（S0 与 main 的 social 包零 diff——USTC 合并未弄丢任何东西，属「从未
+ * 实现**（S0 与 main 的 social 包零 diff——早期历史合并未弄丢任何东西，属「从未
  * 实现则按口径补齐」）；html 曾有「文件直发、截图兜底」腿（social-webshot
  * batch 2026-10-09 同日裁定），本批按新裁定**整体退役**——转换升为主腿。
  *

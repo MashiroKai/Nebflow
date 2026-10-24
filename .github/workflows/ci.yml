@@ -546,6 +546,13 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        # 2026-10-24 CI 存量红分诊（run 40063846949 实测）：改前树基线 spec 族
+        # （askuser-answer-source / askuser-dup-card / askuser-history-attach /
+        # history-replay-cards）用 `git archive <改动前 sha> src/main/resources/web`
+        # 提取改动前 web 树做验红对照——默认浅克隆（depth=1）没有历史提交，
+        # git archive 直接 Command failed。全量历史是这批 spec 的硬前提。
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
