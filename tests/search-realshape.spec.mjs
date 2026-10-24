@@ -37,8 +37,15 @@ const MIME = {
 const SID = 'realspec-root-session';
 const KW = '样例关键词'; // 种植行关键词（一条真实非注入 user + 一条 ai + 一条 tool）
 
-// 视口由各测试经 bootApp 的 setViewportSize 控制（桌面 1400×900 / 手机 375×812，
+// 视口由各测试经 bootApp 的 setViewportSize 控制（桌面 1680×900 / 手机 375×812，
 // 手机层激活判据 = matchMedia max-width:768px）；触面/配色文件级统一。
+// 2026-10-24 CI 存量红分诊：桌面视口由 1400 提到 1680 —— 默认 boot 开 Canvas
+// 面板（openPlugins 默认页）+ 侧栏展开把 #main 压到 ~528px，而 uifix「会话头中簇
+// 收纳」批把 header-center 由纵排（内禀 177px）改横排紧凑（内禀 245px = 头像 28 +
+// gap 6 + 名 177 + gap 6 + 记忆 28），碰撐藏链（main.js initHeaderResizeObserver
+// v2，冻结 spec「仅自动隐藏」）实测放不下 search-btn（差 11px）⇒ 开机即藏、
+// #search-btn click 永超时。链判定正确（设计行为：藏而非重叠），本 spec 测的是搜索面
+// 真形状而非碰撞链 ⇒ 换 1680 桌面视口（实测 cut 4/4 零隐藏），断言面零改动。
 test.use({ hasTouch: true, colorScheme: 'dark' });
 
 /** 真实 payload 脱敏保形夹具（见文件头「形状来源」）。 */
@@ -137,7 +144,7 @@ async function openSearchMobile(page) {
 // 上：三类种植行（user/ai/tool）全部命中，kind 词表 = data-kind 同款。
 test('T1 real-shape keyword search hits user+ai+tool across real payload shapes (desktop)', async ({ page }) => {
   historyMode = 'real';
-  await bootApp(page, { viewport: { width: 1400, height: 900 } });
+  await bootApp(page, { viewport: { width: 1680, height: 900 } });
   await openSearchDesktop(page);
 
   await page.locator('#search-keyword').fill(KW);
@@ -158,7 +165,7 @@ test('T1 real-shape keyword search hits user+ai+tool across real payload shapes 
 // askUser 不可检索行被滤除（真实 payload 里它们占 6/107）。
 test('T2 real-shape browse stream renders searchable rows only (desktop)', async ({ page }) => {
   historyMode = 'real';
-  await bootApp(page, { viewport: { width: 1400, height: 900 } });
+  await bootApp(page, { viewport: { width: 1680, height: 900 } });
   await openSearchDesktop(page);
 
   // 真形状可检索行 = 107 - 4 system - 2 askUser = 101；首页 cap 100。
@@ -174,7 +181,7 @@ test('T2 real-shape browse stream renders searchable rows only (desktop)', async
 // 「0 条结果」；404（会话已删）⇒ 合法空态，无错误面。
 test('T3 transport failure surfaces error+retry, never fake zero (the reported bug)', async ({ page }) => {
   historyMode = 'http502';
-  await bootApp(page, { viewport: { width: 1400, height: 900 } });
+  await bootApp(page, { viewport: { width: 1680, height: 900 } });
   await openSearchDesktop(page);
 
   await page.locator('#search-keyword').fill(KW);

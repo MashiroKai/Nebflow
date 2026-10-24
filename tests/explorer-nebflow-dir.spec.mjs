@@ -175,14 +175,20 @@ for (const theme of ['light', 'dark']) {
 
       // ④ 点 flow-map.json → readFile → fileContent → Canvas 预览标签 + 内容
       await page.locator('#explorer-tree .explorer-item.explorer-file[data-path=".nebflow/flow-map.json"]').click();
+      // 2026-10-24 CI 存量红分诊：桌面态页签条已按作者令退役（split.css
+      // 「平时态尺寸调小」批：body:not(.mobile-layer) .canvas-header .canvas-tab-bar
+      // { display:none } —— 胶囊化头部，页签模型仍在 DOM、条不再渲染）。
+      // 预览管线验收改钉模型面（页签在场且 active）+ 内容腿不动。
       const flowTab = page.locator('.canvas-tab', { hasText: 'flow-map.json' });
-      await expect(flowTab).toBeVisible({ timeout: 8000 });
+      await expect(flowTab).toHaveCount(1, { timeout: 8000 });
+      await expect(flowTab).toHaveClass(/active/);
       await expect(page.locator('#canvas-panel')).toContainText('map-stub', { timeout: 8000 });
 
       // ⑤ 点 Agent.md（有效符号链接）→ 内容可读
       await page.locator('#explorer-tree .explorer-item.explorer-file[data-path=".nebflow/Agent.md"]').click();
       const agentTab = page.locator('.canvas-tab', { hasText: 'Agent.md' });
-      await expect(agentTab).toBeVisible({ timeout: 8000 });
+      await expect(agentTab).toHaveCount(1, { timeout: 8000 });
+      await expect(agentTab).toHaveClass(/active/);
       await expect(page.locator('#canvas-panel')).toContainText('AGENTS stub', { timeout: 8000 });
 
       // 无前端异常

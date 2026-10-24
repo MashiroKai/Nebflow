@@ -92,6 +92,19 @@ async function bootApp(page) {
   }, ROOT_SID, { timeout: 15000 });
 }
 
+/**
+ * Fast-forward CSS animations (headless Chromium may stall the animation clock
+ * for idle pages, leaving entry animations stuck at their opacity:0 first
+ * frame — the click-actionability "stable" check then never passes and the
+ * click times out at the test budget. Same fix as dialog-unify.spec.mjs;
+ * 2026-10-24 CI 存量红分诊（run 40063846949 + 本地矩阵同红实证）.
+ */
+async function settleAnimations(page) {
+  await page.evaluate(() => {
+    try { document.getAnimations().forEach(a => { try { a.finish(); } catch { /* not finishable */ } }); } catch { /* API absent */ }
+  });
+}
+
 test('skip-typing: 自然完成后按钮自动消失（伪流式输出结束 ⇒ 无残骸）', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
@@ -119,6 +132,7 @@ test('skip-typing: 点击跳过 ⇒ 文本瞬完 + 按钮移除；Esc 同通道'
   const bubble1 = page.locator('.ob-sim-bubble').nth(0);
   const skip1 = bubble1.locator('[data-skip-typing]');
   await expect(skip1).toBeVisible({ timeout: 10000 });
+  await settleAnimations(page);
   await skip1.click();
   await skip1.waitFor({ state: 'detached', timeout: 10000 });
 
@@ -127,6 +141,7 @@ test('skip-typing: 点击跳过 ⇒ 文本瞬完 + 按钮移除；Esc 同通道'
   const bubble2 = page.locator('.ob-sim-bubble').nth(1);
   const skip2 = bubble2.locator('[data-skip-typing]');
   await expect(skip2).toBeVisible({ timeout: 10000 });
+  await settleAnimations(page);
   await skip2.click();
   await skip2.waitFor({ state: 'detached', timeout: 10000 });
   await expect(bubble2.locator('.ob-cursor')).toHaveCount(0);

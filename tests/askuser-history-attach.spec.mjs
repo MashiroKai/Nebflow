@@ -31,6 +31,10 @@ const SHOT_DIR = process.env.ASKUSER_HISTATT_SHOTS
 guardWrites([SHOT_DIR], { repoRoot: REPO_ROOT, label: 'askuser-history-attach' });
 
 // 基线 ref = 本批开工时的 main 尖（= 改前代码；本支提交后 HEAD 前移，故钉死此 sha）。
+// 2026-10-24 CI 存量红分诊注：钉不可后移 —— B 组负对照需要「附件渲染缺席」的树
+// （其后 10-03~10-05 的附件渲染批次会让 B1 假红），而 N1 的两树逐字相等会被后续
+// 无关批的类名新增击穿（56a44587e 给「其他...」挂了 opt-other 钩子类）。两侧约束
+// 单钉不可兼得 ⇒ 钉保持 66f7ec46a，N1 比较时对两侧做 opt-other 归一化（见 N1）。
 const BASELINE_REF = process.env.ASKUSER_HISTATT_BASELINE_REF ?? '66f7ec46a4dcb9903a699f93ac435b5cd2f6c21c';
 
 let baselineRoot;
@@ -278,7 +282,13 @@ test.describe('负对照 — 缺席即零影响', () => {
     const base = await outerHtml(baselinePort);
     const fixed = await outerHtml(fixedPort);
     expect(base.length).toBeGreaterThan(0);
-    expect(fixed, '无附件 ⇒ 改后树与改前树逐字相等').toEqual(base);
+    // opt-other 归一化（2026-10-24 分诊）：56a44587e（2026-10-06 askuser-hybrid-code，
+    // 附件批之后落的无关样式批）给「其他...」按钮挂了 opt-other 样式钩子类 ——
+    // 基线钉（66f7ec46a）先于它，逐字相等被这一个类名击穿。该类与附件特性零交集
+    // （纯视觉钩子，两树同按钮、同结构），故两侧同删后比较，负对照恢复
+    // 「附件特性对无附件行零影响」的本义。
+    const norm = (s) => s.replaceAll(' class="option-btn opt-other"', ' class="option-btn"');
+    expect(norm(fixed), '无附件 ⇒ 改后树与改前树逐字相等（opt-other 归一化后）').toEqual(norm(base));
   });
 
   test('N2 无附件 ⇒ 零附件 DOM + 零探针帧', async ({ browser }) => {

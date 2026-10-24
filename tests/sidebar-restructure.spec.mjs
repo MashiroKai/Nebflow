@@ -18,6 +18,7 @@
 import { test, expect } from '@playwright/test';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { join, dirname, extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -299,8 +300,19 @@ test('T3 § avatar local-first cache: rebuild-free second load, refetch only on 
 });
 
 test('T4 § i18n parity: zh-CN and en key sets are identical', async () => {
-  const zh = (await import(resolve(HERE, '..', 'src', 'main', 'resources', 'web', 'js', 'locales', 'zh-CN.js'))).default;
-  const en = (await import(resolve(HERE, '..', 'src', 'main', 'resources', 'web', 'js', 'locales', 'en.js'))).default;
+  // 2026-10-24 CI 分诊：`await import('....js')` 依赖 Node 的 ESM 自动探测
+  // （node22+ 默认开）；CI 钉 node20 ⇒ .js 按 CJS 解析 ⇒ `Unexpected token
+  // 'export'`（本机 node 新 ⇒ 误绿）。两文件都是无 import 的单一
+  // `export default {...}`（值全为纯字符串字面量，反引号仅存于注释）⇒
+  // 读文本取对象字面量求值，键集对账语义零变化、版本无关。
+  const loadLocale = (f) => {
+    const src = readFileSync(resolve(WEB, 'js', 'locales', f), 'utf-8');
+    const m = src.match(/export default (\{[\s\S]*\});\s*$/);
+    expect(m, `${f}: single trailing export default object`).toBeTruthy();
+    return (0, eval)(`(${m[1]})`);
+  };
+  const zh = loadLocale('zh-CN.js');
+  const en = loadLocale('en.js');
   const zk = Object.keys(zh).sort(); const ek = Object.keys(en).sort();
   expect(zk).toEqual(ek);
   for (const k of zk) expect(String(zh[k]).length, `zh key ${k} must be non-empty`).toBeGreaterThan(0);

@@ -262,9 +262,11 @@ test('T5 workspace-picker overlay has no dimming (source + runtime, both themes)
   expect(baseBlock, '.wsp-overlay base rule exists').toBeTruthy();
   expect(baseBlock[0], 'base overlay bg uses --overlay-bg token').toContain('var(--overlay-bg)');
   expect(baseBlock[0], 'no rgba dimming in base rule').not.toContain('rgba(0, 0, 0');
-  const darkIdx = css.indexOf('.wsp-overlay { background: var(--overlay-bg); }');
-  expect(css.indexOf('.wsp-overlay'), 'two .wsp-overlay rules (base + dark)').toBeGreaterThanOrEqual(0);
-  expect(darkIdx, 'dark-mode override also uses the undimmed token').toBeGreaterThan(0);
+  // 2026-10-24 CI 分诊重钉（run 40063846949 + 本地同红实证）：暗色覆写规则已由
+  // 579e3d228（2026-09-07 ProjectCreate 对齐 path-picker 设计语言批）**有意删除**
+  //（"删 wsp 自定义 dark 覆写"）——--overlay-bg token 本身随主题翻面，单一规则
+  // 双主题生效。钉「恰一条规则、双主题共用同一未调光 token」，不再要求第二规则。
+  expect(css.match(/\.wsp-overlay\s*\{/g), 'exactly one .wsp-overlay rule (token carries both themes)').toHaveLength(1);
 
   // 运行时：直接调 openPicker 渲染弹窗，断言计算样式 + 双主题截图。
   for (const colorScheme of ['light', 'dark']) {

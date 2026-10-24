@@ -209,15 +209,19 @@ test('T2: 真停摆回归（活动路径）——无心跳时 timer 照常到点
   const armed = await snapshot(page, ROOT_SID);
   expect(armed.timerArmed).toBe(true);
 
-  // 不发任何心跳：400ms 压缩窗到点 → 超时卡 + busy 清除（活动事件重武装的
-  // 是 main.js resetStreamTimeout 变体——渲染超时卡 + clearBusy）。
-  await page.waitForTimeout(900);
+  // 不发任何心跳：freezetimeout B2 阶梯看门契约（chat.js WATCHDOG_RUNG_FACTORS
+  // = [1,2,4]，判定/动作分离）——400ms 压缩窗让三档全部压到 400ms：档0@400ms
+  // 「仍在处理」、档1@800ms、档2@1200ms 真死收口（本 harness 武装后零入站帧 ⇒
+  // 无活性证据 ⇒ 真死分支命中）⇒ 连接断开如实态错误卡 + clearBusy。
+  // 2026-10-24 CI 存量红分诊重写：旧断言等 900ms 期望「到点即清」——那是 B2 前
+  // 的单发契约；阶梯下 900ms 恰停在档1（慢≠死，不清 busy），真死收口在 ~1200ms。
+  await page.waitForTimeout(2500);
 
   const after = await snapshot(page, ROOT_SID);
   expect(after.busy).toBe(false);
   // 注：不断言 timerArmed——既有代码 fire 后残留已触发的 timer id（fire 后
   // 不 delete 键），键存在≠还能再触发；本批不改动该清理语义。
-  expect(await page.locator('.row.error .error-card').count()).toBeGreaterThanOrEqual(1);
+  expect(await page.locator('.row.error[data-watchdog-dead="1"] .error-card').count()).toBeGreaterThanOrEqual(1);
 });
 
 test('T2b: 真停摆回归（send 路径）——发送后零活动，input.js timer 到点发 interrupt 杀 turn（作者症状路径不回归）', async ({ page }) => {
@@ -234,13 +238,17 @@ test('T2b: 真停摆回归（send 路径）——发送后零活动，input.js t
   const armed = await snapshot(page, ROOT_SID);
   expect(armed.busy).toBe(true);
 
-  // 模拟长工具执行且【无】toolHeartbeat（变异面对照：T1 有心跳则永不触发）
-  await page.waitForTimeout(900);
+  // 模拟长工具执行且【无】toolHeartbeat（变异面对照：T1 有心跳则永不触发）。
+  // 2026-10-24 CI 存量红分诊重写：旧断言期望 send 路径 timer 到点发 interrupt——
+  // freezetimeout B2 ①（作者裁定「破坏性动作建立在无依据判定上」）已把**自动
+  // interrupt 整体退役**（到点只呈现，中断降级为用户显式确认）；真死收口 =
+  // 连接断开如实态错误卡 + clearBusy + 零 interrupt。三档阶梯 @400ms×3 ⇒ 等 2500ms。
+  await page.waitForTimeout(2500);
 
   const sent = await sentMessages(page);
   const interrupts = sent.filter((m) => m.type === 'interrupt' && m.sessionId === ROOT_SID);
-  expect(interrupts.length).toBeGreaterThanOrEqual(1);
+  expect(interrupts.length, 'B2 ①：前端绝不自动发 interrupt（反复活钉）').toBe(0);
   const after = await snapshot(page, ROOT_SID);
   expect(after.busy).toBe(false);
-  expect(await page.locator('.row.error .error-card').count()).toBeGreaterThanOrEqual(1);
+  expect(await page.locator('.row.error[data-watchdog-dead="1"] .error-card').count()).toBeGreaterThanOrEqual(1);
 });

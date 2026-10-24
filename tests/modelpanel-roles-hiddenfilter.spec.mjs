@@ -34,9 +34,15 @@ test('M1+M2+M3 /model 角色枚举 = 全集滤 PanelHiddenNames；现役两角�
   expect(src).toContain("'Nebula'");
 });
 
-test('M2b 插件面板既有镜像对账（同一隐藏名单值双镜像）', async () => {
+test('M2b 插件面板镜像退役钉（2026-10-21 作者令「只看纯插件」：agents 枚举整段退役）', async () => {
+  // 2026-10-24 CI 存量红分诊重钉：旧断言钉 plugins.js 的 PANEL_HIDDEN_AGENTS 镜像，
+  // 但 dca5025d5（七条令面板收口，含作者令①「只看纯插件」）把 agents 枚举连同该
+  // 镜像整段退役 —— 插件面板不再列 agent，第三过滤点不复存在。隐藏名单的权威面
+  // 收敛为两处：BuiltinAgents.PanelHiddenNames（scala 侧）+ modelPanel.js
+  // PANEL_HIDDEN_ROLES（M1 钉）。本钉改钉退役本身：镜像与 agents 枚举零复活。
   const pluginsSrc = readFileSync(join(WEB, 'js', 'plugins.js'), 'utf8');
-  expect(pluginsSrc).toContain("const PANEL_HIDDEN_AGENTS = ['project-dispatcher']");
+  expect(pluginsSrc, 'PANEL_HIDDEN_AGENTS 镜像随 agents 枚举一并退役，零复活').not.toContain('PANEL_HIDDEN_AGENTS');
+  expect(pluginsSrc, '插件面板纯插件视角：不再枚举隐藏 agent 名单').not.toContain("'project-dispatcher'");
 });
 
 test('M4 零 locale 触碰：model.roleDispatcher 键 zh/en 成对保留', async () => {

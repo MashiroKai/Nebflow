@@ -103,9 +103,23 @@ async function bootApp(page) {
  *  作用域纪律：按钮 locator 必须锚定在本气泡内 —— 点击成功后下一气泡立刻开流
  *  并带自己的新按钮，全局 first() 会在 waitFor(detached) 时重解析到那颗新按钮，
  *  把「已消失」误判成「未消失」。 */
+/**
+ * Fast-forward CSS animations (headless Chromium may stall the animation clock
+ * for idle pages, leaving entry animations stuck at their opacity:0 first
+ * frame — the click-actionability "stable" check then never passes and the
+ * click times out at the test budget. Same fix as onboarding-skip-typing /
+ * dialog-unify; 2026-10-24 CI 存量红分诊（run 40063846949）.
+ */
+async function settleAnimations(page) {
+  await page.evaluate(() => {
+    try { document.getAnimations().forEach(a => { try { a.finish(); } catch { /* not finishable */ } }); } catch { /* API absent */ }
+  });
+}
+
 async function skipCurrentBubble(page, nth) {
   const skip = page.locator('.ob-sim-bubble').nth(nth).locator('[data-skip-typing]');
   await expect(skip).toBeVisible({ timeout: 15000 });
+  await settleAnimations(page);
   await skip.click();
   await skip.waitFor({ state: 'detached', timeout: 10000 });
 }

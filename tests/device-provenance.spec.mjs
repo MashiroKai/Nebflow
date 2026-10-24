@@ -22,6 +22,13 @@ import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
+
+// 2026-10-24 CI 分诊：三处读数原钉死 Mac 面（"本机 = macOS headless chrome"）——
+// UA 派生平台随 **runner OS** 走（CI = Linux ⇒ 'linux'/'Linux'），本机绿只因作者机
+// 是 Mac。契约不变（UA 平台词进 stamp / 帧 / 设置面读数），期望值改为按驱动进程
+// 平台推导（Playwright 浏览器与 driver 同机同 OS）。
+const UA_PLATFORM = process.platform === 'darwin' ? 'mac' : process.platform === 'win32' ? 'windows' : 'linux';
+const UA_PLATFORM_LABEL = { mac: 'Mac', windows: 'Windows', linux: 'Linux' }[UA_PLATFORM];
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
@@ -114,7 +121,7 @@ test('device identity: stable clientId across reloads; stamp shape with UA-assis
   const stamp1 = await page.evaluate(async () => (await import('/js/deviceIdentity.js')).deviceStamp());
   expect(stamp1.clientId, 'clientId 必须在场（身份主键）').toBeTruthy();
   // Playwright 默认桌面 UA（本机 = macOS headless chrome）。
-  expect(stamp1.platform).toBe('mac');
+  expect(stamp1.platform).toBe(UA_PLATFORM);
   expect(stamp1.browser).toBe('Chrome');
   expect(stamp1, '未绑定时不得携带 boundDeviceId 键').not.toHaveProperty('boundDeviceId');
   expect(stamp1, '未命名时不得携带 name 键').not.toHaveProperty('name');
@@ -156,7 +163,7 @@ test('typeless send: the input-box frame carries the device declaration', async 
   expect(frame.content).toBe('设备标记探针消息');
   expect(frame.device, 'typeless 帧必须带 device 声明').toBeTruthy();
   expect(frame.device.clientId).toBeTruthy();
-  expect(frame.device.platform).toBe('mac');
+  expect(frame.device.platform).toBe(UA_PLATFORM);
   expect(frame.device.browser).toBe('Chrome');
 
   expect(pageErrors, '零新增页面错误').toEqual([]);
@@ -176,7 +183,7 @@ test('settings face: device stamp section renders readable default, rename and r
   await expect(section).toBeVisible();
 
   // 默认读数：未登记 + UA 派生可读名（桌面 headless chrome → 未登记-Mac Chrome）。
-  await expect(page.locator('#device-stamp-current')).toHaveText(/未登记-Mac Chrome（未登记）/);
+  await expect(page.locator('#device-stamp-current')).toHaveText(new RegExp(`未登记-${UA_PLATFORM_LABEL} Chrome（未登记）`));
 
   // 绑定下拉来自花名册：不绑定 + self + 两个 peers。
   const optTexts = await page.locator('#cfg-device-stamp-bind option').allTextContents();

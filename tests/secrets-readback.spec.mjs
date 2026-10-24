@@ -284,7 +284,11 @@ test('R2 expanding fetches nothing; the eye reveals via exactly one authenticate
   expect(revealed.value, 'the fetched value shows in the detail field').toBe(VALUE);
   expect(revealed.security, 'revealed → security none').toBe('none');
   expect(revealed.pressed, 'aria-pressed=true while revealed').toBe('true');
-  expect(revealed.glyph, 'glyph swaps to eye-off').toContain('10.733');
+  // 2026-10-24 CI 存量红分诊：断言目标笔误修正 —— 消息语义是「眼睛换挡为眼斜杠
+  // （eye-off）」，旧断言却 .toContain('10.733')（值字符串，与上一行 value 断言粘重）。
+  // lucide eye-off 的正身 = 贯穿斜杠线 <line x1="1" y1="1" x2="23" y2="23">（遮面 eye
+  // 无此线），按本意钉斜杠在场。
+  expect(revealed.glyph, 'glyph swaps to eye-off').toContain('x1="1" y1="1" x2="23" y2="23"');
   expect(revealed.label, 'label names the hide action').toBe('隐藏值');
   expect(h.valueCalls.length, 'exactly ONE value read for the reveal').toBe(1);
   expect(h.valueCalls[0].auth, 'the read rides the panel auth header').toBe('Bearer t');

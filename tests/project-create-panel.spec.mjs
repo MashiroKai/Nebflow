@@ -340,19 +340,24 @@ test('T8 三帧截图（正常/兜底/回放）× 亮暗主题落盘', async ({ 
 // ============================================================
 // T9 取消 → '__cancelled__' 哨兵（后端据回搁置消息，不创建）
 // ============================================================
-test('T9 取消键：answers = __cancelled__ 哨兵（后端回搁置消息，不创建项目）', async ({ browser }) => {
+test('T9 取消键：改走 hub 取消原语 askUserCancel（askucancel 批位2；后端终结 ⇒ 搁置消息，不创建项目）', async ({ browser }) => {
   const { context, page, pageErrors } = await newPage(browser, 'dark');
   await page.evaluate(() => window.__panel());
   await page.waitForTimeout(100);
   expect(pageErrors).toEqual([]);
 
   await page.locator('.option-cancel').click();
-  await expect.poll(async () => (await answerFrames(page)).length).toBe(1);
-  expect((await answerFrames(page))[0]).toEqual({
-    type: 'askUserAnswer',
-    sessionId: 'harness-session',
-    answers: ['__cancelled__'],
+  // 2026-10-24 CI 存量红分诊重写：askucancel 批位2（2026-10-08）把卡上「取消」从
+  // __cancelled__ 哨兵答复（askUserAnswer——hub 记 answered，非取消语义）改为
+  // askUserCancel 帧（→ CancelRequest：kind 闸 + 发起方终结通知 + 幂等裁决，
+  // Cancelled 时 __cancelled__ 落盘行由 hub 侧落）。前端面钉取消原语帧形；旧哨兵
+  // 仅存于无 requestId 兜底（chat.js cancelBtn 回调），面板卡恒带 id ⇒ 不可达。
+  await expect.poll(async () => (await frames(page)).filter(f => f.type === 'askUserCancel').length).toBe(1);
+  expect((await frames(page)).filter(f => f.type === 'askUserCancel')[0]).toEqual({
+    type: 'askUserCancel',
     requestId: 'pc-e2e-01',
+    by: 'web',
   });
+  expect(await answerFrames(page), '哨兵答复帧零复活').toEqual([]);
   await context.close();
 });
