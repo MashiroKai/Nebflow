@@ -1658,7 +1658,12 @@ class WebSocketRoutes(
   private[gateway] def browseResultFrame(dir: os.Path, displayPath: String, query: String, cap: Int): Json =
     WebSocketRoutes.browseFrame(dir, displayPath, query, cap)
 
-  private val MaxMessageSize = 10 * 1024 * 1024 // 10MB (base64 images can be large)
+  // attach-split 批（2026-10-24 现场事故：作者 22 张图 + 文字一条帧 ≈11MB > 旧 10MB
+  // 上限 ⇒ 整帧被静默丢弃、文字同丢、前端已渲乐观气泡 = 假成功）：上限提到 64MB。
+  // 栈内无更低帧级 cap（http4s-core 0.23.30 FrameTranscoder 无 size 限制，已核实
+  // 缓存 jar）⇒ 22 图级体积（前端 1920px/q0.8 压缩后 ~30-40MB 上限）单帧可达。
+  // 64MB 之上仍超限的帧走 :1719 的「有声拒绝」（messageTooLarge 错误帧），不再静默。
+  private val MaxMessageSize = 64 * 1024 * 1024 // 64MB (base64 image batches; see attach-split batch note)
 
   /**
    * A2 (perf-481): per-connection outbound queue capacity, in frames.
@@ -1713,7 +1718,27 @@ class WebSocketRoutes(
     wsSend: io.circe.Json => IO[Unit],
     watchSession: ExplorerWatchSession
   ): IO[Unit] =
-    if text.length > MaxMessageSize then logger.warn(s"Dropping oversized WebSocket message (${text.length} bytes)")
+    // attach-split 批（2026-10-24）：超限帧不再只留一行服务器 warn（现场事故 =
+    // 22 图整帧静默丢、文字同丢、前端乐观气泡假成功、「引擎日志零痕迹」体感）。
+    // 尽力解析 sessionId/clientMessageId 回发 `messageTooLarge` 错误帧（超限有声）——
+    // 客户端据此给出用户可见错误并收掉幻影 busy；旧前端收到未知帧型 = 无害 no-op。
+    if text.length > MaxMessageSize then
+      val overJson  = parsedJson(text)
+      val overSid   = overJson.hcursor.downField("sessionId").as[String].getOrElse("")
+      val overCmid  = overJson.hcursor.downField("clientMessageId").as[Option[String]].getOrElse(None)
+      logger.warn(
+        s"Dropping oversized WebSocket message (${text.length} bytes > $MaxMessageSize limit, " +
+          s"sessionId='$overSid', clientMessageId=${overCmid.getOrElse("")}) — messageTooLarge receipt sent"
+      ) *>
+        wsSend(
+          io.circe.Json.obj(
+            "type"          -> "messageTooLarge".asJson,
+            "sessionId"     -> overSid.asJson,
+            "clientMessageId" -> overCmid.asJson,
+            "sizeBytes"     -> text.length.asJson,
+            "limitBytes"    -> MaxMessageSize.asJson
+          )
+        )
     else
       val parsed = parsedJson(text)
       // 未走信封助手:parsed 绑定同时供 type 等多字段使用(全文件「先绑定 json/hcursor

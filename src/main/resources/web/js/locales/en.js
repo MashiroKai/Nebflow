@@ -412,6 +412,9 @@ export default {
   // 说清**为什么**（页面刷新把载荷剥离了——localStorage 放不下）与**怎么办**
   // （重新添加）。修前该情形只有 console.warn，对用户是**静默消失**。
   'messages.queueAttachUnrecoverable': '{n} attachment(s) could not be restored because the page was refreshed — please add them again',
+  // attach-split batch (2026-10-24 incident fix): user-visible copy for the server's
+  // loud rejection receipt (messageTooLarge) — {size}/{limit} = measured frame MB / server cap MB.
+  'send.messageTooLarge': 'This message (~{size} MB) exceeds the {limit} MB delivery limit and was NOT sent — remove some attachments and retry',
   'messages.trusted': 'Trusted',
   'messages.trustedHint': 'Trust is on: new messages are auto-forwarded to your agent',
   'messages.loadingOlder': 'Load earlier messages',
