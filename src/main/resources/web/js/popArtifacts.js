@@ -51,6 +51,10 @@ import { t } from './i18n.js';
 import state from './state.js';
 import { escapeHtml, smartScroll, localizeToolLabel, localizeToolSummary } from './utils.js';
 import { ticketUrl, reMint } from './nfTicket.js';
+// imgdoor 二次加载批（2026-10-24）：图片脸字节进 nfFileCache 账本——预览取数即入账，
+// Canvas 打开账本命中零取数（预览 + 打开 = 恰一次网络抓取）。账本模块只 import
+// state/branding，本边不成环。
+import { nfViewerUrl, nfCacheDrop } from './nfFileCache.js';
 // quote-message 一期（2026-10-09）：用户媒体/文件卡行挂消息 id + 右键「引用」。
 // 摘要 = [图片]/[文件] 文件名（spec §2.5 表）。挂点在本 builder ⇒ live 发送、
 // 历史恢复（persistence.buildUserAttachmentRows）、attachmentsSaved 原位重渲
@@ -214,13 +218,44 @@ function hydrateMedia(el, item, onFail) {
     el.addEventListener('error', () => {
       if (el.dataset.nfReminted === '1') { fail(); return; }
       el.dataset.nfReminted = '1';
-      reMint(path)
+      // imgdoor 二次加载批（2026-10-24）：账本腿（blob: URL）解码失败 = 手上这份
+      // 缓存字节坏了 ⇒ 先把该键逐出账本再走既有 reMint 直取链——自愈语义与票腿
+      // 同族，坏字节不粘死账本（否则 TTL 内每次渲染都命中同一份坏字节）。
+      const remedy = el.src.startsWith('blob:')
+        ? nfCacheDrop('nf:' + path).then(() => reMint(path))
+        : reMint(path);
+      Promise.resolve(remedy)
         .then(url => { if (el.isConnected) el.src = url; })
         .catch(() => fail());
     });
-    ticketUrl(path)
-      .then(url => { if (el.isConnected) el.src = url; })
-      .catch(() => fail());
+    // 互斥分派（恰一腿）：图片 = 账本腿；视频/音频 = 既有票腿原样。
+    // 既有票腿（视频/音频恒走这里；图片只在账本腿失败时回落）：ticketUrl ⇒ 裸 src
+    // 直取，error ⇒ 上面的 reMint 自愈链。逐字保留。
+    if (el.tagName !== 'IMG') {
+      legacyTicketFace();
+      return;
+    }
+
+    // imgdoor 二次加载批（2026-10-24 · 作者报障「pop 的图片预览会加载一次，点击在
+    // canvas 打开好像又会加载一次」）：图片脸字节改经 **nfFileCache 账本**
+    // （`nfViewerUrl` 单点：`nf:<path>` 命中 = blob URL 直显；未命中 = 既有票据链
+    // 取数并 `nfCachePut` 入账）。修前形态：预览 = 裸 `<img src=票据URL>` 直取，
+    // 字节不进账本 ⇒ Canvas 打开按「账本未命中」把同一件再全量下载一次（取数腿
+    // `cache:'no-store'`，HTTP 缓存帮不上）——同图两次网络抓取。修后：预览取数即
+    // 入账 ⇒ Canvas 打开（image viewer 同走 `nfViewerUrl`）命中零取数，预览 +
+    // 打开 = 恰一次抓取；内容失效仍由既有事件失效/TTL/列目录对账三腿把关，灯箱
+    // 复用同一 hydrateMedia ⇒ 同样零追加抓取。铸票/取数失败（nfViewerUrl 拒绝）
+    // ⇒ 原样回落 legacyTicketFace，失败面与改前逐字一致。视频/音频不进账本
+    // （Range/流式播放语义，非本批症状面）。
+    nfViewerUrl({ absPath: path, objectUrl: null, pane: el })
+      .then(url => { if (el.isConnected && !el.dataset.nfReminted) el.src = url; })
+      .catch(() => { if (!el.dataset.nfReminted) legacyTicketFace(); });
+
+    function legacyTicketFace() {
+      ticketUrl(path)
+        .then(url => { if (el.isConnected) el.src = url; })
+        .catch(() => fail());
+    }
   }
 }
 
