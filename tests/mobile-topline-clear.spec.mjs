@@ -81,11 +81,11 @@ async function bootApp(page) {
   await page.waitForTimeout(300);
 }
 
-/** 种两条长消息行（.row.ai/.user + .bubble），把 #chat 撑出滚动量。 */
+/** 种两条长消息行（.row.ai/.user + .bubble），把 #chat 撑出滚动量（只追加，
+ *  不清空 —— 避免扰动 main.js 对既有行的引用）。 */
 async function seedRows(page) {
   await page.evaluate(() => {
     const chat = document.getElementById('chat');
-    chat.innerHTML = '';
     const mk = (cls, text) => {
       const row = document.createElement('div');
       row.className = `row ${cls}`;
