@@ -357,6 +357,12 @@ private[agent] object AgentFinishTurn:
         // Idle 是合法状态（run_in_background 后台命令等待期），TaskStuckWatcher
         // 只判 Processing——此标记是防误杀铁律的落地。
         _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
+        // ── 回合尾后台任务栅栏门（修复批 2026-10-24 spec ③）──────────────────
+        // 对照在飞账本：本会话自有等待型后台任务非空 ⇒ 持久栅栏（BgTaskLedger
+        // .armBarrier——「有在飞任务结束回合必有栅栏」的强制腿）+ 新等待期首拍
+        // 生成记账警告（随 idle 底座消息进入转录，模型下次被唤醒即见「在飞 N 个
+        // （id+描述+起止）」的账目——spec ① 的 agent 上下文可见面）。
+        bgAccounting <- bgTurnEndAccounting(state)
         // Drain pending user inputs: forward head to self (agent is now idle,
         // so it will be processed with full metadata by the idle handler). The
         // tail is preserved for the next turn boundary drain.
@@ -382,9 +388,10 @@ private[agent] object AgentFinishTurn:
         // swapBase.messages，内存/盘分叉）。landed 腿的 swapBase.messages 经上方
         // executeSwap 喂态修正后已含本轮产出（S+Δ），此处取它才与原意一致。
         // 非乒乓会话（swapDone=None）⇒ newMessages，与乒乓前旧路径逐字节等价。
-        val baseMessages = swapDone match
+        val baseMessages = (swapDone match
           case Some(s) if s.landed => s.state.messages
           case _ => newMessages
+        ) ++ bgAccounting.toList
         val updatedState = swapBase
           .copy(execution =
             ExecutionContext
@@ -766,6 +773,55 @@ private[agent] object AgentFinishTurn:
     if agentDef.category == "team" then
       sid.fold(IO.unit)(s => TeamSessionRegistry.markBusy(s).handleErrorWith(_ => IO.unit))
     else IO.unit
+
+  // ═══ 回合尾后台任务栅栏门（修复批 2026-10-24，spec ①/③ 接线单点）══════════
+  // 结束回合时对照 BgTaskRegistry 在飞账本（本会话**自有**等待型任务；子代理
+  // 挂靠任务由子代理自己的回合尾门承载，不灌水父会话——与 reclaimSession 的
+  // 自有判据同口径）：
+  //   - 非空 ⇒ 持久栅栏（BgTaskLedger.armBarrier，**必有栅栏**的强制腿——引擎
+  //     侧保证，与会话族无关）；
+  //   - 新等待期首拍（任务集相对上次栅栏有变化）⇒ 记账警告随返回值进入 idle
+  //     底座消息（下一回合模型上下文可见「在飞 N 个（id+描述+起止）」——账目
+  //     不再只存在于引擎侧；PPT 病历「agent 上下文不知道自己跑了多少后台任务」
+  //     的收口）。同任务集重复回合尾不重发（防逐轮刷转录）。
+  // fail-soft：账本/registry 故障降级为无警告，绝不阻断回合收尾。
+  private[agent] def bgTurnEndAccounting(
+    state: AgentState
+  ): IO[Option[Message]] =
+    state.sessionId.fold(IO.none[Message]) { sid =>
+      nebflow.core.tools.BgTaskRegistry
+        .waitingFor(sid)
+        .map(_.filter(_.sessionId == sid))
+        .flatMap {
+          case Nil =>
+            // 等待集清空：顺手撤栅栏（卫生面——不留陈旧栅栏记录）。
+            nebflow.core.tools.BgTaskLedger.armBarrier(sid, Nil).as(None)
+          case waiting =>
+            nebflow.core.tools.BgTurnEndGate
+              .onTurnEnd(sid, waiting)
+              .flatMap { outcome =>
+                // 独立 helper 不在 actor 行为内（无 ActorContext given）——审计走
+                // 纯 logger（与 BackoffSupervisor 的 bg-wait cap 腿同风格）。
+                NebflowLogger
+                  .forName("nebflow.agent")
+                  .info(
+                    s"[bg-turn-end-barrier] sid=$sid waiting=${outcome.waitingCount} " +
+                      s"changed=${outcome.changed} warning=${outcome.warning.isDefined}"
+                  ) *>
+                  IO.pure(
+                    outcome.warning.map(txt =>
+                      Message(MessageRole.User, Left(txt)).copy(source = Some("system"))
+                    )
+                  )
+              }
+              .handleErrorWith { e =>
+                NebflowLogger
+                  .forName("nebflow.agent")
+                  .warn(s"bg-turn-end accounting failed for $sid: ${e.getMessage}")
+                  .as(None)
+              }
+        }
+    }
 
   private[agent] def markTeamIdle(agentDef: AgentDef, sid: Option[String]): IO[Unit] =
     if agentDef.category == "team" then

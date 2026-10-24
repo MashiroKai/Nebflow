@@ -979,29 +979,44 @@ class RemoteExecutor(
     result: Either[String, String]
   ): IO[Unit] =
     BgTaskRegistry.unregister(jobId) *>
+      // 完成事件持久账本（修复批 2026-10-24「先落账本再投递」）：与 BashTool
+      // 本地后台同语义——事件先落账再投递，投递失联由补投腿兜底，永不蒸发。
       (result match
         case Right(output) =>
-          ctx.agentActorRef.fold(IO.unit)(ref =>
-            ref ! AgentCommand.ExternalEvent(
-              source = "background-task",
-              eventType = "completed",
-              payload = s"[Background task completed] \"$description\":\n$output",
-              metadata = JsonObject("description" -> description.asJson, "output" -> output.asJson)
-            )
-          ) *>
-            emitBgTaskFinished(ctx, jobId, description, "completed") *>
-            logger.info(s"Remote background task $jobId completed")
+          val payload = s"[Background task completed] \"$description\":\n$output"
+          val notifyAgent =
+            ctx.agentActorRef.fold(IO.unit)(ref =>
+              ref ! AgentCommand.ExternalEvent(
+                source = "background-task",
+                eventType = "completed",
+                payload = payload,
+                metadata = JsonObject("description" -> description.asJson, "output" -> output.asJson)
+              )
+            ) *>
+              emitBgTaskFinished(ctx, jobId, description, "completed") *>
+              logger.info(s"Remote background task $jobId completed")
+          BgTaskLedger
+            .recordCompletion(ctx.sessionId.getOrElse(""), jobId, description, "completed", payload)
+            .handleErrorWith(e => logger.warn(s"bg-ledger record failed for remote job $jobId: ${e.getMessage}"))
+            .flatMap(_ => notifyAgent)
         case Left(errMsg) =>
-          ctx.agentActorRef.fold(IO.unit)(ref =>
-            ref ! AgentCommand.ExternalEvent(
-              source = "background-task",
-              eventType = "failed",
-              payload = s"[Background task failed] \"$description\":\n$errMsg",
-              metadata = JsonObject("description" -> description.asJson)
-            )
-          ) *>
-            emitBgTaskFinished(ctx, jobId, description, "failed") *>
-            logger.warn(s"Remote background task $jobId failed: $errMsg"))
+          val payload = s"[Background task failed] \"$description\":\n$errMsg"
+          val notifyAgent =
+            ctx.agentActorRef.fold(IO.unit)(ref =>
+              ref ! AgentCommand.ExternalEvent(
+                source = "background-task",
+                eventType = "failed",
+                payload = payload,
+                metadata = JsonObject("description" -> description.asJson)
+              )
+            ) *>
+              emitBgTaskFinished(ctx, jobId, description, "failed") *>
+              logger.warn(s"Remote background task $jobId failed: $errMsg")
+          BgTaskLedger
+            .recordCompletion(ctx.sessionId.getOrElse(""), jobId, description, "failed", payload)
+            .handleErrorWith(e => logger.warn(s"bg-ledger record failed for remote job $jobId: ${e.getMessage}"))
+            .flatMap(_ => notifyAgent)
+      )
 
   // ---- P2P Direct ----
 
