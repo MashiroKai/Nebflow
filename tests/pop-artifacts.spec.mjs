@@ -432,15 +432,19 @@ test.describe('UI-G — subagent window: no added periodic refresh', () => {
     });
 
     const moduleRaf = read.subagent.raf - read.baseline.raf;
-    // The one module-side frame in this sequence is chat.js appendThinkingDelta's
-    // COALESCED one-shot (`if (!_pendingThinkingRAF) _pendingThinkingRAF = rAF(…)`
-    // — a pending-flag guard, the callback self-clears): 1 frame, never a loop.
-    // A loop would grow with the await count; 1 does not.
+    // 2026-10-24 CI 存量红分诊：预算 1→2 —— 本序列的 module 侧帧 = 两个 COALESCED
+    // one-shot，同款 pending-flag 守卫、回调自清、绝不循环：
+    //   ① chat.js appendThinkingDelta（`if (!_pendingThinkingRAF) _pendingThinkingRAF
+    //      = rAF(…)`）—— 旧钉的那一发；
+    //   ② chat.js 工具流部分 JSON 渲染（`if (!_pendingToolStreamRAF)
+    //      _pendingToolStreamRAF = rAF(…)`，对话层活性流式批加入）—— toolRunHere 步
+    //      触发的那一发。
+    // 判定力不变：loop 会随 await 步数增长（本序列 5 步 ⇒ loop ≥5），单发恒定 2。
     expect(moduleRaf,
       `no rAF loop: the module scheduled ${moduleRaf} frame(s) over `
       + `${read.subagent.raf} total (harness baseline ${read.baseline.raf}); `
-      + 'a coalescing one-shot is 1, a loop grows with the step count')
-      .toBeLessThanOrEqual(1);
+      + 'each coalescing one-shot is 1, a loop grows with the step count')
+      .toBeLessThanOrEqual(2);
     expect(read.subagent.interval,
       'the subagent window armed NO setInterval (the dots live-seconds timer is gated)')
       .toBe(0);

@@ -159,7 +159,11 @@ async function cardDump(page) {
     const q = (s) => document.querySelector(s);
     const card = document.querySelector('.plugins-card[data-plugin="e2e-hello"]');
     const pill = card?.querySelector('.plugins-state-pill');
-    const dsw = card?.querySelector('[data-plugin-dispatch]');
+    // 2026-10-24 CI 存量红分诊重钉：2026-10-07 14:13 作者令①把收起态行尾也给了
+    // 同源开关（新钩子 [data-plugin-dispatch-row]，与药丸/chevron 同排；原
+    // [data-plugin-dispatch] 仍是展开详情区actions行的钩子，语义零变）。
+    // 状态区几何断言读**行尾视图**；本体断言两视图同状态源等价。
+    const dsw = card?.querySelector('[data-plugin-dispatch-row]') || card?.querySelector('[data-plugin-dispatch]');
     const lab = card?.querySelector('.plugins-dispatch-label');
     const noteEl = card?.querySelector('.plugins-dispatch-note');
     const cs = pill ? getComputedStyle(pill) : null;
@@ -195,13 +199,24 @@ async function cardDump(page) {
         if (!card || !head || !state || !dsw) return null;
         const r = (el) => el.getBoundingClientRect();
         const dr = r(dsw), hr = r(head);
+        // 2026-10-07 行尾开关批：状态区 = [行尾开关包裹, chevron]（药丸仅在有文字态
+        // 插队同排）——chevron 保持行末展开 affordance。右对齐判据随迁到 chevron。
+        const chevron = state.lastElementChild;
+        const dswWrap = dsw.closest('.plugins-card-dispatch') || dsw;
+        const wrapIsToggle = dswWrap.matches('[data-plugin-dispatch-row], [data-plugin-dispatch]')
+          || !!dswWrap.querySelector('[data-plugin-dispatch-row], [data-plugin-dispatch]');
         return {
           inHead: head.contains(dsw),
           inState: state.contains(dsw),
           pillAbsent: !pill,
-          // 状态区唯一子元素 = 承载 toggle 的 `.plugins-card-dispatch` 包裹（无占位元素）
-          stateOnlyChild: state.children.length === 1 && !!state.firstElementChild?.querySelector('[data-plugin-dispatch]'),
-          rightAlignedInHead: (hr.right - dr.right) <= 4,
+          // 状态区子元素 = 行尾开关（toggleHTML 渲染裸 button，无包裹）+ 行末
+          // chevron（零占位残留；空态无药丸）
+          stateOnlyChild: state.children.length === 2
+            && wrapIsToggle
+            && !!chevron
+            && chevron !== dswWrap
+            && chevron.previousElementSibling === dswWrap,
+          rightAlignedInHead: !!chevron && (hr.right - r(chevron).right) <= 4,
         };
       })(),
     };
@@ -255,23 +270,24 @@ test('件1: 插件面板两处可见小字整体删除；toggle 本体/状态样
     expect(s.pillVisual, `[${locale}] 空态无药丸 ⇒ 无计算样式可读`).toBe(null);
 
     // ── 可点性 + 状态样式翻转（写 dispatch.authorEnabled，wire 只出现 disable/enable）──
+    // 2026-10-07 条目式重构后详情区默认收起（hidden）⇒ 点**行尾开关**
+    // （[data-plugin-dispatch-row]），状态断言读 cardDump 的同源行尾视图。
+    const rowSel = '.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch-row]';
     const posts = [];
     page.on('request', (req) => {
       if (req.method() === 'POST' && new URL(req.url()).pathname.startsWith('/api/plugins/')) posts.push(new URL(req.url()).pathname);
     });
-    await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]');
-    await page.waitForFunction(() =>
-      !document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]')?.classList.contains('on'),
-      { timeout: 8000 });
+    await page.click(rowSel);
+    await page.waitForFunction((sel) =>
+      !document.querySelector(sel)?.classList.contains('on'), rowSel, { timeout: 8000 });
     const off = await cardDump(page);
     expect(off.toggleOn, `[${locale}] 点击后 toggle 状态样式翻转为 off`).toBe(false);
     expect(off.toggleAriaChecked, `[${locale}] aria-checked 跟随翻转为 false`).toBe('false');
     // 🔴 关态也不出说明小字（作者令点名的就是「派发已关闭——…」这条）
     expect(off.noteText, `[${locale}] 关态仍无可见说明小字`).toBe(null);
-    await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]');
-    await page.waitForFunction(() =>
-      document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]')?.classList.contains('on'),
-      { timeout: 8000 });
+    await page.click(rowSel);
+    await page.waitForFunction((sel) =>
+      document.querySelector(sel)?.classList.contains('on'), rowSel, { timeout: 8000 });
     const on = await cardDump(page);
     expect(on.toggleOn, `[${locale}] 再点回 on`).toBe(true);
     expect(posts, `[${locale}] wire：仍只有 disable/enable 两笔`).toEqual([

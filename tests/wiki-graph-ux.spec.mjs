@@ -666,7 +666,7 @@ test('§E-2 trackpad/shift pan intact; middle-drag = pan; left semantics regress
   expect(errors).toEqual([]);
 });
 
-test('§F frosted: capsule ≡ search ≡ chips ≡ chat header material; capsule skirt fade retired on desktop', async ({ page }) => {
+test('§F frosted: 各族材质正身——header 平玻璃豁免 / wiki 控件 frost 族 / 胶囊 elevation（10-22 双作者令）; capsule skirt fade retired on desktop', async ({ page }) => {
   const errors = await boot(page);
   await openGraph(page);
   const mat = await page.evaluate(() => {
@@ -681,9 +681,27 @@ test('§F frosted: capsule ≡ search ≡ chips ≡ chat header material; capsul
   // chips 契约取「静息片」：无过滤时首片（全部）恒为 .on 选中态 accent 材质，
   // 不在本契约内（同 chat header 的 hover 控件）。
   expect(mat.header && mat.capsule && mat.search && mat.chip).toBeTruthy();
-  expect(mat.capsule).toEqual(mat.header);
-  expect(mat.search).toEqual(mat.header);
-  expect(mat.chip).toEqual(mat.header);
+  // 2026-10-24 CI 存量红分诊重钉：旧钉「capsule ≡ search ≡ chips ≡ header 四者
+  // 逐字同材质」已被 2026-10-22 两条同日作者令合法取代 ——
+  //   ①「全站一套毛玻璃」（sapphire.css --frost-shadow 单源）：wiki 控件
+  //     （.wg-search/.wg-chip）挂 frost 族（--glass-bg/blur saturate(1.15)/
+  //     --glass-border/--frost-shadow）；
+  //   ② 合并裁定 #header 豁免 --frost-shadow（chat.css：外投影分量会在气泡穿入
+  //     时衬线 +「Header 下面有一个边缘…要移除」底缘零边界令）⇒ header 计算面
+  //     = 平玻璃（单内描高光、底边透明、零外投影）；
+  //   ③ 卡头胶囊材质批（405ff4）：胶囊独立 elevation 正身。
+  // 改钉 = 各族正身（token 源），不再做跨元素逐字等式。
+  expect(mat.header.shadow, 'header 豁免 frost 外投影（平底玻璃）').not.toContain('0px 8px 24px');
+  expect(mat.header.border, 'header 底缘零边界（下边透明）').toContain('rgba(0, 0, 0, 0)');
+  for (const el of [mat.search, mat.chip]) {
+    expect(el.blur, 'wiki 控件走全站毛玻璃 blur 档').toContain('saturate(1.15)');
+    expect(el.shadow, 'wiki 控件挂 --frost-shadow 近影').toContain('0px 2px 8px');
+    expect(el.shadow, 'wiki 控件挂 --frost-shadow 远影').toContain('0px 8px 24px');
+  }
+  expect(mat.capsule.shadow, '胶囊内高光与玻璃同源').toContain('inset');
+  expect(mat.capsule.shadow, '胶囊近影（材质批 elevation）').toContain('0px 2px 8px');
+  expect(mat.capsule.shadow, '胶囊远影（材质批 elevation）').toContain('0px 8px 24px');
+  expect(mat.capsule.border, '胶囊四边均匀描边（不再平底透底）').not.toContain('rgba(0, 0, 0, 0)');
   // ③ canvas 胶囊裙边渐隐桌面退役：类仍挂（手机层共用样式表），桌面 ::after
   // display:none —— 画布内容不再穿胶囊渐变淡出。
   const skirt = await page.evaluate(() => {
