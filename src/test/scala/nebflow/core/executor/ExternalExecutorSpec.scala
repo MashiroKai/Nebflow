@@ -70,6 +70,32 @@ class ExternalExecutorSpec extends CatsEffectSuite:
     assertEquals(noise, Nil)
   }
 
+  // 子智能体面板实时可视化批（2026-10-24）：claude thinking → Thinking、
+  // tool_result → ToolEnd、result.usage → Usage、api_retry → 可见 Text。
+  test("claude-code: thinking block → Thinking; tool_result → ToolEnd; result usage → Usage frame") {
+    val frames = List(
+      """{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"Let me reason."}]}}""",
+      """{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu_1","content":"ok"}]},"subtype":"tool_result"}""",
+      """{"type":"result","subtype":"success","is_error":false,"result":"done","usage":{"input_tokens":1200,"output_tokens":34}}"""
+    ).flatMap(ExternalExecutor.ClaudeCode.parseLine)
+
+    assertEquals(frames.collect { case ExternalExecutor.Frame.Thinking(d) => d }, List("Let me reason."))
+    assertEquals(frames.collect { case ExternalExecutor.Frame.ToolEnd(l) => l }, List("tool_result"))
+    assertEquals(frames.collect { case f: ExternalExecutor.Frame.Final => f.text }, List("done"))
+    assertEquals(
+      frames.collect { case u: ExternalExecutor.Frame.Usage => u },
+      List(ExternalExecutor.Frame.Usage(Some(1200), Some(34)))
+    )
+  }
+
+  test("claude-code: api_retry 可见性帧（卡住可感知），不抛不错帧") {
+    val frames = ExternalExecutor.ClaudeCode.parseLine(
+      """{"type":"system","subtype":"api_retry","attempt":3,"max_retries":10,"error_status":429,"error":"rate_limit","session_id":"s1"}"""
+    )
+    assertEquals(frames.length, 1)
+    assert(frames.exists { case ExternalExecutor.Frame.Text(t) => t.contains("api retry 3/10") && t.contains("429") })
+  }
+
   test("claude-code launchArgs: fresh = print+stream-json+verbose; resume appends --resume") {
     assertEquals(
       ExternalExecutor.ClaudeCode.launchArgs("do it", None),
@@ -83,22 +109,44 @@ class ExternalExecutorSpec extends CatsEffectSuite:
 
   // ── codex 适配器 fixture 回放 ───────────────────────────────────
 
-  test("codex: thread.started → Start, command_execution → Tool, agent_message → Text, turn.failed → Final(failed)") {
+  test("codex: thread.started → Start, command_execution → Tool/ToolEnd, agent_message → Text, turn.completed usage → Usage") {
     val frames = List(
       """{"type":"thread.started","thread_id":"th-77"}""",
       """{"type":"turn.started"}""",
+      """{"type":"item.started","item":{"type":"reasoning","text":"thinking it over"}}""",
       """{"type":"item.started","item":{"type":"command_execution","command":"cargo test --all"}}""",
+      """{"type":"item.completed","item":{"type":"command_execution","command":"cargo test --all","aggregated_output":"ok"}}""",
+      """{"type":"item.completed","item":{"type":"mcp_tool_call","tool":"search"}}""",
       """{"type":"item.completed","item":{"type":"agent_message","text":"Tests pass."}}""",
-      """{"type":"turn.completed","usage":{"input_tokens":10}}"""
+      """{"type":"turn.completed","usage":{"input_tokens":16472,"output_tokens":900}}"""
     ).flatMap(ExternalExecutor.Codex.parseLine)
 
     assertEquals(frames.collect { case ExternalExecutor.Frame.Start(s) => s }, List(Some("th-77")))
+    assertEquals(frames.collect { case ExternalExecutor.Frame.Thinking(d) => d }, List("thinking it over"))
     assertEquals(frames.collect { case ExternalExecutor.Frame.Tool(l) => l }, List("cargo"))
+    assertEquals(frames.collect { case ExternalExecutor.Frame.ToolEnd(l) => l }, List("cargo", "search"))
     assertEquals(frames.collect { case ExternalExecutor.Frame.Text(t) => t }, List("Tests pass."))
+    assertEquals(
+      frames.collect { case u: ExternalExecutor.Frame.Usage => u },
+      List(ExternalExecutor.Frame.Usage(Some(16472), Some(900)))
+    )
+    // 成功 turn.completed 无 response 字段 ⇒ 无 Final 帧（终稿走 runner lastText 兜底）。
     assert(frames.collect { case f: ExternalExecutor.Frame.Final => f }.isEmpty)
 
     val failed = ExternalExecutor.Codex.parseLine("""{"type":"turn.failed","error":{"message":"sandbox denied"}}""")
     assertEquals(failed, List(ExternalExecutor.Frame.Final("sandbox denied", failed = true)))
+  }
+
+  // 可见性底线（今晨 codex 假死疑案）：瞬态 error 事件与 error item 进面板。
+  test("codex: transient error events and error items become visible Text frames") {
+    val frames = List(
+      """{"type":"error","message":"Reconnecting... 2/5 (workspace routing discovery failed)"}""",
+      """{"type":"item.completed","item":{"id":"item_0","type":"error","message":"`[features].codex_hooks` is deprecated."}}"""
+    ).flatMap(ExternalExecutor.Codex.parseLine)
+
+    assertEquals(frames.length, 2)
+    assert(frames.exists { case ExternalExecutor.Frame.Text(t) => t.contains("Reconnecting... 2/5") })
+    assert(frames.exists { case ExternalExecutor.Frame.Text(t) => t.contains("[codex error]") && t.contains("deprecated") })
   }
 
   test("codex launchArgs: fresh = exec --json (repo check skipped); resume = exec resume") {
@@ -139,22 +187,29 @@ class ExternalExecutorSpec extends CatsEffectSuite:
     assertEquals(frames.collect { case f: ExternalExecutor.Frame.Final => f.failed }, List(false))
   }
 
-  test("zcode stream-json 兼容方言: 事件流 JSONL → Start/Text/Tool；紧凑 result 行 → Start+Final") {
+  test("zcode stream-json 兼容方言: 事件流 JSONL → Start/Text/Thinking/Tool/ToolEnd；紧凑 result 行 → Start+Final+Usage") {
     val frames = List(
       """{"type":"session.created","sessionId":"sess_abc","eventId":"e1","seq":0,"payload":{}}""",
       """{"type":"turn.started","sessionId":"sess_abc","eventId":"e2","seq":1,"payload":{}}""",
       """{"type":"model.streaming","sessionId":"sess_abc","payload":{"kind":"text_delta","delta":"Working."}}""",
+      """{"type":"model.streaming","sessionId":"sess_abc","payload":{"kind":"reasoning_delta","delta":"hmm"}}""",
       """{"type":"tool.updated","sessionId":"sess_abc","payload":{"kind":"started","toolName":"Bash","toolCallId":"tc-1"}}""",
-      """{"type":"model.streaming","sessionId":"sess_abc","payload":{"kind":"reasoning_delta","delta":"hidden"}}""",
-      """{"type":"result","sessionId":"sess_abc","turnId":"turn_1","response":"All done.","eventCount":5,"projection":{"status":"idle","turnCount":1}}"""
+      """{"type":"tool.updated","sessionId":"sess_abc","payload":{"kind":"completed","toolName":"Bash","toolCallId":"tc-1"}}""",
+      """{"type":"result","sessionId":"sess_abc","turnId":"turn_1","response":"All done.","eventCount":5,"usage":{"inputTokens":16869,"outputTokens":36},"projection":{"status":"idle","turnCount":1}}"""
     ).flatMap(ExternalExecutor.ZCode.parseLine)
 
     assertEquals(frames.collect { case ExternalExecutor.Frame.Start(s) => s }, List(Some("sess_abc"), Some("sess_abc")))
     assertEquals(frames.collect { case ExternalExecutor.Frame.Text(t) => t }, List("Working."))
+    assertEquals(frames.collect { case ExternalExecutor.Frame.Thinking(d) => d }, List("hmm"))
     assertEquals(frames.collect { case ExternalExecutor.Frame.Tool(l) => l }, List("Bash"))
+    assertEquals(frames.collect { case ExternalExecutor.Frame.ToolEnd(l) => l }, List("Bash"))
     assertEquals(
       frames.collect { case f: ExternalExecutor.Frame.Final => f },
       List(ExternalExecutor.Frame.Final("All done.", failed = false))
+    )
+    assertEquals(
+      frames.collect { case u: ExternalExecutor.Frame.Usage => u },
+      List(ExternalExecutor.Frame.Usage(Some(16869), Some(36)))
     )
   }
 
@@ -179,9 +234,64 @@ class ExternalExecutorSpec extends CatsEffectSuite:
     assertEquals(noise, Nil)
   }
 
-  test("zcode launchArgs: fresh = -p + --json; resume = --resume 前置（晨裁①-B 旗标轮换）") {
-    assertEquals(ExternalExecutor.ZCode.launchArgs("t", None), List("-p", "t", "--json"))
-    assertEquals(ExternalExecutor.ZCode.launchArgs("t", Some("zc-1")), List("--resume", "zc-1", "-p", "t", "--json"))
+  test("zcode launchArgs: fresh = -p + --output-format stream-json（实时可视化批旗标定稿）; resume = --resume 前置") {
+    assertEquals(ExternalExecutor.ZCode.launchArgs("t", None), List("-p", "t", "--output-format", "stream-json"))
+    assertEquals(
+      ExternalExecutor.ZCode.launchArgs("t", Some("zc-1")),
+      List("--resume", "zc-1", "-p", "t", "--output-format", "stream-json")
+    )
+  }
+
+  // ── 无结构化输出退化（parseLineWithFallback 纯函数契约）──────────────
+  //
+  // 作者令可见性底线：某 CLI 无任何结构化输出时，面板绝不黑盒——未解析行按行
+  // 缓冲注入为 Text 帧。spec 面四性质：结构化帧照常、结构化前噪声 passthrough、
+  // 结构化后噪声停注（除非适配器显式声明）、洪水闸（行数上限 + 单帧截断）。
+
+  test("parseLineWithFallback: structured frames pass through unchanged and flip sawStructured") {
+    val line = """{"type":"thread.started","thread_id":"th-1"}"""
+    val (frames, saw, rawCount) = ExternalExecutor.parseLineWithFallback(ExternalExecutor.Codex, line, false, 0)
+    assertEquals(frames, List(ExternalExecutor.Frame.Start(Some("th-1"))))
+    assert(saw)
+    assertEquals(rawCount, 0)
+  }
+
+  test("parseLineWithFallback: unparsed lines before any structured frame stream into the panel (raw tail)") {
+    val (f1, saw1, n1) = ExternalExecutor.parseLineWithFallback(ExternalExecutor.Codex, "Claude Code v1.0", false, 0)
+    assertEquals(f1, List(ExternalExecutor.Frame.Text("Claude Code v1.0")))
+    assert(!saw1) // 仍无结构化帧——后续行继续 passthrough
+    assertEquals(n1, 1)
+
+    // 单帧截断（行缓冲 tail 上限）。
+    val longLine = "x" * 1000
+    val (f2, _, _) = ExternalExecutor.parseLineWithFallback(ExternalExecutor.Codex, longLine, false, 1)
+    assertEquals(f2, List(ExternalExecutor.Frame.Text("x" * ExternalExecutor.RawLineMaxChars)))
+
+    // 空白行不注。
+    val (f3, _, _) = ExternalExecutor.parseLineWithFallback(ExternalExecutor.Codex, "   ", false, 1)
+    assertEquals(f3, Nil)
+  }
+
+  test("parseLineWithFallback: after structured frames, noise stops (no passthrough) unless adapter declares it") {
+    val (f1, _, _) = ExternalExecutor.parseLineWithFallback(ExternalExecutor.Codex, "Reconnecting...", true, 0)
+    assertEquals(f1, Nil) // Codex 不声明 passthroughUnparsed ⇒ 结构化后噪声停注
+
+    val passthroughAdapter = new ExternalExecutor.ExternalExecutor:
+      val id = "raw-cli"
+      val displayName = "Raw CLI"
+      def launchArgs(task: String, resumeSessionId: Option[String]): List[String] = Nil
+      def parseLine(line: String): List[ExternalExecutor.Frame] = Nil
+      def interactiveResumeCommand(cliSessionId: Option[String]): String = "raw-cli"
+      override val passthroughUnparsed = true
+    val (f2, _, _) = ExternalExecutor.parseLineWithFallback(passthroughAdapter, "some raw progress", true, 0)
+    assertEquals(f2, List(ExternalExecutor.Frame.Text("some raw progress")))
+  }
+
+  test("parseLineWithFallback: flood cap — raw passthrough stops at RawPassthroughLineCap lines") {
+    val (frames, _, count) =
+      ExternalExecutor.parseLineWithFallback(ExternalExecutor.Codex, "noise", false, ExternalExecutor.RawPassthroughLineCap)
+    assertEquals(frames, Nil)
+    assertEquals(count, ExternalExecutor.RawPassthroughLineCap)
   }
 
   // ── 注册表与选择面 ──────────────────────────────────────────────

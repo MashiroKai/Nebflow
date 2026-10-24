@@ -32,7 +32,13 @@ import io.circe.parser.parse
  */
 object ExternalExecutor:
 
-  /** 适配器产出的一帧（stdout 单行解析结果；一行情值多帧时按序给全）。 */
+  /** 适配器产出的一帧（stdout 单行解析结果；一行情值多帧时按序给全）。
+    *
+    * 子智能体面板实时可视化批（2026-10-24）：帧集从四帧扩到七帧——
+    * ToolEnd（工具调用收尾，面板工具 tile 不再永久挂起）＋ Thinking（CLI
+    * 推理流）＋ Usage（token 进度，agentDone 的 inputTokens/outputTokens
+    * 徽标）。映射实证：/tmp 探针三 CLI 真流走查（zcode stream-json 全事件、
+    * codex exec --json、claude stream-json）。 */
   sealed trait Frame extends Product with Serializable
 
   object Frame:
@@ -46,6 +52,17 @@ object ExternalExecutor:
     /** 工具调用开始（label 面向进度行）。 */
     final case class Tool(label: String) extends Frame
 
+    /** 工具调用收尾（label 与对应 Tool 帧同词；面板/历史按 toolEnd 落卡）。 */
+    final case class ToolEnd(label: String) extends Frame
+
+    /** CLI 推理流增量（claude thinking 块 / codex reasoning item / zcode
+      * reasoning_delta）——映射引擎 agentThinking 帧，复用思考区渲染。 */
+    final case class Thinking(delta: String) extends Frame
+
+    /** token 用量（CLI turn 完成时给出）；runner 暂存最后一份，终局
+      * agentDone 携带 inputTokens/outputTokens（面板 ✻ 徽标同内部腿）。 */
+    final case class Usage(inputTokens: Option[Int], outputTokens: Option[Int]) extends Frame
+
     /**
      * 终局帧：CLI final 文本（结果取 CLI final 文本——原书不变）。failed=true
      * 表示流面显式报错（result error / turn.failed）。
@@ -53,6 +70,44 @@ object ExternalExecutor:
     final case class Final(text: String, failed: Boolean) extends Frame
 
   end Frame
+
+  /** 行缓冲 tail 退化的阈值：未解析行单帧截断（防超长行刷爆面板）。 */
+  val RawLineMaxChars: Int = 500
+
+  /** 未解析行 passthrough 的运行期行数上限（结构化帧已出现后，非结构化
+    * 噪声行不再逐行进面板——见 [[parseLineWithFallback]]）。 */
+  val RawPassthroughLineCap: Int = 200
+
+  /**
+   * 单行解析 + 无结构化输出退化（纯函数——spec 直测）。
+   *
+   * 退化契约（作者令可见性底线）：某 CLI 无任何结构化输出时，面板也绝不
+   * 黑盒——未解析行按行缓冲注入为 Text 帧。两档：
+   *   - `sawStructured=false`（本 run 尚无结构化帧）：逐行 passthrough
+   *     （截断 [[RawLineMaxChars]]；累计过 [[RawPassthroughLineCap]] 行后
+   *     停止——洪水闸）。JSONL 首行即结构化，故正常 run 此档几乎不触发；
+   *     纯文本 CLI 全程可见。
+   *   - `sawStructured=true`：仅当适配器显式 `passthroughUnparsed`（为无
+   *     结构化 CLI 建适配器时的声明）才继续逐行；否则未解析行只进
+   *     [[ExternalOutputStore]]（REST 输出面留痕），不进 WS。
+   */
+  def parseLineWithFallback(
+    ex: ExternalExecutor,
+    line: String,
+    sawStructured: Boolean,
+    rawLinesEmitted: Int
+  ): (List[Frame], Boolean, Int) =
+    val frames = ex.parseLine(line)
+    val nowStructured = sawStructured || frames.nonEmpty
+    if frames.nonEmpty then (frames, nowStructured, rawLinesEmitted)
+    else
+      val trimmed = line.trim
+      val passthrough =
+        trimmed.nonEmpty &&
+          (ex.passthroughUnparsed || !nowStructured) &&
+          rawLinesEmitted < RawPassthroughLineCap
+      if passthrough then (List(Frame.Text(trimmed.take(RawLineMaxChars))), nowStructured, rawLinesEmitted + 1)
+      else (Nil, nowStructured, rawLinesEmitted)
 
   /** 单个外部执行器适配器。 */
   trait ExternalExecutor:
@@ -64,6 +119,14 @@ object ExternalExecutor:
 
     /** 单行 stdout 解析；非本格式行（噪声/空行）→ Nil，绝不抛。 */
     def parseLine(line: String): List[Frame]
+
+    /**
+     * 无结构化输出 CLI 的退化声明（缺省 false）：true = 即使本 run 已见
+     * 结构化帧，未解析行也逐行 passthrough 进面板（行缓冲 tail）。为三 CLI
+     * 既有适配器保持 false（JSONL 全程结构化，passthrough 只会注噪）；
+     * 未来为无结构化 CLI 建适配器时置 true 即获得作者令的可见性底线。
+     */
+    def passthroughUnparsed: Boolean = false
 
     /** 「打开原软件」的交互恢复命令（openNative 模板用；resume 缺席时=裸启动）。 */
     def interactiveResumeCommand(cliSessionId: Option[String]): String
@@ -103,6 +166,13 @@ object ExternalExecutor:
         j.hcursor.downField("type").as[String].toOption match
           case Some("system") if j.hcursor.downField("subtype").as[String].toOption.contains("init") =>
             List(Frame.Start(str(j, "session_id")))
+          case Some("system") if j.hcursor.downField("subtype").as[String].toOption.contains("api_retry") =>
+            // 卡住可感知（子智能体面板实时可视化批 2026-10-24）：429 退避静默
+            // 期面板不再无事件——重试行进面板（间隔秒~分钟级，非注噪）。
+            val attempt = j.hcursor.downField("attempt").as[Int].toOption.getOrElse(0)
+            val maxR = j.hcursor.downField("max_retries").as[Int].toOption.getOrElse(0)
+            val status = str(j, "error_status").orElse(str(j, "error")).getOrElse("?")
+            List(Frame.Text(s"[claude-code] api retry $attempt/$maxR (status $status)"))
           case Some("assistant") =>
             val content = j.hcursor.downField("message").downField("content")
             content
@@ -112,15 +182,29 @@ object ExternalExecutor:
               .collect {
                 case block if block.hcursor.downField("type").as[String].toOption.contains("text") =>
                   block.hcursor.downField("text").as[String].toOption.filter(_.nonEmpty).toList.map(Frame.Text.apply)
+                case block if block.hcursor.downField("type").as[String].toOption.contains("thinking") =>
+                  block.hcursor.downField("thinking").as[String].toOption.filter(_.nonEmpty).toList.map(Frame.Thinking.apply)
                 case block if block.hcursor.downField("type").as[String].toOption.contains("tool_use") =>
                   block.hcursor.downField("name").as[String].toOption.toList.map(Frame.Tool.apply)
               }
               .flatten
+          case Some("user")
+              if j.hcursor.downField("subtype").as[String].toOption.contains("tool_result") =>
+            // 工具收尾：tool_result 行无工具名（tool_use_id 与前面 tool_use 的
+            // id 对应——适配器无状态不配对），label 用 "tool_result"，面板按
+            // toolEnd 清工具 tile / 历史落卡。
+            List(Frame.ToolEnd("tool_result"))
           case Some("result") =>
             val text = str(j, "result").getOrElse("")
             val isErr = j.hcursor.downField("is_error").as[Boolean].toOption.getOrElse(false)
             val subtypeErr = j.hcursor.downField("subtype").as[String].toOption.exists(_.startsWith("error"))
-            List(Frame.Final(text, failed = isErr || subtypeErr))
+            val usage = j.hcursor.downField("usage")
+            Frame.Final(text, failed = isErr || subtypeErr) +: (
+              for
+                in <- usage.downField("input_tokens").as[Int].toOption
+                out <- usage.downField("output_tokens").as[Int].toOption
+              yield Frame.Usage(Some(in), Some(out))
+            ).toList
           case _ => Nil
       }
 
@@ -167,6 +251,10 @@ object ExternalExecutor:
                 Frame.Tool(cmd.split("\\s+").headOption.getOrElse("command"))
               case item if item.hcursor.downField("type").as[String].toOption.contains("mcp_tool_call") =>
                 Frame.Tool(str(item, "tool").getOrElse("mcp_tool_call"))
+              case item if item.hcursor.downField("type").as[String].toOption.contains("reasoning") =>
+                // 推理流（子智能体面板实时可视化批 2026-10-24）——reasoning item
+                // 的文本在 started 即给出（completed 不重复）。
+                Frame.Thinking(str(item, "text").getOrElse(""))
             }
           case Some("item.completed") =>
             j.hcursor
@@ -176,8 +264,35 @@ object ExternalExecutor:
               .collect {
                 case item if item.hcursor.downField("type").as[String].toOption.contains("agent_message") =>
                   item.hcursor.downField("text").as[String].toOption.filter(_.nonEmpty).toList.map(Frame.Text.apply)
+                case item if item.hcursor.downField("type").as[String].toOption.contains("command_execution") =>
+                  val cmd = str(item, "command").getOrElse("")
+                  List(Frame.ToolEnd(cmd.split("\\s+").headOption.getOrElse("command")))
+                case item if item.hcursor.downField("type").as[String].toOption.contains("mcp_tool_call") =>
+                  List(Frame.ToolEnd(str(item, "tool").getOrElse("mcp_tool_call")))
+                case item if item.hcursor.downField("type").as[String].toOption.contains("error") =>
+                  // 错误 item 也进面板（可见性底线）：今晨 codex 空返回疑案的
+                  // 直接观感来源——item.completed{type:error} 此前被静默丢弃。
+                  List(Frame.Text(s"[codex error] ${str(item, "message").getOrElse("unknown error")}"))
               }
               .flatten
+          case Some("error") =>
+            // 瞬态错误事件（如 "Reconnecting... 2/5"——今晨探针实证）：面板可见，
+            // 卡住可感知。进程级终局仍由 turn.failed/退出码/settle 判。
+            List(Frame.Text(s"[codex] ${str(j, "message").getOrElse("error")}"))
+          case Some("turn.completed") =>
+            // 成功终局 + token 用量（子智能体面板实时可视化批）：usage 键名
+            // snake_case（input_tokens/output_tokens）与 camelCase 双兼容；
+            // response 字段（新版本给出）非空时即终稿。
+            val usage = j.hcursor.downField("usage")
+            val in =
+              usage.downField("input_tokens").as[Int].toOption
+                .orElse(usage.downField("inputTokens").as[Int].toOption)
+            val out =
+              usage.downField("output_tokens").as[Int].toOption
+                .orElse(usage.downField("outputTokens").as[Int].toOption)
+            val frames0 =
+              (if in.isDefined || out.isDefined then List(Frame.Usage(in, out)) else Nil)
+            str(j, "response").filter(_.trim.nonEmpty).fold(frames0)(r => frames0 :+ Frame.Final(r, failed = false))
           case Some("turn.failed") =>
             val msg = j.hcursor
               .downField("error")
@@ -214,15 +329,23 @@ object ExternalExecutor:
    *    help 不列，bundle parseArgs 白名单 `["text","json","stream-json"]` 在册，
    *    wantsEventStream 语义）＝逐帧 JSONL 事件流（`{type:"session.created"|
    *    "model.streaming"|"tool.updated"|"turn.failed"|…}`，payload.kind 驱动）
-   *    ＋终局紧凑单行 `{type:"result",sessionId,response,…}`。候裁如复审旗标
-   *    选型（stream-json 有逐帧流式进度），仅 launchArgs 一行翻转，解析面不动。
+   *    ＋终局紧凑单行 `{type:"result",sessionId,response,…}`。
+   *
+   * == 旗标选型定稿（子智能体面板实时可视化批 2026-10-24，复审通过）==
+   * 装机 zcode 0.16.9 探针实证（`/tmp` 真流走查，exit 0，37 事件）：stream-json
+   * 模式逐帧给出 `model.streaming`（kind=start/reasoning_start/reasoning_delta/
+   * reasoning_end/text_start/text_delta/text_end/finish，均带 delta）＋
+   * `turn.completed{response,usage}`＋终局 `{type:"result",sessionId,response,
+   * usage{inputTokens,outputTokens}}`。`--json` pretty 摘要模式则 turn 期间
+   * stdout 静默（黑盒——作者令禁止的形态）⇒ 弃 `--json`，launchArgs 恒
+   * stream-json；pretty 摘要方言解析保留（向后兼容/防御双跑）。
    */
   object ZCode extends ExternalExecutor:
     val id = "zcode"
     val displayName = "ZCode"
 
     def launchArgs(task: String, resumeSessionId: Option[String]): List[String] =
-      val base = List("-p", task, "--json")
+      val base = List("-p", task, "--output-format", "stream-json")
       resumeSessionId.fold(base)(sid => List("--resume", sid) :++ base)
 
     def parseLine(line: String): List[Frame] =
@@ -237,10 +360,17 @@ object ExternalExecutor:
     private def parseFrameJson(j: Json): List[Frame] =
       j.hcursor.downField("type").as[String].toOption match
         case Some("result") =>
-          // 终局紧凑行：sessionId＝续聊锚点，response＝终稿文本。
+          // 终局紧凑行：sessionId＝续聊锚点，response＝终稿文本，usage（探针
+          // 实证 camelCase inputTokens/outputTokens）＝token 徽标。
           val sid = str(j, "sessionId")
-          (if sid.isDefined then List(Frame.Start(sid)) else Nil) :+
-            Frame.Final(str(j, "response").getOrElse(""), failed = summaryFailed(j))
+          val usage = j.hcursor.downField("usage")
+          val usageFrame =
+            for
+              in <- usage.downField("inputTokens").as[Int].toOption
+              out <- usage.downField("outputTokens").as[Int].toOption
+            yield Frame.Usage(Some(in), Some(out))
+          (if sid.isDefined then List(Frame.Start(sid)) else Nil) ++
+            (Frame.Final(str(j, "response").getOrElse(""), failed = summaryFailed(j)) +: usageFrame.toList)
         case Some("session.created") =>
           str(j, "sessionId").map(sid => Frame.Start(Some(sid))).toList
         case Some("model.streaming") =>
@@ -248,9 +378,13 @@ object ExternalExecutor:
             p.hcursor.downField("kind").as[String].toOption match
               case Some("text_delta") =>
                 p.hcursor.downField("delta").as[String].toOption.filter(_.nonEmpty).toList.map(Frame.Text.apply)
+              case Some("reasoning_delta") =>
+                // 推理流（子智能体面板实时可视化批，0.16.9 探针实证 kind 词）——
+                // 映射 agentThinking，复用思考区渲染。
+                p.hcursor.downField("delta").as[String].toOption.filter(_.nonEmpty).toList.map(Frame.Thinking.apply)
               case Some("tool_call") | Some("tool_input_start") =>
                 p.hcursor.downField("toolName").as[String].toOption.toList.map(Frame.Tool.apply)
-              case _ => Nil // reasoning_* / start / end / tool_input_delta 等零帧
+              case _ => Nil // reasoning_start/end、text_start/end、start、finish 零帧
           }
         case Some("tool.updated") =>
           j.hcursor
@@ -261,6 +395,11 @@ object ExternalExecutor:
               case p
                   if p.hcursor.downField("kind").as[String].toOption.exists(k => k == "started" || k == "scheduled") =>
                 p.hcursor.downField("toolName").as[String].toOption.filter(_.nonEmpty).toList.map(Frame.Tool.apply)
+              case p
+                  if p.hcursor.downField("kind").as[String].toOption.exists(k =>
+                    k == "completed" || k == "finished" || k == "succeeded" || k == "ended"
+                  ) =>
+                p.hcursor.downField("toolName").as[String].toOption.filter(_.nonEmpty).toList.map(Frame.ToolEnd.apply)
             }
             .flatten
         case Some("turn.failed") =>

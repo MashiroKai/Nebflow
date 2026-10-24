@@ -25,6 +25,7 @@ import nebflow.shared.NebflowLogger
 import nebflow.shared.SubAgentTask
 
 import scala.collection.immutable.Queue
+import scala.concurrent.duration.*
 import scala.util.Try
 
 /**
@@ -198,7 +199,7 @@ Executor: ${ex.displayName} (external CLI); workspace: $seatWs${spec.project
 It runs in session $sessionId with no project context and no memory; the brief is its entire context. External executors receive the task text only — no platform tools or plugins are injected.
 You will be notified when it completes via a system message. Do NOT duplicate this task — wait for the result or work on something unrelated."""
               _ <- emitAgentStart(
-                seatedSpec.wsSend,
+                seatedSpec,
                 sessionId,
                 seatedSpec.rootSessionId,
                 seatedSpec.parentSessionId,
@@ -320,7 +321,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
         message,
         s"continuation: ${record.title}"
       )
-      _ <- emitAgentStart(spec.wsSend, record.id, record.parentSessionId, record.parentSessionId, ex, record.title)
+      _ <- emitAgentStart(spec, record.id, record.parentSessionId, record.parentSessionId, ex, record.title)
       _ <- launchTurn(record.id, ex, spec, prompt = brief, resumeSid = resumeSid)
       _ <- appendLedgerNote(
         record.taskId,
@@ -377,7 +378,8 @@ You will be notified when it completes via a system message. Do NOT duplicate th
           p
         }.flatMap { p =>
           ExternalOutputStore.attachProcess(sessionId, p) *>
-            // 读取循环放后台 fiber——spawn 立即返回（ack 不等进程）。
+            // 运行期心跳与读取循环并行（均为守护 fiber——spawn 立即返回）。
+            heartbeatLoop(sessionId, ex, spec, p).start *>
             readLoop(sessionId, ex, spec, p)
               .handleErrorWith(e =>
                 logger.warn(s"External delegate $sessionId read loop crashed: ${e.getMessage}") *>
@@ -451,6 +453,31 @@ You will be notified when it completes via a system message. Do NOT duplicate th
     try p.getOutputStream.close()
     catch case _: Throwable => () // 已关闭/进程早夭——无害，终态由 readLoop/settle 判定
 
+  /**
+   * 运行期心跳（子智能体面板实时可视化批 2026-10-24）：外部 CLI 静默段
+   * （长推理 / 网络重试 / 代理等待——今晨 codex 假死疑案的直接观感）面板
+   * 零事件，前端 630s 纯静默超时与幻影流判定均无食可喂。每
+   * Defaults.ToolHeartbeatSec 秒一条 agentToolHeartbeat（与内部执行器
+   * AgentSessionExecution 心跳同帧同语义——喂 busy timer / resetStreamTimeout /
+   * stampSessionStreamActivity）；进程死亡即停。
+   */
+  private def heartbeatLoop(
+    sessionId: String,
+    ex: ExternalExecutor.ExternalExecutor,
+    spec: SpawnSpec,
+    p: java.lang.Process
+  ): IO[Unit] =
+    def tick: IO[Unit] =
+      IO.sleep(nebflow.shared.Defaults.ToolHeartbeatSec.seconds) *>
+        IO.delay(p.isAlive).flatMap {
+          case false => IO.unit
+          case true =>
+            emitFrame(spec.wsSend, spec.rootSessionId, spec.parentSessionId, sessionId)(
+              Json.obj("type" -> "agentToolHeartbeat".asJson, "agentId" -> sessionId.asJson, "label" -> ex.id.asJson)
+            ).handleErrorWith(e => logger.warn(s"External delegate heartbeat failed: ${e.getMessage}")) *> tick
+        }
+    tick
+
   /** stdout 读取循环：行 → 缓冲 + 帧解析 → WS；进程退出后 settle。 */
   private def readLoop(
     sessionId: String,
@@ -462,29 +489,64 @@ You will be notified when it completes via a system message. Do NOT duplicate th
       val reader = new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream))
       val lines = Iterator.continually(Option(reader.readLine())).takeWhile(_.isDefined).flatten
       var finalFrame: Option[ExternalExecutor.Frame.Final] = None
+      var lastText = "" // 最后一段助手文本——CLI 无 Final 帧时的终稿兜底（codex 空返回修复）
+      var lastUsage: Option[ExternalExecutor.Frame.Usage] = None
+      var sawStructured = false // 无结构化输出退化档（parseLineWithFallback）
+      var rawLinesEmitted = 0
       lines.foreach { line =>
         ExternalOutputStore.append(sessionId, line).unsafeRunSync()
-        ex.parseLine(line).foreach {
+        val (frames, nowStructured, nowRawCount) =
+          ExternalExecutor.parseLineWithFallback(ex, line, sawStructured, rawLinesEmitted)
+        sawStructured = nowStructured
+        rawLinesEmitted = nowRawCount
+        frames.foreach {
           case ExternalExecutor.Frame.Start(cliSidOpt) =>
             cliSidOpt.foreach { cliSid =>
               (ExternalOutputStore.setCliSession(sessionId, cliSid) *> updateRecordCliSession(sessionId, cliSid))
                 .unsafeRunSync()
             }
           case ExternalExecutor.Frame.Text(t) =>
+            lastText = t
             emitFrame(spec.wsSend, spec.rootSessionId, spec.parentSessionId, sessionId)(
               Json.obj("type" -> "agentTextDelta".asJson, "agentId" -> sessionId.asJson, "delta" -> t.asJson)
+            ).unsafeRunSync()
+          case ExternalExecutor.Frame.Thinking(delta) =>
+            emitFrame(spec.wsSend, spec.rootSessionId, spec.parentSessionId, sessionId)(
+              Json.obj("type" -> "agentThinking".asJson, "agentId" -> sessionId.asJson, "delta" -> delta.asJson)
             ).unsafeRunSync()
           case ExternalExecutor.Frame.Tool(label) =>
             emitFrame(spec.wsSend, spec.rootSessionId, spec.parentSessionId, sessionId)(
               Json.obj("type" -> "agentToolStart".asJson, "agentId" -> sessionId.asJson, "label" -> label.asJson)
             ).unsafeRunSync()
+          case ExternalExecutor.Frame.ToolEnd(label) =>
+            // 工具收尾：summary/content 空（外部 CLI 不给工具输出详情）——
+            // 面板按 label 清工具 tile、历史落 UiMessage.Tool 卡。
+            emitFrame(spec.wsSend, spec.rootSessionId, spec.parentSessionId, sessionId)(
+              Json.obj(
+                "type" -> "agentToolEnd".asJson,
+                "agentId" -> sessionId.asJson,
+                "label" -> label.asJson,
+                "summary" -> "".asJson,
+                "content" -> "".asJson,
+                "isError" -> false.asJson
+              )
+            ).unsafeRunSync()
+          case u: ExternalExecutor.Frame.Usage => lastUsage = Some(u)
           case f: ExternalExecutor.Frame.Final => finalFrame = Some(f)
         }
       }
-      finalFrame
-    }.flatMap(finalFrame =>
-      IO.blocking(p.waitFor()).flatMap(exit => settle(sessionId, ex, spec, Some(exit), finalFrame))
+      TurnReadout(finalFrame, lastText, lastUsage)
+    }.flatMap(readout =>
+      IO.blocking(p.waitFor())
+        .flatMap(exit => settle(sessionId, ex, spec, Some(exit), readout.finalFrame, readout.lastText, readout.lastUsage))
     )
+
+  /** readLoop 的读取产物（纯数据——终稿/用量兜底随帧外带）。 */
+  private final case class TurnReadout(
+    finalFrame: Option[ExternalExecutor.Frame.Final],
+    lastText: String,
+    lastUsage: Option[ExternalExecutor.Frame.Usage]
+  )
 
   // ── 终态 settle（三态缝 → 父投递 → 面板帧 → mailbox 消化）───────────────
 
@@ -493,7 +555,9 @@ You will be notified when it completes via a system message. Do NOT duplicate th
     ex: ExternalExecutor.ExternalExecutor,
     spec: SpawnSpec,
     exitCode: Option[Int],
-    finalFrame: Option[ExternalExecutor.Frame.Final]
+    finalFrame: Option[ExternalExecutor.Frame.Final],
+    lastText: String = "",
+    lastUsage: Option[ExternalExecutor.Frame.Usage] = None
   ): IO[Unit] =
     settled.modify(s => if s.contains(sessionId) then (s, false) else (s + sessionId, true)).flatMap {
       case false => IO.unit // 首个终态胜出（cancel 与自然终态竞态防重入）
@@ -501,7 +565,14 @@ You will be notified when it completes via a system message. Do NOT duplicate th
         for
           cancelledNow <- cancelRequested.get.map(_.contains(sessionId))
           processFailed = exitCode.exists(_ != 0) || finalFrame.exists(_.failed)
-          text = finalFrame.map(_.text).map(_.trim).filter(_.nonEmpty).getOrElse("")
+          // 终稿文本：CLI Final 帧优先；缺席/空时退 lastText（流面最后一段助手
+          // 文本——codex 无 Final 帧路径的空返回修复：今晨两轮空回传的直接根因
+          // 是 item.completed(agent_message) 只走 delta 不留终稿）；再无 = 占位。
+          text = finalFrame
+            .map(_.text)
+            .filter(_.trim.nonEmpty)
+            .orElse(Option(lastText).filter(_.trim.nonEmpty))
+            .getOrElse("")
           // 引擎加固批 2026-10-09（P1-2）：判定缝素材补全——git 摘要（工作座位）
           // ＋漂移注记（[[DelegateTerminal.externalDriftNote]]，注记级覆盖）＋合并
           // 轮旗（合并指令经通道注入过的下一拍 settle）。
@@ -697,9 +768,18 @@ You will be notified when it completes via a system message. Do NOT duplicate th
                 autoMergeNote.map(n => s"$text$n").getOrElse(text),
                 reasonOpt
               )
-          // 面板终态帧（与内部 delegate 的 agentDone 同契约）。
+          // 面板终态帧（与内部 delegate 的 agentDone 同契约）；token 用量随帧
+          // （usageUpdate 同键——前端 ✻ 徽标直接消费，子智能体面板实时可视化批）。
           _ <- emitFrame(spec.wsSend, spec.rootSessionId, spec.parentSessionId, sessionId)(
-            Json.obj("type" -> "agentDone".asJson, "agentId" -> sessionId.asJson)
+            {
+              val base =
+                Json.obj("type" -> "agentDone".asJson, "agentId" -> sessionId.asJson)
+              val withIn =
+                lastUsage.flatMap(_.inputTokens).fold(base)(n => base.deepMerge(Json.obj("inputTokens" -> n.asJson)))
+              lastUsage.flatMap(_.outputTokens).fold(withIn)(n =>
+                withIn.deepMerge(Json.obj("outputTokens" -> n.asJson))
+              )
+            }
           )
           _ = logger.info(
             s"External delegate settled: $sessionId outcome=$outcome exit=${exitCode.map(_.toString).getOrElse("-")}${
@@ -823,22 +903,33 @@ You will be notified when it completes via a system message. Do NOT duplicate th
           case None => frame
         send(routed).handleErrorWith(e => logger.warn(s"External delegate WS frame failed: ${e.getMessage}"))
 
+  /**
+   * agentStart 发射。task 归属三键（project/taskId/taskTitle）与内部腿
+   * [[nebflow.core.node.NodeRunner]].routeSubagentWsSend 同契约——外部
+   * delegate 行徽章（项目名 / #任务号）与内部 delegate 同渲染，交互一致批
+   * 2026-10-24。
+   */
   private def emitAgentStart(
-    wsSend: Option[Json => IO[Unit]],
+    spec: SpawnSpec,
     sessionId: String,
     rootSessionId: String,
     parentSessionId: String,
     ex: ExternalExecutor.ExternalExecutor,
     title: String
   ): IO[Unit] =
-    emitFrame(wsSend, rootSessionId, parentSessionId, sessionId)(
-      Json.obj(
-        "type" -> "agentStart".asJson,
-        "agentId" -> sessionId.asJson,
-        "name" -> ex.displayName.asJson,
-        "agentType" -> "external".asJson,
-        "taskDescription" -> title.asJson
-      )
+    emitFrame(spec.wsSend, rootSessionId, parentSessionId, sessionId)(
+      {
+        val base = Json.obj(
+          "type" -> "agentStart".asJson,
+          "agentId" -> sessionId.asJson,
+          "name" -> ex.displayName.asJson,
+          "agentType" -> "external".asJson,
+          "taskDescription" -> title.asJson
+        )
+        val withProject = spec.project.fold(base)(p => base.deepMerge(Json.obj("project" -> p.asJson)))
+        val withTaskId = spec.taskId.fold(withProject)(n => withProject.deepMerge(Json.obj("taskId" -> n.asJson)))
+        withTaskId.deepMerge(Json.obj("taskTitle" -> title.asJson))
+      }
     )
 
   // ── 小件（SessionStore / 台账 / registry / 工具形态）────────────────────
