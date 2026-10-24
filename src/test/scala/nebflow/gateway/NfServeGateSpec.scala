@@ -54,7 +54,7 @@ class NfServeGateSpec extends CatsEffectSuite:
   /** The request as a pure IO (concurrency-safe — no nested unsafeRunSync). */
   private def request(route: HttpRoutes[IO], target: String): IO[org.http4s.Response[IO]] =
     route(Request[IO](Method.GET, Uri.unsafeFromString(target))).value.flatMap {
-      case None       => IO.raiseError(new IllegalStateException("nf-file route did not match"))
+      case None => IO.raiseError(new IllegalStateException("nf-file route did not match"))
       case Some(resp) => IO.pure(resp)
     }
 

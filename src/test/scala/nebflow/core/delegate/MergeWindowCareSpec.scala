@@ -90,6 +90,7 @@ class MergeWindowCareSpec extends CatsEffectSuite:
     )
 
   private class Sink(records: ListBuffer[String]) extends Behavior[AgentCommand]:
+
     def receive(ctx: nebflow.actor.ActorContext[AgentCommand], msg: AgentCommand): IO[Behavior[AgentCommand]] =
       msg match
         case AgentCommand.UserInput(text, _, _, _, _, _, _, _, _, _, _, _, _) => IO { records += text; this }
@@ -119,7 +120,8 @@ class MergeWindowCareSpec extends CatsEffectSuite:
       sup <- system.spawn(
         new Behavior[AgentEvent]:
           def receive(ctx: nebflow.actor.ActorContext[AgentEvent], msg: AgentEvent): IO[Behavior[AgentEvent]] =
-            IO.pure(this),
+            IO.pure(this)
+        ,
         s"sup-$delegateId"
       )
     yield Rig(
@@ -144,7 +146,9 @@ class MergeWindowCareSpec extends CatsEffectSuite:
 
   // ── ① 司机死 → 留队待重试 + 升级投活 root ────────────────────────────
 
-  test("⑤ dead round driver: entry kept pending retry, window released, escalation lands on the LIVE root; idempotent") {
+  test(
+    "⑤ dead round driver: entry kept pending retry, window released, escalation lands on the LIVE root; idempotent"
+  ) {
     val system = ActorSystem(s"mwc-1-${scala.util.Random.nextInt(100000)}")
     val records = ListBuffer.empty[String]
     for
@@ -167,12 +171,17 @@ class MergeWindowCareSpec extends CatsEffectSuite:
     yield
       assertEquals(findings.map(_.action), List(MergeWindowCare.ActionRoundDriverDead), "the dead driver is caught")
       assertEquals(kept.map(_.pendingRetry), Some(true), "the entry is kept pending retry (refused-head semantics)")
-      assertEquals(MergeQueue.isInFlight("p-mwc"), false, "the single-flight window is released (queue not wedged on the corpse)")
+      assertEquals(
+        MergeQueue.isInFlight("p-mwc"),
+        false,
+        "the single-flight window is released (queue not wedged on the corpse)"
+      )
       val events = got.collect { case e: AgentCommand.ExternalEvent => e }
       assertEquals(events.size, 1, "exactly one escalation event reached the live root")
       assertEquals(events.head.source, "merge-window-care")
       assertEquals(events.head.metadata("delegateId").flatMap(_.asString), Some("d-m1"))
       assertEquals(findings2, Nil, "second sweep is a no-op (pendingRetry idempotence)")
+    end for
   }
 
   // ── ② 孤儿 pre-injection 条目 → 出队收口 ─────────────────────────────
@@ -193,8 +202,13 @@ class MergeWindowCareSpec extends CatsEffectSuite:
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
       assert(before.isDefined, "sanity: the orphan entry was queued")
-      assertEquals(findings.map(_.action), List(MergeWindowCare.ActionOrphanDequeue), "the orphan is dequeued by the care sweep")
+      assertEquals(
+        findings.map(_.action),
+        List(MergeWindowCare.ActionOrphanDequeue),
+        "the orphan is dequeued by the care sweep"
+      )
       assertEquals(after, None, "the orphan entry is gone after the sweep")
+    end for
   }
 
   // ── ③ 活司机 → 零动作 ────────────────────────────────────────────────
@@ -216,6 +230,7 @@ class MergeWindowCareSpec extends CatsEffectSuite:
       assertEquals(findings, Nil, "a live merge round is left alone")
       assert(kept.isDefined, "the entry stays queued")
       assertEquals(kept.map(_.pendingRetry), Some(false))
+    end for
   }
 
 end MergeWindowCareSpec

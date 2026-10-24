@@ -13,7 +13,14 @@ import org.typelevel.ci.CIString
 import java.net.URI
 import java.net.http.{HttpClient, WebSocket, WebSocketHandshakeException}
 import java.nio.charset.StandardCharsets.UTF_8
-import java.util.concurrent.{CompletableFuture, ConcurrentHashMap, CompletionStage, ExecutionException, TimeoutException, TimeUnit}
+import java.util.concurrent.{
+  CompletableFuture,
+  ConcurrentHashMap,
+  CompletionStage,
+  ExecutionException,
+  TimeoutException,
+  TimeUnit
+}
 
 /**
  * Portal frame bridge for ONE relay WebSocket connection (phase 3a design
@@ -65,13 +72,16 @@ private[neblink] final class PortalTunnelBridge(
 
   private val logger = NebflowLogger.forName("nebflow.neblink.relay")
 
-  /** pong-reliability 批（2026-10-22）：隧道活性 pong 的上行口——包内唯一授权
-    * 访问器，供 [[PortalConnection.sendControlText]] 把控制帧路由进与本业务
-    * bulk 同一把单发位锁的发送器（Send pending 重试 + 预算）。 */
+  /**
+   * pong-reliability 批（2026-10-22）：隧道活性 pong 的上行口——包内唯一授权
+   * 访问器，供 [[PortalConnection.sendControlText]] 把控制帧路由进与本业务
+   * bulk 同一把单发位锁的发送器（Send pending 重试 + 预算）。
+   */
   private[neblink] def controlSender: RelayFrameSender = sender
 
   /** Per-connection state: HTTP body channels + local WS cycles, keyed by requestId. */
   private val bodyChannels = new ConcurrentHashMap[String, BodyChannel]
+
   /** Test seam (package-private): the self-safe-drop spec registers cycles here directly. */
   private[neblink] val wsCycles = new ConcurrentHashMap[String, WsCycle]
 
@@ -125,13 +135,13 @@ private[neblink] final class PortalTunnelBridge(
     // wire order, which is the ordering the FIFO mailbox exists to provide.
     IO.defer {
       frame match
-        case f: PortalWireCodec.HttpRequest        => handleHttpRequest(f)
-        case f: PortalWireCodec.BodyFrame          => feedBodyFrame(f)
-        case f: PortalWireCodec.WsOpen             => handleWsOpen(f)
-        case f: PortalWireCodec.WsFrame            => feedWsFrame(f)
-        case f: PortalWireCodec.WsClose            => handleWsClose(f)
-        case f: PortalWireCodec.ConsoleTicketMint  => handleConsoleTicketMint(f)
-        case f: PortalWireCodec.BindingControl     => handleBindingControl(f)
+        case f: PortalWireCodec.HttpRequest => handleHttpRequest(f)
+        case f: PortalWireCodec.BodyFrame => feedBodyFrame(f)
+        case f: PortalWireCodec.WsOpen => handleWsOpen(f)
+        case f: PortalWireCodec.WsFrame => feedWsFrame(f)
+        case f: PortalWireCodec.WsClose => handleWsClose(f)
+        case f: PortalWireCodec.ConsoleTicketMint => handleConsoleTicketMint(f)
+        case f: PortalWireCodec.BindingControl => handleBindingControl(f)
         case f: PortalWireCodec.MigrationChunk =>
           // Explicit not-implemented case (design 3.1): the migration relay face
           // belongs to phase 5; the frame must not fall into the unknown-type
@@ -172,10 +182,19 @@ private[neblink] final class PortalTunnelBridge(
             ) *>
               // One-shot answer (head + optional body): spawned OFF the mailbox —
               // the consumer never waits on the relay socket.
-              respondStatus(frame.requestId, 429, "application/json", s"""{"error":"rate_limited","reason":"$reason"}""").start.void
+              respondStatus(
+                frame.requestId,
+                429,
+                "application/json",
+                s"""{"error":"rate_limited","reason":"$reason"}"""
+              ).start.void
           case None => startHttpCycle(frame)
         }
       case None => startHttpCycle(frame)
+
+    end match
+
+  end handleHttpRequest
 
   private def startHttpCycle(frame: PortalWireCodec.HttpRequest): IO[Unit] =
     deps.faces.httpApp match
@@ -272,6 +291,8 @@ private[neblink] final class PortalTunnelBridge(
           )
       }
 
+  end runLocalRequest
+
   /**
    * Response body streaming: seq from 0 (+1 per frame), `more=false` only on the last chunk.
    * An EMPTY body still emits exactly one empty `more=false` terminator — the ingress
@@ -316,7 +337,7 @@ private[neblink] final class PortalTunnelBridge(
       .takeWhile(_ != BodySignal.End)
       .flatMap {
         case BodySignal.Data(bytes) => Stream.chunk(Chunk.array(bytes))
-        case BodySignal.End         => Stream.empty
+        case BodySignal.End => Stream.empty
       }
 
   private def feedBodyFrame(frame: PortalWireCodec.BodyFrame): IO[Unit] =
@@ -335,7 +356,7 @@ private[neblink] final class PortalTunnelBridge(
               case true =>
                 if !frame.more then
                   ch.queue.tryOffer(BodySignal.End).flatMap {
-                    case true  => IO.unit
+                    case true => IO.unit
                     case false => dropBodyCycle(frame.requestId, "body queue full at End")
                   }
                 else IO.unit
@@ -353,12 +374,12 @@ private[neblink] final class PortalTunnelBridge(
   private def dropBodyCycle(requestId: String, reason: String): IO[Unit] =
     logger.warn(s"portal body cycle dropped: requestId=$requestId reason=$reason")
     Option(bodyChannels.remove(requestId)) match
-      case None     => IO.unit
+      case None => IO.unit
       case Some(ch) => cancelCycle(ch)
 
   private def cancelCycle(ch: BodyChannel): IO[Unit] =
     IO(ch.cycle.get()).flatMap {
-      case None    => IO.unit
+      case None => IO.unit
       case Some(f) => f.cancel.void
     }
 
@@ -458,7 +479,7 @@ private[neblink] final class PortalTunnelBridge(
       .handleErrorWith { e =>
         val status = e match
           case hs: WebSocketHandshakeException => Option(hs.getResponse).map(_.statusCode()).getOrElse(0)
-          case _                               => 0
+          case _ => 0
         logger.warn(
           s"portal ws_open failed: requestId=$requestId path=${frame.path} " +
             s"error=${NeblinkRelayTunnel.describeErr(e)} — answering accepted=false status=$status"
@@ -471,6 +492,8 @@ private[neblink] final class PortalTunnelBridge(
       }
       .start
       .void
+
+  end handleWsOpen
 
   private def connectLocalWs(
     uri: String,
@@ -490,9 +513,7 @@ private[neblink] final class PortalTunnelBridge(
         .build()
       val builder = client.newWebSocketBuilder()
       subprotocol.foreach(builder.subprotocols(_))
-      headers.foreach(h =>
-        wsHandshakeHeaders(h).foreach { (name, value) => builder.header(name, value) }
-      )
+      headers.foreach(h => wsHandshakeHeaders(h).foreach { (name, value) => builder.header(name, value) })
       // Stage C: self-signed tunnel-origin mark on the loopback handshake —
       // the WS face has no mechanical origin signal (the socket IS loopback),
       // so this header is the tunnel discriminator GatewayAuth consumes. A
@@ -642,7 +663,9 @@ private[neblink] final class PortalTunnelBridge(
       down.fold(IO.unit)(_.cancel).void *> up.fold(IO.unit)(_.cancel).void
     }
 
-  private def cancelPump(ref: java.util.concurrent.atomic.AtomicReference[Option[cats.effect.Fiber[IO, Throwable, Unit]]]): IO[Unit] =
+  private def cancelPump(
+    ref: java.util.concurrent.atomic.AtomicReference[Option[cats.effect.Fiber[IO, Throwable, Unit]]]
+  ): IO[Unit] =
     IO(ref.getAndSet(None)).flatMap(_.fold(IO.unit)(_.cancel)).void
 
   /**
@@ -739,6 +762,8 @@ private[neblink] final class PortalTunnelBridge(
     // One-shot answer: spawned OFF the mailbox (the consumer never waits on
     // the relay socket; a single result frame has no ordering dependency).
     result.flatMap(r => sender.send(PortalWireCodec.encode(r))).start.void
+
+  end handleConsoleTicketMint
 
   private def mintError(frame: PortalWireCodec.ConsoleTicketMint, error: String): PortalWireCodec.ConsoleTicketResult =
     PortalWireCodec.ConsoleTicketResult(
@@ -916,6 +941,9 @@ private[neblink] final class RelayFrameSender(
           Thread.currentThread().interrupt()
           throw e
         case _: ExecutionException => () // position free either way; our send reports the socket honestly
+      end try
+    end if
+  end drainPrevious
 
   /**
    * Enqueue behind the (now expected-free) single-send position and await the
@@ -962,7 +990,7 @@ private[neblink] final class RelayFrameSender(
                 pendingRejection = ise
                 parkBeforeRetry()
               case c: Exception => throw c
-              case c            => throw new ExecutionException(c)
+              case c => throw new ExecutionException(c)
           case _: TimeoutException =>
             // Write budget exhausted while the frame is STILL in flight (`get`
             // with timeout does not cancel it — it keeps holding the single-send
@@ -971,6 +999,14 @@ private[neblink] final class RelayFrameSender(
             // never abort the socket: a stalled write is not a session death
             // verdict (the write may still complete once the path recovers).
             throw writeStallTimeout()
+
+        end try
+
+      end if
+
+    end while
+
+  end enqueueAndAwait
 
   private def parkBeforeRetry(): Unit =
     try Thread.sleep(pendingRetryMillis)
@@ -995,6 +1031,8 @@ private[neblink] final class RelayFrameSender(
     new TimeoutException(
       s"relay send position not acquired within ${sendTimeoutSec}s$cause — connection left intact"
     )
+
+end RelayFrameSender
 
 object RelayFrameSender:
   /** Non-contract implementation constant (backpressure tuning belongs to T-1). */
@@ -1029,6 +1067,7 @@ private[neblink] object PortalTunnelBridge:
 
   private val DropRequestHeaderNames: Set[String] =
     Set("transfer-encoding", "connection", "keep-alive", "upgrade")
+
   private val DropResponseHeaderNames: Set[String] =
     Set("transfer-encoding", "connection", "keep-alive")
 
@@ -1075,6 +1114,7 @@ private[neblink] object PortalTunnelBridge:
     !BodylessMethodNames.contains(method.name)
 
   sealed trait BodySignal
+
   object BodySignal:
     final case class Data(bytes: Array[Byte]) extends BodySignal
     case object End extends BodySignal
@@ -1088,8 +1128,10 @@ private[neblink] object PortalTunnelBridge:
   private[neblink] final class BodyChannel:
     val queue: Queue[IO, BodySignal] = Queue.bounded[IO, BodySignal](BodyQueueSlots).unsafeRunSync()
     val nextSeq: cats.effect.Ref[IO, Int] = cats.effect.Ref.unsafe[IO, Int](0)
+
     /** The app-run fiber of this cycle (registered after spawn; cancel = drop the cycle). */
     val cycle = new java.util.concurrent.atomic.AtomicReference[Option[cats.effect.Fiber[IO, Throwable, Unit]]](None)
+
     /** Whether any body_frame arrived — gates the first-frame deadline backstop. */
     val receivedAny = new java.util.concurrent.atomic.AtomicBoolean(false)
 
@@ -1104,8 +1146,10 @@ private[neblink] object PortalTunnelBridge:
   private[neblink] final class WsCycle(val requestId: String):
     val toLocal = new java.util.concurrent.LinkedBlockingQueue[WsCycle.DownlinkItem](WsQueueSlots)
     val uplink = new java.util.concurrent.LinkedBlockingQueue[WsCycle.UplinkItem](WsQueueSlots)
+
     val downPump =
       new java.util.concurrent.atomic.AtomicReference[Option[cats.effect.Fiber[IO, Throwable, Unit]]](None)
+
     val upPump =
       new java.util.concurrent.atomic.AtomicReference[Option[cats.effect.Fiber[IO, Throwable, Unit]]](None)
     private val activated = new java.util.concurrent.atomic.AtomicBoolean(false)
@@ -1126,18 +1170,23 @@ private[neblink] object PortalTunnelBridge:
 
   object WsCycle:
     sealed trait DownlinkItem
+
     object DownlinkItem:
       final case class Frame(frame: PortalWireCodec.WsFrame) extends DownlinkItem
+
       /** Server-initiated ws_close: drain pending frames, then close the local WS. */
       final case class LocalClose(code: Int, reason: String) extends DownlinkItem
+
       /** The local endpoint is gone; the downlink pump exits. */
       case object LocalGone extends DownlinkItem
 
     sealed trait UplinkItem
+
     object UplinkItem:
       /** Head item: the ws_open_result precedes any local frame by construction. */
       final case class OpenResult(accepted: Boolean, status: Int) extends UplinkItem
       final case class Frame(frame: PortalWireCodec.WsFrame) extends UplinkItem
+
       /** Tail item: propagate the close up to the relay, then the pump exits. */
       final case class RelayClose(code: Int, reason: String) extends UplinkItem
   end WsCycle
@@ -1167,6 +1216,7 @@ private[neblink] final class PortalConnection(dispatcher: Dispatcher[IO]):
   private val logger = NebflowLogger.forName("nebflow.neblink.relay")
 
   private val bridgeRef = new java.util.concurrent.atomic.AtomicReference[Option[PortalTunnelBridge]](None)
+
   private val consumer =
     new java.util.concurrent.atomic.AtomicReference[Option[cats.effect.Fiber[IO, Throwable, Unit]]](None)
 
@@ -1227,7 +1277,8 @@ private[neblink] final class PortalConnection(dispatcher: Dispatcher[IO]):
       case None =>
         // 桥未绑（upgrade 与首帧的竞态窗，此窗内不可能有 bulk 在飞）：修前裸发
         // 语义兜底——同步异常吞掉，与既有 case "ping" 面逐字同形。
-        try { ws.sendText(text, true); () }
+        try
+          ws.sendText(text, true); ()
         catch case _: Exception => ()
 
 end PortalConnection

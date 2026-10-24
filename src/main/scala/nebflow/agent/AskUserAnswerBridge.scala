@@ -196,7 +196,10 @@ object AskUserAnswerBridge:
         val c = a.hcursor
         val path = c.downField("path").as[String].toOption.getOrElse("")
         val name = c.downField("name").as[String].toOption.getOrElse(path.split('/').lastOption.getOrElse("file"))
-        val mime = c.downField("mime").as[String].toOption
+        val mime = c
+          .downField("mime")
+          .as[String]
+          .toOption
           .orElse(c.downField("mimeType").as[String].toOption)
           .getOrElse("application/octet-stream")
         val size = c.downField("size").as[Long].toOption.getOrElse(0L)
@@ -214,12 +217,14 @@ object AskUserAnswerBridge:
           IO.blocking(java.util.Base64.getEncoder.encodeToString(os.read.bytes(os.Path(path))))
             .map(Some(_))
             .handleErrorWith(e =>
-              logger.warn(s"askUser answer bridge: requestId=$requestId — image read failed ($path): ${e.getMessage}")
+              logger
+                .warn(s"askUser answer bridge: requestId=$requestId — image read failed ($path): ${e.getMessage}")
                 .as(None)
             )
       // vision 子集：图片、文件仍在、≤10MB 的**前 5 张**（ImageInject 单源上限）。
       val imageCandidates =
-        parsed.collect { case e @ (p, _, m, s, _) if m.startsWith("image/") && s > 0 && s <= maxImageBytes => e }
+        parsed
+          .collect { case e @ (p, _, m, s, _) if m.startsWith("image/") && s > 0 && s <= maxImageBytes => e }
           .take(maxImages)
       val imageReads = imageCandidates.traverse { case (p, _, _, _, _) => readImage(p) }
       imageReads.map { imageB64s =>
@@ -236,9 +241,11 @@ object AskUserAnswerBridge:
             "\n(Read any of these paths for full content" +
             (if imageBlocks.nonEmpty then "; the attached images are already visible to you" else "") +
             ".)"
-        val uiLines = "\n\n" + parsed.map { case (path, name, mime, size, _) =>
-          s"- $name (${humanSize(size)})" + (if isFileOk(path, size) then "" else " · unavailable")
-        }.mkString("\n")
+        val uiLines = "\n\n" + parsed
+          .map { case (path, name, mime, size, _) =>
+            s"- $name (${humanSize(size)})" + (if isFileOk(path, size) then "" else " · unavailable")
+          }
+          .mkString("\n")
         (attachText, imageBlocks, uiLines)
       }
   end attachmentInjection

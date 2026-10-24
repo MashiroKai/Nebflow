@@ -173,13 +173,26 @@ object StopCommand extends CliCommand:
   private[cli] object StopRun extends CliSubcommand:
     def name = "run"
     def description = "Stop the Gateway (--force skips the ownership gate; --tree kills an sbt-managed chain)"
+
     def params = List(
-      CliParam("force", None, "Skip the ownership gate (identity check, port confirmation and the 8080/8097 dev-host gate always apply)", isFlag = true),
-      CliParam("tree", None, "Stop the whole sbt-managed process chain; degrades to a single-process stop when no sbt ancestor exists", isFlag = true)
+      CliParam(
+        "force",
+        None,
+        "Skip the ownership gate (identity check, port confirmation and the 8080/8097 dev-host gate always apply)",
+        isFlag = true
+      ),
+      CliParam(
+        "tree",
+        None,
+        "Stop the whole sbt-managed process chain; degrades to a single-process stop when no sbt ancestor exists",
+        isFlag = true
+      )
     )
 
     def run(ctx: CliContext): IO[CliResult] =
       runStop(stopOptions(ctx))
+
+  end StopRun
 
   /**
    * StopOutcome → CliResult mapping (piece 4): Stopped/NotRunning exit 0
@@ -187,8 +200,8 @@ object StopCommand extends CliCommand:
    * the spec to drive with injected deps — zero real signals there.
    */
   private[cli] def runStop(
-      opts: ProcessManager.StopOptions,
-      deps: ProcessManager.StopDeps = ProcessManager.StopDeps()
+    opts: ProcessManager.StopOptions,
+    deps: ProcessManager.StopDeps = ProcessManager.StopDeps()
   ): IO[CliResult] =
     ProcessManager.stopHardened(opts, deps).map {
       case ProcessManager.StopOutcome.NotRunning =>
@@ -206,6 +219,8 @@ object StopCommand extends CliCommand:
       force = ctx.args.get("force").contains("true"),
       tree = ctx.args.get("tree").contains("true")
     )
+
+end StopCommand
 
 object StatusCommand extends CliCommand:
   def name = "status"
@@ -250,15 +265,17 @@ object StatusCommand extends CliCommand:
           if ctx.json then
             CliResult.Exit(
               code,
-              io.circe.Json.obj(
-                "running" -> running.asJson,
-                "pid" -> pidOpt.asJson,
-                "port" -> port.asJson,
-                "version" -> nebflow.Version.string.asJson,
-                "daemon" -> daemon.asJson,
-                "startedBy" -> startedBy.asJson,
-                "mode" -> mode.asJson
-              ).spaces2
+              io.circe.Json
+                .obj(
+                  "running" -> running.asJson,
+                  "pid" -> pidOpt.asJson,
+                  "port" -> port.asJson,
+                  "version" -> nebflow.Version.string.asJson,
+                  "daemon" -> daemon.asJson,
+                  "startedBy" -> startedBy.asJson,
+                  "mode" -> mode.asJson
+                )
+                .spaces2
             )
           else
             val head =
@@ -275,6 +292,7 @@ object StatusCommand extends CliCommand:
                 )
               case None => Nil
             CliResult.Exit(code, (head :: metaLines).mkString("\n"))
+          end if
         }
       }
 

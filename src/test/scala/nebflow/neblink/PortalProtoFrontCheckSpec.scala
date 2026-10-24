@@ -211,7 +211,9 @@ class PortalProtoFrontCheckSpec extends CatsEffectSuite:
 
   // ── Terminal probe leg（判定表 row 1/2/4：终态不停拨、101 清终态）────────
 
-  test("terminal binding does NOT stop dialing: the low-frequency probe reaches a real upgrade and row 4 clears the state"):
+  test(
+    "terminal binding does NOT stop dialing: the low-frequency probe reaches a real upgrade and row 4 clears the state"
+  ):
     withFixture { fix =>
       fix.relayMode = RelayAuthFixtureServer.RelayMode.AcceptIfLive
       Dispatcher.parallel[IO].use { dispatcher =>
@@ -285,7 +287,8 @@ class PortalProtoFrontCheckSpec extends CatsEffectSuite:
           _ = faces.bindHttpApp(
             org.http4s.HttpApp[IO] { (_: org.http4s.Request[IO]) =>
               IO(
-                org.http4s.Response[IO](status = org.http4s.Status.Ok)
+                org.http4s
+                  .Response[IO](status = org.http4s.Status.Ok)
                   .withBodyStream(fs2.Stream.emits("ok".getBytes(UTF_8)))
               )
             }

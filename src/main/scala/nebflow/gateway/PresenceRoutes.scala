@@ -608,7 +608,14 @@ private[gateway] object PresenceRoutes:
               .handleErrorWith(_ => IO.pure((Nil, Map.empty[String, String])))
               .flatMap { case (taskRows, statuses) =>
                 ChainsReadFace
-                  .delegatesJson(reg, archived, statuses, project, sharedResources.subAgentTaskStore.findByParent, taskRows)
+                  .delegatesJson(
+                    reg,
+                    archived,
+                    statuses,
+                    project,
+                    sharedResources.subAgentTaskStore.findByParent,
+                    taskRows
+                  )
                   .flatMap(body => HttpCache.conditionalOk(req, body, HttpCache.ofJson(body)))
               }
           }
@@ -1058,7 +1065,8 @@ private[gateway] object PresenceRoutes:
                 case None => NotFound(Json.obj("error" -> "no custom avatar".asJson))
                 case Some(sha) =>
                   Ok(
-                    Json.obj("sha256" -> sha.asJson, "updatedAt" -> rec.updatedAt.asJson)
+                    Json
+                      .obj("sha256" -> sha.asJson, "updatedAt" -> rec.updatedAt.asJson)
                       .deepMerge(Json.obj("displayName" -> rec.displayName.asJson))
                   )
             }

@@ -191,6 +191,8 @@ class MailToolRootSenderSpec extends FunSuite:
         case Right(v) => fail(s"a delegate mailing project: must be rejected, got: $v")
     finally system.stopAll.unsafeRunSync()
 
+    end try
+
   test("demolished: team sender + project:<name> => explicit refusal (no dispatcher trigger)"):
     val system = ActorSystem(s"mail-r2-team-${java.util.UUID.randomUUID().toString.take(6)}")
     try
@@ -209,6 +211,8 @@ class MailToolRootSenderSpec extends FunSuite:
           assert(!err.message.contains("not mounted"), s"the refusal must not depend on mount state: ${err.message}")
         case Right(v) => fail(s"a team sender mailing project: must be rejected, got: $v")
     finally system.stopAll.unsafeRunSync()
+
+    end try
 
   test("demolished: dispatcher + project:<name> => explicit refusal (no self-trigger)"):
     val system = ActorSystem(s"mail-r2-disp-${java.util.UUID.randomUUID().toString.take(6)}")
@@ -229,7 +233,11 @@ class MailToolRootSenderSpec extends FunSuite:
         case Right(v) => fail(s"a dispatcher mailing project: must be rejected, got: $v")
     finally system.stopAll.unsafeRunSync()
 
-  test("demolished: Nebula root + project:<name> => explicit refusal (the trigger leg is gone, mount state irrelevant)"):
+    end try
+
+  test(
+    "demolished: Nebula root + project:<name> => explicit refusal (the trigger leg is gone, mount state irrelevant)"
+  ):
     val system = ActorSystem(s"mail-r2-root-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       val res = MailTool
@@ -251,6 +259,7 @@ class MailToolRootSenderSpec extends FunSuite:
           )
         case Right(v) => fail(s"a project address must be refused, got: $v")
     finally system.stopAll.unsafeRunSync()
+    end try
 
   // ── root sender + TEAM name: routes to the team Manager ──
 

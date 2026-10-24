@@ -60,7 +60,8 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
       Ref.unsafe[IO, List[(String, String, Option[String])]](Nil)
 
     // 媒体统一适配批（2026-10-20）：统一媒体缝的记录面——(session, 指针列表, origin)。
-    val mediaInjections: Ref[IO, List[(String, List[nebflow.bridge.BridgeAttachment], Option[nebflow.bridge.BridgeOrigin])]] =
+    val mediaInjections
+      : Ref[IO, List[(String, List[nebflow.bridge.BridgeAttachment], Option[nebflow.bridge.BridgeOrigin])]] =
       Ref.unsafe[IO, List[(String, List[nebflow.bridge.BridgeAttachment], Option[nebflow.bridge.BridgeOrigin])]](Nil)
 
     val bound: Ref[IO, List[(String, String, Json)]] =
@@ -115,6 +116,8 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
     def listSessions: IO[List[SessionMeta]] = IO.pure(sessions)
     def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] = IO.unit
+
+  end OriginRecordingCtx
 
   private def plugin(allowed: Option[List[String]] = None, root: os.Path = tmpRoot()): WeixinIlinkBridgePlugin =
     new WeixinIlinkBridgePlugin(root, pinnedAllowedIlinkUserIds = allowed)
@@ -896,6 +899,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
    */
   private final class VarCtx(sessionsRef: Ref[IO, List[SessionMeta]]) extends BridgeContext:
     val bound: Ref[IO, List[(String, String, Json)]] = Ref.unsafe[IO, List[(String, String, Json)]](Nil)
+
     def injectMessage(
       sessionId: String,
       content: String,
@@ -905,6 +909,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     def interruptAgent(sessionId: String): IO[Unit] = IO.unit
     def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
     def listSessions: IO[List[SessionMeta]] = sessionsRef.get
+
     def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] =
       config.fold(IO.unit)(c => bound.update(_ :+ ((sessionId, platform, c))))
 
@@ -941,7 +946,10 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
       strikes = strikesOf(root)
       _ = assertEquals(strikes.size, 1, "exactly one strike on the health face")
       s0 = strikes.head
-      _ = assertEquals(s0.hcursor.downField("reason").as[String].toOption, Some(WeixinIlinkBridgePlugin.ReasonNoReturnAddress))
+      _ = assertEquals(
+        s0.hcursor.downField("reason").as[String].toOption,
+        Some(WeixinIlinkBridgePlugin.ReasonNoReturnAddress)
+      )
       _ = assertEquals(s0.hcursor.downField("sessionId").as[String].toOption, Some("s_default"))
       _ = assertEquals(s0.hcursor.downField("count").as[Long].toOption, Some(1L))
       _ = assert(s0.hcursor.downField("firstAt").as[Long].toOption.isDefined)
@@ -952,6 +960,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
         "the lost reply is stashed for redelivery"
       )
     yield ()
+    end for
   }
 
   test("WI-NR2 a never-served session's drop stays QUIET: no strike, no stash (it is not weixin traffic)") {
@@ -994,6 +1003,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
       dropped <- p.droppedRef.get
       _ = assertEquals(dropped.get("s_default"), None, "the letter is consumed")
     yield ()
+    end for
   }
 
   test("WI-NR4 a successful reply clears the session's strike (the channel face returns to green)") {
@@ -1025,7 +1035,8 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
       _ <- p.droppedRef.update(
         _ + ("s1" -> WeixinIlinkBridgePlugin.DroppedReply(
           "stale",
-          System.currentTimeMillis() - (WeixinIlinkBridgePlugin.DroppedReplyTtl.toMillis + 60000)))
+          System.currentTimeMillis() - (WeixinIlinkBridgePlugin.DroppedReplyTtl.toMillis + 60000)
+        ))
       )
       _ <- p.intake(c, inbound(Some("wx_old")))
       got <- calls.get
@@ -1033,6 +1044,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
       dropped <- p.droppedRef.get
       _ = assertEquals(dropped.get("s1"), None, "the expired letter is consumed either way")
     yield ()
+    end for
   }
 
   test("WI-NR6 the rebuilt routing table redelivers too (the save/REST binding face)") {
@@ -1057,6 +1069,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
       got2 <- calls.get
       _ = assertEquals(got2, got, "idempotent: no second send")
     yield ()
+    end for
   }
 
   test("WI-NR7 repeated drops accumulate the strike count, firstAt stable, letter = latest") {
@@ -1079,6 +1092,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
       dropped <- p.droppedRef.get
       _ = assertEquals(dropped.get("s_default").map(_.text), Some("second"), "the letter is the LATEST drop")
     yield ()
+    end for
   }
 
   test(
@@ -1088,7 +1102,9 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val root = tmpRoot()
     for
       _ <- IO(SocialChannels.save(root, "weixin-ilink", Json.obj("enabled" -> true.asJson, "fields" -> Json.obj())))
-      _ <- IO(SocialChannels.setBindError(root, "weixin-ilink", Some("provision failed after retries: attempt 4: exit 5")))
+      _ <- IO(
+        SocialChannels.setBindError(root, "weixin-ilink", Some("provision failed after retries: attempt 4: exit 5"))
+      )
       _ <- IO(
         SocialChannels.writeChannelHealth(
           root,
@@ -1119,6 +1135,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
       _ = assertEquals(after.downField("bindError").as[String].toOption, None, "stale error cleared by a new attempt")
       _ = assert(after.downField("health").focus.isDefined, "health is config-independent (runtime face)")
     yield ()
+    end for
   }
 
   // ─────────────── weixin-inbound-media batch: the media arm ───────────────
@@ -1231,6 +1248,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
         ),
         "the (path,name,mime) pointer + origin reach the unified seam (classification/attJson/vision live gateway-side)"
       )
+    end for
   }
 
   test("WI-M4 a media path missing at injection fails CLOSED: the bare label is injected (still delivered)") {
@@ -1313,6 +1331,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
         gotMedia.map { case (sid, atts, _) => (sid, atts.map(a => (a.path, a.name))) },
         List(("s_default", List((media.toString, Some("pic.png")))))
       )
+    end for
   }
 
   test("WI-M7 a media message with NO session to serve it drops as before (the media arm adds no routing)") {

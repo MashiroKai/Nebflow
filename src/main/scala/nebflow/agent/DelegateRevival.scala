@@ -70,8 +70,7 @@ object DelegateRevival:
    * boot 级预算（cap）由调用方按 spawnedAt 新者优先截取——不在本判据内。
    */
   def eligibility(sessionStore: SessionStore, task: SubAgentTask): IO[Option[String]] =
-    if !Defaults.DelegateRevivalEnabled then
-      IO.pure(Some("kill-switch off (nebflow.delegate.revival.enabled=false)"))
+    if !Defaults.DelegateRevivalEnabled then IO.pure(Some("kill-switch off (nebflow.delegate.revival.enabled=false)"))
     else if task.source != "delegate" then
       IO.pure(Some(s"source=${task.source} (only delegate tasks revive; subtasks are cheap to re-dispatch)"))
     else
@@ -83,14 +82,20 @@ object DelegateRevival:
           val parentExistsIo = sessionStore.listSessions.map(_.exists(_.id == task.parentSessionId))
           parentExistsIo.map { parentExists =>
             if rec.executor != ExecutorRegistry.DefaultId then
-              Some(s"external executor '${rec.executor}' (boot revival is internal-executor only; use the Mail continuation leg)")
+              Some(
+                s"external executor '${rec.executor}' (boot revival is internal-executor only; use the Mail continuation leg)"
+              )
             else if rec.archivedAt.isDefined then Some("record archived")
             else if !seatExists(rec.cwd) then Some(s"seat directory missing: ${rec.cwd}")
             else if !parentExists then Some(s"parent session '${task.parentSessionId}' no longer exists")
             else if !budgetLeft then
-              Some(s"revival budget exhausted (${task.revivalCount.getOrElse(0)}/${Defaults.DelegateRevivalMaxPerTask})")
+              Some(
+                s"revival budget exhausted (${task.revivalCount.getOrElse(0)}/${Defaults.DelegateRevivalMaxPerTask})"
+              )
             else if !ageOk then
-              Some(s"orphan older than revival age budget (${Defaults.DelegateRevivalMaxAgeMs}ms) — stale, salvage only")
+              Some(
+                s"orphan older than revival age budget (${Defaults.DelegateRevivalMaxAgeMs}ms) — stale, salvage only"
+              )
             else None
           }
       }
@@ -102,7 +107,9 @@ object DelegateRevival:
   def revive(deps: Deps, task: SubAgentTask): IO[Either[String, Unit]] =
     reviveImpl(deps, task)
       .handleErrorWith(e =>
-        logger.warn(s"[delegate-revival] revival errored for ${task.taskId}: ${e.getMessage}").as(Left(s"revival error: ${e.getMessage}"))
+        logger
+          .warn(s"[delegate-revival] revival errored for ${task.taskId}: ${e.getMessage}")
+          .as(Left(s"revival error: ${e.getMessage}"))
       )
 
   /** spawn 链本体（镜像 `BackoffSupervisor.respawn` 的跨进程版；设计 §2.3 ①–⑨）。 */
@@ -238,10 +245,13 @@ object DelegateRevival:
               "supervision chain rebuilt (BackoffSupervisor watching again)"
           )
         yield Right(())
+        end for
     }
 
-  /** 插件 best-effort 重挂：registry 记录的 plugins 集逐名 resolve → MCP 授予 +
-    * builtin 工具并集 → effectiveDef。零分配/全失败 = 原 def（fail-open）。 */
+  /**
+   * 插件 best-effort 重挂：registry 记录的 plugins 集逐名 resolve → MCP 授予 +
+   * builtin 工具并集 → effectiveDef。零分配/全失败 = 原 def（fail-open）。
+   */
   private def regrantPlugins(
     resources: SharedResources,
     sessionId: String,
@@ -275,12 +285,21 @@ object DelegateRevival:
                 else baseDef.copy(pluginMcpServers = grant.serverIds, pluginTools = builtinTools)
             }
             .handleErrorWith(e =>
-              logger.warn(s"[delegate-revival] plugin re-grant error for $sessionId (continuing without): ${e.getMessage}").as(baseDef)
+              logger
+                .warn(s"[delegate-revival] plugin re-grant error for $sessionId (continuing without): ${e.getMessage}")
+                .as(baseDef)
             )
         }
 
+    end if
+
+  end regrantPlugins
+
   /** 父会话活引用（Mail 续聊腿同款判读：统一注册表现查——重启后一律视为不 live）。 */
-  private def resolveParentRef(resources: SharedResources, parentSessionId: String): IO[Option[ActorRef[AgentCommand]]] =
+  private def resolveParentRef(
+    resources: SharedResources,
+    parentSessionId: String
+  ): IO[Option[ActorRef[AgentCommand]]] =
     if parentSessionId.isEmpty then IO.pure(None)
     else resources.agentRegistry.get.map(_.get(parentSessionId).map(_.ref))
 
@@ -294,17 +313,21 @@ object DelegateRevival:
   def reviveAll(deps: Deps, tasks: List[SubAgentTask], salvage: SubAgentTask => IO[Unit]): IO[Ref[IO, List[String]]] =
     Ref.of[IO, List[String]](Nil).flatMap { revivedRef =>
       Semaphore[IO](math.max(1, Defaults.DelegateRevivalConcurrency)).flatMap { sem =>
-        tasks.traverse { t =>
-          (sem.permit.use(_ =>
-            revive(deps, t).flatMap {
-              case Right(()) => revivedRef.update(_ :+ t.taskId)
-              case Left(reason) =>
-                logger.warn(
-                  s"[delegate-revival] revival failed for ${t.taskId}: $reason — falling through to the salvage chain"
-                ) *> salvage(t)
-            }
-          )).start
-        }.flatMap(fibers => fibers.traverse_(_.join.void)) *> IO.pure(revivedRef)
+        tasks
+          .traverse { t =>
+            (sem.permit
+              .use(_ =>
+                revive(deps, t).flatMap {
+                  case Right(()) => revivedRef.update(_ :+ t.taskId)
+                  case Left(reason) =>
+                    logger.warn(
+                      s"[delegate-revival] revival failed for ${t.taskId}: $reason — falling through to the salvage chain"
+                    ) *> salvage(t)
+                }
+              ))
+              .start
+          }
+          .flatMap(fibers => fibers.traverse_(_.join.void)) *> IO.pure(revivedRef)
       }
     }
 

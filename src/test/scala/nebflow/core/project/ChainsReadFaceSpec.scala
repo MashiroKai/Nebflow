@@ -221,36 +221,41 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     val statuses = Map(holderId -> "ready-to-merge", queuedId -> "ready-to-merge")
     // 清理挂 IO 链尾（guarantee）——finally 会先于 munit 跑 IO 执行，队列出队会
     // 撕掉被断言的 holder 态。
-    ChainsReadFace.rowsJson(Map.empty, archived = false, taskStatuses = statuses).map { body =>
-      val rows = body.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil)
-      val holder = rows.find(_.hcursor.get[String]("id").toOption.contains(holderId)).getOrElse(fail("holder row missing"))
-      val queued = rows.find(_.hcursor.get[String]("id").toOption.contains(queuedId)).getOrElse(fail("queued row missing"))
-      assertEquals(
-        holder.hcursor.get[String]("taskStatus").toOption,
-        Some("merging"),
-        "the merge-window holder exposes the explicit merging state (G1: derivation lives in the engine read face)"
-      )
-      // 排队者维持 ready-to-merge（排队 ≠ 合并中）。
-      assertEquals(
-        queued.hcursor.get[String]("taskStatus").toOption,
-        Some("ready-to-merge"),
-        "a queued (non-holder) row keeps ready-to-merge"
-      )
-      // 行内排队键照常（位次/持有者——前端零派生的透传面）。
-      assertEquals(
-        holder.hcursor.downField("mergeQueue").get[String]("holder").toOption,
-        Some(holderId),
-        "mergeQueue.holder rides the row for visibility"
-      )
-      assertEquals(
-        queued.hcursor.downField("mergeQueuePos").get[Int]("position").toOption,
-        Some(2),
-        "mergeQueuePos.position = engine FIFO order (holder included in total)"
-      )
-    }.guarantee(IO {
-      MergeQueue.onTerminal(holderId)
-      MergeQueue.onTerminal(queuedId)
-    })
+    ChainsReadFace
+      .rowsJson(Map.empty, archived = false, taskStatuses = statuses)
+      .map { body =>
+        val rows = body.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil)
+        val holder =
+          rows.find(_.hcursor.get[String]("id").toOption.contains(holderId)).getOrElse(fail("holder row missing"))
+        val queued =
+          rows.find(_.hcursor.get[String]("id").toOption.contains(queuedId)).getOrElse(fail("queued row missing"))
+        assertEquals(
+          holder.hcursor.get[String]("taskStatus").toOption,
+          Some("merging"),
+          "the merge-window holder exposes the explicit merging state (G1: derivation lives in the engine read face)"
+        )
+        // 排队者维持 ready-to-merge（排队 ≠ 合并中）。
+        assertEquals(
+          queued.hcursor.get[String]("taskStatus").toOption,
+          Some("ready-to-merge"),
+          "a queued (non-holder) row keeps ready-to-merge"
+        )
+        // 行内排队键照常（位次/持有者——前端零派生的透传面）。
+        assertEquals(
+          holder.hcursor.downField("mergeQueue").get[String]("holder").toOption,
+          Some(holderId),
+          "mergeQueue.holder rides the row for visibility"
+        )
+        assertEquals(
+          queued.hcursor.downField("mergeQueuePos").get[Int]("position").toOption,
+          Some(2),
+          "mergeQueuePos.position = engine FIFO order (holder included in total)"
+        )
+      }
+      .guarantee(IO {
+        MergeQueue.onTerminal(holderId)
+        MergeQueue.onTerminal(queuedId)
+      })
   }
 
   // ── C6 delegates 列表投影（视图重设计实施批 · UI 最小集）──────────────────────
@@ -309,8 +314,7 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
       lastError = None,
       source = "subagent"
     )
-    val childrenOf = (id: String) =>
-      if id == starId then IO(List(child)) else IO(Nil)
+    val childrenOf = (id: String) => if id == starId then IO(List(child)) else IO(Nil)
     for
       all <- ChainsReadFace.delegatesJson(Map.empty, childrenOf = childrenOf)
       filtered <- ChainsReadFace.delegatesJson(
@@ -319,10 +323,9 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
         childrenOf = childrenOf
       )
     yield
-      val rowsOf = (body: io.circe.Json) =>
-        body.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil)
-      val byId = (rows: List[io.circe.Json], id: String) =>
-        rows.find(_.hcursor.get[String]("id").toOption.contains(id))
+      val rowsOf =
+        (body: io.circe.Json) => body.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil)
+      val byId = (rows: List[io.circe.Json], id: String) => rows.find(_.hcursor.get[String]("id").toOption.contains(id))
       // 项目过滤：只留 spec-proj-c6 三行。
       val frows = rowsOf(filtered)
       assertEquals(frows.size, 3, "project filter keeps only the matching rows")
@@ -372,7 +375,7 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     DelegateRegistry.put(
       record(succId, Some("83"))
         .copy(createdAt = 2000L, title = "【断点续作】前会话（delegate-general-cc01old1）被引擎重启打断")
-    )    // 台账任务原文行（引用文本源——title 截断后仍可命中的兜底腿）。
+    ) // 台账任务原文行（引用文本源——title 截断后仍可命中的兜底腿）。
     val taskRows = List(
       SubAgentTask(
         taskId = loneId,
@@ -390,7 +393,8 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     )
     ChainsReadFace.rowsJson(Map.empty, taskStatuses = Map.empty, taskRows = taskRows).map { body =>
       val rows = body.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil)
-      val byId = (id: String) => rows.find(_.hcursor.get[String]("id").toOption.contains(id)).getOrElse(fail(s"$id missing"))
+      val byId =
+        (id: String) => rows.find(_.hcursor.get[String]("id").toOption.contains(id)).getOrElse(fail(s"$id missing"))
       val old = byId(oldId)
       assertEquals(
         old.hcursor.get[Long]("restartInterruptedAt").toOption,

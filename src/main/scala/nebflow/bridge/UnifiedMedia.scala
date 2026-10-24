@@ -24,8 +24,10 @@ import java.util.Base64
  */
 object UnifiedMedia:
 
-  /** Image sniff-fallback mime the weixin sidecar uses for an unrecognized
-    * image container — NOT concrete, so it can never ride a provider block. */
+  /**
+   * Image sniff-fallback mime the weixin sidecar uses for an unrecognized
+   * image container — NOT concrete, so it can never ride a provider block.
+   */
   val WildcardImageMime = "image/*"
 
   /**
@@ -41,9 +43,12 @@ object UnifiedMedia:
 
   /** The attJson `name` fallback: the path basename. */
   def nameOf(a: BridgeAttachment): String =
-    a.name.map(_.trim).filter(_.nonEmpty).getOrElse(
-      a.path.replaceAll("\\\\", "/").split("/").lastOption.filter(_.nonEmpty).getOrElse("file")
-    )
+    a.name
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .getOrElse(
+        a.path.replaceAll("\\\\", "/").split("/").lastOption.filter(_.nonEmpty).getOrElse("file")
+      )
 
   /**
    * ② 控制台同形 attJson 行：`{name, type, path}`（`WebSocketRoutes` :1764-1773
@@ -96,6 +101,7 @@ object UnifiedMedia:
                 case nebflow.core.tools.ImageInject.TooLarge(_) => Nil
                 case nebflow.core.tools.ImageInject.Prepared(prepared, preparedMime, _) =>
                   List(ContentBlock.Image(Base64.getEncoder.encodeToString(prepared), preparedMime))
+        end if
       }.handleError(_ => Nil)
 
 end UnifiedMedia

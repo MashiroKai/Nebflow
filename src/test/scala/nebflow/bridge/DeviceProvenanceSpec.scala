@@ -83,27 +83,33 @@ class DeviceProvenanceSpec extends FunSuite:
   private val peers = List(DeviceRosterEntry("win-1", "DESKTOP-IJBBEOT"), DeviceRosterEntry("phone-1", "Kaiyu-iPhone"))
 
   test("resolve: bound to self ⇒ enrolled with the roster device name (registration is authoritative)") {
-    val r = DeviceProvenance.resolve(ClientDevice("c", None, Some("mac"), Some("Chrome"), Some("self-1")), Some(self), peers)
+    val r =
+      DeviceProvenance.resolve(ClientDevice("c", None, Some("mac"), Some("Chrome"), Some("self-1")), Some(self), peers)
     assertEquals(r, ResolvedDevice("Mashiros-MacBook-Pro", enrolled = true))
   }
 
   test("resolve: bound to a peer ⇒ enrolled (phone / windows ends land the same way)") {
     assertEquals(
-      DeviceProvenance.resolve(ClientDevice("c", None, Some("phone"), Some("Safari"), Some("phone-1")), Some(self), peers),
+      DeviceProvenance
+        .resolve(ClientDevice("c", None, Some("phone"), Some("Safari"), Some("phone-1")), Some(self), peers),
       ResolvedDevice("Kaiyu-iPhone", enrolled = true)
     )
     assertEquals(
-      DeviceProvenance.resolve(ClientDevice("c", None, Some("windows"), Some("Edge"), Some("win-1")), Some(self), peers),
+      DeviceProvenance
+        .resolve(ClientDevice("c", None, Some("windows"), Some("Edge"), Some("win-1")), Some(self), peers),
       ResolvedDevice("DESKTOP-IJBBEOT", enrolled = true)
     )
   }
 
   test("resolve: unbound / unknown binding ⇒ unenrolled; user naming wins over the default name") {
-    val unbound = DeviceProvenance.resolve(ClientDevice("c", None, Some("phone"), Some("Chrome"), None), Some(self), peers)
+    val unbound =
+      DeviceProvenance.resolve(ClientDevice("c", None, Some("phone"), Some("Chrome"), None), Some(self), peers)
     assertEquals(unbound, ResolvedDevice("未登记-手机 Chrome", enrolled = false))
-    val named = DeviceProvenance.resolve(ClientDevice("c", Some("我的手机"), Some("phone"), Some("Chrome"), None), Some(self), peers)
+    val named =
+      DeviceProvenance.resolve(ClientDevice("c", Some("我的手机"), Some("phone"), Some("Chrome"), None), Some(self), peers)
     assertEquals(named, ResolvedDevice("我的手机", enrolled = false))
-    val stale = DeviceProvenance.resolve(ClientDevice("c", None, Some("mac"), Some("Chrome"), Some("gone-9")), Some(self), peers)
+    val stale =
+      DeviceProvenance.resolve(ClientDevice("c", None, Some("mac"), Some("Chrome"), Some("gone-9")), Some(self), peers)
     assertEquals(stale, ResolvedDevice("未登记-Mac Chrome", enrolled = false), "花名册已消失的绑定 id 不冒认已登记")
     assertEquals(
       DeviceProvenance.resolve(ClientDevice("c", None, Some("mac"), Some("Chrome"), Some("  ")), Some(self), peers),
@@ -157,3 +163,4 @@ class DeviceProvenanceSpec extends FunSuite:
     assertEquals(out.length, 1)
     assert(out.head.isInstanceOf[ContentBlock.Text])
   }
+end DeviceProvenanceSpec

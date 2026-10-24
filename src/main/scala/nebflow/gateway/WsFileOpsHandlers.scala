@@ -129,8 +129,7 @@ private[gateway] object WsFileOpsHandlers:
       case None => IO.pure(Left("NebLink is not enabled on this host (no device network)"))
       case Some(ns) =>
         ns.identity.flatMap { id =>
-          if device.equalsIgnoreCase(id.deviceId) || device.equalsIgnoreCase(id.deviceName) then
-            IO.pure(Right(None))
+          if device.equalsIgnoreCase(id.deviceId) || device.equalsIgnoreCase(id.deviceName) then IO.pure(Right(None))
           else
             ns.peers.flatMap { peers =>
               nebflow.core.tools.RemoteExecutor.resolvePeer(device, peers) match
@@ -143,6 +142,10 @@ private[gateway] object WsFileOpsHandlers:
                   }
             }
         }
+
+    end match
+
+  end resolveBrowseTarget
 
   /**
    * `listDir` 对端腿（v2.1 阶段 1 §C.1-3 无感面②）：scope=browse 元数据列举，
@@ -157,52 +160,58 @@ private[gateway] object WsFileOpsHandlers:
     wsSend: io.circe.Json => IO[Unit]
   ): IO[Unit] =
     import ctx.*
-    resolveBrowseTarget(device)(using ctx).flatMap {
-      case Left(err) =>
-        wsSend(io.circe.Json.obj("type" -> "dirListing".asJson, "error" -> err.asJson, "device" -> device.asJson))
-      case Right(None) =>
-        // 防御分支（正常不可达：self 目标在 handleListDir 已走本地腿）。
-        wsSend(
-          io.circe.Json.obj(
-            "type" -> "dirListing".asJson,
-            "error" -> s"'$device' resolved to this device — re-send without the device key".asJson,
-            "device" -> device.asJson
-          )
-        )
-      case Right(Some(peer)) =>
-        nebflow.core.tools.RemoteExecutor.current match
-          case None =>
-            wsSend(
-              io.circe.Json.obj(
-                "type" -> "dirListing".asJson,
-                "error" -> "remote executor not initialized (NebLink disabled?)".asJson,
-                "device" -> device.asJson
-              )
+    resolveBrowseTarget(device)(using ctx)
+      .flatMap {
+        case Left(err) =>
+          wsSend(io.circe.Json.obj("type" -> "dirListing".asJson, "error" -> err.asJson, "device" -> device.asJson))
+        case Right(None) =>
+          // 防御分支（正常不可达：self 目标在 handleListDir 已走本地腿）。
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "dirListing".asJson,
+              "error" -> s"'$device' resolved to this device — re-send without the device key".asJson,
+              "device" -> device.asJson
             )
-          case Some(re) =>
-            re.transferListScoped(peer, remoteDir).flatMap {
-              case Right(json) =>
-                val entries = json.hcursor.downField("entries").as[Vector[io.circe.Json]].getOrElse(Vector.empty)
-                val resolved = json.hcursor.downField("path").as[String].getOrElse(remoteDir)
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "dirListing".asJson,
-                    "path" -> remoteDir.asJson,
-                    "resolvedPath" -> resolved.asJson,
-                    "entries" -> io.circe.Json.fromValues(entries),
-                    "device" -> device.asJson
+          )
+        case Right(Some(peer)) =>
+          nebflow.core.tools.RemoteExecutor.current match
+            case None =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "dirListing".asJson,
+                  "error" -> "remote executor not initialized (NebLink disabled?)".asJson,
+                  "device" -> device.asJson
+                )
+              )
+            case Some(re) =>
+              re.transferListScoped(peer, remoteDir).flatMap {
+                case Right(json) =>
+                  val entries = json.hcursor.downField("entries").as[Vector[io.circe.Json]].getOrElse(Vector.empty)
+                  val resolved = json.hcursor.downField("path").as[String].getOrElse(remoteDir)
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "dirListing".asJson,
+                      "path" -> remoteDir.asJson,
+                      "resolvedPath" -> resolved.asJson,
+                      "entries" -> io.circe.Json.fromValues(entries),
+                      "device" -> device.asJson
+                    )
                   )
-                )
-              case Left(err) =>
-                logger.warn(s"remote listDir failed for ${peer.deviceName}: $err")
-                wsSend(
-                  io.circe.Json.obj("type" -> "dirListing".asJson, "error" -> err.asJson, "device" -> device.asJson)
-                )
-            }
-    }.handleErrorWith { e =>
-      logger.warn(s"remote listDir failed: ${e.getMessage}")
-      wsSend(io.circe.Json.obj("type" -> "dirListing".asJson, "error" -> e.getMessage.asJson, "device" -> device.asJson))
-    }
+                case Left(err) =>
+                  logger.warn(s"remote listDir failed for ${peer.deviceName}: $err")
+                  wsSend(
+                    io.circe.Json.obj("type" -> "dirListing".asJson, "error" -> err.asJson, "device" -> device.asJson)
+                  )
+              }
+      }
+      .handleErrorWith { e =>
+        logger.warn(s"remote listDir failed: ${e.getMessage}")
+        wsSend(
+          io.circe.Json.obj("type" -> "dirListing".asJson, "error" -> e.getMessage.asJson, "device" -> device.asJson)
+        )
+      }
+
+  end listRemoteDir
 
   private def handleWatchSubscribe(
     ctx: WsDispatchCtx,
@@ -422,67 +431,72 @@ private[gateway] object WsFileOpsHandlers:
         "totalBytes" -> total.asJson,
         "chunkMs" -> chunkMs.asJson
       )
-    resolveBrowseTarget(device)(using ctx).flatMap {
-      case Left(err) => wsSend(errorFrame(err))
-      case Right(None) =>
-        // 防御分支（正常不可达：self 目标在 handleReadFile 已走本地腿）。
-        wsSend(errorFrame(s"'$device' resolved to this device — re-send without the device key"))
-      case Right(Some(peer)) =>
-        nebflow.core.tools.RemoteExecutor.current match
-          case None => wsSend(errorFrame("remote executor not initialized (NebLink disabled?)"))
-          case Some(re) =>
-            re.transferGetScopedChunked(peer, remotePath, (b, t, ms) => wsSend(progressFrame(b, t, ms))).flatMap {
-              case Left(err) =>
-                logger.warn(s"remote readFile failed for ${peer.deviceName}: $err")
-                wsSend(errorFrame(err, cancelled = err == nebflow.core.tools.BrowseGetCursor.Cancelled))
-              case Right(res) =>
-                val ext = remotePath.split('.').lastOption.getOrElse("").toLowerCase
-                val entry = nebflow.core.workspace.FileTypeRegistry.detect(ext)
-                val fileName = remotePath.replaceAll("""[/\\]""", "/").split("/").lastOption.getOrElse(remotePath)
-                val mtimeMs = scala.util.Try(os.mtime(res.path)).getOrElse(0L)
-                // 分块腿整件 hash 的**免费副产品**（v1 §6.3）：下行帧带 `wholeSha256`
-                // 前 16 hex，前端据此入缓存账本副键（多设备同文件去重）。
-                val hash16 = res.wholeSha256.take(16)
-                if entry.binary then
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "fileContent".asJson,
-                      "path" -> remotePath.asJson,
-                      "absPath" -> res.path.toString.asJson,
-                      "itemType" -> entry.itemType.asJson,
-                      "fileName" -> fileName.asJson,
-                      "size" -> res.size.asJson,
-                      "mtimeMs" -> mtimeMs.asJson,
-                      "wholeSha256" -> hash16.asJson,
-                      "device" -> device.asJson
+    resolveBrowseTarget(device)(using ctx)
+      .flatMap {
+        case Left(err) => wsSend(errorFrame(err))
+        case Right(None) =>
+          // 防御分支（正常不可达：self 目标在 handleReadFile 已走本地腿）。
+          wsSend(errorFrame(s"'$device' resolved to this device — re-send without the device key"))
+        case Right(Some(peer)) =>
+          nebflow.core.tools.RemoteExecutor.current match
+            case None => wsSend(errorFrame("remote executor not initialized (NebLink disabled?)"))
+            case Some(re) =>
+              re.transferGetScopedChunked(peer, remotePath, (b, t, ms) => wsSend(progressFrame(b, t, ms))).flatMap {
+                case Left(err) =>
+                  logger.warn(s"remote readFile failed for ${peer.deviceName}: $err")
+                  wsSend(errorFrame(err, cancelled = err == nebflow.core.tools.BrowseGetCursor.Cancelled))
+                case Right(res) =>
+                  val ext = remotePath.split('.').lastOption.getOrElse("").toLowerCase
+                  val entry = nebflow.core.workspace.FileTypeRegistry.detect(ext)
+                  val fileName = remotePath.replaceAll("""[/\\]""", "/").split("/").lastOption.getOrElse(remotePath)
+                  val mtimeMs = scala.util.Try(os.mtime(res.path)).getOrElse(0L)
+                  // 分块腿整件 hash 的**免费副产品**（v1 §6.3）：下行帧带 `wholeSha256`
+                  // 前 16 hex，前端据此入缓存账本副键（多设备同文件去重）。
+                  val hash16 = res.wholeSha256.take(16)
+                  if entry.binary then
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "fileContent".asJson,
+                        "path" -> remotePath.asJson,
+                        "absPath" -> res.path.toString.asJson,
+                        "itemType" -> entry.itemType.asJson,
+                        "fileName" -> fileName.asJson,
+                        "size" -> res.size.asJson,
+                        "mtimeMs" -> mtimeMs.asJson,
+                        "wholeSha256" -> hash16.asJson,
+                        "device" -> device.asJson
+                      )
                     )
-                  )
-                else
-                  // 文本腿：与本地 readFile 的 2MB 截断规则同规（字节面截断 + 同款标记行）。
-                  val bytes = os.read.bytes(res.path)
-                  val content =
-                    if bytes.length > 2 * 1024 * 1024 then
-                      new String(bytes, 0, 2 * 1024 * 1024, "UTF-8") + "\n\n[... file truncated at 2MB]"
-                    else new String(bytes, "UTF-8")
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "fileContent".asJson,
-                      "path" -> remotePath.asJson,
-                      "absPath" -> res.path.toString.asJson,
-                      "content" -> content.asJson,
-                      "itemType" -> entry.itemType.asJson,
-                      "fileName" -> fileName.asJson,
-                      "size" -> bytes.length.asJson,
-                      "mtimeMs" -> mtimeMs.asJson,
-                      "wholeSha256" -> hash16.asJson,
-                      "device" -> device.asJson
+                  else
+                    // 文本腿：与本地 readFile 的 2MB 截断规则同规（字节面截断 + 同款标记行）。
+                    val bytes = os.read.bytes(res.path)
+                    val content =
+                      if bytes.length > 2 * 1024 * 1024 then
+                        new String(bytes, 0, 2 * 1024 * 1024, "UTF-8") + "\n\n[... file truncated at 2MB]"
+                      else new String(bytes, "UTF-8")
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "fileContent".asJson,
+                        "path" -> remotePath.asJson,
+                        "absPath" -> res.path.toString.asJson,
+                        "content" -> content.asJson,
+                        "itemType" -> entry.itemType.asJson,
+                        "fileName" -> fileName.asJson,
+                        "size" -> bytes.length.asJson,
+                        "mtimeMs" -> mtimeMs.asJson,
+                        "wholeSha256" -> hash16.asJson,
+                        "device" -> device.asJson
+                      )
                     )
-                  )
-            }
-    }.handleErrorWith { e =>
-      logger.warn(s"remote readFile failed: ${e.getMessage}")
-      wsSend(errorFrame(e.getMessage))
-    }
+                  end if
+              }
+      }
+      .handleErrorWith { e =>
+        logger.warn(s"remote readFile failed: ${e.getMessage}")
+        wsSend(errorFrame(e.getMessage))
+      }
+
+  end readRemoteFile
 
   /**
    * `fileTransferCancel`（M2 · 设计 v1 §4.4 取消契约 + Q2 推荐默认）：浏览器侧取消
@@ -889,7 +903,9 @@ private[gateway] object WsFileOpsHandlers:
         .flatMap { p =>
           // M2 缓存一致性（v1 §6.1）：UI 通道的文件事实变更也广播失效（与 Write 工具
           // 同一面；新建空文件对「内容缓存」无实义，但覆盖写场景 `writeFile` 在下）。
-          NfCacheInvalidator.invalidated(p) *> wsSend(io.circe.Json.obj("type" -> "fileCreated".asJson, "path" -> p.asJson))
+          NfCacheInvalidator.invalidated(p) *> wsSend(
+            io.circe.Json.obj("type" -> "fileCreated".asJson, "path" -> p.asJson)
+          )
         }
         .handleErrorWith { e =>
           logger.warn(s"createFile failed: ${e.getMessage}")
@@ -995,7 +1011,9 @@ private[gateway] object WsFileOpsHandlers:
       yield dpPath)
         .flatMap { p =>
           // M2 缓存一致性：删除 ⇒ 广播失效（账本残留条目指向已删件，立即淘汰）。
-          NfCacheInvalidator.invalidated(p) *> wsSend(io.circe.Json.obj("type" -> "pathDeleted".asJson, "path" -> p.asJson))
+          NfCacheInvalidator.invalidated(p) *> wsSend(
+            io.circe.Json.obj("type" -> "pathDeleted".asJson, "path" -> p.asJson)
+          )
         }
         .handleErrorWith { e =>
           logger.warn(s"deletePath failed: ${e.getMessage}")

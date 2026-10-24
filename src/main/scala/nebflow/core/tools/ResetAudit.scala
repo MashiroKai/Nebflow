@@ -96,7 +96,7 @@ object ResetAudit:
     else
       delegateWorktree.map(norm) match
         case Some(wt) if wt.nonEmpty => s == wt || s.startsWith(wt + "/")
-        case _                       => true
+        case _ => true
 
   /**
    * 目标解析（纯函数）：live × 同检出区 × 非调用者自身，按 id 稳序
@@ -144,6 +144,8 @@ object ResetAudit:
         base + s" target=${t.id} targetKind=Delegate targetStatus=${statusOpt.map(_.toString).getOrElse("unknown")} " +
           s"targetTask=${quote(t.title)}"
 
+  end line
+
   /**
    * 审计入口（BashTool 执行腿唯一调用点）：解析 + 组装 + 逐行发射。
    *
@@ -168,7 +170,9 @@ object ResetAudit:
         IO.blocking(DelegateRegistry.list())
           .map(rows => rows.map(r => DelegateSeat(r.id, r.cwd, r.worktree, r.title)))
           .handleError { e =>
-            logger.warn(s"ResetAudit: delegate registry scan failed (audit continues, targets unresolved): ${e.getMessage}")
+            logger.warn(
+              s"ResetAudit: delegate registry scan failed (audit continues, targets unresolved): ${e.getMessage}"
+            )
             Nil
           }
           .flatMap { seats =>
@@ -179,17 +183,23 @@ object ResetAudit:
                 (affectedTargets(seat, callerSid, seats, live), statuses)
               }
               .handleError { e =>
-                logger.warn(s"ResetAudit: agent registry read failed (audit continues, targets unresolved): ${e.getMessage}")
+                logger.warn(
+                  s"ResetAudit: agent registry read failed (audit continues, targets unresolved): ${e.getMessage}"
+                )
                 (Nil, Map.empty)
               }
           }
 
-    targetsIo.flatMap { case (targets, statuses) =>
-      val lines: List[String] =
-        if targets.isEmpty then List(line(command, callerSid, callerAgent, seat, ts, target = None))
-        else
-          targets.map(t => line(command, callerSid, callerAgent, seat, ts, target = Some((t, statuses.get(t.id)))))
-      lines.traverse_(l => emit(l).handleErrorWith(e => IO(logger.warn(s"ResetAudit: emit failed (command unaffected): ${e.getMessage}"))))
-    }
+    targetsIo
+      .flatMap { case (targets, statuses) =>
+        val lines: List[String] =
+          if targets.isEmpty then List(line(command, callerSid, callerAgent, seat, ts, target = None))
+          else targets.map(t => line(command, callerSid, callerAgent, seat, ts, target = Some((t, statuses.get(t.id)))))
+        lines.traverse_(l =>
+          emit(l)
+            .handleErrorWith(e => IO(logger.warn(s"ResetAudit: emit failed (command unaffected): ${e.getMessage}")))
+        )
+      }
       .handleErrorWith(e => IO(logger.warn(s"ResetAudit: audit failed (command unaffected): ${e.getMessage}")))
+  end record
 end ResetAudit

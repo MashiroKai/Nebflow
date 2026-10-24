@@ -7,7 +7,16 @@ import io.circe.syntax.*
 import munit.CatsEffectSuite
 
 import scala.concurrent.duration.*
-import nebflow.actor.{ActorSystem, AskCancelOutcome, Behaviors, InteractionAnswered, InteractionHubCommand, InteractionKind, InteractionReply, InteractionRequest}
+import nebflow.actor.{
+  ActorSystem,
+  AskCancelOutcome,
+  Behaviors,
+  InteractionAnswered,
+  InteractionHubCommand,
+  InteractionKind,
+  InteractionReply,
+  InteractionRequest
+}
 import nebflow.shared.AskUserCancelled
 
 /**
@@ -39,7 +48,7 @@ class InteractionHubCancelSpec extends CatsEffectSuite:
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError(s"awaitCond: $label not met in time"))

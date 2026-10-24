@@ -615,9 +615,11 @@ object ProjectActor:
                 case Right(()) =>
                   dispatchAnswerReentry(cfg, active, behavior, nodeId, requestId, answerText, cfg.rootSessionId)
                 case Left(reason) =>
-                  logger.warn(
-                    s"[hot-restart] ask-answer reentry refused during draining (requestId=$requestId): $reason"
-                  ).as(behavior)
+                  logger
+                    .warn(
+                      s"[hot-restart] ask-answer reentry refused during draining (requestId=$requestId): $reason"
+                    )
+                    .as(behavior)
               }
             case ProjectCommand.CancelNode(nodeId) =>
               cfg.engine.cancelNodeById(nodeId).as(behavior)

@@ -112,7 +112,9 @@ class PortalUrlSpec extends FunSuite:
   }
 
   test("portalUrl survives NeblinkConfig.save/load round-trip (self-hosted override surface)") {
-    NeblinkConfig.save(NeblinkConfig(enabled = true, portalUrl = Some("https://neblink.selfhost.example"))).unsafeRunSync()
+    NeblinkConfig
+      .save(NeblinkConfig(enabled = true, portalUrl = Some("https://neblink.selfhost.example")))
+      .unsafeRunSync()
     val reloaded = NeblinkConfig.load.unsafeRunSync()
     assertEquals(reloaded.portalUrl, Some("https://neblink.selfhost.example"))
     // 磁盘形态：顶层键（非嵌套块）——写进 JSON 顶层才被本判据读到

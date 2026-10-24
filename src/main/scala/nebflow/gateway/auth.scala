@@ -55,8 +55,7 @@ object Auth:
         os.write.over(os.Path(tmp, os.pwd), next.asJson.noSpaces, createFolders = true)
         // Restrict permissions BEFORE the rename (no 0644 window); best effort
         // on non-POSIX systems — same posture as createAndSave.
-        try
-          java.nio.file.Files.setPosixFilePermissions(tmp, PosixFilePermissions.fromString("rw-------"))
+        try java.nio.file.Files.setPosixFilePermissions(tmp, PosixFilePermissions.fromString("rw-------"))
         catch case _: Exception => ()
         java.nio.file.Files.move(
           tmp,
@@ -69,6 +68,7 @@ object Auth:
           try java.nio.file.Files.deleteIfExists(tmp)
           catch case _: Exception => ()
           throw e
+      end try
     }
 
   def loadOrCreateToken: IO[String] = IO.blocking {

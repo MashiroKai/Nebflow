@@ -50,6 +50,7 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     val injected: Ref[IO, List[(String, String)]] = Ref.unsafe[IO, List[(String, String)]](Nil)
     val forwarded: Ref[IO, List[(String, String, Json)]] = Ref.unsafe[IO, List[(String, String, Json)]](Nil)
     val closed: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     val mediaInjected
       : Ref[IO, List[(String, List[nebflow.bridge.BridgeAttachment], Option[nebflow.bridge.BridgeOrigin])]] =
       Ref.unsafe[IO, List[(String, List[nebflow.bridge.BridgeAttachment], Option[nebflow.bridge.BridgeOrigin])]](Nil)
@@ -662,7 +663,9 @@ class WeixinAskLegSpec extends CatsEffectSuite:
   private val secretOne =
     List(PromptView(0, "密钥?", List(nebflow.social.outbound.PromptOption("甲")), secret = true))
 
-  test("WA-P8 short-number free-text arm: `N <text>` = question N's Other; out-of-range refused; secret fail-closed; the 0-prefix/comma legs unchanged") {
+  test(
+    "WA-P8 short-number free-text arm: `N <text>` = question N's Other; out-of-range refused; secret fail-closed; the 0-prefix/comma legs unchanged"
+  ) {
     // B-3 恒单问：`1 开放` ≡ `0 开放` 的带题号便捷形（单问集 N 恒 1）
     assertEquals(
       WeixinAskLeg.parseReply("1 开放", one),
@@ -694,7 +697,9 @@ class WeixinAskLegSpec extends CatsEffectSuite:
 
   // ──────── answer-landing 批（2026-10-21）缺陷②：媒体消息永不进 ask 臂 ────────
 
-  test("WI-A8 media message never enters the ask arm — a placeholder label colliding with an option label is NOT an answer") {
+  test(
+    "WI-A8 media message never enters the ask arm — a placeholder label colliding with an option label is NOT an answer"
+  ) {
     val out = Out()
     val root = tmpRoot()
     val png = root / "shot.png"; os.write(png, "png-bytes")
@@ -740,7 +745,9 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     assertEquals(truncB, truncN, "批名行不参与截断判据")
   }
 
-  test("WI-A9 the ask card carries the frame's attribution as the batch header (project first, nodeName fallback, absent → none)") {
+  test(
+    "WI-A9 the ask card carries the frame's attribution as the batch header (project first, nodeName fallback, absent → none)"
+  ) {
     val out = Out()
     def frame(rid: String, extra: (String, Json)*): Json =
       Json.obj(

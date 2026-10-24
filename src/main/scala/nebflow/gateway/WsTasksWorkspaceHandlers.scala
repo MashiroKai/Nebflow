@@ -242,36 +242,42 @@ private[gateway] object WsTasksWorkspaceHandlers:
       )
       err.foreach(e => fields += "error" -> io.circe.Json.fromString(e))
       io.circe.Json.obj(fields.toList*)
-    WsFileOpsHandlers.resolveBrowseTarget(device)(using ctx).flatMap {
-      case Left(err) => wsSend(frame(Nil, Some(err)))
-      case Right(None) =>
-        // 防御分支（与 listDir/readFile 同语义）：self 目标应由调用方去掉 device 键。
-        wsSend(frame(Nil, Some(s"'$device' resolved to this device — re-send without the device key")))
-      case Right(Some(peer)) =>
-        nebflow.core.tools.RemoteExecutor.current match
-          case None =>
-            wsSend(frame(Nil, Some("remote executor not initialized (NebLink disabled?)")))
-          case Some(re) =>
-            re.transferListScoped(peer, raw).flatMap {
-              case Left(err) =>
-                logger.warn(s"wsBrowse.list remote leg failed for ${peer.deviceName}: $err")
-                wsSend(frame(Nil, Some(err)))
-              case Right(json) =>
-                // 选目录模式语义 = 仅目录（本地腿同款 dirs-only），按名排序。
-                val names = json.hcursor.downField("entries").as[List[io.circe.Json]].toOption
-                  .getOrElse(Nil)
-                  .flatMap { e =>
-                    val isDir = e.hcursor.downField("type").as[String].toOption.contains("dir")
-                    val name = e.hcursor.downField("name").as[String].toOption
-                    if isDir then name else None
-                  }
-                  .sorted
-                wsSend(frame(names, None))
-            }
-    }.handleErrorWith { e =>
-      logger.warn(s"wsBrowse.list remote leg failed: ${e.getMessage}")
-      wsSend(frame(Nil, Some(e.getMessage)))
-    }
+    WsFileOpsHandlers
+      .resolveBrowseTarget(device)(using ctx)
+      .flatMap {
+        case Left(err) => wsSend(frame(Nil, Some(err)))
+        case Right(None) =>
+          // 防御分支（与 listDir/readFile 同语义）：self 目标应由调用方去掉 device 键。
+          wsSend(frame(Nil, Some(s"'$device' resolved to this device — re-send without the device key")))
+        case Right(Some(peer)) =>
+          nebflow.core.tools.RemoteExecutor.current match
+            case None =>
+              wsSend(frame(Nil, Some("remote executor not initialized (NebLink disabled?)")))
+            case Some(re) =>
+              re.transferListScoped(peer, raw).flatMap {
+                case Left(err) =>
+                  logger.warn(s"wsBrowse.list remote leg failed for ${peer.deviceName}: $err")
+                  wsSend(frame(Nil, Some(err)))
+                case Right(json) =>
+                  // 选目录模式语义 = 仅目录（本地腿同款 dirs-only），按名排序。
+                  val names = json.hcursor
+                    .downField("entries")
+                    .as[List[io.circe.Json]]
+                    .toOption
+                    .getOrElse(Nil)
+                    .flatMap { e =>
+                      val isDir = e.hcursor.downField("type").as[String].toOption.contains("dir")
+                      val name = e.hcursor.downField("name").as[String].toOption
+                      if isDir then name else None
+                    }
+                    .sorted
+                  wsSend(frame(names, None))
+              }
+      }
+      .handleErrorWith { e =>
+        logger.warn(s"wsBrowse.list remote leg failed: ${e.getMessage}")
+        wsSend(frame(Nil, Some(e.getMessage)))
+      }
   end browseRemoteDirs
 
   private def handleWsBrowseMkdir(

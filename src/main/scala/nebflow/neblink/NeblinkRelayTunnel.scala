@@ -150,7 +150,11 @@ final class NeblinkRelayTunnel(
         verifyAndConsume = token => deps.consoleTickets.verifyAndConsume(token),
         // Break-glass mint: origin=local-ticket, binding gate EXEMPT (the
         // escape face works in the revoked state), shared budget enforced.
-        mintLocalTicket = deps.mintConsoleTicket(ConsoleTicketStore.LocalAccountSub, ConsoleTicketStore.OriginLocalTicket, enforceBindingGate = false)
+        mintLocalTicket = deps.mintConsoleTicket(
+          ConsoleTicketStore.LocalAccountSub,
+          ConsoleTicketStore.OriginLocalTicket,
+          enforceBindingGate = false
+        )
       )
     )
     faces.bindSessionRevocation(sessionRevocation.getOrElse(IO.pure(0)))
@@ -406,8 +410,10 @@ final class NeblinkRelayTunnel(
    * 复活行（`(re)starting after stop()`）由 `start()` 负责，配对可查。
    */
   def stop(): IO[Unit] =
-    logger.info("Relay tunnel disconnected: stop() — tunnel torn down (logout local teardown); " +
-      "status no longer reports this tunnel connected") *>
+    logger.info(
+      "Relay tunnel disconnected: stop() — tunnel torn down (logout local teardown); " +
+        "status no longer reports this tunnel connected"
+    ) *>
       signalWake() *> IO.blocking {
         running.set(false)
         alive.set(false)
@@ -462,7 +468,7 @@ final class NeblinkRelayTunnel(
         case false => idleWhileDisabled(attempt)
         case true =>
           bindingTerminal.flatMap {
-            case true  => probeWhileTerminal(attempt)
+            case true => probeWhileTerminal(attempt)
             case false => connectConfigured(attempt)
           }
       }
@@ -784,9 +790,12 @@ final class NeblinkRelayTunnel(
           try w.sendClose(WebSocket.NORMAL_CLOSURE, "stopped during upgrade")
           catch case _: Exception => ()
           dispatcher.unsafeRunAndForget(
-            closed.complete(()).void.handleErrorWith(e =>
-              logger.debug(s"stop-during-upgrade latch complete errored (${e.getClass.getSimpleName})")
-            )
+            closed
+              .complete(())
+              .void
+              .handleErrorWith(e =>
+                logger.debug(s"stop-during-upgrade latch complete errored (${e.getClass.getSimpleName})")
+              )
           )
           logger.infoSync(
             "Relay tunnel: stop() landed during the upgrade — closing the fresh socket, nothing installed"
@@ -839,11 +848,12 @@ final class NeblinkRelayTunnel(
           // then left through a stale, output-closed sender).
           portalConn.armLifecycle(closed)
           ()
+        end if
       } *> closed.get <* IO.blocking {
-          alive.set(false)
-          stopHeartbeat()
-          wsRef = None
-        }
+        alive.set(false)
+        stopHeartbeat()
+        wsRef = None
+      }
     }
 
   // ===== Relay request handling (called from WS listener thread) =====
@@ -1239,10 +1249,9 @@ final class NeblinkRelayTunnel(
                 logger.infoSync("Relay tunnel heartbeat timeout — aborting zombie connection for reconnect")
                 ws.abort()
                 armZombieLatchWatchdog(closed)
-              else
-                sendHeartbeatPing(ws, closed)
-            else
-              sendHeartbeatPing(ws, closed)
+              else sendHeartbeatPing(ws, closed)
+            else sendHeartbeatPing(ws, closed)
+            end if
         catch case _: Exception => ()
       },
       NeblinkRelayTunnel.HeartbeatIntervalSec,
@@ -1308,7 +1317,9 @@ final class NeblinkRelayTunnel(
                 s"Relay tunnel ping beat skipped: another send is in flight (${NeblinkRelayTunnel.describeErr(err)}) — output open, not a failure"
               )
             case _ =>
-              logger.debugSync(s"Relay tunnel ping write failed async — aborting broken connection: ${NeblinkRelayTunnel.describeErr(err)}")
+              logger.debugSync(
+                s"Relay tunnel ping write failed async — aborting broken connection: ${NeblinkRelayTunnel.describeErr(err)}"
+              )
               try ws.abort()
               catch case _: Exception => ()
               armZombieLatchWatchdog(closed)
@@ -1749,7 +1760,7 @@ private final class RelayWsListener(
           logger.warnSync(
             "relay frame dropped: proto unsupported " +
               f"branch=P0 conversationId=<none> messageId=<none> reason=proto_unsupported " +
-                s"head=${RelayTunnelDiagnostics.redact(text.take(200))}"
+              s"head=${RelayTunnelDiagnostics.redact(text.take(200))}"
           )
         case Right(json) =>
           json.hcursor.downField("type").as[String].getOrElse("") match
@@ -1840,8 +1851,8 @@ private final class RelayWsListener(
               // `message-` 族未命中 = WARN + 审计；其余族 = DEBUG）。本分支**只读**帧，
               // 不改帧形状、不改本端 `sendAck` 的既有发送语义。
               dispatcher.unsafeRunAndForget(DeviceMailAck.handle(json))
-            case "http_request" | "body_frame" | "ws_open" | "ws_frame" | "ws_close" |
-                "ConsoleTicketMint" | "BindingControl" | "MigrationChunk" =>
+            case "http_request" | "body_frame" | "ws_open" | "ws_frame" | "ws_close" | "ConsoleTicketMint" |
+                "BindingControl" | "MigrationChunk" =>
               // P1（设计 §3.1）：契约帧族——先过生产 codec（[[PortalWireCodec]]）全量
               // 校验：帧字段与冻结契约逐字一致；拒码 = conformance vocabulary，
               // 丢帧 + 结构化诊断（复用既有脱敏面），绝不部分处理、绝不回落 W10
@@ -1902,9 +1913,9 @@ private final class RelayWsListener(
         logger.warnSync(
           "relay frame dropped: portal contract rejection " +
             f"branch=P1 conversationId=<none> messageId=<none> reason=${rej.code} " +
-              s"field=${rej.field.getOrElse("<none>")} fields=${rej.fields.getOrElse(Nil).mkString(",")} " +
-              s"expected=${rej.expected.getOrElse("-")} allowed=${rej.allowed.getOrElse(Nil).mkString("/")} " +
-              s"head=${RelayTunnelDiagnostics.redact(text.take(200))}"
+            s"field=${rej.field.getOrElse("<none>")} fields=${rej.fields.getOrElse(Nil).mkString(",")} " +
+            s"expected=${rej.expected.getOrElse("-")} allowed=${rej.allowed.getOrElse(Nil).mkString("/")} " +
+            s"head=${RelayTunnelDiagnostics.redact(text.take(200))}"
         )
 
   override def onClose(ws: WebSocket, statusCode: Int, reason: String): CompletionStage[?] =

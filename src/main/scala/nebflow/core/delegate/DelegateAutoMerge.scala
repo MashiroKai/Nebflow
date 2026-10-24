@@ -85,11 +85,17 @@ object DelegateAutoMerge:
               val cur = json.hcursor.downField("delegateAutoMerge")
               val enabled = cur.downField("enabled").as[Option[Boolean]].toOption.flatten.getOrElse(true)
               val target =
-                cur.downField("targetBranch").as[Option[String]].toOption.flatten
-                  .map(_.trim).filter(_.nonEmpty)
+                cur
+                  .downField("targetBranch")
+                  .as[Option[String]]
+                  .toOption
+                  .flatten
+                  .map(_.trim)
+                  .filter(_.nonEmpty)
               val restoreArtifacts =
                 cur.downField("restoreArtifacts").as[Option[Boolean]].toOption.flatten.getOrElse(true)
               Config(enabled, target, restoreArtifacts)
+        end if
       catch case _: Throwable => Default
   end Config
 
@@ -105,6 +111,7 @@ object DelegateAutoMerge:
     /** ② 零冲突自动合并落地。 */
     final case class Merged(target: String, commit: String, ahead: Int) extends Result:
       val action = "merged"
+
       val suffix = Some(
         s"\n\n[auto-merge] branch merged into '$target' by the engine (FIFO, --no-ff, merge commit ${commit.take(9)}, $ahead commit(s)) — audit row: ChainStore '$EntryKind'."
       )
@@ -112,6 +119,7 @@ object DelegateAutoMerge:
     /** ④ 幂等：目标已含支头（或无可并提交）——含批内已自行合并的场景。 */
     final case class AlreadyMerged(target: String) extends Result:
       val action = "already-merged"
+
       val suffix = Some(
         s"\n\n[auto-merge] nothing to merge — '$target' already contains the branch head (idempotent skip)."
       )
@@ -120,10 +128,13 @@ object DelegateAutoMerge:
      * ③ 冲突挂起：merge 已 `--abort` 干净复原，分支/worktree/基工作区原样；
      * 文件清单候人/候智能裁决。
      */
-    final case class ConflictPending(target: String, files: List[String], abortErr: Option[String])
-        extends Result:
+    final case class ConflictPending(target: String, files: List[String], abortErr: Option[String]) extends Result:
       val action = "conflict-pending"
-      val abortNote = abortErr.map(e => s" NOTE: 'git merge --abort' itself failed ($e) — inspect the base workspace manually.").getOrElse("")
+
+      val abortNote = abortErr
+        .map(e => s" NOTE: 'git merge --abort' itself failed ($e) — inspect the base workspace manually.")
+        .getOrElse("")
+
       val suffix = Some(
         s"\n\n[auto-merge] CONFLICT — merge of the branch into '$target' was aborted cleanly; branch, worktree and base workspace are preserved untouched. " +
           s"Conflicting files: ${if files.isEmpty then "<unreadable>" else files.mkString(", ")}. " +
@@ -137,6 +148,7 @@ object DelegateAutoMerge:
      */
     final case class Refused(target: String, reason: String, dirtyPaths: List[String] = Nil) extends Result:
       val action = "refused"
+
       val suffix = Some(
         s"\n\n[auto-merge] branch NOT merged into '$target': $reason Branch preserved — pending adjudication; " +
           "the delegate has been notified to clear the obstacle and retry the merge on its own (the platform never runs merges for delegates)."
@@ -150,6 +162,7 @@ object DelegateAutoMerge:
     /** 异常态（落地后构造性校验不通过等）——诚实报 failed，分支保留。 */
     final case class Failed(reason: String) extends Result:
       val action = "failed"
+
       val suffix = Some(
         s"\n\n[auto-merge] merge attempt FAILED: $reason Branch preserved — inspect the base workspace before any retry."
       )
@@ -181,13 +194,20 @@ object DelegateAutoMerge:
             // ⇒ 通知 delegate 本人（可行动诊断，持久注入）+ 父会话知会一行。平台
             // 零代跑——重试合并是 delegate 自己的责任（清障后自行重试）。self-
             // guarded——通知故障绝不污染终态尾注。
-            .flatTap(res => postSettle(r, res).handleErrorWith(e =>
-              logger.warn(s"auto-merge post-settle failed for ${r.id}: ${e.getMessage}")
-            ))
+            .flatTap(res =>
+              postSettle(r, res).handleErrorWith(e =>
+                logger.warn(s"auto-merge post-settle failed for ${r.id}: ${e.getMessage}")
+              )
+            )
             .map(_.suffix)
             .handleErrorWith(e =>
-              IO(Some(s"\n\n[auto-merge] hook error: ${Option(e.getMessage).getOrElse(e.toString).take(200)} — branch left untouched."))
+              IO(
+                Some(
+                  s"\n\n[auto-merge] hook error: ${Option(e.getMessage).getOrElse(e.toString).take(200)} — branch left untouched."
+                )
+              )
             )
+        end if
 
   // ── 评估本体（同步；全 git 面快操作；绝不抛——异常折进 Result.Failed） ──
 
@@ -263,6 +283,9 @@ object DelegateAutoMerge:
                 val msg =
                   s"auto-merge: delegate ${rec.id} — merge branch '$branch' into '$target' (engine-native FIFO, #524)"
                 runMerge(ws, rec, target, branch, ahead, msg)
+            end if
+      end match
+    end if
   end attempt
 
   /** ②/③ 合并执行：成功走构造性校验；失败读冲突清单后 --abort 复原（绝不强推）。 */
@@ -297,6 +320,7 @@ object DelegateAutoMerge:
             s"post-merge acceptance verification failed (target tip=$commit) — unexpected state after a reported-clean merge"
           row(rec, "failed", Json.obj("target" -> target.asJson, "reason" -> reason.asJson))
           Result.Failed(s"$reason.")
+        end if
       case Left(err) =>
         val files = conflictFiles(ws)
         if files.nonEmpty then
@@ -318,12 +342,15 @@ object DelegateAutoMerge:
             s"[auto-merge] conflict pending — branch '$branch' NOT merged into '$target' (merge aborted cleanly, branch preserved). " +
               s"Conflicting files: ${files.mkString(", ")}. Awaiting human/agent adjudication."
           )
-          logger.warn(s"auto-merge: ${rec.id} conflict on '$branch' -> '$target' (${files.size} file(s)) — merge aborted, PENDING")
+          logger.warn(
+            s"auto-merge: ${rec.id} conflict on '$branch' -> '$target' (${files.size} file(s)) — merge aborted, PENDING"
+          )
           Result.ConflictPending(target, files, abortErr)
         else
           val reason = s"git refused the merge (no conflict markers): ${err.take(300)}"
           row(rec, "refused", Json.obj("target" -> target.asJson, "reason" -> reason.asJson))
           Result.Refused(target, s"$reason.")
+        end if
     end match
   end runMerge
 
@@ -379,16 +406,21 @@ object DelegateAutoMerge:
   private def restoreArtifacts(rec: DelegateRegistry.Record, ws: os.Path, cfg: Config): List[RestoredArtifact] =
     if !cfg.restoreArtifacts then Nil
     else
-      val candidates = gitRaw(ws, "status", "--porcelain").getOrElse("").linesIterator.flatMap { line =>
-        if line.length <= 3 then None
-        else
-          val xy = line.take(2)
-          val path = line.drop(3).trim
-          val modified = xy.charAt(0) == 'M' || xy.charAt(1) == 'M'
-          val whitelisted =
-            ArtifactRestoreDirs.exists(d => path == d || path.startsWith(s"$d/"))
-          if modified && whitelisted then Some(path) else None
-      }.toList.distinct
+      val candidates = gitRaw(ws, "status", "--porcelain")
+        .getOrElse("")
+        .linesIterator
+        .flatMap { line =>
+          if line.length <= 3 then None
+          else
+            val xy = line.take(2)
+            val path = line.drop(3).trim
+            val modified = xy.charAt(0) == 'M' || xy.charAt(1) == 'M'
+            val whitelisted =
+              ArtifactRestoreDirs.exists(d => path == d || path.startsWith(s"$d/"))
+            if modified && whitelisted then Some(path) else None
+        }
+        .toList
+        .distinct
       if candidates.isEmpty then Nil
       else
         // 还原前证据：每条路径的 diff 摘要（对 HEAD 的 --stat；二进制 = Bin 字节摘要）。
@@ -422,13 +454,22 @@ object DelegateAutoMerge:
               s"(${restored.map(_.path).mkString(", ")})"
           )
         restored
+      end if
   end restoreArtifacts
 
-  /** 脏路径清单（porcelain `XY<sp>PATH` 形——首行 X 列空白是状态位，必须走
-    * [[gitRaw]] 保内容解析；cap 条后折 「+N more」；不可读 = Nil）。 */
+  /**
+   * 脏路径清单（porcelain `XY<sp>PATH` 形——首行 X 列空白是状态位，必须走
+   * [[gitRaw]] 保内容解析；cap 条后折 「+N more」；不可读 = Nil）。
+   */
   private def dirtyPaths(ws: os.Path, cap: Int = 10): List[String] =
-    val all = gitRaw(ws, "status", "--porcelain").getOrElse("")
-      .linesIterator.filter(_.nonEmpty).map(_.drop(3).trim).filter(_.nonEmpty).toList.distinct
+    val all = gitRaw(ws, "status", "--porcelain")
+      .getOrElse("")
+      .linesIterator
+      .filter(_.nonEmpty)
+      .map(_.drop(3).trim)
+      .filter(_.nonEmpty)
+      .toList
+      .distinct
     if all.length <= cap then all else all.take(cap) :+ s"+${all.length - cap} more"
 
   // ── 审计面（⑥ 每条评估路径一行 + 台账 note） ────────────────────────────

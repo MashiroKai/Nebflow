@@ -47,6 +47,7 @@ class LocalAccelBudgetSpec extends CatsEffectSuite:
 
   /** v2 §4.3 预算线 1：近路全链 p95（ms）。 */
   val BudgetNearPathChainP95Ms: Double = 50.0
+
   /** v2 §4.3 预算线 2：304 条件对账 p95（ms）。 */
   val BudgetConditional304P95Ms: Double = 10.0
 
@@ -85,6 +86,8 @@ class LocalAccelBudgetSpec extends CatsEffectSuite:
       )
     )
     faces
+
+  end mkFaces
 
   /** 预算 face 的注入式裁定（同 NfFileRoutesSpec：主体是链路不是策略）。 */
   private val nfPolicy = NfFilePolicy.NfPathPolicy(
@@ -160,7 +163,8 @@ class LocalAccelBudgetSpec extends CatsEffectSuite:
     assert(redeemResp.statusCode() == 303, s"redeem leg must 303: ${redeemResp.statusCode()}")
     val cookie = redeemResp
       .headers()
-      .allValues("set-cookie").asScala
+      .allValues("set-cookie")
+      .asScala
       .headOption
       .map(_.split(";").head.trim)
       .getOrElse(sys.error("redeem leg returned no session cookie"))
@@ -170,6 +174,7 @@ class LocalAccelBudgetSpec extends CatsEffectSuite:
       s"session REST leg must seat via the loopback-bound local session: ${restResp.statusCode()}"
     )
     (mintMs, mintMs + redeemMs + restMs, redeemMs, restMs)
+  end chainOnce
 
   // ── 预算线 1：近路全链 ─────────────────────────────────────────────────────
 
@@ -210,8 +215,8 @@ class LocalAccelBudgetSpec extends CatsEffectSuite:
       Files.write(file, ("window.PAGE=\"" + ("x" * 65536) + "\";").getBytes(StandardCharsets.UTF_8))
       (tmp, file)
     }
-    val cleanup: ((Path, Path)) => IO[Unit] = (tmp, file) =>
-      IO.blocking { Files.deleteIfExists(file); Files.deleteIfExists(tmp) }.void
+    val cleanup: ((Path, Path)) => IO[Unit] =
+      (tmp, file) => IO.blocking { Files.deleteIfExists(file); Files.deleteIfExists(tmp) }.void
     acquire.flatMap { paths =>
       val (tmp, file) = paths
       val run = for

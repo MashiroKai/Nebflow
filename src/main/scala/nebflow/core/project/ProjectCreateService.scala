@@ -173,7 +173,13 @@ object ProjectCreateService:
               val executorOpt = RemoteExecutor.current
               executorOpt match
                 case None =>
-                  IO.pure(Left(ToolError("Remote executor is not initialized on this host — remote project creation unavailable. (DEVICE_ROUTE_UNAVAILABLE)")))
+                  IO.pure(
+                    Left(
+                      ToolError(
+                        "Remote executor is not initialized on this host — remote project creation unavailable. (DEVICE_ROUTE_UNAVAILABLE)"
+                      )
+                    )
+                  )
                 case Some(executor) =>
                   // ② 目录校验（元数据列举——零字节；失败 = 显式失败，零本侧写入）。
                   executor.transferListScoped(peer, workspace).flatMap {
@@ -236,6 +242,7 @@ object ProjectCreateService:
                                 case Left(err) => IO.pure(Left(ToolError(err)))
                               }
                         }
+                      end if
                   }
               end match
         }
@@ -258,30 +265,45 @@ object ProjectCreateService:
       case Left(err) => IO.pure(Left(s"list for scaffold check failed: $err"))
       case Right(listing) =>
         val existing: Set[String] =
-          listing.hcursor.downField("entries").as[List[Json]].toOption.getOrElse(Nil).flatMap { e =>
-            e.hcursor.downField("name").as[String].toOption
-          }.toSet
+          listing.hcursor
+            .downField("entries")
+            .as[List[Json]]
+            .toOption
+            .getOrElse(Nil)
+            .flatMap { e =>
+              e.hcursor.downField("name").as[String].toOption
+            }
+            .toSet
         val wanted: List[(String, String)] = List(
           ("AGENTS.md", AgentMdTemplate),
           (".gitignore", ".nebflow/\n")
         )
         val missing = wanted.filterNot((name, _) => existing.contains(name))
         if missing.isEmpty then
-          IO.pure(Right(ProjectStore.ScaffoldReport(wanted.map(n => ProjectStore.ScaffoldItem(n._1, created = false, detail = "already present")))))
+          IO.pure(
+            Right(
+              ProjectStore.ScaffoldReport(
+                wanted.map(n => ProjectStore.ScaffoldItem(n._1, created = false, detail = "already present"))
+              )
+            )
+          )
         else
-          missing.foldLeft(IO.pure(Right(Nil): Either[String, List[ProjectStore.ScaffoldItem]])) { (acc, item) =>
-            acc.flatMap {
-              case l @ Left(_) => IO.pure(l)
-              case Right(items) =>
-                writeRemoteFile(executor, peer, s"${stripTrailingSlashes(workspace)}/${item._1}", item._2).map {
-                  case Right(_) => Right(items :+ ProjectStore.ScaffoldItem(item._1, created = true))
-                  case Left(err) => Left(err)
-                }
+          missing
+            .foldLeft(IO.pure(Right(Nil): Either[String, List[ProjectStore.ScaffoldItem]])) { (acc, item) =>
+              acc.flatMap {
+                case l @ Left(_) => IO.pure(l)
+                case Right(items) =>
+                  writeRemoteFile(executor, peer, s"${stripTrailingSlashes(workspace)}/${item._1}", item._2).map {
+                    case Right(_) => Right(items :+ ProjectStore.ScaffoldItem(item._1, created = true))
+                    case Left(err) => Left(err)
+                  }
+              }
             }
-          }.map {
-            case Right(items) => Right(ProjectStore.ScaffoldReport(items))
-            case Left(err) => Left(err)
-          }
+            .map {
+              case Right(items) => Right(ProjectStore.ScaffoldReport(items))
+              case Left(err) => Left(err)
+            }
+        end if
     }
   end scaffoldRemote
 

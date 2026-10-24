@@ -50,18 +50,24 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
     os.proc("git", "init", "-b", "main", dir.toString).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
     os.proc("git", "-C", dir.toString, "config", "user.email", "spec@nebflow.local").call(check = true)
     os.proc("git", "-C", dir.toString, "config", "user.name", "spec").call(check = true)
-    os.proc("git", "-C", dir.toString, "commit", "--allow-empty", "-m", "init").call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+    os.proc("git", "-C", dir.toString, "commit", "--allow-empty", "-m", "init")
+      .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
     dir
 
   private class SilentLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): fs2.Stream[IO, StreamChunk] =
       fs2.Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
-  private def spec(repo: os.Path, resources: nebflow.core.AgentRuntimePort, task: String): ExternalSessionRunner.SpawnSpec =
+  private def spec(
+    repo: os.Path,
+    resources: nebflow.core.AgentRuntimePort,
+    task: String
+  ): ExternalSessionRunner.SpawnSpec =
     ExternalSessionRunner.SpawnSpec(
       executorId = "claude-code",
       binPath = "/bin/echo", // 假 CLI：打印 argv 即退（exit 0，零帧）——真通路的进程面
@@ -104,9 +110,11 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
       )
       record = DelegateRegistry.find(sessionId)
       spawnRows = ChainStore.listSync().flatMap(_.entries).filter(_.kind == "delegate-spawn")
-      userText <- res.sessionStore.loadMessagesForSession(sessionId).map(
-        _.filter(_.role == MessageRole.User).map(_.textContent).mkString("\n")
-      )
+      userText <- res.sessionStore
+        .loadMessagesForSession(sessionId)
+        .map(
+          _.filter(_.role == MessageRole.User).map(_.textContent).mkString("\n")
+        )
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
       val r = record.getOrElse(fail("no registry record for the external session"))
@@ -117,8 +125,11 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
       assertEquals(r.projectWorkspace, Some(repo.toString))
       assertEquals(r.worktreeJudged, Some(true), "judge absent ⇒ fail-open reversal recorded as judged-true")
       assert(os.exists(os.Path(r.worktree.get)), "the worktree directory exists")
-      val branchOut = os.proc("git", "-C", repo.toString, "rev-parse", "--abbrev-ref", s"delegate/$sessionId")
-        .call(check = true).out.trim()
+      val branchOut = os
+        .proc("git", "-C", repo.toString, "rev-parse", "--abbrev-ref", s"delegate/$sessionId")
+        .call(check = true)
+        .out
+        .trim()
       assertEquals(branchOut, s"delegate/$sessionId", "the branch exists in the base repo")
       // spawn 行审计键（worktreeJudged / judgeLeg —— additive）
       val row = spawnRows.find(_.payload.hcursor.get[String]("delegateId").toOption.contains(sessionId))
@@ -128,12 +139,17 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
       assertEquals(c.get[String]("judgeLeg").toOption, Some("fail-open"))
       assertEquals(c.get[String]("executor").toOption, Some("claude-code"))
       // brief 申报行进会话历史（外部零平台注入——任务文本即全部上下文）
-      assert(userText.contains("[working branch]"), s"the working-branch line must precede the task text: ${userText.take(200)}")
+      assert(
+        userText.contains("[working branch]"),
+        s"the working-branch line must precede the task text: ${userText.take(200)}"
+      )
       assert(userText.contains("read the code and report"), "the original task text is preserved after the brief line")
     end for
   }
 
-  test("② ready-to-merge verdict enqueues the EXTERNAL channel entry; the merge round runs through CLI resume and the mechanical gate refuses a fake merge") {
+  test(
+    "② ready-to-merge verdict enqueues the EXTERNAL channel entry; the merge round runs through CLI resume and the mechanical gate refuses a fake merge"
+  ) {
     val system = ActorSystem(s"el-2-${scala.util.Random.nextInt(100000)}")
     try
       for
@@ -167,11 +183,17 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
         _ <- pollUntil("merge round refused by the mechanical gate + entry dequeued", maxMs = 120000)(
           res.subAgentTaskStore.findByTaskId(sessionId).flatMap {
             case Some(t) if t.status == "failed" =>
-              IO(t.lastError.exists(_.contains("mechanical merge acceptance refused")) && MergeQueue.find(sessionId).isEmpty)
+              IO(
+                t.lastError
+                  .exists(_.contains("mechanical merge acceptance refused")) && MergeQueue.find(sessionId).isEmpty
+              )
             case _ => IO.pure(false)
           }
         )
-        rows = ChainStore.listSync().flatMap(_.entries).filter(_.kind == MergeQueue.EntryKind)
+        rows = ChainStore
+          .listSync()
+          .flatMap(_.entries)
+          .filter(_.kind == MergeQueue.EntryKind)
           .flatMap(_.payload.hcursor.get[String]("action").toOption)
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
       yield
@@ -182,6 +204,7 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
         assert(rows.contains("dequeued"), s"the entry must exit the queue (the resume turn settled): $rows")
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
+    end try
   }
 
   test("③ MergeQueue channel units: external entry injects via send (zero actor); recovered entry rekeys on revive") {
@@ -191,10 +214,18 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
       _ <- IO {
         MergeQueue.enqueue(
           MergeQueue.Entry(
-            delegateId = "delegate-ext-chan", branch = "delegate/delegate-ext-chan", baseWs = tempRoot.toString,
-            baseBranch = "main", worktree = false, projectKey = "p-chan", taskId = Some("71"),
-            parentSessionId = "nebula-root", description = "t", readyAt = 1L,
-            childRef = MergeQueue.NoopChild, supervisorRef = MergeQueue.NoopSupervisor,
+            delegateId = "delegate-ext-chan",
+            branch = "delegate/delegate-ext-chan",
+            baseWs = tempRoot.toString,
+            baseBranch = "main",
+            worktree = false,
+            projectKey = "p-chan",
+            taskId = Some("71"),
+            parentSessionId = "nebula-root",
+            description = "t",
+            readyAt = 1L,
+            childRef = MergeQueue.NoopChild,
+            supervisorRef = MergeQueue.NoopSupervisor,
             external = Some(MergeQueue.ExternalLeg(msg => IO { sent.add(msg); Right(()) }))
           )
         )
@@ -205,12 +236,24 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
       _ <- IO {
         MergeQueue.enqueue(
           MergeQueue.Entry(
-            delegateId = "delegate-old", branch = "delegate/delegate-old", baseWs = tempRoot.toString,
-            baseBranch = "main", worktree = false, projectKey = "p-rekey", taskId = Some("72"),
-            parentSessionId = "nebula-root", description = "t", readyAt = 1L,
-            childRef = MergeQueue.NoopChild, supervisorRef = MergeQueue.NoopSupervisor,
-            recovered = Some(MergeQueue.Recovered("delegate-old", msg =>
-              IO { MergeQueue.rekey("delegate-old", "delegate-new"); Right(()) }))
+            delegateId = "delegate-old",
+            branch = "delegate/delegate-old",
+            baseWs = tempRoot.toString,
+            baseBranch = "main",
+            worktree = false,
+            projectKey = "p-rekey",
+            taskId = Some("72"),
+            parentSessionId = "nebula-root",
+            description = "t",
+            readyAt = 1L,
+            childRef = MergeQueue.NoopChild,
+            supervisorRef = MergeQueue.NoopSupervisor,
+            recovered = Some(
+              MergeQueue.Recovered(
+                "delegate-old",
+                msg => IO { MergeQueue.rekey("delegate-old", "delegate-new"); Right(()) }
+              )
+            )
           )
         )
       }
@@ -223,10 +266,14 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
       assertEquals(sent.size(), 1, "the external channel got exactly one merge brief (zero actor injection)")
-      assert(sent.peek().contains("<system-reminder>") && sent.peek().contains("merge --no-ff"), "the injected text is the merge brief")
+      assert(
+        sent.peek().contains("<system-reminder>") && sent.peek().contains("merge --no-ff"),
+        "the injected text is the merge brief"
+      )
       assert(afterRekey.isDefined, "the rekeyed entry lives under the new session id")
       assert(oldGone, "the old id is gone after the rekey")
       assert(released, "the merge-round terminal (new id) released the single-flight window")
+    end for
   }
 
 end ExternalLegPrepareSpec

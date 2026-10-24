@@ -75,17 +75,21 @@ class FileTransferActionListSpec extends CatsEffectSuite:
     val outside = tmp / "secret-dir"
     os.makeDir.all(outside)
     os.write.over(outside / "s.txt", "classified")
-    val result = FileTransferAction.handle(
-      JsonObject("direction" -> "list".asJson, "path" -> outside.toString.asJson, "scope" -> "browse".asJson)
-    ).unsafeRunSync()
+    val result = FileTransferAction
+      .handle(
+        JsonObject("direction" -> "list".asJson, "path" -> outside.toString.asJson, "scope" -> "browse".asJson)
+      )
+      .unsafeRunSync()
     assert(result.isLeft)
     assert(result.fold(_.toLowerCase, _ => "").contains("whitelist"))
   }
 
   test("direction=list on a missing directory fails explicitly") {
-    val result = FileTransferAction.handle(
-      JsonObject("direction" -> "list".asJson, "path" -> (share / "nope").toString.asJson, "scope" -> "browse".asJson)
-    ).unsafeRunSync()
+    val result = FileTransferAction
+      .handle(
+        JsonObject("direction" -> "list".asJson, "path" -> (share / "nope").toString.asJson, "scope" -> "browse".asJson)
+      )
+      .unsafeRunSync()
     assert(result.left.exists(_.contains("not found")))
   }
 

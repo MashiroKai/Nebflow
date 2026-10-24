@@ -127,9 +127,11 @@ final class DropboxService private (
     // 与 DeviceDelegate arming 行的 ns= 指纹及分发面 svc= 指纹三方对照。
     loadMessages *> loadTransfers *> sweepOrphanTemps *>
       neblinkService.addDataHandler(handleDataMessage) *>
-      IO.blocking(logger.infoSync(
-        s"P6 probe: dropbox data handler registered ns=${System.identityHashCode(neblinkService)}"
-      ))
+      IO.blocking(
+        logger.infoSync(
+          s"P6 probe: dropbox data handler registered ns=${System.identityHashCode(neblinkService)}"
+        )
+      )
 
   /**
    * 启动清孤儿：temp 目录里有、但没有任何**活跃**会话引用的文件 ⇒ 删除。

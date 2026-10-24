@@ -8,16 +8,21 @@ import java.net.{HttpURLConnection, Proxy, URI, URLEncoder}
 import java.nio.charset.StandardCharsets
 import scala.util.Using
 
-/** Establish a browser session using the existing local credential, without
-  * placing that long-lived credential in a URL or contacting a remote host.
-  */
+/**
+ * Establish a browser session using the existing local credential, without
+ * placing that long-lived credential in a URL or contacting a remote host.
+ */
 object LocalConsoleUrl:
+
   private[gateway] def issue(localUrl: String, token: String): Option[String] =
     val base = URI.create(localUrl)
     require(base.getScheme == "http" && Set("localhost", "127.0.0.1", "[::1]").contains(base.getHost))
     require(base.getRawUserInfo == null && base.getRawQuery == null && base.getRawFragment == null)
-    val conn = base.resolve("/api/auth/console-ticket").toURL
-      .openConnection(Proxy.NO_PROXY).asInstanceOf[HttpURLConnection]
+    val conn = base
+      .resolve("/api/auth/console-ticket")
+      .toURL
+      .openConnection(Proxy.NO_PROXY)
+      .asInstanceOf[HttpURLConnection]
     conn.setConnectTimeout(1500)
     conn.setReadTimeout(1500)
     conn.setInstanceFollowRedirects(false)
@@ -30,15 +35,21 @@ object LocalConsoleUrl:
       if conn.getResponseCode != 200 then None
       else
         val body = Using.resource(scala.io.Source.fromInputStream(conn.getInputStream, "UTF-8"))(_.mkString)
-        parse(body).toOption.flatMap(_.hcursor.get[String]("ticket").toOption)
-          .filter(_.nonEmpty).map { ticket =>
+        parse(body).toOption
+          .flatMap(_.hcursor.get[String]("ticket").toOption)
+          .filter(_.nonEmpty)
+          .map { ticket =>
             s"${base.resolve("/")}?ticket=${URLEncoder.encode(ticket, StandardCharsets.UTF_8)}"
           }
     finally conn.disconnect()
 
+  end issue
+
   def authenticated(localUrl: String): IO[String] =
-    GatewayClient.readToken.flatMap {
-      case Some(token) => IO.blocking(issue(localUrl, token)).map(_.getOrElse(localUrl))
-      case None => IO.pure(localUrl)
-    }.handleError(_ => localUrl)
+    GatewayClient.readToken
+      .flatMap {
+        case Some(token) => IO.blocking(issue(localUrl, token)).map(_.getOrElse(localUrl))
+        case None => IO.pure(localUrl)
+      }
+      .handleError(_ => localUrl)
 end LocalConsoleUrl

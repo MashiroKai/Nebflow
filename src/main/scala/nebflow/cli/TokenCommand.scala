@@ -62,10 +62,14 @@ private[cli] object TokenPrint extends CliSubcommand:
             )
         }
 
+end TokenPrint
+
 /** `token rotate` — dual-form rotation (gateway face when reachable, local atomic rewrite otherwise). */
 private[cli] object TokenRotate extends CliSubcommand:
   def name = "rotate"
-  def description = "Rotate the gateway token (online: takes effect immediately; offline: rewrites auth.json for the next start)"
+
+  def description =
+    "Rotate the gateway token (online: takes effect immediately; offline: rewrites auth.json for the next start)"
   def params = Nil
 
   def run(ctx: CliContext): IO[CliResult] =
@@ -94,15 +98,17 @@ private[cli] object TokenRotate extends CliSubcommand:
           case None => IO.pure(CliResult.error("No gateway token found (auth.json missing); nothing to rotate"))
           case Some(current) =>
             nebflow.gateway.Auth.generateToken.flatMap { next =>
-              nebflow.gateway.Auth.writeTokenAtomic(next).as(
-                CliResult.Text(
-                  List(
-                    "Token rotated offline: auth.json rewritten atomically.",
-                    "The old value keeps working on a gateway that is already running; the new value",
-                    "takes effect at the next gateway start (old value dies then)."
+              nebflow.gateway.Auth
+                .writeTokenAtomic(next)
+                .as(
+                  CliResult.Text(
+                    List(
+                      "Token rotated offline: auth.json rewritten atomically.",
+                      "The old value keeps working on a gateway that is already running; the new value",
+                      "takes effect at the next gateway start (old value dies then)."
+                    )
                   )
                 )
-              )
             }
         }
     }
@@ -124,9 +130,13 @@ object SessionsCommand extends CliCommand:
 private[cli] object SessionsRevoke extends CliSubcommand:
   def name = "revoke"
   def description = "Revoke console sessions: all (--all) or by masked-id prefix (--id)"
+
   def params = List(
     CliParam("all", description = "Revoke ALL console sessions", isFlag = true),
-    CliParam("id", description = "Revoke sessions whose masked id starts with this prefix (see `GET /api/auth/sessions`)")
+    CliParam(
+      "id",
+      description = "Revoke sessions whose masked id starts with this prefix (see `GET /api/auth/sessions`)"
+    )
   )
 
   def run(ctx: CliContext): IO[CliResult] =
@@ -149,8 +159,8 @@ private[cli] object SessionsRevoke extends CliSubcommand:
   private[cli] def revokeBody(all: Boolean, idPrefix: Option[String]): Either[String, Json] =
     (all, idPrefix) match
       case (true, Some(_)) => Left("Pass either --all or --id, not both")
-      case (false, None)   => Left("Nothing to revoke: pass --all or --id <prefix>")
-      case (true, None)    => Right(Json.obj("all" -> true.asJson))
+      case (false, None) => Left("Nothing to revoke: pass --all or --id <prefix>")
+      case (true, None) => Right(Json.obj("all" -> true.asJson))
       case (false, Some(p)) =>
         if p.length < 4 then Left("Masked-id prefix too short (minimum 4 characters)")
         else Right(Json.obj("id" -> p.asJson))

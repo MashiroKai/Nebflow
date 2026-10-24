@@ -1423,6 +1423,7 @@ private[agent] object AgentProcessing:
           IO.pure(
             processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending)
           )
+        end if
       case msg: AgentCommand.SkillActivate =>
         val updatedExec = state.execution.copy(
           pendingUserInputs = state.execution.pendingUserInputs :+ msg

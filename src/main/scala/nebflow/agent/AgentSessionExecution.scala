@@ -718,13 +718,12 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           // 新身份段）。AgentState 不持久化 ⇒ 重启即生命周期轮，天然自愈。
           identityDeltaText =
             if isLifecycleRebuild then ""
-            else {
+            else
               val prevIdentity = stateForLlm.stableSnapshot
                 .map(_.identity)
                 .getOrElse(currentSnapshot.identity)
               if prevIdentity == identitySelfText then ""
               else SystemReminders.renderIdentityChange(prevIdentity, identitySelfText)
-            }
           (systemStable, changeDevices, changeLanguage, changeProjects) =
             if isLifecycleRebuild then (buildSystemPrompt(freshDef, promptCtx), "", Option.empty[String], "")
             else

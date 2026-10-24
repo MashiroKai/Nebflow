@@ -153,5 +153,6 @@ private[neblink] final class PortalTunnelDeps(
             }
         }
     }
+  end mintConsoleTicket
 
 end PortalTunnelDeps

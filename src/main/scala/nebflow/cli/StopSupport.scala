@@ -46,9 +46,7 @@ object StopSupport:
         val p = pb.start()
         val out = new String(p.getInputStream.readAllBytes(), "UTF-8")
         p.waitFor()
-        out
-          .linesIterator
-          .toList
+        out.linesIterator.toList
           .drop(1) // header row
           .flatMap(_.trim.split("\\s+").collect { case NamePort(port) => port.toInt })
           .distinct

@@ -639,9 +639,7 @@ object GatewayMain extends IOApp:
                                     actorSystem
                                       .spawn(
                                         nebflow.agent.InteractionHub(
-                                          Some((sid: String) =>
-                                            sharedResources.agentRegistry.get.map(_.contains(sid))
-                                          ),
+                                          Some((sid: String) => sharedResources.agentRegistry.get.map(_.contains(sid))),
                                           Some(pendingAskLedger)
                                         ),
                                         "interaction-hub"
@@ -730,8 +728,8 @@ object GatewayMain extends IOApp:
                                     pendingAskLedger
                                       .bootReconcile(
                                         broadcast = json => wsHub.broadcast(json),
-                                        appendReceipt = (rootSid, msg) =>
-                                          sessionStore.appendUiMessages(rootSid, List(msg))
+                                        appendReceipt =
+                                          (rootSid, msg) => sessionStore.appendUiMessages(rootSid, List(msg))
                                       )
                                       .attempt
                                       .flatMap {
@@ -987,11 +985,11 @@ object GatewayMain extends IOApp:
                                     // --- Bridge Manager (plugins: telegram, etc.) ---
                                     val bridgeInjectRef: Ref[IO, Option[
                                       (
-                                          String,
-                                          String,
-                                          Option[String],
-                                          Option[nebflow.bridge.BridgeOrigin],
-                                          List[nebflow.bridge.BridgeAttachment]
+                                        String,
+                                        String,
+                                        Option[String],
+                                        Option[nebflow.bridge.BridgeOrigin],
+                                        List[nebflow.bridge.BridgeAttachment]
                                       ) => IO[Unit]
                                     ]] =
                                       Ref.unsafe(None)

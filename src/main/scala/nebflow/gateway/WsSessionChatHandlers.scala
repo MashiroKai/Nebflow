@@ -88,8 +88,13 @@ private[gateway] object WsSessionChatHandlers:
             // 修正② fail-closed（纵深防御）：secret 卡的作答**永不**接受附件——
             // 前端对 secret 卡本就无附件入口，此闸只服务伪造/越权客户端。整帧
             // 拒收：不落盘、不进 hub（卡保留，可刷新后重新作答）。
-            rejectAttachFrame(wsSend, askSessionId, requestId, "ASKUSER_ATTACH_SECRET_CARD",
-              "secret questions never accept attachments")
+            rejectAttachFrame(
+              wsSend,
+              askSessionId,
+              requestId,
+              "ASKUSER_ATTACH_SECRET_CARD",
+              "secret questions never accept attachments"
+            )
           case Nil =>
             validateAnswerAttachments(askSessionId, requestId, attachmentsJson).flatMap {
               case Some((code, detail)) => rejectAttachFrame(wsSend, askSessionId, requestId, code, detail)
@@ -179,6 +184,7 @@ private[gateway] object WsSessionChatHandlers:
                         )
                       )
                     else Right(()) // 基础闸过；sha 比对在 blocking 块外（需查台账 IO）
+                end if
               }.flatMap {
                 case Left(reject) => IO.pure(reject)
                 case Right(_) =>
@@ -188,7 +194,10 @@ private[gateway] object WsSessionChatHandlers:
                       Some(("ASKUSER_ATTACH_SHA_MISMATCH", s"attachment sha mismatch: $path"))
                     case _ => None
                   }
-              }.handleErrorWith(e => IO.pure(Some(("ASKUSER_ATTACH_UNREADABLE", s"attachment not readable: ${e.getMessage}"))))
+              }.handleErrorWith(e =>
+                IO.pure(Some(("ASKUSER_ATTACH_UNREADABLE", s"attachment not readable: ${e.getMessage}")))
+              )
+            end if
         }
       }
 
@@ -208,7 +217,9 @@ private[gateway] object WsSessionChatHandlers:
   ): IO[Unit] =
     nebflow.shared.NebflowLogger
       .forName("nebflow.ws")
-      .warn(s"askUserAnswer with attachments REJECTED requestId=$requestId root=$askSessionId code=$code detail=$detail") *>
+      .warn(
+        s"askUserAnswer with attachments REJECTED requestId=$requestId root=$askSessionId code=$code detail=$detail"
+      ) *>
       wsSend(
         io.circe.Json.obj(
           "type" -> "interactionAnswerRejected".asJson,
@@ -220,8 +231,10 @@ private[gateway] object WsSessionChatHandlers:
         )
       )
 
-  /** 已作答卡的 `.answered` 标记（孤儿清扫的保留判据；只对带附件的作答落——
-    * 无附件作答卡即便曾传过孤儿件也照扫）。best-effort。 */
+  /**
+   * 已作答卡的 `.answered` 标记（孤儿清扫的保留判据；只对带附件的作答落——
+   * 无附件作答卡即便曾传过孤儿件也照扫）。best-effort。
+   */
   private def markAnswered(askSessionId: String, requestId: String, attachments: List[Json]): IO[Unit] =
     if attachments.isEmpty then IO.unit
     else AskUserAttachmentRoutes.markAnswered(askSessionId, requestId)
@@ -792,6 +805,8 @@ private[gateway] object WsSessionChatHandlers:
       )
     )
 
+  end handleImmediateInput
+
   private def handleUserMessage(
     ctx: WsDispatchCtx,
     text: String,
@@ -1061,58 +1076,60 @@ private[gateway] object WsSessionChatHandlers:
           .flatMap { titles =>
             // #752 空闲细分：会话自有等待型后台任务一次全表扫描（waitingBySession
             // 分组 Map），逐行查表取自有集——快照「在等什么」字段单源。
-            nebflow.core.tools.BgTaskRegistry.waitingBySession.flatMap { waitingBySession =>
-              active
-                .traverse { rec =>
-                  // retryCount 来自 taskStore（2026-08-22 缺口 2：快照自带三
-                  // 字段之一；Ephemeral/无任务记录 → 0）
-                  sharedResources.subAgentTaskStore.findByTaskId(rec.sessionId).flatMap { taskOpt =>
-                    // 显示名契约批（2026-10-22 · 子智能体面板行显示名修复）：快照面
-                    // 的 delegate/SubTask 行名**不再回落 sessionId**——权威主源 =
-                    // DelegateRegistry.Record.title（spawn 落盘、跨重启存活）；任务
-                    // 记录 description 为回填源（`delegateDisplayTitle` 单一解析缝，
-                    // 纯函数可单测）。不命中 = None（既有三档链逐字不动）。
-                    val delegateTitleIO: IO[Option[String]] =
-                      IO
-                        .blocking {
-                          val registryTitle =
-                            if rec.kind == AgentKind.Delegate then
-                              nebflow.core.delegate.DelegateRegistry
-                                .find(rec.sessionId)
-                                .map(_.title)
-                                .filter(_.trim.nonEmpty)
-                            else None
-                          WebSocketRoutes.delegateDisplayTitle(
-                            rec.kind,
-                            registryTitle,
-                            taskOpt.map(_.description).filter(_.trim.nonEmpty)
+            nebflow.core.tools.BgTaskRegistry.waitingBySession
+              .flatMap { waitingBySession =>
+                active
+                  .traverse { rec =>
+                    // retryCount 来自 taskStore（2026-08-22 缺口 2：快照自带三
+                    // 字段之一；Ephemeral/无任务记录 → 0）
+                    sharedResources.subAgentTaskStore.findByTaskId(rec.sessionId).flatMap { taskOpt =>
+                      // 显示名契约批（2026-10-22 · 子智能体面板行显示名修复）：快照面
+                      // 的 delegate/SubTask 行名**不再回落 sessionId**——权威主源 =
+                      // DelegateRegistry.Record.title（spawn 落盘、跨重启存活）；任务
+                      // 记录 description 为回填源（`delegateDisplayTitle` 单一解析缝，
+                      // 纯函数可单测）。不命中 = None（既有三档链逐字不动）。
+                      val delegateTitleIO: IO[Option[String]] =
+                        IO
+                          .blocking {
+                            val registryTitle =
+                              if rec.kind == AgentKind.Delegate then
+                                nebflow.core.delegate.DelegateRegistry
+                                  .find(rec.sessionId)
+                                  .map(_.title)
+                                  .filter(_.trim.nonEmpty)
+                              else None
+                            WebSocketRoutes.delegateDisplayTitle(
+                              rec.kind,
+                              registryTitle,
+                              taskOpt.map(_.description).filter(_.trim.nonEmpty)
+                            )
+                          }
+                          .handleErrorWith(_ => IO.pure(None))
+                      delegateTitleIO.flatMap { delegateTitle =>
+                        sessionStore.getSessionMeta(rec.sessionId).map { meta =>
+                          WebSocketRoutes.activeAgentEntryJson(
+                            rec,
+                            meta,
+                            taskOpt.map(_.retryCount),
+                            taskTitle = rec.taskId.flatMap(titles.get),
+                            delegateTitle = delegateTitle,
+                            bgWaiting = waitingBySession
+                              .getOrElse(rec.sessionId, Nil)
+                              .map(t => (t.jobId, t.description, t.startedAtMs))
                           )
                         }
-                        .handleErrorWith(_ => IO.pure(None))
-                    delegateTitleIO.flatMap { delegateTitle =>
-                      sessionStore.getSessionMeta(rec.sessionId).map { meta =>
-                        WebSocketRoutes.activeAgentEntryJson(
-                          rec,
-                          meta,
-                          taskOpt.map(_.retryCount),
-                          taskTitle = rec.taskId.flatMap(titles.get),
-                          delegateTitle = delegateTitle,
-                          bgWaiting = waitingBySession
-                            .getOrElse(rec.sessionId, Nil)
-                            .map(t => (t.jobId, t.description, t.startedAtMs))
-                        )
                       }
                     }
                   }
-                }
-            }.flatMap { agents =>
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "activeAgents".asJson,
-                  "agents" -> agents.asJson
+              }
+              .flatMap { agents =>
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "activeAgents".asJson,
+                    "agents" -> agents.asJson
+                  )
                 )
-              )
-            }
+              }
           }
       }
     }

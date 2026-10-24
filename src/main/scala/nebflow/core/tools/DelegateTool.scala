@@ -172,8 +172,10 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
   end routeWsSend
 
   /** 供 BlockingSubagent 复用的路由包装（nodeSessionId 戳 + 根会话索引）。 */
-  /** 监督链自动恢复批（2026-10-22）：boot 复活腿（DelegateRevival）同款路由——
-    * 可见域从 tools 放宽到本工程（复活腿在 agent 层，路由单点不二写）。 */
+  /**
+   * 监督链自动恢复批（2026-10-22）：boot 复活腿（DelegateRevival）同款路由——
+   * 可见域从 tools 放宽到本工程（复活腿在 agent 层，路由单点不二写）。
+   */
   private[nebflow] def routeWsSendFor(
     subagentId: String,
     parentSessionId: Option[String],

@@ -57,16 +57,35 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
   val MaxRemoteAttachments = 200
   val MaxRemoteDocBytes = WikiIndex.MaxDocBytes
 
-  /** Sub-vault discovery budgets (#744-B) — a runaway nesting must not stall
-    * a graph request. Depth counts nested `SUB/docs` levels BELOW the root. */
+  /**
+   * Sub-vault discovery budgets (#744-B) — a runaway nesting must not stall
+   * a graph request. Depth counts nested `SUB/docs` levels BELOW the root.
+   */
   val MaxSubVaultDepth = 3
   val MaxSubVaultsPerVault = 32
   val MaxRemoteSubVaultProbe = 16
 
-  /** Binary viewer extensions — remote-doc returns base64 for these so the
-    * frontend can open them from a blob URL (literature PDFs, figures). */
+  /**
+   * Binary viewer extensions — remote-doc returns base64 for these so the
+   * frontend can open them from a blob URL (literature PDFs, figures).
+   */
   private val BinaryDocExtensions: Set[String] = Set(
-    ".pdf", ".docx", ".pptx", ".xlsx", ".epub", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".mp4", ".webm", ".mov", ".mp3", ".wav"
+    ".pdf",
+    ".docx",
+    ".pptx",
+    ".xlsx",
+    ".epub",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".svg",
+    ".mp4",
+    ".webm",
+    ".mov",
+    ".mp3",
+    ".wav"
   )
 
   private val cacheState =
@@ -107,7 +126,10 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
                 IO.pure(emptyView(project, vault))
             )
             .guarantee(IO(building.set(false)))
+      end match
     }
+
+  end graph
 
   /** Create `<workspace>/docs/attachments` for a project (idempotent). */
   def ensureVault(project: String): IO[Either[String, Json]] =
@@ -137,39 +159,42 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
    */
   def vaults: IO[Json] =
     ProjectStore.list().flatMap { defs =>
-      defs.traverse { pd =>
-        val device = deviceOf(pd)
-        if ProjectOrigin.isSelfLiteral(device) then
-          IO.blocking {
-            val ws = workspacePath(pd)
-            Json.obj(
-              "project" -> pd.name.asJson,
-              "device" -> device.asJson,
-              "workspace" -> ws.toString.asJson,
-              "vault" -> (ws / WikiIndex.VaultDirName).toString.asJson,
-              "present" -> os.isDir(ws / WikiIndex.VaultDirName).asJson
+      defs
+        .traverse { pd =>
+          val device = deviceOf(pd)
+          if ProjectOrigin.isSelfLiteral(device) then
+            IO.blocking {
+              val ws = workspacePath(pd)
+              Json.obj(
+                "project" -> pd.name.asJson,
+                "device" -> device.asJson,
+                "workspace" -> ws.toString.asJson,
+                "vault" -> (ws / WikiIndex.VaultDirName).toString.asJson,
+                "present" -> os.isDir(ws / WikiIndex.VaultDirName).asJson
+              )
+            }
+          else
+            IO.pure(
+              Json.obj(
+                "project" -> pd.name.asJson,
+                "device" -> device.asJson,
+                "workspace" -> pd.origin.map(_.path).getOrElse(pd.workspace).asJson,
+                "vault" -> joinRemote(pd.origin.map(_.path).getOrElse(pd.workspace), WikiIndex.VaultDirName).asJson,
+                "present" -> Json.Null // presence unknown without a peer round-trip
+              )
             )
-          }
-        else
-          IO.pure(
-            Json.obj(
-              "project" -> pd.name.asJson,
-              "device" -> device.asJson,
-              "workspace" -> pd.origin.map(_.path).getOrElse(pd.workspace).asJson,
-              "vault" -> joinRemote(pd.origin.map(_.path).getOrElse(pd.workspace), WikiIndex.VaultDirName).asJson,
-              "present" -> Json.Null // presence unknown without a peer round-trip
-            )
-          )
-      }.map(entries => Json.obj("vaults" -> entries.asJson))
+          end if
+        }
+        .map(entries => Json.obj("vaults" -> entries.asJson))
     }
 
   // ── View dispatch ────────────────────────────────────────────────
 
   private def cacheKey(project: Option[String], vault: Option[String]): String =
     project match
-      case None                         => "merged"
+      case None => "merged"
       case Some(p) if p == UserHistoryProject => "user-history"
-      case Some(p)                      => vault.fold(s"p:$p")(v => s"p:$p|v:$v")
+      case Some(p) => vault.fold(s"p:$p")(v => s"p:$p|v:$v")
 
   /** C-batch reserved project value — user-history graph lands there later. */
   val UserHistoryProject = "__user__"
@@ -193,10 +218,12 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
     rel.nonEmpty && !rel.startsWith("/") && !rel.startsWith("\\") &&
       rel.split('/').forall(s => s.nonEmpty && s != "." && s != "..")
 
-  /** Segments of a root-vault-relative vault rel BELOW the root vault:
-    * "docs" → Nil, "sub/docs" → Vector("sub", "docs"), "a/docs/b/docs" →
-    * Vector("a", "docs", "b", "docs"). Single join point for the "docs" root
-    * segment (folder for vault paths, string namespace for rels elsewhere). */
+  /**
+   * Segments of a root-vault-relative vault rel BELOW the root vault:
+   * "docs" → Nil, "sub/docs" → Vector("sub", "docs"), "a/docs/b/docs" →
+   * Vector("a", "docs", "b", "docs"). Single join point for the "docs" root
+   * segment (folder for vault paths, string namespace for rels elsewhere).
+   */
   private def vaultRelSegments(rel: String): Vector[String] =
     val r = if rel == WikiIndex.VaultDirName then "" else rel.stripPrefix(WikiIndex.VaultDirName + "/")
     r.split('/').filter(_.nonEmpty).toVector
@@ -221,22 +248,21 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
     val edges = scans.flatMap(s => s.scan.edges.map(WikiIndex.edgeJson))
     Json.obj(
       "generatedAt" -> System.currentTimeMillis().asJson,
-      "projects" -> scans
-        .map { s =>
-          Json.obj(
-            "name" -> s.name.asJson,
-            "device" -> s.device.asJson,
-            "workspace" -> s.workspace.asJson,
-            "vault" -> s.vault.asJson,
-            "docCount" -> s.scan.nodes.count(n => !n.stub).asJson,
-            "error" -> s.error.map(_.asJson).getOrElse(Json.Null),
-            "stub" -> s.stubProject.asJson
-          )
-        }
-        .asJson,
+      "projects" -> scans.map { s =>
+        Json.obj(
+          "name" -> s.name.asJson,
+          "device" -> s.device.asJson,
+          "workspace" -> s.workspace.asJson,
+          "vault" -> s.vault.asJson,
+          "docCount" -> s.scan.nodes.count(n => !n.stub).asJson,
+          "error" -> s.error.map(_.asJson).getOrElse(Json.Null),
+          "stub" -> s.stubProject.asJson
+        )
+      }.asJson,
       "nodes" -> nodes.asJson,
       "edges" -> edges.asJson
     )
+  end assembleMerged
 
   // ── Per-project views (#744-B) ───────────────────────────────────
 
@@ -307,12 +333,15 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
         val scan = scanLocalVaultDir(pd.name, device, vault, vaultRel, skipRels)
         val classified = WikiIndex.classifyExternals(scan, siblingRels)
         assembleVaultView(pd, vaultRel, classified, children, None)
+      end if
     }.handleErrorWith(e =>
       // Swallowed errors must stay visible: the degraded view carries the
       // message in its `error` field, the log keeps the stack face.
       IO(logger.errorSync(s"wiki: local vault view '${pd.name}/$vaultRel' degraded: ${msgOf(e)}")) *>
         IO.pure(vaultErrorView(pd, vaultRel, msgOf(e)))
     )
+
+  end buildLocalVaultView
 
   private def buildRemoteVaultView(pd: ProjectDef, vaultRel: String): IO[Json] =
     val wsPath = pd.origin.map(_.path).getOrElse(pd.workspace)
@@ -331,6 +360,8 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
         assembleVaultView(pd, vaultRel, scan, children, scanErr)
       }
     }
+
+  end buildRemoteVaultView
 
   private def assembleVaultView(
     pd: ProjectDef,
@@ -354,11 +385,15 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
           "stub" -> false.asJson
         )
       ),
-      "childVaults" -> children.map(c => Json.obj(
-        "name" -> c.name.asJson,
-        "rel" -> c.rel.asJson,
-        "docCount" -> c.docCount.asJson
-      )).asJson,
+      "childVaults" -> children
+        .map(c =>
+          Json.obj(
+            "name" -> c.name.asJson,
+            "rel" -> c.rel.asJson,
+            "docCount" -> c.docCount.asJson
+          )
+        )
+        .asJson,
       "nodes" -> scan.nodes.map(WikiIndex.nodeJson).asJson,
       "edges" -> scan.edges.map(WikiIndex.edgeJson).asJson,
       "stats" -> statsJson(scan).asJson,
@@ -370,6 +405,8 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
       "rootVault" -> isRoot.asJson
     )
 
+  end assembleVaultView
+
   private def statsJson(scan: WikiIndex.VaultScan): Json =
     val externalNodes = scan.nodes.filter(_.external).map(_.id).toSet
     val externalEdges = scan.edges.count(e => externalNodes.contains(e.to))
@@ -378,13 +415,18 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
       "docs" -> scan.nodes.count(n => !n.stub).asJson,
       "attachments" -> scan.nodes.count(n => !n.stub && n.kind == "attachment").asJson,
       "edges" -> (totalEdges - externalEdges).asJson,
-      "unresolved" -> scan.edges.count(e => !externalNodes.contains(e.to) && scan.nodes.exists(n => n.id == e.to && n.stub)).asJson,
+      "unresolved" -> scan.edges
+        .count(e => !externalNodes.contains(e.to) && scan.nodes.exists(n => n.id == e.to && n.stub))
+        .asJson,
       "crossVault" -> externalEdges.asJson
     )
 
   private val zeroStats: Json = Json.obj(
-    "docs" -> 0.asJson, "attachments" -> 0.asJson, "edges" -> 0.asJson,
-    "unresolved" -> 0.asJson, "crossVault" -> 0.asJson
+    "docs" -> 0.asJson,
+    "attachments" -> 0.asJson,
+    "edges" -> 0.asJson,
+    "unresolved" -> 0.asJson,
+    "crossVault" -> 0.asJson
   )
 
   private def viewJson(pd: ProjectDef, vaultRel: String): Json =
@@ -403,7 +445,10 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
     var acc = ListBuffer.empty[String]
     while i + 1 < segs.length do
       acc += segs(i)
-      crumbs += Json.obj("name" -> segs(i).asJson, "vault" -> (acc.toList :+ WikiIndex.VaultDirName).mkString("/").asJson)
+      crumbs += Json.obj(
+        "name" -> segs(i).asJson,
+        "vault" -> (acc.toList :+ WikiIndex.VaultDirName).mkString("/").asJson
+      )
       i += 2
     crumbs.toList
 
@@ -509,15 +554,35 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
     val vault = ws / WikiIndex.VaultDirName
     IO.blocking {
       if !os.isDir(vault) then
-        ProjectScan(pd.name, device, ws.toString(), vault.toString(), emptyStubScan(pd.name, device), None, stubProject = true)
+        ProjectScan(
+          pd.name,
+          device,
+          ws.toString(),
+          vault.toString(),
+          emptyStubScan(pd.name, device),
+          None,
+          stubProject = true
+        )
       else
         // Root vault scan prunes discovered sub-vault dirs (they are separate graphs).
         val subRels = discoverLocalSubVaults(vault).map(_.rel).toSet
         val scan = scanLocalVaultDir(pd.name, device, vault, WikiIndex.VaultDirName, subRels)
         ProjectScan(pd.name, device, ws.toString(), vault.toString(), scan, None, stubProject = false)
     }.handleErrorWith(e =>
-      IO.pure(ProjectScan(pd.name, device, ws.toString(), vault.toString(), emptyStubScan(pd.name, device), Some(msgOf(e)), stubProject = true))
+      IO.pure(
+        ProjectScan(
+          pd.name,
+          device,
+          ws.toString(),
+          vault.toString(),
+          emptyStubScan(pd.name, device),
+          Some(msgOf(e)),
+          stubProject = true
+        )
+      )
     )
+
+  end scanLocalRootProject
 
   /**
    * Scan ONE local vault directory into a VaultScan. `skipRels` = vault-relative
@@ -547,6 +612,8 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
       .take(WikiIndex.MaxFilesPerVault)
     WikiIndex.buildVaultScan(project, device, docs.toList, attachments.toList)
 
+  end scanLocalVaultDir
+
   /**
    * Discover sub-vaults (`<name>/docs/` direct children, recursively) of a
    * LOCAL vault. Bounded by [[MaxSubVaultDepth]] / [[MaxSubVaultsPerVault]];
@@ -569,6 +636,8 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
     walk(rootVault, Nil, 0)
     out.toList
 
+  end discoverLocalSubVaults
+
   /** Every vault rel of a local workspace (root + sub vaults) — listing only. */
   private def allLocalVaultRels(ws: os.Path): List[String] =
     val root = ws / WikiIndex.VaultDirName
@@ -589,7 +658,17 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
     val vaultPath = joinRemote(wsPath, WikiIndex.VaultDirName)
     RemoteExecutor.current match
       case None =>
-        IO.pure(ProjectScan(pd.name, device, wsPath, vaultPath, emptyStubScan(pd.name, device), Some("peer channel not initialized"), stubProject = true))
+        IO.pure(
+          ProjectScan(
+            pd.name,
+            device,
+            wsPath,
+            vaultPath,
+            emptyStubScan(pd.name, device),
+            Some("peer channel not initialized"),
+            stubProject = true
+          )
+        )
       case Some(executor) =>
         val scan = for
           peers <- peers
@@ -621,8 +700,22 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
           .map(s => ProjectScan(pd.name, device, wsPath, vaultPath, s, None, stubProject = false))
           .handleErrorWith(e =>
             IO(logger.warnSync(s"wiki: remote vault scan for '${pd.name}' on '$device' failed: ${msgOf(e)}")) *>
-              IO.pure(ProjectScan(pd.name, device, wsPath, vaultPath, emptyStubScan(pd.name, device), Some(msgOf(e)), stubProject = true))
+              IO.pure(
+                ProjectScan(
+                  pd.name,
+                  device,
+                  wsPath,
+                  vaultPath,
+                  emptyStubScan(pd.name, device),
+                  Some(msgOf(e)),
+                  stubProject = true
+                )
+              )
           )
+
+    end match
+
+  end scanRemoteRootProject
 
   /**
    * Remote SUB-vault scan (drill-in, #744-B): same channel, paths joined under
@@ -631,7 +724,11 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
    * phantoms as broken, documented in the design §6). Returns the scan plus an
    * optional error (peer offline / refused) so the view can surface it.
    */
-  private def scanRemoteVault(pd: ProjectDef, vaultRel: String, vaultPath: String): IO[(WikiIndex.VaultScan, Option[String])] =
+  private def scanRemoteVault(
+    pd: ProjectDef,
+    vaultRel: String,
+    vaultPath: String
+  ): IO[(WikiIndex.VaultScan, Option[String])] =
     val device = deviceOf(pd)
     RemoteExecutor.current match
       case None =>
@@ -664,9 +761,16 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
         scan
           .map(s => (s, None))
           .handleErrorWith(e =>
-            IO(logger.warnSync(s"wiki: remote sub-vault scan for '${pd.name}/$vaultRel' on '$device' failed: ${msgOf(e)}")) *>
+            IO(
+              logger
+                .warnSync(s"wiki: remote sub-vault scan for '${pd.name}/$vaultRel' on '$device' failed: ${msgOf(e)}")
+            ) *>
               IO.pure((emptyStubScan(pd.name, device), Some(msgOf(e))))
           )
+
+    end match
+
+  end scanRemoteVault
 
   /**
    * Best-effort one-level child-vault probe over the peer channel (design §1):
@@ -687,27 +791,33 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
           entries <- listed match
             case Right(json) => IO.pure(json.hcursor.downField("entries").as[List[Json]].getOrElse(Nil))
             case Left(err) => IO.raiseError[List[Json]](new Exception(err))
-          dirNames = entries.flatMap { e =>
-            val c = e.hcursor
-            for
-              name <- c.downField("name").as[String].toOption
-              typ <- c.downField("type").as[String].toOption
-              if typ == "dir"
-            yield name
-          }.take(MaxRemoteSubVaultProbe)
+          dirNames = entries
+            .flatMap { e =>
+              val c = e.hcursor
+              for
+                name <- c.downField("name").as[String].toOption
+                typ <- c.downField("type").as[String].toOption
+                if typ == "dir"
+              yield name
+            }
+            .take(MaxRemoteSubVaultProbe)
           children <- dirNames.traverse { sub =>
             val subDocs = joinRemote(vaultPath, s"$sub/${WikiIndex.VaultDirName}")
-            executor.transferListScoped(peer, subDocs).map {
-              case Right(json) =>
-                val count = json.hcursor.downField("entries").as[List[Json]].getOrElse(Nil).count { e =>
-                  val c = e.hcursor
-                  c.downField("type").as[String].contains("file") &&
+            executor
+              .transferListScoped(peer, subDocs)
+              .map {
+                case Right(json) =>
+                  val count = json.hcursor.downField("entries").as[List[Json]].getOrElse(Nil).count { e =>
+                    val c = e.hcursor
+                    c.downField("type").as[String].contains("file") &&
                     WikiIndex.DocExtensions.contains(WikiIndex.extOf(c.downField("name").as[String].getOrElse("")))
-                }
-                if count > 0 then Some(WikiIndex.ChildVault(name = sub, rel = s"$sub/${WikiIndex.VaultDirName}", docCount = count))
-                else None
-              case Left(_) => None
-            }.handleErrorWith(_ => IO.pure(None))
+                  }
+                  if count > 0 then
+                    Some(WikiIndex.ChildVault(name = sub, rel = s"$sub/${WikiIndex.VaultDirName}", docCount = count))
+                  else None
+                case Left(_) => None
+              }
+              .handleErrorWith(_ => IO.pure(None))
           }
         yield children.flatten).handleErrorWith(_ => IO.pure(Nil))
 
@@ -748,8 +858,7 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
                       "binary" -> binary.asJson
                     ) ++ (if binary then
                             List("contentBase64" -> java.util.Base64.getEncoder.encodeToString(bytes).asJson)
-                          else
-                            List("content" -> new String(bytes, java.nio.charset.StandardCharsets.UTF_8).asJson))
+                          else List("content" -> new String(bytes, java.nio.charset.StandardCharsets.UTF_8).asJson))
                     IO.pure(Right(Json.obj(fields*)))
                 case Left(err) => IO.pure(Left(err))
               }
@@ -776,7 +885,8 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
 
   def paragraph(project: String, rel: String, anchor: String): IO[Either[String, Json]] =
     if project.isBlank then IO.pure(Left("project is required"))
-    else if rel.isBlank || rel.contains("..") || rel.contains('\\') then IO.pure(Left("rel must be a vault-relative path"))
+    else if rel.isBlank || rel.contains("..") || rel.contains('\\') then
+      IO.pure(Left("rel must be a vault-relative path"))
     else if anchor.isBlank then IO.pure(Left("anchor is required"))
     else
       ProjectStore.load(project).flatMap {
@@ -788,36 +898,48 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
               IO.blocking {
                 val parsed = WikiIndex.parseDoc(rel, text)
                 val wanted = WikiIndex.edgeAnchorForm(anchor)
-                (parsed.paragraphs.find(_.anchor == wanted).map { p =>
-                  Right(Json.obj(
-                    "fallback" -> "index".asJson,
-                    "project" -> project.asJson,
-                    "rel" -> rel.asJson,
-                    "anchor" -> wanted.asJson,
-                    "paragraph" -> WikiIndex.paragraphJson(p)
-                  ))
-                }, parsed.summary)
+                (
+                  parsed.paragraphs.find(_.anchor == wanted).map { p =>
+                    Right(
+                      Json.obj(
+                        "fallback" -> "index".asJson,
+                        "project" -> project.asJson,
+                        "rel" -> rel.asJson,
+                        "anchor" -> wanted.asJson,
+                        "paragraph" -> WikiIndex.paragraphJson(p)
+                      )
+                    )
+                  },
+                  parsed.summary
+                )
               }.handleErrorWith(e =>
-                IO(logger.warnSync(s"wiki: paragraph parse failed for $project/$rel: ${msgOf(e)}")) *> IO.pure((None, None))
+                IO(logger.warnSync(s"wiki: paragraph parse failed for $project/$rel: ${msgOf(e)}")) *> IO
+                  .pure((None, None))
               ).flatMap {
                 case (Some(r), _) => IO.pure(r)
                 case (None, summary) =>
                   standRecallParagraph(anchor).map {
-                    case Some(hits) => Right(Json.obj(
-                      "fallback" -> "recall".asJson,
-                      "project" -> project.asJson,
-                      "rel" -> rel.asJson,
-                      "anchor" -> WikiIndex.edgeAnchorForm(anchor).asJson,
-                      "source" -> "stand-recall".asJson,
-                      "hits" -> hits.asJson))
+                    case Some(hits) =>
+                      Right(
+                        Json.obj(
+                          "fallback" -> "recall".asJson,
+                          "project" -> project.asJson,
+                          "rel" -> rel.asJson,
+                          "anchor" -> WikiIndex.edgeAnchorForm(anchor).asJson,
+                          "source" -> "stand-recall".asJson,
+                          "hits" -> hits.asJson
+                        )
+                      )
                     case None => Right(docFallback(rel, anchor, summary))
                   }
               }
           }
       }
 
-  /** Doc-level contract floor: summary when we have the text, plain fallback
-    * shape when we do not (unreachable peer, unreadable file). */
+  /**
+   * Doc-level contract floor: summary when we have the text, plain fallback
+   * shape when we do not (unreachable peer, unreadable file).
+   */
   private def docFallback(rel: String, anchor: String, summary: Option[String]): Json =
     Json.obj(
       "fallback" -> "doc".asJson,
@@ -826,9 +948,11 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
       "summary" -> summary.map(_.asJson).getOrElse(Json.Null)
     )
 
-  /** Read one vault doc's text — local projects straight from disk, remote
-    * projects through the peer browse channel. None = unreadable (degrade,
-    * never fail). */
+  /**
+   * Read one vault doc's text — local projects straight from disk, remote
+   * projects through the peer browse channel. None = unreadable (degrade,
+   * never fail).
+   */
   private def readVaultDoc(pd: ProjectDef, rel: String): IO[Option[String]] =
     val device = deviceOf(pd)
     if ProjectOrigin.isSelfLiteral(device) then
@@ -846,27 +970,44 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
           peers.flatMap(p => IO(RemoteExecutor.resolvePeer(device, p))).flatMap {
             case Left(_) => IO.pure(None)
             case Right(peer) =>
-              val remotePath = joinRemote(joinRemote(pd.origin.map(_.path).getOrElse(pd.workspace), WikiIndex.VaultDirName), rel)
-              executor.transferGetScoped(peer, remotePath).map {
-                case Right(bytes) if bytes.length <= WikiIndex.MaxDocBytes =>
-                  Some(new String(bytes, java.nio.charset.StandardCharsets.UTF_8))
-                case _ => None
-              }.handleErrorWith(_ => IO.pure(None))
+              val remotePath =
+                joinRemote(joinRemote(pd.origin.map(_.path).getOrElse(pd.workspace), WikiIndex.VaultDirName), rel)
+              executor
+                .transferGetScoped(peer, remotePath)
+                .map {
+                  case Right(bytes) if bytes.length <= WikiIndex.MaxDocBytes =>
+                    Some(new String(bytes, java.nio.charset.StandardCharsets.UTF_8))
+                  case _ => None
+                }
+                .handleErrorWith(_ => IO.pure(None))
           }
 
-  /** The xerj 按段检索 leg — best-effort `tools/stand-recall` (memory-db).
-    * Locates the CLI via STAND_RECALL_CLI (absolute) or `<cwd>/tools/stand-recall`;
-    * anything absent/late/malformed ⇒ None (the graph must not depend on the
-    * runtime memory-db — design §5 boundary clause 1). */
+    end if
+
+  end readVaultDoc
+
+  /**
+   * The xerj 按段检索 leg — best-effort `tools/stand-recall` (memory-db).
+   * Locates the CLI via STAND_RECALL_CLI (absolute) or `<cwd>/tools/stand-recall`;
+   * anything absent/late/malformed ⇒ None (the graph must not depend on the
+   * runtime memory-db — design §5 boundary clause 1).
+   */
   private def standRecallParagraph(anchor: String): IO[Option[List[Json]]] =
     IO.blocking {
       val cli = sys.env.get("STAND_RECALL_CLI") match
         case Some(p) => os.Path(p, PathUtil.dataRoot)
-        case None    => os.Path("tools/stand-recall", os.pwd)
+        case None => os.Path("tools/stand-recall", os.pwd)
       if !os.isFile(cli) then None
       else
         val query = anchor.stripPrefix("#").stripPrefix("^").take(120)
-        val proc = new java.lang.ProcessBuilder("python3", cli.toString, "--json", "-n", String.valueOf(ParagraphRecallMaxHits), query)
+        val proc = new java.lang.ProcessBuilder(
+          "python3",
+          cli.toString,
+          "--json",
+          "-n",
+          String.valueOf(ParagraphRecallMaxHits),
+          query
+        )
           .redirectErrorStream(false)
           .start()
         try
@@ -883,11 +1024,17 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
                   "ts" -> c.downField("ts").as[String].map(_.asJson).getOrElse(Json.Null),
                   "role" -> c.downField("role").as[String].map(_.asJson).getOrElse(Json.Null),
                   "session" -> c.downField("session_name").as[String].map(_.asJson).getOrElse(Json.Null),
-                  "text" -> c.downField("text").as[String].map(t => t.take(ParagraphRecallTextCap).asJson).getOrElse(Json.Null)
+                  "text" -> c
+                    .downField("text")
+                    .as[String]
+                    .map(t => t.take(ParagraphRecallTextCap).asJson)
+                    .getOrElse(Json.Null)
                 )
               }
             }
         finally proc.destroyForcibly()
+        end try
+      end if
     }.handleErrorWith { e =>
       IO(logger.warnSync(s"wiki: stand-recall leg skipped: ${msgOf(e)}")) *> IO.pure(None)
     }
@@ -897,14 +1044,23 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
       List(
         WikiIndex.WikiDocNode(
           WikiIndex.nodeId(project, WikiIndex.VaultDirName + "/"),
-          project, device, WikiIndex.VaultDirName + "/", project, Nil, Nil, stub = true
+          project,
+          device,
+          WikiIndex.VaultDirName + "/",
+          project,
+          Nil,
+          Nil,
+          stub = true
         )
       ),
-      Nil, Nil
+      Nil,
+      Nil
     )
 
-  /** `<base>/<child>` for remote (possibly Windows-style) paths — string-level
-    * join: the path never resolves on THIS filesystem. */
+  /**
+   * `<base>/<child>` for remote (possibly Windows-style) paths — string-level
+   * join: the path never resolves on THIS filesystem.
+   */
   private def joinRemote(base: String, child: String): String =
     if base.endsWith("/") || base.endsWith("\\") then base + child
     else base + "/" + child

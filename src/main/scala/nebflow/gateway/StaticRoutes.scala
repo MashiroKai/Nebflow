@@ -324,14 +324,16 @@ object StaticRoutes:
 
   private val PackStylesheetRe = """<link rel="stylesheet" href="((?:css|vendor)/[^"]+)"([^>]*)>""".r
   private val PackVendorScriptRe = """<script defer src="(vendor/[^"]+)"></script>""".r
-  private val PackMediaAttrRe  = """media="([^"]*)"""".r
+  private val PackMediaAttrRe = """media="([^"]*)"""".r
 
   /** CSS 相对 url() 捕获（绝对/http(s)/data/协议相对/锚引用不碰）。 */
   private val CssRelativeUrlRe = """url\(\s*(?!['"]?(?:data:|https?:|//|/|#))([^)]+)\)""".r
 
-  /** 匹配重建助手：绕开 [[scala.util.matching.Regex.replaceAllIn]] 的替换串
-    * 语义（`$` 被当组引用展开——vendor JS 里的 `$` 模板字面量即触发
-    * Illegal group reference）。重建是纯拼接：f 的返回值逐字进结果串。 */
+  /**
+   * 匹配重建助手：绕开 [[scala.util.matching.Regex.replaceAllIn]] 的替换串
+   * 语义（`$` 被当组引用展开——vendor JS 里的 `$` 模板字面量即触发
+   * Illegal group reference）。重建是纯拼接：f 的返回值逐字进结果串。
+   */
   private def rebuildMatches(target: String, re: scala.util.matching.Regex)(
     f: scala.util.matching.Regex.Match => String
   ): String =
@@ -347,10 +349,10 @@ object StaticRoutes:
   /** [[packedIndexHtml]] 的 CSS url() 重写（纯函数，spec 直读）。 */
   private[gateway] def rewriteCssUrls(css: String, baseDir: String): String =
     rebuildMatches(css, CssRelativeUrlRe) { m =>
-      val inner  = m.group(1).trim
-      val quote  = if inner.startsWith("\"") then "\"" else if inner.startsWith("'") then "'" else ""
-      val bare   = if quote.isEmpty then inner else inner.stripPrefix(quote).stripSuffix(quote)
-      val cut    = bare.indexWhere(c => c == '?' || c == '#')
+      val inner = m.group(1).trim
+      val quote = if inner.startsWith("\"") then "\"" else if inner.startsWith("'") then "'" else ""
+      val bare = if quote.isEmpty then inner else inner.stripPrefix(quote).stripSuffix(quote)
+      val cut = bare.indexWhere(c => c == '?' || c == '#')
       val (path, suffix) = if cut < 0 then (bare, "") else bare.splitAt(cut)
       if path.isEmpty then m.matched
       else s"""url($quote$baseDir$path$suffix$quote)"""
@@ -359,7 +361,7 @@ object StaticRoutes:
   /** 隧道首开打包转换（纯函数）：逐字保留未知形状，单资源失败回落原 tag。 */
   private[gateway] def packedIndexHtml(html: String): String =
     val afterCss = rebuildMatches(html, PackStylesheetRe) { m =>
-      val path  = m.group(1)
+      val path = m.group(1)
       val attrs = m.group(2)
       ConsoleAssetBatchRoutes.readCapped(s"web/$path", ConsoleAssetBatchRoutes.MaxBytesPerAsset) match
         case None => m.matched
@@ -371,7 +373,7 @@ object StaticRoutes:
           ).replace("</style", "<\\/style")
           val open = PackMediaAttrRe.findFirstMatchIn(attrs) match
             case Some(mm) => s"""<style media="${mm.group(1)}">"""
-            case None     => "<style>"
+            case None => "<style>"
           open + css + "</style>"
     }
     rebuildMatches(afterCss, PackVendorScriptRe) { m =>

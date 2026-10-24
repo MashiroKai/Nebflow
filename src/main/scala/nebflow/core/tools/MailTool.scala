@@ -645,7 +645,8 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     // 送来的任何非空 `task=` 一律显式拒绝（fail-closed，与 `delivery` / `device` 墓碑
     // 同形态——引擎零 JSON-Schema 校验 ⇒ 旧键照样到达此处；静默忽略 = 静默语义损失：
     // 调用方会以为任务收到了这条消息）。
-    val taskTombstone = input("task").flatMap(_.asString).map(_.trim.stripPrefix("#")).filter(_.nonEmpty).filter(_ != "null")
+    val taskTombstone =
+      input("task").flatMap(_.asString).map(_.trim.stripPrefix("#")).filter(_.nonEmpty).filter(_ != "null")
 
     // Mail 模型裁定: the `device` tombstone gate — **ahead of
     // every other judgment and delivery side effect** (same order as the existing
@@ -768,7 +769,8 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
   /** 统一 delegate 续聊地址前缀。 */
   private val DelegatePrefix = "delegate:"
 
-  private def rootFace: String = "\"delegate:<id>\"/\"kernel:<id>\"（续聊）或 \"node:<节点id或名>\"（已登记 delegate 链）——项目地址（project:<名> 或裸挂载项目名）不是 Mail 面，派发走 Delegate"
+  private def rootFace: String =
+    "\"delegate:<id>\"/\"kernel:<id>\"（续聊）或 \"node:<节点id或名>\"（已登记 delegate 链）——项目地址（project:<名> 或裸挂载项目名）不是 Mail 面，派发走 Delegate"
   private def dispatcherFace: String = "\"Nebula\"（root）或 \"node:<节点id或名>\""
   private def delegateFace: String = "\"node:<节点id或名>\"（你自己作用域链图内的节点）"
 

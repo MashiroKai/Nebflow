@@ -36,7 +36,10 @@ class DeviceProvenanceInjectionGateSpec extends FunSuite:
     noBlock.linesIterator.map(l => l.replaceAll("//.*$", "")).mkString("\n")
 
   private lazy val wsRoutesCode: String = codeOnly(read("src/main/scala/nebflow/gateway/WebSocketRoutes.scala"))
-  private lazy val chatHandlersCode: String = codeOnly(read("src/main/scala/nebflow/gateway/WsSessionChatHandlers.scala"))
+
+  private lazy val chatHandlersCode: String = codeOnly(
+    read("src/main/scala/nebflow/gateway/WsSessionChatHandlers.scala")
+  )
   private lazy val dispatchCode: String = codeOnly(read("src/main/scala/nebflow/gateway/WsDispatch.scala"))
   private lazy val inputJs: String = read("src/main/resources/web/js/input.js")
   private lazy val recoveryJs: String = read("src/main/resources/web/js/errorRecovery.js")
@@ -62,7 +65,7 @@ class DeviceProvenanceInjectionGateSpec extends FunSuite:
   test("② the typeless leg prepends the marker BLOCK (prependMarker), never rewrites the content") {
     assert(
       wsRoutesCode.contains("deviceResolved.fold(blocks.toList)(") &&
-      wsRoutesCode.contains("nebflow.bridge.DeviceProvenance.prependMarker(_, blocks.toList)"),
+        wsRoutesCode.contains("nebflow.bridge.DeviceProvenance.prependMarker(_, blocks.toList)"),
       "typeless 腿必须块前插（prependMarker），正文块逐字不动"
     )
   }
@@ -88,3 +91,4 @@ class DeviceProvenanceInjectionGateSpec extends FunSuite:
     assert(inputCount >= 6, s"input.js 真人发送点钉 6 处，实测 $inputCount 处")
     assert(recoveryJs.contains(stamped), "errorRecovery 重发腿缺 device 声明")
   }
+end DeviceProvenanceInjectionGateSpec

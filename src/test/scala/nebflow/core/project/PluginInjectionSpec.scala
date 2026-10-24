@@ -175,7 +175,9 @@ class PluginInjectionSpec extends CatsEffectSuite:
       assert(prep.injectedBlock.contains("<plugin name=\"p1\">") && prep.injectedBlock.contains("<plugin name=\"p2\">"))
   }
 
-  test("set semantics: one DECLARATION of two capabilities mounts both without consulting the allocator (declaration face)") {
+  test(
+    "set semantics: one DECLARATION of two capabilities mounts both without consulting the allocator (declaration face)"
+  ) {
     setPluginsEnabled(true)
     writeSkillPlugin("p1", "DECL-ALPHA")
     writeSkillPlugin("p2", "DECL-BETA")
@@ -309,12 +311,15 @@ class PluginInjectionSpec extends CatsEffectSuite:
       assertEquals(calls.size, 0, "autoAllocate=false never consults the Jev/LLM family")
       // 惰性态 = 不写分配审计（与 disabled 同族）；连 allocated 成功行也不落。
       val logLines =
-        if os.exists(tempRoot / "logs" / "jev-allocation.jsonl") then os.read.lines(tempRoot / "logs" / "jev-allocation.jsonl")
+        if os.exists(tempRoot / "logs" / "jev-allocation.jsonl") then
+          os.read.lines(tempRoot / "logs" / "jev-allocation.jsonl")
         else Vector.empty
       assert(!logLines.exists(_.contains("delegate-auto-off")), logLines.mkString("\n"))
   }
 
-  test("forNode S9: autoAllocate=false + delegate-scope + empty declaration → no step-plugins line, no allocation call") {
+  test(
+    "forNode S9: autoAllocate=false + delegate-scope + empty declaration → no step-plugins line, no allocation call"
+  ) {
     setPluginsEnabled(true)
     setAutoAllocate(false)
     writeSkillPlugin("p1", "NEVER-STEP")
@@ -326,7 +331,9 @@ class PluginInjectionSpec extends CatsEffectSuite:
       assertEquals(os.exists(tempRoot / "chains"), false, "inert mode writes no step-plugins line")
   }
 
-  test("allocatePreparation: both allocation arms fail → mode=fail-open, empty injection, dispatch continues (Jev 不可用回退路径)") {
+  test(
+    "allocatePreparation: both allocation arms fail → mode=fail-open, empty injection, dispatch continues (Jev 不可用回退路径)"
+  ) {
     setPluginsEnabled(true)
     writeSkillPlugin("p1", "FAIL-OPEN") // 非空目录——越过 empty-catalog 短路，分配面真实到场
     PluginAllocator.install(

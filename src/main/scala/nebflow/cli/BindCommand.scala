@@ -43,6 +43,7 @@ object BindCommand extends CliCommand:
 /** `bind confirm` — mint + report the 6-digit transfer confirmation code (online). */
 private[cli] object BindConfirm extends CliSubcommand:
   def name = "confirm"
+
   def description =
     "Mint a 6-digit binding-transfer confirmation code on this (old) host; enter it in the portal to re-bind"
   def params = Nil
@@ -82,6 +83,7 @@ private[cli] object BindConfirm extends CliSubcommand:
               "portal's grace-period path (old host offline beyond the grace window, default 72h)."
             )
           )
+        end if
       case "offline" =>
         CliResult.Text(
           List(
@@ -97,5 +99,7 @@ private[cli] object BindConfirm extends CliSubcommand:
         CliResult.error(s"Failed to report the code to the server — nothing became pending; try again.$detail")
       case other =>
         CliResult.error(s"Unexpected gateway response (kind=$other)")
+    end match
+  end render
 
 end BindConfirm

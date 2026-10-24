@@ -20,11 +20,11 @@ import java.util.concurrent.atomic.AtomicReference
  * ——无人被通知，工作就地搁浅：面板上就是「空等，没有人去通知」。本面把拒绝
  * 变成两条持久注入通知：
  *   - **主通知 → delegate 本人**（rec.id 会话）：持久注入队 append（correlationId
-     * 幂等，复活/续聊轮 RecoverPersistedQueues 重放），带**可行动诊断**——哪条
-     * 路径脏、什么原因、怎么清、重试是 delegate 自己的责任（清障后自行重试合
-     * 并；平台不代跑）；
+ * 幂等，复活/续聊轮 RecoverPersistedQueues 重放），带**可行动诊断**——哪条
+ * 路径脏、什么原因、怎么清、重试是 delegate 自己的责任（清障后自行重试合
+ * 并；平台不代跑）；
  *   - **知会一行 → 父会话**（rec.parentSessionId）：一行 FYI（重试责任在
-     * delegate，父会话无需行动），root 行在时的升格路由同 MergeWindowCare 族。
+ * delegate，父会话无需行动），root 行在时的升格路由同 MergeWindowCare 族。
  *   - 投递路由 = [[nebflow.core.tools.BgNotifyDelivery.deliverToRootOrInbox]]
  *     同族（目标活 = 直投；死 = 持久收件箱补投）；correlationId 按 reason 摘要
  *     幂等——同脏重评不重复轰炸持久队列，脏面变化（reason 变）= 新事件照发。
@@ -39,14 +39,14 @@ object MergeRefusalCare:
 
   /** 一条拒绝通知（DelegateAutoMerge.postSettle 构造；字段 = 可行动信息面）。 */
   final case class RefusalNotice(
-      delegateId: String,
-      parentSessionId: String,
-      title: String,
-      branch: String,
-      target: String,
-      baseWorkspace: String,
-      reason: String,
-      dirtyPaths: List[String]
+    delegateId: String,
+    parentSessionId: String,
+    title: String,
+    branch: String,
+    target: String,
+    baseWorkspace: String,
+    reason: String,
+    dirtyPaths: List[String]
   )
 
   /** delegate 主通知 correlationId 前缀（幂等键族；spec 判红锚）。 */
@@ -118,7 +118,13 @@ object MergeRefusalCare:
      * （活 = 直投 / 死 = 持久收件箱）与目标解析。
      */
     trait Face:
-      def deliver(delegateId: String, parentSessionId: String, delegateEvent: AgentCommand.ExternalEvent, parentEvent: AgentCommand.ExternalEvent): IO[Unit]
+
+      def deliver(
+        delegateId: String,
+        parentSessionId: String,
+        delegateEvent: AgentCommand.ExternalEvent,
+        parentEvent: AgentCommand.ExternalEvent
+      ): IO[Unit]
     end Face
 
     private val face = new AtomicReference[Option[Face]](None)
@@ -141,9 +147,10 @@ object MergeRefusalCare:
     ): IO[Unit] =
       face.get match
         case Some(f) =>
-          f.deliver(delegateId, parentSessionId, delegateEvent, parentEvent).handleErrorWith(e =>
-            logger.warn(s"[merge-refusal-care] notification delivery failed for $delegateId: ${e.getMessage}")
-          )
+          f.deliver(delegateId, parentSessionId, delegateEvent, parentEvent)
+            .handleErrorWith(e =>
+              logger.warn(s"[merge-refusal-care] notification delivery failed for $delegateId: ${e.getMessage}")
+            )
         case None =>
           logger
             .warn(

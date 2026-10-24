@@ -49,6 +49,7 @@ class MergeQueueBootSweepSpec extends FunSuite:
 
   private class SilentLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -70,15 +71,30 @@ class MergeQueueBootSweepSpec extends FunSuite:
   private def ledgerActions(delegateId: String): List[String] =
     ChainStore.listSync().flatMap(_.entries).filter(_.kind == MergeQueue.EntryKind).flatMap { e =>
       val c = e.payload.hcursor
-      c.get[String]("delegateId").toOption.filter(_ == delegateId).map(_ => c.get[String]("action").toOption.getOrElse(""))
+      c.get[String]("delegateId")
+        .toOption
+        .filter(_ == delegateId)
+        .map(_ => c.get[String]("action").toOption.getOrElse(""))
     }
 
-  private def seedRecord(id: String, repo: os.Path, executor: String = "nebflow", worktree: Option[os.Path] = None): Unit =
+  private def seedRecord(
+    id: String,
+    repo: os.Path,
+    executor: String = "nebflow",
+    worktree: Option[os.Path] = None
+  ): Unit =
     DelegateRegistry.put(
       DelegateRegistry.Record(
-        id = id, executor = executor, cwd = worktree.map(_.toString).getOrElse(repo.toString),
-        project = None, taskId = Some("99"), parentSessionId = "nebula-root", title = "survivor", createdAt = 1L,
-        branch = Some(s"delegate/$id"), baseBranch = Some("main"),
+        id = id,
+        executor = executor,
+        cwd = worktree.map(_.toString).getOrElse(repo.toString),
+        project = None,
+        taskId = Some("99"),
+        parentSessionId = "nebula-root",
+        title = "survivor",
+        createdAt = 1L,
+        branch = Some(s"delegate/$id"),
+        baseBranch = Some("main"),
         projectWorkspace = Some(repo.toString),
         worktree = worktree.map(_.toString)
       )
@@ -102,7 +118,11 @@ class MergeQueueBootSweepSpec extends FunSuite:
     if merge then g("merge", "--no-ff", branch, "-m", "merge the branch")
     dir
 
-  test("① interruptedMembers: last row enqueued/reminder-sent = interrupted (readyAt from payload, ascending); dequeued/inject-failed = clean") {
+  end mkRepo
+
+  test(
+    "① interruptedMembers: last row enqueued/reminder-sent = interrupted (readyAt from payload, ascending); dequeued/inject-failed = clean"
+  ) {
     ledgerRow("mq-a", "enqueued", readyAt = 300L)
     ledgerRow("mq-b", "enqueued", readyAt = 100L)
     ledgerRow("mq-b", "dequeued", readyAt = 100L)
@@ -110,7 +130,11 @@ class MergeQueueBootSweepSpec extends FunSuite:
     ledgerRow("mq-c", "reminder-sent", readyAt = 200L)
     ledgerRow("mq-d", "inject-failed", readyAt = 50L)
     val members = MergeQueueBootSweep.interruptedMembers()
-    assertEquals(members.map(_.delegateId), List("mq-c", "mq-a"), "only the unfinished members survive, FIFO by readyAt")
+    assertEquals(
+      members.map(_.delegateId),
+      List("mq-c", "mq-a"),
+      "only the unfinished members survive, FIFO by readyAt"
+    )
     assertEquals(members.map(_.readyAt), List(200L, 300L), "readyAt comes from the ledger payload original value")
   }
 
@@ -128,7 +152,10 @@ class MergeQueueBootSweepSpec extends FunSuite:
       report <- MergeQueueBootSweep.sweep(res)
       actions = ledgerActions("mq-merged")
       cleanup <- IO {
-        ChainStore.listSync().flatMap(_.entries).filter(_.kind == "worktree-cleanup")
+        ChainStore
+          .listSync()
+          .flatMap(_.entries)
+          .filter(_.kind == "worktree-cleanup")
           .flatMap(_.payload.hcursor.get[String]("action").toOption)
       }
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
@@ -162,7 +189,9 @@ class MergeQueueBootSweepSpec extends FunSuite:
     assert(MergeQueue.find("mq-empty").isEmpty, "nothing must be re-mounted for an empty branch")
   }
 
-  test("④ mountable internal leg ⇒ re-mounted with the ORIGINAL readyAt + revive channel received the merge brief; onTerminal frees the window") {
+  test(
+    "④ mountable internal leg ⇒ re-mounted with the ORIGINAL readyAt + revive channel received the merge brief; onTerminal frees the window"
+  ) {
     val repo = mkRepo(tempRoot / "sweep-mount-repo", branch = "delegate/mq-mount", merge = false)
     seedRecord("mq-mount", repo) // executor = nebflow ⇒ internal leg
     ledgerRow("mq-mount", "enqueued", readyAt = 555000L)
@@ -184,9 +213,16 @@ class MergeQueueBootSweepSpec extends FunSuite:
     val released = MergeQueue.queueViewOf("mq-mount").isEmpty && !MergeQueue.isInFlight(GitWorktrees.projectKeyOf(repo))
     assertEquals(report.reMounted, List("mq-mount"), "the membership re-mounts")
     assert(mounted.isDefined, "the entry must live in the in-process queue again")
-    assertEquals(mounted.map(_.readyAt), Some(555000L), "readyAt is the ledger original value (FIFO rank survives the restart)")
+    assertEquals(
+      mounted.map(_.readyAt),
+      Some(555000L),
+      "readyAt is the ledger original value (FIFO rank survives the restart)"
+    )
     assert(inFlight, "the single-flight window is held by the re-mounted member")
-    assert(captured.size == 1 && captured.head.contains("merge --no-ff"), s"the revive channel got the merge brief: $captured")
+    assert(
+      captured.size == 1 && captured.head.contains("merge --no-ff"),
+      s"the revive channel got the merge brief: $captured"
+    )
     assert(actions.contains("reminder-sent"), s"the channel injection is audited: $actions")
     assert(released, "onTerminal of the re-mounted member releases the window")
   }
@@ -200,9 +236,17 @@ class MergeQueueBootSweepSpec extends FunSuite:
       res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
       _ <- res.subAgentTaskStore.recordTask(
         SubAgentTask(
-          taskId = "mq-blocked", parentSessionId = "nebula-root", agentName = "nebflow",
-          prompt = "brief", description = "survivor", status = "ready-to-merge", retryCount = 0,
-          spawnedAt = 1L, completedAt = None, lastError = None, source = "delegate"
+          taskId = "mq-blocked",
+          parentSessionId = "nebula-root",
+          agentName = "nebflow",
+          prompt = "brief",
+          description = "survivor",
+          status = "ready-to-merge",
+          retryCount = 0,
+          spawnedAt = 1L,
+          completedAt = None,
+          lastError = None,
+          source = "delegate"
         )
       )
       report <- MergeQueueBootSweep.sweep(res) // reviveInternal = None ⇒ 诚实挂不进
@@ -212,8 +256,15 @@ class MergeQueueBootSweepSpec extends FunSuite:
     yield (report, actions, task)).unsafeRunSync()
     assertEquals(report.blocked.map(_._1), List("mq-blocked"), "the unmountable member is reported blocked")
     assert(actions.contains("recovery-blocked"), s"the recovery-blocked row must be audited: $actions")
-    assertEquals(task.map(_.status), Some("failed"), "the ghost ready-to-merge row must close as failed (blocked semantics)")
-    assert(task.flatMap(_.lastError).exists(_.contains("merge-queue recovery blocked")), s"the reason channel carries the cause: ${task.flatMap(_.lastError)}")
+    assertEquals(
+      task.map(_.status),
+      Some("failed"),
+      "the ghost ready-to-merge row must close as failed (blocked semantics)"
+    )
+    assert(
+      task.flatMap(_.lastError).exists(_.contains("merge-queue recovery blocked")),
+      s"the reason channel carries the cause: ${task.flatMap(_.lastError)}"
+    )
     assert(MergeQueue.find("mq-blocked").isEmpty, "nothing must be re-mounted for a blocked member")
   }
 

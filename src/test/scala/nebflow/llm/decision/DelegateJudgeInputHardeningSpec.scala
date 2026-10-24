@@ -43,17 +43,28 @@ class DelegateJudgeInputHardeningSpec extends FunSuite:
     val longText = "x" * (DelegateJudgeMachine.ResultCap + 5000)
     val s = DelegateJudgeMachine.terminalState(input(longText))
     assert(s.contains(s"truncated from ${longText.length} chars"), "the truncation note must state the original size")
-    assert(s.count(_ == 'x') == DelegateJudgeMachine.ResultCap, s"exactly ${DelegateJudgeMachine.ResultCap} chars enter the prompt")
+    assert(
+      s.count(_ == 'x') == DelegateJudgeMachine.ResultCap,
+      s"exactly ${DelegateJudgeMachine.ResultCap} chars enter the prompt"
+    )
     val short = "short and honest"
     val s2 = DelegateJudgeMachine.terminalState(input(short))
     assert(s2.contains(short) && !s2.contains("truncated from"), "short result passes verbatim without a note")
   }
 
-  test("③ untrusted-source labels: RESULT marked UNTRUSTED; git digest section carries the untrusted-source annotation") {
+  test(
+    "③ untrusted-source labels: RESULT marked UNTRUSTED; git digest section carries the untrusted-source annotation"
+  ) {
     val s = DelegateJudgeMachine.terminalState(input("done"))
     assert(s.contains("UNTRUSTED delegate-authored"), "the result section must be labeled untrusted")
-    assert(s.contains("GIT STATUS DIGEST (engine-collected; UNTRUSTED SOURCE"), "the git digest section must carry the untrusted-source annotation")
-    assert(s.contains("ONLY authoritative git evidence"), "the digest must be stated as the only authoritative git evidence")
+    assert(
+      s.contains("GIT STATUS DIGEST (engine-collected; UNTRUSTED SOURCE"),
+      "the git digest section must carry the untrusted-source annotation"
+    )
+    assert(
+      s.contains("ONLY authoritative git evidence"),
+      "the digest must be stated as the only authoritative git evidence"
+    )
   }
 
   test("④ merge-round flag and context keys pass through (regression anchor)") {

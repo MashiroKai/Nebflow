@@ -71,7 +71,8 @@ class BgRateGateSpec extends FunSuite:
   }
 
   test("decide: expired breaker re-evaluates from window state") {
-    val d = BgRateGate.decide(Vector.fill(3)(now - 1000L), Some(now - 1L), now, window, warnAfter, breakerAfter, cooldown)
+    val d =
+      BgRateGate.decide(Vector.fill(3)(now - 1000L), Some(now - 1L), now, window, warnAfter, breakerAfter, cooldown)
     assert(clue(d.allowed), "到期熔断解除，窗口计数照常")
     assert(!clue(d.breakerEngaged))
   }

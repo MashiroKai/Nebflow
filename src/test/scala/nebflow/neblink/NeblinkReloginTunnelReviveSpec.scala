@@ -132,6 +132,7 @@ class NeblinkReloginTunnelReviveSpec extends CatsEffectSuite:
         out <- body(ms, client, tunnel).guarantee(tunnel.stop())
       yield out
     }
+  end withStack
 
   // ── 用例 ①：登出 → 凭据腿重登录 → 隧道自动重注册（A 修全链）──────────────
 

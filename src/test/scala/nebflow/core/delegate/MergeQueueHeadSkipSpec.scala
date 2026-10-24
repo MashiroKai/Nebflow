@@ -47,6 +47,7 @@ class MergeQueueHeadSkipSpec extends CatsEffectSuite:
 
   /** 收单 actor：把收到的 UserInput 记进共享缓冲。 */
   private class Sink(records: ListBuffer[String]) extends Behavior[AgentCommand]:
+
     def receive(ctx: nebflow.actor.ActorContext[AgentCommand], msg: AgentCommand): IO[Behavior[AgentCommand]] =
       msg match
         case AgentCommand.UserInput(text, _, _, _, _, _, _, _, _, _, _, _, _) => IO { records += text; this }
@@ -64,7 +65,8 @@ class MergeQueueHeadSkipSpec extends CatsEffectSuite:
       sup <- system.spawn(
         new Behavior[AgentEvent]:
           def receive(ctx: nebflow.actor.ActorContext[AgentEvent], msg: AgentEvent): IO[Behavior[AgentEvent]] =
-            IO.pure(this),
+            IO.pure(this)
+        ,
         s"sup-$delegateId"
       )
     yield MergeQueue.Entry(
@@ -85,12 +87,17 @@ class MergeQueueHeadSkipSpec extends CatsEffectSuite:
   private def chainActions(delegateId: String): List[String] =
     ChainStore.listSync().flatMap(_.entries).filter(_.kind == MergeQueue.EntryKind).flatMap { e =>
       val c = e.payload.hcursor
-      c.get[String]("delegateId").toOption.filter(_ == delegateId).map(_ => c.get[String]("action").toOption.getOrElse(""))
+      c.get[String]("delegateId")
+        .toOption
+        .filter(_ == delegateId)
+        .map(_ => c.get[String]("action").toOption.getOrElse(""))
     }
 
   // ── ③ 验收：队头被拒不堵塞后续 ────────────────────────────────────────
 
-  test("③ refused head no longer blocks: window released, next entry injected, head KEPT pending retry (not re-injected)") {
+  test(
+    "③ refused head no longer blocks: window released, next entry injected, head KEPT pending retry (not re-injected)"
+  ) {
     val system = ActorSystem(s"mq-hs-1-${scala.util.Random.nextInt(100000)}")
     val records = ListBuffer.empty[String]
     for
@@ -113,17 +120,23 @@ class MergeQueueHeadSkipSpec extends CatsEffectSuite:
     yield
       assertEquals(first.size, 1, "the head was injected first (single-flight)")
       assertEquals(afterRefusal.size, 2, "the refused head no longer blocks: the NEXT entry got its merge turn")
-      assert(afterRefusal(1).contains("delegate/d-b"), s"the skipped-to entry is d-b, got: ${afterRefusal(1).take(120)}")
+      assert(
+        afterRefusal(1).contains("delegate/d-b"),
+        s"the skipped-to entry is d-b, got: ${afterRefusal(1).take(120)}"
+      )
       assert(aEntry.isDefined, "the refused head is KEPT in the queue (pending retry), not dropped")
       assertEquals(aEntry.map(_.pendingRetry), Some(true), "the refused head carries the pending-retry flag")
       assert(chainActions("d-a").contains("refused-keep-queued"), "the refusal is audited as refused-keep-queued")
       assertEquals(afterB.size, 2, "the pending-retry head is never re-injected while parked")
       assert(MergeQueue.find("d-b").isEmpty, "the done entry is dequeued")
+    end for
   }
 
   // ── ② 验收：提醒不绑活体（目标已死 ⇒ 留队待重试 + 账本行）────────────
 
-  test("② dead injection target: reminder deferred (not stamped, window not held), next entry turns immediately, ledger row lands") {
+  test(
+    "② dead injection target: reminder deferred (not stamped, window not held), next entry turns immediately, ledger row lands"
+  ) {
     val system = ActorSystem(s"mq-hs-2-${scala.util.Random.nextInt(100000)}")
     val records = ListBuffer.empty[String]
     for
@@ -146,11 +159,14 @@ class MergeQueueHeadSkipSpec extends CatsEffectSuite:
       assert(chainActions("d-x").contains("reminder-deferred"), "the deferred reminder is persisted in the ledger")
       assertEquals(afterB.size, 1, "the next entry turned immediately — the dead head did not hold the window")
       assert(afterB.head.contains("delegate/d-y"), s"the injected one is d-y, got: ${afterB.head.take(120)}")
+    end for
   }
 
   // ── ② 复活轮：reattach 换绑 + 清标记 + 立即重投 ──────────────────────
 
-  test("② revival: reattach swaps the child ref, clears pending-retry, and re-fires the deferred reminder to the LIVE session") {
+  test(
+    "② revival: reattach swaps the child ref, clears pending-retry, and re-fires the deferred reminder to the LIVE session"
+  ) {
     val system = ActorSystem(s"mq-hs-3-${scala.util.Random.nextInt(100000)}")
     val records = ListBuffer.empty[String]
     for
@@ -173,6 +189,7 @@ class MergeQueueHeadSkipSpec extends CatsEffectSuite:
       assert(after.head.contains("delegate/d-r"), s"the revived brief targets d-r, got: ${after.head.take(120)}")
       assertEquals(rEntry.map(_.pendingRetry), Some(false), "the pending-retry flag is cleared on revival")
       assert(chainActions("d-r").contains("child-reattached"), "the rebind is audited")
+    end for
   }
 
   test("② reattach on an in-flight merge round (reminder already sent) only rebinds — no duplicate merge turn") {
@@ -195,6 +212,7 @@ class MergeQueueHeadSkipSpec extends CatsEffectSuite:
       assertEquals(after, Nil, "the rebind does NOT duplicate the merge turn (resume rides recovered messages)")
       assertEquals(total.size, 1, "exactly one reminder overall")
       assert(MergeQueue.find("d-f").isDefined, "the re-bound entry is still queued (merge round in flight)")
+    end for
   }
 
 end MergeQueueHeadSkipSpec

@@ -25,6 +25,7 @@ object RestartCommand extends CliCommand:
   private object RestartRun extends CliSubcommand:
     def name = "run"
     def description = "Stop then start the Gateway (stop flags pass through)"
+
     def params = List(
       CliParam("force", None, "Skip the stop ownership gate (identity and dev-host gates always apply)", isFlag = true),
       CliParam("tree", None, "Stop the whole sbt-managed process chain before starting", isFlag = true)
@@ -38,14 +39,16 @@ object RestartCommand extends CliCommand:
         )
       )
 
+  end RestartRun
+
   /**
    * Orchestration core (spec-driven): `launch` injectable so the spec can
    * assert "refused stop ⇒ zero spawns" without any real process.
    */
   private[cli] def runRestart(
-      opts: ProcessManager.StopOptions,
-      deps: ProcessManager.StopDeps = ProcessManager.StopDeps(),
-      launch: (os.Path, Int, Boolean) => IO[ExitCode] = DaemonSpawn.launch
+    opts: ProcessManager.StopOptions,
+    deps: ProcessManager.StopDeps = ProcessManager.StopDeps(),
+    launch: (os.Path, Int, Boolean) => IO[ExitCode] = DaemonSpawn.launch
   ): IO[CliResult] =
     ProcessManager.stopHardened(opts, deps).flatMap {
       case ProcessManager.StopOutcome.NotRunning =>
@@ -59,7 +62,7 @@ object RestartCommand extends CliCommand:
     }
 
   private def startFresh(
-      launch: (os.Path, Int, Boolean) => IO[ExitCode]
+    launch: (os.Path, Int, Boolean) => IO[ExitCode]
   ): IO[CliResult] =
     GatewayConfig.load.flatMap { cfg =>
       launch(PathUtil.dataRoot, cfg.port.value, GatewayConfig.noBrowser)

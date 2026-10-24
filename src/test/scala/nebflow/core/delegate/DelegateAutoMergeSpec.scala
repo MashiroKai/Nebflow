@@ -60,6 +60,7 @@ class DelegateAutoMergeSpec extends FunSuite:
 
   private val on: DelegateAutoMerge.Config =
     DelegateAutoMerge.Config(enabled = true, targetBranch = None, restoreArtifacts = true)
+
   private val off: DelegateAutoMerge.Config =
     DelegateAutoMerge.Config(enabled = false, targetBranch = None, restoreArtifacts = true)
 
@@ -289,7 +290,8 @@ class DelegateAutoMergeSpec extends FunSuite:
       val wt = addWorktree(repo, "delegate/am-target", tempRoot / "am-target-wt")
       val r = rec("delegate-am-target", repo, "delegate/am-target", Some(wt))
       val mainBefore = headSha(repo, "main")
-      val suffix = hook(r, DelegateAutoMerge.Config(enabled = true, targetBranch = Some("release"), restoreArtifacts = true))
+      val suffix =
+        hook(r, DelegateAutoMerge.Config(enabled = true, targetBranch = Some("release"), restoreArtifacts = true))
       assert(suffix.exists(_.contains("merged into 'release'")), s"suffix: $suffix")
       assertEquals(headSha(repo, "main"), mainBefore, "main must stay untouched when the target is overridden")
       assertEquals(parents(repo, "release").size, 2, "release must receive the two-parent merge")
@@ -421,10 +423,14 @@ class DelegateAutoMergeSpec extends FunSuite:
 
   private final class RecordingFace:
     private val lock = new Object
+
     private val buf =
-      scala.collection.mutable.ListBuffer.empty[(String, String, AgentCommand.ExternalEvent, AgentCommand.ExternalEvent)]
+      scala.collection.mutable.ListBuffer
+        .empty[(String, String, AgentCommand.ExternalEvent, AgentCommand.ExternalEvent)]
+
     val face: MergeRefusalCare.EscalationPort.Face = (delegateId, parentSessionId, delegateEvent, parentEvent) =>
       IO.blocking(lock.synchronized(buf += ((delegateId, parentSessionId, delegateEvent, parentEvent)))).void
+
     def all: List[(String, String, AgentCommand.ExternalEvent, AgentCommand.ExternalEvent)] =
       lock.synchronized(buf.toList)
 
@@ -462,18 +468,32 @@ class DelegateAutoMergeSpec extends FunSuite:
         assert(ev.payload.contains("half-done.txt"), "delegate payload names the dirty path (actionable)")
         assert(ev.payload.contains("Your move"), "delegate payload assigns the action to the delegate itself")
         assert(ev.payload.contains("clean the dirty paths"), "delegate payload carries the how-to-clean guidance")
-        assert(!ev.payload.toLowerCase.contains("engine retries"), "platform must NOT promise proxy retries (zero proxy-run)")
+        assert(
+          !ev.payload.toLowerCase.contains("engine retries"),
+          "platform must NOT promise proxy retries (zero proxy-run)"
+        )
         // 父会话知会：一行、责任在 delegate、无需行动
-        assert(pev.correlationId.exists(_.startsWith(MergeRefusalCare.ParentCorrelationPrefix)), s"parent cid: ${pev.correlationId}")
+        assert(
+          pev.correlationId.exists(_.startsWith(MergeRefusalCare.ParentCorrelationPrefix)),
+          s"parent cid: ${pev.correlationId}"
+        )
         assert(pev.payload.contains("delegate-am-esc".take(8)), "parent FYI names the delegate")
         assert(pev.payload.contains("no action needed"), "parent FYI states no action needed")
-        assert(pev.payload.length < ev.payload.length, "parent line must stay a one-liner (diagnosis lives with the delegate)")
+        assert(
+          pev.payload.length < ev.payload.length,
+          "parent line must stay a one-liner (diagnosis lives with the delegate)"
+        )
         // 同脏重评：correlationId 稳定（持久注入队列靠它挡重；诊断不漂移）
         hook(r, on)
         val got2 = rf.all
         assertEquals(got2.size, 2, "the re-evaluation notifies the live channel again…")
-        assertEquals(got2(1)._3.correlationId, got(0)._3.correlationId, "…but with the SAME correlationId — the persistent queue dedups it")
+        assertEquals(
+          got2(1)._3.correlationId,
+          got(0)._3.correlationId,
+          "…but with the SAME correlationId — the persistent queue dedups it"
+        )
       finally MergeRefusalCare.EscalationPort.clear()
+      end try
   }
 
   test(
@@ -496,7 +516,11 @@ class DelegateAutoMergeSpec extends FunSuite:
         val mainAfterClean = headSha(repo, "main")
         val rowsAfterClean = autoMergeRows("delegate-am-retry").map(_._1)
         assertEquals(rowsAfterClean.count(_ == "merged"), 0, s"platform must not merge on its own: $rowsAfterClean")
-        assertEquals(rowsAfterClean.count(_ == "already-merged"), 0, s"no hidden re-evaluation may run: $rowsAfterClean")
+        assertEquals(
+          rowsAfterClean.count(_ == "already-merged"),
+          0,
+          s"no hidden re-evaluation may run: $rowsAfterClean"
+        )
         // ── delegate 自己的重试拍（重评终态）⇒ 合并落地 ──
         val s2 = hook(r, on)
         assert(s2.exists(_.contains("merged into 'main'")), s"delegate's own retry lands: $s2")
@@ -509,6 +533,7 @@ class DelegateAutoMergeSpec extends FunSuite:
         val mainNow = headSha(repo, "main")
         assert(mainNow != mainAfterClean, "main advanced only at the delegate's own retry beat")
       finally MergeRefusalCare.EscalationPort.clear()
+      end try
   }
 
   test(
@@ -539,7 +564,8 @@ class DelegateAutoMergeSpec extends FunSuite:
       // 审计面：还原前审计行（路径 + diff 摘要在案）
       val actions = autoMergeRows("delegate-am-restore").map(_._1)
       assert(actions.contains("artifact-restore"), s"an artifact-restore audit row must exist: $actions")
-      val (_, payload) = autoMergeRows("delegate-am-restore").find(_._1 == "artifact-restore").getOrElse(fail("restore row"))
+      val (_, payload) =
+        autoMergeRows("delegate-am-restore").find(_._1 == "artifact-restore").getOrElse(fail("restore row"))
       val entries = payload.hcursor.downField("plannedRestores").values.map(_.toList).getOrElse(Nil)
       val paths = entries.map(_.hcursor.get[String]("path").toOption.getOrElse(""))
       assert(paths.contains("evidence/pic.png"), s"restore row must name evidence/pic.png: $paths")
@@ -602,7 +628,11 @@ class DelegateAutoMergeSpec extends FunSuite:
       )
       assertEquals(headSha(repo, "main"), mainBefore, "refused ⇒ main untouched")
       assertEquals(autoMergeRows("delegate-am-src").lastOption.map(_._1), Some("refused"))
-      assertEquals(autoMergeRows("delegate-am-src").exists(_._1 == "artifact-restore"), false, "no restore row for source paths")
+      assertEquals(
+        autoMergeRows("delegate-am-src").exists(_._1 == "artifact-restore"),
+        false,
+        "no restore row for source paths"
+      )
       val (_, payload) = autoMergeRows("delegate-am-src").lastOption.getOrElse(fail("refused row"))
       val dirty = payload.hcursor.get[List[String]]("dirtyPaths").toOption.getOrElse(Nil)
       assert(dirty.contains("src/Main.scala"), s"dirtyPaths must record the source path: $dirty")

@@ -62,11 +62,15 @@ class GrepToolRankedSpec extends FunSuite:
   test("ranked=true: 多命中文件排前，输出仍是纯路径行") {
     val tmp = os.Path(java.nio.file.Files.createTempDirectory("nb-grep-ranked"))
     try
-      os.write(tmp / "many.txt", """needle one
+      os.write(
+        tmp / "many.txt",
+        """needle one
         |filler
         |needle two
         |filler
-        |needle three""".stripMargin, createFolders = true)
+        |needle three""".stripMargin,
+        createFolders = true
+      )
       os.write(tmp / "one.txt", "needle once only", createFolders = true)
       os.write(tmp / "none.txt", "nothing here", createFolders = true)
       val r = call("needle", tmp.toString, "ranked" -> true.asJson)
@@ -82,6 +86,7 @@ class GrepToolRankedSpec extends FunSuite:
       val l2 = r2.toOption.get.split("\n").filter(_.nonEmpty).toList
       assertEquals(l2.size, 2, s"default mode unchanged: $l2")
     finally os.remove.all(tmp)
+    end try
   }
 
   // ── 工具面（真跑 rg）：长行预览（命中不隐身）────────────────────────────
@@ -107,6 +112,7 @@ class GrepToolRankedSpec extends FunSuite:
       assert(!out.strip().startsWith("["), s"preview must precede the marker: ${out.take(120)}")
       assert(out.contains("前缀可见"), s"CJK preview head must be visible: ${out.take(120)}")
     finally os.remove.all(tmp)
+    end try
   }
 
 end GrepToolRankedSpec

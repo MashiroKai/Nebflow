@@ -66,6 +66,8 @@ class MemoryRecallDaemonSpec extends CatsEffectSuite:
     os.write(sessions / "_index.json", s"""{"activeId":"$MainId","sessions":[${entries.mkString(",")}],"folders":[]}""")
     main
 
+  end seedRoot
+
   /** 追加一条用户消息到主会话（=「主会话发消息落盘」的注入面）。 */
   private def appendUserMessage(sessionFile: os.Path, text: String): Unit =
     val trimmed = os.read(sessionFile).trim.stripSuffix("]")
@@ -103,6 +105,8 @@ class MemoryRecallDaemonSpec extends CatsEffectSuite:
           catch case _: Throwable => "<unreadable>"
         if p.exitValue() == 0 then text else s"<exit-${p.exitValue()}>$text"
     finally Files.deleteIfExists(out)
+    end try
+  end dbScalarSync
 
   /** 库未建（守护首跑前）= 0；查询失败 = -1（轮询继续等）。 */
   private def dbMessages(root: os.Path): IO[Int] = IO.blocking(dbMessagesSync(root))
@@ -294,7 +298,7 @@ class MemoryRecallDaemonSpec extends CatsEffectSuite:
         finally
           original match
             case Some(v) => sys.props("nebflow.memoryRecall.enabled") = v
-            case None    => sys.props.remove("nebflow.memoryRecall.enabled")
+            case None => sys.props.remove("nebflow.memoryRecall.enabled")
       }
     }
   }
@@ -316,8 +320,9 @@ class MemoryRecallDaemonSpec extends CatsEffectSuite:
       finally
         original match
           case Some(v) => sys.props("nebflow.memoryRecall.toolPath") = v
-          case None    => sys.props.remove("nebflow.memoryRecall.toolPath")
+          case None => sys.props.remove("nebflow.memoryRecall.toolPath")
         os.remove.all(tmp)
+      end try
     }
   }
 end MemoryRecallDaemonSpec

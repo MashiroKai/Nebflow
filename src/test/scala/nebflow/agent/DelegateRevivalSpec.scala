@@ -45,6 +45,7 @@ class DelegateRevivalSpec extends CatsEffectSuite:
 
   override def beforeEach(context: munit.BeforeEach): Unit = resetGlobals()
   override def afterEach(context: munit.AfterEach): Unit = resetGlobals()
+
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
     nebflow.core.LlmLogWriter.setEnabled(true)
@@ -64,7 +65,12 @@ class DelegateRevivalSpec extends CatsEffectSuite:
         StreamChunk.Done(None, None)
       )
 
-  private def mkTask(id: String, parent: String, status: String = "running", revivalCount: Option[Int] = None): SubAgentTask =
+  private def mkTask(
+    id: String,
+    parent: String,
+    status: String = "running",
+    revivalCount: Option[Int] = None
+  ): SubAgentTask =
     SubAgentTask(
       taskId = id,
       parentSessionId = parent,
@@ -146,6 +152,8 @@ class DelegateRevivalSpec extends CatsEffectSuite:
       os.remove.all(tmp)
       os.remove.all(seat)
 
+  end withFx
+
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 100.millis)(cond: IO[Boolean]): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -164,7 +172,9 @@ class DelegateRevivalSpec extends CatsEffectSuite:
       Some(SubAgentStartupRecovery.RevivalDeps(fx.resources, fx.system, None))
     )
 
-  test("V1: eligible orphan revives from transcript checkpoint and delivers completed result to the parent's F2 queue") {
+  test(
+    "V1: eligible orphan revives from transcript checkpoint and delivers completed result to the parent's F2 queue"
+  ) {
     withFx("v1") { fx =>
       for
         parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
@@ -300,6 +310,7 @@ class DelegateRevivalSpec extends CatsEffectSuite:
         live <- fx.resources.agentRegistry.get.map(_.contains(child))
         _ = assert(!live)
       yield ()
+      end for
     }
   }
 
@@ -341,7 +352,9 @@ class DelegateRevivalSpec extends CatsEffectSuite:
     }
   }
 
-  test("V8: author's fake-interrupt scenario — salvaged row flagged interrupted folds once the ledger adjudicates completed") {
+  test(
+    "V8: author's fake-interrupt scenario — salvaged row flagged interrupted folds once the ledger adjudicates completed"
+  ) {
     withFx("v8") { fx =>
       for
         parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))

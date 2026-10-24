@@ -501,17 +501,18 @@ case class SharedResources(
   //     delegate 自己的责任——平台零代跑）；
   //   - 父会话 = 知会一行（重试责任在 delegate 侧）。
   // 未装配（无 SharedResources 场）= EscalationPort 响亮 WARN，通知绝不静默蒸发。
-  nebflow.core.delegate.MergeRefusalCare.EscalationPort.install { (delegateId, parentSessionId, delegateEvent, parentEvent) =>
-    def to(sessionId: String, ev: nebflow.actor.AgentCommand.ExternalEvent) =
-      nebflow.core.tools.BgNotifyDelivery
-        .deliverToRootOrInbox(Some(actorSystem), Some(agentRegistry), sessionId, ev)
-        .void
-        .handleErrorWith(e =>
-          nebflow.shared.NebflowLogger
-            .forName("nebflow.merge-refusal-care")
-            .warn(s"[merge-refusal-care] delivery to '$sessionId' failed: ${e.getMessage}")
-        )
-    to(delegateId, delegateEvent) *> to(parentSessionId, parentEvent)
+  nebflow.core.delegate.MergeRefusalCare.EscalationPort.install {
+    (delegateId, parentSessionId, delegateEvent, parentEvent) =>
+      def to(sessionId: String, ev: nebflow.actor.AgentCommand.ExternalEvent) =
+        nebflow.core.tools.BgNotifyDelivery
+          .deliverToRootOrInbox(Some(actorSystem), Some(agentRegistry), sessionId, ev)
+          .void
+          .handleErrorWith(e =>
+            nebflow.shared.NebflowLogger
+              .forName("nebflow.merge-refusal-care")
+              .warn(s"[merge-refusal-care] delivery to '$sessionId' failed: ${e.getMessage}")
+          )
+      to(delegateId, delegateEvent) *> to(parentSessionId, parentEvent)
   }
 
   // D3-②（steward 批 2026-10-23）：MergeQueue 合并提醒注入的活性探针——注入前

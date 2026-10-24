@@ -77,6 +77,8 @@ class DeviceFaceHardeningRoutesSpec extends FunSuite:
       friendService = None
     )
 
+  end mkResources
+
   private val routes = new RestApiRoutes(
     tokenRef = cats.effect.Ref.unsafe[IO, String](TestToken),
     configRef = cats.effect.Ref.unsafe[IO, NebflowServiceConfig](

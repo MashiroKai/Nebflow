@@ -43,7 +43,9 @@ class PointerPickupSpec extends CatsEffectSuite:
   test("save lands under uploads/pickups/<hash>/<sanitized name>; same pointer re-fetch overwrites") {
     val f = PointerPickup.save("dev-1", "/remote/ws/report final?.txt", "v1".getBytes("UTF-8"))
     // 落位在 uploads 白名单子树（父链含 uploads/pickups）。
-    assert(f.toString.contains(s"uploads/pickups/${PointerPickup.pointerHash("dev-1", "/remote/ws/report final?.txt")}"))
+    assert(
+      f.toString.contains(s"uploads/pickups/${PointerPickup.pointerHash("dev-1", "/remote/ws/report final?.txt")}")
+    )
     // 非法字符消毒、名字取远端路径末段。
     assertEquals(f.last, "report_final_.txt")
     assertEquals(os.read(f), "v1")

@@ -40,6 +40,7 @@ class MergeQueueRestartReminderSpec extends FunSuite:
 
   private class SilentLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -61,9 +62,16 @@ class MergeQueueRestartReminderSpec extends FunSuite:
   private def seedRecord(id: String, repo: os.Path): Unit =
     DelegateRegistry.put(
       DelegateRegistry.Record(
-        id = id, executor = "nebflow", cwd = repo.toString,
-        project = None, taskId = Some("99"), parentSessionId = "nebula-root", title = "survivor", createdAt = 1L,
-        branch = Some(s"delegate/$id"), baseBranch = Some("main"),
+        id = id,
+        executor = "nebflow",
+        cwd = repo.toString,
+        project = None,
+        taskId = Some("99"),
+        parentSessionId = "nebula-root",
+        title = "survivor",
+        createdAt = 1L,
+        branch = Some(s"delegate/$id"),
+        baseBranch = Some("main"),
         projectWorkspace = Some(repo.toString),
         worktree = None
       )
@@ -86,13 +94,20 @@ class MergeQueueRestartReminderSpec extends FunSuite:
     g("checkout", "main")
     dir
 
-  test("refused-keep-queued last row ⇒ interrupted member after restart; the sweep re-mounts it and the revive channel re-delivers the merge reminder") {
+  end mkRepo
+
+  test(
+    "refused-keep-queued last row ⇒ interrupted member after restart; the sweep re-mounts it and the revive channel re-delivers the merge reminder"
+  ) {
     val repo = mkRepo(tempRoot / "rr-refused-repo", branch = "delegate/rr-refused")
     seedRecord("rr-refused", repo)
     ledgerRow("rr-refused", "enqueued", readyAt = 700L)
     ledgerRow("rr-refused", "refused-keep-queued", readyAt = 700L)
     val members = MergeQueueBootSweep.interruptedMembers()
-    assert(members.exists(_.delegateId == "rr-refused"), "the kept-for-retry membership survives the restart as interrupted")
+    assert(
+      members.exists(_.delegateId == "rr-refused"),
+      "the kept-for-retry membership survives the restart as interrupted"
+    )
     val captured = ListBuffer[String]()
     val revive: DelegateRegistry.Record => String => IO[Either[String, Unit]] =
       _ => msg => IO { captured += msg; Right(()) }
@@ -104,7 +119,10 @@ class MergeQueueRestartReminderSpec extends FunSuite:
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield (report, mounted)).unsafeRunSync()
     assertEquals(report.reMounted, List("rr-refused"), "the refused membership re-mounts")
-    assert(captured.size == 1 && captured.head.contains("merge --no-ff"), s"the reminder STILL ARRIVES via the revive channel: $captured")
+    assert(
+      captured.size == 1 && captured.head.contains("merge --no-ff"),
+      s"the reminder STILL ARRIVES via the revive channel: $captured"
+    )
     assert(mounted.isDefined, "the entry lives in the in-process queue again")
   }
 
@@ -114,7 +132,10 @@ class MergeQueueRestartReminderSpec extends FunSuite:
     ledgerRow("rr-deferred", "enqueued", readyAt = 800L)
     ledgerRow("rr-deferred", "reminder-deferred", readyAt = 800L)
     val members = MergeQueueBootSweep.interruptedMembers()
-    assert(members.exists(_.delegateId == "rr-deferred"), "the deferred-reminder membership survives the restart as interrupted")
+    assert(
+      members.exists(_.delegateId == "rr-deferred"),
+      "the deferred-reminder membership survives the restart as interrupted"
+    )
     val captured = ListBuffer[String]()
     val revive: DelegateRegistry.Record => String => IO[Either[String, Unit]] =
       _ => msg => IO { captured += msg; Right(()) }

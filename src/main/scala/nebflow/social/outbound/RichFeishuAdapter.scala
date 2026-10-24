@@ -163,7 +163,8 @@ final class RichFeishuAdapter(
                 sendDegrade(
                   RichDegrade.unconverted(original, s),
                   okDetail = "unconverted file card delivered"
-                ))
+                )
+              )
             case Right(png) =>
               uploadImageFn(png).flatMap { up =>
                 if !up.ok then

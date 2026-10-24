@@ -58,9 +58,7 @@ private[gateway] object ProjectsRoutes:
                       // 的 ProjectOrigin Codec）。老前端忽略未知键零破坏；存量项目（无
                       // origin 盘面）= 显式 null。
                       "origin" -> p.origin
-                        .fold(Json.Null)(o =>
-                          Json.obj("device" -> o.device.asJson, "path" -> o.path.asJson)
-                        )
+                        .fold(Json.Null)(o => Json.obj("device" -> o.device.asJson, "path" -> o.path.asJson))
                     )
                   )
                   .asJson

@@ -44,6 +44,7 @@ object HeldDeliveryWatchdog:
 
   /** 单轮扫描的决策动作（[[scanCore]] 产出、[[scan]] 执行）。 */
   sealed trait ScanAction
+
   final case class Nudge(sessionId: String, ids: List[String], ref: nebflow.actor.ActorRef[AgentCommand])
       extends ScanAction
   final case class Exhaust(sessionId: String, ids: List[String], heads: List[String]) extends ScanAction
@@ -68,7 +69,8 @@ object HeldDeliveryWatchdog:
     val (exhaust, nudge) = due.partition(HeldDeliveryPolicy.shouldExhaust)
     val unreadNow = entries.count(_.exhausted) + exhaust.size
     val nudgeAct = if nudge.isEmpty then Nil else List(Nudge(sessionId, nudge.map(_.id), ref))
-    val exhaustAct = if exhaust.isEmpty then Nil else List(Exhaust(sessionId, exhaust.map(_.id), exhaust.map(_.summary)))
+    val exhaustAct =
+      if exhaust.isEmpty then Nil else List(Exhaust(sessionId, exhaust.map(_.id), exhaust.map(_.summary)))
     val badgeAct = if unreadNow == unreadSnapshot then Nil else List(BadgeSync(sessionId, unreadNow, unreadSnapshot))
     exhaustAct ++ nudgeAct ++ badgeAct
   end scanCore

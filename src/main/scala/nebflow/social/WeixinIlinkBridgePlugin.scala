@@ -7,7 +7,16 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.bridge.{AskAnswerReceipt, BridgeContext, BridgeManager, BridgePlugin}
 import nebflow.shared.NebflowLogger
-import nebflow.social.outbound.{AskPromptCodec, FileLeg, FileLongShot, PromptAction, PromptView, RichDegrade, RichKind, RichProduct}
+import nebflow.social.outbound.{
+  AskPromptCodec,
+  FileLeg,
+  FileLongShot,
+  PromptAction,
+  PromptView,
+  RichDegrade,
+  RichKind,
+  RichProduct
+}
 
 import java.util.concurrent.atomic.AtomicBoolean
 import scala.concurrent.duration.*
@@ -458,6 +467,8 @@ final class WeixinIlinkBridgePlugin(
         ) *> inject(ctx, in.copy(text = Some(mediaLabel(in.mediaKind))), sessionId)
     }
 
+  end mediaArm
+
   /**
    * The unresolvable-sender tail of the default-session arm (was the inline
    * text match): a landed media path takes the media arm; plain text injects;
@@ -640,7 +651,11 @@ final class WeixinIlinkBridgePlugin(
               // answer-landing 实施批（表1 ★）：卡头批名 = 提问载荷归因（project
               // 优先，回落 nodeName——分发器提问取「dispatcher」标）——标签非寻址键。
               val batch =
-                c.downField("project").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+                c.downField("project")
+                  .as[String]
+                  .toOption
+                  .map(_.trim)
+                  .filter(_.nonEmpty)
                   .orElse(c.downField("nodeName").as[String].toOption.map(_.trim).filter(_.nonEmpty))
                   .getOrElse("")
               val views = AskPromptCodec.viewsFromItemsJson(items)
@@ -877,6 +892,8 @@ final class WeixinIlinkBridgePlugin(
       // injected for a no-text media message grew.
       mediaArmOrText(ctx, in, sessionId)
 
+  end autoBind
+
   /**
    * The text injection (with its SERVED accounting and log line). 媒体统一适配批
    * （2026-10-20）：`media` 指针在场 ⇒ 改走统一媒体缝
@@ -944,9 +961,12 @@ final class WeixinIlinkBridgePlugin(
           // [no-return-address] dead letter (auto-bind lands here too via its
           // own routes update; this leg covers the save/REST face).
           logger.info(s"weixin-ilink bridge: routing table rebuilt — ${bound.size} sender id(s) bound to sessions") *>
-            bound.collect {
-              case (sender, sid) if previous.get(sender) != Some(sid) => redeliverDropped(sender, sid)
-            }.toList.foldLeft(IO.unit)((acc, leg) => acc *> leg)
+            bound
+              .collect {
+                case (sender, sid) if previous.get(sender) != Some(sid) => redeliverDropped(sender, sid)
+              }
+              .toList
+              .foldLeft(IO.unit)((acc, leg) => acc *> leg)
         }
     }
 
@@ -1140,7 +1160,8 @@ final class WeixinIlinkBridgePlugin(
   private def noteNoReturnAddress(sessionId: String, text: String): IO[Unit] =
     droppedRef.update(m => m.updated(sessionId, DroppedReply(text))) *>
       writeStrike(sessionId).handleErrorWith(e =>
-        logger.warn(s"weixin-ilink bridge: health strike write failed (${e.getClass.getSimpleName}) — contained"))
+        logger.warn(s"weixin-ilink bridge: health strike write failed (${e.getClass.getSimpleName}) — contained")
+      )
 
   /** Read-modify-write of the channel health face; contained, never raises. */
   private def writeStrike(sessionId: String): IO[Unit] =
@@ -1150,9 +1171,10 @@ final class WeixinIlinkBridgePlugin(
         .channelHealth(root, Name)
         .flatMap(_.hcursor.downField("strikes").as[List[Json]].toOption)
         .getOrElse(Nil)
-      val (matching, rest) = previous.partition(
-        s => s.hcursor.downField("sessionId").as[String].toOption.contains(sessionId) &&
-          s.hcursor.downField("reason").as[String].toOption.contains(ReasonNoReturnAddress))
+      val (matching, rest) = previous.partition(s =>
+        s.hcursor.downField("sessionId").as[String].toOption.contains(sessionId) &&
+          s.hcursor.downField("reason").as[String].toOption.contains(ReasonNoReturnAddress)
+      )
       val count = matching.headOption
         .flatMap(_.hcursor.downField("count").as[Long].toOption)
         .getOrElse(0L) + 1L
@@ -1173,7 +1195,7 @@ final class WeixinIlinkBridgePlugin(
       )
       SocialChannels.writeChannelHealth(root, Name, health)
     }.flatMap {
-      case true  => IO.unit
+      case true => IO.unit
       case false => logger.warn("weixin-ilink bridge: health strike could not be written (face degraded)")
     }
 
@@ -1188,9 +1210,10 @@ final class WeixinIlinkBridgePlugin(
         .channelHealth(root, Name)
         .flatMap(_.hcursor.downField("strikes").as[List[Json]].toOption)
         .getOrElse(Nil)
-      val rest = previous.filterNot(
-        s => s.hcursor.downField("sessionId").as[String].toOption.contains(sessionId) &&
-          s.hcursor.downField("reason").as[String].toOption.contains(ReasonNoReturnAddress))
+      val rest = previous.filterNot(s =>
+        s.hcursor.downField("sessionId").as[String].toOption.contains(sessionId) &&
+          s.hcursor.downField("reason").as[String].toOption.contains(ReasonNoReturnAddress)
+      )
       if rest == previous then false // nothing to clear — no write
       else
         SocialChannels.writeChannelHealth(
@@ -1198,10 +1221,11 @@ final class WeixinIlinkBridgePlugin(
           Name,
           Json.obj("channel" -> Name.asJson, "updatedAt" -> now.asJson, "strikes" -> rest.asJson)
         )
-    }.handleError(_ => false).flatMap {
-      case true  => IO.unit
-      case false => IO.unit // nothing cleared, or the face degraded — either way quiet
-    }
+    }.handleError(_ => false)
+      .flatMap {
+        case true => IO.unit
+        case false => IO.unit // nothing cleared, or the face degraded — either way quiet
+      }
 
   /**
    * The redelivery leg: the sender's FIRST registration for this session (the
@@ -1268,8 +1292,8 @@ final class WeixinIlinkBridgePlugin(
             )
             (runs.lastOption, kind) match
               case (Some(ImageRun(ps)), RichKind.Image) => runs.init :+ ImageRun(ps :+ p)
-              case (_, RichKind.Image)                  => runs :+ ImageRun(List(p))
-              case (_, other)                           => runs :+ ItemRun(p, other)
+              case (_, RichKind.Image) => runs :+ ImageRun(List(p))
+              case (_, other) => runs :+ ItemRun(p, other)
           }
       }
     }
@@ -1327,7 +1351,7 @@ final class WeixinIlinkBridgePlugin(
               val captionMode =
                 plain.trim.nonEmpty && plain.length <= WeixinAskLeg.FullTextThreshold &&
                   runs.headOption.exists {
-                    case ImageRun(ps)  => ps.size >= 2
+                    case ImageRun(ps) => ps.size >= 2
                     case ItemRun(_, _) => false
                   }
               val textLeg =
@@ -1361,16 +1385,18 @@ final class WeixinIlinkBridgePlugin(
           case ItemRun(p, kind) => deliverClassifiedItem(sender, p, kind)
         val spent = run match
           case ImageRun(single :: Nil) => cap
-          case ImageRun(_)             => None
-          case ItemRun(_, _)           => cap
+          case ImageRun(_) => None
+          case ItemRun(_, _) => cap
         (acc *> leg.handleErrorWith(e => deliverRunFault(sender, runLabel(run), e)), spent)
       }
       ._1
 
-  /** The visible label a faulted run degrades under: a group shows its size,
-    * a solo item its file name (the [未送达] line's subject). */
+  /**
+   * The visible label a faulted run degrades under: a group shows its size,
+   * a solo item its file name (the [未送达] line's subject).
+   */
   private def runLabel(run: MediaRun): String = run match
-    case ImageRun(ps)  => if ps.sizeIs == 1 then ps.head.last else s"图片组(${ps.size}张)"
+    case ImageRun(ps) => if ps.sizeIs == 1 then ps.head.last else s"图片组(${ps.size}张)"
     case ItemRun(p, _) => p.last
 
   /**
@@ -1387,13 +1413,14 @@ final class WeixinIlinkBridgePlugin(
         )
       )
       r2 <- outbound(sender, s"[未送达] $label — 这一项发送时出现异常，其余内容照常")
-      _ <- if r2.ok then IO.unit
-           else
-             IO(
-               logger.warnSync(
-                 s"weixin-ilink bridge: degrade notice send failed code=${r2.code} reason=${r2.reason}"
-               )
-             )
+      _ <-
+        if r2.ok then IO.unit
+        else
+          IO(
+            logger.warnSync(
+              s"weixin-ilink bridge: degrade notice send failed code=${r2.code} reason=${r2.reason}"
+            )
+          )
     yield ()
 
   /**
@@ -1458,37 +1485,37 @@ final class WeixinIlinkBridgePlugin(
         )
       )
       .flatMap {
-      case res if res.ok =>
-        IO(
-          logger.info(
-            s"weixin-ilink bridge: image group delivered to sender $sender (${paths.size} images, id=${res.messageId.getOrElse("-")})"
+        case res if res.ok =>
+          IO(
+            logger.info(
+              s"weixin-ilink bridge: image group delivered to sender $sender (${paths.size} images, id=${res.messageId.getOrElse("-")})"
+            )
           )
-        )
-      case res =>
-        val recover = caption.fold(IO.unit) { t =>
-          deliverText(sender, t).flatMap { r =>
-            if r.ok then IO.unit
-            else
-              IO(
-                logger.warn(
-                  s"weixin-ilink bridge: caption recovery send failed code=${r.code} reason=${r.reason}"
+        case res =>
+          val recover = caption.fold(IO.unit) { t =>
+            deliverText(sender, t).flatMap { r =>
+              if r.ok then IO.unit
+              else
+                IO(
+                  logger.warn(
+                    s"weixin-ilink bridge: caption recovery send failed code=${r.code} reason=${r.reason}"
+                  )
                 )
-              )
+            }
           }
-        }
-        val line = s"[${paths.size} 张图片发送失败 code=${res.code}] ${res.reason}"
-        logger.warn(
-          s"weixin-ilink bridge: image group send failed (${paths.size} images) code=${res.code} reason=${res.reason} " +
-            "— recovering the caption through the text seam, then the text notice"
-        ) *> recover *>
-          outbound(sender, line).flatMap { r2 =>
-            if r2.ok then IO.unit
-            else
-              logger.warn(
-                s"weixin-ilink bridge: degrade notice send failed code=${r2.code} reason=${r2.reason}"
-              )
-          }
-    }
+          val line = s"[${paths.size} 张图片发送失败 code=${res.code}] ${res.reason}"
+          logger.warn(
+            s"weixin-ilink bridge: image group send failed (${paths.size} images) code=${res.code} reason=${res.reason} " +
+              "— recovering the caption through the text seam, then the text notice"
+          ) *> recover *>
+            outbound(sender, line).flatMap { r2 =>
+              if r2.ok then IO.unit
+              else
+                logger.warn(
+                  s"weixin-ilink bridge: degrade notice send failed code=${r2.code} reason=${r2.reason}"
+                )
+            }
+      }
 
   /**
    * 文件类长图腿（pop-social-files batch, 2026-10-20；作者裁定「文件类产物投递
@@ -1511,9 +1538,11 @@ final class WeixinIlinkBridgePlugin(
   private def deliverLongShotMedia(sender: String, p: os.Path): IO[Unit] =
     IO(FileLongShot.Dedup.keyOf(p)).flatMap {
       case Some(key) if FileLongShot.Dedup.seen(key) =>
-        IO(logger.info(
-          s"weixin-ilink bridge: long-shot duplicate suppressed for $p — same bytes already pushed (dedup)"
-        ))
+        IO(
+          logger.info(
+            s"weixin-ilink bridge: long-shot duplicate suppressed for $p — same bytes already pushed (dedup)"
+          )
+        )
       case keyOpt =>
         val out = root / "tmp" / "outbound-render" /
           s"file-${java.util.UUID.randomUUID().toString.take(12)}.png"
@@ -1525,12 +1554,16 @@ final class WeixinIlinkBridgePlugin(
                 outbound(sender, RichDegrade.originalNote(p)).flatMap { r2 =>
                   if r2.ok then IO.unit
                   else
-                    IO(logger.warnSync(
-                      s"weixin-ilink bridge: long-shot note send failed code=${r2.code} reason=${r2.reason}"
-                    ))
-                } *> IO(logger.info(
-                  s"weixin-ilink bridge: file long-shot delivered to sender $sender (id=${res.messageId.getOrElse("-")})"
-                ))
+                    IO(
+                      logger.warnSync(
+                        s"weixin-ilink bridge: long-shot note send failed code=${r2.code} reason=${r2.reason}"
+                      )
+                    )
+                } *> IO(
+                  logger.info(
+                    s"weixin-ilink bridge: file long-shot delivered to sender $sender (id=${res.messageId.getOrElse("-")})"
+                  )
+                )
               case res =>
                 val line = s"[图片发送失败 code=${res.code}] ${res.reason}"
                 logger.warn(
@@ -1580,9 +1613,11 @@ final class WeixinIlinkBridgePlugin(
   private def deliverFileMedia(sender: String, p: os.Path): IO[Unit] =
     IO(FileLongShot.Dedup.keyOf(p)).flatMap {
       case Some(key) if FileLongShot.Dedup.seen(key) =>
-        IO(logger.info(
-          s"weixin-ilink bridge: file-leg duplicate suppressed for $p — same bytes already pushed (dedup)"
-        ))
+        IO(
+          logger.info(
+            s"weixin-ilink bridge: file-leg duplicate suppressed for $p — same bytes already pushed (dedup)"
+          )
+        )
       case keyOpt =>
         val oversize: Option[String] = FileLeg.sizeOf(p) match
           case Some(n) if n > FileLeg.MaxBytes =>
@@ -1611,6 +1646,7 @@ final class WeixinIlinkBridgePlugin(
                 IO.unit
               case _ => IO.unit // deliverMedia already logged + put out the 保底 notice
             }
+        end match
     }
 
   /**
@@ -1621,9 +1657,9 @@ final class WeixinIlinkBridgePlugin(
    * the reading so [[deliverFileMedia]] can record dedup on success only.
    */
   private def deliverMedia(
-      sender: String,
-      media: WeixinOutboundAdapter.WeixinMedia,
-      kindLabel: String
+    sender: String,
+    media: WeixinOutboundAdapter.WeixinMedia,
+    kindLabel: String
   ): IO[WeixinOutboundAdapter.SendResult] =
     outboundMedia(sender, media).flatMap { res =>
       if res.ok then
@@ -1641,10 +1677,12 @@ final class WeixinIlinkBridgePlugin(
           s"weixin-ilink bridge: rich media send failed kind=$kindLabel code=${res.code} reason=${res.reason} " +
             "— degrading to a text notice"
         ) *>
-          outbound(sender, line).flatMap { r2 =>
-            if r2.ok then IO.unit
-            else logger.warn(s"weixin-ilink bridge: degrade notice send failed code=${r2.code} reason=${r2.reason}")
-          }.as(res)
+          outbound(sender, line)
+            .flatMap { r2 =>
+              if r2.ok then IO.unit
+              else logger.warn(s"weixin-ilink bridge: degrade notice send failed code=${r2.code} reason=${r2.reason}")
+            }
+            .as(res)
     }
 
 end WeixinIlinkBridgePlugin

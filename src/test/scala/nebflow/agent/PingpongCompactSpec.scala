@@ -11,7 +11,19 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.actor.{AgentDef, AgentState, PingpongShadowJob, PingpongSReady, PingpongState, messages, withForkQueued, withPpFailures, withPingpongCleared, withShadowPending, withSReadyPending}
+import nebflow.actor.{
+  AgentDef,
+  AgentState,
+  PingpongShadowJob,
+  PingpongSReady,
+  PingpongState,
+  messages,
+  withForkQueued,
+  withPpFailures,
+  withPingpongCleared,
+  withShadowPending,
+  withSReadyPending
+}
 import nebflow.core.compact.{CompactConfig, FullCompact, PingpongConfig, TokenEstimator}
 import nebflow.shared.{Message, MessageRole, PathUtil}
 import nebflow.shared.given
@@ -63,7 +75,11 @@ class PingpongCompactSpec extends FunSuite:
       PathUtil.setDataRoot(tmp / "data")
       // 缺文件 / 缺键 ⇒ false（默认关——一期灰度主会话）
       assertEquals(PingpongConfig.enabled.unsafeRunSync(), false)
-      os.write.over(tmp / "data" / "nebflow.json", Json.obj("other" -> Json.fromBoolean(true)).noSpaces, createFolders = true)
+      os.write.over(
+        tmp / "data" / "nebflow.json",
+        Json.obj("other" -> Json.fromBoolean(true)).noSpaces,
+        createFolders = true
+      )
       assertEquals(PingpongConfig.enabled.unsafeRunSync(), false)
       // 置 true ⇒ 热读生效（无需重启）
       os.write.over(
@@ -77,6 +93,7 @@ class PingpongCompactSpec extends FunSuite:
       )
       assertEquals(PingpongConfig.enabled.unsafeRunSync(), false)
     finally PathUtil.setDataRoot(prevRoot)
+    end try
   }
 
   // ── §C S 解析：pingpong 分支 ───────────────────────────────────────────────
@@ -111,13 +128,15 @@ class PingpongCompactSpec extends FunSuite:
         recentReadPaths = List("src/main/scala/A.scala"),
         forkSeq = forkSeq
       )
-      .toOption.get
+      .toOption
+      .get
     val text = outcome.messages.head.content.left.toOption.get
     assert(text.contains("Resume directly"), "ContinuationPrompt 保留（消息形态与现行摘要同构）")
     assert(text.contains("A.scala") && text.contains("object A // restored"), "files 恢复段带上文件内容")
     assert(text.endsWith("</context-compact>"))
     // 不存在的文件 ⇒ 恢复段为空（readPaths 缺席时不注入空段）
-    val outcome2 = FullCompact.parsePingpongResponse(summaryResponse("LEDGER"), history, root.toString, Nil, forkSeq).toOption.get
+    val outcome2 =
+      FullCompact.parsePingpongResponse(summaryResponse("LEDGER"), history, root.toString, Nil, forkSeq).toOption.get
     val text2 = outcome2.messages.head.content.left.toOption.get
     assert(!text2.contains("Restored file contents after compaction"))
   }
@@ -179,14 +198,17 @@ class PingpongCompactSpec extends FunSuite:
     // 断言：S 打头；Δ 逐条原位（引用相等）；总长 = 1 + Δ
     assertEquals(newList.size, 1 + delta.size)
     assertEquals(newList.head, sMessage)
-    newList.drop(1).zip(delta).foreach { case (a, b) => assert(a eq b, "Δ messages must be structurally shared, not rebuilt") }
+    newList.drop(1).zip(delta).foreach { case (a, b) =>
+      assert(a eq b, "Δ messages must be structurally shared, not rebuilt")
+    }
     // 幂等闸（§E-8）：崩溃后磁盘头部即本 forkSeq 的 pingpong 摘要 ⇒ 只清档不重换
     assert(FullCompact.isPingpongSummaryWithForkSeq(newList.head, 6))
   }
 
   test("swap invalid: forkMsgCount > size is the §E-6 state-disorder predicate") {
     val msgs = (0 until 4).map(i => userMsg(s"m$i")).toList
-    val ready = PingpongSReady("ppc-s-9", List(userMsg("S")), forkMsgCount = 9, forkedAt = 0L, sTokensEst = 1, latencyMs = 0)
+    val ready =
+      PingpongSReady("ppc-s-9", List(userMsg("S")), forkMsgCount = 9, forkedAt = 0L, sTokensEst = 1, latencyMs = 0)
     assert(ready.forkMsgCount > msgs.size, "换入断言：违例 ⇒ 放弃换入走 §E-6，绝不截断历史")
   }
 
@@ -250,7 +272,15 @@ class PingpongCompactSpec extends FunSuite:
       PingpongStateFile.save(sid, compacting).unsafeRunSync()
       assertEquals(PingpongStateFile.load(sid).unsafeRunSync(), Some(compacting))
       // §E-8 格：s-ready 带 S 文本（续用换入的依据）
-      val sReady = PingpongStateFile.Record(PingpongStateFile.SReady, "ppc-sid-6", 6, 123L, Some("<summary>LEDGER</summary>"), 1200, 1)
+      val sReady = PingpongStateFile.Record(
+        PingpongStateFile.SReady,
+        "ppc-sid-6",
+        6,
+        123L,
+        Some("<summary>LEDGER</summary>"),
+        1200,
+        1
+      )
       PingpongStateFile.save(sid, sReady).unsafeRunSync()
       assertEquals(PingpongStateFile.load(sid).unsafeRunSync(), Some(sReady))
       // S 消息重建（不重算）
@@ -269,6 +299,7 @@ class PingpongCompactSpec extends FunSuite:
       os.write.over(f, """{"phase":"future","shadowId":"x","forkMsgCount":1,"forkedAt":1}""")
       assertEquals(PingpongStateFile.load(sid).unsafeRunSync(), None)
     finally PathUtil.setDataRoot(prevRoot)
+    end try
   }
 
   test("SessionStore.durableSwapMessages: pending-map coherence + durable write (§D3-②)") {
@@ -295,5 +326,6 @@ class PingpongCompactSpec extends FunSuite:
       val disk = io.circe.parser.decode[List[Message]](os.read(tmp / "sessions" / s"$sid.json")).toOption.get
       assertEquals(disk, swapped)
     finally PathUtil.setDataRoot(prevRoot)
+    end try
   }
 end PingpongCompactSpec

@@ -99,13 +99,17 @@ object WeixinBindAutoWire:
   val KeyMsgloopTokenFile = "WEIXIN_MSGLOOP_TOKEN_FILE"
   val KeyNebflowHome = "NEBFLOW_HOME"
 
-  /** The forbidden plist spellings (author fact ①) — always injected EMPTY so
-    * the merged environment can never hand the script a value under them. */
+  /**
+   * The forbidden plist spellings (author fact ①) — always injected EMPTY so
+   * the merged environment can never hand the script a value under them.
+   */
   val ForbiddenKeys: List[String] = List("WEIXIN_SEND_TOKEN_FILE", "WEIXIN_SEND_TOKEN")
 
-  /** The provision subprocess is bounded (launchd bootstrap + the script's own
-    * two 1s sleeps settle well inside this; a hung subprocess must never pin
-    * the binding fiber). */
+  /**
+   * The provision subprocess is bounded (launchd bootstrap + the script's own
+   * two 1s sleeps settle well inside this; a hung subprocess must never pin
+   * the binding fiber).
+   */
   val ProcTimeout: FiniteDuration = 120.seconds
 
   // ───────────── bind-transactional 批 (2026-10-20): the retry budget ─────────────
@@ -113,33 +117,45 @@ object WeixinBindAutoWire:
   /** Total provision attempts: the first run + 3 retries (指数退避×3). */
   val MaxProvisionAttempts: Int = 4
 
-  /** Exponential backoff base: attempt N's pre-retry wait is base × 2^(N-1)
-    * (1s, 2s, 4s — the launchd-side kill/bootout races settle in seconds). */
+  /**
+   * Exponential backoff base: attempt N's pre-retry wait is base × 2^(N-1)
+   * (1s, 2s, 4s — the launchd-side kill/bootout races settle in seconds).
+   */
   val BackoffBase: FiniteDuration = 1.second
 
-  /** How long one retry waits for the sidecar port to actually release before
-    * re-running the installer (lsof poll, [[PortPollInterval]] steps). */
+  /**
+   * How long one retry waits for the sidecar port to actually release before
+   * re-running the installer (lsof poll, [[PortPollInterval]] steps).
+   */
   val PortFreeWait: FiniteDuration = 10.seconds
 
-  /** The liveness confirmation budget after an installer exit 0 (launchd
-    * ThrottleInterval = 10s; the first start can legitimately lag one notch). */
+  /**
+   * The liveness confirmation budget after an installer exit 0 (launchd
+   * ThrottleInterval = 10s; the first start can legitimately lag one notch).
+   */
   val LivenessWait: FiniteDuration = 15.seconds
 
   /** The poll cadence of both bounded waits. */
   val PortPollInterval: FiniteDuration = 500.millis
 
-  /** Deterministic step counts (budget ÷ cadence) — the loops are bounded by
-    * ITERATIONS, never by wall-clock reads, so an injected zero-cost sleeper
-    * stays fast and production gets its full budget back. */
+  /**
+   * Deterministic step counts (budget ÷ cadence) — the loops are bounded by
+   * ITERATIONS, never by wall-clock reads, so an injected zero-cost sleeper
+   * stays fast and production gets its full budget back.
+   */
   val PortFreePollSteps: Int = (PortFreeWait / PortPollInterval).toInt
   val LivenessPollSteps: Int = (LivenessWait / PortPollInterval).toInt
 
-  /** `true` = something LISTENs on the port (production: `lsof -sTCP:LISTEN`).
-    * The SAME probe reads both waits: port-free = `false`, liveness = `true`. */
+  /**
+   * `true` = something LISTENs on the port (production: `lsof -sTCP:LISTEN`).
+   * The SAME probe reads both waits: port-free = `false`, liveness = `true`.
+   */
   type PortProbe = Int => IO[Boolean]
 
-  /** `true` = the sidecar answers `/healthz` (the shim's unauthenticated
-    * liveness face — the installer's own probe suggestion). */
+  /**
+   * `true` = the sidecar answers `/healthz` (the shim's unauthenticated
+   * liveness face — the installer's own probe suggestion).
+   */
   type HealthProbe = Int => IO[Boolean]
 
   /** The wait seam (production `IO.sleep`; offline specs inject a recorder). */
@@ -167,10 +183,12 @@ object WeixinBindAutoWire:
 
   // ───────────────────────── pure helpers (spec-pinned) ─────────────────────────
 
-  /** The sidecar control port: the card's `sidecar_url` port, else the port
-    * of the existing [[WeixinIlinkScanBind.SidecarDefaultBase]] constant. A
-    * portless/unparseable card URL falls back to the constant (the same URL
-    * the scan-bind control leg dials). */
+  /**
+   * The sidecar control port: the card's `sidecar_url` port, else the port
+   * of the existing [[WeixinIlinkScanBind.SidecarDefaultBase]] constant. A
+   * portless/unparseable card URL falls back to the constant (the same URL
+   * the scan-bind control leg dials).
+   */
   def sidecarPort(root: os.Path): Int =
     parsePort(WeixinOutboundAdapter.sidecarBase(root))
       .orElse(parsePort(WeixinIlinkScanBind.SidecarDefaultBase))
@@ -182,8 +200,10 @@ object WeixinBindAutoWire:
       if p > 0 then Some(p) else None
     catch case _: Exception => None
 
-  /** The engine ingress full URL the shim POSTs to (the same port the gateway
-    * itself listens on — `RestApiCtx.gatewayPort` upstream). */
+  /**
+   * The engine ingress full URL the shim POSTs to (the same port the gateway
+   * itself listens on — `RestApiCtx.gatewayPort` upstream).
+   */
   def ingressUrl(gatewayPort: Int): String =
     s"http://127.0.0.1:$gatewayPort/api/social/channels/${WeixinIlinkBridgePlugin.Name}/ingress"
 
@@ -201,8 +221,10 @@ object WeixinBindAutoWire:
       KeyNebflowHome -> root.toString
     ) ++ ForbiddenKeys.map(_ -> "")
 
-  /** Resolve the installer relative to the engine run directory (never an
-    * absolute hardcode). `None` ⇒ the caller degrades to the liveness arbiter. */
+  /**
+   * Resolve the installer relative to the engine run directory (never an
+   * absolute hardcode). `None` ⇒ the caller degrades to the liveness arbiter.
+   */
   def resolveScript(pwd: os.Path): Option[os.Path] =
     val candidate = pwd / ScriptRelPath
     if os.isFile(candidate) then Some(candidate) else None
@@ -216,10 +238,10 @@ object WeixinBindAutoWire:
    * per step.
    */
   private[social] def awaitLiveness(
-      port: Int,
-      portProbe: PortProbe,
-      healthProbe: HealthProbe,
-      sleeper: Sleeper
+    port: Int,
+    portProbe: PortProbe,
+    healthProbe: HealthProbe,
+    sleeper: Sleeper
   ): IO[Boolean] =
     List.range(0, LivenessPollSteps).foldLeft(IO.pure(false)) { (acc, _) =>
       acc.flatMap {
@@ -248,7 +270,8 @@ object WeixinBindAutoWire:
     List.range(0, PortFreePollSteps).foldLeft(IO.pure(false)) { (acc, _) =>
       acc.flatMap {
         case true => IO.pure(true)
-        case false => portProbe(port).flatMap(busy => if busy then sleeper(PortPollInterval).as(false) else IO.pure(true))
+        case false =>
+          portProbe(port).flatMap(busy => if busy then sleeper(PortPollInterval).as(false) else IO.pure(true))
       }
     }
 
@@ -269,24 +292,29 @@ object WeixinBindAutoWire:
         case None =>
           logger.info(
             "weixin bind-through: no active session at bind time — defaultSessionId not written " +
-              "(the REST default-session face can set it later)")
+              "(the REST default-session face can set it later)"
+          )
         case Some(sid) =>
           IO.blocking(SocialChannels.setDefaultSessionId(root, WeixinIlinkBridgePlugin.Name, Some(sid)))
             .flatMap {
               case Right(_) =>
                 logger.info(
                   s"weixin bind-through: defaultSessionId=$sid written to the ${WeixinIlinkBridgePlugin.Name} card " +
-                    "(latest active session at bind time)")
+                    "(latest active session at bind time)"
+                )
               case Left(err) =>
                 logger.warn(
                   s"weixin bind-through: defaultSessionId write failed (${renderFailure(err)}) — " +
-                    "the card stays without a default session")
+                    "the card stays without a default session"
+                )
             }
       }
       .handleErrorWith(e =>
         logger.warn(
           s"weixin bind-through: defaultSession leg failed (${e.getClass.getSimpleName}: " +
-            s"${Option(e.getMessage).getOrElse("")}) — contained"))
+            s"${Option(e.getMessage).getOrElse("")}) — contained"
+        )
+      )
 
   /**
    * Leg ② — sidecar plist regenerate + restart through the repo installer,
@@ -309,30 +337,35 @@ object WeixinBindAutoWire:
    * fix it and no sidecar serving: half-bind territory).
    */
   def provisionLeg(
-      root: os.Path,
-      gatewayPort: Int,
-      runner: Runner = liveRunner,
-      pwd: os.Path = os.pwd,
-      portProbe: PortProbe = livePortProbe,
-      healthProbe: HealthProbe = liveHealthProbe,
-      sleeper: Sleeper = d => IO.sleep(d)
+    root: os.Path,
+    gatewayPort: Int,
+    runner: Runner = liveRunner,
+    pwd: os.Path = os.pwd,
+    portProbe: PortProbe = livePortProbe,
+    healthProbe: HealthProbe = liveHealthProbe,
+    sleeper: Sleeper = d => IO.sleep(d)
   ): IO[Either[String, Unit]] =
     val port = sidecarPort(root)
     resolveScript(pwd) match
       case None =>
         logger.warn(
           s"weixin bind-through: ${ScriptRelPath.toString} not found under $pwd — " +
-            "arbitrating on sidecar liveness instead")
+            "arbitrating on sidecar liveness instead"
+        )
         awaitLiveness(port, portProbe, healthProbe, sleeper).flatMap {
           case true =>
-            logger.warn(
-              "weixin bind-through: installer missing but the sidecar answers /healthz — provision skipped, " +
-                "the running sidecar stands in"
-            ).as(Right(()))
+            logger
+              .warn(
+                "weixin bind-through: installer missing but the sidecar answers /healthz — provision skipped, " +
+                  "the running sidecar stands in"
+              )
+              .as(Right(()))
           case false =>
-            logger.warn(
-              "weixin bind-through: installer missing AND no live sidecar — provision failed"
-            ).as(Left("installer not found and no live sidecar (no LISTEN/healthz)"))
+            logger
+              .warn(
+                "weixin bind-through: installer missing AND no live sidecar — provision failed"
+              )
+              .as(Left("installer not found and no live sidecar (no LISTEN/healthz)"))
         }
       case Some(script) =>
         val env = envMatrix(root, gatewayPort)
@@ -346,22 +379,31 @@ object WeixinBindAutoWire:
                 ) *>
                   awaitLiveness(port, portProbe, healthProbe, sleeper).flatMap {
                     case true =>
-                      logger.info(
-                        s"weixin bind-through: attempt $n sidecar alive (LISTEN + /healthz ok) — " +
-                          s"${oneLine(output)}"
-                      ).as(None)
+                      logger
+                        .info(
+                          s"weixin bind-through: attempt $n sidecar alive (LISTEN + /healthz ok) — " +
+                            s"${oneLine(output)}"
+                        )
+                        .as(None)
                     case false =>
-                      IO.pure(Some(
-                        s"attempt $n: installer exit 0 but sidecar not alive " +
-                          s"(no LISTEN+healthz within ${LivenessWait.toString})"
-                      ))
+                      IO.pure(
+                        Some(
+                          s"attempt $n: installer exit 0 but sidecar not alive " +
+                            s"(no LISTEN+healthz within ${LivenessWait.toString})"
+                        )
+                      )
                   }
               case Right((code, output)) =>
                 IO.pure(Some(s"attempt $n: installer exit $code (${oneLine(output)})"))
             }
             .handleErrorWith(e =>
-              IO.pure(Some(s"attempt $n: provision leg raised (${e.getClass.getSimpleName}: " +
-                s"${Option(e.getMessage).getOrElse("")})")))
+              IO.pure(
+                Some(
+                  s"attempt $n: provision leg raised (${e.getClass.getSimpleName}: " +
+                    s"${Option(e.getMessage).getOrElse("")})"
+                )
+              )
+            )
         def loop(n: Int, acc: List[String]): IO[Either[String, Unit]] =
           oneAttempt(n).flatMap {
             case None => IO.pure(Right(()))
@@ -373,7 +415,8 @@ object WeixinBindAutoWire:
                    else
                      logger.warn(
                        s"weixin bind-through: port $port still occupied after ${PortFreeWait.toString} — retrying anyway"
-                     )) *>
+                     )
+                  ) *>
                     sleeper(BackoffBase * (1L << (n - 1))) *>
                     loop(n + 1, acc :+ fail)
                 }
@@ -382,6 +425,10 @@ object WeixinBindAutoWire:
           s"weixin bind-through: provisioning sidecar via $script (up to $MaxProvisionAttempts attempts, " +
             s"liveness-gated)"
         ) *> loop(1, Nil)
+
+    end match
+
+  end provisionLeg
 
   /**
    * The rollback arm — the bind-transactional 批's own words: 清卡片
@@ -403,15 +450,20 @@ object WeixinBindAutoWire:
           logger.warn(s"weixin bind-through rollback: could not clear defaultSessionId (${renderFailure(err)})")
       }
       .handleErrorWith(e =>
-        logger.warn(s"weixin bind-through rollback: defaultSessionId clear raised (${e.getClass.getSimpleName})")) *>
+        logger.warn(s"weixin bind-through rollback: defaultSessionId clear raised (${e.getClass.getSimpleName})")
+      ) *>
       // ② the bridge seam — unregister stops the plugin (routing table, pending
       // buffers, ask ledger all cleared) and removes it, byte-for-byte the
       // disabled-card exit path
       bridgeManager.fold(IO.unit)(m =>
-        m.unregister(WeixinIlinkBridgePlugin.Name).handleErrorWith(e =>
-          logger.warn(
-            s"weixin bind-through rollback: bridge unregister failed (${e.getClass.getSimpleName}: " +
-              s"${Option(e.getMessage).getOrElse("")})"))) *>
+        m.unregister(WeixinIlinkBridgePlugin.Name)
+          .handleErrorWith(e =>
+            logger.warn(
+              s"weixin bind-through rollback: bridge unregister failed (${e.getClass.getSimpleName}: " +
+                s"${Option(e.getMessage).getOrElse("")})"
+            )
+          )
+      ) *>
       // ③ the explicit panel error
       IO.blocking(SocialChannels.setBindError(root, WeixinIlinkBridgePlugin.Name, Some(reason)))
         .flatMap {
@@ -421,7 +473,10 @@ object WeixinBindAutoWire:
             logger.warn(s"weixin bind-through rollback: could not write bindError (${renderFailure(err)})")
         }
         .handleErrorWith(e =>
-          logger.warn(s"weixin bind-through rollback: bindError write raised (${e.getClass.getSimpleName})"))
+          logger.warn(s"weixin bind-through rollback: bindError write raised (${e.getClass.getSimpleName})")
+        )
+
+  end rollbackBinding
 
   /**
    * The activation chain the gateway wiring hands to [[WeixinIlinkScanBind]]:
@@ -439,15 +494,15 @@ object WeixinBindAutoWire:
    * contained write — its own failure never un-does a finished binding).
    */
   def productionActivate(
-      bridgeManager: Option[BridgeManager],
-      root: os.Path,
-      listSessions: () => IO[List[SessionMeta]],
-      gatewayPort: Int,
-      runner: Runner = liveRunner,
-      pwd: os.Path = os.pwd,
-      portProbe: PortProbe = livePortProbe,
-      healthProbe: HealthProbe = liveHealthProbe,
-      sleeper: Sleeper = d => IO.sleep(d)
+    bridgeManager: Option[BridgeManager],
+    root: os.Path,
+    listSessions: () => IO[List[SessionMeta]],
+    gatewayPort: Int,
+    runner: Runner = liveRunner,
+    pwd: os.Path = os.pwd,
+    portProbe: PortProbe = livePortProbe,
+    healthProbe: HealthProbe = liveHealthProbe,
+    sleeper: Sleeper = d => IO.sleep(d)
   ): IO[Unit] =
     bridgeManager.fold(IO.unit)(m => WeixinIlinkBridgePlugin.sync(m, root)) *>
       defaultSessionLeg(root, listSessions) *>
@@ -457,7 +512,8 @@ object WeixinBindAutoWire:
             case Right(_) => IO.unit
             case Left(err) =>
               logger.warn(
-                s"weixin bind-through: bound, but the stale bindError could not be cleared (${renderFailure(err)})")
+                s"weixin bind-through: bound, but the stale bindError could not be cleared (${renderFailure(err)})"
+              )
           }
         case Left(steps) =>
           rollbackBinding(root, bridgeManager, steps) *> IO.raiseError(ProvisionFailedException(steps))
@@ -475,17 +531,18 @@ object WeixinBindAutoWire:
    */
   private val liveRunner: Runner = (script, env) =>
     IO.blocking {
-      val res = os.proc("bash", script).call(
-        env = env,
-        propagateEnv = true,
-        check = false,
-        timeout = ProcTimeout.toMillis,
-        stdout = os.Pipe,
-        stderr = os.Pipe
-      )
+      val res = os
+        .proc("bash", script)
+        .call(
+          env = env,
+          propagateEnv = true,
+          check = false,
+          timeout = ProcTimeout.toMillis,
+          stdout = os.Pipe,
+          stderr = os.Pipe
+        )
       Right((res.exitCode, s"${res.err.text().trim}\n${res.out.text().trim}".trim))
-    }.handleError(e =>
-      Left(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"))
+    }.handleError(e => Left(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"))
 
   /**
    * The production port probe: `lsof -ti tcp:<port> -sTCP:LISTEN` — exit 0
@@ -494,12 +551,14 @@ object WeixinBindAutoWire:
    */
   val livePortProbe: PortProbe = port =>
     IO.blocking {
-      val res = os.proc("lsof", "-ti", s"tcp:$port", "-sTCP:LISTEN").call(
-        check = false,
-        timeout = 5000,
-        stdout = os.Pipe,
-        stderr = os.Pipe
-      )
+      val res = os
+        .proc("lsof", "-ti", s"tcp:$port", "-sTCP:LISTEN")
+        .call(
+          check = false,
+          timeout = 5000,
+          stdout = os.Pipe,
+          stderr = os.Pipe
+        )
       res.exitCode == 0 && res.out.text().trim.nonEmpty
     }.handleError(_ => false)
 
@@ -527,8 +586,8 @@ object WeixinBindAutoWire:
 
   private def renderFailure(err: SocialChannels.Failure): String = err match
     case SocialChannels.Failure.InvalidField(f, r) => s"invalid field $f: $r"
-    case SocialChannels.Failure.SecretMode(f, r)   => s"could not store $f: $r"
-    case SocialChannels.Failure.Io(r)              => s"storage error: $r"
+    case SocialChannels.Failure.SecretMode(f, r) => s"could not store $f: $r"
+    case SocialChannels.Failure.Io(r) => s"storage error: $r"
     case SocialChannels.Failure.UnknownChannel(id) => s"unknown channel $id"
 
 end WeixinBindAutoWire
