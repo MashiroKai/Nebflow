@@ -2848,8 +2848,23 @@ function renderBgDropdown() {
     const linesPart = (rowState !== 'cancelling')
       ? '<span class="bg-task-lines">' + escapeHtml(t('bg.lines', { count: lines })) + '</span>'
       : '';
+    // 退出码 chip（通知详情批 2026-10-24）：终态帧携带 exitCode ⇒ 行内直接可判
+    // 成败（旧形态要点开详情卡才知道）；复用详情卡既有文案键 bg.detail.exit。
+    const exitPart = (typeof task.exitCode === 'number')
+      ? '<span class="bg-task-exit">' + escapeHtml(t('bg.detail.exit', { code: task.exitCode })) + '</span>'
+      : '';
+    // 耗时段：运行行走表钟（now - startedAt，1s ticker 按 data-task-id 刷新）；
+    // 终态行冻结（终态帧 durationMs 权威，缺省回落 finishedAt - startedAt）——
+    // 旧行为终态后仍在走表直到淘汰（「已完成 · 已运行 8 分钟」谎报形态）。
+    // 冻结不靠去 data-task-id（面板生命周期 e2e 用它寻址行，保留）——靠 ticker
+    // 侧「终态不改写」守卫（ensureBgTimer tick）。
+    const isEndedTask = isTerminalBgStatus(task.status);
+    const frozenMs = (typeof task.durationMs === 'number') ? task.durationMs
+      : (isEndedTask && typeof task.finishedAt === 'number' && task.startedAt
+        ? Math.max(0, task.finishedAt - task.startedAt) : null);
     const uptimePart = task.startedAt
-      ? '<span class="bg-task-uptime" data-task-id="' + escapeHtml(task.taskId) + '">' + escapeHtml(formatDuration(now - task.startedAt)) + '</span>'
+      ? '<span class="bg-task-uptime" data-task-id="' + escapeHtml(task.taskId) + '">' +
+        escapeHtml(formatDuration(isEndedTask && frozenMs != null ? frozenMs : now - task.startedAt)) + '</span>'
       : '';
     const desc = task.description || task.taskId;
     const nameTitle = desc + ' · ' + task.taskId;
@@ -2863,7 +2878,7 @@ function renderBgDropdown() {
       '<div class="bg-task-info">' +
         '<div class="bg-task-line bg-task-meta">' +
           '<span class="bg-task-state' + stateClass + '">' + escapeHtml(statusLabel) + '</span>' +
-          originPart + kindPart + linesPart + uptimePart +
+          originPart + kindPart + linesPart + exitPart + uptimePart +
         '</div>' +
         '<div class="bg-task-line bg-task-name-line">' +
           '<span class="bg-task-name" title="' + escapeHtml(nameTitle) + '">' + escapeHtml(desc) + '</span>' +
@@ -3029,7 +3044,9 @@ function startBgTimer() {
       const now = Date.now();
       dropdown.querySelectorAll('.bg-task-uptime[data-task-id]').forEach(el => {
         const t = tasks.find(t => t.taskId === el.dataset.taskId);
-        if (t && t.startedAt) el.textContent = formatDuration(now - t.startedAt);
+        // 终态行不走表（通知详情批 2026-10-24）：span 渲染时已不带 data-task-id，
+        // 此守卫是双保险——快照行先 running 后终态的窗口里不被 ticker 改写回走表值。
+        if (t && t.startedAt && !isTerminalBgStatus(t.status)) el.textContent = formatDuration(now - t.startedAt);
       });
     }
     // Idle out once every bucket is empty; ensureBgTimer() restarts it on the next
@@ -3183,9 +3200,13 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
       // Retention deadline (R1): the 1s sweep removes the row from the bucket when
       // it passes; while the row's output card is open the deadline is re-armed
       // each tick (R2 — paused reading), so closing restarts a full window.
-      tasks[idx].finishedAt = Date.now();
+      tasks[idx].finishedAt = typeof msg.finishedAt === 'number' ? msg.finishedAt : Date.now();
       tasks[idx].evictAt = Date.now() + TERMINAL_ROW_TTL_MS;
     }
+    // 通知详情批（2026-10-24）：终态帧只增键——退出码（行内 exit chip）与耗时
+    // （冻结时长，不再终态后走表）。运行帧不带 ⇒ 缺读零变化（向后兼容）。
+    if (typeof msg.exitCode === 'number') tasks[idx].exitCode = msg.exitCode;
+    if (typeof msg.durationMs === 'number') tasks[idx].durationMs = msg.durationMs;
     if (msg.heartbeat) tasks[idx].heartbeat = msg.heartbeat;
   } else {
     tasks.push({
@@ -3194,8 +3215,12 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
       status: msg.status,
       startedAt: msg.startedAt || Date.now(),
       heartbeat: msg.heartbeat || null,
-      finishedAt: isTerminal ? Date.now() : undefined,
+      finishedAt: (isTerminal && typeof msg.finishedAt === 'number') ? msg.finishedAt : (isTerminal ? Date.now() : undefined),
       evictAt: isTerminal ? Date.now() + TERMINAL_ROW_TTL_MS : undefined,
+      // 通知详情批（2026-10-24）：终态帧只增键（退出码/耗时）——仅终态帧创建的行
+      // 也同权获得 exit chip 与冻结时长。
+      exitCode: (isTerminal && typeof msg.exitCode === 'number') ? msg.exitCode : undefined,
+      durationMs: (isTerminal && typeof msg.durationMs === 'number') ? msg.durationMs : undefined,
       // 来源标注（2026-09-07 重设计）：注册会话 id（兜底推导用）+ 后端权威
       // origin/originLabel/kind（BgTaskRegistry.originFor 推导，信封同源）。
       sessionId: msg.sessionId || '',

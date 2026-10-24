@@ -209,6 +209,17 @@ object BgTaskRegistry:
     tasks.update(_ - jobId)
 
   /**
+   * 注销并返回被注销行（通知详情批 2026-10-24）：完成回调取 `startedAtMs` 算耗时
+   * （通知负载的耗时段）——注销与读数一次原子完成，防 unregister+get 两拍竞态。
+   * 行不存在（极早终态/重复回调）⇒ None，调用方耗时段落省略。
+   */
+  def unregisterReturning(jobId: String): IO[Option[ActiveTask]] =
+    tasks.modify { m =>
+      val removed = m.get(jobId)
+      (m - jobId, removed)
+    }
+
+  /**
    * #391 机制 E：移除某 session 的全部任务并返回它们——restart/Stop 联动时
    * 调用方用返回值发 WS backgroundTaskUpdate(status="cancelled") 通知前端
    * 指示器消失（agent 已死，正常的 completed 通知不会到来）。

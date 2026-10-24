@@ -1075,126 +1075,146 @@ Git safety:
     ctx.agentActorRef.map { ref => (result: Either[Throwable, ProcessResult]) =>
       val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
       val description = desc.getOrElse(firstLine)
-      val (eventType, payload, metadata, exitInfo, exitCodeOpt, errHintOpt, storeStatus) = result match
-        case Right(pr) =>
-          val rawOut = tailN match
-            case Some(n) => applyTailTruncation(pr.stdout, n)
-            case None => pr.stdout
-          val out = cleanOutput(sanitizeCardOutput(rawOut))
-          val cleanedErr = cleanOutput(pr.stderr)
-          val output = out + (if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else "")
-          val exitTxt = if pr.exitCode != 0 then s" (exit ${pr.exitCode})" else ""
-          (
-            "completed",
-            s"[Background task completed] \"$description\"$exitTxt:\n$output",
-            JsonObject(
+      // 通知详情批（作者报障 2026-10-24「后台任务通知很不详细甚至有截断」）：注销
+      // 即取回注册行——startedAtMs 算耗时进通知负载；负载组装依赖它 ⇒ unregister
+      // 前置（旧链在负载定型后才 unregister，取不到）。
+      val finishedAtMs = System.currentTimeMillis()
+      BgTaskRegistry.unregisterReturning(jobId).flatMap { registered =>
+        val durationMs = registered.map(st => (finishedAtMs - st.startedAtMs).max(0L))
+        val (eventType, payload, metadata, exitInfo, exitCodeOpt, errHintOpt, storeStatus) = result match
+          case Right(pr) =>
+            val rawOut = tailN match
+              case Some(n) => applyTailTruncation(pr.stdout, n)
+              case None => pr.stdout
+            val out = cleanOutput(sanitizeCardOutput(rawOut))
+            val cleanedErr = cleanOutput(pr.stderr)
+            // 负载组装单点 = BgNotifyPayload（纯函数）：退出码恒在（exit 0 = 显式
+            // 成功信号，旧形态只在非零才带——作者无法从通知判断任务成没成功）+
+            // 耗时 + 输出尾段（默认 20 行，截断标注带 jobId 指回详情卡看全文；
+            // 全文照旧 BgTaskOutputStore.finalizeTask 落盘）。
+            val built = BgNotifyPayload.completed(
+              description,
+              Some(pr.exitCode),
+              durationMs,
+              out,
+              cleanedErr,
+              jobId
+            )
+            (
+              "completed",
+              built.payload,
+              built.metadata,
+              if built.logTag.isEmpty then "" else s" (${built.logTag})",
+              Some(pr.exitCode),
+              None: Option[String],
+              "completed"
+            )
+          case Left(e) =>
+            val errInfo = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
+            // 输出留存区语义（仅 store；agent 通知路径 eventType 不变）：取消类
+            // 异常（cancelBackgroundJob / 会话收割 complete Left(InterruptedException)）
+            // 在留存区记 cancelled 而非 failed——用户回看时语义准确。
+            val store = e match
+              case _: InterruptedException => "cancelled"
+              case _ => "failed"
+            // 失败通知同面补料（spec ③）：错误尾段 + 耗时；异常 message 常为单行，
+            // 尾段截断只在多行错误栈生效。
+            val built = BgNotifyPayload.failed(description, errInfo, durationMs, jobId)
+            (
+              "failed",
+              built.payload,
+              built.metadata,
+              if built.logTag.isEmpty then s" ($errInfo)" else s" (${built.logTag}; $errInfo)",
+              None: Option[Int],
+              Some(errInfo),
+              store
+            )
+
+        // 🔴 「只提醒」改造口径：本处的**台账写点
+        // 已摘除**——原「等待集内任务被看护杀（TimeoutException）→ `markFailed` 终局
+        // 记账 → 节点 failed+注明」链的**生产端取消**（消费端 `NodeEngine.drainFailures`
+        // 与 `bgFailureMessage` **原样保留** ⇒ 台账恒空 ⇒ 自然走放行支）。
+        // 判据本身**不删**：`TimeoutException` 仍是**读数**（B2 硬超时+停滞杀仍经
+        // `killWith` 产生它 ⇒ 本分支仍会被命中），故保留一处**只提醒**审计：
+        // 写 `bg-slow` 事件（与 #27 mount-stalled 同族：只写事件、不终态化）。
+        // 语义分工：① 事件 = 「任务被判为停滞」这一事实的读数；② 节点终态**不再**由此
+        // 改写（此前 = 必 failed，现 = 可正常 completed）。
+        // 🔴 调用点删 ≠ 函数删：`BgTaskRegistry.markFailed` 本体保留（测试面 `:460`
+        // 与 `BashPersistentBgTaskSpec` P5 直调；唯一生产点 = 本处，现读 `rg` 1 命中 ⇒ 0）。
+        // 🔴 persistent 不在等待集、显式取消（InterruptedException）是 agent 自主决策
+        // ⇒ 两者均不入账（口径不变）。
+        val gateLedger = result match
+          case Left(e: scala.concurrent.TimeoutException) if gateOwned =>
+            auditBgSlow(
+              ctx,
+              jobId,
+              s"wait-set bg task guard-hit: job $jobId (session ${ctx.sessionId.getOrElse("")}) " +
+                s"ended with ${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("").take(160)} — " +
+                "sensor only: no failure ledger, no node failure"
+            )
+          case _ => IO.unit
+
+        // Notify agent via ExternalEvent.
+        // D1（steward 批 2026-10-23；作者裁定 09:46「目标会话死了就激活发送，不用发
+        // 给root」）：投递不再盲投「创建时焊死的会话 ActorRef」——`ref !` 是队列 offer
+        // 永不失败，目标会话已死 = 消息进无人消费的队列静默蒸发（bg-wait cap 强制收
+        // 尾后同样投尸）。交付面 = 活性判定 + 激活（复活）目标会话本身（持久化恢复
+        // spawn 同源，通知落其新回合）+ 激活不可用则向**目标会话**注入队落「待补投」
+        // 标记（复活重放补投给它）+ 三态全审计（消灭 WARN 吞掉的静默路径），见
+        // BgNotifyDelivery。无 actorSystem（harness）保持旧行为直投。
+        // ref ! 返回 IO[Unit] already — do NOT wrap in IO() or it
+        // becomes IO[IO[Unit]] (double-wrapped, fires at construction time).
+        val notifyAgent = BgNotifyDelivery.deliverAgentEvent(
+          targetRef = Some(ref),
+          targetSessionId = ctx.sessionId,
+          system = ctx.actorSystem,
+          registry = ctx.sharedResources.map(_.agentRegistry),
+          projectName = ctx.projectName,
+          flowNodeId = ctx.flowNodeId,
+          jobId = jobId,
+          source = "background-task",
+          eventType = eventType,
+          payload = payload,
+          metadata = metadata
+        )
+
+        // Notify frontend via WS so the indicator dismisses. 通知详情批：终态帧
+        // 补 exitCode / durationMs / finishedAt 三个只增键（面板行 exit chip 与
+        // 冻结时长；旧前端缺读法 = 忽略，向后兼容）。
+        val notifyFrontend = ctx.wsSend.fold(IO.unit) { send =>
+          send(
+            io.circe.Json.obj(
+              "type" -> "backgroundTaskUpdate".asJson,
+              "sessionId" -> ctx.sessionId.asJson,
+              // 权威分键（计数/列表分叉修复）：前端直接按 rootSessionId
+              // 分桶，替代已删除的 bgTaskRootFor 启发式逆向分键。缺省回退执行者
+              // sessionId（根会话自己的任务 root==sessionId，分桶不变）。
+              "rootSessionId" -> ctx.rootSessionId.orElse(ctx.sessionId).asJson,
+              "taskId" -> jobId.asJson,
               "description" -> description.asJson,
-              "exitCode" -> pr.exitCode.asJson,
-              "output" -> output.asJson
-            ),
-            exitTxt,
-            Some(pr.exitCode),
-            None: Option[String],
-            "completed"
-          )
-        case Left(e) =>
-          val errInfo = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
-          // 输出留存区语义（仅 store；agent 通知路径 eventType 不变）：取消类
-          // 异常（cancelBackgroundJob / 会话收割 complete Left(InterruptedException)）
-          // 在留存区记 cancelled 而非 failed——用户回看时语义准确。
-          val store = e match
-            case _: InterruptedException => "cancelled"
-            case _ => "failed"
-          (
-            "failed",
-            s"[Background task failed] \"$description\":\n$errInfo",
-            JsonObject("description" -> description.asJson),
-            s" ($errInfo)",
-            None: Option[Int],
-            Some(errInfo),
-            store
-          )
+              "status" -> eventType.asJson,
+              "exitCode" -> exitCodeOpt.asJson,
+              "durationMs" -> durationMs.asJson,
+              "finishedAt" -> finishedAtMs.asJson
+            )
+          ).handleErrorWith(e => logger.warn(s"WS send failed for background job $jobId: ${e.getMessage}"))
+        }
 
-      // 🔴 「只提醒」改造口径：本处的**台账写点
-      // 已摘除**——原「等待集内任务被看护杀（TimeoutException）→ `markFailed` 终局
-      // 记账 → 节点 failed+注明」链的**生产端取消**（消费端 `NodeEngine.drainFailures`
-      // 与 `bgFailureMessage` **原样保留** ⇒ 台账恒空 ⇒ 自然走放行支）。
-      // 判据本身**不删**：`TimeoutException` 仍是**读数**（B2 硬超时+停滞杀仍经
-      // `killWith` 产生它 ⇒ 本分支仍会被命中），故保留一处**只提醒**审计：
-      // 写 `bg-slow` 事件（与 #27 mount-stalled 同族：只写事件、不终态化）。
-      // 语义分工：① 事件 = 「任务被判为停滞」这一事实的读数；② 节点终态**不再**由此
-      // 改写（此前 = 必 failed，现 = 可正常 completed）。
-      // 🔴 调用点删 ≠ 函数删：`BgTaskRegistry.markFailed` 本体保留（测试面 `:460`
-      // 与 `BashPersistentBgTaskSpec` P5 直调；唯一生产点 = 本处，现读 `rg` 1 命中 ⇒ 0）。
-      // 🔴 persistent 不在等待集、显式取消（InterruptedException）是 agent 自主决策
-      // ⇒ 两者均不入账（口径不变）。
-      val gateLedger = result match
-        case Left(e: scala.concurrent.TimeoutException) if gateOwned =>
-          auditBgSlow(
-            ctx,
-            jobId,
-            s"wait-set bg task guard-hit: job $jobId (session ${ctx.sessionId.getOrElse("")}) " +
-              s"ended with ${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("").take(160)} — " +
-              "sensor only: no failure ledger, no node failure"
-          )
-        case _ => IO.unit
-
-      // Notify agent via ExternalEvent.
-      // D1（steward 批 2026-10-23；作者裁定 09:46「目标会话死了就激活发送，不用发
-      // 给root」）：投递不再盲投「创建时焊死的会话 ActorRef」——`ref !` 是队列 offer
-      // 永不失败，目标会话已死 = 消息进无人消费的队列静默蒸发（bg-wait cap 强制收
-      // 尾后同样投尸）。交付面 = 活性判定 + 激活（复活）目标会话本身（持久化恢复
-      // spawn 同源，通知落其新回合）+ 激活不可用则向**目标会话**注入队落「待补投」
-      // 标记（复活重放补投给它）+ 三态全审计（消灭 WARN 吞掉的静默路径），见
-      // BgNotifyDelivery。无 actorSystem（harness）保持旧行为直投。
-      // ref ! 返回 IO[Unit] already — do NOT wrap in IO() or it
-      // becomes IO[IO[Unit]] (double-wrapped, fires at construction time).
-      val notifyAgent = BgNotifyDelivery.deliverAgentEvent(
-        targetRef = Some(ref),
-        targetSessionId = ctx.sessionId,
-        system = ctx.actorSystem,
-        registry = ctx.sharedResources.map(_.agentRegistry),
-        projectName = ctx.projectName,
-        flowNodeId = ctx.flowNodeId,
-        jobId = jobId,
-        source = "background-task",
-        eventType = eventType,
-        payload = payload,
-        metadata = metadata
-      )
-
-      // Notify frontend via WS so the indicator dismisses
-      val notifyFrontend = ctx.wsSend.fold(IO.unit) { send =>
-        send(
-          io.circe.Json.obj(
-            "type" -> "backgroundTaskUpdate".asJson,
-            "sessionId" -> ctx.sessionId.asJson,
-            // 权威分键（计数/列表分叉修复）：前端直接按 rootSessionId
-            // 分桶，替代已删除的 bgTaskRootFor 启发式逆向分键。缺省回退执行者
-            // sessionId（根会话自己的任务 root==sessionId，分桶不变）。
-            "rootSessionId" -> ctx.rootSessionId.orElse(ctx.sessionId).asJson,
-            "taskId" -> jobId.asJson,
-            "description" -> description.asJson,
-            "status" -> eventType.asJson
-          )
-        ).handleErrorWith(e => logger.warn(s"WS send failed for background job $jobId: ${e.getMessage}"))
-      }
-
-      // Log first so we know the callback fired, then send both notifications
-      // independently — each has its own error recovery so one failure
-      // doesn't prevent the other.
-      BgTaskRegistry.unregister(jobId) *>
+        // Log first so we know the callback fired, then send both notifications
+        // independently — each has its own error recovery so one failure
+        // doesn't prevent the other.
         // 输出查看批：终态翻转 + 进留存区（completed/failed；cancelled 走 WS
         // cancelBackgroundJob / reclaimSession 的 finalizeTask，幂等防双写）。
         BgTaskOutputStore
           .finalizeTask(jobId, storeStatus, exitCodeOpt, errHintOpt)
           .handleErrorWith(e2 => logger.warn(s"bg-output finalize failed for job $jobId: ${e2.getMessage}")) *>
-        gateLedger *>
-        logger.info(
-          s"Background job $jobId callback: $eventType$exitInfo",
-          "sessionId" -> ctx.sessionId.getOrElse("")
-        ) *>
-        notifyFrontend.void *> notifyAgent
+          gateLedger *>
+          logger.info(
+            s"Background job $jobId callback: $eventType$exitInfo",
+            "sessionId" -> ctx.sessionId.getOrElse("")
+          ) *>
+          notifyFrontend.void *> notifyAgent
+      }
     }
 
   /**

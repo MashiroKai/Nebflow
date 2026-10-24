@@ -357,6 +357,16 @@ object Defaults:
     sys.props.getOrElse("nebflow.bg.rateBreakerCooldownMs", (10L * 60L * 1000L).toString).toLong
 
   /**
+   * 后台任务终态通知（agent 注入气泡 + 前台面板）携带的**输出尾段行数**（作者报障
+   * 2026-10-24「后台任务通知很不详细甚至有截断」批）：完成/失败通知正文只带末尾
+   * 本值行 + 截断标注（总行数 + jobId 指回），全文照旧由 BgTaskOutputStore 落盘、
+   * 面板行点击经 REST 详情卡查看——通知面不背大输出，回看面不丢字节。
+   * `nebflow.bg.notifyTailLines`，默认 20（BgRateWindowMs 同款 I2 prop 缝）。
+   */
+  def BgNotifyTailLines: Int =
+    sys.props.getOrElse("nebflow.bg.notifyTailLines", "20").toInt
+
+  /**
    * Background job idle timeout — if a background command produces no output
    * for this many seconds, it is automatically cancelled and the agent is
    * notified with a timeout error. This prevents delegate/subtask agents from
