@@ -16,8 +16,9 @@ import org.typelevel.ci.CIString
  * Contract pinned here:
  *  - single-segment, two-segment (locales/, viewers/) and arbitrary-depth
  *    paths are all legal shapes and 200 when the resource exists
- *  - Cache-Control: no-cache at EVERY depth (this closes the old gap where
- *    /js/locales shipped without it)
+ *  - Cache-Control: bare requests (no version param) stay `no-cache` at EVERY
+ *    depth; versioned requests (`?v=<fingerprint>` — the index-reference form,
+ *    缓存击穿批 2026-10-25) get the long-lived immutable shipped-asset policy
  *  - traversal is rejected: literal ".." segments never reach the resource
  *    lookup; encoded "%2e%2e" and backslash forms 404 (no such resource)
  *  - missing resources 404 at any depth; "/js" (no slash) is declined
@@ -28,7 +29,7 @@ class JsStaticRoutesSpec extends FunSuite:
     val req = Request[IO](Method.GET, Uri.unsafeFromString(path))
     StaticRoutes.jsRoutes(req).value.unsafeRunSync()
 
-  private def assertServed(path: String): Unit =
+  private def assertServed(path: String, expectedCache: String = "no-cache"): Unit =
     val resp = get(path).get
     assertEquals(resp.status, Status.Ok, s"expected 200 for $path")
     val contentType = resp.headers.get(CIString("Content-Type")).map(_.head.value)
@@ -36,13 +37,23 @@ class JsStaticRoutesSpec extends FunSuite:
       contentType.exists(_.contains("javascript")),
       s"expected JS content type for $path, got: $contentType"
     )
-    // no-cache at every depth: rebuilt classpath resources must be picked
-    // up by the browser during development.
+    // Bare requests: no-cache at every depth (module-graph imports have no
+    // version param — revalidation keeps them fresh). Versioned requests: the
+    // content-addressed URL makes the long-lived immutable policy safe.
     val cacheControl = resp.headers.get(CIString("Cache-Control")).map(_.head.value)
-    assertEquals(cacheControl, Some("no-cache"), s"expected no-cache for $path")
+    assertEquals(cacheControl, Some(expectedCache), s"expected $expectedCache for $path")
 
   test("serves single-segment modules with JS content type and no-cache") {
     assertServed("/js/main.js")
+  }
+
+  test("versioned request gets the immutable shipped-asset policy (缓存击穿批)") {
+    // The URL form index.html emits after versionedIndexHtml: ?v=<16 hex>.
+    assertServed("/js/main.js?v=0123456789abcdef", StaticRoutes.ShippedAssetCacheControl)
+  }
+
+  test("versioned URL with empty v value stays bare (no-cache)") {
+    assertServed("/js/main.js?v=", "no-cache")
   }
 
   test("serves two-segment modules (locales) — no-cache gap now closed") {

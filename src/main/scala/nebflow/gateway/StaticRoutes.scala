@@ -277,7 +277,8 @@ object StaticRoutes:
   def indexResponse: IO[Response[IO]] = staticSource match
     case StaticSource.BundledDist => indexWithBrand("web-dist/index.html")
     case StaticSource.DiskDist(root) => indexWithBrandFile(root / "index.html")
-    case StaticSource.DevTree => indexWithBrand("web/index.html")
+    // 缓存击穿批：dev 树 index 走版本化改写（dist 树已是内容寻址形态，不动）。
+    case StaticSource.DevTree => devIndexWithBrand
   end indexResponse
 
   // ── 隧道首开内联打包面（console-fastpath 批 2026-10-23·腿②「请求打包」）─────
@@ -317,7 +318,9 @@ object StaticRoutes:
       case StaticSource.DevTree =>
         IO.blocking(readClasspathResourceUtf8("web/index.html")).flatMap {
           case None => NotFound()
-          case Some(html) => brandInjectedResponse(packedIndexHtml(html))
+          // 打包在前（干净路径供 Pack*Re 捕获），版本化在后（css/vendor 已内联，
+          // 只剩 module 入口 src 可版本化 —— 与 dev 脸同一改写函数，幂等形状类）。
+          case Some(html) => brandInjectedResponse(versionedIndexHtml(packedIndexHtml(html)))
         }
       case _ => indexResponse
   end packedIndexResponse
@@ -383,6 +386,59 @@ object StaticRoutes:
           "<script>" + js + "</script>"
     }
   end packedIndexHtml
+
+  // ── 静态资源缓存击穿批（2026-10-25 作者令④）：index 引用版本化 ─────────
+  //
+  // dev 树 index.html 里每个 css/…、vendor/…（stylesheet/defer script）与
+  // js/…（module 入口）引用改写为 `<path>?v=<内容指纹>`（[[AssetVersions.versionOf]]
+  // 现算，file: 资源 mtime 变即重算 ⇒ sbt run 热编辑下一导航即新 URL）。带版本
+  // URL 由静态路由面回 immutable（[[assetCacheControl]]）—— 修完即生效：手机端
+  // 旧缓存条目按旧键（裸路径）留在原地，index（no-cache）永拿最新引用。
+  //
+  // 转换纪律（[[versionedIndexHtml]] 纯函数、spec 直读）：
+  //   - 只动两种已知形状：`href="(css|vendor)/…"（stylesheet link）与
+  //     `src="(vendor|js)/…"（script）—— favicon 族引用自带静态 digest（?v=…）
+  //     且前缀不匹配，零触碰；未知形状逐字保留（packedIndexHtml 同族回落纪律）；
+  //   - 单资源指纹失败（缺文件/IO 意外）⇒ 原 tag 原样回落（裸路径 ⇒ no-cache
+  //     语义自动接管，页面行为与本批之前逐字节一致）；
+  //   - 幂等：已带 `?v=` 的引用（二次改写/packed 面）不匹配形状类，零触碰；
+  //   - dist 脸（BundledDist/DiskDist）不走本改写 —— esbuild 产物的 app 代码
+  //     已是 assets/app-[hash] 内容寻址形态，vendor 面维持现状（bare ⇒ no-cache）。
+  //
+  // 模块图边界（刻意不做）：ES module 内部相对 import 指示符不带版本参数，
+  // 本批不改任何 js 字节 —— 其新鲜度由 sw.js 索引指纹链（index 变 ⇒ 清静态
+  // 缓存 + 补导航）+ 裸路径 no-cache 重验证保底。
+
+  /** stylesheet link：`<link rel="stylesheet" href="css|vendor/...">` 的 href 值。 */
+  private val VerHrefRe = """(href=")((?:css|vendor)/[^"?]+)(")""".r
+
+  /** script 引用：defer vendor 与 module 入口（js/main.js、js/mobile/bootstrap.js）。 */
+  private val VerSrcRe = """(src=")((?:vendor|js)/[^"?]+)(")""".r
+
+  private def versionTag(path: String): Option[String] =
+    AssetVersions.versionOf(s"web/$path").map(h => s"?v=$h")
+
+  /** index 资源引用版本化（纯函数）：命中形状插 `?v=<指纹>`，未命中原样保留。 */
+  private[gateway] def versionedIndexHtml(html: String): String =
+    val afterHref = rebuildMatches(html, VerHrefRe) { m =>
+      versionTag(m.group(2)) match
+        case None    => m.matched
+        case Some(v) => s"${m.group(1)}${m.group(2)}$v${m.group(3)}"
+    }
+    rebuildMatches(afterHref, VerSrcRe) { m =>
+      versionTag(m.group(2)) match
+        case None    => m.matched
+        case Some(v) => s"${m.group(1)}${m.group(2)}$v${m.group(3)}"
+    }
+  end versionedIndexHtml
+
+  /** dev 树 index 应答：版本化 + brand 注入（响应契约同 [[indexWithBrand]]）。 */
+  private[gateway] def devIndexWithBrand: IO[Response[IO]] =
+    IO.blocking(readClasspathResourceUtf8("web/index.html")).flatMap {
+      case None => NotFound()
+      case Some(html) => brandInjectedResponse(versionedIndexHtml(html))
+    }
+  end devIndexWithBrand
 
   private def readClasspathResourceUtf8(name: String): Option[String] =
     Option(getClass.getClassLoader.getResourceAsStream(name)).map { in =>
@@ -450,6 +506,27 @@ object StaticRoutes:
 
   /** W2: hashed dist assets are content-addressed — cache for a year, immutable. */
   val HashedAssetCacheControl: String = "public, max-age=31536000, immutable"
+
+  /**
+   * 静态资源缓存击穿批（2026-10-25 作者令④）：shipped 静态树在**内容寻址版本化
+   * URL**（index 引用带 `?v=<内容指纹>`，[[AssetVersions.versionOf]] 现算）下的
+   * 长效缓存策略 —— 与 [[HashedAssetCacheControl]] 同值：URL 含内容哈希 ⇒ 内容
+   * 变则 URL 变，immutable 永远不可能 serve 到旧字节；index.html 仍 no-cache 且
+   * 是唯一新鲜裁判。裸路径请求（无版本参数）走 `no-cache`（[[assetCacheControl]]
+   * 的另一腿）：ES module 图内的相对 import 不带版本参数，其新鲜度由既有 sw.js
+   * 索引指纹链 + no-cache 重验证保底，本批不改模块图字节。
+   */
+  val ShippedAssetCacheControl: String = "public, max-age=31536000, immutable"
+
+  /**
+   * 静态资产应答的 Cache-Control 单点：请求带非空 `v` 版本参数 ⇒ immutable
+   * 长效（内容寻址，安全）；裸请求 ⇒ no-cache（现状语义，热编辑/重验证保底）。
+   * 消费面 = jsRoutes / vendorSubtree（本文件）与 WebSocketRoutes 的
+   * css/vendor/favicon 族 case。
+   */
+  def assetCacheControl(req: Request[IO]): String =
+    if req.params.get("v").exists(_.nonEmpty) then ShippedAssetCacheControl
+    else "no-cache"
 
   /**
    * G1: serve user-uploaded attachments from
@@ -684,7 +761,7 @@ object StaticRoutes:
         val path = segs.mkString("/")
         StaticFile
           .fromResource(s"web/vendor/$path", Some(req))
-          .map(_.putHeaders("Cache-Control" -> "no-cache"))
+          .map(_.putHeaders("Cache-Control" -> assetCacheControl(req)))
           .getOrElseF(NotFound())
       end if
     end if
@@ -739,9 +816,11 @@ object StaticRoutes:
    *
    * Manual segment parsing (same pattern and guard style as the monaco
    * route): ".." and backslash segments are rejected; everything else is
-   * joined and looked up as a classpath resource. no-cache at EVERY depth —
-   * rebuilt classpath resources must be picked up by the browser during
-   * development (this also fixes locales, which used to ship without it).
+   * joined and looked up as a classpath resource. Cache-Control at EVERY
+   * depth via [[assetCacheControl]]（静态资源缓存击穿批 2026-10-25）：带版本
+   * 参数（index 引用的 `?v=<内容指纹>` 形态）⇒ immutable 长效；裸请求（模块
+   * 图相对 import）⇒ no-cache 重验证保底。此前全深度 no-cache 的重验证往返
+   * （隧道腿每资产一跳）由版本化 URL 的 immutable 直出消解。
    *
    * Standalone (zero class deps) so it is directly unit-testable
    * (JsStaticRoutesSpec); composed ahead of the instance routes like
@@ -761,7 +840,7 @@ object StaticRoutes:
           val path = relParts.mkString("/")
           StaticFile
             .fromResource(s"web/js/$path", Some(req))
-            .map(_.putHeaders("Cache-Control" -> "no-cache"))
+            .map(_.putHeaders("Cache-Control" -> assetCacheControl(req)))
             .getOrElseF(NotFound())
         end if
       end if
