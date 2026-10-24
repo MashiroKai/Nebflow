@@ -7,12 +7,17 @@ on:
     branches: [main]
 
 env:
-  SBT_OPTS: "-Xms512m -Xmx2g"
+  # 2026-10-24 CI 迁移批（作者令「试试ci放github上跑」）：本机 sbt test 两次事故
+  # （Metaspace OOM、进程假死 5h）后，sbt 启动 JVM 内存钉为作者本机验证过的组合
+  # —— -Xmx3g -XX:MaxMetaspaceSize=2g（Metaspace 上限是 OOM 的直接解）。
+  # fork 出的测试 JVM 不受此影响（build.sbt MaxRAMPercentage=12.5 单点管辖）。
+  SBT_OPTS: "-Xms512m -Xmx3g -XX:MaxMetaspaceSize=2g"
   COURSIER_REPOSITORIES: "ivy2Local|https://maven.aliyun.com/repository/public|https://repo1.maven.org/maven2"
 
 jobs:
   js-types:
     name: JS Types (checkJs gate)
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -87,6 +92,7 @@ jobs:
 
   user-knowledge-gate:
     name: User Knowledge Gate (#338)
+    timeout-minutes: 10
     # Fail-fast static gate: user-specific knowledge (provider gateway IDs,
     # personal paths, API keys) must not leak into src/main Scala sources.
     # Same logic locally: bash scripts/check-user-knowledge.sh
@@ -98,6 +104,7 @@ jobs:
 
   dead-logging-gate:
     name: Dead Logging Gate
+    timeout-minutes: 10
     # Fail-fast static gate: NebflowLogger double-wrap (IO(IO[Unit]) — inner
     # log never runs; all known instances sat on error-recovery paths).
     # Same logic locally: bash scripts/check-dead-logging.sh
@@ -109,6 +116,7 @@ jobs:
 
   jdk-baseline-gate:
     name: JDK Baseline Gate (21)
+    timeout-minutes: 10
     # Fail-fast static gate. TWO constants, NOT one number:
     #   JDK_BASELINE        = 21  runtime floor, declared on five surfaces —
     #                             release/install.sh, release/install.ps1, the
@@ -135,6 +143,7 @@ jobs:
 
   installer-home-gate:
     name: Installer Default Home Gate (~/.stand)
+    timeout-minutes: 10
     # Fail-fast static gate (再生治本批 2026-10-22): the installer/shim default
     # home is STAND_HOME env first, then brand homeDirName (~/.stand) — the
     # installer NEVER writes the legacy ~/.nebflow root and setup_path retires
@@ -150,6 +159,7 @@ jobs:
 
   lint:
     name: Lint (scalafmt + scalafix)
+    timeout-minutes: 25
     # Format gate: `make lint` / `make check` existed but were never wired into
     # CI — only -Xfatal-warnings compile was enforced. This job runs the same
     # scalafmtCheckAll as the Makefile quality targets so a formatting
@@ -165,7 +175,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 23
           cache: sbt
       - name: Setup sbt
         shell: bash
@@ -194,6 +204,7 @@ jobs:
 
   compile:
     name: Compile (${{ matrix.os }})
+    timeout-minutes: 30
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -204,7 +215,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 23
           cache: sbt
       - name: Setup sbt
         shell: bash
@@ -221,6 +232,7 @@ jobs:
 
   test:
     name: Test
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     needs: compile
     steps:
@@ -228,7 +240,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 23
           cache: sbt
       - name: Setup sbt
         shell: bash
@@ -246,6 +258,7 @@ jobs:
 
   assembly:
     name: Build JAR
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     needs: [compile, test]
     steps:
@@ -253,7 +266,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 23
           cache: sbt
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -304,6 +317,7 @@ jobs:
 
   smoke-test:
     name: Smoke Test (${{ matrix.os }})
+    timeout-minutes: 20
     runs-on: ${{ matrix.os }}
     needs: assembly
     strategy:
@@ -324,7 +338,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 23
       - uses: actions/download-artifact@v4
         with:
           name: ${{ env.LOWER_NAME }}-jar
@@ -391,6 +405,7 @@ jobs:
 
   frontend-smoke:
     name: Frontend Smoke (Playwright, real backend)
+    timeout-minutes: 40
     runs-on: ubuntu-latest
     needs: assembly
     steps:
@@ -405,7 +420,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 23
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -465,6 +480,30 @@ jobs:
         # Token comes from the fresh instance's own ~/.nebflow/auth.json —
         # smoke.spec.mjs reads it when NEBFLOW_TOKEN is not set.
         run: npx playwright test tests/smoke.spec.mjs
+      - name: Bridge fresh-instance token (instance-backed spec suite)
+        shell: bash
+        # 2026-10-24 CI 迁移批：补足 node 全量的 instance-backed 面。服务器首启
+        # 自动生成 ~/.stand/auth.json（Auth.loadOrCreateToken；dataRoot 解析
+        # src/main/scala/nebflow/shared/paths.scala），各 spec 的 token 契约
+        # （NEBFLOW_TOKEN / $NEBFLOW_HOME/auth.json / $NEBFLOW_HOME_DIR/auth.json）
+        # 由这里统一桥接；BASE_URL / NEBFLOW_URL 全部钉到本 job 的 :8080 实例。
+        run: |
+          echo "NEBFLOW_TOKEN=$(cat "$HOME/.stand/auth.json")" >> "$GITHUB_ENV"
+          echo "NEBFLOW_HOME=$HOME/.stand" >> "$GITHUB_ENV"
+          echo "NEBFLOW_HOME_DIR=$HOME/.stand" >> "$GITHUB_ENV"
+          echo "BASE_URL=http://localhost:8080" >> "$GITHUB_ENV"
+          echo "NEBFLOW_URL=http://localhost:8080" >> "$GITHUB_ENV"
+      - name: Instance-backed specs (askuser / workspace-picker / plugins panels)
+        shell: bash
+        run: npx playwright test tests/askuser.spec.mjs tests/askuser-attach.spec.mjs tests/workspace-picker.spec.mjs tests/plugins-panel-redesign.spec.mjs tests/plugins-panel-two-actions.spec.mjs
+      - name: Instance-backed spec (clientconn-wake, standalone script)
+        shell: bash
+        run: node tests/clientconn-wake.spec.mjs
+      - name: Instance-backed spec (session-rail, standalone, destructive — must run last)
+        shell: bash
+        # session-rail 故意排最后：它会轮换 token 并吊销全部会话（spec 自带
+        # 断言即此），throwaway 实例上无害，但跑了之后别的 spec 的会话全废。
+        run: node tests/session-rail.spec.mjs
       - name: Verify web assets (C1, dist tree)
         shell: bash
         # The CI jar contains the P1 bundle — guard the PUBLISHED tree.
@@ -479,8 +518,48 @@ jobs:
         shell: bash
         run: kill $SERVER_PID 2>/dev/null || true
 
+  frontend-specs:
+    name: Frontend Specs (self-contained suite, Playwright)
+    # 2026-10-24 CI 迁移批：补足 node 全量面。本机全量 = sbt test + tests/*.spec.mjs；
+    # 此前 CI 只跑 smoke.spec.mjs 一个。本 job 跑自足 spec（自带 stub 服务 /
+    # page.route 静态面 / WS 回放，零后端零外网）中走 @playwright/test 的全部——
+    # 收集面与隔离名单单点管辖于 playwright.config.mjs（独立 node 脚本不进收集面，
+    # instance-backed 由 frontend-smoke 点名跑）。workers=1 钉在配置里：大量 spec
+    # 绑定固定默认端口（8117–8300，有重复占用），并行必撞。
+    # 首轮观察期 continue-on-error：这批 spec 从未在 CI 跑过，先取一轮真实基线
+    # （失败列表在 job 日志可见），全绿后翻成硬门禁（= 删除本行）。
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install Playwright (chromium + webkit)
+        # webkit：nffile-three-tier / nffile-503-backoff / imgcard-click-safari-compat /
+        # mdscroll-toc-scroll 四个 spec 显式 import webkit（Safari 行为兼容面）。
+        run: |
+          npm install --no-save --no-package-lock @playwright/test@1.62.0
+          npx playwright install --with-deps chromium webkit
+      - name: Run self-contained spec suite
+        env:
+          # project-panel-archive.spec.mjs 的默认 SHOT_DIR 是 mac 形态
+          # （/Users/dev/...），ubuntu 上必须覆盖到可写目录。
+          ARCHIVE_SHOT_DIR: ${{ runner.temp }}/archive-shots
+        run: PW_SELFCONTAINED_ONLY=1 npx playwright test
+      - name: Upload failure traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
   docker-test:
     name: Docker Build Test
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     needs: assembly
     steps:

@@ -61,7 +61,9 @@ node_modules/
 test-results/
 # NOTE: package.json / package-lock.json are TRACKED since P1 (esbuild build
 # tooling, scripts/build-web.mjs) - they used to be ignored as scratch files.
-playwright.config.mjs
+# playwright.config.mjs likewise TRACKED since 2026-10-24 CI 迁移批（全量 spec
+# 收集面/隔离名单的唯一管辖点，ci.yml frontend-specs 依赖它）——旧的
+# scratch-file 忽略规则删除。
 
 # Test artifacts
 gui-test-screenshots/
