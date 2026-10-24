@@ -92,6 +92,68 @@ class CanvasTabStoreSpec extends CatsEffectSuite:
     assert(CanvasTabs.validate(json("""{"v":2,"tabs":[],"activeTabId":5}""")).isLeft)
   }
 
+  // ── validate：LWW 批新字段（updatedAt / openedAt，2026-10-24）──
+
+  test("validate accepts numeric updatedAt and per-tab openedAt") {
+    val p = json(
+      """{"v":2,"tabs":[{"id":"x","title":"X","type":"t","openedAt":1730000000000}],"updatedAt":1730000000001}"""
+    )
+    assertEquals(CanvasTabs.validate(p), Right(p))
+  }
+
+  test("validate rejects non-numeric updatedAt / openedAt") {
+    assert(CanvasTabs.validate(json("""{"v":2,"tabs":[],"updatedAt":"soon"}""")).isLeft)
+    assert(CanvasTabs.validate(json("""{"v":2,"tabs":[{"id":"x","title":"X","type":"t","openedAt":"yesterday"}]}""")).isLeft)
+  }
+
+  // ── lwwVerdict：存档级 LWW 裁决（跨设备收敛批 2026-10-24）──
+  // 验收点（spec 钉死）：
+  //   无存档 → 接受且补 now 戳（老前端无戳写也落可比基线）
+  //   来方无戳 → 接受且补 now 戳（向后兼容）
+  //   双方有戳：来方 >= 存档 → 接受（存档逐字用来方戳）；来方更旧 → 拒绝回存档
+
+  test("lwwVerdict accepts first write into empty store and stamps it with now") {
+    val incoming = json("""{"v":2,"tabs":[]}""")
+    val saved = CanvasTabs.lwwVerdict(None, incoming, 1000L)
+    assertEquals(saved, Right(json("""{"v":2,"tabs":[],"updatedAt":1000}""")))
+  }
+
+  test("lwwVerdict accepts stamp-less (legacy client) write and stamps it with now") {
+    val stored = Some(json("""{"v":2,"tabs":[{"id":"a","title":"A","type":"t"}],"updatedAt":500}"""))
+    val incoming = json("""{"v":2,"tabs":[{"id":"b","title":"B","type":"t"}]}""")
+    val saved = CanvasTabs.lwwVerdict(stored, incoming, 900L)
+    assertEquals(saved, Right(json("""{"v":2,"tabs":[{"id":"b","title":"B","type":"t"}],"updatedAt":900}""")))
+  }
+
+  test("lwwVerdict accepts newer or equal stamp verbatim (client event time is authoritative)") {
+    val stored = Some(json("""{"v":2,"tabs":[],"updatedAt":500}"""))
+    val newer = json("""{"v":2,"tabs":[{"id":"n","title":"N","type":"t"}],"updatedAt":600}""")
+    assertEquals(CanvasTabs.lwwVerdict(stored, newer, 9999L), Right(newer))
+    // 等戳 = 同一事件的补写/重放，接受（幂等）。
+    val equal = json("""{"v":2,"tabs":[{"id":"e","title":"E","type":"t"}],"updatedAt":500}""")
+    assertEquals(CanvasTabs.lwwVerdict(stored, equal, 9999L), Right(equal))
+  }
+
+  test("lwwVerdict rejects stale (older-stamp) write and returns the authoritative archive") {
+    val kernel = json("""{"v":2,"tabs":[{"id":"keep","title":"K","type":"t"}],"updatedAt":900}""")
+    val stale = json("""{"v":2,"tabs":[{"id":"revived","title":"R","type":"t"}],"updatedAt":800}""")
+    assertEquals(CanvasTabs.lwwVerdict(Some(kernel), stale, 9999L), Left(Some(kernel)))
+  }
+
+  test("lwwVerdict compares against stored stamp when incoming carries one and stored lacks one") {
+    // 存档无戳（批前遗留盘上数据）视作 0：任何带戳来方都赢。
+    val legacy = Some(json("""{"v":2,"tabs":[]}"""))
+    val incoming = json("""{"v":2,"tabs":[{"id":"n","title":"N","type":"t"}],"updatedAt":1}""")
+    assertEquals(CanvasTabs.lwwVerdict(legacy, incoming, 9999L), Right(incoming))
+  }
+
+  test("stampOf / openedAtOf read the LWW stamps (missing → None)") {
+    assertEquals(CanvasTabs.stampOf(json("""{"v":2,"updatedAt":42}""")), Some(42L))
+    assertEquals(CanvasTabs.stampOf(json("""{"v":2}""")), None)
+    assertEquals(CanvasTabs.openedAtOf(json("""{"id":"x","openedAt":7}""")), Some(7L))
+    assertEquals(CanvasTabs.openedAtOf(json("""{"id":"x"}""")), None)
+  }
+
   // ── parseBody：大小限制 + JSON 解析 + 校验链 ──────────────
 
   test("parseBody accepts valid payload under the limit") {

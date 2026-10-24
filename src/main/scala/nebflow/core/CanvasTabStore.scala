@@ -1,7 +1,7 @@
 package nebflow.core
 
 import cats.effect.IO
-import io.circe.{Json, parser}
+import io.circe.{Json, JsonObject, parser}
 import nebflow.shared.NebflowLogger
 
 /**
@@ -16,18 +16,55 @@ import nebflow.shared.NebflowLogger
  * 字段契约（与前端 js/canvas.js persistTabs/restoreTabs 的 v2 schema 对齐，
  * 2026-08-30 实测）：
  *   { "v": 2,
- *     "tabs": [ { "id", "title", "type", "absPath"?, "pinned"?, "closable"? } ],
- *     "activeTabId"? }
+ *     "tabs": [ { "id", "title", "type", "absPath"?, "pinned"?, "closable"?,
+ *                 "openedAt"? } ],
+ *     "activeTabId"?,
+ *     "updatedAt"? }
  * - v 必须为数字 2
  * - tabs 必须是数组；id/type/title 必填 string（id 非空）；
  *   absPath 可选 null|string；pinned/closable 可选 boolean；
+ *   openedAt 可选 number（标签打开事件毫秒戳，跨设备 per-tab LWW 基线）；
  *   activeTabId 可选 null|string
+ * - updatedAt 可选 number（存档级 LWW 戳，跨设备收敛批 2026-10-24：
+ *   关闭/打开 = 一次带戳权威写，服务端按戳拒绝陈旧写并广播收敛）
  * - 未知字段忽略（宽容，向前兼容）
  */
 object CanvasTabs:
 
   /** PUT body 上限（防滥用）——256 KiB。 */
   val MaxBodyBytes: Int = 256 * 1024
+
+  /** 存档级 LWW 戳（顶层 updatedAt，毫秒）。缺失/非数 → None。 */
+  def stampOf(json: Json): Option[Long] =
+    json.hcursor.downField("updatedAt").as[Long].toOption
+
+  /** 单标签打开事件戳（tabs[i].openedAt，毫秒）。缺失/非数 → None。 */
+  def openedAtOf(tab: Json): Option[Long] =
+    tab.hcursor.downField("openedAt").as[Long].toOption
+
+  /**
+   * LWW 写穿裁决（跨设备收敛批 2026-10-24）。规则：
+   *   - 无存档 → 接受（Right）。落盘件补 `updatedAt = nowMs`（来方无戳时），
+   *     此后所有写都有可比的戳。
+   *   - 来方无戳（老前端）→ 接受（向后兼容），落盘件补 nowMs 戳。
+   *   - 双方有戳：来方戳 >= 存档戳 → 接受（存档逐字用来方戳——客户端事件时序
+   *     是权威，服务端不改写）；来方戳更旧 → 拒绝（Left(权威存档)——路由层转
+   *     409 并回存档，让陈旧写方即时收敛，而不是覆盖掉他端更新的关闭事件）。
+   * 纯函数，便于单测。
+   */
+  def lwwVerdict(stored: Option[Json], incoming: Json, nowMs: Long): Either[Option[Json], Json] =
+    val stamped = if (stampOf(incoming).isDefined) incoming
+    else Json.fromJsonObject(
+      incoming.asObject.getOrElse(JsonObject.empty)
+        .add("updatedAt", Json.fromLong(nowMs))
+    )
+    stored match
+      case None         => Right(stamped)
+      case Some(kernel) =>
+        stampOf(incoming) match
+          case Some(s) if s >= stampOf(kernel).getOrElse(0L) => Right(incoming)
+          case Some(_)                                       => Left(Some(kernel))
+          case None                                          => Right(stamped)
 
   /**
    * 校验 v2 存档 JSON。成功返回规范化后的 Json（原样透传，不做字段裁剪），
@@ -53,6 +90,11 @@ object CanvasTabs:
         .as[Option[String]]
         .left
         .map(_ => "'activeTabId' must be a string or null")
+      _ <- hc
+        .downField("updatedAt")
+        .as[Option[Long]]
+        .left
+        .map(_ => "'updatedAt' must be a number (ms epoch LWW stamp)")
     yield json
 
     end for
@@ -70,6 +112,11 @@ object CanvasTabs:
       _ <- hc.downField("absPath").as[Option[String]].left.map(_ => "'absPath' must be a string or null")
       _ <- hc.downField("pinned").as[Option[Boolean]].left.map(_ => "'pinned' must be a boolean")
       _ <- hc.downField("closable").as[Option[Boolean]].left.map(_ => "'closable' must be a boolean")
+      _ <- hc
+        .downField("openedAt")
+        .as[Option[Long]]
+        .left
+        .map(_ => "'openedAt' must be a number (ms epoch open-event stamp)")
     yield ()
 
   /**

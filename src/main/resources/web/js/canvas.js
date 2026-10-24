@@ -41,6 +41,35 @@ let serverPersistTimer = null;
 // 避免同一文件被发两次 readFile（重复请求/重复打开）。
 const requestedFilePaths = new Set();
 
+// ── 跨设备收敛（canvas-tabs LWW 批 2026-10-24）──────────────
+// 作者报障：A 机关闭标签，B 机刷新后标签复活。根因 = B 机过期 localStorage
+// 先行恢复（restoreTabs 旧逻辑本地先行）+ reconcileFromServer 只加不减，
+// 且恢复期 setActiveTab→persistTabs 把本地并集防抖 PUT 回服务端（把已关标签
+// 二次污染进权威存档，两台互相复活）。本批对齐 identity-sync 批语义
+// （agentProfile.js sha 对账 + agentIdentityChanged 广播）：
+//   · 关闭/打开 = 一次带 LWW 戳（updatedAt）的权威写：写穿服务端 → 服务端
+//     409 拒陈旧写并广播 canvasTabsChanged → 各设备按戳收敛（补开缺失 +
+//     收敛删除）；
+//   · 刷新 = 服务端为准（server-first 恢复，localStorage 仅离线兜底），
+//     不复活已关标签；恢复期写入被 hydration 闸压住，不回灌权威存档；
+//   · WS 重连 = 补收敛（先对账再重放脏写，离线期间他端关闭的标签落地）。
+// authTabsStamp   = 最新权威存档戳（GET/PUT/广播三通道共享）。
+// serverAbsent    = 「权威快照里已不存在的标签 id → 快照戳」；openTab 以
+//                   openedAt 与之 LWW，压住恢复期在途 readFile 回声复活。
+// localClosedAt   = 本端关闭时刻表；压住广播重放本端已关的标签。
+// fileRestorePending = 在途恢复 readFile（absPath → 派出时刻 + 存档原始打开戳，
+// 回声 open 的事件溯源与 LWW 基线回填）。
+let authTabsStamp = 0;
+const serverAbsent = new Map();        // tabId -> 缺失它的权威快照戳
+const localClosedAt = new Map();       // tabId -> 本端关闭时刻（毫秒）
+// absPath -> { issuedAt, openedAt }：在途恢复 readFile 的派出时刻（回声 open 的
+// 事件时刻溯源）+ 存档携带的原始打开戳（恢复成功时回填 entry.openedAt，per-tab
+// LWW 基线跨刷新不漂移）。
+const fileRestorePending = new Map();
+let hydrating = true;                  // 恢复期写闸：true = persistTabs 只记账不 PUT
+let hydrateDirty = false;
+let canvasTabsWsBound = false;
+
 // Track pending close timeout so openCanvas can cancel it (rapid toggle safety).
 let closeTimeout = null;
 
@@ -628,6 +657,27 @@ function disposeTabEditor(entry) {
 export function openTab(id, title, opts = {}) {
   const { type = 'generic', closable = true, pinned = false } = opts;
 
+  // 跨设备收敛（LWW 批）：权威快照里已不存在的标签，open 事件的戳不晚于快照戳
+  // ⇒ 已被他端关闭，拒绝复活。压住两条回声路径：恢复期在途 readFile 的响应回声
+  // （open 事件溯到存档原始打开戳/派出时刻）、旧缓存携带的 openedAt。全新打开
+  // （无显式 openedAt、无在途恢复）= 当前时刻，恒新于历史快照，永不被拒——
+  // 他端关闭不影响本端此后对该文件的主动打开。
+  const pendingRestore = opts.absPath ? fileRestorePending.get(opts.absPath) : null;
+  const absentAt = serverAbsent.get(id);
+  if (absentAt !== undefined) {
+    const openedAt = opts.openedAt || (pendingRestore && pendingRestore.openedAt) ||
+      (pendingRestore && pendingRestore.issuedAt) || Date.now();
+    if (absentAt >= openedAt) {
+      console.log('[openTab] refused (absent from authoritative archive):', id);
+      return null;
+    }
+  }
+  // 在途恢复的回声落定（接受的成功打开）：消费溯源记录——此后同路径的再打开是
+  // 全新事件（openedAt = now），不吃恢复期的旧戳。
+  const openedAt = opts.openedAt ||
+    (pendingRestore ? (pendingRestore.openedAt || pendingRestore.issuedAt) : 0) || Date.now();
+  if (pendingRestore && !opts.openedAt) fileRestorePending.delete(opts.absPath);
+
   // Open the panel if it's not already visible.
   if (!isCanvasOpen()) openCanvas();
 
@@ -694,6 +744,9 @@ export function openTab(id, title, opts = {}) {
 
   const entry = { id, title, type, paneEl: pane, tabEl: tab, closable, pinned,
                   absPath: opts.absPath || null,
+                  // LWW 批：打开事件戳（显式 openedAt > 在途恢复携带的存档原值 >
+                  // now）。
+                  openedAt,
                   // canvasdrop: the write root + request path the pane was
                   // opened with. The drop handler reuses them verbatim so its
                   // writeFile lands under the same containment root as the
@@ -726,6 +779,13 @@ function teardownTab(id) {
   entry.paneEl.remove();
   entry.tabEl.remove();
   tabs.delete(id);
+  // LWW 批：登记本端关闭时刻——晚于快照戳的本地关闭不被广播补开（LWW 归本地）。
+  // 有界（进程存活的会话级表）：超上限弃最旧，只防极端长会话下的慢泄漏。
+  localClosedAt.set(id, Date.now());
+  if (localClosedAt.size > 200) {
+    const oldest = localClosedAt.keys().next();
+    if (!oldest.done) localClosedAt.delete(oldest.value);
+  }
   for (const [k, v] of previewTabs) { if (v === id) previewTabs.delete(k); }
   persistTabs();
   deckNotifyRemoved(id);
@@ -4114,15 +4174,22 @@ function persistTabs() {
         absPath: t.absPath || null,   // null for panel tabs (Teams/Flows)
         pinned: t.pinned,
         closable: t.closable !== false,  // default true
+        // 跨设备收敛（LWW 批）：打开事件毫秒戳随存档走——刷新后从缓存/服务端
+        // 恢复的标签保留原始打开时刻，per-tab LWW（openTab 的 serverAbsent
+        // 拒绝面、converge 的删除豁免面）才有可比基线。旧存档无此字段 →
+        // 视为 0（服务端权威获胜 = 过期缓存治愈方向）。
+        ...(t.openedAt ? { openedAt: t.openedAt } : {}),
       });
     }
-    const payload = { v: 2, tabs: serializable };
+    // LWW 批：存档级毫秒戳 = 本次写的事件时刻（服务端据此拒陈旧写）。
+    const payload = { v: 2, tabs: serializable, updatedAt: Date.now() };
     // localStorage 仅作降级缓存（Safari 无痕/清空后仍可从服务端恢复）。
     localStorage.setItem(LS_TABS_KEY, JSON.stringify({
       v: 2,  // schema version — v1 (pre-unified-persistence) lacked closable
              // and skipped no-absPath tabs; restoreTabs discards non-v2 data
       tabs: serializable,
       activeTabId: activeTabId,
+      updatedAt: payload.updatedAt,
     }));
     console.log('[persistTabs] saved', serializable.length, 'tabs', serializable.map(t => t.id));
     // F1 (2026-08-30 作者裁定 + 方案 §8.4 F1): 服务端权威存档，防抖 PUT。
@@ -4138,6 +4205,11 @@ let pendingPersistPayload = null;
 let persistDirty = false;
 
 function scheduleServerPersist(payload) {
+  // 恢复期写闸（LWW 批）：与权威存档对账完成前不 PUT。恢复期 persistTabs
+  // 携带的是「本地缓存并集」，先写会把它回灌进权威存档——正是「关了刷新又
+  // 复活」的放大器（刷新端把复活集写穿，关标签端下次刷新也复活）。记账后
+  // 对账结束统一重放（endHydration，载荷按当时集合重建）。
+  if (hydrating) { hydrateDirty = true; return; }
   pendingPersistPayload = payload;
   if (serverPersistTimer) clearTimeout(serverPersistTimer);
   serverPersistTimer = setTimeout(() => {
@@ -4146,6 +4218,14 @@ function scheduleServerPersist(payload) {
     pendingPersistPayload = null;
     sendServerPersist(p);
   }, 500);
+}
+
+// LWW 批：恢复（对账）结束——放行写闸；记账期有写就按当前集合重放一次
+// （openTab/closeTab/setActiveTab 在恢复窗口内的真实用户操作不丢）。
+function endHydration() {
+  if (!hydrating) return;
+  hydrating = false;
+  if (hydrateDirty) { hydrateDirty = false; persistTabs(); }
 }
 
 // P2: 发送一份存档载荷（防抖到期 / pagehide·visibilitychange flush 共用）。
@@ -4162,8 +4242,24 @@ function sendServerPersist(payload, keepalive) {
     body: JSON.stringify(payload),
   })
     .then((r) => {
-      if (r.ok) { persistDirty = false; return; }
+      if (r.ok) {
+        persistDirty = false;
+        // LWW 批：自己的写已落权威存档 → 登记戳，自己的广播回声
+        //（`<= authTabsStamp` 去重）与本端之后的陈旧广播不再回放。
+        const st = Number(payload.updatedAt) || 0;
+        if (st > authTabsStamp) authTabsStamp = st;
+        return;
+      }
       persistDirty = true;
+      // LWW 落选（409 = 权威存档被更新戳写走，多半是另一台设备刚关闭/打开
+      // 标签）：按响应携带的权威存档即时收敛，不等下一轮对账。
+      if (r.status === 409) {
+        r.json().then((j) => {
+          if (j && j.archive && j.archive.v === 2 && Array.isArray(j.archive.tabs)) {
+            applyServerArchive(j.archive);
+          }
+        }).catch(() => { /* 响应体不可解析：保持 dirty，待重连对账 */ });
+      }
       console.warn('[canvas-tabs] server persist failed:', r.status);
     })
     .catch((e) => {
@@ -4196,15 +4292,30 @@ function bindPersistReconnect() {
   if (persistReconnectBound) return;
   persistReconnectBound = true;
   import('./ws.js')
-    .then(({ onReconnect }) => {
+    .then(({ onReconnect, onMessage }) => {
+      // LWW 批：重连 = 补收敛（identity-sync 同型——离线期间他端关闭/打开的
+      // 标签在对账落地）。先对账再重放脏写：反过来会把离线旧视图带新戳盖回
+      // 权威存档（把已关标签复活成「服务端真相」）。
       onReconnect(() => {
-        if (!persistDirty) return;
-        // 重放「当前集合」而非旧载荷：persistTabs 重建载荷后走防抖 PUT。
-        // 只在连接恢复时触发，不逐帧重试，无自旋/日志风暴。
-        persistTabs();
+        fetchServerConverge().finally(() => {
+          if (!persistDirty) return;
+          // 重放「当前集合」而非旧载荷：persistTabs 重建载荷后走防抖 PUT。
+          // 只在连接恢复时触发，不逐帧重试，无自旋/日志风暴。
+          persistTabs();
+        });
+      });
+      if (canvasTabsWsBound) return;
+      canvasTabsWsBound = true;
+      // 服务端写穿广播（他端打开/关闭标签 → PUT 落盘成功时外推）：按戳收敛。
+      // 自己 PUT 的回声被 ok 路径登记的 authTabsStamp 去重（no-op 直通）。
+      onMessage('canvasTabsChanged', (msg) => {
+        if (!msg || msg.v !== 2 || !Array.isArray(msg.tabs)) return;
+        const stamp = Number(msg.updatedAt) || 0;
+        if (stamp <= authTabsStamp) return;
+        applyServerArchive(msg);
       });
     })
-    .catch(() => { /* ws.js 不可用 → 无重放通道，保持 dirty */ });
+    .catch(() => { /* ws.js 不可用 → 无重放/收敛通道，保持 dirty */ });
 }
 bindPersistReconnect();
 
@@ -4227,6 +4338,9 @@ function openPanelTab(tab) {
     type: tab.type || 'generic',
     closable: true,
     pinned: true,
+    // LWW 批：恢复路径携带存档里的原始打开戳（openTab 的收敛拒绝面用它做
+    // per-tab LWW；缺省 = 旧存档 → 0，权威快照获胜）。
+    openedAt: tab.openedAt,
   });
   if (!entry) return null;
   if (tab.pinned === false) {
@@ -4241,7 +4355,7 @@ function openPanelTab(tab) {
 }
 
 // 批量发送文件标签的 readFile 恢复请求（WS 未就绪时延迟到 onopen）。
-// 这是 restoreFromData / reconcileFromServer 共用的文件恢复通道。
+// 这是 restoreFromData / applyServerArchive 共用的文件恢复通道。
 // 用 requestedFilePaths 去重：本地恢复已派发的路径，服务端 reconcile 不再重复发。
 function sendFileRestoreRequests(fileTabs) {
   if (fileTabs.length === 0) return;
@@ -4250,7 +4364,12 @@ function sendFileRestoreRequests(fileTabs) {
     !requestedFilePaths.has(t.absPath) && !tabs.has(`file:${t.absPath}`)
   ));
   if (fresh.length === 0) return;
-  fresh.forEach((t) => requestedFilePaths.add(t.absPath));
+  fresh.forEach((t) => {
+    requestedFilePaths.add(t.absPath);
+    // LWW 批：登记在途恢复——issuedAt = 派出时刻（回声拒绝面用），openedAt =
+    // 存档原始打开戳（打开成功回填 entry.openedAt，per-tab LWW 基线跨刷新不漂）。
+    fileRestorePending.set(t.absPath, { issuedAt: Date.now(), openedAt: t.openedAt || 0 });
+  });
   // Defer WS import to avoid circular dependency.
   Promise.all([import('./ws.js'), import('./state.js')]).then(([{ sendWs, onReconnect }, stateMod]) => {
     const state = stateMod.default;
@@ -4312,79 +4431,132 @@ function restoreFromData(data) {
   return true;
 }
 
-// F1: 服务端数据到达后，与服务端对齐（服务端权威）。只补开本地缺的标签，不强制关闭
-// 本地已开的（避免破坏用户当前打开的标签）；刷新本地缓存。
-function reconcileFromServer(serverData) {
-  if (!serverData || !Array.isArray(serverData.tabs) || serverData.tabs.length === 0) return false;
-  const present = new Set([...tabs.keys()]);
-  const panelToOpen = [];
-  const fileToOpen = [];
-  for (const tab of serverData.tabs) {
-    if (tab.type === 'flow-run') continue;
-    // Retired legacy panel tabs (Teams/Flows) — server archive may still
-    // carry them; never re-open (2026-09-05 旧 UI 退役).
-    if (tab.type === 'teams' || tab.type === 'flows') continue;
-    if (present.has(tab.id)) continue;  // 已开（本地恢复成功）→ 跳过
-    if (tab.absPath) fileToOpen.push(tab);
-    else panelToOpen.push(tab);
+// ── 跨设备收敛核心（canvas-tabs LWW 批 2026-10-24）──────────
+// applyServerArchive：登记权威快照（戳 + 缺失表），随后按戳收敛本地集合——
+//   补开缺失（快照有、本地无；本端在快照落地后自己关掉的不重开）+
+//   收敛删除（本地有、快照无；openedAt 晚于快照戳的本地新开不删）+
+//   本地缓存对齐。刷新（restoreTabs）/ 广播（canvasTabsChanged）/ 重连
+//   （fetchServerConverge）/ 409 落选（sendServerPersist）四通道共用这一个
+//   收敛点；「服务端为准，不复活已关标签」的语义只定义在此一处。
+// 返回「是否补开了任何内容」（restoreTabs 兜底判定沿用）。
+function applyServerArchive(data) {
+  if (!data || !Array.isArray(data.tabs)) return false;
+  // 无戳快照（老服务端数据）→ 取当前时刻为同步点：此后本端新开的标签
+  // （openedAt = now+）都晚于它，天然受删除豁免保护。
+  const stamp = Number(data.updatedAt) || Date.now();
+  const serverIds = new Set(data.tabs.map((t) => t && t.id).filter(Boolean));
+  authTabsStamp = stamp;
+  serverAbsent.clear();
+  // 缺失表 = 权威快照里不存在的「本端已知」标签（现存 + 近期本端关闭的）。
+  // 快照之后的新打开不在表内（或戳更新），openTab 拒绝面不会误伤新事件。
+  const tracked = new Set([...tabs.keys(), ...localClosedAt.keys()]);
+  for (const id of tracked) {
+    if (serverIds.has(id)) serverAbsent.delete(id);
+    else serverAbsent.set(id, stamp);
   }
+
+  // ① 补开缺失。本端在快照落地后自己关掉的（localClosedAt > stamp）不重开
+  //    ——那是比快照更新的本地关闭事件，LWW 归本地；它会随下一次 PUT 写穿。
+  //    面板/文件分批收集后各发一次（sendFileRestoreRequests 单批注册单个
+  //    onReconnect 腿，不逐标签造回调）。
   let openedAny = false;
-  for (const tab of panelToOpen) {
-    if (!openPanelTab(tab)) continue;
-    openedAny = true;
+  const fileToOpen = [];
+  for (const tab of data.tabs) {
+    if (!tab || !tab.id || tabs.has(tab.id)) continue;
+    if ((localClosedAt.get(tab.id) || 0) > stamp) continue;
+    // 退役/不恢复类型与 restoreFromData 同口径（快照可能仍携带旧条目）。
+    if (tab.type === 'flow-run' || tab.type === 'teams' || tab.type === 'flows') continue;
+    if (tab.absPath) fileToOpen.push(tab);
+    else if (openPanelTab(tab)) openedAny = true;
   }
-  if (fileToOpen.length > 0) {
-    sendFileRestoreRequests(fileToOpen);
-    openedAny = true;
+  if (fileToOpen.length > 0) { sendFileRestoreRequests(fileToOpen); openedAny = true; }
+
+  // ② 收敛删除（修「关了刷新又复活」的主刃）。本地有、快照无 = 他端已关闭
+  //    （或本端缓存过期）；openedAt 晚于快照戳 = 快照没见过的本地新开（并发
+  //    打开），LWW 归本地——保留。旧存档无 openedAt 视为 0：权威快照获胜
+  //    （正是过期缓存治愈面）。走 closeTab（非裸 teardown）：独立卡窗静默
+  //    收窗、关活动签换邻、关最后一签收面板——收敛关闭 = 一次真实关闭语义。
+  //    closeTab 的摘除在退场动画 finalize 里（≤200ms），异步落定即收敛。
+  for (const [id, entry] of [...tabs]) {
+    if (serverIds.has(id)) continue;
+    if ((entry.openedAt || 0) > stamp) continue;
+    closeTab(id);
   }
-  // 刷新本地缓存（服务端权威）。
+
+  // ③ 本地缓存对齐权威快照（activeTabId 保留本端视图；缓存里带戳与 per-tab
+  //    openedAt，离线兜底恢复时 LWW 基线不丢）。
   try {
     localStorage.setItem(LS_TABS_KEY, JSON.stringify({
-      v: 2, tabs: serverData.tabs, activeTabId,
+      v: 2, tabs: data.tabs, activeTabId, updatedAt: stamp,
     }));
   } catch (e) { /* storage full — non-critical */ }
   return openedAny;
 }
 
-/** Restore tabs on page load — server persisted (authoritative), falls back to localStorage.
- *  F1 (2026-08-30 作者裁定 + 方案 §8.4 F1): 服务端存档为权威，localStorage 仅降级缓存。
- *  Two-phase restore:
- *  1. Panel tabs without absPath (Teams/Flows) are re-opened synchronously —
- *     they re-render from live state via the 'canvas-tab-restore' event.
- *  2. File tabs are re-opened asynchronously by sending a readFile WS message
- *     for each absPath. The existing fileContent → workspace-open-item
- *     pipeline handles rendering.
- *  Finally the last active tab is re-activated.
+// LWW 批：对账收敛——GET 权威存档并 applyServerArchive。重连钩子（补收敛）
+// 与 409 落选（sendServerPersist，走响应体直达）共用语义；这里走网络面。
+// 返回 Promise 以便重连钩子「先对账、后重放脏写」排序。cardWindow 不参与
+// 主窗标签组收敛；恢复期（hydrating）不做——restoreTabs 自己就是对账起点。
+function fetchServerConverge() {
+  if (cardWindowMode || hydrating) return Promise.resolve();
+  return fetch(TABS_API, { headers: { ...authHeaders() } })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((serverData) => {
+      const parsed = parseTabsData(serverData);
+      // null = 404/网络失败/解析失败 → 无权威存档可收敛（离线兜底态保留）。
+      // 注意空存档（tabs: []）是合法权威态 = 全部收敛关闭（P1 空集语义）。
+      if (parsed) applyServerArchive(parsed);
+    })
+    .catch(() => { /* 离线：本地态照旧，待下次对账 */ });
+}
+
+/** Restore tabs on page load — SERVER-FIRST (LWW 批 2026-10-24), localStorage
+ *  仅离线兜底。
+ *  修「A 机关闭标签，B 机刷新后复活」：复活源 = 旧逻辑本地缓存先行恢复 +
+ *  reconcile 只加不减（B 机过期缓存里的已关标签直接复活）。改服务端直取：
+ *  权威存档里没有的标签根本不参与恢复；恢复期写入被 hydration 闸压住，恢复
+ *  集合不被回灌进权威存档。
+ *  Two-phase restore of the authoritative set (applyServerArchive):
+ *  1. Panel tabs re-open synchronously via openPanelTab ('canvas-tab-restore').
+ *  2. File tabs re-open asynchronously by readFile WS (restore pipeline).
+ *  无服务端存档（404/空）或网络失败 → 离线兜底：本地缓存恢复（旧路径，
+ *  restoreFromData 两阶段不变）。
  *  Returns a Promise<boolean> — true if any tab was restored; false means main.js
- *  should fall back to opening the Teams panel. */
+ *  should fall back to opening the Plugins panel. */
 export function restoreTabs() {
   return new Promise((resolve) => {
     // UI 批⑧：独立卡窗不恢复主窗标签组（只承载 ?path= 单卡）；返回 true 让
-    // main.js 跳过「恢复失败 → 开 Teams 面板」兜底。
-    if (cardWindowMode) { resolve(true); return; }
-    let didLocal = false;
-    try {
-      const raw = localStorage.getItem(LS_TABS_KEY);
-      console.log('[restoreTabs] localStorage:', raw);
-      const localData = parseTabsData(raw);
-      didLocal = restoreFromData(localData);
-    } catch (e) { /* corrupt data — ignore */ }
+    // main.js 跳过「恢复失败 → 开 Teams 面板」兜底。卡窗无主窗存档面 →
+    // 直接出恢复期（写闸放行）。
+    if (cardWindowMode) { hydrating = false; resolve(true); return; }
 
-    // F1 (2026-08-30 作者裁定 + 方案 §8.4 F1): 服务端为权威存档。无论本地是否恢复成功，
-    // 都拉取服务端并合并/覆盖——这是根治 Safari 无痕/多窗口清空 localStorage 导致标签
-    // 重启丢失的关键：存档介质移出浏览器、落到服务端磁盘。服务端 404/网络失败时回退本地。
+    const offlineFallback = () => {
+      let did = false;
+      try {
+        const localData = parseTabsData(localStorage.getItem(LS_TABS_KEY));
+        did = restoreFromData(localData);
+      } catch (e) { /* corrupt data — ignore */ }
+      return did;
+    };
+
     fetch(TABS_API, { headers: { ...authHeaders() } })
       .then((r) => (r.ok ? r.json() : null))
       .then((serverData) => {
         const parsed = parseTabsData(serverData);
-        if (parsed && parsed.tabs.length > 0) {
-          const didServer = reconcileFromServer(parsed);
-          resolve(didLocal || didServer);
+        let did;
+        if (parsed) {
+          // 服务端权威：权威快照登记 + 收敛（补开缺失 / 删除过期——恢复起点
+          // 本地集合为空，删除面通常为 no-op，但重连对账等入口复用同一语义）。
+          did = applyServerArchive(parsed);
+          if (parsed.activeTabId && tabs.has(parsed.activeTabId)) setActiveTab(parsed.activeTabId);
         } else {
-          // 无服务端存档（404/空）或网络失败 → 回退本地结果。
-          resolve(didLocal);
+          // 404 / 空 / 不可解析 → 离线兜底：本地缓存恢复（LWW 批后缓存携带
+          // openedAt + updatedAt，重连对账时仍可按戳收敛）。
+          did = offlineFallback();
         }
+        resolve(did);
       })
-      .catch(() => resolve(didLocal));
+      .catch(() => resolve(offlineFallback()))
+      .finally(() => endHydration());
   });
 }

@@ -105,7 +105,14 @@ private[gateway] object ConfigRoutes:
       // 无痕/多窗口 removeItem 竞态/清理）。服务端存档 ~/.nebflow/canvas_tabs.json
       // 与 sessionStore 同生命周期，JVM 重启保留；前端 restoreTabs 优先拉这里。
       // 契约（与 Frontend 同步）：GET → 200 {v:2,tabs:[...]} 或 404（无存档）；
-      // PUT body {v:2,tabs:[...]} → 200 {ok:true}；非法输入 400 / 超限 413 不落盘。
+      // PUT body {v:2,tabs:[...],updatedAt?} → 200 {ok:true}；非法输入 400 /
+      // 超限 413 不落盘。
+      //
+      // 跨设备收敛（canvas-tabs LWW 批 2026-10-24）：作者报障「A 机关闭标签，
+      // B 机刷新后复活」。服务端按 `updatedAt` 毫秒戳做 LWW 裁决——陈旧写
+      // （戳更旧）409 拒绝并回权威存档，让陈旧写方即时收敛；接受即广播
+      // `canvasTabsChanged`（agentIdentityChanged 同型外推），全部已连设备
+      // 按戳收敛（补开缺失 + 收敛删除），关闭不再只是单机视图事件。
       case req @ GET -> Root / "canvas-tabs" =>
         withAuth(req) {
           new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json").load().flatMap {
@@ -123,16 +130,40 @@ private[gateway] object ConfigRoutes:
               case Left((status, msg)) =>
                 val st = org.http4s.Status.fromInt(status).getOrElse(Status.BadRequest)
                 IO.pure(Response[IO](status = st).withEntity(Json.obj("error" -> msg.asJson)))
-              case Right(json) =>
-                new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json")
-                  .save(json) *> Ok(ApiJson.ok)
-                  .handleErrorWith { e =>
-                    logger.error(s"canvas tabs save failed: ${e.getMessage}") *>
+              case Right(incoming) =>
+                val store = new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json")
+                store.load().flatMap { stored =>
+                  CanvasTabs.lwwVerdict(stored, incoming, System.currentTimeMillis()) match
+                    case Left(stale) =>
+                      // LWW 落选：不落盘。409 + 权威存档——陈旧写方（离线重启的
+                      // 旧视图）拿到即收敛，不把自己盖章的旧集合覆盖回去。
                       IO.pure(
-                        Response[IO](status = Status.InternalServerError)
-                          .withEntity(Json.obj("error" -> s"save failed: ${e.getMessage}".asJson))
+                        Response[IO](status = Status.Conflict).withEntity(
+                          Json.obj(
+                            "error" -> "stale canvas tabs write (LWW): a newer archive exists".asJson,
+                            "archive" -> stale.getOrElse(Json.Null).asJson
+                          )
+                        )
                       )
-                  }
+                    case Right(toSave) =>
+                      // 🔴 括号面：handleErrorWith 必须罩整条链（save/广播任一失败
+                      // 都转 500），不是只罩 Ok(...)——旧形状（迁移自
+                      // RestApiRoutes）里方法调用绑定紧于中缀 `*>`，错误臂罩不到
+                      // save，是死错误臂；本臂重写时修正分组。
+                      (store.save(toSave) *>
+                        // 写穿即外推（identity-sync 同型）：他端收到后按戳收敛，
+                        // 关闭/打开跨设备可见，不等刷新。
+                        wsHub.broadcast(
+                          toSave.deepMerge(Json.obj("type" -> "canvasTabsChanged".asJson))
+                        ) *> Ok(ApiJson.ok))
+                        .handleErrorWith { e =>
+                          logger.error(s"canvas tabs save failed: ${e.getMessage}") *>
+                            IO.pure(
+                              Response[IO](status = Status.InternalServerError)
+                                .withEntity(Json.obj("error" -> s"save failed: ${e.getMessage}".asJson))
+                            )
+                        }
+                }
           }
         }
 
