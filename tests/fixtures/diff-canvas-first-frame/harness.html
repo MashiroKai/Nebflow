@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<!-- diff-canvas-first-frame harness.html — diff 打开链「点击→首帧 + 大 diff 不阻塞
+     主线程 + 失败可见反馈」（二次加载清剿批 2026-10-24 · 作者现场报障补充令）的
+     静态测试 harness。
+
+     驱动真实链路（生产模块原样）：
+       diffPanel.openDiffBatch / 行点击 → 动态 import diffCanvas →
+       openFileChangesCanvas（openTab 复用/建签）→ renderReader →
+       流式 renderDiffChunked（首帧同步落壳 + 文件头 + 装载态；行按帧预算渐进）。
+     数据链说明：diff 载荷 = WS 帧内存载荷（fileChanges），本链**零网络取数**——
+     spec 用请求计数钉死这一点（/api/canvas-tabs 标签存档 PUT 除外，与 diff 链
+     无关）。失败腿注入 = 载荷字段抛错 getter（__sabotageFile /
+     __openBatchSabotaged）：修前两处 `.catch(() => {})` 静默吞的正是这类
+     装配/渲染抛错；摘 canvas 容器不构成失败腿（openTab 自建 DOM 自愈）。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>diff-canvas-first-frame harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/diffView.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #sidebar-panel { width: 320px; float: left; height: 90vh; position: relative; }
+    #canvas-host { margin-left: 330px; height: 90vh; position: relative; }
+    #canvas-content { height: 100%; overflow: hidden; }
+    #canvas-tab-bar { height: 32px; }
+    .canvas-tab-pane { height: calc(100% - 32px); overflow: auto; padding: 8px; }
+  </style>
+</head>
+<body>
+  <div id="sidebar-panel"></div>
+  <div id="canvas-host">
+    <div id="canvas-tab-bar"></div>
+    <div id="canvas-content"></div>
+  </div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const state = (await import(`${WEB}/state.js`)).default;
+    state.ws = { readyState: 1, send: () => {} };
+    window.__nfSessionId = 'sess-1';
+
+    const diffPanel = await import(`${WEB}/diffPanel.js`);
+    const i18n = await import(`${WEB}/i18n.js`);
+    try { i18n.setLocale('zh-CN'); } catch (e) { /* 缺省即 zh-CN */ }
+
+    window.__openBatch = async (payload) => {
+      window.__lastPayload = payload;
+      await diffPanel.openDiffBatch(payload);
+    };
+
+    /** 开批腿失败注入：载荷字段 = 抛错 getter（renderBatch 装配抛 ⇒ openDiffBatch
+     *  的可见失败面腿——真实形态 = 畸形载荷，修前 = 静默无响应）。 */
+    window.__openBatchSabotaged = async (lines, fileIdx, field) => {
+      const payload = window.__bigPayload(lines);
+      Object.defineProperty(payload.files[fileIdx], field, {
+        get() { throw new Error('nf-spec-sabotage'); },
+      });
+      return window.__openBatch(payload);
+    };
+
+    /** 行腿失败注入：对**已开批次**的载荷字段换抛错 getter（renderReader 抛 ⇒
+     *  行 open 的 .catch 可见失败面腿——真实形态 = 畸形载荷）。 */
+    window.__sabotageFile = (fileIdx, field) => {
+      const f = window.__lastPayload && window.__lastPayload.files[fileIdx];
+      if (!f) return false;
+      Object.defineProperty(f, field, { get() { throw new Error('nf-spec-sabotage'); } });
+      return true;
+    };
+    window.__restoreFile = (fileIdx, field) => {
+      const f = window.__lastPayload && window.__lastPayload.files[fileIdx];
+      if (!f) return false;
+      delete f[field]; // 摘掉抛错 getter（原型链无同名属性 ⇒ 回到 undefined 字段语义）
+      f[field] = '@@ -1,1 +1,1 @@\n+ restored';
+      return true;
+    };
+
+    window.__clickRow = (i) => {
+      const row = document.querySelectorAll('#panel-filechanges .nfp-list .nf-fc')[i];
+      if (!row) return false;
+      row.click();
+      return true;
+    };
+
+    /** Canvas 阅读器读数：首帧面（文件头/装载态）+ 已挂行数。 */
+    window.__readerState = () => {
+      const pane = document.querySelector('#canvas-content .canvas-tab-pane[data-tab-id^="filechanges:"]');
+      if (!pane) return { hasTab: false };
+      const view = pane.querySelector('.fcv-view');
+      return {
+        hasTab: true,
+        hasHead: !!pane.querySelector('.fcv-filehead'),
+        loading: !!pane.querySelector('.nf-diff-loading'),
+        rows: pane.querySelectorAll('.nf-diff-row').length,
+      };
+    };
+
+    /** 两帧间隔（rAF×2 的墙钟差）：流式渲染中途主线程必须仍按帧出票（禁冻结）。 */
+    window.__frameGapMs = () => new Promise((resolve) => {
+      const t0 = performance.now();
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve(performance.now() - t0)));
+    });
+
+    /** 面板 meta 槽读数（失败可见反馈断言面）。 */
+    window.__metaState = () => {
+      const meta = document.querySelector('#panel-filechanges .nfp-meta');
+      return {
+        err: !!(meta && meta.classList.contains('nfp-meta-err')),
+        text: meta ? meta.textContent : '',
+        failRows: document.querySelectorAll('#panel-filechanges .nf-fc-openfail').length,
+      };
+    };
+
+    /** 失败腿注入备忘：摘 canvas 容器的旧注入形态**不构成失败腿**——openTab 会
+     *  自建 DOM（自愈）；真实失败腿 = 载荷抛错 getter（__sabotageFile /
+     *  __openBatchSabotaged，renderBatch / renderReader 装配抛）。 */
+
+    /** 大 diff 构造（行数精确；每行带 +/-/ctx 前缀混合）。 */
+    window.__bigPayload = (lines) => {
+      const chunks = [];
+      chunks.push(`@@ -1,${lines} +1,${lines} @@`);
+      for (let i = 0; i < lines; i++) {
+        const kind = i % 3;
+        chunks.push((kind === 0 ? '+' : kind === 1 ? '-' : ' ') + ' line ' + i + ' lorem ipsum dolor sit amet');
+      }
+      return {
+        nodeId: 'node-dbg-1',
+        generatedAt: '2026-10-24T00:00:00Z',
+        root: '/tmp/x',
+        files: [
+          { path: 'src/big/file.ts', changeType: 'modified', added: Math.floor(lines * 2 / 3), removed: Math.floor(lines / 3), source: 'git', diffText: chunks.join('\n') },
+          { path: 'src/small/other.ts', changeType: 'added', added: 2, removed: 0, source: 'git', diffText: '@@ -0,0 +1,2 @@\n+alpha\n+beta' },
+        ],
+      };
+    };
+
+    window.__apiRequests = 0;
+    const origFetch = window.fetch.bind(window);
+    window.fetch = (...a) => {
+      const u = typeof a[0] === 'string' ? a[0] : (a[0] && a[0].url) || '';
+      const s = String(u);
+      // 计数面 = diff 打开链的取数腿（nf-file / nf-ticket / 附件字节）。
+      // /api/canvas-tabs 是标签架构的存档 PUT（任何 openTab 都防抖触发一次，
+      // 与 diff 链无关）——排除，不算取数腿。
+      if (s.includes('/api/') && !s.includes('/api/canvas-tabs')) window.__apiRequests += 1;
+      return origFetch(...a);
+    };
+    window.__ready = true;
+  </script>
+</body>
+</html>

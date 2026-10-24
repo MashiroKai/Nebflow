@@ -380,3 +380,26 @@
   background: var(--color-bg-hover, rgba(128, 128, 128, 0.12));
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
 }
+
+/* ── 二次加载清剿批（2026-10-24 · 作者报障「点 diff … 打开还是很慢/点了没反应」）
+   装载态 + 失败可见反馈面。颜色只用既有 --color-* token（禁裸 hex）。 ── */
+/* 流式渲染进行中：Canvas 阅读器首帧的装载态行（渲染完成即移除）。 */
+.nf-diff-loading {
+  padding: 8px 6px;
+  font-size: 12px;
+  color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
+  animation: nf-diff-loading-pulse 1.2s ease-in-out infinite;
+}
+@keyframes nf-diff-loading-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+/* 面板 meta 槽的失败文案（打开链 import/容器失败——禁静默无响应）。 */
+.nfp-meta-err {
+  color: var(--color-danger, #d64545);
+  font-size: 12px;
+}
+/* 打开失败行的行内标记（下次成功开图时移除）。 */
+.nf-fc-openfail {
+  outline: 1px solid var(--color-danger, #d64545);
+}

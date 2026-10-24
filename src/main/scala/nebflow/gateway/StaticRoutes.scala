@@ -526,7 +526,23 @@ object StaticRoutes:
         val filePath = uploadsBase / os.RelPath(relParts.mkString("/"))
         // Final defense: the resolved path must stay under the base
         if filePath.startsWith(uploadsBase) && os.exists(filePath) && os.isFile(filePath) then
-          StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
+          StaticFile
+            .fromPath(fs2.io.file.Path(filePath.toString), Some(req))
+            .map { r =>
+              // 二次加载清剿批（2026-10-24）：#538 同款确定性浏览器缓存。本路由
+              // 一直带 ETag + Last-Modified（StaticFile）并应答 304，但从未发
+              // Cache-Control ⇒ 重复消费按启发式新鲜度走（RFC 9111 §4.2.1，截图类
+              // 新文件 ≈ 秒级窗），媒体脸每次重渲都把同一体再拉一遍。
+              // `private, max-age=300`：5 分钟内零字节往返，之后一次条件往返 304；
+              // `private`（带会话凭据的鉴权路由，绝不进共享缓存）。只打在可缓存
+              // 正答上（200 体 / 304 须重申策略）；404 腿不动（minimal-diff）。
+              if r.status == Status.Ok || r.status == Status.NotModified then
+                r.putHeaders(
+                  Header.Raw(org.typelevel.ci.CIString("Cache-Control"), "private, max-age=300")
+                )
+              else r
+            }
+            .getOrElseF(NotFound())
         else NotFound()
     end if
 

@@ -146,6 +146,43 @@ function syncChipActive(key) {
   });
 }
 
+/** Meta slot faces (二次加载清剿批 2026-10-24)：模块级单点——失败面在下次成功
+ *  开图时清除（错误面不粘死，恢复语义 = 成功即清），成功面重建 totals 文案。
+ *  面板 DOM 不在时安全空转（meta 是辅助反馈面，缺位不阻塞主路径）。 */
+function metaEl() {
+  return /** @type {HTMLElement | null} */ (document.querySelector(`#${PANEL_ELEM_ID} .nfp-meta`));
+}
+
+/** Failure face: error caption in the meta slot + optional row fail mark. */
+function setMetaError(row) {
+  const meta = metaEl();
+  if (meta) {
+    meta.classList.add('nfp-meta-err');
+    meta.textContent = t('panel.diffOpenFailed');
+  }
+  if (row) row.classList.add('nf-fc-openfail');
+}
+
+/** Success face: drop the error face, rebuild the quiet totals caption
+ *  (files count + +a −r，口径走 totalsOf 单点). */
+function setMetaTotals() {
+  const meta = metaEl();
+  if (!meta) return;
+  meta.classList.remove('nfp-meta-err');
+  const files = Array.isArray(currentPayload?.files) ? currentPayload.files : [];
+  const tot = totalsOf(currentPayload);
+  meta.innerHTML = '';
+  const n = document.createElement('span');
+  n.textContent = `${files.length} file${files.length === 1 ? '' : 's'} · `;
+  const a = document.createElement('span');
+  a.className = 'nf-fc-added';
+  a.textContent = `+${tot.a}`;
+  const r = document.createElement('span');
+  r.className = 'nf-fc-removed';
+  r.textContent = `−${tot.r}`;
+  meta.append(n, a, document.createTextNode(' '), r);
+}
+
 /** Render the panel body for `payload` (list rows + quiet totals meta). */
 function renderBatch(payload) {
   const panel = document.getElementById(PANEL_ELEM_ID);
@@ -159,13 +196,20 @@ function renderBatch(payload) {
   empty.hidden = files.length > 0;
   list.hidden = files.length === 0;
   if (!files.length) return;
+  // 二次加载清剿批 2026-10-24（作者报障「点了没反应」）：行点击链的失败腿曾有
+  // `.catch(() => {})` 静默吞掉（动态 import 失败 / canvas 通道不可用 / 面板 DOM
+  // 不在）——任何取数/渲染路径必须有失败可见反馈（作者令②）。失败 ⇒ meta 槽
+  // 显示错误文案 + 行失败态；重试成功 ⇒ 失败面清除（setMetaTotals，不粘死）。
   files.forEach((f, i) => {
     const row = buildFileRow(f, i);
     const open = () => {
       syncActiveRow(i);
+      list.querySelectorAll('.nf-fc-openfail').forEach((el) => el.classList.remove('nf-fc-openfail'));
       import('./diffCanvas.js').then(({ openFileChangesCanvas }) => {
-        openFileChangesCanvas(payload, { focusIndex: i });
-      }).catch(() => { /* canvas 通道不可用——面板行保持已选态 */ });
+        const entry = openFileChangesCanvas(payload, { focusIndex: i });
+        if (!entry) setMetaError(row); // canvas 容器不在（openTab null）——可见失败，禁静默
+        else setMetaTotals(); // 成功 = 失败面清除（错误态不残留）
+      }).catch(() => setMetaError(row));
     };
     row.addEventListener('click', open);
     row.addEventListener('keydown', (e) => {
@@ -173,17 +217,7 @@ function renderBatch(payload) {
     });
     list.appendChild(row);
   });
-  const tot = totalsOf(payload);
-  meta.innerHTML = '';
-  const n = document.createElement('span');
-  n.textContent = `${files.length} file${files.length === 1 ? '' : 's'} · `;
-  const a = document.createElement('span');
-  a.className = 'nf-fc-added';
-  a.textContent = `+${tot.a}`;
-  const r = document.createElement('span');
-  r.className = 'nf-fc-removed';
-  r.textContent = `−${tot.r}`;
-  meta.append(n, a, document.createTextNode(' '), r);
+  setMetaTotals();
 }
 
 /** Boot hook (main.js, after initActivityBar)：建面板 DOM + 注册进侧栏面板注册表。
@@ -212,7 +246,15 @@ export async function openDiffBatch(payload, opts = {}) {
   currentBatchKey = key;
   currentPayload = payload;
   ensurePanelDom();
-  renderBatch(payload);
+  try {
+    renderBatch(payload);
+  } catch {
+    // 二次加载清剿批：载荷畸形（渲染装配抛错）不再静默无响应——chip/程序化入口
+    // 的渲染路径也必须有失败可见反馈（作者令②），否则 = 「点了没反应」。列表可能
+    // 半渲染——下次成功 open 全量重建（renderBatch 先清空）。
+    setMetaError(null);
+    return;
+  }
   syncChipActive(key);
   syncActiveRow(Number(opts.focusIndex) || 0);
   try {
@@ -221,8 +263,17 @@ export async function openDiffBatch(payload, opts = {}) {
   } catch { /* 注册表不可达——面板类已切，可见性交给既有面板族样式 */ }
   try {
     const { openFileChangesCanvas } = await import('./diffCanvas.js');
-    openFileChangesCanvas(payload, { focusIndex: Number(opts.focusIndex) || 0 });
-  } catch { /* canvas 通道不可用——左栏列表照常成立 */ }
+    const entry = openFileChangesCanvas(payload, { focusIndex: Number(opts.focusIndex) || 0 });
+    if (!entry) {
+      // 二次加载清剿批：canvas 通道不可用（容器不在）不再静默——meta 槽可见失败
+      // 文案（左栏列表照常成立；作者令②禁静默无响应）。
+      setMetaError(null);
+    } else {
+      setMetaTotals(); // 成功 = 失败面清除（错误态不残留）
+    }
+  } catch {
+    setMetaError(null);
+  }
 }
 
 /** Chip toggle entry (chat/injectedRows 摘要条点击单点)。

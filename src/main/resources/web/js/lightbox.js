@@ -10,6 +10,10 @@
 
 import { t } from './i18n.js';
 import { reMint, decodePathParam } from './nfTicket.js';
+// 二次加载清剿批（2026-10-24 · #816 同法）：本地路径的字节改经 **nfFileCache 账本
+// 单点**先行——`nf:<path>` 命中零抓取直显（气泡/文档渲染已入账的同件）；未命中 =
+// 账本票据链取数 + 入账（恰一次）。失败回落既有 reMint 直取腿（下方逐字保留）。
+import { nfViewerSource, nfCacheDrop } from './nfFileCache.js';
 
 let overlayEl = null;   // lazily-created singleton
 let imgEl = null;
@@ -157,6 +161,7 @@ export function openLightbox(src, alt, path) {
   // Reset to loading state
   imgEl.classList.remove('loaded');
   imgEl.removeAttribute('src');
+  delete imgEl.dataset.nfLbRetried; // 账本自愈旗标按次开清零（每开恰一次自愈机会）
   statusEl.className = 'nf-lightbox-status loading';
   statusEl.textContent = t('lightbox.loading');
   statusEl.style.display = '';
@@ -168,23 +173,10 @@ export function openLightbox(src, alt, path) {
     statusEl.className = 'nf-lightbox-status error';
     statusEl.textContent = t('lightbox.loadError');
   };
-  imgEl.onload = () => {
-    imgEl.classList.add('loaded');
-    statusEl.style.display = 'none';
-  };
-  imgEl.onerror = fail;
-  imgEl.alt = alt || '';
-
-  const localPath = path || nfPathOf(src);
-  if (localPath) {
-    // 2026-09-11 (C batch, C2-20 / self-correction ⑧): the card's iframe used
-    // to hand the parent a fully-formed URL — credential included — which was
-    // then written straight into this img element: a live ticket parked in the
-    // parent document (serializable, screenshot-able, visible in devtools) and
-    // reused later, so a lightbox opened after the TTL just showed `loadError`.
-    // Now the parent mints a FRESH ticket for this path, fetches the bytes
-    // itself, and shows a `blob:` URL — `img.src` carries no credential at all,
-    // while the one request that mattered carried a newly issued one.
+  /** 既有直取腿（C2-20 语义逐字：本腿永远新铸票据、字节自取）——现在只由账本腿
+   *  失败/自愈时出场（二次加载清剿批），修前它是本地路径的**唯一**腿：每次开图
+   *  都 reMint（新票据 = 新 URL）⇒ 已在气泡/文档里显示过的同件再全量下载一次。 */
+  const legacyFetch = () => {
     reMint(localPath)
       .then((url) => fetch(url, { credentials: 'same-origin' }))
       .then((resp) => {
@@ -197,6 +189,46 @@ export function openLightbox(src, alt, path) {
         imgEl.src = objectUrl;
       })
       .catch(() => { fail(); });
+  };
+  imgEl.onload = () => {
+    imgEl.classList.add('loaded');
+    statusEl.style.display = 'none';
+  };
+  imgEl.onerror = () => {
+    if (seq !== openSeq) return;
+    // 账本 blob 解码失败（坏字节，#816 同族语义）：先逐出账本，再走既有 reMint
+    // 直取腿恰一次——坏字节不粘死账本。直取腿再败 ⇒ 既有 loadError 失败面。
+    if (imgEl.src && imgEl.src.startsWith('blob:') && !imgEl.dataset.nfLbRetried) {
+      imgEl.dataset.nfLbRetried = '1';
+      void nfCacheDrop('nf:' + localPath).catch(() => {});
+      legacyFetch();
+      return;
+    }
+    fail();
+  };
+  imgEl.alt = alt || '';
+
+  const localPath = path || nfPathOf(src);
+  if (localPath) {
+    // 2026-09-11 (C batch, C2-20 / self-correction ⑧): the card's iframe used
+    // to hand the parent a fully-formed URL — credential included — which was
+    // then written straight into this img element: a live ticket parked in the
+    // parent document (serializable, screenshot-able, visible in devtools) and
+    // reused later, so a lightbox opened after the TTL just showed `loadError`.
+    // Now the parent mints a FRESH ticket for this path, fetches the bytes
+    // itself, and shows a `blob:` URL — `img.src` carries no credential at all,
+    // while the one request that mattered carried a newly issued one.
+    //
+    // 二次加载清剿批（2026-10-24）：字节面改经 **账本单点**（上方 import 处注释）。
+    // C2-20 的凭据纪律原样保留——账本命中根本不碰票据；账本腿内部取数仍走
+    // 票据链新铸；本函数自己的 reMint 腿降级为失败/自愈回落。
+    nfViewerSource({ absPath: localPath, objectUrl: null, pane: overlayEl })
+      .then(({ url }) => {
+        if (seq !== openSeq) { try { URL.revokeObjectURL(url); } catch (e) { /* already dead */ } return; }
+        objectUrl = url;
+        imgEl.src = url;
+      })
+      .catch(() => { if (seq === openSeq) legacyFetch(); });
   } else {
     imgEl.src = src;  // remote / data: URL — nothing to mint, nothing to strip
   }

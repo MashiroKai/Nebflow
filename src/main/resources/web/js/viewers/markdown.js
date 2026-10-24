@@ -12,7 +12,11 @@
 //     and "open in wiki graph".
 
 import { addSourceToggle, addFindToggle, addGraphToggle, routeLocalHref, openLocalFileTab, openExternalUrlTab } from './shared.js';
-import { mintTickets, stripCredentialParams } from '../nfTicket.js';
+import { mintTickets, stripCredentialParams, decodePathParam } from '../nfTicket.js';
+// 二次加载清剿批（2026-10-24 · #816 同法）：文档图片字节改经 **nfFileCache 账本
+// 单点**——`nfViewerUrl` 命中零抓取 / 未命中取数即入账；blob 解码失败自愈逐出
+// （`nfCacheDrop`，见下方 __nfMdImgFail）。
+import { nfViewerUrl, nfCacheDrop } from '../nfFileCache.js';
 import { noteAuthRejected } from '../sessionGate.js';
 import { t } from '../i18n.js';
 // mermaid-md batch (2026-10-23): explicit hydration at the primary document
@@ -498,7 +502,12 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
       return m;
     });
     const tickets = await mintTickets([...candidates]);
-    // Pass 2 — rewrite, synchronously, from the minted set.
+    // Pass 2 — rewrite to SHORT-LIVED placeholders (index tokens), synchronously.
+    // 二次加载清剿批（2026-10-24 · #816 同法）：出帧前每张图的最终 src 先经
+    // **账本单点**解析（下方 hydration）——占位符阶段保证 innerHTML 落地时图已带
+    // 终局 src，浏览器不会先对票据 URL 发一轮注定重复的抓取。
+    /** @type {{ path: string, url: string, finalUrl?: string }[]} */
+    const mdImgs = [];
     html = html.replace(IMG_REWRITE_RE, (m, prefix, raw, suffix) => {
       let src = raw;
       try { src = decodeURIComponent(src); } catch (e) { /* keep as-is */ }
@@ -506,16 +515,61 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
       if (!p) return m;
       const t = tickets.get(p);
       const url = `/api/nf-file?path=${encodeURIComponent(p)}${t ? `&ticket=${encodeURIComponent(t)}` : ''}`;
-      return `${prefix}${url}${suffix}`;
+      mdImgs.push({ path: p, url });
+      // token sits INSIDE the src="…" value; the fallback attribute rides a
+      // second placeholder AFTER the attribute (a literal url here would put
+      // markup inside the quoted src value).
+      return `${prefix}__NF_MD_IMG_${mdImgs.length - 1}__${suffix} data-nf-md-fb="__NF_MD_FB_${mdImgs.length - 1}__"`;
     });
-    // Broken-image tooltip (debugging aid). The shown URL must never carry a
-    // credential (T2 / Δ⑦): the ONE strip implementation lives in
-    // nfTicket.js and is published here because an inline attribute handler
-    // evaluates in global scope, where a module import is not visible.
-    /** @type {any} */ (window).__nfStripCredential = stripCredentialParams;
+    // Hydration — every rewritten image resolves its final src through the
+    // ledger single point (`nfViewerUrl`): `nf:<path>` hit = blob URL (ZERO
+    // fetch — e.g. the same image already rendered in a bubble or opened in
+    // Canvas); miss = the existing ticketed fetch + `nfCachePut` (exactly once,
+    // so re-opens/re-renders of this doc and Canvas opens of the image reuse
+    // the bytes). Failure (mint/fetch) ⇒ the ticketed URL (browser fetches it
+    // directly — the pre-batch behavior, verbatim).
+    await Promise.all(mdImgs.map(async (e) => {
+      try {
+        e.finalUrl = await nfViewerUrl({ absPath: e.path, objectUrl: null, pane });
+      } catch (err) {
+        e.finalUrl = e.url; // 逐字现状：票据 URL 直取（含无票 URL ⇒ 端点 401 ⇒ onerror 失败面）
+      }
+    }));
+    html = html.replace(/__NF_MD_FB_(\d+)__/g, (m, i) => {
+      const e = mdImgs[Number(i)];
+      // fallback 属性只对「账本 blob src」在场（票据 URL 直取的图，失败面 = 既有 tooltip）。
+      return e && e.finalUrl && e.finalUrl !== e.url ? e.url : '';
+    });
+    html = html.replace(/__NF_MD_IMG_(\d+)__/g, (m, i) => {
+      const e = mdImgs[Number(i)];
+      return e ? (e.finalUrl || e.url) : m;
+    });
+    // Broken-image tooltip + blob self-heal (debugging aid + #816-同族语义).
+    // The shown URL must never carry a credential (T2 / Δ⑦): the ONE strip
+    // implementation lives in nfTicket.js — this module imports it directly
+    // (the old inline-attribute handler needed a window publication; the
+    // handler is a real function now, so the global is gone). `__nfMdImgFail`
+    // = 账本 blob 解码失败的自愈腿单点：坏字节先逐出账本（`nfCacheDrop`），再回落
+    // 票据 URL 恰一次；票据 URL 也败 ⇒ 既有 tooltip 失败面（凭据已剥）。
+    // 非 blob src = 直达失败面（逐字现状）。（`window.__nfMdImgFail` 仍在发布，
+    // 因为 onerror 是内联属性、求值于全局作用域——模块 import 不可见。）
+    /** @type {any} */ (window).__nfMdImgFail = (/** @type {HTMLImageElement} */ img) => {
+      const fallback = (img.dataset && img.dataset.nfMdFb) || '';
+      if (img.src && img.src.startsWith('blob:') && fallback && !img.dataset.nfMdRetried) {
+        img.dataset.nfMdRetried = '1';
+        const q = /[?&]path=([^&]*)/.exec(fallback);
+        const p = q ? decodePathParam(q[1]) : null;
+        if (p) void nfCacheDrop('nf:' + p).catch(() => {});
+        img.src = fallback;
+        return;
+      }
+      img.style.opacity = '0.3';
+      const shown = (img.dataset && img.dataset.nfMdRetried && fallback) || img.src;
+      img.title = 'Failed: ' + stripCredentialParams(shown);
+    };
     html = html.replace(
       /<img\b/g,
-      '<img onerror="this.style.opacity=0.3;this.title=\'Failed: \'+(window.__nfStripCredential?window.__nfStripCredential(this.src):this.src)"'
+      '<img onerror="window.__nfMdImgFail && window.__nfMdImgFail(this)"'
     );
   }
 

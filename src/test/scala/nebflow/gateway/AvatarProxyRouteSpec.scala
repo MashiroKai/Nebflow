@@ -155,6 +155,13 @@ class AvatarProxyRouteSpec extends CatsEffectSuite:
           resp.headers.get[`Content-Type`].map(ct => s"${ct.mediaType.mainType}/${ct.mediaType.subType}"),
           Some("image/jpeg")
         )
+        // 二次加载清剿批（2026-10-24）：同族对端路由（/api/neblink/avatars/:userId）
+        // 带 private,max-age=3600 + ETag/304；本路由（自己的头像）必须至少带同族的
+        // private 缓存策略 —— 设置页/列表重复开零字节往返（#538 家族语义）。
+        assertEquals(
+          resp.headers.get[org.http4s.headers.`Cache-Control`].map(_.values.toList.mkString(", ")),
+          Some("private, max-age=300")
+        )
         resp.body.compile.to(Array).map(bytes => assertEquals(bytes.toSeq, AvatarBytes.toSeq))
       }
     }.guarantee(IO.blocking(origin.stop(0)))

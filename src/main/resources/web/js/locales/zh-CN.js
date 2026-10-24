@@ -21,6 +21,10 @@ export default {
   // diff 拆面板批（2026-10-22）：左栏「变更文件」面板（委托 diff 摘要条唤起）。
   'panel.diff': '变更文件',
   'panel.diffEmpty': '尚未打开 diff。点击委托交付消息上的变更摘要查看文件列表。',
+  // 二次加载清剿批（2026-10-24）：diff 打开链的装载态 + 失败可见反馈（作者令
+  // 「任何取数/渲染路径必须有 loading 态与失败可见反馈，禁止静默无响应」）。
+  'panel.diffRendering': 'diff 渲染中…',
+  'panel.diffOpenFailed': 'Canvas 打开失败——点行重试。',
   // #27 Project 标签页 + Flow Map 标签页（方向调整：Canvas 标签页形态，参考 team 面板）
   'project.title': '项目',
   'project.loading': '加载项目…',
