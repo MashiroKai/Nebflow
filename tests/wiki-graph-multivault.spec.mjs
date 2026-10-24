@@ -221,7 +221,7 @@ test.describe('wiki-graph #744-B 多项目图谱', () => {
       const sx = (n.x - p.W / 2) * p.scale + p.W / 2 + p.vx;
       const sy = (n.y - p.H / 2) * p.scale + p.H / 2 + p.vy;
       c.dispatchEvent(new WheelEvent('wheel', {
-        deltaX: p.W / 2 - sx, deltaY: p.H / 2 - sy,
+        deltaX: p.W / 2 - sx, deltaY: p.H / 2 - sy, shiftKey: true, // CAD 批：shift+wheel = 保底平移
         clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
         bubbles: true, cancelable: true,
       }));

@@ -20,10 +20,13 @@
 //     手机层没有左栏，紧凑控制条随 pane 收编进移动页，桌面零渲染）
 //   双向联动：左栏点目录/词条（chips/ref/断链行）→ canvas 过滤聚焦；
 //     canvas 点节点 → 左栏详情卡刷新
-// 作者令 2026-10-22（触控板手感）：滚轮/双指滚动 = 平移（1:1，不误触缩放）；
-//   触控板捏合（ctrl+wheel）/ ⌘(Ctrl)+滚轮 = 以光标为锚点缩放，exp 曲线累积
-//   zoomTarget + rAF 25% 阻尼追帧——连续捏合帧平滑无跳变（excalidraw/figma
-//   手感）；约定在左栏 .wg-hint 图例注明。
+// 作者令 2026-10-22（触控板手感）：触控板捏合（ctrl+wheel）/ ⌘(Ctrl)+滚轮 =
+//   以光标为锚点缩放，exp 曲线累积 zoomTarget + rAF 25% 阻尼追帧——连续捏合
+//   帧平滑无跳变（excalidraw/figma 手感）。
+// 作者令 2026-10-24（CAD 手感，覆盖 10-22 滚轮约定）：鼠标滚轮 = 以光标为锚点
+//   缩放（0.1x–4x），中键拖拽 = 平移（CAD 核心手势，拦浏览器中键自动滚动），
+//   左键语义不变；触控板不劣化：双指滚动仍 = 平移（横分量/小帧/分数 delta
+//   判定，见 wheelIsPan），捏合仍 = 缩放；约定在左栏 .wg-hint 图例注明。
 //   亮暗双主题：canvas 沿用 --wg-* 石墨双主题表；左栏面板吃侧栏玻璃卡既有的
 //     --color-frame-* / --glass-* token（prefers-color-scheme 自动双主题）；
 //     窄面板（container query，wgside）压缩内距与徽标
@@ -50,8 +53,8 @@ const GRAPH_API = '/api/wiki/graph';
 // rest linearly until everything is labeled at LABEL_ALL_AT_SCALE.
 const LABEL_HUBS = 12;
 const LABEL_ALL_AT_SCALE = 1.5;
-const ZOOM_MIN = 0.08; // design §3: 8%–320%
-const ZOOM_MAX = 3.2;
+const ZOOM_MIN = 0.1;  // CAD 批 2026-10-24：0.1x–4x（作者建议区间，可调）
+const ZOOM_MAX = 4.0;
 const LABEL_MAX_CHARS = 22;   // canvas label truncation (design §4)
 
 const MOBILE_MQ = '(max-width: 768px)';
@@ -1186,17 +1189,18 @@ function pickEdge(px, py) {
   return best;
 }
 
-// ── Wheel: trackpad-first zoom/pan (作者令 2026-10-22 · excalidraw/figma 手感) ──
-// 惯例（主流画布约定，Figma/Miro 同款；左栏 .wg-hint 注明）：
-//   双指滚动 / 鼠标滚轮        → 平移（1:1 跟手，Shift+纵滚 = 横移）
-//   触控板捏合 / ⌘(Ctrl)+滚轮  → 以光标为锚点缩放
-// 平滑（阻尼追帧）：捏合不直接写 scale —— 每个事件按 exp 曲线累积进 zoomTarget，
-// rAF 每帧向目标追近 25%（速度∝剩余距离），锚点 = 最近一次指针位置 ⇒ 连续捏合
+// ── Wheel: CAD 范式 + 触控板保底 (作者令 2026-10-24；承 2026-10-22 捏合阻尼) ──
+// 惯例（CAD 标准范式；左栏 .wg-hint 注明）：
+//   鼠标滚轮 / 触控板捏合（ctrl+wheel）/ ⌘(Ctrl)+滚轮 → 以光标为锚点缩放
+//   触控板双指滚动（wheelIsPan 判定）/ Shift+滚轮     → 平移（1:1，Shift+纵滚 = 横移）
+// 平滑（阻尼追帧）：缩放不直接写 scale —— 每个事件按 exp 曲线累积进 zoomTarget，
+// rAF 每帧向目标追近 25%（速度∝剩余距离），锚点 = 最近一次指针位置 ⇒ 连续滚轮
 // 帧只表现为平滑推进，无 1.12 定步跳变；动量收尾自然滑入目标。
 
 const PINCH_K = 0.0015;   // exp 系数：滚轮一格 Δ≈120 → ≈1.2 档；触控板单帧 Δ≈2 → 微步
 const ZOOM_CHASE = 0.25;  // 每帧向 zoomTarget 追近的比例（阻尼）
 const ZOOM_SNAP = 0.0005; // 剩余差小于此直接贴合（收尾不抖）
+const WHEEL_NOTCH_PX = 48; // 鼠标滚轮一格 ≥ 48px（触控板单帧通常 ≤ 30px，见 wheelIsPan）
 
 /** WheelEvent deltas → pixels（Firefox line 档 ×16、page 档 ×视口高）。 */
 function normalizeWheelDelta(e) {
@@ -1204,6 +1208,18 @@ function normalizeWheelDelta(e) {
   if (e.deltaMode === 1) { x *= 16; y *= 16; }
   else if (e.deltaMode === 2) { const h = (view && view.H) || 600; x *= h; y *= h; }
   return { x, y };
+}
+
+/** 滚轮 → 平移 or 缩放路由（作者令 2026-10-24：CAD 手感 + 触控板保底）。
+ *  缩放：ctrl/⌘（捏合/⌘滚）恒缩放；无修饰时按设备启发判定——行/页档（离散
+ *  滚轮）或 |deltaY| ≥ 一格 = 鼠标滚轮 → 缩放；横分量 ≠0、单帧 < 48px 或分数
+ *  delta = 触控板双指滚动 → 平移（不破坏 2026-10-22 触控板手感）。
+ *  Shift+滚轮恒 = 平移（shift+纵滚 = 横移，平移兜底入口之一）。 */
+function wheelIsPan(e) {
+  if (e.shiftKey) return true;
+  if (e.ctrlKey || e.metaKey) return false;
+  if (e.deltaMode !== 0) return false;           // line/page 档 = 离散滚轮
+  return e.deltaX !== 0 || Math.abs(e.deltaY) < WHEEL_NOTCH_PX || !Number.isInteger(e.deltaY);
 }
 
 /** One damped chase step toward zoomTarget (cursor-anchored when an anchor is
@@ -1219,8 +1235,13 @@ function zoomChaseStep() {
   if (view.zoomAnchor) {
     const k = next / view.scale;
     const { px, py } = view.zoomAnchor;
-    view.vx = px - (px - view.vx) * k;
-    view.vy = py - (py - view.vy) * k;
+    // 锚点补偿绕画布中心（draw 变换 screen = (w − W/2)·s + W/2 + v，toWorld 为其
+    // 逆）：保持 (px − W/2 − vx)/scale 不变 ⇒ 光标下的世界点逐帧纹丝不动。
+    // 旧式 px − (px − vx)·k 对齐的是 screen = w·s + v（原点左上）——偏心锚点下
+    // 内容会以 (W/2)(1−s) 级漂移（CAD 批修正，2026-10-24）。
+    const ux = px - view.W / 2, uy = py - view.H / 2;
+    view.vx = ux - (ux - view.vx) * k;
+    view.vy = uy - (uy - view.vy) * k;
   }
   view.scale = next;
   return true;
@@ -1235,12 +1256,16 @@ function ensureLoop() {
 
 function bindCanvas(canvasEl) {
   let moved = false;
+  let downButton = 0;   // 0 左键 / 1 中键（CAD 平移手势——松手不触发点选）
   canvasEl.addEventListener('pointerdown', (e) => {
     if (!view) return;
     canvasEl.setPointerCapture(e.pointerId);
     const rect = canvasEl.getBoundingClientRect();
     const px = e.clientX - rect.left, py = e.clientY - rect.top;
-    const hit = pick(px, py);
+    const middle = e.button === 1;
+    if (middle) e.preventDefault();  // 拦浏览器中键自动滚动（取消 pointerdown ⇒ 兼容 mousedown 不起）
+    downButton = middle ? 1 : 0;
+    const hit = middle ? null : pick(px, py);   // 中键恒平移，CAD 语义不吃节点命中
     moved = false;
     wake(hit ? 0.6 : 0.25);
     if (hit) { view.dragging = hit; canvasEl.classList.add('grabbing'); }
@@ -1297,6 +1322,7 @@ function bindCanvas(canvasEl) {
     if (moved) return;
     if (wasDragging) { select(wasDragging, false); return; }
     if (!wasPanning) return;
+    if (downButton === 1) return;   // 中键松手 = 纯平移收尾，不做点选
     const rect = canvasEl.getBoundingClientRect();
     const hit = pick(e.clientX - rect.left, e.clientY - rect.top);
     if (hit) { select(hit, false); return; }
@@ -1324,20 +1350,20 @@ function bindCanvas(canvasEl) {
     e.preventDefault();
     const rect = canvasEl.getBoundingClientRect();
     const d = normalizeWheelDelta(e);
-    if (e.ctrlKey || e.metaKey) {
-      // 捏合 / ⌘(Ctrl)+滚轮：光标锚点阻尼缩放（平移/缩放互不复位——平移只动
-      // vx/vy，缩放只动 scale+锚点补偿，两个自由度正交）。
-      view.zoomAnchor = { px: e.clientX - rect.left, py: e.clientY - rect.top };
-      view.zoomTarget = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, view.zoomTarget * Math.exp(-d.y * PINCH_K)));
-      ensureLoop();
-    } else {
-      // 双指滚动 / 鼠标滚轮：平移（不误触缩放）
+    if (wheelIsPan(e)) {
+      // 触控板双指滚动 / Shift+滚轮：平移（1:1 跟手，不误触缩放）
       let dx = d.x, dy = d.y;
       if (e.shiftKey && !dx) { dx = dy; dy = 0; }
       view.vx += dx; view.vy += dy;
       view.zoomTarget = view.scale;
       view.zoomAnchor = null;
       if (!view.raf) draw();
+    } else {
+      // 鼠标滚轮 / 捏合 / ⌘(Ctrl)+滚轮：光标锚点阻尼缩放（平移/缩放互不复位——
+      // 平移只动 vx/vy，缩放只动 scale+锚点补偿，两个自由度正交）。
+      view.zoomAnchor = { px: e.clientX - rect.left, py: e.clientY - rect.top };
+      view.zoomTarget = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, view.zoomTarget * Math.exp(-d.y * PINCH_K)));
+      ensureLoop();
     }
   }, { passive: false });
 }
@@ -1572,8 +1598,9 @@ function select(n, scroll) {
     // pane — no half-width yield anymore). A pending damped pinch loses its
     // cursor anchor (chase continues center-anchored, never fights the recenter).
     view.zoomAnchor = null;
-    view.vx = view.W / 2 - n.x * view.scale;
-    view.vy = view.H / 2 - n.y * view.scale;
+    // Center = draw 变换 screen = (w − W/2)·s + W/2 + v 反解：v = (W/2 − w)·s。
+    view.vx = (view.W / 2 - n.x) * view.scale;
+    view.vy = (view.H / 2 - n.y) * view.scale;
   }
   wake(0.15);
   draw();
