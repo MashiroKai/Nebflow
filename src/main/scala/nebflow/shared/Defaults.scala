@@ -146,6 +146,16 @@ object Defaults:
     sys.props.getOrElse("nebflow.delegate.bgWaitHold.enabled", "true").toBoolean
 
   /**
+   * 诊断修复批 2026-10-24（delegate-nebflow-52308ee4 投递丢失）：delegate 终态
+   * 交付回执的确认宽限——首投/每次重投后 `now - deliveredAt` 超本值仍无父会话
+   * ack ⇒ 重投一拍（节拍 = 本值；重投达 3 次停投留痕）。默认 **10 分钟**；
+   * 现读 prop `nebflow.delegate.deliveryAckGraceMs`（BgGateWaitTimeoutMs 同款
+   * 每次调用现读先例；≤0 = 立即重投）。
+   */
+  def DelegateDeliveryAckGraceMs: Long =
+    sys.props.getOrElse("nebflow.delegate.deliveryAckGraceMs", (10 * 60 * 1000L).toString).toLong
+
+  /**
    * B 段（sleep-poll 护栏）开关：前台命令含 sleep>N 秒 ⇒ 工具级介入
    * （首次警告放行 + 同类心跳 N 次后拒绝并升级面板）。默认 **true**；
    * 现读 prop `nebflow.shell.sleepPollGuard.enabled` 可关。
