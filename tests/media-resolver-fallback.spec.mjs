@@ -155,8 +155,12 @@ test('A1: resolver 命中但 URL 404 ⇒ 回落票腿取件成功 ⇒ 脸活、�
   expect(mounted).toBe(true);
   const states = await page.evaluate(() => window.__imgStates());
   expect(states).toHaveLength(1);
-  // 中途的 resolver URL（404 面）已被票腿 URL 取代。
-  expect(new URL(states[0].src).pathname).toBe('/api/nf-file');
+  // 中途的 resolver URL（404 面）已被票腿字节面取代。imgdoor 二次加载批
+  // （2026-10-24）后图片脸字节经 nfFileCache 账本（nfViewerUrl 单点，取数腿仍是
+  // nf-file 票据路）⇒ 面形态 = blob:（账本命中直显）或 /api/nf-file（既有形态）。
+  const src = states[0].src;
+  expect(src.startsWith('blob:') || new URL(src).pathname === '/api/nf-file').toBe(true);
+  expect(mintCount).toBeGreaterThanOrEqual(1); // 票据路确实被走过（账本腿取数也铸票）
   expect(states[0].failed).toBe(false);
   expect(states[0].loaded).toBe(true); // 票腿字节真解码
   expect(await page.evaluate(() => window.__failedNotes())).toHaveLength(0);
@@ -170,7 +174,10 @@ test('A2: resolver 拒答（非 uploads 族）⇒ 直进票腿（媒体统一适
   expect(mounted).toBe(true);
   const states = await page.evaluate(() => window.__imgStates());
   expect(states).toHaveLength(1);
-  expect(new URL(states[0].src).pathname).toBe('/api/nf-file');
+  // imgdoor 二次加载批（2026-10-24）：图片脸 = 账本腿（blob:）或既有票腿形态。
+  const src2 = states[0].src;
+  expect(src2.startsWith('blob:') || new URL(src2).pathname === '/api/nf-file').toBe(true);
+  expect(mintCount).toBeGreaterThanOrEqual(1);
   expect(states[0].failed).toBe(false);
   expect(states[0].loaded).toBe(true);
   expect(await page.evaluate(() => window.__failedNotes())).toHaveLength(0);
