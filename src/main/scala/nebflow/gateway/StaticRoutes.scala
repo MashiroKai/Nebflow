@@ -151,7 +151,7 @@ object StaticRoutes:
    * the avatar-letter slot and the two console logo asset references, each
    * optional on the frontend: older gateways that omit them leave every
    * consumer on its current-value fallback).
-   * `domain` carries the default value (nebflow.space); a `NEBFLOW_BRAND_DOMAIN`
+   * `domain` carries the default value (mystand.space); a `NEBFLOW_BRAND_DOMAIN`
    * env override may replace it (single-domain, 2026-09-07 naming ruling) —
    * display-only, never consumed to build a URL. `logoUrl`/`logoDarkUrl` are
    * reference slots of the same display-only class: <img> sources only.

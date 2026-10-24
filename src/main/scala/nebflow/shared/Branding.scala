@@ -86,7 +86,7 @@ object Branding:
 
   /**
    * Primary domain. 单域（2026-09-07 命名边界裁定：neblink.space 退役）：默认 =
-   * nebflow.space（brand.conf 真值），可用 `NEBFLOW_BRAND_DOMAIN` env 覆盖
+   * mystand.space（brand.conf 真值），可用 `NEBFLOW_BRAND_DOMAIN` env 覆盖
    * （复用 L3 dualEnv 双前缀读取），默认无需再覆盖。display-only 语义：
    * 前端 profile 链接必须消费 `profileUrl`，禁止用 domain 构建 URL。
    */
@@ -94,14 +94,14 @@ object Branding:
 
   /**
    * Profile 页 URL——前端 profile 链接的唯一来源（activityBar.js 消费它拼
-   * URL，与 domain 解耦）。默认 = nebflow.space，可用
+   * URL，与 domain 解耦）。默认 = mystand.space，可用
    * `NEBFLOW_PROFILE_URL` env 覆盖。
    */
   val profileUrl: String = env("PROFILE_URL").getOrElse(get("profileUrl"))
 
   /**
    * Login page URL — the sign-in entry and the base the logout landing page
-   * derives from (origin + /logged-out). Default = nebflow.space/login,
+   * derives from (origin + /logged-out). Default = mystand.space/login,
    * overridable via `NEBFLOW_LOGIN_URL` (dual-prefix env read, same as
    * profileUrl). Consumers must use this value, never build URLs from
    * `domain`.

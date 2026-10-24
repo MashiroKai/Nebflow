@@ -29,7 +29,7 @@ import scala.concurrent.duration.*
  */
 class EnrollGuardExplicitLoginSpec extends FunSuite:
 
-  private val ProdUrl = "https://nebflow.space"
+  private val ProdUrl = "https://link.mystand.space"
 
   private var tmpDir: java.nio.file.Path = null
   private var savedRoot: os.Path = scala.compiletime.uninitialized

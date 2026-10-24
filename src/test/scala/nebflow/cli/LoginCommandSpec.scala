@@ -65,7 +65,7 @@ class LoginCommandSpec extends FunSuite:
     assertEquals(
       LoginCopy.promptLines("ABCD-EFGH"),
       List(
-        "Open https://nebflow.space/device on any device with a browser, then enter the code below.",
+        "Open https://mystand.space/device on any device with a browser, then enter the code below.",
         "Code: ABCD-EFGH",
         "Waiting for approval... (Ctrl+C to cancel)"
       )
@@ -74,7 +74,7 @@ class LoginCommandSpec extends FunSuite:
   }
 
   test("H2 地址行硬编码品牌域（不随响应变化）且不含任何码字段名") {
-    assert(LoginCopy.DevicePromptAddress.contains("https://nebflow.space/device"))
+    assert(LoginCopy.DevicePromptAddress.contains("https://mystand.space/device"))
     for line <- LoginCopy.promptLines("WXYZ-1234") do
       assert(!line.contains("deviceCode"), s"H2 不得出现 deviceCode 字样: $line")
       assert(!line.contains("verificationUri"), s"H2 不得出现 verificationUri 字样: $line")
