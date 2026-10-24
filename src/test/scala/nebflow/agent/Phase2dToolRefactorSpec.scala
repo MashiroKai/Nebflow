@@ -93,10 +93,14 @@ class Phase2dToolRefactorSpec extends FunSuite:
     // the single delivery point (AgentCore.friendsSealedStrip, the ONE
     // features.friends latch). Never a bare number, never a relaxed assertion.
     val sealStrip = if nebflow.core.FriendsSeal.isSealed then Set("ListFriends") else Set.empty[String]
+    // imagegen 双层批（2026-10-24）：generate_image 的编译期 seal 剥离面与
+    // friendseal 同消费点条件化——本锚的期望值一并扣除（静态集不动）。
+    val imageGenStrip =
+      if nebflow.core.ImageGenSeal.CompiledIn then Set.empty[String] else Set("generate_image")
     assertEquals(
       fixed,
-      expected -- sealStrip,
-      "Nebula 静态集件数 == 单点常量 AgentCore.RootOrchestrationToolsExpectedSize（在飞 18 = 2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后值 17 + builtin-def 批（2026-10-03）+Delegate − pop 批 −Card − unified-delegate 批（2026-10-03）−AgentFlow + task-rag 批 #1227 +TaskSearch；沿革：root 面 −Glob −Grep ⇒ 13 与 promptgov 批 −Delegate ⇒ 12 均史实（后者之授能面已被 2026-10-03 作者令②取代）；好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除——节点结果沿 out 边自动投递，主动查图与职责重叠，dispatcher 自身面不受影响；+Card 解封，−Mail/FlowTrigger/FlowExecute 旧体系退役；Issue/CheckIssues 退役；friendseal 封存期按单点 strip 派生）"
+      expected -- sealStrip -- imageGenStrip,
+      "Nebula 静态集件数 == 单点常量 AgentCore.RootOrchestrationToolsExpectedSize（在飞 19 = 2026-09-18 18:18 令 +Bash/Edit/Write/Glob/Grep 后值 17 + builtin-def 批（2026-10-03）+Delegate − pop 批 −Card − unified-delegate 批（2026-10-03）−AgentFlow + task-rag 批 #1227 +TaskSearch + imagegen 双层批（2026-10-24）+generate_image；沿革：root 面 −Glob −Grep ⇒ 13 与 promptgov 批 −Delegate ⇒ 12 均史实（后者之授能面已被 2026-10-03 作者令②取代）；好友消息改造批 ⑩ +ListFriends；TaskList 批 +TaskList；NodeList 摘除——节点结果沿 out 边自动投递，主动查图与职责重叠，dispatcher 自身面不受影响；+Card 解封，−Mail/FlowTrigger/FlowExecute 旧体系退役；Issue/CheckIssues 退役；friendseal 封存期与 imagegen seal 关时按单点 strip 派生）"
     )
     assert(!fixed.contains("Issue"), "Nebula fixedTools 零 Issue（2026-09-04 终裁退役）")
     assert(!fixed.contains("NodeList"), "Nebula fixedTools 零 NodeList（2026-09-06 00:48 裁定摘除——变异验红锚）")

@@ -5020,3 +5020,98 @@ body:not(.mobile-layer) #header .header-center {
   padding: 8px 2px 0;
   border-top: 1px solid var(--glass-border);
 }
+
+/* ── imagegen 占位卡片（imagegen 双层批 2026-10-24，调试状态）────────────────
+ * 腿①非阻塞生图的占位动画面：克制的玻璃 shimmer + 细 spinner + 「调试中」徽标。
+ * 设计原则六条口径：低饱和单事件、4px 基数间距、无 emoji/强调条；动效纯 CSS、
+ * 一次性动画（ prefers-reduced-motion 即停）。release bundle 不携带本块
+ * （js 面经 __NEBFLOW_RELEASE__ DCE，css 由后端 seal 保证不可达）。 */
+.imagegen-row {
+  margin: 4px 0 8px;
+}
+.imagegen-ph {
+  position: relative;
+  max-width: 420px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--glass-border, rgba(120, 144, 180, 0.25));
+  background: var(--glass-bg, rgba(255, 255, 255, 0.55));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.imagegen-ph-shimmer {
+  aspect-ratio: 16 / 10;
+  background: linear-gradient(100deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.28) 50%,
+    transparent 70%);
+  background-size: 200% 100%;
+  animation: imagegen-shimmer 1.8s ease-in-out infinite;
+}
+@keyframes imagegen-shimmer {
+  from { background-position: 120% 0; }
+  to   { background-position: -80% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .imagegen-ph-shimmer { animation: none; }
+}
+.imagegen-ph-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--color-text-secondary, #667085);
+  font-size: 13px;
+}
+.imagegen-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--glass-border, rgba(120, 144, 180, 0.35));
+  border-top-color: var(--color-primary, #07c160);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+.imagegen-ph-caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--color-text-secondary, #667085);
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.06));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 「调试中」徽标（视觉裁定：低调描边小徽标，无强调条） */
+.imagegen-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  border-radius: 6px;
+  border: 1px solid var(--glass-border, rgba(120, 144, 180, 0.4));
+  color: var(--color-text-secondary, #667085);
+  opacity: 0.85;
+}
+.imagegen-done .imagegen-loading { display: none; }
+.imagegen-img {
+  display: block;
+  width: 100%;
+  max-width: 420px;
+  border-radius: 12px;
+}
+.imagegen-done { border: none; background: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.imagegen-done-badge { margin-top: 4px; }
+.imagegen-error {
+  max-width: 420px;
+  padding: 10px 12px;
+  font-size: 13px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border, rgba(120, 144, 180, 0.25));
+  color: var(--color-text-secondary, #667085);
+  word-break: break-all;
+}

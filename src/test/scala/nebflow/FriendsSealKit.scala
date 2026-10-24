@@ -21,13 +21,17 @@ import nebflow.core.FriendsSeal
  */
 object FriendsSealKit:
 
-  /** constant − (sealed ? 1 : 0), derived from the delivered snapshot itself. */
+  /**
+   * constant − (friendsSealed ? 1 : 0) − (imageGenSealed ? 1 : 0)，全部由交付
+   * 快照自身推导（presence-based，零裸数字、零二次读锁——imagegen 双层批
+   * 2026-10-24 把 generate_image 的编译期 seal 剥离面并进了同一个单点推导：
+   * 静态集与件数常量不动，seal 状态只在这个消费点读一次）。
+   */
   def expectedNebulaSize(delivered: Set[String]): Int =
-    // W1 provisional shim: the constant was renamed PR-side
-    // (NebulaOrchestrationToolsExpectedSize -> RootOrchestrationToolsExpectedSize,
-    // same single-point discipline); point at the merged tree's single source.
     val constant = nebflow.agent.AgentCore.RootOrchestrationToolsExpectedSize
-    if delivered.contains("ListFriends") then constant else constant - 1
+    val friends = if delivered.contains("ListFriends") then 0 else 1
+    val imageGen = if delivered.contains("generate_image") then 0 else 1
+    constant - friends - imageGen
 
   /**
    * Lift the seal for the duration of `ioa` (ref-counted, restored on every
