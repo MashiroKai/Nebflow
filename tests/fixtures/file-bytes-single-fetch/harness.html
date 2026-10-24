@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<!-- file-bytes-single-fetch harness.html — 文件字节消费面「账本单点·恰一次抓取」
+     (二次加载清剿批 2026-10-24) 的静态测试 harness。#816（pop-image-single-fetch）
+     的姊妹面：驱动**真实前端模块**，各消费面都是生产链原样：
+
+       · 设备面内联直显：messages.attachInlineImage（export = 测试 seam）
+         device/path 腿 ⇒ nfViewerSource 账本单点（命中 blob / 未命中取数+入账）；
+       · 好友面内联直显：attachInlineImage ready 腿 ⇒ `attach:<id>` 账本键
+         （与 Canvas 预览腿 previewFriendAttachment 同键同字节）；
+       · Canvas 打开：fileViewers.renderFile({itemType:'image'}) ⇒ 同一
+         nfViewerUrl 单点（#816 harness 同款）；
+       · 灯箱：lightbox.openLightbox(src, alt, path) —— frame postMessage 同形
+         （本地路径 ⇒ 账本先行，失败回落 reMint 直取腿）；
+       · Markdown 文档：viewers/markdown render —— 图片出帧前经账本解析终局 src；
+       · HTML 文档：viewers/html render —— SVG 内联化 fetch force-cache。
+
+     字节面由 spec 侧的小源服务器提供：POST /api/nf-ticket 铸票（带 size）+
+     GET /api/nf-file?path&ticket 取件（真字节、带请求计数、Cache-Control/ETag/304）
+     + GET /api/friends/attachments/:id（好友面鉴权路，带计数）。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>file-bytes-single-fetch harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <!-- markdown 渲染依赖 = 生产 index.html 同款 vendor 全局面（window.marked/katex；
+       缺席 ⇒ utils.renderMarkdownWithMath 落 escapeHtml 纯文回退 = 假红）。 -->
+  <script defer src="/vendor/marked.min.js"></script>
+  <script defer src="/vendor/katex.min.js"></script>
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #chat { width: 680px; padding: 12px; }
+    #canvas-pane, #md-pane-1, #md-pane-2 { width: 680px; min-height: 320px; padding: 12px; }
+    #html-pane { width: 680px; height: 400px; padding: 12px; }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <div id="canvas-pane"></div>
+  <div id="md-pane-1"></div>
+  <div id="md-pane-2"></div>
+  <div id="html-pane"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const state = (await import(`${WEB}/state.js`)).default;
+    state.ws = { readyState: 1, send: () => {} };
+    window.__nfSessionId = 'sess-1';
+
+    // 控制面错误捕获（spec 诊断读数面；禁静默假绿）。
+    window.__consoleErrs = [];
+    const origErr = console.error;
+    const origWarn = console.warn;
+    console.error = (...a) => { window.__consoleErrs.push('error: ' + a.map(String).join(' ')); origErr(...a); };
+    console.warn = (...a) => { window.__consoleErrs.push('warn: ' + a.map(String).join(' ')); origWarn(...a); };
+    window.addEventListener('unhandledrejection', (e) => {
+      window.__consoleErrs.push('unhandledrejection: ' + String((e.reason && e.reason.stack) || e.reason));
+    });
+
+    const cacheMod = await import(`${WEB}/nfFileCache.js`);
+    const { renderFile } = await import(`${WEB}/fileViewers.js`);
+    const lb = await import(`${WEB}/lightbox.js`);
+    const md = await import(`${WEB}/viewers/markdown.js`);
+    const htmlv = await import(`${WEB}/viewers/html.js`);
+
+    // messages.js 的依赖图最重（ws/neblink/input/voiceEngine…）——失败要显性：
+    // spec 读 __importError，非空即红（禁静默假绿）。
+    let importError = '';
+    try {
+      const messages = await import(`${WEB}/messages.js`);
+      window.__attachInlineImage = messages.attachInlineImage;
+    } catch (e) { importError = String((e && e.stack) || e); }
+    window.__importError = importError;
+
+    const settle = async (ms = 500) => {
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      // 账本腿 = 异步铸票（合帧 + fetch）+ fetchBlobWithProgress 整收 + nfCachePut
+      // 落账 + blob URL 建链——多等几拍，保证落账与后续命中都 landed。
+      await new Promise(r => setTimeout(r, ms));
+    };
+
+    // ── 设备面内联直显（attachInlineImage · device/path 腿）──────────────────
+    window.__deviceInline = async (attPath, name) => {
+      const card = document.createElement('div');
+      card.className = 'fm-att';
+      document.getElementById('chat').appendChild(card);
+      const ok = window.__attachInlineImage(
+        card, { name: name || attPath.split('/').pop() }, 'device', { kind: 'path', path: attPath });
+      await settle();
+      const img = card.querySelector('.fm-att-inline img');
+      return {
+        ok,
+        boxInDom: !!card.querySelector('.fm-att-inline'),
+        src: img ? String(img.src || '') : '',
+        isBlob: !!(img && String(img.src || '').startsWith('blob:')),
+        isTicket: !!(img && String(img.src || '').includes('/api/nf-file')),
+        loaded: !!(img && img.complete && img.naturalWidth > 0),
+        natW: img ? img.naturalWidth : 0,
+        tag: (img && img.dataset && img.dataset.attSrc) || '',
+      };
+    };
+
+    // ── 好友面内联直显（attachInlineImage · ready 腿 = 鉴权路由 + attach:<id> 账本键）
+    window.__friendInline = async (attId, name, size) => {
+      const card = document.createElement('div');
+      card.className = 'fm-att';
+      document.getElementById('chat').appendChild(card);
+      const ok = window.__attachInlineImage(card, { id: attId, name, size }, 'ready');
+      await settle();
+      const img = card.querySelector('.fm-att-inline img');
+      return {
+        ok,
+        boxInDom: !!card.querySelector('.fm-att-inline'),
+        src: img ? String(img.src || '') : '',
+        isBlob: !!(img && String(img.src || '').startsWith('blob:')),
+        loaded: !!(img && img.complete && img.naturalWidth > 0),
+        tag: (img && img.dataset && img.dataset.attSrc) || '',
+      };
+    };
+
+    // ── Canvas 打开（image viewer = 同一 nfViewerUrl 单点；#816 harness 同款）──
+    window.__openInCanvas = async (ctx) => {
+      const pane = document.getElementById('canvas-pane');
+      pane.innerHTML = '';
+      await renderFile(pane, Object.assign({ itemType: 'image' }, ctx));
+      await settle();
+      const img = pane.querySelector('.canvas-image-viewer img');
+      return img
+        ? { found: true, src: String(img.src), isBlob: String(img.src).startsWith('blob:'),
+            loaded: img.complete && img.naturalWidth > 0, naturalWidth: img.naturalWidth }
+        : { found: false };
+    };
+
+    // ── 灯箱（frame postMessage 同形：src + path）────────────────────────────
+    window.__openLightbox = async (src, alt, path) => {
+      lb.openLightbox(src, alt, path);
+      await settle(400);
+      const img = document.querySelector('.nf-lightbox-img');
+      const status = document.querySelector('.nf-lightbox-status');
+      return {
+        src: String((img && img.src) || ''),
+        isBlob: String((img && img.src) || '').startsWith('blob:'),
+        loaded: !!(img && img.classList.contains('loaded')),
+        failed: !!(status && status.classList.contains('error')),
+      };
+    };
+    window.__closeLightbox = () => lb.closeLightbox();
+
+    // ── Markdown 文档（viewMarkdown：图片出帧前经账本解析终局 src）─────────────
+    window.__renderMd = async (paneId, content, absPath) => {
+      const pane = document.getElementById(paneId);
+      pane.innerHTML = '';
+      await md.default.render(pane, { content, absPath, fileName: (absPath || 'doc.md').split('/').pop() });
+      await settle(600);
+      return Array.from(pane.querySelectorAll('.canvas-md-viewer img')).map(img => ({
+        src: String(img.src || ''),
+        isBlob: String(img.src || '').startsWith('blob:'),
+        isTicket: String(img.src || '').includes('/api/nf-file'),
+        loaded: img.complete && img.naturalWidth > 0,
+        natW: img.naturalWidth,
+        fallback: (img.dataset && img.dataset.nfMdFb) || '',
+      }));
+    };
+
+    // ── HTML 文档（viewHtml：SVG 内联化 fetch force-cache）────────────────────
+    window.__renderHtmlDoc = async (content, absPath) => {
+      const pane = document.getElementById('html-pane');
+      pane.innerHTML = '';
+      await htmlv.default.render(pane, { content, absPath, fileName: 'doc.html', warnings: [] });
+      await settle(900); // iframe load + svg 内联 fetch
+      const frame = pane.querySelector('iframe[data-nf-canvas-html]');
+      let svgInlined = null;
+      try {
+        const doc = frame.contentDocument;
+        const img = doc && doc.querySelector('img');
+        svgInlined = { imgGone: !img, parentTag: img ? img.parentNode.tagName : null };
+      } catch (e) { svgInlined = { error: String(e) }; }
+      return { hasFrame: !!frame, svgInlined };
+    };
+
+    window.__cacheStats = () => cacheMod.nfCacheStats();
+    window.__ledgerBlob = (k) => cacheMod.nfCachedBlob(k).then(b => (b ? { size: b.size } : null));
+    window.__invalidate = (p) => cacheMod.nfCacheInvalidatePath(p);
+    window.__ready = true;
+  </script>
+</body>
+</html>

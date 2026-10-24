@@ -356,9 +356,16 @@ private[gateway] object SocialRoutes:
                     case 200 =>
                       // 显式字节流实体（同 /neblink/avatar 先例：裸 Ok(Array[Byte]) 会命中
                       // circe 的 byte 数组编码器，把字节变成 JSON 数字数组 ⇒ 文件损坏）。
+                      // 二次加载清剿批（2026-10-24）：加 `private, max-age=300`（#538
+                      // 同款）——附件字节按 id 寻址、收侧 sha256 校验后不可变（内容寻址
+                      // 语义），但前端此前每次重渲/重开都全额重拉（响应从未带缓存策略，
+                      // POST 上传面亦无 ETag 可协商）。5 分钟内零往返，其后每次全重拉
+                      // 的账单面收窄到消费面自己的账本（nfFileCache `attach:<id>`）。
+                      // `private`：鉴权路由（withAuth），绝不进共享缓存。
                       val attHeaders = Headers(
                         List(
                           Some(Header.Raw(CIString("Content-Type"), "application/octet-stream")),
+                          Some(Header.Raw(CIString("Cache-Control"), "private, max-age=300")),
                           fetch.contentDisposition.map(d => Header.Raw(CIString("Content-Disposition"), d)),
                           fetch.sha256Header.map(h => Header.Raw(CIString("X-Attachment-Sha256"), h))
                         ).flatten

@@ -21,6 +21,10 @@ export default {
   // diff 拆面板批（2026-10-22）：左栏「变更文件」面板（委托 diff 摘要条唤起）。
   'panel.diff': 'Changed Files',
   'panel.diffEmpty': 'No diff open. Click the changes summary on a delegate delivery message.',
+  // 二次加载清剿批（2026-10-24）：diff 打开链的装载态 + 失败可见反馈（作者令
+  // 「任何取数/渲染路径必须有 loading 态与失败可见反馈，禁止静默无响应」）。
+  'panel.diffRendering': 'Rendering diff…',
+  'panel.diffOpenFailed': 'Could not open in Canvas — click the row to retry.',
   // #27 Project tab + Flow Map tab (direction adjustment: Canvas tab form, team-panel paradigm)
   'project.title': 'Projects',
   'project.loading': 'Loading projects…',

@@ -468,6 +468,15 @@ export async function nfCacheReset() {
 const viewerUrls = new Map();
 let viewerRevokeBound = false;
 
+/** 账本未命中的**在飞取数合流表**（二次加载清剿批 2026-10-24 · 作者令「网络腿
+ *  重复取按账本单点治」的收尾单点）：同键并发未命中（同帧 N 面、pane 双开、
+ *  预览+打开同拍）合流为**恰一次网络抓取**——首发起者铸票+取数+入账，后续
+ *  调用 await 同一枚 promise 分得同一份字节（各铸各的 blob URL，不共享 URL）。
+ *  settle 即摘（成功后账本已可命中；失败不粘表 ⇒ 下次调用重新起腿）。进度回调
+ *  只服务发起者（onProgress 是诊断面，分身不接）。 */
+/** @type {Map<string, Promise<Blob>>} 键 = 'nf:<absPath>' */
+const viewerFetchInFlight = new Map();
+
 /** 会话内已知的路径→整件 hash 读数（设备取件腿 fileContent 帧免费带回；viewer
  *  取数入账时作 cid——同内容跨设备/跨键只存一份字节，v1 §6.3）。 */
 /** @type {Map<string, string>} 键 = 'nf:<absPath>' → hash16 */
@@ -516,17 +525,34 @@ export async function nfViewerSource(p) {
     return { url, cached: true };
   }
   // 未命中：票据链（动态 import——静态边会成环：nfTicket ← viewers/shared ← …）。
+  // 铸票改走**合帧批量**出口（二次加载清剿批 2026-10-24）：账本接入的消费面
+  // （设备内联图/多图 markdown/搜索缩略）同帧 N 个未命中各调一次本函数，逐个
+  // `ticketUrl` 会退化成 N 发 POST /api/nf-ticket；`queuedTicketUrl` 把同一
+  // setTimeout(0) 窗内的铸票合成一次（imgdoor #542 档1 同款语义，N 图 ≤ 1 铸票）。
   // 大文件 LAN 直传腿（console-fastpath 批·腿③）：≥4MiB 且近路在册 ⇒ 绝对
   // URL 跨源直取（凭据仍 ticket，服务端 CORS/PNA 已放）；否则原票据腿。
-  const nfTicket = await import('./nfTicket.js');
-  const directUrl = await nfTicket.largeFileDirectUrl(absPath);
-  const res = await fetchBlobWithProgress(directUrl || await nfTicket.ticketUrl(absPath), onProgress || null);
-  // 入账带 hash（设备取件腿已知时）+ srcPath（事件失效/对账的路径锚）。
-  void nfCachePut(cacheKey, res.blob, res.version, {
-    hash: knownHashes.get(cacheKey) || '',
-    srcPath: absPath,
-  });
-  const url = trackViewerUrl(pane || document.body, URL.createObjectURL(res.blob));
+  // 同键**并发**未命中（在飞合流表）：合流为恰一次抓取（见 viewerFetchInFlight
+  // 头注）——首发起者跑全腿，分身等同一枚 promise。
+  let shared = viewerFetchInFlight.get(cacheKey);
+  if (!shared) {
+    shared = (async () => {
+      const nfTicket = await import('./nfTicket.js');
+      const ticketedUrl = await nfTicket.queuedTicketUrl(absPath);
+      const directUrl = await nfTicket.largeFileDirectUrl(absPath);
+      const res = await fetchBlobWithProgress(directUrl || ticketedUrl, onProgress || null);
+      // 入账带 hash（设备取件腿已知时）+ srcPath（事件失效/对账的路径锚）。
+      void nfCachePut(cacheKey, res.blob, res.version, {
+        hash: knownHashes.get(cacheKey) || '',
+        srcPath: absPath,
+      });
+      return res.blob;
+    })();
+    viewerFetchInFlight.set(cacheKey, shared);
+    const settle = () => { if (viewerFetchInFlight.get(cacheKey) === shared) viewerFetchInFlight.delete(cacheKey); };
+    shared.then(settle, settle);
+  }
+  const blob = await shared;
+  const url = trackViewerUrl(pane || document.body, URL.createObjectURL(blob));
   return { url, cached: false };
 }
 

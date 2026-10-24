@@ -116,6 +116,58 @@ class UploadsRoutesSpec extends CatsEffectSuite:
     }
   }
 
+  // ── 二次加载清剿批（2026-10-24）：#538 同款确定性浏览器缓存 ─────────────────
+  // 修前形态：本路由带 ETag+Last-Modified（StaticFile）并应答 304，但从未发
+  // Cache-Control ⇒ 重复消费按启发式新鲜度（截图类新文件 ≈ 秒级窗），媒体脸每次
+  // 重渲都把同一体再拉一遍。`private, max-age=300`：5 分钟内零字节往返，其后一次
+  // 条件往返 304（304 必须重申策略）；404 腿不带（不可缓存面不染色）。
+  test("200 carries the deterministic private cache policy (#538 family)") {
+    withTempUploads {
+      for
+        cred <- sessionCred
+        resp = get("/uploads/sess-1/shot.png", cookie = Some(cred)).get
+        _ = assertEquals(resp.status, Status.Ok)
+        _ = assertEquals(
+          resp.headers.get[org.http4s.headers.`Cache-Control`].map(_.values.toList.mkString(", ")),
+          Some("private, max-age=300")
+        )
+      yield ()
+    }
+  }
+
+  test("304 revalidation restates the cache policy; 404 stays uncolored") {
+    withTempUploads {
+      for
+        cred <- sessionCred
+        ok = get("/uploads/sess-1/shot.png", cookie = Some(cred)).get
+        _ = assertEquals(ok.status, Status.Ok)
+        etag = ok.headers.get[org.http4s.headers.ETag].map(_.tag.toString).getOrElse(fail("ETag missing"))
+        // Same request shape with If-None-Match added on the wire:
+        _ = {
+          val req = StaticRoutes
+            .uploadsRoutes(TokenRef, Sessions)(
+              SpecRequests.withRemote(
+                Request[IO](Method.GET, Uri.unsafeFromString("/uploads/sess-1/shot.png"))
+                  .putHeaders(org.http4s.Header.Raw(org.typelevel.ci.CIString("If-None-Match"), etag)),
+                Some(SpecRequests.LoopbackV4)
+              ).addCookie(GatewaySessionStore.CookieName, cred(1))
+            )
+            .value
+            .unsafeRunSync()
+            .get
+          assertEquals(req.status, Status.NotModified)
+          assertEquals(
+            req.headers.get[org.http4s.headers.`Cache-Control`].map(_.values.toList.mkString(", ")),
+            Some("private, max-age=300")
+          )
+        }
+        missing = get("/uploads/sess-1/nope.png", cookie = Some(cred)).get
+        _ = assertEquals(missing.status, Status.NotFound)
+        _ = assertEquals(missing.headers.get[org.http4s.headers.`Cache-Control`], None)
+      yield ()
+    }
+  }
+
   test("rejects traversal segments") {
     withTempUploads {
       for

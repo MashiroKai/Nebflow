@@ -53,6 +53,9 @@ import { popArtifactFromInput, openPopArtifact } from './chat.js';
 import { indexMedia, entryMatchesTab, entryMatchesKeyword, groupEntriesByTime } from './popMediaIndex.js';
 import { openMediaLightbox } from './popArtifacts.js';
 import { ticketUrl } from './nfTicket.js';
+// 二次加载清剿批（2026-10-24 · #816 同法）：媒体网格的 agent 引用**图片**缩略字节
+// 改经 nfFileCache 账本单点（nfViewerSource）——命中零抓取 / 未命中取数即入账。
+import { nfViewerSource } from './nfFileCache.js';
 import { attachmentImageUrl } from './persistence.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
@@ -1800,6 +1803,21 @@ function resolveEntryThumb(e) {
   return ticketUrl(e.ref).catch(() => '');
 }
 
+/** Image-grid thumb bytes for one agent-ref entry, via the **ledger single
+ *  point** (二次加载清剿批 2026-10-24 · #816 同法): `nf:<ref>` hit = blob URL
+ *  (zero fetch — the same bytes the bubble/Canvas faces already registered);
+ *  miss = the existing ticketed fetch + `nfCachePut` (exactly once, so the
+ *  Canvas open of that image then reuses them). Failure ⇒ the pre-batch
+ *  ticketed-URL leg, verbatim. Video thumbs stay on `resolveEntryThumb`
+ *  (Range/metadata-probe semantics ride the native media stack, not the
+ *  byte ledger — same boundary #816 drew for <video>). */
+function resolveEntryImageThumb(e) {
+  if (e.thumbRef || !e.ref || e.source === 'user') return resolveEntryThumb(e);
+  return nfViewerSource({ absPath: e.ref, objectUrl: null })
+    .then(({ url }) => url)
+    .catch(() => resolveEntryThumb(e));
+}
+
 function mediaEntryCard(e) {
   const card = document.createElement('div');
   card.className = 'search-media-card';
@@ -1822,7 +1840,7 @@ function mediaEntryCard(e) {
       img.alt = e.name;
       img.loading = 'lazy';
       img.draggable = false;
-      resolveEntryThumb(e).then(url => { if (img.isConnected && url) img.src = url; }).catch(() => {});
+      resolveEntryImageThumb(e).then(url => { if (img.isConnected && url) img.src = url; }).catch(() => {});
       img.addEventListener('error', () => card.classList.add('search-media-broken'));
       card.appendChild(img);
     } else {

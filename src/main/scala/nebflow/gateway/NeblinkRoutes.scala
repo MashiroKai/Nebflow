@@ -318,7 +318,15 @@ private[gateway] object NeblinkRoutes:
                     IO.pure(
                       Response[IO](Status.Ok)
                         .withEntity(fs2.Stream.emits(bytes).covary[IO])
-                        .withHeaders(ct)
+                        .withHeaders(Headers(
+                          ct,
+                          // 二次加载清剿批（2026-10-24）：同族对端路由
+                          // /api/neblink/avatars/:userId 早已带 ETag+304 + private,
+                          // max-age=3600（line ~390）；本路由（自己的头像）此前零缓存
+                          // 策略 ⇒ 设置页/列表每次开都全额重拉远源头像。对齐 #538 家族
+                          // 的保守值（300 ≪ 身份切换窗）：5 分钟内零往返。
+                          Header.Raw(CIString("Cache-Control"), "private, max-age=300")
+                        ))
                     )
                   case Left(err) =>
                     BadGateway(Json.obj("error" -> err.asJson))

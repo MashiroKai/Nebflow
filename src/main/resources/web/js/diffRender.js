@@ -20,18 +20,29 @@ export function esc(s) {
   ));
 }
 
+/** One diff line → its row kind. Single source for BOTH consumers that
+ *  classify lines: [[parseUnifiedDiff]] (whole-body, small faces) and the
+ *  streaming Canvas renderer (diffCanvas.js, huge bodies — walks the string
+ *  line-by-line instead of materializing a rows array first).
+ *  二次加载清剿批 2026-10-24（作者报障「点 diff … 在 canvas 打开的体验还是很慢，
+ *  甚至点了没反应」）：抽出来就是为了那条腿不再先全量 split 再渲染。 */
+/** @returns {'hunk'|'add'|'del'|'ctx'|'meta'} */
+export function classifyDiffLine(line) {
+  if (line.startsWith('@@')) return 'hunk';
+  if (line.startsWith('+++') || line.startsWith('---')) return 'meta';
+  if (line.startsWith('+')) return 'add';
+  if (line.startsWith('-')) return 'del';
+  if (line.startsWith('\\')) return 'meta';
+  return 'ctx';
+}
+
 /** Row model for one unified diff body.
  *  @returns {Array<{kind: 'hunk'|'add'|'del'|'ctx'|'meta', text: string}>} */
 export function parseUnifiedDiff(diffText) {
   /** @type {Array<{kind: 'hunk'|'add'|'del'|'ctx'|'meta', text: string}>} */
   const rows = [];
   for (const line of String(diffText ?? '').split('\n')) {
-    if (line.startsWith('@@')) rows.push({ kind: 'hunk', text: line });
-    else if (line.startsWith('+++') || line.startsWith('---')) rows.push({ kind: 'meta', text: line });
-    else if (line.startsWith('+')) rows.push({ kind: 'add', text: line });
-    else if (line.startsWith('-')) rows.push({ kind: 'del', text: line });
-    else if (line.startsWith('\\')) rows.push({ kind: 'meta', text: line });
-    else rows.push({ kind: 'ctx', text: line });
+    rows.push({ kind: classifyDiffLine(line), text: line });
   }
   return rows;
 }

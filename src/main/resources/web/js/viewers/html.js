@@ -504,8 +504,16 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
   (function(){
     document.querySelectorAll('img').forEach(function(img){
       var src = img.getAttribute('src') || '';
-      if (!/\\.svg(\\?|$)/i.test(src)) return;
-      fetch(src).then(function(r){ return r.text(); }).then(function(svgText){
+      // 二次加载清剿批（2026-10-24）判据修正：票据化后本地面 URL =
+      // /api/nf-file?path=…%2Fx.svg&ticket=… ——「.svg」落在 query **中段**（后随
+      // &ticket=），旧判据 (\?|$) 只认尾/问号 ⇒ 2026-09-11 C 批票据化起本内联化
+      // 对重写 URL 恒不触发（静默失效）。[?&] 恢复设计行为（主题色覆写 SVG）。
+      // （注：本段处于模板字面量内——注释禁用反引号，此处以直书文本代替。）
+      if (!/\\.svg([?&]|$)/i.test(src)) return;
+      // 同批：内联化取字节显式吃 HTTP 缓存——img 标签刚取过同一 URL（nf-file 成功
+      // 面带 private,max-age=300 + ETag），force-cache 命中即零字节往返；修前裸
+      // fetch 依赖启发式，缓存窗弱时同一 SVG 双取。
+      fetch(src, { cache: 'force-cache' }).then(function(r){ return r.text(); }).then(function(svgText){
         var parser = new DOMParser();
         var doc = parser.parseFromString(svgText, 'image/svg+xml');
         var svg = doc.documentElement;

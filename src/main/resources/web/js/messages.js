@@ -101,7 +101,9 @@ import {
 import { ticketUrl, queuedTicketUrl } from './nfTicket.js';
 // imgdoor #542（三档加速）：流式读出器（边收边报进度）——只吃调用方给定的
 // **既有**路由 URL（票据路/鉴权路），禁第三条取字节路。
-import { fetchBlobWithProgress, nfCacheDrop } from './nfFileCache.js';
+// 二次加载清剿批（2026-10-24，#816 同法）：内联直显字节接 **nfFileCache 账本单点**
+// ——`nfCachedBlob` 查账 / `nfCachePut` 入账 / `nfViewerSource` 账本取数单点。
+import { fetchBlobWithProgress, nfCacheDrop, nfCachedBlob, nfCachePut, nfViewerSource } from './nfFileCache.js';
 import { MAX_INLINE_IMAGE_BYTES, isImageAttachmentName } from './attachmentPreview.js';
 
 let conversations = [];
@@ -2147,8 +2149,11 @@ function paintInlineFrame(img, url, dims) {
  *    群面、设备面、历史卡片）⇒ **逐字现状**。
  *  `data-att-src` 是字节源的**读数面**（不参与任何行为分支）：
  *  `local-thumb` / `local-file` / `local-handle` / `server` / `server-cached` / `server-ticket`；
- *  `data-att-nat` / `data-att-ar` / `data-att-box` 是几何读数面（同上，非行为分支）。 */
-function attachInlineImage(card, att, kind, src) {
+ *  `data-att-nat` / `data-att-ar` / `data-att-box` 是几何读数面（同上，非行为分支）。
+ *
+ *  `export` = 测试 seam（二次加载清剿批 2026-10-24：单取数 spec 驱动真实生产链；
+ *  零行为变化——函数体一字未改，只是多了一个模块出口）。 */
+export function attachInlineImage(card, att, kind, src) {
   if (!card || !att) return false;
   /** 发送侧乐观面（本批唯一新腿）：本机字节句柄。 */
   const localFace = att.localFace || null;
@@ -2164,6 +2169,9 @@ function attachInlineImage(card, att, kind, src) {
   img.alt = ''; // 骨架期无内容 ⇒ 装饰性（真名在字节就位时补上）
   box.appendChild(img);
   let mounted = false;
+  /** 账本 blob 解码失败的自愈腿（#816 同族语义，二次加载清剿批）：只由账本腿
+   *  （设备 path 腿）在场——坏字节先逐出账本，再走既有票腿恰一次重挂。 */
+  let legacyRetry = null;
   /** @param {string} url @param {string} [tag] 字节源读数（`data-att-src`）
    *  @param {{w:number,h:number}|null} [dims] 已知内禀尺寸（省一次解码；缺席则本函数自取） */
   const mount = (url, tag, dims) => {
@@ -2180,7 +2188,19 @@ function attachInlineImage(card, att, kind, src) {
     if (img.dataset.attBox) return;
     if (img.naturalWidth > 0 && img.naturalHeight > 0) applyInlineRatio(img, img.naturalWidth, img.naturalHeight);
   }, { once: true });
-  img.addEventListener('error', () => box.remove(), { once: true });
+  img.addEventListener('error', () => {
+    // 账本腿（blob: URL）解码失败 = 手上这份缓存字节坏了（#816 同族语义）：
+    // 先把该键逐出账本，再走既有票腿恰一次（`legacyRetry` 只由账本腿设置）——
+    // 坏字节不粘死账本（否则 TTL 内每次渲染都命中同一份坏字节）。其余失败
+    // （含自愈后的第二次失败）照旧摘槽（`box.remove` 幂等，摘 detached 节点 = 无操作）。
+    if (legacyRetry && img.src && img.src.startsWith('blob:') && !img.dataset.nfBlobRetried) {
+      img.dataset.nfBlobRetried = '1';
+      mounted = false; // 允许自愈腿重挂同一枚 img
+      legacyRetry();
+      return;
+    }
+    box.remove();
+  });
   card.insertBefore(box, card.firstChild);
 
   if (kind === 'device') {
@@ -2199,10 +2219,34 @@ function attachInlineImage(card, att, kind, src) {
     }
     // imgdoor #542（档1 + 票据计数面）：合帧批量铸票——同帧渲染的 N 张设备图只发
     // 一次 POST /api/nf-ticket（N 图 ≤ 1 铸票）；点击开图的 `ticketUrl` 随后全部命中
-    // per-path 票据缓存 ⇒ 零追加铸票。拿不到票 ⇒ 既有无票 URL（onerror 摘槽）。
-    queuedTicketUrl(s.path)
-      .then((url) => { if (url) mount(url, 'server-ticket'); else box.remove(); })
-      .catch(() => box.remove());
+    // per-path 票据缓存 ⇒ 零追加铸票。
+    // 二次加载清剿批（2026-10-24 · #816 同法）：取字节改经 **账本单点**
+    // `nfViewerSource`——`nf:<path>` 命中 = blob URL 直显（零抓取）；未命中 =
+    // 合帧铸票 + 既有票据链取数 + `nfCachePut` 入账。修前形态：裸 `img.src=票据URL`
+    // 直取，字节不进账本 ⇒ 整卡点击的 Canvas 预览（`previewDeviceSavedAttachment`，
+    // 同键 `nf:<path>`）按「未命中」把同图再全量下载一次——同图两次网络抓取；
+    // 修后预览取数即入账，预览 + Canvas 打开 = 恰一次抓取。拿不到字节（账本腿
+    // 拒绝）⇒ 回落既有无票/有票 URL 腿（onerror 摘槽，失败面逐字现状）。
+    legacyRetry = () => {
+      void nfCacheDrop('nf:' + s.path).catch(() => {});
+      queuedTicketUrl(s.path)
+        .then((url) => { if (url) mount(url, 'server-ticket'); else box.remove(); })
+        .catch(() => box.remove());
+    };
+    // 二次加载清剿批修订（spec T6 验红钉出）：本腿**不挂会话内 objectURL 复用表**
+    // （曾用 devnf: 键早退）——LRU 早退在账本**之前**，`nf-cache-invalidate` 只逐出
+    // 账本键够不着它 ⇒ 内容变更后重渲照挂**失效前**的旧字节 URL（静默陈旧 = 失效
+    // 语义破）。`nfViewerSource` 每次从账本字节现铸 URL（命中零网络）——账本即复用
+    // 面；URL 生命周期归 nfViewerSource 的 trackViewerUrl（pane 摘除即撤，泄漏纪律不破）。
+    nfViewerSource({ absPath: s.path, objectUrl: null, pane: card })
+      .then(({ url, cached }) => {
+        mount(url, cached ? 'server-cached' : 'server-ticket');
+      })
+      .catch(() => {
+        queuedTicketUrl(s.path)
+          .then((url) => { if (url) mount(url, 'server-ticket'); else box.remove(); })
+          .catch(() => box.remove());
+      });
     return true;
   }
 
@@ -2251,17 +2295,32 @@ function attachInlineImage(card, att, kind, src) {
     mount(previewDataUrlOf(att), 'inline-preview', { w: previewField.w, h: previewField.h });
     return true;
   }
-  api.downloadAttachment(id)
-    .then(({ blob }) => {
-      // ② 类型复判已删（msgfix 批 · 作者 2026-09-19 睡前令）：该路由的响应头
-      // **契约上恒为** `application/octet-stream` ⇒ 旧的 `blob.type` 前缀判据恒假、
-      // 直显腿恒不可达。判据保留在上游（`isImageAttachmentName(name)`）+ 体积上限。
-      if (!blob
-        || (typeof blob.size === 'number' && blob.size > MAX_INLINE_IMAGE_BYTES)) {
-        box.remove();
+  // 二次加载清剿批（2026-10-24 · #816 同法）：直显取字节接 **账本单点**——键 =
+  // Canvas 预览腿同一把 `attach:<id>`（`previewFriendAttachment` ⇒
+  // attachmentPreview 的 `nfCachedBlob`/`nfCachePut`），气泡与 Canvas 预览共享同一
+  // 份字节：命中零往返直显（修前两者各取一次）；未命中 = 既有鉴权路由取数 +
+  // `nfCachePut` 入账。`inlineObjectUrls` 仍是会话内 objectURL 复用面（淘汰即撤
+  // URL，不动账本字节）。失败面逐字现状（摘槽，卡片本身即降级面）。
+  const attachKey = `attach:${id}`;
+  nfCachedBlob(attachKey)
+    .then((hit) => {
+      if (hit) {
+        if (typeof hit.size === 'number' && hit.size > MAX_INLINE_IMAGE_BYTES) { box.remove(); return; }
+        mount(rememberInlineObjectUrl(id, URL.createObjectURL(hit)), 'server-cached');
         return;
       }
-      mount(rememberInlineObjectUrl(id, URL.createObjectURL(blob)), 'server');
+      return api.downloadAttachment(id).then(({ blob }) => {
+        // ② 类型复判已删（msgfix 批 · 作者 2026-09-19 睡前令）：该路由的响应头
+        // **契约上恒为** `application/octet-stream` ⇒ 旧的 `blob.type` 前缀判据恒假、
+        // 直显腿恒不可达。判据保留在上游（`isImageAttachmentName(name)`）+ 体积上限。
+        if (!blob
+          || (typeof blob.size === 'number' && blob.size > MAX_INLINE_IMAGE_BYTES)) {
+          box.remove();
+          return;
+        }
+        void nfCachePut(attachKey, blob);
+        mount(rememberInlineObjectUrl(id, URL.createObjectURL(blob)), 'server');
+      });
     })
     .catch(() => box.remove()); // 410 过期 / 网络 / 鉴权：卡片本身即降级面
   return true;
