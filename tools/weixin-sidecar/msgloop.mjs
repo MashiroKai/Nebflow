@@ -60,6 +60,18 @@
  * rides as text). v1 keeps NO automatic cleanup: the media dir grows with
  * traffic — an ops concern, swept by hand.
  *
+ * 入站图片必达批（2026-10-24）: the failure is AUDIBLE now. `processInboundMedia`
+ * reports every not-landed reason through the optional `deps.onFailure` seam
+ * (return values byte-identical), `deliverToIngress` rides it on the wire as
+ * the optional `mediaError` field (+ `mediaExtra` for the items beyond the
+ * first that the single-item contract does not deliver), and the engine WARNs
+ * + receipts the author — the 2026-10-24 incident class (media silently
+ * missing, zero engine traces) is a loud path now. A client-side long-poll
+ * timeout is marked `silentTimeout` and WARNs every 10 in a row, so a stalling
+ * poll layer can no longer present as a zero-trace blackout (cursor static,
+ * lock heartbeat fresh, no logs). Both fields are optional on the wire: old
+ * engines ignore them, old side-cars omit them.
+ *
  * Shared helpers are EXPORTED for the outbound batch (contract §2④): import
  * from this file, never rewrite.
  */
@@ -226,8 +238,14 @@ export function messageIdOf(msg) {
  * step result (weixin-inbound-media batch) — rides as the four optional fields
  * ONLY when the item landed on disk; `text` keeps the placeholder label either
  * way (the engine rewrites its own richer line when the path is good).
+ * 入站图片必达批（2026-10-24）: `report` — {mediaError, mediaExtra} — rides the
+ * two AUDIT fields: mediaError = the (first) media item failed to land
+ * (download/decrypt/timeout/oversize/no-CDN-ref/no-key/no-account; ≤240B),
+ * mediaExtra = further in-scope items the v1 single-item contract did NOT
+ * deliver. Both are OPTIONAL — old engines ignore unknown fields, old
+ * side-cars omit them (the engine treats absence as "nothing to receipt").
  */
-export function toInboundBody(msg, media = null) {
+export function toInboundBody(msg, media = null, report = null) {
   const body = { senderId: String(msg?.from_user_id ?? "") };
   const text = messageBody(msg);
   if (text) body.text = text;
@@ -239,6 +257,8 @@ export function toInboundBody(msg, media = null) {
     body.mediaName = media.mediaName;
     body.mediaMime = media.mediaMime;
   }
+  if (report?.mediaError) body.mediaError = report.mediaError;
+  if (report?.mediaExtra > 0) body.mediaExtra = report.mediaExtra;
   return body;
 }
 
@@ -442,6 +462,19 @@ async function withMediaRetry(label, fn) {
 }
 
 /**
+ * 入站图片必达批（2026-10-24）: the pure media-item census — how many
+ * in-scope items (IMAGE/FILE/VIDEO; voice stays out) a message carries and
+ * the first item's kind. The v1 deliver contract lands ONLY the first item;
+ * the rest are counted here so the wire can carry `mediaExtra` and the
+ * engine can receipt the author for exactly what did NOT arrive (the
+ * 2026-10-24 incident class: media silently missing, zero traces).
+ */
+export function analyzeInboundMedia(msg) {
+  const items = (msg?.item_list ?? []).filter((it) => MEDIA_KINDS[it.type]);
+  return { count: items.length, kind: items.length ? MEDIA_KINDS[items[0].type] : null };
+}
+
+/**
  * The deliver-leg media step (weixin-inbound-media batch): find the FIRST
  * image/file/video item, download + decrypt + persist it to
  * <mediaRoot>/<accountId>/<messageId>-<name>, and return the four wire fields
@@ -451,19 +484,34 @@ async function withMediaRetry(label, fn) {
  * the placeholder-label delivery and the cursor is NEVER held for a media leg
  * (this function is TOTAL — it does not throw). `deps` is the test/ops seam
  * (fetchImpl / mediaRoot / now / cdnBase); a live call passes just {accountId}.
+ * 入站图片必达批（2026-10-24）: `deps.onFailure(err)` — OPTIONAL audit seam —
+ * fires with a readable reason whenever an in-scope item EXISTS but did NOT
+ * land (no account / no CDN reference / no aes_key / download / decrypt /
+ * write). Purely additive: the return discipline above is byte-identical,
+ * and a missing callback changes nothing (the legacy silent-degrade tests
+ * keep passing). The live caller turns the reason into the wire's
+ * `mediaError` field so the engine can WARN + receipt the author — a failed
+ * image must never vanish with only a side-car log line.
  */
 export async function processInboundMedia(msg, deps = {}) {
+  const report = (m) => { try { deps.onFailure?.(m); } catch { /* audit seam must never disturb the leg */ } };
+  const fail = (m) => new Error(m);
   try {
     const accountId = normalizeAccountId(deps.accountId ?? "");
     const item = (msg?.item_list ?? []).find((it) => MEDIA_KINDS[it.type]);
-    if (!item || !accountId) return null;
+    if (!item) return null;
     const kind = MEDIA_KINDS[item.type];
     const label = `${kind} msg=${messageIdOf(msg) ?? "?"}`;
+    if (!accountId) {
+      report(fail(`${label}: no account resolved`));
+      return null;
+    }
     const media = item.image_item ?? item.file_item ?? item.video_item;
     const encryptedParam = typeof media?.media?.encrypt_query_param === "string" ? media.media.encrypt_query_param : "";
     const fullUrl = typeof media?.media?.full_url === "string" ? media.media.full_url : "";
     if (!encryptedParam.trim() && !fullUrl.trim()) {
       debug(`media: ${label} carries no CDN reference — placeholder only`);
+      report(fail(`${label}: carries no CDN reference`));
       return null;
     }
     // The official inbound key preference: image_item.aeskey (the hex spelling)
@@ -477,6 +525,7 @@ export async function processInboundMedia(msg, deps = {}) {
           : "";
     if (!aesKeyBase64.trim()) {
       debug(`media: ${label} carries no aes_key — placeholder only`);
+      report(fail(`${label}: carries no aes_key`));
       return null;
     }
     const buf = await withMediaRetry(label, () =>
@@ -517,6 +566,13 @@ export async function processInboundMedia(msg, deps = {}) {
     info(`media: ${label} landed ${buf.length}B → ${mediaPath} (${mime})`);
     return { mediaPath, mediaKind: kind, mediaName: name, mediaMime: mime };
   } catch (err) {
+    // 入站图片必达批：the audit reason carries the same `kind msg=id` label
+    // the leg's WARN lines use — the engine receipt names WHAT did not arrive.
+    report(
+      new Error(
+        `${kind4(msg)} msg=${messageIdOf(msg) ?? "?"}: ${err?.protocol ? "protocol" : classifyFetchError(err)}: ${err?.message}`,
+      ),
+    );
     warn(
       `media: ${kind4(msg)} download failed (${err?.protocol ? "protocol" : classifyFetchError(err)}: ${err?.message}) ` +
         "— degrading to the placeholder label, cursor NOT held",
@@ -719,8 +775,27 @@ const CURSOR_HOLD_DROPPED = new Set(["adapter-not-started", "inject-failed"]);
  * placeholder label (the step is contained; it never holds the cursor).
  */
 export async function deliverToIngress(msg, accountId = loopAccount) {
-  const media = await processInboundMedia(msg, { accountId });
-  const body = JSON.stringify(toInboundBody(msg, media));
+  const items = analyzeInboundMedia(msg);
+  // 入站图片必达批（2026-10-24）：the audit seam — a failure reason captured
+  // here rides the wire as `mediaError` (the engine WARNs and receipts the
+  // author; a failed image must never be a side-car-log-only event).
+  let mediaFailure = null;
+  const media = await processInboundMedia(msg, {
+    accountId,
+    onFailure: (err) => {
+      mediaFailure = String(err?.message ?? err).slice(0, 240);
+    },
+  });
+  if (items.count > 1) {
+    warn(
+      `media: message carries ${items.count} media items — v1 delivers the first, ` +
+        `${items.count - 1} more ride as mediaExtra (the engine receipts the author)`,
+    );
+  }
+  const report = {};
+  if (mediaFailure) report.mediaError = mediaFailure;
+  if (items.count > 1) report.mediaExtra = items.count - 1;
+  const body = JSON.stringify(toInboundBody(msg, media, Object.keys(report).length ? report : null));
   for (let attempt = 1; attempt <= 2; attempt++) {
     const token = readIngressToken();
     if (!token) {
@@ -767,7 +842,7 @@ export async function deliverToIngress(msg, accountId = loopAccount) {
 // ───────────────────── live leg (getUpdates long-poll mirror) ─────────────────────
 
 /** api.ts getUpdates (2.4.9 mirror; client timeout → empty ret=0 like the plugin). */
-async function getUpdates(baseUrl, token, cursor, timeoutMs) {
+export async function getUpdates(baseUrl, token, cursor, timeoutMs) {
   try {
     const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/ilink/bot/getupdates`, {
       method: "POST",
@@ -779,7 +854,7 @@ async function getUpdates(baseUrl, token, cursor, timeoutMs) {
     if (!res.ok) throw new Error(`getUpdates ${res.status}: ${raw.slice(0, 200)}`);
     return JSON.parse(raw);
   } catch (err) {
-    if (err?.name === "TimeoutError" || err?.name === "AbortError") return { ret: 0, msgs: [] };
+    if (err?.name === "TimeoutError" || err?.name === "AbortError") return { ret: 0, msgs: [], silentTimeout: true };
     throw err;
   }
 }
@@ -802,6 +877,7 @@ async function liveLoop(accountId, stop) {
   let cursor = loadCursor(accountId);
   info(`live: ${cursor ? `resuming cursor (${cursor.length}B buf)` : "fresh cursor"} — ${ILINK_BASE}/ilink/bot/getupdates`);
   let failures = 0;
+  let silentTimeouts = 0; // 入站图片必达批：consecutive client-side long-poll timeouts (zero-trace stall detector)
   let pausedUntil = 0;
   let pollTimeoutMs = LONG_POLL_TIMEOUT_MS;
   let lastAccountCheckAt = 0; // self-heal throttle (0 ⇒ first cycle re-reads at once)
@@ -842,6 +918,22 @@ async function liveLoop(accountId, stop) {
     }
     if (typeof resp.longpolling_timeout_ms === "number" && resp.longpolling_timeout_ms > 0) {
       pollTimeoutMs = resp.longpolling_timeout_ms; // monitor.js server-driven pacing
+    }
+    // 入站图片必达批（2026-10-24）: a client-side long-poll timeout is NOT an
+    // empty poll — it means the iLink poll layer returned nothing at all. An
+    // unbroken streak of those makes the whole inbound leg a zero-trace
+    // blackout (cursor static, lock heartbeat fresh, no logs — the incident
+    // window), so every 10 in a row earns one WARN.
+    if (resp.silentTimeout) {
+      silentTimeouts += 1;
+      if (silentTimeouts >= 10 && silentTimeouts % 10 === 0) {
+        warn(
+          `live: getUpdates long-poll timed out ${silentTimeouts} times in a row — ` +
+            "the iLink poll layer is returning nothing; inbound may be stalling silently (check the bridge session)",
+        );
+      }
+    } else {
+      silentTimeouts = 0;
     }
     if ((resp.errcode ?? resp.ret ?? 0) !== 0) {
       if (resp.errcode === STALE_TOKEN_ERRCODE || resp.ret === STALE_TOKEN_ERRCODE) {

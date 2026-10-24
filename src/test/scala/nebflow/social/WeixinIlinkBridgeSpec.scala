@@ -3,6 +3,7 @@ package nebflow.social
 import cats.effect.IO
 import cats.effect.Ref
 import cats.effect.unsafe.implicits.global
+import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
@@ -63,6 +64,12 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val mediaInjections: Ref[IO, List[(String, List[nebflow.bridge.BridgeAttachment], Option[nebflow.bridge.BridgeOrigin])]] =
       Ref.unsafe[IO, List[(String, List[nebflow.bridge.BridgeAttachment], Option[nebflow.bridge.BridgeOrigin])]](Nil)
 
+    // 入站图片必达批（2026-10-24）：the unified seam's CONTENT slot recorder —
+    // the caption-preservation arm (WI-M9) proves a 图文同发 caption rides
+    // where the pre-batch arm dropped it (text = None).
+    val mediaContents: Ref[IO, List[(String, String)]] =
+      Ref.unsafe[IO, List[(String, String)]](Nil)
+
     val bound: Ref[IO, List[(String, String, Json)]] =
       Ref.unsafe[IO, List[(String, String, Json)]](Nil)
 
@@ -84,7 +91,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
       attachments: List[nebflow.bridge.BridgeAttachment] = Nil
     ): IO[Unit] =
       if raiseOnInject then IO.raiseError(new RuntimeException("injected: peer leg failed"))
-      else mediaInjections.update(_ :+ ((sessionId, attachments, origin)))
+      else mediaInjections.update(_ :+ ((sessionId, attachments, origin))) *> mediaContents.update(_ :+ ((sessionId, content)))
 
     def interruptAgent(sessionId: String): IO[Unit] = IO.unit
     def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
@@ -1341,6 +1348,281 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
         "a landed media path must not bypass the sender gate"
       )
       assertEquals(got, List.empty)
+  }
+
+  // ─── 入站图片必达批（2026-10-24）: caption preservation, the loud failure leg,
+  //     and the bridge-dead detector. 每一臂 red-by-construction：拿掉 caption 保留
+  //     / 回执 / 升级告警中的任何一个，对应断言即刻翻红。 ───
+
+  test("WI-M9 a landed media message KEEPS its real caption (图文同发 no longer drops the text silently)") {
+    val dir = os.temp.dir(prefix = "nb-weixin-media-cap-")
+    val media = dir / "m1-pic.png"
+    os.write(media, "png")
+    val c = new RecordingCtx(List(meta("s1", Some("wx_alice"))))
+    val p = plugin()
+    for
+      _ <- started(p, c)
+      v <- p.intake(c, mediaInbound(Some("wx_alice"), Some(media.toString), text = Some("帮我把这 22 张图归档")))
+      gotMedia <- c.mediaInjections.get
+      gotContent <- c.mediaContents.get
+    yield
+      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Injected("s1"))
+      assertEquals(gotMedia.length, 1, "the (path,name,mime) pointer still rides the unified seam")
+      assertEquals(
+        gotContent,
+        List(("s1", "帮我把这 22 张图归档")),
+        "the REAL caption reaches the unified seam's content slot (the pre-batch arm passed text = None)"
+      )
+  }
+
+  test("WI-M9b the PLACEHOLDER label is not a caption: a pure media message still injects with empty content") {
+    val dir = os.temp.dir(prefix = "nb-weixin-media-ph-")
+    val media = dir / "m1-pic.png"
+    os.write(media, "png")
+    val c = new RecordingCtx(List(meta("s1", Some("wx_alice"))))
+    val p = plugin()
+    for
+      _ <- started(p, c)
+      v <- p.intake(c, mediaInbound(Some("wx_alice"), Some(media.toString), text = Some("[图片]")))
+      gotContent <- c.mediaContents.get
+    yield
+      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Injected("s1"))
+      assertEquals(gotContent, List(("s1", "")), "the side-car's placeholder label stays filtered out")
+  }
+
+  test("WI-M10 a mediaError inbound is LOUD: WARN + author receipt, and the placeholder still delivers") {
+    val c = new RecordingCtx(List(meta("s1", Some("wx_alice"))))
+    val calls = Ref.unsafe[IO, List[(String, String)]](Nil)
+    val p = new WeixinIlinkBridgePlugin(
+      tmpRoot(),
+      pinnedAllowedIlinkUserIds = None,
+      send = _ =>
+        (to, text) =>
+          calls.update(_ :+ ((to, text))).as(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered"))
+    )
+    withAppender { appender =>
+      val before = messages(appender).length
+      val (v, injected, sent) = (for
+        _ <- started(p, c)
+        v <- p.intake(
+          c,
+          WeixinIlinkBridgePlugin.Inbound(
+            Some("wx_alice"),
+            Some("[图片]"),
+            Some("m1"),
+            None,
+            Some("image"),
+            None,
+            None,
+            mediaError = Some("image msg=m1: timeout: CDN dial timed out")
+          )
+        )
+        injected <- c.injected.get
+        sent <- calls.get
+      yield (v, injected, sent)).unsafeRunSync()
+      val fired = messages(appender).drop(before)
+      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Injected("s1"))
+      assertEquals(injected.map(_._2), List("[图片]"), "the placeholder still rides — the message is STILL delivered")
+      assert(
+        fired.exists(l => l.contains("inbound media NOT delivered") && l.contains("msg=m1")),
+        s"the failure must be a loud WARN, got $fired"
+      )
+      assertEquals(sent.map(_._1), List("wx_alice"), "exactly one receipt, addressed to the author")
+      assert(
+        sent.head._2.contains("没有送达") && sent.head._2.contains("timeout"),
+        s"the receipt says what did not arrive and why, got ${sent.head._2}"
+      )
+    }
+  }
+
+  test("WI-M11 mediaExtra rides parseInbound and the receipt names the undelivered rest") {
+    val c = new RecordingCtx(List(meta("s1", Some("wx_alice"))))
+    val calls = Ref.unsafe[IO, List[(String, String)]](Nil)
+    val p = new WeixinIlinkBridgePlugin(
+      tmpRoot(),
+      pinnedAllowedIlinkUserIds = None,
+      send = _ =>
+        (to, text) =>
+          calls.update(_ :+ ((to, text))).as(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered"))
+    )
+    for
+      _ <- started(p, c)
+      v <- p.intake(
+        c,
+        WeixinIlinkBridgePlugin.Inbound(
+          Some("wx_alice"),
+          Some("[图片]"),
+          Some("m2"),
+          None,
+          Some("image"),
+          None,
+          None,
+          mediaError = Some("image msg=m2: protocol: carries no CDN reference"),
+          mediaExtra = 2
+        )
+      )
+      sent <- calls.get
+    yield
+      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Injected("s1"))
+      assert(sent.head._2.contains("其余 2 个也未送达"), s"the receipt counts the rest, got ${sent.head._2}")
+      // the wire contract of the two audit fields
+      val parsed = WeixinIlinkBridgePlugin.parseInbound(
+        Json.obj(
+          "senderId" -> "wx_a".asJson,
+          "text" -> "[图片]".asJson,
+          "mediaKind" -> "image".asJson,
+          "mediaError" -> "image msg=m9: dns: boom".asJson,
+          "mediaExtra" -> 3.asJson
+        )
+      )
+      assertEquals(parsed.map(_.mediaError), Right(Some("image msg=m9: dns: boom")))
+      assertEquals(parsed.map(_.mediaExtra), Right(3))
+      val bare = WeixinIlinkBridgePlugin.parseInbound(Json.obj("senderId" -> "wx_a".asJson))
+      assertEquals(bare.map(_.mediaError), Right(None), "absent ⇒ None (old side-car compatibility)")
+      assertEquals(bare.map(_.mediaExtra), Right(0))
+  }
+
+  test("WI-M12 a gated-out sender gets the WARN but NO receipt (fail-closed: no talking off-list)") {
+    val c = new RecordingCtx(List(meta("s1", Some("wx_alice"))))
+    val calls = Ref.unsafe[IO, List[(String, String)]](Nil)
+    val p = new WeixinIlinkBridgePlugin(
+      tmpRoot(),
+      pinnedAllowedIlinkUserIds = Some(List("wx_alice")),
+      send = _ =>
+        (to, text) =>
+          calls.update(_ :+ ((to, text))).as(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered"))
+    )
+    withAppender { appender =>
+      val before = messages(appender).length
+      val (v, sent) = (for
+        _ <- started(p, c)
+        v <- p.intake(
+          c,
+          WeixinIlinkBridgePlugin.Inbound(
+            Some("wx_mallory"),
+            Some("[图片]"),
+            Some("m3"),
+            None,
+            Some("image"),
+            None,
+            None,
+            mediaError = Some("image msg=m3: timeout: boom")
+          )
+        )
+        sent <- calls.get
+      yield (v, sent)).unsafeRunSync()
+      val fired = messages(appender).drop(before)
+      assertEquals(v, WeixinIlinkBridgePlugin.Verdict.Dropped(WeixinIlinkBridgePlugin.ReasonNotOnAllowlist))
+      assertEquals(sent, Nil, "the receipt must NOT leak to a non-allowlisted sender")
+      assert(
+        fired.exists(l => l.contains("inbound media NOT delivered")),
+        "the ops-side WARN still fires (audit regardless of the gate)"
+      )
+    }
+  }
+
+  test("WI-BD1 bridgeDeadStreak: the pure decision table (success resets, ret=-2 502 increments, else neutral)") {
+    import WeixinIlinkBridgePlugin.bridgeDeadStreak
+    assertEquals(bridgeDeadStreak(4, ok = true, 200, "delivered"), 0, "a success resets unconditionally")
+    assertEquals(
+      bridgeDeadStreak(0, ok = false, 502, "delivery_failed: sendmessage ret=-2 errmsg=prepare failed"),
+      1,
+      "the 2026-10-24 incident shape increments"
+    )
+    assertEquals(bridgeDeadStreak(2, ok = false, 502, "ret=-2"), 3)
+    assertEquals(bridgeDeadStreak(3, ok = false, 503, "bad gateway"), 3, "a non-ret=-2 failure is NEUTRAL (not health)")
+    assertEquals(bridgeDeadStreak(3, ok = false, 502, "delivery_failed: delivery refused"), 3, "a 502 without ret=-2 is NEUTRAL")
+    assertEquals(bridgeDeadStreak(0, ok = false, 429, "ret=-2 shaped but wrong code"), 0, "the code gate is exact: 502 only")
+  }
+
+  test("WI-BD2 five consecutive ret=-2 replies escalate ONCE (ERROR + strike + re-bind notice), and recovery re-arms") {
+    val root = tmpRoot()
+    val c = new RecordingCtx(List(meta("s1", Some("wx_alice"))))
+    val fail =
+      WeixinOutboundAdapter.SendResult(false, false, None, 502, "delivery_failed: sendmessage ret=-2 errmsg=prepare failed")
+    val okResult = WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered")
+    // calls 1-5 fail (crossing the threshold), 6-10 succeed, 11-15 fail again
+    // (the re-armed detector must fire a SECOND time) — then 16 succeeds.
+    val n = Ref.unsafe[IO, Int](0)
+    val p = new WeixinIlinkBridgePlugin(
+      root,
+      pinnedAllowedIlinkUserIds = None,
+      send = _ =>
+        (to, text) =>
+          n.modify(i => (i + 1, i)).flatMap(i =>
+            IO.pure(if (i + 1) <= 5 || ((i + 1) >= 11 && (i + 1) <= 15) then fail else okResult)
+          )
+    )
+    withAppender { appender =>
+      val before = messages(appender).length
+      val notices = (for
+        _ <- started(p, c)
+        _ <- (1 to 16).toList.traverse(i => p.reply("s1", s"msg-$i"))
+        injected <- c.injected.get
+      yield injected.map(_._2).filter(_.contains("重新扫码绑定"))).unsafeRunSync()
+      val fired = messages(appender).drop(before)
+      val deadLines = fired.filter(_.contains("bridge session DEAD"))
+      assertEquals(deadLines.length, 2, s"one escalation per streak — the 6-10 success window re-arms, got $deadLines")
+      assert(deadLines.forall(_.contains("5 consecutive")), deadLines)
+      assertEquals(notices.length, 2, s"exactly one re-bind notice per escalation, got $notices")
+      // the health face carries the [bridge-session-dead] strike (keyed by sender)
+      val strikes = SocialChannels
+        .channelHealth(root, WeixinIlinkBridgePlugin.Name)
+        .flatMap(_.hcursor.downField("strikes").as[List[Json]].toOption)
+        .getOrElse(Nil)
+      assert(
+        strikes.exists(s =>
+          s.hcursor.downField("reason").as[String].toOption.contains(WeixinIlinkBridgePlugin.ReasonBridgeDead) &&
+            s.hcursor.downField("sessionId").as[String].toOption.contains("wx_alice")
+        ),
+        s"the bridge-dead strike must be on the channel face, got $strikes"
+      )
+    }
+  }
+
+  test("WI-BD3 media sends feed the same detector (a media-only bridge death is still a death)") {
+    val root = tmpRoot()
+    val png = root / "shot.png"; os.write(png, "png-bytes")
+    val c = new RecordingCtx(List(meta("s1", Some("wx_alice"))))
+    val fail =
+      WeixinOutboundAdapter.SendResult(false, false, None, 502, "delivery_failed: sendmessage ret=-2 errmsg=prepare failed")
+    val okResult = WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered")
+    val n = Ref.unsafe[IO, Int](0)
+    val p = new WeixinIlinkBridgePlugin(
+      root,
+      pinnedAllowedIlinkUserIds = None,
+      send = _ =>
+        (to, text) => IO.pure(okResult), // the ask text cards succeed — only the MEDIA leg dies
+      sendMedia = _ =>
+        (to, media) =>
+          n.modify(i => (i + 1, i)).flatMap(i => IO.pure(if i + 1 <= 5 then fail else okResult)),
+      sendMediaGroup = _ =>
+        (to, paths, caption) =>
+          IO.pure(okResult)
+    )
+    val askEvent = (rid: String) =>
+      Json.obj(
+        "type" -> "askUser".asJson,
+        "sessionId" -> "s1".asJson,
+        "requestId" -> rid.asJson,
+        "items" -> Json.fromValues(
+          List(Json.obj("question" -> "用哪个?".asJson, "options" -> Json.arr(Json.obj("label" -> "甲".asJson))))
+        ),
+        "attachments" -> Json.arr(png.toString.asJson)
+      )
+    withAppender { appender =>
+      val before = messages(appender).length
+      (for
+        _ <- started(p, c)
+        // five ask cards, each pushing its attachment over the dying media seam
+        _ <- (1 to 5).toList.traverse(i => p.onAgentEvent("s1", askEvent(s"rid-$i")))
+      yield ()).unsafeRunSync()
+      val fired = messages(appender).drop(before)
+      assert(
+        fired.exists(_.contains("bridge session DEAD")),
+        s"the media seam must feed the detector, got $fired"
+      )
+    }
   }
 
 end WeixinIlinkBridgeSpec
