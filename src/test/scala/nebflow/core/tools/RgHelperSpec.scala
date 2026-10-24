@@ -22,6 +22,18 @@ class RgHelperSpec extends FunSuite:
   /** launchd 最小 PATH（2026-09-21 事发读数，.nebflow/evidence/20260921_env-rg-restore/）。 */
   private val launchdMinimalPath = "/usr/bin:/bin:/usr/sbin:/sbin"
 
+  /**
+   * 受控最小 PATH（CI 稳定腿）： scratch 空目录冒充 launchd 四段形态。
+   * 2026-10-24 CI 存量红分诊：GitHub runner（ubuntu-24.04 + Test job 的 apt
+   * ripgrep）在 /usr/bin 真有 rg——字面 launchd PATH 在该平台不再「无 rg」，
+   * PATH 腿抢先命中 /usr/bin/rg，四个优先序/None 断言全被环境击穿。断言的
+   * 契约是「最小 PATH 不携带 rg」，故目录集必须内容受控，不依赖宿主机。
+   */
+  private def scratchMinimalPath(tmp: os.Path): String =
+    val dirs = List(tmp / "p-usr-bin", tmp / "p-bin", tmp / "p-usr-sbin", tmp / "p-sbin")
+    dirs.foreach(d => os.makeDir.all(d))
+    dirs.map(_.toString).mkString(java.io.File.pathSeparator)
+
   /** 平台真实的 rg 可执行文件名（RgHelper 的 rgBinName 为 private，测试本地镜像）。 */
   private def rgName: String =
     if sys.props.getOrElse("os.name", "").toLowerCase.contains("win") then "rg.exe" else "rg"
@@ -39,7 +51,7 @@ class RgHelperSpec extends FunSuite:
       val probeDir = tmp / "opt-homebrew-bin"
       val seeded = fakeRg(probeDir)
       val r = RgHelper.resolveRgPathFrom(
-        pathEnv = launchdMinimalPath, // dirs exist but carry no rg
+        pathEnv = scratchMinimalPath(tmp), // scratch dirs exist and carry no rg (host-independent)
         probeDirs = List(probeDir.toString),
         localPaths = List((tmp / "no-home" / ".nebflow" / "bin" / rgName).toString), // nonexistent
         winInstall = None
@@ -73,7 +85,7 @@ class RgHelperSpec extends FunSuite:
       val localDir = tmp / "local-bin"
       val local = fakeRg(localDir)
       val r = RgHelper.resolveRgPathFrom(
-        pathEnv = launchdMinimalPath,
+        pathEnv = scratchMinimalPath(tmp),
         probeDirs = List(probeDir.toString),
         localPaths = List(local),
         winInstall = None
@@ -91,21 +103,21 @@ class RgHelperSpec extends FunSuite:
       val newRg = fakeRg(newBin)
       val legacyRg = fakeRg(legacyBin)
       val both = RgHelper.resolveRgPathFrom(
-        pathEnv = launchdMinimalPath,
+        pathEnv = scratchMinimalPath(tmp),
         probeDirs = Nil,
         localPaths = List(newRg, legacyRg),
         winInstall = None
       )
       assertEquals(both, Some(newRg), "new default bin position must be probed before the legacy one")
       val legacyOnly = RgHelper.resolveRgPathFrom(
-        pathEnv = launchdMinimalPath,
+        pathEnv = scratchMinimalPath(tmp),
         probeDirs = Nil,
         localPaths = List(legacyRg),
         winInstall = None
       )
       assertEquals(legacyOnly, Some(legacyRg), "old installs (legacy bin only) must keep resolving rg")
       val none = RgHelper.resolveRgPathFrom(
-        pathEnv = launchdMinimalPath,
+        pathEnv = scratchMinimalPath(tmp),
         probeDirs = Nil,
         localPaths = List(newRg, legacyRg).map(p => p + ".missing"),
         winInstall = None
@@ -119,7 +131,7 @@ class RgHelperSpec extends FunSuite:
     val tmp = os.Path(java.nio.file.Files.createTempDirectory("nb-rg-none"))
     try
       val r = RgHelper.resolveRgPathFrom(
-        pathEnv = launchdMinimalPath,
+        pathEnv = scratchMinimalPath(tmp),
         probeDirs = Nil, // pre-fix shape: the leg did not exist
         localPaths = List((tmp / "no-home" / ".nebflow" / "bin" / rgName).toString),
         winInstall = None

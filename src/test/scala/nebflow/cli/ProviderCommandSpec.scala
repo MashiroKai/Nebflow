@@ -20,7 +20,7 @@ class ProviderCommandSpec extends FunSuite:
   test("H6 帮助两行：逐字节等于作者 07:27 批文案") {
     assertEquals(
       ProviderCommand.HelpUsageLine,
-      "nebflow provider add <name> --base-url <url> --protocol <anthropic|openai> [--model <id>]..."
+      "stand provider add <name> --base-url <url> --protocol <anthropic|openai> [--model <id>]..."
     )
     assertEquals(
       ProviderCommand.HelpKeyLine,
@@ -32,7 +32,7 @@ class ProviderCommandSpec extends FunSuite:
     val ex = ProviderCommand.examples
     assert(ex.contains(ProviderCommand.HelpUsageLine), s"examples 缺 H6 首行：$ex")
     assert(ex.contains(ProviderCommand.HelpKeyLine), s"examples 缺 H6 次行：$ex")
-    assert(ex.contains("nebflow provider list"))
+    assert(ex.contains("stand provider list"))
   }
 
   test("H7 密钥缺失/非法文案：逐字节") {

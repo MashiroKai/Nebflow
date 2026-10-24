@@ -672,7 +672,16 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
     }
 
   test("G. equivalence (refusal leg): a HARD LINK to a credential inode — tool gate and endpoint agree"):
-    val policy = NfFilePolicy.NfPathPolicy.memoized()
+    // 2026-10-24 CI 分诊（run 40063846949）：`memoized()` 冻结的是 **JVM 首触**政策
+    // ——首个触达套件的 dataRoot 快照。fresh runner 上既无 ~/.ssh、首触 dataRoot
+    // 也无 auth.json/nebflow.json ⇒ credentialInodes 空 ⇒ 硬链接腿无种可用
+    // （本机绿只因 ~/.ssh 恰好存在——非自足）。自足形态：往本套件的 throwaway
+    // dataRoot seed 一枚 auth.json，再取**新鲜** standard() 政策（扫描含种子）；
+    // 等价性判据只要求工具面与端点面共用同一政策对象，快照新鲜度无关。
+    val seedRoot = java.nio.file.Paths.get(nebflow.shared.PathUtil.dataRoot.toString)
+    Files.createDirectories(seedRoot)
+    Files.writeString(seedRoot.resolve("auth.json"), "{\"token\":\"nfpath-probe-seed\"}")
+    val policy = NfFilePolicy.NfPathPolicy.standard()
     val target = snapshotCredential(policy)
     val subtree = policy.dataRoot.resolve("plots/imgref-spec-r1-hardlink")
     val dir = subtree.resolve("space dir")

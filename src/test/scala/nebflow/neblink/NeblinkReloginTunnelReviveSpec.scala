@@ -146,7 +146,11 @@ class NeblinkReloginTunnelReviveSpec extends CatsEffectSuite:
             first <- waitUntil(10.seconds)(IO(fix.attemptCount(101) >= 1))
             _ <- IO(assert(first, s"baseline: the first upgrade must land (${fix.relayAttempts})"))
             spawnsBaseline <- IO(tunnel.loopSpawnCount)
-            aliveBefore <- IO(tunnel.isAlive)
+            // 2026-10-24 CI 分诊：isAlive 的 9s 活性窗起算于**构造时刻**（lastPong
+            // 初始化），4 核 runner 上 30+ 套件并发时 setup→首读可超 9s ⇒ 直接读恒
+            // false（baseline 假红，run 40063846949 实测）。等它翻真再读——夹具
+            // pongReplies=true，心跳 3s 一拍，10s 预算绰绰有余；语义不变。
+            aliveBefore <- waitUntil(10.seconds)(IO(tunnel.isAlive))
             // ── 登出（performLocalLogout 第 2 步的等价物）──
             _ <- tunnel.stop()
             runningAfterLogout <- IO(tunnel.isRunning)

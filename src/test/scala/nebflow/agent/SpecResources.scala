@@ -20,8 +20,14 @@ import nebflow.shared.{LlmHandle, ThinkingConfig}
  *  - `projectRoot` / `FileChangeTracker` 恒取 `os.pwd`(与 tmp 无关——迁移前如此,
  *    保持);
  *  - `llm` 原样透传;
- *  - `historyArchiver` / `providerRegistry` / `healthMonitor` / `actorSystem` 恒
+ *  - `historyArchiver` / `providerRegistry` / `healthMonitor` 恒
  *    `null`(这些 spec 不触达;null 只落 test 域,沿既有口径);
+ *  - `actorSystem` 恒 `null` —— 🔴 2026-10-24 CI 分诊注：此折衷已开始漏水——
+ *    scan 面的看护腿（TaskStuckWatcher → MergeWindowCare.care，steward 批
+ *    2026-10-23）读 actorSystem，null 会在 IO 构造期 NPE（JVM 内全局
+ *    MergeQueue 有其它套件残留条目时必炸，NodeBgCompletionGateSpec G7 实测）。
+ *    需要跑 scan 的套件请 `res.copy(actorSystem = system)` 局部接真（G7 先例），
+ *    不要在此全局改（18+ 套件共享本夹具，一次性换面风险未评估）;
  *  - `dispatcher` 用 `Dispatcher.parallel.allocated` 取泄漏形态 `.map(_._1)`
  *    (与原 43 份相同的既有语义:不释放);
  *  - 其余字段取本函数内新建的默认 Ref / 常量(contextWindow = 100_000)。

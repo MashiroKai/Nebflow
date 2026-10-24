@@ -147,7 +147,7 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
   end runCompletedPayload
 
   test(
-    "四修①: whitespace-only tail + zero tools = empty burn → restart chain, then the deterministic precheck's blocked verdict (never a fake completion)"
+    "四修①: whitespace-only tail + zero tools = empty burn → restart chain, then the deterministic precheck's completed+note verdict (#566: blocked 判词退役——判未完成 = 交付注记，非状态)"
   ) {
     // Last assistant message: thinking block + whitespace-only text ("\n\n")
     val messages = List(
@@ -158,13 +158,19 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
       )
     )
     val payload = runCompletedPayload("ws", messages)
-    // The terminal payload carries the honest blocked verdict line (budget
-    // exhausted after maxRestarts pushes; judge-less precheck renders blocked).
+    // 2026-10-24 CI 分诊重钉（run 40063846949 实测）：#566 作者令把空烧的判词从
+    // blocked 退役为 completed＋注记（DelegateTerminal.deterministicPrecheck 现返
+    // CompletedNote——「判未完成」是交付注记，不是状态）。诚实面 = 注记仍点名
+    // deterministic precheck + 零文本零工具，判词面不再出现 blocked。
     assert(
-      payload.contains("[delegate-judge] verdict: blocked"),
-      s"empty burn must end blocked, got: ${payload.take(160)}"
+      payload.contains("[delegate-judge] verdict: completed"),
+      s"empty burn must end completed (with the honesty note), got: ${payload.take(160)}"
     )
     assert(payload.contains("deterministic precheck"), s"the precheck marker must be named, got: ${payload.take(160)}")
+    assert(
+      payload.contains("no text output and zero tool calls"),
+      s"the note must carry the empty-burn evidence, got: ${payload.take(200)}"
+    )
   }
 
   test(

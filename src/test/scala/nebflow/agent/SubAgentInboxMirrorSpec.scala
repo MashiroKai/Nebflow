@@ -353,6 +353,11 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     // 11 -> 12. The pin below is therefore re-stated as settlement:
     //   call sites = 12 (11 pinned by b32fbdee5 + 1 from the idle window leg),
     //   plus 1 `def` = 13 occurrences tree-wide.
+    // re-pin (CI 存量红分诊, 2026-10-24): 13 -> 15. 两个作者令修复批各加一个
+    // 合法发射点（回执可见性镜像随发射点走，同设计）：
+    //   cde829c2a delegate 回执投递可靠性治本四件（2026-10-21）+1 => 14；
+    //   2474349c6 投递屏障扣留回执缺陷直修批（2026-10-22，D2 tools-complete
+    //   边界补投腿）+1 => 15。
     // The 12 constant was never re-synced after 03724bd1d (stale on every rev
     // from that commit on, including pre-W1 main); the 2026-09-25 domain moves
     // preserved the call sites verbatim and merely re-homed them across the
@@ -363,8 +368,8 @@ class SubAgentInboxMirrorSpec extends FunSuite:
         "emitInjectedUserEvent\\(".r.findAllMatchIn(agentFrozen).size +
         "emitInjectedUserEvent\\(".r.findAllMatchIn(agentIdle).size +
         "emitInjectedUserEvent\\(".r.findAllMatchIn(agentProcessing).size,
-      13,
-      "`emitInjectedUserEvent(` occurrence-count drift (expected 12 call sites + 1 def, aggregated over AgentActor + AgentFinishTurn + AgentFrozen + AgentIdle + AgentProcessing) - call sites must not change in this batch"
+      15,
+      "`emitInjectedUserEvent(` occurrence-count drift (expected 14 call sites + 1 def, aggregated over AgentActor + AgentFinishTurn + AgentFrozen + AgentIdle + AgentProcessing) - call sites must not change in this batch"
     )
     val emitStart = agentActor.indexOf("private[agent] def emitInjectedUserEvent(")
     val applyStart = agentActor.indexOf("\n  def apply(", emitStart)

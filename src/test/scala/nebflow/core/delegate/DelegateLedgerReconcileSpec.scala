@@ -332,7 +332,20 @@ class DelegateLedgerReconcileSpec extends CatsEffectSuite:
             os.proc("git", "-c", "user.email=spec@nebflow", "-c", "user.name=spec", "commit", "-m", "delegate work")
               .call(cwd = repo)
             os.proc("git", "checkout", "main").call(cwd = repo)
-            os.proc("git", "merge", "--no-ff", "-m", "merge delegate/x", "delegate/x").call(cwd = repo)
+            // merge 也产生 commit——runner 的 fresh HOME 无全局 git 身份，必须像上方
+            // commit 一样显式 -c（CI run 40063846949 实测 empty ident name → 128）。
+            os.proc(
+              "git",
+              "-c",
+              "user.email=spec@nebflow",
+              "-c",
+              "user.name=spec",
+              "merge",
+              "--no-ff",
+              "-m",
+              "merge delegate/x",
+              "delegate/x"
+            ).call(cwd = repo)
             done = os.exists(repo / ".git")
           catch case e: java.io.IOException if attempt < 5 => Thread.sleep(300)
           end try

@@ -12,7 +12,7 @@ class ConfigEditHeadlessSpec extends FunSuite:
   test("H9 逐字（§16 文案闸：禁改写）") {
     assertEquals(
       ConfigCommand.NoEditorMessage,
-      "No editor available (no interactive terminal / no $EDITOR). Use 'nebflow config set <key> <value>' instead."
+      "No editor available (no interactive terminal / no $EDITOR). Use 'stand config set <key> <value>' instead."
     )
   }
 

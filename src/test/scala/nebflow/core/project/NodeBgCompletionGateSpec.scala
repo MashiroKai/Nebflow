@@ -637,7 +637,11 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       // 立即 giveUp → 桥 Cancelled → 节点 cancelled。正常实现 scan 只看 Processing
       // → 等待期 Idle 永不命中 → 计数无关紧要。
       stopCounts <- cats.effect.Ref.of[IO, Map[String, Int]](Map(nodeSid -> (TaskStuckWatcher.StopAttempts + 2)))
-      _ <- TaskStuckWatcher.scan(res, new WsHub(), 0L, stopCounts)
+      // scan 腿 2026-10-23 起（steward 批 D3-⑤）读 resources.actorSystem（MergeWindowCare
+      // 合并窗看护）；SpecResources 夹具恒填 null（历史折衷，JVM 内全局 MergeQueue 有
+      // 其它套件残留条目时 care() 在 IO 构造期 NPE——run 40063846949 G7 实测）。scan 面
+      // 传 copy 进真实 system（与生产接线一致），夹具其余面不动。
+      _ <- TaskStuckWatcher.scan(res.copy(actorSystem = system), new WsHub(), 0L, stopCounts)
       _ <- IO.sleep(500.millis) // giveUp 若发生，取消链是异步的——留显形窗口
       a <- byName(rt, "stuck-a")
       stillRegistered <- res.agentRegistry.get.map(_.contains(nodeSid))

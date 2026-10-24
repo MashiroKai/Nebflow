@@ -120,7 +120,14 @@ class UpdateOrchestratorSpec extends CatsEffectSuite:
   // 零改动；30s 只放宽等待上限，成功路径仍然秒级通过（条件达成即返回）。
   // ①abort-install 例已自愈（judge9 的游离链污染源 = 前例 ①full 8s 超时残留
   // 的孤儿链；本修正消除该污染源），无需单独动作。
-  private def waitUntil(desc: String, timeoutMs: Long = 30000)(cond: IO[Boolean]): IO[Unit] =
+  // 🔴 二次棘轮（2026-10-24 CI 存量红分诊，run 40063846949）：30s → 90s。CI 上
+  // ①full 的冻结腿等的是 **JVM 全局忙面**（LlmInterface 在飞 / 全局任务节点的
+  // 跨套件共享状态；当日日志实证 `freeze: busy — 1 node(s) running:
+  // hot-update-force/runner` 来自并发套件），30s 内未收敛 ⇒ intent 永不落盘 ⇒
+  // 本例超时，且孤儿链把 ①abort-install 的 intentExists 断言连带染红（该例随本
+  // 污染源消除自愈，与本批 8s→30s 时同款二次效应）。90s 只放宽等待上限；结构面
+  // （套件级全局状态耦合）已在分诊报告单列交作者裁决。
+  private def waitUntil(desc: String, timeoutMs: Long = 90000)(cond: IO[Boolean]): IO[Unit] =
     def loop: IO[Unit] = cond.flatMap(if _ then IO.unit else IO.sleep(20.millis) *> loop)
     loop
       .timeout(timeoutMs.millis)
