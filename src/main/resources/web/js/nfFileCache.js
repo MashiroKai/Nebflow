@@ -519,15 +519,49 @@ export async function nfViewerSource(p) {
   // 大文件 LAN 直传腿（console-fastpath 批·腿③）：≥4MiB 且近路在册 ⇒ 绝对
   // URL 跨源直取（凭据仍 ticket，服务端 CORS/PNA 已放）；否则原票据腿。
   const nfTicket = await import('./nfTicket.js');
-  const directUrl = await nfTicket.largeFileDirectUrl(absPath);
-  const res = await fetchBlobWithProgress(directUrl || await nfTicket.ticketUrl(absPath), onProgress || null);
+  let url = (await nfTicket.largeFileDirectUrl(absPath)) || (await nfTicket.ticketUrl(absPath));
+  // ── 票链自愈 + 升级路径（Pop 图片 403 批 2026-10-24）────────────────────
+  // 修前形态：取数腿 401/403 直抛「HTTP 403」进各 viewer 终态错误面板——无重试
+  // 无提示升级路径（<img> onerror 腿的 reMint 自愈对本腿不可达：失败是 fetch
+  // 抛出，不是元素 error 事件）。两个 403 源分治：
+  //   · 网关形状（X-Nf-Reason 在场：invalid-ticket/expired/path-mismatch/
+  //     credential-*）⇒ 重铸一票重试恰一次（T3 语义同 image.js）；确定性拒
+  //     （credential-*）二次同败即终态，不成环。
+  //   · relay 门形状（relayGate：中继平面凭据死）⇒ 重铸无意义（铸票同门被
+  //     拒）⇒ 交 sessionGate 统一重认证伞（可见横幅 + 自愈 reload——两条
+  //     已设计落点），不再静默死亡。
+  let res = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      res = await fetchBlobWithProgress(url, onProgress || null);
+      break;
+    } catch (e) {
+      const status = e && /** @type {any} */ (e).status;
+      if (attempt === 0 && (status === 401 || status === 403)) {
+        if (/** @type {any} */ (e).relayGate) {
+          try {
+            const sg = await import('./sessionGate.js');
+            sg.noteAuthRejected('nf-file');
+          } catch (e2) { /* 伞缺席：仍落下方错误面 */ }
+          throw e;
+        }
+        const fresh = await nfTicket.reMint(absPath);
+        if (fresh && fresh !== url && /[?&]ticket=/.test(fresh)) {
+          url = fresh;
+          continue;
+        }
+      }
+      throw e;
+    }
+  }
+  if (!res) throw new Error('nfViewerSource: fetch failed');
   // 入账带 hash（设备取件腿已知时）+ srcPath（事件失效/对账的路径锚）。
   void nfCachePut(cacheKey, res.blob, res.version, {
     hash: knownHashes.get(cacheKey) || '',
     srcPath: absPath,
   });
-  const url = trackViewerUrl(pane || document.body, URL.createObjectURL(res.blob));
-  return { url, cached: false };
+  const url2 = trackViewerUrl(pane || document.body, URL.createObjectURL(res.blob));
+  return { url: url2, cached: false };
 }
 
 /**
@@ -643,8 +677,20 @@ export async function fetchBlobWithProgress(url, onProgress) {
     resp = await send();
   }
   if (!resp.ok) {
-    const err = /** @type {Error & {status?: number}} */ (new Error('HTTP ' + resp.status));
+    const err = /** @type {Error & {status?: number, nfReason?: string, relayGate?: boolean}} */ (new Error('HTTP ' + resp.status));
     err.status = resp.status;
+    let reason = '';
+    let jsonish = false;
+    try { reason = resp.headers.get('X-Nf-Reason') || ''; } catch (e) { /* 无头面：只留裸 status */ }
+    try { jsonish = /json/i.test(resp.headers.get('Content-Type') || ''); } catch (e) { /* 同上 */ }
+    err.nfReason = reason;
+    // relay ingress 拒答形状（link-server require_user，Pop 图片 403 批 2026-10-24）：
+    // 403/401 + JSON 体 + 无 X-Nf-Reason。网关全出向 401/403 一律 text/plain 且
+    // verdict/票拒带 X-Nf-Reason——两种形状机械可分：relayGate = 中继平面凭据死
+    // （重铸票无意义，铸票过同一道门），调用面据此升级可见（sessionGate 伞），
+    // 而不是落成「Failed to render: HTTP 403」死文案。
+    err.relayGate = (resp.status === 401 || resp.status === 403) && !reason && jsonish;
+    if (reason) err.message = 'HTTP ' + resp.status + ' (' + reason + ')';
     throw err;
   }
   const lastModified = resp.headers.get('Last-Modified') || '';
