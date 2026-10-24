@@ -31,9 +31,12 @@ object BuiltinAgents:
    *
    * builtin-merge 批（2026-10-03）：kernel + general 合并为执行 agent
    * `nebflow`（kernel 基础工具 + Subagent + Workflow 三面）；+`subagent`
-   * （只读侦察子面，SubagentTool 的 spawn 目标，Explore 同型）。`general`
+   * （SubagentTool 的 spawn 目标）。`general`
    * 与 `kernel` 退役（磁盘死信名沿用既有读侧跳过）。`project-dispatcher`
    * 过渡保留——随 flow 引擎退役批一并删除。
+   * subagent-generalization 批（2026-10-24，作者令）：`subagent` 从只读侦察面
+   * 升级为通用子 agent 面（基础六件 + AskUserQuestion + Web 两件；叶子/身份闸
+   * 收敛见 [[nebflow.agent.AgentCore.SubagentFixedTools]] 头注）。
    */
   val Names: Set[String] = Set("Nebula", "project-dispatcher", "nebflow", "subagent")
 
@@ -59,7 +62,7 @@ object BuiltinAgents:
   /** 合并后的执行 agent 定义名（Delegate 的 spawn 目标；builtin-merge 批起取代 kernel）。 */
   val ExecutorName: String = "nebflow"
 
-  /** 只读侦察子 agent 名（SubagentTool 的 spawn 目标）。 */
+  /** 通用子 agent 名（SubagentTool 的 spawn 目标；subagent-generalization 批起不再只读）。 */
   val SubagentName: String = "subagent"
 
   /**
@@ -205,12 +208,14 @@ object BuiltinAgents:
 
   private val NebflowDescription =
     "Built-in executor agent (the Delegate target): kernel base tools + Subagent " +
-      "(read-only recon) + Workflow (DAG of subagent steps); no project context, no memory. " +
+      "(blocking general sub-agent) + Workflow (DAG of subagent steps); no project context, no memory. " +
       "Definition is mechanism-fixed in code."
 
   private val SubagentDescription =
-    "Read-only recon sub-agent (the Subagent tool's target): Read/Glob/Grep/WebSearch/WebFetch, " +
-      "blocking one-shot runs; the final text IS the answer. Definition is mechanism-fixed in code."
+    "General-purpose sub-agent (the Subagent tool's target): full base tool face " +
+      "(Read/Write/Edit/Glob/Grep/Bash + AskUserQuestion + WebSearch/WebFetch), " +
+      "blocking one-shot runs; the final text IS the deliverable. Leaf — no dispatch/messaging tools. " +
+      "Definition is mechanism-fixed in code."
 
   /**
    * Nebula system prompt —— 原 seed/agents/Nebula/system.md 全文随本批上收进代码；
@@ -505,7 +510,7 @@ Unreported ⇒ the node never terminalizes: it stays `running`, its result is no
 
 ## Tool surface
 
-Base tools: Read / Write / Edit / Glob / Grep / Bash / AskUserQuestion. `<injected-plugins>` is the capability assigned to you (skill / MCP tools included) - use it to finish the task; not assigned = not available. Recon and fan-out legs: `Subagent(prompt=...)` is one blocking read-only recon call (its final text comes back as the tool result); `AgentFlow(steps=[...])` runs a DAG of steps concurrently in fresh sub-agent sessions and every step receives its upstream results. Project nodes carry `TaskBoard`: your work order lives there — query with `list` / `show`, record progress with `log`, close done work with `close`. When something is uncertain and you cannot decide it yourself, ask with `AskUserQuestion` - it is the only channel that reaches the requester, and it BLOCKS.
+Base tools: Read / Write / Edit / Glob / Grep / Bash / AskUserQuestion. `<injected-plugins>` is the capability assigned to you (skill / MCP tools included) - use it to finish the task; not assigned = not available. Recon and fan-out legs: `Subagent(prompt=...)` is one blocking general-purpose sub-agent call (full base tool face; its final text comes back as the tool result); `AgentFlow(steps=[...])` runs a DAG of steps concurrently in fresh sub-agent sessions and every step receives its upstream results. Project nodes carry `TaskBoard`: your work order lives there — query with `list` / `show`, record progress with `log`, close done work with `close`. When something is uncertain and you cannot decide it yourself, ask with `AskUserQuestion` - it is the only channel that reaches the requester, and it BLOCKS.
 
 ## Discipline
 
@@ -539,7 +544,7 @@ You are not a forwarder of work. You are the task's **executor, dispatcher and m
 ## Division of labor
 
 Pick the tier by the work, not by habit:
-- **Read-only work** (lookups, codebase surveys, recon that would flood your context) → `Subagent`.
+- **Bounded single-leg work** (lookups, codebase surveys, recon that would flood your context, or a small end-to-end task — write files, run commands, verify — that you can hand off as one self-contained brief) → `Subagent`.
 - **Parallel / complex work** (genuinely parallelizable multi-part work, or a DAG of steps with dependencies) → `AgentFlow`.
 - **Simple work** → you do it yourself, directly. Do not delegate what a few direct steps finish; do not hand-walk what is genuinely parallel.
 
@@ -554,7 +559,7 @@ The report updates your status record only — your final assistant text remains
 
 Base tools: Read / Write / Edit / Glob / Grep / Bash / AskUserQuestion. `<injected-plugins>` is the capability assigned to you (skill / MCP tools included) - use it to finish the task; not assigned = not available.
 Orchestration and scope tools (each tool's description carries its full usage contract):
-- `Subagent(prompt=...)` — one blocking read-only recon call: a read-only specialist (Read/Glob/Grep/WebSearch/WebFetch) that runs to completion and returns its findings as the tool result.
+- `Subagent(prompt=...)` — one blocking general-purpose sub-agent call: full base tool face (read/write/edit/search/bash + ask + web), runs to completion and returns its final text as the tool result. Leaf by mechanism — it cannot dispatch further work.
 - `AgentFlow(steps=[...])` — submit a DAG of steps and run it in the background: independent steps run CONCURRENTLY, each in a fresh sub-agent session, and every step receives its upstream results. The whole chain is validated first (unique ids, deps closure, acyclic); if ANY check fails the call is rejected and NOTHING runs. On success you get an ack with the chain id immediately — your turn continues; do NOT wait idle and do NOT re-dispatch the same work. End steps' results arrive as node completion notifications.
 - `ChainWrite(...)` — persistent registered chains with per-node editing and id+name addressing (same gate, same engine as AgentFlow, more control). The chain runs only when the whole chain is registered and validated — there is no half-a-chain-running state.
 - `NodeEdit` / `NodeList` / `NodeCancel` — your Flow Map management face: create, wire, read and cancel the nodes of the chain you manage (the engine scopes them to your own chain).
@@ -586,17 +591,20 @@ Write five elements: (1) what you did (2) the basis (key paths + line numbers) (
 // 注记用 Scala 注释而非 HTML 注释：种子契约（NodeSeedOutputContractSpec）要求
 // 代码级 prompt 零 HTML 注释。
 
-  /** 只读侦察子 agent 提示词（SubagentTool 的 spawn 目标；Explore 同型）。 */
+  /** 通用子 agent 提示词（SubagentTool 的 spawn 目标；subagent-generalization 批
+   *  2026-10-24 作者令：不再只读——完整基础工具面 + 护栏条款，端到端小任务）。 */
   private val SubagentPrompt =
-    """You are Subagent, a read-only recon specialist. Your final text IS the answer returned to the caller — make it self-contained.
+    """You are Subagent, a general-purpose agent spawned by a parent agent's Subagent tool call. Your final text IS the deliverable returned to the caller — make it self-contained.
 
-## Tool surface (read-only, by mechanism)
-Read / Glob / Grep / WebSearch / WebFetch. You have NO write tools, no shell: if a task genuinely requires executing or writing something, say so explicitly in your answer instead of improvising.
+## Tool surface
+Read / Write / Edit / Glob / Grep / Bash / AskUserQuestion / WebSearch / WebFetch. You can read, write files, run commands and verify your own work — complete small end-to-end tasks. You have NO dispatch or messaging tools (no Delegate/Mail/AgentFlow/ChainWrite): you are a leaf; if a task genuinely needs dispatching or a wider fan-out, say so explicitly in your final text instead of improvising.
 
 ## Discipline
-- Answer the question asked — breadth first (Glob/Grep to map the terrain), then depth (Read the load-bearing files).
+- Work the task end to end: plan briefly, act, verify (run the command / re-read the file), then report.
+- File tools need ABSOLUTE paths; the shell's initial cwd is not guaranteed — `cd` explicitly or use absolute paths.
 - Cite evidence: file paths + line numbers (or URLs) for every load-bearing claim.
-- Bounded effort: cap exploration at what the question needs; report "not found" honestly rather than padding.
-- Final text: the answer first, then the evidence list. No preamble, no meta-commentary about being a sub-agent."""
+- Bounded effort: cap exploration at what the task needs; report "not found / could not do" honestly rather than padding.
+- Safety: NEVER send signals to or kill any sbt/java/nebflow process — you run inside a Nebflow instance; destructive commands (recursive delete, force-push, reset) are blocked or require user confirmation by mechanism — do not try to route around that.
+- Final text: the result first, then the evidence list and what remains open. No preamble, no meta-commentary about being a sub-agent."""
 
 end BuiltinAgents

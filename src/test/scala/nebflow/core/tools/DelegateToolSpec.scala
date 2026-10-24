@@ -338,12 +338,29 @@ class DelegateToolSpec extends CatsEffectSuite:
       face
     )
 
-  test("subagent tool face is read-only five — no write, no shell, no message"):
+  test("subagent tool face is the general base face — write/execute/ask/web in, dispatch/message/identity-gate tools out (subagent-generalization 2026-10-24)"):
     val face = nebflow.agent.AgentCore.SubagentFixedTools
-    assertEquals(face, Set("Read", "Glob", "Grep", "WebSearch", "WebFetch"))
-    Set("Write", "Edit", "Bash", "Mail", "Subagent", "AgentFlow", "Delegate").foreach { t =>
+    // 通用面在场：基础六件 + AskUserQuestion + Web 两件（能写文件、跑命令、
+    // 完成端到端小任务——作者令「不再只是只读」）。
+    assertEquals(face, nebflow.agent.AgentCore.BaseTools + "AskUserQuestion" + "WebSearch" + "WebFetch")
+    assertEquals(face.size, 9)
+    // 叶子纪律 + 身份闸零放宽：派发/消息/编排/根专属件一件不在。
+    Set(
+      "Delegate", "SubTask", "Mail", // 派发与消息面
+      "Subagent", "AgentFlow", "ChainWrite", // 扇出/建链（RootExclusiveTools 剥离链）
+      "Pop", "AgentControl", "Task", "TaskInfo", "Schedule", "MemoryNote", "ListFriends",
+      nebflow.core.tools.NodeReportToolDef.Name, "TaskSearch"
+    ).foreach { t =>
       assert(!face.contains(t), s"subagent must not hold: $t")
     }
+    // 护栏不降级钉：subagent 身份走 RootExclusiveTools 全量剥离（与 project node
+    // 身份同闸——Pop 根专属这类身份闸不许越过），且全局 SafetyMode/ToolReversibility
+    // 会话身份无关统一生效（permissions.scala 单点，本面拿 Bash/Write/Edit 后
+    // 危险命令确认链原样在场）。
+    assertEquals(
+      nebflow.agent.AgentCore.exclusiveToolsFor("subagent"),
+      nebflow.agent.AgentCore.RootExclusiveTools
+    )
     assertEquals(
       nebflow.agent.AgentCore
         .fixedToolsFor(AgentDef(name = "subagent", description = "", tools = Nil, systemPrompt = "")),

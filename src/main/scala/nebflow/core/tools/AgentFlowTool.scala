@@ -31,8 +31,10 @@ import io.circe.syntax.*
 object AgentFlowTool extends Tool:
   val name = "AgentFlow"
 
-  /** 规模上限（ChainWrite 同一上限单源——两提交面防误用对称；v2 §6.A/§6.B 家族口径）。 */
-  private val MaxSteps: Int = ChainWriteTool.MaxNodes
+  /** 规模上限（ChainWrite 同一上限单源——两提交面防误用对称；v2 §6.A/§6.B 家族口径）。
+   *  private[nebflow]：subagent-generalization 批审计数字钉（SubagentGeneralizationSpec）
+   *  直读引用，防两上限漂移。 */
+  private[nebflow] val MaxSteps: Int = ChainWriteTool.MaxNodes
 
   /** 案 A legacy guard 错误码（spec 断言单点，禁字面量散落）。 */
   val LegacyShapeCode: String = "AGENTFLOW_LEGACY_SHAPE"
@@ -50,7 +52,7 @@ object AgentFlowTool extends Tool:
 
 **Merge discipline:** steps must NOT arrange merges of any produced branches — branch/merge discipline follows the delegate-layer arbiter; report readiness instead.
 
-**Family:** `Subagent` = one blocking read-only recon call (this turn, result as the tool result); this tool = parallel multi-step execution in the background; `Delegate` = one background task on a full executor (branch/merge machinery); `ChainWrite` = persistent registered chains with per-node editing and id+name addressing (the ledger-backed sibling of this tool — same gate, same engine, more control). Pick by scope, not by habit."""
+**Family:** `Subagent` = one blocking general-purpose sub-agent call (this turn, result as the tool result); this tool = parallel multi-step execution in the background; `Delegate` = one background task on a full executor (branch/merge machinery); `ChainWrite` = persistent registered chains with per-node editing and id+name addressing (the ledger-backed sibling of this tool — same gate, same engine, more control). Pick by scope, not by habit."""
 
   def inputSchema = JsonObject.fromIterable(
     List(
@@ -147,11 +149,12 @@ object AgentFlowTool extends Tool:
         else go(remaining -- ready, resolved ++ ready)
     go(steps.map(_.id).toSet, Set.empty)
 
-  /** 非 delegate 会话 fail-closed（工具内第二保险——挂载面之外的调用一概拒）。 */
-  private[tools] def notDelegateError: String =
-    "AgentFlow runs steps inside the calling DELEGATE's own scope flow map — it is not available outside a " +
+  /** 非 delegate 会话 fail-closed（工具内第二保险——挂载面之外的调用一概拒）。
+   *  private[nebflow]：subagent-generalization 批审计文案钉直读。 */
+  private[nebflow] def notDelegateError: String =
+      "AgentFlow runs steps inside the calling DELEGATE's own scope flow map — it is not available outside a " +
       "delegate session. Nebula dispatches work with Delegate(task=<brief>); background single tasks go to " +
-      "Delegate, read-only recon goes to Subagent."
+      "Delegate, bounded single-leg work (recon or a small end-to-end task) goes to Subagent."
 
   def summarize(input: JsonObject): String =
     val n = input("steps").flatMap(_.asArray).map(_.size).getOrElse(0)

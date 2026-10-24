@@ -18,6 +18,10 @@ import nebflow.shared.Defaults
  * （[[Defaults.PluginDiscoveryLine]]）注入 delegate brief 与节点脚注两个**有
  * Bash** 的面（铁律之后、任务/基线之前）；subagent 只读侦察面无 Bash，**不**
  * 注入查询行（promptWithRule 形态不变——查询通道不可达，注入即纯噪音）。
+ *
+ * subagent-generalization 批（2026-10-24 作者令「subagent 去只读」）：subagent
+ * 面现有 Bash ⇒ 查询通道可达，promptWithRule 升级为第三注入面（铁律 + 查询行 +
+ * 原文），上段「不注入」语义随批失效，以 promptWithRule 组断言为准。
  */
 class SleepPollStartupRuleSpec extends FunSuite:
 
@@ -93,9 +97,13 @@ class SleepPollStartupRuleSpec extends FunSuite:
     assertEquals(NodeEngine.ProtocolFootnote.linesIterator.toList.last, "TaskBoard work order ⇒ close = done, blocked = stuck.")
   }
 
-  test("subagent/workflow 步包装（BlockingSubagent.promptWithRule）：铁律前缀 + 原文保全") {
+  test("subagent 首条消息包装（BlockingSubagent.promptWithRule）：铁律 + 插件查询行（subagent-generalization 批第三注入面）+ 原文保全") {
     val wrapped = BlockingSubagent.promptWithRule("Find all callers of X.")
     assert(wrapped.startsWith(rule), "rule is the prefix")
+    assert(
+      wrapped.indexOf(Defaults.PluginDiscoveryLine) > wrapped.indexOf(rule),
+      "discovery line sits after the iron rule (generalization batch: subagent face now has Bash)"
+    )
     assert(wrapped.endsWith("Find all callers of X."), "original prompt intact")
     assert(BlockingSubagent.promptWithRule("").startsWith(rule), "empty prompt still gets the rule")
   }

@@ -5,20 +5,22 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 
 /**
- * SubagentTool —— 只读侦察子代理入口（builtin-merge 批 2026-10-03，Explore
- * 同型）。挂载面 = 合并执行 agent `nebflow`（[[nebflow.agent.AgentCore]]
- * .NebflowFixedTools）；阻塞运行，结果即返回值（不经后台回投链）。
+ * SubagentTool —— 通用子代理入口（builtin-merge 批 2026-10-03 设立；
+ * subagent-generalization 批 2026-10-24 去只读：子会话 = 完整基础工具面的
+ * 通用 agent 位——能写文件、跑命令、完成端到端小任务）。挂载面 = 合并执行
+ * agent `nebflow`（[[nebflow.agent.AgentCore.NebflowFixedTools]]）；阻塞运行，
+ * 结果即返回值（不经后台回投链）。
  */
 object SubagentTool extends Tool:
   val name = "Subagent"
 
   val description =
-    """Run a read-only recon sub-agent to completion and get its findings as THIS tool's result. The sub-agent has Read/Glob/Grep/WebSearch/WebFetch only (by mechanism — it cannot write, execute or message anything).
+    """Run a general-purpose sub-agent to completion and get its final text as THIS tool's result. The sub-agent has the full base tool face (Read/Write/Edit/Glob/Grep/Bash/AskUserQuestion/WebSearch/WebFetch) and works the task end to end — it can write files, run commands and verify its own work. It has NO dispatch or messaging tools (leaf by mechanism).
 
-**When to use:** lookups, codebase surveys, documentation digs, any read-only legwork whose raw material would flood your context. Do NOT use it for work that writes, executes, or needs your judgment on intermediate state — do those yourself.
+**When to use:** a bounded, self-contained leg of work you can hand off in one brief — codebase surveys and lookups, documentation digs, or a small end-to-end task (generate a file, run a check, produce a verified artifact) whose raw material or step-by-step execution would flood your context. Do NOT use it for work you must judge between phases, or for parallel multi-part execution (use AgentFlow) or a long-running background task (use Delegate).
 
 **Parameters:**
-- `prompt` (required): the question to answer — make it self-contained (paths to start from, what counts as an answer). The sub-agent has none of your context.
+- `prompt` (required): the task — make it self-contained (paths to start from, what done looks like). The sub-agent has none of your context.
 - `description` (optional): short UI label for the sub-agent panel row.
 
 **Semantics:** this call BLOCKS until the sub-agent finishes (hard cap 15 minutes). Its final text comes back as the tool result; cite it, don't redo it."""

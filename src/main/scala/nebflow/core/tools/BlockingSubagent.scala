@@ -13,11 +13,13 @@ import nebflow.shared.{Defaults, NebflowLogger, SubAgentTask}
 import scala.concurrent.duration.*
 
 /**
- * BlockingSubagent —— 阻塞式只读侦察子会话的单一 spawn 点。
+ * BlockingSubagent —— 阻塞式通用子会话的单一 spawn 点。
  *
- * Explore 同型（外部 CLI agent 的 explore 型子代理）：spawn 一个 `subagent`
- * 内置会话（只读工具面，机制固定 = `AgentCore.SubagentFixedTools`），**阻塞**
- * 到它完成，把最终文本作为工具结果返回。
+ * subagent-generalization 批（2026-10-24，作者令「subagent 变成 general 通用的
+ * 一个 agent，就像一个节点那样的，不再只是只读」）：spawn 一个 `subagent`
+ * 内置会话（通用工具面，机制固定 = `AgentCore.SubagentFixedTools`——基础六件 +
+ * AskUserQuestion + Web 两件；叶子/身份闸收敛见该常量头注），**阻塞**到它完成，
+ * 把最终文本作为工具结果返回。
  *
  * ==完成桥（wsSend 间谍）==
  * 子会话的流事件本来就要经 `wsSend` 上行（面板渲染面）——本点在路由包装外再包
@@ -47,8 +49,9 @@ object BlockingSubagent:
   /**
    * 阻塞运行一次子会话。返回子会话最终文本。
    *
-   * @param defName spawn 目标的内置定义名：`subagent`（只读侦察面，默认）或
-   *   `nebflow`（执行面——WorkflowTool 的步骤用这套，步骤要写要执行）。
+   * @param defName spawn 目标的内置定义名：`subagent`（通用子 agent 面，默认；
+   *   subagent-generalization 批起含写/执行面）或 `nebflow`（执行面——历史
+   *   WorkflowTool 步会话用这套；薄壳化后生产仅 `subagent` 一名走本 spawn 点）。
    */
   def run(
     prompt: String,
@@ -108,11 +111,11 @@ object BlockingSubagent:
                 )
               )
               .handleErrorWith(e => logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}"))
-            // sleep-poll 禁令批 C 段：步/子会话首条消息注入等待纪律铁律
+            // sleep-poll 禁令批 C 段：子会话首条消息注入等待纪律铁律
             // （Defaults.NoSleepPollRule 单点——delegate brief / 节点脚注同源）。
-            // 只读侦察面无 Bash，规则是纯提示成本（~60 token）；workflow 步
-            // （defName=nebflow，有执行面）是本注入的主对象。包装单点 =
-            // [[promptWithRule]]（spec 判红锚）。
+            // subagent-generalization 批（2026-10-24）：子面现有 Bash（含后台
+            // 作业通知唤醒面），铁律从「纯提示成本」升格为本面主约束之一。
+            // 包装单点 = [[promptWithRule]]（spec 判红锚）。
             _ <- ref ! AgentCommand.UserInput(promptWithRule(prompt), None)
             result <- done.get
               .timeout(Timeout)
@@ -153,11 +156,13 @@ object BlockingSubagent:
     ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("")
 
   /**
-   * 步/子会话首条消息铁律包装（sleep-poll 禁令批 C 段单点；spec 判红锚）——
-   * 铁律前缀 + 空行 + 原始任务文本（子会话无历史，首条即全部上下文）。
+   * 子会话首条消息包装（sleep-poll 禁令批 C 段单点 + stand-plugins 批查询行
+   * 第三注入面；spec 判红锚）——铁律 + 插件能力查询行（子面现有 Bash，查询通道
+   * 可达；纪律边界「挂载权仍在派发侧」对本叶子面同样成立）+ 空行 + 原始任务
+   * 文本（子会话无历史，首条即全部上下文）。
    */
   private[tools] def promptWithRule(prompt: String): String =
-    s"${Defaults.NoSleepPollRule}\n\n$prompt"
+    s"${Defaults.NoSleepPollRule}\n${Defaults.PluginDiscoveryLine}\n\n$prompt"
 
   /**
    * 叶子终态回收——镜像 [[BackoffSupervisor]]

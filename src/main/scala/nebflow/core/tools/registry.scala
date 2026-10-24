@@ -61,8 +61,9 @@ object ToolRegistry:
       // Sub-agent delegation → 内置极简内核（2026-09-11 恢复批）：Nebula 专属
       // 执行件，目标恒为 `kernel` def（无 agent 目标参数）；persistent 模式已退役。
       "Delegate" -> DelegateTool,
-      // builtin-merge 批（2026-10-03）：Subagent = 只读侦察子入口（阻塞，结果即
-      // 返回值）。N1 复名批（v2 ①/v3 §5）：Workflow → **AgentFlow**（同参数：
+      // builtin-merge 批（2026-10-03）：Subagent = 子代理入口（阻塞，结果即
+      // 返回值；subagent-generalization 批 2026-10-24 去只读——子会话 = 通用
+      // 基础工具面）。N1 复名批（v2 ①/v3 §5）：Workflow → **AgentFlow**（同参数：
       // steps = [{id, task, deps}], description）＝内联 DAG 便捷面，非阻塞薄壳化
       // （steps → ChainWrite.registerChain 同闸同底座）。授权面 =
       // AgentCore.NebflowFixedTools（执行 agent 机制面）；RootExclusiveTools

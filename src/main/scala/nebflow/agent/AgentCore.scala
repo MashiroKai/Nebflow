@@ -700,11 +700,23 @@ object AgentCore:
   val NebflowFixedTools: Set[String] = BaseTools + "AskUserQuestion" + "Subagent" + "AgentFlow"
 
   /**
-   * 只读侦察子面（builtin-merge 批 2026-10-03）：SubagentTool 的 spawn 目标
-   * `subagent` 的机制固定工具面——恰五件只读（Read/Glob/Grep/WebSearch/
-   * WebFetch），**无写、无 shell、无消息**（只读由机制保证，不由提示词保证）。
+   * 通用子 agent 面（subagent-generalization 批 2026-10-24，作者令「subagent 变成
+   * general 通用的一个 agent，就像一个节点那样的，不再只是只读」）：SubagentTool
+   * 的 spawn 目标 `subagent` 的机制固定工具面 = 基础六件（读/写/改/搜/查/执行）
+   * + AskUserQuestion + Web 两件——能写文件、跑命令、完成端到端小任务。
+   *
+   * 仍保留的限制（机制层收敛，非提示词恳求）：
+   *  - **叶子**：无 Subagent/AgentFlow/ChainWrite（∈ RootExclusiveTools，
+   *    `exclusiveToolsFor("subagent")` 全量剥）——扇出归调用方，子会话不建链。
+   *  - **无消息/派发面**：无 Mail/Delegate/SubTask（Delegate ∈ 防逃逸集；
+   *    Mail/SubTask 不在固定集内、收敛名 agent.json 声明恒失效）。
+   *  - **根专属身份闸零放宽**：Pop/AgentControl/Task/Schedule/node_report 等
+   *    RootExclusiveTools 全集照常剥离。
+   *  - 全局 SafetyMode + ToolReversibility（危险命令确认）按会话无关统一生效；
+   *    sleep-poll 护栏、凭据注入白名单（SecretInjection C-case）随 Bash 面一并
+   *    在场，零降级。
    */
-  val SubagentFixedTools: Set[String] = Set("Read", "Glob", "Grep", "WebSearch", "WebFetch")
+  val SubagentFixedTools: Set[String] = BaseTools + "AskUserQuestion" + "WebSearch" + "WebFetch"
 
   /**
    * 通用模版固定工具集（§C.1/§C.5）：恰七件 = BaseTools 六件 + AskUserQuestion。
@@ -794,11 +806,14 @@ object AgentCore:
             AgentCore.RootOrchestrationTools -- AgentCore.friendsSealedStrip
           case "project-dispatcher" => AgentCore.DispatcherFixedTools
           // 合并执行 agent（builtin-merge 批 2026-10-03：kernel+general ⇒ nebflow）：
-          // 基础六件 + AskUserQuestion + Subagent（只读侦察）+ AgentFlow（步级
-          // DAG，N1 复名批 Workflow→AgentFlow 随名）。
+          // 基础六件 + AskUserQuestion + Subagent（通用子 agent，generalization 批
+          // 去只读）+ AgentFlow（步级 DAG，N1 复名批 Workflow→AgentFlow 随名）。
           // 机制固定单点，不经 legacyFixedTools 的 catch-all。
           case "nebflow" => AgentCore.NebflowFixedTools
-          // 只读侦察子（SubagentTool 的 spawn 目标）：机制固定只读五件。
+          // 通用子 agent（SubagentTool 的 spawn 目标）：基础六件 + AskUserQuestion
+          // + Web 两件（subagent-generalization 批 2026-10-24）。叶子/身份闸收敛
+          // 见 [[SubagentFixedTools]] 头注——派发与根专属件由 RootExclusiveTools
+          // 剥离链结构保证。
           case "subagent" => AgentCore.SubagentFixedTools
           // E5 batch 2026-10-01: the former fifth member's by-name branch is deleted
           // together with that name -- the agent retired on 2026-09-25 (`aa371d68f`)

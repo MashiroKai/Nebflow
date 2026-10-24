@@ -122,10 +122,11 @@ object Defaults:
    * 插件能力查询行（stand-plugins 批，作者令 2026-10-23：像记忆检索一样把插件
    * 目录做成只读 CLI，在各级提示词里告知用法——「除了自动分配，还能主动获取」）。
    *
-   * 注入面（同源单点，勿散落复制）：delegate brief（`DelegateTool.assembleBrief`）
-   * 与节点 ProtocolFootnote 前缀（`NodeEngineContract.protocolFootnoteFor`）——两个
-   * **有 Bash** 的启动面。subagent 只读侦察面无 Bash（`BlockingSubagent` 不注入——
-   * 查询通道不可达，注入即纯噪音）；root / 分发器提示词在 BuiltinAgents 各自正文
+   * 注入面（同源单点，勿散落复制）：delegate brief（`DelegateTool.assembleBrief`）、
+   * 节点 ProtocolFootnote 前缀（`NodeEngineContract.protocolFootnoteFor`）与
+   * subagent 首条消息包装（`BlockingSubagent.promptWithRule`）——三个**有 Bash**
+   * 的启动面（subagent-generalization 批 2026-10-24 起子面含 Bash，查询通道
+   * 可达，注入随批补齐）。root / 分发器提示词在 BuiltinAgents 各自正文
    * 接线（决策面自带声明权）。
    *
    * 纪律边界（一行两半）：查询人人可用（只读零副作用）；**挂载权仍在派发侧**——
