@@ -184,7 +184,7 @@ jobs:
         run: |
           curl -fL "https://maven.aliyun.com/repository/central/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
           mkdir -p /tmp/sbt-bin
-          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
+          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -XX:+ExitOnOutOfMemoryError -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
           chmod +x /tmp/sbt-bin/sbt
           echo "/tmp/sbt-bin" >> $GITHUB_PATH
       - name: scalafmt + scalafix check
@@ -224,7 +224,7 @@ jobs:
         run: |
           curl -fL "https://maven.aliyun.com/repository/central/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
           mkdir -p /tmp/sbt-bin
-          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
+          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -XX:+ExitOnOutOfMemoryError -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
           chmod +x /tmp/sbt-bin/sbt
           echo "/tmp/sbt-bin" >> $GITHUB_PATH
           echo "[info] sbt-launch.jar size: $(wc -c < /tmp/sbt-launch.jar) bytes"
@@ -238,6 +238,14 @@ jobs:
     # 未完成（仍在线性执行 suite、非挂死）⇒ 放宽到 90min。本机 M 芯全量约
     # 15–30min 的 suite 在 4 核无热缓存 runner 上时长量级不同，勿按本机体感设限。
     timeout-minutes: 90
+    # 二轮实测（run 40057027901，03:49:57）：in-process 测试 JVM（Test 不 fork，
+    # 与 sbt 同 JVM）约 40min 后堆耗尽——ConsoleFastpathSpec 处
+    # OutOfMemoryError: Java heap space，随后 sbt 僵死 53min 才被超时杀。
+    # 全局 3g（作者本机验证组合，针对 Metaspace）对 40min+ 的长跑不够 ⇒
+    # 本 job 单点提到 6g（runner 16GB 充裕）；ExitOnOutOfMemoryError（bootstrap
+    # 已全局加）保证 OOM 立即红、不再僵死烧满超时。
+    env:
+      SBT_OPTS: "-Xms512m -Xmx6g -XX:MaxMetaspaceSize=2g"
     runs-on: ubuntu-latest
     needs: compile
     steps:
@@ -252,7 +260,7 @@ jobs:
         run: |
           curl -fL "https://maven.aliyun.com/repository/central/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
           mkdir -p /tmp/sbt-bin
-          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
+          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -XX:+ExitOnOutOfMemoryError -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
           chmod +x /tmp/sbt-bin/sbt
           echo "/tmp/sbt-bin" >> $GITHUB_PATH
       - name: Install ripgrep (Glob/Grep runtime dependency)
@@ -295,7 +303,7 @@ jobs:
         run: |
           curl -fL "https://maven.aliyun.com/repository/central/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
           mkdir -p /tmp/sbt-bin
-          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
+          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -XX:+ExitOnOutOfMemoryError -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
           chmod +x /tmp/sbt-bin/sbt
           echo "/tmp/sbt-bin" >> $GITHUB_PATH
       - name: Brand values from brand.conf
@@ -551,7 +559,7 @@ jobs:
         run: |
           curl -fL "https://maven.aliyun.com/repository/central/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
           mkdir -p /tmp/sbt-bin
-          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
+          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -XX:+ExitOnOutOfMemoryError -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
           chmod +x /tmp/sbt-bin/sbt
           echo "/tmp/sbt-bin" >> $GITHUB_PATH
       - name: Generate queuepos engine payload
@@ -573,14 +581,10 @@ jobs:
           # （/Users/dev/...），ubuntu 上必须覆盖到可写目录。
           ARCHIVE_SHOT_DIR: ${{ runner.temp }}/archive-shots
         run: PW_SELFCONTAINED_ONLY=1 npx playwright test
-      - name: Upload failure traces
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-traces
-          path: test-results/
-          if-no-files-found: ignore
-          retention-days: 7
+      # （CI 迁移批 2026-10-24）失败 trace 上传步骤已删：账号 Artifact 存储
+      # 配额已耗尽（二轮实测 Failed to CreateArtifact: Artifact storage quota
+      # has been hit）——保留只会把 job 染红且传不上去。失败判据走 playwright
+      # 的 list 输出 + GitHub step summary；配额释放后再议 trace 回传。
 
   docker-test:
     name: Docker Build Test
