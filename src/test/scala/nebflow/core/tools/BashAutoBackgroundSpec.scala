@@ -84,7 +84,7 @@ class BashAutoBackgroundSpec extends CatsEffectSuite:
       "description" -> "auto-bg-budget".asJson,
       "timeout" -> 2000.asJson
     )
-    (for
+    for
       result <- BashTool.call(input, ToolContext(projectRoot = "/tmp"))
       receipt <- IO {
         result match
@@ -106,7 +106,7 @@ class BashAutoBackgroundSpec extends CatsEffectSuite:
         completed <- pollUntil(jobId, "[Background job completed]", 30.seconds)
         _ <- IO(assert(completed.contains("auto-bg-done"), s"output retrievable after completion: $completed"))
       yield ()).guarantee(BgTaskRegistry.unregister(jobId).attempt.void)
-    yield ())
+    yield ()
     end for
   }
 
@@ -134,7 +134,7 @@ class BashAutoBackgroundSpec extends CatsEffectSuite:
       "description" -> "bg-no-cap".asJson,
       "run_in_background" -> true.asJson
     )
-    (for
+    for
       result <- BashTool.call(input, bgCtx)
       receipt <- IO {
         result match
@@ -151,7 +151,7 @@ class BashAutoBackgroundSpec extends CatsEffectSuite:
         completed <- pollUntil(jobId, "[Background job completed]", 30.seconds)
         _ <- IO(assert(completed.contains("bg-unlimited-done"), s"ran to completion, output retrievable: $completed"))
       yield ()).guarantee(BgTaskRegistry.unregister(jobId).attempt.void)
-    yield ())
+    yield ()
     end for
   }
 

@@ -1,6 +1,6 @@
 package nebflow.core
 
-import nebflow.shared.{MemorySnapshot, MemoryStore, NebflowLogger, PathUtil}
+import nebflow.shared.*
 
 /**
  * `Soul.md` 启动一次性迁移腿（personal-agent 批 2026-10-04，方案 §2.1 / 裁定①）。

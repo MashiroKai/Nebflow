@@ -5,12 +5,12 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.CredentialFileAcl
 import nebflow.shared.{Branding, PathUtil}
-
 import nebflow.social.SocialChannels
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.attribute.{PosixFilePermission, PosixFilePermissions}
 import java.nio.file.{Files, Path, StandardOpenOption}
+
 import scala.jdk.CollectionConverters.*
 
 /**

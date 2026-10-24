@@ -5,7 +5,7 @@ import cats.effect.kernel.Ref
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.core.hotupdate.{UpdateChannel, UpdateRequest, UpdateSource, UpdateOrchestrator, VersionCheck}
+import nebflow.core.hotupdate.*
 import nebflow.shared.NebflowLogger
 
 /**

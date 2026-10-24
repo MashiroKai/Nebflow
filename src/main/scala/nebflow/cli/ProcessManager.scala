@@ -5,6 +5,8 @@ import nebflow.gateway.StaleProcessGuard
 import nebflow.shared.PathUtil
 
 import scala.collection.mutable.ListBuffer
+import scala.util.boundary
+import scala.util.boundary.break
 
 object ProcessManager:
   private def pidFile: os.Path = PathUtil.dataRoot / ".pid"
@@ -303,65 +305,70 @@ object ProcessManager:
     deps: StopDeps,
     degradedVia: Option[String] = None
   ): StopOutcome =
-    // Hard gate: a dev-host-marked process listening on 8080/8097 is never
-    // stoppable through this face — --force does not bypass it. The ports
-    // come from the target pid's own listeners (F-3), never the caller's view.
-    val ports = deps.listeningPortsOf(pid)
-    val hardGate =
-      ports.exists(ProtectedPorts.contains) && DevHostMarkers.exists(cmd.contains)
-    if hardGate then
-      return StopOutcome.Refused(
-        s"pid $pid listens on ${ports.intersect(ProtectedPorts).sorted.mkString("/")} with a dev-host " +
-          s"command line (${StaleProcessGuard.truncate(cmd)}) — refusing; this gate is not bypassable " +
-          "with --force (dev host instances are managed by their own session)"
-      )
+    // DisableSyntax.return（scalafix 门禁）：函数体收进 boundary，四处早退
+    // `return X` 一律改 `break(X)` —— 逐字同义（含四处早退的先后语义）。
+    boundary:
+      // Hard gate: a dev-host-marked process listening on 8080/8097 is never
+      // stoppable through this face — --force does not bypass it. The ports
+      // come from the target pid's own listeners (F-3), never the caller's view.
+      val ports = deps.listeningPortsOf(pid)
+      val hardGate =
+        ports.exists(ProtectedPorts.contains) && DevHostMarkers.exists(cmd.contains)
+      if hardGate then
+        break(
+          StopOutcome.Refused(
+            s"pid $pid listens on ${ports.intersect(ProtectedPorts).sorted.mkString("/")} with a dev-host " +
+              s"command line (${StaleProcessGuard.truncate(cmd)}) — refusing; this gate is not bypassable " +
+              "with --force (dev host instances are managed by their own session)"
+          )
+        )
 
-    // Ownership gate (piece 2): only launcher-started instances are managed
-    // by default; --force skips this gate only, --tree also unlocks it and
-    // extends the kill set. Piece 1 and the hard gate are never bypassed.
-    val startedBy = PidMeta.read().map(_.startedBy).getOrElse(PidMeta.StartedByUnknown)
-    if startedBy != PidMeta.StartedByLauncher && !opts.force && !opts.tree then
-      val hint = startedBy match
-        case PidMeta.StartedBySbt =>
-          "instance was started by an sbt session — stop it there, or rerun with --tree (kills the sbt chain) or --force"
-        case PidMeta.StartedByRestartScript =>
-          "instance was started by nebflow-restart.sh — use that script to manage it, or rerun with --tree/--force"
-        case _ =>
-          "instance ownership is unknown — rerun with --tree or --force if you really own this process"
-      return StopOutcome.Refused(s"refusing to stop pid $pid: $hint")
+      // Ownership gate (piece 2): only launcher-started instances are managed
+      // by default; --force skips this gate only, --tree also unlocks it and
+      // extends the kill set. Piece 1 and the hard gate are never bypassed.
+      val startedBy = PidMeta.read().map(_.startedBy).getOrElse(PidMeta.StartedByUnknown)
+      if startedBy != PidMeta.StartedByLauncher && !opts.force && !opts.tree then
+        val hint = startedBy match
+          case PidMeta.StartedBySbt =>
+            "instance was started by an sbt session — stop it there, or rerun with --tree (kills the sbt chain) or --force"
+          case PidMeta.StartedByRestartScript =>
+            "instance was started by nebflow-restart.sh — use that script to manage it, or rerun with --tree/--force"
+          case _ =>
+            "instance ownership is unknown — rerun with --tree or --force if you really own this process"
+        break(StopOutcome.Refused(s"refusing to stop pid $pid: $hint"))
 
-    val targetsEither =
-      if opts.tree then treeTargets(pid, deps)
-      else Right((List(pid), None))
-    targetsEither match
-      case Left(refusal) =>
-        StopOutcome.Refused(s"refusing tree stop of pid $pid: $refusal")
-      case Right((targets, declaration)) =>
-        targets.foreach(deps.destroy)
-        val gracefulDied = waitUntil(deps, pid, deps.graceTimeoutMs)
-        if !gracefulDied then
-          targets.foreach(deps.destroyForcibly)
-          waitUntil(deps, pid, deps.forceTimeoutMs)
+      val targetsEither =
+        if opts.tree then treeTargets(pid, deps)
+        else Right((List(pid), None))
+      targetsEither match
+        case Left(refusal) =>
+          StopOutcome.Refused(s"refusing tree stop of pid $pid: $refusal")
+        case Right((targets, declaration)) =>
+          targets.foreach(deps.destroy)
+          val gracefulDied = waitUntil(deps, pid, deps.graceTimeoutMs)
+          if !gracefulDied then
+            targets.foreach(deps.destroyForcibly)
+            waitUntil(deps, pid, deps.forceTimeoutMs)
 
-        if deps.isRunning(pid) then return StopOutcome.Failed(s"process $pid did not exit after TERM/KILL")
+          if deps.isRunning(pid) then break(StopOutcome.Failed(s"process $pid did not exit after TERM/KILL"))
 
-        // Piece 3: port-release confirmation from the TARGET pid's own
-        // listener set. Empty after death (or lsof unavailable) = released /
-        // fail-open — a broken probe never blocks a stop.
-        val remaining = deps.listeningPortsOf(pid)
-        if remaining.nonEmpty then
-          val deadline = System.currentTimeMillis() + deps.drainTimeoutMs
-          var busy = remaining.filter(deps.listenerAlive)
-          while busy.nonEmpty && System.currentTimeMillis() < deadline do
-            if deps.pollMs > 0 then Thread.sleep(deps.pollMs)
-            busy = remaining.filter(deps.listenerAlive)
-          if busy.nonEmpty then return StopOutcome.Failed(s"ports still served after stop: ${busy.mkString(", ")}")
+          // Piece 3: port-release confirmation from the TARGET pid's own
+          // listener set. Empty after death (or lsof unavailable) = released /
+          // fail-open — a broken probe never blocks a stop.
+          val remaining = deps.listeningPortsOf(pid)
+          if remaining.nonEmpty then
+            val deadline = System.currentTimeMillis() + deps.drainTimeoutMs
+            var busy = remaining.filter(deps.listenerAlive)
+            while busy.nonEmpty && System.currentTimeMillis() < deadline do
+              if deps.pollMs > 0 then Thread.sleep(deps.pollMs)
+              busy = remaining.filter(deps.listenerAlive)
+            if busy.nonEmpty then break(StopOutcome.Failed(s"ports still served after stop: ${busy.mkString(", ")}"))
 
-        removePid()
-        val base = declaration.getOrElse(s"${nebflow.shared.Branding.productName} stopped (pid $pid)")
-        StopOutcome.Stopped(degradedVia.fold(base)(via => s"$base — identity via degraded chain: $via"))
+          removePid()
+          val base = declaration.getOrElse(s"${nebflow.shared.Branding.productName} stopped (pid $pid)")
+          StopOutcome.Stopped(degradedVia.fold(base)(via => s"$base — identity via degraded chain: $via"))
 
-    end match
+      end match
 
   end stopVerified
 

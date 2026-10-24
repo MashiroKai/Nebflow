@@ -2,15 +2,13 @@ package nebflow.agent
 
 import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.Json
-import io.circe.JsonObject
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.actor.{ActorRef, ActorSystem, AgentCommand}
-import nebflow.core.AgentRuntimePort
-import nebflow.core.GitWorktrees
-import nebflow.core.delegate.{ChainStore, DelegateRegistry, MergeQueue, PostMergeCleanup}
+import nebflow.core.delegate.*
 import nebflow.core.executor.{ExecutorRegistry, ExternalSessionRunner}
 import nebflow.core.tools.DelegateTool
+import nebflow.core.{AgentRuntimePort, GitWorktrees}
 import nebflow.shared.NebflowLogger
 
 import scala.util.Try

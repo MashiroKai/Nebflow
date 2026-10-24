@@ -1,8 +1,8 @@
 package nebflow.llm.decision
 
 import cats.effect.IO
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 
 /**
  * Decision-provider face (JeV integration, Face A / P1-A1).

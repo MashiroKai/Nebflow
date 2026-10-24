@@ -2,7 +2,7 @@ package nebflow.llm.decision
 
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.core.jev.{CatalogEntry, JevAllocation, JevAllocatorPort, JevFallback, JevFallbackKind}
+import nebflow.core.jev.*
 import nebflow.shared.NebflowLogger
 
 /**

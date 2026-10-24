@@ -4,8 +4,8 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import nebflow.gateway.NfFilePolicy
-import nebflow.social.outbound.*
 import nebflow.shared.{AttachContract, NebflowLogger}
+import nebflow.social.outbound.*
 
 /**
  * Feishu implementation of the channel-agnostic outbound layer (socoutbound

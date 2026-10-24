@@ -84,7 +84,7 @@ class BashToolForegroundSpec extends CatsEffectSuite:
       "description" -> "timeout-test".asJson,
       "timeout" -> 3000.asJson
     )
-    (for
+    for
       result <- BashTool.call(input, ToolContext(projectRoot = "/tmp"))
       receipt <- IO {
         result match
@@ -101,7 +101,7 @@ class BashToolForegroundSpec extends CatsEffectSuite:
         completed <- pollUntil(jobId, "[Background job completed]", 30.seconds)
         _ <- IO(assert(completed.contains("budget-done"), s"result delivered on completion: $completed"))
       yield ()).guarantee(BgTaskRegistry.unregister(jobId).attempt.void)
-    yield ())
+    yield ()
     end for
   }
 
@@ -141,7 +141,7 @@ class BashToolForegroundSpec extends CatsEffectSuite:
       "timeout" -> 2000.asJson
     )
     val start = System.currentTimeMillis()
-    (for
+    for
       result <- BashTool.call(input, ToolContext(projectRoot = "/tmp"))
       receipt <- IO {
         val elapsed = (System.currentTimeMillis() - start) / 1000
@@ -171,7 +171,7 @@ class BashToolForegroundSpec extends CatsEffectSuite:
             case Left(e) => fail(s"cancel failed: ${e.message}")
         }
       yield ()).guarantee(BgTaskRegistry.unregister(jobId).attempt.void)
-    yield ())
+    yield ()
     end for
   }
 

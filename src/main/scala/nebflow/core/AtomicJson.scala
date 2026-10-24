@@ -2,6 +2,8 @@ package nebflow.core
 
 import cats.effect.IO
 
+import scala.util.boundary.break
+
 /**
  * Crash-safe file writes for JSON (or any small text) state files.
  *
@@ -394,24 +396,27 @@ object AtomicJson:
     val j = journalPathOf(path)
     if !os.exists(j) then Nil
     else
-      val text =
-        try os.read(j)
-        catch
-          case _: Exception => return Nil
-      // Only lines that END with '\n' are framed records; the tail after the
-      // last '\n' (which may be '' when the file ends cleanly) is discarded.
-      val framed = text.split("\n", -1).toList.dropRight(1)
-      val out = scala.collection.mutable.ListBuffer.empty[Note]
-      var stop = false
-      framed.foreach { l =>
-        if !stop then
-          if l.isEmpty then stop = true
-          else
-            scala.util.Try(io.circe.parser.parse(l)).toOption match
-              case Some(_) => out += Note(l, recordBytes(l))
-              case None => stop = true // torn frame: discard it and everything after
-      }
-      out.toList
+      scala.util.boundary:
+        val text =
+          try os.read(j)
+          catch
+            // DisableSyntax.return（scalafix 门禁）：早退改走 boundary/break ——
+            // 语义与原 `return Nil` 逐字等价（读失败 = 整册视为零记录）。
+            case _: Exception => break(Nil)
+        // Only lines that END with '\n' are framed records; the tail after the
+        // last '\n' (which may be '' when the file ends cleanly) is discarded.
+        val framed = text.split("\n", -1).toList.dropRight(1)
+        val out = scala.collection.mutable.ListBuffer.empty[Note]
+        var stop = false
+        framed.foreach { l =>
+          if !stop then
+            if l.isEmpty then stop = true
+            else
+              scala.util.Try(io.circe.parser.parse(l)).toOption match
+                case Some(_) => out += Note(l, recordBytes(l))
+                case None => stop = true // torn frame: discard it and everything after
+        }
+        out.toList
     end if
   end readJournalRecords
 

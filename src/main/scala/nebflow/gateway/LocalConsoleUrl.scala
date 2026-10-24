@@ -4,8 +4,9 @@ import cats.effect.IO
 import io.circe.parser.parse
 import nebflow.cli.GatewayClient
 
-import java.net.{HttpURLConnection, Proxy, URI, URLEncoder}
+import java.net.*
 import java.nio.charset.StandardCharsets
+
 import scala.util.Using
 
 /**

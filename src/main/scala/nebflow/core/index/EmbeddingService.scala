@@ -2,10 +2,9 @@ package nebflow.core.index
 
 import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.Json
-import io.circe.parser
 import io.circe.syntax.*
-import nebflow.shared.{Config, NebflowLogger, PathUtil, SharedBackend}
+import io.circe.{Json, parser}
+import nebflow.shared.*
 import sttp.client4.*
 
 import scala.concurrent.duration.*

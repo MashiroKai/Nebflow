@@ -4,8 +4,8 @@ import cats.effect.IO
 import io.circe.Json
 import nebflow.actor.ActorSystem
 import nebflow.agent.SharedResources
-import nebflow.shared.PathUtil
 import nebflow.core.tools.{RemoteExecutor, ToolError}
+import nebflow.shared.PathUtil
 
 import scala.util.Try
 

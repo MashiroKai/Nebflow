@@ -5,22 +5,14 @@ import cats.effect.std.{Dispatcher, Queue}
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import fs2.{Chunk, Stream}
-import nebflow.shared.NebflowLogger
-import nebflow.shared.TunnelOriginMark
-import org.http4s.{Header, Headers, HttpApp, Method, Request, Response, Uri}
+import nebflow.shared.{NebflowLogger, TunnelOriginMark}
+import org.http4s.*
 import org.typelevel.ci.CIString
 
 import java.net.URI
 import java.net.http.{HttpClient, WebSocket, WebSocketHandshakeException}
 import java.nio.charset.StandardCharsets.UTF_8
-import java.util.concurrent.{
-  CompletableFuture,
-  ConcurrentHashMap,
-  CompletionStage,
-  ExecutionException,
-  TimeoutException,
-  TimeUnit
-}
+import java.util.concurrent.*
 
 /**
  * Portal frame bridge for ONE relay WebSocket connection (phase 3a design

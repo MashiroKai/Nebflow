@@ -1,14 +1,17 @@
 package nebflow.social
 
-import cats.effect.{IO, Ref}
 import cats.effect.kernel.Fiber
 import cats.effect.unsafe.implicits.global
+import cats.effect.{IO, Ref}
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.shared.NebflowLogger
 
 import java.util.UUID
+
 import scala.collection.immutable.ListMap
+import scala.util.boundary
+import scala.util.boundary.break
 
 /**
  * Weixin iLink scan-bind (weixin-scanbind batch, 2026-10-03) — the "connect by
@@ -331,7 +334,7 @@ object WeixinIlinkScanBind:
     opts => driveLogin(sidecarBase(root).stripSuffix("/"), opts)
 
   /**
-   * The blocking poll loop (own method so the terminal `return`s return the
+   * The blocking poll loop (own method so the terminal `break`s return the
    * [[LoginResult]], not the enclosing lambda).
    */
   private def driveLogin(base: String, opts: LoginOptions): LoginResult =
@@ -371,31 +374,34 @@ object WeixinIlinkScanBind:
     }
     val deadline = System.currentTimeMillis() + MaxLoginMs
     var lastUrl = ""
-    while true do
-      val st = get("/login/status")
-      val state = strField(st, "state").getOrElse("")
-      strField(st, "qrUrl", "qr_url").filter(_ != lastUrl).foreach { url =>
-        lastUrl = url
-        opts.emit(
-          LoginEvent.Qr(
-            url,
-            strField(st, "userCode", "user_code").getOrElse(extractUserCode(url)),
-            longField(st, "expireIn", "expire_in").getOrElse(0L)
+    // DisableSyntax.return（scalafix 门禁）：三个终态早退改 boundary/break，
+    // 语义逐字同义（非局部跳出 while 返回 LoginResult）。
+    boundary:
+      while true do
+        val st = get("/login/status")
+        val state = strField(st, "state").getOrElse("")
+        strField(st, "qrUrl", "qr_url").filter(_ != lastUrl).foreach { url =>
+          lastUrl = url
+          opts.emit(
+            LoginEvent.Qr(
+              url,
+              strField(st, "userCode", "user_code").getOrElse(extractUserCode(url)),
+              longField(st, "expireIn", "expire_in").getOrElse(0L)
+            )
           )
-        )
-      }
-      if state == "polling" then opts.emit(LoginEvent.Polling)
-      if state == "done" then
-        credentials(st) match
-          case Some(c) => return LoginResult.Done(c)
-          case None => return LoginResult.Failed("done-without-credentials")
-      if state == "failed" then
-        return LoginResult.Failed(strField(st, "error").filter(_.nonEmpty).getOrElse("login_failed"))
-      if System.currentTimeMillis() > deadline then throw LoginExpiredException()
-      Thread.sleep(PollIntervalMs)
-    end while
-    // unreachable: the loop above only exits through a return or a throw
-    LoginResult.Failed("internal_error")
+        }
+        if state == "polling" then opts.emit(LoginEvent.Polling)
+        if state == "done" then
+          credentials(st) match
+            case Some(c) => break(LoginResult.Done(c))
+            case None => break(LoginResult.Failed("done-without-credentials"))
+        if state == "failed" then
+          break(LoginResult.Failed(strField(st, "error").filter(_.nonEmpty).getOrElse("login_failed")))
+        if System.currentTimeMillis() > deadline then throw LoginExpiredException()
+        Thread.sleep(PollIntervalMs)
+      end while
+      // unreachable: the loop above only exits through a break or a throw
+      LoginResult.Failed("internal_error")
 
   end driveLogin
 

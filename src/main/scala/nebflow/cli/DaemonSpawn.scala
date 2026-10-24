@@ -5,6 +5,9 @@ import cats.syntax.all.*
 
 import java.lang.management.ManagementFactory
 
+import scala.util.boundary
+import scala.util.boundary.break
+
 /**
  * Daemon launcher (phase 2 daemon plan §1): the `stand start` parent
  * process spawns the gateway as a detached child JVM and returns after the
@@ -139,13 +142,16 @@ object DaemonSpawn:
     pollMs: Long
   ): Either[ReadyFailure, Unit] =
     val deadline = System.currentTimeMillis() + deadlineMs
-    while true do
-      if !childAlive() then return Left(ChildDied)
-      if probe() then return Right(())
-      if System.currentTimeMillis() >= deadline then return Left(TimedOut)
-      if pollMs > 0 then Thread.sleep(pollMs)
-    end while
-    Left(TimedOut) // unreachable
+    // DisableSyntax.return（scalafix 门禁）：早退改走 boundary/break，逐字同义。
+    boundary:
+      while true do
+        if !childAlive() then break(Left(ChildDied))
+        if probe() then break(Right(()))
+        if System.currentTimeMillis() >= deadline then break(Left(TimedOut))
+        if pollMs > 0 then Thread.sleep(pollMs)
+      end while
+      Left(TimedOut) // unreachable: the loop only exits via break
+  end awaitReadyCore
 
   private def readyTimeoutMs(): Long =
     val sec =

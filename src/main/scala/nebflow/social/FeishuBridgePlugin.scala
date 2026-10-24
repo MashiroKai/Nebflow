@@ -5,21 +5,12 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.bridge.{AskAnswerReceipt, BridgeContext, BridgeManager, BridgePlugin}
-import nebflow.social.outbound.{
-  AskPromptCodec,
-  PromptAction,
-  PromptFallback,
-  PromptView,
-  RichCall,
-  RichFeishuAdapter,
-  RichKind,
-  RichProduct
-}
-import nebflow.shared.NebflowLogger
-import nebflow.shared.SessionMeta
+import nebflow.bridge.*
+import nebflow.shared.{NebflowLogger, SessionMeta}
+import nebflow.social.outbound.*
 
 import java.util.concurrent.atomic.AtomicBoolean
+
 import scala.util.Try
 
 /**

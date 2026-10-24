@@ -2,8 +2,8 @@ package nebflow.core.index
 
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.core.project.{TaskLedgerHistory, TaskLedgerStore}
 import nebflow.core.delegate.DelegateRegistry
+import nebflow.core.project.{TaskLedgerHistory, TaskLedgerStore}
 import nebflow.shared.NebflowLogger
 
 import java.security.MessageDigest

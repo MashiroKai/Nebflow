@@ -1,8 +1,8 @@
 package nebflow.neblink
 
-import io.circe.{Json, JsonObject}
 import io.circe.parser.parse
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 
 import java.util.Base64
 

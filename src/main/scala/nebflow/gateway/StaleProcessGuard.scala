@@ -1,8 +1,8 @@
 package nebflow.gateway
 
-import scala.collection.mutable.ListBuffer
-
 import nebflow.shared.Branding
+
+import scala.collection.mutable.ListBuffer
 
 /**
  * P0 2026-09-06 (09:07 host-kill incident) — identity check BEFORE any kill.

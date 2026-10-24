@@ -3,9 +3,9 @@ package nebflow.llm.decision
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
-import nebflow.core.jev.{CatalogEntry, JevAllocation, JevFallback, JevFallbackKind}
+import nebflow.core.jev.*
 import nebflow.llm.{ModelCandidate, ProviderRegistry, SendMessageParams}
-import nebflow.shared.{Defaults, Message, MessageRole, NebflowLogger}
+import nebflow.shared.*
 
 /**
  * LlmAllocator —— **LLM 兜底分配腿**（jev-plugins 批 #1226；原文「未配 Jev → 新

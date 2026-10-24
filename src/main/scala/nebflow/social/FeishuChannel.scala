@@ -4,14 +4,9 @@ import com.lark.oapi.Client as LarkClient
 import com.lark.oapi.core.enums.BaseUrlEnum
 import com.lark.oapi.event.EventDispatcher
 import com.lark.oapi.event.cardcallback.P2CardActionTriggerHandler
-import com.lark.oapi.event.cardcallback.model.{
-  CallBackCard,
-  CallBackToast,
-  P2CardActionTrigger,
-  P2CardActionTriggerResponse
-}
+import com.lark.oapi.event.cardcallback.model.*
 import com.lark.oapi.service.im.ImService
-import com.lark.oapi.service.im.v1.model.{CreateMessageReq, CreateMessageReqBody, GetImageReq, P2MessageReceiveV1}
+import com.lark.oapi.service.im.v1.model.*
 import com.lark.oapi.ws.Client as WsClient
 
 import java.time.format.DateTimeFormatter

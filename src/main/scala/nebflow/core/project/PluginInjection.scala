@@ -7,14 +7,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import nebflow.core.delegate.ChainStore
-import nebflow.core.jev.{
-  JevAllocation,
-  JevDeclarationDuty,
-  JevFallback,
-  JevFallbackKind,
-  PluginAllocator,
-  PluginCatalog
-}
+import nebflow.core.jev.*
 import nebflow.core.plugin.{PluginRegistry, PluginsConfig}
 import nebflow.shared.{NebflowLogger, PathUtil}
 

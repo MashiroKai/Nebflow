@@ -2,14 +2,7 @@ package nebflow.social.outbound
 
 import cats.effect.IO
 import com.lark.oapi.Client as LarkClient
-import com.lark.oapi.service.im.v1.model.{
-  CreateFileReq,
-  CreateFileReqBody,
-  CreateImageReq,
-  CreateImageReqBody,
-  CreateMessageReq,
-  CreateMessageReqBody
-}
+import com.lark.oapi.service.im.v1.model.*
 import nebflow.shared.{AttachContract, NebflowLogger, PathUtil}
 import nebflow.social.{FeishuChannel, FeishuCredentials}
 

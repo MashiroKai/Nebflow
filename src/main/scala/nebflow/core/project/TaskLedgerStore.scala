@@ -1,17 +1,16 @@
 package nebflow.core.project
 
 import io.circe.Codec
-import io.circe.syntax.*
 import io.circe.derivation.{Configuration, ConfiguredCodec}
 import io.circe.parser.decode
+import io.circe.syntax.*
+import nebflow.core.AtomicJson
+import nebflow.core.tools.ToolError
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.time.Instant
 
 import scala.collection.mutable
-
-import nebflow.core.AtomicJson
-import nebflow.shared.{NebflowLogger, PathUtil}
-import nebflow.core.tools.ToolError
 
 /**
  * A unified-ledger entry (wire schema, three states).

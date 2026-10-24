@@ -1,7 +1,7 @@
 package nebflow.llm.decision
 
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 
 /**
  * JeV wire codec (Face A / P1-A1 adaptation layer).

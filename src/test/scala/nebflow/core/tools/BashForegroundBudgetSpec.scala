@@ -101,7 +101,7 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
       "description" -> "silent-clone-shape".asJson
     )
     val start = System.currentTimeMillis()
-    (for
+    for
       result <- BashTool.call(input, budget2sCtx)
       receipt <- IO {
         val elapsed = System.currentTimeMillis() - start
@@ -129,7 +129,7 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
         completed <- pollUntil(jobId, "[Background job completed]", 30.seconds)
         _ <- IO(assert(completed.contains("clone-done"), s"result delivered on completion: $completed"))
       yield ()).guarantee(BgTaskRegistry.unregister(jobId).attempt.void)
-    yield ())
+    yield ()
     end for
   }
 
@@ -164,7 +164,7 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
         "command" -> """python3 -c "import time; time.sleep(9); print('adopted-survivor')"""".asJson,
         "description" -> "adopted-ceiling-retired".asJson
       )
-      (for
+      for
         result <- BashTool.call(input, budget2sCtx)
         receipt <- IO {
           result match
@@ -184,7 +184,7 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
         completed <- pollUntil(jobId, "[Background job completed]", 30.seconds)
           .map(out => assert(out.contains("adopted-survivor"), s"runs to completion: $out"))
           .guarantee(BgTaskRegistry.unregister(jobId).attempt.void)
-      yield ())
+      yield ()
       end for
     }
   }
@@ -196,7 +196,7 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
       "description" -> "chatty-long-runner".asJson
     )
     val start = System.currentTimeMillis()
-    (for
+    for
       result <- BashTool.call(input, budget2sCtx)
       receipt <- IO {
         val elapsed = System.currentTimeMillis() - start
@@ -211,7 +211,7 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
       _ <- pollUntil(jobId, "[Background job completed]", 40.seconds)
         .map(out => assert(out.contains("tick-10"), s"ran to completion: $out"))
         .guarantee(BgTaskRegistry.unregister(jobId).attempt.void)
-    yield ())
+    yield ()
     end for
   }
 
@@ -222,7 +222,7 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
       "timeout" -> 3600000.asJson // agent 想等 60min —— 必须被 2s 预算钳住
     )
     val start = System.currentTimeMillis()
-    (for
+    for
       result <- BashTool.call(input, budget2sCtx)
       receipt <- IO {
         val elapsed = System.currentTimeMillis() - start
@@ -237,7 +237,7 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
       _ <- pollUntil(jobId, "[Background job completed]", 30.seconds)
         .map(out => assert(out.contains("clamped-done"), s"result delivered: $out"))
         .guarantee(BgTaskRegistry.unregister(jobId).attempt.void)
-    yield ())
+    yield ()
     end for
   }
 
