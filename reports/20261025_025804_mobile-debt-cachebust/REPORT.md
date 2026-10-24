@@ -47,3 +47,12 @@
 
 - 「四条全丢」= 作者在手机端所见（交付链断裂），非代码面缺失——考古证据链见 §0；若作者本意是 ①②③ 还有树外新规格，需新令补规格书。
 - 引擎跑 dev 树（sbt run / fresh 判据既有）；dist 脸不受本批影响（已内容寻址）。
+
+## 5. 主会话验证补遗（2026-10-25 04:1x）
+
+本批 sbt 验证留主会话代跑（delegate 零 sbt），首跑暴露 6 红，全部归因修复后 **23 spec 队列 234/234 全绿**：
+
+1. **rebuildMatches 三参 append 编译陷阱（主修复，StaticRoutes.scala）**：`sb.append(target, last, m.start)` 三参形式对 `scala.collection.mutable.StringBuilder` 被 Scala 3.5.2 编译器 tupling 成 `append(Tuple3)`——元组 toString 整串拼进结果（`((…,0,23)…(…,49,50),0,141)` 碎片），单资源缺文件回落路径同样中毒。字节码级钉死（javap：Tuple3.apply + append(Object)）。修复 = 显式 `target.slice(last, m.start)` 单参 append，附注释防复发。packedIndexHtml/rewriteCssUrls 同用此助手，一处修复全覆盖。
+2. **AssetVersioningSpec 自胜正则（spec 修复）**：dev-tree 断言的正则尾四引号被词法并进内容，闭引号成必选项 ⇒ 完全版本化（=本批目标形态）的 body 反而收集为零。修 = 显式容许可选 `(?:\?v=[0-9a-f]+)?` 尾，group(1) 恒裸路径。
+3. **误案两起记录在案**：①首次 6 红曾疑 zinc 陈类（Clean 重编复现，排除）；②IndexEntryAliasSpec OOM/53s 超时系 dump 碎片下游效应，主修复后自愈。
+4. spec 侧教训：本批 delegate 零 sbt 验证留白，spec 首跑即首验——后续批照旧「分支内 spec 绿再合并」，避免带病入库。

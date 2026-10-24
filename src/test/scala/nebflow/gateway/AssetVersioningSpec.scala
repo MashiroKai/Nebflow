@@ -105,8 +105,10 @@ class AssetVersioningSpec extends FunSuite:
     val resp = StaticRoutes.devIndexWithBrand.unsafeRunSync()
     assertEquals(resp.status, org.http4s.Status.Ok)
     val body = resp.body.through(fs2.text.utf8.decode).compile.string.unsafeRunSync()
-    val hrefPaths = """href="((?:css|vendor)/[^"?]+)"""".r.findAllMatchIn(body).map(_.group(1)).toList
-    val srcPaths  = """src="((?:vendor|js)/[^"?]+)"""".r.findAllMatchIn(body).map(_.group(1)).toList
+    // 正则尾容许可选 ?v=<hex>：完全版本化（=本批目标形态）的 body 也必须能
+    // 收集到引用路径；group(1) 恒为裸路径，后断言逐条要求版本化孪生存在。
+    val hrefPaths = """href="((?:css|vendor)/[^"?]+)(?:\?v=[0-9a-f]+)?"""".r.findAllMatchIn(body).map(_.group(1)).toList
+    val srcPaths  = """src="((?:vendor|js)/[^"?]+)(?:\?v=[0-9a-f]+)?"""".r.findAllMatchIn(body).map(_.group(1)).toList
     val all = hrefPaths ++ srcPaths
     assert(all.nonEmpty, "index must reference assets")
     for p <- all do

@@ -338,13 +338,16 @@ object StaticRoutes:
   private def rebuildMatches(target: String, re: scala.util.matching.Regex)(
     f: scala.util.matching.Regex.Match => String
   ): String =
+    // 注意：不可写三参形式 `sb.append(target, last, m.start)` —— Scala 3.5.2 对
+    // scala.collection.mutable.StringBuilder 会把它tupling成 append(Tuple3)
+    // （元组 toString 整串进结果），必须显式 slice 出 String 再单参 append。
     val sb = new StringBuilder
     var last = 0
     for m <- re.findAllMatchIn(target) do
-      sb.append(target, last, m.start)
+      sb.append(target.slice(last, m.start))
       sb.append(f(m))
       last = m.end
-    sb.append(target, last, target.length)
+    sb.append(target.slice(last, target.length))
     sb.toString
 
   /** [[packedIndexHtml]] 的 CSS url() 重写（纯函数，spec 直读）。 */
