@@ -468,6 +468,16 @@
 .bg-task-origin.bg-origin-dispatcher {
   color: var(--color-frame-text);
 }
+/* Device origin (多设备后台任务可见批 · 作者令 2026-10-25「多设备的后台任务
+   我们也要可见」): device-channel background tasks (Bash device=KAI +
+   run_in_background) carry the DEVICE as the origin chip — 「跑在哪台设备」,
+   a different axis from nebula/dispatcher/node (谁开启). Same neutral chip
+   family as dispatcher (one text notch brighter); the LABEL (device name,
+   e.g. KAI) is the differentiator. No new color tokens — existing glass /
+   text tokens only (visual-style: reuse before inventing). */
+.bg-task-origin.bg-origin-device {
+  color: var(--color-frame-text);
+}
 @media (prefers-color-scheme: dark) {
   .bg-task-origin.bg-origin-node {
     color: rgb(var(--sapphire));

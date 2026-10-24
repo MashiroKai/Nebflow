@@ -209,8 +209,7 @@ class RemoteExecutor(
   /** Timeout for synchronous remote calls without ToolContext (fallback path). */
   private val SyncTimeout = 120.seconds
 
-  /** Timeout for background remote calls — the HTTP call waits up to this long. */
-  private val BgTimeout = 3600.seconds
+  // （BgTimeout 已上移伴生：bgHttpWaitTimeout 判据与类内引用同源单点，禁两处漂移。）
 
   // ---- P0-3: Path memory — remember last successful transport per device ----
 
@@ -760,6 +759,16 @@ class RemoteExecutor(
    * 3. Start a detached fiber that does the synchronous HTTP call to the remote device
    * 4. Return "[Background job started]" to the LLM immediately
    * 5. When the HTTP call returns, notify agent (ExternalEvent) + frontend (WS)
+   *
+   * 多设备后台任务可见批（作者令 2026-10-25「多设备的后台任务我们也要可见」）：
+   * 设备通道后台任务进统一账本（BgTaskRegistry）——① origin 类别 = 设备名
+   * （[[BgTaskRegistry.deviceOrigin]]，「跑在哪」轴），注册与 WS 发射面同源；
+   * ② `persistent=true`（服务型长驻，设备上的 dev server / watcher）同本地腿
+   * 语义——不纳入节点等待集/热重启静默闸/bg-wait 屏障（三处消费面同判
+   * ActiveTask.persistent），且 HTTP 等待豁免 1h 网络兜底
+   * （[[RemoteExecutor.bgHttpWaitTimeout]]，对端 timeout 参数同值同源，防对端
+   * 先杀）；③ `persistent` 是**本侧**生命周期旗标，与 `run_in_background` 同法
+   * 在下发前摘除（[[RemoteExecutor.stripLocalBgFlags]]），不过线。
    */
   private def executeRemoteBackground(
     peer: PeerInfo,
@@ -767,14 +776,17 @@ class RemoteExecutor(
     params: JsonObject,
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
-    val remoteParams = ensureRemoteTimeout(params.remove("run_in_background"))
+    val persistent = RemoteExecutor.parsePersistent(params)
+    val waitTimeout = RemoteExecutor.bgHttpWaitTimeout(persistent)
+    val remoteParams = ensureRemoteTimeout(RemoteExecutor.stripLocalBgFlags(params), waitTimeout)
     val commandStr = params("command").flatMap(_.asString).getOrElse(toolName)
     val firstLine = commandStr.split('\n').headOption.getOrElse(commandStr).take(80)
     val description = s"[${peer.deviceName}] ${params("description").flatMap(_.asString).getOrElse(firstLine)}"
 
-    // 来源标注（2026-09-07 后台任务面板重设计）：与 BashTool 同推导（注册
-    // 会话前缀 + 会话名 → 类别/显示名），注册与 WS 信封同源携带。
-    val (bgOrigin, bgOriginLabel) = BgTaskRegistry.originFor(ctx.sessionId.getOrElse(""), ctx.sessionName)
+    // 来源标注（多设备后台任务可见批）：设备通道后台任务的 origin 恒为设备名
+    // （deviceOrigin 单点）——不再借用注册会话的 nebula/dispatcher/node 类别
+    // （那是「谁开启」的轴，设备任务的 chip 要回答的是「跑在哪」）。
+    val (bgOrigin, bgOriginLabel) = BgTaskRegistry.deviceOrigin(peer.deviceName)
     for
       // 终态延迟销毁窗口的禁 spawn 守卫（noderpt 批 B 段 2026-09-11 作者裁定）：远程后台
       // 不经本地 ShellSession（无 executeBackground），故在**注册/发射之前**独立设点——
@@ -783,14 +795,14 @@ class RemoteExecutor(
       jobId <- IO.randomUUID.map(_.toString.take(8))
       _ <- logger.info(s"Remote background task $jobId started on ${peer.deviceName}: $firstLine")
       // 1. Emit "running" to frontend + register in global registry
-      _ <- emitBgTaskStarted(ctx, jobId, description)
+      _ <- emitBgTaskStarted(ctx, jobId, description, bgOrigin, bgOriginLabel)
       _ <- BgTaskRegistry.register(
         jobId,
         ctx.sessionId.getOrElse(""),
         description,
         "remote",
         ctx.rootSessionId.orElse(ctx.sessionId).getOrElse(""),
-        false,
+        persistent,
         bgOrigin,
         bgOriginLabel
       )
@@ -798,7 +810,8 @@ class RemoteExecutor(
       doneRef <- IO.ref(false)
       _ <- startRemoteHeartbeat(ctx, jobId, description, doneRef)
       // 3. Start detached fiber — synchronous HTTP to the remote device, then notify
-      _ <- IO(startRemoteBgFiber(peer, toolName, remoteParams, ctx, jobId, description, doneRef))
+      //    （等待上限随 persistent 豁免：服务型设备任务不被 1h 网络兜底杀。）
+      _ <- IO(startRemoteBgFiber(peer, toolName, remoteParams, ctx, jobId, description, doneRef, waitTimeout))
     yield Right(
       s"[Background job started] Job ID: $jobId\nThe command is running in the background on ${peer.deviceName}. You will be automatically notified when it finishes — continue with other work or finish your turn."
     )
@@ -828,7 +841,7 @@ class RemoteExecutor(
     params: JsonObject,
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
-    val remoteParams = ensureRemoteTimeout(params.remove("run_in_background"))
+    val remoteParams = ensureRemoteTimeout(RemoteExecutor.stripLocalBgFlags(params))
     val commandStr = params("command").flatMap(_.asString).getOrElse(toolName)
     val firstLine = commandStr.split('\n').headOption.getOrElse(commandStr).take(80)
     val description = s"[${peer.deviceName}] ${params("description").flatMap(_.asString).getOrElse(firstLine)}"
@@ -837,8 +850,9 @@ class RemoteExecutor(
       // 进程侧活动心跳（2026-09-10 换轴）：等待期间每 30s 刷新
       // **processActivityMs**（不再是 lastActivityMs——远程等待中的「进程/网络
       // 还活着」不等于 agent 侧有进展；旧写点与 BashTool 活动桥同属事故根因族）。
+      // 本侧旗标（run_in_background/persistent）与后台腿同法摘除，不过线。
       hbFiber <- (IO.sleep(30.seconds) *> touchAgentActivity(ctx)).foreverM.start
-      r <- executeViaBestPath(peer, toolName, remoteParams, BgTimeout, ctx.projectRoot)
+      r <- executeViaBestPath(peer, toolName, remoteParams, RemoteExecutor.BgTimeout, ctx.projectRoot)
       _ <- hbFiber.cancel
     yield r
   end executeForegroundSync
@@ -858,7 +872,9 @@ class RemoteExecutor(
         }
       case _ => IO.unit
 
-  /** Launch the HTTP call in a detached fiber; notify agent + frontend when done. */
+  /** Launch the HTTP call in a detached fiber; notify agent + frontend when done.
+    * `waitTimeout` = 本任务的 HTTP 等待上限（bgHttpWaitTimeout 判据：等待型 =
+    * BgTimeout 1h 网络兜底；persistent 服务型 = 豁免长档）。 */
   private def startRemoteBgFiber(
     peer: PeerInfo,
     toolName: String,
@@ -866,10 +882,11 @@ class RemoteExecutor(
     ctx: ToolContext,
     jobId: String,
     description: String,
-    doneRef: Ref[IO, Boolean]
+    doneRef: Ref[IO, Boolean],
+    waitTimeout: FiniteDuration
   ): Unit =
     val completionIO =
-      executeViaBestPath(peer, toolName, params, BgTimeout, ctx.projectRoot)
+      executeViaBestPath(peer, toolName, params, waitTimeout, ctx.projectRoot)
         .flatMap {
           case Right(output) => notifyRemoteBgResult(ctx, jobId, description, Right(output))
           case Left(err) => notifyRemoteBgResult(ctx, jobId, description, Left(err.message))
@@ -929,8 +946,16 @@ class RemoteExecutor(
     loop.start.void
   end startRemoteHeartbeat
 
-  private def emitBgTaskStarted(ctx: ToolContext, jobId: String, description: String): IO[Unit] =
-    val (origin, originLabel) = BgTaskRegistry.originFor(ctx.sessionId.getOrElse(""), ctx.sessionName)
+  private def emitBgTaskStarted(
+    ctx: ToolContext,
+    jobId: String,
+    description: String,
+    origin: String,
+    originLabel: String
+  ): IO[Unit] =
+    // 来源字段（多设备后台任务可见批）：由注册面（executeRemoteBackground）传入
+    // ——设备任务 = ("device", 设备名)，与 BgTaskRegistry.register 同源同值；
+    // 快照路径（activeTasksJson）与实时信封两条路径的 chip 数据不再分叉。
     ctx.wsSend.fold(
       logger.debug(s"Cannot notify frontend for remote background job $jobId: no wsSend")
     )(send =>
@@ -1395,10 +1420,16 @@ class RemoteExecutor(
    * Ensure remote params have a timeout matching the HTTP timeout.
    * Without this, the remote BashTool uses its default 30s timeout,
    * causing premature timeout for long-running remote tasks.
+   *
+   * `waitTimeout` 与本侧 fiber 的等待上限同源同值（bgHttpWaitTimeout 判据）：
+   * persistent 服务型设备任务两侧同豁免——缺省 = BgTimeout（前台腿现状零漂移）。
    */
-  private def ensureRemoteTimeout(params: JsonObject): JsonObject =
+  private def ensureRemoteTimeout(
+    params: JsonObject,
+    waitTimeout: FiniteDuration = RemoteExecutor.BgTimeout
+  ): JsonObject =
     if params.contains("timeout") then params
-    else params.add("timeout", BgTimeout.toMillis.asJson)
+    else params.add("timeout", waitTimeout.toMillis.asJson)
 
   // resolvePeer 已上移至伴生 object（xdev 批：纯函数 + 同包可测）——
   // 类内调用点经 `RemoteExecutor.resolvePeer` 限定，行为零变化。
@@ -1409,6 +1440,46 @@ object RemoteExecutor:
   private val logger = NebflowLogger.forName("nebflow.remote-executor")
 
   @volatile private var instance: Option[RemoteExecutor] = None
+
+  // ---- 多设备后台任务可见批（作者令 2026-10-25）判据单点（纯函数，spec 直测）----
+
+  /**
+   * 等待型远程调用（前台腿 + 后台 fiber）的 HTTP 等待上限：1h 网络兜底。
+   * （原类内 `private val BgTimeout` 上移伴生——类内引用经限定名同值，禁漂移。）
+   */
+  val BgTimeout: FiniteDuration = 3600.seconds
+
+  /**
+   * persistent（服务型）远程后台任务的 HTTP 等待档：30 天「事实无界」。
+   * dispatch 界面收 FiniteDuration（无 Inf 档），而设备上的 dev server / watcher
+   * 是长驻语义——不该被 1h 网络兜底在等待中杀掉。语义对齐本地腿「persistent
+   * 豁免 idle/硬超时/停滞守卫」；对端 Bash 的 `timeout` 参数经 ensureRemoteTimeout
+   * 同值下发，防对端先杀（两侧同判据）。
+   */
+  val PersistentBgHttpTimeout: FiniteDuration = 30.days
+
+  /**
+   * persistent 豁免判据（唯一单点）：等待型 = BgTimeout（现状零漂移）；
+   * persistent=true = 恒长档。executeRemoteBackground 的 fiber 等待与
+   * ensureRemoteTimeout 的对端 timeout 同源消费本判据。
+   */
+  def bgHttpWaitTimeout(persistent: Boolean): FiniteDuration =
+    if persistent then PersistentBgHttpTimeout else BgTimeout
+
+  /**
+   * 本侧生命周期旗标摘除（下发对端前）：`run_in_background`（execute 分流已消费）
+   * 与 `persistent`（本侧登记/等待集豁免/HTTP 豁免记账）不过线——对端按前台同步
+   * 执行，不识别也不该识别本侧的后台生命周期语义。
+   */
+  def stripLocalBgFlags(params: JsonObject): JsonObject =
+    params.remove("run_in_background").remove("persistent")
+
+  /**
+   * `persistent` 旗标解析（缺省 false = 等待型；与本地 BashTool 同判：
+   * true = 服务型长驻，不纳入等待集、HTTP 等待豁免）。
+   */
+  def parsePersistent(params: JsonObject): Boolean =
+    params("persistent").flatMap(_.asBoolean).getOrElse(false)
 
   /** 浏览面单件大小闸（dropbox 大件通道引导线之上的硬闸；与 10MiB capture 闸分档）。
     * M2 起真源在伴生对象（BrowseGetLoop 首响应闸与实例腿同参一处，禁两处漂移）。 */

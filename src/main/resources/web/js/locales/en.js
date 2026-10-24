@@ -1524,6 +1524,7 @@ export default {
   'bg.kind.local': 'local',
   'bg.kind.remote': 'remote',
   'bg.openedBy': 'Started by {origin}',
+  'bg.runsOn': 'Runs on {origin}',
   // Retained terminal rows + output detail card (2026-09-09 output viewing)
   'bg.completed': 'Completed',
   'bg.failed': 'Failed',
