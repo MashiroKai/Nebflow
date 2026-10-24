@@ -1722,6 +1722,10 @@ export function onBusyWatchdogDeadline(sid, deadlineAt) {
     // queue-idle-flush（2026-10-23）：真死收口 = busy→idle 迁移，排队消息照常触发
     // 投递（旧实现只清不排 ⇒ 队列滞留）。WS 已断子案由 drain 自身的 ws 闸挡下，
     // 重连后的补发轨（flushOfflineQueue）语义不变。
+    // queue-one-per-turn（2026-10-24）：真死判定自带「阶梯到顶 ∧ 无活性证据」上位
+    // 证据 = 权威终态 ⇒ 落终态戳放行投递未决闸（被派 turn 永无终态帧形态下，无戳
+    // 则队列滞留）。
+    state.lastTerminalAt[sid] = Date.now();
     state.scheduleQueueDrain?.(sid);
     return;
   }
