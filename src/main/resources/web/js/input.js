@@ -1437,6 +1437,10 @@ export function initInput(view) {
     // 运行中事实闸照旧把关。
     import('./chat.js').then(({ clearBusy }) => {
       clearBusy(sid);
+      // queue-one-per-turn（2026-10-24）：stop = 用户权威「本 turn 到此为止」⇒ 落
+      // 终态戳放行投递未决闸（interrupted 帧丢失形态下无戳则队列滞留——本腿就是
+      // 该形态的收口，queue-idle-flush R3 语义保留）。
+      state.lastTerminalAt[sid] = Date.now();
       state.scheduleQueueDrain?.(sid);
     });
   };

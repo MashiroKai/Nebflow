@@ -331,7 +331,10 @@ try {
   ok('E4 state 槽接缝 scheduleQueueDrain 在场', /scheduleQueueDrain:\s*null/.test(stateSrc) && /state\.scheduleQueueDrain = scheduleQueueDrain/.test(mainSrc));
   ok('E5 stop 键补 drain 触发腿（input.js）', /state\.scheduleQueueDrain\?\.\(sid\)/.test(inputSrc));
   ok('E6 看门真死收口补 drain 触发腿（chat.js）', /state\.scheduleQueueDrain\?\.\(sid\)/.test(chatSrc));
-  ok('E7 后台代理对账器补 drain 触发腿（main.js）', /clearBusy\(sid\);[\s\S]{0,220}scheduleQueueDrain\(sid\);/.test(mainSrc));
+  // queue-one-per-turn 批（2026-10-24）在对账器腿的 clearBusy 与 scheduleQueueDrain
+  // 之间插入终态戳一行（后端快照=权威空闲 ⇒ 放行投递未决闸）⇒ 邻接窗由 220 放宽到
+  // 500；钉的契约面（先清 busy、后触发 drain）不变。
+  ok('E7 后台代理对账器补 drain 触发腿（main.js）', /clearBusy\(sid\);[\s\S]{0,500}scheduleQueueDrain\(sid\);/.test(mainSrc));
   ok('E8 旧布尔窗口令牌已退役', !/drainWindowUsed/.test(mainSrc));
 
   ok('E9 全程零 pageerror', pageErrors.length === 0, JSON.stringify(pageErrors));

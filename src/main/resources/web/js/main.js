@@ -491,6 +491,13 @@ function armTurnConfirm(sid) {
     delete state.turnConfirmTimers[sid];
     // 到点仍须 busy 才有意义（终态帧/回执已撤网的场景在此早退）。
     if (!state.busySessionIds.has(sid)) return;
+    // queue-one-per-turn（2026-10-24）：引擎权威开轮事实（sessionBusy{busy:true} /
+    // 流帧族，晚于本网武装所随的派发）在场 ⇒ turn **真实在跑**——首 token 前的静默
+    // （慢上游 thinking 阶段）不是幻影，绝不能在此收 busy（收掉 = 队列 drain 闸失守，
+    // 下一条排队件被投进仍在跑的 turn = 2026-10-24 15:41 病历）。本网只裁「无任何
+    // 开轮事实」的真幻影；静默真轮的兜底归看门阶梯（真死收口自带上位证据）。
+    const factAt = queueTurnFactAt.get(sid) || 0;
+    if (factAt > (state.turnStartTimes[sid] || 0)) return;
     // 本会话窗口内有流帧 ⇒ turn 事实上在跑（慢首帧），绝不是幻影 ⇒ 不动。
     const sinceStream = Date.now() - (state.sessionStreamActivity[sid] || 0);
     if (sinceStream < budget) return;
@@ -502,7 +509,10 @@ function armTurnConfirm(sid) {
     }
     clearBusy(sid);
     // 与其他终态路径同律：幻影期间排队的消息照常 flush（红线：修 busy 误判，
-    // 队列语义不动——drain 自身的冷却窗/运行中事实闸/ws 闸照旧把关）。
+    // 队列语义不动——drain 自身的冷却窗/运行中事实闸/投递未决闸/ws 闸照旧把关）。
+    // 真幻影 = 引擎永不开轮 ⇒ 永无终态戳，此处落**权威无-turn** settle 戳放行队列
+    // （queue-idle-flush R2 形态的确认网版）。
+    state.lastTerminalAt[sid] = Date.now();
     scheduleQueueDrain(sid);
   }, budget);
 }
@@ -554,6 +564,21 @@ function armQueueDrainTimer(sid, delay) {
       const factAt = queueTurnFactAt.get(sid) || 0;
       if (factAt > dispatchedAt) return;
     }
+    // ③ 投递未决闸（queue-one-per-turn，2026-10-24 作者裁定「回合结束才投下一条」）：
+    //    上次派发开启的 turn 已被引擎确认开轮（新轮事实晚于派发）但**尚未终态**（终态
+    //    戳未越过派发时刻）⇒ 该 turn 还在跑——此时纵然 busy 标志已被哪条 speculative
+    //    腿提前清掉（turn-start 确认网误判静默慢轮 / 陈旧 sessionBusy{false} / 判重
+    //    回执回落腿），也**不得**把下一条排队件投进仍在跑的 turn。实测病历 2026-10-24
+    //    15:41（Nebula 会话）：m1 派发开轮后 26s，m2 于 m1 turn 运行中被投出，服务端
+    //    排队后在同一 turn 内被消费 = 作者报障「排队的消息一次性发送」。
+    //    放行条件 = 终态事实（done / sessionBusy{false} / compactComplete / stop 键 /
+    //    看门真死 / 对账器 / 判重幻影收口——各权威收口点落 lastTerminalAt 戳）越过
+    //    派发时刻。这是**事实闸不是计时器**：投递跟随回合边界，不做固定间隔节流。
+    //    零新轮事实形态（fact ≤ dispatchedAt：压缩轮无 busy{true} / 幻影派发 / 断线丢
+    //    busy{true}）不受本闸挡——queue-idle-flush 的「零事实空闲即投递」语义逐字保留。
+    const unresolvedFactAt = queueTurnFactAt.get(sid) || 0;
+    const termStampedAt = state.lastTerminalAt[sid] || 0;
+    if (unresolvedFactAt > dispatchedAt && termStampedAt <= dispatchedAt) return;
     lastQueueDispatchAt.set(sid, Date.now()); // 本次派发 = 冷却窗起点
     drainMessageQueue(sid);
   }, delay);
@@ -1338,9 +1363,13 @@ onMessage('messageDuplicate', (msg) => {
     import('./chat.js').then(({ clearBusy }) => {
       clearBusy(sid);
       // busy-stuck-fix ②：幻影收口照常 drain（与终态帧族同一挂点；drain 自身的
-      // 冷却窗/运行中事实闸 / ws 闸照旧把关，队列语义零改动）。queue-idle-flush：
+      // 冷却窗/运行中事实闸/投递未决闸 / ws 闸照旧把关，队列语义零改动）。queue-idle-flush：
       // 幻影派发零新轮事实 ⇒ 运行中事实闸不挡，冷却窗（2s）到界后余件照常投递
       // ——旧布尔窗口在此永久关死 = 队列滞留缺陷形态之一。
+      // queue-one-per-turn：**精确腿**（回执 id = 本会话最新派发 id）= 权威「该派发
+      // 不会有 turn/终态」事实 ⇒ 落终态戳放行投递未决闸；**回落腿**（id 对不上的陈旧
+      // 回执 + 15s 静默）不落戳——它可能撞上真实静默轮，投递未决闸须继续把关。
+      if (idMatchesLatestSend) state.lastTerminalAt[sid] = Date.now();
       scheduleQueueDrain(sid);
     }).catch(() => {});
   }
@@ -2118,7 +2147,11 @@ onMessage('compactComplete', (msg, view) => {
   // Drain queued messages only if agent is NOT busy. During auto-compaction
   // with resume, the agent immediately starts a resume turn after compactComplete.
   // The 'done' event after the resume turn will drain correctly when idle.
+  // queue-one-per-turn（2026-10-24）：compactComplete = 压缩轮的**终态事实**（压缩轮
+  // 常态无 busy{true}/流帧新轮事实，done 亦可能在压缩窗内缺席）⇒ 落终态戳，投递未决闸
+  // （armQueueDrainTimer ③）对压缩轮形态照常放行（queue-idle-flush R1 语义保留）。
   if (sid && !state.busySessionIds.has(sid)) {
+    state.lastTerminalAt[sid] = Date.now();
     scheduleQueueDrain(sid);
   }
 });
@@ -2476,6 +2509,15 @@ onMessage('sessionBusy', (msg, view) => {
     // queue stayed parked forever (diagnosis §1.2 G1/G3). It now rides the SAME
     // drain as the terminal-frame family (clearBusyFor → scheduleQueueDrain,
     // 50ms), reusing the existing drain path rather than adding one.
+    // queue-one-per-turn（2026-10-24）：终态戳**条件落**——「无在跑确认轮」（开轮
+    // 事实不晚于上次派发 = done+busy{true} 双丢形态）时本帧是唯一终态信号，必须落
+    // 戳（G1/G3 语义保留）；「有在跑确认轮」时未伴随 done 的 busy{false} = speculative
+    // /幻影清除（DeathWatcher 误报广播 / 崩溃恢复竞态），落戳会把投递未决闸（③）
+    // 放开 = 「排队消息投进运行中 turn」病历复发——不落戳，真实终态（done 终态对 /
+    // 各权威收口戳）随后到场再放行。
+    if (sid && ((queueTurnFactAt.get(sid) || 0) <= (lastQueueDispatchAt.get(sid) || 0))) {
+      state.lastTerminalAt[sid] = Date.now();
+    }
     // Two decidable properties of doing it here:
     //   (a) one drain per turn window (2026-09-20 chain-msgqueue 阶段 B): the
     //       'done' + sessionBusy{false} pair the engine emits for EVERY turn
@@ -4159,6 +4201,9 @@ onMessage('activeAgents', (msg) => {
       // queue-idle-flush：对账器清的也是**真实** busy→idle 迁移（后端快照证实该
       // 会话无活跃 agent）⇒ 与终态帧族同律触发队列 drain；会话若确在跑 turn，
       // 派发帧由服务端排队闸受理，投递时序不乱。
+      // queue-one-per-turn：后端快照 = 权威空闲证据 ⇒ 落终态戳放行投递未决闸
+      // （断线丢终态帧形态的收口腿：无戳则队列在此永久滞留）。
+      state.lastTerminalAt[sid] = Date.now();
       scheduleQueueDrain(sid);
     }
   }
