@@ -80,6 +80,19 @@ object SessionStore:
   private val ShrinkThresholdBytes: Long = 512L * 1024L
 
   /**
+   * Boot-protect kill-switch for the [[shrinkOversizedUiFiles]] migration
+   * (2026-10-25 night, remote repair at the author's direction; Nebula).
+   * On this install the fiber's full-file `loadUiMessages` parse over ~300
+   * oversized `.ui.json` (sessions/ ≈ 6.5GB) raced boot and OOM'd EVERY
+   * startup 7/7 (17-26s in, ~900MB/s burst). Default stays `true`; flip via
+   * `-Dnebflow.session.shrink.enabled=false` until the migration is made
+   * streaming/bounded. Same system-prop kill-switch precedent as
+   * `Defaults.DelegateRevivalEnabled`.
+   */
+  private def ShrinkMigrationEnabled: Boolean =
+    sys.props.getOrElse("nebflow.session.shrink.enabled", "true").toBoolean
+
+  /**
    * Cap on the number of UiMessages retained per session in `.ui.json`. Once a
    * session exceeds this, the oldest messages are dropped on append (only the
    * newest `MaxStoredUiMessages` are kept). This bounds file size — and therefore
@@ -303,10 +316,16 @@ class SessionStore(
       // once, shrinks bloated .ui.json files in-place, then exits. Subsequent
       // startups no-op once files are under the threshold. Errors are logged
       // inside the fiber so they never surface to the load caller.
-      shrinkOversizedUiFiles
-        .handleErrorWith(e => logger.warn(s"UI file shrink failed: ${e.getMessage}"))
-        .start
-        .void
+      //
+      // Gated by ShrinkMigrationEnabled (boot-protect kill-switch, 2026-10-25):
+      // see the companion doc. Re-enable during the day after the migration is
+      // streaming/bounded — run it one file at a time with heap headroom.
+      IO.whenA(SessionStore.ShrinkMigrationEnabled) {
+        shrinkOversizedUiFiles
+          .handleErrorWith(e => logger.warn(s"UI file shrink failed: ${e.getMessage}"))
+          .start
+          .void
+      }
     )
 
   /**
