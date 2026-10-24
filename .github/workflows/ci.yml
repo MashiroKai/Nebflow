@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # 手动全量（CI 迁移批 2026-10-24）：任意分支上一键跑全套，与 push/PR 同范围。
+  workflow_dispatch: {}
 
 env:
   # 2026-10-24 CI 迁移批（作者令「试试ci放github上跑」）：本机 sbt test 两次事故
