@@ -171,7 +171,11 @@ object SingleInstanceGuard:
           val isOurs = parse(body).toOption.exists { json =>
             val c = json.hcursor
             c.get[String]("product").toOption match
-              case Some(product) => Set("stand", "stand", Branding.lowerName).contains(product)
+              // 🔴 双收口径（含遗留拼写 "nebflow"）：跨 stand 改名边界，旧实例仍须被
+              // focus 而不是打起来（SingleInstanceGuardSpec 契约）。2026-10-24 CI 分诊
+              // 实证：rebrand 批把本集合里的 "nebflow" 字面量也换成了 "stand"（变成
+              // 双 stand），遗留 marker 被 CLASSIFY 成 ForeignOccupant ⇒ 两测试红。
+              case Some(product) => Set("nebflow", "stand", Branding.lowerName).contains(product)
               case None =>
                 c.get[String]("status").toOption.contains("ok") &&
                 c.get[String]("version").toOption.exists(_.nonEmpty) &&
