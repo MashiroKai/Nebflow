@@ -478,6 +478,9 @@ private[agent] object AgentFinishTurn:
         _ <- roundCompleteIO
         // F2: keep the disk snapshot in sync after the drain (drained events gone).
         _ <- persistQueues(state.sessionId, updatedState.execution)
+        // 诊断修复批 2026-10-24：turn 边界 drain 腿同认 delegate 终态交付
+        // （忙碌父会话的注入面在本文而非 AgentIdle——回执只认注入不认持有）。
+        _ <- drainedEvents.traverse_(nebflow.core.delegate.DelegateDeliveryReceipts.ackEvent)
         // 台账对账 + 徽标帧（平台修复批 fix 1/3）：drainBarrier 投递面——已投递回执
         // 出账、余件保簿记；held 计数下降随行。
         _ <- syncHeldReceipts(resources, state.sessionId, remainingEvents).flatMap((h, u) =>

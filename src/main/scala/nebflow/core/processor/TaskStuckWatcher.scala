@@ -845,6 +845,14 @@ object TaskStuckWatcher:
             nebflow.core.delegate.MergeStallCare
               .care(resources)
               .handleErrorWith(e => logger.warn(s"[merge-stall-care] sweep failed: ${e.getMessage}").void)
+              .void *>
+            // ── 诊断修复批 2026-10-24（delegate-nebflow-52308ee4 投递丢失）──────
+            // delegate 终态交付回执的「父未确认」重投监测：超龄未 ack ⇒ 父活直投 /
+            // 父死持久收件箱；父已删 ⇒ 删回执 + 响亮 WARN。搭本既有扫描拍，零新增
+            // 定时器；幂等（ack 即跳过；重投达上限停投留痕）。
+            nebflow.core.delegate.DelegateDeliveryReceipts
+              .sweep(resources)
+              .handleErrorWith(e => logger.warn(s"[delegate-delivery] sweep failed: ${e.getMessage}").void)
               .void
       }
 
