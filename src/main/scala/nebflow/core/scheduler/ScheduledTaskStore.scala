@@ -62,7 +62,10 @@ class ScheduledTaskStore(baseDir: os.Path):
       saveTasks(sessionId, updated)
     }
 
-  /** Get all due (untriggered, past triggerAt) tasks across all sessions. */
+  /** Get all due (untriggered, past triggerAt) tasks across all sessions.
+    * 双面化（2026-10-24）：待办（kind=todo）不走定时触发路径——排除之，
+    * 由 getAllDueTodos / ScheduledTaskService.surfaceTodos 的周期浮出面接管。
+    */
   def getAllDueTasks: IO[List[ScheduledTask]] = IO.blocking {
     if !os.exists(baseDir) then Nil
     else
@@ -72,7 +75,8 @@ class ScheduledTaskStore(baseDir: os.Path):
         .toList
         .flatMap { f =>
           decode[List[ScheduledTask]](os.read(f)) match
-            case Right(list) => list.filter(t => !t.triggered && t.triggerAt <= now && t.enabled)
+            case Right(list) =>
+              list.filter(t => !t.triggered && t.triggerAt <= now && t.enabled && !t.isTodo)
             case Left(_) => Nil
         }
         // FIFO: fire in scheduled-time order so simultaneously-due tasks are
@@ -81,7 +85,10 @@ class ScheduledTaskStore(baseDir: os.Path):
     end if
   }
 
-  /** Get all pending (untriggered) tasks across all sessions — used to compute next fire time. */
+  /** Get all pending (untriggered) tasks across all sessions — used to compute next fire time.
+    * 含待办（待办也是 pending 条目；调用方按 kind 分面呈现——工具 list 分节、
+    * next-fire 计算把待办的下次浮出时间视同一次未来注入，无害）。
+    */
   def getAllPendingTasks: IO[List[ScheduledTask]] = IO.blocking {
     if !os.exists(baseDir) then Nil
     else
@@ -93,6 +100,40 @@ class ScheduledTaskStore(baseDir: os.Path):
             case Right(list) => list.filter(!_.triggered)
             case Left(_) => Nil
         }
+    end if
+  }
+
+  /** Get ALL unfinished todos across all sessions — digest 的内容源（含尚未到
+    * 浮出时间的，汇总语义：一次把未完成待办说全）。 */
+  def getAllTodos: IO[List[ScheduledTask]] = IO.blocking {
+    if !os.exists(baseDir) then Nil
+    else
+      os.list(baseDir)
+        .filter(_.last.endsWith(".json"))
+        .toList
+        .flatMap { f =>
+          decode[List[ScheduledTask]](os.read(f)) match
+            case Right(list) => list.filter(t => t.isTodo && !t.triggered && t.enabled)
+            case Left(_) => Nil
+        }
+        .sortBy(t => (t.triggerAt, t.createdAt))
+    end if
+  }
+
+  /** Get due todos (untriggered, enabled, past surface time) across all sessions. */
+  def getAllDueTodos: IO[List[ScheduledTask]] = IO.blocking {
+    if !os.exists(baseDir) then Nil
+    else
+      val now = System.currentTimeMillis()
+      os.list(baseDir)
+        .filter(_.last.endsWith(".json"))
+        .toList
+        .flatMap { f =>
+          decode[List[ScheduledTask]](os.read(f)) match
+            case Right(list) => list.filter(t => t.isTodo && !t.triggered && t.enabled && t.triggerAt <= now)
+            case Left(_) => Nil
+        }
+        .sortBy(t => (t.triggerAt, t.createdAt))
     end if
   }
 
@@ -130,34 +171,39 @@ class ScheduledTaskStore(baseDir: os.Path):
    * Remove every task whose name == given name across ALL session files.
    * Returns the removed tasks. Same-name tasks are global-unique（upsert 语义
    * 的清理半步）；读不了的任务文件原样跳过（与 loadTasks 容错同口径）。
+   * 双面化（2026-10-24）：kind 圈定清理范围——待办与定时任务可同名互不覆盖
+   * （kind 不匹配者原样保留）；默认 None = 定时任务面，对存量调用方零变化。
    */
-  def removeByName(name: String): IO[List[ScheduledTask]] = IO.blocking {
-    if !os.exists(baseDir) then Nil
-    else
-      val removed = List.newBuilder[ScheduledTask]
-      os.list(baseDir)
-        .filter(_.last.endsWith(".json"))
-        .toList
-        .foreach { f =>
-          decode[List[ScheduledTask]](os.read(f)) match
-            case Right(list) =>
-              val (drop, keep) = list.partition(_.name.contains(name))
-              if drop.nonEmpty then
-                removed ++= drop
-                os.write.over(f, keep.asJson.noSpaces)
-            case Left(_) => () // unreadable: leave untouched
-        }
-      removed.result()
-  }
+  def removeByName(name: String, kind: Option[String] = ScheduledTask.KindTask.some): IO[List[ScheduledTask]] =
+    IO.blocking {
+      if !os.exists(baseDir) then Nil
+      else
+        val removed = List.newBuilder[ScheduledTask]
+        val matchKind = kind.getOrElse(ScheduledTask.KindTask).some
+        os.list(baseDir)
+          .filter(_.last.endsWith(".json"))
+          .toList
+          .foreach { f =>
+            decode[List[ScheduledTask]](os.read(f)) match
+              case Right(list) =>
+                val (drop, keep) = list.partition(t => t.name.contains(name) && ScheduledTask.sameKind(t.kind, matchKind))
+                if drop.nonEmpty then
+                  removed ++= drop
+                  os.write.over(f, keep.asJson.noSpaces)
+              case Left(_) => () // unreadable: leave untouched
+          }
+        removed.result()
+    }
 
   /**
    * Upsert（2026-09-06 事故根因修复）：带 name 的任务替换全库所有同 name 任务
    * （重启后 re-arm 例行任务同名自动去重，收敛单份）；无 name 任务按旧语义
-   * 直接追加、不参与去重。返回被替换掉的旧任务列表。
+   * 直接追加、不参与去重。返回被替换掉的旧任务列表。双面化（2026-10-24）：
+   * 清理半步按 task 自身 kind 圈定——todo upsert 不吃同名定时任务，反之亦然。
    */
   def upsertTaskByName(task: ScheduledTask): IO[List[ScheduledTask]] =
     task.name match
       case None => addTask(task).as(Nil)
-      case Some(n) => removeByName(n).flatMap(removed => addTask(task).as(removed))
+      case Some(n) => removeByName(n, task.kind).flatMap(removed => addTask(task).as(removed))
 
 end ScheduledTaskStore

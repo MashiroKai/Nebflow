@@ -403,7 +403,9 @@ private[gateway] object WsTasksWorkspaceHandlers:
             "triggeredAt" -> t.triggeredAt.asJson,
             "referencePath" -> t.referencePath.asJson,
             "repeat" -> t.repeat.asJson,
-            "enabled" -> t.enabled.asJson
+            "enabled" -> t.enabled.asJson,
+            // 双面化（2026-10-24）：kind ∈ null/"task"（定时）| "todo"（待办）
+            "kind" -> t.kind.asJson
           )
         }
         wsSend(
