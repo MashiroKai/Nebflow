@@ -1,0 +1,7 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "imagegen",
+  "version": "0.1.0",
+  "description": "生图工具包（调试中 / experimental）——节点获得 generate_image 生图工具：文本生图、阻塞调用直接返回结果（落盘 PNG 路径+字节数），无前端占位语义。适用于 delegate/节点会话的生图任务、配图与示意图生成。不适用于根会话（Nebula 用内置非阻塞 generate_image）与图片编辑（仅文生图一击）。凭据与 provider 配置复用实例 nebflow.json 顶层 imagegen 节（keyRef 指针指 secrets/ 不落值；与腿①共用 provider 层，经本机环回 /api/imagegen）。内含 skill：imagegen（调用纪律、参数面、阻塞语义、调试状态声明）。组件面：含 mcp.json（stdio MCP server，封装本机引擎生图路由）。",
+  "author": {"name": "Nebflow"}
+}

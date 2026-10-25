@@ -275,6 +275,43 @@ object EmbeddingConfig:
   given Decoder[EmbeddingConfig] = deriveDecoder[EmbeddingConfig]
 
 /**
+ * 生图 provider 子节（imagegen 双层批 2026-10-24）——`imagegen.providers.<name>` 项。
+ *
+ * 🔴 凭据纪律（jev/embedding 同先例）：`keyRef` 是数据根 `secrets/` 下的**名字**
+ * （指针，不落值）；解析方现读在位性，缺件/空/不可读 ⇒ 该 provider 腿自动关。
+ */
+case class ImageGenProviderConfig(
+  `type`: String,
+  model: String,
+  baseUrl: Option[String] = None,
+  keyRef: Option[String] = None,
+  timeoutMs: Option[Long] = None
+)
+
+object ImageGenProviderConfig:
+  given Decoder[ImageGenProviderConfig] = deriveDecoder[ImageGenProviderConfig]
+
+/**
+ * 生图面顶层节（imagegen 双层批 2026-10-24）——nebflow.json 顶层 `imagegen` 块：
+ *
+ *   "imagegen": { "enabled": true, "defaultProvider": "zhipu",
+ *                 "providers": { "zhipu": { "type": "cogview", "model":
+ *                   "cogview-3-flash", "keyRef": "zhipu-api-key" } } }
+ *
+ * ==Graceful degrade (zero migration)==：`enabled` 缺省 false——面把 prompt 文本送出
+ * 本机，缺省必须关（同 `jev`/`embedding` 方向）。
+ */
+case class ImageGenConfig(
+  enabled: Option[Boolean] = None,
+  defaultProvider: Option[String] = None,
+  providers: Option[Map[String, ImageGenProviderConfig]] = None
+):
+  def isEnabled: Boolean = enabled.getOrElse(false)
+
+object ImageGenConfig:
+  given Decoder[ImageGenConfig] = deriveDecoder[ImageGenConfig]
+
+/**
  * Delegate 判定机 utility model 配置节（worktree-judge-fifo 批 #1224 增补 §一/§3.1
  * —— SmallJudge 的「新可配 utility model」）: 顶层 `judge` 节，全字段可选。
  *
@@ -466,7 +503,15 @@ case class NebflowServiceConfig(
    * `None` = 未配置 ⇒ embedding 面关、任务检索走词法降级（零迁移）；全字段
    * 可选，半节解码为缺省而非抛（同 `jev` / `judge` 节教训）。
    */
-  embedding: Option[EmbeddingConfig] = None
+  embedding: Option[EmbeddingConfig] = None,
+  /**
+   * 生图面节（imagegen 双层批 2026-10-24）——顶层 `imagegen` 块。`None` = 未配置 ⇒
+   * 生图面关（腿①工具提交即给可行动配置文案；腿②路由 503——零迁移安全缺省，方向
+   * 同 `jev`/`embedding`）；全字段可选、半节解码为缺省而非抛（同 `jev` 节教训）。
+   * 适配器形态按协议划分：`cogview` / `openai-images`（gpt-image-1 与一切 OpenAI
+   * 兼容 images 端点，含豆包 Seedream/火山方舟兼容模式）/ `imagen`（预留位）。
+   */
+  imagegen: Option[ImageGenConfig] = None
 )
 
 object NebflowServiceConfig:

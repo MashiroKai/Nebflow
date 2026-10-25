@@ -248,7 +248,11 @@ object AgentCore:
     // TaskSearch（task-rag 批 #1227 / §Batch 7）：Nebula 专属只读检索件——
     // 同享本集【防声明逃逸】通道：agent.json/插件声明（含 "*"）对一切非 Nebula
     // 身份不授能（真实授能 = RootOrchestrationTools 单点；TaskList 同域纪律）。
-    "TaskSearch"
+    "TaskSearch",
+    // generate_image（imagegen 双层批 2026-10-24，调试状态）：Nebula 专属生图件——
+    // 同享本集【防声明逃逸】通道（真实授能 = RootOrchestrationTools 单点；编译期
+    // seal 关时经 imageGenSealedStrip 从交付面剥除且本集条目随之不可达）。
+    "generate_image"
   )
 
   /**
@@ -470,7 +474,12 @@ object AgentCore:
     // 平台
     "Schedule",
     // 记忆（§C.2 MemoryNote）
-    "MemoryNote"
+    "MemoryNote",
+    // generate_image（imagegen 双层批 2026-10-24，调试状态）：Nebula 面非阻塞
+    // 生图件——提交即返回 job 句柄、前端占位动画回填；编译期 seal 关时由
+    // imageGenSealedStrip 在本消费点剥除（静态集与件数常量不动，friends seal
+    // 同款条件化口径）。
+    "generate_image"
   )
 
   /**
@@ -491,6 +500,16 @@ object AgentCore:
    */
   def friendsSealedStrip: Set[String] =
     if nebflow.core.FriendsSeal.isSealed then Set("ListFriends") else Set.empty
+
+  /**
+   * imagegen 双层批（2026-10-24）：`generate_image` 的编译期 seal 剥离面——
+   * friendsSealedStrip 同款条件化口径（静态集与件数常量不动，seal 状态只在本
+   * 消费点读一次）。seal 编译进产物（`STAND_IMAGEGEN=1` 构建）⇒ 空剥除、工具在
+   * 面；release 构建（seal=false，final val 常量折叠）⇒ 名字永不抵达 LLM——
+   * 幻觉调用在 allowed-set 分区即落，与 friends seal 同机制。
+   */
+  def imageGenSealedStrip: Set[String] =
+    if nebflow.core.ImageGenSeal.CompiledIn then Set.empty else Set("generate_image")
 
   /**
    * 阶段 2c 收敛的 agent 定义名（§C.1 总览，本集 = 四个在册名）：其 agent.json tools
@@ -577,8 +596,13 @@ object AgentCore:
    * **task-rag 批（#1227 / §Batch 7，2026-10-07 作者令三批并行）：+`TaskSearch`
    * ⇒ 18（在飞值）**——任务语义检索（Nebula 面只读件：embedding/词法 + 可选
    * Jev 重排）。本增量属「按面变更」（新增成员），非「凑数字」。
+   *
+   * **imagegen 双层批（2026-10-24）：+`generate_image` ⇒ 19（在飞值）**——Nebula
+   * 面非阻塞生图件（调试状态，编译期 seal 门控：seal 关时经
+   * [[imageGenSealedStrip]] 在本面唯一消费点剥除，静态集不动，friends seal
+   * 同款条件化口径）。本增量同属「按面变更」。
    */
-  val RootOrchestrationToolsExpectedSize: Int = 18
+  val RootOrchestrationToolsExpectedSize: Int = 19
 
   /**
    * 退役工具迁移指引表（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1）。
@@ -791,7 +815,8 @@ object AgentCore:
             // friendseal (2026-09-25): the static set above stays the single
             // source; the friends seal strips names at this one consumption
             // point (see friendsSealedStrip — currently ListFriends only).
-            AgentCore.RootOrchestrationTools -- AgentCore.friendsSealedStrip
+            // imagegen 双层批（2026-10-24）：generate_image 编译期 seal 同此一点剥除。
+            AgentCore.RootOrchestrationTools -- AgentCore.friendsSealedStrip -- AgentCore.imageGenSealedStrip
           case "project-dispatcher" => AgentCore.DispatcherFixedTools
           // 合并执行 agent（builtin-merge 批 2026-10-03：kernel+general ⇒ nebflow）：
           // 基础六件 + AskUserQuestion + Subagent（只读侦察）+ AgentFlow（步级

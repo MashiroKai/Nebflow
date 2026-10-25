@@ -1147,6 +1147,16 @@ onMessage('toolArgDelta', (msg, view) => {
   }
 });
 
+// imagegen 双层批（2026-10-24，调试状态）：腿①非阻塞生图完成帧处理（按 jobId
+// 原位替换占位卡片）。release bundle 经 __NEBFLOW_RELEASE__ define 整体剥除。
+import { resolveImageGenUpdate } from './imagegen.js';
+if ((/** @type {Window & { __NEBFLOW_RELEASE__?: boolean }} */ (window)).__NEBFLOW_RELEASE__ !== true) {
+  onMessage('imagegenUpdate', (msg) => {
+    resetStreamTimeout(msg.sessionId);
+    resolveImageGenUpdate(msg);
+  });
+}
+
 // --- Terminal events ---
 // Always clear busySessionId. DOM + status only for active session. Unread for a
 // NON-active session is gated on the 口径 (2026-09-16 msunread 批): only a turn

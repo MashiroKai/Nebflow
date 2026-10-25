@@ -179,7 +179,14 @@ object ToolRegistry:
       // 与 remoteableTools 均不含本件。
       "TaskSearch" -> TaskSearchTool
     )
-    tools.putAll(builtins.asJava)
+    // imagegen 双层批（2026-10-24，调试状态）：编译期 seal 门控——release 构建
+    // （ImageGenSeal.CompiledIn=false，final val 常量折叠）本注册整段消失，
+    // 「release build 零痕迹」断言锚见 ImageGenSpec。授权面 = Nebula 专属
+    // （RootOrchestrationTools 单点 + RootExclusiveTools 防声明逃逸 + 工具内
+    // isRootAgent 身份闸）。非阻塞 job 语义见 GenerateImageTool。
+    val experimental: Map[String, Tool] =
+      if nebflow.core.ImageGenSeal.CompiledIn then Map("generate_image" -> GenerateImageTool) else Map.empty
+    tools.putAll((builtins ++ experimental).asJava)
   }
 
   def TOOL_MAP: Map[String, Tool] = tools.asScala.toMap

@@ -87,6 +87,9 @@ class RestApiRoutes(
       // 路径 /api/console-assets 与既有域互不重叠，公开静态字节、无鉴权门
       // （与静态树同访问语义）。
       ConsoleAssetBatchRoutes.routes <+>
+      // imagegen 双层批（2026-10-24，调试状态）：腿②插件 MCP 的本机阻塞面——
+      // 编译期 seal 门控（release 构建 = HttpRoutes.empty，零痕迹可验证）。
+      (if nebflow.core.ImageGenSeal.CompiledIn then ImageGenRoutes.routes(ctx) else HttpRoutes.empty[IO]) <+>
       SocialRoutes.routes(ctx) <+> SecretsRoutes.routes(ctx) <+>
       // 感知域（mail-perception-impl 批）：面板条目 / 两问配置 / OTP 消费 /
       // 草稿与发送——`/api/perception` 前缀与既有域互不重叠。

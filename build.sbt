@@ -35,6 +35,31 @@ lazy val root = (project in file("."))
       if (!out.exists() || IO.read(out).trim != sha) IO.write(out, sha)
       Seq(out)
     }.taskValue,
+    // imagegen 双层批（2026-10-24，作者裁定「这个功能要和插件要标记调试状态
+    // 发版自动剔除」）：编译期 seal——`STAND_IMAGEGEN=1`（env 或 -Dstand.imagegen=1）
+    // 的构建把实验性生图能力编进产物；release/CI 构建不带该变量 ⇒ ImageGenSeal
+    // .CompiledIn = false ⇒ 全部交付点（工具注册表、Nebula 固定面、REST 路由）
+    // 经 final-val 常量折叠整体消失。三选一论证（编译期 flag / 发布脚本剥离 /
+    // 配置门缺省关）：配置门被否（能力件仍在产物内，一个配置键即复活，不满足
+    // 「release build 零痕迹」）；发布脚本字节码手术脆弱且无可复习的单点；编译期
+    // flag 与 BUILD_SHA/webdist 生成器先例同构、可验证、dev 一键开启。
+    // 验证锚 = ImageGenSpec 的 release-strip 断言组。
+    Compile / sourceGenerators += Def.task {
+      val raw = sys.env.get("STAND_IMAGEGEN").orElse(sys.props.get("stand.imagegen"))
+      val enabled = raw.exists(v => v == "1" || v.equalsIgnoreCase("true"))
+      val out = (Compile / sourceManaged).value / "nebflow" / "core" / "ImageGenSeal.scala"
+      val content =
+        s"""package nebflow.core
+           |
+           |/** 编译期生成——本文件由 build.sbt sourceGenerators 产出，禁手改。 */
+           |object ImageGenSeal {
+           |  final val CompiledIn: Boolean = $enabled
+           |  final val DebugLabel: String = "调试中"
+           |}
+           |""".stripMargin
+      IO.write(out, content)
+      Seq(out)
+    }.taskValue,
     // P1 web bundle: mount build/ (containing web-dist/) as a resource dir ONLY
     // when explicitly requested via -D<lowerName>.webdist=1 (CI: sbt
     // -D${LOWER_NAME}.webdist=1 assembly). The legacy hardcoded -Dnebflow.webdist

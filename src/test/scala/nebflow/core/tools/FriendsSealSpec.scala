@@ -178,11 +178,13 @@ class FriendsSealSpec extends CatsEffectSuite:
       checks.foldLeft(IO.unit)(_ *> _).void
     })
 
-  test("unseal: ListFriends returns to the delivery face; size = constant"):
+  test("unseal: ListFriends returns to the delivery face; size = constant-derived"):
     FriendsSealKit.withUnsealedSync {
       val delivered = AgentCore.fixedToolsFor(defNebula)
       assert(delivered.contains("ListFriends"), "the roster tool is back on the face")
-      assertEquals(delivered.size, AgentCore.RootOrchestrationToolsExpectedSize)
+      // imagegen 双层批（2026-10-24）：generate_image 编译期 seal 同经单点派生
+      // （seal 关时交付面再 −1）——期望值不落裸数字。
+      assertEquals(delivered.size, FriendsSealKit.expectedNebulaSize(delivered))
     }
 
   // ══════════ the latch's config parse (unseal path contract) ══════════

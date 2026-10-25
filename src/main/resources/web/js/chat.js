@@ -11,6 +11,7 @@ import { formatHm, formatFooterTime, toggleTimeFormat, bindTimeToggle } from './
 import { activeView, setActiveView, findViewBySessionId, chatViews } from './chatView.js';
 import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
+import { renderImageGenPlaceholder } from './imagegen.js';
 import { t } from './i18n.js';
 import { sendWs, onMessage } from './ws.js';
 import { askSourceLabel, removePendingAsk } from './askPending.js';
@@ -1020,6 +1021,28 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   // For these, render the tool_use input (recipient, message, action) instead
   // of the tool_result content ("Message sent...").
   const _toolName = label ? label.split('(')[0].split('\n')[0].trim() : '';
+
+  // generate_image (imagegen 双层批 2026-10-24，调试状态)：非阻塞 job——工具调用
+  // 立即返回 job 句柄，标准工具卡头之下渲染占位卡片（克制 shimmer + spinner +
+  // 「调试中」徽标），完成经 WS imagegenUpdate 帧原位替换为真实图片（nf-file
+  // 票据链）。release bundle 经 __NEBFLOW_RELEASE__ define 整体 DCE（后端 seal
+  // 同步剔除，双保险零痕迹）。
+  if (_toolName === 'generate_image' && content && !isError &&
+      (typeof window !== 'undefined' && (/** @type {Window & { __NEBFLOW_RELEASE__?: boolean }} */ (window)).__NEBFLOW_RELEASE__ !== true)) {
+    const gIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+    const gLocalLabel = localizeToolLabel(label);
+    const gLocalSummary = localizeToolSummary(summary, label);
+    card.innerHTML = '<span class="icon ok">' + gIcon + '</span>' +
+      '<div class="content"><div class="label">' + escapeHtml(gLocalLabel) + ' &mdash; ' + escapeHtml(gLocalSummary) + '</div></div>';
+    let gPrompt = '';
+    try {
+      const gInp = typeof inputJson === 'string' ? JSON.parse(inputJson) : inputJson;
+      gPrompt = (gInp && gInp.prompt) || '';
+    } catch {}
+    renderImageGenPlaceholder(row, content, gPrompt);
+    smartScroll();
+    return { type: 'tool', label, summary, content, isError, input: inputJson };
+  }
 
   // Pop artifact payload (pop-upgrade batch): the tool row renders as a plain
   // process face; the media stack / file cards render in a SEPARATE row below
