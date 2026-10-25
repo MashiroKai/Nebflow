@@ -130,6 +130,17 @@ bash ops/release.sh status    # 只读: 指针 / previous / staged 状态
 - **切换事实**：引擎构建主线自本批起 = **KAI**（`C:\Users\Kai\stand`，ssh alias `kai`，git-bash）；
   Mac 本地 sbt 构建**退役**，仅作 KAI 不可用（Tailscale 断 / 机器关）时的紧急兜底。
   迁移基线 `38b81eb4f`（2026-10-26 凌晨，含回执去重修复批）。
+- **首替事实与更正**（2026-10-26 01:03→01:07）：delegate 首次真替换误用 release 版名
+  `2026.10.21-beta.2` 落位，把 Mac 侧原发布包挤进 `.bak`；revival 后当批更正——
+  原发布包字节级还原（SHA256 `502fcf04…`，runtime 探针复核）→ dev 版名重建重拉。
+  现行指针：`current-version = 2026.10.26-dev.38b81eb4f`（KAI @`38b81eb4f` 出包，
+  SHA256 `fa94a929…`，jar 内 runtime == 指针名一致），`previous-version = 2026.10.21-beta.2`。
+  详见 `reports/20261026_010800_kai-migration-phase2/REPORT.md` §3。
+- **版本名纪律**（首替事故后写死）：KAI 日常出包**构建时覆写**仓 VERSION 为 dev 版名
+  `YYYY.MM.DD-dev.<main HEAD 短sha>`（sbt 启动时读 VERSION，jar 文件名与 jar 内 runtime
+  version 一并生效；**打包完立即还原**，tree 保持干净）。dev 构建**不得挂 release 版名**——
+  release 名包在 Mac 侧不可变（`ops/release.sh` 口径），错挂会被 `stand-jar-pull`
+  落进 release 版本目录、把原发布包挤去 `.bak`（即上面首替事故）。
 - **日常流（引擎构建三步，顺序固定）**：
   1. **bundle 同步**（Mac → KAI）：Mac 读当前 main HEAD →
      `git bundle create /tmp/kai-sync.bundle <KAI当前HEAD>..main`（薄包）→
