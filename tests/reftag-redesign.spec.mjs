@@ -313,10 +313,12 @@ test('T8 图片文件引用渲染媒体预览卡；非图片仍走文件引用�
   expect(probe.refPath.endsWith('.png')).toBe(true);
   expect(probe.textHasImgBadge).toBe(false);  // IMG 角标随 att-ref-card 一起退役
 
-  // 8b 非图片引用（.scala）：att-ref-card 原样 —— 文件卡只给非图片
+  // 8b 非图片引用（.scala）：统一卡面（file-lang，2026-10-26 卡片语言统一批）
+  // —— 类型标签由 .fc-icon 扩展名色块承载（badge 字段回落图标块文本）
   await page.evaluate('window.__reftagTest.renderCard("file")');
   const fileCard = await page.evaluate('window.__reftagTest.card()');
   expect(fileCard).not.toBeNull();
   expect(fileCard.refType).toBe('file');
-  expect(fileCard.badge).toBe('SCALA');       // 类型徽章仍在（非图片不走媒体面）
+  expect(fileCard.fileLang).toBe(true);       // 文件引用走统一卡面
+  expect(fileCard.badge).toBe('SCALA');       // 类型标签在图标块（SCALA 色块）
 });

@@ -1103,6 +1103,34 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+/* ── 卡片语言统一批（2026-10-26 作者令「用户附件卡 vs 引擎文件卡同一套卡片语言」）──
+   `.att-ref-card.file-lang` = 文件/文档引用的统一面：几何（圆角 12 / 底面
+   --color-surface / 内距 11×13 / 宽 300 / 阴影）与 `.file-card` 逐项同值；
+   图标/字级直接复用 .fc-icon/.fc-name/.fc-sub 全局类（单一来源，零第二套）。
+   跳转交互（jumpRef）与引用身份 dataset 不变；html-element 引用维持上方旧面。 */
+.bubble.user .att-ref-card.file-lang {
+  display: flex; align-items: center; gap: 11px;
+  background: var(--color-surface);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: 12px; padding: 11px 13px;
+  width: 300px; max-width: 100%;
+  color: var(--color-text); font-size: 12px; cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: box-shadow 0.15s, transform 0.12s;
+  margin-top: 2px;
+}
+.bubble.user .att-ref-card.file-lang:hover { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.09); }
+.bubble.user .att-ref-card.file-lang:active { transform: scale(0.985); }
+.bubble.user .att-ref-card.file-lang .fc-meta { flex: 1; min-width: 0; }
+.bubble.user .att-ref-card.file-lang .fc-sub.att-ref-card-source {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bubble.user .att-ref-card.file-lang .att-ref-card-content {
+  font-size: 11px; color: var(--color-text-muted); margin-top: 3px;
+}
+@media (prefers-color-scheme: dark) {
+  .bubble.user .att-ref-card.file-lang { border-color: var(--color-border); }
+}
 /* ── 打回注入块 one-line form (2026-08-27 用户裁定「只显任务名」) ──
    Converged shape for task references in the message stream AND the collapsed
    [打回任务] injection body: one row, 任务号+标题 only, opinion clipped to a
