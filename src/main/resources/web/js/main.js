@@ -485,6 +485,11 @@ function cancelTurnConfirm(sid) {
 function armTurnConfirm(sid) {
   if (!sid) return;
   cancelTurnConfirm(sid);
+  // queue-idle-return：任何新派发（send / drain / offline 补发——三腿都先走本函数）
+  // = 证据链重置，重连对账网就此作废（新 turn 的 busy/终态事实接管闸面；网若留存
+  // 会在新 turn 静默期误裁「黑暗窗终态丢失」）。置于 depth>0 早退**之前**：delegate
+  // 族派发同样要撤网。
+  cancelQueueReconcileNet(sid);
   // depth>0 家族不武装（见上）：引擎对这些会话从不出 sessionBusy 帧。
   if (String(sid).startsWith('delegate-') || String(sid).startsWith('subtask-') ||
       String(sid).startsWith('node-') || String(sid).startsWith('dispatcher-') ||
@@ -587,6 +592,96 @@ function armQueueDrainTimer(sid, delay) {
   }, delay);
   pendingDrainTimers.set(sid, t);
 }
+
+// ── queue-idle-return（2026-10-25 · 排队消息空闲不投递复发 · 手机后台化场景批）──
+// 作者报障（2026-10-25 13:58 逐字）：「我在消息队列里的消息 你轮次结束进入空闲
+// 但是消息不注入」——作者主用手机 Safari。前两批（queue-idle-flush / queue-one-
+// per-turn）修的都是「帧在页面活着时到达」的闸形；手机形态下帧恰在页面冻结窗内
+// 到场/丢失，两处缺口读码定谳（批报告 §1/§2）：
+//
+// 缺口 A（回前台无补触发腿）：iOS Safari 后台/锁屏冻结页面的 timers+WS——drain
+//   的既有触发面（终态帧族 / busy{false} / compactComplete / 幻影收口）全部前提是
+//   「触发事件在页面活着时被处理」。冻结窗内到场的终态帧要么挂起到恢复后（缓冲
+//   形态自愈），要么随 socket 死亡永久丢失——后者没有任何腿再触发 drain。
+//
+// 缺口 B（断线窗丢终态帧 = 缺戳死锁形）：busy{true} 在场、done+busy{false} 双丢、
+//   WS 重连后永无后续帧的形态里，投递未决闸（③）的前提「有在跑事实 ∧ 无越界终
+//   态戳」永远成立——但那是断线前的旧知识，turn 实际已在黑暗窗内结束。六处权威
+//   终态戳全部依赖「终态帧到场」，本形态永无帧到场；三条既有兜底腿又全部失效：
+//   后台代理对账器**豁免活跃会话**（main.js busySessionIds 同步段）、看门真死分支
+//   被重连后的 pong 活性证据永久挡住（chat.js hasLiveness）、turn-start 确认网早已
+//   被 busy{true} 撤网 ⇒ 队列永久滞留 = 作者报障本体。
+//
+// 修法（全事件驱动；**禁计时器节流不破**——正常形态投递仍跟随事实边界，对账网
+// 只裁「证据被切断」的失证形态，与 turn-start 确认网同款先例、同残余申报）：
+//   A. 补触发腿三条：visibilitychange→visible / pageshow(bfcache persisted) /
+//      WS 重连——对所有队列非空会话 scheduleQueueDrain。纯重触发：冷却窗/运行中
+//      事实闸/投递未决闸/ws 闸照旧裁决，一次一条语义零改动。
+//   B. 重连对账网：重连（= 帧流被切断的权威事件）时对「持有形态」会话（队列非空
+//      ∧ busy ∧ 有在跑事实 ∧ 无越界终态戳）武装对账网（预算同 turnConfirmMs 旋钮）。
+//      到点复核：期间有终态戳或本会话流活动（流帧/工具心跳 = turn 活着）⇒ 撤网
+//      不动，活轮自身的终态稍后照常触发投递；仍持死证 ⇒ 裁定「终态丢失于黑暗窗」：
+//      落重连 settle 终态戳 + 清 stale busy + scheduleQueueDrain。残余 = 重连恰落在
+//      首 token 前静默 thinking 轮 ⇒ 误裁 ⇒ 下一条投进在跑 turn、服务端排队闸受理
+//      逐条边界消费（不重复不丢失）——与 queue-one-per-turn §5 已申报的零事实放行
+//      同一残余等级，且比它晚一个网预算才发生。
+
+/** 重连对账网计时器（sid → timer）。与 turnConfirmTimers 分槽：语义不同（开端网 /
+ *  终态失证网），撤网点不同，零共享态。 */
+const _queueReconcileTimers = new Map();
+
+function cancelQueueReconcileNet(sid) {
+  const t = _queueReconcileTimers.get(sid);
+  if (t) { clearTimeout(t); _queueReconcileTimers.delete(sid); }
+}
+
+/** 缺口 B：对「持有形态」会话武装重连对账网。武装判据 = 投递未决闸（③）正在
+ *  持且其前提是断线前旧知识（事实晚于派发、戳未越界、busy 未清）。 */
+function armQueueReconcileNet(sid) {
+  if (!sid) return;
+  const q = state.messageQueue[sid];
+  if (!q || q.length === 0) return;                              // 无件不网
+  if (!state.busySessionIds.has(sid)) return;                    // 空闲形态补触发腿即可
+  const dispatchedAt = lastQueueDispatchAt.get(sid) || 0;
+  if ((queueTurnFactAt.get(sid) || 0) <= dispatchedAt) return;   // 零事实形态：闸不持
+  if ((state.lastTerminalAt[sid] || 0) > dispatchedAt) return;   // 已有越界终态戳：闸自放
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  cancelQueueReconcileNet(sid);
+  const armedAt = Date.now();
+  const budget = Number(state.turnConfirmMs) || 20000;
+  _queueReconcileTimers.set(sid, setTimeout(() => {
+    _queueReconcileTimers.delete(sid);
+    // 到点复核（期间任一事实到场即撤网，投递归既有触发面）：
+    if ((state.lastTerminalAt[sid] || 0) > armedAt) return;        // 真终态到场
+    if ((state.sessionStreamActivity[sid] || 0) > armedAt) return; // 流帧/工具心跳 = turn 活着
+    if (!state.busySessionIds.has(sid)) {
+      // busy 已清而无戳（终态对 done 半帧丢失的防御形态）：空闲即终态，落戳放行。
+      state.lastTerminalAt[sid] = Date.now();
+      scheduleQueueDrain(sid);
+      return;
+    }
+    // 仍持死证：黑暗窗内终态丢失 ⇒ settle 戳 + 清 stale busy + 补触发。
+    console.warn('[queue-reconcile] post-reconnect no terminal/life evidence — settling dark-window turn:', sid);
+    state.lastTerminalAt[sid] = Date.now();
+    clearBusy(sid);
+    scheduleQueueDrain(sid);
+  }, budget));
+}
+
+/** 缺口 A：补触发清扫——对所有队列非空会话重触发 drain（幂等：pendingDrainTimers
+ *  去重 + 闸面裁决）。可见回前台 / bfcache 恢复 / WS 重连三条腿共用。 */
+function sweepQueueDrains() {
+  for (const [sid, items] of Object.entries(state.messageQueue)) {
+    if (Array.isArray(items) && items.length > 0) scheduleQueueDrain(sid);
+  }
+}
+
+// 补触发腿注册（模块面，ws.js visibilitychange 先例）：手机回前台 + bfcache 恢复。
+// WS 重连腿在 main.js 既有 onReconnect 回调内（与 history/agents 重取同位）。
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') sweepQueueDrains();
+});
+window.addEventListener('pageshow', (e) => { if (e && e.persisted) sweepQueueDrains(); });
 
 // Helper: ①-2 (2026-09-11) busy re-arm gate for STREAMING frames.
 // A streaming frame that lands after this session's terminal frame must not
@@ -4044,6 +4139,13 @@ onReconnect(() => {
   sendWs({ type: 'getActiveAgents' });
   // Re-fetch session list — sessions may have been created/removed during disconnect
   sendWs({ type: 'listSessions' });
+  // queue-idle-return（2026-10-25）：重连 = 帧流被切断的权威事件——两条补腿：
+  //   ① 补触发清扫：断线窗内被 ws 闸/丢帧吞掉的 drain 触发在此补发（缺口 A）；
+  //   ② 重连对账网：持有形态（busy + 有在跑事实 + 无越界终态戳）的会话武装对账
+//      网——黑暗窗内终态丢失的缺戳死锁形在此收口（缺口 B，函数头注见 schedule
+//      QueueDrain 邻域）。
+  sweepQueueDrains();
+  for (const qsid of Object.keys(state.messageQueue)) armQueueReconcileNet(qsid);
 });
 
 // ---------- Reconnect: sync background tasks ----------

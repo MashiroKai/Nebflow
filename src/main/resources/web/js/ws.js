@@ -286,6 +286,15 @@ const GLOBAL_MSG_TYPES = new Set([
 const TERMINAL_MSG_TYPES = new Set([
   'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',
   'compactStart', 'compactComplete', 'compactFailed',
+  // queue-idle-return 批（2026-10-25）缺戳终态路审计收口（B/C 项）：两帧此前不在
+  // 任何路由集 ⇒ 非活跃会话帧被入口过滤器静默丢弃 ⇒ 终态/回执处理器永远饥饿：
+  //   messageDuplicate — 判重回执（AgentSession.scala:51 带 sessionId 广播）：
+  //     busy-stuck-fix 精确腿（收幻影 busy + 落 lastTerminalAt 越界戳 + drain）是
+  //     投递未决闸（③）的权威收口点之一，非活跃会话帧被丢 ⇒ 幻影 busy 滞留 +
+  //     队列缺戳滞留。入 TERMINAL = 回执族路由权（与 done/error 同律）。
+  //   timeout — 客户端终态处理器（main.js clearBusyFor 族）在册帧型；引擎现无
+  //     生产点（兜底语义：后端补发/中继转换的 timeout 终态帧不再被入口过滤丢弃）。
+  'timeout', 'messageDuplicate',
   // taskListUpdate 已移出（2026-09-05 10:54 裁定：旧任务区退役）——非活跃
   // 会话帧被入口过滤器丢弃，活跃会话帧无订阅者 no-op（后端照发，零触碰）。
   'backgroundTaskUpdate',
