@@ -698,6 +698,12 @@ export function addSourceToggle(pane, renderFn, ctx) {
         // renderFn clears the pane and re-attaches the toggle via its own
         // addSourceToggle call, carrying the updated content forward.
         await renderFn(pane, { ...ctx, content: latest });
+        // canvas 文件刷新批: this round trip bypasses openWorkspaceItem (no
+        // readFile), and renderFn wiped pane.innerHTML — the refresh button
+        // went with it. Tell canvas.js to re-seat it (listener registered on
+        // document in canvas.js ⇒ the event must bubble; shared.js holds no
+        // import edge back into canvas.js).
+        pane.dispatchEvent(new CustomEvent('canvas-viewer-rerendered', { bubbles: true }));
       }
     } finally {
       busy = false;
@@ -829,6 +835,92 @@ export function addGraphToggle(pane, absPath, right = 160) {
     } catch (e) {
       window.__showToast?.(t('wiki.graphUnavailable'), 'error');
     }
+  });
+  pane.appendChild(btn);
+  return btn;
+}
+
+// ── File refresh button (canvas 文件刷新批, 作者令 2026-10-25) ──────────
+
+const REFRESH_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>';
+// Same corner family as source/ref/find/graph: 40px glass circles on a 48px
+// pitch, bottom:16 (split.css). The zoom bar is the one non-circle member —
+// its occupied span is measured, not assumed.
+const REFRESH_CIRCLE_SEL = '.canvas-source-toggle, .canvas-ref-select, .canvas-find-toggle, .canvas-graph-toggle';
+const REFRESH_ROW_PITCH = 48;
+const REFRESH_ROW_BOTTOMS = [16, 64];
+
+function _refreshCornerItems(pane) {
+  const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : NaN; };
+  const items = [];
+  for (const el of pane.querySelectorAll(REFRESH_CIRCLE_SEL + ', .canvas-zoom-bar')) {
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+    // Inline style wins (find/graph seats are JS-written); CSS fallback covers
+    // the source/ref circles and both zoom-bar variants.
+    const right = Number.isFinite(num(el.style.right)) ? num(el.style.right) : (num(cs.right) || 16);
+    const bottom = num(cs.bottom) || 16;
+    const isBar = el.classList.contains('canvas-zoom-bar');
+    items.push({ right, bottom, span: isBar ? (el.getBoundingClientRect().width || 140) + 8 : REFRESH_ROW_PITCH });
+  }
+  return items;
+}
+
+/** First free seat on the bottom-right corner row for one more 40px circle.
+ *  Row 0 = bottom:16 (the circle row); when the measured seat would overflow
+ *  the panel the button drops to row 1 = bottom:64 (same convention the narrow
+ *  html zoom bar already uses). */
+function _refreshSeat(pane) {
+  const items = _refreshCornerItems(pane);
+  // The mount can run mid open-transition (flex-basis 0 → target, 0.32s): the
+  // pane's live clientWidth is then transient and would falsely route to row 1.
+  // `--canvas-width` (documentElement inline style — canvas.js openCanvas /
+  // colResizer / deck resize all keep it current) holds the TARGET panel
+  // width; fall back to clientWidth when unset. Unknown width ⇒ keep row 0
+  // (every computed seat so far fits the 320px panel minimum).
+  const target = parseFloat(document.documentElement.style.getPropertyValue('--canvas-width')) || pane.clientWidth || 0;
+  const widthKnown = target > 200;
+  for (const bottom of REFRESH_ROW_BOTTOMS) {
+    let right = 16;
+    for (const it of items) {
+      if (Math.abs(it.bottom - bottom) > 24) continue;  // different row
+      right = Math.max(right, it.right + it.span);
+    }
+    if (bottom === REFRESH_ROW_BOTTOMS[0] && widthKnown && right + 40 > target - 8) continue;  // row 0 full
+    return { right, bottom };
+  }
+  return { right: 16, bottom: REFRESH_ROW_BOTTOMS[1] };
+}
+
+/**
+ * Floating "re-read from disk" button for canvas file tabs (canvas 文件刷新批,
+ * 作者令 2026-10-25). Same frosted-glass material family as the source toggle
+ * (split.css `.canvas-refresh-toggle`); seats automatically in the first free
+ * 48px slot of the bottom-right corner cluster (zoom bar measured by width).
+ * The click handler is owned by the caller (canvas.js refreshFileTab); while a
+ * re-read is in flight the caller puts `.busy` on the returned button (icon
+ * spins). Hidden in source mode via CSS (`[data-source-mode="1"]`).
+ *  @param {HTMLElement} pane — canvas tab pane
+ *  @param {{ onRefresh?: (btn: HTMLButtonElement) => void }} [opts]
+ *  @returns {HTMLButtonElement}
+ */
+export function addRefreshButton(pane, opts) {
+  const { onRefresh } = opts || {};
+  pane.querySelector('.canvas-refresh-toggle')?.remove();
+  if (getComputedStyle(pane).position === 'static') pane.style.position = 'relative';
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'canvas-refresh-toggle';
+  btn.innerHTML = REFRESH_ICON_SVG;
+  btn.title = t('canvas.refresh');
+
+  const seat = _refreshSeat(pane);
+  btn.style.right = seat.right + 'px';
+  btn.style.bottom = seat.bottom + 'px';
+  btn.addEventListener('click', () => {
+    if (btn.classList.contains('busy')) return;  // a re-read is already in flight
+    if (typeof onRefresh === 'function') onRefresh(btn);
   });
   pane.appendChild(btn);
   return btn;

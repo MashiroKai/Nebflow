@@ -1035,12 +1035,19 @@ const pendingPinned = new Map();
 // Track background-refresh requests (canvas.js scheduleFileRefresh) keyed by
 // file path — their fileContent responses must not steal tab activation.
 const pendingRefresh = new Set();
+// Track manual re-read requests (canvas 文件刷新批: refresh button) keyed by
+// file path — their fileContent responses carry `manual` so canvas.js
+// re-renders even without inline content (binary legs: no content field).
+const pendingManual = new Set();
 
 // Listen for canvas tab restore requests — set pinned state before readFile
 window.addEventListener('explorer-preload-pinned', (e) => {
   if (e.detail && e.detail.path) {
     pendingPinned.set(e.detail.path, e.detail.pinned !== false);
     if (e.detail.refresh) pendingRefresh.add(e.detail.path);
+    // (any-cast: this listener's `e.detail` lines are already in the checkJs
+    // baseline — the new leg must not add to that count.)
+    if (/** @type {any} */ (e).detail?.manual) pendingManual.add(/** @type {any} */ (e).detail.path);
   }
 });
 
@@ -1214,6 +1221,7 @@ onMessage('fileContent', (msg) => {
     // 若该路径已有打开标签（后台刷新失败），canvas 端保留原内容不覆盖。
     pendingPinned.delete(msg.path);
     const isBackground = pendingRefresh.delete(msg.path);
+    const isManual = pendingManual.delete(msg.path);
     const filePath = msg.path;
     window.dispatchEvent(new CustomEvent('workspace-open-item', { detail: {
       id: `file:${filePath}`,
@@ -1225,6 +1233,7 @@ onMessage('fileContent', (msg) => {
       error: msg.error,
       pinned: false,
       background: isBackground,
+      manual: isManual,
     }}));
     return;
   }
@@ -1250,6 +1259,9 @@ onMessage('fileContent', (msg) => {
   // Background refresh responses (activation-triggered) re-render in place but
   // must not yank the user back to that tab.
   const background = pendingRefresh.delete(msg.path);
+  // Manual re-read (refresh button): the item carries `manual` so canvas.js
+  // re-renders binary tabs too (their readFile leg carries no content).
+  const manual = pendingManual.delete(msg.path);
   const item = {
     id: tabId,
     title: msg.fileName || msg.path,
@@ -1261,6 +1273,7 @@ onMessage('fileContent', (msg) => {
     rootPath: explorerRoot,
     pinned,
     background,
+    manual,
     // Text-stream descriptor passthrough (卡 §五 step ④): a >8MiB text file comes
     // back WITHOUT content + `stream:{v:1,kind:"text"}` + `mtimeMs`. canvas.js and
     // fileViewers.js consume these two fields; nothing else here changes.

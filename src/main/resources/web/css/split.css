@@ -1873,6 +1873,47 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   background: var(--glass-control-bg);
 }
 
+/* canvas 文件刷新批（作者令 2026-10-25）：文件页签右下「重新读盘」钮。
+   材质与槽位 = source/ref 同族（frosted 标准 token 单源；40px 圆、48px 槽距、
+   bottom:16）——座位由 shared.js addRefreshButton 按既有圆钮/缩放条实测让位
+   （溢出面板宽则落第二行 bottom:64，同窄幅 html 缩放条先例）。源码态整钮
+   隐藏（源码面不是预览刷新语义）；在飞 = 图标自旋（reduce-motion 停转）。 */
+.canvas-refresh-toggle {
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  box-shadow: var(--frost-shadow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 10;
+  color: var(--color-text);
+  transition: all 0.2s ease;
+}
+.canvas-refresh-toggle:hover {
+  background: var(--glass-control-bg-hover);
+  transform: scale(1.05);
+}
+.canvas-refresh-toggle.busy svg {
+  animation: canvasRefreshSpin 1s linear infinite;
+}
+@keyframes canvasRefreshSpin {
+  to { transform: rotate(360deg); }
+}
+.canvas-tab-pane[data-source-mode="1"] .canvas-refresh-toggle {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .canvas-refresh-toggle.busy svg { animation: none; }
+}
+
+
 .canvas-md-scroll {
   position: absolute;
   inset: 0;
