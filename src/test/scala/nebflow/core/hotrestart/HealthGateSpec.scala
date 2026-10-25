@@ -250,7 +250,7 @@ class HealthGateSpec extends munit.CatsEffectSuite:
       jar <- InstallPointer.jarIn(dir, "2026.9.19").flatMap(orDie("retained package"))
       // jar 名 = `${Branding.lowerName}-assembly-<v>.jar`（现值 stand-assembly-…，
       // 与 release/install.sh 的 JAR_NAME 契约同构；重启窗热修批 2026-10-18）。
-      _ = assert(jar.endsWith("versions/2026.9.19/stand-assembly-2026.9.19.jar"), jar)
+      _ = assert(jar.replace('\\', '/').endsWith("versions/2026.9.19/stand-assembly-2026.9.19.jar"), jar)
       flipped <- InstallPointer.flip(dir)
       _ = assertEquals(flipped, Right(("2026.9.19", "2026.9.20")))
       after <- InstallPointer.layout(dir)
@@ -284,7 +284,7 @@ class HealthGateSpec extends munit.CatsEffectSuite:
         os.write(legacyDir / "nebflow-assembly-2026.9.18.jar", "jar-legacy", createFolders = true)
       }
       legacyJar <- InstallPointer.jarIn(dir, "2026.9.18").flatMap(orDie("legacy retained package"))
-      _ = assert(legacyJar.endsWith("versions/2026.9.18/nebflow-assembly-2026.9.18.jar"), legacyJar)
+      _ = assert(legacyJar.replace('\\', '/').endsWith("versions/2026.9.18/nebflow-assembly-2026.9.18.jar"), legacyJar)
       bothDir = dir / InstallPointer.VersionsDirName / "2026.9.17"
       _ <- IO.blocking {
         os.makeDir.all(bothDir)
@@ -292,7 +292,7 @@ class HealthGateSpec extends munit.CatsEffectSuite:
         os.write(bothDir / "stand-assembly-2026.9.17.jar", "jar-current", createFolders = true)
       }
       currentJar <- InstallPointer.jarIn(dir, "2026.9.17").flatMap(orDie("dual-spelling package"))
-      _ = assert(currentJar.endsWith("versions/2026.9.17/stand-assembly-2026.9.17.jar"), currentJar)
+      _ = assert(currentJar.replace('\\', '/').endsWith("versions/2026.9.17/stand-assembly-2026.9.17.jar"), currentJar)
     yield ()
   }
 
@@ -321,7 +321,7 @@ class HealthGateSpec extends munit.CatsEffectSuite:
       _ = assertEquals(layout.current, Some("2026.9.19"), "green: the launcher now runs the previous version")
       _ = assertEquals(layout.previous, Some("2026.9.20"))
       seen <- captured.get
-      _ = assert(seen.exists(_._1.endsWith("versions/2026.9.19/stand-assembly-2026.9.19.jar")), seen.toString)
+      _ = assert(seen.exists(_._1.replace('\\', '/').endsWith("versions/2026.9.19/stand-assembly-2026.9.19.jar")), seen.toString)
       // 「只替换包路径」的可核判据：回执/意图里的复起命令**逐字等于既有纯函数命令构造**
       // 对同一 form/javaBin **只把包路径换成上一版**的产物（不新造命令构造器）。
       // ⚠️ 不直接断言 spawnCmd 含版本号：`HotRestart.detectForm` 在测试 JVM（sbt 类路径、

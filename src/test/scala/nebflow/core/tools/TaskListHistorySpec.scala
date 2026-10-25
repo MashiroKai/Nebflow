@@ -81,7 +81,12 @@ class TaskListHistorySpec extends FunSuite:
   private def events: List[TaskListEvent] = historyLines.flatten
 
   private def sha(p: os.Path): String =
-    os.proc("shasum", "-a", "256", p.toString).call().out.text().trim.split(" ").head
+    // 平台无关 SHA-256（Windows 无 macOS 的 shasum 外部命令）；摘要口径不变。
+    java.security.MessageDigest
+      .getInstance("SHA-256")
+      .digest(os.read.bytes(p))
+      .map("%02x".format(_))
+      .mkString
 
   // ===== ① 独立落盘 + 读动作零写 =====
 

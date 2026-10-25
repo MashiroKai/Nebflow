@@ -537,12 +537,16 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
    * （文案被改动）⇒ **fail-closed 回落基础 description**（绝不产出半截地址面）。
    */
   private def addressFaceProjection(keep: String): String =
-    val h = descriptionBase.indexOf(AddressFaceHeader)
-    val c = descriptionBase.indexOf(AddressFaceClosing)
+    // CRLF 检出容错（Windows 测试批 2026-10-25）：base 为三引号字面量，CRLF 检出下
+    // 行尾带 \r，与显式 "\n" 段常量 indexOf 失配 ⇒ fail-closed 回落全文（kernel 段
+    // 泄漏进 dispatcher 面）。投影在归一副本上做；段未命中仍回落原始全文（语义不变）。
+    val base = descriptionBase.replace("\r\n", "\n")
+    val h = base.indexOf(AddressFaceHeader)
+    val c = base.indexOf(AddressFaceClosing)
     if h < 0 || c < 0 then descriptionBase
     else
-      descriptionBase.substring(0, h) + AddressFaceHeader + keep + AddressFaceClosing +
-        descriptionBase.substring(c + AddressFaceClosing.length)
+      base.substring(0, h) + AddressFaceHeader + keep + AddressFaceClosing +
+        base.substring(c + AddressFaceClosing.length)
 
   /**
    * **分化变体 · Nebula root**：地址面只留 root 自己的那一面（`project:<name>`）。

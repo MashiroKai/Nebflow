@@ -34,12 +34,24 @@ object AtomicJson:
     val tmp = path / os.up / s"${path.last}.tmp.${java.util.UUID.randomUUID()}"
     try
       os.write.over(tmp, content, createFolders = true)
-      java.nio.file.Files.move(
-        tmp.toNIO,
-        path.toNIO,
-        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-        java.nio.file.StandardCopyOption.ATOMIC_MOVE
-      )
+      // Windows 句柄竞态退避重试（Windows 测试批 2026-10-25）：ATOMIC_MOVE 在目标
+      // 被并发句柄短暂占用（AV 扫描/读进程未放）时抛 AccessDeniedException——
+      // 同一 inode 的瞬时态，退避后重试即过；Mac 上该异常几乎不可达，行为零变化。
+      // 非瞬时失败（目标目录缺失等）首次即走 catch，语义不变。
+      @scala.annotation.tailrec
+      def attempt(n: Int, backoffMs: Long): Unit =
+        try
+          java.nio.file.Files.move(
+            tmp.toNIO,
+            path.toNIO,
+            java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+            java.nio.file.StandardCopyOption.ATOMIC_MOVE
+          )
+        catch
+          case _: java.nio.file.AccessDeniedException if n > 0 =>
+            Thread.sleep(backoffMs)
+            attempt(n - 1, backoffMs * 3)
+      attempt(2, 50L)
     catch
       case e: Throwable =>
         // On failure the target file is untouched — that is the point of the

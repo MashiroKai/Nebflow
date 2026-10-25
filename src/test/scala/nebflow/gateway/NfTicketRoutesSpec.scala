@@ -243,6 +243,7 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
   test("A9: a symlink into a credential file is refused (realpath normalization, C1-1/C1-2)") {
     withEnv { env =>
       IO {
+        nebflow.SymlinkProbe.assumeSymlinks()
         val link = env.outside.resolve("link.json")
         Files.createSymbolicLink(link, env.pathOf("auth.json"))
         val resp = env.read(s"path=${url(link)}&ticket=${env.ticketFor(link)}").get

@@ -40,16 +40,16 @@ class DelegateTerminalSpec extends CatsEffectSuite:
   private val originalRoot = PathUtil.dataRoot
 
   PathUtil.setDataRoot(tempRoot)
-  os.remove.all(tempRoot)
+  nebflow.ForceRemove.removeAll(tempRoot)
   os.makeDir.all(tempRoot)
 
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
 
   override def beforeEach(context: munit.BeforeEach): Unit =
     MergeQueue.reset()
-    os.remove.all(tempRoot / "chains")
-    os.remove.all(tempRoot / "delegates")
-    os.remove.all(tempRoot / "subagent-tasks")
+    nebflow.ForceRemove.removeAll(tempRoot / "chains")
+    nebflow.ForceRemove.removeAll(tempRoot / "delegates")
+    nebflow.ForceRemove.removeAll(tempRoot / "subagent-tasks")
 
   override def afterEach(context: munit.AfterEach): Unit = MergeQueue.reset()
 
@@ -95,7 +95,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
    * 形态）。GitWorktreesSpec 同款 git 序列。
    */
   private def mkRealRepo(dir: os.Path, branch: String, ahead: Int): os.Path =
-    os.remove.all(dir)
+    nebflow.ForceRemove.removeAll(dir)
     os.makeDir.all(dir)
     os.proc("git", "init", "-b", "main", dir.toString).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
     os.proc("git", "-C", dir.toString, "config", "user.email", "spec@nebflow.local").call(check = true)
@@ -439,7 +439,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
    * 返回 (repo, forkSha, baseTipSha)——全 sha，与判词 reason 里的证据直比。
    */
   private def mkDriftRepo(dir: os.Path, delegateBranch: String, advance: String): (os.Path, String, String) =
-    os.remove.all(dir)
+    nebflow.ForceRemove.removeAll(dir)
     os.makeDir.all(dir)
     os.proc("git", "init", "-b", "main", dir.toString).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
     def g(args: String*): os.CommandResult =

@@ -38,7 +38,7 @@ class CompletionGateSpec extends CatsEffectSuite:
   private val originalRoot = PathUtil.dataRoot
 
   PathUtil.setDataRoot(tempRoot)
-  os.remove.all(tempRoot)
+  nebflow.ForceRemove.removeAll(tempRoot)
 
   for agent <- List("test-agent", "general") do
     os.makeDir.all(tempRoot / "agents" / agent)

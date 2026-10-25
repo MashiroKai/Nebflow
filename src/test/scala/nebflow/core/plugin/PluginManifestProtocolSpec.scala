@@ -208,6 +208,7 @@ class PluginManifestProtocolSpec extends CatsEffectSuite:
   // ── §4.1 路径围栏（symlink 逃逸）──────────────────────────
 
   test("§4.1: SKILL.md 符号链接逃逸插件根 → 该 skill 跳过；tools.json 逃逸 → tools 扩展忽略") {
+    nebflow.SymlinkProbe.assumeSymlinks() // Windows symlink 特权门（逃逸资产造不出来 ⇒ ignore）
     val outside = tempRoot / "outside-staging"
     os.makeDir.all(outside)
     os.write.over(outside / "evil.md", "evil body")

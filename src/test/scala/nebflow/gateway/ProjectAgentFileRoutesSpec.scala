@@ -86,11 +86,14 @@ class ProjectAgentFileRoutesSpec extends CatsEffectSuite:
     }
 
   /** 相对 symlink `../AGENTS.md`（已迁移项目的真实形状）。 */
-  private def mkRelativeAgentsSymlink(ws: os.Path): Unit =
+  private def mkRelativeAgentsSymlink(ws: os.Path): Unit = {
+    // Windows 无 symlink 特权（ERROR_1314）⇒ 能力门 ignore（非 failed）。
+    nebflow.SymlinkProbe.assumeSymlinks()
     java.nio.file.Files.createSymbolicLink(
       (ws / ".nebflow" / "Agent.md").toNIO,
       java.nio.file.Paths.get("../AGENTS.md")
     )
+  }
 
   private def getBody(resp: Response[IO]): IO[(Status, String)] =
     resp.as[io.circe.Json].map(j => (resp.status, j.hcursor.downField("content").as[String].getOrElse("")))

@@ -37,6 +37,13 @@ class BashToolSpec extends CatsEffectSuite:
 
   private def absOf(p: String): String = new java.io.File(p).getAbsolutePath
 
+  /** 路径读数归一（Windows 批 2026-10-25）：Git Bash `pwd` 打 POSIX 盘符拼写
+    * （/c/…），native 为 C:\… —— 反斜杠归一正斜杠 + MSYS 盘符折算 C:/ 后比较。 */
+  private def normPath(s: String): String =
+    s.replace('\\', '/') match
+      case m if m.matches("/[A-Za-z]/.*") => m.charAt(1).toUpper.toString + ":" + m.substring(2)
+      case other => other
+
   /**
    * 诊断三件套断言：类型 + 原始入参 + 解析后绝对路径 + 触发点 + 判定依据。
    * `expectReason` = 期望的 reason 片段（does not exist / not a directory / …）。
@@ -123,7 +130,7 @@ class BashToolSpec extends CatsEffectSuite:
       .map {
         case Left(ToolError(msg)) =>
           assert(msg.contains(missingRoot), s"错误文本缺原始入参路径: $msg")
-          assert(msg.contains(absOf(missingRoot)), s"错误文本缺解析后绝对路径: $msg")
+          assert(normPath(msg).contains(normPath(absOf(missingRoot))), s"错误文本缺解析后绝对路径: $msg")
           assert(msg.contains(Site), s"错误文本缺触发点符号: $msg")
           assert(!msg.contains("e2e-t2-marker"), s"命令不得执行: $msg")
         case Right(out) =>
@@ -145,8 +152,8 @@ class BashToolSpec extends CatsEffectSuite:
         shell.execute("echo t2-ok && pwd", 10.seconds).map { pr =>
           assertEquals(pr.exitCode, 0, s"合法 cwd 必须照常执行: ${pr.stderr}")
           assert(pr.stdout.contains("t2-ok"), s"命令输出缺失: ${pr.stdout}")
-          assert(pr.stdout.contains(realDir), s"命令必须跑在指定目录: ${pr.stdout}")
-          assertEquals(pr.cwd, realDir, s"结果 cwd 必须是指定目录: ${pr.cwd}")
+          assert(normPath(pr.stdout).contains(normPath(realDir)), s"命令必须跑在指定目录: ${pr.stdout}")
+          assertEquals(normPath(pr.cwd), normPath(realDir), s"结果 cwd 必须是指定目录: ${pr.cwd}")
         }
       }
       .guarantee(ShellSession.destroySession(sid))
@@ -161,7 +168,11 @@ class BashToolSpec extends CatsEffectSuite:
         shell.execute("echo t2-default-ok", 10.seconds).map { pr =>
           assertEquals(pr.exitCode, 0, s"默认 cwd 必须照常执行: ${pr.stderr}")
           assert(pr.stdout.contains("t2-default-ok"), s"命令输出缺失: ${pr.stdout}")
-          assertEquals(pr.cwd, System.getProperty("user.dir"), s"默认 cwd = user.dir: ${pr.cwd}")
+          assertEquals(
+            normPath(pr.cwd),
+            normPath(System.getProperty("user.dir")),
+            s"默认 cwd = user.dir: ${pr.cwd}"
+          )
         }
       }
       .guarantee(ShellSession.destroySession(sid))

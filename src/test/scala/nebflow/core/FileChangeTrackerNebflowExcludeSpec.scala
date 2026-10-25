@@ -74,6 +74,15 @@ class FileChangeTrackerNebflowExcludeSpec extends CatsEffectSuite:
     }
 
   test("the walk prunes .nebflow: an unreadable dir inside it cannot break the scan"):
+    // 不可读夹具走 POSIX 0000 权限位：Windows 无 posix 视图（UOE）⇒ 跳过该腿
+    // （剪枝语义的可见性构造本身是 POSIX 面；Windows 归 ACL 另案）。
+    assume(
+      java.nio.file.Files.getFileAttributeView(
+        java.nio.file.Paths.get(System.getProperty("java.io.tmpdir")),
+        classOf[java.nio.file.attribute.PosixFileAttributeView]
+      ) != null,
+      "unreadable-dir fixture requires POSIX permission bits"
+    )
     // Traversal observer: if the walker DESCENDS into .nebflow it will try to
     // open this unreadable directory, the fail-soft catch then discards the
     // whole scan (Map.empty), and the positive control below fails. A pruned

@@ -173,7 +173,13 @@ class ShellSessionCharsetProbeSpec extends FunSuite:
     assertEquals(out.trim, text, "gate 开 ⇒ probeCharset 生效 ⇒ GBK 正确解码")
 
   test("gate 接线：None 关探测门（Mac 真实平台形态），GBK 流按 UTF-8 解码（乱码）"):
-    // None 跟随真实平台：Mac 上即跳过探测——GBK 字节按 UTF-8 严格解码出 U+FFFD
+    // None 跟随真实平台：Mac 上即跳过探测——GBK 字节按 UTF-8 严格解码出 U+FFFD。
+    // Windows 真实门本就开启（None ⇒ 探测生效 ⇒ GBK 正确解码 = D1 语义），
+    // 「关探测的乱码形态」在 Windows 无此平台前提 ⇒ 跳过该腿。
+    assume(
+      !nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName),
+      "gate-None mojibake shape is the macOS platform premise (Windows probes natively)"
+    )
     val text = "中文GBK输出正确"
     val out = session.readStream(
       new java.io.ByteArrayInputStream(text.getBytes(Charset.forName("GBK"))),

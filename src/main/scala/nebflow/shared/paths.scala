@@ -279,16 +279,23 @@ object PathUtil:
    */
   def resolveRootRef(root: os.Path, ref: String): os.Path =
     val normalized = ref.replace('\\', '/')
+    // token 前缀比对也走正斜杠形态（勿删）：Windows root.toString 为反斜杠形态，
+    // 裸比对恒失配 ⇒ 绝对 ref 落进兜底拼接出「root + / + C:/…」双路径 →
+    // InvalidPathException（Windows 测试批 2026-10-25，social 簇 17 例的根因）。
+    // Mac 上 rootNorm == root.toString，逐行为零变化。
+    val rootNorm = root.toString.replace('\\', '/')
     val tokenPrefixes = List(
       s"~/$LegacyHomeDirName",
       s"~/${Branding.homeDirName}",
-      renderDataRootValue(root)
+      rootNorm
     ).distinct
     tokenPrefixes.find(p => normalized.startsWith(p + "/")) match
-      case Some(p) => os.Path(root.toString + normalized.drop(p.length), os.pwd)
+      case Some(p) => root / os.SubPath(normalized.drop(p.length).stripPrefix("/"))
       case None =>
-        if normalized.startsWith("/") then os.Path(normalized, os.pwd)
-        else os.Path(root.toString + "/" + normalized, os.pwd)
+        // 绝对 ref（POSIX 前导 / 或 Windows 盘符斜杠形态）按契约原样返回。
+        if normalized.startsWith("/") || normalized.matches("[A-Za-z]:/.*") then
+          os.Path(normalized, os.pwd)
+        else root / os.SubPath(normalized)
 
   /**
    * The legacy data-root directory name, HARDCODED — it is a historical

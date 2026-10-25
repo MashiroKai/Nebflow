@@ -37,7 +37,7 @@ class DelegateWorkspaceWorktreeLegSpec extends FunSuite:
       .getOrElse(false)
 
   private def mkRepo(dir: os.Path): Unit =
-    os.remove.all(dir)
+    nebflow.ForceRemove.removeAll(dir)
     os.makeDir.all(dir)
     os.proc("git", "init", "-b", "main", dir.toString).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
     os.proc("git", "-C", dir.toString, "config", "user.email", "spec@nebflow.local").call(check = true)

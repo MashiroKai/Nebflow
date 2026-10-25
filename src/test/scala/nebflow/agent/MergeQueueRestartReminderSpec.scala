@@ -26,15 +26,15 @@ class MergeQueueRestartReminderSpec extends FunSuite:
   private val originalRoot = PathUtil.dataRoot
 
   PathUtil.setDataRoot(tempRoot)
-  os.remove.all(tempRoot)
+  nebflow.ForceRemove.removeAll(tempRoot)
   os.makeDir.all(tempRoot)
 
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
 
   override def beforeEach(context: munit.BeforeEach): Unit =
-    os.remove.all(tempRoot / "chains")
-    os.remove.all(tempRoot / "delegates")
-    os.remove.all(tempRoot / "subagent-tasks")
+    nebflow.ForceRemove.removeAll(tempRoot / "chains")
+    nebflow.ForceRemove.removeAll(tempRoot / "delegates")
+    nebflow.ForceRemove.removeAll(tempRoot / "subagent-tasks")
 
   override def afterEach(context: munit.AfterEach): Unit = ()
 
@@ -71,7 +71,7 @@ class MergeQueueRestartReminderSpec extends FunSuite:
 
   /** main@init + delegate 分支一笔交付提交（不并回 main ⇒ 有可并产物）。 */
   private def mkRepo(dir: os.Path, branch: String): os.Path =
-    os.remove.all(dir)
+    nebflow.ForceRemove.removeAll(dir)
     os.makeDir.all(dir)
     os.proc("git", "init", "-b", "main", dir.toString).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
     def g(args: String*): os.CommandResult =

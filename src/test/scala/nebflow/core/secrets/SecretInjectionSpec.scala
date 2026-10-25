@@ -2,6 +2,7 @@ package nebflow.core.secrets
 
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
+import nebflow.core.CredentialFileAcl
 import nebflow.core.tools.ShellSession
 
 import java.nio.file.Files
@@ -45,7 +46,10 @@ class SecretInjectionSpec extends FunSuite:
 
   private def writeSecret(root: os.Path, name: String, value: String): Unit =
     os.write.over(root / "secrets" / name, value, createFolders = true)
-    os.perms.set(root / "secrets" / name, "rw-------")
+    // Windows 无 POSIX 属性视图（os.perms.set → UnsupportedOperationException）；
+    // 本组用例断言的是 materialize/allowlist 行为，不是权限位 ⇒ Windows 上跳过置位。
+    if !CredentialFileAcl.isWindows(CredentialFileAcl.currentOsName) then
+      os.perms.set(root / "secrets" / name, "rw-------")
 
   // ── Config face ─────────────────────────────────────────────────────────
 

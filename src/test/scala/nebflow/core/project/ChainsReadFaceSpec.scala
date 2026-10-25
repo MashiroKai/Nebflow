@@ -37,7 +37,7 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
   private val originalRoot = PathUtil.dataRoot
 
   PathUtil.setDataRoot(tempRoot)
-  os.remove.all(tempRoot)
+  nebflow.ForceRemove.removeAll(tempRoot)
   os.makeDir.all(tempRoot / "sessions")
 
   override def afterAll(): Unit =
@@ -45,11 +45,11 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
 
   override def beforeEach(context: munit.BeforeEach): Unit =
     (ProjectRuntimeRegistry.clear *> DelegateFlowHosts.clear).unsafeRunSync()
-    if os.exists(tempRoot / "delegates") then os.remove.all(tempRoot / "delegates")
-    if os.exists(tempRoot / "chains") then os.remove.all(tempRoot / "chains")
-    if os.exists(tempRoot / "projects") then os.remove.all(tempRoot / "projects")
-    if os.exists(tempRoot / "c4b-real-ws") then os.remove.all(tempRoot / "c4b-real-ws")
-    if os.exists(tempRoot / "c4b-alias-root") then os.remove.all(tempRoot / "c4b-alias-root")
+    if os.exists(tempRoot / "delegates") then nebflow.ForceRemove.removeAll(tempRoot / "delegates")
+    if os.exists(tempRoot / "chains") then nebflow.ForceRemove.removeAll(tempRoot / "chains")
+    if os.exists(tempRoot / "projects") then nebflow.ForceRemove.removeAll(tempRoot / "projects")
+    if os.exists(tempRoot / "c4b-real-ws") then nebflow.ForceRemove.removeAll(tempRoot / "c4b-real-ws")
+    if os.exists(tempRoot / "c4b-alias-root") then nebflow.ForceRemove.removeAll(tempRoot / "c4b-alias-root")
 
   override def afterEach(context: munit.AfterEach): Unit =
     (ProjectRuntimeRegistry.clear *> DelegateFlowHosts.clear).unsafeRunSync()
@@ -663,6 +663,8 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
   }
 
   test("C4b: seat scoping is canonical-path stable — a symlinked workspace alias still counts as in-world") {
+    // Windows symlink 特权门（别名夹具造不出来 ⇒ ignore，能力缺失非引擎缺陷）。
+    nebflow.SymlinkProbe.assumeSymlinks()
     // 真实形态：projects 目录 nebflow→stand 改名后，旧记录 cwd 仍走旧名（symlink 别名）。
     // canonical 判定必须吃掉别名差异（否则改名即丢现役行）。夹具落 tempRoot 内（生产
     // 形态 = /Users 下稳定路径的改名 symlink，非系统 tmpdir 形态）。

@@ -33,16 +33,16 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
   private val originalRoot = PathUtil.dataRoot
 
   PathUtil.setDataRoot(tempRoot)
-  os.remove.all(tempRoot)
+  nebflow.ForceRemove.removeAll(tempRoot)
   os.makeDir.all(tempRoot)
 
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
 
   override def beforeEach(context: munit.BeforeEach): Unit =
     MergeQueue.reset()
-    os.remove.all(tempRoot / "chains")
-    os.remove.all(tempRoot / "delegates")
-    os.remove.all(tempRoot / "subagent-tasks")
+    nebflow.ForceRemove.removeAll(tempRoot / "chains")
+    nebflow.ForceRemove.removeAll(tempRoot / "delegates")
+    nebflow.ForceRemove.removeAll(tempRoot / "subagent-tasks")
 
   override def afterEach(context: munit.AfterEach): Unit = MergeQueue.reset()
 
@@ -88,7 +88,7 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
     branch: String,
     withReport: Boolean
   ): os.Path =
-    os.remove.all(dir)
+    nebflow.ForceRemove.removeAll(dir)
     os.makeDir.all(dir)
     os.proc("git", "init", "-b", "main", dir.toString).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
     def g(args: String*): os.CommandResult =

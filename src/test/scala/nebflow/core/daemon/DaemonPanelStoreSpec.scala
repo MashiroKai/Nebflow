@@ -97,7 +97,13 @@ class DaemonPanelStoreSpec extends CatsEffectSuite:
     withRoot { (store, _) =>
       for
         _ <- store.writeValues(decl, "mail", Map("password" -> Json.fromString("x")))
-        _ <- IO.blocking(os.perms.set(store.secretPath("mail", "password"), "rw-r--r--"))
+        // Windows 无 POSIX 属性视图（os.perms.set → UOE）；默认夹具在 Windows 上本就
+        // 宽放，「permissive 报告」断言语义不变 ⇒ 非 POSIX 跳过置位。
+        _ <- IO
+          .blocking(
+            if !nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName) then
+              os.perms.set(store.secretPath("mail", "password"), "rw-r--r--")
+          )
         states <- store.credentialStates(decl, "mail")
       yield assertEquals(states.head.state, DaemonPanelSchema.CredentialStates.Permissive)
     }
@@ -191,7 +197,13 @@ class DaemonPanelStoreSpec extends CatsEffectSuite:
     withRoot { (store, _) =>
       for
         _ <- IO.blocking(os.makeDir.all(store.secretsDir))
-        _ <- IO.blocking(os.perms.set(store.secretsDir, "rwxrwxrwx"))
+        // Windows 无 POSIX 属性视图：置位腿跳过（引擎 fail-closed 判据对 Windows 默认
+        // 目录同样拒绝，「失败必须上报、零写」断言语义不变）。
+        _ <- IO
+          .blocking(
+            if !nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName) then
+              os.perms.set(store.secretsDir, "rwxrwxrwx")
+          )
         result <- store.writeValues(decl, "mail", Map("password" -> Json.fromString("x")))
         // The refusal must be reported, never silently swallowed.
         exists <- IO.blocking(os.exists(store.secretPath("mail", "password")))

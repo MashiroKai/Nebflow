@@ -265,7 +265,9 @@ object CompactUtils:
         val stripped = blocks.map {
           case tr @ ContentBlock.ToolResult(toolUseId, content, _)
               if content.length > maxChars && !content.startsWith(PersistedTag) =>
-            val path = s"${PathUtil.dataRoot / "tool-results" / sessionId / s"$toolUseId.txt"}"
+            // 模型可见文案统一正斜杠：os.Path.toString 在 Windows 出反斜杠形态，
+            // 占位符断言/展示面按 `/` 段比对（NIO 两种分隔符等价，落盘不变）。
+            val path = s"${PathUtil.dataRoot / "tool-results" / sessionId / s"$toolUseId.txt"}".replace('\\', '/')
             tr.copy(
               content = s"""$PersistedTag
                    |Output too large (${content.length} chars). Full output saved to: $path

@@ -337,6 +337,11 @@ class ChainArchivedEventSpec extends CatsEffectSuite:
   }
 
   test("容错：INDEX.md 写盘失败（只读）→ 仅 WARN + 不炸 TtlTick + 归档不回滚 + 索引零变化") {
+    // 只读注入走 POSIX 权限位：Windows 无 posix 视图（UOE）⇒ 跳过该容错腿。
+    assume(
+      !nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName),
+      "read-only injection requires POSIX permission bits"
+    )
     val homeDomain = "链路域RO"
     val roPerms = JSet.of(Perm.OWNER_READ)
     val rwPerms = JSet.of(Perm.OWNER_READ, Perm.OWNER_WRITE, Perm.GROUP_READ, Perm.OTHERS_READ)

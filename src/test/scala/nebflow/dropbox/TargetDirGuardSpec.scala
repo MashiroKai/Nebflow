@@ -25,6 +25,10 @@ class TargetDirGuardSpec extends FunSuite:
   private var roDir: os.Path = null // 允许根内、存在、只读
   private var blocker: os.Path = null // 允许根内的普通**文件**（用作中间段）
 
+  /** POSIX 属性视图可用性（Windows NTFS 无 posix 视图 ⇒ 权限位夹具/断言腿收口）。 */
+  private def posixViewAvailable: Boolean =
+    Files.getFileAttributeView(root.toNIO, classOf[java.nio.file.attribute.PosixFileAttributeView]) != null
+
   override def beforeAll(): Unit =
     parent = os.temp.dir(prefix = "nb-tdguard-")
     root = parent / "allowed"
@@ -33,10 +37,12 @@ class TargetDirGuardSpec extends FunSuite:
     os.makeDir.all(outside)
     roDir = root / "ro-dir"
     os.makeDir.all(roDir)
-    Files.setPosixFilePermissions(roDir.toNIO, PosixFilePermissions.fromString("r-xr-xr-x"))
+    // Windows 无 POSIX 属性视图/symlink 特权：夹具置位按能力收口（对应用例各自 assume）。
+    if posixViewAvailable then
+      Files.setPosixFilePermissions(roDir.toNIO, PosixFilePermissions.fromString("r-xr-xr-x"))
+    if nebflow.SymlinkProbe.canCreate() then os.symlink(root / "link-to-etc", os.Path("/etc"))
     blocker = root / "blocker.txt"
     os.write.over(blocker, "x")
-    os.symlink(root / "link-to-etc", os.Path("/etc"))
 
   override def afterAll(): Unit =
     try Files.setPosixFilePermissions(roDir.toNIO, PosixFilePermissions.fromString("rwxr-xr-x"))
@@ -140,12 +146,14 @@ class TargetDirGuardSpec extends FunSuite:
     )
 
   test("样例 #15：允许根内指向 `/etc` 的符号链接 ⇒ TARGET_DIR_NOT_ALLOWED（realpath 后逃逸）"):
+    assume(nebflow.SymlinkProbe.canCreate(), "symlink 脚手架需要符号链接特权（Windows 开发者模式）")
     assertEquals(codeOf((root / "link-to-etc").toString), AttachContract.Codes.TargetDirNotAllowed)
 
   test("样例 #16：最深存在祖先是一条**文件** ⇒ TARGET_DIR_NOT_FOUND"):
     assertEquals(codeOf((blocker / "a" / "b").toString), AttachContract.Codes.TargetDirNotFound)
 
   test("样例 #17：允许根内、存在、只读 ⇒ TARGET_DIR_NOT_WRITABLE"):
+    assume(posixViewAvailable, "只读目录夹具依赖 POSIX 权限位（Windows 无 posix 视图）")
     val r = resolve(roDir.toString)
     assertEquals(r.swap.toOption.map(_.code), Some(AttachContract.Codes.TargetDirNotWritable))
 

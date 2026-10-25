@@ -119,7 +119,9 @@ class LlmLogWriterStreamSpec extends FunSuite:
       gap1 >= 50,
       s"first-token → next-event gap must reflect real arrival times (≥50ms), got ${gap1}ms — timestamps would be indistinguishable under batch flushing"
     )
-    assert(done.isAfter(mid), "Done line must be after the last delta")
+    // 单调性断言（勿收紧回 isAfter）：事件 2→3 无间隔时两行同毫秒同格——
+    // 批刷语义下 Done 与上一事件可合法同格（Windows 计时粒度更粗），只钉不回拨。
+    assert(!done.isBefore(mid), "Done line must not carry a timestamp before the last delta")
     // 完成行（message_delta）与首 token 行（content_block_delta）类型可区分。
     assertEquals(sse.head.hcursor.get[String]("sse_event_type").toOption, Some("content_block_delta"))
     assertEquals(sse(2).hcursor.get[String]("sse_event_type").toOption, Some("message_delta"))

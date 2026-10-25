@@ -131,8 +131,12 @@ class SandboxFenceRemovalSpec extends CatsEffectSuite:
 
   test("S1-b: ToolPathUtil.searchBaseDir——有会话根取会话根，无会话根才回落 JVM user.dir") {
     val tmp = freshDir("base")
+    // 哨兵路径回显按归一形态比（Windows Paths.toString 出 \abs\x 形态）。
     assertEquals(ToolPathUtil.searchBaseDir(policyIn(tmp), "/sentinel/userdir").toString, policyIn(tmp).root.toString)
-    assertEquals(ToolPathUtil.searchBaseDir(SandboxPolicy.off, "/sentinel/userdir").toString, "/sentinel/userdir")
+    assertEquals(
+      ToolPathUtil.searchBaseDir(SandboxPolicy.off, "/sentinel/userdir").toString.replace('\\', '/'),
+      "/sentinel/userdir"
+    )
   }
 
   test("S1-b: ToolPathUtil.resolveAgainstToolRoot——相对路径基准=会话根 + ~ 展开；无会话根=旧行为（仅绝对路径）") {
@@ -143,8 +147,11 @@ class SandboxFenceRemovalSpec extends CatsEffectSuite:
       ToolPathUtil.resolveAgainstToolRoot(p, "sub/x.txt").toOption.map(_.toString),
       Some(SandboxPolicy.canonicalize((tmp / "sub" / "x.txt").wrapped).toString)
     )
-    // 绝对路径原样
-    assertEquals(ToolPathUtil.resolveAgainstToolRoot(p, "/abs/x.txt").toOption.map(_.toString), Some("/abs/x.txt"))
+    // 绝对路径原样（哨兵回显按归一形态比，Windows \abs\x ⇒ /abs/x）
+    assertEquals(
+      ToolPathUtil.resolveAgainstToolRoot(p, "/abs/x.txt").toOption.map(_.toString.replace('\\', '/')),
+      Some("/abs/x.txt")
+    )
     // `~` 展开（PathUtil.expandTilde 等价能力）
     val expanded = Paths.get(PathUtil.expandTilde("~/probe.txt")).toString
     assertEquals(ToolPathUtil.resolveAgainstToolRoot(p, "~/probe.txt").toOption.map(_.toString), Some(expanded))
@@ -158,7 +165,7 @@ class SandboxFenceRemovalSpec extends CatsEffectSuite:
       Some("Path must be absolute, got: ~/rel.txt")
     )
     assertEquals(
-      ToolPathUtil.resolveAgainstToolRoot(SandboxPolicy.off, "/abs/y.txt").toOption.map(_.toString),
+      ToolPathUtil.resolveAgainstToolRoot(SandboxPolicy.off, "/abs/y.txt").toOption.map(_.toString.replace('\\', '/')),
       Some("/abs/y.txt")
     )
   }
@@ -174,7 +181,8 @@ class SandboxFenceRemovalSpec extends CatsEffectSuite:
     // Write/Edit/MultiEdit → checkWrite；Read → checkRead；Glob/Grep 搜索根 → checkReadRoot
     for case (probe, isWrite) <- List(
         (outsideHome.toString, true),
-        ("/etc/hosts", true),
+        // 围栏外绝对探针取宿主 tmpdir（Windows 上 "/etc/hosts" 有根非绝对 ⇒ 被当相对拒）。
+        (java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"), "etc-hosts-probe").toString, true),
         (outsideHome.toString, false),
         ((os.home / "Desktop").toString, false)
       )
@@ -206,9 +214,12 @@ class SandboxFenceRemovalSpec extends CatsEffectSuite:
       FileSandbox.checkRead(offCtx, "rel.txt").swap.toOption.map(_.message),
       Some("Path must be absolute, got: rel.txt")
     )
+    // off 态原样返回（不 canonicalize，旧行为）；探针路径取宿主真绝对
+    // （Windows 上 "/tmp/…" 有根非绝对 ⇒ 被当相对拒，探针前提不成立）。
+    val rollbackProbe = java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"), "rollback-probe.txt").toString
     assertEquals(
-      FileSandbox.checkWrite(offCtx, "/tmp/rollback-probe.txt").toOption.map(_.toString),
-      Some("/tmp/rollback-probe.txt"),
+      FileSandbox.checkWrite(offCtx, rollbackProbe).toOption.map(_.toString),
+      Some(rollbackProbe),
       "off 态原样返回（不 canonicalize，旧行为）"
     )
     // cfg.enabled=false → forRoot 短路 off（§4.5 回退点保留）

@@ -43,7 +43,7 @@ class DelegateDeviceRoutingSpec extends CatsEffectSuite:
         assertEquals(p, None)
         assertEquals(dev, None)
         assertEquals(devWs, None)
-        assert(ws.endsWith("/general"))
+        assert(ws.replace('\\', '/').endsWith("/general"), s"workspace ends with /general, got: $ws")
       case other => fail(s"expected Local resolution, got: $other")
     assertEquals(os.exists(PathUtil.dataRoot / "general"), true)
   }

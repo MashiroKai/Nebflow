@@ -339,8 +339,10 @@ class AskUserDualModeToolSpec extends FunSuite:
     PathUtil.setDataRoot(os.Path(root))
     assertRejected(List(dir.resolve("nope.md").toString), "ASKUSER_ATTACH_NOT_FOUND", "不存在")
     assertRejected(List(dir.toString), "ASKUSER_ATTACH_NOT_REGULAR", "目录")
-    if Files.exists(java.nio.file.Paths.get("/dev/null")) then
-      assertRejected(List("/dev/null"), "ASKUSER_ATTACH_NOT_REGULAR", "字符设备")
+    // /dev/null 字符设备前提是 POSIX 面（Windows 无此设备文件，引擎分支语义不同）⇒ 门控。
+    if !nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName)
+      && Files.exists(java.nio.file.Paths.get("/dev/null"))
+    then assertRejected(List("/dev/null"), "ASKUSER_ATTACH_NOT_REGULAR", "字符设备")
   }
 
   test("附件拒绝②: 凭据身份（形态名）与凭据 inode（secrets 子树）—— 域外逃逸面零松动") {
@@ -363,6 +365,7 @@ class AskUserDualModeToolSpec extends FunSuite:
   }
 
   test("附件拒绝③: 符号链接按真实路径判 —— 链接到凭据真身 ⇒ 拒；链接到普通文件 ⇒ 过（无「按原串判」旁路）") {
+    nebflow.SymlinkProbe.assumeSymlinks() // Windows symlink 特权门（能力缺失 ⇒ ignore）
     val root = freshRoot("symlink")
     val secret = servedFile(root, "secrets/secret-target.pdf")
     val link = root.resolve("projects/demo/link.pdf")

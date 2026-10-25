@@ -46,7 +46,7 @@ class AbandonDetachSpec extends CatsEffectSuite:
   private val originalRoot = PathUtil.dataRoot
 
   PathUtil.setDataRoot(tempRoot)
-  os.remove.all(tempRoot)
+  nebflow.ForceRemove.removeAll(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
 
   os.write.over(
@@ -631,7 +631,7 @@ class AbandonDetachSpec extends CatsEffectSuite:
       oneBranch <- IO.blocking(gitOk(ws, "branch", "--list", "one-wt"))
       audit <- readAudit(ws)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-      _ <- IO.blocking(os.remove.all(ws)).handleErrorWith(_ => IO.unit)
+      _ <- IO.blocking(nebflow.ForceRemove.removeAll(ws)).handleErrorWith(_ => IO.unit)
     yield
       assert(rz.isRight, s"abandon must succeed, got: $rz")
       assert(ro.isRight, s"abandon must succeed, got: $ro")

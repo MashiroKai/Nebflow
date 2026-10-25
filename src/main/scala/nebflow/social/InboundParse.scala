@@ -250,11 +250,9 @@ object InboundParse:
       val sender = quotedSender.map(_.trim).filter(_.nonEmpty).getOrElse(UnknownSender)
       quotedText.map(_.trim).filter(_.nonEmpty) match
         case Some(text) =>
-          s"""[引用的消息]
-             |发送方：$sender
-             |原文：
-             |${truncate(text)}
-             |[/引用的消息]""".stripMargin
+          // 行尾显式 "\n" 拼接（勿改回三引号字面量）：CRLF checkout 会把源行尾编进
+          // 字面量（\r\n）⇒ 消费方按 \n 契约 contains 断言全红（InboundParseSpec IP-8）。
+          s"[引用的消息]\n发送方：$sender\n原文：\n${truncate(text)}\n[/引用的消息]"
         case None =>
           s"""[引用的消息]
              |发送方：$sender

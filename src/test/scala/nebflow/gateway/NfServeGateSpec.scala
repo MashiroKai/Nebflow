@@ -69,7 +69,8 @@ class NfServeGateSpec extends CatsEffectSuite:
     resp.headers.get(CIString(name)).map(_.head.value)
 
   private def fileUrl(f: Path): String =
-    s"/api/nf-file?path=$f&ticket=${ticketFor(f)}"
+    // Windows 反斜杠是 URI 非法字符（http4s ParseFailure）——归一正斜杠（NIO 等价）。
+    s"/api/nf-file?path=${f.toString.replace('\\', '/')}&ticket=${ticketFor(f)}"
 
   test("over-budget request answers 429 + Retry-After + X-Nf-Reason: overloaded (never a bare 503)") {
     withSeedFile("shot.png", Array[Byte](1, 2, 3)) { f =>

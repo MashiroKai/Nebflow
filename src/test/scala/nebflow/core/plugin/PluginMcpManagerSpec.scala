@@ -94,7 +94,20 @@ class PluginMcpManagerSpec extends CatsEffectSuite:
       dir = tempRoot.toString
     )
 
-  private val goodPlugin = mkPlugin("echo-plugin", "srv", "python3", List(serverFile.toString))
+  /** python 解释器解析：Windows 无 `python3` 可执行名 ⇒ 依次回退 `python`/`py`
+    * （探测 = `--version` 能起进程）；全部缺席仍报 python3（与引擎
+    * MemoryRecallDaemon.pythonCmd 同口径）。Mac 上恒 python3，零行为变化。 */
+  private lazy val pythonCmd: String =
+    List("python3", "python", "py")
+      .find { c =>
+        try
+          new ProcessBuilder(c, "--version").start().waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
+          true
+        catch case _: Throwable => false
+      }
+      .getOrElse("python3")
+
+  private val goodPlugin = mkPlugin("echo-plugin", "srv", pythonCmd, List(serverFile.toString))
   private val badPlugin = mkPlugin("bad-plugin", "srv", "/nonexistent-binary-xyz", Nil)
 
   // ── acquire / refcount / recycle ─────────────────────────

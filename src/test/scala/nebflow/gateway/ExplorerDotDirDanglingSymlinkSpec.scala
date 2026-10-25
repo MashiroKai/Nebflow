@@ -30,6 +30,8 @@ class ExplorerDotDirDanglingSymlinkSpec extends FunSuite:
 
   /** Replica of the real project workspace that triggered the bug. */
   private def scaffoldNebflowDir(root: os.Path): Unit =
+    // Windows 无 symlink 特权（ERROR_1314）时脚手架造不出来 ⇒ 能力门 ignore（非 failed）。
+    nebflow.SymlinkProbe.assumeSymlinks()
     os.write(root / "AGENTS.md", "# AGENTS stub\n")
     os.makeDir.all(root / ".nebflow" / "worktrees")
     os.write(root / ".nebflow" / "flow-map.json", "{\"flow\":\"map-stub\"}")
@@ -134,6 +136,7 @@ class ExplorerDotDirDanglingSymlinkSpec extends FunSuite:
 
   test("symlink resolving outside the project root canonicalizes outside (guard rejects)") {
     withTempRoot { root =>
+      nebflow.SymlinkProbe.assumeSymlinks()
       val outsideDir = os.Path(JFiles.createTempDirectory("nb-explorer-outside").toString)
       try
         os.symlink(root / "escape-link", outsideDir)

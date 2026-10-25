@@ -1633,7 +1633,9 @@ final class WeixinIlinkBridgePlugin(
           )
         ).as(res)
       else
-        val name = media.imagePath.orElse(media.filePath).map(_.split('/').last).getOrElse(kindLabel)
+        // 通知面文件名取段前先归一反斜杠：Windows 原生路径 split('/') 切不动
+        // （通知会带全路径），归一后两种检出形态同取末段。
+        val name = media.imagePath.orElse(media.filePath).map(_.replace('\\', '/').split('/').last).getOrElse(kindLabel)
         val line =
           if kindLabel == "image" then s"[图片发送失败 code=${res.code}] ${res.reason}"
           else s"[文件「$name」发送失败 code=${res.code}] ${res.reason}"

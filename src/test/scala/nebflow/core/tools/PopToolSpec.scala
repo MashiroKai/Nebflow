@@ -327,7 +327,9 @@ class PopToolSpec extends FunSuite:
     os.write.over(dir / "b.pdf", Array.fill(8)(0x43.toByte))
     val buf = scala.collection.mutable.ListBuffer.empty[Json]
     // §16 案一披露串（作者放行令逐字；${n} = 解析所得路径条数，此处 2）。
-    val quoted = s"""["${dir / "a.png"}","${dir / "b.pdf"}"]"""
+    // 路径进 JSON 字符串先转义反斜杠（Windows 原生形态裸插 = 非法转义 ⇒ 解析拒收）。
+    val jsonEsc = (p: os.Path) => p.toString.replace("\\", "\\\\")
+    val quoted = s"""["${jsonEsc(dir / "a.png")}","${jsonEsc(dir / "b.pdf")}"]"""
     pop(JsonObject("filePath" -> quoted.asJson), buf) match
       case Right(raw) =>
         val p = payloadOf(raw)

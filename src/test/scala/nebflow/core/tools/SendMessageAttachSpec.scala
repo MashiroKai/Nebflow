@@ -105,11 +105,13 @@ class SendMessageAttachSpec extends CatsEffectSuite:
     // lift the latch for the duration of this behavior probe (call is an eager def,
     // so the guard must evaluate with the latch already lifted).
     nebflow.FriendsSealKit.withUnsealedSync {
+      // 绝对路径取宿主 tmpdir（Windows 上 "/tmp" 非绝对 ⇒ 绝对闸先于服务缺席报错）。
+      val absAttachment = java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"), "a.bin").toString
       val res = callTool(
         obj(
           "to" -> Json.fromString("alice"),
           "message" -> Json.fromString("hi"),
-          "attachments" -> Json.arr(Json.fromString("/tmp/a.bin"))
+          "attachments" -> Json.arr(Json.fromString(absAttachment))
         )
       ).unsafeRunSync()
       assert(res.isLeft)
@@ -150,7 +152,8 @@ class SendMessageAttachSpec extends CatsEffectSuite:
       obj(
         "to" -> Json.fromString("device:KAI"),
         "message" -> Json.fromString("hi"),
-        "targetDir" -> Json.fromString("/tmp/whatever")
+        // 绝对路径取宿主 tmpdir（Windows 上 "/tmp" 非绝对 ⇒ 绝对闸先于设备腿报错）。
+        "targetDir" -> Json.fromString(java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"), "whatever").toString)
       )
     ).unsafeRunSync()
     val msg = res.fold(_.message, identity)

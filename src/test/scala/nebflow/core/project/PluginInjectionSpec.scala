@@ -209,6 +209,12 @@ class PluginInjectionSpec extends CatsEffectSuite:
   }
 
   test("injection accepts the lowercase plugin.md spelling (same mechanism, zero migration)") {
+    // NTFS/APFS-CaseFold 文件系统大小写不敏感：`Plugin.md → plugin.md` 的仅大小写
+    // 改名在该类卷上不成立 ⇒ Windows 上跳过本用例（机制前提不成立，非引擎缺陷）。
+    assume(
+      !nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName),
+      "case-only rename requires a case-sensitive filesystem"
+    )
     setPluginsEnabled(true)
     writeSkillPlugin("p1", "LOWER-SPELLING")
     os.move(tempRoot / "plugins" / "p1" / "Plugin.md", tempRoot / "plugins" / "p1" / "plugin.md")

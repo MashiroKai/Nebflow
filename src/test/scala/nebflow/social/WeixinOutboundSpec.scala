@@ -176,6 +176,12 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       assertEquals(read, Some(t1))
       assert(t1.length >= 40, s"a 32-byte base64url token is at least 40 chars, got ${t1.length}")
       val path = WeixinOutboundAdapter.tokenPath(root).toNIO
+      // POSIX 读回断言：Windows 无 posix 视图 ⇒ 跳过（mint 本腿已断言成功；owner-only
+      // 的 Windows 臂走 ACL，另案）。同 WeixinIlinkScanBindSpec.posixOnly 惯例。
+      assume(
+        !nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName),
+        "POSIX-only owner-mode readback"
+      )
       assertEquals(
         PosixFilePermissions.toString(Files.getPosixFilePermissions(path)),
         "rw-------",

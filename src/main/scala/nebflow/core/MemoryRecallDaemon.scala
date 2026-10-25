@@ -140,6 +140,25 @@ object MemoryRecallDaemon:
   // ── 子进程执行 ──────────────────────────────────────────────────────────
 
   /**
+   * python 解释器（缓存）：Windows 没有 `python3` 可执行名（python.org 装的叫
+   * `python`，官方启动器叫 `py`）⇒ 依次回退探测（`--version` 能起进程即可用），
+    * 全部缺席则仍报 `python3`（错误语义 = 今天的「找不到命令」，诊断口径不变）；
+   * 非 Windows 恒 `python3`（今日行为零变化）。
+   */
+  private lazy val pythonCmd: String =
+    if !nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName) then
+      "python3"
+    else
+      List("python", "py")
+        .find { cmd =>
+          try
+            new ProcessBuilder(cmd, "--version").start().waitFor(5, TimeUnit.SECONDS)
+            true
+          catch case _: Throwable => false
+        }
+        .getOrElse("python3")
+
+  /**
    * 跑一次 `--update --source auto`。输出重定向到临时文件（子进程秒级、输出
    * ~3 行——文件中转杜绝管道满阻塞，超时杀进程无悬挂读线程）。成功解析
    * `indexed:` 计数行回填 [[TickOutcome.Updated]]；非零退出 / 超时 = 左值原因
@@ -150,7 +169,7 @@ object MemoryRecallDaemon:
       val out = Files.createTempFile("stand-recall-update", ".log")
       try
         val pb = new ProcessBuilder(
-          "python3",
+          pythonCmd,
           tool.toString,
           "--update",
           "--source",

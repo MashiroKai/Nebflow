@@ -238,7 +238,9 @@ class MultiEditToolSpec extends CatsEffectSuite:
   // -------------------------------------------------------------------------
 
   test("#11: MultiEdit refuses to create files (missing file → clear error)") {
-    val input = multiEditInput(Paths.get("/tmp/nb-multiedit-no-such-file-xyz.txt"), ("a", "b", false))
+    // 宿主 tmpdir（Windows 上 Paths.get("/tmp/…") 非绝对 ⇒ 绝对闸先于 cannot-create 报错）。
+    val input =
+      multiEditInput(Paths.get(System.getProperty("java.io.tmpdir"), "nb-multiedit-no-such-file-xyz.txt"), ("a", "b", false))
     MultiEditTool.call(input, ctx).map {
       case Left(err) => assert(err.message.contains("cannot create"), err.message)
       case Right(_) => fail("must fail")
@@ -255,9 +257,10 @@ class MultiEditToolSpec extends CatsEffectSuite:
 
   test("#13: summarize and summarizeResult") {
     val p = Paths.get("/tmp/spec/MyFile.scala")
+    // 路径段按归一形态断言（Windows toString 出反斜杠）；文件名与引号包裹契约不变。
     assertEquals(
       MultiEditTool.summarize(multiEditInput(p, ("a", "b", false), ("c", "d", false))),
-      "MultiEdit(MyFile.scala, 2 edits)\n  (\"/tmp/spec/MyFile.scala\")"
+      s"""MultiEdit(MyFile.scala, 2 edits)\n  ("${p.toString.replace('\\', '/')}")"""
     )
     val result = "OK:UPDATED MyFile.scala, 3 added, 1 removed\n@@ -1,1 +1,3 @@\n+x"
     assertEquals(MultiEditTool.summarizeResult(JsonObject(), result), "3 lines added, 1 line removed")

@@ -405,7 +405,9 @@ object FileChangeReport:
     try
       val rootP = Paths.get(root).toAbsolutePath.normalize
       val pathP = Paths.get(path).toAbsolutePath.normalize
-      val rel = rootP.relativize(pathP).toString
+      // 报告面统一正斜杠：Windows relativize.toString 出反斜杠形态（sub\two.txt），
+      // 消费方按 / 段比对（NIO 两种分隔符等价，落盘不变）。
+      val rel = rootP.relativize(pathP).toString.replace('\\', '/')
       if rel.startsWith("..") then path else rel
     catch case _: Exception => path
 

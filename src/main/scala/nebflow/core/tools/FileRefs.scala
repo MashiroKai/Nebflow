@@ -345,7 +345,10 @@ private[tools] object FileRefs:
     else if Files.exists(parent) then Some(parent)
     else nearestExistingParent(parent, hops + 1)
 
-  def describe(path: Path): String = path.toAbsolutePath.normalize.toString
+  def describe(path: Path): String =
+    // 展示面统一正斜杠（Windows 测试批 2026-10-25）：normalize.toString 在 Windows
+    // 出反斜杠形态，消费方（模型/前端/测试）按 / 段比对（NIO 两种分隔符等价）。
+    path.toAbsolutePath.normalize.toString.replace('\\', '/')
 
   def hasTemplatePlaceholder(s: String): Boolean =
     s.contains("${") || s.contains("{{")

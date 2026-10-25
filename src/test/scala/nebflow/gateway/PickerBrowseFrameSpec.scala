@@ -247,7 +247,12 @@ class PickerBrowseFrameSpec extends CatsEffectSuite:
     assume(os.isDir(os.Path(home)), "no real home on this host")
     IO {
       assertEquals(nebflow.shared.PathUtil.expandTilde("~"), home)
-      assertEquals(nebflow.shared.PathUtil.expandTilde("~/Downloads"), home + "/Downloads")
+      // 分隔符无关比较：Windows 上 expandTilde 返回原生反斜杠形态，拼接面用正斜杠
+      // 字面量断言会红（home 本身两端同形，拼接段归一后比）。
+      assertEquals(
+        nebflow.shared.PathUtil.expandTilde("~/Downloads").replace('\\', '/'),
+        home.replace('\\', '/') + "/Downloads"
+      )
       // and the frame builder reports the RESOLVED path (the breadcrumb feed)
       val tilde = os.Path(nebflow.shared.PathUtil.expandTilde("~"), os.pwd)
       val f = frame(tilde)
