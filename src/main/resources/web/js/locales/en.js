@@ -1726,6 +1726,10 @@ export default {
   'canvas.loadingFile': 'Opening…',
   'canvas.loadFailed': 'Failed to open',
   'canvas.retry': 'Retry',
+  // canvas file-refresh batch (2026-10-25 author order): pane corner re-read button
+  'canvas.refresh': 'Re-read from disk',
+  'canvas.refreshDirty': 'Unsaved changes — save or revert before refreshing.',
+  'canvas.refreshFailed': 'Refresh failed: {error}',
   // cardwin-whitepage fix batch (2026-10-22): standalone card-window boot-face
   // failure copy (canvas.js cardWindowBootFace)
   'canvas.cardwinFailHint': 'Failed to load the card content — you can retry.',

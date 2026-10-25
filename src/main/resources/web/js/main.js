@@ -4427,4 +4427,21 @@ initRootNameProbe();
 connect();
 chatViews.primary.dom.input.focus();
 
+// canvas 查看源码提速批（作者令 2026-10-25）：Monaco 空闲预载。
+// 归因：`monacoEditor.js` 的 preloadMonaco 一直无人调用——「查看源码」首击
+// 独扛 loader.js → editor/main.js（~3.6MB）整条 AMD 链 + 解析执行（本机
+// 实测见 reports/20261025*_canvas-file-refresh），跨机访问再叠每请求 RTT，
+// 点击后转圈数秒。空闲时段预载后，点击只剩 createEditor（毫秒级）。
+// 移动端跳过（源码态无入口，白占内存）；失败静默（首击照旧懒加载兜底）。
+const idleWin = /** @type {any} */ (window);
+const idlePreload = typeof idleWin.requestIdleCallback === 'function'
+  ? idleWin.requestIdleCallback.bind(idleWin)
+  : (/** @type {() => void} */ cb) => setTimeout(cb, 2200);
+idlePreload(() => {
+  import('./activityBar.js').then(({ isMobileViewport }) => {
+    if (isMobileViewport()) return;
+    import('./monacoEditor.js').then(({ preloadMonaco }) => { preloadMonaco(); }).catch(() => {});
+  }).catch(() => {});
+}, { timeout: 10000 });
+
 // Cloud STT — no model preloading needed.

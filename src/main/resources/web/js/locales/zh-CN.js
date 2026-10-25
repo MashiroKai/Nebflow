@@ -1660,6 +1660,10 @@ export default {
   'canvas.loadingFile': '正在打开…',
   'canvas.loadFailed': '打开失败',
   'canvas.retry': '重试',
+  // canvas 文件刷新批（2026-10-25 作者令）：页签右下「重新读盘」钮
+  'canvas.refresh': '从磁盘重新读取',
+  'canvas.refreshDirty': '有未保存的修改，先保存或撤销后再刷新。',
+  'canvas.refreshFailed': '刷新失败：{error}',
   // 卡窗白屏修复批（2026-10-22）：独立卡窗引导态面失败文案（canvas.js cardWindowBootFace）
   'canvas.cardwinFailHint': '卡片内容加载失败，可重试。',
   'canvas.cardwinAuthHint': '登录状态可能已过期——重试会自动续登或弹出登录引导。',

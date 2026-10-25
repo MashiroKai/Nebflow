@@ -853,6 +853,77 @@ function scheduleFileRefresh(entry) {
   }, FILE_REFRESH_DEBOUNCE);
 }
 
+/** Manual re-read for a file tab (canvas 文件刷新批, 作者令 2026-10-25): the
+ *  bottom-right refresh button's action. Rides the SAME readFile round trip as
+ *  scheduleFileRefresh (pop.readFile → fileContent → workspace-open-item →
+ *  openWorkspaceItem) but bypasses the activation cooldown (the user asked for
+ *  it), never clobbers unsaved edits (visible toast, same isTabDirty discipline
+ *  as every other refresh path) and drops the nf-file blob-ledger entry first —
+ *  a ledger hit renders cached bytes with zero fetch, which would make the
+ *  button silently lie for image/pdf tabs. */
+function refreshFileTab(entry) {
+  if (!entry || !entry.absPath) return;
+  const pane = entry.paneEl;
+  if (!pane || !pane.isConnected) return;
+  if (pane.dataset.sourceMode === '1') return;  // button hidden there (CSS); programmatic guard
+  if (isTabDirty(entry)) {
+    window.__showToast?.(t('canvas.refreshDirty'), 'info');
+    return;
+  }
+  if (entry._refreshing) return;
+  entry._refreshing = true;
+  const btn = pane.querySelector('.canvas-refresh-toggle');
+  if (btn) btn.classList.add('busy');
+  // Safety: un-busy even if the response never arrives (mirrors the
+  // _refreshing safety window in scheduleFileRefresh).
+  setTimeout(() => { if (entry._refreshing) settleFileRefresh(entry); }, 10000);
+  Promise.all([
+    import('./ws.js'),
+    import('./state.js'),
+    import('./nfFileCache.js').then(({ nfCacheInvalidatePath }) => nfCacheInvalidatePath(entry.absPath)).catch(() => {}),
+  ]).then(([{ sendWs }, { default: stateMod }]) => {
+    if (!tabs.has(entry.id) || entry.paneEl !== pane) { settleFileRefresh(entry); return; }
+    if (!sendWs) { settleFileRefresh(entry); return; }
+    // refresh:true ⇒ the response must not steal activation; manual:true ⇒
+    // openWorkspaceItem re-renders even without inline content (binary legs).
+    window.dispatchEvent(new CustomEvent('explorer-preload-pinned', {
+      detail: { path: entry.absPath, pinned: entry.pinned !== false, refresh: true, manual: true },
+    }));
+    sendWs({ type: 'pop.readFile', path: entry.absPath, sessionId: stateMod?.activeSessionId });
+  }).catch(() => { settleFileRefresh(entry); });
+}
+
+/** Clear one file tab's refresh-in-flight state (busy icon + _refreshing). */
+function settleFileRefresh(entry) {
+  entry._refreshing = false;
+  const pane = entry.paneEl;
+  if (pane && pane.isConnected) pane.querySelector('.canvas-refresh-toggle.busy')?.classList.remove('busy');
+}
+
+/** Mount the bottom-right refresh button on a rendered file tab pane. Called
+ *  after every renderFile (viewers wipe pane.innerHTML, so the button must be
+ *  re-seated each render). No absPath ⇒ no button (panel/URL/attachment tabs). */
+function mountFileRefreshButton(pane, entry) {
+  if (!entry || !entry.absPath) return;
+  import('./viewers/shared.js').then(({ addRefreshButton }) => {
+    // The tab can close (or the whole pane be replaced) while the import settles.
+    if (!pane.isConnected || tabs.get(entry.id) !== entry) return;
+    addRefreshButton(pane, { onRefresh: () => refreshFileTab(entry) });
+  }).catch(() => { /* shared.js unavailable — button absent, zero behavior change */ });
+}
+
+// MD/HTML source↔rendered toggle round trips re-run the viewer WITHOUT a
+// readFile (addSourceToggle → renderFn) — the render wipes pane.innerHTML, so
+// the refresh button must be re-seated here (event decouples shared.js from
+// canvas.js; no import edge back).
+document.addEventListener('canvas-viewer-rerendered', (e) => {
+  const pane = /** @type {any} */ (e.target);
+  if (!(pane instanceof HTMLElement)) return;
+  for (const entry of tabs.values()) {
+    if (entry.paneEl === pane) { mountFileRefreshButton(pane, entry); return; }
+  }
+});
+
 /** Switch the active tab — shows its pane, hides all others.
  *  Also notifies Monaco editors when they become active (for Ctrl+S focus).
  *  @param {string} id — Tab identifier. */
@@ -1099,7 +1170,7 @@ export async function openWorkspaceItem(item) {
   // id is let (not const): the absPath dedupe below may rewrite it to the
   // existing tab's id for the same file.
   let { id } = item;
-  const { itemType, title, content, absPath, size, pinned, anchor, warnings, stream, mtimeMs, readOnly } = item;
+  const { itemType, title, content, absPath, size, pinned, anchor, warnings, stream, mtimeMs, readOnly, manual } = item;
   if (!id) return;
 
   // URL type — render the page in a sandboxed iframe. Handled before all
@@ -1125,13 +1196,20 @@ export async function openWorkspaceItem(item) {
   if (item.error) {
     // 已有该路径标签（后台刷新失败）→ 保留原内容，不覆盖成错误提示。
     if (tabs.has(id)) {
+      // 手动刷新收到错误应答（文件此刻不可读）：原内容照旧保留（F3 纪律），
+      // 但点击不能无声蒸发——给可见失败反馈。后台刷新照旧静默。
+      if (manual) window.__showToast?.(t('canvas.refreshFailed', { error: item.error }), 'error');
       if (!item.background) setActiveTab(id);
+      settleFileRefresh(tabs.get(id));
       return;
     }
     const placeholderTitle = title || (absPath ? absPath.split('/').pop() : id);
     const entry = openTab(id, placeholderTitle, { type: 'code', pinned: !!pinned, absPath: absPath || id });
     if (!entry) return;
     renderFilePlaceholder(entry.paneEl, item.error, absPath || id);
+    // 骨架标签也挂刷新钮：文件恢复可读后一键重读即可翻正（readFile →
+    // fileContent → 下方既有页签重渲腿），不用整页刷新。
+    mountFileRefreshButton(entry.paneEl, entry);
     entry._lastRefreshAt = Date.now();
     if (!item.background) setActiveTab(id);
     return;
@@ -1167,7 +1245,7 @@ export async function openWorkspaceItem(item) {
     // 仍不抢激活（同下方 :1067 口径），面板开着的路径零变化。
     if (!item.background && !isCanvasOpen()) openCanvas();
     const entry = tabs.get(id);
-    entry._refreshing = false;  // response arrived (or user-initiated open)
+    settleFileRefresh(entry);  // response arrived (or user-initiated open) — un-busy the refresh button
     // A response arrived = the file was freshly checked. Update unconditionally
     // — binary viewers (image/pdf/...) receive no content and never re-render,
     // so without this their _lastRefreshAt stays stale, the cooldown never
@@ -1200,7 +1278,11 @@ export async function openWorkspaceItem(item) {
       const pgExisting = jumpIntent.pageStart;
       if (Number.isFinite(pgExisting)) /** @type {any} */ (entry.paneEl)._scrollToPage?.(pgExisting);
     }
-    if (content && !isTabDirty(entry) && entry.paneEl.dataset.sourceMode !== '1') {
+    // 手动刷新（manual，canvas 文件刷新批）：二进制腿的 readFile 应答不带
+    // content——没有 manual 旗标时该分支对图片/PDF 永不触发，刷新按钮就是
+    // 无声空点。流式大文本除外：其变更面走上方 acceptMeta（保滚动位），
+    // 整面重挂反而把读者扔回文件头。
+    if ((content || manual) && !stream && !isTabDirty(entry) && entry.paneEl.dataset.sourceMode !== '1') {
       // Skip the re-render when the live editor already shows this content —
       // remounting Monaco on every refresh would steal the cursor/scroll for
       // zero visible change (matters for focus-triggered refreshes).
@@ -1212,6 +1294,7 @@ export async function openWorkspaceItem(item) {
         }
         const { renderFile } = await import('./fileViewers.js');
         await renderFile(entry.paneEl, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: anchor || stash, warnings });
+        mountFileRefreshButton(entry.paneEl, entry);
         notifyCardUpdate(id);   // UI 批⑧：独立窗内容同步（卡窗重读文件）
       }
     }
@@ -1320,6 +1403,7 @@ export async function openWorkspaceItem(item) {
   /** @type {import('./utils.js').ViewerContext & {objectUrl?: string, stream?: any, mtimeMs?: number, readOnly?: boolean}} */
   const renderCtx = { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: renderAnchor, warnings, objectUrl: item.objectUrl, stream: item.stream || null, mtimeMs: item.mtimeMs || 0, readOnly: readOnly === true };
   await renderFile(pane, renderCtx);
+  mountFileRefreshButton(pane, entry);  // 文件刷新批：右下刷新钮（查看器会清 pane.innerHTML，须渲后挂载）
   entry._lastRefreshAt = Date.now();  // just rendered — don't immediately re-fetch
   notifyCardUpdate(id);               // UI 批⑧：独立窗首渲/重渲同步（卡窗自读文件）
 }
