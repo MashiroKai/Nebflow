@@ -13,20 +13,20 @@ status: solved
 
 | # | 症状 | 一行结论 |
 |---|------|---------|
-| ① | 插件 nebflow-plugin-creator 拒载 | **非用户篡改，是出厂前进踩死锁**：盘上包逐字节等于 10-14 出厂版（eef4c9119），10-20 出厂更新（5fe4309c6「Plugin.md=必要文件机制」种子面）把内置 digest 从 0621dd40dbfe 抬到 f0b97c9f90cc，而信任记录停在更旧的 e885aa308c21 ⇒ SeedService 判「用户改过保留」（刷新腿要求 runtime==trusted，永不触发）⇒ 官方闸（只认当前 jar 出厂 digest）拒载——两个仲裁器基准不同步的自愈死锁。**已修**：备份后恢复出厂字节，digest 已吻合，**免重启实时装载成功**（见「插件修复证据」）。 |
+| ① | 插件 nebflow-plugin-creator 拒载 | **非用户篡改，是出厂前进踩死锁**：盘上包逐字节等于 10-14 出厂版（eef4c9119），10-20 出厂更新（5fe4309c6「Plugin.md=必要文件机制」种子面）把内置 digest（包内容的 sha256 短指纹）从 0621dd40dbfe 抬到 f0b97c9f90cc，而信任记录停在更旧的 e885aa308c21 ⇒ SeedService 判「用户改过保留」（刷新腿要求 runtime==trusted，永不触发）⇒ 官方闸（只认当前 jar 出厂 digest）拒载——两个仲裁器基准不同步的自愈死锁。**已修**：备份后恢复出厂字节，digest 已吻合，**免重启实时装载成功**（见「插件修复证据」）。 |
 | ② | projects 403 | **隧道来源的会话在中继 ingress 平面（[[glossary#^relay-ingress-plane]]，下称 ingress 平面）被拒，不是宿主网关闸**：link.mystand.space 控制台 ingress（Rust link-server）对每个 /api/* 先验中继自己那套登录（require_user），过闸才经隧道转发到宿主；宿主侧 curl 实证全部 200（带有效会话）。作者浏览器缺的是 ingress 平面登录 ⇒ 请求根本没到宿主（当日重启后宿主侧零鉴权拒绝日志可证）。 |
 | ③ | 知识图谱（图谱视图，[[glossary#^graph-view]]）空白 | **403 群下游**：/api/wiki/graph 是宿主会话门面，curl 带有效会话 200 实证；前端拉不到数据即空态渲染。无独立病。 |
 | ④ | token 用量面板加载失败 | **403 群下游**：/api/usage/aggregate 同一宿主会话门，curl 带有效会话 200 实证。 |
 | ⑤ | 搜索聊天记录 403 | **403 群下游**：/api/sessions（搜索/历史）同一宿主会话门，curl 带有效会话 200 实证。 |
-| ⑥ | 心跳进程（daemons 面板）空 | **403 群下游**：面板数据 = GET /api/daemons 同一宿主会话门，curl 带有效会话 200 实证（空态=拉不到）。附带观察：'Nebflow Website' daemon 凌晨 01:39–06:19 曾 crash-loop（exit 1）后自稳，与本症状无关。 |
+| ⑥ | 心跳进程（daemons 面板）空 | **403 群下游**：面板数据 = GET /api/daemons 同一宿主会话门，curl 带有效会话 200 实证（空态=拉不到）。附带观察：'Nebflow Website' daemon 凌晨 01:39–06:19 曾 crash-loop（反复崩溃退出的循环，exit 1）后自稳，与本症状无关。 |
 | ⑦ | 均在 link.mystand.space | **与 ingress 平面解释自洽**：静态面由 Service Worker（[[glossary#^service-worker]]，下称 SW）缓存秒开（sw.js 对 /api 零接触），API/WS 全在 ingress 平面被拒 ⇒ 静好 API 全挂、宿主侧零日志。 |
-| ⑧ | 智能体头像/名称跨设备不同步 | **双实现缺口（非 403 群，与隧道无关）**：①头像只有 localStorage 本地腿（agentProfile.js `writeStored`=纯本地，全仓无任何服务端头像面）——「登录后可随账号同步」从未实现；②名称「回车即存」更是纯内存（saveName 只写 state/agentsData 行+事件，**连本机刷新都会还原**；唯一落盘写点是一次性 onboarding 的 agent.json 腿，面板写回 2026-09-06 已退役）。**本批已补齐双腿**（见「症状⑧修复」），候 [[glossary#^restart-window]]（重启窗）生效。 |
+| ⑧ | 智能体头像/名称跨设备不同步 | **双实现缺口（非 403 群，与隧道无关）**：①头像只有 localStorage 本地腿（agentProfile.js `writeStored`=纯本地，全仓无任何服务端头像面）——「登录后可随账号同步」从未实现；②名称「回车即存」更是纯内存（saveName 只写 state/agentsData 行+事件，**连本机刷新都会还原**；唯一落盘写点是一次性 onboarding（首启引导）流的 agent.json 腿，面板写回 2026-09-06 已退役）。**本批已补齐双腿**（见「症状⑧修复」），候 [[glossary#^restart-window]]（重启窗）生效。 |
 
 ## 403 群主攻：判定与证据
 
 **架构事实**（代码读）：控制台有两套独立会话平面——
 
-1. **ingress 平面**（link-server/src/routes.rs:559 `require_user`）：Logto AT（访问令牌）+ refresh 滑动窗，管 /api/*、/ws、静态资源的**转发准入**；
+1. **ingress 平面**（link-server/src/routes.rs:559 `require_user`）：Logto（官网身份认证服务）AT（访问令牌）+ refresh 滑动窗，管 /api/*、/ws、静态资源的**转发准入**；
 2. **宿主会话平面**（[[glossary#^host-session-plane]]；GatewaySessionStore，纯内存）：管宿主各面鉴权，**每次引擎重启即清空**（设计如此，注册过的 trade-off）。
 
 **宿主侧健康证明**（curl 级，2026-10-21 11:2x 实测）：
@@ -42,7 +42,7 @@ GET  /api/daemons       (带会话)               → 200
 GET  /api/sessions      (带会话)               → 200
 ```
 
-当日重启 jar 新含的四道鉴权改动（Secure cookie 按来源 / auth-trim 服务端 / local-ticket 腿绑定 / 绑定闸）**均不在中继平面、也不拦 relay-mint 会话**——localTicketOnLeg 只约束 local-ticket 源会话（隧道腿 relay-mint 逐字不受影响，GatewayAuth.scala:102-103），Secure 按来源正确，绑定状态实测 `bound`。**判定：不是回归 bug，是真·ingress 平面登录缺失（需作者重新登录一次）**；但控制台前端有一个**真陷阱**：WS 被拒后的兜底登录走「PKCE（授权码交换防截持的 OIDC 流程）直连宿主」——它只能铸宿主会话，对 ingress 平面无效，形成「登录了还是 403」死循环（本次已修，见「引擎侧改动」）。
+当日重启 jar 新含的四道鉴权改动（Secure cookie 按来源 / auth-trim 服务端 / local-ticket 腿绑定 / 绑定闸）**均不在中继平面、也不拦 relay-mint 会话**——localTicketOnLeg 只约束 local-ticket 源会话（隧道腿 relay-mint 逐字不受影响，GatewayAuth.scala:102-103），Secure 按来源正确，绑定状态实测 `bound`。**判定：不是回归 bug，是真·ingress 平面登录缺失（需作者重新登录一次）**；但控制台前端有一个**真陷阱**：WS 被拒后的兜底登录走「PKCE（授权码交换防截持的 OIDC 流程；OIDC＝OpenID Connect 登录协议）直连宿主」——它只能铸宿主会话，对 ingress 平面无效，形成「登录了还是 403」死循环（本次已修，见「引擎侧改动」）。
 
 **ingress 平面缺失证据**（无需作者浏览器即可取得）：
 
@@ -74,7 +74,7 @@ curl -I https://link.mystand.space/api/auth/login?return_to=%2F → 303 auth.mys
 | 面 | 实现 |
 |---|---|
 | 名称落盘+同步 | 引擎 `PUT /api/agents/:name/display-name`（trim 1–64 字，AtomicJson 合并写 agents/<name>/agent.json 的 displayName；root 沿用 OnboardingArtifacts 的 name 键补底纪律，非 root 不补、既有字段零抹除）+ 前端 saveName fire-and-forget 写穿（内存先写+事件照旧，UI 零阻塞）。agentsData 行（handleListAgents 折叠 agent.json）与 rootName 探针同源此文件 ⇒ 同引擎多端下次 list/探针即收敛。 |
-| 头像落盘+同步 | 引擎 `PUT /api/agents/:name/avatar`（base64 dataURL，png/jpeg/webp，字节闸 ≤200KB，落 agents/<name>/avatar）+ `GET`（**fs2.Stream 显式字节实体**——裸 Ok(Array[Byte]) 会命中 circe byte 数组编码器把图片变 JSON 数字数组，/neblink/avatar 同款教训；内容 sha256 强 ETag + If-None-Match 304 + Cache-Control private）+ `DELETE`（幂等 reset）。前端：上传/reset fire-and-forget 写穿；读腿「本地优先」照旧（localStorage 先），**缺键回填**（本地空 → GET 引擎 → 命中写回本地键+重绘，按 agentName 在飞去重）——另一端经回填/下次拉取收敛。 |
+| 头像落盘+同步 | 引擎 `PUT /api/agents/:name/avatar`（base64 dataURL，png/jpeg/webp，字节闸 ≤200KB，落 agents/<name>/avatar）+ `GET`（**fs2.Stream 显式字节实体**——裸 Ok(Array[Byte]) 会命中 circe byte 数组编码器把图片变 JSON 数字数组，/neblink/avatar 同款教训；内容 sha256 强 ETag（内容指纹缓存校验头）+ If-None-Match 304（未变免体应答）+ Cache-Control private）+ `DELETE`（幂等 reset）。前端：上传/reset fire-and-forget 写穿；读腿「本地优先」照旧（localStorage 先），**缺键回填**（本地空 → GET 引擎 → 命中写回本地键+重绘，按 agentName 在飞去重）——另一端经回填/下次拉取收敛。 |
 | 文案校直 | `profile.note`：「登录后可随账号同步」→「保存后同步到本引擎的所有登录设备；名称回车即存（跨设备生效）」（zh-CN + en 同步；新文案与实现逐字对齐）。 |
 | 定位纪律 | 三面全部 withAuth（ApiFull 会话/Bearer，与 GET /agents/:name 同 rail，**新路由禁裸奔过夜**口径）；agentName 白名单校验拒路径穿越；2026-09-06 退役臂（PUT /agents/:name ⇒ 410）保持钉住——display 面不在其射程内。 |
 
@@ -93,7 +93,7 @@ curl -I https://link.mystand.space/api/auth/login?return_to=%2F → 303 auth.mys
 
 ## 附带观察（未处理，一行备案）
 
-- DESKTOP-IJBBEOT（100.118.229.97）对宿主 8080 的 presence WS 升级持续被 conn-guard 以 per-ip-cap 拒（该 IP 已持 64 条 WS），每次快照 rejected 计数缓涨——对端侧的拨号循环病，与本批七症状无关，候另行排查。
+- DESKTOP-IJBBEOT（100.118.229.97）对宿主 8080 的 presence WS 升级持续被 conn-guard（连接防护闸）以 per-ip-cap（单 IP 连接数上限）拒（该 IP 已持 64 条 WS），每次快照 rejected 计数缓涨——对端侧的拨号循环病，与本批七症状无关，候另行排查。
 - 前日 19:40 有 "portal uplink inbox full" 背压告警簇（中继慢于本端），当日零复现。
 
 ## 关键文件

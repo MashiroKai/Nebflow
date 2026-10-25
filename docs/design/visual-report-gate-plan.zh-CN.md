@@ -6,9 +6,9 @@ status: open
 # visual-report 机械门禁方案（zh-CN · 仅方案，未实现）
 
 - **目标**：把「md/html 产出按图谱编排（论文式 / wiki-docs 规范）」从 **skill 行为约束**升级为**机械可查的检查器**——产出文件静态扫描，逐特征给 PASS/FAIL，可接入判定链作门禁。
-- **背景缺口**：审计 a7a04f4e 遗留 2 在案——「『汇报必须使用插件』是约定级强制：md/html 产出走图谱的保证靠 wiki-docs skill 规则（行为规范），非机械门禁；若要硬约束需后续加 lint/CI 类机制」。本件即该机制的**方案件**：特征清单＋正则草案＋挂点评估＋推荐案。**不含任何实现件**（正则草案写入文档代码块属文档内容，不算实现）。
-- **规范底料**：`~/.nebflow/plugins/visual-report/skills/wiki-docs/SKILL.md`（vault 布局/论文式/引用纪律/frontmatter/场景包）、同插件 `skills/core/SKILL.md`（图预算/嵌入路径/dark-mode）、审计 a7a04f4e M1③（论文式引用、点击跳转＋行级高亮的验收口径）。
-- **配套**：[[production-ops-checklist.zh-CN]]、[[parallel-session-resources.zh-CN]]。
+- **背景缺口**：审计 a7a04f4e（批次会话短 id，下同）遗留 2 在案——「『汇报必须使用插件』是约定级强制：md/html 产出走图谱的保证靠 wiki-docs skill 规则（行为规范），非机械门禁；若要硬约束需后续加 lint/CI 类机制」。本件即该机制的**方案件**：特征清单＋正则草案＋挂点评估＋推荐案。**不含任何实现件**（正则草案写入文档代码块属文档内容，不算实现）。
+- **规范底料**：`~/.nebflow/plugins/visual-report/skills/wiki-docs/SKILL.md`（vault（[[glossary#^vault]]）布局 / 论文式引用（引用关系成图谱边，[[glossary#^citation-edge]]）/ 引用纪律 / frontmatter（[[glossary#^front-matter]]）/ 场景包）、同插件 `skills/core/SKILL.md`（图预算/嵌入路径/dark-mode）、审计 a7a04f4e M1③（论文式引用、点击跳转＋行级高亮的验收口径）。
+- **配套**：[[production-ops-checklist.zh-CN]]、[[parallel-session-resources.zh-CN]]；相关：[[wiki-graph-paragraph-ref-design.zh-CN]]（R2/R6 锚校验的图谱消费面）、[[glossary]]（vault/引用纪律术语）。
 
 ---
 

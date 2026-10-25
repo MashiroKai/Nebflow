@@ -1,3 +1,8 @@
+---
+type: design-note
+status: done
+---
+
 # 入站消息来源设备标记 spec（device-provenance 批）
 
 批：入站消息标记来源设备批（2026-10-23，作者微信令）
@@ -19,15 +24,15 @@
 每条网页控制台入站消息在模型上下文里携带：
 
 1. **来源设备**——手机/Mac/Windows 端别 + 可读设备名；
-2. **登记状态**——该设备是否在平台设备列表（NebLink 花名册 self + peers）里。
+2. **登记状态**——该设备是否在平台设备列表（NebLink——设备互联/组网面——的花名册，self + peers）里。
 
 ## 1. 现状考古（三点的答案）
 
 | 考古点 | 结论 |
 | --- | --- |
-| 现有渠道标记怎么实现 | `BridgeOrigin(channelId, channelDisplay, chatRef)`（`bridge/BridgePlugin.scala`）：渠道供给纯数据，模板单点 `BridgeOrigin.marker` 渲染 `<system-reminder>以下消息来自微信（社交接口 · 渠道 weixin-ilink）· 发送方：X · 会话：Y</system-reminder>`，**只进模型面**（`ExternalEvent.payload`），会话 `.ui.json` 行与 `bridgeUser` 帧保持裸正文（source-marker relocation 批 2026-10-01 的两 face 分离） |
+| 现有渠道标记怎么实现 | `BridgeOrigin(channelId, channelDisplay, chatRef)`（`bridge/BridgePlugin.scala`）：渠道供给纯数据，模板单点 `BridgeOrigin.marker` 渲染 `<system-reminder>以下消息来自微信（社交接口 · 渠道 weixin-ilink）· 发送方：X · 会话：Y</system-reminder>`，**只进模型面**（`ExternalEvent.payload`），会话 `.ui.json` 行与 `bridgeUser` 帧保持裸正文（source-marker relocation 批 2026-10-01 定下的两 face 分离——模型上下文面与显示面各走各） |
 | 平台设备列表在哪 | NebLink 花名册：`GET /api/neblink/status` 的 `device{id,name,platform,…}`（self = 本机 `~/.nebflow/device.json` 的 `DeviceIdentity`）+ `peers[{deviceId,deviceName,platform,…}]`（`NeblinkService.identity` / `NeblinkService.peers`，Ref 内存读）。前端既有单一读取点 `web/js/deviceRoster.js` |
-| web 会话带什么身份 | 什么都不带——控制台消息（typeless / immediateInput 帧）今日**无来源标注**直达 agent（`AgentCommand.UserInput` / `ImmediateInput(content, fromUser)`）；localStorage 全站经 `branding.js key()` 命名空间，无既有 clientId |
+| web 会话带什么身份 | 什么都不带——控制台消息（typeless / immediateInput 两类 ws 帧）今日**无来源标注**直达 agent（`AgentCommand.UserInput` / `ImmediateInput(content, fromUser)`）；localStorage 全站经 `branding.js key()` 命名空间，无既有 clientId |
 
 ## 2. 设计
 
@@ -54,7 +59,7 @@
 
 - `clientId`：`crypto.randomUUID`（退化时间+随机），`key('device_client_id')`
   持久；同一浏览器的多次会话同身份。
-- `platform`：UA 判定，值域 `phone / tablet / mac / windows / linux`
+- `platform`：UA（浏览器 User-Agent 串）判定，值域 `phone / tablet / mac / windows / linux`
   （iPadOS 13+ 桌面模式伪装 Macintosh 由 `maxTouchPoints > 1` 揭穿）；判不出不猜
   （缺席键省略，网关按「未知设备」渲染）。
 - `browser`：UA 判定 Chrome / Safari / Edge / Firefox / Opera。
@@ -71,7 +76,7 @@
   用户命名，缺席给可读默认名 **「未登记-手机 Chrome」**（作者令原文示例形态；
   平台缺席降级「未知设备」，名字恒可读，绝不空槽）；
 - neblink 未装配 / 取数失败 ⇒ 空册 ⇒ 一律未登记（保守：读不到名册**永不冒认
-  已登记**），且绝不影响消息本身的派发（fail-open）。
+  已登记**），且绝不影响消息本身的派发（fail-open——失败也放行，不阻塞消息主链路）。
 
 ### 2.4 标记格式（扩展不重造）
 
@@ -110,7 +115,7 @@ cfg-select 族样式，零新 CSS）：
 - **本网页设备命名**：输入 + 保存（空 = 清除回默认名）；
 - **绑定到设备列表**：下拉 = 不绑定 + self + peers（`deviceRoster.getDeviceRoster`
   既有 60s 缓存面，零新后端出口）；花名册已消失的绑定值如实回显，不静默丢弃；
-- 动态文本一律 `textContent`（XSS 纪律）；提示行说明标记只进模型上下文、
+- 动态文本一律 `textContent`（XSS——跨站脚本注入——纪律）；提示行说明标记只进模型上下文、
   不显示在会话气泡。
 
 ## 3. 验收对照（作者令三端验收的落地面）
@@ -133,5 +138,11 @@ cfg-select 族样式，零新 CSS）：
 - 社交渠道（微信/飞书）面**零触碰**：`BridgeOrigin` 模板逐字未动。
 - 构块面（`Some(blocksList).filter(_.nonEmpty)` 语义）不变：标记只在
   content/attachments 非空的帧上生效（空帧准入谓词照旧丢弃）。
-- 引擎零重启：纯增量实现，重启窗外热生效需前端刷新 + 网关重启自然携带（本批
+- 引擎零重启：纯增量实现，重启窗（[[glossary#^restart-window]]）外热生效需前端刷新 + 网关重启自然携带（本批
   未重启任何进程）。
+
+## 相关文档
+
+- [[index]] — 库入口（本篇挂入图谱）。
+- [[glossary]] — 术语（重启窗等）。
+- 邻面：[[parallel-session-resources.zh-CN]] §2.1（8099 neblink-server 保留段——花名册服务的宿主端口）。
