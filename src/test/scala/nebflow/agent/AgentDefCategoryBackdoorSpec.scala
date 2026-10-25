@@ -50,7 +50,11 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
   private def mechanismFace(name: String): Set[String] =
     val face = MechanismFixed.getOrElse(name, fail(s"$name 无机制固定集常量登记"))
     if name == "Nebula" then
-      face -- (if nebflow.core.FriendsSeal.isSealed then Set("ListFriends") else Set.empty[String])
+      // imagegen 双层批（2026-10-24）resume 合入适配：generate_image 的编译期
+      // seal 剥离面经单点 AgentCore.imageGenSealedStrip 一并扣除（friendseal
+      // 同消费点——交付面 = 静态集 -- friendsSealedStrip -- imageGenSealedStrip）。
+      face -- (if nebflow.core.FriendsSeal.isSealed then Set("ListFriends") else Set.empty[String]) --
+        AgentCore.imageGenSealedStrip
     else face
 
   /**
