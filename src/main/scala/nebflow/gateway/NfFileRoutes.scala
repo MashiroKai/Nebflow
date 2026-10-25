@@ -102,6 +102,17 @@ object NfFileRoutes:
 
   private val NfCacheControl: String = "private, max-age=300"
 
+  /**
+   * 网关鉴权拒绝的统一 reason 头（稳定性批 2026-10-26）：铸票面 / authcheck 的
+   * 403（会话/Bearer 双轨全拒）带 `X-Nf-Reason: credential-required`——与票据
+   * 判据族（invalid-ticket/expired/path-mismatch）同 vocabulary，前端可机械
+   * 分形「网关会话死」（静默退避/重座腿）与「中继平面凭据死」（relayGate 升级）。
+   * 读端点（/api/nf-file）的票拒面已有自己的 reason 出向，不在本 helper 射程。
+   */
+  private def authDenied: Response[IO] =
+    nfText(Status.Forbidden, "Invalid token")
+      .putHeaders(org.http4s.Header.Raw(org.typelevel.ci.CIString("X-Nf-Reason"), "credential-required"))
+
   // ────────────────────────────────────────────────────────────────────────
   // HTTP Range support (video-canvas batch, 2026-10-06 author order 13:24).
   //
@@ -351,7 +362,7 @@ object NfFileRoutes:
     val authorized =
       tokenRef.get.flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
     authorized.flatMap {
-      case None => Forbidden("Invalid token")
+      case None => IO.pure(authDenied)
       case Some(_) =>
         req.as[Json].attempt.flatMap {
           case Left(e) =>
@@ -440,7 +451,7 @@ object NfFileRoutes:
       tokenRef.get
         .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
         .flatMap {
-          case None => Forbidden("Invalid token")
+          case None => IO.pure(authDenied)
           case Some(cred) =>
             // Session TTL batch (2026-10-21): slide the browser cookie on a
             // session-rail hit (same id, fresh Max-Age; see the doc above).

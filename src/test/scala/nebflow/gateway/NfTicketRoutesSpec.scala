@@ -335,6 +335,12 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
           .unsafeRunSync()
           .get
         assertEquals(resp.status, Status.Forbidden)
+        // 稳定性批 2026-10-26：网关鉴权拒绝可分形 —— reason 头让前端的
+        // relayGate 判据（无 reason 的 JSON 403 = 中继门）不再误吸网关形状。
+        assertEquals(
+          resp.headers.get(org.typelevel.ci.CIString("X-Nf-Reason")).map(_.head.value),
+          Some("credential-required")
+        )
       }
     }
   }
@@ -355,6 +361,11 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
         // query rail is retired and must refuse even the LIVE token).
         assertEquals(probe("", bearer = Some(gatewayToken)).status, Status.NoContent)
         assertEquals(probe("").status, Status.Forbidden)
+        // 稳定性批 2026-10-26：鉴权拒绝带 reason 头（与铸票面同族，可分形）。
+        assertEquals(
+          probe("").headers.get(org.typelevel.ci.CIString("X-Nf-Reason")).map(_.head.value),
+          Some("credential-required")
+        )
         assertEquals(probe("?token=wrong").status, Status.Forbidden)
         assertEquals(
           probe(s"?token=$gatewayToken").status,

@@ -845,14 +845,57 @@ end PortalTunnelBridge
  * 超时语义收紧为诚实三件：本周期失败携带**可读消息**的 `TimeoutException`；
  * **不 abort** socket（写仍可能完成——停摆不是会话死亡证据，撕会话不属于
  * sender 的权限）；在飞帧保持记账，不污染后续发送。
+ *
+ * 双车道让位（稳定性批 2026-10-26，作者 01:09「大文件传输→登录状态失效」归因
+ * 修复腿①）——修前 `send` 只有「monitored 单锁 + 逐帧等写完」一个车道，
+ * `synchronized` 是**非公平**监视器：5MB+ 传输的 bulk 泵逐帧释放后可立即重夺
+ * 锁（barging），控制帧发送线程在锁上排队多久没有上界。被顶在队尾的控制帧族
+ * 与后果（实测归因，见 reports/20261026_*_session-stability）：
+ *   · 隧道活性 pong → relay 侧 2-miss liveness 判死撕隧道 → 骑隧道的浏览器
+ *     WS + HTTP 周期全体塌方（传输中「登录状态失效」的第一现场）；
+ *   · ws_frame（浏览器控制台 WS 的 pong）→ 前端 3-miss 自我逐出 → 重连风暴；
+ *   · http_response 头 → ingress `PORTAL_RESP_HEADER_TIMEOUT`（15s）超窗回
+ *     504 → 前端把传输拥堵误读成「中继平面凭据死」→ 重登引导链被拉动。
+ * 修后：**小帧走控制车道**（[[RelayFrameSender.isControlSized]]：≤64KiB 字符
+ * ——pong/ack/响应头/ws_frame 小消息同族；body_frame 256KiB→base64 ≈ 349K
+ * 字符、readFile 大帧至 4MiB，全都进不了控制车道），控制车道在发送位排队序上
+ * **越过 bulk 等待者**（[[controlWaiters]] 在拿锁前自增，bulk 在锁内让位等待）；
+ * 等待上界从「无界（非公平监视器 + 洪峰泵）」收紧为「一个在飞帧的写完」。
+ * bulk 饿死防线 = [[RelayFrameSender.ControlGrantCap]] 连续控制让位信用——超
+ * 过后即使仍有控制等待者，下一个 bulk 也放行（控制帧小而稀，正常流远触不到）。
+ * 车道决策只影响**不同流之间**的排队序：同一周期/流的帧仍由同一 fiber 顺序发
+ * 出且逐帧等完成（http 头先于本体、body seq 单调、ws_frame 有序——构造不变），
+ * 跨流重排与修前非公平监视器下的实际行为同权，不属契约面。
  */
 private[neblink] final class RelayFrameSender(
   ws: WebSocket,
   sendTimeoutSec: Int = RelayFrameSender.SendTimeoutSec,
-  pendingRetryMillis: Long = RelayFrameSender.PendingRetryMillis
+  pendingRetryMillis: Long = RelayFrameSender.PendingRetryMillis,
+  /** 测试缝：连续控制让位信用上限（稳定性批 2026-10-26 双车道让位）。 */
+  controlGrantCap: Int = RelayFrameSender.ControlGrantCap
 ):
 
-  private val lock = new Object
+  /**
+   * 双车道让位锁（稳定性批 2026-10-26；替代修前的 `new Object` 监视器——非公平
+   * 监视器允许 bulk 泵 barging，控制帧等待无上界，即「大传输饿死控制面」的
+   * 机械根）。**公平模式**：锁等待 FIFO 化是车道让位的确定性基座（bulk 让位 =
+   * 「取锁 → 见控制等待者 → await 重排队尾」，公平模式下让位轮转次数 = 排队
+   * bulk 数，控制等待时间严格有界；非公平模式下规范无法钉出确定序列）。发送
+   * 速率低（帧/百毫秒级），公平模式的吞吐代价可忽略；位置阶段（drainPrevious +
+   * enqueueAndAwait）仍在锁内——与修前同构，JDK 单发位纪律零变化。
+   */
+  private val lock = new java.util.concurrent.locks.ReentrantLock(true)
+  private val laneGate = lock.newCondition()
+
+  /**
+   * 正在等待发送位的控制面发送数。控制线程在**拿锁之前**自增（拿锁后可能被
+   * bulk 持有者阻塞——那时它还不可见），让已持锁的 bulk 让位判据看得见；
+   * Atomic 读写在锁外自增/锁内判读之间无竞态危害（最坏 = 多等一轮 1s 重查）。
+   */
+  private val controlWaiters = new java.util.concurrent.atomic.AtomicInteger(0)
+
+  /** 连续控制让位计数（仅锁内读写）：控制每放行一个 +1，bulk 放行即清零。 */
+  private var bulkCredit: Int = 0
 
   /**
    * The last future this sender handed to `ws.sendText` that may still be in
@@ -873,15 +916,35 @@ private[neblink] final class RelayFrameSender(
    * window; once enqueued, the frame's own write gets a fresh full window.
    * The bounded waits keep a stalled relay from wedging the senders forever
    * without ever tearing the session from inside the sender.
+   *
+   * 车道决策（稳定性批 2026-10-26）按**帧尺寸**单点判定：小帧（控制面族）在
+   * bulk 等待者之前放行，等待上界 = 一个在飞帧的写完；调用点零改动（body_frame
+   * 256KiB→base64 与 ws 大帧天然超出阈值，永远进不了控制车道）。
    */
   def send(text: String): IO[Unit] =
     IO.blocking {
-      lock.synchronized {
-        val positionDeadlineNs = System.nanoTime() + TimeUnit.SECONDS.toNanos(sendTimeoutSec.toLong)
-        drainPrevious(positionDeadlineNs)
-        enqueueAndAwait(text, positionDeadlineNs)
-        ()
-      }
+      val control = RelayFrameSender.isControlSized(text)
+      if control then controlWaiters.incrementAndGet()
+      try
+        lock.lock()
+        try
+          if !control then
+            // bulk 让位环：有控制等待者且让位信用未耗尽 ⇒ 等待（1s 有界重查，
+            // 防信号丢失长睡）。信用耗尽 = 连续 ControlGrantCap 个控制放行后
+            // bulk 强制放行（防控制洪泛饿死 bulk 的理论面）。
+            while controlWaiters.get() > 0 && bulkCredit < controlGrantCap do
+              laneGate.await(1, TimeUnit.SECONDS)
+            bulkCredit = 0
+          val positionDeadlineNs = System.nanoTime() + TimeUnit.SECONDS.toNanos(sendTimeoutSec.toLong)
+          drainPrevious(positionDeadlineNs)
+          enqueueAndAwait(text, positionDeadlineNs)
+          if control then bulkCredit += 1
+          ()
+        finally
+          laneGate.signalAll()
+          lock.unlock()
+      finally
+        if control then controlWaiters.decrementAndGet()
     }
 
   /**
@@ -1002,6 +1065,27 @@ object RelayFrameSender:
 
   /** Non-contract implementation constant: park between position retries. */
   val PendingRetryMillis: Long = 25L
+
+  /**
+   * 控制车道尺寸阈值（稳定性批 2026-10-26，非契约实现常量）：≤64KiB 字符的帧
+   * 走控制车道。口径两端留足余量——控制面帧（pong/ack/bind_confirm/响应头/
+   * ws_open_result/小 ws_frame）最大也就几 KB；body_frame 的 256KiB chunk
+   * base64 后 ≈ 349K 字符、ws 大帧上限 4MiB，都 5 倍开外进不了控制车道。
+   * 语义余量：body 尾帧（<256KiB 的 more=false 终结帧）若落控制车道无害
+   * （小帧插队只轻微延迟他流；同流顺序由单 fiber 逐帧等完成保证，见类注）。
+   */
+  val ControlLaneMaxChars: Int = 64 * 1024
+
+  /**
+   * 连续控制让位信用上限（非契约实现常量）：控制车道连续放行这么多个之后，
+   * 即使仍有控制等待者，下一个 bulk 也放行——控制洪泛不饿死 bulk 的理论防线
+   * （控制帧小而稀，正常流远触不到该值）。
+   */
+  val ControlGrantCap: Int = 16
+
+  /** 车道判定单点（spec 钉）：小帧 = 控制面族。 */
+  private[neblink] def isControlSized(text: String): Boolean =
+    text.length <= ControlLaneMaxChars
 
 private[neblink] object PortalTunnelBridge:
 

@@ -57,8 +57,25 @@ final class RestApiCtx(
   val logger: NebflowLogger
 ):
 
+  /**
+   * 稳定性批 2026-10-26：网关鉴权拒绝的**可分形**出向（403 自愈方向③「真失效
+   * 才引导重登」的服务端半边）。修前 `/api` 域鉴权拒绝 = 403 JSON
+   * `{"error":"Unauthorized"}` **无 X-Nf-Reason**——与 relay ingress 门的 JSON
+   * 403（同样无 reason 头）机械同形，前端 `fetchBlobWithProgress` 的 relayGate
+   * 判据（`(401||403) && !X-Nf-Reason && jsonish`）把「引擎会话死」（引擎重启
+   * 清零，本实例高频发生）误判成「中继平面凭据死」⇒ sessionGate 横幅 + reload。
+   * 修后：网关全族鉴权拒绝带 `X-Nf-Reason: credential-required`——前端既有判据
+   * 无需改动即恢复正确分流（带 reason = 网关形状 ⇒ 走静默退避/逐元素降级），
+   * 升级链交由 noteAuthRejected 的静默重座腿（本批前端半边）。
+   */
+  private val AuthRejectedReason: Header.Raw =
+    Header.Raw(CIString("X-Nf-Reason"), "credential-required")
+
+  private def authRejected: IO[Response[IO]] =
+    Forbidden(Json.obj("error" -> "Unauthorized".asJson)).map(_.putHeaders(AuthRejectedReason))
+
   def withAuth(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =
-    checkAuth(req).flatMap(ok => if ok then f else Forbidden(Json.obj("error" -> "Unauthorized".asJson)))
+    checkAuth(req).flatMap(ok => if ok then f else authRejected)
 
   /**
    * Boolean-verdict adapter for checkAuth's direct-call sites (the census
@@ -66,7 +83,7 @@ final class RestApiCtx(
    * by-name — the exact shape `withAuth` had before checkAuth became IO.
    */
   def gate(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =
-    checkAuth(req).flatMap(ok => if ok then f else Forbidden(Json.obj("error" -> "Unauthorized".asJson)))
+    checkAuth(req).flatMap(ok => if ok then f else authRejected)
 
   // ── 引导腿门（bootstrap-leg gate，2026-10-22 新设备引导修复批·作者令）──────
   //
@@ -94,7 +111,7 @@ final class RestApiCtx(
       case true => f
       case false =>
         if LoopbackLeg.isLoopback(req) then f
-        else Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+        else authRejected
     }
 
   // 设备互联域(NeblinkRoutes,E 步)所需的鉴权判据:checkAuth 同时服务本处
