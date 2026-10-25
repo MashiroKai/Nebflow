@@ -63,7 +63,12 @@ export function askSourceLabel(source) {
  *  carries no creation time by contract — replay frames are byte-identical to
  *  the first send plus `replayed:true`, see InteractionHubReplaySpec). The
  *  snapshot is delivered hub-ordered (createdAt ascending) and Array.sort is
- *  stable, so equal `ts` keeps the hub's order. */
+ *  stable, so equal `ts` keeps the hub's order.
+ *
+ *  `live` = hub-unaware arrival (修复批 2026-10-25「待答徽章常显」)：live 首发帧
+ *  = true；快照/订阅重放帧（`replayed`/`replaces` 任一）= false——重放帧**由
+ *  hub 状态产生**，快照对账时不得凭「到达晚于查询」豁免摘除（旧口径把重放刷新
+ *  的 ts 当活帧豁免 ⇒ 关卡帧丢失时僵尸条目永生，徽标对着已收口的槽位常显）。 */
 function toEntry(msg) {
   return {
     requestId: msg.requestId,
@@ -72,7 +77,8 @@ function toEntry(msg) {
     project: msg.project || '',
     nodeName: msg.nodeName || '',
     summary: summarizeItems(msg.items),
-    ts: Date.now()
+    ts: Date.now(),
+    live: !msg.replayed && !msg.replaces
   };
 }
 
@@ -115,20 +121,24 @@ export function removePendingAsk(requestId) {
  *  simply not in it.
  *
  *  `since` = the local time the snapshot was requested. Entries that arrived
- *  AFTER the request but are absent from the snapshot are kept: the hub may not
- *  have known them yet when it built the answer (a live askUser frame racing
- *  the round trip) — dropping them would be exactly the silent loss this item
- *  removes. Every other entry absent from the snapshot is retired. */
+ *  AFTER the request but are absent from the snapshot are kept **only when
+ *  they arrived on a live frame**: the hub may not have known them yet when it
+ *  built the answer (a live askUser frame racing the round trip) — dropping
+ *  those would be exactly the silent loss this item removes. Entries last
+ *  refreshed by a REPLAYED frame (`live:false`) get no such exemption: a
+ *  replay exists because the hub knew the slot, so absence here means the slot
+ *  closed after the replay was built (its close frame lost/raced) — the
+ *  authority has spoken, retire it (修复批 2026-10-25「待答徽章常显」). */
 export function applyPendingAskSnapshot(asks, since) {
   const incoming = new Map();
   for (const msg of Array.isArray(asks) ? asks : []) {
     if (!msg || !msg.requestId) continue;
     incoming.set(msg.requestId, toEntry(msg));
   }
-  const raced = typeof since === 'number' ? since : 0;
+  const raced = typeof since === 'number' ? since : lastSnapshotSince;
   for (const [rid, entry] of [...pending]) {
     if (incoming.has(rid)) continue;
-    if (entry.ts > raced) continue; // newer than the query — keep (authority had not seen it yet)
+    if (entry.ts > raced && entry.live) continue; // live frame newer than the query — keep (authority had not seen it yet)
     pending.delete(rid);
     if (lastFocusedRequestId === rid) lastFocusedRequestId = null;
   }
@@ -144,6 +154,69 @@ export function pendingSnapshotFailed() {
 }
 
 export function pendingAskCount() { return pending.size; }
+
+// ---------- 权威对账同步（修复批 2026-10-25「待答徽章常显」） ----------
+//
+// 缺口（与 hub 侧 PendingAskLedger.bootReconcile 互补的前端半面）：镜像对账
+// （getPendingAsks → pendingAsksSnapshot）此前**只挂在 WS 重连**上（main.js
+// onReconnect）。答链又是「卡上作答本地清」——hub complete() 在 2026-10-25 修复前
+// 不广播任何关卡帧 ⇒ 任何**没亲手作答**的标签页/设备（多端常开）镜像永久滞留，
+// 而长连标签页可以几天不重连：徽标对着早已收口的槽位常显（作者报障 13:0x 即此
+// 形态——hub 全天 0 槽位、台账空，纯前端僵尸）。三层收口：
+//   ① hub complete() 补广播 askUserClosed{reason:"answered"}（引擎侧，本批）——
+//      亲手作答之外的标签页即时清零；
+//   ② 重放帧不再豁免对账摘除（toEntry.live，本文件）——丢失的关卡帧由下一次
+//      对账兜住；
+//   ③ 本面：对账不再只等重连——可见期低频轮询 + 页面重新可见即补一次对账，
+//      `since` 戳由这里单点维护（main.js onReconnect 改调 requestPendingAskSync）。
+
+/** 最近一次快照查询的本地时间戳（对账 race 闸的 `since`）。 */
+let lastSnapshotSince = 0;
+
+/** send 函数（main.js init 时注入 sendWs；askPending 不 import ws.js——依赖图
+ *  保持无环）。null = WS 未就绪，请求静默跳过（下次节拍再试）。 */
+let wsSend = null;
+
+/** 对账节拍（可见期）。5min = 待办信号的自愈上界：丢失的关卡帧最迟一个节拍
+ *  被权威快照收口。后台标签页不请求（visibility 闸，零无效流量）。 */
+const SYNC_INTERVAL_MS = 5 * 60 * 1000;
+/** 页面重新可见的补账节流：60s 内已对账过就不再补（切 tab 抖动不放大流量）。 */
+const SYNC_VISIBLE_THROTTLE_MS = 60 * 1000;
+
+let syncTimer = null;
+let lastSyncAt = 0;
+let visHooked = false;
+
+/** 单点：盖 `since` 戳并请求全局快照。返回是否真的发出了请求。 */
+export function requestPendingAskSync() {
+  if (!wsSend) return false;
+  lastSnapshotSince = Date.now();
+  lastSyncAt = lastSnapshotSince;
+  wsSend({ type: 'getPendingAsks' });
+  return true;
+}
+
+function syncIfVisible() {
+  if (document.visibilityState !== 'visible') return false;
+  return requestPendingAskSync();
+}
+
+/** main.js 启动时调用一次：注入 send 通道 + 装节拍与可见性补账。幂等（重复
+ *  调用先拆旧节拍）。 */
+export function startPendingAskSync(send) {
+  if (typeof send !== 'function') return;
+  wsSend = send;
+  if (syncTimer) clearInterval(syncTimer);
+  syncTimer = setInterval(() => syncIfVisible(), SYNC_INTERVAL_MS);
+  if (!visHooked) {
+    visHooked = true;
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - lastSyncAt < SYNC_VISIBLE_THROTTLE_MS) return;
+      syncIfVisible();
+    });
+  }
+}
 
 // ---------- 超龄自愈（重启孤儿对账批 2026-10-22） ----------
 
