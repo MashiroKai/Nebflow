@@ -1,3 +1,8 @@
+---
+type: design-note
+status: done
+---
+
 # 子智能体面板行显示名 spec：delegate 行全生命周期 = 批次标题
 
 批：子智能体面板行显示名修复批（2026-10-22）· 修「先长名后收缩成 sessionId」
@@ -20,7 +25,7 @@ S3 八批密度，MODE=before 复现 + 修后全 PASS，前后对照截图）。
    `name = agentDef.name`（执行器名，如 "nebflow"）+ `taskDescription =
    state.sessionName`（= Delegate 工具的 description = 批次标题全文）⇒ 新建行 =
    「nebflow · 【批名】…」长名。
-2. **恢复脸缺第四档**：`activeAgentEntryJson` 的 `agentName` 链 =
+2. **恢复脸（重启后从持久快照重建的显示形态，与 live 实时脸相对）缺第四档**：`activeAgentEntryJson` 的 `agentName` 链 =
    `meta.agentName` → `rec.displayName` → `sessionId`。delegate 会话**从不过
    `SessionStore.createSession`**（实查 `sessions/_index.json`：842 条中 0 条
    delegate 前缀 ⇒ meta 恒 None）；`NodeRunner.registerAgent` 对 delegate **不设
@@ -45,7 +50,7 @@ S3 八批密度，MODE=before 复现 + 修后全 PASS，前后对照截图）。
 
 | 顺位 | 源 | 说明 |
 |---|---|---|
-| 1 | `rowTitle`（组头注册行 title） | `DelegateRegistry.Record.title` 的 provider 镜像（`/api/chains` 行投影同源）——spawn 落盘、跨重启存活，**存量记录零迁移回填** |
+| 1 | `rowTitle`（组头注册行 title） | `DelegateRegistry.Record.title` 的 provider 镜像（`/api/chains` 行投影同源）——spawn（派发创建会话）落盘、跨重启存活，**存量记录零迁移回填** |
 | 2 | `firstLine(info.task)` | live 脸 `taskDescription` = 批次标题全文（取首行） |
 | 3 | `info.name`（≠ sid 时） | 恢复脸后端回填的 `agentName`（= 批名） |
 | 4 | `sid` → 桶 `id` | 全源缺席的退化兜底（诚实形态，不臆造） |
@@ -93,7 +98,13 @@ meta.agentName → rec.displayName → delegateTitle → sessionId
    `delegateDisplayTitle` 三用例（主源/回填、空白过滤、非任务种类不动）。
 5. **邻族零回归**：delegate-ui-twolayer 5/5、turn-activity-stream、
    taskpanel-blocked-retire、tasklist-reconcile-shots、bgagent-orphan-cleanup
-   全绿；checkJs 257 = 基线（零新增）。
+   全绿；checkJs（前端 JS 类型检查质量闸）257 = 基线（零新增）。
+
+## 相关文档
+
+- [[index]] — 库入口（本篇挂入图谱）。
+- [[delegate-supervision-revival-design.zh-CN]] — delegate boot 复活（引擎重启后行名恢复所依赖的持久源 DelegateRegistry 即其复活现场四件之一）。
+- 术语：[[glossary]]。
 
 ## 3. 纪律记录
 

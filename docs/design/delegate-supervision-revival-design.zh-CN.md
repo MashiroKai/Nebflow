@@ -1,3 +1,8 @@
+---
+type: design-note
+status: done
+---
+
 # delegate 监督链自动恢复机制设计（boot-time 复活腿）
 
 状态：**实施中**（设计先行落盘；实现与验证结论回写本档「实现纪要/验证纪要」两节）
@@ -10,15 +15,16 @@
 
 实证（2026-10-22 两次引擎重启）：在飞 delegate 全部被标记 failed（`[task lost: crash]`）——
 `SubAgentStartupRecovery` 启动清扫把「进程死亡时在飞」一律**收殓终态化**，父会话收到的是
-失败通知而不是续作结果。同日 `MergeQueueBootSweep` 对 ready-to-merge 停靠 delegate 的
-boot 恢复生效了（fe4f891e 被自动收口），唯独 running 中的 delegate 没有被复活。
+失败通知而不是续作结果。同日 `MergeQueueBootSweep` 对 ready-to-merge 停靠 delegate
+（完成待合并的会话）的 boot 恢复生效了（fe4f891e 被自动收口），唯独 running 中的
+delegate 没有被复活。
 
 ## 1. 考古结论（9.19 起的既有监督/恢复面，逐层盘点）
 
 | 层 | 对象 | 进程内监督 | 引擎重启后 | 锚点 |
 |---|---|---|---|---|
-| L0 | 主 agent 会话 | — | F2 注入队重放（`RecoverPersistedQueues`） | `AgentActor.scala:937` |
-| L1 | agentflow 节点（项目图） | NodeEngine watchdog + `TaskStuckWatcher` | `ProjectCrashRecovery.recoverAll`：`bootRecoveryClaim` 三分类 + 慢段 `bootRecoveryStart` **transcript 断点 rehydrate** | `ProjectCrashRecovery.scala`（9.19 已有，crash-recovery 批 2026-09-07） |
+| L0 | 主 agent 会话 | — | F2 注入队（引擎向会话补投事件的持久化队列）重放（`RecoverPersistedQueues`） | `AgentActor.scala:937` |
+| L1 | agentflow 节点（项目图） | NodeEngine watchdog + `TaskStuckWatcher` | `ProjectCrashRecovery.recoverAll`：`bootRecoveryClaim` 三分类 + 慢段 `bootRecoveryStart` **transcript 断点 rehydrate**（从盘上转录恢复现场续跑） | `ProjectCrashRecovery.scala`（9.19 已有，crash-recovery 批 2026-09-07） |
 | L2 | delegate 作用域图（delegate 自建链） | `DelegateFlowHosts.launchScanner` | `ProjectCrashRecovery.recoverDelegateScopes`：重挂宿主 + 同判据认领 rehydrate | `ProjectCrashRecovery.scala:255`（N1 刀1） |
 | L3 | **delegate 会话**（Delegate tool → SubAgentTaskStore） | `BackoffSupervisor`：crash respawn + **transcript checkpoint 续跑** + 预算重挂 | ❌ **只收殓**（`SubAgentStartupRecovery.recoverOrphans` → failed + F2 通知父） | `BackoffSupervisor.respawn`（`loadMessagesForSession` → `initialMessages` → continue nudge）；`SubAgentStartupRecovery.scala` |
 | L4 | subtask（Subagent tool） | `BackoffSupervisor` | 收殓（轻量任务，父可廉价重派） | 同上 |
@@ -26,7 +32,7 @@ boot 恢复生效了（fe4f891e 被自动收口），唯独 running 中的 deleg
 
 **缺口 = L3**：delegate 的四件恢复现场在盘上样样俱全——任务行（SubAgentTaskStore）、
 地址簿记录（DelegateRegistry：cwd/worktree/branch/project/plugins）、会话转录
-（SessionStore）、工作产物（worktree/座位目录）——但 boot 清扫只做收殓，从不利用。
+（SessionStore）、工作产物（worktree/座位目录——delegate 会话分到的常驻工作目录）——但 boot 清扫只做收殓，从不利用。
 
 **9.19 版本机制溯源**：`git show 2026.9.19:...ProjectCrashRecovery.scala` 即节点轨
 boot 恢复的原始实现（本批 L3 复活直接沿用其**快段认领 + 慢段 fork rehydrate +
@@ -56,7 +62,7 @@ boot 恢复的原始实现（本批 L3 复活直接沿用其**快段认领 + 慢
 
 ### 2.2 复活判据（全部满足才复活，任一不满足 → 落既有收殓链）
 
-1. kill-switch 开：`Defaults.DelegateRevivalEnabled`（sys prop
+1. kill-switch（功能总开关）开：`Defaults.DelegateRevivalEnabled`（sys prop
    `nebflow.delegate.revival.enabled`，默认 true）
 2. `source == "delegate"`（subtask 不复活：轻量任务父可廉价重派，避免长尾）
 3. DelegateRegistry 记录在 ∧ `executor == 内置（nebflow）` ∧ `archivedAt` 空
@@ -83,11 +89,11 @@ boot 恢复的原始实现（本批 L3 复活直接沿用其**快段认领 + 慢
 4. `registerAgent`（registry 活体行回写：ref + supervisorRef + root/parentSessionId）
 5. `DelegateFlowHosts.mount`（delegate 自己的作用域图宿主重挂——节点 out=Nebula 的
    投递通道恢复；fail-soft 同 spawn 腿）
-6. nudge 注入：转录非空 → `[system]` 续跑指令（engine-restart 措辞，BackoffSupervisor
+6. nudge 注入（向复活会话投一条续跑指令）：转录非空 → `[system]` 续跑指令（engine-restart 措辞，BackoffSupervisor
    crash nudge 同族）；转录为空 → 重注原 prompt（fresh-start fallback 同 respawn）
 7. `DelegateBudget.register`（delegate 轨 3600s wall-clock 预算重挂，超时走既有
    Cancelled 链）
-8. ChainStore 审计行 `delegate-revival`（`delegate-spawn` 行族同构，带 revivalCount）
+8. ChainStore 审计行（引擎操作台账的追加记录）`delegate-revival`（`delegate-spawn` 行族同构，带 revivalCount）
 9. spawn 并发护栏：`Semaphore(Defaults.DelegateRevivalConcurrency)`（默认 2），
    慢段 fork——boot 不阻塞，同 `ProjectCrashRecovery` 慢段纪律
 
@@ -126,7 +132,7 @@ boot 恢复的原始实现（本批 L3 复活直接沿用其**快段认领 + 慢
 - **冒烟红线**
   - V1 合格孤儿（delegate + registry 记录 + 座位在 + 转录在 + 预算内 + 父会话在）→
     sweep 后任务行 running、revivalCount=1、registry 有活体、nudge 已注入（stub LLM
-    回 "ok" → 完成回投父 F2 队列 eventType=completed）。
+    （测试桩模型）回 "ok" → 完成回投父 F2 队列 eventType=completed）。
   - V2 预算耗尽（revivalCount 已达上限）→ 收殓 failed + 父通知，零 spawn。
 - **端到端**
   - V3 硬杀→重启→复活：真实引擎（隔离实例）派 delegate → kill -9 → 重启 → delegate
@@ -157,7 +163,7 @@ boot 恢复的原始实现（本批 L3 复活直接沿用其**快段认领 + 慢
   「响亮 WARN + 结果丢失」升级为「响亮 WARN + 结果延迟可达」。
 - **台账对账**：`core/delegate/DelegateLedgerReconcile.scala`（新）三腿——
   TaskTool complete/close flatTap 钩子（`TaskToolDef.call`）；终态记账
-  （`DelegateTerminal.onTerminalCleanup` 序列内 verdictLine 邻位）；boot 对账
+  （`DelegateTerminal.onTerminalCleanup` 序列内 verdictLine（终态判词行）邻位）；boot 对账
   （sweep settle() 内，旗后收敛）。
 - **开关**：`Defaults` 五旋钮（enabled/maxPerTask=2/maxAgeMs=7d/bootCap=8/
   concurrency=2，均 sys prop 现读）。
@@ -259,6 +265,12 @@ notFound 吞掉 WARN。位置 = verdictLine 邻位（engine 单点，不新造�
 不加新 AgentControl 动作——人工裁定 = **TaskTool complete/close**（作者的工作清单
 面，complete 即裁定「实际完成」），腿 1 自动折叠面板行；误归档走既有
 `DelegateRegistry.unarchive` 回滚。
+
+## 相关文档
+
+- [[index]] — 库入口（本篇挂入图谱）。
+- [[subagent-row-display-name-spec.zh-CN]] — delegate 面板行显示名契约（复活/存续会话的行名即批次标题，重启恢复脸的持久源即本篇的 DelegateRegistry）。
+- 术语：[[glossary]]。
 
 ## C. 增补验收
 
