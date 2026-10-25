@@ -46,6 +46,37 @@ private[agent] object AgentIdle:
     else if sid.startsWith("dag-") then Some("flow")
     else Some("tool")
 
+  /**
+   * ExternalEvent 唤醒轮的 replyTo 判据（纯函数，spec 判红锚）。两路合法：
+   *   - node- 项目节点（既有，2026-09-05 完成闸批）；
+   *   - delegate 会话 × background-task 完成事件（诊断修复批 2026-10-24）——
+   *     BackoffSupervisor 等待屏障依赖该唤醒轮的 Completed 复检投递集。
+   * 其余（mail/schedule 事件源、非 delegate 会话、subtask——subtask 轨无等待
+   * 屏障，Completed 语义零变化）恒 false。
+   */
+  private[agent] def wakeContinuationApplies(
+    isFlowNode: Boolean,
+    sessionId: Option[String],
+    eventSource: String,
+    isDelegateSession: Boolean
+  ): Boolean =
+    val nodeLeg =
+      sessionId.exists(sid => isFlowNode && sid.startsWith(nebflow.core.project.NodeEngine.SessionPrefix))
+    val delegateLeg = isDelegateSession && eventSource == "background-task"
+    nodeLeg || delegateLeg
+
+  /**
+   * 诊断修复批 2026-10-24：delegate 终态事件注入父会话回合 ⇒ 交付回执确认
+   * （fire-and-forget，绝不拖注入链）。判据/幂等语义见
+   * [[nebflow.core.delegate.DelegateDeliveryReceipts.ackEvent]]。
+   */
+  private def ackDelegateDelivery(event: AgentCommand.ExternalEvent): IO[Unit] =
+    nebflow.core.delegate.DelegateDeliveryReceipts
+      .ackEvent(event)
+      .handleErrorWith(e =>
+        NebflowLogger.forName("nebflow.agent.idle").warn(s"delegate delivery ack failed: ${e.getMessage}")
+      )
+
   // ============================================================
   // Idle state
   // ============================================================
@@ -412,6 +443,7 @@ private[agent] object AgentIdle:
             _ <- sessionBusyIO
             _ <- receiveVisibility(waiting = false)
             _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, held.size)
+            _ <- ackDelegateDelivery(event)
             result <- pipeLlmCall(
               agentDef,
               resources,
@@ -450,6 +482,8 @@ private[agent] object AgentIdle:
             _ <- receiveVisibility(waiting = false)
             _ <- touchBarrierSnapshot(resources, state.sessionId, 0, 0)
             _ <- persistQueues(state.sessionId, cleanedExec)
+            // 诊断修复批 2026-10-24：批次腿同认 delegate 终态交付（任一腿注入即确认）。
+            _ <- ackDelegateDelivery(event)
             // 台账对账（平台修复批 fix 1）：held 全量投递 ⇒ 台账清空 + 徽标帧归零。
             _ <- syncHeldReceipts(resources, state.sessionId, Nil).flatMap((h, u) =>
               emitHeldReceiptsBadge(state, h, u)
@@ -474,13 +508,26 @@ private[agent] object AgentIdle:
           // 无人接收——节点观察桥（完成闸单咽喉）在最后一个后台任务完成通知后
           // 永远等不到复检事件，节点悬挂到兜底上限。修正：node- 前缀（Project
           // 节点，kind=Flow）会话以 AgentRecord.supervisorRef（=NodeEngine 观察
-          // 桥，注册即粘性完成目标）作为本唤醒轮的 replyTo。仅 node- 节点启用：
-          // delegate/subtask（BackoffSupervisor 会把 Completed 当任务终态转投父
-          // 会话=重复通知+停 actor）与 dispatcher 桥（pendingInjected 计数契约，
-          // 意外 Completed 会提前拆除）各有既有 Completed 语义，不并入。
+          // 桥，注册即粘性完成目标）作为本唤醒轮的 replyTo。
+          // ═══ 诊断修复批 2026-10-24（delegate-nebflow-52308ee4 投递丢失）═══
+          // 原「仅 node- 启用」排除 delegate 的理由（「Completed 会让 BackoffSupervisor
+          // 停 actor」）在等待屏障（sleep-poll 禁令批 A 段，2026-10-20）落地后已
+          // 反转：屏障**依赖**唤醒轮的 Completed 复检投递集（等待集空 ⇒ 释放终判），
+          // 缺席 = 监督者永远停在 hold 私有态——任务行卡 running、父会话永不收到
+          // 结果（实案：barrier 读数 0/0 全清但无任何终态投递，静默 70+ 分钟）。
+          // 修正：delegate 会话 × background-task 完成事件同享 supervisorRef
+          // replyTo。其余事件源（mail/schedule 等）与非 delegate 会话恒 None——
+          // Completed 语义各归既有，零并线。
           val continuationReplyTo: IO[Option[ActorRef[AgentEvent]]] =
             state.sessionId
-              .filter(sid => state.isFlowNode && sid.startsWith(nebflow.core.project.NodeEngine.SessionPrefix))
+              .filter(sid =>
+                wakeContinuationApplies(
+                  isFlowNode = state.isFlowNode,
+                  sessionId = Some(sid),
+                  eventSource = source,
+                  isDelegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(Some(sid))
+                )
+              )
               .fold(IO.pure(Option.empty[ActorRef[AgentEvent]]))(sid =>
                 resources.agentRegistry.get.map(_.get(sid).flatMap(_.supervisorRef))
               )
@@ -499,6 +546,8 @@ private[agent] object AgentIdle:
               _ <-
                 if heldFlush.isDefined then IO.unit
                 else touchBarrierSnapshot(resources, state.sessionId, newOutstanding, 0)
+              // 诊断修复批 2026-10-24：直投腿同认 delegate 终态交付。
+              _ <- ackDelegateDelivery(event)
               result <- pipeLlmCall(
                 agentDef,
                 resources,

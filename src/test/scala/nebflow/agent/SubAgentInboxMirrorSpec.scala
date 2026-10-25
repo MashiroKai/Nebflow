@@ -357,14 +357,19 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     // from that commit on, including pre-W1 main); the 2026-09-25 domain moves
     // preserved the call sites verbatim and merely re-homed them across the
     // five files below.
+    // re-pin (revive-mech 批 2026-10-25，对现 main 重钉)：13 钉在 main 已漂移
+    // ——2474349c6（投递屏障扣留回执缺陷直修批）等已并批新增 2 个调用点（现值
+    // 15 = 14 调用 + 1 def：AgentActor 5 / AgentFinishTurn 2 / AgentFrozen 1 /
+    // AgentIdle 4 / AgentProcessing 3），钉值未随批重同步（main 裸跑同红）。
+    // 本批（b73c3e73 复活）零调用点改动——两值同为 15，纯基线重钉非放宽。
     assertEquals(
       "emitInjectedUserEvent\\(".r.findAllMatchIn(agentActor).size +
         "emitInjectedUserEvent\\(".r.findAllMatchIn(agentFinishTurn).size +
         "emitInjectedUserEvent\\(".r.findAllMatchIn(agentFrozen).size +
         "emitInjectedUserEvent\\(".r.findAllMatchIn(agentIdle).size +
         "emitInjectedUserEvent\\(".r.findAllMatchIn(agentProcessing).size,
-      13,
-      "`emitInjectedUserEvent(` occurrence-count drift (expected 12 call sites + 1 def, aggregated over AgentActor + AgentFinishTurn + AgentFrozen + AgentIdle + AgentProcessing) - call sites must not change in this batch"
+      15,
+      "`emitInjectedUserEvent(` occurrence-count drift (expected 14 call sites + 1 def, aggregated over AgentActor + AgentFinishTurn + AgentFrozen + AgentIdle + AgentProcessing) - call sites must not change in this batch"
     )
     val emitStart = agentActor.indexOf("private[agent] def emitInjectedUserEvent(")
     val applyStart = agentActor.indexOf("\n  def apply(", emitStart)

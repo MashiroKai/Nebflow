@@ -349,8 +349,28 @@ object BackoffSupervisor:
                     // 会让 self-message 永远发不出去（A-4 实测）。句柄清空后外部
                     // disarm 调用对其 cancel 为 no-op。
                     bgWaitCapFiber.set(None) *>
-                    (ctx.self ! AgentEvent.Completed(subagentId, messages)).void
+                    // 诊断修复批 2026-10-24：cap 触发时**重载会话最新 transcript**——
+                    // hold 时武装捕获的 messages 是旧轮快照（hold 期唤醒轮的新产出
+                    // 不在其中），直接强投会把过期 payload 交付父会话；重载失败/
+                    // 空读回落旧快照（既有行为，绝不静默丢失复检事件本身）。
+                    latestMessages(subagentId, messages).flatMap(latest =>
+                      (ctx.self ! AgentEvent.Completed(subagentId, latest)).void
+                    )
               }).start.flatMap(f => bgWaitCapFiber.set(Some(f)))
+
+        /**
+         * cap 触发的强制终判用消息快照：优先会话持久层的最新 transcript
+         * （断点续跑同款读面），空读/读失败回落调用方给的 hold 期快照。
+         */
+        def latestMessages(sessionId: String, fallback: List[Message]): IO[List[Message]] =
+          resources.sessionStore
+            .loadMessagesForSession(sessionId)
+            .map(latest => if latest.nonEmpty then latest else fallback)
+            .handleErrorWith(e =>
+              logger
+                .warn(s"bg-wait cap: fresh transcript reload failed for $sessionId (${e.getMessage}) — using the held snapshot")
+                .as(fallback)
+            )
 
         /**
          * 等待屏障门（Completed 先过此门再进终判）。三态裁决：
@@ -817,6 +837,26 @@ object BackoffSupervisor:
               .handleErrorWith(e => logger.warn(s"delegate terminal cleanup failed: ${e.getMessage}").void)
           else IO.unit
 
+        // 诊断修复批 2026-10-24（delegate-nebflow-52308ee4 投递丢失）：终态交付
+        // 回执——`ref !` 是 mailbox offer 从不失败，父会话是否真注入回合此前零
+        // 确认。notify（直投 / parentRef=None 的 F2 持久兜底腿）过后落回执；
+        // 父注入时 ack（AgentIdle/AgentFinishTurn 挂点），超龄未确认由
+        // TaskStuckWatcher 扫描拍重投。fail-soft 绝不拖终态三清。
+        val receiptWrite: IO[Unit] =
+          if source == "delegate" then
+            nebflow.core.delegate.DelegateDeliveryReceipts
+              .record(
+                nebflow.core.delegate.DelegateDeliveryReceipts.Receipt(
+                  delegateId = subagentId,
+                  parentSessionId = parentSessionId,
+                  eventType = eventType,
+                  payload = payload,
+                  metadata = metadata,
+                  deliveredAt = System.currentTimeMillis()
+                )
+              )
+          else IO.unit
+
         val taskUpdate = resources.subAgentTaskStore
           .updateStatus(
             parentSessionId,
@@ -877,7 +917,7 @@ object BackoffSupervisor:
         // 卡片再没人能接——全仓唯一的其它清理入口是项目引擎，触及不到内核这种
         // 非项目会话）② 预算通道（不再计时）③ registry 行（既有）。
         // #1224：前置 delegate 清理（队列释放先行，再拆 actor）。
-        (delegateCleanup *> notify *> taskUpdate *> cleanupPendingAsks(resources, subagentId) *>
+        (delegateCleanup *> notify *> receiptWrite *> taskUpdate *> cleanupPendingAsks(resources, subagentId) *>
           DelegateBudget.release(subagentId) *>
           resources.agentRegistry.update(_ - subagentId) *>
           (childRef ! AgentCommand.Stop(s"$source-complete")) *>
