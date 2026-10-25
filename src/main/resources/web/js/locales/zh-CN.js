@@ -761,9 +761,16 @@ export default {
   'subagents.indicatorTitle': '后台子智能体',
   'subagents.status.running': '进行中',
   // held-receipt 投递可靠性批（2026-10-21 fix 4）：显式等待停靠态（等合并轮）。
-  'subagents.status.waiting': '停靠等待',
+  // panel-merge-status 批（2026-10-25 · 作者令）：候合并从通用「停靠等待」提升为
+  // 钉住的可见状态词——面板行状态位直显「候合并」。
+  'subagents.status.waiting': '候合并',
   'subagents.status.waitingMerge': '等待合并轮',
   'subagents.status.idle': '空闲',
+  // panel-merge-status 批（2026-10-25）：候合并行队列细节段（/api/merge-queue 只读
+  // 状态面；位次只渲染不派生，API 未生效 ⇒ 段全缺 = 静态「等待合并轮」降级）。
+  'subagents.mergeQueue.ahead': '前面还有 {n} 位',
+  'subagents.mergeQueue.retry': '第 {n} 次重试',
+  'subagents.mergeQueue.reason': '上次被拒：{reason}',
   // #752 空闲 delegate 在等什么（细分注记 + 长空闲提醒徽标）。
   'subagents.waitingBg': '等后台任务 ×{count}：{desc}（{dur}）',
   'subagents.waitingReceipts': '等子代理回执 ×{count}',

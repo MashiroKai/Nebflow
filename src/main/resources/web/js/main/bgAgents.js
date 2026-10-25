@@ -15,6 +15,9 @@ import { openStepPopup as openBgAgentPopup } from '../bgAgentPopup.js';
 // 两级面板数据侧 stub 读取口（delegate-ui 批：rows/children/chain——provider 镜像；
 // liveSource 挂载在 delegateChainProvider.js，由 main.js 侧 import 触发）。
 import { listDelegateRows, listDelegateChildren, getChainByTask } from '../delegateChainStub.js';
+// panel-merge-status 批（2026-10-25）：候合并行队列细节（位次/重试/拒绝摘要）——
+// /api/merge-queue 只读状态面单点（叶子模块，事件驱动 + 节流退避，禁空转轮询）。
+import { ensureMergeQueueStatus, mergeQueueEntryFor } from '../mergeQueueStatus.js';
 
 // --- Multi-agent events ---
 // Background sub-agent activity shows a header indicator (like Bash background tasks).
@@ -217,6 +220,14 @@ export function armBgUptimeTick(view) {
         const started = Number(el.getAttribute('data-started-at'));
         if (started > 0) el.textContent = fmtUptime(Date.now() - started);
       });
+      // panel-merge-status 批（2026-10-25）：面板在开且含候合并行 ⇒ uptick 同拍取
+      // 一次合并队列状态面（模块内 15s 节流 + 失败 60s 退避兜底——位次/拒绝摘要
+      // 随队列推进在开面板期间自愈刷新；无候合并行零取数）。取到新内容重渲染。
+      if (dd.querySelector('.bg-task-waiting')) {
+        ensureMergeQueueStatus().then((changed) => {
+          if (changed) renderBgAgentDropdown();
+        }).catch(() => {});
+      }
       armBgUptimeTick(view);
     }
   }, 15000);
@@ -456,8 +467,35 @@ function bgTaskRowHtml(id, info, opts = {}) {
     : '';
   // Waiting（held-receipt 投递可靠性批 2026-10-21 fix 4）：显式停靠标签——
   // 「等合并轮」的 delegate 行显示等待词，不再貌似 Idle 完成。
+  // panel-merge-status 批（2026-10-25 · 作者令「面板显示候合并状态与队列位次」）：
+  // 候合并行在静态「等待合并轮」词之上追加队列细节段（' · ' 连接，一段一行）：
+  //   · 位次 —— 前面还有 N 位（N = position-1，载荷只读；队首 N=0 不渲染）；
+  //   · 重试 —— merge 队列 retryCount ≥ 1 →「第 N 次重试」（与主行 ×N 会话重试
+  //     徽标不同源：此处 = 合并尝试失败计数）；
+  //   · 拒绝摘要 —— lastRefusalReason 非空 → 一句摘要（展示截断，全文进 tooltip）。
+  // 数据 = /api/merge-queue 状态面（mergeQueueStatus 单点；join key = 行 sid）。
+  // 降级红线：查无条目 / API 未生效（404）⇒ 三段全缺，行回静态「等待合并轮」
+  // 既有形态——零报错、零占位、零 console 噪音。
+  let waitingText = '';
+  let waitingTip = '';
+  if (rowState === 'waiting') {
+    const mq = mergeQueueEntryFor(String((info && info.sessionId) || '').replace(/^team-/, ''));
+    if (mq) {
+      const segs = [];
+      if (mq.ahead > 0) segs.push(t('subagents.mergeQueue.ahead', { n: mq.ahead }));
+      if (mq.retryCount > 0) segs.push(t('subagents.mergeQueue.retry', { n: mq.retryCount }));
+      if (mq.reason) segs.push(t('subagents.mergeQueue.reason', { reason: mq.reason }));
+      if (segs.length) {
+        waitingText = ' · ' + segs.join(' · ');
+        waitingTip = (mq.reasonFull || mq.reason)
+          ? t('subagents.mergeQueue.reason', { reason: mq.reasonFull || mq.reason })
+          : '';
+      }
+    }
+  }
   const waitingPart = (rowState === 'waiting')
-    ? '<span class="bg-task-waiting">' + escapeHtml(t('subagents.status.waitingMerge')) + '</span>'
+    ? '<span class="bg-task-waiting"' + (waitingTip ? ' title="' + escapeHtml(waitingTip) + '"' : '') + '>'
+      + escapeHtml(t('subagents.status.waitingMerge') + waitingText) + '</span>'
     : '';
   // #752 空闲细分注记：idle/waiting 行显示「在等什么」（等后台任务名+时长 /
   // 等子代理回执 N 条 / 长空闲提醒徽标）。仅在停靠态出现，active 行零变化。
@@ -574,6 +612,15 @@ export function renderBgAgentDropdown() {
   // see isBgRowVisible). Header count, empty state and rows all read this one
   // filtered set — 0 visible ⇒ count 0 + empty text, never a self-contradiction.
   const entries = visibleBgAgentEntries(bgAgents);
+  // panel-merge-status 批（2026-10-25）：面板含候合并行 ⇒ 事件驱动取一次合并队列
+  // 状态面（mergeQueueStatus 单点；模块内节流+退避，本次渲染先以缓存/静态形态落）。
+  // 取到新内容 → 面板在开才重渲染（关着不打扰；throttle 使重渲染链自然收敛）。
+  if (entries.some(([, info]) => bgRowState(info) === 'waiting')) {
+    ensureMergeQueueStatus().then((changed) => {
+      const carrier = activeView && activeView.dom.bgDropdownEl;
+      if (changed && carrier && !carrier.classList.contains('hidden')) renderBgAgentDropdown();
+    }).catch(() => {});
+  }
   // Panel header carries the live count (aria-live polite, spec §5).
   const headerEl = dropdownEl ? dropdownEl.querySelector('.bg-dropdown-header') : null;
   if (headerEl) headerEl.textContent = t('subagents.header', { count: entries.length });
