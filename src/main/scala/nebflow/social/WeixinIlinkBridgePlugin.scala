@@ -275,6 +275,17 @@ final class WeixinIlinkBridgePlugin(
     cats.effect.Ref.unsafe[IO, Set[String]](Set.empty)
 
   /**
+   * 断桥预警降级批（2026-10-25，作者令）: one open ret=-2 flap window —
+   * when it opened, how many refusals it has accumulated, and the last
+   * refusal's code/reason — so the RECOVERY log line can carry the ret code
+   * and the recovery time (the structured transient log the ruling asks
+   * for). Opens on the first 0→N increment, extends on every further
+   * increment, closes exactly when both streaks return to zero. Pure data;
+   * the decision stays in [[noteSendHealth]].
+   */
+  private[social] final case class RetFlap(startMs: Long, refusals: Int, lastCode: Int, lastReason: String)
+
+  /**
    * 入站图片必达批（2026-10-24）: the bridge-dead detector state —
    * ((text-streak, media-streak), alert-fired). Streak decision per leg is
    * the pure companion [[WeixinIlinkBridgePlugin.bridgeDeadStreak]].
@@ -283,9 +294,12 @@ final class WeixinIlinkBridgePlugin(
    * 失败 + 卡文本成功交替，单一共享 streak 永远到不了阈值）；告警闸共享
    * （一次死亡一次升级），双 streak 同时归零才算全愈（re-arm + 清 strike 回
    * 绿——健康判定 = 桥整体回活，不是任一腿独活）。
+   * 断桥预警降级批（2026-10-25，作者令）：第三槽 [[RetFlap]] 记录当前
+   * ret=-2 抖动窗（起点/累计拒数/末次 ret 码与 reason），供恢复时的结构化
+   * INFO（带 ret 码与恢复时间）——瞬态抖动只落 log，绝不通知主会话。
    */
   private val bridgeDeadRef =
-    cats.effect.Ref.unsafe[IO, ((Int, Int), Boolean)](((0, 0), false))
+    cats.effect.Ref.unsafe[IO, ((Int, Int), Boolean, Option[RetFlap])](((0, 0), false, None))
 
   /**
    * The dead-letter slot: the LAST reply each served session dropped on
@@ -1327,10 +1341,16 @@ final class WeixinIlinkBridgePlugin(
    * 复位告警闸、清 [bridge-session-dead] strike ⇒ 通道面回绿）；502+ret=-2 累
    * 进；阈值穿越且未告警过 ⇒ 一次性升级（[[alertBridgeDead]]）。其它失败中
    * 立不动。自身 TOTAL：任何一步失败都被包含，绝不改变发送结果语义。
+   *
+   * 断桥预警降级批（2026-10-25，作者令）：瞬态拒绝（抖动窗内恢复）只落
+   * 结构化 log——逐条拒绝已有逐条 WARN（code/reason），此处补齐「恢复时间」：
+   * 全愈瞬间一条 INFO（累计拒数 + 抖动窗时长 + 末次 ret 码）。任何路径都
+   * 不再向主会话注入通知（[[alertBridgeDead]] 的注入腿已整个退役）；作者
+   * 面只有通道卡自身的健康 strike（状态自解释）。
    */
   private def noteSendHealth(sender: String, res: WeixinOutboundAdapter.SendResult, mediaLeg: Boolean): IO[Unit] =
     val fire =
-      bridgeDeadRef.modify { case ((tStreak, mStreak), alerted) =>
+      bridgeDeadRef.modify { case ((tStreak, mStreak), alerted, flap) =>
         val next =
           WeixinIlinkBridgePlugin.bridgeDeadStreak(if mediaLeg then mStreak else tStreak, res.ok, res.code, res.reason)
         val (tNext, mNext) = if mediaLeg then (tStreak, next) else (next, mStreak)
@@ -1340,12 +1360,31 @@ final class WeixinIlinkBridgePlugin(
         // 全愈 = 双 streak 同时归零（桥整体回活）：此时告警闸 re-arm。
         val bothGreen = tNext == 0 && mNext == 0
         val newAlerted = if bothGreen then false else alerted || shouldFire
-        // (fire?, was-alerted-before, both-green-now): the clear is skipped on
-        // the common healthy path (zero extra fs reads per successful send).
-        (((tNext, mNext), newAlerted), (if shouldFire then Some(math.max(tNext, mNext)) else None, alerted, bothGreen))
+        // 抖动窗账本：ret=-2 累进（0→1 开窗）开/续窗；全愈即关窗（关窗时把
+        // 刚关的窗带回给日志腿）。中立失败不动窗。
+        val incremented = tNext > tStreak || mNext > mStreak
+        val flapNext =
+          if incremented then
+            Some(
+              flap.fold(RetFlap(System.currentTimeMillis(), 1, res.code, res.reason))(f =>
+                f.copy(refusals = f.refusals + 1, lastCode = res.code, lastReason = res.reason)
+              )
+            )
+          else if bothGreen then None
+          else flap
+        val closedFlap = if bothGreen then flap else None
+        (((tNext, mNext), newAlerted, flapNext),
+        (if shouldFire then Some(math.max(tNext, mNext)) else None, alerted, bothGreen, closedFlap))
       }
-    fire.flatMap { case (alert, wasAlerted, bothGreen) =>
+    fire.flatMap { case (alert, wasAlerted, bothGreen, closedFlap) =>
       alert.fold(IO.unit)(streak => alertBridgeDead(sender, streak)) *>
+        closedFlap.fold(IO.unit) { f =>
+          val durSec = math.max(0, (System.currentTimeMillis() - f.startMs) / 1000)
+          logger.info(
+            s"weixin-ilink bridge: ret=-2 flap recovered — ${f.refusals} refused send(s) over ${durSec}s " +
+              s"(last code=${f.lastCode} reason=${f.lastReason.take(160)}) — transient; logged only, the main session is not notified"
+          )
+        } *>
         (if res.ok && wasAlerted && bothGreen then clearNoReturnStrike(sender, WeixinIlinkBridgePlugin.ReasonBridgeDead)
          else IO.unit)
     }
@@ -1353,40 +1392,31 @@ final class WeixinIlinkBridgePlugin(
   end noteSendHealth
 
   /**
-   * The ONE-TIME bridge-dead escalation: ERROR log (per-reply WARNs alone hid
-   * the 2026-10-24 18-hour death), a [bridge-session-dead] strike on the
-   * channel health face (the panel marks the channel), and the re-bind notice
-   * injected into the sender's bound session (web-visible — where the
-   * scan-bind card lives). TRUE re-login still needs the author to scan once;
-   * the detector's job is to bring the author to that scan, not to swallow
-   * the death silently. Every leg contained.
+   * 断桥预警降级批（2026-10-25，作者令）: the ONE-TIME sustained-hard-failure
+   * escalation — WARN-level log (downgraded from the 2026-10-24 ERROR: both
+   * of that night's firings were transient-flap false alarms) + the
+   * [bridge-session-dead] health strike on the channel face (the card
+   * explains itself — the ONLY author-facing surface). 🔴 NO session
+   * injection of any kind: the ⚠️「桥会话疑似失效」re-bind notice
+   * ([[WeixinIlinkBridgePlugin.bridgeDeadNotice]], retired with this batch)
+   * fired on transient flaps and interrupted the main session twice for
+   * nothing. A transient flap recovers on its own and must stay invisible to
+   * the session; even a sustained death is a log + card-strike matter — the
+   * author watching the channel card sees the strike and re-binds when he
+   * chooses. TRUE re-login still needs one QR scan; the detector keeps the
+   * card truthful, it does not interrupt. Every leg contained.
    */
   private def alertBridgeDead(sender: String, streak: Int): IO[Unit] =
-    logger.error(
-      s"weixin-ilink bridge: bridge session DEAD — $streak consecutive sends refused (502 ret=-2) — " +
-        "inbound is likely equally stalled; a QR re-bind on the channel card is required " +
-        "(self-heal needs one scan; until then the author is served via web/file-assistant)"
+    logger.warn(
+      s"weixin-ilink bridge: bridge session DEAD — $streak consecutive sends refused (502 ret=-2) with no recovery " +
+        "beyond the " + WeixinIlinkBridgePlugin.BridgeDeadThreshold + "-send window — inbound is likely equally stalled; " +
+        "a QR re-bind on the channel card is required (health strike written to the card face; the main session is NOT notified)"
     ) *>
       writeStrike(sender, WeixinIlinkBridgePlugin.ReasonBridgeDead).handleErrorWith(e =>
         logger.warn(
           s"weixin-ilink bridge: bridge-dead health strike write failed (${e.getClass.getSimpleName}) — contained"
         )
-      ) *>
-      routesRef.get.map(routes => routes.collectFirst { case (s, sid) if s == sender => sid }).flatMap {
-        case None => IO.unit
-        case Some(sid) =>
-          ctxRef.get.flatMap {
-            case None => IO.unit
-            case Some(ctx) =>
-              ctx
-                .injectMessage(sid, WeixinIlinkBridgePlugin.bridgeDeadNotice(streak), None, None)
-                .handleErrorWith(e =>
-                  logger.warn(
-                    s"weixin-ilink bridge: bridge-dead notice inject failed (${e.getClass.getSimpleName}) — contained"
-                  )
-                )
-          }
-      }
+      )
 
   /**
    * The redelivery leg: the sender's FIRST registration for this session (the
@@ -1992,17 +2022,24 @@ object WeixinIlinkBridgePlugin:
   // 2026-10-24 事故面：桥会话态服务器侧损坏（sendmessage 一律 502
   // ret=-2「prepare failed」，18 小时数百条回复全灭），引擎侧只有逐条 WARN、
   // 无任何升级/自愈提示——作者毫不知情。此处把「连续被拒」本身变成一等信号：
-  // 纯 streak 判定（下方）+ 阈值穿越一次性告警（ERROR + 健康面 strike +
-  // 注入会话的重绑提示）。真正的「重登」必须作者扫一次码（QR 在通道卡上），
-  // 探测器负责把作者带到扫码动作前——而不是静默吞到地老天荒。
+  // 纯 streak 判定（下方）+ 阈值穿越一次性升级。
+  // 断桥预警降级批（2026-10-25，作者令）：升级面改为 WARN 级 log + 通道卡
+  // 健康 strike（状态自解释）——不再向主会话注入任何通知。当晚两次「⚠️ 桥
+  // 会话疑似失效」均为短暂抖动误报（连续拒收在窗内自愈）；瞬态抖动只落
+  // 结构化 log（逐条 WARN + 恢复时带 ret 码与恢复时间的 INFO），持续硬故障
+  // 也只升 log + 卡面 strike。真正的「重登」仍须作者扫一次码（QR 在通道卡
+  // 上）——卡面 strike 把作者带到扫码动作前，而不是静默吞到地老天荒。
 
   /** The health-face strike reason for a dead bridge session. */
   val ReasonBridgeDead = "bridge-session-dead"
 
   /**
-   * 连续 ret=-2 拒绝达到该数 ⇒ 桥会话判定死亡，一次性告警。side-car 侧每次
-   * 发送自带重试，5 连拒已是「不是频控、是态坏」的充分证据（频控短爆在
-   * 成功复位语义下达不到这个长度）。
+   * 连续 ret=-2 拒绝达到该数 ⇒ 持续硬故障判定（设定窗），一次性升级：
+   * WARN 级 log + 通道卡健康 strike（不通知主会话——断桥预警降级批）。
+   * 窗内恢复（含窗内任意成功复位 streak）= 瞬态抖动：只落结构化 log
+   * （恢复 INFO 带累计拒数、抖动时长与末次 ret 码）。side-car 侧每次发送
+   * 自带重试，5 连拒已是「不是频控、是态坏」的充分证据（频控短爆在成功
+   * 复位语义下达不到这个长度）。
    */
   val BridgeDeadThreshold = 5
 
@@ -2019,13 +2056,9 @@ object WeixinIlinkBridgePlugin:
     else if code == 502 && Option(reason).exists(_.contains("ret=-2")) then prev + 1
     else prev
 
-  /**
-   * The author-facing re-bind notice (injected into the bound session, so it
-   *  is visible on the web console where the scan-bind card lives).
-   */
-  def bridgeDeadNotice(streak: Int): String =
-    s"⚠️ 微信（iLink）桥会话疑似失效：连续 $streak 条消息被服务器拒绝（sendmessage ret=-2），微信收发已中断。" +
-      "请在控制台「微信（iLink）」通道卡重新扫码绑定（恢复需一次扫码）；绑定成功前，请改用网页端或文件传输助手。"
+  // （断桥预警降级批 2026-10-25：`bridgeDeadNotice`——注入主会话的「⚠️ 桥会话
+  // 疑似失效」重绑提示——随注入腿一并退役。作者实证当晚两次触发均为短暂抖动
+  // 误报；作者面改为通道卡健康 strike 自解释，主会话零打扰。）
 
   // ───────── weixin-inbound-media batch: the media arm's pure face ─────────
 

@@ -1566,7 +1566,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     )
   }
 
-  test("WI-BD2 five consecutive ret=-2 replies escalate ONCE (ERROR + strike + re-bind notice), and recovery re-arms") {
+  test("WI-BD2 five consecutive ret=-2 replies escalate to a WARN log + channel strike ONLY (the main session is NEVER notified), and recovery re-arms") {
     val root = tmpRoot()
     val c = new RecordingCtx(List(meta("s1", Some("wx_alice"))))
     val fail =
@@ -1602,7 +1602,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
         )
     withAppender { appender =>
       val before = messages(appender).length
-      val (notices, w1, rec, w2, green) = (for
+      val (w1, rec, w2, green, injected) = (for
         _ <- started(p, c)
         // death window 1: the strike must be ON the face while the bridge is dead
         _ <- (1 to 5).toList.traverse(i => p.reply("s1", s"msg-$i"))
@@ -1617,18 +1617,29 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
         _ <- p.reply("s1", "msg-16")
         green <- IO(bridgeDeadStrikes)
         injected <- c.injected.get
-      yield (
-        injected.map(_._2).filter(_.contains("重新扫码绑定")),
-        w1,
-        rec,
-        w2,
-        green
-      )).unsafeRunSync()
+      yield (w1, rec, w2, green, injected)).unsafeRunSync()
       val fired = messages(appender).drop(before)
-      val deadLines = fired.filter(_.contains("bridge session DEAD"))
-      assertEquals(deadLines.length, 2, s"one escalation per streak — the 6-10 success window re-arms, got $deadLines")
-      assert(deadLines.forall(_.contains("5 consecutive")), deadLines)
-      assertEquals(notices.length, 2, s"exactly one re-bind notice per escalation, got $notices")
+      // 断桥预警降级批（2026-10-25，作者令）：升级 = WARN 级 log（不再是 ERROR）
+      import scala.jdk.CollectionConverters.*
+      val escalated = appender.list.asScala.toList
+        .drop(before)
+        .filter(_.getLevel == ch.qos.logback.classic.Level.WARN)
+        .map(_.getFormattedMessage)
+        .filter(_.contains("bridge session DEAD"))
+      assertEquals(escalated.length, 2, s"one WARN escalation per streak — the 6-10 success window re-arms, got $escalated")
+      assert(escalated.forall(_.contains("5 consecutive")), escalated)
+      // 🔴 THE RULING: no session notification on ANY path — not on the
+      // transient flap, not on the sustained death. The bound session hears
+      // nothing; the channel card strike is the only author-facing surface.
+      assertEquals(injected, List.empty[(String, String, Option[String])], s"the main session must NOT be notified, got $injected")
+      assert(
+        !fired.exists(_.contains("疑似失效")),
+        "the ⚠️ re-bind notice text is retired — it must not reach any log or session"
+      )
+      // 瞬态抖动的结构化 log：每次全愈一条恢复 INFO（带 ret 码与恢复时间）
+      val recoveries = fired.filter(_.contains("ret=-2 flap recovered"))
+      assertEquals(recoveries.length, 2, s"one structured recovery line per flap window, got $recoveries")
+      assert(recoveries.forall(_.contains("last code=502")), recoveries)
       def hasAliceStrike(strikes: List[Json]): Boolean =
         strikes.exists(s =>
           s.hcursor.downField("sessionId").as[String].toOption.contains("wx_alice") &&

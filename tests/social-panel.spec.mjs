@@ -338,7 +338,7 @@ const WEB = process.env.SOCIAL_WEB_ROOT ? resolve(process.env.SOCIAL_WEB_ROOT) :
 // is served (the `web=` reading on the mode line below states the tree).
 const SUITE_ENV = String(process.env.SOCIAL_SUITE || '').toLowerCase();
 const MODE = SUITE_ENV === 'after' || SUITE_ENV === 'before' || SUITE_ENV === 'fixture' || SUITE_ENV === 'redfilter'
-  || SUITE_ENV === 'nrs' || SUITE_ENV === 'ilinkred' || SUITE_ENV === 'scanauth'
+  || SUITE_ENV === 'nrs' || SUITE_ENV === 'ilinkred' || SUITE_ENV === 'scanauth' || SUITE_ENV === 'instant'
   ? SUITE_ENV.toUpperCase()
   : (process.env.SOCIAL_WEB_ROOT ? 'BEFORE'
     : (process.env.SOCIAL_MUTATE === 'adapter-true' ? 'FIXTURE'
@@ -761,6 +761,7 @@ async function afterSuite(browser, base) {
     'src/main/scala/nebflow/gateway/PresenceRoutes.scala',   // weixin-scanbind: the begin/status routes
     'src/main/scala/nebflow/social/SocialChannels.scala',
     'src/main/scala/nebflow/social/WeixinIlinkScanBind.scala', // weixin-scanbind: the manager
+    'src/main/scala/nebflow/social/WeixinIlinkBridgePlugin.scala', // 断桥预警降级批 2026-10-25: the bridge-dead detector's escalation face (A 件)；revive-p0 的 streak 分腿也在此
     'src/test/scala/nebflow/social/WeixinIlinkScanBindSpec.scala', // weixin-scanbind spec
     'src/test/scala/nebflow/social/WeixinIlinkBridgeSpec.scala', // weixin-scanbind: the WI-F1 field contract
     'README.md',                                             // weixin-scanbind: the section update
@@ -3117,6 +3118,115 @@ async function ilinkRedSuite(browser, base) {
 //   SAG-3  begin 503（真传输错）⇒ 保持既有 'io' 兜底、零横幅零 reload（5xx
 //          静默降级面不变——session-gate.spec ③ 的扫描面镜像）。
 // 每腿独立 context（sessionStorage 冷却与单飞互不串扰）。
+// ── 秒显批 (author order 2026-10-25): the bound-state cache face ───────────
+// Panel open must paint the LAST CONVERGED bound state from the localStorage
+// snapshot BEFORE the network converges (开卡即从本地读 — the bound pill rides
+// the first paint, <1s), a converged read that AGREES with that paint must
+// rebuild nothing (变更才更新界面 — tagged DOM node survives convergence), and
+// every convergence point writes the snapshot back (落盘持久化). RED on the
+// pre-batch tree: the first paint rendered empty maps (notConfigured) and the
+// pill only flipped after the whole fetch chain answered.
+async function instantSuite(browser, base) {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+  const page = await ctx.newPage();
+  await boot(page, { locale: 'zh-CN' });
+  // The snapshot a previous open would have persisted: the weixin card bound
+  // (enabled + clean probe triple + registered ⇒ connected). Shape = v1.
+  const CACHE = {
+    v: 1,
+    at: 1,
+    channels: {
+      'weixin-ilink': {
+        cfg: {
+          enabled: true,
+          fields: {
+            ilink_bot_id: 'wxid_mock_bot',
+            ilink_user_id: 'wxid_mock_user',
+            bot_token_ref: '~/.nebflow/secrets/social-weixin-bot-token',
+          },
+        },
+        probe: { bot_token: { exists: true, modeOk: true, readable: true } },
+        registered: true,
+        live: null,
+      },
+    },
+  };
+  await page.addInitScript(
+    (c) => { try { localStorage.setItem('nebflow.social.panelCache.v1', JSON.stringify(c)); } catch { /* ignore */ } },
+    CACHE,
+  );
+  // And the SAME state as live backend truth — so convergence must AGREE with
+  // the cached paint (nothing to correct).
+  apiState.channels = {};
+  apiState.probes = {};
+  apiState.registered = {};
+  apiState.posts = [];
+  apiState.channels['weixin-ilink'] = { enabled: true, fields: { ...CACHE.channels['weixin-ilink'].cfg.fields } };
+  apiState.probes['weixin-ilink'] = JSON.parse(JSON.stringify(CACHE.channels['weixin-ilink'].probe));
+  apiState.registered['weixin-ilink'] = true;
+
+  // Gate GET /api/social/channels behind a test-held promise: the load chain
+  // cannot converge until released, so anything painted before that point came
+  // from the cache. (Probes answer immediately; fetchConfig is the chain's
+  // FIRST await, so the whole convergence waits here.)
+  let release = () => {};
+  const gate = new Promise((res) => { release = res; });
+  await page.route('**/api/social/channels', async (r) => {
+    if (r.request().method() !== 'GET') return r.fallback();
+    await gate;
+    return r.fulfill({ json: { channels: apiState.channels, adapterRegistered: false } });
+  });
+
+  try {
+    await page.goto(base);
+    await page.waitForSelector('#social-btn', { timeout: 8000 });
+    await page.waitForFunction(() => !!document.querySelector('#social-btn svg'), undefined, { timeout: 8000 });
+    await page.click('#social-btn');
+    await page.waitForSelector('#social-overlay.on', { timeout: 4000 });
+    // ① the cached paint: the bound pill is up while the network is still gated
+    await page.waitForFunction(
+      () => document.querySelector('.social-card[data-channel="weixin-ilink"] [data-status]')?.dataset.status === 'connected',
+      undefined,
+      { timeout: 4000 },
+    );
+    const busyBefore = await page.$eval('#social-section-channels', (el) => el.getAttribute('aria-busy'));
+    // ② tag the card so a rebuild would be observable, then let truth land
+    await page.evaluate(() => {
+      const el = document.querySelector('.social-card[data-channel="weixin-ilink"]');
+      if (el) el.dataset.instantProbe = 'painted-from-cache';
+    });
+    release();
+    await page.waitForFunction(
+      () => document.getElementById('social-section-channels')?.getAttribute('aria-busy') === 'false',
+      undefined,
+      { timeout: 8000 },
+    );
+    const after = await page.evaluate(() => {
+      const card = document.querySelector('.social-card[data-channel="weixin-ilink"]');
+      let snapshotted = false;
+      try { snapshotted = !!JSON.parse(localStorage.getItem('nebflow.social.panelCache.v1') || '').channels['weixin-ilink']; } catch { /* absent */ }
+      return {
+        status: (card.querySelector('[data-status]') || {}).dataset?.status || '',
+        rebuilt: !card || card.dataset.instantProbe !== 'painted-from-cache',
+        snapshotted,
+      };
+    });
+    check('秒显-1 开卡即显示绑定态（缓存先画；网络未收敛时 pill 已 connected）',
+      after.status === 'connected' && busyBefore === 'true',
+      `status=${after.status} busyBeforeNetwork=${busyBefore}`);
+    check('秒显-2 校真一致不重画（收敛后同一 DOM 节点存续 = 变更才更新界面）',
+      after.status === 'connected' && !after.rebuilt,
+      `status=${after.status} rebuilt=${after.rebuilt}`);
+    check('秒显-3 收敛点回写快照（绑定态落盘持久化）', after.snapshotted, `snapshotted=${after.snapshotted}`);
+  } catch (e) {
+    release();
+    check('秒显 suite', false, `threw: ${String((e && e.message) || e).slice(0, 200)}`);
+  } finally {
+    release();
+    await ctx.close();
+  }
+}
+
 async function scanAuthGateSuite(browser, base) {
   const AUTH_LINE = ZH['social.scan.authExpired'] || '登录已过期';
 
@@ -3226,7 +3336,8 @@ try {
   // headless 下不可见，A/B 已证与本批无关)，so the 403-family legs need their
   // own entry point to be runnable in isolation.
   else if (MODE === 'SCANAUTH') await scanAuthGateSuite(browser, base);
-  else { await afterSuite(browser, base); await apiSuite(); await minSuite(browser, base); await min2Suite(browser, base); await bindItemSuite(browser, base); await scanAuthGateSuite(browser, base); }
+  else if (MODE === 'INSTANT') await instantSuite(browser, base);
+  else { await afterSuite(browser, base); await apiSuite(); await minSuite(browser, base); await min2Suite(browser, base); await bindItemSuite(browser, base); await instantSuite(browser, base); await scanAuthGateSuite(browser, base); }
 } finally {
   await browser.close();
   await new Promise((r) => server.close(r));
