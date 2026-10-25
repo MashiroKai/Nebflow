@@ -187,21 +187,22 @@ object BackoffSupervisor:
               )
               .attempt
               .flatMap {
-                case Right(nebflow.core.delegate.DelegateTerminal.Outcome.Release(suffix, mergeRoundRefused)) =>
+                case Right(nebflow.core.delegate.DelegateTerminal.Outcome.Release(suffix, mergeOutcome)) =>
                   // file-diff → 委托结果行（bug #58 修 2026-10-09）：完成批次携带
                   // 改动文件 diff 载荷（metadata.fileChanges）——父会话注入行的
                   // 产物卡展开即 diff 视图。空报告 = 不带键（行字节形态不变）。
                   // A 段等待屏罩：兜底交付注记（bg-wait cap 到期强制终判时附带
                   // ——诚实标注「交付时仍有未结后台任务，其完成通知将丢失」）。
-                  // D3-③（steward 批 2026-10-23）：合并轮被拒（机械验收拒绝等
-                  // 注记形）⇒ 队列条目留队待重试而非出队（队头被拒不堵塞后续）。
+                  // 台账 #896（交通引导员制 2026-10-26）：合并轮终态结论随行关账
+                  // （merged / failed；回合外 = None → 账实核对回落 owner-gone）
+                  // ——无留队待重试语义。
                   val note = bgWaitNote.fold("")(n => s"\n[delegate-bg-wait] $n")
                   fileChangesMetadata().flatMap(fc =>
                     notifyParentAndStop(
                       "completed",
                       payload + suffix + note,
                       fc,
-                      keepForRetry = mergeRoundRefused
+                      mergeOutcome = mergeOutcome
                     )
                   )
                 case Right(nebflow.core.delegate.DelegateTerminal.Outcome.HoldForMerge) =>
@@ -830,7 +831,7 @@ object BackoffSupervisor:
         payload: String,
         failureMetadata: JsonObject,
         taskStatusOverride: Option[String] = None,
-        keepForRetry: Boolean = false
+        mergeOutcome: Option[nebflow.core.delegate.MergeQueue.RoundOutcome] = None
       ): IO[Behavior[AgentEvent]] =
         val metadata = JsonObject(
           "description" -> description.asJson,
@@ -843,13 +844,14 @@ object BackoffSupervisor:
           if eventType == "completed" then "completed" else "failed"
         )
         // worktree-judge-fifo 批（#1224）：delegate 轨终态统一清理（幂等）——
-        // MergeQueue 出队（合并轮完成/超时/任何终态都要释放队列）+ failed/
-        // cancelled 的补判词行（completed 腿的判词行由 DelegateTerminal.onCompleted
-        // 写，此处不重复）。subtask 轨零变化。
+        // MergeQueue 关账（合并轮结论随行：merged / failed / 回合外账实核对回落；
+        // 台账 #896 交通引导员制——无留队待重试语义）+ failed/cancelled 的补判词行
+        // （completed 腿的判词行由 DelegateTerminal.onCompleted 写，此处不重复）。
+        // subtask 轨零变化。
         val delegateCleanup =
           if source == "delegate" then
             nebflow.core.delegate.DelegateTerminal
-              .onTerminalCleanup(resources, subagentId, parentSessionId, taskStatus, eventType, keepForRetry)
+              .onTerminalCleanup(resources, subagentId, parentSessionId, taskStatus, eventType, mergeOutcome)
               .handleErrorWith(e => logger.warn(s"delegate terminal cleanup failed: ${e.getMessage}").void)
           else IO.unit
 

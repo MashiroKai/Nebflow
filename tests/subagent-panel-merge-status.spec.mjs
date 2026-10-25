@@ -1,13 +1,14 @@
 // subagent-panel-merge-status.spec.mjs — 子智能体面板「候合并」状态钉验收
-// （panel-merge-status 批 2026-10-25 · 作者令「子智能体面板显示候合并状态与队列位次」）。
+// （台账 #896 交通引导员制 2026-10-26 · 前身 = panel-merge-status 批 2026-10-25）。
 //
-// 作者令四条 → 断言面：
-//   T1 状态钉 …… 候合并行状态位直显「候合并」（不再隐没在通用「停靠等待」文案）；
-//      队列位次段「前面还有 N 位」（数据 = GET /api/merge-queue 条目 position，
-//      前端只渲染不派生）+「第 N 次重试」（retryCount ≥ 1）+ 拒绝原因摘要一句
-//      （展示截断、全文进 title tooltip）。
-//   T2 队首降段 …… position=1 ⇒ 无「前面还有」段；retryCount=0 / 原因空 ⇒ 段全缺
-//      ——行回静态「等待合并轮」形态。
+// 作者令四条 → 断言面（载荷 = MergeQueue 账本条目：state / position / lastBlockReason；
+// 重试轮与 parked 语义已整体退役——无「第 N 次重试」段）：
+//   T1 状态钉 …… 候合并行状态位直显「候合并」；waiting × 前面有人 ⇒ 队列位次段
+//      「前面还有 N 位」（数据 = GET /api/merge-queue 条目 position，前端只渲染
+//      不派生）+ 未放行原因摘要一句（展示截断、全文进 title tooltip）。
+//   T1b 放行段 …… state=turn-granted（单持有人窗本体）⇒「轮到你合并」段（位次段
+//      让位）；合并轮通知不可达 ⇒ owner-gone 关账，绝不静默 park（引擎侧判据）。
+//   T2 队首降段 …… position=1 且原因空 ⇒ 段全缺——行回静态「等待合并轮」形态。
 //   T3 API 未生效降级 …… /api/merge-queue 404 ⇒ 静态「候合并」+「等待合并轮」，
 //      零位次、零报错弹面（预期的资源 404 日志除外）、零 pageerror。
 //   T4 形状漂移/空队列降级 …… 载荷 `{}` / 空 queues ⇒ 同静态形态，零噪音。
@@ -34,11 +35,11 @@ const ROOT_SID = 'mqst-root-session';
 const DELEGATE_SID = 'delegate-mqst-1';
 const T0 = Date.now();
 
-/** merge-queue 打桩载荷（一条项目队列；entries 可空）。 */
+/** merge-queue 打桩载荷（一条项目队列；entries 可空——PresenceRoutes 投影形）。 */
 function queuePayload(entries) {
   return {
     generatedAt: Date.now(),
-    queues: [{ projectKey: 'stand', inFlight: false, entries }],
+    queues: [{ projectKey: 'stand', holder: null, entries, recent: [] }],
   };
 }
 function queueEntry(over = {}) {
@@ -53,14 +54,12 @@ function queueEntry(over = {}) {
     position: 2,
     total: 3,
     holder: null,
-    pendingRetry: false,
-    reminderSent: false,
-    retryCount: 0,
-    lastAttemptAt: 0,
-    stallNotified: false,
-    stallEscalated: false,
+    state: 'waiting',
+    grantedAt: null,
+    grantedBaseTip: null,
     readyAt: T0 - 60_000,
-    lastRefusalReason: '',
+    lastBlockReason: '',
+    lastEventReason: '',
     ...over,
   };
 }
@@ -165,7 +164,7 @@ test.beforeEach(async ({ page }) => {
   await bootApp(page);
 });
 
-test('T1 merge-queued pin: status word + queue position + retry + refusal summary', async ({ page }) => {
+test('T1 merge-queued pin: status word + queue position + hold-reason summary', async ({ page }) => {
   const errors = watchErrors(page);
   await page.route('**/api/merge-queue*', (route) => route.fulfill({
     status: 200,
@@ -173,8 +172,8 @@ test('T1 merge-queued pin: status word + queue position + retry + refusal summar
     body: JSON.stringify(queuePayload([queueEntry({
       position: 2,
       total: 3,
-      retryCount: 1,
-      lastRefusalReason: 'merge: dirty worktree: reports/20261025_panel_merge_status_REPORT.md 未提交',
+      state: 'waiting',
+      lastBlockReason: 'merge: dirty worktree: reports/20261025_panel_merge_status_REPORT.md 未提交',
     })])),
   }));
   await seedAgent(page, 'Waiting');
@@ -184,22 +183,46 @@ test('T1 merge-queued pin: status word + queue position + retry + refusal summar
   const row = rows.first();
   // 状态钉：状态位直显「候合并」。
   await expect(row.locator('.bg-task-state')).toHaveText('候合并');
-  // 队列细节段：位次 + 重试 + 拒绝摘要（一句话，同段 ' · ' 连接）。
+  // 队列细节段：位次 + 未放行原因（一句话，同段 ' · ' 连接）。
   const detail = row.locator('.bg-task-waiting');
   await expect(detail).toHaveText(
-    '等待合并轮 · 前面还有 1 位 · 第 1 次重试 · 上次被拒：merge: dirty worktree: reports/20261025_panel_merge_status_REPORT.md 未提交',
+    '等待合并轮 · 前面还有 1 位 · 未放行原因：merge: dirty worktree: reports/20261025_panel_merge_status_REPORT.md 未提交',
   );
   // 全文 tooltip（摘要截断防线之上的完整原因）。
   await expect(detail).toHaveAttribute('title', /merge: dirty worktree: reports\/20261025_panel_merge_status_REPORT\.md 未提交$/);
   expect(errors).toEqual([]);
 });
 
-test('T2 head-of-queue: no ahead segment; zero retry / empty reason drop their segments', async ({ page }) => {
+test('T1b turn-granted: the granted holder shows the merge-turn segment (position segment yields)', async ({ page }) => {
   const errors = watchErrors(page);
   await page.route('**/api/merge-queue*', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
-    body: JSON.stringify(queuePayload([queueEntry({ position: 1, total: 2, retryCount: 0, lastRefusalReason: '' })])),
+    body: JSON.stringify(queuePayload([queueEntry({
+      position: 1,
+      total: 3,
+      state: 'turn-granted',
+      grantedAt: Date.now() - 5000,
+      grantedBaseTip: 'abc123def456',
+    })])),
+  }));
+  await seedAgent(page, 'Waiting');
+
+  const rows = await openAgentSection(page);
+  await expect(rows).toHaveCount(1);
+  const row = rows.first();
+  await expect(row.locator('.bg-task-state')).toHaveText('候合并');
+  // 持有人段（位次段让位、无原因段）：放行 = 通知已送达（交通引导员制）。
+  await expect(row.locator('.bg-task-waiting')).toHaveText('等待合并轮 · 轮到你合并（窗口持有中）');
+  expect(errors).toEqual([]);
+});
+
+test('T2 head-of-queue: no ahead segment; empty reason drops its segment', async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.route('**/api/merge-queue*', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(queuePayload([queueEntry({ position: 1, total: 2, state: 'waiting', lastBlockReason: '' })])),
   }));
   await seedAgent(page, 'Waiting');
 

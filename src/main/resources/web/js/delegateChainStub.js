@@ -101,8 +101,10 @@ const PENDING_N1_KINDS = new Set([FRAME_KINDS.CHAIN_REGISTERED, FRAME_KINDS.CHAI
  * @property {string} orchestrationMode G1 编排模式（ORCHESTRATION_MODES 值域；'' = 旧盘
  *                                      null/缺键——过渡启发兜底，禁折叠为 single）
  * @property {number|null} archivedAt   G6 归档时间戳 epoch ms（null = 在册未归档）
- * @property {{projectKey: string, ahead: string[], holder: string|null, reminderSent: boolean}|null} mergeQueue
- *                                      G5 行内排队可见性槽（引擎闸透传；未排队 = null）
+ * @property {{projectKey: string, ahead: string[], holder: string|null, state: string}|null} mergeQueue
+ *                                      G5 行内排队可见性槽（引擎闸透传；未排队 = null；
+ *                                      state = 账本状态机 waiting|turn-granted——台账
+ *                                      #896 交通引导员制，reminderSent 语义已退役）
  * @property {{position: number, total: number, readyAt: number, branch: string, baseBranch: string}|null} mergeQueuePos
  *                                      G5 行内排队位次（引擎自排序透传；未排队 = null）
  * @property {number|null} restartInterruptedAt  重启打断旗（对账批 2026-10-22，epoch ms；
@@ -235,7 +237,7 @@ export function rowFromRegistry(record, live) {
       projectKey: String(q.projectKey || ''),
       ahead: Array.isArray(q.ahead) ? q.ahead.map((x) => String(x || '')) : [],
       holder: q.holder == null ? null : String(q.holder),
-      reminderSent: q.reminderSent === true,
+      state: String(q.state || ''),
     } : null,
     mergeQueuePos: qp ? {
       position: typeof qp.position === 'number' ? qp.position : 0,

@@ -214,6 +214,11 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         // 裸 tempRoot（无该分支 ⇒ commitsAhead fail-soft 0 会被新判据降级）换成
         // 真仓 + 真领先提交（下方既有断言逐字不动——红验⑤）。
         holdRepo = mkRealRepo(tempRoot / "hold-repo", branch = "delegate/delegate-nebflow-hold", ahead = 1)
+        // 座位形态归位：基工作区 HEAD 回 main（可并形态——放行净空闸要求目标
+        // 分支必须是检出分支；台账 #896 交通引导员制）。
+        _ = os
+          .proc("git", "-C", holdRepo.toString, "checkout", "main")
+          .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
         _ = seedRecord(
           "delegate-nebflow-hold",
           Some("51"),
@@ -258,7 +263,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         assert(queued.isDefined, "the entry must be enqueued for the merge round")
         assertEquals(queued.map(_.branch), Some("delegate/delegate-nebflow-hold"))
         assertEquals(verdictLine("delegate-nebflow-hold"), Some("ready-to-merge"))
-        // 审计行：enqueued 1 行；空队列 pump 立即单飞行注入 ⇒ reminder-sent 1 行
+        // 审计行：enqueued 1 行；空队列 pump 立即放行（放行 = 通知）⇒ granted 1 行
         val mqLines = ChainStore.listSync().flatMap(_.entries).filter(_.kind == MergeQueue.EntryKind)
         assertEquals(
           mqLines.count(l => l.payload.hcursor.get[String]("action").toOption.contains("enqueued")),
@@ -266,9 +271,9 @@ class DelegateTerminalSpec extends CatsEffectSuite:
           "the enqueued audit line lands"
         )
         assertEquals(
-          mqLines.count(l => l.payload.hcursor.get[String]("action").toOption.contains("reminder-sent")),
+          mqLines.count(l => l.payload.hcursor.get[String]("action").toOption.contains("granted")),
           1,
-          "the empty-queue pump fires the merge reminder immediately (single-flight holder)"
+          "the empty-queue pump grants the turn immediately (notification = grant, single-flight holder)"
         )
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
@@ -369,7 +374,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       (child, sup) <- noopRefs(system)
       _ = seedRecord("delegate-nebflow-fail", Some("71"), branch = Some("delegate/delegate-nebflow-fail"))
       _ = MergeQueue.enqueue(
-        MergeQueue.Entry(
+        MergeQueue.Member(
           delegateId = "delegate-nebflow-fail",
           branch = "delegate/delegate-nebflow-fail",
           baseWs = tempRoot.toString,
@@ -380,8 +385,8 @@ class DelegateTerminalSpec extends CatsEffectSuite:
           parentSessionId = "nebula-root",
           description = "t",
           readyAt = 1L,
-          childRef = child,
-          supervisorRef = sup
+          channelKind = "internal",
+          internal = Some(MergeQueue.InternalLeg(child, sup))
         )
       )
       _ <- DelegateTerminal.onTerminalCleanup(res, "delegate-nebflow-fail", "nebula-root", "failed", "failed")
@@ -397,7 +402,13 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         .count(e => e.kind == "terminal-verdict" && e.payload.hcursor.get[String]("source").toOption.contains("engine"))
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
-      assert(MergeQueue.find("delegate-nebflow-fail").isEmpty, "any terminal releases the queue entry")
+      // 台账 #896：终态 = **关账**（成员留在持久账本，state 落终态；开放队列视图
+      // 释放）——不再是「出队消失」。关账前账实核对先行（此处分支未并 ⇒ owner-gone）。
+      assert(
+        MergeQueue.find("delegate-nebflow-fail").exists(m => !m.open),
+        "any terminal closes the queue membership (no open state survives)"
+      )
+      assert(MergeQueue.queueViewOf("delegate-nebflow-fail").isEmpty, "the closed member leaves the open queue view")
       assertEquals(before, 1, "the failed terminal wrote exactly one engine verdict line")
       assertEquals(after, before, "the completed leg must not double-write an engine verdict line")
       // #566：engine 判词行写真值（verdict=failed），不再冒充 blocked。
@@ -533,12 +544,12 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       (child, sup) <- noopRefs(system)
       (repo, _, _) = mkDriftRepo(tempRoot / "drift-attr", "delegate/delegate-nebflow-dg2", advance = "delegateMerge")
       // 账本行：真流程由 MergeQueue.record 落在被并 delegate 自己的键下（跨键扫描
-      // 才可达）——此处按同一行契约直落 reminder-sent 行
+      // 才可达）——此处按同一行契约直落 merge-merged 行
       _ = ChainStore.appendSync(
         "other-task-51",
         MergeQueue.EntryKind,
         Json.obj(
-          "action" -> "reminder-sent".asJson,
+          "action" -> "merge-merged".asJson,
           "delegateId" -> "delegate-nebflow-other".asJson,
           "branch" -> "delegate/other".asJson,
           "projectKey" -> "p-other".asJson,
@@ -579,28 +590,8 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       // 判定机缺席（withJudgeAbsent 同⑥⑦⑨）：闸豁免后走既有回落链——completed
       (child, sup) <- noopRefs(system)
       (repo, _, _) = mkDriftRepo(tempRoot / "drift-round", "delegate/delegate-nebflow-dg3", advance = "direct")
-      _ = seedRecord("delegate-nebflow-dg3", Some("93"), branch = Some("delegate/delegate-nebflow-dg3"), cwd = repo)
-      // 合并轮在飞（fireMergeReminder 盖章 reminderSentAt ⇒ mergeRound=true）
-      _ = MergeQueue.enqueue(
-        MergeQueue.Entry(
-          delegateId = "delegate-nebflow-dg3",
-          branch = "delegate/delegate-nebflow-dg3",
-          baseWs = repo.toString,
-          baseBranch = "main",
-          worktree = false,
-          projectKey = "p-dg3",
-          taskId = Some("93"),
-          parentSessionId = "nebula-root",
-          description = "t",
-          readyAt = 1L,
-          childRef = child,
-          supervisorRef = sup
-        )
-      )
-      // 引擎加固批 2026-10-09（P1-1① 机械验收闸）：合并轮 completed 判词的 Release
-      // 前置闸要求基分支 HEAD 真是「双亲 merge ＋第二亲=支头」——夹具必须**真并**
-      // （分支先落一笔真实交付提交再并；原先 park 在 fork 的零领先形态 `merge
-      // --no-ff` = Already up to date 不产 merge commit，在 P1-1① 起会被判否）。
+      // 支先落一笔真实交付提交（分叉形态——若 park 在 fork，放行时账实核对直接
+      // 关账 merged，合并轮在飞形态就位不了）。落笔后 HEAD 回 main。
       _ = os
         .proc("git", "-C", repo.toString, "checkout", "delegate/delegate-nebflow-dg3")
         .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
@@ -612,6 +603,29 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       _ = os
         .proc("git", "-C", repo.toString, "checkout", "main")
         .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+      _ = seedRecord("delegate-nebflow-dg3", Some("93"), branch = Some("delegate/delegate-nebflow-dg3"), cwd = repo)
+      // 合并轮在飞（账本 turn-granted ⇒ mergeRound=true，台账 #896 放行判据）
+      _ = MergeQueue.enqueue(
+        MergeQueue.Member(
+          delegateId = "delegate-nebflow-dg3",
+          branch = "delegate/delegate-nebflow-dg3",
+          baseWs = repo.toString,
+          baseBranch = "main",
+          worktree = false,
+          projectKey = "p-dg3",
+          taskId = Some("93"),
+          parentSessionId = "nebula-root",
+          description = "t",
+          readyAt = 1L,
+          channelKind = "internal",
+          internal = Some(MergeQueue.InternalLeg(child, sup))
+        )
+      )
+      // 引擎加固批 2026-10-09（P1-1① 机械验收闸）：合并轮 completed 判词的 Release
+      // 前置闸要求基分支 HEAD 真是「双亲 merge ＋第二亲=支头」——夹具必须**真并**
+      // （放行后属主自己完成合并——交通引导员制的真实时序：grant → 属主 git merge
+      // → 回报终态）。原先 park 在 fork 的零领先形态 `merge --no-ff` = Already up
+      // to date 不产 merge commit，在 P1-1① 起会被判否。
       _ = os
         .proc("git", "-C", repo.toString, "merge", "--no-ff", "delegate/delegate-nebflow-dg3", "-m", "merge dg3")
         .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
@@ -847,7 +861,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
   }
 
   test(
-    "⑬ (P2-3 只读座位诚实化 × #524 引擎自动合并) judged-read-only seat + completed + commits ahead ⇒ flips to ready-to-merge (auto-enqueued); working seat same shape ⇒ engine auto-merges (never flipped, no legacy note)"
+    "⑬ (P2-3 只读座位诚实化 × 台账 #896 交通引导员制) judged-completed seat + commits ahead ⇒ flips to ready-to-merge (auto-enqueued) for BOTH read-only and working seats; the engine never merges anything itself"
   ) {
     val system = ActorSystem(s"dt-13-${scala.util.Random.nextInt(100000)}")
     try
@@ -884,7 +898,8 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         )
         queued = MergeQueue.find("delegate-nebflow-ro")
         flipVerdict = verdictLine("delegate-nebflow-ro")
-        // 工作座位对照：同形态但判是旗在场 ⇒ 判词归判定机，#524 引擎自动合并接管交付
+        // 工作座位对照：同形态但判是旗在场 ⇒ 台账 #896 起同样翻转入队（引擎零代并
+        // ——DelegateAutoMerge 已退役，交付走队列：放行 = 通知属主自己合并）。
         workingRepo = mkRealRepo(tempRoot / "work-note-repo", branch = "delegate/delegate-nebflow-wn", ahead = 1)
         // 座位形态归位：基工作区 HEAD 回 main（可并形态——目标分支必须是检出分支）
         _ = os
@@ -908,6 +923,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
           child,
           sup
         )
+        queuedWn = MergeQueue.find("delegate-nebflow-wn")
         noteRows = ChainStore.listSync().flatMap(_.entries).filter(_.kind == "unmerged-work").flatMap { e =>
           e.payload.hcursor
             .get[String]("delegateId")
@@ -925,34 +941,20 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         assert(queued.isDefined, "the flipped delegate must be enqueued into the merge queue")
         assertEquals(queued.map(_.branch), Some("delegate/delegate-nebflow-ro"))
         assert(
-          workOutcome.isInstanceOf[DelegateTerminal.Outcome.Release],
-          "a working seat stays with the judge's completed verdict"
+          workOutcome == DelegateTerminal.Outcome.HoldForMerge,
+          "a working seat with delivered commits flips too — the engine never runs merges itself (traffic-controller model)"
         )
-        assertEquals(verdictLine("delegate-nebflow-wn"), Some("completed"))
+        assertEquals(verdictLine("delegate-nebflow-wn"), Some("ready-to-merge"), "the working seat's verdict line flips as well")
+        assertEquals(queuedWn.map(_.branch), Some("delegate/delegate-nebflow-wn"), "the working seat is enqueued")
         assert(
-          MergeQueue.find("delegate-nebflow-wn").isEmpty,
-          "the working seat is NOT flipped — engine auto-merge owns the delivery"
+          !GitWorktrees.isAncestor(workingRepo, "delegate/delegate-nebflow-wn", "main").contains(true),
+          "the engine did NOT merge anything itself (zero proxy-merge — the queue only notifies)"
         )
-        // #524（2026-10-04 裁定引擎化）：工作座位 × completed × 领先提交的交付改由
-        // 引擎原生自动合并处置（--no-ff 并回 main，审计行 action=merged）；旧
-        // unmerged-work 注记只在钩子未产出尾注时回退（开关 off / 不可评场景）。
-        val autoMergeRows =
-          ChainStore.listSync().flatMap(_.entries).filter(_.kind == DelegateAutoMerge.EntryKind).flatMap { e =>
-            e.payload.hcursor
-              .get[String]("delegateId")
-              .toOption
-              .filter(_ == "delegate-nebflow-wn")
-              .map(_ => e.payload.hcursor.get[String]("action").toOption.getOrElse(""))
-          }
-        assert(
-          GitWorktrees.isAncestor(workingRepo, "delegate/delegate-nebflow-wn", "main").contains(true),
-          "the engine really merged the working seat's branch into main"
-        )
-        assertEquals(autoMergeRows.lastOption, Some("merged"), "the engine-native auto-merge audit row lands (merged)")
+        // 台账 #896：旧 unmerged-work 注记被「翻转入队」取代（交付不再只注记）。
         assertEquals(
           noteRows,
           Nil,
-          "the legacy unmerged-work note is superseded when the hook evaluated (suffix present)"
+          "the legacy unmerged-work note is superseded by the queue flip (delivery goes through the merge queue)"
         )
       end for
     finally DelegateJudge.DelegateJudgePort.clear()

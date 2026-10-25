@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicReference
  *
  *   - `delegate-spawn`     —— delegate spawn 行（branch / worktree / cwd / 基分支）
  *   - `terminal-verdict`   —— 终态三态判定行（completed / blocked / ready-to-merge）
- *   - `merge-queue`        —— 合并队列状态行（enqueued / reminder-sent / merged / …）
+ *   - `merge-queue`        —— 合并队列账面行（enqueued / granted / merge-merged / merge-failed / owner-gone / …）
  *
  * 上层消费（N1 于本存储之上落整链登记/S3/S4 校验面；#1228 per-task 视图）只依赖
  * 本文件的**通用行形态**，不感知三行族的语义——新行种类零迁移。

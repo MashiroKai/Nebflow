@@ -498,30 +498,52 @@ case class SharedResources(
   // correlationId 幂等 + 会话已删守卫，复活轮 RecoverPersistedQueues 重放）。
   BgInboxPort.install(BgInboxBackstop.face(this))
 
-  // 合并静默搁浅修复批（2026-10-23 作者令腿①，同日裁定纠正版——合并不自动化，
-  // 平台只做排队/通知）：DelegateAutoMerge 的 refused 通知投递面注册
-  // （MergeRefusalCare.EscalationPort，BgInboxPort 同款 M2 注册器形态——core 不
-  // import agent 的分层纪律）。双目标路由（deliverToRootOrInbox 同族：目标活 =
-  // 直投；死 = 持久收件箱补投，复活轮 RecoverPersistedQueues 重放）：
-  //   - delegate 本人 = 主通知（可行动诊断：哪条路径脏、怎么清、重试合并是
-  //     delegate 自己的责任——平台零代跑）；
-  //   - 父会话 = 知会一行（重试责任在 delegate 侧）。
-  // 未装配（无 SharedResources 场）= EscalationPort 响亮 WARN，通知绝不静默蒸发。
-  nebflow.core.delegate.MergeRefusalCare.EscalationPort.install { (delegateId, parentSessionId, delegateEvent, parentEvent) =>
-    def to(sessionId: String, ev: nebflow.actor.AgentCommand.ExternalEvent) =
-      nebflow.core.tools.BgNotifyDelivery
-        .deliverToRootOrInbox(Some(actorSystem), Some(agentRegistry), sessionId, ev)
-        .void
-        .handleErrorWith(e =>
+  // 台账 #896（交通引导员制 2026-10-26）：合并队列 owner-gone 关账的升级通知面
+  // 注册（MergeQueue.OwnerGonePort，BgInboxPort 同款 M2 注册器形态——core 不
+  // import agent 的分层纪律）。属主失联（会话终态/通知不可达）关账 owner-gone 时
+  // 投最终责任方（root 活投 / 持久收件箱补投，复活轮 RecoverPersistedQueues 重放）
+  // ——面板「需 dispatcher 处置」的持久呈现面，绝不静默 park。未装配（无
+  // SharedResources 场）= OwnerGonePort 响亮 WARN（账本行仍落，面板仍可查）。
+  nebflow.core.delegate.MergeQueue.OwnerGonePort.install { (m, reason) =>
+    import io.circe.syntax.*
+    nebflow.core.tools.BgNotifyDelivery
+      .resolveRootSessionId(Some(agentRegistry), m.delegateId, m.parentSessionId)
+      .flatMap { rootId =>
+        if rootId.trim.isEmpty then
           nebflow.shared.NebflowLogger
-            .forName("nebflow.merge-refusal-care")
-            .warn(s"[merge-refusal-care] delivery to '$sessionId' failed: ${e.getMessage}")
-        )
-    to(delegateId, delegateEvent) *> to(parentSessionId, parentEvent)
+            .forName("nebflow.merge-queue")
+            .warn(s"[merge-queue] no responsible session for owner-gone '${m.delegateId}' — escalation dropped with this line")
+          IO.unit
+        else
+          val event = nebflow.actor.AgentCommand.ExternalEvent(
+            source = "merge-queue",
+            eventType = "failed",
+            payload =
+              s"""[merge-queue] delegate "${m.description}" (${m.delegateId}) — its merge membership for branch '${m.branch}' → '${m.baseBranch}' was closed as OWNER-GONE: $reason. No merge rounds are revived (traffic-controller model). MANUAL ACTION: merge '${m.branch}' by hand or re-dispatch the task (branch and worktree preserved).""",
+            metadata = io.circe.JsonObject(
+              "delegateId" -> m.delegateId.asJson,
+              "description" -> m.description.asJson,
+              "branch" -> m.branch.asJson,
+              "target" -> m.baseBranch.asJson,
+              "state" -> "owner-gone".asJson,
+              "action" -> "owner-gone".asJson,
+              "escalatedBy" -> "merge-queue".asJson
+            ),
+            correlationId = Some(s"merge-queue-owner-gone-${m.delegateId}")
+          )
+          nebflow.core.tools.BgNotifyDelivery
+            .deliverToRootOrInbox(Some(actorSystem), Some(agentRegistry), rootId, event)
+            .void
+            .handleErrorWith(e =>
+              nebflow.shared.NebflowLogger
+                .forName("nebflow.merge-queue")
+                .warn(s"[merge-queue] owner-gone escalation delivery failed for '${m.delegateId}': ${e.getMessage}")
+            )
+      }
   }
 
-  // D3-②（steward 批 2026-10-23）：MergeQueue 合并提醒注入的活性探针——注入前
-  // 探测目标 childRef 是否活（actor 注册表已退出 = 死 ⇒ 不盲投、不盖章、不持窗，
-  // 条目留队待重试）。未注册（无 SharedResources 场）= 恒活，既有行为零变化。
+  // D3-②（steward 批 2026-10-23）：MergeQueue 合并提醒注入的活性探针——放行前
+  // 探测属主 childRef 是否活（actor 注册表已退出 = 死 ⇒ 不盲投，成员 owner-gone
+  // 关账，绝不盲投死 ref）。未注册（无 SharedResources 场）= 恒活，测试行为零变化。
   nebflow.core.delegate.MergeQueue.installLivenessProbe(ref => actorSystem.isAlive(ref.path))
 end SharedResources

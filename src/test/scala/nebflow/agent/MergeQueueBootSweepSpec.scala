@@ -10,26 +10,24 @@ import nebflow.core.delegate.{ChainStore, DelegateRegistry, MergeQueue}
 import nebflow.core.GitWorktrees
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, SubAgentTask, StreamChunk}
 
-import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration.*
 import scala.util.Try
 
 /**
- * MergeQueueBootSweep 合并队列跨重启恢复判读（引擎加固批 2026-10-09，P2-5）：
+ * MergeQueueBootSweep 重启对账判读（台账 #896 交通引导员制 2026-10-26；前身 =
+ * 引擎加固批 2026-10-09 的「重挂 + 复活」sweep——重挂/复活/换键腿已整体退役）：
  *
- *  - ① 账本判据（单点）：末行 action ∈ {enqueued, reminder-sent} = 中断成员
- *    （readyAt 取 payload 原值，升序）；末行 dequeued / inject-failed = 干净退出
- *    跳过；
- *  - ② 已并成员（祖先真）⇒ `recovered-merged` 行 + [[PostMergeCleanup]] 同守卫
- *    收残留现场（worktree 移除 + branch -d）+ 报告 alreadyMerged；
- *  - ③ 无可并物（支零领先）⇒ `recovered-dropped-empty` 行 + 报告 droppedEmpty；
- *  - ④ 可重挂内置腿（reviveInternal 假通道）⇒ MergeQueue 重挂 + readyAt 原值 +
- *    revive 收到合并 brief + 报告 reMounted；onTerminal 放窗；
- *  - ⑤ 内置腿无复活通道（reviveInternal=None）⇒ `recovery-blocked` 行 + 任务行
- *    翻 failed + 报告 blocked（挂不进诚实处置）。
+ *  - ① 已并成员（祖先真）⇒ 关账 merged + [[PostMergeCleanup]] 同守卫收残留现场
+ *    （worktree 移除 + branch -d）+ 报告 alreadyMerged——**零复活零重挂**；
+ *  - ② 无可并物（分支引用消失）⇒ 关账 merged（诚实注记）+ 报告 droppedEmpty；
+ *  - ③ 可并但属主失联（重启后属主会话必死）⇒ **owner-gone** 关账 + 任务行翻
+ *    failed + 报告 ownerGone（需 dispatcher 处置——绝不静默 park，绝不续起
+ *    合并回合）；
+ *  - ④ 无开放成员 = 零动作。
  *
- * （父通知腿 = F2 注入队文件 correlationId 幂等，与本批 SubAgentStartupRecovery
- * 同机制；spec 未建父会话 ⇒ 通知静默跳过——本件不断言通知内容。）
+ * 账本判据单点 = 持久账本（merge-ledger.json）——ChainStore 行只做审计。
+ * （父通知腿 = F2 注入队文件 correlationId 幂等；spec 未建父会话 ⇒ 通知静默
+ * 跳过——本件不断言通知内容。）
  */
 class MergeQueueBootSweepSpec extends FunSuite:
 
@@ -43,6 +41,7 @@ class MergeQueueBootSweepSpec extends FunSuite:
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
 
   override def beforeEach(context: munit.BeforeEach): Unit =
+    MergeQueue.reset()
     nebflow.ForceRemove.removeAll(tempRoot / "chains")
     nebflow.ForceRemove.removeAll(tempRoot / "delegates")
     nebflow.ForceRemove.removeAll(tempRoot / "subagent-tasks")
@@ -54,18 +53,6 @@ class MergeQueueBootSweepSpec extends FunSuite:
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): fs2.Stream[IO, StreamChunk] =
       fs2.Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
-
-  private def ledgerRow(delegateId: String, action: String, readyAt: Long): Unit =
-    ChainStore.appendSync(
-      ChainStore.keyFor(None, delegateId),
-      MergeQueue.EntryKind,
-      Json.obj(
-        "action" -> action.asJson,
-        "delegateId" -> delegateId.asJson,
-        "branch" -> s"delegate/$delegateId".asJson,
-        "readyAt" -> readyAt.asJson
-      )
-    )
 
   private def ledgerActions(delegateId: String): List[String] =
     ChainStore.listSync().flatMap(_.entries).filter(_.kind == MergeQueue.EntryKind).flatMap { e =>
@@ -102,28 +89,35 @@ class MergeQueueBootSweepSpec extends FunSuite:
     if merge then g("merge", "--no-ff", branch, "-m", "merge the branch")
     dir
 
-  test("① interruptedMembers: last row enqueued/reminder-sent = interrupted (readyAt from payload, ascending); dequeued/inject-failed = clean") {
-    ledgerRow("mq-a", "enqueued", readyAt = 300L)
-    ledgerRow("mq-b", "enqueued", readyAt = 100L)
-    ledgerRow("mq-b", "dequeued", readyAt = 100L)
-    ledgerRow("mq-c", "enqueued", readyAt = 200L)
-    ledgerRow("mq-c", "reminder-sent", readyAt = 200L)
-    ledgerRow("mq-d", "inject-failed", readyAt = 50L)
-    val members = MergeQueueBootSweep.interruptedMembers()
-    assertEquals(members.map(_.delegateId), List("mq-c", "mq-a"), "only the unfinished members survive, FIFO by readyAt")
-    assertEquals(members.map(_.readyAt), List(200L, 300L), "readyAt comes from the ledger payload original value")
-  }
+  /** 把一条开放成员直接写进持久账本（模拟重启前的在账成员；无通道闭包）。 */
+  private def seedMember(id: String, repo: os.Path, readyAt: Long): Unit =
+    MergeQueue.seedMemberForTest(
+      MergeQueue.Member(
+        delegateId = id,
+        branch = s"delegate/$id",
+        baseWs = repo.toString,
+        baseBranch = "main",
+        worktree = false,
+        projectKey = Try(GitWorktrees.projectKeyOf(repo)).getOrElse(repo.toString),
+        taskId = Some("99"),
+        parentSessionId = "nebula-root",
+        description = "survivor",
+        readyAt = readyAt,
+        channelKind = "internal"
+      )
+    )
 
-  test("② already-merged member ⇒ recovered-merged row + leftover scene cleaned under the zero-ahead guard + report") {
+  test("① already-merged member ⇒ closed merged + leftover scene cleaned under the zero-ahead guard + report; NO merge round is revived") {
     val repo = mkRepo(tempRoot / "sweep-merged-repo", branch = "delegate/mq-merged", merge = true)
     val wt = tempRoot / "sweep-merged-wt"
     nebflow.ForceRemove.removeAll(wt) // 夹具幂等：上一轮残留的 kept 场景 wt 会撞 worktree add already exists
     os.proc("git", "-C", repo.toString, "worktree", "add", wt.toString, "delegate/mq-merged")
       .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
     seedRecord("mq-merged", repo, worktree = Some(wt))
-    ledgerRow("mq-merged", "enqueued", readyAt = 111L)
+    seedMember("mq-merged", repo, readyAt = 111L)
+    MergeQueue.dropMemoryStateForTest() // 模拟重启：账在盘上、内存清零、属主通道闭包消失
     val system = ActorSystem(s"mqbs-2-${scala.util.Random.nextInt(100000)}")
-    val (report, actions, cleanupActions) = (for
+    val (report, actions, cleanupActions, state) = (for
       res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
       report <- MergeQueueBootSweep.sweep(res)
       actions = ledgerActions("mq-merged")
@@ -131,90 +125,75 @@ class MergeQueueBootSweepSpec extends FunSuite:
         ChainStore.listSync().flatMap(_.entries).filter(_.kind == "worktree-cleanup")
           .flatMap(_.payload.hcursor.get[String]("action").toOption)
       }
+      state = MergeQueue.find("mq-merged").map(_.state)
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
-    yield (report, actions, cleanup)).unsafeRunSync()
+    yield (report, actions, cleanup, state)).unsafeRunSync()
     assertEquals(report.alreadyMerged, List("mq-merged"), "the landed merge is recognized")
-    assert(actions.contains("recovered-merged"), s"the recovered-merged row must be audited: $actions")
+    assert(actions.contains("merge-merged"), s"the close-out must be audited: $actions")
     assert(cleanupActions.contains("removed"), s"the leftover worktree scene must be cleaned: $cleanupActions")
     assert(!os.exists(wt), "the worktree directory must be gone after the sweep cleanup")
     assert(!GitWorktrees.branchExists(repo, "delegate/mq-merged"), "the merged branch must be deleted (branch -d)")
+    assertEquals(state, Some("merged"), "the membership is closed as merged (owner-gone must NOT apply to a landed merge)")
   }
 
-  test("③ missing branch ref (nothing mergeable) ⇒ recovered-dropped-empty + report droppedEmpty") {
+  test("② missing branch ref (nothing mergeable) ⇒ closed merged with the honest note + report droppedEmpty") {
     val repo = mkRepo(tempRoot / "sweep-empty-repo", branch = "delegate/mq-empty", merge = false)
-    // 落 dropped-empty 臂的可达形态 = 分支引用消失（典型：合并后 branch -d、或
-    // 重启前被清）。可读 git 面下 ancestor 假 ⟺ ahead≥1，`ahead==0` 腿对存在的
-    // 分支不可达（扫臂序：ancestor 真 ⇒ already-merged；否则分支在 ⇒ mountable）。
     os.proc("git", "-C", repo.toString, "branch", "-D", "delegate/mq-empty")
       .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
     assert(!GitWorktrees.branchExists(repo, "delegate/mq-empty"), "fixture sanity: the branch ref is gone")
     seedRecord("mq-empty", repo)
-    ledgerRow("mq-empty", "reminder-sent", readyAt = 222L)
+    seedMember("mq-empty", repo, readyAt = 222L)
+    MergeQueue.dropMemoryStateForTest()
     val system = ActorSystem(s"mqbs-3-${scala.util.Random.nextInt(100000)}")
-    val (report, actions) = (for
+    val (report, actions, state) = (for
       res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
       report <- MergeQueueBootSweep.sweep(res)
       actions = ledgerActions("mq-empty")
+      state = MergeQueue.find("mq-empty").map(m => (m.state, m.closeReason))
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
-    yield (report, actions)).unsafeRunSync()
+    yield (report, actions, state)).unsafeRunSync()
     assertEquals(report.droppedEmpty, List("mq-empty"), "an empty membership closes honestly")
-    assert(actions.contains("recovered-dropped-empty"), s"the dropped-empty row must be audited: $actions")
-    assert(MergeQueue.find("mq-empty").isEmpty, "nothing must be re-mounted for an empty branch")
+    assertEquals(state.map(_._1), Some("merged"), "the membership is closed as merged (nothing to merge)")
+    assert(state.flatMap(_._2).exists(_.contains("nothing to merge")), s"the honest note rides the close reason: $state")
+    assert(actions.contains("merge-merged"), s"the close-out row must be audited: $actions")
   }
 
-  test("④ mountable internal leg ⇒ re-mounted with the ORIGINAL readyAt + revive channel received the merge brief; onTerminal frees the window") {
-    val repo = mkRepo(tempRoot / "sweep-mount-repo", branch = "delegate/mq-mount", merge = false)
-    seedRecord("mq-mount", repo) // executor = nebflow ⇒ internal leg
-    ledgerRow("mq-mount", "enqueued", readyAt = 555000L)
-    val captured = ListBuffer[String]()
-    val revive: DelegateRegistry.Record => String => IO[Either[String, Unit]] =
-      _ => msg => IO { captured += msg; Right(()) }
+  test("③ mergeable but the owner session died with the restart ⇒ owner-gone + task row failed; NO revival channel is invoked") {
+    val repo = mkRepo(tempRoot / "sweep-gone-repo", branch = "delegate/mq-gone", merge = false)
+    seedRecord("mq-gone", repo)
+    seedMember("mq-gone", repo, readyAt = 444L)
+    MergeQueue.dropMemoryStateForTest()
     val system = ActorSystem(s"mqbs-4-${scala.util.Random.nextInt(100000)}")
-    val (report, mounted, inFlight, actions) = (for
-      res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
-      report <- MergeQueueBootSweep.sweep(res, reviveInternal = Some(revive))
-      mounted = MergeQueue.find("mq-mount")
-      // 🔴 键语义：isInFlight 收 projectKey（git common-dir 实路径），非 delegate id。
-      inFlight = MergeQueue.isInFlight(GitWorktrees.projectKeyOf(repo))
-      actions = ledgerActions("mq-mount")
-      _ <- IO.sleep(100.millis)
-      _ = MergeQueue.onTerminal("mq-mount")
-      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
-    yield (report, mounted, inFlight, actions)).unsafeRunSync()
-    val released = MergeQueue.queueViewOf("mq-mount").isEmpty && !MergeQueue.isInFlight(GitWorktrees.projectKeyOf(repo))
-    assertEquals(report.reMounted, List("mq-mount"), "the membership re-mounts")
-    assert(mounted.isDefined, "the entry must live in the in-process queue again")
-    assertEquals(mounted.map(_.readyAt), Some(555000L), "readyAt is the ledger original value (FIFO rank survives the restart)")
-    assert(inFlight, "the single-flight window is held by the re-mounted member")
-    assert(captured.size == 1 && captured.head.contains("merge --no-ff"), s"the revive channel got the merge brief: $captured")
-    assert(actions.contains("reminder-sent"), s"the channel injection is audited: $actions")
-    assert(released, "onTerminal of the re-mounted member releases the window")
-  }
-
-  test("⑤ internal leg without a revival channel ⇒ recovery-blocked row + task row failed + report blocked") {
-    val repo = mkRepo(tempRoot / "sweep-blocked-repo", branch = "delegate/mq-blocked", merge = false)
-    seedRecord("mq-blocked", repo)
-    ledgerRow("mq-blocked", "enqueued", readyAt = 444L)
-    val system = ActorSystem(s"mqbs-5-${scala.util.Random.nextInt(100000)}")
-    val (report, actions, task) = (for
+    val (report, actions, task, state) = (for
       res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
       _ <- res.subAgentTaskStore.recordTask(
         SubAgentTask(
-          taskId = "mq-blocked", parentSessionId = "nebula-root", agentName = "nebflow",
+          taskId = "mq-gone", parentSessionId = "nebula-root", agentName = "nebflow",
           prompt = "brief", description = "survivor", status = "ready-to-merge", retryCount = 0,
           spawnedAt = 1L, completedAt = None, lastError = None, source = "delegate"
         )
       )
-      report <- MergeQueueBootSweep.sweep(res) // reviveInternal = None ⇒ 诚实挂不进
-      actions = ledgerActions("mq-blocked")
-      task <- res.subAgentTaskStore.findByTaskId("mq-blocked")
+      report <- MergeQueueBootSweep.sweep(res)
+      actions = ledgerActions("mq-gone")
+      task <- res.subAgentTaskStore.findByTaskId("mq-gone")
+      state = MergeQueue.find("mq-gone").map(_.state)
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
-    yield (report, actions, task)).unsafeRunSync()
-    assertEquals(report.blocked.map(_._1), List("mq-blocked"), "the unmountable member is reported blocked")
-    assert(actions.contains("recovery-blocked"), s"the recovery-blocked row must be audited: $actions")
-    assertEquals(task.map(_.status), Some("failed"), "the ghost ready-to-merge row must close as failed (blocked semantics)")
-    assert(task.flatMap(_.lastError).exists(_.contains("merge-queue recovery blocked")), s"the reason channel carries the cause: ${task.flatMap(_.lastError)}")
-    assert(MergeQueue.find("mq-blocked").isEmpty, "nothing must be re-mounted for a blocked member")
+    yield (report, actions, task, state)).unsafeRunSync()
+    assertEquals(report.ownerGone, List("mq-gone"), "the orphaned member is reported owner-gone")
+    assert(actions.contains("owner-gone"), s"the owner-gone row must be audited: $actions")
+    assertEquals(state, Some("owner-gone"), "the membership is closed as owner-gone (needs dispatcher handling)")
+    assertEquals(task.map(_.status), Some("failed"), "the ghost ready-to-merge row must close as failed")
+    assert(task.flatMap(_.lastError).exists(_.contains("merge-queue owner-gone")), s"the reason channel carries the cause: ${task.flatMap(_.lastError)}")
+  }
+
+  test("④ no open members = zero-action sweep") {
+    val system = ActorSystem(s"mqbs-5-${scala.util.Random.nextInt(100000)}")
+    val report = (for
+      res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+      report <- MergeQueueBootSweep.sweep(res)
+      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
+    yield report).unsafeRunSync()
+    assertEquals(report, MergeQueueBootSweep.Report(), "an empty ledger sweeps to an empty report")
   }
 
 end MergeQueueBootSweepSpec
