@@ -3090,6 +3090,14 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
     // (ProjectTool.scala，原 ProjectCreateTool.scala:425) 不受影响、免回归。
     // showOptions 同步完成 `container.appendChild(box)` ⇒ 此处 box 已在 DOM 内。
     renderAskAttachments(bubble.querySelector('.option-box'), attachments);
+    // 感知域增强（mail-perception-impl 批）：OTP 单码片 + 感知草稿快照卡。
+    // 单一可选钩子——perception.js 未装载（或未注册）时恒为 no-op，本路径与
+    // 改前逐字节同行为；钩子自身零抛出（实现侧 self-contained）。答复由
+    // perception.js 走与卡面同形的 askUserAnswer 帧（answers + requestId）。
+    if (typeof window.__perceptionEnhanceAskCard === 'function') {
+      try { window.__perceptionEnhanceAskCard(bubble, items, requestId, targetSid); }
+      catch (e) { console.warn('[askUser] perception enhance skipped:', e); }
+    }
   } catch (e) {
     console.error('[askUser] render failed:', e);
     bubble.textContent = t('chat.failedRender');

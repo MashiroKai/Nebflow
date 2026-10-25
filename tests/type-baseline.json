@@ -1,6 +1,6 @@
 {
   "generatedBy": "scripts/check-js-types.mjs --update",
-  "total": 257,
+  "total": 260,
   "files": {
     "src/main/resources/web/js/activityBar.js": {
       "TS2345": 1,
@@ -88,6 +88,10 @@
     },
     "src/main/resources/web/js/monacoEditor.js": {
       "TS2339": 11
+    },
+    "src/main/resources/web/js/nearpath.js": {
+      "TS2339": 2,
+      "TS2322": 1
     },
     "src/main/resources/web/js/neblink.js": {
       "TS2339": 1

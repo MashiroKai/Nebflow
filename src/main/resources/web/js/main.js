@@ -97,6 +97,7 @@ import { registerCanvasPanelButton } from './canvas.js';
 import { openProjectsTab } from './projectTab.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
 import { initDaemons } from './daemons.js';
+import { initPerception } from './perception.js';
 import { initChatSearch } from './chatSearch.js';
 import { initFileSearch } from './fileSearch.js';
 import { initUsageDashboard } from './usageDashboard.js';
@@ -3926,6 +3927,7 @@ restoreTabs().then((restored) => {
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();
 initDaemons();
+initPerception();
 initChatSearch();
 initUsageDashboard();
 initNeblink();

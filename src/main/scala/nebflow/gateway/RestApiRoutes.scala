@@ -88,6 +88,9 @@ class RestApiRoutes(
       // （与静态树同访问语义）。
       ConsoleAssetBatchRoutes.routes <+>
       SocialRoutes.routes(ctx) <+> SecretsRoutes.routes(ctx) <+>
+      // 感知域（mail-perception-impl 批）：面板条目 / 两问配置 / OTP 消费 /
+      // 草稿与发送——`/api/perception` 前缀与既有域互不重叠。
+      PerceptionRoutes.routes(ctx) <+>
       // Phase 3b: the AuthAdmin face (break-glass ticket / token rotate /
       // sessions list+revoke), file-token Bearer ONLY (R1-1) — appended last:
       // its /api/auth/* paths are disjoint from every sibling above.
