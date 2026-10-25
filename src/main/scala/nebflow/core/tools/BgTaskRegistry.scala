@@ -59,7 +59,18 @@ object BgTaskRegistry:
      * 形态）/ Flow Map 节点名（节点 sessionName=nodeName）。空 = 调用方未传
      * → 前端按 origin 类别兜底。
      */
-    originLabel: String = ""
+    originLabel: String = "",
+    /**
+     * 输出查看补全批（作者令 2026-10-25「远端任务看不到」）：设备通道任务的对端
+     * 设备名（kind=remote 时非空）——remote-output 路由按它经既有 resolvePeer
+     * 面解析对端拉日志尾窗。空 = 本地任务 / 未登记。
+     */
+    deviceName: String = "",
+    /**
+     * 对端日志路径（remote 专属；RemoteBgOutputLog.parseRedirect 从命令文本
+     * 解析——无可解析重定向 = 空 ⇒ 面板走「输出不可用 + 原因」降级，不猜路径）。
+     */
+    outputPath: String = ""
   )
 
   /**
@@ -200,7 +211,9 @@ object BgTaskRegistry:
     rootSessionId: String = "",
     persistent: Boolean = false,
     origin: String = "nebula",
-    originLabel: String = ""
+    originLabel: String = "",
+    deviceName: String = "",
+    outputPath: String = ""
   ): IO[Unit] =
     tasks.update(
       _ + (jobId -> ActiveTask(
@@ -212,12 +225,19 @@ object BgTaskRegistry:
         rootSessionId,
         persistent,
         origin,
-        originLabel
+        originLabel,
+        deviceName,
+        outputPath
       ))
     )
 
   def unregister(jobId: String): IO[Unit] =
     tasks.update(_ - jobId)
+
+  /** 单任务查行（输出查看补全批：remote-output 路由按 jobId 取 deviceName/
+    * outputPath；完成即注销 ⇒ 查无 = 已终态，路由 404 让前端转 /output 收口面）。 */
+  def find(jobId: String): IO[Option[ActiveTask]] =
+    tasks.get.map(_.get(jobId))
 
   /**
    * #391 机制 E：移除某 session 的全部任务并返回它们——restart/Stop 联动时

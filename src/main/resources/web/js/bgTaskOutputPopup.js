@@ -9,8 +9,13 @@
 //   绿玻璃语言（#send-btn 参数）。零新增设计语言。
 // - 数据面：REST GET /api/bg-tasks/:taskId/output?offset=N（后端
 //   BgTaskOutputStore，字节游标增量），运行中 ~2s 轮询；终态（completed/failed/
-  // cancelled）后停轮询——后端留存区（最近 20 条）保证可回看。
-// - kind=remote（远端任务）降级：不轮询，卡内注明「远端任务暂不支持查看」。
+//   cancelled）后停轮询——后端留存区（最近 20 条）+ 落盘（bg-task-logs/，
+//   2026-10-25 输出查看补全批）保证可回看。
+// - kind=remote（远端任务）——2026-10-25 输出查看补全批重做（作者令「远端任务
+//   看不到」）：不再降级占位。运行中轮询 /api/bg-tasks/:id/remote-output（引擎
+//   按 outputPath 经既有设备通道拉对端日志尾窗，~3s），终态（404）后单拍 /output
+//   取灌账留存；无 outputPath / 设备不可达 = 「输出不可用 + 原因」，不再用
+//   「暂不支持」搪塞。
 // - 滚动跟随：输出增长时若用户在底部附近则自动滚到底；用户上滚即暂停跟随
 //   （回看历史），重新滚回底部恢复跟随。
 // - XSS 纪律：动态文本一律 textContent（骨架 innerHTML 仅静态结构）。
@@ -37,6 +42,8 @@ const MAX_ONESHOT_ATTEMPTS = 3;
 const FETCH_TIMEOUT_MS = 8000;
 // 轮询模式总预算：10min 无终态 → 停轮询并明示（persistent/僵死任务防线）。
 const MAX_POLL_TOTAL_MS = 10 * 60 * 1000;
+// 远端模式（2026-10-25 输出查看补全批）：轮询间隔 3s（设备通道拉尾的礼貌节拍）。
+const REMOTE_POLL_MS = 3000;
 
 function getToken() { return localStorage.getItem(key('token')) || ''; }
 function authHeaders() {
@@ -311,12 +318,16 @@ function renderStatus(status, exitCode) {
   labelEl.className = 'bgt-state-label' + (v.state ? ' bgt-state-label--' + v.state : '');
   // ui-status-redesign（盘点 #15）：failed 词前 circle-x 红图标，词本体中性。
   labelEl.innerHTML = (v.state === 'failed' ? statusIcon('circle-x', 11, 'st-err') : '') + escapeHtml(v.label);
-  // 非零退出码补注（completed 但 exit!=0 也如实展示）
+  // 非零退出码补注（completed 但 exit!=0 也如实展示）；outputPath 有值时补在
+  // subtitle（输出查看补全批：本地=落盘路径 / remote=对端日志路径——title 带
+  // 全文，视觉截断交给 CSS ellipsis）。
   const sub = overlayEl.querySelector('.bgt-subtitle');
   const exitNote = (exitCode !== undefined && exitCode !== null && exitCode !== 0)
     ? ' · ' + t('bg.detail.exit', { code: exitCode }) : '';
+  const pathNote = cur.outputPath ? ' · ' + cur.outputPath : '';
   const origin = cur.originText || '';
-  sub.textContent = cur.taskId + (origin ? ' · ' + origin : '') + exitNote;
+  sub.textContent = cur.taskId + (origin ? ' · ' + origin : '') + exitNote + pathNote;
+  sub.title = cur.outputPath || '';
 }
 
 function renderMeta(data) {
@@ -428,12 +439,14 @@ function stopAll() {
 }
 
 // 读取失败终局（预算耗尽）：明确错误提示 + 停止一切等待，面板可关闭。
+// remote 模式专措（输出查看补全批）：设备通道拉不到 ≠ 本地网络故障——
+// 「设备可能离线」语义，不用本地措辞搪塞。
 function showReadFailure() {
   if (!cur || cur.closed) return;
   stopAll();
   const dotEl = overlayEl.querySelector('.bgt-dot');
   if (dotEl) dotEl.className = 'bg-task-status bg-status-error bgt-dot';
-  showPlaceholder(t('bg.detail.readError'));
+  showPlaceholder(t(cur.remoteMode ? 'bg.detail.remoteOffline' : 'bg.detail.readError'));
 }
 
 // 带 8s 挂死兜底的 fetch（AbortController；响应到达即拆定时器）。
@@ -485,6 +498,7 @@ async function pollOnce() {
   if (!cur || cur.closed) return;
   cur.failCount = 0;
   cur.gotData = true;
+  if (data.outputPath) cur.outputPath = data.outputPath;
   hidePlaceholder();
   if (data.output) appendOutput(data.output);
   else if (!cur.text) {
@@ -548,6 +562,129 @@ function startPoll() {
   }
 }
 
+// ── 远端模式（2026-10-25 输出查看补全批，作者令「远端任务看不到」）──
+// 运行中：轮询 /bg-tasks/:id/remote-output——引擎按 job 记录的 outputPath 经
+// 既有设备通道拉对端日志尾窗（~3s 节拍，整窗替换渲染，非增量游标）。404 =
+// 任务已终态（引擎完成即注销 + 灌账留存）→ 单拍 /output 收口。失败预算与本地
+// 同族（MAX_POLL_FAILS 连败终局 / 总预算），措辞分叉（remoteOffline）。
+// 「输出不可用」不再用「暂不支持」搪塞：无 outputPath / executor 缺席 = 永久
+// 态（停轮询明示原因）；设备拉取失败 = 暂态（占位原因 + 继续重试至预算）。
+
+/** 整窗替换渲染（远端尾窗语义：每拍拿的是完整尾窗快照，不是增量块）。 */
+function setOutput(text) {
+  if (!cur || cur.closed) return;
+  const pre = overlayEl.querySelector('.bgt-output');
+  const nearBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 32;
+  cur.text = text || '';
+  pre.textContent = cur.text;
+  if (nearBottom) pre.scrollTop = pre.scrollHeight;
+}
+
+/** 远端 meta：对端日志路径（title 全文）+ 运行时长——行数/字节对尾窗无意义。 */
+function renderRemoteMeta() {
+  if (!cur || cur.closed) return;
+  const metaTextEl = overlayEl.querySelector('.bgt-meta-text');
+  if (!metaTextEl) return;
+  const running = cur.lastStatus === 'running' || cur.lastStatus === 'cancelling';
+  const upPart = running && cur.startedAtMs
+    ? ' · ' + t('bg.detail.uptime', { dur: fmtDuration(Date.now() - cur.startedAtMs) })
+    : '';
+  metaTextEl.textContent = (cur.outputPath || '') + upPart;
+  metaTextEl.title = cur.outputPath || '';
+}
+
+/** 终态收口：单拍 /output 取引擎灌账留存（fillRemote 先于 WS completed 帧 ⇒
+ *  命中是常态）；仍 404 = 无留存（引擎重启后旧任务）→ 明示，不虚报状态。 */
+async function fetchRemoteFinal() {
+  let resp = null;
+  try {
+    resp = await fetchWithTimeout(
+      `/api/bg-tasks/${encodeURIComponent(cur.taskId)}/output?offset=0`,
+      { headers: authHeaders() }
+    );
+  } catch {
+    showReadFailure();
+    return;
+  }
+  if (!cur || cur.closed) return;
+  if (!resp.ok) {
+    const dotEl = overlayEl.querySelector('.bgt-dot');
+    if (dotEl) dotEl.className = 'bg-task-status bg-status-done bgt-dot';
+    showPlaceholder(t('bg.detail.remoteLost'));
+    stopAll();
+    return;
+  }
+  let data = null;
+  try { data = await resp.json(); } catch { showReadFailure(); return; }
+  if (!cur || cur.closed) return;
+  if (data.outputPath) cur.outputPath = data.outputPath;
+  if (data.output) setOutput(data.output);
+  else showPlaceholder(t('bg.detail.empty'));
+  renderMeta(data);
+  renderStatus(data.status || cur.initialStatus, data.exitCode);
+  renderTerminalState(data.status || cur.initialStatus, data.exitCode);
+  if (data.output && data.truncated) showTruncatedNote();
+  if (data.errorHint) showErrorHint(data.errorHint);
+  stopAll();
+}
+
+async function pollRemoteOnce() {
+  if (!cur || cur.closed) return;
+  // 已收口（fetchRemoteFinal 渲染过终态）→ 不再打设备通道（interval 由 stopAll
+  // 清掉，本拍是竞态尾巴，静默返回即可）。
+  if (isTerminalStatus(cur.lastStatus || '')) return;
+  let resp = null;
+  try {
+    resp = await fetchWithTimeout(
+      `/api/bg-tasks/${encodeURIComponent(cur.taskId)}/remote-output`,
+      { headers: authHeaders() }
+    );
+  } catch {
+    onReadFailure();
+    return;
+  }
+  if (!cur || cur.closed) return;
+  if (resp.status === 404) { stopPoll(); await fetchRemoteFinal(); return; }
+  if (!resp.ok) { onReadFailure(); return; }
+  let data = null;
+  try { data = await resp.json(); } catch { onReadFailure(); return; }
+  if (!cur || cur.closed) return;
+  cur.failCount = 0;
+  if (data.outputPath) cur.outputPath = data.outputPath;
+  if (data.available === false) {
+    const kind = data.reasonKind || 'pullFailed';
+    if (kind === 'noOutputPath' || kind === 'noExecutor') {
+      // 永久态：轮询无意义 → 停，占位 = 真实内容 + 明确原因（不再「暂不支持」）。
+      stopAll();
+      showPlaceholder(t(kind === 'noOutputPath' ? 'bg.detail.remoteNoPath' : 'bg.detail.remoteNoExecutor'));
+    } else {
+      // 暂态（设备离线/拉取失败）：占位原因，继续重试至预算。
+      showPlaceholder(t('bg.detail.remoteUnavailable', { reason: data.reason || '' }));
+    }
+    return;
+  }
+  hidePlaceholder();
+  setOutput(data.output || '');
+  renderStatus('running');
+  renderTerminalState('running');
+  renderRemoteMeta();
+  if (data.truncated) showTruncatedNote();
+}
+
+function startRemotePoll() {
+  cur.remoteMode = true;
+  cur.failCount = 0;
+  renderStatus(cur.initialStatus);
+  renderTerminalState(cur.initialStatus);
+  renderRemoteMeta();
+  // 终态行（completed 行回看）→ 不进轮询，直取灌账留存。
+  if (isTerminalStatus(cur.initialStatus)) { fetchRemoteFinal(); return; }
+  showPlaceholder(t('bg.detail.remotePulling', { device: cur.deviceName || '' }));
+  pollRemoteOnce();
+  cur.pollTimer = setInterval(pollRemoteOnce, REMOTE_POLL_MS);
+  armTotalBudget();
+}
+
 // ── 复制（hover 右上角浮现，2026-09-10 作者指令：与代码块同款）──
 // 点击处理直接复用代码块全局 window.copyCode（utils.js）：读取
 // .code-block-wrap 内 pre 的当前 textContent（运行中=已加载部分，规格允许）、
@@ -608,7 +745,13 @@ export function openBgTaskOutput(task) {
     // #753 运行态 meta 的「已运行」时长来源（行数据自带 startedAt；缺省 0 = 不显示）。
     startedAtMs: Number(task.startedAt) || 0,
     originText: [task.originLabel, task.kind === 'remote' ? t('bg.kind.remote') : (task.kind ? t('bg.kind.local') : '')]
-      .filter(Boolean).join(' · ')
+      .filter(Boolean).join(' · '),
+    // 远端模式面（输出查看补全批）：remoteMode = 轮询 /remote-output 的整窗渲染
+    // 分叉；outputPath = 对端日志路径（引擎逐拍回带）；deviceName = 设备名
+    // （origin chip 的 label，拉取中占位文案用）。
+    remoteMode: false,
+    outputPath: '',
+    deviceName: task.originLabel || ''
   };
 
   overlayEl = document.createElement('div');
@@ -676,14 +819,11 @@ export function openBgTaskOutput(task) {
   if (closeBtn instanceof HTMLElement) closeBtn.focus();
 
   if (task.kind === 'remote') {
-    // 远端任务降级：不轮询，卡内注明暂不支持查看（任务规格允许的降级面）。
-    // 复制按钮照常 hover 浮现（空输出点击 no-op——window.copyCode 空文本 guard）。
-    showPlaceholder(t('bg.detail.remote'));
-    overlayEl.querySelector('.bgt-meta').textContent = '';
-    // 远端无输出流：撤掉 pre 的运行态绿光标——改前该态的光标随 meta 清空一并
-    // 消失（`.bgt-meta` textContent 清空连 .bgt-cursor 一起抹掉），这里保持同款
-    // 视觉（降级面零变化）。
-    overlayEl.querySelector('.bgt-output').classList.remove('bgt-running');
+    // 远端任务（输出查看补全批 2026-10-25 重做）：不再降级占位——轮询引擎的
+    // remote-output 面（对端日志尾窗按需拉取），终态收口取灌账留存；无路径 /
+    // 设备不可达 = 「输出不可用 + 原因」真实内容。复制按钮照常 hover 浮现
+    // （空输出点击 no-op——window.copyCode 空文本 guard）。
+    startRemotePoll();
     return;
   }
   startPoll();

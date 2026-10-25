@@ -2,6 +2,7 @@
 package nebflow.gateway
 
 import cats.effect.IO
+import cats.effect.Ref
 import cats.effect.std.Queue
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
@@ -53,6 +54,31 @@ private[gateway] object PresenceRoutes:
     nebflow.social.FeishuBridgePlugin.Name,
     nebflow.social.WeixinIlinkBridgePlugin.Name
   )
+
+  // ── 远端尾拉单飞缓存（输出查看补全批 2026-10-25）────────────────────────
+  //
+  // remote-output 轮询的防叠加面：同 jobId 1.5s 内的重复拉取（多面板 / 双开卡）
+  // 直接回放缓存读数——对端不被连续 tail 轰炸。失败读数同缓存（设备离线时
+  // 前端 3s 轮询不至于每次都打满完整超时）。进程内存态（重启即空，无害）。
+  private val remoteTailCache: Ref[IO, Map[String, (Long, Json)]] = Ref.unsafe(Map.empty)
+  private val RemoteTailMinIntervalMs: Long = 1500L
+
+  private def cachedRemoteTail(jobId: String, nowMs: Long): IO[Option[Json]] =
+    remoteTailCache.get.map(_.get(jobId).collect { case (at, body) if nowMs - at < RemoteTailMinIntervalMs => body })
+
+  private def putRemoteTailCache(jobId: String, nowMs: Long, body: Json): IO[Unit] =
+    remoteTailCache.update(m => m.updated(jobId, (nowMs, body)))
+
+  private def unavailableRemoteTail(jobId: String, deviceName: String, outputPath: String, reason: String, reasonKind: String): Json =
+    Json.obj(
+      "taskId" -> jobId.asJson,
+      "status" -> "running".asJson,
+      "available" -> false.asJson,
+      "reason" -> reason.asJson,
+      "reasonKind" -> reasonKind.asJson,
+      "deviceName" -> deviceName.asJson,
+      "outputPath" -> outputPath.asJson
+    )
 
   def routes(wsb: WebSocketBuilder2[IO], ctx: RestApiCtx): HttpRoutes[IO] =
     import ctx.*
@@ -541,6 +567,9 @@ private[gateway] object PresenceRoutes:
       // status / totalBytes / totalLines / truncated (tail window dropped the
       // head) / output / nextOffset (+ finishedAtMs / exitCode / errorHint when
       // terminal). 404 = unknown jobId (remote tasks and evicted retention).
+      // 输出查看补全批（作者令 2026-10-25）：响应补来源/落盘面（kind/deviceName/
+      // outputPath/startedAtMs/description，缺省缺席）；留存区 miss 先落盘兜底
+      // （bg-task-logs/ meta+log），淘汰/重启后的旧任务照样可回看。
       case req @ GET -> Root / "bg-tasks" / jobId / "output" =>
         withAuth(req) {
           val offset = req.uri.params.get("offset").flatMap(_.toLongOption).getOrElse(0L)
@@ -559,9 +588,79 @@ private[gateway] object PresenceRoutes:
                   "nextOffset" -> o.nextOffset.asJson,
                   "finishedAtMs" -> o.finishedAtMs.asJson,
                   "exitCode" -> o.exitCode.asJson,
-                  "errorHint" -> o.errorHint.asJson
+                  "errorHint" -> o.errorHint.asJson,
+                  "kind" -> o.kind.asJson,
+                  "deviceName" -> o.deviceName.asJson,
+                  "outputPath" -> o.outputPath.asJson,
+                  "startedAtMs" -> o.startedAtMs.asJson,
+                  "description" -> o.description.asJson
                 )
               )
+          }
+        }
+
+      // GET /bg-tasks/:jobId/remote-output — 远端后台任务的输出尾窗按需拉取
+      // （输出查看补全批，作者令 2026-10-25「远端任务看不到」需求②）。
+      //
+      // 运行中的远端任务输出只存在于对端；本面按 job 记录的 outputPath（命令
+      // 重定向解析，RemoteBgOutputLog）经既有设备通道拉尾（RemoteExecutor
+      // .readBgLogTail —— 对端 Bash `tail -c 64K`，P2P/relay dispatch 与远端命令
+      // 执行同一族，零新 wire、零新权限口子），无需实时流，前端 ~3s 轮询拉尾。
+      // 响应：available=true → output=尾窗文本 / outputPath / deviceName /
+      // tailBytes / truncated；available=false → reason（无重定向路径 / 设备不
+      // 可达 / executor 未初始化——面板原样降级，不再用「暂不支持」搪塞）。
+      // 404 = job 已终态（注销）或未知 → 前端转 /output 收口面取终态留存。
+      // 单飞缓存：同 job 1.5s 内重复拉取回放缓存读数（多面板双开卡防对端被
+      // 连续 tail 轰炸），进程内存态。
+      case req @ GET -> Root / "bg-tasks" / jobId / "remote-output" =>
+        withAuth(req) {
+          nebflow.core.tools.BgTaskRegistry.find(jobId).flatMap {
+            case None =>
+              NotFound(Json.obj("error" -> s"Background task '$jobId' is not running (finished or unknown)".asJson))
+            case Some(t) if t.kind != "remote" =>
+              NotFound(Json.obj("error" -> s"Background task '$jobId' is not a remote task".asJson))
+            case Some(t) if t.outputPath.isEmpty =>
+              Ok(
+                Json.obj(
+                  "taskId" -> jobId.asJson,
+                  "status" -> "running".asJson,
+                  "available" -> false.asJson,
+                  "reason" -> "no output file detected in the command (needs a redirect like `> run.log 2>&1`)".asJson,
+                  // 机器可读的原因类别（前端停/续轮询判据：noOutputPath/noExecutor =
+                  // 永久态停止轮询；pullFailed = 暂态——设备离线/执行失败，继续重试）。
+                  "reasonKind" -> "noOutputPath".asJson,
+                  "deviceName" -> t.deviceName.asJson,
+                  "outputPath" -> "".asJson
+                )
+              )
+            case Some(t) =>
+              val nowMs = System.currentTimeMillis()
+              cachedRemoteTail(jobId, nowMs).flatMap {
+                case Some(cached) => Ok(cached)
+                case None =>
+                  nebflow.core.tools.RemoteExecutor.current match
+                    case None =>
+                      Ok(unavailableRemoteTail(jobId, t.deviceName, t.outputPath,
+                        "remote executor not initialized (NebLink disabled?)", "noExecutor"))
+                    case Some(re) =>
+                      re.readBgLogTail(t.deviceName, t.outputPath).flatMap {
+                        case Right(text) =>
+                          val body = Json.obj(
+                            "taskId" -> jobId.asJson,
+                            "status" -> "running".asJson,
+                            "available" -> true.asJson,
+                            "output" -> text.asJson,
+                            "tailBytes" -> text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong.asJson,
+                            "truncated" -> (text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong >= nebflow.core.tools.RemoteBgOutputLog.TailMaxBytes).asJson,
+                            "deviceName" -> t.deviceName.asJson,
+                            "outputPath" -> t.outputPath.asJson
+                          )
+                          putRemoteTailCache(jobId, nowMs, body) *> Ok(body)
+                        case Left(reason) =>
+                          val body = unavailableRemoteTail(jobId, t.deviceName, t.outputPath, reason, "pullFailed")
+                          putRemoteTailCache(jobId, nowMs, body) *> Ok(body)
+                      }
+              }
           }
         }
 

@@ -1538,7 +1538,16 @@ export default {
   // #753: running-with-no-output liveness note (waiters/pollers legitimately stay silent).
   'bg.detail.waitingLive': 'Running · no output yet — waiting-style tasks (pollers/listeners) may stay silent on stdout; the process is alive',
   'bg.detail.uptime': 'up {dur}',
-  'bg.detail.remote': 'Output viewing is not available for remote tasks',
+  // Output-viewer completion batch (author 2026-10-25 "can't see remote tasks"):
+  // remote tasks no longer get a "not supported" placeholder — the tail of the
+  // peer-side log is polled via the device channel; unavailable states carry a
+  // real reason.
+  'bg.detail.remotePulling': 'Pulling output tail from {device}…',
+  'bg.detail.remoteNoPath': 'Remote output unavailable: no output redirect detected in the command (needs something like `> run.log 2>&1`)',
+  'bg.detail.remoteNoExecutor': 'Remote output unavailable: device network (NebLink) is not enabled',
+  'bg.detail.remoteUnavailable': 'Remote output temporarily unavailable: {reason} (retrying…)',
+  'bg.detail.remoteLost': 'Remote task output is no longer available (task ended without retained output)',
+  'bg.detail.remoteOffline': 'Failed to pull remote output (device may be offline) — close and retry',
   'bg.detail.notFound': 'Task output is no longer available (task ended and was cleaned up)',
   'bg.detail.truncated': 'Large output — showing the tail only',
   'bg.detail.meta': '{lines} lines · {bytes}',

@@ -795,6 +795,12 @@ class RemoteExecutor(
     val commandStr = params("command").flatMap(_.asString).getOrElse(toolName)
     val firstLine = commandStr.split('\n').headOption.getOrElse(commandStr).take(80)
     val description = s"[${peer.deviceName}] ${params("description").flatMap(_.asString).getOrElse(firstLine)}"
+    // 输出查看补全批（作者令 2026-10-25「远端任务看不到」）：从命令文本解析对端
+    // 日志路径（LLM 惯例把远端长任务输出重定向到日志，实证 test5 的
+    // `/c/Users/Kai/stand-win-test5.log`）——解析不到 = 空（面板降级注明原因，
+    // 不猜路径）。startedAtMs 一并捕获（fillRemote 落账 origin 用）。
+    val bgOutputPath = RemoteBgOutputLog.parseRedirect(commandStr).getOrElse("")
+    val bgStartedAtMs = System.currentTimeMillis()
 
     // 来源标注（多设备后台任务可见批）：设备通道后台任务的 origin 恒为设备名
     // （deviceOrigin 单点）——不再借用注册会话的 nebula/dispatcher/node 类别
@@ -806,7 +812,10 @@ class RemoteExecutor(
       // 拒绝时零 WS 帧、零 registry 项、零 HTTP fiber（真拦截，不是事后注销）。
       _ <- BgTaskRegistry.denySpawnIfFinalized(ctx.sessionId.getOrElse(""))
       jobId <- IO.randomUUID.map(_.toString.take(8))
-      _ <- logger.info(s"Remote background task $jobId started on ${peer.deviceName}: $firstLine")
+      _ <- logger.info(
+          s"Remote background task $jobId started on ${peer.deviceName}: $firstLine" +
+            (if bgOutputPath.nonEmpty then s" (log: $bgOutputPath)" else "")
+        )
       // 1. Emit "running" to frontend + register in global registry
       _ <- emitBgTaskStarted(ctx, jobId, description, bgOrigin, bgOriginLabel)
       _ <- BgTaskRegistry.register(
@@ -817,14 +826,16 @@ class RemoteExecutor(
         ctx.rootSessionId.orElse(ctx.sessionId).getOrElse(""),
         persistent,
         bgOrigin,
-        bgOriginLabel
+        bgOriginLabel,
+        peer.deviceName,
+        bgOutputPath
       )
       // 2. Start heartbeat so frontend shows progress (remote tasks have no process-level health)
       doneRef <- IO.ref(false)
       _ <- startRemoteHeartbeat(ctx, jobId, description, doneRef)
       // 3. Start detached fiber — synchronous HTTP to the remote device, then notify
       //    （等待上限随 persistent 豁免：服务型设备任务不被 1h 网络兜底杀。）
-      _ <- IO(startRemoteBgFiber(peer, toolName, remoteParams, ctx, jobId, description, doneRef, waitTimeout))
+      _ <- IO(startRemoteBgFiber(peer, toolName, remoteParams, ctx, jobId, description, doneRef, waitTimeout, bgOutputPath, bgStartedAtMs))
     yield Right(
       s"[Background job started] Job ID: $jobId\nThe command is running in the background on ${peer.deviceName}. You will be automatically notified when it finishes — continue with other work or finish your turn."
     )
@@ -896,13 +907,15 @@ class RemoteExecutor(
     jobId: String,
     description: String,
     doneRef: Ref[IO, Boolean],
-    waitTimeout: FiniteDuration
+    waitTimeout: FiniteDuration,
+    outputPath: String = "",
+    startedAtMs: Long = 0L
   ): Unit =
     val completionIO =
       executeViaBestPath(peer, toolName, params, waitTimeout, ctx.projectRoot)
         .flatMap {
-          case Right(output) => notifyRemoteBgResult(ctx, jobId, description, Right(output))
-          case Left(err) => notifyRemoteBgResult(ctx, jobId, description, Left(err.message))
+          case Right(output) => notifyRemoteBgResult(ctx, jobId, description, Right(output), peer.deviceName, outputPath, startedAtMs)
+          case Left(err) => notifyRemoteBgResult(ctx, jobId, description, Left(err.message), peer.deviceName, outputPath, startedAtMs)
         }
         .flatMap(_ => doneRef.set(true))
 
@@ -1009,37 +1022,106 @@ class RemoteExecutor(
       ).handleErrorWith(_ => IO.unit)
     )
 
-  /** Notify agent (ExternalEvent) + frontend (WS) of a background task result. */
+  /**
+   * Notify agent (ExternalEvent) + frontend (WS) of a background task result.
+   *
+   * 输出查看补全批（作者令 2026-10-25）：终态时先把 HTTP 拿到的全量输出灌进
+   * BgTaskOutputStore（[[BgTaskOutputStore.fillRemote]]——open + append +
+   * finalize 同一时序），**再** unregister + 发 WS completed 帧 ⇒ 前端详情卡
+   * 对 remote 任务的终态回看首拍即命中留存（不再是「暂不支持」/404）。exit
+   * 码只认对端回执末尾的 `(exit N)` 标记（解析不到不虚报）。
+   */
   private def notifyRemoteBgResult(
     ctx: ToolContext,
     jobId: String,
     description: String,
-    result: Either[String, String]
+    result: Either[String, String],
+    deviceName: String = "",
+    outputPath: String = "",
+    startedAtMs: Long = 0L
   ): IO[Unit] =
-    BgTaskRegistry.unregister(jobId) *>
-      (result match
-        case Right(output) =>
-          ctx.agentActorRef.fold(IO.unit)(ref =>
-            ref ! AgentCommand.ExternalEvent(
-              source = "background-task",
-              eventType = "completed",
-              payload = s"[Background task completed] \"$description\":\n$output",
-              metadata = JsonObject("description" -> description.asJson, "output" -> output.asJson)
-            )
-          ) *>
-            emitBgTaskFinished(ctx, jobId, description, "completed") *>
-            logger.info(s"Remote background task $jobId completed")
-        case Left(errMsg) =>
-          ctx.agentActorRef.fold(IO.unit)(ref =>
-            ref ! AgentCommand.ExternalEvent(
-              source = "background-task",
-              eventType = "failed",
-              payload = s"[Background task failed] \"$description\":\n$errMsg",
-              metadata = JsonObject("description" -> description.asJson)
-            )
-          ) *>
-            emitBgTaskFinished(ctx, jobId, description, "failed") *>
-            logger.warn(s"Remote background task $jobId failed: $errMsg"))
+    val fillIo = result match
+      case Right(output) =>
+        BgTaskOutputStore.fillRemote(
+          jobId,
+          output,
+          "completed",
+          RemoteBgOutputLog.parseExitMarker(output),
+          None,
+          BgTaskOutputStore.Origin("remote", deviceName, outputPath, description, startedAtMs)
+        )
+      case Left(errMsg) =>
+        BgTaskOutputStore.fillRemote(
+          jobId,
+          "",
+          "failed",
+          None,
+          Some(errMsg),
+          BgTaskOutputStore.Origin("remote", deviceName, outputPath, description, startedAtMs)
+        )
+    fillIo
+      .handleErrorWith(e => logger.warn(s"Remote bg fill store failed for $jobId: ${e.getMessage}"))
+      .guarantee(BgTaskRegistry.unregister(jobId))
+      .flatMap { _ =>
+        result match
+          case Right(output) =>
+            ctx.agentActorRef.fold(IO.unit)(ref =>
+              ref ! AgentCommand.ExternalEvent(
+                source = "background-task",
+                eventType = "completed",
+                payload = s"[Background task completed] \"$description\":\n$output",
+                metadata = JsonObject("description" -> description.asJson, "output" -> output.asJson)
+              )
+            ) *>
+              emitBgTaskFinished(ctx, jobId, description, "completed") *>
+              logger.info(s"Remote background task $jobId completed")
+          case Left(errMsg) =>
+            ctx.agentActorRef.fold(IO.unit)(ref =>
+              ref ! AgentCommand.ExternalEvent(
+                source = "background-task",
+                eventType = "failed",
+                payload = s"[Background task failed] \"$description\":\n$errMsg",
+                metadata = JsonObject("description" -> description.asJson)
+              )
+            ) *>
+              emitBgTaskFinished(ctx, jobId, description, "failed") *>
+              logger.warn(s"Remote background task $jobId failed: $errMsg")
+      }
+
+  /**
+   * 对端日志尾窗拉取（输出查看补全批：详情面板 remote-output 路由的设备通道面）。
+   *
+   * 走**既有**通道面——对端 Bash 工具执行 `tail -c N`（[[RemoteBgOutputLog.tailCommand]]
+   * 构造，路径单引号包裹），P2P/relay dispatch 与远端命令执行同一族
+   * （executeViaBestPath），零新 wire、零新权限口子。短超时（[[RemoteBgOutputLog.TailRemoteTimeoutMs]]）
+   * ——设备无响应快速失败，不占用 1h 网络兜底档。
+   *
+   * Left = 可读原因（executor 未初始化 / 设备解析不到 / 执行失败 / tail 非零退出），
+   * 面板原样降级展示；Right = 尾窗文本（对端 Bash 回执原文，含 formatResult 的
+   * `(cwd: …)` 头——展示面如实呈现）。
+   */
+  def readBgLogTail(deviceName: String, remotePath: String): IO[Either[String, String]] =
+    resolvePeerByName(deviceName).flatMap {
+      case None => IO.pure(Left(s"device '$deviceName' not reachable (offline or unknown)"))
+      case Some(peer) =>
+        val cmd = RemoteBgOutputLog.tailCommand(remotePath, RemoteBgOutputLog.TailMaxBytes)
+        val params = JsonObject(
+          "command" -> cmd.asJson,
+          "description" -> "bg-log-tail".asJson,
+          "timeout" -> RemoteBgOutputLog.TailRemoteTimeoutMs.asJson
+        )
+        executeViaBestPath(
+          peer,
+          "Bash",
+          params,
+          RemoteBgOutputLog.TailRemoteTimeoutMs.millis + 5.seconds,
+          "",
+          kind = "bglog"
+        ).map {
+          case Right(out) => Right(out)
+          case Left(err) => Left(err.message.take(200))
+        }
+    }
 
   // ---- P2P Direct ----
 
