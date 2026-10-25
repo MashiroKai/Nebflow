@@ -1,0 +1,348 @@
+#!/bin/bash
+# stand CLI launcher — authoritative copy (stand repo ops/bin/stand)
+#
+# 部署位置: ~/.stand/bin/stand  (cp + chmod +x; 见 stand 仓 ops/README.md)
+# 本文件是权威版本: 修在这里, 再部署出去 —— 不许只改 live 副本 (ops 入库纪律)。
+#
+# fix batch 2026-10-25 (stand CLI 生命周期双病):
+#   病1 双启动无守卫: `stand start` 连跑两次起两个 daemon, 第二个 strictBoot 崩溃
+#       (SessionStore.scala:376 → Main.scala:237), 且 stop 面 pid 记账失配报
+#       「stand is not running」。修法: start 前探端口 (与 nebflow-autostart.sh v2
+#       同源守卫, 端口权威), stop 改端口/pid 文件双探针 + 身份门。
+#   病2 pinned JDK 缺失路径: 修复指引「re-run the stand installer」不可执行 ——
+#       改为指向 ops/bin/stand-jdk (自愈 installer, 已入库), 并保持
+#       非静默降级 (作者令 2026-09-21: WARN 后才回落 PATH java)。
+#   品牌横幅 (作者追加 2026-10-25 13:10): start 放行路径印 logo + 标语
+#       「One entry, Every agent.」; 守卫在 JDK 门之前 —— already-running /
+#       stop / not-running 面零 JVM 依赖 (java 全坏也能停、也能识别已启动)。
+#
+# 流程: start/stop 探测面 (无 java 依赖) → 共同启动面 (JDK 门 → jar 选择 → 横幅 → exec)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# 数据根 (与 src/main/scala/nebflow/shared/paths.scala dataRoot 同优先级:
+#   STAND_HOME > NEBFLOW_HOME > ~/.stand)
+STAND_HOME="${STAND_HOME:-${NEBFLOW_HOME:-$HOME/.stand}}"
+
+# >>> LIFECYCLE-GUARD-BEGIN v1 (fix batch 2026-10-25) >>>
+# start 双启动守卫 + stop 端口/pid 双探针。端口权威原则与
+# Main.scala startGatewayLegacy / SingleInstanceGuard 同源:
+#   - start: 端口已有 stand listener => already running, exit 0 (不进 JVM,
+#     病历 86244/86479 双 daemon + strictBoot 崩溃从此断根);
+#     端口被非 stand 进程占 => 拒启 (镜像 ForeignOccupant), exit 1。
+#   - stop: lsof listener + .pid 文件双探针并集; pid 记账失配 (stop 报
+#     not running 但 daemon 活着) 由端口腿兜住; 身份门拦非 stand 进程,
+#     --force 跳过 (与 ProcessManager.StopOptions.force 同语义);
+#     --tree 透传给应用侧 (sbt 链止损逻辑在 ProcessManager)。
+STAND_PORT_DEFAULT=6138
+
+stand_port_from_args() { # 扫描 "$@": --port N / --port=N -> echo 端口; 无则 rc=1
+    local _i=1 _n=$# _a _v
+    while [ "$_i" -le "$_n" ]; do
+        eval "_a=\${$_i}"
+        case "$_a" in
+            --port=*) printf '%s\n' "${_a#--port=}"; return 0 ;;
+            --port)   eval "_v=\${$((_i+1))}"; [ -n "${_v:-}" ] && { printf '%s\n' "$_v"; return 0; } ;;
+        esac
+        _i=$((_i+1))
+    done
+    return 1
+}
+
+stand_resolve_port() { # $@ = 子命令参数; 优先级 --port > STAND_GATEWAY_PORT > NEBFLOW_GATEWAY_PORT > 6138
+    local _p
+    if _p=$(stand_port_from_args "$@"); then printf '%s\n' "$_p"; return 0; fi
+    printf '%s\n' "${STAND_GATEWAY_PORT:-${NEBFLOW_GATEWAY_PORT:-$STAND_PORT_DEFAULT}}"
+}
+
+stand_listener_pids() { # <port> -> LISTEN pids (每行一个), 空则端口空闲
+    lsof -ti tcp:"$1" -sTCP:LISTEN 2>/dev/null
+}
+
+stand_alive_pids() { # stdin: pids -> 只回活着的数字 pid
+    local _p
+    while IFS= read -r _p; do
+        case "$_p" in ''|*[!0-9]*) continue ;; esac
+        kill -0 "$_p" 2>/dev/null && printf '%s\n' "$_p"
+    done
+    return 0
+}
+
+stand_cmd_of() { ps -p "$1" -o command= 2>/dev/null | head -n 1; }
+
+stand_is_ours() { # <pid> 身份门: cmdline 须含 stand-assembly / nebflow / sbt 之一
+    local _c
+    _c=$(stand_cmd_of "$1")
+    case "$_c" in
+        *stand-assembly*|*nebflow*|*sbt*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+stand_exec() { # 统一 exec 面
+    exec "$JAVA_BIN" --add-opens java.base/java.lang=ALL-UNNAMED -jar "$JAR" "$@"
+}
+
+# >>> BRAND-BANNER-BEGIN v1 (作者追加 2026-10-25 13:10: One entry, Every agent.) >>>
+# 仅 start 且守卫放行（真的要起 daemon）时打印；already-running / 拒启 / stop 不印。
+# 分寸: 非 TTY / NO_COLOR / TERM=dumb → 单行纯文本（不往日志刷艺术字）。
+# 宽窄: cols>=80 徽标款(A), <80 双行紧凑款(B); STAND_BANNER=A|B|C 强制,
+#       STAND_BANNER_COLS 覆写探测宽（测试/ops 旋钮）。候选三款作者批注定稿。
+stand_banner_print() {
+    local _cols _cand
+    if [ -n "${STAND_BANNER_COLS:-}" ]; then
+        _cols="$STAND_BANNER_COLS"
+    else
+        _cols="$(tput cols 2>/dev/null)"
+        _cols="${_cols:-80}"
+    fi
+    case "$_cols" in ''|*[!0-9]*) _cols=80 ;; esac
+    if [ ! -t 1 ] || [ -n "${NO_COLOR:-}" ] || [ "${TERM:-}" = "dumb" ]; then
+        printf 'stand — One entry, Every agent.\n'
+        return 0
+    fi
+    local _w=$'\033[97m' _k=$'\033[40m' _b=$'\033[1m' _r=$'\033[0m'
+    _cand="${STAND_BANNER:-}"
+    if [ -z "$_cand" ]; then
+        if [ "$_cols" -ge 80 ]; then _cand="A"; else _cand="B"; fi
+    fi
+    case "$_cand" in
+        A)  # 徽标款: 黑底白 S 方块（favicon 同构）+ 标语
+            printf '%s\n' \
+"$_k ${_w}███████${_r}$_k       ${_r}" \
+"$_k ${_w}█${_r}$_k        ${_r}" \
+"$_k ${_w}███████${_r}$_k   $_r$_b${_w} One entry, Every agent.$_r" \
+"$_k ${_w}      █${_r}$_k   ${_r}" \
+"$_k ${_w}███████${_r}$_k       ${_r}"
+            ;;
+        B)  # 双行紧凑款: 窄终端 / 择优
+            printf '%s\n' \
+"$_k ${_w}▐█▌${_r}$_k ${_r}  $_b${_w}One entry,$_r" \
+"$_k ${_w}▐█▌${_r}$_k ${_r}  $_b${_w}Every agent.$_r"
+            ;;
+        C)  # 单行字标款
+            printf '%s\n' "$_b${_w}stand$_r — $_b${_w}One entry, Every agent.$_r"
+            ;;
+        *)  printf 'stand — One entry, Every agent.\n' ;;
+    esac
+}
+# <<< BRAND-BANNER-END v1 <<<
+
+stand_cmd="${1:-}"
+_stand_boot=0   # 1 = 走共同启动面 (JDK 门 → jar 选择 → [横幅] → exec)
+
+case "$stand_cmd" in
+    start)
+        STAND_GUARD_PORT=$(stand_resolve_port "$@")
+        # 端口一致性: 守卫探的端口钉进子进程 env (CLI --port 优先级更高, 不受影响;
+        # 缺此步时 jar 默认 8080 != 守卫探的 6138, 守卫形同虚设)
+        export STAND_GATEWAY_PORT="$STAND_GUARD_PORT"
+        export NEBFLOW_GATEWAY_PORT="$STAND_GUARD_PORT"
+        _guard_pids=$(stand_listener_pids "$STAND_GUARD_PORT")
+        if [ -n "$_guard_pids" ]; then
+            _guard_pid=$(printf '%s\n' "$_guard_pids" | head -n 1)
+            if stand_is_ours "$_guard_pid"; then
+                echo "stand is already running (pid $_guard_pid) on port $STAND_GUARD_PORT"
+                exit 0
+            fi
+            echo "ERROR: port $STAND_GUARD_PORT is occupied by a non-stand process (pid $_guard_pid):" >&2
+            echo "       $(stand_cmd_of "$_guard_pid")" >&2
+            echo "       Stop it, or pick another port (--port / STAND_GATEWAY_PORT)." >&2
+            exit 1
+        fi
+        _stand_boot=1   # 端口空闲 → 真的要起 daemon, 走启动面
+        ;;
+    stop)
+        _stop_force=0; _stop_tree=0
+        for _a in "$@"; do
+            case "$_a" in
+                --force) _stop_force=1 ;;
+                --tree)  _stop_tree=1 ;;
+            esac
+        done
+        if [ "$_stop_tree" = 0 ]; then
+            STAND_GUARD_PORT=$(stand_resolve_port "$@")
+            _stop_port_pids=$(stand_listener_pids "$STAND_GUARD_PORT" | stand_alive_pids)
+            _stop_pf_pid=""
+            if [ -r "$STAND_HOME/.pid" ]; then
+                _stop_pf_pid=$(tr -d ' \t\r\n' < "$STAND_HOME/.pid" 2>/dev/null)
+            fi
+            _stop_pf_alive=$(printf '%s\n' "${_stop_pf_pid:-}" | stand_alive_pids)
+            # 双探针并集去重 (端口腿 + pid 文件腿)
+            _stop_targets=$({ [ -n "$_stop_port_pids" ] && printf '%s\n' "$_stop_port_pids"
+                              [ -n "$_stop_pf_alive" ] && printf '%s\n' "$_stop_pf_alive"; } | sort -u)
+            if [ -z "$_stop_targets" ]; then
+                # 双空 = 真没在跑: 顺手清陈年 pid 记账 (病历: stop 报 not running 的失配面)
+                rm -f "$STAND_HOME/.pid" "$STAND_HOME/.pid.meta" 2>/dev/null
+                echo "stand is not running"
+                exit 0
+            fi
+            # 身份门 (--force 跳过)
+            _stop_foreign=""
+            while IFS= read -r _p; do
+                [ -n "$_p" ] || continue
+                if ! stand_is_ours "$_p"; then
+                    if [ "$_stop_force" = 1 ]; then
+                        echo "WARN: --force: killing non-stand process pid $_p: $(stand_cmd_of "$_p")" >&2
+                    else
+                        _stop_foreign="$_stop_foreign $_p"
+                    fi
+                fi
+            done <<< "$_stop_targets"
+            if [ -n "$_stop_foreign" ]; then
+                echo "ERROR: refusing to stop: port $STAND_GUARD_PORT held by non-stand process(es):" >&2
+                for _p in $_stop_foreign; do echo "       pid $_p: $(stand_cmd_of "$_p")" >&2; done
+                echo "       Re-run with --force to kill anyway." >&2
+                exit 1
+            fi
+            echo "stopping stand (port $STAND_GUARD_PORT, pids:$(echo $_stop_targets))"
+            kill $_stop_targets 2>/dev/null
+            _stop_i=0
+            while [ "$_stop_i" -lt 50 ]; do  # 宽限 ≤10s
+                _stop_left=$(printf '%s\n' $_stop_targets | stand_alive_pids)
+                if [ -z "$_stop_left" ] && [ -z "$(stand_listener_pids "$STAND_GUARD_PORT")" ]; then
+                    break
+                fi
+                sleep 0.2
+                _stop_i=$((_stop_i+1))
+            done
+            _stop_left=$(printf '%s\n' $_stop_targets | stand_alive_pids)
+            if [ -n "$_stop_left" ]; then
+                echo "  TERM ignored, sending KILL to:$_stop_left" >&2
+                kill -9 $_stop_left 2>/dev/null
+            fi
+            # pid 记账清理: 记录的 pid 已死才清 (不碰别的活实例的记账)
+            if [ -n "$_stop_pf_pid" ] && ! kill -0 "$_stop_pf_pid" 2>/dev/null; then
+                rm -f "$STAND_HOME/.pid" "$STAND_HOME/.pid.meta" 2>/dev/null
+            fi
+            echo "stand stopped (port $STAND_GUARD_PORT free)"
+            exit 0
+        fi
+        # --tree: sbt 祖先链止损在应用侧 (ProcessManager), 脚本只透传
+        _stand_boot=1
+        ;;
+    *)
+        _stand_boot=1
+        ;;
+esac
+# <<< LIFECYCLE-GUARD-END v1 <<<
+
+if [ "$_stand_boot" = 1 ]; then
+    # ── 共同启动面: 需要 JVM 才走到这里 ──
+    # Java selection: the pinned JDK (jdk-21) wins; PATH java is only a fallback.
+    # A missing pinned JDK must NEVER degrade silently (author ruling 2026-09-21,
+    # envfix batch): warn loudly to stderr first, then fall back.
+    # >>> JDK-SELECT-BEGIN v2 (fix batch 2026-10-25: actionable repair guidance) >>>
+    # STAND_JAVA_BIN: 显式钉死 java (测试沙箱 / ops 逃生门), 设置则跳过 pinned 探测。
+    if [ -n "${STAND_JAVA_BIN:-}" ]; then
+        JAVA_BIN="$STAND_JAVA_BIN"
+    else
+        JAVA_BIN="$STAND_HOME/jdk-21/bin/java"
+        if [ ! -x "$JAVA_BIN" ]; then
+            echo "WARN: stand pinned JDK missing at $JAVA_BIN - falling back to PATH java." >&2
+            echo "      This is a NON-silent degrade (author ruling 2026-09-21); the pinned" >&2
+            echo "      JDK contract still wants jdk-21 under $STAND_HOME." >&2
+            echo "      Repair (run the first that exists):" >&2
+            echo "        bash \"$STAND_HOME/bin/stand-jdk\" install     # deployed self-heal installer" >&2
+            echo "        bash \"<stand-repo>/ops/bin/stand-jdk\" install # from a stand repo checkout" >&2
+            JAVA_BIN="$(command -v java || true)"
+        fi
+    fi
+    # <<< JDK-SELECT-END v2 <<<
+    java_hint() {
+        case "$(uname -s)" in
+            Darwin) echo "  Install: brew install openjdk@21  (or: bash \"$STAND_HOME/bin/stand-jdk\" install)" >&2 ;;
+            Linux)  echo "  Install: sudo apt install openjdk-21-jdk-headless  (dnf/yum: java-21-openjdk, apk: openjdk21); no sudo: bash \"$STAND_HOME/bin/stand-jdk\" install" >&2 ;;
+            *)      echo "  Install: https://adoptium.net/temurin/releases/?version=21" >&2 ;;
+        esac
+        echo "  Then re-run: stand <command>" >&2
+        }
+    if [ -z "$JAVA_BIN" ]; then
+        echo "ERROR: Java 21+ not found (no pinned JDK, none on PATH)." >&2
+        java_hint
+        exit 11
+    fi
+    JAVA_MAJOR="$("$JAVA_BIN" -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f1)"
+    [ "$JAVA_MAJOR" = "1" ] && JAVA_MAJOR="$("$JAVA_BIN" -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f2)"
+    case "$JAVA_MAJOR" in ''|*[!0-9]*) JAVA_MAJOR=0 ;; esac
+    if [ "$JAVA_MAJOR" -lt 21 ]; then
+        echo "ERROR: Java 21+ required, found $("$JAVA_BIN" -version 2>&1 | head -n1)" >&2
+        echo "       launcher java: $JAVA_BIN" >&2
+        java_hint
+        exit 11
+    fi
+    # >>> WINSORT-BEGIN v1 (version-order jar pick) >>>
+    # Name order != version order: the date scheme deliberately strips leading zeros
+    # (Windows version fields reject them), so as plain strings "2026.10.5" sorts
+    # BEFORE "2026.9.19". Rank the candidates by the parsed numeric tuple and take
+    # the max. Version core = the SAME contract as packaging/app-version.sh:36
+    #   ([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})(\.[0-9]+)?(-beta\.[0-9]+)?
+    # The optional 4th segment and the -beta.N tail carry the SAME meaning - the
+    # same-day sequence (O-3), i.e. the tuple's single 4th field: four segments =
+    # date core + sequence. (tagfix 2026-09-17: the segment is optional and still
+    # anchored inside the core, so a 5-field name stays unparseable and is excluded
+    # like any other unknown shape - no new segment semantics are introduced.)
+    # Legacy semver shapes (1.4.1-beta.56) are ranked by the same 4-field tuple, so
+    # the order is total and deterministic. A name that parses as neither is
+    # EXCLUDED - deliberately NO silent fall back to name order: the caller's
+    # existing "jar not found" error path then fires.
+    _winsort_jar_key() { # <jar path> -> fixed-width numeric key (year,month,day,seq); rc=1 if unparseable
+      local _base="${1:-}" _re
+      _base="${_base##*/}"
+      _re='-assembly-([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})(\.([0-9]+))?(-beta\.([0-9]+))?\.jar$'
+      if [[ $_base =~ $_re ]]; then
+        printf '%04d%03d%03d%06d' "$((10#${BASH_REMATCH[1]}))" "$((10#${BASH_REMATCH[2]}))" "$((10#${BASH_REMATCH[3]}))" "$((10#${BASH_REMATCH[5]:-${BASH_REMATCH[7]:-0}}))"
+        return 0
+      fi
+      _re='-assembly-([0-9]+)\.([0-9]+)\.([0-9]+)(\.([0-9]+))?(-beta\.([0-9]+))?\.jar$'
+      if [[ $_base =~ $_re ]]; then
+        printf '%04d%03d%03d%06d' "$((10#${BASH_REMATCH[1]}))" "$((10#${BASH_REMATCH[2]}))" "$((10#${BASH_REMATCH[3]}))" "$((10#${BASH_REMATCH[5]:-${BASH_REMATCH[7]:-0}}))"
+        return 0
+      fi
+      return 1
+    }
+    _winsort_pick_newest() { # stdin: one candidate path per line -> prints the newest one
+      local _cand _key _best='' _best_key=''
+      while IFS= read -r _cand; do
+        [ -n "$_cand" ] || continue
+        _key=$(_winsort_jar_key "$_cand") || continue
+        if [ -z "$_best_key" ] || [ "$_key" \> "$_best_key" ]; then
+          _best="$_cand"; _best_key="$_key"
+        fi
+      done
+      [ -n "$_best" ] && printf '%s\n' "$_best"
+      return 0
+    }
+    # <<< WINSORT-END v1 <<<
+
+    # >>> POINTER-SELECT-BEGIN v1 (batch 2 G4: rollback-capable selection) >>>
+    # The pointer file current-version decides which version runs; a rollback is a
+    # pointer switch, so a bad version that is still on disk is never picked again.
+    # Version dirs hold one immutable jar each.
+    # Strict: if the pointer names a package that is not on disk, we do NOT silently
+    # pick something else - the fallback scan below finds nothing (no root jars) and
+    # the existing "JAR not found" error path fires loudly.
+    JAR=""
+    if [ -f "${SCRIPT_DIR}/current-version" ]; then
+        _pv=$(tr -d ' \t\r\n' < "${SCRIPT_DIR}/current-version" 2>/dev/null)
+        if [ -n "$_pv" ] && [ -f "${SCRIPT_DIR}/versions/${_pv}/stand-assembly-${_pv}.jar" ]; then
+            JAR="${SCRIPT_DIR}/versions/${_pv}/stand-assembly-${_pv}.jar"
+        elif [ -n "$_pv" ]; then
+            for _cand in "${SCRIPT_DIR}/versions/${_pv}"/*.jar; do
+                [ -f "$_cand" ] || continue
+                JAR="$_cand"
+                break
+            done
+        fi
+    fi
+    # <<< POINTER-SELECT-END v1 <<<
+
+    JAR=${JAR:-$(ls -1 "${SCRIPT_DIR}"/stand-assembly-*.jar 2>/dev/null | _winsort_pick_newest)}
+    if [ -z "$JAR" ]; then
+        echo "ERROR: stand JAR not found in ${SCRIPT_DIR}"
+        exit 1
+    fi
+
+    # 品牌横幅: jar 就绪 + 即将 exec = 成功语义的脚本侧最近似点;
+    # app 的 pid/URL 行紧随其后, 是终端最后一行 = 最显眼, 不被艺术字埋掉。
+    [ "$stand_cmd" = "start" ] && stand_banner_print
+    stand_exec "$@"
+fi
