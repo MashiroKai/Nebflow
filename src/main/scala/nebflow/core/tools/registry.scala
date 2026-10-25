@@ -37,6 +37,9 @@ object ToolRegistry:
       // payloads already stored in old session histories.
       // User interaction
       "AskUserQuestion" -> AskUserQuestionTool,
+      // Perception mail (mail-perception-impl batch): draft + snapshot card;
+      // the user always triggers the actual send (card/canvas).
+      "EmailSend" -> PerceptionMailTool,
       // Team task tools (任务工具重做 2026-08-30: 任务=进展展示，工具只配
       // team——category=team 机制层注入全体成员；session 域 TaskCreate/Update/
       // Query 已退役，TTL 清理见 TaskStore)

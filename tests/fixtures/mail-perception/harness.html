@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<!-- mail-perception harness.html — 感知域三脸静态夹具（mail-perception-impl 批）。
+
+     Imports the REAL perception.js（无 stub、无打包）+ 真 ws.js / state.js /
+     branding.js / i18n.js / askPending.js，暴露五个驱动：
+
+       window.__frame(msg)      → routePerceptionFrame(msg)——WS 帧单点投递
+                                   （spec 直接投帧，无需真 WebSocket）
+       window.__openPanel()     → openPerceptionPanel()——感知面板脸
+       window.__openConfig()    → openPerceptionConfig(null)——两问配置卡脸
+       window.__enhance(...)    → window.__perceptionEnhanceAskCard(...)——
+                                   OTP 单码片 / 快照卡（ask 卡增强脸）
+       window.__openEditor(id)  → openMailEditor(id, opts)——Canvas 编辑器脸
+
+     fetch 全量 mock（window.__routes：method+path 前缀 → 响应），出站 WS 帧
+     落 window.__sent（state.ws 为捕获桩）。绝无真实网络。
+
+     spec（tests/mail-perception.spec.mjs）经一次性静态服务（127.0.0.1 临时
+     端口，🔴 绝非 8080 宿主）驱动本页。-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>mail-perception harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/stand-tokens.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/perception.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--st-bg, #f5f6f8); }
+    #chat {
+      position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <div id="sidebar-panel"></div>
+  <div id="canvas-host">
+    <div id="canvas-tab-bar"></div>
+    <div id="canvas-content"></div>
+  </div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const stateMod = await import(`${WEB}/state.js`);
+    const state = stateMod.default;
+
+    // 出站 WS 帧捕获桩（answerAsk 的 askUserAnswer 帧在这里落网）
+    window.__sent = [];
+    state.ws = { readyState: 1, send: (data) => window.__sent.push(JSON.parse(data)) };
+    state.activeSessionId = 'harness-session';
+
+    // REST mock 路由：matchFn(method, path) → { ok, status, data }
+    window.__routes = [];
+    const realFetch = window.fetch.bind(window);
+    window.fetch = async (path, opts = {}) => {
+      const method = (opts.method || 'GET').toUpperCase();
+      const p = String(path);
+      for (const r of window.__routes) {
+        if (r.method === method && r.match(p)) {
+          const body = typeof r.data === 'function' ? r.data(p, opts) : r.data;
+          return {
+            ok: (r.status ?? 200) >= 200 && (r.status ?? 200) < 300,
+            status: r.status ?? 200,
+            json: async () => body,
+          };
+        }
+      }
+      return { ok: false, status: 404, json: async () => ({ error: 'no mock route: ' + method + ' ' + p }) };
+    };
+
+    const perception = await import(`${WEB}/perception.js`);
+    perception.initPerception();
+
+    window.__frame = (msg) => perception.routePerceptionFrame(msg);
+    window.__openPanel = () => perception.openPerceptionPanel();
+    window.__openConfig = () => perception.openPerceptionConfig(null);
+    window.__enhance = (bubble, items, requestId, targetSid) =>
+      window.__perceptionEnhanceAskCard(bubble, items, requestId, targetSid);
+    window.__openEditor = (draftId, opts) => perception.openMailEditor(draftId, opts);
+
+    // AskUser 卡的最小气泡骨架（renderAskUser 的 .option-box 形态投影）
+    window.__mkBubble = (withSecret) => {
+      const chat = document.getElementById('chat');
+      chat.innerHTML = '';
+      const bubble = document.createElement('div');
+      bubble.className = 'msg-row assistant';
+      const box = document.createElement('div');
+      box.className = 'option-box';
+      if (withSecret) {
+        const input = document.createElement('input');
+        input.type = 'password';
+        input.className = 'option-secret-input';
+        box.appendChild(input);
+      }
+      bubble.appendChild(box);
+      chat.appendChild(bubble);
+      return bubble;
+    };
+
+    window.__ready = true;
+  </script>
+</body>
+</html>

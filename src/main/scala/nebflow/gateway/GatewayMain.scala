@@ -969,7 +969,16 @@ object GatewayMain extends IOApp:
                                       updateOrchestrator = Some(updateOrchestrator),
                                       updateConvergence = Some(updateConvergence)
                                     )
-                                  hubSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
+                                  // 感知守护进程 boot（mail-perception-impl 批，裁决 4：
+                                  // 独立生命周期——随网关进程启停，不挂会话/流；广播经
+                                  // wsHub 窄端口注入）。失败只 WARN 绝不阻塞启动。
+                                  val perceptionBoot: IO[Unit] =
+                                    nebflow.perception.PerceptionService
+                                      .boot(json => wsHub.broadcast(json), sharedResources)
+                                      .handleErrorWith(e =>
+                                        logger.warn(s"perception daemon boot failed: ${e.getMessage}").void
+                                      )
+                                  hubSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> perceptionBoot *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {

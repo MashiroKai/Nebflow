@@ -1,0 +1,132 @@
+/*
+ * stand-tokens.css — 感知域 token 单一来源（mail-perception-impl 批·作者令
+ * 「配色 = 真官网 stand 色」）。
+ *
+ * 来源 = mystand.space 官网 CSS chunk 实抓（2026-10-25，`/_next/static/chunks/
+ * 05v9w7~p~o9n_.css`，`.nfd` 块 + `html[data-theme=dark] .nfd` 暗档），逐值转录，
+ * 零自拟。官网变量名 `--nfd-*` 在此镜像为产品端 `--st-*`（stand tokens）：
+ * 感知域新面（面板/单码片/快照卡/画布邮件编辑器）一律消费本文件变量；存量
+ * 组件不受影响（本文件不覆盖任何既有变量名）。
+ *
+ * 与 r3 样张（reports/20261025_141024_mail-perception-design-r3）的色板对照
+ * 见同批 REPORT.md §色板对照：样张玻璃/阴影/描边若干自拟值在官网源里逐一
+ * 收敛为下表值（v3 偏差归因 = 样张未先抓官网源，凭记忆近似）。
+ */
+
+:root {
+  /* 品牌与语义（不随主题变） */
+  --st-primary: #07c160;            /* 官网 --nfd-primary（品牌绿 = 交互主色） */
+  --st-brand-green: 7 193 96;       /* 官网 --nfd-brand-green（triplet 形态） */
+  --st-success: #4caf50;            /* 官网 --nfd-success */
+  --st-warning: #ff9800;            /* 官网 --nfd-warning */
+  --st-error: #f44336;              /* 官网 --nfd-error */
+  --st-amber: 255 152 0;            /* 官网 --nfd-amber（亮档） */
+  --st-sapphire: 91 127 191;        /* 官网 --nfd-sapphire（玻璃面结构色，只 tint/描边） */
+  --st-sapphire-glow: 120 160 220;  /* 官网 --nfd-sapphire-glow */
+  --st-bubble-user: #95ec69;        /* 官网 --nfd-bubble-user */
+
+  /* 亮档：底面/文字/描边 */
+  --st-bg: #f5f6f8;
+  --st-surface: #ffffff;
+  --st-text: #1b1e26;
+  --st-text-muted: #8b8e96;
+  --st-text-dim: #6b6e76;
+  --st-border: #ddd;
+  --st-frame-text: #3a3d45;
+  --st-frame-text-bright: #1b1e26;
+  --st-frame-text-muted: #717379;
+  --st-toggle-off-border: #1b1e2626;
+
+  /* 亮档：玻璃面（官网 --nfd-glass-* 同值） */
+  --st-glass-bg: #ffffff8c;         /* rgba(255,255,255,.55) */
+  --st-glass-blur: 24px;
+  --st-glass-border: #ffffff59;     /* rgba(255,255,255,.35) */
+  --st-refraction: rgb(91 127 191 / .45);
+  --st-header-refraction: #ffffff73;
+  --st-etched-bg: #00000006;
+  --st-etched-border: #5b7fbf1a;
+
+  /* 亮档：玻璃控件（按钮/胶囊/工具条材质） */
+  --st-control-bg: #ffffff73;
+  --st-control-bg-hover: #ffffffa6;
+  --st-control-border: #fff6;
+  --st-control-highlight: #ffffff80;
+  --st-control-underedge: #00000014;
+  --st-control-glow: #0000000f;
+  --st-control-shadow: #0000000a;
+  --st-control-blur: 10px;
+}
+
+html[data-theme="dark"] {
+  --st-amber: 255 168 60;
+  --st-bg: #13161c;
+  --st-surface: #1c1f27;
+  --st-text: #e8eaed;
+  --st-text-muted: #7b7e88;
+  --st-text-dim: #9ba0aa;
+  --st-border: #2a2d35;
+  --st-frame-text: #c8cad0;
+  --st-frame-text-bright: #e8eaed;
+  --st-frame-text-muted: #81838a;
+  --st-toggle-off-border: #ffffff14;
+
+  --st-glass-bg: #181c26ad;
+  --st-glass-blur: 24px;
+  --st-glass-border: #ffffff0f;
+  --st-refraction: rgb(91 127 191 / .22);
+  --st-header-refraction: #5b7fbf0f;
+  --st-etched-bg: #ffffff0a;
+  --st-etched-border: #5b7fbf14;
+
+  --st-control-bg: #ffffff0d;
+  --st-control-bg-hover: #ffffff1a;
+  --st-control-border: #ffffff14;
+  --st-control-highlight: #ffffff14;
+  --st-control-underedge: #00000040;
+  --st-control-glow: #0003;
+  --st-control-shadow: #00000026;
+  --st-control-blur: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]):not([data-theme="dark"]) {
+    --st-amber: 255 168 60;
+    --st-bg: #13161c;
+    --st-surface: #1c1f27;
+    --st-text: #e8eaed;
+    --st-text-muted: #7b7e88;
+    --st-text-dim: #9ba0aa;
+    --st-border: #2a2d35;
+    --st-frame-text: #c8cad0;
+    --st-frame-text-bright: #e8eaed;
+    --st-frame-text-muted: #81838a;
+    --st-toggle-off-border: #ffffff14;
+
+    --st-glass-bg: #181c26ad;
+    --st-glass-border: #ffffff0f;
+    --st-refraction: rgb(91 127 191 / .22);
+    --st-header-refraction: #5b7fbf0f;
+    --st-etched-bg: #ffffff0a;
+    --st-etched-border: #5b7fbf14;
+
+    --st-control-bg: #ffffff0d;
+    --st-control-bg-hover: #ffffff1a;
+    --st-control-border: #ffffff14;
+    --st-control-highlight: #ffffff14;
+    --st-control-underedge: #00000040;
+    --st-control-glow: #0003;
+    --st-control-shadow: #00000026;
+  }
+}
+
+/* 派生组合面（感知域消费；值全部来自上表，零新色值） */
+:root {
+  --st-mail-panel-bg: var(--st-glass-bg);
+  --st-mail-panel-border: var(--st-glass-border);
+  --st-mail-chip-bg: var(--st-etched-bg);
+  --st-mail-chip-border: var(--st-etched-border);
+  --st-mail-focus-ring: rgb(var(--st-sapphire) / .35);
+  --st-mail-danger-icon: #d64545;   /* 语义色图标档（产品端 base.css 同值，官网不改语义图标档） */
+  --st-mail-warn-icon: #b45309;
+  --st-mail-success-icon: #2e7d32;
+}

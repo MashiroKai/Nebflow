@@ -82,6 +82,17 @@ interface Window {
   __stopThinkingTimer?: () => void;
 }
 
+/** 感知域 ask 卡增强（mail-perception-impl 批；由 perception.js 注册，
+ *  chat.js renderAskUser 可选调用——缺席 = 卡面行为与改前逐字节相同）。 */
+interface Window {
+  __perceptionEnhanceAskCard?: (
+    bubble: HTMLElement,
+    items: Array<Record<string, unknown>>,
+    requestId: string,
+    targetSid: string
+  ) => void;
+}
+
 /** NebLink settings-panel refresh interval handle (set/cleared by sidebar.js). */
 interface Window {
   _neblinkRefreshTimer?: number | null;
