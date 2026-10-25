@@ -8,7 +8,7 @@ status: done
 ## 1. 机制定义
 
 - **插件必要文件**：每个插件目录必须有包根 `Plugin.md`，内容 = 该插件的功能描述。
-  既有 16 个 seed/线上包生态的既有命名是 `Plugin.md`（大写 P），本机制沿用之（零迁移）；
+  既有 16 个 seed（随 jar 内置分发的官方包）/线上包生态的既有命名是 `Plugin.md`（大写 P），本机制沿用之（零迁移）；
   小写拼写 `plugin.md` 同认（读取时回退一查，覆盖手写小写名的包）。
 - **注入语义**：插件分配时注入给 agent 的提示词 = **Plugin.md 的内容**（整文）。
   旧链（逐 skill 读 SKILL.md 全文拼 `<plugin name skill>` 块）随本批退役；
@@ -33,7 +33,7 @@ status: done
 | 文件存在但不可读（IO 错误） | 同上 Left（同一 no-silent-degradation 纪律） | 同上（missing/unreadable 同一错误面） |
 | 只有小写 `plugin.md` | 正常注入（同一文件机制双拼写同认） | `PluginInjectionSpec` · "injection accepts the lowercase plugin.md spelling" |
 | 分配选中包被封禁 | 既有 `PLUGIN_BLOCKED` Left（本批零改动） | `PluginInjectionSpec`（封禁腿，沿用） |
-| SKILL.md 存在与否 | **不影响注入**（SKILL.md 退出注入链；缺 SKILL.md 的纯 MCP 包照常注入 Plugin.md） | `PluginInjectionSpec` · "injection source = Plugin.md"（SKILL.md 正文不在注入块内） |
+| SKILL.md 存在与否 | **不影响注入**（SKILL.md 退出注入链；缺 SKILL.md 的纯 MCP（Model Context Protocol 工具服务）包照常注入 Plugin.md） | `PluginInjectionSpec` · "injection source = Plugin.md"（SKILL.md 正文不在注入块内） |
 
 装载面（PluginRegistry 扫描）**不**因缺 Plugin.md 拒载——缺文件在**分配注入时**
 fail-closed（「装了就是信任」 doctrine 不破坏；面板可见性由 Plugin.md 入口探针承担：
@@ -60,6 +60,12 @@ fail-closed（「装了就是信任」 doctrine 不破坏；面板可见性由 P
 ## 5. 与面板的关系（条⑥联动）
 
 - 面板 Plugin.md 入口（`[data-plugin-doc]`）：探针 `/api/plugin-assets/<name>/Plugin.md`
-  200 ⇒ 在场；点击经既有 Canvas 通路打开——机制不变，本批零改动。
+  200 ⇒ 在场；点击经既有 Canvas（控制台内查看文件的面板）通路打开——机制不变，本批零改动。
 - skill 胶囊（新）：点击取 `/api/plugin-assets/<name>/skills/<skill>/SKILL.md` 进
   Canvas——SKILL.md 的「按需查阅」消费面。
+
+## 相关文档
+
+- [[index]] — 库入口（本篇挂入图谱）。
+- [[visual-report-gate-plan.zh-CN]] — 文档门禁方案件（其挂点③ tools.json 授权面即本机制所述 PluginRegistry 授权口）。
+- 术语：[[glossary]]。

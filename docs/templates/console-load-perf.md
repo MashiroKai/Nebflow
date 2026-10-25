@@ -13,11 +13,11 @@ status: done
 
 ## 结论先行
 
-现状实测：dev 树（`src/main/resources/web` 源码直喂引擎的静态面形态，与打包 dist 相对）仍在喂（150 js 请求）、gzip 全网关已开（A2 无需动）、monaco 预载已被 W3 摘除（真引擎首开 `/vendor/monaco/**` = 0 请求）。本地冷温两腿其实已达标（冷 DCL（[[glossary#^dcl]]，首可交互时点）247ms / 温 95ms）——「本地慢」的感知大头在引擎重启后的 REST/WS 装载，不在静态瀑布。真正的欠账在远程腿：隧道冷 9.2s ✗、**隧道温 8.8s ✗（171-183 次 no-cache 304 往返，审计根因#2 原样活着）**。本批 A 段交付：vendor 阻塞脚本 defer 化 + qrcode 按需（首开少 1 阻塞位/58KB）、SW（[[glossary#^service-worker]]）温访问秒开全套（活体测试 9/9，含版本指纹防陈旧链）、dist（`build/web-dist` 打包产物）激活卡备妥。预期终态（B 卡重启后）：本地冷 0.13s/温 0.06s、**远程冷 2.6s（-72%）**、**远程温 ~0.07s（-99%）**——四条验收线全绿。
+现状实测：dev 树（`src/main/resources/web` 源码直喂引擎的静态面形态，与打包 dist 相对）仍在喂（150 js 请求）、gzip 全网关已开（A2 无需动）、monaco 预载已被 W3（当时批的工作项编号）摘除（真引擎首开 `/vendor/monaco/**` = 0 请求）。本地冷温两腿其实已达标（冷 DCL（[[glossary#^dcl]]，首可交互时点）247ms / 温 95ms）——「本地慢」的感知大头在引擎重启后的 REST/WS 装载，不在静态瀑布。真正的欠账在远程腿：隧道冷 9.2s ✗、**隧道温 8.8s ✗（171-183 次 no-cache 304（协商缓存命中、未变免体应答的状态码）往返，审计根因#2 原样活着）**。本批 A 段交付：vendor 阻塞脚本 defer 化 + qrcode 按需（首开少 1 阻塞位/58KB）、SW（[[glossary#^service-worker]]）温访问秒开全套（活体测试 9/9，含版本指纹防陈旧链）、dist（`build/web-dist` 打包产物）激活卡备妥。预期终态（B 卡重启后）：本地冷 0.13s/温 0.06s、**远程冷 2.6s（-72%）**、**远程温 ~0.07s（-99%）**——四条验收线全绿。
 
 ## A 段（无重启立得，随合并落 main 刷新生效）
 
-1. **实测现状两腿瀑布**（A1）：见证据 README §①§②。关键核验三项：dev 树确认在喂（`/assets` 404 + `/js` no-cache + 150 请求）；**gzip 已全开**（index/js/vendor 全部 `Content-Encoding: gzip`，A2 无需动，brotli 注记为可选）；W2 头代码在位（`StaticRoutes.scala:318`）但 dev 树下 `/assets` 恒 404，**W2 活体实证排入 B 卡核验清单**（curl immutable）。
+1. **实测现状两腿瀑布**（A1）：见证据 README §①§②。关键核验三项：dev 树确认在喂（`/assets` 404 + `/js` no-cache + 150 请求）；**gzip 已全开**（index/js/vendor 全部 `Content-Encoding: gzip`，A2 无需动，brotli（gzip 之外的新一代压缩算法）注记为可选）；W2 头代码在位（`StaticRoutes.scala:318`）但 dev 树下 `/assets` 恒 404，**W2 活体实证排入 B 卡核验清单**（curl 验 `Cache-Control: immutable`——一年期不可变缓存指令）。
 2. **响应压缩**（A2）：已开，零改动，实证行见 `results/before/*.json` gz 列。
 3. **dev 树止损**（A3）：
    - monaco：核实 W3 已改按需（`258959ce5`，`preloadMonaco/loadMonaco` 全树零调用点），真引擎首开零 monaco 字节——本批无需再动，实测复核入证据。
@@ -53,15 +53,15 @@ curl -s -o /dev/null -w '%{http_code}\n' 127.0.0.1:8080/sw.js          # 期待 
 curl -s -o /dev/null -w '%{http_code}\n' 127.0.0.1:8080/js/main.js    # 期待 200（C1 源模式契约不变）
 ```
 
-**预期数字**（替换面同法实测，`evidence/.../results/dist-predict*`）：本地冷 DCL 134ms / 温 62ms；**隧道冷 2.6s（dev 9.2s，-72%）**；隧道温 ~0.07s（SW+immutable 双保险）。请求结构：62 请求/0.87MB（dev 194/2.16MB），45 js = 入口 chunk + boot 需要 chunks（156 lazy chunks 按需）。
+**预期数字**（替换面同法实测，`evidence/.../results/dist-predict*`）：本地冷 DCL 134ms / 温 62ms；**隧道冷 2.6s（dev 9.2s，-72%）**；隧道温 ~0.07s（SW+immutable 双保险）。请求结构：62 请求/0.87MB（dev 194/2.16MB），45 js = 入口 chunk（打包代码块）+ boot 需要 chunks（156 lazy chunks 按需）。
 
 **回退三道**：①`-Dstand.webdist=dev` 重启（热编辑逃生门，`StaticRoutes.scala:60`）；②`rm -rf build/web-dist` + 重启（`resolveStaticSource` 落回 DevTree）；③SW 一键退：页面控制台 `localStorage.setItem('stand_sw','0')` 后刷新（反注销），或任意 URL 加 `?nfsw=0` 单次绕过。
 
 ## 质量闸读数
 
 - scala：`sbt compile` 577 源零错（worktree 隔离 target，未触碰在跑引擎）；改动 2 文件，`StaticRoutes.scala` scalafmt 通过，`WebSocketRoutes.scala` 仅 1 行白名单增项（scalafmt 全文件跑会卷入该文件既有格式债区域，噪声已逐 hunk 回退）；测试面编译进行中，受影响 spec（`AssetsRoutesSpec` 择树矩阵为注入探针式，钉 `resolveStaticSource` 语义——本批未改其语义，只增 boot 行可见性）。
-- checkJs 闸：**main 检出现状即红**（283 错 vs 基线 273：agentProfile/historyReplay/mobile 四件/scrollUnderGlass/socialPanel 六个「new file」+ canvas.js 四项超基线——近几日合并未再生基线的既有债）；本批 worktree 与 main **逐项相同（283=283）**，swReg.js 零错、socialPanel 错数 7→7、canvas.js 不变——本批零新增闸面。
-- dist 构建管线：`build-web.mjs` 本批树上出产 OK（175 js 源全图 0 孤儿；sw.js 根文件走 copy-through 自动进 dist；index 重写规则与 defer 化无冲突）。
+- checkJs（前端 JS 类型检查质量闸）闸：**main 检出现状即红**（283 错 vs 基线 273：agentProfile/historyReplay/mobile 四件/scrollUnderGlass/socialPanel 六个「new file」+ canvas.js 四项超基线——近几日合并未再生基线的既有债）；本批 worktree 与 main **逐项相同（283=283）**，swReg.js 零错、socialPanel 错数 7→7、canvas.js 不变——本批零新增闸面。
+- dist 构建管线：`build-web.mjs` 本批树上出产 OK（175 js 源全图 0 孤儿（无未被任何入口引用的打包模块）；sw.js 根文件走 copy-through 自动进 dist；index 重写规则与 defer 化无冲突）。
 
 ## 文件清单
 

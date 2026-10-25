@@ -5,7 +5,7 @@ status: current
 
 # wiki-graph 段落级引用 + hover 快照 · 设计稿（图谱演进 A 批）
 
-> 本篇是台账 #744-A 的实施设计稿：把图谱引用从文档级精确到**段落级**——名词解释场景下 hover 小窗显示「那一段」的定义内容，点击跳转目标文档并高亮该段。承接 [[wiki-graph-redesign-design.zh-CN]]（图谱极简化重设计），复用其已建成的左栏控制面与画布手感。
+> 本篇是台账 #744-A（图谱演进批的任务台账编号）的实施设计稿：把图谱引用从文档级精确到**段落级**——名词解释场景下 hover 小窗显示「那一段」的定义内容，点击跳转目标文档并高亮该段。承接 [[wiki-graph-redesign-design.zh-CN]]（图谱极简化重设计），复用其已建成的左栏控制面与画布手感。
 
 ## 1. 背景与现状
 
@@ -94,7 +94,7 @@ hover ──► 图谱载荷内嵌 paragraphs（零请求，主路径）
               ▼
 GET /api/wiki/paragraph?project=&rel=&anchor=      ← 接口边界
               │ 1) 段落索引直查（本地 vault 现场重扫该文档）
-              │ 2) 未命中 → best-effort tools/stand-recall（xerj 按段检索，
+              │ 2) 未命中 → best-effort tools/stand-recall（xerj——引擎的记忆检索面——按段检索，
               │    短超时，进程缺席/超时/零命中都吞掉）
               ▼
         3) 回退文档级预览 {fallback:"doc", summary}   ← 契约底线
@@ -104,7 +104,7 @@ GET /api/wiki/paragraph?project=&rel=&anchor=      ← 接口边界
 
 1. **图谱运行时不依赖 memory-db**：hover 主路径纯内嵌载荷；`/api/wiki/paragraph` 的 stand-recall 腿是 best-effort（进程不存在、超时 2s、零命中一律沉默），任何失败都落到文档级预览；
 2. **语料口径不混**：stand-recall 现行语料 = 主 agent 会话（其头部作者令锁定），不含 vault 文档；vault 段落的真源是构建期段落索引，stand-recall 是索引未覆盖时的可选增强位，命中语义为「记忆系统相关段落」；
-3. 远端（peer）vault 段落一律走索引内嵌（扫描时已在宿主侧解析），不跨设备调 stand-recall。
+3. 远端（peer——组网内其他设备——）vault 段落一律走索引内嵌（扫描时已在宿主侧解析），不跨设备调 stand-recall。
 
 ## 6. 移动层
 
