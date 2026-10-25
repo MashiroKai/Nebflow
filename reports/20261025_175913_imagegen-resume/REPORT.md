@@ -57,3 +57,17 @@ git 三方合并**零文本冲突**（5 文件交集全部自动合并）。任�
 - main 合并 commit `83788191f`（零冲突合入 9776d3ce1）
 - 漂移修复 4 件（§1 漂移修复面；spec 期望面适配，生产码零改动）+ 本 REPORT，随恢复批分支 `delegate/delegate-nebflow-f817af85` 入队落 main
 - 本 REPORT：`reports/20261025_175913_imagegen-resume/REPORT.md`
+
+## 6. 重启后 refresh（2026-10-25 23:26 引擎重启，会话复活续作）
+
+- 事件：23:26 引擎重启，本批会话以 116 条 transcript 复活续跑；悬置期间 main 自 `83788191f` 前进至 `beb5c6f5f`（+24 commits：感知 P0 boot 修复直并、#809/#810 收口、面板候合并批、ticket 排查报告等）。
+- 分支处置：`git rebase main` 干净落位——本批 5 件（4 spec + REPORT）与 main 新增 commits **零文件重叠**（rebase 后与原 8555f7cf5 逐字节 diff 为空）；分支现为 `main(beb5c6f5f) + 1 commit 586442fbf`，内容与重启前完全一致。
+- 重验动机：main 侧动过 agent 族生产件（`AgentFinishTurn`/`AgentIdle`/`BackoffSupervisor`），§2 绿声明须在重生效（rebase 后树）上重跑才诚实：
+
+| 门 | 形态 | 结果 |
+|---|---|---|
+| §2 同款 seal=OFF 全电池 | CompiledIn=false（同 §2 纪律） | ✅ **1131/1131**（Total 1132, Skipped 1 存量门控, Ignored 2），355s |
+| seal=ON 轮（`STAND_IMAGEGEN=1`，§2 同五件） | 生成件实读 `final val CompiledIn: Boolean = true` | ✅ **119/119**，4s |
+
+  证据：本目录 `evidence-refresh-sealOFF.log` / `evidence-refresh-sealON.log`（读数与 §2 重启前完全一致）。
+- §1–§5 结论全部在重生效；合并面不变（4 spec 适配 + 本 REPORT），继续候并入 main。

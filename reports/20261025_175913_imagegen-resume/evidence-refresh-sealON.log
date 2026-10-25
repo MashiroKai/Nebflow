@@ -1,0 +1,6 @@
+# post-restart refresh seal=ON round @ branch 586442fbf — 2026-10-25 23:39:51
+# cmd: STAND_IMAGEGEN=1 sbt -batch testOnly ImageGenSpec RootSixBaseToolsSpec Phase2dToolRefactorSpec AllowedToolSetSpec AgentConvergenceSpec
+# generated-file readout: target/scala-3.5.2/src_managed/main/nebflow/core/ImageGenSeal.scala => final val CompiledIn: Boolean = true
+[info] Passed: Total 119, Failed 0, Errors 0, Passed 119
+[success] Total time: 4 s, completed 2026年10月25日 23:39:16
+EXIT=0
