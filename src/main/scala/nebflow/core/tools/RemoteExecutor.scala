@@ -1007,7 +1007,9 @@ class RemoteExecutor(
     ctx: ToolContext,
     jobId: String,
     description: String,
-    status: String
+    status: String,
+    exitCode: Option[Int] = None,
+    durationMs: Option[Long] = None
   ): IO[Unit] =
     ctx.wsSend.fold(IO.unit)(send =>
       send(
@@ -1017,7 +1019,12 @@ class RemoteExecutor(
           "rootSessionId" -> ctx.rootSessionId.orElse(ctx.sessionId).asJson,
           "taskId" -> jobId.asJson,
           "description" -> description.asJson,
-          "status" -> status.asJson
+          "status" -> status.asJson,
+          // 通知详情批（2026-10-24）：终态帧只增键（本地腿同款）——面板行 exit
+          // chip 与冻结时长；远程无进程退出码 ⇒ 恒 null，前端按缺读处理。
+          "exitCode" -> exitCode.asJson,
+          "durationMs" -> durationMs.asJson,
+          "finishedAt" -> System.currentTimeMillis().asJson
         )
       ).handleErrorWith(_ => IO.unit)
     )
@@ -1040,6 +1047,13 @@ class RemoteExecutor(
     outputPath: String = "",
     startedAtMs: Long = 0L
   ): IO[Unit] =
+    // 通知详情批（作者报障 2026-10-24「后台任务通知很不详细甚至有截断」）：远程腿
+    // 与本地腿同一负载单点（BgNotifyPayload）——耗时（输出查看批传入的 startedAtMs
+    // → 终态墙钟差；缺席=无耗时段）+ 输出/错误尾段 + 零输出占位。远程退出码只认
+    // 对端回执末尾的 `(exit N)` 标记（输出查看补全批 parseExitMarker；解析不到不
+    // 虚报 ⇒ None——耗时段仍在）。存储灌装（fillRemote，输出查看批）照旧先于投递。
+    val finishedAtMs = System.currentTimeMillis()
+    val durationMs = if startedAtMs > 0L then Some((finishedAtMs - startedAtMs).max(0L)) else None
     val fillIo = result match
       case Right(output) =>
         BgTaskOutputStore.fillRemote(
@@ -1065,28 +1079,34 @@ class RemoteExecutor(
       .flatMap { _ =>
         result match
           case Right(output) =>
+            val exitCode = RemoteBgOutputLog.parseExitMarker(output)
+            val built = BgNotifyPayload.completed(description, exitCode, durationMs, output, "", jobId)
             ctx.agentActorRef.fold(IO.unit)(ref =>
               ref ! AgentCommand.ExternalEvent(
                 source = "background-task",
                 eventType = "completed",
-                payload = s"[Background task completed] \"$description\":\n$output",
-                metadata = JsonObject("description" -> description.asJson, "output" -> output.asJson)
+                payload = built.payload,
+                metadata = built.metadata
               )
             ) *>
-              emitBgTaskFinished(ctx, jobId, description, "completed") *>
-              logger.info(s"Remote background task $jobId completed")
+              emitBgTaskFinished(ctx, jobId, description, "completed", exitCode, durationMs) *>
+              logger.info(s"Remote background task $jobId completed${logTagSuffix(built.logTag)}")
           case Left(errMsg) =>
+            val built = BgNotifyPayload.failed(description, errMsg, durationMs, jobId)
             ctx.agentActorRef.fold(IO.unit)(ref =>
               ref ! AgentCommand.ExternalEvent(
                 source = "background-task",
                 eventType = "failed",
-                payload = s"[Background task failed] \"$description\":\n$errMsg",
-                metadata = JsonObject("description" -> description.asJson)
+                payload = built.payload,
+                metadata = built.metadata
               )
             ) *>
-              emitBgTaskFinished(ctx, jobId, description, "failed") *>
-              logger.warn(s"Remote background task $jobId failed: $errMsg")
+              emitBgTaskFinished(ctx, jobId, description, "failed", None, durationMs) *>
+              logger.warn(s"Remote background task $jobId failed: $errMsg${logTagSuffix(built.logTag)}")
       }
+
+  private def logTagSuffix(tag: String): String =
+    if tag.isEmpty then "" else s" ($tag)"
 
   /**
    * 对端日志尾窗拉取（输出查看补全批：详情面板 remote-output 路由的设备通道面）。
