@@ -14,7 +14,18 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{BgTaskLedger, BgTaskOutputStore, BgTaskRegistry, FileLockManager}
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, PathUtil, StreamChunk, ThinkingConfig, SubAgentTask}
+import nebflow.shared.{
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  Message,
+  MessageRole,
+  PathUtil,
+  StreamChunk,
+  ThinkingConfig,
+  SubAgentTask
+}
 
 import scala.concurrent.duration.*
 
@@ -147,9 +158,11 @@ class BgWaitCapLedgerSpec extends CatsEffectSuite:
       // cap 300ms 后强制终判：诚实注记（回归面，A-4 语义零漂移）
       _ <- waitUntil(15.seconds)(
         parentEvents.get.map(events =>
-          events.collect { case e: AgentCommand.ExternalEvent =>
-            e
-          }.exists(e => e.eventType == "completed" && e.payload.contains("[delegate-bg-wait]"))
+          events
+            .collect { case e: AgentCommand.ExternalEvent =>
+              e
+            }
+            .exists(e => e.eventType == "completed" && e.payload.contains("[delegate-bg-wait]"))
         )
       )
       // 账本面：孤儿条目 = 未结任务的完成事件+输出尾段供续会话拾取（fix 3 本体）
@@ -158,8 +171,13 @@ class BgWaitCapLedgerSpec extends CatsEffectSuite:
       )
       pendingNow <- BgTaskLedger.pending(childSid)
       // 此后真实完成事件到达：recordCompletion 原位升级（不降级、payload 落账）
-      _ <- BgTaskLedger.recordCompletion(childSid, jobId, "Full test suite (sbt -batch test)", "completed",
-        "[Background task completed] \"Full test suite (sbt -batch test)\":\nall green")
+      _ <- BgTaskLedger.recordCompletion(
+        childSid,
+        jobId,
+        "Full test suite (sbt -batch test)",
+        "completed",
+        "[Background task completed] \"Full test suite (sbt -batch test)\":\nall green"
+      )
       upgraded <- BgTaskLedger.pending(childSid)
       _ <- BgTaskRegistry.unregisterSession(Some(childSid))
       _ <- system.stopAll

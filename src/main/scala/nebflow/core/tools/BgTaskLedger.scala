@@ -155,7 +155,8 @@ object BgTaskLedger:
       IO.blocking {
         if !os.exists(file / os.up) then os.makeDir.all(file / os.up)
         AtomicJson.writeSync(file, s.asJson.noSpaces)
-      }.void.handleErrorWith(e => logger.warn(s"BgTaskLedger.save failed for $sessionId: ${e.getMessage}").void)
+      }.void
+        .handleErrorWith(e => logger.warn(s"BgTaskLedger.save failed for $sessionId: ${e.getMessage}").void)
 
   /** 空账本删文件（与 CompactionQueueStore.clear 同语义：零条目不留壳）。 */
   private def clearFile(sessionId: String): IO[Unit] =
@@ -164,7 +165,8 @@ object BgTaskLedger:
       val file = ledgerFile(sessionId)
       IO.blocking {
         if os.exists(file) then os.remove(file)
-      }.void.handleErrorWith(e => logger.warn(s"BgTaskLedger.clear failed for $sessionId: ${e.getMessage}").void)
+      }.void
+        .handleErrorWith(e => logger.warn(s"BgTaskLedger.clear failed for $sessionId: ${e.getMessage}").void)
 
   /**
    * 完成事件落账（**先落账本再投递**的唯一写点语义）：同 jobId 既有条目
@@ -304,16 +306,19 @@ object BgTaskLedger:
     waiting: List[(String, String, Long)],
     nowMs: Long
   ): String =
-    val lines = waiting.zipWithIndex.map { case ((jobId, description, startedAtMs), i) =>
-      val started = java.time.Instant.ofEpochMilli(startedAtMs).toString
-      val elapsedMin = math.max(0L, (nowMs - startedAtMs) / 60000L)
-      s"${i + 1}. '$description' (jobId=$jobId, started=$started, running ${elapsedMin}m)"
-    }.mkString("\n")
+    val lines = waiting.zipWithIndex
+      .map { case ((jobId, description, startedAtMs), i) =>
+        val started = java.time.Instant.ofEpochMilli(startedAtMs).toString
+        val elapsedMin = math.max(0L, (nowMs - startedAtMs) / 60000L)
+        s"${i + 1}. '$description' (jobId=$jobId, started=$started, running ${elapsedMin}m)"
+      }
+      .mkString("\n")
     s"""<system-reminder>
        |[Background-task accounting] You have ${waiting.size} background task(s) still in flight in this session:
        |$lines
        |Ending this turn now is your call: completion notifications wake this session automatically, and every completion is recorded in the persistent task ledger — if a wake is ever lost, the pending completions are re-delivered first on your next wake (never evaporate). If the results are required for your deliverable, do not end without either waiting for the wake or stating explicitly that the tasks are someone else's responsibility now.
        |</system-reminder>""".stripMargin
+  end turnEndWarning
 end BgTaskLedger
 
 /**
@@ -335,7 +340,10 @@ object BgTurnEndGate:
         Outcome(
           warning =
             if changed && waiting.nonEmpty then
-              Some(BgTaskLedger.turnEndWarning(waiting.map(t => (t.jobId, t.description, t.startedAtMs)), System.currentTimeMillis()))
+              Some(
+                BgTaskLedger
+                  .turnEndWarning(waiting.map(t => (t.jobId, t.description, t.startedAtMs)), System.currentTimeMillis())
+              )
             else None,
           changed = changed,
           waitingCount = waiting.size

@@ -172,9 +172,7 @@ private[agent] object AgentIdle:
             case None => IO.unit
           val sessionBusyIO =
             if depth == 0 then
-              stateWithWidth.sessionId.fold(IO.unit)(sid =>
-                emitSessionBusy(stateWithWidth.wsSend, sid, busy = true)
-              )
+              stateWithWidth.sessionId.fold(IO.unit)(sid => emitSessionBusy(stateWithWidth.wsSend, sid, busy = true))
             else IO.unit
           for
             ledgerFlush <- flushPendingLedgerCompletions(stateWithFlush, Nil)
@@ -511,9 +509,7 @@ private[agent] object AgentIdle:
               (held :+ event).flatMap(_.correlationId)
             )
             // 台账对账（平台修复批 fix 1）：held 全量投递 ⇒ 台账清空 + 徽标帧归零。
-            _ <- syncHeldReceipts(resources, state.sessionId, Nil).flatMap((h, u) =>
-              emitHeldReceiptsBadge(state, h, u)
-            )
+            _ <- syncHeldReceipts(resources, state.sessionId, Nil).flatMap((h, u) => emitHeldReceiptsBadge(state, h, u))
             result <- pipeLlmCall(
               agentDef,
               resources,
@@ -856,7 +852,8 @@ private[agent] object AgentIdle:
               )
               _ <- heldFlush.fold(IO.unit)(p => flushHeldSideEffects(agentDef, resources, depth, p))
               _ <-
-                if depth == 0 then flushBase.sessionId.fold(IO.unit)(sid => emitSessionBusy(flushBase.wsSend, sid, busy = true))
+                if depth == 0 then
+                  flushBase.sessionId.fold(IO.unit)(sid => emitSessionBusy(flushBase.wsSend, sid, busy = true))
                 else IO.unit
               // One injected frame per payload item — each carries its own text / sender /
               // status, so the frontend renders N bubbles with zero frontend change

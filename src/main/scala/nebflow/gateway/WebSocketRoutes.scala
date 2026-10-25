@@ -1805,207 +1805,207 @@ class WebSocketRoutes(
                     // device-provenance 批：帧 `device` 键解析（缺席 ⇒ None ⇒ 下方
                     // 构块/派发逐字节不变；解析面 fail-open，绝不阻塞消息本身）。
                     deviceProvenanceOf(json).flatMap { deviceResolved =>
-                    (for
-                      metaOpt <- sessionStore.getSessionMeta(msgSessionId)
-                      folderId = metaOpt.flatMap(_.folderId)
-                      projectRoot <- sessionStore.resolveProjectRoot(folderId)
-                    yield (metaOpt, projectRoot)).flatMap { (metaOpt, projectRoot) =>
-                      val blocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
-                      if content.nonEmpty then blocks += ContentBlock.Text(content)
+                      (for
+                        metaOpt <- sessionStore.getSessionMeta(msgSessionId)
+                        folderId = metaOpt.flatMap(_.folderId)
+                        projectRoot <- sessionStore.resolveProjectRoot(folderId)
+                      yield (metaOpt, projectRoot)).flatMap { (metaOpt, projectRoot) =>
+                        val blocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
+                        if content.nonEmpty then blocks += ContentBlock.Text(content)
 
-                      // Map attachment index → saved/local path (only non-image files get entries)
-                      val savedPaths = scala.collection.mutable.Map.empty[Int, String]
-                      attachments.zipWithIndex.foreach { case (att, attIdx) =>
-                        val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
-                        val data = att.hcursor.downField("data").as[String].getOrElse("")
-                        val name = att.hcursor.downField("name").as[String].getOrElse("")
-                        val hash = att.hcursor.downField("hash").as[String].getOrElse("")
-                        val fileSize = att.hcursor.downField("size").as[Long].getOrElse(0L)
-                        if mimeType.startsWith("image/") && data.nonEmpty then
-                          // Save image to uploads dir so it has a local path (like non-image files)
-                          val uploadDir = Config.NebflowHome / "uploads" / msgSessionId
-                          try
-                            os.makeDir.all(uploadDir)
-                            val ext =
-                              if mimeType.contains("png") then "png"
-                              else if mimeType.contains("webp") then "webp"
-                              else "jpg"
-                            // Use the MIME-derived extension, not the original
-                            // filename's: the frontend re-encodes uploads to JPEG
-                            // (compressImage), so "shot.png" would otherwise be
-                            // saved with JPEG bytes under a .png name — and
-                            // ReadTool maps MIME by extension.
-                            val stem = name.replaceAll("\\.[a-zA-Z0-9]+$", "")
-                            val fileName = s"${System.nanoTime()}_$stem.$ext"
-                            val safeName = fileName.replaceAll("[/\\\\]", "_").replace("..", "_")
-                            val filePath = uploadDir / safeName
-                            val decoded = java.util.Base64.getDecoder.decode(data)
-                            os.write.over(filePath, decoded)
-                            val absPath = filePath.toString
-                            if absPath.startsWith(uploadDir.toString) then
-                              savedPaths(attIdx) = absPath
-                              // Give LLM both the image (visual) and the path (forwardable via Mail)
-                              blocks += ContentBlock.Image(data, mimeType)
-                              blocks += ContentBlock.Text(s"[用户附加图片: $absPath]")
-                              logger.info(s"Saved image '$name' to $absPath (${decoded.length} bytes)")
-                            else
-                              blocks += ContentBlock.Image(data, mimeType)
-                              logger.warn(s"Image '$name' path resolved outside upload dir, only sending visual")
-                          catch
-                            case e: Exception =>
-                              logger.warn(s"Failed to save image '$name': ${e.getMessage}")
-                              // Fallback: still send the image visually even if save failed
-                              blocks += ContentBlock.Image(data, mimeType)
-                          end try
-                        else if mimeType.startsWith("image/") then
-                          // Image without data — cannot process
-                          blocks += ContentBlock.Text(s"[image: $name (无数据)]")
-                        else
-                          // Non-image: try to find the file locally by name + size + hash
-                          // Search priority: project root → common user dirs → full home → Spotlight
-                          // P1 2026-08-27: attachments generated in-memory by the frontend
-                          // (large paste → pasted-text-*.txt, input.js paste handler) never
-                          // exist on disk — the fs walk + Spotlight search below is a
-                          // guaranteed miss costing 5-30s of silent processing. Skip
-                          // straight to the data-save branch when base64 data is in hand.
-                          val isFrontendBlob = name.startsWith("pasted-text-") && data.nonEmpty
-                          val home = os.home.toString
-                          val commonDirs = List("Downloads", "Desktop", "Documents")
-                            .map(d => s"$home/$d")
-                            .filter(d => java.nio.file.Files.isDirectory(java.nio.file.Path.of(d)))
-                          val searchPaths = projectRoot.toList ::: commonDirs ::: List(home)
-                          val localPath =
-                            if !isFrontendBlob && hash.nonEmpty && fileSize > 0 then
-                              findLocalFile(name, hash, fileSize, searchPaths)
-                            else None
-                          // Fallback: macOS Spotlight (finds files in Library, Containers, etc.)
-                          val spotlightPath = localPath match
-                            case Some(_) => localPath
-                            case None if !isFrontendBlob && hash.nonEmpty && fileSize > 0 =>
-                              spotlightSearch(name, hash, fileSize)
-                            case None => None
-                          spotlightPath match
-                            case Some(path) =>
-                              savedPaths(attIdx) = path
-                              blocks += ContentBlock.Text(s"[用户附加文件: $path]")
-                              logger.info(s"Attachment '$name' resolved to local file: $path")
-                            case None if data.nonEmpty =>
-                              // Fallback: save uploaded content to disk, send path reference to LLM
-                              val uploadDir = Config.NebflowHome / "uploads" / msgSessionId
-                              try
-                                os.makeDir.all(uploadDir)
-                                val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
-                                val fileName = s"${System.nanoTime()}_$safeName"
-                                val filePath = uploadDir / fileName
-                                val decoded = java.util.Base64.getDecoder.decode(data)
-                                os.write.over(filePath, decoded)
-                                val absPath = filePath.toString
-                                if absPath.startsWith(uploadDir.toString) then
-                                  savedPaths(attIdx) = absPath
-                                  blocks += ContentBlock.Text(s"[用户附加文件: $absPath]")
-                                  logger.info(s"Saved attachment '$name' to $absPath (${decoded.length} bytes)")
-                                else
-                                  logger.warn(s"Attachment '$name' resolved outside upload dir, skipping")
-                                  blocks += ContentBlock.Text(s"[file: $name (path unsafe)]")
-                              catch
-                                case e: Exception =>
-                                  logger.warn(s"Failed to save attachment '$name': ${e.getMessage}")
-                                  blocks += ContentBlock.Text(s"[file: $name (保存失败)]")
-                              end try
-                            case None =>
-                              // No data and not found locally — tell the LLM the file name so it can
-                              // use Read/Grep tools to locate it.
-                              logger.warn(s"Attachment '$name' not found locally (hash=$hash, size=$fileSize)")
-                              blocks += ContentBlock.Text(s"[用户附加文件: $name (未找到本地路径，请用工具搜索)]")
-                          end match
-                        end if
-                      }
+                        // Map attachment index → saved/local path (only non-image files get entries)
+                        val savedPaths = scala.collection.mutable.Map.empty[Int, String]
+                        attachments.zipWithIndex.foreach { case (att, attIdx) =>
+                          val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
+                          val data = att.hcursor.downField("data").as[String].getOrElse("")
+                          val name = att.hcursor.downField("name").as[String].getOrElse("")
+                          val hash = att.hcursor.downField("hash").as[String].getOrElse("")
+                          val fileSize = att.hcursor.downField("size").as[Long].getOrElse(0L)
+                          if mimeType.startsWith("image/") && data.nonEmpty then
+                            // Save image to uploads dir so it has a local path (like non-image files)
+                            val uploadDir = Config.NebflowHome / "uploads" / msgSessionId
+                            try
+                              os.makeDir.all(uploadDir)
+                              val ext =
+                                if mimeType.contains("png") then "png"
+                                else if mimeType.contains("webp") then "webp"
+                                else "jpg"
+                              // Use the MIME-derived extension, not the original
+                              // filename's: the frontend re-encodes uploads to JPEG
+                              // (compressImage), so "shot.png" would otherwise be
+                              // saved with JPEG bytes under a .png name — and
+                              // ReadTool maps MIME by extension.
+                              val stem = name.replaceAll("\\.[a-zA-Z0-9]+$", "")
+                              val fileName = s"${System.nanoTime()}_$stem.$ext"
+                              val safeName = fileName.replaceAll("[/\\\\]", "_").replace("..", "_")
+                              val filePath = uploadDir / safeName
+                              val decoded = java.util.Base64.getDecoder.decode(data)
+                              os.write.over(filePath, decoded)
+                              val absPath = filePath.toString
+                              if absPath.startsWith(uploadDir.toString) then
+                                savedPaths(attIdx) = absPath
+                                // Give LLM both the image (visual) and the path (forwardable via Mail)
+                                blocks += ContentBlock.Image(data, mimeType)
+                                blocks += ContentBlock.Text(s"[用户附加图片: $absPath]")
+                                logger.info(s"Saved image '$name' to $absPath (${decoded.length} bytes)")
+                              else
+                                blocks += ContentBlock.Image(data, mimeType)
+                                logger.warn(s"Image '$name' path resolved outside upload dir, only sending visual")
+                            catch
+                              case e: Exception =>
+                                logger.warn(s"Failed to save image '$name': ${e.getMessage}")
+                                // Fallback: still send the image visually even if save failed
+                                blocks += ContentBlock.Image(data, mimeType)
+                            end try
+                          else if mimeType.startsWith("image/") then
+                            // Image without data — cannot process
+                            blocks += ContentBlock.Text(s"[image: $name (无数据)]")
+                          else
+                            // Non-image: try to find the file locally by name + size + hash
+                            // Search priority: project root → common user dirs → full home → Spotlight
+                            // P1 2026-08-27: attachments generated in-memory by the frontend
+                            // (large paste → pasted-text-*.txt, input.js paste handler) never
+                            // exist on disk — the fs walk + Spotlight search below is a
+                            // guaranteed miss costing 5-30s of silent processing. Skip
+                            // straight to the data-save branch when base64 data is in hand.
+                            val isFrontendBlob = name.startsWith("pasted-text-") && data.nonEmpty
+                            val home = os.home.toString
+                            val commonDirs = List("Downloads", "Desktop", "Documents")
+                              .map(d => s"$home/$d")
+                              .filter(d => java.nio.file.Files.isDirectory(java.nio.file.Path.of(d)))
+                            val searchPaths = projectRoot.toList ::: commonDirs ::: List(home)
+                            val localPath =
+                              if !isFrontendBlob && hash.nonEmpty && fileSize > 0 then
+                                findLocalFile(name, hash, fileSize, searchPaths)
+                              else None
+                            // Fallback: macOS Spotlight (finds files in Library, Containers, etc.)
+                            val spotlightPath = localPath match
+                              case Some(_) => localPath
+                              case None if !isFrontendBlob && hash.nonEmpty && fileSize > 0 =>
+                                spotlightSearch(name, hash, fileSize)
+                              case None => None
+                            spotlightPath match
+                              case Some(path) =>
+                                savedPaths(attIdx) = path
+                                blocks += ContentBlock.Text(s"[用户附加文件: $path]")
+                                logger.info(s"Attachment '$name' resolved to local file: $path")
+                              case None if data.nonEmpty =>
+                                // Fallback: save uploaded content to disk, send path reference to LLM
+                                val uploadDir = Config.NebflowHome / "uploads" / msgSessionId
+                                try
+                                  os.makeDir.all(uploadDir)
+                                  val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
+                                  val fileName = s"${System.nanoTime()}_$safeName"
+                                  val filePath = uploadDir / fileName
+                                  val decoded = java.util.Base64.getDecoder.decode(data)
+                                  os.write.over(filePath, decoded)
+                                  val absPath = filePath.toString
+                                  if absPath.startsWith(uploadDir.toString) then
+                                    savedPaths(attIdx) = absPath
+                                    blocks += ContentBlock.Text(s"[用户附加文件: $absPath]")
+                                    logger.info(s"Saved attachment '$name' to $absPath (${decoded.length} bytes)")
+                                  else
+                                    logger.warn(s"Attachment '$name' resolved outside upload dir, skipping")
+                                    blocks += ContentBlock.Text(s"[file: $name (path unsafe)]")
+                                catch
+                                  case e: Exception =>
+                                    logger.warn(s"Failed to save attachment '$name': ${e.getMessage}")
+                                    blocks += ContentBlock.Text(s"[file: $name (保存失败)]")
+                                end try
+                              case None =>
+                                // No data and not found locally — tell the LLM the file name so it can
+                                // use Read/Grep tools to locate it.
+                                logger.warn(s"Attachment '$name' not found locally (hash=$hash, size=$fileSize)")
+                                blocks += ContentBlock.Text(s"[用户附加文件: $name (未找到本地路径，请用工具搜索)]")
+                            end match
+                          end if
+                        }
 
-                      val sessionName = metaOpt.map(_.name).getOrElse("-")
-                      val agentName = metaOpt.flatMap(_.agentName).getOrElse("")
-                      logger.info(s"${logger.hl(sessionName)} User message: ${content
-                          .take(60)}${if content.length > 60 then "..." else ""}") *>
-                        logInputHistory(content, attachments, msgSessionId, sessionName, agentName) *>
-                        // Record user message as UiMessage for history
-                        (if msgSessionId.nonEmpty then
-                           val attJson = attachments.zipWithIndex.map { case (att, idx) =>
-                             val name = att.hcursor.downField("name").as[String].getOrElse("")
-                             val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
-                             val savedPath = savedPaths.getOrElse(idx, "")
-                             io.circe.Json.obj(
-                               "name" -> name.asJson,
-                               "type" -> (if mimeType.startsWith("image/") then "image" else "file").asJson,
-                               "path" -> (if savedPath.nonEmpty then savedPath.asJson else Json.Null)
-                             )
-                           }
-                           // quote-message 一期（2026-10-09，spec §3.3）：帧 refs 里
-                           // refType==='chat-message' 的**首条**转成落盘 quote 快照
-                           // （至多 1 条；与 attJson 组装同段）。缺席 ⇒ None ⇒ 编码器
-                           // 不落 quote 键 ⇒ 无引用行字节形态与旧 .ui.json 逐字相同。
-                           val quoteJson = quoteFromRefs(json)
-                           val injected = json.hcursor.downField("injected").as[Boolean].getOrElse(false)
-                           sharedResources.sessionStore
-                             .appendUiMessages(
-                               msgSessionId,
-                               List(
-                                 UiMessage.User(
-                                   content,
-                                   attJson,
-                                   injected,
-                                   timestamp = System.currentTimeMillis(),
-                                   quote = quoteJson
+                        val sessionName = metaOpt.map(_.name).getOrElse("-")
+                        val agentName = metaOpt.flatMap(_.agentName).getOrElse("")
+                        logger.info(s"${logger.hl(sessionName)} User message: ${content
+                            .take(60)}${if content.length > 60 then "..." else ""}") *>
+                          logInputHistory(content, attachments, msgSessionId, sessionName, agentName) *>
+                          // Record user message as UiMessage for history
+                          (if msgSessionId.nonEmpty then
+                             val attJson = attachments.zipWithIndex.map { case (att, idx) =>
+                               val name = att.hcursor.downField("name").as[String].getOrElse("")
+                               val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
+                               val savedPath = savedPaths.getOrElse(idx, "")
+                               io.circe.Json.obj(
+                                 "name" -> name.asJson,
+                                 "type" -> (if mimeType.startsWith("image/") then "image" else "file").asJson,
+                                 "path" -> (if savedPath.nonEmpty then savedPath.asJson else Json.Null)
+                               )
+                             }
+                             // quote-message 一期（2026-10-09，spec §3.3）：帧 refs 里
+                             // refType==='chat-message' 的**首条**转成落盘 quote 快照
+                             // （至多 1 条；与 attJson 组装同段）。缺席 ⇒ None ⇒ 编码器
+                             // 不落 quote 键 ⇒ 无引用行字节形态与旧 .ui.json 逐字相同。
+                             val quoteJson = quoteFromRefs(json)
+                             val injected = json.hcursor.downField("injected").as[Boolean].getOrElse(false)
+                             sharedResources.sessionStore
+                               .appendUiMessages(
+                                 msgSessionId,
+                                 List(
+                                   UiMessage.User(
+                                     content,
+                                     attJson,
+                                     injected,
+                                     timestamp = System.currentTimeMillis(),
+                                     quote = quoteJson
+                                   )
                                  )
                                )
-                             )
-                             .handleErrorWith(e => logger.warn(s"Failed to record user UiMessage: ${e.getMessage}"))
-                           // attachmentsSaved（用户附件点击统一批 2026-10-08）：live 渲染腿
-                           // 前端只有 data/preview、没有落盘 path —— Pop 面的点击开 Canvas
-                           // 依赖 item.path（popArtifacts.openMediaItemClick / buildFileCard
-                           // 的 `if (item.path)` 闸）。把与 ui.json 同形的 [{name,type,path}]
-                           // 回传请求方连接，前端据此原位重渲用户媒体行。纯文本帧（无附件）
-                           // 不发；旧前端未知帧类型 = handlers 无登记 = no-op，协议零破坏。
-                             *> (if attJson.nonEmpty then
-                                   wsSend(
-                                     io.circe.Json.obj(
-                                       "type" -> "attachmentsSaved".asJson,
-                                       "sessionId" -> msgSessionId.asJson,
-                                       "attachments" -> attJson.asJson
+                               .handleErrorWith(e => logger.warn(s"Failed to record user UiMessage: ${e.getMessage}"))
+                             // attachmentsSaved（用户附件点击统一批 2026-10-08）：live 渲染腿
+                             // 前端只有 data/preview、没有落盘 path —— Pop 面的点击开 Canvas
+                             // 依赖 item.path（popArtifacts.openMediaItemClick / buildFileCard
+                             // 的 `if (item.path)` 闸）。把与 ui.json 同形的 [{name,type,path}]
+                             // 回传请求方连接，前端据此原位重渲用户媒体行。纯文本帧（无附件）
+                             // 不发；旧前端未知帧类型 = handlers 无登记 = no-op，协议零破坏。
+                               *> (if attJson.nonEmpty then
+                                     wsSend(
+                                       io.circe.Json.obj(
+                                         "type" -> "attachmentsSaved".asJson,
+                                         "sessionId" -> msgSessionId.asJson,
+                                         "attachments" -> attJson.asJson
+                                       )
                                      )
-                                   )
-                                 else IO.unit)
-                         else IO.unit) *> {
-                          // 任务工具重做（2026-08-30）：打回语义退役——
-                          // taskRefs/refs(refType=task) 的 processTaskReturns
-                          // 路径整体移除。#303 D1: resolve non-task refs
-                          // (file/document/html-element) into [引用: …]
-                          // injection blocks; refType=task fail-open 跳过。
-                          processRefs(json, blocks).flatMap { _ =>
-                            // device-provenance 批：标记块前插为首块（正文块逐字不动；
-                            // 会话显示面已在上方 appendUiMessages 落裸正文）。None =
-                            // 未声明设备 ⇒ 逐字节现状。
-                            val blocksList = deviceResolved.fold(blocks.toList)(
-                              nebflow.bridge.DeviceProvenance.prependMarker(_, blocks.toList)
-                            )
-                            // 输入框直通退役（2026-09-14 作者令）：typeless 帧不再探
-                            // hub 的 pending AskUser 槽位 —— 文本一律按普通消息投
-                            // AgentCommand.UserInput（= 引入直通之前的既有通道）。
-                            // 曾以直通覆盖的「刷新后 busy 标志丢失」窗口（#43-domain）
-                            // 随之回到功能前口径：pending 卡保持 pending、须点卡作答。
-                            // ref/附件携带帧本就只走本通道，形态逐字节不变。
-                            ensureAgent(msgSessionId)(ref =>
-                              ref ! AgentCommand
-                                .UserInput(
-                                  content,
-                                  None,
-                                  clientMessageId,
-                                  Some(blocksList).filter(_.nonEmpty),
-                                  chatWidth
-                                )
-                            )
+                                   else IO.unit)
+                           else IO.unit) *> {
+                            // 任务工具重做（2026-08-30）：打回语义退役——
+                            // taskRefs/refs(refType=task) 的 processTaskReturns
+                            // 路径整体移除。#303 D1: resolve non-task refs
+                            // (file/document/html-element) into [引用: …]
+                            // injection blocks; refType=task fail-open 跳过。
+                            processRefs(json, blocks).flatMap { _ =>
+                              // device-provenance 批：标记块前插为首块（正文块逐字不动；
+                              // 会话显示面已在上方 appendUiMessages 落裸正文）。None =
+                              // 未声明设备 ⇒ 逐字节现状。
+                              val blocksList = deviceResolved.fold(blocks.toList)(
+                                nebflow.bridge.DeviceProvenance.prependMarker(_, blocks.toList)
+                              )
+                              // 输入框直通退役（2026-09-14 作者令）：typeless 帧不再探
+                              // hub 的 pending AskUser 槽位 —— 文本一律按普通消息投
+                              // AgentCommand.UserInput（= 引入直通之前的既有通道）。
+                              // 曾以直通覆盖的「刷新后 busy 标志丢失」窗口（#43-domain）
+                              // 随之回到功能前口径：pending 卡保持 pending、须点卡作答。
+                              // ref/附件携带帧本就只走本通道，形态逐字节不变。
+                              ensureAgent(msgSessionId)(ref =>
+                                ref ! AgentCommand
+                                  .UserInput(
+                                    content,
+                                    None,
+                                    clientMessageId,
+                                    Some(blocksList).filter(_.nonEmpty),
+                                    chatWidth
+                                  )
+                              )
+                            }
                           }
-                        }
-                    }
-                      } // end deviceResolved flatMap (device-provenance 批)
+                      }
+                    } // end deviceResolved flatMap (device-provenance 批)
                   ) // end IO.uncancelable
               }
             else
@@ -2104,7 +2104,8 @@ class WebSocketRoutes(
   // 花名册取数（neblink self + peers，Ref 读内存价）与接线。
 
   /** 花名册读数：self 身份 + peers 列表，映射为纯结构行。取数失败降级空册（未登记兜底，绝不冒认已登记）。 */
-  private def deviceRosterEntries: IO[(Option[nebflow.bridge.DeviceRosterEntry], List[nebflow.bridge.DeviceRosterEntry])] =
+  private def deviceRosterEntries
+    : IO[(Option[nebflow.bridge.DeviceRosterEntry], List[nebflow.bridge.DeviceRosterEntry])] =
     sharedResources.neblinkService match
       case None => IO.pure((None, Nil))
       case Some(svc) =>

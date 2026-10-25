@@ -633,11 +633,13 @@ Git safety:
                       // 未开启（spec）= 纯内存，行为与批前一致。
                       outBuffer <- BgTaskOutputStore.open(
                         jobId,
-                        Some(BgTaskOutputStore.Origin(
-                          "local",
-                          description = bgDescription,
-                          startedAtMs = System.currentTimeMillis()
-                        ))
+                        Some(
+                          BgTaskOutputStore.Origin(
+                            "local",
+                            description = bgDescription,
+                            startedAtMs = System.currentTimeMillis()
+                          )
+                        )
                       )
                       _ <- shell.executeBackground(
                         actualCommand,
@@ -876,11 +878,13 @@ Git safety:
       // live 尾行——落盘/留存保终态 meta（状态/exit）可回看，不再 404）。
       _ <- BgTaskOutputStore.open(
         jobId,
-        Some(BgTaskOutputStore.Origin(
-          "local",
-          description = bgDescription,
-          startedAtMs = System.currentTimeMillis()
-        ))
+        Some(
+          BgTaskOutputStore.Origin(
+            "local",
+            description = bgDescription,
+            startedAtMs = System.currentTimeMillis()
+          )
+        )
       )
       _ <- shell.adoptAsBackgroundJob(
         jobId,

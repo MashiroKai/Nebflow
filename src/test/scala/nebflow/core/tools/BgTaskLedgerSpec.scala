@@ -45,7 +45,10 @@ class BgTaskLedgerSpec extends FunSuite:
     // 消费 = 出账；全部出清后文件不留壳
     BgTaskLedger.consume("sid-l1", List("job-1")).unsafeRunSync()
     assertEquals(BgTaskLedger.pending("sid-l1").unsafeRunSync(), Nil)
-    assert(!os.exists(PathUtil.dataRoot / "sessions" / "sid-l1" / "bg-task-ledger.json"), "empty ledger leaves no shell file")
+    assert(
+      !os.exists(PathUtil.dataRoot / "sessions" / "sid-l1" / "bg-task-ledger.json"),
+      "empty ledger leaves no shell file"
+    )
 
   test("L2 orphan 登记（cap 孤儿）→ 迟到 completion 原位升级（kind 不降级）"):
     BgTaskLedger.markOrphaned("sid-l2", List(("job-2", "long build", Some("tail lines")))).unsafeRunSync()
@@ -61,7 +64,9 @@ class BgTaskLedgerSpec extends FunSuite:
     assert(!upgraded.consumed, "upgraded entry is pending again")
 
   test("L3 竞态保护：已完成的条目不被迟到的 markOrphaned 降级"):
-    BgTaskLedger.recordCompletion("sid-l3", "job-3", "quick task", "failed", "[Background task failed] \"quick task\":\nboom").unsafeRunSync()
+    BgTaskLedger
+      .recordCompletion("sid-l3", "job-3", "quick task", "failed", "[Background task failed] \"quick task\":\nboom")
+      .unsafeRunSync()
     BgTaskLedger.markOrphaned("sid-l3", List(("job-3", "quick task", None))).unsafeRunSync()
     val kept = BgTaskLedger.pending("sid-l3").unsafeRunSync().head
     assertEquals(kept.kind, "completion", "completion must not be downgraded by a late orphan mark")
@@ -86,12 +91,21 @@ class BgTaskLedgerSpec extends FunSuite:
   test("L5 判重拆分（spec ② 幂等面）：转录命中/在途命中 ⇒ 只消费不重注"):
     val e1 = BgTaskLedger.Entry("job-1", "d", "completion", "completed", payload.take(160), payload, None, 1L, Some(1L))
     val e2 = BgTaskLedger.Entry("job-2", "d", "completion", "completed", payload.take(160), payload, None, 2L, Some(2L))
-    val e3 = BgTaskLedger.Entry("job-3", "d", "completion", "completed", "other-payload-head", "other", None, 3L, Some(3L))
+    val e3 =
+      BgTaskLedger.Entry("job-3", "d", "completion", "completed", "other-payload-head", "other", None, 3L, Some(3L))
     // e1 在转录、e2 在途、e3 两者皆非 ⇒ 只有 e3 需补投；e1/e2 只消费
     val (inject, consumeOnly) =
-      BgTaskLedger.splitForRedelivery(List(e1, e2, e3), s"turn transcript mentions ${payload.take(160)} already", List(payload))
+      BgTaskLedger.splitForRedelivery(
+        List(e1, e2, e3),
+        s"turn transcript mentions ${payload.take(160)} already",
+        List(payload)
+      )
     assertEquals(inject.map(_.jobId), List("job-3"), "only never-delivered entries are re-injected")
-    assertEquals(consumeOnly.map(_.jobId).sorted, List("job-1", "job-2"), "delivered/in-flight entries are consumed silently")
+    assertEquals(
+      consumeOnly.map(_.jobId).sorted,
+      List("job-1", "job-2"),
+      "delivered/in-flight entries are consumed silently"
+    )
 
   test("L6 警告文案（spec ①）：任务数 + id + 描述 + 起止齐全"):
     val started = 1730000000000L
@@ -102,19 +116,23 @@ class BgTaskLedgerSpec extends FunSuite:
     assert(text.contains("started=") && text.contains("running 2m"), s"start+elapsed visible: $text")
 
   test("G1 回合尾门（BgTurnEndGate）：非空集 = 栅栏 + 首拍警告；同集 = 仅栅栏"):
-    val first = BgTurnEndGate.onTurnEnd(
-      "sid-g1",
-      List(BgTaskRegistry.ActiveTask("job-g", "sid-g1", "render deck", startedAtMs = 1L, kind = "local"))
-    ).unsafeRunSync()
+    val first = BgTurnEndGate
+      .onTurnEnd(
+        "sid-g1",
+        List(BgTaskRegistry.ActiveTask("job-g", "sid-g1", "render deck", startedAtMs = 1L, kind = "local"))
+      )
+      .unsafeRunSync()
     assertEquals(first.waitingCount, 1)
     assert(first.warning.isDefined, "first turn-end of a new wait period warns")
     assert(first.warning.get.contains("job-g"), "warning names the job")
     assert(BgTaskLedger.barrierOf("sid-g1").unsafeRunSync().isDefined, "gate arms the persistent barrier")
     // 同集第二个回合尾：栅栏仍在，警告不重发
-    val second = BgTurnEndGate.onTurnEnd(
-      "sid-g1",
-      List(BgTaskRegistry.ActiveTask("job-g", "sid-g1", "render deck", startedAtMs = 1L, kind = "local"))
-    ).unsafeRunSync()
+    val second = BgTurnEndGate
+      .onTurnEnd(
+        "sid-g1",
+        List(BgTaskRegistry.ActiveTask("job-g", "sid-g1", "render deck", startedAtMs = 1L, kind = "local"))
+      )
+      .unsafeRunSync()
     assertEquals(second.warning, None, "same wait set must not re-warn every turn")
     assertEquals(second.changed, false)
 

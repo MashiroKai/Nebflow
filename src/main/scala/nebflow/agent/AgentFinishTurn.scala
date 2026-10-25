@@ -817,9 +817,7 @@ private[agent] object AgentFinishTurn:
                       s"changed=${outcome.changed} warning=${outcome.warning.isDefined}"
                   ) *>
                   IO.pure(
-                    outcome.warning.map(txt =>
-                      Message(MessageRole.User, Left(txt)).copy(source = Some("system"))
-                    )
+                    outcome.warning.map(txt => Message(MessageRole.User, Left(txt)).copy(source = Some("system")))
                   )
               }
               .handleErrorWith { e =>
