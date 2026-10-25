@@ -138,6 +138,7 @@ if [ -f "$dest" ]; then
     log "旧包备份: $bak"
 fi
 mv "$part" "$dest"   # 同卷 rename = 原子
+chmod 644 "$dest"    # scp 自 Windows 落 600; 回归目录 644 惯例（phase-2 正式跑发现, 同用户场景下非阻塞）
 log "落位: $dest"
 
 if [ -n "$cur_ptr" ] && [ "$cur_ptr" != "$VER" ]; then
