@@ -804,9 +804,16 @@ export default {
   'subagents.indicatorTitle': 'Background sub-agents',
   'subagents.status.running': 'Running',
   // held-receipt 投递可靠性批（2026-10-21 fix 4）：显式等待停靠态（等合并轮）。
-  'subagents.status.waiting': 'Waiting',
+  // panel-merge-status 批（2026-10-25 · 作者令）：候合并从通用「Waiting」提升为
+  // 钉住的可见状态词——面板行状态位直显「Merge-queued」。
+  'subagents.status.waiting': 'Merge-queued',
   'subagents.status.waitingMerge': 'waiting-merge (FIFO)',
   'subagents.status.idle': 'Idle',
+  // panel-merge-status 批（2026-10-25）：候合并行队列细节段（/api/merge-queue 只读
+  // 状态面；位次只渲染不派生，API 未生效 ⇒ 段全缺 = 静态「waiting-merge」降级）。
+  'subagents.mergeQueue.ahead': '{n} ahead in merge queue',
+  'subagents.mergeQueue.retry': 'retry #{n}',
+  'subagents.mergeQueue.reason': 'last refusal: {reason}',
   // #752 idle-subdivision: what an idle delegate is waiting on + long-idle badge.
   'subagents.waitingBg': 'waiting on {count} bg task(s): {desc} ({dur})',
   'subagents.waitingReceipts': 'waiting on {count} sub-agent receipt(s)',
