@@ -48,30 +48,17 @@ object PerceptionService:
 
   private val phase: Ref[IO, Phase] = Ref.unsafe[IO, Phase](Cold)
 
-  /** 单飞闸（boot-lesson 批 2026-10-26）：boot 可能从两条腿并发到达（GatewayMain
-   *  端口门后的脱离 fiber + routes 侧 ensureBoot 兜底）——Ref.modify 原子仲裁，
-   *  只放第一腿进 doBoot，第二腿拿 IO.unit。双 boot = 双 loops（poll/sweep/
-   *  digest/spool 各两份）是本单例最重的回归面，这里从根上关死。 */
-  private val bootGate: Ref[IO, Boolean] = Ref.unsafe[IO, Boolean](false)
-
-  /** Boot once (idempotent, single-flight). Called from GatewayMain's detached
-    * post-gate fiber and defensively from PerceptionRoutes (ensureBoot). */
+  /** Boot once (idempotent). Called from GatewayMain's startup chain. */
   def boot(broadcast: Json => IO[Unit], resources: SharedResources): IO[Unit] =
-    bootGate.modify:
-      case false => true -> doBoot(broadcast, resources).void
-      case true  => true -> IO.unit
-    .flatten
+    phase.get.flatMap:
+      case Hot(_, _) => IO.unit
+      case Cold      => doBoot(broadcast, resources).void
 
-  /** Routes-side defensive idempotent boot; returns the live core. 闸内另一腿
-   *  在途时 boot 即回（IO.unit）而 core 尚未 Hot——doBoot 只做本地盘装载（毫秒
-   *  级），短退避重探一次；仍未 Hot 才报错（store 不可读等真故障）。 */
+  /** Routes-side defensive idempotent boot; returns the live core. */
   def ensureBoot(broadcast: Json => IO[Unit], resources: SharedResources): IO[PerceptionCore] =
-    boot(broadcast, resources) *> coreNow.flatMap:
-      case Some(core) => IO.pure(core)
-      case None =>
-        IO.sleep(scala.concurrent.duration.Duration(50, "milliseconds")) *> coreNow.flatMap:
-          case Some(core) => IO.pure(core)
-          case None => IO.raiseError(new java.lang.IllegalStateException("perception core unavailable after boot"))
+    phase.get.flatMap:
+      case Hot(core, _) => IO.pure(core)
+      case Cold         => doBoot(broadcast, resources)
 
   private def doBoot(broadcast: Json => IO[Unit], resources: SharedResources): IO[PerceptionCore] =
     val core = new PerceptionCore(

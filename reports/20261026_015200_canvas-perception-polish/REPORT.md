@@ -1,4 +1,6 @@
-# canvas 胶囊 / 附件卡片 / 感知面板 六件 + 引擎一件 —— 交付报告
+# canvas 胶囊 / 附件卡片 / 感知面板 五件交付 + 撤销件记录
+
+> **撤销口径（作者 2026-10-26 02:00 前后飞书原话）**：「那暂时先不并入吧 分开感知和心跳」——**件 7「心跳进程与感知合并」整件撤销**：感知面板保持独立，不并心跳，引擎件不落地；批内曾试做的引擎改动（PerceptionService.bootGate 单飞闸 + GatewayMain perceptionBootDetached 脱链 boot）已**整体还原**至批前状态（与 main 线逐字节一致），还原后复验 compile rc=0、PerceptionCoreSpec 34/34、assembly rc=0、**BOOT-SMOKE PASS**（boot_ready=4s checks=11 teardown 零残留）；全批 diff 扫描零「心跳/daemon/合并占位」死桩。其余五件照常交付，本行以下除件 7 小节外未因撤销改动。
 
 - 批次：作者 2026-10-26 01:07 反馈批（七件）
 - 工作区：worktree `delegate-nebflow-4180ab95`（分支 `delegate/delegate-nebflow-4180ab95`，未触 main）
@@ -45,14 +47,12 @@
 - 前后对照：before `evidence/before/item456-panel.png`（文件/日历「即将推出」占位在列）→ after `evidence/after/item456-panel.png`（零占位，只承载真实条目）
 - 钉：P1 改钉零 reserved + 无「即将推出」绿
 
-### 7.（引擎件）心跳进程与感知合并 + boot-smoke 必须过
+### 7.（已撤销）心跳进程与感知合并
 
-- 现状判读：感知现为**网关进程内** 4 loops（poll/sweep/digest/spool；GatewayMain 启动链内联 boot），并非独立 OS 进程；「心跳进程」= `#daemon-btn` 的 DaemonService 面板（daemons.json 为空）。架构歧义已 AskUserQuestion 问作者（非阻塞），答案未到；本批先交付**对任何解读都有益且零回退**的 boot 加固，merge 终形态待作者定夺（见文末待决）
-- 改动（boot-lesson 加固）：
-  - `PerceptionService.scala`：新增 `bootGate: Ref[IO,Boolean]` 单飞闸——boot 可能从两条腿并发到达（GatewayMain 端口门后的脱离 fiber + routes 侧 ensureBoot 兜底），`Ref.modify` 原子仲裁只放第一腿进 `doBoot`（双 boot = 双 loops 是本单例最重回归面，从根上关死）；`ensureBoot` 闸内另一腿在途时短退避（50ms）重探一次
-  - `GatewayMain.scala`：`perceptionBoot` 改 `perceptionBootDetached`——**移出关键启动链**，端口门放行后才以脱离 fiber 拉起。教训实体：sweepLoop 构造期 SOE 曾越过 handleErrorWith 把整条启动链带走（2/2 listener 拒起）；现任何感知 boot 故障（含 Error 级）最多带走这根 fiber，listener 必起；routes 侧 `ensureBoot` 幂等兜底；sweep/digest/spool 语义逐字不变（感知能力零回退）
-- 验证：`sbt compile` rc=0；`PerceptionCoreSpec` **34/34 绿**；`sbt assembly` rc=0（jar=stand-assembly-2026.10.21-beta.2.jar, hash 4c8b1c8a）；**boot-smoke PASS ×2**（`BOOT-SMOKE: PASS jar=stand-assembly-2026.10.21-beta.2.jar port=8089 boot_ready=5s/4s checks=11 (portal+health+ws-or-degraded+teardown)`，teardown 零残留；证据 `evidence-branch-assembly-boot-smoke.log`）；--keep-home 复跑在冒烟实例 `logs/stand.log` 实证 **`perception daemon booted (poll/sweep/digest/spool loops live)`** —— 脱离 fiber 在端口门后真起、四 loops 全活（冒烟临时 home 已清理）
-- 单飞闸注：singleton boot 路径未加并发 spec（boot 硬编码 `PerceptionStore.defaultRoot`——spec 化会触碰真实用户信箱盘；以编译+评审背书）
+- **作者 02:00 裁定撤销**（口径见卷首引言行）：感知面板保持独立，不并心跳，引擎件不落地
+- 处置：批内曾试做的引擎改动（bootGate 单飞闸 + 脱链 boot）已整体还原至批前状态；`git diff <批前基线> -- src/main/scala` 为空（逐字节一致）；前端 diff 扫描零心跳入口/tab/合并占位（无死桩）
+- 还原后复验：sbt compile rc=0；PerceptionCoreSpec 34/34 绿；sbt assembly rc=0；**BOOT-SMOKE: PASS**（jar=stand-assembly-2026.10.21-beta.2.jar port=8089 boot_ready=4s checks=11 portal+health+ws-or-degraded+teardown，teardown 零残留）
+- 历史存档：批内引擎试做版的验证读数（boot-smoke PASS ×2 + 冒烟实例 stand.log 实证四 loops 起）见 git 历史 47cef9cf8 及其报告版本，供日后若重启合并议题时复用
 
 ## 测试与门禁读数（本批全量）
 
@@ -67,9 +67,9 @@
 | sbt compile | rc=0 |
 | PerceptionCoreSpec | 34/34 绿 |
 | sbt assembly | rc=0（jar hash 4c8b1c8a） |
-| boot-smoke | **PASS ×2**（boot_ready 5s/4s，checks=11，teardown 零残留；四感知 loops 实证起） |
+| boot-smoke | **PASS**（还原引擎件后的分支 jar 复跑 ×2：boot_ready 4s/2s，checks=11，teardown 零残留；试做版历史读数见 47cef9cf8） |
 
 ## 待决（非阻塞）
 
-1. **件 7 merge 终形态**：作者问询在途。两案：A=感知注册为 DaemonService（心跳面板）托管条目（面板可见启停，进程仍单进程承载）；B=仅面板入口合并（daemon 面板加感知入口，无托管语义）。本批交付的 boot 单飞+脱链对两案皆为基础件，落地任一案均为增量。
+1. ~~件 7 merge 终形态~~ —— **已了结**：作者 02:00 裁定撤销（见卷首口径行与件 7 小节），无遗留动作。
 2. CR2-5 材质钉既有红：main HEAD 基点问题，建议另开小批处理。
