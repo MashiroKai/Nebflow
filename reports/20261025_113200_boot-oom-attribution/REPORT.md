@@ -60,7 +60,7 @@ sessions(.ui.json 303 个超大文件)/台账冷档/flow-maps/task-board（E2b/E
 
 1. **3 个杂散 neblink 设备身份**：E1-E3 实验各铸造过一个（896651f1…、c6049534…、57669c98…，见 /tmp/nf-oom-repro/home1-3），需在 NebLink Server 侧吊销；E7+ 因隔离守卫未再铸造。
 2. **/tmp/nf-oom-repro ≈ 60GB+**（home1-4 克隆 + 11 个 JFR + 采样输出）：确认后 `rm -rf`。home4 内含生产数据副本（sessions/台账），勿外传。
-3. `/tmp/mat2.dmg`、`/tmp/MAT.app`、`/tmp/mat*.ini`、`/tmp/hv`（venv）、`/tmp/nf-cp.txt`、`/tmp/nf-e8*`：可删。MAT 经 brew 装后两度从 /Applications 消失（疑似用户/清理策略），本次改从 /tmp 运行，未再安装。
+3. `/tmp/mat2.dmg`、`/tmp/MAT.app`、`/tmp/mat*.ini`、`/tmp/hv`（venv）、`/tmp/nf-cp.txt`、`/tmp/nf-e8*`：可删。MAT 两度从 /Applications 消失经作者确认为 **Gatekeeper 隔离误报**（下载的 app 带 `com.apple.quarantine` xattr → macOS 报「已损坏」）后被作者删除——若日后需要 MAT：`xattr -dr com.apple.quarantine <MAT.app 路径>` 即可正常打开。本次归因**最终未依赖 MAT**： dominator 分析被 JFR `jdk.ObjectAllocationSample`（`jfr view allocation-by-site` / `jfr print --stack-depth 64`）替代，直接给出分配点类名 + 应用调用栈（比直方图差集信息更强）， gc.log 时间线（作者建议的备选路线 ② + ③）定位爆发起点。
 4. `~/.nebflow/logs/`：E11f 的受监督子进程曾按相对路径写入 gc 日志（11:15-11:21），如见多余 `jvm/gc.log*` 可删。
 5. 凌晨实验（本报告前一轮）曾重启过 home3/home4 的克隆 daemon（CZT Garfield Sim/AI FPGA Deck，均为克隆内 vite/npm 实例），现已全部停止。
 6. 生产引擎（6138，PID 49839，2026.10.21-beta.2 旧构建）全程未触碰；本修复合入 main 后正常重启即可生效。
