@@ -1,0 +1,123 @@
+== E2E release.sh full chain ==
+repo=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-187d2ff9 root=/tmp/rel-e2e-20261025-141638/bin port=21883 version=2026.10.21-beta.2
+
+──────────── [1] stage (real assembly + real boot-smoke, expect PASS) ────────────
+[release] stage: version=2026.10.21-beta.2 repo=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-187d2ff9 root=/tmp/rel-e2e-20261025-141638/bin
+[release] preflight: branch=delegate/delegate-nebflow-187d2ff9 dirty_files=3
+[release]   dirty:  M ops/README.md
+[release]   dirty: ?? ops/release.sh
+[release]   dirty: ?? ops/test/release-pipeline.test.sh
+[release] preflight: vs origin/main (as of last fetch): ahead=16 behind=0
+[release] preflight drift (NON-blocking, reported for the candidate card): worktree not clean (3 files) main vs origin/main ahead=16 behind=0
+[release] building: (sbt assembly) — cwd=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-187d2ff9
+[release] build ok in 4s: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-187d2ff9/target/scala-3.5.2/stand-assembly-2026.10.21-beta.2.jar ( 98M)
+[release] smoke gate: port=21883 timeout=120s
+[smoke] jar=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-187d2ff9/target/scala-3.5.2/stand-assembly-2026.10.21-beta.2.jar ( 98M )
+[smoke] port=21883 timeout=120s java=/Users/kaiyu/.stand/jdk-21/bin/java
+[smoke] never-kill ledger: 1105 88102 52985 
+[smoke] home=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T//stand-boot-smoke.xDd7xZ (isolated data root; cwd of the boot = the home itself)
+[smoke] ready: GET /api/health -> 200 after 4s
+[smoke] portal: GET / -> 200 (44121 bytes)
+[smoke] health: payload carries deviceId (own instance identity)
+[smoke] ws: handshake HTTP/1.1 101 Switching Protocols (RFC6455 101, bearer token)
+[boot] stand started (pid 58154) — https://mystand.space/portal?device=790e499f-bbca-5182-b696-31fd2e0e6b1d
+[smoke] teardown: port 21883 free
+[smoke] teardown: isolated home removed (/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T//stand-boot-smoke.xDd7xZ)
+[smoke] no leftover processes on :21883; temp root cleaned (idempotent — safe to rerun)
+BOOT-SMOKE: PASS jar=stand-assembly-2026.10.21-beta.2.jar port=21883 boot_ready=4s checks=11 (portal+health+ws-or-degraded+teardown)
+[release] smoke PASS: BOOT-SMOKE: PASS jar=stand-assembly-2026.10.21-beta.2.jar port=21883 boot_ready=4s checks=11 (portal+health+ws-or-degraded+teardown)
+[release] installed: /tmp/rel-e2e-20261025-141638/bin/versions/2026.10.21-beta.2/stand-assembly-2026.10.21-beta.2.jar
+[release] pointer untouched: current-version=2026.9.19 (approval switches it, not stage)
+RELEASE-STAGE: OK version=2026.10.21-beta.2 commit=efae698db jar=/tmp/rel-e2e-20261025-141638/bin/versions/2026.10.21-beta.2/stand-assembly-2026.10.21-beta.2.jar sha256=05c12f9eb650445aba7989ffc69f5e6dfeb4fa263fc1ede97a327c5fa64101ee
+CANDIDATE-READY: version=2026.10.21-beta.2 commit=efae698db jar=/tmp/rel-e2e-20261025-141638/bin/versions/2026.10.21-beta.2/stand-assembly-2026.10.21-beta.2.jar sha256=05c12f9eb650445aba7989ffc69f5e6dfeb4fa263fc1ede97a327c5fa64101ee
+[release] 候批就绪 — approve with: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-187d2ff9/ops/release.sh approve --root "/tmp/rel-e2e-20261025-141638/bin"
+[release] note: preflight drift on record: worktree not clean (3 files) main vs origin/main ahead=16 behind=0
+>>> STAGE_RC=0
+
+pointer after stage: 2026.9.19  (must still be 2026.9.19)
+staged-release.json:
+{
+  "version": "2026.10.21-beta.2",
+  "commit": "efae698db0335cbb7dd00a2f2f87f704b253be2e",
+  "commitShort": "efae698db",
+  "branch": "delegate/delegate-nebflow-187d2ff9",
+  "jar": "/tmp/rel-e2e-20261025-141638/bin/versions/2026.10.21-beta.2/stand-assembly-2026.10.21-beta.2.jar",
+  "jarSha256": "05c12f9eb650445aba7989ffc69f5e6dfeb4fa263fc1ede97a327c5fa64101ee",
+  "smokeEvidence": "BOOT-SMOKE: PASS jar=stand-assembly-2026.10.21-beta.2.jar port=21883 boot_ready=4s checks=11 (portal+health+ws-or-degraded+teardown)",
+  "smokePort": "21883",
+  "smokedAt": "2026-10-25T06:16:49Z",
+  "stagedAt": "2026-10-25T06:16:49Z",
+  "previous": "2026.9.19",
+  "approved": false,
+  "approvedAt": "",
+  "rolledBackAt": ""
+}
+
+──────────── [2] approve (real promotion probe, expect switch + rollback line) ────────────
+[release] promotion probe: boot-smoke on staged jar (port=21273 timeout=120s)
+[smoke] jar=/tmp/rel-e2e-20261025-141638/bin/versions/2026.10.21-beta.2/stand-assembly-2026.10.21-beta.2.jar ( 98M )
+[smoke] port=21273 timeout=120s java=/Users/kaiyu/.stand/jdk-21/bin/java
+[smoke] never-kill ledger: 1105 88102 52985 
+[smoke] home=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T//stand-boot-smoke.iLPxKN (isolated data root; cwd of the boot = the home itself)
+[smoke] ready: GET /api/health -> 200 after 2s
+[smoke] portal: GET / -> 200 (44121 bytes)
+[smoke] health: payload carries deviceId (own instance identity)
+[smoke] ws: handshake HTTP/1.1 101 Switching Protocols (RFC6455 101, bearer token)
+[smoke] teardown: port 21273 free
+[smoke] teardown: isolated home removed (/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T//stand-boot-smoke.iLPxKN)
+[smoke] no leftover processes on :21273; temp root cleaned (idempotent — safe to rerun)
+BOOT-SMOKE: PASS jar=stand-assembly-2026.10.21-beta.2.jar port=21273 boot_ready=2s checks=11 (portal+health+ws-or-degraded+teardown)
+[release] probe PASS: BOOT-SMOKE: PASS jar=stand-assembly-2026.10.21-beta.2.jar port=21273 boot_ready=2s checks=11 (portal+health+ws-or-degraded+teardown)
+[release] pointer switched: current-version -> 2026.10.21-beta.2 (previous: 2026.9.19)
+[release] restart when ready via: bin/stand stop && bin/stand start  (release.sh never touches running processes)
+RELEASE-APPROVE: OK version=2026.10.21-beta.2 previous=2026.9.19
+[release] 回退指令(一行): /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-187d2ff9/ops/release.sh rollback --root "/tmp/rel-e2e-20261025-141638/bin"
+>>> APPROVE_RC=0
+pointer after approve: 2026.10.21-beta.2  (must be 2026.10.21-beta.2)
+previous-version: 2026.9.19  (must be 2026.9.19)
+
+──────────── [3] rollback (expect pointer restored) + idempotent ────────────
+[release] pointer rolled back: current-version -> 2026.9.19 (was: 2026.10.21-beta.2)
+[release] restart when ready via: bin/stand stop && bin/stand start  (release.sh never touches running processes)
+RELEASE-ROLLBACK: OK current=2026.9.19
+>>> ROLLBACK_RC=0
+pointer after rollback: 2026.9.19  (must be 2026.9.19)
+[release] already at previous: current-version=2026.9.19 (idempotent no-op)
+RELEASE-ROLLBACK: OK current=2026.9.19 (already at previous, no-op)
+>>> ROLLBACK2_RC=0 (idempotent, expect 0)
+pointer after 2nd rollback: 2026.9.19
+
+──────────── [4] bad jar (truncated) stage -> FAIL, zero candidates ────────────
+[release] stage: version=2026.10.21-beta.2 repo=/tmp/rel-e2e-20261025-141638/badrepo root=/tmp/rel-e2e-20261025-141638/bin2
+[release] preflight: branch=main dirty_files=0
+[release] preflight: no origin/main ref known (no fetch performed — run 'git fetch' to refresh; not blocking)
+[release] preflight drift (NON-blocking, reported for the candidate card):  origin/main unknown (stale refs?)
+[release] building: (mkdir -p "$RELEASE_REPO/target/scala-3.5.2" && head -c 4096 "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-187d2ff9/target/scala-3.5.2/stand-assembly-2026.10.21-beta.2.jar" > "$RELEASE_REPO/target/scala-3.5.2/stand-assembly-$RELEASE_VERSION.jar") — cwd=/tmp/rel-e2e-20261025-141638/badrepo
+[release] build ok in 0s: /tmp/rel-e2e-20261025-141638/badrepo/target/scala-3.5.2/stand-assembly-2026.10.21-beta.2.jar (4.0K)
+[release] smoke gate: port=22089 timeout=20s
+[smoke] jar=/tmp/rel-e2e-20261025-141638/badrepo/target/scala-3.5.2/stand-assembly-2026.10.21-beta.2.jar (4.0K )
+[smoke] port=22089 timeout=20s java=/Users/kaiyu/.stand/jdk-21/bin/java
+[smoke] never-kill ledger: 1105 88102 52985 
+[smoke] home=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T//stand-boot-smoke.tqRtHU (isolated data root; cwd of the boot = the home itself)
+[smoke] last 50 log lines (/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T//stand-boot-smoke.tqRtHU/boot-smoke.log):
+[log] Error: Invalid or corrupt jarfile /tmp/rel-e2e-20261025-141638/badrepo/target/scala-3.5.2/stand-assembly-2026.10.21-beta.2.jar
+[smoke] teardown: port 22089 free
+[smoke] teardown: isolated home removed (/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T//stand-boot-smoke.tqRtHU)
+BOOT-SMOKE: FAIL stage=boot reason=gateway not ready within 20s (listener_seen=0)
+[release] smoke verdict: BOOT-SMOKE: FAIL stage=boot reason=gateway not ready within 20s (listener_seen=0)
+RELEASE-STAGE: FAIL stage=smoke reason=boot-smoke did not pass (rc=1) — zero candidates produced
+>>> BAD_STAGE_RC=1 (expect 1)
+bad root versions dir: (expect empty)
+bad root staged-release.json: absent (correct)
+
+──────────── [5] 收尾扫描: 零残留 + 在产无扰 ────────────
+-- sandbox ports listeners left:
+   port 21883: none
+   port 21273: none
+   port 22089: none
+-- production 6138/8080 untouched check (read-only):
+   8080 listeners: 88102 -- live pointer untouched:
+   ~/.stand/bin/current-version = 2026.10.25-dev.8ae0e5317
+
+== E2E verdicts ==
+STAGE_RC=0 APPROVE_RC=0 ROLLBACK_RC=0 ROLLBACK2_RC=0 BAD_STAGE_RC=1

@@ -12,7 +12,9 @@
 | `ops/bin/stand-jdk` | `~/.stand/bin/stand-jdk` | pinned JDK（`$STAND_HOME/jdk-21`）自愈 installer（装 / 修 / 体检） |
 | `ops/nebflow-autostart.sh` | `~/.stand/bin/nebflow-autostart.sh` | 开机自启入口（v2：从 main 树 `sbt run` 起，带 6138 端口守卫） |
 | `ops/nebflow-restart.sh` | `~/.stand/bin/nebflow-restart.sh` | 开发实例自重启工具 v4.2（verbatim 入库，改动仍走它自己的版本纪律） |
+| `ops/release.sh` | —（不入 live：与仓绑定，从仓内跑） | **发版流水线（工程化 M2）**：`stage` → `approve` → `rollback` / `tag`，显式批准门（见下节） |
 | `ops/test/stand-lifecycle.test.sh` | —（不入 live） | 守卫的纯 bash 断言测试（沙箱化，零真实 daemon） |
+| `ops/test/release-pipeline.test.sh` | —（不入 live） | release.sh 的纯 bash 断言测试（沙箱化：假构建/假冒烟/假 java + fixture git 仓） |
 
 ## 部署（Mac 侧）
 
@@ -79,10 +81,38 @@ not running —— pid 记账失配）：
 - 路径全部 `STAND_HOME` 感知（`STAND_HOME` > `NEBFLOW_HOME` > `~/.stand`，
   与 `shared/paths.scala` dataRoot 同优先级）——数据根迁移不破 launcher。
 
+## 发版流水线（工程化 M2 · `ops/release.sh`）
+
+一条命令流水线 + 显式批准门（发布纪律红线：staged 自动化、**晋级必须作者逐次显式批准**）。
+对齐 `scripts/boot-smoke.sh`（M1）契约：stage/approve 都吃它的 exit code 与
+`BOOT-SMOKE: PASS/FAIL` 结论行作闸。
+
+```bash
+bash ops/release.sh stage     # 预检(main 干净/origin 齐平——不阻塞但列漂移) → sbt assembly
+                              # → boot-smoke(FAIL 即中止, 零候选) → 装 versions/<v>/ + staged-release.json
+bash ops/release.sh approve   # 作者逐次批准唯一入口: 对 staged jar 再跑一次 boot-smoke 探针
+                              # (FAIL = 拒晋级, 指针不动) → 原子切 current-version/previous-version → 打印回退指令
+bash ops/release.sh rollback  # 指针回退上一版(staged-release.json 记 previous), 幂等
+bash ops/release.sh tag       # 只在 approve 之后; tag 名 == VERSION@approved commit == jar 内 runtime version
+                              # 三方对账, 不匹配即拒(10-24 死 tag 教训的机械卡点); 永不 push
+bash ops/release.sh status    # 只读: 指针 / previous / staged 状态
+```
+
+- 发布根 = `~/.stand/bin`（`--root`/`STAND_RELEASE_ROOT` 可沙箱化），即
+  `ops/bin/stand` 的 POINTER-SELECT 读的同一布局：`current-version` +
+  `previous-version` + `versions/<v>/stand-assembly-<v>.jar` + `staged-release.json`。
+- **换手只写文件**：approve/rollback 零信号——重启交给 `bin/stand`
+  （already-running 守卫），本脚本绝不触碰在产进程 / 6138。
+- 版本包不可变：`versions/<v>` 已存在即拒（要发请 bump VERSION）。
+- 可测接缝（env）：`STAND_RELEASE_ROOT` / `STAND_RELEASE_REPO` /
+  `STAND_RELEASE_BUILD_CMD` / `STAND_RELEASE_SMOKE_CMD` / `STAND_RELEASE_JAVA_BIN`。
+- 完整证据链见 `reports/20261025_142200_release-pipeline-m2__delegate-nebflow-187d2ff9/REPORT.md`。
+
 ## 测试
 
 ```bash
 bash ops/test/stand-lifecycle.test.sh
+bash ops/test/release-pipeline.test.sh        # 89 断言全绿; RELEASE_TEST_REAL_SMOKE=1 追加真冒烟用例
 ```
 
 纯 bash 断言（无 bats 依赖），沙箱化：假 java（`STAND_JAVA_BIN`）+ 假 jar +
