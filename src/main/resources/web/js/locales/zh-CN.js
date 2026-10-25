@@ -1480,7 +1480,14 @@ export default {
   // #753：运行中且暂无输出的活性明示（等待型/轮询任务整段无 stdout 是常态）。
   'bg.detail.waitingLive': '运行中 · 暂无输出——等待型任务（轮询/监听）可能整段无 stdout，进程仍在运行',
   'bg.detail.uptime': '已运行 {dur}',
-  'bg.detail.remote': '远端任务暂不支持输出查看',
+  // 输出查看补全批（作者令 2026-10-25「远端任务看不到」）：远端任务不再
+  // 「暂不支持」搪塞——运行中轮询对端日志尾窗，无路径/拉不到时给真实原因。
+  'bg.detail.remotePulling': '正在从设备{device}拉取输出尾窗…',
+  'bg.detail.remoteNoPath': '远端输出不可用：命令未检测到输出重定向（需类似 `> run.log 2>&1` 落日志文件）',
+  'bg.detail.remoteNoExecutor': '远端输出不可用：设备网络（NebLink）未启用',
+  'bg.detail.remoteUnavailable': '远端输出暂不可用：{reason}（持续重试中…）',
+  'bg.detail.remoteLost': '远端任务输出已不可用（任务已结束且无留存输出）',
+  'bg.detail.remoteOffline': '远端输出拉取失败（设备可能离线），请关闭后重试',
   'bg.detail.notFound': '任务输出已不可用（任务已结束并被清理）',
   'bg.detail.truncated': '输出过大，仅保留末尾',
   'bg.detail.meta': '{lines} 行 · {bytes}',

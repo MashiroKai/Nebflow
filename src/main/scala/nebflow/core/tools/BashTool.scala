@@ -626,7 +626,19 @@ Git safety:
                       // 先建缓冲拿句柄，sink 随
                       // executeBackground 挂上 JobHealth——运行中逐行入尾窗缓冲，
                       // 终态后由 onComplete finalizeTask 进留存区（详情卡 REST 读）。
-                      outBuffer <- BgTaskOutputStore.open(jobId)
+                      // 输出查看补全批（作者令 2026-10-25 需求④「本地任务输出落盘 +
+                      // 记录路径」）：origin 登记 + lineSink 复合口——persistDir 由
+                      // Main.run boot 面开启后，行同步落 bg-task-logs/ + 终态 meta，
+                      // 留存淘汰 / 引擎重启后的旧任务详情卡照样可回看（read 落盘兜底）；
+                      // 未开启（spec）= 纯内存，行为与批前一致。
+                      outBuffer <- BgTaskOutputStore.open(
+                        jobId,
+                        Some(BgTaskOutputStore.Origin(
+                          "local",
+                          description = bgDescription,
+                          startedAtMs = System.currentTimeMillis()
+                        ))
+                      )
                       _ <- shell.executeBackground(
                         actualCommand,
                         desc,
@@ -637,7 +649,7 @@ Git safety:
                         stuckWindowSec = ctx.bashConfig.stuckWindowSec,
                         healthCheckIntervalSec = ctx.bashConfig.healthCheckIntervalSec,
                         persistent = persistent,
-                        outputSink = Some((line: String) => outBuffer.append(line)),
+                        outputSink = Some(BgTaskOutputStore.lineSink(jobId, outBuffer)),
                         // B1 只提醒腿的审计出口：经 ctx 身份解析
                         // 项目工作区写 `bg-slow` 事件。无项目上下文 ⇒ None ⇒ 只留 logger.warn。
                         onSlowDetected = Some((summary: String) => auditBgSlow(ctx, jobId, summary))
@@ -860,7 +872,16 @@ Git safety:
       // bookkeeping, same as the explicit background path.
       gateOwned = isNodeSession(ctx)
       onComplete = makeNotifyCallback(command, desc, ctx, jobId, tailN, gateOwned)
-      _ <- BgTaskOutputStore.open(jobId)
+      // 输出查看补全批：收编路径同样登记 origin（前台段行已被读线程消费、无
+      // live 尾行——落盘/留存保终态 meta（状态/exit）可回看，不再 404）。
+      _ <- BgTaskOutputStore.open(
+        jobId,
+        Some(BgTaskOutputStore.Origin(
+          "local",
+          description = bgDescription,
+          startedAtMs = System.currentTimeMillis()
+        ))
+      )
       _ <- shell.adoptAsBackgroundJob(
         jobId,
         execFiber,

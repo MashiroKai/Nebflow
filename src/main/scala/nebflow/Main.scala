@@ -111,6 +111,10 @@ object Main extends IOApp:
     // 同理钉住日志位置）。
     sys.props("NEBFLOW_HOME") = root.toString
     PathUtil.setDataRoot(root)
+    // 后台任务输出落盘（输出查看补全批 2026-10-25 作者令需求④）：数据根在此
+    // 定案后一次性开启（`<dataRoot>/bg-task-logs/`）——只在真实 boot 面开启，
+    // CLI 路由与 spec（不跑 Main.run）保持纯内存，零测试污染。
+    nebflow.core.tools.BgTaskOutputStore.enablePersistence(root)
     portOpt.foreach { p =>
       GatewayConfig.setPort(p)
     }
