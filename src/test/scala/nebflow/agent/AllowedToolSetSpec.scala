@@ -704,10 +704,13 @@ class AllowedToolSetSpec extends FunSuite:
     // point (AgentCore.friendsSealedStrip), so the expected face subtracts the same
     // strip derived from this snapshot. Never a bare number, never a relaxed assertion.
     val sealStrip = if nebflow.core.FriendsSeal.isSealed then Set("ListFriends") else Set.empty[String]
+    // imagegen 双层批（2026-10-24）resume 合入适配：generate_image 的编译期 seal
+    // 在单点 AgentCore.imageGenSealedStrip 剥除（release 形态剥、dev 形态在场）——
+    // 期望面扣同一单点，静态集与件数常量不动，零裸数字（friendseal 同款纪律）。
     assertEquals(
       allowed,
-      AgentCore.RootOrchestrationTools -- sealStrip,
-      "converged 名 tools 声明整体失效（base=∅）：交付面 ≡ 机制集常量（friendseal 封存期按单点 strip 派生），与声明无关"
+      AgentCore.RootOrchestrationTools -- sealStrip -- AgentCore.imageGenSealedStrip,
+      "converged 名 tools 声明整体失效（base=∅）：交付面 ≡ 机制集常量（friendseal 封存期与 imagegen 编译期 seal 均按单点 strip 派生），与声明无关"
     )
     Set("Read", "Glob", "Grep", "Bash", "Write", "Edit").foreach { t =>
       assert(allowed.contains(t), s"Nebula 文件面六件因**机制集**而在场（2026-09-18 18:18 令；非因声明）: $t")

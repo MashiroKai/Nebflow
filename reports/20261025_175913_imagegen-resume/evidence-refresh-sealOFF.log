@@ -1,0 +1,5 @@
+# post-restart refresh seal=OFF battery @ branch 586442fbf (main beb5c6f5f + 1) — 2026-10-25 23:39:51
+# cmd: sbt -batch testOnly ImageGenSpec RootSixBaseToolsSpec Phase2dToolRefactorSpec Phase2dSkillCatalogSpec FriendsSealSpec AllowedToolSetSpec AgentConvergenceSpec AgentDefCategoryBackdoor{Spec,Probe} AgentControlE2ESpec nebflow.core.tools.* (env: seal OFF)
+[info] Passed: Total 1132, Failed 0, Errors 0, Passed 1131, Skipped 1, Ignored 2
+[success] Total time: 355 s (0:05:55.0), completed 2026年10月25日 23:38:51
+EXIT=0
