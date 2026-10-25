@@ -336,26 +336,33 @@ const ringInfo = (page) => page.evaluate(() => {
     clip: shotBox,
   });
 
-  /* ③ 滚动选择（hover 交互改向令）：**纵滚 deltaY 主导**（鼠标滚轮即换选，
-     一格 ≈ 100 → 归一 0.56 × 100 = 56 = 恰好一格）；触控板横滑 deltaX 保留
-     为副手势（-140 = 退两位归一量不变）。 */
+  /* ③ 滚动选择（hover 交互改向令）：**纵滚 deltaY 主导**（鼠标滚轮即换选）。
+     触控板手感批（作者报障 2026-10-25「mac 触控板滑动不够灵敏和丝滑」）改约：
+     设备分档（单事件 |d|≥40 归一 px = 鼠标离散格）+ 按向累积器 + 200ms 冷却
+     —— **单事件无论多大至多换一格**（多格合并事件/惯性不超调），连拨逐格靠
+     冷却窗后再拨。 */
   const before = await stateOf(page);
-  await page.mouse.wheel(0, -200);                 // 纵滚上滚 2 格 → alpha 居中
+  await page.mouse.wheel(0, -200);                 // 纵滚上滚（单事件 -200）→ 恰退一格（不超调）
   await sleep(300);
   const rolled = await ringInfo(page);
-  ok('CR3-1 纵滚换选（鼠标可操作）：deltaY -200 → 游标退两位（alpha 居中），激活不变（滚动≠切换）',
-    rolled.centerId === 'file:/tmp/cr-fixture/alpha.md' && (await stateOf(page)).activeId === before.activeId,
+  ok('CR3-1 纵滚换选（鼠标可操作）：deltaY -200 单事件 → 恰退一格（bravo 居中；单事件不超调），激活不变（滚动≠切换）',
+    rolled.centerId === 'file:/tmp/cr-fixture/bravo.md' && (await stateOf(page)).activeId === before.activeId,
     `center=${rolled.centerId} active=${(await stateOf(page)).activeId}`);
-  await page.mouse.wheel(-112, 0);                 // 横滑副手势：-112 = 退两位（0 环绕 → bravo）
-  await sleep(300);
-  const rolledX = await ringInfo(page);
-  ok('CR3-1b 横滑保留（触控板副手势）：deltaX -112 → bravo 居中（余量清零随动）',
-    rolledX.centerId === 'file:/tmp/cr-fixture/bravo.md', `center=${rolledX.centerId}`);
-  await page.mouse.wheel(0, 100);                  // 纵滚下滚 1 格（一格滚轮 = 一换）→ charlie 居中
+  await page.mouse.wheel(0, -100);                 // 冷却窗后再拨一格（连拨逐格）→ alpha 居中
   await sleep(300);
   const rolled2 = await ringInfo(page);
-  ok('CR3-2 反向一格：deltaY +100 → charlie 居中（环绕步进 100px/格，累积器余量随动）',
-    rolled2.centerId === 'file:/tmp/cr-fixture/charlie.md', `center=${rolled2.centerId}`);
+  ok('CR3-1b 连拨逐格：冷却后再拨 deltaY -100 → alpha 居中（200ms 冷却窗外，累进不断链）',
+    rolled2.centerId === 'file:/tmp/cr-fixture/alpha.md', `center=${rolled2.centerId}`);
+  await page.mouse.wheel(-112, 0);                 // 横滑副手势：单事件 -112 → 恰退一格（0 环绕 → charlie）
+  await sleep(300);
+  const rolledX = await ringInfo(page);
+  ok('CR3-1c 横滑保留（触控板副手势）：deltaX -112 单事件 → 恰退一格（charlie 居中，与纵滚同规不超调）',
+    rolledX.centerId === 'file:/tmp/cr-fixture/charlie.md', `center=${rolledX.centerId}`);
+  await page.mouse.wheel(0, 100);                  // 纵滚下滚 1 格（0 环绕 +1）→ alpha 居中
+  await sleep(300);
+  const rolled3 = await ringInfo(page);
+  ok('CR3-2 反向一格：deltaY +100 → alpha 居中（环绕步进：单事件一格）',
+    rolled3.centerId === 'file:/tmp/cr-fixture/alpha.md', `center=${rolled3.centerId}`);
 
   /* ② B 令·尺寸恒定（环滚动中）：换选发生后的胶囊本体仍与常态全等 */
   const scrollRect = await page.evaluate(() => {

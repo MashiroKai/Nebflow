@@ -3210,10 +3210,11 @@ function initCardHeadGestures() {
 // （甚至开→收振荡）—— 环开期间 document pointermove 跟踪指针，离区才调度
 // 140ms 宽限收环。（对称批的「环开点→沉底胶囊顶走廊 ±90px」随沉降撤销一并
 // 退役 —— 环锚回顶带，胶囊不再离位，走廊无事可桥。）
-// 滚轮 = 环开期间 document 捕获（capture + preventDefault），**面板矩形内一律
-// 消费为换选**：环开后指针可以停在原地（不必悬在胶囊上）滚动换选；面板外
-// （侧栏/聊天）滚轮不消费零感知。#716 捏合缩放分区：环开 = 环优先，画布区
-// 缩放/平移与 pane 滚动在环开期间让位（Escape/离区即还）。
+// 滚轮 = 环开期间 document 捕获（capture），**hover 区内消费为换选、区外零响
+// 应**（触控板手感批 2026-10-25 收窄：旧「面板矩形内一律消费」会抢面板内容
+// 滚动 —— 光标在胶囊/环胶囊/环开点走廊之外时页面滚动照旧，不 preventDefault
+// 不换选）；面板外（侧栏/聊天）滚轮不消费零感知照旧。#716 捏合缩放分区：环开
+// = 环优先（区内），画布区缩放/平移与 pane 滚动在环开期间 Escape/离区即还。
 // 按住=按钮语义（作者令③）：胶囊本体 <button> + 全头 user-select:none（CSS）
 // + dragstart preventDefault（拦从胶囊发起的原生拖拽；OS 文件拖入 drop 不受影响）。
 // 实现形态：纯前端组件（真越出批六项②：#canvas-capsule-ring 挂 body 层，
@@ -3221,8 +3222,24 @@ function initCardHeadGestures() {
 // 上缘位真实越出顶缘渲染；环锚常驻顶带 —— 顶部修正批撤销沉降；胶囊 absolute
 // 沿弧 transform），与左栏控制面零共享。手机层/卡窗态整腿让位（各有自己的
 // 卡头形态）；deck 叠卡态不开环（叠卡有自己的环卡滚轮语义，双环互搏）。
-const RING_WHEEL_STEP = 56;   // 横滑一格步进（≈两指一次横扫的 deltaX 量级）
-const RING_WHEEL_STEP_Y = 100; // 纵滚一格步进（≈鼠标滚轮一格的 deltaY 量级——一格滚轮 = 一换）
+// 触控板手感批（作者报障 2026-10-25 13:07「使用 mac 的触控板进行滑动的时候，
+// 不够灵敏和丝滑」）：旧「单事件过恒定阈值即切」在两类输入下两难 —— 触控板
+// 滑动是高频小增量 + 惯性末段，鼠标滚轮是离散大步进（|dy|≈±100）；阈高触控板
+// 要用力甩（不灵敏）、阈低惯性一冲连跳三格（不丝滑）。改**设备分档 + 累积器
+// + 冷却**三件：
+//   · 设备分档（deck DECK_NOTCH_PX 同口径）：单事件 |d|（deltaMode 归一 px）
+//     ≥ RING_MOUSE_DELTA = 鼠标离散格（一格意图）→ 低阈 RING_WHEEL_STEP_MOUSE
+//     即切；否则触控板高频小增量 → 按方向累积过 RING_WHEEL_STEP_TRACKPAD 才切
+//     （微漂不移游标）。
+//   · 冷却：切换后 RING_WHEEL_COOLDOWN_MS 内事件只消费不累积 —— 轻扫一挥恰切
+//     一格、惯性末段不连跳（冷却后重新累积）。
+//   · 反向归零：累积中途反向 = 清账重积（反转跟手，不吃旧账死区）。
+//   · 步进动画：steady 态游标步进 0.18s 快跟手档（split.css §ring）—— 0.36s
+//     每步重定相位拖泥带水；收放 morph 档保持不变。
+const RING_WHEEL_STEP_TRACKPAD = 48; // 触控板档阈值（X/Y 同档 ≈ 一挥轻扫的累积量）
+const RING_WHEEL_STEP_MOUSE = 32;    // 鼠标离散格档阈值（一格意图明确，单事件即切）
+const RING_MOUSE_DELTA = 40;         // 单事件 |d|≥40 判鼠标格（触控板指纹 1~20px）
+const RING_WHEEL_COOLDOWN_MS = 200;  // 切换冷却（惯性末段防连跳；150-250ms 档取中）
 const RING_CLOSE_GRACE_MS = 140; // 离环收起宽限（快速掠过不闪收）
 const RING_ZONE_PAD_PX = 14;  // hover 区外扩（缘位胶囊 hit 盒外缘，穿越不闪收）
 const RING_STEADY_MS = 370;   // 真越出批：展开过渡（0.36s）后缘位才接 pointer 的稳态门
@@ -3274,6 +3291,7 @@ function initCapsuleRing() {
 
   let acc = 0;                                     // 横滑游标累加器（deltaX 刻度）
   let accY = 0;                                    // 纵滚游标累加器（deltaY 刻度，整数步进零浮点）
+  let wheelLockUntil = 0;                          // 滚轮切换冷却截止（performance.now() ms，触控板手感批）
   let leaveTimer = 0;
   let steadyTimer = 0;                             // 真越出批：稳态门定时（展开过渡后缘位才可点）
 
@@ -3411,27 +3429,47 @@ function initCapsuleRing() {
     }
   };
   const onDocPointerMove = (e) => { lastPtr = { x: e.clientX, y: e.clientY }; evaluateLeave(); };
-  /** 环开期间 document 捕获滚轮（capture + 面板矩形内消费）：环开后指针停在
-   *  原地即可换选（不必悬在胶囊上）；面板外（侧栏/聊天）零消费零感知。 */
+  /** 环开期间 document 捕获滚轮（capture + hover 区内消费）：触控板手感批 ——
+   *  ④光标在 hover 区（openPt ∪ 标题头 ∪ 非弧外胶囊，与收环判定同一几何）外 =
+   *  零响应（不 preventDefault 不换选，页面滚动照旧 —— 不再抢面板内容滚动）；
+   *  ①区内设备分档累积（鼠标格低阈即切 / 触控板小增量累积过阈），切换后进
+   *  RING_WHEEL_COOLDOWN_MS 冷却：期内事件只消费不累积 —— 轻扫一挥恰切一格、
+   *  惯性末段不连跳，冷却后重新累积。 */
   const onDocWheel = (e) => {
     if (!ringState || isMobileLayer()) return;
     if (deck.open) { closeRing(); return; }   // deck 态不开环（叠卡有自己的滚轮语义；开环态下 deck 开启即让位）
-    const panel = document.getElementById('canvas-panel');
-    const pr = panel ? panel.getBoundingClientRect() : null;
-    if (pr && (e.clientX < pr.left || e.clientX > pr.right || e.clientY < pr.top || e.clientY > pr.bottom)) return;
+    if (!inHoverZone(e.clientX, e.clientY)) return;   // ④区外零响应：不消费，页面滚动照旧
     e.preventDefault();
     e.stopPropagation();
+    const now = performance.now();
+    if (now < wheelLockUntil) return;         // 冷却期内：只消费不累积（惯性不叠加切换）
+    /* deltaMode 归一 px（1=线 ×40 / 2=页 ×100 —— deck 滚轮重做同一口径）。 */
+    const k = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 100 : 1;
+    const dx = e.deltaX * k;
+    const dy = e.deltaY * k;
+    if (!dx && !dy) return;
+    /* ②设备分档阈值：主导轴本事件 ≥ RING_MOUSE_DELTA = 鼠标离散格（一格意图）
+     *  → 低阈即切；触控板小增量走累积档（48px ≈ 一挥轻扫）。 */
+    const thr = Math.max(Math.abs(dx), Math.abs(dy)) >= RING_MOUSE_DELTA
+      ? RING_WHEEL_STEP_MOUSE : RING_WHEEL_STEP_TRACKPAD;
     const n = ringState.ids.length;
-    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
-      acc += e.deltaX;
-      while (acc <= -RING_WHEEL_STEP) { acc += RING_WHEEL_STEP; ringState.cursor = (ringState.cursor - 1 + n) % n; }
-      while (acc >= RING_WHEEL_STEP) { acc -= RING_WHEEL_STEP; ringState.cursor = (ringState.cursor + 1) % n; }
+    let dir = 0;
+    if (Math.abs(dx) > Math.abs(dy)) {
+      if (acc !== 0 && (dx > 0) !== (acc > 0)) acc = 0;   // 反向：清账重积
+      acc += dx;
+      if (acc >= thr) dir = 1; else if (acc <= -thr) dir = -1;
+      if (dir) acc = 0;
     } else {
-      accY += e.deltaY;
-      while (accY <= -RING_WHEEL_STEP_Y) { accY += RING_WHEEL_STEP_Y; ringState.cursor = (ringState.cursor - 1 + n) % n; }
-      while (accY >= RING_WHEEL_STEP_Y) { accY -= RING_WHEEL_STEP_Y; ringState.cursor = (ringState.cursor + 1) % n; }
+      if (accY !== 0 && (dy > 0) !== (accY > 0)) accY = 0;
+      accY += dy;
+      if (accY >= thr) dir = 1; else if (accY <= -thr) dir = -1;
+      if (dir) accY = 0;
     }
-    layout();
+    if (dir) {                                // 单次过阈恰切一格（余量清零 —— 事件不跨账）
+      ringState.cursor = (ringState.cursor + dir + n) % n;
+      wheelLockUntil = now + RING_WHEEL_COOLDOWN_MS;
+      layout();
+    }
   };
   const onDocPointerLeft = (e) => { if (ringState && !e.relatedTarget) closeRing(); }; // 离窗即收
 
@@ -3443,6 +3481,7 @@ function initCapsuleRing() {
     ringState = { ids: all, cursor: Math.max(0, all.indexOf(activeTabId)) };
     acc = 0;
     accY = 0;
+    wheelLockUntil = 0;                            // 新环新账：开环清冷却（上次环的余威不作废新环第一挥）
     openPt = pt ? { x: pt.x, y: pt.y } : null;
     lastPtr = null;
     build();
@@ -3471,6 +3510,7 @@ function initCapsuleRing() {
     root.textContent = '';
     acc = 0;
     accY = 0;
+    wheelLockUntil = 0;
     openPt = null;
     lastPtr = null;
     document.removeEventListener('pointermove', onDocPointerMove);
@@ -3508,6 +3548,7 @@ function initCapsuleRing() {
       ringState.cursor = Math.max(0, ringState.ids.indexOf(activeTabId));
       acc = 0;
       accY = 0;
+      wheelLockUntil = 0;      // 点击/手势换签 = 明确意图：清冷却，滚轮即时可再换选
       layout();                // layout() 内部先回锚（真越出批视口版）
       return;
     }
