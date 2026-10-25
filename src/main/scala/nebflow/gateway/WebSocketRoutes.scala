@@ -3150,6 +3150,10 @@ object WebSocketRoutes:
       // #752 空闲细分：「等后台任务」——会话自有等待型任务（BgTaskRegistry
       // waitingBySession，调用方一次全表扫描传入）。[{taskId, description,
       // startedAt}]；空数组 = 无（前端 falsy 判 length）。启动戳毫秒，前端算时长。
+      // bgWaitingCount（修复批 2026-10-24 spec ①「状态面可见任务数断言」）：在飞
+      // 任务数的显式字段——面板与取证直接读数，不必从数组长度反推（数组空 =
+      // 0，两字段恒一致）。
+      "bgWaitingCount" -> bgWaiting.size.asJson,
       "bgWaiting" -> bgWaiting.map { case (jobId, description, startedAtMs) =>
         Json.obj(
           "taskId" -> jobId.asJson,

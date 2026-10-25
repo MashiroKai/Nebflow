@@ -1081,28 +1081,41 @@ class RemoteExecutor(
           case Right(output) =>
             val exitCode = RemoteBgOutputLog.parseExitMarker(output)
             val built = BgNotifyPayload.completed(description, exitCode, durationMs, output, "", jobId)
-            ctx.agentActorRef.fold(IO.unit)(ref =>
-              ref ! AgentCommand.ExternalEvent(
-                source = "background-task",
-                eventType = "completed",
-                payload = built.payload,
-                metadata = built.metadata
-              )
-            ) *>
-              emitBgTaskFinished(ctx, jobId, description, "completed", exitCode, durationMs) *>
-              logger.info(s"Remote background task $jobId completed${logTagSuffix(built.logTag)}")
+            // 完成事件持久账本（修复批 2026-10-24「先落账本再投递」）：与 BashTool
+            // 本地腿同语义——事件先落账再投递，投递失联由补投腿兜底，永不蒸发。
+            // fail-soft：账本故障绝不阻断投递。
+            BgTaskLedger
+              .recordCompletion(ctx.sessionId.getOrElse(""), jobId, description, "completed", built.payload)
+              .handleErrorWith(e => logger.warn(s"bg-ledger record failed for remote job $jobId: ${e.getMessage}"))
+              .flatMap { _ =>
+                ctx.agentActorRef.fold(IO.unit)(ref =>
+                  ref ! AgentCommand.ExternalEvent(
+                    source = "background-task",
+                    eventType = "completed",
+                    payload = built.payload,
+                    metadata = built.metadata
+                  )
+                ) *>
+                  emitBgTaskFinished(ctx, jobId, description, "completed", exitCode, durationMs) *>
+                  logger.info(s"Remote background task $jobId completed${logTagSuffix(built.logTag)}")
+              }
           case Left(errMsg) =>
             val built = BgNotifyPayload.failed(description, errMsg, durationMs, jobId)
-            ctx.agentActorRef.fold(IO.unit)(ref =>
-              ref ! AgentCommand.ExternalEvent(
-                source = "background-task",
-                eventType = "failed",
-                payload = built.payload,
-                metadata = built.metadata
-              )
-            ) *>
-              emitBgTaskFinished(ctx, jobId, description, "failed", None, durationMs) *>
-              logger.warn(s"Remote background task $jobId failed: $errMsg${logTagSuffix(built.logTag)}")
+            BgTaskLedger
+              .recordCompletion(ctx.sessionId.getOrElse(""), jobId, description, "failed", built.payload)
+              .handleErrorWith(e => logger.warn(s"bg-ledger record failed for remote job $jobId: ${e.getMessage}"))
+              .flatMap { _ =>
+                ctx.agentActorRef.fold(IO.unit)(ref =>
+                  ref ! AgentCommand.ExternalEvent(
+                    source = "background-task",
+                    eventType = "failed",
+                    payload = built.payload,
+                    metadata = built.metadata
+                  )
+                ) *>
+                  emitBgTaskFinished(ctx, jobId, description, "failed", None, durationMs) *>
+                  logger.warn(s"Remote background task $jobId failed: $errMsg${logTagSuffix(built.logTag)}")
+              }
       }
 
   private def logTagSuffix(tag: String): String =

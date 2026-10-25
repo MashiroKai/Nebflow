@@ -343,13 +343,27 @@ object BackoffSupervisor:
                     s"BackoffSupervisor: delegate $subagentId bg-wait cap (${bgWaitCapMs}ms) hit with " +
                       s"${still.size} task(s) pending — forcing honest terminal delivery"
                   ) *>
-                    bgWaitCapFired.set(true) *>
-                    bgWaitHeld.set(false) *>
-                    // 🔴 只清句柄不 cancel——此刻正在本 fiber 体内，cancel 自己
-                    // 会让 self-message 永远发不出去（A-4 实测）。句柄清空后外部
-                    // disarm 调用对其 cancel 为 no-op。
-                    bgWaitCapFiber.set(None) *>
-                    (ctx.self ! AgentEvent.Completed(subagentId, messages)).void
+                    // ── 孤儿登记（修复批 2026-10-24 fix 3「两种死法统一收口」）──
+                    // cap 强制终判 = 本会话终结、这些任务的完成通知将无处投递。
+                    // 逐条写入持久账本（含当时输出尾段快照——「完成事件+输出尾段
+                    // 供续会话拾取，现在直接丢」的收口）：会话若被复活/重派拾取，
+                    // 账本条目即完整证据链；completion 事件此后照常经 BashTool
+                    // recordCompletion 原位升级 orphan 条目（kind 不降级）。
+                    // fail-soft：账本故障绝不阻断强制终判。
+                    still.traverse { t =>
+                      nebflow.core.tools.BgTaskOutputStore
+                        .read(t.jobId, 0L)
+                        .map(out => out.map(o => o.output.takeRight(2000)).filter(_.trim.nonEmpty))
+                        .handleErrorWith(_ => IO.pure(Option.empty[String]))
+                        .map(tail => (t.jobId, t.description, tail))
+                    }.flatMap(rows => nebflow.core.tools.BgTaskLedger.markOrphaned(subagentId, rows)) *>
+                      bgWaitCapFired.set(true) *>
+                      bgWaitHeld.set(false) *>
+                      // 🔴 只清句柄不 cancel——此刻正在本 fiber 体内，cancel 自己
+                      // 会让 self-message 永远发不出去（A-4 实测）。句柄清空后外部
+                      // disarm 调用对其 cancel 为 no-op。
+                      bgWaitCapFiber.set(None) *>
+                      (ctx.self ! AgentEvent.Completed(subagentId, messages)).void
               }).start.flatMap(f => bgWaitCapFiber.set(Some(f)))
 
         /**

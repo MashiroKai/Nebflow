@@ -1230,6 +1230,20 @@ Git safety:
           .finalizeTask(jobId, storeStatus, exitCodeOpt, errHintOpt)
           .handleErrorWith(e2 => logger.warn(s"bg-output finalize failed for job $jobId: ${e2.getMessage}")) *>
           gateLedger *>
+          // 完成事件持久账本（修复批 2026-10-24「先落账本再投递」）：事件与输出
+          // 尾段先落账，再走投递——投递面任何一环失联（目标会话 idle 无栅栏 /
+          // 直投未唤醒 / 激活 Deferred），账本条目挂起，会话下次唤醒由补投腿
+          // （AgentActor.flushPendingLedgerCompletions）先补投未消费事件，永不
+          // 蒸发。fail-soft：账本故障绝不阻断投递。
+          BgTaskLedger
+            .recordCompletion(
+              ctx.sessionId.getOrElse(""),
+              jobId,
+              description,
+              eventType,
+              payload
+            )
+            .handleErrorWith(e2 => logger.warn(s"bg-ledger record failed for job $jobId: ${e2.getMessage}")) *>
           logger.info(
             s"Background job $jobId callback: $eventType$exitInfo",
             "sessionId" -> ctx.sessionId.getOrElse("")
