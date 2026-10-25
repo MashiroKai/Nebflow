@@ -18,7 +18,7 @@ status: current
 [文本](x.md)       普通 markdown 链接（指向库内 .md 时同为图谱边）
 ```
 
-文档库（vault） — 项目工作区内 `docs/` 目录整体：Obsidian 兼容的文档库，文档、词表与附件（[[#^attachment]]）都住在这里，图谱视图（[[#^graph-view]]）只扫这个目录。 ^vault
+文档库（vault） — 项目工作区内 `docs/` 目录整体：Obsidian（双链笔记应用，本库沿用其 wiki-link 与块锚语法）兼容的文档库，文档、词表与附件（[[#^attachment]]）都住在这里，图谱视图（[[#^graph-view]]）只扫这个目录。 ^vault
 
 front-matter — 文档开头 `---` 围起的键值元数据块（如 `type`/`status`），供图谱过滤与状态识别；正文行号不含它。 ^front-matter
 
@@ -40,9 +40,9 @@ wiki-link — Obsidian 双链引用（语法见上文一览）：文档间引用
 
 样张 — 只做设计演示、不进产品代码的静态 HTML 样例（数据真实、交互可点）；本库样张与设计稿成对放 `docs/design/`。 ^mockup-sample
 
-重启窗 — 引擎（sbt 跑的 JVM 进程）下次安全重启的时间窗口：编译进 jar 的改动（Scala、web dist）要等重启窗才生效，静态 web 源码树改动则刷新即生效。 ^restart-window
+重启窗 — 引擎（sbt 跑的 JVM 进程；sbt＝Scala 构建工具，JVM＝Java 虚拟机）下次安全重启的时间窗口：编译进 jar 的改动（Scala、web dist）要等重启窗才生效，静态 web 源码树改动则刷新即生效。 ^restart-window
 
-中继 ingress 平面 — link.mystand.space 反向链路上的 Rust link-server 鉴权层：对每个 `/api/*`、`/ws` 先验中继自己那套登录（require_user），过闸才转发到宿主引擎。与宿主会话平面（[[#^host-session-plane]]）是两套独立会话。 ^relay-ingress-plane
+中继 ingress 平面 — link.mystand.space 反向链路上的 Rust link-server（中继链路上的转发/鉴权服务）鉴权层：对每个 `/api/*`、`/ws` 先验中继自己那套登录（require_user），过闸才转发到宿主引擎。与宿主会话平面（[[#^host-session-plane]]）是两套独立会话。 ^relay-ingress-plane
 
 宿主会话平面 — 宿主引擎（本机 8080 网关）自己的会话鉴权层，纯内存、每次引擎重启即清空；控制台请求要同时过中继 ingress 平面（[[#^relay-ingress-plane]]）与它两道闸。 ^host-session-plane
 
