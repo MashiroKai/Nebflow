@@ -58,3 +58,14 @@
 2. **#824 与 #807（b73c3e73）改动面重叠**（AgentIdle/BackoffSupervisor）：triage 报告已提示三批落序需排；#807 续做时对本批的补投腿需 rebase 对齐（本批 AgentIdle 三唤醒点的消息组装顺序=held→ledger→input，#807 回执批接入时保持该序）。
 3. 通知详情批的 `AgentCommand.BackgroundTaskNotification` 死命令面维持不改动（快照口径）。
 4. BgWaitCapLedgerSpec 日志里的 `ClassCastException: Stop → Nothing$` 是 `Behaviors.stopped` 探针的既有噪音（测试 PASS，非本批引入）。
+
+## 6. 附记：引擎重启恢复 + main 漂移再融合（2026-10-25 夜）
+
+- 引擎 23:26 重启（boot 1792942008501），本批会话复活续作；重启前 5 提交（两快照合并 + spec 重钉 + scalafmt + 本报告）零丢失。
+- main 自批基 4c866d61d 再漂移 24 提交（诊断修复批交付回执 AgentIdle/AgentFinishTurn/BackoffSupervisor + DelegateDeliveryReceipts、revive-p0 #809/#810、perception boot SOE 修复、面板候合并批）。§5.2 预警的 #807 域重叠兑现，本批 `git merge main`（合并提交 d3aeed65a）**零冲突自动融合**，语义缝合点逐一核实：
+  - AgentIdle ExternalEvent 唤醒腿：账本补投（flushPendingLedgerCompletions）先于事件注入，消息组装序 **held→ledger→input 保持**（§5.2 约束兑现）；诊断批 ackDelegateDelivery 直投腿正交共存（确认面非组装面，不改变注入序）。
+  - AgentFinishTurn：bgTurnEndAccounting（#824 栅栏）与 drainedEvents 回执 ack（诊断批）并存。
+  - BackoffSupervisor 终态链：#824 cap 腿 markOrphaned × 诊断批 latestMessages 重载 / receiptWrite 回执并存。
+  - WebSocketRoutes `bgWaitingCount` 字段、main.js exit chip/终态时长冻结完好（与候合并面板批零域撞）。
+- 融合后再验证（合并树，sbt job 6d6a3cc5）：**142/142 断言全绿**（新 spec 6 套件 40 + bg 族 17 套件 102，4m21s）——与重启前验收同口径，融合零回归。
+- 本批「不自行 merge main」指不并 main 分支；对 main → 本支的漂移对齐合并属分支内工作，合入 main 仍走合并队列。
