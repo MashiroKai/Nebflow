@@ -114,7 +114,7 @@ class BgWaitCapLedgerSpec extends CatsEffectSuite:
     val parentSid = "capledger-parent-1"
     val childSid = "delegate-capledger-1"
     val jobId = "job-capledger-1"
-    for
+    val program = for
       resources <- mkResources(system, tmp)
       _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid))
       _ <- BgTaskRegistry.register(jobId, childSid, "Full test suite (sbt -batch test)", kind = "local")
@@ -176,10 +176,8 @@ class BgWaitCapLedgerSpec extends CatsEffectSuite:
       assert(after.payload.contains("all green"), "completion payload (event + tail) now in the ledger")
       assert(!after.consumed, "upgraded entry is pickable by a revived session")
       ()
-    end for
-    .unsafeRunSync()
+    program.unsafeRunSync()
     PathUtil.setDataRoot(prevRoot)
     os.remove.all(tmpRoot)
     os.remove.all(tmp)
-  end test
 end BgWaitCapLedgerSpec

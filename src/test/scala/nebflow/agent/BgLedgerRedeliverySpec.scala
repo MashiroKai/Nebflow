@@ -38,7 +38,9 @@ class BgLedgerRedeliverySpec extends FunSuite:
     "[Background task completed] \"render deck\":\nline-1\nline-2 (exit 0)"
 
   private def stateWithMessages(sid: Option[String], messages: List[Message]): AgentState =
-    AgentState().copy(sessionId = sid, messages = messages)
+    // 主仓 AgentState 构造走 object apply 装配器（session/execution 是 ctor 必填；
+    // sessionId/messages 是装配器缝——copy 不直收它们）。
+    AgentState(messages = messages, sessionId = sid)
 
   private def msg(text: String): Message =
     Message(MessageRole.User, Left(text))

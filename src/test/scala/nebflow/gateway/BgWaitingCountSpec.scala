@@ -2,6 +2,7 @@ package nebflow.gateway
 
 import io.circe.Json
 import io.circe.syntax.*
+import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 import nebflow.actor.{ActorRef, AgentCommand, AgentKind, AgentRecord}
 import nebflow.core.tools.BgTaskRegistry
