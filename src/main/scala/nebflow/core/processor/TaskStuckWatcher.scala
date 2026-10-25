@@ -837,7 +837,15 @@ object TaskStuckWatcher:
           nebflow.core.delegate.MergeWindowCare
             .care(resources)
             .handleErrorWith(e => logger.warn(s"[merge-window-care] sweep failed: ${e.getMessage}").void)
-            .void
+            .void *>
+            // ── 滞留告警 + 退避重试看护（merge-queue 滞留两病灶修复批 2026-10-25
+            // 腿②③）：队首停靠条目「无竞争合并 ∧ 工件已清理」条件下退避重发合并
+            // 轮，逐次拒绝通知带「谁在挡、挡在哪」，预算耗尽升级告警根会话（不再
+            // 静默滞留）。幂等：通知/升级/重试各由条目台账字段把门。
+            nebflow.core.delegate.MergeStallCare
+              .care(resources)
+              .handleErrorWith(e => logger.warn(s"[merge-stall-care] sweep failed: ${e.getMessage}").void)
+              .void
       }
 
   end scan

@@ -72,7 +72,7 @@ object MergeRefusalCare:
         s"""[auto-merge] your branch '$n.branch' was NOT merged into '${n.target}' — the engine's auto-merge refused (fail-closed, nothing staged).
            |Reason: ${n.reason}
            |Dirty paths: $dirtyList
-           |Your move (the merge is YOUR responsibility — the platform does not run merges for you): commit or clean the dirty paths above in the base workspace ('${n.baseWorkspace}'; generated artifacts under evidence/ and reports/ are auto-restored by the platform as shared-area hygiene), then re-attempt the merge yourself on your next turn.
+           |Your move (the merge is YOUR responsibility — the platform does not run merges for you): commit or clean the dirty paths above in the base workspace ('${n.baseWorkspace}'; the platform's shared-area hygiene auto-restores tracked overwrites and auto-absorbs untracked generated artifacts under evidence/ and reports/ into the merge batch — tracked source modifications are never touched and stay fail-closed), then re-attempt the merge yourself on your next turn.
            |(Persistent injection — correlationId $cid; audit row: ChainStore '${DelegateAutoMerge.EntryKind}' action=refused.)""".stripMargin,
       metadata = JsonObject(
         "delegateId" -> n.delegateId.asJson,

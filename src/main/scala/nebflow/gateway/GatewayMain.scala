@@ -877,6 +877,30 @@ object GatewayMain extends IOApp:
                                         case Left(e) =>
                                           logger.warn(s"Merge-queue boot sweep failed: ${e.getMessage}").void
                                       }
+                                  // 滞留看护的内部腿复活通道（merge-queue 滞留两病灶修复批
+                                  // 2026-10-25 腿②）：合并轮被拒后会话已终态——重发须续起
+                                  // 会话。复用 boot sweep internalRevival（续起基工作区座位
+                                  // continuation 会话 + rekey 换键）。fail-soft：装配失败只
+                                  // WARN（看护侧响亮 WARN + 跳过重试，绝不静默烧重试预算）。
+                                  val mergeStallPortSetup: IO[Unit] =
+                                    IO {
+                                      val revival = nebflow.agent.MergeQueueBootSweep.internalRevival(
+                                        sharedResources,
+                                        actorSystem,
+                                        Some((json: io.circe.Json) => wsHub.broadcast(json))
+                                      )
+                                      nebflow.core.delegate.MergeStallCare.RevivalPort.install { entry =>
+                                        nebflow.core.delegate.DelegateRegistry.find(entry.delegateId) match
+                                          case None =>
+                                            IO.pure(Left(
+                                              s"no delegate registry record for '${entry.delegateId}' — cannot revive the merge round"
+                                            ))
+                                          case Some(rec) =>
+                                            revival(rec)(nebflow.core.delegate.MergeQueue.mergeBriefFor(entry))
+                                      }
+                                    }.handleErrorWith(e =>
+                                      logger.warn(s"merge-stall revival port install failed: ${e.getMessage}").void
+                                    )
                                   // #28 阶段 0：Project Flow Map **completed** 节点 TTL 扫描
                                   // （24h 显示消失 → 移归档 + WS nodeRemoved；failed/cancelled
                                   // 无 TTL 不过期——2026-09-07 裁定，死亡现场保留待上层裁决；
@@ -978,7 +1002,7 @@ object GatewayMain extends IOApp:
                                       .handleErrorWith(e =>
                                         logger.warn(s"perception daemon boot failed: ${e.getMessage}").void
                                       )
-                                  hubSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> perceptionBoot *> succeedPortGate(
+                                  hubSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> mergeStallPortSetup *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> perceptionBoot *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {

@@ -525,6 +525,59 @@ private[gateway] object PresenceRoutes:
             )
         }
 
+      // GET /api/merge-queue — 合并队列**状态面**（merge-queue 滞留两病灶修复批
+      // 2026-10-25 腿③「可观测」，只读诊断口；现有面板无队列聚合面 ⇒ 本口单点）：
+      // 排队项全投影（位次/持窗者/停靠标记）+ 滞留台账（失败计数/上次动作时刻/
+      // 通知与升级旗）+ 每条目的最近拒绝原因（ChainStore 扫描，fail-soft 空串）。
+      // 真源 = MergeQueue 进程内队列（与 queueViewOf/NodeList mergeQueuePos 键同源
+      // ——引擎闸本体）；404 不存在，空队列 = 空 entries。
+      case req @ GET -> Root / "merge-queue" =>
+        withAuth(req) {
+          IO.blocking(nebflow.core.delegate.MergeQueue.stallSnapshot).flatMap { views =>
+            val reasons = IO.blocking(
+              nebflow.core.delegate.MergeStallCare.lastRefusalReasons(views.map(_.delegateId).toSet)
+            ).handleErrorWith(_ => IO.pure(Map.empty[String, String]))
+            reasons.flatMap { reasonBy =>
+              val queues = views
+                .groupBy(_.projectKey)
+                .toList
+                .map { (projectKey, vs) =>
+                  val sorted = vs.sortBy(v => (v.readyAt, v.delegateId))
+                  Json.obj(
+                    "projectKey" -> projectKey.asJson,
+                    "inFlight" -> nebflow.core.delegate.MergeQueue.isInFlight(projectKey).asJson,
+                    "entries" -> sorted
+                      .map(v =>
+                        Json.obj(
+                          "delegateId" -> v.delegateId.asJson,
+                          "description" -> v.description.asJson,
+                          "branch" -> v.branch.asJson,
+                          "baseBranch" -> v.baseBranch.asJson,
+                          "baseWs" -> v.baseWs.asJson,
+                          "taskId" -> v.taskId.asJson,
+                          "parentSessionId" -> v.parentSessionId.asJson,
+                          "position" -> v.position.asJson,
+                          "total" -> v.total.asJson,
+                          "holder" -> v.holder.asJson,
+                          "pendingRetry" -> v.pendingRetry.asJson,
+                          "reminderSent" -> v.reminderSent.asJson,
+                          "retryCount" -> v.retryCount.asJson,
+                          "lastAttemptAt" -> v.lastAttemptAt.asJson,
+                          "stallNotified" -> v.stallNotified.asJson,
+                          "stallEscalated" -> v.stallEscalated.asJson,
+                          "readyAt" -> v.readyAt.asJson,
+                          "lastRefusalReason" -> reasonBy.getOrElse(v.delegateId, "").asJson
+                        )
+                      )
+                      .asJson
+                  )
+                }
+                .asJson
+              Ok(Json.obj("generatedAt" -> System.currentTimeMillis().asJson, "queues" -> queues))
+            }
+          }
+        }
+
       // ===== Flow Editor APIs =====
 
       // GET /teams/def/:name — return team definition for the editor
