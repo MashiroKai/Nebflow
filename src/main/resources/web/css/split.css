@@ -1377,6 +1377,15 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
    （点击切换/右键菜单），中心位恒 pe:none 落穿（见 is-center 块注）。 */
 #canvas-capsule-ring.open .cr-capsule { opacity: 1; }
 #canvas-capsule-ring.open.steady .cr-capsule { pointer-events: auto; }
+/* 触控板手感批（作者报障 2026-10-25「触控板滑动不够灵敏和丝滑」③切换动画）：
+   环开稳态后的**游标步进**换快跟手档 —— transform/opacity/filter 全 0.18s
+   （150-200ms 档）：换选一击即至、连拨不断链（0.36s 每步重定相位，连拨时
+   拖泥带水）。环展开/收起的 0.36s 温和 morph（「动画放慢、自然、流畅」令）
+   不收窄 —— 本规则只在 .steady 后生效，收放路径照旧走基档。prefers-reduced-
+   motion 直切由 §动效降级 0.01s !important 兜底（importance 压过特异性）。 */
+#canvas-capsule-ring.open.steady .cr-capsule {
+  transition-duration: 0.18s;
+}
 /* 中心位落穿（双态全钉，特异性压过上方 steady 全开 (1,3,0)）：环层叠在标题头
    之上，中心位事件必须落穿到标题头手势链（按压/竖滑换卡/横滑关卡/右键引用）。 */
 #canvas-capsule-ring .cr-capsule.is-center,
