@@ -281,6 +281,7 @@ object AgentActor extends AgentCore with AgentSession:
           .getOrElse(Nil)
       }
       Message(MessageRole.User, Right(blocks), source = Some("external"))
+    end if
   end buildEventReminder
 
   /**
@@ -367,9 +368,7 @@ object AgentActor extends AgentCore with AgentSession:
     if state.execution.pendingEvents.isEmpty then None
     else
       val held = state.execution.pendingEvents
-      val cleaned = state.copy(execution =
-        state.execution.copy(pendingEvents = Nil, outstandingSubagentResults = 0)
-      )
+      val cleaned = state.copy(execution = state.execution.copy(pendingEvents = Nil, outstandingSubagentResults = 0))
       Some(HeldFlushPlan(List(buildEventReminder(held)), cleaned, held))
 
   /** [[heldFlushPlan]] 的伴生副作用：日志 + 屏障快照 + 台账对账 + 徽标帧。 */
@@ -453,6 +452,7 @@ object AgentActor extends AgentCore with AgentSession:
                 .warn(s"bg-ledger consume failed for $sid: ${e.getMessage}")
             )
             .as(LedgerFlushPlan(messages, consumed, toInject))
+        end if
       }
     }
 
@@ -492,15 +492,13 @@ object AgentActor extends AgentCore with AgentSession:
             state.wsSend,
             state.sessionId,
             s"[投递补注] ${held.size} 条回执此前被子代理批屏障扣留未注入（屏障槽位已归还），现随本回合补投:" +
-              held.zipWithIndex
-                .map { (e, i) =>
-                  val ageMin = ledger.get(nebflow.core.processor.HeldDeliveryPolicy.receiptId(e)).map(r =>
-                    (now - r.producedAt) / 60000L
-                  )
-                  val age = ageMin.fold("")(m => s" · 已等待${m}分钟")
-                  s"\n${i + 1}. [${e.source}·${e.eventType}$age] ${oneLine(e.payload).take(80)}"
-                }
-                .mkString,
+              held.zipWithIndex.map { (e, i) =>
+                val ageMin = ledger
+                  .get(nebflow.core.processor.HeldDeliveryPolicy.receiptId(e))
+                  .map(r => (now - r.producedAt) / 60000L)
+                val age = ageMin.fold("")(m => s" · 已等待${m}分钟")
+                s"\n${i + 1}. [${e.source}·${e.eventType}$age] ${oneLine(e.payload).take(80)}"
+              }.mkString,
             "system",
             Some("force-drain"),
             sessionProject = state.projectName

@@ -101,15 +101,17 @@ class BgNotifyPayloadSpec extends CatsEffectSuite:
       assert(built.payload.contains("row-3"))
       assert(built.payload.contains("row-5"))
       assert(built.payload.contains("[truncated: showing last 3 of 5 lines"))
-    finally old match
-      case Some(v) => sys.props.update(key, v)
-      case None => sys.props.remove(key)
+    finally
+      old match
+        case Some(v) => sys.props.update(key, v)
+        case None => sys.props.remove(key)
   }
 
   // ── ③ 失败通知：错误尾段 ─────────────────────────────────────────────
 
   test("③a 失败 payload 含错误尾段与耗时段") {
-    val built = BgNotifyPayload.failed("deploy step", "git push rejected\nremote: permission denied", Some(1200L), "job-h1")
+    val built =
+      BgNotifyPayload.failed("deploy step", "git push rejected\nremote: permission denied", Some(1200L), "job-h1")
     assert(built.payload.startsWith("[Background task failed] \"deploy step\" (1.2s):"))
     assert(built.payload.contains("git push rejected"))
     assert(built.payload.contains("remote: permission denied"))
@@ -135,3 +137,4 @@ class BgNotifyPayloadSpec extends CatsEffectSuite:
     assertEquals(BgNotifyPayload.formatDuration(0L), "0s")
     assertEquals(BgNotifyPayload.formatDuration(-5L), "0s")
   }
+end BgNotifyPayloadSpec

@@ -140,9 +140,7 @@ private[agent] object AgentIdle:
             case None => IO.unit
           val sessionBusyIO =
             if depth == 0 then
-              stateWithWidth.sessionId.fold(IO.unit)(sid =>
-                emitSessionBusy(stateWithWidth.wsSend, sid, busy = true)
-              )
+              stateWithWidth.sessionId.fold(IO.unit)(sid => emitSessionBusy(stateWithWidth.wsSend, sid, busy = true))
             else IO.unit
           for
             ledgerFlush <- flushPendingLedgerCompletions(stateWithFlush, Nil)
@@ -469,9 +467,7 @@ private[agent] object AgentIdle:
             _ <- touchBarrierSnapshot(resources, state.sessionId, 0, 0)
             _ <- persistQueues(state.sessionId, cleanedExec)
             // 台账对账（平台修复批 fix 1）：held 全量投递 ⇒ 台账清空 + 徽标帧归零。
-            _ <- syncHeldReceipts(resources, state.sessionId, Nil).flatMap((h, u) =>
-              emitHeldReceiptsBadge(state, h, u)
-            )
+            _ <- syncHeldReceipts(resources, state.sessionId, Nil).flatMap((h, u) => emitHeldReceiptsBadge(state, h, u))
             result <- pipeLlmCall(
               agentDef,
               resources,
@@ -646,9 +642,8 @@ private[agent] object AgentIdle:
             // 此前恢复面不同步台账 ⇒ 无 producedAt ⇒ watchdog 对重启恢复回执致盲
             // （nudge 文本整天数「1 条」而实际队列 5/11 条），只能等下一次输入触
             // 发 fix-1 腿才投递（实证 2026-10-22 10:36/17:13 两次重启恢复）。
-            syncHeldReceipts(resources, state.sessionId, exec.pendingEvents).flatMap((h, u) =>
-              emitHeldReceiptsBadge(state, h, u)
-            ) *>
+            syncHeldReceipts(resources, state.sessionId, exec.pendingEvents)
+              .flatMap((h, u) => emitHeldReceiptsBadge(state, h, u)) *>
               IO.pure(idle(agentDef, resources, depth, parentRef, state.copy(execution = exec)))
           case _ => IO.pure(idle(agentDef, resources, depth, parentRef, state))
         }
@@ -667,9 +662,8 @@ private[agent] object AgentIdle:
             IO.pure(idle(agentDef, resources, depth, parentRef, state))
         else
           val batchMessage = buildEventReminder(held)
-          val cleaned = state.copy(execution =
-            state.execution.copy(pendingEvents = Nil, outstandingSubagentResults = 0)
-          )
+          val cleaned =
+            state.copy(execution = state.execution.copy(pendingEvents = Nil, outstandingSubagentResults = 0))
           for
             _ <- IO(
               logAgentEvent(
@@ -682,15 +676,12 @@ private[agent] object AgentIdle:
               )
             )
             _ <-
-              if depth == 0 then
-                state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
+              if depth == 0 then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
               else IO.unit
             _ <- emitForceDrainVisibility(resources, state, held)
             _ <- touchBarrierSnapshot(resources, state.sessionId, 0, 0)
             _ <- persistQueues(state.sessionId, cleaned.execution)
-            _ <- syncHeldReceipts(resources, state.sessionId, Nil).flatMap((h, u) =>
-              emitHeldReceiptsBadge(state, h, u)
-            )
+            _ <- syncHeldReceipts(resources, state.sessionId, Nil).flatMap((h, u) => emitHeldReceiptsBadge(state, h, u))
             result <- pipeLlmCall(
               agentDef,
               resources,
@@ -775,7 +766,8 @@ private[agent] object AgentIdle:
               )
               _ <- heldFlush.fold(IO.unit)(p => flushHeldSideEffects(agentDef, resources, depth, p))
               _ <-
-                if depth == 0 then flushBase.sessionId.fold(IO.unit)(sid => emitSessionBusy(flushBase.wsSend, sid, busy = true))
+                if depth == 0 then
+                  flushBase.sessionId.fold(IO.unit)(sid => emitSessionBusy(flushBase.wsSend, sid, busy = true))
                 else IO.unit
               // One injected frame per payload item — each carries its own text / sender /
               // status, so the frontend renders N bubbles with zero frontend change

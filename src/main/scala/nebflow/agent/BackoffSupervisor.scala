@@ -350,20 +350,22 @@ object BackoffSupervisor:
                     // 账本条目即完整证据链；completion 事件此后照常经 BashTool
                     // recordCompletion 原位升级 orphan 条目（kind 不降级）。
                     // fail-soft：账本故障绝不阻断强制终判。
-                    still.traverse { t =>
-                      nebflow.core.tools.BgTaskOutputStore
-                        .read(t.jobId, 0L)
-                        .map(out => out.map(o => o.output.takeRight(2000)).filter(_.trim.nonEmpty))
-                        .handleErrorWith(_ => IO.pure(Option.empty[String]))
-                        .map(tail => (t.jobId, t.description, tail))
-                    }.flatMap(rows => nebflow.core.tools.BgTaskLedger.markOrphaned(subagentId, rows)) *>
-                      bgWaitCapFired.set(true) *>
-                      bgWaitHeld.set(false) *>
-                      // 🔴 只清句柄不 cancel——此刻正在本 fiber 体内，cancel 自己
-                      // 会让 self-message 永远发不出去（A-4 实测）。句柄清空后外部
-                      // disarm 调用对其 cancel 为 no-op。
-                      bgWaitCapFiber.set(None) *>
-                      (ctx.self ! AgentEvent.Completed(subagentId, messages)).void
+                    still
+                      .traverse { t =>
+                        nebflow.core.tools.BgTaskOutputStore
+                          .read(t.jobId, 0L)
+                          .map(out => out.map(o => o.output.takeRight(2000)).filter(_.trim.nonEmpty))
+                          .handleErrorWith(_ => IO.pure(Option.empty[String]))
+                          .map(tail => (t.jobId, t.description, tail))
+                      }
+                      .flatMap(rows => nebflow.core.tools.BgTaskLedger.markOrphaned(subagentId, rows)) *>
+                    bgWaitCapFired.set(true) *>
+                    bgWaitHeld.set(false) *>
+                    // 🔴 只清句柄不 cancel——此刻正在本 fiber 体内，cancel 自己
+                    // 会让 self-message 永远发不出去（A-4 实测）。句柄清空后外部
+                    // disarm 调用对其 cancel 为 no-op。
+                    bgWaitCapFiber.set(None) *>
+                    (ctx.self ! AgentEvent.Completed(subagentId, messages)).void
               }).start.flatMap(f => bgWaitCapFiber.set(Some(f)))
 
         /**

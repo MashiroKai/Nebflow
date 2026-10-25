@@ -46,6 +46,8 @@ class BgWaitingCountSpec extends FunSuite:
       assert(rows.forall(_.hcursor.get[Long]("startedAt").isRight), "start timestamp carried for the 起止 face")
     finally BgTaskRegistry.unregisterSession(Some(sessionId)).unsafeRunSync()
 
+    end try
+
   test("S2 无在飞任务 ⇒ bgWaitingCount=0（与 bgWaiting 空数组恒一致）"):
     val json = WebSocketRoutes.activeAgentEntryJson(rec("sid-bgcount-2"), None, bgWaiting = Nil)
     assertEquals(json.hcursor.get[Int]("bgWaitingCount"), Right(0))

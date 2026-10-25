@@ -130,54 +130,71 @@ object BgTaskRegistry:
    */
   def gateCreation(sessionId: String): IO[BgRateGate.Decision] =
     val sid = sessionId.trim
-    if sid.isEmpty then IO.pure(BgRateGate.Decision(allowed = true, breakerEngaged = false, warn = false, recentCount = 0, breakerUntilMs = None, message = None))
+    if sid.isEmpty then
+      IO.pure(
+        BgRateGate.Decision(
+          allowed = true,
+          breakerEngaged = false,
+          warn = false,
+          recentCount = 0,
+          breakerUntilMs = None,
+          message = None
+        )
+      )
     else
       IO.monotonic.map(_.toMillis).flatMap { _ =>
         IO.realTime.map(_.toMillis).flatMap { now =>
           val windowMs = Defaults.BgRateWindowMs
-          rateStates.modify { m =>
-            val st = m.getOrElse(sid, SessionRateState())
-            val prior = st.creations.filter(_ > now - windowMs)
-            val breakerActive = st.breakerUntilMs > now
-            val decision = BgRateGate.decide(
-              prior,
-              if breakerActive then Some(st.breakerUntilMs) else None,
-              now,
-              windowMs,
-              Defaults.BgRateWarnAfter,
-              Defaults.BgRateBreakerAfter,
-              Defaults.BgRateBreakerCooldownMs
-            )
-            val nextState =
-              if decision.allowed then
-                st.copy(
-                  creations = prior :+ now,
-                  breakerUntilMs = decision.breakerUntilMs.getOrElse(0L)
-                )
-              else st.copy(creations = prior, breakerUntilMs = decision.breakerUntilMs.getOrElse(st.breakerUntilMs))
-            (m + (sid -> nextState), decision)
-          }.flatTap { d =>
-            // 告警面：warn 档与熔断档都留引擎侧告警日志；熔断同时记账
-            // lastAlert（spec 观察面）。
-            val logWarn =
-              if d.breakerEngaged then
-                logger.warn(
-                  s"[bg-rate-gate] breaker ENGAGED for session '$sid': ${d.recentCount} background tasks created within " +
-                    s"${Defaults.BgRateWindowMs / 60000}min (cooldown ${Defaults.BgRateBreakerCooldownMs / 60000}min)"
-                )
-              else if d.warn then
-                logger.warn(
-                  s"[bg-rate-gate] warn for session '$sid': ${d.recentCount} background tasks created within " +
-                    s"${Defaults.BgRateWindowMs / 60000}min (breaker at ${Defaults.BgRateBreakerAfter})"
-                )
-              else IO.unit
-            val recordAlert =
-              if d.breakerEngaged then lastAlert.set(Some(RateAlert(sid, now, d.recentCount)))
-              else IO.unit
-            logWarn *> recordAlert
-          }.map(identity)
+          rateStates
+            .modify { m =>
+              val st = m.getOrElse(sid, SessionRateState())
+              val prior = st.creations.filter(_ > now - windowMs)
+              val breakerActive = st.breakerUntilMs > now
+              val decision = BgRateGate.decide(
+                prior,
+                if breakerActive then Some(st.breakerUntilMs) else None,
+                now,
+                windowMs,
+                Defaults.BgRateWarnAfter,
+                Defaults.BgRateBreakerAfter,
+                Defaults.BgRateBreakerCooldownMs
+              )
+              val nextState =
+                if decision.allowed then
+                  st.copy(
+                    creations = prior :+ now,
+                    breakerUntilMs = decision.breakerUntilMs.getOrElse(0L)
+                  )
+                else st.copy(creations = prior, breakerUntilMs = decision.breakerUntilMs.getOrElse(st.breakerUntilMs))
+              (m + (sid -> nextState), decision)
+            }
+            .flatTap { d =>
+              // 告警面：warn 档与熔断档都留引擎侧告警日志；熔断同时记账
+              // lastAlert（spec 观察面）。
+              val logWarn =
+                if d.breakerEngaged then
+                  logger.warn(
+                    s"[bg-rate-gate] breaker ENGAGED for session '$sid': ${d.recentCount} background tasks created within " +
+                      s"${Defaults.BgRateWindowMs / 60000}min (cooldown ${Defaults.BgRateBreakerCooldownMs / 60000}min)"
+                  )
+                else if d.warn then
+                  logger.warn(
+                    s"[bg-rate-gate] warn for session '$sid': ${d.recentCount} background tasks created within " +
+                      s"${Defaults.BgRateWindowMs / 60000}min (breaker at ${Defaults.BgRateBreakerAfter})"
+                  )
+                else IO.unit
+              val recordAlert =
+                if d.breakerEngaged then lastAlert.set(Some(RateAlert(sid, now, d.recentCount)))
+                else IO.unit
+              logWarn *> recordAlert
+            }
+            .map(identity)
         }
       }
+
+    end if
+
+  end gateCreation
 
   /**
    * 来源推导（后台任务面板重设计）：从注册会话 id 前缀 + 会话名
@@ -234,8 +251,10 @@ object BgTaskRegistry:
   def unregister(jobId: String): IO[Unit] =
     tasks.update(_ - jobId)
 
-  /** 单任务查行（输出查看补全批：remote-output 路由按 jobId 取 deviceName/
-    * outputPath；完成即注销 ⇒ 查无 = 已终态，路由 404 让前端转 /output 收口面）。 */
+  /**
+   * 单任务查行（输出查看补全批：remote-output 路由按 jobId 取 deviceName/
+   * outputPath；完成即注销 ⇒ 查无 = 已终态，路由 404 让前端转 /output 收口面）。
+   */
   def find(jobId: String): IO[Option[ActiveTask]] =
     tasks.get.map(_.get(jobId))
 
@@ -425,31 +444,30 @@ object BgTaskRegistry:
     for
       m <- tasks.get
       lineCounts <- BgTaskOutputStore.lineCounts
-    yield
-      m.values
-        .groupBy(t => if t.rootSessionId.nonEmpty then t.rootSessionId else t.sessionId)
-        .map { case (sid, taskSet) =>
-          sid -> taskSet.map { t =>
-            io.circe.Json.obj(
-              "taskId" -> t.jobId.asJson,
-              "description" -> t.description.asJson,
-              "status" -> "running".asJson,
-              "startedAt" -> t.startedAtMs.asJson,
-              // 后台任务面板重设计：快照补 kind（local/remote）与
-              // 来源字段（origin 类别 + originLabel 显示名）——前端来源 chip
-              // 与类别样式在刷新恢复路径同样可渲染。
-              "kind" -> t.kind.asJson,
-              "origin" -> t.origin.asJson,
-              "originLabel" -> t.originLabel.asJson,
-              // #753 行带已产出行数（刷新恢复路径）：实时行由心跳帧携带
-              // outputLines，快照行此前无来源——面板行在页面刷新后行数 chip
-              // 消失。本字段 = BgTaskOutputStore 的当前 totalLines（无缓冲
-              // 任务 = 0，前端 falsy 不渲染）。remote 任务无缓冲，恒 0。
-              "outputLines" -> lineCounts.getOrElse(t.jobId, 0L).asJson
-            )
-          }.toList
-        }
-        .asJson
+    yield m.values
+      .groupBy(t => if t.rootSessionId.nonEmpty then t.rootSessionId else t.sessionId)
+      .map { case (sid, taskSet) =>
+        sid -> taskSet.map { t =>
+          io.circe.Json.obj(
+            "taskId" -> t.jobId.asJson,
+            "description" -> t.description.asJson,
+            "status" -> "running".asJson,
+            "startedAt" -> t.startedAtMs.asJson,
+            // 后台任务面板重设计：快照补 kind（local/remote）与
+            // 来源字段（origin 类别 + originLabel 显示名）——前端来源 chip
+            // 与类别样式在刷新恢复路径同样可渲染。
+            "kind" -> t.kind.asJson,
+            "origin" -> t.origin.asJson,
+            "originLabel" -> t.originLabel.asJson,
+            // #753 行带已产出行数（刷新恢复路径）：实时行由心跳帧携带
+            // outputLines，快照行此前无来源——面板行在页面刷新后行数 chip
+            // 消失。本字段 = BgTaskOutputStore 的当前 totalLines（无缓冲
+            // 任务 = 0，前端 falsy 不渲染）。remote 任务无缓冲，恒 0。
+            "outputLines" -> lineCounts.getOrElse(t.jobId, 0L).asJson
+          )
+        }.toList
+      }
+      .asJson
 
   /**
    * #752 空闲 delegate 在等什么（快照面数据源）：按**自有 sessionId** 分组的
@@ -541,7 +559,8 @@ object BgRateGate:
             warn = false,
             recentCount = recent.size,
             breakerUntilMs = Some(until),
-            message = Some(rejectMessageEngaged(recent.size, math.max(1, windowMs / 60000L), math.max(1, cooldownMs / 60000L)))
+            message =
+              Some(rejectMessageEngaged(recent.size, math.max(1, windowMs / 60000L), math.max(1, cooldownMs / 60000L)))
           )
         else
           val count = recent.size + 1
@@ -553,4 +572,5 @@ object BgRateGate:
             breakerUntilMs = None,
             message = None
           )
+        end if
 end BgRateGate
