@@ -1,0 +1,51 @@
+HB 2026-10-25 19:21:18 start: sbt compile + PerceptionCoreSpec
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-5201f3c4-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-5201f3c4/project
+[info] compiling 2 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-5201f3c4/project/target/scala-2.12/sbt-1.0/classes ...
+[info] done compiling
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-5201f3c4/)
+[info] compiling 628 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-5201f3c4/target/scala-3.5.2/classes ...
+[info] done compiling
+[info] compiling 846 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-5201f3c4/target/scala-3.5.2/test-classes ...
+[info] done compiling
+[warn] javaOptions will be ignored, fork is set to false
+[32mnebflow.perception.PerceptionCoreSpec:[0m
+[32m  + [0m[32mpresets: QQ 邮箱两问自动识别（imap/smtp 全配）[0m [90m0.007s[0m
+[32m  + [0m[32mpresets: outlook 走 587 STARTTLS（非隐式 TLS）[0m [90m0.0s[0m
+[32m  + [0m[32mpresets: 未收录域返回 None（高级手填路径）[0m [90m0.0s[0m
+[32m  + [0m[32mpresets: domainOf 大小写归一[0m [90m0.001s[0m
+[32m  + [0m[32motp: 中文验证码邮件 → 提取数字码[0m [90m0.006s[0m
+[32m  + [0m[32motp: 英文 verification code 邮件[0m [90m0.001s[0m
+[32m  + [0m[32motp: 无意图词的邮件不误报（订单号不提取）[0m [90m0.0s[0m
+[32m  + [0m[32motp: 年份形 4 位数字不作为验证码[0m [90m0.001s[0m
+[32m  + [0m[32motp: 主题意图加权高于正文[0m [90m0.0s[0m
+[32m  + [0m[32motp: mask 只露前三位[0m [90m0.0s[0m
+[32m  + [0m[32mbilling: 支付宝域直接判账单[0m [90m0.008s[0m
+[32m  + [0m[32mbilling: 关键词+金额判账单；关键词无金额不判[0m [90m0.0s[0m
+[32m  + [0m[32mbilling: 普通邮件不判[0m [90m0.001s[0m
+[32m  + [0m[32mdraft: serialize → parse 往返一致[0m [90m0.004s[0m
+[32m  + [0m[32mdraft: parse 容忍缺失字段 / 未闭合报错[0m [90m0.0s[0m
+[32m  + [0m[32mdraft: 引用块剥取（blockquote 到文末归 quote）[0m [90m0.001s[0m
+[32m  + [0m[32mdraft: htmlToText 剥标签还原换行[0m [90m0.002s[0m
+[32m  + [0m[32mdraft: 地址解析（逗号/分号/空白分隔，滤非法）[0m [90m0.001s[0m
+[32m  + [0m[32mmime: buildData 组装 alternative 正文 + B 编码主题 + 点填充[0m [90m0.011s[0m
+[32m  + [0m[32mmime: dotStuff 只填行首点[0m [90m0.0s[0m
+[32m  + [0m[32mrfc822: 头解析 + base64 正文解码[0m [90m0.002s[0m
+[32m  + [0m[32mrfc822: multipart 深取 text/plain part[0m [90m0.0s[0m
+[32m  + [0m[32mrfc822: toIncomingMail 组装（域名抽取/首地址）[0m [90m0.002s[0m
+[32m  + [0m[32mstore: 账户落盘无授权码值；草稿/审计/spool/账单缓冲全链路[0m [90m0.134s[0m
+[32m  + [0m[32mcore: OTP 窗口单码槽——命中/覆盖/一次性消费/过期[0m [90m0.215s[0m
+[32m  + [0m[32mcore: sweep 过期窗口零 UI 广播（expired 帧）且窗口移除[0m [90m0.003s[0m
+[32m  + [0m[32mregression: sweepLoop/spoolLoop 求值（构造）不炸栈——boot 必经点[0m [90m0.002s[0m
+[32m  + [0m[32mregression: sweepLoop fiber 可启动、进入 sleep 腿、可取消[0m [90m0.204s[0m
+[32m  + [0m[32mregression: spoolLoop 求值不炸栈且 fiber 可启动取消[0m [90m0.155s[0m
+[32m  + [0m[32mregression: sweepLoop 跨 sleep 边界推进 ≥1 轮（过期窗被扫除）[0m [90m10.174s[0m
+[32m  + [0m[32mcore: 面板条目投影——未配置/已连接/暂停/授权失效四态与四色[0m [90m0.008s[0m
+[32m  + [0m[32mcore: 草稿快照一致性——编辑后 mtime > snapshotAt 判 stale[0m [90m0.015s[0m
+[32m  + [0m[32mcore: sendDraft 附件拒绝（本批发送附件未开放，不静默丢弃）[0m [90m0.007s[0m
+[32m  + [0m[32mcore: abandonDraft 置态并删文件[0m [90m0.005s[0m
+[info] Passed: Total 34, Failed 0, Errors 0, Passed 34
+[success] Total time: 143 s (0:02:23.0), completed 2026年10月25日 19:23:49
+HB 2026-10-25 19:23:49 done rc=0
