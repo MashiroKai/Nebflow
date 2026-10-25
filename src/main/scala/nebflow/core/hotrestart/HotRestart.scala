@@ -824,7 +824,7 @@ object HotRestart:
    *    --no-browser`。
    * 双保险（§3.5 规则 3）：env `NEBFLOW_GATEWAY_PORT` 主保险（defaultSpawn 显式
    * 注入）+ argv `--home/--port` belt（intent 记录值注入 argv——任何一层 fork/exec
-   * 断链都不会回落 8080）。
+   * 断链都不会回落引擎默认口；2026-10-25 端口对调后默认口 = 6138，曾 8080）。
    */
   def buildCommand(
     form: String,
@@ -907,7 +907,8 @@ object HotRestart:
         IO.blocking {
           val pb = new ProcessBuilder(parts*)
           pb.directory(new File(sys.props("user.home")))
-          // env 主保险：无论哪层 fork/exec 断了 argv，后继端口都不回落 8080（标准配方）
+          // env 主保险：无论哪层 fork/exec 断了 argv，后继端口都不回落引擎默认口
+          // （端口对调批 2026-10-25 后默认口 = 6138，曾 8080；标准配方）
           pb.environment().put("NEBFLOW_GATEWAY_PORT", intent.port.toString)
           val logsDir = new File(PathUtil.dataRoot.toIO, "logs")
           if !logsDir.exists() then logsDir.mkdirs()

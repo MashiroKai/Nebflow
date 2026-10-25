@@ -12,10 +12,11 @@ COPY target/scala-*/${lower_name}-assembly-*.jar /app/app.jar
 # Create config directory
 RUN mkdir -p /root/.config/${lower_name}
 
-EXPOSE 8080
+# 引擎默认网关口（端口对调落地批 2026-10-25，单一来源 Defaults.GatewayPort）
+EXPOSE 6138
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD wget -qO- http://localhost:8080/api/health || exit 1
+  CMD wget -qO- http://localhost:6138/api/health || exit 1
 
 ENTRYPOINT ["java", "--add-opens", "java.base/java.lang=ALL-UNNAMED", "-jar", "/app/app.jar"]
 CMD ["--server"]

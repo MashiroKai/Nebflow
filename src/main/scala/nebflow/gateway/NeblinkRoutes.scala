@@ -99,7 +99,7 @@ private[gateway] object NeblinkRoutes:
             req.as[Json].flatMap { body =>
               io.circe.parser.decode[nebflow.neblink.DeviceDiscoveryInfo](body.noSpaces) match
                 case Right(info) =>
-                  val port = body.hcursor.downField("port").as[Int].getOrElse(8080)
+                  val port = body.hcursor.downField("port").as[Int].getOrElse(nebflow.shared.Defaults.GatewayPort)
                   isKnownNetworkDevice(ms, info.deviceId, remoteIp).flatMap { known =>
                     if ms.isTrustedPeer(remoteIp) || known then
                       ms.handleAnnounce(info, remoteIp, port) *>

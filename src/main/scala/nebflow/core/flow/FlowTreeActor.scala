@@ -282,7 +282,7 @@ object FlowTreeActor:
     resources: AgentRuntimePort,
     projectRoot: String,
     safetyMode: String,
-    gatewayPort: Int = 8080,
+    gatewayPort: Int = nebflow.shared.Defaults.GatewayPort,
     disableFileWatcher: Boolean = false,
     folderId: Option[String] = None,
     projectsDir: Option[String] = None

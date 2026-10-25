@@ -97,7 +97,7 @@ irm https://mystand.space/install.ps1 | iex
 Then start the workspace:
 
 ```bash
-stand start    # serves the web UI at http://localhost:8080
+stand start    # serves the web UI at http://localhost:6138
 ```
 
 Releases on [GitHub Releases](https://github.com/MashiroKai/Nebflow/releases) ship a single self-contained JAR; the install scripts above add Java 21 and ripgrep for you when either is missing.

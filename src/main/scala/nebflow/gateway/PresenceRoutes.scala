@@ -349,7 +349,10 @@ private[gateway] object PresenceRoutes:
                     case None => // 大段受理体原缩进零改排（花括号区域经典解析）
                       val peerDeviceName = req.params.getOrElse("deviceName", "Unknown")
                       val peerPlatform = req.params.getOrElse("platform", "")
-                      val peerPort = req.params.getOrElse("port", "8080").toIntOption.getOrElse(8080)
+                      val peerPort = req.params
+                        .getOrElse("port", nebflow.shared.Defaults.GatewayPort.toString)
+                        .toIntOption
+                        .getOrElse(nebflow.shared.Defaults.GatewayPort)
                       val capsStr = req.params.getOrElse("capabilities", "{}")
                       val capabilities = parser.decode[Map[String, String]](capsStr).getOrElse(Map.empty)
                       val info = nebflow.neblink.DeviceDiscoveryInfo(

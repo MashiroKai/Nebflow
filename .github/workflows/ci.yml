@@ -395,7 +395,7 @@ jobs:
           SERVER_PID=$!
           echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
           for i in $(seq 1 30); do
-            if curl -s http://localhost:8080/ > /dev/null 2>&1; then
+            if curl -s http://localhost:6138/ > /dev/null 2>&1; then
               echo "Server started after ${i}s"
               break
             fi
@@ -410,11 +410,11 @@ jobs:
         shell: bash
         run: |
           echo "--- Health check ---"
-          curl -sf http://localhost:8080/api/health && echo "" || echo "FAIL"
+          curl -sf http://localhost:6138/api/health && echo "" || echo "FAIL"
           echo "--- Static assets ---"
-          curl -s -o /dev/null -w "GET / -> %{http_code}\n" http://localhost:8080/
+          curl -s -o /dev/null -w "GET / -> %{http_code}\n" http://localhost:6138/
           echo "--- Config endpoint ---"
-          CONFIG=$(curl -sf http://localhost:8080/api/config 2>&1) && echo "${CONFIG:0:200}..." || echo "Config not available"
+          CONFIG=$(curl -sf http://localhost:6138/api/config 2>&1) && echo "${CONFIG:0:200}..." || echo "Config not available"
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -424,7 +424,7 @@ jobs:
         # Traversal-based: every file under src/main/resources/web must be
         # served 200. New files are covered automatically; an unroutable file
         # fails the job.
-        run: node scripts/verify-web-assets.mjs http://localhost:8080
+        run: node scripts/verify-web-assets.mjs http://localhost:6138
       - name: Stop server
         if: always()
         shell: bash
@@ -469,7 +469,7 @@ jobs:
           SERVER_PID=$!
           echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
           for i in $(seq 1 60); do
-            if curl -s http://localhost:8080/api/health > /dev/null 2>&1; then
+            if curl -s http://localhost:6138/api/health > /dev/null 2>&1; then
               echo "Server started after ${i}s"
               break
             fi
@@ -491,7 +491,7 @@ jobs:
         #  2. the injected contract appears with RAW quotes: "productName":
         shell: bash
         run: |
-          BODY=$(curl -s http://localhost:8080/)
+          BODY=$(curl -s http://localhost:6138/)
           FIRST15=$(printf '%s' "$BODY" | head -c 15)
           if [ "$FIRST15" != "<!DOCTYPE html>" ]; then
             echo "FAIL: index does not start with <!DOCTYPE html> (got: $FIRST15)"
@@ -515,13 +515,14 @@ jobs:
         # 自动生成 ~/.stand/auth.json（Auth.loadOrCreateToken；dataRoot 解析
         # src/main/scala/nebflow/shared/paths.scala），各 spec 的 token 契约
         # （NEBFLOW_TOKEN / $NEBFLOW_HOME/auth.json / $NEBFLOW_HOME_DIR/auth.json）
-        # 由这里统一桥接；BASE_URL / NEBFLOW_URL 全部钉到本 job 的 :8080 实例。
+        # 由这里统一桥接；BASE_URL / NEBFLOW_URL 全部钉到本 job 的 :6138 实例
+        #（引擎默认口，端口对调落地批 2026-10-25，曾 8080）。
         run: |
           echo "NEBFLOW_TOKEN=$(cat "$HOME/.stand/auth.json")" >> "$GITHUB_ENV"
           echo "NEBFLOW_HOME=$HOME/.stand" >> "$GITHUB_ENV"
           echo "NEBFLOW_HOME_DIR=$HOME/.stand" >> "$GITHUB_ENV"
-          echo "BASE_URL=http://localhost:8080" >> "$GITHUB_ENV"
-          echo "NEBFLOW_URL=http://localhost:8080" >> "$GITHUB_ENV"
+          echo "BASE_URL=http://localhost:6138" >> "$GITHUB_ENV"
+          echo "NEBFLOW_URL=http://localhost:6138" >> "$GITHUB_ENV"
       - name: Instance-backed specs (askuser / workspace-picker / plugins panels)
         shell: bash
         run: npx playwright test tests/askuser.spec.mjs tests/askuser-attach.spec.mjs tests/workspace-picker.spec.mjs tests/plugins-panel-redesign.spec.mjs tests/plugins-panel-two-actions.spec.mjs
@@ -541,7 +542,7 @@ jobs:
         run: |
           npm ci
           node scripts/build-web.mjs
-          node scripts/verify-web-assets.mjs --root build/web-dist http://localhost:8080
+          node scripts/verify-web-assets.mjs --root build/web-dist http://localhost:6138
       - name: Stop server
         if: always()
         shell: bash
@@ -624,10 +625,10 @@ jobs:
         run: docker build --build-arg lower_name=${LOWER_NAME} -t ${LOWER_NAME}:test .
       - name: Test container starts
         run: |
-          docker run -d --name ${LOWER_NAME}-test -p 8080:8080 ${LOWER_NAME}:test
+          docker run -d --name ${LOWER_NAME}-test -p 6138:6138 ${LOWER_NAME}:test
           sleep 5
           docker logs ${LOWER_NAME}-test 2>&1 | head -20
-          curl -sf http://localhost:8080/api/health || echo "Health check failed"
+          curl -sf http://localhost:6138/api/health || echo "Health check failed"
           docker stop ${LOWER_NAME}-test
       - name: Java 17 reproduction — banner reachable + self-repair path alive (A-7b/A-6)
         # The only assertion that makes "Java 17 is incompatible" visible in CI:

@@ -120,7 +120,9 @@ private[gateway] object AuthRoutes:
       // `post_logout_redirect_uri not registered` (the older "ignored, always
       // safe" note is obsolete), and it does NOT apply loopback port leniency
       // here — so this page is reached only on a port whose exact URI is
-      // allow-listed on the Logto app (today: 8080 and 8097).
+      // allow-listed on the Logto app. 端口对调批 2026-10-25：引擎默认口 8080→6138，
+      // 6138 须入 Logto app 的 redirect/post-logout allow-list（ops 侧动作，见
+      // reports/weixin-restart-parity）；存量 8080（9.19 自有根实例）与 8097 仍在列。
       //
       // Behaviour is decided in ONE place — the single-use switch handoff marker:
       // armed+fresh ⇒ consume and continue the switch-account login IN THIS

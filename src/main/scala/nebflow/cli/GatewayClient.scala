@@ -152,13 +152,14 @@ object GatewayClient:
   private[cli] def resetPort(): Unit = portOverride = None
 
   /**
-   * Single port resolver: explicit CLI override > `GATEWAY_PORT` env > 8080.
+   * Single port resolver: explicit CLI override > `GATEWAY_PORT` env >
+   * Defaults.GatewayPort (6138, 端口对调批 2026-10-25 — was 8080).
    * Every CLI-side port read goes through here — no second mechanism.
    */
   def readPort: IO[Int] = IO.blocking {
     portOverride
       .orElse(nebflow.shared.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption))
-      .getOrElse(8080)
+      .getOrElse(nebflow.shared.Defaults.GatewayPort)
   }
 
   /**
