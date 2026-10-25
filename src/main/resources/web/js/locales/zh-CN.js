@@ -418,6 +418,9 @@ export default {
   'messages.forwardPartial': '已转发 {n} 条，{f} 条失败',
   // B+C 批 · 方案 B（不可恢复标记的**文案**半边）：{n} = 无法恢复的附件数。
   'messages.queueAttachUnrecoverable': '{n} 个附件因页面刷新无法恢复，请重新添加',
+  // attach-split 批（2026-10-24 现场事故修复）：服务端超限帧有声拒绝（messageTooLarge
+  // 回执）的用户可见文案 —— {size}/{limit} = 实测帧 MB / 服务端上限 MB。
+  'send.messageTooLarge': '这条消息（约 {size} MB）超过投递上限 {limit} MB，未被发送——请减少附件数量后重发',
   'messages.trusted': '已信任',
   'messages.trustedHint': '已开启信任：新消息将自动转发给 agent',
   'messages.loadingOlder': '加载更早消息',
@@ -758,9 +761,16 @@ export default {
   'subagents.indicatorTitle': '后台子智能体',
   'subagents.status.running': '进行中',
   // held-receipt 投递可靠性批（2026-10-21 fix 4）：显式等待停靠态（等合并轮）。
-  'subagents.status.waiting': '停靠等待',
+  // panel-merge-status 批（2026-10-25 · 作者令）：候合并从通用「停靠等待」提升为
+  // 钉住的可见状态词——面板行状态位直显「候合并」。
+  'subagents.status.waiting': '候合并',
   'subagents.status.waitingMerge': '等待合并轮',
   'subagents.status.idle': '空闲',
+  // panel-merge-status 批（2026-10-25）：候合并行队列细节段（/api/merge-queue 只读
+  // 状态面；位次只渲染不派生，API 未生效 ⇒ 段全缺 = 静态「等待合并轮」降级）。
+  'subagents.mergeQueue.ahead': '前面还有 {n} 位',
+  'subagents.mergeQueue.retry': '第 {n} 次重试',
+  'subagents.mergeQueue.reason': '上次被拒：{reason}',
   // #752 空闲 delegate 在等什么（细分注记 + 长空闲提醒徽标）。
   'subagents.waitingBg': '等后台任务 ×{count}：{desc}（{dur}）',
   'subagents.waitingReceipts': '等子代理回执 ×{count}',

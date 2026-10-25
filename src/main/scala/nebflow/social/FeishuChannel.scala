@@ -11,7 +11,7 @@ import com.lark.oapi.event.cardcallback.model.{
   P2CardActionTriggerResponse
 }
 import com.lark.oapi.service.im.ImService
-import com.lark.oapi.service.im.v1.model.{CreateMessageReq, CreateMessageReqBody, GetImageReq, P2MessageReceiveV1}
+import com.lark.oapi.service.im.v1.model.{CreateMessageReq, CreateMessageReqBody, P2MessageReceiveV1}
 import com.lark.oapi.ws.Client as WsClient
 
 import java.time.format.DateTimeFormatter
@@ -164,6 +164,13 @@ object FeishuChannel:
    */
   private[social] def baseUrlFor(region: String): BaseUrlEnum =
     if region.equalsIgnoreCase("lark") then BaseUrlEnum.LarkSuite else BaseUrlEnum.FeiShu
+
+  /**
+   * The https ORIGIN of the region — the raw-HTTP legs ([[getImageVia]]) build
+   * URLs from this string. Same region judgement as [[baseUrlFor]].
+   */
+  private[social] def baseOriginOf(region: String): String =
+    if region.equalsIgnoreCase("lark") then "https://open.larksuite.com" else "https://open.feishu.cn"
 
   /**
    * Open a long connection and collect inbound events.
@@ -468,35 +475,151 @@ object FeishuChannel:
    * (feishu-inbound-image batch, 2026-10-11) — the inbound twin of
    * `RichFeishuAdapter`'s upload leg. `bytes` is the image body exactly as the
    * channel returned it: no re-encode, no synthesis, never a credential.
+   * 入站图片必达批（2026-10-24）: the face is deliberately byte[]-shaped — a
+   * stream object must NEVER ride this DTO (see [[getImage]]).
    */
   final case class ImageResult(ok: Boolean, bytes: Option[Array[Byte]], code: Int, msg: String)
 
   /**
+   * 入站图片必达批（2026-10-24）· the raw-HTTP transport seam of
+   * [[getImageVia]]: (url, headers, body) → status + bytes. `body` present ⇒
+   * POST, absent ⇒ GET. `Left` = the transport itself failed (dns/timeout/…).
+   * The offline spec injects a stub here; production =
+   * [[rawHttpLive]]. Introduced because the SDK's download leg is BROKEN on
+   * JDK 23 (see [[getImage]]): the engine must own this wire.
+   */
+  type RawHttp = (String, Map[String, String], Option[Array[Byte]]) => Either[String, (Int, Array[Byte])]
+
+  /**
+   * Production [[RawHttp]] — `java.net.http.HttpClient` (the same JDK client
+   * family the neblink legs already use; zero new dependencies).
+   */
+  def rawHttpLive(timeoutMs: Int = 15_000): RawHttp =
+    (url, headers, body) =>
+      try
+        val client = java.net.http.HttpClient
+          .newBuilder()
+          .connectTimeout(java.time.Duration.ofMillis(timeoutMs))
+          .followRedirects(java.net.http.HttpClient.Redirect.NEVER)
+          .build()
+        val builder = java.net.http.HttpRequest
+          .newBuilder()
+          .uri(java.net.URI.create(url))
+          .timeout(java.time.Duration.ofMillis(timeoutMs))
+        headers.foreach { case (k, v) => builder.header(k, v) }
+        val request = body match
+          case Some(bytes) => builder.POST(java.net.http.HttpRequest.BodyPublishers.ofByteArray(bytes)).build()
+          case None        => builder.GET().build()
+        val resp = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofByteArray())
+        Right((resp.statusCode(), resp.body()))
+      catch
+        case e: Exception =>
+          Left(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}")
+
+  /** One cached tenant token (value never leaves this map). */
+  private final case class CachedToken(token: String, fetchedAt: Long)
+
+  /** The in-memory tenant-token cache — key = appId + region base (never the secret). */
+  private val tokenCache = scala.collection.mutable.Map.empty[String, CachedToken]
+
+  /** tenant_access_token lives 2h server-side; refresh after 90min locally. */
+  private val TokenTtlMs = 90L * 60L * 1000L
+
+  /**
+   * The tenant-token leg of the raw download: POST
+   * `/open-apis/auth/v3/tenant_access_token/internal`, cache per
+   * (appId, region) for [[TokenTtlMs]]. Every refusal is an explicit reading —
+   * code/msg only, the request body (which carries the secret) never rides a
+   * log line.
+   */
+  private[social] def tenantToken(appId: String, appSecret: String, base: String, http: RawHttp): Either[String, String] =
+    val cacheKey = s"$appId@$base"
+    tokenCache.synchronized {
+      tokenCache.get(cacheKey).filter(t => System.currentTimeMillis() - t.fetchedAt < TokenTtlMs) match
+        case Some(cached) => Right(cached.token)
+        case None =>
+          val body = io.circe.Json
+            .obj("app_id" -> io.circe.Json.fromString(appId), "app_secret" -> io.circe.Json.fromString(appSecret))
+            .noSpaces
+            .getBytes("UTF-8")
+          http(s"$base/open-apis/auth/v3/tenant_access_token/internal", Map("Content-Type" -> "application/json"), Some(body)) match
+            case Left(err) => Left(s"token request failed: $err")
+            case Right((status, bytes)) =>
+              io.circe.parser.parse(new String(bytes, java.nio.charset.StandardCharsets.UTF_8)).toOption
+                .flatMap { j =>
+                  val code = j.hcursor.downField("code").as[Long].toOption.map(_.toInt).getOrElse(-1)
+                  if code == 0 then
+                    j.hcursor.downField("tenant_access_token").as[String].toOption.filter(_.nonEmpty) match
+                      case Some(token) =>
+                        tokenCache.update(cacheKey, CachedToken(token, System.currentTimeMillis()))
+                        Some(Right(token))
+                      case None => Some(Left(s"token response carried no tenant_access_token (http=$status)"))
+                  else
+                    val msg = j.hcursor.downField("msg").as[String].toOption.getOrElse("")
+                    Some(Left(s"token refused code=$code msg=$msg (http=$status)"))
+                }
+                .getOrElse(Left(s"token response was not JSON (http=$status, ${bytes.length}B)"))
+    }
+
+  /**
+   * The readable refusal out of a non-2xx `im/v1/images` body — feishu's own
+   * `code`/`msg` when the body is the error JSON, an honest shape note when it
+   * is not. Pure, so the offline spec pins the exact reading (the SDK used to
+   * mask ALL of these behind a JsonIOException — the 2026-10-24 incident).
+   */
+  def imageErrorReading(status: Int, body: Array[Byte]): (Int, String) =
+    io.circe.parser.parse(new String(body, java.nio.charset.StandardCharsets.UTF_8)).toOption
+      .flatMap { j =>
+        val code = j.hcursor
+          .downField("code")
+          .as[Long]
+          .toOption
+          .map(_.toInt)
+          .orElse(j.hcursor.downField("code").as[String].toOption.flatMap(s => scala.util.Try(s.toInt).toOption))
+        code.map(c => (c, j.hcursor.downField("msg").as[String].toOption.getOrElse("")))
+      }
+      .getOrElse((status, s"HTTP $status with a non-JSON body (${body.length}B)"))
+
+  /**
    * `im/v1/images/:image_key` — download one message image by its key
    * (feishu-inbound-image batch). The bot credential pair rides the SAME face
-   * as [[sendText]] (same client construction, the region base URL); a null
-   * response, a channel refusal and a thrown exception all become explicit
-   * readings — never a raise, never a silent empty.
+   * as [[sendText]] (the region base URL); a null response, a channel refusal
+   * and a thrown exception all become explicit readings — never a raise, never
+   * a silent empty.
+   *
+   * 入站图片必达批（2026-10-24）· THE SDK IS GONE FROM THIS LEG. Root cause of
+   * the 2026-10-24 incident (every inbound image failing, zero ever landed):
+   * the SDK models the download as `GetImageResp extends
+   * BaseResponse<java.io.ByteArrayOutputStream>` — a STREAM OBJECT inside the
+   * Gson-serialized DTO. On any non-binary (error-JSON) response the SDK runs
+   * Gson over that DTO; under JDK 23 strong encapsulation `setAccessible` on
+   * `java.io.ByteArrayOutputStream#buf` throws JsonIOException BEFORE feishu's
+   * real code/msg can be read — the refusal is unreadable, the failure
+   * deterministic, and the download leg never worked in production. The fix
+   * owns the wire: tenant token + raw GET over [[RawHttp]], bytes in/out, the
+   * error JSON parsed with circe. SAME public signature and [[ImageResult]]
+   * face — FeishuBridgePlugin is untouched.
    */
   def getImage(appId: String, appSecret: String, region: String, imageKey: String): ImageResult =
-    try
-      val client = LarkClient
-        .newBuilder(appId, appSecret)
-        .openBaseUrl(baseUrlFor(region))
-        .build()
-      val req = GetImageReq.newBuilder().imageKey(imageKey).build()
-      val resp = client.im().v1().image().get(req)
-      if resp == null then ImageResult(ok = false, None, -1, "SDK returned a null response")
-      else if !resp.success() then ImageResult(ok = false, None, resp.getCode, Option(resp.getMsg).getOrElse(""))
-      else
-        Option(resp.getData).map(_.toByteArray).filter(_.nonEmpty) match
-          case Some(bytes) => ImageResult(ok = true, Some(bytes), resp.getCode, "ok")
-          case None => ImageResult(ok = false, None, resp.getCode, "download succeeded but returned no bytes")
-    catch
-      case e: Exception =>
-        ImageResult(ok = false, None, -1, s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}")
+    getImageVia(rawHttpLive())(appId, appSecret, region, imageKey)
 
-  end getImage
+  /** The [[RawHttp]]-seamed core — the offline spec injects the transport here. */
+  private[social] def getImageVia(http: RawHttp)(appId: String, appSecret: String, region: String, imageKey: String): ImageResult =
+    val base = baseOriginOf(region)
+    tenantToken(appId, appSecret, base, http) match
+      case Left(reason) => ImageResult(ok = false, None, -1, reason)
+      case Right(token) =>
+        http(s"$base/open-apis/im/v1/images/$imageKey", Map("Authorization" -> s"Bearer $token"), None) match
+          case Left(err) => ImageResult(ok = false, None, -1, s"image GET failed: $err")
+          case Right((status, bytes)) =>
+            if status >= 200 && status < 300 then
+              if bytes.nonEmpty then ImageResult(ok = true, Some(bytes), status, "ok")
+              else ImageResult(ok = false, None, status, "download succeeded but returned no bytes")
+            else
+              val (code, msg) = imageErrorReading(status, bytes)
+              ImageResult(ok = false, None, code, msg)
+
+  end getImageVia
 
   /**
    * Send one interactive card (askuser batch, 2026-10-01).

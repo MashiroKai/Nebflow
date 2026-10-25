@@ -14,6 +14,28 @@ import org.http4s.headers.`Content-Type`
 object NfFileRoutes:
 
   /**
+   * 判据拒的日志可见性（Pop 图片 403 批 2026-10-24）：修前 `/api/nf-file` 的
+   * 403 全族（verdict 判据拒 + 票拒）**零日志**——前端只回「Failed to render:
+   * HTTP 403」，网关侧没有任何留痕可取证（作者报障「怎么老是出现 Failed to
+   * render: HTTP 403」，宿主日志 grep 零命中即此缺口）。本 logger 名下
+   * （`nebflow.nf-file`）对每个 403 写一行可 grep 的 `nf-file denied:`
+   * （reason/status/path/remote 四键，ticket 本体永不落日志——T2 凭据纪律）。
+   * 401（缺票参数）**刻意不记**：它是铸票面降级（F2/F5）的设计信号，量大的
+   * 会话级噪音，无诊断价值。
+   */
+  private val logger = nebflow.shared.NebflowLogger.forName("nebflow.nf-file")
+
+  /** 单行可 grep 的判据拒日志（spec NfFileDenyLogSpec 按本形状钉死）。 */
+  private[gateway] def denyLogLine(status: Int, reason: String, path: String, remote: String): String =
+    s"nf-file denied: status=$status reason=$reason path=$path remote=$remote"
+
+  /** 出向响应纯化 + 可见性日志：denied 出向原样，日志 fire-and-forget。 */
+  private def deniedWithLog(resp: NfVerdict.Denied, path: String, req: Request[IO]): IO[Response[IO]] =
+    logger
+      .warn(denyLogLine(resp.status.code, resp.reason, path, req.remoteAddr.map(_.toString).getOrElse("unknown")))
+      .as(nfDenied(resp))
+
+  /**
    * Plain-text response builder.
    *
    * Deliberately NOT `Response.withEntity(String)` / the dsl generators:
@@ -223,11 +245,11 @@ object NfFileRoutes:
             case true =>
               nfFileVerdictTolerant(rawPath, policy, home)
                 .flatMap {
-                  case denied: NfVerdict.Denied => IO.pure(nfDenied(denied))
+                  case denied: NfVerdict.Denied => deniedWithLog(denied, rawPath, req)
                   case NfVerdict.Allowed(real, _) =>
                     store.verifyAndConsume(ticket, real.toString).flatMap {
                       case Left(reason) =>
-                        IO.pure(nfDenied(NfVerdict.Denied(Status.Forbidden, reason, "ticket rejected")))
+                        deniedWithLog(NfVerdict.Denied(Status.Forbidden, reason, "ticket rejected"), rawPath, req)
                       case Right(_) =>
                         val fsReal = fs2.io.file.Path(real.toString)
                         // Stage 1: syntax probe against MaxValue — separates "carries a

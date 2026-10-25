@@ -1,0 +1,85 @@
+== E2E release.sh full chain ==
+repo=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-f12732c8 root=/tmp/rel-e2e-20261025-190219/bin port=23554 version=2026.10.25-dev.7b41a525b
+
+──────────── [1] stage (real assembly + real boot-smoke, expect PASS) ────────────
+[release] stage: version=2026.10.25-dev.7b41a525b repo=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-f12732c8 root=/tmp/rel-e2e-20261025-190219/bin
+[release] preflight: branch=delegate/delegate-nebflow-f12732c8 dirty_files=1
+[release]   dirty:  M VERSION
+[release] preflight: vs origin/main (as of last fetch): ahead=53 behind=0
+[release] preflight drift (NON-blocking, reported for the candidate card): worktree not clean (1 files) main vs origin/main ahead=53 behind=0
+[release] building: (sbt assembly) — cwd=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-f12732c8
+[release] build ok in 73s: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-f12732c8/target/scala-3.5.2/stand-assembly-2026.10.25-dev.7b41a525b.jar ( 99M)
+[release] smoke gate: port=23554 timeout=120s
+[smoke] jar=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-f12732c8/target/scala-3.5.2/stand-assembly-2026.10.25-dev.7b41a525b.jar ( 99M )
+[smoke] port=23554 timeout=120s java=/Users/kaiyu/.stand/jdk-21/bin/java
+[smoke] never-kill ledger: 1105 88102 52985 
+[smoke] home=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T//stand-boot-smoke.1rRv1p (isolated data root; cwd of the boot = the home itself)
+[smoke] last 50 log lines (/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T//stand-boot-smoke.1rRv1p/boot-smoke.log):
+[log] daemon child exited before becoming ready — last lines of daemon.out:
+[log] 	at nebflow.perception.PerceptionCore.sweepLoop(PerceptionService.scala:150)
+[log] 	at nebflow.perception.PerceptionCore.sweepLoop(PerceptionService.scala:150)
+[log] 	at nebflow.perception.PerceptionCore.sweepLoop(PerceptionService.scala:150)
+[log] 	at nebflow.perception.PerceptionCore.sweepLoop(PerceptionService.scala:150)
+[log] 	at nebflow.perception.PerceptionCore.sweepLoop(PerceptionService.scala:150)
+[smoke] teardown: port 23554 free
+[smoke] teardown: isolated home removed (/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T//stand-boot-smoke.1rRv1p)
+BOOT-SMOKE: FAIL stage=boot reason=gateway not ready within 120s (listener_seen=0)
+[release] smoke verdict: BOOT-SMOKE: FAIL stage=boot reason=gateway not ready within 120s (listener_seen=0)
+RELEASE-STAGE: FAIL stage=smoke reason=boot-smoke did not pass (rc=1) — zero candidates produced
+>>> STAGE_RC=1
+
+pointer after stage: 2026.9.19  (must still be 2026.9.19)
+staged-release.json:
+cat: /tmp/rel-e2e-20261025-190219/bin/staged-release.json: No such file or directory
+
+──────────── [2] approve (real promotion probe, expect switch + rollback line) ────────────
+RELEASE-APPROVE: REJECT reason=no staged-release.json in /tmp/rel-e2e-20261025-190219/bin — run stage first
+>>> APPROVE_RC=1
+pointer after approve: 2026.9.19  (must be 2026.10.25-dev.7b41a525b)
+/tmp/cut-f12732c8/e2e-run.sh: 行 38: /tmp/rel-e2e-20261025-190219/bin/previous-version: No such file or directory
+previous-version:   (must be 2026.9.19)
+
+──────────── [3] rollback (expect pointer restored) + idempotent ────────────
+RELEASE-ROLLBACK: FAIL reason=no previous version on record (staged-release.json / previous-version)
+>>> ROLLBACK_RC=1
+pointer after rollback: 2026.9.19  (must be 2026.9.19)
+RELEASE-ROLLBACK: FAIL reason=no previous version on record (staged-release.json / previous-version)
+>>> ROLLBACK2_RC=1 (idempotent, expect 0)
+pointer after 2nd rollback: 2026.9.19
+
+──────────── [4] bad jar (truncated) stage -> FAIL, zero candidates ────────────
+real jar under test: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-f12732c8/target/scala-3.5.2/stand-assembly-2026.10.25-dev.7b41a525b.jar
+[release] stage: version=2026.10.25-dev.7b41a525b repo=/tmp/rel-e2e-20261025-190219/badrepo root=/tmp/rel-e2e-20261025-190219/bin2
+[release] preflight: branch=main dirty_files=0
+[release] preflight: no origin/main ref known (no fetch performed — run 'git fetch' to refresh; not blocking)
+[release] preflight drift (NON-blocking, reported for the candidate card):  origin/main unknown (stale refs?)
+[release] building: (mkdir -p "$RELEASE_REPO/target/scala-3.5.2" && head -c 4096 "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-f12732c8/target/scala-3.5.2/stand-assembly-2026.10.25-dev.7b41a525b.jar" > "$RELEASE_REPO/target/scala-3.5.2/stand-assembly-$RELEASE_VERSION.jar") — cwd=/tmp/rel-e2e-20261025-190219/badrepo
+[release] build ok in 0s: /tmp/rel-e2e-20261025-190219/badrepo/target/scala-3.5.2/stand-assembly-2026.10.25-dev.7b41a525b.jar (4.0K)
+[release] smoke gate: port=21724 timeout=20s
+[smoke] jar=/tmp/rel-e2e-20261025-190219/badrepo/target/scala-3.5.2/stand-assembly-2026.10.25-dev.7b41a525b.jar (4.0K )
+[smoke] port=21724 timeout=20s java=/Users/kaiyu/.stand/jdk-21/bin/java
+[smoke] never-kill ledger: 1105 88102 52985 
+[smoke] home=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T//stand-boot-smoke.am4EEs (isolated data root; cwd of the boot = the home itself)
+[smoke] last 50 log lines (/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T//stand-boot-smoke.am4EEs/boot-smoke.log):
+[log] Error: Invalid or corrupt jarfile /tmp/rel-e2e-20261025-190219/badrepo/target/scala-3.5.2/stand-assembly-2026.10.25-dev.7b41a525b.jar
+[smoke] teardown: port 21724 free
+[smoke] teardown: isolated home removed (/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T//stand-boot-smoke.am4EEs)
+BOOT-SMOKE: FAIL stage=boot reason=gateway not ready within 20s (listener_seen=0)
+[release] smoke verdict: BOOT-SMOKE: FAIL stage=boot reason=gateway not ready within 20s (listener_seen=0)
+RELEASE-STAGE: FAIL stage=smoke reason=boot-smoke did not pass (rc=1) — zero candidates produced
+>>> BAD_STAGE_RC=1 (expect 1)
+bad root versions dir: (expect only preset)
+bad root staged-release.json: absent (correct)
+
+──────────── [5] 收尾扫描: 零残留 + 在产无扰 ────────────
+-- sandbox ports listeners left:
+   port 23554: none
+   port 23520: none
+   port 21724: none
+-- production 6138/8080 untouched check (read-only):
+   8080 listeners: 88102 -- live pointer untouched:
+   ~/.stand/bin/current-version = 2026.10.25-dev.8ae0e5317
+
+== E2E verdicts ==
+STAGE_RC=1 APPROVE_RC=1 ROLLBACK_RC=1 ROLLBACK2_RC=1 BAD_STAGE_RC=1
+2026-10-25 19:05:56 end rc=0

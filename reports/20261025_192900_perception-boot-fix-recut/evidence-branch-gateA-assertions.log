@@ -1,0 +1,119 @@
+== release.sh pipeline tests ==
+   repo: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-5201f3c4
+   sandbox: /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T//release-pipeline.2AvMXr
+--- case 0: bash -n / shellcheck
+  PASS: syntax: release.sh
+  PASS: boot-smoke.sh present (M1 contract dependency)
+  PASS: shellcheck: release.sh
+--- case 1: stage PASS -> versions/<v> installed, staged-release.json written, pointer untouched
+  PASS: stage rc (rc=0)
+  PASS: CANDIDATE-READY emitted
+  PASS: RELEASE-STAGE: OK emitted
+  PASS: jar installed
+  PASS: staged-release.json written
+  PASS: json.version
+  PASS: json.smokeEvidence is a PASS line
+  PASS: json.previous = pre-stage pointer
+  PASS: json.commit is a sha
+  PASS: pointer untouched by stage
+  PASS: no rollback line at stage
+--- case 2: stage smoke FAIL -> rc!=0, ZERO candidates (no versions/<v>, no staged json)
+  PASS: stage smoke-fail rc (rc=1)
+  PASS: RELEASE-STAGE: FAIL emitted
+  PASS: no versions/<v> dir
+  PASS: no staged-release.json
+  PASS: pointer untouched
+--- case 3: stage refuses existing versions/<v> (immutable packages)
+  PASS: immutable refuse rc (rc=1)
+  PASS: immutable message
+  PASS: no build attempted
+--- case 4: preflight drift (dirty) is NON-blocking and reported
+  PASS: dirty stage still passes (rc=0)
+  PASS: dirty reported
+  PASS: drift on record
+--- case 5: approve PASS -> pointer switched, previous recorded, rollback line printed
+  PASS: approve rc (rc=0)
+  PASS: RELEASE-APPROVE: OK
+  PASS: pointer switched to staged version
+  PASS: previous-version records old pointer
+  PASS: rollback instruction present
+  PASS: json.approved=true
+  PASS: approve re-probed the staged jar
+--- case 6: approve probe FAIL -> REJECT, pointer untouched
+  PASS: approve reject rc (rc=1)
+  PASS: REJECT named
+  PASS: pointer NOT switched
+  PASS: no previous-version file written
+--- case 7: approve without staging -> named reject
+  PASS: approve no-staging rc (rc=1)
+  PASS: no staging reason
+--- case 8: approve rejects tampered staged jar (sha256 mismatch), pointer untouched
+  PASS: approve tamper rc (rc=1)
+  PASS: sha mismatch reason
+  PASS: pointer NOT switched
+--- case 9: approve twice -> second is a no-op rc=0
+  PASS: second approve rc (rc=0)
+  PASS: no-op message
+  PASS: pointer still staged version
+--- case 10: rollback -> pointer restored; second rollback idempotent
+  PASS: rollback rc (rc=0)
+  PASS: RELEASE-ROLLBACK: OK
+  PASS: pointer back to previous
+  PASS: second rollback rc (idempotent) (rc=0)
+  PASS: idempotent message
+  PASS: pointer stays previous
+--- case 11: rollback with no previous record -> named fail
+  PASS: rollback no-record rc (rc=1)
+  PASS: no previous reason
+--- case 12: tag before approve -> refused
+  PASS: tag pre-approve rc (rc=1)
+  PASS: not approved reason
+  PASS: no tag created
+--- case 13: tag after approve -> reconciled, annotated tag on approved commit
+  PASS: tag rc (rc=0)
+  PASS: RELEASE-TAG: OK
+  PASS: reconciliation line
+  PASS: not pushed declared
+  PASS: tag exists at approved commit
+  PASS: tag is annotated
+--- case 14: tag rejects jar runtime version mismatch (dead-tag class)
+  PASS: tag runtime-mismatch rc (rc=1)
+  PASS: runtime mismatch reason
+  PASS: no tag created
+--- case 15: tag rejects VERSION@commit mismatch (10-24 dead-tag checkpoint)
+  PASS: tag VERSION@commit mismatch rc (rc=1)
+  PASS: dead-tag reason
+  PASS: no tag created
+--- case 16: tag refuses existing tag (immutable)
+  PASS: tag exists rc (rc=1)
+  PASS: already exists reason
+--- case 17: --tag override must match staged version
+  PASS: tag name mismatch rc (rc=1)
+  PASS: implies version reason
+  PASS: explicit matching tag rc (rc=0)
+--- case 18: iron-rule ports refused at entry (6138, 8080)
+  PASS: 6138 refused rc (rc=1)
+  PASS: 6138 named
+  PASS: 8080 refused rc (rc=1)
+  PASS: 8080 named
+  PASS: no build ran
+--- case 19: status reports pointer + staged state, rc=0
+  PASS: status rc (empty staging) (rc=0)
+  PASS: pointer reported
+  PASS: status rc (rc=0)
+  PASS: staged version shown
+  PASS: approved flag shown
+--- case 20: unknown subcommand / option -> named error rc=1
+  PASS: unknown subcommand rc (rc=1)
+  PASS: unknown subcommand named
+  PASS: unknown option rc (rc=1)
+  PASS: unknown option named
+--- case 21 (opt-in RELEASE_TEST_REAL_SMOKE=1): REAL boot-smoke rejects truncated jar at stage
+  (skipped — set RELEASE_TEST_REAL_SMOKE=1 to include; the E2E batch covers it for real)
+--- case 22: smoke cmd path with spaces (this repo's checkout path has one) -> quoted exec
+  PASS: space-path stage rc (rc=0)
+  PASS: space-path smoke ran (PASS verdict)
+  PASS: candidate installed
+
+== summary: PASS=89 FAIL=0 ==
+2026-10-25 19:22:48 end rc=0

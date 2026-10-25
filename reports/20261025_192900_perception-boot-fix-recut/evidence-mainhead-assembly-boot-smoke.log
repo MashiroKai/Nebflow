@@ -1,0 +1,18 @@
+ASSEMBLY_RC=0
+JAR=target/scala-3.5.2/stand-assembly-2026.10.21-beta.2.jar
+[smoke] jar=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-5201f3c4/target/scala-3.5.2/stand-assembly-2026.10.21-beta.2.jar ( 99M )
+[smoke] port=8089 timeout=120s java=/Users/kaiyu/.stand/jdk-21/bin/java
+[smoke] never-kill ledger: 1105 88102 52985 
+[smoke] home=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T//stand-boot-smoke.WB6Zmc (isolated data root; cwd of the boot = the home itself)
+[smoke] ready: GET /api/health -> 200 after 4s
+[smoke] portal: GET / -> 200 (44449 bytes)
+[smoke] health: payload carries deviceId (own instance identity)
+[smoke] ws: handshake HTTP/1.1 101 Switching Protocols (RFC6455 101, bearer token)
+[boot] stand started (pid 49276) — https://mystand.space/portal?device=685d54d4-c4d3-5d8a-b6e6-f2433e5c7dde
+[smoke] teardown: port 8089 free
+[smoke] teardown: isolated home removed (/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T//stand-boot-smoke.WB6Zmc)
+[smoke] no leftover processes on :8089; temp root cleaned (idempotent — safe to rerun)
+BOOT-SMOKE: PASS jar=stand-assembly-2026.10.21-beta.2.jar port=8089 boot_ready=4s checks=11 (portal+health+ws-or-degraded+teardown)
+SMOKE_RC=0
+HB 23:16:38 main-head smoke done
+2026-10-25 23:16:38 end rc=0

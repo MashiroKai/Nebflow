@@ -416,6 +416,9 @@ export default {
   // 说清**为什么**（页面刷新把载荷剥离了——localStorage 放不下）与**怎么办**
   // （重新添加）。修前该情形只有 console.warn，对用户是**静默消失**。
   'messages.queueAttachUnrecoverable': '{n} attachment(s) could not be restored because the page was refreshed — please add them again',
+  // attach-split batch (2026-10-24 incident fix): user-visible copy for the server's
+  // loud rejection receipt (messageTooLarge) — {size}/{limit} = measured frame MB / server cap MB.
+  'send.messageTooLarge': 'This message (~{size} MB) exceeds the {limit} MB delivery limit and was NOT sent — remove some attachments and retry',
   'messages.trusted': 'Trusted',
   'messages.trustedHint': 'Trust is on: new messages are auto-forwarded to your agent',
   'messages.loadingOlder': 'Load earlier messages',
@@ -801,9 +804,16 @@ export default {
   'subagents.indicatorTitle': 'Background sub-agents',
   'subagents.status.running': 'Running',
   // held-receipt 投递可靠性批（2026-10-21 fix 4）：显式等待停靠态（等合并轮）。
-  'subagents.status.waiting': 'Waiting',
+  // panel-merge-status 批（2026-10-25 · 作者令）：候合并从通用「Waiting」提升为
+  // 钉住的可见状态词——面板行状态位直显「Merge-queued」。
+  'subagents.status.waiting': 'Merge-queued',
   'subagents.status.waitingMerge': 'waiting-merge (FIFO)',
   'subagents.status.idle': 'Idle',
+  // panel-merge-status 批（2026-10-25）：候合并行队列细节段（/api/merge-queue 只读
+  // 状态面；位次只渲染不派生，API 未生效 ⇒ 段全缺 = 静态「waiting-merge」降级）。
+  'subagents.mergeQueue.ahead': '{n} ahead in merge queue',
+  'subagents.mergeQueue.retry': 'retry #{n}',
+  'subagents.mergeQueue.reason': 'last refusal: {reason}',
   // #752 idle-subdivision: what an idle delegate is waiting on + long-idle badge.
   'subagents.waitingBg': 'waiting on {count} bg task(s): {desc} ({dur})',
   'subagents.waitingReceipts': 'waiting on {count} sub-agent receipt(s)',
