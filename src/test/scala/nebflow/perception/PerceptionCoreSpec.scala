@@ -313,6 +313,58 @@ class PerceptionCoreSpec extends FunSuite:
     assertEquals(remaining, None)
   }
 
+  // ── 回归：sweepLoop/spoolLoop 构造期自引用 SOE（P0 boot-fatal）─────────
+  //
+  // 旧版 `IO.sleep(..) *> sweepOnce *> sweepLoop`：`*>` 右操作数是急切的方法
+  // 调用——构造一个迭代的 IO 需同步递归构造全部未来迭代 → boot 必经点
+  // `doBoot` 的 `core.sweepLoop.start`（PerceptionService）当场 StackOverflowError，
+  // 任何新 daemon 起不来（切版批实证 2/2，引入=183c375c2）。修法 = 递归腿
+  // `IO.defer` 包住（同 ProjectActor.ttlScanner / TaskStuckWatcher.run 先例）。
+  // 感知域两循环节奏固定（10s/45s），不能像先例那样缩 interval——推进钉用
+  // 真实节奏 + 过期窗被清作可观察证据。
+
+  test("regression: sweepLoop/spoolLoop 求值（构造）不炸栈——boot 必经点") {
+    val (core, _) = newCore()
+    core.bootInitialize.unsafeRunSync()
+    // 旧版在下面两行「值构造期」即 StackOverflowError（尚未 .start）
+    val _ = core.sweepLoop
+    val _ = core.spoolLoop
+  }
+
+  test("regression: sweepLoop fiber 可启动、进入 sleep 腿、可取消") {
+    val (core, _) = newCore()
+    core.bootInitialize.unsafeRunSync()
+    val fiber = core.sweepLoop.start.unsafeRunSync() // 旧版：构造期 SOE
+    Thread.sleep(200) // 存活于 10s sleep 腿（未异常终止由 cancel/join 完成佐证）
+    fiber.cancel.unsafeRunSync()
+    fiber.join.unsafeRunSync()
+  }
+
+  test("regression: spoolLoop 求值不炸栈且 fiber 可启动取消") {
+    val (core, _) = newCore()
+    core.bootInitialize.unsafeRunSync()
+    val fiber = core.spoolLoop.start.unsafeRunSync() // 旧版：构造期 SOE
+    Thread.sleep(150)
+    fiber.cancel.unsafeRunSync()
+    fiber.join.unsafeRunSync()
+  }
+
+  test("regression: sweepLoop 跨 sleep 边界推进 ≥1 轮（过期窗被扫除）") {
+    val (core, _) = newCore()
+    core.bootInitialize.unsafeRunSync()
+    val w = core.openOtpWindow("asknb-loop", -1).unsafeRunSync() // 已过期窗
+    val fiber = core.sweepLoop.start.unsafeRunSync()
+    // 轮询至窗口被扫除 = sleep(10s) → sweepOnce → 递归腿重新进入，一轮完整走通；
+    // 上限 13s（sleep 节奏 10s + 余量）。旧版在 start 前即 SOE，到不了这里。
+    val deadline = System.currentTimeMillis() + 13000L
+    var gone = false
+    while !gone && System.currentTimeMillis() < deadline do
+      Thread.sleep(250)
+      gone = !core.windows.get.map(_.contains(w.windowId)).unsafeRunSync()
+    fiber.cancel.unsafeRunSync()
+    assert(gone, "sweepLoop 未在 13s 内完成第一轮 sweep（过期窗未被清）——循环未推进")
+  }
+
   test("core: 面板条目投影——未配置/已连接/暂停/授权失效四态与四色") {
     val (core, _) = newCore()
     core.bootInitialize.unsafeRunSync()
