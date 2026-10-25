@@ -1,0 +1,44 @@
+===== FINAL BATTERY (script v3: -sTCP:LISTEN precision) =====
+----- RUN A'': real jar (expect PASS) -----
+[smoke] jar=/Users/kaiyu/.stand/bin/versions/2026.10.21-beta.2/stand-assembly-2026.10.21-beta.2.jar (105M )
+[smoke] port=8089 timeout=120s java=/Users/kaiyu/.stand/jdk-21/bin/java
+[smoke] never-kill ledger: 1105 88102 52985 
+[smoke] home=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T//stand-boot-smoke.als31O (isolated data root; cwd of the boot = the home itself)
+[smoke] ready: GET /api/health -> 200 after 4s
+[smoke] portal: GET / -> 200 (39124 bytes)
+[smoke] health: payload carries deviceId (own instance identity)
+[smoke] ws: handshake HTTP/1.1 101 Switching Protocols (RFC6455 101, bearer token)
+[boot] stand started (pid 12376) — https://mystand.space/portal?device=4fbdbce3-38d4-5ebc-942f-dee5fc17c051
+[smoke] teardown: port 8089 free
+[smoke] teardown: isolated home removed (/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T//stand-boot-smoke.als31O)
+[smoke] no leftover processes on :8089; temp root cleaned (idempotent — safe to rerun)
+BOOT-SMOKE: PASS jar=stand-assembly-2026.10.21-beta.2.jar port=8089 boot_ready=4s checks=11 (portal+health+ws-or-degraded+teardown)
+EXIT_A=0
+----- RUN B'': idempotency (expect PASS) -----
+[smoke] jar=/Users/kaiyu/.stand/bin/versions/2026.10.21-beta.2/stand-assembly-2026.10.21-beta.2.jar (105M )
+[smoke] port=8089 timeout=120s java=/Users/kaiyu/.stand/jdk-21/bin/java
+[smoke] never-kill ledger: 1105 88102 52985 
+[smoke] home=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T//stand-boot-smoke.Y5uOu7 (isolated data root; cwd of the boot = the home itself)
+[smoke] ready: GET /api/health -> 200 after 4s
+[smoke] portal: GET / -> 200 (39124 bytes)
+[smoke] health: payload carries deviceId (own instance identity)
+[smoke] ws: handshake HTTP/1.1 101 Switching Protocols (RFC6455 101, bearer token)
+[boot] stand started (pid 12638) — https://mystand.space/portal?device=12829955-78ec-5f4c-af05-1841cdbb646c
+[smoke] teardown: port 8089 free
+[smoke] teardown: isolated home removed (/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T//stand-boot-smoke.Y5uOu7)
+[smoke] no leftover processes on :8089; temp root cleaned (idempotent — safe to rerun)
+BOOT-SMOKE: PASS jar=stand-assembly-2026.10.21-beta.2.jar port=8089 boot_ready=4s checks=11 (portal+health+ws-or-degraded+teardown)
+EXIT_B=0
+----- RUN C'': bad input (expect FAIL exit 1) -----
+[smoke] teardown: port 8089 free
+BOOT-SMOKE: FAIL stage=preflight reason=jar not found or unreadable: /nonexistent/stand-assembly-bad.jar
+EXIT_C=1
+----- RUN D'': 6138 iron rule (expect FAIL exit 1) -----
+[smoke] teardown: port 6138 free
+BOOT-SMOKE: FAIL stage=preflight reason=refusing port 6138 = production port (iron rule: smoke never touches :6138)
+EXIT_D=1
+----- sweep -----
+(no 8089 listener)
+(no temp homes)
+COMMAND   PID  USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+java    88102 kaiyu  137u  IPv6 0x228deb71699d6c44      0t0  TCP *:8080 (LISTEN)
