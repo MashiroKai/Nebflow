@@ -1,0 +1,10 @@
+# boot-smoke (isolated: --home /tmp/mq-smoke-mq896 --port 6177 --no-browser; in-prod daemon pid 72160 untouched)
+# boot reconcile + API evidence lines:
+30:02:41:47.819 [36mINFO [0m nebflow.gateway - Merge-queue boot reconcile: alreadyMerged=0 () droppedEmpty=0 ownerGone=0 ()
+41:02:41:47.909 [36mINFO [0m nebflow.conn-guard - conn-guard enabled=true wsPerIpCap=64 wsTotalCap=1024 warnPct=80 snapshotSec=60 trusted=[127.0.0.1,::1,0:0:0:0:0:0:0:1]
+50:02:41:48.210 [36mINFO [0m nebflow.gateway - MCP servers initialized
+52:02:42:48.155 [36mINFO [0m nebflow.conn-guard - conn-guard snapshot ws=0/1024 perIpCap=64 trackedIps=1/1024 overflow=0 accepted=0 rejected=0 reqTotal=3 reqUntracked=0 top=[] tunnelReq=0 tunnelRejected=0
+53:02:43:48.142 [36mINFO [0m nebflow.conn-guard - conn-guard snapshot ws=0/1024 perIpCap=64 trackedIps=1/1024 overflow=0 accepted=0 rejected=0 reqTotal=3 reqUntracked=0 top=[] tunnelReq=0 tunnelRejected=0
+54:02:44:48.141 [36mINFO [0m nebflow.conn-guard - conn-guard snapshot ws=0/1024 perIpCap=64 trackedIps=1/1024 overflow=0 accepted=0 rejected=0 reqTotal=3 reqUntracked=0 top=[] tunnelReq=0 tunnelRejected=0
+# GET /api/merge-queue (Bearer token from the isolated home) => 200 {"generatedAt":...,"queues":[]}
+# teardown: stdin quit not forwarded by sbt -batch => platform job-cancel reaped the pipeline; port released, pid file cleaned.
