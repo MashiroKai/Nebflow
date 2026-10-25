@@ -146,8 +146,16 @@ class PerceptionCore(
   private def pollIntervalSec: IO[Int] =
     windows.get.map(w => if w.nonEmpty then PollIntervalWindowSec else PollIntervalIdleSec)
 
+  /**
+   * NOTE: recursion leg must be lazy (`IO.defer`) — `*>` evaluates its right
+   * operand strictly, so a bare `*> sweepLoop` self-reference recurses
+   * infinitely while BUILDING the IO description (StackOverflowError at boot,
+   * before any fiber starts; same bug class as ProjectActor.ttlScanner /
+   * TaskStuckWatcher.run — QA e2e SOE 回归先例）。Semantics unchanged:
+   * sleep 10s → sweepOnce → repeat.
+   */
   def sweepLoop: IO[Unit] =
-    IO.sleep(scala.concurrent.duration.Duration(10, "seconds")) *> sweepOnce *> sweepLoop
+    IO.sleep(scala.concurrent.duration.Duration(10, "seconds")) *> IO.defer(sweepOnce *> sweepLoop)
 
   /** Digest at HH:MM local (single fire per day; loop sleeps till next). */
   def digestLoop: IO[Unit] =
@@ -160,8 +168,9 @@ class PerceptionCore(
       _ <- runBillingDigest().attempt.void
     yield ()
 
+  /** 同型修净（与 sweepLoop 同批）：递归腿 `IO.defer` 包住，构造期零递归。 */
   def spoolLoop: IO[Unit] =
-    IO.sleep(scala.concurrent.duration.Duration(45, "seconds")) *> replaySpool().attempt.void *> spoolLoop
+    IO.sleep(scala.concurrent.duration.Duration(45, "seconds")) *> IO.defer(replaySpool().attempt.void *> spoolLoop)
 
   // ── polling ────────────────────────────────────────────────────────────
 
