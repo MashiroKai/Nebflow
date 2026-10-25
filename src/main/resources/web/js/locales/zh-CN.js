@@ -418,6 +418,9 @@ export default {
   'messages.forwardPartial': '已转发 {n} 条，{f} 条失败',
   // B+C 批 · 方案 B（不可恢复标记的**文案**半边）：{n} = 无法恢复的附件数。
   'messages.queueAttachUnrecoverable': '{n} 个附件因页面刷新无法恢复，请重新添加',
+  // attach-split 批（2026-10-24 现场事故修复）：服务端超限帧有声拒绝（messageTooLarge
+  // 回执）的用户可见文案 —— {size}/{limit} = 实测帧 MB / 服务端上限 MB。
+  'send.messageTooLarge': '这条消息（约 {size} MB）超过投递上限 {limit} MB，未被发送——请减少附件数量后重发',
   'messages.trusted': '已信任',
   'messages.trustedHint': '已开启信任：新消息将自动转发给 agent',
   'messages.loadingOlder': '加载更早消息',
