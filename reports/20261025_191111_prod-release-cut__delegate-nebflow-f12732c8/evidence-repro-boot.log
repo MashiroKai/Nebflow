@@ -1,0 +1,6 @@
+daemon child exited before becoming ready — last lines of daemon.out:
+	at nebflow.perception.PerceptionCore.sweepLoop(PerceptionService.scala:150)
+	at nebflow.perception.PerceptionCore.sweepLoop(PerceptionService.scala:150)
+	at nebflow.perception.PerceptionCore.sweepLoop(PerceptionService.scala:150)
+	at nebflow.perception.PerceptionCore.sweepLoop(PerceptionService.scala:150)
+	at nebflow.perception.PerceptionCore.sweepLoop(PerceptionService.scala:150)
