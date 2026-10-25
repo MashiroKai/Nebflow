@@ -165,12 +165,14 @@ test('T2 controls: heat dim seg on top region, 52-week heatmap scrollable, curve
   expect(errors).toEqual([]);
 });
 
-test('T3 injected back button pops to chat (external close reconcile intact)', async ({ page }) => {
+test('T3 page-shell back button pops to chat (injected back retired by ②17 dedup)', async ({ page }) => {
   const errors = watchErrors(page);
   await pushPage(page, 'usage');
 
-  // 注入式返回钮（ensureInjectedBack 进 .ud-header）。
-  const back = page.locator('#usage-dashboard .mobile-back-injected');
+  // 返回钮单点 = 页面壳 .mobile-back-btn（②17 返回钮去重批：ensureInjectedBack
+  // 注入腿已退役为无调用死代码 —— 注入选择器零存留 = 防复活钉）。
+  await expect(page.locator('#usage-dashboard .mobile-back-injected')).toHaveCount(0);
+  const back = page.locator('.mobile-page[data-page="usage"] .mobile-back-btn');
   await expect(back).toBeVisible();
   await back.click();
   await expect(page.locator('.mobile-page[data-page="usage"]')).not.toHaveClass(/live/);

@@ -262,7 +262,9 @@ try {
   const src = await readFile(join(WEB, 'js', 'input.js'), 'utf8');
   ok('D1 ask 帧带 clientMessageId', /type:\s*'ask',\s*question,\s*clientMessageId:\s*askId/.test(src));
   ok('D2 skill 帧带 clientMessageId', /type:\s*'skill',\s*skillName,\s*input:\s*text,\s*clientMessageId:\s*skillId/.test(src));
-  ok('D3 immediateInput 帧带 clientMessageId', /type:\s*'immediateInput',\s*content:\s*item\.text,\s*clientMessageId:\s*itemMsgId/.test(src));
+  // 判据跟 device-provenance 批（2026-10-23）：帧中段插入了 device 声明字段，
+  // 正则放宽为中段任意帧字段（仍钉死 immediateInput 帧必带 itemMsgId 幂等键）。
+  ok('D3 immediateInput 帧带 clientMessageId', /type:\s*'immediateInput',\s*content:\s*item\.text,[\s\S]{0,80}clientMessageId:\s*itemMsgId/.test(src));
   ok('D4 排队项入队即钉 id（drain/立即发送同 id 复用）', /mode,\s*\n\s*clientMessageId:\s*Date\.now\(\)\.toString\(36\)/.test(src));
 
   // ══ 收尾 ════════════════════════════════════════════════════════════

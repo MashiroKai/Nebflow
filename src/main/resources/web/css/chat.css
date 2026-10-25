@@ -810,6 +810,38 @@
   color: #bbb;
   user-select: none;
 }
+/* ---------- Initial-load skeleton（audit ②27，2026-10-25）----------
+   初次进会话（历史未加载完）的渐变占位泡：官网气泡同语言（AI 左 / 用户右对齐、
+   16px 圆角族、80% 宽上限），shimmer = sapphire 弱 tint 扫过 --color-bubble-ai 底
+   （用户位 = --color-bubble-user 底 + 白光扫）。挂载/摘除单点 =
+   historyIndicators.showChatSkeleton / hideChatSkeleton（historyPage 处理器同帧
+   摘除 ⇒ 加载完成让位零跳变）；prefers-reduced-motion 降级为静态浅底。 */
+.chat-skeleton { display: flex; flex-direction: column; gap: 2px; padding: 6px 0; }
+.chat-sk-row { display: flex; justify-content: flex-start; animation: fadeIn 0.2s ease; }
+.chat-sk-row-me { justify-content: flex-end; }
+.chat-sk-bubble {
+  height: 38px;
+  max-width: 80%;
+  border-radius: 16px;
+  border-bottom-left-radius: 4px;
+  background-color: var(--color-bubble-ai);
+  background-image: linear-gradient(90deg,
+    rgb(var(--sapphire) / 0.05) 25%, rgb(var(--sapphire) / 0.13) 50%, rgb(var(--sapphire) / 0.05) 75%);
+  background-size: 200% 100%;
+  animation: chat-sk-shimmer 1.4s ease-in-out infinite;
+}
+.chat-sk-row-me .chat-sk-bubble { border-bottom-left-radius: 16px; border-bottom-right-radius: 4px; background-color: var(--color-bubble-user); }
+.chat-sk-w62 { width: 62%; }
+.chat-sk-w38 { width: 38%; }
+.chat-sk-w76 { width: 76%; }
+.chat-sk-w50 { width: 50%; }
+@keyframes chat-sk-shimmer {
+  from { background-position: 130% 0; }
+  to { background-position: -30% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-sk-bubble { animation: none; }
+}
 .row {
   display: flex;
   margin: 6px 0;

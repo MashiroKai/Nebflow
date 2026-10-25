@@ -913,10 +913,36 @@ function dispatchOfflineItem(sid, item) {
   return true;
 }
 
+/** ②26/⑥38 busy 排队项断连补发轨（2026-10-25，手机端 P1 批）：busy 排队项不带
+ *  offline 标记（两轨隔离设计，:740 注），其唯一投递挂点 = 终态帧族（done /
+ *  sessionBusy{false} → clearBusyFor → scheduleQueueDrain）。WS 断连期终态帧全数
+ *  被吞 ⇒ 断连前进队、轮次在断连窗内真终态的 busy 项，重连后**无人触发**（引擎
+ *  onopen 引导帧族不重放 per-session busy 态，客户端 busy 镜像/开轮事实就此陈旧
+ *  —— drain 闸 ②/③ 按陈旧事实把重连后的每次补触发都挡到「永远不来的终态」上）。
+ *  本腿 = 重连/首连时对含 busy 轨项（非 offline 标记、非 failed 终态）的会话：
+ *    ① 补触发 drain（触发点补一；正确性闸全在 main.js armQueueDrainTimer 内裁决
+ *      ——冷却窗/运行中事实/投递未决/WS 开，queue-one-per-turn 语义零放松）；
+ *    ② turn-start 确认网换新窗口基点重挂（turnStartTimes 推进到 now：断连**前**
+ *      的开轮事实不再计入对账）——引擎仍在跑的轮次由流帧/心跳在重连后持续记账
+ *      （网体 factAt > 新基点 ⇒ 持有不误杀），真空闲轮 20s 无任何新事实 ⇒ 幻影
+ *      分支收 busy + 落权威无-turn 戳 + drain（与派发幻影腿 main.js:518 同款收口）。
+ *    纯 offline 轨会话不进本腿（归 flushOfflineQueue，双轨不混）。 */
+function rearmBusyQueueDrains() {
+  for (const [sid, items] of Object.entries(state.messageQueue)) {
+    if (!Array.isArray(items) || items.length === 0) continue;
+    if (!items.some(it => it && !it.failed && !it.offline)) continue; // 纯离线轨/全失败：不进本腿
+    state.scheduleQueueDrain?.(sid);
+    state.turnStartTimes[sid] = Date.now();
+    state.armTurnConfirm?.(sid);
+  }
+}
+
 // 首连/重连收口点：ws.js onopen 在 flushPendingSends 之后、引导帧族之后调
-// reconnectCallbacks —— 离线项补发先行，历史重拉（main.js onReconnect）随后。
+// reconnectCallbacks —— 离线项补发先行，busy 轨重排次之，历史重拉（main.js
+// onReconnect）随后。
 onReconnect(() => {
   try { flushOfflineQueue(); } catch (e) { console.error('[input] offline flush failed:', e); }
+  try { rearmBusyQueueDrains(); } catch (e) { console.error('[input] busy queue re-drain failed:', e); }
 });
 
 // historyPage 后落实离线气泡终态（S6 整替窗口的收口）。input.js 模块先于 main.js
