@@ -73,6 +73,22 @@ class ApiGuardFollowupRoutesSpec extends CatsEffectSuite:
     }
   }
 
+  test("稳定性批 2026-10-26：网关鉴权拒绝带 X-Nf-Reason: credential-required（前端 relayGate 判据可分形）") {
+    mkRoutes().routes(post("/tts", withToken = false, Json.obj("text" -> "hi".asJson)))
+      .value
+      .map(_.getOrElse(fail("route fell through")))
+      .flatMap { resp =>
+        IO {
+          assertEquals(resp.status, Status.Forbidden)
+          assertEquals(
+            resp.headers.get(org.typelevel.ci.CIString("X-Nf-Reason")).map(_.head.value),
+            Some("credential-required"),
+            "网关 401/403 必须带 reason 头——无 reason 的 JSON 403 是 relay 门形状，前端据此分流"
+          )
+        }
+      }
+  }
+
   test("POST /tts 带令牌 + 未配置 TTS ⇒ 404「TTS not configured」（同一服务状态、令牌不同 ⇒ 状态码不同 = 门的区分力）") {
     run(post("/tts", withToken = true, Json.obj("text" -> "hi".asJson))).map { case (status, body) =>
       assertEquals(status, Status.NotFound, "带令牌必须过门并落到业务判据（ttsService=None ⇒ 404）")

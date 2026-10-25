@@ -168,6 +168,9 @@ try {
     const m = await import('/js/sessionGate.js');
     window.__gate = m;
     m._sessionGateTestHooks().setReload(() => { window.__reloads = (window.__reloads || 0) + 1; });
+    // 稳定性批 2026-10-26：noteAuthRejected 先走静默重座腿；lab 无 portal 面 ⇒
+    // 缝为「重座不可用」，可见面判定确定化（重座行为本体在 session-gate.spec ①c/①d 钉）。
+    m._sessionGateTestHooks().setReseat(async () => false);
     window.__shared = await import('/js/viewers/shared.js');
     window.__md = (await import('/js/viewers/markdown.js')).default;
     window.__epub = (await import('/js/viewers/epub.js')).default;
