@@ -489,6 +489,10 @@ object MergeQueue:
    * 合并指令文本（🔴 模型可见文案——§16 待过目标注：本批最小成稿，终稿归 N3
    * 提示词批）。worktree 腿与就地腿同形：`git -C <baseWs> merge --no-ff <branch>`
    * （worktree 里 merge 会并进 delegate 自己的分支——方向必须钉死在基工作区）。
+   *
+   * delegate-finish-report 修复批 2026-10-25 增一行 finish 报告契约：终稿必须以
+   * 工作结果为主（产出/工件/REPORT.md 路径），合并信息一行带过——引擎另有自动
+   * 附页（DelegateWorkReport），但 delegate 自述摘要是第一交付面。
    */
   def mergeBriefFor(entry: Entry): String =
     s"""<system-reminder>
@@ -497,7 +501,7 @@ Execute the merge EXACTLY like this (single command, no flags beyond these):
   git -C ${entry.baseWs} merge --no-ff ${entry.branch}
 This merges your branch into the base branch `${entry.baseBranch}`. Do NOT merge anywhere else, do NOT force-push, do NOT rebase, do NOT touch other branches or other sessions' work.
 If git refuses or reports conflicts: STOP — change nothing, resolve nothing; report the refusal/conflict verbatim in your final text, call delegate_report(category="finish", detail=<the refusal/conflict>), and end your turn (there is no blocked category — the refusal is your report's content, not a state).
-On success, call delegate_report(category="finish", detail=<what the merge landed>) and end with your final report; the engine re-judges the merge round.
+On success, call delegate_report(category="finish", detail=<what the merge landed>) and end with your final report; the engine re-judges the merge round. Your final report must LEAD with the work result (what the task produced, artifacts, REPORT.md paths) and keep the merge info to one line — the parent session reads this report as the task's result.
 </system-reminder>"""
 
   /** ChainStore 审计行（fail-soft：账本失败绝不阻断队列）。 */

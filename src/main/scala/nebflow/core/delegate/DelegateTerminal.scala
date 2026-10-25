@@ -253,6 +253,16 @@ object DelegateTerminal:
           else ()
         }
         .handleErrorWith(e => IO(logger.warn(s"unmerged-work note failed: ${e.getMessage}")))
+      // delegate-finish-report 修复批 2026-10-25：合并轮 Release 的工作结果附页
+      // （[[DelegateWorkReport]]——merge status 一行 + workReport 保真段 + REPORT.md
+      // 摘要段；三段全空 = ""，老 delegate 逐字退化现状文本）。只挂合并轮（非合并
+      // 轮的终文即工作结果本体，零附页）；fail-soft：附页任何故障 = 空串，绝不拖
+      // 垮终态投递。
+      workAppendix <-
+        if mergeRound then
+          IO.blocking(DelegateWorkReport.appendixFor(record))
+            .handleErrorWith(e => IO(logger.warn(s"work-result appendix failed: ${e.getMessage}")).as(""))
+        else IO.pure("")
       // ChainStore 行 source：drift（A5 步2 漂移闸确证——#566 起注记形）/ precheck（确定性
       // 预检——#566 起注记形）/ merge-verify（P1-1① 机械验收拒绝——#566 起注记形）/
       // unjudged（两层全败诚实态）/ judge（判定机或自申报回落——既有口径）。
@@ -274,7 +284,7 @@ object DelegateTerminal:
         .handleErrorWith(e => IO(logger.warn(s"terminal-verdict chain line failed: ${e.getMessage}")))
       outcome <- finalVerdict match
         case DelegateJudge.Verdict.ReadyToMerge =>
-          holdForMerge(resources, record, delegateId, parentSessionId, childRef, supervisorRef)
+          holdForMerge(resources, record, delegateId, parentSessionId, childRef, supervisorRef, resultText)
         case DelegateJudge.Verdict.Completed =>
           // P2-4 合并后清理：机械验收通过的合并 Release 前回收现场（守卫在
           // [[PostMergeCleanup.run]]——零领先 + 祖先真 + 绝不 force；失败仅 WARN
@@ -284,8 +294,10 @@ object DelegateTerminal:
             else IO.pure(false)
           // #524：auto-merge 尾注（merged / conflict-pending / refused / already-
           // merged / failed 五态文案）并入判词行——delegate 终态 payload 即冲突
-          // 挂起状态的承载面之一。
-          cleanup *> IO.pure(Outcome.Release(verdictLineCompleted(unjudged) + autoMergeSuffix.getOrElse("")))
+          // 挂起状态的承载面之一。修复批 2026-10-25：工作结果附页随后（合并轮）。
+          cleanup *> IO.pure(
+            Outcome.Release(verdictLineCompleted(unjudged) + autoMergeSuffix.getOrElse("") + workAppendix)
+          )
         case DelegateJudge.Verdict.CompletedNote(note) =>
           // #566：退役 blocked 的唯一残留出口——completed 判词＋注记交付（注记 =
           // 报告内容，不是状态）。合并轮上的注记形 = 合并未干净落地（机械验收
@@ -293,7 +305,7 @@ object DelegateTerminal:
           // 注记 = 普通完成注记，语义不变。
           IO.pure(
             Outcome.Release(
-              s"${verdictLineCompleted(unjudged = false)}\n[delegate-judge] note: $note",
+              s"${verdictLineCompleted(unjudged = false)}\n[delegate-judge] note: $note" + workAppendix,
               mergeRoundRefused = mergeRound && acceptance.exists(!_.ok)
             )
           )
@@ -698,6 +710,12 @@ object DelegateTerminal:
    * ready-to-merge 停靠：任务库状态 + 入队轮转。**不通知父、不停 actor**——
    * 预算重挂（合并窗新 3600s）由监督者在收到 HoldForMerge 后执行（DelegateBudget
    * ∈ agent 层，core 不 import——分层纪律）。
+   *
+   * delegate-finish-report 修复批 2026-10-25（工作结果保真，根因①）：停靠点把
+   * **工作轮终稿**（resultText——本批合并轮之前的那次完成汇报全文）保真进
+   * `DelegateRegistry.workReport`（first-write-wins，幂等）——合并轮 finish 终文
+   * 不再顶掉工作结果；合并轮 Release 投父时由 [[DelegateWorkReport.appendixFor]]
+   * 随附页回传。fail-soft：保真失败只 WARN，绝不阻断入队。
    */
   private def holdForMerge(
     resources: AgentRuntimePort,
@@ -705,7 +723,8 @@ object DelegateTerminal:
     delegateId: String,
     parentSessionId: String,
     childRef: ActorRef[AgentCommand],
-    supervisorRef: ActorRef[AgentEvent]
+    supervisorRef: ActorRef[AgentEvent],
+    resultText: String
   ): IO[Outcome] =
     val rec = record.getOrElse(
       DelegateRegistry.Record(
@@ -766,6 +785,18 @@ object DelegateTerminal:
           supervisorRef = supervisorRef
         )
         for
+          // 工作结果保真（修复批 2026-10-25，根因①——见上注）。查无记录 = 非本次
+          // 判定形态（兜底记录），零动作语义随 Either.Left 吞掉。
+          _ <- IO
+            .blocking(DelegateRegistry.updateWorkResult(delegateId, resultText))
+            .attempt
+            .flatMap {
+              case Right(Right(())) => IO.unit
+              case other =>
+                IO(logger.warn(
+                  s"work-result preservation skipped for $delegateId: ${other.fold(_.getMessage, _.toString).take(200)}"
+                ))
+            }
           _ <- resources.subAgentTaskStore
             .updateStatus(parentSessionId, delegateId, ReadyToMergeStatus, completedAt = Some(now))
             .handleErrorWith(e => IO(logger.warn(s"ready-to-merge status write failed: ${e.getMessage}")))

@@ -13,6 +13,7 @@ import nebflow.core.GitWorktrees
 import nebflow.core.delegate.ChainStore
 import nebflow.core.delegate.DelegateAutoMerge
 import nebflow.core.delegate.DelegateRegistry
+import nebflow.core.delegate.DelegateWorkReport
 import nebflow.core.delegate.DelegateWorkspace
 import nebflow.core.delegate.ExternalJudgeHook
 import nebflow.core.delegate.MergeAcceptance
@@ -631,6 +632,13 @@ You will be notified when it completes via a system message. Do NOT duplicate th
           // P1-2：ready-to-merge 并入 MergeQueue（外部通道条目——合并轮经续聊通道
           // 注入、settle 终态再判）。锚缺失（非 git 腿误判 ready-to-merge / 记录
           // 缺键）= 诚实降级：WARN ＋ completed 报父（绝不静默挂起）。
+          // delegate-finish-report 修复批 2026-10-25：停靠即保真工作轮终稿
+          // （DelegateRegistry.updateWorkResult，first-write-wins——内部腿
+          // holdForMerge 同机制），合并轮 finish 终文不再顶掉工作结果。
+          _ <- outcome match
+            case Outcome.ReadyToMerge =>
+              IO(DelegateRegistry.updateWorkResult(sessionId, text)).attempt.void
+            case _ => IO.unit
           _ <- outcome match
             case Outcome.ReadyToMerge =>
               rec.filter(r => r.branch.isDefined && r.baseBranch.isDefined) match
@@ -687,16 +695,20 @@ You will be notified when it completes via a system message. Do NOT duplicate th
             case other => MergeQueue.onTerminalIO(sessionId)
           // 父投递（ready-to-merge 不发——MergeQueue 持有父回报权）。#524：
           // auto-merge 尾注并入终文——冲突挂起的文件清单随终态抵达父会话。
+          // delegate-finish-report 修复批 2026-10-25：合并轮投父附工作结果附页
+          // （DelegateWorkReport.appendixFor——内部腿 Release 尾注同构造器，两腿
+          // 同一附页契约；fail-soft 内包，任何故障 = 原文直投）。
           _ <- outcome match
             case Outcome.ReadyToMerge => IO.unit
             case other =>
-              notifyParent(
-                spec,
-                sessionId,
-                other,
-                autoMergeNote.map(n => s"$text$n").getOrElse(text),
-                reasonOpt
-              )
+              val base = autoMergeNote.map(n => s"$text$n").getOrElse(text)
+              val withWork =
+                if mergeRoundNow then
+                  IO(DelegateWorkReport.appendixFor(rec))
+                    .handleErrorWith(_ => IO(""))
+                    .map(apx => base + apx)
+                else IO.pure(base)
+              withWork.flatMap(delivered => notifyParent(spec, sessionId, other, delivered, reasonOpt))
           // 面板终态帧（与内部 delegate 的 agentDone 同契约）。
           _ <- emitFrame(spec.wsSend, spec.rootSessionId, spec.parentSessionId, sessionId)(
             Json.obj("type" -> "agentDone".asJson, "agentId" -> sessionId.asJson)
