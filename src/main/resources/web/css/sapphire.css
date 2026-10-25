@@ -69,6 +69,19 @@
   --glow-spread: 16px;
   --glow-opacity: 0.22;
 
+  /* ── Capsule geometry（2026-10-25 胶囊固定尺寸批，作者令「每个胶囊…保持一个
+     固定的大小」）── 顶栏胶囊全脸（标题头 .canvas-header 主胶囊 + hover 环
+     .cr-capsule 页签胶囊）统一固定几何，宽度/高度单一来源 = 本 token。
+     依据：高度沿用 #840（胶囊三 bug 批 C-①）钉的 36px 全面板档；宽度 180px
+     按「最长常规标签」反推 —— 最宽常驻面板标签「文档图谱/任务列表」48px 文本
+     + 图标 14 + pop 钮 26 + gap 13 + padding 19 ≈ 120px，取一倍余量整档；且
+     180px 落在 #840 长名可读下限（size-uniform C3c ≥180）与主窗面板 cap 最小
+     档 220px 之间 —— 标准面板永不收缩，超长内容走 ellipsis 不撑几何（对齐
+     4px 基数栅格 45 格）。手机层通栏卡头（mobileLayer.css §⑨ 自有形态）不在
+     本 token 射程。 */
+  --capsule-h: 36px;
+  --capsule-w: 180px;
+
   /* Overlay — fully transparent, no dim */
   --overlay-bg: transparent;
 }

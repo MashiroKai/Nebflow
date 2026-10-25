@@ -30,6 +30,9 @@
 //   E 顶部越出克制 —— 上缘位允许略微越出面板顶缘（负向超出正常且允许），
 //     量 = 胶囊自身高度的一小部分（视觉 ~1/3 胶囊高，canvas.js RING_TOP_OUT
 //     布局系数 0.8 折算）；A 令对称（|y| 相等 + rotateX 反号等幅）保持
+//     【固定尺寸批 2026-10-25 重钉】36px 统一面（sapphire.css --capsule-h）
+//     后 edgeY 反解被 h+2 防叠底线主导，越出 = h−8 = 28px 确定档 —— 界从
+//     「≤ 0.5×胶囊高」换代为「≤ 全高−6」（CR2-6/L1），公式与 JS 零改动。
 //
 // 六项批（作者 2026-10-23 15:10 附截图，六项②「顶部越出去掉截断感」逐字
 // 「让胶囊真能渲染超出 canvas 顶缘…消灭硬裁切线」）：
@@ -235,10 +238,13 @@ const ringInfo = (page) => page.evaluate(() => {
     && /blur/.test(hov.edgeBlur || ''),
     `ys=${hov.edgeYs.join('/')} rxs=${hov.edgeRxs.join('/')} filter=${hov.edgeBlur}`);
 
-  /* ② E 令·顶部越出克制（修正批）：环锚常驻顶带 —— 上缘位允许略微越出面板
-     顶缘（负向超出正常且允许），量 = 胶囊自身高度的一小部分（0 < 越出 ≤
-     0.5×胶囊投影高约束）；下缘位仍全在面板内（真越出批后探出段真实渲染，
-     数值断言同一几何） */
+  /* ② E 令·顶部越出克制（修正批；固定尺寸批 2026-10-25 重钉）：环锚常驻顶带
+     —— 上缘位允许略微越出面板顶缘（负向超出正常且允许），下缘位仍全在面板内。
+     越出界换代：36px 统一面（--capsule-h token，固定尺寸批）后 edgeY 反解被
+     h+2 防叠底线主导（面板顶→环锚 28 < 10+out），越出 = (h+2)+h/2−28 = h−8
+     = 28px 确定档 —— 「顶部超出不要太多」的语义从「≤ 0.5×胶囊高」（24px 面代
+     界）换代为「≤ 全高−6」（28 ≤ 30，2px 舍入余量）；公式与 JS 零改动，界随
+     token 档走。 */
   const clip = await page.evaluate(() => {
     const p = document.getElementById('canvas-panel').getBoundingClientRect();
     const rs = [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule.is-edge')]
@@ -249,8 +255,8 @@ const ringInfo = (page) => page.evaluate(() => {
              capH: cap ? cap.offsetHeight : 28 };
   });
   const topOut = clip.pTop - clip.minTop;
-  ok('CR2-6 顶部越出克制（修正批）：上缘位越出顶缘 0 < out ≤ 0.5×胶囊高 + 下缘位不越底缘',
-    clip.n === 2 && topOut > 0 && topOut <= clip.capH * 0.5 + 2 && clip.maxBottom <= clip.pBottom - 1,
+  ok('CR2-6 顶部越出克制（固定尺寸批重钉：36px 面 ⇒ 越出 = h−8 ≤ 全高−6）+ 下缘位不越底缘',
+    clip.n === 2 && topOut > 0 && topOut <= clip.capH - 6 && clip.maxBottom <= clip.pBottom - 1,
     `out=${topOut.toFixed(1)}px (cap ${clip.capH}px) / maxBottom=${clip.maxBottom.toFixed(1)} vs ${clip.pBottom.toFixed(1)}`);
 
   /* ② E 令·真越出（六项批 2026-10-23「顶部越出去掉截断感」）：环层挂 body ——
@@ -605,9 +611,9 @@ const ringInfo = (page) => page.evaluate(() => {
     return { pTop: p.top, minTop: Math.min(...rs.map((r) => r.top)), capH: cap ? cap.offsetHeight : 28 };
   });
   const topOutL = clipL.pTop - clipL.minTop;
-  ok('L1 亮色：环展开上下对称（|y| 相等一上一下）+ 顶部越出克制 + 环锚顶带零沉降',
+  ok('L1 亮色：环展开上下对称（|y| 相等一上一下）+ 顶部越出克制（固定尺寸批重钉 ≤ 全高−6）+ 环锚顶带零沉降',
     hovL.open && hovL.n === 3 && eys[0] < 0 && eys[1] > 0 && approx(-eys[0], eys[1], 0.5)
-    && topOutL > 0 && topOutL <= clipL.capH * 0.5 + 2
+    && topOutL > 0 && topOutL <= clipL.capH - 6
     && await page.evaluate(() => {
       const hdr = document.querySelector('#canvas-panel .canvas-header').getBoundingClientRect();
       const slide = document.getElementById('canvas-slide').getBoundingClientRect();

@@ -738,15 +738,18 @@ body:not(.mobile-layer):not(.card-window) #canvas-panel.stacked .canvas-header {
 .canvas-header.scroll-under-glass::after { left: -18px; right: -18px; }
 
 /* 桌面态胶囊内容（原 46px 实条规则退役）：padding/字号降一档
-   （2026-10-22 作者令「平时态尺寸调小」）。高度不再交内容撑（尺寸一致批
-   2026-10-25 作者报障「所有面板的胶囊大小应该保持一致，现在是我们内部的
-   面板明显小一圈」）：修前 height:auto 随子件浮沉 —— 文件页签有
-   canvas-pop-btn（26px）撑到 36，功能性面板页签（图谱/插件/任务列表/设置，
-   pop 钮 hidden）塌到 27 = 面板间「明显小一圈」。固定 36px（= 文件卡档视觉
-   基准；全局 border-box 含 padding/border）后所有面板同高。手机层通栏卡头
-   （mobileLayer.css §⑨ 自有形态）由 :not(.mobile-layer) 让位不锁高。 */
+   （2026-10-22 作者令「平时态尺寸调小」）。固定几何（尺寸一致批 2026-10-25
+   作者报障「所有面板的胶囊大小应该保持一致」+ 同日固定尺寸令「现在每个胶囊
+   的大小还是…会根据内容自适应，我要保持一个固定的大小」）：高度 36px（#840
+   C-① 钉，单一来源升格 = sapphire.css --capsule-h token）+ 宽度 --capsule-w
+   180px 固定 —— 修前 width:fit-content 随内容自适应（作者不要）；超长内容由
+   .t-name ellipsis 截断兜底（「绝不溢出、绝不撑开几何」），窄面板极值下
+   上方 max-width cap（min(76%, …) / max(220px, …)）仍作收缩护栏（护栏触发时
+   同走 ellipsis，标准面板永不触发）。手机层通栏卡头（mobileLayer.css §⑨
+   自有形态）由 :not(.mobile-layer) 让位不锁几何。 */
 body:not(.mobile-layer) .canvas-header {
-  height: 36px;
+  height: var(--capsule-h, 36px);
+  width: var(--capsule-w, 180px);
   padding: 4px 7px 4px 12px;
 }
 body:not(.mobile-layer) .canvas-header .canvas-tab-bar,
@@ -1343,8 +1346,18 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
   left: 0;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  max-width: 150px;
+  /* 固定几何（2026-10-25 胶囊固定尺寸批，作者令「全部胶囊面统一固定宽高」）：
+     环页签胶囊与标题头主胶囊同一 token 档（--capsule-h 36 / --capsule-w 180）——
+     修前 fit-content（max-width 150）随内容自适应；环几何（canvas.js layout()
+     的 h = offsetHeight / edgeY 反解）全部动态读数，36px 面自动流入 —— 越出量
+     随之换挡（h+2 防叠底线主导 ⇒ 越出 = h−8 档），canvas-capsule-ring.spec
+     CR2-6/L1 界已随 36px 统一面重钉。max-width 只留窄窗极值护栏（≤92vw），
+     超长页签名 .cr-name ellipsis 截断（「绝不撑开几何」）。 */
+  height: var(--capsule-h, 36px);
+  width: var(--capsule-w, 180px);
+  max-width: min(var(--capsule-w, 180px), 92vw);
   padding: 4px 10px;
   border: 1px solid var(--glass-border);
   border-radius: 999px;
