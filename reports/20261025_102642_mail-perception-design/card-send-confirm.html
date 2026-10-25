@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>发送确认卡片 · 样张（设计批 2026-10-25）</title>
+<style>
+/* ── 设计样张：自包含。Sapphire Glass 视觉语言；主发送按钮微信绿实色族（visual-style 裁定） ── */
+:root{
+  --page-bg1:#e9edf4; --page-bg2:#dde3ee;
+  --glass-bg:rgba(255,255,255,0.72); --glass-blur:28px;
+  --sapphire-edge:rgba(91,127,191,0.28); --sapphire-refraction:rgba(91,127,191,0.55);
+  --text:#1c2333; --text-muted:#6b7486; --text-faint:#9aa3b5;
+  --control-bg-hover:rgba(91,127,191,0.08); --control-border:rgba(91,127,191,0.22);
+  --accent:#5b7fbf;
+  --wechat-green:#07c160; --wechat-green-press:#06ad56;
+  --ok:#2e9e5b; --danger:#bf4a4a; --warn:#b97a24;
+  --field-bg:rgba(255,255,255,0.6); --field-border:rgba(28,35,51,0.14);
+  --divider:rgba(28,35,51,0.08);
+  --shadow:0 4px 16px rgba(0,0,0,0.05),0 8px 36px rgba(0,0,0,0.07);
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --page-bg1:#171b23; --page-bg2:#10131a;
+    --glass-bg:rgba(32,38,50,0.78);
+    --sapphire-edge:rgba(91,127,191,0.34); --sapphire-refraction:rgba(91,127,191,0.6);
+    --text:#e8ecf4; --text-muted:#9aa4b8; --text-faint:#6d7789;
+    --control-bg-hover:rgba(91,127,191,0.16); --control-border:rgba(91,127,191,0.30);
+    --field-bg:rgba(16,20,28,0.5); --field-border:rgba(232,236,244,0.14);
+    --divider:rgba(232,236,244,0.08);
+    --shadow:0 4px 16px rgba(0,0,0,0.22),0 8px 36px rgba(0,0,0,0.32);
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"SF Pro Text","PingFang SC","Microsoft YaHei",sans-serif;
+  background:linear-gradient(160deg,var(--page-bg1),var(--page-bg2));color:var(--text);
+  min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:32px 16px 64px;
+  font-size:13px;line-height:1.5}
+.page-note{max-width:460px;text-align:center;color:var(--text-muted);margin-bottom:16px;font-size:12px}
+
+.chat-col{width:460px;max-width:100%;display:flex;flex-direction:column;gap:14px}
+
+/* 卡片基底（ask 卡玻璃质感） */
+.card{background:var(--glass-bg);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter:blur(var(--glass-blur)) saturate(1.15);border-radius:14px;border:1px solid var(--sapphire-edge);
+  box-shadow:var(--shadow);position:relative;overflow:hidden}
+.card::before{content:'';position:absolute;top:0;left:10%;right:10%;height:1px;
+  background:linear-gradient(90deg,transparent 10%,var(--sapphire-refraction) 50%,transparent 90%);pointer-events:none}
+.card-h{display:flex;align-items:center;gap:8px;padding:13px 16px 4px}
+.card-h svg{width:15px;height:15px;stroke:var(--accent);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.card-h .t{font-size:13px;font-weight:600}
+.card-h .ver{margin-left:auto;font-size:10.5px;color:var(--text-faint)}
+.card-b{padding:8px 16px 14px}
+
+.frow{display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--divider);align-items:baseline}
+.frow:last-of-type{border-bottom:none}
+.flabel{flex-shrink:0;width:52px;font-size:11.5px;color:var(--text-muted)}
+.fval{flex:1;min-width:0;font-size:12.5px}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{font-size:11.5px;padding:2px 8px;border-radius:7px;background:var(--field-bg);border:1px solid var(--field-border)}
+.subject-line{font-weight:500}
+.body-preview{margin-top:6px;background:var(--field-bg);border:1px solid var(--field-border);border-radius:10px;
+  padding:10px 12px;font-size:12.5px;max-height:120px;overflow-y:auto;white-space:pre-wrap;color:var(--text)}
+.att{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;background:var(--field-bg);
+  border:1px solid var(--field-border);margin-top:4px}
+.att svg{width:13px;height:13px;stroke:var(--accent);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.att .nm{flex:1;min-width:0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.att .sz{font-size:11px;color:var(--text-faint);flex-shrink:0}
+.att .pv{font-size:11px;color:var(--accent);cursor:pointer;border:none;background:none;font-family:inherit}
+.att .pv:hover{text-decoration:underline}
+.att.missing{border-color:rgba(191,74,74,.4)}
+.att.missing .nm{color:var(--danger)}
+
+.btnrow{display:flex;gap:8px;margin-top:12px}
+.btn{font:inherit;border-radius:8px;padding:7px 14px;cursor:pointer;transition:all .15s;
+  border:1px solid var(--field-border);background:var(--field-bg);color:var(--text)}
+.btn:hover{background:var(--control-bg-hover);border-color:var(--control-border)}
+.btn.primary{background:var(--wechat-green);border-color:var(--wechat-green);color:#fff;font-weight:500}
+.btn.primary:hover{background:var(--wechat-green-press)}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--accent)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.block{flex:1}
+
+.revise-box{display:none;margin-top:10px}
+.revise-box.open{display:block}
+.revise-box textarea{width:100%;font:inherit;font-size:12.5px;color:var(--text);background:var(--field-bg);
+  border:1px solid var(--field-border);border-radius:10px;padding:9px 11px;min-height:64px;resize:vertical;outline:none}
+.revise-box textarea:focus{border-color:var(--accent)}
+.revise-hint{font-size:11px;color:var(--text-faint);margin-top:4px}
+
+.flow-note{font-size:11.5px;color:var(--text-muted);padding:8px 2px;display:none;align-items:center;gap:8px}
+.flow-note.show{display:flex}
+.spin{width:12px;height:12px;border:2px solid var(--control-border);border-top-color:var(--accent);border-radius:50%;
+  animation:sp 0.8s linear infinite;flex-shrink:0}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+.receipt{display:none;padding:12px 16px;gap:10px;align-items:flex-start}
+.receipt.show{display:flex}
+.receipt svg{width:17px;height:17px;flex-shrink:0;margin-top:1px;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;fill:none}
+.receipt.ok svg{stroke:var(--ok)}
+.receipt.bad svg{stroke:var(--danger)}
+.receipt .rh{font-weight:600;font-size:12.5px}
+.receipt .rd{font-size:12px;color:var(--text-muted)}
+.receipt .rd code{font-size:11px;background:var(--field-bg);border:1px solid var(--field-border);
+  border-radius:5px;padding:0 5px;font-family:ui-monospace,Menlo,monospace}
+.receipt .abtns{display:flex;gap:8px;margin-top:8px}
+.receipt .btn.sm{padding:4px 10px;font-size:12px;border-radius:7px}
+
+.diff-add{background:rgba(46,158,91,.12);border-radius:4px;padding:0 3px}
+.divider-note{margin:10px 0 0;text-align:center;color:var(--text-faint);font-size:11.5px}
+</style>
+</head>
+<body>
+
+<div class="page-note">设计样张 · 发送确认卡片（构想 4）：字段布局 / 修改意见回流（二次确认）/ 失败回执 · 交互假数据 · 设计批 2026-10-25</div>
+
+<div class="chat-col">
+
+  <!-- ═══ 确认卡 v1（agent 拟稿后弹出） ═══ -->
+  <div class="card" id="card-v1">
+    <div class="card-h">
+      <svg viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+      <span class="t">发送邮件确认</span>
+      <span class="ver">v1 · 待确认</span>
+    </div>
+    <div class="card-b">
+      <div class="frow"><span class="flabel">发件人</span><span class="fval">Kaiyu &lt;i@kaiyu.me&gt;</span></div>
+      <div class="frow"><span class="flabel">收件人</span>
+        <span class="fval chips"><span class="chip">billing@vendor.com</span></span></div>
+      <div class="frow"><span class="flabel">抄送</span>
+        <span class="fval chips"><span class="chip">finance@kaiyu.me</span></span></div>
+      <div class="frow"><span class="flabel">主题</span><span class="fval subject-line" id="subj-v1">10 月服务对账与发票申请</span></div>
+      <div class="frow"><span class="flabel">附件</span>
+        <span class="fval" style="padding:0">
+          <div class="att" id="att-1">
+            <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+            <span class="nm">2026-10-invoice-draft.pdf</span><span class="sz">214 KB</span>
+            <button class="pv" onclick="alert('样张：Canvas 打开本机文件预览（路径引用，不内嵌不外传）')">预览</button>
+          </div>
+          <div class="att" id="att-2">
+            <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+            <span class="nm">ledger-oct.xlsx</span><span class="sz">38 KB</span>
+            <button class="pv" onclick="alert('样张：Canvas 打开本机文件预览')">预览</button>
+          </div>
+          <div class="att missing" id="att-missing">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+            <span class="nm">missing-scan.jpg · 文件不存在，发送已禁用（示例行）</span><span class="sz">—</span>
+          </div>
+        </span>
+      </div>
+      <div class="frow"><span class="flabel">正文</span>
+        <span class="fval"><div class="body-preview" id="body-v1">王经理您好：
+
+附件是 10 月的服务对账单与发票申请表，请查收。金额与上月一致，如有出入请直接批注回复。
+
+顺祝商祺，
+Kaiyu</div></span>
+      </div>
+      <div class="btnrow">
+        <button class="btn primary block" id="send-btn" disabled title="示例中一个附件不存在，实际流程中文件齐备即可发送">发送</button>
+        <button class="btn block" id="revise-btn">提出修改意见</button>
+      </div>
+      <div class="revise-box" id="revise-box">
+        <textarea id="revise-text" placeholder="要改哪里？代理将按你的意见修订后再次请你确认。&#10;例：主题加上合同编号 HT-2026-118；正文语气更正式一些。如果改完可以直接发，请在意见里写明「改完直接发」。"></textarea>
+        <div class="revise-hint">修改意见将回给代理；默认二次确认。意见中写明「改完直接发」则该次修订后自动发送。</div>
+        <div class="btnrow">
+          <button class="btn primary block" id="revise-send">把修改意见交回代理</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="flow-note" id="flow-note"><span class="spin"></span><span>修改意见已交回代理 · 修订中…</span></div>
+
+  <!-- ═══ 确认卡 v2（修订后二次确认） ═══ -->
+  <div class="card" id="card-v2" style="display:none">
+    <div class="card-h">
+      <svg viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+      <span class="t">发送邮件确认</span>
+      <span class="ver">v2 · 按你的意见修订 · 二次确认</span>
+    </div>
+    <div class="card-b">
+      <div class="frow"><span class="flabel">发件人</span><span class="fval">Kaiyu &lt;i@kaiyu.me&gt;</span></div>
+      <div class="frow"><span class="flabel">收件人</span>
+        <span class="fval chips"><span class="chip">billing@vendor.com</span></span></div>
+      <div class="frow"><span class="flabel">抄送</span>
+        <span class="fval chips"><span class="chip">finance@kaiyu.me</span></span></div>
+      <div class="frow"><span class="flabel">主题</span><span class="fval subject-line"><span class="diff-add">HT-2026-118 · </span>10 月服务对账与发票申请</span></div>
+      <div class="frow"><span class="flabel">附件</span>
+        <span class="fval" style="padding:0">
+          <div class="att">
+            <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+            <span class="nm">2026-10-invoice-draft.pdf</span><span class="sz">214 KB</span>
+            <button class="pv" onclick="alert('样张：Canvas 预览')">预览</button>
+          </div>
+          <div class="att">
+            <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+            <span class="nm">ledger-oct.xlsx</span><span class="sz">38 KB</span>
+            <button class="pv" onclick="alert('样张：Canvas 预览')">预览</button>
+          </div>
+        </span>
+      </div>
+      <div class="frow"><span class="flabel">正文</span>
+        <span class="fval"><div class="body-preview">王经理您好：
+
+<span class="diff-add">兹就 HT-2026-118 号合同项下</span>附件是 10 月的服务对账单与发票申请表，请查收。金额与上月一致，<span class="diff-add">若贵司核对存在差异，恳请</span>直接批注回复。
+
+<span class="diff-add">此致</span>
+Kaiyu</div></span>
+      </div>
+      <div class="btnrow">
+        <button class="btn primary block" onclick="doSend('card-v2')">发送</button>
+        <button class="btn block" onclick="alert('样张：继续修订 → v3，同样二次确认')">继续修改</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ 成功回执 ═══ -->
+  <div class="card receipt ok" id="receipt-ok">
+    <svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+    <div style="flex:1">
+      <div class="rh">已发送 · 10:32:07</div>
+      <div class="rd">收件人 billing@vendor.com · 附件 2 个 · 服务器已接收 <code>Message-ID &lt;a81f@smtp.qq.com&gt;</code></div>
+    </div>
+  </div>
+
+  <div class="divider-note">── 以下为发送失败回执样张（静态） ──</div>
+
+  <!-- ═══ 失败回执（静态样张） ═══ -->
+  <div class="card receipt bad" style="display:flex">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+    <div style="flex:1">
+      <div class="rh">发送失败 · 收件方拒收（SMTP 550）</div>
+      <div class="rd"><code>550 5.1.1 recipient address rejected</code> · 收件地址可能已失效。认证/网络类失败会自动退避重试并在本卡更新状态。</div>
+      <div class="abtns">
+        <button class="btn sm" onclick="alert('样张：原样重发')">重试</button>
+        <button class="btn sm ghost" onclick="alert('样张：放弃并把失败原因告知代理，由代理决定下一步')">放弃并告知代理</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider-note">── 一次到位变体说明 ──</div>
+  <div class="card" style="padding:12px 16px;font-size:12px;color:var(--text-muted)">
+    若修改意见中含「改完直接发」：代理修订后<b style="font-weight:500;color:var(--text)">不再弹 v2 卡</b>，
+    直接发送并回执（该授权仅限当次，不记忆）。其余一律二次确认——发送是不可逆外部副作用。
+  </div>
+</div>
+
+<script>
+// 交互：修改意见展开 → 提交 → 模拟代理修订 → v2 卡二次确认 → 发送回执
+const reviseBtn=document.getElementById('revise-btn');
+const reviseBox=document.getElementById('revise-box');
+reviseBtn.addEventListener('click',()=>{
+  const open=reviseBox.classList.toggle('open');
+  reviseBtn.textContent=open?'收起':'提出修改意见';
+  if(open)document.getElementById('revise-text').focus();
+});
+document.getElementById('revise-send').addEventListener('click',()=>{
+  const txt=document.getElementById('revise-text').value.trim();
+  if(!txt){document.getElementById('revise-text').placeholder='请先写一句修改意见（示例占位已给出写法）';
+    document.getElementById('revise-text').focus();return;}
+  document.getElementById('card-v1').style.opacity='.5';
+  document.getElementById('revise-box').classList.remove('open');
+  const note=document.getElementById('flow-note');note.classList.add('show');
+  setTimeout(()=>{
+    note.classList.remove('show');
+    document.getElementById('card-v1').style.display='none';
+    document.getElementById('card-v2').style.display='';
+  },1400);
+});
+function doSend(fromCard){
+  document.getElementById(fromCard).style.opacity='.5';
+  setTimeout(()=>{
+    document.getElementById(fromCard).style.display='none';
+    const r=document.getElementById('receipt-ok');r.classList.add('show');
+    r.scrollIntoView({behavior:'smooth',block:'nearest'});
+  },900);
+}
+// 演示辅助：missing 行展示「文件不存在 → 发送禁用」校验；2s 后模拟文件补齐，发送解禁
+document.getElementById('send-btn').addEventListener('click',()=>doSend('card-v1'));
+setTimeout(()=>{
+  const m=document.getElementById('att-missing');
+  if(m){m.remove();
+    const b=document.getElementById('send-btn');b.disabled=false;b.title='';}
+},2000);
+</script>
+</body>
+</html>

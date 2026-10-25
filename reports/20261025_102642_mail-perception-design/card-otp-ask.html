@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>验证码候选注入 · 样张（设计批 2026-10-25）</title>
+<style>
+/* ── 设计样张：自包含。ask 卡形态：问句下方内联验证码候选（方案 B，「像苹果那样」点击即填）──
+   候选值以 secret 提交：密码框 + owner-only + TTL + 一次性消费（复用平台 secret 问题面） */
+:root{
+  --page-bg1:#e9edf4; --page-bg2:#dde3ee;
+  --glass-bg:rgba(255,255,255,0.72); --glass-blur:28px;
+  --sapphire-edge:rgba(91,127,191,0.28); --sapphire-refraction:rgba(91,127,191,0.55);
+  --text:#1c2333; --text-muted:#6b7486; --text-faint:#9aa3b5;
+  --control-bg-hover:rgba(91,127,191,0.08); --control-border:rgba(91,127,191,0.22);
+  --accent:#5b7fbf; --ok:#2e9e5b; --danger:#bf4a4a; --warn:#b97a24;
+  --field-bg:rgba(255,255,255,0.6); --field-border:rgba(28,35,51,0.14);
+  --divider:rgba(28,35,51,0.08);
+  --shadow:0 4px 16px rgba(0,0,0,0.05),0 8px 36px rgba(0,0,0,0.07);
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --page-bg1:#171b23; --page-bg2:#10131a;
+    --glass-bg:rgba(32,38,50,0.78);
+    --sapphire-edge:rgba(91,127,191,0.34); --sapphire-refraction:rgba(91,127,191,0.6);
+    --text:#e8ecf4; --text-muted:#9aa4b8; --text-faint:#6d7789;
+    --control-bg-hover:rgba(91,127,191,0.16); --control-border:rgba(91,127,191,0.30);
+    --field-bg:rgba(16,20,28,0.5); --field-border:rgba(232,236,244,0.14);
+    --divider:rgba(232,236,244,0.08);
+    --shadow:0 4px 16px rgba(0,0,0,0.22),0 8px 36px rgba(0,0,0,0.32);
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,"SF Pro Text","PingFang SC","Microsoft YaHei",sans-serif;
+  background:linear-gradient(160deg,var(--page-bg1),var(--page-bg2));color:var(--text);
+  min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:32px 16px 64px;
+  font-size:13px;line-height:1.5}
+.page-note{max-width:460px;text-align:center;color:var(--text-muted);margin-bottom:16px;font-size:12px}
+.chat-col{width:460px;max-width:100%;display:flex;flex-direction:column;gap:14px}
+
+.card{background:var(--glass-bg);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter:blur(var(--glass-blur)) saturate(1.15);border-radius:14px;border:1px solid var(--sapphire-edge);
+  box-shadow:var(--shadow);position:relative;overflow:hidden}
+.card::before{content:'';position:absolute;top:0;left:10%;right:10%;height:1px;
+  background:linear-gradient(90deg,transparent 10%,var(--sapphire-refraction) 50%,transparent 90%);pointer-events:none}
+
+.ask-q{padding:13px 16px 8px;display:flex;gap:8px;align-items:flex-start}
+.ask-q .qmark{flex-shrink:0;width:22px;height:22px;border-radius:7px;background:var(--control-bg-hover);
+  border:1px solid var(--control-border);display:flex;align-items:center;justify-content:center;color:var(--accent);
+  font-size:11px;font-weight:600}
+.ask-q .qt{font-size:13px;font-weight:500}
+.ask-q .qs{display:block;font-size:11.5px;color:var(--text-muted);font-weight:400;margin-top:2px}
+
+/* 时间窗条 */
+.window-bar{margin:6px 16px 4px;display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:9px;
+  background:var(--field-bg);border:1px solid var(--field-border);font-size:11.5px;color:var(--text-muted)}
+.window-bar svg{width:13px;height:13px;stroke:var(--accent);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.window-bar .cd{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:600;color:var(--accent)}
+.window-bar.expired{opacity:.55}
+.window-bar.expired .cd{color:var(--text-faint)}
+
+/* 候选区 */
+.otp-sec-label{padding:8px 16px 4px;font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:.04em}
+.cand{margin:0 16px 8px;display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:11px;cursor:pointer;
+  background:var(--field-bg);border:1px solid var(--field-border);transition:all .15s;position:relative}
+.cand:hover{background:var(--control-bg-hover);border-color:var(--control-border)}
+.cand.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.cand .code{font-family:ui-monospace,Menlo,monospace;font-size:19px;font-weight:600;letter-spacing:.14em;font-variant-numeric:tabular-nums}
+.cand .meta{flex:1;min-width:0}
+.cand .src{font-size:12px;font-weight:500}
+.cand .sub{font-size:11px;color:var(--text-muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.cand .fill-tag{flex-shrink:0;font-size:11px;color:var(--accent);border:1px solid var(--control-border);
+  padding:2px 8px;border-radius:7px;white-space:nowrap}
+.cand .fill-tag::after{content:'点击填入'}
+.cand.sel .fill-tag{background:var(--accent);border-color:var(--accent);color:#fff}
+.cand.sel .fill-tag::after{content:'已填入'}
+.cand.expired{opacity:.45;cursor:not-allowed;pointer-events:none}
+.cand.expired .fill-tag{display:none}
+.trust{font-size:10px;padding:0 6px;border-radius:5px;border:1px solid var(--control-border);white-space:nowrap}
+.trust.hi{color:var(--ok);border-color:rgba(46,158,91,.4)}
+.trust.mid{color:var(--accent)}
+.trust.low{color:var(--warn);border-color:rgba(185,122,36,.4)}
+.cand .fresh-dot{width:6px;height:6px;border-radius:50%;background:var(--ok);flex-shrink:0}
+.pre-window{margin:0 16px 8px;padding:7px 10px;border-radius:9px;font-size:11.5px;color:var(--text-muted);
+  background:var(--field-bg);border:1px dashed var(--field-border);display:flex;gap:8px;align-items:center}
+.pre-window button{border:none;background:none;color:var(--accent);cursor:pointer;font:inherit;font-size:11.5px;padding:0}
+.pre-window button:hover{text-decoration:underline}
+
+/* secret 提交框 */
+.secret-fill{margin:4px 16px 0;display:flex;gap:8px}
+.secret-fill input{flex:1;font:inherit;font-size:16px;letter-spacing:.3em;color:var(--text);
+  background:var(--field-bg);border:1px solid var(--field-border);border-radius:9px;padding:8px 12px;outline:none;text-align:center}
+.secret-fill input:focus{border-color:var(--accent)}
+.secret-note{padding:6px 16px 0;font-size:11px;color:var(--text-faint);display:flex;align-items:center;gap:6px}
+.secret-note svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.btnrow{display:flex;gap:8px;padding:10px 16px 14px}
+.btn{font:inherit;border-radius:8px;padding:7px 14px;cursor:pointer;transition:all .15s;
+  border:1px solid var(--field-border);background:var(--field-bg);color:var(--text)}
+.btn:hover{background:var(--control-bg-hover);border-color:var(--control-border)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:500}
+.btn.primary:hover{filter:brightness(1.06)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.block{flex:1}
+.answered{display:none;padding:12px 16px 14px;gap:10px;align-items:flex-start}
+.answered.show{display:flex}
+.answered svg{width:16px;height:16px;stroke:var(--ok);fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;margin-top:1px}
+.answered .rh{font-weight:600;font-size:12.5px}
+.answered .rd{font-size:11.5px;color:var(--text-muted)}
+.rt{font-size:10px;padding:0 6px;border-radius:5px;border:1px solid rgba(46,158,91,.4);color:var(--ok);margin-left:6px}
+
+.empty-otp{margin:2px 16px 12px;padding:16px;text-align:center;color:var(--text-muted);font-size:12px;
+  background:var(--field-bg);border:1px dashed var(--field-border);border-radius:11px}
+.empty-otp .big{font-size:12.5px;color:var(--text);font-weight:500;margin-bottom:2px}
+.divider-note{margin:6px 0 0;text-align:center;color:var(--text-faint);font-size:11.5px}
+</style>
+</head>
+<body>
+
+<div class="page-note">设计样张 · 验证码候选注入（构想 3）：agent 提问开启时间窗 → 窗内验证码邮件实时成为候选 → 点击即填入 secret 框提交 · 交互假数据 · 设计批 2026-10-25</div>
+
+<div class="chat-col">
+
+  <!-- ═══ 卡一：窗口开启中 · 有候选 ═══ -->
+  <div class="card" id="ask-live">
+    <div class="ask-q">
+      <span class="qmark">?</span>
+      <span class="qt">请提供刚收到的登录验证码
+        <span class="qs">用于 service.example.com 登录 · 验证码将以一次性秘密提交，不留在对话里</span></span>
+    </div>
+
+    <div class="window-bar" id="winbar">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+      <span>候选时间窗 · 仅窗内到达的验证码可作为候选</span>
+      <span class="cd" id="win-cd">09:42</span>
+    </div>
+
+    <div class="otp-sec-label">候选（按可信度 → 时间排序）</div>
+
+    <div class="cand" data-code="824193" tabindex="0">
+      <span class="fresh-dot" title="窗内新到达"></span>
+      <span class="code">824 193</span>
+      <span class="meta">
+        <span class="src">QQ 邮箱 <span class="trust hi">白名单域</span></span>
+        <span class="sub">service@qq.com · 刚刚 · 已去重（60s 内重发取最新）</span>
+      </span>
+      <span class="fill-tag"></span>
+    </div>
+
+    <div class="cand" data-code="552107" tabindex="0">
+      <span class="code">552 107</span>
+      <span class="meta">
+        <span class="src">12306 <span class="trust mid">历史往来域</span></span>
+        <span class="sub">noreply@rails.com.cn · 1 分钟前</span>
+      </span>
+      <span class="fill-tag"></span>
+    </div>
+
+    <div class="cand" data-code="390522" tabindex="0">
+      <span class="code">390 522</span>
+      <span class="meta">
+        <span class="src">未知发件域 <span class="trust low">低可信</span></span>
+        <span class="sub">notify@strange-cdn.net · 2 分钟前</span>
+      </span>
+      <span class="fill-tag"></span>
+    </div>
+
+    <div class="pre-window">
+      <svg viewBox="0 0 24 24" style="width:13px;height:13px;stroke:var(--text-faint);fill:none;stroke-width:2;stroke-linecap:round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l2.5 2.5"/></svg>
+      <span>窗开启前 5 分钟另有 1 封疑似验证码（824 193 同码），按窗口规则未列为候选。</span>
+      <button onclick="alert('样张：用户主动展开查看窗前邮件原文（eml 引用，不自动采纳）')">查看</button>
+    </div>
+
+    <div class="secret-fill">
+      <input id="otp-input" type="password" inputmode="numeric" maxlength="6" placeholder="······" aria-label="验证码（以秘密提交）">
+    </div>
+    <div class="secret-note">
+      <svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+      提交即写入一次性秘密（owner-only · TTL 10 分钟 · 用后即焚）；对话与日志只留掩码 824***
+    </div>
+    <div class="btnrow">
+      <button class="btn primary block" id="otp-submit" disabled>提交验证码</button>
+    </div>
+
+    <div class="answered" id="otp-answered">
+      <svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+      <div style="flex:1">
+        <div class="rh">验证码已提交 <span class="rt">一次性消费完成</span></div>
+        <div class="rd">窗口已关闭（reason=answered）· 剩余候选转灰 · 值未进入对话与日志</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider-note">── 以下为同卡的其他窗口状态（静态） ──</div>
+
+  <!-- ═══ 卡二：窗口开启 · 尚无候选（空态） ═══ -->
+  <div class="card">
+    <div class="ask-q">
+      <span class="qmark">?</span>
+      <span class="qt">请提供刚收到的短信/邮件验证码
+        <span class="qs">窗口已开启，验证码一到就会出现在这里</span></span>
+    </div>
+    <div class="window-bar">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+      <span>候选时间窗开启中 · 新验证码实时显示</span>
+      <span class="cd">08:15</span>
+    </div>
+    <div class="empty-otp">
+      <div class="big">尚未收到窗口内的验证码</div>
+      请去邮箱查收并等待推送；此前的验证码按窗口规则不自动显示
+    </div>
+    <div class="btnrow">
+      <button class="btn block" onclick="alert('样张：取消提问 → 窗口关闭（reason=cancelled）')">取消</button>
+    </div>
+  </div>
+
+  <!-- ═══ 卡三：窗口过期（expired 态） ═══ -->
+  <div class="card">
+    <div class="ask-q">
+      <span class="qmark">?</span>
+      <span class="qt">请提供刚收到的登录验证码</span>
+    </div>
+    <div class="window-bar expired">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+      <span>候选时间窗已过期（10 分钟）· 候选失效</span>
+      <span class="cd">00:00</span>
+    </div>
+    <div class="cand expired">
+      <span class="code">824 193</span>
+      <span class="meta">
+        <span class="src">QQ 邮箱 <span class="trust hi">白名单域</span></span>
+        <span class="sub">已过期 · 验证码大概率也已失效，建议让代理重发</span>
+      </span>
+    </div>
+    <div class="btnrow">
+      <button class="btn block" onclick="alert('样张：让代理重新触发一次验证码，新窗口重新开 10 分钟')">让代理重发验证码</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── 窗口倒计时（TTL 10 分钟，假数据从 09:42 起走） ──
+let cd=9*60+42;
+const cdEl=document.getElementById('win-cd');
+const timer=setInterval(()=>{
+  cd=cd>0?cd-1:0;
+  cdEl.textContent=String(Math.floor(cd/60)).padStart(2,'0')+':'+String(cd%60).padStart(2,'0');
+  if(cd===0){clearInterval(timer);document.getElementById('winbar').classList.add('expired');}
+},1000);
+
+// ── 候选点击即填入（方案 B 语义：点击 → 填入 secret 框 → 提交） ──
+const input=document.getElementById('otp-input');
+const submit=document.getElementById('otp-submit');
+document.querySelectorAll('.cand:not(.expired)').forEach(c=>{
+  const pick=()=>{
+    document.querySelectorAll('.cand').forEach(x=>x.classList.remove('sel'));
+    c.classList.add('sel');
+    input.value=c.dataset.code;
+    submit.disabled=false;
+  };
+  c.addEventListener('click',pick);
+  c.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();pick();}});
+});
+input.addEventListener('input',()=>{
+  submit.disabled=input.value.length<4;
+  if(input.value.length>=4)document.querySelectorAll('.cand').forEach(x=>
+    x.classList.toggle('sel',x.dataset.code===input.value));
+});
+submit.addEventListener('click',()=>{
+  // 样张语义：真实流程走 secret 提交（服务端 owner-only 存储 + 一次性消费）
+  document.getElementById('ask-live').querySelectorAll('.ask-q,.window-bar,.otp-sec-label,.cand,.pre-window,.secret-fill,.secret-note,.btnrow')
+    .forEach(el=>{el.style.display='none';});
+  document.getElementById('otp-answered').classList.add('show');
+});
+</script>
+</body>
+</html>
