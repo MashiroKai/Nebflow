@@ -1,0 +1,166 @@
+#!/bin/bash
+# stand-jar-pull — KAI 构建机 → Mac 构建位 jar 流转（KAI 主线迁移批 2026-10-26）
+#
+# 定位（作者令 2026-10-25/26）: KAI 成为开发主线出包位；Mac 按需从 KAI 拉 jar
+# 替换 `stand start` 构建位。本脚本与仓绑定、从仓内跑（同 ops/release.sh 分类，
+# 不入 live）；实际替换动作等作者令。
+#
+# 用法:
+#   ops/bin/stand-jar-pull --verify              # 只读: KAI 最新产物 + 本地位指针/解析对照（零写入）
+#   ops/bin/stand-jar-pull --dry-run             # 全流程演练: 下载+落位+切指针全在临时沙箱 root，不碰真实构建位
+#   ops/bin/stand-jar-pull                       # 实际替换: 拉 KAI 最新 jar → versions/<v>/ 原子落位 → 切 current-version
+#   ops/bin/stand-jar-pull --version <v>         # 指定版本（默认 KAI 上最新的 stand-assembly-*.jar）
+#   ops/bin/stand-jar-pull --root <DIR>          # 覆写目标发布根（默认 $STAND_HOME/bin；演练/测试用）
+#   ops/bin/stand-jar-pull --host <ssh-alias>    # 覆写 KAI ssh 主机（默认 kai，见 ~/.ssh/config）
+#
+# 保证:
+#   - 原子落位: scp 到同卷 .part 临时名 → mv 原子改名（rename 语义，见断电半包不落位）
+#   - 旧包时间戳备份: versions/<v>/ 同名旧 jar → .bak-YYYYMMDD-HHMMSS（沿 live 目录惯例）
+#   - 指针原子切换: current-version 临时文件 + mv；旧指针记入 previous-version（release.sh 同语义）
+#   - 完整性对账: KAI 侧 certutil SHA256 ↔ Mac 侧 shasum -a 256 逐字节比对，不合即拒（不切指针）
+#   - `stand start` 指针解析验证: 替换后按 ops/bin/stand POINTER-SELECT 同源逻辑只读复演，
+#     打印下次 start 将运行的 jar 绝对路径；绝不 exec jar、绝不触碰 6138/在产 daemon
+#
+# KAI 侧约定（fixed 出包位）: C:/Users/Kai/stand/target/scala-3.5.2/stand-assembly-<VERSION>.jar
+#   （sbt assembly 标准出包；版名来自仓 VERSION 文件。脚本认文件名，不依赖仓内 VERSION。）
+
+set -euo pipefail
+
+KAI_HOST="${KAI_SSH:-kai}"
+KAI_JAR_DIR="${KAI_JAR_DIR:-C:/Users/Kai/stand/target/scala-3.5.2}"
+MODE=""          # "" replace | verify | dry-run
+WANT_VER=""
+ROOT_ARG=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --verify)  MODE="verify" ;;
+        --dry-run) MODE="dry-run" ;;
+        --version) shift; WANT_VER="${1:-}" ;;
+        --root)    shift; ROOT_ARG="${1:-}" ;;
+        --host)    shift; KAI_HOST="${1:-}" ;;
+        *) echo "ERROR: unknown arg: $1 (see header for usage)" >&2; exit 64 ;;
+    esac
+    shift
+done
+
+# 数据根解析与 ops/bin/stand 同优先级: STAND_HOME > NEBFLOW_HOME > ~/.stand；发布根 = <data>/bin
+STAND_HOME="${STAND_HOME:-${NEBFLOW_HOME:-$HOME/.stand}}"
+ROOT="${ROOT_ARG:-$STAND_HOME/bin}"
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10)
+
+log()  { printf '[stand-jar-pull] %s\n' "$*"; }
+die()  { printf '[stand-jar-pull] ERROR: %s\n' "$*" >&2; exit 1; }
+
+# ── KAI 侧: 列出候选并取最新（cmd dir /o-d = 新→旧; /b 纯文件名） ──────────────
+kai_list_jars() {
+    ssh "${SSH_OPTS[@]}" "$KAI_HOST" "dir /b /o-d \"$KAI_JAR_DIR\\stand-assembly-*.jar\" 2>nul" | tr -d '\r' | grep -v '^$' || true
+}
+kai_sha256() { # <jar file name> -> hex
+    ssh "${SSH_OPTS[@]}" "$KAI_HOST" "certutil -hashfile \"$KAI_JAR_DIR\\$1\" SHA256" | tr -d '\r' | sed -n '2p' | tr -d ' '
+}
+
+# ── 本地位: 指针解析（只读复演 ops/bin/stand POINTER-SELECT 契约） ────────────
+resolve_current_jar() { # stdout: <jar 绝对路径或空>; 解析不到不为错（caller 处置）
+    local pv=""
+    if [ -f "$ROOT/current-version" ]; then
+        pv="$(tr -d ' \t\r\n' < "$ROOT/current-version" 2>/dev/null || true)"
+    fi
+    if [ -n "$pv" ] && [ -f "$ROOT/versions/$pv/stand-assembly-$pv.jar" ]; then
+        printf '%s\n' "$ROOT/versions/$pv/stand-assembly-$pv.jar"
+    elif [ -n "$pv" ] && ls "$ROOT/versions/$pv"/*.jar >/dev/null 2>&1; then
+        printf '%s\n' "$(ls -1 "$ROOT/versions/$pv"/*.jar | head -n 1)"
+    else
+        # 指针缺/悬空 → launcher 会走根目录 winsort 兜底; 这里只报告指针态, 不替它选
+        printf '%s\n' ""
+    fi
+}
+
+PORT_CHECK="${STAND_GATEWAY_PORT:-${NEBFLOW_GATEWAY_PORT:-6138}}"
+
+# ── 采集: KAI 最新产物 + 版本名 ────────────────────────────────────────────────
+latest="$(kai_list_jars | head -n 1)"
+[ -n "$latest" ] || die "KAI $KAI_JAR_DIR 下没有任何 stand-assembly-*.jar（先在 KAI 跑 sbt assembly）"
+if [ -n "$WANT_VER" ]; then
+    JAR_NAME="stand-assembly-$WANT_VER.jar"
+    kai_list_jars | grep -qx "$JAR_NAME" || die "KAI 上没有指定版本 $JAR_NAME"
+else
+    JAR_NAME="$latest"
+fi
+VER="${JAR_NAME#stand-assembly-}"; VER="${VER%.jar}"
+[ -n "$VER" ] || die "无法从文件名解析版本: $JAR_NAME"
+
+log "KAI($KAI_HOST) 最新产物: $KAI_JAR_DIR/$JAR_NAME"
+kai_remote_sha="$(kai_sha256 "$JAR_NAME")"
+[ -n "$kai_remote_sha" ] || die "KAI 侧 certutil SHA256 取不到（certutil 不可用?）"
+log "KAI SHA256: $kai_remote_sha"
+
+# ── 本地位现状（只读对照面） ─────────────────────────────────────────────────
+cur_ptr="$(cat "$ROOT/current-version" 2>/dev/null | tr -d ' \t\r\n' || true)"
+cur_resolved="$(resolve_current_jar)"
+log "本地发布根: $ROOT"
+log "current-version: ${cur_ptr:-<无>}"
+log "指针现解析: ${cur_resolved:-<解析不到>}"
+engine_pids="$(lsof -ti tcp:"$PORT_CHECK" -sTCP:LISTEN 2>/dev/null || true)"
+if [ -n "$engine_pids" ]; then
+    log "注意: 端口 $PORT_CHECK 有 stand listener (pid $(printf '%s' "$engine_pids" | tr '\n' ' ')) — 新 jar 在下次 stop/start 生效, 本脚本绝不触碰在产进程"
+fi
+
+if [ "$MODE" = "verify" ]; then
+    log "verify 模式: 零写入, 到此为止。要演练用 --dry-run, 要替换默认直接跑。"
+    exit 0
+fi
+
+if [ "$MODE" = "dry-run" ]; then
+    ROOT="$(mktemp -d "${TMPDIR:-/tmp}/stand-jar-pull-dryrun.XXXXXX")"
+    log "dry-run: 沙箱发布根 = ${ROOT} （真实构建位零触碰）"
+fi
+
+# ── 下载 → 原子落位 → 备份 → 切指针 → 对账 ───────────────────────────────────
+mkdir -p "$ROOT/versions/$VER" "$ROOT/incoming"
+part="$ROOT/incoming/$JAR_NAME.part"
+log "下载 → $part"
+scp -q "${SSH_OPTS[@]}" "$KAI_HOST:$KAI_JAR_DIR/$JAR_NAME" "$part"
+[ -s "$part" ] || die "下载产物为空: $part"
+
+local_sha="$(shasum -a 256 "$part" | awk '{print $1}')"
+if [ "$local_sha" != "$kai_remote_sha" ]; then
+    log "KAI=$kai_remote_sha"; log "MAC=$local_sha"
+    rm -f "$part"
+    die "SHA256 不合 — 传输损坏, 已丢弃 .part, 指针未动"
+fi
+log "SHA256 对账一致: $local_sha"
+
+dest="$ROOT/versions/$VER/stand-assembly-$VER.jar"
+if [ -f "$dest" ]; then
+    bak="$dest.bak-$(date +%Y%m%d-%H%M%S)"
+    mv "$dest" "$bak"
+    log "旧包备份: $bak"
+fi
+mv "$part" "$dest"   # 同卷 rename = 原子
+log "落位: $dest"
+
+if [ -n "$cur_ptr" ] && [ "$cur_ptr" != "$VER" ]; then
+    printf '%s\n' "$cur_ptr" > "$ROOT/previous-version"
+    log "previous-version ← $cur_ptr"
+fi
+tmp="$ROOT/.current-version.tmp.$$"
+printf '%s\n' "$VER" > "$tmp"
+mv "$tmp" "$ROOT/current-version"   # 同卷 rename = 原子
+if [ "$MODE" = "dry-run" ]; then
+    log "current-version（沙箱内）← $VER"
+else
+    log "current-version ← $VER"
+fi
+
+# ── `stand start` 指针解析验证（只读复演） ───────────────────────────────────
+now_ptr="$(cat "$ROOT/current-version" 2>/dev/null | tr -d ' \t\r\n' || true)"
+resolved="$(resolve_current_jar)"
+if [ -n "$resolved" ] && [ -s "$resolved" ]; then
+    log "✅ 指针解析验证: stand start 将运行 $resolved ($(wc -c < "$resolved" | tr -d ' ') bytes)"
+    log "   （与 ops/bin/stand POINTER-SELECT 同源逻辑复演; 未 exec jar, 未触碰 6138/daemon）"
+else
+    log "⚠️ 指针解析验证: current-version=$now_ptr 解析不到 jar — launcher 将走 winsort 兜底或报 JAR not found（请检查 $ROOT/versions/）"
+    exit 1
+fi
+log "完成。重启生效需显式 stand stop && stand start（本脚本不做）。"
