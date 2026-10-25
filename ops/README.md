@@ -111,6 +111,33 @@ bash ops/release.sh status    # 只读: 指针 / previous / staged 状态
   `STAND_RELEASE_BUILD_CMD` / `STAND_RELEASE_SMOKE_CMD` / `STAND_RELEASE_JAVA_BIN`。
 - 完整证据链见 `reports/20261025_142200_release-pipeline-m2__delegate-nebflow-187d2ff9/REPORT.md`。
 
+## KAI 主线构建约定（2026-10-26 正式切换 · 作者令 00:55「把STAND的开发转移到Kai上去」）
+
+- **切换事实**：引擎构建主线自本批起 = **KAI**（`C:\Users\Kai\stand`，ssh alias `kai`，git-bash）；
+  Mac 本地 sbt 构建**退役**，仅作 KAI 不可用（Tailscale 断 / 机器关）时的紧急兜底。
+  迁移基线 `38b81eb4f`（2026-10-26 凌晨，含回执去重修复批）。
+- **日常流（引擎构建三步，顺序固定）**：
+  1. **bundle 同步**（Mac → KAI）：Mac 读当前 main HEAD →
+     `git bundle create /tmp/kai-sync.bundle <KAI当前HEAD>..main`（薄包）→
+     `scp` 到 KAI（如 `kai:C:/Users/Kai/kai-phase2/`）→ KAI 侧
+     `git fetch <bundle> main && git merge --ff-only FETCH_HEAD`，完事 `git status` 核干净。
+     （SSH 直 push 在 Windows 非交互 PATH 下不可用，bundle 通道是唯一约定通道——
+     见 `reports/20261026_002700_kai-migration-phase1/REPORT.md` §2。）
+  2. **KAI 出包**：KAI 仓跑 `sbt -batch compile [快验面 testOnly] assembly`
+     （前台 + 心跳落盘纪律；testOnly 红会 fail-fast 短路 assembly，assembly 单独补跑——两段各有日志落
+     `/c/Users/Kai/kai-phase2/` 惯例位）。固定出包位 =
+     `C:/Users/Kai/stand/target/scala-3.5.2/stand-assembly-<VERSION>.jar`（版名=仓 VERSION 文件）。
+  3. **Mac 拉取替换**：仓内 `ops/bin/stand-jar-pull`（certutil↔shasum SHA256 双端对账 →
+     `.part` 原子落位 → 旧包 `.bak-时间戳` 备份 → `current-version` 指针原子切换 →
+     `stand start` 指针解析只读复演）。新包**下次 stop/start 生效**；
+     脚本绝不触碰在产 daemon / 6138。用法一页：`ops/stand-jar-pull.md`。
+- **测试电池约定**：白天全量电池在 **KAI** 跑（批名 `test7`，对照 2026-10-26 凌晨基线：
+  phase-1 18:24 终验账 Total 1365/Failed 157 @`4c866d61d` + phase-2 快验族读数 @`38b81eb4f`，
+  见 `reports/20261026_*_kai-migration-phase2/REPORT.md`）；Mac 侧不再跑全量电池。
+  快验固定面：`ImageGenSpec` + agent 三锚（`RootSixBaseToolsSpec`/`FriendsSealSpec`/`Phase2dToolRefactorSpec`）
+  + `PerceptionCoreSpec`（末者 KAI 上有 4 稳定红，Windows 环境差定因候选见 phase-2 报告，非合并回归判读）。
+- **Mac 本地构建（紧急兜底）**：仅 KAI 不可用时走 `ops/release.sh stage` 老路；恢复后回到三步主线流。
+
 ## 测试
 
 ```bash
