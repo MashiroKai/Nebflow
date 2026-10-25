@@ -59,9 +59,9 @@ class DelegateAutoMergeSpec extends FunSuite:
     nebflow.ForceRemove.removeAll(tempRoot / "tasks")
 
   private val on: DelegateAutoMerge.Config =
-    DelegateAutoMerge.Config(enabled = true, targetBranch = None, restoreArtifacts = true)
+    DelegateAutoMerge.Config(enabled = true, targetBranch = None, restoreArtifacts = true, absorbArtifacts = true)
   private val off: DelegateAutoMerge.Config =
-    DelegateAutoMerge.Config(enabled = false, targetBranch = None, restoreArtifacts = true)
+    DelegateAutoMerge.Config(enabled = false, targetBranch = None, restoreArtifacts = true, absorbArtifacts = true)
 
   private def gitAvailable: Boolean =
     Try(os.proc("git", "--version").call(check = false, stdout = os.Pipe, stderr = os.Pipe).exitCode == 0)
@@ -289,7 +289,7 @@ class DelegateAutoMergeSpec extends FunSuite:
       val wt = addWorktree(repo, "delegate/am-target", tempRoot / "am-target-wt")
       val r = rec("delegate-am-target", repo, "delegate/am-target", Some(wt))
       val mainBefore = headSha(repo, "main")
-      val suffix = hook(r, DelegateAutoMerge.Config(enabled = true, targetBranch = Some("release"), restoreArtifacts = true))
+      val suffix = hook(r, DelegateAutoMerge.Config(enabled = true, targetBranch = Some("release"), restoreArtifacts = true, absorbArtifacts = true))
       assert(suffix.exists(_.contains("merged into 'release'")), s"suffix: $suffix")
       assertEquals(headSha(repo, "main"), mainBefore, "main must stay untouched when the target is overridden")
       assertEquals(parents(repo, "release").size, 2, "release must receive the two-parent merge")
@@ -564,7 +564,7 @@ class DelegateAutoMergeSpec extends FunSuite:
       g("commit", "-m", "artifacts v1")
       os.write.over(repo / "evidence" / "pic.png", "PNGDATA-TEST-RUN-OVERWRITE")
       val r = rec("delegate-am-restore-off", repo, "delegate/am-restore-off", worktree = None)
-      val cfg = DelegateAutoMerge.Config(enabled = true, targetBranch = None, restoreArtifacts = false)
+      val cfg = DelegateAutoMerge.Config(enabled = true, targetBranch = None, restoreArtifacts = false, absorbArtifacts = true)
       val mainBefore = headSha(repo, "main")
       val suffix = hook(r, cfg)
       assertEquals(os.read(repo / "evidence" / "pic.png"), "PNGDATA-TEST-RUN-OVERWRITE", "switch off ⇒ no restore")
@@ -607,6 +607,104 @@ class DelegateAutoMergeSpec extends FunSuite:
       val dirty = payload.hcursor.get[List[String]]("dirtyPaths").toOption.getOrElse(Nil)
       assert(dirty.contains("src/Main.scala"), s"dirtyPaths must record the source path: $dirty")
       assert(suffix.exists(_.contains("src/Main.scala")), s"suffix must carry the actionable path: $suffix")
+  }
+
+  // ── 腿⑤ 工件处置兑现·收编（merge-queue 滞留修复批 2026-10-25 作者令腿①） ──
+
+  test(
+    "⑬ untracked reports/evidence artifacts ⇒ auto-ABSORBED into the merge batch (add+commit), tree de-clogged, merge lands; artifact-absorb row carries paths+commit"
+  ) {
+    if !gitAvailable then ()
+    else
+      val repo = mkRepo(tempRoot / "am-absorb", branch = "delegate/am-absorb")
+      val wt = addWorktree(repo, "delegate/am-absorb", tempRoot / "am-absorb-wt")
+      // delegate 分支携带 reports/ 交付物（合并时会撞上主树同名未跟踪目录——
+      // 10-25 实证病灶：未跟踪工件挡死合并队列）
+      def gw(args: String*): os.CommandResult =
+        os.proc(Seq("git", "-C", wt.toString) ++ args).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+      os.makeDir.all(wt / "reports" / "20261025_panels-mobile-ux")
+      os.write(wt / "reports" / "20261025_panels-mobile-ux" / "REPORT.md", "# ux batch report\n")
+      gw("add", ".")
+      gw("commit", "-m", "report deliverable")
+      // 主树同路径未跟踪工件（测试/任务在主树落报告——收编对象）
+      os.makeDir.all(repo / "reports" / "20261023_182241_panels-mobile-ux")
+      os.write(repo / "reports" / "20261023_182241_panels-mobile-ux" / "old.md", "# older report\n")
+      val r = rec("delegate-am-absorb", repo, "delegate/am-absorb", Some(wt))
+      val mainBefore = headSha(repo, "main")
+      val suffix = hook(r, on)
+      // 收编落地：报告文件入册（内容保留）、树转洁、合并照常落地
+      assert(os.exists(repo / "reports" / "20261023_182241_panels-mobile-ux" / "old.md"), "absorbed artifact is committed, not deleted")
+      assert(suffix.exists(_.contains("merged into 'main'")), s"tree de-clogged ⇒ merge lands: $suffix")
+      assertEquals(parents(repo, "main").size, 2, "the --no-ff merge landed after absorption")
+      assert(headSha(repo, "main") != mainBefore, "main advanced")
+      // 审计面：artifact-absorb 行（路径 + 收编提交）
+      val actions = autoMergeRows("delegate-am-absorb").map(_._1)
+      assert(actions.contains("artifact-absorb"), s"an artifact-absorb audit row must exist: $actions")
+      val (_, payload) = autoMergeRows("delegate-am-absorb").find(_._1 == "artifact-absorb").getOrElse(fail("absorb row"))
+      val paths = payload.hcursor.get[List[String]]("absorbedPaths").toOption.getOrElse(Nil)
+      assert(paths.exists(_.startsWith("reports/")), s"absorb row must name the reports/ path: $paths")
+      assert(payload.hcursor.get[String]("absorbCommit").toOption.exists(_.nonEmpty), "absorb row carries the chore commit sha")
+      assertEquals(actions.lastOption, Some("merged"), "the merge row closes the evaluation")
+  }
+
+  test(
+    "⑬b absorbArtifacts=false ⇒ untracked artifacts stay untracked, refused — the kill-switch returns the pre-batch semantics"
+  ) {
+    if !gitAvailable then ()
+    else
+      val repo = mkRepo(tempRoot / "am-absorb-off", branch = "delegate/am-absorb-off")
+      os.makeDir.all(repo / "reports" / "stray-batch")
+      os.write(repo / "reports" / "stray-batch" / "note.md", "generated\n")
+      val r = rec("delegate-am-absorb-off", repo, "delegate/am-absorb-off", worktree = None)
+      val cfg = DelegateAutoMerge.Config(enabled = true, targetBranch = None, restoreArtifacts = true, absorbArtifacts = false)
+      val mainBefore = headSha(repo, "main")
+      val suffix = hook(r, cfg)
+      assertEquals(
+        os.read(repo / "reports" / "stray-batch" / "note.md"),
+        "generated\n",
+        "switch off ⇒ the untracked artifact stays untracked (untouched)"
+      )
+      assertEquals(headSha(repo, "main"), mainBefore, "switch off ⇒ refused, zero merge")
+      assertEquals(autoMergeRows("delegate-am-absorb-off").lastOption.map(_._1), Some("refused"))
+      assertEquals(
+        autoMergeRows("delegate-am-absorb-off").exists(_._1 == "artifact-absorb"),
+        false,
+        "switch off ⇒ no absorb audit row"
+      )
+      assert(suffix.exists(_.contains("NOT merged")), s"suffix: $suffix")
+  }
+
+  test(
+    "⑬c mixed dirt (untracked reports/ + untracked source) ⇒ only the whitelist is absorbed, source stays, refusal is fail-closed with remaining paths"
+  ) {
+    if !gitAvailable then ()
+    else
+      val repo = mkRepo(tempRoot / "am-absorb-mixed", branch = "delegate/am-absorb-mixed")
+      os.makeDir.all(repo / "reports" / "gen")
+      os.write(repo / "reports" / "gen" / "note.md", "generated\n")
+      os.makeDir.all(repo / "src")
+      os.write(repo / "src" / "HalfDone.scala", "// human work in progress")
+      val r = rec("delegate-am-absorb-mixed", repo, "delegate/am-absorb-mixed", worktree = None)
+      val mainBefore = headSha(repo, "main")
+      val suffix = hook(r, on)
+      // 白名单收编照常（生成工件入册——一笔 chore 提交先落 main）；源码原样滞留（fail-closed 禁区）
+      assertEquals(os.read(repo / "src" / "HalfDone.scala"), "// human work in progress", "source files are NEVER touched")
+      assert(suffix.exists(_.contains("NOT merged")), s"still refused over the source dirt: $suffix")
+      // porcelain 将全未跟踪目录折叠为 `src/` 形——拒绝面携目录路径（既有 dirtyPaths 语义）
+      assert(suffix.exists(_.contains("src/")), s"the refusal must name the remaining path: $suffix")
+      // 收编提交已让 main 前进（chore 一笔、单亲——合并本身仍被拒）
+      assert(headSha(repo, "main") != mainBefore, "the absorb commit advanced main")
+      assertEquals(parents(repo, "main").size, 1, "refused ⇒ NO merge commit on main")
+      val tracked = os
+        .proc("git", "-C", repo.toString, "ls-files", "reports/gen/note.md")
+        .call(check = true, stdout = os.Pipe)
+        .out
+        .trim()
+      assertEquals(tracked, "reports/gen/note.md", "the absorbed artifact is committed (tracked), not deleted")
+      val (_, payload) = autoMergeRows("delegate-am-absorb-mixed").lastOption.getOrElse(fail("refused row"))
+      assertEquals(payload.hcursor.get[String]("action").toOption, Some("refused"))
+      val dirty = payload.hcursor.get[List[String]]("dirtyPaths").toOption.getOrElse(Nil)
+      assert(dirty.contains("src/"), s"dirtyPaths must carry the remaining source path: $dirty")
   }
 
 end DelegateAutoMergeSpec

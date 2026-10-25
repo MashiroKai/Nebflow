@@ -67,11 +67,20 @@ object DelegateAutoMerge:
      * 生成物，非人写代码——去堵源），还原后仍脏才拒。缺省 true；false = 一键回
      * 「脏即拒」原语义（还原面零动作）。
      */
-    restoreArtifacts: Boolean
+    restoreArtifacts: Boolean,
+    /**
+     * 未跟踪生成工件收编开关（merge-queue 滞留修复批 2026-10-25 作者令腿①
+     * 「工件处置兑现」）：还原腿之后树仍脏、且余脏恰为 evidence/、reports/ 下
+     * `??` 未跟踪工件 ⇒ `git add` + `git commit` **收编进待合并批**（报告/证据
+     * 是批交付物，收编优先——删/还原反而丢东西），树转洁合并放行。缺省 true；
+     * false = 未跟踪工件不收编（照旧拒，工件原样滞留——一键回 10-25 前语义）。
+     * 白名单外一切脏（源码等）两开关皆不碰：fail-closed 拒绝不变。
+     */
+    absorbArtifacts: Boolean
   )
 
   object Config:
-    val Default: Config = Config(enabled = true, targetBranch = None, restoreArtifacts = true)
+    val Default: Config = Config(enabled = true, targetBranch = None, restoreArtifacts = true, absorbArtifacts = true)
 
     /** 热读（每次现读盘，零缓存）；absent / 非法 / garbage ⇒ 缺省。 */
     def read: Config =
@@ -89,7 +98,9 @@ object DelegateAutoMerge:
                   .map(_.trim).filter(_.nonEmpty)
               val restoreArtifacts =
                 cur.downField("restoreArtifacts").as[Option[Boolean]].toOption.flatten.getOrElse(true)
-              Config(enabled, target, restoreArtifacts)
+              val absorbArtifacts =
+                cur.downField("absorbArtifacts").as[Option[Boolean]].toOption.flatten.getOrElse(true)
+              Config(enabled, target, restoreArtifacts, absorbArtifacts)
       catch case _: Throwable => Default
   end Config
 
@@ -230,17 +241,46 @@ object DelegateAutoMerge:
           else
             // 腿③（生成物自动还原·去堵源，2026-10-23）：树脏先做白名单还原
             // （evidence/、reports/ 下已跟踪文件的未提交修改 = 测试覆写的生成物；
-            // 源码路径绝不碰），还原后仍脏才拒——拒绝理由携脏路径清单（可行动）。
+            // 源码路径绝不碰）。
             val dirtyNow = dirty(ws)
             val restored = if dirtyNow then restoreArtifacts(rec, ws, cfg) else Nil
-            if dirtyNow && dirty(ws) then
+            // 腿⑤（工件处置兑现·收编，merge-queue 滞留修复批 2026-10-25 作者令）：
+            // 还原后仍脏、且余脏恰为白名单内 `??` 未跟踪工件 ⇒ 收编进待合并批
+            // （add+commit 一笔 chore——报告/证据是批交付物，收编不丢）；收编后仍脏
+            // （源码等白名单外）才拒。拒绝文案「auto-restored by the engine」的
+            // 承诺自此对两类生成工件都兑现（10-25 病灶①：未跟踪工件曾只承诺不兑现）。
+            val absorbed =
+              if dirty(ws) && cfg.absorbArtifacts then
+                MergeArtifactCare.absorbUntracked(ws) match
+                  case Right(a) if a.paths.nonEmpty =>
+                    logger.info(
+                      s"auto-merge: absorbed ${a.paths.size} untracked generated artifact(s) into the merge batch " +
+                        s"(${a.paths.mkString(", ")}) as ${a.commit.take(9)}"
+                    )
+                    row(
+                      rec,
+                      "artifact-absorb",
+                      Json.obj(
+                        "baseWorkspace" -> ws.toString.asJson,
+                        "absorbedPaths" -> a.paths.asJson,
+                        "absorbCommit" -> a.commit.asJson
+                      )
+                    )
+                    Some(a)
+                  case Right(_) => None
+                  case Left(err) =>
+                    logger.warn(s"auto-merge: artifact absorb failed (tree may stay dirty, refused path): ${err.take(200)}")
+                    None
+              else None
+            if dirty(ws) then
               val paths = dirtyPaths(ws)
               val reason =
                 "base workspace has uncommitted changes — refusing to auto-merge over an unclean tree " +
                   "(fail-closed, nothing staged)" +
                   (if paths.nonEmpty then s". Dirty paths: ${paths.mkString(", ")}" else "") +
-                  ". Clean them (commit or restore) to unblock — generated artifacts under evidence/ and " +
-                  "reports/ are auto-restored by the engine."
+                  ". Clean them (commit or restore) to unblock — the engine auto-restores tracked overwrites " +
+                  "and auto-absorbs untracked generated artifacts under evidence/ and reports/ (absorbed into " +
+                  "the merge batch as a commit); tracked source modifications stay fail-closed."
               row(
                 rec,
                 "refused",
@@ -248,7 +288,8 @@ object DelegateAutoMerge:
                   "reason" -> reason.asJson,
                   "target" -> target.asJson,
                   "dirtyPaths" -> paths.asJson,
-                  "artifactsRestored" -> restored.map(_.path).asJson
+                  "artifactsRestored" -> restored.map(_.path).asJson,
+                  "artifactsAbsorbed" -> absorbed.map(_.paths).getOrElse(Nil).asJson
                 )
               )
               Result.Refused(target, s"$reason.", paths)

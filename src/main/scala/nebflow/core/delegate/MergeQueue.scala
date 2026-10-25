@@ -5,6 +5,7 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.actor.{ActorPath, ActorRef, AgentCommand, AgentEvent}
+import nebflow.core.GitWorktrees
 import nebflow.shared.NebflowLogger
 
 import scala.concurrent.duration.FiniteDuration
@@ -77,10 +78,23 @@ object MergeQueue:
      * 待重试标记（steward 批 D3-③，2026-10-23）：合并轮被拒（冲突/脏树/机械
      * 验收拒绝）或提醒不可投（目标会话已死）的条目**不再堵塞后续**——单飞行窗
      * 立即放行轮转下一条，本条**留队待重试**（位置键 readyAt 不变，FIFO 序保持）。
-     * 资格恢复 = 事件驱动：会话复活（respawn reattach / boot sweep 重挂）时清除。
-     * pump 授窗时跳过本标记条目（`pumpLocked`）。
+     * 资格恢复 = 事件驱动：会话复活（respawn reattach / boot sweep 重挂）或
+     * [[MergeStallCare]] 滞留看护的重试注入（2026-10-25 批——退避重发合并轮，
+     * 不再永久静默滞留）。pump 授窗时跳过本标记条目（`pumpLocked`）。
      */
-    pendingRetry: Boolean = false
+    pendingRetry: Boolean = false,
+    /**
+     * 滞留台账（merge-queue 滞留两病灶修复批 2026-10-25 作者令腿②）：本条目
+     * **被拒/重试失败的次数**——keepForRetry 终态 +1，看护重试失败 +1。达到
+     * [[MergeStallCare]] 上限 ⇒ 升级告警根会话（不再静默）。
+     */
+    retryCount: Int = 0,
+    /** 上一次重试动作（拒绝/注入/清障失败）的墙钟锚——退避间隔的起算点。 */
+    lastAttemptAt: Long = 0L,
+    /** 本次停靠段落内拒绝诊断通知是否已送达（每次新拒绝复位——逐次通知）。 */
+    stallNotified: Boolean = false,
+    /** 重试预算耗尽后是否已升级告警根会话（粘住——一次停靠段只告警一次）。 */
+    stallEscalated: Boolean = false
   )
 
   /**
@@ -210,6 +224,197 @@ object MergeQueue:
       }
   }
 
+  // ── 滞留面（merge-queue 滞留两病灶修复批 2026-10-25 腿②③） ────────────
+  //
+  // 被拒条目此前只有「留队待重试」的标记而无任何重试者/告警者——队首滞留静默
+  // 楔死（作者 2026-10-25 实证：reports/ 工件两次挡死队列两天多）。本段给
+  // [[MergeStallCare]]（滞留看护）与 /api/merge-queue（队列状态面）提供单点：
+  // 台账字段迁移（markStallNotified / bumpStallAttempt）、窗接管（acquireWindow
+  // / releaseWindow）、通道腿重发（retryInject）、全队列投影（stallSnapshot）。
+
+  /** 一条队列条目的滞留投影（看护判据 + API 状态面单一形状源）。 */
+  final case class StallView(
+    delegateId: String,
+    projectKey: String,
+    branch: String,
+    baseBranch: String,
+    baseWs: String,
+    description: String,
+    taskId: Option[String],
+    parentSessionId: String,
+    /** 1 起位次（引擎 FIFO 序）。 */
+    position: Int,
+    total: Int,
+    /** 窗空闲 = None；窗持 = 队头条目 id（与 QueueView.holder 同判据）。 */
+    holder: Option[String],
+    pendingRetry: Boolean,
+    reminderSent: Boolean,
+    retryCount: Int,
+    lastAttemptAt: Long,
+    stallNotified: Boolean,
+    stallEscalated: Boolean,
+    readyAt: Long
+  )
+
+  /** 全队列滞留投影（进程内态只读；API 面 + MergeStallCare 判据同源）。 */
+  def stallSnapshot: List[StallView] = lock.synchronized {
+    queues.toList.flatMap { (projectKey, q) =>
+      val sorted = sortByReadyAt(q)
+      sorted.zipWithIndex.map { (e, idx) =>
+        StallView(
+          delegateId = e.delegateId,
+          projectKey = projectKey,
+          branch = e.branch,
+          baseBranch = e.baseBranch,
+          baseWs = e.baseWs,
+          description = e.description,
+          taskId = e.taskId,
+          parentSessionId = e.parentSessionId,
+          position = idx + 1,
+          total = sorted.size,
+          // 持窗者 = 真实在飞合并轮（提醒已发 ∧ 未停靠）；窗持但无在飞轮 = 队头
+          // （既有 QueueView 语义的精化——停靠队头不是真持窗者）。
+          holder =
+            if inFlight.contains(projectKey) then
+              sorted.find(e2 => e2.reminderSentAt.isDefined && !e2.pendingRetry).orElse(sorted.headOption).map(_.delegateId)
+            else None,
+          pendingRetry = e.pendingRetry,
+          reminderSent = e.reminderSentAt.isDefined,
+          retryCount = e.retryCount,
+          lastAttemptAt = e.lastAttemptAt,
+          stallNotified = e.stallNotified,
+          stallEscalated = e.stallEscalated,
+          readyAt = e.readyAt
+        )
+      }
+    }
+  }
+
+  /** lock held；按 delegateId 原地迁移条目（查无 = no-op）。 */
+  private def mutateEntryLocked(delegateId: String)(f: Entry => Entry): Option[Entry] =
+    queues.find((_, q) => q.exists(_.delegateId == delegateId)).flatMap { (key, _) =>
+      val updated = queues(key).map(e => if e.delegateId == delegateId then f(e) else e)
+      queues = queues.updated(key, updated)
+      updated.find(_.delegateId == delegateId)
+    }
+
+  /** 拒绝诊断通知已送达盖章（MergeStallCare 通知腿；查无 = no-op）。 */
+  def markStallNotified(delegateId: String): Unit = lock.synchronized {
+    mutateEntryLocked(delegateId)(_.copy(stallNotified = true)).foreach { e =>
+      record(e, "stall-notice-sent", Json.obj("retryCount" -> e.retryCount.asJson))
+    }
+  }
+
+  /** 重试预算耗尽的升级告警已发盖章（粘住——一次停靠段只告警一次；查无 = no-op）。 */
+  def markStallEscalated(delegateId: String): Unit = lock.synchronized {
+    mutateEntryLocked(delegateId)(_.copy(stallEscalated = true)).foreach { e =>
+      record(e, "stall-escalated", Json.obj("retryCount" -> e.retryCount.asJson))
+    }
+  }
+
+  /**
+   * 滞留重试失败记账（清障仍脏 / 通道复活失败——无合并轮在飞故无终态可计数，
+     * 由看护直接记账）：retryCount +1、退避锚重置、通知复位（下拍携新路径再通知）。
+   */
+  def bumpStallAttempt(delegateId: String, reason: String): Unit = lock.synchronized {
+    mutateEntryLocked(delegateId) { e =>
+      e.copy(retryCount = e.retryCount + 1, lastAttemptAt = System.currentTimeMillis(), stallNotified = false)
+    }.foreach { e =>
+      record(
+        e,
+        "stall-attempt",
+        Json.obj("reason" -> reason.take(300).asJson, "retryCount" -> e.retryCount.asJson)
+      )
+    }
+  }
+
+  /** 窗接管（重试注入前；已被持 = false——竞态让位，下拍再来）。 */
+  def acquireWindow(projectKey: String): Boolean = lock.synchronized {
+    if inFlight.contains(projectKey) then false
+    else
+      inFlight = inFlight + projectKey
+      true
+  }
+
+  /** 窗释放（重试注入失败的回收腿；仅看护/复活路径使用）。 */
+  def releaseWindow(projectKey: String): Unit = lock.synchronized {
+    inFlight = inFlight - projectKey
+  }
+
+  /**
+   * 滞留重发（MergeStallCare 重试腿的通道单点）：通道腿（external/recovered 闭包）
+   * 重发合并指令——成功 = 盖章 + 记账行 `retry-injected` + **持窗**（合并轮重新
+     * 在飞，终态释放）；失败 = 记账行 `retry-inject-failed` + 本条留队不动 +
+   * `bumpStallAttempt`（退避进位）。内部腿（childRef）不走此处——会话已终态，
+   * 复活归 agent 层 [[MergeStallCare.RevivalPort]]（续起会话 + rekey）；本面返回
+   * Left 标识。条目在两拍之间已出队（合并落地/收口）= Right 空转。
+   */
+  def retryInject(entry: Entry): IO[Either[String, Unit]] =
+    import cats.effect.unsafe.implicits.global
+    val current = lock.synchronized {
+      if inFlight.contains(entry.projectKey) then None // 窗被持 = 竞态，本拍放弃
+      else queues.getOrElse(entry.projectKey, Nil).find(_.delegateId == entry.delegateId)
+    }
+    current match
+      case None => IO.pure(Right(())) // 已出队（本轮已落地/收口）——重试自然完成
+      case Some(cur) =>
+        cur.recovered.orElse(cur.external.map(l => Recovered(cur.delegateId, l.send))) match
+          case Some(recov) =>
+            recov.revive(mergeBriefFor(cur)).attempt.unsafeRunSync() match
+              case Right(Right(())) =>
+                stampReminder(cur)
+                lock.synchronized { inFlight = inFlight + cur.projectKey } // 持窗：合并轮重新在飞
+                record(
+                  stampOf(cur),
+                  "retry-injected",
+                  Json.obj(
+                    "retryCount" -> cur.retryCount.asJson,
+                    "viaChannel" -> (if cur.recovered.isDefined then "recovered" else "external").asJson
+                  )
+                )
+                IO.pure(Right(()))
+              case Right(Left(err)) =>
+                bumpStallAttempt(cur.delegateId, s"retry channel inject failed: ${err.take(200)}")
+                IO.pure(Left(err))
+              case Left(e) =>
+                val err = Option(e.getMessage).getOrElse(e.toString)
+                bumpStallAttempt(cur.delegateId, s"retry channel inject threw: ${err.take(200)}")
+                IO.pure(Left(err))
+            end match
+          case None => IO.pure(Left("internal-leg: revival via MergeStallCare.RevivalPort"))
+    end match
+  end retryInject
+
+  /** IO 包装（看护扫描腿是 IO 上下文）。 */
+  def stallSnapshotIO: IO[List[StallView]] = IO.blocking(stallSnapshot)
+
+  /**
+   * 合并轮注入前的工件卫生（2026-10-25 批腿①）：基工作区 evidence/、reports/
+   * 下的生成工件先处置（tracked 覆写还原 + 未跟踪收编进待合并批）——delegate 的
+   * `git merge` 不再被工件挡死（10-25 病灶①的合并轮形态）。全 fail-soft：任何
+   * 故障只 WARN，注入照常（delegate 的拒绝面兜底，MergeStallCare 重试拍再清）。
+   * 有动作落账本行 `artifact-hygiene`（审计可查）。
+   */
+  private def artifactHygiene(entry: Entry): Unit =
+    try
+      val ws = os.Path(entry.baseWs)
+      if os.exists(ws) && GitWorktrees.isGitRepo(ws) then
+        val report = MergeArtifactCare.hygiene(ws)
+        if report.restored.nonEmpty || report.absorbed.nonEmpty then
+          record(
+            entry,
+            "artifact-hygiene",
+            Json.obj(
+              "restored" -> report.restored.asJson,
+              "absorbed" -> report.absorbed.asJson,
+              "absorbCommit" -> report.absorbCommit.map(_.take(12)).asJson,
+              "remainingDirty" -> report.remainingDirty.asJson
+            )
+          )
+    catch
+      case e: Throwable =>
+        logger.warn(s"merge-queue artifact hygiene skipped for ${entry.delegateId}: ${Option(e.getMessage).getOrElse(e.toString).take(200)}")
+
   /** 测试复位（生产无调用方）。 */
   private[delegate] def reset(): Unit = lock.synchronized {
     queues = Map.empty
@@ -253,11 +458,24 @@ object MergeQueue:
         findAndRemoveLocked(delegateId) match
           case None => None
           case Some(entry) if keepForRetry && entry.reminderSentAt.isDefined =>
-            val flagged = entry.copy(pendingRetry = true)
+            // 滞留台账（2026-10-25 批腿②）：被拒 = 一次失败的重试轮——计数 +1、
+            // 退避锚重置、拒绝诊断通知复位（MergeStallCare 下拍逐次通知）。
+            // stallEscalated 粘住（一次停靠段只升级告警一次）。
+            val now = System.currentTimeMillis()
+            val flagged = entry.copy(
+              pendingRetry = true,
+              retryCount = entry.retryCount + 1,
+              lastAttemptAt = now,
+              stallNotified = false
+            )
             val q = queues.getOrElse(entry.projectKey, Nil) :+ flagged
             queues = queues.updated(entry.projectKey, sortByReadyAt(q))
             inFlight = inFlight - entry.projectKey
-            record(flagged, "refused-keep-queued", Json.obj("phase" -> "merge-refused-pending-retry".asJson))
+            record(
+              flagged,
+              "refused-keep-queued",
+              Json.obj("phase" -> "merge-refused-pending-retry".asJson, "retryCount" -> flagged.retryCount.asJson)
+            )
             pumpLocked(entry.projectKey)
           case Some(entry) =>
             if entry.reminderSentAt.isDefined then
@@ -366,6 +584,7 @@ object MergeQueue:
     import cats.effect.unsafe.implicits.global
     if !childAlive(entry.childRef) then deferUndeliverable(entry, "child session not live at injection time")
     else
+      artifactHygiene(entry) // 轮前工件卫生（2026-10-25 批腿①——fail-soft，不阻断注入）
       val brief = mergeBriefFor(entry)
       (entry.childRef ! AgentCommand.UserInput(
         text = brief,
@@ -433,6 +652,7 @@ object MergeQueue:
   /** 外部腿/恢复腿通道注入（P1-2/P2-5）。 */
   private def fireViaChannel(entry: Entry, recov: Recovered): Unit =
     import cats.effect.unsafe.implicits.global
+    artifactHygiene(entry) // 轮前工件卫生（2026-10-25 批腿①——fail-soft，不阻断注入）
     recov.revive(mergeBriefFor(entry)).attempt.unsafeRunSync() match
       case Right(Right(())) =>
         // 换键腿（内部恢复）已在 rekey 盖章；未换键腿（外部通道，同 id）在此盖章。

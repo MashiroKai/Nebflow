@@ -314,8 +314,12 @@ $brief""",
    * {enqueued, reminder-sent, reminder-deferred, refused-keep-queued} = 中断成员
    * （无后继 dequeued = 未出队；steward 批 D3-②③ 2026-10-23 起新增两词——提醒
    * 不可投与合并轮被拒的条目**留队待重试**，重启后同样按中断成员重挂，提醒经
-   * revive 通道重投 = 「重启后提醒仍达」）。readyAt 取末行 payload 的 readyAt
-   * （缺失回落行时间戳）。同 delegate 跨键去重（取末行——重挂一次）。
+   * revive 通道重投 = 「重启后提醒仍达」；merge-queue 滞留修复批 2026-10-25 起
+   * 新增四词——滞留看护的盖章/记账/重发行（stall-notice-sent / stall-attempt /
+   * retry-injected / stall-escalated）同样全是「条目仍在队」的中断形态，重启后
+   * 一律重挂——交付绝不静默丢失；重试预算随重挂归零，重启即新一轮看护）。
+   * readyAt 取末行 payload 的 readyAt（缺失回落行时间戳）。同 delegate 跨键去重
+   * （取末行——重挂一次）。
    */
   private[agent] def interruptedMembers(): List[Interrupted] =
     ChainStore
@@ -338,9 +342,18 @@ $brief""",
       .toList
       .sortBy(_.readyAt)
 
-  /** 中断成员的末行 action 词表（含 steward 批新增的留队待重试两词）。 */
+  /** 中断成员的末行 action 词表（含 steward 批两词 + 滞留看护批四词）。 */
   private val InterruptedActions: Set[String] =
-    Set("enqueued", "reminder-sent", "reminder-deferred", "refused-keep-queued")
+    Set(
+      "enqueued",
+      "reminder-sent",
+      "reminder-deferred",
+      "refused-keep-queued",
+      "stall-notice-sent",
+      "stall-attempt",
+      "retry-injected",
+      "stall-escalated"
+    )
 
   private def combine(a: Report, b: Report): Report =
     Report(
