@@ -274,6 +274,14 @@ const GLOBAL_MSG_TYPES = new Set([
   //   fileTransferCancelResult {type,path,device,active} —— fileTransferCancel 的
   //     直回帧（无在途 = active:false，前端静默清理）。
   'nf-cache-invalidate', 'fileProgress', 'fileTransferCancelResult',
+  // 修复批 2026-10-25「待答徽章常显」顺带面：pendingAsksSnapshot（#250 ③ 全局
+  // 待答快照，hub ListAllPendingAsks 的直回帧）——无 sessionId 的**本连接**直回
+  // 帧，与 askUserCancelResult / chainCancelResult 同「弹窗私有请求-响应」族。
+  // 🔴 必须入 GLOBAL：无 sessionId 的非 GLOBAL 帧会被下方视图路由当会话内事件
+  // ⇒ 每次对账（现在还有可见期节拍，比改前频繁）都 setActiveView(primary)，
+  // 把用户正在看的视图抢走。消费点 = main.js（applyPendingAskSnapshot，零
+  // view 依赖）。
+  'pendingAsksSnapshot',
 ]);
 const TERMINAL_MSG_TYPES = new Set([
   'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',

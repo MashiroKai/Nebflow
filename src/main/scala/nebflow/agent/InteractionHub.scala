@@ -542,7 +542,7 @@ object InteractionHub:
       if ans.requestId.nonEmpty then
         m.get(ans.requestId) match
           case Some(p) =>
-            if answerCompletes(p, ans) then (m - ans.requestId, complete(p, ans) *> ledgerRemove(ans.requestId))
+            if answerCompletes(p, ans) then (m - ans.requestId, complete(p, ans, rootWsSend) *> ledgerRemove(ans.requestId))
             else
               // #12: a malformed answer must NOT consume the card — eating it
               // would strand the pending deferred forever with
@@ -593,7 +593,7 @@ object InteractionHub:
             )
           else IO.unit
         candidates.find { case (_, p) => answerCompletes(p, ans) } match
-          case Some((rid, p)) => (m - rid, multiWarn *> complete(p, ans) *> ledgerRemove(rid))
+          case Some((rid, p)) => (m - rid, multiWarn *> complete(p, ans, rootWsSend) *> ledgerRemove(rid))
           case None =>
             (
               m,
@@ -915,7 +915,12 @@ object InteractionHub:
   // 可见性 `private[agent]`（同 `PendingRequest` 先例 · McpPermissionReplaySpec 形态）：
   // askuser-secret 批验收「回执 JSON 的 answers 秘密槽位被占位化」需对**生产本体**取值，
   // spec 在包内直接捕获 delivered 载荷。零行为影响（同包可见性放宽）。
-  private[agent] def complete(p: PendingRequest, ans: InteractionAnswered, via: String = "card"): IO[Unit] =
+  private[agent] def complete(
+    p: PendingRequest,
+    ans: InteractionAnswered,
+    rootWsSend: Ref[IO, Map[String, Json => IO[Unit]]],
+    via: String = "card"
+  ): IO[Unit] =
     val approved = ans.payload.hcursor.downField("approved").as[Boolean].toOption
     val answers = ans.payload.hcursor.downField("answers").as[List[String]].toOption
     // P0-1（spec §2.4/§2.5）：mcpPermission 的答复面比 permission 多 scope/upgradeMode。
@@ -1041,6 +1046,37 @@ object InteractionHub:
             (r ! (answersForDelivery ++
               nebflow.shared.AskUserAnswerAttachments.manifestSlot(answerAttachments)))
           )
+      // 修复批 2026-10-25「Header 待答徽章常显」：作答收口随行广播关卡帧。
+      //
+      // WHY（缺口）：此前 complete 是唯一**不广播**的终态路（answered / cleanup /
+      // close / cancel / boot-reconcile 五路中，其余四路各有关卡帧）——卡片翻面与
+      // 前端镜像（待办条 / Header 徽标）清零是**作答面本地**副作用（chat.js confirm
+      // 回调）。没亲手作答的标签页/设备（多端常开）收不到任何帧 ⇒ 镜像滞留，而
+      // 镜像对账此前只挂在 WS 重连上，长连标签页可以几天不重连 ⇒ 徽标对着早已
+      // 收口的槽位常显（作者报障 2026-10-25 13:0x 的实证形态：hub 全天 0 槽位、
+      // 台账空，纯前端僵尸）。
+      //
+      // 帧形状 = bootReconcile 同族（sessionId = **卡所在 root**，非逐 root 自址
+      // ——多 root 下 closeAskUserCard 才寻址得到卡；单一 root 部署两形等价）。
+      // reason="answered"：前端 main.js 映射「已作答（本页未参与作答）」终态行，
+      // 不落入「已取消」文案；作答面自身卡片已带 .option-answer，closeAskUserCard
+      // 幂等跳过（chat.js :3167），作答文案不被覆盖。best-effort：广播失败不回滚
+      // 收口（deferred 已完成，槽位已出账）。
+      _ <- rootWsSend.get.flatMap { sends =>
+        sends.toList.traverse_ { case (_, ws) =>
+          ws(
+            Json.obj(
+              "type"          -> "askUserClosed".asJson,
+              "sessionId"     -> p.rootSessionId.asJson,
+              "requestId"     -> ans.requestId.asJson,
+              "sourceSession" -> p.sourceSession.asJson,
+              "reason"        -> "answered".asJson
+            )
+          ).handleErrorWith(e =>
+            logger.warn(s"askUserClosed(answered) broadcast failed requestId=${ans.requestId}: ${e.getMessage}")
+          )
+        }
+      }
     yield ()
     end for
   end complete

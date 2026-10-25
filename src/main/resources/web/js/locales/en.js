@@ -1368,6 +1368,10 @@ export default {
   // REST / WS / channel cancel entries all funnel into hub CancelRequest →
   // askUserClosed{reason:"user-cancelled"} broadcast + `__cancelled__` history row).
   'askUser.cancelled': 'Cancelled (no longer awaiting an answer)',
+  // ask-badge-fix batch 2026-10-25: hub complete() now broadcasts the close
+  // frame on every answer (askUserClosed{reason:"answered"}) — the terminal
+  // card note on tabs/devices that did not answer it themselves.
+  'askUser.answeredElsewhere': 'Answered elsewhere (this view did not answer; closed automatically)',
   'askUser.cancelFailed': 'Cancel did not take effect ({state}); the question may already be resolved',
   'askUser.nextPending': 'Next pending ({n})',
   'askUser.cardGone': 'That question is gone — removed from the pending list',

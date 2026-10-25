@@ -1316,6 +1316,9 @@ export default {
   // 渠道取消入口共用——hub CancelRequest → askUserClosed{reason:"user-cancelled"}
   // 广播与 `__cancelled__` 历史落盘行走同一文案）。
   'askUser.cancelled': '已取消（不再等待作答）',
+  // 修复批 2026-10-25「待答徽章常显」：hub complete() 随作答广播的关卡帧
+  // （askUserClosed{reason:"answered"}）——没亲手作答的标签页/设备的卡片终态行。
+  'askUser.answeredElsewhere': '已作答（本页未参与作答，自动关闭）',
   'askUser.cancelFailed': '取消未生效（{state}），问题可能已被处理',
   'askUser.nextPending': '下一张待办（{n}）',
   'askUser.cardGone': '该提问已不存在，已从待办条移除',

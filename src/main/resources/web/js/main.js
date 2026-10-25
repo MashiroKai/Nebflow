@@ -49,7 +49,7 @@ import {
 // ON the turn line (dots + live timer), not in a bubble row.
 import { startWorklineDots, beginRound } from './workline.js';
 import { replayHistoryPageInitialLoad } from './chat/historyReplay.js';
-import { notePendingAsk, removePendingAsk, applyPendingAskSnapshot, pendingSnapshotFailed, initPendingAsks } from './askPending.js';
+import { notePendingAsk, removePendingAsk, applyPendingAskSnapshot, pendingSnapshotFailed, initPendingAsks, requestPendingAskSync, startPendingAskSync } from './askPending.js';
 import { initScrollUnderGlass } from './scrollUnderGlass.js'; // uifix ⑤
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
@@ -248,6 +248,9 @@ initChatView(
 
 // D6 批 F2: pending-ask bar + header badge wiring (click = jump to oldest ask).
 initPendingAsks();
+// 修复批 2026-10-25「待答徽章常显」：对账请求单点化（since 戳随行）——重连、
+// 可见期节拍与页面重新可见共用一个 requestPendingAskSync，镜像不再只靠重连自愈。
+startPendingAskSync(sendWs);
 initScrollUnderGlass(); // uifix ⑤：浮层毛玻璃裙边降级探测器
 initServiceWorker(); // console-load-perf 批：温访问秒开（/sw.js 未上线的引擎上为静默空转）
 
@@ -1549,6 +1552,10 @@ onMessage('askUserClosed', (msg) => {
   // 的账面由引擎在对账里收口，卡片锁进与原因相符的终态。
   const note = msg.reason === 'turn-interrupted' ? t('askUser.turnInterrupted')
     : msg.reason === 'expired-orphan' ? t('askUser.expiredOrphan')
+    // 修复批 2026-10-25「待答徽章常显」：hub complete() 现随作答广播本帧
+    // （reason:"answered"）——没亲手作答的标签页/设备由此清零+翻卡。已答卡
+    // （.option-answer 在场）被 closeAskUserCard 幂等跳过，作答面文案不被覆盖。
+    : msg.reason === 'answered' ? t('askUser.answeredElsewhere')
     : (msg.reason && msg.reason !== 'caller-withdrew') ? t('askUser.cancelled')
     : t('askUser.sourceClosed');
   closeAskUserCard(msg.sessionId, msg.requestId, note);
@@ -1584,11 +1591,11 @@ onMessage('askUserAnsweredRemote', (msg) => {
 // session is subscribed/re-fetched. Replaces the old reconnect-time global clear
 // whose rebuild only happened for the (re)subscribed session. `failed:true`
 // keeps the local mirror and shows a notice (never silently claims "nothing
-// pending").
-let pendingSnapshotSince = 0;
+// pending"). `since` 戳由 askPending.requestPendingAskSync 单点维护（修复批
+// 2026-10-25）：重连 / 可见期节拍 / 重新可见补账三条请求路共用它。
 onMessage('pendingAsksSnapshot', (msg) => {
   if (msg.failed) { pendingSnapshotFailed(); return; }
-  applyPendingAskSnapshot(msg.asks, pendingSnapshotSince);
+  applyPendingAskSnapshot(msg.asks);
 });
 
 // #250 ⑥: the hub dropped an answer (shape mismatch / unknown requestId / no
@@ -4014,11 +4021,9 @@ onReconnect(() => {
   // globally while the backend only replayed for the (re)subscribed session
   // stranded the bar/badge at 0 whenever the active session was not the root
   // session carrying the cards (silently lost todo signal).
-  // `pendingSnapshotSince` bounds the reconciliation: entries that arrive after
-  // the query are kept (a live askUser frame racing the round trip), everything
-  // older and absent from the snapshot is retired.
-  pendingSnapshotSince = Date.now();
-  sendWs({ type: 'getPendingAsks' });
+  // `since` 闸（race 保护）单点在 askPending.requestPendingAskSync（修复批
+  // 2026-10-25「待答徽章常显」）：与可见期节拍/补账路共用，重放帧不再豁免对账。
+  requestPendingAskSync();
   const sid = state.activeSessionId;
   if (sid) {
     const view = findViewBySessionId(sid);
