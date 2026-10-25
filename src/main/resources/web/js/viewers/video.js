@@ -8,8 +8,9 @@
 //
 // Zero-copy face: the player is the BROWSER-NATIVE <video controls> strip — no
 // custom chrome, no locale keys, no visible copy of our own (the only text is
-// the shared viewer idiom: the `image-info` name+size line and the `canvas-error`
-// failure panel, both verbatim siblings of viewers/image.js).
+// the `canvas-error` failure panel, a verbatim sibling of viewers/image.js; the
+// old `image-info` name+size line retired with it — 2026-10-25 capsule dedup
+// order: the canvas header capsule is the single name surface).
 //
 // Range: seeking (progress-bar drag) depends on the byte leg answering HTTP
 // Range with 206 Partial Content — /api/nf-file rides http4s StaticFile, which
@@ -24,7 +25,7 @@
 // carries it (FileTypeRegistry.scala comment, canvas-media batch), so its bytes
 // can never be served — claiming it would promise an unplayable render.
 
-import { escapeHtml, formatSize } from './shared.js';
+import { escapeHtml } from './shared.js';
 import { reMint } from '../nfTicket.js';
 import { nfViewerUrl } from '../nfFileCache.js';
 
@@ -45,11 +46,8 @@ async function viewVideo(pane, { absPath, fileName, size, objectUrl }) {
 
   const wrap = document.createElement('div');
   wrap.className = 'canvas-video-viewer';
-
-  const info = document.createElement('div');
-  info.className = 'image-info';
-  info.textContent = `${fileName || ''} — ${formatSize(size || 0)}`;
-  wrap.appendChild(info);
+  // 「文件名+体积」标签行退役 — 同 viewers/image.js（2026-10-25 胶囊去重令：
+  // canvas 顶带标题胶囊是唯一名称面，被胶囊叠住只露边缘 = 同屏重复）。
 
   const video = document.createElement('video');
   video.className = 'canvas-video';

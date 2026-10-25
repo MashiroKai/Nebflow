@@ -83,6 +83,11 @@ const MOBILE_MQ = '(max-width: 768px)';
  * @property {number} crossVault — #744-B cross-vault reference count (stats line)
  * @property {Map<string, WgNode>} byId
  * @property {WgNode | null} hover
+ * @property {WgNode | null} tipFor — the node the visible hover pill names
+ *             (悬停去重批 2026-10-25): showTip/showEdgeTip set it, hideTip
+ *             clears it; draw() suppresses that node's canvas label while the
+ *             pill is up (the pill already carries the name — no on-screen
+ *             duplicate), restoring it when the pill dismisses.
  * @property {{a: WgNode, b: WgNode, anchor: string | null} | null} hoverEdge
  *             — paragraph-level reference under the cursor (段落级引用批):
  *               hover shows the TARGET paragraph snapshot, click jumps.
@@ -249,7 +254,7 @@ async function renderInto(pane) {
            data: null, sim: null,
            raf: 0, focusId: pendingFocus || '', byId: new Map(),
            selProject: presetProject, selVault: '', vaultList: [], crossVault: 0,
-           hover: null, hoverEdge: null, selected: null,
+           hover: null, hoverEdge: null, selected: null, tipFor: null,
            vx: 0, vy: 0, scale: 1, zoomTarget: 1, zoomAnchor: null,
            dragging: null, panning: false, lastPointer: null,
            resizeObs: null, W: 0, H: 0, colors: null,
@@ -1123,9 +1128,15 @@ function draw() {
     // hover/selection only.
     let labelAlpha = 0;
     if (!dim) {
+      // 悬停去重（作者报障 2026-10-25「胶囊底下，文件名称重复显示，主要是
+      // 图谱」）：悬停 pill 已在叫这个名字 —— pill 点名的节点（悬停节点 /
+      // 引用边目标）的画布标签同屏复读 = 重复显示来源，让它位；pill 收起
+      // （hideTip 清 tipFor）即恢复。选中态无 pill，标签照常。
+      const pillNamed = n === view.tipFor;
       const isFocusNode = n === view.hover || n === view.selected ||
       (view.hoverEdge && (n === view.hoverEdge.a || n === view.hoverEdge.b));
-      if (isFocusNode) labelAlpha = 1;
+      if (pillNamed) labelAlpha = 0;
+      else if (isFocusNode) labelAlpha = 1;
       else if (n.isVault) labelAlpha = 0.72; // aggregates stay labeled (#744-B)
       else if (near && near.has(n)) labelAlpha = 0.62;
       else if (view.filter || view.dirFilter) labelAlpha = 0.62;
@@ -1287,25 +1298,36 @@ function bindCanvas(canvasEl) {
       view.vx += dx; view.vy += dy;
       if (!view.raf) draw();
     } else {
+      // 悬停去重批（2026-10-25）：pill 命名（tipFor）先落、画布重绘后行 ——
+      // 悬停节点/引用边目标的画布标签与 pill 同帧让位（消除同屏同名）。
+      // 重绘仅 hover/边/target 易主时触发（静息 hover 内移动零重绘）。
       const hit = pick(px, py);
-      if (hit !== view.hover) {
+      const prevTipFor = view.tipFor;
+      const hoverChanged = hit !== view.hover;
+      if (hoverChanged) {
         view.hover = hit;
         view.hoverEdge = null;
         canvasEl.classList.toggle('hovering', !!hit);
-        if (!view.raf) draw();
       }
-      if (hit) { showTip(hit, px, py); }
-      else {
+      if (hit) {
+        showTip(hit, px, py);
+        if ((hoverChanged || prevTipFor !== view.tipFor) && !view.raf) draw();
+      } else {
         // Edge hover (段落级引用批): nearest edge within 6px shows the target
         // paragraph snapshot — a plain node pick beats an edge pick.
         const eh = pickEdge(px, py);
-        if (eh !== view.hoverEdge) {
+        const edgeChanged = eh !== view.hoverEdge;
+        if (edgeChanged) {
           view.hoverEdge = eh;
           canvasEl.classList.toggle('hovering', !!eh);
-          if (!view.raf) draw();
         }
-        if (eh) showEdgeTip(eh, px, py);
-        else hideTip();
+        if (eh) {
+          showEdgeTip(eh, px, py);
+          if ((edgeChanged || prevTipFor !== view.tipFor) && !view.raf) draw();
+        } else {
+          hideTip();
+          if ((edgeChanged || prevTipFor) && !view.raf) draw();
+        }
       }
     }
     view.lastPointer = { px, py };
@@ -1391,6 +1413,7 @@ function showTip(node, px, py) {
       .replace('{in}', String(node.inc.length))
       .replace('{out}', String(node.out.length));
   }
+  view.tipFor = node;
   placeTip(tip, px, py, 330, 110);
 }
 
@@ -1440,11 +1463,17 @@ function showEdgeTip(edge, px, py) {
       tip.querySelector('.tt').textContent = d.title || d.rel || '';
       tip.querySelector('.ts').textContent = d.summary || t('wiki.noSummary');
     }
-    tip.querySelector('.td').textContent = (d.title || d.rel || '') +
-      (edge.anchor ? ' · ' + t('wiki.tipJump') : ' · ' + t('wiki.tipDegree')
-        .replace('{in}', String(edge.b.inc.length))
-        .replace('{out}', String(edge.b.out.length)));
+    // 悬停去重（作者报障 2026-10-25「胶囊底下，文件名称重复显示」）：.tt 已是
+    // 这个名字 —— .td 只补元信息，不再复读一遍标题。文档名仅在 § 段落快照态
+    // （.tt = 段标题）下保留，用于交代段落属于哪篇文档（那时不是重复）。
+    const tdParts = [];
+    if (para && para.title) tdParts.push(d.title || d.rel || '');
+    tdParts.push(edge.anchor ? t('wiki.tipJump') : t('wiki.tipDegree')
+      .replace('{in}', String(edge.b.inc.length))
+      .replace('{out}', String(edge.b.out.length)));
+    tip.querySelector('.td').textContent = tdParts.join(' · ');
   }
+  view.tipFor = edge.b;
   placeTip(tip, px, py, 360, 150);
 }
 
@@ -1461,6 +1490,7 @@ function placeTip(tip, px, py, maxW, estH) {
 
 function hideTip() {
   if (!view || !view.pane) return;
+  view.tipFor = null;
   const tip = /** @type {HTMLElement|null} */ (view.pane.querySelector('.wg-tip'));
   if (tip) tip.style.display = 'none';
 }
@@ -1693,6 +1723,8 @@ export function focusWikiNode(project, rel) {
   edges: view.sim.edges.map(e => ({ from: e.a.id, to: e.b.id, anchor: e.anchor || null })),
   anchoredEdges: view.sim.edges.filter(e => e.anchor).length,
   hoverEdge: view.hoverEdge ? { from: view.hoverEdge.a.id, to: view.hoverEdge.b.id, anchor: view.hoverEdge.anchor } : null,
+  hover: view.hover ? view.hover.id : null,
+  tipFor: view.tipFor ? view.tipFor.id : null,   // 悬停去重批 2026-10-25：pill 点名节点
   unresolved: view.unresolved.length,
   crossVault: view.crossVault,
   selProject: view.selProject, selVault: view.selVault,
