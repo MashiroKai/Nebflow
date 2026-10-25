@@ -1484,6 +1484,38 @@ onMessage('messageDuplicate', (msg) => {
   }
 });
 
+// ── attach-split 批（2026-10-24 现场事故修复）：服务端超限帧的**有声拒绝**回执 ──
+// 形状：{type:'messageTooLarge', sessionId, clientMessageId, sizeBytes, limitBytes}
+// （WebSocketRoutes.handleMessage 超限支发出）。语义：这条消息**整体未被投递**
+// （旧服务端 10MB 上限静默丢弃的取代面 = 用户可见错误 + 收幻影 busy，禁假成功气泡
+// 沉默）。新前端拆分阈值 8MB 使本帧只在「未升级前端撞 64MB 新上限」或旧前端
+// 单帧 >64MB 时出现 —— 防守纵深，出现即必须可见。
+onMessage('messageTooLarge', (msg) => {
+  const sid = msg.sessionId || state.activeSessionId;
+  console.warn('[ws] messageTooLarge receipt:', {
+    sessionId: sid, clientMessageId: msg.clientMessageId,
+    sizeBytes: msg.sizeBytes, limitBytes: msg.limitBytes
+  });
+  const text = t('send.messageTooLarge', {
+    size: Math.round((msg.sizeBytes || 0) / 1048576),
+    limit: Math.round((msg.limitBytes || 0) / 1048576)
+  });
+  addNotification('reminder', text, { dismissAfter: 0 });
+  // 乐观置位的 busy 是幻影（服务端从未受理 turn）⇒ 按 messageDuplicate 同款
+  // 口径收掉：撤确认网、清看门槽、清 busy、照常 drain 排队件。
+  if (!sid) return;
+  delete state.turnExpecting[sid];
+  cancelTurnConfirm(sid);
+  if (state.sessionBusyTimeouts[sid]) {
+    clearTimeout(state.sessionBusyTimeouts[sid]);
+    delete state.sessionBusyTimeouts[sid];
+  }
+  const view = findViewBySessionId(sid);
+  if (view) renderError(text);
+  clearBusy(sid);
+  scheduleQueueDrain(sid);
+});
+
 onMessage('interrupted', (msg, view) => {
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;

@@ -103,6 +103,85 @@ function showAttachmentBanner(message) {
 }
 
 // ---------- Send ----------
+// attach-split 批（2026-10-24 现场事故修复：22 图 + 文字一条 WS 帧 > 服务端旧 10MB
+// 上限 ⇒ 整帧（含文字）被静默丢弃，前端已渲乐观气泡 = 假成功）：附件与文字投递解耦。
+// 单帧估算超阈 ⇒ 拆「文字必达首帧 + 附件分批帧」。阈值 8MB 刻意低于服务端**旧** 10MB
+// 上限 ⇒ 拆分后的每一帧对未升级服务端同样安全；服务端新上限已提 64MB（双保险）。
+const WS_SPLIT_MAX_BYTES = 8 * 1024 * 1024;
+
+/** 单条线上附件的帧字节估算（base64 data 占绝对大头，+256 记 JSON 包装开销）。 */
+function wireAttBytes(a) {
+  return (a && typeof a.data === 'string' ? a.data.length : 0)
+    + (a && typeof a.name === 'string' ? a.name.length : 0) + 256;
+}
+
+/**
+ * 用户消息帧真派发台 —— 直发（send 普通支）/ busy drain / 立即发送 / 离线补发
+ * 四腿共用（四腿帧形原本逐字同构）。低于阈值 = 原样单帧（行为逐字不变）；超阈 ⇒
+ *  ① 首帧只载正文 + refs/taskRefs + 主 clientMessageId（**文字必达**，WS 有序先行）；
+ *  ② 附件按累计字节切片，每片一帧，clientMessageId = 主 id + '/a' + 序号 —— **独立
+ *     幂等键**（AgentActor recentMessageIds 按 id 判重：附件帧与主帧同 id 会被判重
+ *     丢弃 ⇒ 附件永远到不了）；帧序 = 单连接有序 ⇒ 文字 turn 必然先于附件 turn 受理；
+ *  ③ 附件帧无 content/chatWidth/refs（全部随首帧）；服务端 typeless 腿对「content 空 ∧
+ *     attachments 非空」帧的受理是既有行为（准入谓词 `content.nonEmpty || attachments.
+ *     nonEmpty` 早覆盖）⇒ 附件帧对未升级服务端同样可达（落 UiMessage.User + 块注入）。
+ * 返回首帧 sendWs 结果（false = 帧进 ws.js pendingSends 内存轨，离线补发腿据此留队）。
+ */
+function dispatchUserMessageFrames({ sessionId, content, clientMessageId, taskRefs, refs, wireAtts, chatWidth }) {
+  const baseBytes = (content ? content.length : 0) + (sessionId ? sessionId.length : 0)
+    + (clientMessageId ? clientMessageId.length : 0) + 512;
+  const totalBytes = baseBytes + (wireAtts || []).reduce((s, a) => s + wireAttBytes(a), 0);
+  const buildFrame = (attachments, cmid, withExtras) => ({
+    content,
+    device: deviceStamp(),
+    ...(withExtras && taskRefs && taskRefs.length > 0 ? { taskRefs } : {}),
+    ...(withExtras && refs && refs.length > 0 ? { refs } : {}),
+    attachments,
+    clientMessageId: cmid,
+    sessionId,
+    chatWidth: chatWidth || 0
+  });
+  if (totalBytes <= WS_SPLIT_MAX_BYTES || (wireAtts || []).length === 0) {
+    return sendWs(buildFrame(wireAtts || [], clientMessageId, true));
+  }
+  console.info('[send] frame over split threshold — text first, attachments chunked:', {
+    sessionId, estimatedBytes: totalBytes, attachments: wireAtts.length
+  });
+  // ① 文字必达首帧（附件显式空数组 —— 与单帧形态同键；服务端按 content 非空受理）。
+  //    正文为空（纯附件消息）时不发空心首帧 —— 网关准入谓词会把它当空帧丢弃
+  //    （fwdguard 批钉死过这个静默面）：此时主幂等键让给第一片附件帧。
+  let first = true;
+  if (content) first = sendWs(buildFrame([], clientMessageId, true));
+  // ② 附件分批帧：content 缺省（undefined 键不落 JSON），幂等键 = 有首帧时
+  //    主 id + '/a' + 序号（独立键，躲 AgentActor recentMessageIds 判重），无首帧时
+  //    第一片用主 id、其后 '/a' + 序号。
+  let idx = 0;
+  let chunk = [];
+  let chunkBytes = 0;
+  const flush = () => {
+    if (chunk.length === 0) return;
+    idx += 1;
+    const cmid = (content || idx > 1) ? clientMessageId + '/a' + idx : clientMessageId;
+    sendWs({
+      device: deviceStamp(),
+      attachments: chunk,
+      clientMessageId: cmid,
+      sessionId
+    });
+    chunk = [];
+    chunkBytes = 0;
+  };
+  for (const a of wireAtts) {
+    const ab = wireAttBytes(a);
+    if (chunk.length > 0 && chunkBytes + ab > WS_SPLIT_MAX_BYTES) flush();
+    chunk.push(a);
+    chunkBytes += ab;
+  }
+  flush();
+  return first;
+}
+
+
 // resend-dedup 批（修复批 #569）：`resendId` = **同一条逻辑消息**重发时携带的
 // 原 clientMessageId（重试/重发腿从 state.lastUserSendId[sid] 取）。语义分叉：
 //   · 全新发送（resendId 缺省）⇒ 新 id + 乐观气泡 + 落盘 + 入历史（原状）；
@@ -364,18 +443,16 @@ export function send(resendId) {
     // resend-dedup 批：帧 content 用 frameText（同 id 重发时 = 登记表兜底文本，
     // 与首次尝试逐字一致）；登记 lastUserSendId = 重发腿的同 id 取用点。
     if (v.sessionId) state.lastUserSendId[v.sessionId] = clientMessageId;
-    sendWs({
-      content: frameText,
-      device: deviceStamp(), // device-provenance 批：来源设备声明（网关对照花名册出标记）
-      ...(taskRefs.length > 0 ? { taskRefs } : {}),
-      ...(refs.length > 0 ? { refs } : {}),
-      attachments: (v.pendingAttachments || [])
-        .filter(a => a.type !== 'taskRef' && a.type !== 'ref')
-        .map(a => ({
-          mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
-        })),
-      clientMessageId,
+    // attach-split 批：单帧超阈 ⇒ 拆「文字必达首帧 + 附件分批帧」（helper 内）。
+    dispatchUserMessageFrames({
       sessionId: v.sessionId,
+      content: frameText,
+      clientMessageId,
+      taskRefs,
+      refs,
+      wireAtts: (v.pendingAttachments || [])
+        .filter(a => a.type !== 'taskRef' && a.type !== 'ref')
+        .map(a => ({ mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0 })),
       chatWidth: v.dom.chat?.clientWidth || 0
     });
   } catch (e) {
@@ -861,16 +938,15 @@ function dispatchOfflineItem(sid, item) {
   const taskRefs = (item.attachments || []).filter(a => a.type === 'taskRef');
   const refs = (item.attachments || []).filter(a => a.type === 'ref');
   notifyFriendRefsSent(refs);
-  const sent = sendWs({
+  const sent = dispatchUserMessageFrames({
+    sessionId: sid,
     content: item.text,
-    device: deviceStamp(), // device-provenance 批：离线补发腿同律随帧声明
-    ...(taskRefs.length > 0 ? { taskRefs: taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sid })) } : {}),
-    ...(refs.length > 0 ? { refs: refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) })) } : {}),
-    attachments: (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref').map(a => ({
+    clientMessageId,
+    taskRefs: taskRefs.length > 0 ? taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sid })) : taskRefs,
+    refs: refs.length > 0 ? refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) })) : refs,
+    wireAtts: (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref').map(a => ({
       mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
     })),
-    clientMessageId,
-    sessionId: sid,
     chatWidth: view?.dom?.chat?.clientWidth || 0
   });
   if (!sent) return false; // 帧在 ws.js pendingSends 内存轨；项留队，下次 open 同 id 再补
@@ -993,16 +1069,15 @@ function sendImmediate(sessionId, item) {
     // §6.2); immediateInput goes through handleUserText and would drop them.
     const clientMessageId = itemMsgId;
     notifyFriendRefsSent(refs);
-    sendWs({
+    dispatchUserMessageFrames({
+      sessionId,
       content: item.text,
-      device: deviceStamp(), // device-provenance 批：队列 drain 腿同律随帧声明
-      ...(taskRefs.length > 0 ? { taskRefs: taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sessionId })) } : {}),
-      ...(refs.length > 0 ? { refs: refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) })) } : {}),
-      attachments: (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref').map(a => ({
+      clientMessageId,
+      taskRefs: taskRefs.length > 0 ? taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sessionId })) : taskRefs,
+      refs: refs.length > 0 ? refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) })) : refs,
+      wireAtts: (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref').map(a => ({
         mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
       })),
-      clientMessageId,
-      sessionId,
       chatWidth: activeView?.dom?.chat?.clientWidth || 0
     });
   } else {
@@ -1228,16 +1303,15 @@ function drainMessageQueueNow(sessionId) {
     const taskRefs = (item.attachments || []).filter(a => a.type === 'taskRef');
     const refs = (item.attachments || []).filter(a => a.type === 'ref');
     notifyFriendRefsSent(refs);
-    sendWs({
+    dispatchUserMessageFrames({
+      sessionId,
       content: item.text,
-      device: deviceStamp(), // device-provenance 批：busy 队列 drain 腿同律随帧声明
-      ...(taskRefs.length > 0 ? { taskRefs: taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sessionId })) } : {}),
-      ...(refs.length > 0 ? { refs: refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) })) } : {}),
-      attachments: (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref').map(a => ({
+      clientMessageId,
+      taskRefs: taskRefs.length > 0 ? taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sessionId })) : taskRefs,
+      refs: refs.length > 0 ? refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) })) : refs,
+      wireAtts: (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref').map(a => ({
         mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
       })),
-      clientMessageId,
-      sessionId,
       chatWidth: view?.dom?.chat?.clientWidth || 0
     });
   }
