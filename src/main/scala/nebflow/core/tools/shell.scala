@@ -413,6 +413,21 @@ final class ShellSession private (
   private val isWindows: Boolean =
     sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
 
+  // ── 字符集探测参数（2026-10-25 非阻塞化改造）──────────────────────────
+  // 零超时纪律：预算窗是「等数据的轮询上限」，不是 wall-clock 判死——数据一到
+  // 立即走（再等一个静默窗确认突发完整），零数据则按 UTF-8 放行兜底。
+  private val ProbeSize = 4096
+  private val ProbePollMs = 25L // 轮询节奏，与 readStream 主体同款
+  private val ProbeQuietWindowMs = 50L // 首批字节后的静默窗：窗内无新字节即定案
+  private val ProbeBudgetMs = 500L // 零数据等待上限；窗满 → UTF-8 兜底放行
+
+  /**
+   * 探测门（可注入）：companion 覆写优先（spec 在 Mac 上注入 `Some(true)` 跑
+   * 真探测逻辑），否则跟随真实平台。生产路径两个取值行为不变。
+   */
+  private def charsetProbeEnabled: Boolean =
+    ShellSession.charsetProbeGateOverride.get().getOrElse(isWindows)
+
   /**
    * Find Git Bash on Windows. Git for Windows is a declared dependency.
    * Resolution chain lives on the companion (ShellSession.resolvedBashPath)
@@ -1156,8 +1171,13 @@ final class ShellSession private (
    * writer finishes the line or dies; if a surviving orphan then holds the
    * pipe open forever, so can this read — requires both a mid-line write at
    * exit AND an orphan holder, vs. the previous every-orphan hang.
+   *
+   * Windows charset probe (entry) is non-blocking too (2026-10-25): see
+   * probeCharset — available()-driven polling with a data-wait budget, never
+   * a bare blocking read. `private[tools]` (not `private`) so the probe spec
+   * can drive this method directly with synthetic streams.
    */
-  private def readStream(
+  private[tools] def readStream(
     is: java.io.InputStream,
     onLine: String => Unit = _ => (),
     isProcessExited: () => Boolean = () => true,
@@ -1166,10 +1186,14 @@ final class ShellSession private (
     // On Windows, detect whether the output is UTF-8 or system ANSI code page
     // (GBK on Chinese Windows). Git Bash and Python (with PYTHONUTF8=1) output
     // UTF-8, but native Windows programs (ipconfig, systeminfo, cmd, etc.) output
-    // in the system ANSI code page. We probe the first chunk to pick the right
-    // charset, then read the entire stream with it.
+    // in the system ANSI code page. We probe the first chunk NON-BLOCKINGLY
+    // (available()-driven poll; zero bytes within budget → UTF-8 fallback) to
+    // pick the right charset, then read the entire stream with it. The probe
+    // receives the same exit criteria as this loop so an exited process (incl.
+    // the orphan-holding-pipe class) concludes the probe immediately instead of
+    // waiting out the budget.
     val (stream, charset) =
-      if isWindows then probeCharset(is)
+      if charsetProbeEnabled then probeCharset(is, isProcessExited)
       else (is, StandardCharsets.UTF_8)
 
     Using.resource(new java.io.BufferedReader(new java.io.InputStreamReader(stream, charset))) { reader =>
@@ -1215,37 +1239,131 @@ final class ShellSession private (
   end readStream
 
   /**
-   * Probe the first bytes of a stream to detect UTF-8 vs system ANSI code page.
+   * Probe the first bytes of a stream to detect UTF-8 vs system ANSI code page,
+   * WITHOUT blocking (2026-10-25 非阻塞化改造——KAI Windows 全量 test5 挂死根因修复).
    * Returns the stream (rewound via PushbackInputStream) and the detected charset.
    *
+   * 旧实现（已废）：第一行 `pushback.read(probe)` 是**裸阻塞读**——等满 4096 字节
+   * 或管道 EOF 才返回。凡「输出总量 < 4096 ∧ 进程长活」的 Windows 会话（sbt 测试
+   * 里 spawn 的引擎场景全是），stdout/stderr 两条读线程永久埋死在这一行，会话永不
+   * 完成；Mac 因 `isWindows` 门跳过探测而四天零暴露（jstack 实锤：两线程同时停在
+   * `PushbackInputStream.read → probeCharset(shell.scala:1230)`）。
+   *
+   * 新实现：与 readStream 主体同款的 **available() 驱动 + 25ms 轮询**，零超时纪律
+   * ——预算窗是「等数据的轮询上限」，不是 wall-clock 判死：
+   *   1. 有数据立即读（available()>0 保证 read 非阻塞），每个突发后重置静默时钟；
+   *   2. 首批字节后再等 `ProbeQuietWindowMs`(50ms) 静默窗确认突发完整，即定案
+   *      （正常命令首批字节毫秒级到达 ⇒ 总探测成本 ≈ 一个静默窗，零新增时延）；
+   *   3. `isProcessExited()` 纳入判据——进程退了立即收尾定案，覆盖孤儿占管道类；
+   *   4. 预算窗 `ProbeBudgetMs`(500ms) 内零字节 → 按 UTF-8 放行（Git Bash /
+   *      PYTHONUTF8 场景本就是 UTF-8，静默长活进程不亏——读线程随后回到
+   *      readStream 主循环继续轮询，数据来了照读）。
+   *
    * UTF-8 has strict multi-byte structure — GBK output almost certainly contains
-   * byte sequences that violate it, so strict UTF-8 decoding is a reliable detector.
-   * The probe bytes are pushed back so the caller's InputStreamReader sees the
-   * complete stream from the beginning.
+   * byte sequences that violate it, so strict UTF-8 decoding is a reliable
+   * detector. The probe bytes are pushed back UNMODIFIED so the caller's
+   * InputStreamReader sees the complete stream from the beginning（切片可能把
+   * 多字节字符切一半——回推原始字节，解码器从头拼整，半字不丢）.
+   *
+   * 知情接受（informed acceptance，如实记录）：
+   *   - 切片恰好全 ASCII 的 GBK 输出会被判为 UTF-8——ASCII ⊂ GBK，两种码页解码
+   *     结果逐字节相同，无害；
+   *   - 反向（切片尾部恰好拼成合法 UTF-8 的 GBK 序列）概率可忽略：GBK 双字节
+   *     尾字节常落 0x40-0x7E（非 UTF-8 continuation 区间），严格解码即报错；
+   *   - 极端流若 available() 谎报 0（进程管道不在此列，内核如实报告缓冲字节），
+   *     预算窗后按 UTF-8 放行——GBK 输出会乱码，但读线程不再挂死（正确性换
+   *     不挂死，挂死是全损）。
    */
-  private def probeCharset(is: java.io.InputStream): (java.io.InputStream, Charset) =
-    val ProbeSize = 4096
+  private[tools] def probeCharset(
+    is: java.io.InputStream,
+    isProcessExited: () => Boolean = () => false,
+    probeBudgetMs: Long = ProbeBudgetMs,
+    quietWindowMs: Long = ProbeQuietWindowMs,
+    pollMs: Long = ProbePollMs
+  ): (java.io.InputStream, Charset) =
     val pushback = new java.io.PushbackInputStream(is, ProbeSize)
     val probe = new Array[Byte](ProbeSize)
-    val n = pushback.read(probe)
+    val startMs = System.currentTimeMillis()
+    var n = 0
+    var lastDataMs = -1L // 最近一次读到字节的时刻（静默窗基准）
+    var go = true
+    while go do
+      // available()/read 的 IOException（进程被 destroyForcibly 关流等）：
+      // 与 readStream 主体同款处理——带着已攒字节定案，不让异常炸穿读线程
+      val avail =
+        try pushback.available()
+        catch case _: java.io.IOException => 0
+      if avail > 0 then
+        try
+          val k = pushback.read(probe, n, math.min(avail, ProbeSize - n))
+          if k < 0 then go = false // EOF：以已攒字节定案
+          else
+            n += k
+            lastDataMs = System.currentTimeMillis()
+            if n >= ProbeSize then go = false // 探测片攒满
+        catch case _: java.io.IOException => go = false
+      else
+        val now = System.currentTimeMillis()
+        if n > 0 && now - lastDataMs >= quietWindowMs then go = false // 突发已静默，定案
+        else if n >= ProbeSize then go = false
+        else if isProcessExited() then go = false // 进程退了立即收尾（孤儿占管道类）
+        else if now - startMs >= probeBudgetMs then go = false // 预算窗满 → UTF-8 兜底
+        else Thread.sleep(pollMs)
+    end while
+
     if n <= 0 then (pushback, StandardCharsets.UTF_8)
     else
       pushback.unread(probe, 0, n)
-      val charset =
-        try
-          val decoder = StandardCharsets.UTF_8
-            .newDecoder()
-            .onMalformedInput(CodingErrorAction.REPORT)
-            .onUnmappableCharacter(CodingErrorAction.REPORT)
-          decoder.decode(ByteBuffer.wrap(probe, 0, n))
-          StandardCharsets.UTF_8
-        catch
-          case _: CharacterCodingException =>
-            try Charset.forName("GBK")
-            catch case _: Exception => StandardCharsets.UTF_8
-      (pushback, charset)
-    end if
+      (pushback, detectCharset(probe, n))
   end probeCharset
+
+  /** Strict-UTF-8 通过即 UTF-8；否则 GBK（系统 ANSI 码页，失败再兜底 UTF-8）。 */
+  private def detectCharset(bytes: Array[Byte], len: Int): Charset =
+    if isStrictUtf8(bytes, len) then StandardCharsets.UTF_8
+    else
+      try Charset.forName("GBK")
+      catch case _: Exception => StandardCharsets.UTF_8
+
+  /**
+   * 严格 UTF-8 判定，带**切半尾字容忍**：探测切片可能把多字节字符切一半
+   * （4096 截断或管道分片边界），严格解码会在「尾部不完整序列」上报
+   * MalformedInput——那不是坏字节，是半字。识别尾部不完整序列的长度并且回退
+   * 重判；回退后仍报错才是真 GBK 形态（旧实现此处直接误判 GBK ⇒ 整流乱码）。
+   */
+  private def isStrictUtf8(bytes: Array[Byte], len: Int): Boolean =
+    def decode(to: Int): Boolean =
+      try
+        StandardCharsets.UTF_8
+          .newDecoder()
+          .onMalformedInput(CodingErrorAction.REPORT)
+          .onUnmappableCharacter(CodingErrorAction.REPORT)
+          .decode(ByteBuffer.wrap(bytes, 0, to))
+        true
+      catch case _: CharacterCodingException => false
+    decode(len) ||
+    {
+      val partial = trailingPartialLen(bytes, len)
+      partial > 0 && decode(len - partial)
+    }
+
+  /**
+   * 尾部不完整多字节序列的字节数（0 = 无）：在末 3 字节内找最后一个 lead byte
+   * （非 10xxxxxx），若其声明序列长度超过实有字节数即为切半尾字。越界的
+   * continuation 串（找不到 lead）或非法 lead 都不算切半——那是真坏字节。
+   */
+  private def trailingPartialLen(bytes: Array[Byte], len: Int): Int =
+    val leadIdx =
+      (math.max(0, len - 3) until len).reverse.find(i => (bytes(i) & 0xC0) != 0x80)
+    leadIdx match
+      case None => 0
+      case Some(i) =>
+        val b = bytes(i) & 0xFF
+        val seqLen =
+          if (b & 0xE0) == 0xC0 then 2
+          else if (b & 0xF0) == 0xE0 then 3
+          else if (b & 0xF8) == 0xF0 then 4
+          else 0 // 非法 lead（0x80-0xC1 / 0xF8+）：不是切半，是真坏字节
+        if seqLen > 0 && len - i < seqLen then len - i else 0
 
 end ShellSession
 
@@ -1257,6 +1375,21 @@ object ShellSession:
    * 后台 executeBackground、命令后 `pwd` 复核三条路径都经 `runProcess` 到此）。
    */
   private[tools] val CwdSiteBuildProcessBuilder: String = "ShellSession.buildProcessBuilder/safeCwd"
+
+  /**
+   * 字符集探测门覆写（2026-10-25 Windows 探测阻塞修复，测试接缝）：
+   * `None` = 跟随真实平台（`isWindows`，生产行为不变）；`Some(true/false)` =
+   * 强制开/关探测门。`probeCharset` 的旧实现第一行是裸阻塞读（等满 4096 字节
+   * 或管道 EOF），Windows 上「输出总量 < 4096 ∧ 进程长活」的会话把 stdout/stderr
+   * 两条读线程永久埋死（KAI 全量 test5 挂死根因，jstack 实锤
+   * `probeCharset(shell.scala:1230) → pushback.read(probe)`）——该路径被 `isWindows`
+   * 门挡住，Mac 上四天零暴露，spec 无法在 Mac 复现。接缝的含义：spec 注入
+   * `Some(true)` 即可在 Mac 上跑真探测逻辑（永不出字流 / 慢速出字流断言）。
+   * 测试用完必须复位 `None`（afterEach），否则污染同 JVM 后续测试。
+   */
+  private[tools] val charsetProbeGateOverride
+    : java.util.concurrent.atomic.AtomicReference[Option[Boolean]] =
+    new java.util.concurrent.atomic.AtomicReference(None)
 
   /**
    * cwd 判定单点（T2）：返回可用 cwd，否则抛 [[InvalidCwdError]]。
