@@ -1,0 +1,141 @@
+#!/bin/bash
+# stand pinned-JDK self-heal installer — authoritative copy (stand repo ops/bin/stand-jdk)
+#
+# 部署位置: ~/.stand/bin/stand-jdk  (cp + chmod +x; 见 stand 仓 ops/README.md)
+#
+# 修的是 bin/stand 的病2 (2026-10-25): pinned JDK (~/.stand/jdk-21) 缺失时, 旧
+# WARN 指引「re-run the stand installer」不可执行 (installer 不在仓里)。本脚本
+# 就是那个可执行动作: 装/修 $STAND_HOME/jdk-21, 不用 sudo, 不动系统 JVM。
+#
+# 合同 (作者令 2026-09-21): launcher 缺 pinned JDK 不得静默降级 —— 本脚本把
+# 「修好 pinned JDK」变成一条命令, WARN 指引直接指向它。
+#
+# 用法:
+#   stand-jdk install   装/修 pinned JDK (幂等; 已装则 no-op exit 0)
+#   stand-jdk check     只体检, 不动盘 (rc 0 = pinned JDK 可用)
+#   stand-jdk path      打印 java 绝对路径
+set -u
+
+STAND_HOME="${STAND_HOME:-${NEBFLOW_HOME:-$HOME/.stand}}"
+JDK_DIR="$STAND_HOME/jdk-21"
+
+log()  { echo "[stand-jdk] $*"; }
+warn() { echo "[stand-jdk] WARN: $*" >&2; }
+die()  { echo "[stand-jdk] ERROR: $*" >&2; exit 1; }
+
+java_major_of() { # <java bin> -> major version number (0 if unparseable)
+    "$1" -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f1
+}
+
+jdk_ok() { # rc 0 = JDK_DIR/bin/java 存在且 major>=21
+    [ -x "$JDK_DIR/bin/java" ] || return 1
+    local _m
+    _m="$(java_major_of "$JDK_DIR/bin/java")"
+    case "$_m" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$_m" -ge 21 ]
+}
+
+link_into_place() { # <jdk-home-src> : 原子换位 JDK_DIR -> src
+    local _src="$1"
+    [ -x "$_src/bin/java" ] || die "candidate '$_src' has no bin/java"
+    rm -f "$JDK_DIR"
+    ln -sfn "$_src" "$JDK_DIR" || die "symlink $JDK_DIR -> $_src failed"
+}
+
+install_from_brew() { # macOS: brew openjdk@21 (keg-only, 无需 sudo)
+    command -v brew >/dev/null 2>&1 || return 1
+    local _prefix
+    log "brew route: ensuring openjdk@21"
+    brew list --versions openjdk@21 >/dev/null 2>&1 || brew install openjdk@21 || return 1
+    _prefix="$(brew --prefix)/opt/openjdk@21"
+    # keg 布局两态: 直带 bin/java, 或 macOS bundle libexec/openjdk.jdk/Contents/Home
+    if [ -x "$_prefix/bin/java" ]; then
+        link_into_place "$_prefix"
+    elif [ -x "$_prefix/libexec/openjdk.jdk/Contents/Home/bin/java" ]; then
+        link_into_place "$_prefix/libexec/openjdk.jdk/Contents/Home"
+    else
+        warn "brew openjdk@21 installed but no recognizable java home under $_prefix"
+        return 1
+    fi
+    return 0
+}
+
+install_from_pkg_mgr() { # Linux: 系统包管理器 -> /usr/lib/jvm/java-21-*
+    local _jvm
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get install -y openjdk-21-jdk-headless || sudo apt-get install -y openjdk-21-jdk-headless || return 1
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y java-21-openjdk || sudo dnf install -y java-21-openjdk || return 1
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y java-21-openjdk || sudo yum install -y java-21-openjdk || return 1
+    elif command -v apk >/dev/null 2>&1; then
+        apk add openjdk21 || sudo apk add openjdk21 || return 1
+    else
+        return 1
+    fi
+    _jvm="$(ls -1d /usr/lib/jvm/java-21-openjdk-* /usr/lib/jvm/java-21-* 2>/dev/null | while IFS= read -r _d; do
+        [ -x "$_d/bin/java" ] && { printf '%s\n' "$_d"; break; }
+    done)"
+    [ -n "$_jvm" ] || return 1
+    link_into_place "$_jvm"
+    return 0
+}
+
+install_from_temurin() { # 兜底: Adoptium Temurin 21 tarball 直落 STAND_HOME (无 sudo)
+    local _os _arch _url _tmp _top
+    case "$(uname -s)" in Darwin) _os="mac" ;; Linux) _os="linux" ;; *) return 1 ;; esac
+    case "$(uname -m)" in
+        arm64|aarch64) _arch="aarch64" ;;
+        x86_64|amd64)  _arch="x64" ;;
+        *) return 1 ;;
+    esac
+    _url="https://api.adoptium.net/v3/binary/latest/21/ga/${_os}/${_arch}/jdk/hotspot/normal/eclipse"
+    _tmp="$(mktemp -d "${TMPDIR:-/tmp}/stand-jdk.XXXXXX")" || return 1
+    log "temurin route: downloading JDK 21 (${_os}/${_arch})"
+    curl -fsSL "$_url" -o "$_tmp/jdk.tar.gz" || { rm -rf "$_tmp"; return 1; }
+    tar -xzf "$_tmp/jdk.tar.gz" -C "$_tmp" || { rm -rf "$_tmp"; return 1; }
+    _top="$(ls -1d "$_tmp"/*/ 2>/dev/null | head -n 1)"
+    [ -n "$_top" ] || { rm -rf "$_tmp"; return 1; }
+    # mac tarball: jdk-21.x/Contents/Home; linux tarball: jdk-21.x/
+    if [ -x "$_top/Contents/Home/bin/java" ]; then
+        _top="$_top/Contents/Home"
+    fi
+    if [ ! -x "$_top/bin/java" ]; then rm -rf "$_tmp"; return 1; fi
+    rm -rf "$JDK_DIR"
+    mv "$_top" "$JDK_DIR" || { rm -rf "$_tmp"; return 1; }
+    rm -rf "$_tmp"
+    return 0
+}
+
+cmd_install() {
+    if jdk_ok; then
+        log "pinned JDK already OK at $JDK_DIR ($("$JDK_DIR/bin/java" -version 2>&1 | head -n 1))"
+        return 0
+    fi
+    mkdir -p "$STAND_HOME"
+    if install_from_brew || install_from_pkg_mgr || install_from_temurin; then
+        :
+    else
+        die "all install routes failed (brew / package manager / temurin tarball). Manual: https://adoptium.net/temurin/releases/?version=21 then symlink $JDK_DIR -> the JDK home"
+    fi
+    jdk_ok || die "install ran but $JDK_DIR/bin/java is not a working JDK 21+"
+    log "pinned JDK installed: $JDK_DIR"
+    log "version: $("$JDK_DIR/bin/java" -version 2>&1 | head -n 1)"
+}
+
+cmd_check() {
+    if jdk_ok; then
+        log "OK: $JDK_DIR ($("$JDK_DIR/bin/java" -version 2>&1 | head -n 1))"
+        return 0
+    fi
+    warn "pinned JDK missing or not Java 21+ at $JDK_DIR"
+    warn "repair: bash \"$0\" install"
+    return 1
+}
+
+case "${1:-install}" in
+    install) cmd_install ;;
+    check)   cmd_check ;;
+    path)    jdk_ok && echo "$JDK_DIR/bin/java" || { warn "pinned JDK not ready at $JDK_DIR"; exit 1; } ;;
+    *) die "usage: stand-jdk install|check|path" ;;
+esac
