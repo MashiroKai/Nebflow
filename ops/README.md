@@ -50,6 +50,22 @@ not running —— pid 记账失配）：
   `stand is not running` exit 0（幂等，与应用侧 `StopOutcome.NotRunning` 同语义）。
   `--tree`（sbt 链止损）仍透传给应用侧 `ProcessManager`。
 - 非生命周期子命令（version/status/…）零改动直透。
+- **守卫面在 JDK 门之前**（2026-10-25 横幅批顺带强化）：already-running / stop /
+  not-running 面零 JVM 依赖——java 全坏也能 `stop` 真停、也能识别已启动，
+  这些面也不再先吃 JDK WARN 噪声。
+
+**品牌横幅**（作者追加 2026-10-25 13:10:「One entry, Every agent.」）：
+
+- 仅 `stand start` 且守卫放行（真的要起 daemon）时打印；already-running /
+  拒启 / stop 不印。URL/pid 行紧随其后（应用侧输出），保持终端最后一行 = 最显眼。
+- 候选三款（待作者定稿，实截见
+  `reports/20261025_132822_stand-cli-lifecycle/shots/`）：
+  - `STAND_BANNER=A` 徽标款——黑底白 S 方块（favicon 同构）+ 标语（宽终端 ≥80 列缺省）
+  - `STAND_BANNER=B` 双行紧凑款（窄终端 <80 列缺省）
+  - `STAND_BANNER=C` 单行字标款
+- `STAND_BANNER_COLS` 覆写宽度探测（测试/ops 旋钮）。
+- 分寸：非 TTY / `NO_COLOR` / `TERM=dumb` → 单行纯文本
+  `stand — One entry, Every agent.`，autostart / 重定向日志不刷艺术字。
 
 **病2 · pinned JDK 缺失路径**（合同：作者令 2026-09-21「缺了不得静默降级」）：
 

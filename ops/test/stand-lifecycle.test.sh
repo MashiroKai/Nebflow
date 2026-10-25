@@ -343,6 +343,65 @@ else
     assert_rc "stand-jdk check rc (absent)" 1 "$RC"
 fi
 
+# ── 13. 横幅降级: 非 TTY → 单行纯文本, 零艺术字零 ANSI ──
+t "case 13: banner non-TTY -> single plain line, no art no ANSI"
+fresh_sandbox
+P13=$(pick_free_port)
+run_stand_on "$P13" start; RC=$?
+assert_rc "non-tty start rc" 0 "$RC"
+assert_contains "plain slogan line" "stand — One entry, Every agent." "$RUN_OUT"
+assert_lacks "no block art in non-TTY" "█" "$RUN_OUT"
+assert_lacks "no ANSI escape in non-TTY" "$(printf '\033[')" "$RUN_OUT"
+
+# ── 14. 横幅徽标款: pty(TTY) + 宽终端 → 候选 A 艺术字 ──
+t "case 14: banner TTY wide (pty, cols>=80) -> candidate A art"
+fresh_sandbox
+P14=$(pick_free_port)
+PTY_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+    STAND_GATEWAY_PORT="$P14" FAKE_LOG="$FAKE_LOG" STAND_BANNER_COLS=100 \
+    script -q "$SANDBOX/pty-a.txt" "$SANDBOX/bin/stand" start 2>&1)"
+RC=$?
+assert_rc "pty wide start rc" 0 "$RC"
+assert_contains "candidate A slogan" "One entry, Every agent." "$(cat "$SANDBOX/pty-a.txt")"
+assert_contains "candidate A block art" "███████" "$(cat "$SANDBOX/pty-a.txt")"
+
+# ── 15. NO_COLOR 恒胜 TTY → 单行纯文本 ──
+t "case 15: banner NO_COLOR under pty -> plain single line"
+fresh_sandbox
+P15=$(pick_free_port)
+PTY_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+    STAND_GATEWAY_PORT="$P15" FAKE_LOG="$FAKE_LOG" NO_COLOR=1 STAND_BANNER_COLS=100 \
+    script -q "$SANDBOX/pty-b.txt" "$SANDBOX/bin/stand" start 2>&1)"
+RC=$?
+assert_rc "NO_COLOR start rc" 0 "$RC"
+assert_contains "NO_COLOR plain slogan" "stand — One entry, Every agent." "$(cat "$SANDBOX/pty-b.txt")"
+assert_lacks "NO_COLOR kills art" "███████" "$(cat "$SANDBOX/pty-b.txt")"
+
+# ── 16. 窄终端 (cols<80) → 候选 B 双行款 ──
+t "case 16: banner narrow (cols<80) -> candidate B two-line"
+fresh_sandbox
+P16=$(pick_free_port)
+PTY_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+    STAND_GATEWAY_PORT="$P16" FAKE_LOG="$FAKE_LOG" STAND_BANNER_COLS=40 \
+    script -q "$SANDBOX/pty-c.txt" "$SANDBOX/bin/stand" start 2>&1)"
+RC=$?
+assert_rc "narrow start rc" 0 "$RC"
+assert_contains "candidate B slogan part 1" "One entry," "$(cat "$SANDBOX/pty-c.txt")"
+assert_contains "candidate B slogan part 2" "Every agent." "$(cat "$SANDBOX/pty-c.txt")"
+assert_lacks "narrow has no wide top bar" "███████" "$(cat "$SANDBOX/pty-c.txt")"
+
+# ── 17. STAND_BANNER=C 强制单行款 (宽终端也不出艺术字) ──
+t "case 17: STAND_BANNER=C override -> single-line wordmark"
+fresh_sandbox
+P17=$(pick_free_port)
+PTY_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+    STAND_GATEWAY_PORT="$P17" FAKE_LOG="$FAKE_LOG" STAND_BANNER=C STAND_BANNER_COLS=100 \
+    script -q "$SANDBOX/pty-d.txt" "$SANDBOX/bin/stand" start 2>&1)"
+RC=$?
+assert_rc "banner C start rc" 0 "$RC"
+assert_contains "candidate C slogan" "One entry, Every agent." "$(cat "$SANDBOX/pty-d.txt")"
+assert_lacks "candidate C has no block art" "█" "$(cat "$SANDBOX/pty-d.txt")"
+
 echo
 echo "== summary: PASS=$PASS FAIL=$FAIL =="
 [ "$FAIL" -eq 0 ]

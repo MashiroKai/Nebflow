@@ -87,8 +87,44 @@
 - pinned JDK：本批读盘时 `~/.stand/jdk-21 → /opt/homebrew/opt/openjdk@21`
   （21.0.13，主会话安装）已就位，WARN 路径不再触发；`stand-jdk` 供他机/灾备。
 
+## 品牌横幅（作者追加 2026-10-25 13:10 逐字:「然后我们 stand start 的时候，也可以放一些我们的 logo，以及标语，One entry, Every agent.」）
+
+`ops/bin/stand` BRAND-BANNER v1：仅 **start 且守卫放行**（真的要起 daemon）时打印；
+already-running / 外姓拒启 / stop / 非 start 子命令一律不印。
+
+- **三候选**（作者挑一款定稿，旋钮 `STAND_BANNER=A|B|C` 可即时切换试戴，缺省 A；
+  `STAND_BANNER_COLS` 覆宽探测供测试/ops）：
+  - **A 徽标款**（宽终端 ≥80 列缺省）：黑底白 S 方块（favicon 同构，5 行块字符）+ 标语同行
+    ![候选A](shots/candidate-A-wide.png)
+  - **B 双行紧凑款**（窄终端 <80 列缺省）：块字符立柱 + 两行标语
+    ![候选B](shots/candidate-B-narrow.png)
+  - **C 单行字标款**：`stand — One entry, Every agent.`
+    ![候选C](shots/candidate-C-wordmark.png)
+  - 四态合览（含降级款）：![合览](shots/all-candidates.png)
+- **分寸**：URL 行紧随横幅之后且是终端最后一行（最显眼，不被艺术字埋掉）；
+  非 TTY / `NO_COLOR` / `TERM=dumb` → 单行纯文本 `stand — One entry, Every agent.`
+  （autostart / 重定向日志不刷艺术字，实截：shots/fallback-plain-nontty.png）。
+  真机 E2E 序列（沙箱数据根 + 端口 21873，pty 实抓，ANSI 已剥）：
+  ```text
+   ███████
+   █
+   ███████    One entry, Every agent.
+         █
+   ███████
+  stand started (pid 14307) — https://mystand.space/portal?device=cb89d132-…
+  ```
+- **顺带结构强化**：守卫面提到 JDK 门**之前**——already-running / stop /
+  not-running 面零 JVM 依赖（`stand stop` 在 java 全坏时也能真停、已启动识别
+  也不再先吃 JDK WARN 噪声；真机复验：stop 面输出干净）。
+- 断言套件新增 case 13–17（非 TTY 降级 / pty 宽版 A / NO_COLOR 恒胜 / 窄版 B /
+  STAND_BANNER=C 覆写），套件 **58/58 绿**。
+  测试基建坑二则（记入测试头注释）：`script -q` 捕获带 `^D\b\b` 前缀属正常；
+  候选渲染初版 `[97mOne` 丢失系 bash `$var` 后接字字符未加花括号（`$_wOne`
+  被解析为变量 `_wOne`）——已全部 `${_w}` 花括号化。
+
 ## 未做 / 开放项
 
+- **横幅候选 A/B/C 待作者定稿**（当前缺省 A；定稿后可把缺省旋钮改死并删备选）。
 - Scala 侧双启动防线（strictBoot 本身）未动——脚本守卫已把双启动挡在 JVM 外；
   应用侧是否还要 boot 内幂等（第二个实例直接 no-op 而非崩溃），留给后续批。
 - `stand status` 未加脚本面（应用侧已探 port+pid，A5 注释在案）。
