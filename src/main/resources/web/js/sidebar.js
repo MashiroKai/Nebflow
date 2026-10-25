@@ -28,6 +28,8 @@ import { toggleHTML, setToggleState } from './toggle.js';
 import { authHeaders } from './flowHelpers.js';
 import { preloadModelCapabilities, renderVisionBadge } from './modelCapabilities.js';
 import { renderAppearanceSection, bindAppearanceEvents } from './orbSettingsUI.js';
+// 骨架卡（audit ②27，2026-10-25）：初次进会话（历史未加载完）的 loading 占位泡。
+import { showChatSkeleton, hideChatSkeleton } from './main/historyIndicators.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 // Root agent's DISPLAY name — the single read point shared with onboarding /
@@ -2261,6 +2263,11 @@ export function resetChatForActiveSession() {
     }
 
     smartScroll();
+  } else if (sid) {
+    // audit ②27（2026-10-25）：初次进会话（历史未加载完）且**无缓冲流内容可恢复**
+    // ⇒ 出骨架卡占位；historyPage 到场由 main.js 处理器同帧摘除（让位零跳变）。
+    // 有缓冲内容（thinking/text）的会话直渲真内容，不出骨架（占位不与真内容同帧）。
+    showChatSkeleton();
   }
 
   if (state.sessionPendingTools[sid]) {

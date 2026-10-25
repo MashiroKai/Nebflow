@@ -38,6 +38,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css
 // ── 桩服务端状态 ────────────────────────────────────────────────────
 let currentWs = null;
 let serverDown = false;        // true = 新连接立即掐断（断线窗）
+let holdTurn = false;          // true = 受理帧只回 sessionBusy{true}，不发终态（模拟引擎持轮）
 let connSeq = 0;
 const conns = [];              // 每条连接的入站帧日志
 const accepted = [];           // 受理的用户内容帧
@@ -65,6 +66,7 @@ function wireUp(ws) {
     if (isUserContentFrame(m)) {
       accepted.push(m);
       ws.send(JSON.stringify({ type: 'sessionBusy', sessionId: m.sessionId, busy: true }));
+      if (holdTurn) return; // ⑤ busy 轨用例：持轮不发终态（引擎长轮形态）
       setTimeout(() => {
         try {
           ws.send(JSON.stringify({ type: 'sessionBusy', sessionId: m.sessionId, busy: false }));
@@ -236,6 +238,49 @@ try {
     `bubbles=${await bubbleCount('online normal send')}, marks=${await pendingMarkCount('online normal send')}`);
   ok('3c 在线发送不入队', (await queuedItems()).length === 0);
   ok('3d 全程零 pageerror', pageErrors.length === 0, JSON.stringify(pageErrors));
+
+  // ══ ⑤ busy 排队项断连补发轨（audit ②26/⑥38 残余，2026-10-25 P1 批）════
+  // busy 排队项（WS 开、轮次运行中入队，不带 offline 标记，两轨隔离设计）的
+  // 唯一投递挂点 = 终态帧族 ⇒ 断连期终态被吞 ⇒ 客户端 busy 镜像/开轮事实陈旧
+  // （引擎 onopen 引导族不重放 per-session busy 态）。收口 = input.js
+  // rearmBusyQueueDrains（重连腿）：补触发 drain（投递未决闸挡即刺抢跑）+
+  // turn-start 确认网换新窗口基点重挂（引擎静默空闲 20s ⇒ 幻影收口：权威
+  // 无-turn 戳 + drain 恰投一帧）。桩侧 = holdTurn 持轮、终态永不出线。
+  holdTurn = true;
+  await page.fill('#input', 'busy held q1');
+  await page.keyboard.press('Enter');
+  await sleep(500);
+  ok('5a 持轮首条出线（桩只回 busy{true}，终态扣发）',
+    inboundUserFramesOf('busy held q1').length === 1,
+    `frames=${inboundUserFramesOf('busy held q1').length}`);
+  await page.fill('#input', 'busy queued q2');
+  await page.keyboard.press('Enter');
+  await sleep(400);
+  const q5 = await queuedItems();
+  ok('5b busy 中第二条入 busy 轨（无 offline 标记 = 两轨隔离语义）',
+    q5.length === 1 && !q5[0].offline,
+    JSON.stringify(q5.map(i => ({ offline: !!i.offline, id: i.clientMessageId }))));
+  holdTurn = false;
+  const seq5 = await enterOutage();
+  // 引擎在断连窗内真终态（终态帧被吞 —— 客户端侧永不可见）。
+  await exitOutage(seq5);
+  await sleep(1200); // 重连腿先跑：陈旧开轮事实在场 ⇒ 投递未决闸必须挡住抢跑
+  ok('5c 重连即刺不抢跑（queue-one-per-turn 语义不因断连放松）',
+    inboundUserFramesOf('busy queued q2').length === 0,
+    `frames=${inboundUserFramesOf('busy queued q2').length}`);
+  const deadline5 = Date.now() + 26000; // 确认网 20s 预算 + drain 50ms + 余量
+  while (Date.now() < deadline5 && inboundUserFramesOf('busy queued q2').length === 0) await sleep(300);
+  const f5 = inboundUserFramesOf('busy queued q2');
+  ok('5d 确认网幻影收口后 busy 轨补发恰一帧（断连补发轨本体）', f5.length === 1,
+    `frames=${f5.length}`);
+  ok('5e busy 轨补发后排空', (await queuedItems()).length === 0);
+  const src5 = await readFile(join(WEB, 'js', 'input.js'), 'utf8');
+  ok('5f 重连腿源钉：rearmBusyQueueDrains 挂 onReconnect（补 drain + 换窗确认网）',
+    /function rearmBusyQueueDrains/.test(src5)
+      && /rearmBusyQueueDrains\(\)/.test(src5)
+      && /state\.scheduleQueueDrain\?\.\(sid\)/.test(src5)
+      && /state\.armTurnConfirm\?\.\(sid\)/.test(src5)
+      && /!it\.offline/.test(src5));
 
   // ══ ④ 源面静态钉（与实现同树同读数）══════════════════════════════════
   const src = await readFile(join(WEB, 'js', 'input.js'), 'utf8');

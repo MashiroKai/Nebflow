@@ -1375,10 +1375,14 @@ body.mobile-layer #canvas-panel .canvas-header {
   transform: translate3d(var(--head-dx, 0px), var(--head-dy, 0px), 0) scale(var(--head-scale, 1));
 }
 body.mobile-layer #canvas-panel .canvas-header.is-longpress,
-body.mobile-layer #canvas-panel .canvas-header.is-pressed {
+body.mobile-layer #canvas-panel .canvas-header.is-pressed,
+body.mobile-layer #canvas-panel .canvas-header:active {
   --head-scale: 0.97;
   filter: brightness(0.9);
 }
+/* CC6-4 触感缩放腿（2026-10-25 P1 批）：上 :active 补按压即缩档（合成事件断言
+   不触发 :active，spec 断言通道走 computedStyleMap —— 本子树 getComputedStyle
+   .transform 恒返 none（Chromium 探针实证），真实渲染值以 computedStyleMap 为准）。 */
 /* 长按浮出引用钮：固定定位（视口坐标，JS 落点），玻璃胶囊钮 + 弹入动画。 */
 body.mobile-layer .mobile-card-ref-btn {
   position: fixed;

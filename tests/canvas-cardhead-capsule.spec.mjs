@@ -20,9 +20,13 @@
 //        「关闭/关闭其他」三项（stopPropagation 不与面板菜单双弹）。
 //   CC5 分区（滚动冲突消解）—— 手势只绑胶囊：胶囊竖滑换卡前后 pane scrollTop
 //        不变；内容区滚轮正常滚 pane（零劫持）；胶囊 touch-action:none。
-//   CC6 手机 375 —— 无按压前置：卡头直滑上下=换文档卡（docTabs 序）、左右=关卡
-//        （closeCard）；长按 450ms → is-longpress 触感 + .mobile-card-ref-btn
-//        浮出，点击 → 引用 chip 进 #attachment-preview 且钮收；外部滚动即收；
+//   CC6 手机 375 —— 无按压前置：卡头直滑下滑=收起整叠（⑦令 2026-10-23 取代批⑨
+//        「下滑换卡」下半向；closeCanvas 状态保留可再开）、上滑=换下一张（批⑨
+//        保留上向）、左右=关卡（closeCard）；长按 450ms → is-longpress 触感
+//        （缩放断言通道 = computedStyleMap —— #canvas-panel 子树 getComputedStyle
+//        .transform 恒返 none（2026-10-25 探针实证），以 toMatrix() 真值 + rect
+//        收缩比交叉验证）+ .mobile-card-ref-btn 浮出，点击 → 引用 chip 进
+//        #attachment-preview 且钮收；外部滚动即收；
 //        底缘带上滑收层保留（卡头带不再收层 —— ⑨ 语义取代）。
 //
 // 断言通道 = window.__canvasDeck.state()（open/activeId/tabCount/tabs）+ DOM 计算
@@ -365,14 +369,36 @@ const headerInfo = (page) => page.evaluate(() => {
 
   const titleOf = () => page.evaluate(() => document.querySelector('.mobile-card-title')?.textContent || '');
 
-  // 直滑下滑 = 下一张（docTabs=[alpha, bravo]，bravo 活动 → alpha）
+  // ⑦令语义（2026-10-23，取代批⑨「下滑=下一张」下半向）：直滑下滑 = 收起整叠
+  // bottom sheet（closeCanvas —— 文档保留在页签数据模型，状态保留可再开）。
+  const layerState = () => page.evaluate(() => ({
+    cardsLive: document.body.classList.contains('mf-cards-live'),
+    canvasOpen: document.body.classList.contains('canvas-open'),
+    panelVisible: getComputedStyle(document.getElementById('canvas-panel')).display !== 'none',
+  }));
   await swipe(headInfo.x, headInfo.y, 0, 70);
-  const t1 = await titleOf();
-  ok('CC6-1 直滑下滑 = 下一张文档卡（无按压前置，bravo→alpha）', t1 === 'alpha.md', `title=${t1}`);
-  // 直滑上滑 = 上一张（alpha → bravo 环绕）
+  await sleep(400);
+  const st1 = await layerState();
+  const s1 = await stateOf(page);
+  ok('CC6-1 直滑下滑 = 收起整叠（⑦令：canvas 收层，页签数据保留）',
+    !st1.cardsLive && !st1.canvasOpen && s1.tabCount === 2,
+    `cardsLive=${st1.cardsLive} open=${st1.canvasOpen} n=${s1.tabCount}`);
+  // 再开（bar 画板键同 boot 通路）⇒ 层回来且活动卡不变（状态保留语义闭环）。
+  await page.evaluate(() => {
+    const key = document.querySelector('.mh-dd[data-dd="right"] [data-face="canvas"]');
+    if (key) key.click();
+  });
+  await page.waitForSelector('.mobile-card-head', { timeout: 8000 });
+  await sleep(300);
+  const tRe = await titleOf();
+  const stRe = await layerState();
+  ok('CC6-1b 收起后再开 = 状态保留（活动卡 bravo 不变，层回 live）',
+    stRe.cardsLive && tRe === 'bravo.md', `title=${tRe} live=${stRe.cardsLive}`);
+
+  // ⑦令保留上向：直滑上滑 = 换下一张（批⑨换卡语义上向；bravo → alpha 环绕）
   await swipe(headInfo.x, headInfo.y, 0, -70);
   const t2 = await titleOf();
-  ok('CC6-2 直滑上滑 = 上一张（alpha→bravo）', t2 === 'bravo.md', `title=${t2}`);
+  ok('CC6-2 直滑上滑 = 下一张文档卡（⑦令：上滑换卡保留，bravo→alpha）', t2 === 'alpha.md', `title=${t2}`);
   // 直滑左 = 关卡（closeCard，tabCount 2→1）
   const n0 = (await stateOf(page)).tabCount;
   await swipe(headInfo.x, headInfo.y, -90, 0);
@@ -384,22 +410,33 @@ const headerInfo = (page) => page.evaluate(() => {
   const lp = await page.evaluate(() => {
     const head = document.querySelector('.mobile-card-head');
     const r = head.getBoundingClientRect();
-    return { x: r.left + r.width * 0.35, y: r.top + r.height / 2 };
+    const pill = head.closest('.canvas-header');
+    return { x: r.left + r.width * 0.35, y: r.top + r.height / 2, pillW0: pill.getBoundingClientRect().width };
   });
   await page.dispatchEvent('.mobile-card-head', 'pointerdown',
     { pointerId: 9, pointerType: 'touch', isPrimary: true, button: 0, buttons: 1, clientX: lp.x, clientY: lp.y, bubbles: true });
-  await sleep(700);                                       // > 450ms 长按阈
+  await sleep(700);                                       // > 450ms 长按阈 + 0.18s 过渡收尾
   const lpState = await page.evaluate(() => {
     const head = document.querySelector('.mobile-card-head');
     const pill = head.closest('.canvas-header');
     const btn = document.querySelector('.mobile-card-ref-btn');
-    const m = new DOMMatrixReadOnly(getComputedStyle(pill).transform === 'none' ? undefined : getComputedStyle(pill).transform);
+    // 断言通道 = computedStyleMap（真值）：#canvas-panel 子树 getComputedStyle
+    // .transform 恒返 'none'（2026-10-25 P1 批探针实证：内联/!important 注入同谎，
+    // toMatrix() 与真实渲染一致）——缩放腿的判定面。
+    let scale = null;
+    try {
+      const tf = pill.computedStyleMap().get('transform');
+      scale = tf && tf.toMatrix ? tf.toMatrix().a : null;
+    } catch (_) { /* 旧引擎无 computedStyleMap：回落 rect 比 */ }
     return { feel: head.classList.contains('is-longpress') || pill.classList.contains('is-longpress'),
-      scale: m.a, btn: !!btn, btnText: btn ? btn.textContent : '' };
+      scale, btn: !!btn, btnText: btn ? btn.textContent : '',
+      pillW1: pill.getBoundingClientRect().width };
   });
-  ok('CC6-4 长按触感 + 引用钮浮出（is-longpress + .mobile-card-ref-btn）',
-    lpState.feel && lpState.scale < 0.999 && lpState.btn && lpState.btnText.length > 0,
-    `feel=${lpState.feel} scale=${lpState.scale.toFixed(3)} btn=${lpState.btn}(${lpState.btnText})`);
+  const rectRatio = lp.pillW0 > 0 ? lpState.pillW1 / lp.pillW0 : 1;
+  ok('CC6-4 长按触感 + 引用钮浮出（is-longpress + computedStyleMap scale<1 + rect 收缩交叉验证）',
+    lpState.feel && lpState.scale !== null && lpState.scale < 0.999 && rectRatio < 0.999 && rectRatio > 0.9
+      && lpState.btn && lpState.btnText.length > 0,
+    `feel=${lpState.feel} scale=${lpState.scale === null ? 'null' : lpState.scale.toFixed(3)} rect=${rectRatio.toFixed(3)} btn=${lpState.btn}(${lpState.btnText})`);
   await page.evaluate(() => document.querySelector('.mobile-card-ref-btn').click());
   await sleep(300);
   const afterRef = await page.evaluate(() => {

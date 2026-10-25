@@ -124,7 +124,7 @@ test.beforeEach(async ({ page }) => {
   await bootApp(page);
 });
 
-test('T1 graph page: adopted pane, status line counts, canvas fills page', async ({ page }) => {
+test('T1 graph page: adopted pane, canvas fills page, toolbar retired (left-column migration 8a2c703f9)', async ({ page }) => {
   const errors = watchErrors(page);
   await pushPage(page, 'graph');
 
@@ -135,8 +135,11 @@ test('T1 graph page: adopted pane, status line counts, canvas fills page', async
     '.mobile-page[data-page="graph"] .mobile-page-body .canvas-tab-pane[data-tab-id="wiki-graph"]',
   )).toHaveCount(1);
 
-  // 状态行 = wiki.status 模板（stub 不计入）。
-  await expect(page.locator('.wiki-toolbar-status')).toHaveText('2 个项目 · 2 篇文档 · 2 条链接');
+  // 控制面已迁左栏（8a2c703f9 作者令 2026-10-21）：pane 只留力导向图本体 +
+  // 悬停 tooltip —— 旧工具条族（状态行/玻璃钮/缩放珠）在图谱页零存留（防复活钉）。
+  await expect(page.locator(
+    '.mobile-page[data-page="graph"] .wiki-toolbar, .mobile-page[data-page="graph"] .wiki-toolbar-status, .mobile-page[data-page="graph"] .wx-zoom',
+  )).toHaveCount(0);
 
   // 画布满页（flex:1）—— pane/画布盒非零高。收编有两条腿：ensurePanelContent
   // 尾随腿（render 完成才移入）与 watchCanvasContent 扫描腿（openTab 一挂 pane
@@ -155,28 +158,25 @@ test('T1 graph page: adopted pane, status line counts, canvas fills page', async
   expect(errors).toEqual([]);
 });
 
-test('T2 zoom cluster: three glass buttons, safe-area offset', async ({ page }) => {
+test('T2 canvas-only face: zoom cluster retired, graph canvas is the page surface', async ({ page }) => {
   const errors = watchErrors(page);
   await pushPage(page, 'graph');
 
-  const zoom = page.locator('.wx-zoom');
-  await expect(zoom).toBeVisible();
-  expect(await zoom.locator('button').count()).toBe(3);
-  // 玻璃珠材质（backdrop-filter blur 在场）。
-  const bf = await zoom.evaluate((el) => getComputedStyle(el).backdropFilter || getComputedStyle(el).webkitBackdropFilter);
-  expect(bf).toContain('blur');
-  // 底距含安全区兜底（calc ≥16px）。
-  const bottom = await zoom.evaluate((el) => getComputedStyle(el).bottom);
-  expect(parseFloat(bottom)).toBeGreaterThanOrEqual(16);
+  // 缩放三钮随左栏迁移退役（8a2c703f9）：页面交互面 = 画布本体（触控/滚轮由
+  // 图谱画布自身承担），.wx-zoom 玻璃珠零存留。
+  await expect(page.locator('.mobile-page[data-page="graph"] .wx-zoom')).toHaveCount(0);
+  // 图谱画布在场且铺满页面（T1 几何的交互面读数：canvas 元素非零、页面内可见）。
+  await expect(page.locator('.mobile-page[data-page="graph"] .wiki-canvas')).toHaveCount(1);
+  await expect(page.locator('.mobile-page[data-page="graph"] .wiki-canvas')).toBeVisible();
   expect(errors).toEqual([]);
 });
 
-test('T3 back contract pops to chat; toolbar keeps glass buttons', async ({ page }) => {
+test('T3 back contract pops to chat; page carries no toolbar glass buttons', async ({ page }) => {
   const errors = watchErrors(page);
   await pushPage(page, 'graph');
 
-  // 工具条玻璃钮（刷新）在场（glass-control 族）。
-  await expect(page.locator('.wiki-toolbar .wiki-toolbar-btn').first()).toBeVisible();
+  // 工具条玻璃钮已随控制面迁左栏退役 —— 页内零存留（防复活钉，判据跟 8a2c703f9）。
+  await expect(page.locator('.mobile-page[data-page="graph"] .wiki-toolbar-btn')).toHaveCount(0);
 
   // 返回契约：pop 一层回聊天。
   await page.locator('.mobile-page[data-page="graph"] .mobile-back-btn').click();
