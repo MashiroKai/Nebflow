@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>感知面板 · 内容源条目化 · 样张（设计批 r2 2026-10-25）</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════════
+   STAND 设计语言对齐（REPORT.md §16 token 表的单源清单）
+   值逐字取自产品客户端：src/main/resources/web/css/sapphire.css + base.css
+   + chat.css(.ask-card) + split.css(#canvas-panel)；官网 mystand.space 同值
+   .nfd-* 集等价（--nfd-sapphire ≡ --sapphire、--nfd-glass-blur ≡ 24px 等）。
+   主题机制随官网：html[data-theme="dark"]（init 脚本随系统置位，样张可手动切）。
+   铁律沿用：语义色只上载体（点/描边/底纹），11px+ 状态词一律中性 --status-word。
+   ═══════════════════════════════════════════════════════════════════════ */
+:root{
+  /* 面（base.css Content area light） */
+  --color-bg:#f5f6f8; --color-surface:#fff;
+  --color-text:#1b1e26; --color-text-muted:#8b8e96; --color-text-dim:#6b6e76;
+  --color-frame-text:#3a3d45; --color-frame-text-bright:#1b1e26;
+  --color-frame-text-muted:#717379; --color-frame-text-dim:#aaacb3;
+  --color-border:#ddd;
+  /* 玻璃（sapphire.css） */
+  --glass-bg:rgba(255,255,255,0.55); --glass-blur:24px; --glass-border:rgba(255,255,255,0.35);
+  --sapphire:91 127 191; --sapphire-glow:120 160 220;
+  --sapphire-edge:rgba(91,127,191,0.08); --sapphire-edge-strong:rgba(91,127,191,0.25);
+  --sapphire-refraction:rgba(255,255,255,0.45);
+  --sapphire-tint-15:rgba(91,127,191,0.15); --sapphire-tint-10:rgba(91,127,191,0.10);
+  --frost-shadow:inset 0 1px 0 0 rgba(255,255,255,0.25),0px 2px 8px rgba(0,0,0,0.04),0px 8px 24px rgba(0,0,0,0.06);
+  /* 玻璃控件（sapphire.css glass-control 族） */
+  --glass-control-bg:rgba(255,255,255,0.45); --glass-control-bg-hover:rgba(255,255,255,0.65);
+  --glass-control-border:rgba(255,255,255,0.40); --glass-control-highlight:rgba(255,255,255,0.50);
+  --glass-control-underedge:rgba(0,0,0,0.08); --glass-control-glow:rgba(0,0,0,0.06);
+  --glass-control-shadow:rgba(0,0,0,0.04); --glass-control-blur:10px;
+  --glass-etched-bg:rgba(0,0,0,0.025); --glass-etched-border:rgba(91,127,191,0.10);
+  --glass-etched-border-focus:rgba(91,127,191,0.35);
+  /* 品牌 / 语义（base.css；语义色只上载体） */
+  --color-primary:#07c160; --color-primary-hover:#06ad56;
+  --color-error:#f44336; --color-success:#4caf50; --color-warning:#ff9800;
+  --status-error-icon:#d64545; --status-warn-icon:#b45309; --status-success-icon:#2e7d32;
+  --status-word:var(--color-frame-text-muted);
+  /* daemon 面板阴影栈（daemons.js #daemon-panel 逐字） */
+  --panel-shadow:inset 0 -1px 0 0 rgba(91,127,191,0.025),inset 1px 0 0 0 rgba(91,127,191,0.02),
+    inset -1px 0 0 0 rgba(91,127,191,0.02),0px 0px 0px 1px rgba(0,0,0,0.03),
+    0px 4px 16px rgba(0,0,0,0.05),0px 8px 36px rgba(0,0,0,0.06);
+}
+html[data-theme="dark"]{
+  --color-bg:#13161c; --color-surface:#1c1f27;
+  --color-text:#e8eaed; --color-text-muted:#7b7e88; --color-text-dim:#9ba0aa;
+  --color-frame-text:#c8cad0; --color-frame-text-bright:#e8eaed;
+  --color-frame-text-muted:#81838a; --color-frame-text-dim:#7b7e88;
+  --color-border:#2a2d35;
+  --glass-bg:rgba(24,28,38,0.68); --glass-border:rgba(255,255,255,0.06);
+  --sapphire-edge:rgba(91,127,191,0.06); --sapphire-edge-strong:rgba(91,127,191,0.18);
+  --sapphire-refraction:rgba(91,127,191,0.06);
+  --frost-shadow:inset 0 1px 0 0 rgba(255,255,255,0.04),0px 2px 8px rgba(0,0,0,0.20),0px 8px 24px rgba(0,0,0,0.35);
+  --glass-control-bg:rgba(255,255,255,0.05); --glass-control-bg-hover:rgba(255,255,255,0.10);
+  --glass-control-border:rgba(255,255,255,0.08); --glass-control-highlight:rgba(255,255,255,0.08);
+  --glass-control-underedge:rgba(0,0,0,0.25); --glass-control-glow:rgba(0,0,0,0.20);
+  --glass-control-shadow:rgba(0,0,0,0.15);
+  --glass-etched-bg:rgba(255,255,255,0.04); --glass-etched-border:rgba(91,127,191,0.08);
+  --glass-etched-border-focus:rgba(91,127,191,0.30);
+  --panel-shadow:inset 0 -1px 0 0 rgba(91,127,191,0.035),inset 1px 0 0 0 rgba(91,127,191,0.025),
+    inset -1px 0 0 0 rgba(91,127,191,0.025),0px 0px 0px 1px rgba(255,255,255,0.035),
+    0px 4px 16px rgba(0,0,0,0.22),0px 8px 36px rgba(0,0,0,0.35);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background:var(--color-bg);color:var(--color-text);
+  min-height:100vh;display:flex;flex-direction:column;align-items:center;
+  padding:32px 16px 64px;font-size:13px;line-height:1.5;
+}
+.page-note{max-width:400px;text-align:center;color:var(--color-text-muted);margin-bottom:16px;font-size:12px}
+.demo-bar{display:flex;gap:4px;padding:4px;border-radius:10px;background:var(--glass-bg);
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(1.15);backdrop-filter:blur(var(--glass-blur)) saturate(1.15);
+  border:1px solid var(--sapphire-edge);margin-bottom:20px;flex-wrap:wrap;justify-content:center}
+.demo-bar button{border:none;background:transparent;color:var(--color-text-muted);font:inherit;
+  padding:6px 14px;border-radius:7px;cursor:pointer;transition:all .15s}
+.demo-bar button:hover{background:var(--glass-control-bg-hover)}
+.demo-bar button.on{background:var(--color-primary);color:#fff;font-weight:500}
+.demo-bar .themebtn{color:var(--color-frame-text-muted);font-size:12px}
+
+/* ═══ 面板本体（#daemon-panel 逐字同构：400px 玻璃 + 折射线 + 阴影栈） ═══ */
+#perception-panel{
+  width:400px;max-width:100%;background:var(--glass-bg);
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(1.15);backdrop-filter:blur(var(--glass-blur)) saturate(1.15);
+  border-radius:16px;border:1px solid var(--sapphire-edge);box-shadow:var(--panel-shadow);
+  position:relative;overflow:hidden;
+}
+#perception-panel::before{content:'';position:absolute;top:0;left:10%;right:10%;height:1px;
+  background:linear-gradient(90deg,transparent 10%,var(--sapphire-refraction) 50%,transparent 90%);pointer-events:none;z-index:1}
+.pp-header{display:flex;align-items:center;gap:8px;padding:12px 14px 6px}
+.pp-title{font-size:13px;font-weight:600;letter-spacing:-0.02em;color:var(--color-text)}
+.pp-dot{width:7px;height:7px;border-radius:50%;background:var(--color-frame-text-dim);flex-shrink:0}
+.pp-dot.ok{background:var(--color-success)} .pp-dot.warn{background:var(--status-warn-icon)}
+.pp-dot.bad{background:var(--status-error-icon)}
+.pp-state-label{font-size:11.5px;color:var(--status-word)}
+.pp-header-right{margin-left:auto;display:flex;gap:4px;align-items:center}
+.pp-icon-btn{width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:6px;
+  border:1px solid transparent;background:transparent;color:var(--color-text-muted);cursor:pointer;transition:all .15s;opacity:.7}
+.pp-icon-btn:hover{opacity:1;background:var(--glass-control-bg-hover);
+  -webkit-backdrop-filter:blur(var(--glass-control-blur)) saturate(1.2);backdrop-filter:blur(var(--glass-control-blur)) saturate(1.2);
+  border-color:var(--glass-control-border);color:var(--color-frame-text)}
+.pp-icon-btn svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.pp-body{padding:2px 10px 10px}
+
+/* ═══ 条目列表（§9 内容源条目模型） ═══ */
+.sec-label{font-size:10.5px;font-weight:600;letter-spacing:.08em;color:var(--color-frame-text-muted);
+  padding:6px 6px 4px}
+.entry{border:1px solid var(--glass-etched-border);border-radius:12px;background:var(--glass-etched-bg);margin-bottom:6px;overflow:hidden}
+.entry-head{display:flex;align-items:center;gap:10px;width:100%;padding:10px 12px;border:none;background:transparent;
+  font:inherit;color:inherit;cursor:pointer;text-align:left;transition:background .15s}
+.entry-head:hover{background:var(--glass-control-bg-hover)}
+.e-ic{width:30px;height:30px;flex-shrink:0;border-radius:9px;display:flex;align-items:center;justify-content:center;
+  background:rgb(var(--sapphire)/.12);border:1px solid rgb(var(--sapphire)/.18)}
+.e-ic svg{width:16px;height:16px;stroke:rgb(var(--sapphire));fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.entry.reserved .e-ic{background:var(--glass-etched-bg);border-color:var(--glass-etched-border)}
+.entry.reserved .e-ic svg{stroke:var(--color-frame-text-dim)}
+.e-main{flex:1;min-width:0}
+.e-name{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:500;color:var(--color-text)}
+.e-sum{display:block;font-size:11px;color:var(--color-text-muted);margin-top:1px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip{font-size:10px;padding:1px 7px;border-radius:6px;border:1px solid rgb(var(--sapphire)/.30);
+  color:var(--color-frame-text);white-space:nowrap;font-weight:400}
+.chip.dim{border-color:var(--color-border);color:var(--status-word)}
+.e-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--color-frame-text-dim)}
+.e-dot.ok{background:var(--color-success)} .e-dot.warn{background:var(--status-warn-icon)}
+.e-dot.bad{background:var(--status-error-icon)} .e-dot.paused{background:var(--color-frame-text-dim)}
+.e-chev{width:14px;height:14px;flex-shrink:0;stroke:var(--color-frame-text-muted);fill:none;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round;transition:transform .18s}
+.entry.open .e-chev{transform:rotate(90deg)}
+.e-detail{display:none;border-top:1px solid var(--glass-etched-border);padding:10px 12px 12px}
+.entry.open .e-detail{display:block;animation:eIn .22s cubic-bezier(.16,1,.3,1)}
+@keyframes eIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.entry.reserved{cursor:default}
+.entry.reserved .entry-head{cursor:default}
+.entry.reserved .entry-head:hover{background:transparent}
+.reserved-tag{font-size:10px;padding:1px 7px;border-radius:6px;border:1px dashed var(--color-border);
+  color:var(--status-word);white-space:nowrap}
+.pp-footer{border-top:1px solid var(--glass-etched-border);padding:9px 14px;display:flex;align-items:center;gap:8px;
+  color:var(--color-frame-text-dim);font-size:11px}
+.pp-footer .spacer{flex:1}
+
+/* ═══ 展开区通用控件 ═══ */
+.btn{font:inherit;border-radius:8px;padding:7px 14px;cursor:pointer;transition:all .15s;
+  border:1px solid var(--glass-control-border);background:var(--glass-control-bg);color:var(--color-frame-text);
+  -webkit-backdrop-filter:blur(var(--glass-control-blur)) saturate(1.2);backdrop-filter:blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:inset 0 1px 0 var(--glass-control-highlight),inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),0 2px 8px var(--glass-control-shadow)}
+.btn:hover{background:var(--glass-control-bg-hover)}
+.btn.primary{background:var(--color-primary);border-color:var(--color-primary);color:#fff;font-weight:500;
+  box-shadow:none}
+.btn.primary:hover{background:var(--color-primary-hover)}
+.btn.danger-line{color:var(--color-danger,#c0392b);border-color:rgba(192,57,43,.4);box-shadow:none;
+  -webkit-backdrop-filter:none;backdrop-filter:none;background:transparent}
+html[data-theme="dark"] .btn.danger-line{color:#f26b6b;border-color:rgba(242,107,107,.35)}
+.btn.danger-line:hover{background:rgba(214,69,69,.08)}
+.btn.ghost{border-color:transparent;background:transparent;color:rgb(var(--sapphire));box-shadow:none;
+  -webkit-backdrop-filter:none;backdrop-filter:none}
+.btn.ghost:hover{background:var(--glass-control-bg-hover)}
+.btn.sm{padding:4px 10px;font-size:12px;border-radius:7px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+
+/* ── 未配置（展开区 hero） ── */
+.setup-hero{display:flex;flex-direction:column;align-items:center;text-align:center;padding:16px 8px 12px}
+.setup-hero svg{width:36px;height:36px;stroke:rgb(var(--sapphire));fill:none;stroke-width:1.6;
+  stroke-linecap:round;stroke-linejoin:round;opacity:.85;margin-bottom:10px}
+.setup-h{font-size:13.5px;font-weight:600;margin-bottom:5px}
+.setup-p{color:var(--color-text-muted);font-size:12px;max-width:300px;margin-bottom:14px}
+.copy-done{color:var(--status-success-icon);font-size:11.5px;margin-top:8px;min-height:15px;opacity:0;transition:opacity .2s}
+.copy-done.show{opacity:1}
+.setup-steps{width:100%;text-align:left;border-top:1px solid var(--glass-etched-border);padding-top:10px;margin-top:6px}
+.setup-steps li{list-style:none;display:flex;gap:8px;color:var(--color-text-muted);font-size:11.5px;padding:2.5px 0}
+.setup-steps li b{color:var(--color-text);font-weight:500}
+
+/* ── 运行中（展开区） ── */
+.st-row{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;
+  background:var(--glass-etched-bg);border:1px solid var(--glass-etched-border);margin-bottom:8px}
+.st-h{font-size:12.5px;font-weight:500;display:flex;align-items:center;gap:6px}
+.st-sub{font-size:11px;color:var(--color-text-muted);margin-top:1px;font-variant-numeric:tabular-nums}
+.stats{display:flex;gap:8px;margin-bottom:8px}
+.stat{flex:1;background:var(--glass-etched-bg);border:1px solid var(--glass-etched-border);border-radius:10px;
+  padding:8px 10px;text-align:center}
+.stat .n{font-size:16px;font-weight:600;letter-spacing:-0.02em;font-variant-numeric:tabular-nums}
+.stat .l{font-size:10.5px;color:var(--status-word);margin-top:1px}
+.evlog{border:1px solid var(--glass-etched-border);border-radius:10px;padding:6px 10px;background:var(--glass-etched-bg)}
+.evlog .ev{display:flex;gap:8px;align-items:baseline;padding:3.5px 0;border-bottom:1px solid var(--glass-etched-border);
+  font-size:11.5px}
+.evlog .ev:last-child{border-bottom:none}
+.evlog .t{color:var(--color-frame-text-dim);font-variant-numeric:tabular-nums;flex-shrink:0}
+.evlog .tag{flex-shrink:0;font-size:10px;padding:0 6px;border-radius:5px;border:1px solid var(--color-border);
+  color:var(--status-word);display:inline-flex;align-items:center;gap:4px}
+.evlog .tag i{width:5px;height:5px;border-radius:50%;display:inline-block}
+.evlog .tag.dl i{background:var(--status-success-icon)} .evlog .tag.bl i{background:var(--status-error-icon)}
+.evlog .tag.otp i{background:rgb(var(--sapphire))} .evlog .tag.llm i{background:var(--color-frame-text-dim)}
+.evlog .m{color:var(--color-text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mailrow{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;
+  background:var(--glass-etched-bg);border:1px solid var(--glass-etched-border)}
+.mailrow .addr{font-size:12.5px;font-weight:500}
+.mailrow .srv{font-size:11px;color:var(--color-text-muted)}
+.toggle{position:relative;width:38px;height:22px;border-radius:11px;background:var(--glass-etched-bg);
+  border:1px solid var(--color-border);cursor:pointer;transition:all .18s;flex-shrink:0;padding:0}
+.toggle::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
+  background:var(--color-surface);box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .18s}
+.toggle.on{background:var(--color-primary);border-color:var(--color-primary)}
+.toggle.on::after{transform:translateX(16px)}
+.paused-banner{display:none;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;margin-bottom:8px;
+  background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.28);font-size:12px;color:var(--color-text)}
+.paused-banner svg{width:14px;height:14px;stroke:var(--status-warn-icon);fill:none;stroke-width:2;
+  stroke-linecap:round;flex-shrink:0}
+.paused-banner.show{display:flex}
+.actions{display:flex;gap:8px;margin-top:10px}
+.actions .btn{flex:1}
+
+/* ── 异常（展开区 banner） ── */
+.alert{display:flex;gap:10px;padding:11px 12px;border-radius:12px;margin-bottom:10px}
+.alert svg{width:17px;height:17px;flex-shrink:0;margin-top:1px;stroke:currentColor;fill:none;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round}
+.alert.bad{background:rgba(214,69,69,.07);border:1px solid rgba(214,69,69,.30)}
+.alert.bad>svg{color:var(--status-error-icon)}
+.alert.warnbox{background:rgba(255,152,0,.07);border:1px solid rgba(255,152,0,.30)}
+.alert.warnbox>svg{color:var(--status-warn-icon)}
+.alert .ah{font-weight:600;font-size:12.5px;color:var(--color-text);margin-bottom:2px}
+.alert .ad{font-size:11.5px;color:var(--color-text-muted)}
+.alert .ad b{color:var(--color-text);font-weight:500;font-variant-numeric:tabular-nums}
+.alert .abtns{display:flex;gap:8px;margin-top:9px}
+.subtabs{display:flex;gap:4px;margin-bottom:10px}
+.subtabs button{border:1px solid var(--glass-etched-border);background:transparent;color:var(--color-text-muted);
+  font:inherit;font-size:12px;padding:4px 10px;border-radius:7px;cursor:pointer}
+.subtabs button.on{border-color:rgb(var(--sapphire)/.4);color:rgb(var(--sapphire))}
+
+/* ═══ 配置卡片（overlay，玻璃 + etched 输入） ═══ */
+.overlay{position:fixed;inset:0;background:rgba(10,14,22,.35);display:none;align-items:center;justify-content:center;
+  z-index:50;padding:20px}
+.overlay.open{display:flex}
+.cfg{width:400px;max-width:100%;max-height:86vh;overflow-y:auto;background:var(--glass-bg);
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(1.15);backdrop-filter:blur(var(--glass-blur)) saturate(1.15);
+  border-radius:16px;border:1px solid var(--sapphire-edge);box-shadow:var(--frost-shadow),0 12px 40px rgba(0,0,0,.18);
+  position:relative}
+.cfg::before{content:'';position:absolute;top:0;left:10%;right:10%;height:1px;
+  background:linear-gradient(90deg,transparent 10%,var(--sapphire-refraction) 50%,transparent 90%)}
+.cfg-h{display:flex;align-items:center;padding:13px 16px 5px;font-size:13px;font-weight:600}
+.cfg-b{padding:6px 16px 4px}
+.cfg-sec{font-size:10.5px;font-weight:600;color:var(--color-frame-text-muted);letter-spacing:.06em;margin:12px 0 6px}
+.field{margin-bottom:8px}
+.field label{display:block;font-size:11.5px;color:var(--color-text-muted);margin-bottom:3px}
+.field input,.field textarea{width:100%;font:inherit;font-size:12.5px;color:var(--color-text);
+  background:var(--glass-etched-bg);border:1px solid var(--glass-etched-border);border-radius:8px;padding:7px 10px;
+  outline:none;transition:border-color .15s}
+.field input:focus,.field textarea:focus{border-color:var(--glass-etched-border-focus)}
+.field textarea{resize:vertical;min-height:54px}
+.field .hint{font-size:11px;color:var(--color-frame-text-dim);margin-top:3px}
+.field-grid{display:grid;grid-template-columns:1fr 96px;gap:8px}
+.mask-note{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--status-success-icon);margin-top:3px}
+.mask-note svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.cfg-foot{display:flex;gap:8px;padding:12px 16px 16px;border-top:1px solid var(--glass-etched-border);margin-top:12px}
+.cfg-foot .spacer{flex:1}
+.test-result{font-size:11.5px;margin-top:8px;min-height:16px;color:var(--color-text-muted);padding:0 16px}
+.test-result.ok{color:var(--status-success-icon)}
+.switchline{display:flex;align-items:center;gap:10px;padding:8px 0}
+.switchline .sl-t{font-size:12.5px}
+.switchline .sl-d{font-size:11px;color:var(--color-text-muted)}
+</style>
+</head>
+<body>
+
+<div class="page-note">设计样张 r2 · 感知面板 = 内容源条目列表（邮件 = 首个条目；文件系统变动 / 日历 / Webhook 为预留条目位）· 点击条目展开配置/状态/操作 · REPORT.md §9</div>
+
+<div class="demo-bar" role="tablist" aria-label="邮件条目状态样张切换">
+  <button data-st="setup">未配置</button>
+  <button data-st="run" class="on">运行中</button>
+  <button data-st="err">异常</button>
+  <button class="themebtn" id="theme-btn" title="切换亮暗主题">◐ 主题</button>
+</div>
+
+<div id="perception-panel">
+  <div class="pp-header">
+    <span class="pp-dot ok" id="pp-dot"></span>
+    <span class="pp-title">感知</span>
+    <span class="pp-state-label" id="pp-state-label">运行中</span>
+    <div class="pp-header-right">
+      <button class="pp-icon-btn" title="面板说明" onclick="alert('样张：说明入口占位')">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
+      </button>
+      <button class="pp-icon-btn" title="关闭" onclick="alert('样张：关闭弹层')">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="pp-body">
+    <div class="sec-label">内容源</div>
+
+    <!-- ═══ 条目一：邮件（首个内容源；状态投影见 §9.3） ═══ -->
+    <div class="entry open" id="entry-mail">
+      <button class="entry-head" id="entry-mail-head" aria-expanded="true" aria-controls="e-mail-detail">
+        <span class="e-ic" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 8l9 6 9-6"/></svg>
+        </span>
+        <span class="e-main">
+          <span class="e-name">邮件 <span class="chip" id="e-mode-chip">IMAP IDLE</span></span>
+          <span class="e-sum" id="e-mail-sum">i@kaiyu.me · 已连接 · 今日投递 3</span>
+        </span>
+        <span class="e-dot ok" id="e-mail-dot"></span>
+        <svg class="e-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+
+      <div class="e-detail" id="e-mail-detail">
+        <!-- 展开态一：未配置 -->
+        <div class="e-view" id="ev-setup" style="display:none">
+          <div class="setup-hero">
+            <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 8l9 6 9-6"/></svg>
+            <div class="setup-h">邮件推送未配置</div>
+            <div class="setup-p">配置邮箱后，新邮件自动推送：垃圾先滤、重要邮件投递给代理、验证码在提问时点击即填。</div>
+            <button class="btn primary" id="copy-prompt-btn">复制配置提示词</button>
+            <div class="copy-done" id="copy-done">已复制 · 粘贴到对话即可，代理将引导你完成配置</div>
+            <ul class="setup-steps">
+              <li><b>1</b>复制上方提示词，粘贴给代理</li>
+              <li><b>2</b>代理以 secret 卡片收授权码（不明文出现）</li>
+              <li><b>3</b>自检通过后此条目转为「运行中」</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- 展开态二：运行中 -->
+        <div class="e-view" id="ev-run">
+          <div class="paused-banner" id="paused-banner">
+            <svg viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></svg>
+            已暂停 · 停收新邮件，恢复后自动补拉去重
+          </div>
+          <div class="st-row">
+            <div style="flex:1;min-width:0">
+              <div class="st-h">邮件推送 <span class="chip" id="mode-chip">IMAP IDLE</span></div>
+              <div class="st-sub" id="mode-sub">已连接 · IDLE 重续 <span id="idle-count">12:34</span></div>
+            </div>
+          </div>
+          <div class="stats">
+            <div class="stat"><div class="n">3</div><div class="l">今日投递</div></div>
+            <div class="stat"><div class="n">41</div><div class="l">拦截</div></div>
+            <div class="stat"><div class="n">2</div><div class="l">验证码</div></div>
+          </div>
+          <div class="evlog" aria-label="事件迷你日志">
+            <div class="ev"><span class="t">10:21</span><span class="tag dl"><i></i>投递</span><span class="m">银行月度对账单 → 已入今日账单缓冲（白名单）</span></div>
+            <div class="ev"><span class="t">10:14</span><span class="tag bl"><i></i>拦截</span><span class="m">promo@deals-example.com · 黑名单域</span></div>
+            <div class="ev"><span class="t">10:02</span><span class="tag otp"><i></i>验证码</span><span class="m">824*** · QQ 邮箱 · 已随提问展示</span></div>
+            <div class="ev"><span class="t">09:47</span><span class="tag dl"><i></i>投递</span><span class="m">服务器巡检告警 → 主代理（LLM 判定）</span></div>
+            <div class="ev"><span class="t">09:31</span><span class="tag llm"><i></i>L1</span><span class="m">招聘周报 · 判定不投递</span></div>
+          </div>
+          <div style="height:8px"></div>
+          <div class="mailrow">
+            <div style="flex:1;min-width:0">
+              <div class="addr">i@kaiyu.me</div>
+              <div class="srv">imap.qq.com:993 · smtp.qq.com:465</div>
+            </div>
+            <button class="toggle on" id="pp-toggle" title="启停邮件推送" aria-label="启停邮件推送"></button>
+          </div>
+          <div class="actions">
+            <button class="btn" onclick="openCfg()">配置</button>
+            <button class="btn ghost" onclick="alert('样张：查看完整审计日志')">审计日志</button>
+          </div>
+        </div>
+
+        <!-- 展开态三：异常 -->
+        <div class="e-view" id="ev-err" style="display:none">
+          <div class="subtabs" role="tablist" aria-label="异常子样张">
+            <button id="err-auth-btn" class="on">授权失效</button>
+            <button id="err-conn-btn">连接断开</button>
+          </div>
+          <div id="err-auth">
+            <div class="alert bad">
+              <svg viewBox="0 0 24 24"><path d="M12 3l10 18H2L12 3zM12 10v5M12 18h.01"/></svg>
+              <div style="flex:1;min-width:0">
+                <div class="ah">邮箱授权已失效</div>
+                <div class="ad">IMAP 登录被拒绝（可能授权码已重置）。停机期间不收信；恢复后自动补拉去重，不丢信。</div>
+                <div class="abtns">
+                  <button class="btn sm primary" onclick="openCfg(true)">重新授权</button>
+                  <button class="btn sm danger-line" onclick="alert('样张：删除邮箱授权 → 残留清理回执')">删除此邮箱</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="err-conn" style="display:none">
+            <div class="alert warnbox">
+              <svg viewBox="0 0 24 24"><path d="M2 9c5-5 15-5 20 0M5 13c4-4 10-4 14 0M8.5 17c2-2 5-2 7 0M12 20.5h.01"/></svg>
+              <div style="flex:1;min-width:0">
+                <div class="ah">推送连接中断</div>
+                <div class="ad">第 <b id="retry-n">3</b> 次重试 · <b id="retry-in">14</b>s 后（指数退避，上限 5 分钟）。期间新邮件暂存本地，恢复后补投。</div>
+                <div class="abtns">
+                  <button class="btn sm" onclick="alert('样张：立即重试')">立即重试</button>
+                  <button class="btn sm ghost" onclick="alert('样张：转短轮询（状态行如实显示）')">转轮询模式</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="mailrow" style="margin-top:10px">
+            <div style="flex:1;min-width:0">
+              <div class="addr">i@kaiyu.me</div>
+              <div class="srv">最近成功连接 · 今天 09:58</div>
+            </div>
+            <button class="toggle on" title="启停邮件推送" aria-label="启停邮件推送"></button>
+          </div>
+          <div class="actions">
+            <button class="btn" onclick="openCfg()">配置</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ 预留条目位（§9.4 未来内容源抽象；本批只留位不设计细节） ═══ -->
+    <div class="entry reserved">
+      <div class="entry-head" role="presentation" title="预留条目位 · 未来内容源">
+        <span class="e-ic" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M3 7h9M3 12h13M3 17h7"/><circle cx="19" cy="7" r="2"/></svg>
+        </span>
+        <span class="e-main">
+          <span class="e-name">文件系统变动</span>
+          <span class="e-sum">监控目录变化 → 事件投递主代理</span>
+        </span>
+        <span class="reserved-tag">规划中</span>
+      </div>
+    </div>
+    <div class="entry reserved">
+      <div class="entry-head" role="presentation" title="预留条目位 · 未来内容源">
+        <span class="e-ic" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>
+        </span>
+        <span class="e-main">
+          <span class="e-name">日历</span>
+          <span class="e-sum">日程临近提醒 / 当日议程摘要</span>
+        </span>
+        <span class="reserved-tag">规划中</span>
+      </div>
+    </div>
+    <div class="entry reserved">
+      <div class="entry-head" role="presentation" title="预留条目位 · 未来内容源">
+        <span class="e-ic" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M13 3L4 14h6l-1 7 9-11h-6l1-7z"/></svg>
+        </span>
+        <span class="e-main">
+          <span class="e-name">Webhook</span>
+          <span class="e-sum">接收外部系统推送事件</span>
+        </span>
+        <span class="reserved-tag">规划中</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="pp-footer">
+    <span id="pp-foot-left">感知 · 内容源 1/4 已接入</span>
+    <span class="spacer"></span>
+    <span id="pp-foot-right">本地处理 · 全文不出本机</span>
+  </div>
+</div>
+
+<div class="page-note" style="margin-top:20px">
+  样张说明：面板状态 = 各条目状态的投影（页签切换「邮件」条目的三种展开态；实际产品由状态机驱动，见 REPORT.md §9）。
+  条目点击展开/收起（单展开手风琴）；预留条目位只展示抽象形态。「复制配置提示词」（真实剪贴板）与 toggle 可交互；
+  「配置」打开下方配置卡片。
+</div>
+
+<!-- ═══ 配置卡片（交互式配置；授权码走 secret 掩码，数据面已裁决锁定最小化） ═══ -->
+<div class="overlay" id="cfg-overlay">
+  <div class="cfg" role="dialog" aria-label="感知邮件配置">
+    <div class="cfg-h">邮件推送配置 <span style="margin-left:auto"><button class="pp-icon-btn" onclick="closeCfg()" aria-label="关闭">
+      <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span></div>
+    <div class="cfg-b">
+      <div class="cfg-sec">收信（IMAP）</div>
+      <div class="field-grid">
+        <div class="field"><label>服务器</label><input value="imap.qq.com"></div>
+        <div class="field"><label>端口</label><input value="993"></div>
+      </div>
+      <div class="field"><label>邮箱地址</label><input value="i@kaiyu.me"></div>
+      <div class="field">
+        <label>IMAP 授权码</label>
+        <input type="password" value="" placeholder="已存储 · 留空不修改">
+        <div class="mask-note">
+          <svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+          存于 secrets/perception-imap-auth（owner-only · 不回显）
+        </div>
+      </div>
+
+      <div class="cfg-sec">发信（SMTP）</div>
+      <div class="field-grid">
+        <div class="field"><label>服务器</label><input value="smtp.qq.com"></div>
+        <div class="field"><label>端口</label><input value="465"></div>
+      </div>
+      <div class="field">
+        <label>SMTP 授权码</label>
+        <input type="password" value="" placeholder="与 IMAP 相同 · 留空复用">
+      </div>
+      <div class="field"><label>发件显示名</label><input value="Kaiyu"></div>
+
+      <div class="cfg-sec">过滤与投递</div>
+      <div class="field">
+        <label>白名单发件域（每行一个，直通不判 LLM）</label>
+        <textarea>pay.weixin.qq.com
+bill.alipay.com
+mail.bank.com</textarea>
+      </div>
+      <div class="switchline">
+        <div style="flex:1">
+          <div class="sl-t">LLM 重要性判定</div>
+          <div class="sl-d">关闭后仅白名单与账单直通，其余暂存不投递</div>
+        </div>
+        <button class="toggle on" id="llm-toggle" aria-label="LLM 重要性判定"></button>
+      </div>
+      <div class="switchline" id="dataplane-line">
+        <div style="flex:1">
+          <div class="sl-t">LLM 数据面</div>
+          <div class="sl-d">仅头部＋正文前 4KB 发给 LLM；全文永不出本机（已裁决锁定，不可改）</div>
+        </div>
+        <span class="chip dim">最小化 · 固定</span>
+      </div>
+      <div class="switchline">
+        <div style="flex:1">
+          <div class="sl-t">账单类投递形态</div>
+          <div class="sl-d">日结攒批：每日 <b id="bill-hour-label">09:00</b> 汇总一封注入（已裁决）</div>
+        </div>
+        <span class="chip dim">日结 · 固定</span>
+      </div>
+
+      <div class="field" style="margin-top:10px">
+        <label>验证码监听窗口宽度（秒）</label>
+        <input value="600">
+        <div class="hint">代理提问验证码后，窗口内到达的验证码才在输入框下方展开（默认 10 分钟）</div>
+      </div>
+    </div>
+    <div class="test-result" id="test-result"></div>
+    <div class="cfg-foot">
+      <button class="btn" id="test-btn">测试连接</button>
+      <span class="spacer"></span>
+      <button class="btn" onclick="closeCfg()">取消</button>
+      <button class="btn primary" onclick="closeCfg();alert('样张：保存 → 非密值写 daemon-config/perception-mail.json，密值走 secrets')">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* 主题：随系统置位 + 手动切换（html[data-theme=dark] 机制，同官网） */
+const root=document.documentElement;
+function syncTheme(){root.dataset.theme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}
+syncTheme();matchMedia('(prefers-color-scheme: dark)').addEventListener('change',syncTheme);
+document.getElementById('theme-btn').addEventListener('click',()=>{
+  root.dataset.theme=root.dataset.theme==='dark'?'light':'dark';
+});
+
+/* ── 邮件条目三态样张切换（驱动条目展开区 + 条目摘要行 + 面板头投影） ── */
+const SCEN={
+  setup:{label:'未配置',dot:'',chip:'未配置',chipDim:true,sum:'未配置 · 复制提示词开始'},
+  run:{label:'运行中',dot:'ok',chip:'IMAP IDLE',chipDim:false,sum:'i@kaiyu.me · 已连接 · 今日投递 3'},
+  err:{label:'异常',dot:'bad',chip:'已断开',chipDim:true,sum:'授权失效 · 需重新授权'}
+};
+let scen='run';
+function applyScen(s){
+  scen=s;
+  document.querySelectorAll('.demo-bar button[data-st]').forEach(b=>b.classList.toggle('on',b.dataset.st===s));
+  const c=SCEN[s];
+  document.getElementById('pp-state-label').textContent=c.label;
+  document.getElementById('pp-dot').className='pp-dot '+c.dot;
+  const chip=document.getElementById('e-mode-chip');
+  chip.textContent=c.chip;chip.classList.toggle('dim',c.chipDim);
+  document.getElementById('e-mail-sum').textContent=c.sum;
+  document.getElementById('e-mail-dot').className='e-dot '+c.dot;
+  document.getElementById('ev-setup').style.display=s==='setup'?'':'none';
+  document.getElementById('ev-run').style.display=s==='run'?'':'none';
+  document.getElementById('ev-err').style.display=s==='err'?'':'none';
+  if(s!=='run'){
+    document.getElementById('paused-banner').classList.remove('show');
+    document.getElementById('pp-foot-right').textContent='本地处理 · 全文不出本机';
+    const t=document.getElementById('pp-toggle'); if(t)t.classList.add('on');
+  }
+  /* 样张一致性：切到未配置/异常时确保条目展开（展开区才是内容所在） */
+  document.getElementById('entry-mail').classList.add('open');
+  document.getElementById('entry-mail-head').setAttribute('aria-expanded','true');
+}
+document.querySelectorAll('.demo-bar button[data-st]').forEach(b=>
+  b.addEventListener('click',()=>applyScen(b.dataset.st)));
+
+/* ── 条目手风琴：点击条目头展开/收起 ── */
+document.getElementById('entry-mail-head').addEventListener('click',()=>{
+  const en=document.getElementById('entry-mail');
+  en.classList.toggle('open');
+  document.getElementById('entry-mail-head').setAttribute('aria-expanded',en.classList.contains('open'));
+});
+
+/* ── 异常态子样张 ── */
+const eAuth=document.getElementById('err-auth-btn'),eConn=document.getElementById('err-conn-btn');
+eAuth.addEventListener('click',()=>{eAuth.classList.add('on');eConn.classList.remove('on');
+  document.getElementById('err-auth').style.display='';document.getElementById('err-conn').style.display='none';
+  SCEN.err.sum='授权失效 · 需重新授权';if(scen==='err')applyScen('err');});
+eConn.addEventListener('click',()=>{eConn.classList.add('on');eAuth.classList.remove('on');
+  document.getElementById('err-conn').style.display='';document.getElementById('err-auth').style.display='none';
+  SCEN.err.sum='连接中断 · 第 3 次重试';SCEN.err.dot='warn';if(scen==='err')applyScen('err');});
+
+/* ── 复制配置提示词（载荷 = REPORT.md §10 全文） ── */
+const PROMPT=`请帮我配置 Nebflow「感知」的邮件自动化，按以下步骤：
+
+1. 向我要齐配置要素：邮箱地址、IMAP 服务器与端口、SMTP 服务器与端口
+   （我说不全时，按 QQ / 163 / Gmail 的常见默认值给出让我确认）、发件显示名。
+2. SMTP 与 IMAP 授权码不要让我贴在对话里：用 AskUserQuestion 的 secret
+   问题（密码框）向我收集，存入 secrets（文件名 perception-imap-auth /
+   perception-smtp-auth，owner-only），之后一切引用只用名字。
+3. 把非密配置写入 ~/.nebflow/daemon-config/perception-mail.json；
+   密字段只写 secrets 引用名，绝不写值。
+4. 自检并报告结果：IMAP 登录成功、服务器支持 IDLE（不支持则说明将退化为
+   60 秒轮询）、SMTP 发一封标题为「感知配置自检」的测试邮件到我邮箱。
+5. 打开感知面板，确认「邮件」条目转为「运行中」；失败则给出具体修复建议，不要猜。
+
+全程纪律：授权码与邮件全文不进对话、不进日志、不进任何报告。`;
+document.getElementById('copy-prompt-btn').addEventListener('click',async()=>{
+  try{await navigator.clipboard.writeText(PROMPT);}catch(e){
+    const ta=document.createElement('textarea');ta.value=PROMPT;document.body.appendChild(ta);
+    ta.select();document.execCommand('copy');ta.remove();
+  }
+  const d=document.getElementById('copy-done');d.classList.add('show');
+  setTimeout(()=>d.classList.remove('show'),2600);
+});
+
+/* ── toggle 启停（运行态：暂停横幅 + 摘要行联动） ── */
+document.getElementById('pp-toggle').addEventListener('click',function(){
+  this.classList.toggle('on');
+  const off=!this.classList.contains('on');
+  document.getElementById('paused-banner').classList.toggle('show',off);
+  document.getElementById('mode-chip').textContent=off?'已暂停':'IMAP IDLE';
+  document.getElementById('mode-sub').innerHTML=off?'停收新邮件 · 恢复后自动补拉去重':'已连接 · IDLE 重续 <span id="idle-count">12:34</span>';
+  document.getElementById('pp-foot-right').textContent=off?'已暂停 · 不收信':'本地处理 · 全文不出本机';
+  document.getElementById('e-mail-sum').textContent=off?'i@kaiyu.me · 已暂停':'i@kaiyu.me · 已连接 · 今日投递 3';
+  document.getElementById('e-mail-dot').className='e-dot '+(off?'paused':'ok');
+  document.getElementById('e-mode-chip').textContent=off?'已暂停':'IMAP IDLE';
+});
+
+/* ── IDLE 重续倒计时（假数据，25 分钟重发周期） ── */
+let idleLeft=754;
+setInterval(()=>{
+  idleLeft=idleLeft>0?idleLeft-1:1500;
+  const el=document.getElementById('idle-count');
+  if(el)el.textContent=String(Math.floor(idleLeft/60)).padStart(2,'0')+':'+String(idleLeft%60).padStart(2,'0');
+},1000);
+
+/* ── 退避倒计时（异常态假数据） ── */
+let retryLeft=14;
+setInterval(()=>{
+  retryLeft=retryLeft>0?retryLeft-1:14;
+  const el=document.getElementById('retry-in'); if(el)el.textContent=retryLeft;
+},1000);
+
+/* ── 配置卡片 ── */
+function openCfg(focusAuth){
+  document.getElementById('cfg-overlay').classList.add('open');
+  if(focusAuth){const f=document.querySelector('#cfg-overlay input[type=password]');if(f)f.focus();}
+}
+function closeCfg(){document.getElementById('cfg-overlay').classList.remove('open');}
+document.getElementById('cfg-overlay').addEventListener('click',e=>{if(e.target===e.currentTarget)closeCfg();});
+
+/* ── 配置卡内 toggle 与测试连接（模拟） ── */
+document.getElementById('llm-toggle').addEventListener('click',function(){
+  this.classList.toggle('on');
+  document.getElementById('dataplane-line').style.opacity=this.classList.contains('on')?'1':'.4';
+});
+document.getElementById('test-btn').addEventListener('click',function(){
+  const r=document.getElementById('test-result');
+  r.className='test-result';r.textContent='自检中 · IMAP 登录…';
+  this.disabled=true;
+  setTimeout(()=>{r.textContent='IMAP 登录 · IDLE 能力 · SMTP 试发 均通过';r.className='test-result ok';},1400);
+  setTimeout(()=>{document.getElementById('test-btn').disabled=false;},1600);
+});
+applyScen('run');
+</script>
+</body>
+</html>
