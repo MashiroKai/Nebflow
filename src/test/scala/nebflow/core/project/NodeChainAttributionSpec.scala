@@ -350,7 +350,8 @@ class NodeChainAttributionSpec extends CatsEffectSuite:
       "非白名单键（同时越 8 键）必须违规"
     )
     assert(headViolations(single.replace("root: home", "root: ~/.nebflow/docs")).nonEmpty, "路径值必须违规")
-    assert(headViolations(single.replace("---\n", "")).nonEmpty, "无 front matter 段 → 违规（解析器定位失败）")
+    // 行尾两种拼写都剥（CRLF checkout 下引擎字面量行尾带 \r，单剥 \n 会漏）。
+    assert(headViolations(single.replaceAll("---\r?\n", "")).nonEmpty, "无 front matter 段 → 违规（解析器定位失败）")
   }
 
   // ── ② 无链：整块不注入 + 孤立单节点分量不算链 ──────────────────────

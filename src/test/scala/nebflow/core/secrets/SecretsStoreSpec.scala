@@ -476,7 +476,9 @@ class SecretsStoreSpec extends FunSuite:
       // A managed file that already exists (written by its own panel).
       os.makeDir.all(root / "secrets")
       os.write(root / "secrets" / "social-telegram-bot-token", MockValue1)
-      os.perms.set(root / "secrets" / "social-telegram-bot-token", "rw-------")
+      // Windows 无 POSIX 属性视图；N4 断言的是 list 可见性，不是权限位 ⇒ 跳过置位。
+      if !CredentialFileAcl.isWindows(CredentialFileAcl.currentOsName) then
+        os.perms.set(root / "secrets" / "social-telegram-bot-token", "rw-------")
       val entries = store.list().unsafeRunSync()
       entries match
         case Right(list) =>

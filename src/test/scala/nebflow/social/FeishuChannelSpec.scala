@@ -21,6 +21,14 @@ class FeishuChannelSpec extends FunSuite:
 
   private def tmpRoot(): os.Path = os.temp.dir(prefix = "nb-feishu-")
 
+  /** 夹具置位收口：Windows 无 POSIX 属性视图（os.write+perms → UOE）⇒ null 跳过
+    * （os.write 的 perms 默认就是 null）；本组断言的是解析次序/内容，不是权限位。
+    * （与 WeixinIlinkScanBindSpec.posixOnly 同一平台惯例。） */
+  private def posixPerms(): os.PermSet =
+    if !nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName) then
+      os.PermSet.fromString("rw-------")
+    else null
+
   /**
    * POSIX-only creation attribute: the mode comes from the creation call, so the
    *  file never exists for an instant with a wider mode (same discipline the
@@ -175,7 +183,7 @@ class FeishuChannelSpec extends FunSuite:
     os.write(
       p,
       """{"appId":"cli_abcdefghij1234567890","appSecret":"s3cr3t-value-of-length-32-chars"}""",
-      perms = os.PermSet.fromString("rw-------")
+      perms = posixPerms()
     )
     val r = FeishuCredentials.resolve(root)
     assert(r.isRight, s"expected resolution, got $r")
@@ -225,7 +233,7 @@ class FeishuChannelSpec extends FunSuite:
     os.write(
       root / "secrets" / "social-feishu-app-secret",
       "schema-side-secret-value",
-      perms = os.PermSet.fromString("rw-------")
+      perms = posixPerms()
     )
     os.write(
       root / "nebflow.json",
@@ -235,7 +243,7 @@ class FeishuChannelSpec extends FunSuite:
     os.write(
       root / "feishu.json",
       """{"appId":"cli_legacyapp00000001","appSecret":"legacy-secret-value-32-chars"}""",
-      perms = os.PermSet.fromString("rw-------")
+      perms = posixPerms()
     )
     val r = FeishuCredentials.resolve(root)
     assert(r.isRight, s"expected a credential, got $r")
@@ -249,7 +257,7 @@ class FeishuChannelSpec extends FunSuite:
     os.write(
       root / "feishu.json",
       """{"appId":"cli_legacyapp00000001","appSecret":"legacy-secret-value-32-chars"}""",
-      perms = os.PermSet.fromString("rw-------")
+      perms = posixPerms()
     )
     val r = FeishuCredentials.resolve(root)
     assert(r.isRight, "the legacy file remains the fallback when the schema has no credential")
@@ -269,7 +277,7 @@ class FeishuChannelSpec extends FunSuite:
     os.write(
       root / "feishu.json",
       """{"appId":"cli_legacyapp00000001","appSecret":"legacy-secret-value-32-chars"}""",
-      perms = os.PermSet.fromString("rw-------")
+      perms = posixPerms()
     )
     val r = FeishuCredentials.resolve(root)
     assert(r.isRight, "a credential-less schema entry must be transparent to resolution")
@@ -283,7 +291,7 @@ class FeishuChannelSpec extends FunSuite:
     os.write(
       root / "secrets" / "social-feishu-app-secret",
       "schema-side-secret",
-      perms = os.PermSet.fromString("rw-------")
+      perms = posixPerms()
     )
     os.write(
       root / "nebflow.json",

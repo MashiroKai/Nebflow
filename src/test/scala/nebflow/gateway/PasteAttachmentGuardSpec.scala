@@ -22,6 +22,9 @@ class PasteAttachmentGuardSpec extends FunSuite:
 
   private val src =
     os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "gateway" / "WebSocketRoutes.scala")
+      // CRLF checkout（Windows autocrlf）会把 \r 带进逐字 indexOf 判据（then\r\n ≠ then\n）
+      // ⇒ 源码先归一 LF 再匹配（判据语义不变，平台无关）。
+      .replaceAll("\r\n", "\n")
 
   test("user-message dispatch chain is wrapped in IO.uncancelable") {
     val idxUncancelable = src.indexOf("IO.uncancelable(_ =>")

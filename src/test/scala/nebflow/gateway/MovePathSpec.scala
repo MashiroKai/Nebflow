@@ -75,6 +75,7 @@ class MovePathSpec extends FunSuite:
 
   test("movePathSafely rejects symlinks resolving outside the project root") {
     withTempRoot { root =>
+      nebflow.SymlinkProbe.assumeSymlinks()
       val outsideDir = os.Path(JFiles.createTempDirectory("nb-move-outside").toString)
       try
         os.makeDir.all(root / "dest")

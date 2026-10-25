@@ -76,7 +76,10 @@ class GrepToolRankedSpec extends FunSuite:
       assert(lines.head.contains("many.txt"), s"most-matching file must rank first, got: $lines")
       assert(lines.exists(_.contains("one.txt")), s"single-match file still present: $lines")
       assert(!lines.exists(_.contains("none.txt")), "non-matching file must not appear")
-      assert(!lines.exists(_.contains(":")), s"wire contract = pure paths, got: $lines")
+      // 「纯路径行」契约按归一形态断言：Windows 路径带盘符冒号（C:\…）与反斜杠，
+      // 归一正斜杠并剥盘符前缀后再查冒号；Mac 上逐行为零变化。
+      val normLines = lines.map(l => l.replace('\\', '/').replaceAll("^[A-Za-z]:", ""))
+      assert(!normLines.exists(_.contains(":")), s"wire contract = pure paths, got: $lines")
       // 默认（ranked 缺省 false）：两文件都在，零回归
       val r2 = call("needle", tmp.toString)
       val l2 = r2.toOption.get.split("\n").filter(_.nonEmpty).toList

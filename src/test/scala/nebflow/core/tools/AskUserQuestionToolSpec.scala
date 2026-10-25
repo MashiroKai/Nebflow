@@ -232,6 +232,10 @@ class AskUserQuestionToolSpec extends FunSuite:
   private def multiItem(q: String, labels: String*): AskItem =
     AskItem(q, labels.map(l => AskOption(l)).toList, multiple = true)
 
+  /** 期望串归一 LF：三引号字面量在 CRLF checkout（Windows autocrlf）下带 \r，
+    * 引擎 formatAnswer 以显式 "\n" 构造 ⇒ 逐字比较在 Windows 假红；归一后契约不变。 */
+  private def lf(s: String): String = s.replace("\r\n", "\n")
+
   private def singleItem(q: String, labels: String*): AskItem =
     AskItem(q, labels.map(l => AskOption(l)).toList)
 
@@ -259,7 +263,7 @@ class AskUserQuestionToolSpec extends FunSuite:
         |   → Scala
         |2. Which areas?
         |   → ["Frontend","Backend"]""".stripMargin
-    assertEquals(AskUserQuestionTool.formatAnswer(items, answers), expected)
+    assertEquals(AskUserQuestionTool.formatAnswer(items, answers), lf(expected))
   }
 
   test("formatAnswer: non-JSON multi-select payload passes through unchanged (fallback)") {
@@ -276,7 +280,7 @@ class AskUserQuestionToolSpec extends FunSuite:
         |   → Scala
         |2. Areas?
         |   → (skipped)""".stripMargin
-    assertEquals(AskUserQuestionTool.formatAnswer(items, answers), expected)
+    assertEquals(AskUserQuestionTool.formatAnswer(items, answers), lf(expected))
   }
 
   // ============================================================
@@ -299,7 +303,7 @@ class AskUserQuestionToolSpec extends FunSuite:
         |   → Scala
         |2. Priority?
         |   → Performance""".stripMargin
-    assertEquals(AskUserQuestionTool.formatAnswer(items, answers), expected)
+    assertEquals(AskUserQuestionTool.formatAnswer(items, answers), lf(expected))
   }
 
   test("inputSchema: multiple documented as boolean on question items") {

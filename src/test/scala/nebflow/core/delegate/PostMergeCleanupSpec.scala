@@ -35,7 +35,7 @@ class PostMergeCleanupSpec extends FunSuite:
     * extraFile = 分支上随交付提交一起提交的附加文件（报告抢救测试用——文件
     * 落进合并提交，两侧都被跟踪）。 */
   private def mkRepo(dir: os.Path, branch: String, merged: Boolean, extraFile: Option[(os.RelPath, String)] = None): os.Path =
-    os.remove.all(dir)
+    nebflow.ForceRemove.removeAll(dir)
     os.makeDir.all(dir)
     os.proc("git", "init", "-b", "main", dir.toString).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
     def g(args: String*): os.CommandResult =
@@ -58,7 +58,7 @@ class PostMergeCleanupSpec extends FunSuite:
   /** 给分支挂真 worktree（路径在仓外，避免 untracked 互染）。先清残留（kept 场景
     * 的 wt 目录跨轮存活——测试夹具幂等性；否则 worktree add 撞 already exists 128）。 */
   private def addWorktree(repo: os.Path, branch: String, wt: os.Path): os.Path =
-    os.remove.all(wt)
+    nebflow.ForceRemove.removeAll(wt)
     os.proc("git", "-C", repo.toString, "worktree", "add", wt.toString, branch)
       .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
     wt
@@ -83,7 +83,7 @@ class PostMergeCleanupSpec extends FunSuite:
     }
 
   override def beforeEach(context: munit.BeforeEach): Unit =
-    os.remove.all(tempRoot / "chains")
+    nebflow.ForceRemove.removeAll(tempRoot / "chains")
 
   test("① merged scene (ahead==0, ancestor true) + worktree seat ⇒ worktree removed + branch -d + removed row") {
     if !gitAvailable then ()

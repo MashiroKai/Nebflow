@@ -46,7 +46,10 @@ class DeviceFaceHardeningSpec extends FunSuite:
     PathUtil.setDataRoot(os.Path(tmpDir, os.pwd))
     // Give the directory fallback something to do: the OS hands out 0700 temp
     // dirs, so widen it first — otherwise "narrowed" would be vacuous.
-    Files.setPosixFilePermissions(tmpDir, PosixFilePermissions.fromString("rwxr-xr-x"))
+    // Windows 无 POSIX 属性视图（setPosixFilePermissions → UOE，会炸掉每条用例的
+    // beforeEach）；加宽只为让「收窄」断言非空洞，POSIX 读回断言用例各自有门。
+    if !CredentialFileAcl.isWindows(CredentialFileAcl.currentOsName) then
+      Files.setPosixFilePermissions(tmpDir, PosixFilePermissions.fromString("rwxr-xr-x"))
 
   override def afterEach(context: AfterEach): Unit =
     PathUtil.setDataRoot(savedRoot)
@@ -60,6 +63,15 @@ class DeviceFaceHardeningSpec extends FunSuite:
 
   private def mode(p: Path): String =
     PosixFilePermissions.toString(Files.getPosixFilePermissions(p))
+
+  /** POSIX 读回断言专用门（SecretsStoreSpec.posixOnly 同款惯例）：Windows 无
+    * POSIX 属性视图，0600/收窄读回用例在 Windows 上跳过（Windows 臂归
+    * DeviceCredentialAclSpec 的 ACL 读数）。 */
+  private def posixOnly(): Unit =
+    assume(
+      !CredentialFileAcl.isWindows(CredentialFileAcl.currentOsName),
+      "POSIX-only ACL readback assertion"
+    )
 
   /**
    * True when ANY group/other bit is still set (what "owner-only" forbids).
@@ -181,6 +193,7 @@ class DeviceFaceHardeningSpec extends FunSuite:
   // ── A6 ─────────────────────────────────────────────────────────────────────
 
   test("A6: DeviceIdentity.save writes 0600 AND narrows the data root") {
+    posixOnly()
     DeviceIdentity.save(id).unsafeRunSync()
     val file = PathUtil.dataRoot / "device.json"
     println(s"[A6-R1] device.json mode = ${mode(file.toNIO)}   (pre-change tree: rw-r--r--)")
@@ -191,6 +204,7 @@ class DeviceFaceHardeningSpec extends FunSuite:
   }
 
   test("A6: the mode survives the AtomicJson inode swap (repeat/overwrite write)") {
+    posixOnly()
     val file = PathUtil.dataRoot / "device.json"
     DeviceIdentity.save(id).unsafeRunSync()
     val ino1 = Files.getAttribute(file.toNIO, "unix:ino")
@@ -204,6 +218,7 @@ class DeviceFaceHardeningSpec extends FunSuite:
   }
 
   test("A6: NeblinkConfig.save binds 0600 on neblink/config.json and narrows neblink/") {
+    posixOnly()
     NeblinkConfig.save(NeblinkConfig()).unsafeRunSync()
     val dir = PathUtil.dataRoot / "neblink"
     val cfg = dir / "config.json"

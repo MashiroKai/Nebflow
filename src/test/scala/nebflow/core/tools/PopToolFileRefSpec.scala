@@ -112,7 +112,8 @@ class PopToolFileRefSpec extends FunSuite:
     assertEquals(w.hcursor.get[String]("ref").toOption, Some("~/__poprefs_missing__/plot.png"))
     assertEquals(
       resolvedOf(w),
-      Some(s"${sys.props("user.home")}/__poprefs_missing__/plot.png"),
+      // describe 展示面统一正斜杠（FileRefs.describe），user.home 原生形态随之归一。
+      Some(s"${sys.props("user.home").replace('\\', '/')}/__poprefs_missing__/plot.png"),
       "resolvedPath is the post-expansion path"
     )
 

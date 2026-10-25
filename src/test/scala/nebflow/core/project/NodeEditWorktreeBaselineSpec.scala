@@ -35,7 +35,7 @@ class NodeEditWorktreeBaselineSpec extends CatsEffectSuite:
   private val originalRoot = PathUtil.dataRoot
 
   PathUtil.setDataRoot(tempRoot)
-  os.remove.all(tempRoot)
+  nebflow.ForceRemove.removeAll(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
 
   os.write.over(

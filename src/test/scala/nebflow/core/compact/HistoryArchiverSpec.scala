@@ -101,6 +101,14 @@ class HistoryArchiverSpec extends CatsEffectSuite:
   // 随 report 生成链一并删除 —— 它们断言的产物已不存在。
 
   test("archiveCompaction returns Left on unwritable directory without throwing") {
+    // 只读目录夹具走 POSIX 权限位：Windows 无 posix 视图 ⇒ 跳过该腿。
+    assume(
+      java.nio.file.Files.getFileAttributeView(
+        java.nio.file.Paths.get(System.getProperty("java.io.tmpdir")),
+        classOf[java.nio.file.attribute.PosixFileAttributeView]
+      ) != null,
+      "unwritable-dir fixture requires POSIX permission bits"
+    )
     val root = os.temp.dir()
     val sessionDir = root / "archives" / "bad-sess"
     os.makeDir.all(sessionDir)

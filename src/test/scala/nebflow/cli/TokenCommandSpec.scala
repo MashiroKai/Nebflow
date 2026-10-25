@@ -89,6 +89,11 @@ class TokenCommandSpec extends FunSuite:
     val content = os.read(os.Path(authJson, os.pwd))
     assertEquals(content, "\"brand-new-token\"", "auth.json stays a JSON string (same shape as loadOrCreateToken reads)")
     assertEquals(Files.exists(tmpDir.resolve("auth.json.tmp")), false, "the tmp sibling must not survive the move")
+    // POSIX 读回断言：Windows 无 posix 属性视图 ⇒ 跳过（0600 语义 Windows 臂走 ACL，另案）。
+    assume(
+      !nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName),
+      "POSIX-only owner-mode readback"
+    )
     val perms = Files.getPosixFilePermissions(authJson)
     assertEquals(perms, PosixFilePermissions.fromString("rw-------"), "owner-only (no 0644 window)")
 

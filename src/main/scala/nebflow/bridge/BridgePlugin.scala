@@ -186,9 +186,10 @@ object BridgeOrigin:
   def marker(origin: BridgeOrigin, senderId: Option[String]): String =
     val sender = senderId.map(_.trim).filter(_.nonEmpty).getOrElse(UnknownSender)
     val chat = origin.chatRef.map(_.trim).filter(_.nonEmpty).getOrElse("-")
-    s"""$MarkerOpen
-       |以下消息来自${origin.channelDisplay}（社交接口 · 渠道 ${origin.channelId}）· 发送方：$sender · 会话：$chat
-       |$MarkerClose""".stripMargin
+    // 行尾显式 "\n" 拼接（勿改回三引号字面量）：CRLF checkout（Windows autocrlf）
+    // 会把源文件行尾编进字面量，marker 变 \r\n ⇒ 消费方按 \n 契约断言/前缀匹配全红
+    // （BridgeOriginSpec/DeviceProvenanceSpec 的 Windows 红点根因）。
+    s"$MarkerOpen\n以下消息来自${origin.channelDisplay}（社交接口 · 渠道 ${origin.channelId}）· 发送方：$sender · 会话：$chat\n$MarkerClose"
 
   /**
    * Compose the **model-context** string: **marker block (1) then content (2/3)**,

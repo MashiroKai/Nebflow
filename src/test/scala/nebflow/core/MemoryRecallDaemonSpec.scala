@@ -312,7 +312,8 @@ class MemoryRecallDaemonSpec extends CatsEffectSuite:
         // dataRoot 候选（tmp/tools/stand-recall）不存在 → 回落 <cwd>/tools（仓根真脚本）
         val fallback = MemoryRecallDaemon.resolveToolPath(tmp)
         assertEquals(fallback.map(_.last), Some("stand-recall"))
-        assert(fallback.exists(p => p.toString.endsWith("tools/stand-recall")), s"仓根兜底应命中真脚本: $fallback")
+        // 分隔符无关：Windows 原生反斜杠形态也要命中 tools/ 段。
+        assert(fallback.exists(p => p.toString.replace('\\', '/').endsWith("tools/stand-recall")), s"仓根兜底应命中真脚本: $fallback")
       finally
         original match
           case Some(v) => sys.props("nebflow.memoryRecall.toolPath") = v

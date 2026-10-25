@@ -144,9 +144,9 @@ object DeviceProvenance:
    */
   def marker(resolved: ResolvedDevice): String =
     val status = if resolved.enrolled then "已登记" else "未登记"
-    s"""$MarkerOpen
-       |以下消息来自$ChannelDisplay（渠道 $ChannelId）· 设备：${resolved.display}（$status）
-       |$MarkerClose""".stripMargin
+    // 行尾显式 "\n" 拼接（勿改回三引号字面量）：CRLF checkout 会把源行尾编进
+    // 字面量（marker 变 \r\n）⇒ 消费方按 \n 契约前缀匹配全红。同 BridgePlugin.marker。
+    s"$MarkerOpen\n以下消息来自$ChannelDisplay（渠道 $ChannelId）· 设备：${resolved.display}（$status）\n$MarkerClose"
 
   /**
    * 模型面合成：标记块在前、空一行、正文随后——与 [[BridgeOrigin.compose]] 同一

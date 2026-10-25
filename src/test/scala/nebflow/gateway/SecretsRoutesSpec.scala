@@ -41,6 +41,13 @@ class SecretsRoutesSpec extends FunSuite:
 
   private def json(s: String): Json = parse(s).fold(e => throw e, identity)
 
+  /** 夹具权限位收口：Windows 无 POSIX 属性视图（os.perms.set → UOE），这些用例
+    * 断言的是路由行为而非权限位 ⇒ Windows 上跳过置位（与 SecretsStoreSpec.posixOnly
+    * 同一平台惯例，CredentialFileAcl.isWindows）。 */
+  private def fixtureTight(p: os.Path): Unit =
+    if !nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName) then
+      os.perms.set(p, "rw-------")
+
   /** Isolated data root + live routes for one case (DaemonPanelRoutesSpec shape). */
   private def withRoutes(f: HttpRoutes[IO] => Unit): Unit =
     val root = os.Path(Files.createTempDirectory("secrets-routes-spec").toRealPath().toString)
@@ -271,7 +278,7 @@ class SecretsRoutesSpec extends FunSuite:
       val root = PathUtil.dataRoot
       os.makeDir.all(root / "secrets")
       os.write.over(root / "secrets" / "social-telegram-bot-token", MockValue)
-      os.perms.set(root / "secrets" / "social-telegram-bot-token", "rw-------")
+      fixtureTight(root / "secrets" / "social-telegram-bot-token")
       // Visible + inspectable in the list.
       val (lst, body) = call(routes, GET, "/secrets")
       assertEquals(lst.code, 200)
@@ -304,7 +311,7 @@ class SecretsRoutesSpec extends FunSuite:
       // fires (the managed-vs-referenced ordering has its own case, D4).
       os.makeDir.all(root / "secrets")
       os.write.over(root / "secrets" / "feishu-app-cred", MockValue)
-      os.perms.set(root / "secrets" / "feishu-app-cred", "rw-------")
+      fixtureTight(root / "secrets" / "feishu-app-cred")
       // An isolated (non-default) root renders its ABSOLUTE path in stored
       // refs — write the fixture ref the way SocialChannels.persist would.
       os.write.over(
@@ -328,7 +335,7 @@ class SecretsRoutesSpec extends FunSuite:
       val root = PathUtil.dataRoot
       os.makeDir.all(root / "secrets")
       os.write.over(root / "secrets" / "social-wechat-app-secret", MockValue)
-      os.perms.set(root / "secrets" / "social-wechat-app-secret", "rw-------")
+      fixtureTight(root / "secrets" / "social-wechat-app-secret")
       val (st, b) = call(routes, DELETE, "/secrets/social-wechat-app-secret?confirm=social-wechat-app-secret")
       assertEquals(st.code, 403, "a managed+referenced name reports managed_namespace, not referenced")
       assertEquals(b.flatMap(j => j.hcursor.get[String]("error").toOption), Some("managed_namespace"))
@@ -513,7 +520,7 @@ class SecretsRoutesSpec extends FunSuite:
       val root = PathUtil.dataRoot
       os.makeDir.all(root / "secrets")
       os.write.over(root / "secrets" / "social-telegram-bot-token", MockValue)
-      os.perms.set(root / "secrets" / "social-telegram-bot-token", "rw-------")
+      fixtureTight(root / "secrets" / "social-telegram-bot-token")
       val (stm, bm) = call(routes, GET, "/secrets/social-telegram-bot-token/value")
       assertEquals(stm.code, 200, "managed namespaces stay read-visible")
       assertEquals(bm.flatMap(_.hcursor.get[String]("value").toOption), Some(MockValue))
@@ -525,7 +532,7 @@ class SecretsRoutesSpec extends FunSuite:
       val root = PathUtil.dataRoot
       os.makeDir.all(root / "secrets")
       os.write.over(root / "secrets" / "multiline", "line-one\nline-two\n")
-      os.perms.set(root / "secrets" / "multiline", "rw-------")
+      fixtureTight(root / "secrets" / "multiline")
       val (st, body) = call(routes, GET, "/secrets/multiline/value")
       assertEquals(st.code, 200)
       assertEquals(
@@ -534,7 +541,7 @@ class SecretsRoutesSpec extends FunSuite:
         "one trailing LF stripped, inner newlines intact"
       )
       os.write.over(root / "secrets" / "crlf", "token-abc\r\n")
-      os.perms.set(root / "secrets" / "crlf", "rw-------")
+      fixtureTight(root / "secrets" / "crlf")
       val (st2, body2) = call(routes, GET, "/secrets/crlf/value")
       assertEquals(st2.code, 200)
       assertEquals(
@@ -558,7 +565,7 @@ class SecretsRoutesSpec extends FunSuite:
       val root = PathUtil.dataRoot
       os.makeDir.all(root / "secrets")
       os.write.over(root / "secrets" / "toobig", "x" * (nebflow.core.secrets.SecretsStore.MaxValueBytes + 1))
-      os.perms.set(root / "secrets" / "toobig", "rw-------")
+      fixtureTight(root / "secrets" / "toobig")
       val (st3, b3) = call(routes, GET, "/secrets/toobig/value")
       assertEquals(st3.code, 400)
       assertEquals(b3.flatMap(j => j.hcursor.get[String]("error").toOption), Some("invalid_value"))

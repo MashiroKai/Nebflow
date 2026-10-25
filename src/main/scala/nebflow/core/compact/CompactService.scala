@@ -57,13 +57,21 @@ object CompactService:
    * FullCompact uses this to exclude the trailing reminder from tail-round
    * preservation — the reminder is the summarization instruction, not
    * conversation content.
+   *
+   * 判据 CRLF 容错（Windows 测试批 2026-10-25）：reminder 文本来自本文件的三引号
+   * 字面量，CRLF 检出（Windows 全局 autocrlf）会把 `\r` 编进字面量行尾 ⇒ 首行尾变
+   * `\r\n`，按 `\n` 契约的 startsWith 恒假 ⇒ 尾部 reminder 摘不掉、混入保留轮。
+   * 取签名窗剥 `\r` 后比对，两种检出形态同判（LF 检出零变化）。
    */
+  private def isCompactReminderText(t: String): Boolean =
+    t.take(ReminderSignature.length + 2).replace("\r", "").startsWith(ReminderSignature)
+
   def isCompactReminder(msg: Message): Boolean =
     msg.content match
-      case Left(text) => text.startsWith(ReminderSignature)
+      case Left(text) => isCompactReminderText(text)
       case Right(blocks) =>
         blocks.exists {
-          case ContentBlock.Text(t) => t.startsWith(ReminderSignature)
+          case ContentBlock.Text(t) => isCompactReminderText(t)
           case _ => false
         }
 

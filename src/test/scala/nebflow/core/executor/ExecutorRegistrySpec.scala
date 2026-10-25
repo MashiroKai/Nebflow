@@ -32,7 +32,9 @@ class ExecutorRegistrySpec extends CatsEffectSuite:
   private def withFakeBin[A](name: String)(f: os.Path => A): A =
     val dir = os.temp.dir(prefix = "nb-exec-bin-")
     os.write(dir / name, "#!/bin/sh\n")
-    os.perms.set(dir / name, java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"))
+    // Windows 无 POSIX 属性视图：假 bin 的执行位置位跳过（Windows 存在性判定不需要执行位）。
+    if !nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName) then
+      os.perms.set(dir / name, java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"))
     try f(dir)
     finally os.remove.all(dir)
 

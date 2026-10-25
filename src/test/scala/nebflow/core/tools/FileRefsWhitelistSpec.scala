@@ -108,10 +108,13 @@ class FileRefsWhitelistSpec extends FunSuite:
     // left are the credential identity tables. (The R2 inode layer is not
     // exercised here — this synthetic policy carries an empty inode set; the
     // route-level inode pins live in NfTicketRoutesSpec A5/A6/A17-counter.)
-    val root = java.nio.file.Paths.get("/tmp/nebflow-ns-mirror-spec/dataroot").normalize()
+    // 宿主真临时目录（Windows 上 Paths.get("/tmp/…") 有根非绝对 ⇒ startsWith 根组件
+    // 失配 ⇒ 种子层死）；纯读用例，目录无需存在。
+    val base = java.nio.file.Files.createTempDirectory("nebflow-ns-mirror-spec")
+    val root = base.resolve("dataroot").normalize()
     val policy = NfFilePolicy.NfPathPolicy(
       root,
-      java.nio.file.Paths.get("/tmp/nebflow-ns-mirror-spec/ws"),
+      base.resolve("ws"),
       Set.empty
     )
     def deny(rel: String): Option[String] = NfFilePolicy.nfCredentialDeny(root.resolve(rel), policy)

@@ -110,8 +110,19 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
    * 走 refused 轴，两轴的**门槛不同**（5 vs 3）⇒ 轴归属若靠 OS 偶发（把 `127.0.0.0/8`
    * 全段当本地网段的平台上，黑洞会转 `ECONNREFUSED`）就会**静默降级**成 refused 轴仍绿。
    * 本机（macOS）实测口径：`127.0.0.2/.3/.4:<无监听端口>` >3s 无响应（丢包）。
+   *
+   * 🔴 Windows 批 2026-10-25：Windows 环回全段转 ECONNREFUSED ⇒ 黑洞夹具在 Windows 上
+   * 轴漂移（refused，门槛 5→3）。曾试改 TEST-NET-1（192.0.2.x）求两平台同轴，Mac 实测
+   * 虽仍 timeout 轴但每拍成本 +1s（真实路由 ARP/网关）撑爆预算敏感断言（T2 期望
+   * ≈1×budget 实测 2503ms）与 30s 墙（T3）⇒ 回退 127.0.0.x + Windows 平台门
+   * （T1/T2/T3 在 Windows 上 ignore，KAI 单跑按 ignored 记账）。
    */
-  private def blackholeEndpoint(port: Int, alias: Int): String = s"http://127.0.0.$alias:$port"
+  private def blackholeEndpoint(port: Int, alias: Int): String =
+    s"http://127.0.0.$alias:$port"
+
+  /** Windows 环回无黑洞语义（127/8 全段回 ECONNREFUSED）⇒ timeout 轴组跳过。 */
+  private val windowsBlackholeUnsupported: Boolean =
+    System.getProperty("os.name", "").toLowerCase.contains("win")
 
   private def roundOf(ps: NeblinkPresenceService, id: String): PresenceDialRound =
     ps.lastDialRound(id).getOrElse(fail(s"未记录到 $id 的拨号轮（F-D 读数面缺失）"))
@@ -543,6 +554,10 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
   // 而现场故障轴正是 timeout；④ 剔除 WARN 死码 ⇒ 「置窗恰 1 条」的判据无处绿。
 
   test("T1 轴钉正：黑洞夹具首轮失败类必须是 Timeout（读到 Refused 即硬红，禁静默降级）") {
+    assume(
+      !windowsBlackholeUnsupported,
+      "Windows 环回全段回 ECONNREFUSED ⇒ 黑洞夹具轴漂移，timeout 轴组无法在此平台成立——skip（KAI 单跑按 ignored 记账）"
+    )
     val port = closedPort()
     val epA = blackholeEndpoint(port, 2)
     val epB = blackholeEndpoint(port, 3)
@@ -566,6 +581,10 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
   }
 
   test("T2 门槛轴可分：timeout 轴第 4 拍不得置窗、第 5 拍末置窗、第 6 拍半开探测（refused 轴第 4 拍早已置窗）") {
+    assume(
+      !windowsBlackholeUnsupported,
+      "Windows 环回全段回 ECONNREFUSED ⇒ 黑洞夹具轴漂移，timeout 轴组无法在此平台成立——skip（KAI 单跑按 ignored 记账）"
+    )
     val port = closedPort()
     val epA = blackholeEndpoint(port, 2)
     val epB = blackholeEndpoint(port, 3)
@@ -610,6 +629,10 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
   }
 
   test("T3 计数存活跨名册缺席：名册缺席一拍不得清账（改前：账本被抹 ⇒ 回册后从零重累）") {
+    assume(
+      !windowsBlackholeUnsupported,
+      "Windows 环回全段回 ECONNREFUSED ⇒ 黑洞夹具轴漂移，timeout 轴组无法在此平台成立——skip（KAI 单跑按 ignored 记账）"
+    )
     val port = closedPort()
     val epA = blackholeEndpoint(port, 2)
     val epB = blackholeEndpoint(port, 3)

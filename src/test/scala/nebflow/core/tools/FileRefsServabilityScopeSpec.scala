@@ -204,6 +204,8 @@ class FileRefsServabilityScopeSpec extends FunSuite:
   // ── single source: the gate IS the endpoint's own ladder ──────────────────
 
   test("single source: every refusal carries the layer and message of the endpoint's own ladder"):
+    // 夹具含 symlink 别名资产：Windows symlink 特权门（能力缺失 ⇒ ignore）。
+    nebflow.SymlinkProbe.assumeSymlinks()
     val root = freshRoot("single-source")
     val ext = freshRoot("single-source-external")
     val servedPng = writePng(root.resolve("plots/served 2.png"))
@@ -350,6 +352,8 @@ class FileRefsServabilityScopeSpec extends FunSuite:
     assertEquals(reasons(p), List("not-servable"))
 
   test("FileType layer RETIRED (2026-10-07 flip): an extension-lent symlink embeds — the bytes are what render"):
+    // Windows symlink 特权门（能力缺失 ⇒ ignore）。
+    nebflow.SymlinkProbe.assumeSymlinks()
     val root = freshRoot("identity-filetype")
     val served = writePng(root.resolve("plots/real 6.png"))
     val target = root.resolve("plots/target 6.xyz")

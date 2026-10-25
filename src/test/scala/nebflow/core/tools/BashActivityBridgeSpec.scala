@@ -101,6 +101,17 @@ class BashActivityBridgeSpec extends CatsEffectSuite:
   private def processActivityOf(registry: Ref[IO, Map[String, AgentRecord]]): IO[Long] =
     registry.get.map(_.get("bridge-session").map(_.processActivityMs).getOrElse(-1L))
 
+  /** python 解释器解析（Windows 无 python3 可执行名 ⇒ python/py 回退；Mac 恒 python3）。 */
+  private lazy val pythonCmd: String =
+    List("python3", "python", "py")
+      .find { c =>
+        try
+          new ProcessBuilder(c, "--version").start().waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
+          true
+        catch case _: Throwable => false
+      }
+      .getOrElse("python3")
+
   test("D-1: CPU delta < 10ms/窗口 + 零输出 → 两戳都不被 touch（卡死不误判有进展）") {
     for
       registry <- Ref.of[IO, Map[String, AgentRecord]](
@@ -145,7 +156,7 @@ class BashActivityBridgeSpec extends CatsEffectSuite:
       ctx = ToolContext(projectRoot = "/tmp", sessionId = Some("bridge-session"), sharedResources = Some(resources))
       // CPU 忙进程：python busy loop（每 1s 窗口 CPU 增量 >> 10ms）——
       // 永不自终止，断言失败/中断路径必须守卫销毁（作者手清的残留形态）
-      proc <- startProc("python3 -c 'while True: pass'")
+      proc <- startProc(s"$pythonCmd -c 'while True: pass'")
       _ <- runBridge(proc, ctx).guarantee(IO(proc.destroyForcibly()))
       last <- lastActivityOf(registry)
       process <- processActivityOf(registry)

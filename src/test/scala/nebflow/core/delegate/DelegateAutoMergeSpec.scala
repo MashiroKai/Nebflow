@@ -48,15 +48,15 @@ class DelegateAutoMergeSpec extends FunSuite:
   private val originalRoot = PathUtil.dataRoot
 
   PathUtil.setDataRoot(tempRoot)
-  os.remove.all(tempRoot)
+  nebflow.ForceRemove.removeAll(tempRoot)
   os.makeDir.all(tempRoot)
 
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
 
   override def beforeEach(context: munit.BeforeEach): Unit =
-    os.remove.all(tempRoot / "chains")
-    os.remove.all(tempRoot / "delegates")
-    os.remove.all(tempRoot / "tasks")
+    nebflow.ForceRemove.removeAll(tempRoot / "chains")
+    nebflow.ForceRemove.removeAll(tempRoot / "delegates")
+    nebflow.ForceRemove.removeAll(tempRoot / "tasks")
 
   private val on: DelegateAutoMerge.Config =
     DelegateAutoMerge.Config(enabled = true, targetBranch = None, restoreArtifacts = true)
@@ -72,7 +72,7 @@ class DelegateAutoMergeSpec extends FunSuite:
    * checkedOut="release" ⇒ 另建 release 分支并被出（目标覆盖形态）。
    */
   private def mkRepo(dir: os.Path, branch: String, conflict: Boolean = false, checkedOut: String = "main"): os.Path =
-    os.remove.all(dir)
+    nebflow.ForceRemove.removeAll(dir)
     os.makeDir.all(dir)
     def g(args: String*): os.CommandResult =
       os.proc(Seq("git", "-C", dir.toString) ++ args).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
@@ -95,7 +95,7 @@ class DelegateAutoMergeSpec extends FunSuite:
   end mkRepo
 
   private def addWorktree(repo: os.Path, branch: String, wt: os.Path): os.Path =
-    os.remove.all(wt)
+    nebflow.ForceRemove.removeAll(wt)
     os.proc("git", "-C", repo.toString, "worktree", "add", wt.toString, branch)
       .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
     wt

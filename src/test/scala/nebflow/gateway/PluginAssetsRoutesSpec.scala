@@ -55,7 +55,10 @@ class PluginAssetsRoutesSpec extends CatsEffectSuite:
     os.write.over(pluginDir / "assets" / "sub" / "deep.txt", "deep", createFolders = true)
     val outside = tmp / "outside-secret.txt"
     os.write.over(outside, "secret")
-    java.nio.file.Files.createSymbolicLink((pluginDir / "escape").toNIO, outside.toNIO)
+    // Windows 无 symlink 特权 ⇒ 逃逸资产造不出来；其余用例的资产面照常，
+    // 逃逸拒绝腿（symlink escape refused）自带能力门。
+    if nebflow.SymlinkProbe.canCreate() then
+      java.nio.file.Files.createSymbolicLink((pluginDir / "escape").toNIO, outside.toNIO)
     pluginDir
 
   /**
@@ -241,6 +244,7 @@ class PluginAssetsRoutesSpec extends CatsEffectSuite:
   }
 
   test("symlink escape inside the package is refused (realpath containment final defense)") {
+    nebflow.SymlinkProbe.assumeSymlinks() // Windows symlink 特权门（逃逸资产造不出来 ⇒ ignore）
     withTempPlugin { dir =>
       for
         cred <- sessionCred

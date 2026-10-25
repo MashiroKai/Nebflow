@@ -284,6 +284,7 @@ class AgentsMdInjectionSpec extends CatsEffectSuite:
   test(
     "load migration ①b: legacy symlink (target != root) -> root gets target content, link removed, TARGET UNTOUCHED"
   ) {
+    nebflow.SymlinkProbe.assumeSymlinks() // Windows symlink 特权门（能力缺失 ⇒ ignore）
     val ws = tempRoot / "ws-mig-link"
     os.makeDir.all(ws / ".nebflow" / "docs")
     mkProject("am-mig-link", ws) *> IO(os.remove(ws / "AGENTS.md")) *> IO {
@@ -322,6 +323,7 @@ class AgentsMdInjectionSpec extends CatsEffectSuite:
   }
 
   test("load migration ② steady state: legacy symlink -> ../AGENTS.md is a no-op (no link removal, no warning path)") {
+    nebflow.SymlinkProbe.assumeSymlinks() // Windows symlink 特权门（能力缺失 ⇒ ignore）
     val ws = tempRoot / "ws-mig-steady"
     os.makeDir.all(ws / ".nebflow")
     mkProject("am-mig-steady", ws) *> IO {

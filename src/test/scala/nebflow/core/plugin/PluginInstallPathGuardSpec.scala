@@ -114,6 +114,7 @@ class PluginInstallPathGuardSpec extends FunSuite:
     assertEquals(installTmpResidue(), residueBefore, "负控路径零临时残留（非破坏性 + finally 清理语义保持）")
 
   test("负控: 符号链接指向 cwd ⇒ 按 canonical（toRealPath）判拒"):
+    nebflow.SymlinkProbe.assumeSymlinks() // Windows symlink 特权门（能力缺失 ⇒ ignore）
     val link = fixtureRoot / "cwd-link"
     os.makeDir.all(fixtureRoot)
     try

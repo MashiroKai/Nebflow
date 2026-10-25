@@ -42,6 +42,17 @@ class BashBackgroundHardTimeoutSpec extends CatsEffectSuite:
       case Left(e) => fail(s"expected TimeoutException, got: ${e.getClass.getSimpleName}: ${e.getMessage}")
       case Right(r) => fail(s"expected timeout failure, got success: ${r.stdout.take(100)}")
 
+  /** python 解释器解析（Windows 无 python3 可执行名 ⇒ python/py 回退；Mac 恒 python3）。 */
+  private lazy val pythonCmd: String =
+    List("python3", "python", "py")
+      .find { c =>
+        try
+          new ProcessBuilder(c, "--version").start().waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
+          true
+        catch case _: Throwable => false
+      }
+      .getOrElse("python3")
+
   test("B-1+B-4: background sleep 3600 killed by injected hard timeout + stuck window") {
     for
       shell <- ShellSession.forSession("bg-hard-1")
@@ -65,7 +76,7 @@ class BashBackgroundHardTimeoutSpec extends CatsEffectSuite:
       // 永不自终止的 python busy loop：断言失败/中断路径必须守卫销毁（残留治理 2026-09-05）
       _ <- (for
         _ <- shell.executeBackground(
-          "python3 -c 'while True: pass'",
+          s"$pythonCmd -c 'while True: pass'",
           jobIdOverride = Some("b2"),
           hardTimeoutMs = 3000,
           stuckWindowSec = 2,
@@ -88,7 +99,7 @@ class BashBackgroundHardTimeoutSpec extends CatsEffectSuite:
       shell <- ShellSession.forSession("bg-hard-3")
       // 异常路径销毁守卫（残留治理 2026-09-05）：同 B-1
       res <- (shell.executeBackground(
-        "python3 -c 'import sys; sys.stdout.write(\"x\"*1000); import time; time.sleep(3600)'",
+        s"$pythonCmd -c 'import sys; sys.stdout.write(\"x\"*1000); import time; time.sleep(3600)'",
         jobIdOverride = Some("b3"),
         hardTimeoutMs = 4000,
         stuckWindowSec = 2,

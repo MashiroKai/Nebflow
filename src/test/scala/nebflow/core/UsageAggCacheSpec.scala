@@ -349,6 +349,12 @@ class UsageAggCacheSpec extends FunSuite:
     val store = new UsageRecordStore(dir)
     val expected = store.aggregate(None, None, None).unsafeRunSync()
     os.remove(cacheFile(dir))
+    // 只读目录模拟走 POSIX 权限位：Windows 无 posix 视图 ⇒ 跳过该降级模拟腿
+    // （降级路径本身由缓存写失败的单元腿另测）。
+    assume(
+      Files.getFileAttributeView(dir.toNIO, classOf[java.nio.file.attribute.PosixFileAttributeView]) != null,
+      "unwritable-dir simulation requires POSIX permission bits"
+    )
     val perms = Files.getPosixFilePermissions(dir.toNIO)
     try
       Files.setPosixFilePermissions(dir.toNIO, PosixFilePermissions.fromString("r-xr-xr-x"))

@@ -139,8 +139,11 @@ class NeblinkSecuritySpec extends CatsEffectSuite:
   }
 
   private def validateRelPath(relPath: String): Option[String] =
+    // 契约镜像的平台无关化：Windows 上 Paths.get("/x") 非 absolute 且 toString 出
+    // 反斜杠 —— 前导 `/` 按 POSIX 绝对路径同判（契约面），回显统一正斜杠段。
     val n = java.nio.file.Paths.get(relPath).normalize
-    if n.startsWith("..") || n.isAbsolute then None else Some(n.toString)
+    if n.startsWith("..") || n.isAbsolute || relPath.startsWith("/") then None
+    else Some(n.toString.replace('\\', '/'))
 
   // ===== File transfer path validation =====
 
@@ -148,7 +151,8 @@ class NeblinkSecuritySpec extends CatsEffectSuite:
     val invalid = List("../../etc/passwd", "..", "../", "/etc/passwd", "foo/../../../etc/shadow")
     invalid.foreach { p =>
       val n = java.nio.file.Paths.get(p).normalize
-      assert(n.startsWith("..") || n.isAbsolute, s"Path '$p' should be rejected")
+      // 前导 `/` 在 Windows 上非 isAbsolute ⇒ 契约面按 POSIX 绝对路径同判。
+      assert(n.startsWith("..") || n.isAbsolute || p.startsWith("/"), s"Path '$p' should be rejected")
     }
   }
 

@@ -135,6 +135,9 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
 
   private def text(b: Array[Byte]): String = new String(b, StandardCharsets.UTF_8).take(240)
 
+  /** Path→URL 值形态：Windows 反斜杠归一正斜杠（URI 非法字符），调用方再施空格拼写。 */
+  private def wirePath(s: String): String = s.replace('\\', '/')
+
   /** Recursive delete that never throws: cleanup must not mask a test failure. */
   private def deleteTree(p: Path): Unit =
     try
@@ -183,11 +186,14 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
    */
   private def forms(plain: String): List[(String, String)] =
     require(plain.contains("space dir") && plain.contains("probe shot"), s"fixture path: $plain")
+    // Windows 反斜杠是 URI 非法字符（URI.create 直接炸）——先归一为正斜杠再施各形态；
+    // NIO 对两种分隔符等价，探针语义（空格的四种拼写）不变。
+    val p = plain.replace('\\', '/')
     List(
-      "pct20" -> plain.replace(" ", "%20"),
-      "plus" -> plain.replace(" ", "+"),
-      "pct2B" -> plain.replace(" ", "%2B"),
-      "mixed" -> plain.replace(" ", "%20").replace("probe%20shot", "probe+shot")
+      "pct20" -> p.replace(" ", "%20"),
+      "plus" -> p.replace(" ", "+"),
+      "pct2B" -> p.replace(" ", "%2B"),
+      "mixed" -> p.replace(" ", "%20").replace("probe%20shot", "probe+shot")
     )
 
   // ── A. 探针：http4s 的解码口径 ─────────────────────────────────────────────
@@ -260,7 +266,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
               val real = f.toRealPath().toString
               val ticket = store.issue("spec", real).unsafeRunSync().token
               val (status, body) =
-                httpGet(s"http://127.0.0.1:$port/api/nf-file?path=${real.replace(" ", "%20")}&ticket=$ticket")
+                httpGet(s"http://127.0.0.1:$port/api/nf-file?path=${wirePath(real).replace(" ", "%20")}&ticket=$ticket")
               println(s"PROBE[namespace][$label] status=$status bytes=${body.length}")
               assertEquals(status, 200, s"$label must serve despite the spaces")
               assertEquals(sha256(body), FixtureSha)
@@ -269,7 +275,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
             val realSecret = secret.toRealPath().toString
             val ticket = store.issue("spec", realSecret).unsafeRunSync().token
             val (status, body) =
-              httpGet(s"http://127.0.0.1:$port/api/nf-file?path=$realSecret&ticket=$ticket")
+              httpGet(s"http://127.0.0.1:$port/api/nf-file?path=${wirePath(realSecret)}&ticket=$ticket")
             println(s"PROBE[namespace][secrets] status=$status body=${text(body)}")
             assertEquals(status, 403)
             assert(text(body).contains("credential-path"), text(body))
@@ -336,7 +342,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
             .getOrElse(fail("the pop payload must be JSON"))
           val referenced = payload.hcursor.downField("fileRefs").get[Int]("referenced").toOption.getOrElse(-1)
           // the frontend-built URL: encodeURIComponent semantics = %20 for a space
-          val url = videoReal.replace(" ", "%20")
+          val url = wirePath(videoReal).replace(" ", "%20")
           val ticket = store.issue("spec", videoReal).unsafeRunSync().token
           val (status, body) = httpGet(s"http://127.0.0.1:$port/api/nf-file?path=$url&ticket=$ticket")
           println(
@@ -365,7 +371,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
     server(policyFor(dataRoot, Paths.get("/nonexistent-workspace"))).flatMap { (port, stop) =>
       IO {
         val plain = secret.toRealPath().toString
-        val root = dataRoot.toRealPath().toString
+        val root = wirePath(dataRoot.toRealPath().toString)
         val cases = List(
           "encoded-traversal" -> s"$root/plots/imgref-spec/%2e%2e/%2e%2e/auth.json",
           "plain-traversal" -> s"$root/plots/imgref-spec/../../auth.json"
@@ -404,7 +410,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
         val t1 = store.issue("spec", plusReal).unsafeRunSync().token
         val (s1, b1) = httpGet(
           s"http://127.0.0.1:$port/api/nf-file?path=" +
-            s"${plusReal.replace(" ", "%20").replace("+", "%2B")}&ticket=$t1"
+            s"${wirePath(plusReal).replace(" ", "%20").replace("+", "%2B")}&ticket=$t1"
         )
         println(s"PROBE[order][literal-plus] status=$s1 sha256=${sha256(b1)}")
         assertEquals(s1, 200)
@@ -413,7 +419,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
         // space-bearing file, and it is served too.
         val t2 = store.issue("spec", spaceReal).unsafeRunSync().token
         val (s2, b2) = httpGet(
-          s"http://127.0.0.1:$port/api/nf-file?path=${spaceReal.replace(" ", "+")}&ticket=$t2"
+          s"http://127.0.0.1:$port/api/nf-file?path=${wirePath(spaceReal).replace(" ", "+")}&ticket=$t2"
         )
         println(s"PROBE[order][bare-plus] status=$s2 sha256=${sha256(b2)}")
         assertEquals(s2, 200)
@@ -564,7 +570,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
       .getOrElse("-")
     val ticket = minted
       .flatMap(_.hcursor.downField("tickets").downField(plain).get[String]("t").toOption)
-    val pathParam = plain.replace(" ", "%20")
+    val pathParam = wirePath(plain).replace(" ", "%20")
     val (getStatus, bytes) = ticket match
       case Some(t) => httpGet(s"http://127.0.0.1:$port/api/nf-file?path=$pathParam&ticket=$t")
       case None => httpGet(s"http://127.0.0.1:$port/api/nf-file?path=$pathParam")
@@ -703,6 +709,8 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
     }
 
   test("H. symlink leg post-flip: a symlink serves under its REAL path — tool face and endpoint agree"):
+    // Windows 无 symlink 特权（ERROR_1314）⇒ 能力门 ignore（非 failed）。
+    nebflow.SymlinkProbe.assumeSymlinks()
     // The extension gate retired (2026-10-07 askuser-attach-align): a symlink
     // named big.png pointing at a non-image extension is no longer refused by
     // its realpath extension — the SERVED extension is read from the REAL path

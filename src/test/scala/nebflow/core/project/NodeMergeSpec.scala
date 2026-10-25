@@ -61,7 +61,7 @@ class NodeMergeSpec extends CatsEffectSuite:
   private val originalRoot = PathUtil.dataRoot
 
   PathUtil.setDataRoot(tempRoot)
-  os.remove.all(tempRoot)
+  nebflow.ForceRemove.removeAll(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "test-agent")
 
   os.write.over(

@@ -37,15 +37,15 @@ class MergeQueueBootSweepSpec extends FunSuite:
   private val originalRoot = PathUtil.dataRoot
 
   PathUtil.setDataRoot(tempRoot)
-  os.remove.all(tempRoot)
+  nebflow.ForceRemove.removeAll(tempRoot)
   os.makeDir.all(tempRoot)
 
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
 
   override def beforeEach(context: munit.BeforeEach): Unit =
-    os.remove.all(tempRoot / "chains")
-    os.remove.all(tempRoot / "delegates")
-    os.remove.all(tempRoot / "subagent-tasks")
+    nebflow.ForceRemove.removeAll(tempRoot / "chains")
+    nebflow.ForceRemove.removeAll(tempRoot / "delegates")
+    nebflow.ForceRemove.removeAll(tempRoot / "subagent-tasks")
 
   private class SilentLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
@@ -86,7 +86,7 @@ class MergeQueueBootSweepSpec extends FunSuite:
 
   /** main@init + delegate 分支一笔交付提交；merge=true ⇒ 分支 --no-ff 并回 main。 */
   private def mkRepo(dir: os.Path, branch: String, merge: Boolean): os.Path =
-    os.remove.all(dir)
+    nebflow.ForceRemove.removeAll(dir)
     os.makeDir.all(dir)
     os.proc("git", "init", "-b", "main", dir.toString).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
     def g(args: String*): os.CommandResult =
@@ -117,7 +117,7 @@ class MergeQueueBootSweepSpec extends FunSuite:
   test("② already-merged member ⇒ recovered-merged row + leftover scene cleaned under the zero-ahead guard + report") {
     val repo = mkRepo(tempRoot / "sweep-merged-repo", branch = "delegate/mq-merged", merge = true)
     val wt = tempRoot / "sweep-merged-wt"
-    os.remove.all(wt) // 夹具幂等：上一轮残留的 kept 场景 wt 会撞 worktree add already exists
+    nebflow.ForceRemove.removeAll(wt) // 夹具幂等：上一轮残留的 kept 场景 wt 会撞 worktree add already exists
     os.proc("git", "-C", repo.toString, "worktree", "add", wt.toString, "delegate/mq-merged")
       .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
     seedRecord("mq-merged", repo, worktree = Some(wt))
