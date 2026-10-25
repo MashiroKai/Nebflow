@@ -769,8 +769,8 @@ export default {
   // panel-merge-status 批（2026-10-25）：候合并行队列细节段（/api/merge-queue 只读
   // 状态面；位次只渲染不派生，API 未生效 ⇒ 段全缺 = 静态「等待合并轮」降级）。
   'subagents.mergeQueue.ahead': '前面还有 {n} 位',
-  'subagents.mergeQueue.retry': '第 {n} 次重试',
-  'subagents.mergeQueue.reason': '上次被拒：{reason}',
+  'subagents.mergeQueue.turn': '轮到你合并（窗口持有中）',
+  'subagents.mergeQueue.reason': '未放行原因：{reason}',
   // #752 空闲 delegate 在等什么（细分注记 + 长空闲提醒徽标）。
   'subagents.waitingBg': '等后台任务 ×{count}：{desc}（{dur}）',
   'subagents.waitingReceipts': '等子代理回执 ×{count}',

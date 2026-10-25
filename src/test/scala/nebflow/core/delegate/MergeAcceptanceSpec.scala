@@ -178,8 +178,9 @@ class MergeAcceptanceSpec extends CatsEffectSuite:
       for
         res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
         (child, sup) <- noopRefs(system)
-        // 零合并形态：支 park 在 fork（上批红验③的旧夹具形态——P1-1① 起正确判否）
-        repo = mkRepo(tempRoot / "never-merged", branch = "delegate/delegate-ma5", deliver = false)
+        // 分叉形态（支上真有一笔领先提交——台账 #896 起若 park 在 fork，放行时
+        // 账实核对直接关账 merged，合并轮在飞形态就位不了）。
+        repo = mkRepo(tempRoot / "never-merged", branch = "delegate/delegate-ma5")
         _ = DelegateRegistry.put(
           DelegateRegistry.Record(
             id = "delegate-ma5",
@@ -196,7 +197,7 @@ class MergeAcceptanceSpec extends CatsEffectSuite:
           )
         )
         _ = MergeQueue.enqueue(
-          MergeQueue.Entry(
+          MergeQueue.Member(
             delegateId = "delegate-ma5",
             branch = "delegate/delegate-ma5",
             baseWs = repo.toString,
@@ -207,8 +208,8 @@ class MergeAcceptanceSpec extends CatsEffectSuite:
             parentSessionId = "nebula-root",
             description = "t",
             readyAt = 1L,
-            childRef = child,
-            supervisorRef = sup
+            channelKind = "internal",
+            internal = Some(MergeQueue.InternalLeg(child, sup))
           )
         )
         // 判定机缺席＋无自申报 ⇒ 既有回落链本来会放 completed——机械验收闸必须拦下

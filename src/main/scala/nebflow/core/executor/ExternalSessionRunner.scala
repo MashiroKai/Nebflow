@@ -11,7 +11,6 @@ import nebflow.actor.ActorRef
 import nebflow.core.AgentRuntimePort
 import nebflow.core.GitWorktrees
 import nebflow.core.delegate.ChainStore
-import nebflow.core.delegate.DelegateAutoMerge
 import nebflow.core.delegate.DelegateRegistry
 import nebflow.core.delegate.DelegateWorkReport
 import nebflow.core.delegate.DelegateWorkspace
@@ -577,23 +576,35 @@ You will be notified when it completes via a system message. Do NOT duplicate th
                     IO.pure(Outcome.Failed(s"mechanical merge acceptance unreadable: ${e.getMessage}"))
                   )
               case (other, _) => IO.pure(other)
-          // 引擎原生 delegate worktree 自动合并批（#524）：外部腿 completed 终态 ×
-          // 非合并轮 ⇒ 与内部腿同闸（[[DelegateAutoMerge.onCompletedHook]]，引擎侧
-          // FIFO `merge --no-ff` 回集成分支）。外部执行器经 DelegateWorkspace.prepare
-          // 同样有分支锚——能拿到分支就纳入（作者令边界条款）；锚缺失（非 git 腿 /
-          // 旧盘记录）= 注记跳过、诚实可查。合并轮豁免（外部合并轮的机械验收闸在
-          // 上方 P1-1①）。
-          autoMergeNote <-
+          // 台账 #896（交通引导员制 2026-10-26）：引擎侧自动合并执行已整体退役
+          // （DelegateAutoMerge 删除——引擎永不自己跑 git merge）。外部腿 completed
+          // 终态 × 非合并轮 × 分支锚齐 × 确有领先提交 ⇒ **翻转 ready-to-merge 入队**
+          // （放行 = 通知属主自己合并；交付绝不静默丢失）。锚缺失（非 git 腿 / 旧盘
+          // 记录）/ git 读数不可得 = 原判词直投（诚实兜底）。
+          flipped <-
             (outcome, mergeRoundNow) match
               case (Outcome.Completed, false) =>
-                rec match
-                  case Some(r) if r.branch.isDefined => DelegateAutoMerge.onCompletedHook(rec)
-                  case _ =>
-                    IO.pure(
-                      Some("\n\n[auto-merge] skipped (no branch anchors on record) — branch behaviour not evaluated")
-                    )
+                rec.filter(r => r.branch.isDefined && r.baseBranch.isDefined) match
+                  case Some(r) =>
+                    IO.blocking {
+                      Try(os.Path(r.projectWorkspace.getOrElse(r.cwd))).toOption
+                        .filter(GitWorktrees.isGitRepo)
+                        .map(ws => GitWorktrees.commitsAhead(ws, r.baseBranch.get, r.branch.get))
+                        .getOrElse(0)
+                    }
+                      .handleError(_ => 0)
+                      .map { ahead =>
+                        if ahead > 0 then
+                          logger.info(
+                            s"external delegate $sessionId completed with $ahead commit(s) ahead — flipping to ready-to-merge (traffic-controller queue)"
+                          )
+                          Some(Outcome.ReadyToMerge)
+                        else None
+                      }
+                  case None => IO.pure(None)
               case _ => IO.pure(None)
-          reasonOpt = outcome match
+          outcome2 = flipped.getOrElse(outcome)
+          reasonOpt = outcome2 match
             case Outcome.Failed(r) => Some(r)
             case Outcome.Cancelled => Some("cancelled")
             case _ => None
@@ -601,7 +612,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
           // completed——进程本身成功了，合并轮语义归 #1224 队列）。
           _ <- ExternalOutputStore.finalizeTask(
             sessionId,
-            status = outcome match
+            status = outcome2 match
               case Outcome.Failed(_) => "failed"
               case Outcome.ReadyToMerge | Outcome.Completed => "completed"
               case Outcome.Cancelled => "cancelled",
@@ -611,7 +622,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
           // 会话持久化：assistant 终稿（空输出也给占位，历史面完整）。
           _ <- persistAssistantTurn(spec.resources, sessionId, if text.nonEmpty then text else "(no text output)")
           // 任务行终态（ready-to-merge 保持 running——父回报权在合并轮）。
-          _ <- outcome match
+          _ <- outcome2 match
             case Outcome.Completed =>
               updateTaskTolerant(spec.resources, spec.parentSessionId, sessionId, "completed", lastError = None)
             case Outcome.ReadyToMerge => IO.unit
@@ -621,7 +632,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               updateTaskTolerant(spec.resources, spec.parentSessionId, sessionId, "failed", lastError = reasonOpt)
           _ <- appendLedgerNote(
             spec.taskId,
-            outcome match
+            outcome2 match
               case Outcome.Completed =>
                 s"External delegate finished (executor=${ex.id}, exit=${exitCode.map(_.toString).getOrElse("-")})"
               case Outcome.ReadyToMerge =>
@@ -635,11 +646,11 @@ You will be notified when it completes via a system message. Do NOT duplicate th
           // delegate-finish-report 修复批 2026-10-25：停靠即保真工作轮终稿
           // （DelegateRegistry.updateWorkResult，first-write-wins——内部腿
           // holdForMerge 同机制），合并轮 finish 终文不再顶掉工作结果。
-          _ <- outcome match
+          _ <- outcome2 match
             case Outcome.ReadyToMerge =>
               IO(DelegateRegistry.updateWorkResult(sessionId, text)).attempt.void
             case _ => IO.unit
-          _ <- outcome match
+          _ <- outcome2 match
             case Outcome.ReadyToMerge =>
               rec.filter(r => r.branch.isDefined && r.baseBranch.isDefined) match
                 case Some(r) =>
@@ -656,7 +667,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
                         .map(_.map(_ => ()))
                   }
                   MergeQueue.enqueueIO(
-                    MergeQueue.Entry(
+                    MergeQueue.Member(
                       delegateId = sessionId,
                       branch = r.branch.get,
                       baseWs = baseWs,
@@ -667,8 +678,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
                       parentSessionId = r.parentSessionId,
                       description = r.title,
                       readyAt = System.currentTimeMillis(),
-                      childRef = MergeQueue.NoopChild,
-                      supervisorRef = MergeQueue.NoopSupervisor,
+                      channelKind = "external",
                       external = Some(channel)
                     )
                   )
@@ -684,42 +694,46 @@ You will be notified when it completes via a system message. Do NOT duplicate th
                     None
                   )
             case _ => IO.unit
-          // P1-2/P2-4（引擎加固批 2026-10-09）：外部腿**终态出队**（内部腿同语义 =
-          // DelegateTerminal.onTerminalCleanup 的出队臂）。合并轮终态（机械验收
-          // 拒绝 failed / 放行 completed）后条目必须出队＋单飞行窗释放——否则窗
-          // 泄漏（同项目后继全楔死）且账本无 `dequeued` 后继行，下次 boot sweep
-          // 会把已终结成员误判为中断成员重挂。ReadyToMerge = 刚入队，出队权归
-          // 合并轮。未入队过（completed/cancelled 首轮终态）= onTerminal 幂等 no-op。
-          _ <- outcome match
+          // P1-2/P2-4（引擎加固批 2026-10-09；台账 #896 改关账语义）：外部腿**终态
+          // 关账**（内部腿同语义 = DelegateTerminal.onTerminalCleanup 的关账臂）。
+          // 合并轮终态（机械验收拒绝 failed / 放行 completed）后成员必须关账＋单
+          // 飞行窗释放——否则窗泄漏（同项目后继全楔死）。ReadyToMerge = 刚入队，
+          // 关账权归合并轮。未入账过（completed/cancelled 首轮终态）= 幂等 no-op。
+          // 回合外终态（None）→ 队列账实核对后落 owner-gone（无重试无 park）。
+          _ <- outcome2 match
             case Outcome.ReadyToMerge => IO.unit
+            case Outcome.Completed =>
+              val roundOutcome = if mergeRoundNow then Some(MergeQueue.RoundOutcome.Merged) else None
+              MergeQueue.onTerminalIO(sessionId, roundOutcome)
+            case Outcome.Failed(r) =>
+              val roundOutcome = if mergeRoundNow then Some(MergeQueue.RoundOutcome.Refused(r)) else None
+              MergeQueue.onTerminalIO(sessionId, roundOutcome)
             case other => MergeQueue.onTerminalIO(sessionId)
-          // 父投递（ready-to-merge 不发——MergeQueue 持有父回报权）。#524：
-          // auto-merge 尾注并入终文——冲突挂起的文件清单随终态抵达父会话。
+          // 父投递（ready-to-merge 不发——MergeQueue 持有父回报权）。
           // delegate-finish-report 修复批 2026-10-25：合并轮投父附工作结果附页
           // （DelegateWorkReport.appendixFor——内部腿 Release 尾注同构造器，两腿
           // 同一附页契约；fail-soft 内包，任何故障 = 原文直投）。
-          _ <- outcome match
+          _ <- outcome2 match
             case Outcome.ReadyToMerge => IO.unit
             case other =>
-              val base = autoMergeNote.map(n => s"$text$n").getOrElse(text)
               val withWork =
                 if mergeRoundNow then
                   IO(DelegateWorkReport.appendixFor(rec))
                     .handleErrorWith(_ => IO(""))
-                    .map(apx => base + apx)
-                else IO.pure(base)
+                    .map(apx => text + apx)
+                else IO.pure(text)
               withWork.flatMap(delivered => notifyParent(spec, sessionId, other, delivered, reasonOpt))
           // 面板终态帧（与内部 delegate 的 agentDone 同契约）。
           _ <- emitFrame(spec.wsSend, spec.rootSessionId, spec.parentSessionId, sessionId)(
             Json.obj("type" -> "agentDone".asJson, "agentId" -> sessionId.asJson)
           )
           _ = logger.info(
-            s"External delegate settled: $sessionId outcome=$outcome exit=${exitCode.map(_.toString).getOrElse("-")}${
+            s"External delegate settled: $sessionId outcome=$outcome2 exit=${exitCode.map(_.toString).getOrElse("-")}${
                 if mergeRoundNow then " (merge round)" else ""
               }"
           )
           // mailbox 消化：live 期间的来信 = 一条 resume 续聊（S15 同通道）。
-          _ <- outcome match
+          _ <- outcome2 match
             case Outcome.Cancelled => IO.unit // 取消即终止——来信留队列由下轮续聊取
             case _ =>
               ExternalOutputStore.drainMailbox(sessionId).flatMap {

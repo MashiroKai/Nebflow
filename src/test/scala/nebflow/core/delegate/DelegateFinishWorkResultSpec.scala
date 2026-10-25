@@ -148,7 +148,7 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
   private def withJudgeAbsent[A](io: IO[A]): IO[A] =
     IO { DelegateJudge.DelegateJudgePort.clear() } *> io <* IO { DelegateJudge.DelegateJudgePort.clear() }
 
-  /** 合并轮在飞夹具：入队（空队列 pump 立即注入 + reminderSentAt 盖章——mergeRound 判据与生产同源）。 */
+  /** 合并轮在飞夹具：入账（空队列 pump 立即放行通知——mergeRound 判据与生产同源）。 */
   private def enqueueRound(
     id: String,
     branch: String,
@@ -158,7 +158,7 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
     sup: ActorRef[AgentEvent]
   ): Unit =
     MergeQueue.enqueue(
-      MergeQueue.Entry(
+      MergeQueue.Member(
         delegateId = id,
         branch = branch,
         baseWs = repoPath.toString,
@@ -169,8 +169,8 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
         parentSessionId = "nebula-root",
         description = "t",
         readyAt = 1L,
-        childRef = child,
-        supervisorRef = sup
+        channelKind = "internal",
+        internal = Some(MergeQueue.InternalLeg(child, sup))
       )
     )
 
@@ -319,19 +319,21 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
         (child, sup) <- noopRefs(system)
         // ④a 老盘面形态：无停靠保真（修复前已完成停靠）、finish 自申报在槽、无
         // 报告文件 ⇒ 附页 = merge status 一行（merge 信息降为一行——正是修复形态），
-        // 无 work result 段、无 report files 段
+        // 无 work result 段、无 report files 段。
+        // 台账 #896 时序：先入队（放行 = 通知 ⇒ turn-granted = 合并轮在飞判据）
+        // 再真并——若先并后入队，放行时账实核对会直接关账 merged，合并轮形态失位。
         _ = seedRecord("delegate-nebflow-wr6", Some("86"), Some("delegate/delegate-nebflow-wr6"), repo)
+        _ = enqueueRound("delegate-nebflow-wr6", "delegate/delegate-nebflow-wr6", repo, "86", child, sup)
         _ = mergeNoFF(repo, "delegate/delegate-nebflow-wr6")
         _ = DelegateRegistry.updateReport("delegate-nebflow-wr6", "finish", "merged to main cleanly", "")
-        _ = enqueueRound("delegate-nebflow-wr6", "delegate/delegate-nebflow-wr6", repo, "86", child, sup)
         releaseA <- withJudgeAbsent {
           DelegateTerminal.onCompleted(res, "delegate-nebflow-wr6", "nebula-root", "t", "brief", "merge done", child, sup)
         }
         // ④b 全裸记录（连 finish 自申报都没有——fail-open unjudged 腿）：附页整段
         // 缺席，Release 尾注逐字现状
         _ = seedRecord("delegate-nebflow-wr8", Some("88"), Some("delegate/delegate-nebflow-wr8"), bareRepo)
-        _ = mergeNoFF(bareRepo, "delegate/delegate-nebflow-wr8")
         _ = enqueueRound("delegate-nebflow-wr8", "delegate/delegate-nebflow-wr8", bareRepo, "88", child, sup)
+        _ = mergeNoFF(bareRepo, "delegate/delegate-nebflow-wr8")
         releaseB <- withJudgeAbsent {
           DelegateTerminal.onCompleted(res, "delegate-nebflow-wr8", "nebula-root", "t", "brief", "merge done", child, sup)
         }

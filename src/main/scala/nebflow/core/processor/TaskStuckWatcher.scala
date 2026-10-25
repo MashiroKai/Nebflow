@@ -829,23 +829,15 @@ object TaskStuckWatcher:
                   }
                 }
           } *>
-          // ── D3-⑤（steward 批 2026-10-23）：合并窗台账事件化看护 ────────────────
-          // DelegateBudget wall-clock 预算退役后的另一半活性替代：合并轮停靠相的
-          // 看护（判据 = 队列台账 × 监督者 actor 活性，事件判据零时间判据）——
-          // 司机死 ⇒ 轮驱动（留队待重试 + 窗释放 + 升级），孤儿条目出队。搭本
-          // 既有扫描拍驱动，零新增定时器；幂等（动作过 = 待重试/出队，零重复）。
-          nebflow.core.delegate.MergeWindowCare
-            .care(resources)
-            .handleErrorWith(e => logger.warn(s"[merge-window-care] sweep failed: ${e.getMessage}").void)
+          // ── 台账 #896（交通引导员制 2026-10-26）：合并队列扫描拍驱动面 ────────
+          // 持窗尸体判死（turn-granted 属主 actor 已退 ⇒ owner-gone 关账，窗绝不
+          // 许尸体持死）+ 每个有开放成员的 project 补一拍放行（净空转洁/阻碍消除
+          // 后自然推进）。搭本既有扫描拍，零新增定时器；幂等。重试合并轮与复活轮
+          // 已整体退役（owner-gone / failed 关账后处置归 dispatcher，绝不静默 park）。
+          nebflow.core.delegate.MergeQueueCare
+            .tick()
+            .handleErrorWith(e => logger.warn(s"[merge-queue-care] sweep failed: ${e.getMessage}").void)
             .void *>
-            // ── 滞留告警 + 退避重试看护（merge-queue 滞留两病灶修复批 2026-10-25
-            // 腿②③）：队首停靠条目「无竞争合并 ∧ 工件已清理」条件下退避重发合并
-            // 轮，逐次拒绝通知带「谁在挡、挡在哪」，预算耗尽升级告警根会话（不再
-            // 静默滞留）。幂等：通知/升级/重试各由条目台账字段把门。
-            nebflow.core.delegate.MergeStallCare
-              .care(resources)
-              .handleErrorWith(e => logger.warn(s"[merge-stall-care] sweep failed: ${e.getMessage}").void)
-              .void *>
             // ── 诊断修复批 2026-10-24（delegate-nebflow-52308ee4 投递丢失）──────
             // delegate 终态交付回执的「父未确认」重投监测：超龄未 ack ⇒ 父活直投 /
             // 父死持久收件箱；父已删 ⇒ 删回执 + 响亮 WARN。搭本既有扫描拍，零新增
@@ -859,12 +851,13 @@ object TaskStuckWatcher:
   end scan
 
   /**
-   * D3-④ Waiting 停靠态看护（steward 批 2026-10-23；**活性判据，零时间判据**）：
+   * D3-④ Waiting 停靠态看护（steward 批 2026-10-23；**活性判据，零时间判据**；
+   * 台账 #896 改关账语义）：
    * registry 行 status=Waiting（等合并轮停靠）而其 actor 已从系统注册表退出 =
-   * 明确死亡事件 ⇒ ① 合并队列前进（`onTerminal(keepForRetry=true)`——被拒/未投
-   * 条目按语义留队待重试，窗释放轮转下一条）② 任务台账翻 failed（面板可见终态）
-   * ③ taskStuck WS 广播（人可见）④ 事件升级投最终责任方（root 活投 / 持久收件箱
-   * 补投——①落点）。活停靠（等提醒/后台任务唤醒）= 合法态零动作。
+   * 明确死亡事件 ⇒ ① 合并队列关账 owner-gone（账实核对先行——期间被并则关
+   * merged；无留队待重试语义，处置归 dispatcher）② 任务台账翻 failed（面板可见
+   * 终态）③ taskStuck WS 广播（人可见）④ 事件升级投最终责任方（root 活投 / 持久
+   * 收件箱补投——①落点）。活停靠（等提醒/后台任务唤醒）= 合法态零动作。
    */
   private def careWaitingDock(
     resources: AgentRuntimePort,
@@ -881,7 +874,9 @@ object TaskStuckWatcher:
             val detail =
               s"waiting dock orphaned: session '${rec.sessionId}' is docked waiting-merge but its actor has exited"
             logger.warn(s"[waiting-dock-care] $detail") *>
-              IO.blocking(nebflow.core.delegate.MergeQueue.onTerminal(rec.sessionId, keepForRetry = true))
+              IO.blocking(
+                nebflow.core.delegate.MergeQueue.markOwnerGone(rec.sessionId, s"$detail — needs dispatcher handling")
+              )
                 .handleErrorWith(e =>
                   logger.warn(s"[waiting-dock-care] merge queue advance failed: ${e.getMessage}")
                 ) *>
@@ -919,7 +914,7 @@ object TaskStuckWatcher:
             source = "waiting-dock-care",
             eventType = "failed",
             payload =
-              s"""[waiting-dock-care] delegate '${rec.sessionId}': $detail. The merge queue moved on (entry kept pending retry) and the task row was marked failed; escalated here because the previous responsible party is not live.""",
+              s"""[waiting-dock-care] delegate '${rec.sessionId}': $detail. The merge-ledger membership was closed as owner-gone (fact-checked first; no merge rounds are revived) and the task row was marked failed — needs dispatcher handling; escalated here because the previous responsible party is not live.""",
             metadata = io.circe.JsonObject(
               "delegateId" -> rec.sessionId.asJson,
               "action" -> "waiting-dock-dead".asJson,

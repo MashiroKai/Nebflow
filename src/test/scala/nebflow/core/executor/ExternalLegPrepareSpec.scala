@@ -17,15 +17,17 @@ import scala.concurrent.duration.*
  *    worktreeJudged 落库；spawn 行审计键（worktreeJudged/judgeLeg）在链上；brief
  *    行进会话历史。判定机缺席 = fail-open 反转（judgeLeg=fail-open）——分支纪律
  *    不因判定机缺席而丢；
- *  - ② 判定机判 ready-to-merge ⇒ 真并入 MergeQueue（外部通道条目）→ 注入走续聊
- *    通道（CLI resume——夹具用 /bin/echo 假 CLI）→ 合并轮 settle 走机械验收闸
- *    （假 CLI 不会真并 ⇒ blocked + 证据——绝不凭自申报放行）；
- *  - ③ MergeQueue 通道注入单元锚：external 条目注入走 send 闭包（零 actor）；
- *    recovered 条目注入走 revive 闭包 + rekey 换键（新 id 持窗、终态出队放窗）。
+ *  - ② 判定机判 ready-to-merge ⇒ 真并入 MergeQueue（外部通道条目，channelKind=
+ *    external）→ 放行时账实核对命中（分支头已是基分支祖先）⇒ 关账 merged +「已落地」
+ *    收尾通知走续聊通道（CLI resume——夹具用 /bin/echo 假 CLI spawn）；合并轮 settle
+ *    走机械验收闸（无真 merge commit ⇒ 拒 + 证据——绝不凭自申报放行；账已关，队列零损）；
+ *  - ③ MergeQueue 通道注入单元锚（台账 #896 交通引导员制）：external 成员注入走
+ *    send 闭包（零 actor）；无通道成员（重启后通道闭包丢失形态）⇒ owner-gone 关账 +
+ *    OwnerGonePort 升级（绝不静默 park）。
  */
 class ExternalLegPrepareSpec extends CatsEffectSuite:
 
-  override def munitIOTimeout: FiniteDuration = 180.seconds
+  override def munitIOTimeout: FiniteDuration = 300.seconds
 
   private val tempRoot: os.Path = os.pwd / "target" / "test-external-leg"
   private val originalRoot = PathUtil.dataRoot
@@ -43,6 +45,9 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
 
   override def afterEach(context: munit.AfterEach): Unit =
     DelegateJudge.DelegateJudgePort.clear()
+    MergeQueue.reset()
+    MergeQueue.installLivenessProbe(_ => IO.pure(true))
+    MergeQueue.OwnerGonePort.clear()
 
   private def mkRepo(dir: os.Path): os.Path =
     nebflow.ForceRemove.removeAll(dir)
@@ -133,7 +138,7 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
     end for
   }
 
-  test("② ready-to-merge verdict enqueues the EXTERNAL channel entry; the merge round runs through CLI resume and the mechanical gate refuses a fake merge") {
+  test("② ready-to-merge verdict enqueues the EXTERNAL channel entry; the grant-time fact-check closes an already-landed branch as merged and the close-out notice rides the continuation channel") {
     val system = ActorSystem(s"el-2-${scala.util.Random.nextInt(100000)}")
     try
       for
@@ -149,84 +154,108 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
         repo = mkRepo(tempRoot / "ext-rtm")
         spawned <- ExternalSessionRunner.spawn(spec(repo, res, "produce a deliverable"))
         (sessionId, ack) = spawned.fold(err => fail(s"spawn failed: $err"), identity)
-        _ <- pollUntil("entry enqueued (settle ran, judge said ready-to-merge)")(
-          IO(MergeQueue.find(sessionId).isDefined)
+        // spawn 造的分支停在 main HEAD（echo 不产提交）⇒ `is-ancestor` 已真 = 「已落地」
+        // 形态：放行闸的账实核对（先于一切）必须直接关账 merged——零合并轮通知、零重试
+        // （今晚「已落定仍罚站」的消除闸在放行路径的直证）。
+        _ <- pollUntil("entry enqueued + grant-time fact-check closed it (settle ran, judge said ready-to-merge)")(
+          IO(MergeQueue.find(sessionId).exists(_.state == MergeQueue.State.Merged))
         )
-        queued0 = MergeQueue.find(sessionId)
-        // 注入即续聊（假 CLI resume）→ 合并轮 settle（mergeRound=true）→ 机械验收闸：
-        // 假 CLI 从不真并 ⇒ 拒 Release 判 blocked（任务行 failed + 证据在 lastError），
-        // 条目出队、单飞行窗释放。
-        //
-        // 🔴 密封性注记（P1-2 实现的 fail-closed 面所然）：resume 腿经
-        // `ExecutorRegistry.resolveRequested` **重新解析执行器二进制**（PATH 腿优先），
-        // spawn 侧的 `binPath=/bin/echo` 假不进 resume。密封跑法 = 把本套件跑在
-        // 带假 `claude` 的 PATH 前（`PATH=<dir-with-fake-claude>:$PATH sbt testOnly …`，
-        // 假件只回一行 stream-json result 帧即退）。若机器 PATH 上有真 claude，
-        // resume 会真起一次 LLM 轮（brief=合并指令）——闸照常拒绝（没真并），只是
-        // 轮时长≈LLM 时延 ⇒ 轮询窗给足 120s。
-        _ <- pollUntil("merge round refused by the mechanical gate + entry dequeued", maxMs = 120000)(
-          res.subAgentTaskStore.findByTaskId(sessionId).flatMap {
-            case Some(t) if t.status == "failed" =>
-              IO(t.lastError.exists(_.contains("mechanical merge acceptance refused")) && MergeQueue.find(sessionId).isEmpty)
-            case _ => IO.pure(false)
+        member = MergeQueue.find(sessionId)
+        // 「已落地」收尾通知走续聊通道（CLI resume）。🔴 密封性注记：resume 腿经
+        // `ExecutorRegistry.resolveRequested` 重新解析执行器二进制（PATH 腿优先），
+        // spawn 侧的 `binPath=/bin/echo` 假不进 resume。密封跑法 = 把本套件跑在带假
+        // `claude` 的 PATH 前（`PATH=<dir-with-fake-claude>:$PATH sbt testOnly …`，
+        // 假件只回一行 stream-json result 帧即退）。机器 PATH 上有真 claude ⇒ resume
+        // 真起一轮（brief = 已落地收尾令）——轮时长≈LLM 时延 ⇒ 轮询窗给足 150s。
+        _ <- pollUntil("the already-landed close-out notice reached the session via the continuation channel", maxMs = 150000) {
+          res.sessionStore.loadMessagesForSession(sessionId).map { msgs =>
+            val userText = msgs.filter(_.role == MessageRole.User).map(_.textContent).mkString("\n")
+            userText.contains("ALREADY merged into")
           }
+        }
+        userText <- res.sessionStore.loadMessagesForSession(sessionId).map(
+          _.filter(_.role == MessageRole.User).map(_.textContent).mkString("\n")
         )
+        // resume 轮 settle（引擎侧唯一的 CLI 依赖腿；其成败不回改账本）：
+        // 真机 = 机械验收闸拒假并 → failed；机器无 claude / 座位已清 = 启动失败 →
+        // failed。两条腿都终态 failed——只断言终态，不断言原因文案（CLI 侧结果）。
+        _ <- pollUntil("the resumed merge round settled (task row terminal)", maxMs = 150000)(
+          res.subAgentTaskStore.findByTaskId(sessionId).map(_.exists(_.status == "failed"))
+        )
+        member2 = MergeQueue.find(sessionId)
         rows = ChainStore.listSync().flatMap(_.entries).filter(_.kind == MergeQueue.EntryKind)
           .flatMap(_.payload.hcursor.get[String]("action").toOption)
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
       yield
-        assert(queued0.isDefined, "the ready-to-merge verdict must enqueue the external entry")
-        assertEquals(queued0.map(_.branch), Some(s"delegate/$sessionId"))
+        assert(member.isDefined, "the ready-to-merge verdict must enqueue the external entry")
+        assertEquals(member.map(_.branch), Some(s"delegate/$sessionId"))
+        assertEquals(member.map(_.channelKind), Some("external"), "the entry rides the external continuation channel")
+        assert(
+          member.flatMap(_.closeReason).exists(_.contains("already merged into base")),
+          s"the close reason names the grant-time fact-check: ${member.flatMap(_.closeReason)}"
+        )
         assert(rows.contains("enqueued"), s"enqueued audited: $rows")
-        assert(rows.contains("reminder-sent"), s"reminder-sent (external channel injection) audited: $rows")
-        assert(rows.contains("dequeued"), s"the entry must exit the queue (the resume turn settled): $rows")
+        assert(rows.contains("merge-merged"), s"the fact-check close is audited (merge-merged): $rows")
+        assert(!rows.contains("granted"), "an already-landed branch never gets a merge-turn notification")
+        assert(!rows.contains("reminder-sent") && !rows.contains("dequeued"), "retired queue vocabulary is gone")
+        assert(userText.contains("ALREADY merged into"), "the close-out notice rode the continuation channel into the session history")
+        assert(!userText.contains("merge --no-ff"), "the merge brief is never sent for an already-landed branch")
+        assertEquals(member2.map(_.state), Some(MergeQueue.State.Merged), "a late refused round cannot reopen or re-close the membership")
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
   }
 
-  test("③ MergeQueue channel units: external entry injects via send (zero actor); recovered entry rekeys on revive") {
-    val system = ActorSystem(s"el-3-${scala.util.Random.nextInt(100000)}")
+  test("③ MergeQueue channel units: external entry injects via send (zero actor); a channel-less entry closes owner-gone with escalation") {
     val sent = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+    val escalations = new java.util.concurrent.ConcurrentLinkedQueue[(String, String)]()
+    MergeQueue.OwnerGonePort.install((m, reason) => IO { escalations.add((m.delegateId, reason)) })
+    // 真仓基座（净空闸/账实核对的真 git 面；分支未在仓 ⇒ 账实核对不命中）。
+    val chanRepo = mkRepo(tempRoot / "ext-chan-repo")
     for
+      // ③a 外通道注入单元：external 成员放行 = send 闭包收单（零 actor、零 replyTo）。
       _ <- IO {
         MergeQueue.enqueue(
-          MergeQueue.Entry(
-            delegateId = "delegate-ext-chan", branch = "delegate/delegate-ext-chan", baseWs = tempRoot.toString,
+          MergeQueue.Member(
+            delegateId = "delegate-ext-chan", branch = "delegate/delegate-ext-chan", baseWs = chanRepo.toString,
             baseBranch = "main", worktree = false, projectKey = "p-chan", taskId = Some("71"),
             parentSessionId = "nebula-root", description = "t", readyAt = 1L,
-            childRef = MergeQueue.NoopChild, supervisorRef = MergeQueue.NoopSupervisor,
+            channelKind = "external",
             external = Some(MergeQueue.ExternalLeg(msg => IO { sent.add(msg); Right(()) }))
           )
         )
       }
+      granted = MergeQueue.find("delegate-ext-chan")
       _ <- IO.sleep(100.millis)
-      _ = MergeQueue.onTerminal("delegate-ext-chan")
-      // recovered + rekey：revive 成功即换键——新 id 持窗，旧 id 消失；新 id 终态出队放窗。
+      // 合并轮终态回报（Some(Merged)）= 关账 merged（幂等、放窗）。
+      _ = MergeQueue.onTerminal("delegate-ext-chan", Some(MergeQueue.RoundOutcome.Merged))
+      closed = MergeQueue.find("delegate-ext-chan")
+      // ③b 无通道成员（重启后通道闭包丢失形态）：放行时通知不可达 ⇒ owner-gone 关账
+      // + OwnerGonePort 升级——绝不静默 park，窗即时放给后继。
       _ <- IO {
         MergeQueue.enqueue(
-          MergeQueue.Entry(
-            delegateId = "delegate-old", branch = "delegate/delegate-old", baseWs = tempRoot.toString,
-            baseBranch = "main", worktree = false, projectKey = "p-rekey", taskId = Some("72"),
+          MergeQueue.Member(
+            delegateId = "delegate-nochan", branch = "delegate/delegate-nochan", baseWs = chanRepo.toString,
+            baseBranch = "main", worktree = false, projectKey = "p-nochan", taskId = Some("72"),
             parentSessionId = "nebula-root", description = "t", readyAt = 1L,
-            childRef = MergeQueue.NoopChild, supervisorRef = MergeQueue.NoopSupervisor,
-            recovered = Some(MergeQueue.Recovered("delegate-old", msg =>
-              IO { MergeQueue.rekey("delegate-old", "delegate-new"); Right(()) }))
+            channelKind = "external" // 通道闭包不持久——重启回载后 external/internal 皆 None
           )
         )
       }
-      _ <- IO.sleep(100.millis)
-      afterRekey = MergeQueue.find("delegate-new")
-      oldGone = MergeQueue.find("delegate-old").isEmpty
-      _ = MergeQueue.onTerminal("delegate-new")
-      _ <- IO.sleep(50.millis)
-      released = MergeQueue.queueViewOf("delegate-new").isEmpty && !MergeQueue.isInFlight("p-rekey")
-      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
+      gone = MergeQueue.find("delegate-nochan")
+      released = MergeQueue.queueViewOf("delegate-nochan")
     yield
       assertEquals(sent.size(), 1, "the external channel got exactly one merge brief (zero actor injection)")
       assert(sent.peek().contains("<system-reminder>") && sent.peek().contains("merge --no-ff"), "the injected text is the merge brief")
-      assert(afterRekey.isDefined, "the rekeyed entry lives under the new session id")
-      assert(oldGone, "the old id is gone after the rekey")
-      assert(released, "the merge-round terminal (new id) released the single-flight window")
+      assertEquals(granted.map(_.state), Some(MergeQueue.State.TurnGranted), "the external member holds the window after the send")
+      assertEquals(closed.map(_.state), Some(MergeQueue.State.Merged), "the merge-round terminal closes the membership merged")
+      assertEquals(gone.map(_.state), Some(MergeQueue.State.OwnerGone), "a channel-less member is closed owner-gone at grant time")
+      assert(
+        gone.flatMap(_.closeReason).exists(_.contains("no delivery channel on record")),
+        s"the close reason names the undeliverable notification: ${gone.flatMap(_.closeReason)}"
+      )
+      assertEquals(escalations.size(), 1, "exactly one owner-gone escalation (needs-dispatcher-handling is never silent)")
+      assert(escalations.peek()._2.contains("no delivery channel"), "the escalation carries the reason")
+      assert(released.isEmpty, "the owner-gone close released the window (terminal members have no queue view)")
   }
 
 end ExternalLegPrepareSpec

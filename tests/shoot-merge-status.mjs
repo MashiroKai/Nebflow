@@ -1,6 +1,7 @@
-// shoot-merge-status.mjs — panel-merge-status 批视觉取证（改后截图，一次性脚本）。
+// shoot-merge-status.mjs — 候合并面板视觉取证（改后截图，一次性脚本；台账 #896
+// 交通引导员制 2026-10-26 · 前身 = panel-merge-status 批 2026-10-25）。
 // 用法：node tests/shoot-merge-status.mjs <out-dir>
-// 产出：merge-status-queued.png（有队列数据：候合并 + 位次 + 重试 + 拒绝摘要）
+// 产出：merge-status-queued.png（有队列数据：候合并 + 位次 + 未放行原因摘要）
 //       merge-status-degraded.png（API 404：静态候合并 + 等待合并轮）
 import { chromium } from '/Users/kaiyu/Claude code/Stand/node_modules/playwright/index.mjs';
 import { readFileSync, mkdirSync } from 'node:fs';
@@ -71,13 +72,13 @@ const browser = await chromium.launch();
 const page = await browser.newPage();
 await boot(page, {
   generatedAt: Date.now(),
-  queues: [{ projectKey: 'stand', inFlight: false, entries: [{
+  queues: [{ projectKey: 'stand', holder: null, recent: [], entries: [{
     delegateId: 'delegate-mqst-1', description: '面板候合并样例批次', branch: 'delegate/delegate-mqst-1',
     baseBranch: 'main', baseWs: '/ws', taskId: null, parentSessionId: ROOT_SID,
-    position: 3, total: 5, holder: null, pendingRetry: false, reminderSent: false,
-    retryCount: 2, lastAttemptAt: T0 - 60_000, stallNotified: false, stallEscalated: false,
+    position: 3, total: 5, holder: null, state: 'waiting', grantedAt: null, grantedBaseTip: null,
     readyAt: T0 - 300_000,
-    lastRefusalReason: 'merge: dirty worktree: reports/20261025_185500_panel-merge-status/REPORT.md · evidence/20261025_shots/panel.png 未收编',
+    lastBlockReason: 'merge: dirty worktree: reports/20261025_185500_panel-merge-status/REPORT.md · evidence/20261025_shots/panel.png 未收编',
+    lastEventReason: '',
   }] }],
 });
 await page.screenshot({ path: join(OUT, 'merge-status-queued.png') });

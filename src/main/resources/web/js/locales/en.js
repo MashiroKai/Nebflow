@@ -812,8 +812,8 @@ export default {
   // panel-merge-status 批（2026-10-25）：候合并行队列细节段（/api/merge-queue 只读
   // 状态面；位次只渲染不派生，API 未生效 ⇒ 段全缺 = 静态「waiting-merge」降级）。
   'subagents.mergeQueue.ahead': '{n} ahead in merge queue',
-  'subagents.mergeQueue.retry': 'retry #{n}',
-  'subagents.mergeQueue.reason': 'last refusal: {reason}',
+  'subagents.mergeQueue.turn': 'your merge turn — window held',
+  'subagents.mergeQueue.reason': 'hold reason: {reason}',
   // #752 idle-subdivision: what an idle delegate is waiting on + long-idle badge.
   'subagents.waitingBg': 'waiting on {count} bg task(s): {desc} ({dur})',
   'subagents.waitingReceipts': 'waiting on {count} sub-agent receipt(s)',

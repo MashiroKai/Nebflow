@@ -1,34 +1,48 @@
 package nebflow.core.delegate
 
 import cats.effect.IO
+import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.actor.{ActorPath, ActorRef, AgentCommand, AgentEvent}
+import nebflow.actor.{ActorRef, AgentCommand, AgentEvent}
 import nebflow.core.GitWorktrees
-import nebflow.shared.NebflowLogger
-
-import scala.concurrent.duration.FiniteDuration
+import nebflow.shared.{NebflowLogger, PathUtil}
+import scala.util.Try
 
 /**
- * MergeQueue —— delegate 合并队列（R7/S11/S12；worktree-judge-fifo 批 #1224 增补
- * §3.2/§3.3：**排序键＝ready-to-merge 终态（完成）时间**，非创建时间；每 project
- * 一条，代码写死 FIFO）.
+ * MergeQueue —— delegate 合并队列：**交通引导员**（台账 #896 · 2026-10-26 作者裁定
+ * 「主要是你的重试和复活的逻辑写的不好……我们的合并排队系统 应该就是一个交通引导员的
+ * 角色 通知他们一个一个合并就行了 然后手里有个账就行了 它不需要负责合并」）.
  *
- * 执行下沉（S12 改写 R7）：轮到合并 → **system reminder 注入 delegate**（与节点
- * 提醒同通道：`<system-reminder>` 包裹的合并指令，经 turn 边界注入）→
- * **delegate 自行执行合并**（`merge --no-ff` 回基分支）→ 合并轮终态再判
- * （completed / 冲突 blocked，判定与轮转在 [[nebflow.agent.BackoffSupervisor]] 的
- * 终态钩子）。**引擎不代跑任何 git merge**。
+ * 职责（三条，逐字对应裁定）：
+ *   - **只持账（账本）**：每条候合并成员一条记录（分支、属主会话、状态机
+ *     `waiting → turn-granted → merged / owner-gone / failed`），**落盘持久**
+ *     （`<dataRoot>/merge-ledger.json`，逐迁移写穿）——重启不清零、面板可查
+ *     （`/api/merge-queue` + `ChainsReadFace` 行投影）。
+ *   - **只发通知（放行 = 通知）**：base 净空且轮到该成员时，向**属主 delegate 会话**
+ *     注入合并轮指令（带 base 当前 tip）；delegate 自己执行 `git merge` 并回报。
+ *     同一时刻**至多一个持有人**（per projectKey 单飞行——`turn-granted` 即窗本体）。
+ *   - **永不自己执行 git merge**：引擎侧自动合并执行与自动重试合并轮已整体拆除
+ *     （DelegateAutoMerge / MergeStallCare 退役）——「refused×N / parked」语义消失。
  *
- * 调度集中：本 object 只做队列与轮转（单飞行 per project：一个项目的合并轮在飞时
- * 后续 ready-to-merge 排队等待）。队列状态为进程内运行态（actor 死亡即消亡——
- * 与被管 delegate 的 actor 生命周期一致），每次状态迁移**同步落 ChainStore
- * `merge-queue` 行**（跨重启审计可查；重启后未完成的队列条目随 actor 消亡——
- * 已知限制，交付回报注明，恢复面属 #1225 的 resume 语义）。
+ * 放行前置闸（每次授窗前逐项核对，单点在 [[pumpLocked]] → [[grant]]）：
+ *   - **账实核对（先于一切）**：`git merge-base --is-ancestor <branch> <baseBranch>`
+ *     —— 已并入的成员**直接关账**（state=merged），不再通知、不再重试（今晚
+ *     e300e71c「已落定仍 attempt 5 refused/parked」类 should-not-happen 消失）；
+ *     属主会话还活着 docks 时收到「已落地」通知立即收尾（delegate 侧纪律 #6）。
+ *   - **净空闸**：基工作区先过 [[MergeArtifactCare.hygiene]]（白名单工件还原/收编
+ *     ——引擎侧 base 净空维护，非合并执行），余脏非空或基分支非检出分支 ⇒ 本拍
+ *     不放行（state 留 waiting + `grant-blocked` 记账，扫描拍再试）。
+ *   - **属主活性**：属主会话已死 / 通知通道不可达 ⇒ **owner-gone** 关账 + 面板显式
+ *     「需 dispatcher 处置」+ 持久通知升级（绝不静默 park）。
  *
- * 与旧引擎 merge 节点互斥面（`core.project` MergeMutexPolicy / NodeGating）**零
- * 关系、零引用**（增补件 §3.2：旧引擎队列面不相干、不在本批范围）。
+ * 成员回报驱动关账：合并轮终态（BackoffSupervisor / ExternalSessionRunner settle）
+ * → [[onTerminal]]——机械验收通过 = merged；拒绝 = failed(原因)；回合外终态
+ * （取消/超时/会话死亡）先账实核对再落 owner-gone。
+ *
+ * 分层纪律：core 不 import agent——属主失联升级走注册器端口
+ * [[OwnerGonePort]]（生产装配 = agent.SharedResources 构造行）。
  */
 object MergeQueue:
 
@@ -37,16 +51,48 @@ object MergeQueue:
   /** 注入源标记（UserInput.source）——UI 气泡归因 + 审计 grep 锚。 */
   val Source: String = "merge-queue"
 
-  /** 注入事件行种类（ChainStore）。 */
+  /** 审计事件行种类（ChainStore；账本文件是真源，行是审计面）。 */
   val EntryKind: String = "merge-queue"
 
+  // ── 状态机（账本；JSON 直存字符串——跨重启持久形状） ──────────────────
+
+  object State:
+    /** 排队中（等窗 / 等净空 / 等通知）。 */
+    val Waiting: String = "waiting"
+    /** 已放行：属主持合并窗、合并轮在飞（唯一持有人）。 */
+    val TurnGranted: String = "turn-granted"
+    /** 关账：合并已落地（账实核对或属主回合确认）。 */
+    val Merged: String = "merged"
+    /** 关账：属主失联（会话终态/通知不可达）——需 dispatcher 处置。 */
+    val OwnerGone: String = "owner-gone"
+    /** 关账：合并回合被拒（冲突/脏树/机械验收拒绝）——需 dispatcher 处置。 */
+    val Failed: String = "failed"
+
+    val Open: Set[String] = Set(Waiting, TurnGranted)
+    val Terminal: Set[String] = Set(Merged, OwnerGone, Failed)
+    val All: Set[String] = Open ++ Terminal
+
+    def isTerminal(s: String): Boolean = Terminal.contains(s)
+  end State
+
+  /** 合并回合结论（属主回报；onTerminal 的裁决输入）。 */
+  sealed trait RoundOutcome
+
+  object RoundOutcome:
+    /** 机械验收通过——合并真落地。 */
+    case object Merged extends RoundOutcome
+
+    /** 回合被拒（冲突 / 脏树 / 机械验收拒绝）——原因随行关账 failed。 */
+    final case class Refused(reason: String) extends RoundOutcome
+  end RoundOutcome
+
   /**
-   * 一条排队项。`readyAt` = ready-to-merge 终态（完成）时间——**唯一排序键**
-   * （S11；同刻并列按 delegateId 字典序，保决定性）。`baseWs` = 合并执行的工作区
-   * （worktree 腿 = 基工作区——worktree 里 `git merge` 会并进自己的分支，方向错）；
-   * `baseBranch` = spawn 时基工作区的当前分支（合并目标）。
+   * 一条候合并成员（账本记录）。`readyAt` = ready-to-merge 终态（完成）时间——
+   * **唯一排序键**（完成序 FIFO；同刻并列按 delegateId 字典序，保决定性）。
+   * `baseWs` = 合并执行的工作区（worktree 腿 = 基工作区——worktree 里 `git merge`
+   * 会并进自己的分支，方向错）；`baseBranch` = spawn 时基工作区的当前分支。
    */
-  final case class Entry(
+  final case class Member(
     delegateId: String,
     branch: String,
     baseWs: String,
@@ -57,132 +103,200 @@ object MergeQueue:
     parentSessionId: String,
     description: String,
     readyAt: Long,
-    childRef: ActorRef[AgentCommand],
-    supervisorRef: ActorRef[AgentEvent],
-    reminderSentAt: Option[Long] = None,
+    /** 通道类别："internal"（actor 注入）| "external"（续聊通道）。 */
+    channelKind: String,
+    /** 状态机：waiting → turn-granted → merged / owner-gone / failed。 */
+    state: String = State.Waiting,
+    /** 放行时刻 + 放行时 base tip（通知携带，审计可对账）。 */
+    grantedAt: Option[Long] = None,
+    grantedBaseTip: Option[String] = None,
+    /** 关账时刻 + 原因（merged / owner-gone / failed 三终态必有）。 */
+    closedAt: Option[Long] = None,
+    closeReason: Option[String] = None,
+    /** 最近一次未放行原因（净空闸/分支闸；面板可见——waiting 成员的「为什么还没轮到」）。 */
+    lastBlockReason: Option[String] = None,
     /**
-     * 外部执行器腿的合并轮注入通道（引擎加固批 2026-10-09，P1-2）：None = 内部
-     * 腿（childRef actor 注入——既有单点）；Some = 外部腿（续聊通道注入——
-     * mailbox 排队 / CLI resume，settle 侧终结再判）。MergeQueue 零
-     * core.executor import：通道函数由 settle 构造 Entry 时闭包携带。
+     * 内部腿通道（进程内运行态，**不持久**）：child = 注入目标 actor，supervisor =
+     * 合并轮终态回路的 replyTo。持久账本回载后为 None——重启后的开放成员在 boot
+     * reconcile 走 owner-gone（会话随进程消亡，诚实关账）。
      */
-    external: Option[ExternalLeg] = None,
+    internal: Option[InternalLeg] = None,
     /**
-     * 跨重启恢复腿（P2-5 boot sweep 重挂的条目）：原会话 actor 已死，注入走
-     * revive 通道（内部腿 = 续起会话 + [[rekey]] 换键；外部腿 = CLI resume，
-     * 同 [[external]] 通道形）。readyAt 由 sweep 从中断账本行原值回挂（FIFO 序
-     * 跨重启保真）。
+     * 外部腿通道（进程内闭包，**不持久**）：`send(brief)` = 续聊通道注入
+     * （mailbox / CLI resume）。`Left` = 通道失败 ⇒ owner-gone。
      */
-    recovered: Option[Recovered] = None,
-    /**
-     * 待重试标记（steward 批 D3-③，2026-10-23）：合并轮被拒（冲突/脏树/机械
-     * 验收拒绝）或提醒不可投（目标会话已死）的条目**不再堵塞后续**——单飞行窗
-     * 立即放行轮转下一条，本条**留队待重试**（位置键 readyAt 不变，FIFO 序保持）。
-     * 资格恢复 = 事件驱动：会话复活（respawn reattach / boot sweep 重挂）或
-     * [[MergeStallCare]] 滞留看护的重试注入（2026-10-25 批——退避重发合并轮，
-     * 不再永久静默滞留）。pump 授窗时跳过本标记条目（`pumpLocked`）。
-     */
-    pendingRetry: Boolean = false,
-    /**
-     * 滞留台账（merge-queue 滞留两病灶修复批 2026-10-25 作者令腿②）：本条目
-     * **被拒/重试失败的次数**——keepForRetry 终态 +1，看护重试失败 +1。达到
-     * [[MergeStallCare]] 上限 ⇒ 升级告警根会话（不再静默）。
-     */
-    retryCount: Int = 0,
-    /** 上一次重试动作（拒绝/注入/清障失败）的墙钟锚——退避间隔的起算点。 */
-    lastAttemptAt: Long = 0L,
-    /** 本次停靠段落内拒绝诊断通知是否已送达（每次新拒绝复位——逐次通知）。 */
-    stallNotified: Boolean = false,
-    /** 重试预算耗尽后是否已升级告警根会话（粘住——一次停靠段只告警一次）。 */
-    stallEscalated: Boolean = false
-  )
+    external: Option[ExternalLeg] = None
+  ):
+    def open: Boolean = State.Open.contains(state)
+  end Member
+
+  /** 内部腿通道（actor 注入单点）。 */
+  final case class InternalLeg(childRef: ActorRef[AgentCommand], supervisorRef: ActorRef[AgentEvent])
 
   /**
-   * 外部腿通道（P1-2）：`send(brief)` = 把合并指令送进外部 delegate 的续聊通道
-   * （live → mailbox 排队；终态 → CLI resume）。`Right(())` = 送进成功；`Left`
-   * = 通道失败（注入失败的条目出队 + 窗释放，绝不楔死队列）。
+   * 外部腿通道：`send(brief)` = 把合并指令送进外部 delegate 的续聊通道
+   * （live → mailbox 排队；终态 → CLI resume）。`Right(())` = 送进成功；
+   * `Left` = 通道失败（owner-gone，绝不楔死队列）。
    */
   final case class ExternalLeg(send: String => IO[Either[String, Unit]])
 
-  /**
-   * 恢复腿通道（P2-5）：`revive(brief)` = 让已死的会话重新吃到合并指令。内部腿
-   * 的实现 = 续起一个新会话执行合并并 [[rekey]] 换键（Right(()) 已含换键事实）。
-   */
-  final case class Recovered(originId: String, revive: String => IO[Either[String, Unit]])
+  // ── 进程内态 + 持久账本 ───────────────────────────────────────────────
 
-  // ── 进程内运行态（单飞行 per project） ────────────────────────────────
   private val lock = new Object
-  private var queues: Map[String, List[Entry]] = Map.empty // projectKey → FIFO（readyAt 升序）
-  private var inFlight: Set[String] = Set.empty // projectKey → 合并轮在飞
+  private var members: Map[String, Member] = Map.empty // delegateId → Member（含终态，审计/面板保留）
+  private var loaded = false
 
-  /**
-   * 通道条目（`external`/`recovered` 腿——P1-2/P2-5）的占位 ref：actor 注入路径
-   * （fireViaActor）对这两类条目永不走（fireMergeReminder 按通道分派），ref 仅
-   * 因 Entry 字段非可选而需要在场。`!` = IO.unit（误投即 no-op，不炸）。
-   */
-  val NoopChild: ActorRef[AgentCommand] =
-    new ActorRef[AgentCommand]:
-      def path = ActorPath("noop", "merge-queue/channel-child")
-      def !(msg: AgentCommand) = IO.unit
-      def ?[Reply](makeMsg: ActorRef[Reply] => AgentCommand, timeout: Option[FiniteDuration]) =
-        IO.raiseError(new RuntimeException("no-op channel ref cannot ask"))
+  /** 账本文件（`<dataRoot>/merge-ledger.json`；逐迁移写穿，原子替换）。 */
+  private def ledgerPath: os.Path = PathUtil.dataRoot / "merge-ledger.json"
 
-  val NoopSupervisor: ActorRef[AgentEvent] =
-    new ActorRef[AgentEvent]:
-      def path = ActorPath("noop", "merge-queue/channel-supervisor")
-      def !(msg: AgentEvent) = IO.unit
-      def ?[Reply](makeMsg: ActorRef[Reply] => AgentEvent, timeout: Option[FiniteDuration]) =
-        IO.raiseError(new RuntimeException("no-op channel ref cannot ask"))
+  /** 持久化形状（只存数据字段——通道闭包/actor ref 是进程内运行态，永不落盘）。 */
+  private def memberJson(m: Member): Json = Json.obj(
+    "delegateId" -> m.delegateId.asJson,
+    "branch" -> m.branch.asJson,
+    "baseWs" -> m.baseWs.asJson,
+    "baseBranch" -> m.baseBranch.asJson,
+    "worktree" -> m.worktree.asJson,
+    "projectKey" -> m.projectKey.asJson,
+    "taskId" -> m.taskId.asJson,
+    "parentSessionId" -> m.parentSessionId.asJson,
+    "description" -> m.description.asJson,
+    "readyAt" -> m.readyAt.asJson,
+    "channelKind" -> m.channelKind.asJson,
+    "state" -> m.state.asJson,
+    "grantedAt" -> m.grantedAt.asJson,
+    "grantedBaseTip" -> m.grantedBaseTip.asJson,
+    "closedAt" -> m.closedAt.asJson,
+    "closeReason" -> m.closeReason.asJson,
+    "lastBlockReason" -> m.lastBlockReason.asJson
+  )
 
-  // ── 查询面（审计 / spec） ─────────────────────────────────────────────
+  private def memberFromJson(j: Json): Option[Member] =
+    val c = j.hcursor
+    for
+      delegateId <- c.get[String]("delegateId").toOption
+      branch <- c.get[String]("branch").toOption
+      baseWs <- c.get[String]("baseWs").toOption
+      baseBranch <- c.get[String]("baseBranch").toOption
+      projectKey <- c.get[String]("projectKey").toOption
+      readyAt <- c.get[Long]("readyAt").toOption
+    yield Member(
+      delegateId = delegateId,
+      branch = branch,
+      baseWs = baseWs,
+      baseBranch = baseBranch,
+      worktree = c.get[Boolean]("worktree").toOption.getOrElse(false),
+      projectKey = projectKey,
+      taskId = c.get[Option[String]]("taskId").toOption.flatten,
+      parentSessionId = c.get[String]("parentSessionId").toOption.getOrElse(""),
+      description = c.get[String]("description").toOption.getOrElse(""),
+      readyAt = readyAt,
+      channelKind = c.get[String]("channelKind").toOption.getOrElse("internal"),
+      state = c.get[String]("state").toOption.filter(State.All.contains).getOrElse(State.Waiting),
+      grantedAt = c.get[Option[Long]]("grantedAt").toOption.flatten,
+      grantedBaseTip = c.get[Option[String]]("grantedBaseTip").toOption.flatten,
+      closedAt = c.get[Option[Long]]("closedAt").toOption.flatten,
+      closeReason = c.get[Option[String]]("closeReason").toOption.flatten,
+      lastBlockReason = c.get[Option[String]]("lastBlockReason").toOption.flatten
+    )
 
-  def find(delegateId: String): Option[Entry] = lock.synchronized {
-    queues.values.flatten.find(_.delegateId == delegateId)
+  private def persistLocked(): Unit =
+    try
+      val payload = Json.obj("version" -> 1.asJson, "members" -> Json.fromValues(members.values.map(memberJson).toList))
+      val tmp = PathUtil.dataRoot / s"${ledgerPath.last}.tmp"
+      os.write.over(tmp, payload.noSpaces, createFolders = true)
+      os.move(tmp, ledgerPath, replaceExisting = true)
+    catch
+      case e: Throwable =>
+        logger.warn(s"merge-ledger persist failed (memory state unaffected): ${Option(e.getMessage).getOrElse(e.toString).take(200)}")
+
+  /** 惰性加载（首次访问；文件缺失/损坏 = 空账起步，坏行跳过不炸）。 */
+  private def ensureLoadedLocked(): Unit =
+    if !loaded then
+      loaded = true
+      try
+        if os.exists(ledgerPath) then
+          io.circe.parser.parse(os.read(ledgerPath)).toOption.flatMap(_.hcursor.downField("members").as[List[Json]].toOption) match
+            case None => logger.warn(s"merge-ledger at $ledgerPath unreadable — starting an empty ledger")
+            case Some(rows) =>
+              val parsed = rows.flatMap(memberFromJson)
+              members = parsed.map(m => m.delegateId -> m).toMap
+              if parsed.nonEmpty then
+                logger.info(s"merge-ledger loaded: ${parsed.size} member(s) (${parsed.count(_.open)} open)")
+      catch
+        case e: Throwable =>
+          logger.warn(s"merge-ledger load failed — starting an empty ledger: ${Option(e.getMessage).getOrElse(e.toString).take(200)}")
+
+  /** 查询/审计用全量快照（readyAt 升序）。 */
+  def snapshot: List[Member] = lock.synchronized {
+    ensureLoadedLocked()
+    members.values.toList.sortBy(m => (m.readyAt, m.delegateId))
   }
 
-  def pending(projectKey: String): List[Entry] = lock.synchronized {
-    queues.getOrElse(projectKey, Nil)
+  /** 开放成员快照（waiting + turn-granted）。 */
+  def openSnapshot: List[Member] = snapshot.filter(_.open)
+
+  def find(delegateId: String): Option[Member] = lock.synchronized {
+    ensureLoadedLocked()
+    members.get(delegateId)
   }
 
-  def isInFlight(projectKey: String): Boolean = lock.synchronized(inFlight.contains(projectKey))
-
   /**
-   * 全量条目快照（steward 批 D3-⑤ 台账看护消费面 + 审计）。进程内态只读投影，
-   * 零副作用；`MergeWindowCare.care` 每拍经此取全队列做活性看护。
+   * 合并轮在飞判据（DelegateTerminal mergeRound 判定单点）：该 delegate 的成员
+   * 处于 turn-granted（持窗、合并轮指令已注入）。仅 waiting（未放行）不算——
+   * 工作轮终态与合并轮终态必须可分。
    */
-  def entriesSnapshot: List[Entry] = lock.synchronized(queues.values.flatten.toList)
+  def isMergeRound(delegateId: String): Boolean =
+    find(delegateId).exists(_.state == State.TurnGranted)
 
-  // ── ② 活性探针（steward 批 2026-10-23：提醒注入不再绑活体引用盲投）──────
-  //
-  // 注入前探测 childRef 是否活（actor 注册表已退出 = 死——`ref !` 是队列 offer
-  // 永不失败，盲投死 ref = 消息进无人消费的队列静默蒸发 + 章照盖 + 窗被尸体持死）。
-  // 注册点 = agent.SharedResources 构造行（actorSystem 单点注入，本 object 不持
-  // ActorSystem 引用）；未装配（测试 harness）= 恒活 ⇒ 既有行为零变化。
+  /** 活性探针（注入前探测属主 actor 是否活——不盲投死 ref）。生产 boot 装配；未装配 = 恒活。 */
   private val livenessProbe: java.util.concurrent.atomic.AtomicReference[ActorRef[?] => IO[Boolean]] =
     new java.util.concurrent.atomic.AtomicReference(_ => IO.pure(true))
 
-  /** 注册活性探针（生产 boot 装配；测试可注入假探针）。幂等覆盖。 */
   def installLivenessProbe(probe: ActorRef[?] => IO[Boolean]): Unit = livenessProbe.set(probe)
 
-  /** 探针求值（fail-open：探针自身故障 = 不判死——绝不因探针丢提醒）。 */
+  /** 探针求值（fail-open：探针自身故障 = 不判死）。 */
   private def childAlive(ref: ActorRef[?]): Boolean =
-    try
-      import cats.effect.unsafe.implicits.global
-      livenessProbe.get.apply(ref).unsafeRunSync()
+    try livenessProbe.get.apply(ref).unsafeRunSync()
     catch case _: Throwable => true
 
+  // ── 属主失联升级端口（M2 注册器形态：core 只见面，agent 侧装配实现） ──
+
+  object OwnerGonePort:
+
+    /**
+     * owner-gone 关账的升级通知面（持久注入父/根 + 面板警示的数据源）。
+     * 实现面负责目标解析与投递路由（deliverToRootOrInbox 同族）；fail-soft。
+     */
+    trait Face:
+      def deliver(m: Member, reason: String): IO[Unit]
+    end Face
+
+    private val face = new java.util.concurrent.atomic.AtomicReference[Option[Face]](None)
+
+    def install(f: Face): Unit = face.set(Some(f))
+
+    def clear(): Unit = face.set(None)
+
+    def deliver(m: Member, reason: String): Unit =
+      face.get match
+        case Some(f) =>
+          try f.deliver(m, reason).unsafeRunSync()
+          catch
+            case e: Throwable =>
+              logger.warn(s"[merge-queue] owner-gone escalation delivery failed for ${m.delegateId}: ${Option(e.getMessage).getOrElse(e.toString).take(200)}")
+        case None =>
+          logger.warn(
+            s"[merge-queue] OwnerGonePort not installed — owner-gone escalation for '${m.delegateId}' is ledger-only " +
+              "(production boot installs this at SharedResources construction)"
+          )
+  end OwnerGonePort
+
+  // ── 面板/行投影 ───────────────────────────────────────────────────────
+
   /**
-   * 行内排队槽（delegate-ui 批 2026-10-08 · G5 读面单点）：某 delegate 当下在本队列
-   * 的实时槽位投影。🔴 判据**单点** = 本队列的进程内状态（`queues` + `inFlight`，
-   * 引擎闸本体）——🔴 禁读 ChainStore `merge-queue` 历史行（审计面，非实时真源）、
-   * 🔴 禁读文件票层（`.nebflow/locks/main-merge.queue`，过渡期旧层）、🔴 禁从事件流
-   * 回放。排序键 = 引擎自己的 FIFO 序（`sortByReadyAt`：readyAt ↑ → delegateId ↑），
-   * 行投影不二次派生次序。
-   *
-   * 键语义与 NodeList 载荷键同族（`mergeQueue` = 可见性槽「谁挡着我/谁持窗」、
-   * `mergeQueuePos` = 位次「我排第几」）；`None` = 未排队（不在册）⇒ 消费行**缺键**
-   * （与 NodeList「只收非空项」同纪律）。`projectKey` 原样透出——P2 把键切到
-   * workspace 维度时本面零改动、消费端语义自动跟随（两批零耦合）。
+   * 某 delegate 当下的排队槽位投影（行内「谁挡着我/我排第几」读面单点）。
+   * 只对**开放成员**有值（终态成员 = 已出账，键缺席）。排序键 = 引擎自己的
+   * FIFO 序（readyAt ↑ → delegateId ↑），行投影不二次派生次序。
    */
   final case class QueueView(
     delegateId: String,
@@ -194,571 +308,521 @@ object MergeQueue:
     total: Int,
     /** 严格排在本位之前的 delegateId（引擎序）。队头 = Nil。 */
     ahead: List[String],
-    /** 合并窗持有者（`inFlight` 的队头条目 id）；None = 窗空闲（纯排队）。 */
+    /** 合并窗持有者（turn-granted 成员 id）；None = 窗空闲（纯排队）。 */
     holder: Option[String],
-    /** 本条是否已被注入合并轮指令（reminder 已发 = 持窗者的动作面已启动）。 */
-    reminderSent: Boolean,
+    /** 本条状态（waiting / turn-granted）。 */
+    state: String,
     readyAt: Long
   )
 
   def queueViewOf(delegateId: String): Option[QueueView] = lock.synchronized {
-    queues.toList
-      .collectFirst { case (projectKey, q) if q.exists(_.delegateId == delegateId) => projectKey }
-      .flatMap { projectKey =>
-        val q = sortByReadyAt(queues.getOrElse(projectKey, Nil))
-        q.find(_.delegateId == delegateId).map { entry =>
-          val pos = q.indexWhere(_.delegateId == delegateId) + 1
+    ensureLoadedLocked()
+    members.get(delegateId).filter(_.open).flatMap { me =>
+      val open = openSortedLocked(me.projectKey)
+      val pos = open.indexWhere(_.delegateId == delegateId)
+      if pos < 0 then None
+      else
+        Some(
           QueueView(
             delegateId = delegateId,
-            projectKey = projectKey,
-            branch = entry.branch,
-            baseBranch = entry.baseBranch,
-            position = pos,
-            total = q.size,
-            ahead = q.take(pos - 1).map(_.delegateId),
-            holder = if inFlight.contains(projectKey) then q.headOption.map(_.delegateId) else None,
-            reminderSent = entry.reminderSentAt.isDefined,
-            readyAt = entry.readyAt
-          )
-        }
-      }
-  }
-
-  // ── 滞留面（merge-queue 滞留两病灶修复批 2026-10-25 腿②③） ────────────
-  //
-  // 被拒条目此前只有「留队待重试」的标记而无任何重试者/告警者——队首滞留静默
-  // 楔死（作者 2026-10-25 实证：reports/ 工件两次挡死队列两天多）。本段给
-  // [[MergeStallCare]]（滞留看护）与 /api/merge-queue（队列状态面）提供单点：
-  // 台账字段迁移（markStallNotified / bumpStallAttempt）、窗接管（acquireWindow
-  // / releaseWindow）、通道腿重发（retryInject）、全队列投影（stallSnapshot）。
-
-  /** 一条队列条目的滞留投影（看护判据 + API 状态面单一形状源）。 */
-  final case class StallView(
-    delegateId: String,
-    projectKey: String,
-    branch: String,
-    baseBranch: String,
-    baseWs: String,
-    description: String,
-    taskId: Option[String],
-    parentSessionId: String,
-    /** 1 起位次（引擎 FIFO 序）。 */
-    position: Int,
-    total: Int,
-    /** 窗空闲 = None；窗持 = 队头条目 id（与 QueueView.holder 同判据）。 */
-    holder: Option[String],
-    pendingRetry: Boolean,
-    reminderSent: Boolean,
-    retryCount: Int,
-    lastAttemptAt: Long,
-    stallNotified: Boolean,
-    stallEscalated: Boolean,
-    readyAt: Long
-  )
-
-  /** 全队列滞留投影（进程内态只读；API 面 + MergeStallCare 判据同源）。 */
-  def stallSnapshot: List[StallView] = lock.synchronized {
-    queues.toList.flatMap { (projectKey, q) =>
-      val sorted = sortByReadyAt(q)
-      sorted.zipWithIndex.map { (e, idx) =>
-        StallView(
-          delegateId = e.delegateId,
-          projectKey = projectKey,
-          branch = e.branch,
-          baseBranch = e.baseBranch,
-          baseWs = e.baseWs,
-          description = e.description,
-          taskId = e.taskId,
-          parentSessionId = e.parentSessionId,
-          position = idx + 1,
-          total = sorted.size,
-          // 持窗者 = 真实在飞合并轮（提醒已发 ∧ 未停靠）；窗持但无在飞轮 = 队头
-          // （既有 QueueView 语义的精化——停靠队头不是真持窗者）。
-          holder =
-            if inFlight.contains(projectKey) then
-              sorted.find(e2 => e2.reminderSentAt.isDefined && !e2.pendingRetry).orElse(sorted.headOption).map(_.delegateId)
-            else None,
-          pendingRetry = e.pendingRetry,
-          reminderSent = e.reminderSentAt.isDefined,
-          retryCount = e.retryCount,
-          lastAttemptAt = e.lastAttemptAt,
-          stallNotified = e.stallNotified,
-          stallEscalated = e.stallEscalated,
-          readyAt = e.readyAt
-        )
-      }
-    }
-  }
-
-  /** lock held；按 delegateId 原地迁移条目（查无 = no-op）。 */
-  private def mutateEntryLocked(delegateId: String)(f: Entry => Entry): Option[Entry] =
-    queues.find((_, q) => q.exists(_.delegateId == delegateId)).flatMap { (key, _) =>
-      val updated = queues(key).map(e => if e.delegateId == delegateId then f(e) else e)
-      queues = queues.updated(key, updated)
-      updated.find(_.delegateId == delegateId)
-    }
-
-  /** 拒绝诊断通知已送达盖章（MergeStallCare 通知腿；查无 = no-op）。 */
-  def markStallNotified(delegateId: String): Unit = lock.synchronized {
-    mutateEntryLocked(delegateId)(_.copy(stallNotified = true)).foreach { e =>
-      record(e, "stall-notice-sent", Json.obj("retryCount" -> e.retryCount.asJson))
-    }
-  }
-
-  /** 重试预算耗尽的升级告警已发盖章（粘住——一次停靠段只告警一次；查无 = no-op）。 */
-  def markStallEscalated(delegateId: String): Unit = lock.synchronized {
-    mutateEntryLocked(delegateId)(_.copy(stallEscalated = true)).foreach { e =>
-      record(e, "stall-escalated", Json.obj("retryCount" -> e.retryCount.asJson))
-    }
-  }
-
-  /**
-   * 障碍清除事件（MergeStallCare 树脏→洁过渡检测命中）：退避闸旁路（lastAttemptAt
-   * 归零）+ 升级粘住解除（stallEscalated 复位——障碍真清除后恢复自动推进资格；
-   * 若再滞留走完整重试+再升级路径，事件有界不 storms）。账本行 `obstacle-cleared`。
-   */
-  def markObstacleCleared(delegateId: String): Unit = lock.synchronized {
-    mutateEntryLocked(delegateId)(_.copy(lastAttemptAt = 0L, stallEscalated = false)).foreach { e =>
-      record(e, "obstacle-cleared", Json.obj("retryCount" -> e.retryCount.asJson))
-    }
-  }
-
-  /**
-   * 滞留重试失败记账（清障仍脏 / 通道复活失败——无合并轮在飞故无终态可计数，
-     * 由看护直接记账）：retryCount +1、退避锚重置、通知复位（下拍携新路径再通知）。
-   */
-  def bumpStallAttempt(delegateId: String, reason: String): Unit = lock.synchronized {
-    mutateEntryLocked(delegateId) { e =>
-      e.copy(retryCount = e.retryCount + 1, lastAttemptAt = System.currentTimeMillis(), stallNotified = false)
-    }.foreach { e =>
-      record(
-        e,
-        "stall-attempt",
-        Json.obj("reason" -> reason.take(300).asJson, "retryCount" -> e.retryCount.asJson)
-      )
-    }
-  }
-
-  /** 窗接管（重试注入前；已被持 = false——竞态让位，下拍再来）。 */
-  def acquireWindow(projectKey: String): Boolean = lock.synchronized {
-    if inFlight.contains(projectKey) then false
-    else
-      inFlight = inFlight + projectKey
-      true
-  }
-
-  /** 窗释放（重试注入失败的回收腿；仅看护/复活路径使用）。 */
-  def releaseWindow(projectKey: String): Unit = lock.synchronized {
-    inFlight = inFlight - projectKey
-  }
-
-  /**
-   * 滞留重发（MergeStallCare 重试腿的通道单点）：通道腿（external/recovered 闭包）
-   * 重发合并指令——成功 = 盖章 + 记账行 `retry-injected` + **持窗**（合并轮重新
-     * 在飞，终态释放）；失败 = 记账行 `retry-inject-failed` + 本条留队不动 +
-   * `bumpStallAttempt`（退避进位）。内部腿（childRef）不走此处——会话已终态，
-   * 复活归 agent 层 [[MergeStallCare.RevivalPort]]（续起会话 + rekey）；本面返回
-   * Left 标识。条目在两拍之间已出队（合并落地/收口）= Right 空转。
-   */
-  def retryInject(entry: Entry): IO[Either[String, Unit]] =
-    import cats.effect.unsafe.implicits.global
-    val current = lock.synchronized {
-      if inFlight.contains(entry.projectKey) then None // 窗被持 = 竞态，本拍放弃
-      else queues.getOrElse(entry.projectKey, Nil).find(_.delegateId == entry.delegateId)
-    }
-    current match
-      case None => IO.pure(Right(())) // 已出队（本轮已落地/收口）——重试自然完成
-      case Some(cur) =>
-        cur.recovered.orElse(cur.external.map(l => Recovered(cur.delegateId, l.send))) match
-          case Some(recov) =>
-            recov.revive(mergeBriefFor(cur)).attempt.unsafeRunSync() match
-              case Right(Right(())) =>
-                stampReminder(cur)
-                lock.synchronized { inFlight = inFlight + cur.projectKey } // 持窗：合并轮重新在飞
-                record(
-                  stampOf(cur),
-                  "retry-injected",
-                  Json.obj(
-                    "retryCount" -> cur.retryCount.asJson,
-                    "viaChannel" -> (if cur.recovered.isDefined then "recovered" else "external").asJson
-                  )
-                )
-                IO.pure(Right(()))
-              case Right(Left(err)) =>
-                bumpStallAttempt(cur.delegateId, s"retry channel inject failed: ${err.take(200)}")
-                IO.pure(Left(err))
-              case Left(e) =>
-                val err = Option(e.getMessage).getOrElse(e.toString)
-                bumpStallAttempt(cur.delegateId, s"retry channel inject threw: ${err.take(200)}")
-                IO.pure(Left(err))
-            end match
-          case None => IO.pure(Left("internal-leg: revival via MergeStallCare.RevivalPort"))
-    end match
-  end retryInject
-
-  /** IO 包装（看护扫描腿是 IO 上下文）。 */
-  def stallSnapshotIO: IO[List[StallView]] = IO.blocking(stallSnapshot)
-
-  /**
-   * 合并轮注入前的工件卫生（2026-10-25 批腿①）：基工作区 evidence/、reports/
-   * 下的生成工件先处置（tracked 覆写还原 + 未跟踪收编进待合并批）——delegate 的
-   * `git merge` 不再被工件挡死（10-25 病灶①的合并轮形态）。全 fail-soft：任何
-   * 故障只 WARN，注入照常（delegate 的拒绝面兜底，MergeStallCare 重试拍再清）。
-   * 有动作落账本行 `artifact-hygiene`（审计可查）。
-   */
-  private def artifactHygiene(entry: Entry): Unit =
-    try
-      val ws = os.Path(entry.baseWs)
-      if os.exists(ws) && GitWorktrees.isGitRepo(ws) then
-        val report = MergeArtifactCare.hygiene(ws)
-        if report.restored.nonEmpty || report.absorbed.nonEmpty then
-          record(
-            entry,
-            "artifact-hygiene",
-            Json.obj(
-              "restored" -> report.restored.asJson,
-              "absorbed" -> report.absorbed.asJson,
-              "absorbCommit" -> report.absorbCommit.map(_.take(12)).asJson,
-              "remainingDirty" -> report.remainingDirty.asJson
-            )
-          )
-    catch
-      case e: Throwable =>
-        logger.warn(s"merge-queue artifact hygiene skipped for ${entry.delegateId}: ${Option(e.getMessage).getOrElse(e.toString).take(200)}")
-
-  /** 测试复位（生产无调用方）。 */
-  private[delegate] def reset(): Unit = lock.synchronized {
-    queues = Map.empty
-    inFlight = Set.empty
-  }
-
-  // ── 入队与轮转 ────────────────────────────────────────────────────────
-
-  /**
-   * ready-to-merge 入队并尝试轮转。FIFO 排序键 = `readyAt`（完成时间）——
-   * 后到不得插队；排序在**本单点**（spec 判红锚）。锁定区只做队列状态机；
-   * 中选的注入在本函数尾部（锁外）执行——actor 消息投递（`!` = IO）不在
-   * 锁内跑（mail 箱投递虽非阻塞，锁内同步 IO 执行是反面先例）。
-   */
-  def enqueue(entry: Entry): Unit =
-    lock
-      .synchronized {
-        val q = queues.getOrElse(entry.projectKey, Nil) :+ entry
-        val sorted = q.sortBy(e => (e.readyAt, e.delegateId)) // S11：完成时间 FIFO
-        queues = queues.updated(entry.projectKey, sorted)
-        record(entry, "enqueued", Json.obj("readyAt" -> entry.readyAt.asJson, "queueDepth" -> sorted.size.asJson))
-        pumpLocked(entry.projectKey)
-      }
-      .foreach(fireMergeReminder)
-
-  /**
-   * delegate 终态（任意形态：合并轮完成 / 合并窗超时被取消 / 直接终态）时的
-   * 出队钩子——若该 delegate 是本 project 在飞合并的持有者，释放并轮转下一条。
-   * 幂等（查无条目 = no-op）。由 BackoffSupervisor 的终态路径（gate source=delegate）
-   * 调用。
-   *
-   * `keepForRetry`（steward 批 D3-③，2026-10-23）：合并轮**被拒**（冲突/脏树/
-   * 机械验收拒绝）的终态传 true——条目**不出队**，标 `pendingRetry` 留队待重试
-   * （位置键 readyAt 不变），单飞行窗立即释放并轮转下一条（队头被拒不再堵塞
-   * 后续）。重试资格 = 事件驱动恢复（respawn reattach / boot sweep 重挂）。
-   * 默认 false = 既有出队语义逐字不变。
-   */
-  def onTerminal(delegateId: String, keepForRetry: Boolean = false): Unit =
-    lock
-      .synchronized {
-        findAndRemoveLocked(delegateId) match
-          case None => None
-          case Some(entry) if keepForRetry && entry.reminderSentAt.isDefined =>
-            // 滞留台账（2026-10-25 批腿②）：被拒 = 一次失败的重试轮——计数 +1、
-            // 退避锚重置、拒绝诊断通知复位（MergeStallCare 下拍逐次通知）。
-            // stallEscalated 粘住（一次停靠段只升级告警一次）。
-            val now = System.currentTimeMillis()
-            val flagged = entry.copy(
-              pendingRetry = true,
-              retryCount = entry.retryCount + 1,
-              lastAttemptAt = now,
-              stallNotified = false
-            )
-            val q = queues.getOrElse(entry.projectKey, Nil) :+ flagged
-            queues = queues.updated(entry.projectKey, sortByReadyAt(q))
-            inFlight = inFlight - entry.projectKey
-            record(
-              flagged,
-              "refused-keep-queued",
-              Json.obj("phase" -> "merge-refused-pending-retry".asJson, "retryCount" -> flagged.retryCount.asJson)
-            )
-            pumpLocked(entry.projectKey)
-          case Some(entry) =>
-            if entry.reminderSentAt.isDefined then
-              inFlight = inFlight - entry.projectKey
-              record(entry, "dequeued", Json.obj("phase" -> "merge-round-done".asJson))
-            else
-              record(entry, "dequeued", Json.obj("phase" -> "pre-injection".asJson))
-              releaseGhostWindowLocked(entry.projectKey)
-            pumpLocked(entry.projectKey)
-      }
-      .foreach(fireMergeReminder)
-
-  // lock held
-  /**
-   * 尸窗自愈（steward 批 D3-③）：pre-injection 出队后窗仍被占、但队列里再无
-   * 「在飞」（提醒已发且未待重试）条目 = 持窗者已消亡（终态清理竞态形态）——
-   * 释放窗，绝不留幽灵窗楔死整队。有活持窗者时零动作。
-   */
-  private def releaseGhostWindowLocked(projectKey: String): Unit =
-    if inFlight.contains(projectKey) &&
-      !queues.getOrElse(projectKey, Nil).exists(e => e.reminderSentAt.isDefined && !e.pendingRetry)
-    then inFlight = inFlight - projectKey
-
-  /** 排序纯函数（spec 判红锚：完成时间序，创建时间序必红）。 */
-  private[delegate] def sortByReadyAt(entries: List[Entry]): List[Entry] =
-    entries.sortBy(e => (e.readyAt, e.delegateId))
-
-  /**
-   * 恢复腿换键（P2-5）：内部腿续起会话产生**新会话 id**——条目换键后，合并轮
-   * 终态（新 id 的 onCompleted → `MergeQueue.find(newId)` 的 mergeRound 判定与
-   * `onTerminal(newId)` 出队）才能正确驱动单飞行窗。换键即盖章
-   * `reminderSentAt`（revive 成功 = 合并指令已送达新会话——合并轮在飞）。幂等：
-   * 查无旧键 = no-op。换键事实落 ChainStore `recovered-rekeyed` 行。
-   */
-  def rekey(originId: String, newId: String): Unit =
-    if originId == newId then ()
-    else
-      lock
-        .synchronized {
-          findAndRemoveLocked(originId) match
-            case None => None
-            case Some(entry) =>
-              val rekeyed = entry.copy(
-                delegateId = newId,
-                recovered = None,
-                reminderSentAt = Some(System.currentTimeMillis()) // 换键即盖章：brief 已送达续起会话
-              )
-              val q = queues.getOrElse(entry.projectKey, Nil) :+ rekeyed
-              queues = queues.updated(entry.projectKey, sortByReadyAt(q))
-              record(
-                entry,
-                "recovered-rekeyed",
-                Json.obj(
-                  "originId" -> originId.asJson,
-                  "newId" -> newId.asJson,
-                  "phase" -> "merge-round-superseded".asJson
-                )
-              )
-              Some(rekeyed)
-        }
-        .foreach { _ => () } // 换键条目已在飞（窗已持）——不重复 pump
-
-  // lock held
-  private def findAndRemoveLocked(delegateId: String): Option[Entry] =
-    queues.find((_, q) => q.exists(_.delegateId == delegateId)).flatMap { (key, _) =>
-      val entry = queues(key).find(_.delegateId == delegateId)
-      queues = queues.updated(key, queues(key).filterNot(_.delegateId == delegateId))
-      if queues(key).isEmpty then queues = queues - key
-      entry
-    }
-
-  // lock held
-  private def pumpLocked(projectKey: String): Option[Entry] =
-    if inFlight.contains(projectKey) then None
-    else
-      // D3-③（steward 批）：待重试条目不参与授窗（跳过继续处理后续项，队头
-      // 保持待重试）——复活轮 reattach / boot sweep 重挂时清除标记后重新入序。
-      queues.get(projectKey).flatMap(_.filterNot(_.pendingRetry).headOption) match
-        case None => None
-        case Some(head) =>
-          inFlight = inFlight + projectKey
-          Some(head)
-
-  /**
-   * 合并轮注入（S12；引擎加固批 2026-10-09 扩展 P1-2/P2-5 三通道）：按条目通道
-   * 分派——内部腿 = 既有 actor 注入（逐字）；外部腿（P1-2）/ 恢复腿（P2-5）=
-   * `send/revive` 闭包注入（mailbox / CLI resume / 续起会话）。`reminderSentAt`
-   * 与 ChainStore 行 = 增补件 §3.3「代码侧记录 reminder 已发状态（审计可查）」。
-   * **锁外执行**（enqueue/onTerminal/rekey 尾部）；通道注入失败 = 条目出队＋窗
-   * 释放＋WARN＋账本行（绝不楔死队列单飞行窗）。
-   */
-  private def fireMergeReminder(entry: Entry): Unit =
-    entry.recovered
-      .orElse(entry.external.map(l => Recovered(entry.delegateId, l.send))) match
-      case Some(recov) => fireViaChannel(entry, recov)
-      case None => fireViaActor(entry)
-
-  /**
-   * 既有单点（内部腿 actor 注入——原 fireMergeReminder 本体）。steward 批 D3-②
-   * （2026-10-23）：注入前活性探测——目标已死 ⇒ **不盲投**（投尸 = 消息进无人
-   * 消费的队列）、不盖章、不持窗：条目标记 `pendingRetry` 留队，账本行
-   * `reminder-deferred`（提醒持久化面——持久账本行 + 复活轮 reattach/pump 重投，
-   * 不绑活体引用），单飞行窗立即放行轮转下一条。
-   */
-  private def fireViaActor(entry: Entry): Unit =
-    import cats.effect.unsafe.implicits.global
-    if !childAlive(entry.childRef) then deferUndeliverable(entry, "child session not live at injection time")
-    else
-      artifactHygiene(entry) // 轮前工件卫生（2026-10-25 批腿①——fail-soft，不阻断注入）
-      val brief = mergeBriefFor(entry)
-      (entry.childRef ! AgentCommand.UserInput(
-        text = brief,
-        replyTo = Some(entry.supervisorRef),
-        source = Some(Source),
-        eventType = Some("merge-turn")
-      )).unsafeRunSync()
-      stampReminder(entry)
-      record(stampOf(entry), "reminder-sent", Json.obj("mergeRound" -> true.asJson))
-
-  /**
-   * 提醒不可投（目标会话已死）：条目留队待重试（不删不投），窗释放 + 轮转下一条
-   * + 账本行 `reminder-deferred`（dropFailedInject 的「留队」变体——条目价值仍在，
-   * 只等会话复活）。
-   */
-  private def deferUndeliverable(entry: Entry, reason: String): Unit =
-    logger.warn(
-      s"merge-queue reminder deferred for ${entry.delegateId} — entry kept pending retry, single-flight window released: $reason"
-    )
-    lock
-      .synchronized {
-        queues.get(entry.projectKey).flatMap(_.find(_.delegateId == entry.delegateId)) match
-          case None => None
-          case Some(_) =>
-            queues = queues.updated(
-              entry.projectKey,
-              queues(entry.projectKey)
-                .map(e => if e.delegateId == entry.delegateId then e.copy(pendingRetry = true) else e)
-            )
-            inFlight = inFlight - entry.projectKey
-            pumpLocked(entry.projectKey)
-      }
-      .foreach(fireMergeReminder)
-    record(entry, "reminder-deferred", Json.obj("reason" -> reason.take(200).asJson))
-
-  end deferUndeliverable
-
-  /**
-   * 崩溃重启换绑（steward 批 D3-②，2026-10-23）：delegate 会话崩溃经监督者
-   * respawn 换新子 actor——排队条目的 childRef 原地换绑（**事件驱动**，respawn
-   * 点调用），`pendingRetry` 标记随之清除（复活轮重新获得注入资格）。提醒**未发
-   * 过**的条目若正巧队首且窗空闲 ⇒ 立即 pump 重投；提醒**已发过**（合并轮在飞
-   * 崩溃）只换绑不重投——断点续跑轮经 recovered messages 续推合并轮。查无条目
-   * = no-op（未停靠 / 已出队 / 通道腿）。
-   */
-  def reattach(delegateId: String, newChildRef: ActorRef[AgentCommand]): Unit =
-    lock
-      .synchronized {
-        queues.find((_, q) => q.exists(_.delegateId == delegateId)) match
-          case None => None
-          case Some((key, _)) =>
-            val refreshed = queues(key)
-              .map(e => if e.delegateId == delegateId then e.copy(childRef = newChildRef, pendingRetry = false) else e)
-            queues = queues.updated(key, refreshed)
-            val me = refreshed.find(_.delegateId == delegateId).getOrElse(queues(key).head)
-            record(me, "child-reattached", Json.obj("phase" -> "respawn-reattach".asJson))
-            if me.reminderSentAt.isEmpty then pumpLocked(key) else None
-      }
-      .foreach(fireMergeReminder)
-
-  /** IO 包装（BackoffSupervisor respawn 路径是 IO 上下文）。 */
-  def reattachIO(delegateId: String, newChildRef: ActorRef[AgentCommand]): IO[Unit] =
-    IO.blocking(reattach(delegateId, newChildRef))
-
-  /** 外部腿/恢复腿通道注入（P1-2/P2-5）。 */
-  private def fireViaChannel(entry: Entry, recov: Recovered): Unit =
-    import cats.effect.unsafe.implicits.global
-    artifactHygiene(entry) // 轮前工件卫生（2026-10-25 批腿①——fail-soft，不阻断注入）
-    recov.revive(mergeBriefFor(entry)).attempt.unsafeRunSync() match
-      case Right(Right(())) =>
-        // 换键腿（内部恢复）已在 rekey 盖章；未换键腿（外部通道，同 id）在此盖章。
-        stampReminder(entry)
-        record(
-          stampOf(entry),
-          "reminder-sent",
-          Json.obj(
-            "mergeRound" -> true.asJson,
-            "viaChannel" -> (if entry.recovered.isDefined then "recovered" else "external").asJson,
-            "originId" -> recov.originId.asJson
+            projectKey = me.projectKey,
+            branch = me.branch,
+            baseBranch = me.baseBranch,
+            position = pos + 1,
+            total = open.size,
+            ahead = open.take(pos).map(_.delegateId),
+            holder = open.find(_.state == State.TurnGranted).map(_.delegateId),
+            state = me.state,
+            readyAt = me.readyAt
           )
         )
-      case Right(Left(err)) => dropFailedInject(entry, err)
-      case Left(e) => dropFailedInject(entry, e.getMessage)
+    }
+  }
 
-    end match
+  // lock held；本项目开放成员按 FIFO 序
+  private def openSortedLocked(projectKey: String): List[Member] =
+    members.values.toList.filter(m => m.projectKey == projectKey && m.open).sortBy(m => (m.readyAt, m.delegateId))
 
-  end fireViaChannel
+  // lock held
+  private def holderLocked(projectKey: String): Option[Member] =
+    openSortedLocked(projectKey).find(_.state == State.TurnGranted)
 
-  /** 通道注入失败：条目出队＋窗释放＋pump 下一条（绝不楔死单飞行窗）。 */
-  private def dropFailedInject(entry: Entry, err: String): Unit =
-    logger.warn(
-      s"merge-queue channel inject failed for ${entry.delegateId} — entry dropped, single-flight window released: ${err.take(300)}"
-    )
-    lock
-      .synchronized {
-        findAndRemoveLocked(entry.delegateId)
-        inFlight = inFlight - entry.projectKey
-        pumpLocked(entry.projectKey)
-      }
-      .foreach(fireMergeReminder)
-    record(entry, "inject-failed", Json.obj("error" -> err.take(300).asJson))
+  // ── 审计行（fail-soft：账本失败绝不阻断队列） ─────────────────────────
 
-  /**
-   * reminderSentAt 盖章（队列内按 delegateId 定位——换键腿的章已由 rekey 落、
-   * 旧 id 定位不到 = 自然 no-op）。
-   */
-  private def stampReminder(entry: Entry): Unit =
-    if queues.getOrElse(entry.projectKey, Nil).exists(_.delegateId == entry.delegateId) then
-      val now = System.currentTimeMillis()
-      lock.synchronized {
-        queues = queues.updated(
-          entry.projectKey,
-          queues
-            .getOrElse(entry.projectKey, Nil)
-            .map(e => if e.delegateId == entry.delegateId then e.copy(reminderSentAt = Some(now)) else e)
-        )
-      }
-
-  private def stampOf(entry: Entry): Entry = entry.copy(reminderSentAt = Some(System.currentTimeMillis()))
-
-  /**
-   * 合并指令文本（🔴 模型可见文案——§16 待过目标注：本批最小成稿，终稿归 N3
-   * 提示词批）。worktree 腿与就地腿同形：`git -C <baseWs> merge --no-ff <branch>`
-   * （worktree 里 merge 会并进 delegate 自己的分支——方向必须钉死在基工作区）。
-   *
-   * delegate-finish-report 修复批 2026-10-25 增一行 finish 报告契约：终稿必须以
-   * 工作结果为主（产出/工件/REPORT.md 路径），合并信息一行带过——引擎另有自动
-   * 附页（DelegateWorkReport），但 delegate 自述摘要是第一交付面。
-   */
-  def mergeBriefFor(entry: Entry): String =
-    s"""<system-reminder>
-Merge turn (FIFO): your branch `${entry.branch}` has been judged ready-to-merge and it is now your turn in the queue for `${entry.baseWs}`.
-Execute the merge EXACTLY like this (single command, no flags beyond these):
-  git -C ${entry.baseWs} merge --no-ff ${entry.branch}
-This merges your branch into the base branch `${entry.baseBranch}`. Do NOT merge anywhere else, do NOT force-push, do NOT rebase, do NOT touch other branches or other sessions' work.
-If git refuses or reports conflicts: STOP — change nothing, resolve nothing; report the refusal/conflict verbatim in your final text, call delegate_report(category="finish", detail=<the refusal/conflict>), and end your turn (there is no blocked category — the refusal is your report's content, not a state).
-On success, call delegate_report(category="finish", detail=<what the merge landed>) and end with your final report; the engine re-judges the merge round. Your final report must LEAD with the work result (what the task produced, artifacts, REPORT.md paths) and keep the merge info to one line — the parent session reads this report as the task's result.
-</system-reminder>"""
-
-  /** ChainStore 审计行（fail-soft：账本失败绝不阻断队列）。 */
-  private def record(entry: Entry, action: String, extra: Json): Unit =
+  private def record(m: Member, action: String, extra: Json): Unit =
     try
       ChainStore.appendSync(
-        ChainStore.keyFor(entry.taskId, entry.delegateId),
+        ChainStore.keyFor(m.taskId, m.delegateId),
         EntryKind,
         Json
           .obj(
             "action" -> action.asJson,
-            "delegateId" -> entry.delegateId.asJson,
-            "branch" -> entry.branch.asJson,
-            "projectKey" -> entry.projectKey.asJson,
-            "readyAt" -> entry.readyAt.asJson
+            "delegateId" -> m.delegateId.asJson,
+            "branch" -> m.branch.asJson,
+            "projectKey" -> m.projectKey.asJson,
+            "state" -> m.state.asJson,
+            "readyAt" -> m.readyAt.asJson
           )
           .deepMerge(extra)
       )
     catch
       case e: Throwable =>
-        logger.warn(s"MergeQueue ChainStore line failed ($action): ${e.getMessage}")
+        logger.warn(s"MergeQueue ChainStore line failed ($action): ${Option(e.getMessage).getOrElse(e.toString).take(200)}")
 
-  /** IO 包装（BackoffSupervisor 终态路径是 IO 上下文）。 */
-  def enqueueIO(entry: Entry): IO[Unit] = IO.blocking(enqueue(entry))
+  /** 最近一次关账/拒绝原因（ChainStore 扫描——API 状态面的原因列；fail-soft 空映射）。 */
+  def lastReasons(delegateIds: Set[String]): Map[String, String] =
+    if delegateIds.isEmpty then Map.empty
+    else
+      try
+        ChainStore
+          .listSync()
+          .flatMap(_.entries)
+          .filter(_.kind == EntryKind)
+          .flatMap { e =>
+            val c = e.payload.hcursor
+            for
+              delegateId <- c.get[String]("delegateId").toOption if delegateIds.contains(delegateId)
+              action <- c.get[String]("action").toOption
+              reason <- c.get[String]("reason").toOption
+            yield (delegateId, e.at, action, reason)
+          }
+          .groupBy(_._1)
+          .map { (id, rows) =>
+            val last = rows.maxBy(_._2)
+            id -> s"${last._3}: ${last._4.take(240)}"
+          }
+      catch
+        case e: Throwable =>
+          logger.warn(s"[merge-queue] reason scan failed: ${e.getMessage}")
+          Map.empty
 
-  def onTerminalIO(delegateId: String, keepForRetry: Boolean = false): IO[Unit] =
-    IO.blocking(onTerminal(delegateId, keepForRetry))
+  // ── 入队（waiting） ───────────────────────────────────────────────────
 
+  /**
+   * ready-to-merge 入账并尝试放行。FIFO 排序键 = `readyAt`（完成时间）——后到不得
+   * 插队；排序在**本单点**（spec 判红锚）。锁定区只做账本状态机；放行动作
+   * （git 核对 + 通知）在锁外执行。
+   */
+  def enqueue(entry: Member): Unit =
+    lock
+      .synchronized {
+        ensureLoadedLocked()
+        members.get(entry.delegateId) match
+          case Some(existing) if existing.open =>
+            // 幂等：已在账的开放成员不重复入账（重复完成/钩子重放），只刷新通道。
+            val refreshed = existing.copy(internal = entry.internal.orElse(existing.internal), external = entry.external.orElse(existing.external))
+            members = members.updated(entry.delegateId, refreshed)
+            record(refreshed, "enqueued-duplicate", Json.obj("state" -> refreshed.state.asJson))
+            if refreshed.state == State.Waiting then Some(refreshed) else None
+          case _ =>
+            members = members.updated(entry.delegateId, entry)
+            persistLocked()
+            record(entry, "enqueued", Json.obj("readyAt" -> entry.readyAt.asJson, "queueDepth" -> openSortedLocked(entry.projectKey).size.asJson))
+            Some(entry)
+      }
+      .foreach { m => if m.state == State.Waiting then pump(m.projectKey) }
+
+  /** IO 包装（BackoffSupervisor / settle 路径是 IO 上下文）。 */
+  def enqueueIO(entry: Member): IO[Unit] = IO.blocking(enqueue(entry))
+
+  // ── 放行（waiting → turn-granted；通知即放行） ────────────────────────
+
+  /**
+   * 一拍放行尝试（本 projectKey）。窗被持（已有 turn-granted）⇒ 零动作；
+   * 队头 waiting 成员按闸序核对：账实核对（已并 → 关账，永不通知合并）→
+   * 净空闸（脏/分支错位 → 留队记账）→ 通知放行（通道失败 → owner-gone）。
+   * 锁内只做账本迁移；git 面与通道注入全部锁外。
+   */
+  def pump(projectKey: String): Unit =
+    val candidate = lock.synchronized {
+      ensureLoadedLocked()
+      if holderLocked(projectKey).isDefined then None // 单飞行：窗被持
+      else
+        openSortedLocked(projectKey).find(_.state == State.Waiting).map { head =>
+          // 先占窗（占位即迁移）——通知在锁外，绝不双授。
+          val reserved = head.copy(state = State.TurnGranted, grantedAt = Some(System.currentTimeMillis()))
+          members = members.updated(head.delegateId, reserved)
+          persistLocked()
+          reserved
+        }
+    }
+    candidate.foreach(grant)
+
+  /** 已占窗成员的放行腿：账实核对 → 净空闸 → 通知（任一关账腿释放窗并续放下一位）。 */
+  private def grant(reserved: Member): Unit =
+    // ① 账实核对（先于一切——已并成员直接关账，不再通知不再重试）。
+    alreadyMerged(reserved) match
+      case true =>
+        closeMerged(reserved.delegateId, via = "fact-check", closeReason = Some("branch already merged into base — closed at grant time"), cleanup = true)
+        notifyAlreadyLanded(reserved) // 属主还 dock 着 → 立即收尾通知（delegate 纪律 #6）
+        pump(reserved.projectKey)
+        return
+      case false => ()
+    end match
+    // ② 净空闸（引擎侧 base 净空维护——白名单工件还原/收编；非合并执行）。
+    baseReady(reserved) match
+      case Left(blockReason) =>
+        requeueBlocked(reserved, blockReason)
+        return
+      case Right(baseTip) => ()
+    end match
+    // ③ 放行 = 通知（属主自己执行合并并回报）。
+    notifyTurn(reserved) match
+      case Right(()) =>
+        val tip = baseTipOf(reserved)
+        lock.synchronized {
+          members.get(reserved.delegateId).foreach { cur =>
+            val stamped = cur.copy(grantedBaseTip = tip)
+            members = members.updated(cur.delegateId, stamped)
+            persistLocked()
+            record(stamped, "granted", Json.obj("baseTip" -> tip.fold("".asJson)(_.take(12).asJson), "viaChannel" -> reserved.channelKind.asJson))
+          }
+        }
+        logger.info(
+          s"[merge-queue] turn granted to '${reserved.delegateId}' (branch '${reserved.branch}' → '${reserved.baseBranch}', window holder = single)"
+        )
+      case Left(err) =>
+        markOwnerGone(reserved.delegateId, s"merge-turn notification undeliverable: ${err.take(200)}")
+        pump(reserved.projectKey)
+  end grant
+
+  /** 账实核对单点：分支头已是基分支祖先 ⟺ 已并入（今晚 should-not-happen 的消除闸）。 */
+  private def alreadyMerged(m: Member): Boolean =
+    Try(os.Path(m.baseWs)).toOption.filter(GitWorktrees.isGitRepo) match
+      case None => false // 读数不可得 = 不判（fail-open，交给回合终态核对）
+      case Some(ws) => GitWorktrees.isAncestor(ws, m.branch, m.baseBranch).contains(true)
+
+  /** base tip（放行通知携带；不可读 = None，brief 用 "unknown"）。 */
+  private def baseTipOf(m: Member): Option[String] =
+    Try(os.Path(m.baseWs)).toOption.flatMap(ws => GitWorktrees.resolveRef(ws, m.baseBranch))
+
+  /**
+   * 净空闸（fail-closed on verified dirt；fail-open on unreadable）：
+   *   - 基工作区不可读（非 git / 路径坏）⇒ 放行（历史行为——delegate 的合并回合
+   *     会诚实拒绝并进 failed，面板可见）；
+   *   - 树脏 ⇒ 先过 [[MergeArtifactCare.hygiene]]（白名单工件还原/收编）；余脏
+   *     非空 ⇒ Left（留队，`grant-blocked` 记账）；
+   *   - 基分支非检出分支 ⇒ Left（方向闸——绝不把合并轮放进错误座位）。
+   * Right(baseTip) = 可放行。
+   */
+  private def baseReady(m: Member): Either[String, Option[String]] =
+    Try(os.Path(m.baseWs)).toOption.filter(os.exists(_)) match
+      case None => Right(baseTipOf(m))
+      case Some(ws) if !GitWorktrees.isGitRepo(ws) => Right(baseTipOf(m))
+      case Some(ws) =>
+        try
+          val report = MergeArtifactCare.hygiene(ws)
+          if report.restored.nonEmpty || report.absorbed.nonEmpty then
+            record(
+              m,
+              "artifact-hygiene",
+              Json.obj(
+                "restored" -> report.restored.asJson,
+                "absorbed" -> report.absorbed.asJson,
+                "absorbCommit" -> report.absorbCommit.map(_.take(12)).asJson,
+                "remainingDirty" -> report.remainingDirty.asJson
+              )
+            )
+          val remaining = try MergeArtifactCare.dirtyPaths(ws) catch case _: Throwable => List("unreadable")
+          if remaining.nonEmpty then
+            Left(s"base workspace still dirty after hygiene: ${remaining.take(6).mkString(", ")}")
+          else
+            val current = try GitWorktrees.currentBranch(ws) catch case _: Throwable => None
+            if current.isDefined && current != Some(m.baseBranch) then
+              Left(s"base branch '${m.baseBranch}' is not the checked-out branch ('${current.getOrElse("detached HEAD")}') of the base workspace")
+            else Right(baseTipOf(m))
+        catch
+          case e: Throwable => Right(baseTipOf(m)) // 闸面自身故障 = fail-open（不楔死队列）
+  end baseReady
+
+  /** 净空闸未过：窗让回（state → waiting）+ 记账 + 面板可见原因；等下一拍。 */
+  private def requeueBlocked(reserved: Member, reason: String): Unit =
+    lock.synchronized {
+      members.get(reserved.delegateId) match
+        case Some(cur) if cur.state == State.TurnGranted =>
+          val back = cur.copy(state = State.Waiting, grantedAt = None, lastBlockReason = Some(reason.take(300)))
+          members = members.updated(cur.delegateId, back)
+          persistLocked()
+          record(back, "grant-blocked", Json.obj("reason" -> reason.take(300).asJson))
+        case _ => () // 两拍间已关账——不动
+    }
+    logger.info(s"[merge-queue] grant blocked for '${reserved.delegateId}': $reason")
+
+  /** 放行通知（按通道分派；Right = 已送达属主会话）。 */
+  private def notifyTurn(m: Member): Either[String, Unit] =
+    val brief = mergeBriefFor(m)
+    m.external match
+      case Some(ext) =>
+        try ext.send(brief).attempt.unsafeRunSync() match
+          case Right(r) => r
+          case Left(e) => Left(Option(e.getMessage).getOrElse(e.toString))
+        catch case e: Throwable => Left(Option(e.getMessage).getOrElse(e.toString))
+      case None =>
+        m.internal match
+          case Some(leg) if childAlive(leg.childRef) =>
+            try
+              (leg.childRef ! AgentCommand.UserInput(
+                text = brief,
+                replyTo = Some(leg.supervisorRef),
+                source = Some(Source),
+                eventType = Some("merge-turn")
+              )).unsafeRunSync()
+              Right(())
+            catch case e: Throwable => Left(Option(e.getMessage).getOrElse(e.toString))
+          case Some(_) => Left("owner session is no longer live at grant time")
+          case None => Left("no delivery channel on record (channel lost across restart)")
+  end notifyTurn
+
+  /**
+   * 「已落地」收尾通知（grant 时账实核对命中 + 属主会话还 dock 着）：让属主
+   * 立即 finish、不碰 base（delegate 侧纪律 #6 的引擎配对闸）。通知失败只 WARN
+   * ——账已关（merged），会话超时链兜底。
+   */
+  private def notifyAlreadyLanded(m: Member): Unit =
+    val brief = alreadyLandedBrief(m)
+    val deliver: Either[String, Unit] = m.external match
+      case Some(ext) =>
+        try ext.send(brief).attempt.unsafeRunSync() match
+          case Right(r) => r
+          case Left(e) => Left(Option(e.getMessage).getOrElse(e.toString))
+        catch case e: Throwable => Left(Option(e.getMessage).getOrElse(e.toString))
+      case None =>
+        m.internal match
+          case Some(leg) if childAlive(leg.childRef) =>
+            try
+              (leg.childRef ! AgentCommand.UserInput(
+                text = brief,
+                replyTo = Some(leg.supervisorRef),
+                source = Some(Source),
+                eventType = Some("merge-turn")
+              )).unsafeRunSync()
+              Right(())
+            catch case e: Throwable => Left(Option(e.getMessage).getOrElse(e.toString))
+          case _ => Right(()) // 会话已死 = 无可通知，账已关，零动作
+    deliver match
+      case Right(()) => record(m, "already-landed-notice", Json.obj())
+      case Left(err) => logger.warn(s"[merge-queue] already-landed notice failed for '${m.delegateId}': ${err.take(200)}")
+  end notifyAlreadyLanded
+
+  // ── 关账（merged / owner-gone / failed；全部先账实核对再落终态） ──────
+
+  /**
+   * 关账 merged（幂等）。`via` = 审计来源（fact-check / round / boot-reconcile）。
+   * `cleanup` = 合并后现场回收（PostMergeCleanup——零领先守卫，绝不丢工作）。
+   * 关账前再跑一次账实核对：事实未落地但调用方声称 merged（机械验收已挡住常规
+   * 路径；boot/手工路径兜底）⇒ 照关（调用方是裁决者），但 closeReason 如实标注。
+   */
+  def closeMerged(delegateId: String, via: String, closeReason: Option[String] = None, cleanup: Boolean = false): Unit =
+    lock
+      .synchronized {
+        ensureLoadedLocked()
+        members.get(delegateId) match
+          case Some(m) if m.open =>
+            val closed = m.copy(
+              state = State.Merged,
+              closedAt = Some(System.currentTimeMillis()),
+              closeReason = closeReason.orElse(Some(s"merge landed (via $via)"))
+            )
+            members = members.updated(delegateId, closed)
+            persistLocked()
+            record(closed, "merge-merged", Json.obj("via" -> via.asJson, "reason" -> closed.closeReason.fold("".asJson)(_.asJson)))
+            if cleanup then
+              try
+                DelegateRegistry.find(delegateId).foreach(rec => PostMergeCleanup.run(Some(rec)).unsafeRunSync())
+              catch
+                case e: Throwable =>
+                  logger.warn(s"[merge-queue] post-merge cleanup failed for $delegateId: ${Option(e.getMessage).getOrElse(e.toString).take(200)}")
+            Some(closed)
+          case _ => None
+      }
+      .foreach { closed => pump(closed.projectKey) }
+
+  /** IO 包装（boot reconcile 路径）。 */
+  def closeMergedIO(delegateId: String, via: String, closeReason: Option[String] = None, cleanup: Boolean = false): IO[Unit] =
+    IO.blocking(closeMerged(delegateId, via, closeReason, cleanup))
+
+  /**
+   * 关账 owner-gone（幂等）：属主失联——通知不可达 / 会话终态 / 重启后通道丢失。
+   * 关账前**先账实核对**：期间被并（human/别的轮次）⇒ 关 merged 而非 owner-gone
+   * （今晚「分支已落定仍在账上罚站」的消除闸）。升级通知经 [[OwnerGonePort]]
+   * （面板「需 dispatcher 处置」的数据源；绝不静默）。
+   */
+  def markOwnerGone(delegateId: String, reason: String): Unit =
+    val mOpt = lock.synchronized {
+      ensureLoadedLocked()
+      members.get(delegateId).filter(_.open)
+    }
+    mOpt.foreach { m =>
+      if alreadyMerged(m) then
+        closeMerged(delegateId, via = "fact-check-on-owner-gone", closeReason = Some("owner gone, but the branch was already merged — closed as merged"), cleanup = true)
+      else
+        val closed = lock.synchronized {
+          members.get(delegateId) match
+            case Some(cur) if cur.open =>
+              val c = cur.copy(state = State.OwnerGone, closedAt = Some(System.currentTimeMillis()), closeReason = Some(reason.take(300)))
+              members = members.updated(delegateId, c)
+              persistLocked()
+              record(c, "owner-gone", Json.obj("reason" -> reason.take(300).asJson))
+              Some(c)
+            case _ => None
+        }
+        closed.foreach { c =>
+          logger.warn(s"[merge-queue] OWNER-GONE '${c.delegateId}' (branch '${c.branch}'): $reason — needs dispatcher handling")
+          OwnerGonePort.deliver(c, reason)
+          pump(c.projectKey)
+        }
+    }
+  end markOwnerGone
+
+  /** IO 包装。 */
+  def markOwnerGoneIO(delegateId: String, reason: String): IO[Unit] = IO.blocking(markOwnerGone(delegateId, reason))
+
+  // ── 成员终态（合并轮回报 / 会话终态） ─────────────────────────────────
+
+  /**
+   * 属主会话终态钩子（BackoffSupervisor / ExternalSessionRunner settle / 停靠看护）。
+   *   - `Some(Merged)`：合并轮机械验收通过 → 关账 merged；
+   *   - `Some(Refused(r))`：合并轮被拒 → 关账 failed(原因)——**无重试、无 park**；
+   *   - `None`（回合外终态：取消/超时/会话死亡）：先账实核对（期间被并 ⇒ merged），
+   *     否则 owner-gone。
+   * 幂等（查无/已关账 = no-op）；关账即释放窗并轮转下一位。
+   */
+  def onTerminal(delegateId: String, outcome: Option[RoundOutcome] = None): Unit =
+    val mOpt = lock.synchronized {
+      ensureLoadedLocked()
+      members.get(delegateId).filter(_.open)
+    }
+    mOpt.foreach { m =>
+      outcome match
+        case Some(RoundOutcome.Merged) =>
+          closeMerged(delegateId, via = "merge-round", cleanup = true)
+        case Some(RoundOutcome.Refused(reason)) =>
+          closeFailed(delegateId, reason)
+        case None =>
+          if alreadyMerged(m) then
+            closeMerged(delegateId, via = "fact-check-on-terminal", closeReason = Some("session ended; the branch was already merged"), cleanup = true)
+          else
+            markOwnerGone(delegateId, s"owner session ended without completing the merge round (state was '${m.state}')")
+    }
+  end onTerminal
+
+  /** IO 包装。 */
+  def onTerminalIO(delegateId: String, outcome: Option[RoundOutcome] = None): IO[Unit] =
+    IO.blocking(onTerminal(delegateId, outcome))
+
+  /** 关账 failed（合并回合被拒；原因落账 + 面板可见；无自动重试）。 */
+  private def closeFailed(delegateId: String, reason: String): Unit =
+    lock
+      .synchronized {
+        ensureLoadedLocked()
+        members.get(delegateId) match
+          case Some(m) if m.open =>
+            val closed = m.copy(state = State.Failed, closedAt = Some(System.currentTimeMillis()), closeReason = Some(reason.take(300)))
+            members = members.updated(delegateId, closed)
+            persistLocked()
+            record(closed, "merge-failed", Json.obj("reason" -> reason.take(300).asJson))
+            Some(closed)
+          case _ => None
+      }
+      .foreach { closed =>
+        logger.warn(s"[merge-queue] merge round FAILED for '${closed.delegateId}' (branch '${closed.branch}'): ${reason.take(200)} — closed, no auto-retry")
+        pump(closed.projectKey)
+      }
+  end closeFailed
+
+  // ── 活性看护（扫描拍消费；TaskStuckWatcher.scan 尾部单点） ────────────
+
+  /**
+   * 一拍看护（事件判据，零时间判据）：
+   *   - 持窗成员（turn-granted）内部腿属主 actor 已死 ⇒ owner-gone（窗绝不许尸体持死）；
+   *   - 每个有开放成员的 project 补一拍放行尝试（净空转洁 / 阻碍消除后自然推进）。
+   * 幂等：动作过的成员已关账，重复扫描零重复动作。
+   */
+  def careTick(): Unit =
+    val granted = snapshot.filter(m => m.state == State.TurnGranted)
+    granted.foreach { m =>
+      m.internal match
+        case Some(leg) if !childAlive(leg.childRef) =>
+          markOwnerGone(m.delegateId, "merge-round holder session is no longer live — needs dispatcher handling")
+        case _ => ()
+    }
+    snapshot.map(_.projectKey).distinct.foreach(pump)
+
+  /** IO 包装（扫描腿是 IO 上下文）。 */
+  def careTickIO: IO[Unit] = IO.blocking(careTick())
+
+  // ── 崩溃重启换绑（监督者 respawn 换新子 actor——事件驱动） ────────────
+
+  /**
+   * delegate 会话崩溃经监督者 respawn 换新子 actor：开放成员的内部腿通道原地换绑
+   * （进程内运行态；账本数据面零变化）。已关账/查无 = no-op。
+   */
+  def reattach(delegateId: String, newChildRef: ActorRef[AgentCommand]): Unit =
+    lock.synchronized {
+      ensureLoadedLocked()
+      members.get(delegateId).filter(_.open) match
+        case None => ()
+        case Some(m) =>
+          val refreshed = m.copy(internal = m.internal.map(_.copy(childRef = newChildRef)))
+          members = members.updated(delegateId, refreshed)
+          // 通道闭包不落盘（进程内运行态）——只落审计行。
+          record(refreshed, "session-reattached", Json.obj("phase" -> "respawn-reattach".asJson))
+    }
+
+  /** IO 包装（BackoffSupervisor respawn 路径是 IO 上下文）。 */
+  def reattachIO(delegateId: String, newChildRef: ActorRef[AgentCommand]): IO[Unit] =
+    IO.blocking(reattach(delegateId, newChildRef))
+
+  // ── 合并指令文本（放行通知本体） ─────────────────────────────────────
+
+  /**
+   * 合并轮通知（🔴 模型可见文案）。放行 = 通知：属主自己是唯一执行者。文本三段：
+   *   - 账面：轮到你了（单持有人）+ base 当前 tip；
+   *   - 账实核对预检（只读）：`merge-base --is-ancestor` 已 0 ⇒ 合并已落地——
+   *     不碰 base 立即收尾（delegate 侧纪律 #6 的引擎配对闸；复活/续投实例的
+   *     陈旧重放在此被只读预检挡下）；
+   *   - 执行：单命令 `git -C <baseWs> merge --no-ff <branch>`；拒绝/冲突 = STOP
+   *     原文上报（无重试——failed 关账，处置归 dispatcher）。
+   */
+  def mergeBriefFor(m: Member): String =
+    val tip = m.grantedBaseTip.map(_.take(12)).getOrElse("unknown")
+    s"""<system-reminder>
+Merge turn (FIFO): your branch `${m.branch}` is ready-to-merge and it is now YOUR turn — you are the single merge-window holder for `${m.baseWs}` (no one else may merge while you hold it, so start now).
+Base branch `${m.baseBranch}` tip now: $tip
+Read-only pre-check FIRST (zero writes): run `git -C ${m.baseWs} merge-base --is-ancestor ${m.branch} ${m.baseBranch}` — if it exits 0, the merge has ALREADY landed (an earlier round or another operator landed it): do NOT run the merge, do NOT touch the base workspace; report finish immediately stating it was already merged.
+Otherwise execute the merge EXACTLY like this (single command, no flags beyond these):
+  git -C ${m.baseWs} merge --no-ff ${m.branch}
+This merges your branch into the base branch `${m.baseBranch}`. Do NOT merge anywhere else, do NOT force-push, do NOT rebase, do NOT touch other branches or other sessions' work.
+If git refuses or reports conflicts: STOP — change nothing, resolve nothing; report the refusal/conflict verbatim in your final text, call delegate_report(category="finish", detail=<the refusal/conflict>), and end your turn (there is no blocked category — the refusal is your report's content, not a state; the queue closes your membership as failed — no automatic retries).
+On success, call delegate_report(category="finish", detail=<what the merge landed>) and end with your final report; the engine re-judges the merge round. Your final report must LEAD with the work result (what the task produced, artifacts, REPORT.md paths) and keep the merge info to one line — the parent session reads this report as the task's result.
+</system-reminder>"""
+  end mergeBriefFor
+
+  /** 「已落地」收尾通知（grant 时账实核对命中——属主立即 finish，不碰 base）。 */
+  private def alreadyLandedBrief(m: Member): String =
+    s"""<system-reminder>
+Merge ledger close-out: your branch `${m.branch}` is ALREADY merged into `${m.baseBranch}` — your merge-queue membership was closed as merged at grant time (fact-check: `git merge-base --is-ancestor` true). Do NOT run the merge, do NOT touch the base workspace. Call delegate_report(category="finish", detail=<the branch was already merged; membership closed>) and end with your final report (lead with the work result, merge info one line).
+</system-reminder>"""
+  end alreadyLandedBrief
+
+  /** 测试复位（生产无调用方）：清内存 + 清账本文件。 */
+  private[nebflow] def reset(): Unit = lock.synchronized {
+    members = Map.empty
+    loaded = false
+    try if os.exists(ledgerPath) then os.remove.all(ledgerPath)
+    catch case _: Throwable => ()
+  }
+
+  /** 测试专用的「进程重启」模拟：只丢内存态（账本文件保留），下次访问自盘回载。 */
+  private[nebflow] def dropMemoryStateForTest(): Unit = lock.synchronized {
+    members = Map.empty
+    loaded = false
+  }
+
+  /** 测试专用：直接把成员写进持久账本（绕过入账泵——模拟重启前的盘上账面）。 */
+  private[nebflow] def seedMemberForTest(m: Member): Unit = lock.synchronized {
+    ensureLoadedLocked()
+    members = members.updated(m.delegateId, m)
+    persistLocked()
+  }
 end MergeQueue
