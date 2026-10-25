@@ -120,4 +120,59 @@ class DelegateTerminalDeliverySpec extends CatsEffectSuite:
     yield ()
   }
 
+  // ── #886 完成回执重启去重批（2026-10-26）：重投件的 ack 身份归位 ──────────
+  //
+  // 实证链（10-25 23:15 重启后 canvas ×3 / console-card ×2 / imagegen ×3）：
+  // 重投腿把 correlationId 改写为 `delivery-redelivery-<id>`，ackEvent 按改写 id
+  // 去 find 永远查无回执 ⇒ 原回执永挂未确认 ⇒ sweep 每 grace（10min）拍重投一次
+  // 直至上限——同一 [delegate-finish] 载荷重复到达根会话。修后：重投注入按
+  // redeliveryOf / 前缀剥离归位**原回执 id**，一拍即 ack、重投链在第一拍终止。
+
+  test("#886 ackableReceiptId: 重投件归位原回执 id（metadata redeliveryOf 优先、前缀剥离次之）") {
+    val base = AgentCommand.ExternalEvent(
+      source = "delegate",
+      eventType = "completed",
+      payload = "p",
+      metadata = JsonObject.empty,
+      correlationId = Some("delegate-nebflow-52308ee4")
+    )
+    val viaMeta = base.copy(
+      correlationId = Some(s"${DelegateDeliveryReceipts.RedeliveryCorrelationPrefix}delegate-nebflow-52308ee4"),
+      metadata = JsonObject("redeliveryOf" -> io.circe.Json.fromString("delegate-nebflow-52308ee4"))
+    )
+    val viaPrefix = base.copy(
+      correlationId = Some(s"${DelegateDeliveryReceipts.RedeliveryCorrelationPrefix}delegate-nebflow-52308ee4")
+    )
+    assertEquals(DelegateDeliveryReceipts.ackableReceiptId(viaMeta), Some("delegate-nebflow-52308ee4"))
+    assertEquals(DelegateDeliveryReceipts.ackableReceiptId(viaPrefix), Some("delegate-nebflow-52308ee4"))
+    assertEquals(DelegateDeliveryReceipts.ackableReceiptId(base), Some("delegate-nebflow-52308ee4"))
+    // 非终态 / 非 delegate 源：身份解析直接拒绝（与 ackEvent 词表闸一致）
+    assertEquals(DelegateDeliveryReceipts.ackableReceiptId(viaMeta.copy(eventType = "progress")), None)
+    assertEquals(DelegateDeliveryReceipts.ackableReceiptId(viaMeta.copy(source = "mail")), None)
+  }
+
+  test("#886 ackEvent 对重投件 ack 原回执——重投链第一拍终止（不重复轰炸）") {
+    for
+      _ <- DelegateDeliveryReceipts.record(receipt(ackedAt = None))
+      redelivered = AgentCommand.ExternalEvent(
+        source = "delegate",
+        eventType = "completed",
+        payload = """"绘图批":\n## 完成报告……（终文全量）""",
+        metadata = JsonObject("redeliveryOf" -> io.circe.Json.fromString("delegate-nebflow-52308ee4")),
+        correlationId = Some(s"${DelegateDeliveryReceipts.RedeliveryCorrelationPrefix}delegate-nebflow-52308ee4")
+      )
+      _ <- DelegateDeliveryReceipts.ackEvent(redelivered)
+      acked = DelegateDeliveryReceipts.find("delegate-nebflow-52308ee4").flatMap(_.ackedAt)
+      _ = assert(acked.isDefined, "redelivered-event injection must ack the ORIGINAL receipt")
+      // 已 ack ⇒ 不再判超龄 ⇒ sweep 停投（重复链终止的机检等价）
+      _ = assert(
+        !DelegateDeliveryReceipts.needsRedelivery(
+          DelegateDeliveryReceipts.find("delegate-nebflow-52308ee4").get,
+          now = Long.MaxValue / 2,
+          graceMs = 0L
+        )
+      )
+    yield ()
+  }
+
 end DelegateTerminalDeliverySpec
