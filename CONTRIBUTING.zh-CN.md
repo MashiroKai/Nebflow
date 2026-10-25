@@ -17,10 +17,10 @@
 ```bash
 sbt compile        # 编译
 sbt assembly       # fat JAR -> target/scala-3.5.2/
-sbt run            # 启动 web 服务 http://localhost:8080
+sbt run            # 启动 web 服务 http://localhost:6138（引擎默认口，2026-10-25 端口对调，曾 8080）
 ```
 
-如 8080 已被占用（生产实例或其他服务），用独立 home 与端口隔离开发实例（`--home` / `--port` 为全局旗标）：
+如 6138 已被占用（生产实例或其他服务），用独立 home 与端口隔离开发实例（`--home` / `--port` 为全局旗标）：
 
 ```bash
 sbt "run --home /tmp/nb-dev --port 8090"

@@ -34,7 +34,7 @@ final class Rollback(
   spawnPrevious: (HotRestartIntent, String) => IO[Either[String, HotRestart.SpawnedProcess]] = (intent, jar) =>
     HotRestart.defaultSpawnWithJar(intent, Some(jar)),
   host: String = "0.0.0.0",
-  port: Int = 8080
+  port: Int = nebflow.shared.Defaults.GatewayPort
 ):
 
   private val logger = NebflowLogger.forName("nebflow.hotupdate")

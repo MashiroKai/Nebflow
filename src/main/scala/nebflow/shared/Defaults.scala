@@ -1558,6 +1558,25 @@ object Defaults:
    */
   def RootNotifyBatchMax: Int =
     sys.props.getOrElse("nebflow.notify.rootBatchMax", "10").trim.toIntOption.getOrElse(10)
+
+  /**
+   * 引擎默认网关端口 —— **单一来源**（端口对调落地批 2026-10-25；作者令 2026-10-23
+   * 「默认改 6138——下次重启生效」的引擎代码面收口）。
+   *
+   * 事故链（2026-10-25）：作者手动 `sbt run` 起引擎走旧默认 8080，微信 side-car
+   * （msgloop）投递目标 `127.0.0.1:6138/.../weixin-ilink/ingress` 全部
+   * tcp_refused —— 微信入站全断。此前 10-23 对调只落在 ops 显式传参
+   * （autostart/restart/stand CLI 均 `NEBFLOW_GATEWAY_PORT=6138` / `--port 6138`），
+   * 引擎代码默认值没跟，裸启动即分叉。自此引擎侧全部「默认端口」读数统一引用
+   * 本常量（GatewayConfig.load 兜底 / CLI GatewayClient.readPort / doctor 端口
+   * 读数 / prompt 变量 `nebflow.gateway.port` 兜底 / 热更新 Rollback 复起缺省 /
+   * FlowTree·RestApiRoutes 构造兜底 / neblink 对端口兜底），改默认只动这一处。
+   *
+   * 8080 让渡给 9.19 自有根实例（其启动器缺省 8080 不变），故 ProcessManager
+   * 的 ProtectedPorts（8080/8097 dev-host 硬闸）**保持不动**；沙箱不走本值
+   * （沙箱口 = 高位随机，`SandboxRuntime` 自有分配面）。
+   */
+  val GatewayPort = 6138
 end Defaults
 
 /**

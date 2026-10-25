@@ -7,7 +7,8 @@ import nebflow.gateway.WindowsProcs
  * daemon plan §3.2, F-3).
  *
  * The old stop face derived "the instance's port" from the CALLER's view
- * (`GatewayClient.readPort`: --port override > GATEWAY_PORT env > 8080).
+ * (`GatewayClient.readPort`: --port override > GATEWAY_PORT env >
+ * Defaults.GatewayPort — 6138 since the 2026-10-25 port swap, was 8080).
  * That resolver answers "which port would I talk to", not "which port does
  * the target process serve" — a bare `stand stop` on a machine whose dev
  * host listens on 8080 would then poll 8080 for a foreign process and fail

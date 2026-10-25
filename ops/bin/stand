@@ -133,7 +133,7 @@ case "$stand_cmd" in
     start)
         STAND_GUARD_PORT=$(stand_resolve_port "$@")
         # 端口一致性: 守卫探的端口钉进子进程 env (CLI --port 优先级更高, 不受影响;
-        # 缺此步时 jar 默认 8080 != 守卫探的 6138, 守卫形同虚设)
+        # 引擎默认口 2026-10-25 对调后 = 6138 与守卫同源, env 注入保留为双保险)
         export STAND_GATEWAY_PORT="$STAND_GUARD_PORT"
         export NEBFLOW_GATEWAY_PORT="$STAND_GUARD_PORT"
         _guard_pids=$(stand_listener_pids "$STAND_GUARD_PORT")

@@ -62,6 +62,20 @@
  *
  * Shared helpers are EXPORTED for the outbound batch (contract §2④): import
  * from this file, never rewrite.
+ *
+ * Ingress backoff (2026-10-25 tcp_refused-storm batch): when the engine seam
+ * is NOT REACHABLE (fetch threw ⇒ status 0: tcp_refused / timeout / dns / tls,
+ * or a 5xx), the loop's next round waits an exponentially growing backoff —
+ * 1s → 2s → 4s → … capped at 60s, +additive jitter (never below the core
+ * step), reset to the base on the first successful delivery. Before this, a
+ * delivery failure just broke to the next poll cycle: with messages still
+ * buffered upstream (cursor held), getUpdates returns instantly and the
+ * deliver leg fails instantly — the 2026-10-25 13:29 incident shape was
+ * multiple `tcp_refused — fetch failed` lines per SECOND for the whole
+ * engine-down window. Data-driven (#692 backoff philosophy, no death
+ * sentence): a SPEAKING engine (4xx, 200 + hold verdict) never backs off —
+ * recovery is immediate the moment the target answers; only an unreachable
+ * one earns longer waits. Spec: msgloop-backoff.test.mjs.
  */
 
 import crypto from "node:crypto";
@@ -109,6 +123,46 @@ const MUTEX_STALE_MS = 120_000; // > 3× live cycle; heartbeat refreshes EVERY c
 const MUTEX_RETRY_MS = 60_000;
 const FIXTURE_POLL_GAP_MS = 1_000;
 const ACCOUNT_RECHECK_MS = 5 * 60_000; // self-heal: index re-read throttle while polling (pause wakes re-read on EVERY ≤60s wake)
+
+// ── ingress backoff (2026-10-25 tcp_refused-storm batch) ──
+const INGRESS_BACKOFF_BASE_MS = 1_000; // first failure → 1s
+const INGRESS_BACKOFF_CAP_MS = 60_000; // 封顶 60s
+const INGRESS_BACKOFF_JITTER = 0.25; // additive +[0,25%) — never below the core step
+
+/**
+ * Exponential ingress backoff, pure (spec-pinned in msgloop-backoff.test.mjs).
+ * (consecutive transport-class failures) → wait ms: the core step doubles
+ * base → 2×base → … and is capped at capMs; jitter is ADDITIVE UPWARD only,
+ * so the realized wait is always ≥ the core step — once the core step reaches
+ * the cap the wait is ≥ cap, i.e. during a sustained outage the retry
+ * frequency stays ≤ 1/capMs (the evidence pin). failures < 1 clamps to the
+ * first step. All knobs injectable so the spec runs offline and instant.
+ * @param {number} failures consecutive transport-class delivery failures (≥1)
+ * @param {{baseMs?: number, capMs?: number, jitter?: number, rand?: () => number}} [o]
+ * @returns {number} wait in ms
+ */
+export function ingressBackoffMs(failures, o = {}) {
+  const baseMs = o.baseMs ?? INGRESS_BACKOFF_BASE_MS;
+  const capMs = o.capMs ?? INGRESS_BACKOFF_CAP_MS;
+  const jitter = o.jitter ?? INGRESS_BACKOFF_JITTER;
+  const rand = o.rand ?? Math.random;
+  const n = Math.max(1, Math.floor(failures));
+  const core = Math.min(capMs, baseMs * 2 ** (n - 1));
+  return Math.round(core + rand() * core * jitter);
+}
+
+/**
+ * Transport-class delivery verdict — the engine seam was NOT reached (fetch
+ * threw ⇒ status 0: tcp_refused / timeout / dns / tls) or is failing server
+ * side (5xx). ONLY this class backs off. A speaking engine (4xx; 200 with a
+ * hold verdict) is reachable — data-driven recovery is immediate (#692:
+ * back off on unreachable, never punish a responding target).
+ * @param {number} status the deliver leg's HTTP status (0 = fetch threw)
+ * @returns {boolean}
+ */
+export function isTransportFailure(status) {
+  return status === 0 || (status >= 500 && status <= 599);
+}
 
 function log(level, msg) {
   const line = `${new Date().toISOString()} ${level} msgloop: ${msg}`;
@@ -804,6 +858,7 @@ async function liveLoop(accountId, stop) {
   let failures = 0;
   let pausedUntil = 0;
   let pollTimeoutMs = LONG_POLL_TIMEOUT_MS;
+  let ingressFailures = 0; // consecutive transport-class ingress delivery failures (backoff schedule)
   let lastAccountCheckAt = 0; // self-heal throttle (0 ⇒ first cycle re-reads at once)
   /** the one self-heal re-read (pure core; ids normalized like startup selection):
    *  a switch verdict carries the trigger and IS the handoff; a keep verdict
@@ -865,17 +920,33 @@ async function liveLoop(accountId, stop) {
     }
     failures = 0;
     let allDelivered = true;
+    let failStatus = 0; // the deliver leg's HTTP status at the breaking failure (0 = fetch threw)
     for (const m of resp.msgs ?? []) {
       info(`live: inbound from=${String(m?.from_user_id ?? "") || "unresolved"} body=${shape(messageBody(m))}`);
       const r = await deliverToIngress(m, accountId);
-      if (!r.delivered) { allDelivered = false; break; }
+      if (!r.delivered) { allDelivered = false; failStatus = r.status; break; }
       info(`live: verdict ${JSON.stringify(r.verdict)}`);
     }
     const buf = typeof resp.get_updates_buf === "string" ? resp.get_updates_buf : "";
-    if (allDelivered && buf && buf !== cursor) {
-      saveCursor(accountId, buf);
-      cursor = buf;
-      debug(`cursor → ${buf.length}B`);
+    if (allDelivered) {
+      ingressFailures = 0; // success resets the schedule — a recovered engine is polled at once (data-driven)
+      if (buf && buf !== cursor) {
+        saveCursor(accountId, buf);
+        cursor = buf;
+        debug(`cursor → ${buf.length}B`);
+      }
+    } else if (isTransportFailure(failStatus)) {
+      // 2026-10-25 tcp_refused-storm batch: an UNREACHABLE engine must not be
+      // re-polled at full cadence — with the cursor held, getUpdates returns
+      // instantly and the deliver leg fails instantly (the per-second
+      // tcp_refused storm face). Wait on the exponential schedule instead;
+      // a speaking engine (4xx / 200+hold) keeps the poll cadence unchanged.
+      ingressFailures += 1;
+      const wait = ingressBackoffMs(ingressFailures);
+      warn(`live: ingress unreachable ×${ingressFailures} (status ${failStatus}) — backing off ${Math.round(wait / 1000)}s before the next poll`);
+      await sleep(wait, stop);
+    } else {
+      ingressFailures = 0; // the engine answered (4xx / 200+hold) — reachable ⇒ the outage schedule is stale, reset
     }
   }
 }
@@ -893,6 +964,7 @@ async function fixtureLoop(accountId, stop) {
   let offset = 0; // absolute file position: everything before it is DELIVERED
   try { offset = Number(fs.readFileSync(offsetFile, "utf-8").trim()) || 0; } catch { /* fresh */ }
   info(`fixture: tailing ${FIXTURE} from offset ${offset}`);
+  let ingressFailures = 0; // consecutive transport-class ingress delivery failures (backoff schedule)
   let pending = ""; // bytes read from `offset` not yet delivered; invariant: pending === file[offset..size)
   for (;;) {
     if (!heartbeatMutex(accountId)) return;
@@ -917,10 +989,24 @@ async function fixtureLoop(accountId, stop) {
         if (msg) {
           info(`fixture: inbound from=${String(msg?.from_user_id ?? "")} body=${shape(messageBody(msg))}`);
           const r = await deliverToIngress(msg, accountId);
-          if (r.delivered) info(`fixture: verdict ${JSON.stringify(r.verdict)}`);
-          else {
+          if (r.delivered) {
+            info(`fixture: verdict ${JSON.stringify(r.verdict)}`);
+            ingressFailures = 0; // success resets the schedule (data-driven recovery)
+          } else {
             warn(`fixture: NOT delivered (HTTP ${r.status}) — line held, will redeliver`);
             consume = false; // at-least-once: this line retries on a later tick
+            if (isTransportFailure(r.status)) {
+              // 2026-10-25 tcp_refused-storm batch: unreachable engine ⇒ grow
+              // the redelivery gap on the exponential schedule instead of the
+              // plain 1s poll gap (the held line would otherwise hot-spin at
+              // 1Hz against a dead seam). Speaking engine ⇒ unchanged cadence.
+              ingressFailures += 1;
+              const wait = ingressBackoffMs(ingressFailures);
+              warn(`fixture: ingress unreachable ×${ingressFailures} (status ${r.status}) — backing off ${Math.round(wait / 1000)}s before redelivery`);
+              await sleep(wait, stop);
+            } else {
+              ingressFailures = 0; // the engine answered — reachable ⇒ schedule stale, reset
+            }
           }
         }
       }

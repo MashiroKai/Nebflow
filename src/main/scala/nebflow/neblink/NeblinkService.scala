@@ -643,7 +643,7 @@ object NeblinkService:
     nowMs - peer.lastSeen <= onlineFreshnessMs(syncIntervalSec)
 
   def create(
-    serverPort: Int = 8080,
+    serverPort: Int = nebflow.shared.Defaults.GatewayPort,
     dispatcher: Dispatcher[IO]
   ): IO[NeblinkService] =
     createInternal(serverPort, dispatcher, 15.seconds)

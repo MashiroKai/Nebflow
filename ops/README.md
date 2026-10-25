@@ -41,7 +41,9 @@ not running —— pid 记账失配）：
   已有 stand listener → `stand is already running (pid X)` **exit 0**，不进 JVM。
   端口被外姓进程占 → 拒启 exit 1（镜像应用侧 `ForeignOccupant`）。
 - 端口一致性：守卫把探的端口钉进子进程 env（`STAND_GATEWAY_PORT` +
-  `NEBFLOW_GATEWAY_PORT`）。缺此步时 jar 默认 8080 ≠ 守卫探的 6138，守卫形同虚设。
+  `NEBFLOW_GATEWAY_PORT`）。引擎默认口自端口对调落地批（2026-10-25）起 = 6138
+  （`Defaults.GatewayPort` 单一来源），env 注入保留为双保险——裸 jar、旧版本
+  jar 与 ops 脚本间任何一环不对齐时守卫仍成立。
   优先级与 `GatewayConfig`/`paths.scala` 对齐：`--port` > `STAND_GATEWAY_PORT` >
   `NEBFLOW_GATEWAY_PORT` > 6138。
 - `stop`：**双探针**（lsof listener + `$STAND_HOME/.pid` 文件并集）→ 身份门

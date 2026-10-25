@@ -30,7 +30,7 @@ class RestApiRoutes(
   /** Phase 3b: the console session store (ApiFull session rail + AuthAdmin face). */
   sessions: GatewaySessionStore = GatewaySessionStore.unsafeCreate(),
   /** Phase 3b: the portal faces holder (AuthAdmin's break-glass mint port). */
-  faces: PortalHostFaces = new PortalHostFaces(8080),
+  faces: PortalHostFaces = new PortalHostFaces(nebflow.shared.Defaults.GatewayPort),
   configRef: cats.effect.Ref[IO, NebflowServiceConfig],
   sharedResources: SharedResources,
   sessionStore: SessionStore,
@@ -38,7 +38,7 @@ class RestApiRoutes(
   neblinkService: Option[NeblinkService] = None,
   ttsService: Option[TtsService] = None,
   neblinkDiscovery: Option[nebflow.neblink.NeblinkDiscovery] = None,
-  gatewayPort: Int = 8080,
+  gatewayPort: Int = nebflow.shared.Defaults.GatewayPort,
   wsHub: WsHub = new WsHub,
   /**
    * R-1b conn-guard：presence WS 受理面 per-IP 看护 + /health/conn 读数源。
