@@ -32,6 +32,11 @@ import nebflow.shared.{NebflowLogger, PathUtil}
  *   - **升级告警根会话（不再静默）**：重试预算（`maxRetries`）耗尽仍滞留 ⇒ 升级
  *     事件投最终责任方（root 活投 / 持久收件箱补投，[[BgNotifyDelivery]] 同族），
  *     粘住只告警一次；条目留队（分支/工件绝不丢——收尾归人裁决）。
+ *   - **障碍清除事件驱动唤醒（2026-10-25 补充令③——今日精确缺口「障碍清除后无人
+ *     再唤醒 delegate」）**：树由脏转洁的真过渡（扫描拍上采样）⇒ 对队首被拒
+ *     delegate **重发合并提醒**——退避闸旁路 + 升级粘住解除，恢复自动推进资格。
+ *     这是 10-23 批撤销的「转洁代跑重试」的合规范替身：唤醒 = 提醒重发，合并仍由
+ *     delegate 自己执行，平台零代跑。
  *
  * 消费点 = `TaskStuckWatcher.scan` 尾部（[[MergeWindowCare]] 邻位，搭既有扫描拍
  * 零新增定时器）；幂等——通知/升级/重试各由条目台账字段（stallNotified /
@@ -120,6 +125,16 @@ object MergeStallCare:
   val ActionRetryInjected: String = "stall-retry-injected"
   val ActionBlockedByDirt: String = "stall-blocked-by-dirt"
   val ActionEscalated: String = "stall-escalated"
+  val ActionObstacleCleared: String = "stall-obstacle-cleared"
+
+  /**
+   * 障碍清除事件驱动的脏基线（进程内，projectKey → 上拍 dirty 读数；30s 扫描拍
+   * 上采样——重启归零，首拍只记基线不触发）。10-23 批撤销的「转洁代跑重试」的
+   * **合规范替身**（作者 2026-10-25 补充令③「障碍清除后无人再唤醒 delegate」）：
+   * 树由脏转洁 ⇒ 只对队首被拒 delegate **重发合并提醒**（退避闸旁路 + 升级粘住
+   * 解除），合并本身仍由 delegate 会话执行——平台零代跑。
+   */
+  private val dirtyBaseline = new java.util.concurrent.ConcurrentHashMap[String, java.lang.Boolean]()
 
   // ── 一拍看护 ──────────────────────────────────────────────────────────
 
@@ -149,7 +164,14 @@ object MergeStallCare:
               )
               if liveAhead then Nil else List(head)
             }
-          val attempts: IO[List[List[Finding]]] = heads.traverse(v => attemptOrEscalate(resources, cfg, v))
+          val attempts: IO[List[List[Finding]]] = heads.traverse { v =>
+            val cleared = obstacleClearPulse(v)
+            attemptOrEscalate(resources, cfg, v, cleared).map(fs =>
+              if cleared then
+                Finding(v.delegateId, ActionObstacleCleared, "tree dirty→clean — backoff bypassed, merge reminder re-fired") :: fs
+              else fs
+            )
+          }
           notices.flatMap(ns => attempts.map(ats => ns.flatten ++ ats.flatten))
       }
     if cfg.enabled then sweep.handleErrorWith(e => logger.warn(s"[merge-stall-care] sweep failed: ${e.getMessage}").as(Nil))
@@ -229,20 +251,41 @@ object MergeStallCare:
   private def extraCount(paths: List[String]): String =
     if paths.size > 5 then s" +${paths.size - 5} more" else ""
 
-  /** 重试/升级面：预算耗尽 ⇒ 升级告警（粘住）；退避未到 ⇒ 等下拍；否则重试拍。 */
+  /**
+   * 树脏→洁过渡检测（扫描拍上采样；真过渡 ⇒ 退避闸旁路 + 升级粘住解除——
+   * 「障碍清除后有人唤醒」腿，作者 2026-10-25 补充令③）。首拍只记基线；
+   * 非 dirty 状态之间的拍间抖动（洁→脏→洁 30s 内完成）不触发—— documented 限界。
+   */
+  private def obstacleClearPulse(v: MergeQueue.StallView): Boolean =
+    try
+      val nowDirty = MergeArtifactCare.dirty(os.Path(v.baseWs))
+      val prev = dirtyBaseline.put(v.projectKey, java.lang.Boolean.valueOf(nowDirty))
+      val fired = java.lang.Boolean.TRUE.equals(prev) && !nowDirty
+      if fired then
+        logger.info(
+          s"[merge-stall-care] obstacle cleared for '${v.delegateId}' (${v.projectKey}) — tree dirty→clean: " +
+            "backoff bypassed, the parked delegate is re-woken with a merge reminder (never a proxy merge)"
+        )
+        MergeQueue.markObstacleCleared(v.delegateId)
+      fired
+    catch case _: Throwable => false
+  end obstacleClearPulse
+
+  /** 重试/升级面：预算耗尽 ⇒ 升级告警（粘住）；退避未到（且无障碍清除事件）⇒ 等下拍；否则重试拍。 */
   private def attemptOrEscalate(
     resources: AgentRuntimePort,
     cfg: Config,
-    v: MergeQueue.StallView
+    v: MergeQueue.StallView,
+    obstacleCleared: Boolean = false
   ): IO[List[Finding]] =
-    if v.stallEscalated then IO.pure(Nil) // 升级粘住：不再重试不再告警（收尾归人）
-    else if v.retryCount >= cfg.maxRetries then
+    if v.stallEscalated && !obstacleCleared then IO.pure(Nil) // 升级粘住（障碍真清除 = 解除，恢复推进资格）
+    else if v.retryCount >= cfg.maxRetries && !obstacleCleared then
       escalate(resources, v).as(
         List(Finding(v.delegateId, ActionEscalated, s"retry budget (${cfg.maxRetries}) exhausted after ${v.retryCount} failed round(s)"))
       )
     else
       val now = System.currentTimeMillis()
-      if now - v.lastAttemptAt < backoffDelayMs(cfg, v.retryCount) then IO.pure(Nil)
+      if !obstacleCleared && now - v.lastAttemptAt < backoffDelayMs(cfg, v.retryCount) then IO.pure(Nil)
       else attempt(resources, v)
   end attemptOrEscalate
 

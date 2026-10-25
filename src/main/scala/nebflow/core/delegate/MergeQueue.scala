@@ -313,6 +313,17 @@ object MergeQueue:
   }
 
   /**
+   * 障碍清除事件（MergeStallCare 树脏→洁过渡检测命中）：退避闸旁路（lastAttemptAt
+   * 归零）+ 升级粘住解除（stallEscalated 复位——障碍真清除后恢复自动推进资格；
+   * 若再滞留走完整重试+再升级路径，事件有界不 storms）。账本行 `obstacle-cleared`。
+   */
+  def markObstacleCleared(delegateId: String): Unit = lock.synchronized {
+    mutateEntryLocked(delegateId)(_.copy(lastAttemptAt = 0L, stallEscalated = false)).foreach { e =>
+      record(e, "obstacle-cleared", Json.obj("retryCount" -> e.retryCount.asJson))
+    }
+  }
+
+  /**
    * 滞留重试失败记账（清障仍脏 / 通道复活失败——无合并轮在飞故无终态可计数，
      * 由看护直接记账）：retryCount +1、退避锚重置、通知复位（下拍携新路径再通知）。
    */

@@ -410,4 +410,50 @@ class MergeStallCareSpec extends CatsEffectSuite:
       assertEquals(calls, Nil, "no retry is attempted behind a live merge round")
   }
 
+  // ── ⑦ 障碍清除事件驱动唤醒（作者 2026-10-25 补充令③——今日精确缺口） ──
+
+  test("⑦ tree dirty→clean between beats wakes the parked head IMMEDIATELY: backoff bypassed, reminder re-fired (never a proxy merge)") {
+    val system = ActorSystem(s"msc-7-${scala.util.Random.nextInt(100000)}")
+    val repo = mkRepo(tempRoot / "msc-repo-7")
+    os.makeDir.all(repo / "src")
+    os.write(repo / "src" / "HumanWork.scala", "// cleared by a human later")
+    // 大退避：无事件腿时本测试窗口内重试永不发生（事件腿是唯一唤醒通道）
+    val slowCfg = MergeStallCare.Config(enabled = true, maxRetries = 3, backoffBaseMs = 3_600_000L, backoffCapMs = 3_600_000L)
+    for
+      resources <- mkResources(system)
+      revivalCalls <- Ref.of[IO, List[String]](Nil)
+      _ = MergeStallCare.RevivalPort.install(RecordingRevival(revivalCalls))
+      _ = MergeRefusalCare.EscalationPort.install((_, _, _, _) => IO.unit) // 通知面静音
+      _ <- enqueueParked(system, "d-s7", "p-s7", repo, readyAt = 1_000L)
+      // 拍1：基线记录（dirty=true），退避闸持住——零重试
+      findings1 <- MergeStallCare.care(resources, Some(slowCfg))
+      calls1 <- revivalCalls.get
+      // 人类/delegate 清障（git add+commit——平台零参与）
+      _ <- IO.blocking {
+        os.proc("git", "-C", repo.toString, "add", "src/HumanWork.scala").call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+        os.proc("git", "-C", repo.toString, "commit", "-m", "human clears the obstacle")
+          .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+        ()
+      }
+      // 拍2：树脏→洁真过渡 ⇒ 退避旁路 + 重发提醒
+      findings2 <- MergeStallCare.care(resources, Some(slowCfg))
+      calls2 <- revivalCalls.get
+      row = chainActions("d-s7")
+      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
+    yield
+      assertEquals(findings1.map(_.action), List(MergeStallCare.ActionRefusalNotice), s"beat 1: baseline only, backoff holds: $findings1")
+      assertEquals(calls1, Nil, "no retry before the obstacle clears")
+      assertEquals(
+        findings2.map(_.action),
+        List(MergeStallCare.ActionObstacleCleared, MergeStallCare.ActionRetryInjected),
+        s"beat 2: the clear event wakes the parked head: $findings2"
+      )
+      assertEquals(calls2, List("d-s7"), "the merge reminder is re-fired to the delegate (revival channel), never run by the platform")
+      assert(row.contains("obstacle-cleared"), s"the clear event is audited: $row")
+      assert(
+        MergeQueue.find("d-s7-revived").isDefined,
+        "the delegate session was revived to run ITS OWN merge (platform zero-proxy)"
+      )
+  }
+
 end MergeStallCareSpec
