@@ -48,6 +48,39 @@ object DelegateDeliveryReceipts:
   /** 终态事件词表（与 BackoffSupervisor.notifyParentAndStop 的 eventType 同串）。 */
   val TerminalEventTypes: Set[String] = Set("completed", "failed", "cancelled")
 
+  /** 重投事件的 correlationId 前缀（[[handleOne]] Redeliver 腿的改写形态）。 */
+  val RedeliveryCorrelationPrefix: String = "delivery-redelivery-"
+
+  /**
+   * 回执身份解析（纯函数，#886 判红锚）：事件 → 应 ack 的回执 id。
+   *   - 重投件（correlationId=`delivery-redelivery-<id>` 改写形态）⇒ **原回执 id**
+   *     （metadata `redeliveryOf` 优先、前缀剥离次之）——重投注入若按改写 id 去
+   *     find，查无回执恒 no-op，原回执永挂未确认 ⇒ sweep 每 grace 拍重投一次
+   *     直至上限（#886 实证：canvas ×3 / console-card ×2 的重复到达链）；
+   *   - 普通件 ⇒ correlationId 原值；
+   *   - 事件须为 delegate 终态（source × eventType 词表闸），id 过 [[validId]]。
+   *     解析不出合法 id ⇒ None（ackEvent no-op，既有宽容面）。
+   */
+  private[delegate] def ackableReceiptId(event: AgentCommand.ExternalEvent): Option[String] =
+    if !(event.source == "delegate" && TerminalEventTypes.contains(event.eventType)) then None
+    else
+      val fromMeta = event.metadata("redeliveryOf").flatMap(_.asString).filter(validId)
+      val fromPrefix = event.correlationId
+        .collect { case c if c.startsWith(RedeliveryCorrelationPrefix) =>
+          c.stripPrefix(RedeliveryCorrelationPrefix)
+        }
+        .filter(validId)
+      fromMeta.orElse(fromPrefix).orElse(event.correlationId.filter(validId))
+
+  /**
+   * 父会话注入腿挂点（AgentIdle 直投/批次腿 + AgentFinishTurn turn 边界 drain 腿）：
+   * 事件匹配 delegate 终态（source=delegate × 终态词表 × 合法 correlationId）⇒
+   * ack（幂等零写）。注入即确认——LLM 消费成败属父会话内部事务，引擎职责到
+   * 「入回合」为止。重投件按 [[ackableReceiptId]] 归位原回执（#886）。
+   */
+  def ackEvent(event: AgentCommand.ExternalEvent): IO[Unit] =
+    ackableReceiptId(event).fold(IO.unit)(id => ack(id).void)
+
   /** 同一回执的重投上限——达上限停投留痕（等人裁决，绝不无限轰炸）。 */
   val MaxRedeliveries: Int = 3
 
@@ -95,17 +128,6 @@ object DelegateDeliveryReceipts:
   def record(receipt: Receipt): IO[Unit] =
     IO.blocking(writeLock.synchronized(put(receipt)))
       .handleErrorWith(e => logger.warn(s"[delegate-delivery] receipt write failed for ${receipt.delegateId}: ${e.getMessage}"))
-
-  /**
-   * 父会话注入腿挂点（AgentIdle 直投/批次腿 + AgentFinishTurn turn 边界 drain 腿）：
-   * 事件匹配 delegate 终态（source=delegate × 终态词表 × 合法 correlationId）⇒
-   * ack（幂等零写）。注入即确认——LLM 消费成败属父会话内部事务，引擎职责到
-   * 「入回合」为止。
-   */
-  def ackEvent(event: AgentCommand.ExternalEvent): IO[Unit] =
-    event.correlationId
-      .filter(id => event.source == "delegate" && TerminalEventTypes.contains(event.eventType) && validId(id))
-      .fold(IO.unit)(id => ack(id).void)
 
   /**
    * 父会话注入 delegate 终态事件时的确认（AgentIdle 直投腿/批次腿挂点）。

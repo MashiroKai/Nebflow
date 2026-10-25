@@ -393,7 +393,15 @@ object AgentActor extends AgentCore with AgentSession:
       syncHeldReceipts(resources, plan.state.sessionId, Nil).flatMap((held, unread) =>
         emitHeldReceiptsBadge(plan.state, held, unread)
       ) *>
-      persistQueues(plan.state.sessionId, plan.state.execution)
+      persistQueues(plan.state.sessionId, plan.state.execution) *>
+      // #886 完成回执重启去重批（2026-10-26）：先补注入腿同认投递——ack（重投件
+      // 归位原回执）+ 持久投递标记（重启恢复闸的判据）。此前本腿漏两件：ack 缺席
+      // ⇒ sweep 按超龄未确认重投（#886 重复链之一）；标记缺席 ⇒ 重启后重放闸放行。
+      plan.events.traverse_(nebflow.core.delegate.DelegateDeliveryReceipts.ackEvent) *>
+      nebflow.core.processor.DeliveredReceiptLedger.markDelivered(
+        plan.state.sessionId.getOrElse(""),
+        plan.events.flatMap(_.correlationId)
+      )
 
   /**
    * force-drain 补投注记（fix 2 可见化面，2026-10-22 身份补全批）：除条数外逐条带
@@ -478,6 +486,8 @@ object AgentActor extends AgentCore with AgentSession:
     eventMessage: Option[Message],
     /** Number of events folded into eventMessage. */
     eventCount: Int,
+    /** The drained events themselves (#886 投递回执批：ack/标记消费面用)。 */
+    drainedEvents: List[AgentCommand.ExternalEvent],
     /** Updated execution with queues drained. */
     exec: ExecutionContext
   )
@@ -615,6 +625,7 @@ object AgentActor extends AgentCore with AgentSession:
       injectedUsers,
       eventMessage,
       drainedEvents.size,
+      drainedEvents,
       updatedExec
     )
 

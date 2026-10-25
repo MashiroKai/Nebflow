@@ -481,6 +481,11 @@ private[agent] object AgentFinishTurn:
         // 诊断修复批 2026-10-24：turn 边界 drain 腿同认 delegate 终态交付
         // （忙碌父会话的注入面在本文而非 AgentIdle——回执只认注入不认持有）。
         _ <- drainedEvents.traverse_(nebflow.core.delegate.DelegateDeliveryReceipts.ackEvent)
+        // #886 完成回执重启去重批：注入即标记（持久投递标记——重启恢复重放闸判据）。
+        _ <- nebflow.core.processor.DeliveredReceiptLedger.markDelivered(
+          state.sessionId.getOrElse(""),
+          drainedEvents.flatMap(_.correlationId)
+        )
         // 台账对账 + 徽标帧（平台修复批 fix 1/3）：drainBarrier 投递面——已投递回执
         // 出账、余件保簿记；held 计数下降随行。
         _ <- syncHeldReceipts(resources, state.sessionId, remainingEvents).flatMap((h, u) =>

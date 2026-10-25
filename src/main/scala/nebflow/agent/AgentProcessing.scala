@@ -856,6 +856,16 @@ private[agent] object AgentProcessing:
               _ <- syncHeldReceipts(resources, state.sessionId, remainingEvents).flatMap((h, u) =>
                 emitHeldReceiptsBadge(state, h, u)
               )
+              // #886 完成回执重启去重批（2026-10-26）：本边界是投递腿却缺 ack——
+              // 10-24 批只接了 AgentFinishTurn/AgentIdle 两面，忙碌父会话经此边界
+              // 投递的终态回执永挂未确认 ⇒ sweep 按 10min grace 重投至上限（#886
+              // 重复链的源头之一：canvas/imagegen 的首件即经本面投出）。补 ack +
+              // 持久投递标记（重启恢复重放闸判据），与孪生面同形。
+              _ <- drainedEvents.traverse_(nebflow.core.delegate.DelegateDeliveryReceipts.ackEvent)
+              _ <- nebflow.core.processor.DeliveredReceiptLedger.markDelivered(
+                state.sessionId.getOrElse(""),
+                drainedEvents.flatMap(_.correlationId)
+              )
               result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, tc.replyTo)
             yield result
         end match
@@ -1080,6 +1090,13 @@ private[agent] object AgentProcessing:
                   _ <- persistDrainIO
                   _ <- logPostCompactInjection(agentDef, depth, state, drain)
                   _ <- emitInjectedBubbles(resources, state, drain)
+                  // #886：压缩窗全量 flush 是投递腿——ack + 持久投递标记（与
+                  // tools-complete/finishTurn 边界面同形；drainedEvents 随行）。
+                  _ <- drain.drainedEvents.traverse_(nebflow.core.delegate.DelegateDeliveryReceipts.ackEvent)
+                  _ <- nebflow.core.processor.DeliveredReceiptLedger.markDelivered(
+                    state.sessionId.getOrElse(""),
+                    drain.drainedEvents.flatMap(_.correlationId)
+                  )
                   result <- pipeLlmCall(
                     agentDef,
                     resources,
@@ -1105,6 +1122,12 @@ private[agent] object AgentProcessing:
                       for
                         _ <- logPostCompactInjection(agentDef, depth, state, drain)
                         _ <- emitInjectedBubbles(resources, state, drain)
+                        // #886：压缩窗全量 flush 是投递腿——ack + 持久投递标记。
+                        _ <- drain.drainedEvents.traverse_(nebflow.core.delegate.DelegateDeliveryReceipts.ackEvent)
+                        _ <- nebflow.core.processor.DeliveredReceiptLedger.markDelivered(
+                          state.sessionId.getOrElse(""),
+                          drain.drainedEvents.flatMap(_.correlationId)
+                        )
                         res <- pipeLlmCall(
                           agentDef,
                           resources,

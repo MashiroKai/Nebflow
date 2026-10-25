@@ -23,6 +23,7 @@ import nebflow.shared.{NebflowLogger, *}
  */
 private[agent] object AgentIdle:
   import nebflow.agent.AgentActor.*
+  import nebflow.core.processor.DeliveredReceiptLedger
 
   /**
    * Infer the injection source (任务 P) for a tool-originated UserInput that
@@ -444,6 +445,8 @@ private[agent] object AgentIdle:
             _ <- receiveVisibility(waiting = false)
             _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, held.size)
             _ <- ackDelegateDelivery(event)
+            // #886：注入即标记（持久投递标记面，与 ack 同点）。
+            _ <- DeliveredReceiptLedger.markDelivered(state.sessionId.getOrElse(""), event.correlationId.toList)
             result <- pipeLlmCall(
               agentDef,
               resources,
@@ -484,6 +487,11 @@ private[agent] object AgentIdle:
             _ <- persistQueues(state.sessionId, cleanedExec)
             // 诊断修复批 2026-10-24：批次腿同认 delegate 终态交付（任一腿注入即确认）。
             _ <- ackDelegateDelivery(event)
+            // #886：注入即标记（批次全量——held 件 + 本件）。
+            _ <- DeliveredReceiptLedger.markDelivered(
+              state.sessionId.getOrElse(""),
+              (held :+ event).flatMap(_.correlationId)
+            )
             // 台账对账（平台修复批 fix 1）：held 全量投递 ⇒ 台账清空 + 徽标帧归零。
             _ <- syncHeldReceipts(resources, state.sessionId, Nil).flatMap((h, u) =>
               emitHeldReceiptsBadge(state, h, u)
@@ -548,6 +556,8 @@ private[agent] object AgentIdle:
                 else touchBarrierSnapshot(resources, state.sessionId, newOutstanding, 0)
               // 诊断修复批 2026-10-24：直投腿同认 delegate 终态交付。
               _ <- ackDelegateDelivery(event)
+              // #886：注入即标记（持久投递标记面，与 ack 同点）。
+              _ <- DeliveredReceiptLedger.markDelivered(state.sessionId.getOrElse(""), event.correlationId.toList)
               result <- pipeLlmCall(
                 agentDef,
                 resources,
@@ -641,30 +651,38 @@ private[agent] object AgentIdle:
       // Idempotent: merges disk entries ahead of the in-memory queues (which
       // are empty at spawn); the disk file is deleted by the drain paths once
       // the queues are flushed, so a second replay is a no-op.
+      // #886 完成回执重启去重批（2026-10-26）：重放前过 **DeliveredReceiptLedger
+      // 重放闸**——已投递（标记在案）的回执不再重放进 pendingEvents。此前投递
+      // 判定只有内存队列 + ack 两腿，快照-投递窗口（缺 persist 腿 / 崩溃点）里
+      // 的已投件在重启后被当「未投」重放（实证 10-25 23:15：canvas ×3、
+      // console-card ×2、imagegen ×3——叠加 sweep 按超龄未确认的 10min 节拍重投）。
+      // 无 correlationId 的事件恒放行（身份不具唯一性，语义零回退）。
       case AgentCommand.RecoverPersistedQueues =>
         val sid = state.sessionId.getOrElse("")
         CompactionQueueStore.load(sid).flatMap {
           case Some(q) if q.imms.nonEmpty || q.events.nonEmpty =>
-            logAgentEvent(
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "queues-recovered",
-              s"imm=${q.imms.size} events=${q.events.size}"
-            )
-            val exec = state.execution.copy(
-              pendingImmediateInputs = q.imms ++ state.execution.pendingImmediateInputs,
-              pendingEvents = q.events ++ state.execution.pendingEvents
-            )
-            // 台账对账 + 徽标帧（fix 1 补漏批，2026-10-22）：恢复的回执必须落账——
-            // 此前恢复面不同步台账 ⇒ 无 producedAt ⇒ watchdog 对重启恢复回执致盲
-            // （nudge 文本整天数「1 条」而实际队列 5/11 条），只能等下一次输入触
-            // 发 fix-1 腿才投递（实证 2026-10-22 10:36/17:13 两次重启恢复）。
-            syncHeldReceipts(resources, state.sessionId, exec.pendingEvents).flatMap((h, u) =>
-              emitHeldReceiptsBadge(state, h, u)
-            ) *>
-              IO.pure(idle(agentDef, resources, depth, parentRef, state.copy(execution = exec)))
+            DeliveredReceiptLedger.filterUndelivered(sid, q.events).flatMap { (keptEvents, blocked) =>
+              logAgentEvent(
+                agentDef,
+                depth,
+                state.sessionId,
+                state.sessionName,
+                "queues-recovered",
+                s"imm=${q.imms.size} events=${keptEvents.size} replayFiltered=${blocked.size}"
+              )
+              val exec = state.execution.copy(
+                pendingImmediateInputs = q.imms ++ state.execution.pendingImmediateInputs,
+                pendingEvents = keptEvents ++ state.execution.pendingEvents
+              )
+              // 台账对账 + 徽标帧（fix 1 补漏批，2026-10-22）：恢复的回执必须落账——
+              // 此前恢复面不同步台账 ⇒ 无 producedAt ⇒ watchdog 对重启恢复回执致盲
+              // （nudge 文本整天数「1 条」而实际队列 5/11 条），只能等下一次输入触
+              // 发 fix-1 腿才投递（实证 2026-10-22 10:36/17:13 两次重启恢复）。
+              syncHeldReceipts(resources, state.sessionId, exec.pendingEvents).flatMap((h, u) =>
+                emitHeldReceiptsBadge(state, h, u)
+              ) *>
+                IO.pure(idle(agentDef, resources, depth, parentRef, state.copy(execution = exec)))
+            }
           case _ => IO.pure(idle(agentDef, resources, depth, parentRef, state))
         }
 
@@ -676,49 +694,63 @@ private[agent] object AgentIdle:
       // 仅把 pendingEventCount 快照对齐防漂移。processing/frozen 态另有各自 no-op
       // 分支（turn 边界 drain / 解冻后 drain 兜住）。
       case AgentCommand.DrainHeldReceipts =>
-        val held = state.execution.pendingEvents
-        if held.isEmpty then
-          touchBarrierSnapshot(resources, state.sessionId, state.execution.outstandingSubagentResults, 0) *>
-            IO.pure(idle(agentDef, resources, depth, parentRef, state))
-        else
-          val batchMessage = buildEventReminder(held)
-          val cleaned = state.copy(execution =
-            state.execution.copy(pendingEvents = Nil, outstandingSubagentResults = 0)
-          )
-          for
-            _ <- IO(
-              logAgentEvent(
-                agentDef,
-                depth,
-                state.sessionId,
-                state.sessionName,
-                "held-receipts-force-drain",
-                s"held=${held.size} returned-outstanding=${state.execution.outstandingSubagentResults}"
+        val heldAll = state.execution.pendingEvents
+        // #886 注入侧幂等（双保险腿）：催注注入前查 DeliveredReceiptLedger——
+        // 已投递（标记在案）的件直接出队不注入（防陈旧内存/旧版快照重放）。
+        DeliveredReceiptLedger.filterUndelivered(state.sessionId.getOrElse(""), heldAll).flatMap { (held, blocked) =>
+          val prunedState =
+            if blocked.isEmpty then state
+            else state.copy(execution = state.execution.copy(pendingEvents = held))
+          if held.isEmpty then
+            persistQueues(prunedState.sessionId, prunedState.execution) *>
+              touchBarrierSnapshot(resources, prunedState.sessionId, prunedState.execution.outstandingSubagentResults, 0) *>
+              IO.pure(idle(agentDef, resources, depth, parentRef, prunedState))
+          else
+            val batchMessage = buildEventReminder(held)
+            val cleaned = prunedState.copy(execution =
+              prunedState.execution.copy(pendingEvents = Nil, outstandingSubagentResults = 0)
+            )
+            for
+              _ <- IO(
+                logAgentEvent(
+                  agentDef,
+                  depth,
+                  prunedState.sessionId,
+                  prunedState.sessionName,
+                  "held-receipts-force-drain",
+                  s"held=${held.size} returned-outstanding=${prunedState.execution.outstandingSubagentResults} replayFiltered=${blocked.size}"
+                )
               )
-            )
-            _ <-
-              if depth == 0 then
-                state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
-              else IO.unit
-            _ <- emitForceDrainVisibility(resources, state, held)
-            _ <- touchBarrierSnapshot(resources, state.sessionId, 0, 0)
-            _ <- persistQueues(state.sessionId, cleaned.execution)
-            _ <- syncHeldReceipts(resources, state.sessionId, Nil).flatMap((h, u) =>
-              emitHeldReceiptsBadge(state, h, u)
-            )
-            result <- pipeLlmCall(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              cleaned
-                .withMessages(cleaned.messages :+ batchMessage)
-                .withNextLoopTurn, // Block 3：催注补投 = 新 turn
-              None
-            )
-          yield result
-          end for
-        end if
+              _ <-
+                if depth == 0 then
+                  prunedState.sessionId.fold(IO.unit)(sid => emitSessionBusy(prunedState.wsSend, sid, busy = true))
+                else IO.unit
+              _ <- emitForceDrainVisibility(resources, prunedState, held)
+              _ <- touchBarrierSnapshot(resources, prunedState.sessionId, 0, 0)
+              _ <- persistQueues(prunedState.sessionId, cleaned.execution)
+              // #886：注入即标记（与 ack 同点——本批的持久投递标记面）。
+              _ <- DeliveredReceiptLedger.markDelivered(
+                prunedState.sessionId.getOrElse(""),
+                held.flatMap(_.correlationId)
+              )
+              _ <- held.traverse_(nebflow.core.delegate.DelegateDeliveryReceipts.ackEvent)
+              _ <- syncHeldReceipts(resources, prunedState.sessionId, Nil).flatMap((h, u) =>
+                emitHeldReceiptsBadge(prunedState, h, u)
+              )
+              result <- pipeLlmCall(
+                agentDef,
+                resources,
+                depth,
+                parentRef,
+                cleaned
+                  .withMessages(cleaned.messages :+ batchMessage)
+                  .withNextLoopTurn, // Block 3：催注补投 = 新 turn
+                None
+              )
+            yield result
+            end for
+          end if
+        }
 
       // Immediate input arriving in idle (turn already finished) — treat as normal UserInput
       // ② (2026-09-11): `fromUser` is carried across the conversion — dropping it
