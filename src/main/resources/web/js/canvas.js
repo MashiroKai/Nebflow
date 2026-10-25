@@ -3415,6 +3415,7 @@ function initCapsuleRing() {
    *  原地即可换选（不必悬在胶囊上）；面板外（侧栏/聊天）零消费零感知。 */
   const onDocWheel = (e) => {
     if (!ringState || isMobileLayer()) return;
+    if (deck.open) { closeRing(); return; }   // deck 态不开环（叠卡有自己的滚轮语义；开环态下 deck 开启即让位）
     const panel = document.getElementById('canvas-panel');
     const pr = panel ? panel.getBoundingClientRect() : null;
     if (pr && (e.clientX < pr.left || e.clientX > pr.right || e.clientY < pr.top || e.clientY > pr.bottom)) return;
@@ -3491,8 +3492,27 @@ function initCapsuleRing() {
   // drop 落区不受影响）。文字多选已被全头 user-select:none 封死（CSS）。
   hdr.addEventListener('dragstart', (e) => e.preventDefault());
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ringState) closeRing(); });
-  // 生命周期：任何换签收环（环游标语义随激活易主作废）；页签增减重建/收环。
-  document.addEventListener('canvas-tab-switched', () => { if (ringState) closeRing(); });
+  // 生命周期：换签不再无条件收环（作者报障 2026-10-25「hover 滚动连续性丧失」：
+  // 「如果滚动，切换了其他卡片，那么就无法再次滚动，需要重新hover触发」）——
+  // 旧腿 canvas-tab-switched → closeRing() 无条件收环，滚轮监听随环拆走，而
+  // pointerenter 在指针未离头时不会再触发 ⇒ 换签后滚动链死断，必须移出再
+  // hover。修法：换签时指针仍在 hover 区（openPt ∪ 标题头 ∪ 非弧外胶囊联合
+  // 盒，与 evaluateLeave 同一判定）= 环保持开、游标跳到新激活页签（acc/accY
+  // 清零、回锚重排），滚动零断链；指针已离区（他处换签）= 照旧收环。deck 态
+  // / 单页签态不开环照旧（deck 叠卡有自己的滚轮语义，双环互搏防回归）。
+  document.addEventListener('canvas-tab-switched', () => {
+    if (!ringState) return;
+    const pt = lastPtr || openPt;
+    if (pt && !deck.open && tabs.size >= 2 && inHoverZone(pt.x, pt.y)) {
+      ringState.ids = [...tabs.keys()];
+      ringState.cursor = Math.max(0, ringState.ids.indexOf(activeTabId));
+      acc = 0;
+      accY = 0;
+      layout();                // layout() 内部先回锚（真越出批视口版）
+      return;
+    }
+    closeRing();
+  });
   document.addEventListener('canvas-tab-closed', () => {
     if (!ringState) return;
     /* teardownTab 在 tabs.delete 之前派发本事件（事件序先于删除）——同步重建

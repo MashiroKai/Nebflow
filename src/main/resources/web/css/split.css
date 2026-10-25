@@ -737,10 +737,16 @@ body:not(.mobile-layer):not(.card-window) #canvas-panel.stacked .canvas-header {
 .canvas-header.scroll-under-glass { --sug-fade: 24px; --sug-blur: 10px; }
 .canvas-header.scroll-under-glass::after { left: -18px; right: -18px; }
 
-/* 桌面态胶囊内容（原 46px 实条规则退役）：高度由内容撑，pop 钮随行。
-   2026-10-22 作者令「平时态尺寸调小」：padding/字号降一档。 */
+/* 桌面态胶囊内容（原 46px 实条规则退役）：padding/字号降一档
+   （2026-10-22 作者令「平时态尺寸调小」）。高度不再交内容撑（尺寸一致批
+   2026-10-25 作者报障「所有面板的胶囊大小应该保持一致，现在是我们内部的
+   面板明显小一圈」）：修前 height:auto 随子件浮沉 —— 文件页签有
+   canvas-pop-btn（26px）撑到 36，功能性面板页签（图谱/插件/任务列表/设置，
+   pop 钮 hidden）塌到 27 = 面板间「明显小一圈」。固定 36px（= 文件卡档视觉
+   基准；全局 border-box 含 padding/border）后所有面板同高。手机层通栏卡头
+   （mobileLayer.css §⑨ 自有形态）由 :not(.mobile-layer) 让位不锁高。 */
 body:not(.mobile-layer) .canvas-header {
-  height: auto;
+  height: 36px;
   padding: 4px 7px 4px 12px;
 }
 body:not(.mobile-layer) .canvas-header .canvas-tab-bar,
@@ -1259,11 +1265,20 @@ body.deck-look-v3 {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  max-width: 62%;
+  /* 显示不全修复（尺寸一致批 2026-10-25 作者报障「还有无法完全显示的bug」）：
+     旧值 max-width:62% 是全宽标题条时代（b5d507737 v5 叠卡批）的遗产 —— UI 批⑨
+     胶囊化后 .canvas-header 变 fit-content，子元素百分比 max-width 对
+     fit-content 父级是**循环约束**，Chrome 收敛在「标题自然宽 ×~0.62」的定点
+     ⇒ 任何标题（哪怕面板空间充裕）都截 ~38%（实测「插件」6.9px/24px 自然宽、
+     「文档图谱」21.8px/48px、short.md 44.3px/52px 全截）。改 none：显示上限
+     交还父级真实几何 cap（上方居中批 max-width: min(76%, max(220px, 100% -
+     368px))，对 #canvas-slide 非循环），.t-name ellipsis 只在真到缘时兜底；
+     flex 链 min-width:0（title/t-inner/t-name 三级俱在）保证收缩不溢出。 */
+  max-width: none;
   min-width: 0;
   user-select: none;
 }
-body.canvas-deck-narrow .canvas-title { max-width: 46%; }
+body.canvas-deck-narrow .canvas-title { max-width: none; }
 .canvas-title .t-inner {
   display: flex;
   align-items: center;
@@ -2050,11 +2065,10 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   gap: 10px;
   height: 100%;
 }
-.canvas-image-viewer .image-info {
-  font-size: 11px;
-  color: var(--color-text-muted);
-  opacity: 0.6;
-}
+/* .image-info（文件名+体积标签行）退役 — 2026-10-25 胶囊去重令（作者报障
+   「胶囊底下文件名称重复显示」）：canvas 顶带标题胶囊是唯一名称面，本行被
+   胶囊叠住只露出边缘 = 同屏重复。渲染端（viewers/image.js、viewers/video.js）
+   同批摘除，规则随层退役 —— 非 z-index 遮盖。 */
 /* Zoom/pan viewport: overflow hidden, transform-driven (viewers/zoom.js). */
 .canvas-image-viewport {
   flex: 1;
@@ -2085,11 +2099,7 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   gap: 10px;
   height: 100%;
 }
-.canvas-video-viewer .image-info {
-  font-size: 11px;
-  color: var(--color-text-muted);
-  opacity: 0.6;
-}
+/* .image-info 已随 2026-10-25 胶囊去重令退役（见上 .canvas-image-viewer 注）。 */
 .canvas-video-viewer video.canvas-video {
   display: block;
   max-width: 100%;
@@ -3023,7 +3033,10 @@ body.card-window #canvas-panel {
   animation: nf-card-win-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 body.card-window #canvas-panel.stacked { transform: none !important; }
-body.card-window #canvas-panel .canvas-header { padding-top: 8px; }
+/* 卡窗胶囊 padding 归一（尺寸一致批 2026-10-25）：旧 8px 顶 pad 是 40px 高
+   形态（height:auto 时代）的配套；胶囊高度统一 36 后 8+4+26 合并钮=38 溢出
+   2px，归一回统一档 4px（与主窗 .canvas-header 同一条 padding 链）。 */
+body.card-window #canvas-panel .canvas-header { padding-top: 4px; }
 /* 卡窗卡头「合并」钮 */
 .canvas-merge-btn {
   flex: none;

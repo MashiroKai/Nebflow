@@ -2,7 +2,7 @@
 // Zoom: transform scale on the <img> (layout-free), wheel/keys/toolbar via the
 // shared viewers/zoom.js engine; pan via pointer drag.
 
-import { escapeHtml, formatSize } from './shared.js';
+import { escapeHtml } from './shared.js';
 import { reMint } from '../nfTicket.js';
 import { nfViewerUrl } from '../nfFileCache.js';
 import { enableViewerZoom } from './zoom.js';
@@ -75,10 +75,13 @@ async function viewImage(pane, { absPath, fileName, size, objectUrl }) {
 
     const wrap = document.createElement('div');
     wrap.className = 'canvas-image-viewer';
-    const info = document.createElement('div');
-    info.className = 'image-info';
-    info.textContent = `${fileName || ''} — ${formatSize(size || 0)}`;
-    wrap.appendChild(info);
+    // 「文件名+体积」标签行退役（2026-10-25 作者报障「胶囊底下文件名称重复显示」）：
+    // canvas 顶带标题胶囊（icon + 文件名，split.css .canvas-title）恒在场且是唯一
+    // 名称面 —— 本行渲染的「fileName — size」被胶囊叠住只露出边缘，形成同屏重复。
+    // 按互斥令退役整层渲染（非 z-index 遮盖）：胶囊在场 ⇒ 不渲染底层标签。
+    // 消费面核查：image viewer 唯一消费腿 = canvas 文件页签 / 附件预览页签 /
+    // 卡窗（fileViewers.js renderFile ← canvas.js ×2 + attachmentPreview.js
+    // renderIntoTab→openTab），三腿标题胶囊全在场，无「无胶囊」消费面。
 
     const viewport = document.createElement('div');
     viewport.className = 'canvas-image-viewport';

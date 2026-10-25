@@ -39,6 +39,13 @@
 //     .steady 才接 pointer —— 展开中胶囊从指针位掠过会抢标题头按压/拖划），
 //     中心位恒 pointer-events:none 落穿标题头手势链（CR2-9/CR2-9b 钉）。
 //
+// hover 连续性批（作者报障 2026-10-25 逐字「hover的效果应该是只要鼠标在胶囊
+// 上，就应该一直能上下滚动，现在是如果滚动，切换了其他卡片，那么就无法再次
+// 滚动，需要重新hover触发」）：
+//   G 换签不再无条件收环 —— 指针仍在 hover 区（联合盒）= 环保持开、游标跳新
+//     激活页签，滚动链零断链（CR4 重钉 + CR4b 不断链钉）；指针已离区 = 收环
+//     腿保留（CR4c）。旧「点击缘位 = 切换 + 环收」契约（CR4 原钉）由此取代。
+//
 // 运行：node tests/canvas-capsule-ring.spec.mjs
 // （boot 同 canvas-cardhead-capsule.spec.mjs：隔离静态服务器 + workspace-open-item
 //   直灌文件卡 + __canvasDeck.state() 探针；永不触碰宿主 8080）
@@ -85,6 +92,7 @@ const FILE_CONTENTS = new Map([
   ['/tmp/cr-fixture/alpha.md', { content: '# alpha\n\nalpha body\n', itemType: 'markdown' }],
   ['/tmp/cr-fixture/bravo.md', { content: '# bravo\n\nbravo body\n', itemType: 'markdown' }],
   ['/tmp/cr-fixture/charlie.md', { content: '# charlie\n\ncharlie body\n', itemType: 'markdown' }],
+  ['/tmp/cr-fixture/delta.md', { content: '# delta\n\ndelta body\n', itemType: 'markdown' }],
 ]);
 
 async function boot({ colorScheme = 'dark', viewport = { width: 1440, height: 900 } } = {}) {
@@ -370,7 +378,11 @@ const ringInfo = (page) => page.evaluate(() => {
   ok('CR3-3 环优先消费：环上滚轮后 pane scrollTop 不变（不外溢内容区）',
     scrollTopBefore === scrollTopAfter, `scroll ${scrollTopBefore} → ${scrollTopAfter}`);
 
-  /* ② 点击即切换：缘位胶囊（charlie 现居右侧缘）点击 → 激活易主 + 环收 */
+  /* ② 点击即切换：缘位胶囊点击 → 激活易主。环收腿已被作者令 2026-10-25
+   *  「hover 连续性」批取代（作者报障逐字「如果滚动，切换了其他卡片，那么就
+   *  无法再次滚动，需要重新hover触发」）：指针仍在 hover 区时换签 = 环保持
+   *  开、游标跳到新激活页签（滚动链零断链）；旧「换签即收环」契约只在指针
+   *  已离区时保留（他处换签，hover 语义不再成立）。 */
   const edgeId = await page.evaluate(() => {
     const e = [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule.is-edge')];
     return e.map((x) => x.dataset.tabId);
@@ -380,9 +392,26 @@ const ringInfo = (page) => page.evaluate(() => {
   await sleep(350);
   const afterClick = await ringInfo(page);
   const sClick = await stateOf(page);
-  ok('CR4 点击缘位胶囊 = 切换（激活易主 + 环收 + 标题回位）',
-    sClick.activeId === target && !afterClick.open && afterClick.n === 0 && afterClick.titleOpacity === '1',
-    `active=${sClick.activeId} open=${afterClick.open}`);
+  ok('CR4 点击缘位胶囊 = 切换（激活易主 + 环保持开·指针在区〔2026-10-25 连续性令〕+ 游标跳新激活）',
+    sClick.activeId === target && afterClick.open && afterClick.n === 3
+    && afterClick.centerId === target && afterClick.titleOpacity === '0',
+    `active=${sClick.activeId} open=${afterClick.open} center=${afterClick.centerId}`);
+  // CR4b 连续性钉：换签后环上滚轮仍活着（旧腿此处滚动链死断 = 作者报障本体）
+  await page.mouse.wheel(0, 100);
+  await sleep(300);
+  const afterClickWheel = await ringInfo(page);
+  ok('CR4b 换签后滚轮不断链：环开 + 游标随滚动移开（center ≠ 刚切换页签）',
+    afterClickWheel.open && afterClickWheel.n === 3 && !!afterClickWheel.centerId
+    && afterClickWheel.centerId !== target,
+    `open=${afterClickWheel.open} center=${afterClickWheel.centerId}`);
+  // CR4c 收环腿保留：指针已离区（离环宽限后）换签 → 照旧收环
+  await unhover(page);
+  await openFile(page, '/tmp/cr-fixture/delta.md');   // 开新页签 = 换签（指针在环区外）
+  await sleep(450);
+  const afterAwaySwitch = await ringInfo(page);
+  ok('CR4c 指针离区换签收环腿保留：环不开（hover 语义随指针离区作废）',
+    !afterAwaySwitch.open && afterAwaySwitch.n === 0 && afterAwaySwitch.titleOpacity === '1',
+    `open=${afterAwaySwitch.open}`);
 
   /* ② hover 收起：离环 140ms 宽限后收（标题回位） */
   await hoverCapsule(page);
@@ -511,8 +540,8 @@ const ringInfo = (page) => page.evaluate(() => {
     });
     await sleep(450);
     const sClose = await stateOf(page);
-    ok('CR6-7 菜单「关闭」= 关对应页签（tabCount −1，对项消失）',
-      sClose.tabCount === 2 && victim !== sClose.activeId, `n=${sClose.tabCount} victim=${victim}`);
+    ok('CR6-7 菜单「关闭」= 关对应页签（tabCount −1，对项消失；4 页签态〔CR4c 起〕关 1 剩 3）',
+      sClose.tabCount === 3 && victim !== sClose.activeId, `n=${sClose.tabCount} victim=${victim}`);
   } else {
     ok('CR6-7 菜单「关闭」= 关对应页签', false, 'no victim capsule');
   }
