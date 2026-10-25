@@ -281,6 +281,7 @@ object AgentActor extends AgentCore with AgentSession:
           .getOrElse(Nil)
       }
       Message(MessageRole.User, Right(blocks), source = Some("external"))
+    end if
   end buildEventReminder
 
   /**
@@ -367,9 +368,7 @@ object AgentActor extends AgentCore with AgentSession:
     if state.execution.pendingEvents.isEmpty then None
     else
       val held = state.execution.pendingEvents
-      val cleaned = state.copy(execution =
-        state.execution.copy(pendingEvents = Nil, outstandingSubagentResults = 0)
-      )
+      val cleaned = state.copy(execution = state.execution.copy(pendingEvents = Nil, outstandingSubagentResults = 0))
       Some(HeldFlushPlan(List(buildEventReminder(held)), cleaned, held))
 
   /** [[heldFlushPlan]] 的伴生副作用：日志 + 屏障快照 + 台账对账 + 徽标帧。 */
@@ -402,6 +401,68 @@ object AgentActor extends AgentCore with AgentSession:
         plan.state.sessionId.getOrElse(""),
         plan.events.flatMap(_.correlationId)
       )
+
+  // ═══ 后台任务完成事件账本补投腿（修复批 2026-10-24 spec ②）══════════════
+  // 「会话下一次被唤醒时先补投未消费的完成事件」——挂在 idle 三个唤醒点
+  // （UserInput / ExternalEvent / ImmediateInput），先于本回合输入组消息。
+  // 判重幂等（consume-on-injection）：payloadHead 已在转录（直投路径此前已把
+  // 事件注入过——如 PPT 病历的「通知没唤醒但账目在」形态）或在途（本回合正
+  // 在注入的同一事件）⇒ 只消费不重注；否则合批一条 reminder 注入 + 消费。
+  // 账本故障降级为「不补投」，绝不阻断唤醒主路径。
+
+  final case class LedgerFlushPlan(
+    /** 前置于本回合既有消息之后的补投 reminder（先补投语义：在用户消息/在途事件之前）。 */
+    messages: List[Message],
+    /** 本次消费的 jobId（账本出账）。 */
+    consumedJobIds: List[String],
+    /** 补投的账目条目（日志/断言输入）。 */
+    entries: List[nebflow.core.tools.BgTaskLedger.Entry]
+  )
+
+  private[agent] def flushPendingLedgerCompletions(
+    state: AgentState,
+    inFlightPayloads: List[String]
+  ): IO[LedgerFlushPlan] =
+    state.sessionId.fold(IO.pure(LedgerFlushPlan(Nil, Nil, Nil))) { sid =>
+      nebflow.core.tools.BgTaskLedger.pending(sid).flatMap { entries =>
+        // 补投面只消费**完成事件**条目；orphan（cap 孤儿取证行，payload 为空）
+        // 不参与判重与注入——它们等 recordCompletion 原位升级或作为证据留存。
+        val completions = entries.filter(e => e.kind == "completion" && e.payloadHead.nonEmpty)
+        if completions.isEmpty then IO.pure(LedgerFlushPlan(Nil, Nil, Nil))
+        else
+          val transcript = state.messages.map(_.textContent).mkString("\n")
+          val (toInject, toConsumeOnly) =
+            nebflow.core.tools.BgTaskLedger.splitForRedelivery(completions, transcript, inFlightPayloads)
+          val consumed = (toInject ++ toConsumeOnly).map(_.jobId)
+          val messages =
+            if toInject.isEmpty then Nil
+            else
+              val body = toInject.zipWithIndex
+                .map { (e, i) =>
+                  s"${i + 1}. [${e.eventType}] ${e.payload.take(2000)}"
+                }
+                .mkString("\n")
+              List(
+                Message(
+                  MessageRole.User,
+                  Left(
+                    s"<system-reminder>\n[Background-task ledger replay] ${toInject.size} background-task completion " +
+                      s"notification(s) were recorded but never delivered into this session (lost wake / idle without " +
+                      s"a barrier). Re-delivered now — never evaporate:\n$body\n</system-reminder>"
+                  )
+                ).copy(source = Some("external"))
+              )
+          nebflow.core.tools.BgTaskLedger
+            .consume(sid, consumed)
+            .handleErrorWith(e =>
+              NebflowLogger
+                .forName("nebflow.agent")
+                .warn(s"bg-ledger consume failed for $sid: ${e.getMessage}")
+            )
+            .as(LedgerFlushPlan(messages, consumed, toInject))
+        end if
+      }
+    }
 
   /**
    * force-drain 补投注记（fix 2 可见化面，2026-10-22 身份补全批）：除条数外逐条带
@@ -439,15 +500,13 @@ object AgentActor extends AgentCore with AgentSession:
             state.wsSend,
             state.sessionId,
             s"[投递补注] ${held.size} 条回执此前被子代理批屏障扣留未注入（屏障槽位已归还），现随本回合补投:" +
-              held.zipWithIndex
-                .map { (e, i) =>
-                  val ageMin = ledger.get(nebflow.core.processor.HeldDeliveryPolicy.receiptId(e)).map(r =>
-                    (now - r.producedAt) / 60000L
-                  )
-                  val age = ageMin.fold("")(m => s" · 已等待${m}分钟")
-                  s"\n${i + 1}. [${e.source}·${e.eventType}$age] ${oneLine(e.payload).take(80)}"
-                }
-                .mkString,
+              held.zipWithIndex.map { (e, i) =>
+                val ageMin = ledger
+                  .get(nebflow.core.processor.HeldDeliveryPolicy.receiptId(e))
+                  .map(r => (now - r.producedAt) / 60000L)
+                val age = ageMin.fold("")(m => s" · 已等待${m}分钟")
+                s"\n${i + 1}. [${e.source}·${e.eventType}$age] ${oneLine(e.payload).take(80)}"
+              }.mkString,
             "system",
             Some("force-drain"),
             sessionProject = state.projectName
