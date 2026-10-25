@@ -180,10 +180,15 @@
       const card = document.querySelector('#message-stage .att-ref-card');
       if (!card) return null;
       const q = (sel) => card.querySelector(sel);
+      // 卡片语言统一批（2026-10-26）：file/document 引用 = .file-lang 面 ——
+      // 标题走 .fc-name、类型标签并入 .fc-icon 扩展名色块（badge 字段读旧面
+      // .att-ref-card-badge，file-lang 回落图标块文本；html-element 旧面照旧）。
       return {
         refType: card.dataset.refType,
-        title: q('.att-ref-card-title')?.textContent ?? '',
-        badge: q('.att-ref-card-badge')?.textContent ?? '',
+        fileLang: card.classList.contains('file-lang'),
+        title: q('.att-ref-card-title')?.textContent ?? q('.fc-name')?.textContent ?? '',
+        badge: q('.att-ref-card-badge')?.textContent ?? q('.fc-icon')?.textContent ?? '',
+        iconCls: q('.fc-icon')?.className ?? '',
         source: q('.att-ref-card-source')?.textContent ?? null,
         sourceAbsent: !q('.att-ref-card-source'),
         text: card.textContent,

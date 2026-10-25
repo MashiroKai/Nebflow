@@ -995,17 +995,27 @@ object GatewayMain extends IOApp:
                                     )
                                   // 感知守护进程 boot（mail-perception-impl 批，裁决 4：
                                   // 独立生命周期——随网关进程启停，不挂会话/流；广播经
-                                  // wsHub 窄端口注入）。失败只 WARN 绝不阻塞启动。
-                                  val perceptionBoot: IO[Unit] =
+                                  // wsHub 窄端口注入）。
+                                  // boot-lesson 批（2026-10-26 作者令「boot-smoke 必须
+                                  // 过」）：boot 移出关键启动链——端口门放行后才以**脱离
+                                  // fiber** 拉起。教训实体：sweepLoop 构造期 SOE 曾越过
+                                  // handleErrorWith 把整条启动链带走，2/2 listener 拒起；
+                                  // 现在任何感知 boot 故障（含 Error 级）最多带走这根
+                                  // fiber，listener 必起。routes 侧 ensureBoot 幂等兜底 +
+                                  // PerceptionService.bootGate 单飞仲裁双腿并发，感知
+                                  // 能力零回退（poll/sweep/digest/spool 语义逐字不变）。
+                                  val perceptionBootDetached: IO[Unit] =
                                     nebflow.perception.PerceptionService
                                       .boot(json => wsHub.broadcast(json), sharedResources)
                                       .handleErrorWith(e =>
                                         logger.warn(s"perception daemon boot failed: ${e.getMessage}").void
                                       )
-                                  hubSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> mergeStallPortSetup *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> perceptionBoot *> succeedPortGate(
+                                      .start
+                                      .void
+                                  hubSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> mergeStallPortSetup *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
-                                  ) *> {
+                                  ) *> perceptionBootDetached *> {
                                     val sharedResourcesLive = sharedResourcesWithRestart
                                     // 2026-09-13（permshield S1）：`SessionService` 不再需要
                                     // "档位覆盖快照"入参——档位只有应用级全局持久一源

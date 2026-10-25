@@ -15,7 +15,9 @@
 import { t } from './i18n.js';
 // imageref-media（2026-10-09 修复批）：图片文件引用的消息内面 = Pop 媒体预览卡
 // （构建器单点在 popArtifacts；popArtifacts 不回引本模块，无环）。
-import { buildImageRefMediaFace } from './popArtifacts.js';
+// 卡片语言统一批（2026-10-26）：文件引用卡再复用同一 `fileIconStyle` 图标规范
+// （扩展名色块档 = 引擎侧 .file-card 同源，零第二套图标语言）。
+import { buildImageRefMediaFace, fileIconStyle } from './popArtifacts.js';
 
 /** Stable-ish ref id (内部用，非用户可见) — refType + monotonic counter. */
 let _refSeq = 0;
@@ -626,6 +628,57 @@ function isImageFileRef(ref) {
   return mime.startsWith('image/');
 }
 
+/** 文件/文档引用的统一卡面（卡片语言统一批 2026-10-26）：与引擎侧 `.file-card`
+ *  同一套语言 —— `.fc-icon` 扩展名色块（fileIconStyle 单源）+ `.fc-name` 文件名
+ *  + `.fc-sub` 来源路径（截断）；preview 有值时保留两行钳制内容行（引用特有的
+ *  信息面，字号随 sub 档）。类型角标（badge）并入图标块（MD/PDF… 即角标），
+ *  不再双写。dataset/click 语义与旧卡逐字节一致（jumpRef 单点）。 */
+function buildFileLangRefCard(ref) {
+  const src = ref.source || {};
+  const path = typeof src.path === 'string' ? src.path : '';
+  const rawName = String(src.fileName || src.title || ref.display?.label || '');
+  const base = rawName.split('/').pop() || rawName;
+  const card = document.createElement('div');
+  card.className = 'att-ref-card file-lang';
+  // 色族 = 扩展名档（fileIconStyle 单源；基础名无扩展名时回落路径扩展名 ——
+  // canvas 页签引用的 fileName 常无点，路径才是真类型源，makeReference typeLabel
+  // 同一口径）；块内文本 = meta.typeLabel（旧 badge 的同一来源，零信息丢失 ——
+  // SCALA/MD 全称保留），无 typeLabel 才回落 fileIconStyle 截断档。
+  const extSrc = (() => {
+    const d = base.lastIndexOf('.');
+    if (d > 0) return base.slice(d + 1);
+    const pd = path.lastIndexOf('.');
+    return pd > path.lastIndexOf('/') ? path.slice(pd + 1).toLowerCase() : '';
+  })();
+  const icon = fileIconStyle(extSrc);
+  const iconEl = document.createElement('div');
+  iconEl.className = 'fc-icon ' + icon.cls;
+  iconEl.textContent = ref.meta?.typeLabel || icon.label;
+  const meta = document.createElement('div');
+  meta.className = 'fc-meta';
+  const name = document.createElement('div');
+  name.className = 'fc-name';
+  name.textContent = ref.display?.label || base || path.split('/').pop() || path || extLabel(base, src.mimeType);
+  meta.appendChild(name);
+  const sourceLine = normalizeSource(ref);
+  if (sourceLine) {               // 20260903 fix: bare-filename path → no dir, no aux row
+    const sub = document.createElement('div');
+    sub.className = 'fc-sub att-ref-card-source';
+    sub.textContent = sourceLine;
+    meta.appendChild(sub);
+  }
+  const body = document.createElement('div');
+  body.className = 'att-ref-card-content';
+  body.textContent = ref.display?.preview || '';
+  if (body.textContent) meta.appendChild(body);
+  card.append(iconEl, meta);
+  card.dataset.refType = ref.refType || '';
+  card.dataset.refPath = path;
+  // #303 C2/C3: click the message card to jump to the referenced content
+  card.addEventListener('click', () => jumpRef(ref));
+  return card;
+}
+
 function renderMessageRef(ref) {
   // imageref-media（2026-10-09 修复批）：图片文件引用先分流到 Pop 媒体预览卡
   // （buildImageRefMediaFace）。修复前本函数对 refType:'file' 一律出 att-ref-card
@@ -635,13 +688,22 @@ function renderMessageRef(ref) {
   // （refType/refPath），点击 = openPopArtifact 开 Canvas（与 jumpRef 同族）。
   if (isImageFileRef(ref)) return buildImageRefMediaFace(ref);
   // Task references converge to the one-line form above (same shape as the
-  // injected [打回任务] collapse); file/document/html-element keep the card.
+  // injected [打回任务] collapse); file/document keep the card.
   if (ref.refType === 'task') {
     return buildTaskRefLine({
       taskId: ref.source?.taskId ?? '',
       title: ref.source?.title || '',
       opinion: '',
     });
+  }
+  // 卡片语言统一批（作者令 2026-10-26「用户发送的附件卡片与引擎发送的文件卡片
+  // 统一为同一套卡片语言」）：file/document 引用走 `.file-lang` 面 —— 图标 =
+  // popArtifacts.fileIconStyle 同一扩展名色块档（.fc-icon 单一来源）、字级/圆角/
+  // 底色与 .file-card 逐项同规（CSS 单点 .att-ref-card.file-lang）。跳转动作
+  // （jumpRef）/dataset 引用身份不变；html-element 引用维持原 svg 图标卡
+  // （无扩展名可言，旧面即对的语言）。
+  if (ref.refType === 'file' || ref.refType === 'document') {
+    return buildFileLangRefCard(ref);
   }
   const card = document.createElement('div');
   card.className = 'att-ref-card';

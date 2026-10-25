@@ -1359,6 +1359,10 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
   width: var(--capsule-w, 180px);
   max-width: min(var(--capsule-w, 180px), 92vw);
   padding: 4px 10px;
+  /* 标题溢出收口（作者令 2026-10-26「任何状态下不得出界」）：胶囊本体兜底
+     overflow:hidden —— .cr-name ellipsis 为主收口（flex 链 min-width:0），本体
+     裁切为兜底（过渡中途/字体度量抖动等任何态，文字绝不越过胶囊圆角边界）。 */
+  overflow: hidden;
   border: 1px solid var(--glass-border);
   border-radius: 999px;
   background: var(--glass-bg);

@@ -3337,9 +3337,12 @@ const RING_STEADY_MS = 370;   // 真越出批：展开过渡（0.36s）后缘位
  *  下缘位 |y| 对称下垂（上下对称裁定保持）。 */
 const RING_TOP_OUT = 0.8;
 
-/** 环开态单例（{ ids: string[], cursor: number }；null = 环闭）。hdr 重建时随
- *  initCanvas 重挂，状态本体放模块级 —— 手势 finish() 的 ringClickCenter 同读。 */
-let ringState = /** @type {{ids: string[], cursor: number}|null} */ (null);
+/** 环开态单例（{ ids: string[], cursor: number, lastDir: number }；null = 环闭）。
+ *  lastDir = 最近一次滚轮换选方向（±1）——双卡环（n=2）的方向感知布局档消费：
+ *  非游标胶囊驻「来向侧」，滑动永远读作「来一张/走一张」的滚动而不是弹回。
+ *  hdr 重建时随 initCanvas 重挂，状态本体放模块级 —— 手势 finish() 的
+ *  ringClickCenter 同读。 */
+let ringState = /** @type {{ids: string[], cursor: number, lastDir: number}|null} */ (null);
 
 /* 真越出批（作者令 2026-10-23 六项②）：环层挂 body（#canvas-capsule-ring
  *  position:fixed，z-246 —— overlay 面板 240 之上、fab 250 之下、模态 300+ 之下），
@@ -3456,6 +3459,12 @@ function initCapsuleRing() {
     for (let i = 0; i < kids.length; i++) {
       let rel = (i - cursor + n) % n;
       if (rel > n / 2) rel -= n;
+      /* 双卡方向感知档（作者令 2026-10-26「卡片数 <3 也要能正常滚动/切换」）：
+       * n=2 时环距取模恒落 +1（下方）——两卡来回换选的位姿集合不变，视觉读作
+       * 「弹回自己」。改：非游标胶囊驻 lastDir 侧（滚上来 = 它从上方来，滚下去
+       * = 从下方来），单步动画 = 真「滚一格」；≥3 卡模运算本就覆盖上下两侧，不
+       * 走本档（动画按实际卡数退化，不强求三卡）。 */
+      if (n === 2 && rel !== 0) rel = ringState.lastDir === -1 ? -1 : 1;
       const ar = Math.abs(rel);
       const k = kids[i];
       k.classList.toggle('is-center', rel === 0);
@@ -3551,6 +3560,7 @@ function initCapsuleRing() {
     }
     if (dir) {                                // 单次过阈恰切一格（余量清零 —— 事件不跨账）
       ringState.cursor = (ringState.cursor + dir + n) % n;
+      ringState.lastDir = dir;                // 双卡方向感知档：非游标胶囊驻来向侧（layout 消费）
       wheelLockUntil = now + RING_WHEEL_COOLDOWN_MS;
       layout();
     }
@@ -3562,7 +3572,7 @@ function initCapsuleRing() {
     if (deck.open) return;                         // deck 态：叠卡有自己的环卡滚轮语义，不开环
     if (tabs.size < 2) return;                     // 单胶囊：平时态即全部，无环可展
     const all = [...tabs.keys()];
-    ringState = { ids: all, cursor: Math.max(0, all.indexOf(activeTabId)) };
+    ringState = { ids: all, cursor: Math.max(0, all.indexOf(activeTabId)), lastDir: 1 };
     acc = 0;
     accY = 0;
     wheelLockUntil = 0;                            // 新环新账：开环清冷却（上次环的余威不作废新环第一挥）
