@@ -1453,6 +1453,35 @@ object TaskStuckWatcher:
                                      s"TaskStuckWatcher: session reclaim for ${rec.sessionId} failed: ${e.getMessage}"
                                    )
                                  )
+                             else if n == 0 && cls.recoverable then
+                               // ── 受控击杀通道（子代理等待三缺口批 2026-10-25，缺口③）──
+                               // 990bd848 实证：三次 Stop 无效 + 工具相位判死（inflight=0，
+                               // 无 LLM transport 可 abort）⇒ 证据 #5 护栏把进程 kill 无条件
+                               // 扣杀，挂死的会话除 supervisor Cancelled 外再无出路，孤儿
+                               // 子会话继续烧 token。本通道把「护栏的**无条件**」改成
+                               // 「**三连 Stop 无效 + 等待面已判死**才放行」：
+                               //   - 三连 = `attempts >= StopAttempts + 1`（本轮 transport
+                               //     abort 恰在此时武装——1/2 拍只发 Stop/hard-cancel）；
+                               //   - 等待面已判死 = `cls.recoverable`（类① true-stuck：零正
+                               //     信号、确实停摆——类② 仍在推进、类④ 归 LLM 层，均进不来）；
+                               //   - 动作 = 复用收殓支 reclaimSession 原语（按自有 PGID 击杀
+                               //     会话进程组 + 结算名下 bg 任务——进程占死形态被解锁后
+                               //     mailbox 恢复轮转；纯 Deferred 挂死形态仍由下一拍的
+                               //     giveUp 终态收殓，通道不越权）。
+                               logger.warn(
+                                 s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L2) — controlled-kill channel: " +
+                                   s"$attempts ineffective Stops and the tool-phase call is judged dead " +
+                                   s"(class=${cls.cls}, zero in-flight LLM transport to abort) — reclaiming the " +
+                                   "session's own processes (container-blindness guard overridden by the " +
+                                   "three-ineffective-Stops + judged-dead gate)"
+                               ) *>
+                                 nebflow.core.tools.BgTaskRegistry
+                                   .reclaimSession(Some(rec.sessionId), wsHub.broadcast, rec.rootSessionId)
+                                   .handleErrorWith(e =>
+                                     logger.warn(
+                                       s"TaskStuckWatcher: controlled-kill reclaim for ${rec.sessionId} failed: ${e.getMessage}"
+                                     )
+                                   )
                              else
                                logger.warn(
                                  s"TaskStuckWatcher: ${rec.sessionId} attempt $attempts (L2) — no in-flight LLM request (tool-phase); " +

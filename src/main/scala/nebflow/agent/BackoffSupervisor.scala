@@ -656,7 +656,26 @@ object BackoffSupervisor:
             .handleErrorWith(e =>
               logger.warn(s"BackoffSupervisor: failed to load messages for $subagentId: ${e.getMessage}").as(Nil)
             )
-          newChild <- childSpawnFn(ctx.system, recoveredMessages)
+          // ── 缺口②（子代理等待三缺口批 2026-10-25）：恢复点的在飞工具调用终结面──
+          // 990bd848 实证：checkpoint 断点里无 result 的 tool_use 原样重进（自毒
+          // 根因）+ 幽灵工具相位让 watcher 掐杀恢复轮 → 重启配额烧尽。respawn 三件：
+          //   ① 孤儿子会话处置（唯一等它的人已死——Stop + 结算，防 token 僵尸）；
+          //   ② transcript 修复：悬挂 tool_use 补 recovered-after-crash 错误
+          //      result（恢复会话看见失败事实，自行重试该步或绕行）；
+          //   ③ registry 恢复记录清幽灵工具相位（下方 refreshed 处）。
+          _ <- SubagentCrashRecovery.disposeOrphanChildren(resources, subagentId)
+          (repairedMessages, terminatedCalls) = SubagentCrashRecovery.terminateDanglingToolCalls(recoveredMessages)
+          _ <-
+            if terminatedCalls.nonEmpty then
+              logger
+                .info(
+                  s"BackoffSupervisor: $subagentId checkpoint repair — terminated ${terminatedCalls.size} dangling " +
+                    s"tool call(s) at the recovery point [${terminatedCalls.map(_._1).mkString(", ")}] " +
+                    s"(${SubagentCrashRecovery.RecoveredAfterCrashToken})"
+                )
+                .void
+            else IO.unit
+          newChild <- childSpawnFn(ctx.system, repairedMessages)
           _ <- ctx.watch(newChild)
           // Spec C2: 回写 registry（新 ref + supervisor 指向自己 + 活动时
           // 间刷新）。无旧记录（ghost respawn）时按 source 重建最小条目。
@@ -677,7 +696,13 @@ object BackoffSupervisor:
                 status = AgentStatus.Idle,
                 lastActivityMs = System.currentTimeMillis()
               )
-            registry.updated(subagentId, refreshed)
+            // 缺口② ③（子代理等待三缺口批 2026-10-25）：落 Idle 必须同步清工具相位
+            // ——「离开 Processing 一律清工具相位」不变式（AgentRegistryEmit
+            // .touchRegistryActivity 头注）的恢复点同款。旧写法绕过该不变式，崩溃前
+            // 的 currentToolStartedAt 残留成幽灵相位：watcher 拿它反复杂死刚 respawn
+            // 的会话，把健康的续跑轮当卡死掐杀（990bd848 实证 "tool 'Subagent'
+            // running 655s" 跨两代 respawn 追杀）。
+            registry.updated(subagentId, SubagentCrashRecovery.staleToolPhaseCleared(refreshed))
           }
           // If we recovered messages, send a "continue" instruction so the
           // child picks up where it left off (crash: plain continue; empty

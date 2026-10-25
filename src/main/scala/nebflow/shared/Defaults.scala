@@ -858,6 +858,22 @@ object Defaults:
     sys.props.getOrElse("nebflow.stuck.toolDeadlineSlackMs", "60000").toLong
 
   /**
+   * 子代理等待面的**活性判定窗**（子代理等待三缺口批 2026-10-25，缺口①）：
+   * `BlockingSubagent` spawn 子会话后，预算窗内子会话**零事件帧**（连
+   * `agentStart` 都没发）= 判子死——工具以结构化失败 `subagent-never-started`
+   * 返回，父 agent 自行处置（重试/绕过），不再干等 15min 硬顶。
+   *
+   * 哲学对齐 #692：有活性事实才继续等，等不到事实是「对端死亡判定」，不是超时杀。
+   * 默认 120s ≫ 任何正常 spawn→首帧路径（actor spawn + turn 派发是毫秒级），
+   * 只会命中「子会话真死」形态；远小于 [[Timeout]]（15min）。
+   *
+   * system prop `nebflow.subagent.startBudgetMs`，每次调用现读（kill-switch 先例，
+   * 同 [[StuckThresholdMs]] 族）。
+   */
+  def SubagentStartBudgetMs: Long =
+    sys.props.getOrElse("nebflow.subagent.startBudgetMs", "120000").toLong
+
+  /**
    * 工具调用自己声明的授权时长（ms）。R6 唯一取数口：读工具入参 JSON 的 `timeout`
    * 字段（Bash 工具既有授权参数，语义 = 该命令被允许跑多久）。
    *

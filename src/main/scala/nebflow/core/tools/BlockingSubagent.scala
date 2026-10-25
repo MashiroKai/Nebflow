@@ -25,6 +25,16 @@ import scala.concurrent.duration.*
  * agentId 命中）即完成 Deferred。零新协议、零新 actor；超时（[[Timeout]]）
  * 是兜底而非主路径。
  *
+ * ==活性判定窗（子代理等待三缺口批 2026-10-25，缺口①）==
+ * spawn 后预算窗（[[Defaults.SubagentStartBudgetMs]]，默认 120s）内子会话
+ * **零事件帧** = 判子死：工具以结构化失败 `subagent-never-started` 返回，
+ * 父 agent 得以自行处置（重试/绕过），不再把「子会话首个 LLM 请求 provider-hang
+ * 永不出声」的形态干等满 15min 硬顶（990bd848 卡死链实证）。哲学对齐 #692：
+ * 有活性事实才继续等，等不到事实是「对端死亡判定」，不是超时杀。活性事实 =
+ * 子会话经本间谍的**第一帧**（`agentStart` 领衔——turn 派发的第一拍即发，
+ * LLM 流楔死形态之后零帧照常覆盖）；完成帧（agentDone/agentEnd）天然蕴含已
+ * 活性，同样先落活性标记再走完成桥。零新协议、零新 actor——与完成桥同一间谍。
+ *
  * ==叶子纪律==
  * subagent 是叶子：不注册 SupervisorAdapter（无后台续命），终态即回收；取消
  * 由 AgentControl 的 SubTask 通道（Stop fallback）覆盖。
@@ -43,6 +53,13 @@ object BlockingSubagent:
 
   /** 单次侦察硬超时（wall-clock；不含人机等待——本会话不等人）。 */
   val Timeout: FiniteDuration = 15.minutes
+
+  /** 结构化失败 token（缺口①）：判子死的工具错误文本必带——父 agent 可据此分流（重试/绕过）。 */
+  val NeverStartedToken: String = "subagent-never-started"
+
+  /** 活性判定窗（缺口①）——[[Defaults.SubagentStartBudgetMs]] 的投影（测试注入缝）。 */
+  private[tools] def startBudget: FiniteDuration =
+    nebflow.shared.Defaults.SubagentStartBudgetMs.millis
 
   /**
    * 阻塞运行一次子会话。返回子会话最终文本。
@@ -66,7 +83,13 @@ object BlockingSubagent:
           val childDepth = ctx.depth + 1
           for
             done <- IO.deferred[Option[String]]
-            childWsSend = spy(done, childId, DelegateTool.routeWsSendFor(childId, parentSid, ctx.wsSend))
+            // 缺口①（子代理等待三缺口批 2026-10-25）：活性判定窗的完成源——子会话
+            // 第一帧即落（见 startSpy）；预算窗内未落 = 判子死。
+            started <- IO.deferred[Unit]
+            childWsSend = startSpy(
+              started,
+              spy(done, childId, DelegateTool.routeWsSendFor(childId, parentSid, ctx.wsSend))
+            )
             agentDef = nebflow.core.entity.BuiltinAgents.entry(defName).map(_.toAgentDef).get
             params = NodeRunner.SpawnParams(
               agentDef = agentDef,
@@ -114,26 +137,16 @@ object BlockingSubagent:
             // （defName=nebflow，有执行面）是本注入的主对象。包装单点 =
             // [[promptWithRule]]（spec 判红锚）。
             _ <- ref ! AgentCommand.UserInput(promptWithRule(prompt), None)
-            result <- done.get
-              .timeout(Timeout)
-              .map {
-                case Some(text) if text.trim.nonEmpty => Right(text.trim)
-                case _ => Left(ToolError(s"Subagent '$childId' ended without a final text."))
-              }
-              .handleErrorWith { e =>
-                logger.warn(s"subagent $childId timeout/crash: ${e.getMessage}")
-                (ref ! AgentCommand.Stop(s"subagent-timeout")).attempt.void *>
-                  // 超时腿子会话被 Stop 掐断，不再有自家 agentDone
-                  // 帧——补一帧面板终态，活面板的行即时翻终态（成功腿子会话自家的
-                  // agentDone 已随间谍上行，无需补发）。
-                  childWsSend(
-                    io.circe.Json.obj("type" -> "agentDone".asJson, "agentId" -> childId.asJson)
-                  ).attempt.void.as(
-                    Left(
-                      ToolError(s"Subagent did not finish within $Timeout — cancelled. Narrow the question and retry.")
-                    )
-                  )
-              }
+            // ── 缺口① 两段等待（2026-10-25）——实现单点 [[awaitResult]]（spec 判红锚）
+            result <- awaitResult(
+              started = started,
+              done = done,
+              childId = childId,
+              stopChild = (reason: String) => (ref ! AgentCommand.Stop(reason)).attempt.void,
+              emitPanelDone = childWsSend(
+                io.circe.Json.obj("type" -> "agentDone".asJson, "agentId" -> childId.asJson)
+              ).attempt.void
+            )
             // 叶子终态回收——桥已定局（成功或超时），
             // 结算 registry / task store / 子 actor。滞留即「空闲」僵尸行 + 永久
             // running 记录 + actor 泄漏（根因取证见类注释）。
@@ -151,6 +164,61 @@ object BlockingSubagent:
 
   private def rootOf(ctx: ToolContext): String =
     ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("")
+
+  /**
+   * 缺口① 两段等待（子代理等待三缺口批 2026-10-25）——**实现单点 + spec 判红锚**
+   * （真实计时，`StuckThresholdMs` 族的 kill-switch 可配）：
+   *   - 段一（活性）：预算窗（[[startBudget]]，默认 120s）内等子会话第一帧。
+   *     预算耗尽 = 判子死 → Stop + 补面板终态帧 + 结构化失败（[[NeverStartedToken]]
+   *     领头——父 agent 可据此分流：重试/绕过）。
+   *   - 段二（完成）：活性到场后与改造前逐字——15min 硬顶 + 完成桥读取
+   *     finalText + 超时补帧腿。
+   */
+  private[tools] def awaitResult(
+    started: Deferred[IO, Unit],
+    done: Deferred[IO, Option[String]],
+    childId: String,
+    stopChild: String => IO[Unit],
+    emitPanelDone: IO[Unit]
+  ): IO[Either[ToolError, String]] =
+    started.get
+      .timeout(startBudget)
+      .attempt
+      .flatMap {
+        case Left(_) =>
+          val budget = startBudget
+          logger.warn(
+            s"subagent $childId never started: zero event frames within $budget — judging the child dead ($NeverStartedToken)"
+          ) *>
+            stopChild(NeverStartedToken) *> emitPanelDone.as(
+              Left(
+                ToolError(
+                  s"Subagent '$childId' spawned but never started: no event frame within $budget " +
+                    s"(the child's first turn produced zero events — a provider hang on its first LLM " +
+                    s"request is the typical cause). Judged dead and stopped; retry the call or continue " +
+                    s"without it. ($NeverStartedToken)"
+                )
+              )
+            )
+        case Right(_) =>
+          done.get
+            .timeout(Timeout)
+            .map {
+              case Some(text) if text.trim.nonEmpty => Right(text.trim)
+              case _ => Left(ToolError(s"Subagent '$childId' ended without a final text."))
+            }
+            .handleErrorWith { e =>
+              logger.warn(s"subagent $childId timeout/crash: ${e.getMessage}")
+              stopChild("subagent-timeout") *>
+                // 超时腿子会话被 Stop 掐断，不再有自家 agentDone 帧——补一帧面板
+                // 终态（成功腿子会话自家的 agentDone 已随间谍上行，无需补发）。
+                emitPanelDone.as(
+                  Left(
+                    ToolError(s"Subagent did not finish within $Timeout — cancelled. Narrow the question and retry.")
+                  )
+                )
+            }
+      }
 
   /**
    * 步/子会话首条消息铁律包装（sleep-poll 禁令批 C 段单点；spec 判红锚）——
@@ -198,6 +266,17 @@ object BlockingSubagent:
       logger.info(s"subagent $childId reaped at terminal: status=$status, registry entry removed, actor stopped")
 
   end reap
+
+  /**
+   * 活性间谍（缺口①）：子会话经此上行的**第一帧**（任何类型——`agentStart`
+   * 领衔，完成帧天然蕴含已活性）即落活性标记，然后原样交完成桥。零新协议——
+   * 与完成桥同一间谍链，只是多读一个「有帧」事实。
+   */
+  private[tools] def startSpy(
+    started: Deferred[IO, Unit],
+    base: io.circe.Json => IO[Unit]
+  ): io.circe.Json => IO[Unit] = json =>
+    started.complete(()).attempt.void *> base(json)
 
   /** wsSend 间谍：agentDone/agentEnd 且 nodeSessionId 命中 ⇒ 完成桥。 */
   private[tools] def spy(
