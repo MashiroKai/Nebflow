@@ -24,7 +24,10 @@ import nebflow.core.delegate.{DelegateRegistry, DelegateSessions}
  * **仅更新 DelegateRegistry 状态，不携汇报**——汇报仍以终态最后一条消息直传
  * （既有 `source="delegate"` 系统消息面不变）：本工具写的是结构化状态槽
  * （reportStatus / reportDetail），消费点 = 终态判定机（DelegateJudge 的
- * selfReport 输入 + 判定机失败时的回落语义）与任务列表状态面。
+ * selfReport 输入 + 判定机失败时的回落语义）与任务列表状态面。状态槽是单槽
+ * （新申报覆写旧申报）——覆写发生时旧 detail 由 DelegateRegistry.updateReport
+ * 留底进 workReport 槽（delegate-finish-report 修复批 2026-10-25：merge 轮的
+ * 工作详报不随 finish 轮短报覆写而丢失，合并轮 Release 投父时随附页回传）。
  *
  * 提醒机制（防忘记调用）：delegate 初始 brief 携一行申报纪律（DelegateTool
  * 注入，§16 待过目）＋ 未申报不阻断终态（与 node_report「未申报不终态」同族，
@@ -134,7 +137,7 @@ object DelegateReportTool extends Tool:
               if category == MergeValue then
                 "[OK] merge recorded — you are now waiting-merge (MergeQueue FIFO). Do NOT merge on your own initiative: keep working elsewhere or go idle; the engine sends you a merge reminder when it is your turn. Your final report comes AFTER the merge round (report finish then)."
               else
-                "[OK] finish recorded — now write your final report as normal text output; it is the deliverable handed back to the dispatcher."
+                "[OK] finish recorded — now write your final report as normal text output; it is the deliverable handed back to the dispatcher. It must contain your WORK RESULT (what the task produced, artifacts, REPORT.md paths) with merge info kept to one line; the engine also auto-attaches your preserved work-phase report."
             Right(confirm)
         }
     end if

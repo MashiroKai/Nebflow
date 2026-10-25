@@ -68,6 +68,15 @@ object DelegateRegistry:
     /** 申报 suggestion（可选）。 */
     reportSuggestion: Option[String] = None,
     /**
+     * 工作结果文本槽（delegate-finish-report 修复批 2026-10-25）：ready-to-merge
+     * 停靠（HoldForMerge）时保真的**工作轮终稿**（delegate_report merge 轮的终文
+     * ——合并轮 finish 终文会把它顶掉，本槽 = 工作结果不随两段汇报丢失的承载面）。
+     * first-write-wins（首个非空文本落槽后不再改写）；`updateReport` 覆写旧
+     * detail 时此处留底（老 delegate 无停靠保真 → merge 申报 detail 回落补种）。
+     * 缺省 None：旧盘面照常解码（cliSessionId 同款纪律）。
+     */
+    workReport: Option[String] = None,
+    /**
      * 外部执行器的 CLI 侧会话 id（external-executors 批 #1225）——resume 续聊
      * 锚点（claude session_id / codex thread_id / zcode session_id），从适配流
      * 首帧取得后回写。None = 内部执行器或外部首帧尚未到达（续聊退化形态见
@@ -170,6 +179,12 @@ object DelegateRegistry:
    * delegate_report 状态槽单写（#1224 增补 §3.4）：读-改-写（同步整写），只动
    * report* 四键，其余字段原样保真。查无记录 = `Left`（不凭空造记录——申报的
    * 身份必须来自真实 spawn）。
+   *
+   * delegate-finish-report 修复批 2026-10-25 **preserve-before-overwrite**：本槽
+   * 是单槽（新申报覆写旧申报）——merge 轮的详细工作汇报会被 finish 轮的「合并
+   * 完成」短报覆掉（作者令缺陷：工作结果丢失）。覆写发生且旧 detail 非空、与新
+   * detail 不同、workReport 槽尚空 ⇒ 旧 detail **留底**进 `workReport`（首写优先
+   * ——停靠保真已落槽的工作轮终稿优先级更高，绝不被申报留底顶掉）。
    */
   def updateReport(id: String, status: String, detail: String, suggestion: String): Either[String, Unit] =
     if !validId(id) then Left(s"delegate_report: invalid session id '$id'")
@@ -179,15 +194,43 @@ object DelegateRegistry:
           case None => Left(s"delegate_report: no registry record for '$id' — report after a real Delegate spawn")
           case Some(rec) =>
             try
+              val preservedWorkReport = rec.workReport.orElse {
+                val old = rec.reportDetail.getOrElse("")
+                if old.trim.nonEmpty && old != detail then Some(old) else None
+              }
               put(
                 rec.copy(
                   reportStatus = Some(status),
                   reportDetail = Some(detail),
-                  reportSuggestion = if suggestion.nonEmpty then Some(suggestion) else None
+                  reportSuggestion = if suggestion.nonEmpty then Some(suggestion) else None,
+                  workReport = preservedWorkReport
                 )
               )
               Right(())
             catch case e: Throwable => Left(s"delegate_report: write failed: ${e.getMessage}")
+      }
+
+  /**
+   * 工作结果槽单写（delegate-finish-report 修复批 2026-10-25）：ready-to-merge
+   * 停靠点调用——把工作轮终稿保真进 `workReport`，合并轮 finish 终文不再顶掉它。
+   * **first-write-wins**：槽内已有非空文本 = 零写（幂等，工作轮终稿权威）；空文本
+   * = 零写（无可保真）。查无记录 = `Left`（与 updateReport 同纪律：只对真实
+   * spawn 生效）。
+   */
+  def updateWorkResult(id: String, text: String): Either[String, Unit] =
+    if !validId(id) then Left(s"updateWorkResult: invalid session id '$id'")
+    else if text.trim.isEmpty then Right(())
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"updateWorkResult: no registry record for '$id'")
+          case Some(rec) =>
+            if rec.workReport.exists(_.trim.nonEmpty) then Right(())
+            else
+              try
+                put(rec.copy(workReport = Some(text)))
+                Right(())
+              catch case e: Throwable => Left(s"updateWorkResult: write failed: ${e.getMessage}")
       }
 
   /** 进程内读-改-写串行化（updateReport 临界区；与 ChainStore.writeLock 各管各件）。 */
@@ -318,6 +361,7 @@ object DelegateRegistry:
       reportStatus <- c.get[Option[String]]("reportStatus")
       reportDetail <- c.get[Option[String]]("reportDetail")
       reportSuggestion <- c.get[Option[String]]("reportSuggestion")
+      workReport <- c.get[Option[String]]("workReport")
       cliSessionId <- c.get[Option[String]]("cliSessionId")
       plugins <- c.get[Option[List[String]]]("plugins")
       orchestrationMode <- c.get[Option[String]]("orchestrationMode")
@@ -341,6 +385,7 @@ object DelegateRegistry:
       reportStatus,
       reportDetail,
       reportSuggestion,
+      workReport,
       cliSessionId,
       plugins,
       orchestrationMode,
