@@ -132,7 +132,7 @@ class MergeQueueRestartReminderSpec extends FunSuite:
         new nebflow.actor.Behavior[nebflow.actor.AgentCommand]:
           def receive(ctx: nebflow.actor.ActorContext[nebflow.actor.AgentCommand], msg: nebflow.actor.AgentCommand): IO[nebflow.actor.Behavior[nebflow.actor.AgentCommand]] =
             msg match
-              case nebflow.actor.AgentCommand.UserInput(text, replyTo, _, _, _, _, _, _, _, _, _, _, _) =>
+              case nebflow.actor.AgentCommand.UserInput(text, replyTo, _, _, _, _, _, _, _, _, _, _, _, _) =>
                 IO { records += ((text, replyTo)); this }
               case _ => IO.pure(this)
         ,

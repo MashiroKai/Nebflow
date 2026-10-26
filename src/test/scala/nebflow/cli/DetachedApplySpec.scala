@@ -119,7 +119,7 @@ class DetachedApplySpec extends CatsEffectSuite:
       xml <- IO.blocking(new String(os.read.bytes(p.dataRoot / "apply" / s"${p.winTask}.xml"), java.nio.charset.StandardCharsets.UTF_16))
       _ = assert(xml.contains("<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"), xml)
       _ = assert(xml.contains("<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>"), xml)
-      _ = assert(xml.contains("<Command>powershell.exe</Command>"), xml)
+      _ = assert(xml.contains("\\WindowsPowerShell\\v1.0\\powershell.exe<"), "Command must be the FULL powershell path (bare name unresolvable in TS service context)")
       _ = assert(xml.contains("-File \""), "ps1 path must stay quoted inside Arguments")
       _ = assert(!xml.contains("/TR"), "legacy /TR face must be gone")
       _ = assert(cmds.exists(c => c.contains("/XML")), "schtasks /Create /XML expected")

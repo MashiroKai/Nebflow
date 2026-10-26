@@ -257,18 +257,18 @@ class LogtoAuthCodeSpec extends FunSuite:
   // ── tokenCall (scripted transport) ─────────────────────────────────────
 
   test("tokenCall maps 200 to tokens and non-200 to the provider error") {
-    val good: LogtoDeviceFlow.Send = _ => IO.pure((200, """{"access_token":"at-1","refresh_token":"rt-1"}"""))
+    val good: LogtoTransport.Send = _ => IO.pure((200, """{"access_token":"at-1","refresh_token":"rt-1"}"""))
     assertEquals(
       LogtoAuthCode.tokenCall(good)(LogtoAuthCode.refreshTokenRequest("https://a", "c", "r")).unsafeRunSync(),
       Right(LogtoAuthCode.TokenResult("at-1", Some("rt-1")))
     )
-    val oauthErr: LogtoDeviceFlow.Send = _ => IO.pure((400, """{"error":"invalid_grant"}"""))
+    val oauthErr: LogtoTransport.Send = _ => IO.pure((400, """{"error":"invalid_grant"}"""))
     assertEquals(
       LogtoAuthCode.tokenCall(oauthErr)(LogtoAuthCode.refreshTokenRequest("https://a", "c", "r")).unsafeRunSync(),
       Left("invalid_grant")
     )
     // Transport failure: status 0, body IS the message.
-    val transport: LogtoDeviceFlow.Send = _ => IO.pure((0, "connect timed out"))
+    val transport: LogtoTransport.Send = _ => IO.pure((0, "connect timed out"))
     assertEquals(
       LogtoAuthCode.tokenCall(transport)(LogtoAuthCode.refreshTokenRequest("https://a", "c", "r")).unsafeRunSync(),
       Left("connect timed out")

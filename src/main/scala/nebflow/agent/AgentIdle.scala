@@ -104,7 +104,8 @@ private[agent] object AgentIdle:
             eventType,
             intake,
             fromUser,
-            project
+            project,
+            _
           ) =>
         val (isDuplicate, dedupedState) = checkDuplicate(clientMessageId, state)
         if isDuplicate then

@@ -31,11 +31,16 @@ import scala.util.Try
  *     —— 已并入的成员**直接关账**（state=merged），不再通知、不再重试（今晚
  *     e300e71c「已落定仍 attempt 5 refused/parked」类 should-not-happen 消失）；
  *     属主会话还活着 docks 时收到「已落地」通知立即收尾（delegate 侧纪律 #6）。
- *   - **净空闸**：基工作区先过 [[MergeArtifactCare.hygiene]]（白名单工件还原/收编
- *     ——引擎侧 base 净空维护，非合并执行），余脏非空或基分支非检出分支 ⇒ 本拍
- *     不放行（state 留 waiting + `grant-blocked` 记账，扫描拍再试）。
+ *   - **净空闸（#943 起 fail-soft）**：基工作区先过 [[MergeArtifactCare.hygiene]]
+ *     （还原/收编/判性：同 blob 复本清理、路径外无关件移隔离区）；余脏
+ *     **只 WARN 放行**——delegate 的 `git merge` 诚实撞脏进 failed 可见关账，
+ *     队列不再留队停靠；基分支非检出分支（方向闸）仍留队并**必通知**。
  *   - **属主活性**：属主会话已死 / 通知通道不可达 ⇒ **owner-gone** 关账 + 面板显式
  *     「需 dispatcher 处置」+ 持久通知升级（绝不静默 park）。
+ *
+ * #943 阻塞必通知：任何阻塞（[[requeueBlocked]]）/失败（[[closeFailed]]）路径经
+ * [[BlockNotifyPort]] 向父会话发可行动通知（原因全文不截断；同因去重，状态变化
+ * 重发，N 拍仍堵升级作者）；owner-gone 沿 [[OwnerGonePort]]（既有）。
  *
  * 成员回报驱动关账：合并轮终态（BackoffSupervisor / ExternalSessionRunner settle）
  * → [[onTerminal]]——机械验收通过 = merged；拒绝 = failed(原因)；回合外终态
@@ -291,6 +296,88 @@ object MergeQueue:
           )
   end OwnerGonePort
 
+  /**
+   * 阻塞/失败通知端口（台账 #943 · 2026-10-26 作者裁定「也不告知」的消除闸：
+   * 「任何阻塞/失败/owner-gone 路径向父会话发可行动通知」——诊断坐实 #896 阻塞
+   * 路径零调用）。M2 注册器形态（core 只见面，agent 侧装配实现，OwnerGonePort
+   * 同款；实现复用既有 message/notify 通道 = resolveRootSessionId +
+   * deliverToRootOrInbox）。**原因全文随行，永不截断**。
+   *
+   * kind 语义：
+   *   - `blocked`：放行闸未过留队（净空/方向闸）——可行动原因 + 全文；
+   *   - `failed`：合并回合被拒关账——原因全文 + 分支保留现场指引；
+   *   - `escalate`：同因连续 N 拍仍堵（[[EscalateAfterBlockedRounds]]）——升级
+   *     通知作者（每成员只升一次）。
+   *
+   * 去重与升级记账在本侧（[[noteBlockedOrFailed]]）：同 (kind, reason) 只发
+   * 一次，状态/原因变化重发；blocked 每拍计数，跨过阈值发一次 escalate。
+   */
+  object BlockNotifyPort:
+
+    trait Face:
+      def deliver(m: Member, kind: String, reason: String): IO[Unit]
+    end Face
+
+    private val face = new java.util.concurrent.atomic.AtomicReference[Option[Face]](None)
+
+    def install(f: Face): Unit = face.set(Some(f))
+
+    def clear(): Unit = face.set(None)
+
+    def deliver(m: Member, kind: String, reason: String): Unit =
+      face.get match
+        case Some(f) =>
+          try f.deliver(m, kind, reason).unsafeRunSync()
+          catch
+            case e: Throwable =>
+              logger.warn(s"[merge-queue] block-notify delivery failed for ${m.delegateId} ($kind): ${Option(e.getMessage).getOrElse(e.toString).take(200)}")
+        case None =>
+          logger.warn(
+            s"[merge-queue] BlockNotifyPort not installed — '$kind' notification for '${m.delegateId}' is ledger-only " +
+              "(production boot installs this at SharedResources construction)"
+          )
+  end BlockNotifyPort
+
+  /**
+   * 同因连续 N 拍仍堵 ⇒ 升级通知作者（拍 = 放行尝试/扫描拍；零 wall-clock——
+   * 计数是事件驱动的，设计零超时红线不受影响）。
+   */
+  val EscalateAfterBlockedRounds: Int = 10
+
+  /** 通知去重/升级记账（进程内；delegateId → 最近 key + blocked 拍数 + 已升级）。 */
+  private final case class NotifyMemo(lastKey: String, rounds: Int, escalated: Boolean)
+  private var notifyMemos: Map[String, NotifyMemo] = Map.empty
+
+  // lock held
+  private def clearNotifyMemoLocked(delegateId: String): Unit =
+    notifyMemos = notifyMemos - delegateId
+
+  /**
+   * 阻塞/失败通知入口（去重 + 升级单点）。同 (kind, reason) 只发一次；原因或
+   * 状态变化重发；`blocked` 连续 [[EscalateAfterBlockedRounds]] 拍 ⇒ 恰一次
+   * escalate（作者面）。放行成功清账（[[clearNotifyMemoLocked]]）。
+   */
+  private def noteBlockedOrFailed(m: Member, kind: String, reason: String): Unit =
+    val key = s"$kind|${reason.take(2000)}"
+    val action = lock.synchronized {
+      notifyMemos.get(m.delegateId) match
+        case Some(memo) if memo.lastKey == key =>
+          if kind != "blocked" then None // 终态通知幂等（重放不重发）
+          else
+            val rounds = memo.rounds + 1
+            if memo.escalated || rounds < EscalateAfterBlockedRounds then
+              notifyMemos = notifyMemos.updated(m.delegateId, memo.copy(rounds = rounds))
+              None
+            else
+              notifyMemos = notifyMemos.updated(m.delegateId, memo.copy(rounds = rounds, escalated = true))
+              Some("escalate")
+        case _ =>
+          notifyMemos = notifyMemos.updated(m.delegateId, NotifyMemo(key, 1, escalated = false))
+          Some(kind)
+    }
+    action.foreach(actual => BlockNotifyPort.deliver(m, actual, reason))
+  end noteBlockedOrFailed
+
   // ── 面板/行投影 ───────────────────────────────────────────────────────
 
   /**
@@ -471,6 +558,7 @@ object MergeQueue:
       case Right(()) =>
         val tip = baseTipOf(reserved)
         lock.synchronized {
+          clearNotifyMemoLocked(reserved.delegateId) // 放行成功：阻塞计数/去重账清零
           members.get(reserved.delegateId).foreach { cur =>
             val stamped = cur.copy(grantedBaseTip = tip)
             members = members.updated(cur.delegateId, stamped)
@@ -497,12 +585,15 @@ object MergeQueue:
     Try(os.Path(m.baseWs)).toOption.flatMap(ws => GitWorktrees.resolveRef(ws, m.baseBranch))
 
   /**
-   * 净空闸（fail-closed on verified dirt；fail-open on unreadable）：
+   * 净空闸（#943 起 **fail-soft 回归**——「合并队列回纯排队+通知」）：
    *   - 基工作区不可读（非 git / 路径坏）⇒ 放行（历史行为——delegate 的合并回合
    *     会诚实拒绝并进 failed，面板可见）；
-   *   - 树脏 ⇒ 先过 [[MergeArtifactCare.hygiene]]（白名单工件还原/收编）；余脏
-   *     非空 ⇒ Left（留队，`grant-blocked` 记账）；
-   *   - 基分支非检出分支 ⇒ Left（方向闸——绝不把合并轮放进错误座位）。
+   *   - 树脏 ⇒ 先过 [[MergeArtifactCare.hygiene]]（还原/收编/判性：同 blob
+   *     复本清理、路径外无关件移隔离区）——**余脏不再 fail-closed 拦截**：只
+   *     WARN 放行，delegate 的 `git merge` 诚实撞脏进 failed（原因可见关账，
+     *     队列不再留队停靠、不再静默）；
+   *   - 基分支非检出分支 ⇒ Left（**方向闸保留**——绝不把合并轮放进错误座位；
+   *     该腿走 [[requeueBlocked]] 留队并**必通知**，绝不静默）。
    * Right(baseTip) = 可放行。
    */
   private def baseReady(m: Member): Either[String, Option[String]] =
@@ -511,8 +602,9 @@ object MergeQueue:
       case Some(ws) if !GitWorktrees.isGitRepo(ws) => Right(baseTipOf(m))
       case Some(ws) =>
         try
-          val report = MergeArtifactCare.hygiene(ws)
-          if report.restored.nonEmpty || report.absorbed.nonEmpty then
+          val ctx = Some(MergeArtifactCare.CareContext(m.delegateId, m.branch, m.baseBranch, m.projectKey))
+          val report = MergeArtifactCare.hygiene(ws, ctx)
+          if report.restored.nonEmpty || report.absorbed.nonEmpty || report.triagedRemoved.nonEmpty || report.triagedQuarantined.nonEmpty then
             record(
               m,
               "artifact-hygiene",
@@ -520,33 +612,45 @@ object MergeQueue:
                 "restored" -> report.restored.asJson,
                 "absorbed" -> report.absorbed.asJson,
                 "absorbCommit" -> report.absorbCommit.map(_.take(12)).asJson,
+                "triagedRemoved" -> report.triagedRemoved.asJson,
+                "triagedQuarantined" -> report.triagedQuarantined.asJson,
+                "quarantineDir" -> report.quarantineDir.map(_.take(300)).asJson,
                 "remainingDirty" -> report.remainingDirty.asJson
               )
             )
-          val remaining = try MergeArtifactCare.dirtyPaths(ws) catch case _: Throwable => List("unreadable")
+          // 余脏只 WARN 不拦（fail-soft 回归）：面板/日志可见全文，合并回合诚实面。
+          val remaining = try MergeArtifactCare.dirtyPaths(ws, cap = 20) catch case _: Throwable => List("unreadable")
           if remaining.nonEmpty then
-            Left(s"base workspace still dirty after hygiene: ${remaining.take(6).mkString(", ")}")
-          else
-            val current = try GitWorktrees.currentBranch(ws) catch case _: Throwable => None
-            if current.isDefined && current != Some(m.baseBranch) then
-              Left(s"base branch '${m.baseBranch}' is not the checked-out branch ('${current.getOrElse("detached HEAD")}') of the base workspace")
-            else Right(baseTipOf(m))
+            logger.warn(
+              s"[merge-queue] base workspace still dirty after hygiene — GRANTING anyway (fail-soft; the merge round will honestly refuse if the dirt bites): ${remaining.mkString(", ")}"
+            )
+          val current = try GitWorktrees.currentBranch(ws) catch case _: Throwable => None
+          if current.isDefined && current != Some(m.baseBranch) then
+            Left(s"base branch '${m.baseBranch}' is not the checked-out branch ('${current.getOrElse("detached HEAD")}') of the base workspace")
+          else Right(baseTipOf(m))
         catch
           case e: Throwable => Right(baseTipOf(m)) // 闸面自身故障 = fail-open（不楔死队列）
   end baseReady
 
-  /** 净空闸未过：窗让回（state → waiting）+ 记账 + 面板可见原因；等下一拍。 */
+  /**
+   * 放行闸未过：窗让回（state → waiting）+ 记账 + 面板可见原因 + **必通知**
+   * （#943：阻塞绝不静默——父会话收到可行动原因全文；同因去重，N 拍仍堵升级）；
+   * 等下一拍。
+   */
   private def requeueBlocked(reserved: Member, reason: String): Unit =
-    lock.synchronized {
+    val memoTarget = lock.synchronized {
       members.get(reserved.delegateId) match
         case Some(cur) if cur.state == State.TurnGranted =>
-          val back = cur.copy(state = State.Waiting, grantedAt = None, lastBlockReason = Some(reason.take(300)))
+          val back = cur.copy(state = State.Waiting, grantedAt = None, lastBlockReason = Some(reason.take(2000)))
           members = members.updated(cur.delegateId, back)
           persistLocked()
-          record(back, "grant-blocked", Json.obj("reason" -> reason.take(300).asJson))
-        case _ => () // 两拍间已关账——不动
+          record(back, "grant-blocked", Json.obj("reason" -> reason.take(2000).asJson))
+          Some(back)
+        case _ => None // 两拍间已关账——不动
     }
-    logger.info(s"[merge-queue] grant blocked for '${reserved.delegateId}': $reason")
+    memoTarget.foreach(m => noteBlockedOrFailed(m, "blocked", reason))
+    logger.warn(s"[merge-queue] grant blocked for '${reserved.delegateId}': $reason")
+  end requeueBlocked
 
   /** 放行通知（按通道分派；Right = 已送达属主会话）。 */
   private def notifyTurn(m: Member): Either[String, Unit] =
@@ -710,7 +814,8 @@ object MergeQueue:
   def onTerminalIO(delegateId: String, outcome: Option[RoundOutcome] = None): IO[Unit] =
     IO.blocking(onTerminal(delegateId, outcome))
 
-  /** 关账 failed（合并回合被拒；原因落账 + 面板可见；无自动重试）。 */
+  /** 关账 failed（合并回合被拒；原因落账 + 面板可见 + **父会话必通知**（#943，
+    * 原因全文随行）；无自动重试）。 */
   private def closeFailed(delegateId: String, reason: String): Unit =
     lock
       .synchronized {
@@ -725,7 +830,8 @@ object MergeQueue:
           case _ => None
       }
       .foreach { closed =>
-        logger.warn(s"[merge-queue] merge round FAILED for '${closed.delegateId}' (branch '${closed.branch}'): ${reason.take(200)} — closed, no auto-retry")
+        logger.warn(s"[merge-queue] merge round FAILED for '${closed.delegateId}' (branch '${closed.branch}'): $reason — closed, no auto-retry")
+        noteBlockedOrFailed(closed, "failed", reason) // 状态变化 ⇒ 必重发（原因全文）
         pump(closed.projectKey)
       }
   end closeFailed
@@ -808,6 +914,7 @@ Merge ledger close-out: your branch `${m.branch}` is ALREADY merged into `${m.ba
   /** 测试复位（生产无调用方）：清内存 + 清账本文件。 */
   private[nebflow] def reset(): Unit = lock.synchronized {
     members = Map.empty
+    notifyMemos = Map.empty
     loaded = false
     try if os.exists(ledgerPath) then os.remove.all(ledgerPath)
     catch case _: Throwable => ()

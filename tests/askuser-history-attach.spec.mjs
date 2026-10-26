@@ -15,6 +15,7 @@
 
 import { test, expect } from '@playwright/test';
 import { spawn, execSync } from 'node:child_process';
+import http from 'node:http';
 import net from 'node:net';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -50,9 +51,27 @@ function freePort() {
 }
 
 function startStaticServer(port, dir) {
-  return spawn('python3', ['-m', 'http.server', String(port), '--bind', '127.0.0.1', '--directory', dir], {
-    stdio: 'ignore',
+  // KAI Windows 环境兼容（perf 台账 #922 批顺手修，行为面不变）：原腿
+  // `python3 -m http.server` 在无 python 的 Windows 检出直接 ENOENT ⇒ 换 node
+  // 静态伺服（history-replay-cards 同款；html/js/json/css/svg/png + 穿越防护）。
+  const MIME = {
+    '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+    '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json',
+    '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png',
+  };
+  const srv = http.createServer((req, res) => {
+    let p = decodeURIComponent(new URL(req.url, 'http://127.0.0.1').pathname);
+    if (p.endsWith('/')) p += 'index.html';
+    const file = path.join(dir, p);
+    if (!file.startsWith(dir)) { res.writeHead(403); res.end(); return; }
+    try {
+      const b = fs.readFileSync(file);
+      res.writeHead(200, { 'Content-Type': MIME[file.slice(file.lastIndexOf('.')).toLowerCase()] || 'application/octet-stream' });
+      res.end(b);
+    } catch { res.writeHead(404); res.end('not found'); }
   });
+  srv.listen(port, '127.0.0.1');
+  return { kill: () => srv.close() };
 }
 
 async function waitUntilUp(url, tries = 50) {
@@ -69,7 +88,9 @@ async function waitUntilUp(url, tries = 50) {
 test.beforeAll(async () => {
   fs.mkdirSync(SHOT_DIR, { recursive: true });
   baselineRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nb-askhistatt-baseline-'));
-  execSync(`git archive ${BASELINE_REF} src/main/resources/web | tar -x -C "${baselineRoot}"`, { cwd: REPO_ROOT });
+  // KAI Windows 环境兼容（perf 台账 #922 批顺手修，行为不变）：反斜杠 -C 路径
+  // 被 bsdtar 当转义吃掉 ⇒ 管道解包必败；正斜杠两侧皆可（history-replay-cards 同款）。
+  execSync(`git archive ${BASELINE_REF} src/main/resources/web | tar -x -C "${baselineRoot.split(path.sep).join('/')}"`, { cwd: REPO_ROOT });
   const dst = path.join(baselineRoot, path.dirname(HARNESS_REL));
   fs.mkdirSync(dst, { recursive: true });
   fs.copyFileSync(path.join(REPO_ROOT, HARNESS_REL), path.join(dst, 'harness.html'));

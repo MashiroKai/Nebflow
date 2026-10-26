@@ -465,7 +465,7 @@ final class RelayAuthFixtureServer extends AutoCloseable:
       respondToken(out)
       closeQuietly(sock)
     else if path.startsWith("/api/device/register") then
-      // 踢旧批 r2：设备注册腿（`LogtoDeviceFlow.register` → POST /api/device/register）。
+      // 踢旧批 r2：设备注册腿（`LogtoTransport.register` → POST /api/device/register）。
       // 真服务端语义照搬：注册即覆盖旧凭据（kick-on-re-enroll），响应 = EnrollResponse
       // 的实字段子集（deviceToken 恒在；model.rs 的 EnrollResponse）。
       val body = parse(req.body).getOrElse(io.circe.Json.Null)

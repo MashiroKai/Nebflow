@@ -717,6 +717,69 @@ private[agent] object AgentProcessing:
         // 末完成路径逐条重投给 idle 处理器（head-forward，见 finishTurnCont）——那
         // 条路径本就是逐条 + 独立 turn + 带全元数据（replyTo 完成结算不搁浅），
         // 也正是本缺陷的「正常路径同规」形态。
+        // ── #939（2026-10-26 作者令）：Mail 补充件 = 工具边界合并注入 ──────────
+        // Mail(delegate:<id>) 对 Processing 会话投的 UserInput（replyTo=supervisor）
+        // 旧路径在本边界**一律不消费**（2026-09-15 真人消息「逐条独立 turn」裁定面
+        // ——原 Q1-A2′ 合批退役），只在 turn 末 head-forward 给 idle ⇒ 小时级长回合
+        // 的补充指令干等整个回合。本批按作者令收窄出**第二个显式豁免**（与
+        // 2026-09-23 windowItems 先例同构）：mail 来源件（fromUser=false +
+        // source="mail"，判据单点 TurnBoundaryDrains.isMailSupplement）在本边界
+        // **整包合并注入**——多件合一包（批头 + 逐件分节，到达顺序保持）、一次性
+        // 并入续轮请求；单件即 idle 等价形（零内容漂移）。真人消息与其余 replyTo 件
+        // （SkillActivate/AskQuestion/非 mail UserInput）逐字不变（留队 head-forward）。
+        // replyTo 结算不搁浅：各件 replyTo 并入 owedCompletion（完成债既有通道——
+        // turn 末 completionTargets = replyTo ++ owedCompletion，含在飞子代理时的
+        // 停靠重放），delegate 结果仍走 source="delegate" 回投链。compaction 挂起
+        // ⇒ 不消费（与 imm 同款守卫——注入进将被 summary 替换的历史 = 消费即丢失）。
+        val (mailInputs, userInputsAfterMail) =
+          TurnBoundaryDrains.drainMailPackage(
+            state.execution.pendingUserInputs,
+            compactionPending = state.pendingCompaction.isDefined
+          )
+        val mailPackage = TurnBoundaryDrains.mergeMailPackage(mailInputs)
+        val mailMessages = mailInputs match
+          case Nil => Nil
+          case mails =>
+            val nowMs = System.currentTimeMillis()
+            val ages = mails.flatMap(_.queuedAtMs) match
+              case Nil => "n/a"
+              case stamps => stamps.map(s => s"${nowMs - s}ms").mkString(",")
+            logAgentEvent(
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "mail-injected-at-tools-complete",
+              s"items=${mails.size} blocks=${mailPackage.blocks.size} agesMs=$ages " +
+                s"textLen=${mailPackage.text.length} remainingUserInputs=${userInputsAfterMail.size}"
+            )
+            List(
+              (mailPackage.text, mailPackage.blocks) match
+                case ("", blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
+                case (text, blocks) if blocks.nonEmpty =>
+                  Message(MessageRole.User, Right(ContentBlock.Text(text) :: blocks))
+                case (text, _) => Message(MessageRole.User, Left(text))
+            )
+        // 逐件注入气泡（与 immEventIO 同形——呈现面逐件归属不因合并而抹平；
+        // ② 真人输入不产注入气泡——mail 件恒 fromUser=false，恒有 source）。
+        val mailEventIO = mailInputs.flatMap { ui =>
+          injectionSourceFor(ui.fromUser, ui.source).map(src =>
+            emitInjectedUserEvent(
+              resources,
+              state.wsSend,
+              state.sessionId,
+              ui.text,
+              src,
+              ui.eventType,
+              ui.sender,
+              ui.senderTeam,
+              ui.delivery,
+              intake = ui.intake,
+              project = ui.project,
+              sessionProject = state.projectName
+            )
+          )
+        }.sequence_
         // Block 3 循环检测器 L0（supervision trio §D3）：LoopGuard Warn 提醒以
         // user system-reminder 追加在工具结果之后（同系统 reminder 形态）
         // ——零成本给模型自纠机会；不阻断轮次。
@@ -727,7 +790,7 @@ private[agent] object AgentProcessing:
           baseMessages ++ List(
             assistantMsg,
             resultMsg
-          ) ++ imageMsgs ++ eventMessages ++ immediateMessages ++ loopReminderMsgs
+          ) ++ imageMsgs ++ eventMessages ++ immediateMessages ++ mailMessages ++ loopReminderMsgs
         // Increment delegate count for Delegate/SubTask calls
         val delegateIncrement = toolCalls.count(c => c.name == "Delegate" || c.name == "SubTask")
         val newDelegateCount = state.delegateCount + delegateIncrement
@@ -760,9 +823,16 @@ private[agent] object AgentProcessing:
                 pendingImmediateInputs = remainingImmInputs,
                 // ub 缺陷批：本边界不再消费排队 UserInput（原 Q1-A2′ 内联合批已退役），
                 // 队列原样带过 turn 边界，由 turn 末 head-forward 逐条处理。
-                pendingUserInputs = state.execution.pendingUserInputs,
+                // #939 豁免：mail 来源件已于上方边界整包消费（userInputsAfterMail =
+                // 真人消息与其余 replyTo 件，逐字不动）。
+                pendingUserInputs = userInputsAfterMail,
                 delegateCount = newDelegateCount,
                 outstandingSubagentResults = newOutstanding,
+                // #939：边界注入 mail 件的 replyTo 挂完成债——本 turn 结束（或子代理
+                // 批屏障归还后的重放 turn 结束）时经 completionTargets 统一结付
+                // （AgentEvent.Completed → supervisor → source="delegate" 回投链）。
+                owedCompletion =
+                  (state.execution.owedCompletion ++ mailInputs.flatMap(_.replyTo)).distinct,
                 mailUsedThisTurn = state.mailUsedThisTurn ||
                   tc.results.exists((call, r) => call.name == "Mail" && !r.isError)
               )
@@ -847,6 +917,7 @@ private[agent] object AgentProcessing:
                 updatedState.execution
               ) // F2@tools-complete：drain 后快照队列（崩溃重放禁重复注入已消费队首）
               _ <- immEventIO
+              _ <- mailEventIO // #939：mail 件逐件注入气泡（呈现面归属不因合并抹平）
               _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, remainingEvents.size)
               // 台账对账 + 徽标帧（fix 1 补漏批，2026-10-22）：tools-complete 边界
               // drainBarrier 投递面——与 AgentFinishTurn 的 drainBarrier 对账（:483）
@@ -1432,16 +1503,25 @@ private[agent] object AgentProcessing:
           emitDuplicateReceipt(state.wsSend, state.sessionId, msg.clientMessageId) *>
             IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
         else
+          // #939（2026-10-26 作者令）：mail 来源件入队即盖**到达戳**——工具边界
+          // 注入时据此打「到达→实际注入」延迟（`mail-injected-at-tools-complete`
+          // 的 agesMs 观测面）。仅排队路径置位；既有件已带戳（frozen 腿转发）
+          // 则原样保留，不重盖。
+          val stamped =
+            if TurnBoundaryDrains.isMailSupplement(msg) then
+              msg.copy(queuedAtMs = msg.queuedAtMs.orElse(Some(System.currentTimeMillis())))
+            else msg
           logAgentEvent(
             agentDef,
             depth,
             state.sessionId,
             state.sessionName,
             "user-input-queued",
-            s"textLen=${msg.text.length} pending=${state.execution.pendingUserInputs.size + 1}"
+            s"textLen=${stamped.text.length} pending=${state.execution.pendingUserInputs.size + 1}" +
+              stamped.source.map(s => s" source=$s").getOrElse("")
           )
           val updatedExec = state.execution.copy(
-            pendingUserInputs = state.execution.pendingUserInputs :+ msg
+            pendingUserInputs = state.execution.pendingUserInputs :+ stamped
           )
           IO.pure(
             processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending)

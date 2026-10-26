@@ -4,6 +4,10 @@ import { isBgAgentId } from './utils.js';
 import { addNotification } from './notificationBanner.js';
 import { brand, getWebsiteLoginUrl } from './brand.js';
 import { armSessionKeepalive } from './sessionGate.js';
+// 渲染遮蔽门（perf 台账 #922 · 2026-10-26）：补页/大帧渲染在途时心跳宽限窗
+// 的 miss 走传输遮蔽同款旁路（不放松 HB_MAX_MISSES 与 sessionGate 重座阈值）。
+// renderGate 是零依赖叶子模块 —— 静态环零增量（check-circular）。
+import { renderGateBegin, renderGateEnd, renderGateBusy } from './chat/renderGate.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
 // 设备识别快速通道（console-fastpath 批 2026-10-23·作者令腿①）：nearpath.js
@@ -847,6 +851,35 @@ export function hbTransferStats() {
   return { activeFileTransfers, shelteredMisses };
 }
 
+/**
+ * 心跳诊断读数（perf 台账 #922 · spec 用）：连续 miss 计数、遮蔽窗计数、
+ * 实测 RTT 高点、渲染门 busy 与在途传输数。只读，零副作用。
+ */
+export function hbStats() {
+  return {
+    misses: hbMisses,
+    shelteredMisses,
+    maxRttMs: hbMaxRttMs,
+    renderBusy: renderGateBusy(),
+    activeFileTransfers,
+  };
+}
+
+/**
+ * spec 缝（perf 台账 #922；_keepaliveTestHooks 先例）：受控触发一次真实
+ * hbProbe（ping + 宽限定时器武装），让遮蔽腿无需等 30s 自然拍即可验证。
+ */
+export function _hbTestHooks() {
+  return { probe: hbProbe };
+}
+
+/**
+ * 大帧渲染遮蔽阈值（perf 台账 #922）：入站帧超过该字符数（≈256KB JSON），
+ * parse + 派发整段（含 historyPage 补页处理器的同步前段）落进渲染遮蔽窗 ——
+ * 挂载腿（main.js 补页异步挂载）随后接力持门，直到挂载完成。
+ */
+const HB_BIG_FRAME_GATE_CHARS = 262144;
+
 /** 发一次 ping 并在宽限内等 pong；未等到记一次 miss —— 连续 HB_MAX_MISSES 次才判死。 */
 function hbProbe() {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
@@ -865,6 +898,15 @@ function hbProbe() {
     if (activeFileTransfers > 0 && shelteredMisses < HB_TRANSFER_SHELTER_MAX) {
       shelteredMisses++;
       console.debug(`[ws] heartbeat miss sheltered: file transfer in flight (${shelteredMisses}/${HB_TRANSFER_SHELTER_MAX})`);
+      return;
+    }
+    // 渲染遮蔽（perf 台账 #922 · 2026-10-26）：补页挂载/大帧派发占住主线程的
+    // 窗里，pong 即使已到也处理不了（或压在超大帧后面）——这是「渲染饿死心跳」，
+    // 不是 socket 死了。同款旁路：本窗 miss 不计入逐出；硬上限（同一计数
+    // shelteredMisses）不变 ⇒ 真死连接在遮蔽掩护下也照常判死；pong/新连接清零。
+    if (renderGateBusy() && shelteredMisses < HB_TRANSFER_SHELTER_MAX) {
+      shelteredMisses++;
+      console.debug(`[ws] heartbeat miss sheltered: render gate busy (${shelteredMisses}/${HB_TRANSFER_SHELTER_MAX})`);
       return;
     }
     hbMisses++;
@@ -1046,6 +1088,12 @@ export function connect() {
   };
 
   state.ws.onmessage = (e) => {
+    // 大帧渲染遮蔽（perf 台账 #922）：超大帧（historyPage 大页等）的
+    // JSON.parse + 处理器同步段本身就是一次主线程长任务 —— 与其让宽限定时器
+    // 在阻塞结束前先到（miss 记一笔假账），不如把这段如实标记为渲染在途。
+    // try/finally 保证异常路径也退门；小帧零额外开销（一次 length 比较）。
+    const bigFrame = typeof e.data === 'string' && e.data.length > HB_BIG_FRAME_GATE_CHARS;
+    if (bigFrame) renderGateBegin();
     try {
       const msg = JSON.parse(e.data);
 
@@ -1229,6 +1277,8 @@ export function connect() {
 
     } catch (err) {
       console.error('[ws] message parse error:', err);
+    } finally {
+      if (bigFrame) renderGateEnd();
     }
   };
 }

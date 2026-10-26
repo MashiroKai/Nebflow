@@ -166,10 +166,11 @@ for (let i = 0; i < 3; i++) {
 const mintsAtEnd = ticketHits;
 
 ok('H1-a 初载有行', counts[0] > 0, `rows=${counts[0]}`);
-// 上滑×3：两轮各补一页（3→6→9），第三轮历史已到头（offset=0/hasMore=false）
-// 行数不增、会话照常 —— 收口本身也是钉（旧缺陷家族里「到头仍打转」出过回归）。
-ok('H1-b 上滑补页（每轮更旧一页，直至历史收口）',
-  counts[1] > counts[0] && counts[2] > counts[1] && counts[3] === counts[2],
+// 上滑×3：perf 台账 #922（2026-10-26）起停顶续拉语义 —— 停在顶部即连续补页
+// 直至历史收口（首轮 3→9 = 两页并进），到头后行数不增、会话照常。
+// 收口本身也是钉（旧缺陷家族里「到头仍打转」出过回归）。
+ok('H1-b 上滑补页（停在顶部连续补进，直至历史收口不再增）',
+  counts[3] === 9 && counts[1] >= counts[0] && counts[3] === counts[2],
   `rows=${counts.join('→')}`);
 ok('H2 铸票被拒路径真实踩到（nf-ticket 401 ×≥3）', mintsAtEnd >= 3, `hits=${mintsAtEnd}`);
 ok('H3 401 后静默重试仍在发生（≥2 次即证退避后重试）', mintsAtEnd >= 2, `hits=${mintsAtEnd}`);

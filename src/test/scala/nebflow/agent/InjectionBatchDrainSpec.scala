@@ -17,6 +17,14 @@ import nebflow.actor.AgentCommand // W1 shim: main had nebflow.actor.AgentComman
  * = `NodeEngine.flushRootNotify` 的 `case many`）可在同一边界展开为 N 个虚拟件（N 气泡 /
  * 1 次唤醒）。**队列层不变**（仍「一次边界只消费队首一个元素」，本 spec 的 `drainHead`
  * 三用例一字未改）；本节新增断言把豁免**钉在结构谓词上**并给出负对照。
+ *
+ * **2026-10-26 第二豁免（#939 作者令「Mail 注入时机提前到工具调用边界」）**：mail 来源
+ * 补充件（`UserInput`，`fromUser=false` + `source="mail"`，判据单点
+ * `TurnBoundaryDrains.isMailSupplement`）在**工具边界**（ToolsComplete）整包合并注入
+ * （多件合一包、到达序保持；单件 = idle 等价形）。禁 ③ 的规范面仍是**排队用户消息**
+ * （真人 chat，fromUser=true）——该面逐字不变；mail 件为服务端补充注入，经作者令
+ * 收窄为与 windowItems 同构的显式豁免。判据/摘取/合并/真会话四层断言 =
+ * `MailBoundaryInjectionSpec`。
  */
 class InjectionBatchDrainSpec extends FunSuite:
 

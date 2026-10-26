@@ -542,6 +542,52 @@ case class SharedResources(
       }
   }
 
+  // 台账 #943（2026-10-26 作者裁定「合并队列回纯排队+通知」）：阻塞/失败必通知
+  // 面（MergeQueue.BlockNotifyPort，OwnerGonePort 同款 M2 注册器形态——core 不
+  // import agent 的分层纪律；通知腿复用既有 message/notify 通道 = resolveRoot
+  // SessionId + deliverToRootOrInbox）。合并队列任何 blocked / failed 路径（以及
+  // 同因 N 拍仍堵的 escalate）向父/根会话投**可行动通知，原因全文不截断**；
+  // 投递路由与 owner-gone 同（root 活投 / 持久收件箱补投）。未装配（无
+  // SharedResources 场）= BlockNotifyPort 响亮 WARN（账本行仍落，面板仍可查）。
+  nebflow.core.delegate.MergeQueue.BlockNotifyPort.install { (m, kind, reason) =>
+    import io.circe.syntax.*
+    val logger943 = nebflow.shared.NebflowLogger.forName("nebflow.merge-queue")
+    val framing = kind match
+      case "blocked" =>
+        s"""[merge-queue] delegate "${m.description}" (${m.delegateId}) is WAITING in the merge queue for branch '${m.branch}' → '${m.baseBranch}' because: $reason. It stays queued and is re-attempted every care tick — ACTION: fix the base workspace condition above (e.g. check out '${m.baseBranch}' in '${m.baseWs}') or the member keeps waiting; an escalation notice follows if the same blocker persists."""
+      case "failed" =>
+        s"""[merge-queue] delegate "${m.description}" (${m.delegateId}) — its merge round for branch '${m.branch}' → '${m.baseBranch}' was REFUSED and the membership is CLOSED as failed: $reason. No merge rounds are revived (traffic-controller model). MANUAL ACTION: merge '${m.branch}' by hand or re-dispatch the task (branch and worktree preserved)."""
+      case _ =>
+        s"""[merge-queue] ESCALATION: delegate "${m.description}" (${m.delegateId}) has been blocked for ${nebflow.core.delegate.MergeQueue.EscalateAfterBlockedRounds} consecutive pump rounds with the same reason: $reason. AUTHOR ATTENTION: the merge queue cannot proceed past this blocker by itself — resolve it or close the membership."""
+    nebflow.core.tools.BgNotifyDelivery
+      .resolveRootSessionId(Some(agentRegistry), m.delegateId, m.parentSessionId)
+      .flatMap { rootId =>
+        if rootId.trim.isEmpty then
+          logger943.warn(s"[merge-queue] no responsible session for '$kind' notify '${m.delegateId}' — dropped with this line")
+          IO.unit
+        else
+          val event = nebflow.actor.AgentCommand.ExternalEvent(
+            source = "merge-queue",
+            eventType = kind,
+            payload = framing,
+            metadata = io.circe.JsonObject(
+              "delegateId" -> m.delegateId.asJson,
+              "description" -> m.description.asJson,
+              "branch" -> m.branch.asJson,
+              "target" -> m.baseBranch.asJson,
+              "kind" -> kind.asJson,
+              "escalatedBy" -> "merge-queue".asJson
+            ),
+            // 每次发送唯一——去重/重发语义由队列侧记账决定，投递层不吞重发。
+            correlationId = Some(s"merge-queue-$kind-${m.delegateId}-${System.currentTimeMillis()}")
+          )
+          nebflow.core.tools.BgNotifyDelivery
+            .deliverToRootOrInbox(Some(actorSystem), Some(agentRegistry), rootId, event)
+            .void
+            .handleErrorWith(e => logger943.warn(s"[merge-queue] '$kind' notify delivery failed for '${m.delegateId}': ${e.getMessage}"))
+      }
+  }
+
   // D3-②（steward 批 2026-10-23）：MergeQueue 合并提醒注入的活性探针——放行前
   // 探测属主 childRef 是否活（actor 注册表已退出 = 死 ⇒ 不盲投，成员 owner-gone
   // 关账，绝不盲投死 ref）。未注册（无 SharedResources 场）= 恒活，测试行为零变化。

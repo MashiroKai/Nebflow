@@ -532,25 +532,18 @@ export default {
   'login.authNote': '将打开浏览器完成认证；GitHub / Google 快捷登录在认证页内',
   'login.starting': '正在启动登录…',
   'login.hintBrowser': '在浏览器中登录 {lowerBrand} 账号，此设备即与账号下的其他设备互联',
-  'login.hintAuthorize': '在浏览器中完成授权，此设备即与账号下的其他设备互联',
   'login.reopenAuthPage': '重新打开登录页面',
-  'login.openAuthPage': '打开授权页面',
   'login.switchAccount': '使用其他账号登录',
-  'login.deviceCodeCaption': '授权码',
   'login.waitingPopupOpened': '已在新标签页打开登录页面，等待完成…',
   'login.waiting': '等待登录完成…',
-  'login.waitingAuthorize': '等待授权完成…',
   'login.retry': '重试',
   'login.failed': '登录失败',
   'login.success': '✓ 连接成功，设备已加入网络',
-  // 面板内可见的流程错文案（来源 = neblink.js 的 PKCE / 设备流失败路径，原为
-  // 中文字面量 ⇒ 英文界面下会露出中文；本批只换文案来源，不改任何流程语义）。
+  // 面板内可见的流程错文案（来源 = neblink.js 的 PKCE 失败路径；设备流文案随
+  // 该流程退役，#924）。
   'login.startFailed': '启动登录失败',
   'login.timeout': '登录超时，请重试',
   'login.networkError': '网络错误：{msg}',
-  'login.deviceStartFailed': '启动设备流程失败',
-  'login.deviceTimeout': '授权超时，请重试',
-  'login.deviceFailed': '授权失败',
   // 缺陷 A（2026-09-18 换号登录失败批）· 失败面**三段式**：
   //   登录失败：<原因>。下一步：<动作>。诊断码：<code>
   // `login.reason.*` / `login.action.*` 的 code 枚举与后端 `CredentialFailure`
@@ -795,7 +788,6 @@ export default {
   'settings.thinkingEffort.low': '低',
   'settings.thinkingEffort.medium': '中',
   'settings.thinkingEffort.high': '高',
-  'settings.thinkingEffortHint': '思考档位（OpenAI 风格）：关闭=禁用推理；低=快速响应；中=均衡；高=深度推理。内部按模型自动映射（Anthropic 预算 / GLM 与 DeepSeek 开关）。',
   // === 权限模式设置页控件（2026-09-12 批）已于 permshield F1（2026-09-13）删除 ===
   // 7 个 `settings.safetyMode*` 键随控件一并移除（作者重裁候选 B ①「删设置页」）。
   // 档位指引改由盾牌承载：`bypass.title.*`（三档 tooltip）+ `bypass.modeSetGlobal`

@@ -247,7 +247,8 @@ private[agent] object AgentFrozen:
             eventType,
             intake,
             fromUser,
-            project
+            project,
+            queuedAtMs
           ) =>
         if clientMessageId.isDefined then
           // ★ 用户唤醒（B5）：注入用户消息到冻结中的上下文，立即 dispatch——
@@ -316,7 +317,9 @@ private[agent] object AgentFrozen:
                 delivery,
                 eventType,
                 intake,
-                fromUser
+                fromUser,
+                project,
+                queuedAtMs
               )
             )
           )

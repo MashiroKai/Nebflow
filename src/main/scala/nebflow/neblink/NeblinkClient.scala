@@ -368,7 +368,7 @@ class NeblinkClient(
    * 调用面（列全，全为自动路径）：`login` ← `discover`（心跳失效后的 re-login）
    * 与 `silentRelogin`（API/隧道自愈）。用户显式登录不经过本客户端
    * （`POST /api/neblink/auth/start` → PKCE 回环 → `RestApiRoutes.handleAuthCallback`
-   * → `LogtoDeviceFlow.register`，与 `NeblinkClient` 无关）。
+   * → `LogtoTransport.register`，与 `NeblinkClient` 无关）。
    *
    * `entry` 只用于日志归因（哪个消费者发现停摆），不参与判定。
    */

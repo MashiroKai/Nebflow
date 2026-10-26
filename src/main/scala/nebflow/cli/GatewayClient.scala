@@ -166,11 +166,16 @@ object GatewayClient:
    * T8 wording for a non-2xx gateway response. The detail prefers the body's
    * `error`/`message` field (the gateway answers `403 {"error":"Unauthorized"}`,
    * `RestApiRoutes.scala:3737-3738`) and falls back to the raw body.
+   *
+   * 台账 #924 (2026-10-26): the body's stable `code` field rides along as a
+   * ` (code: <c>)` suffix when present — the login route (and friendErr's
+   * `neblink_not_logged_in`) classify on the machine face, which the
+   * error-text-only flattening used to drop. Additive: bodies without `code`
+   * render byte-identical to before; substring classifiers are unaffected.
    */
   private[cli] def requestError(code: Int, body: String): String =
-    val detail = parser
-      .parse(body)
-      .toOption
+    val parsed = parser.parse(body).toOption
+    val detail = parsed
       .flatMap { j =>
         val c = j.hcursor
         c.downField("error")
@@ -185,7 +190,11 @@ object GatewayClient:
           "Gateway REST API not available. Restart Gateway to enable CLI support."
         else body.trim.take(200)
       }
-    s"Gateway request failed (HTTP $code): $detail"
+    val stableCode = parsed
+      .flatMap(_.hcursor.downField("code").as[String].toOption)
+      .map(_.trim)
+      .filter(_.nonEmpty)
+    s"Gateway request failed (HTTP $code): $detail${stableCode.map(c => s" (code: $c)").getOrElse("")}"
 
   end requestError
 

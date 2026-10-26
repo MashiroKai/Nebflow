@@ -19,29 +19,32 @@ object Protocol:
   // core/gateway 侧改指 nebflow.shared.DeviceHeader,值逐字不变。
 
   /**
-   * Device-flow and enrollment REST paths on neblink-server (proxied by the
-   * gateway; spoken directly by NeblinkClient).
+   * Enrollment REST paths on neblink-server (proxied by the gateway; spoken
+   * directly by NeblinkClient). 台账 #924 (2026-10-26): the device-code
+   * endpoints (`/api/device/code` + `/api/device/token`) are retired from
+   * this repo's vocabulary — nothing calls them any more (relay-side
+   * retirement = link-server batch); `register` is the token→credential
+   * exchange BOTH surviving login paths converge on.
    */
   object DeviceApi:
-    val code: String = "/api/device/code"
-    val token: String = "/api/device/token"
     val enroll: String = "/api/device/enroll"
     val session: String = "/api/device/session"
     val login: String = "/api/device/login"
 
-    /** Logto stage 1: provider-token exchange for a device credential. */
+    /** Logto-token exchange for a device credential. */
     val register: String = "/api/device/register"
   end DeviceApi
 
   /**
    * Standard OIDC endpoints on the external provider (Logto). `authorize`
-   * serves the Authorization Code + PKCE flow (stage 2, 2026-08-28);
-   * `deviceAuth` the RFC 8628 legacy flow; `endSession` the RP-initiated
-   * logout (OIDC Session Management, RP-logout fix 2026-09-06).
+   * serves the Authorization Code + PKCE flow — the browser path (路径①)
+   * and, headlessly via [[LogtoPasswordFlow]], the password path (路径②);
+   * `endSession` the RP-initiated logout (OIDC Session Management, RP-logout
+   * fix 2026-09-06). 台账 #924 (2026-10-26): `deviceAuth` (`/oidc/device/auth`)
+   * retired with the RFC 8628 flow.
    */
   object LogtoOidc:
     val authorize: String = "/oidc/auth"
-    val deviceAuth: String = "/oidc/device/auth"
     val token: String = "/oidc/token"
 
     /**

@@ -66,7 +66,7 @@ import {
   showDeleteFolderModal,
   initModals
 } from './modal.js';
-import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue, takeRealUserTurn } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup, findLastRealMessage, saveAskMsgDedup } from './persistence.js';
+import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue, takeRealUserTurn } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, mountHistoryPageChunked, migrateLegacyIfNeeded, emergencyCacheCleanup, findLastRealMessage, saveAskMsgDedup } from './persistence.js';
 import { initMicOrb } from './micOrb.js';
 // delegate 链真 provider（N1 刀3 · #1228 setSource 换源）：模块副作用 = setSource
 // 挂 liveSource + boot 首刷 + WS 触发防刷/重连对账。渲染面（taskList/delegateChainView
@@ -1890,16 +1890,23 @@ onMessage('historyPage', (msg, view) => {
   hideHistoryLoader();
   hideChatSkeleton(); // audit ②27：初载骨架卡让位（与渲染同一任务帧 ⇒ 零布局跳变）
   if (!view) return;
-  view.pagination.loading = false;
 
   // Use explicit flag instead of historyOffset === 0 to prevent double-clear.
   const isInitialLoad = view.pagination.pendingInitialLoad;
+  // perf 台账 #922（2026-10-26）：放闸只发生在初载腿与迟到/重复帧——补页腿的
+  // `loading` 闸必须跨**异步挂载**保持 true（改前 = 帧到即无条件 loading=false，
+  // 挂载窗内任何滚动事件都会打出同游标重复请求 ⇒ 同页双挂载 ⇒ 历史行成对重复）。
+  if (isInitialLoad) view.pagination.loading = false;
   if (isInitialLoad) {
     // 重连折叠持久批（2026-10-20，续作 chain 69e5e2e1）：初载重放腿整体迁至
     // chat/historyReplay.js —— main.js 与 reconnect-collapse harness 同源驱动
     // 真实代码；幂等重放（#570 家族封口 + 整块重挂载抽动收敛）与折叠态跨重放
     // 持久两枚修复随腿内嵌。分页字段更新在腿内无条件完成。
     replayHistoryPageInitialLoad(msg, view);
+  } else if (msg.offset >= view.pagination.offset) {
+    // Skipping duplicate response（迟到/重复帧：闸放行）
+    view.pagination.loading = false;
+    return;
   } else {
     // Scroll-up pagination — prepend older messages
     // Guard against duplicate historyPage responses (e.g. from double getHistory on initial load):
@@ -1910,35 +1917,55 @@ onMessage('historyPage', (msg, view) => {
     // offset-0 response (SessionStore.getHistoryPage: offset=max(0,before-
     // limit), messages=slice(offset, ...)) — skipping it made the oldest
     // ≤50 messages unreachable and looped the top loader forever.
-    if (msg.offset >= view.pagination.offset) {
-      // Skipping duplicate response
-      return;
-    }
+    // perf 台账 #922（2026-10-26）：补页走**分帧构建**挂载腿
+    // （persistence.mountHistoryPageChunked）——同一枚 buildHistoryRow（单源），
+    // 但整页一枚长任务被拆成 rAF 切片 + 大工具正文/markdown 空闲升级批；渲染
+    // 遮蔽门横跨全程（门内宽限窗 miss 走 ws.js 遮蔽旁路）。`loading` 闸保持
+    // 到 onDone（升级批 drain 完）才放行 —— 期间不会发出第二页请求。
     const chat = activeView.dom.chat;
     const prevScrollHeight = chat.scrollHeight;
-    const prevScrollTop = chat.scrollTop;
-    // Insert before first child
-    const fragment = document.createDocumentFragment();
-    const tempDiv = document.createElement('div');
-    const origChat = activeView.dom.chat;
-    activeView.dom.chat = tempDiv;
-    restoreFromBackendHistory(msg.messages, { scrollToBottom: false });
-    activeView.dom.chat = origChat;
-    // Move rendered children to fragment, skip animation on prepended rows
-    while (tempDiv.firstChild) {
-      const child = tempDiv.firstChild;
-      if (child.classList && child.classList.contains('row')) {
-        child.classList.add('prepend-skip-anim');
-      }
-      fragment.appendChild(child);
-    }
-    chat.prepend(fragment);
-    // Restore scroll position so user stays at the same message
-    const newScrollHeight = chat.scrollHeight;
-    chat.scrollTop = prevScrollTop + (newScrollHeight - prevScrollHeight);
-    view.pagination.offset = msg.offset;
-    view.pagination.hasMore = msg.hasMore;
-    if (!view.pagination.hasMore) showHistoryEnd();
+    // 陈页守卫：会话切换/重连初载会 `resetPagination()` **整替** pagination
+    // 对象（chatView.js:175 / sidebar.js:2194）——守卫用对象**身份**比对
+    // （数值比对在「新会话初载恰回同 offset」的窄竞态下会漏判）。
+    const paginationAtStart = view.pagination;
+    mountHistoryPageChunked(msg.messages, { scrollAnchor: chat }, {
+      onBuilt: (container) => {
+        // 中途被整替（resetPagination 换对象）⇒ 本页作废（行未挂载，整页弃置；
+        // 已挂载行只会随 wipe 一起被清）。
+        if (view.pagination !== paginationAtStart) return false;
+        const fragment = document.createDocumentFragment();
+        while (container.firstChild) {
+          const child = container.firstChild;
+          if (child.classList && child.classList.contains('row')) {
+            child.classList.add('prepend-skip-anim');
+          }
+          fragment.appendChild(child);
+        }
+        chat.prepend(fragment);
+        // 相对补偿：+整页新增高度（绝对值式会夺走构建切片期间用户的手势滚动）。
+        const newScrollHeight = chat.scrollHeight;
+        chat.scrollTop += (newScrollHeight - prevScrollHeight);
+        view.pagination.offset = msg.offset;
+        view.pagination.hasMore = msg.hasMore;
+        if (!view.pagination.hasMore) showHistoryEnd();
+        return true;
+      },
+      onDone: () => {
+        view.pagination.loading = false;
+        hideHistoryLoader();
+        // 停在顶部续拉：用户已滚到顶且还有更旧页 ⇒ 不等下一次滚动手势，直接
+        // 预取下一页（单飞闸在握；hasMore 收口 / 非本会话时不续）。
+        if (chat.scrollTop < 100 && view.pagination.hasMore && !view.pagination.loading &&
+            state.activeSessionId === msg.sessionId && view.pagination.offset > 0) {
+          view.pagination.loading = true;
+          sendWs({ type: 'getHistory', sessionId: state.activeSessionId, limit: 50, beforeIndex: view.pagination.offset });
+        }
+      },
+    }).catch(() => {
+      // 构建异常：放闸 + 收指示器，绝不楔死分页（与迟到帧同款落点）。
+      view.pagination.loading = false;
+      hideHistoryLoader();
+    });
   }
 });
 
@@ -4426,10 +4453,14 @@ onMessage('activeAgents', (msg) => {
 // (before the fix: this listener probed for the latch AND utils.js probed again
 // for the pill, three times per event → 6 forced reads per wheel step).
 const _primChat = chatViews.primary.dom.chat;
+// perf 台账 #922（2026-10-26）：上滑预取提前量。触顶（<100px）才发 getHistory =
+// 必等一个网络来回 + 整页构建才见旧消息；改在接近顶部前就预取下一页（单飞闸
+// 不变），页到时用户通常刚滚到顶 —— 感知等待≈0，也把「一次巨页」摊成流水线。
+const HISTORY_PREFETCH_PX = 400;
 const _primScrollGate = () => {
   const pv = chatViews.primary;
   // Scroll-to-top: load older messages
-  if (_primChat.scrollTop < 100 && pv?.pagination?.hasMore && !pv?.pagination?.loading && pv?.pagination?.offset > 0) {
+  if (_primChat.scrollTop < HISTORY_PREFETCH_PX && pv?.pagination?.hasMore && !pv?.pagination?.loading && pv?.pagination?.offset > 0) {
     pv.pagination.loading = true;
     setActiveView(pv);
     showHistoryLoader();
