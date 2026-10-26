@@ -313,7 +313,7 @@ class DetachedApplySpec extends CatsEffectSuite:
   // ── launcher 解析 ────────────────────────────────────────────────────────
 
   test("resolveLauncher honours the STAND_LAUNCHER override before platform defaults") {
-    val got = DetachedApply.resolveLauncher(Map("STAND_LAUNCHER" => "/opt/x/stand"), "/home/u", isWindows = false)
+    val got = DetachedApply.resolveLauncher(Map("STAND_LAUNCHER" -> "/opt/x/stand"), "/home/u", isWindows = false)
     assertEquals(got, Some("/opt/x/stand"))
   }
 
