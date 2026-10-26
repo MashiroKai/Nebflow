@@ -537,26 +537,18 @@ export default {
   'login.authNote': 'A browser will open to finish sign-in; GitHub / Google quick sign-in lives inside that page',
   'login.starting': 'Starting login…',
   'login.hintBrowser': 'Sign in to your {lowerBrand} account in the browser; this device then interconnects with your other devices',
-  'login.hintAuthorize': 'Complete authorization in the browser; this device then interconnects with your other devices',
   'login.reopenAuthPage': 'Reopen the login page',
-  'login.openAuthPage': 'Open authorization page',
   'login.switchAccount': 'Use another account',
-  'login.deviceCodeCaption': 'Authorization code',
   'login.waitingPopupOpened': 'Login page opened in a new tab — waiting for completion…',
   'login.waiting': 'Waiting for login to complete…',
-  'login.waitingAuthorize': 'Waiting for authorization…',
   'login.retry': 'Retry',
   'login.failed': 'Login failed',
   'login.success': '✓ Connected — this device joined the network',
-  // Flow-failure strings surfaced inside the panel (source = neblink.js PKCE /
-  // device-flow failure paths, formerly Chinese literals that leaked into the
-  // English UI; only the string source changes, no flow semantics).
+  // Flow-failure strings surfaced inside the panel (source = neblink.js PKCE
+  // failure paths; the device-flow strings were retired with the flow, #924).
   'login.startFailed': 'Could not start login',
   'login.timeout': 'Login timed out — please retry',
   'login.networkError': 'Network error: {msg}',
-  'login.deviceStartFailed': 'Could not start the device flow',
-  'login.deviceTimeout': 'Authorization timed out — please retry',
-  'login.deviceFailed': 'Authorization failed',
   // Defect A (2026-09-18 login-failure batch) — three-part failure face:
   //   Login failed: <reason>. Next: <action>. Diagnostic code: <code>
   // The `login.reason.*` / `login.action.*` codes mirror the backend

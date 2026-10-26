@@ -337,7 +337,7 @@ private[gateway] object AuthRoutes:
                   ) match
                     case Some((serverUrl, (lc, pkceClientId))) =>
                       LogtoAuthCode
-                        .tokenCall(LogtoDeviceFlow.jdkSend)(
+                        .tokenCall(LogtoTransport.jdkSend)(
                           LogtoAuthCode.tokenRequest(
                             lc.endpoint,
                             pkceClientId,
@@ -359,8 +359,8 @@ private[gateway] object AuthRoutes:
                                   ms.updateDeviceInfo(avatarUrl = Some(pic))
                                 case _ => IO.unit
                               pictureWrite *>
-                                LogtoDeviceFlow
-                                  .register(LogtoDeviceFlow.jdkSend)(
+                                LogtoTransport
+                                  .register(LogtoTransport.jdkSend)(
                                     serverUrl,
                                     tokens.accessToken,
                                     identity.deviceId,
@@ -492,7 +492,7 @@ private[gateway] object AuthRoutes:
    * 日志（`detail` 通道，禁进用户可见面）。
    */
   private def classifyRegisterRejection(
-    rejection: LogtoDeviceFlow.RegisterRejection
+    rejection: LogtoTransport.RegisterRejection
   ): nebflow.neblink.CredentialDiagnostics.Diagnostic =
     import nebflow.neblink.{CredentialDiagnostics as CD, CredentialFailure as CF}
     val failure = rejection.reason match

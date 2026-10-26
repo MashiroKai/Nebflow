@@ -21,7 +21,7 @@ import java.time.Duration
  *
  * No open-proxy surface: the route fetches ONLY the current identity
  * avatarUrl — the client never supplies a URL. Transport is injected so the
- * contract is unit-tested without network (mirrors LogtoDeviceFlow.Send).
+ * contract is unit-tested without network (mirrors LogtoTransport.Send).
  */
 object AvatarProxy:
 
@@ -57,7 +57,7 @@ object AvatarProxy:
   /**
    * Production transport: the shared `OutboundHttpClients.Policy.Direct15s`
    * client (HTTP/1.1, system proxy bypassed, 15 s connect) — the same policy
-   * as LogtoDeviceFlow.jdkSend. One memoized instance instead of a new
+   * as LogtoTransport.jdkSend. One memoized instance instead of a new
    * `HttpClient` per avatar miss (D5, 2026-09-13). Transport failures surface
    * as Left so the route degrades to 502 instead of an unhandled IO failure.
    *

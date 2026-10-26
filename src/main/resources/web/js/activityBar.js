@@ -19,7 +19,7 @@
 // stays visible when the sidebar is collapsed.
 
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from './sidebar.js';
-import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow, avatarViewState, noteAvatarFailure, paintAvatarSlot, LOCAL_FILE_CODES, openEndSessionHandoff, classifyLoginFailureCode, loginFailureText } from './neblink.js';
+import { fetchNeblinkStatus, getNeblinkState, startPkceLogin, pollPkceState, cancelPkceFlow, avatarViewState, noteAvatarFailure, paintAvatarSlot, LOCAL_FILE_CODES, openEndSessionHandoff, classifyLoginFailureCode, loginFailureText } from './neblink.js';
 // setUpdateDot（settings-btn 更新绿点，updateCheck.js）已随 auth-trim 批删除 ——
 // 绿点与静默自动检查整链退役（2026-10-20 作者令，未来由官网统一检测更新取代）。
 import { createIconsIn, escapeHtml, statusIcon } from './utils.js';
@@ -429,7 +429,7 @@ export function activateAccountEntry() {
     window.open(getProfileUrl(), '_blank', 'noopener');
     return;
   }
-  // Not logged in → start the NebLink login (PKCE, device-flow fallback).
+  // Not logged in → start the NebLink login (PKCE hosted page).
   // showLoginModal reserves the popup synchronously in THIS gesture.
   showLoginModal();
 }
@@ -459,7 +459,7 @@ function bindSettingsAccountEntry() {
   });
 }
 
-// ── Login modal (PKCE primary, device-flow fallback) ─────
+// ── Login modal (PKCE hosted page) ─────
 // Styles are injected once here (rather than a CSS file) so the modal stays
 // self-contained in this module; all values come from the Sapphire Glass
 // design variables so it themes with the rest of the UI.
@@ -707,9 +707,9 @@ function popupBlockedFallback(url) {
 
 /**
  * Centered glass modal driving the NebLink login.
- * States: starting → waiting (PKCE browser login) → success | error, with a
- * waiting-device state (user code + polling) when the gateway reports
- * logto-not-configured and the legacy device flow takes over.
+ * States: starting → waiting (PKCE browser login) → success | error.
+ * A logto-not-configured answer is an ERROR face (台账 #924: the legacy
+ * device-flow fallback was retired with the flow itself, 2026-10-26).
  * Closing the modal cancels polling.
  */
 function showLoginModal(opts = {}) {
@@ -737,7 +737,6 @@ function showLoginModal(opts = {}) {
   const close = () => {
     if (!finished) {
       cancelPkceFlow();
-      cancelDeviceFlow();
       setPairing(false);
     }
     document.removeEventListener('keydown', onKey);
@@ -750,7 +749,6 @@ function showLoginModal(opts = {}) {
   // handed us.
   const openAuthPage = () => {
     if (flowInfo?.authorizeUrl) window.open(flowInfo.authorizeUrl, '_blank');
-    else if (flowInfo?.verificationUri) window.open(flowInfo.verificationUri, '_blank');
   };
   // Click outside to close (deferred so the opening click doesn't close it).
   setTimeout(() => {
@@ -817,17 +815,6 @@ function showLoginModal(opts = {}) {
           <button class="login-modal-btn glass-control login-modal-btn-secondary" id="login-switch-account">${t('login.switchAccount')}</button>
         </div>
         <div class="login-waiting">${popupOpened ? t('login.waitingPopupOpened') : t('login.waiting')}</div>`;
-    } else if (state === 'waiting-device') {
-      // Legacy device-flow fallback (gateway reports logto-not-configured).
-      body = `
-        <div class="login-hint">${t('login.hintAuthorize')}</div>
-        <div class="login-user-code">${escapeHtml(data.userCode || '')}</div>
-        <div class="login-code-caption">${t('login.deviceCodeCaption')}</div>
-        <div class="login-actions">
-          <button class="login-modal-btn glass-control cfg-btn-primary" id="login-open-auth">${t('login.openAuthPage')}</button>
-          <button class="login-modal-btn glass-control login-modal-btn-secondary" id="login-switch-account">${t('login.switchAccount')}</button>
-        </div>
-        <div class="login-waiting">${t('login.waitingAuthorize')}</div>`;
     } else if (state === 'success') {
       body = `<div class="login-success">${t('login.success')}</div>`;
     } else if (state === 'error') {
@@ -953,24 +940,16 @@ function showLoginModal(opts = {}) {
         pollPkceState(onSuccess, onError);
         return;
       }
-      // Fallback: gateway answered logto-not-configured - legacy device flow.
-      flowInfo = await startDeviceFlow();
-      // Mirror the codes into neblinkState (same as the Settings flow) so the
-      // Settings panel shows the waiting UI if it's open.
-      st.deviceCode = flowInfo.deviceCode;
-      st.userCode = flowInfo.userCode;
-      st.flowState = 'waiting';
-      render('waiting-device', { userCode: flowInfo.userCode });
-      if (flowInfo.verificationUri && !navigateReserved(flowInfo.verificationUri)) {
-        popupBlockedFallback(flowInfo.verificationUri);
-      }
-      pollDeviceFlow(
-        flowInfo.deviceCode,
-        flowInfo.interval || 3,
-        flowInfo.expiresIn || 900,
-        onSuccess,
-        onError
-      );
+      // null = gateway answered logto-not-configured. 台账 #924 (2026-10-26):
+      // this is an ERROR face now — the legacy device-flow fallback it used to
+      // trigger was retired with the flow itself. Same three-part copy the
+      // generic failure face renders (reason + action + diagnostic code, the
+      // locale keys already exist for logto-not-configured).
+      const ncCode = 'logto-not-configured';
+      render('error', {
+        message: loginFailureText({ code: ncCode, error: t('login.reason.' + ncCode) }),
+        code: ncCode
+      });
     } catch (e) {
       finished = true;
       setPairing(false);
