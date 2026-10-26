@@ -60,7 +60,12 @@ private[gateway] object ProjectsRoutes:
                       "origin" -> p.origin
                         .fold(Json.Null)(o =>
                           Json.obj("device" -> o.device.asJson, "path" -> o.path.asJson)
-                        )
+                        ),
+                      // 台账 #913 ②（2026-10-26）：additive `device` —— workspace 所在
+                      // 设备的**存储值**（"self" = 本机 / 对端 deviceId；判定单点 =
+                      // ProjectStore.effectiveDevice）。显示名由前端按需解析（面板既有
+                      // origin 徽标同域）；老前端忽略未知键零破坏。
+                      "device" -> ProjectStore.effectiveDevice(p).asJson
                     )
                   )
                   .asJson

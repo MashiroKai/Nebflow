@@ -350,6 +350,20 @@ class PromptSectionsSpec extends munit.FunSuite:
     assertEquals(MountedProjectList.delta("- a\n- b", "- a\n- b"), "")
     assertEquals(MountedProjectList.delta("- a", "- a"), "")
 
+  // ── 台账 #913 ②：设备标注行形（renderLinesWithDevice）──────────────
+
+  test("MountedProjectList.renderLinesWithDevice: cross-device rows carry (on device X); local rows keep the plain shape"):
+    val lines = MountedProjectList.renderLinesWithDevice(
+      List(
+        ("stand-kai", "KAI", Some("主仓")),
+        ("general", "", None)
+      )
+    )
+    assertEquals(lines, "- general\n- stand-kai (on device KAI): 主仓")
+
+  test("MountedProjectList.renderLinesWithDevice: empty list → explicit placeholder (same as renderLines)"):
+    assertEquals(MountedProjectList.renderLinesWithDevice(Nil), MountedProjectList.EmptyText)
+
   // ============================================================
   // 文档溯源规范（order 350，always 段；作者 2026-09-11 裁定 / 方案 #165）
   //

@@ -88,6 +88,16 @@ object ProjectCreateService:
   val AgentMdTemplate: String = ""
 
   /**
+   * 装配形模板（台账 #913 ③，2026-10-26）：基模板 + fleet 纪律节。
+   * `fleet.enforceExplicitDevice` 关 = 节为空串 = 与 [[AgentMdTemplate]] 字节相等
+   * （向后兼容零变化）；开 = 新脚手架的 AGENTS.md 带「Fleet device discipline」节
+   * （dispatcher 纪律同步——六件工具强制显式 device + 项目 device 标注的查询面）。
+   * 消费点 = 全部脚手架写面（本地 create/幂等重挂补缺、设备腿远端脚手架），禁有
+   * 调用点仍直用基模板（否则开关下面板内字节二态）。
+   */
+  def AgentMdTemplateFull: String = AgentMdTemplate + nebflow.core.device.FleetConfig.agentsMdSection
+
+  /**
    * Create + idempotently mount. `name` defaults to the workspace basename.
    *
    * Same-name semantics (unchanged): same workspace => idempotent
@@ -251,7 +261,7 @@ object ProjectCreateService:
                                 resolvedName,
                                 workspace,
                                 description,
-                                AgentMdTemplate,
+                                AgentMdTemplateFull,
                                 origin = Some(ProjectOrigin(peer.deviceId, stripTrailingSlashes(workspace)))
                               )
                               .flatMap {
@@ -316,7 +326,7 @@ object ProjectCreateService:
         e.hcursor.downField("name").as[String].toOption
       }.toSet
     val wanted: List[(String, String)] = List(
-      ("AGENTS.md", AgentMdTemplate),
+      ("AGENTS.md", AgentMdTemplateFull),
       (".gitignore", ".nebflow/\n")
     )
     val missing = wanted.filterNot((name, _) => existing.contains(name))
@@ -483,7 +493,7 @@ object ProjectCreateService:
         case Some(occupant) =>
           IO.pure(Left(ToolError(occupiedWorkspaceError(resolvedName, workspace, occupant))))
         case None =>
-          ProjectStore.createWithScaffold(resolvedName, workspace, description, AgentMdTemplate).flatMap {
+          ProjectStore.createWithScaffold(resolvedName, workspace, description, AgentMdTemplateFull).flatMap {
             case Right((pd, report)) => mountProject(pd, created = true, scaffold = Some(report))
             case Left(err) =>
               // Idempotent re-mount (the key restart-recovery path): the
@@ -540,7 +550,7 @@ object ProjectCreateService:
                       case Some(refusal) => IO.pure(Left(ToolError(refusal)))
                       case None =>
                         ProjectStore
-                          .ensureScaffold(os.Path(workspace, PathUtil.dataRoot), AgentMdTemplate)
+                          .ensureScaffold(os.Path(workspace, PathUtil.dataRoot), AgentMdTemplateFull)
                           .flatMap(report => mountProject(pd, created = false, scaffold = Some(report)))
                     }
                 case Some(pd) =>

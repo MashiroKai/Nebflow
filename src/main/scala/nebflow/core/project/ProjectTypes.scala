@@ -1755,7 +1755,17 @@ case class ProjectDef(
    * 拒绝 remote-origin 项目——FlowMap/TaskBoard 存储根会写进远端路径（G.12 路径
    * 错觉），远端项目的执行面整体在 origin 设备。
    */
-  origin: Option[ProjectOrigin] = None
+  origin: Option[ProjectOrigin] = None,
+  /**
+   * 设备归属显式标注（台账 #913 ②，2026-10-26）：workspace 所在设备。值域 =
+   * `ProjectOrigin.Self`（"self"，本机）或对端 deviceId。可选字段——存量
+   * project.json 无此键 → None（withDefaults 零迁移）；**读面归属判定恒走
+   * [[ProjectStore.effectiveDevice]]**（本字段 ∪ origin 回导单点，禁消费方各自
+   * 判），写入面 = createWithScaffold（新定义带值：本机 = self、设备项目 =
+   * origin.device）+ `ProjectStore.load` 的缺字段回填（幂等手术式插键，同
+   * archive 形状——失败只 WARN，绝不阻断加载）。
+   */
+  device: Option[String] = None
 )
 
 /**

@@ -61,6 +61,51 @@ object ProjectStore:
   def deviceOrigin(pd: ProjectDef): Option[ProjectOrigin] =
     pd.origin.filter(o => !ProjectOrigin.isSelfLiteral(o.device))
 
+  // ============================================================
+  // 设备归属显式标注（台账 #913 ②，2026-10-26）
+  // ============================================================
+
+  /**
+   * 归属判定单点（工具/上下文/REST 各显示面的唯一取值口，禁各自判）：
+   * 显式 `device` 字段优先 → origin 回导（非 self 字面才认）→ 缺省 self。
+   * 返回值 = 存储值域（`self` 字面或对端 deviceId）；显示名由调用面经
+   * [[displayDevice]] 对名册现查（core.device 不持有名册）。
+   */
+  def effectiveDevice(pd: ProjectDef): String =
+    pd.device.map(_.trim).filter(_.nonEmpty)
+      .orElse(pd.origin.filter(o => !ProjectOrigin.isSelfLiteral(o.device)).map(_.device))
+      .getOrElse(ProjectOrigin.Self)
+
+  /**
+   * 存储值 → 显示名：`self`/空 = "local"；deviceId = 名册现查（`nameOf` 未命中 =
+   * 原样 id——诚实降级，绝不冒认）。
+   */
+  def displayDevice(device: String, nameOf: String => Option[String]): String =
+    if ProjectOrigin.isSelfLiteral(device) then "local"
+    else nameOf(device.trim).getOrElse(device.trim)
+
+  /**
+   * #913 ② 缺字段回填：project.json 无 `device` 键的定义，加载时手术式原位插键
+   * （读原始 Json → deepMerge device → AtomicJson 原子写——与 [[archive]] 同形状，
+   * 不走 ProjectDef 全量 re-encode：存量字段布局逐字节稳定）。幂等：有键不写。
+   * 失败只 WARN（迁移面非关键路径，**绝不阻断加载**）。
+   */
+  private def backfillDevice(name: String, p: os.Path, json: io.circe.Json, eff: String): Unit =
+    val already = json.hcursor.downField("device").as[String].toOption.exists(_.trim.nonEmpty)
+    if already then ()
+    else
+      try
+        val updated = json.deepMerge(io.circe.Json.obj("device" -> io.circe.Json.fromString(eff)))
+        AtomicJson.writeSync(p, updated.noSpaces)
+        logger.infoSync(s"Project '$name': device annotation backfilled (device=$eff)")
+      catch
+        case e: Exception =>
+          logger.warnSync(s"Project '$name': device annotation backfill failed (load continues): ${e.getMessage}")
+
+  /** Backfill 的纯判定面（spec 直测）：定义缺显式 device ⇒ Some(存储值)；有键 ⇒ None（零写入）。 */
+  def deviceBackfillValue(pd: ProjectDef): Option[String] =
+    pd.device.map(_.trim).filter(_.nonEmpty).fold(Some(effectiveDevice(pd)))(_ => None)
+
   /**
    * 引擎侧大脑根（跨设备挂载批 2026-10-25 ·「大脑在引擎，账本一本」）：
    *   - 本机项目 = `pd.workspace` 本身（现状逐字节，存量零迁移）；
@@ -89,14 +134,22 @@ object ProjectStore:
       else
         val p = projectJsonPath(name)
         if os.exists(p) then
-          jsonParse(os.read(p)).flatMap(_.as[ProjectDef]) match
-            case Right(pd) =>
-              // 迁移失败不阻断项目加载（失败态由 WARN 留痕，下次 load 重试）
-              try migrateAgentMd(os.Path(pd.workspace, PathUtil.dataRoot), name)
-              catch
-                case e: Exception =>
-                  logger.warnSync(s"Project '$name': Agent.md migration failed: ${e.getMessage}")
-              Some(pd)
+          jsonParse(os.read(p)) match
+            case Right(json) =>
+              json.as[ProjectDef] match
+                case Right(pd) =>
+                  // 迁移失败不阻断项目加载（失败态由 WARN 留痕，下次 load 重试）
+                  try migrateAgentMd(os.Path(pd.workspace, PathUtil.dataRoot), name)
+                  catch
+                    case e: Exception =>
+                      logger.warnSync(s"Project '$name': Agent.md migration failed: ${e.getMessage}")
+                  // #913 ② 设备归属标注回填（缺键才写，幂等；失败只 WARN 不阻断——
+                  // 手术式原位插键用同一份已解析 Json，零二次读盘）
+                  deviceBackfillValue(pd).foreach(eff => backfillDevice(name, p, json, eff))
+                  Some(pd.copy(device = Some(effectiveDevice(pd))))
+                case Left(e) =>
+                  logger.warnSync(s"Failed to parse project '$name': $e")
+                  None
             case Left(e) =>
               logger.warnSync(s"Failed to parse project '$name': $e")
               None
@@ -243,6 +296,43 @@ object ProjectStore:
       }
 
   /**
+   * description 更新（台账 #913 ④，2026-10-26）：**只改 description 一个字段**
+   * 的手术式原位写（读原始 Json → deepMerge/删键 → AtomicJson 原子写回——与
+   * [[archive]] 同形状，不走 ProjectDef 全量 re-encode：其余字段逐字节稳定）。
+   *
+   * 幂等：现值与目标一致（含「目标空 + 键已缺席」）→ 零写入，`Right(unchanged)`。
+   * 空目标（trim 后空串）= **清空**：删 description 键（解码回 None，与 create 面
+   * 「空 description 视作缺席」同语义）。非空目标 = set 键。
+   * 返回：Right("updated") 写入成功 / Right("unchanged") 幂等零写入；
+   * 名字非法 / 项目不存在 / JSON 损坏 → Left（错误文案与 archive/markUnmounted 同族）。
+   */
+  def updateDescription(name: String, description: String): IO[Either[String, String]] =
+    if name.isEmpty || name.contains("/") || name.contains("\\") || name == "." || name == ".." then
+      IO.pure(Left(s"Invalid project name: '$name'"))
+    else
+      IO.blocking {
+        val p = projectJsonPath(name)
+        if !os.exists(p) then Left(s"Project '$name' not found")
+        else
+          jsonParse(os.read(p)) match
+            case Left(e) => Left(s"Corrupt project.json for '$name': $e")
+            case Right(json) =>
+              val current = json.hcursor.downField("description").as[Option[String]].toOption.flatten
+              val target = Option(description).map(_.trim).filter(_.nonEmpty)
+              if current.map(_.trim).filter(_.nonEmpty) == target then Right("unchanged")
+              else
+                val updated = target match
+                  case Some(d) => json.deepMerge(io.circe.Json.obj("description" -> io.circe.Json.fromString(d)))
+                  case None =>
+                    // 清空 = 删键（吸收既有 null/空串形态；json deepMerge 无法删键，手工重建对象）
+                    io.circe.Json.fromJsonObject(json.asObject.getOrElse(io.circe.JsonObject.empty).remove("description"))
+                AtomicJson.writeSync(p, updated.noSpaces)
+                logger.infoSync(s"Project '$name': description updated (${target.fold("<cleared>")(_.take(60))})")
+                Right("updated")
+        end if
+      }
+
+  /**
    * Create a project definition + workspace `.nebflow/` scaffolding.
    *
    * 产出（验收①「只有 flow-map.json 被 store 写，无手写文件」相关）：
@@ -299,13 +389,16 @@ object ProjectStore:
               // 在 Mac 上经 `os.Path(_, dataRoot)` 会得到数据根下的假名路径（现场
               // 事故原形）。引擎本机读写面走 [[brainWorkspace]]；展示面与文件浏览器
               // 设备腿用本值 + origin.device 经设备通道。
+              // #913 ②：设备归属显式标注 = origin.device（与 origin 同源，读面
+              // effectiveDevice 单点归一）。
               ProjectDef(
                 name = name,
                 description = description,
                 workspace = origin.get.path,
                 agentFile = s"${origin.get.path}/AGENTS.md",
                 createdAt = now,
-                origin = origin
+                origin = origin,
+                device = Some(origin.get.device)
               )
             else
               ProjectDef(
@@ -314,7 +407,9 @@ object ProjectStore:
                 workspace = ws.toString,
                 agentFile = (ws / "AGENTS.md").toString,
                 createdAt = now,
-                origin = origin
+                origin = origin,
+                // #913 ②：本机项目显式标 self（缺席由 load 回填补齐，创建面直写省一次回填写）
+                device = Some(ProjectOrigin.Self)
               )
           os.makeDir.all(projectDir(name))
           AtomicJson.writeSync(projectJsonPath(name), pd.asJson.noSpaces)

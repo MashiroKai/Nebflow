@@ -825,6 +825,25 @@ object MountedProjectList:
         .mkString("\n")
 
   /**
+   * Device-annotated form（台账 #913 ②，2026-10-26）：entries = (name, deviceDisplay,
+   * description)。`deviceDisplay` 非空（跨设备项目）⇒ 行形 `- name (on device X): desc`；
+   * 空（本机项目）⇒ 与 [[renderLines]] 同形（零噪声）。排序与占位语义同源。
+   * 显示名由调用面经名册现查后传入（本件不做 IO——纯函数 spec 直测）。
+   */
+  def renderLinesWithDevice(projects: List[(String, String, Option[String])]): String =
+    if projects.isEmpty then EmptyText
+    else
+      projects
+        .sortBy(_._1)
+        .map { case (name, device, desc) =>
+          val devTag = if device.trim.isEmpty then "" else s" (on device ${device.trim})"
+          desc.filter(_.nonEmpty) match
+            case Some(d) => s"- $name$devTag: $d"
+            case None => s"- $name$devTag"
+        }
+        .mkString("\n")
+
+  /**
    * Line-level +/- delta between the snapshot text and the current text
    * (same semantics as AgentCore.devicesDeltaLines). Each bullet entry is
    * stripped of its leading "- " so the +/− marker reads cleanly ("+ name:
