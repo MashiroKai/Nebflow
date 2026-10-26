@@ -157,6 +157,14 @@ async function fetchAllRoles() {
   });
 }
 
+/** 台账 #937：全部角色读数失败 = 面板不可用态（未登录 / 引擎不可达）。
+ *  修前表现 = 静默僵面：Nebula 只剩 seed 注记 + 永久禁用的「独立配置」、
+ *  follower 展开只有「加载失败」，无一处告诉用户为什么、也无恢复入口
+ *  （作者 14:19 报障「能打开但上面都点不了」的成因面）。 */
+function allRolesUnreadable() {
+  return ROLES.every((r) => !roleState.get(r)?.data);
+}
+
 function nebulaEffectiveRefs() {
   return chainRefs(roleState.get('Nebula')?.data?.effectiveChain);
 }
@@ -567,10 +575,79 @@ function renderBannerContent() {
   banner.querySelector('.mp-banner-view')?.addEventListener('click', () => setMode('separate'));
 }
 
+/** 台账 #937：降级面 —— 显式失败态 + 原因 + 重试（recovery entry）。
+ *  渲染进 .mp-body（替下 per-role blocks）。槽位（.mp-nebula-slot /
+ *  .mp-followers）清空但不销毁 —— panelVisibility 持有 .mp-followers 的注册
+ *  柄，节点一旦重建恢复腿就指空；僵死 blocks 出 DOM（spec 钉 count=0），
+ *  恢复时由 renderPanel 原地重建。头部模式钮照常可点（点了也回同一降级面
+ *  —— 状态一致，不假活）。 */
+function renderPanelLoadError() {
+  if (!panelEl) return;
+  const body = panelEl.querySelector('.mp-body');
+  if (!body) return;
+  for (const sel of ['.mp-nebula-slot', '.mp-followers']) {
+    const slot = body.querySelector(sel);
+    if (!slot) continue;
+    slot.replaceChildren();
+    slot.style.display = 'none';
+  }
+  // 分叉横幅的可见性归 panelVisibility 管，降级态直接压掉（恢复渲染时
+  // panelVisibility.update() 会重新裁决）。
+  const banner = panelEl.querySelector('.mp-banner');
+  if (banner) banner.style.display = 'none';
+  let face = body.querySelector('.mp-load-error');
+  if (!face) {
+    face = document.createElement('div');
+    face.className = 'mp-load-error';
+    face.setAttribute('role', 'alert');
+    const icon = document.createElement('div');
+    icon.className = 'mp-load-error-icon';
+    icon.innerHTML = statusIcon('circle-alert', 20, 'st-err');
+    const title = document.createElement('div');
+    title.className = 'mp-load-error-title';
+    title.textContent = t('model.loadFailed');
+    const hint = document.createElement('div');
+    hint.className = 'mp-load-error-hint';
+    hint.textContent = t('model.loadFailedHint');
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'cfg-btn cfg-btn-sm mp-load-error-retry';
+    retry.textContent = t('model.retry');
+    retry.addEventListener('click', () => {
+      retry.disabled = true;
+      void openModelPanelRefresh();
+    });
+    face.append(icon, title, hint, retry);
+    body.appendChild(face);
+  }
+  face.style.display = '';
+}
+
+/** 台账 #937：带守卫的刷新腿（openModelPanel 与降级面重试共用）—— 渲染链
+ *  任何异常都落到显式降级面（console 之外用户可见），面板绝不留在无声半死态。 */
+async function openModelPanelRefresh() {
+  try {
+    await refreshPanel();
+  } catch (e) {
+    renderPanelLoadError();
+  }
+}
+
 function renderPanel() {
   if (!panelEl) return;
   const nebula = /** @type {HTMLElement} */ (panelEl.querySelector('.mp-nebula-slot'));
   const followers = /** @type {HTMLElement} */ (panelEl.querySelector('.mp-followers'));
+  if (!nebula || !followers) return;
+  // 台账 #937：全角色读数失败 ⇒ 降级面替下 per-role blocks（partial 失败仍走
+  // per-block「加载失败」—— 可用的部分照常可用，只有整体不可用才整面降级）。
+  // 短路在造块之前：降级态不做无用功，setMode 反复点击幂等。
+  if (allRolesUnreadable()) {
+    renderPanelLoadError();
+    return;
+  }
+  // 恢复腿：出降级态先拆降级面 + 复原被降级面压掉的槽位可见性。
+  panelEl.querySelector('.mp-load-error')?.remove();
+  nebula.style.display = '';
   nebula.replaceChildren();
   followers.replaceChildren();
   const commit = (role) => { saveChain(role); };
@@ -652,7 +729,7 @@ export async function openModelPanel() {
   }
   panelEl = buildPanel();
   /** @type {HTMLElement} */ (panelEl.querySelector('.model-panel'))?.focus();
-  await refreshPanel();
+  await openModelPanelRefresh();
 }
 
 function closeModelPanel() {

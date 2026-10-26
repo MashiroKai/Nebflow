@@ -263,6 +263,85 @@ function bgStoreChildState(status) {
   return 'active';
 }
 
+// ── 台账 #929（后台子智能体跨设备透明）：远端投影行渲染 ─────────────────────
+// 数据面 = state.remoteBgAgents（引擎 remoteAgents 帧；LWW/在线判读都在引擎侧，
+// 渲染面原样呈现）。行 = 既有子智能体行语言（状态词/状态点/kind 徽标/uptime/
+// 重试片）+ 两枚新角标：设备角标（bg.runsOn title，「跑在哪」轴——bg-device-
+// origin-chip 批同轴）+ 离线角标（琥珀「设备离线」）。**展示专用**：无点击展开
+// （跨设备会话详情不在本批边界），不入 per-session 徽标计数（跨会话集不归属
+// 单会话）——计数红线见 main.js remoteAgents 处理器。
+const REMOTE_ROW_STATE = {
+  running: 'active',
+  restarting: 'active',
+  'ready-to-merge': 'waiting',
+  completed: 'done',
+  cancelled: 'done',
+  failed: 'error',
+};
+
+/** 远端投影行状态（值域外归 active 保守侧——同 bgStoreChildState 纪律）。 */
+function bgRemoteRowState(status) {
+  return REMOTE_ROW_STATE[String(status || '')] || 'active';
+}
+
+/** 单行远端投影 HTML（设备分组内的行；display-only，零点击锚）。 */
+function bgRemoteRowHtml(info, device) {
+  const rowState = bgRemoteRowState(info.status);
+  const terminal = rowState === 'done' || rowState === 'error';
+  const statusLabel = t('subagents.status.' + (rowState === 'active' ? 'running' : rowState));
+  const dotClass = {
+    active: 'bg-status-active', waiting: 'bg-status-waiting',
+    done: 'bg-status-done', error: 'bg-status-error',
+  }[rowState] || 'bg-status-active';
+  const kindWord = bgChildKindWord(String(info.source || ''));
+  const kindPart = kindWord ? '<span class="bg-task-kind">' + escapeHtml(kindWord) + '</span>' : '';
+  // 设备角标（「跑在哪」轴）+ 离线角标（保留最后态，不消失不假装死亡——在线性
+  // 由引擎发送时刻现算；离线行 = 最后态 + 琥珀「设备离线」）。
+  const deviceName = String((device && device.deviceName) || info.deviceName || '');
+  const devicePart = deviceName
+    ? '<span class="bg-task-device" title="' + escapeHtml(t('bg.runsOn', { origin: deviceName })) + '">'
+      + escapeHtml(deviceName) + '</span>'
+    : '';
+  const offlinePart = (device && device.online === false)
+    ? '<span class="bg-task-offline" role="note">' + statusIcon('wifi-off', 11, 'st-warn')
+      + escapeHtml(t('subagents.deviceOffline')) + '</span>'
+    : '';
+  const displayName = bgFirstLine(info.title) || info.sessionId;
+  const namePart = '<span class="bg-task-name" title="' + escapeHtml(displayName) + '">' + escapeHtml(displayName) + '</span>';
+  const uptimePart = (!terminal && info.startedAt)
+    ? '<span class="bg-task-uptime" data-started-at="' + info.startedAt + '">' + escapeHtml(fmtUptime(Date.now() - info.startedAt)) + '</span>'
+    : '';
+  const retries = info.retryCount || 0;
+  const retriesPart = retries > 0
+    ? '<span class="bg-task-retries" title="' + escapeHtml(t('manage.retry')) + ' ×' + retries + '">×' + retries + '</span>'
+    : '';
+  // data-remote-session = 行锚（E2E 取数面；无点击行为绑定——展示专用行）。
+  return '<div class="bg-task-row bg-task-row-remote bg-task-row-child" role="listitem" tabindex="0" data-remote-session="' + escapeHtml(String(info.sessionId || '')) + '">' +
+    '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
+    '<div class="bg-task-info">' +
+      '<div class="bg-task-line bg-task-main">' +
+        '<span class="bg-task-state bg-state-' + rowState + '">' +
+          (rowState === 'error' ? statusIcon('circle-x', 11, 'st-err') : '') +
+          escapeHtml(statusLabel) + '</span>' +
+        kindPart + namePart + devicePart + offlinePart + retriesPart + uptimePart +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+/** 远端投影行整组 HTML（按设备分组、组内按 updatedAt 升序——引擎 rows() 序）。
+ *  无行 = ''（零噪）。 */
+function bgRemoteRowsHtml() {
+  const remote = state.remoteBgAgents || {};
+  const parts = [];
+  for (const device of Object.values(remote)) {
+    for (const info of Object.values(device.rows || {})) {
+      parts.push(bgRemoteRowHtml(info, device));
+    }
+  }
+  return parts.join('');
+}
+
 /** Store 子条目 kind 词（source 数据词：subagent/subtask/delegate；大写形态与面板
  *  既有 kind 词族对齐——数据非文案，零 locale 键）。修订批九点②（2026-10-09）：
  *  「subtask」显示词更名 delegate 语义（SubTask→Delegate；数据原文保留在
@@ -613,6 +692,8 @@ export function renderBgAgentDropdown() {
   // see isBgRowVisible). Header count, empty state and rows all read this one
   // filtered set — 0 visible ⇒ count 0 + empty text, never a self-contradiction.
   const entries = visibleBgAgentEntries(bgAgents);
+  // 台账 #929：远端投影行（展示专用组，缀在本地行后；不入计数——见处理器红线注）。
+  const remoteHtml = bgRemoteRowsHtml();
   // panel-merge-status 批（2026-10-25）：面板含候合并行 ⇒ 事件驱动取一次合并队列
   // 状态面（mergeQueueStatus 单点；模块内节流+退避，本次渲染先以缓存/静态形态落）。
   // 取到新内容 → 面板在开才重渲染（关着不打扰；throttle 使重渲染链自然收敛）。
@@ -625,9 +706,10 @@ export function renderBgAgentDropdown() {
   // Panel header carries the live count (aria-live polite, spec §5).
   const headerEl = dropdownEl ? dropdownEl.querySelector('.bg-dropdown-header') : null;
   if (headerEl) headerEl.textContent = t('subagents.header', { count: entries.length });
-  if (entries.length === 0) {
+  if (entries.length === 0 && remoteHtml === '') {
     // 空态自动收起（修订批九点⑤ · 2026-10-09）：无内容不渲染空态区块——列表留白，
     // 头部计数（·0）即空态真值（原 spec §6 空态文案行停用，键保留）。
+    // #929：远端行在场时本地空 ≠ 面板空——远端行使本早退失效（列表仍渲远端组）。
     listEl.innerHTML = '';
     return;
   }
@@ -649,6 +731,8 @@ export function renderBgAgentDropdown() {
     }
   }
   for (const [id, info] of leftovers) htmlParts.push(bgTaskRowHtml(id, info, {}));
+  // 台账 #929：远端投影行缀尾（本地行为主的合并语义——本地空时本组独立成面）。
+  htmlParts.push(remoteHtml);
   listEl.innerHTML = htmlParts.join('');
   // ui-status-redesign：statusIcon() 兜底占位（<i data-lucide>）在此升级为真图标
   // （vendor lib 已就绪时上面已是内联 SVG，此调用零替换、幂等）。

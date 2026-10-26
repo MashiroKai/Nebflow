@@ -1,7 +1,9 @@
 // nearpath.js — 设备识别快速通道 · 主动探测（console-fastpath 批 2026-10-23，作者令腿①）。
 //
-// 原理与「消息标记设备」逐字同源（device-provenance 批）：浏览端持 device stamp
-// （clientId + 设置页绑定到设备列表的 boundDeviceId），网关对照花名册
+// 原理与「消息标记设备」逐字同源（device-provenance 批；标注全自动批 2026-10-26
+// 起 boundDeviceId 由花名册自动判定——deviceIdentity.refreshAutoBinding，设置页
+// 手动绑定已退役）：浏览端持 device stamp（clientId + 自动判定的 boundDeviceId），
+// 网关对照花名册
 // （/api/neblink/nearpath 的 enrolled 标记，判定词表与 WebSocketRoutes 的
 // 消息设备登记判定一致）——**是 → 快速通道候选（LAN 地址清单），不是 → relay
 // 兜底**（作者批复原文；LAN 拓扑面服务端强制执行，前端拿不到未登记的清单）。
@@ -21,7 +23,7 @@
 //   30s 防摆闸（与 ws.js remint 同纪律）。
 
 import { key } from './branding.js';
-import { deviceStamp, getDeviceBinding } from './deviceIdentity.js';
+import { deviceStamp, currentAutoBinding, refreshAutoBinding } from './deviceIdentity.js';
 
 const RESULT_KEY = key('ws_nearpath_result');
 const PROBE_TIMEOUT_MS = 2500;
@@ -92,8 +94,12 @@ export async function probeNearPath() {
     return stored.verified || null;
   }
   try {
+    // 绑定读数先刷新再取（标注全自动批）：花名册读数 60s 内存缓存，重复探测
+    // 零额外网络价；失败静默降级空串（⇒ 不带 bound 参数，enrolled 判定交给
+    // 服务端，与本模块既有失败纪律同向）。
+    await refreshAutoBinding();
     const stamp = deviceStamp();
-    const bound = getDeviceBinding();
+    const bound = currentAutoBinding();
     const token = (() => { try { return localStorage.getItem(key('token')) || ''; } catch (_) { return ''; } })();
     const q = new URLSearchParams({ clientId: stamp.clientId || '' });
     if (bound) q.set('bound', bound);

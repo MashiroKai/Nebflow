@@ -843,15 +843,9 @@ export default {
   'settings.autostartUnsupported': 'Autostart is not supported in this runtime mode',
   'settings.autostartOn': 'Autostart enabled — {brand} will launch at login',
   'settings.autostartOff': 'Autostart disabled',
-  // device-provenance batch (author directive, 2026-10-23): inbound device stamp section.
-  'settings.deviceStamp': 'Message Device Stamp',
-  'settings.deviceStampName': 'This Browser\u2019s Device Name',
-  'settings.deviceStampBind': 'Bind to Device List',
-  'settings.deviceStampSave': 'Save',
-  'settings.deviceStampNone': 'Not bound (unenrolled)',
-  'settings.deviceStampEnrolled': 'enrolled',
-  'settings.deviceStampUnenrolled': 'unenrolled',
-  'settings.deviceStampHint': 'Messages carry a device + enrollment stamp for the model (never shown as chat bubbles). Bound browsers are labelled with the roster device name; unbound ones use the readable default ("unenrolled · Phone Chrome").',
+  // The settings.deviceStamp* keys (8) retired with the auto-tagging batch
+  // (2026-10-26 author directive: source recognition is automatic) — the manual
+  // naming/binding face is gone; deviceIdentity.js derives the roster binding.
   'settings.autostartFailed': 'Failed to update autostart',
   'settings.rerunOnboarding': 'Re-run Onboarding',
   // ── Onboarding redesign (chat-native, onboarding-redesign-spec v1.0) ──
@@ -1095,6 +1089,10 @@ export default {
   'model.clearChainConfirm': 'Clearing deletes this role\u2019s own chain and falls back to the seed chain (first available model). Continue?',
   'model.singleModelNote': 'Only 1 model and no fallback — errors go straight to the reserve tier',
   'model.loadFailed': 'Failed to load',
+  // Ledger #937: panel-wide degraded face (all role reads failed — silent-dead
+  // panel fix). Hint names the two real causes + the recovery path.
+  'model.loadFailedHint': 'Not signed in, or the engine is unreachable — sign in (see the top banner), then retry.',
+  'model.retry': 'Retry',
   'model.roleNebula': '{agent}',
   'model.roleDispatcher': 'Project dispatcher',
   'model.roleExecutor': 'Executor agent',
@@ -1530,6 +1528,8 @@ export default {
   'bg.kind.remote': 'remote',
   'bg.openedBy': 'Started by {origin}',
   'bg.runsOn': 'Runs on {origin}',
+  // Ledger #929 (cross-device sub-agent transparency): remote projected-row badges.
+  'subagents.deviceOffline': 'Device offline',
   // Retained terminal rows + output detail card (2026-09-09 output viewing)
   'bg.completed': 'Completed',
   'bg.failed': 'Failed',

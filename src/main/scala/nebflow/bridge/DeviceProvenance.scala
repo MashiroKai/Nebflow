@@ -15,11 +15,15 @@ import nebflow.shared.ContentBlock
  * 数据流（三段，各自由其属主面供给）：
  *
  *   ① 客户端声明 —— `web/js/deviceIdentity.js` 给每个浏览器会话一份稳定身份
- *      （localStorage 持久 clientId；可选用户命名 + 绑定到花名册设备 id；平台/浏览器
- *      由 UA 辅助判定），随用户消息帧的 `device` 键上行；
+ *      （localStorage 持久 clientId；平台/浏览器由 UA 辅助判定），随用户消息帧的
+ *      `device` 键上行。**标注全自动批（2026-10-26 作者令「消息来源识别应该是
+ *      自动的」）**：设置页手动命名/绑定面整区退役，绑定读数由客户端按花名册
+ *      自动判定，三分支——登录会话→账号设备名（鉴权读花名册 self）、配对设备→
+ *      登记名（环回匿名读 self）、匿名→帧不带 boundDeviceId ⇒ 默认标注；
  *   ② 网关解析 —— WebSocketRoutes 读帧 `device` 键（[[ClientDevice.fromFrame]]，
  *      防御解码），按 boundDeviceId 对照花名册（[[DeviceProvenance.resolve]]）判定
- *      已登记/未登记，未登记给可读默认名（「未登记-手机 Chrome」族）；
+ *      已登记/未登记，未登记给可读默认名（「未登记-手机 Chrome」族）——
+ *      手动命名分支已随设置区退役（未登记显示名恒为默认名）；
  *   ③ 注入 —— 与社交渠道头同一纪律：`<system-reminder>` 块**只进模型面**
  *      （source-marker relocation 批 2026-10-01 的两 face 分离原样适用），会话
  *      `.ui.json` 行与前端气泡保持裸正文。
@@ -33,13 +37,11 @@ import nebflow.shared.ContentBlock
 final case class ClientDevice(
   /** 稳定客户端 id：localStorage 持久、跨会话不变；本批的会话身份主键。 */
   clientId: String,
-  /** 用户在设置里给本网页起的名字；缺席 ⇒ 走默认名。 */
-  name: Option[String] = None,
   /** 平台端别：phone / tablet / mac / windows / linux（UA 辅助判定）。 */
   platform: Option[String] = None,
   /** 浏览器名：Chrome / Safari / Edge / Firefox …（UA 辅助判定）。 */
   browser: Option[String] = None,
-  /** 绑定的花名册设备 id（设置里绑定；绑定命中 ⇒ 已登记）。 */
+  /** 自动判定的花名册设备 id（客户端读 roster self；命中 ⇒ 已登记）。 */
   boundDeviceId: Option[String] = None
 )
 
@@ -68,7 +70,8 @@ object ClientDevice:
   /**
    * 帧解析面：从消息帧的 `device` 键防御解码。`clientId` 是身份主键——键缺席、
    * 非串或全空白 ⇒ `None`（老客户端 / CLI 帧 / 伪造空声明一律**不标注**，与
-   * `origin = None` 同一条兼容律：不声明不标注，不猜）。
+   * `origin = None` 同一条兼容律：不声明不标注，不猜）。手动命名键 `name` 已随
+   * 设置区退役（标注全自动批 2026-10-26）：帧里残留该键一律忽略，不进解码面。
    */
   def fromFrame(json: io.circe.Json): Option[ClientDevice] =
     val c = json.hcursor
@@ -83,7 +86,6 @@ object ClientDevice:
         .filter(_.nonEmpty)
     yield ClientDevice(
       clientId = clientId,
-      name = str(device.hcursor, "name"),
       platform = str(device.hcursor, "platform"),
       browser = str(device.hcursor, "browser"),
       boundDeviceId = str(device.hcursor, "boundDeviceId")
@@ -113,11 +115,15 @@ object DeviceProvenance:
   val ChannelDisplay = "网页控制台"
 
   /**
-   * 设备解析：**绑定键 = 花名册设备 id**（id 是配对真源；设备名可重名可伪造，
-   * 不作匹配键——跨会话稳定优先）。绑定命中（self 或 peers）⇒ 已登记，显示名 =
-   * 花名册登记名（登记权威）；未绑定/未命中 ⇒ 未登记，显示名 = 用户命名，缺席给
-   * [[ClientDevice.defaultName]] 可读默认名。花名册不可得（neblink 未装配）⇒
-   * self/peers 恒空 ⇒ 一律未登记（保守：读不到名册永不冒认已登记）。
+   * 设备解析（自动标注三分支的网关侧半面）：**绑定键 = 花名册设备 id**（id 是
+   * 配对真源；设备名可重名可伪造，不作匹配键——跨会话稳定优先）。绑定读数由
+   * 客户端自动判定供给（登录会话/环回配对读得 roster self ⇒ boundDeviceId =
+   * self.id）：命中（self 或 peers——peers 分支保留：花名册对照词表与近路面
+   * 共用，老客户端残留 peer 绑定值仍按登记判定，不冒认不漏认）⇒ 已登记，显示
+   * 名 = 花名册登记名（登记权威）；未命中/缺席 ⇒ 未登记，显示名 =
+   * [[ClientDevice.defaultName]] 可读默认名（手动命名分支已随设置区退役——
+   * 未登记显示名恒为默认名，不存在第二真源）。花名册不可得（neblink 未装配）
+   * ⇒ self/peers 恒空 ⇒ 一律未登记（保守：读不到名册永不冒认已登记）。
    */
   def resolve(
     client: ClientDevice,
@@ -130,12 +136,7 @@ object DeviceProvenance:
     }
     hit match
       case Some(entry) => ResolvedDevice(display = entry.deviceName, enrolled = true)
-      case None =>
-        val custom = client.name.map(_.trim).filter(_.nonEmpty)
-        ResolvedDevice(
-          display = custom.getOrElse(ClientDevice.defaultName(client)),
-          enrolled = false
-        )
+      case None        => ResolvedDevice(display = ClientDevice.defaultName(client), enrolled = false)
 
   /**
    * 渲染来源设备标记块。骨架与社交渠道头同构（「以下消息来自 X（渠道 Y）· 标注段」）；

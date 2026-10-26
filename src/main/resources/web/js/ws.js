@@ -14,6 +14,10 @@ import { t } from './i18n.js';
 // 只依赖 deviceIdentity/branding（无 ws.js 回边——零环）；ws.js 负责「何时
 // 探」（onopen 每连）与「跳不跳」（LAN 整页跳腿）。
 import { probeNearPath } from './nearpath.js';
+// 消息设备标注全自动批（2026-10-26 作者令）：来源识别自动判定——绑定读数
+// （花名册 self）在每连 onopen 刷新（与近路探测同拍；deviceIdentity.js 只依赖
+// deviceRoster/branding，无 ws.js 回边——零环）。
+import { refreshAutoBinding } from './deviceIdentity.js';
 
 // Long-lived token cookie name follows the brand namespace. This is one of
 // the legacy credential copies the B' hook retires (purgeLongLivedCopies
@@ -230,6 +234,13 @@ const GLOBAL_MSG_TYPES = new Set([
   'restartStatus', 'restartResult',
   'remoteUpdateResult', 'peerListChanged',
   'activeBgTasks', 'activeAgents',
+  // 台账 #929（后台子智能体跨设备透明）：远端设备投影行帧 {type:'remoteAgents',
+  // agents:[{sessionId,title,source,status,startedAt,endedAt,retryCount,deviceId,
+  // deviceName,deviceOnline}]}——无 sessionId 的全应用广播（wsHub.broadcast +
+  // 快照回复本连接直发两路）。🔴 必须入 GLOBAL：无 sessionId 的非 GLOBAL 帧会被
+  // :485-494 当会话内事件 ⇒ setActiveView(primary)，把用户正在看的视图抢走。
+  // 消费点 = main.js（state.remoteBgAgents 合并 → 面板渲染）。
+  'remoteAgents',
   'dropbox-message', 'dropbox-file-response', 'dropbox-file-complete', 'dropbox-file-progress', 'dropbox-file-probe', 'dropbox-history', 'dropboxError',
   'friend_event',
   // Project 域节点广播（#28 0b 契约 §2）：{type,project,nodeId,node}，无 sessionId，
@@ -1053,6 +1064,9 @@ export function connect() {
     // 到会话（nearpath.js sessionStorage），大文件 LAN 直传腿（腿③）消费它。
     // 失败静默（停留 relay），绝不拖延 onopen 后续。
     probeNearPath();
+    // 消息设备标注全自动批（2026-10-26）：自动绑定读数每连刷新（登录/登出走
+    // WS 重连 ⇒ 花名册 self 判定自动跟上；失败静默，绝不拖延 onopen 后续）。
+    refreshAutoBinding();
     hasConnectedBefore = true;
   };
 
