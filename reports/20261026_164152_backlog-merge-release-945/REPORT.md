@@ -12,7 +12,11 @@
 | | commit | 说明 |
 |---|---|---|
 | 合并前 | `85a79ff74` | Merge branch 'delegate/delegate-nebflow-c2e6b6d0'（#943 记录写于 14:02） |
-| 合并后 | `095f06461` | Merge branch 'delegate/delegate-nebflow-c2e6b6d0' into main (backlog release #945) |
+| 主代码合并后 | `095f06461` | Merge branch 'delegate/delegate-nebflow-c2e6b6d0' into main (backlog release #945) |
+| 报告入册后 | `eaf5ac78c` | Merge … (backlog release #945 report) —— 仅新增本 REPORT.md，无一代码改动 |
+
+报告文件本身的入册：`6e1bed5d7 report(#945): …`（delegate 分支）→ 并入 main `eaf5ac78c`。
+上表两个合并 commit 均以 `--no-ff` 产生；若之后有别批落地，main tip 会继续前移，以 `git log --oneline -1 main` 为准。
 
 策略：`git merge --no-ff`，实测 `Merge made by the 'ort' strategy.`，零冲突。
 合并基：`456e9d18f4bdf6b9ca1bf669f5f2d1b64c76058b`。
@@ -58,9 +62,9 @@ a35e6599f fix(infra): #916 task XML 编码改 UTF-16LE+BOM
 
 ## 5. worktree 清理确认
 
-- 创建：`git worktree add C:/Users/Kai/stand-merge-tmp main`（临时 linked worktree，检出 main @ 85a79ff74）
-- 删除前确认：`git status --porcelain | wc -l` = **0**（干净）
-- 删除：`git worktree remove C:/Users/Kai/stand-merge-tmp`
+- 创建：`git worktree add C:/Users/Kai/stand-merge-tmp main`（临时 linked worktree；共两轮：第一轮 main @ 85a79ff74 合代码，第二轮 main @ 095f06461 合本报告）
+- 每轮删除前确认：`git status --porcelain | wc -l` = **0**（干净）
+- 每轮删除：`git worktree remove C:/Users/Kai/stand-merge-tmp`（exit=0，目录已不存在）
 - 删除后 `git worktree list` 仅剩：`C:/Users/Kai/stand`（delegate 分支）、`C:/Users/Kai/stand-929`、`C:/Users/Kai/tmp936/main1223`（均为他人/他批既有 worktree，未动）
 
 ## 6. 主工作树未受影响（红线核对）
@@ -68,8 +72,8 @@ a35e6599f fix(infra): #916 task XML 编码改 UTF-16LE+BOM
 | 项 | 合并前 | 合并后 |
 |---|---|---|
 | 检出分支 | `delegate/delegate-nebflow-c2e6b6d0` | 不变 |
-| HEAD | `ed3c8e707` | 不变 |
-| 未提交改动 | 18 项 | 18 项（未动） |
+| HEAD | `ed3c8e707` | → `6e1bed5d7`（仅新增本 REPORT.md 一条 commit，无代码面变更） |
+| 未提交改动 | 18 项 | 18 项（全程未动；新增的仅本报告目录，已提交，未跟踪计数回到基线 18） |
 
 未执行任何 reset / checkout / clean / stash / branch -D；未改动 git config（合并身份用一次性 `-c user.name/-c user.email` 传入，与仓库既有 author `MashiroKai <Kaimashiro@qq.com>` 一致，未写盘任何配置）。
 
