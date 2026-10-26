@@ -1,5 +1,8 @@
 import state from './state.js';
 import { t, getLocale } from './i18n.js';
+// 本机设备显示名读数（设备角标本名批 2026-10-27）：deviceRoster 单一读取点
+// （花名册 self + configData.selfDevice 两源缓存），utils 只消费其同步读数面。
+import { currentSelfDeviceName } from './deviceRoster.js';
 
 // ── Exported protocol typedefs (P2-3 core contracts) ──────────────────────
 
@@ -530,6 +533,42 @@ export function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+// === 工具卡设备角标（设备角标本名批 2026-10-27 作者令） ===
+//
+// 作者令原文：「不要用local，本地的也显示本地的设备名」（+ 2026-10-27 07:05 补充
+// 裁决：隔离实例 `-iso-<hex8>` 后缀只剥显示面，完整原值放 title/tooltip）。
+// 渲染单点：live（chat.js renderTool）与两条历史重放腿（persistence.js localStorage
+// 缓存 / 后端历史恢复）共用本 helper——三处逐字同形，禁第二份拷贝。
+
+// 「本机」字面判定词表：引擎侧 `device="local"` 是显式逃生门（fleet.enforceExplicitDevice
+// 族），项目 origin 用 "self"（ProjectOrigin.Self）——两字面都按本机解析，大小写不敏感。
+const SELF_DEVICE_LITERALS = new Set(['local', 'self']);
+
+/**
+ * 设备角标 HTML：入参 = 工具入参的 `device` 原值。
+ *   · 本机字面（local/self）⇒ 解析本机设备名：花名册 self（多设备面板同源）→
+ *     configData.selfDevice（引擎自身身份；引擎侧无身份文件已含主机名兜底）。
+ *     显示名剥 `-iso-<hex8>` 后缀，title 保留完整原值；两源皆缺 ⇒ 空串（不渲染
+ *     角标）——**绝不回退「local」字样**。
+ *   · 对端名原样直出（现状不变）；空值 ⇒ 空串。
+ */
+export function deviceTagHtml(rawDevice) {
+  const raw = String(rawDevice || '').trim();
+  if (!raw) return '';
+  let name = raw;
+  let titleAttr = '';
+  if (SELF_DEVICE_LITERALS.has(raw.toLowerCase())) {
+    const self = currentSelfDeviceName();
+    if (!self.display) return '';
+    name = self.display;
+    // 隔离实例（display ≠ full）才挂 tooltip：完整原始名（含 -iso 后缀）只进 title。
+    if (self.full && self.full !== self.display) {
+      titleAttr = ' title="' + escapeHtml(self.full) + '"';
+    }
+  }
+  return '<span class="tool-device-tag"' + titleAttr + '>' + escapeHtml(name) + '</span>';
 }
 
 // === Lucide icons - subtree-scoped replacement ===

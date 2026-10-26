@@ -580,7 +580,14 @@ private[gateway] object WsConfigHandlers:
               "config" -> cfg.asJson,
               "configured" -> configured.asJson,
               // null = no marker yet (fresh install); frontend shows the wizard
-              "onboarding" -> onboarding.map(_.name).asJson
+              "onboarding" -> onboarding.map(_.name).asJson,
+              // 本机设备名（设备角标本名批 2026-10-27 加法字段，老客户端忽略未知键）：
+              // 引擎自身身份读数（device.json deviceName；无身份 ⇒ 主机名兜底，
+              // 恒非「local」字样）。原值直出（含隔离 `-iso-<hex8>` 后缀）——剥后缀
+              // 是前端显示面职责，身份面保真。
+              "selfDevice" -> io.circe.Json.obj(
+                "name" -> nebflow.neblink.DeviceIdentity.selfDeviceNameOrHost.asJson
+              )
             )
           )
         }

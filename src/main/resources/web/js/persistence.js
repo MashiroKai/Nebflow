@@ -16,7 +16,7 @@ import { dropDeviceMessageCache } from './fmDropboxCache.js';
 import { evict as evictLocalStore } from './localStore.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
-import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId, shouldFollowBottom } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId, shouldFollowBottom, deviceTagHtml } from './utils.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { createDurationBadgeElement, createMsgFooterBadge, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow, sameAskCards, applyThinkingWindowCap } from './chat.js';
 // pop-upgrade 批(2026-10-03):Pop 工件载荷面(叠卡/文件卡片)单一真源——live
@@ -801,7 +801,7 @@ export function restoreFromStorage(opts = {}) {
         const localSummary = localizeToolSummary(m.summary, m.label);
         const lParts = localLabel.split('\n', 2);
         let _deviceTag = '';
-        if (m.input) { try { const _inp = typeof m.input === 'string' ? JSON.parse(m.input) : m.input; if (_inp.device) _deviceTag = '<span class="tool-device-tag">' + esc(String(_inp.device)) + '</span>'; } catch {} }
+        if (m.input) { try { const _inp = typeof m.input === 'string' ? JSON.parse(m.input) : m.input; if (_inp.device) _deviceTag = deviceTagHtml(_inp.device); } catch {} }
         const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary) + _deviceTag
           + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
@@ -1230,7 +1230,7 @@ function buildHistoryRow(m, i, ctx) {
         const localSummary = localizeToolSummary(m.summary, m.label);
         const lParts = localLabel.split('\n', 2);
         let _deviceTag2 = '';
-        if (m.input) { try { const _inp2 = typeof m.input === 'string' ? JSON.parse(m.input) : m.input; if (_inp2.device) _deviceTag2 = '<span class="tool-device-tag">' + esc(String(_inp2.device)) + '</span>'; } catch {} }
+        if (m.input) { try { const _inp2 = typeof m.input === 'string' ? JSON.parse(m.input) : m.input; if (_inp2.device) _deviceTag2 = deviceTagHtml(_inp2.device); } catch {} }
         const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary) + _deviceTag2
           + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +

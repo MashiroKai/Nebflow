@@ -133,6 +133,31 @@ object DeviceIdentity:
       else decode[DeviceIdentity](os.read(p)).toOption.map(_.deviceId)
     catch case _: Exception => None
 
+  /**
+   * 只读本机显示名探测（readDeviceIdOnly 同族，设备角标本名批 2026-10-27）：读
+   * 现有 device.json 的 deviceName，**零写盘、零铸造**（缺文件/坏文件/空白 ⇒
+   * None）。⚠️ 返回**原值**（含隔离实例 `-iso-<hex8>` 后缀）——剥后缀是**显示面**
+   * 职责（前端 stripIsoNameSuffix），身份/配对/日志面保真不动。
+   */
+  def readDeviceNameOnly: Option[String] =
+    try
+      val p = devicePath
+      if !os.exists(p) then None
+      else
+        decode[DeviceIdentity](os.read(p)).toOption
+          .map(_.deviceName.trim)
+          .filter(_.nonEmpty)
+    catch case _: Exception => None
+
+  /**
+   * 本机设备显示名供给读数（configData.selfDevice 加法字段的值面）：device.json
+   * 的 deviceName；无身份文件/读不开 ⇒ 主机名兜底（[[detectDeviceName]] 同族
+   * 读法，零铸造零写盘）——兜底**永不**是「local」字样（作者令 2026-10-27
+   * 「不要用local，本地的也显示本地的设备名」）。
+   */
+  def selfDeviceNameOrHost: String =
+    readDeviceNameOnly.getOrElse(detectDeviceName)
+
   private def detectPlatform: String =
     val osName = System.getProperty("os.name", "unknown").toLowerCase
     if osName.contains("mac") then "macos"
