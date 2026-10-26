@@ -87,6 +87,7 @@
 
 ## 5. 未竟 / 移交
 
+0. **批次落账注记（共享检出索引竞态）**：本批 8 件于 13:24 经共享检出共享索引竞态随 #916 第二提交 **`b068bc485`** 入树（同检出并行批 `git commit` 吞掉已暂存索引；内容 8/8 逐字节=本批产物，完整性已验：perception.js 伞标记 ×7、spec 鉴权拒绝脸、AuthGateSpec、E2E 脚本、本 REPORT 94 行俱全）。提交标题归属 #916 与事实不符——**本批的台账源 = 本 REPORT + 本注记**，合并队列按内容对账不受影响。
 1. **relay #907 部署**：link-server 仓面（非本仓），部署后作者既有会话自动恢复（refresh 行活着即可被滑动准入）。
 2. **PerceptionRoutesAuthGateSpec 的 sbt 运行**：队列空窗补跑（§3.2 注记；契约已被 §3.3① 实测）。
 3. **伪 IMAP 的 LOGIN 明文腿（可选加固）**：JavaMail 隐式 SSL ⇒ 见 LOGIN 明文需 JVM 信任链（keytool 自签 + `-Djavax.net.ssl.trustStore` 启动注入）——写穿已由 TLS ClientHello 字节 + 引擎侧失败原文钉死，登录拒绝明文属锦上添花。
