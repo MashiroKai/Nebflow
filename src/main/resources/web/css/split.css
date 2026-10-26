@@ -2348,6 +2348,16 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   color: rgb(239, 68, 68);
   font-size: 13px;
 }
+/* 台账 #912 件1（作者令 2026-10-26 12:02「提示文字不得被 CanvasHeader 胶囊
+   遮挡」）：canvas 卡窗内错误面板的顶部清空带 —— .canvas-error 常规流顶对齐
+   居中文本，首行恰好落进卡头胶囊带（top 10 + 高 36 ⇒ 底缘 46px，z-30 毛玻璃
+   叠在错误文字上，实拍在案：PDF 打开失败面「Cannot display PDF」首行被吞）。
+   面板内错误面统一让出胶囊带（56px 首行起点 > 46px 底缘 + 10px 呼吸）；
+   chat 侧同名类（attachmentPreview 弹层）不在 .canvas-tab-pane 子树，不受本条。
+   加载进度面（.nf-progress-pane）为 height:100% 纵居中，与胶囊带无叠，不适用。 */
+.canvas-tab-pane .canvas-error {
+  padding-top: 56px;
+}
 
 /* ── Streamed-open progress pane (imgdoor #542 档3) ──
    Tab-first open: the pane shows a determinate ring (Content-Length known →
