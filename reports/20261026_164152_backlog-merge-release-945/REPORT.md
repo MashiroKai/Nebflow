@@ -14,9 +14,13 @@
 | 合并前 | `85a79ff74` | Merge branch 'delegate/delegate-nebflow-c2e6b6d0'（#943 记录写于 14:02） |
 | 主代码合并后 | `095f06461` | Merge branch 'delegate/delegate-nebflow-c2e6b6d0' into main (backlog release #945) |
 | 报告入册后 | `eaf5ac78c` | Merge … (backlog release #945 report) —— 仅新增本 REPORT.md，无一代码改动 |
+| 终态 | `ab0e904b9` | Merge … (backlog release #945 report final) —— 仅本报告文字补正 |
 
-报告文件本身的入册：`6e1bed5d7 report(#945): …`（delegate 分支）→ 并入 main `eaf5ac78c`。
-上表两个合并 commit 均以 `--no-ff` 产生；若之后有别批落地，main tip 会继续前移，以 `git log --oneline -1 main` 为准。
+报告文件本身的入册：`6e1bed5d7` + `6e5f8e6a5`（delegate 分支，均为报告文字）→ 并入 main `eaf5ac78c`、`ab0e904b9`。
+上表合并 commit 均以 `--no-ff` 产生；若之后有别批落地，main tip 会继续前移，以 `git log --oneline -1 main` 为准。
+
+终态读数（`85a79ff74..main`）：总 14 个 commit，其中非 merge **11** 个 = 9 个交付 commit + 2 个本报告 commit。
+基线代码核对仍以 `85a79ff74..095f06461` 的 9 个交付 commit 为准（见 §3）。
 
 策略：`git merge --no-ff`，实测 `Merge made by the 'ort' strategy.`，零冲突。
 合并基：`456e9d18f4bdf6b9ca1bf669f5f2d1b64c76058b`。
