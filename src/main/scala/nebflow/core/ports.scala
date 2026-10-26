@@ -234,10 +234,16 @@ end ProviderHealthPort
  * val 成员)原地 `extends` 本视图,既有构造点经子类型继续编译。
  */
 // 严格DAG第⑥步第二批裁定(2026-09-27):窄视图,成员面=消费点实读字段,只窄不宽,行为保持
+// fleet-roster 批(台账 #913 ①,2026-10-26)按同一纪律**增员两项**:platform/capabilities
+// ——新消费点 = FleetRoster 的本机行(platform·能力面),仍是「消费点实读字段」口径。
 trait DeviceIdentityView:
   def deviceId: String
   def deviceName: String
   def userDescription: String
+  /** 本机自报平台(windows/macos/linux/…;neblink.DeviceIdentity.detectPlatform 语义)。 */
+  def platform: String
+  /** 本机能力面(键名级消费——值是绝对路径,FleetRoster 只列键名)。 */
+  def capabilities: Map[String, String]
 end DeviceIdentityView
 
 /**

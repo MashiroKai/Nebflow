@@ -73,6 +73,10 @@
     const perception = await import(`${WEB}/perception.js`);
     perception.initPerception();
 
+    // sessionGate 测试缝（Missing token 报障批）：spec 换掉静默重座腿与 reload，
+    // 断言「鉴权拒绝伞被拉动」而不真导航。暴露模块本体 + 缝。
+    window.__gate = await import(`${WEB}/sessionGate.js`);
+
     window.__frame = (msg) => perception.routePerceptionFrame(msg);
     window.__openPanel = () => perception.openPerceptionPanel();
     window.__openConfig = () => perception.openPerceptionConfig(null);

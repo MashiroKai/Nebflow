@@ -2588,6 +2588,7 @@ export default {
   'perception.cfgTesting': 'Connecting…',
   'perception.cfgConnected': 'Connected',
   'perception.cfgFailed': 'Connection failed — check the address and app password',
+  'perception.sessionExpired': 'Session expired — re-entering the console…',
   'perception.to': 'To',
   'perception.cc': 'Cc',
   'perception.bcc': 'Bcc',

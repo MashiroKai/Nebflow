@@ -216,12 +216,14 @@ class PromptSectionsSpec extends munit.FunSuite:
   // ============================================================
 
   test("stripCommentOnlyLines removes whole-line HTML comments, keeps all other bytes"):
+    // CRLF 无关化：Windows checkout（autocrlf=true）下三引号串携带 \r，
+    // 期望值按 LF 断言 —— 被测契约是「注释行剥、其余字节过」，非行尾字节。
     val prompt =
       """<!-- cold-start authority note -->
         |<!-- batch source: dual-track batch -->
         |Deliver in two parts.
         |
-        |You are a task node.""".stripMargin
+        |You are a task node.""".stripMargin.replace("\r\n", "\n")
     val stripped = stripCommentOnlyLines(prompt)
     assert(!stripped.contains("authority note"), "annotation line stripped")
     assert(!stripped.contains("batch source"), "annotation line stripped")
@@ -350,6 +352,20 @@ class PromptSectionsSpec extends munit.FunSuite:
     assertEquals(MountedProjectList.delta("- a\n- b", "- a\n- b"), "")
     assertEquals(MountedProjectList.delta("- a", "- a"), "")
 
+  // ── 台账 #913 ②：设备标注行形（renderLinesWithDevice）──────────────
+
+  test("MountedProjectList.renderLinesWithDevice: cross-device rows carry (on device X); local rows keep the plain shape"):
+    val lines = MountedProjectList.renderLinesWithDevice(
+      List(
+        ("stand-kai", "KAI", Some("主仓")),
+        ("general", "", None)
+      )
+    )
+    assertEquals(lines, "- general\n- stand-kai (on device KAI): 主仓")
+
+  test("MountedProjectList.renderLinesWithDevice: empty list → explicit placeholder (same as renderLines)"):
+    assertEquals(MountedProjectList.renderLinesWithDevice(Nil), MountedProjectList.EmptyText)
+
   // ============================================================
   // 文档溯源规范（order 350，always 段；作者 2026-09-11 裁定 / 方案 #165）
   //
@@ -412,7 +428,9 @@ class PromptSectionsSpec extends munit.FunSuite:
 
   test("文档溯源段不被剥离路径剥掉（stripAllMigrated / SubTaskPrompt.stripTeamContent）"):
     withIsolatedDataRoot {
-      val trace = PromptSections.traceSection
+      // CRLF 无关化：Windows checkout（autocrlf=true）会让源码三引号串携带 \r，
+      // linesIterator 系剥离会归一掉 \r —— 测的是「段不被剥」，不是行尾字节。
+      val trace = PromptSections.traceSection.replace("\r\n", "\n")
       // 文本级剥离对整段无效：stripAllMigrated 只剥 Voice Output；
       // stripTeamContent 剥 Teams & Flows / Team Catalog 块 + 团队交互模式行，
       // 溯源段的段头与正文行都不匹配任何 stripPattern。
