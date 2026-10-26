@@ -653,6 +653,7 @@ export function openTab(id, title, opts = {}) {
         oldEntry.paneEl.remove();
         oldEntry.tabEl.remove();
         tabs.delete(oldPreviewId);
+        recordTombstone(oldPreviewId); // #910: 预览替换=显式关闭旧预览
         previewTabs.delete(previewKey);
         persistTabs();
       }
@@ -701,6 +702,14 @@ export function openTab(id, title, opts = {}) {
                   rootPath: opts.rootPath || null,
                   filePath: opts.filePath || null };
   tabs.set(id, entry);
+  // #910: 新建成功即视为显式重开落账（作者语义「显式重开才恢复」——点开
+  // 这个文件/面板就是重开意图）。服务端对无墓碑的 id 忽略该账（不凭空造
+  // 记录）；restoreTabs 批量恢复走这里也安全：能从服务端回来的 id 必无生效
+  // 墓碑，重开账是空转。
+  sessionReopens.set(id, { id, reopenedAt: Date.now() });
+  if (sessionReopens.size > SESSION_LEDGER_CAP) {
+    sessionReopens.delete(sessionReopens.keys().next().value); // 最旧
+  }
 
   // Track preview tab — will be replaced when a new tab in the same
   // preview group is opened
@@ -726,6 +735,7 @@ function teardownTab(id) {
   entry.paneEl.remove();
   entry.tabEl.remove();
   tabs.delete(id);
+  recordTombstone(id); // #910: 显式关闭意图落账（× 按钮 / deck 侧滑共用此处）
   for (const [k, v] of previewTabs) { if (v === id) previewTabs.delete(k); }
   persistTabs();
   deckNotifyRemoved(id);
@@ -1357,6 +1367,7 @@ export async function openWorkspaceItem(item) {
       oldEntry.paneEl.remove();
       oldEntry.tabEl.remove();
       tabs.delete(oldPreviewId);
+      recordTombstone(oldPreviewId); // #910: 预览替换=显式关闭旧预览
       previewTabs.delete(itemPreviewKey);
       persistTabs();
     }
@@ -2834,6 +2845,7 @@ function deckCloseOthers(keepId) {
     entry.paneEl.remove();
     entry.tabEl.remove();
     tabs.delete(id);
+    recordTombstone(id); // #910: 关闭其他=每张被关卡都是显式关闭意图
     for (const [k, v] of previewTabs) { if (v === id) previewTabs.delete(k); }
   }
   activeTabId = keepId;
@@ -4234,6 +4246,26 @@ function initCardWindowMode() {
   return true;
 }
 
+// ── #910 墓碑语义（作者裁定 2026-10-26 飞书逐字「找少的那个认吧」）────────
+// 关闭意图优先：任一窗口/设备显式关闭的标签，权威存档保持关闭；只有显式
+// 重开才恢复。前端职责=把「本会话关闭/重开意图账」随每次 PUT 上交，合并
+// 裁决在服务端（CanvasTabs.merge，时间戳幂等，账目可重放、不清不剪——超
+// 上限只淘汰最旧，保 PUT 永不因账目超限 400）。
+const sessionTombstones = new Map(); // id -> { id, closedAt, dev }
+const sessionReopens = new Map();    // id -> { id, reopenedAt }
+const SESSION_LEDGER_CAP = 2000;     // 与服务端 MaxTombstoneInput 一致
+
+// 所有显式关闭路径的记账点（× 按钮 / deck 侧滑 / 关闭其他 / 预览替换——
+// 各站点在 tabs.delete 后、persistTabs 前调用）。拖拽排序与文件改名不是
+// 关闭（tabs 重建/换 id），不记账。
+function recordTombstone(id) {
+  if (!id) return;
+  sessionTombstones.set(id, { id, closedAt: Date.now(), dev: navigator.platform || 'unknown' });
+  if (sessionTombstones.size > SESSION_LEDGER_CAP) {
+    sessionTombstones.delete(sessionTombstones.keys().next().value); // 最旧
+  }
+}
+
 function persistTabs() {
   // UI 批⑧：独立卡窗零存档副作用 —— 卡窗自己的单卡标签绝不能写穿服务端权威
   // 存档/本地缓存（否则会把主窗整组标签覆盖成一张卡）。
@@ -4272,6 +4304,9 @@ function persistTabs() {
       });
     }
     const payload = { v: 2, tabs: serializable };
+    // #910: 附带本会话关闭/重开意图账（服务端墓碑合并；账幂等可重放）。
+    if (sessionTombstones.size > 0) payload.tombstones = [...sessionTombstones.values()];
+    if (sessionReopens.size > 0) payload.reopened = [...sessionReopens.values()];
     // localStorage 仅作降级缓存（Safari 无痕/清空后仍可从服务端恢复）。
     localStorage.setItem(LS_TABS_KEY, JSON.stringify({
       v: 2,  // schema version — v1 (pre-unified-persistence) lacked closable
