@@ -1,7 +1,7 @@
 package nebflow.core.tools
 
 import munit.FunSuite
-import nebflow.core.device.{DeviceEntry, FleetRoster}
+import nebflow.core.device.DeviceEntry
 import nebflow.shared.PeerInfo
 
 /**
@@ -89,7 +89,7 @@ class FleetRosterSpec extends FunSuite:
     }.toList
     val out = FleetRoster.render(Some(local), peers, Nil, Map.empty, now, enforce = false)
     val deviceRows = out.linesIterator.count(l => l.contains(" [online · ") || l.contains(" [local"))
-    assert(deviceRows <= FleetRoster.MaxRows, s"rows capped at $MaxRows, got $deviceRows")
+    assert(deviceRows <= FleetRoster.MaxRows, s"rows capped at ${FleetRoster.MaxRows}, got $deviceRows")
     assert(out.contains("more device(s) not shown"), out)
     assert(out.contains("GET /api/neblink/status"), out)
 

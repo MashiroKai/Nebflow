@@ -248,19 +248,21 @@ class ProjectStoreSpec extends CatsEffectSuite:
     val dir = tempRoot / "projects" / "dev-legacy"
     os.makeDir.all(dir)
     os.write.over(dir / "project.json", legacy.replace("WORKSPACE", wsL.toString.replace("\\", "\\\\")))
-    val before = os.read(dir / "project.json")
-    for loaded <- ProjectStore.load("dev-legacy")
-    yield
-      assertEquals(loaded.flatMap(_.device), Some("self"), "legacy local project backfills to self")
-      val after = os.read(dir / "project.json")
-      assert(after.contains("\"device\""), "device key written back")
-      assert(after.contains("旧定义"), "existing description kept byte-for-byte")
-      assert(after.contains("1700000000000"), "existing createdAt kept")
+    for
+      loaded <- ProjectStore.load("dev-legacy")
+      _ <- IO {
+        assertEquals(loaded.flatMap(_.device), Some("self"), "legacy local project backfills to self")
+        val after = os.read(dir / "project.json")
+        assert(after.contains("\"device\""), "device key written back")
+        assert(after.contains("旧定义"), "existing description kept byte-for-byte")
+        assert(after.contains("1700000000000"), "existing createdAt kept")
+      }
       // 幂等：二次 load 零重写（mtime 不再前进）
-      val mtime1 = os.mtime(dir / "project.json")
-      Thread.sleep(5)
+      mtime1 <- IO(os.mtime(dir / "project.json"))
+      _ <- IO(Thread.sleep(5))
       _ <- ProjectStore.load("dev-legacy")
-      assertEquals(os.mtime(dir / "project.json"), mtime1, "second load must not rewrite (idempotent backfill)")
+      mtime2 <- IO(os.mtime(dir / "project.json"))
+    yield assertEquals(mtime2, mtime1, "second load must not rewrite (idempotent backfill)")
 
   test("#913②: effectiveDevice is the single normalization point (device field > origin > self)"):
     val wsE = tempRoot / "ws-eff"
