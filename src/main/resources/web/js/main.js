@@ -4445,6 +4445,95 @@ onMessage('activeAgents', (msg) => {
   computeAgentStates();
 });
 
+// ---------- 台账 #929（后台子智能体跨设备透明）：远端设备投影行 ----------
+// 引擎面 = AgentSessionSync（数据通道 session-sync 收敛 + remoteAgents 帧广播/
+// 快照捎带两路）。本处理器是前端唯一消费点：
+//   · 分设备重组进 state.remoteBgAgents（LWW 已在引擎投影仓收敛，原样呈现）；
+//   · **本地行胜**去重：同一 sessionId 已存在于任何本地桶（DeviceDelegate 形态
+//     下同一 spawn 两侧各有任务行）⇒ 丢弃远端孪生（本地行更富、可交互）——
+//     与 agentStart/activeAgents 的 cross-keyspace dedupe（W1-d）同一条规则；
+//   · 终态行（completed/failed/cancelled）⇒ 翻终态 + 2s 清理（agentDone 同律），
+//     已清理的 (device,session) 记忆化——快照捎带在揭示窗内重发同一终态行不再
+//     复活（snapmerge「done 单调」教训的同款防线）；
+//   · 断联语义：online=false 行原样保留（不消失不假装死亡），渲染层标「设备
+//     离线」角标；重连由引擎对账推 + 在线角标重播补齐。
+// 徽标计数红线：远端行**不进** per-session 徽标计数（updateBgAgentIndicator 按
+// 视图会话桶计数，远端行是跨会话集——计入会错误归属）。
+const REMOTE_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+const remoteTerminalTimers = {};
+/** 已清理终态行的记忆化：rowKey → 清理时的 updatedAt（同戳重发不复活）。 */
+const dismissedRemoteRows = new Map();
+
+onMessage('remoteAgents', (msg) => {
+  const agents = Array.isArray(msg.agents) ? msg.agents : [];
+  const byDevice = {};
+  for (const a of agents) {
+    if (!a || !a.sessionId) continue;
+    const dev = a.deviceId || 'unknown';
+    const rowKey = dev + '\u0000' + a.sessionId;
+    // 已清理的终态行：同戳（或更旧）重发不再复活；戳更新（同 id 重新被投影——
+    // 理论外形态）⇒ 放行使最新态可见。
+    if (dismissedRemoteRows.has(rowKey)) {
+      const prevTs = dismissedRemoteRows.get(rowKey) || 0;
+      if ((a.updatedAt || 0) <= prevTs) continue;
+      dismissedRemoteRows.delete(rowKey);
+    }
+    if (!byDevice[dev]) {
+      byDevice[dev] = { deviceName: a.deviceName || dev, online: a.deviceOnline !== false, rows: {} };
+    }
+    byDevice[dev].rows[a.sessionId] = {
+      sessionId: a.sessionId,
+      title: a.title || '',
+      source: a.source || '',
+      status: a.status || '',
+      startedAt: a.startedAt || 0,
+      endedAt: a.endedAt || null,
+      updatedAt: a.updatedAt || 0,
+      retryCount: a.retryCount || 0,
+    };
+  }
+  // 本地行胜去重（跨设备投影不遮本地行）。
+  const localSessionIds = new Set();
+  for (const bucket of Object.values(state.sessionBgAgents || {})) {
+    for (const info of Object.values(bucket || {})) {
+      const sid = String((info && info.sessionId) || '').replace(/^team-/, '');
+      if (sid) localSessionIds.add(sid);
+    }
+  }
+  for (const dev of Object.keys(byDevice)) {
+    for (const sid of Object.keys(byDevice[dev].rows)) {
+      if (localSessionIds.has(sid)) delete byDevice[dev].rows[sid];
+    }
+    if (Object.keys(byDevice[dev].rows).length === 0) delete byDevice[dev];
+  }
+  state.remoteBgAgents = byDevice;
+  scheduleRemoteTerminalCleanup();
+  // 面板重渲（面板关着 = 写进隐藏载体节点，零可见副作用；开面板路径照常命中）。
+  renderBgAgentDropdown();
+});
+
+/** 终态行 2s 清理（agentDone → 2s cleanup 同律）：翻终态可见，随后从投影态移除。 */
+function scheduleRemoteTerminalCleanup() {
+  for (const [dev, d] of Object.entries(state.remoteBgAgents)) {
+    for (const sid of Object.keys(d.rows)) {
+      const row = d.rows[sid];
+      if (!REMOTE_TERMINAL_STATUSES.has(row.status)) continue;
+      const key = dev + '\u0000' + sid;
+      if (remoteTerminalTimers[key]) continue;
+      remoteTerminalTimers[key] = setTimeout(() => {
+        delete remoteTerminalTimers[key];
+        const d2 = state.remoteBgAgents[dev];
+        if (!d2 || !d2.rows[sid]) return;
+        const row = d2.rows[sid];
+        delete d2.rows[sid];
+        dismissedRemoteRows.set(key, row.updatedAt || 0);
+        if (Object.keys(d2.rows).length === 0) delete state.remoteBgAgents[dev];
+        renderBgAgentDropdown();
+      }, 2000);
+    }
+  }
+}
+
 // Scroll listener (primary window). B4 (2026-10-04): the follow-intent latch
 // refresh and the ↓ N pill now ride ONE listener, installed by initScrollFollow
 // below — the same place that owns the latch element (`view.dom.chat`). This

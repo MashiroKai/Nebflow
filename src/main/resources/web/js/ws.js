@@ -234,6 +234,13 @@ const GLOBAL_MSG_TYPES = new Set([
   'restartStatus', 'restartResult',
   'remoteUpdateResult', 'peerListChanged',
   'activeBgTasks', 'activeAgents',
+  // 台账 #929（后台子智能体跨设备透明）：远端设备投影行帧 {type:'remoteAgents',
+  // agents:[{sessionId,title,source,status,startedAt,endedAt,retryCount,deviceId,
+  // deviceName,deviceOnline}]}——无 sessionId 的全应用广播（wsHub.broadcast +
+  // 快照回复本连接直发两路）。🔴 必须入 GLOBAL：无 sessionId 的非 GLOBAL 帧会被
+  // :485-494 当会话内事件 ⇒ setActiveView(primary)，把用户正在看的视图抢走。
+  // 消费点 = main.js（state.remoteBgAgents 合并 → 面板渲染）。
+  'remoteAgents',
   'dropbox-message', 'dropbox-file-response', 'dropbox-file-complete', 'dropbox-file-progress', 'dropbox-file-probe', 'dropbox-history', 'dropboxError',
   'friend_event',
   // Project 域节点广播（#28 0b 契约 §2）：{type,project,nodeId,node}，无 sessionId，

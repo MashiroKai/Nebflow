@@ -1467,6 +1467,8 @@ export default {
   'bg.kind.remote': '远程',
   'bg.openedBy': '由 {origin} 开启',
   'bg.runsOn': '跑在 {origin}',
+  // 台账 #929（后台子智能体跨设备透明）：远端投影行角标族。
+  'subagents.deviceOffline': '设备离线',
   // 终态留存行 + 输出详情卡（2026-09-09 输出查看批）
   'bg.completed': '已完成',
   'bg.failed': '失败',

@@ -1524,6 +1524,8 @@ export default {
   'bg.kind.remote': 'remote',
   'bg.openedBy': 'Started by {origin}',
   'bg.runsOn': 'Runs on {origin}',
+  // Ledger #929 (cross-device sub-agent transparency): remote projected-row badges.
+  'subagents.deviceOffline': 'Device offline',
   // Retained terminal rows + output detail card (2026-09-09 output viewing)
   'bg.completed': 'Completed',
   'bg.failed': 'Failed',

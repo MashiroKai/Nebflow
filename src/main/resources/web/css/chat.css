@@ -538,6 +538,35 @@
     border-color: rgb(var(--sapphire) / 0.35);
   }
 }
+/* 台账 #929（后台子智能体跨设备透明）：远端投影行的设备角标（「跑在哪」轴，
+   bg-device-origin-chip 批同轴）——中性 chip 族（无新色令牌），truncate 契约
+   同 .bg-task-project。 */
+.bg-task-device {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  color: var(--color-frame-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+/* 离线角标（断联语义）：琥珀警示（--status-warn-icon 同 idle-detail 长空闲徽标
+   族——既有 warn token，零新色）——行保留最后态，角标回答「为什么不动了」，行
+   本身绝不假装死亡。 */
+.bg-task-offline {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--status-warn-icon);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.bg-task-offline .st-ic { width: 11px; height: 11px; margin-right: 3px; vertical-align: -1px; }
 .bg-task-uptime {
   font-size: 10px;
   color: var(--color-frame-text-muted);

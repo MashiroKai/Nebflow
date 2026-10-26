@@ -40,6 +40,34 @@ class SubAgentTaskStore(baseDir: os.Path) extends SubAgentTaskStorePort:
     finally lock.unlock()
   }
 
+  // ── 台账 #929（后台子智能体跨设备透明 · 2026-10-26）：写后外推钩 ────────────
+  // 每次本 store 的记账写入（record/updateStatus/markRevived/remove/cancel 族）成功
+  // 后，把受影响行交给钩（fire-and-forget：.start 派 fiber，绝不阻塞写路径——推送
+  // 是跨设备网络面，写面等它 = 记账面被网络拖着走）。默认 null = no-op（单机形态
+  // 零行为）；装配单点 = GatewayMain boot 的 AgentSessionSync.initialize（与
+  // AgentIdentitySync 同缝同序）。结构防回声：远端收敛写入落在 neblink 投影仓
+  // （RemoteAgentSessions），不经本 store ⇒ 本钩永不因远端帧而触发。
+  @volatile private var writeHook: SubAgentTask => IO[Unit] = null
+
+  /** 装配写后外推钩（boot 单点调用；重复装配 = 后者胜，先例 = setSendDataFn）。 */
+  def setWriteHook(fn: SubAgentTask => IO[Unit]): Unit =
+    writeHook = fn
+
+  /**
+   * 钩触发（脱钩执行；钩异常只留日志，绝不回流写路径）。`.start` 必须处在
+   * **运行位置**（flatMap 结果），包在 IO{} 纯块里只是被丢弃的描述——fiber 永不
+   * 真正起（2026-10-26 自查修正）。
+   */
+  private def fireWriteHook(task: SubAgentTask): IO[Unit] =
+    IO(Option(writeHook)).flatMap {
+      case None => IO.unit
+      case Some(fn) =>
+        fn(task)
+          .handleError(e => logger.warnSync(s"subagent-task write-hook failed for ${task.taskId}: ${e.getMessage}"))
+          .start
+          .void
+    }
+
   private def sessionFile(parentSessionId: String): os.Path =
     // Guard: a blank parentSessionId (caller bug — e.g. an unsupervised
     // context with no session) must not silently write to ".json" where it
@@ -109,7 +137,7 @@ class SubAgentTaskStore(baseDir: os.Path) extends SubAgentTaskStorePort:
         readTasksSync(task.parentSessionId) :+ task.copy(statusAt = task.statusAt.orElse(Some(task.spawnedAt)))
       )
       upgradeParentOrchestrationMode(task.parentSessionId)
-    }
+    } *> fireWriteHook(task.copy(statusAt = task.statusAt.orElse(Some(task.spawnedAt))))
 
   /**
    * G1 编排模式惰性升级挂钩（delegate-ui 批 2026-10-08，**单点**）：星型子代理记账
@@ -153,6 +181,11 @@ class SubAgentTaskStore(baseDir: os.Path) extends SubAgentTaskStorePort:
         else t
       }
       writeTasksSync(parentSessionId, updated)
+      updated.find(_.taskId == taskId)
+    }.flatMap {
+      // 台账 #929：状态面有写 ⇒ 外推钩（行未命中 = 无此任务，零外推）。
+      case Some(row) => fireWriteHook(row)
+      case None => IO.unit
     }
 
   /**
@@ -181,12 +214,26 @@ class SubAgentTaskStore(baseDir: os.Path) extends SubAgentTaskStorePort:
         else t
       }
       writeTasksSync(parentSessionId, updated)
+      updated.find(_.taskId == taskId)
+    }.flatMap {
+      case Some(row) => fireWriteHook(row)
+      case None => IO.unit
     }
 
   /** Remove a task (called after successful completion + grace period). */
   def removeTask(parentSessionId: String, taskId: String): IO[Unit] =
     withLock {
-      writeTasksSync(parentSessionId, readTasksSync(parentSessionId).filterNot(_.taskId == taskId))
+      val before = readTasksSync(parentSessionId)
+      val removed = before.find(_.taskId == taskId)
+      writeTasksSync(parentSessionId, before.filterNot(_.taskId == taskId))
+      removed
+    }.flatMap {
+      // 台账 #929：原域剪行 = 显式墓碑外推（status="removed"）——对端据此退役该行
+      // （LWW 戳 = 剪行时刻，必新于既有终态）。缺席不外推（无从构行）。
+      case Some(row) => fireWriteHook(
+          row.copy(status = SubAgentTaskStore.StatusRemoved, statusAt = Some(System.currentTimeMillis()))
+        )
+      case None => IO.unit
     }
 
   /**
@@ -202,7 +249,7 @@ class SubAgentTaskStore(baseDir: os.Path) extends SubAgentTaskStorePort:
       val now = System.currentTimeMillis()
       val existing = readTasksSync(parentSessionId)
       val inFlight = existing.filter(t => t.status == "running" || t.status == "restarting")
-      if inFlight.isEmpty then Nil
+      if inFlight.isEmpty then (Nil, Nil)
       else
         val updated = existing.map { t =>
           if t.status == "running" || t.status == "restarting" then
@@ -210,7 +257,10 @@ class SubAgentTaskStore(baseDir: os.Path) extends SubAgentTaskStorePort:
           else t
         }
         writeTasksSync(parentSessionId, updated)
-        inFlight.map(_.taskId)
+        (inFlight.map(_.taskId), updated.filter(t => inFlight.exists(_.taskId == t.taskId)))
+    }.flatMap { case (ids, rows) =>
+      // 台账 #929：级联取消的每一行都外推（终态落账的远端对称面）。
+      rows.traverse_(fireWriteHook).as(ids)
     }
 
   /**
@@ -258,5 +308,12 @@ class SubAgentTaskStore(baseDir: os.Path) extends SubAgentTaskStorePort:
             .headOption
       }
       .handleErrorWith(e => logger.warn(s"findByTaskId failed: ${e.getMessage}").as(None))
+
+end SubAgentTaskStore
+
+object SubAgentTaskStore:
+
+  /** 剪行墓碑状态（#929：removeTask 外推专用值——对端退役行判据；不落盘）。 */
+  val StatusRemoved: String = "removed"
 
 end SubAgentTaskStore

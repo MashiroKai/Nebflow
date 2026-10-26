@@ -1455,6 +1455,18 @@ object GatewayMain extends IOApp:
                                                 (json: io.circe.Json) => wsHub.broadcast(json)
                                               )
 
+                                              // 台账 #929（后台子智能体跨设备透明 · 2026-10-26）：
+                                              // 远端 delegate 会话摘要投影通道的收发面装配——
+                                              // 数据通道 handler + SubAgentTaskStore 写后外推钩 +
+                                              // peer 变化对账推/在线角标重播。与 AgentIdentitySync
+                                              // 同缝同序；未接线（NebLink 未配置）⇒ initialize 内
+                                              // 显式 WARN + 跳过（单机形态零行为，写钩不装）。
+                                              nebflow.neblink.AgentSessionSync.initialize(
+                                                Some(neblinkService),
+                                                sharedResourcesFinal.subAgentTaskStore,
+                                                (json: io.circe.Json) => wsHub.broadcast(json)
+                                              )
+
                                               // --- Daemon Service (external process lifecycle) ---
                                               val daemonService = new DaemonService(dispatcher)
                                               val sharedResourcesWithDaemon = sharedResourcesFinal.copy(
