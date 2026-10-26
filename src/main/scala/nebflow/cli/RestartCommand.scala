@@ -108,37 +108,47 @@ object RestartCommand extends CliCommand:
       launch: (os.Path, Int, Boolean) => IO[ExitCode] = DaemonSpawn.launch
   ): IO[CliResult] =
     GatewayConfig.load.flatMap { cfg =>
-      val port = cfg.port.value
-      val pidAlive = ProcessManager.readPid().exists(ProcessManager.isRunning)
-      val portProbe = IO.blocking(SingleInstanceGuard.checkPortBlocking("127.0.0.1", port))
-      val foreignListener = IO.blocking(SingleInstanceGuard.connectProbeAccepted(port))
-      (portProbe, foreignListener).mapN((ours, anyListener) => (pidAlive, ours, anyListener)).flatMap {
-        case (false, None, false) =>
-          // 1. nothing running → start inline (no apply machinery needed)
-          startFresh(launch)
-        case (_, None, true) =>
-          IO.pure(
-            CliResult.Error(
-              s"restart refused — port $port is held by a non-stand process (the detached apply would only time out against it)",
-              1
-            )
-          )
-        case (pidAlive, ours, _) =>
-          // 2/3. our gateway (pid alive and/or identity probe) → detached apply
-          IO.blocking(DetachedApply.defaultPlan(DetachedApply.Kind.Restart, port, None, ProcessManager.readPid()))
-            .flatMap {
-              case Left(err) => IO.pure(CliResult.Error(s"restart not registered: $err", 1))
-              case Right(plan) =>
-                register(plan).map {
-                  case Left(err) => CliResult.Error(s"restart not registered: $err", 1)
-                  case Right(msg) =>
-                    CliResult.text(
-                      msg +
-                        s"\n  the running instance (pid ${ProcessManager.readPid().getOrElse("-")}) will be stopped by the OS-managed job;" +
-                        "\n  progress: tail the log above — this command returns before the restart completes"
-                    )
-                }
-            }
+      val pidOpt = ProcessManager.readPid().filter(ProcessManager.isRunning)
+      // 端口权威 = 活 pid 的实听端口（今天事故的直接教训：编排探错端口 = 假成功）；
+      // pid 不可读 / 未监听 → 回落配置端口。Mac 事故里编排脚本用陈旧的 8080，
+      // 引擎实听 6138——本面绝不重演：端口永远来自引擎自身的实况。
+      val portOf: IO[Int] = pidOpt match
+        case Some(pid) =>
+          IO.blocking(StopSupport.pidListeningPorts(pid)).map(_.sorted.headOption.getOrElse(cfg.port.value))
+        case None => IO.pure(cfg.port.value)
+      portOf.flatMap { port =>
+        val pidAlive = pidOpt.isDefined
+        val portProbe = IO.blocking(SingleInstanceGuard.checkPortBlocking("127.0.0.1", port))
+        val foreignListener = IO.blocking(SingleInstanceGuard.connectProbeAccepted(port))
+        (portProbe, foreignListener)
+          .mapN((ours, anyListener) => (pidAlive, ours, anyListener))
+          .flatMap {
+            case (false, None, false) =>
+              // 1. nothing running → start inline (no apply machinery needed)
+              startFresh(launch)
+            case (_, None, true) =>
+              IO.pure(
+                CliResult.Error(
+                  s"restart refused — port $port is held by a non-stand process (the detached apply would only time out against it)",
+                  1
+                )
+              )
+            case (_, _, _) =>
+              // 2/3. our gateway (pid alive and/or identity probe) → detached apply
+              IO.blocking(DetachedApply.defaultPlan(DetachedApply.Kind.Restart, port, None, pidOpt)).flatMap {
+                case Left(err) => IO.pure(CliResult.Error(s"restart not registered: $err", 1))
+                case Right(plan) =>
+                  register(plan).map {
+                    case Left(err) => CliResult.Error(s"restart not registered: $err", 1)
+                    case Right(msg) =>
+                      CliResult.text(
+                        msg +
+                          s"\n  the running instance (pid ${pidOpt.getOrElse(-1L)}) will be stopped by the OS-managed job;" +
+                          "\n  progress: tail the log above — this command returns before the restart completes"
+                      )
+                  }
+              }
+          }
       }
     }
 
