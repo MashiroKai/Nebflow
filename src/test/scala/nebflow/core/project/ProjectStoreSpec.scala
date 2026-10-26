@@ -1,6 +1,7 @@
 package nebflow.core.project
 
 import cats.effect.IO
+import io.circe.parser.parse
 import munit.CatsEffectSuite
 import nebflow.shared.PathUtil
 
@@ -301,10 +302,12 @@ class ProjectStoreSpec extends CatsEffectSuite:
     yield
       assertEquals(r1, Right("updated"))
       assertEquals(loaded.flatMap(_.description), Some("新的描述"))
-      // 其余字段逐字节稳定（除 description 外的键值对全部保留）
-      def withoutDesc(s: String) = s.split(",").filterNot(_.trim.startsWith("\"description\"")).mkString(",")
-      assert(
-        withoutDesc(before).split(",").toSet.subsetOf(withoutDesc(after).split(",").toSet),
+      // 其余字段值稳定（键序无关：deepMerge 重排键序，语义=除 description 外逐字段保值）
+      val fieldsB = parse(before).toOption.flatMap(_.asObject).map(_.toMap)
+      val fieldsA = parse(after).toOption.flatMap(_.asObject).map(_.toMap)
+      assertEquals(
+        fieldsA.map(_.removed("description")),
+        fieldsB.map(_.removed("description")),
         s"non-description fields must survive: before=$before after=$after"
       )
       assert(after.contains("新的描述"), after)
@@ -313,7 +316,8 @@ class ProjectStoreSpec extends CatsEffectSuite:
     val wsU2 = tempRoot / "ws-update-2"
     os.makeDir.all(wsU2)
     for
-      _ <- ProjectStore.create("upd-two", wsU2.toString, Some("同一句"), template)
+      _ <- ProjectStore.create("upd-two", wsU2.toString, Some("初始描述"), template)
+      // 首次 update 必须是真实变更（create 值 ≠ 目标值），否则首调即正确地 no-op
       r1 <- ProjectStore.updateDescription("upd-two", "同一句")
       mtime1 = os.mtime(ProjectStore.projectJsonPath("upd-two"))
       r2 <- ProjectStore.updateDescription("upd-two", "同一句")
