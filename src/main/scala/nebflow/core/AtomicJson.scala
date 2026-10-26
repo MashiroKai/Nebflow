@@ -63,6 +63,15 @@ object AtomicJson:
     end try
   end writeSync
 
+  /**
+   * Full-content read (detached-apply state reconcile face): None when the file
+   * is absent; IO errors degrade to None (a corrupt/unreadable state record is
+   * evidence loss, never a boot blocker — the caller decides).
+   */
+  def read(path: os.Path): IO[Option[String]] =
+    IO.blocking(if os.exists(path) then Some(os.read(path)) else None)
+      .handleError(_ => None)
+
   // ── Credential-adjacent writes: owner-only at rest (keyaudit-quickfix ①) ──
   //
   // nebflow.json / stt-config.json carry provider apiKeys in cleartext, but the

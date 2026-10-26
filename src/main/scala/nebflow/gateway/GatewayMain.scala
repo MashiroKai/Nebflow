@@ -568,6 +568,11 @@ object GatewayMain extends IOApp:
                         val sandboxCfg = nebflow.core.sandbox.SandboxConfig.load(config.sandbox)
                         nebflow.core.sandbox.SandboxRuntime.init(sandboxCfg)
                         logger.info(s"${Branding.productName} ${nebflow.Version.string}") *>
+                          // 台账 #916 detached-apply boot 对账：上一个 OS 托管 apply 若死在
+                          // 中途（registered/stopped/starting…），这里只记证据 + 改写
+                          // interrupted 相，绝不据 state 自启/自停——选取面只认 pointer/winsort。
+                          nebflow.cli.DetachedApply.reconcileOnBoot(nebflow.shared.PathUtil.dataRoot)
+                            .flatMap(wl => wl.map(l => logger.warn(l)).getOrElse(IO.unit)) *>
                           (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")
                            else
                              presetLabel match
