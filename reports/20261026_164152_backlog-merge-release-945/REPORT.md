@@ -39,16 +39,17 @@ abd67aad7 report(#924): 广面回归读数补正
 a35e6599f fix(infra): #916 task XML 编码改 UTF-16LE+BOM
 ```
 
-计数核对：
-- `git rev-list --count 85a79ff74..main` = **10**（9 个交付 commit + 1 个合并 commit）
-- `git rev-list --count --no-merges 85a79ff74..main` = **9**
+计数核对（读数为合并完成时点 `main`=`095f06461`，即交付面快照）：
+- `git rev-list --count 85a79ff74..095f06461` = **10**（9 个交付 commit + 1 个合并 commit）
+- `git rev-list --count --no-merges 85a79ff74..095f06461` = **9**
 - `git merge-base --is-ancestor delegate/delegate-nebflow-c2e6b6d0 main` → 通过（分支已完全被 main 包含）
+- 终态复核：`git diff --name-only 095f06461..main` 仅本 REPORT.md —— main 之后的所有前移均不含代码改动。
 
 覆盖台账：#916 / #921 / #922 / #924 / #934 / #939 / #943 —— 任务书所列五批（#921/#922/#924/#934/#939）与 #943 引擎修复全数入册。
 
 ## 4. 合并 diffstat（读数，不重跑全量测试）
 
-`git diff --stat 85a79ff74..main -- src/main/scala | tail -5`：
+`git diff --stat 85a79ff74..095f06461 -- src/main/scala | tail -5`：
 
 ```
  .../scala/nebflow/neblink/LogtoTransport.scala     | 187 +++++++++
@@ -76,7 +77,7 @@ a35e6599f fix(infra): #916 task XML 编码改 UTF-16LE+BOM
 | 项 | 合并前 | 合并后 |
 |---|---|---|
 | 检出分支 | `delegate/delegate-nebflow-c2e6b6d0` | 不变 |
-| HEAD | `ed3c8e707` | → `6e1bed5d7`（仅新增本 REPORT.md 一条 commit，无代码面变更） |
+| HEAD | `ed3c8e707` | → 报告 commit（仅新增本 REPORT.md 及其文字修订，无代码面变更） |
 | 未提交改动 | 18 项 | 18 项（全程未动；新增的仅本报告目录，已提交，未跟踪计数回到基线 18） |
 
 未执行任何 reset / checkout / clean / stash / branch -D；未改动 git config（合并身份用一次性 `-c user.name/-c user.email` 传入，与仓库既有 author `MashiroKai <Kaimashiro@qq.com>` 一致，未写盘任何配置）。
