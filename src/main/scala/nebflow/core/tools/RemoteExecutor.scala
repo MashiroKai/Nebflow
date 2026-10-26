@@ -1741,4 +1741,38 @@ object RemoteExecutor:
         case newProps =>
           schema.add("properties", newProps.asJson)
 
+  /**
+   * 工具 schema 是否**自陈** `device` 输入键（stray 判据的豁免面，2026-10-26
+   * 台账 #901 修正批）：自陈 = 工具**自消费**该参数（如 `Project` 的 create
+   * 参数面——device 是它自己的业务入参，不是误投意图），不属 stray。
+   * remoteable 六件的注入键走 [[augmentSchema]]（真漏斗面），与本判据 OR 联合。
+   */
+  def schemaDeclaresDeviceParam(schema: JsonObject): Boolean =
+    schema("properties").flatMap(_.asObject).exists(_.contains("device"))
+
+  /**
+   * 设备通道 `direction=list` 的**版本偏斜诊断**（台账 #901，2026-10-26）：
+   * 签名不中 ⇒ `None`（调用方错误通道逐字节不变）。
+   *
+   * 动因（2026-10-26 晨生产实录）：Mac 引擎（device-project-mount 批）对设备
+   * KAI 发 `direction=list` 做目录核验，KAI 在产 daemon（2026.9.19 stable，
+   * 早于 2026-10-10 list 方向落位）的 legacy 接收分支原样回答
+   * `"Unknown direction: list"`——这不是「目录不存在」，是**对端引擎版本偏斜**。
+   * 旧文案（"Create/verify the directory on that device first"）把用户引去
+   * 错误的补救路径，故命中签名时改诊为版本偏斜 + 指路升级。
+   *
+   * 签名取小写包含匹配（legacy 接收分支自 2026-09 起逐字稳定
+   * `case other => Left(s"Unknown direction: $other")`），对发送侧各包裹形态
+   * （裸串 / `Remote error: ` 前缀 / `p2p: …; relay: …` 合成）同判。
+   */
+  def listDirectionSkewNote(err: String, deviceName: String): Option[String] =
+    if err.toLowerCase.contains("unknown direction: list") then
+      Some(
+        s"device '$deviceName' engine build predates the metadata-list direction " +
+          "(FileTransfer direction=list, landed 2026-10-10) — the peer's legacy receiver answered " +
+          "\"Unknown direction: list\". This is a device-engine version skew, not a missing directory: " +
+          "upgrade the engine on that device to a current build (deploy the assembly jar, then restart the device daemon) and retry."
+      )
+    else None
+
 end RemoteExecutor

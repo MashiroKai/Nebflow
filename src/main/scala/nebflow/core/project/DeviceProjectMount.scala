@@ -84,8 +84,15 @@ private[project] object DeviceProjectMount:
               // ③ 存在性 stat（元数据列举，零字节）。
               executor.transferListScoped(p, devicePath).flatMap {
                 case Left(err) =>
+                  // 版本偏斜诊断（台账 #901，2026-10-26）：对端引擎早于 list 方向
+                  // （2026-10-10）⇒ 签名命中时追加升级指路（挂载腿与创建腿同诊）；
+                  // 签名不中 ⇒ 报错文本逐字节不变。
+                  val msg = RemoteExecutor
+                    .listDirectionSkewNote(err, p.deviceName)
+                    .map(n => s"$err — $n")
+                    .getOrElse(err)
                   IO.raiseError(
-                    new RuntimeException(ProjectMountPreflight.deviceRefusal(p.deviceName, devicePath, err))
+                    new RuntimeException(ProjectMountPreflight.deviceRefusal(p.deviceName, devicePath, msg))
                   )
                 case Right(listing) =>
                   val isDir = listing.hcursor.downField("entries").focus.isDefined
@@ -96,8 +103,9 @@ private[project] object DeviceProjectMount:
                       )
                     )
                   else
-                    // ④ 骨架落设备真实路径（缺件即补、既有永不覆盖）。
-                    scaffold(executor, p, devicePath).flatMap {
+                    // ④ 骨架落设备真实路径（缺件即补、既有永不覆盖）。复用 ③ 列举
+                    // （同 peer 同路径二次 list 去重，2026-10-26 #901 批）。
+                    scaffold(executor, p, devicePath, listing).flatMap {
                       case Left(err) =>
                         IO.raiseError(
                           new RuntimeException(
@@ -127,44 +135,43 @@ private[project] object DeviceProjectMount:
   /**
    * 设备侧骨架（AGENTS.md + .gitignore 的 `.nebflow/` 行）：**缺件即补、既有永不
    * 覆盖**。与 ProjectCreateService.scaffoldRemote 同纪律同形状——挂载腿复用同一
-   * 判定（先 list 元数据，缺失才 Write），不共享实现（创建腿属 ProjectCreateService
-   * 私有；两处消费同一 RemoteExecutor 原语，抽公共件留待第三次出现）。
+   * 判定（目录元数据由 ③ 传入——2026-10-26 #901 批去重：本腿不再自发 list，同
+   * peer 同路径二次往返删除；缺失才 Write），不共享实现（创建腿属
+   * ProjectCreateService 私有；两处消费同一 RemoteExecutor 原语，抽公共件留待
+   * 第三次出现）。
    */
   private def scaffold(
     executor: RemoteExecutor,
     peer: PeerInfo,
-    devicePath: String
+    devicePath: String,
+    listing: Json
   ): IO[Either[String, String]] =
-    executor.transferListScoped(peer, devicePath).flatMap {
-      case Left(err) => IO.pure(Left(s"list for scaffold check failed: $err"))
-      case Right(listing) =>
-        val existing: Set[String] =
-          listing.hcursor.downField("entries").as[List[Json]].toOption.getOrElse(Nil).flatMap { e =>
-            e.hcursor.downField("name").as[String].toOption
-          }.toSet
-        val wanted: List[(String, String)] = List(
-          ("AGENTS.md", ProjectCreateService.AgentMdTemplate),
-          (".gitignore", ".nebflow/\n")
-        )
-        val missing = wanted.filterNot((name, _) => existing.contains(name))
-        if missing.isEmpty then IO.pure(Right("scaffold on device: nothing to do (all pieces already present)"))
-        else
-          missing.foldLeft(IO.pure(Right(Nil): Either[String, List[String]])) { (acc, item) =>
-            acc.flatMap {
-              case l @ Left(_) => IO.pure(l)
-              case Right(done) =>
-                executor
-                  .writeRemoteFileForScaffold(peer, s"${ProjectCreateService.stripTrailingSlashes(devicePath)}/${item._1}", item._2)
-                  .map {
-                    case Right(_) => Right(done :+ item._1)
-                    case Left(err) => Left(err)
-                  }
-            }
-          }.map {
-            case Right(done) => Right(s"scaffold on device: created ${done.mkString(", ")}")
-            case Left(err) => Left(err)
-          }
-    }
+    val existing: Set[String] =
+      listing.hcursor.downField("entries").as[List[Json]].toOption.getOrElse(Nil).flatMap { e =>
+        e.hcursor.downField("name").as[String].toOption
+      }.toSet
+    val wanted: List[(String, String)] = List(
+      ("AGENTS.md", ProjectCreateService.AgentMdTemplate),
+      (".gitignore", ".nebflow/\n")
+    )
+    val missing = wanted.filterNot((name, _) => existing.contains(name))
+    if missing.isEmpty then IO.pure(Right("scaffold on device: nothing to do (all pieces already present)"))
+    else
+      missing.foldLeft(IO.pure(Right(Nil): Either[String, List[String]])) { (acc, item) =>
+        acc.flatMap {
+          case l @ Left(_) => IO.pure(l)
+          case Right(done) =>
+            executor
+              .writeRemoteFileForScaffold(peer, s"${ProjectCreateService.stripTrailingSlashes(devicePath)}/${item._1}", item._2)
+              .map {
+                case Right(_) => Right(done :+ item._1)
+                case Left(err) => Left(err)
+              }
+        }
+      }.map {
+        case Right(done) => Right(s"scaffold on device: created ${done.mkString(", ")}")
+        case Left(err) => Left(err)
+      }
   end scaffold
 
   /**

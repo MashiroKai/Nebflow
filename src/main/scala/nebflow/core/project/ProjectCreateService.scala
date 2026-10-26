@@ -200,11 +200,21 @@ object ProjectCreateService:
                   // ② 目录校验（元数据列举——零字节；失败 = 显式失败，零本侧写入）。
                   executor.transferListScoped(peer, workspace).flatMap {
                     case Left(err) =>
+                      // 版本偏斜诊断（台账 #901，2026-10-26）：对端引擎早于 list 方向
+                      // （2026-10-10）⇒ legacy 接收分支答 "Unknown direction: list"——
+                      // 改诊为「升级对端引擎」而非误导性的「先去建设备目录」。
+                      // 签名不中（真不可达/真缺目录）⇒ 既有文案逐字节不变。
+                      val skewNote = RemoteExecutor.listDirectionSkewNote(err, peer.deviceName)
                       IO.pure(
                         Left(
                           ToolError(
-                            s"Project '$resolvedName' was NOT created: cannot verify directory '$workspace' on device '${peer.deviceName}' — $err. " +
-                              "Create/verify the directory on that device first, then retry. (REMOTE_DIR_UNVERIFIED)"
+                            skewNote match
+                              case Some(note) =>
+                                s"Project '$resolvedName' was NOT created: cannot verify directory '$workspace' on device '${peer.deviceName}' — $note. " +
+                                  "Nothing was created (zero writes on this host and on the device). (DEVICE_ENGINE_TOO_OLD)"
+                              case None =>
+                                s"Project '$resolvedName' was NOT created: cannot verify directory '$workspace' on device '${peer.deviceName}' — $err. " +
+                                  "Create/verify the directory on that device first, then retry. (REMOTE_DIR_UNVERIFIED)"
                           )
                         )
                       )
@@ -221,7 +231,9 @@ object ProjectCreateService:
                         )
                       else
                         // ③ 远端脚手架（缺件即补、既有永不覆盖——与本地 ensureScaffold 同纪律）。
-                        scaffoldRemote(executor, peer, workspace, resolvedName).flatMap {
+                        // 复用 ② 的列举（同 peer 同路径二次 list = 一次多余往返 + 一次多余失败面，
+                        // 2026-10-26 #901 批去重）。
+                        scaffoldRemote(executor, peer, workspace, resolvedName, listing).flatMap {
                           case Left(err) =>
                             IO.pure(
                               Left(
@@ -287,45 +299,43 @@ object ProjectCreateService:
 
   /**
    * 远端脚手架腿（remote-exec Write）：AGENTS.md（缺省模板 = 空）+ .gitignore
-   * （`.nebflow/` 行）。**缺件即补、既有永不覆盖**——先 direction=list 目录元数据，
-   * 已存在的件跳过（不读内容、零覆盖）；缺失才 Write。Write 的 createFolders 语义
-   * 在对端建目录（幂等）。
+   * （`.nebflow/` 行）。**缺件即补、既有永不覆盖**——目录元数据（direction=list）
+   * 由调用方传入（② 目录校验的同一读数；2026-10-26 #901 批去重：本腿不再自发
+   * list，同 peer 同路径二次往返删除）。已存在的件跳过（不读内容、零覆盖）；
+   * 缺失才 Write。Write 的 createFolders 语义在对端建目录（幂等）。
    */
   private def scaffoldRemote(
     executor: nebflow.core.tools.RemoteExecutor,
     peer: nebflow.shared.PeerInfo,
     workspace: String,
-    projectName: String
+    projectName: String,
+    listing: Json
   ): IO[Either[String, ProjectStore.ScaffoldReport]] =
-    executor.transferListScoped(peer, workspace).flatMap {
-      case Left(err) => IO.pure(Left(s"list for scaffold check failed: $err"))
-      case Right(listing) =>
-        val existing: Set[String] =
-          listing.hcursor.downField("entries").as[List[Json]].toOption.getOrElse(Nil).flatMap { e =>
-            e.hcursor.downField("name").as[String].toOption
-          }.toSet
-        val wanted: List[(String, String)] = List(
-          ("AGENTS.md", AgentMdTemplate),
-          (".gitignore", ".nebflow/\n")
-        )
-        val missing = wanted.filterNot((name, _) => existing.contains(name))
-        if missing.isEmpty then
-          IO.pure(Right(ProjectStore.ScaffoldReport(wanted.map(n => ProjectStore.ScaffoldItem(n._1, created = false, detail = "already present")))))
-        else
-          missing.foldLeft(IO.pure(Right(Nil): Either[String, List[ProjectStore.ScaffoldItem]])) { (acc, item) =>
-            acc.flatMap {
-              case l @ Left(_) => IO.pure(l)
-              case Right(items) =>
-                writeRemoteFile(executor, peer, s"${stripTrailingSlashes(workspace)}/${item._1}", item._2).map {
-                  case Right(_) => Right(items :+ ProjectStore.ScaffoldItem(item._1, created = true))
-                  case Left(err) => Left(err)
-                }
+    val existing: Set[String] =
+      listing.hcursor.downField("entries").as[List[Json]].toOption.getOrElse(Nil).flatMap { e =>
+        e.hcursor.downField("name").as[String].toOption
+      }.toSet
+    val wanted: List[(String, String)] = List(
+      ("AGENTS.md", AgentMdTemplate),
+      (".gitignore", ".nebflow/\n")
+    )
+    val missing = wanted.filterNot((name, _) => existing.contains(name))
+    if missing.isEmpty then
+      IO.pure(Right(ProjectStore.ScaffoldReport(wanted.map(n => ProjectStore.ScaffoldItem(n._1, created = false, detail = "already present")))))
+    else
+      missing.foldLeft(IO.pure(Right(Nil): Either[String, List[ProjectStore.ScaffoldItem]])) { (acc, item) =>
+        acc.flatMap {
+          case l @ Left(_) => IO.pure(l)
+          case Right(items) =>
+            writeRemoteFile(executor, peer, s"${stripTrailingSlashes(workspace)}/${item._1}", item._2).map {
+              case Right(_) => Right(items :+ ProjectStore.ScaffoldItem(item._1, created = true))
+              case Left(err) => Left(err)
             }
-          }.map {
-            case Right(items) => Right(ProjectStore.ScaffoldReport(items))
-            case Left(err) => Left(err)
-          }
-    }
+        }
+      }.map {
+        case Right(items) => Right(ProjectStore.ScaffoldReport(items))
+        case Left(err) => Left(err)
+      }
   end scaffoldRemote
 
   /** 对端单文件 Write（remote-exec Write 工具；projectRoot = 该项目 workspace）。 */
