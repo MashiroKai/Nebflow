@@ -831,7 +831,6 @@ export default {
   'settings.thinkingEffort.low': 'Low',
   'settings.thinkingEffort.medium': 'Medium',
   'settings.thinkingEffort.high': 'High',
-  'settings.thinkingEffortHint': 'Thinking effort (OpenAI-style): Off = disable reasoning; Low = fast; Medium = balanced; High = deep reasoning. Mapped per model automatically (Anthropic budget / GLM & DeepSeek switches).',
   // === Settings-page permission-mode control (2026-09-12 batch) was deleted by
   // permshield F1 (2026-09-13): all 7 `settings.safetyMode*` keys went with it
   // (author re-ruling candidate B ① "delete the settings page"). The guidance now

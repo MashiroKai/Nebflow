@@ -788,7 +788,6 @@ export default {
   'settings.thinkingEffort.low': '低',
   'settings.thinkingEffort.medium': '中',
   'settings.thinkingEffort.high': '高',
-  'settings.thinkingEffortHint': '思考档位（OpenAI 风格）：关闭=禁用推理；低=快速响应；中=均衡；高=深度推理。内部按模型自动映射（Anthropic 预算 / GLM 与 DeepSeek 开关）。',
   // === 权限模式设置页控件（2026-09-12 批）已于 permshield F1（2026-09-13）删除 ===
   // 7 个 `settings.safetyMode*` 键随控件一并移除（作者重裁候选 B ①「删设置页」）。
   // 档位指引改由盾牌承载：`bypass.title.*`（三档 tooltip）+ `bypass.modeSetGlobal`
