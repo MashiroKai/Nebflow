@@ -2,13 +2,30 @@
 
 日期：2026-10-26 15:12–15:35 +0800 · 执行：delegate-nebflow-437a0348（stand）· 红线遵守：未重启引擎、媒体资产零丢失（全量备份 + 逐字节校验后处置）
 
-**TL;DR：#896 引导员已生效（`4e1fa1c87`，12:23 重启即带上）；阻塞根因 = `~/.stand` 数据仓数周活现实未入册（1455 条脏，媒体 delegate 连坐被堵）；已备份→校验→三笔归位提交清零，两闸于 15:30/15:31 自动放行（`b722acf`/`b0656f8`），媒体成品全数入册，零丢失、零重启。**
+**TL;DR：#896 代码全量在运行（`4e1fa1c87`，12:23 重启构建树 == HEAD `21f19dfaf`）；但对照作者裁定「合并队列=纯排队+通知，不设阻拦」，#896 把旧制 fail-soft 的工件卫生**升级成了 fail-closed 阻拦闸**（重构走样），且阻塞路径零通知（只落账本行+面板字符串）——三个验收点 a/b/c 全部坐实为缺口。阻塞根因 = `~/.stand` 数据仓数周活现实未入册（1455 条脏，媒体 delegate 连坐被堵）；已备份→校验→三笔归位提交清零，两员于 15:30/15:31 获放行合并（`b722acf`/`b0656f8`），媒体成品全数入册，零丢失、零重启。「回纯排队+通知」引擎改动清单见 §4（派 stand-kai）。**
 
-## 1. 合并优化落地了吗 —— 落地了
+## 1. 对照作者裁定逐项核实
 
-**结论：#896「合并队列交通引导员」已在现役引擎上生效，面板那句 `base workspace still dirty after hygiene` 就是引导员自己的上报，不是旧逻辑残句。**
+**裁定原文（逐字）**：「我们不是把合并改为只是一个排队 通知的逻辑吗 它怎么还有阻拦的逻辑，然后也不告知」——验收基准：a) 运行构建含 #896 全部改动；b) 若含，hygiene 阻拦=重构走样/残留缺口；c) 阻塞时无父会话通知=「不告知」坐实。
 
-证据链：
+### a) 12:23 运行构建含 #896 全部改动 —— 坐实（diff 对照，非只看提交号）
+
+- 构建树核对：sbt cwd=`/Users/kaiyu/Claude code/Stand`，HEAD 自 08:32（`21f19dfaf`）后 reflog 零移动，`git status --porcelain -- src/` = **0** ⇒ 12:22–12:23 编译树 == HEAD，`4e1fa1c87` 在其历史内 ⇒ **#896 全量在编译产物里**；
+- 运行时行为对照 diff：持久账本 `merge-ledger.json`（#896 新文件，schema=state 机 waiting/turn-granted/merged）、`grant-blocked` 账本行、`careTick` 每拍 pump——全部是 #896 diff 引入的行为，逐一在现役引擎上可观察。
+
+### b) hygiene 阻拦 = #896 自己新写的，违背裁定 —— 坐实（既非旧二进制也非残留）
+
+- 阻拦代码在 #896 diff 本体内：`git show 4e1fa1c87 -- .../MergeQueue.scala` 含 `+ baseReady`/`+ hygiene` 8 处、`+ "still dirty after hygiene"` 1 处；
+- **关键对照——旧制语义**：#896 之前（`4e1fa1c87~1`）的 `artifactHygiene(entry)` 是 **fail-soft 非阻断**：「全 fail-soft：任何故障只 WARN，**注入照常**（delegate 的拒绝面兜底…）」——清完白名单工件照样放合并轮，脏基地由 delegate 的 `git merge` 诚实撞死、failed 关账可见；
+- **#896 把它升级成了 fail-closed 阻拦闸**：`baseReady()` 余脏非空 ⇒ `Left` ⇒ `requeueBlocked` 留队等下一拍——把「合并轮会可见地失败」变成「整队静默停靠」。这正是裁定指认的「怎么还有阻拦的逻辑」：**重构走样（把该退役的拦截语义以更强形态带进了新制），不是旧逻辑残留、不是构建没带上**。
+
+### c) 「不告知」—— 坐实（阻塞路径无任何通知腿）
+
+- **代码面**：`requeueBlocked()`（MergeQueue.scala :541-549）只做 state→waiting + `persistLocked()` + `record(grant-blocked)` + `logger.info`——**无任何向父会话/作者的通知调用**；`notifyTurn`/`notifyAlreadyLanded` 都只在放行/收尾路径，阻塞路径没有对偶通知；
+- **运行时面**：① `chains/931.json` 落了 **26+ 条内容相同的 grant-blocked 账本行**（14:46 起每扫描拍一条），零通知动作；② 项目事件日志 `projects/视觉工作室/.nebflow/flow-map-events.jsonl` 全天 41 条**全部 type=dispatcher-wake，零 message/notify 类事件**——父会话 `d7c3cb54` 从未收到任何合并阻塞消息；③ `stand.log` 全天无一条 merge-queue 阻塞日志（且 logback 对 `nebflow.core.delegate` 的 INFO 有过滤，即便打了也无人看见）；
+- 结论：阻塞信息的全部去向 = 账本行 + 面板 `lastBlockReason` 字符串。裁定「然后也不告知」逐字成立。
+
+### 补充证据链（首次核实读数）
 
 | 证据 | 读数 |
 |---|---|
@@ -64,17 +81,46 @@ base 工作区 = **`/Users/kaiyu/.stand` 数据根大仓本身**（视觉工作�
 
 入册核验：`docs/20261025_载人深空时间线/v3_20261026/` 7 文件（v3 三版时间线 PNG + 渲染脚本）、`docs/20261026_深空定义与范围页/` 6 文件（图A双版式 PNG + 构建脚本）全数在 main；工作区保持 `git status --porcelain` = 0；被隔离的 `深空定义与范围_页文案.md` 不在册（符合预期，见 §2.2）。
 
-## 4. 缺口结论
+注：放行得以发生依赖本次**人工疏通**（三笔归位提交清零大仓）——若按裁定的「纯排队+通知」形态，delegate 的合并轮 14:46 首拍就该自己执行：要么直接落册，要么撞上未入册副本诚实 failed 并通知父会话，断不至于静默停靠 44 分钟。
 
-**「hygiene 清不掉就停」是 #896 设计内行为**：净空闸 fail-closed（余脏非空 ⇒ 留队 `grant-blocked` 记账，绝不放合并轮进脏座位）、零超时、每拍补试、面板显式呈现——这半边没有缺口，且复检是自动的（本次全净后下一拍即应放行，无需任何信号或重启）。
+## 4. 缺口结论（按作者裁定改写）
 
-真正的缺口在**闸外**（结论，代码另派 stand-kai）：
+**裁定基准**：合并队列 = 纯排队 + 通知，不设阻拦；卡住必须主动通知（到主会话/作者），不是把原因埋在面板字符串里。对照 §1：#896 落地形态（fail-closed 净空闸 + 阻塞零通知）**违背裁定，a/b/c 三点全部坐实**。本报告初版「停而上报属 #896 设计内行为」的结论**作废**——代码确实照此实现，但该实现本身偏离裁定，属重构走样：旧制（10-25 批）hygiene 本是 fail-soft 非阻断，#896 把它升级成了拦截闸。
 
-1. **结构性根因（最大缺口，非引擎单点可修）**：数据根 `~/.stand` 同时是引擎运行态家、插件目录家、文档/媒体内容仓——净空闸量的是整个大仓，媒体项目被别人的积存连坐。建议长期：内容线（docs/、projects/ 媒体仓）与运行态分仓，或 projects 各自成仓，让闸只量项目自己的工作区。
-2. **hygiene 白名单过窄且静态**（仅根级 `evidence/`、`reports/`）：面对慢性脏仓只能停机等人工。建议：per-project 声明式工件目录配置（保持「源码路径绝不碰」不变量），或对「worktree 内容 == 即将合入 blob」的 tracked 改动（本次 `说明.md` 形态）做可证安全的自动还原。
-3. **grant-blocked 审计刷屏**：每拍一条完全相同的记账（chains/931.json 里 26+ 条同文），建议仅在原因集合变化时记账或聚合计数。
-4. **无升级阶梯**：零超时正确，但堵死 N 拍后应主动把可行动清单（`remainingDirty`）推给 dispatcher/作者（带路径清单的通知），而不是等人在面板发现——本次若非人工巡查，两个成品会无限期停在队里。
-5. 小项：`take(6)`/300 字符截断让面板原因天然不完整，建议面板/API 给全量路径的分页口（账本里其实有 `remainingDirty` 全列表）。
+**「回到纯排队 + 通知」引擎改动清单（结论；代码另派 stand-kai）**：
+
+### 4.1 拆闸（主改动）
+
+- 位置：`src/main/scala/nebflow/core/delegate/MergeQueue.scala` `baseReady()`（:500-545）+ `requeueBlocked`（:541-549）。
+- 改法：删除 fail-closed 语义——余脏非空不再 `Left` 留队；`MergeArtifactCare.hygiene` 降回 best-effort 清障（回到 10-25 批语义），清完照常 `notifyTurn`。脏基地由属主合并轮自己撞上：untracked 覆写/本地改动冲突时 `git merge` 诚实失败 → 合并轮 **failed 关账一次**（可见、面板呈现、dispatcher 处置）——这正是 #896 自己在退役旧制时立下的语义（「a refused round closes the membership failed once」），只是被自家的净空闸挡在门前从未有机会发生。
+- 「base 分支非检出分支」的 Left 同理降级：改在放行 brief 里如实告知属主实际座位（属主自行裁决），默认不拦。
+- specs：`MergeQueueSpec` 净空闸 fail-closed 断言改判为「脏基地 ⇒ 照常放行 + 合并轮诚实失败」；`MergeQueueRestartReminderSpec` 相应更新。
+
+### 4.2 脏基地自动判性/隔离而非拦截（MergeArtifactCare 从「闸」改「护」）
+
+- 位置：`src/main/scala/nebflow/core/delegate/MergeArtifactCare.scala`（新增 triage 面）+ `MergeQueue.baseReady/pump`（消费点）。
+- 放行前 best-effort 四性判定（全部 `record()` 落账，**绝不改变放行结果**）：
+  1. 白名单工件（evidence/、reports/）——收编/还原（现状保留）；
+  2. tracked 改动且 worktree blob == 即将合入 blob（本次 `说明.md` 形态）——自动 `git restore`，可证安全零丢失；
+  3. 合并路径之外的 untracked 文件——自动移入 `<dataRoot>/merge-quarantine/<ts>/`（保留相对路径 + PROVENANCE 清单），放行 brief 告知属主；
+  4. 其余（合并路径上的真实未入册改动）——不动、不拦，留给合并轮诚实失败。
+- 不变量保持：「源码路径绝不碰」纪律只放宽到 2/3 两种可证安全形态。
+
+### 4.3 阻塞必通知（保底腿，拆闸后仍需要）
+
+- 触发面：合并轮 **failed / owner-gone** 关账时，向**父会话**（`parentSessionId`）补发一条可行动通知：原因 + 全量路径清单 + 隔离路径（现有终态回执只到 dispatcher 面板，父会话无感）；
+- 同因去重：reason 集合不变不重发——同时治 `grant-blocked` 记账刷屏（chains/931.json 26+ 条同文行，改「原因集合变化才落行」）；
+- 升级阶梯：同一 member 连续 N 拍未推进 ⇒ 通知升级到作者主会话（Nebula）；
+- 落点：`MergeQueue` 合并轮失败/阻塞回调 + `DelegateTerminal` 通知腿；通知必须显式落 `node-message` 类事件到 `flow-map-events.jsonl`（本次实证该日志 41 条全是 dispatcher-wake、零 message 事件——不落事件的通知等于没发）。
+
+### 4.4 配套小项
+
+- 面板/API：`take(6)`（:528）与 `lastBlockReason` 300 字符截断修正，`remainingDirty` 全量分页口（账本里已有全列表）；
+- 日志：logback 对 `nebflow.core.delegate` 的 INFO 过滤使阻塞不可见——合并队列日志单独 appender 或升 WARN 级。
+
+### 4.5 结构性根因（引擎外，长期）
+
+数据根 `~/.stand` 同时是引擎运行态家、插件目录家、文档/媒体内容仓——媒体项目被大仓任何积存连坐（本次 `bin/nebflow-restart.sh` 堵媒体闸即此机制）。长期：内容线（docs/、projects/ 媒体仓）与运行态分仓，或 projects 各自成仓。
 
 ## 5. 产出文件
 
