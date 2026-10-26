@@ -284,7 +284,9 @@ object DetachedApply:
          |</Task>
          |""".stripMargin
     IO.blocking {
-      os.write.over(xmlPath, xml.getBytes(java.nio.charset.StandardCharsets.UTF_16), createFolders = true)
+      // schtasks 的解析器只认 UTF-16LE+BOM（它自己写出来的就是 LE）；Java UTF_16 默认 BE BOM ⇒ malformed
+      val le = xml.getBytes(java.nio.charset.StandardCharsets.UTF_16LE)
+      os.write.over(xmlPath, Array(0xFF.toByte, 0xFE.toByte) ++ le, createFolders = true)
     }.attempt.flatMap {
       case Left(e) => IO.pure(Left(s"apply task xml write failed: ${Option(e.getMessage).getOrElse(e.toString)}"))
       case Right(_) =>
