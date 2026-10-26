@@ -1179,8 +1179,14 @@ private[neblink] object PortalTunnelBridge:
   val LocalConnectTimeoutSec: Int = 10
   val LocalSendTimeoutSec: Int = 5
 
-  /** Per-cycle WS pump inbox depth (downlink and uplink alike). */
-  val WsQueueSlots: Int = 128
+  /**
+   * Per-cycle WS pump inbox depth (downlink and uplink alike).
+   * Ledger #949 §2 face-③ (author-approved 2026-10-26): 128 → 64 (conservative
+   * end of the suggested 32–64 band) — a full 128-slot inbox only inflated the
+   * queued backlog and the dead-letter volume on slow uplinks; true backpressure
+   * is the request(n) flow-control delivered by the #949 batch.
+   */
+  val WsQueueSlots: Int = 64
   // Base64 plus envelope stays below the relay listener's 8 MiB frame cap.
   val MaxWsMessageBytes: Int = 4 * 1024 * 1024
 

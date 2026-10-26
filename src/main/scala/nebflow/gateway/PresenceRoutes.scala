@@ -116,10 +116,10 @@ private[gateway] object PresenceRoutes:
    *      消失）时 finalizer 无处挂载 ⇒ 计数永久泄漏；现 acquire 未起跑即未发生。
    *   2. 判死回收（half-open 兜底）：入站活跃钟（任何入站帧即触碰，pong 亦然）
    *      + 既有心跳拍上判死（零新增计时面）——连续 `deadAfter` 无入站帧 ⇒
-   *      终结 send 流。ember 会话装配（WebSocketHelpers.upgrade 0.23.30：
-   *      `readSide.concurrently(sendSide)`）对 send 终结的处置 = 写 close 帧 +
-   *      中断 receive 侧 ⇒ 第 1 层的 finalizer 回减与 removePeer 必达，且 close
-   *      帧让对端同步收场（不产生新 half-open）。
+   *      `deadSig` 双侧直达：send 侧终结（ember 对 send 终结写 close 帧，对端
+   *      同步收场）+ receive 侧自身 `interruptWhen` 中断 ⇒ 第 1 层的 finalizer
+   *      回减与 removePeer 必达（不依赖 ember 装配的 concurrently 中断方向，
+   *      fs2 3.11 实测：后台流终结不中断前台——见实现内 🔴 方向注记）。
    *   3. 对账面（计数 ↔ 实活 socket）：配对由结构保证（acquire/release 同
    *      scope，恰好一次）；每次判死回收经 `onZombieRecycle(silentMs)` 留审计
    *      行（ip/device/沉默时长），per-ip 槽位随回收立即复纳 —— 漂移在结构上

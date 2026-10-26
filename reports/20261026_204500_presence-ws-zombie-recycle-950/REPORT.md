@@ -58,7 +58,20 @@ sbt -batch 'set Test / sources ~= 排除他批在途 DeviceProvenance 测试源�
 [success] Total time: 15 s
 ```
 
-presence 端到端家族（真 ember + 真对端拨号）：NeblinkPresenceServiceSpec / NeblinkPresenceHeartbeatLifecycleSpec / DeviceFaceHardeningRoutesSpec —— 读数见提交后补记（本文件 §5b）。
+presence 端到端家族（真 ember + 真对端拨号，§5b）：
+
+```
+sbt -batch "testOnly nebflow.neblink.NeblinkPresenceServiceSpec \
+  nebflow.gateway.DeviceFaceHardeningRoutesSpec \
+  nebflow.neblink.NeblinkPresenceHeartbeatLifecycleSpec"
+[info] Passed: Total 15, Failed 0, Errors 0, Passed 15
+[success] Total time: 401 s (0:06:41)
+```
+
+要点读数：hb-life 测试①（在线对端、真 presence 路由、180s 窗）0 超时/0 掉线/0 重连行——
+新装配对「规范对端每拍必回 pong」的会话零扰动；②聋对端超时节拍回到单连接理论带
+（对端侧机制，未受服务端改动影响）；③④ 6 轮真断连每轮恰一次重连序列。合并即：
+本批服务端判死腿对活跃会话零误杀、对真断连路径零行为漂移。
 
 ## 6. 红线自检
 

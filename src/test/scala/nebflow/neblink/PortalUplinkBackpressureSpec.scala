@@ -83,6 +83,10 @@ class PortalUplinkBackpressureSpec extends CatsEffectSuite:
   private val UuidT2   = "00000000-0000-4000-8000-0000000000d2"
   private val UuidRe   = "00000000-0000-4000-8000-000000000009"
 
+  // Inbox depth follows the production constant (ledger #949 §2 face-③: tuned
+  // 128→64) — specs never hardcode it, so a future retune can't rot assertions.
+  private val Slots = PortalTunnelBridge.WsQueueSlots
+
   private def frame(b: Int, rid: String = "rid"): PortalTunnelBridge.WsCycle.UplinkItem.Frame =
     PortalTunnelBridge.WsCycle.UplinkItem.Frame(WsFrame(rid, "text", Array(b.toByte), fin = true))
 
@@ -104,18 +108,18 @@ class PortalUplinkBackpressureSpec extends CatsEffectSuite:
   test("面一: 满态首条即报、中间静默计数、第32条再报、恢复即报、新回合重新起算"):
     val alarm = new UplinkFullAlarm("req-1")
     // 第 1 条：状态变化（flowing → full），即报
-    val first = alarm.strike(depth = 128, capacity = 128, itemBytes = 4096)
+    val first = alarm.strike(depth = Slots, capacity = Slots, itemBytes = 4096)
     assert(first.isDefined, "first strike must log")
     assert(clue(first.get).contains("strike=1"))
     assert(clue(first.get).contains("QUEUED, NOT dropped"), "the line must say the item is queued, not dropped")
     // 第 2..31 条：限频吞掉
     (2 to 31).foreach { n =>
-      val l = alarm.strike(128, 128, 4096)
+      val l = alarm.strike(Slots, Slots, 4096)
       assert(l.isEmpty, s"strike #$n must be suppressed")
     }
     assert(alarm.strikeCount == 31)
     // 第 32 条：再报一条
-    val at32 = alarm.strike(128, 128, 4096)
+    val at32 = alarm.strike(Slots, Slots, 4096)
     assert(clue(at32).isDefined, "strike #32 must log")
     assert(clue(at32.get).contains("strike=32"))
     assert(clue(at32.get).contains("suppressed=30"), "the compression reading must be carried")
@@ -125,12 +129,12 @@ class PortalUplinkBackpressureSpec extends CatsEffectSuite:
     assert(clue(rec.get).contains("32 full strikes"))
     assert(clue(rec.get).contains("suppressed=30"))
     // 新回合重新起算
-    val again = alarm.strike(64, 128, 1)
+    val again = alarm.strike(Slots / 2, Slots, 1)
     assert(clue(again).isDefined, "new episode first strike must log")
     assert(clue(again.get).contains("episode=2"))
     // 回合内又静默 31 条
     (2 to 31).foreach { _ =>
-      assert(alarm.strike(64, 128, 1).isEmpty)
+      assert(alarm.strike(Slots / 2, Slots, 1).isEmpty)
     }
 
   test("面一: 无满态时 recovered 静默（不刷无事件恢复行）"):
@@ -158,14 +162,14 @@ class PortalUplinkBackpressureSpec extends CatsEffectSuite:
       for
         cycle <- IO(new PortalTunnelBridge.WsCycle("wait-capacity"))
         _ = bridge.wsCycles.put("wait-capacity", cycle) // 注册 = 活周期
-        _ = (0 until 128).foreach(i => cycle.uplink.offer(frame(i))) // 填满
+        _ = (0 until Slots).foreach(i => cycle.uplink.offer(frame(i))) // 填满
         // 后台驱动：满了 → 拍退避等待（不丢）
         worker <- IO.blocking(
           bridge.offerUplinkAwaitCapacity(cycle, frame(0xAA))
         ).start
         _ <- IO.sleep(100.millis)
         early <- IO(cycle.uplink.size())
-        _ = assertEquals(early, 128, "while full, the item must NOT be enqueued NOR dropped")
+        _ = assertEquals(early, Slots, "while full, the item must NOT be enqueued NOR dropped")
         deadEarly <- PortalUplinkDeadLetter.pending
         _ = assertEquals(deadEarly, Nil, "a live cycle must never dead-letter")
         // 模拟 pump 腾一位
@@ -173,12 +177,12 @@ class PortalUplinkBackpressureSpec extends CatsEffectSuite:
         done <- waitUntil(10.seconds)(worker.join.attempt.map(_.isRight))
         _ = assert(done, "the waiter must land the item once capacity appears")
         landed <- IO(cycle.uplink.size())
-        _ = assertEquals(landed, 128, "the item must be QUEUED once capacity appeared (never dropped)")
+        _ = assertEquals(landed, Slots, "the item must be QUEUED once capacity appeared (never dropped)")
         // FIFO 保持：抽干队列，最后一件必须是等容量进来的 0xAA（poll 序 == 入队序）
-        drained <- IO(List.fill(129)(Option(cycle.uplink.poll())))
-        _ = assert(drained.take(128).forall(_.isDefined), "queue must hold exactly 128 items")
-        _ = assert(drained(128).isEmpty, "queue must be empty after 128 polls")
-        lastByte = drained(127).collect { case PortalTunnelBridge.WsCycle.UplinkItem.Frame(f) => f.data(0) }
+        drained <- IO(List.fill(Slots + 1)(Option(cycle.uplink.poll())))
+        _ = assert(drained.take(Slots).forall(_.isDefined), s"queue must hold exactly $Slots items")
+        _ = assert(drained(Slots).isEmpty, s"queue must be empty after $Slots polls")
+        lastByte = drained(Slots - 1).collect { case PortalTunnelBridge.WsCycle.UplinkItem.Frame(f) => f.data(0) }
         _ = assertEquals(lastByte, Some(0xAA.toByte), "the waited item must keep FIFO order (offered last)")
         deadAfter <- PortalUplinkDeadLetter.pending
         _ = assertEquals(deadAfter, Nil)
@@ -189,10 +193,10 @@ class PortalUplinkBackpressureSpec extends CatsEffectSuite:
     val fake = new FakeWebSocket
     val bridge = mkBridge(fake)
     val cycle = new PortalTunnelBridge.WsCycle(UuidDead) // 从不注册 = 已死
-    (0 until 128).foreach(i => cycle.uplink.offer(frame(i, UuidDead)))
+    (0 until Slots).foreach(i => cycle.uplink.offer(frame(i, UuidDead)))
     for
       _ <- IO.blocking(bridge.offerUplinkAwaitCapacity(cycle, frame(0x07, UuidDead))) // 死亡分支：同步返回，不等待
-      _ = assertEquals(cycle.uplink.size(), 128, "the dead cycle's queue must be untouched")
+      _ = assertEquals(cycle.uplink.size(), Slots, "the dead cycle's queue must be untouched")
       entries <- PortalUplinkDeadLetter.pending
       _ = assert(entries.size == 1, s"exactly one dead letter, got ${entries.map(e => (e.requestId, e.kind))}")
       e = entries.head
