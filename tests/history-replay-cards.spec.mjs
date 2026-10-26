@@ -18,6 +18,7 @@
 
 import { test, expect } from '@playwright/test';
 import { spawn, execSync } from 'node:child_process';
+import http from 'node:http';
 import net from 'node:net';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -52,9 +53,27 @@ function freePort() {
 }
 
 function startStaticServer(port, dir) {
-  return spawn('python3', ['-m', 'http.server', String(port), '--bind', '127.0.0.1', '--directory', dir], {
-    stdio: 'ignore',
+  // KAI Windows 环境兼容（perf 台账 #922 批顺手修，行为面不变）：原腿
+  // `python3 -m http.server` 在无 python 的 Windows 检出直接 ENOENT ⇒ 换 node
+  // 静态伺服（本 harness 取材 = html/js/json/css/svg/png；目录穿越防护保留）。
+  const MIME = {
+    '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+    '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json',
+    '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png',
+  };
+  const srv = http.createServer((req, res) => {
+    let p = decodeURIComponent(new URL(req.url, 'http://127.0.0.1').pathname);
+    if (p.endsWith('/')) p += 'index.html';
+    const file = path.join(dir, p);
+    if (!file.startsWith(dir)) { res.writeHead(403); res.end(); return; }
+    try {
+      const b = fs.readFileSync(file);
+      res.writeHead(200, { 'Content-Type': MIME[file.slice(file.lastIndexOf('.')).toLowerCase()] || 'application/octet-stream' });
+      res.end(b);
+    } catch { res.writeHead(404); res.end('not found'); }
   });
+  srv.listen(port, '127.0.0.1');
+  return { kill: () => srv.close() };
 }
 
 async function waitUntilUp(url, tries = 50) {
@@ -72,7 +91,11 @@ test.beforeAll(async () => {
   fs.mkdirSync(SHOT_DIR, { recursive: true });
   // Baseline tree: the web resources exactly as they were before the fix.
   baselineRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nb-replay-baseline-'));
-  execSync(`git archive ${BASELINE_REF} src/main/resources/web | tar -x -C "${baselineRoot}"`, { cwd: REPO_ROOT });
+  // KAI Windows 环境兼容（perf 台账 #922 批顺手修，行为不变）：execSync 走 cmd，
+  // 反斜杠 -C 路径被 bsdtar 当转义吃掉（`C\:\\...`）⇒ 管道解包必败。正斜杠路径
+  // 两侧皆可。
+  const baselineRootPosix = baselineRoot.split(path.sep).join('/');
+  execSync(`git archive ${BASELINE_REF} src/main/resources/web | tar -x -C "${baselineRootPosix}"`, { cwd: REPO_ROOT });
   // Harness + fixture must be reachable from BOTH roots (same-origin module imports).
   const baseHarnessDir = path.join(baselineRoot, 'tests', 'fixtures', 'history-replay');
   fs.mkdirSync(baseHarnessDir, { recursive: true });
@@ -82,7 +105,9 @@ test.beforeAll(async () => {
   baselinePort = await freePort();
   fixedPort = await freePort();
   servers.push(startStaticServer(baselinePort, baselineRoot));
-  servers.push(startStaticServer(fixedPort, REPO_ROOT));
+  // NB_UX_ROOT（perf 台账 #922 批加的红腿旋钮，auth401 spec 同名约定）：
+  // parity 的「fixed 根」默认 = 工作树；指到修前树即红腿对照。
+  servers.push(startStaticServer(fixedPort, process.env.NB_UX_ROOT ? path.resolve(process.env.NB_UX_ROOT) : REPO_ROOT));
   await waitUntilUp(`http://127.0.0.1:${baselinePort}${HARNESS_PATH}`);
   await waitUntilUp(`http://127.0.0.1:${fixedPort}${HARNESS_PATH}`);
 });

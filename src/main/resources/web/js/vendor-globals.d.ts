@@ -97,3 +97,14 @@ interface Window {
 interface Window {
   _neblinkRefreshTimer?: number | null;
 }
+
+/** 渲染遮蔽门诊断/spec 读数缝（perf 台账 #922；chat/renderGate.js 注册：
+ *  begin/end 持门、busy 读数、depth 嵌套深度——ws.js 心跳遮蔽与 spec 用）。 */
+interface Window {
+  __nfRenderGate?: {
+    begin(): void;
+    end(): void;
+    busy(): boolean;
+    depth(): number;
+  };
+}
