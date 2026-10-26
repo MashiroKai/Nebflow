@@ -1331,7 +1331,15 @@ object GatewayMain extends IOApp:
                                           // signal sees an unbound face. Same store instances the
                                           // gateway face holds (never a second one).
                                           sessionRevocation = Some(gatewaySessions.revokeRelayMinted()),
-                                          nfTicketRevocation = Some(nfTicketStore.revokeAll())
+                                          nfTicketRevocation = Some(nfTicketStore.revokeAll()),
+                                          // 台账 #944（跨设备回报丢件腿）：重连即补投设备
+                                          // 待发区（进程重启 / 隧道断连窗口里攒下的完成件）。
+                                          // 只读盘面 + 发送，不碰任何会话状态。
+                                          outboxDrain = Some(
+                                            nebflow.core.delegate.DeviceDelegate
+                                              .drainOutbox(sharedResources)
+                                              .void
+                                          )
                                         )(dispatcher)
                                         neblinkService.setRelayTunnel(relayTunnel)
                                         dispatcher.unsafeRunAndForget(relayTunnel.connect())

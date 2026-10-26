@@ -82,7 +82,19 @@ final class NeblinkRelayTunnel(
    * no-op default makes the absent port a counted zero, never a failure.
    */
   sessionRevocation: Option[IO[Int]] = None,
-  nfTicketRevocation: Option[IO[Int]] = None
+  nfTicketRevocation: Option[IO[Int]] = None,
+  /**
+   * 台账 #944（跨设备回报丢件腿）：**relay（重）连成功后的补投腿**。
+   *
+   * 病灶：device-delegate 的完成件原为 fire-and-forget——宿主暂不可达 / 隧道不在 /
+   * 进程死在发送前，件无声蒸发（实证：KAI 14:39 重启把 6 个在飞会话连回投代理一起
+   * 杀掉，6 件从未离机）。修法 = 完成件先落盘（[[nebflow.core.delegate.DeviceResultOutbox]]），
+   * 隧道重连成功即按入队序补投——断连窗口里攒下的件在连上的第一刻全部出去。
+   *
+   * 语义：fire-and-forget（失败件留盘等下一轮），**零墙钟**（无重试节拍、无超时判死，
+   * 作者红线）；幂等在宿主侧（spawnId 判重）。None = 未装配（spec/无设备面形态）。
+   */
+  outboxDrain: Option[IO[Unit]] = None
 )(dispatcher: Dispatcher[IO])
     extends RelayTunnelPort: // 严格DAG第⑥步第二批裁定(2026-09-27,R3):原地混入 core 窄视图(isAlive,RemoteExecutor 选路读数)
   import NeblinkRelayTunnel.{AckOutcome, TunnelAuthStatus, shouldHealAuthFailure}
@@ -831,6 +843,17 @@ final class NeblinkRelayTunnel(
             )
           }
           logger.infoSync(s"Relay tunnel connected: $wsUri")
+          // 台账 #944：隧道（重）连成功 = 跨设备出站恢复的第一刻 —— 断连窗口里攒下的
+          // 完成件在这里按序补投（fire-and-forget：失败件留盘，等下一轮重连或下一次
+          // boot；零墙钟，不设重试节拍）。放在 connected 行之后、portal 生命周期之前：
+          // 补投走的是 presence/relayNotify 两条独立腿，与 portal 桥无依赖。
+          outboxDrain.foreach { drain =>
+            dispatcher.unsafeRunAndForget(
+              drain.handleErrorWith(e =>
+                logger.warn(s"Relay tunnel: device outbox drain failed (entries kept on disk): ${e.getMessage}")
+              )
+            )
+          }
           // Self-driven portal lifecycle (staging fix): the mailbox consumer
           // starts and the teardown arms HERE, through the dispatcher — not off
           // the connectOnce chain tail, which stalls across reconnect rounds
