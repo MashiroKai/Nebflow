@@ -372,6 +372,11 @@ object DetachedApply:
 |STOP_DEADLINE=${plan.stopDeadlineSec}
 |HEALTH_DEADLINE=${plan.healthDeadlineSec}
 |HEALTH_URL="http://127.0.0.1:$${PORT}/api/health"
+|# OS 托管作业的 env 是全新的——引擎事实必须在这里显式重建，否则 launcher/引擎
+|# 会静默落回默认根/默认口（生产 = 恰好同值而侥幸，沙箱/自定义根 = 直接打错家）。
+|export STAND_HOME=${sh(plan.dataRoot.toString)}
+|export STAND_GATEWAY_PORT='${plan.port}'
+|export NEBFLOW_GATEWAY_PORT='${plan.port}'
 |
 |log() { printf '%s apply: %s\n' "$$(date '+%Y-%m-%d %H:%M:%S')" "$$*" >> "$$LOG"; }
 |set_phase() {
@@ -510,6 +515,11 @@ object DetachedApply:
 |$$StopDeadlineSec = ${plan.stopDeadlineSec}
 |$$HealthDeadlineSec = ${plan.healthDeadlineSec}
 |$$HealthUrl = "http://127.0.0.1:$$Port/api/health"
+|# OS 托管作业的 env 是全新的——引擎事实必须在这里显式重建，否则 launcher/引擎
+|# 会静默落回默认根/默认口（生产 = 恰好同值而侥幸，沙箱/自定义根 = 直接打错家）。
+|$$env:STAND_HOME = '${ps(plan.dataRoot.toString)}'
+|$$env:STAND_GATEWAY_PORT = '${plan.port}'
+|$$env:NEBFLOW_GATEWAY_PORT = '${plan.port}'
 |
 |function Log([string]$$m) {
 |  Add-Content -Path $$Log -Value ("{0} apply: {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $$m)

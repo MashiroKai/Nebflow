@@ -2506,6 +2506,7 @@ export default {
   'perception.cfgTesting': '正在连接…',
   'perception.cfgConnected': '已连接',
   'perception.cfgFailed': '连接失败，请检查地址与授权码',
+  'perception.sessionExpired': '登录状态已过期，正在重新进入控制台…',
   'perception.to': '收件人',
   'perception.cc': '抄送',
   'perception.bcc': '密送',
