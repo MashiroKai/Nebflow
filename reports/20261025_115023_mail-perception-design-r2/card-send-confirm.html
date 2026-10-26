@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>邮件发送 · 快照卡 + Canvas 编辑发送 · 样张（设计批 r2 2026-10-25）</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════════
+   STAND 设计语言对齐（REPORT.md §16）：
+   对话卡 = chat.css .ask-card 逐字；画布 = split.css #canvas-panel 逐字
+   （radius 20 + frost-shadow + 玻璃 header 胶囊）；token 单源 sapphire.css +
+   base.css；主题机制 html[data-theme="dark"]（同官网）。
+   裁决语义（REPORT.md §7）：对话卡=只读快照供查看；修改在 Canvas 打开（大画布
+   编辑态，全部字段可改）；编辑完在 Canvas 里直接发送。
+   ═══════════════════════════════════════════════════════════════════════ */
+:root{
+  --color-bg:#f5f6f8;
+  --color-text:#1b1e26; --color-text-muted:#8b8e96; --color-text-dim:#6b6e76;
+  --color-frame-text:#3a3d45; --color-frame-text-bright:#1b1e26;
+  --color-frame-text-muted:#717379; --color-frame-text-dim:#aaacb3;
+  --color-border:#ddd;
+  --glass-bg:rgba(255,255,255,0.55); --glass-blur:24px; --glass-border:rgba(255,255,255,0.35);
+  --sapphire:91 127 191;
+  --sapphire-edge:rgba(91,127,191,0.08);
+  --sapphire-refraction:rgba(255,255,255,0.45);
+  --sapphire-tint-10:rgba(91,127,191,0.10);
+  --frost-shadow:inset 0 1px 0 0 rgba(255,255,255,0.25),0px 2px 8px rgba(0,0,0,0.04),0px 8px 24px rgba(0,0,0,0.06);
+  --glass-control-bg:rgba(255,255,255,0.45); --glass-control-bg-hover:rgba(255,255,255,0.65);
+  --glass-control-border:rgba(255,255,255,0.40); --glass-control-highlight:rgba(255,255,255,0.50);
+  --glass-control-underedge:rgba(0,0,0,0.08); --glass-control-glow:rgba(0,0,0,0.06);
+  --glass-control-shadow:rgba(0,0,0,0.04); --glass-control-blur:10px;
+  --glass-etched-bg:rgba(0,0,0,0.025); --glass-etched-border:rgba(91,127,191,0.10);
+  --color-primary:#07c160; --color-primary-hover:#06ad56;
+  --color-success:#4caf50; --color-warning:#ff9800;
+  --status-error-icon:#d64545; --status-warn-icon:#b45309; --status-success-icon:#2e7d32;
+  --status-word:var(--color-frame-text-muted);
+  --color-danger:#c0392b;
+  --ask-card-top:#ffffff; --ask-card-bot:#f5f7fa; --ask-card-bd:rgba(20,26,40,0.08);
+  --ask-card-shadow:0 1px 2px rgba(16,24,40,0.05),0 12px 32px rgba(16,24,40,0.10);
+  --ask-card-highlight:inset 0 1px 0 rgba(255,255,255,0.85);
+}
+html[data-theme="dark"]{
+  --color-bg:#13161c;
+  --color-text:#e8eaed; --color-text-muted:#7b7e88; --color-text-dim:#9ba0aa;
+  --color-frame-text:#c8cad0; --color-frame-text-bright:#e8eaed;
+  --color-frame-text-muted:#81838a; --color-frame-text-dim:#7b7e88;
+  --color-border:#2a2d35;
+  --glass-bg:rgba(24,28,38,0.68); --glass-border:rgba(255,255,255,0.06);
+  --sapphire-refraction:rgba(91,127,191,0.06);
+  --frost-shadow:inset 0 1px 0 0 rgba(255,255,255,0.04),0px 2px 8px rgba(0,0,0,0.20),0px 8px 24px rgba(0,0,0,0.35);
+  --glass-control-bg:rgba(255,255,255,0.05); --glass-control-bg-hover:rgba(255,255,255,0.10);
+  --glass-control-border:rgba(255,255,255,0.08); --glass-control-highlight:rgba(255,255,255,0.08);
+  --glass-control-underedge:rgba(0,0,0,0.25); --glass-control-glow:rgba(0,0,0,0.20);
+  --glass-control-shadow:rgba(0,0,0,0.15);
+  --glass-etched-bg:rgba(255,255,255,0.04); --glass-etched-border:rgba(91,127,191,0.08);
+  --color-danger:#f26b6b;
+  --ask-card-top:#272c3a; --ask-card-bot:#1f232d; --ask-card-bd:rgba(255,255,255,0.09);
+  --ask-card-shadow:0 1px 2px rgba(0,0,0,0.2),0 12px 32px rgba(0,0,0,0.35);
+  --ask-card-highlight:inset 0 1px 0 rgba(255,255,255,0.06);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background:var(--color-bg);color:var(--color-text);
+  min-height:100vh;display:flex;flex-direction:column;align-items:center;
+  padding:32px 16px 64px;font-size:13px;line-height:1.5}
+.page-note{max-width:640px;text-align:center;color:var(--color-text-muted);margin-bottom:16px;font-size:12px}
+.col{width:920px;max-width:100%;display:flex;flex-direction:column;gap:14px;align-items:center}
+.demo-bar{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);display:flex;gap:4px;padding:4px;
+  border-radius:10px;background:var(--glass-bg);z-index:60;
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(1.15);backdrop-filter:blur(var(--glass-blur)) saturate(1.15);
+  border:1px solid var(--sapphire-edge);box-shadow:0 4px 16px rgba(0,0,0,.10)}
+.demo-bar button{border:none;background:transparent;color:var(--color-text-muted);font:inherit;font-size:12px;
+  padding:5px 10px;border-radius:7px;cursor:pointer;white-space:nowrap}
+.demo-bar button:hover{background:var(--glass-control-bg-hover)}
+.demo-bar .themebtn{color:var(--color-frame-text-muted)}
+.step-label{align-self:flex-start;font-size:11px;letter-spacing:1.2px;color:var(--color-text-dim);
+  display:flex;align-items:center;gap:6px}
+.step-label i{font-style:normal;width:16px;height:16px;border-radius:50%;background:rgb(var(--sapphire)/.12);
+  border:1px solid rgb(var(--sapphire)/.25);color:rgb(var(--sapphire));font-size:10px;font-weight:600;
+  display:inline-flex;align-items:center;justify-content:center}
+
+/* ═══ ① 快照卡（ask-card 面，只读） ═══ */
+.chat-card-w{width:560px;max-width:100%}
+.ask-card{background:linear-gradient(180deg,var(--ask-card-top),var(--ask-card-bot));
+  border:1px solid var(--ask-card-bd);border-radius:16px;
+  box-shadow:var(--ask-card-shadow),var(--ask-card-highlight);padding:13px 14px;animation:obIn 200ms ease-out}
+@keyframes obIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.card-h{display:flex;align-items:center;gap:8px;padding-bottom:8px}
+.card-h svg{width:15px;height:15px;stroke:rgb(var(--sapphire));fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.card-h .t{font-size:13px;font-weight:600}
+.card-h .ver{margin-left:auto;font-size:10px;padding:1px 7px;border-radius:6px;
+  border:1px solid var(--color-border);color:var(--status-word);white-space:nowrap}
+.frow{display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--glass-etched-border);align-items:baseline}
+.frow:last-of-type{border-bottom:none}
+.flabel{flex-shrink:0;width:52px;font-size:11.5px;color:var(--color-text-muted)}
+.fval{flex:1;min-width:0;font-size:12.5px}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{font-size:11.5px;padding:2px 8px;border-radius:7px;background:var(--glass-etched-bg);
+  border:1px solid var(--glass-etched-border)}
+.subject-line{font-weight:500}
+.body-preview{margin-top:6px;background:var(--glass-etched-bg);border:1px solid var(--glass-etched-border);
+  border-radius:10px;padding:10px 12px;font-size:12.5px;max-height:110px;overflow-y:auto;white-space:pre-wrap}
+.att{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;background:var(--glass-etched-bg);
+  border:1px solid var(--glass-etched-border);margin-top:4px}
+.att svg{width:13px;height:13px;stroke:rgb(var(--sapphire));fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.att .nm{flex:1;min-width:0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.att .sz{font-size:11px;color:var(--color-frame-text-dim);flex-shrink:0}
+.att .pv{font-size:11px;color:rgb(var(--sapphire));cursor:pointer;border:none;background:none;font-family:inherit}
+.att .pv:hover{text-decoration:underline}
+.btnrow{display:flex;gap:8px;margin-top:12px}
+.btn{font:inherit;border-radius:8px;padding:7px 14px;cursor:pointer;transition:all .15s;
+  border:1px solid var(--glass-control-border);background:var(--glass-control-bg);color:var(--color-frame-text);
+  -webkit-backdrop-filter:blur(var(--glass-control-blur)) saturate(1.2);backdrop-filter:blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:inset 0 1px 0 var(--glass-control-highlight),inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),0 2px 8px var(--glass-control-shadow)}
+.btn:hover{background:var(--glass-control-bg-hover)}
+.btn.primary{background:var(--color-primary);border-color:var(--color-primary);color:#fff;font-weight:500;box-shadow:none}
+.btn.primary:hover{background:var(--color-primary-hover)}
+.btn.ghost{border-color:transparent;background:transparent;color:rgb(var(--sapphire));box-shadow:none;
+  -webkit-backdrop-filter:none;backdrop-filter:none}
+.btn.ghost:hover{background:var(--glass-control-bg-hover)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.block{flex:1}
+.card-foot{font-size:11px;color:var(--color-frame-text-dim);margin-top:9px;display:flex;gap:6px;align-items:flex-start}
+.card-foot svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;flex-shrink:0;margin-top:1px}
+.stale{display:none;align-items:center;gap:6px;font-size:11px;color:var(--status-word);
+  background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.28);border-radius:8px;padding:5px 9px;margin-top:8px}
+.stale.show{display:flex}
+.stale i{width:6px;height:6px;border-radius:50%;background:var(--status-warn-icon);flex-shrink:0}
+
+/* ═══ ② Canvas 编辑态（#canvas-panel 同构：radius 20 + frost-shadow + 玻璃 header 胶囊） ═══ */
+.canvas-panel{position:relative;width:100%;background:var(--glass-bg);
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(1.15);backdrop-filter:blur(var(--glass-blur)) saturate(1.15);
+  border:1px solid var(--glass-border);border-radius:20px;box-shadow:var(--frost-shadow);
+  overflow:hidden;height:560px;display:flex;flex-direction:column;transition:opacity .2s}
+.canvas-panel.closed{opacity:.45}
+.canvas-panel::before{content:'';position:absolute;top:0;left:10%;right:10%;height:1px;
+  background:linear-gradient(90deg,transparent 10%,var(--sapphire-refraction) 50%,transparent 90%);z-index:1;pointer-events:none}
+.canvas-header{position:absolute;top:10px;left:14px;z-index:30;display:flex;align-items:center;gap:8px;
+  width:fit-content;max-width:70%;padding:6px 8px 6px 14px;border-radius:999px;
+  background:var(--glass-control-bg);
+  -webkit-backdrop-filter:blur(var(--glass-control-blur)) saturate(1.2);backdrop-filter:blur(var(--glass-control-blur)) saturate(1.2);
+  border:1px solid var(--glass-control-border);
+  box-shadow:inset 0 1px 0 var(--glass-control-highlight),inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),0 2px 8px var(--glass-control-shadow);
+  font-size:12px;color:var(--color-frame-text)}
+.canvas-header svg{width:13px;height:13px;stroke:rgb(var(--sapphire));fill:none;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.canvas-header .fname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.canvas-header .edit-chip{font-size:10px;padding:1px 7px;border-radius:6px;flex-shrink:0;
+  border:1px solid rgb(var(--sapphire)/.35);color:rgb(var(--sapphire))}
+/* 感知草稿工具胶囊（新面：文件带 x-perception-draft 标记时出现） */
+.canvas-tools{position:absolute;top:10px;right:14px;z-index:30;display:flex;align-items:center;gap:6px;
+  padding:4px 6px 4px 10px;border-radius:999px;background:var(--glass-control-bg);
+  -webkit-backdrop-filter:blur(var(--glass-control-blur)) saturate(1.2);backdrop-filter:blur(var(--glass-control-blur)) saturate(1.2);
+  border:1px solid var(--glass-control-border);
+  box-shadow:inset 0 1px 0 var(--glass-control-highlight),inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),0 2px 8px var(--glass-control-shadow)}
+.canvas-tools .hint-dirty{font-size:11px;color:var(--status-word);display:none;align-items:center;gap:5px}
+.canvas-tools .hint-dirty.show{display:inline-flex}
+.canvas-tools .hint-dirty i{width:6px;height:6px;border-radius:50%;background:var(--status-warn-icon)}
+.canvas-tools .btn{padding:4px 12px;font-size:12px;border-radius:999px}
+.canvas-tools .btn.ghost{padding-left:8px;padding-right:8px}
+.canvas-body{flex:1;overflow:auto;padding:58px 26px 24px}
+.draft-file{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.7;
+  color:var(--color-text);outline:none;white-space:pre-wrap;max-width:640px}
+.draft-file .fm{background:var(--sapphire-tint-10);border-left:2px solid rgb(var(--sapphire)/.35);
+  border-radius:0 8px 8px 0;padding:8px 10px;display:block;margin-bottom:4px}
+.draft-file .k{color:rgb(var(--sapphire));font-weight:600}
+.draft-file:focus{outline:none}
+.canvas-note{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);z-index:29;
+  font-size:11px;color:var(--color-frame-text-dim);background:var(--glass-control-bg);
+  -webkit-backdrop-filter:blur(var(--glass-control-blur));backdrop-filter:blur(var(--glass-control-blur));
+  border:1px solid var(--glass-control-border);border-radius:999px;padding:3px 12px;white-space:nowrap}
+
+/* ═══ ③ 回执 ═══ */
+.receipt{display:none;padding:12px 14px;gap:10px;align-items:flex-start;
+  background:linear-gradient(180deg,var(--ask-card-top),var(--ask-card-bot));
+  border:1px solid var(--ask-card-bd);border-radius:16px;
+  box-shadow:var(--ask-card-shadow),var(--ask-card-highlight)}
+.receipt.show{display:flex}
+.receipt svg{width:17px;height:17px;flex-shrink:0;margin-top:1px;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;fill:none}
+.receipt.ok svg{stroke:var(--status-success-icon)}
+.receipt.bad svg{stroke:var(--status-error-icon)}
+.receipt .rh{font-weight:600;font-size:12.5px}
+.receipt .rd{font-size:12px;color:var(--color-text-muted)}
+.receipt .rd code{font-size:11px;background:var(--glass-etched-bg);border:1px solid var(--glass-etched-border);
+  border-radius:5px;padding:0 5px;font-family:ui-monospace,Menlo,monospace}
+.receipt .abtns{display:flex;gap:8px;margin-top:8px}
+.receipt .btn.sm{padding:4px 10px;font-size:12px;border-radius:7px}
+.divider-note{margin:4px 0;text-align:center;color:var(--color-frame-text-dim);font-size:11.5px;align-self:center}
+</style>
+</head>
+<body>
+
+<div class="page-note">设计样张 r2 · 发送语义（作者裁决）：对话卡 = <b>只读快照</b>供查看 → 要修改在 <b>Canvas 打开</b>（大画布编辑态，全部字段可改）→ 编辑完<b>在 Canvas 里直接发送</b> · REPORT.md §7<br>草稿文件落 ~/.nebflow/perception/drafts/，复用平台 Canvas face（文件卡打开）；「发送」按钮为草稿文件专有工具胶囊</div>
+
+<div class="col">
+
+  <div class="step-label"><i>1</i>对话内 · 只读快照卡（供查看）</div>
+
+  <!-- ═══ ① 快照卡 ═══ -->
+  <div class="chat-card-w">
+    <div class="ask-card" id="snap-card">
+      <div class="card-h">
+        <svg viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+        <span class="t">邮件发送 · 快照</span>
+        <span class="ver">只读 · 待处理</span>
+      </div>
+      <div class="frow"><span class="flabel">发件人</span><span class="fval">Kaiyu &lt;i@kaiyu.me&gt;</span></div>
+      <div class="frow"><span class="flabel">收件人</span>
+        <span class="fval chips"><span class="chip">billing@vendor.com</span></span></div>
+      <div class="frow"><span class="flabel">抄送</span>
+        <span class="fval chips"><span class="chip">finance@kaiyu.me</span></span></div>
+      <div class="frow"><span class="flabel">主题</span><span class="fval subject-line" id="snap-subj">10 月服务对账与发票申请</span></div>
+      <div class="frow"><span class="flabel">附件</span>
+        <span class="fval" style="padding:0">
+          <div class="att">
+            <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+            <span class="nm">2026-10-invoice-draft.pdf</span><span class="sz">214 KB</span>
+            <button class="pv" onclick="alert('样张：Canvas 打开本机文件预览（路径引用，不内嵌不外传）')">预览</button>
+          </div>
+          <div class="att">
+            <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+            <span class="nm">ledger-oct.xlsx</span><span class="sz">38 KB</span>
+            <button class="pv" onclick="alert('样张：Canvas 打开本机文件预览')">预览</button>
+          </div>
+        </span>
+      </div>
+      <div class="frow"><span class="flabel">正文</span>
+        <span class="fval"><div class="body-preview" id="snap-body">王经理您好：
+
+附件是 10 月的服务对账单与发票申请表，请查收。金额与上月一致，如有出入请直接批注回复。
+
+顺祝商祺，
+Kaiyu</div></span>
+      </div>
+      <div class="stale" id="stale-note"><i></i>草稿已在 Canvas 修改 · 本卡快照发送已停用，请在画布中发送最新内容</div>
+      <div class="btnrow">
+        <button class="btn primary block" id="snap-send">照此发送</button>
+        <button class="btn block" id="open-canvas-btn">在 Canvas 打开编辑</button>
+      </div>
+      <div class="card-foot">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
+        <span>快照卡只供查看与快速确认；要修改内容请进 Canvas（画布更大，全部字段可改）。画布一旦有改动，本卡的「照此发送」自动停用，防止旧稿覆盖新稿。也可以直接在对话里回复修改意见让代理改稿后重新出快照。</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="step-label" style="margin-top:8px"><i>2</i>Canvas · 编辑态（大画布，全部字段可改；编辑完直接发送）</div>
+
+  <!-- ═══ ② Canvas 编辑态 ═══ -->
+  <div class="canvas-panel" id="canvas-panel">
+    <div class="canvas-header">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+      <span class="fname">~/.nebflow/perception/drafts/draft-20261025-1032-a81f.md</span>
+      <span class="edit-chip">编辑中</span>
+    </div>
+    <div class="canvas-tools">
+      <span class="hint-dirty" id="dirty-hint"><i></i>有未发送修改</span>
+      <button class="btn ghost" id="canvas-discard">放弃</button>
+      <button class="btn primary" id="canvas-send">发送</button>
+    </div>
+    <div class="canvas-body">
+      <pre class="draft-file" id="draft-file" contenteditable="true" spellcheck="false" aria-label="邮件草稿（可编辑）"><span class="fm">---
+<span class="k">draft:</span> perception-mail-send
+<span class="k">to:</span> billing@vendor.com
+<span class="k">cc:</span> finance@kaiyu.me
+<span class="k">subject:</span> 10 月服务对账与发票申请
+<span class="k">attach:</span> ~/Documents/invoice/2026-10-invoice-draft.pdf
+<span class="k">attach:</span> ~/Documents/ledger/ledger-oct.xlsx
+---</span>王经理您好：
+
+附件是 10 月的服务对账单与发票申请表，请查收。金额与上月一致，如有出入请直接批注回复。
+
+顺祝商祺，
+Kaiyu</pre>
+    </div>
+    <div class="canvas-note">样张：contenteditable 可直接编辑 · 真实产品为平台 Canvas 文件编辑面（与文件卡打开同 face），此工具胶囊仅对感知草稿文件出现</div>
+  </div>
+
+  <div class="step-label" style="margin-top:8px"><i>3</i>发送后 · 对话内回执</div>
+
+  <!-- ═══ ③ 成功回执 ═══ -->
+  <div class="chat-card-w" style="width:560px">
+    <div class="receipt ok" id="receipt-ok">
+      <svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+      <div style="flex:1">
+        <div class="rh">已发送 · 10:32:07</div>
+        <div class="rd">收件人 billing@vendor.com · 附件 2 个 · 内容以发送时刻画布文本为准 <code>Message-ID &lt;a81f@smtp.qq.com&gt;</code></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider-note">── 以下为发送失败回执样张（静态） ──</div>
+
+  <!-- ═══ 失败回执（静态样张） ═══ -->
+  <div class="chat-card-w" style="width:560px">
+    <div class="receipt bad" style="display:flex">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+      <div style="flex:1">
+        <div class="rh">发送失败 · 收件方拒收（SMTP 550）</div>
+        <div class="rd"><code>550 5.1.1 recipient address rejected</code> · 收件地址可能已失效。认证/网络类失败会自动退避重试并在本卡更新状态。</div>
+        <div class="abtns">
+          <button class="btn sm" onclick="alert('样张：原样重发')">重试</button>
+          <button class="btn sm ghost" onclick="alert('样张：放弃并把失败原因告知代理，由代理决定下一步')">放弃并告知代理</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- 演示条 -->
+<div class="demo-bar" role="toolbar" aria-label="样张演示">
+  <button id="demo-stale">模拟：画布已有修改</button>
+  <button id="demo-reset">复位</button>
+  <button class="themebtn" id="theme-btn" title="切换亮暗主题">◐ 主题</button>
+</div>
+
+<script>
+/* 主题：随系统置位 + 手动切换（html[data-theme=dark]，同官网机制） */
+const rootEl=document.documentElement;
+function syncTheme(){rootEl.dataset.theme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}
+syncTheme();matchMedia('(prefers-color-scheme: dark)').addEventListener('change',syncTheme);
+document.getElementById('theme-btn').addEventListener('click',()=>{
+  rootEl.dataset.theme=rootEl.dataset.theme==='dark'?'light':'dark';
+});
+
+/* 画布编辑 → dirty 联动：快照卡「照此发送」停用 + 画布工具胶囊提示 */
+const draft=document.getElementById('draft-file');
+const snapSend=document.getElementById('snap-send');
+const dirtyHint=document.getElementById('dirty-hint');
+const draftInitial=draft.innerHTML;
+let dirty=false;
+function markDirty(){
+  if(dirty)return;dirty=true;
+  dirtyHint.classList.add('show');
+  snapSend.disabled=true;
+  document.getElementById('stale-note').classList.add('show');
+}
+draft.addEventListener('input',markDirty);
+
+/* 在 Canvas 打开（真实产品 = openWorkspaceItem 打开草稿文件；样张滚动定位 + 高亮一闪） */
+document.getElementById('open-canvas-btn').addEventListener('click',()=>{
+  const cp=document.getElementById('canvas-panel');
+  cp.scrollIntoView({behavior:'smooth',block:'center'});
+  cp.style.transition='box-shadow .2s';cp.style.boxShadow='0 0 0 2px rgb(var(--sapphire)/.45),var(--frost-shadow)';
+  setTimeout(()=>{cp.style.boxShadow='';},900);
+  draft.focus();
+});
+
+/* 快照卡「照此发送」→ 成功回执（发送内容=快照原文） */
+snapSend.addEventListener('click',()=>{
+  snapSend.textContent='已按快照发送';
+  showReceipt();
+});
+
+/* Canvas「发送」→ 成功回执（发送内容=画布当前文本，含未保存修改） */
+document.getElementById('canvas-send').addEventListener('click',()=>{
+  showReceipt();
+});
+document.getElementById('canvas-discard').addEventListener('click',()=>{
+  document.getElementById('canvas-panel').classList.add('closed');
+  alert('样张：放弃草稿 → 画布关闭，快照卡撤回，agent 收到「用户放弃发送」通知');
+});
+function showReceipt(){
+  const r=document.getElementById('receipt-ok');
+  r.classList.add('show');
+  r.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+/* 演示条 */
+document.getElementById('demo-stale').addEventListener('click',()=>{
+  markDirty();
+  document.getElementById('canvas-panel').scrollIntoView({behavior:'smooth',block:'center'});
+});
+document.getElementById('demo-reset').addEventListener('click',()=>{
+  dirty=false;
+  dirtyHint.classList.remove('show');
+  snapSend.disabled=false;snapSend.textContent='照此发送';
+  document.getElementById('stale-note').classList.remove('show');
+  document.getElementById('receipt-ok').classList.remove('show');
+  document.getElementById('canvas-panel').classList.remove('closed');
+  draft.innerHTML=draftInitial;
+});
+</script>
+</body>
+</html>

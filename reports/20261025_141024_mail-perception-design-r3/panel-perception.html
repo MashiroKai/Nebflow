@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>感知面板 · 极简条目化 · 样张（设计批 r3 2026-10-25）</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════════
+   STAND 设计语言对齐（r2 REPORT §16 token 表沿用，单源 sapphire.css + base.css）
+   r3 修订（作者四裁决）：
+   裁决1 配置极简 —— 配置卡只剩「邮箱地址 + 授权码」两问，服务器自动识别，
+        其余藏进「高级」折叠（默认全收）；LLM 数据面 / 账单日结 / 验证码窗口
+        零 UI（已裁决锁定值，不出现在任何面板）。
+   裁决2 过程态全隐 —— 面板只剩条目（邮件级）：无统计格、无事件日志、
+        无 IDLE 重续倒计时、无重试倒计时、无头部状态词；状态点只在异常时出现。
+   裁决3 零统计 —— 删净计数/用量展示（含页脚「N/M 已接入」）。
+   ═══════════════════════════════════════════════════════════════════════ */
+:root{
+  /* 面（base.css） */
+  --color-bg:#f5f6f8; --color-surface:#fff;
+  --color-text:#1b1e26; --color-text-muted:#8b8e96; --color-text-dim:#6b6e76;
+  --color-frame-text:#3a3d45; --color-frame-text-bright:#1b1e26;
+  --color-frame-text-muted:#717379; --color-frame-text-dim:#aaacb3;
+  --color-border:#ddd;
+  /* 玻璃（sapphire.css） */
+  --glass-bg:rgba(255,255,255,0.55); --glass-blur:24px; --glass-border:rgba(255,255,255,0.35);
+  --sapphire:91 127 191;
+  --sapphire-edge:rgba(91,127,191,0.08);
+  --sapphire-refraction:rgba(255,255,255,0.45);
+  --sapphire-tint-10:rgba(91,127,191,0.10);
+  --frost-shadow:inset 0 1px 0 0 rgba(255,255,255,0.25),0px 2px 8px rgba(0,0,0,0.04),0px 8px 24px rgba(0,0,0,0.06);
+  /* 玻璃控件 */
+  --glass-control-bg:rgba(255,255,255,0.45); --glass-control-bg-hover:rgba(255,255,255,0.65);
+  --glass-control-border:rgba(255,255,255,0.40); --glass-control-highlight:rgba(255,255,255,0.50);
+  --glass-control-underedge:rgba(0,0,0,0.08); --glass-control-glow:rgba(0,0,0,0.06);
+  --glass-control-shadow:rgba(0,0,0,0.04); --glass-control-blur:10px;
+  --glass-etched-bg:rgba(0,0,0,0.025); --glass-etched-border:rgba(91,127,191,0.10);
+  --glass-etched-border-focus:rgba(91,127,191,0.35);
+  /* 品牌 / 语义（语义色只上载体） */
+  --color-primary:#07c160; --color-primary-hover:#06ad56;
+  --color-error:#f44336; --color-success:#4caf50; --color-warning:#ff9800;
+  --status-error-icon:#d64545; --status-warn-icon:#b45309; --status-success-icon:#2e7d32;
+  --status-word:var(--color-frame-text-muted);
+  --color-danger:#c0392b;
+  /* daemon 面板阴影栈（daemons.js #daemon-panel 逐字） */
+  --panel-shadow:inset 0 -1px 0 0 rgba(91,127,191,0.025),inset 1px 0 0 0 rgba(91,127,191,0.02),
+    inset -1px 0 0 0 rgba(91,127,191,0.02),0px 0px 0px 1px rgba(0,0,0,0.03),
+    0px 4px 16px rgba(0,0,0,0.05),0px 8px 36px rgba(0,0,0,0.06);
+}
+html[data-theme="dark"]{
+  --color-bg:#13161c; --color-surface:#1c1f27;
+  --color-text:#e8eaed; --color-text-muted:#7b7e88; --color-text-dim:#9ba0aa;
+  --color-frame-text:#c8cad0; --color-frame-text-bright:#e8eaed;
+  --color-frame-text-muted:#81838a; --color-frame-text-dim:#7b7e88;
+  --color-border:#2a2d35;
+  --glass-bg:rgba(24,28,38,0.68); --glass-border:rgba(255,255,255,0.06);
+  --sapphire-edge:rgba(91,127,191,0.06);
+  --sapphire-refraction:rgba(91,127,191,0.06);
+  --frost-shadow:inset 0 1px 0 0 rgba(255,255,255,0.04),0px 2px 8px rgba(0,0,0,0.20),0px 8px 24px rgba(0,0,0,0.35);
+  --glass-control-bg:rgba(255,255,255,0.05); --glass-control-bg-hover:rgba(255,255,255,0.10);
+  --glass-control-border:rgba(255,255,255,0.08); --glass-control-highlight:rgba(255,255,255,0.08);
+  --glass-control-underedge:rgba(0,0,0,0.25); --glass-control-glow:rgba(0,0,0,0.20);
+  --glass-control-shadow:rgba(0,0,0,0.15);
+  --glass-etched-bg:rgba(255,255,255,0.04); --glass-etched-border:rgba(91,127,191,0.08);
+  --glass-etched-border-focus:rgba(91,127,191,0.30);
+  --color-danger:#f26b6b;
+  --panel-shadow:inset 0 -1px 0 0 rgba(91,127,191,0.035),inset 1px 0 0 0 rgba(91,127,191,0.025),
+    inset -1px 0 0 0 rgba(91,127,191,0.025),0px 0px 0px 1px rgba(255,255,255,0.035),
+    0px 4px 16px rgba(0,0,0,0.22),0px 8px 36px rgba(0,0,0,0.35);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background:var(--color-bg);color:var(--color-text);
+  min-height:100vh;display:flex;flex-direction:column;align-items:center;
+  padding:32px 16px 64px;font-size:13px;line-height:1.5;
+}
+.page-note{max-width:400px;text-align:center;color:var(--color-text-muted);margin-bottom:16px;font-size:12px}
+.demo-bar{display:flex;gap:4px;padding:4px;border-radius:10px;background:var(--glass-bg);
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(1.15);backdrop-filter:blur(var(--glass-blur)) saturate(1.15);
+  border:1px solid var(--sapphire-edge);margin-bottom:20px;flex-wrap:wrap;justify-content:center}
+.demo-bar button{border:none;background:transparent;color:var(--color-text-muted);font:inherit;
+  padding:6px 14px;border-radius:7px;cursor:pointer;transition:all .15s}
+.demo-bar button:hover{background:var(--glass-control-bg-hover)}
+.demo-bar button.on{background:var(--color-primary);color:#fff;font-weight:500}
+.demo-bar .themebtn{color:var(--color-frame-text-muted);font-size:12px}
+
+/* ═══ 面板本体（#daemon-panel 逐字同构：400px 玻璃 + 折射线 + 阴影栈） ═══ */
+#perception-panel{
+  width:400px;max-width:100%;background:var(--glass-bg);
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(1.15);backdrop-filter:blur(var(--glass-blur)) saturate(1.15);
+  border-radius:16px;border:1px solid var(--sapphire-edge);box-shadow:var(--panel-shadow);
+  position:relative;overflow:hidden;
+}
+#perception-panel::before{content:'';position:absolute;top:0;left:10%;right:10%;height:1px;
+  background:linear-gradient(90deg,transparent 10%,var(--sapphire-refraction) 50%,transparent 90%);pointer-events:none;z-index:1}
+.pp-header{display:flex;align-items:center;gap:8px;padding:13px 14px 7px}
+.pp-title{font-size:13px;font-weight:600;letter-spacing:-0.02em;color:var(--color-text)}
+/* r3：头部无状态词；状态点仅在异常时出现 */
+.pp-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;visibility:hidden}
+.pp-dot.show{visibility:visible;background:var(--status-error-icon)}
+.pp-header-right{margin-left:auto;display:flex;gap:4px;align-items:center}
+.pp-icon-btn{width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:6px;
+  border:1px solid transparent;background:transparent;color:var(--color-text-muted);cursor:pointer;transition:all .15s;opacity:.7}
+.pp-icon-btn:hover{opacity:1;background:var(--glass-control-bg-hover);
+  -webkit-backdrop-filter:blur(var(--glass-control-blur)) saturate(1.2);backdrop-filter:blur(var(--glass-control-blur)) saturate(1.2);
+  border-color:var(--glass-control-border);color:var(--color-frame-text)}
+.pp-icon-btn svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.pp-body{padding:2px 10px 10px}
+
+/* ═══ 条目列表（r3：只剩条目本身；无统计/日志/工程态） ═══ */
+.entry{border:1px solid var(--glass-etched-border);border-radius:12px;background:var(--glass-etched-bg);margin-bottom:6px;overflow:hidden}
+.entry-head{display:flex;align-items:center;gap:10px;width:100%;padding:10px 12px;border:none;background:transparent;
+  font:inherit;color:inherit;cursor:pointer;text-align:left;transition:background .15s}
+.entry-head:hover{background:var(--glass-control-bg-hover)}
+.e-ic{width:30px;height:30px;flex-shrink:0;border-radius:9px;display:flex;align-items:center;justify-content:center;
+  background:rgb(var(--sapphire)/.12);border:1px solid rgb(var(--sapphire)/.18)}
+.e-ic svg{width:16px;height:16px;stroke:rgb(var(--sapphire));fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.entry.reserved .e-ic{background:var(--glass-etched-bg);border-color:var(--glass-etched-border)}
+.entry.reserved .e-ic svg{stroke:var(--color-frame-text-dim)}
+.e-main{flex:1;min-width:0}
+.e-name{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:500;color:var(--color-text)}
+.e-sum{display:block;font-size:11px;color:var(--color-text-muted);margin-top:1px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.e-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:transparent}
+.e-dot.bad{background:var(--status-error-icon)} .e-dot.warn{background:var(--status-warn-icon)}
+.e-chev{width:14px;height:14px;flex-shrink:0;stroke:var(--color-frame-text-muted);fill:none;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round;transition:transform .18s}
+.entry.open .e-chev{transform:rotate(90deg)}
+.e-detail{display:none;border-top:1px solid var(--glass-etched-border);padding:10px 12px 12px}
+.entry.open .e-detail{display:block;animation:eIn .22s cubic-bezier(.16,1,.3,1)}
+@keyframes eIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.entry.reserved{cursor:default}
+.entry.reserved .entry-head{cursor:default}
+.entry.reserved .entry-head:hover{background:transparent}
+.reserved-tag{font-size:10px;padding:1px 7px;border-radius:6px;border:1px dashed var(--color-border);
+  color:var(--status-word);white-space:nowrap}
+/* r3 页脚：零计数，只留隐私一句 */
+.pp-footer{border-top:1px solid var(--glass-etched-border);padding:9px 14px;color:var(--color-frame-text-dim);font-size:11px}
+
+/* ═══ 展开区通用控件 ═══ */
+.btn{font:inherit;border-radius:8px;padding:7px 14px;cursor:pointer;transition:all .15s;
+  border:1px solid var(--glass-control-border);background:var(--glass-control-bg);color:var(--color-frame-text);
+  -webkit-backdrop-filter:blur(var(--glass-control-blur)) saturate(1.2);backdrop-filter:blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:inset 0 1px 0 var(--glass-control-highlight),inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),0 2px 8px var(--glass-control-shadow)}
+.btn:hover{background:var(--glass-control-bg-hover)}
+.btn.primary{background:var(--color-primary);border-color:var(--color-primary);color:#fff;font-weight:500;
+  box-shadow:none}
+.btn.primary:hover{background:var(--color-primary-hover)}
+.btn.danger-line{color:var(--color-danger);border-color:rgba(192,57,43,.4);box-shadow:none;
+  -webkit-backdrop-filter:none;backdrop-filter:none;background:transparent}
+html[data-theme="dark"] .btn.danger-line{color:#f26b6b;border-color:rgba(242,107,107,.35)}
+.btn.danger-line:hover{background:rgba(214,69,69,.08)}
+.btn.ghost{border-color:transparent;background:transparent;color:rgb(var(--sapphire));box-shadow:none;
+  -webkit-backdrop-filter:none;backdrop-filter:none}
+.btn.ghost:hover{background:var(--glass-control-bg-hover)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+
+/* ── 未配置（展开区 hero；r3：两步直达——点开即配，不再走提示词复制） ── */
+.setup-hero{display:flex;flex-direction:column;align-items:center;text-align:center;padding:18px 8px 14px}
+.setup-hero svg{width:36px;height:36px;stroke:rgb(var(--sapphire));fill:none;stroke-width:1.6;
+  stroke-linecap:round;stroke-linejoin:round;opacity:.85;margin-bottom:10px}
+.setup-h{font-size:13.5px;font-weight:600;margin-bottom:5px}
+.setup-p{color:var(--color-text-muted);font-size:12px;max-width:290px;margin-bottom:14px}
+
+/* ── 运行中（展开区；r3：只剩身份行 + 启停 + 配置） ── */
+.mailrow{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;
+  background:var(--glass-etched-bg);border:1px solid var(--glass-etched-border)}
+.mailrow .addr{font-size:12.5px;font-weight:500}
+.mailrow .srv{font-size:11px;color:var(--color-text-muted)}
+.quiet-line{font-size:11.5px;color:var(--color-text-muted);padding:2px 2px 0;display:flex;gap:6px;align-items:flex-start}
+.quiet-line svg{width:13px;height:13px;stroke:var(--status-success-icon);fill:none;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;margin-top:1.5px}
+.toggle{position:relative;width:38px;height:22px;border-radius:11px;background:var(--glass-etched-bg);
+  border:1px solid var(--color-border);cursor:pointer;transition:all .18s;flex-shrink:0;padding:0}
+.toggle::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
+  background:var(--color-surface);box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .18s}
+.toggle.on{background:var(--color-primary);border-color:var(--color-primary)}
+.toggle.on::after{transform:translateX(16px)}
+.paused-banner{display:none;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;margin-bottom:8px;
+  background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.28);font-size:12px;color:var(--color-text)}
+.paused-banner svg{width:14px;height:14px;stroke:var(--status-warn-icon);fill:none;stroke-width:2;
+  stroke-linecap:round;flex-shrink:0}
+.paused-banner.show{display:flex}
+.actions{display:flex;gap:8px;margin-top:10px}
+.actions .btn{flex:1}
+
+/* ── 异常（展开区 banner；r3：无人读的工程数字全删，只留人话 + 动作） ── */
+.alert{display:flex;gap:10px;padding:11px 12px;border-radius:12px;margin-bottom:10px}
+.alert svg{width:17px;height:17px;flex-shrink:0;margin-top:1px;stroke:currentColor;fill:none;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round}
+.alert.bad{background:rgba(214,69,69,.07);border:1px solid rgba(214,69,69,.30)}
+.alert.bad>svg{color:var(--status-error-icon)}
+.alert.warnbox{background:rgba(255,152,0,.07);border:1px solid rgba(255,152,0,.30)}
+.alert.warnbox>svg{color:var(--status-warn-icon)}
+.alert .ah{font-weight:600;font-size:12.5px;color:var(--color-text);margin-bottom:2px}
+.alert .ad{font-size:11.5px;color:var(--color-text-muted)}
+.alert .abtns{display:flex;gap:8px;margin-top:9px}
+
+/* ═══ 配置卡片（r3：两问即成——邮箱地址 + 授权码；其余进「高级」折叠） ═══ */
+.overlay{position:fixed;inset:0;background:rgba(10,14,22,.35);display:none;align-items:center;justify-content:center;
+  z-index:50;padding:20px}
+.overlay.open{display:flex}
+.cfg{width:400px;max-width:100%;max-height:86vh;overflow-y:auto;background:var(--glass-bg);
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(1.15);backdrop-filter:blur(var(--glass-blur)) saturate(1.15);
+  border-radius:16px;border:1px solid var(--sapphire-edge);box-shadow:var(--frost-shadow),0 12px 40px rgba(0,0,0,.18);
+  position:relative}
+.cfg::before{content:'';position:absolute;top:0;left:10%;right:10%;height:1px;
+  background:linear-gradient(90deg,transparent 10%,var(--sapphire-refraction) 50%,transparent 90%)}
+.cfg-h{display:flex;align-items:center;padding:14px 16px 4px;font-size:13.5px;font-weight:600}
+.cfg-sub{padding:0 16px;font-size:11.5px;color:var(--color-text-muted)}
+.cfg-b{padding:10px 16px 4px}
+.field{margin-bottom:10px}
+.field label{display:block;font-size:12px;color:var(--color-text);margin-bottom:4px;font-weight:500}
+.field input,.field textarea{width:100%;font:inherit;font-size:12.5px;color:var(--color-text);
+  background:var(--glass-etched-bg);border:1px solid var(--glass-etched-border);border-radius:8px;padding:8px 10px;
+  outline:none;transition:border-color .15s}
+.field input:focus,.field textarea:focus{border-color:var(--glass-etched-border-focus)}
+.field textarea{resize:vertical;min-height:54px}
+.field .hint{font-size:11px;color:var(--color-frame-text-dim);margin-top:4px;line-height:1.45}
+.mask-note{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--status-success-icon);margin-top:4px}
+.mask-note svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.auto-note{display:flex;align-items:flex-start;gap:7px;font-size:11.5px;color:var(--color-text-muted);
+  background:var(--glass-etched-bg);border:1px solid var(--glass-etched-border);border-radius:10px;
+  padding:8px 10px;margin:2px 0 10px}
+.auto-note svg{width:13px;height:13px;stroke:rgb(var(--sapphire));fill:none;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;margin-top:1.5px}
+.adv{margin:2px 0 4px;border-top:1px solid var(--glass-etched-border);padding-top:8px}
+.adv summary{font-size:11.5px;color:var(--color-text-muted);cursor:pointer;list-style:none;display:flex;
+  align-items:center;gap:5px;padding:3px 0;user-select:none}
+.adv summary::-webkit-details-marker{display:none}
+.adv summary svg{width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:2.2;
+  stroke-linecap:round;stroke-linejoin:round;transition:transform .15s}
+.adv[open] summary svg{transform:rotate(90deg)}
+.adv[open] summary{margin-bottom:8px}
+.adv-body .field-grid{display:grid;grid-template-columns:1fr 84px;gap:8px;margin-bottom:8px}
+.cfg-foot{display:flex;gap:8px;padding:12px 16px 16px;border-top:1px solid var(--glass-etched-border);margin-top:12px}
+.cfg-foot .spacer{flex:1}
+.test-result{font-size:11.5px;margin-top:8px;min-height:16px;color:var(--color-text-muted);padding:0 16px}
+.test-result.ok{color:var(--status-success-icon)}
+.field-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+</style>
+</head>
+<body>
+
+<div class="page-note">设计样张 r3 · 感知面板 = 极简条目列表（裁决 1-3）：面板只剩条目，无统计/无事件日志/无运行态；状态点只在异常时出现 · 点击条目展开 · 配置卡两问即成</div>
+
+<div class="demo-bar" role="tablist" aria-label="邮件条目状态样张切换">
+  <button data-st="setup">未配置</button>
+  <button data-st="run" class="on">已连接</button>
+  <button data-st="err">异常</button>
+  <button class="themebtn" id="theme-btn" title="切换亮暗主题">◐ 主题</button>
+</div>
+
+<div id="perception-panel">
+  <div class="pp-header">
+    <span class="pp-dot" id="pp-dot"></span>
+    <span class="pp-title">感知</span>
+    <div class="pp-header-right">
+      <button class="pp-icon-btn" title="关闭" onclick="alert('样张：关闭弹层')">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="pp-body">
+    <!-- ═══ 条目一：邮件（首个内容源） ═══ -->
+    <div class="entry open" id="entry-mail">
+      <button class="entry-head" id="entry-mail-head" aria-expanded="true" aria-controls="e-mail-detail">
+        <span class="e-ic" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 8l9 6 9-6"/></svg>
+        </span>
+        <span class="e-main">
+          <span class="e-name">邮件</span>
+          <span class="e-sum" id="e-mail-sum">i@kaiyu.me · 已连接</span>
+        </span>
+        <span class="e-dot" id="e-mail-dot"></span>
+        <svg class="e-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+
+      <div class="e-detail" id="e-mail-detail">
+        <!-- 展开态一：未配置 -->
+        <div class="e-view" id="ev-setup" style="display:none">
+          <div class="setup-hero">
+            <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 8l9 6 9-6"/></svg>
+            <div class="setup-h">连接你的邮箱</div>
+            <div class="setup-p">两步即成：填邮箱地址和授权码。之后新邮件自动推送——垃圾先滤掉，重要的事交给代理，验证码到点即填。</div>
+            <button class="btn primary" onclick="openCfg()">连接邮箱</button>
+          </div>
+        </div>
+
+        <!-- 展开态二：已连接（r3：身份行 + 启停 + 配置，别无他物） -->
+        <div class="e-view" id="ev-run">
+          <div class="paused-banner" id="paused-banner">
+            <svg viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></svg>
+            已暂停 · 不收新邮件，恢复后自动补上
+          </div>
+          <div class="mailrow">
+            <div style="flex:1;min-width:0">
+              <div class="addr">i@kaiyu.me</div>
+              <div class="srv">QQ 邮箱</div>
+            </div>
+            <button class="toggle on" id="pp-toggle" title="收信开/停" aria-label="收信开/停"></button>
+          </div>
+          <div style="height:8px"></div>
+          <div class="quiet-line">
+            <svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+            <span>新邮件自动交给代理处理，广告与垃圾已被过滤。</span>
+          </div>
+          <div class="actions">
+            <button class="btn" onclick="openCfg()">配置</button>
+          </div>
+        </div>
+
+        <!-- 展开态三：异常（r3：只说人话 + 给动作，无倒计时/无重试次数） -->
+        <div class="e-view" id="ev-err" style="display:none">
+          <div class="subtabs" style="display:none"></div>
+          <div id="err-auth">
+            <div class="alert bad">
+              <svg viewBox="0 0 24 24"><path d="M12 3l10 18H2L12 3zM12 10v5M12 18h.01"/></svg>
+              <div style="flex:1;min-width:0">
+                <div class="ah">邮箱连接已失效</div>
+                <div class="ad">授权码可能已被重置。重新填一次即可恢复；期间不会丢信。</div>
+                <div class="abtns">
+                  <button class="btn sm primary" onclick="openCfg(true)">重新连接</button>
+                  <button class="btn sm danger-line" onclick="alert('样张：删除此邮箱 → 本机残留一并清理')">删除此邮箱</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="err-conn" style="display:none">
+            <div class="alert warnbox">
+              <svg viewBox="0 0 24 24"><path d="M2 9c5-5 15-5 20 0M5 13c4-4 10-4 14 0M8.5 17c2-2 5-2 7 0M12 20.5h.01"/></svg>
+              <div style="flex:1;min-width:0">
+                <div class="ah">网络不稳定</div>
+                <div class="ad">正在自动恢复，期间新邮件先存在本机，恢复后即刻补上。</div>
+                <div class="abtns">
+                  <button class="btn sm" onclick="alert('样张：立即重试')">立即重试</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="actions" style="margin-top:2px">
+            <button class="btn" onclick="openCfg()">配置</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ 预留条目位（未来内容源；本批只留位） ═══ -->
+    <div class="entry reserved">
+      <div class="entry-head" role="presentation" title="预留条目位 · 未来内容源">
+        <span class="e-ic" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M3 7h9M3 12h13M3 17h7"/><circle cx="19" cy="7" r="2"/></svg>
+        </span>
+        <span class="e-main">
+          <span class="e-name">文件</span>
+          <span class="e-sum">目录变动提醒代理</span>
+        </span>
+        <span class="reserved-tag">规划中</span>
+      </div>
+    </div>
+    <div class="entry reserved">
+      <div class="entry-head" role="presentation" title="预留条目位 · 未来内容源">
+        <span class="e-ic" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>
+        </span>
+        <span class="e-main">
+          <span class="e-name">日历</span>
+          <span class="e-sum">日程临近提醒</span>
+        </span>
+        <span class="reserved-tag">规划中</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="pp-footer">本地处理 · 邮件全文不出本机</div>
+</div>
+
+<div class="page-note" style="margin-top:20px">
+  样张说明：页签切换「邮件」条目三种展开态（实际产品由状态机驱动）。异常时头部才出现状态点；
+  「连接邮箱 / 配置」打开下方两问配置卡。
+</div>
+
+<!-- ═══ 配置卡片（r3 裁决1：只问必须问的——邮箱地址 + 授权码；其余全收） ═══ -->
+<div class="overlay" id="cfg-overlay">
+  <div class="cfg" role="dialog" aria-label="连接邮箱">
+    <div class="cfg-h">连接邮箱 <span style="margin-left:auto"><button class="pp-icon-btn" onclick="closeCfg()" aria-label="关闭">
+      <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span></div>
+    <div class="cfg-sub">两步：填地址、填授权码。</div>
+    <div class="cfg-b">
+      <div class="field">
+        <label>邮箱地址</label>
+        <input type="email" value="i@kaiyu.me" placeholder="name@example.com">
+      </div>
+      <div class="field">
+        <label>授权码</label>
+        <input type="password" id="auth-input" placeholder="在邮箱设置里生成的授权码">
+        <div class="hint">不是邮箱登录密码。QQ / 163 等在「设置 → 账户 → IMAP/SMTP 服务」里生成。</div>
+        <div class="mask-note" id="auth-stored" style="display:none">
+          <svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+          已存进本机钥匙串 · 任何对话与日志都不显示它
+        </div>
+      </div>
+      <div class="auto-note">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l2.5 2.5"/></svg>
+        <span>服务器、端口与加密方式按邮箱域自动识别（QQ / 163 / Gmail / Outlook 等），无需填写。</span>
+      </div>
+
+      <!-- 高级折叠：默认全收（裁决 1：藏进「高级」且默认不展开） -->
+      <details class="adv" id="adv">
+        <summary>
+          <svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+          高级选项
+        </summary>
+        <div class="adv-body">
+          <div class="field-grid-2">
+            <div class="field"><label style="font-size:11.5px;color:var(--color-text-muted);font-weight:400">收信服务器</label><input value="imap.qq.com"></div>
+            <div class="field"><label style="font-size:11.5px;color:var(--color-text-muted);font-weight:400">端口</label><input value="993"></div>
+          </div>
+          <div class="field-grid-2">
+            <div class="field"><label style="font-size:11.5px;color:var(--color-text-muted);font-weight:400">发信服务器</label><input value="smtp.qq.com"></div>
+            <div class="field"><label style="font-size:11.5px;color:var(--color-text-muted);font-weight:400">端口</label><input value="465"></div>
+          </div>
+          <div class="field"><label style="font-size:11.5px;color:var(--color-text-muted);font-weight:400">发件显示名</label><input value="Kaiyu" placeholder="留空则用邮箱地址"></div>
+          <div class="field">
+            <label style="font-size:11.5px;color:var(--color-text-muted);font-weight:400">信任的发件人（每行一个）</label>
+            <textarea placeholder="例如：
+pay.weixin.qq.com
+boss@company.com">pay.weixin.qq.com
+bill.alipay.com</textarea>
+            <div class="hint">这些人来的信不做判断，直接交给代理。</div>
+          </div>
+        </div>
+      </details>
+    </div>
+    <div class="test-result" id="test-result"></div>
+    <div class="cfg-foot">
+      <button class="btn" onclick="closeCfg()">取消</button>
+      <span class="spacer"></span>
+      <button class="btn primary" id="connect-btn">连接</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* 主题：随系统置位 + 手动切换（html[data-theme=dark] 机制，同官网） */
+const root=document.documentElement;
+function syncTheme(){root.dataset.theme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}
+syncTheme();matchMedia('(prefers-color-scheme: dark)').addEventListener('change',syncTheme);
+document.getElementById('theme-btn').addEventListener('click',()=>{
+  root.dataset.theme=root.dataset.theme==='dark'?'light':'dark';
+});
+
+/* ── 邮件条目三态样张切换 ── */
+const SCEN={
+  setup:{dot:false,sum:'未配置 · 点击开始',head:false},
+  run:{dot:false,sum:'i@kaiyu.me · 已连接',head:false},
+  err:{dot:'bad',sum:'i@kaiyu.me · 连接已失效',head:true}
+};
+let scen='run';
+function applyScen(s){
+  scen=s;
+  document.querySelectorAll('.demo-bar button[data-st]').forEach(b=>b.classList.toggle('on',b.dataset.st===s));
+  const c=SCEN[s];
+  document.getElementById('pp-dot').className='pp-dot'+(c.head?' show':'');
+  document.getElementById('e-mail-sum').textContent=c.sum;
+  document.getElementById('e-mail-dot').className='e-dot'+(c.dot?' '+c.dot:'');
+  document.getElementById('ev-setup').style.display=s==='setup'?'':'none';
+  document.getElementById('ev-run').style.display=s==='run'?'':'none';
+  document.getElementById('ev-err').style.display=s==='err'?'':'none';
+  document.getElementById('entry-mail').classList.add('open');
+  document.getElementById('entry-mail-head').setAttribute('aria-expanded','true');
+}
+document.querySelectorAll('.demo-bar button[data-st]').forEach(b=>
+  b.addEventListener('click',()=>applyScen(b.dataset.st)));
+
+/* 异常态内部样张切换（授权失效 / 网络不稳） */
+function showErr(which){
+  document.getElementById('err-auth').style.display=which==='auth'?'':'none';
+  document.getElementById('err-conn').style.display=which==='conn'?'':'none';
+  if(scen==='err'){
+    const c=which==='auth'
+      ?{dot:'bad',sum:'i@kaiyu.me · 连接已失效',head:true}
+      :{dot:'warn',sum:'i@kaiyu.me · 网络不稳定，自动恢复中',head:true};
+    document.getElementById('e-mail-sum').textContent=c.sum;
+    document.getElementById('e-mail-dot').className='e-dot'+(c.dot?' '+c.dot:'');
+  }
+}
+document.getElementById('err-auth').querySelector('.btn.sm').addEventListener('click',()=>openCfg(true));
+/* 双击「网络不稳定」标题区域切换两种异常（样张导航用） */
+document.querySelector('#err-conn .ah').addEventListener('dblclick',()=>showErr('auth'));
+document.querySelector('#err-auth .ah').addEventListener('dblclick',()=>showErr('conn'));
+
+/* ── 条目手风琴 ── */
+document.getElementById('entry-mail-head').addEventListener('click',()=>{
+  const en=document.getElementById('entry-mail');
+  en.classList.toggle('open');
+  document.getElementById('entry-mail-head').setAttribute('aria-expanded',en.classList.contains('open'));
+});
+
+/* ── toggle 启停（仅横幅与摘要行联动，无其他工程反馈） ── */
+document.getElementById('pp-toggle').addEventListener('click',function(){
+  this.classList.toggle('on');
+  const off=!this.classList.contains('on');
+  document.getElementById('paused-banner').classList.toggle('show',off);
+  document.getElementById('e-mail-sum').textContent=off?'i@kaiyu.me · 已暂停':'i@kaiyu.me · 已连接';
+});
+
+/* ── 配置卡片 ── */
+function openCfg(focusAuth){
+  document.getElementById('cfg-overlay').classList.add('open');
+  if(focusAuth){const f=document.getElementById('auth-input');if(f)f.focus();}
+}
+function closeCfg(){document.getElementById('cfg-overlay').classList.remove('open');}
+document.getElementById('cfg-overlay').addEventListener('click',e=>{if(e.target===e.currentTarget)closeCfg();});
+
+/* 连接 = 测试 + 保存一体（两步纪律的最后一步） */
+document.getElementById('connect-btn').addEventListener('click',function(){
+  const r=document.getElementById('test-result');
+  r.className='test-result';r.textContent='正在连接…';
+  this.disabled=true;
+  setTimeout(()=>{
+    r.textContent='已连接 · 邮件推送已开启';r.className='test-result ok';
+    document.getElementById('auth-stored').style.display='flex';
+    setTimeout(()=>{closeCfg();applyScen('run');this.disabled=false;r.textContent='';},900);
+  },1300);
+});
+applyScen('run');
+</script>
+</body>
+</html>
