@@ -284,7 +284,7 @@ object DetachedApply:
          |</Task>
          |""".stripMargin
     IO.blocking {
-      os.write.over(xmlPath, xml.getBytes(java.nio.charset.StandardCharsets.UTF_16), createDirs = true)
+      os.write.over(xmlPath, xml.getBytes(java.nio.charset.StandardCharsets.UTF_16), createFolders = true)
     }.attempt.flatMap {
       case Left(e) => IO.pure(Left(s"apply task xml write failed: ${Option(e.getMessage).getOrElse(e.toString)}"))
       case Right(_) =>
