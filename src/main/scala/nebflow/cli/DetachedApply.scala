@@ -378,7 +378,7 @@ object DetachedApply:
 |export STAND_GATEWAY_PORT='${plan.port}'
 |export NEBFLOW_GATEWAY_PORT='${plan.port}'
 |
-|log() { printf '%s apply: %s\n' "$$(date '+%Y-%m-%d %H:%M:%S')" "$$*" >> "$$LOG"; }
+|log() { printf '%s apply: %s\\n' "$$(date '+%Y-%m-%d %H:%M:%S')" "$$*" >> "$$LOG"; }
 |set_phase() {
 |  __p="$${1:-}"; __c="$${2:-}"
 |  __tmp="$$STATE.tmp.$$"
@@ -386,7 +386,7 @@ object DetachedApply:
 |    [ -n "$$TARGET_VERSION" ] && printf ',"targetVersion":"%s"' "$$TARGET_VERSION"
 |    printf ',"cause":'
 |    if [ -n "$$__c" ]; then printf '"%s"' "$$__c"; else printf null; fi
-|    printf ',"ts":"%s"}\n' "$$(date '+%Y-%m-%d %H:%M:%S')"
+|    printf ',"ts":"%s"}\\n' "$$(date '+%Y-%m-%d %H:%M:%S')"
 |  } > "$$__tmp" && mv -f "$$__tmp" "$$STATE"
 |}
 |port_pids() { lsof -ti tcp:"$$PORT" -sTCP:LISTEN 2>/dev/null || true; }
@@ -396,7 +396,7 @@ object DetachedApply:
 |  __h="$$(health_payload)" || return 1
 |  printf '%s' "$$__h" | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"' || return 1
 |  if [ -n "$$TARGET_VERSION" ]; then
-|    printf '%s' "$$__h" | grep -q "\"version\"[[:space:]]*:[[:space:]]*\"$$TARGET_VERSION\"" || return 1
+|    printf '%s' "$$__h" | grep -q "\\\"version\\\"[[:space:]]*:[[:space:]]*\\\"$$TARGET_VERSION\\\"" || return 1
 |  fi
 |  return 0
 |}
@@ -417,7 +417,7 @@ object DetachedApply:
 |    if port_free; then log "stop leg: port $$PORT free"; return 0; fi
 |    sleep 1
 |  done
-|  log "stop leg: port $$PORT still held after $${STOP_DEADLINE}s (pids: $$(port_pids | tr '\n' ' '))"
+|  log "stop leg: port $$PORT still held after $${STOP_DEADLINE}s (pids: $$(port_pids | tr '\\n' ' '))"
 |  return 1
 |}
 |start_new() {
@@ -431,8 +431,8 @@ object DetachedApply:
 |  if [ "$$LAYOUT" = "pointer" ]; then
 |    __cur="$$INSTALL_DIR/current-version"; __prev="$$INSTALL_DIR/previous-version"
 |    if [ -f "$$__prev" ]; then
-|      __p="$$(tr -d '\t\r\n' < "$$__prev")"
-|      printf '%s\n' "$$__p" > "$$__cur.tmp.$$" && mv -f "$$__cur.tmp.$$" "$$__cur"
+|      __p="$$(tr -d '\\t\\r\\n' < "$$__prev")"
+|      printf '%s\\n' "$$__p" > "$$__cur.tmp.$$" && mv -f "$$__cur.tmp.$$" "$$__cur"
 |      log "pointer rolled back to $$__p"
 |    else log "no previous-version pointer — rollback limited to stopping the new instance"; fi
 |  else
@@ -509,7 +509,7 @@ object DetachedApply:
 |$$Launcher = '${ps(plan.launcher)}'
 |$$DataRoot = '${ps(plan.dataRoot.toString)}'
 |$$ApplyDir = Join-Path $$DataRoot 'apply'
-|$$Log = Join-Path $$DataRoot 'logs\apply-restart.log'
+|$$Log = Join-Path $$DataRoot 'logs\\apply-restart.log'
 |$$State = Join-Path $$ApplyDir 'state.json'
 |$$TaskName = '${ps(plan.winTask)}'
 |$$StopDeadlineSec = ${plan.stopDeadlineSec}
