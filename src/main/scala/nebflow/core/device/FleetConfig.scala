@@ -102,7 +102,7 @@ object FleetConfig:
     val defaultHint = sessionDefault.filter(_.nonEmpty).map(d =>
       s" This session's default device is \"$d\" — pass device=\"$d\" explicitly."
     ).getOrElse("")
-    s"$tool refused: missing required \`device\` parameter (fleet.enforceExplicitDevice is ON — " +
+    s"$tool refused: missing required `device` parameter (fleet.enforceExplicitDevice is ON — " +
       "no implicit local routing; every Bash/Read/Write/Edit/Glob/Grep call must name its device). " +
       s"Available devices: $roster. Pass device=\"<name>\" from this list (device=\"local\" is the " +
       "explicit escape hatch for this machine)." + defaultHint
