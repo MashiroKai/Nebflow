@@ -80,11 +80,26 @@ class DeviceProvenanceInjectionGateSpec extends FunSuite:
   }
 
   test("③ every real-human send site in the frontend stamps device: deviceStamp()") {
-    // input.js 的六处（send / busy 队列 drain / 离线补发 / 队列 drain v2 / 插件卡
-    // 注入 / 队列「立即发送」immediateInput）+ errorRecovery 重发腿 = 每条真人
-    // 帧的 `device` 键缺一不可。
+    // input.js 的随帧声明面（attach-split 帧构建收敛后的现状拓扑）：
+    //   buildFrame 中央腿（四腿共用：send / 离线补发 / 队列 drain v2 / busy 队列
+    //   drain，经 dispatchUserMessageFrames 汇流）+ 附件分片腿 + 队列「立即发送」
+    //   immediateInput + 插件卡注入 = 4 处；errorRecovery 重发腿独立 1 处。
     val stamped = "device: deviceStamp()"
     val inputCount = inputJs.sliding(stamped.length).count(_ == stamped)
-    assert(inputCount >= 6, s"input.js 真人发送点钉 6 处，实测 $inputCount 处")
+    assert(inputCount >= 4, s"input.js 随帧声明钉 4 处，实测 $inputCount 处")
+    // 中央腿必须自带声明（漏此一处 = 四条汇流腿全部裸奔），且四腿确经它汇流。
+    assert(
+      inputJs.contains("const buildFrame = (attachments, cmid, withExtras) => ({"),
+      "帧构建中央腿（buildFrame）必须在位"
+    )
+    val buildFrameBody = inputJs.drop(inputJs.indexOf("const buildFrame"))
+    assert(
+      buildFrameBody.contains(stamped),
+      "buildFrame 必须自带 device 声明（四腿共用的收敛点）"
+    )
+    // 四腿汇流锚：1 处定义 + 4 处调用（send/离线补发/队列 drain v2/busy drain）。
+    val dispatchHead = "dispatchUserMessageFrames({"
+    val dispatchCount = inputJs.sliding(dispatchHead.length).count(_ == dispatchHead)
+    assert(dispatchCount >= 5, s"dispatchUserMessageFrames 定义+四腿调用钉 5 处，实测 $dispatchCount 处")
     assert(recoveryJs.contains(stamped), "errorRecovery 重发腿缺 device 声明")
   }

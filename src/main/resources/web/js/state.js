@@ -284,6 +284,14 @@ export default {
   // parent session isn't currently displayed, preventing stale indicators.
   sessionBgAgents: {},
 
+  // 台账 #929（后台子智能体跨设备透明）：远端设备投影行（引擎 remoteAgents 帧）。
+  // deviceId -> { deviceName, online, rows: { [sessionId]: row } }。行 = 引擎摘要
+  // （title/source/status/startedAt/endedAt/retryCount），LWW 已在引擎投影仓收敛，
+  // 前端原样呈现；本地同 sessionId 行存在时本仓行被抑制（本地行胜——更富、可交互）。
+  // 断联语义：对端离线时引擎保留最后态 + online=false（不消失不假装死亡），前端标
+  // 「设备离线」角标；重连由引擎对账推补齐。
+  remoteBgAgents: {},
+
   // Per-agent aggregate state: agentName -> 'working' | 'waiting' | 'compressing' | 'complete' | 'idle'
   agentStates: {},
   // Debounce timer for complete state

@@ -751,6 +751,10 @@ body:not(.mobile-layer) .canvas-header {
   height: var(--capsule-h, 36px);
   width: var(--capsule-w, 180px);
   padding: 4px 7px 4px 12px;
+  /* #926 件1 兜底（作者令 2026-10-26「任何状态不溢出」）：胶囊本体裁切盒 ——
+     .t-name ellipsis 为主收口，本体裁切防过渡中途/字体度量抖动等任何态的
+     子元素出界（pop 钮无出界装饰，裁切零副作用；手机层通栏头不受本条）。 */
+  overflow: hidden;
 }
 body:not(.mobile-layer) .canvas-header .canvas-tab-bar,
 body:not(.mobile-layer) .canvas-header .canvas-close-btn {
@@ -1420,10 +1424,19 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
 }
 /* 中心位 = 环游标胶囊：内容-only 覆层（底 = 常态标题头胶囊本体 —— 同位无缝
    morph；按压触感也由标题头 is-pressed scale 承接），零变换全清晰。
+   #926 件1（作者令 2026-10-26「hover 的时候不要改变文字的布局」）：覆层与常态
+   标题行**同栅格** —— padding 镜像胶囊（左 12 / 右 = 7 + var(--cr-popw)〔pop 钮
+   实占 26+gap 6，JS openRing/layout 供 32px / 0px〕）、gap 7 = .t-inner 同值：
+   覆层文字盒（pop 可见 106px 档 / 隐藏 138px 档）与被替换的 .t-name 盒逐像素
+   等宽 —— hover 换层前后 ellipsis 截断点不变、字号字距零改动、零缩放，文字行
+   不平移不换排。溢出防护照常生效：本体 overflow:hidden（下方基类）+.cr-name
+   ellipsis，任何状态文字不出胶囊圆角界。
    真越出批：pointer-events:none 钉死 —— 环层挂 body 后叠在标题头之上，中心
    位事件必须落穿到标题头手势链（按压/竖滑换卡/横滑关卡/右键引用照旧）。 */
 .cr-capsule.is-center {
   z-index: 3;
+  gap: 7px;
+  padding: 4px calc(7px + var(--cr-popw, 0px)) 4px 12px;
   background: transparent;
   border-color: transparent;
   box-shadow: none;
@@ -2335,6 +2348,16 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   color: rgb(239, 68, 68);
   font-size: 13px;
 }
+/* 台账 #912 件1（作者令 2026-10-26 12:02「提示文字不得被 CanvasHeader 胶囊
+   遮挡」）：canvas 卡窗内错误面板的顶部清空带 —— .canvas-error 常规流顶对齐
+   居中文本，首行恰好落进卡头胶囊带（top 10 + 高 36 ⇒ 底缘 46px，z-30 毛玻璃
+   叠在错误文字上，实拍在案：PDF 打开失败面「Cannot display PDF」首行被吞）。
+   面板内错误面统一让出胶囊带（56px 首行起点 > 46px 底缘 + 10px 呼吸）；
+   chat 侧同名类（attachmentPreview 弹层）不在 .canvas-tab-pane 子树，不受本条。
+   加载进度面（.nf-progress-pane）为 height:100% 纵居中，与胶囊带无叠，不适用。 */
+.canvas-tab-pane .canvas-error {
+  padding-top: 56px;
+}
 
 /* ── Streamed-open progress pane (imgdoor #542 档3) ──
    Tab-first open: the pane shows a determinate ring (Content-Length known →
@@ -2570,6 +2593,13 @@ body.col-resizing #canvas-panel { transition: none; }
   from { opacity: 0; transform: translateY(-6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+/* #926 件2（作者 2026-10-26 报障：搜索框右缘与堆叠视角按钮重叠互挡）：桌面
+   canvas 态 #deck-fab（40px 圆钮）钉面板顶右（right 12），findbar 同角落
+   （right 14）⇒ 右端 ~38px 被 fab（z-250）盖住 —— 关闭 × 点不到、fab 也被
+   搜索条压住。让位：findbar 右缝 66px = fab 40 + fab 右缝 12 + 14 让位缝，
+   两者同排并立、均可点（不重叠不互挡）。fab 隐藏面（mobile 层 / 卡窗，split.css
+   §卡窗 display:none !important）不适用 —— 回 14px 原缝。 */
+body.canvas-open:not(.mobile-layer):not(.card-window) .nf-findbar { right: 66px; }
 .nf-findbar-input {
   width: 200px; border: none; outline: none; background: transparent;
   color: var(--color-text); font-size: 13px;

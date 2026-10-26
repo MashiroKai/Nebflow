@@ -20,12 +20,12 @@ class DeviceProvenanceSpec extends FunSuite:
 
   // ─────────── 帧解析面：ClientDevice.fromFrame ───────────
 
-  test("fromFrame decodes the full device declaration") {
+  test("fromFrame decodes the full device declaration (auto-tagging shape: no manual name)") {
     val frame = parse("""{"sessionId":"s1","content":"hi","device":{
-        "clientId":"c-123","name":"我的手机","platform":"phone","browser":"Chrome","boundDeviceId":"dev-9"
+        "clientId":"c-123","platform":"phone","browser":"Chrome","boundDeviceId":"dev-9"
       }}""").toOption.get
     val d = ClientDevice.fromFrame(frame).getOrElse(fail("expected a ClientDevice"))
-    assertEquals(d, ClientDevice("c-123", Some("我的手机"), Some("phone"), Some("Chrome"), Some("dev-9")))
+    assertEquals(d, ClientDevice("c-123", Some("phone"), Some("Chrome"), Some("dev-9")))
   }
 
   test("fromFrame: absent device key / null device / absent or blank clientId all decode to None (never stamp)") {
@@ -39,11 +39,19 @@ class DeviceProvenanceSpec extends FunSuite:
     assertEquals(ClientDevice.fromFrame(blankClientId), None)
   }
 
-  test("fromFrame trims and tolerates blank optional fields (they fold to None)") {
+  test("fromFrame trims and tolerates blank optional fields (they fold to None); the retired manual name key is ignored") {
     val frame = parse("""{"device":{"clientId":" c1 ","name":"  ","platform":" MAC ","browser":""}}""").toOption.get
     assertEquals(
       ClientDevice.fromFrame(frame),
-      Some(ClientDevice("c1", None, Some("MAC"), None, None))
+      Some(ClientDevice("c1", Some("MAC"), None, None))
+    )
+    // 标注全自动批（2026-10-26）：设置页手动命名退役——旧前端/旧存储残留的
+    // name 键不再进解码面（孤儿键零消费，绝不复活第二显示名真源）。
+    val legacyNamed = parse("""{"device":{"clientId":"c1","name":"我的手机","platform":"mac"}}""").toOption.get
+    assertEquals(
+      ClientDevice.fromFrame(legacyNamed),
+      Some(ClientDevice("c1", Some("mac"), None, None)),
+      "手动命名键一律忽略"
     )
   }
 
@@ -62,16 +70,16 @@ class DeviceProvenanceSpec extends FunSuite:
 
   test("defaultName follows the author's verbatim example shape 未登记-手机 Chrome") {
     assertEquals(
-      ClientDevice.defaultName(ClientDevice("c", None, Some("phone"), Some("Chrome"))),
+      ClientDevice.defaultName(ClientDevice("c", Some("phone"), Some("Chrome"))),
       "未登记-手机 Chrome"
     )
     assertEquals(
-      ClientDevice.defaultName(ClientDevice("c", None, Some("mac"), None)),
+      ClientDevice.defaultName(ClientDevice("c", Some("mac"), None)),
       "未登记-Mac",
       "浏览器缺席省略尾段"
     )
     assertEquals(
-      ClientDevice.defaultName(ClientDevice("c", None, None, Some("Safari"))),
+      ClientDevice.defaultName(ClientDevice("c", None, Some("Safari"))),
       "未登记-未知设备 Safari",
       "平台缺席降级未知设备，名字恒可读"
     )
@@ -83,38 +91,64 @@ class DeviceProvenanceSpec extends FunSuite:
   private val peers = List(DeviceRosterEntry("win-1", "DESKTOP-IJBBEOT"), DeviceRosterEntry("phone-1", "Kaiyu-iPhone"))
 
   test("resolve: bound to self ⇒ enrolled with the roster device name (registration is authoritative)") {
-    val r = DeviceProvenance.resolve(ClientDevice("c", None, Some("mac"), Some("Chrome"), Some("self-1")), Some(self), peers)
+    val r = DeviceProvenance.resolve(ClientDevice("c", Some("mac"), Some("Chrome"), Some("self-1")), Some(self), peers)
     assertEquals(r, ResolvedDevice("Mashiros-MacBook-Pro", enrolled = true))
   }
 
   test("resolve: bound to a peer ⇒ enrolled (phone / windows ends land the same way)") {
     assertEquals(
-      DeviceProvenance.resolve(ClientDevice("c", None, Some("phone"), Some("Safari"), Some("phone-1")), Some(self), peers),
+      DeviceProvenance.resolve(ClientDevice("c", Some("phone"), Some("Safari"), Some("phone-1")), Some(self), peers),
       ResolvedDevice("Kaiyu-iPhone", enrolled = true)
     )
     assertEquals(
-      DeviceProvenance.resolve(ClientDevice("c", None, Some("windows"), Some("Edge"), Some("win-1")), Some(self), peers),
+      DeviceProvenance.resolve(ClientDevice("c", Some("windows"), Some("Edge"), Some("win-1")), Some(self), peers),
       ResolvedDevice("DESKTOP-IJBBEOT", enrolled = true)
     )
   }
 
-  test("resolve: unbound / unknown binding ⇒ unenrolled; user naming wins over the default name") {
-    val unbound = DeviceProvenance.resolve(ClientDevice("c", None, Some("phone"), Some("Chrome"), None), Some(self), peers)
+  test("resolve: unbound / unknown binding ⇒ unenrolled with the readable default name (manual naming retired)") {
+    val unbound = DeviceProvenance.resolve(ClientDevice("c", Some("phone"), Some("Chrome"), None), Some(self), peers)
     assertEquals(unbound, ResolvedDevice("未登记-手机 Chrome", enrolled = false))
-    val named = DeviceProvenance.resolve(ClientDevice("c", Some("我的手机"), Some("phone"), Some("Chrome"), None), Some(self), peers)
-    assertEquals(named, ResolvedDevice("我的手机", enrolled = false))
-    val stale = DeviceProvenance.resolve(ClientDevice("c", None, Some("mac"), Some("Chrome"), Some("gone-9")), Some(self), peers)
+    val stale = DeviceProvenance.resolve(ClientDevice("c", Some("mac"), Some("Chrome"), Some("gone-9")), Some(self), peers)
     assertEquals(stale, ResolvedDevice("未登记-Mac Chrome", enrolled = false), "花名册已消失的绑定 id 不冒认已登记")
     assertEquals(
-      DeviceProvenance.resolve(ClientDevice("c", None, Some("mac"), Some("Chrome"), Some("  ")), Some(self), peers),
+      DeviceProvenance.resolve(ClientDevice("c", Some("mac"), Some("Chrome"), Some("  ")), Some(self), peers),
       ResolvedDevice("未登记-Mac Chrome", enrolled = false),
       "空白绑定等同未绑定"
     )
   }
 
-  test("resolve: roster unavailable (neblink not wired) ⇒ everything unenrolled, never fake-enrolled") {
-    val r = DeviceProvenance.resolve(ClientDevice("c", None, Some("windows"), Some("Edge"), Some("self-1")), None, Nil)
-    assertEquals(r, ResolvedDevice("未登记-Windows Edge", enrolled = false))
+  // ─────────── 自动标注三分支（标注全自动批 2026-10-26）───────────
+  //
+  // 客户端 deviceIdentity.js 按花名册自动判定绑定读数：登录会话 → 账号设备名
+  // （roster self），配对设备 → 登记名（环回读 roster self），匿名 → 帧不带
+  // boundDeviceId。网关侧按绑定命中与否落已登记/未登记——三分支在此钉死。
+
+  test("auto branch ① login session: auto-bound to roster self ⇒ enrolled with the account device name") {
+    val client = ClientDevice("c", Some("mac"), Some("Chrome"), Some(self.deviceId))
+    assertEquals(
+      DeviceProvenance.resolve(client, Some(self), peers),
+      ResolvedDevice("Mashiros-MacBook-Pro", enrolled = true),
+      "登录会话（鉴权读得 roster self）→ 账号登记设备名（已登记）"
+    )
+  }
+
+  test("auto branch ② paired device: loopback-anonymous roster self lands the same enrolled registered name") {
+    // 配对设备（无凭据环回读）与登录会话汇于同一绑定读数形态：self.id 命中。
+    val client = ClientDevice("c", Some("windows"), Some("Edge"), Some("win-1"))
+    assertEquals(
+      DeviceProvenance.resolve(client, Some(self), peers),
+      ResolvedDevice("DESKTOP-IJBBEOT", enrolled = true),
+      "花名册命中即登记名（登记权威），与判定信号（登录/配对）无关"
+    )
+  }
+
+  test("auto branch ③ anonymous: no auto binding ⇒ default 未登记-设备 浏览器 tag, never fake-enrolled") {
+    val anon = DeviceProvenance.resolve(ClientDevice("c", Some("phone"), Some("Safari"), None), Some(self), peers)
+    assertEquals(anon, ResolvedDevice("未登记-手机 Safari", enrolled = false))
+    // 花名册整体不可得（未配对/取数失败）时即便带了绑定读数也一律未登记。
+    val noRoster = DeviceProvenance.resolve(ClientDevice("c", Some("windows"), Some("Edge"), Some(self.deviceId)), None, Nil)
+    assertEquals(noRoster, ResolvedDevice("未登记-Windows Edge", enrolled = false))
   }
 
   // ─────────── 标记渲染面：marker / compose / prependMarker ───────────

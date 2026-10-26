@@ -831,7 +831,6 @@ export function renderSettings() {
         ${toggleHTML({ on: !!(state.autostartStatus && state.autostartStatus.enabled), id: 'toggle-autostart', label: t('settings.autostart'), disabled: !!(state.autostartStatus && !state.autostartStatus.supported) })}
       </div>
       <div class="cfg-hint" id="autostart-hint" style="display:${state.autostartStatus && !state.autostartStatus.supported ? 'block' : 'none'};margin-top:-4px">${escapeHtml(state.autostartStatus?.reason || t('settings.autostartUnsupported'))}</div>
-      <div id="device-stamp-section"></div>
     </div>
     ${ORB_SETTINGS_VISIBLE ? `
     <div class="settings-section">
@@ -986,12 +985,10 @@ export function renderSettings() {
     import('./messages.js').then((m) => m.mountSettingsDevices(devicesSlot)).catch(() => {});
   }
 
-  // device-provenance 批（2026-10-23）：「消息设备标记」区（命名 + 绑定到设备
-  // 列表）——懒挂载（叶子模块 deviceIdentity.js，roster 读数在其内异步拉）。
-  const stampSlot = document.getElementById('device-stamp-section');
-  if (stampSlot) {
-    import('./deviceIdentity.js').then((m) => m.mountDeviceStampSettings(stampSlot)).catch(() => {});
-  }
+  // device-provenance 批（2026-10-23）的「消息设备标记」设置区已随标注全自动批
+  // （2026-10-26 作者令「消息来源识别应该是自动的」）整区退役：来源识别由
+  // deviceIdentity.js 按花名册自动判定（登录会话→账号设备名；配对设备→登记名；
+  // 匿名→默认标注），设置页不再有手动命名/绑定面。
 
   // Pre-fetch model capabilities, then refresh badges on provider cards
   preloadModelCapabilities(() => {
