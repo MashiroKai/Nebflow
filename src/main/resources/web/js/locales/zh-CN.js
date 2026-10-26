@@ -798,15 +798,9 @@ export default {
   'settings.autostartUnsupported': '当前运行形态不支持开机自启',
   'settings.autostartOn': '已开启开机自启，登录后 {brand} 将自动启动',
   'settings.autostartOff': '已关闭开机自启',
-  // device-provenance 批（2026-10-23 作者令）：消息来源设备标记设置区。
-  'settings.deviceStamp': '消息设备标记',
-  'settings.deviceStampName': '本网页设备命名',
-  'settings.deviceStampBind': '绑定到设备列表',
-  'settings.deviceStampSave': '保存',
-  'settings.deviceStampNone': '不绑定（未登记）',
-  'settings.deviceStampEnrolled': '已登记',
-  'settings.deviceStampUnenrolled': '未登记',
-  'settings.deviceStampHint': '发送消息时随帧标注来源设备与登记状态（只进模型上下文，不显示在会话气泡）；绑定到设备列表后按登记名标注，未绑定按「未登记-设备 浏览器」默认名标注。',
+  // 「消息设备标记」设置区文案键（settings.deviceStamp* 八键）已随标注全自动批
+  // （2026-10-26 作者令「消息来源识别应该是自动的」）退役：手动命名/绑定面拆除，
+  // 来源识别由 deviceIdentity.js 按花名册自动判定，无需设置项。
   'settings.autostartFailed': '开机自启设置失败',
   'settings.rerunOnboarding': '重新运行新手引导',
   // ── Onboarding 重设计（chat-native，onboarding-redesign-spec v1.0）──
