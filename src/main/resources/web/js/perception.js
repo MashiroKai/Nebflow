@@ -613,6 +613,8 @@ function renderSnapshotFace(bubble, items, draftItem, draftId, targetSid, reques
   face.appendChild(foot);
 
   const answer = (label) => answerAsk(targetSid, requestId, [label]);
+  // 快照正文 doc（loadDraft 后填充；回执「收件人/附件数」口径来源）
+  let loadedDoc = null;
   // checkJs：querySelector 产出 Element——按钮一次性窄化为 HTMLButtonElement。
   const asBtn = (el) => (el instanceof HTMLButtonElement ? el : null);
 
@@ -621,7 +623,7 @@ function renderSnapshotFace(bubble, items, draftItem, draftId, targetSid, reques
     sendBtn.disabled = true;
     const r = await api('POST', '/api/perception/mail/send', { draftId, snapshot: true });
     sendBtn.disabled = false;
-    if (r.ok) { showReceipt(face, true, r.data); answer(t('perception.answerSent')); }
+    if (r.ok) { showReceipt(face, true, r.data, null, loadedDoc); answer(t('perception.answerSent')); }
     else if (r.status === 409) staleEl.classList.add('show');
     else showReceipt(face, false, null, authErrMsg(r, t('perception.sendFailed')));
   });
@@ -637,7 +639,7 @@ function renderSnapshotFace(bubble, items, draftItem, draftId, targetSid, reques
 
   draftCardHandlers.set(draftId, (frame) => {
     if (frame.type === 'perception.draft.sent') {
-      showReceipt(face, true, frame);
+      showReceipt(face, true, frame, null, loadedDoc);
       answer(t('perception.answerSent'));
     } else if (frame.type === 'perception.draft.updated') {
       if (frame.state === 'abandoned') answer(t('perception.answerAbandoned'));
@@ -651,6 +653,7 @@ function renderSnapshotFace(bubble, items, draftItem, draftId, targetSid, reques
       btnrow.querySelectorAll('button').forEach(b => { b.disabled = true; });
       return;
     }
+    loadedDoc = d.doc || null;
     fillSnapshot(face, d);
     if (d.stale) staleEl.classList.add('show');
   });
@@ -686,7 +689,7 @@ function fillSnapshot(face, d) {
   if (foot) foot.textContent = atts.length ? `${t('perception.attachments')}：${atts.map(a => String(a).split('/').pop()).join('、')}` : '';
 }
 
-function showReceipt(face, ok, data, errMsg) {
+function showReceipt(face, ok, data, errMsg, doc) {
   let receipt = face.querySelector('.pdraft-receipt');
   if (!receipt) {
     receipt = document.createElement('div');
@@ -694,9 +697,19 @@ function showReceipt(face, ok, data, errMsg) {
   }
   receipt.className = 'pdraft-receipt ' + (ok ? 'ok' : 'bad');
   const time = data && data.sentAt ? new Date(data.sentAt).toLocaleString() : '';
-  receipt.textContent = ok
-    ? `${t('perception.receiptSent')} · ${time}${data && data.messageId ? ' · ' + String(data.messageId).slice(0, 40) : ''}`
-    : `${t('perception.receiptFail')}${errMsg ? ' · ' + errMsg : ''}`;
+  // r3 回执口径（作者裁决 4 引申）：时间 + 收件人数 + 附件数 + Message-ID——少字，
+  // 详情在快照行与画布里，不重复。doc 缺席（帧先于草稿加载到达）时逐段省略。
+  const parts = [t('perception.receiptSent')];
+  if (time) parts.push(time);
+  if (doc && Array.isArray(doc.to)) {
+    const n = doc.to.length + ((doc.cc || []).length);
+    if (n > 0) parts.push(`${t('perception.to')} ${n}`);
+  }
+  if (doc && Array.isArray(doc.attachments) && doc.attachments.length) {
+    parts.push(`${t('perception.attachments')} ${doc.attachments.length}`);
+  }
+  if (data && data.messageId) parts.push(String(data.messageId).slice(0, 40));
+  receipt.textContent = ok ? parts.join(' · ') : `${t('perception.receiptFail')}${errMsg ? ' · ' + errMsg : ''}`;
   const btnrow = face.querySelector('.pp-actions');
   if (btnrow) btnrow.querySelectorAll('button').forEach(b => { b.disabled = true; });
 }
