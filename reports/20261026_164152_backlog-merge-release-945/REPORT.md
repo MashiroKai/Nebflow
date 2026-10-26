@@ -14,13 +14,13 @@
 | 合并前 | `85a79ff74` | Merge branch 'delegate/delegate-nebflow-c2e6b6d0'（#943 记录写于 14:02） |
 | 主代码合并后 | `095f06461` | Merge branch 'delegate/delegate-nebflow-c2e6b6d0' into main (backlog release #945) |
 | 报告入册后 | `eaf5ac78c` | Merge … (backlog release #945 report) —— 仅新增本 REPORT.md，无一代码改动 |
-| 终态 | `ab0e904b9` | Merge … (backlog release #945 report final) —— 仅本报告文字补正 |
+| 终态 | 见 `git rev-parse --short=9 main` | —— 本报告文字补正亦随之入册（自引用不再列举后续 merge sha） |
 
-报告文件本身的入册：`6e1bed5d7` + `6e5f8e6a5`（delegate 分支，均为报告文字）→ 并入 main `eaf5ac78c`、`ab0e904b9`。
+报告文件本身的入册：`6e1bed5d7`、`6e5f8e6a5`、`4b142d883`（delegate 分支，均为报告文字，零代码改动），逐笔 `--no-ff` 并入 main。
 上表合并 commit 均以 `--no-ff` 产生；若之后有别批落地，main tip 会继续前移，以 `git log --oneline -1 main` 为准。
 
-终态读数（`85a79ff74..main`）：总 14 个 commit，其中非 merge **11** 个 = 9 个交付 commit + 2 个本报告 commit。
-基线代码核对仍以 `85a79ff74..095f06461` 的 9 个交付 commit 为准（见 §3）。
+交付面读数（判定以本条为准，`85a79ff74..095f06461`）：**恰好 9 个交付 commit**（清单见 §3），零 merge 冲突。
+自引用说明：本报告自身的入册另产生 2+ 个 merge commit，故 `85a79ff74..main` 的裸 commit 计数会大于 9 —— 属报告往返开销，不含代码改动（`git diff --stat 095f06461..main` 仅本 REPORT.md）。
 
 策略：`git merge --no-ff`，实测 `Merge made by the 'ort' strategy.`，零冲突。
 合并基：`456e9d18f4bdf6b9ca1bf669f5f2d1b64c76058b`。
@@ -66,7 +66,7 @@ a35e6599f fix(infra): #916 task XML 编码改 UTF-16LE+BOM
 
 ## 5. worktree 清理确认
 
-- 创建：`git worktree add C:/Users/Kai/stand-merge-tmp main`（临时 linked worktree；共两轮：第一轮 main @ 85a79ff74 合代码，第二轮 main @ 095f06461 合本报告）
+- 创建：`git worktree add C:/Users/Kai/stand-merge-tmp main`（临时 linked worktree；共两轮：第一轮 main @ 85a79ff74 合代码，后续各轮 main @ 当时 tip 合本报告）
 - 每轮删除前确认：`git status --porcelain | wc -l` = **0**（干净）
 - 每轮删除：`git worktree remove C:/Users/Kai/stand-merge-tmp`（exit=0，目录已不存在）
 - 删除后 `git worktree list` 仅剩：`C:/Users/Kai/stand`（delegate 分支）、`C:/Users/Kai/stand-929`、`C:/Users/Kai/tmp936/main1223`（均为他人/他批既有 worktree，未动）
