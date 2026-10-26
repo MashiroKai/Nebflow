@@ -39,7 +39,7 @@ class DetachedApplySpec extends CatsEffectSuite:
     val mustContain = List(
       "PORT='6138'",
       s"LAUNCHER='${p.launcher}'",
-      s"APPLY_DIR='${p.dataRoot}/apply'",
+      s"APPLY_DIR='${DetachedApply.applyDir(p.dataRoot)}'",
       "http://127.0.0.1:${PORT}/api/health",
       "STOP_DEADLINE=90",
       "HEALTH_DEADLINE=180",
@@ -104,7 +104,8 @@ class DetachedApplySpec extends CatsEffectSuite:
       "$env:STAND_HOME = "
     ).foreach(fragment => assert(s.contains(fragment), s"missing '$fragment' in ps1 script"))
     // PowerShell 双引号串内 `$var:` 会被解析成 drive-qualified 变量 ⇒ 整脚本 ParserError 起不来
-    assert(!s.matches("(?s).*\\$[A-Za-z_][A-Za-z0-9_]*:.*"), "ps1 must not contain bare $var: interpolation")
+    // （`$env:` 合法、`${x}:` 已定界——两者都放行）
+    assert(!s.matches("(?s).*\\$(?!env:)(?!\\{)[A-Za-z_][A-Za-z0-9_]*:.*"), "ps1 must not contain bare $var: interpolation")
     assert(s.contains("${label}: health OK"), "interpolation must be ${label}-delimited")
   }
 
@@ -115,7 +116,7 @@ class DetachedApplySpec extends CatsEffectSuite:
     for
       r <- DetachedApply.register(p, fakeRun)
       _ = assert(r.isRight, s"registration expected to succeed, got $r")
-      xml <- IO.blocking(os.read(p.dataRoot / "apply" / s"${p.winTask}.xml"))
+      xml <- IO.blocking(new String(os.read.bytes(p.dataRoot / "apply" / s"${p.winTask}.xml"), java.nio.charset.StandardCharsets.UTF_16))
       _ = assert(xml.contains("<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"), xml)
       _ = assert(xml.contains("<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>"), xml)
       _ = assert(xml.contains("<Command>powershell.exe</Command>"), xml)
