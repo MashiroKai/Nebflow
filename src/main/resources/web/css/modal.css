@@ -1360,6 +1360,24 @@
   color: var(--color-text);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
+
+/* 台账 #937：/model 面板级降级面 —— 全角色读数失败（401/断连）时替下
+   per-role blocks 的显式失败态：居中告警 + 可读原因 + 重试入口。修前该
+   形态 = 静默僵面（禁用钮 + 隐藏组，无一处说明），作者 14:19 报障
+   「能打开但上面都点不了」的体验面即此。 */
+.mp-load-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 56px 24px;
+  text-align: center;
+}
+.mp-load-error-icon { color: var(--color-text-muted); }
+.mp-load-error-title { font-size: 14px; font-weight: 600; color: var(--color-text); }
+.mp-load-error-hint { font-size: 12px; color: var(--color-text-muted); max-width: 360px; }
+.mp-load-error-retry { margin-top: 4px; }
 .mp-close { flex-shrink: 0; }
 /* Divergence banner — visibility is owned by the dep-visibility widget
    (f(mode, fork state)); the stylesheet only defines the visible shape. */

@@ -1089,6 +1089,10 @@ export default {
   'model.clearChainConfirm': 'Clearing deletes this role\u2019s own chain and falls back to the seed chain (first available model). Continue?',
   'model.singleModelNote': 'Only 1 model and no fallback — errors go straight to the reserve tier',
   'model.loadFailed': 'Failed to load',
+  // Ledger #937: panel-wide degraded face (all role reads failed — silent-dead
+  // panel fix). Hint names the two real causes + the recovery path.
+  'model.loadFailedHint': 'Not signed in, or the engine is unreachable — sign in (see the top banner), then retry.',
+  'model.retry': 'Retry',
   'model.roleNebula': '{agent}',
   'model.roleDispatcher': 'Project dispatcher',
   'model.roleExecutor': 'Executor agent',

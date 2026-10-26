@@ -1053,6 +1053,10 @@ export default {
   'model.clearChainConfirm': '清空后回落种子链（首个可用模型），该角色的自有链将被删除。继续？',
   'model.singleModelNote': '仅 1 个模型，无备用——出错将直接使用储备层',
   'model.loadFailed': '加载失败',
+  // 台账 #937：面板级降级面（全角色读数失败 —— 静默僵面修复）。提示给全
+  // 真因两支 + 恢复路径。
+  'model.loadFailedHint': '未登录或引擎不可达——登录（见顶部横幅）后点「重试」重新拉取。',
+  'model.retry': '重试',
   'model.roleNebula': '{agent}',
   'model.roleDispatcher': '任务分发器',
   'model.roleExecutor': '执行 agent',
