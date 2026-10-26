@@ -525,50 +525,68 @@ private[gateway] object PresenceRoutes:
             )
         }
 
-      // GET /api/merge-queue — 合并队列**状态面**（merge-queue 滞留两病灶修复批
-      // 2026-10-25 腿③「可观测」，只读诊断口；现有面板无队列聚合面 ⇒ 本口单点）：
-      // 排队项全投影（位次/持窗者/停靠标记）+ 滞留台账（失败计数/上次动作时刻/
-      // 通知与升级旗）+ 每条目的最近拒绝原因（ChainStore 扫描，fail-soft 空串）。
-      // 真源 = MergeQueue 进程内队列（与 queueViewOf/NodeList mergeQueuePos 键同源
-      // ——引擎闸本体）；404 不存在，空队列 = 空 entries。
+      // GET /api/merge-queue — 合并队列**状态面**（台账 #896 交通引导员制
+      // 2026-10-26 的账本面板口；只读诊断口）。真源 = MergeQueue 持久账本
+      // （`<dataRoot>/merge-ledger.json` + 进程内投影；与 queueViewOf/NodeList
+      // mergeQueuePos 键同源——引擎闸本体）。每 project 一组：entries = 开放成员
+      // （waiting / turn-granted，位次按开放成员 FIFO 序）+ recent = 最近关账成员
+      // （merged / owner-gone / failed，处置可见——绝不静默消失）。owner-gone /
+      // failed 成员 =「需 dispatcher 处置」的面板呈现面。
       case req @ GET -> Root / "merge-queue" =>
         withAuth(req) {
-          IO.blocking(nebflow.core.delegate.MergeQueue.stallSnapshot).flatMap { views =>
+          IO.blocking(nebflow.core.delegate.MergeQueue.snapshot).flatMap { all =>
             val reasons = IO.blocking(
-              nebflow.core.delegate.MergeStallCare.lastRefusalReasons(views.map(_.delegateId).toSet)
+              nebflow.core.delegate.MergeQueue.lastReasons(all.map(_.delegateId).toSet)
             ).handleErrorWith(_ => IO.pure(Map.empty[String, String]))
             reasons.flatMap { reasonBy =>
-              val queues = views
+              val M = nebflow.core.delegate.MergeQueue
+              import M.State
+              val queues = all
                 .groupBy(_.projectKey)
                 .toList
-                .map { (projectKey, vs) =>
-                  val sorted = vs.sortBy(v => (v.readyAt, v.delegateId))
+                .map { (projectKey, ms) =>
+                  val sorted = ms.sortBy(m => (m.readyAt, m.delegateId))
+                  val open = sorted.filter(_.open)
+                  val holder = open.find(_.state == State.TurnGranted).map(_.delegateId)
+                  val recent = sorted.filterNot(_.open).takeRight(20)
                   Json.obj(
                     "projectKey" -> projectKey.asJson,
-                    "inFlight" -> nebflow.core.delegate.MergeQueue.isInFlight(projectKey).asJson,
-                    "entries" -> sorted
-                      .map(v =>
+                    "holder" -> holder.asJson,
+                    "entries" -> open
+                      .map { m =>
+                        val pos = open.indexWhere(_.delegateId == m.delegateId) + 1
                         Json.obj(
-                          "delegateId" -> v.delegateId.asJson,
-                          "description" -> v.description.asJson,
-                          "branch" -> v.branch.asJson,
-                          "baseBranch" -> v.baseBranch.asJson,
-                          "baseWs" -> v.baseWs.asJson,
-                          "taskId" -> v.taskId.asJson,
-                          "parentSessionId" -> v.parentSessionId.asJson,
-                          "position" -> v.position.asJson,
-                          "total" -> v.total.asJson,
-                          "holder" -> v.holder.asJson,
-                          "pendingRetry" -> v.pendingRetry.asJson,
-                          "reminderSent" -> v.reminderSent.asJson,
-                          "retryCount" -> v.retryCount.asJson,
-                          "lastAttemptAt" -> v.lastAttemptAt.asJson,
-                          "stallNotified" -> v.stallNotified.asJson,
-                          "stallEscalated" -> v.stallEscalated.asJson,
-                          "readyAt" -> v.readyAt.asJson,
-                          "lastRefusalReason" -> reasonBy.getOrElse(v.delegateId, "").asJson
+                          "delegateId" -> m.delegateId.asJson,
+                          "description" -> m.description.asJson,
+                          "branch" -> m.branch.asJson,
+                          "baseBranch" -> m.baseBranch.asJson,
+                          "baseWs" -> m.baseWs.asJson,
+                          "taskId" -> m.taskId.asJson,
+                          "parentSessionId" -> m.parentSessionId.asJson,
+                          "position" -> pos.asJson,
+                          "total" -> open.size.asJson,
+                          "holder" -> holder.asJson,
+                          "state" -> m.state.asJson,
+                          "grantedAt" -> m.grantedAt.asJson,
+                          "grantedBaseTip" -> m.grantedBaseTip.asJson,
+                          "readyAt" -> m.readyAt.asJson,
+                          "lastBlockReason" -> m.lastBlockReason.asJson,
+                          "lastEventReason" -> reasonBy.getOrElse(m.delegateId, "").asJson
                         )
-                      )
+                      }
+                      .asJson,
+                    "recent" -> recent
+                      .map { m =>
+                        Json.obj(
+                          "delegateId" -> m.delegateId.asJson,
+                          "description" -> m.description.asJson,
+                          "branch" -> m.branch.asJson,
+                          "baseBranch" -> m.baseBranch.asJson,
+                          "state" -> m.state.asJson,
+                          "closedAt" -> m.closedAt.asJson,
+                          "closeReason" -> m.closeReason.asJson
+                        )
+                      }
                       .asJson
                   )
                 }

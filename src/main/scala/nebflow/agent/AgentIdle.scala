@@ -149,15 +149,8 @@ private[agent] object AgentIdle:
           // 任何后续事件先补注入未读回执再处理事件」。空队列 ⇒ None，本腿逐字现状。
           // 屏障随补注归还（outstanding 清零）：回执全部产出后剩余槽位只能是永不
           // 投递的幻影（issue #31）；仍在飞的真实成员此后经 idle 单件腿照常注入。
-          val heldFlush = heldFlushPlan(stateWithFlush)
-          val flushBase = heldFlush.map(_.state).getOrElse(stateWithFlush)
-          val newMessages =
-            flushBase.messages ++ heldFlush.map(_.messages).getOrElse(Nil) :+ userMsg
-          val heldFlushIO = heldFlush.fold(IO.unit)(p => flushHeldSideEffects(agentDef, resources, depth, p))
-          val sessionBusyIO =
-            if depth == 0 then
-              flushBase.sessionId.fold(IO.unit)(sid => emitSessionBusy(flushBase.wsSend, sid, busy = true))
-            else IO.unit
+          // ── 账本补投先于一切（修复批 2026-10-24 spec ②）────────────────────
+          // 未消费的后台完成事件（账本挂起件）在本输入之前补投——唤醒即对账。
           val injectedEventIO = injectionSource match
             case Some(src) =>
               emitInjectedUserEvent(
@@ -177,8 +170,31 @@ private[agent] object AgentIdle:
                 sessionProject = stateWithWidth.projectName
               )
             case None => IO.unit
+          val sessionBusyIO =
+            if depth == 0 then
+              stateWithWidth.sessionId.fold(IO.unit)(sid => emitSessionBusy(stateWithWidth.wsSend, sid, busy = true))
+            else IO.unit
           for
-            _ <- heldFlushIO
+            ledgerFlush <- flushPendingLedgerCompletions(stateWithFlush, Nil)
+            // 账本补投不改内存状态（消费在账本侧）——held 计划仍以 stateWithFlush 为底。
+            heldFlush = heldFlushPlan(stateWithFlush)
+            flushBase = heldFlush.map(_.state).getOrElse(stateWithFlush)
+            newMessages =
+              flushBase.messages ++ ledgerFlush.messages ++ heldFlush.map(_.messages).getOrElse(Nil) :+ userMsg
+            _ <-
+              if ledgerFlush.consumedJobIds.nonEmpty then
+                IO(
+                  logAgentEvent(
+                    agentDef,
+                    depth,
+                    stateWithFlush.sessionId,
+                    stateWithFlush.sessionName,
+                    "bg-ledger-replayed-before-input",
+                    s"consumed=${ledgerFlush.consumedJobIds.size} injected=${ledgerFlush.entries.size}"
+                  )
+                )
+              else IO.unit
+            _ <- heldFlush.fold(IO.unit)(p => flushHeldSideEffects(agentDef, resources, depth, p))
             _ <- sessionBusyIO
             _ <- injectedEventIO
             result <- pipeLlmCall(
@@ -493,9 +509,7 @@ private[agent] object AgentIdle:
               (held :+ event).flatMap(_.correlationId)
             )
             // 台账对账（平台修复批 fix 1）：held 全量投递 ⇒ 台账清空 + 徽标帧归零。
-            _ <- syncHeldReceipts(resources, state.sessionId, Nil).flatMap((h, u) =>
-              emitHeldReceiptsBadge(state, h, u)
-            )
+            _ <- syncHeldReceipts(resources, state.sessionId, Nil).flatMap((h, u) => emitHeldReceiptsBadge(state, h, u))
             result <- pipeLlmCall(
               agentDef,
               resources,
@@ -543,12 +557,28 @@ private[agent] object AgentIdle:
             // Held-receipt 先补注入（fix 1 第三腿）：非子代理事件（background-task /
             // Schedule / Mail 询问等）到达且有被扣留的已产出回执 ⇒ 先随本 turn 补注
             // 回执再注入本事件；屏障随补注归还。空队列 ⇒ flushBase = state，本腿逐字现状。
-            val heldFlush = heldFlushPlan(state)
-            val flushBase = heldFlush.map(_.state).getOrElse(state)
-            val heldMessages = heldFlush.map(_.messages).getOrElse(Nil)
-            val flushIO = heldFlush.fold(IO.unit)(p => flushHeldSideEffects(agentDef, resources, depth, p))
+            // ── 账本补投（修复批 2026-10-24 spec ②）：先于本事件消费账本挂起件；
+            // 本事件自身的账目经 inFlightPayloads 判重只消费不重注（直投路径的
+            // 事件本体由本分支注入）。
             for
-              _ <- flushIO
+              ledgerFlush <- flushPendingLedgerCompletions(state, List(event.payload))
+              heldFlush = heldFlushPlan(state)
+              flushBase = heldFlush.map(_.state).getOrElse(state)
+              heldMessages = heldFlush.map(_.messages).getOrElse(Nil)
+              _ <-
+                if ledgerFlush.consumedJobIds.nonEmpty then
+                  IO(
+                    logAgentEvent(
+                      agentDef,
+                      depth,
+                      state.sessionId,
+                      state.sessionName,
+                      "bg-ledger-replayed-before-event",
+                      s"consumed=${ledgerFlush.consumedJobIds.size} injected=${ledgerFlush.entries.size} inFlight=${event.eventType}"
+                    )
+                  )
+                else IO.unit
+              _ <- heldFlush.fold(IO.unit)(p => flushHeldSideEffects(agentDef, resources, depth, p))
               _ <- sessionBusyIO
               _ <- receiveVisibility(waiting = false)
               _ <-
@@ -570,7 +600,7 @@ private[agent] object AgentIdle:
                     // (fromUser = Message.source.isEmpty).
                     // 媒体统一适配批（2026-10-20）：组装单点 immediateEventMessage——
                     // 带块事件（桥媒体）⇒ Right(Text+blocks)，无块 ⇒ Left 逐字现状。
-                    flushBase.messages ++ heldMessages :+ immediateEventMessage(
+                    flushBase.messages ++ ledgerFlush.messages ++ heldMessages :+ immediateEventMessage(
                       injectionText,
                       event,
                       visSource.orElse(Some("external"))
@@ -784,9 +814,7 @@ private[agent] object AgentIdle:
             val expanded = expandRootNotify(imm)
             // Held-receipt 先补注入（fix 1 第三腿，与 idle UserInput 腿同判据）：
             // 节点通报（Schedule/调度触发类）同样先带全部 held 回执再展开载荷。
-            val heldFlush = heldFlushPlan(state)
-            val flushBase = heldFlush.map(_.state).getOrElse(state)
-            val heldMessages = heldFlush.map(_.messages).getOrElse(Nil)
+            // ── 账本补投（修复批 2026-10-24 spec ②）：先于载体展开消费账本挂起件。
             // Per-item context messages (each carries its OWN body — never the merged digest).
             val carrierMessages = expanded.map(item =>
               (item.blocks match
@@ -795,6 +823,23 @@ private[agent] object AgentIdle:
               ).copy(source = injectionSourceFor(item.fromUser, item.source))
             )
             for
+              ledgerFlush <- flushPendingLedgerCompletions(state, Nil)
+              heldFlush = heldFlushPlan(state)
+              flushBase = heldFlush.map(_.state).getOrElse(state)
+              heldMessages = heldFlush.map(_.messages).getOrElse(Nil)
+              _ <-
+                if ledgerFlush.consumedJobIds.nonEmpty then
+                  IO(
+                    logAgentEvent(
+                      agentDef,
+                      depth,
+                      state.sessionId,
+                      state.sessionName,
+                      "bg-ledger-replayed-before-carrier",
+                      s"consumed=${ledgerFlush.consumedJobIds.size} injected=${ledgerFlush.entries.size}"
+                    )
+                  )
+                else IO.unit
               _ <- IO(
                 logAgentEvent(
                   agentDef,
@@ -807,7 +852,8 @@ private[agent] object AgentIdle:
               )
               _ <- heldFlush.fold(IO.unit)(p => flushHeldSideEffects(agentDef, resources, depth, p))
               _ <-
-                if depth == 0 then flushBase.sessionId.fold(IO.unit)(sid => emitSessionBusy(flushBase.wsSend, sid, busy = true))
+                if depth == 0 then
+                  flushBase.sessionId.fold(IO.unit)(sid => emitSessionBusy(flushBase.wsSend, sid, busy = true))
                 else IO.unit
               // One injected frame per payload item — each carries its own text / sender /
               // status, so the frontend renders N bubbles with zero frontend change
@@ -838,7 +884,7 @@ private[agent] object AgentIdle:
                 depth,
                 parentRef,
                 flushBase
-                  .withMessages(flushBase.messages ++ heldMessages ++ carrierMessages)
+                  .withMessages(flushBase.messages ++ ledgerFlush.messages ++ heldMessages ++ carrierMessages)
                   .withEmptyResponseRetries(0)
                   .withMailUsedThisTurn(false)
                   .withNextLoopTurn,

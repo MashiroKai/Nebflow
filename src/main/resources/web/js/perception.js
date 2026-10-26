@@ -180,16 +180,42 @@ export function openPerceptionPanel() {
   panelOpen = true;
   positionPanel();
   renderPanel();
+  positionPanel();                                   // renderPanel 后体量落定 → 重钳一次（翻转判定用真高）
   api('GET', '/api/perception/entries').then(r => {
     if (r.ok && r.data && Array.isArray(r.data.entries)) { entriesCache = r.data.entries; renderPanel(); }
   });
+  window.addEventListener('resize', positionPanel);
   document.addEventListener('click', panelOutsideClose);
 }
 
+/** 锚定弹出（作者令 2026-10-26「弹窗从点击的入口按钮锚定」）：面板右缘对齐入口
+ *  按钮（#perception-btn）右缘、顶缘贴按钮下缘 +8px；下方放不下（视口底越界）
+ *  整体翻到按钮上方；左右按视口 8px 内缝钳制。open 与 resize（开着时）都走这里
+ *  ——固定 top56/right16 硬编码退役。 */
 function positionPanel() {
   if (!panelEl) return;
+  const btn = document.getElementById('perception-btn');
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const r = btn && btn.isConnected ? btn.getBoundingClientRect() : null;
+  // 按钮缺席（理论不可达——面板入口即该按钮）：回落旧固定位，零回归。
+  if (!r || (!r.width && !r.height)) {
+    Object.assign(panelEl.style, { position: 'fixed', top: '56px', right: '16px', left: 'auto', zIndex: 250, display: 'block' });
+    return;
+  }
+  const w = panelEl.offsetWidth || 400;
+  const h = panelEl.offsetHeight || panelEl.scrollHeight || 200;
+  const GAP = 8, EDGE = 8;
+  // 右缘对齐按钮右缘，再双侧内缝钳制（按钮在屏幕左半时不得把面板推出去左侧）
+  const right = Math.max(EDGE, Math.min(vw - r.right, vw - w - EDGE));
+  let top = r.bottom + GAP;
+  if (top + h > vh - EDGE) {
+    const above = r.top - GAP - h;                   // 下方越界 → 翻按钮上方
+    top = above >= EDGE ? above : Math.max(EDGE, vh - EDGE - h);
+  }
   Object.assign(panelEl.style, {
-    position: 'fixed', top: '56px', right: '16px', zIndex: 250, display: 'block'
+    position: 'fixed', top: Math.round(top) + 'px',
+    right: Math.round(right) + 'px', left: 'auto', zIndex: 250, display: 'block'
   });
 }
 
@@ -200,6 +226,7 @@ function panelOutsideClose(e) {
 function closePanel() {
   panelOpen = false;
   if (panelEl) panelEl.style.display = 'none';
+  window.removeEventListener('resize', positionPanel);
   document.removeEventListener('click', panelOutsideClose);
 }
 
@@ -213,25 +240,25 @@ function renderPanel() {
   const hasBad = entriesCache.some(en => en.state === 'AuthFailed' || en.state === 'Error');
   const hasWarn = entriesCache.some(en => en.state === 'Backoff' || en.state === 'Degraded');
   dot.className = 'pp-dot' + (hasBad ? ' show bad' : hasWarn ? ' show warn' : '');
-
   const parts = [];
   if (entriesCache.length === 0) parts.push(entryHtml({ id: '__mail__', icon: 'mail', name: t('perception.mailEntry'), state: 'Unconfigured', summary: t('perception.notConfigured'), notice: '' }));
   for (const en of entriesCache) parts.push(entryHtml(en));
-  // 预留条目位（r3 假设 6：文件、日历两枚虚位）
-  parts.push(reservedEntryHtml('file', t('perception.reservedFile')));
-  parts.push(reservedEntryHtml('calendar', t('perception.reservedCalendar')));
+  // 占位条目退役（作者令 2026-10-26「去掉文件/日历即将推出占位」）：面板只承载
+  // 真实能力（邮件），结构随内容收敛——r3 假设 6（预留两枚虚位）随之作废。
   body.innerHTML = parts.join('');
 
-  body.querySelectorAll('.pp-entry:not(.reserved) .pp-entry-head').forEach(head => {
+  body.querySelectorAll('.pp-entry .pp-entry-head').forEach(head => {
     head.addEventListener('click', () => {
       const entry = head.closest('.pp-entry');
       const wasOpen = entry.classList.contains('open');
       body.querySelectorAll('.pp-entry.open').forEach(x => x.classList.remove('open'));
       if (!wasOpen) { entry.classList.add('open'); openEntryId = entry.dataset.id; renderEntryDetail(entry); }
       else openEntryId = null;
+      positionPanel();                                 // 手风琴开合变体量 → 锚定重钳（越界翻转跟手）
     });
   });
   body.querySelectorAll('.pp-entry.open').forEach(renderEntryDetail);
+  positionPanel();
 }
 
 function entryHtml(en) {
@@ -249,21 +276,6 @@ function entryHtml(en) {
       <svg class="pp-e-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
     </button>
     <div class="pp-e-detail"></div>
-  </div>`;
-}
-
-function reservedEntryHtml(icon, name) {
-  return `
-  <div class="pp-entry reserved">
-    <button class="pp-entry-head" tabindex="-1" aria-disabled="true">
-      <span class="pp-e-ic">${icon === 'file'
-        ? '<svg viewBox="0 0 24 24"><path d="M13 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10z"/><path d="M13 3v7h7"/></svg>'
-        : '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 11h18"/></svg>'}</span>
-      <span class="pp-e-main">
-        <span class="pp-e-name">${esc(name)}</span>
-      </span>
-      <span class="reserved-tag">${esc(t('perception.reservedTag'))}</span>
-    </button>
   </div>`;
 }
 

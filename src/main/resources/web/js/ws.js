@@ -524,7 +524,8 @@ function probeCookieAuth() {
       if (resp.headers.get(`x-${brand.lowerName}-credential`) === 'session') {
         purgeLongLivedCopies();
         // 会话保活腿（session TTL 批 2026-10-21）：首次证实已入座（204 +
-        // rail=session）即武装 12h 一拍的 authcheck 保活——健康长命标签页在
+        // rail=session）即武装 1h 一拍的 authcheck 保活（稳定性批 2026-10-26
+        // 收紧，原 12h）——健康长命标签页在
         // 零 reload 期间也持续拉动服务端滑动窗与浏览器 cookie Max-Age 双续
         //（30d 绝对上限 / 7d 闲置窗，GatewaySessionStore）。幂等。
         armSessionKeepalive();
@@ -637,6 +638,31 @@ async function remintHostSessionAndReload() {
   } catch (_) {
     return false;
   }
+}
+
+// ---------- 静默重座单点（稳定性批 2026-10-26 ·「403 自愈：真失效才引导重登」）──
+// HTTP 面的 401/403（sessionGate 统一入口消费）与 WS 握手拒绝（onclose 消费）
+// 共用同一条静默自愈链：portal status → console-ticket → consoleUrl 导航重座
+// （relay 门真死时走 ingress 自己的登录腿）。此前该链只有 WS 臂可达；HTTP 面
+// 403 直接横幅 + reload——「上滑历史/打开大图 403 一发就整页重登」的登出级观感。
+// 本出口把链暴露成**单飞**的模块 API：同页并发 403 共享同一次重座尝试（页面
+// 随导航卸载，无需复位窗口）；30s 防摆闸仍由 remintHostSessionAndReload 自持。
+let reseatInFlight = null;
+
+/**
+ * 尝试一次静默会话重座（不弹任何登录面）。返回：
+ *   true  = 正在导航（重座链已接管，调用方不得再横幅/reload）；
+ *   false = 重座不可用（本地直连源无 portal 面，或链路被拒）——调用方落既有
+ *           可见面（sessionGate 横幅 + reload）。
+ * @returns {Promise<boolean>}
+ */
+export function attemptSilentReseat() {
+  if (reseatInFlight) return reseatInFlight;
+  reseatInFlight = remintHostSessionAndReload().finally(() => {
+    // 导航失败（false）时允许后续 403 再试（remint 自带 30s 防摆闸兜底防环）。
+    setTimeout(() => { reseatInFlight = null; }, 0);
+  });
+  return reseatInFlight;
 }
 
 // ---------- 本机近路短路（本地回路短路批 2026-10-22 · 诊断修复批）────────────

@@ -150,6 +150,14 @@ for (const [label, engine] of [['chromium', chromium], ['webkit(Safari引擎族)
     browserRef = browser;
     await page.route('**/api/nf-ticket*', (route) =>
       route.fulfill({ status: 403, contentType: 'text/plain', body: 'gate' }));
+    // 稳定性批 2026-10-26：noteAuthRejected 先走静默重座（ws.js 动态探链——
+    // lab 无 portal 面，探链要走完两个 404 才落 false）。本站钉的是 #520 的
+    // 可见面（403 ⇒ 横幅在场），不钉重座腿本体（session-gate.spec ①c/①d
+    // 专站）；lab 里把缝钉死为「重座不可用」，可见面判定确定化。
+    await page.evaluate(async () => {
+      const gate = await import('/js/sessionGate.js');
+      gate._sessionGateTestHooks().setReseat(async () => false);
+    });
     const dead = await page.evaluate(async (path) => {
       const nf = await import('/js/nfTicket.js');
       const map = await nf.mintTickets([path]);

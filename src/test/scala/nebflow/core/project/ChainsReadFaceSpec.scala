@@ -45,6 +45,7 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
 
   override def beforeEach(context: munit.BeforeEach): Unit =
     (ProjectRuntimeRegistry.clear *> DelegateFlowHosts.clear).unsafeRunSync()
+    MergeQueue.reset()
     if os.exists(tempRoot / "delegates") then nebflow.ForceRemove.removeAll(tempRoot / "delegates")
     if os.exists(tempRoot / "chains") then nebflow.ForceRemove.removeAll(tempRoot / "chains")
     if os.exists(tempRoot / "projects") then nebflow.ForceRemove.removeAll(tempRoot / "projects")
@@ -53,6 +54,7 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
 
   override def afterEach(context: munit.AfterEach): Unit =
     (ProjectRuntimeRegistry.clear *> DelegateFlowHosts.clear).unsafeRunSync()
+    MergeQueue.reset()
 
   private def mkResources(system: ActorSystem, llm: LlmHandle[IO]): IO[SharedResources] =
     for
@@ -200,9 +202,10 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     DelegateRegistry.put(recHolder)
     DelegateRegistry.put(recQueued)
     val projectKey = tempRoot.toString
-    // 队列两行：holder（队头，入队即 pump 持窗）+ 排队者。readyAt 错开保证 FIFO 序。
-    def entry(id: String, readyAt: Long, taskId: Option[String]): MergeQueue.Entry =
-      MergeQueue.Entry(
+    // 账本两行（seed 直写——绕过入账泵；read-face 是纯读面，不需要真通知通道）：
+    // holder（turn-granted = 单持有人窗本体）+ 排队者。readyAt 错开保证 FIFO 序。
+    def member(id: String, readyAt: Long, taskId: Option[String]): MergeQueue.Member =
+      MergeQueue.Member(
         delegateId = id,
         branch = s"delegate/$id",
         baseWs = projectKey,
@@ -213,14 +216,13 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
         parentSessionId = "spec-root",
         description = "spec merge",
         readyAt = readyAt,
-        childRef = MergeQueue.NoopChild,
-        supervisorRef = MergeQueue.NoopSupervisor
+        channelKind = "internal"
       )
-    MergeQueue.enqueue(entry(holderId, 1000L, Some("61")))
-    MergeQueue.enqueue(entry(queuedId, 2000L, Some("62")))
+    MergeQueue.seedMemberForTest(
+      member(holderId, 1000L, Some("61")).copy(state = MergeQueue.State.TurnGranted, grantedAt = Some(1L))
+    )
+    MergeQueue.seedMemberForTest(member(queuedId, 2000L, Some("62")))
     val statuses = Map(holderId -> "ready-to-merge", queuedId -> "ready-to-merge")
-    // 清理挂 IO 链尾（guarantee）——finally 会先于 munit 跑 IO 执行，队列出队会
-    // 撕掉被断言的 holder 态。
     ChainsReadFace.rowsJson(Map.empty, archived = false, taskStatuses = statuses).map { body =>
       val rows = body.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil)
       val holder = rows.find(_.hcursor.get[String]("id").toOption.contains(holderId)).getOrElse(fail("holder row missing"))
@@ -243,14 +245,16 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
         "mergeQueue.holder rides the row for visibility"
       )
       assertEquals(
+        holder.hcursor.downField("mergeQueue").get[String]("state").toOption,
+        Some("turn-granted"),
+        "mergeQueue.state rides the row (the ledger state machine is panel-visible)"
+      )
+      assertEquals(
         queued.hcursor.downField("mergeQueuePos").get[Int]("position").toOption,
         Some(2),
         "mergeQueuePos.position = engine FIFO order (holder included in total)"
       )
-    }.guarantee(IO {
-      MergeQueue.onTerminal(holderId)
-      MergeQueue.onTerminal(queuedId)
-    })
+    }
   }
 
   // ── C6 delegates 列表投影（视图重设计实施批 · UI 最小集）──────────────────────

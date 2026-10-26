@@ -187,21 +187,22 @@ object BackoffSupervisor:
               )
               .attempt
               .flatMap {
-                case Right(nebflow.core.delegate.DelegateTerminal.Outcome.Release(suffix, mergeRoundRefused)) =>
+                case Right(nebflow.core.delegate.DelegateTerminal.Outcome.Release(suffix, mergeOutcome)) =>
                   // file-diff → 委托结果行（bug #58 修 2026-10-09）：完成批次携带
                   // 改动文件 diff 载荷（metadata.fileChanges）——父会话注入行的
                   // 产物卡展开即 diff 视图。空报告 = 不带键（行字节形态不变）。
                   // A 段等待屏罩：兜底交付注记（bg-wait cap 到期强制终判时附带
                   // ——诚实标注「交付时仍有未结后台任务，其完成通知将丢失」）。
-                  // D3-③（steward 批 2026-10-23）：合并轮被拒（机械验收拒绝等
-                  // 注记形）⇒ 队列条目留队待重试而非出队（队头被拒不堵塞后续）。
+                  // 台账 #896（交通引导员制 2026-10-26）：合并轮终态结论随行关账
+                  // （merged / failed；回合外 = None → 账实核对回落 owner-gone）
+                  // ——无留队待重试语义。
                   val note = bgWaitNote.fold("")(n => s"\n[delegate-bg-wait] $n")
                   fileChangesMetadata().flatMap(fc =>
                     notifyParentAndStop(
                       "completed",
                       payload + suffix + note,
                       fc,
-                      keepForRetry = mergeRoundRefused
+                      mergeOutcome = mergeOutcome
                     )
                   )
                 case Right(nebflow.core.delegate.DelegateTerminal.Outcome.HoldForMerge) =>
@@ -343,6 +344,22 @@ object BackoffSupervisor:
                     s"BackoffSupervisor: delegate $subagentId bg-wait cap (${bgWaitCapMs}ms) hit with " +
                       s"${still.size} task(s) pending — forcing honest terminal delivery"
                   ) *>
+                    // ── 孤儿登记（修复批 2026-10-24 fix 3「两种死法统一收口」）──
+                    // cap 强制终判 = 本会话终结、这些任务的完成通知将无处投递。
+                    // 逐条写入持久账本（含当时输出尾段快照——「完成事件+输出尾段
+                    // 供续会话拾取，现在直接丢」的收口）：会话若被复活/重派拾取，
+                    // 账本条目即完整证据链；completion 事件此后照常经 BashTool
+                    // recordCompletion 原位升级 orphan 条目（kind 不降级）。
+                    // fail-soft：账本故障绝不阻断强制终判。
+                    still
+                      .traverse { t =>
+                        nebflow.core.tools.BgTaskOutputStore
+                          .read(t.jobId, 0L)
+                          .map(out => out.map(o => o.output.takeRight(2000)).filter(_.trim.nonEmpty))
+                          .handleErrorWith(_ => IO.pure(Option.empty[String]))
+                          .map(tail => (t.jobId, t.description, tail))
+                      }
+                      .flatMap(rows => nebflow.core.tools.BgTaskLedger.markOrphaned(subagentId, rows)) *>
                     bgWaitCapFired.set(true) *>
                     bgWaitHeld.set(false) *>
                     // 🔴 只清句柄不 cancel——此刻正在本 fiber 体内，cancel 自己
@@ -814,7 +831,7 @@ object BackoffSupervisor:
         payload: String,
         failureMetadata: JsonObject,
         taskStatusOverride: Option[String] = None,
-        keepForRetry: Boolean = false
+        mergeOutcome: Option[nebflow.core.delegate.MergeQueue.RoundOutcome] = None
       ): IO[Behavior[AgentEvent]] =
         val metadata = JsonObject(
           "description" -> description.asJson,
@@ -827,13 +844,14 @@ object BackoffSupervisor:
           if eventType == "completed" then "completed" else "failed"
         )
         // worktree-judge-fifo 批（#1224）：delegate 轨终态统一清理（幂等）——
-        // MergeQueue 出队（合并轮完成/超时/任何终态都要释放队列）+ failed/
-        // cancelled 的补判词行（completed 腿的判词行由 DelegateTerminal.onCompleted
-        // 写，此处不重复）。subtask 轨零变化。
+        // MergeQueue 关账（合并轮结论随行：merged / failed / 回合外账实核对回落；
+        // 台账 #896 交通引导员制——无留队待重试语义）+ failed/cancelled 的补判词行
+        // （completed 腿的判词行由 DelegateTerminal.onCompleted 写，此处不重复）。
+        // subtask 轨零变化。
         val delegateCleanup =
           if source == "delegate" then
             nebflow.core.delegate.DelegateTerminal
-              .onTerminalCleanup(resources, subagentId, parentSessionId, taskStatus, eventType, keepForRetry)
+              .onTerminalCleanup(resources, subagentId, parentSessionId, taskStatus, eventType, mergeOutcome)
               .handleErrorWith(e => logger.warn(s"delegate terminal cleanup failed: ${e.getMessage}").void)
           else IO.unit
 

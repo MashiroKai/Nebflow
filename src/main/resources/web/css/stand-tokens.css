@@ -130,3 +130,27 @@ html[data-theme="dark"] {
   --st-mail-warn-icon: #b45309;
   --st-mail-success-icon: #2e7d32;
 }
+
+/* 官网尺度档（面板风格对表批 2026-10-26：字号梯度/圆角/行距几何，逐值转录自
+ * mystand.space 同一 CSS chunk 的组件真值 —— 颜色已在上表，本段补齐几何档）：
+ *   .nfd-chat-session-name  15px/600      → 窗头标题（--st-fs-header）
+ *   .nfd-device-row         13px、8×10px、gap10、radius10 → 行卡（--st-fs-row / --st-row-* / --st-radius-card）
+ *   .nfd-device-icon        28px、radius 50%            → 行首图标座（--st-icon-chip）
+ *   .nfd-replay-btn         12.5px/500、7×14px、radius8  → 玻璃按钮（--st-fs-btn / --st-btn-pad / --st-radius-btn）
+ *   .nfd-tool-label         11.5px         → 次级说明（--st-fs-label）
+ *   .nfd-device-status/.nfd-legend 11px    → 元信息（--st-fs-meta）
+ *   .nfd-chat-window        radius 20px    → 玻璃窗体（--st-radius-window） */
+:root {
+  --st-fs-header: 15px;
+  --st-fs-row: 13px;
+  --st-fs-btn: 12.5px;
+  --st-fs-label: 11.5px;
+  --st-fs-meta: 11px;
+  --st-radius-window: 20px;
+  --st-radius-card: 10px;
+  --st-radius-btn: 8px;
+  --st-icon-chip: 28px;
+  --st-row-pad: 8px 10px;
+  --st-btn-pad: 7px 14px;
+  --st-row-gap: 10px;
+}

@@ -27,10 +27,10 @@ import scala.util.Try
  *   - **白名单外一切脏**（源码等）：一概不碰——调用方 fail-closed 拒绝
  *     （[[hygiene]] 的 `remainingDirty` 面如实回报）。
  *
- * 消费点：DelegateAutoMerge 评估闸（脏树先处置后拒）、MergeQueue 合并轮注入前
- * （[[nebflow.core.delegate.MergeQueue]] reminder 面——轮前清障，delegate 的
- * `git merge` 不再被工件挡死）、MergeStallCare 重试拍（「工件已清理」条件）。
- * 全 fail-soft：git 面任何一步失败只 Left/空结果，绝不抛（调用方走既有拒绝面）。
+ * 消费点：[[nebflow.core.delegate.MergeQueue]] 放行净空闸（授窗前清障——base
+ * 净空才放行，delegate 的 `git merge` 不再被工件挡死；引擎侧 base 净空维护，
+ * 非合并执行）。全 fail-soft：git 面任何一步失败只 Left/空结果，绝不抛
+ * （调用方走既有拒绝面）。
  */
 object MergeArtifactCare:
 
@@ -39,9 +39,9 @@ object MergeArtifactCare:
   /**
    * 生成工件目录白名单——**严格面**：只这两类目录（引擎测试/任务覆写与产出
    * delegates 报告/证据的固定落点），源码路径绝不碰。目录本体与 `目录/` 前缀
-   * 都命中。单点 = [[DelegateAutoMerge.ArtifactRestoreDirs]]（10-23 批原词表）。
+   * 都命中。（10-23 批原词表；原 DelegateAutoMerge 单点随该件退役收编于此。）
    */
-  val Dirs: List[String] = DelegateAutoMerge.ArtifactRestoreDirs
+  val Dirs: List[String] = List("evidence", "reports")
 
   /** 白名单命中判（路径 = 目录本体或目录/ 前缀）。 */
   def whitelisted(path: String): Boolean =

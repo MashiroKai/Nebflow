@@ -595,6 +595,56 @@ const ringInfo = (page) => page.evaluate(() => {
   await ctx.close();
 }
 
+/* ════════ 双卡腿：<3 卡也能滚（作者令 2026-10-26）════════
+ * 症状（作者报障 2026-10-26「胶囊 <3 卡不能滑：1-2 张时滑一下弹回自己」）：
+ * n=2 时环距取模恒落 +1（非游标胶囊永远在下方）——换选前后位姿集合不变，
+ * 视觉读作「弹回自己」。修：方向感知档（canvas.js layout() n===2 分支）——
+ * 非游标胶囊驻 lastDir 侧：上滚 = 它从上方来、下滚 = 从下方来，单步即真滚动。 */
+{
+  const { ctx, page, errors } = await boot({ colorScheme: 'dark' });
+  await openFile(page, '/tmp/cr-fixture/alpha.md');
+  await openFile(page, '/tmp/cr-fixture/bravo.md');     // bravo 活动页签（n=2）
+  await page.evaluate(() => document.querySelector('.canvas-tab[data-tab-id="plugins"] .canvas-tab-close')?.click());
+  await sleep(400);
+  const s2 = await stateOf(page);
+  await hoverCapsule(page);
+  const open2 = await ringInfo(page);
+  ok('CR9-1 双卡环展开：两胶囊（1 中心 + 1 缘位）、零弧外',
+    s2.tabCount === 2 && open2.open && open2.n === 2 && open2.edges.length === 1 && open2.farCount === 0,
+    `n=${s2.tabCount} caps=${open2.n} edges=${open2.edges.length} far=${open2.farCount}`);
+
+  // 上滚一格（-200）：bravo→alpha 居中，非游标（bravo）翻到上方（--cr-y < 0）
+  await page.mouse.wheel(0, -200);
+  await sleep(300);
+  const up = await ringInfo(page);
+  const upY = parseFloat(up.edgeYs[0]);
+  ok('CR9-2 双卡上滚：换选生效（alpha 居中）+ 非游标胶囊翻到上方（来向侧，不再恒驻下方）',
+    up.centerId === 'file:/tmp/cr-fixture/alpha.md' && upY < 0,
+    `center=${up.centerId} edgeY=${upY}px`);
+
+  // 下滚一格（+200）：回 bravo 居中，非游标（alpha）落下方（--cr-y > 0）
+  await page.mouse.wheel(0, 200);
+  await sleep(300);
+  const down = await ringInfo(page);
+  const downY = parseFloat(down.edgeYs[0]);
+  ok('CR9-3 双卡下滚：换选生效（bravo 居中）+ 非游标胶囊回落下方（方向感知随动）',
+    down.centerId === 'file:/tmp/cr-fixture/bravo.md' && downY > 0,
+    `center=${down.centerId} edgeY=${downY}px`);
+
+  // 缘位点击照旧切换（<3 卡交互面完备）
+  const edgeId2 = await page.evaluate(() => {
+    const e = document.querySelector('#canvas-capsule-ring .cr-capsule.is-edge');
+    return e ? e.dataset.tabId : null;
+  });
+  await page.click(`#canvas-capsule-ring .cr-capsule[data-tab-id="${edgeId2}"]`);
+  await sleep(350);
+  const clicked2 = await stateOf(page);
+  ok('CR9-4 双卡缘位点击 = 切换（<3 卡交互面完备）',
+    clicked2.activeId === edgeId2, `active=${clicked2.activeId}`);
+  ok('R0c 双卡腿零 JS 错误', errors.length === 0, errors.slice(0, 2).join(' | '));
+  await ctx.close();
+}
+
 /* ════════ 亮色腿：顶带环展开/收起证据（亮主题 × 2 面）════════ */
 {
   const { ctx, page, errors } = await boot({ colorScheme: 'light' });

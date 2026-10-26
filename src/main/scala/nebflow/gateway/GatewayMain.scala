@@ -850,57 +850,27 @@ object GatewayMain extends IOApp:
                                         logger.info(s"Boot dispatcher wake: ${r.summary}")
                                       }
                                     else IO.unit
-                                  // P2-5 合并队列跨重启恢复 boot sweep（引擎加固批
-                                  // 2026-10-09）：扫 ChainStore `merge-queue` 账本的中断
-                                  // 成员（末行 enqueued/reminder-sent 无后继 dequeued），
-                                  // 按 readyAt 原值重挂 MergeQueue（外部腿 CLI resume /
-                                  // 内置腿续起会话+rekey）；挂不进 WARN+blocked+报父
-                                  // （F2 队文件 correlationId 幂等）。排在 startupMount/
-                                  // projectBootWake 之后（父会话注册表已就绪）；无候选 =
+                                  // 台账 #896（交通引导员制 2026-10-26）：合并队列
+                                  // 重启对账 boot sweep——账本落盘持久，重启不清零；
+                                  // 开放成员逐条对账（已并 → 关账 merged + 现场回收 +
+                                  // 报父 completed；无可并物 → 关账 merged 诚实注记；
+                                  // 可并但属主失联 → owner-gone + 报父 blocked）。
+                                  // **不再重挂、不再复活任何合并回合**（旧 P2-5 重挂腿
+                                  // 随交通引导员制退役——互踩与重复合并轮的根因）。
+                                  // 排在 startupMount/projectBootWake 之后；无开放成员 =
                                   // 零动作；失败只 WARN 绝不阻塞启动。
                                   val mergeQueueBootSweep: IO[Unit] =
                                     nebflow.agent.MergeQueueBootSweep
                                       .sweep(
                                         sharedResources,
-                                        reviveInternal = Some(
-                                          nebflow.agent.MergeQueueBootSweep.internalRevival(
-                                            sharedResources,
-                                            actorSystem,
-                                            Some((json: io.circe.Json) => wsHub.broadcast(json))
-                                          )
-                                        ),
                                         wsSend = Some((json: io.circe.Json) => wsHub.broadcast(json))
                                       )
                                       .attempt
                                       .flatMap {
-                                        case Right(r) => logger.info(s"Merge-queue boot sweep: ${r.summary}").void
+                                        case Right(r) => logger.info(s"Merge-queue boot reconcile: ${r.summary}").void
                                         case Left(e) =>
-                                          logger.warn(s"Merge-queue boot sweep failed: ${e.getMessage}").void
+                                          logger.warn(s"Merge-queue boot reconcile failed: ${e.getMessage}").void
                                       }
-                                  // 滞留看护的内部腿复活通道（merge-queue 滞留两病灶修复批
-                                  // 2026-10-25 腿②）：合并轮被拒后会话已终态——重发须续起
-                                  // 会话。复用 boot sweep internalRevival（续起基工作区座位
-                                  // continuation 会话 + rekey 换键）。fail-soft：装配失败只
-                                  // WARN（看护侧响亮 WARN + 跳过重试，绝不静默烧重试预算）。
-                                  val mergeStallPortSetup: IO[Unit] =
-                                    IO {
-                                      val revival = nebflow.agent.MergeQueueBootSweep.internalRevival(
-                                        sharedResources,
-                                        actorSystem,
-                                        Some((json: io.circe.Json) => wsHub.broadcast(json))
-                                      )
-                                      nebflow.core.delegate.MergeStallCare.RevivalPort.install { entry =>
-                                        nebflow.core.delegate.DelegateRegistry.find(entry.delegateId) match
-                                          case None =>
-                                            IO.pure(Left(
-                                              s"no delegate registry record for '${entry.delegateId}' — cannot revive the merge round"
-                                            ))
-                                          case Some(rec) =>
-                                            revival(rec)(nebflow.core.delegate.MergeQueue.mergeBriefFor(entry))
-                                      }
-                                    }.handleErrorWith(e =>
-                                      logger.warn(s"merge-stall revival port install failed: ${e.getMessage}").void
-                                    )
                                   // #28 阶段 0：Project Flow Map **completed** 节点 TTL 扫描
                                   // （24h 显示消失 → 移归档 + WS nodeRemoved；failed/cancelled
                                   // 无 TTL 不过期——2026-09-07 裁定，死亡现场保留待上层裁决；
@@ -1002,7 +972,7 @@ object GatewayMain extends IOApp:
                                       .handleErrorWith(e =>
                                         logger.warn(s"perception daemon boot failed: ${e.getMessage}").void
                                       )
-                                  hubSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> mergeStallPortSetup *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> perceptionBoot *> succeedPortGate(
+                                  hubSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> perceptionBoot *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {

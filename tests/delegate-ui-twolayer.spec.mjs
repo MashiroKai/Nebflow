@@ -146,7 +146,7 @@ test('T1 stub schema 加宽（G1 mode/G5 队列键/G6 archivedAt）＋旧行缺�
     const full = stub.rowFromRegistry({
       id: 'delegate-nebflow-f1', taskId: '81', title: 'T', executor: 'nebflow',
       orchestrationMode: 'agentflow', archivedAt: 1728360000000,
-      mergeQueue: { projectKey: 'nebflow', ahead: ['d0'], holder: 'd0', reminderSent: false },
+      mergeQueue: { projectKey: 'nebflow', ahead: ['d0'], holder: 'd0', state: 'waiting' },
       mergeQueuePos: { position: 2, total: 3, readyAt: 1728360000001, branch: 'delegate/x', baseBranch: 'main' },
     });
     const legacy = stub.rowFromRegistry({ id: 'delegate-nebflow-f2', taskId: '82' });
@@ -168,7 +168,7 @@ test('T1 stub schema 加宽（G1 mode/G5 队列键/G6 archivedAt）＋旧行缺�
   // G1/G5/G6 加宽键逐键
   expect(out.full.orchestrationMode).toBe('agentflow');
   expect(out.full.archivedAt).toBe(1728360000000);
-  expect(out.full.mergeQueue).toEqual({ projectKey: 'nebflow', ahead: ['d0'], holder: 'd0', reminderSent: false });
+  expect(out.full.mergeQueue).toEqual({ projectKey: 'nebflow', ahead: ['d0'], holder: 'd0', state: 'waiting' });
   expect(out.full.mergeQueuePos).toEqual({ position: 2, total: 3, readyAt: 1728360000001, branch: 'delegate/x', baseBranch: 'main' });
   // 旧盘缺键容忍：mode ''（禁折叠 single）、archivedAt null、队列两键 null
   expect(out.legacy.orchestrationMode).toBe('');

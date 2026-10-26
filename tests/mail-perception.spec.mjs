@@ -1,9 +1,10 @@
 // mail-perception.spec.mjs — 感知域三脸钉（mail-perception-impl 批）。
 //
-// 钉面（r3 已批 + 两加强 的验收核心链路）：
+// 钉面（r3 已批 + 两加强 的验收核心链路；占位退役批 2026-10-26 改钉①）：
 //   ① 面板零统计钉 —— 条目化面板无统计行（r3 裁决：条目 = id/icon/name/state/
-//      summary/detail；无 run/计数类统计投影），预留位恰好两枚（文件/日历）；
-//      两问配置卡必填恰好两个（地址 + 授权码），高级折叠默认收起。
+//      summary/detail；无 run/计数类统计投影）；占位条目退役（作者令 2026-10-26
+//      「去掉文件/日历即将推出占位」）：面板恰好零 reserved 条目，只承载真实
+//      能力（邮件）；两问配置卡必填恰好两个（地址 + 授权码），高级折叠默认收起。
 //   ② 单码片钉 —— OTP 等待期零 UI；码到出片（帧不含码值）；点击一次性消费
 //      （GET otp/consume 恰一次）填值入密码框且不自动提交；过期帧静默撤片。
 //   ③ 快照卡钉 —— to/cc/主题/正文只读渲染 + 默认选项区接管；「照此发送」409
@@ -102,10 +103,10 @@ const DRAFT = {
 };
 
 // ============================================================
-// ① 感知面板：条目化 + 预留位两枚 + 零统计 + 两问配置卡
+// ① 感知面板：条目化 + 占位退役（零 reserved）+ 零统计 + 两问配置卡
 // ============================================================
 test.describe('面板脸', () => {
-  test('P1 条目化渲染 + 预留位恰好文件/日历两枚 + 面板内无统计行', async ({ browser }) => {
+  test('P1 条目化渲染 + 占位退役（零 reserved 条目）+ 面板内无统计行', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => {
       window.__routes.push({
@@ -116,16 +117,39 @@ test.describe('面板脸', () => {
     await page.evaluate(() => window.__openPanel());
     const panel = page.locator('#perception-panel');
     await expect(panel).toBeVisible();
-    // 真实条目一枚 + 预留两枚
-    await expect(panel.locator('.pp-entry:not(.reserved)')).toHaveCount(1);
-    await expect(panel.locator('.pp-entry.reserved')).toHaveCount(2);
-    const reservedNames = await panel.locator('.pp-entry.reserved .pp-e-name').allTextContents();
-    expect(reservedNames, '预留位恰好 文件/日历').toEqual(['文件', '日历']);
+    // 真实条目一枚；占位条目退役（作者令 2026-10-26）——零 reserved、无「即将推出」
+    await expect(panel.locator('.pp-entry')).toHaveCount(1);
+    await expect(panel.locator('.pp-entry.reserved')).toHaveCount(0);
+    await expect(panel.getByText('即将推出')).toHaveCount(0);
     // 零统计：面板内不存在任何统计/计数类行（r3 裁决——面板只条目化）
     const statish = await panel.locator('[class*="stat"], [data-stat]').count();
     expect(statish, '面板内不得出现统计行').toBe(0);
     expect(pageErrors).toEqual([]);
     await page.screenshot({ path: path.join(SHOT_DIR, 'mail-perception-1-panel.png') });
+    await context.close();
+  });
+
+  test('P1b 面板锚定入口按钮（作者令 2026-10-26）：右缘对齐按钮右缘 + 顶缘贴按钮下缘', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.evaluate(() => {
+      window.__routes.push({ method: 'GET', match: (p) => p === '/api/perception/entries', data: { entries: [], serverTime: 1 } });
+      // 入口按钮锚定：harness 初始化时 wirePanelButton 已造好真 #perception-btn
+      // （body 兜底腿）——直接把它钉到右下角（32×32 固定钮），量它量面板。
+      const b = document.getElementById('perception-btn');
+      b.style.cssText = 'position:fixed;right:60px;bottom:40px;width:32px;height:32px;';
+    });
+    await page.evaluate(() => window.__openPanel());
+    const anchored = await page.evaluate(() => {
+      const btn = document.getElementById('perception-btn').getBoundingClientRect();
+      const p = document.getElementById('perception-panel').getBoundingClientRect();
+      return { btnRight: btn.right, btnBottom: btn.bottom, pRight: p.right, pTop: p.top, vw: innerWidth };
+    });
+    // 按钮贴近视口底（40px 缝 + 面板高 ~200）⇒ 下方放不下 → 翻到按钮上方；
+    // 右缘对齐恒成立（本批钉面）；顶缘 = 按钮上缘 − 8 缝 − 面板高 ≤ 按钮下缘 + 8。
+    expect(Math.abs(anchored.pRight - anchored.btnRight), '面板右缘对齐入口按钮右缘').toBeLessThanOrEqual(2);
+    expect(anchored.pTop, '下方放不下 → 整体翻按钮上方（顶缘高于按钮下缘）').toBeLessThan(anchored.btnBottom);
+    expect(pageErrors).toEqual([]);
+    await page.screenshot({ path: path.join(SHOT_DIR, 'mail-perception-1b-anchored.png') });
     await context.close();
   });
 
@@ -137,7 +161,7 @@ test.describe('面板脸', () => {
     await page.evaluate(() => window.__openPanel());
     const panel = page.locator('#perception-panel');
     await expect(panel).toBeVisible();
-    await expect(panel.locator('.pp-entry:not(.reserved)')).toHaveCount(1);
+    await expect(panel.locator('.pp-entry')).toHaveCount(1);
     await expect(panel.locator('.pp-entry .pp-e-sum').first()).toHaveText('尚未连接邮箱');
     // 两问配置卡：必填恰好 地址 + 授权码；高级 <details> 默认收起
     await page.evaluate(() => window.__openConfig());

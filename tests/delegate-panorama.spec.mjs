@@ -133,14 +133,14 @@ const rowRestart = base({
 const rowRtm = base({
   taskNo: '94', delegateId: 'delegate-nebflow-pano-rtm', title: '候批装配',
   status: 'ready-to-merge', reportDetail: '样张已出 · 候批', branch: 'delegate/d-94',
-  baseBranch: 'main', mergeQueue: { projectKey: 'projA', ahead: ['delegate-nebflow-pano-mrg'], holder: 'delegate-nebflow-pano-mrg', reminderSent: false },
+  baseBranch: 'main', mergeQueue: { projectKey: 'projA', ahead: ['delegate-nebflow-pano-mrg'], holder: 'delegate-nebflow-pano-mrg', state: 'waiting' },
   mergeQueuePos: { position: 2, total: 3, readyAt: T0 - 20_000, branch: 'delegate/d-94', baseBranch: 'main' },
   createdAt: T0 - 30_000,
 });
 const rowMerging = base({
   taskNo: '95', delegateId: 'delegate-nebflow-pano-mrg', title: '登录态修复',
   status: 'running', taskStatus: 'merging', branch: 'delegate/d-95', baseBranch: 'main',
-  mergeQueue: { projectKey: 'projA', ahead: [], holder: 'delegate-nebflow-pano-mrg', reminderSent: true },
+  mergeQueue: { projectKey: 'projA', ahead: [], holder: 'delegate-nebflow-pano-mrg', state: 'turn-granted' },
   mergeQueuePos: { position: 1, total: 3, readyAt: T0 - 25_000, branch: 'delegate/d-95', baseBranch: 'main' },
   createdAt: T0 - 35_000,
 });

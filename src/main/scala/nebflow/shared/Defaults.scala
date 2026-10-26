@@ -367,6 +367,16 @@ object Defaults:
     sys.props.getOrElse("nebflow.bg.rateBreakerCooldownMs", (10L * 60L * 1000L).toString).toLong
 
   /**
+   * 后台任务终态通知（agent 注入气泡 + 前台面板）携带的**输出尾段行数**（作者报障
+   * 2026-10-24「后台任务通知很不详细甚至有截断」批）：完成/失败通知正文只带末尾
+   * 本值行 + 截断标注（总行数 + jobId 指回），全文照旧由 BgTaskOutputStore 落盘、
+   * 面板行点击经 REST 详情卡查看——通知面不背大输出，回看面不丢字节。
+   * `nebflow.bg.notifyTailLines`，默认 20（BgRateWindowMs 同款 I2 prop 缝）。
+   */
+  def BgNotifyTailLines: Int =
+    sys.props.getOrElse("nebflow.bg.notifyTailLines", "20").toInt
+
+  /**
    * Background job idle timeout — if a background command produces no output
    * for this many seconds, it is automatically cancelled and the agent is
    * notified with a timeout error. This prevents delegate/subtask agents from
@@ -1156,25 +1166,33 @@ object Defaults:
   def DelegateRevivalEnabled: Boolean =
     sys.props.getOrElse("nebflow.delegate.revival.enabled", "true").toBoolean
 
-  /** 单 delegate 复活次数上限（判据 §2.2 #6）：达限后不再复活、落收殓链。
-    * system prop `nebflow.delegate.revival.maxPerTask` 可调。 */
+  /**
+   * 单 delegate 复活次数上限（判据 §2.2 #6）：达限后不再复活、落收殓链。
+   * system prop `nebflow.delegate.revival.maxPerTask` 可调。
+   */
   def DelegateRevivalMaxPerTask: Int =
     sys.props.getOrElse("nebflow.delegate.revival.maxPerTask", "2").toInt
 
-  /** 复活年龄预算（毫秒，判据 §2.2 #7）：spawnedAt 距今超龄的孤儿不诈尸（陈年
-    * 孤儿复活多半派发意图已过期）。默认 7 天。system prop
-    * `nebflow.delegate.revival.maxAgeMs` 可调。 */
+  /**
+   * 复活年龄预算（毫秒，判据 §2.2 #7）：spawnedAt 距今超龄的孤儿不诈尸（陈年
+   * 孤儿复活多半派发意图已过期）。默认 7 天。system prop
+   * `nebflow.delegate.revival.maxAgeMs` 可调。
+   */
   def DelegateRevivalMaxAgeMs: Long =
     sys.props.getOrElse("nebflow.delegate.revival.maxAgeMs", (7L * 24 * 3600 * 1000).toString).toLong
 
-  /** 单 boot 复活总数上限（判据 §2.2 #8）：按 spawnedAt 新者优先，超额者走收殓——
-    * 病态转录批量复活的 LLM 洪峰护栏。system prop
-    * `nebflow.delegate.revival.bootCap` 可调。 */
+  /**
+   * 单 boot 复活总数上限（判据 §2.2 #8）：按 spawnedAt 新者优先，超额者走收殓——
+   * 病态转录批量复活的 LLM 洪峰护栏。system prop
+   * `nebflow.delegate.revival.bootCap` 可调。
+   */
   def DelegateRevivalBootCap: Int =
     sys.props.getOrElse("nebflow.delegate.revival.bootCap", "8").toInt
 
-  /** 复活 spawn 并发上限（慢段信号量，`ProjectCrashRecovery` 慢段同款护栏）。
-    * system prop `nebflow.delegate.revival.concurrency` 可调。 */
+  /**
+   * 复活 spawn 并发上限（慢段信号量，`ProjectCrashRecovery` 慢段同款护栏）。
+   * system prop `nebflow.delegate.revival.concurrency` 可调。
+   */
   def DelegateRevivalConcurrency: Int =
     sys.props.getOrElse("nebflow.delegate.revival.concurrency", "2").toInt
 

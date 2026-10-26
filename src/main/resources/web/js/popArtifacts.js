@@ -139,8 +139,10 @@ function humanSize(bytes) {
   return (n / (1024 * 1024)).toFixed(n < 10 * 1024 * 1024 ? 1 : 0) + ' MB';
 }
 
-/** Icon glyph + color family for a file-card icon (by extension). */
-function fileIconStyle(ext) {
+/** Icon glyph + color family for a file-card icon (by extension). Exported for
+ *  the att-ref-card 语言统一批 (2026-10-26): the user-side ref card reuses the
+ *  SAME icon spec — one family, zero second source. */
+export function fileIconStyle(ext) {
   const e = (ext || '').toLowerCase();
   if (e === 'pdf') return { label: 'PDF', cls: 'pdf' };
   if (e === 'html' || e === 'htm') return { label: 'HTML', cls: 'html' };

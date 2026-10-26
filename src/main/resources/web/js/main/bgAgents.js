@@ -467,14 +467,15 @@ function bgTaskRowHtml(id, info, opts = {}) {
     : '';
   // Waiting（held-receipt 投递可靠性批 2026-10-21 fix 4）：显式停靠标签——
   // 「等合并轮」的 delegate 行显示等待词，不再貌似 Idle 完成。
-  // panel-merge-status 批（2026-10-25 · 作者令「面板显示候合并状态与队列位次」）：
+  // 台账 #896 交通引导员制（2026-10-26 · 前身 = panel-merge-status 批 2026-10-25）：
   // 候合并行在静态「等待合并轮」词之上追加队列细节段（' · ' 连接，一段一行）：
-  //   · 位次 —— 前面还有 N 位（N = position-1，载荷只读；队首 N=0 不渲染）；
-  //   · 重试 —— merge 队列 retryCount ≥ 1 →「第 N 次重试」（与主行 ×N 会话重试
-  //     徽标不同源：此处 = 合并尝试失败计数）；
-  //   · 拒绝摘要 —— lastRefusalReason 非空 → 一句摘要（展示截断，全文进 tooltip）。
+  //   · 放行 —— state=turn-granted（合并窗持有中）→「轮到你合并」段（位次段让位）；
+  //   · 位次 —— state=waiting 且前面还有人（N = position-1，载荷只读）→「前面还有
+  //     N 位」；
+  //   · 原因 —— lastBlockReason 非空（waiting：为什么还没放行——base 未净空等）→
+  //     一句原因摘要（展示截断，全文进 tooltip）。
   // 数据 = /api/merge-queue 状态面（mergeQueueStatus 单点；join key = 行 sid）。
-  // 降级红线：查无条目 / API 未生效（404）⇒ 三段全缺，行回静态「等待合并轮」
+  // 降级红线：查无条目 / API 未生效（404）⇒ 各段全缺，行回静态「等待合并轮」
   // 既有形态——零报错、零占位、零 console 噪音。
   let waitingText = '';
   let waitingTip = '';
@@ -482,8 +483,8 @@ function bgTaskRowHtml(id, info, opts = {}) {
     const mq = mergeQueueEntryFor(String((info && info.sessionId) || '').replace(/^team-/, ''));
     if (mq) {
       const segs = [];
-      if (mq.ahead > 0) segs.push(t('subagents.mergeQueue.ahead', { n: mq.ahead }));
-      if (mq.retryCount > 0) segs.push(t('subagents.mergeQueue.retry', { n: mq.retryCount }));
+      if (mq.state === 'turn-granted') segs.push(t('subagents.mergeQueue.turn'));
+      else if (mq.ahead > 0) segs.push(t('subagents.mergeQueue.ahead', { n: mq.ahead }));
       if (mq.reason) segs.push(t('subagents.mergeQueue.reason', { reason: mq.reason }));
       if (segs.length) {
         waitingText = ' · ' + segs.join(' · ');

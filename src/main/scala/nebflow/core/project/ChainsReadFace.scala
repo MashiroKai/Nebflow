@@ -195,12 +195,12 @@ object ChainsReadFace:
           val withLive = live.fold(obj)(v => obj.add("live", v))
           val withVerdict = verdict.fold(withLive)(v => withLive.add("verdict", v))
           // G1「合并中」一等可查询态（delegate 视图重设计实施批 2026-10-21）：
-          // 合并窗持有者（MergeQueue 单飞行窗 `inFlight` 的队头 = queueView.holder
-          // 命中本行）⇒ 行 `taskStatus` 显式覆写为 "merging"。推导单点收进引擎
-          // 读面（判据本体仍是 MergeQueue 引擎闸，零新存储、零第二权威）——
-          // 前端从「holder 派生第二权威」红线中解放，API 直接可查。非持有者行
-          // 维持 taskStatuses 供给（缺 = 键缺席，旧投影）。
-          val merging = queue.exists(_.holder.contains(rec.id))
+          // 本行是合并窗持有人（账本 state = turn-granted——台账 #896 交通引导员制
+          // 的唯一持有人形态）⇒ 行 `taskStatus` 显式覆写为 "merging"。推导单点收进
+          // 引擎读面（判据本体仍是 MergeQueue 账本，零新存储、零第二权威）——前端
+          // 从「holder 派生第二权威」红线中解放，API 直接可查。非持有者行维持
+          // taskStatuses 供给（缺 = 键缺席，旧投影）。
+          val merging = queue.exists(_.state == nebflow.core.delegate.MergeQueue.State.TurnGranted)
           val withTask = (if merging then Some("merging") else taskStatuses.get(rec.id)).fold(withVerdict) { s =>
             withVerdict.add("taskStatus", s.asJson)
           }
@@ -215,7 +215,7 @@ object ChainsReadFace:
                   "projectKey" -> q.projectKey.asJson,
                   "ahead" -> q.ahead.asJson,
                   "holder" -> q.holder.fold(Json.Null)(_.asJson),
-                  "reminderSent" -> q.reminderSent.asJson
+                  "state" -> q.state.asJson
                 )
               )
               .add(

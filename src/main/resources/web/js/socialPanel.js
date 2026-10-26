@@ -289,6 +289,126 @@ let defaultSessionByChannel = {};
  *  @type {{available: boolean, items: Array<{id: string, name: string, agentName: string}>}|null} */
 let sessionsCache = null;
 
+// ── Bound-state cache (秒显批, author order 2026-10-25) ──────────────────
+// Symptom (author): after a successful scan-bind, opening the panel took
+// visibly long before the card showed the bound pill, because the FIRST paint
+// waited for the whole fetch chain (config → per-channel probes → feishu C1/C4
+// → sessions) to converge. Fix, per the ruling's three clauses:
+//   ① 落盘持久化 — the LAST CONVERGED per-channel render inputs (the four
+//      maps below) snapshot into localStorage (browser-local disk) at every
+//      convergence point ([[persistPanelCache]]);
+//   ② 开卡即本地读 — panel open seeds the maps from that snapshot BEFORE the
+//      first render, so the bound pill paints with the DOM, not after the
+//      network (<1s trivially) ([[seedPanelCache]] in [[openSocialPanel]]);
+//   ③ 后台刷新校真，变更才更新界面 — the normal load then converges in the
+//      background; a converged read that AGREES with the cached paint rebuilds
+//      nothing (per-card signature diff in [[loadAll]] — no flicker, no scan-QR
+//      or typing disturbance), a changed card re-renders as today.
+// The cache is an ACCELERATOR, never a source of truth: a stale snapshot
+// (channel unbound elsewhere, engine restarted) self-corrects the moment the
+// real GETs answer. Snapshot shape is versioned; anything unreadable degrades
+// to the pre-batch behaviour (empty maps ⇒ the first paint waits for truth).
+const PANEL_CACHE_KEY = 'nebflow.social.panelCache.v1';
+
+/** Snapshot the per-channel render inputs into localStorage (write-through at
+ *  the convergence points). Best-effort: quota / privacy-mode failures are
+ *  silent — losing the cache costs one cold open, nothing else. */
+function persistPanelCache() {
+  try {
+    /** @type {Record<string, any>} */
+    const snap = {};
+    for (const ch of SOCIAL_CHANNELS) {
+      snap[ch.id] = {
+        cfg: configByChannel[ch.id] || null,
+        probe: probeByChannel[ch.id] || null,
+        registered: registeredByChannel[ch.id] === true,
+        live: liveByChannel[ch.id] || null,
+      };
+    }
+    localStorage.setItem(PANEL_CACHE_KEY, JSON.stringify({ v: 1, at: Date.now(), channels: snap }));
+  } catch { /* cache write is best-effort */ }
+}
+
+/** Seed the in-memory maps from the last converged snapshot. @returns {boolean}
+ *  true when anything was seeded (⇒ the first render can paint real state). */
+function seedPanelCache() {
+  try {
+    const raw = localStorage.getItem(PANEL_CACHE_KEY);
+    if (!raw) return false;
+    const data = /** @type {any} */ (JSON.parse(raw));
+    if (!data || data.v !== 1 || !data.channels || typeof data.channels !== 'object') return false;
+    let seeded = false;
+    for (const ch of SOCIAL_CHANNELS) {
+      const e = data.channels[ch.id];
+      if (!e || typeof e !== 'object') continue;
+      if (e.cfg && typeof e.cfg === 'object') { configByChannel[ch.id] = e.cfg; seeded = true; }
+      if (e.probe && typeof e.probe === 'object') { probeByChannel[ch.id] = e.probe; seeded = true; }
+      if (typeof e.registered === 'boolean') { registeredByChannel[ch.id] = e.registered; seeded = true; }
+      if (e.live && typeof e.live === 'object') { liveByChannel[ch.id] = e.live; seeded = true; }
+    }
+    return seeded;
+  } catch { return false; }
+}
+
+/**
+ * One card's rendered-face signature (秒显批 ③): everything [[cardHTML]] /
+ * [[itemCardHTML]] read off the mutable maps — display status, created face,
+ * switch position, hint, stored field values, feishu live block. The converged
+ * read diffs against the paint-in-flight signatures so a read that AGREES with
+ * the cached paint triggers no rebuild. (configReady is deliberately absent:
+ * it has no visible face on the visible item-face cards, and including it
+ * would force a rebuild on every open's convergence — the flicker ③ bans.
+ * 🔴 The switch term rides the SAME rule: [[switchOnFor]] embeds configReady,
+ * which ALWAYS flips false→true when the real config lands, so a blanket term
+ * would break the no-rebuild property — but the switch is RENDERED only by
+ * [[plainCardHTML]] (item-face and two-face cards fold it away), so the term
+ * is a constant `null` for those faces and stays honest for plain ones.)
+ * @param {any} ch channel definition (shape: SOCIAL_CHANNELS entries)
+ * @returns {Record<string, any>} named parts — the diff reads them per-term
+ *   (created/fields ⇒ structural, the rest ⇒ in-place).
+ */
+function cardFaceParts(ch) {
+  const status = displayStatus(ch);
+  const plainFace = !ch.scanBind && !ITEM_FACE_CHANNELS.includes(ch.id);
+  return {
+    status,
+    created: faceCreated(ch),
+    switchOn: plainFace ? switchOnFor(ch) : null,
+    hint: cardHint(ch, status),
+    fields: (configByChannel[ch.id] && configByChannel[ch.id].fields) || null,
+    registered: registeredByChannel[ch.id] === true,
+    live: liveByChannel[ch.id] || null,
+  };
+}
+
+/** JSON form of [[cardFaceParts]] (cheap equality for the common no-change path). */
+function cardFaceSignature(ch) {
+  return JSON.stringify(cardFaceParts(ch));
+}
+
+/**
+ * Converge ONE card on new truth, 秒显批 ③ (变更才更新界面): a card whose face
+ * parts changed against the paint in flight is updated IN PLACE when the drift
+ * is pill/hint/live/toggle-shaped ([[refreshCard]]'s exact coverage), and the
+ * full re-render happens only when the drift is STRUCTURAL — the created face
+ * flipped (row ⇄ scan body) or the stored field values moved (refreshCard does
+ * not touch rendered field rows). This is what keeps an agreeing read at zero
+ * rebuilds and a sibling's drift from rebuilding an untouched card.
+ * @param {Array<any>} changed channels whose signature differs
+ * @param {Map<string, Record<string, any>>} before the paint-in-flight parts
+ * @returns {void}
+ */
+function convergeCards(changed, before) {
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const structural = changed.some((ch) => {
+    const b = before.get(ch.id) || {};
+    const n = cardFaceParts(ch);
+    return n.created !== b.created || !same(n.fields, b.fields);
+  });
+  if (structural) renderAll();
+  else for (const ch of changed) refreshCard(ch.id);
+}
+
 /** The root agent's identity name — the frontend mirror of the backend's single
  *  source `RootAgentIdentity.Name` (src/main/scala/nebflow/actor/
  *  RootAgentIdentity.scala). A session IS the Nebula session when its
@@ -1060,8 +1180,18 @@ function applyStaticText() {
 /** Read config + probe for every channel, then the C3/C4 faces for the
  *  scanBind channels; failures degrade to "not configured" / "unavailable"
  *  readings instead of blanking the panel. Ends with the auto-scan decision
- *  (not-created face ⇒ QR first). */
+ *  (not-created face ⇒ QR first).
+ *
+ *  秒显批 (author order 2026-10-25): the FIRST paint of an open no longer
+ *  waits for this chain — [[openSocialPanel]] seeds the maps from the
+ *  localStorage snapshot and renders before this runs. This load is the
+ *  后台校真 leg: it probes only the VISIBLE channels (sealed cards never
+ *  rendered, so probing them was two wasted round trips per open) and, at
+ *  convergence, re-renders ONLY when a card's face signature actually
+ *  changed against the paint in flight (变更才更新界面 — an agreeing read
+ *  rebuilds nothing, so no flicker and no scan/typing disturbance). */
 async function loadAll() {
+  const beforeParts = new Map(visibleChannels().map((ch) => [ch.id, cardFaceParts(ch)]));
   try {
     configByChannel = await fetchConfig();
     configReady = true;
@@ -1069,13 +1199,19 @@ async function loadAll() {
     configByChannel = {};
     configReady = false; // unready ≠ "everything is off" — the switch must not lie
   }
-  for (const ch of SOCIAL_CHANNELS) {
+  // 秒显批: per-channel probes run CONCURRENTLY (each slot still degrades to
+  // its own empty reading) — the chain's own latency no longer sums. A failed
+  // probe slot also withholds this round's snapshot write (below): the
+  // persisted state must only ever be CONVERGED truth, never a degraded read.
+  let probesClean = true;
+  await Promise.all(visibleChannels().map(async (ch) => {
     try {
       probeByChannel[ch.id] = await fetchProbe(ch.id);
     } catch {
       probeByChannel[ch.id] = {};
+      probesClean = false;
     }
-  }
+  }));
   // feishu-panel: C1 + C4 faces ride along with the load (cheap GETs; each
   // degrades to its own unavailable reading on an older backend). C4 is read
   // for its BEHAVIOUR half only ([[pinDefaultSessions]] needs the stored value
@@ -1090,7 +1226,21 @@ async function loadAll() {
     await fetchDefaultSession(ch.id);
   }
   await fetchSessions();
-  renderAll();
+  // 秒显批 ③: only a face that actually changed against the paint in flight
+  // is touched, and it is touched IN PLACE unless the drift is structural
+  // ([[convergeCards]] — an agreeing read rebuilds nothing; a sibling's drift
+  // never rebuilds an untouched card).
+  const changed = visibleChannels().filter((ch) => {
+    const b = beforeParts.get(ch.id);
+    return !b || JSON.stringify(cardFaceParts(ch)) !== JSON.stringify(b);
+  });
+  if (changed.length) convergeCards(changed, beforeParts);
+  // Snapshot write-through ONLY on a fully converged read: a failed config
+  // read (configReady=false) or a failed probe slot (probesClean=false) is a
+  // DEGRADED round, not truth — persisting it would let one gateway hiccup
+  // paint bound cards as not-created on the next open (and auto-begin QR
+  // sessions on them). The last good snapshot stays the seed in that round.
+  if (configReady && probesClean) persistPanelCache();
   setBusy(false);
   maybeBeginScan();
   // AFTER the render: the write-back's "saved" feedback lands in the live
@@ -1173,6 +1323,7 @@ async function saveChannel(channelId, enabledOverride) {
     for (const f of ch.fields) delete draftValues[`${channelId}.${f.key}`];
     configByChannel = await fetchConfig();            // step 2 → step 3: probe re-read
     try { probeByChannel[channelId] = await fetchProbe(channelId); } catch { /* keep POST probe */ }
+    persistPanelCache(); // 秒显批: the save just changed truth — the snapshot follows
     renderAll();
     setSaveState(channelId, t('social.action.saved'));
     return true;
@@ -1200,6 +1351,7 @@ async function recheck(channelId) {
   } catch {
     probeByChannel[channelId] = {};
   }
+  persistPanelCache(); // 秒显批: the recheck's fresh triples become the next open's seed
   refreshCard(channelId);
 }
 
@@ -1258,6 +1410,7 @@ async function archiveChannel(channelId) {
     for (const f of ch.fields) delete draftValues[`${channelId}.${f.key}`];
     configByChannel = await fetchConfig();
     try { probeByChannel[channelId] = await fetchProbe(channelId); } catch { /* keep */ }
+    persistPanelCache(); // 秒显批: the unbind just changed truth — the snapshot follows
     // weixin-binditem: unbind returns the card to its DEFAULT item view (the
     // order's default = the row only); the recreate leg below re-begins the
     // scan behind the collapsed row ([[maybeBeginScan]]), so expanding shows
@@ -1656,6 +1809,13 @@ export function openSocialPanel() {
   if (!ov) return;
   lastFocusedBeforeOpen = /** @type {HTMLElement|null} */ (document.activeElement);
   ov.classList.add('on');
+  // 秒显批 (author order 2026-10-25): seed the maps from the last converged
+  // snapshot BEFORE this first render, so a bound card paints its 已接入 pill
+  // with the DOM — the fetch chain below converges in the background and
+  // corrects only what changed. (The seed is display-only: configReady stays
+  // false until the real config lands, so every write path keeps its
+  // refuse-when-unready guard.)
+  seedPanelCache();
   renderAll();
   setBusy(true); // set BEFORE the load so an observer can never read the previous round's value
   const first = modal()?.querySelector('button, input, select');

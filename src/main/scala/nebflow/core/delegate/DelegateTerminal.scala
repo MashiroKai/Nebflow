@@ -53,12 +53,12 @@ object DelegateTerminal:
   object Outcome:
     /**
      * 判词完成（payload 后缀携带判词行——🔴 模型/用户可见文案，§16 待过目）。
-     * `mergeRoundRefused`（steward 批 D3-③，2026-10-23）：合并轮被拒（机械验收
-     * 拒绝等 CompletedNote 形态）= true ⇒ 清理面把队列条目**留队待重试**而非出队
-     * （`MergeQueue.onTerminal(keepForRetry=true)`——队头被拒不再堵塞后续）。默认
-     * false = 既有出队语义零变化。
+     * `mergeOutcome`（台账 #896 交通引导员制 2026-10-26）：合并轮终态结论——
+     * Some(Merged) = 机械验收通过（关账 merged）；Some(Refused(reason)) = 合并轮
+     * 被拒（关账 failed，无重试无 park）；None = 非合并轮完成（队列成员若在账则
+     * 走账实核对回落）。默认 None。
      */
-    final case class Release(verdictSuffix: String, mergeRoundRefused: Boolean = false) extends Outcome
+    final case class Release(verdictSuffix: String, mergeOutcome: Option[MergeQueue.RoundOutcome] = None) extends Outcome
 
     /** ready-to-merge：保活等合并轮（预算重挂由监督者执行）。 */
     case object HoldForMerge extends Outcome
@@ -101,7 +101,8 @@ object DelegateTerminal:
     val branch = record.flatMap(_.branch)
 
     val gitDigest = IO.blocking(digestFor(record))
-    val mergeRound = MergeQueue.find(delegateId).exists(_.reminderSentAt.isDefined)
+    // 台账 #896：合并轮在飞判据单点 = 账本 turn-granted（放行 = 通知已送达）。
+    val mergeRound = MergeQueue.isMergeRound(delegateId)
     val selfReport = record.flatMap(r => r.reportStatus.map(s => (s, r.reportDetail.getOrElse(""))))
     // N1 刀2 ⑸：在飞链计数（fail-soft 0——宿主/快照任何一步失败都不拖判词）。
     // 判据 = 该 delegate 作用域图内「存在非终态成员」的链数（chainIdView 值集合去重
@@ -196,24 +197,28 @@ object DelegateTerminal:
             )
           }
         else IO.pure(None)
-      // P2-3 只读座位诚实化：判否 + worktree 座位 + 领先提交 + completed ⇒ 翻转
-      // ready-to-merge（自动入队，交付不静默丢失）。非 worktree 座位不翻（就地腿
-      // 归漂移闸管辖面）。
-      readOnlySeatFlip = verdict == DelegateJudge.Verdict.Completed &&
-        record.flatMap(_.worktree).isDefined &&
-        record.flatMap(_.worktreeJudged).contains(false) &&
-        aheadOfBase.exists(_ > 0)
-      verdict1 = if readOnlySeatFlip then DelegateJudge.Verdict.ReadyToMerge else verdict
-      finalVerdict0 = verdict1 match
+      // 无可并产物的 ready-to-merge 降级（A5 步1 既有判据）：空分支凭零领先降级，
+      // 防空合并轮（诚实终态）。
+      finalVerdict0 = verdict match
         case DelegateJudge.Verdict.ReadyToMerge if branch.isEmpty || aheadOfBase.contains(0) =>
           DelegateJudge.Verdict.Completed
         case other => other
+      // 台账 #896（交通引导员制 2026-10-26）：引擎侧自动合并执行已整体退役
+      // （DelegateAutoMerge 删除——引擎永不自己跑 git merge）。completed 判词 ×
+      // worktree 座位 × 分支确有领先提交 ⇒ **翻转 ready-to-merge 入队**（放行 =
+      // 通知属主自己合并；交付绝不静默丢失）。分支锚缺失/零领先 = 降级 completed
+      // （下方 finalVerdict0 与既有注记路径兜底）。
+      queueFlip = finalVerdict0 == DelegateJudge.Verdict.Completed &&
+        !mergeRound &&
+        record.flatMap(_.worktree).isDefined &&
+        aheadOfBase.exists(_ > 0)
+      finalVerdict0b = if queueFlip then DelegateJudge.Verdict.ReadyToMerge else finalVerdict0
       // P1-1① 机械验收闸（2026-10-09）：合并轮 completed 判词的 Release 前置闸
       // ——确定性 git 校验（双亲 merge ＋祖先真），不满足 ⇒ 拒绝 Release 回落
       // 注记形 completed（#566：不再是 blocked 状态——拒绝证据随注记交付）。
       // 绝不凭自申报放行；读数不可确证 = fail-closed（留现场）。
       acceptance <-
-        if mergeRound && finalVerdict0.isCompletedShaped then
+        if mergeRound && finalVerdict0b.isCompletedShaped then
           IO.blocking(MergeAcceptance.verifyRecord(record)).map(Some(_): Option[MergeAcceptance.Result])
         else IO.pure(None: Option[MergeAcceptance.Result])
       finalVerdict = acceptance match
@@ -221,34 +226,14 @@ object DelegateTerminal:
           DelegateJudge.Verdict.CompletedNote(
             s"mechanical merge acceptance refused the release (the delegate/verdict claimed a completed merge): ${r.evidence}"
           )
-        case _ => finalVerdict0
-      // 引擎原生 delegate worktree 自动合并批（#524 · 2026-10-04 裁定引擎化）：
-      // completed 判词 × 有分支锚 × 非合并轮 ⇒ 引擎侧 FIFO 自动合并（开关
-      // `delegateAutoMerge.enabled` 热读；目标 = config targetBranch ∥ spawn 绑定
-      // baseBranch）。尾注并入终态 payload（冲突挂起 = 文件清单候人/候智能裁决）。
-      // 开关 off / 不可评（无锚）= None ⇒ 下方 P2-3 既有注记路径逐字保留。
-      autoMergeSuffix <-
-        if finalVerdict.isCompletedShaped && !mergeRound then
-          DelegateAutoMerge
-            .onCompletedHook(record)
-            .handleErrorWith(e =>
-              IO(
-                Some(
-                  s"\n\n[auto-merge] hook error: ${Option(e.getMessage).getOrElse(e.toString).take(200)} — branch left untouched."
-                )
-              )
-            )
-        else IO.pure(None)
-      // P2-3 工作座位注记（不阻断）：completed 判词 + worktree 座位 + 领先提交
-      // ——判词是判定机的「无可并之物」裁定，引擎只注记（非合并轮；合并轮的
-      // 同形态已被上方验收闸拦下）。#566：注记形判词（CompletedNote）不重复注记
-      // ——判官已留注记，引擎不再叠加。#524：钩子已产出尾注（含开关 on 的全部评估
-      // 路径）时不再重复注记——审计行/台账行已由 DelegateAutoMerge 落。
+        case _ => finalVerdict0b
+      // P2-3 工作座位注记（不阻断）：completed 判词 + 领先提交且未入队——诚实化
+      // 注记（判词归判定机，引擎只记账）。worktree 座位已被 queueFlip 翻转入队；
+      // 本注记只剩就地座位与翻转降级形态（合并轮的同形态已被上方验收闸拦下）。
       _ <- IO
         .blocking {
           if finalVerdict == DelegateJudge.Verdict.Completed && !mergeRound &&
-            aheadOfBase.exists(_ > 0) && record.flatMap(_.worktree).isDefined &&
-            autoMergeSuffix.isEmpty
+            aheadOfBase.exists(_ > 0)
           then noteUnmergedWork(delegateId, taskId, branch, aheadOfBase)
           else ()
         }
@@ -292,21 +277,26 @@ object DelegateTerminal:
           val cleanup =
             if mergeRound && acceptance.exists(_.ok) then PostMergeCleanup.run(record)
             else IO.pure(false)
-          // #524：auto-merge 尾注（merged / conflict-pending / refused / already-
-          // merged / failed 五态文案）并入判词行——delegate 终态 payload 即冲突
-          // 挂起状态的承载面之一。修复批 2026-10-25：工作结果附页随后（合并轮）。
+          // 台账 #896：合并轮终态结论随行（队列关账输入）。非合并轮 = None。
+          val roundOutcome =
+            if mergeRound && acceptance.exists(_.ok) then Some(MergeQueue.RoundOutcome.Merged)
+            else None
+          // 修复批 2026-10-25：工作结果附页随后（合并轮）。
           cleanup *> IO.pure(
-            Outcome.Release(verdictLineCompleted(unjudged) + autoMergeSuffix.getOrElse("") + workAppendix)
+            Outcome.Release(verdictLineCompleted(unjudged) + workAppendix, roundOutcome)
           )
         case DelegateJudge.Verdict.CompletedNote(note) =>
           // #566：退役 blocked 的唯一残留出口——completed 判词＋注记交付（注记 =
           // 报告内容，不是状态）。合并轮上的注记形 = 合并未干净落地（机械验收
-          // 拒绝等）⇒ 队列条目留队待重试（D3-③ 队头被拒不堵塞后续）；非合并轮
-          // 注记 = 普通完成注记，语义不变。
+          // 拒绝等）⇒ 队列成员关账 failed(原因)——无重试无 park（台账 #896）；
+          // 非合并轮注记 = 普通完成注记，语义不变。
+          val refused =
+            if mergeRound && acceptance.exists(!_.ok) then Some(MergeQueue.RoundOutcome.Refused(note))
+            else None
           IO.pure(
             Outcome.Release(
               s"${verdictLineCompleted(unjudged = false)}\n[delegate-judge] note: $note" + workAppendix,
-              mergeRoundRefused = mergeRound && acceptance.exists(!_.ok)
+              refused
             )
           )
     yield outcome
@@ -594,10 +584,11 @@ object DelegateTerminal:
 
   /**
    * 任意终态的统一清理（BackoffSupervisor.notifyParentAndStop 内，gate
-   * source="delegate"）：MergeQueue 出队（幂等）＋ failed/cancelled 的补判词行
+   * source="delegate"）：MergeQueue 关账（幂等）＋ failed/cancelled 的补判词行
    * （completed 腿的判词行已由 [[onCompleted]] 写，此处不重复）。
-   * `keepForRetry`（steward 批 D3-③）：合并轮被拒的 Release 腿传 true——条目
-   * 留队待重试而非出队（队头被拒不堵塞后续，见 [[MergeQueue.onTerminal]]）。
+   * `mergeOutcome`（台账 #896 交通引导员制）：合并轮终态结论——Some(Merged) /
+   * Some(Refused(reason)) 关账 merged / failed；None = 回合外终态（取消/超时/
+   * 会话死亡）→ 队列账实核对后落 owner-gone（无重试无 park）。
    */
   def onTerminalCleanup(
     resources: AgentRuntimePort,
@@ -605,7 +596,7 @@ object DelegateTerminal:
     parentSessionId: String,
     taskStatus: String,
     eventType: String,
-    keepForRetry: Boolean = false
+    mergeOutcome: Option[MergeQueue.RoundOutcome] = None
   ): IO[Unit] =
     val record = DelegateRegistry.find(delegateId)
     val taskId = record.flatMap(_.taskId)
@@ -668,7 +659,7 @@ object DelegateTerminal:
         .handleErrorWith(e => IO(logger.warn(s"delegate settlement note failed: ${e.getMessage}")))
     verdictLine *> ledgerNote *> hostUnmount *> pluginRelease *> MergeQueue.onTerminalIO(
       delegateId,
-      keepForRetry
+      mergeOutcome
     ) *> autoArchive
   end onTerminalCleanup
 
@@ -770,7 +761,7 @@ object DelegateTerminal:
             )
           )
       case Some(resolvedBaseBranch) =>
-        val entry = MergeQueue.Entry(
+        val entry = MergeQueue.Member(
           delegateId = delegateId,
           branch = rec.branch.getOrElse(s"delegate/$delegateId"),
           baseWs = baseWs,
@@ -781,8 +772,8 @@ object DelegateTerminal:
           parentSessionId = parentSessionId,
           description = rec.title,
           readyAt = now,
-          childRef = childRef,
-          supervisorRef = supervisorRef
+          channelKind = "internal",
+          internal = Some(MergeQueue.InternalLeg(childRef, supervisorRef))
         )
         for
           // 工作结果保真（修复批 2026-10-25，根因①——见上注）。查无记录 = 非本次
