@@ -24,7 +24,12 @@ import scala.concurrent.duration.*
  *  - ⑥ 合并轮终态关账：merged / failed（拒绝原因随行），无重试无 park；
  *  - ⑦ **owner-gone**：属主会话死亡（活性探针）/ 通知通道失败 ⇒ 关账
  *    owner-gone + 升级通知（OwnerGonePort），绝不静默 park；
- *  - ⑧ 账本持久化：落盘写穿 + 重启（丢内存）自盘回载，跨重启不清零。
+ *  - ⑧ 账本持久化：落盘写穿 + 重启（丢内存）自盘回载，跨重启不清零；
+ *  - ⑨ **余脏不再拦截（#943 fail-soft 回归）**：base 余脏只 WARN——放行照发，
+ *    合并回合诚实撞脏进 failed（队列回纯排队+通知，零留队停靠）；
+ *  - ⑩ **方向闸留队 + 阻塞必通知（#943）**：base 分支错位仍 Left 留队，但
+ *    BlockNotifyPort 必发可行动通知（原因全文）；同因去重，N 拍仍堵恰一次升级；
+ *  - ⑪ **failed 必通知（#943）**：合并回合拒绝关账时父会话收到**未截断**全文。
  *
  * 夹具：真 actor（Sink 收 UserInput）+ 真 git 仓（净空闸/账实核对的真 git 面）。
  */
@@ -36,23 +41,44 @@ class MergeQueueSpec extends CatsEffectSuite:
   private val originalRoot = PathUtil.dataRoot
 
   PathUtil.setDataRoot(tempRoot)
-  os.remove.all(tempRoot)
+  removeRetry(tempRoot)
   os.makeDir.all(tempRoot)
 
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
 
+  /**
+   * Windows 文件锁 flake（存量在案）真形态：git 松散对象带只读位（444）——
+   * Files.delete 拒删只读文件，`os.remove.all` 半途 Abort。先清只读属性再删，
+   * 短命句柄（AV/索引器）再以重试兜底；只读位仅在 Windows 有此语义。
+   */
+  private def removeRetry(p: os.Path): Unit =
+    if os.exists(p) then
+      if scala.util.Properties.isWin then
+        try os.proc("cmd", "/c", "attrib", "-R", s"${p.toString}\\*", "/S", "/D").call(check = false, stdout = os.Pipe, stderr = os.Pipe)
+        catch case _: Throwable => ()
+        try os.proc("cmd", "/c", "attrib", "-R", p.toString).call(check = false, stdout = os.Pipe, stderr = os.Pipe)
+        catch case _: Throwable => ()
+      var attempt = 0
+      while os.exists(p) && attempt < 8 do
+        try os.remove.all(p)
+        catch case _: Throwable => ()
+        if os.exists(p) then
+          attempt += 1
+          Thread.sleep(250)
+
   override def beforeEach(context: munit.BeforeEach): Unit =
     MergeQueue.reset()
-    os.remove.all(tempRoot / "chains")
+    removeRetry(tempRoot / "chains")
 
   override def afterEach(context: munit.AfterEach): Unit =
     MergeQueue.reset()
     MergeQueue.installLivenessProbe(_ => IO.pure(true))
     MergeQueue.OwnerGonePort.clear()
+    MergeQueue.BlockNotifyPort.clear()
 
   /** 真 git 基座（main@init + 可选的已并分支形态）。 */
   private def mkRepo(dir: os.Path, branch: String, merge: Boolean): os.Path =
-    os.remove.all(dir)
+    removeRetry(dir)
     os.makeDir.all(dir)
     os.proc("git", "init", "-b", "main", dir.toString).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
     def g(args: String*): os.CommandResult =
@@ -366,6 +392,93 @@ class MergeQueueSpec extends CatsEffectSuite:
       assertEquals(after.map(_.readyAt), Some(42L), "readyAt is the ledger original value (FIFO rank survives)")
       assertEquals(after.flatMap(_.internal).isDefined, false, "channel closures are process-local and NOT persisted")
       assertEquals(view.map(_.position), Some(1), "the reloaded member still projects its queue position")
+    end for
+  }
+
+  // ── ⑨ 余脏不再拦截（#943 fail-soft 回归） ─────────────────────────────
+
+  test("⑨ leftover dirt no longer blocks the grant (fail-soft): the turn is granted with a WARN, no grant-blocked, no requeue") {
+    val system = ActorSystem(s"mq-10-${scala.util.Random.nextInt(100000)}")
+    val records = ListBuffer.empty[(String, Option[ActorRef[AgentEvent]])]
+    val repo = mkRepo(tempRoot / "mq10-repo", branch = "delegate/d-dirty", merge = false)
+    // 白名单外 tracked 脏（还原腿不碰、判性面不碰——hygiene 尽力后必余脏）。
+    os.write.over(repo / "deliverable.txt", "dirty source overwrite")
+    val notices = ListBuffer.empty[(String, String)]
+    MergeQueue.BlockNotifyPort.install((m, kind, reason) => IO { notices += ((kind, reason)) })
+    for
+      a <- member(system, records, "d-dirty", repo, readyAt = 1L)
+      _ <- IO { MergeQueue.enqueue(a.copy(projectKey = "p10")) }
+      _ <- IO.sleep(120.millis)
+      got = records.toList
+      state = MergeQueue.find("d-dirty").map(_.state)
+      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
+    yield
+      assertEquals(got.size, 1, "the turn IS granted despite leftover dirt (merge rounds honestly face the dirt)")
+      assert(got.head._1.contains("merge --no-ff"), "a real merge-turn notice rode the grant")
+      assertEquals(state, Some("turn-granted"), "the member holds the window (no requeue parking)")
+      assertEquals(chainLines("grant-blocked").size, 0, "no grant-blocked audit line (the fail-closed gate is gone)")
+      assertEquals(chainLines("granted").size, 1, "the grant is audited")
+      assertEquals(notices.toList, Nil, "leftover dirt is a WARN, not a blocking notice (no false alarm)")
+    end for
+  }
+
+  // ── ⑩ 方向闸留队 + 阻塞必通知（#943：绝不静默） ───────────────────────
+
+  test("⑩ branch-direction gate still parks the member but MUST notify: full reason once per cause, escalation after N blocked rounds") {
+    val system = ActorSystem(s"mq-11-${scala.util.Random.nextInt(100000)}")
+    val records = ListBuffer.empty[(String, Option[ActorRef[AgentEvent]])]
+    val repo = mkRepo(tempRoot / "mq11-repo", branch = "delegate/d-gate", merge = false)
+    // 方向闸形态：base 工作区检出的不是成员声明的 baseBranch。
+    os.proc("git", "-C", repo.toString, "checkout", "delegate/d-gate").call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+    val notices = ListBuffer.empty[(String, String)]
+    MergeQueue.BlockNotifyPort.install((m, kind, reason) => IO { notices += ((m.delegateId, s"$kind|$reason")) })
+    for
+      a <- member(system, records, "d-gate", repo, readyAt = 1L)
+      _ <- IO { MergeQueue.enqueue(a.copy(projectKey = "p11")) } // 第 1 拍：入队即放行尝试
+      _ <- IO.sleep(120.millis)
+      state1 = MergeQueue.find("d-gate").map(_.state)
+      first = notices.toList
+      _ <- IO.blocking { (2 to MergeQueue.EscalateAfterBlockedRounds).foreach(_ => MergeQueue.pump("p11")) } // 第 2..N 拍
+      after = notices.toList
+      lastReason = MergeQueue.find("d-gate").flatMap(_.lastBlockReason)
+      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
+    yield
+      assertEquals(state1, Some("waiting"), "the member parks (direction gate — never merge into the wrong seat)")
+      assertEquals(first.size, 1, "the FIRST block notifies (never silent)")
+      assert(first.head._2.startsWith("blocked|"), s"the notice kind is blocked: ${first.head._2.take(80)}")
+      assert(first.head._2.contains("not the checked-out branch"), "the notice carries the actionable cause")
+      assertEquals(after.size, 2, s"same cause is deduped for rounds 2..N-1, round N escalates exactly once: ${after.map(_._2.take(30))}")
+      assert(after(1)._2.startsWith("escalate|"), "round N is the author escalation")
+      assert(lastReason.exists(_.contains("not the checked-out branch")), "the panel-visible lastBlockReason is recorded")
+    end for
+  }
+
+  // ── ⑪ failed 必通知（#943：原因全文不截断） ───────────────────────────
+
+  test("⑪ a refused merge round closes failed AND notifies the parent with the FULL untruncated reason") {
+    val system = ActorSystem(s"mq-12-${scala.util.Random.nextInt(100000)}")
+    val records = ListBuffer.empty[(String, Option[ActorRef[AgentEvent]])]
+    val repo = mkRepo(tempRoot / "mq12-repo", branch = "delegate/d-notify", merge = false)
+    val longReason =
+      "CONFLICT (content): Merge conflict in " +
+        List.range(1, 41).map(i => s"src/very/deeply/nested/path/segment-$i.scala ").mkString.trim +
+        " — full diagnostics follow verbatim"
+    assert(longReason.length > 300, s"fixture reason must exceed the old 300-char ledger cap: ${longReason.length}")
+    val notices = ListBuffer.empty[(String, String)]
+    MergeQueue.BlockNotifyPort.install((m, kind, reason) => IO { notices += ((kind, reason)) })
+    for
+      a <- member(system, records, "d-notify", repo, readyAt = 1L)
+      _ <- IO { MergeQueue.enqueue(a.copy(projectKey = "p12")) }
+      _ <- IO.sleep(80.millis)
+      _ <- IO { MergeQueue.onTerminal("d-notify", Some(MergeQueue.RoundOutcome.Refused(longReason))) }
+      state = MergeQueue.find("d-notify").map(_.state)
+      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
+    yield
+      assertEquals(state, Some("failed"), "the refused round closes as failed")
+      val failed = notices.toList.filter(_._1 == "failed")
+      assertEquals(failed.size, 1, "the failed close-out notifies exactly once")
+      assertEquals(failed.head._2.length, longReason.length, "the notification carries the FULL reason (never truncated)")
+      assert(failed.head._2 == longReason, "the reason text is verbatim")
     end for
   }
 
