@@ -13,6 +13,13 @@
 #   - 排除：一切工具结果（tool_use / tool_result 块）、thinking 块、
 #     <system-reminder> 注入、source 注入消息（mail/delegate/subtask/flow/skill/tool）、
 #     <context-compact> 压缩摘要（真历史由 compaction/*-before.json 快照承载）。
+#   - 渠道壳解包（盲区修复 2026-10-27）：作者自微信/飞书/网页控制台发言时，引擎以
+#     <system-reminder>（可多层嵌套）包裹传输帧+正文，旧规则整条丢弃 → 10-21 后
+#     作者原话全军覆没。修法：剥壳标、去「以下消息来自…」元数据行，保留作者正文
+#     （壳内无该帧的纯引擎提醒——Current time/Background task 等——照旧排除）。
+#   - sessions 表改 upsert（盲区修复 2026-10-27）：INSERT OR IGNORE 曾把
+#     first_ts/last_ts 冻结在首次建库时刻 → --stats 覆盖区间假性止于 2026-10-21
+#     22:53（messages 表实为持续最新）。upsert 后覆盖区间随每次增量如实推进。
 #   - 数据源只读：绝不写 ~/.stand/sessions/**；只写 ~/.stand/memory-db/**。
 #
 # xerj（xerj-org/xerj，local-first 检索引擎）成果复用（详见 reports/ 提案）：
@@ -106,6 +113,25 @@ INJECTED_SOURCES = {"mail", "delegate", "subtask", "flow", "skill", "tool"}
 
 ATTACH_RE = re.compile(r"\[(用户附加文件|用户附加图片):\s*([^\]]+)\]")
 
+# 渠道传输壳（作者微信/飞书/网页控制台原话的引擎包裹层）
+CHANNEL_SHELL_TAG_RE = re.compile(r"</?system-reminder>")                      # 壳标（嵌套安全：只剥标签不剥内容）
+CHANNEL_META_LINE_RE = re.compile(r"^[ \t]*以下消息来自[^\n]*\n?", re.MULTILINE)  # 渠道元数据行
+CHANNEL_EMPTY_BULLET_RE = re.compile(r"^[ \t]*\d+\.[ \t]*(?=\n|$)", re.MULTILINE)  # 引擎列表编号残壳（仅空项）
+
+
+def unwrap_channel_shell(t: str):
+    """渠道壳解包（2026-10-27 盲区修复）：作者经微信/飞书/网页控制台发言时，引擎
+    以 <system-reminder>（可嵌套，外层或带「1. 」列表编号）包裹传输帧+作者正文。
+    仅当壳内含「以下消息来自」渠道帧才解包：剥壳标→去元数据行→去空编号残壳，
+    保留作者正文；余文为空（纯引擎提醒）→ None（排除）。非壳文本原样交还。"""
+    if not t or not t.lstrip().startswith("<system-reminder>") or "以下消息来自" not in t:
+        return t
+    body = CHANNEL_SHELL_TAG_RE.sub("", t)
+    body = CHANNEL_META_LINE_RE.sub("", body)
+    body = CHANNEL_EMPTY_BULLET_RE.sub("", body)
+    body = body.strip()
+    return body or None
+
 CJK_RANGES = (
     (0x4E00, 0x9FFF),  # CJK 统一表意文字
     (0x3400, 0x4DBF),  # 扩展 A
@@ -194,8 +220,13 @@ def fts_query(query: str):
             parts.append('"' + " ".join(toks) + '"')  # 单个 quoted phrase = 邻接保序
         else:
             tok = payload.strip()
+            # ASCII→单字符 phrase（盲区修复 2026-10-27）：索引侧 cjk_bigram_text 对
+            # 非 CJK 逐字符交还（idx 无整词 token），旧查询把整词当单 term
+            # （MATCH '"hover"'）永远 0 命中——两侧同变换才是口径单点。
+            # 非 alnum 字符在 unicode61 下不成 token，两侧同弃。
+            tok = re.sub(r"[^0-9A-Za-z]", "", tok)
             if tok:
-                parts.append('"' + tok.replace('"', '""') + '"')
+                parts.append('"' + " ".join(tok) + '"')
     and_expr = " ".join(parts)
     or_expr = " OR ".join(parts) if len(parts) > 1 else ""
     # 单字 CJK 且无其他可索引词 → LIKE 兜底（多字按序 %串接）
@@ -293,7 +324,7 @@ def extract_messages(msgs, sid, sname, kind):
         if role == "user":
             if m.get("source") in INJECTED_SOURCES:
                 continue
-            t = text_of(m)
+            t = unwrap_channel_shell(text_of(m))  # 渠道壳解包：作者原话保留，纯引擎提醒 None→排除
             if not t or t.startswith(SKIP_TEXT_PREFIXES):
                 # 纯附件/图片块消息也可能落在 skip 前缀外——附件登记独立于文本收录
                 for b in blocks_of(m):
@@ -395,8 +426,13 @@ def reindex(con: sqlite3.Connection, data_root: str, db_path: str, source: str =
             stats["excluded"] += 1
             manifest.append(entry)
             continue
+        # upsert（盲区修复 2026-10-27）：旧 INSERT OR IGNORE 使既有行的
+        # first_ts/last_ts 冻结在首跑时刻，--stats 覆盖区间假性停摆。
         con.execute(
-            "INSERT OR IGNORE INTO sessions VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO sessions VALUES(?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(session_id) DO UPDATE SET name=excluded.name, kind=excluded.kind, "
+            "reason=excluded.reason, agent_name=excluded.agent_name, created_at=excluded.created_at, "
+            "updated_at=excluded.updated_at, first_ts=excluded.first_ts, last_ts=excluded.last_ts",
             (sid, name, kind, reason, s.get("agentName"), s.get("createdAt", 0), s.get("updatedAt", 0), len(rows),
              min(r[0] for r in rows), max(r[0] for r in rows)),
         )
