@@ -1416,10 +1416,13 @@ object FlowMapStore:
       val span = s"起止：${fmtLocal(start)} → ${fmtLocal(end)}"
       def row(n: NodeDef, i: Int): String =
         val desc = n.description.map(d => s"${d.take(ChainSummaryDescriptionChars)}｜").getOrElse("")
+        // 空串结果的 linesIterator 为空迭代器——`next()` 每拍 NoSuchElementException
+        // 刷 WARN（台账 #943 顺带④：KAI stand.log 每 30s 一条）。先判空再取首行。
+        def firstLine(s: String): String = s.linesIterator.nextOption().getOrElse("")
         if n.status == NodeLifecycle.Failed then
-          s"$i. [failed] ${n.name} (${n.id}) — $desc${n.result.map(_.linesIterator.next().take(ChainSummaryPerNodeChars)).getOrElse("failed")}（已回分发器处置；详情见 NodeList(detail=\"${n.id}\")）"
+          s"$i. [failed] ${n.name} (${n.id}) — $desc${n.result.map(firstLine).map(_.take(ChainSummaryPerNodeChars)).filter(_.nonEmpty).getOrElse("failed")}（已回分发器处置；详情见 NodeList(detail=\"${n.id}\")）"
         else
-          s"$i. [${n.status}] ${n.name} (${n.id}) — $desc${n.result.map(_.linesIterator.next().take(ChainSummaryPerNodeChars)).getOrElse("(无结果文本)")}"
+          s"$i. [${n.status}] ${n.name} (${n.id}) — $desc${n.result.map(firstLine).map(_.take(ChainSummaryPerNodeChars)).filter(_.nonEmpty).getOrElse("(无结果文本)")}"
       // R15 折叠：成员 > 阈值 ⇒ completed 折叠为计数，failed/cancelled 逐条留
       val rows =
         if sorted.size > ChainSummaryFoldMembers then
@@ -1996,7 +1999,7 @@ object FlowMapStore:
     val taskPreview = sorted.headOption
       .flatMap(_.task.map(_.trim).filter(_.nonEmpty))
       .map { t =>
-        val firstLine = t.linesIterator.next().trim
+        val firstLine = t.linesIterator.nextOption().getOrElse(t).trim
         if firstLine.length > NodePayload.TaskPreviewMaxChars then firstLine.take(NodePayload.TaskPreviewMaxChars) + "…"
         else firstLine
       }

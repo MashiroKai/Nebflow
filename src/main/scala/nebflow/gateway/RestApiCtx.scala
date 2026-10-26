@@ -341,7 +341,8 @@ final class RestApiCtx(
   end persistEnrollment
 
   /**
-   * Resolve the NebLink Server URL for device-flow requests. Priority:
+   * Resolve the NebLink Server URL for enrollment requests (headless login,
+   * pairing-code enroll). Priority:
    * 1. Explicitly provided URL (from the request body).
    * 2. URL from the current neblink config.
    * 3. The public default URL — 🔴 **suppressed on a redirected data root**

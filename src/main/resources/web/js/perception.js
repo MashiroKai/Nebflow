@@ -19,6 +19,9 @@ import { t } from './i18n.js';
 import { openTab, isCanvasOpen } from './canvas.js';
 import state from './state.js';
 import { removePendingAsk } from './askPending.js';
+// 鉴权拒绝伞（sessionGate 零静态依赖，本导入无环）。感知面板是控制台最后一个
+// 未接伞的 REST 面——修前 401/403 只会把服务端错误体原样印进卡片死底。
+import { noteAuthRejected } from './sessionGate.js';
 
 // ── api ─────────────────────────────────────────────────────────────────
 
@@ -34,12 +37,26 @@ async function api(method, path, body) {
     const opts = { method, headers: { ...authHeaders(), 'Content-Type': 'application/json' } };
     if (body !== undefined) opts.body = JSON.stringify(body);
     const resp = await fetch(path, opts);
+    // 会话伞（Missing token 报障批 2026-10-26）：感知域业务面从不出 401/403——
+    // 引擎 withAuth 拒 = 403「Unauthorized」+X-Nf-Reason，relay ingress 门拒 =
+    // 403「Missing token」无 reason 头（不落隧道帧，引擎日志零痕）；两者都是
+    // 会话面死亡 ⇒ 命中即拉 sessionGate（静默重座优先，单飞+60s 冷却防环，
+    // 同页多调用并发命中无害化）。WS 活着 + HTTP 403 的盲区由该伞统一收口。
+    if (resp.status === 401 || resp.status === 403) noteAuthRejected('perception');
     let data = null;
     try { data = await resp.json(); } catch { data = null; }
     return { ok: resp.ok, status: resp.status, data };
   } catch (e) {
     return { ok: false, status: 0, data: null };
   }
+}
+
+/** 失败文案面：鉴权拒绝显示会话引导，不透传裸错误体——修前「Missing token」
+ *  原样印进连接卡红字（报障 2026-10-26 12:43）；服务商测连失败等业务错误仍
+ *  透传服务端 error 原文（要直达作者）。 */
+function authErrMsg(r, fallback) {
+  if (r.status === 401 || r.status === 403) return t('perception.sessionExpired');
+  return (r.data && r.data.error) || fallback;
 }
 
 function esc(s) {
@@ -463,7 +480,7 @@ function openConfigCard(existing) {
         if (rr.ok && rr.data && Array.isArray(rr.data.entries)) { entriesCache = rr.data.entries; renderPanel(); }
       });
     } else {
-      setResult(result, (r.data && r.data.error) || t('perception.cfgFailed'), false);
+      setResult(result, authErrMsg(r, t('perception.cfgFailed')), false);
     }
   });
   const addrFocus = overlay.querySelector('#pp-cfg-addr');
@@ -606,7 +623,7 @@ function renderSnapshotFace(bubble, items, draftItem, draftId, targetSid, reques
     sendBtn.disabled = false;
     if (r.ok) { showReceipt(face, true, r.data); answer(t('perception.answerSent')); }
     else if (r.status === 409) staleEl.classList.add('show');
-    else showReceipt(face, false, null, (r.data && r.data.error) || t('perception.sendFailed'));
+    else showReceipt(face, false, null, authErrMsg(r, t('perception.sendFailed')));
   });
   btnrow.querySelector('[data-act="canvas"]').addEventListener('click', () => {
     openMailEditor(draftId);
@@ -886,7 +903,7 @@ export async function openMailEditor(draftId, opts = {}) {
       if (opts.onSent) opts.onSent(r.data);
     } else {
       note.className = 'mail-send-note show ' + (r.status === 409 ? 'warn' : 'err');
-      note.textContent = (r.data && r.data.error) || t('perception.sendFailed');
+      note.textContent = authErrMsg(r, t('perception.sendFailed'));
     }
   });
   tools.querySelector('[data-t="abandon"]').addEventListener('click', async () => {

@@ -341,7 +341,29 @@ object SubAgentStartupRecovery:
       )
       // 2. Notify the parent via its F2 injection-queue file (idempotent on
       // correlationId — see object doc).
-      _ <- if parentExists then notifyOnce(task.parentSessionId, event) else IO.unit
+      //
+      // 台账 #944（跨设备回报丢件腿）**收口修正**：改前判据是
+      // `sessionStore.listSessions.exists(_.id == parentSessionId)`——即「父会话
+      // 在本机」。对 **device-delegate**（跨设备腿）这是恒假命题：父会话永远在
+      // 对端设备的盘上，本机 sessionStore 里根本没有它。后果 = 通知腿被当成
+      // 「父会话已删」整条跳过，而第 3 步仍写下「partial result salvaged and
+      // delivered to parent」的 lastError —— **写了「已通知」，实际零投递**
+      // （2026-10-26 实证：KAI 14:39:04 boot 收殓 6 件，日志逐字 6 行
+      // `parent=... exists=false`，Mac 侧一件都没收到）。
+      //
+      // 修正：跨设备腿走**设备待发区**（[[nebflow.core.delegate.DeviceResultOutbox]]）
+      // ——那是本机唯一能表达「这件要送到对端设备」的持久面，relay（重）连时按序
+      // 补投，宿主侧按 spawnId 判重。本机会话腿语义逐字不变。
+      rec = nebflow.core.delegate.DelegateRegistry.find(task.taskId)
+      hostDeviceId = rec.flatMap(_.delegatedBy)
+      _ <-
+        hostDeviceId match
+          case Some(host) =>
+            // 跨设备腿：落待发区（幂等键 = taskId；内容 = 收殓形态的 delegate-result，
+            // 形态与 resultProxyBehavior 的真终态件同构，宿主 handleResult 同一入口）。
+            nebflow.core.delegate.DeviceDelegate.enqueueLostResultNotice(task, host, partial, head)
+          case None =>
+            if parentExists then notifyOnce(task.parentSessionId, event) else IO.unit
       // 3. Terminalize — after the notify append, so a crash anywhere leaves
       // either (task running + event queued) [retry, no duplicate] or
       // (task failed + event queued) [done]. Never a lost notification.
@@ -365,7 +387,8 @@ object SubAgentStartupRecovery:
       )
       _ <- logger.info(
         s"[startup-recovery] orphan ${task.taskId} (${task.agentName}) terminalized; " +
-          s"parent=${task.parentSessionId.take(16)} exists=$parentExists partialResult=${partial.isDefined}"
+          s"parent=${task.parentSessionId.take(16)} exists=$parentExists partialResult=${partial.isDefined}" +
+          hostDeviceId.fold("")(h => s" crossDeviceOutbox=$h")
       )
     yield task.taskId
 

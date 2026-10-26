@@ -308,7 +308,7 @@ object DeviceIdentity:
   /**
    * Machine fingerprint for the register payload (单设备单账号批, wire field
    * `machineFingerprint` — literal pinned across repos: engine
-   * `LogtoDeviceFlow.registerRequest` ↔ server `DeviceRegisterRequest`).
+   * `LogtoTransport.registerRequest` ↔ server `DeviceRegisterRequest`).
    *
    * Same source and same moment as the deviceId derivation (`readMachineCode`,
    * the exact probe `mint()` ran): a fresh read at register-request build

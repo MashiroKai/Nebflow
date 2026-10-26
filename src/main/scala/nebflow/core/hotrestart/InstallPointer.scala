@@ -36,15 +36,19 @@ object InstallPointer:
   val VersionsDirName = "versions"
 
   /**
-   * 生产安装目录（`release/install.sh:114`：`INSTALL_DIR:-$HOME/.nebflow/bin`；
-   * `$HOME_DIR` = `.nebflow`、`$LOWER_NAME` = `nebflow`— 品牌块逐字）。
+   * 生产安装目录（台账 #916 品牌修正 2026-10-26：`$HOME/<homeDirName>/bin`，
+   * 当前品牌 = `~/.stand/bin`——与部署面 launcher（`ops/bin/stand`、stand-jar-pull、
+   * release/install.sh `INSTALL_DIR:-${STAND_BASE}/bin`）同一真值来源；
+   * `INSTALL_DIR` env 覆写保留。此前硬编码 `.nebflow/bin` 是 rebrand 前旧账：
+   * stand 品牌安装上，健康自检「期望版本」读到空指针、G4 指针回滚切的是
+   * launcher 永远不读的一份孤儿指针文件——面子上全绿，盘上无效。
    */
   def defaultInstallDir(
     env: Map[String, String] = sys.env,
     home: String = sys.props.getOrElse("user.home", "")
   ): os.Path =
     val fromEnv = env.get("INSTALL_DIR").map(_.trim).filter(_.nonEmpty)
-    os.Path(fromEnv.getOrElse(s"$home/.nebflow/bin"))
+    os.Path(fromEnv.getOrElse(s"$home/${Branding.homeDirName}/bin"))
 
   def currentPath(dir: os.Path): os.Path = dir / CurrentFileName
   def previousPath(dir: os.Path): os.Path = dir / PreviousFileName
@@ -105,6 +109,45 @@ object InstallPointer:
         }
       }
       .handleErrorWith(e => IO.pure(Left(s"pointer flip failed: ${msg(e)}")))
+
+  /**
+   * 指针晋升（**two-phase update Phase2 的换装动作**，台账 #916）：current ←
+   * version、previous ← 旧 current，双文件各自原子写（[[writeTrimmed]] tmp+
+   * rename）。前置：version 的包必须在盘（versions/<v>/ 内可解析出 jar）——
+   * 晋升一个无包版本等于把下一次开机指向空气，Phase1 staging 是本动作的合同
+   * 前置，不满足即 Left 且**双指针零改动**。首个版本（无 current 指针）也合法：
+   * previous 写 None 语义 = 清掉旧指针文件。
+   */
+  def promote(dir: os.Path, version: String): IO[Either[String, (String, String)]] =
+    if !safeVersionLiteral(version) then
+      IO.pure(Left(s"invalid version literal: $version"))
+    else
+      jarIn(dir, version).flatMap {
+        case Left(err) => IO.pure(Left(s"refusing to promote: $err"))
+        case Right(_) =>
+          readCurrent(dir).flatMap { cur =>
+            writeTrimmed(currentPath(dir), version) *>
+              (cur match
+                case Some(c) => writeTrimmed(previousPath(dir), c)
+                case None =>
+                  IO.blocking(if os.exists(previousPath(dir)) then os.remove(previousPath(dir)))
+              ) *>
+              IO.pure(Right((version, cur.getOrElse(""))))
+          }.handleErrorWith(e => IO.pure(Left(s"pointer promote failed: ${msg(e)}")))
+      }
+
+  /** 指针回写（更新注册失败时的复原腿：把 promote 前的双指针原样放回）。 */
+  def writePointers(dir: os.Path, current: String, previous: Option[String]): IO[Unit] =
+    writeTrimmed(currentPath(dir), current) *>
+      (previous match
+        case Some(p) => writeTrimmed(previousPath(dir), p)
+        case None    => IO.blocking(if os.exists(previousPath(dir)) then os.remove(previousPath(dir)))
+      )
+
+  /** 注入脚本/指针的版本字面字符闸（与 launcher WINSORT 的可解析形状一致）。 */
+  def safeVersionLiteral(v: String): Boolean = safeToken(v)
+
+  private def safeToken(s: String): Boolean = s.nonEmpty && s.matches("[A-Za-z0-9._\\-]+")
 
   /** 上一版安装目录里的包路径（包在本目录内的 glob；找不到 ⇒ Left，不猜、不回落）。 */
   def jarIn(dir: os.Path, version: String): IO[Either[String, String]] =

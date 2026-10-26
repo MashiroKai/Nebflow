@@ -22,11 +22,13 @@
 // Run: node node_modules/@playwright/test/cli.js test tests/mail-perception.spec.mjs
 
 import { test, expect } from '@playwright/test';
-import { spawn } from 'node:child_process';
+import http from 'node:http';
+import { readFile } from 'node:fs/promises';
 import net from 'node:net';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -49,9 +51,30 @@ function freePort() {
 }
 
 function startStaticServer(p, dir) {
-  return spawn('python3', ['-m', 'http.server', String(p), '--bind', '127.0.0.1', '--directory', dir], {
-    stdio: 'ignore',
+  // node 静态服务（Missing token 报障批 2026-10-26）：修前 spawn `python3 -m
+  // http.server`——KAI Windows 无 python（test6 分诊已立案的 Windows 失败类，
+  // MemoryRecallDaemon 同款 ENOENT）。语义逐字同形：127.0.0.1 临时端口 GET
+  // 静态件；ES module 必须正确 MIME（octet-stream 会被浏览器拒 import）。
+  const MIME = {
+    '.html': 'text/html; charset=utf-8', '.js': 'text/javascript',
+    '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json',
+  };
+  const root = normalize(dir);
+  const srv = http.createServer(async (req, res) => {
+    try {
+      let rel = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+      if (rel.endsWith('/')) rel += 'index.html';
+      const abs = normalize(join(root, rel));
+      if (!abs.startsWith(root)) { res.writeHead(403); res.end(); return; }
+      const buf = await readFile(abs);
+      res.writeHead(200, { 'Content-Type': MIME[extname(abs).toLowerCase()] || 'application/octet-stream' });
+      res.end(buf);
+    } catch {
+      res.writeHead(404); res.end('not found');
+    }
   });
+  srv.listen(p, '127.0.0.1');
+  return { kill: () => srv.close() };
 }
 
 async function waitUntilUp(url, tries = 50) {
@@ -340,6 +363,123 @@ test.describe('快照卡脸', () => {
     expect(sent.filter((f) => f.type === 'askUserAnswer'), '409 不出站作答帧').toEqual([]);
     expect(pageErrors).toEqual([]);
     await page.screenshot({ path: path.join(SHOT_DIR, 'mail-perception-5-snapshot-stale.png') });
+    await context.close();
+  });
+});
+
+// ============================================================
+// ⑤ 鉴权拒绝脸（Missing token 报障批 2026-10-26）
+//
+// 报障：relay ingress 门 403 {"error":"Missing token"}（require_user 在隧
+// 道之前拒绝——引擎零痕）原样印进连接卡红字死底。钉面：
+//   A1 connect 403 ⇒ 卡内文案 = 会话引导（不透传裸错误体）+ sessionGate
+//      鉴权伞被拉（静默重座腿收到 'perception'，重座接管 ⇒ 无横幅无 reload）；
+//   A2 connect 400（服务商测连失败）⇒ 服务端 error 原文照旧透传 + 伞不拉
+//      （业务错误不得误报会话死亡——回归钉）；
+//   A3 面板打开的 entries GET 403 ⇒ 伞同样在 choke point 拉动（面板自愈）；
+//   A4 快照卡「照此发送」403 ⇒ 回执行 = 会话引导。
+// ============================================================
+test.describe('鉴权拒绝脸', () => {
+  /** 武装 sessionGate 缝：重座腿换录音机（返回 true = 导航接管），reload 换计数。 */
+  async function armGate(page) {
+    await page.evaluate(() => {
+      const hooks = window.__gate._sessionGateTestHooks();
+      window.__reseat = [];
+      window.__reloaded = 0;
+      hooks.setReseat(async (source) => { window.__reseat.push(source); return true; });
+      hooks.setReload(() => { window.__reloaded += 1; });
+      hooks.reset();
+    });
+  }
+
+  test('A1 connect 403 Missing token ⇒ 会话引导文案 + 鉴权伞拉动（重座接管零 reload）', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await armGate(page);
+    await page.evaluate(() => {
+      window.__routes.push({ method: 'GET', match: (p) => p === '/api/perception/entries', data: { entries: [], serverTime: 1 } });
+      // relay ingress 门形状逐字节：403 {"error":"Missing token"}（无 reason 头）
+      window.__routes.push({ method: 'POST', match: (p) => p === '/api/perception/mail/connect', status: 403, data: { error: 'Missing token' } });
+    });
+    await page.evaluate(() => window.__openPanel());
+    await page.evaluate(() => window.__openConfig());
+    const cfg = page.locator('#pp-cfg-overlay');
+    await cfg.locator('#pp-cfg-addr').fill('fake@qq.com');
+    await cfg.locator('#pp-cfg-code').fill('badcode');
+    await cfg.locator('#pp-cfg-connect').click();
+    await page.waitForTimeout(400);
+    const face = await page.evaluate(() => ({
+      result: document.querySelector('#pp-cfg-result')?.textContent || '',
+      isErr: (document.querySelector('#pp-cfg-result')?.className || '').includes('err'),
+      reseat: window.__reseat,
+      reloaded: window.__reloaded,
+    }));
+    expect(face.result, '卡内文案 = 会话引导，不透传 ingress 裸错误体').toContain('重新进入控制台');
+    expect(face.result, '不得出现「Missing token」原文').not.toContain('Missing token');
+    expect(face.isErr, '引导文案仍是红字 err 色调').toBe(true);
+    expect(face.reseat, '鉴权伞拉动（重座腿收到 perception 触发源）').toEqual(['perception']);
+    expect(face.reloaded, '重座接管 ⇒ 不落横幅 reload').toBe(0);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('A2 connect 400 服务商测连失败 ⇒ 服务端 error 原文透传 + 伞不拉（业务错误非会话死亡）', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await armGate(page);
+    const engineError = '无法识别邮箱服务商 · 请在高级设置中手填服务器';
+    await page.evaluate((err) => {
+      window.__routes.push({ method: 'GET', match: (p) => p === '/api/perception/entries', data: { entries: [], serverTime: 1 } });
+      window.__routes.push({ method: 'POST', match: (p) => p === '/api/perception/mail/connect', status: 400, data: { ok: false, error: err } });
+    }, engineError);
+    await page.evaluate(() => window.__openPanel());
+    await page.evaluate(() => window.__openConfig());
+    const cfg = page.locator('#pp-cfg-overlay');
+    await cfg.locator('#pp-cfg-addr').fill('fake@qq.com');
+    await cfg.locator('#pp-cfg-code').fill('badcode');
+    await cfg.locator('#pp-cfg-connect').click();
+    await page.waitForTimeout(400);
+    const face = await page.evaluate(() => ({
+      result: document.querySelector('#pp-cfg-result')?.textContent || '',
+      reseat: window.__reseat,
+    }));
+    expect(face.result, '业务错误原文透传（直达作者）').toBe(engineError);
+    expect(face.reseat, '400 不是会话面事件，伞不得拉动').toEqual([]);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('A3 面板打开时 entries GET 403 ⇒ choke point 拉伞（面板自愈）', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await armGate(page);
+    await page.evaluate(() => {
+      window.__routes.push({ method: 'GET', match: (p) => p === '/api/perception/entries', status: 403, data: { error: 'Missing token' } });
+    });
+    await page.evaluate(() => window.__openPanel());
+    await page.waitForTimeout(400);
+    const face = await page.evaluate(() => ({ reseat: window.__reseat, reloaded: window.__reloaded }));
+    expect(face.reseat, '面板打开腿的 403 同样拉伞').toEqual(['perception']);
+    expect(face.reloaded).toBe(0);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('A4 快照卡「照此发送」403 ⇒ 回执行会话引导（不透传裸错误体）', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await armGate(page);
+    await page.evaluate((draft) => {
+      window.__routes.push({ method: 'GET', match: (p) => p === '/api/perception/mail/drafts/draft-e2e-1', data: draft });
+      window.__routes.push({ method: 'POST', match: (p) => p === '/api/perception/mail/send', status: 403, data: { error: 'Missing token' } });
+    }, DRAFT);
+    await page.evaluate(() => {
+      const bubble = window.__mkBubble(false);
+      window.__enhance(bubble, [{ id: 'perceptionDraft:draft-e2e-1', question: 'x', options: [{ label: 'a' }] }], 'ask-d3', 'sess-9');
+    });
+    await page.waitForTimeout(300);
+    await page.evaluate(() => document.querySelector('#chat .pdraft [data-act="send"]').click());
+    await page.waitForTimeout(400);
+    const receipt = await page.evaluate(() => document.querySelector('#chat .pdraft .pdraft-receipt')?.textContent || '');
+    expect(receipt, '回执行 = 会话引导').toContain('重新进入控制台');
+    expect(receipt, '不透传 Missing token 原文').not.toContain('Missing token');
+    expect(pageErrors).toEqual([]);
     await context.close();
   });
 });

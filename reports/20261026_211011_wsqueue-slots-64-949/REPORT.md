@@ -1,0 +1,3 @@
+# 参数采纳 · WsQueueSlots 128→64（#949 §2 面三③，作者拍板 2026-10-26）
+
+作者采纳报告 `20261026_173600_neblink-uplink-backpressure-949` §2 面三建议③，取保守档 64：`PortalTunnelBridge.WsQueueSlots` 128→64（main/scala/nebflow/neblink/PortalTunnelBridge.scala:1183）并补采用注记；`PortalUplinkBackpressureSpec` 全部 128 字面量改为随产线常量 `Slots`（断言永不再烂），零语义改动。验证：`set Test/sources` 排除他批 `DeviceProvenance*`/`DeviceStampAutoTagging*`/`PresenceWsLifecycle*` 后 `testOnly PortalUplinkBackpressureSpec PortalTunnelBridgeSpec` 全绿 `Passed: Total 37, Failed 0, Errors 0, Passed 37`（22s，日志 reports-kai/.sbt-wsqueue64-run.log）。stage 纪律：仅 3 文件入册（常量文件 + spec + 本报告）；`DeviceProvenance*`、web/css/js、Presence* 等他批未提交改动零接触。

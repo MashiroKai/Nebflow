@@ -28,6 +28,7 @@ import { renderRefBlock, normalizeTaskRef } from './reference.js';
 // quote-message 一期（2026-10-09，spec §7.5）：历史重放行挂 data-msg-id（页内
 // index + mount token）+ 可引用行右键菜单 + UiMessage.User.quote 引用块重渲。
 import { beginHistoryMount, historyMsgId, attachQuoteMenu, renderQuoteBlock, syncQuoteJumpStates } from './msgQuote.js';
+import { renderGateBegin, renderGateEnd } from './chat/renderGate.js'; // perf 台账 #922：分帧挂载腿持渲染遮蔽门
 // quote-message 一期：被引用者名（助手/工具/提问行）= agent 显示名 —— ownAgentName
 // （会话行）缺席时回落 rootDisplayName（叶模块，只读 state，无环）。
 import { rootDisplayName } from './rootName.js';
@@ -965,46 +966,21 @@ export function restoreFromStorage(opts = {}) {
   setTimeout(() => { chat.scrollTop = chat.scrollHeight; if (activeView) activeView.stream.scrollSnapped = true; }, 500);
 }
 
-// ---------- Replay backend history messages into the DOM ----------
-// Same logic as restoreFromStorage but takes messages array directly (from backend).
-// Uses DocumentFragment to batch DOM insertions and avoids redundant scroll operations.
-export function restoreFromBackendHistory(msgs, opts = {}) {
-  const { scrollToBottom = true, busyTail = false } = opts;
-  const chat = activeView.dom.chat;
-  // 重连视口不劫持（reconnect-collapse 续作 69e5e2e1，2026-10-21）：真重建腿
-  // 不再无条件把视口拽到底。两个量必须由**调用方在 wipe 之前**采集并随 opts
-  // 传入（historyReplay.js 初载腿）：
-  //   · followBottom —— 跟随意图。wipe 之后的空滚动区对 isNearBottom 恒真
-  //     （「空 = 贴底」），在重放函数内部采集会把「回看中段」误读成「跟随」；
-  //   · anchor.scrollTop —— 视口锚。真重建是**全量替换**：上方行由同一历史
-  //     重放出（高度恒定），恢复绝对 scrollTop 即把用户钉回原阅读位（增长
-  //     发生在下方/视口外时不补偿——分页 prepend 腿另有自管的差值公式）。
-  // 缺省（旧调用方：bg/flow 弹窗首刷等）回退为函数内自采 = 改前行为。
-  const followBottom = scrollToBottom && (typeof opts.followBottom === 'boolean'
-    ? opts.followBottom
-    : shouldFollowBottom(activeView, chat));
-  const prevScrollTop = opts.anchor ? opts.anchor.scrollTop : chat.scrollTop;
-  // quote-message 一期：每次恢复换一个 mount token（historyMsgId 的尾巴）——
-  // prepend 分页对本函数整页重跑 ⇒ 页内 index 重置，裸 index 会撞号；mount token
-  // 同时让「跨重挂载」的旧引用 id 天然失配 ⇒ 引用块退化快照态（无死指针）。
-  beginHistoryMount();
-  // The caller points activeView at the view that received this historyPage
-  // frame (chatView#setActiveView; the sub-agent panels own their own ChatView
-  // with their own sessionId), so that view identifies the session owning
-  // `msgs` — the identity the direction filter must judge against. See
-  // isOutgoingInjection.
-  const ownerSessionId = (activeView && activeView.sessionId) || state.activeSessionId || null;
-  const fragment = document.createDocumentFragment();
-  let skipMsg = false;
-  // Defer expensive markdown+KaTeX rendering into post-append batches.
-  // DOM elements are created synchronously with plain text; innerHTML is upgraded via rAF.
-  const pendingRenders = [];
-  const deferMd = (el, text, parseVoice = true) => {
-    el.textContent = text;
-    pendingRenders.push({ el, text, parseVoice });
-  };
-  msgs.forEach((m, i) => {
-    if (skipMsg) { skipMsg = false; return; }
+/**
+ * ONE history row of a backend-history replay → appends into ctx.fragment.
+ * Extracted verbatim from restoreFromBackendHistory's msgs.forEach body
+ * (perf 台账 #922 · 2026-10-26): the chunked-build prepend leg
+ * (mountHistoryPageChunked) must run the SAME builders as the sync replay leg
+ * — single source, zero second implementation (drift = rendering divergence).
+ * ctx = { msgs, fragment, deferMd, chatEl, ownerSessionId, markSkip, deferToolBody? }:
+ *   · markSkip()  — the skill-activation lookahead (consume next message);
+ *   · chatEl      — the container sameAskCards dedups against (sync leg passes
+ *     the tempDiv swap target exactly as before; chunked leg passes the real chat);
+ *   · deferToolBody(card, build) — chunked leg ONLY: big tool bodies build
+ *     their HTML in an idle batch instead of inline (ctx absence = inline, byte-parity).
+ */
+function buildHistoryRow(m, i, ctx) {
+  const { msgs, fragment, deferMd, chatEl, ownerSessionId, markSkip, deferToolBody } = ctx;
     if (m.type === 'user') {
       // Injected messages (task P+Q): light-blue bubble via shared builder.
       // Skip outgoing sends misrecorded into this session (see
@@ -1075,7 +1051,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
           content.textContent = userUnified.text;
           bubble.appendChild(label);
           bubble.appendChild(content);
-          skipMsg = true; // skip the system message on next iteration
+          markSkip(); // skip the system message on next iteration
         } else {
           const t = document.createElement('div');
           // Plain-text face with mention spans (mention-render batch):
@@ -1235,11 +1211,21 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         } else {
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
-        const detailHtml = buildToolDetail(m.input, m.label);
-        const _delegatePrompt2 = buildDelegatePromptHtml(m.input);
-        const highlightHtml = renderHighlightedContent(m.content, m.label);
-        const bodyHtml = (detailHtml + _delegatePrompt2 + (highlightHtml || (m.content ? '<pre class="tool-body-pre">' + esc(m.content) + '</pre>' : ''))) || '';
-        const hasBody = !!bodyHtml;
+        // perf 台账 #922（2026-10-26）：大工具正文是补页/初载长任务的大头——
+        // 实测 renderHighlightedContent 在 60KB 正文上 ~0.6s/条（正则重灾），
+        // esc+innerHTML 仅 ~3ms。三刀合一：>TOOL_HEAVY_BODY 的正文（甲）跳过
+        // 语法高亮走纯 pre（文字逐字同形，仅色面让位——60KB+ 的代码墙高亮是
+        // 纯成本）；（乙）分帧挂载腿把正文构建推进空闲升级批（卡片壳即时、
+        // .body 稍后逐字同形）；（丙）同步腿（初载/弹窗）同享甲刀（cap 在
+        // 共享 helper 内）。TOOL_HEAVY_BODY 以下逐字现状。
+        const deferBigBody = !!(deferToolBody && typeof m.content === 'string' && m.content.length > TOOL_HEAVY_BODY);
+        let bodyHtml = '';
+        if (deferBigBody) {
+          deferToolBody(card, () => toolBodyHtml(m.content, m.input, m.label));
+        } else {
+          bodyHtml = toolBodyHtml(m.content, m.input, m.label);
+        }
+        const hasBody = deferBigBody || !!bodyHtml;
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
         const lParts = localLabel.split('\n', 2);
@@ -1261,7 +1247,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       // （beforeIndex 非空、不清 DOM）与「重放帧先到、历史后到」两个竞态都靠这一步
       // 收口；禁在这里开 `legacyTwin`（那是替换腿的口子，历史腿开了会把任何遗留
       // 未作答卡后面的历史卡静默跳过）。
-      const dupLive = m.requestId ? sameAskCards(chat, m.requestId) : [];
+      const dupLive = m.requestId ? sameAskCards(chatEl, m.requestId) : [];
       if (dupLive.length) return;
       // Same card component as the live renderAskUser path (chat.js
       // showOptions) + the terminal lock state of the live confirm/cancel
@@ -1411,7 +1397,69 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       }
       fragment.appendChild(restoreSystemNoticeRow(m));
     }
-  });
+}
+
+// ---------- Replay backend history messages into the DOM ----------
+// Same logic as restoreFromStorage but takes messages array directly (from backend).
+// Uses DocumentFragment to batch DOM insertions and avoids redundant scroll operations.
+
+/** 大工具正文门槛（perf 台账 #922）：>16KB 的正文（甲）不进语法高亮（纯 pre，
+ *  文字逐字同形——60KB+ 的 renderHighlightedContent 实测 ~0.6s/条，高亮一面纯
+ *  成本），（乙）分帧挂载腿把它推到空闲升级批。以下逐字现状。 */
+const TOOL_HEAVY_BODY = 16384;
+
+/** 工具正文 HTML 单源（同步腿 / 分帧腿的 deferred 构建共用）：cap 内高亮，
+ *  超出纯 pre。输入 = content/input/label 三元组，输出与改前同构。 */
+function toolBodyHtml(content, input, label) {
+  const detailHtml = buildToolDetail(input, label);
+  const _delegatePrompt2 = buildDelegatePromptHtml(input);
+  const highlightHtml = (typeof content === 'string' && content.length <= TOOL_HEAVY_BODY)
+    ? renderHighlightedContent(content, label)
+    : null;
+  return (detailHtml + _delegatePrompt2 + (highlightHtml || (content ? '<pre class="tool-body-pre">' + esc(content) + '</pre>' : ''))) || '';
+}
+
+export function restoreFromBackendHistory(msgs, opts = {}) {
+  const { scrollToBottom = true, busyTail = false } = opts;
+  const chat = activeView.dom.chat;
+  // 重连视口不劫持（reconnect-collapse 续作 69e5e2e1，2026-10-21）：真重建腿
+  // 不再无条件把视口拽到底。两个量必须由**调用方在 wipe 之前**采集并随 opts
+  // 传入（historyReplay.js 初载腿）：
+  //   · followBottom —— 跟随意图。wipe 之后的空滚动区对 isNearBottom 恒真
+  //     （「空 = 贴底」），在重放函数内部采集会把「回看中段」误读成「跟随」；
+  //   · anchor.scrollTop —— 视口锚。真重建是**全量替换**：上方行由同一历史
+  //     重放出（高度恒定），恢复绝对 scrollTop 即把用户钉回原阅读位（增长
+  //     发生在下方/视口外时不补偿——分页 prepend 腿另有自管的差值公式）。
+  // 缺省（旧调用方：bg/flow 弹窗首刷等）回退为函数内自采 = 改前行为。
+  const followBottom = scrollToBottom && (typeof opts.followBottom === 'boolean'
+    ? opts.followBottom
+    : shouldFollowBottom(activeView, chat));
+  const prevScrollTop = opts.anchor ? opts.anchor.scrollTop : chat.scrollTop;
+  // quote-message 一期：每次恢复换一个 mount token（historyMsgId 的尾巴）——
+  // prepend 分页对本函数整页重跑 ⇒ 页内 index 重置，裸 index 会撞号；mount token
+  // 同时让「跨重挂载」的旧引用 id 天然失配 ⇒ 引用块退化快照态（无死指针）。
+  beginHistoryMount();
+  // The caller points activeView at the view that received this historyPage
+  // frame (chatView#setActiveView; the sub-agent panels own their own ChatView
+  // with their own sessionId), so that view identifies the session owning
+  // `msgs` — the identity the direction filter must judge against. See
+  // isOutgoingInjection.
+  const ownerSessionId = (activeView && activeView.sessionId) || state.activeSessionId || null;
+  const fragment = document.createDocumentFragment();
+  let skipMsg = false;
+  // Defer expensive markdown+KaTeX rendering into post-append batches.
+  // DOM elements are created synchronously with plain text; innerHTML is upgraded via rAF.
+  const pendingRenders = [];
+  const deferMd = (el, text, parseVoice = true) => {
+    el.textContent = text;
+    pendingRenders.push({ el, text, parseVoice });
+  };
+  const rowCtx = { msgs, fragment, deferMd, chatEl: chat, ownerSessionId, skip: false };
+  rowCtx.markSkip = () => { rowCtx.skip = true; };
+  for (let i = 0; i < msgs.length; i++) {
+    if (rowCtx.skip) { rowCtx.skip = false; continue; }
+    buildHistoryRow(msgs[i], i, rowCtx);
+  }
   chat.appendChild(fragment);
   // quote-message 一期：fragment 已入 DOM ⇒ 引用块可点性统一收敛（挂载时目标行
   // 可能在本页靠后位置，创建顺序倒挂 ⇒ 此刻才有完整答案）。
@@ -1454,6 +1502,93 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
   }
   if (pendingRenders.length > 0) {
     requestAnimationFrame(upgradeBatch);
+  }
+}
+
+// ---------- Chunked-build prepend mount（perf 台账 #922 · 2026-10-26）----------
+/** 每片消息数：单片构建目标 <100ms（重页 = 多片跨帧，pong 在片间照常处理）。 */
+const MOUNT_BUILD_CHUNK = 8;
+/** 升级批宽：每帧 4 个任务（md 升级 + 大工具正文混排）。 */
+const MOUNT_UPGRADE_BATCH = 4;
+
+/** rAF 换帧（后台标签 rAF 节流时 120ms 兜底 —— 挂载永不卡死）。 */
+function nextMountFrame() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+    setTimeout(resolve, 120);
+  });
+}
+
+/**
+ * 上滑补页的**分帧构建**挂载腿。与同步腿（restoreFromBackendHistory）共用同一
+ * 枚 buildHistoryRow —— 零第二实现；差别只在节奏：
+ *   · 构建按 MOUNT_BUILD_CHUNK 条/片跨 rAF 切片（改前 = 整页一枚长任务，
+ *     数百 ms~秒级，把心跳 pong 饿出假 miss ⇒ 3-miss 自逐出重连）；
+ *   · 大工具正文 / markdown 升级进空闲批（MOUNT_UPGRADE_BATCH/帧），批间对
+ *     scrollAnchor 做**相对**补偿（行在视口上方长高 ⇒ 视口跟涨，阅读位钉死）；
+ *   · 渲染遮蔽门横跨构建切片/挂载回调/升级批全程（ws.js 据此把门内宽限窗的
+ *     miss 走遮蔽旁路 —— 不放松 HB_MAX_MISSES，sessionGate 重座语义原样）。
+ *
+ * hooks:
+ *   onBuilt(container) — 全部行构建完成且容器仍脱管：调用方在此做原子 prepend +
+ *     滚动补偿 + pagination 落账。返回 false = 本页作废（挂载期间被初载 wipe
+ *     整替），升级批不再发生。
+ *   onDone()           — 升级批 drain 完毕（调用方放闸 / 停顶续拉）。
+ * opts: { scrollAnchor } — 批间补偿锚（真实 chat 容器；缺席 = 不补偿）。
+ */
+export async function mountHistoryPageChunked(msgs, opts = {}, hooks = {}) {
+  renderGateBegin();
+  try {
+    beginHistoryMount();
+    const ownerSessionId = (activeView && activeView.sessionId) || state.activeSessionId || null;
+    const container = document.createElement('div');
+    const pendingRenders = [];
+    const pendingToolBodies = [];
+    const ctx = {
+      msgs, fragment: container,
+      deferMd: (el, text, parseVoice = true) => { el.textContent = text; pendingRenders.push({ el, text, parseVoice }); },
+      chatEl: activeView.dom.chat,
+      ownerSessionId,
+      skip: false,
+      deferToolBody: (card, build) => {
+        const contentEl = card.querySelector('.content');
+        const bodyEl = document.createElement('div');
+        bodyEl.className = 'body';
+        if (contentEl) contentEl.appendChild(bodyEl);
+        pendingToolBodies.push({ el: bodyEl, build });
+      },
+    };
+    ctx.markSkip = () => { ctx.skip = true; };
+    for (let i = 0; i < msgs.length; i++) {
+      if (ctx.skip) { ctx.skip = false; continue; }
+      buildHistoryRow(msgs[i], i, ctx);
+      if ((i + 1) % MOUNT_BUILD_CHUNK === 0 && i + 1 < msgs.length) {
+        await nextMountFrame();
+      }
+    }
+    syncQuoteJumpStates(container);
+    buildTurnSummariesForHistory(container, { busyTail: false });
+    if (hooks.onBuilt && hooks.onBuilt(container) === false) return;
+    // 升级批基线在挂载后取（挂载 Δ 已由调用方补偿，批间只吃自己的增量）。
+    const anchor = opts.scrollAnchor || null;
+    let hPrev = anchor ? anchor.scrollHeight : 0;
+    const reanchor = () => {
+      if (!anchor) return;
+      const h1 = anchor.scrollHeight;
+      if (h1 !== hPrev) { anchor.scrollTop += (h1 - hPrev); hPrev = h1; }
+    };
+    const jobs = [];
+    for (const j of pendingToolBodies) jobs.push(() => { j.el.innerHTML = j.build(); });
+    for (const j of pendingRenders) jobs.push(() => { j.el.innerHTML = renderMarkdownWithMath(j.text, j.parseVoice); });
+    for (let ji = 0; ji < jobs.length; ji += MOUNT_UPGRADE_BATCH) {
+      const end = Math.min(ji + MOUNT_UPGRADE_BATCH, jobs.length);
+      for (; ji < end; ji++) jobs[ji]();
+      reanchor();
+      if (end < jobs.length) await nextMountFrame();
+    }
+    if (hooks.onDone) hooks.onDone();
+  } finally {
+    renderGateEnd();
   }
 }
 

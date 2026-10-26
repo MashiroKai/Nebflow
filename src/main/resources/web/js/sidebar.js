@@ -815,7 +815,6 @@ export function renderSettings() {
           ${['off','low','medium','high'].map(lvl => `<option value="${lvl}"${effortFromConfig() === lvl ? ' selected' : ''}>${t('settings.thinkingEffort.' + lvl)}</option>`).join('')}
         </select>
       </div>
-      <div class="cfg-hint">${t('settings.thinkingEffortHint')}</div>
       <div class="settings-row">
         <span class="settings-label">${t('settings.llmLog')}</span>
         ${toggleHTML({ on: state.llmLogEnabled !== false, id: 'toggle-llm-log', label: t('settings.llmLog') })}

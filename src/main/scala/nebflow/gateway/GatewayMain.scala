@@ -568,6 +568,11 @@ object GatewayMain extends IOApp:
                         val sandboxCfg = nebflow.core.sandbox.SandboxConfig.load(config.sandbox)
                         nebflow.core.sandbox.SandboxRuntime.init(sandboxCfg)
                         logger.info(s"${Branding.productName} ${nebflow.Version.string}") *>
+                          // 台账 #916 detached-apply boot 对账：上一个 OS 托管 apply 若死在
+                          // 中途（registered/stopped/starting…），这里只记证据 + 改写
+                          // interrupted 相，绝不据 state 自启/自停——选取面只认 pointer/winsort。
+                          nebflow.cli.DetachedApply.reconcileOnBoot(nebflow.shared.PathUtil.dataRoot)
+                            .flatMap(wl => wl.map(l => logger.warn(l)).getOrElse(IO.unit)) *>
                           (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")
                            else
                              presetLabel match
@@ -1326,7 +1331,15 @@ object GatewayMain extends IOApp:
                                           // signal sees an unbound face. Same store instances the
                                           // gateway face holds (never a second one).
                                           sessionRevocation = Some(gatewaySessions.revokeRelayMinted()),
-                                          nfTicketRevocation = Some(nfTicketStore.revokeAll())
+                                          nfTicketRevocation = Some(nfTicketStore.revokeAll()),
+                                          // 台账 #944（跨设备回报丢件腿）：重连即补投设备
+                                          // 待发区（进程重启 / 隧道断连窗口里攒下的完成件）。
+                                          // 只读盘面 + 发送，不碰任何会话状态。
+                                          outboxDrain = Some(
+                                            nebflow.core.delegate.DeviceDelegate
+                                              .drainOutbox(sharedResources)
+                                              .void
+                                          )
                                         )(dispatcher)
                                         neblinkService.setRelayTunnel(relayTunnel)
                                         dispatcher.unsafeRunAndForget(relayTunnel.connect())

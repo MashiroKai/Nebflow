@@ -18,19 +18,20 @@ import java.util.Base64
  * against the deployed Logto 2026-08-28).
  *
  * Pure builders (URL/form/parse) are total functions; the network steps are
- * transport-injected (`Send` = `LogtoDeviceFlow.Send`) and unit-tested
- * without network, mirroring `LogtoDeviceFlow`.
+ * transport-injected (`Send` = `LogtoTransport.Send`) and unit-tested
+ * without network, mirroring `LogtoTransport`.
  *
  * Production note (Q1, 2026-08-28): the PKCE flow uses a SEPARATE Native
- * app (`nebflow-desktop-pkce`) because the legacy `nebflow-desktop` app is
+ * app (`nebflow-desktop-pkce`) because the legacy `nebflow-desktop` app was
  * pinned to the device-code grant by its `isDeviceFlow` metadata (and that
  * field is not PATCHable via the Management API). `LogtoConfig.pkceClientId`
- * carries the AC app id; `clientId` keeps meaning the device-flow app.
+ * carries the AC app id. (台账 #924, 2026-10-26: the device flow is retired —
+ * the headless path reuses THIS AC app headlessly via [[LogtoPasswordFlow]].)
  */
 object LogtoAuthCode:
 
-  /** Reuse the device-flow transport shape and its production instance. */
-  type Send = LogtoDeviceFlow.Send
+  /** The shared first-party transport shape and its production instance. */
+  type Send = LogtoTransport.Send
 
   /**
    * OAuth error redirect payload (Logto redirects errors back to the
@@ -162,7 +163,7 @@ object LogtoAuthCode:
     directSignIn: String = ""
   ): String =
     s"${endpoint.stripSuffix("/")}${Protocol.LogtoOidc.authorize}?" +
-      LogtoDeviceFlow.formEncode(
+      LogtoTransport.formEncode(
         (
           Seq(
             "client_id" -> clientId,
@@ -207,7 +208,7 @@ object LogtoAuthCode:
         postLogoutRedirectUri.map("post_logout_redirect_uri" -> _).toSeq
     val base = s"${endpoint.stripSuffix("/")}${Protocol.LogtoOidc.endSession}"
     if params.isEmpty then base
-    else base + "?" + LogtoDeviceFlow.formEncode(params*)
+    else base + "?" + LogtoTransport.formEncode(params*)
 
   /** Exchange the authorization code (+ verifier) for tokens. */
   def tokenRequest(
@@ -216,11 +217,11 @@ object LogtoAuthCode:
     redirectUri: String,
     code: String,
     verifier: String
-  ): LogtoDeviceFlow.Request =
-    LogtoDeviceFlow.Request(
+  ): LogtoTransport.Request =
+    LogtoTransport.Request(
       url = s"${endpoint.stripSuffix("/")}${Protocol.LogtoOidc.token}",
       contentType = "application/x-www-form-urlencoded",
-      body = LogtoDeviceFlow.formEncode(
+      body = LogtoTransport.formEncode(
         "grant_type" -> "authorization_code",
         "code" -> code,
         "redirect_uri" -> redirectUri,
@@ -260,11 +261,11 @@ object LogtoAuthCode:
    * grant never carried, so keeping `offline_access` here (as it was
    * pre-O5) would contradict the authorize change; a subset is legal.
    */
-  def refreshTokenRequest(endpoint: String, clientId: String, refreshToken: String): LogtoDeviceFlow.Request =
-    LogtoDeviceFlow.Request(
+  def refreshTokenRequest(endpoint: String, clientId: String, refreshToken: String): LogtoTransport.Request =
+    LogtoTransport.Request(
       url = s"${endpoint.stripSuffix("/")}${Protocol.LogtoOidc.token}",
       contentType = "application/x-www-form-urlencoded",
-      body = LogtoDeviceFlow.formEncode(
+      body = LogtoTransport.formEncode(
         "grant_type" -> "refresh_token",
         "refresh_token" -> refreshToken,
         "client_id" -> clientId,
@@ -339,7 +340,7 @@ object LogtoAuthCode:
   // ── flow steps (IO, transport-injected) ─────────────────────────────────
 
   /** Run a token request (code exchange or refresh) and parse the outcome. */
-  def tokenCall(send: Send)(req: LogtoDeviceFlow.Request): IO[Either[String, TokenResult]] =
+  def tokenCall(send: Send)(req: LogtoTransport.Request): IO[Either[String, TokenResult]] =
     send(req).flatMap { case (status, body) =>
       IO.pure(
         if status == 200 then parseTokenResponse(body)

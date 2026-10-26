@@ -1,6 +1,7 @@
 package nebflow.agent
 
 import nebflow.actor.AgentCommand
+import nebflow.shared.ContentBlock
 
 /**
  * Pure turn-boundary drain decisions shared by ToolsComplete / CompactionComplete.
@@ -125,5 +126,70 @@ object TurnBoundaryDrains:
     else
       val (subtasks, others) = queue.partition(isSubagentResult)
       (subtasks ::: others.take(1), others.drop(1))
+
+  // ── #939（2026-10-26 作者令）：Mail 补充件的工具边界合并注入 ─────────────────
+  // 作者令逐字：「Mail 到达正在 Processing 的 delegate 会话时……目标：回合进行中
+  // → 下一个工具调用边界注入」「多封 Mail 的既有合并窗口逻辑不变，合并后的包体在
+  // 下一个边界一次性注入」。
+  //
+  // 病灶（改前行为）：Mail(delegate:<id>) 对 live 会话投的是 UserInput（replyTo=
+  // supervisor），Processing 期入 pendingUserInputs——该队列自 2026-09-15 ub 缺陷批
+  // 起**在工具边界一律不消费**（真人消息「逐条独立 turn」裁定面），只在 turn 末
+  // head-forward 给 idle ⇒ 小时级长回合的补充指令干等整个回合。
+  //
+  // 豁免口径（与 2026-09-23 windowItems 先例同构）：2026-09-15 禁合并裁定的规范面
+  // 是**排队用户消息**（真人 chat，fromUser=true）；mail 来源件是**服务端补充注入**
+  // （fromUser=false + source="mail"），本批经作者令收窄为**第二个显式豁免**——
+  // 工具边界整包合并注入。真人消息与其余 replyTo 件（SkillActivate/AskQuestion/
+  // 非 mail 来源 UserInput）语义逐字不变。
+  //
+  // 判据单点 = [[isMailSupplement]]（结构谓词，可机械验定，非模糊判断）。
+
+  /** mail 来源补充件判据（唯一定义处）：非真人 + `source="mail"`（唯一写入点 =
+    * `MailTool` 投递腿——delegate 续聊腿 :1265 / 邮件腿 :2385）。 */
+  def isMailSupplement(ui: AgentCommand.UserInput): Boolean =
+    !ui.fromUser && ui.source.contains("mail")
+
+  /**
+   * 工具边界的 mail 补充件摘取：从排队命令队列里摘出**全部** mail 来源件
+   * （到达顺序保持——`partition` 两半各自保序），其余件（真人消息 /
+   * SkillActivate / AskQuestion / 非 mail UserInput）原样留队，逐字不動。
+   * compaction 挂起 ⇒ 不消费（与 [[drainHead]] 同款守卫：注入进将被 summary
+   * 替换的历史 = 消费即丢失；CompactionComplete 排空时照旧处理）。
+   */
+  def drainMailPackage(
+    queue: List[AgentCommand],
+    compactionPending: Boolean
+  ): (List[AgentCommand.UserInput], List[AgentCommand]) =
+    if compactionPending then (Nil, queue)
+    else
+      val mails = queue.collect { case ui: AgentCommand.UserInput if isMailSupplement(ui) => ui }
+      val rest = queue.filterNot {
+        case ui: AgentCommand.UserInput if isMailSupplement(ui) => true
+        case _ => false
+      }
+      (mails, rest)
+
+  /** 合并包体：正文 + 附件块。单件 ⇒ idle 等价形（无 blocks = 正文原样；有 blocks =
+    * 块形态、正文不重复——G3 批「blocks 首块即正文、消费侧弃 text」同款）；多件 ⇒
+    * 批头一行 + 逐件分节（**每件正文全文**，到达顺序保持），blocks 按件序拼接。 */
+  final case class MailPackage(text: String, blocks: List[ContentBlock])
+
+  def mergeMailPackage(mails: List[AgentCommand.UserInput]): MailPackage =
+    mails match
+      case Nil => MailPackage("", Nil)
+      case single :: Nil =>
+        single.blocks.filter(_.nonEmpty) match
+          case Some(bl) => MailPackage("", bl)
+          case None     => MailPackage(single.text, Nil)
+      case many =>
+        val sections = many.zipWithIndex.map { (m, i) =>
+          val who = m.sender.map(s => s"（from $s）").getOrElse("")
+          if m.blocks.exists(_.nonEmpty) then s"— 件 ${i + 1}$who：正文随附件块注入 —"
+          else s"— 件 ${i + 1}$who —\n${m.text}"
+        }
+        val header =
+          s"[Mail 补充包：本边界合并注入 ${many.size} 件（到达顺序保持）]\n\n" + sections.mkString("\n\n")
+        MailPackage(header, many.flatMap(_.blocks.toList.flatten))
 
 end TurnBoundaryDrains

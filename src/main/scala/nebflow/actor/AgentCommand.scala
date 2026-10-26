@@ -227,7 +227,17 @@ object AgentCommand:
      * （`AgentActor` 冻结腿的 `pendingUserInputs` 追加），插在中间会把旧实参
      * 错位到本字段 ⇒ 置末使既有位置调用逐字保持可编译。
      */
-    project: Option[String] = None
+    project: Option[String] = None,
+    /**
+     * #939（2026-10-26 作者令「Mail 注入时机提前到工具调用边界」）**到达戳**：
+     * mail 来源件（`source="mail"` 且非真人，判据单点
+     * `TurnBoundaryDrains.isMailSupplement`）在 Processing 会话**入队瞬间**盖的
+     * 时间戳——工具边界注入时据此打「到达→实际注入」延迟（观测面：
+     * `mail-injected-at-tools-complete` 事件行的 `agesMs`）。仅排队等待路径置位
+     * （idle 直达件无排队，恒 `None`）；非 mail 件恒 `None`。**位置置末**（
+     * `project` 之后，同上款理由——不使既有位置构造/解构错位）。
+     */
+    queuedAtMs: Option[Long] = None
   ) extends AgentCommand
 
   /**

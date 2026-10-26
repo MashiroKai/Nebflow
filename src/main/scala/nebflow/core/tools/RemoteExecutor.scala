@@ -1724,6 +1724,11 @@ object RemoteExecutor:
   /**
    * Add `device` parameter to a tool's input schema if it's a remoteable tool.
    * Returns the modified schema, or the original if the tool is not remoteable.
+   *
+   * 台账 #913 ③（2026-10-26）：`fleet.enforceExplicitDevice` 开启时，`device`
+   * 参数的 schema 描述改为**必填措辞**（缺省调用会在引擎侧被拒，schema 与引擎
+   * 行为同源——两面都由 [[nebflow.core.device.FleetConfig]] 承载）。开关关 =
+   * 既有文案逐字节（热读 2s memo，成本与改前同量级）。
    */
   def augmentSchema(toolName: String, schema: JsonObject): JsonObject =
     if !remoteableTools.contains(toolName) then schema
@@ -1731,11 +1736,16 @@ object RemoteExecutor:
       val props = schema("properties")
         .flatMap(_.asObject)
         .getOrElse(JsonObject.empty)
+      val deviceDescription =
+        if nebflow.core.device.FleetConfig.enforceExplicitDevice then
+          "Target device name — REQUIRED on EVERY call (fleet.enforceExplicitDevice is ON; calls without it are refused). Use the device's name from the available devices list; \"local\" for this machine."
+        else
+          "Target device name. Use the device's name from the available devices list. Defaults to local device if omitted."
       props.add(
         "device",
         io.circe.Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Target device name. Use the device's name from the available devices list. Defaults to local device if omitted.".asJson
+          "description" -> deviceDescription.asJson
         )
       ) match
         case newProps =>

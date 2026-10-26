@@ -44,10 +44,8 @@ let neblinkState = {
   // User login state: true when a NebLink device credential exists and
   // NebLink is enabled (reported by the backend).
   loggedIn: false,
-  // Device-flow state: 'idle' | 'waiting' | 'success'
+  // Login-flow state: 'idle' | 'waiting' | 'success' (PKCE browser login).
   flowState: 'idle',
-  userCode: '',
-  deviceCode: '',
   // ①opt-A3（方案 §2.1）：relay 隧道状态进 state，供「降级增量回补」判据消费
   // （`relay.available === true` 才算通道可用）。形状 = /api/neblink/status 的
   // `relay` 对象原文 {available, authRejected, lastRejectedStatusCode,
@@ -532,113 +530,19 @@ export function platformDisplay(platform) {
   return { icon: generic, text: platform || 'Device' };
 }
 
-// ---- Device-flow start / polling ----
-
-/**
- * Start a NebLink device-flow authorization.
- * Returns the flow payload {deviceCode, userCode, verificationUri, interval,
- * expiresIn} on success; throws Error(message) otherwise.
- * Shared by the Settings panel button and the avatar login modal.
- */
-export async function startDeviceFlow() {
-  const resp = await fetch('/api/neblink/device-flow/start', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getAuthToken() },
-  });
-  const data = await resp.json();
-  if (!resp.ok) throw new Error(data.error || t('login.deviceStartFailed'));
-  return data;
-}
-
-/**
- * Poll the local gateway's /api/neblink/device-flow/poll until the device is
- * approved (or expired/errored). On success, the Scala backend persists the
- * credential and hot-swaps the client — the UI just needs to refresh state.
- *
- * Optional callbacks let non-Settings callers (avatar login modal) react to
- * the outcome; neblinkState is updated either way.
- */
-let _flowPollTimer = null;
-export function pollDeviceFlow(deviceCode, interval, expiresInSeconds, onSuccess, onError) {
-  // Cancel any existing poll.
-  if (_flowPollTimer) clearTimeout(_flowPollTimer);
-  const deadline = Date.now() + expiresInSeconds * 1000;
-
-  const fail = (failure) => {
-    // 缺陷 A：载荷形态与 PKCE 面一致（对象 ⇒ 走 `loginFailureText`；字符串 ⇒ 兼容面）。
-    const payload = (failure && typeof failure === 'object')
-      ? failure
-      : { error: failure == null ? '' : String(failure) };
-    neblinkState.flowState = 'idle';
-    neblinkState.pairError = loginFailureText(payload);
-    neblinkState.pairErrorCode = classifyLoginFailureCode(payload);
-    neblinkState.userCode = '';
-    neblinkState.deviceCode = '';
-    if (_rerender) _rerender();
-    onError?.(neblinkState.pairError, payload);
-  };
-
-  const poll = async () => {
-    if (Date.now() > deadline) {
-      fail(t('login.deviceTimeout'));
-      return;
-    }
-    try {
-      const resp = await fetch('/api/neblink/device-flow/poll', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getAuthToken() },
-        body: JSON.stringify({ deviceCode })
-      });
-      const data = await resp.json();
-      if (resp.ok && data.ok) {
-        // Success — device enrolled, client hot-swapped.
-        neblinkState.flowState = 'success';
-        neblinkState.pairError = '';
-        neblinkState.userCode = '';
-        neblinkState.deviceCode = '';
-        if (_rerender) _rerender();
-        // Refresh neblink status after a short delay so the new device shows up.
-        setTimeout(() => fetchNeblinkStatus(), 1500);
-        onSuccess?.();
-        return;
-      }
-      if (data.error === 'authorization_pending') {
-        // Keep polling.
-        _flowPollTimer = setTimeout(poll, interval * 1000);
-        return;
-      }
-      // Other error (expired, denied, etc.) — 载荷原样下沉（后端分类文案若带
-      // `code` 则连诊断码一起渲染，缺 `code` 时与修前逐字同款）。
-      fail(data.error ? data : t('login.deviceFailed'));
-    } catch (e) {
-      fail(t('login.networkError', { msg: e.message }));
-    }
-  };
-  _flowPollTimer = setTimeout(poll, interval * 1000);
-}
-
-/** Cancel an in-progress device-flow poll (e.g. the login modal was closed). */
-export function cancelDeviceFlow() {
-  if (_flowPollTimer) { clearTimeout(_flowPollTimer); _flowPollTimer = null; }
-  if (neblinkState.flowState === 'waiting') {
-    neblinkState.flowState = 'idle';
-    neblinkState.userCode = '';
-    neblinkState.deviceCode = '';
-    if (_rerender) _rerender();
-  }
-}
-
 // ---- PKCE login (Authorization Code + PKCE, loopback redirect) ----
-// Primary login path when the gateway has Logto configured: the browser does
-// the full hosted login and redirects back to 127.0.0.1/auth/callback; this
-// side just opens the URL and polls the flow state. When Logto is NOT
-// configured the gateway answers 404 logto-not-configured and callers fall
-// back to the device flow above.
+// The login path (统一登录批, 台账 #924): the browser does the full hosted
+// login and redirects back to 127.0.0.1/auth/callback; this side just opens
+// the URL and polls the flow state. (The legacy device-flow fallback was
+// retired with the flow itself, 2026-10-26 — the gateway no longer serves
+// /api/neblink/device-flow/*; a logto-not-configured answer is an error
+// face, not a fallback trigger.)
 
 /**
  * Start a Logto Authorization Code + PKCE login.
  * Returns {authorizeUrl} on success; returns null when the gateway reports
- * 404 logto-not-configured (caller should fall back to startDeviceFlow);
+ * 404 logto-not-configured (caller surfaces the not-configured error face —
+ * the legacy device-flow fallback is retired, 台账 #924);
  * throws Error(message) on any other failure.
  *
  * `forceLogin` (RP-logout fix, 2026-09-06): true → the gateway adds

@@ -138,6 +138,27 @@ bash ops/release.sh status    # 只读: 指针 / previous / staged 状态
   + `PerceptionCoreSpec`（末者 KAI 上有 4 稳定红，Windows 环境差定因候选见 phase-2 报告，非合并回归判读）。
 - **Mac 本地构建（紧急兜底）**：仅 KAI 不可用时走 `ops/release.sh stage` 老路；恢复后回到三步主线流。
 
+## 内建分离式重启/两阶段更新（台账 #916 · 2026-10-26）
+
+引擎内建（`nebflow.cli.DetachedApply`），设计件：`docs/design/20261026_detached-apply-restart-update-spec.zh-CN.md`。
+
+- **`stand restart`（默认 detached）**：CLI 只向 OS 注册一次性 apply 作业
+  （macOS = launchd agent bootstrap+kickstart；Windows = schtasks 固定名任务
+  `/Create /F` + `/Run`）后立即返回——stop→start→健康闸由 **OS 托管的作业**执行，
+  任何调用形态（ssh/console/引擎树内）注册后即可死，绝不落在垂死进程树里
+  （2026-10-26 12:06 Mac 事故的直接修法）。`--inline` = 旧同步面。
+  日志：`<dataRoot>/logs/apply-restart.log`；状态相：`<dataRoot>/apply/state.json`。
+- **`stand update --from <jar>`（两阶段）**：Phase1 stage+verify（sha256、`.part`
+  原子落位、版本目录不可变：同版同 sha 幂等命中、异 sha 拒绝；不碰指针不碰引擎）
+  → Phase2 指针晋升 + 注册 detached apply（健康闸含版本断言，失败自动回滚旧版）。
+  `--stage-only` = 只做 Phase1。裸 `stand update`/`--beta`/`--device` 行为不变。
+- **选取面**：launcher 目录含 `current-version` = 指针布局（Mac 生产）；否则
+  winsort 扁平（KAI `AppData\Local\stand` 现状，最大版本胜）。中断安全锚：
+  指针原子写 / 包只经同卷 ATOMIC_MOVE 进选取面——任何时刻断电，重启后非旧版
+  可用即新版可用。
+- **引擎 boot 对账**：发现上一 apply 死在中途 → WARN + state 记 `interrupted`，
+  只留证据不自作主张。
+
 ## 测试
 
 ```bash

@@ -803,14 +803,26 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
       reportLine = BriefReportLine
       // 设备项目 workspace 行（跨设备批）：真实工作区在设备本盘——行里给设备盘
       // 路径 + 默认路由语义（本机座位 = brain 根仅是引擎侧锚点，非项目文件）。
+      // 台账 #913 ③（2026-10-26）：host 开了强制显式设备 ⇒ 行尾追加纪律句
+      // （缺省 device 的调用会被引擎直接拒绝——brief 与引擎行为同源，防模型
+      // 依赖「by default」措辞撞墙）。
+      fleetEnforceNote =
+        if nebflow.core.device.FleetConfig.enforceExplicitDevice then
+          " fleet.enforceExplicitDevice is ON on this host: pass device=\"" +
+            sessionDevice.getOrElse("local") + "\" on EVERY Bash/Read/Write/Edit/Glob/Grep call — calls without it are refused."
+        else ""
       deviceWorkspaceLine =
         (sessionDevice, sessionDeviceWorkspace) match
           case (Some(dev), Some(ws)) =>
             s"[workspace] $ws (on device $dev — Bash/Read/Write/Edit/Glob/Grep run on that device by " +
               "default; paths are device-local absolute paths. Pass device=\"local\" explicitly for a " +
               s"local-engine command. This session's local engine seat is $effectiveWs — it holds only " +
-              "the flow map and ledgers, not the project files)"
-          case _ => s"[workspace] $effectiveWs (file tools need absolute paths; Bash cwd is not guaranteed)"
+              "the flow map and ledgers, not the project files)" + fleetEnforceNote
+          case _ =>
+            s"[workspace] $effectiveWs (file tools need absolute paths; Bash cwd is not guaranteed)" +
+              (if nebflow.core.device.FleetConfig.enforceExplicitDevice then
+                 " fleet.enforceExplicitDevice is ON: pass device=\"<name>\" on every Bash/Read/Write/Edit/Glob/Grep call (device=\"local\" for this machine) — calls without it are refused."
+               else "")
       // jev-plugins 批 #1226：分配集注入 = prepareNodePlugins 等价路径（注入块
       // 追加在 brief 尾部——NodeStarter 首条消息同款位形；空分配 = 旧 brief 逐字）。
       brief = assembleBrief(

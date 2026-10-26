@@ -32,15 +32,27 @@ object UpdateCommand extends CliCommand:
   def name = "update"
   def description = s"Update ${nebflow.shared.Branding.productName} to the latest version"
   def subcommands = List(UpdateRun)
-  def examples = List("stand update", "stand update --beta", "stand update --device DESKTOP-IJBBEOT")
+  def examples =
+    List("stand update", "stand update --beta", "stand update --device DESKTOP-IJBBEOT", "stand update --from <jar>")
 
   private object UpdateRun extends CliSubcommand:
     def name = "run"
-    def description = "Run update (--beta for latest beta, --device for remote)"
+    def description = "Run update (--from <jar> two-phase local; --beta for latest beta, --device for remote)"
 
     def params = List(
       CliParam("beta", short = Some('b'), description = "Install latest beta version", isFlag = true),
-      CliParam("device", short = Some('d'), description = "Update a remote device (requires running gateway)")
+      CliParam("device", short = Some('d'), description = "Update a remote device (requires running gateway)"),
+      CliParam(
+        "from",
+        None,
+        "Two-phase update from a local jar: Phase1 stage+verify (engine untouched) → Phase2 pointer promote + OS-detached apply with health gate and auto-rollback"
+      ),
+      CliParam(
+        "stage-only",
+        None,
+        "With --from: stop after Phase1 staging — no pointer change, no restart",
+        isFlag = true
+      )
     )
 
     def run(ctx: CliContext): IO[CliResult] =
@@ -49,22 +61,147 @@ object UpdateCommand extends CliCommand:
           // Remote update — call the target device's /api/neblink/update via neblink
           remoteUpdate(deviceName, ctx.args.get("beta").contains("true"))
         case _ =>
-          // Local update (existing behavior)
-          IO.blocking {
-            import sys.process.*
-            val isWindows = System.getProperty("os.name").toLowerCase.contains("win")
-            val script =
-              if ctx.args.get("beta").contains("true") then
-                if isWindows then
-                  """powershell -Command "$env:CHANNEL='beta'; iwr """ + nebflow.shared.Branding.installPs1Url + """ | iex" """
-                else "curl -fsSL " + nebflow.shared.Branding.installUrl + " | sh -s -- --beta"
-              else if isWindows then
-                """powershell -Command "& { iwr """ + nebflow.shared.Branding.installPs1Url + """ | iex }" """
-              else "curl -fsSL " + nebflow.shared.Branding.installUrl + " | sh"
-            val exitCode = script.!
-            if exitCode == 0 then CliResult.text("Update completed")
-            else CliResult.Error("Update failed", exitCode)
-          }
+          ctx.args.get("from") match
+            case Some(jar) if jar != "true" && jar.trim.nonEmpty =>
+              twoPhaseLocal(os.Path(jar.trim), stageOnly = ctx.args.get("stage-only").contains("true"))
+            case Some(_) =>
+              IO.pure(CliResult.Error("--from requires the jar path: stand update --from <path>/stand-assembly-<version>.jar", 1))
+            case None =>
+              // Local channel update (existing behavior, unchanged)
+              IO.blocking {
+                import sys.process.*
+                val isWindows = System.getProperty("os.name").toLowerCase.contains("win")
+                val script =
+                  if ctx.args.get("beta").contains("true") then
+                    if isWindows then
+                      """powershell -Command "$env:CHANNEL='beta'; iwr """ + nebflow.shared.Branding.installPs1Url + """ | iex" """
+                    else "curl -fsSL " + nebflow.shared.Branding.installUrl + " | sh -s -- --beta"
+                  else if isWindows then
+                    """powershell -Command "& { iwr """ + nebflow.shared.Branding.installPs1Url + """ | iex }" """
+                  else "curl -fsSL " + nebflow.shared.Branding.installUrl + " | sh"
+                val exitCode = script.!
+                if exitCode == 0 then CliResult.text("Update completed")
+                else CliResult.Error("Update failed", exitCode)
+              }
+
+    // ── two-phase local update（台账 #916）────────────────────────────────
+
+    /**
+     * Phase1 [[UpdateStage.stage]]（校验+staging，引擎/指针零触碰）→ 全就绪才
+     * Phase2：pointer 布局 = [[nebflow.core.hotrestart.InstallPointer.promote]]
+     * 原子切（previous←旧 current，回滚锚就位）；两种布局随后都注册 OS 托管
+     * detached apply（stop→start→健康闸含版本断言→失败自动回滚旧版）。注册
+     * 失败 → 指针原样放回（staged 包留在盘上无害）。引擎未在跑 → 不注册 apply，
+     * 下一次 start 直接吃新指针/新包。
+     */
+    private[cli] def twoPhaseLocal(
+        jar: os.Path,
+        stageOnly: Boolean,
+        resolveL: () => Option[String] = () =>
+          DetachedApply.resolveLauncher(sys.env, sys.props.getOrElse("user.home", ""), isWindows),
+        doStage: (os.Path, os.Path, DetachedApply.Layout) => IO[Either[String, UpdateStage.Staged]] =
+          (j, dir, lay) => UpdateStage.stage(j, dir, lay),
+        doRegister: DetachedApply.Plan => IO[Either[String, String]] = p => DetachedApply.register(p)
+    ): IO[CliResult] =
+      IO.blocking(isWindows).flatMap { isWin =>
+        resolveL() match
+          case None =>
+            IO.pure(
+              CliResult.Error(
+                "stand launcher not found (posix: ~/.stand/bin/stand; windows: %LOCALAPPDATA%\\stand\\stand.cmd; override: STAND_LAUNCHER)",
+                1
+              )
+            )
+          case Some(launcher) =>
+            val installDir = DetachedApply.installDirOf(launcher)
+            val layout = DetachedApply.detectLayout(installDir)
+            doStage(jar, installDir, layout).flatMap {
+              case Left(err) => IO.pure(CliResult.Error(s"phase1 stage failed (nothing promoted): $err", 1))
+              case Right(staged) if stageOnly =>
+                IO.pure(
+                  CliResult.text(
+                    s"phase1 staged: ${staged.jarName} → ${staged.stagedPath} (sha256 ${staged.sha256.take(16)}…${if staged.idempotentHit then ", idempotent hit" else ""})\n  pointer untouched, engine untouched — run without --stage-only to promote + restart"
+                  )
+                )
+              case Right(staged) =>
+                val promote = IO.blocking {
+                  if layout == DetachedApply.Layout.Pointer then
+                    for
+                      preCur <- nebflow.core.hotrestart.InstallPointer.readCurrent(installDir)
+                      prePrev <- nebflow.core.hotrestart.InstallPointer.readPrevious(installDir)
+                      promoted <- nebflow.core.hotrestart.InstallPointer.promote(installDir, staged.version)
+                    yield promoted
+                      .map(_ => (preCur, prePrev): (Option[String], Option[String]))
+                      .left.map(_.toString)
+                  else IO.pure(Right((None, None): (Option[String], Option[String])))
+                }.flatten
+                promote.flatMap {
+                  case Left(err) =>
+                    IO.pure(CliResult.Error(s"phase2 promote failed (pointer untouched): $err", 1))
+                  case Right(pointersBefore) =>
+                    val port = nebflow.gateway.GatewayConfig.load.map(_.port.value)
+                    port.flatMap { p =>
+                      val pidAlive = ProcessManager.readPid().exists(ProcessManager.isRunning)
+                      val listener =
+                        IO.blocking(SingleInstanceGuard.connectProbeAccepted(p))
+                      listener.map(accepted => pidAlive || accepted).flatMap { engineRunning =>
+                        if !engineRunning then
+                          IO.pure(
+                            CliResult.text(
+                              s"phase2 done: staged ${staged.version} promoted (pointer/winsort selection face) — engine not running, next start runs ${staged.version}"
+                            )
+                          )
+                        else
+                          IO.blocking(
+                            DetachedApply.defaultPlan(
+                              DetachedApply.Kind.Update,
+                              p,
+                              Some(staged.version),
+                              ProcessManager.readPid()
+                            )
+                          ).flatMap {
+                            case Left(err) => restoreAndFail(installDir, layout, pointersBefore, err)
+                            case Right(plan) =>
+                              doRegister(plan).flatMap {
+                                case Right(msg) =>
+                                  IO.pure(
+                                    CliResult.text(
+                                      s"phase1 staged ${staged.version} (sha256 ${staged.sha256.take(16)}…) → phase2 promoted + detached apply registered\n  $msg\n  on health-gate failure the previous version is restored automatically (cause lands in the log)"
+                                    )
+                                  )
+                                case Left(err) =>
+                                  restoreAndFail(installDir, layout, pointersBefore, err)
+                              }
+                          }
+                      }
+                    }
+                  }
+            }
+      }
+
+    /** 注册失败 → 指针原样放回（staged 包留在盘上无害），报因退出。 */
+    private def restoreAndFail(
+        installDir: os.Path,
+        layout: DetachedApply.Layout,
+        pointersBefore: (Option[String], Option[String]),
+        cause: String
+    ): IO[CliResult] =
+      if layout != DetachedApply.Layout.Pointer then
+        IO.pure(CliResult.Error(s"apply registration failed (selection face unchanged): $cause", 1))
+      else
+        pointersBefore match
+          case (Some(cur), prev) =>
+            nebflow.core.hotrestart.InstallPointer
+              .writePointers(installDir, cur, prev)
+              .attempt
+              .map {
+                _ =>
+                  CliResult.Error(s"apply registration failed — pointers restored to $cur: $cause", 1)
+              }
+          case (None, _) =>
+            IO.pure(CliResult.Error(s"apply registration failed (no pointer to restore — layout had none): $cause", 1))
+
+    private def isWindows: Boolean = System.getProperty("os.name").toLowerCase.contains("win")
 
     /** Trigger update on a remote device via the gateway (P2P first, relay fallback). */
     private def remoteUpdate(deviceName: String, beta: Boolean): IO[CliResult] =

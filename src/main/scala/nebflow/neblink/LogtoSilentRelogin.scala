@@ -59,7 +59,7 @@ object LogtoSilentRelogin:
     // ===== 踢下线停摆门（2026-09-14 踢旧批 r2）— 🔴 必须在 `.register` **之前** =====
     //
     // 复核位判词 fail 的唯一失败点：r1 把停摆位关在 `NeblinkRelayTunnel` 里，而本函数
-    // 的 `.register`（下方 `LogtoDeviceFlow.register`）**先于** `NeblinkEnrollment.persist`
+    // 的 `.register`（下方 `LogtoTransport.register`）**先于** `NeblinkEnrollment.persist`
     // 执行 ⇒ 服务端的 kick-on-re-enroll 在客户端 persist / 护栏之前就已发生，挡 persist
     // 挡不住重注册（r1 实测：踢后 ~24s 自愈链把 `POST /api/device/register` 打到服务端
     // 并成功）。门放在**本函数入口**（register 的最近前驱、且在任何 I/O 之前）：
@@ -143,7 +143,7 @@ object LogtoSilentRelogin:
         // one (post-O5 logins persist none). Rotation degrades on its own
         // once that token is consumed / expired / revoked.
         log(s"attempting refresh-token rotation with a stored pre-O5 credential — $o5Reason") *>
-          LogtoAuthCode.tokenCall(LogtoDeviceFlow.jdkSend)(LogtoAuthCode.refreshTokenRequest(ep, pc, rt))
+          LogtoAuthCode.tokenCall(LogtoTransport.jdkSend)(LogtoAuthCode.refreshTokenRequest(ep, pc, rt))
       case _ =>
         // Timing: hook entered, nothing to rotate — the frontend will be
         // asked for a fresh login (NeblinkClient surfaces the original 401).
@@ -172,8 +172,8 @@ object LogtoSilentRelogin:
         // hint current with the provider's latest session issuance.
         tokens.refreshToken.traverse_(rt => DeviceCredential.updateLogtoRefresh(rt, tokens.idToken)) *>
           ms.identity.flatMap { identity =>
-            LogtoDeviceFlow
-              .register(LogtoDeviceFlow.jdkSend)(
+            LogtoTransport
+              .register(LogtoTransport.jdkSend)(
                 serverUrl,
                 tokens.accessToken,
                 identity.deviceId,
@@ -211,7 +211,7 @@ object LogtoSilentRelogin:
           }
       case Left(err) => warn(s"silent re-login refresh failed: $err").as(None)
 
-  /** Production transport — same policy as LogtoDeviceFlow.jdkSend. */
+  /** Production transport — same policy as LogtoTransport.jdkSend. */
   private def log(message: String): IO[Unit] =
     nebflow.shared.NebflowLogger.forName("nebflow.neblink.relogin").info(s"[logto-ac] $message")
 

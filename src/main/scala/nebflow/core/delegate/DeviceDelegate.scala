@@ -187,6 +187,9 @@ object DeviceDelegate:
   /**
    * 数据通道发送单点：presence `sendData` 优先（送达判真——半开连接回 false），
    * relay `relayNotify` 兜底（对端同一入口 handleDataMessage）。双腿全败 = Left。
+   *
+   * 台账 #944：本方法**只管发一次**（不落盘）——需要「宁重勿丢」的完成件必须走
+   * [[sendDurable]]（先落盘再发）。
    */
   def sendToDevice(resources: AgentRuntimePort, deviceId: String, payload: Json): IO[Either[String, Json]] =
     resources.neblinkService match
@@ -205,6 +208,115 @@ object DeviceDelegate:
                 IO.pure(Left("presence send failed and no relay client is configured (device offline?)"))
         }
   end sendToDevice
+
+  /**
+   * boot 收殓腿的跨设备补录（台账 #944）：进程重启把在飞会话连回投代理一起杀掉 ⇒
+   * 终态件永不到达、从未离机。收殓腿在本机终态化任务行之后，用本方法把「这件丢了，
+   * 部分结果如下」落进**设备待发区**（[[DeviceResultOutbox]]），relay（重）连时按序
+   * 补投，宿主按 spawnId 判重。
+   *
+   * 载荷形态与 [[resultProxyBehavior]] 的真终态件**同构**（同一 `kind`、同一宿主
+   * 处理入口 `handleResult`）——宿主侧零新分支：一条 delegate-result，`status=failed`
+   * 且 `result` 里带收殓说明与抢救出的部分结果。改前该路径因「父会话不在本机」
+   * 被判为「父会话已删」整条跳过（实证 6/6 静默蒸发）。
+   *
+   * 幂等：`enqueue` 以 spawnId 为键，重复 boot 不重写不重排。
+   */
+  def enqueueLostResultNotice(
+    task: nebflow.shared.SubAgentTask,
+    hostDeviceId: String,
+    partial: Option[String],
+    head: String
+  ): IO[Unit] =
+    val selfId = neblinkDeviceId()
+    val payload = Json.obj(
+      "kind" -> KindResult.asJson,
+      "spawnId" -> task.taskId.asJson,
+      "status" -> "failed".asJson,
+      "source" -> "delegate".asJson,
+      "result" -> (partial match
+        case Some(text) =>
+          s"$head Partial result recovered from the child's disk transcript:\n$text"
+        case None =>
+          s"$head No recoverable result on disk — the task is marked failed. " +
+            s"Original prompt: ${task.prompt.take(500)}"
+      ).asJson,
+      "deviceName" -> neblinkDisplayName(selfId).asJson,
+      "deviceId" -> selfId.asJson,
+      // projectName 从派发时的 registry 记录取（收殓路径没有 spawn 载荷；空 = 未知，
+      // 宿主侧 handleResult 按既有缺省处理）。
+      "projectName" -> DelegateRegistry.find(task.taskId).flatMap(_.project).getOrElse("").asJson,
+      "parentSessionId" -> task.parentSessionId.asJson,
+      "pointers" -> Json.arr()
+    )
+    logger.info(
+      s"[device-delegate] boot recovery: enqueueing lost-result notice for spawnId=${task.taskId} " +
+        s"into the device outbox (host=$hostDeviceId, partialResult=${partial.isDefined})"
+    ) *>
+      DeviceResultOutbox.enqueue(hostDeviceId, ChannelName, payload, task.taskId).void
+
+  /** 本机 deviceId（同步只读探测；设备身份文件缺席 = 空串，显示面退化可接受）。 */
+  private def neblinkDeviceId(): String =
+    try
+      nebflow.neblink.DeviceIdentity.readDeviceIdOnly.getOrElse("")
+    catch case _: Throwable => ""
+
+  /**
+   * **持久化发送腿**（台账 #944 跨设备回报丢件腿）：先落盘到
+   * [[DeviceResultOutbox]] 再发一次；发成功即出队，失败/异常留在盘上由 relay（重）连
+   * 时按序补投。语义 = **at-least-once（宁重勿丢）**——幂等在宿主侧
+   * （`DeliveredReceiptLedger`，键 = spawnId）。
+   *
+   * 定因（本腿堵的那条缝）：进程重启把在飞会话连回投代理一起杀掉 ⇒ 终态事件永不到
+   * 达 ⇒ 结果从未离机；boot 收殓腿因「父会话不在本机」跳过通知 ⇒ 件静默蒸发。
+   * 落盘队列让「机器死了/隧道不在/宿主暂不可达」都退化成「晚一点到」，绝不丢。
+   *
+   * 落盘本身失败不阻断发送（簿记面纪律：簿记挂掉不该让件也挂掉）——此时退化为
+   * 改前的 fire-and-forget，WARN 如实留痕。
+   */
+  def sendDurable(
+    resources: AgentRuntimePort,
+    deviceId: String,
+    channel: String,
+    payload: Json,
+    id: String
+  ): IO[Either[String, Json]] =
+    DeviceResultOutbox.enqueue(deviceId, channel, payload, id) *>
+      sendToDevice(resources, deviceId, payload).flatMap {
+        case ok @ Right(_) =>
+          DeviceResultOutbox.delivered(id).as(ok)
+        case ko @ Left(_) => IO.pure(ko) // 留盘：等 relay 重连 / 下一次 boot 补投
+      }.handleErrorWith { err =>
+        // 发送腿自身炸了：件已在盘上，如实回 Left（下一次 drain 会重来）。
+        logger
+          .warn(s"[device-delegate] durable send errored for id=$id (kept in outbox): ${err.getMessage}")
+          .as(Left(Option(err.getMessage).getOrElse(err.getClass.getSimpleName)))
+      }
+
+  /**
+   * 补投待发区全量（relay（重）连上时调用；boot 亦有兜底调用点）。
+   * `send` 参数留缝供 spec 纯桩驱动——生产调用恒传 [[sendToDevice]]。
+   */
+  def drainOutbox(
+    resources: AgentRuntimePort,
+    send: (String, String, Json) => IO[Either[String, Json]] = null
+  ): IO[DeviceResultOutbox.DrainReport] =
+    val leg = Option(send).getOrElse((d: String, c: String, p: Json) => sendToDevice(resources, d, p))
+    DeviceResultOutbox.drain(leg).flatMap { report =>
+      (if report.delivered.nonEmpty then
+         logger.info(
+           s"[device-delegate] outbox drain: ${report.delivered.size} held result(s) delivered after reconnect " +
+             s"(${report.delivered.mkString(", ")})"
+         )
+       else IO.unit) *>
+        (if report.failed.nonEmpty then
+           logger.warn(
+             s"[device-delegate] outbox drain: ${report.failed.size} result(s) still undeliverable, kept on disk — " +
+               report.failed.map((id, err) => s"$id: $err").mkString("; ")
+           )
+         else IO.unit)
+          .as(report)
+    }
 
   // ── 设备侧：接收装配 + spawn 处理 ─────────────────────────────────────
 
@@ -458,7 +570,11 @@ $task"""
             "parentSessionId" -> parentSessionId.asJson,
             "pointers" -> pointers.asJson
           )
-          sendToDevice(resources, hostDeviceId, result)
+          // 台账 #944：完成件**先落盘再发**（sendDurable）——改前是纯 fire-and-forget，
+          // 主机不可达 / 进程死在本行之前 / 隧道不在，结果就无声蒸发（KAI 14:39 重启
+          // 那一批 6 件的实证形态）。落盘后即使发送失败，relay 重连或下一次 boot 会
+          // 按序补投（at-least-once；宿主侧按 spawnId 判重，不会二次唤醒父会话）。
+          sendDurable(resources, hostDeviceId, ChannelName, result, spawnId)
             .flatMap {
               case Right(_) =>
                 logger.info(
@@ -467,7 +583,8 @@ $task"""
               case Left(err) =>
                 logger.warn(
                   s"[device-delegate] delegate-result DELIVERY FAILED for spawnId=$spawnId (host=$hostDeviceId): $err — " +
-                    "the host will not receive this result (no queueing; host may re-dispatch after the device returns)"
+                    "RESULT KEPT IN THE DEVICE OUTBOX (device-outbox/) and will be replayed on the next relay " +
+                    "reconnect / boot; the host dedupes by spawnId so a replay never double-wakes the parent"
                 )
             }
             .as(Behaviors.stopped[AgentCommand])
@@ -543,19 +660,37 @@ $task"""
             "projectName" -> projectName.asJson,
             "spawnId" -> spawnId.asJson
           )
-          resources.agentRegistry.get.flatMap { registry =>
-            registry.get(parentSessionId) match
-              case Some(record) =>
-                record.ref ! AgentCommand.ExternalEvent(
-                  source = dispatchSource,
-                  eventType = status,
-                  payload = resultText,
-                  metadata = meta
-                )
-              case None =>
-                logger.warn(
-                  s"[device-delegate] parent session '$parentSessionId' is gone — result of spawnId=$spawnId kept in the task ledger only (no live injection)"
-                )
+          // ── 台账 #944：重投幂等闸（发端 outbox 是 at-least-once ⇒ 收端必须判重）──
+          // correlationId 恒 = spawnId（跨重启稳定身份），并先查既有
+          // DeliveredReceiptLedger（#886 的已投标记面，与 delegate/subtask 回执同一本
+          // 台账，不新造第二套）。已投 ⇒ **不再注入父会话**（避免重复唤醒/重复回合），
+          // 但台账注记与任务面收尾照跑（幂等）。
+          nebflow.core.processor.DeliveredReceiptLedger.load(parentSessionId).flatMap { delivered =>
+            val alreadyDelivered = parentSessionId.nonEmpty && delivered.contains(spawnId)
+            (if alreadyDelivered then
+               logger.info(
+                 s"[device-delegate] duplicate delegate-result for spawnId=$spawnId (outbox replay) — parent session " +
+                   "already consumed this result, injection suppressed (ledger hit)"
+               )
+             else IO.unit) *> resources.agentRegistry.get.flatMap { registry =>
+              if alreadyDelivered then IO.unit
+              else
+                registry.get(parentSessionId) match
+                  case Some(record) =>
+                    record.ref ! AgentCommand.ExternalEvent(
+                      source = dispatchSource,
+                      eventType = status,
+                      payload = resultText,
+                      metadata = meta,
+                      // 身份 = spawnId ⇒ 父会话侧 DeliveredReceiptLedger 的判重键
+                      // （AgentIdle/AgentProcessing 注入即 markDelivered）。
+                      correlationId = Some(spawnId)
+                    )
+                  case None =>
+                    logger.warn(
+                      s"[device-delegate] parent session '$parentSessionId' is gone — result of spawnId=$spawnId kept in the task ledger only (no live injection)"
+                    )
+            }
           } *>
             IO.blocking {
               // 任务面终态 + 台账注记（指针登记的持久读数）。

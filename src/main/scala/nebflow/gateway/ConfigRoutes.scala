@@ -104,8 +104,11 @@ private[gateway] object ConfigRoutes:
       // 作者报告「JVM 重启后标签页丢失」——浏览器 localStorage 不可靠（Safari
       // 无痕/多窗口 removeItem 竞态/清理）。服务端存档 ~/.nebflow/canvas_tabs.json
       // 与 sessionStore 同生命周期，JVM 重启保留；前端 restoreTabs 优先拉这里。
-      // 契约（与 Frontend 同步）：GET → 200 {v:2,tabs:[...]} 或 404（无存档）；
-      // PUT body {v:2,tabs:[...]} → 200 {ok:true}；非法输入 400 / 超限 413 不落盘。
+      // 契约（与 Frontend 同步）：GET → 200 {v:2,tabs:[...],tombstones?} 或 404
+      // （无存档）；PUT body {v:2,tabs:[...],tombstones?,reopened?} → 200 {ok:true}
+      // —— #910（2026-10-26）起 PUT 不再整档覆盖：锁内 load→merge→save 落墓碑
+      // 语义（关闭意图优先，显式重开才恢复，TTL 30d/上限 500）；非法输入 400 /
+      // 超限 413 不落盘。
       case req @ GET -> Root / "canvas-tabs" =>
         withAuth(req) {
           new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json").load().flatMap {
@@ -125,7 +128,7 @@ private[gateway] object ConfigRoutes:
                 IO.pure(Response[IO](status = st).withEntity(Json.obj("error" -> msg.asJson)))
               case Right(json) =>
                 new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json")
-                  .save(json) *> Ok(ApiJson.ok)
+                  .mergeSave(json) *> Ok(ApiJson.ok)
                   .handleErrorWith { e =>
                     logger.error(s"canvas tabs save failed: ${e.getMessage}") *>
                       IO.pure(

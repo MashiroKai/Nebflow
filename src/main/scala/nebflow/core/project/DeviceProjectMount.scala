@@ -151,7 +151,7 @@ private[project] object DeviceProjectMount:
         e.hcursor.downField("name").as[String].toOption
       }.toSet
     val wanted: List[(String, String)] = List(
-      ("AGENTS.md", ProjectCreateService.AgentMdTemplate),
+      ("AGENTS.md", ProjectCreateService.AgentMdTemplateFull),
       (".gitignore", ".nebflow/\n")
     )
     val missing = wanted.filterNot((name, _) => existing.contains(name))

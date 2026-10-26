@@ -11,7 +11,7 @@ import nebflow.agent.PromptSections.*
 import nebflow.core.*
 import nebflow.core.compact.*
 import nebflow.core.hooks.*
-import nebflow.core.project.{NodeRoles, ProjectRuntimeRegistry}
+import nebflow.core.project.{NodeRoles, ProjectRuntimeRegistry, ProjectStore}
 import nebflow.core.tools.*
 import nebflow.llm.{Fallback, TurnBudgetExceeded}
 import nebflow.shared.given
@@ -589,10 +589,22 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           // only — dispatcher/node sessions skip the registry read (text stays
           // "" → section not injected, no reminder). Root agent always gets an
           // explicit state (sorted bullet lines or the 当前无挂载项目 placeholder).
+          // 台账 #913 ②（2026-10-26）：每行携带项目 device 标注——跨设备项目渲染为
+          // `- name (on device <显示名>): desc`（显示名经名册现查，未命中 = 原始
+          // id 诚实降级）；本机项目维持既有行形（零噪声）。归属判定单点 =
+          // ProjectStore.effectiveDevice。
           mountedProjectsText <-
             if isRootAgent then
-              ProjectRuntimeRegistry.all
-                .map(rts => MountedProjectList.renderLines(rts.map(rt => rt.project.name -> rt.project.description)))
+              for
+                rosterNames <- rosterDeviceNames
+                rts <- ProjectRuntimeRegistry.all
+              yield MountedProjectList.renderLinesWithDevice(rts.map { rt =>
+                val raw = ProjectStore.effectiveDevice(rt.project)
+                val display =
+                  if ProjectStore.displayDevice(raw, rosterNames.get) == "local" then ""
+                  else ProjectStore.displayDevice(raw, rosterNames.get)
+                (rt.project.name, display, rt.project.description)
+              })
             else IO.pure("")
           // 可用执行器段（external-executors 批 #1225，S14 运行时半）：根代理
           // only——数据源 = GET /api/executors 检测面快照（每次现读，安装/卸载
@@ -1978,7 +1990,17 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 // ①不投对端由 remoteable 判据独立保证——schema 豁免只收窄 ③ 的可见性告警）。
                 val schemaDeclaresDevice = RemoteExecutor.schemaDeclaresDeviceParam(tool.inputSchema)
                 val strayDeviceOpt = deviceOpt.filterNot(_ => remoteable || schemaDeclaresDevice)
-                val execIO: IO[ToolExecResult] = remoteDeviceOpt match
+                // fleet 强制显式设备（台账 #913 ③，2026-10-26）：开关开 ⇒ 六件缺省
+                // `device` 的调用**直接报错**（零执行、列可用设备名引导显式选择）。
+                // 显式 `device="local"` 是合法逃生门（被禁的是「不写」）。判据位置 =
+                // 会话默认设备解析**之后**、远端分支之前——强制模式下会话默认设备
+                // 不再兜底（点名该写什么），开关关 ⇒ 本块整体短路（零行为变化）。
+                val fleetEnforceOn = nebflow.core.device.FleetConfig.enforceExplicitDevice
+                val enforceRefusal: Option[IO[ToolExecResult]] =
+                  Option.when(fleetEnforceOn && remoteable && explicitDeviceRaw.isEmpty) {
+                    fleetDeviceRefusalIO(call.name, sessionDefaultDevice, ctx)
+                  }
+                val execIO: IO[ToolExecResult] = enforceRefusal.getOrElse(remoteDeviceOpt match
                   case Some(deviceName) if RemoteExecutor.current.isDefined =>
                     var remoteInput = finalInput.remove("device")
                     // 「命令 cwd 指向设备 workspace」（跨设备批 2026-10-25）：会话默认
@@ -2094,6 +2116,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                           )
                         }
                     }
+                ) // close enforceRefusal.getOrElse( <remoteDeviceOpt match …> )
                 execIO.handleErrorWith {
                   case _: UserAbort => IO.raiseError(new UserAbort())
                   case e => IO.pure(ToolExecResult(s"Tool execution error: ${e.getMessage}", isError = true))
@@ -2496,6 +2519,49 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
   /** Rendered `# Devices` block (unchanged). */
   private def deviceInfoBlock: String = deviceInfoSnapshot.rendered
 
+  /**
+   * fleet 强制显式设备的拒绝面（台账 #913 ③）：读名册（self 名 + 对端名，读失败
+   * 按空册降级——文案诚实写「roster unavailable」）→ [[FleetConfig.explicitDeviceRefusal]]
+   * 单点成文。结果恒 `isError=true`、**零工具执行**（hook Block 先例同形）。
+   */
+  private def fleetDeviceRefusalIO(
+    toolName: String,
+    sessionDefault: Option[String],
+    ctx: ToolContext
+  ): IO[ToolExecResult] =
+    val svcOpt = ctx.sharedResources.flatMap(_.neblinkService)
+    val read: IO[(String, List[String])] = svcOpt match
+      case None => IO.pure(("", Nil))
+      case Some(svc) =>
+        (svc.identity.attempt, svc.peers.attempt).mapN { (self, ps) =>
+          val localName = self.toOption.map(_.deviceName).getOrElse("")
+          (localName, ps.getOrElse(Nil).map(_.deviceName).filter(_.nonEmpty))
+        }
+    read.map { case (localName, peerNames) =>
+      NebflowLogger
+        .forName("nebflow.agent.tools")
+        .info(s"fleet enforcement: refused $toolName without explicit device (peers=${peerNames.size})")
+      ToolExecResult(
+        nebflow.core.device.FleetConfig.explicitDeviceRefusal(toolName, localName, peerNames, sessionDefault),
+        isError = true
+      )
+    }
+
+  /**
+   * deviceId → 设备显示名（台账 #913 ②）：数据源 = neblink 名册（self + peers，
+   * Ref 内存价）；无名册（执行器未初始化/NebLink 缺席）= 空表 ⇒ 消费面诚实降级
+   * 原始 id。读失败按空表继续（装配路径绝不抛）。
+   */
+  private def rosterDeviceNames: IO[Map[String, String]] =
+    RemoteExecutor.current.flatMap(_.neblinkServiceOpt) match
+      case None => IO.pure(Map.empty[String, String])
+      case Some(ms) =>
+        (ms.identity.attempt, ms.peers.attempt).mapN { (self, peers) =>
+          val selfEntry = self.toOption.map(i => i.deviceId -> i.deviceName)
+          val peerEntries = peers.getOrElse(Nil).map(p => p.deviceId -> p.deviceName)
+          (selfEntry.toList ++ peerEntries).filter((_, n) => n.nonEmpty).toMap
+        }
+
   /** F-2 计数键：当前设备**成员集合**（deviceId 面）——与 [[deviceInfoBlock]] 同源同帧。 */
   private def deviceMemberKey: String = deviceInfoSnapshot.memberKey
 
@@ -2518,31 +2584,37 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             // RemoteExecutor 首触下发前）。load = 本地文件读 + 失败回空 Map。
             val profiles = DeviceProfile.loadSyncSafe()
             val nowMs = System.currentTimeMillis()
-            val localStr =
-              s"local (${id.deviceName})" +
-                (if id.userDescription.nonEmpty then s" -${id.userDescription}" else "")
-            val peerStrs =
-              peersList.map { p =>
-                val base = p.deviceName + (if p.userDescription.nonEmpty then s" -${p.userDescription}" else "")
-                // 1-2 行/台：画像摘要 + 回拉约定提示（缺失画像 ⇒ 零追加 = 现状形态）
-                base + DeviceProfile.renderSummary(p, profiles, nowMs) +
-                  DeviceProfile.renderCaptureHint(p, profiles)
-              }
-            val allDevices = (localStr :: peerStrs).mkString("; ")
-            val deviceHint =
-              if peersList.nonEmpty then
-                // 2026-09-14（工具面 `device` 摘除批 · 附加线索与 S4 确认为**同一处**）：
-                // 旧文案是**假陈述**——它宣称 `device` 对**全体工具**通用；事实是只有真远端
-                // 六件接受 `device`（`RemoteExecutor.remoteableTools`），其余工具
-                // （AskUserQuestion / TaskBoard / node_report / Mail / Delegate …）恒在本机执行。
-                // 本行只改这一句事实，`# Devices` 段的**设备清单本身与其位置/语义零改动**
-                // （旧文案逐字留档在过程件，不在源码内复述，免与其零命中判据互斥）。
-                "\nRead/Write/Edit/Glob/Grep/Bash accept a `device` parameter to run on another machine; every other tool always runs locally."
-              else ""
+            // fleet roster（台账 #913 ①，2026-10-26）：deviceId/名称/platform/
+            // 在线态/版本/能力面 逐台一行——数据源 = 本机 device.json 身份（含
+            // #913 批增员的 platform/capabilities 视图成员）+ presence 名册 + 配对
+            // 登记表（neblink/devices.json）+ 画像 store；行数超 MaxRows 截断 +
+            // 指针（上下文预算纪律）。渲染单点 = FleetRoster（纯函数，spec 直测）。
+            // 设备增删/上下线自动反映沿既有机制（30s memo + devicesDelta 差量）。
+            val rendered = FleetRoster.render(
+              local = Some(
+                FleetRoster.LocalDevice(
+                  deviceId = id.deviceId,
+                  deviceName = id.deviceName,
+                  userDescription = id.userDescription,
+                  platform = id.platform,
+                  capabilities = id.capabilities,
+                  version = nebflow.Version.string
+                )
+              ),
+              peers = peersList,
+              offlineKnown =
+                FleetRoster.knownOfflineFromRegistry(FleetRoster.registrySyncSafe()) ++
+                  FleetRoster.knownOfflineFromProfiles(profiles),
+              profiles = profiles,
+              now = nowMs,
+              enforce = nebflow.core.device.FleetConfig.enforceExplicitDevice
+            )
             // F-2：成员集合键（deviceId 面）与渲染文本同帧产出 ⇒ 文本轴抖动（画像 /
-            // ⚠stale）绝不换键（计数零增量），顺序抖动也被排序去重抹平。
+            // ⚠stale）绝不换键（计数零增量），顺序抖动也被排序去重抹平。键域 =
+            // presence 在场集合（本机 + 在线对端）——离线已知行只影响文本轴，
+            // 不进计数键（与改前口径一致）。
             val memberKey = SystemReminders.deviceMemberKey(id.deviceId :: peersList.map(_.deviceId))
-            Some(DeviceInfoSnapshot(s"$allDevices$deviceHint", memberKey))
+            Some(DeviceInfoSnapshot(rendered, memberKey))
           catch case _: Exception => None
         }
         .getOrElse(EmptyDeviceInfo)

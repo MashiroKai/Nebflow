@@ -24,8 +24,10 @@ object ProjectTool extends Tool:
 
   // 工具更名 Project（原 ProjectCreate），
   // 增 `action="unmount"` 面；create 语义逐字保留，仅首行改双面题头＋新增 Unmount 节。
+  // 台账 #913（2026-10-26）：增只读 `list`/`show` 面（设备归属标注的 agent 查询面）
+  // 与 `update` 面（description 单字段写穿）。
   val description =
-    """Manage a Project (Nebula use) — `action="create"` (default): project definition + workspace .nebflow/ scaffolding + mount; `action="unmount"`: hard-unmount a mounted project (stops its in-flight work first; zero workspace deletion).
+    """Manage a Project (Nebula use) — `action="create"` (default): project definition + workspace .nebflow/ scaffolding + mount; `action="list"`: list mounted projects with their device annotation; `action="show"`: one project's full definition; `action="update"`: rewrite the description field only; `action="unmount"`: hard-unmount a mounted project (stops its in-flight work first; zero workspace deletion).
 ## When to Use (create)
 - **Known workspace path** (the user told you, or you know it): pass `workspace` (absolute path; `name`/`description` optional) — direct create: writes projects/<name>/project.json, workspace root AGENTS.md template, workspace/.nebflow/ + .gitignore scaffolding, and mounts the project (FlowMapStore + ProjectActor ready). Existing workspace files are never overwritten; only missing pieces are backfilled, and the result lists what was created vs left alone.
 - **Unknown workspace path**: omit `workspace` — an AskUserQuestion-style card pops up on the user's window with a prominent "选择工作区" (pick workspace) target that opens the in-app folder browser (no native OS dialog, no candidate chips). Alongside that target the card still shows a free-input box (displayed whenever the card carries no options), so the user can hand-type an absolute path with `~` expansion handled by the backend. The chosen path flows back into the card and creation proceeds automatically.
@@ -37,6 +39,11 @@ object ProjectTool extends Tool:
 - Same name + different workspace → explicit error (never silently re-points an existing project).
 - **Different name + workspace already used by another project → explicit error (default-deny).** Workspace occupancy is compared with trailing slashes and case ignored; an archived project still counts as occupying its workspace. The error names the occupying project and gives two ways out: reuse that project, or pass a different workspace directory. Never let a second project silently share an occupied workspace — report the conflict to the user instead.
 - Panel dismissed (cancel / empty answer) → clear shelved message, nothing created — re-invoke with a known path or ask the user again.
+## List / Show (read-only)
+- `action="list"`: every non-archived, non-unmounted project, one line each — name, device annotation (`device=local` or the device's display name resolved from the roster), workspace path, mounted state, description. This is the device-attribution query face: a project marked with another device keeps its workspace on that device (its paths are device-local absolute paths; file tools route there via the device channel).
+- `action="show"` (requires `name`): one project in full — description, workspace, device (storage value + display name), origin pointer, brain root (engine-side ledger anchor; = workspace for local projects), mounted/archived/unmounted state, createdAt.
+## Update Description (`action="update"`, requires `name` + `description`)
+- Rewrites ONLY the `description` field in projects/<name>/project.json — every other field is kept byte-for-byte (surgical in-place write, atomic). Idempotent: same value → "unchanged" (zero write). An empty/whitespace `description` clears the field. Updating an archived/unmounted project's description is allowed (definition-level metadata, not a mount action).
 ## Unmount (action="unmount", requires `name`)
 - **Hard unmount in three ordered steps** — stricter than archive (archive = soft retirement: only tags project.json, running tasks keep running, zero deletion):
   1. **In-flight work stops first**: running nodes get the cancel signal (dead running sessions are finalized as cancelled), active chains are cancelled (cascade), and the project's dispatcher sessions plus its in-flight internal delegate sessions are cancelled; the unmount waits until the flow map has no running node before moving on — if the drain deadline passes with work still running, the unmount aborts with an explicit error and the mount face is left untouched.
@@ -50,12 +57,12 @@ object ProjectTool extends Tool:
       "properties" -> Json.obj(
         "action" -> Json.obj(
           "type" -> "string".asJson,
-          "enum" -> Json.arr("create".asJson, "unmount".asJson),
-          "description" -> "create (default): create / re-mount a project from `workspace`. unmount: hard-unmount the mounted project `name` — stops its in-flight work first (nodes, chains, dispatcher/delegate sessions), then removes it from the mount face; every workspace file is kept (zero deletion). Ignored for create: `workspace`/`description`.".asJson
+          "enum" -> Json.arr("create".asJson, "list".asJson, "show".asJson, "update".asJson, "unmount".asJson),
+          "description" -> "create (default): create / re-mount a project from `workspace`. list: list non-archived/non-unmounted projects with their device annotation. show: one project's full definition (requires `name`). update: rewrite ONLY the description field (requires `name` + `description`; idempotent). unmount: hard-unmount the mounted project `name` — stops its in-flight work first (nodes, chains, dispatcher/delegate sessions), then removes it from the mount face; every workspace file is kept (zero deletion). Ignored for create: `workspace`/`description`.".asJson
         ),
         "name" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Project name (single path segment). Optional for create — defaults to the workspace path basename. Required for unmount.".asJson
+          "description" -> "Project name (single path segment). Optional for create — defaults to the workspace path basename. Required for unmount, show and update.".asJson
         ),
         "workspace" -> Json.obj(
           "type" -> "string".asJson,
@@ -67,7 +74,7 @@ object ProjectTool extends Tool:
         ),
         "description" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Optional one-line description (create only)".asJson
+          "description" -> "create: optional one-line description. update: the new one-line description written through to project.json (only field changed; empty clears it).".asJson
         )
       ),
       "required" -> Json.arr()
@@ -94,16 +101,133 @@ object ProjectTool extends Tool:
       // N2 project-tool 批：unmount 面（S17/⑩A 三步序；实施单点 ProjectUnmount）。
       case "unmount" => unmountFace(rawName, ctx)
       case "create" => createFace(rawName, rawWorkspace, description, device, ctx)
+      // 台账 #913（2026-10-26）：只读 list/show 面 + description 单字段 update 面。
+      case "list" => listFace(ctx)
+      case "show" => showFace(rawName, ctx)
+      case "update" => updateFace(rawName, description)
       case other =>
         IO.pure(
           Left(
             ToolError(
-              s"Unknown action '$other'. Supported actions: create (default), unmount."
+              s"Unknown action '$other'. Supported actions: create (default), list, show, update, unmount."
             )
           )
         )
 
   end call
+
+  // ============================================================
+  // list / show / update 面（台账 #913 ②④，2026-10-26）
+  // ============================================================
+
+  /**
+   * 名册名解析（deviceId → 显示名）：数据源 = 会话上下文的 neblink 名册
+   * （self + peers 现查，Ref 内存价）；无名册上下文（REST 直调/harness）= 空表
+   * ⇒ 显示名诚实降级为原始 id（displayDevice 的兜底语义）。
+   */
+  private def rosterNameMap(ctx: ToolContext): IO[Map[String, String]] =
+    ctx.sharedResources.flatMap(_.neblinkService) match
+      case None => IO.pure(Map.empty[String, String])
+      case Some(svc) =>
+        (
+          svc.identity.attempt,
+          svc.peers.attempt
+        ).mapN { (self, peers) =>
+          val selfEntry = self.toOption.map(i => i.deviceId -> i.deviceName).toMap
+          val peerEntries = peers.getOrElse(Nil).map(p => p.deviceId -> p.deviceName)
+          (selfEntry ++ peerEntries).filter((_, n) => n.nonEmpty)
+        }
+
+  /** `action="list"`：非归档/非卸载项目逐台一行（设备归属标注 + 挂载态）。 */
+  private def listFace(ctx: ToolContext): IO[Either[ToolError, String]] =
+    for
+      names <- rosterNameMap(ctx)
+      projects <- ProjectStore.list()
+      mounted <- ProjectRuntimeRegistry.all.map(_.map(rt => rt.project.name).toSet)
+    yield
+      if projects.isEmpty then
+        Right("No mounted projects (当前无挂载项目). Create one with action=\"create\" and a workspace path.")
+      else
+        val lines = projects.sortBy(_.name).map { pd =>
+          val dev = ProjectStore.displayDevice(ProjectStore.effectiveDevice(pd), names.get)
+          val devTag = if dev == "local" then "device=local" else s"device=$dev"
+          val mountTag = if mounted.contains(pd.name) then "mounted" else "not mounted"
+          val ws = pd.workspace
+          val desc = pd.description.filter(_.nonEmpty).map(d => s" — $d").getOrElse("")
+          s"- ${pd.name} [$devTag, $mountTag] $ws$desc"
+        }
+        Right(lines.mkString("\n") +
+          "\n\nA project tagged with another device keeps its workspace on that device (device-local absolute paths; file tools route there via the device channel). action=\"show\" for one project's full definition.")
+
+  /** `action="show"`：单项目全量定义（含设备归属的存储值 + 显示名 + 大脑根）。 */
+  private def showFace(rawName: Option[String], ctx: ToolContext): IO[Either[ToolError, String]] =
+    rawName match
+      case None =>
+        IO.pure(
+          Left(
+            ToolError(
+              "show requires 'name' — the project to display. action=\"list\" shows every mounted project."
+            )
+          )
+        )
+      case Some(proj) =>
+        for
+          names <- rosterNameMap(ctx)
+          mounted <- ProjectRuntimeRegistry.get(proj).map(_.isDefined)
+          pd <- ProjectStore.load(proj)
+        yield pd match
+          case None =>
+            Left(ToolError(s"Project '$proj' not found (no projects/$proj/project.json). action=\"list\" shows existing projects."))
+          case Some(d) =>
+            val devRaw = ProjectStore.effectiveDevice(d)
+            val devDisplay = ProjectStore.displayDevice(devRaw, names.get)
+            val b = new StringBuilder
+            b ++= s"Project '${d.name}'\n"
+            b ++= s"  description: ${d.description.filter(_.nonEmpty).getOrElse("(none)")}\n"
+            b ++= s"  device: ${if ProjectOrigin.isSelfLiteral(devRaw) then "local" else s"$devDisplay ($devRaw)"}\n"
+            d.origin.foreach { o =>
+              b ++= s"  origin: {device: ${o.device}, path: ${o.path}} — workspace lives on that device (device-local path)\n"
+            }
+            b ++= s"  workspace: ${d.workspace}\n"
+            b ++= s"  brainRoot: ${ProjectStore.brainWorkspace(d)} (engine-side ledger anchor; = workspace for local projects)\n"
+            b ++= s"  agentFile: ${d.agentFile}\n"
+            b ++= s"  mounted: ${if mounted then "yes" else "no"}\n"
+            if d.archived.contains(true) then b ++= "  archived: yes (hidden from the Projects list)\n"
+            if d.unmounted.contains(true) then b ++= "  unmounted: yes (hard-unmounted; re-mount refused until the keys are removed)\n"
+            b ++= s"  createdAt: ${d.createdAt}\n"
+            Right(b.toString)
+
+  /** `action="update"`：description 单字段写穿（实施单点 ProjectStore.updateDescription）。 */
+  private def updateFace(rawName: Option[String], description: Option[String]): IO[Either[ToolError, String]] =
+    rawName match
+      case None =>
+        IO.pure(
+          Left(
+            ToolError(
+              "update requires 'name' — the project whose description to rewrite. " +
+                "Pass action=\"update\" with name and the new description."
+            )
+          )
+        )
+      case Some(proj) =>
+        description match
+          case None =>
+            IO.pure(
+              Left(
+                ToolError(
+                  "update requires 'description' — the new one-line description (this action changes ONLY " +
+                    "that field; an empty string clears it). Nothing was written."
+                )
+              )
+            )
+          case Some(desc) =>
+            ProjectStore.updateDescription(proj, desc).map {
+              case Left(err) => Left(ToolError(err))
+              case Right("unchanged") =>
+                Right(s"Project '$proj' description unchanged (already set — idempotent no-op, zero write).")
+              case Right(_) =>
+                Right(s"Project '$proj' description updated (only the description field changed — every other project.json field is byte-for-byte).")
+            }
 
   /** create 面（原 ProjectCreate 语义，逐字保持）。 */
   private def createFace(

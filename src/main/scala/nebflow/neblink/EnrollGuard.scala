@@ -32,7 +32,9 @@ import java.net.URI
  * never meant to refuse a login the user started by hand. A caller that can
  * PROVE the user initiated the login (`explicitUserAction = true`) is let
  * through; the gate's own semantics are untouched for every other path (boot,
- * silent re-login, device-flow poll, tests), which all pass `false`.
+ * silent re-login, tests), which all pass `false`.
+ * (台账 #924, 2026-10-26: the device-flow poll path is retired; the headless
+ * password login passes `true` — typed credentials ARE the user action.)
  *
  * The proof is mechanical, not a convention — see
  * `RestApiRoutes.handleAuthCallback`: the flag is set only downstream of
@@ -78,7 +80,7 @@ object EnrollGuard:
 
   /**
    * Live decision — reads the current data root and the explicit switch.
-   * Automatic paths (boot client, silent re-login, device-flow poll) use this
+   * Automatic paths (boot client, silent re-login) use this
    * and are gated exactly as before.
    */
   def enrollRefusal(serverUrl: String): Option[String] =

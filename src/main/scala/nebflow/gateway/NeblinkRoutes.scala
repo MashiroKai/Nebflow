@@ -141,7 +141,8 @@ private[gateway] object NeblinkRoutes:
       // 不是就走 relay」）=====
       //
       // 浏览端（ws.js/nearpath.js）在会话打开/重连时主动上报 device stamp 的
-      // boundDeviceId（deviceIdentity.js 设置页的绑定面，与消息设备标记
+      // boundDeviceId（deviceIdentity.js 花名册自动判定面——标注全自动批
+      // 2026-10-26 起设置页手动绑定退役；与消息设备标记
       // 「消息标记设备」逐字同源）；本端点对照花名册（self + peers，与
       // WebSocketRoutes.deviceProvenanceOf 的登记判定同一词表）给 enrolled 标记。
       //   enrolled = true  ⇒ 回 lanAddresses（本机私网 IPv4 枚举，[[LanAddresses]]）
@@ -719,137 +720,64 @@ private[gateway] object NeblinkRoutes:
                   }
         }
 
-      // ===== Device authorization flow (Tailscale-style) =====
-
-      // Start device flow. Dual-mode (Logto stage 1): with a provider
-      // configured, start its RFC 8628 /oidc/device/auth; otherwise proxy to
-      // neblink-server's /api/device/code. Both map onto the same frontend
-      // contract {deviceCode, userCode, verificationUri, interval, expiresIn}.
-      case req @ POST -> Root / "neblink" / "device-flow" / "start" =>
-        gate(req):
+      // ===== Headless first-party password login (统一登录·路径②, 台账 #924) =====
+      //
+      // `POST /neblink/auth/password` — the CLI's `stand login` hands the
+      // account + password to THIS loopback face and the gateway performs the
+      // Logto Experience dance ([[LogtoPasswordFlow]]): no browser, no device
+      // code, and the credentials never leave first-party code (CLI → local
+      // gateway over loopback → the first-party tenant over TLS). The
+      // former RFC 8628 device-flow routes (`/neblink/device-flow/start|poll`)
+      // are RETIRED with that flow (2026-10-26; issued legacy codes expire
+      // naturally).
+      //
+      // Gate = [[bootstrapGate]] (the auth/start precedent): login initiation
+      // is the bootstrap leg — a NEW device has no session yet, so the route
+      // is anonymous BUT loopback-only (LoopbackLeg.isLoopback; LAN/tunnel
+      // legs keep their relay-portal session in front of them).
+      //
+      // Convergence (作者令「注册汇聚点统一」): success lands on the SAME
+      // register + persist + hot-swap client leg as the browser PKCE callback —
+      // `LogtoTransport.register` (provider token → /api/device/register →
+      // EnrollResponse, machine fingerprint included) then
+      // `completeDeviceEnrollment(explicitUserAction = true)`: typed
+      // credentials ARE the user action, the same class as the PKCE callback
+      // and the pair-code submission. Device list / online state are
+      // therefore identical for both paths.
+      //
+      // 🔴 Zero-echo: `account`/`password` are never logged — the log line
+      // carries the attempt OUTCOME only. Failure bodies carry the provider's
+      // stable error code (`invalid_credentials` etc.), never the input.
+      case req @ POST -> Root / "neblink" / "auth" / "password" =>
+        bootstrapGate(req):
           neblinkService match
             case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
             case Some(ms) =>
-              for
-                logto <- ms.neblinkConfig.map(_.logto)
-                result <- logto match
-                  case Some(lc) =>
-                    LogtoDeviceFlow
-                      .start(LogtoDeviceFlow.jdkSend)(lc.endpoint, lc.clientId)
-                  case None =>
-                    for
-                      identity <- ms.identity
-                      // The neblink-server URL: explicit request field > config > the
-                      // public default — the last one is gated by 案 b① (isolated data
-                      // root without the explicit switch ⇒ **no target**, see
-                      // `neblinkServerUrl`). For device flow the server must be reachable
-                      // from both the browser (for OAuth) and the device (for polling).
-                      serverTarget <- neblinkServerUrl(None)
-                      result <- serverTarget match
-                        case Some(serverUrl) =>
-                          val body = Json
-                            .obj(
-                              "deviceId" -> identity.deviceId.asJson,
-                              "deviceName" -> identity.deviceName.asJson,
-                              "platform" -> identity.platform.asJson
-                            )
-                            .noSpaces
-                          proxyPost(serverUrl, nebflow.neblink.Protocol.DeviceApi.code, body)
-                        case None =>
-                          // 案 b①：无目标 ⇒ 零出站（不发起任何请求，更不注册）。
-                          IO.pure(Left(EnrollGuard.prodFallbackRefusalReason))
-                    yield result
-                resp <- result match
-                  case Right(json) => Ok(json)
-                  case Left(err) => BadRequest(Json.obj("error" -> s"Failed to start device flow: $err".asJson))
-              yield resp
-
-      // Poll device flow: proxy to neblink-server's /api/device/token.
-      // On success, persist the device credential + update config + hot-swap client.
-      // Poll device flow. Dual-mode (Logto stage 1): with a provider
-      // configured, poll its /oidc/token (RFC 8628 grant) and on success
-      // exchange the access token via /api/device/register; otherwise proxy to
-      // neblink-server's /api/device/token. Both success paths converge on the
-      // same persist-credential + hot-swap completion.
-      case req @ POST -> Root / "neblink" / "device-flow" / "poll" =>
-        gate(req):
-          req.as[Json].flatMap { body =>
-            val deviceCode = body.hcursor.downField("deviceCode").as[String].getOrElse("")
-            val serverUrl = body.hcursor
-              .downField("serverUrl")
-              .as[Option[String]]
-              .toOption
-              .flatten
-              .map(_.stripSuffix("/"))
-            if deviceCode.isEmpty then BadRequest(Json.obj("error" -> "Missing deviceCode".asJson))
-            else
-              neblinkService match
-                case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
-                case Some(ms) =>
-                  for
-                    serverTarget <- neblinkServerUrl(serverUrl)
-                    resp <- serverTarget match
-                      case None =>
-                        // 案 b①：无目标 ⇒ 不轮询、不注册；文案与其余入口同源。
-                        BadRequest(Json.obj("error" -> EnrollGuard.prodFallbackRefusalReason.asJson))
-                      case Some(resolvedUrl) =>
-                        for
-                          logto <- ms.neblinkConfig.map(_.logto)
-                          result <- logto match
-                            case Some(lc) =>
-                              LogtoDeviceFlow
-                                .pollOnce(LogtoDeviceFlow.jdkSend)(lc.endpoint, lc.clientId, deviceCode)
-                                .flatMap {
-                                  case LogtoDeviceFlow.PollOutcome.Success(accessToken) =>
-                                    ms.identity.flatMap { identity =>
-                                      LogtoDeviceFlow
-                                        .register(LogtoDeviceFlow.jdkSend)(
-                                          resolvedUrl,
-                                          accessToken,
-                                          identity.deviceId,
-                                          identity.deviceName,
-                                          identity.platform
-                                        )
-                                        .map {
-                                          case Right(json) => Right(json)
-                                          case Left(err) => Left(err)
-                                        }
-                                    }
-                                  // Pending (incl. slow_down, normalized) and terminal
-                                  // failures surface as error strings exactly like the
-                                  // legacy proxy path — the frontend's
-                                  // authorization_pending polling contract is unchanged.
-                                  case LogtoDeviceFlow.PollOutcome.Pending(err) =>
-                                    IO.pure(Left(err))
-                                  case LogtoDeviceFlow.PollOutcome.Failed(err) =>
-                                    IO.pure(Left(err))
-                                }
-                            case None =>
-                              val pollBody = Json.obj("deviceCode" -> deviceCode.asJson).noSpaces
-                              proxyPost(resolvedUrl, nebflow.neblink.Protocol.DeviceApi.token, pollBody)
-                          resp <- result match
-                            case Right(json) =>
-                              // Success — persist credential + update config + hot-swap.
-                              completeDeviceEnrollment(ms, resolvedUrl, json)
-                            case Left(err) =>
-                              // authorization_pending is expected during polling — pass through.
-                              // 单设备单账号批：register 的失败通道已结构化
-                              // （RegisterRejection）——老代理腿只透传 message 自由串
-                              // （机器闸 409 的分类文案由 PKCE 主链负责，此腿是遗留
-                              // 设备码路径，遇闸拒绝时裸串可接受）。
-                              BadRequest(
-                                Json.obj(
-                                  "error" -> (err match
-                                    case r: LogtoDeviceFlow.RegisterRejection => r.message
-                                    case s => String.valueOf(s)
-                                  ).asJson
-                                )
-                              )
-                        yield resp
-                  yield resp
-              end match
-            end if
-          }
+              req.as[Json].flatMap { body =>
+                val account = body.hcursor.downField("account").as[String].toOption.map(_.trim).getOrElse("")
+                val password = body.hcursor.downField("password").as[String].toOption.getOrElse("")
+                val identifierType = body.hcursor
+                  .downField("identifierType")
+                  .as[String]
+                  .toOption
+                  .filter(v => v == "username" || v == "email" || v == "phone")
+                  .getOrElse(LogtoPasswordFlow.identifierTypeOf(account))
+                val remoteKey = req.remoteAddr.fold("inproc")(_.toString)
+                if account.isEmpty || password.isEmpty then
+                  BadRequest(
+                    Json.obj("error" -> "Missing account or password".asJson, "code" -> "missing_fields".asJson)
+                  )
+                else
+                  loginRateGuard.allow(remoteKey).flatMap { allowed =>
+                    if !allowed then
+                      logger.warn("headless login rate-limited (local limiter)").as(
+                        Response[IO](Status.TooManyRequests).withEntity(
+                          Json.obj("error" -> "Too many attempts, retry later".asJson, "code" -> "rate_limited".asJson)
+                        )
+                      )
+                    else performHeadlessLogin(ms, req, account, identifierType, password)
+                  }
+              }
 
       // ===== Logto AC+PKCE login (stage 2, 2026-08-28) =====
       // Contract (Manager-frozen): start 200 = {authorizeUrl}; logto not
@@ -1565,16 +1493,17 @@ private[gateway] object NeblinkRoutes:
         proxyPost(serverUrl, nebflow.neblink.Protocol.DeviceApi.enroll, body)
 
   /**
-   * Shared completion for BOTH device-flow paths (self-hosted token poll
-   * and Logto register) and the AC+PKCE callback: read the EnrollResponse
+   * Shared completion for BOTH login paths (headless password login's Logto
+   * register and the AC+PKCE callback): read the EnrollResponse
    * fields, persist the credential, switch the config, hot-swap the client,
    * and record the user's profile info. `logtoRefresh` carries the provider
    * refresh token (AC+PKCE / silent re-login) into the persisted credential.
    *
    * `explicitUserAction` (2026-09-14 案 C ①(b)) is forwarded to the isolation
-   * gate; only the PKCE callback — downstream of a matched, single-use login
-   * state — passes `true`. Default `false` = the device-flow poll path, which
-   * has no server-side marker proving who started it.
+   * gate; the PKCE callback — downstream of a matched, single-use login
+   * state — passes `true`, and so does the headless password login (typed
+   * credentials ARE the user action; 台账 #924). Default `false` = automatic
+   * paths (boot client / silent re-login), which have no user in the loop.
    */
   private def completeDeviceEnrollment(
     ms: NeblinkService,
@@ -1654,4 +1583,161 @@ private[gateway] object NeblinkRoutes:
       catch case e: Exception => Left(e.getMessage)
       end try
     }.handleErrorWith(e => IO.pure(Left(e.getMessage)))
+
+  // ── Headless password login (路径②) helpers ─────────────────────────────
+
+  /**
+   * Local brute-force dam for the headless login face (安全自查, 台账 #924):
+   * per-remote-address FAILURE counter, in-memory fixed window, N failures
+   * inside the window ⇒ deny (success resets). The face is loopback-only
+   * ([[bootstrapGate]]), so this bounds a local runaway loop and future-
+   * proofs the leg if exposure ever widens; it is NOT a substitute for the
+   * provider's own anti-brute-force (tenant config — 只读边界, conclusions
+   * in the 台账 #924 report). Shape mirrors the [[peerNonces]] precedent:
+   * hand-rolled synchronized in-memory state, restart resets (fail-open).
+   */
+  private val loginRateGuard = new LoginRateGuard(maxFailures = 10, windowMs = 15L * 60L * 1000L)
+
+  private final class LoginRateGuard(maxFailures: Int, windowMs: Long):
+    private var state = Map.empty[String, (Int, Long)] // remote -> (failures, windowStartMs)
+
+    /** Deny only when the CURRENT window already holds maxFailures. */
+    def allow(key: String): IO[Boolean] = IO {
+      synchronized {
+        val now = System.currentTimeMillis()
+        state.get(key) match
+          case Some((n, start)) if now - start <= windowMs => n < maxFailures
+          case _ => true // no history, or window expired (entry pruned lazily)
+      }
+    }
+
+    def recordFailure(key: String): IO[Unit] = IO {
+      synchronized {
+        val now = System.currentTimeMillis()
+        val next = state.get(key) match
+          case Some((n, start)) if now - start <= windowMs => (n + 1, start)
+          case _ => (1, now) // first failure, or new window
+        state = state + (key -> next)
+      }
+    }
+
+    def recordSuccess(key: String): IO[Unit] = IO {
+      synchronized { state = state - key }
+    }
+  end LoginRateGuard
+
+  /**
+   * The dance + register + persist leg shared with the browser path. Every
+   * provider/gateway failure lands on a STRUCTURED error body
+   * `{error, code}` — the CLI's stable-code closed set keys off `code`.
+   * 🔴 the log lines carry outcome codes only; `account`/`password` are
+   * never logged, never echoed into an error body.
+   */
+  private def performHeadlessLogin(
+    ms: NeblinkService,
+    req: Request[IO],
+    account: String,
+    identifierType: String,
+    password: String
+  )(using ctx: RestApiCtx): IO[Response[IO]] =
+    import ctx.*
+
+    val remoteKey = req.remoteAddr.fold("inproc")(_.toString)
+    ms.neblinkConfig.map(_.effectiveLogto).flatMap {
+      // Defensive parity with auth/start: effectiveLogto resolves via the
+      // embedded default, so the unconfigured arms only fire if that
+      // invariant changes.
+      case None => NotFound(Json.obj("error" -> "logto-not-configured".asJson))
+      case Some(lc) if lc.pkceClientId.isEmpty =>
+        NotFound(Json.obj("error" -> "logto-not-configured".asJson))
+      case Some(lc) =>
+        val pkceClientId = lc.pkceClientId.getOrElse("")
+        // Same loopback callback URI the browser path registers in
+        // PkceLoginSession (AuthRoutes.loopbackCallbackUri is object-private;
+        // the value is one line over ctx.gatewayPort — inline, don't widen).
+        val loopbackCallbackUri = s"http://127.0.0.1:${ctx.gatewayPort}/auth/callback"
+        neblinkServerUrl(None).flatMap {
+          case None =>
+            // 案 b①：无目标 ⇒ 零出站（不发起登录舞步，更不注册）。
+            BadRequest(Json.obj("error" -> EnrollGuard.prodFallbackRefusalReason.asJson))
+          case Some(serverUrl) =>
+            LogtoPasswordFlow
+              .signIn(LogtoPasswordFlow.jdkSend)(
+                lc.endpoint,
+                pkceClientId,
+                loopbackCallbackUri,
+                identifierType,
+                account,
+                password
+              )
+              .flatMap {
+                case Left(LogtoPasswordFlow.Failure.InvalidCredentials) =>
+                  loginRateGuard.recordFailure(remoteKey) *>
+                    logger.warn("headless login failed: invalid credentials").as(
+                      Response[IO](Status.Unauthorized).withEntity(
+                        Json.obj("error" -> "Invalid account or password".asJson, "code" -> "invalid_credentials".asJson)
+                      )
+                    )
+                case Left(LogtoPasswordFlow.Failure.RateLimited) =>
+                  loginRateGuard.recordFailure(remoteKey) *>
+                    logger.warn("headless login throttled by the provider").as(
+                      Response[IO](Status.TooManyRequests).withEntity(
+                        Json.obj("error" -> "Too many attempts, retry later".asJson, "code" -> "rate_limited".asJson)
+                      )
+                    )
+                case Left(LogtoPasswordFlow.Failure.Transport(m)) =>
+                  loginRateGuard.recordFailure(remoteKey) *>
+                    logger.warn(s"headless login transport failure").as(
+                      Response[IO](Status.BadGateway)
+                        .withEntity(Json.obj("error" -> m.asJson, "code" -> "transport_failed".asJson))
+                    )
+                case Left(LogtoPasswordFlow.Failure.Protocol(step, code, m)) =>
+                  loginRateGuard.recordFailure(remoteKey) *>
+                    logger.warn(s"headless login protocol failure at $step (code=$code)").as(
+                      Response[IO](Status.BadGateway).withEntity(
+                        Json.obj("error" -> m.asJson, "code" -> "protocol_error".asJson, "step" -> step.asJson)
+                      )
+                    )
+                case Right(tokens) =>
+                  ms.identity.flatMap { identity =>
+                    LogtoTransport
+                      .register(LogtoTransport.jdkSend)(
+                        serverUrl,
+                        tokens.accessToken,
+                        identity.deviceId,
+                        identity.deviceName,
+                        identity.platform,
+                        DeviceIdentity.machineFingerprint()
+                      )
+                      .flatMap {
+                        case Right(enrollJson) =>
+                          loginRateGuard.recordSuccess(remoteKey) *>
+                            logger.info("headless login: registered, completing enrollment") *>
+                            completeDeviceEnrollment(
+                              ms,
+                              serverUrl,
+                              enrollJson,
+                              tokens.refreshToken,
+                              tokens.idToken,
+                              explicitUserAction = true
+                            )
+                        case Left(rejection) =>
+                          loginRateGuard.recordFailure(remoteKey) *>
+                            logger.warn(
+                              s"headless login register failed: status=${rejection.status}, " +
+                                s"reason=${rejection.reason.getOrElse("-")}"
+                            ) *>
+                            BadRequest(
+                              Json.obj(
+                                "error" -> rejection.message.asJson,
+                                "code" -> rejection.reason.getOrElse("register_failed").asJson
+                              )
+                            )
+                      }
+                  }
+              }
+        }
+    }
+  end performHeadlessLogin
+
 end NeblinkRoutes
