@@ -74,7 +74,7 @@
 - 编译：`Compile/compile` + `Test/compile` = **PASS**（绿轮次 13:55:07，134 测试源全量；中间红轮均为初级错误已修——两处 scaladoc 嵌套注释 `/*`、一处 `Files.exists` 重载推断、http4s DSL 双包 `IO.pure`、`Option(System.console())`、双重 `.attempt`、缺 `HttpRequest`/`Request` 导入）。
 - 定向套件（本批面 + 受影响 neblink 族，9 suite）：**Total 99, Failed 0, Passed 98, Skipped 1**（skip = `HeadlessLoginE2ESpec` 的 env 门控 cancel，就绪待测试账号形态）——13:59:01 读数。
 - 中途修复一轮：首轮 98 中 3 红，根因 = `GatewayClient.requestError` 丢 `code` 字段（§三契约面），修复后全绿。
-- 广面回归（neblink + cli + gateway 包 testOnly）读数见提交附言；全仓 `sbt test` 按批惯例由合并队列门禁跑。
+- 广面回归（neblink + cli + gateway 三包 testOnly）：本批 9 套件**保持全绿**；其余 20 处红点**均在本批弹道之外**——端口占用/TIME_WAIT 环境（SingleInstanceGuard、Status、PidMeta、CliRouter 8080 旧锚）、Windows symlink 特权（PluginAssets、BatchDelete）、拨号预算时序（PresenceDialBudget）、并行 #916 在飞面（DetachedApply×3）、他面文案锚（ConfigEditHeadless H9、ProviderCommand H6）、UserTextGate / LocalAccelBudget / HistoryReplay 类。**弹道内零红**；全仓 `sbt test` 按批惯例由合并队列门禁裁决。
 
 ## 八、文案清单（§16 文案闸口径）
 
