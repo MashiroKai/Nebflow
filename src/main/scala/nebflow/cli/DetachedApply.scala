@@ -252,8 +252,10 @@ object DetachedApply:
     val xmlPath = plan.dataRoot / "apply" / s"${plan.winTask}.xml"
     val triggerAt = java.time.LocalDateTime.now().plusMinutes(1).truncatedTo(java.time.temporal.ChronoUnit.MINUTES)
     val triggerFmt = triggerAt.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"))
-    val argsXml =
-      scala.xml.XML.escape("-NoProfile -ExecutionPolicy Bypass -File \"" + script.toString + "\"")
+    val argsXml = ("-NoProfile -ExecutionPolicy Bypass -File \"" + script.toString + "\"")
+      .replace("&", "&amp;")
+      .replace("<", "&lt;")
+      .replace(">", "&gt;")
     val xml =
       s"""<?xml version="1.0" encoding="UTF-16"?>
          |<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
