@@ -73,7 +73,7 @@ class MergeQueueSpec extends CatsEffectSuite:
 
     def receive(ctx: nebflow.actor.ActorContext[AgentCommand], msg: AgentCommand): IO[nebflow.actor.Behavior[AgentCommand]] =
       msg match
-        case AgentCommand.UserInput(text, replyTo, _, _, _, source, _, _, _, _, _, _, _) =>
+        case AgentCommand.UserInput(text, replyTo, _, _, _, source, _, _, _, _, _, _, _, _) =>
           IO {
             records += ((text, replyTo))
             this
