@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>验证码单码展开 · 样张（设计批 r2 2026-10-25）</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════════
+   STAND 设计语言对齐（REPORT.md §16）：
+   卡面 = chat.css .ask-card 逐字（渐变底/描边/阴影/16px 圆角）；token 单源
+   sapphire.css + base.css；主题机制 html[data-theme="dark"]（同官网）。
+   语义色只上载体：状态词一律中性 --status-word，红/黄/绿只上点/描边/底纹。
+   ═══════════════════════════════════════════════════════════════════════ */
+:root{
+  --color-bg:#f5f6f8;
+  --color-text:#1b1e26; --color-text-muted:#8b8e96; --color-text-dim:#6b6e76;
+  --color-frame-text:#3a3d45; --color-frame-text-bright:#1b1e26;
+  --color-frame-text-muted:#717379; --color-frame-text-dim:#aaacb3;
+  --color-border:#ddd;
+  --glass-bg:rgba(255,255,255,0.55); --glass-blur:24px; --glass-border:rgba(255,255,255,0.35);
+  --sapphire:91 127 191;
+  --sapphire-edge:rgba(91,127,191,0.08);
+  --sapphire-tint-15:rgba(91,127,191,0.15); --sapphire-tint-10:rgba(91,127,191,0.10);
+  --glass-control-bg:rgba(255,255,255,0.45); --glass-control-bg-hover:rgba(255,255,255,0.65);
+  --glass-control-border:rgba(255,255,255,0.40); --glass-control-highlight:rgba(255,255,255,0.50);
+  --glass-control-underedge:rgba(0,0,0,0.08); --glass-control-glow:rgba(0,0,0,0.06);
+  --glass-control-shadow:rgba(0,0,0,0.04); --glass-control-blur:10px;
+  --glass-etched-bg:rgba(0,0,0,0.025); --glass-etched-border:rgba(91,127,191,0.10);
+  --color-primary:#07c160; --color-primary-hover:#06ad56;
+  --color-success:#4caf50;
+  --status-success-icon:#2e7d32;
+  --status-word:var(--color-frame-text-muted);
+  /* ask 卡面（chat.css .ask-card 逐字） */
+  --ask-card-top:#ffffff; --ask-card-bot:#f5f7fa; --ask-card-bd:rgba(20,26,40,0.08);
+  --ask-card-shadow:0 1px 2px rgba(16,24,40,0.05),0 12px 32px rgba(16,24,40,0.10);
+  --ask-card-highlight:inset 0 1px 0 rgba(255,255,255,0.85);
+}
+html[data-theme="dark"]{
+  --color-bg:#13161c;
+  --color-text:#e8eaed; --color-text-muted:#7b7e88; --color-text-dim:#9ba0aa;
+  --color-frame-text:#c8cad0; --color-frame-text-bright:#e8eaed;
+  --color-frame-text-muted:#81838a; --color-frame-text-dim:#7b7e88;
+  --color-border:#2a2d35;
+  --glass-etched-bg:rgba(255,255,255,0.04); --glass-etched-border:rgba(91,127,191,0.08);
+  --glass-control-bg:rgba(255,255,255,0.05); --glass-control-bg-hover:rgba(255,255,255,0.10);
+  --glass-control-border:rgba(255,255,255,0.08); --glass-control-highlight:rgba(255,255,255,0.08);
+  --glass-control-underedge:rgba(0,0,0,0.25); --glass-control-glow:rgba(0,0,0,0.20);
+  --glass-control-shadow:rgba(0,0,0,0.15);
+  --ask-card-top:#272c3a; --ask-card-bot:#1f232d; --ask-card-bd:rgba(255,255,255,0.09);
+  --ask-card-shadow:0 1px 2px rgba(0,0,0,0.2),0 12px 32px rgba(0,0,0,0.35);
+  --ask-card-highlight:inset 0 1px 0 rgba(255,255,255,0.06);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background:var(--color-bg);color:var(--color-text);
+  min-height:100vh;display:flex;flex-direction:column;align-items:center;
+  padding:32px 16px 64px;font-size:13px;line-height:1.5}
+.page-note{max-width:520px;text-align:center;color:var(--color-text-muted);margin-bottom:16px;font-size:12px}
+.chat-col{width:460px;max-width:100%;display:flex;flex-direction:column;gap:14px}
+.demo-bar{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);display:flex;gap:4px;padding:4px;
+  border-radius:10px;background:var(--glass-bg);z-index:60;
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(1.15);backdrop-filter:blur(var(--glass-blur)) saturate(1.15);
+  border:1px solid var(--sapphire-edge);box-shadow:0 4px 16px rgba(0,0,0,.10)}
+.demo-bar button{border:none;background:transparent;color:var(--color-text-muted);font:inherit;font-size:12px;
+  padding:5px 10px;border-radius:7px;cursor:pointer;white-space:nowrap}
+.demo-bar button:hover{background:var(--glass-control-bg-hover)}
+.demo-bar button.on{background:var(--color-primary);color:#fff;font-weight:500}
+.demo-bar .themebtn{color:var(--color-frame-text-muted)}
+
+/* ═══ ask 卡面（chat.css .ask-card 同构） ═══ */
+.ask-card{background:linear-gradient(180deg,var(--ask-card-top),var(--ask-card-bot));
+  border:1px solid var(--ask-card-bd);border-radius:16px;
+  box-shadow:var(--ask-card-shadow),var(--ask-card-highlight);
+  padding:13px 14px;animation:obIn 200ms ease-out}
+@keyframes obIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.ask-meta{font-size:11px;letter-spacing:1.2px;color:var(--color-text-dim);margin-bottom:2px}
+.ask-q{font-size:13px;font-weight:500;margin-bottom:2px}
+.ask-sub{font-size:11.5px;color:var(--color-text-muted);margin-bottom:10px}
+
+/* 验证码输入框（secret 问题密码框） */
+.otp-input{width:100%;font:inherit;font-size:17px;letter-spacing:.35em;text-align:center;
+  color:var(--color-text);background:var(--glass-etched-bg);
+  border:1px solid var(--glass-etched-border);border-radius:10px;padding:9px 12px;outline:none;
+  transition:border-color .15s;font-variant-numeric:tabular-nums}
+.otp-input:focus{border-color:rgb(var(--sapphire)/.45)}
+.otp-input::placeholder{letter-spacing:.2em;color:var(--color-frame-text-dim)}
+
+/* ═══ 检测条（§6 单码模型的核心件）═══
+   rest（等待）：单行弱存在；hit（检测到）：展开显示唯一数字；点击 → 收缩并填入；
+   无「已填入」常驻态（点击后整条撤出卡片）。 */
+.otp-strip{margin-top:8px;border-radius:10px;background:var(--glass-etched-bg);
+  border:1px solid var(--glass-etched-border);overflow:hidden;transition:border-color .15s}
+.otp-strip .strip-rest{display:flex;align-items:center;gap:7px;padding:7px 11px;font-size:11.5px;
+  color:var(--color-text-dim);min-height:32px}
+.otp-strip .strip-hit{display:none;align-items:center;gap:10px;padding:8px 11px;cursor:pointer;
+  transition:background .15s}
+.pulse{width:7px;height:7px;border-radius:50%;background:rgb(var(--sapphire));flex-shrink:0;
+  animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.35;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}
+.otp-strip .cd{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:600;
+  color:rgb(var(--sapphire));font-size:11.5px;flex-shrink:0}
+.otp-strip.hit{border-color:rgb(var(--sapphire)/.35);cursor:pointer}
+.otp-strip.hit .strip-rest{display:none}
+.otp-strip.hit .strip-hit{display:flex;animation:stripHit .3s cubic-bezier(.16,1,.3,1)}
+@keyframes stripHit{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.otp-strip.hit:hover{background:var(--sapphire-tint-10)}
+.strip-code{font-family:ui-monospace,Menlo,monospace;font-size:19px;font-weight:600;letter-spacing:.14em;
+  color:var(--color-text);font-variant-numeric:tabular-nums;flex-shrink:0}
+.strip-src{flex:1;min-width:0;font-size:11px;color:var(--color-text-muted);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.strip-fill{flex-shrink:0;font-size:11px;color:rgb(var(--sapphire));border:1px solid rgb(var(--sapphire)/.35);
+  padding:2px 8px;border-radius:7px;white-space:nowrap}
+.otp-strip.gone{opacity:0;transform:translateY(-4px);transition:all .18s}
+.otp-strip.expired{opacity:.6}
+.otp-strip.expired .cd{color:var(--color-frame-text-dim);font-weight:400}
+
+/* secret 说明与按钮行 */
+.secret-note{padding:8px 2px 0;font-size:11px;color:var(--color-frame-text-dim);display:flex;align-items:center;gap:6px}
+.secret-note svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;
+  stroke-linejoin:round;flex-shrink:0}
+.btnrow{display:flex;gap:8px;padding-top:10px}
+.btn{font:inherit;border-radius:8px;padding:7px 14px;cursor:pointer;transition:all .15s;
+  border:1px solid var(--glass-control-border);background:var(--glass-control-bg);color:var(--color-frame-text);
+  -webkit-backdrop-filter:blur(var(--glass-control-blur)) saturate(1.2);backdrop-filter:blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:inset 0 1px 0 var(--glass-control-highlight),inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),0 2px 8px var(--glass-control-shadow)}
+.btn:hover{background:var(--glass-control-bg-hover)}
+.btn.primary{background:var(--color-primary);border-color:var(--color-primary);color:#fff;font-weight:500;box-shadow:none}
+.btn.primary:hover{background:var(--color-primary-hover)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.block{flex:1}
+/* 已提交回执 */
+.answered{display:none;padding:2px 0 0;gap:10px;align-items:flex-start}
+.answered.show{display:flex}
+.answered svg{width:16px;height:16px;stroke:var(--status-success-icon);fill:none;stroke-width:2.2;
+  stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;margin-top:1px}
+.answered .rh{font-weight:600;font-size:12.5px}
+.answered .rd{font-size:11.5px;color:var(--color-text-muted)}
+.divider-note{margin:4px 0;text-align:center;color:var(--color-frame-text-dim);font-size:11.5px}
+.empty-hint{margin-top:8px;padding:12px;text-align:center;color:var(--color-text-muted);font-size:12px;
+  background:var(--glass-etched-bg);border:1px dashed var(--glass-etched-border);border-radius:10px}
+.empty-hint .big{font-size:12.5px;color:var(--color-text);font-weight:500;margin-bottom:2px}
+</style>
+</head>
+<body>
+
+<div class="page-note">设计样张 r2 · 验证码单码模型（作者裁决：无候选列表，只显示一个）：输入框下方检测到相关验证码后展开一个数字，点击 → 收缩并填入；无「已填入」常驻态 · REPORT.md §6<br>底部演示条可驱动主卡四态（实际产品由 WS 事件驱动）</div>
+
+<div class="chat-col">
+
+  <!-- ═══ 主卡：四态可交互（等待 / 检测到 / 已填入 / 已提交） ═══ -->
+  <div class="ask-card" id="ask-live">
+    <div class="ask-meta">代理提问 · 感知联动</div>
+    <div class="ask-q">请提供刚收到的登录验证码</div>
+    <div class="ask-sub">用于 service.example.com 登录 · 验证码将以一次性秘密提交，不留在对话里</div>
+
+    <input class="otp-input" id="otp-input" type="password" inputmode="numeric" maxlength="6"
+      placeholder="······" aria-label="验证码（以秘密提交）">
+
+    <!-- 检测条：rest → hit → 点击收缩并填入 -->
+    <div class="otp-strip" id="otp-strip" aria-live="polite">
+      <div class="strip-rest" id="strip-rest">
+        <span class="pulse" aria-hidden="true"></span>
+        <span id="strip-rest-text">感知正在监听邮箱中的验证码 · 窗口内到达才展开</span>
+        <span class="cd" id="win-cd">09:42</span>
+      </div>
+      <div class="strip-hit" id="strip-hit" role="button" tabindex="0"
+        aria-label="检测到验证码 824193，点击填入">
+        <span class="strip-code">824 193</span>
+        <span class="strip-src">来自 QQ 邮箱 · service@qq.com · 刚刚</span>
+        <span class="strip-fill">点击填入</span>
+      </div>
+    </div>
+
+    <div class="secret-note">
+      <svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+      提交即写入一次性秘密（owner-only · TTL 10 分钟 · 用后即焚）；对话与日志只留掩码 824***
+    </div>
+    <div class="btnrow">
+      <button class="btn primary block" id="otp-submit" disabled>提交验证码</button>
+    </div>
+
+    <div class="answered" id="otp-answered">
+      <svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+      <div style="flex:1">
+        <div class="rh">验证码已提交</div>
+        <div class="rd">窗口已关闭（reason=answered）· 值一次性消费完成，未进入对话与日志</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider-note">── 以下为同卡的其他窗口状态（静态） ──</div>
+
+  <!-- ═══ 卡二：窗口开启 · 尚未检测到（等待态整卡） ═══ -->
+  <div class="ask-card">
+    <div class="ask-meta">代理提问 · 感知联动</div>
+    <div class="ask-q">请提供刚收到的登录验证码</div>
+    <div class="ask-sub">窗口已开启，验证码一到就在输入框下方展开</div>
+    <input class="otp-input" type="password" inputmode="numeric" maxlength="6" placeholder="······"
+      aria-label="验证码（以秘密提交）">
+    <div class="otp-strip">
+      <div class="strip-rest">
+        <span class="pulse" aria-hidden="true"></span>
+        <span>感知正在监听邮箱中的验证码 · 窗口内到达才展开</span>
+        <span class="cd">08:15</span>
+      </div>
+    </div>
+    <div class="btnrow">
+      <button class="btn block" onclick="alert('样张：取消提问 → 窗口关闭（reason=cancelled）')">取消</button>
+    </div>
+  </div>
+
+  <!-- ═══ 卡三：窗口过期（expired 态；展开后未点击即过期 → 数字收起、码值清出内存） ═══ -->
+  <div class="ask-card">
+    <div class="ask-meta">代理提问 · 感知联动</div>
+    <div class="ask-q">请提供刚收到的登录验证码</div>
+    <input class="otp-input" type="password" inputmode="numeric" maxlength="6" placeholder="······"
+      aria-label="验证码（以秘密提交）">
+    <div class="otp-strip expired">
+      <div class="strip-rest">
+        <span style="width:7px;height:7px;border-radius:50%;background:var(--color-frame-text-dim);flex-shrink:0"></span>
+        <span>监听窗口已过期（10 分钟）· 未捕获可填入的验证码</span>
+        <span class="cd">00:00</span>
+      </div>
+    </div>
+    <div class="btnrow">
+      <button class="btn block" onclick="alert('样张：让代理重新触发一次验证码，新窗口重新开 10 分钟')">让代理重发验证码</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- 演示条：驱动主卡四态 -->
+<div class="demo-bar" role="toolbar" aria-label="样张状态演示">
+  <button data-d="rest">① 等待中</button>
+  <button data-d="hit" class="on">② 检测到验证码</button>
+  <button data-d="filled">③ 点击填入后</button>
+  <button data-d="sent">④ 已提交</button>
+  <button class="themebtn" id="theme-btn" title="切换亮暗主题">◐</button>
+</div>
+
+<script>
+/* 主题：随系统置位 + 手动切换（html[data-theme=dark]，同官网机制） */
+const rootEl=document.documentElement;
+function syncTheme(){rootEl.dataset.theme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}
+syncTheme();matchMedia('(prefers-color-scheme: dark)').addEventListener('change',syncTheme);
+document.getElementById('theme-btn').addEventListener('click',()=>{
+  rootEl.dataset.theme=rootEl.dataset.theme==='dark'?'light':'dark';
+});
+
+const strip=document.getElementById('otp-strip');
+const input=document.getElementById('otp-input');
+const submit=document.getElementById('otp-submit');
+const CODE='824193';
+
+function setState(s){
+  document.querySelectorAll('.demo-bar button[data-d]').forEach(b=>b.classList.toggle('on',b.dataset.d===s));
+  if(s==='rest'){
+    strip.className='otp-strip';strip.style.display='';
+    input.value='';submit.disabled=true;
+    document.getElementById('otp-answered').classList.remove('show');
+    document.querySelector('#ask-live .ask-q,.ask-q');
+  }else if(s==='hit'){
+    strip.className='otp-strip hit';strip.style.display='';
+    input.value='';submit.disabled=true;
+    document.getElementById('otp-answered').classList.remove('show');
+  }else if(s==='filled'){
+    /* 点击语义：收缩并填入；检测条整条撤出（无「已填入」常驻态） */
+    strip.classList.add('gone');
+    setTimeout(()=>{strip.style.display='none';},180);
+    input.value=CODE;submit.disabled=false;input.focus();
+    document.getElementById('otp-answered').classList.remove('show');
+  }else if(s==='sent'){
+    strip.style.display='none';
+    document.getElementById('ask-live').querySelectorAll('.ask-meta,.ask-q,.ask-sub,.otp-input,.secret-note,.btnrow')
+      .forEach(el=>{el.style.display='none';});
+    document.getElementById('otp-answered').classList.add('show');
+    submit.disabled=true;
+  }
+}
+document.querySelectorAll('.demo-bar button[data-d]').forEach(b=>
+  b.addEventListener('click',()=>setState(b.dataset.d)));
+
+/* 检测条点击（或 Enter/Space）→ 收缩并填入 */
+function pick(){
+  if(!strip.classList.contains('hit'))return;
+  setState('filled');
+}
+document.getElementById('strip-hit').addEventListener('click',pick);
+document.getElementById('strip-hit').addEventListener('keydown',e=>{
+  if(e.key==='Enter'||e.key===' '){e.preventDefault();pick();}
+});
+
+/* 手动输入也可提交（等价于自己敲键盘的既有路径） */
+input.addEventListener('input',()=>{submit.disabled=input.value.length<4;});
+
+/* 提交 → answered（真实流程走 secret 一次性消费） */
+submit.addEventListener('click',()=>setState('sent'));
+
+/* 窗口倒计时（TTL 10 分钟假数据；窗开时只影响 rest 行倒计时与过期切换） */
+let cd=9*60+42;
+const cdEl=document.getElementById('win-cd');
+const timer=setInterval(()=>{
+  cd=cd>0?cd-1:0;
+  if(cdEl)cdEl.textContent=String(Math.floor(cd/60)).padStart(2,'0')+':'+String(cd%60).padStart(2,'0');
+  if(cd===0){clearInterval(timer);if(strip.classList.contains('hit')){strip.classList.remove('hit');}}
+},1000);
+
+setState('hit');
+</script>
+</body>
+</html>

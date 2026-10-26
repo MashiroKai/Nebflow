@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>验证码 · 码到才现 · 样张（设计批 r3 2026-10-25）</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════════
+   STAND 设计语言对齐（r2 REPORT §16 token 表沿用；卡面 = chat.css .ask-card 逐字）
+   r3 修订（作者裁决 2「过程状态全隐」）：
+   · r2 的常驻「检测条」（脉冲点 + 监听文案 + 窗口倒计时）整体废除——
+     等待期卡面与普通提问无异，没有任何感知过程痕迹。
+   · 验证码只在可用时出现：单码片（大号数字 + 来源一行 + 点击填入）在输入框
+     下方展开；点击 → 码值填入、码片收缩撤出，无「已填入」残留。
+   · 窗口过期无 UI（本来就没显示过东西）；失败/过期只通知代理侧。
+   ═══════════════════════════════════════════════════════════════════════ */
+:root{
+  --color-bg:#f5f6f8;
+  --color-text:#1b1e26; --color-text-muted:#8b8e96; --color-text-dim:#6b6e76;
+  --color-frame-text:#3a3d45; --color-frame-text-bright:#1b1e26;
+  --color-frame-text-muted:#717379; --color-frame-text-dim:#aaacb3;
+  --color-border:#ddd;
+  --glass-bg:rgba(255,255,255,0.55); --glass-blur:24px; --glass-border:rgba(255,255,255,0.35);
+  --sapphire:91 127 191;
+  --sapphire-edge:rgba(91,127,191,0.08);
+  --sapphire-tint-10:rgba(91,127,191,0.10);
+  --glass-control-bg:rgba(255,255,255,0.45); --glass-control-bg-hover:rgba(255,255,255,0.65);
+  --glass-control-border:rgba(255,255,255,0.40); --glass-control-highlight:rgba(255,255,255,0.50);
+  --glass-control-underedge:rgba(0,0,0,0.08); --glass-control-glow:rgba(0,0,0,0.06);
+  --glass-control-shadow:rgba(0,0,0,0.04); --glass-control-blur:10px;
+  --glass-etched-bg:rgba(0,0,0,0.025); --glass-etched-border:rgba(91,127,191,0.10);
+  --color-primary:#07c160; --color-primary-hover:#06ad56;
+  --color-success:#4caf50;
+  --status-success-icon:#2e7d32;
+  --status-word:var(--color-frame-text-muted);
+  /* ask 卡面（chat.css .ask-card 逐字） */
+  --ask-card-top:#ffffff; --ask-card-bot:#f5f7fa; --ask-card-bd:rgba(20,26,40,0.08);
+  --ask-card-shadow:0 1px 2px rgba(16,24,40,0.05),0 12px 32px rgba(16,24,40,0.10);
+  --ask-card-highlight:inset 0 1px 0 rgba(255,255,255,0.85);
+}
+html[data-theme="dark"]{
+  --color-bg:#13161c;
+  --color-text:#e8eaed; --color-text-muted:#7b7e88; --color-text-dim:#9ba0aa;
+  --color-frame-text:#c8cad0; --color-frame-text-bright:#e8eaed;
+  --color-frame-text-muted:#81838a; --color-frame-text-dim:#7b7e88;
+  --color-border:#2a2d35;
+  --glass-etched-bg:rgba(255,255,255,0.04); --glass-etched-border:rgba(91,127,191,0.08);
+  --glass-control-bg:rgba(255,255,255,0.05); --glass-control-bg-hover:rgba(255,255,255,0.10);
+  --glass-control-border:rgba(255,255,255,0.08); --glass-control-highlight:rgba(255,255,255,0.08);
+  --glass-control-underedge:rgba(0,0,0,0.25); --glass-control-glow:rgba(0,0,0,0.20);
+  --glass-control-shadow:rgba(0,0,0,0.15);
+  --ask-card-top:#272c3a; --ask-card-bot:#1f232d; --ask-card-bd:rgba(255,255,255,0.09);
+  --ask-card-shadow:0 1px 2px rgba(0,0,0,0.2),0 12px 32px rgba(0,0,0,0.35);
+  --ask-card-highlight:inset 0 1px 0 rgba(255,255,255,0.06);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background:var(--color-bg);color:var(--color-text);
+  min-height:100vh;display:flex;flex-direction:column;align-items:center;
+  padding:32px 16px 64px;font-size:13px;line-height:1.5}
+.page-note{max-width:520px;text-align:center;color:var(--color-text-muted);margin-bottom:16px;font-size:12px}
+.chat-col{width:460px;max-width:100%;display:flex;flex-direction:column;gap:14px}
+.demo-bar{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);display:flex;gap:4px;padding:4px;
+  border-radius:10px;background:var(--glass-bg);z-index:60;
+  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(1.15);backdrop-filter:blur(var(--glass-blur)) saturate(1.15);
+  border:1px solid var(--sapphire-edge);box-shadow:0 4px 16px rgba(0,0,0,.10)}
+.demo-bar button{border:none;background:transparent;color:var(--color-text-muted);font:inherit;font-size:12px;
+  padding:5px 10px;border-radius:7px;cursor:pointer;white-space:nowrap}
+.demo-bar button:hover{background:var(--glass-control-bg-hover)}
+.demo-bar button.on{background:var(--color-primary);color:#fff;font-weight:500}
+.demo-bar .themebtn{color:var(--color-frame-text-muted)}
+
+/* ═══ ask 卡面（chat.css .ask-card 同构） ═══ */
+.ask-card{background:linear-gradient(180deg,var(--ask-card-top),var(--ask-card-bot));
+  border:1px solid var(--ask-card-bd);border-radius:16px;
+  box-shadow:var(--ask-card-shadow),var(--ask-card-highlight);
+  padding:13px 14px;animation:obIn 200ms ease-out}
+@keyframes obIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.ask-meta{font-size:11px;letter-spacing:1.2px;color:var(--color-text-dim);margin-bottom:2px}
+.ask-q{font-size:13px;font-weight:500;margin-bottom:2px}
+.ask-sub{font-size:11.5px;color:var(--color-text-muted);margin-bottom:10px}
+
+/* 验证码输入框（secret 问题密码框） */
+.otp-input{width:100%;font:inherit;font-size:17px;letter-spacing:.35em;text-align:center;
+  color:var(--color-text);background:var(--glass-etched-bg);
+  border:1px solid var(--glass-etched-border);border-radius:10px;padding:9px 12px;outline:none;
+  transition:border-color .15s,box-shadow .2s;font-variant-numeric:tabular-nums}
+.otp-input:focus{border-color:rgb(var(--sapphire)/.45)}
+.otp-input::placeholder{letter-spacing:.2em;color:var(--color-frame-text-dim)}
+.otp-input.flash{border-color:rgb(var(--sapphire)/.55);box-shadow:0 0 0 3px rgb(var(--sapphire)/.12)}
+
+/* ═══ 单码片（r3 核心：码到才现；点一下就走） ═══
+   展开即整片淡入上滑；点击 → 收缩撤出 + 码值进输入框；无任何常驻态。 */
+.otp-chip{display:none;align-items:center;gap:11px;margin-top:8px;padding:9px 12px;cursor:pointer;
+  border-radius:12px;background:var(--glass-etched-bg);
+  border:1px solid rgb(var(--sapphire)/.30);transition:background .15s}
+.otp-chip.show{display:flex;animation:chipIn .32s cubic-bezier(.16,1,.3,1)}
+@keyframes chipIn{from{opacity:0;transform:translateY(-6px) scale(.98)}to{opacity:1;transform:none}}
+.otp-chip:hover{background:var(--sapphire-tint-10)}
+.otp-chip.gone{opacity:0;transform:translateY(-5px) scale(.98);transition:all .18s ease-in}
+.chip-code{font-family:ui-monospace,Menlo,monospace;font-size:20px;font-weight:600;letter-spacing:.12em;
+  color:var(--color-text);font-variant-numeric:tabular-nums;flex-shrink:0}
+.chip-src{flex:1;min-width:0;font-size:11px;color:var(--color-text-muted);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip-fill{flex-shrink:0;font-size:11px;color:rgb(var(--sapphire));border:1px solid rgb(var(--sapphire)/.35);
+  padding:2.5px 9px;border-radius:999px;white-space:nowrap}
+
+/* secret 说明与按钮行 */
+.secret-note{padding:8px 2px 0;font-size:11px;color:var(--color-frame-text-dim);display:flex;align-items:center;gap:6px}
+.secret-note svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;
+  stroke-linejoin:round;flex-shrink:0}
+.btnrow{display:flex;gap:8px;padding-top:10px}
+.btn{font:inherit;border-radius:8px;padding:7px 14px;cursor:pointer;transition:all .15s;
+  border:1px solid var(--glass-control-border);background:var(--glass-control-bg);color:var(--color-frame-text);
+  -webkit-backdrop-filter:blur(var(--glass-control-blur)) saturate(1.2);backdrop-filter:blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:inset 0 1px 0 var(--glass-control-highlight),inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),0 2px 8px var(--glass-control-shadow)}
+.btn:hover{background:var(--glass-control-bg-hover)}
+.btn.primary{background:var(--color-primary);border-color:var(--color-primary);color:#fff;font-weight:500;box-shadow:none}
+.btn.primary:hover{background:var(--color-primary-hover)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.block{flex:1}
+/* 已提交回执（结果态，非过程态，保留） */
+.answered{display:none;padding:2px 0 0;gap:10px;align-items:flex-start}
+.answered.show{display:flex}
+.answered svg{width:16px;height:16px;stroke:var(--status-success-icon);fill:none;stroke-width:2.2;
+  stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;margin-top:1px}
+.answered .rh{font-weight:600;font-size:12.5px}
+.answered .rd{font-size:11.5px;color:var(--color-text-muted)}
+.divider-note{margin:4px 0;text-align:center;color:var(--color-frame-text-dim);font-size:11.5px}
+</style>
+</head>
+<body>
+
+<div class="page-note">设计样张 r3 · 验证码（裁决 2：过程态全隐）——等待期与普通提问无异，无监听条/无倒计时；验证码只在可用时以<b>单码片</b>出现，点击即填入并消失 · REPORT.md §6</div>
+
+<div class="chat-col">
+
+  <!-- ═══ 主卡：四态可交互 ═══ -->
+  <div class="ask-card" id="ask-live">
+    <div class="ask-meta">代理提问</div>
+    <div class="ask-q">请提供刚收到的登录验证码</div>
+    <div class="ask-sub">用于 service.example.com 登录</div>
+
+    <input class="otp-input" id="otp-input" type="password" inputmode="numeric" maxlength="6"
+      placeholder="······" aria-label="验证码（以秘密提交）">
+
+    <!-- 单码片：平时不存在；检测到 → 展开；点击 → 填入并消失 -->
+    <div class="otp-chip" id="otp-chip" role="button" tabindex="0" aria-label="收到验证码 824193，点击填入">
+      <span class="chip-code">824 193</span>
+      <span class="chip-src">QQ 邮箱 · service@qq.com · 刚刚</span>
+      <span class="chip-fill">点击填入</span>
+    </div>
+
+    <div class="secret-note">
+      <svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+      以一次性秘密提交 · 对话与日志只留掩码 824***
+    </div>
+    <div class="btnrow">
+      <button class="btn primary block" id="otp-submit" disabled>提交验证码</button>
+    </div>
+
+    <div class="answered" id="otp-answered">
+      <svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+      <div style="flex:1">
+        <div class="rh">验证码已提交</div>
+        <div class="rd">一次性消费完成，未进入对话与日志</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider-note">── 以下为「等待期」整卡（静态）：与普通提问无异 ──</div>
+
+  <!-- ═══ 卡二：等待期（r3：无任何感知痕迹；码片区域根本不存在） ═══ -->
+  <div class="ask-card">
+    <div class="ask-meta">代理提问</div>
+    <div class="ask-q">请提供刚收到的登录验证码</div>
+    <div class="ask-sub">用于 service.example.com 登录 · 验证码一到会自动出现在输入框下方</div>
+    <input class="otp-input" type="password" inputmode="numeric" maxlength="6" placeholder="······"
+      aria-label="验证码（以秘密提交）">
+    <div class="btnrow">
+      <button class="btn block" onclick="alert('样张：取消提问（窗口随之关闭，静默无 UI）')">取消</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- 演示条：驱动主卡四态 -->
+<div class="demo-bar" role="toolbar" aria-label="样张状态演示">
+  <button data-d="rest">① 等待（无痕迹）</button>
+  <button data-d="hit" class="on">② 码片出现</button>
+  <button data-d="filled">③ 点击填入后</button>
+  <button data-d="sent">④ 已提交</button>
+  <button class="themebtn" id="theme-btn" title="切换亮暗主题">◐</button>
+</div>
+
+<script>
+/* 主题：随系统置位 + 手动切换（html[data-theme=dark]，同官网机制） */
+const rootEl=document.documentElement;
+function syncTheme(){rootEl.dataset.theme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}
+syncTheme();matchMedia('(prefers-color-scheme: dark)').addEventListener('change',syncTheme);
+document.getElementById('theme-btn').addEventListener('click',()=>{
+  rootEl.dataset.theme=rootEl.dataset.theme==='dark'?'light':'dark';
+});
+
+const chip=document.getElementById('otp-chip');
+const input=document.getElementById('otp-input');
+const submit=document.getElementById('otp-submit');
+const CODE='824193';
+let goneTimer=null;
+
+function setState(s){
+  document.querySelectorAll('.demo-bar button[data-d]').forEach(b=>b.classList.toggle('on',b.dataset.d===s));
+  clearTimeout(goneTimer);
+  chip.classList.remove('gone');
+  if(s==='rest'){
+    /* 等待期：码片根本不存在，卡面与普通提问无异 */
+    chip.classList.remove('show');chip.style.display='';
+    input.value='';input.classList.remove('flash');submit.disabled=true;
+    document.getElementById('otp-answered').classList.remove('show');
+  }else if(s==='hit'){
+    /* 码到才现：单码片展开 */
+    chip.style.display='';chip.classList.remove('show');
+    void chip.offsetWidth;           /* 重放入场动画 */
+    chip.classList.add('show');
+    input.value='';input.classList.remove('flash');submit.disabled=true;
+    document.getElementById('otp-answered').classList.remove('show');
+  }else if(s==='filled'){
+    /* 点击语义：码片收缩撤出 + 码值进输入框（无「已填入」残留） */
+    chip.classList.add('gone');
+    goneTimer=setTimeout(()=>{chip.classList.remove('show');chip.classList.remove('gone');},200);
+    input.value=CODE;input.classList.add('flash');submit.disabled=false;input.focus();
+    document.getElementById('otp-answered').classList.remove('show');
+  }else if(s==='sent'){
+    chip.style.display='none';
+    document.getElementById('ask-live').querySelectorAll('.ask-meta,.ask-q,.ask-sub,.otp-input,.secret-note,.btnrow')
+      .forEach(el=>{el.style.display='none';});
+    document.getElementById('otp-answered').classList.add('show');
+    submit.disabled=true;
+  }
+}
+document.querySelectorAll('.demo-bar button[data-d]').forEach(b=>
+  b.addEventListener('click',()=>setState(b.dataset.d)));
+
+/* 码片点击（或 Enter/Space）→ 填入并消失 */
+function pick(){
+  if(!chip.classList.contains('show')||chip.classList.contains('gone'))return;
+  setState('filled');
+}
+chip.addEventListener('click',pick);
+chip.addEventListener('keydown',e=>{
+  if(e.key==='Enter'||e.key===' '){e.preventDefault();pick();}
+});
+
+/* 手动输入也可提交（等价既有路径） */
+input.addEventListener('input',()=>{submit.disabled=input.value.length<4;});
+
+/* 提交 → answered（真实流程走 secret 一次性消费） */
+submit.addEventListener('click',()=>setState('sent'));
+
+setState('hit');
+</script>
+</body>
+</html>
