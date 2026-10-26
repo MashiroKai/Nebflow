@@ -1972,7 +1972,12 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 val sessionDefaultDevice =
                   if remoteable && !explicitLocal then ctx.sessionDevice.map(_.trim).filter(_.nonEmpty) else None
                 val remoteDeviceOpt = deviceOpt.filter(_ => remoteable).orElse(sessionDefaultDevice)
-                val strayDeviceOpt = deviceOpt.filterNot(_ => remoteable)
+                // stray 豁免面（台账 #901，2026-10-26）：schema **自陈** `device` 键的工具
+                // （Project 的 create 参数面——device 是它自己的业务入参）= 工具自消费，
+                // 不是误投 ⇒ 不告警。S3 三条语义对真 stray 面原样保留（仍禁静默忽略/改写；
+                // ①不投对端由 remoteable 判据独立保证——schema 豁免只收窄 ③ 的可见性告警）。
+                val schemaDeclaresDevice = RemoteExecutor.schemaDeclaresDeviceParam(tool.inputSchema)
+                val strayDeviceOpt = deviceOpt.filterNot(_ => remoteable || schemaDeclaresDevice)
                 val execIO: IO[ToolExecResult] = remoteDeviceOpt match
                   case Some(deviceName) if RemoteExecutor.current.isDefined =>
                     var remoteInput = finalInput.remove("device")

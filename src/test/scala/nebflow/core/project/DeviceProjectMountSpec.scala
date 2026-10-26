@@ -166,16 +166,23 @@ class DeviceProjectMountSpec extends CatsEffectSuite:
   }
 
   test("铁律②（事故原形）Windows 风格路径走本机腿：拒绝 + device 指引 + 零写入") {
+    // 主机无关化（2026-10-26 #901 批）：路径必须**在任何主机上都不存在**——原形字面
+    // `C:\Users\Kai\stand` 在 Windows 主机（KAI）上是真实存在的目录（本仓自身），
+    // 本机腿预检通过 ⇒ create 成功 ⇒ 本例假绿转红。事故判据的本体是「Windows 风格
+    // 路径误走本机腿被拒 + device 指引 + 零写入」，不依赖那个具体路径本身。
+    val ghostWin = """C:\no-such-incident-dir-901\nb"""
     for
-      r <- ProjectCreateService.create(Some("stand"), winPath, None, identity)
+      r <- ProjectCreateService.create(Some("stand"), ghostWin, None, identity)
     yield
       assert(clue(r.isLeft))
       val msg = clue(r.left.toOption.map(_.message).getOrElse("<unexpected Right>"))
       assert(clue(msg).contains("Mount refused"))
       // 结构化指引：点明该路径应带 device 参数走设备腿（现场事故的可行动出路）。
       assert(clue(msg).contains("device"))
-      // 零写入：数据根下绝不出现 `C:\Users\Kai\stand` 假骨架目录（2026-10-24 原形）。
-      assert(clue(!os.exists(tmp / winPath)), "incident shape: fake scaffold dir under dataRoot")
+      // 零写入：按生产同款解析（os.Path(workspace, base)）核对绝不出现假骨架目录
+      // （2026-10-24 原形：`~/.stand/C:\Users\Kai\stand/` 垃圾骨架）。
+      val resolved = scala.util.Try(os.Path(ghostWin, base = tmp)).toOption
+      assert(clue(resolved.forall(p => !os.exists(p))), "incident shape: fake scaffold dir under dataRoot")
       assert(clue(!os.exists(ProjectStore.projectDir("stand"))))
   }
 
