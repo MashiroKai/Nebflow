@@ -3453,9 +3453,22 @@ function initCapsuleRing() {
    *  上缘位顶越过面板顶缘 RING_TOP_OUT×h（胶囊高的一小部分 —— 作者令「顶部
    *  有些超出…不要太多」，探出段真实渲染在顶缘外 —— 环层挂 body 裁切盒失效），
    *  下缘位对称下垂；h + 2 下限兜底防退化叠置。本体尺寸恒定 ⇒ 间距恒定。 */
+  /** #926 件1（作者令 2026-10-26「hover 的时候不要改变文字的布局」）：中心覆层
+   *  的右内缝随 pop 钮实占宽同步（--cr-popw = 26 钮 + 6 gap，隐藏/缺席 = 0）——
+   *  pop 可见时覆层文字盒收窄到与被替换的常态 .t-name 盒逐像素等宽（106px 档），
+   *  隐藏时回宽档（138px）：hover 换层前后 ellipsis 截断点不变，文字行零换排。
+   *  layout() 每次调（openRing / 滚轮换选 / 开环换签）都同步 —— CR4 开环换签时
+   *  pop 可见性可能随新活动页签翻转，落在这条路径上刷新。 */
+  const syncCenterInset = () => {
+    const pop = hdr.querySelector('.canvas-pop-btn');
+    const on = !!pop && getComputedStyle(pop).display !== 'none';
+    root.style.setProperty('--cr-popw', on ? '32px' : '0px');
+  };
+
   const layout = () => {
     if (!ringState) return;
     anchor();                                        // 真越出批：先回锚（环开中窗口尺寸变化随动）
+    syncCenterInset();                               // #926 件1：中心覆层右内缝随 pop 钮实占同步
     const { ids, cursor } = ringState;
     const n = ids.length;
     const kids = /** @type {HTMLElement[]} */ ([...root.children]);
@@ -3493,14 +3506,17 @@ function initCapsuleRing() {
     }
   };
 
-  /** 环锚 = 标题头实心中心（环收放与常态胶囊同位无缝 morph）。真越出批：环层
-   *  已挂 body（position:fixed），锚点直写**视口坐标**。 */
+  /** 环锚 = 标题头胶囊盒（.canvas-header）中心（环收放与常态胶囊同位无缝 morph）。
+   *  #926 件1（作者 2026-10-26 报障「hover 的时候不要改变文字的布局」）：旧锚取
+   *  #canvas-title 中心 —— pop 钮（独立窗口入口 26px+gap6）可见时标题 fit-content
+   *  盒整体偏左（title 中心 ≠ 胶囊中心，1440 面实测偏 ~13.5px），hover 中心覆层
+   *  随之左移 = 文字行平移换位 + 前导图标顶穿胶囊左圆角（长名 ellipsis 态尤甚）。
+   *  改锚胶囊盒本体中心：覆层与胶囊同轴，文字行零平移。
+   *  真越出批：环层已挂 body（position:fixed），锚点直写**视口坐标**。 */
   const anchor = () => {
-    const title = document.getElementById('canvas-title');
-    if (!title) return;
-    const tr = title.getBoundingClientRect();
-    root.style.left = (tr.left + tr.width / 2) + 'px';
-    root.style.top = (tr.top + tr.height / 2) + 'px';
+    const r = hdr.getBoundingClientRect();
+    root.style.left = (r.left + r.width / 2) + 'px';
+    root.style.top = (r.top + r.height / 2) + 'px';
   };
 
   /* ── hover 区（环开态收环判定）──：环开点（顶带胶囊处）∪ 胶囊本体 ∪ 非弧外
