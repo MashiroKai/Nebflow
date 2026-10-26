@@ -242,27 +242,69 @@ object DetachedApply:
       case Left(e) => Left(e.toString)
     }
 
-  /** Windows：schtasks /Create（/F 覆盖固定名）→ /Run 立即触发；脚本自删除任务。 */
+  /** Windows：schtasks /Create /XML（/F 覆盖固定名）→ /Run 立即触发；脚本自删除任务。
+    *
+    * 为什么走 XML 而不是 /TR：<c>/TR</c> 会剥掉内层引号（带空格路径即碎）且默认
+    * DisallowStartIfOnBatteries=true（电池机上 /Run 假成功不执行）。XML 逐字面存储
+    * 参数、显式关断电池闸；trigger = now+1min 作 /Run 失败时的兜底自动触发。
+    */
   private def registerWindows(plan: Plan, script: os.Path, run: Run): IO[Either[String, String]] =
-    val tr = s"""powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${script.toString}""""
-    val create = List("schtasks", "/Create", "/F", "/TN", plan.winTask, "/SC", "ONCE", "/ST", "23:59", "/TR", tr)
-    val fire = List("schtasks", "/Run", "/TN", plan.winTask)
-    run(create).flatMap {
-      case Left(err) => IO.pure(Left(s"schtasks create failed: $err"))
+    val xmlPath = plan.dataRoot / "apply" / s"${plan.winTask}.xml"
+    val triggerAt = java.time.LocalDateTime.now().plusMinutes(1).truncatedTo(java.time.temporal.ChronoUnit.MINUTES)
+    val triggerFmt = triggerAt.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"))
+    val argsXml =
+      scala.xml.XML.escape("-NoProfile -ExecutionPolicy Bypass -File \"" + script.toString + "\"")
+    val xml =
+      s"""<?xml version="1.0" encoding="UTF-16"?>
+         |<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+         |  <Principals>
+         |    <Principal id="Author">
+         |      <LogonType>InteractiveToken</LogonType>
+         |    </Principal>
+         |  </Principals>
+         |  <Settings>
+         |    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+         |    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+         |    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+         |    <ExecutionTimeLimit>PT1H</ExecutionTimeLimit>
+         |  </Settings>
+         |  <Triggers>
+         |    <TimeTrigger>
+         |      <StartBoundary>$triggerFmt</StartBoundary>
+         |    </TimeTrigger>
+         |  </Triggers>
+         |  <Actions Context="Author">
+         |    <Exec>
+         |      <Command>powershell.exe</Command>
+         |      <Arguments>$argsXml</Arguments>
+         |    </Exec>
+         |  </Actions>
+         |</Task>
+         |""".stripMargin
+    IO.blocking {
+      os.write.over(xmlPath, xml.getBytes(java.nio.charset.StandardCharsets.UTF_16), createDirs = true)
+    }.attempt.flatMap {
+      case Left(e) => IO.pure(Left(s"apply task xml write failed: ${Option(e.getMessage).getOrElse(e.toString)}"))
       case Right(_) =>
-        run(fire).flatMap {
-          case Left(err) =>
-            IO.pure(
-              Left(
-                s"schtasks run failed (task created but not fired — remove manually: schtasks /Delete /TN ${plan.winTask} /F): $err"
-              )
-            )
+        val create = List("schtasks", "/Create", "/F", "/TN", plan.winTask, "/XML", xmlPath.toString)
+        val fire = List("schtasks", "/Run", "/TN", plan.winTask)
+        run(create).flatMap {
+          case Left(err) => IO.pure(Left(s"schtasks create failed: $err"))
           case Right(_) =>
-            writeRegisteredState(plan).as(
-              Right(
-                s"detached apply registered via scheduled task '${plan.winTask}' (survives any session/tree death) — log: ${logPath(plan.dataRoot)}"
-              )
-            )
+            run(fire).flatMap {
+              case Left(err) =>
+                IO.pure(
+                  Left(
+                    s"schtasks run failed (task created but not fired; will auto-fire at $triggerFmt — remove manually: schtasks /Delete /TN ${plan.winTask} /F): $err"
+                  )
+                )
+              case Right(_) =>
+                writeRegisteredState(plan).as(
+                  Right(
+                    s"detached apply registered via scheduled task '${plan.winTask}' (survives any session/tree death) — log: ${logPath(plan.dataRoot)}"
+                  )
+                )
+            }
         }
     }
 
@@ -550,10 +592,10 @@ object DetachedApply:
 |function WaitHealth([int]$$sec, [string]$$label) {
 |  $$dl = (Get-Date).AddSeconds($$sec)
 |  while ((Get-Date) -lt $$dl) {
-|    if (HealthOk) { Log "$$label: health OK"; return $$true }
+|    if (HealthOk) { Log "$${label}: health OK"; return $$true }
 |    Start-Sleep -Seconds 1
 |  }
-|  Log "$$label: health deadline ($$sec s) exceeded"
+|  Log "$${label}: health deadline ($$sec s) exceeded"
 |  return $$false
 |}
 |function StopOld {

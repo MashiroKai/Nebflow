@@ -103,6 +103,26 @@ class DetachedApplySpec extends CatsEffectSuite:
       "'logs\\apply-restart.log'",
       "$env:STAND_HOME = "
     ).foreach(fragment => assert(s.contains(fragment), s"missing '$fragment' in ps1 script"))
+    // PowerShell 双引号串内 `$var:` 会被解析成 drive-qualified 变量 ⇒ 整脚本 ParserError 起不来
+    assert(!s.matches("(?s).*\\$[A-Za-z_][A-Za-z0-9_]*:.*"), "ps1 must not contain bare $var: interpolation")
+    assert(s.contains("${label}: health OK"), "interpolation must be ${label}-delimited")
+  }
+
+  test("windows task xml: battery gates off, ps1 path quoted, trigger set") {
+    val p = planIn(sandbox())
+    val cmds = scala.collection.mutable.ListBuffer.empty[List[String]]
+    val fakeRun: DetachedApply.Run = c => IO { cmds += c; Right("ok") }
+    for
+      r <- DetachedApply.register(p, fakeRun)
+      _ = assert(r.isRight, s"registration expected to succeed, got $r")
+      xml <- IO.blocking(os.read(p.dataRoot / "apply" / s"${p.winTask}.xml"))
+      _ = assert(xml.contains("<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"), xml)
+      _ = assert(xml.contains("<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>"), xml)
+      _ = assert(xml.contains("<Command>powershell.exe</Command>"), xml)
+      _ = assert(xml.contains("-File \""), "ps1 path must stay quoted inside Arguments")
+      _ = assert(!xml.contains("/TR"), "legacy /TR face must be gone")
+      _ = assert(cmds.exists(c => c.contains("/XML")), "schtasks /Create /XML expected")
+    yield ()
   }
 
   test("state json renderer escapes cause quotes") {
