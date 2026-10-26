@@ -1,8 +1,7 @@
 /* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
-import cats.effect.IO
-import cats.effect.Ref
+import cats.effect.{Deferred, IO, Ref}
 import cats.effect.std.Queue
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
@@ -79,6 +78,135 @@ private[gateway] object PresenceRoutes:
       "deviceName" -> deviceName.asJson,
       "outputPath" -> outputPath.asJson
     )
+
+  /**
+   * presence WS 判死参数（conn-guard 僵尸会话回收批 · 台账 #950 旁支 2026-10-26）。
+   *
+   *   - `tick`：心跳拍 = **既有** ping 节拍（原实现即 10s），判死检查只挂在同一
+   *     拍上 —— 零新增 wall-clock 轮询（红线：不新增独立计时面）。
+   *   - `deadAfter`：连续无入站帧判死阈值。生产默认 30s = 3 × tick：容忍连续
+   *     两拍 pong 丢失（网络抖动），第三拍仍无任何入站帧才判死。所有本端点的
+   *     合法对端（nebflow 引擎互联，[[nebflow.neblink.NeblinkPresenceService]]
+   *     监听器）对服务端 ping 必回 pong ⇒ 健康连接入站帧间隔 ≤ tick，永不误杀。
+   */
+  final case class PresenceWsLiveness(tick: FiniteDuration = 10.seconds, deadAfter: FiniteDuration = 30.seconds)
+
+  /** presence WS 会话的收发流（[[presenceWsStreams]] 产物，路由侧交 `wsb.build`）。 */
+  final case class PresenceWsStreams(
+    send: Stream[IO, WebSocketFrame],
+    receive: Pipe[IO, WebSocketFrame, Unit]
+  )
+
+  /**
+   * presence WS 会话收发流装配单点（僵尸会话回收批 2026-10-26）。
+   *
+   * 泄漏法证（「客户端已断、服务端未回收」）：原实现服务端每 10s 发 ping，但
+   * 收流侧对 pong 及一切入站帧零追踪（`case _ => IO.unit`）——half-open 僵尸
+   * （对端消失且无 FIN/RST 到达，如休眠唤醒/组网抖动/重连风暴）的收流永不
+   * 终结 ⇒ finalizer（removePeer / releaseWs）永不执行 ⇒ per-ip 槽位永久泄漏；
+   * 64 槽灌满后 [[ConnGuard.checkWs]] 以 per-ip-cap 拒掉该 IP 的一切新连接
+   * （即现场「presence WS upgrade rejected reason=per-ip-cap」的直接成因）。
+   *
+   * 修复三层：
+   *
+   *   1. 关闭帧 / TCP 层（结构保证）：acquire 移进**会话 fs2 scope**（升级完成
+   *      后才计槽），release 与之配对在同一 scope —— 客户端 close/EOF/异常断开
+   *      ⇒ 收流终结 ⇒ 回减必达。同时补掉 R-1b「入账在 build 前」留下的第三个
+   *      幽灵洞：response 已产出而 upgrade 会话未起跑（101 写失败/客户端中途
+   *      消失）时 finalizer 无处挂载 ⇒ 计数永久泄漏；现 acquire 未起跑即未发生。
+   *   2. 判死回收（half-open 兜底）：入站活跃钟（任何入站帧即触碰，pong 亦然）
+   *      + 既有心跳拍上判死（零新增计时面）——连续 `deadAfter` 无入站帧 ⇒
+   *      `deadSig` 双侧直达：send 侧终结（ember 对 send 终结写 close 帧，对端
+   *      同步收场）+ receive 侧自身 `interruptWhen` 中断 ⇒ 第 1 层的 finalizer
+   *      回减与 removePeer 必达（不依赖 ember 装配的 concurrently 中断方向，
+   *      fs2 3.11 实测：后台流终结不中断前台——见实现内 🔴 方向注记）。
+   *   3. 对账面（计数 ↔ 实活 socket）：配对由结构保证（acquire/release 同
+   *      scope，恰好一次）；每次判死回收经 `onZombieRecycle(silentMs)` 留审计
+   *      行（ip/device/沉默时长），per-ip 槽位随回收立即复纳 —— 漂移在结构上
+   *      不可再积累。
+   */
+  def presenceWsStreams(
+    connGuard: ConnGuard,
+    ip: String,
+    deviceId: String,
+    removePeer: String => IO[Unit],
+    handleData: Json => IO[Unit],
+    onZombieRecycle: Long => IO[Unit],
+    liveness: PresenceWsLiveness = PresenceWsLiveness()
+  ): IO[PresenceWsStreams] =
+    Queue.unbounded[IO, Option[WebSocketFrame]].flatMap { sendQueue =>
+      IO.realTime.map(_.toMillis).flatMap { startedMs =>
+        for
+          // 入站活跃钟：起点 = 会话受理时刻（升级完成后 pipe 起跑，见 receive bracket）
+          lastInbound <- Ref.of[IO, Long](startedMs)
+          deadSig <- Deferred[IO, Unit]
+        yield
+          val touch: IO[Unit] = IO.realTime.map(_.toMillis).flatMap(lastInbound.set)
+          val pingFrame = WebSocketFrame.Text("""{"type":"ping"}""")
+
+          // 心跳腿 = 既有 10s ping 拍；判死检查挂同一拍。判死 ⇒ 审计行 + 打
+          // `deadSig` + 双侧收口：向出站队列投 None 终结符（queued ⇒ send 终结，
+          // ember 对 send 终结的处置 = 写 close 帧——对端同步收场）；deadSig 同时
+          // 直接中断 receive 管道（下）⇒ 槽位凭据回减与 removePeer 必达。
+          // 🔴 方向注记（fs2 3.11 实测钉死，见 PresenceWsLifecycleSpec 探针遗痕）：
+          // `concurrently` 的后台流终结**不**中断前台 —— 不能指望 ember 的
+          // readSide.concurrently(sendSide) 替我们拆收流侧；判死必须自行直达。
+          val heartbeat: Stream[IO, WebSocketFrame] =
+            Stream
+              .awakeEvery[IO](liveness.tick)
+              .evalMap { _ =>
+                (IO.realTime.map(_.toMillis), lastInbound.get).mapN { (nowMs, lastMs) =>
+                  val silentMs = nowMs - lastMs
+                  if silentMs >= liveness.deadAfter.toMillis then Left(silentMs) else Right(pingFrame)
+                }
+              }
+              .evalMap {
+                case Right(frame) => IO.pure(Some(frame))
+                case Left(silentMs) =>
+                  (onZombieRecycle(silentMs).handleErrorWith(_ => IO.unit) *>
+                    sendQueue.offer(None) *>
+                    deadSig.complete(())).as(None)
+              }
+              .unNone
+
+          val queued = Stream.fromQueueNoneTerminated(sendQueue)
+          val send: Stream[IO, WebSocketFrame] = queued.merge(heartbeat)
+
+          val receive: Pipe[IO, WebSocketFrame, Unit] = frames =>
+            Stream
+              // 入账/回减同 fs2 scope（结构配对，恰好一次；见上文修复①）。
+              // acquire 后立即触碰活跃钟：判死起点 = 会话起跑而非装配时刻。
+              .bracket(connGuard.acquireWs(ip) <* touch)(connGuard.releaseWs)
+              .flatMap { _ =>
+                frames
+                  // 任何入站帧（含 pong/ping/data/未知/非 Text）即触碰活跃钟 ——
+                  // 判据是「线还活着」，与帧语义无关。
+                  .evalTap(_ => touch)
+                  .evalMap {
+                    case WebSocketFrame.Text(text, _) =>
+                      parser.parse(text).toOption match
+                        case Some(json) =>
+                          json.hcursor.downField("type").as[String].getOrElse("") match
+                            case "ping" =>
+                              sendQueue.offer(Some(WebSocketFrame.Text("""{"type":"pong"}""")))
+                            case "data" =>
+                              val payload = json.hcursor.downField("payload").focus.getOrElse(Json.Null)
+                              handleData(payload)
+                            case _ => IO.unit // pong 等：活跃钟已触碰，零语义处理
+                        case None => IO.unit
+                    case _ => IO.unit
+                  }
+                  .onFinalize(removePeer(deviceId))
+              }
+              // 判死回收直达：deadSig 完成即中断收流管 ⇒ bracket 回减 + removePeer
+              // 必达（不依赖 ember 装配对 send 终结的处置方向，见 🔴 方向注记）。
+              // 正常关闭（对端 close/EOF）时收流自然终结，此层零干预。
+              .interruptWhen(deadSig.get.attempt)
+
+          PresenceWsStreams(send, receive)
+      }
+    }
+  end presenceWsStreams
 
   def routes(wsb: WebSocketBuilder2[IO], ctx: RestApiCtx): HttpRoutes[IO] =
     import ctx.*
@@ -371,36 +499,23 @@ private[gateway] object PresenceRoutes:
                         capabilities = capabilities
                       )
                       ms.upsertPeer(peer).flatMap { _ =>
-                        Queue.unbounded[IO, WebSocketFrame].flatMap { sendQueue =>
-                          val heartbeat = Stream
-                            .awakeEvery[IO](10.seconds)
-                            .map(_ => WebSocketFrame.Text("""{"type":"ping"}"""))
-                          val queued = Stream.fromQueueUnterminated(sendQueue)
-                          val send = queued.merge(heartbeat)
-                          val receive: Pipe[IO, WebSocketFrame, Unit] =
-                            _.evalMap {
-                              case WebSocketFrame.Text(text, _) =>
-                                parser.parse(text).toOption match
-                                  case Some(json) =>
-                                    json.hcursor.downField("type").as[String].getOrElse("") match
-                                      case "ping" =>
-                                        sendQueue.offer(WebSocketFrame.Text("""{"type":"pong"}"""))
-                                      case "data" =>
-                                        val payload = json.hcursor.downField("payload").focus.getOrElse(Json.Null)
-                                        ms.handleDataMessage(payload)
-                                      case _ => IO.unit
-                                  case None => IO.unit
-                              case _ => IO.unit
-                            }.onFinalize(
-                              ms.removePeer(peerDeviceId).handleErrorWith(_ => IO.unit)
+                        // 僵尸会话回收批（台账 #950 旁支 2026-10-26）：收发流装配收敛至
+                        // [[presenceWsStreams]] 单点 —— 入站活跃钟 + 既有拍上判死 + 会话
+                        // 作用域内 acquire/release 结构配对（R-1b 注记的三洞一并封死：
+                        // response 已产出而 upgrade 会话未起跑的幽灵计数）。回减与
+                        // removePeer 同缝必达（close / 异常断开 / 判死回收三途同归）。
+                        PresenceRoutes.presenceWsStreams(
+                          connGuard = connGuard,
+                          ip = wsIpNorm,
+                          deviceId = peerDeviceId,
+                          removePeer = id => ms.removePeer(id).handleErrorWith(_ => IO.unit),
+                          handleData = ms.handleDataMessage,
+                          onZombieRecycle = silentMs =>
+                            logger.warn(
+                              s"conn-guard: presence zombie recycled ip=$wsIpNorm device=$peerDeviceId " +
+                                s"silentMs=$silentMs — slot released (heartbeat dead-detection)"
                             )
-                          // R-1b：入账在 build 前（此后仅剩 build 本身，失败即自然不
-                          // build ⇒ 无幽灵计数）；回减挂流 finalizer（与 removePeer 同缝，
-                          // 连接关闭必走）。
-                          connGuard.acquireWs(wsIpNorm).flatMap { guardHandle =>
-                            wsb.build(send, receive.andThen(_.onFinalize(connGuard.releaseWs(guardHandle))))
-                          }
-                        }
+                        ).flatMap(streams => wsb.build(streams.send, streams.receive))
                       }
                     // end conn-guard case None
                   } // end conn-guard checkWs flatMap
