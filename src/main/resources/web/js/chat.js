@@ -9,7 +9,7 @@ import { key } from './branding.js';
 // 今天仍为纯时钟（formatHm），更早按本地日历日加日期层（昨天/星期X/M月D日/跨年）。
 import { formatHm, formatFooterTime, toggleTimeFormat, bindTimeToggle } from './timeFormat.js';
 import { activeView, setActiveView, findViewBySessionId, chatViews } from './chatView.js';
-import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX, deviceTagHtml } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { renderImageGenPlaceholder } from './imagegen.js';
 import { t } from './i18n.js';
@@ -1163,12 +1163,14 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   const localSummary = localizeToolSummary(summary, label);
   const labelParts = localLabel.split('\n', 2);
   const truncBadge = ''; // placeholder for future truncated content indicator
-  // Device tag — subtle indicator when tool runs on a remote device
+  // Device tag — subtle indicator when tool runs on a remote device.
+  // 设备角标本名批 2026-10-27：本机字面（local/self）解析为本机设备名（剥 -iso
+  // 后缀显示、title 保留原值），不再直出「local」——helper 单点 deviceTagHtml。
   let deviceTag = '';
   if (inputJson) {
     try {
       const inp = typeof inputJson === 'string' ? JSON.parse(inputJson) : inputJson;
-      if (inp.device) deviceTag = '<span class="tool-device-tag">' + escapeHtml(String(inp.device)) + '</span>';
+      if (inp.device) deviceTag = deviceTagHtml(inp.device);
     } catch {}
   }
   const labelHtml = escapeHtml(labelParts[0]) + ' &mdash; ' + escapeHtml(localSummary) + truncBadge + deviceTag

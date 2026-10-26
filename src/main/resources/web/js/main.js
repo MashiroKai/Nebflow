@@ -83,6 +83,10 @@ import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 // EPUB chapters have no frame guarding them): bound once at boot below.
 import { bindDocMarkupLinkBridge } from './viewers/shared.js';
 import { escapeHtml, isBgAgentId } from './utils.js';
+// 本机设备名登记（设备角标本名批 2026-10-27）：configData.selfDevice.name（引擎
+// 自身身份读数，加法字段）→ deviceRoster 本机显示名缓存——工具卡设备角标本机字面
+// （local/self）的解析第二源（花名册 self 为第一源），两源皆缺不渲染、绝不「local」。
+import { noteSelfDeviceName } from './deviceRoster.js';
 import { showMemoryButton, handleMemoryData, handleMemoryChanged, initMemory, clearMemoryCache } from './memory.js';
 import { initBgMergedPanel } from './bgMergedPanel.js';
 import { addNotification } from './notificationBanner.js';
@@ -2470,6 +2474,9 @@ onMessage('configData', (msg, view) => {
   state._freshConfigText = state.configText; // Cache for slider's fetch-before-save
   try { state.parsedConfig = JSON.parse(state.configText); } catch { state.parsedConfig = null; }
   state.configDirty = false;
+  // 本机设备名登记（设备角标本名批 2026-10-27）：引擎自身身份读数随帧入缓存
+  // （selfDevice.name 加法字段；老引擎帧无此键 ⇒ 空值不覆盖，花名册源照旧）。
+  noteSelfDeviceName(msg.selfDevice?.name);
   // F-1 (permshield F1, 2026-09-13): the config snapshot carries the ONE
   // authoritative global mode (`safety.defaultMode`) and is re-fetched on every
   // `configUpdated` broadcast — i.e. this is the arrival path for "another
