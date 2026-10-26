@@ -141,7 +141,8 @@ private[gateway] object NeblinkRoutes:
       // 不是就走 relay」）=====
       //
       // 浏览端（ws.js/nearpath.js）在会话打开/重连时主动上报 device stamp 的
-      // boundDeviceId（deviceIdentity.js 设置页的绑定面，与消息设备标记
+      // boundDeviceId（deviceIdentity.js 花名册自动判定面——标注全自动批
+      // 2026-10-26 起设置页手动绑定退役；与消息设备标记
       // 「消息标记设备」逐字同源）；本端点对照花名册（self + peers，与
       // WebSocketRoutes.deviceProvenanceOf 的登记判定同一词表）给 enrolled 标记。
       //   enrolled = true  ⇒ 回 lanAddresses（本机私网 IPv4 枚举，[[LanAddresses]]）

@@ -666,6 +666,9 @@ private[neblink] final class PortalTunnelBridge(
     private def received(ws: WebSocket, kind: String, result: Either[String, Option[Array[Byte]]]): Unit =
       result match
         case Right(Some(bytes)) =>
+          // #949：offerUp 现在排队等容量（满则拍退避，不丢）——返回即「件已收下」。
+          // request(1) 因此后置到收下之后：inbox 积压时本地 peer 在这里第一次被
+          // 真实背压（JDK 停发 ⇒ 本地 app 慢下来），而不是「照常放行+丢件」。
           offerUp(WsCycle.UplinkItem.Frame(PortalWireCodec.WsFrame(requestId, kind, bytes, fin = true)))
           ws.request(1)
         case Right(None) => ws.request(1)
@@ -704,12 +707,48 @@ private[neblink] final class PortalTunnelBridge(
         offerUp(WsCycle.UplinkItem.RelayClose(1011, error.getClass.getSimpleName))
         cycle.toLocal.offer(WsCycle.DownlinkItem.LocalGone)
 
+    /** #949：uplink 满态处置核心在 [[offerUplinkAwaitCapacity]]（排队等容量，不丢件）。 */
     private def offerUp(item: WsCycle.UplinkItem): Unit =
-      if !cycle.uplink.offer(item) then
-        logger.warnSync(
-          s"portal uplink inbox full: requestId=$requestId — uplink item dropped (relay slower than the local peer)"
-        )
+      offerUplinkAwaitCapacity(cycle, item)
   end LocalWsListener
+
+  /**
+   * #949（2026-10-26）——修前这里「满了就丢 + 每次一条 WARN」：丢件=浏览器流
+   * 永久缺帧，且固定 2-3 个 requestId 每秒数条刷了 2000 行（无退避无同因去重，
+   * 死循环空烧 CPU）。修后 = **排队等容量**：拍退避（[[UplinkBackoff]]，翻倍
+   * 封顶，零墙钟无放弃时限）等待 pump 腾位；同因 WARN 走 [[UplinkFullAlarm]]
+   * 限频（首条 + 每 32 事件一条，状态变化即报）；本地 peer 由调用方的
+   * `request(1)` 窗口第一次被真实背压。退出只有两个事件：拿到容量；周期死亡
+   * （注册表摘除）——死亡件进 [[PortalUplinkDeadLetter]] 落盘补投，永不静默
+   * 消失（#944「宁重勿丢」同款语义）。package-private：spec 直驱。
+   */
+  private[neblink] def offerUplinkAwaitCapacity(cycle: WsCycle, item: WsCycle.UplinkItem): Unit =
+    var accepted = cycle.uplink.offer(item)
+    var waited = false
+    while !accepted && !cycleDead(cycle) do
+      waited = true
+      cycle.alarm
+        .strike(cycle.uplink.size(), PortalTunnelBridge.WsQueueSlots, cycle.itemBytes(item))
+        .foreach(logger.warnSync)
+      // 拍退避：轮次 = 本回合已历满态事件数（停等拍数随之翻倍、封顶）。
+      UplinkBackoff.park(round = cycle.alarm.strikeCount.toInt.max(1))
+      accepted = cycle.uplink.offer(item)
+    if accepted then
+      if waited then cycle.alarm.recovered().foreach(logger.infoSync)
+    else
+      // 周期已死而件未走（pump 死亡/周期被摘）：死信落盘，状态变化即报。
+      PortalUplinkDeadLetter.enqueueSync(
+        cycle.requestId,
+        PortalUplinkDeadLetter.SourceWaitCycleDeath,
+        cycle.itemKind(item),
+        PortalWireCodec.encode(cycle.itemFrame(item)),
+        cycle.itemBytes(item),
+        "cycle left the registry while the uplink inbox was full (pump dead / cycle dropped)"
+      )
+  end offerUplinkAwaitCapacity
+
+  /** 周期死亡事件：注册表里已不是本周期（摘除即死——teardown/双 pump 失败路径都在此摘）。 */
+  private def cycleDead(cycle: WsCycle): Boolean = wsCycles.get(cycle.requestId) ne cycle
 
   // ────────────────────────── console ticket mint ──────────────────────────
 
@@ -810,6 +849,9 @@ private[neblink] final class PortalTunnelBridge(
         out.toList
       drain(channels).traverse_(cancelCycle) *>
         drain(cycles).traverse_(cancelPumps) *>
+        // #949 面二：连接收尾时仍在 uplink inbox 排队的件 ⇒ 死信落盘（带来源
+        // 与 requestId），relay 恢复后按序补投——永不静默消失（#944 同款）。
+        drain(cycles).traverse_(preservePendingUplink) *>
         IO {
           drain(cycles).foreach { c =>
             val local = c.local
@@ -819,6 +861,48 @@ private[neblink] final class PortalTunnelBridge(
           }
         }
     }
+
+  /**
+   * #949：一个周期的 uplink inbox 全量残件进死信区（同步核心，单件写失败不抛）。
+   * 顺序 = 队列 FIFO（poll 序 == 入队序，死信文件名序保序补投）。
+   */
+  private def preservePendingUplink(c: WsCycle): IO[Unit] = IO {
+    var item = c.uplink.poll()
+    while item != null do
+      PortalUplinkDeadLetter.enqueueSync(
+        c.requestId,
+        PortalUplinkDeadLetter.SourceTeardown,
+        c.itemKind(item),
+        PortalWireCodec.encode(c.itemFrame(item)),
+        c.itemBytes(item),
+        "connection ended with the item still queued in the uplink inbox"
+      )
+      item = c.uplink.poll()
+  }
+
+  /**
+   * #949 面二·补投腿：按入队序把死信区残件经**当前连接**的 sender 补投上去
+   * （成功出队、失败留盘等下一轮重连；单件炸不拖垮其余）。由
+   * [[PortalConnection.armLifecycle]] 在消费纤维起来后 fire-and-forget 驱动，
+   * 零墙钟——触发只认「（重）连成功」这一事件，无重试节拍（#944 outboxDrain
+   * 同款装配位）。
+   */
+  private[neblink] def replayDeadLetters: IO[Unit] =
+    PortalUplinkDeadLetter
+      .drain(entry => sender.send(entry.frameText))
+      .flatMap {
+        case PortalUplinkDeadLetter.DrainReport(Nil, Nil) => IO.unit
+        case report =>
+          IO(
+            logger.infoSync(
+              s"portal uplink dead-letter replay: replayed=${report.replayed.size} kept=${report.kept.size}" +
+                report.kept.take(3).map { (id, err) => s" [$id: $err]" }.mkString
+            )
+          )
+      }
+      .handleErrorWith(e =>
+        logger.warn(s"portal uplink dead-letter replay failed (entries kept on disk): ${e.getMessage}").void
+      )
 
 end PortalTunnelBridge
 
@@ -1194,6 +1278,9 @@ private[neblink] object PortalTunnelBridge:
       new java.util.concurrent.atomic.AtomicReference[Option[cats.effect.Fiber[IO, Throwable, Unit]]](None)
     private val activated = new java.util.concurrent.atomic.AtomicBoolean(false)
 
+    /** #949 面一：同因「inbox full」限频报警器（每周期一个；本地 listener 单生产者）。 */
+    val alarm = new UplinkFullAlarm(requestId)
+
     /** Filled once the loopback connect completes (before pumps start). */
     @volatile var local: WebSocket = null
 
@@ -1206,6 +1293,23 @@ private[neblink] object PortalTunnelBridge:
       if activated.compareAndSet(false, true) then
         val w = local
         if w != null then w.request(1)
+
+    // ── #949：uplink 件的死信投影（帧原文 / 族名 / 字节读数） ──
+
+    def itemFrame(item: WsCycle.UplinkItem): PortalWireCodec.PortalFrame = item match
+      case WsCycle.UplinkItem.OpenResult(accepted, status) =>
+        PortalWireCodec.WsOpenResult(requestId, accepted, status)
+      case WsCycle.UplinkItem.Frame(f)                 => f
+      case WsCycle.UplinkItem.RelayClose(code, reason) => PortalWireCodec.WsClose(requestId, code, reason)
+
+    def itemKind(item: WsCycle.UplinkItem): String = item match
+      case _: WsCycle.UplinkItem.OpenResult => "open_result"
+      case _: WsCycle.UplinkItem.Frame      => "ws_frame"
+      case _: WsCycle.UplinkItem.RelayClose => "relay_close"
+
+    def itemBytes(item: WsCycle.UplinkItem): Long = item match
+      case WsCycle.UplinkItem.Frame(f) => f.data.length.toLong
+      case _                           => 0L
   end WsCycle
 
   object WsCycle:
@@ -1273,7 +1377,11 @@ private[neblink] final class PortalConnection(dispatcher: Dispatcher[IO]):
   def armLifecycle(closed: cats.effect.Deferred[IO, Unit]): Unit =
     bridgeRef.get.foreach { bridge =>
       dispatcher.unsafeRunAndForget(
-        bridge.run.start.flatMap(f => IO(consumer.set(Some(f)))) >>
+        bridge.run.start.flatMap(f => IO(consumer.set(Some(f)))) *>
+          // 台账 #949：连接活了 ⇒ 上行死信区按序补投的第一刻（fire-and-forget：
+          // 失败件留盘，等下一轮重连或下一次 boot；零墙钟，不设重试节拍——
+          // #944 outboxDrain 同款装配位，位于 connected 生命周期内）。
+          bridge.replayDeadLetters *>
           closed.get *> bridge.teardown() *> IO(consumer.getAndSet(None)).flatMap {
             _.fold(IO.unit)(_.cancel).void
           }
