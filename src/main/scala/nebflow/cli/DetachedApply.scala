@@ -256,6 +256,11 @@ object DetachedApply:
       .replace("&", "&amp;")
       .replace("<", "&lt;")
       .replace(">", "&gt;")
+    // 裸 "powershell.exe" 在 Task Scheduler 服务上下文里解析不到（硬化 PATH ⇒ 0x80070002
+    // 假成功）——必须写全路径；SystemRoot 兜底 C:\Windows（PS 5.1 内置于每台 Windows）
+    val psFull = sys.env
+      .get("SystemRoot").orElse(sys.env.get("SYSTEMROOT")).getOrElse("C:\\Windows") +
+      "\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
     val xml =
       s"""<?xml version="1.0" encoding="UTF-16"?>
          |<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -277,7 +282,7 @@ object DetachedApply:
          |  </Triggers>
          |  <Actions Context="Author">
          |    <Exec>
-         |      <Command>powershell.exe</Command>
+         |      <Command>$psFull</Command>
          |      <Arguments>$argsXml</Arguments>
          |    </Exec>
          |  </Actions>
