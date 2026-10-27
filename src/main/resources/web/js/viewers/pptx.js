@@ -18,7 +18,9 @@
 //      重灌完成，产物帧内无可被消息驱动的东西。
 //   3. zip 预算闸 = shared.js ZIP_BUDGET 预算族（entry 32MB / total 128MB，
 //      打开闸 100MB 派生——见 shared.js 常量注释），经 zipLimits 喂给库。
-//   4. 大件行为：源件 >50MB（MAX_SOURCE_BYTES）拒绝渲染 → 可见降级下载链。
+//   4. 大件行为：源件 >50MB（MAX_SOURCE_BYTES）拒绝渲染 → 可见降级下载链；取数/渲染
+//      全程异步 + 进度读数（#815 收口批：onProgress 透传 nfViewerUrl，字节/百分比
+//      逐段回填，字节到齐切「渲染中」读数——大件不黑盒、面板不冻结）。
 //   5. 引用姿势 = 白名单不透传：内联媒体 blob: → data: 重写；其余（http/https 外链
 //      图片/音视频/超链接/样式 url()）一律落占位或剥除（docx.js:48-62 纪律，不留口子）。
 //      中和跑在 staging 帧内（产物侧），CSP 跑在 staging 帧头（网络侧）——双侧独立生效。
@@ -232,7 +234,28 @@ function buildShell(unitsHtml, slideDims, zoom) {
 async function viewPptx(pane, { absPath, fileName, size, objectUrl }) {
   /** @type {any} */ (pane)._pptxTeardown?.(); // 同 pane 重渲：先清上一轮 staging 帧/桥
   pane.classList.remove('scrollable');
-  pane.innerHTML = `<div class="canvas-md-viewer" style="display:flex;align-items:center;justify-content:center;color:var(--color-text-muted);opacity:0.5;">Loading presentation...</div>`;
+  // 加载占位 + 进度读数（#815 收口批）：大件（几十 MB deck）取数/解析全程异步，
+  // 占位不再是一句死文案——取数腿经 nfViewerUrl 的 onProgress 逐段回填「字节/百分比」，
+  // 字节到齐后切换「渲染中」读数直到产物帧接管。objectUrl 腿（字节已在本地）与
+  // 账本命中（cached blob）不触发进度（瞬时完成，无可报）。
+  const loadingBox = document.createElement('div');
+  loadingBox.className = 'canvas-md-viewer';
+  loadingBox.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--color-text-muted);';
+  const loadLabel = document.createElement('div');
+  loadLabel.textContent = 'Loading presentation...';
+  const loadProgress = document.createElement('div');
+  loadProgress.style.cssText = 'font-size:12px;opacity:0.7;font-variant-numeric:tabular-nums;';
+  loadProgress.hidden = true;
+  loadingBox.append(loadLabel, loadProgress);
+  pane.innerHTML = '';
+  pane.appendChild(loadingBox);
+  const onProgress = (/** @type {number} */ loaded, /** @type {number} */ total) => {
+    if (!pane.isConnected) return;
+    loadProgress.hidden = false;
+    loadProgress.textContent = total
+      ? `${formatSize(loaded)} / ${formatSize(total)}（${Math.round((loaded / total) * 100)}%）`
+      : formatSize(loaded);
+  };
   /** @type {any} */ (pane)._pptxDiag = { gateDecision: 'pending' };
   const diag = /** @type {any} */ (pane)._pptxDiag;
   const ctx = { absPath, fileName, size, objectUrl };
@@ -253,7 +276,9 @@ async function viewPptx(pane, { absPath, fileName, size, objectUrl }) {
     // M2 账本接缝（imgdoor #542 推广批）：票据腿经 nfViewerUrl——账本命中 = blob URL
     // 直开（第二次打开零取数），未命中走既有票据链并入账。下载锚腿（renderDownloadFallback）
     // 保持票据 URL 原样（下载语义不经账本）。
-    const url = await nfViewerUrl({ absPath, objectUrl, pane });
+    // #815 收口批：onProgress 透传（nfViewerUrl → nfViewerSource → fetchBlobWithProgress），
+    // 大件取数全程有进度读数，不再黑盒等待。
+    const url = await nfViewerUrl({ absPath, objectUrl, pane, onProgress });
     const resp = await fetch(url);
     if (!resp.ok) {
       const detail = await resp.text().catch(() => '');
@@ -268,6 +293,7 @@ async function viewPptx(pane, { absPath, fileName, size, objectUrl }) {
     return;
   }
   if (!pane.isConnected) return;
+  loadLabel.textContent = 'Rendering slides...'; // 字节到齐，staging 帧解析/渲染中（异步，不阻塞面板）
 
   if (buf.byteLength > MAX_SOURCE_BYTES) {
     diag.gateDecision = 'refuse-render:actual>50MB';

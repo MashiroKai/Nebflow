@@ -596,7 +596,9 @@ export async function nfViewerSource(p) {
  * 语义 = [[nfViewerSource]] 只取 url）。`maxBytes` 在场且声明尺寸超限 ⇒ 不走账本
  * （保持票据 URL 流式/Range 原状——视频 seek 依赖 Range，大件整收是 UX 回归；
  * 阈值 64 MiB 与 96MiB device 桶/128MiB local 桶留距，超预算本也不可缓存）。
- * @param {{ absPath: ?string, objectUrl: ?string, pane?: Element, size?: number, maxBytes?: number }} p
+ * `onProgress` 原样透传 [[nfViewerSource]]（#815 收口批：pptx 大件取数进度读数；
+ * objectUrl 腿/账本命中不触发——字节已在本地，无可报）。
+ * @param {{ absPath: ?string, objectUrl: ?string, onProgress?: ((loaded: number, total: number) => void)|null, pane?: Element, size?: number, maxBytes?: number }} p
  * @returns {Promise<string>}
  */
 export async function nfViewerUrl(p) {
