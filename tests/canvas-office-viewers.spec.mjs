@@ -1,5 +1,15 @@
 // canvas-office-viewers.spec.mjs — Canvas 办公三 viewer（canvas-office-render-fix 批 2026-10-06）。
 //
+// #815 收口批（2026-10-27）新增钉（作者令「pptx 打开可见首屏、翻页、错误态」三条件）：
+//   ①+首屏可见 = 产物帧非零尺寸且与活动面板可视区相交（几何断言；人眼读数靠截图存证）；
+//   ①-C 翻页 = pane（.scrollable 自滚容器）滚动自由度在 + 产物帧随动滚出首屏 +
+//     滚动前后面板区截图字节不同（换页换内容，不潜入沙箱帧取证）；
+//   ①-D 错误态三态 = CFB 容器（legacy .ppt/加密件）→ download-leg:cfb 人话降级；
+//     坏 zip（PK 过嗅探、库解析失败）→ render-failed 终态面板；>50MB 超限 →
+//     refuse-render:source>50MB 秒级终态不阻塞——三态均带「Download to view」可见降级。
+//   ②-T4 铸票轮数断言订正（4→6）：pop-403 批（2026-10-24）给 nfViewerSource 加了
+//     取数腿内部自愈 reMint（存量为 stale 断言，pristine HEAD 即红——基线实测 mints=6）。
+//
 // 作者 16:43 令（双截图为证）三症状：
 //   ① pptx：viewer 已新版但 renderer asset fetch 404 —— vendored
 //     web/vendor/pptx-renderer/*（commit 0adfef219 新增 7 件）无路由可达
@@ -319,9 +329,122 @@ console.log('\n== ① pptx：renderer 资产腿＋渲染出片（mock 档：vend
   ok('产物帧在位（sandbox="" 全沙箱）', !!prodFrame && prodFrame.sandbox === '', JSON.stringify(prodFrame));
   ok('出片 6 页（fidelity 样例）', !!prodFrame && prodFrame.slides === 6, `slides=${prodFrame && prodFrame.slides}`);
   ok('产物帧零脚本', !!prodFrame && prodFrame.scripts === 0, `scripts=${prodFrame && prodFrame.scripts}`);
+  // #815 spec 钉①：首屏可见——产物帧非零尺寸且与活动面板可视区相交（几何断言；
+  // 沙箱帧 opaque origin 不潜入，人眼读数由截图存证）。
+  const firstScreen = await h.page.evaluate(() => {
+    const pane = document.querySelector('.canvas-tab-pane.active');
+    const frame = pane && pane.querySelector('iframe[sandbox=""]');
+    if (!pane || !frame) return null;
+    const pr = pane.getBoundingClientRect();
+    const fr = frame.getBoundingClientRect();
+    const ix = Math.max(0, Math.min(pr.right, fr.right) - Math.max(pr.left, fr.left));
+    const iy = Math.max(0, Math.min(pr.bottom, fr.bottom) - Math.max(pr.top, fr.top));
+    return { frameW: Math.round(fr.width), frameH: Math.round(fr.height), interArea: Math.round(ix * iy) };
+  });
+  ok('首屏可见：产物帧非零尺寸且与面板可视区相交', !!firstScreen && firstScreen.frameW > 100 && firstScreen.frameH > 100 && firstScreen.interArea > 10000, JSON.stringify(firstScreen));
   await shot(h.page, 'mock-pptx-rendered.png');
   if (h.errors.length) console.log(`  [warn] pageerror: ${h.errors.join(' | ').slice(0, 200)}`);
   await h.ctx.close();
+}
+
+console.log('\n== ①-C pptx 翻页（pane 滚动换页：滚动自由度 + 产物帧随动 + 面板区截图变化） ==');
+{
+  const h = await boot(browser);
+  await openPath(h.page, PPTX_FIXTURE);
+  await h.page.waitForFunction(() => {
+    const pane = document.querySelector('.canvas-tab-pane.active');
+    return pane && pane._pptxDiag && pane._pptxDiag.gateDecision === 'render';
+  }, { timeout: 30000 });
+  await h.page.waitForFunction(() => {
+    const f = document.querySelector('.canvas-tab-pane.active iframe[sandbox=""]');
+    return !!f && f.getBoundingClientRect().height > 100;
+  }, { timeout: 10000 });
+  const paneEl = h.page.locator('.canvas-tab-pane.active');
+  const shotA = await paneEl.screenshot();
+  // 翻页 = pane 自滚（.canvas-tab-pane.scrollable 是滚动容器，split.css:1012）滚到底＝末页
+  const scrollInfo = await h.page.evaluate(() => {
+    const pane = document.querySelector('.canvas-tab-pane.active');
+    const before = pane.scrollTop;
+    pane.scrollTop = pane.scrollHeight;
+    return { before, after: pane.scrollTop, scrollHeight: pane.scrollHeight };
+  });
+  ok('翻页自由度在（pane 可滚，内容高于视口）', scrollInfo.scrollHeight > 600 && scrollInfo.after > 0, JSON.stringify(scrollInfo));
+  const frameTop = await h.page.evaluate(() => {
+    const f = document.querySelector('.canvas-tab-pane.active iframe[sandbox=""]');
+    return Math.round(f.getBoundingClientRect().top);
+  });
+  ok('滚动后产物帧随动（首屏已滚出视口）', frameTop < 0, `frameTop=${frameTop}`);
+  const shotB = await paneEl.screenshot();
+  ok('翻页换内容（滚动前后面板区截图不同）', !shotA.equals(shotB), `bytesA=${shotA.length}`);
+  await shot(h.page, 'mock-pptx-paged.png');
+  if (h.errors.length) console.log(`  [warn] pageerror: ${h.errors.join(' | ').slice(0, 200)}`);
+  await h.ctx.close();
+}
+
+console.log('\n== ①-D pptx 错误态三态（CFB / 坏 zip / 超限 → 有人话原因的可见降级，不遮挡） ==');
+{
+  // D1 CFB 容器（legacy .ppt / 加密 pptx 同容器）：魔数嗅探 → 下载链降级
+  const cfbPath = join(FIX_DIR, 'legacy-cfb.pptx');
+  writeFileSync(cfbPath, Buffer.concat([Buffer.from([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]), Buffer.alloc(120, 0x7F)]));
+  const h1 = await boot(browser);
+  await openPath(h1.page, cfbPath);
+  let d1 = null;
+  try {
+    await h1.page.waitForFunction(() => {
+      const pane = document.querySelector('.canvas-tab-pane.active');
+      return pane && pane._pptxDiag && pane._pptxDiag.gateDecision !== 'pending';
+    }, { timeout: 15000 });
+    d1 = await h1.page.evaluate(() => {
+      const pane = document.querySelector('.canvas-tab-pane.active');
+      return { gate: pane._pptxDiag.gateDecision, text: pane.textContent || '' };
+    });
+  } catch { /* timeout ⇒ d1 空 */ }
+  ok('CFB：降级腿有人话原因（legacy/加密提示 + 下载链）', !!d1 && d1.gate === 'download-leg:cfb' && d1.text.includes('Legacy .ppt or encrypted') && d1.text.includes('Download to view'), JSON.stringify(d1 && { gate: d1.gate, text: d1.text.slice(0, 120) }));
+  await shot(h1.page, 'mock-pptx-error-cfb.png');
+  await h1.ctx.close();
+
+  // D2 坏 zip（PK 魔数过嗅探、库解析失败）：渲染失败 → 人话终态
+  const badZip = join(FIX_DIR, 'truncated.pptx');
+  writeFileSync(badZip, Buffer.concat([Buffer.from('PK\x03\x04'), Buffer.alloc(200, 0xA5)]));
+  const h2 = await boot(browser);
+  await openPath(h2.page, badZip);
+  let d2 = null;
+  try {
+    await h2.page.waitForFunction(() => {
+      const pane = document.querySelector('.canvas-tab-pane.active');
+      return pane && pane._pptxDiag && pane._pptxDiag.gateDecision === 'render-failed';
+    }, { timeout: 40000 });
+    d2 = await h2.page.evaluate(() => {
+      const pane = document.querySelector('.canvas-tab-pane.active');
+      return { gate: pane._pptxDiag.gateDecision, text: pane.textContent || '' };
+    });
+  } catch { /* timeout ⇒ d2 空 */ }
+  ok('坏 zip：终态错误面板有人话原因（Failed to render + 下载链）', !!d2 && d2.text.includes('Failed to render PPTX') && d2.text.includes('Download to view'), JSON.stringify(d2 && { gate: d2.gate, text: d2.text.slice(0, 160) }));
+  await shot(h2.page, 'mock-pptx-error-badzip.png');
+  await h2.ctx.close();
+
+  // D3 超限（>50MB 声明尺寸）：打开闸拒绝 → 可见降级（不取数、不冻结面板）
+  const bigPath = join(FIX_DIR, 'oversized.pptx');
+  writeFileSync(bigPath, Buffer.concat([Buffer.from('PK\x03\x04'), Buffer.alloc(51 * 1024 * 1024, 0)]));
+  const h3 = await boot(browser);
+  const t0 = Date.now();
+  await openPath(h3.page, bigPath);
+  let d3 = null;
+  try {
+    await h3.page.waitForFunction(() => {
+      const pane = document.querySelector('.canvas-tab-pane.active');
+      return pane && pane._pptxDiag && pane._pptxDiag.gateDecision !== 'pending';
+    }, { timeout: 15000 });
+    d3 = await h3.page.evaluate(() => {
+      const pane = document.querySelector('.canvas-tab-pane.active');
+      return { gate: pane._pptxDiag.gateDecision, text: pane.textContent || '' };
+    });
+  } catch { /* timeout ⇒ d3 空 */ }
+  const elapsed = Date.now() - t0;
+  ok('超限：>50MB 闸拒绝渲染并给出上限人话', !!d3 && d3.gate === 'refuse-render:source>50MB' && d3.text.includes('50MB in-app render cap'), JSON.stringify(d3 && { gate: d3.gate, text: d3.text.slice(0, 120) }));
+  ok('超限：打开不阻塞（秒级落终态）', elapsed < 8000, `elapsed=${elapsed}ms`);
+  await shot(h3.page, 'mock-pptx-error-oversize.png');
+  await h3.ctx.close();
 }
 
 console.log('\n== ② xlsx：自愈档（首轮铸票失败 → 401 → reMint → 重试 → 出表） ==');
@@ -357,9 +480,11 @@ console.log('\n== ②-T4 xlsx：定局档（铸票恒败 → 恰好一次重试 
   ok('终局面板在位（Failed to render XLSX）', terminal && text.includes('Failed to render XLSX'), text.slice(0, 80));
   ok('401 Missing ticket 形态如实呈现', text.includes('401'), text.slice(0, 120));
   ok('恰好两跳定局（无第三跳）', h.nfFileReqs.length === 2, `reqs=${h.nfFileReqs.length}`);
-  // 每轮铸票 = cookie 腿＋Bearer 腿两次 POST（localStorage 有 token 时，nfTicket.js 403 重试）；
-  // 两轮（首轮＋reMint，reMint 先清 breaker）= 4 次 POST。
-  ok('铸票两轮（首轮＋reMint；403 时每轮双投）', h.mint.count() === 4, `mints=${h.mint.count()}`);
+  // 每轮铸票 = cookie 腿＋Bearer 腿两次 POST（nfTicket.js 403 时带 Bearer 立即重投一次）。
+  // 三轮 = 6 次 POST：queuedTicketUrl 首轮 ＋ nfViewerSource 取数腿内部自愈 reMint
+  // （pop-403 批 2026-10-24 引入，旧断言 4 为 stale——pristine HEAD 基线实测 mints=6）
+  // ＋ viewer 层 reMint。取件跳数纪律由上一条「恰好两跳」钉死，本条只钉轮数封顶。
+  ok('铸票三轮（首轮＋nfViewerSource 自愈＋viewer reMint；403 时每轮双投）', h.mint.count() === 6, `mints=${h.mint.count()}`);
   if (h.errors.length) console.log(`  [warn] pageerror: ${h.errors.join(' | ').slice(0, 200)}`);
   await h.ctx.close();
 }
