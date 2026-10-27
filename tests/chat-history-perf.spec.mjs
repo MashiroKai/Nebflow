@@ -9,6 +9,10 @@
 // 本 spec 用**真实前端代码**（静态伺服 src/main/resources/web）+ 桩后端
 // （routeWebSocket，300 条重历史会话：60KB 工具正文 ×60、markdown、卡片图）
 // 量出四件事：
+//   P0 首屏（#923 钉子，2026-10-27）：初载恰好一页 — 首屏行数 = 一页的行数
+//                           （卡片行双计；零双挂载/零重复行）且首屏时延
+//                           （stub 收到 init getHistory → 首屏行落定）
+//                           < PERF_BUDGET_FIRST_MS（默认 3000ms）；
 //   P1 上滑分页逐页完成   — 前 4 页手动上滑补进，末段停在顶部由**续拉腿**
 //                           自动补齐到 300 条收口（360 .row，卡片行双计）；
 //   P2 每页主线程长任务   — 单页落定 < 2.5s 且 longtask 最长 < 300ms
@@ -21,8 +25,8 @@
 //
 // 运行：node tests/chat-history-perf.spec.mjs
 // 红腿对照：NB_UX_ROOT=<修前树根> NB_CHROME_PATH=<chrome> node tests/chat-history-perf.spec.mjs
-// 可选 env：PORT（默认 8199）、SHOTS_DIR、PERF_BUDGET_PAGE_MS（默认 2500）、
-//   PERF_BUDGET_LONGTASK_MS（默认 300）。
+// 可选 env：PORT（默认 8199）、SHOTS_DIR、PERF_BUDGET_FIRST_MS（默认 3000）、
+//   PERF_BUDGET_PAGE_MS（默认 2500）、PERF_BUDGET_LONGTASK_MS（默认 300）。
 
 import { chromium } from 'playwright';
 import { readFileSync, mkdirSync } from 'node:fs';
@@ -38,6 +42,7 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const SHOTS_DIR = process.env.SHOTS_DIR || '/tmp/stand-1026/history-perf';
 const PAGE_MS = Number(process.env.PERF_BUDGET_PAGE_MS || 2500);
 const LONGTASK_MS = Number(process.env.PERF_BUDGET_LONGTASK_MS || 300);
+const FIRST_MS = Number(process.env.PERF_BUDGET_FIRST_MS || 3000);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const MIME = {
@@ -112,6 +117,7 @@ const pageFor = (m) => {
 
 let wsConnections = 0;
 let initialHistorySends = 0;   // 每次（重）连接的初载 getHistory —— >1 即发生了重连
+let initSendAt = 0;            // 首屏时延锚：stub 收到**第一条** init getHistory 的时刻
 let holdPongMs = 0;            // 遮蔽腿：把下一窗 pong 压住 N ms（模拟大帧占道/主线程阻塞）
 const histReqs = [];           // 诊断：每次 getHistory 的 beforeIndex 轨迹
 
@@ -154,7 +160,10 @@ await page.routeWebSocket(/\/ws/, (ws) => {
       return;
     }
     if (m.type === 'getHistory') {
-      if (m.beforeIndex === undefined) initialHistorySends += 1;
+      if (m.beforeIndex === undefined) {
+        initialHistorySends += 1;
+        if (!initSendAt) initSendAt = Date.now();
+      }
       histReqs.push(m.beforeIndex === undefined ? 'init' : m.beforeIndex);
       ws.send(JSON.stringify(pageFor(m)));
     }
@@ -163,27 +172,62 @@ await page.routeWebSocket(/\/ws/, (ws) => {
   ws.send(JSON.stringify({ type: 'sessionList', sessions: [{ id: 'sess-1', agentName: 'Nebula', title: 'T', updatedAt: Date.now() }], activeId: 'sess-1', folders: [] }));
 });
 
-await page.goto(BASE + '/index.html');
-await page.waitForSelector('#activity-bar', { timeout: 20000 });
-try {
-  await page.waitForFunction(() => document.querySelectorAll('#chat .row').length > 0, { timeout: 15000 });
-} catch (e) {
-  mkdirSync(SHOTS_DIR, { recursive: true });
-  await page.screenshot({ path: join(SHOTS_DIR, 'debug-no-history.png') }).catch(() => {});
-  console.log('DEBUG boot: no history rows in 15s');
-  console.log('pageerrors:', JSON.stringify(errors.slice(0, 8), null, 1));
-  console.log('console tail:', wsLines.slice(0, 12).join('\n'));
-  await browser.close(); server.close(); process.exit(1);
-}
-await sleep(600); // 初载 md 升级批落地
-await page.evaluate(() => { window.__noReloadMarker = { at: Date.now() }; window.__lt = { n: 0, total: 0, max: 0 }; });
-const navAtBoot = navigated;
-
 const results = [];
 const ok = (name, cond, detail = '') => results.push(`${cond ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`);
 const rowCount = () => page.evaluate(() => document.querySelectorAll('#chat .row').length);
 const bannerUp = () => page.evaluate(() => !!document.getElementById('stand-session-gate'));
 const ltSnap = () => page.evaluate(() => ({ ...window.__lt }));
+
+await page.goto(BASE + '/index.html');
+await page.waitForSelector('#activity-bar', { timeout: 20000 });
+// P0 首屏（#923）：初载恰好一页的行数落定（卡片行双计）。等「≥ 期望行数」后
+// 立刻读数——首屏若健康则恒等；若发生双挂载会一次性越过，行数读数留给 F1 判。
+let firstRows = 0;
+let firstScreenAt = 0;
+try {
+  await page.waitForFunction(
+    (exp) => document.querySelectorAll('#chat .row').length >= exp,
+    ROWS_PER_PAGE,
+    { timeout: 15000 },
+  );
+  firstRows = await rowCount();
+  firstScreenAt = Date.now();
+} catch (e) {
+  mkdirSync(SHOTS_DIR, { recursive: true });
+  await page.screenshot({ path: join(SHOTS_DIR, 'debug-no-history.png') }).catch(() => {});
+  console.log('DEBUG boot: first page rows did not reach ' + ROWS_PER_PAGE + ' in 15s — ' + String(e?.message || e).slice(0, 200));
+  const dbg = await page.evaluate(() => ({
+    rows: document.querySelectorAll('#chat .row').length,
+    iframes: document.querySelectorAll('#chat iframe').length,
+    cardRows: document.querySelectorAll('#chat .row.card-content, #chat .row[class*="card"]').length,
+  })).catch(() => 'eval-failed');
+  console.log('DEBUG counts:', JSON.stringify(dbg));
+  console.log('pageerrors:', JSON.stringify(errors.slice(0, 8), null, 1));
+  console.log('console tail:', wsLines.slice(0, 12).join('\n'));
+  await browser.close(); server.close(); process.exit(1);
+}
+await sleep(600); // 初载 md 升级批落地
+const firstScreenMs = initSendAt ? firstScreenAt - initSendAt : -1;
+// P0 判据读数（首屏零双挂载/零重复请求的三件证）：
+//   ① 行数恰等一页（双挂载会一次性 ×2）——firstRows 本体；
+//   ② init getHistory 恰一发（同游标重复请求 bug 的签名 = ['init',...] 里 init>1）；
+//   ③ 非卡行文本唯一（卡片行标签恒同「Card」/iframe 空文本是夹具固有重复，剔除后
+//      真实内容行——user/ai/read——必须零重复；双挂载页会在 user/ai/read 上现形）。
+const bootInitCount = histReqs.filter((r) => r === 'init').length;
+const bootHistReqs = histReqs.slice();
+const firstDup = await page.evaluate(() => {
+  const texts = [...document.querySelectorAll('#chat .row')]
+    // 卡族两行全剔（夹具固有重复）：.card-content 行（iframe 空文本）与承载卡片的
+    // tool 行（label 恒同 + 本地化文案）——双挂载页的现形位是 user/ai/read 内容行。
+    .filter((r) => !r.querySelector('iframe') && !r.classList.contains('card-content'))
+    .map((r) => (r.textContent || '').trim())
+    .filter((t) => t.length > 12);
+  const seen = {}; let dups = 0;
+  for (const t of texts) { seen[t] = (seen[t] || 0) + 1; if (seen[t] > 1) dups++; }
+  return dups;
+});
+await page.evaluate(() => { window.__noReloadMarker = { at: Date.now() }; window.__lt = { n: 0, total: 0, max: 0 }; });
+const navAtBoot = navigated;
 
 /** 上滑一页（滚到 250px —— 预取带内、停顶续拉阈值上方）并等行数落定。 */
 async function scrollUpOnePage(expectRows, deadlineMs = 20000) {
@@ -259,6 +303,11 @@ const statsAfter = (gate && probeArmed)
 const evictLines = wsLines.filter((l) => /3 consecutive misses|force reconnect/.test(l));
 const shelterLines = wsLines.filter((l) => /sheltered: render gate busy/.test(l));
 
+ok('P0-a 首屏恰一页（行数 = ' + ROWS_PER_PAGE + '，init 恰一发，内容行零重复）',
+  firstRows === ROWS_PER_PAGE && bootInitCount === 1 && firstDup === 0,
+  `firstRows=${firstRows} initReqs=${bootInitCount} contentDup=${firstDup} histReqs=${JSON.stringify(bootHistReqs)}`);
+ok('P0-b 首屏时延 < ' + FIRST_MS + 'ms（init getHistory → 行落定）',
+  firstScreenMs >= 0 && firstScreenMs < FIRST_MS, `firstScreen=${firstScreenMs}ms`);
 ok('P1 手动上滑 4 页补进 + 停顶续拉收口全量（卡片行双计）',
   manualRows === ROWS_PER_PAGE * 5 && rows === FINAL_ROWS, `manual=${manualRows} final=${rows}/${FINAL_ROWS} times=${pageTimes.join(',')}ms`);
 ok('P2 单页落定 < ' + PAGE_MS + 'ms', maxPageMs < PAGE_MS, `maxPage=${maxPageMs}ms`);
@@ -283,7 +332,8 @@ mkdirSync(SHOTS_DIR, { recursive: true });
 await page.screenshot({ path: join(SHOTS_DIR, 'final-state.png'), fullPage: false });
 
 console.log(results.join('\n'));
-console.log(`\n[metrics] pageTimes=${pageTimes.join(',')}ms maxPage=${maxPageMs}ms longtask=${JSON.stringify(longtasks)} wsConnections=${wsConnections} initial=${initialHistorySends}`);
+console.log(`\n[metrics] firstScreen=${firstScreenMs}ms firstRows=${firstRows} contentDup=${firstDup}`);
+console.log(`[metrics] pageTimes=${pageTimes.join(',')}ms maxPage=${maxPageMs}ms longtask=${JSON.stringify(longtasks)} wsConnections=${wsConnections} initial=${initialHistorySends}`);
 console.log(`[metrics] histReqs=${JSON.stringify(histReqs)}`);
 console.log('[metrics] domDup=' + JSON.stringify(await page.evaluate(() => {
   const texts = [...document.querySelectorAll('#chat .row')].map(r => (r.textContent || '').slice(0, 36));
