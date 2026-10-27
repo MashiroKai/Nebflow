@@ -882,7 +882,8 @@ function refreshFileTab(entry) {
   }
   if (entry._refreshing) return;
   entry._refreshing = true;
-  const btn = pane.querySelector('.canvas-refresh-toggle');
+  // 定位修复批：钮已是壳层单例（#canvas-content 直子），不再按 pane 作用域查
+  const btn = (fileRefreshBtn && fileRefreshBtn.isConnected) ? fileRefreshBtn : null;
   if (btn) btn.classList.add('busy');
   // Safety: un-busy even if the response never arrives (mirrors the
   // _refreshing safety window in scheduleFileRefresh).
@@ -906,26 +907,81 @@ function refreshFileTab(entry) {
 /** Clear one file tab's refresh-in-flight state (busy icon + _refreshing). */
 function settleFileRefresh(entry) {
   entry._refreshing = false;
-  const pane = entry.paneEl;
-  if (pane && pane.isConnected) pane.querySelector('.canvas-refresh-toggle.busy')?.classList.remove('busy');
+  // 壳层单例：busy 类挂在共享按钮上，代表「任一在飞刷新」——清它即可
+  if (fileRefreshBtn && fileRefreshBtn.isConnected) fileRefreshBtn.classList.remove('busy');
 }
 
-/** Mount the bottom-right refresh button on a rendered file tab pane. Called
- *  after every renderFile (viewers wipe pane.innerHTML, so the button must be
- *  re-seated each render). No absPath ⇒ no button (panel/URL/attachment tabs). */
+// ── 文件刷新钮 · 壳层挂载（定位修复，作者报障 2026-10-27「刷新钮悬浮在正文
+// 中间」）────────────────────────────────────────────────────────────────
+// 根因：刷新钮 absolute 挂在 pane 里，而 docx/yaml/xlsx/pptx 等查看器把
+// .scrollable 加在 pane 自身（pane 即滚动容器）——absolute 子元素按整份滚动
+// 内容盒定位，bottom:16 落到文档末尾而非可视区底缘，随滚动漂移（md/code 等
+// pane 不自滚的页签不受累）。修法：挂载点上移到不滚动的面板壳 #canvas-content
+// （split.css: position:relative + overflow:hidden），按钮 = 每文档单例，可见性
+// 与座位随活动页签同步（syncFileRefreshButton）；源码态隐藏由 addSourceToggle
+// 的 canvas-source-mode-changed 事件驱动（shared.js 无回流 import 边，同
+// canvas-viewer-rerendered 先例）。主题（亮暗）只换 token 色值，几何不动。
+let fileRefreshBtn = null;
+
+/** The active tab's entry iff it is a live file tab (absPath + connected pane). */
+function activeFileEntry() {
+  const entry = activeTabId ? tabs.get(activeTabId) : null;
+  const pane = entry && entry.paneEl;
+  return (entry && entry.absPath && pane && pane.isConnected) ? entry : null;
+}
+
+/** Mount the bottom-right refresh button for rendered file tabs. Called after
+ *  every renderFile (call sites unchanged from the 刷新批) — the shell button
+ *  survives viewer innerHTML wipes, so remounts collapse to a no-op; the
+ *  visibility/seat sync below is what does the per-tab work. */
 function mountFileRefreshButton(pane, entry) {
   if (!entry || !entry.absPath) return;
   import('./viewers/shared.js').then(({ addRefreshButton }) => {
     // The tab can close (or the whole pane be replaced) while the import settles.
     if (!pane.isConnected || tabs.get(entry.id) !== entry) return;
-    addRefreshButton(pane, { onRefresh: () => refreshFileTab(entry) });
+    if (!fileRefreshBtn || !fileRefreshBtn.isConnected) {
+      const host = document.getElementById('canvas-content');
+      // Click resolves the ACTIVE file entry at click time (the singleton
+      // outlives any one tab's closure).
+      fileRefreshBtn = addRefreshButton(pane, {
+        host,
+        onRefresh: () => { const e = activeFileEntry(); if (e) refreshFileTab(e); },
+      });
+    }
+    syncFileRefreshButton();
   }).catch(() => { /* shared.js unavailable — button absent, zero behavior change */ });
 }
 
+/** Shell button follows the active tab: visible iff the active entry is a live
+ *  file tab outside source mode; seat recomputed against the active pane's
+ *  corner cluster (source/ref/find/graph circles + zoom bar live in the pane
+ *  and differ per viewer). */
+function syncFileRefreshButton() {
+  const btn = fileRefreshBtn;
+  if (!btn || !btn.isConnected) return;
+  const entry = activeFileEntry();
+  const pane = entry && entry.paneEl;
+  const visible = !!(entry && pane.dataset.sourceMode !== '1');
+  btn.hidden = !visible;
+  if (!entry) return;
+  const entryId = entry.id;
+  import('./viewers/shared.js').then(({ seatRefreshButton }) => {
+    if (btn.isConnected && activeTabId === entryId) seatRefreshButton(btn, pane);
+  }).catch(() => {});
+}
+
+// MD/HTML source↔rendered toggle swaps pane.dataset.sourceMode — the shell
+// button must hide/show with it (event decouples shared.js from canvas.js; no
+// import edge back). Only the ACTIVE pane owns the button.
+document.addEventListener('canvas-source-mode-changed', (e) => {
+  const pane = /** @type {any} */ (e.target);
+  if (pane instanceof HTMLElement && pane.classList.contains('active')) syncFileRefreshButton();
+});
+
 // MD/HTML source↔rendered toggle round trips re-run the viewer WITHOUT a
-// readFile (addSourceToggle → renderFn) — the render wipes pane.innerHTML, so
-// the refresh button must be re-seated here (event decouples shared.js from
-// canvas.js; no import edge back).
+// readFile (addSourceToggle → renderFn). The shell button survives the render
+// wipe; this remains as a self-healing re-sync (and first-mount belt for flows
+// that bypass openWorkspaceItem).
 document.addEventListener('canvas-viewer-rerendered', (e) => {
   const pane = /** @type {any} */ (e.target);
   if (!(pane instanceof HTMLElement)) return;
@@ -961,6 +1017,8 @@ export function setActiveTab(id) {
   // Live-refresh file tabs on activation (debounced, dirty-safe).
   const entry = tabs.get(id);
   if (entry) scheduleFileRefresh(entry);
+  // 壳层刷新钮（定位修复批）：随活动页签同步可见性 + 座位
+  syncFileRefreshButton();
 
   // canvas-stack：居中标题头随激活易主；叠卡开着时环重置到新 active 的前景位
   // （外部换签——agent 开文件 / 换入编排——都收敛到「新 canvas 在前景位」）。

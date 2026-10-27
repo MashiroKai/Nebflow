@@ -707,6 +707,11 @@ export function addSourceToggle(pane, renderFn, ctx) {
       }
     } finally {
       busy = false;
+      // 定位修复批（作者报障 2026-10-27）：刷新钮已上移到面板壳（#canvas-content
+      // 单例），源码态隐藏从「pane 内后代 CSS 选择器」改为 canvas.js 监听本事件
+      // 同步按钮可见性（同 canvas-viewer-rerendered 的解耦先例：shared.js 无
+      // 回流 canvas.js 的 import 边）。双向都发：渲染→源码隐藏，源码→渲染恢复。
+      pane.dispatchEvent(new CustomEvent('canvas-source-mode-changed', { bubbles: true }));
     }
   });
   pane.appendChild(btn);
@@ -892,6 +897,23 @@ function _refreshSeat(pane) {
   return { right: 16, bottom: REFRESH_ROW_BOTTOMS[1] };
 }
 
+/** Seat one refresh button for `pane`'s corner cluster (used both at mount and
+ *  on every active-tab switch — the cluster differs per viewer). Offsets are
+ *  written onto `btn` relative to its PARENT, compensated for the parent's
+ *  padding: seat values are pane-visual margins (16px from the pane edge), and
+ *  when the parent is the shell (#canvas-content, padding-bottom 8px) the abs
+ *  child resolves against the padding box — add it back so the VISUAL margin
+ *  stays 16px regardless of host. */
+export function seatRefreshButton(btn, pane) {
+  const host = btn.parentElement || pane;
+  const seat = _refreshSeat(pane);
+  const hcs = getComputedStyle(host);
+  const padR = parseFloat(hcs.paddingRight) || 0;
+  const padB = parseFloat(hcs.paddingBottom) || 0;
+  btn.style.right = (seat.right + padR) + 'px';
+  btn.style.bottom = (seat.bottom + padB) + 'px';
+}
+
 /**
  * Floating "re-read from disk" button for canvas file tabs (canvas 文件刷新批,
  * 作者令 2026-10-25). Same frosted-glass material family as the source toggle
@@ -900,14 +922,22 @@ function _refreshSeat(pane) {
  * The click handler is owned by the caller (canvas.js refreshFileTab); while a
  * re-read is in flight the caller puts `.busy` on the returned button (icon
  * spins). Hidden in source mode via CSS (`[data-source-mode="1"]`).
- *  @param {HTMLElement} pane — canvas tab pane
- *  @param {{ onRefresh?: (btn: HTMLButtonElement) => void }} [opts]
- *  @returns {HTMLButtonElement}
+ * 定位修复（作者报障 2026-10-27「刷新钮悬浮在正文中间」）：默认挂载点上移到
+ * `opts.host`（canvas.js 传不滚动的面板壳 #canvas-content）。pane 自身即滚动
+ * 容器的查看器（docx/yaml/xlsx/pptx 走 `.canvas-tab-pane.scrollable`）里，
+ * absolute 子元素按整份滚动内容盒定位——bottom:16 落到文档末尾随滚动漂移；
+ * 壳层 position:relative + overflow:hidden 不滚动，按钮恒钉可视区右下角。
+ *  @param {HTMLElement} pane — canvas tab pane (seat measuring + fallback host)
+ *  @param {{ onRefresh?: (btn: HTMLButtonElement) => void, host?: HTMLElement|null }} [opts]
+ * @returns {HTMLButtonElement}
  */
 export function addRefreshButton(pane, opts) {
-  const { onRefresh } = opts || {};
-  pane.querySelector('.canvas-refresh-toggle')?.remove();
-  if (getComputedStyle(pane).position === 'static') pane.style.position = 'relative';
+  const { onRefresh, host } = opts || {};
+  const mount = (host && host.isConnected) ? host : pane;
+  // Singleton scope: only the shell-level button (direct child) is ours —
+  // never touch anything inside the panes.
+  mount.querySelector(':scope > .canvas-refresh-toggle')?.remove();
+  if (getComputedStyle(mount).position === 'static') mount.style.position = 'relative';
 
   const btn = document.createElement('button');
   btn.type = 'button';
@@ -915,14 +945,12 @@ export function addRefreshButton(pane, opts) {
   btn.innerHTML = REFRESH_ICON_SVG;
   btn.title = t('canvas.refresh');
 
-  const seat = _refreshSeat(pane);
-  btn.style.right = seat.right + 'px';
-  btn.style.bottom = seat.bottom + 'px';
   btn.addEventListener('click', () => {
     if (btn.classList.contains('busy')) return;  // a re-read is already in flight
     if (typeof onRefresh === 'function') onRefresh(btn);
   });
-  pane.appendChild(btn);
+  mount.appendChild(btn);
+  seatRefreshButton(btn, pane);
   return btn;
 }
 
