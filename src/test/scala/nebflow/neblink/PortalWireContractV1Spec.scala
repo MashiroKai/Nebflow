@@ -8,13 +8,13 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.util.{Arrays, Base64}
 
 /**
- * Portal wire contract v1.1 conformance spec (phase 3c re-freeze, main-repo half).
+ * Portal wire contract conformance spec (v1.3 additive re-freeze, main-repo half).
  *
- * Source of truth: `src/test/resources/neblink/portal-wire-contract-v1.1.md` (13-frame wire
+ * Source of truth: `src/test/resources/neblink/portal-wire-contract-v1.3.md` (14-frame wire
  * surface plus the v1.1 optional fields) and its companion vector file
- * `src/test/resources/neblink/portal-wire-vectors-v1.1.json`. The neblink-server repo holds
- * byte-identical copies of both and runs its own conformance suite against the same vectors;
- * both sides must agree on every verdict.
+ * `src/test/resources/neblink/portal-wire-vectors-v1.3.json`. The link-server relay repo
+ * holds byte-identical copies of both and runs its own conformance suite against the same
+ * vectors; both sides must agree on every verdict.
  *
  * This spec models the frozen schema on the test side with circe, kept structurally identical
  * to the production codec (`PortalWireCodec`) so the two faces cannot diverge. For every
@@ -33,7 +33,7 @@ import java.util.{Arrays, Base64}
  * Envelope behaviors from contract section 1: `proto` above the supported version rejects
  * with `proto_unsupported`, and unknown extra keys are ignored (forward compatibility) — the
  * exact mechanism behind the v1.1 zero-breakage discipline, pinned by the vector-preservation
- * test below.
+ * tests below.
  */
 class PortalWireContractV1Spec extends FunSuite:
 
@@ -41,7 +41,7 @@ class PortalWireContractV1Spec extends FunSuite:
 
   private val SupportedProto = 1
 
-  /** Contract "Frame inventory": all 13 frames, exactly. */
+  /** Contract "Frame inventory": all 14 frames, exactly (v1.3). */
   private val FrameInventory: Set[String] = Set(
     "relay_request",
     "relay_response",
@@ -51,6 +51,7 @@ class PortalWireContractV1Spec extends FunSuite:
     "ws_open",
     "ws_open_result",
     "ws_frame",
+    "ws_data_frame",
     "ws_close",
     "ConsoleTicketMint",
     "ConsoleTicketResult",
@@ -59,6 +60,7 @@ class PortalWireContractV1Spec extends FunSuite:
   )
 
   private val WsFrameKinds      = List("text", "binary")
+  private val WsDataEncodings   = List("none", "gzip")
   private val ReqOrigins        = List("portal")
   private val TicketMintErrors  = List("rate_limited", "quiesced", "unbound")
   private val BindingKinds      = List("revoked", "stand-down", "quiesce", "quiesce-renew", "quiesce-lift")
@@ -91,6 +93,14 @@ class PortalWireContractV1Spec extends FunSuite:
   final case class WsOpenResult(requestId: String, accepted: Boolean, status: Int) extends PortalFrame
   final case class WsFrame(requestId: String, kind: String, data: Vector[Byte], fin: Boolean)
       extends PortalFrame
+  final case class WsDataFrame(
+    requestId: String,
+    seq: Int,
+    more: Boolean,
+    kind: String,
+    enc: String,
+    data: Vector[Byte]
+  ) extends PortalFrame
   final case class WsClose(requestId: String, code: Int, reason: String) extends PortalFrame
   final case class ConsoleTicketMint(
     requestId: String,
@@ -223,6 +233,20 @@ class PortalWireContractV1Spec extends FunSuite:
           data <- req(o, "data")(jsonBase64(_, "data"))
           fin <- reqBool(o, "fin")
         yield WsFrame(requestId, kind, data, fin)
+
+      case "ws_data_frame" =>
+        for
+          requestId <- reqUuid(o, "requestId")
+          seq <- reqInt(o, "seq")
+          // Contract 2.14: a negative seq is rejected PER FRAME (invalid_format);
+          // kept identical to the production codec. Same-message enc/kind
+          // agreement is the stream-level face (bridge drop), not a codec verdict.
+          _ <- Either.cond(seq >= 0, (), Rejection("invalid_format", field = Some("seq")))
+          more <- reqBool(o, "more")
+          kind <- reqEnum(o, "kind", WsFrameKinds)
+          enc <- reqEnum(o, "enc", WsDataEncodings)
+          data <- req(o, "data")(jsonBase64(_, "data"))
+        yield WsDataFrame(requestId, seq, more, kind, enc, data)
 
       case "ws_close" =>
         for
@@ -373,6 +397,16 @@ class PortalWireContractV1Spec extends FunSuite:
           "kind" -> Some(Json.fromString(fr.kind)),
           "data" -> Some(Json.fromString(b64Encode(fr.data))),
           "fin" -> Some(Json.fromBoolean(fr.fin))
+        )
+      case fr: WsDataFrame =>
+        envelope(
+          "ws_data_frame",
+          "requestId" -> Some(Json.fromString(fr.requestId)),
+          "seq" -> Some(Json.fromInt(fr.seq)),
+          "more" -> Some(Json.fromBoolean(fr.more)),
+          "kind" -> Some(Json.fromString(fr.kind)),
+          "enc" -> Some(Json.fromString(fr.enc)),
+          "data" -> Some(Json.fromString(b64Encode(fr.data)))
         )
       case fr: WsClose =>
         envelope(
@@ -539,7 +573,7 @@ class PortalWireContractV1Spec extends FunSuite:
         .fold(e => fail(s"$res is not valid JSON: ${e.getMessage}"), identity)
     finally in.close()
 
-  private lazy val vectorsDoc: Json = parseResource("neblink/portal-wire-vectors-v1.1.json")
+  private lazy val vectorsDoc: Json = parseResource("neblink/portal-wire-vectors-v1.3.json")
 
   private def cursorString(c: HCursor, name: String): String =
     c.get[String](name).fold(e => fail(s"vector field '$name' unreadable: ${e.getMessage}"), identity)
@@ -591,16 +625,16 @@ class PortalWireContractV1Spec extends FunSuite:
 
   // ────────────────────────── tests ──────────────────────────
 
-  test("vector file pins the frozen contract identity (contract file + version v1.1)"):
+  test("vector file pins the frozen contract identity (contract file + version v1.3)"):
     val c = vectorsDoc.hcursor
     assertEquals(
       cursorString(c, "contract"),
-      "portal-wire-contract-v1.1.md",
+      "portal-wire-contract-v1.3.md",
       "the vector file must be the companion of the frozen contract copy"
     )
     assertEquals(
       cursorString(c, "version"),
-      "v1.1",
+      "v1.3",
       "any contract change must land as a re-freeze (v1.x) in both repos, not a silent vector edit"
     )
 
@@ -612,11 +646,27 @@ class PortalWireContractV1Spec extends FunSuite:
     val v1Doc = parseResource("neblink/portal-wire-vectors-v1.json")
     val v1 = v1Doc.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1 vectors unreadable: $e"), identity)
     assertEquals(v1.length, 28, "the frozen v1 set is 28 vectors")
-    val v11 = vectorsDoc.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1.1 vectors unreadable: $e"), identity)
+    val v11 = parseResource("neblink/portal-wire-vectors-v1.1.json")
+    val v11Vecs = v11.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1.1 vectors unreadable: $e"), identity)
     assertEquals(
-      v11.take(v1.length).map(_.noSpaces),
+      v11Vecs.take(v1.length).map(_.noSpaces),
       v1.map(_.noSpaces),
       "the v1.1 re-freeze must preserve the v1 vectors byte-for-byte, in order"
+    )
+
+  test("the 40 frozen v1.1 vectors are preserved byte-for-byte at the head of the v1.3 file"):
+    // Contract section 6 (v1.3): the v1.3 additive re-freeze preserves the 40
+    // v1/v1.1 vectors byte-for-byte, in order, and only APPENDS the
+    // ws_data_frame vectors (50 total).
+    val v11 = parseResource("neblink/portal-wire-vectors-v1.1.json")
+    val v11Vecs = v11.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1.1 vectors unreadable: $e"), identity)
+    assertEquals(v11Vecs.length, 40, "the frozen v1.1 set is 40 vectors")
+    val v13Vecs = vectorsDoc.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1.3 vectors unreadable: $e"), identity)
+    assertEquals(v13Vecs.length, 50, "the v1.3 set is 40 preserved + 10 ws_data_frame vectors")
+    assertEquals(
+      v13Vecs.take(v11Vecs.length).map(_.noSpaces),
+      v11Vecs.map(_.noSpaces),
+      "the v1.3 re-freeze must preserve the v1.1 vectors byte-for-byte, in order"
     )
 
   test("every frame in the inventory has at least one positive and one negative vector"):
@@ -625,7 +675,7 @@ class PortalWireContractV1Spec extends FunSuite:
     assertEquals(
       pos,
       FrameInventory,
-      s"positive-vector coverage must be exactly the 13-frame inventory; unexpected=${{
+      s"positive-vector coverage must be exactly the 14-frame inventory; unexpected=${{
         (pos -- FrameInventory).toList.sorted
       }} missing=${{ (FrameInventory -- pos).toList.sorted }}"
     )

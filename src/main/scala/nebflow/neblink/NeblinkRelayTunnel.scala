@@ -773,9 +773,10 @@ final class NeblinkRelayTunnel(
           .proxy(java.net.ProxySelector.of(null)) // bypass system proxy
           .connectTimeout(java.time.Duration.ofSeconds(15))
           .build()
-        val w = client
+        val wsBuilder = client
           .newWebSocketBuilder()
           .header("Authorization", s"Bearer $token")
+        val w = wsBuilder
           .buildAsync(URI.create(wsUri), listener)
           .get(10, TimeUnit.SECONDS)
         // 🔴 relay-honest 批（2026-10-20）：**stop-during-upgrade 诚实闸**。
@@ -1868,7 +1869,7 @@ private final class RelayWsListener(
               // `message-` 族未命中 = WARN + 审计；其余族 = DEBUG）。本分支**只读**帧，
               // 不改帧形状、不改本端 `sendAck` 的既有发送语义。
               dispatcher.unsafeRunAndForget(DeviceMailAck.handle(json))
-            case "http_request" | "body_frame" | "ws_open" | "ws_frame" | "ws_close" |
+            case "http_request" | "body_frame" | "ws_open" | "ws_frame" | "ws_data_frame" | "ws_close" |
                 "ConsoleTicketMint" | "BindingControl" | "MigrationChunk" =>
               // P1（设计 §3.1）：契约帧族——先过生产 codec（[[PortalWireCodec]]）全量
               // 校验：帧字段与冻结契约逐字一致；拒码 = conformance vocabulary，

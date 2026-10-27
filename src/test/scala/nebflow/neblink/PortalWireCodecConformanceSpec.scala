@@ -8,12 +8,12 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.util.{Arrays, Base64}
 
 /**
- * Portal wire contract v1.1 conformance — PRODUCTION codec face (phase 3c
+ * Portal wire contract conformance — PRODUCTION codec face (v1.3 additive
  * re-freeze; the assertion structure is the phase 3a design section 4.2 one).
  *
  * The test-side model spec (`PortalWireContractV1Spec`) and this spec run the
- * SAME frozen vector file (`src/test/resources/neblink/portal-wire-vectors-v1.1.json`,
- * byte-identical to the neblink-server copy) with the SAME assertion
+ * SAME frozen vector file (`src/test/resources/neblink/portal-wire-vectors-v1.3.json`,
+ * byte-identical to the link-server copy) with the SAME assertion
  * structure — model face and production face cross-checked on identical
  * verdicts, which is exactly what the phase 0.5 criterion demands ("both
  * sides agree on every verdict"). The codec under test here is the one the
@@ -37,7 +37,7 @@ class PortalWireCodecConformanceSpec extends FunSuite:
 
   private val SupportedProto = 1
 
-  /** Contract "Frame inventory": all 13 frames, exactly (frozen literal, independent of the codec's own set). */
+  /** Contract "Frame inventory": all 14 frames, exactly (frozen literal, independent of the codec's own set). */
   private val FrameInventory: Set[String] = Set(
     "relay_request",
     "relay_response",
@@ -47,6 +47,7 @@ class PortalWireCodecConformanceSpec extends FunSuite:
     "ws_open",
     "ws_open_result",
     "ws_frame",
+    "ws_data_frame",
     "ws_close",
     "ConsoleTicketMint",
     "ConsoleTicketResult",
@@ -67,7 +68,7 @@ class PortalWireCodecConformanceSpec extends FunSuite:
   )
 
   private lazy val vectorsDoc: Json =
-    val res = "neblink/portal-wire-vectors-v1.1.json"
+    val res = "neblink/portal-wire-vectors-v1.3.json"
     val in = Option(getClass.getClassLoader.getResourceAsStream(res)).getOrElse(
       fail(s"classpath resource '$res' not found — frozen vector file missing from test classpath")
     )
@@ -125,26 +126,26 @@ class PortalWireCodecConformanceSpec extends FunSuite:
 
   // ────────────────────────── tests ──────────────────────────
 
-  test("production codec pins the frozen contract identity (contract file + version v1.1)"):
+  test("production codec pins the frozen contract identity (contract file + version v1.3)"):
     val c = vectorsDoc.hcursor
-    assertEquals(cursorString(c, "contract"), "portal-wire-contract-v1.1.md")
+    assertEquals(cursorString(c, "contract"), "portal-wire-contract-v1.3.md")
     assertEquals(
       cursorString(c, "version"),
-      "v1.1",
+      "v1.3",
       "any contract change must land as a re-freeze (v1.x) in both repos, not a silent vector edit"
     )
 
-  test("vector frame names are exactly the codec's 13-frame inventory (no drift between faces)"):
+  test("vector frame names are exactly the codec's 14-frame inventory (no drift between faces)"):
     val pos = entries.filter(_.polarity == "positive").map(_.frame).toSet
     assertEquals(
       PortalWireCodec.FrameInventory,
       FrameInventory,
-      "the production codec must carry exactly the frozen 13-frame inventory"
+      "the production codec must carry exactly the frozen 14-frame inventory"
     )
     assertEquals(
       pos,
       FrameInventory,
-      s"positive-vector coverage must be exactly the 13-frame inventory; missing=${(FrameInventory -- pos).toList.sorted}"
+      s"positive-vector coverage must be exactly the 14-frame inventory; missing=${(FrameInventory -- pos).toList.sorted}"
     )
     // New contract frame names must not collide with the coexisting frames
     // (contract section 5) — the collision set is frozen there.
