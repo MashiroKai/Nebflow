@@ -713,6 +713,68 @@
 }
 .dev-badge.is-offline { background: transparent; border: 1px solid var(--glass-border); color: var(--color-frame-text-muted); }
 
+/* ── 台账 #920（2026-10-27）面：描述行恒渲染 + 就地编辑 ─────────────────────
+   描述行恒渲染（空 = 占位文案，编辑钮是唯一入口——无描述项目的可发现性）；
+   编辑态 = 值槽隐藏 + 行后插编辑器（textarea + 保存/取消）。材质零新造：
+   textarea 走 `.modal-input` 基（创建弹层同款），保存钮走 `.glass-control`
+   （sapphire.css 基类），取消 = 纯文本 ghost。🔴 零新色值（全走既有 token）。 */
+.project-desc-row .project-field-value.desc { flex: 1 1 auto; min-width: 0; }
+.project-desc-row .project-field-value.desc.is-empty { color: var(--color-frame-text-dim); font-style: italic; }
+.project-desc-edit-btn {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+.project-desc-edit-btn svg { width: 13px; height: 13px; }
+.project-desc-edit-btn:hover {
+  color: rgb(var(--sapphire) / 1);
+  border-color: rgb(var(--sapphire) / 0.45);
+  background: rgb(var(--sapphire) / 0.08);
+}
+.project-desc-edit-btn:focus { outline: none; }
+.project-desc-edit-btn:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); }
+.project-desc-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 2px;
+}
+.project-desc-input {
+  width: 100%;
+  font: 400 12px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  resize: vertical;
+  min-height: 54px;
+}
+.project-desc-acts {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.project-desc-save { font-size: 12px; padding: 5px 14px; }
+.project-desc-cancel {
+  border: none;
+  background: transparent;
+  padding: 5px 8px;
+  font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+.project-desc-cancel:hover { color: var(--color-text); }
+.project-desc-cancel:focus { outline: none; }
+.project-desc-cancel:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); border-radius: 6px; }
+
 /* ── 减动效降级（🔴 本文件首个 `prefers-reduced-motion` 块；取证 §E 实测本文件此前无覆盖）──
    降级后语义仍完整（§F-3）：
      「哪张新」= 静态强调环保持 ~2s（JS 置时）+ 屏幕阅读器「新」标记 + 状态行播报；

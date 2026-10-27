@@ -36,6 +36,9 @@ private[gateway] object ProjectsRoutes:
       //   GET/PUT /projects/<name>/agent.md → 200 {content} / {saved:true}
       //   POST /projects/<name>/archive → 200 {archived:true, archivedAt}（§6.1 显式人工
       //                   归档：仅 project.json 打标记，零删除零移动；幂等；单程无取消）
+      //   POST /projects/<name>/description → 200 {saved:true[,unchanged:true]}（台账 #920
+      //                   面板侧描述更新：body {description}，写穿 ProjectStore.updateDescription；
+      //                   成功腿广播 projectDescriptionUpdated 帧，幂等腿不发帧）
       // 未挂载/不存在 → 404 {error}; 需 auth（withAuth）。
       // 注意：routes 挂载在 Router("/api" -> ...) 下，路径必须写相对段
       // （Root / "projects"），写 "api" 会双前缀 /api/api（QA P1②）。
@@ -95,6 +98,36 @@ private[gateway] object ProjectsRoutes:
               // `*>`：先广播（IO[Unit]）再回响应（Ok(...) 本体已是 IO[Response]）
               wsHub.broadcast(ProjectActor.projectArchivedFrame(name, at)) *>
                 Ok(Json.obj("archived" -> true.asJson, "archivedAt" -> at.asJson))
+          }
+        }
+
+      // POST /projects/<name>/description — 面板侧描述更新（台账 #920 2026-10-27）：
+      // #917 给了 Project 工具 `action="update"`（agent 面），本端点补**面板侧**同一
+      // 写穿面（单点 = 既有 ProjectStore.updateDescription：只改 description 一个字段
+      // 的手术式原位写；空串 = 删键；幂等同值零写入）。语义照 archive 腿：
+      //   · 需 auth（withAuth）；body {description}（缺键按空串 = 清空——显式语义）；
+      //   · 项目不存在 / 名字非法 → 404 {"error"}（updateDescription 的 Left 面）；
+      //   · Right("updated") → 广播一帧 `projectDescriptionUpdated`（帧单点
+      //     ProjectActor.projectDescriptionUpdatedFrame，经既有 wsHub 全连接）+
+      //     200 {"saved":true}；
+      //   · Right("unchanged")（同值幂等腿，零写入）→ 200 {"saved":true,"unchanged":true}
+      //     **不发帧**（无状态变化，面板不重写）。
+      // 已归档/未挂载项目同样可改（定义级元数据，非挂载动作——与 #917 工具面同口径）。
+      case req @ POST -> Root / "projects" / name / "description" =>
+        withAuth(req) {
+          req.as[Json].flatMap { body =>
+            val description = body.hcursor.downField("description").as[String].getOrElse("")
+            ProjectStore.updateDescription(name, description).flatMap {
+              case Left(err) => NotFound(Json.obj("error" -> err.asJson))
+              case Right("unchanged") =>
+                Ok(Json.obj("saved" -> true.asJson, "unchanged" -> true.asJson))
+              case Right(_) =>
+                // `*>` 同 archive 腿：先广播帧再回响应；帧带本次写入的存储值
+                // （updateDescription 已对空白入参做删键/trim 归一）。
+                wsHub.broadcast(
+                  ProjectActor.projectDescriptionUpdatedFrame(name, description, System.currentTimeMillis())
+                ) *> Ok(Json.obj("saved" -> true.asJson))
+            }
           }
         }
 

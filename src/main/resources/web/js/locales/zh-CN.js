@@ -112,6 +112,18 @@ export default {
   'project.createErrSwitchDevice': '换一台设备…',
   'project.devBadgeTitle': '远端项目 · 设备 {device} · 路径 {path}',
   'project.devBadgeOfflineTitle': '远端项目 · 设备 {device}（离线）· 路径 {path}',
+  // 台账 #920（2026-10-27）：device 存储值兜底徽标（origin 缺席 ⇒ 无 path 段）
+  'project.devBadgeDeviceTitle': '远端项目 · 设备 {device}',
+  'project.devBadgeDeviceOfflineTitle': '远端项目 · 设备 {device}（离线）',
+  // 台账 #920（2026-10-27）：面板侧描述写穿（描述行恒渲染 + 就地编辑）
+  'project.descLabel': '描述',
+  'project.descEmpty': '未设置描述',
+  'project.descEdit': '编辑描述',
+  'project.descPlaceholder': '一句话描述该项目（措辞会用于任务分配）',
+  'project.descSave': '保存',
+  'project.descCancel': '取消',
+  'project.descSaved': '「{name}」描述已更新',
+  'project.descSaveFail': '描述保存失败（{detail}）',
   'flowmap.title': 'Flow Map',
   'flowmap.cardRunning': '运行中…',
   // 节点卡 Agent 退役（node-flowmap-slim）：preset 未配置的克制空态文案

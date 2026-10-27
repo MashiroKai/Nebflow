@@ -337,8 +337,10 @@ object ProjectActor:
    *   type    : "projectCreated"
    *   project : <string>   项目名（= ProjectDef.name）
    *   row     : { name, workspace, agentFile, description, createdAt,
-   *               origin:{device,path}|null }                              ← 与 GET /api/projects 行同构
-   *                        （origin additive：ui-device-faces 批 2026-10-10，面C 徽标）
+   *               origin:{device,path}|null, device }                       ← 与 GET /api/projects 行同构
+   *                        （origin additive：ui-device-faces 批 2026-10-10，面C 徽标；
+   *                         device additive：台账 #920 2026-10-27——#913 的 effectiveDevice
+   *                         存储值（"self"/对端 deviceId），行同构闭合）
    *   mounted : <bool>     挂载成功 true；定义就绪但无会话上下文（NodeTools 无 actorSystem
    *                        分支）false
    *
@@ -365,7 +367,10 @@ object ProjectActor:
         // ui-device-faces 批（2026-10-10 · 设计稿 §6 后端②）：additive `origin` 与
         // GET /api/projects 行同构（面C 徽标定点插卡数据源；本机项目 = null）。
         "origin" -> pd.origin
-          .fold(Json.Null)(o => Json.obj("device" -> o.device.asJson, "path" -> o.path.asJson))
+          .fold(Json.Null)(o => Json.obj("device" -> o.device.asJson, "path" -> o.path.asJson)),
+        // 台账 #920（2026-10-27）：additive `device` —— 与 GET /api/projects 行同构
+        // （#913 的 ProjectStore.effectiveDevice 存储值；判定单点，老前端忽略零破坏）。
+        "device" -> ProjectStore.effectiveDevice(pd).asJson
       ),
       "mounted" -> mounted.asJson
     )
@@ -375,6 +380,23 @@ object ProjectActor:
       "type" -> "projectArchived".asJson,
       "project" -> name.asJson,
       "archivedAt" -> archivedAt.asJson
+    )
+
+  /**
+   * **描述更新帧单点**（台账 #920 2026-10-27，#917 Project 工具 update 面的**面板侧**
+   * 补全）：REST `POST /projects/<name>/description` 成功腿广播的
+   * `projectDescriptionUpdated` 帧——载荷镜像 projectArchived §D-2 键形（type / project）
+   * + 本次写入的 `description` 存储值（清空 = 空串）+ `updatedAt`（REST 腿墙钟，仅
+   * 排序/展示用）。经**既有** `wsHub.broadcast` 全连接下发（🔴 零第二套推送面）；
+   * 前端按名定点写该卡的描述槽（同 archived 帧的「只做定点写，不触发全量重拉」纪律）。
+   * 幂等腿（同值 → ProjectStore `Right("unchanged")` 零写入）**不发帧**（无状态变化）。
+   */
+  def projectDescriptionUpdatedFrame(name: String, description: String, updatedAt: Long): Json =
+    Json.obj(
+      "type" -> "projectDescriptionUpdated".asJson,
+      "project" -> name.asJson,
+      "description" -> description.asJson,
+      "updatedAt" -> updatedAt.asJson
     )
 
   /**
