@@ -273,3 +273,44 @@ class CanvasTabTombstoneSpec extends CatsEffectSuite:
       assertEquals(tabIds(merged), Vector("x"))
       assertEquals(loaded, Some(merged))
   }
+
+  // ── #910 追补 spec 钉（2026-10-27 作者报障「关掉的页签还是老是会加载」）──
+  // 任务钉面：①关闭→重载不复活 ②关闭→对端广播同页签不复活 ③重启（持久层）
+  // 不复活。服务端侧 = 持久层三条：墓碑落盘、GET（load）永不含生效墓碑页签、
+  // 全新实例（=进程重启）后关闭意图仍压过陈旧全量 PUT。前端恢复腿的钉在
+  // tests/canvas-tab-tombstone-revive.spec.mjs。
+
+  test("close → reload: GET archive excludes the closed tab while the tombstone persists") {
+    for
+      dir <- IO(os.temp.dir())
+      store = new CanvasTabStore(dir / "canvas_tabs.json")
+      _ <- store.mergeSave(json(s"""{"v":2,"tabs":${tabsJs("a", "b")}}"""), NOW)
+      _ <- store.mergeSave(
+        json(s"""{"v":2,"tabs":${tabsJs("a", "b")},"tombstones":[{"id":"b","closedAt":${NOW + 1}}]}"""),
+        NOW + 2
+      )
+      fetched <- store.load() // GET 的唯一来源
+    yield
+      val archive = fetched.getOrElse(Json.Null)
+      assertEquals(tabIds(archive), Vector("a"), "重载（GET）不含已关页签")
+      assert(isActive(archive, "b"), "墓碑持久在场（重启不丢）")
+  }
+
+  test("restart (fresh store instance over the same file) keeps close intent: stale PUT still filtered") {
+    for
+      dir <- IO(os.temp.dir())
+      path = dir / "canvas_tabs.json"
+      store1 = new CanvasTabStore(path)
+      _ <- store1.mergeSave(
+        json(s"""{"v":2,"tabs":${tabsJs("b")},"tombstones":[{"id":"a","closedAt":$NOW}]}"""),
+        NOW + 1
+      )
+      // 「进程重启」= 全新实例读同一持久层文件
+      store2 = new CanvasTabStore(path)
+      loaded <- store2.load()
+      merged <- store2.mergeSave(json(s"""{"v":2,"tabs":${tabsJs("a", "b")}}"""), NOW + 2)
+    yield
+      assertEquals(tabIds(loaded.getOrElse(Json.Null)), Vector("b"), "重启后 GET 不含已关页签")
+      assertEquals(tabIds(merged), Vector("b"), "重启后陈旧全量 PUT（对端广播同页签）仍不可复活")
+      assert(isActive(merged, "a"), "重启后墓碑仍生效")
+  }
