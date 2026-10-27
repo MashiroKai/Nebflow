@@ -210,8 +210,8 @@ test('R2 Jev card is self-titled; head-row click expands (toggle decoupled); col
   expect(kept, 'collapse/expand keeps the input value in the DOM').toBe('changed-key-name');
 });
 
-// ══ R3 · keyRef 遮蔽 + 精简 hint ════════════════════════════
-test('R3 keyRef starts masked, eye reveals/hides, hint is one safety line', async ({ page }) => {
+// ══ R3 · keyRef 明文直显（作者令 2026-10-27）+ 精简 hint ══════════════════
+test('R3 keyRef starts plaintext (author 2026-10-27), eye re-masks/unmasks, hint is one safety line', async ({ page }) => {
   await bootPage(page, { locale: 'zh-CN' });
   await openSettings(page);
   await page.click('#jev-head'); // jev-panel-threefix 三改①: fields live in the expanded detail
@@ -231,31 +231,33 @@ test('R3 keyRef starts masked, eye reveals/hides, hint is one safety line', asyn
   });
   expect(initial.card, 'jev card present').toBe(true);
   expect(initial.value, 'seeded keyRef name survives the render').toBe('typesafe-api-key');
-  expect(initial.security, 'masked by default (disc)').toBe('disc');
-  expect(initial.pressed, 'aria-pressed=false while masked').toBe('false');
-  expect(initial.label, 'aria-label names the reveal action').toBe('显示密钥引用');
+  expect(initial.security, '🔴 plaintext by default (author 2026-10-27 明文直显) — no mask').toBe('none');
+  expect(initial.pressed, 'aria-pressed=true while revealed').toBe('true');
+  expect(initial.label, 'aria-label names the hide action').toBe('隐藏密钥引用');
   expect(initial.hints, 'the hint is exactly the one safety-critical line')
     .toEqual(['keyRef 是 ~/.nebflow/secrets/ 下的密钥名（指针），永远不是密钥值。']);
 
   await page.click('#jev-keyref-eye');
-  const revealed = await page.evaluate(() => {
+  const masked = await page.evaluate(() => {
     const input = document.getElementById('cfg-jev-keyref');
     const eye = document.getElementById('jev-keyref-eye');
     return {
+      value: input.value,
       security: getComputedStyle(input).webkitTextSecurity,
       pressed: eye.getAttribute('aria-pressed'),
       label: eye.getAttribute('aria-label'),
       glyph: eye.innerHTML,
     };
   });
-  expect(revealed.security, 'revealed → security none').toBe('none');
-  expect(revealed.pressed, 'aria-pressed=true while revealed').toBe('true');
-  expect(revealed.label, 'aria-label names the hide action').toBe('隐藏密钥引用');
-  expect(revealed.glyph, 'glyph swaps to eye-off').toContain('M17.94');
+  expect(masked.value, 'masking is presentation-only — the value stays in the field').toBe('typesafe-api-key');
+  expect(masked.security, 'eye click → masked (disc)').toBe('disc');
+  expect(masked.pressed, 'aria-pressed=false while masked').toBe('false');
+  expect(masked.label, 'aria-label names the reveal action').toBe('显示密钥引用');
+  expect(masked.glyph, 'glyph swaps to the plain eye (reveal affordance)').toContain('M1 12s4-8');
 
   await page.click('#jev-keyref-eye');
   const back = await page.evaluate(() => getComputedStyle(document.getElementById('cfg-jev-keyref')).webkitTextSecurity);
-  expect(back, 'second click re-masks').toBe('disc');
+  expect(back, 'second click reveals again').toBe('none');
 });
 
 // ══ R4 · 健康徽标三态 ═══════════════════════════════════════

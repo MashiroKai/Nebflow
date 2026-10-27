@@ -6,6 +6,9 @@
 import state from '../state.js';
 import { sendWs } from '../ws.js';
 import { t } from '../i18n.js';
+// authHeaders（Bearer 令牌头，flowHelpers 是 branding 叶子单依赖，无环）：
+// 明文回读拉取与 secretsPanel.api 的鉴权头同一条 owner 面。
+import { authHeaders } from '../flowHelpers.js';
 // 探针单源（A 侧 uifix3 ② 抽共用）：POST /api/provider/models 的实现唯一属主 =
 // ../providerModels.js（onboarding 模型题与设置面同用一份，禁第二份）。
 import { fetchProviderModels } from '../providerModels.js';
@@ -47,6 +50,50 @@ function flushConfigToServer() {
   const json = JSON.stringify(state.parsedConfig, null, 2);
   state.configText = json;
   sendWs({type: 'updateConfig', config: json});
+}
+
+// ── 设置页 apikey 明文回读（作者令 2026-10-27 10:33「设置里配置的 apikey，
+//    直接显示就行了，比如 JeV 的以及我们 llm api 的」）────────────────────────
+// GET /api/config/provider-keys（owner 鉴权，与设置写同门槛的 withAuth 面）→
+// llm.providers.<id>.apiKey 真值，只落本模块内存 map，用于编辑弹窗把已存 key
+// 预填成明文。JeV 配置节的 keyRef 无需此路径——那是指针名，config 读面本就
+// 逐字回传（打码只发生在 provider apiKey / search.apiKey 形态字段上）。
+// 🔴 纪律：明文只进弹窗输入框，不入 localStorage / 不打日志 / 不上卡面；
+// 拉取失败或无鉴权 ⇒ map 保持空 ⇒ 弹窗退回既有空态（留空保存 = 回 "***" =
+// 引擎保留旧值），保存路径零改动。60s 缓存与 refreshSecretsEntryCount 同约。
+/** @type {Record<string, string>} */
+let revealedProviderKeys = {};
+/** @type {Promise<Record<string, string>>|null} */
+let revealInflight = null;
+let revealAt = 0;
+
+/** Fetch (cached ≤60s, single-flight) the real provider apiKeys. Resolves
+ *  with the map even on failure (empty map ⇒ legacy blank-field fallback). */
+export function revealProviderApiKeys() {
+  if (revealInflight) return revealInflight;
+  if (revealAt && Date.now() - revealAt < 60000) return Promise.resolve(revealedProviderKeys);
+  revealInflight = fetch('/api/config/provider-keys', { headers: authHeaders() })
+    .then(r => (r.ok ? r.json() : null))
+    .then(data => {
+      // Defensive shaping: strings only — anything unexpected never lands.
+      const provs = data && typeof data.providers === 'object' && data.providers ? data.providers : {};
+      /** @type {Record<string, string>} */
+      const next = {};
+      for (const [id, v] of Object.entries(provs)) {
+        if (typeof v === 'string' && v) next[id] = v;
+      }
+      revealedProviderKeys = next;
+      revealAt = Date.now();
+      return revealedProviderKeys;
+    })
+    .catch(() => revealedProviderKeys)
+    .finally(() => { revealInflight = null; });
+  return revealInflight;
+}
+
+/** The revealed real key for one provider id ('' = unknown ⇒ blank field). */
+function revealedApiKeyFor(name) {
+  return (name && revealedProviderKeys[name]) || '';
 }
 
 // --- Provider model-list auto-fetch (B1) ---
@@ -271,13 +318,18 @@ function showProviderModal(existingName, existingData, onSave) {
   const initialModels = p.models.length > 0 ? p.models.map(m => ({
     ...m,
   })) : [{id: '', contextWindow: 1000000}];
+  // 明文直显（作者令 2026-10-27）：编辑既有 provider 时，config 读面上的
+  // "***" 用回读真值替换（revealProviderApiKeys 已在设置页打开时预取、卡点
+  // 点击时再兜一次）；回读未落地/失败 ⇒ '' = 既有空态（占位符提示留为 ***
+  // 保持不变）。保存逻辑不变：字段里的明文原样进 payload，留空回 "***"。
+  const apiKeyFace = p.apiKey && p.apiKey !== '***' ? p.apiKey : revealedApiKeyFor(existingName);
 
   showModal({
     title: isEdit ? t('provider.edit', { name: existingName }) : t('provider.add'),
     fields: [
       {key: 'name', label: t('provider.id'), type: 'text', value: existingName || '', placeholder: t('provider.idPlaceholder'), disabled: isEdit},
       {key: 'baseUrl', label: t('provider.baseUrl'), type: 'text', value: p.baseUrl || '', placeholder: 'https://api.example.com/v1'},
-      {key: 'apiKey', label: 'API Key', type: 'text', password: true, value: p.apiKey && p.apiKey !== '***' ? p.apiKey : '', placeholder: isEdit ? t('provider.keyPlaceholder') : t('provider.required')},
+      {key: 'apiKey', label: 'API Key', type: 'text', password: true, value: apiKeyFace, placeholder: isEdit ? t('provider.keyPlaceholder') : t('provider.required')},
       {key: 'protocol', label: t('provider.protocol'), type: 'select', value: p.protocol || 'anthropic', options: [
         { value: 'anthropic', label: 'messages' },
         { value: 'openai', label: 'chat/completions' },
@@ -411,7 +463,7 @@ function showModal({title, fields, onConfirm}) {
               ${f.value.map((m, i) => renderModelRow(m, i)).join('')}
               <button class="cfg-model-add" type="button">${t('model.add')}</button>
             </div>` :
-            f.password ? `<div class="cfg-password-wrap"><input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" autocomplete="off" style="-webkit-text-security:disc" ${f.disabled ? 'disabled' : ''}><button class="cfg-eye-btn" type="button" tabindex="-1" aria-label="Toggle visibility">${eyeSvg}</button></div>` :
+            f.password ? `<div class="cfg-password-wrap"><input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" autocomplete="off" ${f.disabled ? 'disabled' : ''}><button class="cfg-eye-btn" type="button" tabindex="-1" aria-label="Toggle visibility">${eyeOffSvg}</button></div>` :
             f.type === 'number' ? `<input class="cfg-input" type="number" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${f.min != null ? `min="${f.min}"` : ''} ${f.disabled ? 'disabled' : ''}>` :
             `<input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${f.disabled ? 'disabled' : ''}>`}
           </div>`;
@@ -449,11 +501,12 @@ function showModal({title, fields, onConfirm}) {
     btn.addEventListener('click', () => btn.closest('.cfg-model-row').remove());
   });
 
-  // Wire up eye toggle
+  // Wire up eye toggle. 明文直显（作者令 2026-10-27）后默认态 = 已揭示：
+  // 判掩码只认内联 disc（初始无内联样式 = 明文），首击即真实切换到遮蔽。
   overlay.querySelectorAll('.cfg-eye-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const input = btn.parentElement.querySelector('input');
-      const isMasked = input.style.webkitTextSecurity !== 'none';
+      const isMasked = input.style.webkitTextSecurity === 'disc';
       input.style.webkitTextSecurity = isMasked ? 'none' : 'disc';
       btn.innerHTML = isMasked ? eyeOffSvg : eyeSvg;
     });
