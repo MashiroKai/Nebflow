@@ -53,3 +53,18 @@
 #923：`tests/chat-history-perf.spec.mjs`
 #920：`src/main/scala/nebflow/core/project/ProjectActor.scala`、`src/main/scala/nebflow/gateway/ProjectsRoutes.scala`、`src/test/scala/nebflow/gateway/ProjectEventSpec.scala`、`src/main/resources/web/js/projectTab.js`、`src/main/resources/web/js/nodeData.js`、`src/main/resources/web/js/ws.js`、`src/main/resources/web/js/locales/{zh-CN,en}.js`、`src/main/resources/web/css/projectPanel.css`、`tests/project-desc-edit.spec.mjs`（新）
 #919：`docs/design/20261027_hot-reload-foundation-spec.zh-CN.md`（新）、`src/main/scala/nebflow/gateway/AssetStampRoutes.scala`（新）、`src/main/scala/nebflow/gateway/RestApiRoutes.scala`、`src/test/scala/nebflow/gateway/AssetStampRoutesSpec.scala`（新）、`src/main/resources/web/js/hotStamp.js`（新）、`src/main/resources/web/js/main.js`、`src/main/resources/web/js/vendor-globals.d.ts`、`tests/hot-stamp-reload.spec.mjs`（新）
+
+---
+
+## 落地补记（重派批 197b0326 · 2026-10-27）
+
+原批（分支 `delegate/delegate-nebflow-ddbdde82`，基于 main `8989391ef`）完成开发与验证后随引擎重启阵亡于合并前，main 零落地。本批（`delegate/delegate-nebflow-197b0326`）将原批 4 commit 原样移植至当前 main HEAD（`a5c3e2219`，期间 main 新进 #960 WS 僵尸回收 + portal B2 两笔，与本批 12 文件零交集）并**在新基线全量复验**：
+
+| 件 | 原 hash (ddbdde82) | 落地 hash (197b0326) |
+|---|---|---|
+| #923 首屏钉 | 8d879f60f | `971d2b72d` |
+| #920 描述写穿+设备卡面 | b05551dcb | `12bd4f7b4` |
+| #919 热更新地基 | 71800fd9d | `06fb7bcee` |
+| 报告 | ad9715861 | `ab98cef8e` |
+
+复验（新基线实测）：chat-history-perf **13 PASS/0 FAIL**（firstScreen 299ms<3000ms、60 行、init 恰一发、零重连、longtask 0、遮蔽腿绿）；project-desc-edit **6/6**；hot-stamp-reload **3/3**；Scala **45/45**（ProjectEventSpec 9+OriginRow 2+Store 23+ToolActions 8 = 上文「42/42」系 Project 族合计，AssetStampRoutesSpec 3）；checkJs **257<260 基线**；build-web **187 源 orphans 0**；check-circular 失败集 = main 检出同跑**同集 SCC[3]**（popArtifacts/reference/msgQuote，批前既有，零回归）。环境注：worktree 冷树 sbt 全量重编需 `-Xmx6g`（默认堆 OOM 一次）。
