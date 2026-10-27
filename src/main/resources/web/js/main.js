@@ -27,6 +27,7 @@ import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearB
 import { armMermaidAutoHydrate } from './mermaidRenderer.js';
 import { getProjectsSnapshot, getProjectsListGen, preheatProjects, onProjectsArrival } from './mentionComplete.js';
 import { initServiceWorker } from './swReg.js'; // console-load-perf 批：温访问秒开注册器（load 后注册，降级零影响）
+import { initHotStampWatch } from './hotStamp.js'; // 台账 #919：热更新地基——asset stamp 轮询自愈（端点缺席 = 静默空转）
 import { connect, onMessage, sendWs, onReconnect } from './ws.js';
 import {
   setBusy, clearBusy, clearStatus,
@@ -258,6 +259,7 @@ initPendingAsks();
 startPendingAskSync(sendWs);
 initScrollUnderGlass(); // uifix ⑤：浮层毛玻璃裙边降级探测器
 initServiceWorker(); // console-load-perf 批：温访问秒开（/sw.js 未上线的引擎上为静默空转）
+initHotStampWatch(); // 台账 #919：热更新地基——stamp 轮询自愈（/api/nf-asset-stamp 缺席的引擎上为静默空转）
 
 // ---------- 2. Init libraries ----------
 // Guard: Safari may execute module scripts before CDN scripts finish loading.

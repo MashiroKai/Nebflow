@@ -108,3 +108,20 @@ interface Window {
     depth(): number;
   };
 }
+
+/** 热更新地基诊断/spec 缝（台账 #919；hotStamp.js 注册：stamp 轮询自愈的
+ *  基线/远端读数、忙挂起态、checkNow 判路缝——tests/hot-stamp-reload 用）。 */
+interface Window {
+  __nfHotStamp?: {
+    setBoot(stamp: string): void;
+    checkNow(): Promise<string>;
+    state(): {
+      bootStamp: string | null;
+      lastRemote: string | null;
+      pendingReload: boolean;
+      pollMs: number;
+      guardMs: number;
+      busy: boolean;
+    };
+  };
+}
