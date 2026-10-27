@@ -1892,9 +1892,19 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
 
 /* canvas 文件刷新批（作者令 2026-10-25）：文件页签右下「重新读盘」钮。
    材质与槽位 = source/ref 同族（frosted 标准 token 单源；40px 圆、48px 槽距、
-   bottom:16）——座位由 shared.js addRefreshButton 按既有圆钮/缩放条实测让位
-   （溢出面板宽则落第二行 bottom:64，同窄幅 html 缩放条先例）。源码态整钮
-   隐藏（源码面不是预览刷新语义）；在飞 = 图标自旋（reduce-motion 停转）。 */
+   bottom:16）——座位由 shared.js seatRefreshButton 按既有圆钮/缩放条实测让位
+   （溢出面板宽则落第二行 bottom:64，同窄幅 html 缩放条先例）。
+   定位修复（作者报障 2026-10-27「↻ 压在正文上」）：挂载点从 pane 上移到不滚动
+   的面板壳 #canvas-content（position:relative + overflow:hidden，本文件 :806）。
+   根因 = docx/yaml/xlsx/pptx 等查看器把 .scrollable 加在 pane 自身（pane 即滚动
+   容器），absolute 子元素按整份滚动内容盒定位，bottom:16 落到文档末尾随滚动
+   漂移；壳层不滚动 ⇒ 恒钉可视区右下——滚动、内容变化、亮暗主题切换（纯 token
+   换色，无几何参与）位置均不动。壳层 padding-bottom 8px 由 seatRefreshButton
+   补齐（视觉边距仍以 pane 为准的 16px）。按钮 = 每文档单例，可见性由 canvas.js
+   syncFileRefreshButton 随活动页签/源码态同步。
+   z 层级：z:10 压 pane 内容（pane z:auto 不建层叠上下文，同层比较胜出）；
+   #912 错误态顶部让位带（纯 padding，非浮层）与卡头胶囊/胶囊环（头部区 z-30，
+   空间不与右下角交叠）互不相扰；deck 层/独立浮标各自独立空间位。 */
 .canvas-refresh-toggle {
   position: absolute;
   width: 40px;
@@ -1923,8 +1933,11 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
 @keyframes canvasRefreshSpin {
   to { transform: rotate(360deg); }
 }
-.canvas-tab-pane[data-source-mode="1"] .canvas-refresh-toggle {
-  display: none;
+/* 可见性同步腿（定位修复批）：原生 hidden 的 UA display:none 会被上面的
+   display:flex（作者样式）压过，必须显式钉死。源码态隐藏走 JS（hidden 置位，
+   canvas-source-mode-changed 事件），不再用 pane 后代选择器（按钮已不在 pane 内）。 */
+.canvas-refresh-toggle[hidden] {
+  display: none !important;
 }
 @media (prefers-reduced-motion: reduce) {
   .canvas-refresh-toggle.busy svg { animation: none; }

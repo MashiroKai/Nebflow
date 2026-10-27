@@ -1,9 +1,13 @@
-// canvas-file-refresh.spec.mjs — canvas 文件刷新批验收（作者令 2026-10-25 两件）
+// canvas-file-refresh.spec.mjs — canvas 文件刷新批验收（作者令 2026-10-25 两件
+// + 定位修复批 2026-10-27 两钉）
 //
 // ① 刷新按钮：canvas 文件页签（md/html/图片等全类型）右下角「重新读盘」钮——
 //    点击走既有 readFile 面（pop.readFile → fileContent → workspace-open-item）
 //    重渲染当前文件，不整页刷新；内容未变时点了无害（不重挂、不丢滚动位）；
 //    脏标签（未保存修改）拒绝覆盖并给可见反馈；源码态整钮隐藏。
+//    定位修复（作者报障 2026-10-27「↻ 悬浮在正文中间」）：挂载点 = 面板壳
+//    #canvas-content（不滚动的 position:relative 壳层）单例，随活动页签同步；
+//    A8 钉滚动不变位（pane 自滚的 yaml 复现类），A9 钉亮暗主题几何一致。
 // ② 「查看源码」提速：归因 = Monaco AMD 链（loader.js → editor.main.js ~3.6MB
 //    → css + basic-languages）被首击独扛（preloadMonaco 无人调用）；修复 = main.js
 //    空闲预载。本 spec 断言预载完成后源码打开时延落在性能预算内（1500ms）。
@@ -27,6 +31,9 @@ const MD_V1 = `# note\n\n${Array.from({ length: 80 }, (_, i) => `Paragraph ${i +
 const MD_V2 = MD_V1 + '\n## Freshly edited on disk\n\nNEW-CONTENT-MARKER v2\n';
 // 1×1 PNG (transparent)
 const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+// 长 YAML（200 行 ≈ 4000px 高）——pane 自滚复现类（.canvas-tab-pane.scrollable：
+// yaml/docx/xlsx/pptx 同机制，作者报障 2026-10-27 截图即此类）
+const YAML_LONG = Array.from({ length: 200 }, (_, i) => `key_${String(i).padStart(3, '0')}: value-row-${i + 1}`).join('\n');
 
 // ── 静态服务（serve 真实 web/ 前端源码树）──
 const MIME = {
@@ -53,8 +60,8 @@ test.afterAll(async () => { await new Promise((r) => server.close(r)); });
 
 /** Shared boot: static web tree + WS mock (answers pop.readFile from FILES) +
  *  api catch-all + ticket mock. Returns handles for per-test wiring. */
-async function bootPage(browser, { files = {}, onFrame = null } = {}) {
-  const ctx = await browser.newContext({ viewport: { width: 1440, height: 960 } });
+async function bootPage(browser, { files = {}, onFrame = null, colorScheme = 'light' } = {}) {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 960 }, colorScheme });
   await ctx.addInitScript(() => {
     localStorage.setItem('nebflow_token', 't'); localStorage.setItem('neblink_token', 't');
     localStorage.setItem('nebflow_locale', 'zh-CN'); localStorage.setItem('neblink_locale', 'zh-CN');
@@ -112,34 +119,36 @@ test.describe('refresh button', () => {
     const pane = page.locator(paneSel('/tmp/nfr/note.md'));
     // 量几何前等面板开合过渡（flex-basis 0 → target, 0.32s）落定，否则 pane 宽读 0
     await expect.poll(async () => pane.evaluate((p) => p.getBoundingClientRect().width), { timeout: 10000 }).toBeGreaterThan(320);
-    // 存在 + 可见 + 圆钮族样式
-    const btn = pane.locator('.canvas-refresh-toggle');
+    // 存在 + 可见 + 圆钮族样式。定位修复批：按钮 = 面板壳 #canvas-content 直子
+    // 单例（不再挂进 pane）——先钉挂载点本身
+    const btn = page.locator('#canvas-content > .canvas-refresh-toggle');
     await expect(btn).toHaveCount(1);
     await expect(btn).toBeVisible();
     const geo = await page.evaluate((sel) => {
       const pane = document.querySelector(sel);
       const paneRect = pane.getBoundingClientRect();
-      const rect = pane.querySelector('.canvas-refresh-toggle').getBoundingClientRect();
+      const rect = document.querySelector('#canvas-content > .canvas-refresh-toggle').getBoundingClientRect();
       const others = [...pane.querySelectorAll('.canvas-source-toggle, .canvas-find-toggle, .canvas-graph-toggle, .canvas-zoom-bar')]
         .map((el) => el.getBoundingClientRect());
       const overlap = others.some((o) => !(rect.right <= o.left + 1 || rect.left >= o.right - 1 || rect.bottom <= o.top + 1 || rect.top >= o.bottom - 1));
       return {
         fromRight: paneRect.right - rect.right, fromBottom: paneRect.bottom - rect.bottom,
-        overlap, paneW: paneRect.width, rightCss: pane.querySelector('.canvas-refresh-toggle').style.right,
+        overlap, paneW: paneRect.width, rightCss: document.querySelector('#canvas-content > .canvas-refresh-toggle').style.right,
       };
     }, paneSel('/tmp/nfr/note.md'));
     // 右下角：贴角簇同一行（bottom ≤ 24px），完整落在 pane 内，不与既有圆钮/缩放条重叠
     expect(geo.fromBottom, 'refresh button sits on the bottom row').toBeLessThanOrEqual(24);
     expect(geo.fromRight, 'button fully inside the pane horizontally').toBeLessThanOrEqual(geo.paneW - 56);
     expect(geo.overlap, 'no overlap with source/find/graph/zoom chrome').toBe(false);
-    // code 页签同样有钮
+    // code 页签同样有钮（单例随活动页签切换保持可见）
     await page.evaluate(() => {
       window.dispatchEvent(new CustomEvent('workspace-open-item', {
         detail: { id: 'file:/tmp/nfr/app.scala', itemType: 'code', title: 'app.scala', content: 'object App {}\n', absPath: '/tmp/nfr/app.scala', pinned: true },
       }));
     });
-    await page.waitForSelector(`${paneSel('/tmp/nfr/app.scala')} .canvas-refresh-toggle`, { timeout: 10000 });
-    // 面板/URL 页签（无 absPath）没有钮（URL 页签 id 自带 scheme，不能走 paneSel 的 file: 前缀）
+    await expect(btn, 'singleton follows the newly activated code tab').toBeVisible({ timeout: 10000 });
+    // 面板/URL 页签（无 absPath）没有钮（URL 页签 id 自带 scheme，不能走 paneSel 的 file: 前缀）：
+    // pane 内零命中 + 单例随非文件页签隐藏
     await page.evaluate(() => {
       window.dispatchEvent(new CustomEvent('workspace-open-item', {
         detail: { id: 'url:https://example.com', itemType: 'url', title: 'example', url: 'https://example.com' },
@@ -147,6 +156,7 @@ test.describe('refresh button', () => {
     });
     await page.waitForSelector('.canvas-tab-pane[data-tab-id="url:https://example.com"]', { timeout: 10000, state: 'attached' });
     expect(await page.locator('.canvas-tab-pane[data-tab-id="url:https://example.com"] .canvas-refresh-toggle').count()).toBe(0);
+    await expect(btn, 'singleton hides on a non-file active tab').toBeHidden({ timeout: 10000 });
     expect(errors, 'zero pageerrors').toEqual([]);
     await ctx.close();
   });
@@ -159,9 +169,9 @@ test.describe('refresh button', () => {
     await expect(pane.locator('.canvas-md-viewer')).toContainText('Paragraph 80');
     // 磁盘上的文件被改动（mock：readFile 应答换成 v2）
     files['/tmp/nfr/live.md'] = { content: MD_V2, itemType: 'markdown' };
-    await pane.locator('.canvas-refresh-toggle').click();
+    await page.locator('.canvas-refresh-toggle').click();
     await expect(pane.locator('.canvas-md-viewer'), 'changed content shows after refresh').toContainText('NEW-CONTENT-MARKER v2', { timeout: 10000 });
-    await expect(pane.locator('.canvas-refresh-toggle'), 'busy state cleared after settle').not.toHaveClass(/busy/);
+    await expect(page.locator('.canvas-refresh-toggle'), 'busy state cleared after settle').not.toHaveClass(/busy/);
     expect(errors, 'zero pageerrors').toEqual([]);
     await ctx.close();
   });
@@ -183,14 +193,14 @@ test.describe('refresh button', () => {
     }, sel);
     const before = await page.evaluate((sel) => document.querySelector(`${sel} .canvas-md-scroll`).scrollTop, sel);
     expect(before, 'scrolled the reader to mid-document').toBeGreaterThan(100);
-    await page.locator(`${sel} .canvas-refresh-toggle`).click();
+    await page.locator('.canvas-refresh-toggle').click();
     await page.waitForTimeout(900);  // readFile round trip + settle
     const after = await page.evaluate((sel) => {
       const pane = document.querySelector(sel);
       return {
         scroll: pane.querySelector('.canvas-md-scroll').scrollTop,
         sameNode: pane.querySelector('.canvas-md-viewer').__nfrProbe === 'v1-node',
-        busy: !!pane.querySelector('.canvas-refresh-toggle.busy'),
+        busy: !!document.querySelector('#canvas-content > .canvas-refresh-toggle.busy'),
       };
     }, sel);
     expect(after.sameNode, 'unchanged refresh must NOT remount the viewer').toBe(true);
@@ -223,7 +233,7 @@ test.describe('refresh button', () => {
     const first = nfFetches;
     console.log('[A4] first render fetches =', first);
     expect(first, 'initial render fetched bytes via the ticket chain').toBeGreaterThan(0);
-    await page.locator(`${paneSel('/tmp/nfr/pic.png')} .canvas-refresh-toggle`).click({ timeout: 15000 });
+    await page.locator('.canvas-refresh-toggle').click({ timeout: 15000 });
     console.log('[A4] refresh clicked');
     await expect.poll(() => nfFetches, { timeout: 20000 }, 'refresh re-fetches (ledger invalidated, cache not served)').toBeGreaterThan(first);
     console.log('[A4] re-fetch observed, count =', nfFetches);
@@ -257,7 +267,7 @@ test.describe('refresh button', () => {
       /** @type {any} */ (window).__showToast = (msg, kind) => { /** @type {any} */ (window).__nfrToasts.push(String(msg)); if (orig) orig(msg, kind); };
     });
     const sentBefore = wsFrames.filter((f) => f.type === 'pop.readFile').length;
-    await page.locator(`${sel} .canvas-refresh-toggle`).click();
+    await page.locator('.canvas-refresh-toggle').click();
     await page.waitForTimeout(600);
     const toasts = await page.evaluate(() => /** @type {any} */ (window).__nfrToasts);
     expect(toasts.some((s) => s.includes('未保存')), 'visible dirty boundary toast').toBe(true);
@@ -279,16 +289,99 @@ test.describe('refresh button', () => {
     const sel = paneSel('/tmp/nfr/src.md');
     await page.locator(`${sel} .canvas-source-toggle`).click();
     await page.waitForSelector(`${sel} .monaco-editor`, { timeout: 30000 });
-    const hidden = await page.evaluate((sel) => {
-      const btn = document.querySelector(`${sel} .canvas-refresh-toggle`);
-      return btn ? getComputedStyle(btn).display === 'none' : true;
-    }, sel);
+    // 定位修复批：按钮 = 壳层单例，源码态由 canvas-source-mode-changed 事件驱动
+    // hidden 置位（CSS [hidden] 钉死 display:none）
+    const hidden = await page.evaluate(() => {
+      const btn = document.querySelector('#canvas-content > .canvas-refresh-toggle');
+      return btn ? (btn.hidden || getComputedStyle(btn).display === 'none') : true;
+    });
     expect(hidden, 'refresh button hidden while the source editor is mounted').toBe(true);
     await page.locator(`${sel} .canvas-source-toggle`).click();
     await page.waitForSelector(`${sel} .canvas-md-viewer`, { timeout: 15000 });
-    await expect(page.locator(`${sel} .canvas-refresh-toggle`)).toBeVisible();
+    await expect(page.locator('.canvas-refresh-toggle')).toBeVisible();
     expect(errors, 'zero pageerrors').toEqual([]);
     await ctx.close();
+  });
+
+  // ── 定位修复批（作者报障 2026-10-27「刷新钮悬浮在正文中间」）两钉 ──
+
+  test('A8 scroll pin: pane self-scroll (yaml/.scrollable class) never moves the button', async ({ browser }) => {
+    const { ctx, page, errors } = await bootPage(browser, {
+      files: { '/tmp/nfr/conf.yaml': { content: YAML_LONG, itemType: 'yaml' } },
+    });
+    await page.evaluate(({ path, content }) => {
+      window.dispatchEvent(new CustomEvent('workspace-open-item', {
+        detail: { id: 'file:' + path, itemType: 'yaml', title: 'conf.yaml', content, absPath: path, pinned: true },
+      }));
+    }, { path: '/tmp/nfr/conf.yaml', content: YAML_LONG });
+    const sel = paneSel('/tmp/nfr/conf.yaml');
+    await page.waitForSelector(`${sel} .canvas-yaml-viewer`, { timeout: 15000 });
+    // 等面板开合过渡落定（同 A1：早量几何读数瞬态）
+    await expect.poll(async () => page.evaluate((s) => document.querySelector(s).getBoundingClientRect().width, sel), { timeout: 10000 }).toBeGreaterThan(320);
+    // yaml pane 自身即滚动容器（.canvas-tab-pane.scrollable）——修前按钮 bottom:16
+    // 按整份内容盒落点 = 文档末尾，滚动即漂移（报障截图形态）。量的是「按钮本体」
+    // 全局唯一命中（挂载点归属已由 A1 钉死，本钉只管行为：滚动不动位）
+    const btnSel = '.canvas-refresh-toggle';
+    await expect(page.locator(btnSel)).toHaveCount(1);
+    const before = await page.evaluate((b) => {
+      const r = document.querySelector(b).getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height };
+    }, btnSel);
+    await page.evaluate((s) => { document.querySelector(s).scrollTop = 600; }, sel);
+    await page.waitForTimeout(120);
+    const scrolled = await page.evaluate((s) => document.querySelector(s).scrollTop, sel);
+    expect(scrolled, 'the yaml pane itself scrolled (repro class active)').toBeGreaterThan(100);
+    const after = await page.evaluate(({ b, p }) => {
+      const r = document.querySelector(b).getBoundingClientRect();
+      const paneR = document.querySelector(p).getBoundingClientRect();
+      return { x: r.x, y: r.y, w: r.width, h: r.height, fromBottom: paneR.bottom - r.bottom, fromRight: paneR.right - r.right };
+    }, { b: btnSel, p: sel });
+    expect(after.x, 'button viewport X unchanged after content scroll').toBeCloseTo(before.x, 1);
+    expect(after.y, 'button viewport Y unchanged after content scroll').toBeCloseTo(before.y, 1);
+    expect(after.w, 'button size unchanged after content scroll').toBeCloseTo(before.w, 1);
+    expect(after.h, 'button height unchanged after content scroll').toBeCloseTo(before.h, 1);
+    // 仍钉在可视区右下（视觉 16px 边距 + 壳层 8px padding 补偿后 ≤ 24）
+    expect(after.fromBottom, 'pinned to the visible bottom edge after scroll').toBeLessThanOrEqual(24);
+    expect(after.fromRight, 'pinned to the visible right edge after scroll').toBeLessThanOrEqual(24);
+    expect(errors, 'zero pageerrors').toEqual([]);
+    await ctx.close();
+  });
+
+  test('A9 theme pin: light and dark give identical button geometry', async ({ browser }) => {
+    const files = { '/tmp/nfr/theme.yaml': { content: YAML_LONG, itemType: 'yaml' } };
+    const light = await bootPage(browser, { files, colorScheme: 'light' });
+    const dark = await bootPage(browser, { files, colorScheme: 'dark' });
+    const open = async (page) => {
+      await page.evaluate(({ path, content }) => {
+        window.dispatchEvent(new CustomEvent('workspace-open-item', {
+          detail: { id: 'file:' + path, itemType: 'yaml', title: 'theme.yaml', content, absPath: path, pinned: true },
+        }));
+      }, { path: '/tmp/nfr/theme.yaml', content: YAML_LONG });
+      await page.waitForSelector(`${paneSel('/tmp/nfr/theme.yaml')} .canvas-yaml-viewer`, { timeout: 15000 });
+      await expect.poll(async () => page.evaluate((s) => document.querySelector(s).getBoundingClientRect().width, paneSel('/tmp/nfr/theme.yaml')), { timeout: 10000 }).toBeGreaterThan(320);
+      return page.evaluate((b) => {
+        const el = document.querySelector(b);
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { x: r.x, y: r.y, w: r.width, h: r.height, display: getComputedStyle(el).display, visibility: getComputedStyle(el).visibility };
+      }, '.canvas-refresh-toggle');
+    };
+    const L = await open(light.page);
+    const D = await open(dark.page);
+    expect(L, 'button mounted in light theme').toBeTruthy();
+    expect(D, 'button mounted in dark theme').toBeTruthy();
+    expect(L.display, 'visible in light').toBe('flex');
+    expect(D.display, 'visible in dark').toBe('flex');
+    expect(D.visibility, 'visible in dark (not collapsed)').toBe('visible');
+    // 同视口（1440×960）两主题下几何逐项一致——主题只换 token 色值，禁影响布局
+    expect(D.x, 'X identical across themes').toBeCloseTo(L.x, 1);
+    expect(D.y, 'Y identical across themes').toBeCloseTo(L.y, 1);
+    expect(D.w, 'width identical across themes').toBeCloseTo(L.w, 1);
+    expect(D.h, 'height identical across themes').toBeCloseTo(L.h, 1);
+    expect(light.errors, 'zero pageerrors (light)').toEqual([]);
+    expect(dark.errors, 'zero pageerrors (dark)').toEqual([]);
+    await light.ctx.close();
+    await dark.ctx.close();
   });
 });
 
