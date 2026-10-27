@@ -626,7 +626,7 @@ function disposeTabEditor(entry) {
  *  @param {object} opts  — { type: 'flow'|'markdown'|'code'|'html'|'generic', closable: bool }
  *  @returns {object|null} — The tab entry, or null on failure. */
 export function openTab(id, title, opts = {}) {
-  const { type = 'generic', closable = true, pinned = false } = opts;
+  const { type = 'generic', closable = true, pinned = false, noRevive = false } = opts;
 
   // Open the panel if it's not already visible.
   if (!isCanvasOpen()) openCanvas();
@@ -638,6 +638,15 @@ export function openTab(id, title, opts = {}) {
     setActiveTab(id);
     return tabs.get(id);
   }
+
+  // #910 追补（2026-10-27 作者报障「关掉的页签还是老是会加载」）：恢复/投影
+  // 路径（restoreTabs 本地缓存腿 / 服务端 reconcile 腿 / readFile 恢复管线，
+  // 经 noRevive 进入）不是重开意图 —— 命中生效墓碑直接拒开，且绝不落
+  // reopened 账：服务端 merge 以 reopenedAt>closedAt 翻惰性墓碑，恢复腿落账
+  // =这次复活变永久复活（2026-10-27 11:19 33 个已关页签被自动重开并永久
+  // 固化的根因链）。显式打开（用户点开）不走此闸，重开账照落（见下方
+  // journal 块），墓碑按时间戳让位 —— 「显式重开才恢复」原语义不变。
+  if (noRevive && tombstoneGateActive(id)) return null;
 
   // VS Code preview behavior: opening a new preview tab replaces the
   // existing preview tab in the same group (if any). Pinned tabs are not
@@ -706,7 +715,18 @@ export function openTab(id, title, opts = {}) {
   // 这个文件/面板就是重开意图）。服务端对无墓碑的 id 忽略该账（不凭空造
   // 记录）；restoreTabs 批量恢复走这里也安全：能从服务端回来的 id 必无生效
   // 墓碑，重开账是空转。
-  sessionReopens.set(id, { id, reopenedAt: Date.now() });
+  // #910 追补（2026-10-27）：上一段「restoreTabs 走这里也安全」的论断被证伪
+  // ——本地缓存腿/readFile 恢复管线能把带生效墓碑的 id 送到这里（旧缓存不
+  // 带墓碑、缓存会被陈旧窗口回写）。恢复腿（noRevive）不落账；显式腿落账并
+  // 同步镜像本会话墓碑的 reopenedAt（服务端同款时间戳裁决，localStorage 里
+  // 的墓碑账随之保持有效态，跨会话恢复过滤才有正确判据）。
+  if (!noRevive) {
+    const reopenedAt = Date.now();
+    sessionReopens.set(id, { id, reopenedAt });
+    const st = sessionTombstones.get(id);
+    if (st && reopenedAt > st.closedAt) sessionTombstones.set(id, { ...st, reopenedAt });
+    knownActiveTombstones.delete(id);
+  }
   if (sessionReopens.size > SESSION_LEDGER_CAP) {
     sessionReopens.delete(sessionReopens.keys().next().value); // 最旧
   }
@@ -726,8 +746,10 @@ export function openTab(id, title, opts = {}) {
 /** Shared teardown core for BOTH close paths (hidden tab-strip × and the deck
  *  stack's swipe/context close, canvas-stack batch): dispose the tab's editor,
  *  fire canvas-tab-closed, delete the entry + preview registration, persist.
- *  Returns the removed entry (or null when the id was already gone). */
-function teardownTab(id) {
+ *  Returns the removed entry (or null when the id was already gone).
+ *  opts.silent（#910 追补）：迟到墓碑清扫腿（suppressTombstonedTabs）专用 ——
+ *  只摘 UI 不落新墓碑（服务端已有生效墓碑，重复落账会把 closedAt 刷晚）。 */
+function teardownTab(id, opts = {}) {
   const entry = tabs.get(id);
   if (!entry) return null;
   disposeTabEditor(entry);
@@ -735,7 +757,7 @@ function teardownTab(id) {
   entry.paneEl.remove();
   entry.tabEl.remove();
   tabs.delete(id);
-  recordTombstone(id); // #910: 显式关闭意图落账（× 按钮 / deck 侧滑共用此处）
+  if (!opts.silent) recordTombstone(id); // #910: 显式关闭意图落账（× 按钮 / deck 侧滑共用此处）
   for (const [k, v] of previewTabs) { if (v === id) previewTabs.delete(k); }
   persistTabs();
   deckNotifyRemoved(id);
@@ -1241,6 +1263,13 @@ export async function openWorkspaceItem(item) {
   const { itemType, title, content, absPath, size, pinned, anchor, warnings, stream, mtimeMs, readOnly, manual } = item;
   if (!id) return;
 
+  // #910 追补（2026-10-27）：readFile 恢复管线（sendFileRestoreRequests）的
+  // 应答在此认领「恢复来历」——发请求前登记进 requestedFilePaths，这里一次性
+  // 消费。恢复腿 ⇒ noRevive：命中生效墓碑拒开、不落重开账。explorer 双击 /
+  // Pop 卡 / 引用跳转等显式打开无标记，语义不变。骨架错误腿（下方 error
+  // 分支）同受此闸：恢复一个「文件不可读」骨架也是复活。
+  const viaRestore = requestedFilePaths.delete(absPath) || requestedFilePaths.delete(item.path);
+
   // URL type — render the page in a sandboxed iframe. Handled before all
   // file logic: URL tabs have no absPath (scheduleFileRefresh skips them)
   // and are excluded from persistTabs (a restored URL tab would be a dead
@@ -1272,7 +1301,7 @@ export async function openWorkspaceItem(item) {
       return;
     }
     const placeholderTitle = title || (absPath ? absPath.split('/').pop() : id);
-    const entry = openTab(id, placeholderTitle, { type: 'code', pinned: !!pinned, absPath: absPath || id });
+    const entry = openTab(id, placeholderTitle, { type: 'code', pinned: !!pinned, absPath: absPath || id, noRevive: viaRestore });
     if (!entry) return;
     renderFilePlaceholder(entry.paneEl, item.error, absPath || id);
     // 骨架标签也挂刷新钮：文件恢复可读后一键重读即可翻正（readFile →
@@ -1434,6 +1463,7 @@ export async function openWorkspaceItem(item) {
   const entry = openTab(id, title || id, {
     type: itemType, pinned: !!pinned, absPath: absPath,
     rootPath: item.rootPath || null, filePath: item.path || null,
+    noRevive: viaRestore, // #910 追补：readFile 恢复管线应答不是重开意图
   });
   if (!entry) return;
   const pane = entry.paneEl;
@@ -4325,9 +4355,70 @@ function initCardWindowMode() {
 // 重开才恢复。前端职责=把「本会话关闭/重开意图账」随每次 PUT 上交，合并
 // 裁决在服务端（CanvasTabs.merge，时间戳幂等，账目可重放、不清不剪——超
 // 上限只淘汰最旧，保 PUT 永不因账目超限 400）。
-const sessionTombstones = new Map(); // id -> { id, closedAt, dev }
+const sessionTombstones = new Map(); // id -> { id, closedAt, dev, reopenedAt? }
 const sessionReopens = new Map();    // id -> { id, reopenedAt }
 const SESSION_LEDGER_CAP = 2000;     // 与服务端 MaxTombstoneInput 一致
+
+// #910 追补（2026-10-27 报障）：服务端 GET 带回的生效墓碑集合（权威）。播种后
+// 参与本会话的恢复闸（tombstoneGateActive）与迟到清扫（suppressTombstonedTabs）
+// ——修「先恢复、后到墓碑压不掉」的时序洞。
+const knownActiveTombstones = new Set();
+
+/** 生效墓碑闸：id 是否带着「本端已知的生效关闭意图」。三源：
+ *  ① 服务端 GET 播种的 knownActiveTombstones（权威）；
+ *  ② 本会话关闭账 sessionTombstones（未被本会话更晚重开压掉）；
+ *  ③ 由调用方把 localStorage/服务端存档自带墓碑并入（activeTombstoneIds）。 */
+function tombstoneGateActive(id) {
+  if (knownActiveTombstones.has(id)) return true;
+  const st = sessionTombstones.get(id);
+  if (!st) return false;
+  const r = sessionReopens.get(id);
+  return !r || r.reopenedAt <= st.closedAt;
+}
+
+/** 从一份存档（localStorage 记录 / 服务端 GET）提取生效墓碑 id 集：条目
+ *  closedAt > reopenedAt（缺省视为无重开）⇒ 生效；惰性条目从集合中剔除
+ *  （另一会话的显式重开已让墓碑让位，不能压掉重开态）。 */
+function activeTombstoneIdsFrom(data) {
+  const ids = new Set(knownActiveTombstones);
+  for (const [id, st] of sessionTombstones) {
+    const r = sessionReopens.get(id);
+    if (!r || r.reopenedAt <= st.closedAt) ids.add(id);
+  }
+  const recs = Array.isArray(data?.tombstones) ? data.tombstones : [];
+  for (const t of recs) {
+    if (!t || typeof t.id !== 'string' || !t.id) continue;
+    const closedAt = typeof t.closedAt === 'number' ? t.closedAt : 0;
+    const reopenedAt = typeof t.reopenedAt === 'number' ? t.reopenedAt : -Infinity;
+    if (closedAt > reopenedAt) ids.add(t.id);
+    else ids.delete(t.id);
+  }
+  return ids;
+}
+
+/** 服务端 GET 到达后播种生效墓碑集合（权威覆盖）。 */
+function seedKnownTombstones(data) {
+  const recs = Array.isArray(data?.tombstones) ? data.tombstones : [];
+  for (const t of recs) {
+    if (!t || typeof t.id !== 'string' || !t.id) continue;
+    const closedAt = typeof t.closedAt === 'number' ? t.closedAt : 0;
+    const reopenedAt = typeof t.reopenedAt === 'number' ? t.reopenedAt : -Infinity;
+    if (closedAt > reopenedAt) knownActiveTombstones.add(t.id);
+    else knownActiveTombstones.delete(t.id);
+  }
+}
+
+/** 迟到墓碑清扫：服务端 GET 到达时，把「先恢复进来、但服务端带生效墓碑」的
+ *  页签摘掉（静默——不落新墓碑）。堵恢复时序洞：本地缓存陈旧/老缓存不带墓碑
+ *  时，页签会先经恢复腿打开，墓碑这时才到。本会话显式重开过的 id 跳过（其
+  *  重开账在途，服务端墓碑即将让位）。 */
+function suppressTombstonedTabs() {
+  for (const id of [...tabs.keys()]) {
+    if (!tombstoneGateActive(id)) continue;
+    if (sessionReopens.has(id)) continue;
+    teardownTab(id, { silent: true });
+  }
+}
 
 // 所有显式关闭路径的记账点（× 按钮 / deck 侧滑 / 关闭其他 / 预览替换——
 // 各站点在 tabs.delete 后、persistTabs 前调用）。拖拽排序与文件改名不是
@@ -4335,6 +4426,7 @@ const SESSION_LEDGER_CAP = 2000;     // 与服务端 MaxTombstoneInput 一致
 function recordTombstone(id) {
   if (!id) return;
   sessionTombstones.set(id, { id, closedAt: Date.now(), dev: navigator.platform || 'unknown' });
+  knownActiveTombstones.add(id); // 本会话关闭意图即刻参与恢复闸
   if (sessionTombstones.size > SESSION_LEDGER_CAP) {
     sessionTombstones.delete(sessionTombstones.keys().next().value); // 最旧
   }
@@ -4382,12 +4474,13 @@ function persistTabs() {
     if (sessionTombstones.size > 0) payload.tombstones = [...sessionTombstones.values()];
     if (sessionReopens.size > 0) payload.reopened = [...sessionReopens.values()];
     // localStorage 仅作降级缓存（Safari 无痕/清空后仍可从服务端恢复）。
-    localStorage.setItem(LS_TABS_KEY, JSON.stringify({
-      v: 2,  // schema version — v1 (pre-unified-persistence) lacked closable
-             // and skipped no-absPath tabs; restoreTabs discards non-v2 data
-      tabs: serializable,
-      activeTabId: activeTabId,
-    }));
+    // #910 追补（2026-10-27）：缓存必须自带墓碑账 —— 缓存写入不受服务端
+    // 墓碑过滤（陈旧窗口会把已关页签写回缓存），不带账的话下次加载本地恢复
+    // 腿无从识别关闭意图，页签每次加载复活一次（本次报障链）。重开镜像进
+    // tombstones 条目（openTab 显式腿已并入），跨会话重开态判据正确。
+    const lsRecord = { v: 2, tabs: serializable, activeTabId: activeTabId };
+    if (sessionTombstones.size > 0) lsRecord.tombstones = [...sessionTombstones.values()];
+    localStorage.setItem(LS_TABS_KEY, JSON.stringify(lsRecord));
     console.log('[persistTabs] saved', serializable.length, 'tabs', serializable.map(t => t.id));
     // F1 (2026-08-30 作者裁定 + 方案 §8.4 F1): 服务端权威存档，防抖 PUT。
     scheduleServerPersist(payload);
@@ -4491,6 +4584,7 @@ function openPanelTab(tab) {
     type: tab.type || 'generic',
     closable: true,
     pinned: true,
+    noRevive: true, // #910 追补：批量恢复/服务端 reconcile 不是重开意图
   });
   if (!entry) return null;
   if (tab.pinned === false) {
@@ -4510,8 +4604,12 @@ function openPanelTab(tab) {
 function sendFileRestoreRequests(fileTabs) {
   if (fileTabs.length === 0) return;
   // 只发送「未派发过」且「标签尚未打开」的文件，避免本地/服务端双通道重复请求。
+  // #910 追补：命中生效墓碑的文件连 readFile 都不发 —— 请求本身就会让内容
+  // 自动加载（作者报障「老是会加载我已经关闭的」），拒开闸在下游兜底，
+  // 这里把浪费的取数与瞬时加载一起掐掉。
   const fresh = fileTabs.filter((t) => (
-    !requestedFilePaths.has(t.absPath) && !tabs.has(`file:${t.absPath}`)
+    !requestedFilePaths.has(t.absPath) && !tabs.has(`file:${t.absPath}`) &&
+    !tombstoneGateActive(`file:${t.absPath}`)
   ));
   if (fresh.length === 0) return;
   fresh.forEach((t) => requestedFilePaths.add(t.absPath));
@@ -4549,11 +4647,18 @@ function sendFileRestoreRequests(fileTabs) {
 // 返回「是否恢复了任何内容」（有面板/文件标签即 true）。
 function restoreFromData(data) {
   if (!data || !data.tabs || data.tabs.length === 0) return false;
+  // #910 追补（2026-10-27 报障）：本地缓存腿先按「缓存自带墓碑 ∪ 本会话
+  // 墓碑 ∪ 服务端已播种生效墓碑」过滤 —— 旧版 persistTabs 写的缓存不带墓碑，
+  // 且缓存写入不受服务端过滤（陈旧窗口回写会把已关页签写回缓存）。不过滤
+  // 就是每次加载复活一次。全被压掉时如实返回 false（交 main.js 兜底）。
+  const activeIds = activeTombstoneIdsFrom(data);
+  const alive = data.tabs.filter((t) => t && t.id && !activeIds.has(t.id));
+  if (alive.length === 0) return false;
   // Retired panel types (legacy Teams/Flows, 2026-09-05) never re-open —
   // old server/localStorage archives may still carry them; drop silently.
-  const panelTabs = data.tabs.filter(t => !t.absPath && t.type !== 'flow-run' &&
+  const panelTabs = alive.filter(t => !t.absPath && t.type !== 'flow-run' &&
     t.type !== 'teams' && t.type !== 'flows');
-  const fileTabs = data.tabs.filter(t => t.absPath);
+  const fileTabs = alive.filter(t => t.absPath);
   console.log('[restoreTabs] restoring', panelTabs.length, 'panel tabs,', fileTabs.length, 'file tabs');
 
   // Phase 1 — panel tabs, synchronous.
@@ -4588,6 +4693,9 @@ function reconcileFromServer(serverData) {
     // Retired legacy panel tabs (Teams/Flows) — server archive may still
     // carry them; never re-open (2026-09-05 旧 UI 退役).
     if (tab.type === 'teams' || tab.type === 'flows') continue;
+    // #910 追补：命中生效墓碑一律不开（服务端已过滤，此为纵深防御——
+    // 播种集合与响应不一致的窗口期也不复活）。
+    if (tombstoneGateActive(tab.id)) continue;
     if (present.has(tab.id)) continue;  // 已开（本地恢复成功）→ 跳过
     if (tab.absPath) fileToOpen.push(tab);
     else panelToOpen.push(tab);
@@ -4601,11 +4709,16 @@ function reconcileFromServer(serverData) {
     sendFileRestoreRequests(fileToOpen);
     openedAny = true;
   }
-  // 刷新本地缓存（服务端权威）。
+  // 刷新本地缓存（服务端权威）。#910 追补：墓碑账随写 —— 服务端存档若带
+  // tombstones 用服务端的（权威），否则沿用缓存里已有的（陈旧窗口回写后
+  // 账不丢，本地恢复腿才有判据）。
   try {
-    localStorage.setItem(LS_TABS_KEY, JSON.stringify({
-      v: 2, tabs: serverData.tabs, activeTabId,
-    }));
+    const lsRecord = { v: 2, tabs: serverData.tabs, activeTabId };
+    const lsTombs = Array.isArray(serverData.tombstones)
+      ? serverData.tombstones
+      : (() => { try { return parseTabsData(localStorage.getItem(LS_TABS_KEY))?.tombstones || undefined; } catch { return undefined; } })();
+    if (lsTombs) lsRecord.tombstones = lsTombs;
+    localStorage.setItem(LS_TABS_KEY, JSON.stringify(lsRecord));
   } catch (e) { /* storage full — non-critical */ }
   return openedAny;
 }
@@ -4641,6 +4754,13 @@ export function restoreTabs() {
       .then((r) => (r.ok ? r.json() : null))
       .then((serverData) => {
         const parsed = parseTabsData(serverData);
+        if (parsed) {
+          // #910 追补：服务端权威墓碑先播种，再把「先恢复进来、但带生效
+          // 墓碑」的页签压掉（本地缓存陈旧/老缓存不带墓碑的恢复时序洞），
+          // 然后才 reconcile。
+          seedKnownTombstones(parsed);
+          suppressTombstonedTabs();
+        }
         if (parsed && parsed.tabs.length > 0) {
           const didServer = reconcileFromServer(parsed);
           resolve(didLocal || didServer);
