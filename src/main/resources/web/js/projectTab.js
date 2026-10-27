@@ -931,6 +931,20 @@ function projectOriginOf(row) {
   return device ? { device, path } : null;
 }
 
+/** 徽标行判定（台账 #920 2026-10-27 · 多设备交互上下文补全）：
+ *  origin 在场（跨设备创建的项目）→ origin 原样；origin 缺席而 #913 的 `device`
+ *  存储值在（本机直建、effectiveDevice 回填/标注的行——GET /api/projects 与
+ *  projectCreated 帧自 2026-10-26 起 additive 携带）⇒ {device, path:''} 兜底，
+ *  让这类远端项目同样拿到徽标（title 无 path 段，花名册补名同面）。
+ *  `self`/`local`/空 = 本机 ⇒ null（「本机项目零徽标」缺省纪律逐字不变）。 */
+function projectBadgeOf(row) {
+  const origin = projectOriginOf(row);
+  if (origin) return origin;
+  const dev = typeof row?.device === 'string' ? row.device.trim() : '';
+  if (!dev || dev === 'self' || dev === 'local') return null;
+  return { device: dev, path: '' };
+}
+
 /** hard-drive 图形（与 explorer.js 的 chip 同源描边；此处内联一份避免静态依赖）。 */
 const DEV_BADGE_SVG =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
@@ -955,7 +969,13 @@ function applyDevBadges(scroll) {
       if (!badge.isConnected) return;
       const nm = badge.querySelector('.dev-badge-nm');
       if (nm && name) nm.textContent = name;
-      badge.title = t(online === false ? 'project.devBadgeOfflineTitle' : 'project.devBadgeTitle', { device: id, path: badge.getAttribute('data-origin-path') || '' });
+      // 台账 #920：origin 兜底徽标（#913 device 存储值）无 path 段 ⇒ title 走
+      // 无 path 专用键（不产「路径 」空尾巴）。
+      const path = badge.getAttribute('data-origin-path') || '';
+      const titleKey = online === false
+        ? (path ? 'project.devBadgeOfflineTitle' : 'project.devBadgeDeviceOfflineTitle')
+        : (path ? 'project.devBadgeTitle' : 'project.devBadgeDeviceTitle');
+      badge.title = t(titleKey, { device: id, path });
       badge.classList.toggle('is-offline', online === false);
       const dotNeeded = online === false && !badge.querySelector('.warn-dot');
       if (dotNeeded) {
@@ -971,11 +991,15 @@ function applyDevBadges(scroll) {
 /** 单卡模板。摘要槽**初始为骨架态**（渐进填充），title 初始按「摘要未知」处理（可点）；
  *  真实态由 applyCardSummary / applyCardEmptyState 定点写入（不重建节点）。
  *  面C：origin 在场 ⇒ title 旁插 `.dev-badge`；工作区行 open 钮 additive
- *  `data-open-device`（bindProjectCard 据此把远端根交给 explorer 的 device 腿）。 */
+ *  `data-open-device`（bindProjectCard 据此把远端根交给 explorer 的 device 腿）。
+ *  台账 #920（2026-10-27）：徽标源改走 [[projectBadgeOf]]（origin 缺席时 `device`
+ *  存储值兜底，本机行仍零徽标）；描述行**恒渲染**（空 = 占位文案）+ 行尾一枚
+ *  编辑钮——面板侧描述写穿入口（POST description，见 startDescriptionEdit）。 */
 function projectCardHtml(p) {
   const name = p.name;
-  const origin = projectOriginOf(p);
-  const badge = devBadgeHtml(origin);
+  const badgeOf = projectBadgeOf(p);
+  const badge = devBadgeHtml(badgeOf);
+  const desc = typeof p.description === 'string' ? p.description : '';
   return `
     <div class="team-card project-card" data-project="${esc(name)}" data-running="0">
       <div class="team-card-header">
@@ -988,7 +1012,7 @@ function projectCardHtml(p) {
         <div class="project-field" title="${esc(p.workspace)}">
           <span class="project-field-label">${esc(t('project.workspace'))}</span>
           <span class="project-field-value mono">${esc(p.workspace)}</span>
-          <button class="project-open-btn" data-open-workspace="${esc(p.workspace || '')}"${origin ? ` data-open-device="${esc(origin.device)}"` : ''} title="${esc(t('project.openWorkspace'))}" aria-label="${esc(t('project.openWorkspace'))}"><i data-lucide="folder-open"></i></button>
+          <button class="project-open-btn" data-open-workspace="${esc(p.workspace || '')}"${badgeOf ? ` data-open-device="${esc(badgeOf.device)}"` : ''} title="${esc(t('project.openWorkspace'))}" aria-label="${esc(t('project.openWorkspace'))}"><i data-lucide="folder-open"></i></button>
         </div>
         <div class="project-field">
           <span class="project-field-label">${esc(t('project.agentFileLabel'))}</span>
@@ -998,7 +1022,11 @@ function projectCardHtml(p) {
           <span class="project-field-label">${esc(t('project.runningAgents'))}</span>
           <span class="project-field-value tabular" data-running-count="${esc(name)}">0</span>
         </div>
-        ${p.description ? `<div class="project-field"><span class="project-field-value desc">${esc(contentText('project', name, 'desc', p.description))}</span></div>` : ''}
+        <div class="project-field project-desc-row">
+          <span class="project-field-label">${esc(t('project.descLabel'))}</span>
+          <span class="project-field-value desc${desc ? '' : ' is-empty'}" data-desc-value="${esc(name)}" data-desc-raw="${esc(desc)}">${desc ? esc(contentText('project', name, 'desc', desc)) : esc(t('project.descEmpty'))}</span>
+          <button class="project-desc-edit-btn" data-edit-desc="${esc(name)}" title="${esc(t('project.descEdit'))}" aria-label="${esc(t('project.descEdit'))}"><i data-lucide="pencil"></i></button>
+        </div>
       </div>
     </div>`;
 }
@@ -1136,10 +1164,110 @@ function bindProjectCard(card) {
       window.__showToast?.(t('project.workspaceOpened', { path }), 'info');
     }).catch(() => window.__showToast?.(t('project.openWorkspaceFail'), 'error'));
   });
+  // 台账 #920（2026-10-27）：描述行编辑钮 —— 面板侧写穿入口（POST /api/projects/
+  // <name>/description；单点 = nodeData.updateProjectDescription）。保存成功由
+  // applyProjectDescription 定点写回本卡（WS 帧回声对同值幂等写零感）。
+  card.querySelector('[data-edit-desc]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    startDescriptionEdit(card);
+  });
   // N2 project-tool 批（2026-10-06）：原 `[data-archive-project]` 手动卸载按钮随
   // 「面板手动卸载被工具面替代」移除（Project 工具 action="unmount" = 唯一卸载面；
   // 卸载经 projectUnmounted 帧回声驱动本文件定点退场，见文末订阅）。REST
   // POST /projects/<name>/archive 保留（软下线档现语义不动），仅失去面板入口。
+}
+
+// ── 描述行编辑（台账 #920 2026-10-27 · 面板侧描述写穿的交互面）──────────────────
+// 就地编辑（不弹层）：值槽 → textarea + 保存/取消，Esc = 取消。写入走
+// updateProjectDescription 三态（ok / http / network）；成功即定点写回 + toast，
+// 失败保持编辑器打开（用户输入不丢）+ 错误 toast。幂等腿（unchanged）静默收编辑器。
+// 🔴 零全量重渲：所有 DOM 变更都定点在本卡的描述行内。
+
+/** 描述值槽定点写（保存成功与 projectDescriptionUpdated 帧共用面）。 */
+function applyProjectDescription(card, description) {
+  if (!card || !card.isConnected) return;
+  const slot = card.querySelector('[data-desc-value]');
+  if (!slot) return;
+  const desc = typeof description === 'string' ? description : '';
+  slot.dataset.descRaw = desc;
+  const name = card.dataset.project || '';
+  slot.textContent = desc ? contentText('project', name, 'desc', desc) : t('project.descEmpty');
+  slot.classList.toggle('is-empty', !desc);
+}
+
+/** 收起编辑器（恢复值槽可见性；DOM 只增删编辑器节点本体）。 */
+function closeDescriptionEditor(card, editor) {
+  editor?.remove();
+  delete card.dataset.descEditing;
+  const slot = card.querySelector('[data-desc-value]');
+  if (slot) slot.hidden = false;
+}
+
+/** 进入就地编辑。幂等闸 = `data-desc-editing`（同卡不叠第二份编辑器）。 */
+function startDescriptionEdit(card) {
+  if (!card || !card.isConnected || card.dataset.descEditing === '1') return;
+  const name = card.dataset.project || '';
+  const slot = card.querySelector('[data-desc-value]');
+  if (!slot) return;
+  const raw = slot.dataset.descRaw || '';
+  card.dataset.descEditing = '1';
+  slot.hidden = true;
+
+  const editor = document.createElement('div');
+  editor.className = 'project-desc-editor';
+  const ta = document.createElement('textarea');
+  ta.className = 'project-desc-input modal-input';
+  ta.rows = 3;
+  ta.value = raw;
+  ta.placeholder = t('project.descPlaceholder');
+  const acts = document.createElement('div');
+  acts.className = 'project-desc-acts';
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'glass-control project-desc-save';
+  save.textContent = t('project.descSave');
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'project-desc-cancel';
+  cancel.textContent = t('project.descCancel');
+  acts.append(save, cancel);
+  editor.append(ta, acts);
+  // 插在描述行之后（不进 .project-field 行内——编辑态比单行高，行内会撑破栅格）。
+  slot.closest('.project-field')?.after(editor);
+  // 编辑器内任何点击不吃到面板/卡级交互（与卡内其他钮同纪律）。
+  editor.addEventListener('click', (e) => e.stopPropagation());
+  ta.focus();
+
+  const onCancel = () => closeDescriptionEditor(card, editor);
+  cancel.addEventListener('click', onCancel);
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); onCancel(); }
+  });
+  save.addEventListener('click', async () => {
+    const next = ta.value;
+    save.disabled = true;
+    cancel.disabled = true;
+    try {
+      const { updateProjectDescription } = await import('./nodeData.js');
+      const res = await updateProjectDescription(name, next);
+      if (res.state === 'ok') {
+        const unchanged = res.data?.unchanged === true;
+        closeDescriptionEditor(card, editor);
+        applyProjectDescription(card, next);
+        if (!unchanged) window.__showToast?.(t('project.descSaved', { name }), 'info');
+      } else {
+        save.disabled = false;
+        cancel.disabled = false;
+        window.__showToast?.(t('project.descSaveFail', {
+          detail: res.state === 'http' ? String(res.status) : 'network',
+        }), 'error');
+      }
+    } catch (_) {
+      save.disabled = false;
+      cancel.disabled = false;
+      window.__showToast?.(t('project.descSaveFail', { detail: 'network' }), 'error');
+    }
+  });
 }
 
 // ── 空态 CTA：一键引导（方向 B · 行为 = 仅预填）────────────────────────────────
@@ -1263,7 +1391,9 @@ function projectsListScroll() {
  *  避免「事件到了却因为字段缺失不立卡」这种静默丢帧。
  *  面C（ui-device-faces 批 2026-10-10）：additive `origin` = {device,path}——远端项目
  *  的创建落点（后端两出口 additive 补齐：GET /api/projects 行 + projectCreated 帧 row）。
- *  缺失/畸形 ⇒ null（= 本机项目，零徽标，存量行逐字节）。 */
+ *  缺失/畸形 ⇒ null（= 本机项目，零徽标，存量行逐字节）。
+ *  台账 #920（2026-10-27）：additive `device`（#913 存储值）随行透传——
+ *  徽标兜底面（projectBadgeOf）与设备上下文消费同源。 */
 function normalizeProjectRow(msg) {
   const name = msg?.project ?? msg?.row?.name;
   if (!name || typeof name !== 'string') return null;
@@ -1273,6 +1403,7 @@ function normalizeProjectRow(msg) {
     workspace: typeof row.workspace === 'string' ? row.workspace : '',
     description: typeof row.description === 'string' ? row.description : '',
     origin: projectOriginOf(row),
+    device: typeof row.device === 'string' ? row.device : '',
   };
 }
 
@@ -1323,9 +1454,30 @@ function onProjectUnmountedFrame(msg) {
   announceProjects(scroll, t('project.unmountedAnnounce', { name }));
 }
 
+/** 描述更新帧（台账 #920 2026-10-27）：REST POST description 成功腿广播
+ *  `projectDescriptionUpdated{project,description,updatedAt}`——按名定点写该卡的
+ *  描述槽（零重渲、零重拉；与本文件其他项目级帧同一纪律）。编辑中（`data-desc-editing`）
+ *  的卡**不写**（不打断用户输入；保存请求本身带权威值，服务端为唯一真源）。
+ *  帧无 sessionId ⇒ 必须在 ws.js 的 GLOBAL_MSG_TYPES 内（见文下 onMessage 订阅注）。 */
+function onProjectDescriptionUpdatedFrame(msg) {
+  const scroll = projectsListScroll();
+  if (!scroll) return;
+  const state = scroll.dataset.projectsState;
+  if (state !== 'ready' && state !== 'empty') { rerenderProjectsTab(); return; }
+  const name = typeof msg?.project === 'string' ? msg.project : '';
+  const description = typeof msg?.description === 'string' ? msg.description : '';
+  if (!name) return;
+  const card = cardByName(scroll, name);
+  if (!card) return; // 面板未展示该项目 ⇒ no-op
+  if (card.dataset.descEditing === '1') return; // 编辑中不覆盖输入
+  applyProjectDescription(card, description);
+  announceProjects(scroll, t('project.descSaved', { name }));
+}
+
 onMessage('projectCreated', (msg) => onProjectCreatedFrame(msg));
 onMessage('projectArchived', (msg) => onProjectArchivedFrame(msg));
 onMessage('projectUnmounted', (msg) => onProjectUnmountedFrame(msg));
+onMessage('projectDescriptionUpdated', (msg) => onProjectDescriptionUpdatedFrame(msg));
 
 // ── 兜底 C：低频重拉（裁定 (c) 同批）──────────────────────────────────────────
 // 为什么必须有：进程外改动（有人直接编辑/删除 `~/.nebflow/projects/<name>/project.json`，

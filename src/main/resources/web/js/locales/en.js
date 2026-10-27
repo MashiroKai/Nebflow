@@ -119,6 +119,18 @@ export default {
   'project.createErrSwitchDevice': 'Switch device…',
   'project.devBadgeTitle': 'Remote project · device {device} · path {path}',
   'project.devBadgeOfflineTitle': 'Remote project · device {device} (offline) · path {path}',
+  // 台账 #920 (2026-10-27): device-storage fallback badge (no origin → no path segment)
+  'project.devBadgeDeviceTitle': 'Remote project · device {device}',
+  'project.devBadgeDeviceOfflineTitle': 'Remote project · device {device} (offline)',
+  // 台账 #920 (2026-10-27): panel-side description write-through (always-rendered row + inline edit)
+  'project.descLabel': 'Description',
+  'project.descEmpty': 'No description yet',
+  'project.descEdit': 'Edit description',
+  'project.descPlaceholder': 'One line describing this project (wording feeds task routing)',
+  'project.descSave': 'Save',
+  'project.descCancel': 'Cancel',
+  'project.descSaved': '"{name}" description updated',
+  'project.descSaveFail': 'Failed to save description ({detail})',
   'flowmap.title': 'Flow Map',
   'flowmap.cardRunning': 'Running…',
   // Node card agent retirement (node-flowmap-slim): restrained empty state when no preset

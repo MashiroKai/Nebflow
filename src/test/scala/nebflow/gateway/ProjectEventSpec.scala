@@ -138,12 +138,20 @@ class ProjectEventSpec extends CatsEffectSuite:
       assertEquals(row.downField("agentFile").as[String].toOption, Some((ws / "AGENTS.md").toString))
       assertEquals(row.downField("description").as[String].toOption, Some("realtime event contract"))
       assert(row.downField("createdAt").as[Long].toOption.exists(_ > 0L), "row.createdAt must be a positive epoch ms")
-      // Row field set stays isomorphic with the GET /api/projects row — six
+      // Row field set stays isomorphic with the GET /api/projects row — seven
       // fields, no more, no less. `origin` is the additive ui-device-faces
-      // field (ProjectActor.projectCreatedFrame), null for a local project.
+      // field (ProjectActor.projectCreatedFrame), null for a local project;
+      // `device` is the additive #920 field (effectiveDevice storage value,
+      // "self" for local), closing the row isomorphism with GET /api/projects.
       assertEquals(
         row.keys.map(_.toSet).getOrElse(Set.empty),
-        Set("name", "workspace", "agentFile", "description", "createdAt", "origin")
+        Set("name", "workspace", "agentFile", "description", "createdAt", "origin", "device")
+      )
+      // #920：device 存储值与 origin 同源（origin 非本机字面量 ⇒ = origin.device）。
+      assertEquals(
+        row.downField("device").as[String].toOption,
+        Some("self"),
+        "local project device storage value = self (effectiveDevice single point)"
       )
       assertEquals(frame.asObject.map(_.keys.toSet).getOrElse(Set.empty), Set("type", "project", "row", "mounted"))
     end for
@@ -276,14 +284,97 @@ class ProjectEventSpec extends CatsEffectSuite:
     )
     val created = ProjectActor.projectCreatedFrame(pd, mounted = true)
     val archived = ProjectActor.projectArchivedFrame("evt-shape", 5678L)
+    val descUpdated = ProjectActor.projectDescriptionUpdatedFrame("evt-shape", "新描述", 9999L)
     IO {
       // description 为 None → 与 GET /api/projects 行同构地编码为 null（不是缺失键）
       assertEquals(created.hcursor.downField("row").downField("description").focus, Some(Json.Null))
       assertEquals(archived.hcursor.downField("archivedAt").as[Long].toOption, Some(5678L))
-      // 🔴 单 projectsChanged 事件未采（作者裁定 (e)）：两帧的 type 只可能是这两个身份名
-      val types: Set[Option[String]] = Set(field(created, "type"), field(archived, "type"))
-      assertEquals(types, Set[Option[String]](Some("projectCreated"), Some("projectArchived")))
+      // #920：描述帧载荷四键（type/project/description/updatedAt），description= 空串表示清空
+      assertEquals(field(descUpdated, "type"), Some("projectDescriptionUpdated"))
+      assertEquals(field(descUpdated, "project"), Some("evt-shape"))
+      assertEquals(field(descUpdated, "description"), Some("新描述"))
+      assertEquals(descUpdated.hcursor.downField("updatedAt").as[Long].toOption, Some(9999L))
+      assertEquals(descUpdated.asObject.map(_.keys.toSet).getOrElse(Set.empty), Set("type", "project", "description", "updatedAt"))
+      // 🔴 单 projectsChanged 事件未采（作者裁定 (e)）：帧 type 只可能是这三个身份名
+      val types: Set[Option[String]] = Set(field(created, "type"), field(archived, "type"), field(descUpdated, "type"))
+      assertEquals(types, Set[Option[String]](Some("projectCreated"), Some("projectArchived"), Some("projectDescriptionUpdated")))
     }
+  }
+
+  // ── 台账 #920（2026-10-27）：面板侧描述写穿（POST /projects/<name>/description）────
+  // 与 archive 腿同构的走真实路由四钉：成功帧恰一帧（载荷含写入值）/ 幂等腿零帧 +
+  // unchanged 标记 / 未知项目 404 零帧 / 帧键形单点。
+
+  test("description leg: POST /projects/<name>/description writes through and emits exactly ONE frame") {
+    val ws = tempRoot / "ws-evt-desc"
+    os.makeDir.all(ws)
+    for
+      created <- ProjectStore.create("evt-desc", ws.toString, None, "# template\n")
+      pair <- hubWithFrames
+      (hub, frames) = pair
+      routes = mkRoutes(hub, os.pwd)
+      authed = Request[IO](Method.POST, Uri.unsafeFromString("/projects/evt-desc/description"))
+        .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
+        .withEntity(Json.obj("description" -> Json.fromString("面板侧写入的描述")))
+      resp <- routes.routes(authed).value.map(_.getOrElse(fail("description route fell through")))
+      body <- resp.as[Json]
+      stored <- ProjectStore.load("evt-desc")
+      collected <- frames.get
+    yield
+      assert(created.isRight, created.toString)
+      assertEquals(resp.status, Status.Ok)
+      assertEquals(body.hcursor.downField("saved").as[Boolean].toOption, Some(true))
+      // 写穿读数：project.json 的 description 单字段已变（ProjectStore.load 单点回读）
+      assertEquals(stored.flatMap(_.description), Some("面板侧写入的描述"))
+      assertEquals(projectFrames(collected).size, 1, s"exactly one project frame, got: $collected")
+      val frame = projectFrames(collected).head
+      assertEquals(field(frame, "type"), Some("projectDescriptionUpdated"))
+      assertEquals(field(frame, "project"), Some("evt-desc"))
+      assertEquals(field(frame, "description"), Some("面板侧写入的描述"))
+      assert(frame.hcursor.downField("updatedAt").as[Long].toOption.exists(_ > 0L), "frame carries updatedAt epoch ms")
+    end for
+  }
+
+  test("description leg idempotency: same value returns unchanged with ZERO frames") {
+    val ws = tempRoot / "ws-evt-desc-idem"
+    os.makeDir.all(ws)
+    for
+      created <- ProjectStore.create("evt-desc-idem", ws.toString, None, "# template\n")
+      _ <- ProjectStore.updateDescription("evt-desc-idem", "同一句")
+      pair <- hubWithFrames
+      (hub, frames) = pair
+      routes = mkRoutes(hub, os.pwd)
+      authed = Request[IO](Method.POST, Uri.unsafeFromString("/projects/evt-desc-idem/description"))
+        .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
+        .withEntity(Json.obj("description" -> Json.fromString("同一句")))
+      resp <- routes.routes(authed).value.map(_.getOrElse(fail("description route fell through")))
+      body <- resp.as[Json]
+      collected <- frames.get
+    yield
+      assert(created.isRight, created.toString)
+      assertEquals(resp.status, Status.Ok)
+      assertEquals(body.hcursor.downField("saved").as[Boolean].toOption, Some(true))
+      assertEquals(body.hcursor.downField("unchanged").as[Boolean].toOption, Some(true), "idempotent leg carries the unchanged flag")
+      assertEquals(projectFrames(collected).size, 0, s"unchanged must not emit, got: $collected")
+    end for
+  }
+
+  test("description leg failure: unknown project → 404 with ZERO frames") {
+    for
+      pair <- hubWithFrames
+      (hub, frames) = pair
+      routes = mkRoutes(hub, os.pwd)
+      authed = Request[IO](Method.POST, Uri.unsafeFromString("/projects/evt-desc-missing/description"))
+        .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
+        .withEntity(Json.obj("description" -> Json.fromString("x")))
+      resp <- routes.routes(authed).value.map(_.getOrElse(fail("description route fell through")))
+      body <- resp.as[Json]
+      collected <- frames.get
+    yield
+      assertEquals(resp.status, Status.NotFound)
+      assert(body.hcursor.downField("error").as[String].toOption.isDefined, "404 body carries the error text")
+      assertEquals(projectFrames(collected).size, 0, s"failure path must not emit, got: $collected")
+    end for
   }
 
 end ProjectEventSpec

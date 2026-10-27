@@ -51,6 +51,11 @@ export const API = {
   //     CHAIN_CANCELLED）；每条成功腿另广播一帧 `chainState`（WS 单点，前端据此刷新）
   chainControl: (name, chainId, action) =>
     `/api/projects/${encodeURIComponent(name)}/chains/${encodeURIComponent(chainId)}/${action}`,
+  // 项目描述写穿（台账 #920 2026-10-27，#917 工具面的面板侧补全）：
+  // POST /api/projects/<name>/description，body {description}（空串 = 清空）
+  //   · 成功 200 → {saved:true}（幂等同值腿另带 unchanged:true，零写入不发帧）
+  //   · 404 → {error}（项目不存在 / 名字非法）；成功腿广播 projectDescriptionUpdated 帧
+  projectDescription: (name) => `/api/projects/${encodeURIComponent(name)}/description`,
 };
 
 /** 链控合法动作（与引擎面三条端点一一对应；禁前端自造第四种）。 */
@@ -227,6 +232,31 @@ export async function controlChain(projectName, chainId, action) {
       method: 'POST',
       headers: { ...authHeaders(), 'Content-Type': 'application/json' },
     });
+    let data = null;
+    try { data = await r.json(); } catch (_) { data = null; }
+    if (!r.ok) return { state: 'http', status: r.status, data };
+    return { state: 'ok', data };
+  } catch (_) {
+    return { state: 'network' };
+  }
+}
+
+/**
+ * 项目描述写穿（台账 #920 2026-10-27）。POST /api/projects/<name>/description，
+ * body {description}（空串 = 清空）。三态结果对象（与 fetchNodeResultDetail 同族）：
+ *   ok      200（data.saved === true；幂等腿 data.unchanged === true，零写入不发帧）
+ *   http    非 2xx（404 = 项目不存在 / 名字非法；401/403 走 sessionGate 同族上报）
+ *   network fetch 拒绝
+ * @param {string} projectName @param {string} description
+ */
+export async function updateProjectDescription(projectName, description) {
+  try {
+    const r = await fetch(API.projectDescription(projectName), {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description: String(description ?? '') }),
+    });
+    if (r.status === 401 || r.status === 403) noteAuthRejected('projects');
     let data = null;
     try { data = await r.json(); } catch (_) { data = null; }
     if (!r.ok) return { state: 'http', status: r.status, data };
