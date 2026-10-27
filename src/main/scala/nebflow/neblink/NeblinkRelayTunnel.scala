@@ -773,9 +773,14 @@ final class NeblinkRelayTunnel(
           .proxy(java.net.ProxySelector.of(null)) // bypass system proxy
           .connectTimeout(java.time.Duration.ofSeconds(15))
           .build()
+        // v1.3（契约 2.15）：portal-v2 能力协商 offer。总闸关（NEBLINK_PORTAL_V2
+        // =0/false/off）⇒ 不 offer = 即时回退到 v1 整帧；relay 侧灰度未放行 ⇒
+        // 不 echo ⇒ 下面的 getSubprotocol 读回空 ⇒ v1 整帧，零行为漂移（「协商
+        // 失败不破链」，契约 2.15 I2 纪律）。
         val wsBuilder = client
           .newWebSocketBuilder()
           .header("Authorization", s"Bearer $token")
+        if PortalTunnelBridge.portalV2OfferEnabled then wsBuilder.subprotocols(PortalWireCodec.PortalV2Subprotocol)
         val w = wsBuilder
           .buildAsync(URI.create(wsUri), listener)
           .get(10, TimeUnit.SECONDS)
@@ -812,7 +817,11 @@ final class NeblinkRelayTunnel(
           // completing and this line drop with an explicit "bridge not wired"
           // WARN; the server never sends portal frames in that window — they
           // require a mint/binding cycle first.)
-          portalDeps.foreach(deps => portalConn.bind(new PortalTunnelBridge(deps, new RelayFrameSender(w))))
+          // v1.3（契约 2.15）：能力位随连接判定——relay echo 了
+          // `neblink.portal.v2` ⇒ 本连接 ws 周期应用消息走 ws_data_frame；空 ⇒
+          // v1 整帧。能力位与 bridge 同生命周期（一连接一判）。
+          val portalV2 = w.getSubprotocol == PortalWireCodec.PortalV2Subprotocol
+          portalDeps.foreach(deps => portalConn.bind(new PortalTunnelBridge(deps, new RelayFrameSender(w), portalV2)))
           wsRef = Some(w)
           alive.set(true)
           lastPong.set(System.currentTimeMillis())
@@ -843,7 +852,7 @@ final class NeblinkRelayTunnel(
               }
             )
           }
-          logger.infoSync(s"Relay tunnel connected: $wsUri")
+          logger.infoSync(s"Relay tunnel connected: $wsUri portalV2=$portalV2")
           // 台账 #944：隧道（重）连成功 = 跨设备出站恢复的第一刻 —— 断连窗口里攒下的
           // 完成件在这里按序补投（fire-and-forget：失败件留盘，等下一轮重连或下一次
           // boot；零墙钟，不设重试节拍）。放在 connected 行之后、portal 生命周期之前：
