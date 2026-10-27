@@ -318,12 +318,21 @@ private[gateway] object WsFileOpsHandlers:
         // 现在二进制与流式态都跳过读取。
         readIsStream = TextStream.isStream(readIsBinary, fileSize)
         readMtimeMs <- IO.blocking(os.mtime(basePath))
-        content <- IO.blocking {
-          if readIsBinary || readIsStream then ""
+        // 台账 #902 收口批 F（三级缓存 ①②）：整件腿（≤2MB）读穿——stat 现值
+        // 指纹未变 = 热层/持久层直出（二次打开零磁盘读）；指纹变 = 条目立即失效
+        // + 全量重读（绝不显示陈旧内容）。>2MB 有界腿照旧（部分读不入缓存——
+        // 「缓存字节恒等于真件内容」红线）；二进制/流式态照旧零字节。
+        content <-
+          if readIsBinary || readIsStream then IO.pure("")
           else if fileSize > 2 * 1024 * 1024 then
-            os.read(basePath, offset = 0, count = 2 * 1024 * 1024) + "\n\n[... file truncated at 2MB]"
-          else os.read(basePath)
-        }
+            IO.blocking(
+              os.read(basePath, offset = 0, count = 2 * 1024 * 1024) + "\n\n[... file truncated at 2MB]"
+            )
+          else IO.blocking {
+            val r = nebflow.core.tools.FileOpenCache
+              .readWholeThrough(basePath, nebflow.core.tools.FileOpenCache.Fingerprint(fileSize, readMtimeMs))
+            r.content
+          }
       yield (content, basePath.toString, fileSize, readMtimeMs, readIsStream))
         .flatMap { case (content, absPath, fileSize, mtimeMs, isStream) =>
           val ext = filePath.split('.').lastOption.getOrElse("").toLowerCase
@@ -422,6 +431,58 @@ private[gateway] object WsFileOpsHandlers:
         "totalBytes" -> total.asJson,
         "chunkMs" -> chunkMs.asJson
       )
+    // 台账 #902 收口批 F（三级缓存 ③）：统一帧形（与分块拉取腿逐键同构；命中腿
+    // additive `cached:true` 读数键——既有前端消费者零感知，spec 据此断言免拉取）。
+    def contentFrame(
+        bytes: Array[Byte],
+        absPath: os.Path,
+        mtimeMs: Long,
+        wholeSha: String,
+        cached: Boolean
+    ): io.circe.Json =
+      val ext = remotePath.split('.').lastOption.getOrElse("").toLowerCase
+      val entry = nebflow.core.workspace.FileTypeRegistry.detect(ext)
+      val fileName = remotePath.replaceAll("""[/\\]""", "/").split("/").lastOption.getOrElse(remotePath)
+      val base = JsonObject(
+        "type" -> "fileContent".asJson,
+        "path" -> remotePath.asJson,
+        "absPath" -> absPath.toString.asJson,
+        "itemType" -> entry.itemType.asJson,
+        "fileName" -> fileName.asJson,
+        "size" -> bytes.length.asJson,
+        "mtimeMs" -> mtimeMs.asJson,
+        "wholeSha256" -> wholeSha.take(16).asJson,
+        "device" -> device.asJson
+      )
+      val withCached = if cached then base.add("cached", Json.True) else base
+      if entry.binary then Json.fromJsonObject(withCached)
+      else
+        // 文本腿：与本地 readFile 的 2MB 截断规则同规（字节面截断 + 同款标记行）。
+        val content =
+          if bytes.length > 2 * 1024 * 1024 then
+            new String(bytes, 0, 2 * 1024 * 1024, "UTF-8") + "\n\n[... file truncated at 2MB]"
+          else new String(bytes, "UTF-8")
+        Json.fromJsonObject(withCached.add("content", content.asJson))
+    end contentFrame
+
+    def pullAndStore(re: nebflow.core.tools.RemoteExecutor, peer: PeerInfo, fpOpt: Option[nebflow.core.tools.FileOpenCache.Fingerprint]): IO[Unit] =
+      re.transferGetScopedChunked(peer, remotePath, (b, t, ms) => wsSend(progressFrame(b, t, ms))).flatMap {
+        case Left(err) =>
+          logger.warn(s"remote readFile failed for ${peer.deviceName}: $err")
+          wsSend(errorFrame(err, cancelled = err == nebflow.core.tools.BrowseGetCursor.Cancelled))
+        case Right(res) =>
+          IO.blocking {
+            val bytes = os.read.bytes(res.path)
+            // 对端取件 → 本机持久层入账（下次同件探测指纹命中即免拉）。
+            fpOpt.foreach(fp =>
+              nebflow.core.tools.FileOpenCache.putRemote(peer.deviceId, remotePath, fp, bytes, res.wholeSha256))
+            (res.path, bytes, res.wholeSha256)
+          }.flatMap { case (pickup, bytes, sha) =>
+            val mtimeMs = scala.util.Try(os.mtime(pickup)).getOrElse(0L)
+            wsSend(contentFrame(bytes, pickup, mtimeMs, sha, cached = false))
+          }
+      }
+
     resolveBrowseTarget(device)(using ctx).flatMap {
       case Left(err) => wsSend(errorFrame(err))
       case Right(None) =>
@@ -431,53 +492,40 @@ private[gateway] object WsFileOpsHandlers:
         nebflow.core.tools.RemoteExecutor.current match
           case None => wsSend(errorFrame("remote executor not initialized (NebLink disabled?)"))
           case Some(re) =>
-            re.transferGetScopedChunked(peer, remotePath, (b, t, ms) => wsSend(progressFrame(b, t, ms))).flatMap {
-              case Left(err) =>
-                logger.warn(s"remote readFile failed for ${peer.deviceName}: $err")
-                wsSend(errorFrame(err, cancelled = err == nebflow.core.tools.BrowseGetCursor.Cancelled))
-              case Right(res) =>
-                val ext = remotePath.split('.').lastOption.getOrElse("").toLowerCase
-                val entry = nebflow.core.workspace.FileTypeRegistry.detect(ext)
-                val fileName = remotePath.replaceAll("""[/\\]""", "/").split("/").lastOption.getOrElse(remotePath)
-                val mtimeMs = scala.util.Try(os.mtime(res.path)).getOrElse(0L)
-                // 分块腿整件 hash 的**免费副产品**（v1 §6.3）：下行帧带 `wholeSha256`
-                // 前 16 hex，前端据此入缓存账本副键（多设备同文件去重）。
-                val hash16 = res.wholeSha256.take(16)
-                if entry.binary then
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "fileContent".asJson,
-                      "path" -> remotePath.asJson,
-                      "absPath" -> res.path.toString.asJson,
-                      "itemType" -> entry.itemType.asJson,
-                      "fileName" -> fileName.asJson,
-                      "size" -> res.size.asJson,
-                      "mtimeMs" -> mtimeMs.asJson,
-                      "wholeSha256" -> hash16.asJson,
-                      "device" -> device.asJson
-                    )
-                  )
-                else
-                  // 文本腿：与本地 readFile 的 2MB 截断规则同规（字节面截断 + 同款标记行）。
-                  val bytes = os.read.bytes(res.path)
-                  val content =
-                    if bytes.length > 2 * 1024 * 1024 then
-                      new String(bytes, 0, 2 * 1024 * 1024, "UTF-8") + "\n\n[... file truncated at 2MB]"
-                    else new String(bytes, "UTF-8")
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "fileContent".asJson,
-                      "path" -> remotePath.asJson,
-                      "absPath" -> res.path.toString.asJson,
-                      "content" -> content.asJson,
-                      "itemType" -> entry.itemType.asJson,
-                      "fileName" -> fileName.asJson,
-                      "size" -> bytes.length.asJson,
-                      "mtimeMs" -> mtimeMs.asJson,
-                      "wholeSha256" -> hash16.asJson,
-                      "device" -> device.asJson
-                    )
-                  )
+            // 三级缓存 ③ 探测腿：父目录元数据列举拿 {size,mtime}（零字节流动）→
+            // 指纹未变 + 本机缓存命中 = 跳过全量分块拉取（近端优先）；探测失败/
+            // 指纹变/无缓存 = 原分块拉取腿逐字节（缓存永不挡路，绝不显示陈旧内容）。
+            val probe = remotePath.replaceAll("""[/\\]+""", "/")
+            val slash = probe.lastIndexOf('/')
+            val probeFp: IO[Option[nebflow.core.tools.FileOpenCache.Fingerprint]] =
+              if slash <= 0 then IO.pure(None)
+              else
+                re.transferListScoped(peer, probe.substring(0, slash)).flatMap {
+                  case Left(err) =>
+                    logger.info(s"[file-open-cache] probe ${peer.deviceName}:$remotePath bypass: $err")
+                    IO.pure(None)
+                  case Right(js) =>
+                    IO.pure(nebflow.core.tools.FileOpenCache.fingerprintFromListing(js, probe.substring(slash + 1)))
+                }
+            probeFp.flatMap {
+              case None => pullAndStore(re, peer, None)
+              case Some(fp) =>
+                IO.blocking(nebflow.core.tools.FileOpenCache.lookupRemote(peer.deviceId, remotePath, fp))
+                  .flatMap {
+                    case None => pullAndStore(re, peer, Some(fp))
+                    case Some(hit) =>
+                      IO.blocking {
+                        val pickup =
+                          nebflow.core.tools.FileOpenCache.ensurePickup(peer.deviceId, remotePath, hit.bytes)
+                        (pickup, scala.util.Try(os.mtime(pickup)).getOrElse(0L))
+                      }.flatMap { case (pickup, mtimeMs) =>
+                        logger.info(
+                          s"[file-open-cache] remote hit ${peer.deviceName}:$remotePath (${hit.bytes.length}B) — pull skipped"
+                        )
+                        IO(nebflow.core.tools.FileOpenCache.noteRemotePullSkip())
+                          *> wsSend(contentFrame(hit.bytes, pickup, mtimeMs, hit.sha16, cached = true))
+                      }
+                  }
             }
     }.handleErrorWith { e =>
       logger.warn(s"remote readFile failed: ${e.getMessage}")
@@ -568,7 +616,15 @@ private[gateway] object WsFileOpsHandlers:
         // `stream` 描述符，字节由 `textWindow` 按需拉（一窗一取 = 流控本体）。
         popIsStream = TextStream.isStream(popIsBinary, fileSize)
         popMtimeMs <- IO.blocking(os.mtime(basePath))
-        content <- if popIsBinary || popIsStream then IO.pure("") else IO.blocking { os.read(basePath) }
+        // 台账 #902 收口批 F（三级缓存 ①②）：pop 整件腿读穿（≤8MiB 流式闸之下
+        // 的全量读；入账上限 96MiB 由 FileOpenCache 自己夹）——同 readFile 整件腿语义。
+        content <-
+          if popIsBinary || popIsStream then IO.pure("")
+          else IO.blocking {
+            nebflow.core.tools.FileOpenCache
+              .readWholeThrough(basePath, nebflow.core.tools.FileOpenCache.Fingerprint(fileSize, popMtimeMs))
+              .content
+          }
       yield (content, basePath.toString, fileSize, popFilePath, popMtimeMs, popIsStream))
         .flatMap { case (content, absPath, fileSize, origPath, mtimeMs, isStream) =>
           val ext = popFilePath.split('.').lastOption.getOrElse("").toLowerCase

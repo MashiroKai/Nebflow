@@ -678,7 +678,10 @@ class RemoteExecutor(
       "content" -> content.asJson
     )
     executeViaBestPath(peer, "Write", params, 60.seconds, parent, kind = "scaffold").map {
-      case Right(out) => Right(out)
+      case Right(out) =>
+        // 台账 #902 收口批 F（写穿红线）：远端件被改写 ⇒ 本机 dev 键缓存立即失效。
+        FileOpenCache.invalidateRemote(peer.deviceId, remotePath)
+        Right(out)
       case Left(err) => Left(err.message)
     }
   end writeRemoteFileForScaffold
