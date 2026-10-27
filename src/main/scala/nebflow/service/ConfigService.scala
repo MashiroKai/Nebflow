@@ -93,6 +93,31 @@ object ConfigService:
       root.add("search", Json.fromJsonObject(search.add("apiKey", Json.fromString(SecretMask))))
     )).getOrElse(json)
 
+  /**
+   * 设置页 apikey 明文回读投影（作者令 2026-10-27 10:33「设置里配置的 apikey，
+   * 直接显示就行了」）：把 nebflow.json 里 `llm.providers.<id>.apiKey` 的**真值**
+   * 投影出来——即通用读面 [[getConfig]] 刻意打码（keyaudit-quickfix ③）的那些值。
+   *
+   *  - 线格式：`{"providers":{"<id>":"<apiKey>"}}`；没有 apiKey 的 provider
+   *    缺席（前端显示空态，不是掩码）。
+   *  - 范围：仅 provider apiKey——`search.apiKey` 不在设置页两处字段内，通用读面
+   *    打码维持；`jev.keyRef` 无需回读（secrets 目录里的**名**，config 读面本就
+   *    逐字回传）。
+   *  - 纪律：唯一调用方 = 网关 `withAuth` 臂（与设置写同一条 owner 门槛，
+   *    GatewayAuth Rails.ApiFull）；🔴 日志零 key 值——值的唯一出现位置是响应体。
+   *  - 纯读投影：不取写锁、不落盘，盘上真相不变。
+   */
+  def revealProviderApiKeys: IO[Json] = IO.blocking {
+    val raw = if os.exists(configPath) then os.read(configPath) else "{}"
+    val providers = parse(raw)
+      .toOption
+      .flatMap(_.hcursor.downField("llm").downField("providers").as[Map[String, Json]].toOption)
+      .getOrElse(Map.empty[String, Json])
+    Json.obj("providers" -> Json.fromFields(providers.flatMap { case (id, p) =>
+      p.hcursor.downField("apiKey").as[String].toOption.filter(_.nonEmpty).map(id -> Json.fromString(_))
+    }))
+  }
+
   def getConfig: IO[String] = IO.blocking {
     // Read-side masking (keyaudit-quickfix ③): the wire faces (REST
     // GET /api/config, WS getConfig) must not echo the stored keys. Every

@@ -51,7 +51,7 @@ import { nfCacheStats, nfCacheReset } from './nfFileCache.js';
 // 本文件保持单向 import(子模块不得反向 import
 // sidebar.js),公共导出面(批次前 41 符号)经下方 `export ... from` 显式转发,
 // 外部 import 方零改动。
-import { protocolFormLabel, escapeHtml, flushConfigToServer, showProviderModal, saveNewProvider } from './sidebar/providersUi.js';
+import { protocolFormLabel, escapeHtml, flushConfigToServer, showProviderModal, saveNewProvider, revealProviderApiKeys } from './sidebar/providersUi.js';
 export { saveNewProvider, openProviderWizard, validateContextWindow, CTX_WINDOW_HARD_CEILING } from './sidebar/providersUi.js';
 import { openRulesEditor, openPathPicker, injectRenderSessionSidebar } from './sidebar/pathRules.js';
 export { handleRulesData, handleRulesSaved, handleRulesDeleted, initRulesModal, openPathPicker, openPathPickerCallback, handleBrowseResult, initPathPicker } from './sidebar/pathRules.js';
@@ -857,8 +857,11 @@ export function renderSettings() {
            折叠体（展开才见，三改①原话「点击展开才显示细节」）。端点行按
            提供方钉死：typesafe-jev → 预填 JEV_PINNED_ENDPOINT + disabled
            禁用态（用户只填密钥引用，三改②）；laya 保持可编辑。keyRef 是
-           指针 NAME（.cfg-password-wrap + 眼睛，provider-modal 先例），保存
-           仍是显式 PUT /api/config/jev 白名单键。健康徽标读 legs 分腿载荷
+           指针 NAME（.cfg-password-wrap + 眼睛，provider-modal 先例）；
+           明文直显批（作者令 2026-10-27「设置里配置的 apikey 直接显示」）：
+           默认态 = 明文（无内联 disc），眼睛保留为可选遮蔽（初始揭示面
+           eyeOffSvg/aria-pressed=true，点击才上掩码）。保存仍是显式
+           PUT /api/config/jev 白名单键。健康徽标读 legs 分腿载荷
            （三改③，jev 不可用→已回退 llm 的如实显示见渲染块）。-->
       <div class="cfg-card" id="jev-card">
         <div class="cfg-card-head">
@@ -886,8 +889,8 @@ export function renderSettings() {
             <span class="cfg-row-label">${t('settings.jevKeyRef')}</span>
             <span class="cfg-row-main">
               <span class="cfg-password-wrap">
-                <input class="cfg-input" type="text" id="cfg-jev-keyref" placeholder="typesafe-api-key" value="${escapeHtml((cfg.jev && cfg.jev.keyRef) || '')}" autocomplete="off" style="-webkit-text-security:disc" spellcheck="false">
-                <button type="button" class="cfg-eye-btn" id="jev-keyref-eye" tabindex="-1" aria-label="${t('settings.jevKeyRefShow')}" aria-pressed="false" title="${t('settings.jevKeyRefShow')}">${eyeSvg}</button>
+                <input class="cfg-input" type="text" id="cfg-jev-keyref" placeholder="typesafe-api-key" value="${escapeHtml((cfg.jev && cfg.jev.keyRef) || '')}" autocomplete="off" spellcheck="false">
+                <button type="button" class="cfg-eye-btn" id="jev-keyref-eye" tabindex="-1" aria-label="${t('settings.jevKeyRefHide')}" aria-pressed="true" title="${t('settings.jevKeyRefHide')}">${eyeOffSvg}</button>
               </span>
             </span>
           </div>
@@ -974,6 +977,12 @@ export function renderSettings() {
   // Secrets entry count pill (secrets-ui-redesign, 2026-10-08): read/cached
   // module-side, repainted on every render and on `secrets-changed`.
   refreshSecretsEntryCount();
+  // 设置页 apikey 明文回读预取（作者令 2026-10-27「设置里配置的 apikey 直接
+  // 显示」）：进页即拉已存 provider key 真值（owner 鉴权单点
+  // GET /api/config/provider-keys；providersUi 模块内 60s 缓存 + 单飞），编辑
+  // 弹窗打开时已在手。失败静默——弹窗退回既有空态（留空保存 = "***" = 引擎
+  // 保留旧值），保存路径零改动。
+  revealProviderApiKeys().catch(() => {});
 
   // friendseal batch (2026-09-25 ①-A): the settings-page device expansion
   // area (chat entry per device). Lazy import — the P2-4 cycle-cut precedent:
@@ -1284,8 +1293,10 @@ function bindSettingsEvents(content, cfg) {
       if (!input) return;
       // -webkit-text-security 是非标属性：lib.dom 的 CSSStyleDeclaration 不带它，
       // 经 any 视图读写（providers-modal 先例同型）。
+      // 明文直显批（作者令 2026-10-27）：默认态 = 明文（无内联样式），判掩码
+      // 只认内联 disc——首击即真实切换到遮蔽（providersUi showModal 同步调向）。
       const style = /** @type {any} */ (input.style);
-      const isMasked = style.webkitTextSecurity !== 'none';
+      const isMasked = style.webkitTextSecurity === 'disc';
       style.webkitTextSecurity = isMasked ? 'none' : 'disc';
       jevEye.innerHTML = isMasked ? eyeOffSvg : eyeSvg;
       const label = t(isMasked ? 'settings.jevKeyRefHide' : 'settings.jevKeyRefShow');
@@ -1511,14 +1522,19 @@ function bindSettingsEvents(content, cfg) {
     });
     card.addEventListener('click', () => {
       const p = state.parsedConfig.llm.providers[name];
-      showProviderModal(name, p, (newName, data) => {
-        if (newName !== name) {
-          // Use null to signal explicit deletion of old name
-          state.parsedConfig.llm.providers[name] = null;
-        }
-        state.parsedConfig.llm.providers[newName] = data;
-        state.configDirty = true;
-        flushConfigToServer();
+      // 明文直显（作者令 2026-10-27）：开弹窗前等一次回读落地——进页已预取，
+      // 这里只兜「进页即点」的竞态；回读失败也照常开弹窗（退回空态语义，
+      // 见 providersUi.js revealProviderApiKeys）。
+      Promise.resolve(revealProviderApiKeys()).catch(() => {}).then(() => {
+        showProviderModal(name, p, (newName, data) => {
+          if (newName !== name) {
+            // Use null to signal explicit deletion of old name
+            state.parsedConfig.llm.providers[name] = null;
+          }
+          state.parsedConfig.llm.providers[newName] = data;
+          state.configDirty = true;
+          flushConfigToServer();
+        });
       });
     });
   });

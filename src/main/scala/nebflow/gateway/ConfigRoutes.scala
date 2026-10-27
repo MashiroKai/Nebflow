@@ -171,6 +171,19 @@ private[gateway] object ConfigRoutes:
           }
         }
 
+      // GET /api/config/provider-keys —— 设置页 apikey 明文回读（作者令
+      // 2026-10-27 10:33「设置里配置的 apikey 直接显示」：JeV 配置节 + LLM API
+      // 配置节明文直显）。owner 鉴权与设置写同门槛（withAuth = GatewayAuth
+      // Rails.ApiFull，与下方 PUT /config/jev 同一面），不新增无鉴权端点；
+      // 载荷只含 llm.providers.<id>.apiKey 真值（ConfigService.revealProviderApiKeys
+      // 单点投影）——通用读面 GET /api/config 的 keyaudit-quickfix ③ 打码维持
+      // 不动（掩码 round-trip 语义照旧）。🔴 日志零 key 值：本臂不打任何日志，
+      // 值的唯一出现位置是响应体。
+      case req @ GET -> Root / "config" / "provider-keys" =>
+        withAuth(req) {
+          ConfigService.revealProviderApiKeys.flatMap(Ok(_))
+        }
+
       // PUT /api/config/jev —— JeV 配置定向写（设置页 Jev 区的写通道；键
       // 白名单在 ConfigService.JEV_WRITABLE_KEYS 单点，越界键 400）。
       case req @ PUT -> Root / "config" / "jev" =>
