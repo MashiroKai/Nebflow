@@ -58,7 +58,14 @@ import java.util.concurrent.{CompletableFuture, ConcurrentHashMap, CompletionSta
  */
 private[neblink] final class PortalTunnelBridge(
   deps: PortalTunnelDeps,
-  sender: RelayFrameSender
+  sender: RelayFrameSender,
+  /**
+   * v1.3（契约 2.15）portal-v2 能力位：本连接隧道升级时 relay 是否 echo 了
+   * `neblink.portal.v2`。true ⇒ 本连接所有 ws 周期的应用消息一律走
+   * `ws_data_frame`（同帧族替代，契约 2.14）；false ⇒ v1 整帧面逐字不变。
+   * 连接常量（升级时判定一次，与连接同生命周期）。
+   */
+  val portalV2: Boolean = false
 ):
 
   import PortalTunnelBridge.*
@@ -129,6 +136,7 @@ private[neblink] final class PortalTunnelBridge(
         case f: PortalWireCodec.BodyFrame          => feedBodyFrame(f)
         case f: PortalWireCodec.WsOpen             => handleWsOpen(f)
         case f: PortalWireCodec.WsFrame            => feedWsFrame(f)
+        case f: PortalWireCodec.WsDataFrame        => feedWsDataFrame(f)
         case f: PortalWireCodec.WsClose            => handleWsClose(f)
         case f: PortalWireCodec.ConsoleTicketMint  => handleConsoleTicketMint(f)
         case f: PortalWireCodec.BindingControl     => handleBindingControl(f)
@@ -572,6 +580,19 @@ private[neblink] final class PortalTunnelBridge(
           .handleErrorWith(e =>
             dropFromUpPump(cycle, s"uplink frame send failed (${NeblinkRelayTunnel.describeErr(e)})")
           )
+      case WsCycle.UplinkItem.Sharded(kind, data) =>
+        // v1.3（契约 2.14 同帧族替代）：portal-v2 周期的应用消息一律
+        // ws_data_frame。Sharded 件由 listener 在 v2 能力下产生（消息级记账，
+        // 切片发生在发送位上——设计 §7）；本 pump 单 fiber 逐片等完成 ⇒ 线序
+        // = seq 序，与既有 ws_frame 有序流同构。每片独立过 RelayFrameSender
+        //（256KiB raw → base64 ≈349K 字符 = bulk 车道，与 body_frame 同档）。
+        PortalTunnelBridge
+          .encodeWsUplink(portalV2 = true, cycle.requestId, kind, data)
+          .traverse_(sender.send)
+          .flatMap(_ => upPumpLoop(cycle))
+          .handleErrorWith(e =>
+            dropFromUpPump(cycle, s"uplink shard send failed (${NeblinkRelayTunnel.describeErr(e)})")
+          )
       case WsCycle.UplinkItem.RelayClose(code, reason) =>
         sender
           .send(PortalWireCodec.encode(PortalWireCodec.WsClose(cycle.requestId, code, reason)))
@@ -588,6 +609,34 @@ private[neblink] final class PortalTunnelBridge(
         if !cycle.toLocal.offer(WsCycle.DownlinkItem.Frame(frame)) then
           dropWsCycle(cycle, "downlink inbox full (local peer stalled)")
         else IO.unit
+
+  /**
+   * v1.3 下行重组（契约 2.14）：`ws_data_frame` 喂进该 cycle 的重组槽；
+   * `more=false` 到齐 ⇒ 组装原字节按既有 `DownlinkItem.Frame` 投递（本地转发
+   * 面零变化，inbox 仍按**消息**记账——设计 §7）。violation（seq 违规 / 同消息
+   * enc·kind 混值 / 累计超 cap）⇒ 丢**整个** cycle（契约 2.14 流级纪律，镜像
+   * body_frame 丢环——有序流上「挖洞续流」比显式断环更伤）。重组无独立计时：
+   * 终结帧缺席归 cycle 撕除面（teardown / 隧道重连摘除即随 cycle 对象消亡，
+   * 设计 §4.4「无新增计时器」）。enc=gzip 在压缩批（下一批）落地前显式拒绝
+   * 整条消息所在的 cycle——fail-closed，绝不把未解压字节投给本地 face。
+   */
+  private def feedWsDataFrame(frame: PortalWireCodec.WsDataFrame): IO[Unit] =
+    Option(wsCycles.get(frame.requestId)) match
+      case None =>
+        logger.warn(
+          s"portal ws_data_frame dropped: no open ws cycle requestId=${frame.requestId} seq=${frame.seq}"
+        )
+      case Some(cycle) =>
+        cycle.reasm.feed(frame) match
+          case Left(reason) =>
+            dropWsCycle(cycle, s"ws_data_frame reassembly violation: $reason")
+          case Right(None) => IO.unit // 已缓冲，等后续分片
+          case Right(Some((kind, bytes))) =>
+            if !cycle.toLocal.offer(
+                WsCycle.DownlinkItem.Frame(PortalWireCodec.WsFrame(frame.requestId, kind, bytes, fin = true))
+              )
+            then dropWsCycle(cycle, "downlink inbox full at reassembly completion (local peer stalled)")
+            else IO.unit
 
   /** Mailbox action for ws_close: enqueue the drain-then-close marker — never blocks the consumer. */
   private def handleWsClose(frame: PortalWireCodec.WsClose): IO[Unit] =
@@ -669,7 +718,13 @@ private[neblink] final class PortalTunnelBridge(
           // #949：offerUp 现在排队等容量（满则拍退避，不丢）——返回即「件已收下」。
           // request(1) 因此后置到收下之后：inbox 积压时本地 peer 在这里第一次被
           // 真实背压（JDK 停发 ⇒ 本地 app 慢下来），而不是「照常放行+丢件」。
-          offerUp(WsCycle.UplinkItem.Frame(PortalWireCodec.WsFrame(requestId, kind, bytes, fin = true)))
+          // v1.3（契约 2.14/2.15）：portal-v2 ⇒ 消息级 Sharded 件（切片在 uplink
+          // pump 的发送位上，inbox 记账保持消息粒度）；非 v2 ⇒ 原 ws_frame 路
+          // 径逐字不变（回落面 golden）。
+          val item =
+            if portalV2 then WsCycle.UplinkItem.Sharded(kind, bytes)
+            else WsCycle.UplinkItem.Frame(PortalWireCodec.WsFrame(requestId, kind, bytes, fin = true))
+          offerUp(item)
           ws.request(1)
         case Right(None) => ws.request(1)
         case Left(reason) =>
@@ -1191,6 +1246,31 @@ private[neblink] object PortalTunnelBridge:
   val MaxWsMessageBytes: Int = 4 * 1024 * 1024
 
   /**
+   * v1.3 WS 分片常量（契约 2.14）：上行单条 ws_data_frame 的 raw 载荷切片上限。
+   * 默认 256 KiB，对齐 body_frame 既有口径（BodyChunkBytes / ingress
+   * PORTAL_BODY_CHUNK_BYTES）；base64 后 ≈349K 字符，稳定落 bulk 车道（控制车道
+   * 阈值 64KiB 字符——语义余量与 body_frame 同注）。env `NEBLINK_WS_SHARD_BYTES`
+   * 可覆写，钳位 [1KiB, MaxWsMessageBytes]；契约 2.14：任意正切片尺寸均合规，
+   * 该值是实现常量非契约值。
+   */
+  val WsShardBytes: Int =
+    val raw = sys.env.get("NEBLINK_WS_SHARD_BYTES").map(_.trim).filter(_.nonEmpty).flatMap(_.toIntOption)
+    val picked = raw.getOrElse(256 * 1024)
+    math.max(1024, math.min(picked, MaxWsMessageBytes))
+
+  /**
+   * v1.3 能力协商 offer 总闸（契约 2.15；灰度回退面 = 「env 关 ⇒ 回整帧」）：
+   * `NEBLINK_PORTAL_V2` 置 0/false/off（大小写不敏感）⇒ 隧道升级不 offer
+   * subprotocol ⇒ 对端无从 select ⇒ 全链 v1 整帧（逐字原路）。缺省开（契约
+   * 2.15 / 设计 §4.3 兼容矩阵：新引擎 offer，未 echo 即回落，协商失败不破链）。
+   * def 而非 val：每次连接现读，测试与运维在同一进程内可翻面。
+   */
+  private[neblink] def portalV2OfferEnabled: Boolean =
+    sys.env.get("NEBLINK_PORTAL_V2").map(_.trim).filter(_.nonEmpty) match
+      case Some(v) => !(v.equalsIgnoreCase("0") || v.equalsIgnoreCase("false") || v.equalsIgnoreCase("off"))
+      case None    => true
+
+  /**
    * Backstop for a bodyful request that receives ZERO body_frames (contract
    * 2.3 allows "0..n"; an empty body with no terminal frame from the ingress
    * would otherwise park the handler on the channel forever). Generous vs
@@ -1278,6 +1358,11 @@ private[neblink] object PortalTunnelBridge:
   private[neblink] final class WsCycle(val requestId: String):
     val toLocal = new java.util.concurrent.LinkedBlockingQueue[WsCycle.DownlinkItem](WsQueueSlots)
     val uplink = new java.util.concurrent.LinkedBlockingQueue[WsCycle.UplinkItem](WsQueueSlots)
+    /**
+     * v1.3（契约 2.14）下行重组槽：cap 与 loopback 消息 cap 取等（MaxWsMessageBytes）。
+     * 只被 mailbox 单消费纤维喂入；随本 cycle 摘除整体回收（无独立计时器）。
+     */
+    val reasm = new PortalTunnelBridge.WsReasmBuffer(PortalTunnelBridge.MaxWsMessageBytes)
     val downPump =
       new java.util.concurrent.atomic.AtomicReference[Option[cats.effect.Fiber[IO, Throwable, Unit]]](None)
     val upPump =
@@ -1306,16 +1391,23 @@ private[neblink] object PortalTunnelBridge:
       case WsCycle.UplinkItem.OpenResult(accepted, status) =>
         PortalWireCodec.WsOpenResult(requestId, accepted, status)
       case WsCycle.UplinkItem.Frame(f)                 => f
+      case WsCycle.UplinkItem.Sharded(kind, data) =>
+        // v1.3 死信投影 = v1 整帧形：死信补投是「周期已死后的一次性尽力而为」
+        //（周期已不在注册表 ⇒ 收端不可能有同周期 v2 分片流在飞 ⇒ 无两族混流
+        // 风险）；投影到 v1 面让死信件与既有格式同形（replay 只认 frameText）。
+        PortalWireCodec.WsFrame(requestId, kind, data, fin = true)
       case WsCycle.UplinkItem.RelayClose(code, reason) => PortalWireCodec.WsClose(requestId, code, reason)
 
     def itemKind(item: WsCycle.UplinkItem): String = item match
       case _: WsCycle.UplinkItem.OpenResult => "open_result"
       case _: WsCycle.UplinkItem.Frame      => "ws_frame"
+      case _: WsCycle.UplinkItem.Sharded    => "ws_data_frame"
       case _: WsCycle.UplinkItem.RelayClose => "relay_close"
 
     def itemBytes(item: WsCycle.UplinkItem): Long = item match
-      case WsCycle.UplinkItem.Frame(f) => f.data.length.toLong
-      case _                           => 0L
+      case WsCycle.UplinkItem.Frame(f)          => f.data.length.toLong
+      case WsCycle.UplinkItem.Sharded(_, data)  => data.length.toLong
+      case _                                    => 0L
   end WsCycle
 
   object WsCycle:
@@ -1332,9 +1424,98 @@ private[neblink] object PortalTunnelBridge:
       /** Head item: the ws_open_result precedes any local frame by construction. */
       final case class OpenResult(accepted: Boolean, status: Int) extends UplinkItem
       final case class Frame(frame: PortalWireCodec.WsFrame) extends UplinkItem
+      /**
+       * v1.3（契约 2.14/2.15）：一条**完整**本地消息，portal-v2 周期专用。
+       * inbox 记账保持**消息**粒度（设计 §7：分片使每消息帧数 ×N，但 cycle
+       * inbox 与重组槽按消息数记账）；切片在 uplink pump 的发送位上逐片进行。
+       */
+      final case class Sharded(kind: String, data: Array[Byte]) extends UplinkItem
       /** Tail item: propagate the close up to the relay, then the pump exits. */
       final case class RelayClose(code: Int, reason: String) extends UplinkItem
   end WsCycle
+
+  /**
+   * v1.3 上行改道单点（设计 §5.1）：portal-v2 ⇒ 整消息按 [[WsShardBytes]] 切成
+   * `ws_data_frame` 帧文本序（seq 0..n-1、末片 more=false、enc=none——压缩为
+   * 下一批；契约 2.14：切片按 raw 字节，空消息 = 单条空终结帧）；非 v2 ⇒ 单条
+   * v1 `ws_frame`（fin=true），字节级原路（回落面 golden）。纯函数、spec 直测。
+   */
+  private[neblink] def encodeWsUplink(
+    portalV2: Boolean,
+    requestId: String,
+    kind: String,
+    bytes: Array[Byte]
+  ): Vector[String] =
+    if !portalV2 then
+      Vector(PortalWireCodec.encode(PortalWireCodec.WsFrame(requestId, kind, bytes, fin = true)))
+    else
+      val n = math.max(1, (bytes.length + WsShardBytes - 1) / WsShardBytes)
+      Vector.tabulate(n) { i =>
+        val from = i * WsShardBytes
+        val to = math.min(from + WsShardBytes, bytes.length)
+        PortalWireCodec.encode(
+          PortalWireCodec.WsDataFrame(
+            requestId,
+            i,
+            more = i < n - 1,
+            kind,
+            "none",
+            java.util.Arrays.copyOfRange(bytes, from, to)
+          )
+        )
+      }
+
+  /**
+   * v1.3（契约 2.14）下行重组槽：一 cycle 一个（`WsCycle.reasm`），mailbox 单
+   * 消费纤维喂入（零锁）。纪律：
+   *   - seq 期望值**全周期单调**（契约 2.14：每方向每 requestId 严格 +1，
+   *     more=false 是消息边界而非 seq 重置点——body_frame 2.5 同口径读到整周期）；
+   *   - enc/kind 首片钉定，同消息后续帧不一致 = violation（契约 2.14 流级纪律）；
+   *   - 累计字节 cap = [[MaxWsMessageBytes]]（与 loopback 消息 cap **取等**——
+   *     #955 配对关系：一消息两 cap 夹逼会造成「relay 收齐了、引擎组装不下」的
+   *     不对称丢环）；
+   *   - 完成时交出 (kind, bytes) 并只重置字节/钉定面（seq 面保持到周期终）。
+   * 生命周期：随 WsCycle 消亡（teardown / dropWsCycle 摘除即整体回收）——
+   * 设计 §4.4「无新增计时器」：终结帧缺席归 cycle 撕除面，不设半消息超时回收。
+   */
+  private[neblink] final class WsReasmBuffer(val maxBytes: Int):
+    private var expectedSeq: Int                    = 0
+    private var pinnedEnc: String                   = null
+    private var pinnedKind: String                  = null
+    private val out: java.io.ByteArrayOutputStream  = new java.io.ByteArrayOutputStream()
+
+    /**
+     * 喂入一片：None = 已缓冲；Some((kind, bytes)) = 消息完成；Left = violation
+     * （调用方丢整个 cycle）。
+     */
+    def feed(frame: PortalWireCodec.WsDataFrame): Either[String, Option[(String, Array[Byte])]] =
+      if frame.seq != expectedSeq then
+        Left(s"seq out of order (expected=$expectedSeq got=${frame.seq})")
+      else if pinnedEnc != null && frame.enc != pinnedEnc then
+        Left(s"enc mismatch within one message (pinned=$pinnedEnc got=${frame.enc})")
+      else if pinnedKind != null && frame.kind != pinnedKind then
+        Left(s"kind mismatch within one message (pinned=$pinnedKind got=${frame.kind})")
+      else if out.size().toLong + frame.data.length.toLong > maxBytes.toLong then
+        Left(s"reassembly over cap (max=$maxBytes, accumulated=${out.size()} at seq=${frame.seq})")
+      else
+        if pinnedEnc == null then
+          pinnedEnc = frame.enc
+          pinnedKind = frame.kind
+        out.write(frame.data)
+        expectedSeq += 1
+        if frame.more then Right(None)
+        else
+          val enc   = pinnedEnc
+          val kind  = pinnedKind
+          val bytes = out.toByteArray
+          out.reset()
+          pinnedEnc = null
+          pinnedKind = null
+          // 压缩批（下一批）落地前：enc=gzip 到齐也显式拒绝——fail-closed，
+          // 绝不把未解压字节投给本地 face（显式丢环 + WARN，非静默截断）。
+          if enc == "gzip" then Left("enc=gzip message completed but this build does not decode it yet (compression batch pending)")
+          else Right(Some((kind, bytes)))
+  end WsReasmBuffer
 
 end PortalTunnelBridge
 

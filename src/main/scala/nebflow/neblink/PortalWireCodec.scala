@@ -7,35 +7,36 @@ import io.circe.syntax.*
 import java.util.Base64
 
 /**
- * Production codec for the portal wire contract v1.1 (phase 3c re-freeze,
- * 2026-10-11). Single source: `src/test/resources/neblink/portal-wire-contract-v1.1.md`
- * and its companion vector file `portal-wire-vectors-v1.1.json`; the
- * neblink-server repo holds byte-identical copies and runs its own Rust
+ * Production codec for the portal wire contract (v1.3 additive re-freeze,
+ * 2026-10-27; v1.1 phase 3c / v1.2 errata remain the historical records).
+ * Single source: `src/test/resources/neblink/portal-wire-contract-v1.3.md`
+ * and its companion vector file `portal-wire-vectors-v1.3.json`; the
+ * link-server relay repo holds byte-identical copies and runs its own Rust
  * conformance suite against the same vectors.
  *
- * v1.1 additions (zero breakage — every addition is an optional field): the
- * `ws_open` face carries optional `headers` (the browser session cookie
- * crosses the bridge verbatim) and the `http_response` face carries optional
- * `setCookie` (array of strings, one element per Set-Cookie occurrence;
- * comma-joining Set-Cookie into `headers` is prohibited). A frame that omits
- * the new fields is exactly a v1 frame; a v1 reader silently drops the new
- * fields (unknown extra keys). Senders gate the new fields on the peer's
- * announced readiness — freeze first, then send (contract sections 2.4/2.6).
+ * v1.3 additions (zero breakage — one new frame family, negotiated): the
+ * `ws_data_frame` family (contract 2.14) streams ONE ws_open-cycle message as
+ * 1..n frames under the body_frame seq/more discipline, with a per-message
+ * `enc` (none|gzip). It is legal only on a tunnel whose upgrade negotiated the
+ * `neblink.portal.v2` subprotocol (contract 2.15); a v1 reader rejects the
+ * unknown type (`unknown_type`) — fail-closed, never a silent truncation. The
+ * 13 pre-v1.3 frames are byte-for-byte unchanged. Senders gate the new family
+ * on the negotiated readiness — freeze first, then send (contract 2.15).
  *
  * Scope (phase 3a design section 3.1): the tunnel's outbound frames for the
- * NEW eleven contract frames are encoded here (canonical key order single
+ * NEW fourteen contract frames are encoded here (canonical key order single
  * point — the same discipline as `NeblinkRelayTunnel.ackFrame`) and always
  * carry `proto: 1`. The pre-v1 legacy `relay_request` / `relay_response`
  * construction paths stay byte-for-byte unchanged (no `proto` key); rolling
  * those two frames onto `proto` belongs to the deployment batch, not here.
  *
  * Judgment parity: the test-side model (`PortalWireContractV1Spec`) and this
- * production codec run the SAME frozen 28-vector file with the same
+ * production codec run the SAME frozen 50-vector file with the same
  * assertions — model face and production face cross-checked on identical
  * verdicts. The decoding rules below therefore mirror the frozen contract
  * mechanically:
  *
- *  - envelope: `type` must be in the 13-frame inventory (`unknown_type`
+ *  - envelope: `type` must be in the 14-frame inventory (`unknown_type`
  *    otherwise); `proto` is required (`missing_required_field`) and must not
  *    exceed the supported version (`proto_unsupported`);
  *  - unknown extra keys are ignored (forward compatibility);
@@ -55,7 +56,15 @@ object PortalWireCodec:
 
   val SupportedProto: Int = 1
 
-  /** Contract "Frame inventory": all 13 frames, exactly. */
+  /**
+   * Contract 2.15: the portal-v2 capability token a host tunnel OFFERS on
+   * upgrade; the relay echoes it only through its rollout gates. Echoed ⇒ the
+   * `ws_data_frame` family is legal on that tunnel; empty ⇒ v1 whole-frame
+   * face, zero behavioral drift.
+   */
+  val PortalV2Subprotocol: String = "neblink.portal.v2"
+
+  /** Contract "Frame inventory": all 14 frames, exactly (v1.3). */
   val FrameInventory: Set[String] = Set(
     "relay_request",
     "relay_response",
@@ -65,6 +74,7 @@ object PortalWireCodec:
     "ws_open",
     "ws_open_result",
     "ws_frame",
+    "ws_data_frame",
     "ws_close",
     "ConsoleTicketMint",
     "ConsoleTicketResult",
@@ -73,6 +83,7 @@ object PortalWireCodec:
   )
 
   private val WsFrameKinds     = List("text", "binary")
+  private val WsDataEncodings  = List("none", "gzip")
   private val ReqOrigins       = List("portal")
   private val TicketMintErrors = List("rate_limited", "quiesced", "unbound")
   private val BindingKinds     = List("revoked", "stand-down", "quiesce", "quiesce-renew", "quiesce-lift")
@@ -118,6 +129,26 @@ object PortalWireCodec:
 
   final case class WsFrame(requestId: String, kind: String, data: Array[Byte], fin: Boolean)
       extends PortalFrame
+
+  /**
+   * Contract 2.14 (v1.3): one shard frame of a ws_open-cycle message. `seq` is
+   * the cycle's per-direction ordinal (0-based across the whole cycle, strictly
+   * +1, NOT restarted at message boundaries); `more=false` terminates the
+   * message; `enc` pins the message-wide byte-stream encoding — the
+   * concatenation of one message's payloads in seq order is the complete
+   * encoded stream (decompression is the reassembler's job, never per frame).
+   * Same-message `enc`/`kind` agreement and the seq series are STREAM-level
+   * discipline (the bridge drops the whole cycle on violation), not per-frame
+   * codec verdicts.
+   */
+  final case class WsDataFrame(
+    requestId: String,
+    seq: Int,
+    more: Boolean,
+    kind: String,
+    enc: String,
+    data: Array[Byte]
+  ) extends PortalFrame
 
   final case class WsClose(requestId: String, code: Int, reason: String) extends PortalFrame
 
@@ -258,6 +289,21 @@ object PortalWireCodec:
           data <- req(o, "data")(jsonBase64(_, "data"))
           fin <- reqBool(o, "fin")
         yield WsFrame(requestId, kind, data, fin)
+
+      case "ws_data_frame" =>
+        for
+          requestId <- reqUuid(o, "requestId")
+          seq <- reqInt(o, "seq")
+          // Contract 2.14: a negative seq can never be in-cycle order —
+          // rejected PER FRAME (mirrors body_frame 2.5). In-cycle
+          // duplicates/regressions and same-message enc/kind mismatches are
+          // the stream-level face: the bridge drops the whole cycle.
+          _ <- Either.cond(seq >= 0, (), Rejection("invalid_format", field = Some("seq")))
+          more <- reqBool(o, "more")
+          kind <- reqEnum(o, "kind", WsFrameKinds)
+          enc <- reqEnum(o, "enc", WsDataEncodings)
+          data <- req(o, "data")(jsonBase64(_, "data"))
+        yield WsDataFrame(requestId, seq, more, kind, enc, data)
 
       case "ws_close" =>
         for
@@ -415,6 +461,16 @@ object PortalWireCodec:
           "kind" -> Some(Json.fromString(fr.kind)),
           "data" -> Some(Json.fromString(b64Encode(fr.data))),
           "fin" -> Some(Json.fromBoolean(fr.fin))
+        )
+      case fr: WsDataFrame =>
+        envelope(
+          "ws_data_frame",
+          "requestId" -> Some(Json.fromString(fr.requestId)),
+          "seq" -> Some(Json.fromInt(fr.seq)),
+          "more" -> Some(Json.fromBoolean(fr.more)),
+          "kind" -> Some(Json.fromString(fr.kind)),
+          "enc" -> Some(Json.fromString(fr.enc)),
+          "data" -> Some(Json.fromString(b64Encode(fr.data)))
         )
       case fr: WsClose =>
         envelope(
