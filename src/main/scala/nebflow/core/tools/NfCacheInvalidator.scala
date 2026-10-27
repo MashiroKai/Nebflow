@@ -28,11 +28,22 @@ object NfCacheInvalidator:
   def register(s: Json => IO[Unit]): Unit =
     sink = s
 
-  /** 变更事实发射：一条 `nf-cache-invalidate {path}` 广播（未注册/空路径 = no-op）。 */
+  /**
+   * 变更事实发射：一条 `nf-cache-invalidate {path}` 广播（未注册 = 只失效引擎侧
+   * 账面不再广播；空路径 = no-op）。
+   *
+   * 台账 #902 收口批 F：同一写事实**同步失效引擎侧三级缓存**（FileOpenCache）——
+   * 写穿红线。失效尽力而为（attempt 吞错）：读侧每次开盘的 stat 指纹比对是
+   * 兜底闸，任何失效丢失都不会显示陈旧内容。
+   */
   def invalidated(path: String): IO[Unit] =
     val s = sink
-    if s == null || path == null || path.isEmpty then IO.unit
-    else s(Json.obj("type" -> "nf-cache-invalidate".asJson, "path" -> path.asJson))
+    if path == null || path.isEmpty then IO.unit
+    else
+      val broadcast =
+        if s == null then IO.unit
+        else s(Json.obj("type" -> "nf-cache-invalidate".asJson, "path" -> path.asJson))
+      IO.blocking(FileOpenCache.invalidateLocalPath(path)).attempt.flatMap(_ => broadcast)
 
   /** 测试 seam：清注册（防 spec 间泄漏）。 */
   def reset(): Unit =
