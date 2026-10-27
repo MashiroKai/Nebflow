@@ -1,7 +1,7 @@
 /* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
 package nebflow.gateway
 
-import cats.effect.{Deferred, IO, Ref}
+import cats.effect.{IO, Ref}
 import cats.effect.std.Queue
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
@@ -80,7 +80,8 @@ private[gateway] object PresenceRoutes:
     )
 
   /**
-   * presence WS 判死参数（conn-guard 僵尸会话回收批 · 台账 #950 旁支 2026-10-26）。
+   * presence WS 判死参数（conn-guard 僵尸会话回收批 · 台账 #950 旁支 2026-10-26；
+   * #960 起改指共享真源 [[WsZombieGuard.Liveness]]，def 形态兼容既有构造点）。
    *
    *   - `tick`：心跳拍 = **既有** ping 节拍（原实现即 10s），判死检查只挂在同一
    *     拍上 —— 零新增 wall-clock 轮询（红线：不新增独立计时面）。
@@ -89,7 +90,8 @@ private[gateway] object PresenceRoutes:
    *     合法对端（nebflow 引擎互联，[[nebflow.neblink.NeblinkPresenceService]]
    *     监听器）对服务端 ping 必回 pong ⇒ 健康连接入站帧间隔 ≤ tick，永不误杀。
    */
-  final case class PresenceWsLiveness(tick: FiniteDuration = 10.seconds, deadAfter: FiniteDuration = 30.seconds)
+  def PresenceWsLiveness(tick: FiniteDuration = 10.seconds, deadAfter: FiniteDuration = 30.seconds): WsZombieGuard.Liveness =
+    WsZombieGuard.Liveness(tick, deadAfter)
 
   /** presence WS 会话的收发流（[[presenceWsStreams]] 产物，路由侧交 `wsb.build`）。 */
   final case class PresenceWsStreams(
@@ -132,78 +134,53 @@ private[gateway] object PresenceRoutes:
     removePeer: String => IO[Unit],
     handleData: Json => IO[Unit],
     onZombieRecycle: Long => IO[Unit],
-    liveness: PresenceWsLiveness = PresenceWsLiveness()
+    liveness: WsZombieGuard.Liveness = PresenceWsLiveness()
   ): IO[PresenceWsStreams] =
     Queue.unbounded[IO, Option[WebSocketFrame]].flatMap { sendQueue =>
-      IO.realTime.map(_.toMillis).flatMap { startedMs =>
-        for
-          // 入站活跃钟：起点 = 会话受理时刻（升级完成后 pipe 起跑，见 receive bracket）
-          lastInbound <- Ref.of[IO, Long](startedMs)
-          deadSig <- Deferred[IO, Unit]
-        yield
-          val touch: IO[Unit] = IO.realTime.map(_.toMillis).flatMap(lastInbound.set)
-          val pingFrame = WebSocketFrame.Text("""{"type":"ping"}""")
+      // 僵尸回收装配收敛至共享核 [[WsZombieGuard]]（#960 console 面平移批）——
+      // 入站活跃钟 + tick 拍判死 + deadSig 双侧直达 + acquire/release 会话 scope
+      // 结构配对，presence/console 两面同一装配核，差异只在接线参数（本面：
+      // tick 拍兼任既有服务端 ping 节拍；send 侧终结走 sendQueue None 终结符）。
+      WsZombieGuard.open(liveness).map { zombie =>
+        val pingFrame = WebSocketFrame.Text("""{"type":"ping"}""")
 
-          // 心跳腿 = 既有 10s ping 拍；判死检查挂同一拍。判死 ⇒ 审计行 + 打
-          // `deadSig` + 双侧收口：向出站队列投 None 终结符（queued ⇒ send 终结，
-          // ember 对 send 终结的处置 = 写 close 帧——对端同步收场）；deadSig 同时
-          // 直接中断 receive 管道（下）⇒ 槽位凭据回减与 removePeer 必达。
-          // 🔴 方向注记（fs2 3.11 实测钉死，见 PresenceWsLifecycleSpec 探针遗痕）：
-          // `concurrently` 的后台流终结**不**中断前台 —— 不能指望 ember 的
-          // readSide.concurrently(sendSide) 替我们拆收流侧；判死必须自行直达。
-          val heartbeat: Stream[IO, WebSocketFrame] =
-            Stream
-              .awakeEvery[IO](liveness.tick)
-              .evalMap { _ =>
-                (IO.realTime.map(_.toMillis), lastInbound.get).mapN { (nowMs, lastMs) =>
-                  val silentMs = nowMs - lastMs
-                  if silentMs >= liveness.deadAfter.toMillis then Left(silentMs) else Right(pingFrame)
-                }
-              }
-              .evalMap {
-                case Right(frame) => IO.pure(Some(frame))
-                case Left(silentMs) =>
-                  (onZombieRecycle(silentMs).handleErrorWith(_ => IO.unit) *>
-                    sendQueue.offer(None) *>
-                    deadSig.complete(())).as(None)
-              }
-              .unNone
+        // 心跳腿 = 既有 10s ping 拍；判死检查挂同一拍。判死 ⇒ 审计行（调用方
+        // onZombieRecycle）+ 向出站队列投 None 终结符（queued ⇒ send 终结，ember
+        // 对 send 终结的处置 = 写 close 帧——对端同步收场）+ deadSig 打点（receive
+        // 侧直达中断，见下）⇒ 槽位凭据回减与 removePeer 必达。
+        val heartbeat = zombie.heartbeat(Some(pingFrame)) { silentMs =>
+          onZombieRecycle(silentMs).handleErrorWith(_ => IO.unit) *> sendQueue.offer(None)
+        }
 
-          val queued = Stream.fromQueueNoneTerminated(sendQueue)
-          val send: Stream[IO, WebSocketFrame] = queued.merge(heartbeat)
+        val queued = Stream.fromQueueNoneTerminated(sendQueue)
+        val send: Stream[IO, WebSocketFrame] = queued.merge(heartbeat)
 
-          val receive: Pipe[IO, WebSocketFrame, Unit] = frames =>
-            Stream
-              // 入账/回减同 fs2 scope（结构配对，恰好一次；见上文修复①）。
-              // acquire 后立即触碰活跃钟：判死起点 = 会话起跑而非装配时刻。
-              .bracket(connGuard.acquireWs(ip) <* touch)(connGuard.releaseWs)
-              .flatMap { _ =>
-                frames
-                  // 任何入站帧（含 pong/ping/data/未知/非 Text）即触碰活跃钟 ——
-                  // 判据是「线还活着」，与帧语义无关。
-                  .evalTap(_ => touch)
-                  .evalMap {
-                    case WebSocketFrame.Text(text, _) =>
-                      parser.parse(text).toOption match
-                        case Some(json) =>
-                          json.hcursor.downField("type").as[String].getOrElse("") match
-                            case "ping" =>
-                              sendQueue.offer(Some(WebSocketFrame.Text("""{"type":"pong"}""")))
-                            case "data" =>
-                              val payload = json.hcursor.downField("payload").focus.getOrElse(Json.Null)
-                              handleData(payload)
-                            case _ => IO.unit // pong 等：活跃钟已触碰，零语义处理
-                        case None => IO.unit
-                    case _ => IO.unit
-                  }
-                  .onFinalize(removePeer(deviceId))
-              }
-              // 判死回收直达：deadSig 完成即中断收流管 ⇒ bracket 回减 + removePeer
-              // 必达（不依赖 ember 装配对 send 终结的处置方向，见 🔴 方向注记）。
-              // 正常关闭（对端 close/EOF）时收流自然终结，此层零干预。
-              .interruptWhen(deadSig.get.attempt)
+        // 共享会话作用域收流装配：acquire/release 结构配对（恰好一次）+ 入站帧
+        // 触碰活跃钟 + deadSig 直达中断（🔴 方向注记见 WsZombieGuard）。面内保留：
+        // presence 线路协议（ping→pong / data）与 removePeer finalizer。
+        val receive: Pipe[IO, WebSocketFrame, Unit] = zombie.guardedReceive(
+          connGuard.acquireWs(ip),
+          connGuard.releaseWs
+        ) { frames =>
+          frames
+            .evalMap {
+              case WebSocketFrame.Text(text, _) =>
+                parser.parse(text).toOption match
+                  case Some(json) =>
+                    json.hcursor.downField("type").as[String].getOrElse("") match
+                      case "ping" =>
+                        sendQueue.offer(Some(WebSocketFrame.Text("""{"type":"pong"}""")))
+                      case "data" =>
+                        val payload = json.hcursor.downField("payload").focus.getOrElse(Json.Null)
+                        handleData(payload)
+                      case _ => IO.unit // pong 等：活跃钟已触碰，零语义处理
+                  case None => IO.unit
+              case _ => IO.unit
+            }
+            .onFinalize(removePeer(deviceId))
+        }
 
-          PresenceWsStreams(send, receive)
+        PresenceWsStreams(send, receive)
       }
     }
   end presenceWsStreams

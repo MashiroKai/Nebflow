@@ -1013,8 +1013,9 @@ class WebSocketRoutes(
                 Forbidden("Invalid token")
             case Some(_) =>
               // R-1b conn-guard：升级受理即 per-IP 检查（拒 ⇒ 可见 429，不静默；
-              // 环回恒放行）。入账延后到 wsb.build 前（下方 acquireWs——中途失败
-              // 不留幽灵计数），回减挂流 finalizer（releaseWs 凭据配对）。
+              // 环回恒放行）。入账延后到收流管起跑（下方 guardedReceive 会话
+              // scope bracket——升级会话未起跑即未发生，零幽灵计数），回减同
+              // scope 配对（releaseWs 凭据 + close/EOF/异常/判死四途同归）。
               // 括号包裹 = 保持原 for 缩进不动（大段受理体零改排）。
               val wsIp = ConnGuard.normalizeIp(req.remoteAddr)
               connGuard.checkWs(wsIp).flatMap {
@@ -1027,6 +1028,13 @@ class WebSocketRoutes(
                     )
                 case None => (
                   for
+                    // R-960（僵尸会话回收批 · #954 presence 同款平移）：共享装配核
+                    // [[WsZombieGuard]]——入站活跃钟 + 10s 判死拍 + deadSig 双侧直达。
+                    // console 口径（[[WsZombieGuard.ConsoleLiveness]]）：deadAfter=90s
+                    // = 3 × 客户端自 ping 间隔（ws.js HB_INTERVAL_MS=30s，服务端 pong
+                    // 应答在 WsSystemHandlers.handlePing）——容忍两拍丢失；后台标签页
+                    // 静默回收由 ws.js 唤醒腿（forceReconnect/wake-probe）接住。
+                    zombie <- WsZombieGuard.open(WsZombieGuard.ConsoleLiveness)
                     // ── A2 (perf-481): bounded outbound queue ────────────────────
                     // Was `Queue.unbounded`: a slow/stalled subscriber never
                     // applied backpressure, so its queue grew without bound while
@@ -1086,7 +1094,16 @@ class WebSocketRoutes(
                     // connection releases every WatchService it registered.
                     watchSession = new ExplorerWatchSession(perConnJsonSend, logger)
 
-                    receivePipe: Pipe[IO, WebSocketFrame, Unit] = _.evalMap {
+                    // R-960：收流管装配走共享核 guardedReceive——acquire 进会话 fs2
+                    // scope（收流管起跑 = 升级会话起跑才计槽，R-1b 升级期幽灵洞结构
+                    // 封死；入账时点从「build 前」后移到「会话起跑」，与 #954 presence
+                    // 同款）；release 同 scope 配对恰好一次；任何入站帧（含 ping/pong
+                    // 与未知帧型）先触碰活跃钟再进协议分发。面内保留：消息分发与
+                    // unregister/watchSession.close finalizer。
+                    receivePipe: Pipe[IO, WebSocketFrame, Unit] = zombie.guardedReceive(
+                      connGuard.acquireWs(wsIp),
+                      connGuard.releaseWs
+                    )(_.evalMap {
                       case WebSocketFrame.Text(text, _) =>
                         handleMessage(text, perConnJsonSend, watchSession).handleErrorWith { e =>
                           logger.error(s"WebSocket message handler error: ${e.getMessage}", e)
@@ -1095,7 +1112,7 @@ class WebSocketRoutes(
                       case _ => IO.unit
                     }.onFinalize(
                       wsHub.unregister(hubConnId) *> watchSession.close()
-                    )
+                    ))
 
                     // sendStream: read from outbound queue, send via WebSocket.
                     // Client disconnects are expected (browser tab close, network change) and
@@ -1107,12 +1124,24 @@ class WebSocketRoutes(
                     // of the frame being silently discarded. `interruptWhen` cancels
                     // the queue side on completion, and the server's own WebSocket
                     // close handling runs the receive pipe's finalizer.
-                    sendStream = Stream
-                      .fromQueueUnterminated(outbound)
-                      .interruptWhen(outboundOverflowClosed.get.attempt)
-                      .handleErrorWith { e =>
-                        Stream.eval(logger.debug(s"WebSocket send stream closed: ${e.getMessage}")).drain
-                      }
+                    //
+                    // R-960：拆线道收敛至共享核 guardedSend——既有 overflow 中断之上
+                    // 叠判死中断（send 侧直达 ⇒ ember 写 close 帧）并把 10s 判死腿挂
+                    // 同一会话作用域（连接在则拍在，连接亡则拍亡）。
+                    sendStream = zombie.guardedSend(
+                      Stream
+                        .fromQueueUnterminated(outbound)
+                        .handleErrorWith { e =>
+                          Stream.eval(logger.debug(s"WebSocket send stream closed: ${e.getMessage}")).drain
+                        },
+                      outboundOverflowClosed
+                    )(onDead = silentMs =>
+                      // 与 presence 面同格式审计行（conn-guard: … recycled … slot released）。
+                      logger.warn(
+                        s"conn-guard: console zombie recycled ip=$wsIp silentMs=$silentMs — " +
+                          s"slot released (heartbeat dead-detection)"
+                      )
+                    )
                     _ <- logger.info("WebSocket client connected")
                     thinkingCfg <- sharedResources.thinkingConfigRef.get
                     workScheduleCfg <- sharedResources.freezeScheduleRef.get
@@ -1177,11 +1206,9 @@ class WebSocketRoutes(
                       )
                     )
                     _ <- sessionService.sendSessionList(perConnJsonSend, agentName)
-                    // R-1b：入账在 build 前（此处之后仅剩 build 本身，失败即自然不
-                    // build ⇒ 无幽灵计数）；回减挂流 finalizer（连接关闭必走）。
-                    guardHandle <- connGuard.acquireWs(wsIp)
-                    guardedPipe = receivePipe.andThen(_.onFinalize(connGuard.releaseWs(guardHandle)))
-                    ws <- wsb.build(sendStream, guardedPipe)
+                    // R-960：入账/回减已移入收流管会话 scope（上方 guardedReceive）——
+                    // build 前不再预占槽位；升级会话未起跑 ⇒ 计数未发生（幽灵洞封死）。
+                    ws <- wsb.build(sendStream, receivePipe)
                   yield ws
                 )
               }
