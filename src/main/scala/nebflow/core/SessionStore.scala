@@ -1556,8 +1556,13 @@ class SessionStore(
    * by `flushText()` (which saves Ai without meta). When `done` fires with an
    * empty text buffer, the computed duration has nowhere to go. This method
    * finds the last Ai message in the cache and updates its meta fields.
+   *
+   * replay-terminal 批（2026-10-28，案一「A 根治」）：`markTerminal=true` 时同一
+   * 回填批把 `terminal=Some(true)` 盖到该行（绝不**清除**既有标记——二次回填只
+   * 加不减）。调用面纪律：唯一传 true 的是 `WebSocketRoutes` 的 `done`/`agentDone`
+   * 轮终态落盘点；其余（无）调用保持缺省 false ⇒ 形态不变。
    */
-  def updateLastAiMeta(sessionId: String, durationMs: Option[Long], model: Option[String], timestamp: Long): IO[Unit] =
+  def updateLastAiMeta(sessionId: String, durationMs: Option[Long], model: Option[String], timestamp: Long, markTerminal: Boolean = false): IO[Unit] =
     getAppendSemaphore(sessionId).flatMap { sem =>
       sem.permit.use { _ =>
         loadUiMessages(sessionId).flatMap { existing =>
@@ -1570,7 +1575,12 @@ class SessionStore(
               val (before, rest) = existing.splitAt(idx)
               rest.headOption match
                 case Some(ai: UiMessage.Ai) =>
-                  val updatedAi = ai.copy(durationMs = durationMs, model = model, timestamp = timestamp)
+                  val updatedAi = ai.copy(
+                    durationMs = durationMs,
+                    model = model,
+                    timestamp = timestamp,
+                    terminal = if markTerminal then Some(true) else ai.terminal
+                  )
                   val updated = before ++ (updatedAi :: rest.tail)
                   updateUiCache(sessionId, updated, dirty = true) *> scheduleFlush
                 case _ => IO.unit

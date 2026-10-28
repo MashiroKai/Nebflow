@@ -2729,16 +2729,22 @@ class WebSocketRoutes(
                     if text.nonEmpty || thinkingOpt.isDefined then
                       sharedResources.sessionStore.appendUiMessages(
                         sessionId,
-                        List(UiMessage.Ai(text, durationMs, model, thinkingOpt, System.currentTimeMillis()))
+                        // replay-terminal 批（2026-10-28，案一「A 根治」）：done =
+                        // 轮终态事实本身——terminal=true 与 durationMs 同批落盘，
+                        // 回放折叠不再靠渲染期徽章启发式反推（裸面 1/2/5 根治）。
+                        List(UiMessage.Ai(text, durationMs, model, thinkingOpt, System.currentTimeMillis(), terminal = Some(true)))
                       )
                     else if durationMs.isDefined then
                       // No text to flush (already flushed at roundComplete/toolStart),
                       // but we have a duration — backfill onto the last saved Ai message.
+                      // replay-terminal 批：同一回填批盖 terminal=true（markTerminal
+                      // 显式传位——本方法仅轮终态调用面会传真）。
                       sharedResources.sessionStore.updateLastAiMeta(
                         sessionId,
                         durationMs,
                         model,
-                        System.currentTimeMillis()
+                        System.currentTimeMillis(),
+                        markTerminal = true
                       )
                     else IO.unit
                     end if
@@ -2863,7 +2869,10 @@ class WebSocketRoutes(
                         if text.nonEmpty || thinkingOpt.isDefined then
                           sharedResources.sessionStore.appendUiMessages(
                             nsid,
-                            List(UiMessage.Ai(text, durationMs, model, thinkingOpt, System.currentTimeMillis()))
+                            // replay-terminal 批（2026-10-28，案一「A 根治」）：
+                            // agentDone = 节点会话轮终态——terminal=true 与
+                            // durationMs 同批落盘（弹窗回放腿同判据）。
+                            List(UiMessage.Ai(text, durationMs, model, thinkingOpt, System.currentTimeMillis(), terminal = Some(true)))
                           )
                         else
                           // No text (flushed earlier by agentToolEnd) — backfill
@@ -2874,11 +2883,15 @@ class WebSocketRoutes(
                           // renders the badge (model name + time). durationMs stays
                           // None when unknown; the frontend falls back to a simpler
                           // badge (model + timestamp, no thinking phrase).
+                          // replay-terminal 批：agentDone 亦为轮终态——回填批一律
+                          // 盖 terminal=true（不受 durationMs 门限：轮已终态是事实，
+                          // 时长缺失只影响徽章形态，不影响折叠判据）。
                           sharedResources.sessionStore.updateLastAiMeta(
                             nsid,
                             durationMs,
                             model,
-                            System.currentTimeMillis()
+                            System.currentTimeMillis(),
+                            markTerminal = true
                           )
                         end if
                       }
