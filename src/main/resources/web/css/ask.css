@@ -1,18 +1,23 @@
-/* ask.css — Canvas 文件 ask mode（2026-10-28 实施批）。
+/* ask.css — Canvas 文件 ask mode（2026-10-28 实施批；同日 22:42 v2.1 简化修订）。
  *
- * 形态 = 样张 v2（docs/design/20261028_canvas-ask-mode-mockup-v2.html，作者八条令
- * 2026-10-28 17:5x）：canvas 右下角最靠右 44×44 品牌蓝玻璃圆钮入口 → 点击毛玻璃
- * 输入条从按钮位置向上长出（transform-origin 锚定按钮圆心）→ 气泡弹幕式升腾按龄
- * 渐隐（全毛玻璃 blur16+sat1.4 无窗体背景）→ 列顶 64px 渐变模糊过渡带（mask 渐隐
- * +backdrop 模糊幕，天然止于顶行之下）→ 小巧不占 canvas（列 max-h 316/移动 250）
- * → 每文件独立 session（ask:<hash>，切卡即切）→ 开合同一条缓动曲线 → z 序 24 < 顶
- * 行 30 永不入顶行。零面板/零弹窗/零遮罩。
+ * 形态 = 样张 v2.1（docs/design/20261028_canvas-ask-mode-mockup-v2.html，作者八条令
+ * 2026-10-28 17:5x + v2.1 减法令 22:42「简约一点。不需要两个箭头，就右侧一个发送
+ * 按钮就行，显示内容也尽量删掉不必要的消息」）：canvas 右下角最靠右 44×44 品牌蓝
+ * 玻璃圆钮入口 → 点击毛玻璃输入条从按钮位置向上长出（输入 + 右侧唯一发送钮，
+ * 转交钮自 UI 撤除）→ 气泡弹幕式升腾按龄渐隐（全毛玻璃 blur16+sat1.4 无窗体背
+ * 景）→ 列顶 64px 渐变模糊过渡带（mask 渐隐+backdrop 模糊幕，天然止于顶行之下）
+ * → 小巧不占 canvas（列 max-h 316/移动 250）→ 每文件独立 session（ask:<hash>，
+ * 切卡即切）→ 开合同一条缓动曲线 → z 序 24 < 顶行 30 永不入顶行。零面板/零弹窗/
+ * 零遮罩。v2.1 显示面减法：气泡面只出 user/ai 两族；ghost 提示行/session 徽标/
+ * 转交回执等非问答呈现退场（随批删 .ask-ghost / .ask-sess / .ask-handoff /
+ * .ask-bub.sys 规则与 --ask-sess-* 及 --ask-sys-* token，转录数据仍存渲染面
+ * 永久过滤——token 页 E 表 v2.1 注记同批回写）。
  *
  * token 单源：玻璃基底引用 sapphire.css（--glass-* / --glass-control-* /
  * --frost-shadow / --capsule-h）；品牌色 = stand-website 色板（token 页 E-1 表，
  * 蓝=功能 / 紫=强调 / 绿=身份·非交互不消费）；几何/材质 = token 页 E-2 表；
  * 动效 = base.css --panel-ease/--panel-duration。亮暗双档（E-1 双列，暗档为准）。
- * 本文件只承载 ask 域 token 与组件规则——与样张冲突处以样张 v2 为准。
+ * 本文件只承载 ask 域 token 与组件规则——与样张冲突处以样张 v2.1 为准。
  */
 
 /* ═══ E 表 token（token 规格页 20261028_canvas-ask-mode-tokens.zh-CN §E）═══ */
@@ -27,8 +32,6 @@
   --ask-bub-border: rgba(15, 23, 42, 0.09);
   --ask-input-bg: rgba(255, 255, 255, 0.68);
   --ask-input-border: rgba(15, 23, 42, 0.10);
-  --ask-sess-bg: rgba(255, 255, 255, 0.66);
-  --ask-sess-border: rgba(15, 23, 42, 0.09);
   --ask-dot-ring: rgba(255, 255, 255, 0.9);
 
   /* E-2 几何/材质档 */
@@ -43,11 +46,10 @@
   --ask-veil-blur: 8px;          /* 顶部模糊幕 blur */
   --z-ask-dock: 24;              /* < 顶行 30（排他 z 序：永不入顶行） */
 
-  /* 亮档气泡色（E-1 文字/底列派生；样张为暗档基准，亮档为实施假设档） */
+  /* 亮档气泡色（E-1 文字/底列派生；样张为暗档基准，亮档为实施假设档；
+   * v2.1 起 sys 族 token 随回执族退场删除——渲染面只出 user/ai 两族） */
   --ask-user-bub-bg: linear-gradient(135deg, rgba(59, 130, 246, 0.22), rgba(37, 99, 235, 0.14));
   --ask-user-bub-border: rgba(59, 130, 246, 0.38);
-  --ask-sys-bub-bg: linear-gradient(135deg, rgba(139, 92, 246, 0.16), rgba(124, 58, 237, 0.10));
-  --ask-sys-bub-border: rgba(139, 92, 246, 0.34);
   --ask-link: #1d4ed8;           /* --color-link-strong 亮（cite 徽标） */
 }
 
@@ -63,13 +65,9 @@
     --ask-bub-border: rgb(240 246 252 / 0.10);
     --ask-input-bg: rgb(22 27 34 / 0.60);
     --ask-input-border: rgb(240 246 252 / 0.11);
-    --ask-sess-bg: rgb(22 27 34 / 0.55);
-    --ask-sess-border: rgb(240 246 252 / 0.09);
     --ask-dot-ring: #0b0e14;
     --ask-user-bub-bg: linear-gradient(135deg, rgb(59 130 246 / 0.30), rgb(37 99 235 / 0.20));
     --ask-user-bub-border: rgb(96 165 250 / 0.40);
-    --ask-sys-bub-bg: linear-gradient(135deg, rgb(139 92 246 / 0.24), rgb(124 58 237 / 0.14));
-    --ask-sys-bub-border: rgb(167 139 250 / 0.38);
     --ask-link: #9dbcfa;
   }
 }
@@ -83,13 +81,9 @@ html[data-theme='dark'] {
   --ask-bub-border: rgb(240 246 252 / 0.10);
   --ask-input-bg: rgb(22 27 34 / 0.60);
   --ask-input-border: rgb(240 246 252 / 0.11);
-  --ask-sess-bg: rgb(22 27 34 / 0.55);
-  --ask-sess-border: rgb(240 246 252 / 0.09);
   --ask-dot-ring: #0b0e14;
   --ask-user-bub-bg: linear-gradient(135deg, rgb(59 130 246 / 0.30), rgb(37 99 235 / 0.20));
   --ask-user-bub-border: rgb(96 165 250 / 0.40);
-  --ask-sys-bub-bg: linear-gradient(135deg, rgb(139 92 246 / 0.24), rgb(124 58 237 / 0.14));
-  --ask-sys-bub-border: rgb(167 139 250 / 0.38);
   --ask-link: #9dbcfa;
 }
 html[data-theme='light'] {
@@ -103,8 +97,6 @@ html[data-theme='light'] {
   --ask-bub-border: rgba(15, 23, 42, 0.09);
   --ask-input-bg: rgba(255, 255, 255, 0.68);
   --ask-input-border: rgba(15, 23, 42, 0.10);
-  --ask-sess-bg: rgba(255, 255, 255, 0.66);
-  --ask-sess-border: rgba(15, 23, 42, 0.09);
   --ask-dot-ring: rgba(255, 255, 255, 0.9);
   --ask-link: #1d4ed8;
 }
@@ -151,7 +143,7 @@ html[data-theme='light'] {
   55% { box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.16), 0 1px 3px rgb(0 0 0 / 0.25), 0 0 0 9px rgb(96 165 250 / 0); }
 }
 
-/* ═══ 覆盖层（作者令④无窗体）：气泡列 + session 徽标 + 输入条，z < 顶行 ═══ */
+/* ═══ 覆盖层（作者令④无窗体）：气泡列 + 输入条，z < 顶行（v2.1：徽标退场）═══ */
 .ask-dock {
   position: absolute;
   right: var(--ask-fab-gap);
@@ -189,7 +181,8 @@ html[data-theme='light'] {
   mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
 }
 
-/* 毛玻璃气泡（作者令⑤）：品牌蓝 = 用户侧，中性霜 = 应答侧，紫 = injected 族 */
+/* 毛玻璃气泡（作者令⑤）：v2.1 两族制——品牌蓝 = 用户侧，中性霜 = 应答侧
+ * （v2 的紫 sys 族随回执/状态噪声退场删除，见文件头 v2.1 注记） */
 .ask-bub {
   max-width: var(--ask-bub-maxw);
   padding: 9px 13px; border-radius: 15px;
@@ -208,12 +201,6 @@ html[data-theme='light'] {
   border-color: var(--ask-user-bub-border);
   box-shadow: 0 4px 16px rgb(0 0 0 / 0.26), inset 0 1px 0 rgb(255 255 255 / 0.12);
 }
-.ask-bub.sys {
-  background: var(--ask-sys-bub-bg);
-  border-color: var(--ask-sys-bub-border);
-  font-size: 12px;
-}
-.ask-bub.sys .ask-lbl { color: var(--ask-accent); font-weight: 600; }
 .ask-bub .ask-cite {
   display: inline-block; font-size: 10.5px; color: var(--ask-link);
   background: rgb(96 165 250 / 0.13); border: 1px solid rgb(96 165 250 / 0.18);
@@ -228,32 +215,7 @@ html[data-theme='light'] {
 /* 弹幕感：越靠上（越旧）越透明（样张按龄渐隐同律；JS 写 --ask-age-alpha） */
 .ask-bub[data-age] { opacity: var(--ask-age-alpha, 1); }
 
-/* 空态一行（首发即隐） */
-.ask-ghost {
-  align-self: flex-end; max-width: var(--ask-bub-maxw);
-  font-size: 11.5px; line-height: 1.7; color: var(--ask-muted); text-align: right;
-  padding: 2px 4px 4px 0;
-}
-.ask-ghost b { color: var(--ask-fg); opacity: 0.75; font-weight: 500; }
-
-/* session 徽标（作者令⑦：每文件独立 session 的可视化） */
-.ask-sess {
-  display: inline-flex; align-items: center; gap: 7px;
-  font: 500 10.5px ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: var(--ask-muted);
-  background: var(--ask-sess-bg);
-  border: 1px solid var(--ask-sess-border);
-  border-radius: 999px; padding: 4px 11px;
-  -webkit-backdrop-filter: blur(var(--ask-bub-blur)) saturate(1.3);
-  backdrop-filter: blur(var(--ask-bub-blur)) saturate(1.3);
-  box-shadow: 0 2px 10px rgb(0 0 0 / 0.22);
-  max-width: 100%;
-}
-.ask-sess .ask-sess-live { width: 6px; height: 6px; border-radius: 999px; background: var(--ask-accent); flex: none; box-shadow: 0 0 6px rgb(167 139 250 / 0.8); }
-.ask-sess .ask-sess-fn { color: var(--ask-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 218px; font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', Roboto, sans-serif; }
-.ask-sess .ask-sess-key { color: var(--ask-link); }
-
-/* 输入框（作者令②：点击入口弹出的就是它） */
+/* 输入框（作者令②：点击入口弹出的就是它；v2.1 减法 = 输入 + 右侧唯一发送钮） */
 .ask-input {
   width: 100%; border-radius: 17px; position: relative;
   display: flex; align-items: center; gap: 6px; padding: 7px 7px 7px 6px;
@@ -267,15 +229,6 @@ html[data-theme='light'] {
   border-color: rgb(96 165 250 / 0.5);
   box-shadow: 0 6px 22px rgb(0 0 0 / 0.30), 0 0 0 3px rgb(59 130 246 / 0.12);
 }
-.ask-input .ask-handoff {
-  flex: none; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; padding: 0;
-  background: rgb(139 92 246 / 0.16); border: 1px solid rgb(167 139 250 / 0.30);
-  color: var(--ask-accent);
-  display: flex; align-items: center; justify-content: center;
-  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.ask-input .ask-handoff:hover { background: rgb(139 92 246 / 0.28); }
-.ask-input .ask-handoff svg { width: 13px; height: 13px; pointer-events: none; }
 .ask-input input {
   flex: 1; min-width: 0; border: none; outline: none; background: transparent;
   font: 400 13.5px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', Roboto, sans-serif;
@@ -306,4 +259,3 @@ body.mobile-layer .ask-dock {
 }
 body.mobile-layer .ask-bub { font-size: 13px; padding: 8px 12px; }
 body.mobile-layer .ask-input input { font-size: 15px; } /* iOS 聚焦不缩放 */
-body.mobile-layer .ask-ghost { font-size: 11px; }
