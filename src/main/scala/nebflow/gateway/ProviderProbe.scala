@@ -170,6 +170,19 @@ private[gateway] object ProviderProbe:
       c.downField("message").as[String].toOption
     ).flatten.map(_.trim).find(_.nonEmpty)
 
+  // ── shims for the model-test probe (settings-panel-jev-imagegen 批 B 件) ──
+  // ProviderModelProbe reuses THIS module's error-face parsing (one parsing
+  // truth for provider replies) through these two narrow, value-free helpers.
+
+  /** The provider's own error message when a 2xx body still carries an error
+    * envelope (zhipu 200-carrier precedent). */
+  private[gateway] def errEnvelopeMessage(body: String): Option[String] =
+    parser.parse(body).toOption.filter(isErrorEnvelope).flatMap(errorDetail)
+
+  /** The provider's error message from any body carrying one. */
+  private[gateway] def errBodyMessage(body: String): Option[String] =
+    parser.parse(body).toOption.flatMap(errorDetail)
+
   /**
    * A reply that is an error even under a 2xx status: `{"error":…}`,
    * `{"success":false}`, or the `{"code":…,"msg":…}` envelope a gateway uses to

@@ -240,6 +240,34 @@ private[gateway] object ConfigRoutes:
           }
         }
 
+      // ── 生图（imagegen）设置面（settings-panel-jev-imagegen 批 2026-10-28）────
+      // GET /api/config/imagegen —— 面板两形态的状态投影（ConfigService.
+      // imagegenStatus 单点：compiledIn seal 常量 + 配置热读 + keyRef 在位性，
+      // 永不回传 key 值）。owner 鉴权与 jev/embedding 读写同门槛（withAuth）。
+      // 🔴 边界：这是**设置/状态面**——seal=OFF 的 release 构建照常在（面板的
+      // 「未编入」提示位正需要它）；零痕迹锚（ImageGenRoutes / 工具注册段 /
+      // 前端 imagegen.js DCE）不经过这里（ConfigService 处已申报）。
+      case req @ GET -> Root / "config" / "imagegen" =>
+        withAuth(req) {
+          ConfigService.imagegenStatus.flatMap(Ok(_))
+        }
+
+      // PUT /api/config/imagegen —— 生图节定向写（**整节替换**：面板每次提交
+      // 全量目标形态；校验单点 ConfigService.validateImagegenSection——白名单
+      // 越界 / 不可解码 / 适配器缺席的 type 一律 400 不落盘）。key 值永不走本
+      // 路由（secrets 面专属）。
+      case req @ PUT -> Root / "config" / "imagegen" =>
+        withAuth(req) {
+          req.as[Json].flatMap { body =>
+            ConfigService.setImagegenSection(body).flatMap {
+              case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+              case Right(_) =>
+                wsHub.broadcast(Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson)) *>
+                  Ok(Json.obj("updated" -> true.asJson))
+            }
+          }
+        }
+
       // GET /api/decision/health —— 分配决策通道探活（jev-plugins 批 #1226；设置页
       // Jev 区探活显示的读通道）。读 sharedResources.decisionHealth 单实例（写腿 =
       // 插件分配器两腿）。凭证无关：payload 只含 status/reason/since + 可选 legs

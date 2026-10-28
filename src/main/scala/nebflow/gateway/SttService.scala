@@ -21,6 +21,20 @@ object SttService:
    */
   def configPath: os.Path = PathUtil.dataRoot / "stt-config.json"
 
+  /**
+   * STT 总开关的盘上读数（settings-panel 批 D 件 2026-10-28）。**缺席 = true**
+   * ——存量用户零感知（老配置文件无此键 ⇒ 行为逐字不变）；显式 false = STT
+   * 整体停用（前端入口/快捷键全收 + 引擎 transcribe 拒绝）。
+   */
+  def readEnabledFromDisk: Boolean =
+    try
+      if !os.exists(configPath) then true
+      else
+        parse(os.read(configPath)).toOption
+          .flatMap(_.hcursor.downField("enabled").as[Boolean].toOption)
+          .getOrElse(true)
+    catch case _: Exception => true
+
   def create(): IO[Option[SttService]] =
     IO.blocking {
       if !os.exists(configPath) then None
@@ -34,7 +48,8 @@ object SttService:
               .downField("endpoint")
               .as[String]
               .getOrElse(Defaults.SttDefaultEndpoint)
-            Some(new SttService(apiKey, model, endpoint))
+            val enabled = hc.downField("enabled").as[Boolean].toOption.getOrElse(true)
+            Some(new SttService(apiKey, model, endpoint, enabled))
           }
         }
     }.flatMap {
@@ -49,7 +64,15 @@ object SttService:
    */
   type SttField = Option[Option[String]]
 
-  final case class SttConfigPatch(endpoint: SttField, apiKey: SttField, model: SttField):
+  final case class SttConfigPatch(
+    endpoint: SttField,
+    apiKey: SttField,
+    model: SttField,
+    // settings-panel 批 D 件（2026-10-28）：总开关三态——None=省略（保留旧值，
+    // 存量载荷零变化）；Some(true/false)=显式设值。不参与 clearsEverything
+    // （开关不是凭据字段：清空三串仍回退浏览器腿，开关值随文件保留）。
+    enabled: Option[Boolean] = None
+  ):
 
     /** 全部字段显式清除——等价于清空整个配置。 */
     def clearsEverything: Boolean =
@@ -62,6 +85,7 @@ object SttService:
    * - 字段省略 → 保留旧值（merge 侧处理，本次不触碰）
    * - 字段显式空串/纯空白 → 清除该字段
    * - 字段设值 → 校验后写入（endpoint 须 http(s)://；model/apiKey 非空即可）
+   * - enabled（D 件）：省略=保留；显式=布尔设值（非布尔 400）
    *
    * 旧 validateConfig 把「省略」与「显式空」折叠成同一路径且整文件替换，
    * 导致二次保存（前端 apiKey 恒空、省略该字段）时旧 key 被覆盖丢失。
@@ -75,15 +99,20 @@ object SttService:
           val v = raw.trim
           if v.isEmpty then Right(Some(None)) // explicit empty — clear this field
           else Right(Some(Some(v)))
+    val enabledField: Either[String, Option[Boolean]] =
+      payload.hcursor.downField("enabled").as[Option[Boolean]] match
+        case Left(_) => Left("STT field 'enabled' must be a boolean if present")
+        case Right(v) => Right(v)
     for
       endpoint <- field("endpoint")
       apiKey <- field("apiKey")
       model <- field("model")
+      enabled <- enabledField
       _ <- endpoint.flatten match
         case Some(e) if !e.startsWith("http://") && !e.startsWith("https://") =>
           Left(s"STT endpoint must start with http:// or https:// (got: ${e.take(60)})")
         case _ => Right(())
-    yield SttConfigPatch(endpoint, apiKey, model)
+    yield SttConfigPatch(endpoint, apiKey, model, enabled)
 
   end parsePatch
 
@@ -92,6 +121,7 @@ object SttService:
    * 设值=覆写。返回 None=合并后无任何字段（未配置态——调用方删文件，
    * 服务回退浏览器 Web Speech）。部分字段存在但缺 apiKey 时 create()
    * 返回 None（无代理服务），字段保留在盘上待 key 回填。
+   * enabled（D 件）：省略=保留旧文件值（无旧文件=true 缺省）；显式=覆写。
    */
   def mergeConfig(old: Option[Json], patch: SttConfigPatch): Option[Json] =
     def oldField(name: String): Option[String] =
@@ -105,26 +135,32 @@ object SttService:
       apply("endpoint", patch.endpoint),
       apply("apiKey", patch.apiKey),
       apply("model", patch.model)
-    ).flatten
+    ).flatten ++ patch.enabled.map(v => "enabled" -> v.asJson)
     if fields.isEmpty then None
     else Some(Json.fromJsonObject(JsonObject.fromIterable(fields)))
 
   end mergeConfig
 
   /**
-   * serverConfig 广播的 stt 节（#295）：{sttConfigured, endpoint?, model?}——
-   * **apiKey 永不外露**（key 不落地前端铁律）。未配置时仅 sttConfigured:false。
+   * serverConfig 广播的 stt 节（#295）：{sttConfigured, sttEnabled, endpoint?,
+   * model?}——**apiKey 永不外露**（key 不落地前端铁律）。`sttEnabled`（D 件
+   * 2026-10-28）= 总开关盘上读数（缺席=true 缺省）——未配置/停用形态都要让
+   * 前端拿到同一真值，入口/快捷键据此全收。IO 形态：enabled 读盘（调用方两处
+   * 均在 IO 语境）。
    */
-  def serverConfigNode(svc: Option[SttService]): Json =
+  def serverConfigNode(svc: Option[SttService]): IO[Json] = IO.blocking {
+    val enabled = readEnabledFromDisk
     svc match
       case Some(s) =>
         Json.obj(
           "sttConfigured" -> true.asJson,
+          "sttEnabled" -> enabled.asJson,
           "endpoint" -> s.endpoint.asJson,
           "model" -> s.model.asJson
         )
       case None =>
-        Json.obj("sttConfigured" -> false.asJson)
+        Json.obj("sttConfigured" -> false.asJson, "sttEnabled" -> enabled.asJson)
+  }
 end SttService
 
 /**
@@ -149,7 +185,10 @@ class SttService private[gateway] (
   /** 转录模型名（serverConfig 广播可见；apiKey 永不外露）。 */
   val model: String,
   /** 转录端点（serverConfig 广播可见；apiKey 永不外露）。 */
-  val endpoint: String
+  val endpoint: String,
+  /** 总开关（settings-panel 批 D 件）：false = STT 整体停用——引擎腿同步拒绝
+    * （前端入口已收，这是纵深第二层：直连 WS transcribe 帧也拿不到转写）。 */
+  val enabled: Boolean = true
 ):
   private val logger = NebflowLogger.forName("nebflow.stt")
 
@@ -166,7 +205,8 @@ class SttService private[gateway] (
    * @return Right(识别文本) 或 Left(错误消息，回传前端)
    */
   def transcribe(wavBytes: Array[Byte], language: Option[String]): IO[Either[String, String]] =
-    if wavBytes.isEmpty then IO.pure(Left("Empty audio data"))
+    if !enabled then IO.pure(Left("STT is disabled in settings"))
+    else if wavBytes.isEmpty then IO.pure(Left("Empty audio data"))
     else if isChatCompletionsEndpoint then transcribeViaChat(wavBytes, language)
     else transcribeViaMultipart(wavBytes, language)
   end transcribe

@@ -1198,6 +1198,7 @@ class WebSocketRoutes(
                     mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
                       io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
                     })
+                    sttNode <- SttService.serverConfigNode(sttSvc)
                     _ <- outbound.offer(
                       WebSocketFrame.Text(
                         io.circe.Json
@@ -1217,7 +1218,7 @@ class WebSocketRoutes(
                                 System.currentTimeMillis()
                               )
                               .asJson,
-                            "stt" -> SttService.serverConfigNode(sttSvc),
+                            "stt" -> sttNode,
                             // A4: the tool list is served on demand (`getToolsList`),
                             // not on every connect + config broadcast — see the note
                             // above `toolsListJson`.
@@ -1555,6 +1556,7 @@ class WebSocketRoutes(
       mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
         io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
       })
+      sttNode <- SttService.serverConfigNode(sttSvc)
       _ <- wsHub.broadcast(
         io.circe.Json.obj(
           "type" -> "serverConfig".asJson,
@@ -1573,7 +1575,7 @@ class WebSocketRoutes(
               System.currentTimeMillis()
             )
             .asJson,
-          "stt" -> SttService.serverConfigNode(sttSvc),
+          "stt" -> sttNode,
           // A4: `tools` intentionally NOT here — see the note above the helper
           // (it was ~93.5 KB on every broadcast; now served by `getToolsList`).
           "mcpServers" -> mcpServers.asJson
