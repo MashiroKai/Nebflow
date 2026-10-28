@@ -60,7 +60,9 @@
 
 ## 五、runbook
 
-`docs/runbooks/kai-dispatch-route.md`（本批新增）：§1 链路图（含协议与幂等/签名语义）；§2 每跳地址/凭据依赖表；§3 健康检查命令（Mac 三条 + KAI 四条 + 实弹四证据）；§4 标准派发姿势（root 一句话派单模板、任务书纪律、禁止 executor 参数、结果回收与合回流）；§5 断链排查表 + 三条降级路（B=挂载语义[独立决策，本批未启用] / C=relay 直驱 batchA 先例 / 兜底=Mac worktree）；§6 KAI vs Mac 判据表（8 行）；§7 边界与已知坑（root 专属、父会话回投、spawnId 进程内幂等、mount-skipped=健康态、僵尸 WIP 登记、跨引擎接管不在本批）。
+- 仓内（随本批提交落 main）：`docs/runbooks/kai-dispatch-route.md`（docs/ 整体 ignore 下按既有 tracked 例外先例 `-f` 落位）。
+- 作者阅读面镜像：`~/.stand/docs/runbooks/kai-dispatch-route.md`（与报告一同Surface）。
+- 内容：§1 链路图（含协议与幂等/签名语义）；§2 每跳地址/凭据依赖表；§3 健康检查命令（Mac 三条 + KAI 四条 + 实弹四证据）；§4 标准派发姿势（root 一句话派单模板、任务书纪律、禁止 executor 参数、结果回收与合回流）；§5 断链排查表 + 三条降级路（B=挂载语义[独立决策，本批未启用] / C=relay 直驱 batchA 先例 / 兜底=Mac worktree）；§6 KAI vs Mac 判据表（8 行）；§7 边界与已知坑（root 专属、父会话回投、spawnId 进程内幂等、mount-skipped=健康态、僵尸 WIP 登记、跨引擎接管不在本批）。
 
 ## 六、边界遵守与登记
 
