@@ -721,6 +721,42 @@ function armBusyFromStream(sid) {
   setBusy(sid);
 }
 
+// composer-resync（2026-10-28）：重连后 AgentRegistry 快照是 sessionBusyIds 的
+// 唯一权威重同步源。瞬时 done/sessionBusy(false) 在断连窗内丢失时，historyPage
+// 已能把完成轮渲染出来，旧客户端却永久保留断线前的停止钮。服务端明确回 false
+// 必须强制收敛 busy + 终态账 + 队列触发；明确回 true 则恢复真实在飞轮。
+// 「后台忙」不混进这里：后端只把 Processing 映成 true；Idle 的后台 job 等待期
+// 仍由既有任务/子代理面板解释，不制造一个不可解释的 composer 停止态。
+function applyAuthoritativeSessionBusy(sid, busy) {
+  if (!sid) return;
+  if (busy) {
+    queueTurnFactAt.set(sid, Date.now());
+    cancelTurnConfirm(sid);
+    delete state.lastTerminalAt[sid];
+    state.turnExpecting[sid] = true;
+    if (!state.busySessionIds.has(sid)) setBusy(sid);
+    return;
+  }
+  delete state.turnExpecting[sid];
+  cancelTurnConfirm(sid);
+  if (state.sessionBusyTimeouts[sid]) {
+    clearTimeout(state.sessionBusyTimeouts[sid]);
+    delete state.sessionBusyTimeouts[sid];
+  }
+  if (state.busySessionIds.has(sid)) clearBusy(sid);
+  // 权威 idle 同时是黑暗窗终态事实：放行队列的「有开轮事实、无越界终态戳」闸。
+  state.lastTerminalAt[sid] = Date.now();
+  scheduleQueueDrain(sid);
+  applyLocalFreeze();
+}
+
+onMessage('sessionBusyStates', (msg) => {
+  const states = msg.states || {};
+  for (const [sid, busy] of Object.entries(states)) {
+    applyAuthoritativeSessionBusy(sid, busy === true);
+  }
+});
+
 // Helper: clear busy for a specific session, then drain any queued messages.
 // Called by ALL terminal events (done, error, interrupted, timeout, maxTokens,
 // compactFailed) — not just 'done' — so the queue drains regardless of how the
@@ -2215,6 +2251,12 @@ onMessage('delegateWaiting', (msg) => {
 
 onMessage('agentDone', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
+  // composer-resync（2026-10-28）：agentDone 若直接携带会话 id（无 nodeSessionId
+  // 的子代理路由戳），就是该会话的轮终态，必须走与 done 同一条 clearBusyFor 收口。
+  // 子代理 agentDone 经 ws.js convertAgentEvent 转 done 已清子会话；父会话本身的
+  // busy 不得被携带 rootSessionId/sessionId 的子代理终态误清，故 nodeSessionId
+  // 在场时这里保持旧行为（只收面板行）。
+  if (msg.sessionId && !msg.nodeSessionId) clearBusyFor(msg);
   const sid = msg.rootSessionId || msg.sessionId || state.activeSessionId;
   if (!sid) return;
   const aid = msg.agentId || (view && view.stream.activeAgentId);
@@ -4273,6 +4315,11 @@ onReconnect(() => {
   // Sync background sub-agent state — agentStart events are not replayed
   // after a page refresh, so the indicator count would be lost without this
   sendWs({ type: 'getActiveAgents' });
+  // composer-resync：activeAgents 不含 root session，不能拿它推断主会话闲忙。
+  // 断连窗内 done/sessionBusy(false) 不重放，必须另查 AgentRegistry 权威相位；
+  // 活跃会话也纳入（旧快照同步恰恰把它豁免，正是幽灵停止钮缺口）。
+  const busySyncIds = [...new Set([state.activeSessionId, ...state.busySessionIds].filter(Boolean))];
+  if (busySyncIds.length) sendWs({ type: 'getSessionBusy', sessionIds: busySyncIds });
   // Re-fetch session list — sessions may have been created/removed during disconnect
   sendWs({ type: 'listSessions' });
   // queue-idle-return（2026-10-25）：重连 = 帧流被切断的权威事件——两条补腿：

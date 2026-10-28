@@ -3,7 +3,7 @@ package nebflow.gateway
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
-import nebflow.actor.{AgentCommand, AgentKind, AgentRecord}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord, AgentStatus}
 import nebflow.core.flow.TeamSessionRegistry
 import nebflow.actor.ActorRef
 
@@ -28,12 +28,17 @@ import nebflow.actor.ActorRef
 class ActiveAgentsFilterSpec extends FunSuite:
 
   // filterActiveAgents never touches the actor ref — null is safe here.
-  private def rec(sessionId: String, kind: AgentKind): AgentRecord =
+  private def rec(
+    sessionId: String,
+    kind: AgentKind,
+    status: AgentStatus = AgentStatus.Idle
+  ): AgentRecord =
     AgentRecord(
       sessionId = sessionId,
       ref = null.asInstanceOf[ActorRef[AgentCommand]],
       kind = kind,
-      rootSessionId = "root-1"
+      rootSessionId = "root-1",
+      status = status
     )
 
   private def run(registry: Map[String, AgentRecord]): Set[(String, AgentKind)] =
@@ -115,5 +120,31 @@ class ActiveAgentsFilterSpec extends FunSuite:
         )
       )
     }
+  }
+
+  test("sessionBusyStates: only Processing is busy; idle/background wait/unknown are authoritative false") {
+    val registry = Map(
+      "root-processing" -> rec("root-processing", AgentKind.Root, AgentStatus.Processing),
+      // Idle 是后台任务等待期的合法相位，不能因此让 composer 显示不可解释的停止钮。
+      "root-bg-wait" -> rec("root-bg-wait", AgentKind.Root, AgentStatus.Idle),
+      "root-ask-wait" -> rec("root-ask-wait", AgentKind.Root, AgentStatus.WaitingForUser),
+      "delegate-processing" -> rec("delegate-processing", AgentKind.Delegate, AgentStatus.Processing),
+      "not-requested" -> rec("not-requested", AgentKind.Root, AgentStatus.Processing)
+    )
+    val out = WebSocketRoutes.sessionBusyStates(
+      registry,
+      List("root-processing", "root-bg-wait", "root-ask-wait", "missing", "delegate-processing", "root-processing")
+    )
+    assertEquals(
+      out,
+      Map(
+        "root-processing" -> true,
+        "root-bg-wait" -> false,
+        "root-ask-wait" -> false,
+        "missing" -> false,
+        "delegate-processing" -> true
+      )
+    )
+    assert(!out.contains("not-requested"), "response must stay scoped to requested session ids")
   }
 end ActiveAgentsFilterSpec
