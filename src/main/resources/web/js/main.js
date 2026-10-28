@@ -36,7 +36,7 @@ import {
   renderTool, renderToolPending, renderError, renderTimeoutNotice,
   feedBusyWatchdog, removeStillProcessingNotice,
   renderSystemBubble, renderRetryStatus, clearRetryStatus,
-  renderCompactDoneCard, renderCompactFailCard,
+  renderCompactDoneCard,
   showOptions, renderAskUser, renderPermissionPrompt, closeAskUserCard,
   reclaimAskUserCards,
   renderAttachmentPreview,
@@ -2297,10 +2297,12 @@ onMessage('compactStart', (msg, view) => {
     // 作者令 2026-10-09 10:23 ①（compaction-pill-remove 批）：「压缩中」可见
     // 指示已拆除——本帧不再起卡。帧本身保留：setCompacting 供输入闸
     // （input.js isBusy）与排队闸（队列 drain）使用，saveMsg 供历史记录
-    // （重放腿按 restoreCompactCardRow 抑制起条目）；时间戳供完成卡的
-    // 「用时」后缀（完成态 UI 零改动）。
-    view.compactStartTs = Date.now();
-    saveMsg({ type: 'system', content: t('chat.compacting') }, sid);
+    // （重放腿按 restoreCompactCardRow 抑制起条目）。
+    // 作者令 2026-10-28 11:44（zero-trace 批）：完成卡已全面停渲染（唯一例外 =
+    // 0.95 硬守卫 emergency 卡，无 compactStart 帧不吃用时戳）⇒ compactStartTs
+    // 用时戳元数据随之拆除。缓存条目带 i18nKey：localStorage 重放腿与 ui.json
+    // 腿同判（restoreCompactCardRow 一点静默），不再漏成 notice 行。
+    saveMsg({ type: 'system', content: t('chat.compacting'), i18nKey: 'chat.compacting' }, sid);
   }
 });
 
@@ -2329,9 +2331,21 @@ onMessage('compactComplete', (msg, view) => {
   if (view) {
     // 2026-09-15 作者令：压缩不再落 report ⇒ 帧内不再带 reportPath，
     // 「report: xxx.md」尾巴随生成链一并删除（detail 保持空串，i18n 占位符不变）。
+    // 作者令 2026-10-28 11:44（zero-trace 批）：回落同步压缩完成卡**停渲染**——
+    // 帧与 ui.json 记录照常留账（审计可查），界面上不再出现「✓ 上下文已压缩」卡。
+    // 唯一可见例外 = 0.95 硬守卫 emergencyClean 真清上下文（数据有损）时的
+    // emergency 卡（安全阀，保留现状口径）。
     const text = t('chat.compacted', { before: msg.before, after: msg.after, detail: '' });
-    renderCompactDoneCard(view, { before: msg.before, after: msg.after, detail: '' });
-    saveMsg({ type: 'system', content: text }, sid);
+    delete view.compactStartTs; // 防陈旧用时戳串入后续 emergency 卡
+    if (msg.emergency) {
+      renderCompactDoneCard(view, { before: msg.before, after: msg.after, detail: '' });
+    }
+    // 缓存条目带 i18nKey + params（emergency 随行）——重放腿按 restoreCompactCardRow
+    // 一点静默/放行；WS 帧由后端 recording send 照常落 ui.json（数据面零削减）。
+    saveMsg({
+      type: 'system', content: text, i18nKey: 'chat.compacted',
+      params: { before: msg.before, after: msg.after, ...(msg.emergency ? { emergency: true } : {}) }
+    }, sid);
   }
   // Drain queued messages only if agent is NOT busy. During auto-compaction
   // with resume, the agent immediately starts a resume turn after compactComplete.
@@ -2357,14 +2371,20 @@ onMessage('compactFailed', (msg, view) => {
     view.stream.activeAgentId = null;
   }
   if (view) {
+    // 作者令 2026-10-28 11:44（zero-trace 批）：compactFailed 卡**停渲染**——
+    // 引擎已有退避+熔断+应急兜底，UI 不再重复报错；记录照常落盘（saveMsg，
+    // 数据面零削减）。熔断终局面（下方 renderError）同刀静默：回落路径零卡
+    // 零横幅，唯一可见例外仍是 0.95 硬守卫 emergency 卡。
     const text = t('chat.compactFailed', { attempt: msg.attempt, maxAttempts: msg.maxAttempts });
-    renderCompactFailCard(view, text);
-    saveMsg({ type: 'system', content: text }, sid);
+    // 缓存条目带 i18nKey + params：重放腿按 restoreCompactCardRow 一点静默
+    saveMsg({
+      type: 'system', content: text, i18nKey: 'chat.compactFailed',
+      params: { attempt: msg.attempt, maxAttempts: msg.maxAttempts }
+    }, sid);
   }
   if (msg.attempt >= msg.maxAttempts) {
-    if (view) {
-      renderError(t('chat.compactCircuitBreaker', { attempt: msg.attempt }));
-    }
+    // 熔断终局：仅做功能面收尾（busy 清位）——错误行渲染随 zero-trace 拆除
+    // （应急兜底 = 0.95 硬守卫会在真清上下文时给出唯一可见提示）。
     clearBusyFor(msg);
   } else {
     // Retry path — also drain queue in case user sent messages during compaction

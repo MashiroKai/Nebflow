@@ -332,9 +332,19 @@ object FullCompact:
   private def extractSummaryBlock(text: String, required: Boolean): Either[String, String] =
     "(?s)<summary>(.*?)</summary>".r.findFirstMatchIn(text) match
       case Some(m) => Right(m.group(1).trim)
-      case None if required =>
-        Left("pingpong summary missing <summary>…</summary> pair (output truncated at the hard cap?)")
+      case None if required => Left(MissingSummaryPairError)
       case None => Right(text.trim)
+
+  /**
+   * 刀一③（2026-10-28 无感压缩批）：`<summary>` 对缺失类解析截断的单点判据。
+   * 影子腿（AgentPingpong.shadowFiber）据此在判败前先自动续写一拍——hard-cap
+   * 截断的输出只丢了收尾标签，正文已在手，一次「续写」即可 salvage；其余解析
+   * 失败不适用续写（内容性问题，重问不解决）。
+   */
+  val MissingSummaryPairError: String =
+    "pingpong summary missing <summary>…</summary> pair (output truncated at the hard cap?)"
+
+  def isMissingSummaryPairError(err: String): Boolean = err.startsWith("pingpong summary missing")
 
   // ------------------------------------------------------------------
   // File restoration from ReadTracker

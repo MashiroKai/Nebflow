@@ -44,8 +44,12 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     state: AgentState,
     replyTo: Option[ActorRef[AgentEvent]],
     processing: ProcessingFn
-  )(using ctx: ActorContext[AgentCommand]): Option[IO[Behavior[AgentCommand]]] =
-    if state.pendingCompaction.isDefined then None
+  )(using ctx: ActorContext[AgentCommand]): IO[Option[IO[Behavior[AgentCommand]]]] =
+    // 刀一④（2026-10-28 无感压缩批）：返回类型 Option[IO] → IO[Option[IO]]——
+    // 乒乓门状态（pingpong.enabled 热读 × 根会话谓词）必须在**触发决策点**已知，
+    // 「门关 + 仅 ×0.9 预置线越阈」才能同步返回 None（派发原样续跑，§G1 逐字节
+    // 不变）；若门读留在 forkOrLegacy 内部，窗口内的门关分支将无「拒绝」终值可用。
+    if state.pendingCompaction.isDefined then IO.pure(None)
     else
       val config = CompactConfig()
       // ── P0-2（2026-08-22 Write-only 循环批）：满上下文硬截断前置 ──
@@ -68,15 +72,17 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
       val cooldownOk =
         System.currentTimeMillis() - state.lastCompactionFailureAt > EmergencyHardGuardCooldownMs
       if (reported.exists(_ > hardLimit) || estimatedNow > hardLimit) && cooldownOk then
-        runEmergencyCompact(
-          agentDef,
-          resources,
-          depth,
-          parentRef,
-          state,
-          replyTo,
-          processing,
-          s"P0-2 hard-guard: estimated=$estimatedNow reported=${reported.getOrElse(0)} hardLimit=$hardLimit messages=${state.messages.size}"
+        IO.pure(
+          runEmergencyCompact(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            state,
+            replyTo,
+            processing,
+            s"P0-2 hard-guard: estimated=$estimatedNow reported=${reported.getOrElse(0)} hardLimit=$hardLimit messages=${state.messages.size}"
+          )
         )
       else
         val backoffOk =
@@ -94,7 +100,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 s"backoff=${config.backoffMs(state.compactionFailures)}ms elapsed=${elapsed}ms failures=${state.compactionFailures}"
               )
             ok
-        if !backoffOk then None
+        if !backoffOk then IO.pure(None)
         else if state.compactionFailures >= config.circuitBreakerMax then
           if !config.emergencyAutoFallback then
             logAgentEvent(
@@ -105,17 +111,19 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
               "auto-compact-skipped",
               s"circuitBreakerOpen failures=${state.compactionFailures} max=${config.circuitBreakerMax}"
             )
-            None
+            IO.pure(None)
           else
-            runEmergencyCompact(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              state,
-              replyTo,
-              processing,
-              s"circuitBreakerOpen failures=${state.compactionFailures} messages=${state.messages.size}"
+            IO.pure(
+              runEmergencyCompact(
+                agentDef,
+                resources,
+                depth,
+                parentRef,
+                state,
+                replyTo,
+                processing,
+                s"circuitBreakerOpen failures=${state.compactionFailures} messages=${state.messages.size}"
+              )
             )
         else
           val inputTokensOpt = state.latestUsage.map(_.inputTokens)
@@ -124,35 +132,64 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           // （window × r），无覆盖逐字走 CompactThreshold.threshold（口径②承重钉）。
           // 本处是**判定点唯一**（触发决策），上报表在 AgentActor / 下方 emit 点。
           val threshold = state.compactThresholdTokens
-          val shouldCompact = inputTokensOpt match
-            case Some(inputTokens) if inputTokens > 0 && inputTokens > threshold =>
-              Some(s"inputTokens=$inputTokens threshold=$threshold")
+          // ── 刀一④（2026-10-28 无感压缩批）：fork 判据提前到阈值 ×0.9 预置 ──
+          // 仅乒乓门开（根会话 × pingpong.enabled）的 fork 观测点提前；换入仍在
+          // 轮边界（语义不变）。门关（谓词假/开关关）与 pp-fallback 老同步路径的
+          // 触发阈值逐字不变。[0.9t, t] 窗口是给影子腿 fork 内重试（刀一②）与
+          // 失败退避的时间余量，避免三连败后直接被 0.95 硬守卫逮住。
+          val ppForkThreshold = PingpongConfig.forkPrePositionThreshold(threshold)
+          def crossing(t: Int): Option[String] = inputTokensOpt match
+            case Some(inputTokens) if inputTokens > 0 && inputTokens > t =>
+              Some(s"inputTokens=$inputTokens threshold=$t")
             case _ =>
               val estimated = TokenEstimator.estimate(state.messages)
-              if estimated > threshold then
-                Some(s"estimated=$estimated threshold=$threshold (provider did not report inputTokens)")
+              if estimated > t then Some(s"estimated=$estimated threshold=$t (provider did not report inputTokens)")
               else None
-          shouldCompact match
-            case Some(detail) =>
-              logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "auto-compact-trigger", detail)
-              // ── 乒乓门（主会话无感上下文压缩一期，2026-10-09 spec §G1/§A3/§A4）──
-              // 全部行为差异收在本门之后（spec §G1 零改动论证）：
-              //   影子在飞（含其 S 待换入窗）⇒ 布尔排队位（不堆叠）后照常续跑（§A4）；
-              //   影子失败退避窗（30s×2^n）⇒ 本派发跳过 fork，主腿照常服务（§E-1）；
-              //   影子三连败（= circuitBreakerMax）⇒ 回落老同步路径一拍（§E-1）；
-              //   其余（谓词假 / 开关关 / 门开首次越阈）⇒ AgentPingpong.forkOrLegacyAuto
-              //   内部分流：门关走下行 startDirectCompaction 逐字，门开 fork 影子后主腿
-              //   照常续跑本派发。0.95 硬守卫与熔断应急在本函数上半段原样先行（乒乓
-              //   不绕过最终安全网，§A2）。
-              val pp = state.pingpong
-              if pp.shadowPending.isDefined then
-                if pp.forkQueued then None
-                else
-                  AgentPingpong.logQueued(agentDef, depth, state, detail)
+          val legacyCrossing = crossing(threshold)
+          val ppForkCrossing = crossing(ppForkThreshold)
+          // ── 乒乓门（主会话无感上下文压缩一期，2026-10-09 spec §G1/§A3/§A4）──
+          // 全部行为差异收在本门之后（spec §G1 零改动论证）。门状态在本判定点
+          // 单次热读（刀一④上提，见函数头注）：
+          //   影子在飞（含其 S 待换入窗）⇒ 布尔排队位（不堆叠）后照常续跑（§A4）；
+          //     排队判据仍在**原阈值**（预置只挪 fork 观测点，第二拍复查语义不变）；
+          //   影子失败退避窗（30s×2^n）⇒ 本派发跳过 fork，主腿照常服务（§E-1）；
+          //   影子三连败（= circuitBreakerMax）⇒ 回落老同步路径一拍（§E-1），
+          //     触发仍在原阈值（回落不预置——老同步路径语义零漂移）；
+          //   门关（谓词假/开关关）⇒ 只有原阈值越阈才走 startDirectCompaction 逐字
+          //     （×0.9 窗口内 ⇒ None，派发原样续跑）；门开 ⇒ 原阈值越阈或 ×0.9
+          //     预置线越阈都 fork 影子，主腿照常续跑本派发。
+          //   0.95 硬守卫与熔断应急在本函数上半段原样先行（乒乓不绕过最终安全网，§A2）。
+          PingpongConfig.enabled.flatMap { switchOn =>
+            val ppGateOpen = AgentPingpong.gateOpen(agentDef, depth, switchOn)
+            val pp = state.pingpong
+            if pp.shadowPending.isDefined then
+              if legacyCrossing.isEmpty then IO.pure(None)
+              else if pp.forkQueued then IO.pure(None)
+              else
+                logAgentEvent(
+                  agentDef,
+                  depth,
+                  state.sessionId,
+                  state.sessionName,
+                  "auto-compact-trigger",
+                  legacyCrossing.get
+                )
+                AgentPingpong.logQueued(agentDef, depth, state, legacyCrossing.get)
+                IO.pure(
                   Some(
                     pipeLlmCall(agentDef, resources, depth, parentRef, state.withForkQueued(true), replyTo, processing)
                   )
-              else if pp.ppFailures >= config.circuitBreakerMax then
+                )
+            else if legacyCrossing.isDefined && pp.ppFailures >= config.circuitBreakerMax then
+              logAgentEvent(
+                agentDef,
+                depth,
+                state.sessionId,
+                state.sessionName,
+                "auto-compact-trigger",
+                legacyCrossing.get
+              )
+              IO.pure(
                 Some(
                   IO(
                     logAgentEvent(
@@ -174,16 +211,54 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                     "full"
                   )
                 )
-              else if pp.ppFailures > 0 && !config.isBackoffSatisfied(
-                  pp.ppFailures,
-                  System.currentTimeMillis() - pp.lastPpFailureAt
+              )
+            else if pp.ppFailures > 0 && !config.isBackoffSatisfied(
+                pp.ppFailures,
+                System.currentTimeMillis() - pp.lastPpFailureAt
+              )
+            then IO.pure(None)
+            else if legacyCrossing.isDefined then
+              // 原阈值越阈：门开 fork（观测行逐字）/ 门关老同步路径——两态都由
+              // forkOrLegacyAuto 按 gateOpen 分流，观测行/路径与旧序列逐字。
+              IO.pure(
+                Some(
+                  AgentPingpong.forkOrLegacyAuto(
+                    agentDef,
+                    resources,
+                    depth,
+                    parentRef,
+                    state,
+                    replyTo,
+                    processing,
+                    gateOpen = ppGateOpen,
+                    triggerDetail = legacyCrossing.get,
+                    prePosition = false
+                  )
                 )
-              then None
-              else
-                Some(AgentPingpong.forkOrLegacyAuto(agentDef, resources, depth, parentRef, state, replyTo, processing))
-              end if
-            case None => None
-          end match
+              )
+            else if ppGateOpen && ppForkCrossing.isDefined then
+              // 刀一④核心面：门开 + 仅 ×0.9 预置线越阈（原阈值未到）⇒ 预 fork
+              // 影子（C₀ 含当前全量；换入仍只在轮边界）。门关到不了这里（上方
+              // legacyCrossing 空且本分支有 ppGateOpen 闸）⇒ None = §G1 零漂移。
+              IO.pure(
+                Some(
+                  AgentPingpong.forkOrLegacyAuto(
+                    agentDef,
+                    resources,
+                    depth,
+                    parentRef,
+                    state,
+                    replyTo,
+                    processing,
+                    gateOpen = true,
+                    triggerDetail = ppForkCrossing.get,
+                    prePosition = true
+                  )
+                )
+              )
+            else IO.pure(None)
+            end if
+          }
         end if
 
       end if
@@ -231,7 +306,9 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
       _ <- ctx.forkTurn(
         emitStreamIO(
           state.wsSend,
-          AgentStreamEvent.CompactComplete(state.messages.size, cleaned.size),
+          // 刀二（2026-10-28 彻底零痕迹批）：emergency=true —— 0.95 硬守卫真清
+          // 上下文（数据有损）是唯一保留的可见例外（安全阀），前端据 flag 渲卡。
+          AgentStreamEvent.CompactComplete(state.messages.size, cleaned.size, emergency = true),
           isSubagent = depth > 0,
           state.sessionId
         ).handleErrorWith(_ => IO.unit)
@@ -467,7 +544,9 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     replyTo: Option[ActorRef[AgentEvent]],
     processing: ProcessingFn
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    maybeAutoCompact(agentDef, resources, depth, parentRef, state, replyTo, processing) match
+    // 刀一④：maybeAutoCompact 现为 IO[Option[IO]]（门状态热读上提）——None 仍
+    // 逐字落回本派发体（FastMicroCompact/ContextRefresher 等零漂移）。
+    maybeAutoCompact(agentDef, resources, depth, parentRef, state, replyTo, processing).flatMap {
       case Some(ioBehavior) => ioBehavior
       case None =>
         // Phase-aware compaction: Compact turn disables tools (existing behavior).
@@ -730,13 +809,12 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           // 新身份段）。AgentState 不持久化 ⇒ 重启即生命周期轮，天然自愈。
           identityDeltaText =
             if isLifecycleRebuild then ""
-            else {
+            else
               val prevIdentity = stateForLlm.stableSnapshot
                 .map(_.identity)
                 .getOrElse(currentSnapshot.identity)
               if prevIdentity == identitySelfText then ""
               else SystemReminders.renderIdentityChange(prevIdentity, identitySelfText)
-            }
           (systemStable, changeDevices, changeLanguage, changeProjects) =
             if isLifecycleRebuild then (buildSystemPrompt(freshDef, promptCtx), "", Option.empty[String], "")
             else
@@ -1113,6 +1191,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         yield result
 
         end for
+    }
 
   protected def pipeToolExecutions(
     agentDef: AgentDef,
@@ -2115,8 +2194,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                             imageBlocks = imageBlocks
                           )
                         }
-                    }
-                ) // close enforceRefusal.getOrElse( <remoteDeviceOpt match …> )
+                    }) // close enforceRefusal.getOrElse( <remoteDeviceOpt match …> )
                 execIO.handleErrorWith {
                   case _: UserAbort => IO.raiseError(new UserAbort())
                   case e => IO.pure(ToolExecResult(s"Tool execution error: ${e.getMessage}", isError = true))
@@ -2547,6 +2625,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
       )
     }
 
+  end fleetDeviceRefusalIO
+
   /**
    * deviceId → 设备显示名（台账 #913 ②）：数据源 = neblink 名册（self + peers，
    * Ref 内存价）；无名册（执行器未初始化/NebLink 缺席）= 空表 ⇒ 消费面诚实降级
@@ -2602,9 +2682,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 )
               ),
               peers = peersList,
-              offlineKnown =
-                FleetRoster.knownOfflineFromRegistry(FleetRoster.registrySyncSafe()) ++
-                  FleetRoster.knownOfflineFromProfiles(profiles),
+              offlineKnown = FleetRoster.knownOfflineFromRegistry(FleetRoster.registrySyncSafe()) ++
+                FleetRoster.knownOfflineFromProfiles(profiles),
               profiles = profiles,
               now = nowMs,
               enforce = nebflow.core.device.FleetConfig.enforceExplicitDevice

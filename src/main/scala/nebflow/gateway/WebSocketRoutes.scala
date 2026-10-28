@@ -1116,27 +1116,29 @@ class WebSocketRoutes(
                     receivePipe: Pipe[IO, WebSocketFrame, Unit] = zombie.guardedReceive(
                       connGuard.acquireWs(wsIp),
                       connGuard.releaseWs
-                    )(_.evalMap {
-                      case WebSocketFrame.Text(text, _) =>
-                        // 控制台单实例批：retake 帧前置拦截——连接身份（connId→session）
-                        // 只在本管上有（WsDispatchCtx 不携带），故不走 WsDispatch 注册表。
-                        // 总闸关闭时 isRetakeFrame 恒 false 侧不成立，故显式以
-                        // takeover.enabled 判：关闭 ⇒ 帧走既有未知类型回退（零漂移）。
-                        val handled =
-                          if takeover.enabled && ConsoleTakeover.isRetakeFrame(text) then
-                            takeover.handleRetake(hubConnId, perConnJsonSend)
-                          else handleMessage(text, perConnJsonSend, watchSession)
-                        handled.handleErrorWith { e =>
-                          logger.error(s"WebSocket message handler error: ${e.getMessage}", e)
-                          IO.unit
-                        }
-                      case _ => IO.unit
-                    }.onFinalize(
-                      wsHub.unregister(hubConnId) *> watchSession.close() *>
-                        // 控制台单实例批：连接出账（只摘连接账——掉线 ≠ 让位，owner
-                        // 不动、零出帧；#960 判死回收经本 finalizer 同样不触发提示）。
-                        takeover.onDisconnect(hubConnId)
-                    ))
+                    )(
+                      _.evalMap {
+                        case WebSocketFrame.Text(text, _) =>
+                          // 控制台单实例批：retake 帧前置拦截——连接身份（connId→session）
+                          // 只在本管上有（WsDispatchCtx 不携带），故不走 WsDispatch 注册表。
+                          // 总闸关闭时 isRetakeFrame 恒 false 侧不成立，故显式以
+                          // takeover.enabled 判：关闭 ⇒ 帧走既有未知类型回退（零漂移）。
+                          val handled =
+                            if takeover.enabled && ConsoleTakeover.isRetakeFrame(text) then
+                              takeover.handleRetake(hubConnId, perConnJsonSend)
+                            else handleMessage(text, perConnJsonSend, watchSession)
+                          handled.handleErrorWith { e =>
+                            logger.error(s"WebSocket message handler error: ${e.getMessage}", e)
+                            IO.unit
+                          }
+                        case _ => IO.unit
+                      }.onFinalize(
+                        wsHub.unregister(hubConnId) *> watchSession.close() *>
+                          // 控制台单实例批：连接出账（只摘连接账——掉线 ≠ 让位，owner
+                          // 不动、零出帧；#960 判死回收经本 finalizer 同样不触发提示）。
+                          takeover.onDisconnect(hubConnId)
+                      )
+                    )
 
                     // sendStream: read from outbound queue, send via WebSocket.
                     // Client disconnects are expected (browser tab close, network change) and
@@ -1159,12 +1161,13 @@ class WebSocketRoutes(
                           Stream.eval(logger.debug(s"WebSocket send stream closed: ${e.getMessage}")).drain
                         },
                       outboundOverflowClosed
-                    )(onDead = silentMs =>
-                      // 与 presence 面同格式审计行（conn-guard: … recycled … slot released）。
-                      logger.warn(
-                        s"conn-guard: console zombie recycled ip=$wsIp silentMs=$silentMs — " +
-                          s"slot released (heartbeat dead-detection)"
-                      )
+                    )(onDead =
+                      silentMs =>
+                        // 与 presence 面同格式审计行（conn-guard: … recycled … slot released）。
+                        logger.warn(
+                          s"conn-guard: console zombie recycled ip=$wsIp silentMs=$silentMs — " +
+                            s"slot released (heartbeat dead-detection)"
+                        )
                     )
                     _ <- logger.info("WebSocket client connected")
                     thinkingCfg <- sharedResources.thinkingConfigRef.get
@@ -1799,20 +1802,20 @@ class WebSocketRoutes(
     // 尽力解析 sessionId/clientMessageId 回发 `messageTooLarge` 错误帧（超限有声）——
     // 客户端据此给出用户可见错误并收掉幻影 busy；旧前端收到未知帧型 = 无害 no-op。
     if text.length > MaxMessageSize then
-      val overJson  = parsedJson(text)
-      val overSid   = overJson.hcursor.downField("sessionId").as[String].getOrElse("")
-      val overCmid  = overJson.hcursor.downField("clientMessageId").as[Option[String]].getOrElse(None)
+      val overJson = parsedJson(text)
+      val overSid = overJson.hcursor.downField("sessionId").as[String].getOrElse("")
+      val overCmid = overJson.hcursor.downField("clientMessageId").as[Option[String]].getOrElse(None)
       logger.warn(
         s"Dropping oversized WebSocket message (${text.length} bytes > $MaxMessageSize limit, " +
           s"sessionId='$overSid', clientMessageId=${overCmid.getOrElse("")}) — messageTooLarge receipt sent"
       ) *>
         wsSend(
           io.circe.Json.obj(
-            "type"          -> "messageTooLarge".asJson,
-            "sessionId"     -> overSid.asJson,
+            "type" -> "messageTooLarge".asJson,
+            "sessionId" -> overSid.asJson,
             "clientMessageId" -> overCmid.asJson,
-            "sizeBytes"     -> text.length.asJson,
-            "limitBytes"    -> MaxMessageSize.asJson
+            "sizeBytes" -> text.length.asJson,
+            "limitBytes" -> MaxMessageSize.asJson
           )
         )
     else
@@ -2948,19 +2951,14 @@ class WebSocketRoutes(
         )
 
       case "compactComplete" =>
-        val before = hc.downField("before").as[Int].getOrElse(0)
-        val after = hc.downField("after").as[Int].getOrElse(0)
-        // 2026-09-15 作者令：压缩不再落 report ⇒ 帧内不再带 reportPath，
-        // 「(report: xxx.md)」尾巴随生成链一并删除（不留死读盘分支）。
+        // 刀二（2026-10-28 无感压缩批）：emergency 标记随帧落盘（缺席即不落键，
+        // answerOf/quote 兼容先例）——前端重放腿据 params.emergency 保留 0.95 硬
+        // 守卫安全阀卡的渲染；常规压缩完成记录照常留账（数据面零削减）。
+        // 帧取键形态 = 伴生对象纯函数 compactCompleteRowFromFrame（askUserRowFromFrame
+        // 同款先例：缺席/形态不合 ⇒ 回落缺省 ⇒ 旧载荷逐字节不变）。
         sharedResources.sessionStore.appendUiMessages(
           sessionId,
-          List(
-            UiMessage.System(
-              s"Context compacted: $before → $after messages",
-              Some("chat.compacted"),
-              Some(io.circe.Json.obj("before" -> before.asJson, "after" -> after.asJson))
-            )
-          )
+          List(WebSocketRoutes.compactCompleteRowFromFrame(json))
         )
 
       case "compactFailed" =>
@@ -3356,4 +3354,24 @@ object WebSocketRoutes:
       .flatten
       .filter(_.nonEmpty)
     UiMessage.AskUser(items, askRid, attachments)
+
+  /**
+   * 刀二（2026-10-28 无感压缩批）：`compactComplete` 帧 → ui.json 落盘行的纯函数
+   * 单点（askUserRowFromFrame 同款可测性先例）。数据面零削减：i18nKey/before/after
+   * 与旧载荷逐字节不变；`emergency` 仅在帧携带 true 时落键（0.95 硬守卫安全阀的
+   * 重放腿判据，前端 restoreCompactCardRow 按 params.emergency 放行该卡渲染）。
+   */
+  private[gateway] def compactCompleteRowFromFrame(frame: Json): UiMessage.System =
+    val hc = frame.hcursor
+    val before = hc.downField("before").as[Int].getOrElse(0)
+    val after = hc.downField("after").as[Int].getOrElse(0)
+    val emergency = hc.downField("emergency").as[Boolean].getOrElse(false)
+    val params = io.circe.Json
+      .obj("before" -> before.asJson, "after" -> after.asJson)
+      .deepMerge(if emergency then io.circe.Json.obj("emergency" -> io.circe.Json.True) else io.circe.Json.obj())
+    UiMessage.System(
+      s"Context compacted: $before → $after messages",
+      Some("chat.compacted"),
+      Some(params)
+    )
 end WebSocketRoutes
