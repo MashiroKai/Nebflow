@@ -22,6 +22,7 @@ class PrefixQueueOrderProbe extends CatsEffectSuite:
     private val controlFutures = new java.util.concurrent.ConcurrentLinkedQueue[CompletableFuture[WebSocket]]()
     def offerBulk(f: CompletableFuture[WebSocket]): Unit = bulkFutures.add(f)
     def offerControl(f: CompletableFuture[WebSocket]): Unit = controlFutures.add(f)
+
     override def sendText(data: CharSequence, last: Boolean): CompletableFuture[WebSocket] =
       sent.add(data.toString)
       // 按**车道**派发（稳定性批 2026-10-26 修后控制帧越过 bulk 排队，调用序
@@ -29,13 +30,17 @@ class PrefixQueueOrderProbe extends CatsEffectSuite:
       val q = if data.toString == Control then controlFutures else bulkFutures
       val f = q.poll()
       if f == null then CompletableFuture.completedFuture(this) else f
+
     override def sendBinary(data: java.nio.ByteBuffer, last: Boolean): CompletableFuture[WebSocket] =
       CompletableFuture.completedFuture(this)
+
     override def sendClose(code: Int, reason: String): CompletableFuture[WebSocket] =
       CompletableFuture.completedFuture(this)
     override def request(n: Long): Unit = ()
+
     override def sendPing(data: java.nio.ByteBuffer): CompletableFuture[WebSocket] =
       CompletableFuture.completedFuture(this)
+
     override def sendPong(data: java.nio.ByteBuffer): CompletableFuture[WebSocket] =
       CompletableFuture.completedFuture(this)
     override def getSubprotocol: String = ""
@@ -43,11 +48,13 @@ class PrefixQueueOrderProbe extends CatsEffectSuite:
     override def isOutputClosed: Boolean = false
     override def abort(): Unit = ()
 
+  end GateFakeWebSocket
+
   private def awaitFiber(fib: FiberIO[Unit]): IO[Unit] =
     fib.join.flatMap {
       case Outcome.Succeeded(_) => IO.unit
-      case Outcome.Errored(e)   => IO.raiseError(e)
-      case Outcome.Canceled()   => IO.canceled
+      case Outcome.Errored(e) => IO.raiseError(e)
+      case Outcome.Canceled() => IO.canceled
     }
 
   private val Bulk = "b" * (400 * 1024)

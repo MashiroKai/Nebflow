@@ -225,8 +225,10 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     val statuses = Map(holderId -> "ready-to-merge", queuedId -> "ready-to-merge")
     ChainsReadFace.rowsJson(Map.empty, archived = false, taskStatuses = statuses).map { body =>
       val rows = body.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil)
-      val holder = rows.find(_.hcursor.get[String]("id").toOption.contains(holderId)).getOrElse(fail("holder row missing"))
-      val queued = rows.find(_.hcursor.get[String]("id").toOption.contains(queuedId)).getOrElse(fail("queued row missing"))
+      val holder =
+        rows.find(_.hcursor.get[String]("id").toOption.contains(holderId)).getOrElse(fail("holder row missing"))
+      val queued =
+        rows.find(_.hcursor.get[String]("id").toOption.contains(queuedId)).getOrElse(fail("queued row missing"))
       assertEquals(
         holder.hcursor.get[String]("taskStatus").toOption,
         Some("merging"),
@@ -313,8 +315,7 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
       lastError = None,
       source = "subagent"
     )
-    val childrenOf = (id: String) =>
-      if id == starId then IO(List(child)) else IO(Nil)
+    val childrenOf = (id: String) => if id == starId then IO(List(child)) else IO(Nil)
     for
       all <- ChainsReadFace.delegatesJson(Map.empty, childrenOf = childrenOf)
       filtered <- ChainsReadFace.delegatesJson(
@@ -323,10 +324,9 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
         childrenOf = childrenOf
       )
     yield
-      val rowsOf = (body: io.circe.Json) =>
-        body.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil)
-      val byId = (rows: List[io.circe.Json], id: String) =>
-        rows.find(_.hcursor.get[String]("id").toOption.contains(id))
+      val rowsOf =
+        (body: io.circe.Json) => body.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil)
+      val byId = (rows: List[io.circe.Json], id: String) => rows.find(_.hcursor.get[String]("id").toOption.contains(id))
       // 项目过滤：只留 spec-proj-c6 三行。
       val frows = rowsOf(filtered)
       assertEquals(frows.size, 3, "project filter keeps only the matching rows")
@@ -376,7 +376,7 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     DelegateRegistry.put(
       record(succId, Some("83"))
         .copy(createdAt = 2000L, title = "【断点续作】前会话（delegate-general-cc01old1）被引擎重启打断")
-    )    // 台账任务原文行（引用文本源——title 截断后仍可命中的兜底腿）。
+    ) // 台账任务原文行（引用文本源——title 截断后仍可命中的兜底腿）。
     val taskRows = List(
       SubAgentTask(
         taskId = loneId,
@@ -394,7 +394,8 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     )
     ChainsReadFace.rowsJson(Map.empty, taskStatuses = Map.empty, taskRows = taskRows).map { body =>
       val rows = body.hcursor.downField("rows").as[List[io.circe.Json]].toOption.getOrElse(Nil)
-      val byId = (id: String) => rows.find(_.hcursor.get[String]("id").toOption.contains(id)).getOrElse(fail(s"$id missing"))
+      val byId =
+        (id: String) => rows.find(_.hcursor.get[String]("id").toOption.contains(id)).getOrElse(fail(s"$id missing"))
       val old = byId(oldId)
       assertEquals(
         old.hcursor.get[Long]("restartInterruptedAt").toOption,

@@ -110,12 +110,19 @@ object AuthAdminRoutes:
                 val revoke: IO[Int] =
                   if all then sessions.revokeAll()
                   else if idPrefix.nonEmpty then sessions.revokeByMaskedId(idPrefix)
-                  else IO.raiseError(new IllegalArgumentException("either \"all\":true or a non-empty \"id\" prefix is required"))
+                  else
+                    IO.raiseError(
+                      new IllegalArgumentException("either \"all\":true or a non-empty \"id\" prefix is required")
+                    )
                 revoke.attempt.flatMap {
                   case Left(_) =>
-                    IO.pure(jsonError(Status.BadRequest, "either \"all\":true or a non-empty \"id\" prefix is required"))
+                    IO.pure(
+                      jsonError(Status.BadRequest, "either \"all\":true or a non-empty \"id\" prefix is required")
+                    )
                   case Right(n) =>
-                    logger.info(s"console sessions revoked (count=$n${if all then ", scope=all" else s", scope=prefix:$idPrefix"})")
+                    logger.info(s"console sessions revoked (count=$n${
+                        if all then ", scope=all" else s", scope=prefix:$idPrefix"
+                      })")
                     Ok(Json.obj("revoked" -> n.asJson))
                 }
             }
@@ -123,7 +130,9 @@ object AuthAdminRoutes:
 
   /** The single AuthAdmin verdict: file-token Bearer, nothing else (R1-1). */
   private def authorized(req: Request[IO], tokenRef: Ref[IO, String], sessions: GatewaySessionStore): IO[Boolean] =
-    tokenRef.get.flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.BearerFileOnly)).map(_.isDefined)
+    tokenRef.get
+      .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.BearerFileOnly))
+      .map(_.isDefined)
 
   /** Same body shape `withAuth` answers (no enumeration oracle between faces). */
   private def forbidden: Response[IO] =

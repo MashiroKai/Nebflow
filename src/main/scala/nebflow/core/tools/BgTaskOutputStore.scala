@@ -128,7 +128,9 @@ object BgTaskOutputStore:
   def open(jobId: String, origin: Option[Origin] = None): IO[BgTaskOutputBuffer] =
     IO {
       if persistDir.isDefined && writers.get(jobId) == null then
-        persistDir.foreach(dir => writers.putIfAbsent(jobId, new BgTaskOutputDisk.LogWriter(BgTaskOutputDisk.logPath(dir, jobId))))
+        persistDir.foreach(dir =>
+          writers.putIfAbsent(jobId, new BgTaskOutputDisk.LogWriter(BgTaskOutputDisk.logPath(dir, jobId)))
+        )
       ()
     } *> entries.modify { m =>
       m.get(jobId) match
@@ -142,11 +144,10 @@ object BgTaskOutputStore:
    * sink 同线程复合口：内存缓冲 append + 落盘行写（persistDir 未开启 = 纯内存）。
    * BashTool 的 outputSink 单点消费——读取线程每次回调 O(1)（ConcurrentHashMap get）。
    */
-  def lineSink(jobId: String, buffer: BgTaskOutputBuffer): String => Unit = line => {
+  def lineSink(jobId: String, buffer: BgTaskOutputBuffer): String => Unit = line =>
     buffer.append(line)
     val w = writers.get(jobId)
     if w != null then w.writeLine(line)
-  }
 
   /**
    * 远程后台任务终态输出灌账（输出查看补全批）：open（幂等）→ 全量行 append
@@ -256,56 +257,58 @@ object BgTaskOutputStore:
     exitCode: Option[Int] = None,
     errorHint: Option[String] = None
   ): IO[Unit] =
-    entries.modify { m =>
-      m.get(jobId) match
-        case Some(e) if e.status == "running" =>
-          val seq = 1L + m.values.map(_.seq).foldLeft(0L)(math.max)
-          val updated = e.copy(
-            status = status,
-            finishedAtMs = Some(System.currentTimeMillis()),
-            exitCode = exitCode,
-            errorHint = errorHint.map(_.take(200)),
-            seq = seq
-          )
-          // 留存淘汰：本条入册后终态条目超 MaxRetained → 淘汰 seq 最小（最旧）。
-          val next0 = m + (jobId -> updated)
-          val terminal = next0.collect { case (id, ent) if ent.status != "running" => id -> ent.seq }
-          val next =
-            if terminal.size > MaxRetained then next0 - terminal.minBy(_._2)._1
-            else next0
-          (next, Some(updated))
-        case _ => (m, None)
-    }.flatMap {
-      case None => IO.unit
-      case Some(e) =>
-        IO {
-          val w = writers.remove(jobId)
-          if w != null then w.flushClose()
-          val snap = e.buffer.snapshot(0L)
-          persistDir.foreach { dir =>
-            BgTaskOutputDisk.writeMeta(
-              dir,
-              BgTaskOutputDisk.Meta(
-                jobId = jobId,
-                status = e.status,
-                exitCode = e.exitCode,
-                errorHint = e.errorHint,
-                startedAtMs = e.origin.map(_.startedAtMs).filter(_ > 0L),
-                finishedAtMs = e.finishedAtMs,
-                description = e.origin.map(_.description).filter(_.nonEmpty),
-                totalBytes = snap.totalBytes,
-                totalLines = snap.totalLines,
-                headDropped = snap.truncated,
-                persistTruncated = (w != null && w.persistTruncated),
-                kind = e.origin.map(_.kind),
-                deviceName = e.origin.map(_.deviceName).filter(_.nonEmpty),
-                outputPath = e.origin.map(_.outputPath).filter(_.nonEmpty)
-              )
+    entries
+      .modify { m =>
+        m.get(jobId) match
+          case Some(e) if e.status == "running" =>
+            val seq = 1L + m.values.map(_.seq).foldLeft(0L)(math.max)
+            val updated = e.copy(
+              status = status,
+              finishedAtMs = Some(System.currentTimeMillis()),
+              exitCode = exitCode,
+              errorHint = errorHint.map(_.take(200)),
+              seq = seq
             )
-            BgTaskOutputDisk.sweep(dir)
+            // 留存淘汰：本条入册后终态条目超 MaxRetained → 淘汰 seq 最小（最旧）。
+            val next0 = m + (jobId -> updated)
+            val terminal = next0.collect { case (id, ent) if ent.status != "running" => id -> ent.seq }
+            val next =
+              if terminal.size > MaxRetained then next0 - terminal.minBy(_._2)._1
+              else next0
+            (next, Some(updated))
+          case _ => (m, None)
+      }
+      .flatMap {
+        case None => IO.unit
+        case Some(e) =>
+          IO {
+            val w = writers.remove(jobId)
+            if w != null then w.flushClose()
+            val snap = e.buffer.snapshot(0L)
+            persistDir.foreach { dir =>
+              BgTaskOutputDisk.writeMeta(
+                dir,
+                BgTaskOutputDisk.Meta(
+                  jobId = jobId,
+                  status = e.status,
+                  exitCode = e.exitCode,
+                  errorHint = e.errorHint,
+                  startedAtMs = e.origin.map(_.startedAtMs).filter(_ > 0L),
+                  finishedAtMs = e.finishedAtMs,
+                  description = e.origin.map(_.description).filter(_.nonEmpty),
+                  totalBytes = snap.totalBytes,
+                  totalLines = snap.totalLines,
+                  headDropped = snap.truncated,
+                  persistTruncated = (w != null && w.persistTruncated),
+                  kind = e.origin.map(_.kind),
+                  deviceName = e.origin.map(_.deviceName).filter(_.nonEmpty),
+                  outputPath = e.origin.map(_.outputPath).filter(_.nonEmpty)
+                )
+              )
+              BgTaskOutputDisk.sweep(dir)
+            }
           }
-        }
-    }
+      }
 
   /**
    * #753 快照行数面（批量）：jobId → 当前 totalLines——activeBgTasks 快照

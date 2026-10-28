@@ -74,8 +74,7 @@ class LoginCommandSpec extends FunSuite:
     assert(LoginCopy.PromptNonInteractiveWarning.contains("will not be hidden"))
     // 退役面：提示文案族里不得再有任何设备码字样
     val all = List(LoginCopy.PromptAccount, LoginCopy.PromptPassword, LoginCopy.PromptNonInteractiveWarning)
-    for s <- all do
-      assert(!s.toLowerCase.contains("code"), s"提示文案不得出现 code 字样: $s")
+    for s <- all do assert(!s.toLowerCase.contains("code"), s"提示文案不得出现 code 字样: $s")
   }
 
   // ── D. H3：成功 / 失败行逐字（em dash U+2014） ─────────────────────────────
@@ -107,8 +106,16 @@ class LoginCommandSpec extends FunSuite:
 
   test("闭集关键成员在位；设备码时代码位已退役（不再出现在闭集里）") {
     val codes = SignInFailure.all.map(_.code).toSet
-    for expected <- List("invalid_credentials", "rate_limited", "network_error", "neblink_unavailable", "login_failed", "status_unreadable", "sign_out_failed") do
-      assert(codes.contains(expected), s"缺 $expected")
+    for expected <- List(
+        "invalid_credentials",
+        "rate_limited",
+        "network_error",
+        "neblink_unavailable",
+        "login_failed",
+        "status_unreadable",
+        "sign_out_failed"
+      )
+    do assert(codes.contains(expected), s"缺 $expected")
     for retired <- List("expired_token", "access_denied", "flow_start_failed", "poll_failed", "timeout") do
       assert(!codes.contains(retired), s"设备码码位 $retired 应已退役")
   }
@@ -127,10 +134,16 @@ class LoginCommandSpec extends FunSuite:
       LoginFlow.failureOfDetail("""{"error":"Invalid account or password","code":"invalid_credentials"}"""),
       SignInFailure.InvalidCredentials
     )
-    assertEquals(LoginFlow.failureOfDetail("""{"error":"Too many attempts","code":"rate_limited"}"""), SignInFailure.RateLimited)
+    assertEquals(
+      LoginFlow.failureOfDetail("""{"error":"Too many attempts","code":"rate_limited"}"""),
+      SignInFailure.RateLimited
+    )
     assertEquals(LoginFlow.failureOfDetail("logto-not-configured"), SignInFailure.LogtoUnavailable)
     assertEquals(LoginFlow.failureOfDetail("""{"code":"transport_failed"}"""), SignInFailure.TransportFailed)
-    assertEquals(LoginFlow.failureOfDetail("""{"code":"protocol_error","step":"submit"}"""), SignInFailure.ProtocolError)
+    assertEquals(
+      LoginFlow.failureOfDetail("""{"code":"protocol_error","step":"submit"}"""),
+      SignInFailure.ProtocolError
+    )
   }
 
   test("failureOfDetail：register 机器闸 reason → register_failed；NebLink 未启用 → neblink_unavailable；未识别 → 兜底码") {
@@ -152,7 +165,9 @@ class LoginCommandSpec extends FunSuite:
   test("failureOfMessage：有包装按 detail 分类，未识别落调用面兜底码；无包装落 network_error") {
     assertEquals(
       LoginFlow.failureOfMessage(
-        Some(GatewayClient.requestError(401, """{"error":"Invalid account or password","code":"invalid_credentials"}""")),
+        Some(
+          GatewayClient.requestError(401, """{"error":"Invalid account or password","code":"invalid_credentials"}""")
+        ),
         SignInFailure.LoginFailed
       ),
       SignInFailure.InvalidCredentials
@@ -215,6 +230,7 @@ class LoginCommandSpec extends FunSuite:
   /** Injection bundle: captured requests + scripted replies. */
   private class PostFake(replies: PartialFunction[(String, Json), Either[Throwable, Json]]):
     val calls = ListBuffer.empty[(String, Json)]
+
     def post: (String, Json) => IO[Either[Throwable, Json]] = (path, body) =>
       IO {
         calls += ((path, body))
@@ -226,12 +242,14 @@ class LoginCommandSpec extends FunSuite:
       case (p, _) if p == PostPath => Right(json("""{"ok":true,"networkId":"net-1"}"""))
       case (p, _) if p == LoginFlow.StatusPath => Right(json(statusJson))
     }
-    val result = LoginFlow.signInWith(
-      CliContext.offline(),
-      fake.post,
-      IO.pure(Some("kai@example.com")),
-      IO.pure(Some(password))
-    ).unsafeRunSync()
+    val result = LoginFlow
+      .signInWith(
+        CliContext.offline(),
+        fake.post,
+        IO.pure(Some("kai@example.com")),
+        IO.pure(Some(password))
+      )
+      .unsafeRunSync()
     assertEquals(fake.calls.map(_._1).toList, List(PostPath, LoginFlow.StatusPath))
     val body = fake.calls.head._2
     assertEquals(body.hcursor.downField("account").as[String].toOption, Some("kai@example.com"))
@@ -247,7 +265,8 @@ class LoginCommandSpec extends FunSuite:
       case (p, _) if p == LoginFlow.StatusPath => Right(json(statusJson))
     }
     val ctx = CliContext.offline().copy(json = true)
-    LoginFlow.signInWith(ctx, fake.post, IO.pure(Some("kai@example.com")), IO.pure(Some(password)))
+    LoginFlow
+      .signInWith(ctx, fake.post, IO.pure(Some("kai@example.com")), IO.pure(Some(password)))
       .unsafeRunSync() match
       case CliResult.Json(j) =>
         assertEquals(j.hcursor.downField("signedIn").as[Boolean].toOption, Some(true))
@@ -258,7 +277,8 @@ class LoginCommandSpec extends FunSuite:
   test("signInWith：invalid_credentials / rate_limited / 网关不可达 ⇒ 各自稳定码（H3 失败行）") {
     def run(reply: Either[Throwable, Json]): CliResult =
       val fake = PostFake { case _ => reply }
-      LoginFlow.signInWith(CliContext.offline(), fake.post, IO.pure(Some("a@b.c")), IO.pure(Some(password)))
+      LoginFlow
+        .signInWith(CliContext.offline(), fake.post, IO.pure(Some("a@b.c")), IO.pure(Some(password)))
         .unsafeRunSync()
 
     run(Left(wrapped(401, """{"error":"Invalid account or password","code":"invalid_credentials"}"""))) match
@@ -281,11 +301,12 @@ class LoginCommandSpec extends FunSuite:
     def run(account: Option[String], pw: Option[String]): CliResult =
       LoginFlow.signInWith(CliContext.offline(), fake.post, IO.pure(account), IO.pure(pw)).unsafeRunSync()
     for (a, p) <- List[(Option[String], Option[String])](
-      (Some(""), Some(password)),
-      (None, Some(password)),
-      (Some("a@b.c"), Some("")),
-      (Some("a@b.c"), None)
-    ) do
+        (Some(""), Some(password)),
+        (None, Some(password)),
+        (Some("a@b.c"), Some("")),
+        (Some("a@b.c"), None)
+      )
+    do
       run(a, p) match
         case CliResult.Error(msg, 1) => assert(msg.contains("(code: no_input)"), msg)
         case other => fail(s"expected no_input, got $other")
@@ -296,7 +317,8 @@ class LoginCommandSpec extends FunSuite:
     val fake = PostFake { case _ =>
       Left(wrapped(409, """{"error":"device bound to another account","code":"device_bound_other_account"}"""))
     }
-    LoginFlow.signInWith(CliContext.offline(), fake.post, IO.pure(Some("a@b.c")), IO.pure(Some(password)))
+    LoginFlow
+      .signInWith(CliContext.offline(), fake.post, IO.pure(Some("a@b.c")), IO.pure(Some(password)))
       .unsafeRunSync() match
       case CliResult.Error(msg, 1) => assert(msg.contains("(code: register_failed)"), msg)
       case other => fail(s"expected register_failed, got $other")

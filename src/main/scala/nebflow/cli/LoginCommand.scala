@@ -102,9 +102,7 @@ private[cli] object LoginCopy:
   val PromptAccount = "Account: "
   val PromptPassword = "Password: "
 
-  /**
-   * 无终端（管道/测试）时的如实降级警告：读得到输入但**关不掉回显**——不谎称隐藏。
-   */
+  /** 无终端（管道/测试）时的如实降级警告：读得到输入但**关不掉回显**——不谎称隐藏。 */
   val PromptNonInteractiveWarning =
     "[login] no terminal detected — password input will not be hidden (piped input)"
 
@@ -261,8 +259,7 @@ private[cli] object LoginFlow:
     val d = detail.toLowerCase
     if d.contains("invalid_credentials") then SignInFailure.InvalidCredentials
     else if d.contains("rate_limited") then SignInFailure.RateLimited
-    else if d.contains("logto-not-configured") || d.contains("logto_not_configured") then
-      SignInFailure.LogtoUnavailable
+    else if d.contains("logto-not-configured") || d.contains("logto_not_configured") then SignInFailure.LogtoUnavailable
     else if d.contains("transport_failed") then SignInFailure.TransportFailed
     else if d.contains("protocol_error") then SignInFailure.ProtocolError
     else if d.contains("register_failed") || d.contains("device_bound_other_account") ||
@@ -271,6 +268,8 @@ private[cli] object LoginFlow:
     else if d.contains("neblink not enabled") || d.contains("neblink service not initialized") then
       SignInFailure.NeblinkUnavailable
     else unknown
+
+  end failureOfDetail
 
   /**
    * 异常 → 失败分类。有网关包装 ⇒ 按 detail 分类（未识别落 `contextFallback`）；
@@ -341,7 +340,8 @@ private[cli] object LoginFlow:
               case Right(json) if !json.hcursor.downField("error").succeeded => signInSuccess(ctx, post)
               case Right(json) =>
                 // 2xx 但带 error 字段 = 防御性出口（旧 pollStep 同口径）。
-                val detail = json.hcursor.downField("error").as[String].toOption.getOrElse("unexpected success-shape error")
+                val detail =
+                  json.hcursor.downField("error").as[String].toOption.getOrElse("unexpected success-shape error")
                 IO.pure(signInFailure(ctx, failureOfDetail(detail)))
               case Left(e) =>
                 IO.pure(signInFailure(ctx, failureOfMessage(Option(e.getMessage), SignInFailure.LoginFailed)))
@@ -368,7 +368,9 @@ private[cli] object LoginFlow:
     if ctx.json then CliResult.Exit(1, Json.obj("error" -> f.reason.asJson, "code" -> f.code.asJson).spaces2)
     else CliResult.Error(LoginCopy.signInFailedLine(f.reason, f.code), 1)
 
-  private def readStatusVia(post: (String, Json) => IO[Either[Throwable, Json]]): IO[Either[SignInFailure.Failure, AccountStatus]] =
+  private def readStatusVia(
+    post: (String, Json) => IO[Either[Throwable, Json]]
+  ): IO[Either[SignInFailure.Failure, AccountStatus]] =
     post(StatusPath, Json.obj()).flatMap {
       case Right(json) => IO.pure(parseStatus(json))
       case Left(e) => IO.pure(Left(failureOfMessage(Option(e.getMessage), SignInFailure.StatusUnreadable)))
@@ -411,7 +413,8 @@ private[cli] object LoginFlow:
           case Right(json) =>
             parseStatus(json) match
               case Left(f) =>
-                if ctx.json then CliResult.Exit(1, Json.obj("error" -> f.reason.asJson, "code" -> f.code.asJson).spaces2)
+                if ctx.json then
+                  CliResult.Exit(1, Json.obj("error" -> f.reason.asJson, "code" -> f.code.asJson).spaces2)
                 else CliResult.Error(LoginCopy.statusFailedLine(f.reason, f.code), 1)
               case Right(st) if !st.loggedIn =>
                 if ctx.json then CliResult.Exit(1, Json.obj("loggedIn" -> false.asJson).spaces2)

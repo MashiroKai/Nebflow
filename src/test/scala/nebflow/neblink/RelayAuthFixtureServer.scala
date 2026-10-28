@@ -791,12 +791,16 @@ object RelayAuthFixtureServer:
     /** Always 401 (auth rejection, other spelling). */
     case Auth401
 
-    /** Always 401 with the terminal binding-revocation body (judgment-table
-     *  row 2: the BINDING is dead; the tunnel must park, not re-login). */
+    /**
+     * Always 401 with the terminal binding-revocation body (judgment-table
+     *  row 2: the BINDING is dead; the tunnel must park, not re-login).
+     */
     case TerminalBinding401
 
     /** Always 500 (server/gateway failure) — must NEVER trigger a re-login. */
     case Server500
+
+  end RelayMode
 
   private final case class Request(
     method: String,

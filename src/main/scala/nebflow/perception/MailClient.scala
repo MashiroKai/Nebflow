@@ -80,7 +80,10 @@ object MailClient:
             sb.append(new String(bytes, StandardCharsets.UTF_8)).append("\r\n")
           case None => ()
         done = line.startsWith(tag + " ")
+      end while
       sb.toString
+
+    end readUntilTag
 
     private def literalLen(line: String): Option[Int] =
       LiteralPattern.findAllMatchIn(line).toList.lastOption.map(_.group(1).toInt)
@@ -115,6 +118,8 @@ object MailClient:
           case e: Throwable =>
             Left(s"IMAP 会话异常：${e.getClass.getSimpleName}")
       read.flatMap(resp => MailClient.imapVerdict(tag, resp))
+
+    end command
 
     /** Consume the greeting (`* OK` / `* PREAUTH`). */
     def readGreeting(): Either[String, Unit] =
@@ -242,6 +247,8 @@ object MailClient:
       }
       (headers.toMap, body)
 
+    end parse
+
     /** Extract readable text from a (possibly multipart) body. */
     def bodyText(headers: Map[String, String], body: String): String =
       val cte = headers.getOrElse("content-transfer-encoding", "").toLowerCase
@@ -258,7 +265,8 @@ object MailClient:
             val parts = splitMultipart(body, b)
             val isPlain = (h: Map[String, String]) => h.getOrElse("content-type", "").toLowerCase.contains("text/plain")
             val isHtml = (h: Map[String, String]) => h.getOrElse("content-type", "").toLowerCase.contains("text/html")
-            val isNested = (h: Map[String, String]) => h.getOrElse("content-type", "").toLowerCase.contains("multipart/")
+            val isNested = (h: Map[String, String]) =>
+              h.getOrElse("content-type", "").toLowerCase.contains("multipart/")
             val plain = parts.find(p => isPlain(p._1))
             val html = parts.find(p => isHtml(p._1))
             val nested = parts.find(p => isNested(p._1))
@@ -271,6 +279,10 @@ object MailClient:
       else if ctype.contains("text/html") then DraftCodec.htmlToText(decoded)
       else decoded
 
+      end if
+
+    end bodyText
+
     private def splitMultipart(body: String, boundary: String): List[(Map[String, String], String)] =
       val delim = "--" + boundary
       body.split(java.util.regex.Pattern.quote(delim)).toList.drop(1).takeWhile(c => !c.startsWith("--")).map { c =>
@@ -279,6 +291,7 @@ object MailClient:
 
     def firstAddress(value: String): String =
       AngleAddr.findFirstMatchIn(value).map(_.group(1)).getOrElse(value.trim)
+  end Rfc822
 
   private val BoundaryPattern: Regex = """(?i)boundary="?([^";]+)"?""".r
   private val AngleAddr: Regex = """<([^>]+)>""".r
@@ -311,12 +324,14 @@ object MailClient:
     private val EncodedWord: Regex = """=\?([^?]+)\?([bBqQ])\?([^?]*)\?=""".r
 
     def decode(value: String): String =
-      EncodedWord.replaceAllIn(value, m =>
-        val charset = m.group(1)
-        val enc = m.group(2).toLowerCase
-        val payload = m.group(3)
-        val text = if enc == "b" then b64DecodeText(payload) else qpDecode(payload.replace('_', ' '))
-        reencode(text, charset)
+      EncodedWord.replaceAllIn(
+        value,
+        m =>
+          val charset = m.group(1)
+          val enc = m.group(2).toLowerCase
+          val payload = m.group(3)
+          val text = if enc == "b" then b64DecodeText(payload) else qpDecode(payload.replace('_', ' '))
+          reencode(text, charset)
       )
 
     private def reencode(text: String, charset: String): String =
@@ -324,6 +339,7 @@ object MailClient:
         if charset.toLowerCase.contains("utf-8") then text
         else new String(text.getBytes("ISO-8859-1"), java.nio.charset.Charset.forName(charset))
       catch case _: Throwable => text
+  end HeaderCodec
 
   // ═════════════════ IncomingMail 组装 ═════════════════
 
@@ -364,25 +380,28 @@ object MailClient:
       val altBoundary = s"=_alt_${rand6()}"
       val sb = new StringBuilder
       val fromAddr = addrOnly(mail.from)
-      if mail.fromName.nonEmpty then
-        sb.append(s"From: =?UTF-8?B?${b64(mail.fromName)}?= <$fromAddr>\r\n")
+      if mail.fromName.nonEmpty then sb.append(s"From: =?UTF-8?B?${b64(mail.fromName)}?= <$fromAddr>\r\n")
       else sb.append(s"From: <$fromAddr>\r\n")
       sb.append(s"To: ${mail.to.map(addrOnly).mkString(", ")}\r\n")
       if mail.cc.nonEmpty then sb.append(s"Cc: ${mail.cc.map(addrOnly).mkString(", ")}\r\n")
       if mail.bcc.nonEmpty then sb.append(s"Bcc: ${mail.bcc.map(addrOnly).mkString(", ")}\r\n")
       mail.inReplyTo.foreach(r => sb.append(s"In-Reply-To: $r\r\n"))
       sb.append(s"Subject: =?UTF-8?B?${b64(mail.subject)}?=\r\n")
-      sb.append(s"Date: ${java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(java.time.ZonedDateTime.now())}\r\n")
+      sb.append(
+        s"Date: ${java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(java.time.ZonedDateTime.now())}\r\n"
+      )
       sb.append(s"Message-ID: <${System.currentTimeMillis()}.$boundary@perception.local>\r\n")
       sb.append("MIME-Version: 1.0\r\n")
       sb.append(s"Content-Type: multipart/mixed; boundary=\"$boundary\"\r\n\r\n")
       sb.append(s"--$boundary\r\n")
       sb.append(s"Content-Type: multipart/alternative; boundary=\"$altBoundary\"\r\n\r\n")
       val textPlain = DraftCodec.htmlToText(mail.bodyHtml)
-      sb.append("--").append(altBoundary)
+      sb.append("--")
+        .append(altBoundary)
         .append("\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n")
       sb.append(wrap76(Base64.getEncoder.encodeToString(textPlain.getBytes(StandardCharsets.UTF_8)))).append("\r\n")
-      sb.append("--").append(altBoundary)
+      sb.append("--")
+        .append(altBoundary)
         .append("\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n")
       sb.append(wrap76(Base64.getEncoder.encodeToString(mail.bodyHtml.getBytes(StandardCharsets.UTF_8)))).append("\r\n")
       sb.append(s"--$altBoundary--\r\n")
@@ -395,6 +414,8 @@ object MailClient:
       }
       sb.append(s"--$boundary--\r\n")
       dotStuff(sb.toString)
+
+    end buildData
 
     private def addrOnly(s: String): String =
       AngleAddr.findFirstMatchIn(s).map(_.group(1)).getOrElse(s.trim)
@@ -413,6 +434,7 @@ object MailClient:
     def messageIdOf(data: String): String =
       val (headers, _) = Rfc822.parse(data)
       headers.getOrElse("message-id", "")
+  end SmtpCodec
 
   def rand6(): String = f"${java.util.concurrent.ThreadLocalRandom.current().nextLong(0xffffffL)}%06x"
 
@@ -428,17 +450,16 @@ object MailClient:
   ): Either[PerceptionModel.SendFailure, String] =
     var socket: Socket = null
     try
-      socket =
-        if implicitTls then
-          val s = tlsFactory.createSocket()
-          s.setSoTimeout(timeoutMs)
-          s.connect(new InetSocketAddress(smtpHost, smtpPort), timeoutMs)
-          s
-        else
-          val s = new Socket()
-          s.setSoTimeout(timeoutMs)
-          s.connect(new InetSocketAddress(smtpHost, smtpPort), timeoutMs)
-          s
+      socket = if implicitTls then
+        val s = tlsFactory.createSocket()
+        s.setSoTimeout(timeoutMs)
+        s.connect(new InetSocketAddress(smtpHost, smtpPort), timeoutMs)
+        s
+      else
+        val s = new Socket()
+        s.setSoTimeout(timeoutMs)
+        s.connect(new InetSocketAddress(smtpHost, smtpPort), timeoutMs)
+        s
       var in = new BufferedReader(new InputStreamReader(socket.getInputStream, StandardCharsets.ISO_8859_1))
       var out: OutputStream = socket.getOutputStream
 
@@ -464,9 +485,8 @@ object MailClient:
         readReply()
 
       val fromAddr = AngleAddr.findFirstMatchIn(mail.from).map(_.group(1)).getOrElse(mail.from.trim)
-      val recipients = (mail.to ++ mail.cc ++ mail.bcc).map(r =>
-        AngleAddr.findFirstMatchIn(r).map(_.group(1)).getOrElse(r.trim)
-      )
+      val recipients =
+        (mail.to ++ mail.cc ++ mail.bcc).map(r => AngleAddr.findFirstMatchIn(r).map(_.group(1)).getOrElse(r.trim))
 
       val result = for
         _ <- readReply() // 220 greeting
@@ -482,28 +502,36 @@ object MailClient:
               out = ssl.getOutputStream
               cmd("EHLO perception.local")
             }
-        _ <- cmd("AUTH PLAIN " + Base64.getEncoder.encodeToString(s"\u0000$user\u0000$authCode".getBytes(StandardCharsets.UTF_8)))
+        _ <- cmd(
+          "AUTH PLAIN " + Base64.getEncoder.encodeToString(
+            s"\u0000$user\u0000$authCode".getBytes(StandardCharsets.UTF_8)
+          )
+        )
         _ <- cmd(s"MAIL FROM:<$fromAddr>")
         _ <- recipients.foldLeft[Either[PerceptionModel.SendFailure, Unit]](Right(())) { (acc, r) =>
           acc.flatMap(_ => cmd(s"RCPT TO:<$r>").map(_ => ()))
         }
         _ <- cmd("DATA")
         data = SmtpCodec.buildData(mail)
-        _ = {
+        _ =
           out.write(data.getBytes(StandardCharsets.UTF_8))
           out.write(".\r\n".getBytes(StandardCharsets.ISO_8859_1))
           out.flush()
           val _reply = readReply()
           ()
-        }
-        _ = { val _q = cmd("QUIT"); () }
+        _ =
+          val _q = cmd("QUIT"); ()
       yield SmtpCodec.messageIdOf(data)
       result
     catch
       case e: Throwable =>
         Left(PerceptionModel.SendFailure.Network(s"${e.getClass.getSimpleName}: ${e.getMessage}"))
     finally
-      if socket != null then try socket.close() catch case _: Throwable => ()
+      if socket != null then
+        try socket.close()
+        catch case _: Throwable => ()
+    end try
+  end send
 
   // ════════════════════════ TLS ════════════════════════
 

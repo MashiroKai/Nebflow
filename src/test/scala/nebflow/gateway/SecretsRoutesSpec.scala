@@ -41,9 +41,11 @@ class SecretsRoutesSpec extends FunSuite:
 
   private def json(s: String): Json = parse(s).fold(e => throw e, identity)
 
-  /** 夹具权限位收口：Windows 无 POSIX 属性视图（os.perms.set → UOE），这些用例
-    * 断言的是路由行为而非权限位 ⇒ Windows 上跳过置位（与 SecretsStoreSpec.posixOnly
-    * 同一平台惯例，CredentialFileAcl.isWindows）。 */
+  /**
+   * 夹具权限位收口：Windows 无 POSIX 属性视图（os.perms.set → UOE），这些用例
+   * 断言的是路由行为而非权限位 ⇒ Windows 上跳过置位（与 SecretsStoreSpec.posixOnly
+   * 同一平台惯例，CredentialFileAcl.isWindows）。
+   */
   private def fixtureTight(p: os.Path): Unit =
     if !nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName) then
       os.perms.set(p, "rw-------")

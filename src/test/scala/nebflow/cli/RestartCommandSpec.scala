@@ -137,9 +137,14 @@ class RestartCommandSpec extends FunSuite:
 
       val launches2 = scala.collection.mutable.ListBuffer[Int]()
       val res = RestartCommand
-        .runRestart(ProcessManager.StopOptions(force = true), deps, (_, _, _) => IO {
-          launches2 += 1; ExitCode.Success
-        })
+        .runRestart(
+          ProcessManager.StopOptions(force = true),
+          deps,
+          (_, _, _) =>
+            IO {
+              launches2 += 1; ExitCode.Success
+            }
+        )
         .unsafeRunSync()
       assert(res.isInstanceOf[CliResult.Exit], res.toString)
       assertEquals(launches2.size, 1)

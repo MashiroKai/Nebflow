@@ -617,11 +617,19 @@ class ChainLedgerSpec extends CatsEffectSuite:
       filesEnd <- IO.blocking(if os.exists(arch) then os.list(arch).toList else Nil)
     yield
       assertEquals(settled.retired, 1, "the settling tick drains the archived row with exactly one retire")
-      assertEquals(roundsAfterSettle.map(_.kind), List(ChainLedger.RoundRetire), "exactly one retire round at the settle")
+      assertEquals(
+        roundsAfterSettle.map(_.kind),
+        List(ChainLedger.RoundRetire),
+        "exactly one retire round at the settle"
+      )
       assertEquals(stAfterSettle.entries.keySet, Set.empty[String], "the drained row has left the hot face")
       assertEquals(tick3.born, Nil, "an archive-only component must not re-birth (the loop's birth arm)")
       assertEquals(tick4.born, Nil, "and it stays unborn on every following tick")
-      assertEquals(roundsEnd, roundsAfterSettle, "repeated ticks write zero new rounds (the per-tick retire storm is gone)")
+      assertEquals(
+        roundsEnd,
+        roundsAfterSettle,
+        "repeated ticks write zero new rounds (the per-tick retire storm is gone)"
+      )
       assertEquals(filesEnd.size, roundsAfterSettle.size, "zero new cold files on repeated ticks")
     end for
   }
@@ -647,7 +655,11 @@ class ChainLedgerSpec extends CatsEffectSuite:
       stEnd <- store.snapshot
     yield
       assertEquals(mixed.born, List("chain-m"), "a component with one active member births normally")
-      assertEquals(stBorn.entries("chain-m").status, ChainLedger.StatusActive, "a born entry with an active member is not flipped Archived")
+      assertEquals(
+        stBorn.entries("chain-m").status,
+        ChainLedger.StatusActive,
+        "a born entry with an active member is not flipped Archived"
+      )
       assertEquals(drained.retired, 1, "the fully-archived chain retires through the standard lifecycle")
       assertEquals(roundsAfterDrain.map(_.kind), List(ChainLedger.RoundRetire), "one retire round at the drain")
       assertEquals(next.born, Nil, "after the drain the archive-only component stays unborn")

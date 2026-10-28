@@ -18,7 +18,16 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.{LlmLogWriter, RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
 import nebflow.shared.PathUtil
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, StreamChunk, SubAgentTask, ThinkingConfig}
+import nebflow.shared.{
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  Message,
+  MessageRole,
+  StreamChunk,
+  SubAgentTask,
+  ThinkingConfig
+}
 
 import java.nio.file.Files
 import scala.concurrent.duration.*
@@ -69,11 +78,13 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
 
   /** hang=true ⇒ LLM 流永挂（钉 wiring 用的静止窗口）；hang=false ⇒ 正常完成。 */
   private class StubLlm(hang: Boolean) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       if hang then Stream.never[IO]
       else Stream(StreamChunk.TextDelta("continuation work done"), StreamChunk.Done(None, None))
@@ -104,7 +115,8 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       providerRegistry = null,
       healthMonitor = ProviderHealthMonitor(null),
       actorSystem = system,
-      subAgentTaskStore = new SubAgentTaskStore(tempRoot / s"subagent-tasks-${java.util.UUID.randomUUID().toString.take(6)}"),
+      subAgentTaskStore =
+        new SubAgentTaskStore(tempRoot / s"subagent-tasks-${java.util.UUID.randomUUID().toString.take(6)}"),
       voiceMutedRef = voiceMuted
     )
 
@@ -147,7 +159,7 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
     )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -167,7 +179,9 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
 
   // ── (1) wiring：续起会话的监督者锚定原父会话的活引用 ─────────────────────
 
-  test("(1) continuation wiring: the spawned session's registry record carries parentRef = the original parent's live ref"):
+  test(
+    "(1) continuation wiring: the spawned session's registry record carries parentRef = the original parent's live ref"
+  ):
     val deadId = "delegate-nebflow-wire0001"
     val parentSid = "wire-parent-1"
     val system = ActorSystem("mail-cont-wire")
@@ -189,13 +203,17 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
     yield
       val receipt = res match
         case Right(r) => r
-        case Left(e)  => fail(s"the continuation must proceed, got error: ${e.message}")
+        case Left(e) => fail(s"the continuation must proceed, got error: ${e.message}")
       assert(receipt.contains("CONTINUED the delegate as a fresh session"), receipt)
       assert(!receipt.contains("not live right now"), "the parent IS live — the undeliverable NOTE must be absent")
       val (_, recVal) = recOpt.getOrElse(fail("the continuation session must be registered"))
-      assertEquals(recVal.parentRef, Some(parentRef),
-        "the continuation supervisor must be anchored to the original parent session's live ref (result-return anchor)")
+      assertEquals(
+        recVal.parentRef,
+        Some(parentRef),
+        "the continuation supervisor must be anchored to the original parent session's live ref (result-return anchor)"
+      )
       assertEquals(recVal.parentSessionId, parentSid)
+    end for
 
   // ── (2) e2e：续起会话跑完 ⇒ 父会话收到 completed ExternalEvent ────────────
 
@@ -221,15 +239,24 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       val ext = events.collect { case e: AgentCommand.ExternalEvent => e }
       assertEquals(ext.size, 1, s"exactly one terminal ExternalEvent expected, got: $events")
       assertEquals(ext.head.source, "delegate", "source must stay delegate")
-      assertEquals(ext.head.eventType, "completed", "the continuation finished successfully — completed must reach the parent")
+      assertEquals(
+        ext.head.eventType,
+        "completed",
+        "the continuation finished successfully — completed must reach the parent"
+      )
       assert(ext.head.payload.nonEmpty, "the result payload must not be empty")
-      assert(ext.head.metadata("description").flatMap(_.asString).exists(_.startsWith("continuation:")),
-        s"the description must mark the continuation, got: ${ext.head.metadata}")
+      assert(
+        ext.head.metadata("description").flatMap(_.asString).exists(_.startsWith("continuation:")),
+        s"the description must mark the continuation, got: ${ext.head.metadata}"
+      )
       assertEquals(ext.head.correlationId.map(_.startsWith("delegate-")), Some(true))
+    end for
 
   // ── (3) 父不 live 面：续起照常 + 回执当场说破 + 终态仍落 taskStore ─────────
 
-  test("(3) parent not live: continuation still proceeds, the receipt says so up front, terminal state still lands in the task store"):
+  test(
+    "(3) parent not live: continuation still proceeds, the receipt says so up front, terminal state still lands in the task store"
+  ):
     val deadId = "delegate-nebflow-gone0001"
     val parentSid = "gone-parent-1" // NOT registered in the registry — the parent is gone
     val system = ActorSystem("mail-cont-gone")
@@ -251,38 +278,47 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
     yield
       val receipt = res match
         case Right(r) => r
-        case Left(e)  => fail(s"a dead parent must NOT block the continuation, got error: ${e.message}")
+        case Left(e) => fail(s"a dead parent must NOT block the continuation, got error: ${e.message}")
       assert(receipt.contains("CONTINUED the delegate as a fresh session"), receipt)
-      assert(receipt.contains("is not live right now"),
-        "the receipt must say up front that the result cannot be delivered back (never silent)")
+      assert(
+        receipt.contains("is not live right now"),
+        "the receipt must say up front that the result cannot be delivered back (never silent)"
+      )
       assert(receipt.contains(parentSid), "the NOTE must name the unreachable parent session")
       assert(newSidOpt.isDefined, s"the continuation session must be registered")
       assert(stored.exists(_.isDefined), s"the continuation record must persist: $newSidOpt")
-      assert(tasks.exists(t => t.status == "completed"),
-        s"the terminal state must still land in the task store keyed by the (dead) parent session id, got: $tasks")
+      assert(
+        tasks.exists(t => t.status == "completed"),
+        s"the terminal state must still land in the task store keyed by the (dead) parent session id, got: $tasks"
+      )
+    end for
 
   // ── (4) 监督者兜底：parentRef=None 的终态发出显式 WS 帧，绝不静默 ──────────
 
-  test("(4) supervisor backstop: parentRef=None + completed ⇒ delegateResultUndelivered WS frame + task store completed"):
+  test(
+    "(4) supervisor backstop: parentRef=None + completed ⇒ delegateResultUndelivered WS frame + task store completed"
+  ):
     val system = ActorSystem("mail-cont-backstop")
     val parentSid = "backstop-parent"
     val childSid = "delegate-nebflow-backsto1"
     for
       resources <- mkResources(system, hang = false)
       _ <- seedDeadDelegate(childSid, parentSid)
-      _ <- resources.subAgentTaskStore.recordTask(SubAgentTask(
-        taskId = childSid,
-        parentSessionId = parentSid,
-        agentName = "nebflow",
-        prompt = "backstop probe",
-        description = "backstop probe",
-        status = "running",
-        retryCount = 0,
-        spawnedAt = System.currentTimeMillis(),
-        completedAt = None,
-        lastError = None,
-        source = "delegate"
-      ))
+      _ <- resources.subAgentTaskStore.recordTask(
+        SubAgentTask(
+          taskId = childSid,
+          parentSessionId = parentSid,
+          agentName = "nebflow",
+          prompt = "backstop probe",
+          description = "backstop probe",
+          status = "running",
+          retryCount = 0,
+          spawnedAt = System.currentTimeMillis(),
+          completedAt = None,
+          lastError = None,
+          source = "delegate"
+        )
+      )
       wsFrames <- Ref.of[IO, List[Json]](Nil)
       childRef <- system.spawn(sinkBehavior, "backstop-child")
       supervisor <- system.spawn(
@@ -304,7 +340,9 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       )
       _ <- supervisor ! AgentEvent.Completed(childSid, List(Message(MessageRole.Assistant, Left("work actually done"))))
       _ <- waitUntil(15.seconds)(
-        resources.subAgentTaskStore.loadTasks(parentSid).map(_.exists(t => t.taskId == childSid && t.status == "completed"))
+        resources.subAgentTaskStore
+          .loadTasks(parentSid)
+          .map(_.exists(t => t.taskId == childSid && t.status == "completed"))
       )
       frames <- wsFrames.get
       tasks <- resources.subAgentTaskStore.loadTasks(parentSid)
@@ -312,18 +350,24 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       _ <- DelegateBudget.release(childSid)
       _ <- system.stopAll
     yield
-      val undelivered = frames.filter(json => json.hcursor.get[String]("type").toOption.contains("delegateResultUndelivered"))
+      val undelivered =
+        frames.filter(json => json.hcursor.get[String]("type").toOption.contains("delegateResultUndelivered"))
       assertEquals(undelivered.size, 1, s"exactly one undelivered-terminal frame expected, got: $frames")
       assertEquals(undelivered.head.hcursor.get[String]("sessionId").toOption, Some(childSid))
       assertEquals(undelivered.head.hcursor.get[String]("eventType").toOption, Some("completed"))
       assertEquals(undelivered.head.hcursor.get[String]("source").toOption, Some("delegate"))
-      assert(tasks.find(_.taskId == childSid).exists(_.status == "completed"),
-        "the task store terminal write still lands (panel-visible state)")
+      assert(
+        tasks.find(_.taskId == childSid).exists(_.status == "completed"),
+        "the task store terminal write still lands (panel-visible state)"
+      )
       assert(!registryAfter.contains(childSid), "the registry row is still cleaned up")
+    end for
 
   // ── (5) 正向对照：parentRef=Some ⇒ 父收到 ExternalEvent，无兜底帧 ──────────
 
-  test("(5) positive control: parentRef=Some ⇒ ExternalEvent delivered, NO undelivered frame (backstop never false-fires)"):
+  test(
+    "(5) positive control: parentRef=Some ⇒ ExternalEvent delivered, NO undelivered frame (backstop never false-fires)"
+  ):
     val system = ActorSystem("mail-cont-posctl")
     val parentSid = "posctl-parent"
     val childSid = "delegate-nebflow-posctl1"
@@ -361,7 +405,9 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       val ext = events.collect { case e: AgentCommand.ExternalEvent => e }
       assertEquals(ext.size, 1, s"the parent must receive exactly one ExternalEvent, got: $events")
       assertEquals(ext.head.eventType, "completed")
-      val undelivered = frames.filter(json => json.hcursor.get[String]("type").toOption.contains("delegateResultUndelivered"))
+      val undelivered =
+        frames.filter(json => json.hcursor.get[String]("type").toOption.contains("delegateResultUndelivered"))
       assertEquals(undelivered, Nil, "the backstop must NOT fire when a parent ref exists")
+    end for
 
 end MailDelegateContinuationDeliverySpec

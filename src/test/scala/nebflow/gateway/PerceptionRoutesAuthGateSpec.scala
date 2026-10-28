@@ -33,8 +33,10 @@ class PerceptionRoutesAuthGateSpec extends CatsEffectSuite:
 
   private val TestToken = "test-token-perception-authgate"
 
-  /** 只构造路由表本身：拒绝臂不触 sharedResources / sessionStore（by-name 门），
-    * 故按最小依赖传 null 即可（ApiGuardFollowupRoutesSpec 同法）。 */
+  /**
+   * 只构造路由表本身：拒绝臂不触 sharedResources / sessionStore（by-name 门），
+   * 故按最小依赖传 null 即可（ApiGuardFollowupRoutesSpec 同法）。
+   */
   private def mkRoutes(): RestApiRoutes =
     new RestApiRoutes(
       tokenRef = cats.effect.Ref.unsafe[IO, String](TestToken),
@@ -60,32 +62,43 @@ class PerceptionRoutesAuthGateSpec extends CatsEffectSuite:
   private def bodyOf(resp: Response[IO]): IO[Json] = resp.as[Json]
 
   // 路径形态 = Router 相对：生产挂载是 Router("/api" -> restApiRoutes.routes)
-  //（GatewayMain），域内 case 全部以 `/perception/...` 相对段匹配。本 spec 曾
+  // （GatewayMain），域内 case 全部以 `/perception/...` 相对段匹配。本 spec 曾
   // 直书 `/api/perception/...`——直调 routes 不经 Router 前缀剥离 ⇒ 永久
   // fall-through（authchain 批 REPORT §3.2 注记「sbt 运行延至队列空窗」的
   // 欠账，报障 2026-10-28 回归批补跑时实证）。修路径不改契约。
   private def api(path: String): Uri = Uri.unsafeFromString(path.stripPrefix("/api"))
 
   test("POST /api/perception/mail/connect 无令牌 ⇒ 403「Unauthorized」+ reason 头（业务体零执行）") {
-    mkRoutes().routes(
-      Request[IO](Method.POST, api("/api/perception/mail/connect"))
-        .withEntity(Json.obj("address" -> "fake@qq.com".asJson, "authCode" -> "bad".asJson))
-    ).value.map(_.getOrElse(fail("route fell through"))).flatMap { resp =>
-      assertAuthRejected(resp) *> bodyOf(resp).map { body =>
-        assertEquals(body.hcursor.downField("error").as[String].toOption, Some("Unauthorized"),
-        "「Missing token」是 ingress 门独占形状——引擎侧鉴权拒绝的 error 字恒为 Unauthorized")
+    mkRoutes()
+      .routes(
+        Request[IO](Method.POST, api("/api/perception/mail/connect"))
+          .withEntity(Json.obj("address" -> "fake@qq.com".asJson, "authCode" -> "bad".asJson))
+      )
+      .value
+      .map(_.getOrElse(fail("route fell through")))
+      .flatMap { resp =>
+        assertAuthRejected(resp) *> bodyOf(resp).map { body =>
+          assertEquals(
+            body.hcursor.downField("error").as[String].toOption,
+            Some("Unauthorized"),
+            "「Missing token」是 ingress 门独占形状——引擎侧鉴权拒绝的 error 字恒为 Unauthorized"
+          )
+        }
       }
-    }
   }
 
   test("GET /api/perception/entries 无令牌 ⇒ 同形 403（面板打开腿同门同体）") {
-    mkRoutes().routes(
-      Request[IO](Method.GET, api("/api/perception/entries"))
-    ).value.map(_.getOrElse(fail("route fell through"))).flatMap { resp =>
-      assertAuthRejected(resp) *> bodyOf(resp).map { body =>
-        assertEquals(body.hcursor.downField("error").as[String].toOption, Some("Unauthorized"))
+    mkRoutes()
+      .routes(
+        Request[IO](Method.GET, api("/api/perception/entries"))
+      )
+      .value
+      .map(_.getOrElse(fail("route fell through")))
+      .flatMap { resp =>
+        assertAuthRejected(resp) *> bodyOf(resp).map { body =>
+          assertEquals(body.hcursor.downField("error").as[String].toOption, Some("Unauthorized"))
+        }
       }
-    }
   }
 
 end PerceptionRoutesAuthGateSpec

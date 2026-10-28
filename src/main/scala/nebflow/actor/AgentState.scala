@@ -247,6 +247,7 @@ enum AgentStatus:
   /** 冻结调度：dispatch 边界被冻结时间表拦住（#337 黑名单语义），挂起等待出冻结段/用户唤醒。 */
   case Frozen
   case Error(msg: String)
+end AgentStatus
 
 case class CompactionResult(before: Int, after: Int)
 

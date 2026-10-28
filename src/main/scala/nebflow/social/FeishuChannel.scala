@@ -509,7 +509,7 @@ object FeishuChannel:
         headers.foreach { case (k, v) => builder.header(k, v) }
         val request = body match
           case Some(bytes) => builder.POST(java.net.http.HttpRequest.BodyPublishers.ofByteArray(bytes)).build()
-          case None        => builder.GET().build()
+          case None => builder.GET().build()
         val resp = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofByteArray())
         Right((resp.statusCode(), resp.body()))
       catch
@@ -532,7 +532,12 @@ object FeishuChannel:
    * code/msg only, the request body (which carries the secret) never rides a
    * log line.
    */
-  private[social] def tenantToken(appId: String, appSecret: String, base: String, http: RawHttp): Either[String, String] =
+  private[social] def tenantToken(
+    appId: String,
+    appSecret: String,
+    base: String,
+    http: RawHttp
+  ): Either[String, String] =
     val cacheKey = s"$appId@$base"
     tokenCache.synchronized {
       tokenCache.get(cacheKey).filter(t => System.currentTimeMillis() - t.fetchedAt < TokenTtlMs) match
@@ -542,10 +547,16 @@ object FeishuChannel:
             .obj("app_id" -> io.circe.Json.fromString(appId), "app_secret" -> io.circe.Json.fromString(appSecret))
             .noSpaces
             .getBytes("UTF-8")
-          http(s"$base/open-apis/auth/v3/tenant_access_token/internal", Map("Content-Type" -> "application/json"), Some(body)) match
+          http(
+            s"$base/open-apis/auth/v3/tenant_access_token/internal",
+            Map("Content-Type" -> "application/json"),
+            Some(body)
+          ) match
             case Left(err) => Left(s"token request failed: $err")
             case Right((status, bytes)) =>
-              io.circe.parser.parse(new String(bytes, java.nio.charset.StandardCharsets.UTF_8)).toOption
+              io.circe.parser
+                .parse(new String(bytes, java.nio.charset.StandardCharsets.UTF_8))
+                .toOption
                 .flatMap { j =>
                   val code = j.hcursor.downField("code").as[Long].toOption.map(_.toInt).getOrElse(-1)
                   if code == 0 then
@@ -559,7 +570,10 @@ object FeishuChannel:
                     Some(Left(s"token refused code=$code msg=$msg (http=$status)"))
                 }
                 .getOrElse(Left(s"token response was not JSON (http=$status, ${bytes.length}B)"))
+          end match
     }
+
+  end tenantToken
 
   /**
    * The readable refusal out of a non-2xx `im/v1/images` body — feishu's own
@@ -568,7 +582,9 @@ object FeishuChannel:
    * mask ALL of these behind a JsonIOException — the 2026-10-24 incident).
    */
   def imageErrorReading(status: Int, body: Array[Byte]): (Int, String) =
-    io.circe.parser.parse(new String(body, java.nio.charset.StandardCharsets.UTF_8)).toOption
+    io.circe.parser
+      .parse(new String(body, java.nio.charset.StandardCharsets.UTF_8))
+      .toOption
       .flatMap { j =>
         val code = j.hcursor
           .downField("code")
@@ -604,7 +620,9 @@ object FeishuChannel:
     getImageVia(rawHttpLive())(appId, appSecret, region, imageKey)
 
   /** The [[RawHttp]]-seamed core — the offline spec injects the transport here. */
-  private[social] def getImageVia(http: RawHttp)(appId: String, appSecret: String, region: String, imageKey: String): ImageResult =
+  private[social] def getImageVia(
+    http: RawHttp
+  )(appId: String, appSecret: String, region: String, imageKey: String): ImageResult =
     val base = baseOriginOf(region)
     tenantToken(appId, appSecret, base, http) match
       case Left(reason) => ImageResult(ok = false, None, -1, reason)

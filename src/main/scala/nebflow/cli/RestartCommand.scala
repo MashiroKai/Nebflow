@@ -34,6 +34,7 @@ object RestartCommand extends CliCommand:
   private object RestartRun extends CliSubcommand:
     def name = "run"
     def description = "Stop then start the Gateway (stop flags pass through; default apply is OS-detached)"
+
     def params = List(
       CliParam("force", None, "Skip the stop ownership gate (identity and dev-host gates always apply)", isFlag = true),
       CliParam("tree", None, "Stop the whole sbt-managed process chain before starting", isFlag = true),
@@ -50,8 +51,7 @@ object RestartCommand extends CliCommand:
         force = ctx.args.get("force").contains("true"),
         tree = ctx.args.get("tree").contains("true")
       )
-      if ctx.args.get("inline").contains("true") then
-        runRestart(opts, launch = DaemonSpawn.launch)
+      if ctx.args.get("inline").contains("true") then runRestart(opts, launch = DaemonSpawn.launch)
       else if opts.force || opts.tree then
         IO.pure(
           CliResult.Error(
@@ -61,15 +61,17 @@ object RestartCommand extends CliCommand:
         )
       else runDetached(opts)
 
+  end RestartRun
+
   /**
    * Orchestration core of the INLINE face (spec-driven): `launch` injectable
    * so the spec can assert "refused stop ⇒ zero spawns" without any real
    * process.
    */
   private[cli] def runRestart(
-      opts: ProcessManager.StopOptions,
-      deps: ProcessManager.StopDeps = ProcessManager.StopDeps(),
-      launch: (os.Path, Int, Boolean) => IO[ExitCode] = DaemonSpawn.launch
+    opts: ProcessManager.StopOptions,
+    deps: ProcessManager.StopDeps = ProcessManager.StopDeps(),
+    launch: (os.Path, Int, Boolean) => IO[ExitCode] = DaemonSpawn.launch
   ): IO[CliResult] =
     ProcessManager.stopHardened(opts, deps).flatMap {
       case ProcessManager.StopOutcome.NotRunning =>
@@ -83,7 +85,7 @@ object RestartCommand extends CliCommand:
     }
 
   private def startFresh(
-      launch: (os.Path, Int, Boolean) => IO[ExitCode]
+    launch: (os.Path, Int, Boolean) => IO[ExitCode]
   ): IO[CliResult] =
     GatewayConfig.load.flatMap { cfg =>
       launch(PathUtil.dataRoot, cfg.port.value, GatewayConfig.noBrowser)
@@ -103,9 +105,9 @@ object RestartCommand extends CliCommand:
    *      register the detached apply job (stop→start→health with logging).
    */
   private[cli] def runDetached(
-      opts: ProcessManager.StopOptions,
-      register: DetachedApply.Plan => IO[Either[String, String]] = p => DetachedApply.register(p),
-      launch: (os.Path, Int, Boolean) => IO[ExitCode] = DaemonSpawn.launch
+    opts: ProcessManager.StopOptions,
+    register: DetachedApply.Plan => IO[Either[String, String]] = p => DetachedApply.register(p),
+    launch: (os.Path, Int, Boolean) => IO[ExitCode] = DaemonSpawn.launch
   ): IO[CliResult] =
     GatewayConfig.load.flatMap { cfg =>
       val pidOpt = ProcessManager.readPid().filter(ProcessManager.isRunning)

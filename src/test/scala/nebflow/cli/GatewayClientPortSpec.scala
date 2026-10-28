@@ -14,7 +14,7 @@ import nebflow.shared.Defaults
 class GatewayClientPortSpec extends FunSuite:
 
   // readPort 的兜底档只在 env 沉默时可达；CI/本机若导出了端口 env，本档跳过
-  //（env 生效优先级本身是既定语义，不是本钉对象）。
+  // （env 生效优先级本身是既定语义，不是本钉对象）。
   private def envSilent: Boolean =
     sys.env.get("STAND_GATEWAY_PORT").orElse(sys.env.get("NEBFLOW_GATEWAY_PORT")).flatMap(_.toIntOption).isEmpty
 

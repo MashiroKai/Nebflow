@@ -115,23 +115,23 @@ class WebSocketRoutes(
           IO.raiseError(new RuntimeException(s"ask session $sessionId: ask services unavailable"))
     else
       metaOpt.flatMap(_.agentName) match
-      case Some(agentName) =>
-        sharedResources.agentLibrary.get(agentName).flatMap {
-          case Some(defn) => IO.pure(defn)
-          case None =>
-            metaOpt.flatMap(_.flowName) match
-              case Some(fn) =>
-                nebflow.core.entity.EntityLoader.loadTeamAgent(fn, agentName).flatMap {
-                  case Some(entry) => IO.pure(entry.toAgentDef)
-                  case None => rootFallback(agentName)
-                }
-              case None => rootFallback(agentName)
-        }
-      case None =>
-        sharedResources.agentLibrary.get(RootAgentIdentity.Name).flatMap {
-          case Some(d) => IO.pure(d)
-          case None => IO.raiseError(new RuntimeException("No default agent available"))
-        }
+        case Some(agentName) =>
+          sharedResources.agentLibrary.get(agentName).flatMap {
+            case Some(defn) => IO.pure(defn)
+            case None =>
+              metaOpt.flatMap(_.flowName) match
+                case Some(fn) =>
+                  nebflow.core.entity.EntityLoader.loadTeamAgent(fn, agentName).flatMap {
+                    case Some(entry) => IO.pure(entry.toAgentDef)
+                    case None => rootFallback(agentName)
+                  }
+                case None => rootFallback(agentName)
+          }
+        case None =>
+          sharedResources.agentLibrary.get(RootAgentIdentity.Name).flatMap {
+            case Some(d) => IO.pure(d)
+            case None => IO.raiseError(new RuntimeException("No default agent available"))
+          }
 
   private def rootFallback(agentName: String): IO[AgentDef] =
     sharedResources.agentLibrary.get(RootAgentIdentity.Name).flatMap {
@@ -2795,7 +2795,10 @@ class WebSocketRoutes(
                         // replay-terminal 批（2026-10-28，案一「A 根治」）：done =
                         // 轮终态事实本身——terminal=true 与 durationMs 同批落盘，
                         // 回放折叠不再靠渲染期徽章启发式反推（裸面 1/2/5 根治）。
-                        List(UiMessage.Ai(text, durationMs, model, thinkingOpt, System.currentTimeMillis(), terminal = Some(true)))
+                        List(
+                          UiMessage
+                            .Ai(text, durationMs, model, thinkingOpt, System.currentTimeMillis(), terminal = Some(true))
+                        )
                       )
                     else if durationMs.isDefined then
                       // No text to flush (already flushed at roundComplete/toolStart),
@@ -2937,7 +2940,16 @@ class WebSocketRoutes(
                             // replay-terminal 批（2026-10-28，案一「A 根治」）：
                             // agentDone = 节点会话轮终态——terminal=true 与
                             // durationMs 同批落盘（弹窗回放腿同判据）。
-                            List(UiMessage.Ai(text, durationMs, model, thinkingOpt, System.currentTimeMillis(), terminal = Some(true)))
+                            List(
+                              UiMessage.Ai(
+                                text,
+                                durationMs,
+                                model,
+                                thinkingOpt,
+                                System.currentTimeMillis(),
+                                terminal = Some(true)
+                              )
+                            )
                           )
                         else
                           // No text (flushed earlier by agentToolEnd) — backfill

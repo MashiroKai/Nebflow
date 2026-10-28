@@ -58,9 +58,7 @@ final class NeblinkUpdateConvergence(
    */
   def onHeartbeatTarget(target: NeblinkUpdateTarget): IO[Unit] =
     evaluate(target)
-      .handleErrorWith(e =>
-        logger.warn(s"[update-convergence] hint evaluation failed (ignored): ${msg(e)}")
-      )
+      .handleErrorWith(e => logger.warn(s"[update-convergence] hint evaluation failed (ignored): ${msg(e)}"))
 
   private def evaluate(target: NeblinkUpdateTarget): IO[Unit] =
     for
@@ -78,8 +76,7 @@ final class NeblinkUpdateConvergence(
     val current = currentVersion()
     val mine = selfChannel()
     val targetVersion = target.version.stripPrefix("v")
-    if target.channel.isBlank then
-      IO.pure(Decision("refused", Some("target channel missing"), now))
+    if target.channel.isBlank then IO.pure(Decision("refused", Some("target channel missing"), now))
     else if target.channel != mine then
       // 跨通道拒采：beta 不拖 stable（反向同理）——面板可见「有挂账但不属于本通道」
       IO.pure(Decision("refused", Some(s"channel mismatch (target=${target.channel}, self=$mine)"), now))
@@ -111,6 +108,8 @@ final class NeblinkUpdateConvergence(
               logger.warn(s"[update-convergence] orchestrator request failed: ${msg(e)}") *>
                 IO.pure(Decision("adopted", Some(s"orchestrator request error: ${msg(e)}"), now))
             )
+    end if
+  end gate
 
   // ===== 可见面（面板 serverConfig 快照 / updateState 帧 / /api/health 健康面）=====
 
@@ -176,6 +175,7 @@ final class NeblinkUpdateConvergence(
         case None => IO.unit
       }
     else IO.unit
+  end broadcastStateIfChanged
 
   private def msg(e: Throwable): String = Option(e.getMessage).getOrElse(e.toString)
 

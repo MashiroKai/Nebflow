@@ -73,7 +73,13 @@ private[gateway] object PresenceRoutes:
   private def putRemoteTailCache(jobId: String, nowMs: Long, body: Json): IO[Unit] =
     remoteTailCache.update(m => m.updated(jobId, (nowMs, body)))
 
-  private def unavailableRemoteTail(jobId: String, deviceName: String, outputPath: String, reason: String, reasonKind: String): Json =
+  private def unavailableRemoteTail(
+    jobId: String,
+    deviceName: String,
+    outputPath: String,
+    reason: String,
+    reasonKind: String
+  ): Json =
     Json.obj(
       "taskId" -> jobId.asJson,
       "status" -> "running".asJson,
@@ -95,7 +101,10 @@ private[gateway] object PresenceRoutes:
    *     合法对端（nebflow 引擎互联，[[nebflow.neblink.NeblinkPresenceService]]
    *     监听器）对服务端 ping 必回 pong ⇒ 健康连接入站帧间隔 ≤ tick，永不误杀。
    */
-  def PresenceWsLiveness(tick: FiniteDuration = 10.seconds, deadAfter: FiniteDuration = 30.seconds): WsZombieGuard.Liveness =
+  def PresenceWsLiveness(
+    tick: FiniteDuration = 10.seconds,
+    deadAfter: FiniteDuration = 30.seconds
+  ): WsZombieGuard.Liveness =
     WsZombieGuard.Liveness(tick, deadAfter)
 
   /**
@@ -671,9 +680,11 @@ private[gateway] object PresenceRoutes:
       case req @ GET -> Root / "merge-queue" =>
         withAuth(req) {
           IO.blocking(nebflow.core.delegate.MergeQueue.snapshot).flatMap { all =>
-            val reasons = IO.blocking(
-              nebflow.core.delegate.MergeQueue.lastReasons(all.map(_.delegateId).toSet)
-            ).handleErrorWith(_ => IO.pure(Map.empty[String, String]))
+            val reasons = IO
+              .blocking(
+                nebflow.core.delegate.MergeQueue.lastReasons(all.map(_.delegateId).toSet)
+              )
+              .handleErrorWith(_ => IO.pure(Map.empty[String, String]))
             reasons.flatMap { reasonBy =>
               val M = nebflow.core.delegate.MergeQueue
               import M.State
@@ -688,42 +699,38 @@ private[gateway] object PresenceRoutes:
                   Json.obj(
                     "projectKey" -> projectKey.asJson,
                     "holder" -> holder.asJson,
-                    "entries" -> open
-                      .map { m =>
-                        val pos = open.indexWhere(_.delegateId == m.delegateId) + 1
-                        Json.obj(
-                          "delegateId" -> m.delegateId.asJson,
-                          "description" -> m.description.asJson,
-                          "branch" -> m.branch.asJson,
-                          "baseBranch" -> m.baseBranch.asJson,
-                          "baseWs" -> m.baseWs.asJson,
-                          "taskId" -> m.taskId.asJson,
-                          "parentSessionId" -> m.parentSessionId.asJson,
-                          "position" -> pos.asJson,
-                          "total" -> open.size.asJson,
-                          "holder" -> holder.asJson,
-                          "state" -> m.state.asJson,
-                          "grantedAt" -> m.grantedAt.asJson,
-                          "grantedBaseTip" -> m.grantedBaseTip.asJson,
-                          "readyAt" -> m.readyAt.asJson,
-                          "lastBlockReason" -> m.lastBlockReason.asJson,
-                          "lastEventReason" -> reasonBy.getOrElse(m.delegateId, "").asJson
-                        )
-                      }
-                      .asJson,
-                    "recent" -> recent
-                      .map { m =>
-                        Json.obj(
-                          "delegateId" -> m.delegateId.asJson,
-                          "description" -> m.description.asJson,
-                          "branch" -> m.branch.asJson,
-                          "baseBranch" -> m.baseBranch.asJson,
-                          "state" -> m.state.asJson,
-                          "closedAt" -> m.closedAt.asJson,
-                          "closeReason" -> m.closeReason.asJson
-                        )
-                      }
-                      .asJson
+                    "entries" -> open.map { m =>
+                      val pos = open.indexWhere(_.delegateId == m.delegateId) + 1
+                      Json.obj(
+                        "delegateId" -> m.delegateId.asJson,
+                        "description" -> m.description.asJson,
+                        "branch" -> m.branch.asJson,
+                        "baseBranch" -> m.baseBranch.asJson,
+                        "baseWs" -> m.baseWs.asJson,
+                        "taskId" -> m.taskId.asJson,
+                        "parentSessionId" -> m.parentSessionId.asJson,
+                        "position" -> pos.asJson,
+                        "total" -> open.size.asJson,
+                        "holder" -> holder.asJson,
+                        "state" -> m.state.asJson,
+                        "grantedAt" -> m.grantedAt.asJson,
+                        "grantedBaseTip" -> m.grantedBaseTip.asJson,
+                        "readyAt" -> m.readyAt.asJson,
+                        "lastBlockReason" -> m.lastBlockReason.asJson,
+                        "lastEventReason" -> reasonBy.getOrElse(m.delegateId, "").asJson
+                      )
+                    }.asJson,
+                    "recent" -> recent.map { m =>
+                      Json.obj(
+                        "delegateId" -> m.delegateId.asJson,
+                        "description" -> m.description.asJson,
+                        "branch" -> m.branch.asJson,
+                        "baseBranch" -> m.baseBranch.asJson,
+                        "state" -> m.state.asJson,
+                        "closedAt" -> m.closedAt.asJson,
+                        "closeReason" -> m.closeReason.asJson
+                      )
+                    }.asJson
                   )
                 }
                 .asJson
@@ -850,8 +857,15 @@ private[gateway] object PresenceRoutes:
                 case None =>
                   nebflow.core.tools.RemoteExecutor.current match
                     case None =>
-                      Ok(unavailableRemoteTail(jobId, t.deviceName, t.outputPath,
-                        "remote executor not initialized (NebLink disabled?)", "noExecutor"))
+                      Ok(
+                        unavailableRemoteTail(
+                          jobId,
+                          t.deviceName,
+                          t.outputPath,
+                          "remote executor not initialized (NebLink disabled?)",
+                          "noExecutor"
+                        )
+                      )
                     case Some(re) =>
                       re.readBgLogTail(t.deviceName, t.outputPath).flatMap {
                         case Right(text) =>
@@ -861,7 +875,10 @@ private[gateway] object PresenceRoutes:
                             "available" -> true.asJson,
                             "output" -> text.asJson,
                             "tailBytes" -> text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong.asJson,
-                            "truncated" -> (text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong >= nebflow.core.tools.RemoteBgOutputLog.TailMaxBytes).asJson,
+                            "truncated" -> (text
+                              .getBytes(java.nio.charset.StandardCharsets.UTF_8)
+                              .length
+                              .toLong >= nebflow.core.tools.RemoteBgOutputLog.TailMaxBytes).asJson,
                             "deviceName" -> t.deviceName.asJson,
                             "outputPath" -> t.outputPath.asJson
                           )
@@ -917,7 +934,14 @@ private[gateway] object PresenceRoutes:
               .handleErrorWith(_ => IO.pure((Nil, Map.empty[String, String])))
               .flatMap { case (taskRows, statuses) =>
                 ChainsReadFace
-                  .delegatesJson(reg, archived, statuses, project, sharedResources.subAgentTaskStore.findByParent, taskRows)
+                  .delegatesJson(
+                    reg,
+                    archived,
+                    statuses,
+                    project,
+                    sharedResources.subAgentTaskStore.findByParent,
+                    taskRows
+                  )
                   .flatMap(body => HttpCache.conditionalOk(req, body, HttpCache.ofJson(body)))
               }
           }
@@ -1367,7 +1391,8 @@ private[gateway] object PresenceRoutes:
                 case None => NotFound(Json.obj("error" -> "no custom avatar".asJson))
                 case Some(sha) =>
                   Ok(
-                    Json.obj("sha256" -> sha.asJson, "updatedAt" -> rec.updatedAt.asJson)
+                    Json
+                      .obj("sha256" -> sha.asJson, "updatedAt" -> rec.updatedAt.asJson)
                       .deepMerge(Json.obj("displayName" -> rec.displayName.asJson))
                   )
             }
@@ -2012,21 +2037,23 @@ private[gateway] object PresenceRoutes:
                       val verdict = IO.blocking(
                         ProviderModelProbe.call(p.protocol, p.baseUrl, p.apiKey, model)
                       )
-                      verdict.flatMap {
-                        case ProviderModelProbe.Verdict.Ok(latency, reply) =>
-                          Ok(
-                            Json.obj(
-                              "ok" -> true.asJson,
-                              "latencyMs" -> latency.asJson,
-                              "reply" -> reply.asJson
+                      verdict
+                        .flatMap {
+                          case ProviderModelProbe.Verdict.Ok(latency, reply) =>
+                            Ok(
+                              Json.obj(
+                                "ok" -> true.asJson,
+                                "latencyMs" -> latency.asJson,
+                                "reply" -> reply.asJson
+                              )
                             )
-                          )
-                        case ProviderModelProbe.Verdict.Failed(detail) =>
-                          // 502 carries the sanitized provider-side reason — the
-                          // diagnosable error display the panel paints (red ✗ +
-                          // summary).
-                          Ok(Json.obj("ok" -> false.asJson, "error" -> detail.asJson))
-                      }.guarantee(IO.blocking(modelTestGate.release()))
+                          case ProviderModelProbe.Verdict.Failed(detail) =>
+                            // 502 carries the sanitized provider-side reason — the
+                            // diagnosable error display the panel paints (red ✗ +
+                            // summary).
+                            Ok(Json.obj("ok" -> false.asJson, "error" -> detail.asJson))
+                        }
+                        .guarantee(IO.blocking(modelTestGate.release()))
               }
             end if
           }

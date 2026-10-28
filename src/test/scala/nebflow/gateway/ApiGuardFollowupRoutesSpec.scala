@@ -74,7 +74,8 @@ class ApiGuardFollowupRoutesSpec extends CatsEffectSuite:
   }
 
   test("稳定性批 2026-10-26：网关鉴权拒绝带 X-Nf-Reason: credential-required（前端 relayGate 判据可分形）") {
-    mkRoutes().routes(post("/tts", withToken = false, Json.obj("text" -> "hi".asJson)))
+    mkRoutes()
+      .routes(post("/tts", withToken = false, Json.obj("text" -> "hi".asJson)))
       .value
       .map(_.getOrElse(fail("route fell through")))
       .flatMap { resp =>

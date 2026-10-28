@@ -53,7 +53,7 @@ class BusyConsoleInputInjectionSpec extends CatsEffectSuite:
   override def munitIOTimeout: FiniteDuration = 180.seconds
 
   private class ScriptedLlm(streams: Ref[IO, List[Stream[IO, StreamChunk]]]) extends LlmHandle[IO]:
-    val calls    = Ref.unsafe[IO, Int](0)
+    val calls = Ref.unsafe[IO, Int](0)
     val requests = Ref.unsafe[IO, List[LlmRequest]](Nil) // append 序：lift(1) = 第 2 次 call
 
     def send(req: LlmRequest): IO[LlmResponse] =
@@ -82,11 +82,12 @@ class BusyConsoleInputInjectionSpec extends CatsEffectSuite:
     req.messages
       .map(_.content)
       .flatMap {
-        case Right(blocks) => blocks.collect {
-          case ContentBlock.Text(t)      => t
-          case ContentBlock.ToolResult(_, content, _) => content
-          case use: ContentBlock.ToolUse => use.input.toString
-        }
+        case Right(blocks) =>
+          blocks.collect {
+            case ContentBlock.Text(t) => t
+            case ContentBlock.ToolResult(_, content, _) => content
+            case use: ContentBlock.ToolUse => use.input.toString
+          }
         case Left(t) => List(t)
       }
       .mkString("\n")
@@ -102,7 +103,7 @@ class BusyConsoleInputInjectionSpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
-  private val tempRoot: os.Path     = os.pwd / "target" / "test-busy-console-input-injection"
+  private val tempRoot: os.Path = os.pwd / "target" / "test-busy-console-input-injection"
   private val originalRoot: os.Path = PathUtil.dataRoot
 
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)

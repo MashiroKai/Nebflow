@@ -30,7 +30,9 @@ class UnifiedMediaSpec extends FunSuite:
 
   /** 1×1 PNG（<2MB、长边≤1920 ⇒ prepareImage 原样通过，无重编码）。 */
   private val TinyPng: Array[Byte] =
-    Base64.getDecoder.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+    Base64.getDecoder.decode(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+    )
 
   private def tempFile(name: String, bytes: Array[Byte]): String =
     val p = Files.createTempFile("nb-unify-", name)
@@ -94,10 +96,12 @@ class UnifiedMediaSpec extends FunSuite:
       "[用户附加文件: /r/m2.pdf]"
     )
     assertEquals(
-      UnifiedMedia.labelLinesOf(List(
-        BridgeAttachment("/r/m1.png", None, Some("image/png")),
-        BridgeAttachment("/r/m2.pdf", None, Some("application/pdf"))
-      )),
+      UnifiedMedia.labelLinesOf(
+        List(
+          BridgeAttachment("/r/m1.png", None, Some("image/png")),
+          BridgeAttachment("/r/m2.pdf", None, Some("application/pdf"))
+        )
+      ),
       "[用户附加图片: /r/m1.png]\n[用户附加文件: /r/m2.pdf]"
     )
     assertEquals(UnifiedMedia.labelLinesOf(Nil), "")
@@ -168,10 +172,17 @@ class UnifiedMediaSpec extends FunSuite:
 
   // ── the Feishu-leg interface: the default degrade ──
 
-  test("UM-6 injectMessageWithMedia default degrades to injectMessage (interface-only legs keep compiling and behaving)") {
+  test(
+    "UM-6 injectMessageWithMedia default degrades to injectMessage (interface-only legs keep compiling and behaving)"
+  ) {
     val recorded = new scala.collection.mutable.ListBuffer[(String, String)]()
     val ctx = new BridgeContext:
-      def injectMessage(sessionId: String, content: String, senderId: Option[String], origin: Option[BridgeOrigin]): IO[Unit] =
+      def injectMessage(
+        sessionId: String,
+        content: String,
+        senderId: Option[String],
+        origin: Option[BridgeOrigin]
+      ): IO[Unit] =
         IO { recorded += ((sessionId, content)) }.void
       def interruptAgent(sessionId: String): IO[Unit] = IO.unit
       def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none

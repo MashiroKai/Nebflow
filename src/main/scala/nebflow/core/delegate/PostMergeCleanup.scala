@@ -51,7 +51,7 @@ object PostMergeCleanup:
               case None =>
                 keep(r, wt, branch, "base workspace path unresolvable")
               case Some(ws) =>
-                val ahead    = GitWorktrees.commitsAhead(ws, baseBranch, branch)
+                val ahead = GitWorktrees.commitsAhead(ws, baseBranch, branch)
                 val ancestor = GitWorktrees.isAncestor(ws, branch, baseBranch)
                 if ahead > 0 || !ancestor.contains(true) then
                   keep(
@@ -66,8 +66,8 @@ object PostMergeCleanup:
                   // 路径缺失的 reports/evidence 复制回主工作区（已存在的跳过；
                   // fail-soft，绝不阻断清理）——只挂在移除分支，kept 现场不经此。
                   val rescue = WorktreeRescue.rescue(ws, wt)
-                  val rm      = GitWorktrees.removeWorktree(ws, wt)
-                  val bd      = if rm.isRight then GitWorktrees.deleteBranch(ws, branch) else Right("")
+                  val rm = GitWorktrees.removeWorktree(ws, wt)
+                  val bd = if rm.isRight then GitWorktrees.deleteBranch(ws, branch) else Right("")
                   val removed = rm.isRight && bd.isRight
                   row(
                     r,
@@ -78,6 +78,7 @@ object PostMergeCleanup:
                       (if rescue.isEmpty then "" else s" ${rescue.summary}")
                   )
                   removed
+                end if
           case _ =>
             // 无 worktree / 无分支锚 = 非合并现场（就地腿 / 非 git）——零动作
             false

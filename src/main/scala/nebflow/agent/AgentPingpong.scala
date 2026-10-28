@@ -123,8 +123,16 @@ private[agent] object AgentPingpong:
         resources,
         depth,
         state,
-        legacy =
-          handleTriggerCompaction(agentDef, resources, depth, parentRef, state, "full", None, resumeAfterCompact = false),
+        legacy = handleTriggerCompaction(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
+          state,
+          "full",
+          None,
+          resumeAfterCompact = false
+        ),
         onForked = st => IO.pure(idle(agentDef, resources, depth, parentRef, st)),
         gateOpen = open,
         legacyTriggerLog = None, // model-switch-compact 观测行已由调用点落，不重复

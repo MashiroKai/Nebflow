@@ -923,6 +923,8 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] =
       config.fold(IO.unit)(c => bound.update(_ :+ ((sessionId, platform, c))))
 
+  end VarCtx
+
   /** The escalated-drop setup: an unresolvable sender served by the default session. */
   private def servedDropFixture(root: os.Path, calls: Ref[IO, List[(String, String)]]): IO[WeixinIlinkBridgePlugin] =
     for
@@ -1566,7 +1568,9 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     )
   }
 
-  test("WI-BD2 five consecutive ret=-2 replies escalate to a WARN log + channel strike ONLY (the main session is NEVER notified), and recovery re-arms") {
+  test(
+    "WI-BD2 five consecutive ret=-2 replies escalate to a WARN log + channel strike ONLY (the main session is NEVER notified), and recovery re-arms"
+  ) {
     val root = tmpRoot()
     val c = new RecordingCtx(List(meta("s1", Some("wx_alice"))))
     val fail =
@@ -1626,12 +1630,20 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
         .filter(_.getLevel == ch.qos.logback.classic.Level.WARN)
         .map(_.getFormattedMessage)
         .filter(_.contains("bridge session DEAD"))
-      assertEquals(escalated.length, 2, s"one WARN escalation per streak — the 6-10 success window re-arms, got $escalated")
+      assertEquals(
+        escalated.length,
+        2,
+        s"one WARN escalation per streak — the 6-10 success window re-arms, got $escalated"
+      )
       assert(escalated.forall(_.contains("5 consecutive")), escalated)
       // 🔴 THE RULING: no session notification on ANY path — not on the
       // transient flap, not on the sustained death. The bound session hears
       // nothing; the channel card strike is the only author-facing surface.
-      assertEquals(injected, List.empty[(String, String, Option[String])], s"the main session must NOT be notified, got $injected")
+      assertEquals(
+        injected,
+        List.empty[(String, String, Option[String])],
+        s"the main session must NOT be notified, got $injected"
+      )
       assert(
         !fired.exists(_.contains("疑似失效")),
         "the ⚠️ re-bind notice text is retired — it must not reach any log or session"

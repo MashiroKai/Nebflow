@@ -123,6 +123,7 @@ class PluginRegistrySpec extends CatsEffectSuite:
   private val lowerPluginMd = pluginDir("lower-plugin-md")
   writeManifest(lowerPluginMd, "lower-plugin-md")
   writeSkill(lowerPluginMd, "s1", "body")
+
   os.write.over(
     lowerPluginMd / "plugin.md",
     "# lower-plugin-md\n\nlowercase variant — the injection face tolerates it, the loader keeps the canonical-name discipline.\n"

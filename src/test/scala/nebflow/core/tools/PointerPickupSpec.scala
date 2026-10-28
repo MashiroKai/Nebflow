@@ -44,7 +44,9 @@ class PointerPickupSpec extends CatsEffectSuite:
     val f = PointerPickup.save("dev-1", "/remote/ws/report final?.txt", "v1".getBytes("UTF-8"))
     // 落位在 uploads 白名单子树（父链含 uploads/pickups；分隔符无关比较）。
     assert(
-      f.toString.replace('\\', '/').contains(s"uploads/pickups/${PointerPickup.pointerHash("dev-1", "/remote/ws/report final?.txt")}"),
+      f.toString
+        .replace('\\', '/')
+        .contains(s"uploads/pickups/${PointerPickup.pointerHash("dev-1", "/remote/ws/report final?.txt")}"),
       s"under uploads/pickups, got: $f"
     )
     // 非法字符消毒、名字取远端路径末段。

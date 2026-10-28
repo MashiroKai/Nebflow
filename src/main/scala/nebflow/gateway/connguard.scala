@@ -56,6 +56,8 @@ final case class ConnGuardConfig(
   /** 环回恒在信任名单：本机 web UI / CLI / 健康探针的管理通道不能被限死。 */
   val trustedIps: Set[String] = ConnGuardConfig.DefaultTrustedIps ++ extraTrustedIps
 
+end ConnGuardConfig
+
 object ConnGuardConfig:
 
   // A console cold load includes modules, editor preload, assets and API reads.
@@ -468,8 +470,7 @@ class ConnGuard private (
         val windowMs = config.tunnelWindowSec * 1000L
         stateRef.update { st =>
           val st1 =
-            if now - st.tunnelWindowStartMs >= windowMs then
-              st.copy(tunnelWindowStartMs = now, tunnelTotalReq = 0L)
+            if now - st.tunnelWindowStartMs >= windowMs then st.copy(tunnelWindowStartMs = now, tunnelTotalReq = 0L)
             else st
           ensureSlot(st1, ip, now) match
             case Some(st2) =>
@@ -487,6 +488,7 @@ class ConnGuard private (
             case None =>
               // Table full with no evictable slot: count globally only.
               st1.copy(tunnelTotalReq = st1.tunnelTotalReq + 1L)
+          end match
         }
       }
 
@@ -511,8 +513,7 @@ class ConnGuard private (
       stateRef.get.flatMap { st =>
         val reject =
           if st.tunnelTotalReq > config.tunnelTotalCap then Some("tunnel-total-cap")
-          else if st.perIp.get(ip).exists(_.tunnelReqTotal > config.tunnelPerIpCap) then
-            Some("tunnel-per-ip-cap")
+          else if st.perIp.get(ip).exists(_.tunnelReqTotal > config.tunnelPerIpCap) then Some("tunnel-per-ip-cap")
           else None
         reject match
           case Some(reason) =>

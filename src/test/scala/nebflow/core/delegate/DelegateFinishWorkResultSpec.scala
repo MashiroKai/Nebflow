@@ -140,7 +140,8 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
       DelegateJudge.DelegateJudgePort.install(
         new DelegateJudge.DelegateJudgePort.Face:
           def decideWorktree(task: String): IO[Option[Boolean]] = IO.pure(Some(false))
-          def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] = IO.pure(Some(verdict))
+          def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
+            IO.pure(Some(verdict))
       )
     } *> io <* IO(DelegateJudge.DelegateJudgePort.clear())
 
@@ -201,7 +202,16 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
         // 合并轮，走验收闸而非停靠
         _ = MergeQueue.onTerminal("delegate-nebflow-wr1")
         again <- withJudge(DelegateJudge.Verdict.ReadyToMerge) {
-          DelegateTerminal.onCompleted(res, "delegate-nebflow-wr1", "nebula-root", "t", "brief", "SECOND run text", child, sup)
+          DelegateTerminal.onCompleted(
+            res,
+            "delegate-nebflow-wr1",
+            "nebula-root",
+            "t",
+            "brief",
+            "SECOND run text",
+            child,
+            sup
+          )
         }
         after = DelegateRegistry.find("delegate-nebflow-wr1").flatMap(_.workReport)
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
@@ -230,7 +240,13 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
     DelegateRegistry.updateReport("delegate-nebflow-wr2", "finish", "merged to main cleanly", "")
     val legacy = DelegateRegistry.find("delegate-nebflow-wr2")
     // 停靠保真形态：workReport 已在槽 ⇒ 申报覆写绝不顶掉
-    seedRecord("delegate-nebflow-wr3", Some("83"), Some("delegate/x"), tempRoot, workReport = Some("PRESERVED WORK TEXT"))
+    seedRecord(
+      "delegate-nebflow-wr3",
+      Some("83"),
+      Some("delegate/x"),
+      tempRoot,
+      workReport = Some("PRESERVED WORK TEXT")
+    )
     DelegateRegistry.updateReport("delegate-nebflow-wr3", "finish", "merged ok", "")
     val preserved = DelegateRegistry.find("delegate-nebflow-wr3")
     // 同 detail 重报：无留底（无信息可保）
@@ -242,7 +258,11 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
       legacy.flatMap(_.workReport).contains("MERGE-PHASE WORK DETAIL: root cause + evidence"),
       s"the overwritten merge-phase detail must be preserved into workReport; got: ${legacy.flatMap(_.workReport)}"
     )
-    assertEquals(legacy.flatMap(_.reportDetail), Some("merged to main cleanly"), "the finish detail still owns the slot")
+    assertEquals(
+      legacy.flatMap(_.reportDetail),
+      Some("merged to main cleanly"),
+      "the finish detail still owns the slot"
+    )
     assertEquals(preserved.flatMap(_.workReport), Some("PRESERVED WORK TEXT"), "first-write-wins over the report slot")
     assertEquals(noSeed.flatMap(_.workReport), None, "identical re-reports must not seed a work report")
   }
@@ -327,7 +347,16 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
         _ = mergeNoFF(repo, "delegate/delegate-nebflow-wr6")
         _ = DelegateRegistry.updateReport("delegate-nebflow-wr6", "finish", "merged to main cleanly", "")
         releaseA <- withJudgeAbsent {
-          DelegateTerminal.onCompleted(res, "delegate-nebflow-wr6", "nebula-root", "t", "brief", "merge done", child, sup)
+          DelegateTerminal.onCompleted(
+            res,
+            "delegate-nebflow-wr6",
+            "nebula-root",
+            "t",
+            "brief",
+            "merge done",
+            child,
+            sup
+          )
         }
         // ④b 全裸记录（连 finish 自申报都没有——fail-open unjudged 腿）：附页整段
         // 缺席，Release 尾注逐字现状
@@ -335,7 +364,16 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
         _ = enqueueRound("delegate-nebflow-wr8", "delegate/delegate-nebflow-wr8", bareRepo, "88", child, sup)
         _ = mergeNoFF(bareRepo, "delegate/delegate-nebflow-wr8")
         releaseB <- withJudgeAbsent {
-          DelegateTerminal.onCompleted(res, "delegate-nebflow-wr8", "nebula-root", "t", "brief", "merge done", child, sup)
+          DelegateTerminal.onCompleted(
+            res,
+            "delegate-nebflow-wr8",
+            "nebula-root",
+            "t",
+            "brief",
+            "merge done",
+            child,
+            sup
+          )
         }
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
       yield

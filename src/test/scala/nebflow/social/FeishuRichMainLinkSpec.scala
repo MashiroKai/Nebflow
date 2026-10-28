@@ -87,11 +87,15 @@ class FeishuRichMainLinkSpec extends CatsEffectSuite:
   private final class OutboundRecorder(
     imageOk: Boolean = true,
     failUploads: Set[os.Path] = Set.empty,
-    /** pop multi-group batch: these uploads RAISE (unexpected fault, not a
-      * channel refusal) — drives the bridge's per-item raise containment. */
+    /**
+     * pop multi-group batch: these uploads RAISE (unexpected fault, not a
+     * channel refusal) — drives the bridge's per-item raise containment.
+     */
     raiseOn: Set[os.Path] = Set.empty,
-    /** pop multi-group batch: a SHARED ordered wire log across the rich seams
-      * and the bridge's text seam, for media-first/正文殿后 order assertions. */
+    /**
+     * pop multi-group batch: a SHARED ordered wire log across the rich seams
+     * and the bridge's text seam, for media-first/正文殿后 order assertions.
+     */
     wire: Option[Ref[IO, List[String]]] = None
   ):
     val images: Ref[IO, List[os.Path]] = Ref.unsafe[IO, List[os.Path]](Nil)
@@ -115,10 +119,18 @@ class FeishuRichMainLinkSpec extends CatsEffectSuite:
       (p, n) => files.update(_ :+ ((p, n))).as(RichFeishuAdapter.UploadResult(true, s"file_key_$n", 0, "ok"))
 
     def sendMsg: RichFeishuAdapter.SendMsg =
-      (t, c) => msgs.update(_ :+ ((t, c))).flatMap(_ => note(s"msg:$t:${c}")).as(RichFeishuAdapter.SendResult(true, Some("om_msg_1"), 0, "ok"))
+      (t, c) =>
+        msgs
+          .update(_ :+ ((t, c)))
+          .flatMap(_ => note(s"msg:$t:${c}"))
+          .as(RichFeishuAdapter.SendResult(true, Some("om_msg_1"), 0, "ok"))
 
     def sendText: RichFeishuAdapter.SendText =
-      t => texts.update(_ :+ t).flatMap(_ => note(s"richText:${t.take(12)}")).as(RichFeishuAdapter.SendResult(true, Some("om_text_1"), 0, "ok"))
+      t =>
+        texts
+          .update(_ :+ t)
+          .flatMap(_ => note(s"richText:${t.take(12)}"))
+          .as(RichFeishuAdapter.SendResult(true, Some("om_text_1"), 0, "ok"))
 
   end OutboundRecorder
 
@@ -139,6 +151,8 @@ class FeishuRichMainLinkSpec extends CatsEffectSuite:
     def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
     def listSessions: IO[List[SessionMeta]] = IO.pure(sessions)
     def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] = IO.unit
+
+  end RecordingCtx
 
   private def boundMeta(id: String, chatId: String): SessionMeta =
     SessionMeta(
@@ -677,20 +691,21 @@ class FeishuRichMainLinkSpec extends CatsEffectSuite:
       _ <- p.onAgentEvent("s1", toolEnd("s1", popPayload(item("image", "a.png", a), item("image", "b.png", b))))
       _ <- p.onAgentEvent("s1", done("s1"))
       order <- wire.get
-    yield
-      assertEquals(
-        order,
-        List(
-          "msg:image:{\"image_key\":\"img_key_a.png\"}",
-          "msg:image:{\"image_key\":\"img_key_b.png\"}",
-          "reply:两张图如下"
-        ),
-        "each image is its own message, then the turn text — the wire order IS the delivery order"
-      )
+    yield assertEquals(
+      order,
+      List(
+        "msg:image:{\"image_key\":\"img_key_a.png\"}",
+        "msg:image:{\"image_key\":\"img_key_b.png\"}",
+        "reply:两张图如下"
+      ),
+      "each image is its own message, then the turn text — the wire order IS the delivery order"
+    )
     end for
   }
 
-  test("ML-16 one item's unexpected RAISE degrades to its own [未送达] line; the remaining items and the text tail survive") {
+  test(
+    "ML-16 one item's unexpected RAISE degrades to its own [未送达] line; the remaining items and the text tail survive"
+  ) {
     val a = writeNoisePng(tmpDir() / "a.png", 8, 8)
     val bad = writeNoisePng(tmpDir() / "bad.png", 8, 8)
     val c = writeNoisePng(tmpDir() / "c.png", 8, 8)

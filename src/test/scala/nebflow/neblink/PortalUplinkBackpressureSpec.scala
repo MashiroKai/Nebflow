@@ -46,21 +46,37 @@ class PortalUplinkBackpressureSpec extends CatsEffectSuite:
   private final class FakeWebSocket extends java.net.http.WebSocket:
     val sent = new ConcurrentLinkedQueue[String]()
     @volatile var aborted = false
+
     private def done: java.util.concurrent.CompletableFuture[java.net.http.WebSocket] =
       java.util.concurrent.CompletableFuture.completedFuture(this)
-    override def sendText(data: CharSequence, last: Boolean): java.util.concurrent.CompletableFuture[java.net.http.WebSocket] =
+
+    override def sendText(
+      data: CharSequence,
+      last: Boolean
+    ): java.util.concurrent.CompletableFuture[java.net.http.WebSocket] =
       sent.add(data.toString); done
-    override def sendBinary(data: java.nio.ByteBuffer, last: Boolean): java.util.concurrent.CompletableFuture[java.net.http.WebSocket] =
+
+    override def sendBinary(
+      data: java.nio.ByteBuffer,
+      last: Boolean
+    ): java.util.concurrent.CompletableFuture[java.net.http.WebSocket] =
       done
+
     override def sendClose(code: Int, reason: String): java.util.concurrent.CompletableFuture[java.net.http.WebSocket] =
       done
-    override def request(n: Long): Unit  = ()
-    override def sendPing(data: java.nio.ByteBuffer): java.util.concurrent.CompletableFuture[java.net.http.WebSocket] = done
-    override def sendPong(data: java.nio.ByteBuffer): java.util.concurrent.CompletableFuture[java.net.http.WebSocket] = done
-    override def getSubprotocol: String  = ""
+    override def request(n: Long): Unit = ()
+
+    override def sendPing(data: java.nio.ByteBuffer): java.util.concurrent.CompletableFuture[java.net.http.WebSocket] =
+      done
+
+    override def sendPong(data: java.nio.ByteBuffer): java.util.concurrent.CompletableFuture[java.net.http.WebSocket] =
+      done
+    override def getSubprotocol: String = ""
     override def isOutputClosed: Boolean = false
-    override def isInputClosed: Boolean  = false
-    override def abort(): Unit           = aborted = true
+    override def isInputClosed: Boolean = false
+    override def abort(): Unit = aborted = true
+
+  end FakeWebSocket
 
   private def mkBridge(fake: FakeWebSocket): PortalTunnelBridge =
     val faces = new PortalHostFaces(gatewayPort = 1)
@@ -79,9 +95,9 @@ class PortalUplinkBackpressureSpec extends CatsEffectSuite:
   // 传过 PortalWireCodec 的 requestId 必须是 wire 合法 UUID（jsonUuid 白名单：
   // v1-5 / [89ab] variant）——需要 decode 回读断言的用例一律用这些。
   private val UuidDead = "00000000-0000-4000-8000-000000000007"
-  private val UuidT1   = "00000000-0000-4000-8000-0000000000d1"
-  private val UuidT2   = "00000000-0000-4000-8000-0000000000d2"
-  private val UuidRe   = "00000000-0000-4000-8000-000000000009"
+  private val UuidT1 = "00000000-0000-4000-8000-0000000000d1"
+  private val UuidT2 = "00000000-0000-4000-8000-0000000000d2"
+  private val UuidRe = "00000000-0000-4000-8000-000000000009"
 
   // Inbox depth follows the production constant (ledger #949 §2 face-③: tuned
   // 128→64) — specs never hardcode it, so a future retune can't rot assertions.
@@ -164,9 +180,11 @@ class PortalUplinkBackpressureSpec extends CatsEffectSuite:
         _ = bridge.wsCycles.put("wait-capacity", cycle) // 注册 = 活周期
         _ = (0 until Slots).foreach(i => cycle.uplink.offer(frame(i))) // 填满
         // 后台驱动：满了 → 拍退避等待（不丢）
-        worker <- IO.blocking(
-          bridge.offerUplinkAwaitCapacity(cycle, frame(0xAA))
-        ).start
+        worker <- IO
+          .blocking(
+            bridge.offerUplinkAwaitCapacity(cycle, frame(0xaa))
+          )
+          .start
         _ <- IO.sleep(100.millis)
         early <- IO(cycle.uplink.size())
         _ = assertEquals(early, Slots, "while full, the item must NOT be enqueued NOR dropped")
@@ -183,10 +201,11 @@ class PortalUplinkBackpressureSpec extends CatsEffectSuite:
         _ = assert(drained.take(Slots).forall(_.isDefined), s"queue must hold exactly $Slots items")
         _ = assert(drained(Slots).isEmpty, s"queue must be empty after $Slots polls")
         lastByte = drained(Slots - 1).collect { case PortalTunnelBridge.WsCycle.UplinkItem.Frame(f) => f.data(0) }
-        _ = assertEquals(lastByte, Some(0xAA.toByte), "the waited item must keep FIFO order (offered last)")
+        _ = assertEquals(lastByte, Some(0xaa.toByte), "the waited item must keep FIFO order (offered last)")
         deadAfter <- PortalUplinkDeadLetter.pending
         _ = assertEquals(deadAfter, Nil)
       yield ()
+      end for
     }
 
   test("面二: 等容量期间周期死亡——件进持久死信区（带来源与 requestId），不入队"):
@@ -214,6 +233,7 @@ class PortalUplinkBackpressureSpec extends CatsEffectSuite:
           assert(fin2)
         case other => fail(s"dead-letter frameText must decode to the original ws_frame, got $other")
     yield ()
+    end for
 
   // ── 面二：teardown 收尾残件全量死信 ──────────────────────────────────────
 
@@ -227,11 +247,16 @@ class PortalUplinkBackpressureSpec extends CatsEffectSuite:
       _ = bridge.wsCycles.put(UuidT2, c2)
       _ = c1.local = fake
       _ = c2.local = fake
-      _ = { c1.uplink.offer(frame(1, UuidT1)); c1.uplink.offer(frame(2, UuidT1)) }
+      _ =
+        c1.uplink.offer(frame(1, UuidT1)); c1.uplink.offer(frame(2, UuidT1))
       _ = c2.uplink.offer(frame(3, UuidT2))
       _ <- bridge.teardown()
       entries <- PortalUplinkDeadLetter.pending
-      _ = assertEquals(entries.size, 3, s"all pending uplink items must be dead-lettered, got ${entries.map(e => (e.requestId, e.bytes))}")
+      _ = assertEquals(
+        entries.size,
+        3,
+        s"all pending uplink items must be dead-lettered, got ${entries.map(e => (e.requestId, e.bytes))}"
+      )
       _ = assert(entries.forall(_.source == PortalUplinkDeadLetter.SourceTeardown))
       _ = assert(entries.forall(e => e.requestId == UuidT1 || e.requestId == UuidT2))
       // 每周期内部保序（poll 序 == 死信文件序）
@@ -241,13 +266,32 @@ class PortalUplinkBackpressureSpec extends CatsEffectSuite:
       _ = assertEquals(c1Bytes.toList, List(1.toByte, 2.toByte), "per-cycle FIFO must survive the dead letter")
       _ = assert(bridge.wsCycles.isEmpty, "cycles leave the registry at teardown")
     yield ()
+    end for
 
   // ── 面二：死信两态迁移（落盘 → 补投出队 / 失败留盘） ─────────────────────
 
   test("面二: 死信迁移——补投成功出队（文件消失）；失败留盘（attempts 读数升）"):
     for
-      _ <- IO(PortalUplinkDeadLetter.enqueueSync("req-A", PortalUplinkDeadLetter.SourceTeardown, "ws_frame", """{"type":"ws_frame"}""", 9L, "unit"))
-      _ <- IO(PortalUplinkDeadLetter.enqueueSync("req-B", PortalUplinkDeadLetter.SourceTeardown, "relay_close", """{"type":"ws_close"}""", 0L, "unit"))
+      _ <- IO(
+        PortalUplinkDeadLetter.enqueueSync(
+          "req-A",
+          PortalUplinkDeadLetter.SourceTeardown,
+          "ws_frame",
+          """{"type":"ws_frame"}""",
+          9L,
+          "unit"
+        )
+      )
+      _ <- IO(
+        PortalUplinkDeadLetter.enqueueSync(
+          "req-B",
+          PortalUplinkDeadLetter.SourceTeardown,
+          "relay_close",
+          """{"type":"ws_close"}""",
+          0L,
+          "unit"
+        )
+      )
       first <- PortalUplinkDeadLetter.pending
       _ = assertEquals(first.map(_.requestId).sorted, List("req-A", "req-B"))
       // 成功腿：全出队
@@ -257,7 +301,16 @@ class PortalUplinkBackpressureSpec extends CatsEffectSuite:
       after <- PortalUplinkDeadLetter.pending
       _ = assertEquals(after, Nil, "delivered entries must leave the disk")
       // 失败腿：留盘 + attempts 读数
-      _ <- IO(PortalUplinkDeadLetter.enqueueSync("req-C", PortalUplinkDeadLetter.SourceTeardown, "ws_frame", """{"type":"ws_frame"}""", 1L, "unit"))
+      _ <- IO(
+        PortalUplinkDeadLetter.enqueueSync(
+          "req-C",
+          PortalUplinkDeadLetter.SourceTeardown,
+          "ws_frame",
+          """{"type":"ws_frame"}""",
+          1L,
+          "unit"
+        )
+      )
       fail <- PortalUplinkDeadLetter.drain(_ => IO.raiseError(new java.io.IOException("relay down")))
       _ = assertEquals(fail.replayed, Nil)
       _ = assertEquals(fail.kept.size, 1, "the failed entry must be reported kept")
@@ -270,7 +323,14 @@ class PortalUplinkBackpressureSpec extends CatsEffectSuite:
     for
       entries <- IO {
         (1 to 5).map { i =>
-          PortalUplinkDeadLetter.enqueueSync("req-order", PortalUplinkDeadLetter.SourceTeardown, "ws_frame", s"""{"i":$i}""", i.toLong, "unit")
+          PortalUplinkDeadLetter.enqueueSync(
+            "req-order",
+            PortalUplinkDeadLetter.SourceTeardown,
+            "ws_frame",
+            s"""{"i":$i}""",
+            i.toLong,
+            "unit"
+          )
           i
         }.toList
       }
@@ -311,6 +371,8 @@ class PortalUplinkBackpressureSpec extends CatsEffectSuite:
       after <- PortalUplinkDeadLetter.pending
       _ = assertEquals(after, Nil, "replayed entries leave the disk")
     yield ()
+
+    end for
 
   test("面二: 空死信区补投是 no-op"):
     val fake = new FakeWebSocket

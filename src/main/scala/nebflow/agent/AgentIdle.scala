@@ -22,6 +22,7 @@ import nebflow.shared.{NebflowLogger, *}
  * AgentActor,经 import AgentActor.* 引用(本 object 只含 def,无顶层状态)。
  */
 private[agent] object AgentIdle:
+
   import nebflow.agent.AgentActor.*
   import nebflow.core.processor.DeliveredReceiptLedger
 
@@ -728,9 +729,8 @@ private[agent] object AgentIdle:
               // 此前恢复面不同步台账 ⇒ 无 producedAt ⇒ watchdog 对重启恢复回执致盲
               // （nudge 文本整天数「1 条」而实际队列 5/11 条），只能等下一次输入触
               // 发 fix-1 腿才投递（实证 2026-10-22 10:36/17:13 两次重启恢复）。
-              syncHeldReceipts(resources, state.sessionId, exec.pendingEvents).flatMap((h, u) =>
-                emitHeldReceiptsBadge(state, h, u)
-              ) *>
+              syncHeldReceipts(resources, state.sessionId, exec.pendingEvents)
+                .flatMap((h, u) => emitHeldReceiptsBadge(state, h, u)) *>
                 IO.pure(idle(agentDef, resources, depth, parentRef, state.copy(execution = exec)))
             }
           case _ => IO.pure(idle(agentDef, resources, depth, parentRef, state))
@@ -753,13 +753,17 @@ private[agent] object AgentIdle:
             else state.copy(execution = state.execution.copy(pendingEvents = held))
           if held.isEmpty then
             persistQueues(prunedState.sessionId, prunedState.execution) *>
-              touchBarrierSnapshot(resources, prunedState.sessionId, prunedState.execution.outstandingSubagentResults, 0) *>
+              touchBarrierSnapshot(
+                resources,
+                prunedState.sessionId,
+                prunedState.execution.outstandingSubagentResults,
+                0
+              ) *>
               IO.pure(idle(agentDef, resources, depth, parentRef, prunedState))
           else
             val batchMessage = buildEventReminder(held)
-            val cleaned = prunedState.copy(execution =
-              prunedState.execution.copy(pendingEvents = Nil, outstandingSubagentResults = 0)
-            )
+            val cleaned = prunedState
+              .copy(execution = prunedState.execution.copy(pendingEvents = Nil, outstandingSubagentResults = 0))
             for
               _ <- IO(
                 logAgentEvent(
@@ -784,9 +788,8 @@ private[agent] object AgentIdle:
                 held.flatMap(_.correlationId)
               )
               _ <- held.traverse_(nebflow.core.delegate.DelegateDeliveryReceipts.ackEvent)
-              _ <- syncHeldReceipts(resources, prunedState.sessionId, Nil).flatMap((h, u) =>
-                emitHeldReceiptsBadge(prunedState, h, u)
-              )
+              _ <- syncHeldReceipts(resources, prunedState.sessionId, Nil)
+                .flatMap((h, u) => emitHeldReceiptsBadge(prunedState, h, u))
               result <- pipeLlmCall(
                 agentDef,
                 resources,
@@ -1052,6 +1055,7 @@ private[agent] object AgentIdle:
             .handleErrorWith(_ => IO.unit)
           result <- pipeLlmCall(agentDef, resources, depth, parentRef, restartState.withNextLoopTurn, None)
         yield result
+        end for
 
       case _ =>
         IO.pure(idle(agentDef, resources, depth, parentRef, state))

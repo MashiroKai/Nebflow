@@ -229,7 +229,13 @@ class PerceptionCoreSpec extends FunSuite:
     store.ensureDirs()
 
     // accounts
-    val acc = MailAccount(id = "qqcom", address = "i@qq.com", imapHost = "imap.qq.com", smtpHost = "smtp.qq.com", authCodeSecret = "perception-i-qq-com")
+    val acc = MailAccount(
+      id = "qqcom",
+      address = "i@qq.com",
+      imapHost = "imap.qq.com",
+      smtpHost = "smtp.qq.com",
+      authCodeSecret = "perception-i-qq-com"
+    )
     assert(store.saveAccounts(List(acc)).isRight)
     val loaded = store.loadAccounts()
     assertEquals(loaded.map(_.address), List("i@qq.com"))
@@ -262,7 +268,11 @@ class PerceptionCoreSpec extends FunSuite:
     assertEquals(store.spoolList(), Nil)
 
     // billing buffer
-    assert(store.billingAppend("2026-10-25", PerceptionStore.BillingLine(1L, "<m>", "alipay.com", "s", "¥1.00", "domain")).isRight)
+    assert(
+      store
+        .billingAppend("2026-10-25", PerceptionStore.BillingLine(1L, "<m>", "alipay.com", "s", "¥1.00", "domain"))
+        .isRight
+    )
     assertEquals(store.billingRead("2026-10-25").size, 1)
     store.billingClear("2026-10-25")
     assertEquals(store.billingRead("2026-10-25"), Nil)
@@ -427,15 +437,17 @@ class PerceptionCoreSpec extends FunSuite:
     PerceptionModel.IncomingMail(uid, "s@x.com", "x.com", List("me@qq.com"), "您的验证码", "", s"<m$uid@x>", "code 111222")
 
   extension (core: PerceptionCore)
+
     /** Test seam: register an account WITHOUT touching real IMAP/secrets. */
     def connectForTest(address: String): IO[Unit] =
-      for
-        _ <- core.testInjectAccount(MailAccount(
-          id = address.replaceAll("[^a-z0-9]", ""),
-          address = address,
-          imapHost = "imap.test",
-          smtpHost = "smtp.test",
-          authCodeSecret = ""
-        ))
+      for _ <- core.testInjectAccount(
+          MailAccount(
+            id = address.replaceAll("[^a-z0-9]", ""),
+            address = address,
+            imapHost = "imap.test",
+            smtpHost = "smtp.test",
+            authCodeSecret = ""
+          )
+        )
       yield ()
 end PerceptionCoreSpec

@@ -74,6 +74,10 @@ class BgRemoteOutputRoutesSpec extends FunSuite:
       try os.remove.all(root)
       catch case _: Throwable => ()
 
+    end try
+
+  end withRoutes
+
   private def call(
     routes: HttpRoutes[IO],
     method: Method,
@@ -148,12 +152,23 @@ class BgRemoteOutputRoutesSpec extends FunSuite:
     finally BgTaskRegistry.unregister(id).unsafeRunSync()
   }
 
-  test("remote-output: no outputPath = 200 available:false reasonKind=noOutputPath (permanent — frontend stops polling)") {
+  test(
+    "remote-output: no outputPath = 200 available:false reasonKind=noOutputPath (permanent — frontend stops polling)"
+  ) {
     val id = s"rt-nopath-${System.nanoTime().toString.take(8)}"
     try
       withRoutes { routes =>
         BgTaskRegistry
-          .register(id, "sess-y", "[KAI] interactive cmd", "remote", rootSessionId = "sess-y", origin = "device", originLabel = "KAI", deviceName = "KAI")
+          .register(
+            id,
+            "sess-y",
+            "[KAI] interactive cmd",
+            "remote",
+            rootSessionId = "sess-y",
+            origin = "device",
+            originLabel = "KAI",
+            deviceName = "KAI"
+          )
           .unsafeRunSync()
         val (st, body) = call(routes, Method.GET, s"/bg-tasks/$id/remote-output")
         assertEquals(st.code, 200)
@@ -165,6 +180,7 @@ class BgRemoteOutputRoutesSpec extends FunSuite:
         assert(b.hcursor.get[String]("reason").toOption.exists(_.contains("redirect")), "原因须可读（不再「暂不支持」）")
       }
     finally BgTaskRegistry.unregister(id).unsafeRunSync()
+    end try
   }
 
   test("remote-output: outputPath known but no executor singleton = 200 available:false reasonKind=noExecutor") {
@@ -173,8 +189,14 @@ class BgRemoteOutputRoutesSpec extends FunSuite:
       withRoutes { routes =>
         BgTaskRegistry
           .register(
-            id, "sess-z", "[KAI] sbt full test", "remote", rootSessionId = "sess-z",
-            origin = "device", originLabel = "KAI", deviceName = "KAI",
+            id,
+            "sess-z",
+            "[KAI] sbt full test",
+            "remote",
+            rootSessionId = "sess-z",
+            origin = "device",
+            originLabel = "KAI",
+            deviceName = "KAI",
             outputPath = "/c/Users/Kai/stand-win-test5.log"
           )
           .unsafeRunSync()
@@ -188,6 +210,7 @@ class BgRemoteOutputRoutesSpec extends FunSuite:
         assertEquals(b.hcursor.get[String]("outputPath").toOption, Some("/c/Users/Kai/stand-win-test5.log"))
       }
     finally BgTaskRegistry.unregister(id).unsafeRunSync()
+    end try
   }
 
 end BgRemoteOutputRoutesSpec

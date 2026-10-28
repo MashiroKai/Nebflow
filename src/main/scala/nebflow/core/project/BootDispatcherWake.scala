@@ -227,9 +227,11 @@ object BootDispatcherWake:
   val KindGraceful: String = "graceful"
   val KindUnclean: String = "unclean"
 
-  /** 项目 `.nebflow` 目录（与 `FlowMapStore.open` / `ProjectMemory.path` 同规解析）。
-    * 跨设备批（2026-10-25）：引擎本机存储座位——本机项目 = workspace；设备项目 =
-    * 本机 brain 根（设备路径不是本机盘路径，与挂载面存储锚同源）。 */
+  /**
+   * 项目 `.nebflow` 目录（与 `FlowMapStore.open` / `ProjectMemory.path` 同规解析）。
+   * 跨设备批（2026-10-25）：引擎本机存储座位——本机项目 = workspace；设备项目 =
+   * 本机 brain 根（设备路径不是本机盘路径，与挂载面存储锚同源）。
+   */
   def nebflowDir(pd: ProjectDef): os.Path =
     os.Path(ProjectStore.brainWorkspace(pd), PathUtil.dataRoot) / ".nebflow"
 

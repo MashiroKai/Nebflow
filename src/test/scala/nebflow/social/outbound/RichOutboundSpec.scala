@@ -157,7 +157,15 @@ class RichOutboundSpec extends CatsEffectSuite:
     // default reads the process-global data root, which other suites mutate, so a
     // spec that used it would be coupled to their state. The long-shot seam
     // defaults to Unavailable so no test ever starts node (the offline discipline).
-    new RichFeishuAdapter(rec.uploadImage, rec.uploadFile, rec.sendMsg, rec.sendText, renderer, () => tmpDir(), longshot)
+    new RichFeishuAdapter(
+      rec.uploadImage,
+      rec.uploadFile,
+      rec.sendMsg,
+      rec.sendText,
+      renderer,
+      () => tmpDir(),
+      longshot
+    )
 
   private val CardHtml = """<!doctype html><html><body><h1>hello card</h1></body></html>"""
 
@@ -949,7 +957,11 @@ class RichOutboundSpec extends CatsEffectSuite:
           assertEquals(texts.size, 1, "the refusal lands as one text reading")
           assert(texts.head.contains("[未渲染]"), s"the closed placeholder: ${texts.head}")
           assert(texts.head.contains(md.toString), s"the note survives the degrade: ${texts.head}")
-          assertEquals(results.size, 1, "the degrade card is the one reading (the refused upload leaves no upload reading)")
+          assertEquals(
+            results.size,
+            1,
+            "the degrade card is the one reading (the refused upload leaves no upload reading)"
+          )
           assert(results.head.ok, "the CARD was delivered — the refusal lives in the card text, not a failed send")
       }
   }

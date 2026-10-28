@@ -51,6 +51,8 @@ trait DecisionHealthPort:
   def recordAllocationOutcome(legs: Map[String, DecisionHealth], effective: DecisionHealth): IO[Unit] =
     IO.unit
 
+end DecisionHealthPort
+
 /**
  * In-memory decision-health monitor.
  *
@@ -100,7 +102,10 @@ final class DecisionHealthMonitor extends DecisionHealthPort:
       // legs 键是**加法**扩展：无分腿记账（legacy 直写路径）时载荷与旧形
       // byte-identical（P2 golden-diff 纪律）；有记账才多出 `legs` 块。
       if legs.isEmpty then baseJson
-      else baseJson.deepMerge(Json.obj("legs" -> Json.fromFields(legs.toList.sortBy(_._1).map { case (k, v) => k -> legJson(v) })))
+      else
+        baseJson.deepMerge(Json.obj("legs" -> Json.fromFields(legs.toList.sortBy(_._1).map { case (k, v) =>
+          k -> legJson(v)
+        })))
     }
 
   private def legJson(h: DecisionHealth): Json = h match

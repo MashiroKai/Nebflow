@@ -19,11 +19,11 @@ class DaemonSpawnSpec extends FunSuite:
   // ── decide matrix ──────────────────────────────────────────────────────
 
   private def decide(
-      cmdArgs: List[String],
-      succeed: Option[os.Path] = None,
-      daemonChild: Boolean = false,
-      foreground: Boolean = false,
-      spawnable: Boolean = true
+    cmdArgs: List[String],
+    succeed: Option[os.Path] = None,
+    daemonChild: Boolean = false,
+    foreground: Boolean = false,
+    spawnable: Boolean = true
   ): Dispatch =
     MainDispatch.decide(cmdArgs, succeed, daemonChild, foreground, spawnable)
 

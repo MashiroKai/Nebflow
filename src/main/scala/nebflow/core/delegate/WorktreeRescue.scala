@@ -38,7 +38,7 @@ object WorktreeRescue:
       if isEmpty then ""
       else
         val sample = rescued.take(3).mkString(",")
-        val more   = if rescued.size > 3 then s"…+${rescued.size - 3}" else ""
+        val more = if rescued.size > 3 then s"…+${rescued.size - 3}" else ""
         s"rescue rescued=${rescued.size} skipped=${skipped.size} failed=${failed.size}" +
           (if rescued.nonEmpty then s" [$sample$more]" else "")
 
@@ -49,8 +49,8 @@ object WorktreeRescue:
   def rescue(ws: os.Path, worktree: os.Path): Report =
     if !os.isDir(worktree) then Report()
     else
-      val (rescued, skipped, failed) = GuardedDirs.foldLeft((List.empty[String], List.empty[String], List.empty[String])) {
-        case ((r, s, f), dir) =>
+      val (rescued, skipped, failed) =
+        GuardedDirs.foldLeft((List.empty[String], List.empty[String], List.empty[String])) { case ((r, s, f), dir) =>
           val root = worktree / dir
           if !os.isDir(root) then (r, s, f)
           else
@@ -69,14 +69,15 @@ object WorktreeRescue:
                   logger.info(s"worktree rescue copied into main workspace: $rel")
                   (rel.toString :: r2, s2, f2)
               }.fold(
-                e => {
+                e =>
                   logger.warn(s"worktree rescue failed for $rel (kept going): ${e.getMessage}")
                   (r2, s2, rel.toString :: f2)
-                },
+                ,
                 identity
               )
             }
-      }
+          end if
+        }
       Report(rescued.reverse, skipped.reverse, failed.reverse)
 
 end WorktreeRescue

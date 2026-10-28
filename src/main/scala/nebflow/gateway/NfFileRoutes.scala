@@ -244,7 +244,7 @@ object NfFileRoutes:
       // 出向统一补是唯一不会在某条错误腿上断直传的面。
       val corsWrap = (io: IO[Response[IO]]) => io.map(_.putHeaders(NfFileCorsHeaders*))
       corsWrap(
-          if rawPath.isEmpty then BadRequest("Missing 'path' parameter")
+        if rawPath.isEmpty then BadRequest("Missing 'path' parameter")
         else if ticket.isEmpty then
           // Not the DSL `Unauthorized`: that constructor demands a
           // WWW-Authenticate challenge, and this route has no auth scheme to
@@ -320,7 +320,7 @@ object NfFileRoutes:
                   case Right(resp) => IO.pure(resp.withBodyStream(resp.body.onFinalize(gate.release)))
                 }
           }
-    ) // corsWrap(…) — 全出向补 CORS/PNA 头（LAN 直传腿）
+      ) // corsWrap(…) — 全出向补 CORS/PNA 头（LAN 直传腿）
   }
 
   /**
@@ -386,19 +386,18 @@ object NfFileRoutes:
                       // 拿它做 LAN 直传阈值判定（≥4MiB 且近路在册 ⇒ 直连取）。
                       // verdict 与 stat 之间文件可能消失/变化——stat 失败回 0
                       // （= 未知尺寸，前端按不直传处理，诚实降级）。
-                      IO.blocking(java.nio.file.Files.size(real)).attempt.map(_.getOrElse(0L)).flatMap {
-                        size =>
-                          store.issue(sessionId, real.toString).map { issued =>
-                            Right(
-                              p,
-                              Json.obj(
-                                "t" -> issued.token.asJson,
-                                "exp" -> issued.expiresAt.asJson,
-                                "uses" -> issued.remaining.asJson,
-                                "size" -> size.asJson
-                              )
+                      IO.blocking(java.nio.file.Files.size(real)).attempt.map(_.getOrElse(0L)).flatMap { size =>
+                        store.issue(sessionId, real.toString).map { issued =>
+                          Right(
+                            p,
+                            Json.obj(
+                              "t" -> issued.token.asJson,
+                              "exp" -> issued.expiresAt.asJson,
+                              "uses" -> issued.remaining.asJson,
+                              "size" -> size.asJson
                             )
-                          }
+                          )
+                        }
                       }
                     case denied: NfVerdict.Denied =>
                       IO.pure(Left(p, Json.obj("path" -> p.asJson, "reason" -> denied.reason.asJson)))
@@ -462,11 +461,13 @@ object NfFileRoutes:
                 nebflow.shared.TunnelOriginMark.isMarked(req)
             val slid = cred match
               case Credential.ViaSession(rec) => Some(GatewaySessionStore.newCookie(rec.sessionId, secure = secure))
-              case _                          => None
+              case _ => None
             NoContent().map(resp =>
-              slid.fold(resp)(resp.addCookie).putHeaders(
-                Header.Raw(org.typelevel.ci.CIString(GatewayAuth.CredentialHeader), cred.railName)
-              )
+              slid
+                .fold(resp)(resp.addCookie)
+                .putHeaders(
+                  Header.Raw(org.typelevel.ci.CIString(GatewayAuth.CredentialHeader), cred.railName)
+                )
             )
         }
     }

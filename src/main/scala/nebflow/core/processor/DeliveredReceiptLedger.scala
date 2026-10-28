@@ -61,6 +61,7 @@ object DeliveredReceiptLedger:
 
   object Ledger:
     given Encoder[Ledger] = Encoder.instance(l => Json.obj("v" -> l.v.asJson, "ids" -> l.ids.asJson))
+
     given Decoder[Ledger] = Decoder.instance { c =>
       for v <- c.get[Option[Int]]("v"); ids <- c.get[Option[List[String]]]("ids")
       yield Ledger(v.getOrElse(1), ids.getOrElse(Nil))
@@ -83,7 +84,9 @@ object DeliveredReceiptLedger:
           decode[Ledger](os.read(f)) match
             case Right(l) => l.ids.toSet
             case Left(e) =>
-              logger.warn(s"DeliveredReceiptLedger.load: corrupt ledger for $sessionId — treated as empty (${e.getMessage})")
+              logger.warn(
+                s"DeliveredReceiptLedger.load: corrupt ledger for $sessionId — treated as empty (${e.getMessage})"
+              )
               Set.empty[String]
       }.handleErrorWith(e =>
         logger.warn(s"DeliveredReceiptLedger.load failed for $sessionId: ${e.getMessage}").as(Set.empty[String])
@@ -110,9 +113,14 @@ object DeliveredReceiptLedger:
             if !os.exists(f / os.up) then os.makeDir.all(f / os.up)
             AtomicJson.writeSync(f, Ledger(existing.v, capped).asJson.noSpaces)
         }
-      }.void.handleErrorWith(e =>
-        logger.warn(s"DeliveredReceiptLedger.markDelivered failed for $sessionId: ${e.getMessage}").void
-      )
+      }.void
+        .handleErrorWith(e =>
+          logger.warn(s"DeliveredReceiptLedger.markDelivered failed for $sessionId: ${e.getMessage}").void
+        )
+
+    end if
+
+  end markDelivered
 
   /** 身份判据（纯函数）：有 correlationId 的事件才具备跨重启稳定身份。 */
   def hasStableId(e: AgentCommand.ExternalEvent): Boolean =

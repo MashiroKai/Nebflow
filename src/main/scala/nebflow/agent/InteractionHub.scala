@@ -85,9 +85,8 @@ object InteractionHub:
               rootWsSend.update(_ - rootSessionId) *> IO.pure(behavior)
             case InteractionHubCommand.Request(req) =>
               // 重启孤儿对账批：槽位注册随行记账（best-effort，绝不阻断提问链）。
-              val ledgerRecord = ledger.fold(IO.unit)(l =>
-                l.record(PendingAskLedger.Entry.of(req, firstQuestionExcerpt(req.payload)))
-              )
+              val ledgerRecord =
+                ledger.fold(IO.unit)(l => l.record(PendingAskLedger.Entry.of(req, firstQuestionExcerpt(req.payload))))
               ctx.forkTurn(handleRequest(pending, rootWsSend, req) *> ledgerRecord) *> IO.pure(behavior)
             case InteractionHubCommand.Answered(ans) =>
               ctx.forkTurn(handleAnswered(pending, rootWsSend, ans, ledger)) *> IO.pure(behavior)
@@ -124,7 +123,9 @@ object InteractionHub:
               // askucancel 批（2026-10-08）：用户发起的取消——按 requestId 精确终结
               // 一个 AskUser 槽位。与上一条（调用侧撤回，#147）的差别 = kind 闸 +
               // 发起方终结通知 + 显式裁决（见 InteractionHubCommand.CancelRequest 注）。
-              ctx.forkTurn(handleCancelRequest(pending, rootWsSend, requestId, reason, by, reply, ledger)) *> IO.pure(behavior)
+              ctx.forkTurn(handleCancelRequest(pending, rootWsSend, requestId, reason, by, reply, ledger)) *> IO.pure(
+                behavior
+              )
             case InteractionHubCommand.SecretSlotsOf(requestId, reply) =>
               // askuser-secret 批（2026-10-08）：只读 secret 槽位查询（网关作答闸的
               // 判据来源）——见 InteractionHubCommand.SecretSlotsOf 注。
@@ -542,7 +543,8 @@ object InteractionHub:
       if ans.requestId.nonEmpty then
         m.get(ans.requestId) match
           case Some(p) =>
-            if answerCompletes(p, ans) then (m - ans.requestId, complete(p, ans, rootWsSend) *> ledgerRemove(ans.requestId))
+            if answerCompletes(p, ans) then
+              (m - ans.requestId, complete(p, ans, rootWsSend) *> ledgerRemove(ans.requestId))
             else
               // #12: a malformed answer must NOT consume the card — eating it
               // would strand the pending deferred forever with
@@ -605,6 +607,8 @@ object InteractionHub:
               )
             )
     }.flatten
+
+  end handleAnswered
 
   /**
    * #12: does this answer payload have the shape required to complete `p`?
@@ -903,7 +907,13 @@ object InteractionHub:
    * 关了」）：`via` 曾另有 `chat-input` 取值，随 `handleChatInputAnswer` 一并
    * 删除 ⇒ 现存唯一取值 = card（卡片入口作答）。
    */
-  private def auditAnswer(requestId: String, p: PendingRequest, answersJoined: String, via: String, attachNote: String = ""): IO[Unit] =
+  private def auditAnswer(
+    requestId: String,
+    p: PendingRequest,
+    answersJoined: String,
+    via: String,
+    attachNote: String = ""
+  ): IO[Unit] =
     val excerpt = if answersJoined.length > 200 then answersJoined.take(200) + "..." else answersJoined
     audit
       .info(
@@ -1066,11 +1076,11 @@ object InteractionHub:
         sends.toList.traverse_ { case (_, ws) =>
           ws(
             Json.obj(
-              "type"          -> "askUserClosed".asJson,
-              "sessionId"     -> p.rootSessionId.asJson,
-              "requestId"     -> ans.requestId.asJson,
+              "type" -> "askUserClosed".asJson,
+              "sessionId" -> p.rootSessionId.asJson,
+              "requestId" -> ans.requestId.asJson,
               "sourceSession" -> p.sourceSession.asJson,
-              "reason"        -> "answered".asJson
+              "reason" -> "answered".asJson
             )
           ).handleErrorWith(e =>
             logger.warn(s"askUserClosed(answered) broadcast failed requestId=${ans.requestId}: ${e.getMessage}")

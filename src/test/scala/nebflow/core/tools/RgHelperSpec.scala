@@ -187,7 +187,8 @@ class RgHelperSpec extends FunSuite:
           assertEquals(code, 0)
           assert(!truncated)
           // Windows rg 输出 ".\" 前缀 + 反斜杠分隔 —— 剥两种相对前缀并归一正斜杠。
-          val lines = stdout.trim.split("\\n").toList.map(l => l.stripPrefix("./").stripPrefix(".\\").replace('\\', '/')).sorted
+          val lines =
+            stdout.trim.split("\\n").toList.map(l => l.stripPrefix("./").stripPrefix(".\\").replace('\\', '/')).sorted
           assertEquals(lines, List("one.txt", "sub/two.txt"), "relative search must list cwd-relative paths")
         case Left(err) => fail(s"unexpected ToolError: ${err.message}")
     finally os.remove.all(tmp)

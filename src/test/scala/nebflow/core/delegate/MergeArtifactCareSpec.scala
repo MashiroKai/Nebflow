@@ -39,7 +39,9 @@ class MergeArtifactCareSpec extends FunSuite:
   private def removeForce(p: os.Path): Unit =
     if os.exists(p) then
       if scala.util.Properties.isWin then
-        try os.proc("cmd", "/c", "attrib", "-R", s"${p.toString}\\*", "/S", "/D").call(check = false, stdout = os.Pipe, stderr = os.Pipe)
+        try
+          os.proc("cmd", "/c", "attrib", "-R", s"${p.toString}\\*", "/S", "/D")
+            .call(check = false, stdout = os.Pipe, stderr = os.Pipe)
         catch case _: Throwable => ()
         try os.proc("cmd", "/c", "attrib", "-R", p.toString).call(check = false, stdout = os.Pipe, stderr = os.Pipe)
         catch case _: Throwable => ()
@@ -95,15 +97,29 @@ class MergeArtifactCareSpec extends FunSuite:
     os.write(repo / "notes" / "scratch.txt", "someone's stray note", createFolders = true)
     val report = MergeArtifactCare.hygiene(repo, ctx)
     // porcelain 把整目录未跟踪折叠成 `?? notes/`——判性按折叠形整目录隔离。
-    assertEquals(report.triagedQuarantined, List("notes"), "the stray out-of-path untracked dir is quarantined (collapsed form)")
+    assertEquals(
+      report.triagedQuarantined,
+      List("notes"),
+      "the stray out-of-path untracked dir is quarantined (collapsed form)"
+    )
     assertEquals(os.exists(repo / "notes"), false, "the repo tree is clean of it")
     val dir = report.quarantineDir.map(os.Path(_)).getOrElse(fail("quarantineDir must be recorded"))
-    assert(dir.toString.startsWith(MergeArtifactCare.quarantineRoot.toString), "quarantine lives under the data root, OUTSIDE the repo")
+    assert(
+      dir.toString.startsWith(MergeArtifactCare.quarantineRoot.toString),
+      "quarantine lives under the data root, OUTSIDE the repo"
+    )
     val provenance = os.read(dir / "PROVENANCE.json")
     assert(provenance.contains("notes"), s"PROVENANCE names the original path: $provenance")
     assert(provenance.contains(repo.toString.replace("\\", "\\\\")), "PROVENANCE records the origin workspace")
-    assert(provenance.contains("d-943") && provenance.contains("b1"), "PROVENANCE records the delegate/branch attribution")
-    assertEquals(os.read(dir / "notes" / "scratch.txt"), "someone's stray note", "the quarantined file is intact (nothing lost)")
+    assert(
+      provenance.contains("d-943") && provenance.contains("b1"),
+      "PROVENANCE records the delegate/branch attribution"
+    )
+    assertEquals(
+      os.read(dir / "notes" / "scratch.txt"),
+      "someone's stray note",
+      "the quarantined file is intact (nothing lost)"
+    )
   }
 
   test("③ whitelisted untracked NOT on the branch is still absorbed (deliverable semantics unchanged)") {
@@ -118,14 +134,19 @@ class MergeArtifactCareSpec extends FunSuite:
     assertEquals(report.remainingDirty, Nil, "the tree is clean after the absorb commit")
   }
 
-  test("④ whitelisted tracked overwrite is restored (10-23 semantics); out-of-path tracked dirt is NEVER touched (honest remainingDirty)") {
+  test(
+    "④ whitelisted tracked overwrite is restored (10-23 semantics); out-of-path tracked dirt is NEVER touched (honest remainingDirty)"
+  ) {
     val repo = mkRepo(tempRoot / "mqac-tracked")
     os.write.over(repo / "evidence" / "tracked.txt", "dirty overwrite") // whitelisted tracked dirt
     os.write.over(repo / "base.txt", "source dirt") // out-of-path tracked dirt — never touched
     val report = MergeArtifactCare.hygiene(repo, ctx)
     assertEquals(report.restored, List("evidence/tracked.txt"), "the whitelisted overwrite is restored")
     assertEquals(os.read(repo / "evidence" / "tracked.txt"), "tracked-v1")
-    assert(report.remainingDirty.contains("base.txt"), s"out-of-path dirt is honestly reported: ${report.remainingDirty}")
+    assert(
+      report.remainingDirty.contains("base.txt"),
+      s"out-of-path dirt is honestly reported: ${report.remainingDirty}"
+    )
     assertEquals(os.read(repo / "base.txt"), "source dirt", "out-of-path tracked dirt is never modified")
   }
 
@@ -133,10 +154,18 @@ class MergeArtifactCareSpec extends FunSuite:
     val repo = mkRepo(tempRoot / "mqac-dircollapse")
     os.write(repo / "build-cache" / "chunk.bin", "binary junk", createFolders = true)
     val report = MergeArtifactCare.hygiene(repo, ctx)
-    assertEquals(report.triagedQuarantined, List("build-cache"), "the collapsed dir entry is quarantined (normalized, no trailing slash)")
+    assertEquals(
+      report.triagedQuarantined,
+      List("build-cache"),
+      "the collapsed dir entry is quarantined (normalized, no trailing slash)"
+    )
     assertEquals(os.exists(repo / "build-cache"), false, "the dir is gone from the tree")
     val dir = report.quarantineDir.map(os.Path(_)).getOrElse(fail("quarantineDir must be recorded"))
-    assertEquals(Try(os.read(dir / "build-cache" / "chunk.bin")).toOption, Some("binary junk"), "the quarantined dir is intact")
+    assertEquals(
+      Try(os.read(dir / "build-cache" / "chunk.bin")).toOption,
+      Some("binary junk"),
+      "the quarantined dir is intact"
+    )
   }
 
   test("⑥ fail-soft: a non-repo path reports an error and never throws") {

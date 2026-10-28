@@ -43,6 +43,7 @@ class MergeQueueRestartReminderSpec extends FunSuite:
 
   private class SilentLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -66,6 +67,8 @@ class MergeQueueRestartReminderSpec extends FunSuite:
     if merge then g("merge", "--no-ff", branch, "-m", "merge the branch")
     dir
 
+  end mkRepo
+
   private def member(id: String, repo: os.Path, readyAt: Long): MergeQueue.Member =
     MergeQueue.Member(
       delegateId = id,
@@ -84,7 +87,10 @@ class MergeQueueRestartReminderSpec extends FunSuite:
   private def ledgerActions(delegateId: String): List[String] =
     ChainStore.listSync().flatMap(_.entries).filter(_.kind == MergeQueue.EntryKind).flatMap { e =>
       val c = e.payload.hcursor
-      c.get[String]("delegateId").toOption.filter(_ == delegateId).map(_ => c.get[String]("action").toOption.getOrElse(""))
+      c.get[String]("delegateId")
+        .toOption
+        .filter(_ == delegateId)
+        .map(_ => c.get[String]("action").toOption.getOrElse(""))
     }
 
   /** 重试/滞留/重挂词汇（退役词——账面上零出现）。 */
@@ -101,12 +107,22 @@ class MergeQueueRestartReminderSpec extends FunSuite:
     "recovery-blocked"
   )
 
-  test("① terminal members are invisible to the boot sweep (closed is closed — a restart never re-opens a membership)") {
+  test(
+    "① terminal members are invisible to the boot sweep (closed is closed — a restart never re-opens a membership)"
+  ) {
     val repo = mkRepo(tempRoot / "rr-repo", branch = "delegate/rr-a", merge = true)
     // 三条终态成员（merged / owner-gone / failed）直接落账。
-    MergeQueue.seedMemberForTest(member("rr-merged", repo, readyAt = 1L).copy(state = "merged", closedAt = Some(1L), closeReason = Some("landed")))
-    MergeQueue.seedMemberForTest(member("rr-gone", repo, readyAt = 2L).copy(state = "owner-gone", closedAt = Some(2L), closeReason = Some("session gone")))
-    MergeQueue.seedMemberForTest(member("rr-failed", repo, readyAt = 3L).copy(state = "failed", closedAt = Some(3L), closeReason = Some("CONFLICT")))
+    MergeQueue.seedMemberForTest(
+      member("rr-merged", repo, readyAt = 1L).copy(state = "merged", closedAt = Some(1L), closeReason = Some("landed"))
+    )
+    MergeQueue.seedMemberForTest(
+      member("rr-gone", repo, readyAt = 2L)
+        .copy(state = "owner-gone", closedAt = Some(2L), closeReason = Some("session gone"))
+    )
+    MergeQueue.seedMemberForTest(
+      member("rr-failed", repo, readyAt = 3L)
+        .copy(state = "failed", closedAt = Some(3L), closeReason = Some("CONFLICT"))
+    )
     MergeQueue.dropMemoryStateForTest() // 重启模拟
     val system = ActorSystem(s"mqr-1-${scala.util.Random.nextInt(100000)}")
     val (report, open, states) = (for
@@ -126,11 +142,15 @@ class MergeQueueRestartReminderSpec extends FunSuite:
   test("② the retry vocabulary is retired: a full grant→refused lifecycle leaves no park/retry words on the ledger") {
     val repo = mkRepo(tempRoot / "rr2-repo", branch = "delegate/rr-life", merge = false)
     val system = ActorSystem(s"mqr-2-${scala.util.Random.nextInt(100000)}")
-    val records = scala.collection.mutable.ListBuffer.empty[(String, Option[nebflow.actor.ActorRef[nebflow.actor.AgentEvent]])]
+    val records =
+      scala.collection.mutable.ListBuffer.empty[(String, Option[nebflow.actor.ActorRef[nebflow.actor.AgentEvent]])]
     val (child, sup) = (for
       child <- system.spawn(
         new nebflow.actor.Behavior[nebflow.actor.AgentCommand]:
-          def receive(ctx: nebflow.actor.ActorContext[nebflow.actor.AgentCommand], msg: nebflow.actor.AgentCommand): IO[nebflow.actor.Behavior[nebflow.actor.AgentCommand]] =
+          def receive(
+            ctx: nebflow.actor.ActorContext[nebflow.actor.AgentCommand],
+            msg: nebflow.actor.AgentCommand
+          ): IO[nebflow.actor.Behavior[nebflow.actor.AgentCommand]] =
             msg match
               case nebflow.actor.AgentCommand.UserInput(text, replyTo, _, _, _, _, _, _, _, _, _, _, _, _) =>
                 IO { records += ((text, replyTo)); this }
@@ -140,7 +160,10 @@ class MergeQueueRestartReminderSpec extends FunSuite:
       )
       sup <- system.spawn(
         new nebflow.actor.Behavior[nebflow.actor.AgentEvent]:
-          def receive(ctx: nebflow.actor.ActorContext[nebflow.actor.AgentEvent], msg: nebflow.actor.AgentEvent): IO[nebflow.actor.Behavior[nebflow.actor.AgentEvent]] =
+          def receive(
+            ctx: nebflow.actor.ActorContext[nebflow.actor.AgentEvent],
+            msg: nebflow.actor.AgentEvent
+          ): IO[nebflow.actor.Behavior[nebflow.actor.AgentEvent]] =
             IO.pure(this)
         ,
         s"rr-life-sup-${scala.util.Random.nextInt(100000)}"

@@ -99,19 +99,21 @@ class BridgeManager private (
   // instead of re-running the (state-heavy) plugin startup. A failed start
   // releases the claim so a later retry is possible.
   private def startPlugin(p: BridgePlugin): IO[Unit] =
-    startedRef.modify { s =>
-      if s.contains(p.name) then (s, false) else (s + p.name, true)
-    }.flatMap {
-      case false =>
-        logger.info(s"Bridge plugin '${p.name}' already started — duplicate start skipped")
-      case true =>
-        p.start(ctx).attempt.flatMap {
-          case Right(_) => logger.info(s"Bridge plugin '${p.name}' started")
-          case Left(e) =>
-            startedRef.update(_ - p.name) *>
-              logger.error(s"Bridge plugin '${p.name}' failed to start: ${e.getMessage}")
-        }
-    }
+    startedRef
+      .modify { s =>
+        if s.contains(p.name) then (s, false) else (s + p.name, true)
+      }
+      .flatMap {
+        case false =>
+          logger.info(s"Bridge plugin '${p.name}' already started — duplicate start skipped")
+        case true =>
+          p.start(ctx).attempt.flatMap {
+            case Right(_) => logger.info(s"Bridge plugin '${p.name}' started")
+            case Left(e) =>
+              startedRef.update(_ - p.name) *>
+                logger.error(s"Bridge plugin '${p.name}' failed to start: ${e.getMessage}")
+          }
+      }
 
   /**
    * Stop every plugin. Mirrors [[startAll]]'s per-plugin log discipline: the

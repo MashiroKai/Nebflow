@@ -105,7 +105,10 @@ class DetachedApplySpec extends CatsEffectSuite:
     ).foreach(fragment => assert(s.contains(fragment), s"missing '$fragment' in ps1 script"))
     // PowerShell 双引号串内 `$var:` 会被解析成 drive-qualified 变量 ⇒ 整脚本 ParserError 起不来
     // （`$env:` 合法、`${x}:` 已定界——两者都放行）
-    assert(!s.matches("(?s).*\\$(?!env:)(?!\\{)[A-Za-z_][A-Za-z0-9_]*:.*"), "ps1 must not contain bare $var: interpolation")
+    assert(
+      !s.matches("(?s).*\\$(?!env:)(?!\\{)[A-Za-z_][A-Za-z0-9_]*:.*"),
+      "ps1 must not contain bare $var: interpolation"
+    )
     assert(s.contains("${label}: health OK"), "interpolation must be ${label}-delimited")
   }
 
@@ -116,14 +119,20 @@ class DetachedApplySpec extends CatsEffectSuite:
     for
       r <- DetachedApply.register(p, fakeRun)
       _ = assert(r.isRight, s"registration expected to succeed, got $r")
-      xml <- IO.blocking(new String(os.read.bytes(p.dataRoot / "apply" / s"${p.winTask}.xml"), java.nio.charset.StandardCharsets.UTF_16))
+      xml <- IO.blocking(
+        new String(os.read.bytes(p.dataRoot / "apply" / s"${p.winTask}.xml"), java.nio.charset.StandardCharsets.UTF_16)
+      )
       _ = assert(xml.contains("<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"), xml)
       _ = assert(xml.contains("<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>"), xml)
-      _ = assert(xml.contains("\\WindowsPowerShell\\v1.0\\powershell.exe<"), "Command must be the FULL powershell path (bare name unresolvable in TS service context)")
+      _ = assert(
+        xml.contains("\\WindowsPowerShell\\v1.0\\powershell.exe<"),
+        "Command must be the FULL powershell path (bare name unresolvable in TS service context)"
+      )
       _ = assert(xml.contains("-File \""), "ps1 path must stay quoted inside Arguments")
       _ = assert(!xml.contains("/TR"), "legacy /TR face must be gone")
       _ = assert(cmds.exists(c => c.contains("/XML")), "schtasks /Create /XML expected")
     yield ()
+    end for
   }
 
   test("state json renderer escapes cause quotes") {
@@ -136,8 +145,7 @@ class DetachedApplySpec extends CatsEffectSuite:
   test("windows registration issues create+run with the generated ps1 path") {
     val p = planIn(sandbox())
     val cmds = scala.collection.mutable.ListBuffer.empty[List[String]]
-    val fakeRun: DetachedApply.Run = c =>
-      IO { cmds += c; Right("ok") }
+    val fakeRun: DetachedApply.Run = c => IO { cmds += c; Right("ok") }
     for
       r <- DetachedApply.register(p, fakeRun)
       _ = assert(r.isRight, s"registration expected to succeed, got $r")
@@ -167,7 +175,9 @@ class DetachedApplySpec extends CatsEffectSuite:
       _ = assert(cmds.exists(_ == List("id", "-u")), "uid resolved first (no $(id -u) through argv)")
       _ = assert(cmds.exists(c => c.take(2) == List("/bin/launchctl", "bootstrap")))
       _ = assert(
-        cmds.exists(c => c.take(2) == List("/bin/launchctl", "kickstart") && c.last.endsWith("gui/501/" + DetachedApply.macLabel(p)))
+        cmds.exists(c =>
+          c.take(2) == List("/bin/launchctl", "kickstart") && c.last.endsWith("gui/501/" + DetachedApply.macLabel(p))
+        )
       )
       _ = assert(os.exists(DetachedApply.macPlist(p)), "plist written")
     yield ()
@@ -209,7 +219,10 @@ class DetachedApplySpec extends CatsEffectSuite:
       _ = assert(none.isEmpty, "missing state file → no reconcile line")
       _ <- IO.blocking {
         os.makeDir.all(DetachedApply.applyDir(p.dataRoot))
-        os.write.over(DetachedApply.statePath(p.dataRoot), DetachedApply.renderStateJson("restart", "done", 6138, None, None, "t"))
+        os.write.over(
+          DetachedApply.statePath(p.dataRoot),
+          DetachedApply.renderStateJson("restart", "done", 6138, None, None, "t")
+        )
       }
       terminal <- DetachedApply.reconcileOnBoot(p.dataRoot)
       _ = assert(terminal.isEmpty, "terminal phase → silent")
@@ -231,7 +244,10 @@ class DetachedApplySpec extends CatsEffectSuite:
         assertEquals(s.version, "2026.10.27-beta.1")
         assertEquals(s.idempotentHit, false)
         assert(os.exists(os.Path(s.stagedPath)))
-        assert(!os.exists(os.Path(s.stagedPath) / os.up / s"${s.jarName}.part"), "no .part residue in the selection face")
+        assert(
+          !os.exists(os.Path(s.stagedPath) / os.up / s"${s.jarName}.part"),
+          "no .part residue in the selection face"
+        )
     }
   }
 
@@ -246,11 +262,11 @@ class DetachedApplySpec extends CatsEffectSuite:
       second <- UpdateStage.stage(jar, bin, DetachedApply.Layout.Pointer)
       _ = second match
         case Right(s) => assertEquals(s.idempotentHit, true)
-        case Left(e)  => fail(e)
+        case Left(e) => fail(e)
       _ <- IO.blocking(os.write.over(jar, "JARBYTES-2"))
       third <- UpdateStage.stage(jar, bin, DetachedApply.Layout.Pointer)
       _ = third match
-        case Left(e)  => assert(e.contains("DIFFERENT content"))
+        case Left(e) => assert(e.contains("DIFFERENT content"))
         case Right(s) => fail(s"expected refusal, got $s")
     yield ()
   }
@@ -263,7 +279,7 @@ class DetachedApplySpec extends CatsEffectSuite:
     for
       refused <- UpdateStage.stage(jar, bin, DetachedApply.Layout.WinsortFlat)
       _ = refused match
-        case Left(e)  => assert(e.contains("not winsort-selectable"))
+        case Left(e) => assert(e.contains("not winsort-selectable"))
         case Right(s) => fail(s"expected refusal, got $s")
       // 指针布局接受该形状（指针直名，不依赖排序）
       ok <- UpdateStage.stage(jar, bin, DetachedApply.Layout.Pointer)
@@ -300,6 +316,7 @@ class DetachedApplySpec extends CatsEffectSuite:
           assertEquals(os.read(InstallPointer.currentPath(bin)).trim, "2026.10.27-beta.1")
         case Right(_) => fail("expected refusal for a jarless version")
     yield ()
+    end for
   }
 
   test("update registration failure restores the pre-promote pointers") {
@@ -329,6 +346,7 @@ class DetachedApplySpec extends CatsEffectSuite:
       _ = assertEquals(cur, "2026.10.26-beta.1")
       _ = assertEquals(prev, "2026.10.21-beta.2")
     yield ()
+    end for
   }
 
   // ── launcher 解析 ────────────────────────────────────────────────────────
@@ -359,6 +377,7 @@ end DetachedApplySpec
 
 /** writeTrimmed 是 private——spec 经公开包裹使用（测试面单独放行）。 */
 object DetachedApplySpecAccess:
+
   def writeTrimmedIO(path: os.Path, value: String): IO[Unit] =
     IO.blocking {
       os.makeDir.all(path / os.up)

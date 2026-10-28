@@ -391,7 +391,8 @@ class NfTicketRoutesSpec extends CatsEffectSuite:
         def probe(uri: String, cookie: Option[(String, String)] = None, bearer: Option[String] = None) =
           val base = Request[IO](Method.GET, Uri.unsafeFromString(uri))
           val authed = cookie.fold(base)(c => base.addCookie(c._1, c._2))
-          val withBearer = bearer.fold(authed)(t => authed.putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, t))))
+          val withBearer =
+            bearer.fold(authed)(t => authed.putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, t))))
           NfFileRoutes
             .nfAuthcheckRoutes(TokenRef, Sessions)(
               SpecRequests.withRemote(withBearer, Some(SpecRequests.LoopbackV4))

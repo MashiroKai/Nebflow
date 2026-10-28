@@ -116,7 +116,19 @@ object DeviceDelegate:
     val tsSec = nowMs / 1000
     val sig = DeviceHmac.sign(
       sharedKey,
-      spawnCanonical(fromDeviceId, tsSec, nonce, spawnId, projectName, workspace, task, title, parentSessionId, rootSessionId, taskId)
+      spawnCanonical(
+        fromDeviceId,
+        tsSec,
+        nonce,
+        spawnId,
+        projectName,
+        workspace,
+        task,
+        title,
+        parentSessionId,
+        rootSessionId,
+        taskId
+      )
     )
     Json.obj(
       "kind" -> KindSpawn.asJson,
@@ -134,6 +146,8 @@ object DeviceDelegate:
       "nonce" -> nonce.asJson,
       "sig" -> sig.asJson
     )
+
+  end buildSpawnPayload
 
   private def newNonce(): String =
     java.util.UUID.randomUUID().toString.replace("-", "")
@@ -177,8 +191,17 @@ object DeviceDelegate:
               )
             case Some(key) =>
               val payload = buildSpawnPayload(
-                key, selfId, selfName, spawnId, projectName, workspace, task, title,
-                parentSessionId, rootSessionId, taskId
+                key,
+                selfId,
+                selfName,
+                spawnId,
+                projectName,
+                workspace,
+                task,
+                title,
+                parentSessionId,
+                rootSessionId,
+                taskId
               )
               sendToDevice(resources, peer.deviceId, payload)
           }
@@ -255,10 +278,11 @@ object DeviceDelegate:
     ) *>
       DeviceResultOutbox.enqueue(hostDeviceId, ChannelName, payload, task.taskId).void
 
+  end enqueueLostResultNotice
+
   /** 本机 deviceId（同步只读探测；设备身份文件缺席 = 空串，显示面退化可接受）。 */
   private def neblinkDeviceId(): String =
-    try
-      nebflow.neblink.DeviceIdentity.readDeviceIdOnly.getOrElse("")
+    try nebflow.neblink.DeviceIdentity.readDeviceIdOnly.getOrElse("")
     catch case _: Throwable => ""
 
   /**
@@ -282,16 +306,18 @@ object DeviceDelegate:
     id: String
   ): IO[Either[String, Json]] =
     DeviceResultOutbox.enqueue(deviceId, channel, payload, id) *>
-      sendToDevice(resources, deviceId, payload).flatMap {
-        case ok @ Right(_) =>
-          DeviceResultOutbox.delivered(id).as(ok)
-        case ko @ Left(_) => IO.pure(ko) // 留盘：等 relay 重连 / 下一次 boot 补投
-      }.handleErrorWith { err =>
-        // 发送腿自身炸了：件已在盘上，如实回 Left（下一次 drain 会重来）。
-        logger
-          .warn(s"[device-delegate] durable send errored for id=$id (kept in outbox): ${err.getMessage}")
-          .as(Left(Option(err.getMessage).getOrElse(err.getClass.getSimpleName)))
-      }
+      sendToDevice(resources, deviceId, payload)
+        .flatMap {
+          case ok @ Right(_) =>
+            DeviceResultOutbox.delivered(id).as(ok)
+          case ko @ Left(_) => IO.pure(ko) // 留盘：等 relay 重连 / 下一次 boot 补投
+        }
+        .handleErrorWith { err =>
+          // 发送腿自身炸了：件已在盘上，如实回 Left（下一次 drain 会重来）。
+          logger
+            .warn(s"[device-delegate] durable send errored for id=$id (kept in outbox): ${err.getMessage}")
+            .as(Left(Option(err.getMessage).getOrElse(err.getClass.getSimpleName)))
+        }
 
   /**
    * 补投待发区全量（relay（重）连上时调用；boot 亦有兜底调用点）。
@@ -317,6 +343,7 @@ object DeviceDelegate:
          else IO.unit)
           .as(report)
     }
+  end drainOutbox
 
   // ── 设备侧：接收装配 + spawn 处理 ─────────────────────────────────────
 
@@ -344,9 +371,10 @@ object DeviceDelegate:
         // 修法 = boot 期真注册：unsafeRunSync（既有先例 = GatewayMain
         // `neblinkConfigAtBoot.unsafeRunSync()`，同处 boot 链、同款阻塞语义）。
         // ⚠ 冲突面：本文件在作者 4 件 WIP 内，合并时将与其 WIP 冲突。
-        ns.addDataHandler(payload => handlePayload(resources, payload)).unsafeRunSync()(
-          using cats.effect.unsafe.implicits.global
-        )
+        ns.addDataHandler(payload => handlePayload(resources, payload))
+          .unsafeRunSync()(using
+            cats.effect.unsafe.implicits.global
+          )
         // 步2 判别读数：实例指纹（identityHashCode）——与分发面「svc=」指纹对照。
         logger.infoSync(
           s"DeviceDelegate receive face armed (channel: delegate-spawn/result/accept) ns=${System.identityHashCode(ns)}"
@@ -411,8 +439,17 @@ object DeviceDelegate:
           reject(s"device ${entry.deviceName} has allowSpawn=false in the pairing registry")
         case Some(entry) =>
           val canonical = spawnCanonical(
-            fromDeviceId, ts.toLongOption.getOrElse(0L), nonce, spawnId,
-            projectName, workspace, task, title, parentSessionId, rootSessionId, taskId
+            fromDeviceId,
+            ts.toLongOption.getOrElse(0L),
+            nonce,
+            spawnId,
+            projectName,
+            workspace,
+            task,
+            title,
+            parentSessionId,
+            rootSessionId,
+            taskId
           )
           val verify =
             if !DeviceHmac.tsFresh(ts, System.currentTimeMillis()) then
@@ -442,12 +479,15 @@ object DeviceDelegate:
                     "sessionId" -> localSessionId.asJson,
                     "deviceId" -> fromDeviceId.asJson
                   )
-                  sendToDevice(resources, fromDeviceId, accept).handleErrorWith(e =>
-                    // 注：此处的 logger.warn（IO 版）在 handleErrorWith 链内会真跑，
-                    // 勿改 Sync 变体（类型不符且不必要）——步2 复核留痕。
-                    logger.warn(s"[device-delegate] accept send failed for spawnId=$spawnId: ${e.getMessage}")
-                  ).void
+                  sendToDevice(resources, fromDeviceId, accept)
+                    .handleErrorWith(e =>
+                      // 注：此处的 logger.warn（IO 版）在 handleErrorWith 链内会真跑，
+                      // 勿改 Sync 变体（类型不符且不必要）——步2 复核留痕。
+                      logger.warn(s"[device-delegate] accept send failed for spawnId=$spawnId: ${e.getMessage}")
+                    )
+                    .void
               }
+          end match
       end match
     end if
   end handleSpawn
@@ -478,17 +518,20 @@ object DeviceDelegate:
       selfId <- resources.neblinkService.fold(IO.pure(""))(_.identity.map(_.deviceId))
       // 本机台账一条（对端自己的任务面可查；失败不阻断派发——fail-soft 先例）。
       // createSyncReturningId = Either[ToolError, String] ⇒ 双层 Option 折叠。
-      localTaskId <- IO.blocking {
-        nebflow.core.project.TaskLedgerStore
-          .open()
-          .createSyncReturningId(
-            title = s"$projectName — $title (device-delegate from ${fromDeviceName.take(40)})",
-            // 🔴 project 字段随派发面落库（#506 过滤字段错位修复，2026-10-18）——
-            // 与 DelegateTool.createLedgerEntry 同批同型；空名 = 缺省座位（None）。
-            project = Option(projectName).map(_.trim).filter(_.nonEmpty),
-            actor = nebflow.core.project.TaskLedgerHistory.Actors.Nebula
-          )
-      }.attempt.map(_.toOption.flatMap(_.toOption))
+      localTaskId <- IO
+        .blocking {
+          nebflow.core.project.TaskLedgerStore
+            .open()
+            .createSyncReturningId(
+              title = s"$projectName — $title (device-delegate from ${fromDeviceName.take(40)})",
+              // 🔴 project 字段随派发面落库（#506 过滤字段错位修复，2026-10-18）——
+              // 与 DelegateTool.createLedgerEntry 同批同型；空名 = 缺省座位（None）。
+              project = Option(projectName).map(_.trim).filter(_.nonEmpty),
+              actor = nebflow.core.project.TaskLedgerHistory.Actors.Nebula
+            )
+        }
+        .attempt
+        .map(_.toOption.flatMap(_.toOption))
       proxyRef <-
         resources.actorSystem.spawn(
           resultProxyBehavior(
@@ -702,9 +745,11 @@ $task"""
                   completedAt = Some(System.currentTimeMillis())
                 )
                 .handleErrorWith(_ => IO.unit)
-              DelegateRegistry.find(spawnId).foreach(rec =>
-                DelegateRegistry.put(rec.copy(reportStatus = Some(if terminal then status else "completed")))
-              )
+              DelegateRegistry
+                .find(spawnId)
+                .foreach(rec =>
+                  DelegateRegistry.put(rec.copy(reportStatus = Some(if terminal then status else "completed")))
+                )
               rec.taskId.foreach { tid =>
                 nebflow.core.project.TaskLedgerStore
                   .open()
@@ -720,7 +765,9 @@ $task"""
                     actor = nebflow.core.project.TaskLedgerHistory.Actors.Nebula
                   )
               }
-            }.handleErrorWith(e => logger.warn(s"[device-delegate] ledger/task updates failed for $spawnId: ${e.getMessage}"))
+            }.handleErrorWith(e =>
+              logger.warn(s"[device-delegate] ledger/task updates failed for $spawnId: ${e.getMessage}")
+            )
         case None =>
           logger.warn(
             s"[device-delegate] result for unknown spawnId=$spawnId (no dispatch record on this host) — dropped with this log line (not silent: grep device-delegate)"
@@ -752,6 +799,7 @@ $task"""
             ).handleErrorWith(_ => IO.unit)
           case None => IO.unit
         }
+    end if
   end handleAccept
 
 end DeviceDelegate

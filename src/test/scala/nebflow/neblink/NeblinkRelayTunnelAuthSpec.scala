@@ -299,10 +299,11 @@ class NeblinkRelayTunnelAuthSpec extends CatsEffectSuite:
     }
   }
 
-
   // ── phase 3b review pin: terminal rejection fires all three revocation faces ──
 
-  test("terminal binding rejection (401 binding_revoked) parks AND revokes console tickets + relay-mint sessions + nf tickets (plan §5 row 2)") {
+  test(
+    "terminal binding rejection (401 binding_revoked) parks AND revokes console tickets + relay-mint sessions + nf tickets (plan §5 row 2)"
+  ) {
     withFixture { fix =>
       captureRelayLog { lines =>
         val sessionRevocations = new ConcurrentLinkedQueue[Integer]()

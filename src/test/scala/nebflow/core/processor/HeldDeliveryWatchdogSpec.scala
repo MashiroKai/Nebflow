@@ -28,7 +28,10 @@ class HeldDeliveryWatchdogSpec extends FunSuite:
   private val noopRef = new nebflow.actor.ActorRef[AgentCommand]:
     def path = nebflow.actor.ActorPath("noop", "wd-spec")
     def !(msg: AgentCommand) = cats.effect.IO.unit
-    def ?[Reply](makeMsg: nebflow.actor.ActorRef[Reply] => AgentCommand, timeout: Option[scala.concurrent.duration.FiniteDuration]) =
+    def ?[Reply](
+      makeMsg: nebflow.actor.ActorRef[Reply] => AgentCommand,
+      timeout: Option[scala.concurrent.duration.FiniteDuration]
+    ) =
       cats.effect.IO.raiseError(new RuntimeException("no-op ref cannot ask"))
 
   test("W1 到期未穷尽 ⇒ 催注 + 记 attempts（动作携带 id 集，催注计数由执行面落账）"):
@@ -47,7 +50,8 @@ class HeldDeliveryWatchdogSpec extends FunSuite:
 
   test("W3 下一次催注超 HeldDeliveryMaxAttempts ⇒ Exhaust + BadgeSync（终态落盘 + 停催）"):
     // attempts 已用尽 ⇒ 第 6 催窗口 = 退避封顶（30min）：producedAt 必须早于 now - 30min 才到期。
-    val rows = List(held("r1", now - Defaults.HeldDeliveryMaxBackoffMs - 1, attempts = Defaults.HeldDeliveryMaxAttempts))
+    val rows =
+      List(held("r1", now - Defaults.HeldDeliveryMaxBackoffMs - 1, attempts = Defaults.HeldDeliveryMaxAttempts))
     val actions = scanCore("s1", noopRef, rows, unreadSnapshot = 0, now)
     assert(actions.collect { case n: Nudge => n }.isEmpty, "exhausted rows are never nudged again")
     val exhaust = actions.collect { case e: Exhaust => e }

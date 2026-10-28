@@ -94,7 +94,7 @@ object UpdateStage:
           )
         case Some(v) =>
           val finalPath = layout match
-            case DetachedApply.Layout.Pointer     => InstallPointer.versionDir(installDir, v) / jarPath.last
+            case DetachedApply.Layout.Pointer => InstallPointer.versionDir(installDir, v) / jarPath.last
             case DetachedApply.Layout.WinsortFlat => installDir / jarPath.last
           IO
             .blocking {
@@ -128,6 +128,7 @@ object UpdateStage:
                 finally
                   try if os.exists(part) then os.remove(part)
                   catch case _: Exception => ()
+                end try
             }
             .attempt
             .map {

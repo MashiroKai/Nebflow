@@ -132,7 +132,18 @@ class GatewaySessionStore private (
   def list: IO[List[SessionView]] =
     sessionsRef.get.map { current =>
       current.values.toList
-        .map(r => SessionView(r.sessionId.take(8), r.accountSub, r.origin, r.boundNetworkId, r.createdAt, r.absoluteExpiresAt, r.lastSeenAt, r.slidingExpiresAt))
+        .map(r =>
+          SessionView(
+            r.sessionId.take(8),
+            r.accountSub,
+            r.origin,
+            r.boundNetworkId,
+            r.createdAt,
+            r.absoluteExpiresAt,
+            r.lastSeenAt,
+            r.slidingExpiresAt
+          )
+        )
         .sortBy(_.createdAt)
     }
 
@@ -253,7 +264,8 @@ object GatewaySessionStore:
     absoluteTtlSeconds: Long = AbsoluteTtlSeconds,
     idleTimeoutSeconds: Long = IdleTimeoutSeconds
   ): IO[GatewaySessionStore] =
-    Ref.of[IO, Map[String, SessionRecord]](Map.empty)
+    Ref
+      .of[IO, Map[String, SessionRecord]](Map.empty)
       .map(new GatewaySessionStore(_, absoluteTtlSeconds, idleTimeoutSeconds))
 
   /** Sync construction (assembly code runs outside an IO constructor; same as the ticket stores). */

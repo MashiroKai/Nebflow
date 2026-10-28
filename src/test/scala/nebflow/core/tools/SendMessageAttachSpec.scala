@@ -153,7 +153,9 @@ class SendMessageAttachSpec extends CatsEffectSuite:
         "to" -> Json.fromString("device:KAI"),
         "message" -> Json.fromString("hi"),
         // 绝对路径取宿主 tmpdir（Windows 上 "/tmp" 非绝对 ⇒ 绝对闸先于设备腿报错）。
-        "targetDir" -> Json.fromString(java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"), "whatever").toString)
+        "targetDir" -> Json.fromString(
+          java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"), "whatever").toString
+        )
       )
     ).unsafeRunSync()
     val msg = res.fold(_.message, identity)

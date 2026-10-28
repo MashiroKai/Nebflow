@@ -392,7 +392,7 @@ object AgentCore:
     // 形态与裸挂载项目名）对**一切角色**显式拒绝（`MAIL_PROJECT_TRIGGER_UNSUPPORTED`），
     // 零建任务、零复活、零 TriggerDispatcher；派发面唯一入口 = `Delegate`。
     // Root 的 Mail 地址面 = `delegate:<id>`/`kernel:<id>` 续聊 + `node:<id|name>`
-    //（`node:<id>`/自身地址照旧显式报错或指路，硬禁静默兜底/模糊匹配）；入站不受限。
+    // （`node:<id>`/自身地址照旧显式报错或指路，硬禁静默兜底/模糊匹配）；入站不受限。
     "Mail",
     // Project（N2 project-tool 批 2026-10-06 ⑨A 硬替换：ProjectCreate → Project，
     // 同参数面 + 新增 action="unmount" 硬卸载腿；旧名入 RetiredToolGuides 指路）。

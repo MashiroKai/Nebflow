@@ -212,6 +212,7 @@ class MailProjectTriggerDemolitionSpec extends FunSuite:
     val cmds = record.get.unsafeRunSync()
     assertEquals(cmds, Nil, s"no ProjectCommand may reach the project actor, got: $cmds")
     assertEquals(ledgerEntryCount(), entriesBefore, "the ledger must gain no entry (auto-create demolished)")
+  end assertDemolished
 
   // ── 1. `project:<mounted>`（Root）──
 
@@ -272,7 +273,9 @@ class MailProjectTriggerDemolitionSpec extends FunSuite:
 
   // ── 3. 裸名 short-name 瀑布腿（delegate 会话 / 无团队语境——旧 D-4 泄漏面）──
 
-  test("bare mounted project name via the short-name waterfall (delegate session and teamless sender) => refused, D-4 closed"):
+  test(
+    "bare mounted project name via the short-name waterfall (delegate session and teamless sender) => refused, D-4 closed"
+  ):
     val ws = tempRoot / "ws-demo-d4"
     os.makeDir.all(ws)
     val system = ActorSystem(s"mail-demo-d4-${java.util.UUID.randomUUID().toString.take(6)}")

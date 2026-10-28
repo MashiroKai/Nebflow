@@ -5,7 +5,17 @@ import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.actor.{ActorRef, ActorSystem, AgentCommand, AgentEvent, AgentKind, AgentRecord, AgentStatus, Behavior, Behaviors}
+import nebflow.actor.{
+  ActorRef,
+  ActorSystem,
+  AgentCommand,
+  AgentEvent,
+  AgentKind,
+  AgentRecord,
+  AgentStatus,
+  Behavior,
+  Behaviors
+}
 import nebflow.agent.{AgentLibrary, SharedResources}
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
@@ -15,7 +25,16 @@ import nebflow.core.tools.FileLockManager
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.gateway.WsHub
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, SubAgentTask, ThinkingConfig}
+import nebflow.shared.{
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  PathUtil,
+  StreamChunk,
+  SubAgentTask,
+  ThinkingConfig
+}
 
 import scala.concurrent.duration.*
 
@@ -44,6 +63,7 @@ class WaitingDockCareSpec extends CatsEffectSuite:
   os.makeDir.all(tempRoot)
 
   override def beforeAll(): Unit = WatchdogEventLog.setLogDirForTest(watchdogLogTmp.toNIO)
+
   override def afterAll(): Unit =
     WatchdogEventLog.resetLogDirForTest()
     PathUtil.setDataRoot(originalRoot)
@@ -161,7 +181,9 @@ class WaitingDockCareSpec extends CatsEffectSuite:
 
   // ── ① 验收：Waiting 死停靠被看护 ─────────────────────────────────────
 
-  test("① docked Waiting session whose actor died: membership closed owner-gone, task row failed, escalation reaches the live root, window released") {
+  test(
+    "① docked Waiting session whose actor died: membership closed owner-gone, task row failed, escalation reaches the live root, window released"
+  ) {
     val system = ActorSystem(s"wdc-1-${scala.util.Random.nextInt(100000)}")
     val key = s"p-wdc-1-${scala.util.Random.nextInt(100000)}"
     val baseRepo = mkBaseRepo(tempRoot / s"base-$key")
@@ -177,10 +199,19 @@ class WaitingDockCareSpec extends CatsEffectSuite:
       m1 = member(system, "d-w1", key, dockedRef, sup, baseRepo)
       _ <- IO { MergeQueue.enqueue(m1) } // 放行 = 通知（子活）→ 窗持
       _ <- IO.sleep(80.millis)
-      _ <- received.get.map(l => assert(l.size == 1, "sanity: the merge-turn brief was injected while the dock was alive"))
+      _ <- received.get.map(l =>
+        assert(l.size == 1, "sanity: the merge-turn brief was injected while the dock was alive")
+      )
       _ <- system.stop(dockedRef)
       _ <- resources.agentRegistry.update(
-        _ + ("d-w1" -> AgentRecord("d-w1", dockedRef, AgentKind.Delegate, "root-1", parentSessionId = "root-1", status = AgentStatus.Waiting))
+        _ + ("d-w1" -> AgentRecord(
+          "d-w1",
+          dockedRef,
+          AgentKind.Delegate,
+          "root-1",
+          parentSessionId = "root-1",
+          status = AgentStatus.Waiting
+        ))
       )
       _ <- recordTask(resources, "d-w1")
       escalations <- Ref.of[IO, List[(String, String)]](Nil)
@@ -205,21 +236,41 @@ class WaitingDockCareSpec extends CatsEffectSuite:
       _ = MergeQueue.onTerminal("d-w2", Some(MergeQueue.RoundOutcome.Refused("spec teardown")))
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
-      assertEquals(kept.map(_.state), Some(MergeQueue.State.OwnerGone), "the dead dock's membership is closed owner-gone (needs dispatcher handling — never kept pending, never dropped)")
-      assert(kept.flatMap(_.closeReason).exists(_.contains("waiting dock orphaned")), "the ledger carries the death reason")
-      assertEquals(task.map(_.status), Some("failed"), "the task ledger row is flipped to failed (panel-visible terminal)")
-      assert(task.flatMap(_.lastError).exists(_.contains("waiting dock orphaned")), "the ledger carries the death reason")
+      assertEquals(
+        kept.map(_.state),
+        Some(MergeQueue.State.OwnerGone),
+        "the dead dock's membership is closed owner-gone (needs dispatcher handling — never kept pending, never dropped)"
+      )
+      assert(
+        kept.flatMap(_.closeReason).exists(_.contains("waiting dock orphaned")),
+        "the ledger carries the death reason"
+      )
+      assertEquals(
+        task.map(_.status),
+        Some("failed"),
+        "the task ledger row is flipped to failed (panel-visible terminal)"
+      )
+      assert(
+        task.flatMap(_.lastError).exists(_.contains("waiting dock orphaned")),
+        "the ledger carries the death reason"
+      )
       assertEquals(escGot.map(_._1), List("d-w1"), "exactly one queue-side owner-gone escalation")
       val escalationsRoot = rootGot.collect { case e: AgentCommand.ExternalEvent => e }
       assertEquals(escalationsRoot.size, 1, "exactly one escalation event reached the live root (①)")
       assertEquals(escalationsRoot.head.source, "waiting-dock-care")
-      assert(wsGot.exists(_.hcursor.get[String]("action").toOption.contains("waiting-dock-dead")), "the death is WS-broadcast for humans")
+      assert(
+        wsGot.exists(_.hcursor.get[String]("action").toOption.contains("waiting-dock-dead")),
+        "the death is WS-broadcast for humans"
+      )
       assertEquals(nextGot.size, 1, "the window was released: the next member got its merge turn immediately")
+    end for
   }
 
   // ── ② 负控：活停靠零动作 ─────────────────────────────────────────────
 
-  test("② LIVE docked Waiting session: zero action — no Stop, no ledger flip, queue untouched (stale lastActivityMs is NOT a criterion)") {
+  test(
+    "② LIVE docked Waiting session: zero action — no Stop, no ledger flip, queue untouched (stale lastActivityMs is NOT a criterion)"
+  ) {
     val system = ActorSystem(s"wdc-2-${scala.util.Random.nextInt(100000)}")
     val key = s"p-wdc-2-${scala.util.Random.nextInt(100000)}"
     val baseRepo = mkBaseRepo(tempRoot / s"base-$key")
@@ -267,10 +318,18 @@ class WaitingDockCareSpec extends CatsEffectSuite:
     yield
       assertEquals(dockGot, Nil, "no Stop / no command is sent to a live docked session")
       assertEquals(task.map(_.status), Some("ready-to-merge"), "the task ledger row is untouched")
-      assertEquals(kept.map(_.state), Some(MergeQueue.State.TurnGranted), "the queue membership is untouched (still the single window holder)")
+      assertEquals(
+        kept.map(_.state),
+        Some(MergeQueue.State.TurnGranted),
+        "the queue membership is untouched (still the single window holder)"
+      )
       assertEquals(escGot, Nil, "no owner-gone escalation for a live dock")
       assertEquals(rootGot, Nil, "no escalation for a live dock")
-      assert(!wsGot.exists(_.hcursor.get[String]("action").toOption.contains("waiting-dock-dead")), "no death broadcast")
+      assert(
+        !wsGot.exists(_.hcursor.get[String]("action").toOption.contains("waiting-dock-dead")),
+        "no death broadcast"
+      )
+    end for
   }
 
 end WaitingDockCareSpec

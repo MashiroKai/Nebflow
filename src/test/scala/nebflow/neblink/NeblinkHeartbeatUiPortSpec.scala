@@ -91,9 +91,10 @@ class NeblinkHeartbeatUiPortSpec extends FunSuite:
         val client = new NeblinkClient(NeblinkServerConfig(url = url, networkId = "n1", secret = "s"), GatewayPort)
         client.login("d1", "dev", "macos", Nil).flatMap {
           case Left(err) => IO.raiseError(new IllegalStateException(s"login failed: $err"))
-          case Right(_) => client.heartbeat.flatMap {
-              case Left(err)  => IO.raiseError(new IllegalStateException(s"heartbeat failed: $err"))
-              case Right(_)   => IO.pure((client, server, heartbeats))
+          case Right(_) =>
+            client.heartbeat.flatMap {
+              case Left(err) => IO.raiseError(new IllegalStateException(s"heartbeat failed: $err"))
+              case Right(_) => IO.pure((client, server, heartbeats))
             }
         }
       }

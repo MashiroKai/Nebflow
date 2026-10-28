@@ -66,6 +66,7 @@ object MemoryRecallDaemon:
     warnedNoTool: Boolean = false,
     consecutiveFailures: Int = 0
   )
+
   object State:
     val empty: State = State(0L, None)
 
@@ -76,18 +77,25 @@ object MemoryRecallDaemon:
   enum TickOutcome:
     /** kill-switch 关（`nebflow.memoryRecall.enabled=false`）。 */
     case Disabled
+
     /** stand-recall 脚本不可解析（三处候选全落空；每进程首见 WARN 一行）。 */
     case NoTool
+
     /** sessions/_index.json 不存在（全新数据根尚无会话）——无可入库面。 */
     case NoData
+
     /** 节流窗内（距上次尝试 < minIntervalMs）——跳过。 */
     case Throttled
+
     /** 脏探测指纹无变化——跳过（零子进程）。 */
     case CleanSkip
+
     /** 入库成功：本窗新增消息数 / 库内总消息数 / 耗时 ms。 */
     case Updated(newMsgs: Long, totalMsgs: Long, durationMs: Long)
+
     /** 入库失败（已占节流窗，下窗静默重试）：`reason` 含退出码/超时 + 输出尾。 */
     case Failed(reason: String)
+  end TickOutcome
 
   // ── 工具脚本解析（三处候选，优先级降序）────────────────────────────────
 
@@ -129,10 +137,11 @@ object MemoryRecallDaemon:
           else if os.isDir(p) then
             val comp = p / "compaction"
             if os.exists(comp) then
-              for c <- os.list(comp).toList.sortBy(_.last) if c.last.endsWith("-before.json") do
-                parts += statPart(c)
+              for c <- os.list(comp).toList.sortBy(_.last) if c.last.endsWith("-before.json") do parts += statPart(c)
         Some(parts.result().mkString("|"))
       catch case _: Throwable => Some("<fs-unstable>")
+
+  end sessionsFingerprint
 
   private def statPart(p: os.Path): String =
     s"${p.last}:${os.mtime(p)}:${os.size(p)}"
@@ -142,12 +151,11 @@ object MemoryRecallDaemon:
   /**
    * python 解释器（缓存）：Windows 没有 `python3` 可执行名（python.org 装的叫
    * `python`，官方启动器叫 `py`）⇒ 依次回退探测（`--version` 能起进程即可用），
-    * 全部缺席则仍报 `python3`（错误语义 = 今天的「找不到命令」，诊断口径不变）；
+   * 全部缺席则仍报 `python3`（错误语义 = 今天的「找不到命令」，诊断口径不变）；
    * 非 Windows 恒 `python3`（今日行为零变化）。
    */
   private lazy val pythonCmd: String =
-    if !nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName) then
-      "python3"
+    if !nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName) then "python3"
     else
       List("python", "py")
         .find { cmd =>
@@ -197,7 +205,9 @@ object MemoryRecallDaemon:
                 // 退出码 0 但计数行缺失（脚本未来改版）：入库本身成功，计数面退化
                 Right((-1L, -1L))
           else Left(s"exit $code: ${text.linesIterator.toList.takeRight(2).mkString(" | ")}")
+        end if
       finally Files.deleteIfExists(out)
+      end try
     }
 
   // ── 单拍（launch 纤维驱动；spec 可逐步直驱）────────────────────────────
@@ -244,7 +254,8 @@ object MemoryRecallDaemon:
                                s"[memory-recall] auto --update: +$n msgs ($total total) in ${dur.toMillis}ms"
                              )
                            else
-                             logger.debug(s"[memory-recall] auto --update ok (${dur.toMillis}ms, counts unavailable)")) *>
+                             logger.debug(s"[memory-recall] auto --update ok (${dur.toMillis}ms, counts unavailable)")
+                          ) *>
                             state
                               .set(
                                 State(now, Some(fp), warnedNoTool = st.warnedNoTool, consecutiveFailures = 0)
@@ -303,4 +314,5 @@ object MemoryRecallDaemon:
           ) *>
         IO.defer(loop)
     logger.debug("[memory-recall] daemon started") *> loop.start
+  end spawn
 end MemoryRecallDaemon

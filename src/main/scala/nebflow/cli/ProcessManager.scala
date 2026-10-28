@@ -59,6 +59,7 @@ object ProcessManager:
   )
 
   sealed trait StopOutcome
+
   object StopOutcome:
     case object NotRunning extends StopOutcome
     final case class Stopped(message: String) extends StopOutcome
@@ -238,11 +239,18 @@ object ProcessManager:
             val metaState = meta match
               case None => "no .pid.meta"
               case Some(m) =>
-                s".pid.meta startedBy=${m.startedBy}${if m.pid.contains(pid) then "" else s" names pid ${m.pid.getOrElse("-")}"}" +
+                s".pid.meta startedBy=${m.startedBy}${
+                    if m.pid.contains(pid) then "" else s" names pid ${m.pid.getOrElse("-")}"
+                  }" +
                   s"${if m.startedAt.isEmpty then " without startedAt" else ""}"
             s"no pid-meta/start-time identity ($metaState) and the pid does not listen on the " +
-              s"gateway port $gatewayPort (listening: ${if listeningPorts.isEmpty then "none" else listeningPorts.sorted.mkString(",")})"
+              s"gateway port $gatewayPort (listening: ${
+                  if listeningPorts.isEmpty then "none" else listeningPorts.sorted.mkString(",")
+                })"
         DegradedIdentity.Refused(why)
+      end if
+    end if
+  end degradedIdentity
 
   /** Start-time match tolerance: the meta is written seconds after spawn; 10 min absorbs slow boots. */
   private[cli] val DegradedToleranceMs: Long = 600_000L
@@ -292,11 +300,11 @@ object ProcessManager:
           .handleError(_ => nebflow.shared.Defaults.GatewayPort)
 
   private def stopVerified(
-      pid: Long,
-      cmd: String,
-      opts: StopOptions,
-      deps: StopDeps,
-      degradedVia: Option[String] = None
+    pid: Long,
+    cmd: String,
+    opts: StopOptions,
+    deps: StopDeps,
+    degradedVia: Option[String] = None
   ): StopOutcome =
     // Hard gate: a dev-host-marked process listening on 8080/8097 is never
     // stoppable through this face — --force does not bypass it. The ports
@@ -338,8 +346,7 @@ object ProcessManager:
           targets.foreach(deps.destroyForcibly)
           waitUntil(deps, pid, deps.forceTimeoutMs)
 
-        if deps.isRunning(pid) then
-          return StopOutcome.Failed(s"process $pid did not exit after TERM/KILL")
+        if deps.isRunning(pid) then return StopOutcome.Failed(s"process $pid did not exit after TERM/KILL")
 
         // Piece 3: port-release confirmation from the TARGET pid's own
         // listener set. Empty after death (or lsof unavailable) = released /
@@ -351,12 +358,15 @@ object ProcessManager:
           while busy.nonEmpty && System.currentTimeMillis() < deadline do
             if deps.pollMs > 0 then Thread.sleep(deps.pollMs)
             busy = remaining.filter(deps.listenerAlive)
-          if busy.nonEmpty then
-            return StopOutcome.Failed(s"ports still served after stop: ${busy.mkString(", ")}")
+          if busy.nonEmpty then return StopOutcome.Failed(s"ports still served after stop: ${busy.mkString(", ")}")
 
         removePid()
         val base = declaration.getOrElse(s"${nebflow.shared.Branding.productName} stopped (pid $pid)")
         StopOutcome.Stopped(degradedVia.fold(base)(via => s"$base — identity via degraded chain: $via"))
+
+    end match
+
+  end stopVerified
 
   private def waitUntil(deps: StopDeps, pid: Long, timeoutMs: Long): Boolean =
     val deadline = System.currentTimeMillis() + timeoutMs
@@ -383,8 +393,8 @@ object ProcessManager:
    * carries an sbt marker — the root of a managed sbt tree.
    */
   private[cli] def sbtRootFromChain(
-      chain: List[Long],
-      readCmd: Long => Option[String]
+    chain: List[Long],
+    readCmd: Long => Option[String]
   ): Option[Long] =
     // nearest sbt ancestor = closest to the target, i.e. first found walking up
     chain.find(pid => readCmd(pid).exists(isSbtCommandLine))
@@ -398,10 +408,10 @@ object ProcessManager:
    * Result ordered top-down (root side first).
    */
   private[cli] def treeKillSet(
-      chain: List[Long],
-      sbtRoot: Option[Long],
-      descendantsOf: Long => List[Long],
-      readCmd: Long => Option[String]
+    chain: List[Long],
+    sbtRoot: Option[Long],
+    descendantsOf: Long => List[Long],
+    readCmd: Long => Option[String]
   ): Either[String, List[Long]] =
     sbtRoot match
       case Some(root) if chain.contains(root) =>
@@ -413,7 +423,9 @@ object ProcessManager:
               case Some(c) if StaleProcessGuard.isNebflowCommandLine(c) || isSbtCommandLine(c) =>
                 Right(m)
               case Some(c) =>
-                Left(s"member $m is not a verified ${nebflow.shared.Branding.productName}/sbt process: ${StaleProcessGuard.truncate(c)}")
+                Left(
+                  s"member $m is not a verified ${nebflow.shared.Branding.productName}/sbt process: ${StaleProcessGuard.truncate(c)}"
+                )
               case None =>
                 Left(s"member $m command line unreadable — refusing the whole tree")
           }

@@ -62,7 +62,9 @@ object DelegateWorkReport:
           val workResult = rec.workReport
             .map(_.trim)
             .filter(_.nonEmpty)
-            .map(w => s"$Marker work result (preserved from the work phase, before the merge round):\n${w.take(Bound.WorkChars)}")
+            .map(w =>
+              s"$Marker work result (preserved from the work phase, before the merge round):\n${w.take(Bound.WorkChars)}"
+            )
           val reportFiles = reportFilesSection(rec)
           compose(mergeStatus, workResult, reportFiles)
     }.getOrElse("")
@@ -120,12 +122,23 @@ object DelegateWorkReport:
               .call(check = false, mergeErrIntoOut = true)
             if res.exitCode != 0 then Nil
             else
-              res.out.trim().linesIterator.filter(_.trim.nonEmpty).filter { rel =>
-                val name = rel.trim.split('/').lastOption.getOrElse("")
-                name.equalsIgnoreCase("REPORT.md")
-              }.map(_.trim).toList
+              res.out
+                .trim()
+                .linesIterator
+                .filter(_.trim.nonEmpty)
+                .filter { rel =>
+                  val name = rel.trim.split('/').lastOption.getOrElse("")
+                  name.equalsIgnoreCase("REPORT.md")
+                }
+                .map(_.trim)
+                .toList
           }.getOrElse(Nil)
+        end if
       case _ => Nil
+
+    end match
+
+  end changedReportFiles
 
   /** 摘要截断：首 [[Bound.DigestLines]] 行、至多 [[Bound.DigestChars]] 字符。 */
   private[delegate] def digestOf(content: String): String =

@@ -26,7 +26,9 @@ class WorktreeRescueSpec extends FunSuite:
     os.makeDir.all(wt)
     (ws, wt)
 
-  test("① unmerged report rescued: missing in main ⇒ same relative path, nested dirs created; paths outside reports/evidence untouched") {
+  test(
+    "① unmerged report rescued: missing in main ⇒ same relative path, nested dirs created; paths outside reports/evidence untouched"
+  ) {
     val (ws, wt) = mkWsWt("rescue")
     os.makeDir.all(wt / "reports" / "20261024_120000_fix" / "shots")
     os.write(wt / "reports" / "20261024_120000_fix" / "REPORT.md", "the lost report body")
@@ -55,7 +57,7 @@ class WorktreeRescueSpec extends FunSuite:
 
   test("② already-present files are skipped, never overwritten") {
     val (ws, wt) = mkWsWt("skip")
-    val rel      = os.rel / "reports" / "20261024_130000_fix" / "REPORT.md"
+    val rel = os.rel / "reports" / "20261024_130000_fix" / "REPORT.md"
     os.makeDir.all(wt / rel / os.up)
     os.write(wt / rel, "worktree version")
     os.makeDir.all(ws / rel / os.up)

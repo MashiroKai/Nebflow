@@ -43,6 +43,7 @@ class DeviceDelegateSpawnTrustSpec extends CatsEffectSuite:
 
   // 任何成员被触到即炸——拒绝路径不得触碰运行时。
   private def boom: Throwable = new IllegalStateException("rejection path must not touch runtime resources")
+
   private val neverResources: AgentRuntimePort = new AgentRuntimePort:
     def sessionStore: SessionStore = throw boom
     def actorSystem: ActorSystem = throw boom
@@ -126,8 +127,19 @@ class DeviceDelegateSpawnTrustSpec extends CatsEffectSuite:
     task: String = "do the thing"
   ): Json =
     DeviceDelegate.buildSpawnPayload(
-      k, hostId, "Host", "spawn-1", "proj", "/remote/ws", task, "Do The Thing",
-      "parent-1", "root-1", Some("42"), nowMs, nonce
+      k,
+      hostId,
+      "Host",
+      "spawn-1",
+      "proj",
+      "/remote/ws",
+      task,
+      "Do The Thing",
+      "parent-1",
+      "root-1",
+      Some("42"),
+      nowMs,
+      nonce
     )
 
   test("spawnCanonical is the frozen pipe-joined form with task sha in the tail") {
@@ -144,7 +156,9 @@ class DeviceDelegateSpawnTrustSpec extends CatsEffectSuite:
     val nonce = payload.hcursor.downField("nonce").as[String].getOrElse("")
     val sig = payload.hcursor.downField("sig").as[String].getOrElse("")
     val canon = DeviceDelegate.spawnCanonical(
-      hostId, ts, nonce,
+      hostId,
+      ts,
+      nonce,
       payload.hcursor.downField("spawnId").as[String].getOrElse(""),
       payload.hcursor.downField("projectName").as[String].getOrElse(""),
       payload.hcursor.downField("workspace").as[String].getOrElse(""),

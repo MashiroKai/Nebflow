@@ -64,12 +64,16 @@ object MergeQueue:
   object State:
     /** 排队中（等窗 / 等净空 / 等通知）。 */
     val Waiting: String = "waiting"
+
     /** 已放行：属主持合并窗、合并轮在飞（唯一持有人）。 */
     val TurnGranted: String = "turn-granted"
+
     /** 关账：合并已落地（账实核对或属主回合确认）。 */
     val Merged: String = "merged"
+
     /** 关账：属主失联（会话终态/通知不可达）——需 dispatcher 处置。 */
     val OwnerGone: String = "owner-gone"
+
     /** 关账：合并回合被拒（冲突/脏树/机械验收拒绝）——需 dispatcher 处置。 */
     val Failed: String = "failed"
 
@@ -204,6 +208,10 @@ object MergeQueue:
       lastBlockReason = c.get[Option[String]]("lastBlockReason").toOption.flatten
     )
 
+    end for
+
+  end memberFromJson
+
   private def persistLocked(): Unit =
     try
       val payload = Json.obj("version" -> 1.asJson, "members" -> Json.fromValues(members.values.map(memberJson).toList))
@@ -212,7 +220,9 @@ object MergeQueue:
       os.move(tmp, ledgerPath, replaceExisting = true)
     catch
       case e: Throwable =>
-        logger.warn(s"merge-ledger persist failed (memory state unaffected): ${Option(e.getMessage).getOrElse(e.toString).take(200)}")
+        logger.warn(
+          s"merge-ledger persist failed (memory state unaffected): ${Option(e.getMessage).getOrElse(e.toString).take(200)}"
+        )
 
   /** 惰性加载（首次访问；文件缺失/损坏 = 空账起步，坏行跳过不炸）。 */
   private def ensureLoadedLocked(): Unit =
@@ -220,7 +230,10 @@ object MergeQueue:
       loaded = true
       try
         if os.exists(ledgerPath) then
-          io.circe.parser.parse(os.read(ledgerPath)).toOption.flatMap(_.hcursor.downField("members").as[List[Json]].toOption) match
+          io.circe.parser
+            .parse(os.read(ledgerPath))
+            .toOption
+            .flatMap(_.hcursor.downField("members").as[List[Json]].toOption) match
             case None => logger.warn(s"merge-ledger at $ledgerPath unreadable — starting an empty ledger")
             case Some(rows) =>
               val parsed = rows.flatMap(memberFromJson)
@@ -229,7 +242,11 @@ object MergeQueue:
                 logger.info(s"merge-ledger loaded: ${parsed.size} member(s) (${parsed.count(_.open)} open)")
       catch
         case e: Throwable =>
-          logger.warn(s"merge-ledger load failed — starting an empty ledger: ${Option(e.getMessage).getOrElse(e.toString).take(200)}")
+          logger.warn(
+            s"merge-ledger load failed — starting an empty ledger: ${Option(e.getMessage).getOrElse(e.toString).take(200)}"
+          )
+
+      end try
 
   /** 查询/审计用全量快照（readyAt 升序）。 */
   def snapshot: List[Member] = lock.synchronized {
@@ -288,7 +305,9 @@ object MergeQueue:
           try f.deliver(m, reason).unsafeRunSync()
           catch
             case e: Throwable =>
-              logger.warn(s"[merge-queue] owner-gone escalation delivery failed for ${m.delegateId}: ${Option(e.getMessage).getOrElse(e.toString).take(200)}")
+              logger.warn(
+                s"[merge-queue] owner-gone escalation delivery failed for ${m.delegateId}: ${Option(e.getMessage).getOrElse(e.toString).take(200)}"
+              )
         case None =>
           logger.warn(
             s"[merge-queue] OwnerGonePort not installed — owner-gone escalation for '${m.delegateId}' is ledger-only " +
@@ -330,7 +349,9 @@ object MergeQueue:
           try f.deliver(m, kind, reason).unsafeRunSync()
           catch
             case e: Throwable =>
-              logger.warn(s"[merge-queue] block-notify delivery failed for ${m.delegateId} ($kind): ${Option(e.getMessage).getOrElse(e.toString).take(200)}")
+              logger.warn(
+                s"[merge-queue] block-notify delivery failed for ${m.delegateId} ($kind): ${Option(e.getMessage).getOrElse(e.toString).take(200)}"
+              )
         case None =>
           logger.warn(
             s"[merge-queue] BlockNotifyPort not installed — '$kind' notification for '${m.delegateId}' is ledger-only " +
@@ -423,6 +444,7 @@ object MergeQueue:
             readyAt = me.readyAt
           )
         )
+      end if
     }
   }
 
@@ -454,7 +476,9 @@ object MergeQueue:
       )
     catch
       case e: Throwable =>
-        logger.warn(s"MergeQueue ChainStore line failed ($action): ${Option(e.getMessage).getOrElse(e.toString).take(200)}")
+        logger.warn(
+          s"MergeQueue ChainStore line failed ($action): ${Option(e.getMessage).getOrElse(e.toString).take(200)}"
+        )
 
   /** 最近一次关账/拒绝原因（ChainStore 扫描——API 状态面的原因列；fail-soft 空映射）。 */
   def lastReasons(delegateIds: Set[String]): Map[String, String] =
@@ -497,15 +521,24 @@ object MergeQueue:
         members.get(entry.delegateId) match
           case Some(existing) if existing.open =>
             // 幂等：已在账的开放成员不重复入账（重复完成/钩子重放），只刷新通道。
-            val refreshed = existing.copy(internal = entry.internal.orElse(existing.internal), external = entry.external.orElse(existing.external))
+            val refreshed = existing.copy(
+              internal = entry.internal.orElse(existing.internal),
+              external = entry.external.orElse(existing.external)
+            )
             members = members.updated(entry.delegateId, refreshed)
             record(refreshed, "enqueued-duplicate", Json.obj("state" -> refreshed.state.asJson))
             if refreshed.state == State.Waiting then Some(refreshed) else None
           case _ =>
             members = members.updated(entry.delegateId, entry)
             persistLocked()
-            record(entry, "enqueued", Json.obj("readyAt" -> entry.readyAt.asJson, "queueDepth" -> openSortedLocked(entry.projectKey).size.asJson))
+            record(
+              entry,
+              "enqueued",
+              Json
+                .obj("readyAt" -> entry.readyAt.asJson, "queueDepth" -> openSortedLocked(entry.projectKey).size.asJson)
+            )
             Some(entry)
+        end match
       }
       .foreach { m => if m.state == State.Waiting then pump(m.projectKey) }
 
@@ -540,7 +573,12 @@ object MergeQueue:
     // ① 账实核对（先于一切——已并成员直接关账，不再通知不再重试）。
     alreadyMerged(reserved) match
       case true =>
-        closeMerged(reserved.delegateId, via = "fact-check", closeReason = Some("branch already merged into base — closed at grant time"), cleanup = true)
+        closeMerged(
+          reserved.delegateId,
+          via = "fact-check",
+          closeReason = Some("branch already merged into base — closed at grant time"),
+          cleanup = true
+        )
         notifyAlreadyLanded(reserved) // 属主还 dock 着 → 立即收尾通知（delegate 纪律 #6）
         pump(reserved.projectKey)
         return
@@ -563,7 +601,11 @@ object MergeQueue:
             val stamped = cur.copy(grantedBaseTip = tip)
             members = members.updated(cur.delegateId, stamped)
             persistLocked()
-            record(stamped, "granted", Json.obj("baseTip" -> tip.fold("".asJson)(_.take(12).asJson), "viaChannel" -> reserved.channelKind.asJson))
+            record(
+              stamped,
+              "granted",
+              Json.obj("baseTip" -> tip.fold("".asJson)(_.take(12).asJson), "viaChannel" -> reserved.channelKind.asJson)
+            )
           }
         }
         logger.info(
@@ -572,6 +614,7 @@ object MergeQueue:
       case Left(err) =>
         markOwnerGone(reserved.delegateId, s"merge-turn notification undeliverable: ${err.take(200)}")
         pump(reserved.projectKey)
+    end match
   end grant
 
   /** 账实核对单点：分支头已是基分支祖先 ⟺ 已并入（今晚 should-not-happen 的消除闸）。 */
@@ -591,7 +634,7 @@ object MergeQueue:
    *   - 树脏 ⇒ 先过 [[MergeArtifactCare.hygiene]]（还原/收编/判性：同 blob
    *     复本清理、路径外无关件移隔离区）——**余脏不再 fail-closed 拦截**：只
    *     WARN 放行，delegate 的 `git merge` 诚实撞脏进 failed（原因可见关账，
-     *     队列不再留队停靠、不再静默）；
+   *     队列不再留队停靠、不再静默）；
    *   - 基分支非检出分支 ⇒ Left（**方向闸保留**——绝不把合并轮放进错误座位；
    *     该腿走 [[requeueBlocked]] 留队并**必通知**，绝不静默）。
    * Right(baseTip) = 可放行。
@@ -604,7 +647,8 @@ object MergeQueue:
         try
           val ctx = Some(MergeArtifactCare.CareContext(m.delegateId, m.branch, m.baseBranch, m.projectKey))
           val report = MergeArtifactCare.hygiene(ws, ctx)
-          if report.restored.nonEmpty || report.absorbed.nonEmpty || report.triagedRemoved.nonEmpty || report.triagedQuarantined.nonEmpty then
+          if report.restored.nonEmpty || report.absorbed.nonEmpty || report.triagedRemoved.nonEmpty || report.triagedQuarantined.nonEmpty
+          then
             record(
               m,
               "artifact-hygiene",
@@ -618,18 +662,24 @@ object MergeQueue:
                 "remainingDirty" -> report.remainingDirty.asJson
               )
             )
+          end if
           // 余脏只 WARN 不拦（fail-soft 回归）：面板/日志可见全文，合并回合诚实面。
-          val remaining = try MergeArtifactCare.dirtyPaths(ws, cap = 20) catch case _: Throwable => List("unreadable")
+          val remaining =
+            try MergeArtifactCare.dirtyPaths(ws, cap = 20)
+            catch case _: Throwable => List("unreadable")
           if remaining.nonEmpty then
             logger.warn(
               s"[merge-queue] base workspace still dirty after hygiene — GRANTING anyway (fail-soft; the merge round will honestly refuse if the dirt bites): ${remaining.mkString(", ")}"
             )
-          val current = try GitWorktrees.currentBranch(ws) catch case _: Throwable => None
+          val current =
+            try GitWorktrees.currentBranch(ws)
+            catch case _: Throwable => None
           if current.isDefined && current != Some(m.baseBranch) then
-            Left(s"base branch '${m.baseBranch}' is not the checked-out branch ('${current.getOrElse("detached HEAD")}') of the base workspace")
+            Left(
+              s"base branch '${m.baseBranch}' is not the checked-out branch ('${current.getOrElse("detached HEAD")}') of the base workspace"
+            )
           else Right(baseTipOf(m))
-        catch
-          case e: Throwable => Right(baseTipOf(m)) // 闸面自身故障 = fail-open（不楔死队列）
+        catch case e: Throwable => Right(baseTipOf(m)) // 闸面自身故障 = fail-open（不楔死队列）
   end baseReady
 
   /**
@@ -657,9 +707,10 @@ object MergeQueue:
     val brief = mergeBriefFor(m)
     m.external match
       case Some(ext) =>
-        try ext.send(brief).attempt.unsafeRunSync() match
-          case Right(r) => r
-          case Left(e) => Left(Option(e.getMessage).getOrElse(e.toString))
+        try
+          ext.send(brief).attempt.unsafeRunSync() match
+            case Right(r) => r
+            case Left(e) => Left(Option(e.getMessage).getOrElse(e.toString))
         catch case e: Throwable => Left(Option(e.getMessage).getOrElse(e.toString))
       case None =>
         m.internal match
@@ -675,6 +726,7 @@ object MergeQueue:
             catch case e: Throwable => Left(Option(e.getMessage).getOrElse(e.toString))
           case Some(_) => Left("owner session is no longer live at grant time")
           case None => Left("no delivery channel on record (channel lost across restart)")
+    end match
   end notifyTurn
 
   /**
@@ -686,9 +738,10 @@ object MergeQueue:
     val brief = alreadyLandedBrief(m)
     val deliver: Either[String, Unit] = m.external match
       case Some(ext) =>
-        try ext.send(brief).attempt.unsafeRunSync() match
-          case Right(r) => r
-          case Left(e) => Left(Option(e.getMessage).getOrElse(e.toString))
+        try
+          ext.send(brief).attempt.unsafeRunSync() match
+            case Right(r) => r
+            case Left(e) => Left(Option(e.getMessage).getOrElse(e.toString))
         catch case e: Throwable => Left(Option(e.getMessage).getOrElse(e.toString))
       case None =>
         m.internal match
@@ -705,7 +758,8 @@ object MergeQueue:
           case _ => Right(()) // 会话已死 = 无可通知，账已关，零动作
     deliver match
       case Right(()) => record(m, "already-landed-notice", Json.obj())
-      case Left(err) => logger.warn(s"[merge-queue] already-landed notice failed for '${m.delegateId}': ${err.take(200)}")
+      case Left(err) =>
+        logger.warn(s"[merge-queue] already-landed notice failed for '${m.delegateId}': ${err.take(200)}")
   end notifyAlreadyLanded
 
   // ── 关账（merged / owner-gone / failed；全部先账实核对再落终态） ──────
@@ -729,20 +783,31 @@ object MergeQueue:
             )
             members = members.updated(delegateId, closed)
             persistLocked()
-            record(closed, "merge-merged", Json.obj("via" -> via.asJson, "reason" -> closed.closeReason.fold("".asJson)(_.asJson)))
+            record(
+              closed,
+              "merge-merged",
+              Json.obj("via" -> via.asJson, "reason" -> closed.closeReason.fold("".asJson)(_.asJson))
+            )
             if cleanup then
-              try
-                DelegateRegistry.find(delegateId).foreach(rec => PostMergeCleanup.run(Some(rec)).unsafeRunSync())
+              try DelegateRegistry.find(delegateId).foreach(rec => PostMergeCleanup.run(Some(rec)).unsafeRunSync())
               catch
                 case e: Throwable =>
-                  logger.warn(s"[merge-queue] post-merge cleanup failed for $delegateId: ${Option(e.getMessage).getOrElse(e.toString).take(200)}")
+                  logger.warn(
+                    s"[merge-queue] post-merge cleanup failed for $delegateId: ${Option(e.getMessage).getOrElse(e.toString).take(200)}"
+                  )
             Some(closed)
           case _ => None
+        end match
       }
       .foreach { closed => pump(closed.projectKey) }
 
   /** IO 包装（boot reconcile 路径）。 */
-  def closeMergedIO(delegateId: String, via: String, closeReason: Option[String] = None, cleanup: Boolean = false): IO[Unit] =
+  def closeMergedIO(
+    delegateId: String,
+    via: String,
+    closeReason: Option[String] = None,
+    cleanup: Boolean = false
+  ): IO[Unit] =
     IO.blocking(closeMerged(delegateId, via, closeReason, cleanup))
 
   /**
@@ -758,12 +823,21 @@ object MergeQueue:
     }
     mOpt.foreach { m =>
       if alreadyMerged(m) then
-        closeMerged(delegateId, via = "fact-check-on-owner-gone", closeReason = Some("owner gone, but the branch was already merged — closed as merged"), cleanup = true)
+        closeMerged(
+          delegateId,
+          via = "fact-check-on-owner-gone",
+          closeReason = Some("owner gone, but the branch was already merged — closed as merged"),
+          cleanup = true
+        )
       else
         val closed = lock.synchronized {
           members.get(delegateId) match
             case Some(cur) if cur.open =>
-              val c = cur.copy(state = State.OwnerGone, closedAt = Some(System.currentTimeMillis()), closeReason = Some(reason.take(300)))
+              val c = cur.copy(
+                state = State.OwnerGone,
+                closedAt = Some(System.currentTimeMillis()),
+                closeReason = Some(reason.take(300))
+              )
               members = members.updated(delegateId, c)
               persistLocked()
               record(c, "owner-gone", Json.obj("reason" -> reason.take(300).asJson))
@@ -771,7 +845,9 @@ object MergeQueue:
             case _ => None
         }
         closed.foreach { c =>
-          logger.warn(s"[merge-queue] OWNER-GONE '${c.delegateId}' (branch '${c.branch}'): $reason — needs dispatcher handling")
+          logger.warn(
+            s"[merge-queue] OWNER-GONE '${c.delegateId}' (branch '${c.branch}'): $reason — needs dispatcher handling"
+          )
           OwnerGonePort.deliver(c, reason)
           pump(c.projectKey)
         }
@@ -804,9 +880,17 @@ object MergeQueue:
           closeFailed(delegateId, reason)
         case None =>
           if alreadyMerged(m) then
-            closeMerged(delegateId, via = "fact-check-on-terminal", closeReason = Some("session ended; the branch was already merged"), cleanup = true)
+            closeMerged(
+              delegateId,
+              via = "fact-check-on-terminal",
+              closeReason = Some("session ended; the branch was already merged"),
+              cleanup = true
+            )
           else
-            markOwnerGone(delegateId, s"owner session ended without completing the merge round (state was '${m.state}')")
+            markOwnerGone(
+              delegateId,
+              s"owner session ended without completing the merge round (state was '${m.state}')"
+            )
     }
   end onTerminal
 
@@ -814,15 +898,21 @@ object MergeQueue:
   def onTerminalIO(delegateId: String, outcome: Option[RoundOutcome] = None): IO[Unit] =
     IO.blocking(onTerminal(delegateId, outcome))
 
-  /** 关账 failed（合并回合被拒；原因落账 + 面板可见 + **父会话必通知**（#943，
-    * 原因全文随行）；无自动重试）。 */
+  /**
+   * 关账 failed（合并回合被拒；原因落账 + 面板可见 + **父会话必通知**（#943，
+   * 原因全文随行）；无自动重试）。
+   */
   private def closeFailed(delegateId: String, reason: String): Unit =
     lock
       .synchronized {
         ensureLoadedLocked()
         members.get(delegateId) match
           case Some(m) if m.open =>
-            val closed = m.copy(state = State.Failed, closedAt = Some(System.currentTimeMillis()), closeReason = Some(reason.take(300)))
+            val closed = m.copy(
+              state = State.Failed,
+              closedAt = Some(System.currentTimeMillis()),
+              closeReason = Some(reason.take(300))
+            )
             members = members.updated(delegateId, closed)
             persistLocked()
             record(closed, "merge-failed", Json.obj("reason" -> reason.take(300).asJson))
@@ -830,7 +920,9 @@ object MergeQueue:
           case _ => None
       }
       .foreach { closed =>
-        logger.warn(s"[merge-queue] merge round FAILED for '${closed.delegateId}' (branch '${closed.branch}'): $reason — closed, no auto-retry")
+        logger.warn(
+          s"[merge-queue] merge round FAILED for '${closed.delegateId}' (branch '${closed.branch}'): $reason — closed, no auto-retry"
+        )
         noteBlockedOrFailed(closed, "failed", reason) // 状态变化 ⇒ 必重发（原因全文）
         pump(closed.projectKey)
       }

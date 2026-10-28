@@ -18,15 +18,16 @@ object PerceptionModel:
 
   object EntryState:
     given Encoder[EntryState] = Encoder.encodeString.contramap(_.toString)
+
     given Decoder[EntryState] = Decoder.decodeString.emap(s =>
       EntryState.values.find(_.toString.equalsIgnoreCase(s)).toRight(s"unknown entry state: $s")
     )
 
     /** 四色投影：ok / warn / bad / dim（面板只认这四色，语义色只上载体）。 */
     def colorOf(s: EntryState): String = s match
-      case Idle                              => "ok"
-      case Degraded | Backoff                => "warn"
-      case AuthFailed | Error                => "bad"
+      case Idle => "ok"
+      case Degraded | Backoff => "warn"
+      case AuthFailed | Error => "bad"
       case Unconfigured | Connecting | Paused => "dim"
 
   /** 一个邮箱账户的配置（授权码不入此结构——授权码只进 secrets）。 */
@@ -51,7 +52,10 @@ object PerceptionModel:
   ):
     def secretName: String = MailAccount.secretNameFor(address)
 
+  end MailAccount
+
   object MailAccount:
+
     def secretNameFor(address: String): String =
       val safe = address.toLowerCase.replaceAll("[^a-z0-9._-]", "-").take(40).stripSuffix("-")
       // SecretsStore 命名 ^[a-z0-9][a-z0-9._-]{0,63}$
@@ -170,11 +174,13 @@ object PerceptionModel:
     case Invalid(msg: String)
 
   object SendFailure:
+
     def readable(f: SendFailure): String = f match
-      case AuthFailed              => "授权码已失效 · 需重新连接邮箱"
-      case Network(m)              => s"网络异常，稍后自动重试（$m）"
-      case Rejected(_)             => "收件方拒收 · 地址可能已失效"
-      case Stale                   => "草稿已在 Canvas 中修改，请以画布内容发送"
+      case AuthFailed => "授权码已失效 · 需重新连接邮箱"
+      case Network(m) => s"网络异常，稍后自动重试（$m）"
+      case Rejected(_) => "收件方拒收 · 地址可能已失效"
+      case Stale => "草稿已在 Canvas 中修改，请以画布内容发送"
       case MissingAttachment(paths) => s"附件不存在：${paths.mkString("、")}"
-      case NoAccount               => "尚未连接邮箱"
-      case Invalid(m)              => m
+      case NoAccount => "尚未连接邮箱"
+      case Invalid(m) => m
+end PerceptionModel

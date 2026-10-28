@@ -591,8 +591,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
                         .filter(GitWorktrees.isGitRepo)
                         .map(ws => GitWorktrees.commitsAhead(ws, r.baseBranch.get, r.branch.get))
                         .getOrElse(0)
-                    }
-                      .handleError(_ => 0)
+                    }.handleError(_ => 0)
                       .map { ahead =>
                         if ahead > 0 then
                           logger.info(

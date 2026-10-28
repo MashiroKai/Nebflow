@@ -25,9 +25,7 @@ class BindConfirmStoreSpec extends FunSuite:
 
   test("newCode: always exactly 6 digits (format stability over a large sample)"):
     val codes = (1 to 1000).map(_ => BindConfirmStore.newCode())
-    codes.foreach(c =>
-      assert(c.length == 6 && c.forall(_.isDigit), s"malformed code: $c")
-    )
+    codes.foreach(c => assert(c.length == 6 && c.forall(_.isDigit), s"malformed code: $c"))
 
   test("newCode: the sample space spans both low and high codes (leading zeros are real codes)"):
     // A uniform 000000-999999 generator over 1000 draws must not stay inside

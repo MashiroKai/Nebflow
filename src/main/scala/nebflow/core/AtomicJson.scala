@@ -243,11 +243,12 @@ object AtomicJson:
     checkpoint: Option[String] = None,
     records: List[Note] = Nil,
     checkpointError: Option[String] = None,
-    /** The checkpoint's already-parsed tree — `Some` exactly when the parse
-      * below succeeded. Carrying it lets a caller that needs BOTH the validity
-      * verdict and the decoded value (the chain-ledger open path) pay for one
-      * parse instead of two on a multi-megabyte checkpoint.
-      */
+    /**
+     * The checkpoint's already-parsed tree — `Some` exactly when the parse
+     * below succeeded. Carrying it lets a caller that needs BOTH the validity
+     * verdict and the decoded value (the chain-ledger open path) pay for one
+     * parse instead of two on a multi-megabyte checkpoint.
+     */
     checkpointJson: Option[io.circe.Json] = None
   ):
     /** True when neither face carries anything (fresh file; no WARN warranted). */

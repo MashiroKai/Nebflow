@@ -53,14 +53,20 @@ class SttEnabledSpec extends munit.FunSuite:
     assertEquals(off.hcursor.downField("apiKey").as[String].toOption, Some("k"))
     // 清空三串 + enabled=false：结果只剩 {enabled:false}（非 None——停用态要
     // 落盘存活，下次开回只需翻开关，凭据字段已被显式清除）。
-    val clearOff = SttService.mergeConfig(Some(old), SttService.SttConfigPatch(Some(None), Some(None), Some(None), Some(false)))
+    val clearOff =
+      SttService.mergeConfig(Some(old), SttService.SttConfigPatch(Some(None), Some(None), Some(None), Some(false)))
     assertEquals(clearOff.map(_.hcursor.downField("enabled").as[Boolean].toOption), Some(Some(false)))
     assertEquals(clearOff.map(_.hcursor.downField("apiKey").as[Option[String]].toOption.flatten), Some(None))
     // 清空三串 + enabled=true ⇒ None（整体删档，回退浏览器腿——既有语义）。
-    assertEquals(SttService.mergeConfig(Some(old), SttService.SttConfigPatch(Some(None), Some(None), Some(None), Some(true))), None)
+    assertEquals(
+      SttService.mergeConfig(Some(old), SttService.SttConfigPatch(Some(None), Some(None), Some(None), Some(true))),
+      None
+    )
     // 无旧文件 + 仅 enabled=false：文件 = {enabled:false}（先关后配的形态）。
     assertEquals(
-      SttService.mergeConfig(None, noPatch.copy(enabled = Some(false))).map(_.hcursor.downField("enabled").as[Boolean].toOption),
+      SttService
+        .mergeConfig(None, noPatch.copy(enabled = Some(false)))
+        .map(_.hcursor.downField("enabled").as[Boolean].toOption),
       Some(Some(false))
     )
   }
@@ -78,7 +84,10 @@ class SttEnabledSpec extends munit.FunSuite:
         Some(false)
       )
       // ③ 在配服务 + 停用：configured 与 enabled 两个真值并陈。
-      os.write.over(root / "stt-config.json", """{"apiKey":"sk-secret","model":"asr","endpoint":"https://e/x","enabled":false}""")
+      os.write.over(
+        root / "stt-config.json",
+        """{"apiKey":"sk-secret","model":"asr","endpoint":"https://e/x","enabled":false}"""
+      )
       val svc = SttService.create().unsafeRunSync()
       assert(svc.isDefined, "apiKey 在 ⇒ 服务对象仍建（停用是开关语义，不是配置丢失）")
       val node = SttService.serverConfigNode(svc).unsafeRunSync()
@@ -92,7 +101,7 @@ class SttEnabledSpec extends munit.FunSuite:
     val svc = new SttService("k", "m", "https://e/x", enabled = false)
     svc.transcribe(Array(1.toByte, 2, 3), None).unsafeRunSync() match
       case Left(err) => assert(err.toLowerCase.contains("disabled"), s"拒绝文案须可诊断: $err")
-      case Right(_)  => fail("disabled service must not transcribe")
+      case Right(_) => fail("disabled service must not transcribe")
     // 开启态 + 空音频 = 既有空载错误（零回归）。
     val on = new SttService("k", "m", "https://e/x", enabled = true)
     assertEquals(on.transcribe(Array.empty, None).unsafeRunSync(), Left("Empty audio data"))

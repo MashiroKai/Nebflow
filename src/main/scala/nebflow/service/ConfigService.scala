@@ -109,8 +109,7 @@ object ConfigService:
    */
   def revealProviderApiKeys: IO[Json] = IO.blocking {
     val raw = if os.exists(configPath) then os.read(configPath) else "{}"
-    val providers = parse(raw)
-      .toOption
+    val providers = parse(raw).toOption
       .flatMap(_.hcursor.downField("llm").downField("providers").as[Map[String, Json]].toOption)
       .getOrElse(Map.empty[String, Json])
     Json.obj("providers" -> Json.fromFields(providers.flatMap { case (id, p) =>
@@ -515,8 +514,7 @@ object ConfigService:
       case None => Left("imagegen section must be a JSON object")
       case Some(o) =>
         val unknown = o.keys.toSet.diff(IMAGEGEN_WRITABLE_KEYS.toSet)
-        if unknown.nonEmpty then
-          Left(s"imagegen section write refused — unknown key(s): ${unknown.mkString(", ")}")
+        if unknown.nonEmpty then Left(s"imagegen section write refused — unknown key(s): ${unknown.mkString(", ")}")
         else
           json.as[ImageGenConfig] match
             case Left(err) => Left(s"imagegen section undecodable: ${err.getMessage}")
@@ -553,7 +551,7 @@ object ConfigService:
                 // degrade 方向与删节同义）；非空 = 整节替换。
                 val updated = section.asObject.filter(_.isEmpty) match
                   case Some(_) => parsed.mapObject(_.remove(IMAGEGEN_SECTION))
-                  case None    => parsed.mapObject(_.add(IMAGEGEN_SECTION, section))
+                  case None => parsed.mapObject(_.add(IMAGEGEN_SECTION, section))
                 AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
                 Right(())
           }
@@ -593,9 +591,11 @@ object ConfigService:
     )
   }
 
-  /** keyRef 指针的**在位性**判定（存在且非空即已配——与
+  /**
+   * keyRef 指针的**在位性**判定（存在且非空即已配——与
    * [[nebflow.llm.imagegen.ImageGenService.readSecret]] 的腿关判据逐字同源，
-   * 面板显示与引擎判定永不漂移）。只 stat/读空判，不回传值。 */
+   * 面板显示与引擎判定永不漂移）。只 stat/读空判，不回传值。
+   */
   private def imagegenKeyConfigured(keyRef: Option[String]): Boolean =
     keyRef.filter(_.trim.nonEmpty).exists { name =>
       try

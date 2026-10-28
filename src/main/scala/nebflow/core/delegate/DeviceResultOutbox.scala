@@ -66,6 +66,7 @@ object DeviceResultOutbox:
   )
 
   object Entry:
+
     given Encoder[Entry] = Encoder.instance { e =>
       Json.obj(
         "id" -> e.id.asJson,
@@ -76,6 +77,7 @@ object DeviceResultOutbox:
         "attempts" -> e.attempts.asJson
       )
     }
+
     given Decoder[Entry] = Decoder.instance { c =>
       for
         id <- c.downField("id").as[String]
@@ -149,9 +151,8 @@ object DeviceResultOutbox:
     else
       IO.blocking {
         pendingSync().filter(_.id == id).foreach(e => if os.exists(fileOf(e)) then os.remove(fileOf(e)))
-      }.void.handleErrorWith(e =>
-        logger.warn(s"DeviceResultOutbox.delivered failed for id=$id: ${e.getMessage}").void
-      )
+      }.void
+        .handleErrorWith(e => logger.warn(s"DeviceResultOutbox.delivered failed for id=$id: ${e.getMessage}").void)
 
   /** 记一次投递尝试（纯读数：`attempts` 升序可见，不参与任何判失败逻辑）。 */
   private def bumpAttempt(e: Entry): IO[Unit] =
@@ -159,9 +160,10 @@ object DeviceResultOutbox:
       // 尝试数改写走独立文件名尾（enqueuedAt 不变 ⇒ 入队序不变）。
       val updated = e.copy(attempts = e.attempts + 1)
       AtomicJson.writeSync(fileOf(updated), updated.asJson.noSpaces)
-    }.void.handleErrorWith(err =>
-      logger.warn(s"DeviceResultOutbox: attempt counter write failed for ${e.id}: ${err.getMessage}").void
-    )
+    }.void
+      .handleErrorWith(err =>
+        logger.warn(s"DeviceResultOutbox: attempt counter write failed for ${e.id}: ${err.getMessage}").void
+      )
 
   /** 补投结果读数（drain 汇总面 / spec 断言面）。 */
   final case class DrainReport(delivered: List[String] = Nil, failed: List[(String, String)] = Nil):
@@ -179,8 +181,7 @@ object DeviceResultOutbox:
     pending.flatMap { entries =>
       entries.foldLeft(IO.pure(DrainReport())) { (acc, e) =>
         acc.flatMap { report =>
-          send(e.targetDeviceId, e.channel, e.payload)
-            .attempt
+          send(e.targetDeviceId, e.channel, e.payload).attempt
             .flatMap {
               case Right(Right(_)) =>
                 delivered(e.id).as(
@@ -192,7 +193,9 @@ object DeviceResultOutbox:
                 )
               case Left(t) =>
                 bumpAttempt(e).as(
-                  report.copy(failed = report.failed :+ (e.id, Option(t.getMessage).getOrElse(t.getClass.getSimpleName)))
+                  report.copy(failed =
+                    report.failed :+ (e.id, Option(t.getMessage).getOrElse(t.getClass.getSimpleName))
+                  )
                 )
             }
         }
@@ -201,7 +204,8 @@ object DeviceResultOutbox:
 
   /** 清空（运维/spec 用；正常路径绝不调用——零删除纪律）。 */
   def clear(): IO[Unit] =
-    IO.blocking(if os.exists(dir) then os.remove.all(dir)).void
+    IO.blocking(if os.exists(dir) then os.remove.all(dir))
+      .void
       .handleErrorWith(e => logger.warn(s"DeviceResultOutbox.clear failed: ${e.getMessage}").void)
 
 end DeviceResultOutbox

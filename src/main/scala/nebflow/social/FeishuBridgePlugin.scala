@@ -424,11 +424,14 @@ final class FeishuBridgePlugin(
         val answers = flat.expandAnswerSlots(kept)
         // answer-landing 实施批：回执反向通道登记（微信文本腿同款——失败出口经它
         // 把「问题已作废+原因」显式送回本渠道；发送闭包 contained）。
-        AskAnswerReceipt.record(rid, AskAnswerReceipt.Entry(
-          channel = Name,
-          routeKey = rootSid,
-          send = line => reply(rootSid, line)
-        )) *>
+        AskAnswerReceipt.record(
+          rid,
+          AskAnswerReceipt.Entry(
+            channel = Name,
+            routeKey = rootSid,
+            send = line => reply(rootSid, line)
+          )
+        ) *>
           ctx.forwardInteractionAnswer(rid, rootSid, Json.obj("answers" -> answers.asJson)) *>
           logger.info(s"feishu bridge: text answer forwarded requestId=$rid root=$rootSid answers=${answers.size}")
 
@@ -466,6 +469,7 @@ final class FeishuBridgePlugin(
             s"feishu bridge: cancel keyword ambiguous — ${many.size} open asks for session $sessionId, refusing"
           ) *>
             reply(sessionId, WeixinAskLeg.cancelAmbiguousLine(many.size))
+      end match
     }
 
   // ───────── feishu-inbound-image batch (2026-10-11): the image arm (intake 前置臂) ─────────
@@ -720,7 +724,7 @@ final class FeishuBridgePlugin(
           // order — then the text tail. Media first, 正文殿后 is preserved.
           val richLeg = richs match
             case Nil => IO.unit
-            case rs  => pacer.enqueue(deliverRichAll(sessionId, rs))
+            case rs => pacer.enqueue(deliverRichAll(sessionId, rs))
           val textLeg = if text.trim.isEmpty then IO.unit else pacer.enqueue(reply(sessionId, text))
           richLeg *> textLeg
         }
@@ -772,7 +776,11 @@ final class FeishuBridgePlugin(
           // answer-landing 实施批（表1 ★）：卡头批名 = 提问载荷归因（project 优先，
           // 回落 nodeName）；文本降级形态同款（静态卡不动——按钮按 rid 消歧不受影响）。
           val batch =
-            c.downField("project").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+            c.downField("project")
+              .as[String]
+              .toOption
+              .map(_.trim)
+              .filter(_.nonEmpty)
               .orElse(c.downField("nodeName").as[String].toOption.map(_.trim).filter(_.nonEmpty))
               .getOrElse("")
           val allViews = AskPromptCodec.viewsFromItemsJson(items)
@@ -856,7 +864,8 @@ final class FeishuBridgePlugin(
             views,
             FeishuAskCard.fallbackReason(PromptFallback.SendRejected(results.head.code, results.head.msg)),
             batch = batch
-          )        else
+          )
+        else
           IO(
             logger.warn(
               s"feishu bridge: ask cards PARTIALLY delivered to chat $chatId " +
@@ -960,6 +969,7 @@ final class FeishuBridgePlugin(
       if res.ok then IO(logger.info(s"feishu bridge: ask TEXT fallback delivered to chat $chatId"))
       else IO(logger.warn(s"feishu bridge: ask TEXT fallback rejected too code=${res.code} msg=${res.msg}"))
     }
+  end sendTextFallback
 
   // ───────────── askuser-remote P1: the card.action.trigger leg ─────────────
 
@@ -1079,11 +1089,14 @@ final class FeishuBridgePlugin(
               if text.isEmpty then FeishuAskCard.OtherCopy else text
           // answer-landing 实施批：回执反向通道登记（文本腿同款；卡片点击腿同一
           // requestId 键——后登记覆盖前登记，幂等）。
-          AskAnswerReceipt.record(rid, AskAnswerReceipt.Entry(
-            channel = Name,
-            routeKey = rootSid,
-            send = line => reply(rootSid, line)
-          )) *>
+          AskAnswerReceipt.record(
+            rid,
+            AskAnswerReceipt.Entry(
+              channel = Name,
+              routeKey = rootSid,
+              send = line => reply(rootSid, line)
+            )
+          ) *>
             ctx.forwardInteractionAnswer(rid, rootSid, Json.obj("answers" -> answers.asJson)) *>
             IO(
               logger.info(s"feishu bridge: card answer forwarded requestId=$rid root=$rootSid answers=${answers.size}")
@@ -1170,14 +1183,19 @@ final class FeishuBridgePlugin(
                       s"feishu bridge: rich item delivery raised for $p " +
                         s"(${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}) — degrading to a visible line"
                     ) *> sendVisibleLine(c, chatId, line)
-                      .as(List(nebflow.social.outbound.RichLedger.of(
-                        nebflow.social.outbound.RichCall.SendText(line),
-                        ok = false,
-                        -1,
-                        None,
-                        s"item delivery raised: ${e.getClass.getSimpleName}"
-                      )))
+                      .as(
+                        List(
+                          nebflow.social.outbound.RichLedger.of(
+                            nebflow.social.outbound.RichCall.SendText(line),
+                            ok = false,
+                            -1,
+                            None,
+                            s"item delivery raised: ${e.getClass.getSimpleName}"
+                          )
+                        )
+                      )
                   }
+              end deliverOne
               val legs =
                 if RichKind.isCardContent(rich.content) then
                   adapter
@@ -1185,9 +1203,11 @@ final class FeishuBridgePlugin(
                     .handleErrorWith(e =>
                       // 直落 IO 语法（同 weixin 腿的 IO[IO[Unit]] 死日志修正）：
                       // `IO(logger.warn(...))` 的内层永不执行。
-                      logger.warn(
-                        s"feishu bridge: rich card delivery raised (${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")})"
-                      ).as(Nil)
+                      logger
+                        .warn(
+                          s"feishu bridge: rich card delivery raised (${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")})"
+                        )
+                        .as(Nil)
                     )
                 else
                   rich.media.foldLeft(IO.pure(List.empty[nebflow.social.outbound.RichCallResult])) { (acc, p) =>
@@ -1288,8 +1308,7 @@ final class FeishuBridgePlugin(
                     logger.info(s"feishu bridge: reply delivered to chat $chatId (${res.messageId.getOrElse("-")})")
                 else
                   logger.warn(s"feishu bridge: send rejected code=${res.code} msg=${res.msg}") *>
-                    (if isSegment then
-                       noteSegmentFailure(sessionId, s"[上一条推送失败 code=${res.code} ${res.msg}]")
+                    (if isSegment then noteSegmentFailure(sessionId, s"[上一条推送失败 code=${res.code} ${res.msg}]")
                      else IO.unit)
               }
     }
@@ -1392,7 +1411,12 @@ object FeishuBridgePlugin:
    * arrives as an explicit reading; this wrapper only re-shapes it into
    * `Either[String, Array[Byte]]`.
    */
-  def defaultFetchImage(appId: String, appSecret: String, region: String, imageKey: String): IO[Either[String, Array[Byte]]] =
+  def defaultFetchImage(
+    appId: String,
+    appSecret: String,
+    region: String,
+    imageKey: String
+  ): IO[Either[String, Array[Byte]]] =
     IO.blocking(FeishuChannel.getImage(appId, appSecret, region, imageKey)).map { r =>
       if r.ok then r.bytes.map(Right(_)).getOrElse(Left(s"code=${r.code} msg=${r.msg}"))
       else Left(s"code=${r.code} msg=${r.msg}")

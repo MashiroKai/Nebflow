@@ -64,9 +64,11 @@ class DeviceFaceHardeningSpec extends FunSuite:
   private def mode(p: Path): String =
     PosixFilePermissions.toString(Files.getPosixFilePermissions(p))
 
-  /** POSIX 读回断言专用门（SecretsStoreSpec.posixOnly 同款惯例）：Windows 无
-    * POSIX 属性视图，0600/收窄读回用例在 Windows 上跳过（Windows 臂归
-    * DeviceCredentialAclSpec 的 ACL 读数）。 */
+  /**
+   * POSIX 读回断言专用门（SecretsStoreSpec.posixOnly 同款惯例）：Windows 无
+   * POSIX 属性视图，0600/收窄读回用例在 Windows 上跳过（Windows 臂归
+   * DeviceCredentialAclSpec 的 ACL 读数）。
+   */
   private def posixOnly(): Unit =
     assume(
       !CredentialFileAcl.isWindows(CredentialFileAcl.currentOsName),

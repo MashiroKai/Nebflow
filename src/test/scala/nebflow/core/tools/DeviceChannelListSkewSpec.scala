@@ -88,7 +88,9 @@ class DeviceChannelListSkewSpec extends FunSuite:
   test("正控：augmentSchema 注入产物（remoteable 六件的漏斗面）⇒ true"):
     val augmented = RemoteExecutor.augmentSchema(
       "Bash",
-      JsonObject("properties" -> io.circe.Json.obj("command" -> io.circe.Json.obj("type" -> io.circe.Json.fromString("string"))))
+      JsonObject(
+        "properties" -> io.circe.Json.obj("command" -> io.circe.Json.obj("type" -> io.circe.Json.fromString("string")))
+      )
     )
     assert(RemoteExecutor.schemaDeclaresDeviceParam(augmented))
 

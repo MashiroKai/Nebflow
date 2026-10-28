@@ -519,7 +519,9 @@ case class SharedResources(
         if rootId.trim.isEmpty then
           nebflow.shared.NebflowLogger
             .forName("nebflow.merge-queue")
-            .warn(s"[merge-queue] no responsible session for owner-gone '${m.delegateId}' — escalation dropped with this line")
+            .warn(
+              s"[merge-queue] no responsible session for owner-gone '${m.delegateId}' — escalation dropped with this line"
+            )
           IO.unit
         else
           val event = nebflow.actor.AgentCommand.ExternalEvent(
@@ -570,7 +572,9 @@ case class SharedResources(
       .resolveRootSessionId(Some(agentRegistry), m.delegateId, m.parentSessionId)
       .flatMap { rootId =>
         if rootId.trim.isEmpty then
-          logger943.warn(s"[merge-queue] no responsible session for '$kind' notify '${m.delegateId}' — dropped with this line")
+          logger943.warn(
+            s"[merge-queue] no responsible session for '$kind' notify '${m.delegateId}' — dropped with this line"
+          )
           IO.unit
         else
           val event = nebflow.actor.AgentCommand.ExternalEvent(
@@ -591,7 +595,9 @@ case class SharedResources(
           nebflow.core.tools.BgNotifyDelivery
             .deliverToRootOrInbox(Some(actorSystem), Some(agentRegistry), rootId, event)
             .void
-            .handleErrorWith(e => logger943.warn(s"[merge-queue] '$kind' notify delivery failed for '${m.delegateId}': ${e.getMessage}"))
+            .handleErrorWith(e =>
+              logger943.warn(s"[merge-queue] '$kind' notify delivery failed for '${m.delegateId}': ${e.getMessage}")
+            )
       }
   }
 

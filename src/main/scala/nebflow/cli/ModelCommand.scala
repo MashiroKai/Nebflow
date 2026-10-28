@@ -159,8 +159,14 @@ object ThinkingCommand extends CliCommand:
             case Some(cfg) =>
               val enabled = cfg.hcursor.downField("enabled").as[Boolean].getOrElse(true)
               val budget = cfg.hcursor.downField("budgetTokens").as[Int].getOrElse(32000)
+              // thinking-config 批（2026-10-28）：effort 档位（可选新字段）随行显示。
+              val effort = cfg.hcursor.downField("effort").as[String].toOption
+              val effortTxt = effort.map(e => s", effort: $e").getOrElse("")
               if ctx.json then CliResult.Json(cfg)
-              else CliResult.text(s"Thinking: ${if enabled then "ON" else "OFF"} (budget: $budget tokens)")
+              else
+                CliResult.text(
+                  s"Thinking: ${if enabled then "ON" else "OFF"} (budget: $budget tokens$effortTxt)"
+                )
             case None =>
               CliResult.text("Thinking: default (enabled)")
           }

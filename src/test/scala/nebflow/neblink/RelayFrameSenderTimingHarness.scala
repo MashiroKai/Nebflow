@@ -39,7 +39,9 @@ class RelayFrameSenderTimingHarness extends CatsEffectSuite:
   private val BulkFrame: String =
     val raw = new Array[Byte](256 * 1024)
     java.util.Arrays.fill(raw, 0x61.toByte)
-    s"""{"type":"body_frame","requestId":"harness","seq":0,"more":true,"data":"${Base64.getEncoder.encodeToString(raw)}"}"""
+    s"""{"type":"body_frame","requestId":"harness","seq":0,"more":true,"data":"${Base64.getEncoder.encodeToString(
+        raw
+      )}"}"""
 
   private val ControlFrame = """{"type":"pong"}"""
   private val BulkFrames = 16 // ×349,525 chars ≈ 5.6MB 字节面（≥5MB 门槛）
@@ -53,7 +55,8 @@ class RelayFrameSenderTimingHarness extends CatsEffectSuite:
       IO.unit
     else
       IO.blocking {
-        val outDir = Option(System.getenv("NF_TIMING_OUT")).map(Paths.get(_))
+        val outDir = Option(System.getenv("NF_TIMING_OUT"))
+          .map(Paths.get(_))
           .getOrElse(Paths.get("target", "session-stability"))
         Files.createDirectories(outDir)
         val tag = Option(System.getenv("NF_TIMING_TAG")).getOrElse("run")
@@ -74,21 +77,24 @@ class RelayFrameSenderTimingHarness extends CatsEffectSuite:
 
             // 控制面：固定节奏发 pong，逐帧记（排队+写完）时延 —— 独立线程，
             // 与 bulk 泵（本线程）在 sender 的发送位上竞争（生产形状）。
-            val controlThread = new Thread(() =>
-              try
-                var i = 0
-                while !stop.get() && i < ControlTotal do
-                  val f0 = System.nanoTime()
-                  sender.send(ControlFrame).unsafeRunSync()
-                  val totalMs = (System.nanoTime() - f0) / 1000000
-                  synchronized {
-                    sink.write(s"""{"kind":"control","index":$i,"totalMs":$totalMs,"bytes":${ControlFrame.length}}\n""")
-                    sink.flush()
-                  }
-                  i += 1
-                  Thread.sleep(ControlEveryMs)
-              catch case _: InterruptedException => ()
-              finally stop.set(true),
+            val controlThread = new Thread(
+              () =>
+                try
+                  var i = 0
+                  while !stop.get() && i < ControlTotal do
+                    val f0 = System.nanoTime()
+                    sender.send(ControlFrame).unsafeRunSync()
+                    val totalMs = (System.nanoTime() - f0) / 1000000
+                    synchronized {
+                      sink.write(
+                        s"""{"kind":"control","index":$i,"totalMs":$totalMs,"bytes":${ControlFrame.length}}\n"""
+                      )
+                      sink.flush()
+                    }
+                    i += 1
+                    Thread.sleep(ControlEveryMs)
+                catch case _: InterruptedException => ()
+                finally stop.set(true),
               "sender-timing-control"
             )
             controlThread.start()
@@ -113,9 +119,15 @@ class RelayFrameSenderTimingHarness extends CatsEffectSuite:
             val elapsedMs = (System.nanoTime() - t0) / 1000000
             println(f"[sender-timing] tag=$tag elapsed=${elapsedMs}ms bulkSent=$bulkSent out=$out")
             assertEquals(bulkSent, BulkFrames, "洪峰应全部写完（夹具有效性）")
-          finally try ws.abort() finally ()
+          finally
+            try ws.abort()
+            finally ()
+          end try
         finally fix.close()
+        end try
       }
+
+    end if
 
   /** 慢读对端：排空速率受控（每 32KiB 睡 readSleepMs），制造确定性回压。 */
   private final class ThrottledReadWsFixture(readSleepMs: Long) extends AutoCloseable:
@@ -142,6 +154,8 @@ class RelayFrameSenderTimingHarness extends CatsEffectSuite:
       t.start()
       t
 
+    end acceptor
+
     private def serve(s: Socket): Unit =
       try
         val request = readHeaders(s.getInputStream)
@@ -153,7 +167,9 @@ class RelayFrameSenderTimingHarness extends CatsEffectSuite:
           if n < 0 then return
           if n > 0 then Thread.sleep(readSleepMs) // 受限排空 = 慢上行
       catch case _: Throwable => ()
-      finally try s.close() catch case _: Throwable => ()
+      finally
+        try s.close()
+        catch case _: Throwable => ()
 
     private def readHeaders(in: java.io.InputStream): String =
       val sb = new StringBuilder
@@ -167,9 +183,11 @@ class RelayFrameSenderTimingHarness extends CatsEffectSuite:
           case (1, '\n') => 2
           case (2, '\r') => 3
           case (3, '\n') => 4
-          case _         => 0
+          case _ => 0
         if state < 4 then b = in.read()
       sb.toString
+
+    end readHeaders
 
     private def handshakeResponse(request: String): String =
       val key = request.linesIterator
@@ -188,7 +206,10 @@ class RelayFrameSenderTimingHarness extends CatsEffectSuite:
       stopped = true
       try serverSocket.close()
       catch case _: Throwable => ()
-      clients.forEach(s => try s.close() catch case _: Throwable => ())
+      clients.forEach(s =>
+        try s.close()
+        catch case _: Throwable => ()
+      )
 
   end ThrottledReadWsFixture
 

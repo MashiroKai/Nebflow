@@ -46,7 +46,7 @@ final class NfServeGate private (inFlight: AtomicInteger, val maxConcurrent: Int
    */
   def tryAcquire: IO[Boolean] = IO {
     var acquired = false
-    var settled  = false
+    var settled = false
     while !settled && !acquired do
       val cur = inFlight.get
       if cur >= maxConcurrent then settled = true
@@ -68,9 +68,11 @@ end NfServeGate
 
 object NfServeGate:
 
-  /** 缺省预算：`nebflow.json` 无 `nfFile.serveConcurrency` 时。同源浏览器对单
-    * origin 的并行连接本就 ≤6，32 给足余量；真正的挤压面（并行构建饿池）由
-    * 429-重试语义收敛，不靠加大预算硬扛。 */
+  /**
+   * 缺省预算：`nebflow.json` 无 `nfFile.serveConcurrency` 时。同源浏览器对单
+   * origin 的并行连接本就 ≤6，32 给足余量；真正的挤压面（并行构建饿池）由
+   * 429-重试语义收敛，不靠加大预算硬扛。
+   */
   val DefaultMaxConcurrent: Int = 32
 
   /** Config block inside `nebflow.json` — the ticket TTL's own `nfFile` block. */
@@ -79,13 +81,17 @@ object NfServeGate:
   /** Key inside the block. */
   val ConcurrencyKey: String = "serveConcurrency"
 
-  /** The `Retry-After` hint the 429 leg advertises (RFC 9110 §18.2, seconds).
-    * Short by design: the overloaded leg drains in seconds, and the frontend
-    * retry is capped at one. */
+  /**
+   * The `Retry-After` hint the 429 leg advertises (RFC 9110 §18.2, seconds).
+   * Short by design: the overloaded leg drains in seconds, and the frontend
+   * retry is capped at one.
+   */
   val RetryAfterSeconds: String = "1"
 
-  /** Budget clamps: ≥1 (a 0 budget would refuse everything) and ≤4096 (a
-    * runaway value would recreate the unbounded leg this gate exists to close). */
+  /**
+   * Budget clamps: ≥1 (a 0 budget would refuse everything) and ≤4096 (a
+   * runaway value would recreate the unbounded leg this gate exists to close).
+   */
   val MinMaxConcurrent: Int = 1
   val MaxMaxConcurrent: Int = 4096
 
@@ -106,8 +112,10 @@ object NfServeGate:
       .flatMap(_.hcursor.downField(ConfigKey).downField(ConcurrencyKey).as[Int].toOption)
       .filter(_ > 0)
 
-  /** Read the configured budget from the data root's `nebflow.json` once
-    * (startup path), fail-safe → [[DefaultMaxConcurrent]]. */
+  /**
+   * Read the configured budget from the data root's `nebflow.json` once
+   * (startup path), fail-safe → [[DefaultMaxConcurrent]].
+   */
   def loadMaxConcurrent(): Int =
     try
       val cfg = PathUtil.configJsonWritePath(PathUtil.dataRoot)

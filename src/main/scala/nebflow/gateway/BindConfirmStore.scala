@@ -56,7 +56,7 @@ class BindConfirmStore private (clock: IO[Long]):
       slot.modify { current =>
         val next: (Option[PendingConfirmation], Option[PendingConfirmation]) = current match
           case Some(p) if p.expiresAtMs > now => (Some(p), Some(p))
-          case _                              => (None, None) // expired (or absent): sweep + report empty
+          case _ => (None, None) // expired (or absent): sweep + report empty
         next
       }
     }

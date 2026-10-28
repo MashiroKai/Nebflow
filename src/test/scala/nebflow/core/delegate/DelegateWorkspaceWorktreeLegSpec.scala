@@ -55,7 +55,9 @@ class DelegateWorkspaceWorktreeLegSpec extends FunSuite:
       )
     } *> io <* IO(DelegateJudge.DelegateJudgePort.clear())
 
-  test("红验① 判否腿: decideWorktree=Some(false) still creates branch + worktree (read-only seat); cwd = the seat, not the workspace") {
+  test(
+    "红验① 判否腿: decideWorktree=Some(false) still creates branch + worktree (read-only seat); cwd = the seat, not the workspace"
+  ) {
     if !gitAvailable then () // 环境无 git = 跳过（CI 侧 git 前置同既有 MergeMutexGateSpec 先例）
     else
       val repo = tempRoot / "no-leg-repo"
@@ -67,14 +69,21 @@ class DelegateWorkspaceWorktreeLegSpec extends FunSuite:
       val binding = b.getOrElse(fail("judged-no leg must still produce a binding (read-only seat), not None"))
       assertEquals(binding.branch, s"delegate/$id")
       val seat = binding.worktree.getOrElse(fail("judged-no leg must carry a worktree seat"))
-      assertEquals(os.Path(seat).toString, (repo / ".nebflow" / "worktrees" / GitWorktrees.sanitizeRefName(id)).toString)
+      assertEquals(
+        os.Path(seat).toString,
+        (repo / ".nebflow" / "worktrees" / GitWorktrees.sanitizeRefName(id)).toString
+      )
       assert(binding.cwd != repo.toString, "the delegate must NOT sit in the shared workspace any more")
       assertEquals(binding.cwd, seat, "cwd = the worktree seat")
       assertEquals(GitWorktrees.currentBranch(os.Path(seat)), Some(s"delegate/$id"))
       assertEquals(GitWorktrees.currentBranch(repo), Some("main"), "the shared HEAD stays on the base branch")
       assertEquals(binding.baseBranch, Some("main"))
       assertEquals(binding.baseWs, repo.toString)
-      assertEquals(GitWorktrees.commitsAhead(repo, "main", binding.branch), 0, "a fresh read-only seat has zero commits ahead")
+      assertEquals(
+        GitWorktrees.commitsAhead(repo, "main", binding.branch),
+        0,
+        "a fresh read-only seat has zero commits ahead"
+      )
       // brief 行 = 只读座位变体（🔴 模型可见文案，§16 待过目——随批呈报件）
       val line = binding.briefLine.getOrElse(fail("the read-only seat brief line must exist"))
       assert(line.contains(s"[working branch] delegate/$id"), line)
@@ -96,7 +105,8 @@ class DelegateWorkspaceWorktreeLegSpec extends FunSuite:
       // 自然形态的直改 main 第一步（checkout）被 git 本体拒绝。LC_ALL=C 钉住
       // git 报文语言（本机 zh_CN locale 下 git 出中文报文——「已经被工作区使用」
       // 与英文 "already used by worktree" 同义；断言只认英文形态 ⇒ 钉 locale）。
-      val res = os.proc("git", "-C", seat.toString, "checkout", "main")
+      val res = os
+        .proc("git", "-C", seat.toString, "checkout", "main")
         .call(check = false, mergeErrIntoOut = true, env = Map("LC_ALL" -> "C"))
       assert(res.exitCode != 0, s"checkout of the already-checked-out base branch must fail, got: ${res.out.trim()}")
       val msg = res.out.trim().toLowerCase
@@ -106,7 +116,9 @@ class DelegateWorkspaceWorktreeLegSpec extends FunSuite:
       )
   }
 
-  test("红验③ worktree 建败 ⇒ inPlaceBinding 回落: branch set / worktree None / brief line carries the GIT_INDEX_FILE recipe (fail-open intact)") {
+  test(
+    "红验③ worktree 建败 ⇒ inPlaceBinding 回落: branch set / worktree None / brief line carries the GIT_INDEX_FILE recipe (fail-open intact)"
+  ) {
     if !gitAvailable then ()
     else
       val repo = tempRoot / "fallback-repo"
@@ -123,7 +135,8 @@ class DelegateWorkspaceWorktreeLegSpec extends FunSuite:
       val b = withJudge(Some(true))(
         DelegateWorkspace.prepare(repo.toString, "task", id)
       ).unsafeRunSync()
-      val binding = b.getOrElse(fail("fallback must still produce a binding — dispatch is never rejected on a git-face failure"))
+      val binding =
+        b.getOrElse(fail("fallback must still produce a binding — dispatch is never rejected on a git-face failure"))
       assertEquals(binding.worktree, None, "worktree creation failed ⇒ no worktree in the binding")
       assertEquals(binding.branch, s"delegate/$id", "the in-place branch is still created")
       assertEquals(binding.cwd, repo.toString, "the fallback seat = the original workspace")
@@ -132,7 +145,9 @@ class DelegateWorkspaceWorktreeLegSpec extends FunSuite:
       assert(binding.briefLine.exists(_.contains("GIT_INDEX_FILE")), binding.briefLine.getOrElse("missing brief line"))
   }
 
-  test("判是腿对照: decideWorktree=Some(true) — worktree seat with the deliverable-commit brief line unchanged (word-for-word leg)") {
+  test(
+    "判是腿对照: decideWorktree=Some(true) — worktree seat with the deliverable-commit brief line unchanged (word-for-word leg)"
+  ) {
     if !gitAvailable then ()
     else
       val repo = tempRoot / "yes-leg-repo"

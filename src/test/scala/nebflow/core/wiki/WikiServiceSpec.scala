@@ -68,8 +68,10 @@ class WikiServiceSpec extends CatsEffectSuite:
       assertEquals(beta.hcursor.get[Boolean]("stub").toOption, Some(true))
       // sub-vault isolation: child.md is NOT a real node of the merged graph
       val nodes = g.hcursor.downField("nodes").as[List[io.circe.Json]].getOrElse(Nil)
-      val realRels = nodes.filterNot(n => n.hcursor.get[Boolean]("stub").toOption.contains(true))
-        .flatMap(n => str(n, "rel")).sorted
+      val realRels = nodes
+        .filterNot(n => n.hcursor.get[Boolean]("stub").toOption.contains(true))
+        .flatMap(n => str(n, "rel"))
+        .sorted
       assertEquals(realRels, List("a.md", "b.md"))
     }
   }
@@ -81,8 +83,10 @@ class WikiServiceSpec extends CatsEffectSuite:
       assertEquals(crumbs.map(c => str(c, "name")), List(Some("alpha")))
 
       val nodes = g.hcursor.downField("nodes").as[List[io.circe.Json]].getOrElse(Nil)
-      val realRels = nodes.filterNot(n => n.hcursor.get[Boolean]("stub").toOption.contains(true))
-        .flatMap(n => str(n, "rel")).sorted
+      val realRels = nodes
+        .filterNot(n => n.hcursor.get[Boolean]("stub").toOption.contains(true))
+        .flatMap(n => str(n, "rel"))
+        .sorted
       assertEquals(realRels, List("a.md", "b.md")) // child.md isolated
 
       val children = g.hcursor.downField("childVaults").as[List[io.circe.Json]].getOrElse(Nil)
@@ -106,12 +110,16 @@ class WikiServiceSpec extends CatsEffectSuite:
     svc.graph(Some("alpha"), Some("sub/docs")).map { g =>
       assertEquals(g.hcursor.downField("view").downField("vault").as[String].toOption, Some("sub/docs"))
       val crumbs = g.hcursor.downField("view").downField("breadcrumb").as[List[io.circe.Json]].getOrElse(Nil)
-      assertEquals(crumbs.map(c => (str(c, "name"), str(c, "vault"))),
-        List((Some("alpha"), Some("docs")), (Some("sub"), Some("sub/docs"))))
+      assertEquals(
+        crumbs.map(c => (str(c, "name"), str(c, "vault"))),
+        List((Some("alpha"), Some("docs")), (Some("sub"), Some("sub/docs")))
+      )
 
       val nodes = g.hcursor.downField("nodes").as[List[io.circe.Json]].getOrElse(Nil)
-      val realRels = nodes.filterNot(n => n.hcursor.get[Boolean]("stub").toOption.contains(true))
-        .flatMap(n => str(n, "rel")).sorted
+      val realRels = nodes
+        .filterNot(n => n.hcursor.get[Boolean]("stub").toOption.contains(true))
+        .flatMap(n => str(n, "rel"))
+        .sorted
       assertEquals(realRels, List("child.md"))
       val ext = nodes.filter(n => n.hcursor.get[Boolean]("external").toOption.contains(true))
       assertEquals(ext.flatMap(n => str(n, "rel")), List("a.md"))
@@ -128,12 +136,12 @@ class WikiServiceSpec extends CatsEffectSuite:
     svc.graph(Some("nope")).map { g =>
       assertEquals(str(g, "error"), Some("project 'nope' not found"))
     } *>
-    svc.graph(Some("alpha"), Some("../escape")).map { g =>
-      assertEquals(str(g, "error"), Some("invalid vault path '../escape'"))
-    } *>
-    svc.graph(Some("beta")).map { g =>
-      assert(str(g, "error").exists(_.contains("not found")))
-    }
+      svc.graph(Some("alpha"), Some("../escape")).map { g =>
+        assertEquals(str(g, "error"), Some("invalid vault path '../escape'"))
+      } *>
+      svc.graph(Some("beta")).map { g =>
+        assert(str(g, "error").exists(_.contains("not found")))
+      }
   }
 
   test("WS-5 __user__ is the reserved C-batch placeholder (empty view, no error)") {

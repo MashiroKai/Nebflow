@@ -220,7 +220,8 @@ class AssetsRoutesSpec extends CatsEffectSuite:
   }
 
   test("indexWithBrandFile: missing file degrades to NotFound") {
-    StaticRoutes.indexWithBrandFile(os.Path("/nonexistent/definitely-missing.html"))
+    StaticRoutes
+      .indexWithBrandFile(os.Path("/nonexistent/definitely-missing.html"))
       .map(resp => assertEquals(resp.status, Status.NotFound))
   }
 

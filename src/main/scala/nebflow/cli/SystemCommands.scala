@@ -32,6 +32,7 @@ object UpdateCommand extends CliCommand:
   def name = "update"
   def description = s"Update ${nebflow.shared.Branding.productName} to the latest version"
   def subcommands = List(UpdateRun)
+
   def examples =
     List("stand update", "stand update --beta", "stand update --device DESKTOP-IJBBEOT", "stand update --from <jar>")
 
@@ -65,7 +66,12 @@ object UpdateCommand extends CliCommand:
             case Some(jar) if jar != "true" && jar.trim.nonEmpty =>
               twoPhaseLocal(os.Path(jar.trim), stageOnly = ctx.args.get("stage-only").contains("true"))
             case Some(_) =>
-              IO.pure(CliResult.Error("--from requires the jar path: stand update --from <path>/stand-assembly-<version>.jar", 1))
+              IO.pure(
+                CliResult.Error(
+                  "--from requires the jar path: stand update --from <path>/stand-assembly-<version>.jar",
+                  1
+                )
+              )
             case None =>
               // Local channel update (existing behavior, unchanged)
               IO.blocking {
@@ -95,13 +101,13 @@ object UpdateCommand extends CliCommand:
      * 下一次 start 直接吃新指针/新包。
      */
     private[cli] def twoPhaseLocal(
-        jar: os.Path,
-        stageOnly: Boolean,
-        resolveL: () => Option[String] = () =>
-          DetachedApply.resolveLauncher(sys.env, sys.props.getOrElse("user.home", ""), isWindows),
-        doStage: (os.Path, os.Path, DetachedApply.Layout) => IO[Either[String, UpdateStage.Staged]] =
-          (j, dir, lay) => UpdateStage.stage(j, dir, lay),
-        doRegister: DetachedApply.Plan => IO[Either[String, String]] = p => DetachedApply.register(p)
+      jar: os.Path,
+      stageOnly: Boolean,
+      resolveL: () => Option[String] = () =>
+        DetachedApply.resolveLauncher(sys.env, sys.props.getOrElse("user.home", ""), isWindows),
+      doStage: (os.Path, os.Path, DetachedApply.Layout) => IO[Either[String, UpdateStage.Staged]] = (j, dir, lay) =>
+        UpdateStage.stage(j, dir, lay),
+      doRegister: DetachedApply.Plan => IO[Either[String, String]] = p => DetachedApply.register(p)
     ): IO[CliResult] =
       IO.blocking(isWindows).flatMap { isWin =>
         resolveL() match
@@ -120,7 +126,9 @@ object UpdateCommand extends CliCommand:
               case Right(staged) if stageOnly =>
                 IO.pure(
                   CliResult.text(
-                    s"phase1 staged: ${staged.jarName} → ${staged.stagedPath} (sha256 ${staged.sha256.take(16)}…${if staged.idempotentHit then ", idempotent hit" else ""})\n  pointer untouched, engine untouched — run without --stage-only to promote + restart"
+                    s"phase1 staged: ${staged.jarName} → ${staged.stagedPath} (sha256 ${staged.sha256.take(16)}…${
+                        if staged.idempotentHit then ", idempotent hit" else ""
+                      })\n  pointer untouched, engine untouched — run without --stage-only to promote + restart"
                   )
                 )
               case Right(staged) =>
@@ -132,7 +140,8 @@ object UpdateCommand extends CliCommand:
                       promoted <- nebflow.core.hotrestart.InstallPointer.promote(installDir, staged.version)
                     yield promoted
                       .map(_ => (preCur, prePrev): (Option[String], Option[String]))
-                      .left.map(_.toString)
+                      .left
+                      .map(_.toString)
                   else IO.pure(Right((None, None): (Option[String], Option[String])))
                 }.flatten
                 promote.flatMap {
@@ -175,16 +184,16 @@ object UpdateCommand extends CliCommand:
                           }
                       }
                     }
-                  }
+                }
             }
       }
 
     /** 注册失败 → 指针原样放回（staged 包留在盘上无害），报因退出。 */
     private def restoreAndFail(
-        installDir: os.Path,
-        layout: DetachedApply.Layout,
-        pointersBefore: (Option[String], Option[String]),
-        cause: String
+      installDir: os.Path,
+      layout: DetachedApply.Layout,
+      pointersBefore: (Option[String], Option[String]),
+      cause: String
     ): IO[CliResult] =
       if layout != DetachedApply.Layout.Pointer then
         IO.pure(CliResult.Error(s"apply registration failed (selection face unchanged): $cause", 1))
@@ -194,9 +203,8 @@ object UpdateCommand extends CliCommand:
             nebflow.core.hotrestart.InstallPointer
               .writePointers(installDir, cur, prev)
               .attempt
-              .map {
-                _ =>
-                  CliResult.Error(s"apply registration failed — pointers restored to $cur: $cause", 1)
+              .map { _ =>
+                CliResult.Error(s"apply registration failed — pointers restored to $cur: $cause", 1)
               }
           case (None, _) =>
             IO.pure(CliResult.Error(s"apply registration failed (no pointer to restore — layout had none): $cause", 1))
@@ -310,13 +318,26 @@ object StopCommand extends CliCommand:
   private[cli] object StopRun extends CliSubcommand:
     def name = "run"
     def description = "Stop the Gateway (--force skips the ownership gate; --tree kills an sbt-managed chain)"
+
     def params = List(
-      CliParam("force", None, "Skip the ownership gate (identity check, port confirmation and the 8080/8097 dev-host gate always apply)", isFlag = true),
-      CliParam("tree", None, "Stop the whole sbt-managed process chain; degrades to a single-process stop when no sbt ancestor exists", isFlag = true)
+      CliParam(
+        "force",
+        None,
+        "Skip the ownership gate (identity check, port confirmation and the 8080/8097 dev-host gate always apply)",
+        isFlag = true
+      ),
+      CliParam(
+        "tree",
+        None,
+        "Stop the whole sbt-managed process chain; degrades to a single-process stop when no sbt ancestor exists",
+        isFlag = true
+      )
     )
 
     def run(ctx: CliContext): IO[CliResult] =
       runStop(stopOptions(ctx))
+
+  end StopRun
 
   /**
    * StopOutcome → CliResult mapping (piece 4): Stopped/NotRunning exit 0
@@ -324,8 +345,8 @@ object StopCommand extends CliCommand:
    * the spec to drive with injected deps — zero real signals there.
    */
   private[cli] def runStop(
-      opts: ProcessManager.StopOptions,
-      deps: ProcessManager.StopDeps = ProcessManager.StopDeps()
+    opts: ProcessManager.StopOptions,
+    deps: ProcessManager.StopDeps = ProcessManager.StopDeps()
   ): IO[CliResult] =
     ProcessManager.stopHardened(opts, deps).map {
       case ProcessManager.StopOutcome.NotRunning =>
@@ -343,6 +364,8 @@ object StopCommand extends CliCommand:
       force = ctx.args.get("force").contains("true"),
       tree = ctx.args.get("tree").contains("true")
     )
+
+end StopCommand
 
 object StatusCommand extends CliCommand:
   def name = "status"
@@ -387,15 +410,17 @@ object StatusCommand extends CliCommand:
           if ctx.json then
             CliResult.Exit(
               code,
-              io.circe.Json.obj(
-                "running" -> running.asJson,
-                "pid" -> pidOpt.asJson,
-                "port" -> port.asJson,
-                "version" -> nebflow.Version.string.asJson,
-                "daemon" -> daemon.asJson,
-                "startedBy" -> startedBy.asJson,
-                "mode" -> mode.asJson
-              ).spaces2
+              io.circe.Json
+                .obj(
+                  "running" -> running.asJson,
+                  "pid" -> pidOpt.asJson,
+                  "port" -> port.asJson,
+                  "version" -> nebflow.Version.string.asJson,
+                  "daemon" -> daemon.asJson,
+                  "startedBy" -> startedBy.asJson,
+                  "mode" -> mode.asJson
+                )
+                .spaces2
             )
           else
             val head =
@@ -412,6 +437,7 @@ object StatusCommand extends CliCommand:
                 )
               case None => Nil
             CliResult.Exit(code, (head :: metaLines).mkString("\n"))
+          end if
         }
       }
 
@@ -540,7 +566,10 @@ object DoctorCommand extends CliCommand:
         // --- 5. PID file / Gateway status ---
         val pidOpt = ProcessManager.readPid()
         val gatewayRunning = pidOpt.exists(ProcessManager.isRunning)
-        val port = nebflow.shared.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(nebflow.shared.Defaults.GatewayPort)
+        val port = nebflow.shared.Branding
+          .env("GATEWAY_PORT")
+          .flatMap(_.toIntOption)
+          .getOrElse(nebflow.shared.Defaults.GatewayPort)
         if gatewayRunning then checks += Diagnostic("Gateway", true, s"Running (pid=${pidOpt.get}, port=$port)", "")
         else
           // Stale PID file?

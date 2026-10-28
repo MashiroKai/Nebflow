@@ -51,6 +51,7 @@ object DelegateTerminal:
   sealed trait Outcome
 
   object Outcome:
+
     /**
      * 判词完成（payload 后缀携带判词行——🔴 模型/用户可见文案，§16 待过目）。
      * `mergeOutcome`（台账 #896 交通引导员制 2026-10-26）：合并轮终态结论——
@@ -58,7 +59,8 @@ object DelegateTerminal:
      * 被拒（关账 failed，无重试无 park）；None = 非合并轮完成（队列成员若在账则
      * 走账实核对回落）。默认 None。
      */
-    final case class Release(verdictSuffix: String, mergeOutcome: Option[MergeQueue.RoundOutcome] = None) extends Outcome
+    final case class Release(verdictSuffix: String, mergeOutcome: Option[MergeQueue.RoundOutcome] = None)
+        extends Outcome
 
     /** ready-to-merge：保活等合并轮（预算重挂由监督者执行）。 */
     case object HoldForMerge extends Outcome
@@ -784,9 +786,11 @@ object DelegateTerminal:
             .flatMap {
               case Right(Right(())) => IO.unit
               case other =>
-                IO(logger.warn(
-                  s"work-result preservation skipped for $delegateId: ${other.fold(_.getMessage, _.toString).take(200)}"
-                ))
+                IO(
+                  logger.warn(
+                    s"work-result preservation skipped for $delegateId: ${other.fold(_.getMessage, _.toString).take(200)}"
+                  )
+                )
             }
           _ <- resources.subAgentTaskStore
             .updateStatus(parentSessionId, delegateId, ReadyToMergeStatus, completedAt = Some(now))
@@ -796,6 +800,7 @@ object DelegateTerminal:
             s"delegate $delegateId held for merge (project=$projectKey, branch=${entry.branch}, readyAt=$now) — parent notified after the merge round"
           )
         yield Outcome.HoldForMerge
+        end for
     end match
   end holdForMerge
 

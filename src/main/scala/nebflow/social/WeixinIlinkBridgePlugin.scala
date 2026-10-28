@@ -1373,8 +1373,10 @@ final class WeixinIlinkBridgePlugin(
           else if bothGreen then None
           else flap
         val closedFlap = if bothGreen then flap else None
-        (((tNext, mNext), newAlerted, flapNext),
-        (if shouldFire then Some(math.max(tNext, mNext)) else None, alerted, bothGreen, closedFlap))
+        (
+          ((tNext, mNext), newAlerted, flapNext),
+          (if shouldFire then Some(math.max(tNext, mNext)) else None, alerted, bothGreen, closedFlap)
+        )
       }
     fire.flatMap { case (alert, wasAlerted, bothGreen, closedFlap) =>
       alert.fold(IO.unit)(streak => alertBridgeDead(sender, streak)) *>

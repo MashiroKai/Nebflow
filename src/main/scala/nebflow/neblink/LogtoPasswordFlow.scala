@@ -159,6 +159,8 @@ object LogtoPasswordFlow:
         code <- params.get("code").filter(_.nonEmpty).toRight("redirect carries no code")
         state <- params.get("state").toRight("redirect carries no state")
       yield (code, state)
+    end if
+  end parseRedirectQuery
 
   // ── pure: request builders (dialect pinned to the deployed tenant) ───────
 
@@ -202,7 +204,12 @@ object LogtoPasswordFlow:
    * The password-verification leg. 🔴 The password exists ONLY inside this
    * request body — the failure model ([[Failure]]) never carries it.
    */
-  def verifyPasswordRequest(endpoint: String, identifierType: String, identifierValue: String, password: String): Request =
+  def verifyPasswordRequest(
+    endpoint: String,
+    identifierType: String,
+    identifierValue: String,
+    password: String
+  ): Request =
     Request(
       url = s"${endpoint.stripSuffix("/")}/api/experience/verification/password",
       contentType = "application/json",
@@ -289,17 +296,20 @@ object LogtoPasswordFlow:
       verifier <- LogtoAuthCode.generateVerifier
       state <- LogtoAuthCode.generateState
       nonce <- LogtoAuthCode.generateState
-      result <- dance(send, DanceInput(
-        base = endpoint.stripSuffix("/"),
-        clientId = clientId,
-        redirectUri = redirectUri,
-        identifierType = identifierType,
-        identifierValue = identifierValue,
-        password = password,
-        verifier = verifier,
-        state = state,
-        nonce = nonce
-      ))
+      result <- dance(
+        send,
+        DanceInput(
+          base = endpoint.stripSuffix("/"),
+          clientId = clientId,
+          redirectUri = redirectUri,
+          identifierType = identifierType,
+          identifierValue = identifierValue,
+          password = password,
+          verifier = verifier,
+          state = state,
+          nonce = nonce
+        )
+      )
     yield result
   end signIn
 
@@ -320,7 +330,14 @@ object LogtoPasswordFlow:
     // ── leg 1: mount the OIDC interaction (303 expected, never followed) ────
     send(
       Request(
-        interactionAuthorizeUrl(in.base, in.clientId, in.redirectUri, LogtoAuthCode.challengeS256(in.verifier), in.state, in.nonce),
+        interactionAuthorizeUrl(
+          in.base,
+          in.clientId,
+          in.redirectUri,
+          LogtoAuthCode.challengeS256(in.verifier),
+          in.state,
+          in.nonce
+        ),
         contentType = "application/x-www-form-urlencoded",
         body = "",
         method = "GET"
@@ -337,45 +354,57 @@ object LogtoPasswordFlow:
           else
             val jar2 = mergeCookies(jar1, r2.setCookies)
             // ── leg 3: password-identifier recognition ─────────────────────
-            send(verifyPasswordRequest(in.base, in.identifierType, in.identifierValue, in.password), jar2).flatMap { r3 =>
-              if r3.status / 100 != 2 then IO.pure(Left(classifyFailure("verification/password", r3.status, r3.body)))
-              else
-                parseVerification(r3.body) match
-                  case Left(f) => IO.pure(Left(f))
-                  case Right(vid) =>
-                    val jar3 = mergeCookies(jar2, r3.setCookies)
-                    // ── leg 4: bind the verified identity to the session ────
-                    send(identifyRequest(in.base, vid), jar3).flatMap { r4 =>
-                      if r4.status / 100 != 2 then IO.pure(Left(classifyFailure("identification", r4.status, r4.body)))
-                      else
-                        val jar4 = mergeCookies(jar3, r4.setCookies)
-                        // ── leg 5: submit → redirectTo ─────────────────────
-                        send(submitRequest(in.base), jar4).flatMap { r5 =>
-                          if r5.status / 100 != 2 then IO.pure(Left(classifyFailure("submit", r5.status, r5.body)))
-                          else
-                            parseSubmit(r5.body) match
-                              case Left(f) => IO.pure(Left(f))
-                              case Right(redirectTo) =>
-                                // ── leg 6: follow redirectTo, take code+state ──
-                                send(
-                                  Request(redirectTo, contentType = "application/x-www-form-urlencoded", body = "", method = "GET"),
-                                  jar4
-                                ).flatMap { r6 =>
-                                  r6.location match
-                                    case None =>
-                                      IO.pure(Left(Failure.Protocol("redirect", "", s"HTTP ${r6.status} without Location")))
-                                    case Some(loc) =>
-                                      parseRedirectQuery(loc) match
-                                        case Left(m) => IO.pure(Left(Failure.Protocol("redirect", "", m)))
-                                        case Right((code, st)) if st == in.state =>
-                                          exchangeToken(send)(in.base, in.clientId, in.redirectUri, code, in.verifier)
-                                        case Right(_) =>
-                                          IO.pure(Left(Failure.Protocol("redirect", "", "state mismatch (possible CSRF)")))
-                                }
-                        }
-                    }
+            send(verifyPasswordRequest(in.base, in.identifierType, in.identifierValue, in.password), jar2).flatMap {
+              r3 =>
+                if r3.status / 100 != 2 then IO.pure(Left(classifyFailure("verification/password", r3.status, r3.body)))
+                else
+                  parseVerification(r3.body) match
+                    case Left(f) => IO.pure(Left(f))
+                    case Right(vid) =>
+                      val jar3 = mergeCookies(jar2, r3.setCookies)
+                      // ── leg 4: bind the verified identity to the session ────
+                      send(identifyRequest(in.base, vid), jar3).flatMap { r4 =>
+                        if r4.status / 100 != 2 then
+                          IO.pure(Left(classifyFailure("identification", r4.status, r4.body)))
+                        else
+                          val jar4 = mergeCookies(jar3, r4.setCookies)
+                          // ── leg 5: submit → redirectTo ─────────────────────
+                          send(submitRequest(in.base), jar4).flatMap { r5 =>
+                            if r5.status / 100 != 2 then IO.pure(Left(classifyFailure("submit", r5.status, r5.body)))
+                            else
+                              parseSubmit(r5.body) match
+                                case Left(f) => IO.pure(Left(f))
+                                case Right(redirectTo) =>
+                                  // ── leg 6: follow redirectTo, take code+state ──
+                                  send(
+                                    Request(
+                                      redirectTo,
+                                      contentType = "application/x-www-form-urlencoded",
+                                      body = "",
+                                      method = "GET"
+                                    ),
+                                    jar4
+                                  ).flatMap { r6 =>
+                                    r6.location match
+                                      case None =>
+                                        IO.pure(
+                                          Left(Failure.Protocol("redirect", "", s"HTTP ${r6.status} without Location"))
+                                        )
+                                      case Some(loc) =>
+                                        parseRedirectQuery(loc) match
+                                          case Left(m) => IO.pure(Left(Failure.Protocol("redirect", "", m)))
+                                          case Right((code, st)) if st == in.state =>
+                                            exchangeToken(send)(in.base, in.clientId, in.redirectUri, code, in.verifier)
+                                          case Right(_) =>
+                                            IO.pure(
+                                              Left(Failure.Protocol("redirect", "", "state mismatch (possible CSRF)"))
+                                            )
+                                  }
+                          }
+                      }
             }
         }
+      end if
     }
   end dance
 
@@ -388,8 +417,7 @@ object LogtoPasswordFlow:
     verifier: String
   ): IO[Either[Failure, LogtoAuthCode.TokenResult]] =
     send(tokenRequest(endpoint, clientId, redirectUri, code, verifier), "").map { r =>
-      if r.status == 200 then
-        LogtoAuthCode.parseTokenResponse(r.body).left.map(m => Failure.Protocol("token", "", m))
+      if r.status == 200 then LogtoAuthCode.parseTokenResponse(r.body).left.map(m => Failure.Protocol("token", "", m))
       else
         val parsed = parser.parse(r.body).toOption
         val code = parsed.flatMap(_.hcursor.downField("error").as[String].toOption).getOrElse("")
@@ -429,8 +457,6 @@ object LogtoPasswordFlow:
       val location =
         Option(response.headers().firstValue("location").orElse(null))
       Resp(response.statusCode(), setCookies, location, response.body())
-    }.handleErrorWith(e =>
-      IO.pure(Resp(0, Nil, None, Option(e.getMessage).getOrElse(e.getClass.getSimpleName)))
-    )
+    }.handleErrorWith(e => IO.pure(Resp(0, Nil, None, Option(e.getMessage).getOrElse(e.getClass.getSimpleName))))
 
 end LogtoPasswordFlow

@@ -101,8 +101,10 @@ object SubAgentStartupRecovery:
   // 阻塞，ProjectCrashRecovery 慢段同款纪律），spawn 并发信号量护栏；复活失败
   // （spawn 链错误）的孤儿在 fork 内落回收殓链——绝不静默悬挂。
 
-  /** 复活腿依赖（GatewayMain boot 装配点传入；None = 复活腿整体旁路——legacy 形态，
-    * 既有测试/无 ActorSystem 载体场的诚实缺省）。 */
+  /**
+   * 复活腿依赖（GatewayMain boot 装配点传入；None = 复活腿整体旁路——legacy 形态，
+   * 既有测试/无 ActorSystem 载体场的诚实缺省）。
+   */
   final case class RevivalDeps(
     resources: SharedResources,
     system: nebflow.actor.ActorSystem,
@@ -111,11 +113,12 @@ object SubAgentStartupRecovery:
 
   /** sweep 汇总（boot 日志行 + 测试断言面）。 */
   final case class Report(
-      terminalized: List[String] = Nil,
-      revived: List[String] = Nil,
-      /** (taskId, 不可复活原因)——资格不满足/预算耗尽/boot cap 超额而走收殓的孤儿。 */
-      revivalSkipped: List[(String, String)] = Nil
+    terminalized: List[String] = Nil,
+    revived: List[String] = Nil,
+    /** (taskId, 不可复活原因)——资格不满足/预算耗尽/boot cap 超额而走收殓的孤儿。 */
+    revivalSkipped: List[(String, String)] = Nil
   ):
+
     def summary: String =
       s"terminalized=${terminalized.size} revived=${revived.size} (${revived.mkString(",")}) " +
         s"revivalSkipped=${revivalSkipped.size}"
@@ -159,9 +162,7 @@ object SubAgentStartupRecovery:
             logger
               .info("[delegate-revival] kill-switch off — all orphans fall through to the salvage chain")
               .as(())
-              .flatMap(_ =>
-                salvageAll(orphans).flatMap(ids => settle().as(Report(terminalized = ids)))
-              )
+              .flatMap(_ => salvageAll(orphans).flatMap(ids => settle().as(Report(terminalized = ids))))
           case Some(deps) =>
             for
               judged <- orphans.traverse { t =>
@@ -198,13 +199,19 @@ object SubAgentStartupRecovery:
               _ <- settle()
               revivedNow <- revivedRef.get
             yield Report(terminalized = terminalized, revived = revivedNow, revivalSkipped = skipped)
+        end match
     }
 
-  /** 在飞任务全量（running/restarting；单遍 findAllTasks 后过滤——boot 一次性）。
-    * [合并融合] 标记腿与 #692 收宽同向：本 helper 服务 boot sweep（一次性全量），
-    * 运行期视野走 watchdogSweep 的 findRunningTasks（已加宽 running∨restarting）。 */
+  end sweep
+
+  /**
+   * 在飞任务全量（running/restarting；单遍 findAllTasks 后过滤——boot 一次性）。
+   * [合并融合] 标记腿与 #692 收宽同向：本 helper 服务 boot sweep（一次性全量），
+   * 运行期视野走 watchdogSweep 的 findRunningTasks（已加宽 running∨restarting）。
+   */
   private def inFlightTasks(store: SubAgentTaskStore): IO[List[SubAgentTask]] =
-    store.findAllTasks()
+    store
+      .findAllTasks()
       .map(_.filter(t => InFlightStatuses.contains(t.status)))
       .handleErrorWith(e => logger.warn(s"[startup-recovery] in-flight scan failed: ${e.getMessage}").as(Nil))
 
@@ -216,7 +223,8 @@ object SubAgentStartupRecovery:
    */
   private def markInterruptedRecords(store: SubAgentTaskStore): IO[Int] =
     for
-      tasks <- store.findAllTasks()
+      tasks <- store
+        .findAllTasks()
         .map(_.filter(t => t.lastError.exists(_.startsWith(RestartLossFingerprint))))
         .handleErrorWith(e => logger.warn(s"[startup-recovery] fingerprint scan failed: ${e.getMessage}").as(Nil))
       lostIds = tasks.map(_.taskId).collect { case id if id.nonEmpty => id }.toSet
@@ -245,8 +253,7 @@ object SubAgentStartupRecovery:
                 .map(_.count(identity))
             }
       _ <-
-        if marked > 0 then
-          logger.info(s"[startup-recovery] restart-interruption marked on $marked delegate record(s)")
+        if marked > 0 then logger.info(s"[startup-recovery] restart-interruption marked on $marked delegate record(s)")
         else IO.unit
     yield marked
 

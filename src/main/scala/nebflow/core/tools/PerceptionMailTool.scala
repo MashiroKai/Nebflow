@@ -60,7 +60,7 @@ The mailbox must already be connected in the perception panel (未连接时本�
       "quoteText" -> Json.obj("type" -> Json.fromString("string")),
       "inReplyTo" -> Json.obj("type" -> Json.fromString("string"))
     ),
-      "required" -> Json.arr("to".asJson, "subject".asJson, "body".asJson)
+    "required" -> Json.arr("to".asJson, "subject".asJson, "body".asJson)
   )
 
   def summarize(input: JsonObject): String =
@@ -85,8 +85,7 @@ The mailbox must already be connected in the perception panel (未连接时本�
 
     if to.isEmpty then IO.pure(Left(ToolError("EmailSend: 'to' is required (at least one recipient address)")))
     else if subject.isBlank then IO.pure(Left(ToolError("EmailSend: 'subject' is required")))
-    else if bodyText.isBlank && bodyHtmlRaw.isBlank then
-      IO.pure(Left(ToolError("EmailSend: 'body' is required")))
+    else if bodyText.isBlank && bodyHtmlRaw.isBlank then IO.pure(Left(ToolError("EmailSend: 'body' is required")))
     else
       val html = if bodyHtmlRaw.nonEmpty then bodyHtmlRaw else textToHtml(bodyText)
       val quote =
@@ -94,7 +93,8 @@ The mailbox must already be connected in the perception panel (未连接时本�
           Some(
             s"""<perception-quote data-quote="1"><div class="pq-head">发件人：${esc(
                 if quoteFrom.nonEmpty then quoteFrom else "(未知发件人)"
-              )}</div><div class="pq-body">${esc(quoteText.take(2000)).replace("\n", "<br>")}</div></perception-quote>"""
+              )}</div><div class="pq-body">${esc(quoteText.take(2000))
+                .replace("\n", "<br>")}</div></perception-quote>"""
           )
         else None
       val doc = DraftCodec.DraftDoc(
@@ -114,9 +114,13 @@ The mailbox must already be connected in the perception panel (未连接时本�
         case Some(core) =>
           core.hasAccount.flatMap:
             case false =>
-              IO.pure(Left(ToolError(
-                "尚未连接邮箱 · 请先在感知面板点击「连接邮箱」完成两步配置（邮箱地址 + 授权码），再发送邮件。"
-              )))
+              IO.pure(
+                Left(
+                  ToolError(
+                    "尚未连接邮箱 · 请先在感知面板点击「连接邮箱」完成两步配置（邮箱地址 + 授权码），再发送邮件。"
+                  )
+                )
+              )
             case true =>
               core.createDraft(doc.copy(draftId = "")).flatMap {
                 case Left(err) => IO.pure(Left(ToolError(s"草稿落盘失败: $err")))
@@ -124,6 +128,10 @@ The mailbox must already be connected in the perception panel (未连接时本�
                   emitSnapshotAsk(core, rec, doc, ctx)
               }
       }
+
+    end if
+
+  end call
 
   /** AskUser snapshot card (id marks it as a perception draft for the web face). */
   private def emitSnapshotAsk(
@@ -174,7 +182,9 @@ The mailbox must already be connected in the perception panel (未连接时本�
     input(k).flatMap(_.asString).getOrElse("")
 
   private def addrField(input: JsonObject, k: String): List[String] =
-    input(k).flatMap(_.asArray).map(_.flatMap(_.asString).toList)
+    input(k)
+      .flatMap(_.asArray)
+      .map(_.flatMap(_.asString).toList)
       .orElse(input(k).flatMap(_.asString).map(List(_)))
       .getOrElse(Nil)
       .flatMap(DraftCodec.parseAddresses)
@@ -185,3 +195,4 @@ The mailbox must already be connected in the perception panel (未连接时本�
 
   private def esc(s: String): String =
     s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+end PerceptionMailTool

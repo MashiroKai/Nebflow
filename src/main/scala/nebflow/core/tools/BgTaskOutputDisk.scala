@@ -71,8 +71,10 @@ object BgTaskOutputDisk:
     private var written: Long = 0L
     private var truncated: Boolean = false
 
-    /** 追加一行（带换行）。cap 超限静默停写（truncated 记账，读面如实标注）。
-      * 首写惰性建文件（含父目录——open 早于 dir 首次落盘）。 */
+    /**
+     * 追加一行（带换行）。cap 超限静默停写（truncated 记账，读面如实标注）。
+     * 首写惰性建文件（含父目录——open 早于 dir 首次落盘）。
+     */
     def writeLine(line: String): Unit = lock.synchronized {
       if !truncated then
         try
@@ -81,7 +83,8 @@ object BgTaskOutputDisk:
             val w = Files.newBufferedWriter(
               Paths.get(path.toString),
               StandardCharsets.UTF_8,
-              StandardOpenOption.CREATE, StandardOpenOption.APPEND
+              StandardOpenOption.CREATE,
+              StandardOpenOption.APPEND
             )
             writer = Some(w)
             w
@@ -99,7 +102,11 @@ object BgTaskOutputDisk:
     def bytesWritten: Long = written
 
     def flushClose(): Unit = lock.synchronized {
-      writer.foreach { w => try { w.flush(); w.close() } catch case _: Throwable => () }
+      writer.foreach { w =>
+        try
+          w.flush(); w.close()
+        catch case _: Throwable => ()
+      }
       writer = None
     }
   end LogWriter
@@ -123,9 +130,14 @@ object BgTaskOutputDisk:
   /**
    * log 切片读（与内存读同协议：offset = 字节游标，行粒度——从第一个起始位置
    * ≥ offset 的换行之后切片，最多 maxWindow 字节）。返回 (文本, nextOffset,
-    * 文件是否已到尾)。
+   * 文件是否已到尾)。
    */
-  def readSlice(dir: os.Path, jobId: String, offset: Long, maxWindow: Long = BgTaskOutputStore.CapBytes.toLong): Option[(String, Long, Boolean)] =
+  def readSlice(
+    dir: os.Path,
+    jobId: String,
+    offset: Long,
+    maxWindow: Long = BgTaskOutputStore.CapBytes.toLong
+  ): Option[(String, Long, Boolean)] =
     try
       val p = logPath(dir, jobId)
       if !os.exists(p) then None
@@ -133,7 +145,7 @@ object BgTaskOutputDisk:
         val size = os.size(p)
         if offset >= size then Some(("", offset, true))
         else
-          val start = {
+          val start =
             // 行对齐：offset 落在行中间时跳到下一个换行之后
             val is = Files.newInputStream(Paths.get(p.toString))
             try
@@ -146,7 +158,6 @@ object BgTaskOutputDisk:
                 k += 1 // 换行之后
               math.min(k, size)
             finally is.close()
-          }
           if start >= size then Some(("", size, true))
           else
             val len = math.min(maxWindow, size - start).toInt
@@ -157,10 +168,15 @@ object BgTaskOutputDisk:
               var read = 0
               while read < len do
                 val r = is.read(bytes, read, len - read)
-                if r < 0 then { read = len; () } else read += r
+                if r < 0 then
+                  read = len; ()
+                else read += r
             finally is.close()
             val text = new String(bytes, 0, len, StandardCharsets.UTF_8)
             Some((text, start + len, start + len >= size))
+          end if
+        end if
+      end if
     catch case _: Throwable => None
 
   /**
@@ -182,8 +198,7 @@ object BgTaskOutputDisk:
 
   /** 目录里现存任务对数（观测面 / 测试断言）。 */
   def pairCount(dir: os.Path): Int =
-    try
-      if os.exists(dir) then os.list(dir).count(_.last.endsWith(".meta.json")) else 0
+    try if os.exists(dir) then os.list(dir).count(_.last.endsWith(".meta.json")) else 0
     catch case _: Throwable => 0
 
 end BgTaskOutputDisk

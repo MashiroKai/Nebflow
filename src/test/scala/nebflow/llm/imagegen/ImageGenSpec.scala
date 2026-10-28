@@ -73,7 +73,10 @@ class ImageGenSpec extends munit.FunSuite:
 
   test("Imagen.buildBody: instances/parameters 双段协议") {
     val body = ImageGenAdapters.Imagen.buildBody("imagen-3.0-generate-002", sampleReq)
-    assertEquals(body.hcursor.downField("instances").downArray.downField("prompt").as[String].toOption, Some(sampleReq.prompt))
+    assertEquals(
+      body.hcursor.downField("instances").downArray.downField("prompt").as[String].toOption,
+      Some(sampleReq.prompt)
+    )
     assertEquals(body.hcursor.downField("parameters").downField("sampleCount").as[Int].toOption, Some(1))
   }
 
@@ -83,7 +86,11 @@ class ImageGenSpec extends munit.FunSuite:
       "https://open.bigmodel.cn/api/paas/v4/images/generations"
     )
     assertEquals(
-      ImageGenAdapters.endpointFor(ImageGenAdapters.Imagen, "https://generativelanguage.googleapis.com/v1beta", "imagen-3.0-generate-002"),
+      ImageGenAdapters.endpointFor(
+        ImageGenAdapters.Imagen,
+        "https://generativelanguage.googleapis.com/v1beta",
+        "imagen-3.0-generate-002"
+      ),
       "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:generateImages"
     )
   }
@@ -113,7 +120,10 @@ class ImageGenSpec extends munit.FunSuite:
 
   test("materialize: b64 解码、非法 b64、空载荷三面") {
     val resolved = ResolvedProvider("t", ImageGenAdapters.CogView, "https://x", "m", "token", 1000)
-    assertEquals(ImageGenService.materialize(ImageRef.B64("QUJD"), resolved).map(_.toList), Right(List(65.toByte, 66, 67)))
+    assertEquals(
+      ImageGenService.materialize(ImageRef.B64("QUJD"), resolved).map(_.toList),
+      Right(List(65.toByte, 66, 67))
+    )
     assert(ImageGenService.materialize(ImageRef.B64("!!!not-base64!!!"), resolved).isLeft)
     assert(ImageGenService.materialize(ImageRef.B64(""), resolved).isLeft)
   }
@@ -129,7 +139,8 @@ class ImageGenSpec extends munit.FunSuite:
   // ── 2. 配置节 decode ───────────────────────────────────────
 
   test("ImageGenConfig decode: 全节") {
-    val json = """{"enabled":true,"defaultProvider":"zhipu","providers":{"zhipu":{"type":"cogview","model":"cogview-3-flash","keyRef":"zhipu-api-key"}}}"""
+    val json =
+      """{"enabled":true,"defaultProvider":"zhipu","providers":{"zhipu":{"type":"cogview","model":"cogview-3-flash","keyRef":"zhipu-api-key"}}}"""
     val decoded = parse(json).flatMap(_.as[ImageGenConfig]).toOption.get
     assert(decoded.isEnabled)
     assertEquals(decoded.defaultProvider, Some("zhipu"))

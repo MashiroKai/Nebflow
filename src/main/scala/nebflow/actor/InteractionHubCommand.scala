@@ -129,8 +129,7 @@ object InteractionHubCommand:
    * 旁路落盘）。与 [[SecretSlotsOf]] 同一纪律：只读（不碰 pending/渲染/广播）、
    * hub 是槽位唯一权威。
    */
-  final case class AttachGateOf(requestId: String, reply: ActorRef[Option[AttachGate]])
-      extends InteractionHubCommand
+  final case class AttachGateOf(requestId: String, reply: ActorRef[Option[AttachGate]]) extends InteractionHubCommand
 end InteractionHubCommand
 
 /**

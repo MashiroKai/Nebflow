@@ -173,8 +173,10 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
   end routeWsSend
 
   /** 供 BlockingSubagent 复用的路由包装（nodeSessionId 戳 + 根会话索引）。 */
-  /** 监督链自动恢复批（2026-10-22）：boot 复活腿（DelegateRevival）同款路由——
-    * 可见域从 tools 放宽到本工程（复活腿在 agent 层，路由单点不二写）。 */
+  /**
+   * 监督链自动恢复批（2026-10-22）：boot 复活腿（DelegateRevival）同款路由——
+   * 可见域从 tools 放宽到本工程（复活腿在 agent 层，路由单点不二写）。
+   */
   private[nebflow] def routeWsSendFor(
     subagentId: String,
     parentSessionId: Option[String],
@@ -201,6 +203,7 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
   private[tools] sealed trait WorkspaceResolution
 
   private[tools] object WorkspaceResolution:
+
     /**
      * 本机座位：workspace（**引擎侧本机座位**——设备项目 = 本机 brain 根）+ 挂载
      * 项目名（缺省派发 = None）+ 会话默认设备上下文（跨设备批 2026-10-25：设备
@@ -237,6 +240,7 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
         def localOf(rt: ProjectRuntime): IO[Either[ToolError, WorkspaceResolution]] =
           val ws = os.Path(rt.project.workspace)
           IO.blocking(os.makeDir.all(ws)).map(_ => Right(WorkspaceResolution.Local(ws.toString, Some(name))))
+
         /** 设备显示名解析（deviceId → 名册现查；名册不可用 = 原样 id，防御一致）。 */
         def deviceNameOf(deviceId: String): IO[String] =
           ctx.sharedResources.flatMap(_.neblinkService) match
@@ -810,7 +814,9 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
       fleetEnforceNote =
         if nebflow.core.device.FleetConfig.enforceExplicitDevice then
           " fleet.enforceExplicitDevice is ON on this host: pass device=\"" +
-            sessionDevice.getOrElse("local") + "\" on EVERY Bash/Read/Write/Edit/Glob/Grep call — calls without it are refused."
+            sessionDevice.getOrElse(
+              "local"
+            ) + "\" on EVERY Bash/Read/Write/Edit/Glob/Grep call — calls without it are refused."
         else ""
       deviceWorkspaceLine =
         (sessionDevice, sessionDeviceWorkspace) match

@@ -66,8 +66,9 @@ object DelegateDeliveryReceipts:
     else
       val fromMeta = event.metadata("redeliveryOf").flatMap(_.asString).filter(validId)
       val fromPrefix = event.correlationId
-        .collect { case c if c.startsWith(RedeliveryCorrelationPrefix) =>
-          c.stripPrefix(RedeliveryCorrelationPrefix)
+        .collect {
+          case c if c.startsWith(RedeliveryCorrelationPrefix) =>
+            c.stripPrefix(RedeliveryCorrelationPrefix)
         }
         .filter(validId)
       fromMeta.orElse(fromPrefix).orElse(event.correlationId.filter(validId))
@@ -127,7 +128,9 @@ object DelegateDeliveryReceipts:
   /** 终态直投成功后的回执落盘（覆盖写——重投刷新 deliveredAt/redeliveries）。 */
   def record(receipt: Receipt): IO[Unit] =
     IO.blocking(writeLock.synchronized(put(receipt)))
-      .handleErrorWith(e => logger.warn(s"[delegate-delivery] receipt write failed for ${receipt.delegateId}: ${e.getMessage}"))
+      .handleErrorWith(e =>
+        logger.warn(s"[delegate-delivery] receipt write failed for ${receipt.delegateId}: ${e.getMessage}")
+      )
 
   /**
    * 父会话注入 delegate 终态事件时的确认（AgentIdle 直投腿/批次腿挂点）。
@@ -238,10 +241,12 @@ object DelegateDeliveryReceipts:
               s"for ${r.delegateId} (${r.eventType}); the terminal payload remains in the delegate session transcript (recover manually if still needed)"
           ) *> delete(r.delegateId).as(SweepReport(dropped = List(r.delegateId)))
         case Decision.Retain =>
-          logger.warn(
-            s"[delegate-delivery] ${r.delegateId}: parent never acknowledged the ${r.eventType} terminal after " +
-              s"$MaxRedeliveries redeliveries — giving up automatic redelivery; receipt retained for human review"
-          ).as(SweepReport(retained = List(r.delegateId)))
+          logger
+            .warn(
+              s"[delegate-delivery] ${r.delegateId}: parent never acknowledged the ${r.eventType} terminal after " +
+                s"$MaxRedeliveries redeliveries — giving up automatic redelivery; receipt retained for human review"
+            )
+            .as(SweepReport(retained = List(r.delegateId)))
         case Decision.Redeliver =>
           val event = AgentCommand.ExternalEvent(
             source = "delegate",
@@ -270,10 +275,12 @@ object DelegateDeliveryReceipts:
                   )
                 }
               ) *>
-                logger.warn(
-                  s"[delegate-delivery] parent never acknowledged ${r.delegateId} terminal (${r.eventType}) — " +
-                    s"redelivery #${r.redeliveries + 1} dispatched via $route (correlationId=delivery-redelivery-${r.delegateId})"
-                ).as(SweepReport(redelivered = List(r.delegateId)))
+                logger
+                  .warn(
+                    s"[delegate-delivery] parent never acknowledged ${r.delegateId} terminal (${r.eventType}) — " +
+                      s"redelivery #${r.redeliveries + 1} dispatched via $route (correlationId=delivery-redelivery-${r.delegateId})"
+                  )
+                  .as(SweepReport(redelivered = List(r.delegateId)))
             }
       end match
     }

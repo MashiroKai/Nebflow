@@ -21,19 +21,29 @@ object ImageGenTypes:
     def message: String
 
   object ImageGenError:
+
     /** 节缺失 / enabled=false —— 面整体关闭（零迁移安全缺省方向）。 */
     case object Disabled extends ImageGenError:
-      val message = "imagegen face is disabled or unconfigured (nebflow.json top-level `imagegen` section, enabled=true required)"
+
+      val message =
+        "imagegen face is disabled or unconfigured (nebflow.json top-level `imagegen` section, enabled=true required)"
+
     final case class UnknownProvider(name: String) extends ImageGenError:
       def message = s"unknown imagegen provider '$name'"
+
     final case class MissingCredential(provider: String, keyRef: Option[String]) extends ImageGenError:
+
       def message =
         s"provider '$provider' has no usable credential (keyRef ${keyRef.getOrElse("<unset>")} resolves to no readable secret under the data-root secrets/ dir)"
+
     final case class HttpStatus(provider: String, status: Int, body: String) extends ImageGenError:
+
       def message =
         s"provider '$provider' returned HTTP $status: ${body.take(300)}"
+
     final case class BadResponse(provider: String, detail: String) extends ImageGenError:
       def message = s"provider '$provider' returned an unparseable response: $detail"
+
     final case class Transport(provider: String, detail: String) extends ImageGenError:
       def message = s"provider '$provider' transport error: $detail"
   end ImageGenError
@@ -67,15 +77,19 @@ object ImageGenTypes:
    */
   trait ImageGenAdapter:
     def `type`: String
+
     /** 该协议缺省 baseUrl（config 未给 baseUrl 时的回落值）。 */
     def defaultBaseUrl: String
+
     /** 请求体（纯函数；token 只进 header 不进 body）。 */
     def buildBody(model: String, req: ImageGenRequest): io.circe.Json
     def authHeader(token: String): (String, String)
+
     /** 从响应 JSON 提取图片引用。 */
     def parseResult(json: io.circe.Json): Either[ImageGenError, ImageRef]
 
   sealed trait ImageRef extends Product with Serializable
+
   object ImageRef:
     final case class Url(url: String) extends ImageRef
     final case class B64(base64: String) extends ImageRef

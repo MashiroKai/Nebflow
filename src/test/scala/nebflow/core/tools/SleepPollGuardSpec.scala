@@ -70,8 +70,18 @@ class SleepPollGuardSpec extends FunSuite:
   test("阶梯：变参心跳各自计犯（同会话累计——与 LoopGuard 指纹语义的互补面）") {
     // 每拍参数都不同（echo wN），会话计数仍累积到拒绝——747cd36a 的机制补位锚
     val v1 = SleepPollGuard.decide("sleep 100; echo a", SleepPollGuard.State(), t0, cfg)
-    val v2 = SleepPollGuard.decide("sleep 200; echo bb", v1.asInstanceOf[SleepPollGuard.Verdict.WarnExecute].state, t0 + 1, cfg)
-    val v3 = SleepPollGuard.decide("sleep 300; echo ccc", v2.asInstanceOf[SleepPollGuard.Verdict.WarnExecute].state, t0 + 2, cfg)
+    val v2 = SleepPollGuard.decide(
+      "sleep 200; echo bb",
+      v1.asInstanceOf[SleepPollGuard.Verdict.WarnExecute].state,
+      t0 + 1,
+      cfg
+    )
+    val v3 = SleepPollGuard.decide(
+      "sleep 300; echo ccc",
+      v2.asInstanceOf[SleepPollGuard.Verdict.WarnExecute].state,
+      t0 + 2,
+      cfg
+    )
     assert(v3.isInstanceOf[SleepPollGuard.Verdict.Reject], s"third distinct-args sleep-poll must reject, got $v3")
   }
 

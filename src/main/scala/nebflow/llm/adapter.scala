@@ -52,7 +52,33 @@ case class SendMessageParams(
    * read). None = use the adapter's shared backend (legacy behavior; also the
    * non-streaming sendMessage path).
    */
-  attemptBackend: Option[StreamBackend[IO, Fs2Streams[IO]]] = None
+  attemptBackend: Option[StreamBackend[IO, Fs2Streams[IO]]] = None,
+  /**
+   * thinking-config 批（2026-10-28，设计 §4.2）：按候选解析好的思考语义
+   * （能力类 + 档位 + GLM 保留式思考位）。None（辅助面：probe / judge /
+   * allocator 等）= adapter 按模型名家族启发取能力类（`ThinkingFamily
+   * .forModel`）——启发式只影响缺省。`thinking` 字段仍是语义载体
+   * （enabled → budget JSON；off → `Json.Null`）；wire 形态翻译单点 =
+   * `AnthropicAdapter.wireThinkingFragment`。
+   */
+  thinkingResolved: Option[ResolvedThinking] = None
+)
+
+/**
+ * 按候选解析后的思考语义（interface.scala 每候选单点解析：model 层 >
+ * provider 层 > 全局，`ThinkingMode.resolveEffective`；能力类 = model
+ * `thinkingKind` > provider `thinkingKind` > 家族启发）。
+ *
+ * @param enabled
+ *   三层解析后的开关位。只能降不能升：全局 master off（语义载体 Null）不可被
+ *   layer 复活（`AnthropicAdapter.wireThinkingOn` 保守语义）——本位只表达
+ *   「layer 显式关」这条腿。
+ */
+case class ResolvedThinking(
+  kind: ThinkingKind,
+  enabled: Boolean = true,
+  effort: Option[ThinkingEffort] = None,
+  clearThinking: Option[Boolean] = None
 )
 
 case class AdapterResponse(

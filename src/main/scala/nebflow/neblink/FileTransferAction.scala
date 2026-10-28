@@ -268,6 +268,8 @@ object FileTransferAction:
           Right(base.deepMerge(Json.obj("wholeSha256" -> ChunkedTransfer.hashFileStreaming(path).asJson)))
         else Right(base)
 
+      end if
+
   /** 读文件的一个字节窗（有界：≤ chunkSize 驻留，禁整件读入——分块契约 I4 同规）。 */
   private def readSlice(path: os.Path, offset: Long, want: Int): Array[Byte] =
     val buf = new Array[Byte](want)

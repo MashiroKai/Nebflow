@@ -294,10 +294,16 @@ class ProjectEventSpec extends CatsEffectSuite:
       assertEquals(field(descUpdated, "project"), Some("evt-shape"))
       assertEquals(field(descUpdated, "description"), Some("新描述"))
       assertEquals(descUpdated.hcursor.downField("updatedAt").as[Long].toOption, Some(9999L))
-      assertEquals(descUpdated.asObject.map(_.keys.toSet).getOrElse(Set.empty), Set("type", "project", "description", "updatedAt"))
+      assertEquals(
+        descUpdated.asObject.map(_.keys.toSet).getOrElse(Set.empty),
+        Set("type", "project", "description", "updatedAt")
+      )
       // 🔴 单 projectsChanged 事件未采（作者裁定 (e)）：帧 type 只可能是这三个身份名
       val types: Set[Option[String]] = Set(field(created, "type"), field(archived, "type"), field(descUpdated, "type"))
-      assertEquals(types, Set[Option[String]](Some("projectCreated"), Some("projectArchived"), Some("projectDescriptionUpdated")))
+      assertEquals(
+        types,
+        Set[Option[String]](Some("projectCreated"), Some("projectArchived"), Some("projectDescriptionUpdated"))
+      )
     }
   }
 
@@ -354,7 +360,11 @@ class ProjectEventSpec extends CatsEffectSuite:
       assert(created.isRight, created.toString)
       assertEquals(resp.status, Status.Ok)
       assertEquals(body.hcursor.downField("saved").as[Boolean].toOption, Some(true))
-      assertEquals(body.hcursor.downField("unchanged").as[Boolean].toOption, Some(true), "idempotent leg carries the unchanged flag")
+      assertEquals(
+        body.hcursor.downField("unchanged").as[Boolean].toOption,
+        Some(true),
+        "idempotent leg carries the unchanged flag"
+      )
       assertEquals(projectFrames(collected).size, 0, s"unchanged must not emit, got: $collected")
     end for
   }

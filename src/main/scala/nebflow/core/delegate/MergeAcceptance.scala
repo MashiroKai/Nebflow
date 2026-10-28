@@ -29,9 +29,11 @@ object MergeAcceptance:
   /** 单次验收结论：`ok` + 证据行（blocked 判词 reason / 审计行共用文案）。 */
   final case class Result(ok: Boolean, evidence: String)
 
-  /** 记录驱动的验收（锚 = 记录的 projectWorkspace|cwd + baseBranch + branch）。
-    * 锚缺失（无记录 / 无分支 / 无基分支）= `Some(fail)`——合并轮语境下无法确证
-    * 本身就是拒绝理由（调用方在合并轮语境才调本函数）。 */
+  /**
+   * 记录驱动的验收（锚 = 记录的 projectWorkspace|cwd + baseBranch + branch）。
+   * 锚缺失（无记录 / 无分支 / 无基分支）= `Some(fail)`——合并轮语境下无法确证
+   * 本身就是拒绝理由（调用方在合并轮语境才调本函数）。
+   */
   def verifyRecord(rec: Option[DelegateRegistry.Record]): Result =
     rec match
       case None => Result(false, "no registry record for the delegate — merge acceptance unverifiable")
@@ -51,13 +53,13 @@ object MergeAcceptance:
     if !GitWorktrees.isGitRepo(baseWs) then
       Result(false, s"base workspace '$baseWs' is not a git repo — merge acceptance unverifiable")
     else
-      val baseTip   = GitWorktrees.resolveRef(baseWs, baseBranch)
+      val baseTip = GitWorktrees.resolveRef(baseWs, baseBranch)
       val branchTip = GitWorktrees.resolveRef(baseWs, branch)
-      val parents   = baseTip.flatMap(t => GitWorktrees.commitInfo(baseWs, t)).map(_.parents)
+      val parents = baseTip.flatMap(t => GitWorktrees.commitInfo(baseWs, t)).map(_.parents)
       // a) HEAD 双亲 merge commit 且第二亲 = delegate 分支头
       val twoParentMerged = (parents, branchTip) match
         case (Some(ps), Some(bt)) => ps.lengthCompare(2) >= 0 && ps.lift(1).contains(bt)
-        case _                    => false
+        case _ => false
       // b) delegate 分支已是基分支祖先（merge 真落地的构造性判据）
       val ancestor = GitWorktrees.isAncestor(baseWs, branch, baseBranch)
       val evidence =

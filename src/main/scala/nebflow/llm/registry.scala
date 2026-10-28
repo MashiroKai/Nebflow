@@ -27,7 +27,15 @@ case class ModelCandidate(
   model: String,
   contextWindow: Int = Defaults.ContextWindow,
   capabilities: Set[String] = Set.empty,
-  modelMaxContext: Option[Int] = None
+  modelMaxContext: Option[Int] = None,
+  /**
+   * thinking-config 批（2026-10-28）：该 model 的三层继承 model 层 + 显式能力类
+   * （`ModelConfig.thinking` / `ModelConfig.thinkingKind` 直通）。provider 层经
+   * `provider: ProviderConfig` 随行；解析单点 = interface.scala 的
+   * `resolveThinkingFor`（`ThinkingMode.resolveEffective`）。
+   */
+  thinking: Option[ThinkingLayerConfig] = None,
+  thinkingKind: Option[ThinkingKind] = None
 )
 
 class ProviderRegistry(
@@ -47,7 +55,15 @@ class ProviderRegistry(
           // DeepSeek's thinking mode rejects history replay that omits unsigned
           // thinking blocks (400 invalid_request → provider marked DOWN); real
           // Anthropic is the opposite. Explicit config overrides the default.
-          requireThinkingPassback = provider.requireThinkingPassback.getOrElse(providerId == "deepseek")
+          // thinking-config 批（2026-10-28）旁支修复：缺省判据从
+          // providerId=="deepseek" 扩为「providerId 或任一模型 id 命中 DeepSeek
+          // 模型族」——现配 providerId 是 cmdcode（服务 deepseek-v4.1-flash 族）
+          // ⇒ 旧判据缺省 false ⇒ 跨 provider 历史回退存在同型 400 隐患
+          // （调研 §1.8/§6-4）。代码面根治 + live 配置显式补键 = 双保险。
+          requireThinkingPassback = provider.requireThinkingPassback.getOrElse {
+            val id = providerId.toLowerCase
+            id.contains("deepseek") || provider.models.exists(m => ThinkingFamily.isDeepSeekFamily(m.id))
+          }
         )
 
   def getAdapter(providerId: String): IO[ProviderAdapter[IO]] =
@@ -106,7 +122,9 @@ class ProviderRegistry(
                   modelId,
                   contextWindow,
                   caps,
-                  modelConfig.flatMap(_.modelMaxContext)
+                  modelConfig.flatMap(_.modelMaxContext),
+                  modelConfig.flatMap(_.thinking),
+                  modelConfig.flatMap(_.thinkingKind)
                 )
               )
             case None => None // Skip unknown provider
@@ -130,7 +148,9 @@ class ProviderRegistry(
                 mc.id,
                 effectiveContextWindow(mc.contextWindow, mc.modelMaxContext),
                 caps,
-                mc.modelMaxContext
+                mc.modelMaxContext,
+                mc.thinking,
+                mc.thinkingKind
               )
             }
           }
@@ -190,7 +210,16 @@ class ProviderRegistry(
             modelConfig.flatMap(_.modelMaxContext)
           )
           val caps = resolveCapabilities(providerId, modelId, modelConfig)
-          ModelCandidate(providerId, provider, modelId, contextWindow, caps, modelConfig.flatMap(_.modelMaxContext))
+          ModelCandidate(
+            providerId,
+            provider,
+            modelId,
+            contextWindow,
+            caps,
+            modelConfig.flatMap(_.modelMaxContext),
+            modelConfig.flatMap(_.thinking),
+            modelConfig.flatMap(_.thinkingKind)
+          )
         }
       catch case _: Exception => None
     }
@@ -264,7 +293,9 @@ class ProviderRegistry(
               mc.id,
               effectiveContextWindow(mc.contextWindow, mc.modelMaxContext),
               caps,
-              mc.modelMaxContext
+              mc.modelMaxContext,
+              mc.thinking,
+              mc.thinkingKind
             )
           }
       }

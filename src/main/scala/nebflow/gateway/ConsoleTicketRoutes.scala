@@ -49,62 +49,83 @@ object ConsoleTicketRoutes:
     networkIdNow: IO[String],
     logger: NebflowLogger
   ): HttpRoutes[IO] =
-    HttpRoutes.of[IO] { case req @ GET -> Root if req.params.get("ticket").exists(_.nonEmpty) =>
-      val ticket = req.params.get("ticket").getOrElse("")
-      faces.consoleTicketFace match
-        case None =>
-          // Tunnel not assembled (pre-assembly / test shape): a readable 503
-          // result page, never a bare 500 (the browser shows this page).
-          IO.pure(resultPage(Status.ServiceUnavailable, "Console unavailable",
-            "The console ticket service is not assembled on this instance. Open the local URL instead."))
-        case Some(face) =>
-          face.verifyAndConsume(ticket).flatMap {
-            case Left(reason) =>
-              val (headline, detail) = reason match
-                case "expired" => ("Ticket expired", "This one-time ticket's validity window elapsed. Mint a fresh ticket and try again.")
-                case "invalid-ticket" => ("Ticket rejected", "The ticket is unknown, already used, or revoked. Mint a fresh ticket and try again.")
-                case other => ("Ticket rejected", s"The ticket was refused ($other). Mint a fresh ticket and try again.")
-              IO.pure(resultPage(Status.Forbidden, headline, detail))
-            case Right(t) =>
-              val isRelayMint = t.origin == GatewaySessionStore.OriginRelayMint
-              def refuseUnbound: IO[Response[IO]] =
-                IO.pure(resultPage(Status.Forbidden, "Binding revoked",
-                  "This host's account binding was revoked, so portal-minted tickets are no longer accepted. " +
-                    "Use a locally minted ticket (stand token) to reach the console."))
-              (if isRelayMint then face.isUnbound else IO.pure(false)).flatMap { unbound =>
-                if unbound then refuseUnbound
-                else
-                  networkIdNow.flatMap { nid =>
-                    sessions.create(t.accountSub, t.origin, nid).flatMap { rec =>
-                      // #522: Secure rides the consuming browser origin, not the
-                      // server's preference — https and tunnel-marked legs (the
-                      // relay console behind the HTTPS ingress) keep `Secure`;
-                      // a plain-http DIRECT leg (the local console) must NOT
-                      // carry it: WebKit refuses to store Secure cookies over
-                      // plain http (no localhost exemption), which silently
-                      // dropped every local session seating — WS handshake and
-                      // REST then answered 403 behind a "please log in" loop.
-                      // A direct client cannot forge the mark (boot-armed
-                      // 256-bit in-process value, client-supplied copies of the
-                      // header are dropped by the bridge before injection), so
-                      // "marked" is exactly "the cookie will be consumed at an
-                      // HTTPS origin".
-                      val secure =
-                        req.uri.scheme.exists(_.value.equalsIgnoreCase("https")) ||
-                          nebflow.shared.TunnelOriginMark.isMarked(req)
-                      logger.info(
-                        s"console ticket redeemed: session established (accountSub=${t.accountSub}, " +
-                          s"origin=${t.origin}, sid=${rec.sessionId.take(8)}…, networkId=${nid.take(24)})"
-                      )
-                      IO.pure(
-                        Response[IO](Status.SeeOther)
-                          .putHeaders(Location(Uri(path = Uri.Path.unsafeFromString("/"))))
-                          .addCookie(GatewaySessionStore.newCookie(rec.sessionId, secure = secure))
-                      )
+    HttpRoutes.of[IO] {
+      case req @ GET -> Root if req.params.get("ticket").exists(_.nonEmpty) =>
+        val ticket = req.params.get("ticket").getOrElse("")
+        faces.consoleTicketFace match
+          case None =>
+            // Tunnel not assembled (pre-assembly / test shape): a readable 503
+            // result page, never a bare 500 (the browser shows this page).
+            IO.pure(
+              resultPage(
+                Status.ServiceUnavailable,
+                "Console unavailable",
+                "The console ticket service is not assembled on this instance. Open the local URL instead."
+              )
+            )
+          case Some(face) =>
+            face.verifyAndConsume(ticket).flatMap {
+              case Left(reason) =>
+                val (headline, detail) = reason match
+                  case "expired" =>
+                    (
+                      "Ticket expired",
+                      "This one-time ticket's validity window elapsed. Mint a fresh ticket and try again."
+                    )
+                  case "invalid-ticket" =>
+                    (
+                      "Ticket rejected",
+                      "The ticket is unknown, already used, or revoked. Mint a fresh ticket and try again."
+                    )
+                  case other =>
+                    ("Ticket rejected", s"The ticket was refused ($other). Mint a fresh ticket and try again.")
+                IO.pure(resultPage(Status.Forbidden, headline, detail))
+              case Right(t) =>
+                val isRelayMint = t.origin == GatewaySessionStore.OriginRelayMint
+                def refuseUnbound: IO[Response[IO]] =
+                  IO.pure(
+                    resultPage(
+                      Status.Forbidden,
+                      "Binding revoked",
+                      "This host's account binding was revoked, so portal-minted tickets are no longer accepted. " +
+                        "Use a locally minted ticket (stand token) to reach the console."
+                    )
+                  )
+                (if isRelayMint then face.isUnbound else IO.pure(false)).flatMap { unbound =>
+                  if unbound then refuseUnbound
+                  else
+                    networkIdNow.flatMap { nid =>
+                      sessions.create(t.accountSub, t.origin, nid).flatMap { rec =>
+                        // #522: Secure rides the consuming browser origin, not the
+                        // server's preference — https and tunnel-marked legs (the
+                        // relay console behind the HTTPS ingress) keep `Secure`;
+                        // a plain-http DIRECT leg (the local console) must NOT
+                        // carry it: WebKit refuses to store Secure cookies over
+                        // plain http (no localhost exemption), which silently
+                        // dropped every local session seating — WS handshake and
+                        // REST then answered 403 behind a "please log in" loop.
+                        // A direct client cannot forge the mark (boot-armed
+                        // 256-bit in-process value, client-supplied copies of the
+                        // header are dropped by the bridge before injection), so
+                        // "marked" is exactly "the cookie will be consumed at an
+                        // HTTPS origin".
+                        val secure =
+                          req.uri.scheme.exists(_.value.equalsIgnoreCase("https")) ||
+                            nebflow.shared.TunnelOriginMark.isMarked(req)
+                        logger.info(
+                          s"console ticket redeemed: session established (accountSub=${t.accountSub}, " +
+                            s"origin=${t.origin}, sid=${rec.sessionId.take(8)}…, networkId=${nid.take(24)})"
+                        )
+                        IO.pure(
+                          Response[IO](Status.SeeOther)
+                            .putHeaders(Location(Uri(path = Uri.Path.unsafeFromString("/"))))
+                            .addCookie(GatewaySessionStore.newCookie(rec.sessionId, secure = secure))
+                        )
+                      }
                     }
-                  }
-              }
-          }
+                }
+            }
+        end match
     }
 
   /**
@@ -131,5 +152,6 @@ object ConsoleTicketRoutes:
     Response[IO](status)
       .putHeaders(org.http4s.headers.`Content-Type`(MediaType.text.html, Charset.`UTF-8`))
       .withBodyStream(fs2.Stream.emit(body).through(fs2.text.utf8.encode))
+  end resultPage
 
 end ConsoleTicketRoutes

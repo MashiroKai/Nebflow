@@ -93,6 +93,10 @@ object LogsCommand extends CliCommand:
               (lines, len - (data.length - lastNl - 1))
           finally raf.close()
 
+        end if
+
+      end if
+
   /**
    * The follow loop: wait for a logs-directory event, drain what appeared on
    * the watched file, print (after the optional grep filter), repeat. The
@@ -103,11 +107,11 @@ object LogsCommand extends CliCommand:
    * (Ctrl+C); no exit-code promise is made for that path.
    */
   private[cli] def followLoop(
-      dir: os.Path,
-      fileName: String,
-      grep: Option[java.util.regex.Pattern],
-      print: String => IO[Unit],
-      awaitEvent: () => Unit
+    dir: os.Path,
+    fileName: String,
+    grep: Option[java.util.regex.Pattern],
+    print: String => IO[Unit],
+    awaitEvent: () => Unit
   ): IO[Unit] =
     def loop(pos: Long): IO[Unit] =
       IO.blocking(awaitEvent()) *>
@@ -122,18 +126,23 @@ object LogsCommand extends CliCommand:
     }
     start.flatMap(loop)
 
+  end followLoop
+
   /** One WatchService over the logs dir; any event wakes the drain. */
   private final class WatchAwait(dir: java.nio.file.Path) extends AutoCloseable:
     private val watcher = java.nio.file.FileSystems.getDefault.newWatchService()
+
     dir.register(
       watcher,
       java.nio.file.StandardWatchEventKinds.ENTRY_CREATE,
       java.nio.file.StandardWatchEventKinds.ENTRY_DELETE,
       java.nio.file.StandardWatchEventKinds.ENTRY_MODIFY
     )
+
     def await(): Unit =
       val key = watcher.take()
       key.reset()
+
     def close(): Unit =
       watcher.close()
 
@@ -243,6 +252,8 @@ object LogsCommand extends CliCommand:
             )
           else CliResult.text(file.toString) // 单行：`cat "$(stand logs path)"` 可直接用
         }
+      end if
+    end run
 
   end LogsPath
 
@@ -360,6 +371,7 @@ object LogsCommand extends CliCommand:
               )
             else IO.pure(CliResult.Text(kept))
         }
+      end if
     end run
 
     /**

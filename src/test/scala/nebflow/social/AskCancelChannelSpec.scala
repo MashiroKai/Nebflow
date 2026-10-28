@@ -30,10 +30,16 @@ class AskCancelChannelSpec extends CatsEffectSuite:
     val cancelled: Ref[IO, List[(String, String, String)]] = Ref.unsafe[IO, List[(String, String, String)]](Nil)
     val injected: Ref[IO, List[(String, String)]] = Ref.unsafe[IO, List[(String, String)]](Nil)
     override def listPendingAsks: IO[List[Json]] = IO.pure(frames)
+
     override def cancelInteractionRequest(requestId: String, reason: String, by: String): IO[Unit] =
       cancelled.update(_ :+ ((requestId, reason, by)))
-    def injectMessage(sessionId: String, content: String, senderId: Option[String],
-        origin: Option[nebflow.bridge.BridgeOrigin] = None): IO[Unit] =
+
+    def injectMessage(
+      sessionId: String,
+      content: String,
+      senderId: Option[String],
+      origin: Option[nebflow.bridge.BridgeOrigin] = None
+    ): IO[Unit] =
       injected.update(_ :+ ((sessionId, content)))
     def interruptAgent(sessionId: String): IO[Unit] = IO.unit
     def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
@@ -54,7 +60,11 @@ class AskCancelChannelSpec extends CatsEffectSuite:
 
   private def wxMeta(id: String, senderId: Option[String]): SessionMeta =
     SessionMeta(
-      id = id, name = id, createdAt = 0L, updatedAt = 0L, hasUnread = false,
+      id = id,
+      name = id,
+      createdAt = 0L,
+      updatedAt = 0L,
+      hasUnread = false,
       bridges = senderId
         .map(s => Map(WeixinIlinkBridgePlugin.Name -> Json.obj("ilink_user_id" -> Json.fromString(s))))
         .getOrElse(Map.empty)
@@ -62,6 +72,7 @@ class AskCancelChannelSpec extends CatsEffectSuite:
 
   private final class WxSend(ok: Boolean = true):
     val texts: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     val fn: (String, String) => IO[WeixinOutboundAdapter.SendResult] = (_, text) =>
       texts.update(_ :+ text).as(WeixinOutboundAdapter.SendResult(ok, delivered = ok, None, 0, "ok"))
 
@@ -74,12 +85,17 @@ class AskCancelChannelSpec extends CatsEffectSuite:
     val p = wxPlugin(seam)
     for
       _ <- p.start(ctx)
-      _ <- p.onAgentEvent("s1", Json.obj(
-        "type" -> "askUser".asJson,
-        "sessionId" -> "s1".asJson,
-        "requestId" -> "asknb-wx1".asJson,
-        "items" -> Json.arr(Json.obj("question" -> "继续？".asJson, "options" -> Json.arr(Json.obj("label" -> "是".asJson))))
-      ))
+      _ <- p.onAgentEvent(
+        "s1",
+        Json.obj(
+          "type" -> "askUser".asJson,
+          "sessionId" -> "s1".asJson,
+          "requestId" -> "asknb-wx1".asJson,
+          "items" -> Json.arr(
+            Json.obj("question" -> "继续？".asJson, "options" -> Json.arr(Json.obj("label" -> "是".asJson)))
+          )
+        )
+      )
       v <- p.intake(ctx, WeixinIlinkBridgePlugin.Inbound(Some("wx_alice"), Some("取消问题"), Some("m1")))
       cancels <- ctx.cancelled.get
       receipt <- seam.texts.get
@@ -98,12 +114,17 @@ class AskCancelChannelSpec extends CatsEffectSuite:
     val p = wxPlugin(seam)
     for
       _ <- p.start(ctx)
-      _ <- p.onAgentEvent("s1", Json.obj(
-        "type" -> "askUser".asJson,
-        "sessionId" -> "s1".asJson,
-        "requestId" -> "asknb-wx2".asJson,
-        "items" -> Json.arr(Json.obj("question" -> "继续？".asJson, "options" -> Json.arr(Json.obj("label" -> "是".asJson))))
-      ))
+      _ <- p.onAgentEvent(
+        "s1",
+        Json.obj(
+          "type" -> "askUser".asJson,
+          "sessionId" -> "s1".asJson,
+          "requestId" -> "asknb-wx2".asJson,
+          "items" -> Json.arr(
+            Json.obj("question" -> "继续？".asJson, "options" -> Json.arr(Json.obj("label" -> "是".asJson)))
+          )
+        )
+      )
       v <- p.intake(ctx, WeixinIlinkBridgePlugin.Inbound(Some("wx_alice"), Some("1"), Some("m2")))
       cancels <- ctx.cancelled.get
     yield
@@ -132,12 +153,17 @@ class AskCancelChannelSpec extends CatsEffectSuite:
 
   private def fsMeta(id: String, chatId: Option[String]): SessionMeta =
     SessionMeta(
-      id = id, name = id, createdAt = 0L, updatedAt = 0L, hasUnread = false,
+      id = id,
+      name = id,
+      createdAt = 0L,
+      updatedAt = 0L,
+      hasUnread = false,
       bridges = chatId.map(c => Map("feishu" -> Json.obj("chat_id" -> Json.fromString(c)))).getOrElse(Map.empty)
     )
 
   private final class FsSeams(ok: Boolean = true):
     val texts: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
+
     val okSend: FeishuBridgePlugin.Send = (_, _, _, _, text) =>
       texts.update(_ :+ text).as(FeishuChannel.SendResult(ok, Some("om"), 0, "ok", "t", "chat_id"))
 
@@ -145,7 +171,8 @@ class AskCancelChannelSpec extends CatsEffectSuite:
     new FeishuBridgePlugin(
       tmpRoot(),
       send = seams.okSend,
-      pinnedCreds = Some(FeishuCredentials.Credential("cli_app", "sec", "spec")))
+      pinnedCreds = Some(FeishuCredentials.Credential("cli_app", "sec", "spec"))
+    )
 
   test("FS-C1 恰一张在册问卡 + 「取消问题」 ⇒ 精确取消 + 回执行 + 不注入") {
     val frames = List(askFrame("asknb-fs1", "root-1"))
@@ -203,17 +230,20 @@ class AskCancelChannelSpec extends CatsEffectSuite:
   }
 
   private def feishuInbound(chatId: String, text: String): FeishuMessage.Inbound =
-    FeishuMessage.inboundFrom(
-      eventId = Some("evt-1"),
-      messageId = Some("om-1"),
-      chatId = Some(chatId),
-      messageType = Some("text"),
-      contentRaw = Some(Json.obj("text" -> text.asJson).noSpaces),
-      createTime = None,
-      senderId = Some("ou_author"),
-      parentId = None,
-      rootId = None,
-      mentions = Nil
-    ).toOption.get
+    FeishuMessage
+      .inboundFrom(
+        eventId = Some("evt-1"),
+        messageId = Some("om-1"),
+        chatId = Some(chatId),
+        messageType = Some("text"),
+        contentRaw = Some(Json.obj("text" -> text.asJson).noSpaces),
+        createTime = None,
+        senderId = Some("ou_author"),
+        parentId = None,
+        rootId = None,
+        mentions = Nil
+      )
+      .toOption
+      .get
 
 end AskCancelChannelSpec

@@ -348,7 +348,7 @@ Ids are NEVER reused: the ledger keeps a monotonic id watermark, so even after a
       // closed→completed，故写成功即 upkeep）。fire-and-forget（在飞合流 + 异常
       // 内吞），绝不影响工具结果。
       case (Right(_), _, _) => nebflow.core.index.TaskSearchIndex.upkeepFireAndForget()
-      case _                => IO.unit
+      case _ => IO.unit
     }.flatTap {
       // 台账↔面板对账批（2026-10-22 作者补充需求 · 腿 1）：complete/close 成功后
       // 面板联动——关联 delegate 记录（taskId 命中）且任务行已终态者归档折叠；
@@ -356,8 +356,9 @@ Ids are NEVER reused: the ledger keeps a monotonic id watermark, so even after a
       // 绝不影响工具结果（台账写已成功，面板收敛是观测面补强）。
       case (Right(_), action, Some(entryId)) if action == "complete" || action == "close" =>
         ctx.sharedResources match
-          case Some(res) => nebflow.core.delegate.DelegateLedgerReconcile.onLedgerTerminal(res.subAgentTaskStore, entryId)
-          case None      => IO.unit
+          case Some(res) =>
+            nebflow.core.delegate.DelegateLedgerReconcile.onLedgerTerminal(res.subAgentTaskStore, entryId)
+          case None => IO.unit
       case _ => IO.unit
     }.map(_._1)
 

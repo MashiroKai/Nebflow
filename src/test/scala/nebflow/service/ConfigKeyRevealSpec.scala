@@ -62,18 +62,20 @@ class ConfigKeyRevealSpec extends CatsEffectSuite:
 
   /** 盘上样本：两个带 key 的 provider + 一个不带 key 的 + keyRef 指针 + search 节。 */
   private def seedConfig(): String =
-    Json.obj(
-      "llm" -> Json.obj(
-        "providers" -> Json.obj(
-          "kimi" -> providerJson(Some("sk-real-kimi-1")),
-          "deepseek" -> providerJson(Some("sk-real-ds-2")),
-          "anon" -> providerJson(None)
-        )
-      ),
-      "search" -> Json.obj("provider" -> Json.fromString("zhipu"), "apiKey" -> Json.fromString("zhipu-real-3")),
-      "jev" -> Json.obj("enabled" -> Json.fromBoolean(true), "keyRef" -> Json.fromString("jev-key")),
-      "embedding" -> Json.obj("keyRef" -> Json.fromString("embed-key"), "model" -> Json.fromString("emb-1"))
-    ).spaces2
+    Json
+      .obj(
+        "llm" -> Json.obj(
+          "providers" -> Json.obj(
+            "kimi" -> providerJson(Some("sk-real-kimi-1")),
+            "deepseek" -> providerJson(Some("sk-real-ds-2")),
+            "anon" -> providerJson(None)
+          )
+        ),
+        "search" -> Json.obj("provider" -> Json.fromString("zhipu"), "apiKey" -> Json.fromString("zhipu-real-3")),
+        "jev" -> Json.obj("enabled" -> Json.fromBoolean(true), "keyRef" -> Json.fromString("jev-key")),
+        "embedding" -> Json.obj("keyRef" -> Json.fromString("embed-key"), "model" -> Json.fromString("emb-1"))
+      )
+      .spaces2
 
   private def writeSeed(): Unit = os.write.over(PathUtil.dataRoot / "nebflow.json", seedConfig())
 
@@ -154,7 +156,8 @@ class ConfigKeyRevealSpec extends CatsEffectSuite:
     if withToken then base.withHeaders(Headers("Authorization" -> s"Bearer $TestToken")) else base
 
   test("GET /config/provider-keys 无令牌 ⇒ 403（owner 鉴权与设置写同门槛；门在业务之前）") {
-    mkRoutes().routes(get("/config/provider-keys", withToken = false))
+    mkRoutes()
+      .routes(get("/config/provider-keys", withToken = false))
       .value
       .map(_.getOrElse(fail("route fell through")))
       .flatMap { resp =>
@@ -173,7 +176,8 @@ class ConfigKeyRevealSpec extends CatsEffectSuite:
 
   test("GET /config/provider-keys 带令牌 ⇒ 200 + 盘上真值（保存 → 重载设置页 → 字段明文等于所存值 的服务端半边）") {
     writeSeed()
-    mkRoutes().routes(get("/config/provider-keys", withToken = true))
+    mkRoutes()
+      .routes(get("/config/provider-keys", withToken = true))
       .value
       .map(_.getOrElse(fail("route fell through")))
       .flatMap(resp => resp.as[Json].map(json => (resp.status, json)))

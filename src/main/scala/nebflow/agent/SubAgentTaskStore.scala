@@ -230,7 +230,8 @@ class SubAgentTaskStore(baseDir: os.Path) extends SubAgentTaskStorePort:
     }.flatMap {
       // 台账 #929：原域剪行 = 显式墓碑外推（status="removed"）——对端据此退役该行
       // （LWW 戳 = 剪行时刻，必新于既有终态）。缺席不外推（无从构行）。
-      case Some(row) => fireWriteHook(
+      case Some(row) =>
+        fireWriteHook(
           row.copy(status = SubAgentTaskStore.StatusRemoved, statusAt = Some(System.currentTimeMillis()))
         )
       case None => IO.unit

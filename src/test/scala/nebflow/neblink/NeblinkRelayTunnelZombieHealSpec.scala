@@ -177,7 +177,10 @@ class NeblinkRelayTunnelZombieHealSpec extends CatsEffectSuite:
           assertEquals(aliveAtEnd, true, "健康路径 isAlive 必须恒真（pong 窗口判据不误杀常连）")
           // 45s at the 3s cadence is ~15 beats; answering at least 12 of them
           // (20% scheduler slack) proves the window never false-kills.
-          assert(fix.pongsSent.get() >= 12, s"45s should answer at least 12 of ~15 3s heartbeat beats, got ${fix.pongsSent.get()}")
+          assert(
+            fix.pongsSent.get() >= 12,
+            s"45s should answer at least 12 of ~15 3s heartbeat beats, got ${fix.pongsSent.get()}"
+          )
       }
     }
   }
@@ -225,11 +228,14 @@ class NeblinkRelayTunnelZombieHealSpec extends CatsEffectSuite:
             "数据帧 = 对端活着的直接证据：isAlive 不得翻转（false 采样数 = " +
               s"${samples.count(s => !s._1)}/${samples.size}）"
           )
+        end for
       }
     }
   }
 
-  test("liveness retune correlation (phase 3c §7.3): heartbeat 3s under the 6s server miss window; LivenessTimeoutMs = 3 beats > 2x margin") {
+  test(
+    "liveness retune correlation (phase 3c §7.3): heartbeat 3s under the 6s server miss window; LivenessTimeoutMs = 3 beats > 2x margin"
+  ) {
     // The eviction face is three constants that must move as ONE set (plan
     // §7.3): the server ping interval x missed-pong threshold (= relay.rs
     // TUNNEL_PING_INTERVAL 3s x TUNNEL_MAX_MISSED_PONGS 2 = a 6s miss window),
@@ -245,11 +251,22 @@ class NeblinkRelayTunnelZombieHealSpec extends CatsEffectSuite:
     //    same beats ratio the 30s/10s pairing had before the retune;
     //  - the zombie window and isAlive stay one shared threshold (no second
     //    liveness constant).
-    assertEquals(NeblinkRelayTunnel.HeartbeatIntervalSec, 3L, "the client heartbeat must sit at 3s (half of the 6s server miss window)")
+    assertEquals(
+      NeblinkRelayTunnel.HeartbeatIntervalSec,
+      3L,
+      "the client heartbeat must sit at 3s (half of the 6s server miss window)"
+    )
     val heartbeatMs = NeblinkRelayTunnel.HeartbeatIntervalSec * 1000
     assert(6000L > heartbeatMs, "the 6s server miss window must stay above the client heartbeat (2x margin)")
-    assertEquals(NeblinkRelayTunnel.LivenessTimeoutMs, heartbeatMs * 3, "the zombie window is exactly 3 heartbeat beats")
-    assert(NeblinkRelayTunnel.LivenessTimeoutMs > heartbeatMs * 2, "the zombie window must tolerate one lost beat plus a full interval of delay")
+    assertEquals(
+      NeblinkRelayTunnel.LivenessTimeoutMs,
+      heartbeatMs * 3,
+      "the zombie window is exactly 3 heartbeat beats"
+    )
+    assert(
+      NeblinkRelayTunnel.LivenessTimeoutMs > heartbeatMs * 2,
+      "the zombie window must tolerate one lost beat plus a full interval of delay"
+    )
   }
 
 end NeblinkRelayTunnelZombieHealSpec

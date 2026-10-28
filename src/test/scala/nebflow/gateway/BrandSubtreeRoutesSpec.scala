@@ -76,3 +76,4 @@ class BrandSubtreeRoutesSpec extends FunSuite:
     // it must land on 404 (no such resource), never leak a file.
     assertEquals(get("/brand/stand%5Clogo/logo-512-light.png").status, Status.NotFound)
   }
+end BrandSubtreeRoutesSpec

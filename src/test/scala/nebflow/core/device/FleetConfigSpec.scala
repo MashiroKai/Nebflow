@@ -99,7 +99,9 @@ class FleetConfigSpec extends FunSuite:
     val offDesc = off("properties").flatMap(_.hcursor.downField("device").downField("description").as[String].toOption)
     assertEquals(
       offDesc,
-      Some("Target device name. Use the device's name from the available devices list. Defaults to local device if omitted."),
+      Some(
+        "Target device name. Use the device's name from the available devices list. Defaults to local device if omitted."
+      ),
       "flag off = legacy wording byte-identical (backward compat)"
     )
     // 非 remoteable 工具不受影响（无 device 键）

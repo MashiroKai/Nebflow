@@ -59,7 +59,7 @@ class MailBoundaryInjectionSpec extends CatsEffectSuite:
       def path: nebflow.actor.ActorPath = nebflow.actor.ActorPath("probe", Nil)
       def !(msg: AgentEvent): IO[Unit] = msg match
         case _: AgentEvent.Completed => counter.update(_ + 1)
-        case _                       => IO.unit
+        case _ => IO.unit
       def ?[Reply](makeMsg: nebflow.actor.ActorRef[Reply] => AgentEvent, timeout: Option[FiniteDuration]): IO[Reply] =
         IO.raiseError(new UnsupportedOperationException("probe ref cannot ask"))
 
@@ -166,7 +166,7 @@ class MailBoundaryInjectionSpec extends CatsEffectSuite:
   // ═══════════════════ 真会话层（边界注入生效） ═══════════════════
 
   private class ScriptedLlm(streams: Ref[IO, List[Stream[IO, StreamChunk]]]) extends LlmHandle[IO]:
-    val calls    = Ref.unsafe[IO, Int](0)
+    val calls = Ref.unsafe[IO, Int](0)
     val requests = Ref.unsafe[IO, List[LlmRequest]](Nil)
 
     def send(req: LlmRequest): IO[LlmResponse] =
@@ -196,7 +196,7 @@ class MailBoundaryInjectionSpec extends CatsEffectSuite:
       .map(_.content)
       .flatMap {
         case Right(blocks) => blocks.collect { case ContentBlock.Text(t) => t }
-        case Left(t)       => List(t)
+        case Left(t) => List(t)
       }
       .mkString("\n")
 
@@ -209,7 +209,7 @@ class MailBoundaryInjectionSpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis).void
 
-  private val tempRoot: os.Path     = os.pwd / "target" / "test-mail-boundary-injection"
+  private val tempRoot: os.Path = os.pwd / "target" / "test-mail-boundary-injection"
   private val originalRoot: os.Path = PathUtil.dataRoot
 
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
@@ -323,6 +323,7 @@ class MailBoundaryInjectionSpec extends CatsEffectSuite:
           !body.contains("human follow-up"),
           "负对照：真人消息不得进本边界包体（2026-09-15 裁定面逐字不变——留队由 turn 末处理）"
         )
+      end for
     }
   }
 
@@ -347,6 +348,7 @@ class MailBoundaryInjectionSpec extends CatsEffectSuite:
         n >= 1,
         "W2 VIOLATED — mail 件的 replyTo 必须并入 owedCompletion 并在本 turn 末收到 Completed（改前：mail 自己的 turn 末结付；边界注入后由完成债通道承接种算）"
       )
+      end for
     }
   }
 

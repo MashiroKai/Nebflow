@@ -58,16 +58,22 @@ private[project] object DeviceProjectMount:
       case (_, None) =>
         IO.raiseError(
           new RuntimeException(
-            ProjectMountPreflight.deviceRefusal(device, devicePath, "the device executor is not initialized on this host")
+            ProjectMountPreflight.deviceRefusal(
+              device,
+              devicePath,
+              "the device executor is not initialized on this host"
+            )
           )
         )
       case (Some(neblink), Some(executor)) =>
         neblink.peers.flatMap { peers =>
           // ② 名册解析：origin.device = deviceId（创建面写入的稳定标识）精确优先，
           //    回落名册解析单点（按名同解析，手工改写 project.json 的形态防御一致）。
-          val peer = peers.find(_.deviceId == device).orElse(
-            RemoteExecutor.resolvePeer(device, peers).toOption
-          )
+          val peer = peers
+            .find(_.deviceId == device)
+            .orElse(
+              RemoteExecutor.resolvePeer(device, peers).toOption
+            )
           peer match
             case None =>
               val online = peers.map(_.deviceName).mkString(", ")
@@ -99,7 +105,8 @@ private[project] object DeviceProjectMount:
                   if !isDir then
                     IO.raiseError(
                       new RuntimeException(
-                        ProjectMountPreflight.deviceRefusal(p.deviceName, devicePath, "path exists but is not a directory")
+                        ProjectMountPreflight
+                          .deviceRefusal(p.deviceName, devicePath, "path exists but is not a directory")
                       )
                     )
                   else
@@ -120,12 +127,15 @@ private[project] object DeviceProjectMount:
                         val brainWs = ProjectStore.brainWorkspace(pd)
                         // ⑤ AGENTS.md 镜像 + 本机大脑根建目录（唯一的本机写盘点）。
                         mirrorAgentsMd(executor, p, devicePath, brainWs).flatMap { _ =>
-                          IO.blocking(os.makeDir.all(os.Path(brainWs) / ".nebflow")).as(
-                            Prepared(p, brainWs, note)
-                          )
+                          IO.blocking(os.makeDir.all(os.Path(brainWs) / ".nebflow"))
+                            .as(
+                              Prepared(p, brainWs, note)
+                            )
                         }
                     }
+                  end if
               }
+          end match
         }
     end match
   end prepare
@@ -147,9 +157,15 @@ private[project] object DeviceProjectMount:
     listing: Json
   ): IO[Either[String, String]] =
     val existing: Set[String] =
-      listing.hcursor.downField("entries").as[List[Json]].toOption.getOrElse(Nil).flatMap { e =>
-        e.hcursor.downField("name").as[String].toOption
-      }.toSet
+      listing.hcursor
+        .downField("entries")
+        .as[List[Json]]
+        .toOption
+        .getOrElse(Nil)
+        .flatMap { e =>
+          e.hcursor.downField("name").as[String].toOption
+        }
+        .toSet
     val wanted: List[(String, String)] = List(
       ("AGENTS.md", ProjectCreateService.AgentMdTemplateFull),
       (".gitignore", ".nebflow/\n")
@@ -157,21 +173,28 @@ private[project] object DeviceProjectMount:
     val missing = wanted.filterNot((name, _) => existing.contains(name))
     if missing.isEmpty then IO.pure(Right("scaffold on device: nothing to do (all pieces already present)"))
     else
-      missing.foldLeft(IO.pure(Right(Nil): Either[String, List[String]])) { (acc, item) =>
-        acc.flatMap {
-          case l @ Left(_) => IO.pure(l)
-          case Right(done) =>
-            executor
-              .writeRemoteFileForScaffold(peer, s"${ProjectCreateService.stripTrailingSlashes(devicePath)}/${item._1}", item._2)
-              .map {
-                case Right(_) => Right(done :+ item._1)
-                case Left(err) => Left(err)
-              }
+      missing
+        .foldLeft(IO.pure(Right(Nil): Either[String, List[String]])) { (acc, item) =>
+          acc.flatMap {
+            case l @ Left(_) => IO.pure(l)
+            case Right(done) =>
+              executor
+                .writeRemoteFileForScaffold(
+                  peer,
+                  s"${ProjectCreateService.stripTrailingSlashes(devicePath)}/${item._1}",
+                  item._2
+                )
+                .map {
+                  case Right(_) => Right(done :+ item._1)
+                  case Left(err) => Left(err)
+                }
+          }
         }
-      }.map {
-        case Right(done) => Right(s"scaffold on device: created ${done.mkString(", ")}")
-        case Left(err) => Left(err)
-      }
+        .map {
+          case Right(done) => Right(s"scaffold on device: created ${done.mkString(", ")}")
+          case Left(err) => Left(err)
+        }
+    end if
   end scaffold
 
   /**
