@@ -52,9 +52,7 @@ class AskAnswerLandingSpec extends CatsEffectSuite:
   /** 捕获 AskAnswerReentry 的假 ProjectActor（重入臂断言面）。 */
   private def projectActorCapturer(
     system: ActorSystem
-  ): IO[
-    (nebflow.actor.ActorRef[nebflow.core.project.ProjectActor.ProjectCommand], Ref[IO, List[(String, String, String)]])
-  ] =
+  ): IO[(nebflow.actor.ActorRef[nebflow.core.project.ProjectActor.ProjectCommand], Ref[IO, List[(String, String, String)]])] =
     Ref.of[IO, List[(String, String, String)]](Nil).flatMap { seen =>
       lazy val behavior: nebflow.actor.Behavior[nebflow.core.project.ProjectActor.ProjectCommand] =
         Behaviors.receiveMessage[nebflow.core.project.ProjectActor.ProjectCommand] {
@@ -90,7 +88,6 @@ class AskAnswerLandingSpec extends CatsEffectSuite:
   /** 渠道回执记录器（登记进 AskAnswerReceipt 的 send 闭包落这里）。 */
   private final class ReceiptSink:
     val lines: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
-
     def entry(channel: String = "weixin-ilink", routeKey: String = "wx_a"): AskAnswerReceipt.Entry =
       AskAnswerReceipt.Entry(channel, routeKey, line => lines.update(_ :+ line))
     def recorded: IO[List[String]] = lines.get
@@ -105,10 +102,9 @@ class AskAnswerLandingSpec extends CatsEffectSuite:
   private def poll[A](probe: IO[Option[A]]): IO[A] =
     def loop(tries: Int): IO[A] =
       if tries <= 0 then IO.raiseError(new IllegalStateException("poll timeout: landing side-effect not observed"))
-      else
-        probe.flatMap:
-          case Some(a) => IO.pure(a)
-          case None => IO.sleep(50.millis) *> loop(tries - 1)
+      else probe.flatMap:
+        case Some(a) => IO.pure(a)
+        case None    => IO.sleep(50.millis) *> loop(tries - 1)
     loop(100)
 
   private def ctx(
@@ -158,7 +154,6 @@ class AskAnswerLandingSpec extends CatsEffectSuite:
 
   override def beforeAll(): Unit =
     ProjectRuntimeRegistry.clear.unsafeRunSync() // 进程级注册表隔离（跨 suite 污染防护）
-
   override def afterAll(): Unit =
     ProjectRuntimeRegistry.clear.unsafeRunSync()
 
@@ -174,7 +169,8 @@ class AskAnswerLandingSpec extends CatsEffectSuite:
       _ <- bridge ! List("yes")
       hits <- poll(seen.get.map(_.headOption)) // 注入 tell 的消化异步——poll 同步化
       _ <- system.stopAll
-    yield assertEquals(hits, (AskUserQuestionTool.formatAnswer(items, List("yes")), true))
+    yield
+      assertEquals(hits, (AskUserQuestionTool.formatAnswer(items, List("yes")), true))
     end for
   }
 
@@ -198,13 +194,10 @@ class AskAnswerLandingSpec extends CatsEffectSuite:
       rc <- sink.recorded
       // answer-retry 审计事件落 FlowMapEventLog（`<ws>/.nebflow/flow-map-events.jsonl`；
       // 带闭引号的子串匹配，不误吞 answer-retry-failed 行）
-      audit <- IO
-        .blocking(
-          os.read
-            .lines(ws / ".nebflow" / FlowMapEventLog.FileName)
-            .filter(_.contains("\"type\":\"answer-retry\""))
-        )
-        .handleErrorWith(_ => IO.pure(Nil))
+      audit <- IO.blocking(
+        os.read.lines(ws / ".nebflow" / FlowMapEventLog.FileName)
+          .filter(_.contains("\"type\":\"answer-retry\""))
+      ).handleErrorWith(_ => IO.pure(Nil))
       inj <- seen.get
       _ <- system.stopAll
     yield
@@ -256,12 +249,7 @@ class AskAnswerLandingSpec extends CatsEffectSuite:
       sink = ReceiptSink()
       ws = WsSink()
       _ <- AskAnswerReceipt.record("asknb-l3", sink.entry())
-      bridge = AskUserAnswerBridge.ref(
-        target,
-        items,
-        "asknb-l3",
-        ctx(res, Some("no-such-project"), Some("n9"), Some(ws))
-      )
+      bridge = AskUserAnswerBridge.ref(target, items, "asknb-l3", ctx(res, Some("no-such-project"), Some("n9"), Some(ws)))
       _ <- bridge ! List("yes")
       hits <- seen.get
       rc <- sink.recorded
@@ -282,9 +270,9 @@ class AskAnswerLandingSpec extends CatsEffectSuite:
     import AskAnswerLanding.*
     import AskAnswerLanding.Landing.*
     def shapeOf(l: Landing): String = l match
-      case ProjectReentry => "ProjectReentry"
-      case DelegateInjection => "DelegateInjection"
-      case Fail(_) => "Fail"
+      case ProjectReentry      => "ProjectReentry"
+      case DelegateInjection   => "DelegateInjection"
+      case Fail(_)             => "Fail"
     // 归因缺席 ⇒ 失败出口（原因文案由 land 端到端面承载，L2 断言其内容）
     assertEquals(shapeOf(decide(false, false, false, false)), "Fail")
     // 臂1：节点在项目图内 + 宿主带指令面（图内分派只看 projectActorPresent，
@@ -299,7 +287,7 @@ class AskAnswerLandingSpec extends CatsEffectSuite:
     // 归因缺席的 Fail 确实是 Fail 分支（非对象臂）
     decide(false, false, false, false) match
       case Fail(_) => ()
-      case other => fail(s"归因缺席必须判 Fail，实际：$other")
+      case other   => fail(s"归因缺席必须判 Fail，实际：$other")
   }
 
   // ───────────── AskAnswerReceipt 反向通道注册表 ─────────────

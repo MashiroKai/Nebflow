@@ -44,14 +44,11 @@ class ImageGenSettingsSpec extends munit.FunSuite:
   test("setImagegenSection: 整节替换（缺键=消失）+ 读回一致 + 空体拒写") {
     withDataRoot { root =>
       // 前置节：enabled=true + 两个 provider；替换后仅剩新形态。
-      val seed = parse(
-        """{"imagegen":{"enabled":true,"defaultProvider":"a","providers":{"a":{"type":"cogview","model":"m1"},"b":{"type":"imagen","model":"m2"}}}}"""
-      ).toOption.get
+      val seed = parse("""{"imagegen":{"enabled":true,"defaultProvider":"a","providers":{"a":{"type":"cogview","model":"m1"},"b":{"type":"imagen","model":"m2"}}}}""").toOption.get
       val prep = ConfigService.setImagegenSection(seed.hcursor.downField("imagegen").focus.get)
       assert(prep.unsafeRunSync().isRight)
 
-      val next =
-        parse("""{"enabled":false,"providers":{"z":{"type":"openai-images","model":"gpt-image-1"}}}""").toOption.get
+      val next = parse("""{"enabled":false,"providers":{"z":{"type":"openai-images","model":"gpt-image-1"}}}""").toOption.get
       ConfigService.setImagegenSection(next).unsafeRunSync() match
         case Left(err) => fail(s"write refused: $err")
         case Right(()) => ()
@@ -80,10 +77,7 @@ class ImageGenSettingsSpec extends munit.FunSuite:
       // 🔴 镜像锚：投影的 compiledIn 与编译期 seal 常量逐字相等——seal=OFF
       //   构建 = false（面板显示「未编入」），seal=ON 构建 = true（正常配置面）。
       //   任何一侧不同步 = 两形态契约破损。
-      assertEquals(
-        status.hcursor.downField("compiledIn").as[Boolean].toOption,
-        Some(nebflow.core.ImageGenSeal.CompiledIn)
-      )
+      assertEquals(status.hcursor.downField("compiledIn").as[Boolean].toOption, Some(nebflow.core.ImageGenSeal.CompiledIn))
       assertEquals(status.hcursor.downField("configured").as[Boolean].toOption, Some(false))
       assertEquals(status.hcursor.downField("enabled").as[Boolean].toOption, Some(false))
       val providers = status.hcursor.downField("providers").as[Map[String, Json]].toOption.get
@@ -96,23 +90,14 @@ class ImageGenSettingsSpec extends munit.FunSuite:
   test("imagegenStatus: keyConfigured 在位性——缺文件/空文件=false，有值=true，投影零 key 值") {
     withDataRoot { root =>
       os.makeDir.all(root / "secrets")
-      val section = parse(
-        """{"enabled":true,"defaultProvider":"zhipu","providers":{"zhipu":{"type":"cogview","model":"cogview-3-flash","keyRef":"spec-key"}}}"""
-      ).toOption.get
+      val section = parse("""{"enabled":true,"defaultProvider":"zhipu","providers":{"zhipu":{"type":"cogview","model":"cogview-3-flash","keyRef":"spec-key"}}}""").toOption.get
       ConfigService.setImagegenSection(section).unsafeRunSync() match
         case Left(err) => fail(s"write refused: $err")
         case Right(()) => ()
 
       def keyConfigured: Boolean =
-        ConfigService.imagegenStatus
-          .unsafeRunSync()
-          .hcursor
-          .downField("providers")
-          .downField("zhipu")
-          .downField("keyConfigured")
-          .as[Boolean]
-          .toOption
-          .get
+        ConfigService.imagegenStatus.unsafeRunSync().hcursor
+          .downField("providers").downField("zhipu").downField("keyConfigured").as[Boolean].toOption.get
 
       // ① 缺文件 = 待录入（面板「待录入」形态的数据源；引擎腿关同判据）。
       assertEquals(keyConfigured, false)

@@ -5,7 +5,6 @@ import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets.UTF_8
 
 class PortalWsMessageAssemblerSpec extends FunSuite:
-
   test("UTF-16 surrogate split across callbacks is encoded only after joining"):
     val a = new PortalWsMessageAssembler(16)
     assertEquals(a.text("配置\uD83D", false), Right(None))
@@ -21,13 +20,13 @@ class PortalWsMessageAssemblerSpec extends FunSuite:
     val a = new PortalWsMessageAssembler(4)
     assertEquals(a.text("1234", false), Right(None))
     assertEquals(a.text("5", false), Left("message-too-large"))
-    assertEquals(a.binary(ByteBuffer.wrap(Array[Byte](1, 2, 3, 4)), false), Right(None))
+    assertEquals(a.binary(ByteBuffer.wrap(Array[Byte](1,2,3,4)), false), Right(None))
     assertEquals(a.binary(ByteBuffer.wrap(Array[Byte](5)), true), Left("message-too-large"))
 
   test("binary fragments join and successive messages remain separate"):
     val a = new PortalWsMessageAssembler(8)
-    assertEquals(a.binary(ByteBuffer.wrap(Array[Byte](1, 2)), false), Right(None))
-    assertEquals(a.binary(ByteBuffer.wrap(Array[Byte](3)), true).toOption.flatten.get.toList, List[Byte](1, 2, 3))
+    assertEquals(a.binary(ByteBuffer.wrap(Array[Byte](1,2)), false), Right(None))
+    assertEquals(a.binary(ByteBuffer.wrap(Array[Byte](3)), true).toOption.flatten.get.toList, List[Byte](1,2,3))
     assertEquals(new String(a.text("next", true).toOption.flatten.get, UTF_8), "next")
 
   test("mixed fragment kinds are refused and buffered content is discarded"):
@@ -35,4 +34,3 @@ class PortalWsMessageAssemblerSpec extends FunSuite:
     assertEquals(a.text("half", false), Right(None))
     assertEquals(a.binary(ByteBuffer.wrap(Array[Byte](1)), true), Left("mixed-message-fragments"))
     assertEquals(new String(a.text("new", true).toOption.flatten.get, UTF_8), "new")
-end PortalWsMessageAssemblerSpec

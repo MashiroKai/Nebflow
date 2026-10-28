@@ -41,20 +41,16 @@ object ImageGenAdapters:
 
   def cogviewSize(model: String, d: Dim): String =
     if model.startsWith("cogview-4") then s"${d.w}x${d.h}"
-    else
-      val s = snapByAspect(d, CogViewEnumSizes); s"${s.w}x${s.h}"
+    else { val s = snapByAspect(d, CogViewEnumSizes); s"${s.w}x${s.h}" }
 
   def openAiImagesSize(d: Dim): String =
     if GptImageSizes.contains(d) then s"${d.w}x${d.h}"
-    else
-      val s = snapByAspect(d, GptImageSizes); s"${s.w}x${s.h}"
+    else { val s = snapByAspect(d, GptImageSizes); s"${s.w}x${s.h}" }
 
   def imagenAspect(d: Dim): String =
     val r = d.w.toDouble / d.h
-    if r > 1.7 then "16:9"
-    else if r >= 1.2 then "4:3"
-    else if r > 0.83 then "1:1"
-    else if r >= 0.55 then "3:4"
+    if r > 1.7 then "16:9" else if r >= 1.2 then "4:3"
+    else if r > 0.83 then "1:1" else if r >= 0.55 then "3:4"
     else "9:16"
 
   // ── OpenAI images 兼容协议（gpt-image-1 / Seedream / 一切兼容端点）─────────
@@ -68,27 +64,22 @@ object ImageGenAdapters:
 
     def buildBody(model: String, req: ImageGenRequest): Json =
       val d = parseSize(req.size)
-      Json
-        .obj(
-          "model" -> model.asJson,
-          "prompt" -> req.prompt.asJson,
-          "n" -> 1.asJson,
-          "size" -> openAiImagesSize(d).asJson,
-          // gpt-image-1 只收 b64_json；兼容端点两种都给时 url 省一次下载——
-          // 声明 url 对只认 b64 的端点是安全忽略（实测 gpt-image-1 忽略多余键）。
-          "response_format" -> "url".asJson
-        )
-        .deepDropNullValues
+      Json.obj(
+        "model" -> model.asJson,
+        "prompt" -> req.prompt.asJson,
+        "n" -> 1.asJson,
+        "size" -> openAiImagesSize(d).asJson,
+        // gpt-image-1 只收 b64_json；兼容端点两种都给时 url 省一次下载——
+        // 声明 url 对只认 b64 的端点是安全忽略（实测 gpt-image-1 忽略多余键）。
+        "response_format" -> "url".asJson
+      ).deepDropNullValues
 
     def parseResult(json: Json): Either[ImageGenError, ImageRef] =
       val cursor = json.hcursor.downField("data").downArray
       lazy val b64 = cursor.downField("b64_json").as[String].toOption
       lazy val url = cursor.downField("url").as[String].toOption.filter(_.nonEmpty)
-      b64
-        .map(ImageRef.B64(_))
-        .orElse(url.map(ImageRef.Url(_)))
+      b64.map(ImageRef.B64(_)).orElse(url.map(ImageRef.Url(_)))
         .toRight(E.BadResponse(`type`, "data[0] carries neither b64_json nor url"))
-  end OpenAiImages
 
   // ── 智谱 CogView（OpenAI 兼容层 + 自家 size 枚举/鉴权）─────────────────────
   // POST {baseUrl}/images/generations（v4 起 Bearer 直用 API Key）· data[0].url|b64_json
@@ -112,11 +103,8 @@ object ImageGenAdapters:
       val cursor = json.hcursor.downField("data").downArray
       lazy val url = cursor.downField("url").as[String].toOption.filter(_.nonEmpty)
       lazy val b64 = cursor.downField("b64_json").as[String].toOption
-      url
-        .map(ImageRef.Url(_))
-        .orElse(b64.map(ImageRef.B64(_)))
+      url.map(ImageRef.Url(_)).orElse(b64.map(ImageRef.B64(_)))
         .toRight(E.BadResponse(`type`, "data[0] carries neither url nor b64_json"))
-  end CogView
 
   // ── Google Imagen（预留位——Gemini generateImages 协议，未验证）────────────
   // ⚠️ 调试状态：imagen-3.0-generate-002 已被 Google 标记 2026-06-30 停服；
@@ -137,15 +125,9 @@ object ImageGenAdapters:
       )
 
     def parseResult(json: Json): Either[ImageGenError, ImageRef] =
-      json.hcursor
-        .downField("predictions")
-        .downArray
-        .downField("bytesBase64Encoded")
-        .as[String]
-        .toOption
+      json.hcursor.downField("predictions").downArray.downField("bytesBase64Encoded").as[String].toOption
         .map(ImageRef.B64(_))
         .toRight(E.BadResponse(`type`, "predictions[0].bytesBase64Encoded missing"))
-  end Imagen
 
   val All: List[ImageGenAdapter] = List(CogView, OpenAiImages, Imagen)
 
@@ -155,5 +137,5 @@ object ImageGenAdapters:
   def endpointFor(adapter: ImageGenAdapter, baseUrl: String, model: String): String =
     adapter match
       case Imagen => s"$baseUrl/models/$model:generateImages"
-      case _ => s"$baseUrl/images/generations"
+      case _      => s"$baseUrl/images/generations"
 end ImageGenAdapters

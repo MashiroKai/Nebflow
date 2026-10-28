@@ -7,7 +7,7 @@ import nebflow.core.tools.AskUserQuestionTool
 import nebflow.shared.{AttachContract, PathUtil}
 
 import java.nio.file.Files
-import scala.concurrent.duration.*
+import scala.concurrent.duration._
 
 /**
  * askuser-dragdrop 实施批（2026-10-19，批 #551）配对 spec：`POST /api/askuser/attachments`
@@ -109,9 +109,7 @@ class AskUserAttachmentRoutesSpec extends CatsEffectSuite:
     assertEquals(j.hcursor.get[String]("kind").toOption, Some("image"))
     assertEquals(j.hcursor.get[String]("path").toOption, Some(rec.path))
     val j2 = AskUserAttachmentRoutes.Store.recJson(
-      RID,
-      rec.copy(mime = "application/pdf"),
-      "a.pdf"
+      RID, rec.copy(mime = "application/pdf"), "a.pdf"
     )
     assertEquals(j2.hcursor.get[String]("kind").toOption, Some("file"))
   }

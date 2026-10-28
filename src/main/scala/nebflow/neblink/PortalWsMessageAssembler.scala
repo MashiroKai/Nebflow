@@ -3,11 +3,10 @@ package nebflow.neblink
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets.UTF_8
 
-/**
- * The JDK listener delivers partial messages. The relay browser pump sends
- * whole messages, so only complete UTF-8/binary payloads may cross that leg.
- * One bounded message per connection; no partial JSON ever reaches a browser.
- */
+/** The JDK listener delivers partial messages. The relay browser pump sends
+  * whole messages, so only complete UTF-8/binary payloads may cross that leg.
+  * One bounded message per connection; no partial JSON ever reaches a browser.
+  */
 private[neblink] final class PortalWsMessageAssembler(
   maxBytes: Int = PortalTunnelBridge.MaxWsMessageBytes
 ):
@@ -52,4 +51,3 @@ private[neblink] final class PortalWsMessageAssembler(
         val out = bytes.toByteArray
         reset()
         Right(Some(out))
-end PortalWsMessageAssembler

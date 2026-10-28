@@ -371,7 +371,6 @@ class WeixinIlinkScanBindSpec extends CatsEffectSuite:
 
   /** A do-nothing BridgeContext for the BridgeManager under test. */
   private object NoopCtx extends nebflow.bridge.BridgeContext:
-
     def injectMessage(
       sessionId: String,
       content: String,
@@ -645,11 +644,9 @@ class WeixinIlinkScanBindSpec extends CatsEffectSuite:
       recordings <- Ref.of[IO, List[(os.Path, Map[String, String])]](Nil)
       sleeps <- Ref.of[IO, List[FiniteDuration]](Nil)
       (portProbe, healthProbe, sleeper) =
-        (
-          (_ => IO.pure(false)): WeixinBindAutoWire.PortProbe,
+        ((_ => IO.pure(false)): WeixinBindAutoWire.PortProbe,
           (_ => IO.pure(false)): WeixinBindAutoWire.HealthProbe,
-          (d => sleeps.update(_ :+ d)): WeixinBindAutoWire.Sleeper
-        )
+          (d => sleeps.update(_ :+ d)): WeixinBindAutoWire.Sleeper)
       now <- IO(System.currentTimeMillis())
       activate = WeixinBindAutoWire.productionActivate(
         bridgeManager = None,
@@ -760,11 +757,9 @@ class WeixinIlinkScanBindSpec extends CatsEffectSuite:
       // the port never shows a listener and /healthz never answers: the
       // installer "succeeded" but nothing is alive
       (portProbe, healthProbe, sleeper) =
-        (
-          (_ => IO.pure(false)): WeixinBindAutoWire.PortProbe,
+        ((_ => IO.pure(false)): WeixinBindAutoWire.PortProbe,
           (_ => IO.pure(false)): WeixinBindAutoWire.HealthProbe,
-          (d => sleeps.update(_ :+ d)): WeixinBindAutoWire.Sleeper
-        )
+          (d => sleeps.update(_ :+ d)): WeixinBindAutoWire.Sleeper)
       now <- IO(System.currentTimeMillis())
       activate = WeixinBindAutoWire.productionActivate(
         bridgeManager = None,
@@ -885,9 +880,7 @@ class WeixinIlinkScanBindSpec extends CatsEffectSuite:
       // (a) port busy → free after 3 polls: 3 sleeps, then true
       sleepsA <- Ref.of[IO, List[FiniteDuration]](Nil)
       scriptA <- Ref.of[IO, List[Boolean]](List(true, true, true, false))
-      freeA <- WeixinBindAutoWire
-        .awaitPortFree(8787, scriptedProbe(scriptA), d => sleepsA.update(_ :+ d))
-        .map(_ -> sleepsA.get.unsafeRunSync())
+      freeA <- WeixinBindAutoWire.awaitPortFree(8787, scriptedProbe(scriptA), d => sleepsA.update(_ :+ d)).map(_ -> sleepsA.get.unsafeRunSync())
       _ = assertEquals(freeA._1, true, "released on the 4th read")
       _ = assertEquals(freeA._2.size, 3, "one poll sleep per busy read")
       // (b) never released: bounded at PortFreePollSteps, returns false

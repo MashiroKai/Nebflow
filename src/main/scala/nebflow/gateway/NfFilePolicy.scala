@@ -406,12 +406,12 @@ object NfFilePolicy extends FilePolicyPort:
           val head = rel.split('/').headOption.getOrElse("")
           if head == "secrets" || rel == "auth.json" || rel == "nebflow.json" then
             Some(
-              (
-                NfDenyLayer.Credential,
-                "this path is a " + nebflow.shared.Branding.productName +
-                  " credential file inside the data directory " +
-                  "(auth.json / nebflow.json / the secrets subtree)"
-              )
+                (
+                  NfDenyLayer.Credential,
+                  "this path is a " + nebflow.shared.Branding.productName +
+                    " credential file inside the data directory " +
+                    "(auth.json / nebflow.json / the secrets subtree)"
+                )
             )
           else None
         else None
@@ -449,10 +449,8 @@ object NfFilePolicy extends FilePolicyPort:
   // `home` 参数化（默认进程 user.home）纯为 spec 可隔离注入，零 sys.props 改写。
   // ────────────────────────────────────────────────────────────────────────
 
-  /**
-   * 存量旧根字面残留 → 现役根/迁移树双读（语义见上块注释）。`None` = 不在旧根
-   * 前缀之下，或全部候选都不存在（调用方维持原 404，行为不变）。
-   */
+  /** 存量旧根字面残留 → 现役根/迁移树双读（语义见上块注释）。`None` = 不在旧根
+    * 前缀之下，或全部候选都不存在（调用方维持原 404，行为不变）。 */
   def legacyRootResidual(
     lexical: java.nio.file.Path,
     dataRoot: java.nio.file.Path,
@@ -465,18 +463,16 @@ object NfFilePolicy extends FilePolicyPort:
       if tail.toString.isEmpty then None
       else
         val primary = dataRoot.resolve(tail)
-        if java.nio.file.Files.exists(primary) && java.nio.file.Files.isRegularFile(primary) then Some(primary)
+        if java.nio.file.Files.exists(primary) && java.nio.file.Files.isRegularFile(primary) then
+          Some(primary)
         else
-          migratedTrees(home).iterator
+          migratedTrees(home)
+            .iterator
             .map(_.resolve(tail))
             .find(p => java.nio.file.Files.exists(p) && java.nio.file.Files.isRegularFile(p))
 
-  end legacyRootResidual
-
-  /**
-   * `<home>/.nebflow-migrated-*` 迁移树清单：目录名后缀为零填充时间戳，字典序
-   * 降序 = 最新树优先。best-effort：列目录失败 = 空表（双读退化为现役根一问）。
-   */
+  /** `<home>/.nebflow-migrated-*` 迁移树清单：目录名后缀为零填充时间戳，字典序
+    * 降序 = 最新树优先。best-effort：列目录失败 = 空表（双读退化为现役根一问）。 */
   private def migratedTrees(home: java.nio.file.Path): List[java.nio.file.Path] =
     val prefix = PathUtil.LegacyHomeDirName + "-migrated-"
     val names =
@@ -493,8 +489,6 @@ object NfFilePolicy extends FilePolicyPort:
         finally stream.close()
       catch case _: Throwable => Nil
     names.sorted(Ordering[String].reverse).map(home.resolve(_))
-
-  end migratedTrees
 
   /** 进程 user.home（判据默认值；spec 注入合成 home 时不用）。 */
   private[gateway] def processHome: java.nio.file.Path =
@@ -527,7 +521,8 @@ object NfFilePolicy extends FilePolicyPort:
         val expanded = PathUtil.expandTilde(rawPath)
         val lexical = java.nio.file.Paths.get(expanded).normalize()
         val probed =
-          if java.nio.file.Files.exists(lexical) && java.nio.file.Files.isRegularFile(lexical) then lexical
+          if java.nio.file.Files.exists(lexical) && java.nio.file.Files.isRegularFile(lexical) then
+            lexical
           else legacyRootResidual(lexical, policy.dataRoot, home).getOrElse(lexical)
         if !java.nio.file.Files.exists(probed) || !java.nio.file.Files.isRegularFile(probed) then
           NfVerdict.Denied(

@@ -24,10 +24,8 @@ import scala.util.Try
  */
 object ProjectMountPreflight:
 
-  /**
-   * Windows 风格绝对路径判据（`C:\...` / `C:/...` / `\\server\...` UNC）。
-   * 这类路径出现在本机腿 = 「声明设备」与「实际走腿」错位的强信号（事故原形）。
-   */
+  /** Windows 风格绝对路径判据（`C:\...` / `C:/...` / `\\server\...` UNC）。
+    * 这类路径出现在本机腿 = 「声明设备」与「实际走腿」错位的强信号（事故原形）。 */
   def windowsStylePath(p: String): Boolean =
     p.matches("""(?i)^[a-z]:[\\/].*""") || p.startsWith("""\\""")
 

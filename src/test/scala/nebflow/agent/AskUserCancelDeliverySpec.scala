@@ -28,12 +28,7 @@ class AskUserCancelDeliverySpec extends CatsEffectSuite:
   private val items = List(AskItem("继续？", List(AskOption("yes"))))
 
   /** 捕获 ImmediateInput 的目标 agent ref + 命中读数（actor 常驻，可收多条）。 */
-  private def targetCapturer(system: ActorSystem): IO[
-    (
-      nebflow.actor.ActorRef[nebflow.actor.AgentCommand],
-      Ref[IO, List[(String, Option[String], Option[String], Boolean)]]
-    )
-  ] =
+  private def targetCapturer(system: ActorSystem): IO[(nebflow.actor.ActorRef[nebflow.actor.AgentCommand], Ref[IO, List[(String, Option[String], Option[String], Boolean)]])] =
     Ref.of[IO, List[(String, Option[String], Option[String], Boolean)]](Nil).flatMap { seen =>
       lazy val behavior: nebflow.actor.Behavior[nebflow.actor.AgentCommand] =
         Behaviors.receiveMessage[nebflow.actor.AgentCommand] {

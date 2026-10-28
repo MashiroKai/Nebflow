@@ -72,9 +72,7 @@ object ProjectStore:
    * [[displayDevice]] 对名册现查（core.device 不持有名册）。
    */
   def effectiveDevice(pd: ProjectDef): String =
-    pd.device
-      .map(_.trim)
-      .filter(_.nonEmpty)
+    pd.device.map(_.trim).filter(_.nonEmpty)
       .orElse(pd.origin.filter(o => !ProjectOrigin.isSelfLiteral(o.device)).map(_.device))
       .getOrElse(ProjectOrigin.Self)
 
@@ -156,7 +154,6 @@ object ProjectStore:
               logger.warnSync(s"Failed to parse project '$name': $e")
               None
         else None
-        end if
     }
 
   /**
@@ -328,9 +325,7 @@ object ProjectStore:
                   case Some(d) => json.deepMerge(io.circe.Json.obj("description" -> io.circe.Json.fromString(d)))
                   case None =>
                     // 清空 = 删键（吸收既有 null/空串形态；json deepMerge 无法删键，手工重建对象）
-                    io.circe.Json.fromJsonObject(
-                      json.asObject.getOrElse(io.circe.JsonObject.empty).remove("description")
-                    )
+                    io.circe.Json.fromJsonObject(json.asObject.getOrElse(io.circe.JsonObject.empty).remove("description"))
                 AtomicJson.writeSync(p, updated.noSpaces)
                 logger.infoSync(s"Project '$name': description updated (${target.fold("<cleared>")(_.take(60))})")
                 Right("updated")

@@ -9,7 +9,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord, AgentStatus}
-import nebflow.actor.ActorSystem
+import nebflow.actor.{ActorSystem}
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.core.schedule.FreezeScheduleConfig
 import nebflow.core.task.FileTaskStore
@@ -17,7 +17,15 @@ import nebflow.core.tools.FileLockManager
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.FileChangeTracker
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
+import nebflow.shared.{
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  PathUtil,
+  StreamChunk,
+  ThinkingConfig
+}
 
 import scala.concurrent.duration.*
 
@@ -135,19 +143,15 @@ class ResendDedupSpec extends CatsEffectSuite:
     events: cats.effect.Ref[IO, List[Json]],
     clientMessageId: String
   ): IO[List[Json]] =
-    events.get.map(
-      _.filter(j =>
-        j.hcursor.downField("type").as[String].contains("messageDuplicate") &&
-          j.hcursor.downField("clientMessageId").as[String].contains(clientMessageId)
-      )
-    )
+    events.get.map(_.filter(j =>
+      j.hcursor.downField("type").as[String].contains("messageDuplicate") &&
+        j.hcursor.downField("clientMessageId").as[String].contains(clientMessageId)
+    ))
 
-  /**
-   * 该请求**最后一条实义 user 消息**是否为 text —— 按「本轮投递的是哪条」计数，
+  /** 该请求**最后一条实义 user 消息**是否为 text —— 按「本轮投递的是哪条」计数，
    *  不按上下文包含（后继轮的 context 含历史文本，包含判定会把续轮错算进来）。
    *  跳过 reminders 注入的 `<system-reminder>…` User 行（时间注入会排在实义消息
-   *  之后 —— 实测把「最后一条 user」位占掉）。
-   */
+   *  之后 —— 实测把「最后一条 user」位占掉）。 */
   private def lastUserIs(req: LlmRequest, text: String): Boolean =
     req.messages
       .filter(_.role == nebflow.shared.MessageRole.User)
@@ -217,9 +221,7 @@ class ResendDedupSpec extends CatsEffectSuite:
   //        重复 ⇒ 排队消息永不派发），drain 后**恰派发一次**（第二份在下一边界被
   //        idle 去重收掉）。
 
-  test(
-    "RD2: busy-queue gate drops a duplicate of the in-flight turn's id; a double-queued fresh id drains exactly once"
-  ) {
+  test("RD2: busy-queue gate drops a duplicate of the in-flight turn's id; a double-queued fresh id drains exactly once") {
     val system = ActorSystem("resend-dedup-rd2")
     val tmp = os.temp.dir()
     val prevRoot = PathUtil.dataRoot
@@ -275,20 +277,10 @@ class ResendDedupSpec extends CatsEffectSuite:
         _ = assert(count == 2, s"queued head must drain into its own turn (got $count calls, want 2)")
         reqs <- requests.get
         queuedTurns = reqs.count(lastUserIs(_, "queued msg"))
-        _ = assert(
-          queuedTurns == 1,
-          s"double-queued fresh id must dispatch exactly once, got $queuedTurns; lastUsers=" +
-            reqs
-              .map(r =>
-                r.messages
-                  .filter(_.role == nebflow.shared.MessageRole.User)
-                  .filterNot(_.textContent.startsWith("<system-reminder>"))
-                  .lastOption
-                  .map(m => m.textContent.take(50))
-                  .getOrElse("-")
-              )
-              .mkString(" | ")
-        )
+        _ = assert(queuedTurns == 1, s"double-queued fresh id must dispatch exactly once, got $queuedTurns; lastUsers=" +
+          reqs.map(r => r.messages.filter(_.role == nebflow.shared.MessageRole.User)
+            .filterNot(_.textContent.startsWith("<system-reminder>"))
+            .lastOption.map(m => m.textContent.take(50)).getOrElse("-")).mkString(" | "))
         heldTurns = reqs.count(lastUserIs(_, "hold turn"))
         _ = assert(heldTurns == 1, s"in-flight turn must complete exactly once, got $heldTurns")
         r2 <- receiptsFor(events, "q-2")

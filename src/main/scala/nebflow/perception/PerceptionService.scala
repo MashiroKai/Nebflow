@@ -47,21 +47,21 @@ object PerceptionService:
     val scrubbed = if authCode.nonEmpty && err.contains(authCode) then err.replace(authCode, "••••") else err
     val e = scrubbed.toLowerCase
     if scrubbed.contains("AUTHENTICATIONFAILED") || scrubbed.contains("LOGIN")
-      || e.contains("invalid") || scrubbed.contains("AUTH")
-    then "授权码无效 · 请确认已在邮箱设置开启 IMAP 服务并使用授权码（非登录密码）"
+      || e.contains("invalid") || scrubbed.contains("AUTH") then
+      "授权码无效 · 请确认已在邮箱设置开启 IMAP 服务并使用授权码（非登录密码）"
     else if e.contains("超时") || e.contains("timeout") || e.contains("timed out") then
       s"连接 $imapHost:$imapPort 响应超时 · 请检查网络后重试"
     else if e.contains("unknownhost") || e.contains("unreachable") || e.contains("connect") then
       s"无法连接 $imapHost:$imapPort · 请检查网络与服务器设置"
     else if e.contains("imap no") || e.contains("imap bad") || e.contains("响应不完整") then
       "邮箱服务器拒绝了该操作 · 请确认已开启 IMAP 服务后重试"
-    else "连接失败 · 请检查邮箱地址、授权码与服务器设置"
+    else
+      "连接失败 · 请检查邮箱地址、授权码与服务器设置"
 
   // ── singleton runtime ─────────────────────────────────────────────────
 
   private sealed trait Phase
   private case object Cold extends Phase
-
   private case class Hot(
     core: PerceptionCore,
     loops: List[cats.effect.Fiber[IO, Throwable, Unit]]
@@ -73,13 +73,13 @@ object PerceptionService:
   def boot(broadcast: Json => IO[Unit], resources: SharedResources): IO[Unit] =
     phase.get.flatMap:
       case Hot(_, _) => IO.unit
-      case Cold => doBoot(broadcast, resources).void
+      case Cold      => doBoot(broadcast, resources).void
 
   /** Routes-side defensive idempotent boot; returns the live core. */
   def ensureBoot(broadcast: Json => IO[Unit], resources: SharedResources): IO[PerceptionCore] =
     phase.get.flatMap:
       case Hot(core, _) => IO.pure(core)
-      case Cold => doBoot(broadcast, resources)
+      case Cold         => doBoot(broadcast, resources)
 
   private def doBoot(broadcast: Json => IO[Unit], resources: SharedResources): IO[PerceptionCore] =
     val core = new PerceptionCore(
@@ -97,13 +97,11 @@ object PerceptionService:
       _ <- logger.info("perception daemon booted (poll/sweep/digest/spool loops live)")
     yield core
 
-  end doBoot
-
   /** Test/panel access to the live core (None before boot). */
   def coreNow: IO[Option[PerceptionCore]] =
     phase.get.map:
       case Hot(core, _) => Some(core)
-      case Cold => None
+      case Cold         => None
 
 end PerceptionService
 
@@ -204,9 +202,9 @@ class PerceptionCore(
       rt <- accountRuntime.get
       now <- IO(System.currentTimeMillis())
       due = accs.filter(a => a.enabled && rt.get(a.id).forall(r => now >= r.nextAttemptAt))
-      _ <- due.traverse_(a =>
-        pollAccount(a).handleErrorWith(e => logger.warn(s"poll ${a.address}: ${e.getMessage}").void)
-      )
+      _ <- due.traverse_(a => pollAccount(a).handleErrorWith(e =>
+        logger.warn(s"poll ${a.address}: ${e.getMessage}").void
+      ))
     yield ()
 
   private def pollAccount(account: MailAccount): IO[Unit] =
@@ -217,39 +215,33 @@ class PerceptionCore(
         case Some(v) => IO.pure(v)
         case None => IO.raiseError(new java.lang.IllegalStateException("auth code missing"))
       }
-      result <- IO
-        .blocking {
-          val conn = MailClient.connectImap(account.imapHost, account.imapPort)
-          conn.flatMap { session =>
-            // pure Either flow inside the blocking lane (session is synchronous)
-            val flow: Either[String, List[IncomingMail]] = for
-              _ <- session.login(account.address, authCode)
-              _ <- session.selectInbox()
-              uids <- session.searchUids(st.lastSeenUid)
-              // first sync: only record the max UID (history is not backfilled)
-              toFetch = if st.lastSeenUid <= 0 then Nil else uids
-              mails <- toFetch.foldLeft[Either[String, List[IncomingMail]]](Right(Nil)) { (acc, uid) =>
-                acc.flatMap(list => session.fetchMessage(uid).map(raw => list :+ MailClient.toIncomingMail(uid, raw)))
-              }
-              _ = session.logout()
-            yield mails
-            flow match
-              case Right(mails) => session.close(); Right(mails)
-              case Left(err) => session.close(); Left(err)
-          }
+      result <- IO.blocking {
+        val conn = MailClient.connectImap(account.imapHost, account.imapPort)
+        conn.flatMap { session =>
+          // pure Either flow inside the blocking lane (session is synchronous)
+          val flow: Either[String, List[IncomingMail]] = for
+            _ <- session.login(account.address, authCode)
+            _ <- session.selectInbox()
+            uids <- session.searchUids(st.lastSeenUid)
+            // first sync: only record the max UID (history is not backfilled)
+            toFetch = if st.lastSeenUid <= 0 then Nil else uids
+            mails <- toFetch.foldLeft[Either[String, List[IncomingMail]]](Right(Nil)) { (acc, uid) =>
+              acc.flatMap(list => session.fetchMessage(uid).map(raw => list :+ MailClient.toIncomingMail(uid, raw)))
+            }
+            _ = session.logout()
+          yield mails
+          flow match
+            case Right(mails) => session.close(); Right(mails)
+            case Left(err)    => session.close(); Left(err)
         }
-        .flatMap {
-          case Right(mails) =>
-            recordOk(account) *>
-              (if mails.isEmpty then IO.unit else processMails(account, mails))
-          case Left(err) =>
-            recordFailure(account, err)
-        }
+      }.flatMap {
+        case Right(mails) =>
+          recordOk(account) *>
+            (if mails.isEmpty then IO.unit else processMails(account, mails))
+        case Left(err) =>
+          recordFailure(account, err)
+      }
     yield ()
-
-    end for
-
-  end pollAccount
 
   /** New mail pipeline (L0). Order: OTP window hit → trusted delivery → billing → drop. */
   def processMails(account: MailAccount, mails: List[IncomingMail]): IO[Unit] =
@@ -275,19 +267,14 @@ class PerceptionCore(
               case v if v.isBilling =>
                 for
                   today <- IO(LocalDate.now().toString)
-                  _ <- IO.blocking(
-                    store.billingAppend(
-                      today,
-                      PerceptionStore.BillingLine(
-                        ts = System.currentTimeMillis(),
-                        messageId = mail.messageId,
-                        fromDomain = mail.fromDomain,
-                        subject = mail.subject.take(120),
-                        amountSample = v.amountSample.take(40),
-                        matchedBy = v.matchedBy
-                      )
-                    )
-                  )
+                  _ <- IO.blocking(store.billingAppend(today, PerceptionStore.BillingLine(
+                    ts = System.currentTimeMillis(),
+                    messageId = mail.messageId,
+                    fromDomain = mail.fromDomain,
+                    subject = mail.subject.take(120),
+                    amountSample = v.amountSample.take(40),
+                    matchedBy = v.matchedBy
+                  )))
                   _ <- audit("L0", "billing-buffered", s"uid=${mail.uid} by=${v.matchedBy}")
                 yield ()
               case _ =>
@@ -295,10 +282,7 @@ class PerceptionCore(
                 audit("L0", "held-no-pipeline", s"uid=${mail.uid} reason=unmatched")
         _ <- advanceUid(account, mail.uid)
       yield ()
-      end for
     }
-
-  end processMails
 
   private def maskSubject(s: String): String =
     if s.length > 24 then s.take(24) + "…" else s
@@ -307,10 +291,7 @@ class PerceptionCore(
     IO.blocking {
       val st = store.loadState()
       val cur = st.getOrElse(account.id, PerceptionStore.AccountState())
-      store.saveState(
-        st + (account.id -> cur
-          .copy(lastSeenUid = math.max(cur.lastSeenUid, uid), lastOkAt = System.currentTimeMillis()))
-      )
+      store.saveState(st + (account.id -> cur.copy(lastSeenUid = math.max(cur.lastSeenUid, uid), lastOkAt = System.currentTimeMillis())))
       ()
     }
 
@@ -335,10 +316,8 @@ class PerceptionCore(
         val cur = m.getOrElse(account.id, AccountRuntime())
         val attempt = cur.backoffAttempt + 1
         val delaySec = math.min(BackoffBaseSec * (1L << math.min(attempt, 8)), BackoffMaxSec)
-        val state =
-          if err.toLowerCase.contains("auth") || err.contains("LOGIN") || err.contains("INVALID") then
-            EntryState.AuthFailed
-          else EntryState.Backoff
+        val state = if err.toLowerCase.contains("auth") || err.contains("LOGIN") || err.contains("INVALID") then EntryState.AuthFailed
+        else EntryState.Backoff
         m + (account.id -> cur.copy(
           state = state,
           lastError = err.take(200),
@@ -363,9 +342,7 @@ class PerceptionCore(
     else
       val from = mail.from.toLowerCase
       val dom = mail.fromDomain.toLowerCase
-      trusted.exists(t =>
-        from == t || from.endsWith("<" + t) || dom == t.stripPrefix("@") || (t.startsWith("@") && dom == t.drop(1))
-      )
+      trusted.exists(t => from == t || from.endsWith("<" + t) || dom == t.stripPrefix("@") || (t.startsWith("@") && dom == t.drop(1)))
 
   /** v1 无黑名单 UI（r3 高级折叠裁撤白名单外显）；占位恒 false，文件面留扩展位。 */
   def isBlocked(mail: IncomingMail): Boolean = false
@@ -389,22 +366,16 @@ class PerceptionCore(
           acc + (w.windowId -> nid)
         }
       }
-      _ <- audit(
-        "otp",
-        "hit",
-        s"windowCount=${live.size} codeMasked=${OtpExtractor.mask(cand.code)} from=${mail.fromDomain}"
-      )
+      _ <- audit("otp", "hit", s"windowCount=${live.size} codeMasked=${OtpExtractor.mask(cand.code)} from=${mail.fromDomain}")
       _ <- live.traverse_(w =>
-        broadcast(
-          Json.obj(
-            "type" -> "perception.otp.code".asJson,
-            "windowId" -> w.windowId.asJson,
-            "requestId" -> w.requestId.asJson,
-            "from" -> mail.from.asJson,
-            "fromDomain" -> mail.fromDomain.asJson,
-            "receivedAt" -> now.asJson
-          )
-        )
+        broadcast(Json.obj(
+          "type" -> "perception.otp.code".asJson,
+          "windowId" -> w.windowId.asJson,
+          "requestId" -> w.requestId.asJson,
+          "from" -> mail.from.asJson,
+          "fromDomain" -> mail.fromDomain.asJson,
+          "receivedAt" -> now.asJson
+        ))
       )
     yield ()
 
@@ -431,7 +402,7 @@ class PerceptionCore(
       items <- IO.blocking(store.spoolList())
       _ <- items.traverse_ { (id, env) =>
         injectEnvelope(env, s"spool:$id").flatMap {
-          case true => IO.blocking(store.spoolRemove(id)) *> audit("deliver", "spool-replayed", s"spoolId=$id")
+          case true  => IO.blocking(store.spoolRemove(id)) *> audit("deliver", "spool-replayed", s"spoolId=$id")
           case false => IO.unit
         }
       }
@@ -491,10 +462,7 @@ class PerceptionCore(
       files <- IO.blocking {
         try
           import scala.jdk.CollectionConverters.*
-          java.nio.file.Files
-            .list(store.billingDir.toNIO)
-            .iterator()
-            .asScala
+          java.nio.file.Files.list(store.billingDir.toNIO).iterator().asScala
             .map(p => os.Path(p))
             .filter(_.ext == "jsonl")
             .filter(n => n.last.stripSuffix(".jsonl") <= today)
@@ -507,29 +475,23 @@ class PerceptionCore(
         if lines.isEmpty then audit("digest", "empty-skip", "no billing lines")
         else
           for
-            _ <- injectEnvelope(
-              DeliveryEnvelope(
-                priority = "billing",
-                text = billingDigestText(lines)
-              ),
-              s"digest:$today"
-            )
+            _ <- injectEnvelope(DeliveryEnvelope(
+              priority = "billing",
+              text = billingDigestText(lines)
+            ), s"digest:$today")
             _ <- files.traverse_(f => IO.blocking(store.billingClear(f.last.stripSuffix(".jsonl"))))
             _ <- audit("digest", "injected", s"day=$today count=${lines.size}")
           yield ()
     yield ()
 
   private def billingDigestText(lines: List[PerceptionStore.BillingLine]): String =
-    val byDay = lines.groupBy(l =>
-      java.time.Instant.ofEpochMilli(l.ts).atZone(java.time.ZoneId.systemDefault()).toLocalDate.toString
-    )
+    val byDay = lines.groupBy(l => java.time.Instant.ofEpochMilli(l.ts).atZone(java.time.ZoneId.systemDefault()).toLocalDate.toString)
     val sb = new StringBuilder
     sb.append(s"【感知 · 账单日结】共 ${lines.size} 封账单类邮件\n")
     byDay.toSeq.sortBy(_._1).foreach { (day, ls) =>
       sb.append(s"\n— $day（${ls.size} 封）—\n")
       ls.take(50).foreach { l =>
-        sb.append(s"· ${l.fromDomain} · ${l.subject
-            .take(60)}${if l.amountSample.nonEmpty then s" · ${l.amountSample}" else ""}\n")
+        sb.append(s"· ${l.fromDomain} · ${l.subject.take(60)}${if l.amountSample.nonEmpty then s" · ${l.amountSample}" else ""}\n")
       }
     }
     sb.toString
@@ -613,12 +575,6 @@ class PerceptionCore(
             IO.pure(Left(readableConnectError(err, imapH, imapP, authCode)))
         }
 
-      end if
-
-    end if
-
-  end connectAccount
-
   private def accountIdFor(address: String): String =
     address.toLowerCase.replaceAll("[^a-z0-9]", "").take(24)
 
@@ -628,21 +584,18 @@ class PerceptionCore(
       val st = new nebflow.core.secrets.SecretsStore(PathUtil.dataRoot / "secrets")
       val existing = os.exists(PathUtil.dataRoot / "secrets" / name)
       if existing then st.overwrite(name, value) else st.create(name, value)
-    }.flatten
-      .attempt
-      .map {
-        case Right(Right(_)) => Right(())
-        case Right(Left(f)) => Left(s"secrets: ${f}")
-        case Left(e) => Left(s"secrets: ${e.getMessage}")
-      }
+    }.flatten.attempt.map {
+      case Right(Right(_)) => Right(())
+      case Right(Left(f))  => Left(s"secrets: ${f}")
+      case Left(e)         => Left(s"secrets: ${e.getMessage}")
+    }
 
   def readAuthCode(account: MailAccount): IO[Option[String]] =
     IO.blocking {
       val p = PathUtil.dataRoot / "secrets" / account.authCodeSecret
       if account.authCodeSecret.nonEmpty && os.exists(p) then Some(os.read(p).trim)
       else None
-    }.attempt
-      .map(_.toOption.flatten)
+    }.attempt.map(_.toOption.flatten)
 
   def toggleAccount(id: String, enabled: Boolean): IO[Either[String, Unit]] =
     for
@@ -650,8 +603,7 @@ class PerceptionCore(
       accs <- accounts.get
       _ <- IO.blocking(store.saveAccounts(accs))
       _ <- accountRuntime.update(m =>
-        m.get(id)
-          .map(r => m + (id -> r.copy(state = if enabled then EntryState.Connecting else EntryState.Paused)))
+        m.get(id).map(r => m + (id -> r.copy(state = if enabled then EntryState.Connecting else EntryState.Paused)))
           .getOrElse(m)
       )
       _ <- audit("state", if enabled then "resumed" else "paused", s"id=$id")
@@ -668,8 +620,7 @@ class PerceptionCore(
           if a.authCodeSecret.nonEmpty && os.exists(p) then
             new nebflow.core.secrets.SecretsStore(PathUtil.dataRoot / "secrets").delete(a.authCodeSecret)
           ()
-        }.attempt
-          .void
+        }.attempt.void
       )
       _ <- accounts.update(_.filterNot(_.id == id))
       accs2 <- accounts.get
@@ -697,17 +648,16 @@ class PerceptionCore(
         val r = rt.getOrElse(a.id, AccountRuntime())
         val (state, summary, notice): (EntryState, String, String) =
           if !a.enabled then (EntryState.Paused, s"${a.address} · 已暂停", "")
-          else
-            r.state match
-              case EntryState.AuthFailed =>
-                (EntryState.AuthFailed, s"${a.address} · 授权失效", "授权码已失效，请重新连接邮箱")
-              case EntryState.Backoff =>
-                val waitSec = math.max(0, (r.nextAttemptAt - now) / 1000).toInt
-                (EntryState.Backoff, s"${a.address} · 正在自动恢复", s"连接中断 · 稍后自动重试（约 ${waitSec}s），新邮件会先存本机")
-              case EntryState.Connecting =>
-                (EntryState.Connecting, s"${a.address} · 连接中", "")
-              case _ =>
-                (EntryState.Idle, s"${a.address} · 已连接", "")
+          else r.state match
+            case EntryState.AuthFailed =>
+              (EntryState.AuthFailed, s"${a.address} · 授权失效", "授权码已失效，请重新连接邮箱")
+            case EntryState.Backoff =>
+              val waitSec = math.max(0, (r.nextAttemptAt - now) / 1000).toInt
+              (EntryState.Backoff, s"${a.address} · 正在自动恢复", s"连接中断 · 稍后自动重试（约 ${waitSec}s），新邮件会先存本机")
+            case EntryState.Connecting =>
+              (EntryState.Connecting, s"${a.address} · 连接中", "")
+            case _ =>
+              (EntryState.Idle, s"${a.address} · 已连接", "")
         MailEntry(
           id = a.id,
           icon = "mail",
@@ -744,10 +694,8 @@ class PerceptionCore(
       // snapshotAt = 落盘后文件 mtime（快照基线与文件状态严格对齐——严格式
       // stale 判据 `mtime > snapshotAt` 在创建时刻恒 false，编辑后才置真）。
       snapshotAt = pathE.toOption
-        .flatMap(p =>
-          try Some(java.nio.file.Files.getLastModifiedTime(java.nio.file.Path.of(p)).toMillis)
-          catch case _: Throwable => None
-        )
+        .flatMap(p => try Some(java.nio.file.Files.getLastModifiedTime(java.nio.file.Path.of(p)).toMillis)
+        catch case _: Throwable => None)
         .getOrElse(now)
       rec = DraftRecord(
         draftId = draftId,
@@ -765,13 +713,7 @@ class PerceptionCore(
       _ <- audit("send", "draft-created", s"draftId=$draftId to=${rec.toSummary}")
     yield pathE.map(_ => rec)
 
-  case class DraftView(
-    record: DraftRecord,
-    content: String,
-    mtimeMs: Long,
-    stale: Boolean,
-    doc: Either[String, DraftCodec.DraftDoc]
-  )
+  case class DraftView(record: DraftRecord, content: String, mtimeMs: Long, stale: Boolean, doc: Either[String, DraftCodec.DraftDoc])
 
   def draftView(draftId: String): IO[Option[DraftView]] =
     for
@@ -800,9 +742,8 @@ class PerceptionCore(
           IO.blocking(store.writeDraftFile(r.draftId, content)).flatMap {
             case Left(err) => IO.pure(Left(err))
             case Right(_) =>
-              val mtime =
-                try java.nio.file.Files.getLastModifiedTime(java.nio.file.Path.of(r.path)).toMillis
-                catch case _: Throwable => System.currentTimeMillis()
+              val mtime = try java.nio.file.Files.getLastModifiedTime(java.nio.file.Path.of(r.path)).toMillis
+              catch case _: Throwable => System.currentTimeMillis()
               IO.pure(Right(mtime))
           }
       _ <- res.traverse_(_ =>
@@ -835,14 +776,12 @@ class PerceptionCore(
                   upd <- drafts.get
                   _ <- IO.blocking(store.saveDrafts(upd))
                   _ <- audit("send", "sent", s"draftId=$draftId mid=${sent.messageId.take(80)}")
-                  _ <- broadcast(
-                    Json.obj(
-                      "type" -> "perception.draft.sent".asJson,
-                      "draftId" -> draftId.asJson,
-                      "messageId" -> sent.messageId.asJson,
-                      "sentAt" -> sent.sentAt.asJson
-                    )
-                  )
+                  _ <- broadcast(Json.obj(
+                    "type" -> "perception.draft.sent".asJson,
+                    "draftId" -> draftId.asJson,
+                    "messageId" -> sent.messageId.asJson,
+                    "sentAt" -> sent.sentAt.asJson
+                  ))
                 yield Right(sent)
               case Left(f) =>
                 audit("send", "failed", s"draftId=$draftId reason=${SendFailure.readable(f)}").as(Left(f))
@@ -859,37 +798,35 @@ class PerceptionCore(
           case (Some(_), Left(err)) => IO.pure(Left(SendFailure.Invalid(s"草稿损坏：$err")))
           case (Some(account), Right(d)) =>
             if d.to.isEmpty then IO.pure(Left(SendFailure.Invalid("收件人为空")))
-            else if d.attachments.nonEmpty then IO.pure(Left(SendFailure.Invalid("附件发送本批未开放 · 请先移除附件")))
+            else if d.attachments.nonEmpty then
+              IO.pure(Left(SendFailure.Invalid("附件发送本批未开放 · 请先移除附件")))
             else
               readAuthCode(account).flatMap {
                 case None => IO.pure(Left(SendFailure.AuthFailed))
                 case Some(code) =>
-                  IO.blocking(
-                    MailClient.send(
-                      smtpHost = account.smtpHost,
-                      smtpPort = account.smtpPort,
-                      implicitTls = account.smtpImplicitTls,
-                      user = account.address,
-                      authCode = code,
-                      mail = MailClient.OutgoingMail(
-                        from = account.address,
-                        fromName = account.displayName.getOrElse(""),
-                        to = d.to,
-                        cc = d.cc,
-                        bcc = d.bcc,
-                        subject = d.subject,
-                        bodyHtml = d.bodyHtml,
-                        attachments = Nil,
-                        inReplyTo = d.replyToMessageId
-                      )
+                  IO.blocking(MailClient.send(
+                    smtpHost = account.smtpHost,
+                    smtpPort = account.smtpPort,
+                    implicitTls = account.smtpImplicitTls,
+                    user = account.address,
+                    authCode = code,
+                    mail = MailClient.OutgoingMail(
+                      from = account.address,
+                      fromName = account.displayName.getOrElse(""),
+                      to = d.to,
+                      cc = d.cc,
+                      bcc = d.bcc,
+                      subject = d.subject,
+                      bodyHtml = d.bodyHtml,
+                      attachments = Nil,
+                      inReplyTo = d.replyToMessageId
                     )
-                  ).map {
+                  )).map {
                     case Right(mid) =>
                       Right(r.copy(state = "sent", sentAt = System.currentTimeMillis(), messageId = mid))
                     case Left(f) => Left(f)
                   }
               }
-        end match
       }
     }
 
@@ -905,13 +842,7 @@ class PerceptionCore(
             upd <- drafts.get
             _ <- IO.blocking(store.saveDrafts(upd))
             _ <- audit("send", "abandoned", s"draftId=$draftId")
-            _ <- broadcast(
-              Json.obj(
-                "type" -> "perception.draft.updated".asJson,
-                "draftId" -> draftId.asJson,
-                "state" -> "abandoned".asJson
-              )
-            )
+            _ <- broadcast(Json.obj("type" -> "perception.draft.updated".asJson, "draftId" -> draftId.asJson, "state" -> "abandoned".asJson))
           yield Right(())
     }
 

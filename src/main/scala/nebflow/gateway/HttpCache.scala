@@ -52,12 +52,7 @@ private[gateway] object HttpCache:
    * @param cacheControl 缺省 `private, no-cache`；如需更长复用窗由调用方覆盖
    *   （本批六端点统一缺省——「未变 ⇒ 一次条件往返」，零启发式新鲜度猜判）。
    */
-  def conditionalOk(
-    req: Request[IO],
-    body: Json,
-    etag: String,
-    cacheControl: String = PrivateNoCache
-  ): IO[Response[IO]] =
+  def conditionalOk(req: Request[IO], body: Json, etag: String, cacheControl: String = PrivateNoCache): IO[Response[IO]] =
     val inm = req.headers
       .get(org.typelevel.ci.CIString("If-None-Match"))
       .map(nel => nel.head.value)
@@ -80,7 +75,5 @@ private[gateway] object HttpCache:
             org.http4s.Header.Raw(org.typelevel.ci.CIString("Cache-Control"), cacheControl)
           )
       )
-    end if
-  end conditionalOk
 
 end HttpCache

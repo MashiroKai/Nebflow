@@ -100,25 +100,26 @@ class ProjectOriginRowSpec extends CatsEffectSuite:
       """{"name":"origin-legacy","workspace":"WS","agentFile":"WS/AGENTS.md","createdAt":1}"""
     )
 
-    run(Request[IO](Method.GET, Uri.unsafeFromString("/projects")).withHeaders(bearer)).map { case (status, body) =>
-      assertEquals(status, Status.Ok)
-      val rows = body.hcursor.downField("projects").as[List[Json]].toOption.getOrElse(Nil)
-      val byName = rows.flatMap(r => r.hcursor.get[String]("name").toOption.map(_ -> r)).toMap
-      val remoteRow = byName("origin-remote")
-      assertEquals(
-        remoteRow.hcursor.downField("origin").downField("device").as[String].toOption,
-        Some("dev-remote-9"),
-        "REST 行 origin.device additive（面C 徽标数据源）"
-      )
-      assertEquals(
-        remoteRow.hcursor.downField("origin").downField("path").as[String].toOption,
-        Some(remoteWs.toString)
-      )
-      val legacyRow = byName("origin-legacy")
-      assert(
-        legacyRow.hcursor.downField("origin").focus.exists(_.isNull),
-        "存量项目（无 origin 键盘面）读数 = null（零迁移）"
-      )
+    run(Request[IO](Method.GET, Uri.unsafeFromString("/projects")).withHeaders(bearer)).map {
+      case (status, body) =>
+        assertEquals(status, Status.Ok)
+        val rows = body.hcursor.downField("projects").as[List[Json]].toOption.getOrElse(Nil)
+        val byName = rows.flatMap(r => r.hcursor.get[String]("name").toOption.map(_ -> r)).toMap
+        val remoteRow = byName("origin-remote")
+        assertEquals(
+          remoteRow.hcursor.downField("origin").downField("device").as[String].toOption,
+          Some("dev-remote-9"),
+          "REST 行 origin.device additive（面C 徽标数据源）"
+        )
+        assertEquals(
+          remoteRow.hcursor.downField("origin").downField("path").as[String].toOption,
+          Some(remoteWs.toString)
+        )
+        val legacyRow = byName("origin-legacy")
+        assert(
+          legacyRow.hcursor.downField("origin").focus.exists(_.isNull),
+          "存量项目（无 origin 键盘面）读数 = null（零迁移）"
+        )
     }
   }
 

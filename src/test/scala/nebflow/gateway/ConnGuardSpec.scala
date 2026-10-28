@@ -447,9 +447,9 @@ class ConnGuardSpec extends CatsEffectSuite:
   test("fromEnv: tunnel face knobs parse and junk falls back"):
     val o = ConnGuardConfig.fromEnv {
       case "GATEWAY_CONN_GUARD_TUNNEL_PER_IP_CAP" => Some("120")
-      case "GATEWAY_CONN_GUARD_TUNNEL_TOTAL_CAP" => Some("1200")
+      case "GATEWAY_CONN_GUARD_TUNNEL_TOTAL_CAP"  => Some("1200")
       case "GATEWAY_CONN_GUARD_TUNNEL_WINDOW_SEC" => Some("junk")
-      case _ => None
+      case _                                       => None
     }
     assertEquals(o.tunnelPerIpCap, 120)
     assertEquals(o.tunnelTotalCap, 1200)

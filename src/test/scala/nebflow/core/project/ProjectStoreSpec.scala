@@ -265,8 +265,6 @@ class ProjectStoreSpec extends CatsEffectSuite:
       mtime2 <- IO(os.mtime(dir / "project.json"))
     yield assertEquals(mtime2, mtime1, "second load must not rewrite (idempotent backfill)")
 
-    end for
-
   test("#913②: effectiveDevice is the single normalization point (device field > origin > self)"):
     val wsE = tempRoot / "ws-eff"
     os.makeDir.all(wsE)
@@ -313,8 +311,6 @@ class ProjectStoreSpec extends CatsEffectSuite:
         s"non-description fields must survive: before=$before after=$after"
       )
       assert(after.contains("新的描述"), after)
-
-    end for
 
   test("#913④: updateDescription is idempotent — same value returns unchanged with zero write"):
     val wsU2 = tempRoot / "ws-update-2"

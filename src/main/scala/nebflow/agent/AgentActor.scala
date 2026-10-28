@@ -1678,6 +1678,8 @@ object AgentActor extends AgentCore with AgentSession:
         if idx < 0 then pending :+ incoming
         else pending.updated(idx, incoming)
 
+
+
   /**
    * 反查 ActorRef → registry 中对应 sessionId（升级链「父存活」判定）。
    * registry 小（几十条），O(n) 可接受。

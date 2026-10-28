@@ -58,12 +58,10 @@ object SubagentCrashRecovery:
    */
   def terminateDanglingToolCalls(messages: List[Message]): (List[Message], List[(String, String)]) =
     // 全量已配对 tool_use id 集（其后任何 user 消息里的 tool_result 都算配对）。
-    val answered: Set[String] = messages
-      .collect { case Message(MessageRole.User, Right(blocks), _, _) =>
+    val answered: Set[String] = messages.collect {
+      case Message(MessageRole.User, Right(blocks), _, _) =>
         blocks.collect { case ContentBlock.ToolResult(id, _, _) => id }
-      }
-      .flatten
-      .toSet
+    }.flatten.toSet
     val builder = List.newBuilder[Message]
     val terminated = List.newBuilder[(String, String)]
     messages.foreach { msg =>
@@ -83,11 +81,8 @@ object SubagentCrashRecovery:
               source = Some("crash-recovery")
             )
         case _ => ()
-      end match
     }
     (builder.result(), terminated.result())
-
-  end terminateDanglingToolCalls
 
   /**
    * 缺口② ② 子会话面：把崩溃会话名下仍 running 的子任务（SubAgentTask 行）
@@ -103,36 +98,33 @@ object SubagentCrashRecovery:
       .map(_.filter(t => t.status == "running").map(_.taskId))
       .flatMap { orphanIds =>
         orphanIds.traverse { childId =>
-          val taskUpdate = resources.subAgentTaskStore
-            .updateStatus(parentSessionId, childId, "cancelled", completedAt = Some(System.currentTimeMillis()))
-            .handleErrorWith(e => logger.warn(s"orphan $childId taskStore terminalize failed: ${e.getMessage}"))
-          val askCleanup = resources.interactionHubRef.get
-            .flatMap {
-              case Some(hub) => (hub ! nebflow.actor.InteractionHubCommand.CleanupForSession(childId)).void
-              case None => IO.unit
-            }
-            .handleErrorWith(e => logger.warn(s"orphan $childId ask-slot cleanup failed: ${e.getMessage}"))
-          // ref 随 registry 记录取用，先取后移（移除后 watcher/面板不再见该行——reap 同款）。
-          val settle = resources.agentRegistry.get
-            .map(_.get(childId))
-            .flatMap {
-              case Some(rec) =>
-                resources.agentRegistry
-                  .update(_ - childId)
-                  .handleErrorWith(e => logger.warn(s"orphan $childId registry remove failed: ${e.getMessage}")) *>
-                  (rec.ref ! AgentCommand.Stop("orphaned-by-parent-crash"))
-                    .handleErrorWith(e => logger.warn(s"orphan $childId stop offer failed: ${e.getMessage}"))
-              case None => IO.unit
-            }
-          taskUpdate *> askCleanup *> settle *> IO.pure(childId)
-        }
+        val taskUpdate = resources.subAgentTaskStore
+          .updateStatus(parentSessionId, childId, "cancelled", completedAt = Some(System.currentTimeMillis()))
+          .handleErrorWith(e => logger.warn(s"orphan $childId taskStore terminalize failed: ${e.getMessage}"))
+        val askCleanup = resources.interactionHubRef.get
+          .flatMap {
+            case Some(hub) => (hub ! nebflow.actor.InteractionHubCommand.CleanupForSession(childId)).void
+            case None => IO.unit
+          }
+          .handleErrorWith(e => logger.warn(s"orphan $childId ask-slot cleanup failed: ${e.getMessage}"))
+        // ref 随 registry 记录取用，先取后移（移除后 watcher/面板不再见该行——reap 同款）。
+        val settle = resources.agentRegistry.get
+          .map(_.get(childId))
+          .flatMap {
+            case Some(rec) =>
+              resources.agentRegistry
+                .update(_ - childId)
+                .handleErrorWith(e => logger.warn(s"orphan $childId registry remove failed: ${e.getMessage}")) *>
+                (rec.ref ! AgentCommand.Stop("orphaned-by-parent-crash"))
+                  .handleErrorWith(e => logger.warn(s"orphan $childId stop offer failed: ${e.getMessage}"))
+            case None => IO.unit
+          }
+        taskUpdate *> askCleanup *> settle *> IO.pure(childId)
+      }
       }
       .flatTap {
         case Nil => IO.unit
-        case ids =>
-          logger.info(
-            s"disposed ${ids.size} orphaned child session(s) of crashed '$parentSessionId': ${ids.mkString(", ")}"
-          )
+        case ids => logger.info(s"disposed ${ids.size} orphaned child session(s) of crashed '$parentSessionId': ${ids.mkString(", ")}")
       }
       .handleErrorWith { e =>
         logger.warn(s"orphan disposal for '$parentSessionId' failed (respawn continues): ${e.getMessage}").as(Nil)

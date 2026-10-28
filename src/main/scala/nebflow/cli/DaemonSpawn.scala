@@ -80,8 +80,6 @@ object DaemonSpawn:
     end while
     kept.result()
 
-  end filterJvmArgs
-
   /** JVM arguments of the current process (each token one element). */
   def currentJvmArgs: List[String] =
     import scala.jdk.CollectionConverters.*
@@ -204,7 +202,8 @@ object DaemonSpawn:
     val logsDir = home / "logs"
     os.makeDir.all(logsDir)
     val daemonOut = logsDir / "daemon.out"
-    if os.exists(daemonOut) && shouldRotate(os.size(daemonOut)) then os.move.over(daemonOut, logsDir / "daemon.out.old")
+    if os.exists(daemonOut) && shouldRotate(os.size(daemonOut)) then
+      os.move.over(daemonOut, logsDir / "daemon.out.old")
 
     val posix = !sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
     val classPath = sys.props.getOrElse("java.class.path", "")
@@ -246,8 +245,6 @@ object DaemonSpawn:
         // Self-started process self-clean: WE spawned it, WE take it down.
         child.destroy()
         ReadinessTimeout(child.pid(), tailOf(daemonOut, 5))
-
-  end spawnAndAwait
 
   private def stderrLines(lines: List[String]): IO[Unit] =
     lines.traverse_(l => IO.blocking(System.err.println(l)))

@@ -38,7 +38,8 @@ class TargetDirGuardSpec extends FunSuite:
     roDir = root / "ro-dir"
     os.makeDir.all(roDir)
     // Windows 无 POSIX 属性视图/symlink 特权：夹具置位按能力收口（对应用例各自 assume）。
-    if posixViewAvailable then Files.setPosixFilePermissions(roDir.toNIO, PosixFilePermissions.fromString("r-xr-xr-x"))
+    if posixViewAvailable then
+      Files.setPosixFilePermissions(roDir.toNIO, PosixFilePermissions.fromString("r-xr-xr-x"))
     if nebflow.SymlinkProbe.canCreate() then os.symlink(root / "link-to-etc", os.Path("/etc"))
     blocker = root / "blocker.txt"
     os.write.over(blocker, "x")

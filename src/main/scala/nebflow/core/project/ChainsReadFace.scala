@@ -77,9 +77,9 @@ object ChainsReadFace:
       val windowed: IO[List[DelegateRegistry.Record]] =
         if archived then IO.pure(scoped) // 历史窗：全量（零删除展示纪律）
         else activeWorldSeatFilter(scoped)
-      windowed
-        .flatMap(_.traverse(rowJson(registry, taskStatuses, continuations)))
-        .map(rows => Json.obj("rows" -> rows.asJson))
+      windowed.flatMap(_.traverse(rowJson(registry, taskStatuses, continuations))).map(rows =>
+        Json.obj("rows" -> rows.asJson)
+      )
     }
 
   /**
@@ -114,8 +114,6 @@ object ChainsReadFace:
         .lastOption
         .map(c => r.id -> c.id)
     }.toMap
-
-  end continuationLinks
 
   /** 记录的「座位」：项目 workspace 优先，回落派发 cwd（scopeProjection 同款取序）。 */
   private[project] def seatOf(rec: DelegateRegistry.Record): String =
@@ -353,7 +351,6 @@ object ChainsReadFace:
       (childrenIO, stepsIO).mapN { (ch, st) =>
         row.mapObject(_.add("topology", Json.obj("mode" -> mode.asJson).deepMerge(ch).deepMerge(st)))
       }
-    end if
   end withTopology
 
   /** 星扇子条目紧凑投影（SubAgentTask → {taskId,agentName,description,status,spawnedAt,completedAt}）。 */
@@ -366,6 +363,7 @@ object ChainsReadFace:
       "spawnedAt" -> t.spawnedAt.asJson,
       "completedAt" -> t.completedAt.asJson
     )
+
 
   /**
    * per-task 链视图投影（chains/:key 臂）。`None` = 查无 delegate 记录（HTTP 404 面）；

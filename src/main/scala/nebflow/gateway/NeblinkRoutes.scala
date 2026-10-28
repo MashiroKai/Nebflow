@@ -172,7 +172,8 @@ private[gateway] object NeblinkRoutes:
               "port" -> ctx.gatewayPort.asJson,
               "lanAddresses" -> (if enrolled then LanAddresses.list() else Nil).asJson
             )
-          )).flatten
+          )
+          ).flatten
         }
 
       // NebLink status — identity, peers, login state
@@ -318,17 +319,15 @@ private[gateway] object NeblinkRoutes:
                     IO.pure(
                       Response[IO](Status.Ok)
                         .withEntity(fs2.Stream.emits(bytes).covary[IO])
-                        .withHeaders(
-                          Headers(
-                            ct,
-                            // 二次加载清剿批（2026-10-24）：同族对端路由
-                            // /api/neblink/avatars/:userId 早已带 ETag+304 + private,
-                            // max-age=3600（line ~390）；本路由（自己的头像）此前零缓存
-                            // 策略 ⇒ 设置页/列表每次开都全额重拉远源头像。对齐 #538 家族
-                            // 的保守值（300 ≪ 身份切换窗）：5 分钟内零往返。
-                            Header.Raw(CIString("Cache-Control"), "private, max-age=300")
-                          )
-                        )
+                        .withHeaders(Headers(
+                          ct,
+                          // 二次加载清剿批（2026-10-24）：同族对端路由
+                          // /api/neblink/avatars/:userId 早已带 ETag+304 + private,
+                          // max-age=3600（line ~390）；本路由（自己的头像）此前零缓存
+                          // 策略 ⇒ 设置页/列表每次开都全额重拉远源头像。对齐 #538 家族
+                          // 的保守值（300 ≪ 身份切换窗）：5 分钟内零往返。
+                          Header.Raw(CIString("Cache-Control"), "private, max-age=300")
+                        ))
                     )
                   case Left(err) =>
                     BadGateway(Json.obj("error" -> err.asJson))
@@ -583,8 +582,7 @@ private[gateway] object NeblinkRoutes:
               .flatten
               .map(_.stripSuffix("/"))
             // 空/空白 pairCode = 未给（6 位码永不为空）
-            val pairCodeOpt =
-              body.hcursor.downField("pairCode").as[Option[String]].toOption.flatten.map(_.trim).filter(_.nonEmpty)
+            val pairCodeOpt = body.hcursor.downField("pairCode").as[Option[String]].toOption.flatten.map(_.trim).filter(_.nonEmpty)
             pairCodeOpt match
               case None => BadRequest(Json.obj("error" -> "Missing pairCode".asJson))
               case Some(pairCode) =>
@@ -648,7 +646,6 @@ private[gateway] object NeblinkRoutes:
                         yield resp
                     }
                 end match
-            end match
           }
 
       // D6 binding-transfer confirmation mint (phase 3c plan §8 component ①,
@@ -681,51 +678,47 @@ private[gateway] object NeblinkRoutes:
       // The code value itself is never logged (zero-echo beyond the one CLI
       // print); `arm` replaces any previous pending code (newest report wins).
       case req @ POST -> Root / "neblink" / "bind" / "confirm" =>
-        tokenRef.get
-          .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.BearerFileOnly))
-          .flatMap {
-            case None => Forbidden(Json.obj("error" -> "Unauthorized".asJson))
-            case Some(_) =>
-              neblinkService match
-                case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
-                case Some(ms) =>
-                  val code = BindConfirmStore.newCode()
-                  NeblinkRelayTunnel
-                    .sendBindConfirmLive(ms.relayTunnelOpt, code, BindConfirmStore.DefaultTtlSec)
-                    .flatMap {
-                      case NeblinkRelayTunnel.AckOutcome.Sent =>
-                        bindConfirmStore.arm(code, BindConfirmStore.DefaultTtlSec).flatMap { pending =>
-                          logger.info(
-                            s"bind confirm code armed and reported over the relay (ttl=${pending.ttlSec}s)"
-                          )
-                          Ok(
-                            Json.obj(
-                              "kind" -> "pending".asJson,
-                              "code" -> pending.code.asJson,
-                              "expiresInSec" -> pending.ttlSec.asJson
-                            )
-                          )
-                        }
-                      case NeblinkRelayTunnel.AckOutcome.NoLiveSocket =>
+        tokenRef.get.flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.BearerFileOnly)).flatMap {
+          case None => Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+          case Some(_) =>
+            neblinkService match
+              case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+              case Some(ms) =>
+                val code = BindConfirmStore.newCode()
+                NeblinkRelayTunnel
+                  .sendBindConfirmLive(ms.relayTunnelOpt, code, BindConfirmStore.DefaultTtlSec)
+                  .flatMap {
+                    case NeblinkRelayTunnel.AckOutcome.Sent =>
+                      bindConfirmStore.arm(code, BindConfirmStore.DefaultTtlSec).flatMap { pending =>
                         logger.info(
-                          "bind confirm refused: no live relay tunnel — the confirm-code path needs the old host online"
+                          s"bind confirm code armed and reported over the relay (ttl=${pending.ttlSec}s)"
                         )
                         Ok(
                           Json.obj(
-                            "kind" -> "offline".asJson,
-                            "reason" -> "no live relay tunnel to the NebLink server".asJson
+                            "kind" -> "pending".asJson,
+                            "code" -> pending.code.asJson,
+                            "expiresInSec" -> pending.ttlSec.asJson
                           )
                         )
-                      case NeblinkRelayTunnel.AckOutcome.SendFailed(reason) =>
-                        logger.warn(s"bind confirm report failed to send: $reason")
-                        Ok(
-                          Json.obj(
-                            "kind" -> "send_failed".asJson,
-                            "reason" -> reason.asJson
-                          )
+                      }
+                    case NeblinkRelayTunnel.AckOutcome.NoLiveSocket =>
+                      logger.info("bind confirm refused: no live relay tunnel — the confirm-code path needs the old host online")
+                      Ok(
+                        Json.obj(
+                          "kind" -> "offline".asJson,
+                          "reason" -> "no live relay tunnel to the NebLink server".asJson
                         )
-                    }
-          }
+                      )
+                    case NeblinkRelayTunnel.AckOutcome.SendFailed(reason) =>
+                      logger.warn(s"bind confirm report failed to send: $reason")
+                      Ok(
+                        Json.obj(
+                          "kind" -> "send_failed".asJson,
+                          "reason" -> reason.asJson
+                        )
+                      )
+                  }
+        }
 
       // ===== Headless first-party password login (统一登录·路径②, 台账 #924) =====
       //
@@ -777,17 +770,13 @@ private[gateway] object NeblinkRoutes:
                 else
                   loginRateGuard.allow(remoteKey).flatMap { allowed =>
                     if !allowed then
-                      logger
-                        .warn("headless login rate-limited (local limiter)")
-                        .as(
-                          Response[IO](Status.TooManyRequests).withEntity(
-                            Json
-                              .obj("error" -> "Too many attempts, retry later".asJson, "code" -> "rate_limited".asJson)
-                          )
+                      logger.warn("headless login rate-limited (local limiter)").as(
+                        Response[IO](Status.TooManyRequests).withEntity(
+                          Json.obj("error" -> "Too many attempts, retry later".asJson, "code" -> "rate_limited".asJson)
                         )
+                      )
                     else performHeadlessLogin(ms, req, account, identifierType, password)
                   }
-                end if
               }
 
       // ===== Logto AC+PKCE login (stage 2, 2026-08-28) =====
@@ -1371,8 +1360,6 @@ private[gateway] object NeblinkRoutes:
               )
             )
         }
-      end if
-    end trustByIp
 
     neblinkService match
       case None =>
@@ -1420,11 +1407,7 @@ private[gateway] object NeblinkRoutes:
                   ) *> IO.pure(
                     Left(
                       Response[IO](Status.Unauthorized)
-                        .withEntity(
-                          Json.obj(
-                            "error" -> "HMAC verification failed: missing x-neblink-ts/nonce/signature headers".asJson
-                          )
-                        )
+                        .withEntity(Json.obj("error" -> "HMAC verification failed: missing x-neblink-ts/nonce/signature headers".asJson))
                     )
                   )
                 case _ =>
@@ -1451,8 +1434,7 @@ private[gateway] object NeblinkRoutes:
                           case _ => hmacValid(req2)
                 }
               }
-            end if
-        }
+            }
 
     end match
 
@@ -1691,42 +1673,31 @@ private[gateway] object NeblinkRoutes:
               .flatMap {
                 case Left(LogtoPasswordFlow.Failure.InvalidCredentials) =>
                   loginRateGuard.recordFailure(remoteKey) *>
-                    logger
-                      .warn("headless login failed: invalid credentials")
-                      .as(
-                        Response[IO](Status.Unauthorized).withEntity(
-                          Json.obj(
-                            "error" -> "Invalid account or password".asJson,
-                            "code" -> "invalid_credentials".asJson
-                          )
-                        )
+                    logger.warn("headless login failed: invalid credentials").as(
+                      Response[IO](Status.Unauthorized).withEntity(
+                        Json.obj("error" -> "Invalid account or password".asJson, "code" -> "invalid_credentials".asJson)
                       )
+                    )
                 case Left(LogtoPasswordFlow.Failure.RateLimited) =>
                   loginRateGuard.recordFailure(remoteKey) *>
-                    logger
-                      .warn("headless login throttled by the provider")
-                      .as(
-                        Response[IO](Status.TooManyRequests).withEntity(
-                          Json.obj("error" -> "Too many attempts, retry later".asJson, "code" -> "rate_limited".asJson)
-                        )
+                    logger.warn("headless login throttled by the provider").as(
+                      Response[IO](Status.TooManyRequests).withEntity(
+                        Json.obj("error" -> "Too many attempts, retry later".asJson, "code" -> "rate_limited".asJson)
                       )
+                    )
                 case Left(LogtoPasswordFlow.Failure.Transport(m)) =>
                   loginRateGuard.recordFailure(remoteKey) *>
-                    logger
-                      .warn(s"headless login transport failure")
-                      .as(
-                        Response[IO](Status.BadGateway)
-                          .withEntity(Json.obj("error" -> m.asJson, "code" -> "transport_failed".asJson))
-                      )
+                    logger.warn(s"headless login transport failure").as(
+                      Response[IO](Status.BadGateway)
+                        .withEntity(Json.obj("error" -> m.asJson, "code" -> "transport_failed".asJson))
+                    )
                 case Left(LogtoPasswordFlow.Failure.Protocol(step, code, m)) =>
                   loginRateGuard.recordFailure(remoteKey) *>
-                    logger
-                      .warn(s"headless login protocol failure at $step (code=$code)")
-                      .as(
-                        Response[IO](Status.BadGateway).withEntity(
-                          Json.obj("error" -> m.asJson, "code" -> "protocol_error".asJson, "step" -> step.asJson)
-                        )
+                    logger.warn(s"headless login protocol failure at $step (code=$code)").as(
+                      Response[IO](Status.BadGateway).withEntity(
+                        Json.obj("error" -> m.asJson, "code" -> "protocol_error".asJson, "step" -> step.asJson)
                       )
+                    )
                 case Right(tokens) =>
                   ms.identity.flatMap { identity =>
                     LogtoTransport

@@ -571,8 +571,7 @@ object GatewayMain extends IOApp:
                           // 台账 #916 detached-apply boot 对账：上一个 OS 托管 apply 若死在
                           // 中途（registered/stopped/starting…），这里只记证据 + 改写
                           // interrupted 相，绝不据 state 自启/自停——选取面只认 pointer/winsort。
-                          nebflow.cli.DetachedApply
-                            .reconcileOnBoot(nebflow.shared.PathUtil.dataRoot)
+                          nebflow.cli.DetachedApply.reconcileOnBoot(nebflow.shared.PathUtil.dataRoot)
                             .flatMap(wl => wl.map(l => logger.warn(l)).getOrElse(IO.unit)) *>
                           (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")
                            else
@@ -645,7 +644,9 @@ object GatewayMain extends IOApp:
                                     actorSystem
                                       .spawn(
                                         nebflow.agent.InteractionHub(
-                                          Some((sid: String) => sharedResources.agentRegistry.get.map(_.contains(sid))),
+                                          Some((sid: String) =>
+                                            sharedResources.agentRegistry.get.map(_.contains(sid))
+                                          ),
                                           Some(pendingAskLedger)
                                         ),
                                         "interaction-hub"
@@ -734,8 +735,8 @@ object GatewayMain extends IOApp:
                                     pendingAskLedger
                                       .bootReconcile(
                                         broadcast = json => wsHub.broadcast(json),
-                                        appendReceipt =
-                                          (rootSid, msg) => sessionStore.appendUiMessages(rootSid, List(msg))
+                                        appendReceipt = (rootSid, msg) =>
+                                          sessionStore.appendUiMessages(rootSid, List(msg))
                                       )
                                       .attempt
                                       .flatMap {
@@ -994,11 +995,11 @@ object GatewayMain extends IOApp:
                                     // --- Bridge Manager (plugins: telegram, etc.) ---
                                     val bridgeInjectRef: Ref[IO, Option[
                                       (
-                                        String,
-                                        String,
-                                        Option[String],
-                                        Option[nebflow.bridge.BridgeOrigin],
-                                        List[nebflow.bridge.BridgeAttachment]
+                                          String,
+                                          String,
+                                          Option[String],
+                                          Option[nebflow.bridge.BridgeOrigin],
+                                          List[nebflow.bridge.BridgeAttachment]
                                       ) => IO[Unit]
                                     ]] =
                                       Ref.unsafe(None)
@@ -1519,8 +1520,7 @@ object GatewayMain extends IOApp:
                                                   )
                                                   logger.info(
                                                     s"console-takeover: single-instance gate " +
-                                                      (if ConsoleTakeover.defaultEnabled then "on"
-                                                       else "OFF (zero-drift)")
+                                                      (if ConsoleTakeover.defaultEnabled then "on" else "OFF (zero-drift)")
                                                   )
                                                   ConnGuard.create(connGuardLogger).flatMap { connGuard =>
                                                     EmberServerBuilder

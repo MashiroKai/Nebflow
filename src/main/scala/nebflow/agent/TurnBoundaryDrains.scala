@@ -145,10 +145,8 @@ object TurnBoundaryDrains:
   //
   // 判据单点 = [[isMailSupplement]]（结构谓词，可机械验定，非模糊判断）。
 
-  /**
-   * mail 来源补充件判据（唯一定义处）：非真人 + `source="mail"`（唯一写入点 =
-   * `MailTool` 投递腿——delegate 续聊腿 :1265 / 邮件腿 :2385）。
-   */
+  /** mail 来源补充件判据（唯一定义处）：非真人 + `source="mail"`（唯一写入点 =
+    * `MailTool` 投递腿——delegate 续聊腿 :1265 / 邮件腿 :2385）。 */
   def isMailSupplement(ui: AgentCommand.UserInput): Boolean =
     !ui.fromUser && ui.source.contains("mail")
 
@@ -172,11 +170,9 @@ object TurnBoundaryDrains:
       }
       (mails, rest)
 
-  /**
-   * 合并包体：正文 + 附件块。单件 ⇒ idle 等价形（无 blocks = 正文原样；有 blocks =
-   * 块形态、正文不重复——G3 批「blocks 首块即正文、消费侧弃 text」同款）；多件 ⇒
-   * 批头一行 + 逐件分节（**每件正文全文**，到达顺序保持），blocks 按件序拼接。
-   */
+  /** 合并包体：正文 + 附件块。单件 ⇒ idle 等价形（无 blocks = 正文原样；有 blocks =
+    * 块形态、正文不重复——G3 批「blocks 首块即正文、消费侧弃 text」同款）；多件 ⇒
+    * 批头一行 + 逐件分节（**每件正文全文**，到达顺序保持），blocks 按件序拼接。 */
   final case class MailPackage(text: String, blocks: List[ContentBlock])
 
   def mergeMailPackage(mails: List[AgentCommand.UserInput]): MailPackage =
@@ -185,7 +181,7 @@ object TurnBoundaryDrains:
       case single :: Nil =>
         single.blocks.filter(_.nonEmpty) match
           case Some(bl) => MailPackage("", bl)
-          case None => MailPackage(single.text, Nil)
+          case None     => MailPackage(single.text, Nil)
       case many =>
         val sections = many.zipWithIndex.map { (m, i) =>
           val who = m.sender.map(s => s"（from $s）").getOrElse("")

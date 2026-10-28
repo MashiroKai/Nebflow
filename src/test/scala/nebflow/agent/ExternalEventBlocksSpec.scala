@@ -37,11 +37,9 @@ class ExternalEventBlocksSpec extends FunSuite:
   }
 
   test("EB-2 a block event upgrades the reminder to Right(blocks): numbered text then the blocks") {
-    val m = AgentActor.buildEventReminder(
-      List(
-        event("<system-reminder>…marker…</system-reminder>\n[用户附加图片: /r/m1.png]", Some(List(img)))
-      )
-    )
+    val m = AgentActor.buildEventReminder(List(
+      event("<system-reminder>…marker…</system-reminder>\n[用户附加图片: /r/m1.png]", Some(List(img)))
+    ))
     m.content match
       case Right(blocks) =>
         assertEquals(blocks.size, 2, "one numbered text line + one image block")
@@ -60,14 +58,12 @@ class ExternalEventBlocksSpec extends FunSuite:
       "boom",
       eventType = "failed",
       blocks = Some(List(img))
-    ).copy(metadata =
-      io.circe.JsonObject(
-        "retryable" -> io.circe.Json.True,
-        "failureType" -> io.circe.Json.fromString("crash"),
-        "failedSessionId" -> io.circe.Json.fromString("s9"),
-        "agentName" -> io.circe.Json.fromString("Worker")
-      )
-    )
+    ).copy(metadata = io.circe.JsonObject(
+      "retryable" -> io.circe.Json.True,
+      "failureType" -> io.circe.Json.fromString("crash"),
+      "failedSessionId" -> io.circe.Json.fromString("s9"),
+      "agentName" -> io.circe.Json.fromString("Worker")
+    ))
     val m = AgentActor.buildEventReminder(List(failing))
     m.content match
       case Right(blocks) =>

@@ -37,10 +37,8 @@ class BashToolSpec extends CatsEffectSuite:
 
   private def absOf(p: String): String = new java.io.File(p).getAbsolutePath
 
-  /**
-   * 路径读数归一（Windows 批 2026-10-25）：Git Bash `pwd` 打 POSIX 盘符拼写
-   * （/c/…），native 为 C:\… —— 反斜杠归一正斜杠 + MSYS 盘符折算 C:/ 后比较。
-   */
+  /** 路径读数归一（Windows 批 2026-10-25）：Git Bash `pwd` 打 POSIX 盘符拼写
+    * （/c/…），native 为 C:\… —— 反斜杠归一正斜杠 + MSYS 盘符折算 C:/ 后比较。 */
   private def normPath(s: String): String =
     s.replace('\\', '/') match
       case m if m.matches("/[A-Za-z]/.*") => m.charAt(1).toUpper.toString + ":" + m.substring(2)

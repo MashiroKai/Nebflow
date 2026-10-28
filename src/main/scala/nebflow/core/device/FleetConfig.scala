@@ -99,15 +99,13 @@ object FleetConfig:
       else
         val self = if localName.nonEmpty then List(s"$localName (= local)") else List("local")
         (self ++ peerNames).mkString(", ")
-    val defaultHint = sessionDefault
-      .filter(_.nonEmpty)
-      .map(d => s" This session's default device is \"$d\" — pass device=\"$d\" explicitly.")
-      .getOrElse("")
+    val defaultHint = sessionDefault.filter(_.nonEmpty).map(d =>
+      s" This session's default device is \"$d\" — pass device=\"$d\" explicitly."
+    ).getOrElse("")
     s"$tool refused: missing required `device` parameter (fleet.enforceExplicitDevice is ON — " +
       "no implicit local routing; every Bash/Read/Write/Edit/Glob/Grep call must name its device). " +
       s"Available devices: $roster. Pass device=\"<name>\" from this list (device=\"local\" is the " +
       "explicit escape hatch for this machine)." + defaultHint
-  end explicitDeviceRefusal
 
   // ── AGENTS.md 模板节（dispatcher 纪律同步）────────────────────────
 

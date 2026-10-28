@@ -107,11 +107,10 @@ object HeldReceiptStore:
       IO.blocking {
         val f = fileOf(sessionId)
         if !os.exists(f) then Nil
-        else
-          decode[List[HeldReceipt]](os.read(f)).getOrElse {
-            logger.warn(s"HeldReceiptStore.load: corrupt ledger for $sessionId — treated as empty")
-            Nil
-          }
+        else decode[List[HeldReceipt]](os.read(f)).getOrElse {
+          logger.warn(s"HeldReceiptStore.load: corrupt ledger for $sessionId — treated as empty")
+          Nil
+        }
       }
 
   private def save(sessionId: String, entries: List[HeldReceipt]): IO[Unit] =

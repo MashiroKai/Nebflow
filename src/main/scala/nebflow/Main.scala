@@ -15,27 +15,19 @@ import scala.util.Try
 // Main. `Main.run` only orchestrates IO per the returned Dispatch.
 
 sealed trait Dispatch
-
 object Dispatch:
   /** `--succeed <intent>` on the start path — hot-restart successor boot. */
   final case class Succeed(intent: os.Path) extends Dispatch
-
   /** `--daemon-child` — the spawned gateway JVM booting under strict gating. */
   case object StrictChild extends Dispatch
-
   /** Foreground exemption — today's full start semantics (sbt run / explicit). */
   case object ForegroundLegacy extends Dispatch
-
   /** Classpath-empty (jpackage/bundled) form — no spawn possible, run foreground. */
   case object ForegroundNoSpawn extends Dispatch
-
   /** Default product form — parent launcher spawns the daemon child JVM. */
   case object Daemon extends Dispatch
-
   /** Everything else (incl. `--succeed X status`) goes to the CLI router. */
   case object CliRoute extends Dispatch
-
-end Dispatch
 
 object MainDispatch:
 
@@ -49,15 +41,15 @@ object MainDispatch:
    * boot > daemon child > foreground > spawnability > daemon.
    */
   def decide(
-    cmdArgs: List[String],
-    succeedOpt: Option[os.Path],
-    daemonChild: Boolean,
-    foreground: Boolean,
-    classPathSpawnable: Boolean
+      cmdArgs: List[String],
+      succeedOpt: Option[os.Path],
+      daemonChild: Boolean,
+      foreground: Boolean,
+      classPathSpawnable: Boolean
   ): Dispatch =
     val isStart = cmdArgs match
-      case Nil => true
-      case head :: _ => StartModes.contains(head)
+      case Nil          => true
+      case head :: _    => StartModes.contains(head)
     if !isStart then Dispatch.CliRoute
     else
       succeedOpt match
@@ -68,8 +60,6 @@ object MainDispatch:
           else if !classPathSpawnable then Dispatch.ForegroundNoSpawn
           else Dispatch.Daemon
 
-  end decide
-
   /**
    * Strict-boot port gate verdict: only PortFree may boot; a nebflow
    * instance or foreign occupant is a zero-signal refusal (ExitCode.Error).
@@ -77,7 +67,7 @@ object MainDispatch:
   def decideStrictPort(state: SingleInstanceGuard.PortState): Either[ExitCode, Unit] =
     state match
       case SingleInstanceGuard.PortFree => Right(())
-      case _ => Left(ExitCode.Error)
+      case _                            => Left(ExitCode.Error)
 
   /** The refusal text paired with a Left from [[decideStrictPort]]. */
   def strictRefusalMessage(state: SingleInstanceGuard.PortState, port: Int): Option[String] =
@@ -89,9 +79,7 @@ object MainDispatch:
             "not focusing (no terminal), not killing"
         )
       case SingleInstanceGuard.ForeignOccupant(detail) =>
-        Some(
-          s"ERROR: $detail — ${Branding.productName} cannot start.\nStop it, or pick another port (--port / GATEWAY_PORT)."
-        )
+        Some(s"ERROR: $detail — ${Branding.productName} cannot start.\nStop it, or pick another port (--port / GATEWAY_PORT).")
 
 end MainDispatch
 
@@ -189,7 +177,7 @@ object Main extends IOApp:
    * `remaining` — a leaked flag would hit CliRouter's unknown-flag face.
    */
   private def parseGlobalFlags(
-    args: List[String]
+      args: List[String]
   ): (Option[String], Option[Int], Option[os.Path], Boolean, Boolean, List[String]) =
     var home: Option[String] = None
     var port: Option[Int] = None
@@ -275,25 +263,23 @@ object Main extends IOApp:
             onFree
           case nebflow.cli.SingleInstanceGuard.NebflowInstance(url) =>
             // 门户开门（同 pid 快道）：聚焦目标换 PortalUrl 解析值；探测原样。
-            nebflow.gateway.PortalUrl
-              .focusUrl(
-                url,
-                authenticateLocal = !GatewayConfig.noBrowser && !nebflow.core.HeadlessMode.enabled
-              )
-              .flatMap { focusTarget =>
-                // #512 门审计批：聚焦腿开门目标落 stdout（CLI 路径无 logger 面）——
-                // 二实例撞端口时「开的是哪条门」可从终端对账。
-                IO.println(
-                  s"[door] focus 开门: 目标=$focusTarget（解析=PortalUrl env>config>brand；NEBFLOW_OPEN_UI=local ⇒ 本地自铸票）"
-                ) *>
-                  nebflow.cli.SingleInstanceGuard
-                    .focusExisting(
-                      focusTarget,
-                      "same port",
-                      openBrowser = !nebflow.gateway.GatewayConfig.noBrowser
-                    )
-                    .as(ExitCode.Success)
-              }
+            nebflow.gateway.PortalUrl.focusUrl(
+              url,
+              authenticateLocal = !GatewayConfig.noBrowser && !nebflow.core.HeadlessMode.enabled
+            ).flatMap { focusTarget =>
+              // #512 门审计批：聚焦腿开门目标落 stdout（CLI 路径无 logger 面）——
+              // 二实例撞端口时「开的是哪条门」可从终端对账。
+              IO.println(
+                s"[door] focus 开门: 目标=$focusTarget（解析=PortalUrl env>config>brand；NEBFLOW_OPEN_UI=local ⇒ 本地自铸票）"
+              ) *>
+                nebflow.cli.SingleInstanceGuard
+                  .focusExisting(
+                    focusTarget,
+                    "same port",
+                    openBrowser = !nebflow.gateway.GatewayConfig.noBrowser
+                  )
+                  .as(ExitCode.Success)
+            }
           case nebflow.cli.SingleInstanceGuard.ForeignOccupant(detail) =>
             IO.println(s"ERROR: $detail — ${Branding.productName} cannot start.") *>
               IO.println(
@@ -302,8 +288,7 @@ object Main extends IOApp:
         }
     }
 
-  /**
-   * The listening port is authoritative. A PID copied from another device
+  /** The listening port is authoritative. A PID copied from another device
    * can refer to an unrelated live process, and must never suppress startup.
    */
   private def startGatewayLegacy(metaStartedBy: String): IO[ExitCode] =

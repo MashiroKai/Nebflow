@@ -146,12 +146,10 @@ object SttService:
         // 语义对它一体适用——否则一次普通保存就把停用态静默翻回开）。
         case Some(v) => List("enabled" -> v.asJson)
         case None =>
-          old
-            .flatMap(_.hcursor.downField("enabled").as[Boolean].toOption)
-            .map(v => List("enabled" -> v.asJson))
-            .getOrElse(List.empty))
+          old.flatMap(_.hcursor.downField("enabled").as[Boolean].toOption)
+            .map(v => List("enabled" -> v.asJson)).getOrElse(List.empty)
+      )
       Some(Json.fromJsonObject(JsonObject.fromIterable(fields)))
-    end if
 
   end mergeConfig
 
@@ -200,10 +198,8 @@ class SttService private[gateway] (
   val model: String,
   /** 转录端点（serverConfig 广播可见；apiKey 永不外露）。 */
   val endpoint: String,
-  /**
-   * 总开关（settings-panel 批 D 件）：false = STT 整体停用——引擎腿同步拒绝
-   * （前端入口已收，这是纵深第二层：直连 WS transcribe 帧也拿不到转写）。
-   */
+  /** 总开关（settings-panel 批 D 件）：false = STT 整体停用——引擎腿同步拒绝
+    * （前端入口已收，这是纵深第二层：直连 WS transcribe 帧也拿不到转写）。 */
   val enabled: Boolean = true
 ):
   private val logger = NebflowLogger.forName("nebflow.stt")

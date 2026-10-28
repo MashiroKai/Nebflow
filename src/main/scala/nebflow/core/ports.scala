@@ -240,10 +240,8 @@ trait DeviceIdentityView:
   def deviceId: String
   def deviceName: String
   def userDescription: String
-
   /** 本机自报平台(windows/macos/linux/…;neblink.DeviceIdentity.detectPlatform 语义)。 */
   def platform: String
-
   /** 本机能力面(键名级消费——值是绝对路径,FleetRoster 只列键名)。 */
   def capabilities: Map[String, String]
 end DeviceIdentityView

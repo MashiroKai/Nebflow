@@ -26,8 +26,6 @@ trait CliCommand:
    */
   def defaultSubcommand: Option[String] = None
 
-end CliCommand
-
 trait CliSubcommand:
   /** Subcommand name, e.g. "list" */
   def name: String

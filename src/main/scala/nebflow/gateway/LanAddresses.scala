@@ -41,7 +41,8 @@ private[gateway] object LanAddresses:
           catch case _: Throwable => Nil
         }
         .collect {
-          case a: Inet4Address if a.isSiteLocalAddress && !a.isLoopbackAddress && !a.isLinkLocalAddress =>
+          case a: Inet4Address
+              if a.isSiteLocalAddress && !a.isLoopbackAddress && !a.isLinkLocalAddress =>
             a.getHostAddress
         }
         .distinct

@@ -31,13 +31,7 @@ class DeviceHmacSpec extends CatsEffectSuite:
     assert(DeviceHmac.verify(key, canon, sig))
     // 常数时间比对同样拒错钥与错串（不是异常，是 false）。
     assert(!DeviceHmac.verify("other-key", canon, sig))
-    assert(
-      !DeviceHmac.verify(
-        key,
-        DeviceHmac.canonical(deviceId, "1700000001", "n-1", "POST", "/p", DeviceHmac.bodySha256("body")),
-        sig
-      )
-    )
+    assert(!DeviceHmac.verify(key, DeviceHmac.canonical(deviceId, "1700000001", "n-1", "POST", "/p", DeviceHmac.bodySha256("body")), sig))
     assert(!DeviceHmac.verify(key, canon, ""))
   }
 
@@ -62,18 +56,9 @@ class DeviceHmacSpec extends CatsEffectSuite:
     val ts = (now / 1000).toString
     val nonce = "nonce-1"
     val body = """{"action":"Bash"}"""
-    val sig = DeviceHmac.sign(
-      key,
-      DeviceHmac.canonical(deviceId, ts, nonce, "POST", "/api/neblink/remote-exec", DeviceHmac.bodySha256(body))
-    )
+    val sig = DeviceHmac.sign(key, DeviceHmac.canonical(deviceId, ts, nonce, "POST", "/api/neblink/remote-exec", DeviceHmac.bodySha256(body)))
 
-    def verdict(
-      t: Option[String],
-      n: Option[String],
-      s: Option[String],
-      b: String = body,
-      path: String = "/api/neblink/remote-exec"
-    ) =
+    def verdict(t: Option[String], n: Option[String], s: Option[String], b: String = body, path: String = "/api/neblink/remote-exec") =
       DeviceHmac.verifyHeaders(key, deviceId, t, n, s, "POST", path, b, now)
 
     assertEquals(verdict(None, Some(nonce), Some(sig)), Some("missing x-neblink-ts header"))

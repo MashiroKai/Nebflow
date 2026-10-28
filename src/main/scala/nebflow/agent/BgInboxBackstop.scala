@@ -25,27 +25,22 @@ object BgInboxBackstop:
         val sid = sessionId.trim
         if sid.isEmpty then IO.unit
         else
-          CompactionQueueStore
-            .load(sid)
-            .flatMap { existing =>
-              val already =
-                existing.exists(_.events.exists(_.correlationId.contains(event.correlationId.getOrElse(""))))
-              if already then IO.unit
-              else
-                resources.sessionStore.listSessions.flatMap { sessions =>
-                  if !sessions.exists(_.id == sid) then IO.unit
-                  else
-                    val q = existing.getOrElse(CompactionQueueStore.PersistedQueues())
-                    CompactionQueueStore.save(sid, q.copy(events = q.events :+ event))
-                }
-            }
-            .handleErrorWith(e =>
-              nebflow.shared.NebflowLogger
-                .forName("nebflow.bg-notify")
-                .warn(s"[bg-notify-inbox] append failed for session '$sid': ${e.getMessage}")
-            )
-        end if
-      end append
+          CompactionQueueStore.load(sid).flatMap { existing =>
+            val already =
+              existing.exists(_.events.exists(_.correlationId.contains(event.correlationId.getOrElse(""))))
+            if already then IO.unit
+            else
+              resources.sessionStore.listSessions.flatMap { sessions =>
+                if !sessions.exists(_.id == sid) then IO.unit
+                else
+                  val q = existing.getOrElse(CompactionQueueStore.PersistedQueues())
+                  CompactionQueueStore.save(sid, q.copy(events = q.events :+ event))
+              }
+          }.handleErrorWith(e =>
+            nebflow.shared.NebflowLogger
+              .forName("nebflow.bg-notify")
+              .warn(s"[bg-notify-inbox] append failed for session '$sid': ${e.getMessage}")
+          )
   end face
 
 end BgInboxBackstop

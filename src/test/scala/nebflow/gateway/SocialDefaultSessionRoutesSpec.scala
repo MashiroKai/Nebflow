@@ -16,26 +16,25 @@ import org.typelevel.ci.CIString
 
 import java.nio.file.Files
 
-/**
- * 绑定即通批 (weixin bind-through, 2026-10-11) — the per-channel
- * default-session REST face at the wire level, plus the feishu regression.
- *
- *   - the literal feishu arms (pre-existing) keep their exact shapes: PUT set
- *     → `{"ok":true,"sessionId":…}` / clear (null|blank) → sessionId null;
- *     GET → `{"sessionId":…}`; a non-JSON body → `400 invalid_field`;
- *   - the parameterized spelling PUT/GET
- *     `/social/channels/{channel}/default-session` serves the SAME contract
- *     for `weixin-ilink` (the card the scan-bind auto-wire writes), whitelist
- *     {feishu, weixin-ilink};
- *   - an off-whitelist channel → `400 unknown_channel` with the channel
- *     echoed (the social save face's existing unknown-card shape);
- *   - every arm sits behind withAuth (no token ⇒ the bare
- *     `{"error":"Unauthorized"}` 403);
- *   - the stored key is the channel-entry SIBLING `defaultSessionId` (never a
- *     card `field`) — the same position the feishu C4 batch pinned.
- *
- * Fixture root is a temp directory; the real `~/.nebflow` is never touched.
- */
+/** 绑定即通批 (weixin bind-through, 2026-10-11) — the per-channel
+  * default-session REST face at the wire level, plus the feishu regression.
+  *
+  *   - the literal feishu arms (pre-existing) keep their exact shapes: PUT set
+  *     → `{"ok":true,"sessionId":…}` / clear (null|blank) → sessionId null;
+  *     GET → `{"sessionId":…}`; a non-JSON body → `400 invalid_field`;
+  *   - the parameterized spelling PUT/GET
+  *     `/social/channels/{channel}/default-session` serves the SAME contract
+  *     for `weixin-ilink` (the card the scan-bind auto-wire writes), whitelist
+  *     {feishu, weixin-ilink};
+  *   - an off-whitelist channel → `400 unknown_channel` with the channel
+  *     echoed (the social save face's existing unknown-card shape);
+  *   - every arm sits behind withAuth (no token ⇒ the bare
+  *     `{"error":"Unauthorized"}` 403);
+  *   - the stored key is the channel-entry SIBLING `defaultSessionId` (never a
+  *     card `field`) — the same position the feishu C4 batch pinned.
+  *
+  * Fixture root is a temp directory; the real `~/.nebflow` is never touched.
+  */
 class SocialDefaultSessionRoutesSpec extends FunSuite:
 
   private val token = "default-session-routes-token"
@@ -83,19 +82,17 @@ class SocialDefaultSessionRoutesSpec extends FunSuite:
       releaseDispatcher.unsafeRunSync()
       try os.remove.all(root)
       catch case _: Throwable => ()
-    end try
-  end withRoutes
 
   // HTTP method aliases (http4s `Method.GET` etc.).
   private val GET: Method = Method.GET
   private val PUT: Method = Method.PUT
 
   private def call(
-    routes: HttpRoutes[IO],
-    method: Method,
-    path: String,
-    body: Option[Json] = None,
-    bearer: Option[String] = Some(token)
+      routes: HttpRoutes[IO],
+      method: Method,
+      path: String,
+      body: Option[Json] = None,
+      bearer: Option[String] = Some(token)
   ): (Status, Option[Json]) =
     val base = Request[IO](method, Uri.unsafeFromString(path))
     val authed = bearer.fold(base)(t => base.putHeaders(Header.Raw(CIString("Authorization"), s"Bearer $t")))
@@ -107,42 +104,21 @@ class SocialDefaultSessionRoutesSpec extends FunSuite:
       val text = resp.body.compile.toVector.unsafeRunSync().map(_.toChar).mkString
       (resp.status, if text.isEmpty then None else parse(text).toOption)
 
-  end call
-
-  /**
-   * The stored defaultSessionId as the frontend's raw config would read it:
-   * the channel-entry sibling (NOT a member of `fields`).
-   */
+  /** The stored defaultSessionId as the frontend's raw config would read it:
+    * the channel-entry sibling (NOT a member of `fields`). */
   private def storedSibling(root: os.Path, channel: String): Option[String] =
-    nebflow.social.SocialChannels
-      .readChannels(root)
-      .hcursor
-      .downField("channels")
-      .downField(channel)
-      .downField("defaultSessionId")
-      .as[String]
-      .toOption
+    nebflow.social.SocialChannels.readChannels(root).hcursor
+      .downField("channels").downField(channel)
+      .downField("defaultSessionId").as[String].toOption
 
   // ── auth ────────────────────────────────────────────────────────────────
 
   test("A1 · no token ⇒ 403 Unauthorized on every default-session arm, no reason detail") {
     withRoutes { routes =>
       val checks = List(
-        call(
-          routes,
-          PUT,
-          "/social/channels/feishu/default-session",
-          Some(json("""{"sessionId":"s"}""")),
-          bearer = None
-        ),
+        call(routes, PUT, "/social/channels/feishu/default-session", Some(json("""{"sessionId":"s"}""")), bearer = None),
         call(routes, GET, "/social/channels/feishu/default-session", bearer = None),
-        call(
-          routes,
-          PUT,
-          "/social/channels/weixin-ilink/default-session",
-          Some(json("""{"sessionId":"s"}""")),
-          bearer = None
-        ),
+        call(routes, PUT, "/social/channels/weixin-ilink/default-session", Some(json("""{"sessionId":"s"}""")), bearer = None),
         call(routes, GET, "/social/channels/weixin-ilink/default-session", bearer = None)
       )
       checks.foreach { case (st, body) =>
@@ -157,8 +133,8 @@ class SocialDefaultSessionRoutesSpec extends FunSuite:
   test("A2 · feishu literal arms: set / read / clear / invalid body — shapes unchanged") {
     withRoutes { routes =>
       // set
-      val (st1, b1) =
-        call(routes, PUT, "/social/channels/feishu/default-session", Some(json("""{"sessionId":"sess-feishu-1"}""")))
+      val (st1, b1) = call(routes, PUT, "/social/channels/feishu/default-session",
+        Some(json("""{"sessionId":"sess-feishu-1"}""")))
       assertEquals(st1.code, 200)
       assertEquals(b1, Some(json("""{"ok":true,"sessionId":"sess-feishu-1"}""")))
       // read
@@ -168,7 +144,8 @@ class SocialDefaultSessionRoutesSpec extends FunSuite:
       // stored as the channel-entry sibling
       assertEquals(storedSibling(PathUtil.dataRoot, "feishu"), Some("sess-feishu-1"))
       // clear (null)
-      val (st3, b3) = call(routes, PUT, "/social/channels/feishu/default-session", Some(json("""{"sessionId":null}""")))
+      val (st3, b3) = call(routes, PUT, "/social/channels/feishu/default-session",
+        Some(json("""{"sessionId":null}""")))
       assertEquals(st3.code, 200)
       assertEquals(b3, Some(json("""{"ok":true,"sessionId":null}""")))
       val (st4, b4) = call(routes, GET, "/social/channels/feishu/default-session")

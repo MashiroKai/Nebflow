@@ -711,6 +711,5 @@ object SecretsStore:
     case ManagedNamespace(name: String)
     case SecretMode(name: String, reason: String)
     case Io(reason: String)
-  end Failure
 
 end SecretsStore

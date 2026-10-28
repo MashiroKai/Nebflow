@@ -1047,7 +1047,6 @@ When to use:
               s"budget — after 2 restarts within 5 minutes the task fails with a notification. " +
               s"Current task retryCount: ${task.retryCount}."
           )
-          end for
       }
 
   /**
@@ -1063,10 +1062,9 @@ When to use:
     if sessionId.trim.isEmpty then IO.unit
     else
       resources.agentRegistry
-        .update(m =>
-          m.get(sessionId) match
-            case Some(rec) if rec.escalation.isDefined => m.updated(sessionId, rec.copy(escalation = None))
-            case _ => m
+        .update(m => m.get(sessionId) match
+          case Some(rec) if rec.escalation.isDefined => m.updated(sessionId, rec.copy(escalation = None))
+          case _ => m
         )
         .handleErrorWith(e => logger.warn(s"clearRegistryEscalation($sessionId) failed: ${e.getMessage}"))
 

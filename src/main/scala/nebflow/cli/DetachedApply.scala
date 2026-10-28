@@ -80,7 +80,6 @@ object DetachedApply:
   val LogFileName = "apply-restart.log"
   val ScriptNameBash = "apply-restart.sh"
   val ScriptNamePs1 = "apply-restart.ps1"
-
   /** 终态前的全部相——boot 时发现这些 = 上一个 apply 死在中途（reconcile 报 interrupted）。 */
   val InFlightPhases: Set[String] = Set("registered", "running", "stopped", "starting", "health", "rolling-back")
 
@@ -144,21 +143,18 @@ object DetachedApply:
               val cause = json.hcursor.downField("cause").as[String].toOption
               val line =
                 s"[detached-apply] previous $kind apply died mid-flight (phase=$phase${cause.map(c => s", cause=$c").getOrElse("")}) — selection face (pointer/winsort) is authoritative, this record is evidence only"
-              AtomicJson
-                .write(
-                  statePath(dataRoot),
-                  renderStateJson(
-                    kind,
-                    "interrupted",
-                    json.hcursor.downField("port").as[Int].getOrElse(0),
-                    json.hcursor.downField("targetVersion").as[String].toOption,
-                    Some(s"interrupted at phase=$phase"),
-                    isoNow()
-                  )
+              AtomicJson.write(
+                statePath(dataRoot),
+                renderStateJson(
+                  kind,
+                  "interrupted",
+                  json.hcursor.downField("port").as[Int].getOrElse(0),
+                  json.hcursor.downField("targetVersion").as[String].toOption,
+                  Some(s"interrupted at phase=$phase"),
+                  isoNow()
                 )
-                .as(Some(line))
+              ).as(Some(line))
             else IO.pure(None)
-            end if
           case Left(_) => IO.pure(None) // 坏行不挡 boot；脚本侧下次覆写
     }
 
@@ -166,17 +162,13 @@ object DetachedApply:
 
   /** 平台 launcher 解析：posix = `~/.stand/bin/stand`；windows = `%LOCALAPPDATA%\stand\stand.cmd`。 */
   def resolveLauncher(env: Map[String, String], home: String, isWindows: Boolean): Option[String] =
-    env
-      .get("STAND_LAUNCHER")
-      .map(_.trim)
-      .filter(_.nonEmpty)
-      .orElse(
-        if isWindows then
-          env.get("LOCALAPPDATA").map(l => os.Path(l) / "stand" / "stand.cmd").filter(os.exists).map(_.toString)
-        else
-          Some((os.Path(home) / Branding.homeDirName / "bin" / "stand").toString)
-            .filter(p => os.exists(os.Path(p)))
-      )
+    env.get("STAND_LAUNCHER").map(_.trim).filter(_.nonEmpty).orElse(
+      if isWindows then
+        env.get("LOCALAPPDATA").map(l => os.Path(l) / "stand" / "stand.cmd").filter(os.exists).map(_.toString)
+      else
+        Some((os.Path(home) / Branding.homeDirName / "bin" / "stand").toString)
+          .filter(p => os.exists(os.Path(p)))
+    )
 
   /** 安装根 = launcher 所在目录（Mac: ~/.stand/bin 指针布局；KAI: AppData 扁平布局）。 */
   def installDirOf(launcher: String): os.Path = os.Path(launcher) / os.up
@@ -199,12 +191,11 @@ object DetachedApply:
       val code = proc.waitFor()
       if code == 0 then Right(out.take(2000))
       else Left(s"rc=$code: ${out.take(2000)}")
-    }.attempt
-      .map {
-        case Right(r) => r
-        case Left(NonFatal(e)) => Left(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse(e.toString)}")
-        case Left(e) => Left(e.toString)
-      }
+    }.attempt.map {
+      case Right(r) => r
+      case Left(NonFatal(e)) => Left(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse(e.toString)}")
+      case Left(e) => Left(e.toString)
+    }
 
   /**
    * 注册 apply 作业。写脚本（tmp+rename）→ 写 registered 相 → OS 注册 →
@@ -242,26 +233,21 @@ object DetachedApply:
         java.nio.file.StandardCopyOption.REPLACE_EXISTING,
         java.nio.file.StandardCopyOption.ATOMIC_MOVE
       )
-      if !isWindows then
-        try os.perms.set(script, "rwxr-xr-x")
-        catch case _: Throwable => () // 非 POSIX 文件系统（spec 注入面）尽力即可
+      if !isWindows then try os.perms.set(script, "rwxr-xr-x")
+      catch case _: Throwable => () // 非 POSIX 文件系统（spec 注入面）尽力即可
       Right(script)
-    }.attempt
-      .map {
-        case Right(r) => r
-        case Left(NonFatal(e)) => Left(s"apply script write failed: ${Option(e.getMessage).getOrElse(e.toString)}")
-        case Left(e) => Left(e.toString)
-      }
+    }.attempt.map {
+      case Right(r) => r
+      case Left(NonFatal(e)) => Left(s"apply script write failed: ${Option(e.getMessage).getOrElse(e.toString)}")
+      case Left(e) => Left(e.toString)
+    }
 
-  end writeScriptAndState
-
-  /**
-   * Windows：schtasks /Create /XML（/F 覆盖固定名）→ /Run 立即触发；脚本自删除任务。
-   *
-   * 为什么走 XML 而不是 /TR：<c>/TR</c> 会剥掉内层引号（带空格路径即碎）且默认
-   * DisallowStartIfOnBatteries=true（电池机上 /Run 假成功不执行）。XML 逐字面存储
-   * 参数、显式关断电池闸；trigger = now+1min 作 /Run 失败时的兜底自动触发。
-   */
+  /** Windows：schtasks /Create /XML（/F 覆盖固定名）→ /Run 立即触发；脚本自删除任务。
+    *
+    * 为什么走 XML 而不是 /TR：<c>/TR</c> 会剥掉内层引号（带空格路径即碎）且默认
+    * DisallowStartIfOnBatteries=true（电池机上 /Run 假成功不执行）。XML 逐字面存储
+    * 参数、显式关断电池闸；trigger = now+1min 作 /Run 失败时的兜底自动触发。
+    */
   private def registerWindows(plan: Plan, script: os.Path, run: Run): IO[Either[String, String]] =
     val xmlPath = plan.dataRoot / "apply" / s"${plan.winTask}.xml"
     val triggerAt = java.time.LocalDateTime.now().plusMinutes(1).truncatedTo(java.time.temporal.ChronoUnit.MINUTES)
@@ -273,9 +259,7 @@ object DetachedApply:
     // 裸 "powershell.exe" 在 Task Scheduler 服务上下文里解析不到（硬化 PATH ⇒ 0x80070002
     // 假成功）——必须写全路径；SystemRoot 兜底 C:\Windows（PS 5.1 内置于每台 Windows）
     val psFull = sys.env
-      .get("SystemRoot")
-      .orElse(sys.env.get("SYSTEMROOT"))
-      .getOrElse("C:\\Windows") +
+      .get("SystemRoot").orElse(sys.env.get("SYSTEMROOT")).getOrElse("C:\\Windows") +
       "\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
     val xml =
       s"""<?xml version="1.0" encoding="UTF-16"?>
@@ -307,34 +291,31 @@ object DetachedApply:
     IO.blocking {
       // schtasks 的解析器只认 UTF-16LE+BOM（它自己写出来的就是 LE）；Java UTF_16 默认 BE BOM ⇒ malformed
       val le = xml.getBytes(java.nio.charset.StandardCharsets.UTF_16LE)
-      os.write.over(xmlPath, Array(0xff.toByte, 0xfe.toByte) ++ le, createFolders = true)
-    }.attempt
-      .flatMap {
-        case Left(e) => IO.pure(Left(s"apply task xml write failed: ${Option(e.getMessage).getOrElse(e.toString)}"))
-        case Right(_) =>
-          val create = List("schtasks", "/Create", "/F", "/TN", plan.winTask, "/XML", xmlPath.toString)
-          val fire = List("schtasks", "/Run", "/TN", plan.winTask)
-          run(create).flatMap {
-            case Left(err) => IO.pure(Left(s"schtasks create failed: $err"))
-            case Right(_) =>
-              run(fire).flatMap {
-                case Left(err) =>
-                  IO.pure(
-                    Left(
-                      s"schtasks run failed (task created but not fired; will auto-fire at $triggerFmt — remove manually: schtasks /Delete /TN ${plan.winTask} /F): $err"
-                    )
+      os.write.over(xmlPath, Array(0xFF.toByte, 0xFE.toByte) ++ le, createFolders = true)
+    }.attempt.flatMap {
+      case Left(e) => IO.pure(Left(s"apply task xml write failed: ${Option(e.getMessage).getOrElse(e.toString)}"))
+      case Right(_) =>
+        val create = List("schtasks", "/Create", "/F", "/TN", plan.winTask, "/XML", xmlPath.toString)
+        val fire = List("schtasks", "/Run", "/TN", plan.winTask)
+        run(create).flatMap {
+          case Left(err) => IO.pure(Left(s"schtasks create failed: $err"))
+          case Right(_) =>
+            run(fire).flatMap {
+              case Left(err) =>
+                IO.pure(
+                  Left(
+                    s"schtasks run failed (task created but not fired; will auto-fire at $triggerFmt — remove manually: schtasks /Delete /TN ${plan.winTask} /F): $err"
                   )
-                case Right(_) =>
-                  writeRegisteredState(plan).as(
-                    Right(
-                      s"detached apply registered via scheduled task '${plan.winTask}' (survives any session/tree death) — log: ${logPath(plan.dataRoot)}"
-                    )
+                )
+              case Right(_) =>
+                writeRegisteredState(plan).as(
+                  Right(
+                    s"detached apply registered via scheduled task '${plan.winTask}' (survives any session/tree death) — log: ${logPath(plan.dataRoot)}"
                   )
-              }
-          }
-      }
-
-  end registerWindows
+                )
+            }
+        }
+    }
 
   /** macOS：launchd 一次性 agent（bootstrap+kickstart；旧版回落 load+start）；脚本自清理。 */
   private def registerPosix(plan: Plan, script: os.Path, run: Run): IO[Either[String, String]] =
@@ -392,8 +373,6 @@ object DetachedApply:
         }
     }
 
-  end fireLaunchd
-
   /** launchd plist 模板（一次性：RunAtLoad=false，kickstart 触发；日志直落 apply log）。 */
   def renderPlist(label: String, script: os.Path): String =
     s"""<?xml version="1.0" encoding="UTF-8"?>
@@ -425,9 +404,7 @@ object DetachedApply:
     val plistPath = if plan.layout != null then sh(macPlist(plan).toString) else ""
     s"""#!/bin/bash
 |# stand detached apply — GENERATED by nebflow.cli.DetachedApply (台账 #916); do not edit
-|# kind=${plan.kind.wire} port=${plan.port} target=${plan.targetVersion.getOrElse(
-        "-"
-      )} layout=${plan.layout.wire} gen=${plan.generation}$oldPidNote
+|# kind=${plan.kind.wire} port=${plan.port} target=${plan.targetVersion.getOrElse("-")} layout=${plan.layout.wire} gen=${plan.generation}$oldPidNote
 |# 语义: stop(硬化)→端口空闲闸→start→健康闸→done; 失败→update回滚起旧版, restart报因.
 |# 全程落日志+state.json(原子写)——永不无人观测. 选择面只有 pointer/winsort, 崩不坏.
 |set -u
@@ -562,7 +539,6 @@ object DetachedApply:
 |cleanup_registration
 |exit 0
 |""".stripMargin
-  end renderBash
 
   // ── Windows PowerShell 面（与 bash 面同构）─────────────────────────────
 
@@ -573,9 +549,7 @@ object DetachedApply:
     val oldPidNote = plan.oldPid.map(p => s" oldPid=$p").getOrElse("")
     val tv = plan.targetVersion.map(v => s"""$$TargetVersion = '${ps(v)}'""").getOrElse("$TargetVersion = $null")
     s"""# stand detached apply (Windows) — GENERATED by nebflow.cli.DetachedApply (台账 #916); do not edit
-|# kind=${plan.kind.wire} port=${plan.port} target=${plan.targetVersion.getOrElse(
-        "-"
-      )} layout=${plan.layout.wire} gen=${plan.generation}$oldPidNote
+|# kind=${plan.kind.wire} port=${plan.port} target=${plan.targetVersion.getOrElse("-")} layout=${plan.layout.wire} gen=${plan.generation}$oldPidNote
 |$$ErrorActionPreference = 'Continue'
 |$$Kind = '${ps(plan.kind.wire)}'
 |$$Port = ${plan.port}
@@ -703,8 +677,6 @@ object DetachedApply:
 |exit 0
 |""".stripMargin
 
-  end renderPowerShell
-
   /** 便利装配：从当前进程环境推断 Plan（launcher/安装根/布局/端口/数据根全解析）。 */
   def defaultPlan(kind: Kind, port: Int, targetVersion: Option[String], oldPid: Option[Long]): Either[String, Plan] =
     val env = sys.env
@@ -728,6 +700,4 @@ object DetachedApply:
             oldPid = oldPid
           )
         )
-    end match
-  end defaultPlan
 end DetachedApply

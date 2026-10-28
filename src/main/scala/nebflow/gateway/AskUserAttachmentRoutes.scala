@@ -61,10 +61,8 @@ private[gateway] object AskUserAttachmentRoutes:
   /** 一件已受理附件的服务端记录（答案侧终验的 sha 比对源）。 */
   final case class Rec(path: String, seq: Int, size: Long, mime: String, sha256: String)
 
-  /**
-   * 每卡的受理台账（内存态：重启清零 = 去重/计数降级为宽松，不作安全闸——
-   * 答案侧终验按路径前缀 + 真实文件状态独立把关）。
-   */
+  /** 每卡的受理台账（内存态：重启清零 = 去重/计数降级为宽松，不作安全闸——
+    * 答案侧终验按路径前缀 + 真实文件状态独立把关）。 */
   final case class CardEntry(count: Int, inFlight: Int, files: Map[String, Rec])
 
   object Store:
@@ -120,11 +118,9 @@ private[gateway] object AskUserAttachmentRoutes:
 
   // ===== 孤儿清扫（惰性，上传后顺手）=====
 
-  /**
-   * 扫一遍 `uploads/<sid>/ask-<rid>` 目录族：无 `.answered` 标记且 mtime 落后
-   * >24h 的整目录删除。纯 best-effort：任何异常只留 WARN。
-   * 返回删除目录数（诊断/测试读数）。
-   */
+  /** 扫一遍 `uploads/<sid>/ask-<rid>` 目录族：无 `.answered` 标记且 mtime 落后
+    * >24h 的整目录删除。纯 best-effort：任何异常只留 WARN。
+    * 返回删除目录数（诊断/测试读数）。 */
   def sweepOrphans(nowMs: Long = System.currentTimeMillis()): IO[Int] =
     IO.blocking {
       val uploadsBase = PathUtil.dataRoot / "uploads"
@@ -150,7 +146,6 @@ private[gateway] object AskUserAttachmentRoutes:
           }
         }
         removed
-      end if
     }.handleErrorWith { e =>
       logger.warn(s"ask-attachment orphan sweep failed: ${e.getMessage}").as(0)
     }
@@ -186,7 +181,9 @@ private[gateway] object AskUserAttachmentRoutes:
           }
           .compile
           .last
-          .map(count => Right((count.map(_._2).getOrElse(0L), md.digest().map("%02x".format(_)).mkString)))
+          .map(count =>
+            Right((count.map(_._2).getOrElse(0L), md.digest().map("%02x".format(_)).mkString))
+          )
           .handleErrorWith {
             case _: AttachmentTooLarge => IO.pure(Left("ASKUSER_ATTACH_TOO_LARGE"))
             case e =>
@@ -198,38 +195,36 @@ private[gateway] object AskUserAttachmentRoutes:
 
   def routes(ctx: RestApiCtx): HttpRoutes[IO] =
     import ctx.*
-    HttpRoutes.of[IO] { case req @ POST -> Root / "askuser" / "attachments" =>
-      withAuth(req) {
-        val requestId = req.params.getOrElse("requestId", "").trim
-        if requestId.isEmpty then
-          badRequest("ASKUSER_BAD_REQUEST", "requestId is required (the live pending asknb- id)")
-        else
-          // ② hub 闸：live pending AskUser 卡 + 非 secret 卡（fail-closed）。
-          sharedResources.interactionHubRef.get.flatMap {
-            case None => gone("ASKUSER_CARD_NOT_LIVE", "no interaction hub — card state unknown")
-            case Some(hub) =>
-              hub
-                .?[Option[nebflow.actor.AttachGate]](reply => InteractionHubCommand.AttachGateOf(requestId, reply))
-                .flatMap {
-                  case None =>
-                    gone(
-                      "ASKUSER_CARD_NOT_LIVE",
-                      s"no pending ask with requestId=$requestId (already answered, closed, or never existed)"
-                    )
-                  case Some(gate) if gate.hasSecret =>
-                    forbidden("ASKUSER_ATTACH_SECRET_CARD", "secret questions never accept attachments (fail-closed)")
-                  case Some(gate) =>
-                    // Content-Length 预检（流中仍有逐块闸兜底——chunked 上传无长度头）。
-                    val declared = req.contentLength.getOrElse(0L)
-                    if declared > MaxBytes then tooLarge(declared)
-                    else handleUpload(ctx, gate.rootSessionId, requestId, req)
-                }
-          }
-        end if
-      }
+    HttpRoutes.of[IO] {
+      case req @ POST -> Root / "askuser" / "attachments" =>
+        withAuth(req) {
+          val requestId = req.params.getOrElse("requestId", "").trim
+          if requestId.isEmpty then
+            badRequest("ASKUSER_BAD_REQUEST", "requestId is required (the live pending asknb- id)")
+          else
+            // ② hub 闸：live pending AskUser 卡 + 非 secret 卡（fail-closed）。
+            sharedResources.interactionHubRef.get.flatMap {
+              case None => gone("ASKUSER_CARD_NOT_LIVE", "no interaction hub — card state unknown")
+              case Some(hub) =>
+                hub
+                  .?[Option[nebflow.actor.AttachGate]](reply => InteractionHubCommand.AttachGateOf(requestId, reply))
+                  .flatMap {
+                    case None =>
+                      gone(
+                        "ASKUSER_CARD_NOT_LIVE",
+                        s"no pending ask with requestId=$requestId (already answered, closed, or never existed)"
+                      )
+                    case Some(gate) if gate.hasSecret =>
+                      forbidden("ASKUSER_ATTACH_SECRET_CARD", "secret questions never accept attachments (fail-closed)")
+                    case Some(gate) =>
+                      // Content-Length 预检（流中仍有逐块闸兜底——chunked 上传无长度头）。
+                      val declared = req.contentLength.getOrElse(0L)
+                      if declared > MaxBytes then tooLarge(declared)
+                      else handleUpload(ctx, gate.rootSessionId, requestId, req)
+                  }
+            }
+        }
     }
-
-  end routes
 
   private def handleUpload(
     ctx: RestApiCtx,
@@ -239,15 +234,12 @@ private[gateway] object AskUserAttachmentRoutes:
   ): IO[Response[IO]] =
     req.decode[Multipart[IO]] { mp =>
       // 单文件单请求：取第一个带 filename 的 part（纯字节体次之），其余忽略。
-      mp.parts
-        .collectFirst { case p if p.filename.nonEmpty => p }
+      mp.parts.collectFirst { case p if p.filename.nonEmpty => p }
         .orElse(mp.parts.headOption) match
         case None =>
           badRequest("ASKUSER_BAD_REQUEST", "multipart body with one file part is required")
         case Some(part) =>
-          val rawName = part.filename
-            .map(_.trim)
-            .filter(_.nonEmpty)
+          val rawName = part.filename.map(_.trim).filter(_.nonEmpty)
             .orElse(req.params.get("name").map(_.trim).filter(_.nonEmpty))
             .getOrElse("file")
           val mime = part.headers.headers
@@ -256,38 +248,34 @@ private[gateway] object AskUserAttachmentRoutes:
             .getOrElse("application/octet-stream")
           val dir = Store.dirOf(rootSessionId, requestId)
           // 并发闸 + inFlight 占位（guarantee 归还）。
-          Store.registry
-            .modify { m =>
-              val entry = m.getOrElse(requestId, CardEntry(0, 0, Map.empty))
-              concurrencyGate(entry) match
-                case Left(code) => (m, Left(code, entry))
-                case Right(_) => (m.updated(requestId, entry.copy(inFlight = entry.inFlight + 1)), Right(entry))
-            }
-            .flatMap {
-              case Left(("ASKUSER_ATTACH_BUSY", _)) => tooBusy()
-              case Left((code, _)) => errorJson(Status.Conflict, code, "per-card limit reached")
-              case Right(entrySnapshot) =>
-                val temp = dir / s".tmp-${System.nanoTime()}"
-                val receive =
-                  IO.blocking(os.makeDir.all(dir)).handleError(_ => ()) *>
-                    receiveTo(part.body, temp)
-                receive
-                  .flatMap {
-                    case Left(code) =>
-                      cleanup(temp) *>
-                        (if code == "ASKUSER_ATTACH_TOO_LARGE" then tooLarge(0)
-                         else errorJson(Status.InternalServerError, code, "upload failed"))
-                    case Right((size, sha)) =>
-                      settle(ctx, requestId, entrySnapshot, temp, dir, rawName, mime, size, sha)
-                  }
-                  .guarantee(
-                    Store.registry.update { m =>
-                      m.get(requestId) match
-                        case Some(e) => m.updated(requestId, e.copy(inFlight = math.max(0, e.inFlight - 1)))
-                        case None => m
-                    }
-                  )
-            }
+          Store.registry.modify { m =>
+            val entry = m.getOrElse(requestId, CardEntry(0, 0, Map.empty))
+            concurrencyGate(entry) match
+              case Left(code) => (m, Left(code, entry))
+              case Right(_) => (m.updated(requestId, entry.copy(inFlight = entry.inFlight + 1)), Right(entry))
+          }.flatMap {
+            case Left(("ASKUSER_ATTACH_BUSY", _)) => tooBusy()
+            case Left((code, _)) => errorJson(Status.Conflict, code, "per-card limit reached")
+            case Right(entrySnapshot) =>
+              val temp = dir / s".tmp-${System.nanoTime()}"
+              val receive =
+                IO.blocking(os.makeDir.all(dir)).handleError(_ => ()) *>
+                  receiveTo(part.body, temp)
+              receive.flatMap {
+                case Left(code) =>
+                  cleanup(temp) *>
+                    (if code == "ASKUSER_ATTACH_TOO_LARGE" then tooLarge(0)
+                     else errorJson(Status.InternalServerError, code, "upload failed"))
+                case Right((size, sha)) =>
+                  settle(ctx, requestId, entrySnapshot, temp, dir, rawName, mime, size, sha)
+              }.guarantee(
+                Store.registry.update { m =>
+                  m.get(requestId) match
+                    case Some(e) => m.updated(requestId, e.copy(inFlight = math.max(0, e.inFlight - 1)))
+                    case None => m
+                }
+              )
+      }
     }
 
   /** 受理落位：计数闸 → sha 去重 → move 落位 → 台账推进 → 惰性清扫 → 响应。 */
@@ -329,11 +317,9 @@ private[gateway] object AskUserAttachmentRoutes:
           // 惰性孤儿清扫（后台 fiber，best-effort——绝不拖慢响应）。
           sweepOrphans().start.void *>
           Ok(
-            Store
-              .recJson(requestId, rec, rawName)
-              .deepMerge(
-                Json.obj("ok" -> true.asJson, "deduplicated" -> (!isNew).asJson)
-              )
+            Store.recJson(requestId, rec, rawName).deepMerge(
+              Json.obj("ok" -> true.asJson, "deduplicated" -> (!isNew).asJson)
+            )
           )
     }
 
@@ -351,14 +337,8 @@ private[gateway] object AskUserAttachmentRoutes:
   private def badRequest(code: String, message: String): IO[Response[IO]] = errorJson(Status.BadRequest, code, message)
   private def gone(code: String, message: String): IO[Response[IO]] = errorJson(Status.Gone, code, message)
   private def forbidden(code: String, message: String): IO[Response[IO]] = errorJson(Status.Forbidden, code, message)
-
   private def tooBusy(): IO[Response[IO]] =
-    errorJson(
-      Status.TooManyRequests,
-      "ASKUSER_ATTACH_BUSY",
-      s"at most $MaxConcurrentPerCard concurrent uploads per card"
-    )
-
+    errorJson(Status.TooManyRequests, "ASKUSER_ATTACH_BUSY", s"at most $MaxConcurrentPerCard concurrent uploads per card")
   private def tooLarge(size: Long): IO[Response[IO]] =
     errorJson(
       Status.PayloadTooLarge,

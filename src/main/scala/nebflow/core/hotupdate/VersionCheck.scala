@@ -23,12 +23,8 @@ object VersionCheck:
 
   /** 正式通道版本指针地址（桶名走 `Branding.cosBucket` 派生，禁硬编码桶名）。 */
   def pointerUrl: String =
-    sys.props
-      .get("nebflow.updates.pointerUrl")
-      .map(_.trim)
-      .filter(_.nonEmpty)
-      .getOrElse:
-        s"https://${Branding.cosBucket}.oss-cn-hangzhou.aliyuncs.com/latest-version.txt"
+    sys.props.get("nebflow.updates.pointerUrl").map(_.trim).filter(_.nonEmpty).getOrElse:
+      s"https://${Branding.cosBucket}.oss-cn-hangzhou.aliyuncs.com/latest-version.txt"
 
   /**
    * manifest 地址（DESIGN §5：stable = `/updates/manifest.json`，beta 同构
@@ -38,15 +34,13 @@ object VersionCheck:
    * `nebflow.hotupdate.installCommand` 同款口径）。
    */
   def manifestUrl(beta: Boolean): String =
-    sys.props
-      .get("nebflow.updates.manifestUrl")
-      .map(_.trim)
-      .filter(_.nonEmpty)
-      .getOrElse:
-        val base = s"https://${Branding.domain}/updates/manifest"
-        if beta then s"$base-beta.json" else s"$base.json"
+    sys.props.get("nebflow.updates.manifestUrl").map(_.trim).filter(_.nonEmpty).getOrElse:
+      val base = s"https://${Branding.domain}/updates/manifest"
+      if beta then s"$base-beta.json" else s"$base.json"
 
-  /** 读原文（前导 `v` 由调用方决定剥不剥）。连接与读取各 5 秒超时；异常 / 空响应 ⇒ None。 */
+  /**
+   * 读原文（前导 `v` 由调用方决定剥不剥）。连接与读取各 5 秒超时；异常 / 空响应 ⇒ None。
+   */
   def fetchRaw(url: String): IO[Option[String]] =
     IO.blocking {
       try
@@ -130,7 +124,6 @@ object VersionCheck:
         case (Some(_), None) => -1
         case (None, Some(_)) => 1
         case (Some(x), Some(y)) => x.compare(y)
-  end compareVersions
 
 end VersionCheck
 
@@ -174,6 +167,5 @@ object ReleaseManifest:
         jarSizeBytes = jar.downField("sizeBytes").as[Long].toOption.filter(_ > 0),
         minCompatibleEngine = obj.hcursor.downField("minCompatibleEngine").as[String].toOption
       )
-      end for
     catch case _: Exception => None
 end ReleaseManifest

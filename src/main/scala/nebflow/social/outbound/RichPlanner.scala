@@ -62,7 +62,6 @@ object RichDegrade:
     val RenderInvalid = "渲染输出非法(PNG 校验失败)"
     val SizeGateRejected = "尺寸闸拒绝"
     val FileUnreadable = "原件不可读"
-
     /** 文件腿体积闸（pop-file-leg batch, 2026-10-21）：超引擎闸（sidecar 发送腿同款 25MB）。 */
     val FileOversize = "文件超出社交腿上限"
     def channelRejected(code: Int): String = s"渠道拒绝(code=$code)"

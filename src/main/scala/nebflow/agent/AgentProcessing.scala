@@ -838,7 +838,8 @@ private[agent] object AgentProcessing:
                 // #939：边界注入 mail 件的 replyTo 挂完成债——本 turn 结束（或子代理
                 // 批屏障归还后的重放 turn 结束）时经 completionTargets 统一结付
                 // （AgentEvent.Completed → supervisor → source="delegate" 回投链）。
-                owedCompletion = (state.execution.owedCompletion ++ mailInputs.flatMap(_.replyTo)).distinct,
+                owedCompletion =
+                  (state.execution.owedCompletion ++ mailInputs.flatMap(_.replyTo)).distinct,
                 mailUsedThisTurn = state.mailUsedThisTurn ||
                   tc.results.exists((call, r) => call.name == "Mail" && !r.isError)
               )
@@ -1198,7 +1199,6 @@ private[agent] object AgentProcessing:
                     compactionPending.flatMap(_.replyTo)
                   )
                 yield result
-                end for
               else
                 for
                   _ <- ctx.forkTurn(compactEmitIO)
@@ -1553,7 +1553,6 @@ private[agent] object AgentProcessing:
           IO.pure(
             processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending)
           )
-        end if
       case msg: AgentCommand.SkillActivate =>
         val updatedExec = state.execution.copy(
           pendingUserInputs = state.execution.pendingUserInputs :+ msg

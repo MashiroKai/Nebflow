@@ -24,8 +24,9 @@ class NfReachRoutesSpec extends CatsEffectSuite:
       assert(names(s"x-${nebflow.shared.Branding.lowerName}-gateway"), "brand self-evidence header missing")
       assert(names("access-control-allow-origin"), "CORS allow-origin missing")
       assert(
-        resp.headers.headers
-          .exists(h => h.name.toString.equalsIgnoreCase("Access-Control-Allow-Origin") && h.value == "*"),
+        resp.headers.headers.exists(h =>
+          h.name.toString.equalsIgnoreCase("Access-Control-Allow-Origin") && h.value == "*"
+        ),
         "allow-origin must be *"
       )
       assert(
@@ -43,8 +44,9 @@ class NfReachRoutesSpec extends CatsEffectSuite:
     routes.run(req).map { resp =>
       assertEquals(resp.status, Status.NoContent)
       assert(
-        resp.headers.headers
-          .exists(h => h.name.toString.equalsIgnoreCase("Access-Control-Allow-Private-Network") && h.value == "true"),
+        resp.headers.headers.exists(h =>
+          h.name.toString.equalsIgnoreCase("Access-Control-Allow-Private-Network") && h.value == "true"
+        ),
         "PNA preflight header missing"
       )
     }

@@ -267,9 +267,7 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
         assertEquals(json.hcursor.downField("resolvedFrom").as[String], Right("seed"))
     }
 
-  test(
-    "PUT a settable name with no agent dir → in-place sidecar + 200 (builtin-def); a non-settable name → 400 gate first"
-  ):
+  test("PUT a settable name with no agent dir → in-place sidecar + 200 (builtin-def); a non-settable name → 400 gate first"):
     withFixture { () =>
       for
         fresh <- putJson("/agents/project-dispatcher/model", io.circe.Json.obj("model" -> io.circe.Json.Null))
@@ -286,7 +284,7 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
         val sidecar = io.circe.parser
           .parse(os.read(PathUtil.dataRoot / "agents" / "project-dispatcher" / "agent.json")) match
           case Right(j) => j
-          case Left(e) => fail(s"the created sidecar must be JSON: $e")
+          case Left(e)  => fail(s"the created sidecar must be JSON: $e")
         assertEquals(
           sidecar.asObject.map(_.keys.toSet),
           Some(Set("name")),

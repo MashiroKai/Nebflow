@@ -147,8 +147,7 @@ object SingleInstanceGuard:
    */
   def connectProbeAccepted(port: Int): Boolean = connectAccepted(port)
 
-  /**
-   * Probe health without the system proxy. Recognize the current/legacy
+  /** Probe health without the system proxy. Recognize the current/legacy
    * product names, or the full legacy health shape, rather than arbitrary
    * responses containing a product/version key.
    */
@@ -174,13 +173,11 @@ object SingleInstanceGuard:
               case Some(product) => Set("stand", "stand", Branding.lowerName).contains(product)
               case None =>
                 c.get[String]("status").toOption.contains("ok") &&
-                c.get[String]("version").toOption.exists(_.nonEmpty) &&
-                c.downField("providers").focus.exists(_.isObject)
+                  c.get[String]("version").toOption.exists(_.nonEmpty) &&
+                  c.downField("providers").focus.exists(_.isObject)
           }
           if isOurs then Some(s"http://localhost:$port") else None
-        end if
       finally conn.disconnect()
-      end try
     }.toOption.flatten
 
   /**

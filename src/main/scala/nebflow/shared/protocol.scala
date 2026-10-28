@@ -378,8 +378,6 @@ object UiMessage:
   ) extends UiMessage:
     val typeName = "ai"
 
-  end Ai
-
   case class Tool(
     label: String,
     summary: String,
@@ -401,8 +399,6 @@ object UiMessage:
     terminal: Option[Boolean] = None
   ) extends UiMessage:
     val typeName = "tool"
-
-  end Tool
 
   case class Agent(
     agentId: String,
@@ -534,8 +530,7 @@ object UiMessage:
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
       val withModel = m.model.fold(withDur)(mod => withDur.deepMerge(Json.obj("model" -> mod.asJson)))
       val withThinking = m.thinking.fold(withModel)(th => withModel.deepMerge(Json.obj("thinking" -> th.asJson)))
-      val withTs =
-        if m.timestamp > 0 then withThinking.deepMerge(Json.obj("timestamp" -> m.timestamp.asJson)) else withThinking
+      val withTs = if m.timestamp > 0 then withThinking.deepMerge(Json.obj("timestamp" -> m.timestamp.asJson)) else withThinking
       // replay-terminal 批（2026-10-28）：轮终态标记——只在 Some(true) 落键
       // （缺席即不落键 ⇒ 无标记行与旧字节形态逐字相同）。
       if m.terminal.contains(true) then withTs.deepMerge(Json.obj("terminal" -> true.asJson)) else withTs

@@ -45,11 +45,9 @@ class IndexEntryAliasSpec extends FunSuite:
   private val NullBackend =
     null.asInstanceOf[sttp.client4.StreamBackend[IO, sttp.capabilities.fs2.Fs2Streams[IO]]]
 
-  /**
-   * 最小 SharedResources（HealthRoutesSpec 先例）：路由表构造只解引用
+  /** 最小 SharedResources（HealthRoutesSpec 先例）：路由表构造只解引用
    *  `.actorSystem`，本 spec 的目标 case（`GET -> Root[/index.html]`）不触碰
-   *  任何服务依赖 —— null 即安全。
-   */
+   *  任何服务依赖 —— null 即安全。 */
   private def mkResources: SharedResources =
     SharedResources(
       llm = null,
@@ -66,8 +64,7 @@ class IndexEntryAliasSpec extends FunSuite:
       fileLockManager = FileLockManager.create.unsafeRunSync(),
       sessionModelOverrides = cats.effect.Ref.unsafe[IO, Map[String, ModelCandidate]](Map.empty),
       providerRegistry = new ProviderRegistry(
-        cats.effect.Ref
-          .unsafe[IO, NebflowServiceConfig](NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))),
+        cats.effect.Ref.unsafe[IO, NebflowServiceConfig](NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))),
         NullBackend
       ),
       healthMonitor = ProviderHealthMonitor(null),

@@ -57,23 +57,13 @@ class DelegateTerminalDeliverySpec extends CatsEffectSuite:
   test("needsRedelivery: 超龄未确认 = true（barrier 清零但父未收到的精确形态）") {
     // 本例实态钉死：delegate_report(finish) 已落盘、会话 Idle、barrier 0/0——
     // 但父会话从未收到终态；首投回执超龄未 ack 即该形态。
-    assert(
-      DelegateDeliveryReceipts.needsRedelivery(receipt(), now = 1000L + 10 * 60 * 1000L + 1, graceMs = 10 * 60 * 1000L)
-    )
+    assert(DelegateDeliveryReceipts.needsRedelivery(receipt(), now = 1000L + 10 * 60 * 1000L + 1, graceMs = 10 * 60 * 1000L))
   }
 
   test("needsRedelivery: 未超龄 / 已确认 = false") {
     val grace = 10 * 60 * 1000L
-    assert(
-      !DelegateDeliveryReceipts.needsRedelivery(receipt(deliveredAt = 1000L), now = 1000L + grace, graceMs = grace)
-    )
-    assert(
-      !DelegateDeliveryReceipts.needsRedelivery(
-        receipt(ackedAt = Some(2000L)),
-        now = 1000L + grace * 10,
-        graceMs = grace
-      )
-    )
+    assert(!DelegateDeliveryReceipts.needsRedelivery(receipt(deliveredAt = 1000L), now = 1000L + grace, graceMs = grace))
+    assert(!DelegateDeliveryReceipts.needsRedelivery(receipt(ackedAt = Some(2000L)), now = 1000L + grace * 10, graceMs = grace))
   }
 
   // ── decide：单条处置裁决 ────────────────────────────────────────────────
@@ -81,11 +71,7 @@ class DelegateTerminalDeliverySpec extends CatsEffectSuite:
   test("decide: 父已删 = Drop；达上限 = Retain；否则 Redeliver") {
     import DelegateDeliveryReceipts.Decision.*
     assertEquals(DelegateDeliveryReceipts.decide(receipt(), parentExists = false), Drop)
-    assertEquals(
-      DelegateDeliveryReceipts
-        .decide(receipt(redeliveries = DelegateDeliveryReceipts.MaxRedeliveries), parentExists = true),
-      Retain
-    )
+    assertEquals(DelegateDeliveryReceipts.decide(receipt(redeliveries = DelegateDeliveryReceipts.MaxRedeliveries), parentExists = true), Retain)
     assertEquals(DelegateDeliveryReceipts.decide(receipt(), parentExists = true), Redeliver)
   }
 
@@ -109,7 +95,6 @@ class DelegateTerminalDeliverySpec extends CatsEffectSuite:
       // DelegateRegistry.list 不被 receipt 文件污染（解码失败静默跳过 + 空目录）
       _ = assert(DelegateRegistry.list().isEmpty)
     yield ()
-    end for
   }
 
   test("ackEvent: 只认 source=delegate × 终态词表 × 合法 correlationId") {

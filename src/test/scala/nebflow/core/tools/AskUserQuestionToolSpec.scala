@@ -232,10 +232,8 @@ class AskUserQuestionToolSpec extends FunSuite:
   private def multiItem(q: String, labels: String*): AskItem =
     AskItem(q, labels.map(l => AskOption(l)).toList, multiple = true)
 
-  /**
-   * 期望串归一 LF：三引号字面量在 CRLF checkout（Windows autocrlf）下带 \r，
-   * 引擎 formatAnswer 以显式 "\n" 构造 ⇒ 逐字比较在 Windows 假红；归一后契约不变。
-   */
+  /** 期望串归一 LF：三引号字面量在 CRLF checkout（Windows autocrlf）下带 \r，
+    * 引擎 formatAnswer 以显式 "\n" 构造 ⇒ 逐字比较在 Windows 假红；归一后契约不变。 */
   private def lf(s: String): String = s.replace("\r\n", "\n")
 
   private def singleItem(q: String, labels: String*): AskItem =

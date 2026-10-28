@@ -33,15 +33,11 @@ import scala.concurrent.duration.*
  */
 class RelayFrameSenderPrioritySpec extends CatsEffectSuite:
 
-  /**
-   * 闸门式假 socket：完成时刻按**车道**派发（bulk 队列 / 控制队列各自 FIFO）——
-   * 修后控制帧越过 bulk 排队，「按调用序派发」不再成立，必须按帧内容分流。
-   */
-  private final class GateFakeWebSocket(
-    bulkFutures: java.util.Queue[CompletableFuture[WebSocket]],
-    controlFutures: java.util.Queue[CompletableFuture[WebSocket]],
-    controlText: String
-  ) extends WebSocket:
+  /** 闸门式假 socket：完成时刻按**车道**派发（bulk 队列 / 控制队列各自 FIFO）——
+    * 修后控制帧越过 bulk 排队，「按调用序派发」不再成立，必须按帧内容分流。 */
+  private final class GateFakeWebSocket(bulkFutures: java.util.Queue[CompletableFuture[WebSocket]],
+                                        controlFutures: java.util.Queue[CompletableFuture[WebSocket]],
+                                        controlText: String) extends WebSocket:
     val sent = new java.util.concurrent.ConcurrentLinkedQueue[String]()
     @volatile var aborted: Boolean = false
 
@@ -50,17 +46,13 @@ class RelayFrameSenderPrioritySpec extends CatsEffectSuite:
       val q = if data.toString == controlText then controlFutures else bulkFutures
       val f = q.poll()
       if f == null then CompletableFuture.completedFuture(this) else f
-
     override def sendBinary(data: java.nio.ByteBuffer, last: Boolean): CompletableFuture[WebSocket] =
       CompletableFuture.completedFuture(this)
-
     override def sendClose(code: Int, reason: String): CompletableFuture[WebSocket] =
       CompletableFuture.completedFuture(this)
     override def request(n: Long): Unit = ()
-
     override def sendPing(data: java.nio.ByteBuffer): CompletableFuture[WebSocket] =
       CompletableFuture.completedFuture(this)
-
     override def sendPong(data: java.nio.ByteBuffer): CompletableFuture[WebSocket] =
       CompletableFuture.completedFuture(this)
     override def getSubprotocol: String = ""
@@ -68,13 +60,11 @@ class RelayFrameSenderPrioritySpec extends CatsEffectSuite:
     override def isOutputClosed: Boolean = false
     override def abort(): Unit = aborted = true
 
-  end GateFakeWebSocket
-
   private def awaitFiber(fib: FiberIO[Unit]): IO[Unit] =
     fib.join.flatMap {
       case Outcome.Succeeded(_) => IO.unit
-      case Outcome.Errored(e) => IO.raiseError(e)
-      case Outcome.Canceled() => IO.canceled
+      case Outcome.Errored(e)   => IO.raiseError(e)
+      case Outcome.Canceled()   => IO.canceled
     }
 
   private val BulkSized = "b" * (400 * 1024) // > ControlLaneMaxChars ⇒ bulk 车道
@@ -120,7 +110,7 @@ class RelayFrameSenderPrioritySpec extends CatsEffectSuite:
         // 返回）——本钉断言的是「C 何时**上得了发送位**」，不是它的写时长。
         _ <- IO(fC.complete(fake))
         _ <- IO(f1.complete(fake)) // B1 写完 → B2/B3 依 FIFO 取锁、见控制等待者让位 → C 上位
-        _ <- awaitFiber(fibC) // 修前 = C 等 B2/B3 排空才轮到（这里 f2/f3 未完成 ⇒ 永等 → 超时红）
+        _ <- awaitFiber(fibC)      // 修前 = C 等 B2/B3 排空才轮到（这里 f2/f3 未完成 ⇒ 永等 → 超时红）
         _ <- IO(assert(!f2.isDone, "控制完成后排队 bulk 不应已被放行（C 越过了队列）"))
         _ <- IO(assert(!f3.isDone, "同上（第二排队 bulk）"))
         _ <- IO(f2.complete(fake)) *> awaitFiber(fibB2)

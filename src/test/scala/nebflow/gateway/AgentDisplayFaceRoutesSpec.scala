@@ -66,8 +66,6 @@ class AgentDisplayFaceRoutesSpec extends FunSuite:
       friendService = None
     )
 
-  end mkResources
-
   private val routes = new RestApiRoutes(
     tokenRef = cats.effect.Ref.unsafe[IO, String](TestToken),
     configRef = cats.effect.Ref.unsafe[IO, NebflowServiceConfig](
@@ -106,8 +104,7 @@ class AgentDisplayFaceRoutesSpec extends FunSuite:
   // ── display-name ────────────────────────────────────────────
 
   test("PUT display-name writes agent.json displayName (root backfills the name key)"):
-    val resp =
-      run(putJson("/agents/Nebula/display-name", io.circe.Json.obj("displayName" -> io.circe.Json.fromString("小星"))))
+    val resp = run(putJson("/agents/Nebula/display-name", io.circe.Json.obj("displayName" -> io.circe.Json.fromString("小星"))))
     assertEquals(resp.status, Status.Ok)
     val json = io.circe.parser.parse(os.read(tempRoot / "agents" / "Nebula" / "agent.json")).toOption.get
     assertEquals(json.hcursor.get[String]("displayName").toOption.get, "小星")
@@ -117,66 +114,31 @@ class AgentDisplayFaceRoutesSpec extends FunSuite:
     val dir = tempRoot / "agents" / "Coder"
     os.makeDir.all(dir)
     os.write.over(dir / "agent.json", """{"name":"Coder","model":"gpt-x"}""")
-    val resp =
-      run(putJson("/agents/Coder/display-name", io.circe.Json.obj("displayName" -> io.circe.Json.fromString("码手"))))
+    val resp = run(putJson("/agents/Coder/display-name", io.circe.Json.obj("displayName" -> io.circe.Json.fromString("码手"))))
     assertEquals(resp.status, Status.Ok)
     val json = io.circe.parser.parse(os.read(dir / "agent.json")).toOption.get
     assertEquals(json.hcursor.get[String]("displayName").toOption.get, "码手")
     assertEquals(json.hcursor.get[String]("model").toOption.get, "gpt-x", "既有字段不被合并写抹掉")
 
   test("PUT display-name rejects blank, over-long and invalid agent names"):
+    assertEquals(run(putJson("/agents/Nebula/display-name", io.circe.Json.obj("displayName" -> io.circe.Json.fromString("  ")))).status, Status.BadRequest)
     assertEquals(
-      run(
-        putJson("/agents/Nebula/display-name", io.circe.Json.obj("displayName" -> io.circe.Json.fromString("  ")))
-      ).status,
-      Status.BadRequest
-    )
-    assertEquals(
-      run(
-        putJson("/agents/Nebula/display-name", io.circe.Json.obj("displayName" -> io.circe.Json.fromString("x" * 65)))
-      ).status,
+      run(putJson("/agents/Nebula/display-name", io.circe.Json.obj("displayName" -> io.circe.Json.fromString("x" * 65)))).status,
       Status.BadRequest
     )
     // 路径穿越形态（".." 判据）：用 a..b（过正则、撞显式禁令；"/agents/../x" 会被
     // Uri 归一化吃掉，测不到网关臂）。
-    assertEquals(
-      run(
-        putJson("/agents/a..b/display-name", io.circe.Json.obj("displayName" -> io.circe.Json.fromString("x")))
-      ).status,
-      Status.BadRequest
-    )
+    assertEquals(run(putJson("/agents/a..b/display-name", io.circe.Json.obj("displayName" -> io.circe.Json.fromString("x")))).status, Status.BadRequest)
 
   // ── avatar ──────────────────────────────────────────────────
 
   test("PUT avatar stores bytes behind the size gate; malformed payloads 400"):
-    assertEquals(
-      run(putJson("/agents/Nebula/avatar", io.circe.Json.obj("dataUrl" -> io.circe.Json.fromString(TinyPng)))).status,
-      Status.Ok
-    )
+    assertEquals(run(putJson("/agents/Nebula/avatar", io.circe.Json.obj("dataUrl" -> io.circe.Json.fromString(TinyPng)))).status, Status.Ok)
     assert(os.exists(avatarPath("Nebula")), "字节落 agents/<name>/avatar")
-    assertEquals(
-      run(
-        putJson(
-          "/agents/Nebula/avatar",
-          io.circe.Json.obj("dataUrl" -> io.circe.Json.fromString("data:text/html;base64,PGI+"))
-        )
-      ).status,
-      Status.BadRequest
-    )
-    assertEquals(
-      run(
-        putJson(
-          "/agents/Nebula/avatar",
-          io.circe.Json.obj("dataUrl" -> io.circe.Json.fromString("data:image/png;base64,not!base64"))
-        )
-      ).status,
-      Status.BadRequest
-    )
+    assertEquals(run(putJson("/agents/Nebula/avatar", io.circe.Json.obj("dataUrl" -> io.circe.Json.fromString("data:text/html;base64,PGI+")))).status, Status.BadRequest)
+    assertEquals(run(putJson("/agents/Nebula/avatar", io.circe.Json.obj("dataUrl" -> io.circe.Json.fromString("data:image/png;base64,not!base64")))).status, Status.BadRequest)
     val huge = "data:image/png;base64," + ("A" * 200_001)
-    assertEquals(
-      run(putJson("/agents/Nebula/avatar", io.circe.Json.obj("dataUrl" -> io.circe.Json.fromString(huge)))).status,
-      Status.BadRequest
-    )
+    assertEquals(run(putJson("/agents/Nebula/avatar", io.circe.Json.obj("dataUrl" -> io.circe.Json.fromString(huge)))).status, Status.BadRequest)
 
   test("GET avatar serves explicit byte-stream entity with content-sha ETag; If-None-Match hits 304; absent 404"):
     val resp = run(Request[IO](method = Method.GET, uri = Uri.unsafeFromString("/agents/Nebula/avatar")))
@@ -192,43 +154,19 @@ class AgentDisplayFaceRoutesSpec extends FunSuite:
         .putHeaders(Header.Raw(CIString("If-None-Match"), etag))
     )
     assertEquals(notMod.status, Status.NotModified)
-    assertEquals(
-      run(Request[IO](method = Method.GET, uri = Uri.unsafeFromString("/agents/Coder/avatar"))).status,
-      Status.NotFound
-    )
+    assertEquals(run(Request[IO](method = Method.GET, uri = Uri.unsafeFromString("/agents/Coder/avatar"))).status, Status.NotFound)
 
   test("DELETE avatar clears and is idempotent"):
     assert(os.exists(avatarPath("Nebula")), "前置：头像在位")
-    assertEquals(
-      run(Request[IO](method = Method.DELETE, uri = Uri.unsafeFromString("/agents/Nebula/avatar"))).status,
-      Status.Ok
-    )
+    assertEquals(run(Request[IO](method = Method.DELETE, uri = Uri.unsafeFromString("/agents/Nebula/avatar"))).status, Status.Ok)
     assert(!os.exists(avatarPath("Nebula")))
-    assertEquals(
-      run(Request[IO](method = Method.DELETE, uri = Uri.unsafeFromString("/agents/Nebula/avatar"))).status,
-      Status.Ok,
-      "幂等"
-    )
+    assertEquals(run(Request[IO](method = Method.DELETE, uri = Uri.unsafeFromString("/agents/Nebula/avatar"))).status, Status.Ok, "幂等")
 
   // ── rail 与退役 sibling ─────────────────────────────────────
 
   test("all display faces sit behind withAuth (bare request ⇒ 403) and the retired PUT sibling stays 410"):
-    assertEquals(
-      runNoAuth(Request[IO](method = Method.GET, uri = Uri.unsafeFromString("/agents/Nebula/avatar"))).status,
-      Status.Forbidden
-    )
-    assertEquals(
-      runNoAuth(
-        putJson("/agents/Nebula/display-name", io.circe.Json.obj("displayName" -> io.circe.Json.fromString("x")))
-      ).status,
-      Status.Forbidden
-    )
-    assertEquals(
-      runNoAuth(
-        putJson("/agents/Nebula/avatar", io.circe.Json.obj("dataUrl" -> io.circe.Json.fromString(TinyPng)))
-      ).status,
-      Status.Forbidden
-    )
+    assertEquals(runNoAuth(Request[IO](method = Method.GET, uri = Uri.unsafeFromString("/agents/Nebula/avatar"))).status, Status.Forbidden)
+    assertEquals(runNoAuth(putJson("/agents/Nebula/display-name", io.circe.Json.obj("displayName" -> io.circe.Json.fromString("x")))).status, Status.Forbidden)
+    assertEquals(runNoAuth(putJson("/agents/Nebula/avatar", io.circe.Json.obj("dataUrl" -> io.circe.Json.fromString(TinyPng)))).status, Status.Forbidden)
     val retired = run(putJson("/agents/Nebula", io.circe.Json.obj("skills" -> io.circe.Json.arr())))
     assertEquals(retired.status, Status.Gone, "能力配置退役面不被本批复活")
-end AgentDisplayFaceRoutesSpec

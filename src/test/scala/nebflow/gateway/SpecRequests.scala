@@ -43,6 +43,8 @@ private[gateway] object SpecRequests:
    * in-process HTTP shape.
    */
   def withRemote(r: Request[IO], remote: Option[SocketAddress[IpAddress]]): Request[IO] =
-    remote.fold(r)(a => r.withAttribute(Request.Keys.ConnectionInfo, Request.Connection(LoopbackV4, a, secure = false)))
+    remote.fold(r)(a =>
+      r.withAttribute(Request.Keys.ConnectionInfo, Request.Connection(LoopbackV4, a, secure = false))
+    )
 
 end SpecRequests

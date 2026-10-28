@@ -82,13 +82,13 @@ private[gateway] object ConsoleAssetBatchRoutes:
       else
         val segs = p.split('/').toList
         segs.nonEmpty && segs.lengthIs <= MaxSegments &&
-        segs.forall(s => s.nonEmpty && s != ".." && !s.contains('\\'))
+          segs.forall(s => s.nonEmpty && s != ".." && !s.contains('\\'))
 
   /** 扩展名 → Content-Type（与 StaticFile 的推导同词表）。 */
   private[gateway] def contentTypeOf(path: String): String =
     val ext = path.lastIndexOf('.') match
       case i if i >= 0 && i < path.length - 1 => path.substring(i + 1).toLowerCase(java.util.Locale.ROOT)
-      case _ => ""
+      case _                                  => ""
     MediaType
       .forExtension(ext)
       .map(mt => s"${mt.mainType}/${mt.subType}")
@@ -115,14 +115,7 @@ private[gateway] object ConsoleAssetBatchRoutes:
         if total > limit then None
         else Some(java.util.Arrays.copyOf(buf, total))
     catch case _: Throwable => None
-    finally
-      if in != null then
-        try in.close()
-        catch case _: Throwable => ()
-
-    end try
-
-  end readCapped
+    finally if in != null then try in.close() catch case _: Throwable => ()
 
   def routes: HttpRoutes[IO] = HttpRoutes.of[IO] { case req @ POST -> Root / "console-assets" =>
     req.as[Json].attempt.flatMap {

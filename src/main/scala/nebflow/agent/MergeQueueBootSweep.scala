@@ -75,44 +75,23 @@ object MergeQueueBootSweep:
     IO.blocking(DelegateRegistry.find(m.delegateId)).flatMap {
       case None =>
         // 记录已随清理消失（旧盘/外部腿）——无可并现场，诚实关 owner-gone。
-        ownerGone(
-          resources,
-          m,
-          s"no delegate registry record for '${m.delegateId}' — the owner session did not survive the restart"
-        )
+        ownerGone(resources, m, s"no delegate registry record for '${m.delegateId}' — the owner session did not survive the restart")
       case Some(rec) =>
         (rec.branch, rec.baseBranch) match
           case (Some(branch), Some(baseBranch)) =>
             IO.blocking {
               Try(os.Path(rec.projectWorkspace.getOrElse(rec.cwd))).toOption
                 .filter(GitWorktrees.isGitRepo)
-                .map(ws =>
-                  (
-                    ws,
-                    GitWorktrees.isAncestor(ws, branch, baseBranch),
-                    GitWorktrees.commitsAhead(ws, baseBranch, branch)
-                  )
-                )
+                .map(ws => (ws, GitWorktrees.isAncestor(ws, branch, baseBranch), GitWorktrees.commitsAhead(ws, baseBranch, branch)))
             }.flatMap {
               case None =>
-                ownerGone(
-                  resources,
-                  m,
-                  s"base workspace '${rec.projectWorkspace.getOrElse(rec.cwd)}' unreadable after restart — needs dispatcher handling"
-                )
+                ownerGone(resources, m, s"base workspace '${rec.projectWorkspace.getOrElse(rec.cwd)}' unreadable after restart — needs dispatcher handling")
               case Some((ws, ancestor, ahead)) =>
                 if ancestor.contains(true) then
                   // 已并：合并落地、成员中断在关账前——收残留现场（同守卫），报父 completed。
                   for
                     _ <- PostMergeCleanup.run(Some(rec)).void
-                    _ <- IO(
-                      MergeQueue.closeMerged(
-                        m.delegateId,
-                        via = "boot-reconcile",
-                        closeReason = Some("branch already merged (fact-check at boot)"),
-                        cleanup = false
-                      )
-                    )
+                    _ <- IO(MergeQueue.closeMerged(m.delegateId, via = "boot-reconcile", closeReason = Some("branch already merged (fact-check at boot)"), cleanup = false))
                     _ <- notifyParent(
                       resources,
                       rec,
@@ -123,16 +102,7 @@ object MergeQueueBootSweep:
                   yield Report(alreadyMerged = List(m.delegateId))
                 else if !GitWorktrees.branchExists(ws, branch) || ahead == 0 then
                   for
-                    _ <- IO(
-                      MergeQueue.closeMerged(
-                        m.delegateId,
-                        via = "boot-reconcile",
-                        closeReason = Some(
-                          s"nothing to merge (branch exists=${GitWorktrees.branchExists(ws, branch)}, commitsAhead=$ahead)"
-                        ),
-                        cleanup = false
-                      )
-                    )
+                    _ <- IO(MergeQueue.closeMerged(m.delegateId, via = "boot-reconcile", closeReason = Some(s"nothing to merge (branch exists=${GitWorktrees.branchExists(ws, branch)}, commitsAhead=$ahead)"), cleanup = false))
                     _ <- notifyParent(
                       resources,
                       rec,

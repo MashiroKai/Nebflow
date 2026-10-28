@@ -81,10 +81,8 @@ class NeblinkBootstrapLegSpec extends CatsEffectSuite:
       friendService = None
     )
 
-  /**
-   * start 只读 ms.neblinkConfig（effectiveLogto 单点），presence/tunnel/discovery
-   * 都不参与 ⇒ stack 到 ms 为止（同 DeviceFaceHardeningRoutesSpec 的最小装配）。
-   */
+  /** start 只读 ms.neblinkConfig（effectiveLogto 单点），presence/tunnel/discovery
+    * 都不参与 ⇒ stack 到 ms 为止（同 DeviceFaceHardeningRoutesSpec 的最小装配）。 */
   private def mkStack(dispatcher: Dispatcher[IO]): IO[(NeblinkService, RestApiRoutes)] =
     NeblinkService.create(0, dispatcher).map { ms =>
       val routes = new RestApiRoutes(
@@ -100,18 +98,14 @@ class NeblinkBootstrapLegSpec extends CatsEffectSuite:
       (ms, routes)
     }
 
-  /**
-   * Explicit logto block with a PKCE client: authorizeUrl is built LOCALLY
-   * (no network). The embedded default would also resolve, but the explicit
-   * block keeps the spec independent of the embedded product config
-   * (same shape the NeblinkLogoutRoutesSpec start tests pin).
-   */
+  /** Explicit logto block with a PKCE client: authorizeUrl is built LOCALLY
+    * (no network). The embedded default would also resolve, but the explicit
+    * block keeps the spec independent of the embedded product config
+    * (same shape the NeblinkLogoutRoutesSpec start tests pin). */
   private def configureLogto(ms: NeblinkService): IO[Unit] =
-    ms.updateConfig(
-      _.copy(logto =
-        Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app")))
-      )
-    )
+    ms.updateConfig(_.copy(logto =
+      Some(LogtoConfig(endpoint = "https://auth.example", clientId = "legacy", pkceClientId = Some("pkce-app")))
+    ))
 
   // ── request builders ────────────────────────────────────
 
@@ -321,10 +315,7 @@ class NeblinkBootstrapLegSpec extends CatsEffectSuite:
           body <- resp.as[Json]
         yield
           assertEquals(resp.status, Status.Ok)
-          assert(
-            body.hcursor.downField("loggedIn").as[Boolean].toOption.isDefined,
-            s"credentialed read unchanged: $body"
-          )
+          assert(body.hcursor.downField("loggedIn").as[Boolean].toOption.isDefined, s"credentialed read unchanged: $body")
       }
     }
   }

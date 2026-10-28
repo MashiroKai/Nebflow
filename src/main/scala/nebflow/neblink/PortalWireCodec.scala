@@ -82,11 +82,11 @@ object PortalWireCodec:
     "MigrationChunk"
   )
 
-  private val WsFrameKinds = List("text", "binary")
-  private val WsDataEncodings = List("none", "gzip")
-  private val ReqOrigins = List("portal")
+  private val WsFrameKinds     = List("text", "binary")
+  private val WsDataEncodings  = List("none", "gzip")
+  private val ReqOrigins       = List("portal")
   private val TicketMintErrors = List("rate_limited", "quiesced", "unbound")
-  private val BindingKinds = List("revoked", "stand-down", "quiesce", "quiesce-renew", "quiesce-lift")
+  private val BindingKinds     = List("revoked", "stand-down", "quiesce", "quiesce-renew", "quiesce-lift")
 
   /** `headers` keeps insertion order so canonical encoding stays byte-stable. */
   type Headers = Vector[(String, String)]
@@ -102,7 +102,8 @@ object PortalWireCodec:
 
   final case class RelayResponse(requestId: String, output: String, error: String) extends PortalFrame
 
-  final case class HttpRequest(requestId: String, method: String, path: String, headers: Headers) extends PortalFrame
+  final case class HttpRequest(requestId: String, method: String, path: String, headers: Headers)
+      extends PortalFrame
 
   /**
    * Contract 2.4 (v1.1 D8): `setCookie` carries one element per `Set-Cookie`
@@ -113,7 +114,8 @@ object PortalWireCodec:
   final case class HttpResponse(requestId: String, status: Int, headers: Headers, setCookie: Vector[String])
       extends PortalFrame
 
-  final case class BodyFrame(requestId: String, seq: Int, more: Boolean, data: Array[Byte]) extends PortalFrame
+  final case class BodyFrame(requestId: String, seq: Int, more: Boolean, data: Array[Byte])
+      extends PortalFrame
 
   /** Contract 2.6 (v1.1 D9): optional bridge `headers`, cookie carried verbatim. */
   final case class WsOpen(
@@ -125,7 +127,8 @@ object PortalWireCodec:
 
   final case class WsOpenResult(requestId: String, accepted: Boolean, status: Int) extends PortalFrame
 
-  final case class WsFrame(requestId: String, kind: String, data: Array[Byte], fin: Boolean) extends PortalFrame
+  final case class WsFrame(requestId: String, kind: String, data: Array[Byte], fin: Boolean)
+      extends PortalFrame
 
   /**
    * Contract 2.14 (v1.3): one shard frame of a ws_open-cycle message. `seq` is
@@ -160,7 +163,8 @@ object PortalWireCodec:
     error: Option[String]
   ) extends PortalFrame
 
-  final case class BindingControl(kind: String, migrationId: Option[String], ttlSec: Option[Int]) extends PortalFrame
+  final case class BindingControl(kind: String, migrationId: Option[String], ttlSec: Option[Int])
+      extends PortalFrame
 
   final case class MigrationChunk(
     migrationId: String,
@@ -516,26 +520,22 @@ object PortalWireCodec:
 
   private def opt[A](o: JsonObject, name: String)(decode: Json => Either[Rejection, A]): Either[Rejection, Option[A]] =
     o(name) match
-      case None => Right(None)
+      case None    => Right(None)
       case Some(j) => decode(j).map(Some(_))
 
   private def reqString(o: JsonObject, name: String): Either[Rejection, String] = req(o, name)(jsonString(_, name))
-  private def reqInt(o: JsonObject, name: String): Either[Rejection, Int] = req(o, name)(jsonInt(_, name))
-  private def reqBool(o: JsonObject, name: String): Either[Rejection, Boolean] = req(o, name)(jsonBool(_, name))
-  private def reqUuid(o: JsonObject, name: String): Either[Rejection, String] = req(o, name)(jsonUuid(_, name))
-
+  private def reqInt(o: JsonObject, name: String): Either[Rejection, Int]       = req(o, name)(jsonInt(_, name))
+  private def reqBool(o: JsonObject, name: String): Either[Rejection, Boolean]  = req(o, name)(jsonBool(_, name))
+  private def reqUuid(o: JsonObject, name: String): Either[Rejection, String]   = req(o, name)(jsonUuid(_, name))
   private def reqEnum(o: JsonObject, name: String, allowed: List[String]): Either[Rejection, String] =
     req(o, name)(jsonEnum(_, name, allowed))
 
   private def optString(o: JsonObject, name: String): Either[Rejection, Option[String]] =
     opt(o, name)(jsonString(_, name))
-
   private def optInt(o: JsonObject, name: String): Either[Rejection, Option[Int]] =
     opt(o, name)(jsonInt(_, name))
-
   private def optUuid(o: JsonObject, name: String): Either[Rejection, Option[String]] =
     opt(o, name)(jsonUuid(_, name))
-
   private def optEnum(o: JsonObject, name: String, allowed: List[String]): Either[Rejection, Option[String]] =
     opt(o, name)(jsonEnum(_, name, allowed))
 
@@ -577,7 +577,9 @@ object PortalWireCodec:
 
   /** Contract 2.6: `path` is absolute (leading '/'). */
   private def jsonAbsolutePath(j: Json, name: String): Either[Rejection, String] =
-    jsonString(j, name).flatMap(p => Either.cond(p.startsWith("/"), p, Rejection("invalid_format", field = Some(name))))
+    jsonString(j, name).flatMap(p =>
+      Either.cond(p.startsWith("/"), p, Rejection("invalid_format", field = Some(name)))
+    )
 
   /** Contract 2.13: `sha256` is 64 lowercase hex chars. */
   private def jsonSha256(j: Json, name: String): Either[Rejection, String] =

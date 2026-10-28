@@ -41,10 +41,8 @@ class WsBrowseDeviceLegSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(originalRoot)
     os.remove.all(tempRoot)
 
-  /**
-   * 只喂 `wsBrowse.list` 的 ctx（ChainViewWsEntrySpec.chatCtx 同款 null 占位纪律：
-   *  腿读不到的依赖刻意置 null，越界即 NPE 报警，不静默蒙混）。
-   */
+  /** 只喂 `wsBrowse.list` 的 ctx（ChainViewWsEntrySpec.chatCtx 同款 null 占位纪律：
+   *  腿读不到的依赖刻意置 null，越界即 NPE 报警，不静默蒙混）。 */
   private def browseCtx(res: SharedResources): WsDispatchCtx =
     WsDispatchCtx(
       logger = NebflowLogger.forName("wsbrowse.device.leg.spec"),
@@ -97,8 +95,7 @@ class WsBrowseDeviceLegSpec extends CatsEffectSuite:
         )
         parent.foreach(p => fields += "parent" -> Json.fromString(p))
         err.foreach(e => fields += "error" -> Json.fromString(e))
-        Json.obj(fields.toList*)
-      ,
+        Json.obj(fields.toList*),
       browseResultFrameImpl = null,
       browseErrorFrameImpl = null,
       browseEntryCapImpl = 0,

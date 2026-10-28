@@ -90,9 +90,7 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
     }
   }
 
-  test(
-    "N-2+N-4 today's clone regression: SILENT no-output command auto-backgrounds at the 2s budget (not stall-killed), receipt carries job id + query hint, result delivered on completion"
-  ) {
+  test("N-2+N-4 today's clone regression: SILENT no-output command auto-backgrounds at the 2s budget (not stall-killed), receipt carries job id + query hint, result delivered on completion") {
     // 克隆形态：运行期零输出零 CPU（python sleep = poll 等待，进程字符串**不含**
     // `sleep <数字>`，不享受 SleepCommandRe 的 ceiling 豁免——真刀真枪过 ceiling 面；
     // 子进程 stdin=/dev/null，故不用 `read -t`——它会瞬间 EOF）。
@@ -130,12 +128,9 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
         _ <- IO(assert(completed.contains("clone-done"), s"result delivered on completion: $completed"))
       yield ()).guarantee(BgTaskRegistry.unregister(jobId).attempt.void)
     yield ())
-    end for
   }
 
-  test(
-    "N-3 OLD-face control (对照): same silent command with NO budget hits the 600s-class ceiling kill — the incident path"
-  ) {
+  test("N-3 OLD-face control (对照): same silent command with NO budget hits the 600s-class ceiling kill — the incident path") {
     // 压缩 ceiling（4000ms 判死 / 1s 采样），预算保持缺省（120s 未到）⇒
     // 旧面行为 = 前台阶段被 ceiling 杀。这就是当日事故的精确复现形态
     // （预算从未到点、停滞阈值先到、结果 = 杀）。
@@ -185,7 +180,6 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
           .map(out => assert(out.contains("adopted-survivor"), s"runs to completion: $out"))
           .guarantee(BgTaskRegistry.unregister(jobId).attempt.void)
       yield ())
-      end for
     }
   }
 
@@ -212,7 +206,6 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
         .map(out => assert(out.contains("tick-10"), s"ran to completion: $out"))
         .guarantee(BgTaskRegistry.unregister(jobId).attempt.void)
     yield ())
-    end for
   }
 
   test("N-6 explicit timeout hint is clamped to the configured budget (author's zero-blocking ruling wins)") {
@@ -238,7 +231,6 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
         .map(out => assert(out.contains("clamped-done"), s"result delivered: $out"))
         .guarantee(BgTaskRegistry.unregister(jobId).attempt.void)
     yield ())
-    end for
   }
 
   test("N-7 engine short-command family regression: fast commands stay foreground with real output (default config)") {

@@ -56,11 +56,9 @@ object CanvasTabs:
   final case class Tomb(id: String, closedAt: Long, dev: Option[String], reopenedAt: Option[Long]):
     def latestTs: Long = math.max(closedAt, reopenedAt.getOrElse(Long.MinValue))
 
-    /**
-     * 生效墓碑：closedAt 晚于 reopenedAt。重开过的老墓碑保持惰性（不删除）——
-     * 旧 PUT 重放既无法复活「已重开又被关」的标签，也无法把已重开的标签
-     * 压回关闭态（时间戳裁决，见 merge）。
-     */
+    /** 生效墓碑：closedAt 晚于 reopenedAt。重开过的老墓碑保持惰性（不删除）——
+      * 旧 PUT 重放既无法复活「已重开又被关」的标签，也无法把已重开的标签
+      * 压回关闭态（时间戳裁决，见 merge）。 */
     def active: Boolean = closedAt > reopenedAt.getOrElse(Long.MinValue)
 
   /**
@@ -156,7 +154,7 @@ object CanvasTabs:
   private def arrField(j: Json, field: String): Vector[Json] =
     j.hcursor.downField(field).as[Option[Vector[Json]]] match
       case Right(Some(arr)) => arr
-      case _ => Vector.empty
+      case _                => Vector.empty
 
   /** 宽松解析墓碑数组（merge 只吃已过 validate 的载荷，坏条目静默跳过）。 */
   private def parseTombstones(j: Json): Vector[Tomb] =
@@ -208,7 +206,7 @@ object CanvasTabs:
     parseTombstones(put).foreach { t =>
       map(t.id) = map.get(t.id) match
         case Some(old) => old.copy(closedAt = math.max(old.closedAt, t.closedAt), dev = t.dev.orElse(old.dev))
-        case None => t
+        case None      => t
     }
     parseReopens(put).foreach { r =>
       map.get(r.id).foreach { old =>
@@ -229,11 +227,7 @@ object CanvasTabs:
     val tabs = kept.toVector
     val prevActive =
       prev.flatMap(_.hcursor.downField("activeTabId").as[Option[String]].toOption.flatten)
-    val activeId = put.hcursor
-      .downField("activeTabId")
-      .as[Option[String]]
-      .toOption
-      .flatten
+    val activeId = put.hcursor.downField("activeTabId").as[Option[String]].toOption.flatten
       .orElse(prevActive)
       .filter(id => !activeIds(id) && id.nonEmpty)
     val tombJson = map.values.toVector.sortBy(_.latestTs).map { t =>
@@ -248,7 +242,6 @@ object CanvasTabs:
     fields("tombstones") = Json.fromValues(tombJson)
     activeId.foreach(id => fields("activeTabId") = Json.fromString(id))
     Json.fromJsonObject(io.circe.JsonObject.fromIterable(fields))
-  end merge
 
 end CanvasTabs
 

@@ -20,8 +20,7 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
 
   /** 假发送缝：connId → 已收帧列表（序即送达序）。 */
   private def fixture(enabled: Boolean = true): IO[(ConsoleTakeover, Ref[IO, List[(String, Json)]])] =
-    for
-      sent <- Ref.of[IO, List[(String, Json)]](Nil)
+    for sent <- Ref.of[IO, List[(String, Json)]](Nil)
       reg = new ConsoleTakeover(
         (connId, json) => sent.update(_.prepended((connId, json))),
         logger,
@@ -42,8 +41,7 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
   // ── A1 二进一踢：B fresh claim ⇒ owner 翻位 + A 活跃连接收 takeover 帧 ──
 
   test("A1 second fresh session takes over: owner flips, old owner's live conns get takeover frame"):
-    for
-      (reg, sent) <- fixture()
+    for (reg, sent) <- fixture()
       _ <- reg.onConnect(sidA, "conn-a1")
       _ <- reg.onConnect(sidB, "conn-b1")
       ownerNow <- reg.owner
@@ -58,8 +56,7 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
   // ── A2 刷新不自杀：同会话重连静默续位，零帧 ──
 
   test("A2 same-session reconnect (refresh) silently resumes: no frame, owner unchanged"):
-    for
-      (reg, sent) <- fixture()
+    for (reg, sent) <- fixture()
       _ <- reg.onConnect(sidA, "conn-a1")
       _ <- reg.onConnect(sidA, "conn-a2") // 刷新后新连接（旧连接未及离场也无妨）
       ownerNow <- reg.owner
@@ -71,8 +68,7 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
   // ── A3 断线宽限不误踢：owner 掉线不摘位；同会话重连零帧 ──
 
   test("A3 owner drop never yields: disconnect keeps ownership, resume is silent"):
-    for
-      (reg, sent) <- fixture()
+    for (reg, sent) <- fixture()
       _ <- reg.onConnect(sidA, "conn-a1")
       _ <- reg.onDisconnect("conn-a1") // 掉线（含 #960 判死回收路径）
       ownerAfterDrop <- reg.owner
@@ -89,8 +85,7 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
   // ── A4 重新接管反向踢 ──
 
   test("A4 retake flips ownership back and reverse-kicks the new owner"):
-    for
-      (reg, sent) <- fixture()
+    for (reg, sent) <- fixture()
       _ <- reg.onConnect(sidA, "conn-a1")
       _ <- reg.onConnect(sidB, "conn-b1") // B 接管，A 落 superseded
       replies <- Ref.of[IO, List[Json]](Nil)
@@ -114,8 +109,7 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
   // ── A5 旧主回连不反抢：pastOwner 重连落 superseded（本连接收帧，owner 不动）──
 
   test("A5 past-owner reconnect does NOT auto-reclaim: it lands superseded, owner untouched"):
-    for
-      (reg, sent) <- fixture()
+    for (reg, sent) <- fixture()
       _ <- reg.onConnect(sidA, "conn-a1")
       _ <- reg.onConnect(sidB, "conn-b1") // B 接管
       _ <- reg.onDisconnect("conn-a1")
@@ -138,8 +132,7 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
   // ── A6 僵尸回收不触发提示：回收只摘连接账、无任何帧 ──
 
   test("A6 zombie recycle (disconnect of every conn) emits zero frames and keeps ownership"):
-    for
-      (reg, sent) <- fixture()
+    for (reg, sent) <- fixture()
       _ <- reg.onConnect(sidA, "conn-a1")
       _ <- reg.onConnect(sidA, "conn-a2")
       _ <- reg.onDisconnect("conn-a1") *> reg.onDisconnect("conn-a2") // 判死回收全场连接
@@ -154,8 +147,7 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
   // ── A7 总闸关闭 = 现行为零漂移 ──
 
   test("A7 master switch off: registry is a full no-op (no claims, no frames)"):
-    for
-      (reg, sent) <- fixture(enabled = false)
+    for (reg, sent) <- fixture(enabled = false)
       _ <- reg.onConnect(sidA, "conn-a1")
       _ <- reg.onConnect(sidB, "conn-b1")
       replies <- Ref.of[IO, List[Json]](Nil)
@@ -171,8 +163,7 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
   // ── A8 Bearer 直通 + 帧形/判别函数钉 ──
 
   test("A8 unregistered conn (bearer rail bypass) retake is refused; frame shapes pinned"):
-    for
-      (reg, sent) <- fixture()
+    for (reg, sent) <- fixture()
       _ <- reg.onConnect(sidA, "conn-a1")
       replies <- Ref.of[IO, List[Json]](Nil)
       _ <- reg.handleRetake("conn-ghost", j => replies.update(_.prepended(j))) // 未注册连接
@@ -198,8 +189,7 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
   // ── A9 fresh claim 对无活连接的旧主必胜（旧主不在场 = 推送尽力而为）──
 
   test("A9 fresh claim wins even when the incumbent has no live conn (best-effort push)"):
-    for
-      (reg, sent) <- fixture()
+    for (reg, sent) <- fixture()
       _ <- reg.onConnect(sidA, "conn-a1")
       _ <- reg.onDisconnect("conn-a1") // 旧主已死（休眠/回收）
       _ <- reg.onConnect(sidC, "conn-c1") // 第三台进入
@@ -212,8 +202,7 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
   // ── A10 多标签同会话集体被踢 + retake 面向全会话广播 ──
 
   test("A10 takeover pushes reach every live conn of the displaced session"):
-    for
-      (reg, sent) <- fixture()
+    for (reg, sent) <- fixture()
       _ <- reg.onConnect(sidA, "conn-a1")
       _ <- reg.onConnect(sidA, "conn-a2") // 同浏览器第二标签
       _ <- reg.onConnect(sidB, "conn-b1")
@@ -221,10 +210,7 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
       a2Frames <- framesTo(sent, "conn-a2")
     yield
       assertEquals(aFrames.map(_.hcursor.downField("type").as[String].getOrElse("?")), List("takeover"))
-      assertEquals(
-        a2Frames.map(_.hcursor.downField("type").as[String].getOrElse("?")),
-        List("takeover"),
-        "同会话全部活跃连接都收接管帧（模态在两个标签都弹）"
-      )
+      assertEquals(a2Frames.map(_.hcursor.downField("type").as[String].getOrElse("?")), List("takeover"),
+        "同会话全部活跃连接都收接管帧（模态在两个标签都弹）")
 
 end ConsoleTakeoverSpec

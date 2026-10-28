@@ -161,11 +161,9 @@ class ConsoleFastpathSpec extends CatsEffectSuite:
       .withEntity(Json.obj("paths" -> Json.fromValues(paths.map(Json.fromString))))
 
   private def batchJson(paths: List[String]): Json =
-    ConsoleAssetBatchRoutes
-      .routes(batchReq(paths))
-      .value
+    ConsoleAssetBatchRoutes.routes(batchReq(paths)).value
       .map {
-        case None => fail("route fell through")
+        case None        => fail("route fell through")
         case Some(resp) =>
           assertEquals(resp.status, Status.Ok)
           parse(new String(resp.body.compile.toVector.unsafeRunSync().toArray, StandardCharsets.UTF_8))
@@ -194,10 +192,8 @@ class ConsoleFastpathSpec extends CatsEffectSuite:
 
   test("② console-assets：traversal / 超前缀 / 超体积一律 missing，无存在性预言面") {
     val json = batchJson(List("../secret.txt", "api/nf-ticket", "js/../../etc/passwd", "vendor/xlsx.full.min.js"))
-    assertEquals(
-      json.hcursor.downField("missing").as[List[String]].getOrElse(Nil).toSet,
-      Set("../secret.txt", "api/nf-ticket", "js/../../etc/passwd", "vendor/xlsx.full.min.js")
-    )
+    assertEquals(json.hcursor.downField("missing").as[List[String]].getOrElse(Nil).toSet,
+      Set("../secret.txt", "api/nf-ticket", "js/../../etc/passwd", "vendor/xlsx.full.min.js"))
     assert(json.hcursor.downField("assets").focus.exists(_.asObject.exists(_.isEmpty)))
   }
 
@@ -213,7 +209,8 @@ class ConsoleFastpathSpec extends CatsEffectSuite:
     val assets = json.hcursor.downField("assets")
     assert(assets.downField("vendor/marked.min.js").succeeded)
     assert(assets.downField("favicon.svg").succeeded)
-    assertEquals(assets.downField("favicon.svg").downField("contentType").as[String].getOrElse(""), "image/svg+xml")
+    assertEquals(assets.downField("favicon.svg").downField("contentType").as[String].getOrElse(""),
+      "image/svg+xml")
   }
 
   // ── ③ 首开打包转换（纯函数）──────────────────────────────
@@ -225,15 +222,11 @@ class ConsoleFastpathSpec extends CatsEffectSuite:
     val packed = StaticRoutes.packedIndexHtml(indexHtml)
     assert(!packed.contains("<link rel=\"stylesheet\""), "no stylesheet link may survive packing")
     // media 查询保留（highlight 双主题语义）。
-    assert(
-      packed.contains("<style media=\"(prefers-color-scheme: light)\">"),
-      "media attr must be preserved on the style tag"
-    )
+    assert(packed.contains("<style media=\"(prefers-color-scheme: light)\">"),
+      "media attr must be preserved on the style tag")
     // katex 字体相对引用重写为 /vendor/ 绝对基（内联 <style> 的解析基是文档）。
-    assert(
-      packed.contains("url(/vendor/fonts/KaTeX_AMS-Regular.woff2)"),
-      "relative css url() must be rewritten absolute against the asset dir"
-    )
+    assert(packed.contains("url(/vendor/fonts/KaTeX_AMS-Regular.woff2)"),
+      "relative css url() must be rewritten absolute against the asset dir")
     // module 脚本与 favicon 链接逐字保留。
     assert(packed.contains("<script type=\"module\" src=\"js/main.js\"></script>"))
     assert(packed.contains("favicon-32.png"))

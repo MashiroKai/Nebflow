@@ -16,7 +16,7 @@ import nebflow.shared.{PathUtil, SubAgentTask}
  *  - **G3** `SubAgentTaskStore.findByParent` 按父整表读 + recordTask 记账点的
  *    星型惰性升级挂钩（父为 delegate 记录 ⇒ 升 subagent-star）。
  *  - **G5** rows 排队条件键纪律：未排队行 `mergeQueue` / `mergeQueuePos` **缺键**
- * （「只收非空项」同款；排队态真源 = MergeQueue 进程内队列，spec 零注入）。
+    * （「只收非空项」同款；排队态真源 = MergeQueue 进程内队列，spec 零注入）。
  *  - **G6** `archive` 单旗写幂等；rows 臂在册窗/历史窗互补零重叠（零删除）。
  *  - **G4** `ChainsReadFace.delegateJson` 聚合形状（record/live/verdict/task/childrenCount）。
  *
@@ -82,45 +82,19 @@ class DelegateUiDataPlaneSpec extends FunSuite:
 
   test("G1: upgrade ladder only moves up (single < subagent-star < agentflow), idempotent at the top") {
     put("delegate-nebflow-g1lad0001")
-    assertEquals(
-      DelegateRegistry.upgradeOrchestrationMode("delegate-nebflow-g1lad0001", DelegateRegistry.ModeSubagentStar),
-      Right(())
-    )
-    assertEquals(
-      DelegateRegistry.find("delegate-nebflow-g1lad0001").flatMap(_.orchestrationMode),
-      Some(DelegateRegistry.ModeSubagentStar)
-    )
+    assertEquals(DelegateRegistry.upgradeOrchestrationMode("delegate-nebflow-g1lad0001", DelegateRegistry.ModeSubagentStar), Right(()))
+    assertEquals(DelegateRegistry.find("delegate-nebflow-g1lad0001").flatMap(_.orchestrationMode), Some(DelegateRegistry.ModeSubagentStar))
     // 只上不下：star 不会被 single/subagent-star 降级或重写
-    assertEquals(
-      DelegateRegistry.upgradeOrchestrationMode("delegate-nebflow-g1lad0001", DelegateRegistry.ModeSingle),
-      Right(())
-    )
-    assertEquals(
-      DelegateRegistry.find("delegate-nebflow-g1lad0001").flatMap(_.orchestrationMode),
-      Some(DelegateRegistry.ModeSubagentStar)
-    )
-    assertEquals(
-      DelegateRegistry.upgradeOrchestrationMode("delegate-nebflow-g1lad0001", DelegateRegistry.ModeAgentflow),
-      Right(())
-    )
-    assertEquals(
-      DelegateRegistry.find("delegate-nebflow-g1lad0001").flatMap(_.orchestrationMode),
-      Some(DelegateRegistry.ModeAgentflow)
-    )
-    assertEquals(
-      DelegateRegistry.upgradeOrchestrationMode("delegate-nebflow-g1lad0001", DelegateRegistry.ModeSubagentStar),
-      Right(())
-    )
-    assertEquals(
-      DelegateRegistry.find("delegate-nebflow-g1lad0001").flatMap(_.orchestrationMode),
-      Some(DelegateRegistry.ModeAgentflow)
-    )
+    assertEquals(DelegateRegistry.upgradeOrchestrationMode("delegate-nebflow-g1lad0001", DelegateRegistry.ModeSingle), Right(()))
+    assertEquals(DelegateRegistry.find("delegate-nebflow-g1lad0001").flatMap(_.orchestrationMode), Some(DelegateRegistry.ModeSubagentStar))
+    assertEquals(DelegateRegistry.upgradeOrchestrationMode("delegate-nebflow-g1lad0001", DelegateRegistry.ModeAgentflow), Right(()))
+    assertEquals(DelegateRegistry.find("delegate-nebflow-g1lad0001").flatMap(_.orchestrationMode), Some(DelegateRegistry.ModeAgentflow))
+    assertEquals(DelegateRegistry.upgradeOrchestrationMode("delegate-nebflow-g1lad0001", DelegateRegistry.ModeSubagentStar), Right(()))
+    assertEquals(DelegateRegistry.find("delegate-nebflow-g1lad0001").flatMap(_.orchestrationMode), Some(DelegateRegistry.ModeAgentflow))
   }
 
   test("G1: upgrade on an unknown id is an explicit Left (call sites are fail-soft by contract)") {
-    assert(
-      DelegateRegistry.upgradeOrchestrationMode("delegate-nebflow-nosuch01", DelegateRegistry.ModeAgentflow).isLeft
-    )
+    assert(DelegateRegistry.upgradeOrchestrationMode("delegate-nebflow-nosuch01", DelegateRegistry.ModeAgentflow).isLeft)
   }
 
   // ── G3：findByParent + 记账点升级挂钩 ─────────────────────────────────────

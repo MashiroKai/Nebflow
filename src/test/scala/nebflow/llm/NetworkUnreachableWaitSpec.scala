@@ -3,13 +3,7 @@ package nebflow.llm
 import munit.FunSuite
 import nebflow.shared.{ErrorPermanence, FailoverReason, FallbackAttempt, FallbackExhaustedError}
 
-import java.net.{
-  ConnectException,
-  NoRouteToHostException,
-  SocketException,
-  SocketTimeoutException,
-  UnknownHostException
-}
+import java.net.{ConnectException, NoRouteToHostException, SocketException, SocketTimeoutException, UnknownHostException}
 
 /**
  * #692（网络不可达退避等待修批，2026-10-21 作者令）判据 spec：网络级失败 =
@@ -42,10 +36,7 @@ class NetworkUnreachableWaitSpec extends FunSuite:
         attempt(FailoverReason.Unknown, ErrorPermanence.Transient)
       )
     )
-    assert(
-      Fallback.isNetworkUnreachableExhaustion(err),
-      "zhipu timeout + kimi unknown = network outage shape, must wait"
-    )
+    assert(Fallback.isNetworkUnreachableExhaustion(err), "zhipu timeout + kimi unknown = network outage shape, must wait")
   }
 
   test("pure connect-refused chain is waitable") {
@@ -69,10 +60,7 @@ class NetworkUnreachableWaitSpec extends FunSuite:
         attempt(FailoverReason.Auth, ErrorPermanence.Permanent)
       )
     )
-    assert(
-      !Fallback.isNetworkUnreachableExhaustion(err),
-      "mixed [timeout, auth]: the 401 will never heal — real failure"
-    )
+    assert(!Fallback.isNetworkUnreachableExhaustion(err), "mixed [timeout, auth]: the 401 will never heal — real failure")
   }
 
   test("pure auth chain is NOT waitable") {

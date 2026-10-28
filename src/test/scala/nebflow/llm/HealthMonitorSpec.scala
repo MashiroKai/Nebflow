@@ -257,20 +257,17 @@ class HealthMonitorSpec extends CatsEffectSuite:
     hangAfter: Boolean = false,
     err: Option[Throwable] = None
   ) extends ProviderAdapter[IO]:
-
     def sendMessage(params: SendMessageParams): IO[AdapterResponse] =
       IO.raiseError(new RuntimeException("probe must use the streaming face (修 2026-10-21)"))
-
     def sendMessageStream(params: SendMessageParams): fs2.Stream[IO, StreamChunk] =
       err match
         case Some(e) => fs2.Stream.raiseError[IO](e)
         case None =>
           val head: fs2.Stream[IO, StreamChunk] =
-            if delayBeforeMs > 0 then fs2.Stream.eval(IO.sleep(delayBeforeMs.millis)) >> fs2.Stream.emits(chunks.toList)
+            if delayBeforeMs > 0 then
+              fs2.Stream.eval(IO.sleep(delayBeforeMs.millis)) >> fs2.Stream.emits(chunks.toList)
             else fs2.Stream.emits(chunks.toList)
           if hangAfter then head ++ fs2.Stream.never[IO] else head
-
-  end FakeStreamAdapter
 
   private class FakeRegistry(adapter: ProviderAdapter[IO]) extends ProviderRegistry(null, null):
     override def getAdapter(providerId: String): IO[ProviderAdapter[IO]] = IO.pure(adapter)

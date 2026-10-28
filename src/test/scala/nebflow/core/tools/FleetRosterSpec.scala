@@ -50,10 +50,7 @@ class FleetRosterSpec extends FunSuite:
     assert(out.contains("KAI (40742cd4) [local · v2026.10.26-beta.1 · windows]"), out)
     assert(out.contains("- 主力机"), out)
     assert(out.contains("caps: git,node"), "caps listed as sorted KEYS (never values)")
-    assert(
-      !out.contains("node.exe") && !out.contains("git.exe"),
-      "capability VALUES (absolute paths) must not leak into the roster"
-    )
+    assert(!out.contains("node.exe") && !out.contains("git.exe"), "capability VALUES (absolute paths) must not leak into the roster")
 
   test("render: online peer row carries online tag, platform and caps keys"):
     val out = FleetRoster.render(Some(local), List(mac), Nil, Map.empty, now, enforce = false)
@@ -72,11 +69,7 @@ class FleetRosterSpec extends FunSuite:
       now,
       enforce = false
     )
-    assertEquals(
-      out.linesIterator.count(_.contains("Mac (")),
-      1,
-      "presence-present device must not repeat as offline row"
-    )
+    assertEquals(out.linesIterator.count(_.contains("Mac (")), 1, "presence-present device must not repeat as offline row")
     assert(out.contains("OldBox (aaaabbbb) [offline · linux]"), out)
 
   test("render: profile summary still rides the peer row (existing DeviceProfile face unchanged)"):
@@ -103,9 +96,7 @@ class FleetRosterSpec extends FunSuite:
   test("render: hint line OFF-state is the existing verbatim copy"):
     val out = FleetRoster.render(Some(local), List(mac), Nil, Map.empty, now, enforce = false)
     assert(
-      out.contains(
-        "\nRead/Write/Edit/Glob/Grep/Bash accept a `device` parameter to run on another machine; every other tool always runs locally."
-      ),
+      out.contains("\nRead/Write/Edit/Glob/Grep/Bash accept a `device` parameter to run on another machine; every other tool always runs locally."),
       out
     )
 

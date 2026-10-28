@@ -65,21 +65,11 @@ class HeldReceiptStoreSpec extends FunSuite:
 
   test("P2c 穷尽判定：下一次催注将超 HeldDeliveryMaxAttempts ⇒ 置终态停催"):
     val edge = HeldReceiptStore.HeldReceipt(
-      "r",
-      "delegate",
-      "completed",
-      "s",
-      producedAt = 0L,
-      attempts = Defaults.HeldDeliveryMaxAttempts
+      "r", "delegate", "completed", "s", producedAt = 0L, attempts = Defaults.HeldDeliveryMaxAttempts
     )
     assert(HeldDeliveryPolicy.shouldExhaust(edge))
     val below = HeldReceiptStore.HeldReceipt(
-      "r",
-      "delegate",
-      "completed",
-      "s",
-      producedAt = 0L,
-      attempts = Defaults.HeldDeliveryMaxAttempts - 1
+      "r", "delegate", "completed", "s", producedAt = 0L, attempts = Defaults.HeldDeliveryMaxAttempts - 1
     )
     assert(!HeldDeliveryPolicy.shouldExhaust(below))
 

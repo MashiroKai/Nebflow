@@ -59,8 +59,7 @@ private[gateway] object AskUserCancelRoutes:
       case Some(hub) =>
         hub
           .?[nebflow.actor.AskCancelOutcome](reply =>
-            InteractionHubCommand.CancelRequest(requestId, reason, by, Some(reply))
-          )
+            InteractionHubCommand.CancelRequest(requestId, reason, by, Some(reply)))
           .flatMap {
             case nebflow.actor.AskCancelOutcome.Cancelled(rid, kind, rootSessionId, _) =>
               sessionStore
@@ -69,9 +68,7 @@ private[gateway] object AskUserCancelRoutes:
                   // 取消落盘行：与前端卡片取消按钮同形态（哨兵 = ProjectTool 单点常量，
                   // UiMessage.askUserAnswer 仍是唯一构造点；answerOf=rid 保证案 B 的
                   // 数据驱动历史读法直接把这张卡渲染成已取消）。
-                  List(
-                    nebflow.shared.UiMessage.askUserAnswer(ProjectTool.CancelSentinel, rid, System.currentTimeMillis())
-                  )
+                  List(nebflow.shared.UiMessage.askUserAnswer(ProjectTool.CancelSentinel, rid, System.currentTimeMillis()))
                 )
                 .handleErrorWith(_ => IO.unit) *> IO.pure(
                 Verdict("cancelled", Some(kind.toString), Some(rootSessionId))
@@ -85,49 +82,27 @@ private[gateway] object AskUserCancelRoutes:
 
   def routes(ctx: RestApiCtx): HttpRoutes[IO] =
     import ctx.*
-    HttpRoutes.of[IO] { case req @ POST -> Root / "askuser" / "cancel" =>
-      withAuth(req) {
-        req.as[Json].flatMap { body =>
-          val requestId = body.hcursor.downField("requestId").as[String].toOption.map(_.trim).filter(_.nonEmpty)
-          val reason = body.hcursor
-            .downField("reason")
-            .as[String]
-            .toOption
-            .map(_.trim)
-            .filter(_.nonEmpty)
-            .getOrElse("user-cancelled")
-          val by = body.hcursor.downField("by").as[String].toOption.map(_.trim).filter(_.nonEmpty).getOrElse("rest")
-          requestId match
-            case None =>
-              BadRequest(
-                Json.obj("error" -> "requestId is required (the asknb-/panel- id from the askUser frame)".asJson)
-              )
-            case Some(rid) =>
-              cancelOnce(sharedResources, sessionStore, rid, reason, by).flatMap {
-                case v if v.ok => Ok(v.json(rid))
-                case v @ Verdict("unknown", _, _) =>
-                  NotFound(
-                    v.json(rid)
-                      .deepMerge(
-                        Json.obj(
-                          "error" -> s"no pending ask with requestId=$rid (already answered, closed, or never existed)".asJson
-                        )
-                      )
-                  )
-                case v @ Verdict("not-ask-user", _, _) =>
-                  Conflict(
-                    v.json(rid)
-                      .deepMerge(
-                        Json.obj(
-                          "error" -> s"slot $rid is a ${v.kind.getOrElse("?")} card — only AskUser questions are cancellable".asJson
-                        )
-                      )
-                  )
-                case v => BadGateway(v.json(rid).deepMerge(Json.obj("error" -> "interaction hub unavailable".asJson)))
-              }
-          end match
+    HttpRoutes.of[IO] {
+      case req @ POST -> Root / "askuser" / "cancel" =>
+        withAuth(req) {
+          req.as[Json].flatMap { body =>
+            val requestId = body.hcursor.downField("requestId").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+            val reason = body.hcursor.downField("reason").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+              .getOrElse("user-cancelled")
+            val by = body.hcursor.downField("by").as[String].toOption.map(_.trim).filter(_.nonEmpty).getOrElse("rest")
+            requestId match
+              case None =>
+                BadRequest(Json.obj("error" -> "requestId is required (the asknb-/panel- id from the askUser frame)".asJson))
+              case Some(rid) =>
+                cancelOnce(sharedResources, sessionStore, rid, reason, by).flatMap {
+                  case v if v.ok      => Ok(v.json(rid))
+                  case v @ Verdict("unknown", _, _)         => NotFound(v.json(rid).deepMerge(Json.obj("error" -> s"no pending ask with requestId=$rid (already answered, closed, or never existed)".asJson)))
+                  case v @ Verdict("not-ask-user", _, _)    => Conflict(v.json(rid).deepMerge(Json.obj("error" -> s"slot $rid is a ${v.kind.getOrElse("?")} card — only AskUser questions are cancellable".asJson)))
+                  case v                                    => BadGateway(v.json(rid).deepMerge(Json.obj("error" -> "interaction hub unavailable".asJson)))
+                }
+            end match
+          }
         }
-      }
     }
   end routes
 end AskUserCancelRoutes

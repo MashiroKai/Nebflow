@@ -35,29 +35,27 @@ object WikiIndex:
 
   /** A document in the graph. */
   final case class WikiDocNode(
-    id: String, // "<project>:<rel-path-with-forward-slashes>"
+    id: String,        // "<project>:<rel-path-with-forward-slashes>"
     project: String,
-    device: String, // "self" or the peer deviceId
-    rel: String, // vault-relative path, forward slashes
-    title: String, // first H1, else file basename
+    device: String,    // "self" or the peer deviceId
+    rel: String,       // vault-relative path, forward slashes
+    title: String,     // first H1, else file basename
     headings: List[WikiHeading],
     blocks: List[WikiBlockAnchor],
-    stub: Boolean, // true = project-level placeholder / unresolved phantom
-    kind: String = "doc", // "doc" | "attachment"
+    stub: Boolean,     // true = project-level placeholder / unresolved phantom
+    kind: String = "doc",         // "doc" | "attachment"
     docType: Option[String] = None, // YAML frontmatter `type:` (scenario pack)
-    status: Option[String] = None, // YAML frontmatter `status:` (open/solved/…)
-    summary: Option[String] = None, // graph-preview summary (summaryOf — wiki-graph redesign)
-    external: Boolean = false, // true = cross-vault placeholder (#744-B): the target
-    // lives in ANOTHER vault of the same project — counted
-    // in stats, never drawn, never a broken-link entry
+    status: Option[String] = None,  // YAML frontmatter `status:` (open/solved/…)
+    summary: Option[String] = None,  // graph-preview summary (summaryOf — wiki-graph redesign)
+    external: Boolean = false,      // true = cross-vault placeholder (#744-B): the target
+                                   // lives in ANOTHER vault of the same project — counted
+                                   // in stats, never drawn, never a broken-link entry
     paragraphs: List[WikiParagraph] = Nil // paragraph index (段落级引用批 — docs only)
   )
 
-  /**
-   * A sub-vault discovered inside a vault (#744-B hierarchy): `rel` is the
-   * vault-relative path of the sub vault root (e.g. "sub/docs"), `name` the
-   * sub-project label, `docCount` a listing-level file count (no parsing).
-   */
+  /** A sub-vault discovered inside a vault (#744-B hierarchy): `rel` is the
+    * vault-relative path of the sub vault root (e.g. "sub/docs"), `name` the
+    * sub-project label, `docCount` a listing-level file count (no parsing). */
   final case class ChildVault(name: String, rel: String, docCount: Int)
 
   final case class WikiHeading(text: String, line: Int)
@@ -65,65 +63,45 @@ object WikiIndex:
   /** A `^blockid` found in a document (line is 1-based, source coordinates). */
   final case class WikiBlockAnchor(id: String, line: Int)
 
-  /**
-   * One indexable paragraph of a document (wiki-graph 段落级引用批, 台账
-   * #744-A; design doc `docs/design/wiki-graph-paragraph-ref-design.zh-CN.md`
-   * §3 — the Python exporter `check_wiki_docs.py` mirrors this field by
-   * field). `anchor` is the EDGE-anchor form (`"#^id"` / `"#Heading"`), so a
-   * client resolves `edge.anchor` against `node.paragraphs` with a plain
-   * equality lookup — no transformation.
-   */
+  /** One indexable paragraph of a document (wiki-graph 段落级引用批, 台账
+    * #744-A; design doc `docs/design/wiki-graph-paragraph-ref-design.zh-CN.md`
+    * §3 — the Python exporter `check_wiki_docs.py` mirrors this field by
+    * field). `anchor` is the EDGE-anchor form (`"#^id"` / `"#Heading"`), so a
+    * client resolves `edge.anchor` against `node.paragraphs` with a plain
+    * equality lookup — no transformation. */
   final case class WikiParagraph(
-    anchor: String, // edge-anchor form: "#^blk" | "#Heading"
-    kind: String, // "block" | "heading"
-    title: String, // term part (block) or heading text
-    line: Int, // 1-based FULL-FILE coordinates (frontmatter included)
+    anchor: String,   // edge-anchor form: "#^blk" | "#Heading"
+    kind: String,     // "block" | "heading"
+    title: String,    // term part (block) or heading text
+    line: Int,        // 1-based FULL-FILE coordinates (frontmatter included)
     endLine: Int,
-    text: String // inline-markup-stripped excerpt, capped at [[ParagraphMaxChars]]
+    text: String      // inline-markup-stripped excerpt, capped at [[ParagraphMaxChars]]
   )
 
   final case class WikiEdge(
     from: String,
-    to: String, // resolved node id (may be an unresolved-phantom node)
-    kind: String, // "link" | "embed"
+    to: String,        // resolved node id (may be an unresolved-phantom node)
+    kind: String,      // "link" | "embed"
     anchor: Option[String], // raw anchor as authored: "^blk" | "#Heading" | "L42"
-    line: Int // source line of the link in `from`
+    line: Int          // source line of the link in `from`
   )
 
   final case class VaultScan(nodes: List[WikiDocNode], edges: List[WikiEdge], warnings: List[String])
 
   // ── File classification (docs vs attachments) ───────────────────
 
-  /**
-   * Document extensions indexed as first-class graph nodes. `.md` is the
-   * primary face; `.html` covers visual-report HTML deliverables so they get
-   * the same node treatment the author mandated.
-   */
+  /** Document extensions indexed as first-class graph nodes. `.md` is the
+    * primary face; `.html` covers visual-report HTML deliverables so they get
+    * the same node treatment the author mandated. */
   val DocExtensions: Set[String] = Set(".md", ".markdown", ".html")
 
-  /**
-   * Attachment extensions indexed as `kind=attachment` nodes — exactly the
-   * files a canvas viewer can open, so a literature PDF cited from a document
-   * is one click away. Unknown extensions are skipped entirely.
-   */
+  /** Attachment extensions indexed as `kind=attachment` nodes — exactly the
+    * files a canvas viewer can open, so a literature PDF cited from a document
+    * is one click away. Unknown extensions are skipped entirely. */
   val AttachmentExtensions: Set[String] = Set(
-    ".pdf",
-    ".docx",
-    ".pptx",
-    ".xlsx",
-    ".epub",
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".gif",
-    ".webp",
-    ".svg",
-    ".mp4",
-    ".webm",
-    ".mov",
-    ".mp3",
-    ".wav",
-    ".csv"
+    ".pdf", ".docx", ".pptx", ".xlsx", ".epub",
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
+    ".mp4", ".webm", ".mov", ".mp3", ".wav", ".csv"
   )
 
   def extOf(rel: String): String =
@@ -133,12 +111,10 @@ object WikiIndex:
 
   // ── Frontmatter (scenario packs: type / status / tags) ───────────
 
-  /**
-   * A leading `--- … ---` block's key/value pairs (flat scalars only — the
-   * vault convention keeps frontmatter tiny), the text AFTER it, and the
-   * number of lines it occupied (body line numbers stay in FULL-FILE
-   * coordinates so anchors agree with the authoring view).
-   */
+  /** A leading `--- … ---` block's key/value pairs (flat scalars only — the
+    * vault convention keeps frontmatter tiny), the text AFTER it, and the
+    * number of lines it occupied (body line numbers stay in FULL-FILE
+    * coordinates so anchors agree with the authoring view). */
   def frontmatterOf(text: String): (Option[Map[String, String]], String, Int) =
     val lines = text.linesIterator.toVector
     if lines.isEmpty || lines.head.trim != "---" then (None, text, 0)
@@ -150,18 +126,14 @@ object WikiIndex:
         i += 1
       if endIdx < 0 then (None, text, 0)
       else
-        val fields = lines
-          .slice(1, endIdx)
-          .flatMap { l =>
-            val idx = l.indexOf(':')
-            if idx <= 0 then None
-            else Some(l.substring(0, idx).trim -> l.substring(idx + 1).trim.stripPrefix("\"").stripSuffix("\""))
-          }
-          .toMap
+        val fields = lines.slice(1, endIdx).flatMap { l =>
+          val idx = l.indexOf(':')
+          if idx <= 0 then None
+          else Some(l.substring(0, idx).trim -> l.substring(idx + 1).trim.stripPrefix("\"").stripSuffix("\""))
+        }.toMap
         val body = lines.drop(endIdx + 1).mkString("\n")
         (Some(fields), body, endIdx + 1)
-    end if
-  end frontmatterOf
+
 
   // ── Link extraction ──────────────────────────────────────────────
 
@@ -171,10 +143,8 @@ object WikiIndex:
   private val BlockIdRe = raw"^(.*\S)\s+\^([A-Za-z0-9][A-Za-z0-9-]*)\s*$$".r
   private val FenceRe = raw"^\s*(```+|~~~+)".r
 
-  /**
-   * Split a document into lines, remembering which lines are inside a fenced
-   * code block — links in code samples are not graph edges.
-   */
+  /** Split a document into lines, remembering which lines are inside a fenced
+    * code block — links in code samples are not graph edges. */
   private def fencedMask(lines: Vector[String]): Vector[Boolean] =
     val inFence = Array.fill(lines.length)(false)
     var fenceOpen = false
@@ -192,8 +162,6 @@ object WikiIndex:
       inFence(i) = fenceOpen || (FenceRe.findFirstMatchIn(lines(i)).isDefined && !fenceOpen)
       i += 1
     Vector.from(inFence)
-
-  end fencedMask
 
   /** Strip the alias segment and split `target#anchor`. Returns (target, anchor). */
   private def splitWikilink(inner: String): (String, Option[String]) =
@@ -227,11 +195,10 @@ object WikiIndex:
           try
             bytes += Integer.parseInt(s.substring(i + 1, i + 3), 16).toByte
             i += 3
-          catch
-            case _: Exception =>
-              flushBytes()
-              sb.append(s.charAt(i))
-              i += 1
+          catch case _: Exception =>
+            flushBytes()
+            sb.append(s.charAt(i))
+            i += 1
         else
           flushBytes()
           sb.append(s.charAt(i))
@@ -246,10 +213,8 @@ object WikiIndex:
     if idx < 0 then (decoded.trim, None)
     else (decoded.substring(0, idx).trim, Some(decoded.substring(idx + 1).trim))
 
-  /**
-   * One parsed document: headings, block anchors, outgoing links and the
-   * graph summary.
-   */
+  /** One parsed document: headings, block anchors, outgoing links and the
+    * graph summary. */
   final case class ParsedDoc(
     title: String,
     headings: List[WikiHeading],
@@ -259,11 +224,9 @@ object WikiIndex:
     paragraphs: List[WikiParagraph] = Nil
   )
 
-  /**
-   * Parse raw markdown text into headings / block anchors / outgoing links /
-   * summary. A leading frontmatter block is metadata, not content — its lines
-   * are excluded from heading/block/link/summary extraction.
-   */
+  /** Parse raw markdown text into headings / block anchors / outgoing links /
+    * summary. A leading frontmatter block is metadata, not content — its lines
+    * are excluded from heading/block/link/summary extraction. */
   def parseDoc(rel: String, text: String): ParsedDoc =
     val (_, body, fmOffset) = frontmatterOf(text)
     val lines = body.linesIterator.toVector
@@ -302,41 +265,28 @@ object WikiIndex:
           val (target, anchor) = splitMdDest(m.group(2))
           if target.nonEmpty then links += ((target, anchor, "link", lineNo))
         }
-      end if
       i += 1
-    end while
-    ParsedDoc(
-      title,
-      headings.toList,
-      blocks.toList,
-      links.toList,
-      summaryOf(lines, mask, afterFirstH1),
-      paragraphsOf(lines, mask, headings.toList, fmOffset)
-    )
-  end parseDoc
+    ParsedDoc(title, headings.toList, blocks.toList, links.toList, summaryOf(lines, mask, afterFirstH1),
+      paragraphsOf(lines, mask, headings.toList, fmOffset))
 
   // ── Graph summary (wiki-graph redesign §5) ──────────────────────
 
   /** Summary cap — the graph surfaces exactly one preview line per document. */
   val SummaryMaxChars = 140
 
-  /**
-   * A line the summary scan may not start from or continue through: blank,
-   * any heading (the first paragraph AFTER the H1 — later headings bound the
-   * paragraph), or a fence marker line. Fenced CONTENT is masked separately
-   * by `mask`.
-   */
+  /** A line the summary scan may not start from or continue through: blank,
+    * any heading (the first paragraph AFTER the H1 — later headings bound the
+    * paragraph), or a fence marker line. Fenced CONTENT is masked separately
+    * by `mask`. */
   private def summaryBreak(line: String): Boolean =
     val t = line.trim
     t.isEmpty || t.startsWith("#") || FenceRe.findFirstMatchIn(t).isDefined
 
-  /**
-   * First non-empty non-heading paragraph after the first H1, inline markup
-   * stripped, capped at [[SummaryMaxChars]]. No H1 ⇒ no summary (the graph
-   * shows the title only). Multi-line paragraphs join with a space; per-line
-   * blockquote/list prefixes are stripped before the join so a quoted first
-   * paragraph reads like prose.
-   */
+  /** First non-empty non-heading paragraph after the first H1, inline markup
+    * stripped, capped at [[SummaryMaxChars]]. No H1 ⇒ no summary (the graph
+    * shows the title only). Multi-line paragraphs join with a space; per-line
+    * blockquote/list prefixes are stripped before the join so a quoted first
+    * paragraph reads like prose. */
   def summaryOf(lines: Vector[String], mask: Vector[Boolean], fromIdx: Int): Option[String] =
     if fromIdx < 0 || fromIdx >= lines.length then None
     else
@@ -349,16 +299,14 @@ object WikiIndex:
       val cleaned = cleanSummaryText(buf.mkString(" "))
       if cleaned.isEmpty then None else Some(truncateSummary(cleaned, SummaryMaxChars))
 
-  /**
-   * Strip inline markdown from a summary candidate: images → alt, links and
-   * wikilinks → their text/alias, emphasis/strikethrough markers and inline
-   * backticks removed, whitespace collapsed. Plain prose passes verbatim.
-   */
+  /** Strip inline markdown from a summary candidate: images → alt, links and
+    * wikilinks → their text/alias, emphasis/strikethrough markers and inline
+    * backticks removed, whitespace collapsed. Plain prose passes verbatim. */
   def cleanSummaryText(s: String): String =
     s.replaceAll(raw"!\[([^\]]*)\]\([^)]*\)", "$1") // image → alt
       .replaceAll(raw"\[([^\]]*)\]\([^)]*\)", "$1") // md link → text
       .replaceAll(raw"!?\[\[[^\]\|]+\|([^\]]+)\]\]", "$1") // aliased wikilink → alias
-      .replaceAll(raw"!?\[\[([^\]]+)\]\]", "$1") // plain wikilink/embed → target
+      .replaceAll(raw"!?\[\[([^\]]+)\]\]", "$1")    // plain wikilink/embed → target
       .replaceAll(raw"\*\*([^*]+)\*\*", "$1")
       .replaceAll(raw"__([^_]+)__", "$1")
       .replaceAll(raw"\*([^*]+)\*", "$1")
@@ -388,16 +336,13 @@ object WikiIndex:
     if s.length <= max then s
     else s.substring(0, s.offsetByCodePoints(0, max - 1)) + "…" // never split a code point
 
-  /**
-   * Term-part title of a block paragraph: the text before the first
-   * ` —`/`：` separator (glossary-entry convention), else the cleaned
-   * first-line prefix; falls back to the anchor id when the line is empty.
-   */
+  /** Term-part title of a block paragraph: the text before the first
+    * ` —`/`：` separator (glossary-entry convention), else the cleaned
+    * first-line prefix; falls back to the anchor id when the line is empty. */
   private def blockTitle(rawFirstLine: String, id: String): String =
     val base = rawFirstLine.replaceAll(raw"(?s)^(.*\S)\s+\^[A-Za-z0-9][A-Za-z0-9-]*\s*$$", "$1").trim
     val term = cleanSummaryText(base.split(raw"\s*[—–]\s*|\s*[:：]\s*", 2).head)
-      .replaceAll(raw"^[#*-]+\s*", "")
-      .trim
+      .replaceAll(raw"^[#*-]+\s*", "").trim
     val fallback = cleanSummaryText(base)
     val candidate =
       if term.nonEmpty && term.length <= ParagraphTitleMaxChars then term
@@ -405,13 +350,11 @@ object WikiIndex:
       else id
     candidate
 
-  /**
-   * Content runs of the body (fenced lines masked out, blanks/headings break
-   * runs) as (bodyIdx, text) groups in document order. A NON-CONTENT line
-   * always flushes the open run — an intervening blank/fence/heading ends the
-   * paragraph even if the next content line is index-adjacent (the Python
-   * exporter breaks the same way; keep the two isomorphic).
-   */
+  /** Content runs of the body (fenced lines masked out, blanks/headings break
+    * runs) as (bodyIdx, text) groups in document order. A NON-CONTENT line
+    * always flushes the open run — an intervening blank/fence/heading ends the
+    * paragraph even if the next content line is index-adjacent (the Python
+    * exporter breaks the same way; keep the two isomorphic). */
   private def contentRuns(lines: Vector[String], mask: Vector[Boolean]): List[List[(Int, String)]] =
     val runs = ListBuffer.empty[List[(Int, String)]]
     var cur = ListBuffer.empty[(Int, String)]
@@ -433,19 +376,15 @@ object WikiIndex:
     flush()
     runs.toList
 
-  end contentRuns
-
   /** Block paragraphs: content runs whose LAST line carries a `^blockid`. */
   private def blockParagraphs(runs: List[List[(Int, String)]], fmOffset: Int): List[WikiParagraph] =
     runs.flatMap { group =>
       val (lastIdx, lastLine) = group.last
       BlockIdRe.findFirstMatchIn(lastLine).map { m =>
         val id = m.group(2)
-        val body = group
-          .map { case (idx, t) =>
-            if idx == lastIdx then t.replaceAll(raw"(?s)^(.*\S)\s+\^[A-Za-z0-9][A-Za-z0-9-]*\s*$$", "$1") else t
-          }
-          .mkString(" ")
+        val body = group.map { case (idx, t) =>
+          if idx == lastIdx then t.replaceAll(raw"(?s)^(.*\S)\s+\^[A-Za-z0-9][A-Za-z0-9-]*\s*$$", "$1") else t
+        }.mkString(" ")
         WikiParagraph(
           anchor = "#^" + id,
           kind = "block",
@@ -457,31 +396,19 @@ object WikiIndex:
       }
     }
 
-  /**
-   * Heading sections: heading line through the line before the next
-   * heading (any level) or end of body.
-   */
-  private def headingParagraphs(
-    lines: Vector[String],
-    mask: Vector[Boolean],
-    headings: List[WikiHeading],
-    fmOffset: Int
-  ): List[WikiParagraph] =
+  /** Heading sections: heading line through the line before the next
+    * heading (any level) or end of body. */
+  private def headingParagraphs(lines: Vector[String], mask: Vector[Boolean],
+                                headings: List[WikiHeading], fmOffset: Int): List[WikiParagraph] =
     headings.zipWithIndex.map { case (h, i) =>
       val startIdx = h.line - 1 - fmOffset
       val endIdx = headings.lift(i + 1) match
         case Some(nh) => math.min(nh.line - 1 - fmOffset - 1, lines.length - 1)
-        case None => lines.length - 1
+        case None     => lines.length - 1
       val text =
         if startIdx + 1 > endIdx then ""
-        else
-          (startIdx + 1 to endIdx)
-            .filter(j =>
-              !mask(j) && lines(j).trim.nonEmpty &&
-                HeadingRe.findFirstMatchIn(lines(j)).isEmpty
-            )
-            .map(lines)
-            .mkString(" ")
+        else (startIdx + 1 to endIdx).filter(j => !mask(j) && lines(j).trim.nonEmpty &&
+          HeadingRe.findFirstMatchIn(lines(j)).isEmpty).map(lines).mkString(" ")
       WikiParagraph(
         anchor = "#" + h.text,
         kind = "heading",
@@ -492,16 +419,10 @@ object WikiIndex:
       )
     }
 
-  /**
-   * Full paragraph index of one document: block paragraphs + heading
-   * sections, line-ordered, capped at [[ParagraphMaxPerDoc]].
-   */
-  def paragraphsOf(
-    lines: Vector[String],
-    mask: Vector[Boolean],
-    headings: List[WikiHeading],
-    fmOffset: Int
-  ): List[WikiParagraph] =
+  /** Full paragraph index of one document: block paragraphs + heading
+    * sections, line-ordered, capped at [[ParagraphMaxPerDoc]]. */
+  def paragraphsOf(lines: Vector[String], mask: Vector[Boolean],
+                   headings: List[WikiHeading], fmOffset: Int): List[WikiParagraph] =
     if lines.isEmpty then Nil
     else
       val runs = contentRuns(lines, mask)
@@ -516,10 +437,8 @@ object WikiIndex:
 
   // ── Graph assembly ───────────────────────────────────────────────
 
-  /**
-   * Normalize a link target to a vault-relative doc path (forward slashes,
-   * leading "./" stripped, `.md` added when the target has no extension).
-   */
+  /** Normalize a link target to a vault-relative doc path (forward slashes,
+    * leading "./" stripped, `.md` added when the target has no extension). */
   def normalizeTarget(target: String): String =
     var t = target.replace('\\', '/')
     while t.startsWith("./") do t = t.substring(2)
@@ -532,20 +451,15 @@ object WikiIndex:
    * basename match. Unresolved targets become phantom nodes (`stub=true`) so
    * the graph still shows the reference — Obsidian draws them the same way.
    */
-  def buildEdges(
-    project: String,
-    device: String,
-    fromRel: String,
-    parsed: ParsedDoc,
-    knownRels: Set[String]
-  ): List[WikiEdge] =
+  def buildEdges(project: String, device: String, fromRel: String, parsed: ParsedDoc, knownRels: Set[String]): List[WikiEdge] =
     val byBasename = knownRels.groupBy(r => basename(r).stripSuffix(".md").toLowerCase)
     parsed.links.flatMap { case (rawTarget, anchor, kind, line) =>
       val target = normalizeTarget(rawTarget)
       val targetKey = target.toLowerCase
       val resolved =
         if knownRels.contains(target) || knownRels.contains(targetKey) then Some(target)
-        else if knownRels.exists(_.toLowerCase == targetKey) then knownRels.find(_.toLowerCase == targetKey)
+        else if knownRels.exists(_.toLowerCase == targetKey) then
+          knownRels.find(_.toLowerCase == targetKey)
         else
           byBasename.get(basename(target).stripSuffix(".md").toLowerCase) match
             case Some(matches) if matches.sizeIs == 1 => Some(matches.head)
@@ -555,7 +469,6 @@ object WikiIndex:
         case None => nodeId(project, target)
       Some(WikiEdge(nodeId(project, fromRel), toId, kind, anchor.map(a => "#" + a), line))
     }
-  end buildEdges
 
   def nodeId(project: String, rel: String): String = s"$project:${rel.replace('\\', '/')}"
 
@@ -563,12 +476,10 @@ object WikiIndex:
   def phantomNode(project: String, device: String, rel: String): WikiDocNode =
     WikiDocNode(nodeId(project, rel), project, device, rel, basename(rel).stripSuffix(".md"), Nil, Nil, stub = true)
 
-  /**
-   * Cross-vault placeholder (#744-B): same shape as a phantom, but flagged
-   * `external` so consumers count it as a cross-vault reference instead of a
-   * broken link. `rel` is the target AS AUTHORED (vault-relative to the source
-   * vault, e.g. "sub/docs/x.md" or a sibling vault's "glossary.md").
-   */
+  /** Cross-vault placeholder (#744-B): same shape as a phantom, but flagged
+    * `external` so consumers count it as a cross-vault reference instead of a
+    * broken link. `rel` is the target AS AUTHORED (vault-relative to the source
+    * vault, e.g. "sub/docs/x.md" or a sibling vault's "glossary.md"). */
   def externalNode(project: String, device: String, rel: String): WikiDocNode =
     phantomNode(project, device, rel).copy(external = true)
 
@@ -582,22 +493,16 @@ object WikiIndex:
   def classifyExternals(scan: VaultScan, foreignRels: Set[String]): VaultScan =
     if foreignRels.isEmpty then scan
     else
-      val nodes =
-        scan.nodes.map(n => if n.stub && !n.external && foreignRels.contains(n.rel) then n.copy(external = true) else n)
+      val nodes = scan.nodes.map(n =>
+        if n.stub && !n.external && foreignRels.contains(n.rel) then n.copy(external = true) else n
+      )
       scan.copy(nodes = nodes)
 
-  /**
-   * Build a full vault scan from (rel -> raw text) document pairs plus the
-   * vault's attachment files (rel paths; content is never read). Attachments
-   * join the resolution namespace so `[[paper.pdf]]` cites resolve like any
-   * Obsidian link.
-   */
-  def buildVaultScan(
-    project: String,
-    device: String,
-    docs: List[(String, String)],
-    attachments: List[String] = Nil
-  ): VaultScan =
+  /** Build a full vault scan from (rel -> raw text) document pairs plus the
+    * vault's attachment files (rel paths; content is never read). Attachments
+    * join the resolution namespace so `[[paper.pdf]]` cites resolve like any
+    * Obsidian link. */
+  def buildVaultScan(project: String, device: String, docs: List[(String, String)], attachments: List[String] = Nil): VaultScan =
     val knownRels = docs.map(_._1).toSet ++ attachments.toSet
     val nodes = ListBuffer.empty[WikiDocNode]
     val edges = ListBuffer.empty[WikiEdge]
@@ -641,7 +546,6 @@ object WikiIndex:
     }
     nodes ++= phantom.values
     VaultScan(nodes.toList, edges.toList, Nil)
-  end buildVaultScan
 
   // ── JSON encoding ────────────────────────────────────────────────
 

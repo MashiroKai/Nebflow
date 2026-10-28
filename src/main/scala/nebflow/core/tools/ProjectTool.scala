@@ -113,7 +113,6 @@ object ProjectTool extends Tool:
             )
           )
         )
-    end match
 
   end call
 
@@ -157,10 +156,8 @@ object ProjectTool extends Tool:
           val desc = pd.description.filter(_.nonEmpty).map(d => s" — $d").getOrElse("")
           s"- ${pd.name} [$devTag, $mountTag] $ws$desc"
         }
-        Right(
-          lines.mkString("\n") +
-            "\n\nA project tagged with another device keeps its workspace on that device (device-local absolute paths; file tools route there via the device channel). action=\"show\" for one project's full definition."
-        )
+        Right(lines.mkString("\n") +
+          "\n\nA project tagged with another device keeps its workspace on that device (device-local absolute paths; file tools route there via the device channel). action=\"show\" for one project's full definition.")
 
   /** `action="show"`：单项目全量定义（含设备归属的存储值 + 显示名 + 大脑根）。 */
   private def showFace(rawName: Option[String], ctx: ToolContext): IO[Either[ToolError, String]] =
@@ -180,11 +177,7 @@ object ProjectTool extends Tool:
           pd <- ProjectStore.load(proj)
         yield pd match
           case None =>
-            Left(
-              ToolError(
-                s"Project '$proj' not found (no projects/$proj/project.json). action=\"list\" shows existing projects."
-              )
-            )
+            Left(ToolError(s"Project '$proj' not found (no projects/$proj/project.json). action=\"list\" shows existing projects."))
           case Some(d) =>
             val devRaw = ProjectStore.effectiveDevice(d)
             val devDisplay = ProjectStore.displayDevice(devRaw, names.get)
@@ -200,8 +193,7 @@ object ProjectTool extends Tool:
             b ++= s"  agentFile: ${d.agentFile}\n"
             b ++= s"  mounted: ${if mounted then "yes" else "no"}\n"
             if d.archived.contains(true) then b ++= "  archived: yes (hidden from the Projects list)\n"
-            if d.unmounted.contains(true) then
-              b ++= "  unmounted: yes (hard-unmounted; re-mount refused until the keys are removed)\n"
+            if d.unmounted.contains(true) then b ++= "  unmounted: yes (hard-unmounted; re-mount refused until the keys are removed)\n"
             b ++= s"  createdAt: ${d.createdAt}\n"
             Right(b.toString)
 
@@ -234,9 +226,7 @@ object ProjectTool extends Tool:
               case Right("unchanged") =>
                 Right(s"Project '$proj' description unchanged (already set — idempotent no-op, zero write).")
               case Right(_) =>
-                Right(
-                  s"Project '$proj' description updated (only the description field changed — every other project.json field is byte-for-byte)."
-                )
+                Right(s"Project '$proj' description updated (only the description field changed — every other project.json field is byte-for-byte).")
             }
 
   /** create 面（原 ProjectCreate 语义，逐字保持）。 */
@@ -358,6 +348,7 @@ object ProjectTool extends Tool:
       ),
       device = device
     )
+
 
   /** '~' 展开（仅前缀语义，防 API 差异；非 ~ 开头原样返回）。 */
   def expandTilde(path: String): String =

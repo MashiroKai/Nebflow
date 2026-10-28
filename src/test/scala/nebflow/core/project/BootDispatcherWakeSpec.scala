@@ -802,9 +802,7 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
 
   // ══ A8 排除表（exclusivity 批 2026-10-15，双活根治一）══════════════════
 
-  test(
-    "A8: excluded-by-config — sweep exclusion table skips the project before any wake work (zero disk contact, hot-read)"
-  ) {
+  test("A8: excluded-by-config — sweep exclusion table skips the project before any wake work (zero disk contact, hot-read)") {
     val ws = root / "ws-a8"
     val pdEx = pdOf("a8-excluded", ws)
     val pdCtl = pdOf("a8-control", root / "ws-a8ctl")
@@ -855,8 +853,7 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
       assertEquals(
         exOutcome.map(o => (o.result, o.reason)),
         Some((BootDispatcherWake.ResultSkipped, BootDispatcherWake.ReasonExcludedByConfig)),
-        s"excluded project must be skipped with excluded-by-config, got ${reportEx.outcomes
-            .map(o => o.project -> o.reason)}"
+        s"excluded project must be skipped with excluded-by-config, got ${reportEx.outcomes.map(o => o.project -> o.reason)}"
       )
       assertEquals(textsEx.count(_.contains(pdEx.name)), 0, "excluded project: zero wake text")
       assertEquals(
@@ -864,11 +861,7 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
         Some(BootDispatcherWake.ResultWoken),
         "control project (not on the table) must wake in the same boot"
       )
-      assertEquals(
-        hotRead,
-        (Set(pdEx.name, "other-project"), Set.empty[String]),
-        "prop is hot-read; empty = no exclusion"
-      )
+      assertEquals(hotRead, (Set(pdEx.name, "other-project"), Set.empty[String]), "prop is hot-read; empty = no exclusion")
       // 零触碰语义：被排除项目的 workspace 运行态（events + boot-wake.json 标记）零写入
       assertEquals(eventsEx, Nil, "excluded project: zero events written into its workspace (zero disk contact)")
       assertEquals(markerEx, None, "excluded project: zero marker written into its workspace (zero disk contact)")
@@ -876,11 +869,7 @@ class BootDispatcherWakeSpec extends CatsEffectSuite:
         invEx.isRight && invEx.exists(_.needWake),
         "exclusion must skip BEFORE inventory-driven decisions (fixture does need wake — skip reason is the table, not no-reentry)"
       )
-      assertEquals(
-        reportCtl.outcomes.headOption.map(_.result),
-        Some(BootDispatcherWake.ResultWoken),
-        "no exclusion = status quo (control)"
-      )
+      assertEquals(reportCtl.outcomes.headOption.map(_.result), Some(BootDispatcherWake.ResultWoken), "no exclusion = status quo (control)")
       // recorder 跨两次 boot 累积（excluded boot 里 control 项目已贡献一条）——按项目名数
       assertEquals(textsCtl.count(_.contains(pdEx.name)), 1, "control boot: exactly one wake text for pdEx")
     end for

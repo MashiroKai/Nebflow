@@ -33,8 +33,6 @@ object ProviderHealthMonitor:
    */
   val RecheckIntervalSec = 5
 
-end ProviderHealthMonitor
-
 /**
  * Tracks the health of every provider+model in the candidate chain.
  *

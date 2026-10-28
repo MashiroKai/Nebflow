@@ -66,14 +66,9 @@ class AtomicJsonRestrictedWriteSpec extends CatsEffectSuite:
       after <- IO(perms(f))
       content <- IO(os.read(f))
     yield
-      assertEquals(
-        before,
-        ownerRW + PosixFilePermission.GROUP_READ + PosixFilePermission.OTHERS_READ,
-        "fixture is 0644"
-      )
+      assertEquals(before, ownerRW + PosixFilePermission.GROUP_READ + PosixFilePermission.OTHERS_READ, "fixture is 0644")
       assertEquals(after, ownerRW, "one save must converge the legacy file to 0600")
       assertEquals(content, """{"apiKey":"sk-new"}""")
-    end for
   }
 
   test("already-0600 target stays 0600 and the IO form behaves like the Sync form") {
@@ -94,7 +89,6 @@ class AtomicJsonRestrictedWriteSpec extends CatsEffectSuite:
       assertEquals(c1, """{"v":2}""")
       assertEquals(m2, ownerRW, "IO form == Sync form on mode")
       assertEquals(c2, """{"w":1}""")
-    end for
   }
 
   test("failed write leaves the old file's content AND mode untouched (fail-same-as-writeSync)") {
@@ -122,10 +116,8 @@ class AtomicJsonRestrictedWriteSpec extends CatsEffectSuite:
       // 目录置为不可写 → tmp 的 createFile 必败（AccessDenied），走 catch 清理
       os.perms.set(dir, "r-xr-xr-x")
       val attemptCls =
-        try
-          AtomicJson.writeSyncRestricted(f, """{"apiKey":"sk-new"}"""); None
-        catch
-          case e: Exception => Some(e.getClass.getSimpleName)
+        try { AtomicJson.writeSyncRestricted(f, """{"apiKey":"sk-new"}"""); None }
+        catch case e: Exception => Some(e.getClass.getSimpleName)
       // 恢复目录可写（清场），再断言
       os.perms.set(dir, "rwxr-xr-x")
       val content = os.read(f)

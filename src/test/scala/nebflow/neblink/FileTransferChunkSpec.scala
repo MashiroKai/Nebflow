@@ -510,16 +510,8 @@ class FileTransferChunkSpec extends CatsEffectSuite:
         huge <- FileTransferAction.handle(getParams(p.toString, 0, 100 * 1024 * 1024)) // > 4MiB ⇒ 夹到 MaxChunkSize
       yield
         val chunks1KiB = ((6L * 1024 * 1024) + 1023) / 1024
-        assertEquals(
-          tiny.toOption.get.hcursor.downField("totalChunks").as[Long].toOption,
-          Some(chunks1KiB),
-          "sub-1KiB ask clamps up to 1KiB"
-        )
-        assertEquals(
-          negative.toOption.get.hcursor.downField("totalChunks").as[Long].toOption,
-          Some(chunks1KiB),
-          "negative ask clamps up to 1KiB"
-        )
+        assertEquals(tiny.toOption.get.hcursor.downField("totalChunks").as[Long].toOption, Some(chunks1KiB), "sub-1KiB ask clamps up to 1KiB")
+        assertEquals(negative.toOption.get.hcursor.downField("totalChunks").as[Long].toOption, Some(chunks1KiB), "negative ask clamps up to 1KiB")
         assertEquals(
           huge.toOption.get.hcursor.downField("totalChunks").as[Long].toOption,
           Some(2L),

@@ -275,7 +275,8 @@ object BlockingSubagent:
   private[tools] def startSpy(
     started: Deferred[IO, Unit],
     base: io.circe.Json => IO[Unit]
-  ): io.circe.Json => IO[Unit] = json => started.complete(()).attempt.void *> base(json)
+  ): io.circe.Json => IO[Unit] = json =>
+    started.complete(()).attempt.void *> base(json)
 
   /** wsSend 间谍：agentDone/agentEnd 且 nodeSessionId 命中 ⇒ 完成桥。 */
   private[tools] def spy(

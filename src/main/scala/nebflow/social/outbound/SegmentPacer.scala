@@ -38,21 +38,17 @@ import scala.concurrent.duration.*
  */
 final class SegmentPacer private (minGapMs: Long):
 
-  /**
-   * The turn-taking ticket: `Some(d)` = the latest registered runner's
-   * completion signal (already completed at rest); `None` = never used yet.
-   * ONE atomic cell: installing my ticket and reading my predecessor is a
-   * single modify, so even two racing registrars chain strictly.
-   */
+  /** The turn-taking ticket: `Some(d)` = the latest registered runner's
+    * completion signal (already completed at rest); `None` = never used yet.
+    * ONE atomic cell: installing my ticket and reading my predecessor is a
+    * single modify, so even two racing registrars chain strictly. */
   private val ticketRef: Ref[IO, Option[Deferred[IO, Unit]]] = Ref.unsafe(None)
 
   /** The last send's START (monotonic ms) — the start-to-start pace anchor. */
   private val lastStartMs: Ref[IO, Long] = Ref.unsafe[IO, Long](0L)
 
-  /**
-   * The pace: ≥ `minGapMs` since the previous send STARTED (zero wait for the
-   * first send after idle).
-   */
+  /** The pace: ≥ `minGapMs` since the previous send STARTED (zero wait for the
+    * first send after idle). */
   private def paced(task: IO[Unit]): IO[Unit] =
     lastStartMs.get.flatMap { last =>
       IO.monotonic.flatMap { now =>
@@ -61,39 +57,33 @@ final class SegmentPacer private (minGapMs: Long):
       }
     }
 
-  /**
-   * Register `task` at the chain tail **on the caller's fiber** (the atomic
-   * modify IS the ordering point) and return its runner. The runner runs
-   * exactly once — inline via [[enqueue]] or forked via [[enqueueAsync]] —
-   * and hands ITS ticket to the next registrant on completion.
-   */
+  /** Register `task` at the chain tail **on the caller's fiber** (the atomic
+    * modify IS the ordering point) and return its runner. The runner runs
+    * exactly once — inline via [[enqueue]] or forked via [[enqueueAsync]] —
+    * and hands ITS ticket to the next registrant on completion. */
   private def register(task: IO[Unit]): IO[IO[Unit]] =
     Deferred[IO, Unit].flatMap { mine =>
       ticketRef
         .modify {
           case Some(prev) => (Some(mine), Some(prev))
-          case None => (Some(mine), None)
+          case None       => (Some(mine), None)
         }
         .map {
           case Some(prev) => prev.get *> paced(task).guarantee(mine.complete(()).void)
-          case None => paced(task).guarantee(mine.complete(()).void)
+          case None       => paced(task).guarantee(mine.complete(()).void)
         }
     }
 
-  /**
-   * Register and AWAIT: the returned IO ends when this task (and, by the
-   * ticket chain, everything registered before it) completed. The turn-end
-   * leg (`done`) uses this — awaiting the tail is the structural guarantee
-   * that every earlier segment is already out.
-   */
+  /** Register and AWAIT: the returned IO ends when this task (and, by the
+    * ticket chain, everything registered before it) completed. The turn-end
+    * leg (`done`) uses this — awaiting the tail is the structural guarantee
+    * that every earlier segment is already out. */
   def enqueue(task: IO[Unit]): IO[Unit] = register(task).flatten
 
-  /**
-   * Register synchronously, run in the background: the mid-turn boundary leg
-   * (`toolStart` / `roundComplete`) uses this — the register lands in the
-   * caller's fiber (order preserved), the 1s-paced run never blocks the
-   * streaming event face.
-   */
+  /** Register synchronously, run in the background: the mid-turn boundary leg
+    * (`toolStart` / `roundComplete`) uses this — the register lands in the
+    * caller's fiber (order preserved), the 1s-paced run never blocks the
+    * streaming event face. */
   def enqueueAsync(task: IO[Unit]): IO[Unit] = register(task).flatMap(_.start).void
 
 end SegmentPacer
@@ -103,10 +93,8 @@ object SegmentPacer:
   /** 段间最小间隔（生产默认 1s）。两条渠道腿各自持有一个 pacer，互不影响。 */
   val DefaultGapMs = 1000L
 
-  /**
-   * The constructor face for callers that build their refs unsafely (the two
-   * bridges' field-initializer style — no IO context at construction).
-   */
+  /** The constructor face for callers that build their refs unsafely (the two
+    * bridges' field-initializer style — no IO context at construction). */
   def unsafe(minGapMs: Long = DefaultGapMs): SegmentPacer = new SegmentPacer(minGapMs)
 
 end SegmentPacer

@@ -39,11 +39,7 @@ class PendingAskLedgerSpec extends CatsEffectSuite:
       payload = Json.obj(
         "type" -> Json.fromString("askUser"),
         "items" -> Json.arr(
-          Json.obj(
-            "question" -> Json.fromString("continue?"),
-            "options" -> Json.arr(),
-            "allowOther" -> Json.fromBoolean(false)
-          )
+          Json.obj("question" -> Json.fromString("continue?"), "options" -> Json.arr(), "allowOther" -> Json.fromBoolean(false))
         )
       ),
       reply = InteractionReply.AskUserReply(None),
@@ -97,7 +93,7 @@ class PendingAskLedgerSpec extends CatsEffectSuite:
           // 回执行内容取自 System 行（bootReconcile 的过期回执恒为 System 型）
           val text = msg match
             case s: UiMessage.System => s.content
-            case other => other.toString
+            case other               => other.toString
           receipts.update(_ :+ (rootSid -> text))
       )
       loaded <- ledger.load()

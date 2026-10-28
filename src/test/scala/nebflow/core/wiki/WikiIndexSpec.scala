@@ -51,10 +51,7 @@ class WikiIndexSpec extends FunSuite:
         |### Deep heading""".stripMargin
     )
     assertEquals(doc.title, "Auth review")
-    assertEquals(
-      doc.headings.map(h => (h.text, h.line)),
-      List(("Auth review", 1), ("Token lifetime", 3), ("Deep heading", 5))
-    )
+    assertEquals(doc.headings.map(h => (h.text, h.line)), List(("Auth review", 1), ("Token lifetime", 3), ("Deep heading", 5)))
   }
 
   test("WI-4 block ids attach to their source line (1-based)") {
@@ -81,8 +78,7 @@ class WikiIndexSpec extends FunSuite:
 
   test("WI-6 edges resolve by exact rel path, then unique basename; unresolved become phantom nodes") {
     val scan = WikiIndex.buildVaultScan(
-      "proj",
-      "self",
+      "proj", "self",
       List(
         "notes/a.md" -> "links: [[notes/b.md]] and [[b]] and [[missing]]",
         "notes/b.md" -> "back to [[a]]"
@@ -98,8 +94,7 @@ class WikiIndexSpec extends FunSuite:
 
   test("WI-7 ambiguous basename (two matches) stays unresolved — never a silent guess") {
     val scan = WikiIndex.buildVaultScan(
-      "proj",
-      "self",
+      "proj", "self",
       List(
         "x/a.md" -> "see [[a]]",
         "x/one.md" -> "x",
@@ -109,8 +104,7 @@ class WikiIndexSpec extends FunSuite:
     // Two candidate basenames? "a" matches exactly one doc (x/a.md) → resolved.
     // Renamed fixture: a link whose basename matches TWO documents resolves to none.
     val scan2 = WikiIndex.buildVaultScan(
-      "proj",
-      "self",
+      "proj", "self",
       List(
         "x/a.md" -> "see [[dup]]",
         "p/dup.md" -> "1",
@@ -127,8 +121,7 @@ class WikiIndexSpec extends FunSuite:
 
   test("WI-8 anchors ride the edge verbatim (prefixed with #)") {
     val scan = WikiIndex.buildVaultScan(
-      "proj",
-      "self",
+      "proj", "self",
       List("a.md" -> "[[b#Heading one]] [[b#^blk-1]] [[b|alias only]]", "b.md" -> "b")
     )
     val anchors = scan.edges.filter(_.from == "proj:a.md").map(_.anchor)
@@ -166,8 +159,7 @@ Day 1: framed the retry budget question. ^frame
 
   test("WI-11 attachments become kind=attachment nodes and resolve as link targets") {
     val scan = WikiIndex.buildVaultScan(
-      "proj",
-      "self",
+      "proj", "self",
       List("review.md" -> "Read [[chen-2024-retry.pdf]] and see ![[figure.png]]."),
       attachments = List("attachments/chen-2024-retry.pdf", "attachments/figure.png")
     )
@@ -246,8 +238,7 @@ body links [[real]]"""
 
   test("WI-17 nodeJson carries summary; nodes without one emit null") {
     val scan = WikiIndex.buildVaultScan(
-      "proj",
-      "self",
+      "proj", "self",
       List(
         "a.md" -> "# A\n\nFirst paragraph here with [[b]] reference.",
         "b.md" -> "no heading in b"
@@ -264,8 +255,7 @@ body links [[real]]"""
 
   test("WI-18 classifyExternals flips only cross-vault phantoms; true broken links stay broken") {
     val scan = WikiIndex.buildVaultScan(
-      "proj",
-      "self",
+      "proj", "self",
       List(
         "a.md" -> "# A\n\nSee [[sub/docs/c.md]] and [[ghost.md]].",
         "glossary.md" -> "# G\n\ndefinition. ^x"
@@ -383,8 +373,7 @@ body links [[real]]"""
     assertEquals(WikiIndex.ParagraphMaxChars, 280)
     // nodeJson carries paragraphs; attachment/phantom nodes carry []
     val scan = WikiIndex.buildVaultScan(
-      "proj",
-      "self",
+      "proj", "self",
       List("a.md" -> "# A\n\nglossary term — the definition. ^term"),
       List("fig.png")
     )

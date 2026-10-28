@@ -107,7 +107,6 @@ class BashAutoBackgroundSpec extends CatsEffectSuite:
         _ <- IO(assert(completed.contains("auto-bg-done"), s"output retrievable after completion: $completed"))
       yield ()).guarantee(BgTaskRegistry.unregister(jobId).attempt.void)
     yield ())
-    end for
   }
 
   test("A-5 default threshold arm: MAX_TIMEOUT reads the compressible prop per call (default-arm plumbing)") {
@@ -152,7 +151,6 @@ class BashAutoBackgroundSpec extends CatsEffectSuite:
         _ <- IO(assert(completed.contains("bg-unlimited-done"), s"ran to completion, output retrievable: $completed"))
       yield ()).guarantee(BgTaskRegistry.unregister(jobId).attempt.void)
     yield ())
-    end for
   }
 
   test(
@@ -184,7 +182,6 @@ class BashAutoBackgroundSpec extends CatsEffectSuite:
         }
       yield ()).guarantee(ShellSession.destroySession("auto-bg-adopt").attempt.void)
     yield ()
-    end for
   }
 
   test("A-4 adopted job explicit cancel kills the still-running process tree") {

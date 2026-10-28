@@ -102,7 +102,6 @@ class BashToolForegroundSpec extends CatsEffectSuite:
         _ <- IO(assert(completed.contains("budget-done"), s"result delivered on completion: $completed"))
       yield ()).guarantee(BgTaskRegistry.unregister(jobId).attempt.void)
     yield ())
-    end for
   }
 
   // ── #22 (2026-08-19 20:35 incident): zombie timeout class ────────────────
@@ -172,7 +171,6 @@ class BashToolForegroundSpec extends CatsEffectSuite:
         }
       yield ()).guarantee(BgTaskRegistry.unregister(jobId).attempt.void)
     yield ())
-    end for
   }
 
 end BashToolForegroundSpec

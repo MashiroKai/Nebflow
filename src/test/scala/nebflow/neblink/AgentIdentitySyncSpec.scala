@@ -39,8 +39,6 @@ class AgentIdentitySyncSpec extends CatsEffectSuite:
     )
     os.write(dir / "devices.json", json.noSpaces)
 
-  end writePairing
-
   private def mkAgent(name: String, displayName: Option[String], avatar: Option[Array[Byte]]): Unit =
     val dir = tempRoot / "agents" / name
     os.makeDir.all(dir)
@@ -79,8 +77,7 @@ class AgentIdentitySyncSpec extends CatsEffectSuite:
       IO.delay {
         val rec = AgentIdentityStore.readRec("Nebula")
         // 信封 roundtrip 需非空 sig（parsePayload fail-closed 只管结构；验签走下一测）
-        val signed =
-          AgentIdentitySync.buildPayload(rec, "self", 1_800_000_000_000L).get.copy(sig = "roundtrip-signature")
+        val signed = AgentIdentitySync.buildPayload(rec, "self", 1_800_000_000_000L).get.copy(sig = "roundtrip-signature")
         val back = AgentIdentitySync.parsePayload(AgentIdentitySync.encodePayload(signed))
         assertEquals(back, Some(signed))
         // kind 信封不对 ⇒ None（数据通道上有别的流量，静默忽略）
@@ -116,8 +113,7 @@ class AgentIdentitySyncSpec extends CatsEffectSuite:
         assert(AgentIdentitySync.verifyPayload(stale, nowMs).isDefined)
         // 未配对发送方 ⇒ 拒
         val stranger = unsigned.copy(fromDeviceId = "unpaired")
-        val strangerSigned =
-          stranger.copy(sig = nebflow.core.device.DeviceHmac.sign("other", AgentIdentitySync.canonicalOf(stranger)))
+        val strangerSigned = stranger.copy(sig = nebflow.core.device.DeviceHmac.sign("other", AgentIdentitySync.canonicalOf(stranger)))
         assert(AgentIdentitySync.verifyPayload(strangerSigned, nowMs).isDefined)
       }
 
@@ -126,15 +122,8 @@ class AgentIdentitySyncSpec extends CatsEffectSuite:
   test("decodeAvatar: None passes through, oversize rejected, valid decoded"):
     IO.delay {
       val base = AgentIdentitySync.IdentityPayload(
-        agent = "Nebula",
-        displayName = None,
-        avatarB64 = None,
-        avatarSha256 = None,
-        updatedAt = 1L,
-        fromDeviceId = "self",
-        tsSec = 0L,
-        nonce = "n",
-        sig = "s"
+        agent = "Nebula", displayName = None, avatarB64 = None, avatarSha256 = None,
+        updatedAt = 1L, fromDeviceId = "self", tsSec = 0L, nonce = "n", sig = "s"
       )
       assertEquals(AgentIdentitySync.decodeAvatar(base), Some(None))
       val withBytes = base.copy(avatarB64 = Some(Base64.getEncoder.encodeToString(bytes)), avatarSha256 = Some(sha))
@@ -159,22 +148,23 @@ class AgentIdentitySyncSpec extends CatsEffectSuite:
         AgentIdentitySync.selfIdFn = IO.pure("self")
         AgentIdentitySync.panelBroadcastFn = _ => IO.unit
         sent
-      }.flatMap { sent =>
-        AgentIdentitySync.pushIdentity("Nebula") *> AgentIdentitySync.pushAllIdentity() *>
-          IO {
-            // pushIdentity 2 帧（peerA/peerB）+ reconcile 2 帧（bare 无身份不占帧）
-            assertEquals(sent.map(_._1).toList.sorted, List("peerA", "peerA", "peerB", "peerB"))
-            val payloads = sent.map { case (t, j) => t -> AgentIdentitySync.parsePayload(j).get }
-            payloads.foreach { case (t, p) =>
-              assertEquals(p.agent, "Nebula")
-              assertEquals(p.displayName, Some("小雨"))
-              assertEquals(p.fromDeviceId, "self")
-              // 每份都按「本机与该目标的配对 key」签署（逐对端签署的可观测差异）。
-              val expectedKey = if t == "peerA" then "keyA" else "keyB"
-              assertEquals(p.sig, nebflow.core.device.DeviceHmac.sign(expectedKey, AgentIdentitySync.canonicalOf(p)))
-            }
-          }
       }
+        .flatMap { sent =>
+          AgentIdentitySync.pushIdentity("Nebula") *> AgentIdentitySync.pushAllIdentity() *>
+            IO {
+              // pushIdentity 2 帧（peerA/peerB）+ reconcile 2 帧（bare 无身份不占帧）
+              assertEquals(sent.map(_._1).toList.sorted, List("peerA", "peerA", "peerB", "peerB"))
+              val payloads = sent.map { case (t, j) => t -> AgentIdentitySync.parsePayload(j).get }
+              payloads.foreach { case (t, p) =>
+                assertEquals(p.agent, "Nebula")
+                assertEquals(p.displayName, Some("小雨"))
+                assertEquals(p.fromDeviceId, "self")
+                // 每份都按「本机与该目标的配对 key」签署（逐对端签署的可观测差异）。
+                val expectedKey = if t == "peerA" then "keyA" else "keyB"
+                assertEquals(p.sig, nebflow.core.device.DeviceHmac.sign(expectedKey, AgentIdentitySync.canonicalOf(p)))
+              }
+            }
+        }
 
   test("unwired sync is a no-op (single-machine form)"):
     reset() *>
@@ -183,4 +173,3 @@ class AgentIdentitySyncSpec extends CatsEffectSuite:
         AgentIdentitySync.selfIdFn = IO.pure("")
       } *>
       AgentIdentitySync.pushIdentity("Nebula").flatMap(_ => AgentIdentitySync.pushAllIdentity())
-end AgentIdentitySyncSpec

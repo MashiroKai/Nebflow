@@ -38,7 +38,6 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     wire: Option[Ref[IO, List[String]]] = None
   ):
     val calls: Ref[IO, List[(String, String)]] = Ref.unsafe[IO, List[(String, String)]](Nil)
-
     val sendFn: WeixinOutboundAdapter.Send = (to, text) =>
       calls
         .update(_ :+ ((to, text)))
@@ -67,21 +66,19 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       Ref.unsafe[IO, List[(String, WeixinOutboundAdapter.WeixinMedia)]](Nil)
 
     private def note(m: WeixinOutboundAdapter.WeixinMedia): IO[Unit] =
-      wire.fold(IO.unit)(w => w.update(_ :+ s"media:${m.imagePath.orElse(m.filePath).getOrElse("?")}"))
+      wire.fold(IO.unit)(w =>
+        w.update(_ :+ s"media:${m.imagePath.orElse(m.filePath).getOrElse("?")}")
+      )
 
     val sendFn: WeixinIlinkBridgePlugin.SendMedia = (to, media) =>
       if raiseOn(media) then
-        note(media).flatMap(_ =>
-          IO.raiseError[WeixinOutboundAdapter.SendResult](new java.io.IOException("simulated media fault"))
-        )
+        note(media).flatMap(_ => IO.raiseError[WeixinOutboundAdapter.SendResult](new java.io.IOException("simulated media fault")))
       else
         calls
           .update(_ :+ ((to, media)))
           .flatMap(_ => note(media))
           .as(if failOn(media) then failResult else result)
     val factory: os.Path => WeixinIlinkBridgePlugin.SendMedia = _ => sendFn
-
-  end RecordingMedia
 
   private def okResult =
     WeixinOutboundAdapter.SendResult(true, true, Some("421001"), 200, "delivered")
@@ -99,7 +96,6 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     raiseOn: List[String] => Boolean = _ => false,
     wire: Option[Ref[IO, List[String]]] = None
   ):
-
     private val failResult =
       WeixinOutboundAdapter.SendResult(false, false, None, 502, "delivery_failed: group sendmessage ret=1")
 
@@ -120,8 +116,6 @@ class WeixinOutboundSpec extends CatsEffectSuite:
           .flatMap(_ => note(images, caption))
           .as(if failOn(images) then failResult else result)
     val factory: os.Path => WeixinIlinkBridgePlugin.SendGroup = _ => sendFn
-
-  end RecordingGroup
 
   private def plugin(
     root: os.Path,
@@ -327,7 +321,8 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "hi".asJson))
       _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
       calls <- failing.calls.get
-    yield assertEquals(calls.size, 1, "the attempt WAS made (fail-closed, not silently skipped)")
+    yield
+    assertEquals(calls.size, 1, "the attempt WAS made (fail-closed, not silently skipped)")
     // no raise: the for-comprehension above completing IS the assertion
   }
 
@@ -405,7 +400,8 @@ class WeixinOutboundSpec extends CatsEffectSuite:
 
   test("WO-SG2 the throttle paces adjacent segments: send N starts ≥1s after send N-1 started") {
     val stamps = Ref.unsafe[IO, List[Long]](Nil)
-    val p = plugin(tmpRoot(), _ => (_, _) => IO.monotonic.flatMap(d => stamps.update(_ :+ d.toMillis)).as(okResult))
+    val p = plugin(tmpRoot(), _ =>
+      (_, _) => IO.monotonic.flatMap(d => stamps.update(_ :+ d.toMillis)).as(okResult))
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
       _ <- p.onAgentEvent("s1", wxDelta("s1", "seg one"))
@@ -434,11 +430,12 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       _ <- p.onAgentEvent("s1", wxDelta("s1", "尾段"))
       _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
       calls <- rec.calls.get
-    yield assertEquals(
-      calls,
-      List(("wx_alice", "第一段"), ("wx_alice", "尾段")),
-      "empty boundaries are silent; only committed text and the tail reach the wire"
-    )
+    yield
+      assertEquals(
+        calls,
+        List(("wx_alice", "第一段"), ("wx_alice", "尾段")),
+        "empty boundaries are silent; only committed text and the tail reach the wire"
+      )
     end for
   }
 
@@ -455,18 +452,17 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       // 段推送骑 .start 后台 fiber（awaitCalls 的文档即此险）：轮终 await 盖不
       // 住它，直读有负载竞态——等它落账再断言（pop multi-group 批顺手收紧）。
       calls <- awaitCalls(rec.calls, 1).timeout(10.seconds)
-    yield assertEquals(
-      calls,
-      List(("wx_alice", "已推段")),
-      "a committed segment is already delivered (cannot be unsent); the torn tail flushes nothing"
-    )
+    yield
+      assertEquals(
+        calls,
+        List(("wx_alice", "已推段")),
+        "a committed segment is already delivered (cannot be unsent); the torn tail flushes nothing"
+      )
     end for
   }
 
-  /**
-   * Bounded wait for the recorder to observe `count` calls — the failure note
-   * rides a background fiber (`.start`), which done's await cannot cover.
-   */
+  /** Bounded wait for the recorder to observe `count` calls — the failure note
+    * rides a background fiber (`.start`), which done's await cannot cover. */
   private def awaitCalls(
     ref: Ref[IO, List[(String, String)]],
     count: Int
@@ -775,13 +771,10 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     val calls: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
     val lastInput: Ref[IO, String] = Ref.unsafe[IO, String]("")
     def available: Boolean = true
-
     def shot(file: os.Path, outPng: os.Path): IO[Either[String, os.Path]] =
       calls.update(_ + 1) *> lastInput.set(file.toString).as(result)
 
-  test(
-    "WO-W1 an md product converts to ONE long-shot PNG on image_path + the original-path note; the file leg is gone"
-  ) {
+  test("WO-W1 an md product converts to ONE long-shot PNG on image_path + the original-path note; the file leg is gone") {
     nebflow.social.outbound.FileLongShot.Dedup.reset()
     val md = tmpRoot() / "report.md"
     os.write(md, "# 报告\n\n第一段正文。\n", createFolders = true)
@@ -807,13 +800,9 @@ class WeixinOutboundSpec extends CatsEffectSuite:
         List(WeixinOutboundAdapter.WeixinMedia.image(png.toString)),
         "ONE image send of the converted PNG — no file_path send (the file-first face is retired)"
       )
-      assertEquals(
-        calls,
-        List(("wx_alice", nebflow.social.outbound.RichDegrade.originalNote(md))),
-        "the companion note carries the original path"
-      )
+      assertEquals(calls, List(("wx_alice", nebflow.social.outbound.RichDegrade.originalNote(md))),
+        "the companion note carries the original path")
       assert(nebflow.social.outbound.FileLongShot.Dedup.size >= 1, "a successful push records the dedup key")
-    end for
   }
 
   test("WO-W2 an html product takes the SAME long-shot leg (2026-10-20 ruling supersedes file-first)") {
@@ -887,7 +876,6 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       assert(card.startsWith(nebflow.social.outbound.RichDegrade.UnconvertedPrefix), s"machine-matchable card: $card")
       assert(card.contains("audit.md") && card.contains(md.toString), s"file name + local path: $card")
       assert(card.contains("存储审计"), s"the one-line summary: $card")
-    end for
   }
 
   test("WO-W5 a FAILED image send does NOT record dedup: the next Pop of the same file retries") {
@@ -1008,11 +996,7 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       assert(card.contains("huge.pdf") && card.contains(big.toString), s"file name + local path: $card")
       assert(card.contains("控制台"), s"the console guidance: $card")
       assert(card.contains("25.0MB"), s"the limit in human units: $card")
-      assert(
-        nebflow.social.outbound.FileLongShot.Dedup.size == 1,
-        "the delivered card discharges the obligation — recorded"
-      )
-    end for
+      assert(nebflow.social.outbound.FileLongShot.Dedup.size == 1, "the delivered card discharges the obligation — recorded")
   }
 
   test("WO-W10 a FAILED file send does NOT record dedup: the next Pop of the same file retries") {
@@ -1074,7 +1058,6 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       )
       assertEquals(mediaCalls, Nil, "the per-item media seam never fires for a grouped stretch")
       assertEquals(calls, Nil, "no separate text send — the text is INSIDE the group message")
-    end for
   }
 
   test("WO-B2 a MIXED Pop keeps the payload order across runs: the 2-image stretch merges, the files stay per-item") {
@@ -1105,7 +1088,6 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       ),
       "the contiguous image stretch is ONE group call, the files stay per-item, payload order rules the wire"
     )
-    end for
   }
 
   test(
@@ -1116,8 +1098,7 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       val p = dir / n; os.write(p, "png", createFolders = true); p
     val i1 = img("i1.png"); val i2 = img("i2.png"); val i3 = img("i3.png")
     val rec = RecordingSend(okResult)
-    val group =
-      RecordingGroup(WeixinOutboundAdapter.SendResult(false, false, None, 502, "delivery_failed: cdn http_500"))
+    val group = RecordingGroup(WeixinOutboundAdapter.SendResult(false, false, None, 502, "delivery_failed: cdn http_500"))
     val p = plugin(tmpRoot(), rec.factory, RecordingMedia(okResult).factory, group.factory)
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
@@ -1127,18 +1108,13 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       groupCalls <- group.calls.get
       calls <- rec.calls.get
     yield
-      assertEquals(
-        groupCalls.map(_._2),
-        List(List(i1.toString, i2.toString, i3.toString)),
-        "ONE group attempt for the stretch"
-      )
+      assertEquals(groupCalls.map(_._2), List(List(i1.toString, i2.toString, i3.toString)), "ONE group attempt for the stretch")
       assertEquals(calls.size, 2, "the caption recovery AND the batch notice both go out")
       assertEquals(calls.head._2, "正文", "the caption is recovered FIRST — the text never dies with the media")
       assert(
         calls(1)._2.startsWith("[3 张图片发送失败 code=502]"),
         s"the notice names the batch size: ${calls(1)._2}"
       )
-    end for
   }
 
   // ───────────── pop multi-group fix (2026-10-09) → 媒体合并批 (2026-10-22) ─────────────
@@ -1183,7 +1159,6 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       assertEquals(groupCalls.map(_._2), List(List(a.toString, b.toString)), "the multi-image card is ONE group call")
       assertEquals(groupCalls.map(_._3), List(None), "no text in the turn ⇒ no caption")
       assertEquals(rich.get("s1"), None, "the memory is drained by the flush")
-    end for
   }
 
   test(
@@ -1203,11 +1178,12 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("image", a), popItem("image", b))))
       _ <- p.onAgentEvent("s1", doneEv("s1"))
       order <- wire.get
-    yield assertEquals(
-      order,
-      List(s"group:两张图如下|${a.toString},${b.toString}"),
-      "ONE wire event: the caption rides INSIDE the group message — text and images arrive together, never split"
-    )
+    yield
+      assertEquals(
+        order,
+        List(s"group:两张图如下|${a.toString},${b.toString}"),
+        "ONE wire event: the caption rides INSIDE the group message — text and images arrive together, never split"
+      )
   }
 
   test("WO-B5b a LONG tail (> first tier) keeps its own pull flow and goes FIRST; the group follows caption-less") {
@@ -1235,9 +1211,7 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       assertEquals(groupCalls.head._3, None, "a long tail never rides as a caption")
   }
 
-  test(
-    "WO-B6 a group seam RAISE is contained: the caption is recovered and ONE batch notice goes out; nothing rethrows"
-  ) {
+  test("WO-B6 a group seam RAISE is contained: the caption is recovered and ONE batch notice goes out; nothing rethrows") {
     val dir = tmpRoot()
     def img(n: String) =
       val p = dir / n; os.write(p, "png", createFolders = true); p
@@ -1260,7 +1234,6 @@ class WeixinOutboundSpec extends CatsEffectSuite:
         calls(1)._2.startsWith("[3 张图片发送失败 code=-1]"),
         s"the fault names the batch: ${calls(1)._2}"
       )
-    end for
   }
 
   test("WO-B7 a raising per-ITEM leg (file) degrades to its own [未送达] line; the remaining runs and the text survive") {
@@ -1305,7 +1278,6 @@ class WeixinOutboundSpec extends CatsEffectSuite:
         calls(1)._2.contains("[未送达] bad.pdf"),
         s"the faulted item is named visibly, after the text: ${calls(1)._2}"
       )
-    end for
   }
 
   // ───────────── 媒体合并批: the merge-window timing trio (task #756 验证面) ─────────────
@@ -1325,11 +1297,12 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "看这两张".asJson))
       _ <- p.onAgentEvent("s1", doneEv("s1"))
       order <- wire.get
-    yield assertEquals(
-      order,
-      List(s"group:看这两张|${a.toString},${b.toString}"),
-      "the merge window holds the media until the turn ends; the late text rides INSIDE the group — media never goes out empty"
-    )
+    yield
+      assertEquals(
+        order,
+        List(s"group:看这两张|${a.toString},${b.toString}"),
+        "the merge window holds the media until the turn ends; the late text rides INSIDE the group — media never goes out empty"
+      )
   }
 
   test("WO-GT2 文字先到、媒体后到: the wire order stays text-first, media-after (顺序稳定)") {
@@ -1350,11 +1323,12 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", doc1))))
       _ <- p.onAgentEvent("s1", doneEv("s1"))
       order <- wire.get
-    yield assertEquals(
-      order,
-      List("text:正文", s"media:${doc1.toString}"),
-      "text leads, media follows — the text never lags the media it belongs to"
-    )
+    yield
+      assertEquals(
+        order,
+        List("text:正文", s"media:${doc1.toString}"),
+        "text leads, media follows — the text never lags the media it belongs to"
+      )
   }
 
   test("WO-GT3 纯媒体无文字: the group goes out alone at the turn end (no empty text send, no artificial wait)") {
@@ -1370,18 +1344,17 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("image", a), popItem("image", b))))
       _ <- p.onAgentEvent("s1", doneEv("s1"))
       order <- wire.get
-    yield assertEquals(
-      order,
-      List(s"group:|${a.toString},${b.toString}"),
-      "a text-less media turn delivers its group caption-less at the turn end — the turn end IS the window's close"
-    )
+    yield
+      assertEquals(
+        order,
+        List(s"group:|${a.toString},${b.toString}"),
+        "a text-less media turn delivers its group caption-less at the turn end — the turn end IS the window's close"
+      )
   }
 
   // ───────────── 媒体合并批: the wire body + timeout arithmetic (pure) ─────────────
 
-  test(
-    "WO-WG1 buildMediaGroupSendJson: keys exactly to+images, +text when a caption rides, +account under the verbatim rule"
-  ) {
+  test("WO-WG1 buildMediaGroupSendJson: keys exactly to+images, +text when a caption rides, +account under the verbatim rule") {
     val bare = WeixinOutboundAdapter.buildMediaGroupSendJson("wx_alice", List("/tmp/a.png", "/tmp/b.png"))
     assertEquals(bare.asObject.map(_.keys.toList.sorted), Some(List("images", "to")), "no caption ⇒ NO text key")
     assertEquals(bare.hcursor.downField("images").as[List[String]].toOption, Some(List("/tmp/a.png", "/tmp/b.png")))

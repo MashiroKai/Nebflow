@@ -431,7 +431,6 @@ class FileChangeReportSpec extends CatsEffectSuite:
       // …and the full body rides the wire verbatim — no strip, no shared reason.
       assertEquals(files.head.hcursor.downField("diffText").as[String].toOption, Some(bigBody))
       assertEquals(files.head.hcursor.downField("degradedReason").as[String].toOption, None)
-    end for
   }
 
   test("git workspace: file whose diff exceeds the old 200k per-file cap keeps the full body") {

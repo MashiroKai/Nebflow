@@ -32,7 +32,6 @@ private[gateway] object ProviderModelProbe:
   val TimeoutMs: Long = 20_000
 
   sealed trait Verdict extends Product with Serializable
-
   object Verdict:
     final case class Ok(latencyMs: Long, replyPreview: String) extends Verdict
     final case class Failed(detail: String) extends Verdict
@@ -46,7 +45,7 @@ private[gateway] object ProviderModelProbe:
     val base = baseUrl.trim.replaceAll("/+$", "")
     protocol match
       case LlmProtocol.Anthropic => if base.endsWith("/v1/messages") then base else s"$base/v1/messages"
-      case LlmProtocol.OpenAI => if base.endsWith("/chat/completions") then base else s"$base/chat/completions"
+      case LlmProtocol.OpenAI    => if base.endsWith("/chat/completions") then base else s"$base/chat/completions"
 
   /**
    * Minimal 1-token request body per protocol face (tens of tokens of real
@@ -112,7 +111,7 @@ private[gateway] object ProviderModelProbe:
         // the provider's own message (zhipu 200-carrier precedent).
         ProviderProbe.errEnvelopeMessage(body) match
           case Some(msg) => Verdict.Failed(sanitize(s"HTTP $status: $msg", apiKey))
-          case None => Verdict.Ok(latency, sanitize(body.take(120), apiKey))
+          case None      => Verdict.Ok(latency, sanitize(body.take(120), apiKey))
       else
         val detail = ProviderProbe.errBodyMessage(body).getOrElse(body.take(200))
         Verdict.Failed(sanitize(s"HTTP $status: $detail", apiKey))
@@ -124,10 +123,6 @@ private[gateway] object ProviderModelProbe:
         Verdict.Failed("interrupted")
       case e: Exception =>
         Verdict.Failed(sanitize(Option(e.getMessage).filter(_.nonEmpty).getOrElse(e.getClass.getSimpleName), apiKey))
-
-    end try
-
-  end call
 
   /** Per-provider one-flight guard for the route (double-click). */
   final class Gate:

@@ -82,7 +82,6 @@ class BgTaskOutputDiskSpec extends FunSuite:
       // 无残留 temp 文件（原子 move 收口）
       assertEquals(os.list(dir).filter(_.last.endsWith(".tmp")).size, 0)
     finally os.remove.all(dir)
-    end try
   }
 
   // ── readSlice：字节游标 + 行对齐 ─────────────────────────────────────
@@ -108,7 +107,6 @@ class BgTaskOutputDiskSpec extends FunSuite:
       assertEquals(past._1, "")
       assertEquals(past._3, true)
     finally os.remove.all(dir)
-    end try
   }
 
   test("readSlice: missing log = None (meta-only tasks serve empty output at the store layer)") {
@@ -146,21 +144,17 @@ class BgTaskOutputDiskSpec extends FunSuite:
       assert(!os.exists(BgTaskOutputDisk.logPath(dir, "sw-1")))
       assert(!os.exists(BgTaskOutputDisk.metaPath(dir, "sw-2")))
     finally os.remove.all(dir)
-    end try
   }
 
   // ── Store 集成：落盘开启后的 round-trip（fillRemote + 落盘兜底读）──────
 
-  test(
-    "store round-trip with persistence on: fillRemote lands in memory AND on disk; read falls back to disk after retention miss"
-  ) {
+  test("store round-trip with persistence on: fillRemote lands in memory AND on disk; read falls back to disk after retention miss") {
     val root = tmpDir()
     val dir = BgTaskOutputDisk.dir(root) // store 落在 <root>/bg-task-logs/
     try
       BgTaskOutputStore.enablePersistence(root)
       val id = s"store-disk-${System.nanoTime().toString.take(8)}"
-      val origin =
-        BgTaskOutputStore.Origin("remote", "KAI", "/c/Users/Kai/stand-win-test5.log", "[KAI] full test", 1234L)
+      val origin = BgTaskOutputStore.Origin("remote", "KAI", "/c/Users/Kai/stand-win-test5.log", "[KAI] full test", 1234L)
       BgTaskOutputStore
         .fillRemote(id, "line A\nline B\n", "completed", Some(2), None, origin)
         .unsafeRunSync()
@@ -181,13 +175,8 @@ class BgTaskOutputDiskSpec extends FunSuite:
       BgTaskOutputDisk.writeMeta(
         dir,
         BgTaskOutputDisk.Meta(
-          jobId = orphanId,
-          status = "failed",
-          exitCode = None,
-          errorHint = Some("old crash"),
-          totalBytes = 5L,
-          totalLines = 1L,
-          kind = Some("local"),
+          jobId = orphanId, status = "failed", exitCode = None, errorHint = Some("old crash"),
+          totalBytes = 5L, totalLines = 1L, kind = Some("local"),
           outputPath = Some(s"$dir/$orphanId.log")
         )
       )
@@ -198,6 +187,5 @@ class BgTaskOutputDiskSpec extends FunSuite:
       assertEquals(disk.errorHint, Some("old crash"))
       assertEquals(disk.kind, Some("local"))
     finally os.remove.all(root)
-    end try
   }
 end BgTaskOutputDiskSpec

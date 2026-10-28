@@ -123,11 +123,8 @@ final class ConsoleTakeover(
    */
   def onDisconnect(connId: String): IO[Unit] =
     if !enabled then IO.unit
-    else
-      connsRef.update(m =>
-        m.collect { case (sid, ids) if ids.contains(connId) => sid -> (ids - connId) }
-          .filterNot(_._2.isEmpty)
-      )
+    else connsRef.update(m => m.collect { case (sid, ids) if ids.contains(connId) => sid -> (ids - connId) }
+      .filterNot(_._2.isEmpty))
 
   /**
    * 【重新接管】（收流管拦截 `takeoverRetake` 帧后调用）：owner 翻回本连接的会话 +
@@ -151,9 +148,7 @@ final class ConsoleTakeover(
                 case _ =>
                   for
                     // 推送面在翻位前定死（旧主此刻的活跃连接集）。
-                    targets <- cur
-                      .traverse(p => connsRef.get.map(_.getOrElse(p, Set.empty).toList))
-                      .map(_.getOrElse(Nil))
+                    targets <- cur.traverse(p => connsRef.get.map(_.getOrElse(p, Set.empty).toList)).map(_.getOrElse(Nil))
                     now <- nowMs()
                     _ <- claim(sid)
                     _ <- targets.traverse_(cid => sendTo(cid, ConsoleTakeover.takeoverFrame(now)))

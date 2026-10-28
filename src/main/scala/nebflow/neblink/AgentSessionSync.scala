@@ -157,24 +157,9 @@ object AgentSessionSync:
         nonce <- c.downField("nonce").as[String].toOption.filter(_.nonEmpty)
         sig <- c.downField("sig").as[String].toOption.filter(_.nonEmpty)
       yield SessionPayload(
-        sessionId,
-        title,
-        source,
-        status,
-        startedAt,
-        endedAt,
-        updatedAt,
-        retryCount,
-        fromDeviceId,
-        deviceName,
-        tsSec,
-        nonce,
-        sig
+        sessionId, title, source, status, startedAt, endedAt, updatedAt,
+        retryCount, fromDeviceId, deviceName, tsSec, nonce, sig
       )
-
-    end if
-
-  end parsePayload
 
   /** 编码上机（kind 信封 + 全字段平铺）。 */
   def encodePayload(p: SessionPayload): Json =
@@ -217,7 +202,6 @@ object AgentSessionSync:
   @volatile private[neblink] var selfIdFn: IO[String] = IO.pure("")
   @volatile private[neblink] var deviceNameFn: IO[String] = IO.pure("")
   @volatile private[neblink] var allTasksFn: IO[List[SubAgentTask]] = IO.pure(Nil)
-
   /** 设备在线判读缝（收端 UI 帧的 deviceOnline 现算面；默认 ns 新鲜度谓词）。 */
   @volatile private[neblink] var onlineFn: String => IO[Boolean] = _ => IO.pure(true)
   @volatile private[neblink] var panelBroadcastFn: Json => IO[Unit] = null
@@ -243,18 +227,14 @@ object AgentSessionSync:
         store = RemoteAgentSessions.dataRootStore
         // 收件面：unsafeRunSync 注册（DeviceDelegate/AgentIdentitySync 同款纪律——
         // 本语境是 Unit，IO 返回值被丢弃即注册面静默缺失）。
-        svc
-          .addDataHandler(payload => handlePayload(payload))
-          .unsafeRunSync()(using
-            cats.effect.unsafe.implicits.global
-          )
+        svc.addDataHandler(payload => handlePayload(payload)).unsafeRunSync()(
+          using cats.effect.unsafe.implicits.global
+        )
         // peer 变化（boot 后首联/对端重连/新配对/离线）⇒ 对账推 + 在线角标重播。
         // 两腿同拍（identity 同构）：推是幂等全量，收端 LWW 收敛。
-        svc
-          .addPeerChangeCallback(
-            pushAllSessions().attempt.void *> broadcastRemoteRows()
-          )
-          .unsafeRunSync()(using cats.effect.unsafe.implicits.global)
+        svc.addPeerChangeCallback(
+          pushAllSessions().attempt.void *> broadcastRemoteRows()
+        ).unsafeRunSync()(using cats.effect.unsafe.implicits.global)
         // 写后外推钩（本批唯一的 store 侵入面；未接线不装 = 记账面零触碰）。
         taskStore.setWriteHook(task => pushTask(task))
         // 投影仓载盘（boot 一次；载盘失败 = 空仓起步，可读 WARN 不楔死）。
@@ -320,12 +300,10 @@ object AgentSessionSync:
             )
             .flatMap { _ =>
               // 每目标单独签署（配对 key 每对一份——见 signedFor）。
-              targets.traverse_(t =>
-                fn(t, encodePayload(signedFor(unsigned, t))).flatMap {
-                  case true => IO.unit
-                  case false => logger.debug(s"session-sync: device $t unreachable (offline?)")
-                }
-              )
+              targets.traverse_(t => fn(t, encodePayload(signedFor(unsigned, t))).flatMap {
+                case true  => IO.unit
+                case false => logger.debug(s"session-sync: device $t unreachable (offline?)")
+              })
             }
         yield ()
     }
@@ -360,11 +338,11 @@ object AgentSessionSync:
   // ── 收件面（对端帧落地：验签 → LWW 收敛 → 变更即广播 UI 帧；零回推）─────────
 
   private[neblink] def handlePayload(json: Json): IO[Unit] =
-    parsePayload(json) match
+    parsePayload(json) match {
       case None => IO.unit // 非 session-sync / 结构坏 —— 数据通道上有别的流量，静默
       case Some(p) =>
         val nowMs = System.currentTimeMillis()
-        verifyPayload(p, nowMs) match
+        verifyPayload(p, nowMs) match {
           case Some(reason) =>
             logger.warn(s"session-sync frame REJECTED from=${p.fromDeviceId} session=${p.sessionId}: $reason")
           case None =>
@@ -381,7 +359,8 @@ object AgentSessionSync:
                   )
                   .productR(broadcastRemoteRows())
             }
-        end match
+        }
+    }
 
   // ── UI 帧面（收端浏览器：remoteAgents 帧；投影仓 → 行集 + 在线角标现算）──────
 
@@ -431,8 +410,7 @@ object AgentSessionSync:
     Option(panelBroadcastFn) match
       case Some(broadcast) =>
         remoteRowsFrame().flatMap {
-          case Some(frame) =>
-            broadcast(frame).handleError(e =>
+          case Some(frame) => broadcast(frame).handleError(e =>
               logger.warnSync(s"session-sync: remoteAgents broadcast failed: ${e.getMessage}")
             )
           case None => IO.unit
@@ -479,20 +457,8 @@ object RemoteAgentSessions:
   )
 
   object Row:
-
     def of(p: AgentSessionSync.SessionPayload): Row =
-      Row(
-        p.sessionId,
-        p.title,
-        p.source,
-        p.status,
-        p.startedAt,
-        p.endedAt,
-        p.updatedAt,
-        p.retryCount,
-        p.fromDeviceId,
-        p.deviceName
-      )
+      Row(p.sessionId, p.title, p.source, p.status, p.startedAt, p.endedAt, p.updatedAt, p.retryCount, p.fromDeviceId, p.deviceName)
 
   // ── codecs（手写宽容：缺键逐字段兜默认，禁整文件静默消失）──────────────────
   private given Encoder[Row] = Encoder.instance { r =>
@@ -537,10 +503,8 @@ object RemoteAgentSessions:
 
 end RemoteAgentSessions
 
-/**
- * 投影仓实例（见伴生对象纪律注）。线程模型：单 ReentrantLock 串行化读-改-写
- * （SubAgentTaskStore 同款纪律）。
- */
+/** 投影仓实例（见伴生对象纪律注）。线程模型：单 ReentrantLock 串行化读-改-写
+  * （SubAgentTaskStore 同款纪律）。 */
 final class RemoteAgentSessions private (path: Option[os.Path]):
   import RemoteAgentSessions.*
 
@@ -555,20 +519,16 @@ final class RemoteAgentSessions private (path: Option[os.Path]):
     finally lock.unlock()
   }
 
-  /**
-   * 载盘（幂等；文件缺席/坏 = 空仓起步——fail-soft，绝不楔死）。
-   * 复验批注（batchA 2026-10-27）：载盘体抽成 [[loadLocked]]（纯同步、须持锁），
-   * 本 IO 面只是 withLock 外皮——原先 apply 锁内经 ensureLoaded 嵌套起第二个
-   * runtime（load().unsafeRunSync() inside IO.blocking body）在套件/单线程池形态
-   * 下互等死锁（spec 31s 超时实证），生产形态同属潜在饥饿点。
-   */
+  /** 载盘（幂等；文件缺席/坏 = 空仓起步——fail-soft，绝不楔死）。
+    * 复验批注（batchA 2026-10-27）：载盘体抽成 [[loadLocked]]（纯同步、须持锁），
+    * 本 IO 面只是 withLock 外皮——原先 apply 锁内经 ensureLoaded 嵌套起第二个
+    * runtime（load().unsafeRunSync() inside IO.blocking body）在套件/单线程池形态
+    * 下互等死锁（spec 31s 超时实证），生产形态同属潜在饥饿点。 */
   def load(): IO[Unit] = withLock(loadLocked())
 
-  /**
-   * 载盘同步体（**须持锁调用**——withLock 可重入，apply/ensureLocked 直接复用，
-   * 绝不在锁内再起 runtime）。
-   */
-  private def loadLocked(): Unit =
+  /** 载盘同步体（**须持锁调用**——withLock 可重入，apply/ensureLocked 直接复用，
+    * 绝不在锁内再起 runtime）。 */
+  private def loadLocked(): Unit = {
     loaded = true
     path.foreach { p =>
       if os.exists(p) then
@@ -576,6 +536,7 @@ final class RemoteAgentSessions private (path: Option[os.Path]):
           case Right(rows) => rowsMap = rows.map(r => (r.fromDeviceId, r.sessionId) -> r).toMap
           case Left(err) => logger.warnSync(s"remote-agent-sessions decode failed (${err.getMessage}) — starting empty")
     }
+  }
 
   def rows(): List[Row] = rowsMap.values.toList.sortBy(r => (r.fromDeviceId, r.updatedAt))
 
@@ -610,8 +571,7 @@ final class RemoteAgentSessions private (path: Option[os.Path]):
   private def persistLocked(): Unit = path.foreach { p =>
     try
       os.makeDir.all(p / os.up)
-      nebflow.core.AtomicJson
-        .writeSync(p, rowsMap.values.toList.sortBy(r => (r.fromDeviceId, r.updatedAt)).asJson.noSpaces)
+      nebflow.core.AtomicJson.writeSync(p, rowsMap.values.toList.sortBy(r => (r.fromDeviceId, r.updatedAt)).asJson.noSpaces)
     catch case e: Exception => logger.warnSync(s"remote-agent-sessions persist failed: ${e.getMessage}")
   }
 end RemoteAgentSessions

@@ -164,30 +164,25 @@ class PortalWireCodecConformanceSpec extends FunSuite:
       case Some(wire) =>
         test(s"${v.id} [positive · production codec]: canonical encode is byte-identical to the frozen wire"):
           val json = v.json.getOrElse(fail(s"positive vector '${v.id}' lacks a json block"))
-          PortalWireCodec
-            .decode(json.noSpaces)
-            .fold(
-              rej =>
-                fail(
-                  s"positive vector '${v.id}' must decode cleanly, got rejection '${rej.code}' " +
-                    s"(field=${rej.field.getOrElse("none")}); input=${json.noSpaces}"
-                ),
-              frame =>
-                assertByteIdentical(
-                  PortalWireCodec.encode(frame),
-                  wire,
-                  s"canonical serialization of '${v.id}' drifted from the frozen wire bytes " +
-                    "(key order / separators / base64 form must match the contract's canonical encoding)"
-                )
-                // Round-trip of the frozen wire: decode → re-encode is byte-stable.
-                PortalWireCodec
-                  .decode(wire)
-                  .fold(
-                    rej => fail(s"frozen wire of '${v.id}' must decode, got '${rej.code}'"),
-                    frame2 =>
-                      assertByteIdentical(PortalWireCodec.encode(frame2), wire, s"round-trip of '${v.id}' drifted")
-                  )
-            )
+          PortalWireCodec.decode(json.noSpaces).fold(
+            rej =>
+              fail(
+                s"positive vector '${v.id}' must decode cleanly, got rejection '${rej.code}' " +
+                  s"(field=${rej.field.getOrElse("none")}); input=${json.noSpaces}"
+              ),
+            frame =>
+              assertByteIdentical(
+                PortalWireCodec.encode(frame),
+                wire,
+                s"canonical serialization of '${v.id}' drifted from the frozen wire bytes " +
+                  "(key order / separators / base64 form must match the contract's canonical encoding)"
+              )
+              // Round-trip of the frozen wire: decode → re-encode is byte-stable.
+              PortalWireCodec.decode(wire).fold(
+                rej => fail(s"frozen wire of '${v.id}' must decode, got '${rej.code}'"),
+                frame2 => assertByteIdentical(PortalWireCodec.encode(frame2), wire, s"round-trip of '${v.id}' drifted")
+              )
+          )
 
       case None =>
         test(s"${v.id} [negative · production codec]: decode is rejected exactly as the expect block demands"):
@@ -197,12 +192,12 @@ class PortalWireCodecConformanceSpec extends FunSuite:
           val exp = expectOf(v)
           PortalWireCodec.decode(input) match
             case Right(frame) =>
-              fail(
-                s"expected rejection '${exp.reject}' but the production codec decoded: ${frame.getClass.getSimpleName}"
-              )
+              fail(s"expected rejection '${exp.reject}' but the production codec decoded: ${frame.getClass.getSimpleName}")
             case Left(rej) =>
               assertEquals(rej.code, exp.reject, s"rejection code mismatch for '${v.id}'")
-              exp.field.foreach(want => assertEquals(rej.field, Some(want), s"offending field mismatch for '${v.id}'"))
+              exp.field.foreach(want =>
+                assertEquals(rej.field, Some(want), s"offending field mismatch for '${v.id}'")
+              )
               exp.fields.foreach(want =>
                 assertEquals(rej.fields.map(_.toSet), Some(want.toSet), s"conflicting fields mismatch for '${v.id}'")
               )
@@ -212,7 +207,6 @@ class PortalWireCodecConformanceSpec extends FunSuite:
               exp.allowed.foreach(want =>
                 assertEquals(rej.allowed.map(_.toSet), Some(want.toSet), s"allowed enum values mismatch for '${v.id}'")
               )
-          end match
   }
 
   // ────────── envelope behaviors without frozen vectors (contract section 1,
@@ -244,9 +238,7 @@ class PortalWireCodecConformanceSpec extends FunSuite:
       )
     }
 
-  test(
-    "missing proto is missing_required_field on the strict codec face (runtime leniency is the tunnel's, not the codec's)"
-  ):
+  test("missing proto is missing_required_field on the strict codec face (runtime leniency is the tunnel's, not the codec's)"):
     val noProto =
       """{"type":"http_request","requestId":"0a1b2c3d-4e5f-4678-9abc-def012345678","method":"GET","path":"/api/x","headers":{}}"""
     assertEquals(
@@ -281,7 +273,7 @@ class PortalWireCodecConformanceSpec extends FunSuite:
     assert(encoded.contains("\"data\":\"AAECAwQ=\""))
     PortalWireCodec.decode(encoded).foreach {
       case f: PortalWireCodec.BodyFrame => assert(Arrays.equals(f.data, payload))
-      case other => fail(s"unexpected frame: $other")
+      case other                        => fail(s"unexpected frame: $other")
     }
     assertEquals(Base64.getEncoder.encodeToString(payload), "AAECAwQ=")
 

@@ -143,16 +143,14 @@ class UploadsRoutesSpec extends CatsEffectSuite:
         _ = assertEquals(ok.status, Status.Ok)
         etag = ok.headers.get[org.http4s.headers.ETag].map(_.tag.toString).getOrElse(fail("ETag missing"))
         // Same request shape with If-None-Match added on the wire:
-        _ =
+        _ = {
           val req = StaticRoutes
             .uploadsRoutes(TokenRef, Sessions)(
-              SpecRequests
-                .withRemote(
-                  Request[IO](Method.GET, Uri.unsafeFromString("/uploads/sess-1/shot.png"))
-                    .putHeaders(org.http4s.Header.Raw(org.typelevel.ci.CIString("If-None-Match"), etag)),
-                  Some(SpecRequests.LoopbackV4)
-                )
-                .addCookie(GatewaySessionStore.CookieName, cred(1))
+              SpecRequests.withRemote(
+                Request[IO](Method.GET, Uri.unsafeFromString("/uploads/sess-1/shot.png"))
+                  .putHeaders(org.http4s.Header.Raw(org.typelevel.ci.CIString("If-None-Match"), etag)),
+                Some(SpecRequests.LoopbackV4)
+              ).addCookie(GatewaySessionStore.CookieName, cred(1))
             )
             .value
             .unsafeRunSync()
@@ -162,6 +160,7 @@ class UploadsRoutesSpec extends CatsEffectSuite:
             req.headers.get[org.http4s.headers.`Cache-Control`].map(_.values.toList.mkString(", ")),
             Some("private, max-age=300")
           )
+        }
         missing = get("/uploads/sess-1/nope.png", cookie = Some(cred)).get
         _ = assertEquals(missing.status, Status.NotFound)
         _ = assertEquals(missing.headers.get[org.http4s.headers.`Cache-Control`], None)

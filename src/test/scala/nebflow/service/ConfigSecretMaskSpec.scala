@@ -49,20 +49,18 @@ class ConfigSecretMaskSpec extends FunSuite:
 
   /** 带两类密钥 + keyRef 指针 + 普通字段的样本配置（磁盘上的真值形态）。 */
   private def seedConfig(): String =
-    Json
-      .obj(
-        "llm" -> Json.obj(
-          "providers" -> Json.obj(
-            "kimi" -> providerJson("sk-real-kimi-1"),
-            "deepseek" -> providerJson("sk-real-ds-2")
-          )
-        ),
-        "search" -> Json.obj("provider" -> Json.fromString("zhipu"), "apiKey" -> Json.fromString("zhipu-real-3")),
-        "jev" -> Json.obj("enabled" -> Json.fromBoolean(true), "keyRef" -> Json.fromString("jev-key")),
-        "embedding" -> Json.obj("keyRef" -> Json.fromString("embed-key"), "model" -> Json.fromString("emb-1")),
-        "ui" -> Json.obj("theme" -> Json.fromString("dark"))
-      )
-      .spaces2
+    Json.obj(
+      "llm" -> Json.obj(
+        "providers" -> Json.obj(
+          "kimi" -> providerJson("sk-real-kimi-1"),
+          "deepseek" -> providerJson("sk-real-ds-2")
+        )
+      ),
+      "search" -> Json.obj("provider" -> Json.fromString("zhipu"), "apiKey" -> Json.fromString("zhipu-real-3")),
+      "jev" -> Json.obj("enabled" -> Json.fromBoolean(true), "keyRef" -> Json.fromString("jev-key")),
+      "embedding" -> Json.obj("keyRef" -> Json.fromString("embed-key"), "model" -> Json.fromString("emb-1")),
+      "ui" -> Json.obj("theme" -> Json.fromString("dark"))
+    ).spaces2
 
   private def readDisk(): Json = parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get
 
@@ -74,10 +72,7 @@ class ConfigSecretMaskSpec extends FunSuite:
   test("maskSecretsJson masks llm.providers.*.apiKey and search.apiKey to ***") {
     val masked = ConfigService.maskSecretsJson(parse(seedConfig()).toOption.get)
     val hc = masked.hcursor
-    assertEquals(
-      hc.downField("llm").downField("providers").downField("kimi").downField("apiKey").as[String],
-      Right("***")
-    )
+    assertEquals(hc.downField("llm").downField("providers").downField("kimi").downField("apiKey").as[String], Right("***"))
     assertEquals(
       hc.downField("llm").downField("providers").downField("deepseek").downField("apiKey").as[String],
       Right("***")
@@ -95,13 +90,8 @@ class ConfigSecretMaskSpec extends FunSuite:
       Right("https://prov.example.com/v1")
     )
     assertEquals(
-      hc.downField("llm")
-        .downField("providers")
-        .downField("kimi")
-        .downField("models")
-        .downArray
-        .downField("id")
-        .as[String],
+      hc.downField("llm").downField("providers").downField("kimi").downField("models").downArray
+        .downField("id").as[String],
       Right("m1")
     )
     // keyRef 指针（jev/embedding）不是值——不打码
@@ -131,10 +121,7 @@ class ConfigSecretMaskSpec extends FunSuite:
     val served = ConfigService.getConfig.unsafeRunSync()
     val servedJson = parse(served).toOption.get
     val hc = servedJson.hcursor
-    assertEquals(
-      hc.downField("llm").downField("providers").downField("kimi").downField("apiKey").as[String],
-      Right("***")
-    )
+    assertEquals(hc.downField("llm").downField("providers").downField("kimi").downField("apiKey").as[String], Right("***"))
     assertEquals(hc.downField("search").downField("apiKey").as[String], Right("***"))
 
     // 盘上真相不变：打码只发生在读出投影
@@ -164,9 +151,7 @@ class ConfigSecretMaskSpec extends FunSuite:
       val kimiEdited = kimi.add("baseUrl", Json.fromString("https://kimi.example.com/v2"))
       root.add(
         "llm",
-        Json.fromJsonObject(
-          llm.add("providers", Json.fromJsonObject(provs.add("kimi", Json.fromJsonObject(kimiEdited))))
-        )
+        Json.fromJsonObject(llm.add("providers", Json.fromJsonObject(provs.add("kimi", Json.fromJsonObject(kimiEdited)))))
       )
     }
 

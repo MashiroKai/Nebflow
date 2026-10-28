@@ -156,13 +156,9 @@ class TaskStuckWatcherControlledKillSpec extends CatsEffectSuite:
         ),
         s"reclaim must broadcast the task-cancelled frame for $sid, got ${ws.map(_.hcursor.get[String]("type").toOption)}"
       )
-      assert(
-        cmds.exists { case AgentCommand.Stop(_) => true; case _ => false },
-        s"the ladder must still send the round's Stop, got $cmds"
-      )
+      assert(cmds.exists { case AgentCommand.Stop(_) => true; case _ => false },
+        s"the ladder must still send the round's Stop, got $cmds")
       assertEquals(counts.getOrElse(sid, 0), 3, "the round must be counted on the stop ladder")
-
-    end for
 
   test("负控①: 未满三连（attempts=2，transport abort 未武装拍）⇒ 护栏照旧扣杀，不杀"):
     val system = ActorSystem("kill-neg1")
@@ -187,8 +183,6 @@ class TaskStuckWatcherControlledKillSpec extends CatsEffectSuite:
       assert(probe.isDefined, "before three ineffective Stops the guard must still withhold the kill")
       assertEquals(probe.map(_.sessionId), Some(sid), "the probe task must survive untouched")
 
-    end for
-
   test("负控②: 类④ provider-hang（在飞 LLM 存在，LLM 层自管）⇒ 不进受控击杀通道"):
     val system = ActorSystem("kill-neg2")
     val sid = "delegate-providerhang"
@@ -211,9 +205,8 @@ class TaskStuckWatcherControlledKillSpec extends CatsEffectSuite:
       probe <- BgTaskRegistry.find(jobId)
       _ <- nebflow.llm.LlmInterface.cancelAllInflight() // 清场（全局 Ref）
       _ <- IO(system.stopAll.attempt.void.unsafeRunSync())
-    yield assert(probe.isDefined, "class 4 (provider-hang) owns the case — the controlled kill must NOT fire")
-
-    end for
+    yield
+      assert(probe.isDefined, "class 4 (provider-hang) owns the case — the controlled kill must NOT fire")
 
   test("负控③: 类② 假阳性（正信号新鲜——工具仍在推进）⇒ 本拍零动作，不杀"):
     val system = ActorSystem("kill-neg3")
@@ -239,6 +232,5 @@ class TaskStuckWatcherControlledKillSpec extends CatsEffectSuite:
     yield
       assert(probe.isDefined, "a still-advancing tool (class 2) must never be killed")
       assertEquals(counts.getOrElse(sid, 0), 0, "class 2 takes zero action and must not consume ladder attempts")
-    end for
 
 end TaskStuckWatcherControlledKillSpec

@@ -224,11 +224,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       got <- injected.get
       calls <- fetch.calls.get
     yield
-      assertEquals(
-        calls,
-        List(("test-app", "img_v3_abc")),
-        "the fetch rode the pinned credential face, keyed by image_key"
-      )
+      assertEquals(calls, List(("test-app", "img_v3_abc")), "the fetch rode the pinned credential face, keyed by image_key")
       assertEquals(got.map(_._1), List("s1"), "the message reaches the bound session")
       val body = got.head._2
       assert(
@@ -243,7 +239,6 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       val landed = root / "uploads" / "s1" / "feishu-om_1.jpg"
       assert(os.exists(landed), s"the image is on disk under the session's uploads dir:\n$landed")
       assertEquals(os.read.bytes(landed).toList, bytes.toList, "the landed bytes are the fetched bytes, untouched")
-    end for
   }
 
   test("FB-R3b a failed download injects the honest failure line — no file, no placeholder, no silence") {
@@ -258,10 +253,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
     )
     for
       _ <- p.rebuildRoutes(ctx)
-      _ <- p.intake(
-        ctx,
-        inbound("oc_bound", None, messageType = "image", contentRaw = """{"image_key":"img_v3_bad"}""")
-      )
+      _ <- p.intake(ctx, inbound("oc_bound", None, messageType = "image", contentRaw = """{"image_key":"img_v3_bad"}"""))
       got <- injected.get
     yield
       assertEquals(got.map(_._1), List("s1"), "the failure is still SESSION-VISIBLE — never a silent drop")
@@ -275,7 +267,6 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
         !os.exists(root / "uploads" / "s1"),
         "a failed download lands nothing — no half-broken file"
       )
-    end for
   }
 
   test("FB-R3f an over-budget image is NOT landed; the session reads the over-limit line") {
@@ -291,10 +282,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
     )
     for
       _ <- p.rebuildRoutes(ctx)
-      _ <- p.intake(
-        ctx,
-        inbound("oc_bound", None, messageType = "image", contentRaw = """{"image_key":"img_v3_big"}""")
-      )
+      _ <- p.intake(ctx, inbound("oc_bound", None, messageType = "image", contentRaw = """{"image_key":"img_v3_big"}"""))
       got <- injected.get
     yield
       val body = got.head._2
@@ -540,11 +528,9 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
   test("FB-SG2 the throttle paces adjacent segments: send N starts ≥1s after send N-1 started") {
     val stamps = Ref.unsafe[IO, List[Long]](Nil)
     val sendFn: FeishuBridgePlugin.Send = (_, _, _, _, _) =>
-      IO.monotonic
-        .flatMap(d => stamps.update(_ :+ d.toMillis))
-        .as(
-          FeishuChannel.SendResult(true, Some("om_out"), 0, "ok", "t", "chat_id")
-        )
+      IO.monotonic.flatMap(d => stamps.update(_ :+ d.toMillis)).as(
+        FeishuChannel.SendResult(true, Some("om_out"), 0, "ok", "t", "chat_id")
+      )
     val (ctx, _) = newCtx(List(meta("s1", Some("oc_bound"))))
     val p = plugin(sendFn)
     for
@@ -576,18 +562,17 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       _ <- p.onAgentEvent("s1", delta("s1", "尾段"))
       _ <- p.onAgentEvent("s1", done("s1"))
       got <- send.calls.get
-    yield assertEquals(
-      got,
-      List(("oc_bound", "第一段"), ("oc_bound", "尾段")),
-      "empty boundaries are silent; only committed text and the tail reach the wire"
-    )
+    yield
+      assertEquals(
+        got,
+        List(("oc_bound", "第一段"), ("oc_bound", "尾段")),
+        "empty boundaries are silent; only committed text and the tail reach the wire"
+      )
     end for
   }
 
-  /**
-   * Bounded wait for the recorder to observe `count` calls — the failure note
-   * rides a background fiber (`.start`), which done's await cannot cover.
-   */
+  /** Bounded wait for the recorder to observe `count` calls — the failure note
+    * rides a background fiber (`.start`), which done's await cannot cover. */
   private def awaitCalls(ref: Ref[IO, List[(String, String)]], count: Int): IO[List[(String, String)]] =
     IO.sleep(50.millis) *> ref.get.flatMap { l =>
       if l.size >= count then IO.pure(l) else awaitCalls(ref, count)
@@ -770,7 +755,6 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       assert(os.exists(landed), s"the PNG-magic image landed under the default session's uploads dir:\n$landed")
       assertEquals(routes.get("oc_new"), Some("s_default"), "the chat itself is bound for the next text message")
       assertEquals(binds.map(_._1), List("s_default"), "the binding is minted exactly as for a first text")
-    end for
   }
 
   test("FB-R12 a message with genuinely no body is still dropped (the residual None arm)") {
@@ -801,9 +785,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
     assertEquals(FeishuBridgePlugin.imageExtOf(Array[Byte](0x89.toByte, 0x50.toByte, 0x4e.toByte, 0x47.toByte)), ".png")
     assertEquals(FeishuBridgePlugin.imageExtOf(Array[Byte](0x47.toByte, 0x49.toByte, 0x46.toByte, 0x38.toByte)), ".gif")
     assertEquals(
-      FeishuBridgePlugin.imageExtOf(
-        Array[Byte](0x52.toByte, 0x49.toByte, 0x46.toByte, 0x46.toByte, 0, 0, 0, 0, 0x57.toByte)
-      ),
+      FeishuBridgePlugin.imageExtOf(Array[Byte](0x52.toByte, 0x49.toByte, 0x46.toByte, 0x46.toByte, 0, 0, 0, 0, 0x57.toByte)),
       ".webp"
     )
     assertEquals(FeishuBridgePlugin.imageExtOf(Array[Byte](0x42.toByte, 0x4d.toByte)), ".bmp")

@@ -66,6 +66,5 @@ object AssetVersions:
             Some(hash)
           catch case _: Throwable => None
           finally in.close()
-    end if
   end versionOf
 end AssetVersions

@@ -45,11 +45,9 @@ object ImageGenJobs:
     evictIfNeeded()
     job
 
-  def complete(jobId: String, path: String): Option[Job] =
-    update(jobId)(_.copy(status = Status.Completed, path = Some(path)))
+  def complete(jobId: String, path: String): Option[Job] = update(jobId)(_.copy(status = Status.Completed, path = Some(path)))
 
-  def fail(jobId: String, error: String): Option[Job] =
-    update(jobId)(_.copy(status = Status.Failed, error = Some(error)))
+  def fail(jobId: String, error: String): Option[Job] = update(jobId)(_.copy(status = Status.Failed, error = Some(error)))
 
   private def update(jobId: String)(f: Job => Job): Option[Job] =
     Option(jobs.get(jobId)).map { existing =>

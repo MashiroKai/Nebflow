@@ -453,14 +453,12 @@ class NeblinkClient(
                 // 登录结果（凭据腿的职责仍是恢复 device session，隧道复活是它顺带的
                 // 通知义务，不是它的新前置条件）。
                 onSessionMinted
-                  .fold(IO.unit)(
-                    _.handleErrorWith(e =>
-                      logger.warn(
-                        "relay tunnel ensure after session mint failed (login result unaffected): " +
-                          e.getClass.getSimpleName
-                      )
+                  .fold(IO.unit)(_.handleErrorWith(e =>
+                    logger.warn(
+                      "relay tunnel ensure after session mint failed (login result unaffected): " +
+                        e.getClass.getSimpleName
                     )
-                  )
+                  ))
                   .as(Right(login.peers))
             case Left(err) =>
               logger

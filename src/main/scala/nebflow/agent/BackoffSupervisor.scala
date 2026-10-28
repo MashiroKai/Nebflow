@@ -370,8 +370,9 @@ object BackoffSupervisor:
                     // hold 时武装捕获的 messages 是旧轮快照（hold 期唤醒轮的新产出
                     // 不在其中），直接强投会把过期 payload 交付父会话；重载失败/
                     // 空读回落旧快照（既有行为，绝不静默丢失复检事件本身）。
-                    latestMessages(subagentId, messages)
-                      .flatMap(latest => (ctx.self ! AgentEvent.Completed(subagentId, latest)).void)
+                    latestMessages(subagentId, messages).flatMap(latest =>
+                      (ctx.self ! AgentEvent.Completed(subagentId, latest)).void
+                    )
               }).start.flatMap(f => bgWaitCapFiber.set(Some(f)))
 
         /**
@@ -384,9 +385,7 @@ object BackoffSupervisor:
             .map(latest => if latest.nonEmpty then latest else fallback)
             .handleErrorWith(e =>
               logger
-                .warn(
-                  s"bg-wait cap: fresh transcript reload failed for $sessionId (${e.getMessage}) — using the held snapshot"
-                )
+                .warn(s"bg-wait cap: fresh transcript reload failed for $sessionId (${e.getMessage}) — using the held snapshot")
                 .as(fallback)
             )
 

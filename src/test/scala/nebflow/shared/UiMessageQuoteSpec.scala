@@ -58,8 +58,7 @@ class UiMessageQuoteSpec extends CatsEffectSuite:
 
   test("quote carries the raw payload verbatim (engine does not interpret inner fields)"):
     val exotic = Json.obj("refMessageId" -> "x".asJson, "custom" -> Json.arr("a".asJson, 1.asJson))
-    val decoded = (UiMessage
-      .User("t", quote = Some(exotic)): UiMessage).asJson.as[UiMessage].toOption.get.asInstanceOf[UiMessage.User]
+    val decoded = (UiMessage.User("t", quote = Some(exotic)): UiMessage).asJson.as[UiMessage].toOption.get.asInstanceOf[UiMessage.User]
     assertEquals(decoded.quote, Some(exotic))
 
   test("legacy .ui.json row without a quote key decodes with quote=None"):
@@ -121,4 +120,3 @@ class UiMessageQuoteSpec extends CatsEffectSuite:
         val keys = (u: UiMessage).asJson.asObject.map(_.keys.toList).getOrElse(Nil)
         assert(!keys.contains("quote"))
     }
-end UiMessageQuoteSpec

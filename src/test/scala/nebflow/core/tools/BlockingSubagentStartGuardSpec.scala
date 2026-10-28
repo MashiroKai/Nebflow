@@ -71,11 +71,7 @@ class BlockingSubagentStartGuardSpec extends CatsEffectSuite:
         assert(err.contains("subagent-guard01"), s"failure must name the child session: $err")
         assert(elapsed >= 350.millis, s"the guard must REALLY wait the budget window (real timing), elapsed=$elapsed")
         assert(elapsed < 10.seconds, s"the guard must NOT wait the 15min hard cap, elapsed=$elapsed")
-        assertEquals(
-          stopReasons,
-          List(BlockingSubagent.NeverStartedToken),
-          s"judged-dead leg must stop the child, got $stopReasons"
-        )
+        assertEquals(stopReasons, List(BlockingSubagent.NeverStartedToken), s"judged-dead leg must stop the child, got $stopReasons")
         assertEquals(panelFrames, 1, "judged-dead leg must emit the panel terminal frame")
     }
 
@@ -136,20 +132,14 @@ class BlockingSubagentStartGuardSpec extends CatsEffectSuite:
       _ <- started.complete(()) // 幂等性经由 attempt 吞 AlreadyCompletedException
     yield
       assertEquals(marked.isRight, true, s"the first frame must mark liveness, got $marked")
-      assertEquals(
-        fwd.map(_.hcursor.get[String]("type").toOption),
-        List(Some("agentStart")),
-        "the spy must forward the frame to the routed base"
-      )
+      assertEquals(fwd.map(_.hcursor.get[String]("type").toOption), List(Some("agentStart")), "the spy must forward the frame to the routed base")
 
   // ── ④ 旋钮：默认 120s / prop 现读可配 ──────────────────────────────────────
 
   test("缺口①: 预算窗旋钮——默认 120000ms，prop 现读（kill-switch 先例）"):
     withBudgetMs("250") {
       for
-        _ <- IO(
-          assertEquals(BlockingSubagent.startBudget, 250.millis, "the knob must be read per-call from the system prop")
-        )
+        _ <- IO(assertEquals(BlockingSubagent.startBudget, 250.millis, "the knob must be read per-call from the system prop"))
         _ <- IO(System.clearProperty(budgetProp))
         v <- IO(BlockingSubagent.startBudget)
       yield assertEquals(v, 120000.millis, "cleared prop ⇒ default 120s")

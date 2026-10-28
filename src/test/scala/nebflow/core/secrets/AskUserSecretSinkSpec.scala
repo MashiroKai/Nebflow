@@ -11,26 +11,25 @@ import java.nio.file.attribute.PosixFilePermissions
 import java.nio.file.{Files, Path}
 import scala.jdk.CollectionConverters.*
 
-/**
- * secret 型 AskUser 落库 Sink 的验收面（askuser-secret 批，2026-10-08 · 规格 §6）。
- *
- * 全部用例跑在一次性 dataRoot 上（`secretsDir` 由 dataRoot 派生），**绝不**触碰
- * 真实 `~/.nebflow/secrets/`。钉住的判据（对照规格 §2/§5）：
- *
- *   - 验收口径「桌面问 key → secrets 出 0600 文件」：`.askuser/` 内出现 mode=0600
- *     的落盘文件（POSIX 读回）；
- *   - F1 写序的 fail-closed doubles（同 `SecretsStoreSpec` 形态）：注入「收窄失败」
- *     的 restrict ⇒ 文件零残留、返回 Failure（值绝不留在宽文件里）；
- *   - 命名：显式 hint 合法即用；非法/缺省 ⇒ 派生 `askuser-<rid>-<idx>` /
- *     `otp-<rid>-<idx>`（过 `SecretsStore.NamePattern` 同一契约）；
- *   - 大小上限复用 64KiB（`SecretsStore.MaxValueBytes`，禁第二份常量）；
- *   - ephemeral：`.otp/` 落盘 + 消费一次成功、第二次 `UnknownSecret`（原子
- *     rename-out —— 防两次 Bash 同时读到，规格 §5.6）；TTL 过期 ⇒ 消费面给同一
- *     「不可得」终态（过期明文绝不回读）+ `sweepExpired` 清文件与台账；
- *   - 受管命名空间：`askuser-`/`otp-` 前缀单一判据（规格 §4.4），且受管项落在
- *     secrets 的**子目录**里 ⇒ `SecretsStore.list` / `SecretsCatalog.rows`（顶层
- *     枚举）结构性地不列受管项（「面板不列受管项」）。
- */
+/** secret 型 AskUser 落库 Sink 的验收面（askuser-secret 批，2026-10-08 · 规格 §6）。
+  *
+  * 全部用例跑在一次性 dataRoot 上（`secretsDir` 由 dataRoot 派生），**绝不**触碰
+  * 真实 `~/.nebflow/secrets/`。钉住的判据（对照规格 §2/§5）：
+  *
+  *   - 验收口径「桌面问 key → secrets 出 0600 文件」：`.askuser/` 内出现 mode=0600
+  *     的落盘文件（POSIX 读回）；
+  *   - F1 写序的 fail-closed doubles（同 `SecretsStoreSpec` 形态）：注入「收窄失败」
+  *     的 restrict ⇒ 文件零残留、返回 Failure（值绝不留在宽文件里）；
+  *   - 命名：显式 hint 合法即用；非法/缺省 ⇒ 派生 `askuser-<rid>-<idx>` /
+  *     `otp-<rid>-<idx>`（过 `SecretsStore.NamePattern` 同一契约）；
+  *   - 大小上限复用 64KiB（`SecretsStore.MaxValueBytes`，禁第二份常量）；
+  *   - ephemeral：`.otp/` 落盘 + 消费一次成功、第二次 `UnknownSecret`（原子
+  *     rename-out —— 防两次 Bash 同时读到，规格 §5.6）；TTL 过期 ⇒ 消费面给同一
+  *     「不可得」终态（过期明文绝不回读）+ `sweepExpired` 清文件与台账；
+  *   - 受管命名空间：`askuser-`/`otp-` 前缀单一判据（规格 §4.4），且受管项落在
+  *     secrets 的**子目录**里 ⇒ `SecretsStore.list` / `SecretsCatalog.rows`（顶层
+  *     枚举）结构性地不列受管项（「面板不列受管项」）。
+  */
 class AskUserSecretSinkSpec extends FunSuite:
 
   private val MockValue = "test-askuser-secret-value-1"
@@ -76,8 +75,10 @@ class AskUserSecretSinkSpec extends FunSuite:
     val root = newRoot()
     val big = "x".repeat(SecretsStore.MaxValueBytes + 1)
     val f1 = store(root, StoreRequest("asknb-big", 0, big))
-    assert(f1.left.toOption.get.toString.contains("value exceeds"), "超限 ⇒ Failure.InvalidValue（SecretsStore 词表）")
-    assertEquals(Files.exists((AskUserSecretSink.secretsDir(root) / ".askuser").toNIO), false, "拒存路径零残留（上限在触碰文件系统前判定）")
+    assert(f1.left.toOption.get.toString.contains("value exceeds"),
+      "超限 ⇒ Failure.InvalidValue（SecretsStore 词表）")
+    assertEquals(Files.exists((AskUserSecretSink.secretsDir(root) / ".askuser").toNIO), false,
+      "拒存路径零残留（上限在触碰文件系统前判定）")
   }
 
   // ── F1 fail-closed doubles（SecretsStoreSpec 同款注入 seam 形态） ─────────
@@ -125,8 +126,7 @@ class AskUserSecretSinkSpec extends FunSuite:
     )
     assertEquals(Files.exists(file.toNIO), false, "消费后文件不在原位")
     // 消费残壳（.consumed-*）零残留。
-    val leftovers = os
-      .list(AskUserSecretSink.secretsDir(root) / ".otp")
+    val leftovers = os.list(AskUserSecretSink.secretsDir(root) / ".otp")
       .filter(_.last.startsWith(".consumed-"))
     assert(leftovers.isEmpty, "rename-out 的临时壳必须被清掉")
   }
@@ -137,10 +137,8 @@ class AskUserSecretSinkSpec extends FunSuite:
     // 把台账到期时间拨到过去（模拟 TTL 流逝；缺条目回退 mtime+缺省 TTL 的惰性臂
     // 语义同源，不另测）。
     val dir = AskUserSecretSink.secretsDir(root) / ".otp"
-    AskUserSecretSink.writeDeadlines(
-      dir,
-      AskUserSecretSink.loadDeadlines(dir).updated(r.keyRef, System.currentTimeMillis() - 1000L)
-    )
+    AskUserSecretSink.writeDeadlines(dir,
+      AskUserSecretSink.loadDeadlines(dir).updated(r.keyRef, System.currentTimeMillis() - 1000L))
     assertEquals(
       AskUserSecretSink.consumeEphemeral(root, r.keyRef).swap.toOption.get,
       SecretsStore.Failure.UnknownSecret(r.keyRef),
@@ -149,10 +147,8 @@ class AskUserSecretSinkSpec extends FunSuite:
     assertEquals(Files.exists((dir / r.keyRef).toNIO), false, "过期值已销毁（不回读）")
     // sweep：过期条目清文件 + 清台账。
     val r2 = store(root, StoreRequest("asknb-ttl", 1, MockValue, ephemeral = true, ttlSec = Some(600))).toOption.get
-    AskUserSecretSink.writeDeadlines(
-      dir,
-      AskUserSecretSink.loadDeadlines(dir).updated(r2.keyRef, System.currentTimeMillis() - 1000L)
-    )
+    AskUserSecretSink.writeDeadlines(dir,
+      AskUserSecretSink.loadDeadlines(dir).updated(r2.keyRef, System.currentTimeMillis() - 1000L))
     AskUserSecretSink.sweepExpired(root)
     assertEquals(Files.exists((dir / r2.keyRef).toNIO), false, "清扫删除过期文件")
     assertEquals(AskUserSecretSink.loadDeadlines(dir).contains(r2.keyRef), false, "清扫清台账条目")

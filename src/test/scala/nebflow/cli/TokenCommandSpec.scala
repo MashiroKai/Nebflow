@@ -48,10 +48,7 @@ class TokenCommandSpec extends FunSuite:
 
   test("--id prefix shorter than 4 chars => refused (masked ids print 8 chars; a 1-2 char prefix is a foot-gun)"):
     assert(SessionsRevoke.revokeBody(all = false, idPrefix = Some("ab")).isLeft)
-    assert(
-      SessionsRevoke.revokeBody(all = false, idPrefix = Some("")).isLeft,
-      "an empty prefix counts as absent (run() trims first)"
-    )
+    assert(SessionsRevoke.revokeBody(all = false, idPrefix = Some("")).isLeft, "an empty prefix counts as absent (run() trims first)")
 
   // ── B. registry + offline classification ────────────────────────────────
 
@@ -90,11 +87,7 @@ class TokenCommandSpec extends FunSuite:
     os.write.over(os.Path(authJson, os.pwd), "\"old-token\"", createFolders = true)
     nebflow.gateway.Auth.writeTokenAtomic("brand-new-token").unsafeRunSync()
     val content = os.read(os.Path(authJson, os.pwd))
-    assertEquals(
-      content,
-      "\"brand-new-token\"",
-      "auth.json stays a JSON string (same shape as loadOrCreateToken reads)"
-    )
+    assertEquals(content, "\"brand-new-token\"", "auth.json stays a JSON string (same shape as loadOrCreateToken reads)")
     assertEquals(Files.exists(tmpDir.resolve("auth.json.tmp")), false, "the tmp sibling must not survive the move")
     // POSIX 读回断言：Windows 无 posix 属性视图 ⇒ 跳过（0600 语义 Windows 臂走 ACL，另案）。
     assume(

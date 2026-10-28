@@ -21,11 +21,9 @@ class FeishuChannelSpec extends FunSuite:
 
   private def tmpRoot(): os.Path = os.temp.dir(prefix = "nb-feishu-")
 
-  /**
-   * 夹具置位收口：Windows 无 POSIX 属性视图（os.write+perms → UOE）⇒ null 跳过
-   * （os.write 的 perms 默认就是 null）；本组断言的是解析次序/内容，不是权限位。
-   * （与 WeixinIlinkScanBindSpec.posixOnly 同一平台惯例。）
-   */
+  /** 夹具置位收口：Windows 无 POSIX 属性视图（os.write+perms → UOE）⇒ null 跳过
+    * （os.write 的 perms 默认就是 null）；本组断言的是解析次序/内容，不是权限位。
+    * （与 WeixinIlinkScanBindSpec.posixOnly 同一平台惯例。） */
   private def posixPerms(): os.PermSet =
     if !nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName) then
       os.PermSet.fromString("rw-------")

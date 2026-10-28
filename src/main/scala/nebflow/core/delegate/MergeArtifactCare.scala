@@ -71,18 +71,18 @@ object MergeArtifactCare:
 
   /** 一拍处置（[[hygiene]]）报告；`error` = 处置面自身故障（fail-soft 承载）。 */
   final case class Report(
-    restored: List[String],
-    absorbed: List[String],
-    absorbCommit: Option[String],
-    /** 判性清理的同 blob 陈旧复本（内容已在 delegate 分支保真）。 */
-    triagedRemoved: List[String] = Nil,
-    /** 判性移隔离区的路径外无关 untracked（PROVENANCE 随行）。 */
-    triagedQuarantined: List[String] = Nil,
-    /** 隔离批次目录（PROVENANCE.json 所在）。 */
-    quarantineDir: Option[String] = None,
-    /** 处置后仍脏的路径（如实回报——#943 起只 WARN 不拦截，delegate 的合并回合诚实面）。 */
-    remainingDirty: List[String],
-    error: Option[String]
+      restored: List[String],
+      absorbed: List[String],
+      absorbCommit: Option[String],
+      /** 判性清理的同 blob 陈旧复本（内容已在 delegate 分支保真）。 */
+      triagedRemoved: List[String] = Nil,
+      /** 判性移隔离区的路径外无关 untracked（PROVENANCE 随行）。 */
+      triagedQuarantined: List[String] = Nil,
+      /** 隔离批次目录（PROVENANCE.json 所在）。 */
+      quarantineDir: Option[String] = None,
+      /** 处置后仍脏的路径（如实回报——#943 起只 WARN 不拦截，delegate 的合并回合诚实面）。 */
+      remainingDirty: List[String],
+      error: Option[String]
   )
 
   // ── git 面（私有薄封装，全 fail-soft） ────────────────────────────────
@@ -106,8 +106,7 @@ object MergeArtifactCare:
   /** 同 [[gitRaw]] 但前置可变 git 参数（`-c` 覆写等）。 */
   private def gitRaw2(ws: os.Path, preAndArgs: List[String]): Either[String, String] =
     try
-      val res =
-        os.proc(Seq("git", "-C", ws.toString) ++ preAndArgs).call(cwd = ws, check = false, mergeErrIntoOut = true)
+      val res = os.proc(Seq("git", "-C", ws.toString) ++ preAndArgs).call(cwd = ws, check = false, mergeErrIntoOut = true)
       if res.exitCode != 0 then Left(res.out.trim().take(400))
       else Right(String(res.out.bytes, java.nio.charset.StandardCharsets.UTF_8).stripTrailing())
     catch case e: Throwable => Left(Option(e.getMessage).getOrElse(e.toString).take(400))
@@ -123,30 +122,19 @@ object MergeArtifactCare:
   def untrackedArtifactPaths(ws: os.Path): List[String] =
     if !isRepo(ws) then Nil
     else
-      gitRaw(ws, "status", "--porcelain")
-        .getOrElse("")
-        .linesIterator
-        .flatMap { line =>
-          if line.length <= 3 then None
-          else
-            val path = line.drop(3).trim
-            if line.take(2) == "??" && whitelisted(path) then Some(path) else None
-        }
-        .toList
-        .distinct
+      gitRaw(ws, "status", "--porcelain").getOrElse("").linesIterator.flatMap { line =>
+        if line.length <= 3 then None
+        else
+          val path = line.drop(3).trim
+          if line.take(2) == "??" && whitelisted(path) then Some(path) else None
+      }.toList.distinct
 
   /** 脏路径清单（porcelain 全量；cap 条后折「+N more」；不可读 = Nil）。 */
   def dirtyPaths(ws: os.Path, cap: Int = 10): List[String] =
     if !isRepo(ws) then Nil
     else
-      val all = gitRaw(ws, "status", "--porcelain")
-        .getOrElse("")
-        .linesIterator
-        .filter(_.nonEmpty)
-        .map(_.drop(3).trim)
-        .filter(_.nonEmpty)
-        .toList
-        .distinct
+      val all = gitRaw(ws, "status", "--porcelain").getOrElse("")
+        .linesIterator.filter(_.nonEmpty).map(_.drop(3).trim).filter(_.nonEmpty).toList.distinct
       if all.length <= cap then all else all.take(cap) :+ s"+${all.length - cap} more"
 
   def dirty(ws: os.Path): Boolean =
@@ -158,7 +146,7 @@ object MergeArtifactCare:
    * 收编白名单内 `??` 未跟踪工件进待合并批：`git add -- <paths>` + `git commit`
    * （chore 一笔）。守卫：提交前读暂存区全量，白名单外的 staged 路径（他人
    * staged 的源码）⇒ `git reset` 撤销本次暂存并放弃收编（Left——fail-closed，
-   * 绝不卷走别人的 staged 工作）。无可收编 = Right(空)。收编成功后树净了一类。
+     * 绝不卷走别人的 staged 工作）。无可收编 = Right(空)。收编成功后树净了一类。
    */
   def absorbUntracked(ws: os.Path): Either[String, Absorption] =
     if !isRepo(ws) then Right(Absorption(Nil, ""))
@@ -168,8 +156,7 @@ object MergeArtifactCare:
         case paths =>
           gitList(ws, List("add", "--") ++ paths).flatMap { _ =>
             val staged = git(ws, "diff", "--cached", "--name-only")
-              .map(_.linesIterator.map(_.trim).filter(_.nonEmpty).toList)
-              .getOrElse(Nil)
+              .map(_.linesIterator.map(_.trim).filter(_.nonEmpty).toList).getOrElse(Nil)
             val foreign = staged.filterNot(whitelisted)
             if foreign.nonEmpty then
               gitList(ws, List("reset", "--") ++ paths) // 撤销本次暂存（不动他人 staged 面——reset 按路径收窄）
@@ -177,12 +164,7 @@ object MergeArtifactCare:
               logger.warn(s"[merge-artifact-care] $err")
               Left(err)
             else
-              git(
-                ws,
-                "commit",
-                "-m",
-                "chore(merge-hygiene): absorb untracked generated artifacts (evidence/, reports/) into the merge batch"
-              ).flatMap { _ =>
+              git(ws, "commit", "-m", "chore(merge-hygiene): absorb untracked generated artifacts (evidence/, reports/) into the merge batch").flatMap { _ =>
                 git(ws, "rev-parse", "HEAD").map(sha => Absorption(paths, sha))
               }
           }
@@ -190,24 +172,19 @@ object MergeArtifactCare:
   /**
    * 白名单内「已跟踪文件的未提交修改」还原到 HEAD（`git checkout HEAD --`——
    * staged/unstaged 皆算 M，连索引一并复位；10-23 批 DelegateAutoMerge 同语义
-   * 的 rec 解耦版，供合并轮/重试拍消费）。返回实际还原的路径。
+     * 的 rec 解耦版，供合并轮/重试拍消费）。返回实际还原的路径。
    */
   def restoreTrackedOverwrites(ws: os.Path): List[String] =
     if !isRepo(ws) then Nil
     else
-      val candidates = gitRaw(ws, "status", "--porcelain")
-        .getOrElse("")
-        .linesIterator
-        .flatMap { line =>
-          if line.length <= 3 then None
-          else
-            val xy = line.take(2)
-            val path = line.drop(3).trim
-            val modified = xy.charAt(0) == 'M' || xy.charAt(1) == 'M'
-            if modified && whitelisted(path) then Some(path) else None
-        }
-        .toList
-        .distinct
+      val candidates = gitRaw(ws, "status", "--porcelain").getOrElse("").linesIterator.flatMap { line =>
+        if line.length <= 3 then None
+        else
+          val xy = line.take(2)
+          val path = line.drop(3).trim
+          val modified = xy.charAt(0) == 'M' || xy.charAt(1) == 'M'
+          if modified && whitelisted(path) then Some(path) else None
+      }.toList.distinct
       candidates.filter(p => git(ws, "checkout", "HEAD", "--", p).isRight)
 
   // ── 判性面（#943：untracked 按 blob 判性，不再堵队） ──────────────────
@@ -216,30 +193,20 @@ object MergeArtifactCare:
   def allUntrackedPaths(ws: os.Path): List[String] =
     if !isRepo(ws) then Nil
     else
-      gitRaw2(ws, List("-c", "core.quotepath=off", "status", "--porcelain"))
-        .getOrElse("")
-        .linesIterator
-        .flatMap { line =>
-          if line.length <= 3 then None
-          else if line.take(2) == "??" then Some(line.drop(3).trim)
-          else None
-        }
-        .toList
-        .distinct
+      gitRaw2(ws, List("-c", "core.quotepath=off", "status", "--porcelain")).getOrElse("").linesIterator.flatMap { line =>
+        if line.length <= 3 then None
+        else if line.take(2) == "??" then Some(line.drop(3).trim) else None
+      }.toList.distinct
 
   /** delegate 分支 tip 的 blob 集合（判性基准；不可读 = 空集——一律不判同）。 */
   private def branchBlobIds(ws: os.Path, branch: String): Set[String] =
-    gitRaw(ws, "ls-tree", "-r", branch)
-      .getOrElse("")
-      .linesIterator
-      .flatMap { line =>
-        val tab = line.indexOf('\t')
-        if tab <= 0 then None
-        else
-          val meta = line.take(tab).trim.split("\\s+")
-          if meta.length >= 3 && meta(1) == "blob" then Some(meta(2)) else None
-      }
-      .toSet
+    gitRaw(ws, "ls-tree", "-r", branch).getOrElse("").linesIterator.flatMap { line =>
+      val tab = line.indexOf('\t')
+      if tab <= 0 then None
+      else
+        val meta = line.take(tab).trim.split("\\s+")
+        if meta.length >= 3 && meta(1) == "blob" then Some(meta(2)) else None
+    }.toSet
 
   /** 隔离区根（repo 外——隔离件绝不回流成树脏）。 */
   def quarantineRoot: os.Path = nebflow.shared.PathUtil.dataRoot / "merge-quarantine"
@@ -276,9 +243,7 @@ object MergeArtifactCare:
             val removedOk = Try(os.remove.all(abs)).isSuccess
             if removedOk then
               removed += p
-              logger.info(
-                s"[merge-artifact-care] triaged: untracked copy of '$p' is blob-identical to delegate branch '$branch' — removed (content preserved on the branch)"
-              )
+              logger.info(s"[merge-artifact-care] triaged: untracked copy of '$p' is blob-identical to delegate branch '$branch' — removed (content preserved on the branch)")
           else if !whitelisted(p) then toQuarantine += p
         // 其余异常形态一律不动——fail-soft。
       }
@@ -287,29 +252,17 @@ object MergeArtifactCare:
         else
           quarantineInto(ws, toQuarantine.toList, context) match
             case Some((dir, moved)) =>
-              moved.foreach(p =>
-                logger.info(
-                  s"[merge-artifact-care] quarantined out-of-path untracked '$p' → $dir (PROVENANCE recorded)"
-                )
-              )
+              moved.foreach(p => logger.info(s"[merge-artifact-care] quarantined out-of-path untracked '$p' → $dir (PROVENANCE recorded)"))
               Some((dir, moved))
             case None => None // 移动失败：文件原地不动（绝不丢），不报已隔离
-      Triage(
-        removedCopies = removed.toList,
-        quarantined = qdir.map(_._2).getOrElse(Nil),
-        quarantineDir = qdir.map(_._1)
-      )
+      Triage(removedCopies = removed.toList, quarantined = qdir.map(_._2).getOrElse(Nil), quarantineDir = qdir.map(_._1))
   end triageUntracked
 
   /**
    * 把 `paths`（工作区相对）移入隔离批次目录（保相对结构），旁挂 PROVENANCE.json。
    * 返回（批次目录, 实际移动清单）；任何一步失败 = None（原文件原地不动——绝不丢）。
    */
-  private def quarantineInto(
-    ws: os.Path,
-    paths: List[String],
-    context: Option[CareContext]
-  ): Option[(os.Path, List[String])] =
+  private def quarantineInto(ws: os.Path, paths: List[String], context: Option[CareContext]): Option[(os.Path, List[String])] =
     try
       val batch = quarantineRoot / slug(ws) / java.time.LocalDateTime
         .now(java.time.ZoneId.systemDefault())
@@ -332,22 +285,19 @@ object MergeArtifactCare:
            |  "what": "out-of-path untracked file(s) moved aside by merge-artifact-care at the merge gate — the merge queue is never blocked by them, and nothing is deleted",
            |  "originWs": "${ws.toString.replace("\\", "\\\\")}",
            |  "paths": ${moved.toList.asJson.noSpaces},
-           |  "delegateId": "${context.fold("")(_.delegateId)}",
-           |  "branch": "${context.fold("")(_.branch)}",
-           |  "baseBranch": "${context.fold("")(_.baseBranch)}",
-           |  "projectKey": "${context.fold("")(_.projectKey)}",
+           |  "delegateId": "${context.fold("")( _.delegateId)}",
+           |  "branch": "${context.fold("")( _.branch)}",
+           |  "baseBranch": "${context.fold("")( _.baseBranch)}",
+           |  "projectKey": "${context.fold("")( _.projectKey)}",
            |  "quarantinedAtEpochMs": ${System.currentTimeMillis()},
            |  "restoreHint": "move the files back under the originWs paths above"
            |}
            |""".stripMargin
         os.write.over(batch / "PROVENANCE.json", provenance)
         Some((batch, moved.toList))
-      end if
     catch
       case e: Throwable =>
-        logger.warn(
-          s"[merge-artifact-care] quarantine move failed (files left in place): ${Option(e.getMessage).getOrElse(e.toString).take(200)}"
-        )
+        logger.warn(s"[merge-artifact-care] quarantine move failed (files left in place): ${Option(e.getMessage).getOrElse(e.toString).take(200)}")
         None
   end quarantineInto
 

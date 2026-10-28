@@ -31,10 +31,8 @@ class HttpCacheSpec extends CatsEffectSuite:
       assertEquals(HttpCache.ofJson(a), HttpCache.ofJson(io.circe.Json.obj("x" -> io.circe.Json.fromLong(1L))))
       assert(clue(HttpCache.ofJson(a)) != clue(HttpCache.ofJson(b)))
       // 键序不同 = 载荷不同（circe JsonObject 保序）⇒ 标签区分（申报：内容寻址按序列化字节）。
-      assert(
-        clue(HttpCache.ofJson(io.circe.Json.obj("a" -> io.circe.Json.True, "b" -> io.circe.Json.False)))
-          != clue(HttpCache.ofJson(io.circe.Json.obj("b" -> io.circe.Json.False, "a" -> io.circe.Json.True)))
-      )
+      assert(clue(HttpCache.ofJson(io.circe.Json.obj("a" -> io.circe.Json.True, "b" -> io.circe.Json.False)))
+        != clue(HttpCache.ofJson(io.circe.Json.obj("b" -> io.circe.Json.False, "a" -> io.circe.Json.True))))
     }
   }
 

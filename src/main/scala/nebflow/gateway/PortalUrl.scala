@@ -7,8 +7,7 @@ import nebflow.shared.Branding
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-/**
- * Browser entry resolution. The website portal is independent of the relay
+/** Browser entry resolution. The website portal is independent of the relay
  * server. Explicit portal overrides and local mode work on every device.
  */
 object PortalUrl:
@@ -43,11 +42,9 @@ object PortalUrl:
         case Some(base) => Some(withDeviceParam(base, deviceId))
         case None => Some(withDeviceParam(defaultPortalUrl, deviceId))
 
-  /**
-   * base + `?device=<id>`（或 `&`，当 base 已带 query）；deviceId 空 ⇒ base 原样。
-   * 编码口径同 RestApiCtx.encSeg 先例：URLEncoder 后把 `+` 归一 `%20`
-   * （form-urlencoded 的 `+` 在通用 URL 解码面会碎）。
-   */
+  /** base + `?device=<id>`（或 `&`，当 base 已带 query）；deviceId 空 ⇒ base 原样。
+    * 编码口径同 RestApiCtx.encSeg 先例：URLEncoder 后把 `+` 归一 `%20`
+    * （form-urlencoded 的 `+` 在通用 URL 解码面会碎）。 */
   def withDeviceParam(base: String, deviceId: Option[String]): String =
     deviceId
       .map(_.trim)
@@ -67,8 +64,7 @@ object PortalUrl:
   def openUrl(deviceId: Option[String]): IO[Option[String]] =
     NeblinkConfig.load.map(c => decide(c.portalUrl, livePortalEnv, liveOpenUiEnv, deviceId))
 
-  /**
-   * Resolve the website portal, or establish a local browser session.
+  /** Resolve the website portal, or establish a local browser session.
    * Configuration/identity read failures leave local access available.
    */
   def startupUrl(deviceId: IO[Option[String]], localUrl: String, authenticateLocal: Boolean = true): IO[String] =

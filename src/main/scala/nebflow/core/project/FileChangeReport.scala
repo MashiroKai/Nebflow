@@ -45,12 +45,10 @@ private val fileDiffLogger = NebflowLogger.forName("nebflow.filediff")
  */
 object FileChangeReport:
 
-  /**
-   * Files above this size are not read into a diff — counts-only entry.
-   * Memory guard only (whole-file read on the completion path), NOT a diff
-   * char cap: every diff CHARACTER cap on this face was removed by the
-   * 2026-10-10 ruling (chat-face 60k / per-file 200k / ledger capture 100k).
-   */
+  /** Files above this size are not read into a diff — counts-only entry.
+    * Memory guard only (whole-file read on the completion path), NOT a diff
+    * char cap: every diff CHARACTER cap on this face was removed by the
+    * 2026-10-10 ruling (chat-face 60k / per-file 200k / ledger capture 100k). */
   val MaxFileBytesForDiff: Long = 1024L * 1024
 
   /** Directory name under `<workspace>/.nebflow/` (git-ignored). */
@@ -362,10 +360,8 @@ object FileChangeReport:
     }
   end readAsAllAdditions
 
-  /**
-   * Full-fidelity entry: the diff body ships verbatim (2026-10-10 ruling —
-   * no per-file char cap; Canvas renders oversized bodies in full).
-   */
+  /** Full-fidelity entry: the diff body ships verbatim (2026-10-10 ruling —
+    * no per-file char cap; Canvas renders oversized bodies in full). */
   private def fullEntry(path: String, changeType: String, a: Int, r: Int, diff: String, source: String): Entry =
     Entry(path, changeType, a, r, source, Some(diff), None)
 

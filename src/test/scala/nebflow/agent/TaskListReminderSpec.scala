@@ -74,10 +74,9 @@ class TaskListReminderSpec extends FunSuite:
     )
     os.write.over(file, store.copy(tasks = existing :+ entry).asJson.noSpaces, createFolders = true)
 
-  end seedTask
-
   private def readStore: Option[nebflow.core.project.TaskLedgerData] =
-    if os.exists(file) then io.circe.parser.decode[nebflow.core.project.TaskLedgerData](os.read(file)).toOption
+    if os.exists(file) then
+      io.circe.parser.decode[nebflow.core.project.TaskLedgerData](os.read(file)).toOption
     else None
 
   private val smallMem = Some("# User\n\n- 正常内容")

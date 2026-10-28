@@ -59,11 +59,11 @@ class PortalWireContractV1Spec extends FunSuite:
     "MigrationChunk"
   )
 
-  private val WsFrameKinds = List("text", "binary")
-  private val WsDataEncodings = List("none", "gzip")
-  private val ReqOrigins = List("portal")
-  private val TicketMintErrors = List("rate_limited", "quiesced", "unbound")
-  private val BindingKinds = List("revoked", "stand-down", "quiesce", "quiesce-renew", "quiesce-lift")
+  private val WsFrameKinds      = List("text", "binary")
+  private val WsDataEncodings   = List("none", "gzip")
+  private val ReqOrigins        = List("portal")
+  private val TicketMintErrors  = List("rate_limited", "quiesced", "unbound")
+  private val BindingKinds      = List("revoked", "stand-down", "quiesce", "quiesce-renew", "quiesce-lift")
 
   // ────────────────────────── frame model ──────────────────────────
 
@@ -71,7 +71,6 @@ class PortalWireContractV1Spec extends FunSuite:
   private type Headers = Vector[(String, String)]
 
   sealed trait PortalFrame
-
   final case class RelayRequest(
     requestId: String,
     action: String,
@@ -79,12 +78,12 @@ class PortalWireContractV1Spec extends FunSuite:
     projectRoot: Option[String]
   ) extends PortalFrame
   final case class RelayResponse(requestId: String, output: String, error: String) extends PortalFrame
-  final case class HttpRequest(requestId: String, method: String, path: String, headers: Headers) extends PortalFrame
-
+  final case class HttpRequest(requestId: String, method: String, path: String, headers: Headers)
+      extends PortalFrame
   final case class HttpResponse(requestId: String, status: Int, headers: Headers, setCookie: Vector[String])
       extends PortalFrame
-  final case class BodyFrame(requestId: String, seq: Int, more: Boolean, data: Vector[Byte]) extends PortalFrame
-
+  final case class BodyFrame(requestId: String, seq: Int, more: Boolean, data: Vector[Byte])
+      extends PortalFrame
   final case class WsOpen(
     requestId: String,
     path: String,
@@ -92,8 +91,8 @@ class PortalWireContractV1Spec extends FunSuite:
     headers: Option[Headers]
   ) extends PortalFrame
   final case class WsOpenResult(requestId: String, accepted: Boolean, status: Int) extends PortalFrame
-  final case class WsFrame(requestId: String, kind: String, data: Vector[Byte], fin: Boolean) extends PortalFrame
-
+  final case class WsFrame(requestId: String, kind: String, data: Vector[Byte], fin: Boolean)
+      extends PortalFrame
   final case class WsDataFrame(
     requestId: String,
     seq: Int,
@@ -103,14 +102,12 @@ class PortalWireContractV1Spec extends FunSuite:
     data: Vector[Byte]
   ) extends PortalFrame
   final case class WsClose(requestId: String, code: Int, reason: String) extends PortalFrame
-
   final case class ConsoleTicketMint(
     requestId: String,
     mintId: String,
     accountSub: String,
     reqOrigin: String
   ) extends PortalFrame
-
   final case class ConsoleTicketResult(
     requestId: String,
     mintId: String,
@@ -118,8 +115,8 @@ class PortalWireContractV1Spec extends FunSuite:
     expiresInSec: Option[Int],
     error: Option[String]
   ) extends PortalFrame
-  final case class BindingControl(kind: String, migrationId: Option[String], ttlSec: Option[Int]) extends PortalFrame
-
+  final case class BindingControl(kind: String, migrationId: Option[String], ttlSec: Option[Int])
+      extends PortalFrame
   final case class MigrationChunk(
     migrationId: String,
     manifestPath: String,
@@ -459,26 +456,22 @@ class PortalWireContractV1Spec extends FunSuite:
 
   private def opt[A](o: JsonObject, name: String)(decode: Json => Either[Rejection, A]): Either[Rejection, Option[A]] =
     o(name) match
-      case None => Right(None)
-      case Some(j) => decode(j).map(Some(_))
+      case None      => Right(None)
+      case Some(j)   => decode(j).map(Some(_))
 
   private def reqString(o: JsonObject, name: String): Either[Rejection, String] = req(o, name)(jsonString(_, name))
   private def reqInt(o: JsonObject, name: String): Either[Rejection, Int] = req(o, name)(jsonInt(_, name))
   private def reqBool(o: JsonObject, name: String): Either[Rejection, Boolean] = req(o, name)(jsonBool(_, name))
   private def reqUuid(o: JsonObject, name: String): Either[Rejection, String] = req(o, name)(jsonUuid(_, name))
-
   private def reqEnum(o: JsonObject, name: String, allowed: List[String]): Either[Rejection, String] =
     req(o, name)(jsonEnum(_, name, allowed))
 
   private def optString(o: JsonObject, name: String): Either[Rejection, Option[String]] =
     opt(o, name)(jsonString(_, name))
-
   private def optInt(o: JsonObject, name: String): Either[Rejection, Option[Int]] =
     opt(o, name)(jsonInt(_, name))
-
   private def optUuid(o: JsonObject, name: String): Either[Rejection, Option[String]] =
     opt(o, name)(jsonUuid(_, name))
-
   private def optEnum(o: JsonObject, name: String, allowed: List[String]): Either[Rejection, Option[String]] =
     opt(o, name)(jsonEnum(_, name, allowed))
 
@@ -520,7 +513,9 @@ class PortalWireContractV1Spec extends FunSuite:
 
   /** Contract 2.6: `path` is absolute (leading '/'). */
   private def jsonAbsolutePath(j: Json, name: String): Either[Rejection, String] =
-    jsonString(j, name).flatMap(p => Either.cond(p.startsWith("/"), p, Rejection("invalid_format", field = Some(name))))
+    jsonString(j, name).flatMap(p =>
+      Either.cond(p.startsWith("/"), p, Rejection("invalid_format", field = Some(name)))
+    )
 
   /** Contract 2.13: `sha256` is 64 lowercase hex chars. */
   private def jsonSha256(j: Json, name: String): Either[Rejection, String] =
@@ -652,8 +647,7 @@ class PortalWireContractV1Spec extends FunSuite:
     val v1 = v1Doc.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1 vectors unreadable: $e"), identity)
     assertEquals(v1.length, 28, "the frozen v1 set is 28 vectors")
     val v11 = parseResource("neblink/portal-wire-vectors-v1.1.json")
-    val v11Vecs =
-      v11.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1.1 vectors unreadable: $e"), identity)
+    val v11Vecs = v11.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1.1 vectors unreadable: $e"), identity)
     assertEquals(
       v11Vecs.take(v1.length).map(_.noSpaces),
       v1.map(_.noSpaces),
@@ -665,11 +659,9 @@ class PortalWireContractV1Spec extends FunSuite:
     // v1/v1.1 vectors byte-for-byte, in order, and only APPENDS the
     // ws_data_frame vectors (50 total).
     val v11 = parseResource("neblink/portal-wire-vectors-v1.1.json")
-    val v11Vecs =
-      v11.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1.1 vectors unreadable: $e"), identity)
+    val v11Vecs = v11.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1.1 vectors unreadable: $e"), identity)
     assertEquals(v11Vecs.length, 40, "the frozen v1.1 set is 40 vectors")
-    val v13Vecs =
-      vectorsDoc.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1.3 vectors unreadable: $e"), identity)
+    val v13Vecs = vectorsDoc.hcursor.downField("vectors").as[List[Json]].fold(e => fail(s"v1.3 vectors unreadable: $e"), identity)
     assertEquals(v13Vecs.length, 50, "the v1.3 set is 40 preserved + 10 ws_data_frame vectors")
     assertEquals(
       v13Vecs.take(v11Vecs.length).map(_.noSpaces),
@@ -684,8 +676,8 @@ class PortalWireContractV1Spec extends FunSuite:
       pos,
       FrameInventory,
       s"positive-vector coverage must be exactly the 14-frame inventory; unexpected=${{
-          (pos -- FrameInventory).toList.sorted
-        }} missing=${{ (FrameInventory -- pos).toList.sorted }}"
+        (pos -- FrameInventory).toList.sorted
+      }} missing=${{ (FrameInventory -- pos).toList.sorted }}"
     )
     assert(
       FrameInventory.forall(neg.contains),
@@ -746,7 +738,9 @@ class PortalWireContractV1Spec extends FunSuite:
               fail(s"expected rejection '${exp.reject}' but the frame decoded cleanly: $frame")
             case Left(rej) =>
               assertEquals(rej.code, exp.reject, s"rejection code mismatch for '${v.id}'")
-              exp.field.foreach(want => assertEquals(rej.field, Some(want), s"offending field mismatch for '${v.id}'"))
+              exp.field.foreach(want =>
+                assertEquals(rej.field, Some(want), s"offending field mismatch for '${v.id}'")
+              )
               exp.fields.foreach(want =>
                 assertEquals(
                   rej.fields.map(_.toSet),
@@ -764,7 +758,6 @@ class PortalWireContractV1Spec extends FunSuite:
                   s"allowed enum values mismatch for '${v.id}'"
                 )
               )
-          end match
   }
 
 end PortalWireContractV1Spec

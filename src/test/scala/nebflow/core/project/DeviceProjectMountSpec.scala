@@ -142,7 +142,6 @@ class DeviceProjectMountSpec extends CatsEffectSuite:
       def agentRegistry: Ref[IO, Map[String, AgentRecord]] = throw boom
       def processingSessionIds: IO[List[String]] = throw boom
     end new
-  end resourcesWith
 
   /** 无会话身份（definition-only）：create 只走定义腿 + 预检，不挂载。 */
   private val identity = ProjectCreateService.CreateIdentity.definitionOnly
@@ -154,7 +153,8 @@ class DeviceProjectMountSpec extends CatsEffectSuite:
 
   test("铁律① 本机腿：不存在目录挂载被拒，project.json 与骨架零写入") {
     val ghost = tmp / "ws-root" / "no-such"
-    for r <- ProjectCreateService.create(Some("ghost-proj"), ghost.toString, None, identity)
+    for
+      r <- ProjectCreateService.create(Some("ghost-proj"), ghost.toString, None, identity)
     yield
       val msg = clue(r.left.toOption.map(_.message).getOrElse("<unexpected Right>"))
       assert(clue(r.isLeft), s"expected Left, got $r")
@@ -171,7 +171,8 @@ class DeviceProjectMountSpec extends CatsEffectSuite:
     // 本机腿预检通过 ⇒ create 成功 ⇒ 本例假绿转红。事故判据的本体是「Windows 风格
     // 路径误走本机腿被拒 + device 指引 + 零写入」，不依赖那个具体路径本身。
     val ghostWin = """C:\no-such-incident-dir-901\nb"""
-    for r <- ProjectCreateService.create(Some("stand"), ghostWin, None, identity)
+    for
+      r <- ProjectCreateService.create(Some("stand"), ghostWin, None, identity)
     yield
       assert(clue(r.isLeft))
       val msg = clue(r.left.toOption.map(_.message).getOrElse("<unexpected Right>"))
@@ -268,7 +269,8 @@ class DeviceProjectMountSpec extends CatsEffectSuite:
   // ---- 设备腿：无网络 / 离线 / 通道缺位 = 结构化拒绝 ---------------------------
 
   test("设备腿：无设备网络 device=create → (DEVICE_ROUTE_UNAVAILABLE) 零写入") {
-    for r <- ProjectCreateService.create(Some("dev-proj"), winPath, None, identity, device = Some("KAI"))
+    for
+      r <- ProjectCreateService.create(Some("dev-proj"), winPath, None, identity, device = Some("KAI"))
     yield
       assert(clue(r.isLeft))
       assert(clue(r.left.toOption.map(_.message).getOrElse("")).contains("(DEVICE_ROUTE_UNAVAILABLE)"))
@@ -276,7 +278,8 @@ class DeviceProjectMountSpec extends CatsEffectSuite:
   }
 
   test("设备列举断言：未知设备 = (DEVICE_OFFLINE) 拒绝并列在线设备名单") {
-    for r <- ProjectCreateService.create(
+    for
+      r <- ProjectCreateService.create(
         Some("roam-proj"),
         winPath,
         None,
@@ -326,7 +329,6 @@ class DeviceProjectMountSpec extends CatsEffectSuite:
       assert(clue(m2).contains("device executor is not initialized"))
       // prepare 失败 = 全程零本机写（大脑根目录也不建）。
       assert(clue(!os.exists(PathUtil.dataRoot / "projects" / "prep-p" / "brain")))
-    end for
   }
 
 end DeviceProjectMountSpec

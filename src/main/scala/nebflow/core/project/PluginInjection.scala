@@ -97,8 +97,7 @@ object PluginInjection:
                   logDuty(subject, result)
                   if InertModes.contains(mode) then
                     IO.pure(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, mode)))
-                  else if names.isEmpty then
-                    IO.pure(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, mode)))
+                  else if names.isEmpty then IO.pure(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, mode)))
                   else resolvePreparation(names).map(_.map(prep => (prep, AllocatedSet(names, mode))))
                 }
             }
@@ -220,8 +219,6 @@ object PluginInjection:
             )
           )
       }
-
-  end injectedPluginBlock
 
   /**
    * duty 记账（INFO 单行；判定 = [[JevDeclarationDuty.evaluate]] 单点）：分配动作

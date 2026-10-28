@@ -112,7 +112,7 @@ object InjectionAttribution:
    * 出处（逐个可溯源）：
    *   mail                MailTool#sendMail（腿③ / team 腿）
    *   task / dispatch     ProjectActor.SourceTask（TriggerDispatcher 默认源：重入 /
-   *                       spawn 首条 prompt）/ SourceDispatch（DispatchNotify 回流）
+ *                       spawn 首条 prompt）/ SourceDispatch（DispatchNotify 回流）
    *   system              NodeEngine#injectRunning（腿②，见 SourceSystem）
    *   node                NodeEngine#deliverToRoot（节点完成通报）
    *   skill               AgentActor SkillActivate 分支

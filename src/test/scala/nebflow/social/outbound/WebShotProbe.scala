@@ -53,20 +53,14 @@ object WebShotProbe:
         res match
           case Right(png) =>
             val img = ImageIO.read(png.toNIO.toFile)
-            println(
-              s"[webshot-probe] dark=$dark OK ${img.getWidth}x${img.getHeight} " +
-                s"${Files.size(png.toNIO)}B in ${ms}ms -> $png"
-            )
+            println(s"[webshot-probe] dark=$dark OK ${img.getWidth}x${img.getHeight} " +
+              s"${Files.size(png.toNIO)}B in ${ms}ms -> $png")
             if img.getHeight <= 900 then
-              println(
-                s"[webshot-probe] FAIL dark=$dark: height ${img.getHeight} <= viewport 900 — fullPage did not happen"
-              )
+              println(s"[webshot-probe] FAIL dark=$dark: height ${img.getHeight} <= viewport 900 — fullPage did not happen")
               failures += 1
           case Left(reason) =>
             println(s"[webshot-probe] FAIL dark=$dark: $reason (${ms}ms)")
             failures += 1
-        end match
-      end for
 
       if failures == 0 then println("[webshot-probe] ALL PASS") else println(s"[webshot-probe] FAILURES=$failures")
       if failures == 0 then System.exit(0) else System.exit(1)
@@ -76,6 +70,3 @@ object WebShotProbe:
         val stream = Files.walk(tmp).sorted(java.util.Comparator.reverseOrder()).iterator()
         while stream.hasNext do Files.deleteIfExists(stream.next())
       catch case _: Throwable => ()
-    end try
-  end main
-end WebShotProbe

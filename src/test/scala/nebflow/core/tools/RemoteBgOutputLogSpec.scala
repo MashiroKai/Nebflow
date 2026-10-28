@@ -46,10 +46,7 @@ class RemoteBgOutputLogSpec extends FunSuite:
   }
 
   test("quoted path (spaces) is unwrapped") {
-    assertEquals(
-      RemoteBgOutputLog.parseRedirect("prog > '/tmp/my logs/run log.txt' 2>&1"),
-      Some("/tmp/my logs/run log.txt")
-    )
+    assertEquals(RemoteBgOutputLog.parseRedirect("prog > '/tmp/my logs/run log.txt' 2>&1"), Some("/tmp/my logs/run log.txt"))
     assertEquals(RemoteBgOutputLog.parseRedirect("prog > \"/tmp/x y.log\""), Some("/tmp/x y.log"))
   }
 
@@ -76,9 +73,7 @@ class RemoteBgOutputLogSpec extends FunSuite:
     assertEquals(RemoteBgOutputLog.parseRedirect("prog > $LOGFILE"), None)
   }
 
-  test(
-    "word-embedded digit before `>` stays part of the word; the `>` is still a plain stdout redirect (bash tokenization)"
-  ) {
+  test("word-embedded digit before `>` stays part of the word; the `>` is still a plain stdout redirect (bash tokenization)") {
     // `-k2` 是词（非全数字词）⇒ `2` 不是 IO-number，`>` 按 stdout 重定向解析。
     assertEquals(RemoteBgOutputLog.parseRedirect("sort -k2> f.txt"), Some("f.txt"))
     // 独立词 `2` = IO-number ⇒ stderr 类目标（同为可拉取路径）。

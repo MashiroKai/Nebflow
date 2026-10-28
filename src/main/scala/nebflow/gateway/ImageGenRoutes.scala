@@ -38,17 +38,15 @@ private[gateway] object ImageGenRoutes:
       // 阻塞生图一击（腿②主面）：{prompt, size?, provider?, quality?} →
       // {path, bytes, provider}；面关/错参给可行动 4xx，provider 失败 502。
       case req @ POST -> Root / "imagegen" =>
-        if !isLoopback(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+        if !isLoopback(req) then
+          Forbidden(Json.obj("error" -> "Unauthorized".asJson))
         else
           req.as[Json].attempt.flatMap {
-            case Left(_) =>
-              BadRequest(Json.obj("error" -> "invalid_body".asJson, "reason" -> "JSON object body required".asJson))
+            case Left(_) => BadRequest(Json.obj("error" -> "invalid_body".asJson, "reason" -> "JSON object body required".asJson))
             case Right(body) =>
               val prompt = body.hcursor.downField("prompt").as[String].toOption.map(_.trim).getOrElse("")
               if prompt.isEmpty then
-                BadRequest(
-                  Json.obj("error" -> "invalid_prompt".asJson, "reason" -> "non-empty 'prompt' string required".asJson)
-                )
+                BadRequest(Json.obj("error" -> "invalid_prompt".asJson, "reason" -> "non-empty 'prompt' string required".asJson))
               else
                 val reqModel = ImageGenRequest(
                   prompt = prompt,
@@ -86,7 +84,6 @@ private[gateway] object ImageGenRoutes:
                         )
                     }
                 }
-              end if
           }
 
       // job 状态读面（两腿通用调试面）：腿①非阻塞 job 的查询腿。

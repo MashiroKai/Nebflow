@@ -66,10 +66,8 @@ private[nebflow] object RemoteBgOutputLog:
       while k < n && command(k) == ' ' do k += 1
       k
 
-    /**
-     * `2>` / `1>` 的 IO-number 判据：数字必须独立成词（行首/空白/`;|&(` 之后）——
-     * `sort -k2> f` 的 `2` 是词的一部分，shell 里不是 IO-number（同判）。
-     */
+    /** `2>` / `1>` 的 IO-number 判据：数字必须独立成词（行首/空白/`;|&(` 之后）——
+      * `sort -k2> f` 的 `2` 是词的一部分，shell 里不是 IO-number（同判）。 */
     def atTokenStart(idx: Int): Boolean =
       idx == 0 || command(idx - 1).isWhitespace || ";|&(".contains(command(idx - 1))
 
@@ -89,15 +87,14 @@ private[nebflow] object RemoteBgOutputLog:
         while k < n && !command(k).isWhitespace && "<>|&;".indexOf(command(k)) < 0 do k += 1
         (command.substring(j, k), k)
 
-    /**
-     * 操作符处理：返回 (类别, 目标)（dup 无目标）与下一步下标。目标读取起点 =
-     * 操作符自身的长度（`>`/`2>`/`1>`=1 字符，`&>`/`>>`/`2>>`…=2，`&>>`=3）——
-     * 与目标间的空白由 skipSpaces 吸收（`>out.log` 无空格形态同路径）。
-     */
+    /** 操作符处理：返回 (类别, 目标)（dup 无目标）与下一步下标。目标读取起点 =
+      * 操作符自身的长度（`>`/`2>`/`1>`=1 字符，`&>`/`>>`/`2>>`…=2，`&>>`=3）——
+      * 与目标间的空白由 skipSpaces 吸收（`>out.log` 无空格形态同路径）。 */
     def handleRedirect(opStart: Int): ((Cl, String), Int) =
       val c = command(opStart)
       val targetAt =
-        if c == '&' then if opStart + 2 < n && command(opStart + 2) == '>' then opStart + 3 else opStart + 2 // &>> / &>
+        if c == '&' then
+          if opStart + 2 < n && command(opStart + 2) == '>' then opStart + 3 else opStart + 2 // &>> / &>
         else if opStart + 1 < n && command(opStart + 1) == '>' then
           if opStart + 2 < n && command(opStart + 2) == '>' then opStart + 3 else opStart + 2 // >> / 2>> / 1>>
         else opStart + 1 // > / 2> / 1>
@@ -113,7 +110,6 @@ private[nebflow] object RemoteBgOutputLog:
       else
         val (t, ni) = readTarget(j)
         ((cl, t), ni)
-    end handleRedirect
 
     while i < n do
       val c = command(i)
@@ -123,11 +119,12 @@ private[nebflow] object RemoteBgOutputLog:
       else if c == '"' && !inSingle then
         inDouble = !inDouble
         i += 1
-      else if inSingle || inDouble then i += 1
-      else if c == '\\' && i + 1 < n then i += 2 // 转义：`\>` 不是操作符
+      else if inSingle || inDouble then
+        i += 1
+      else if c == '\\' && i + 1 < n then
+        i += 2 // 转义：`\>` 不是操作符
       else if c == '>' || (c == '&' && i + 1 < n && command(i + 1) == '>')
-        || ((c == '2' || c == '1') && i + 1 < n && command(i + 1) == '>' && atTokenStart(i))
-      then
+        || ((c == '2' || c == '1') && i + 1 < n && command(i + 1) == '>' && atTokenStart(i)) then
         val ((cl, t), ni) = handleRedirect(i)
         if t.nonEmpty then out += ((cl, t))
         i = ni
@@ -143,9 +140,8 @@ private[nebflow] object RemoteBgOutputLog:
             i = j + m.end
           case None =>
             i += 1
-      else i += 1
-      end if
-    end while
+      else
+        i += 1
     out.result()
   end scan
 

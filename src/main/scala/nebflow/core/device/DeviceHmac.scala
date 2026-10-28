@@ -115,7 +115,6 @@ end DeviceHmac
  * `firstSeen(deviceId, nonce)` = true（首见，放行）| false（窗口内重放，拒）。
  */
 final class NonceCache(capacityPerDevice: Int = 1024):
-
   private val seen =
     new java.util.concurrent.ConcurrentHashMap[String, java.util.LinkedHashSet[String]]()
 
@@ -141,8 +140,8 @@ end NonceCache
  * Enforcement 档位（v2 §A.4「双轨灰度收口」的配置面）：
  *   - `off`（**缺省**）= 现状逐字节（不验签、双轨不启动）；
  *   - `audit` = 灰度观察档：带有效 HMAC 头 = 信任升级（配对即信任，IP 列表不设限）；
- *     无头/坏签 = 维持既有 IP 判据 + 一条可 grep 的审计行（`[deviceAuth]`，**不拒**）；
- *   - `required` = 收紧档：无有效 HMAC 头一律 401（acceptance #5 的「收紧后」态）。
+     无头/坏签 = 维持既有 IP 判据 + 一条可 grep 的审计行（`[deviceAuth]`，**不拒**）；
+   - `required` = 收紧档：无有效 HMAC 头一律 401（acceptance #5 的「收紧后」态）。
  *
  * 配置键 = nebflow.json 顶层 `deviceAuth`（字符串）；宽容解码（坏值/缺失 = off），
  * 仿 [[nebflow.core.executor.ExecutorRegistry.readSettings]] 纪律。**运行期热读**

@@ -74,16 +74,10 @@ object AgentIdentitySync:
     s"$ChannelName|${p.fromDeviceId}|${p.tsSec}|${p.nonce}|${p.agent}|${p.displayName.getOrElse("")}|${p.avatarSha256
         .getOrElse("")}|${p.updatedAt}"
 
-  /**
-   * 从本机状态构建**未签名**载荷（纯组装；含头像字节读取与 b64 编码，同步面）。
-   * 签名按目标逐台做（[[signedFor]]）——配对 key 是**每对一份**的（A-B 与 A-C
-   * 两把 key），一份载荷签一个对端（DeviceDelegate.buildSpawnPayload 同款）。
-   */
-  def buildPayload(
-    rec: AgentIdentityStore.AgentIdentityRec,
-    fromDeviceId: String,
-    nowMs: Long
-  ): Option[IdentityPayload] =
+  /** 从本机状态构建**未签名**载荷（纯组装；含头像字节读取与 b64 编码，同步面）。
+    * 签名按目标逐台做（[[signedFor]]）——配对 key 是**每对一份**的（A-B 与 A-C
+    * 两把 key），一份载荷签一个对端（DeviceDelegate.buildSpawnPayload 同款）。 */
+  def buildPayload(rec: AgentIdentityStore.AgentIdentityRec, fromDeviceId: String, nowMs: Long): Option[IdentityPayload] =
     if !AgentIdentityStore.hasIdentity(rec) then None
     else
       val b64 = rec.avatarSha256.map { _ =>
@@ -134,8 +128,6 @@ object AgentIdentitySync:
         avatarB64 = c.downField("avatar").as[Option[String]].toOption.flatten
         avatarSha = c.downField("avatarSha256").as[Option[String]].toOption.flatten
       yield IdentityPayload(agent, displayName, avatarB64, avatarSha, updatedAt, fromDeviceId, tsSec, nonce, sig)
-
-  end parsePayload
 
   /** 编码上机（kind 信封 + 全字段平铺）。 */
   def encodePayload(p: IdentityPayload): Json =
@@ -197,17 +189,13 @@ object AgentIdentitySync:
         panelBroadcastFn = panelBroadcast
         // 收件面：unsafeRunSync 注册（DeviceDelegate 同款纪律——本语境是 Unit，
         // IO 返回值被丢弃即注册面静默缺失）。
-        svc
-          .addDataHandler(payload => handlePayload(payload))
-          .unsafeRunSync()(using
-            cats.effect.unsafe.implicits.global
-          )
+        svc.addDataHandler(payload => handlePayload(payload)).unsafeRunSync()(
+          using cats.effect.unsafe.implicits.global
+        )
         // 对账推：peer 集合变化（boot 后首联/重连/新配对）⇒ 全量身份外推。
-        svc
-          .addPeerChangeCallback(pushAllIdentity())
-          .unsafeRunSync()(using
-            cats.effect.unsafe.implicits.global
-          )
+        svc.addPeerChangeCallback(pushAllIdentity()).unsafeRunSync()(
+          using cats.effect.unsafe.implicits.global
+        )
         logger.infoSync(
           s"AgentIdentitySync receive face armed (channel: $ChannelName, kind: $KindSync)"
         )
@@ -245,7 +233,7 @@ object AgentIdentitySync:
   /** 单 agent 身份外推（fire-and-forget；失败只留元数据读数，不阻塞写路径）。 */
   def pushIdentity(agent: String): IO[Unit] =
     if sendFn == null then IO.unit
-    else
+    else {
       for
         selfId <- selfIdFn.attempt.map(_.getOrElse(""))
         rec <- IO.blocking(AgentIdentityStore.readRec(agent))
@@ -262,14 +250,13 @@ object AgentIdentitySync:
               )
               .flatMap { _ =>
                 // 每目标单独签署（配对 key 每对一份——见 signedFor）。
-                targets.traverse_(t =>
-                  sendFn(t, encodePayload(signedFor(unsigned, t))).flatMap {
-                    case true => IO.unit
-                    case false => logger.debug(s"identity-sync: device $t unreachable (offline?)")
-                  }
-                )
+                targets.traverse_(t => sendFn(t, encodePayload(signedFor(unsigned, t))).flatMap {
+                  case true  => IO.unit
+                  case false => logger.debug(s"identity-sync: device $t unreachable (offline?)")
+                })
               }
       yield ()
+    }
 
   /**
    * 对账推：本机全部身份态逐一外推（peer 变化回调触发）。单飞闸防发现循环抖动
@@ -303,19 +290,17 @@ object AgentIdentitySync:
   // ── 收件面（对端帧落地：验签 → LWW 收敛 → Soul 腿 + 面板广播；零回推）─────
 
   private[neblink] def handlePayload(json: Json): IO[Unit] =
-    parsePayload(json) match
+    parsePayload(json) match {
       case None => IO.unit // 非 identity-sync / 结构坏 —— 数据通道上有别的流量，静默
       case Some(p) =>
         val nowMs = System.currentTimeMillis()
-        verifyPayload(p, nowMs) match
+        verifyPayload(p, nowMs) match {
           case Some(reason) =>
             logger.warn(s"identity-sync frame REJECTED from=${p.fromDeviceId} agent=${p.agent}: $reason")
           case None =>
-            decodeAvatar(p) match
+            decodeAvatar(p) match {
               case None =>
-                logger.warn(
-                  s"identity-sync frame REJECTED from=${p.fromDeviceId} agent=${p.agent}: avatar decode failed"
-                )
+                logger.warn(s"identity-sync frame REJECTED from=${p.fromDeviceId} agent=${p.agent}: avatar decode failed")
               case Some(bytesOpt) =>
                 AgentIdentityStore
                   .applyRemote(
@@ -327,7 +312,7 @@ object AgentIdentitySync:
                       logger
                         .debug(s"identity-sync: stale frame skipped agent=${p.agent} updatedAt=${p.updatedAt}")
                         .void
-                    else
+                    else {
                       // ① 落到智能体的记忆（Soul.md 自我认知段；仅根 agent 生效）。
                       // ② 面板立即重读（不等重启/刷新）。
                       val soulLeg = AgentIdentityStore
@@ -343,6 +328,8 @@ object AgentIdentitySync:
                         )
                         .productR(soulLeg)
                         .productR(broadcast)
+                    }
                   }
-        end match
-end AgentIdentitySync
+        }
+    }
+}

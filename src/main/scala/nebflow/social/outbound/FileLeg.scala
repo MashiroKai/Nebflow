@@ -36,15 +36,7 @@ object FileLeg:
    * Pop 一个 zip/tar.gz 今天只落日志，作者令点名「压缩包=文件腿直推」。
    */
   val ArchiveExtensions: Set[String] = Set(
-    "zip",
-    "7z",
-    "rar",
-    "tar",
-    "gz",
-    "tgz",
-    "bz2",
-    "xz",
-    "zst"
+    "zip", "7z", "rar", "tar", "gz", "tgz", "bz2", "xz", "zst"
   )
 
   /** 小写扩展名（不带点），无扩展名 ⇒ ""。与 [[RichKind.of]] 同一读取口径。 */
@@ -52,7 +44,7 @@ object FileLeg:
     val lower = name.toLowerCase
     lower.lastIndexOf('.') match
       case -1 => ""
-      case i => lower.substring(i + 1)
+      case i  => lower.substring(i + 1)
 
   /** 是否文件腿直推类（压缩包表；PDF/办公件走 Document 臂，不经这里）。 */
   def isPushable(p: os.Path): Boolean = ArchiveExtensions.contains(extensionOf(p.toString))

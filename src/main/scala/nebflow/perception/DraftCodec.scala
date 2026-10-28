@@ -33,7 +33,8 @@ object DraftCodec:
   def parse(draftId: String, raw: String): Either[String, DraftDoc] =
     val lines = raw.linesIterator.toList
     val trimmed = lines.dropWhile(_.isBlank)
-    if !trimmed.headOption.exists(_.trim == "---") then Left("draft front-matter missing (expected leading '---')")
+    if !trimmed.headOption.exists(_.trim == "---") then
+      Left("draft front-matter missing (expected leading '---')")
     else
       val rest = trimmed.tail
       val closeIdx = rest.indexWhere(_.trim == "---")
@@ -53,23 +54,17 @@ object DraftCodec:
             val key = line.take(ci).trim.toLowerCase
             val value = line.drop(ci + 1).trim
             key match
-              case "to" => to = parseAddresses(value)
-              case "cc" => cc = parseAddresses(value)
-              case "bcc" => bcc = parseAddresses(value)
+              case "to"      => to = parseAddresses(value)
+              case "cc"      => cc = parseAddresses(value)
+              case "bcc"     => bcc = parseAddresses(value)
               case "subject" => subject = value
-              case "attach" => if value.nonEmpty then attach = attach :+ value
+              case "attach"  => if value.nonEmpty then attach = attach :+ value
               case "replyto" | "reply-to" | "inreplyto" => if value.nonEmpty then replyTo = Some(value)
-              case "draft" => () // marker line, informational
-              case _ => () // unknown key tolerated (forward-compat)
+              case "draft"   => () // marker line, informational
+              case _         => () // unknown key tolerated (forward-compat)
         }
         val (quote, pureBody) = splitQuote(body)
         Right(DraftDoc(draftId, to, cc, bcc, subject, pureBody, attach, replyTo, quote))
-
-      end if
-
-    end if
-
-  end parse
 
   /** Serialize a doc back to the canonical file form. */
   def serialize(doc: DraftDoc): String =
@@ -88,8 +83,6 @@ object DraftCodec:
     sb.append(doc.bodyHtml).append("\n\n")
     doc.quoteHtml.foreach(q => sb.append(q.trim).append("\n"))
     sb.toString
-
-  end serialize
 
   /** Comma/space separated addresses → list. */
   def parseAddresses(value: String): List[String] =
@@ -122,10 +115,9 @@ object DraftCodec:
         val quote = body.substring(m.start)
         val rest = body.substring(0, m.start)
         // close an unterminated tag so the HTML stays well-formed enough for mail clients
-        val closed =
-          if quote.toLowerCase.contains("</blockquote>") || quote.toLowerCase.contains("</perception-quote>")
-          then quote
-          else quote + "</blockquote>"
+        val closed = if quote.toLowerCase.contains("</blockquote>") || quote.toLowerCase.contains("</perception-quote>")
+        then quote
+        else quote + "</blockquote>"
         (Some(closed), rest.trim)
 
   /** Address header value (SMTP): `"Name" <addr>` or bare addr; we send bare addrs. */
@@ -135,4 +127,3 @@ object DraftCodec:
   def looksLikeAddress(s: String): Boolean =
     val at = s.indexOf('@')
     at > 0 && at < s.length - 1 && !s.contains(' ') && s.drop(at + 1).contains('.')
-end DraftCodec

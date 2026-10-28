@@ -52,11 +52,9 @@ object EnrollGuard:
    */
   val AllowProdEnrollEnv: String = "NEBFLOW_ALLOW_PROD_ENROLL"
 
-  /**
-   * Production domains; subdomains included. `mystand.space` is the current
-   * brand/relay family; `nebflow.space` stays listed so installs still pointed
-   * at the legacy relay host keep hitting the gate.
-   */
+  /** Production domains; subdomains included. `mystand.space` is the current
+    * brand/relay family; `nebflow.space` stays listed so installs still pointed
+    * at the legacy relay host keep hitting the gate. */
   private val ProdDomains: Seq[String] = Seq("mystand.space", "nebflow.space")
 
   /**

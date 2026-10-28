@@ -209,13 +209,7 @@ class ResetAuditSpec extends CatsEffectSuite:
       ("root-1", AgentKind.Root, AgentStatus.Processing) // 非 Delegate kind ⇒ 不入目标
     )
     val out = Collector()
-    for _ <- ResetAudit.record(
-        "git reset --hard",
-        auditCtx("root-1", Some("/ws")),
-        Some(port),
-        ts = 42L,
-        emit = out.append
-      )
+    for _ <- ResetAudit.record("git reset --hard", auditCtx("root-1", Some("/ws")), Some(port), ts = 42L, emit = out.append)
     yield
       val lines = out.lines.unsafeRunSync()(using munitIORuntime)
       assertEquals(lines.length, 1, s"one co-checkout target: $lines")
@@ -226,20 +220,13 @@ class ResetAuditSpec extends CatsEffectSuite:
       assert(l.contains("targetStatus=Processing"), s"status at reset time: $l")
       assert(l.contains("targetTask=\"bind flow\""), s"running task: $l")
       assert(!l.contains("delegate-wt") && !l.contains("delegate-elsewhere"), s"insulated/distant seats excluded: $l")
-    end for
   }
 
   test("record: zero targets still writes one target=none line (the reset itself is never traceless)") {
     os.remove.all(tempRoot / "delegates")
     val port = mkPort()
     val out = Collector()
-    for _ <- ResetAudit.record(
-        "git clean -fdx",
-        auditCtx("root-1", Some("/ws")),
-        Some(port),
-        ts = 7L,
-        emit = out.append
-      )
+    for _ <- ResetAudit.record("git clean -fdx", auditCtx("root-1", Some("/ws")), Some(port), ts = 7L, emit = out.append)
     yield
       val lines = out.lines.unsafeRunSync()(using munitIORuntime)
       assertEquals(lines.length, 1)

@@ -176,7 +176,6 @@ object PortalUplinkDeadLetter:
   )
 
   object Entry:
-
     given Encoder[Entry] = Encoder.instance { e =>
       Json.obj(
         "id" -> e.id.asJson,
@@ -190,18 +189,17 @@ object PortalUplinkDeadLetter:
         "attempts" -> e.attempts.asJson
       )
     }
-
     given Decoder[Entry] = Decoder.instance { c =>
       for
-        id <- c.downField("id").as[String]
-        requestId <- c.downField("requestId").as[String]
-        source <- c.downField("source").as[String]
-        kind <- c.downField("kind").as[String]
-        frameText <- c.downField("frameText").as[String]
-        bytes <- c.downField("bytes").as[Long]
-        reason <- c.downField("reason").as[String]
+        id         <- c.downField("id").as[String]
+        requestId  <- c.downField("requestId").as[String]
+        source     <- c.downField("source").as[String]
+        kind       <- c.downField("kind").as[String]
+        frameText  <- c.downField("frameText").as[String]
+        bytes      <- c.downField("bytes").as[Long]
+        reason     <- c.downField("reason").as[String]
         enqueuedAt <- c.downField("enqueuedAt").as[Long]
-        attempts <- c.downField("attempts").as[Option[Int]]
+        attempts   <- c.downField("attempts").as[Option[Int]]
       yield Entry(id, requestId, source, kind, frameText, bytes, reason, enqueuedAt, attempts.getOrElse(0))
     }
   end Entry
@@ -284,18 +282,18 @@ object PortalUplinkDeadLetter:
   def delivered(id: String): IO[Unit] =
     IO.blocking {
       pendingSync().filter(_.id == id).foreach(e => if os.exists(fileOf(e)) then os.remove(fileOf(e)))
-    }.void
-      .handleErrorWith(e => logger.warn(s"PortalUplinkDeadLetter.delivered failed for id=$id: ${e.getMessage}").void)
+    }.void.handleErrorWith(e =>
+      logger.warn(s"PortalUplinkDeadLetter.delivered failed for id=$id: ${e.getMessage}").void
+    )
 
   /** 记一次补投尝试（纯读数：attempts 升序可见，不参与任何判失败逻辑）。 */
   private def bumpAttempt(e: Entry): IO[Unit] =
     IO.blocking {
       val updated = e.copy(attempts = e.attempts + 1)
       AtomicJson.writeSync(fileOf(updated), updated.asJson.noSpaces)
-    }.void
-      .handleErrorWith(err =>
-        logger.warn(s"PortalUplinkDeadLetter: attempt counter write failed for ${e.id}: ${err.getMessage}").void
-      )
+    }.void.handleErrorWith(err =>
+      logger.warn(s"PortalUplinkDeadLetter: attempt counter write failed for ${e.id}: ${err.getMessage}").void
+    )
 
   /** 补投结果读数。 */
   final case class DrainReport(replayed: List[String] = Nil, kept: List[(String, String)] = Nil)
@@ -310,13 +308,16 @@ object PortalUplinkDeadLetter:
     pending.flatMap { entries =>
       entries.foldLeft(IO.pure(DrainReport())) { (acc, e) =>
         acc.flatMap { report =>
-          send(e).attempt
+          send(e)
+            .attempt
             .flatMap {
               case Right(_) =>
                 delivered(e.id).as(report.copy(replayed = report.replayed :+ e.id))
               case Left(t) =>
                 bumpAttempt(e).as(
-                  report.copy(kept = report.kept :+ (e.id, Option(t.getMessage).getOrElse(t.getClass.getSimpleName)))
+                  report.copy(kept =
+                    report.kept :+ (e.id, Option(t.getMessage).getOrElse(t.getClass.getSimpleName))
+                  )
                 )
             }
         }
@@ -325,8 +326,7 @@ object PortalUplinkDeadLetter:
 
   /** 清空（运维/spec 用；正常路径绝不调用——零删除纪律）。 */
   def clear(): IO[Unit] =
-    IO.blocking(if os.exists(dir) then os.remove.all(dir))
-      .void
+    IO.blocking(if os.exists(dir) then os.remove.all(dir)).void
       .handleErrorWith(e => logger.warn(s"PortalUplinkDeadLetter.clear failed: ${e.getMessage}").void)
 
 end PortalUplinkDeadLetter

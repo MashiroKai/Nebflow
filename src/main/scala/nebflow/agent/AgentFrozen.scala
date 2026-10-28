@@ -468,7 +468,6 @@ private[agent] object AgentFrozen:
           _ <- updateRegistryFrozenReason(resources, state.sessionId, None)
           _ <- fireLifecycleStopHooks(resources, state)
         yield Behaviors.stopped
-        end for
 
       case AgentCommand.RestartAgent(level) =>
         // 镜像 processing 的 RestartAgent；末尾 dispatch 是系统动作（Gated）——

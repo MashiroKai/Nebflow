@@ -175,21 +175,7 @@ object ProjectRuntimeRegistry:
             sessionDeviceWorkspace = ProjectStore.deviceOrigin(project).map(_.path)
           )
         }
-      case None =>
-        mountAtWorkspace(
-          project,
-          project.workspace,
-          system,
-          resources,
-          wsSend,
-          rootSessionId,
-          ttlDisplayMs,
-          ttlCheckIntervalSec,
-          skipStaleReap,
-          dispatcherIdleWindowMs,
-          dispatcherLifecycleAnchorTaskTerminal,
-          dispatcherMaxConcurrentSessions
-        )
+      case None => mountAtWorkspace(project, project.workspace, system, resources, wsSend, rootSessionId, ttlDisplayMs, ttlCheckIntervalSec, skipStaleReap, dispatcherIdleWindowMs, dispatcherLifecycleAnchorTaskTerminal, dispatcherMaxConcurrentSessions)
     }
 
   /**
@@ -704,11 +690,9 @@ object ProjectActor:
                 case Right(()) =>
                   dispatchAnswerReentry(cfg, active, behavior, nodeId, requestId, answerText, cfg.rootSessionId)
                 case Left(reason) =>
-                  logger
-                    .warn(
-                      s"[hot-restart] ask-answer reentry refused during draining (requestId=$requestId): $reason"
-                    )
-                    .as(behavior)
+                  logger.warn(
+                    s"[hot-restart] ask-answer reentry refused during draining (requestId=$requestId): $reason"
+                  ).as(behavior)
               }
             case ProjectCommand.CancelNode(nodeId) =>
               cfg.engine.cancelNodeById(nodeId).as(behavior)

@@ -50,20 +50,14 @@ class DeviceFlowRetiredSpec extends FunSuite:
     while i < src.length do
       val rest = src.substring(i)
       if inBlock then
-        if rest.startsWith("*/") then
-          inBlock = false; i += 2; sb.append(' ')
-        else i += 1
+        if rest.startsWith("*/") then { inBlock = false; i += 2; sb.append(' ') }
+        else { i += 1 }
       else if inLine then
-        if src.charAt(i) == '\n' then
-          inLine = false; sb.append('\n'); i += 1
+        if src.charAt(i) == '\n' then { inLine = false; sb.append('\n'); i += 1 }
         else i += 1
-      else if rest.startsWith("/*") then
-        inBlock = true; i += 2; sb.append(' ')
-      else if rest.startsWith("//") then
-        inLine = true; i += 2
-      else
-        sb.append(src.charAt(i)); i += 1
-    end while
+      else if rest.startsWith("/*") then { inBlock = true; i += 2; sb.append(' ') }
+      else if rest.startsWith("//") then { inLine = true; i += 2 }
+      else { sb.append(src.charAt(i)); i += 1 }
     sb.toString
   end stripComments
 
@@ -72,7 +66,8 @@ class DeviceFlowRetiredSpec extends FunSuite:
   /** 断言文件**代码面**不含任何退役字面量。 */
   private def assertRetiredAbsent(rel: String, retired: List[String]): Unit =
     val content = codeOf(rel)
-    for lit <- retired do assert(!content.contains(lit), s"$rel 代码面含退役字面量「$lit」 — 设备码死面复活了？")
+    for lit <- retired do
+      assert(!content.contains(lit), s"$rel 代码面含退役字面量「$lit」 — 设备码死面复活了？")
 
   test("neblink 包：设备流客户端与 RFC 8628 词汇已退役") {
     assertRetiredAbsent(
@@ -83,10 +78,7 @@ class DeviceFlowRetiredSpec extends FunSuite:
       "src/main/scala/nebflow/neblink/Protocol.scala",
       List("deviceAuth", "/oidc/device/auth", "/api/device/code", "/api/device/token")
     )
-    assert(
-      !Files.exists(repoRoot.resolve("src/main/scala/nebflow/neblink/LogtoDeviceFlow.scala")),
-      "LogtoDeviceFlow.scala 必须删除"
-    )
+    assert(!Files.exists(repoRoot.resolve("src/main/scala/nebflow/neblink/LogtoDeviceFlow.scala")), "LogtoDeviceFlow.scala 必须删除")
   }
 
   test("网关：device-flow 路由字面量已退役") {
@@ -103,19 +95,8 @@ class DeviceFlowRetiredSpec extends FunSuite:
   test("CLI：--device-code 旗标与设备码提示面已退役") {
     assertRetiredAbsent(
       "src/main/scala/nebflow/cli/LoginCommand.scala",
-      List(
-        "--device-code",
-        "device-flow",
-        "DevicePrompt",
-        "promptLines",
-        "userCode",
-        "deviceCode",
-        "authorization_pending",
-        "PollStep",
-        "heartbeatLine",
-        "expired_token",
-        "access_denied"
-      )
+      List("--device-code", "device-flow", "DevicePrompt", "promptLines", "userCode", "deviceCode",
+        "authorization_pending", "PollStep", "heartbeatLine", "expired_token", "access_denied")
     )
   }
 
@@ -126,28 +107,13 @@ class DeviceFlowRetiredSpec extends FunSuite:
     )
     assertRetiredAbsent(
       "src/main/resources/web/js/activityBar.js",
-      List(
-        "device-flow",
-        "waiting-device",
-        "userCode",
-        "deviceCode",
-        "startDeviceFlow",
-        "pollDeviceFlow",
-        "cancelDeviceFlow"
-      )
+      List("device-flow", "waiting-device", "userCode", "deviceCode", "startDeviceFlow", "pollDeviceFlow", "cancelDeviceFlow")
     )
     for f <- List("src/main/resources/web/js/locales/en.js", "src/main/resources/web/js/locales/zh-CN.js") do
       assertRetiredAbsent(
         f,
-        List(
-          "login.deviceCodeCaption",
-          "login.hintAuthorize",
-          "login.waitingAuthorize",
-          "login.deviceStartFailed",
-          "login.deviceTimeout",
-          "login.deviceFailed",
-          "login.openAuthPage"
-        )
+        List("login.deviceCodeCaption", "login.hintAuthorize", "login.waitingAuthorize",
+          "login.deviceStartFailed", "login.deviceTimeout", "login.deviceFailed", "login.openAuthPage")
       )
   }
 

@@ -292,13 +292,11 @@ private[project] trait NodeStarter:
     // Bash/文件六件已默认经设备通道路由（sessionDevice）。设备项目才注入（本机
     // 项目零变化）；一行形态，与 delegate 的 [workspace] 行同族。
     val deviceBlock: List[String] =
-      (sessionDevice, sessionDeviceWorkspace)
-        .mapN((dev, ws) =>
-          s"[device workspace] $ws on device $dev — Bash/Read/Write/Edit/Glob/Grep run on that device " +
-            "by default (paths are device-local absolute paths; the engine host only holds the flow map, " +
-            "task board and this session). Pass device=\"local\" explicitly for a local-engine command."
-        )
-        .toList
+      (sessionDevice, sessionDeviceWorkspace).mapN((dev, ws) =>
+        s"[device workspace] $ws on device $dev — Bash/Read/Write/Edit/Glob/Grep run on that device " +
+          "by default (paths are device-local absolute paths; the engine host only holds the flow map, " +
+          "task board and this session). Pass device=\"local\" explicitly for a local-engine command."
+      ).toList
     taskBoardNodeBlock(node).flatMap { boardBlock =>
       node.in
         .traverse { upId =>

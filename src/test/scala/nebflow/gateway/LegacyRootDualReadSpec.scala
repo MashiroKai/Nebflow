@@ -56,15 +56,12 @@ class LegacyRootDualReadSpec extends CatsEffectSuite:
 
     /** 旧根字面（迁移前形态）——stub 下**不存在**的文件。 */
     def legacyLiteral(rel: String): Path = home.resolve(".nebflow").resolve(rel)
-
     /** 最新迁移树字面。 */
     def migratedNew(rel: String): Path =
       home.resolve(".nebflow-migrated-20261020-190831").resolve(rel)
-
     /** 更旧迁移树字面。 */
     def migratedOld(rel: String): Path =
       home.resolve(".nebflow-migrated-20261019-010000").resolve(rel)
-
     /** 现役根字面。 */
     def liveLiteral(rel: String): Path = dataRoot.resolve(rel)
 
@@ -91,8 +88,6 @@ class LegacyRootDualReadSpec extends CatsEffectSuite:
       // 双树同尾（现役根缺席）——专验「树间新者优先」
       put(migratedNew(s"uploads/$sid/both-trees.jpg"), "BOTH-NEW")
       put(migratedOld(s"uploads/$sid/both-trees.jpg"), "BOTH-OLD")
-
-    end seed
 
     def issue(body: Json) =
       val req = SpecRequests
@@ -143,11 +138,9 @@ class LegacyRootDualReadSpec extends CatsEffectSuite:
     withEnv { env =>
       IO {
         val legacy = env.legacyLiteral(s"uploads/${env.sid}/shot.jpg")
-        val mint = env
-          .issue(
-            Json.obj("sessionId" -> Json.fromString("spec"), "paths" -> Json.arr(Json.fromString(legacy.toString)))
-          )
-          .get
+        val mint = env.issue(
+          Json.obj("sessionId" -> Json.fromString("spec"), "paths" -> Json.arr(Json.fromString(legacy.toString)))
+        ).get
         assertEquals(mint.status, Status.Ok)
         val ticket = env.ticketOf(mint, legacy)
         assert(ticket.isDefined, s"旧根字面必须能铸票，rejected=${bodyOf(mint)}")
@@ -178,11 +171,9 @@ class LegacyRootDualReadSpec extends CatsEffectSuite:
     withEnv { env =>
       IO {
         val live = env.liveLiteral(s"uploads/${env.sid}/new.jpg")
-        val mint = env
-          .issue(
-            Json.obj("sessionId" -> Json.fromString("spec"), "paths" -> Json.arr(Json.fromString(live.toString)))
-          )
-          .get
+        val mint = env.issue(
+          Json.obj("sessionId" -> Json.fromString("spec"), "paths" -> Json.arr(Json.fromString(live.toString)))
+        ).get
         val ticket = env.ticketOf(mint, live)
         assert(ticket.isDefined, s"新路径必须能铸票，rejected=${bodyOf(mint)}")
         val served = env.get(url(live), ticket.get).get

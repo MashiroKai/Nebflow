@@ -64,20 +64,14 @@ class NfFileLanDirectSpec extends CatsEffectSuite:
 
     def read(query: String): Response[IO] =
       val req = Request[IO](Method.GET, Uri.unsafeFromString(s"/api/nf-file?$query"))
-      NfFileRoutes
-        .nfFileRoutes(store, policy)(req)
-        .value
+      NfFileRoutes.nfFileRoutes(store, policy)(req).value
         .map(_.getOrElse(fail("route fell through")))
         .unsafeRunSync()
 
     def options(): Response[IO] =
-      NfFileRoutes
-        .nfFileRoutes(store, policy)(
-          Request[IO](Method.OPTIONS, Uri.unsafeFromString("/api/nf-file"))
-        )
-        .value
-        .map(_.getOrElse(fail("route fell through")))
-        .unsafeRunSync()
+      NfFileRoutes.nfFileRoutes(store, policy)(
+        Request[IO](Method.OPTIONS, Uri.unsafeFromString("/api/nf-file"))
+      ).value.map(_.getOrElse(fail("route fell through"))).unsafeRunSync()
 
     def mint(): Json =
       val req = SpecRequests
@@ -86,12 +80,8 @@ class NfFileLanDirectSpec extends CatsEffectSuite:
             .putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, gatewayToken))),
           Some(SpecRequests.LoopbackV4)
         )
-        .withEntity(
-          Json.obj("sessionId" -> Json.fromString("lan-spec"), "paths" -> Json.arr(Json.fromString(file.toString)))
-        )
-      NfFileRoutes
-        .nfTicketRoutes(TokenRef, store, policy, Sessions)(req)
-        .value
+        .withEntity(Json.obj("sessionId" -> Json.fromString("lan-spec"), "paths" -> Json.arr(Json.fromString(file.toString))))
+      NfFileRoutes.nfTicketRoutes(TokenRef, store, policy, Sessions)(req).value
         .map(_.getOrElse(fail("route fell through")))
         .map { resp =>
           assertEquals(resp.status, Status.Ok)
@@ -99,10 +89,6 @@ class NfFileLanDirectSpec extends CatsEffectSuite:
             .getOrElse(fail("mint body not json"))
         }
         .unsafeRunSync()
-
-    end mint
-
-  end Env
 
   test("① 铸票并键 size = 文件真实字节数") {
     val json = env.mint()
@@ -115,48 +101,28 @@ class NfFileLanDirectSpec extends CatsEffectSuite:
   test("② OPTIONS 预检腿：204 + ACAO `*` + PNA 放行") {
     val resp = env.options()
     assertEquals(resp.status, Status.NoContent)
-    assertEquals(
-      resp.headers.headers.find(_.name.toString.equalsIgnoreCase("Access-Control-Allow-Origin")).map(_.value),
-      Some("*")
-    )
-    assert(
-      resp.headers.headers.exists(h =>
-        h.name.toString.equalsIgnoreCase("Access-Control-Allow-Private-Network") && h.value == "true"
-      )
-    )
+    assertEquals(resp.headers.headers.find(_.name.toString.equalsIgnoreCase("Access-Control-Allow-Origin")).map(_.value), Some("*"))
+    assert(resp.headers.headers.exists(h =>
+      h.name.toString.equalsIgnoreCase("Access-Control-Allow-Private-Network") && h.value == "true"))
   }
 
   test("② 全出向 CORS：无票 401 也带 ACAO（错误腿不断直传）") {
     val resp = env.read(s"path=${env.file.getFileName}&ticket=")
     assertEquals(resp.status, Status.Unauthorized)
-    assertEquals(
-      resp.headers.headers.find(_.name.toString.equalsIgnoreCase("Access-Control-Allow-Origin")).map(_.value),
-      Some("*")
-    )
+    assertEquals(resp.headers.headers.find(_.name.toString.equalsIgnoreCase("Access-Control-Allow-Origin")).map(_.value), Some("*"))
     assert(resp.headers.headers.exists(_.name.toString.equalsIgnoreCase("Access-Control-Allow-Private-Network")))
     // Expose 面（前端进度/seek/退避读数头）在正向上可见。
     val q = java.net.URLEncoder.encode(env.file.toString, "UTF-8")
-    val ok = env.read(
-      s"path=$q&ticket=${java.net.URLEncoder.encode(env.store.issue("s", env.file.toRealPath().toString).unsafeRunSync().token, "UTF-8")}"
-    )
+    val ok = env.read(s"path=$q&ticket=${java.net.URLEncoder.encode(env.store.issue("s", env.file.toRealPath().toString).unsafeRunSync().token, "UTF-8")}")
     assertEquals(ok.status, Status.Ok)
-    val expose = ok.headers.headers
-      .find(_.name.toString.equalsIgnoreCase("Access-Control-Expose-Headers"))
-      .map(_.value)
-      .getOrElse("")
-    assert(
-      expose.contains("content-length") && expose.contains("content-range"),
-      s"Expose-Headers must carry range/length reads: $expose"
-    )
+    val expose = ok.headers.headers.find(_.name.toString.equalsIgnoreCase("Access-Control-Expose-Headers")).map(_.value).getOrElse("")
+    assert(expose.contains("content-length") && expose.contains("content-range"), s"Expose-Headers must carry range/length reads: $expose")
   }
 
   test("③ 鉴权语义零变化：坏票仍 403 + CORS 头在场（CORS 不替代 ticket）") {
     val resp = env.read(s"path=${java.net.URLEncoder.encode(env.file.toString, "UTF-8")}&ticket=deadbeef")
     assertEquals(resp.status, Status.Forbidden)
-    assertEquals(
-      resp.headers.headers.find(_.name.toString.equalsIgnoreCase("Access-Control-Allow-Origin")).map(_.value),
-      Some("*")
-    )
+    assertEquals(resp.headers.headers.find(_.name.toString.equalsIgnoreCase("Access-Control-Allow-Origin")).map(_.value), Some("*"))
   }
 
 end NfFileLanDirectSpec

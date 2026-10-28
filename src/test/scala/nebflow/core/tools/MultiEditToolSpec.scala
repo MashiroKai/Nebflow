@@ -240,10 +240,7 @@ class MultiEditToolSpec extends CatsEffectSuite:
   test("#11: MultiEdit refuses to create files (missing file → clear error)") {
     // 宿主 tmpdir（Windows 上 Paths.get("/tmp/…") 非绝对 ⇒ 绝对闸先于 cannot-create 报错）。
     val input =
-      multiEditInput(
-        Paths.get(System.getProperty("java.io.tmpdir"), "nb-multiedit-no-such-file-xyz.txt"),
-        ("a", "b", false)
-      )
+      multiEditInput(Paths.get(System.getProperty("java.io.tmpdir"), "nb-multiedit-no-such-file-xyz.txt"), ("a", "b", false))
     MultiEditTool.call(input, ctx).map {
       case Left(err) => assert(err.message.contains("cannot create"), err.message)
       case Right(_) => fail("must fail")

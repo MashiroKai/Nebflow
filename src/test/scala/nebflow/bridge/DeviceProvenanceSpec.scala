@@ -39,9 +39,7 @@ class DeviceProvenanceSpec extends FunSuite:
     assertEquals(ClientDevice.fromFrame(blankClientId), None)
   }
 
-  test(
-    "fromFrame trims and tolerates blank optional fields (they fold to None); the retired manual name key is ignored"
-  ) {
+  test("fromFrame trims and tolerates blank optional fields (they fold to None); the retired manual name key is ignored") {
     val frame = parse("""{"device":{"clientId":" c1 ","name":"  ","platform":" MAC ","browser":""}}""").toOption.get
     assertEquals(
       ClientDevice.fromFrame(frame),
@@ -111,8 +109,7 @@ class DeviceProvenanceSpec extends FunSuite:
   test("resolve: unbound / unknown binding ⇒ unenrolled with the readable default name (manual naming retired)") {
     val unbound = DeviceProvenance.resolve(ClientDevice("c", Some("phone"), Some("Chrome"), None), Some(self), peers)
     assertEquals(unbound, ResolvedDevice("未登记-手机 Chrome", enrolled = false))
-    val stale =
-      DeviceProvenance.resolve(ClientDevice("c", Some("mac"), Some("Chrome"), Some("gone-9")), Some(self), peers)
+    val stale = DeviceProvenance.resolve(ClientDevice("c", Some("mac"), Some("Chrome"), Some("gone-9")), Some(self), peers)
     assertEquals(stale, ResolvedDevice("未登记-Mac Chrome", enrolled = false), "花名册已消失的绑定 id 不冒认已登记")
     assertEquals(
       DeviceProvenance.resolve(ClientDevice("c", Some("mac"), Some("Chrome"), Some("  ")), Some(self), peers),
@@ -150,8 +147,7 @@ class DeviceProvenanceSpec extends FunSuite:
     val anon = DeviceProvenance.resolve(ClientDevice("c", Some("phone"), Some("Safari"), None), Some(self), peers)
     assertEquals(anon, ResolvedDevice("未登记-手机 Safari", enrolled = false))
     // 花名册整体不可得（未配对/取数失败）时即便带了绑定读数也一律未登记。
-    val noRoster =
-      DeviceProvenance.resolve(ClientDevice("c", Some("windows"), Some("Edge"), Some(self.deviceId)), None, Nil)
+    val noRoster = DeviceProvenance.resolve(ClientDevice("c", Some("windows"), Some("Edge"), Some(self.deviceId)), None, Nil)
     assertEquals(noRoster, ResolvedDevice("未登记-Windows Edge", enrolled = false))
   }
 
@@ -195,4 +191,3 @@ class DeviceProvenanceSpec extends FunSuite:
     assertEquals(out.length, 1)
     assert(out.head.isInstanceOf[ContentBlock.Text])
   }
-end DeviceProvenanceSpec

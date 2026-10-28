@@ -60,35 +60,32 @@ class DelegateLedgerReconcileSpec extends CatsEffectSuite:
         thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
         modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
         voiceMuted <- Ref.of[IO, Boolean](false)
-        _ <- nebflow.agent
-          .SharedResources(
-            llm = new nebflow.shared.LlmHandle[IO]:
-              def send(req: nebflow.shared.LlmRequest): IO[nebflow.shared.LlmResponse] =
-                IO.raiseError(new RuntimeException("not expected"))
-              def sendStream(
-                req: nebflow.shared.LlmRequest,
-                onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
-              ) = fs2.Stream.raiseError[IO](new RuntimeException("not expected"))
-            ,
-            dispatcher = dispatcher,
-            sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-            projectRoot = os.pwd,
-            thinkingConfigRef = thinkingRef,
-            rateLimiter = rateLimiter,
-            fileChangeTracker = tracker,
-            contextWindow = 100_000,
-            agentLibrary = new nebflow.agent.AgentLibrary(tmp / "agents"),
-            taskStore = FileTaskStore,
-            historyArchiver = HistoryArchiver.fileSystem(tmp / "archives"),
-            fileLockManager = fileLocks,
-            sessionModelOverrides = modelOverrides,
-            providerRegistry = null,
-            healthMonitor = ProviderHealthMonitor(null),
-            actorSystem = system,
-            subAgentTaskStore = new nebflow.agent.SubAgentTaskStore(tmp / "subagent-tasks"),
-            voiceMutedRef = voiceMuted
-          )
-          .pure[IO]
+        _ <- nebflow.agent.SharedResources(
+          llm = new nebflow.shared.LlmHandle[IO]:
+            def send(req: nebflow.shared.LlmRequest): IO[nebflow.shared.LlmResponse] =
+              IO.raiseError(new RuntimeException("not expected"))
+            def sendStream(
+              req: nebflow.shared.LlmRequest,
+              onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+            ) = fs2.Stream.raiseError[IO](new RuntimeException("not expected")),
+          dispatcher = dispatcher,
+          sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
+          projectRoot = os.pwd,
+          thinkingConfigRef = thinkingRef,
+          rateLimiter = rateLimiter,
+          fileChangeTracker = tracker,
+          contextWindow = 100_000,
+          agentLibrary = new nebflow.agent.AgentLibrary(tmp / "agents"),
+          taskStore = FileTaskStore,
+          historyArchiver = HistoryArchiver.fileSystem(tmp / "archives"),
+          fileLockManager = fileLocks,
+          sessionModelOverrides = modelOverrides,
+          providerRegistry = null,
+          healthMonitor = ProviderHealthMonitor(null),
+          actorSystem = system,
+          subAgentTaskStore = new nebflow.agent.SubAgentTaskStore(tmp / "subagent-tasks"),
+          voiceMutedRef = voiceMuted
+        ).pure[IO]
         store = new nebflow.agent.SubAgentTaskStore(tmp / "subagent-tasks")
         _ <- body(Fx(store, system, tmp))
       yield ()
@@ -97,8 +94,6 @@ class DelegateLedgerReconcileSpec extends CatsEffectSuite:
       system.stopAll.attempt.void.unsafeRunSync()
       PathUtil.setDataRoot(originalRoot)
       os.remove.all(tmp)
-
-  end withFx
 
   private def mkTask(id: String, parent: String, status: String): SubAgentTask =
     SubAgentTask(
@@ -160,14 +155,10 @@ class DelegateLedgerReconcileSpec extends CatsEffectSuite:
           _ <- DelegateLedgerReconcile.onLedgerTerminal(fx.store, entryLive)
           a1 <- IO(DelegateRegistry.find("delegate-nebflow-a1"))
           a2 <- IO(DelegateRegistry.find("delegate-nebflow-a2"))
-          _ = assert(
-            a1.flatMap(_.archivedAt).isDefined,
-            "terminal flagged row folded (archived) once the ledger adjudicates"
-          )
+          _ = assert(a1.flatMap(_.archivedAt).isDefined, "terminal flagged row folded (archived) once the ledger adjudicates")
           _ = assert(a2.flatMap(_.archivedAt).isEmpty, "in-flight row untouched — panel stays truthful")
         yield ()
       finally os.remove.all(seat)
-      end try
     }
   }
 
@@ -190,17 +181,12 @@ class DelegateLedgerReconcileSpec extends CatsEffectSuite:
             depth = 0,
             sharedResources = Some(res)
           )
-          out <- nebflow.core.tools.TaskToolDef
-            .call(JsonObject("action" -> "complete".asJson, "id" -> entry.asJson), ctx)
+          out <- nebflow.core.tools.TaskToolDef.call(JsonObject("action" -> "complete".asJson, "id" -> entry.asJson), ctx)
           _ = assert(out.isRight, s"complete must succeed: $out")
           rec <- IO(DelegateRegistry.find("delegate-nebflow-b1"))
-          _ = assert(
-            rec.flatMap(_.archivedAt).isDefined,
-            "TaskTool complete folds the panel row (ledger → panel wiring)"
-          )
+          _ = assert(rec.flatMap(_.archivedAt).isDefined, "TaskTool complete folds the panel row (ledger → panel wiring)")
         yield ()
       finally os.remove.all(seat)
-      end try
     }
   }
 
@@ -221,8 +207,7 @@ class DelegateLedgerReconcileSpec extends CatsEffectSuite:
         def sendStream(
           req: nebflow.shared.LlmRequest,
           onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
-        ) = fs2.Stream.raiseError[IO](new RuntimeException("not expected"))
-      ,
+        ) = fs2.Stream.raiseError[IO](new RuntimeException("not expected")),
       dispatcher = dispatcher,
       sessionStore = SessionStore(fx.tmp / "sessions2", fx.tmp / "tasks2"),
       projectRoot = os.pwd,
@@ -264,7 +249,6 @@ class DelegateLedgerReconcileSpec extends CatsEffectSuite:
           )
         yield ()
       finally os.remove.all(seat)
-      end try
     }
   }
 
@@ -324,35 +308,21 @@ class DelegateLedgerReconcileSpec extends CatsEffectSuite:
             os.proc("git", "init", "-b", "main").call(cwd = repo)
             os.write(repo / "base.txt", "base")
             os.proc("git", "add", ".").call(cwd = repo)
-            os.proc("git", "-c", "user.email=spec@nebflow", "-c", "user.name=spec", "commit", "-m", "base")
-              .call(cwd = repo)
+            os.proc("git", "-c", "user.email=spec@nebflow", "-c", "user.name=spec", "commit", "-m", "base").call(cwd = repo)
             os.proc("git", "checkout", "-b", "delegate/x").call(cwd = repo)
             os.write(repo / "work.txt", "work")
             os.proc("git", "add", ".").call(cwd = repo)
-            os.proc("git", "-c", "user.email=spec@nebflow", "-c", "user.name=spec", "commit", "-m", "delegate work")
-              .call(cwd = repo)
+            os.proc("git", "-c", "user.email=spec@nebflow", "-c", "user.name=spec", "commit", "-m", "delegate work").call(cwd = repo)
             os.proc("git", "checkout", "main").call(cwd = repo)
             os.proc("git", "merge", "--no-ff", "-m", "merge delegate/x", "delegate/x").call(cwd = repo)
             done = os.exists(repo / ".git")
-          catch case e: java.io.IOException if attempt < 5 => Thread.sleep(300)
-          end try
-        end while
+          catch
+            case e: java.io.IOException if attempt < 5 => Thread.sleep(300)
         if !done then throw new java.io.IOException(s"git fixture did not survive $attempt attempts")
-      end buildGitFixture
       try
         for
           entry <- IO(newLedgerEntry(fx, "recon merged task"))
-          _ <- IO(
-            DelegateRegistry.put(
-              mkRecord(
-                "delegate-nebflow-f1",
-                repo.toString,
-                Some(entry),
-                branch = Some("delegate/x"),
-                baseBranch = Some("main")
-              )
-            )
-          )
+          _ <- IO(DelegateRegistry.put(mkRecord("delegate-nebflow-f1", repo.toString, Some(entry), branch = Some("delegate/x"), baseBranch = Some("main"))))
           _ <- IO.blocking(buildGitFixture())
           _ = assert(os.exists(repo / ".git"), "git fixture must survive until the reconcile step")
           report <- DelegateLedgerReconcile.reconcileInterruptedRecords(fx.store)
@@ -366,7 +336,6 @@ class DelegateLedgerReconcileSpec extends CatsEffectSuite:
           )
         yield ()
       finally os.remove.all(repo)
-      end try
     }
   }
 

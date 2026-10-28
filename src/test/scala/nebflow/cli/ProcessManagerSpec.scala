@@ -22,7 +22,6 @@ class ProcessManagerSpec extends FunSuite:
   private val NebCmd = "java -cp /opt/nebflow/bin/nebflow-assembly-1.0.jar nebflow.Main start"
   // Dev-host forms (DevHostMarkers): sbt dev fork + assembly jar from target/.
   private val SbtDevCmd = "java -cp /repo/target/scala-3.5.2/classes nebflow.gateway.GatewayMain"
-
   private val TargetJarCmd =
     "java -cp /repo/target/scala-3.5.2/nebflow-assembly-1.0.jar nebflow.Main start"
 
@@ -54,28 +53,24 @@ class ProcessManagerSpec extends FunSuite:
    * targets.
    */
   private def stubDeps(
-    readCmd: Long => Option[String] = _ => Some(NebCmd),
-    portsOf: Long => List[Int] = _ => Nil,
-    listenerAliveResult: Boolean = false,
-    isAliveOverride: Option[Long => Boolean] = None,
-    metaRead: () => Option[PidMeta.Meta] = () => None,
-    startInstantMs: Long => Option[Long] = _ => None,
-    gatewayPortOverride: Option[Int] = Some(18108)
+      readCmd: Long => Option[String] = _ => Some(NebCmd),
+      portsOf: Long => List[Int] = _ => Nil,
+      listenerAliveResult: Boolean = false,
+      isAliveOverride: Option[Long => Boolean] = None,
+      metaRead: () => Option[PidMeta.Meta] = () => None,
+      startInstantMs: Long => Option[Long] = _ => None,
+      gatewayPortOverride: Option[Int] = Some(18108)
   ): (ProcessManager.StopDeps, Recorder) =
     val rec = new Recorder
     val deps = ProcessManager.StopDeps(
       readCmd = readCmd,
       listeningPortsOf = portsOf,
-      listenerAlive = port =>
-        rec.probedPorts += port; listenerAliveResult
-      ,
-      destroy = pid =>
-        rec.destroyed += pid; rec.deadPids += pid
-      ,
-      destroyForcibly = pid =>
-        rec.destroyedForcibly += pid; rec.deadPids += pid
-      ,
-      isRunning = isAliveOverride.getOrElse(pid => !rec.deadPids.contains(pid) && ProcessManager.isRunning(pid)),
+      listenerAlive = port => { rec.probedPorts += port; listenerAliveResult },
+      destroy = pid => { rec.destroyed += pid; rec.deadPids += pid },
+      destroyForcibly = pid => { rec.destroyedForcibly += pid; rec.deadPids += pid },
+      isRunning = isAliveOverride.getOrElse(pid =>
+        !rec.deadPids.contains(pid) && ProcessManager.isRunning(pid)
+      ),
       graceTimeoutMs = 0L,
       forceTimeoutMs = 0L,
       drainTimeoutMs = 200L,
@@ -86,11 +81,9 @@ class ProcessManagerSpec extends FunSuite:
     )
     (deps, rec)
 
-  end stubDeps
-
   private def runStop(
-    opts: ProcessManager.StopOptions,
-    deps: ProcessManager.StopDeps
+      opts: ProcessManager.StopOptions,
+      deps: ProcessManager.StopDeps
   ): ProcessManager.StopOutcome =
     ProcessManager.stopHardened(opts, deps).unsafeRunSync()
 
@@ -290,8 +283,8 @@ class ProcessManagerSpec extends FunSuite:
       val (deps, rec) = stubDeps(isAliveOverride = Some(_ => true))
       runStop(ProcessManager.StopOptions(), deps) match
         case ProcessManager.StopOutcome.Failed(reason) => assert(reason.contains("did not exit"), reason)
-        case other => fail(s"expected Failed, got $other")
-      assert(rec.destroyed.contains(pid)) // graceful leg attempted
+        case other                                     => fail(s"expected Failed, got $other")
+      assert(rec.destroyed.contains(pid))     // graceful leg attempted
       assert(rec.destroyedForcibly.contains(pid)) // force leg attempted too
     }
   }
@@ -398,17 +391,16 @@ class ProcessManagerSpec extends FunSuite:
       val nowIso = java.time.Instant.ofEpochMilli(System.currentTimeMillis()).toString
       val (deps, rec) = stubDeps(
         readCmd = _ => None,
-        metaRead = () =>
-          Some(
-            PidMeta.Meta(
-              startedBy = PidMeta.StartedByLauncher,
-              mode = Some(PidMeta.ModeDaemon),
-              startedAt = Some(nowIso),
-              pid = Some(999999L), // names ANOTHER pid
-              cmdlineSha256 = None,
-              cmdline = None
-            )
-          ),
+        metaRead = () => Some(
+          PidMeta.Meta(
+            startedBy = PidMeta.StartedByLauncher,
+            mode = Some(PidMeta.ModeDaemon),
+            startedAt = Some(nowIso),
+            pid = Some(999999L), // names ANOTHER pid
+            cmdlineSha256 = None,
+            cmdline = None
+          )
+        ),
         startInstantMs = _ => Some(System.currentTimeMillis()),
         portsOf = _ => Nil
       )
@@ -428,17 +420,16 @@ class ProcessManagerSpec extends FunSuite:
       val twoHoursAgo = java.time.Instant.ofEpochMilli(System.currentTimeMillis() - 7_200_000L).toString
       val (deps, rec) = stubDeps(
         readCmd = _ => None,
-        metaRead = () =>
-          Some(
-            PidMeta.Meta(
-              startedBy = PidMeta.StartedByLauncher,
-              mode = Some(PidMeta.ModeDaemon),
-              startedAt = Some(twoHoursAgo), // meta written ≫ 10 min before the live start instant
-              pid = Some(pid),
-              cmdlineSha256 = None,
-              cmdline = None
-            )
-          ),
+        metaRead = () => Some(
+          PidMeta.Meta(
+            startedBy = PidMeta.StartedByLauncher,
+            mode = Some(PidMeta.ModeDaemon),
+            startedAt = Some(twoHoursAgo), // meta written ≫ 10 min before the live start instant
+            pid = Some(pid),
+            cmdlineSha256 = None,
+            cmdline = None
+          )
+        ),
         startInstantMs = _ => Some(System.currentTimeMillis()),
         portsOf = _ => Nil
       )
@@ -457,17 +448,16 @@ class ProcessManagerSpec extends FunSuite:
       val nowIso = java.time.Instant.ofEpochMilli(System.currentTimeMillis()).toString
       val (deps, rec) = stubDeps(
         readCmd = _ => None,
-        metaRead = () =>
-          Some(
-            PidMeta.Meta(
-              startedBy = PidMeta.StartedBySbt,
-              mode = Some(PidMeta.ModeForeground),
-              startedAt = Some(nowIso),
-              pid = Some(pid),
-              cmdlineSha256 = None,
-              cmdline = None
-            )
-          ),
+        metaRead = () => Some(
+          PidMeta.Meta(
+            startedBy = PidMeta.StartedBySbt,
+            mode = Some(PidMeta.ModeForeground),
+            startedAt = Some(nowIso),
+            pid = Some(pid),
+            cmdlineSha256 = None,
+            cmdline = None
+          )
+        ),
         startInstantMs = _ => Some(System.currentTimeMillis()),
         portsOf = _ => Nil
       )
@@ -538,17 +528,17 @@ class ProcessManagerSpec extends FunSuite:
   test("treeKillSet: sbt root found ⇒ chain + descendants, verified, top-down") {
     val chain = List(100L, 90L, 80L) // pid-first upward
     val readCmd: Long => Option[String] = {
-      case 90 => Some("java -jar sbt-launch.jar run")
-      case 80 => Some("zsh -l")
+      case 90  => Some("java -jar sbt-launch.jar run")
+      case 80  => Some("zsh -l")
       case 100 => Some(NebCmd)
       case 101 => Some(NebCmd)
-      case 91 => Some("java -jar sbt-launch.jar")
-      case 92 => Some(NebCmd)
+      case 91  => Some("java -jar sbt-launch.jar")
+      case 92  => Some(NebCmd)
     }
     val descendants: Long => List[Long] = {
       case 100 => List(101L)
-      case 90 => List(91L, 92L)
-      case _ => Nil
+      case 90  => List(91L, 92L)
+      case _   => Nil
     }
     assertEquals(ProcessManager.sbtRootFromChain(chain, readCmd), Some(90L))
     ProcessManager.treeKillSet(chain, Some(90L), descendants, readCmd) match
@@ -564,13 +554,13 @@ class ProcessManagerSpec extends FunSuite:
   test("treeKillSet: unverified member refuses the whole tree") {
     val chain = List(100L, 90L)
     val readCmd: Long => Option[String] = {
-      case 90 => Some("java -jar sbt-launch.jar")
+      case 90  => Some("java -jar sbt-launch.jar")
       case 100 => Some(NebCmd)
-      case 91 => Some("python3 -m http.server") // foreign descendant
+      case 91  => Some("python3 -m http.server") // foreign descendant
     }
     ProcessManager.treeKillSet(chain, Some(90L), _ => List(91L), readCmd) match
       case Left(refusal) => assert(refusal.contains("91"), refusal)
-      case Right(ts) => fail(s"expected refusal, got $ts")
+      case Right(ts)     => fail(s"expected refusal, got $ts")
   }
 
   test("treeKillSet: no sbt root ⇒ single pid") {

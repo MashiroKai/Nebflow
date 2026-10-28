@@ -1562,13 +1562,7 @@ class SessionStore(
    * 加不减）。调用面纪律：唯一传 true 的是 `WebSocketRoutes` 的 `done`/`agentDone`
    * 轮终态落盘点；其余（无）调用保持缺省 false ⇒ 形态不变。
    */
-  def updateLastAiMeta(
-    sessionId: String,
-    durationMs: Option[Long],
-    model: Option[String],
-    timestamp: Long,
-    markTerminal: Boolean = false
-  ): IO[Unit] =
+  def updateLastAiMeta(sessionId: String, durationMs: Option[Long], model: Option[String], timestamp: Long, markTerminal: Boolean = false): IO[Unit] =
     getAppendSemaphore(sessionId).flatMap { sem =>
       sem.permit.use { _ =>
         loadUiMessages(sessionId).flatMap { existing =>

@@ -47,8 +47,8 @@ class NfFileDenyLogSpec extends CatsEffectSuite:
   private val routes = NfFileRoutes.nfFileRoutes(store, policy)
 
   private def capturedLogs[A](body: => A): (A, List[String]) =
-    val lg = LoggerFactory.getLogger("nebflow.nf-file").asInstanceOf[LogbackLogger]
-    val app = new ListAppender[ILoggingEvent]()
+    val lg   = LoggerFactory.getLogger("nebflow.nf-file").asInstanceOf[LogbackLogger]
+    val app  = new ListAppender[ILoggingEvent]()
     app.start()
     lg.addAppender(app)
     try
@@ -61,15 +61,14 @@ class NfFileDenyLogSpec extends CatsEffectSuite:
 
   private def get(path: String, ticket: String, extraHeader: (String, String) = null): IO[org.http4s.Response[IO]] =
     var req = Request[IO](Method.GET, Uri.unsafeFromString(s"http://localhost/api/nf-file?path=$path&ticket=$ticket"))
-    if extraHeader != null then
-      req = req.putHeaders(org.http4s.Header.Raw(org.typelevel.ci.CIString(extraHeader._1), extraHeader._2))
+    if extraHeader != null then req = req.putHeaders(org.http4s.Header.Raw(org.typelevel.ci.CIString(extraHeader._1), extraHeader._2))
     routes.run(req).value.map(_.getOrElse(Response[IO](Status.NotFound)))
 
   test("① 票拒写 1 行可 grep 日志：status/reason/path/remote 四键齐") {
-    val tmp = os.temp.dir(prefix = "nffile-deny-log")
+    val tmp  = os.temp.dir(prefix = "nffile-deny-log")
     val file = tmp / "shot.png"
     os.write(file, Array[Byte](1, 2, 3))
-    val q = java.net.URLEncoder.encode(file.toString, "UTF-8")
+    val q     = java.net.URLEncoder.encode(file.toString, "UTF-8")
     val (resp, logs) = capturedLogs {
       get(q, "bogus-ticket-value").unsafeRunSync()
     }
@@ -87,10 +86,10 @@ class NfFileDenyLogSpec extends CatsEffectSuite:
   }
 
   test("② 判据拒（credential-path）同样留痕：reason=credential-path") {
-    val tmp = os.temp.dir(prefix = "nffile-deny-log-cred")
+    val tmp  = os.temp.dir(prefix = "nffile-deny-log-cred")
     val file = tmp / "auth.json" // basename 命中 NfCredentialNamePattern（identity 层，根无关）
     os.write(file, "{}")
-    val q = java.net.URLEncoder.encode(file.toString, "UTF-8")
+    val q     = java.net.URLEncoder.encode(file.toString, "UTF-8")
     val (resp, logs) = capturedLogs {
       get(q, "any-ticket").unsafeRunSync()
     }
@@ -104,7 +103,7 @@ class NfFileDenyLogSpec extends CatsEffectSuite:
   }
 
   test("③ 负控：有效票 200 成功腿零 deny 日志") {
-    val tmp = os.temp.dir(prefix = "nffile-deny-log-ok")
+    val tmp  = os.temp.dir(prefix = "nffile-deny-log-ok")
     val file = tmp / "ok.png"
     os.write(file, Array[Byte](9, 8, 7))
     val q = java.net.URLEncoder.encode(file.toString, "UTF-8")
@@ -118,7 +117,7 @@ class NfFileDenyLogSpec extends CatsEffectSuite:
   }
 
   test("④ 隧道面等权：tunnel-mark 头请求与直请求同判（200 / 同 reason 403）") {
-    val tmp = os.temp.dir(prefix = "nffile-deny-log-tunnel")
+    val tmp  = os.temp.dir(prefix = "nffile-deny-log-tunnel")
     val file = tmp / "t.png"
     os.write(file, Array[Byte](5, 5, 5))
     val q = java.net.URLEncoder.encode(file.toString, "UTF-8")

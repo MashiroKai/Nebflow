@@ -50,15 +50,8 @@ class ConsoleTicketRoutesSpec extends CatsEffectSuite:
     )
     faces
 
-  end mkFaces
-
   private def route(faces: PortalHostFaces) =
-    ConsoleTicketRoutes.ticketRoutes(
-      brandSessions,
-      faces,
-      IO.pure("net-1"),
-      nebflow.shared.NebflowLogger.forName("test")
-    )
+    ConsoleTicketRoutes.ticketRoutes(brandSessions, faces, IO.pure("net-1"), nebflow.shared.NebflowLogger.forName("test"))
 
   private def get(path: String): Request[IO] = Request[IO](Method.GET, Uri.unsafeFromString(path))
 
@@ -175,10 +168,7 @@ class ConsoleTicketRoutesSpec extends CatsEffectSuite:
       _ = assertEquals(resp.status, Status.Forbidden)
       _ = assertEquals(setCookies(resp), Nil)
       body <- resp.bodyText.compile.string
-      _ = assert(
-        body.toLowerCase.contains("revoked") || body.toLowerCase.contains("local"),
-        s"readable why: ${body.take(160)}"
-      )
+      _ = assert(body.toLowerCase.contains("revoked") || body.toLowerCase.contains("local"), s"readable why: ${body.take(160)}")
     yield ()
 
   test("local-ticket + unbound binding => EXEMPT (break-glass escape): 303 + cookie"):

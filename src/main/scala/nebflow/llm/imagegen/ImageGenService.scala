@@ -58,12 +58,6 @@ object ImageGenService:
                       )
                     )
 
-        end match
-
-    end match
-
-  end resolve
-
   /** keyRef 未配置 = 不期望凭据的形态（缺省空 token 直传——本地网关类端点）；配置了但缺件/空/不可读 = 腿关。 */
   private[imagegen] def readSecret(keyRef: Option[String]): Either[ImageGenError, String] =
     keyRef.filter(_.trim.nonEmpty) match
@@ -105,28 +99,21 @@ object ImageGenService:
         case Left(errBody) => Left(E.HttpStatus(resolved.name, response.code.code, errBody))
         case Right(text) =>
           parse(text) match
-            case Left(_) => Left(E.BadResponse(resolved.name, s"non-JSON body (${text.take(120)})"))
-            case Right(json) => Right(json)
+            case Left(_)       => Left(E.BadResponse(resolved.name, s"non-JSON body (${text.take(120)})"))
+            case Right(json)   => Right(json)
     catch
       case e: sttp.client4.SttpClientException =>
         Left(E.Transport(resolved.name, Option(e.getMessage).getOrElse(e.getClass.getSimpleName).take(300)))
       case e: Exception =>
         Left(E.Transport(resolved.name, Option(e.getMessage).getOrElse(e.getClass.getSimpleName).take(300)))
 
-  end httpPostJson
-
   private def httpGetBytes(url: String, timeoutMs: Long): Either[ImageGenError, Array[Byte]] =
     try
-      val response = basicRequest
-        .get(uri"$url")
-        .readTimeout(timeoutMs.millis)
-        .response(asByteArrayAlways)
-        .send(SharedBackend.instance)
+      val response = basicRequest.get(uri"$url").readTimeout(timeoutMs.millis).response(asByteArrayAlways).send(SharedBackend.instance)
       if response.code.isSuccess then Right(response.body)
       else Left(E.HttpStatus("download", response.code.code, s"image URL fetch failed for $url"))
     catch
-      case e: Exception =>
-        Left(E.Transport("download", Option(e.getMessage).getOrElse(e.getClass.getSimpleName).take(300)))
+      case e: Exception => Left(E.Transport("download", Option(e.getMessage).getOrElse(e.getClass.getSimpleName).take(300)))
 
   /** b64/url 引用统一收束为 PNG 字节（空/超帽即 BadResponse）。 */
   private[imagegen] def materialize(ref: ImageRef, resolved: ResolvedProvider): Either[ImageGenError, Array[Byte]] =
@@ -137,8 +124,7 @@ object ImageGenService:
       case ImageRef.Url(url) => httpGetBytes(url, resolved.timeoutMs)
     bytesEither.flatMap { bytes =>
       if bytes.isEmpty then Left(E.BadResponse(resolved.name, "empty image payload"))
-      else if bytes.length > MaxImageBytes then
-        Left(E.BadResponse(resolved.name, s"image payload exceeds ${MaxImageBytes} bytes"))
+      else if bytes.length > MaxImageBytes then Left(E.BadResponse(resolved.name, s"image payload exceeds ${MaxImageBytes} bytes"))
       else Right(bytes)
     }
 
@@ -178,8 +164,7 @@ object ImageGenService:
 
   /** magic-bytes 嗅探；未知格式按 png 落（img 标签按内容渲染，扩展名仅供参考）。 */
   def sniffExt(bytes: Array[Byte]): String =
-    Magics
-      .find((_, magic) => bytes.length >= magic.length && magic.indices.forall(i => bytes(i) == magic(i)))
+    Magics.find((_, magic) => bytes.length >= magic.length && magic.indices.forall(i => bytes(i) == magic(i)))
       .map(_._1)
       .getOrElse("png")
 

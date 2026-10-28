@@ -54,9 +54,7 @@ class MergeQueueSpec extends CatsEffectSuite:
   private def removeRetry(p: os.Path): Unit =
     if os.exists(p) then
       if scala.util.Properties.isWin then
-        try
-          os.proc("cmd", "/c", "attrib", "-R", s"${p.toString}\\*", "/S", "/D")
-            .call(check = false, stdout = os.Pipe, stderr = os.Pipe)
+        try os.proc("cmd", "/c", "attrib", "-R", s"${p.toString}\\*", "/S", "/D").call(check = false, stdout = os.Pipe, stderr = os.Pipe)
         catch case _: Throwable => ()
         try os.proc("cmd", "/c", "attrib", "-R", p.toString).call(check = false, stdout = os.Pipe, stderr = os.Pipe)
         catch case _: Throwable => ()
@@ -96,16 +94,10 @@ class MergeQueueSpec extends CatsEffectSuite:
     if merge then g("merge", "--no-ff", branch, "-m", "merge the branch")
     dir
 
-  end mkRepo
-
   /** 收单 actor：把收到的 UserInput 记进共享缓冲（text + replyTo ref 逐条留存）。 */
-  private class Sink(records: ListBuffer[(String, Option[ActorRef[AgentEvent]])])
-      extends nebflow.actor.Behavior[AgentCommand]:
+  private class Sink(records: ListBuffer[(String, Option[ActorRef[AgentEvent]])]) extends nebflow.actor.Behavior[AgentCommand]:
 
-    def receive(
-      ctx: nebflow.actor.ActorContext[AgentCommand],
-      msg: AgentCommand
-    ): IO[nebflow.actor.Behavior[AgentCommand]] =
+    def receive(ctx: nebflow.actor.ActorContext[AgentCommand], msg: AgentCommand): IO[nebflow.actor.Behavior[AgentCommand]] =
       msg match
         case AgentCommand.UserInput(text, replyTo, _, _, _, source, _, _, _, _, _, _, _, _) =>
           IO {
@@ -129,10 +121,7 @@ class MergeQueueSpec extends CatsEffectSuite:
       child <- system.spawn(new Sink(records), s"child-$delegateId")
       sup <- system.spawn(
         new nebflow.actor.Behavior[AgentEvent]:
-          def receive(
-            ctx: nebflow.actor.ActorContext[AgentEvent],
-            msg: AgentEvent
-          ): IO[nebflow.actor.Behavior[AgentEvent]] =
+          def receive(ctx: nebflow.actor.ActorContext[AgentEvent], msg: AgentEvent): IO[nebflow.actor.Behavior[AgentEvent]] =
             IO.pure(this)
         ,
         s"sup-$delegateId"
@@ -161,9 +150,7 @@ class MergeQueueSpec extends CatsEffectSuite:
 
   // ── ① FIFO 按完成时间 + ③ 跨项目并行 ─────────────────────────────────
 
-  test(
-    "① FIFO rank = readyAt (completion time) and cross-project parallel grants — the late-enqueued earlier-finisher is notified first"
-  ) {
+  test("① FIFO rank = readyAt (completion time) and cross-project parallel grants — the late-enqueued earlier-finisher is notified first") {
     val system = ActorSystem(s"mq-1-${scala.util.Random.nextInt(100000)}")
     val records = ListBuffer.empty[(String, Option[ActorRef[AgentEvent]])]
     val repo = mkRepo(tempRoot / "mq1-repo", branch = "delegate/d-x", merge = false)
@@ -207,9 +194,7 @@ class MergeQueueSpec extends CatsEffectSuite:
     end for
   }
 
-  test(
-    "③ cross-project: two different projectKeys are granted immediately (per-project single holder never blocks the other)"
-  ) {
+  test("③ cross-project: two different projectKeys are granted immediately (per-project single holder never blocks the other)") {
     val system = ActorSystem(s"mq-3-${scala.util.Random.nextInt(100000)}")
     val records = ListBuffer.empty[(String, Option[ActorRef[AgentEvent]])]
     val repo = mkRepo(tempRoot / "mq3-repo", branch = "delegate/d-y", merge = false)
@@ -228,9 +213,7 @@ class MergeQueueSpec extends CatsEffectSuite:
 
   // ── ② 单持有人（同项目第二成员不通知） ────────────────────────────────
 
-  test(
-    "② single holder per project: a second ready-to-merge in the SAME project stays waiting until the holder's round closes"
-  ) {
+  test("② single holder per project: a second ready-to-merge in the SAME project stays waiting until the holder's round closes") {
     val system = ActorSystem(s"mq-2-${scala.util.Random.nextInt(100000)}")
     val records = ListBuffer.empty[(String, Option[ActorRef[AgentEvent]])]
     val repo = mkRepo(tempRoot / "mq2-repo", branch = "delegate/d-b", merge = false)
@@ -260,9 +243,7 @@ class MergeQueueSpec extends CatsEffectSuite:
 
   // ── ④ 合并指令文本（放行 = 通知） ─────────────────────────────────────
 
-  test(
-    "④ merge brief pins the direction + read-only fact-check pre-check: git -C <baseWs> merge --no-ff <branch>, conflict = STOP"
-  ) {
+  test("④ merge brief pins the direction + read-only fact-check pre-check: git -C <baseWs> merge --no-ff <branch>, conflict = STOP") {
     val system = ActorSystem(s"mq-4-${scala.util.Random.nextInt(100000)}")
     val records = ListBuffer.empty[(String, Option[ActorRef[AgentEvent]])]
     val repo = mkRepo(tempRoot / "mq4-repo", branch = "delegate/d-dir", merge = false)
@@ -289,18 +270,13 @@ class MergeQueueSpec extends CatsEffectSuite:
         "conflict/refusal must instruct a clean stop (no resolution, no force, no retry)"
       )
       assert(brief.contains(e.baseBranch), "the target base branch must be named")
-      assert(
-        brief.toLowerCase.contains("no automatic retries"),
-        "the refusal path must state closed-as-failed (no auto-retry)"
-      )
+      assert(brief.toLowerCase.contains("no automatic retries"), "the refusal path must state closed-as-failed (no auto-retry)")
     end for
   }
 
   // ── ⑤ 账实核对：已并成员直接关账，永不通知合并 ────────────────────────
 
-  test(
-    "⑤ fact-check at grant: an already-merged member closes as merged WITHOUT a merge notice (the e300e71c class is gone)"
-  ) {
+  test("⑤ fact-check at grant: an already-merged member closes as merged WITHOUT a merge notice (the e300e71c class is gone)") {
     val system = ActorSystem(s"mq-5-${scala.util.Random.nextInt(100000)}")
     val records = ListBuffer.empty[(String, Option[ActorRef[AgentEvent]])]
     val repo = mkRepo(tempRoot / "mq5-repo", branch = "delegate/d-merged", merge = true) // 分支已并入 main
@@ -337,17 +313,11 @@ class MergeQueueSpec extends CatsEffectSuite:
       _ <- IO.sleep(80.millis)
       _ <- IO { MergeQueue.onTerminal("d-fail", Some(MergeQueue.RoundOutcome.Refused("CONFLICT: src/Main.scala"))) }
       failed = MergeQueue.find("d-fail").map(m => (m.state, m.closeReason))
-      _ <- IO {
-        MergeQueue.onTerminal("d-fail", Some(MergeQueue.RoundOutcome.Refused("CONFLICT: src/Main.scala")))
-      } // 幂等
+      _ <- IO { MergeQueue.onTerminal("d-fail", Some(MergeQueue.RoundOutcome.Refused("CONFLICT: src/Main.scala"))) } // 幂等
       afterIdem = MergeQueue.find("d-fail").map(_.state)
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
-      assertEquals(
-        failed,
-        Some(("failed", Some("CONFLICT: src/Main.scala"))),
-        "a refused round closes as failed with the reason"
-      )
+      assertEquals(failed, Some(("failed", Some("CONFLICT: src/Main.scala"))), "a refused round closes as failed with the reason")
       assertEquals(afterIdem, Some("failed"), "close-out is idempotent (no re-close, no re-park)")
       assertEquals(chainLines("merge-failed").size, 1, "exactly one merge-failed audit line")
       assertEquals(records.size, 1, "no re-notification after the close-out (no retry rounds exist)")
@@ -427,9 +397,7 @@ class MergeQueueSpec extends CatsEffectSuite:
 
   // ── ⑨ 余脏不再拦截（#943 fail-soft 回归） ─────────────────────────────
 
-  test(
-    "⑨ leftover dirt no longer blocks the grant (fail-soft): the turn is granted with a WARN, no grant-blocked, no requeue"
-  ) {
+  test("⑨ leftover dirt no longer blocks the grant (fail-soft): the turn is granted with a WARN, no grant-blocked, no requeue") {
     val system = ActorSystem(s"mq-10-${scala.util.Random.nextInt(100000)}")
     val records = ListBuffer.empty[(String, Option[ActorRef[AgentEvent]])]
     val repo = mkRepo(tempRoot / "mq10-repo", branch = "delegate/d-dirty", merge = false)
@@ -456,15 +424,12 @@ class MergeQueueSpec extends CatsEffectSuite:
 
   // ── ⑩ 方向闸留队 + 阻塞必通知（#943：绝不静默） ───────────────────────
 
-  test(
-    "⑩ branch-direction gate still parks the member but MUST notify: full reason once per cause, escalation after N blocked rounds"
-  ) {
+  test("⑩ branch-direction gate still parks the member but MUST notify: full reason once per cause, escalation after N blocked rounds") {
     val system = ActorSystem(s"mq-11-${scala.util.Random.nextInt(100000)}")
     val records = ListBuffer.empty[(String, Option[ActorRef[AgentEvent]])]
     val repo = mkRepo(tempRoot / "mq11-repo", branch = "delegate/d-gate", merge = false)
     // 方向闸形态：base 工作区检出的不是成员声明的 baseBranch。
-    os.proc("git", "-C", repo.toString, "checkout", "delegate/d-gate")
-      .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+    os.proc("git", "-C", repo.toString, "checkout", "delegate/d-gate").call(check = true, stdout = os.Pipe, stderr = os.Pipe)
     val notices = ListBuffer.empty[(String, String)]
     MergeQueue.BlockNotifyPort.install((m, kind, reason) => IO { notices += ((m.delegateId, s"$kind|$reason")) })
     for
@@ -482,16 +447,9 @@ class MergeQueueSpec extends CatsEffectSuite:
       assertEquals(first.size, 1, "the FIRST block notifies (never silent)")
       assert(first.head._2.startsWith("blocked|"), s"the notice kind is blocked: ${first.head._2.take(80)}")
       assert(first.head._2.contains("not the checked-out branch"), "the notice carries the actionable cause")
-      assertEquals(
-        after.size,
-        2,
-        s"same cause is deduped for rounds 2..N-1, round N escalates exactly once: ${after.map(_._2.take(30))}"
-      )
+      assertEquals(after.size, 2, s"same cause is deduped for rounds 2..N-1, round N escalates exactly once: ${after.map(_._2.take(30))}")
       assert(after(1)._2.startsWith("escalate|"), "round N is the author escalation")
-      assert(
-        lastReason.exists(_.contains("not the checked-out branch")),
-        "the panel-visible lastBlockReason is recorded"
-      )
+      assert(lastReason.exists(_.contains("not the checked-out branch")), "the panel-visible lastBlockReason is recorded")
     end for
   }
 
@@ -519,11 +477,7 @@ class MergeQueueSpec extends CatsEffectSuite:
       assertEquals(state, Some("failed"), "the refused round closes as failed")
       val failed = notices.toList.filter(_._1 == "failed")
       assertEquals(failed.size, 1, "the failed close-out notifies exactly once")
-      assertEquals(
-        failed.head._2.length,
-        longReason.length,
-        "the notification carries the FULL reason (never truncated)"
-      )
+      assertEquals(failed.head._2.length, longReason.length, "the notification carries the FULL reason (never truncated)")
       assert(failed.head._2 == longReason, "the reason text is verbatim")
     end for
   }

@@ -300,8 +300,6 @@ object FeishuAskCard:
     def duplicate(qi: Int): Reject =
       Reject("duplicate", s"question index $qi was already answered")
 
-  end Reject
-
   /**
    * Turn one callback payload into the user's action.
    *

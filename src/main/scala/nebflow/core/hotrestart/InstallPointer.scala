@@ -119,21 +119,21 @@ object InstallPointer:
    * previous 写 None 语义 = 清掉旧指针文件。
    */
   def promote(dir: os.Path, version: String): IO[Either[String, (String, String)]] =
-    if !safeVersionLiteral(version) then IO.pure(Left(s"invalid version literal: $version"))
+    if !safeVersionLiteral(version) then
+      IO.pure(Left(s"invalid version literal: $version"))
     else
       jarIn(dir, version).flatMap {
         case Left(err) => IO.pure(Left(s"refusing to promote: $err"))
         case Right(_) =>
-          readCurrent(dir)
-            .flatMap { cur =>
-              writeTrimmed(currentPath(dir), version) *>
-                (cur match
-                  case Some(c) => writeTrimmed(previousPath(dir), c)
-                  case None =>
-                    IO.blocking(if os.exists(previousPath(dir)) then os.remove(previousPath(dir)))) *>
-                IO.pure(Right((version, cur.getOrElse(""))))
-            }
-            .handleErrorWith(e => IO.pure(Left(s"pointer promote failed: ${msg(e)}")))
+          readCurrent(dir).flatMap { cur =>
+            writeTrimmed(currentPath(dir), version) *>
+              (cur match
+                case Some(c) => writeTrimmed(previousPath(dir), c)
+                case None =>
+                  IO.blocking(if os.exists(previousPath(dir)) then os.remove(previousPath(dir)))
+              ) *>
+              IO.pure(Right((version, cur.getOrElse(""))))
+          }.handleErrorWith(e => IO.pure(Left(s"pointer promote failed: ${msg(e)}")))
       }
 
   /** 指针回写（更新注册失败时的复原腿：把 promote 前的双指针原样放回）。 */
@@ -141,7 +141,8 @@ object InstallPointer:
     writeTrimmed(currentPath(dir), current) *>
       (previous match
         case Some(p) => writeTrimmed(previousPath(dir), p)
-        case None => IO.blocking(if os.exists(previousPath(dir)) then os.remove(previousPath(dir))))
+        case None    => IO.blocking(if os.exists(previousPath(dir)) then os.remove(previousPath(dir)))
+      )
 
   /** 注入脚本/指针的版本字面字符闸（与 launcher WINSORT 的可解析形状一致）。 */
   def safeVersionLiteral(v: String): Boolean = safeToken(v)

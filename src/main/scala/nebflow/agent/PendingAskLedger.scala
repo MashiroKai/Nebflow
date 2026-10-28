@@ -50,30 +50,26 @@ class PendingAskLedger(path: os.Path = nebflow.shared.PathUtil.dataRoot / "pendi
   import PendingAskLedger.*
 
   private val logger = NebflowLogger.forName("nebflow.agent.interaction")
-  private val audit = NebflowLogger.forName("nebflow.audit")
+  private val audit  = NebflowLogger.forName("nebflow.audit")
 
   // ── 槽位记账（hub 写面；best-effort，绝不影响交互链）────────────────────
 
   /** hub `Request`（槽位注册）随行记账。 */
-  def record(entry: Entry): IO[Unit] = IO
-    .blocking {
-      synchronized {
-        val current = readEntries()
-        writeEntries(current :+ entry)
-      }
+  def record(entry: Entry): IO[Unit] = IO.blocking {
+    synchronized {
+      val current = readEntries()
+      writeEntries(current :+ entry)
     }
-    .handleErrorWith(e => logger.warn(s"PendingAskLedger.record failed requestId=${entry.requestId}: ${e.getMessage}"))
+  }.handleErrorWith(e => logger.warn(s"PendingAskLedger.record failed requestId=${entry.requestId}: ${e.getMessage}"))
 
   /** 任一收口路径（answered / cleanup / close / cancel）随行销账。幂等。 */
-  def remove(requestId: String): IO[Unit] = IO
-    .blocking {
-      synchronized {
-        val current = readEntries()
-        if current.exists(_.requestId == requestId) then writeEntries(current.filterNot(_.requestId == requestId))
-        else ()
-      }
+  def remove(requestId: String): IO[Unit] = IO.blocking {
+    synchronized {
+      val current = readEntries()
+      if current.exists(_.requestId == requestId) then writeEntries(current.filterNot(_.requestId == requestId))
+      else ()
     }
-    .handleErrorWith(e => logger.warn(s"PendingAskLedger.remove failed requestId=$requestId: ${e.getMessage}"))
+  }.handleErrorWith(e => logger.warn(s"PendingAskLedger.remove failed requestId=$requestId: ${e.getMessage}"))
 
   /** 只读清点（boot 对账 / 诊断）。 */
   def load(): IO[List[Entry]] = IO.blocking(synchronized(readEntries()))
@@ -88,19 +84,21 @@ class PendingAskLedger(path: os.Path = nebflow.shared.PathUtil.dataRoot / "pendi
 
   private def writeEntries(entries: List[Entry]): Unit =
     val payload = Json.obj(
-      "version" -> Json.fromInt(1),
+      "version"   -> Json.fromInt(1),
       "updatedAt" -> Json.fromLong(System.currentTimeMillis()),
-      "asks" -> entries.map { e =>
-        Json.obj(
-          "requestId" -> e.requestId.asJson,
-          "kind" -> e.kind.asJson,
-          "rootSessionId" -> e.rootSessionId.asJson,
-          "sourceSession" -> e.sourceSession.asJson,
-          "sourceAgent" -> e.sourceAgent.asJson,
-          "firstQuestion" -> e.firstQuestion.asJson,
-          "createdAt" -> e.createdAt.asJson
-        )
-      }.asJson
+      "asks"      -> entries
+        .map { e =>
+          Json.obj(
+            "requestId"     -> e.requestId.asJson,
+            "kind"          -> e.kind.asJson,
+            "rootSessionId" -> e.rootSessionId.asJson,
+            "sourceSession" -> e.sourceSession.asJson,
+            "sourceAgent"   -> e.sourceAgent.asJson,
+            "firstQuestion" -> e.firstQuestion.asJson,
+            "createdAt"     -> e.createdAt.asJson
+          )
+        }
+        .asJson
     )
     val tmp = path / os.up / s".${path.last}.tmp-${java.util.UUID.randomUUID().toString.take(8)}"
     try
@@ -109,7 +107,6 @@ class PendingAskLedger(path: os.Path = nebflow.shared.PathUtil.dataRoot / "pendi
     finally
       try Files.deleteIfExists(tmp.toNIO)
       catch case _: Throwable => ()
-  end writeEntries
 
   // ── boot 对账（GatewayMain boot 链，listen 前恰一次）────────────────────
 
@@ -130,11 +127,11 @@ class PendingAskLedger(path: os.Path = nebflow.shared.PathUtil.dataRoot / "pendi
         //    旧前端忽略未知 reason 键，回落来源关闭文案，兼容矩阵不破）。
         broadcast(
           Json.obj(
-            "type" -> "askUserClosed".asJson,
-            "sessionId" -> e.rootSessionId.asJson,
-            "requestId" -> e.requestId.asJson,
+            "type"          -> "askUserClosed".asJson,
+            "sessionId"     -> e.rootSessionId.asJson,
+            "requestId"     -> e.requestId.asJson,
             "sourceSession" -> e.sourceSession.asJson,
-            "reason" -> "expired-orphan".asJson
+            "reason"        -> "expired-orphan".asJson
           )
         ) *>
           // ② 持久回执行：历史重载的 pending 判据结构性失效（askUser 行不再是
@@ -184,11 +181,8 @@ object PendingAskLedger:
   )
 
   object Entry:
-
-    /**
-     * hub `Request` 处的单一构造点（excerpt 由调用方给——InteractionHub 已有
-     *  `firstQuestionExcerpt` 单点）。
-     */
+    /** hub `Request` 处的单一构造点（excerpt 由调用方给——InteractionHub 已有
+     *  `firstQuestionExcerpt` 单点）。 */
     def of(req: InteractionRequest, firstQuestion: String): Entry =
       Entry(
         requestId = req.requestId,
@@ -206,13 +200,11 @@ object PendingAskLedger:
         rid <- c.downField("requestId").as[String].toOption
         kind = c.downField("kind").as[String].toOption.getOrElse("")
         root = c.downField("rootSessionId").as[String].toOption.getOrElse("")
-        src = c.downField("sourceSession").as[String].toOption.getOrElse("")
-        agent = c.downField("sourceAgent").as[String].toOption.getOrElse("")
+        src  = c.downField("sourceSession").as[String].toOption.getOrElse("")
+        agent    = c.downField("sourceAgent").as[String].toOption.getOrElse("")
         question = c.downField("firstQuestion").as[String].toOption.getOrElse("")
         createdAt = c.downField("createdAt").as[Long].toOption.getOrElse(0L)
       yield Entry(rid, kind, root, src, agent, question, createdAt)
-
-  end Entry
 
   final case class Report(inspected: Int, closed: Int):
     def summary: String = s"inspected=$inspected expiredClosed=$closed"

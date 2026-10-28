@@ -1309,7 +1309,6 @@ final class ShellSession private (
         else if isProcessExited() then go = false // 进程退了立即收尾（孤儿占管道类）
         else if now - startMs >= probeBudgetMs then go = false // 预算窗满 → UTF-8 兜底
         else Thread.sleep(pollMs)
-      end if
     end while
 
     if n <= 0 then (pushback, StandardCharsets.UTF_8)
@@ -1341,7 +1340,8 @@ final class ShellSession private (
           .decode(ByteBuffer.wrap(bytes, 0, to))
         true
       catch case _: CharacterCodingException => false
-    decode(len) || {
+    decode(len) ||
+    {
       val partial = trailingPartialLen(bytes, len)
       partial > 0 && decode(len - partial)
     }
@@ -1353,15 +1353,15 @@ final class ShellSession private (
    */
   private def trailingPartialLen(bytes: Array[Byte], len: Int): Int =
     val leadIdx =
-      (math.max(0, len - 3) until len).reverse.find(i => (bytes(i) & 0xc0) != 0x80)
+      (math.max(0, len - 3) until len).reverse.find(i => (bytes(i) & 0xC0) != 0x80)
     leadIdx match
       case None => 0
       case Some(i) =>
-        val b = bytes(i) & 0xff
+        val b = bytes(i) & 0xFF
         val seqLen =
-          if (b & 0xe0) == 0xc0 then 2
-          else if (b & 0xf0) == 0xe0 then 3
-          else if (b & 0xf8) == 0xf0 then 4
+          if (b & 0xE0) == 0xC0 then 2
+          else if (b & 0xF0) == 0xE0 then 3
+          else if (b & 0xF8) == 0xF0 then 4
           else 0 // 非法 lead（0x80-0xC1 / 0xF8+）：不是切半，是真坏字节
         if seqLen > 0 && len - i < seqLen then len - i else 0
 
@@ -1387,7 +1387,8 @@ object ShellSession:
    * `Some(true)` 即可在 Mac 上跑真探测逻辑（永不出字流 / 慢速出字流断言）。
    * 测试用完必须复位 `None`（afterEach），否则污染同 JVM 后续测试。
    */
-  private[tools] val charsetProbeGateOverride: java.util.concurrent.atomic.AtomicReference[Option[Boolean]] =
+  private[tools] val charsetProbeGateOverride
+    : java.util.concurrent.atomic.AtomicReference[Option[Boolean]] =
     new java.util.concurrent.atomic.AtomicReference(None)
 
   /**

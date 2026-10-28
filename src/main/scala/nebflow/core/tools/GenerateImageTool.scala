@@ -75,11 +75,7 @@ object GenerateImageTool extends Tool:
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] = IO.defer {
     if !ctx.isRootAgent then
-      IO.pure(
-        Left(
-          ToolError("generate_image is Nebula-only (IMAGEGEN_ROOT_ONLY) — delegates use the imagegen plugin instead.")
-        )
-      )
+      IO.pure(Left(ToolError("generate_image is Nebula-only (IMAGEGEN_ROOT_ONLY) — delegates use the imagegen plugin instead.")))
     else
       val prompt = input("prompt").flatMap(_.asString).map(_.trim).getOrElse("")
       if prompt.isEmpty then IO.pure(Left(ToolError("prompt must be a non-empty string (IMAGEGEN_PROMPT)")))
@@ -107,8 +103,6 @@ object GenerateImageTool extends Tool:
                   .noSpaces
               )
             )
-        end match
-      end if
   }
 
   /** 后台 fiber 体：生成 → 落盘 → 台账 → WS → agent 唤醒（三段互相独立，各带自愈）。 */
@@ -134,11 +128,9 @@ object GenerateImageTool extends Tool:
                   failJob(jobId, ctx, s"save failed: $msg")
               }
           case Right(Left(err)) => failJob(jobId, ctx, err.message)
-          case Left(e) => failJob(jobId, ctx, Option(e.getMessage).getOrElse(e.getClass.getSimpleName))
+          case Left(e)          => failJob(jobId, ctx, Option(e.getMessage).getOrElse(e.getClass.getSimpleName))
         }
     registered *> pipeline.handleErrorWith(e => logger.warn(s"imagegen job $jobId pipeline error: ${e.getMessage}"))
-
-  end runJob
 
   private def failJob(jobId: String, ctx: ToolContext, message: String): IO[Unit] =
     IO.delay(ImageGenJobs.fail(jobId, message.take(300))) *>

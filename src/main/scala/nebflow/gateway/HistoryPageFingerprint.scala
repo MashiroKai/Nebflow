@@ -27,8 +27,8 @@ private[gateway] object HistoryPageFingerprint:
   def lastTimestamp(msgs: List[UiMessage]): Long =
     msgs.lastOption match
       case Some(u: UiMessage.User) => u.timestamp
-      case Some(a: UiMessage.Ai) => a.timestamp
-      case _ => 0L
+      case Some(a: UiMessage.Ai)   => a.timestamp
+      case _                       => 0L
 
   /** 帧指纹对象（空页安全：last = -1）。 */
   def of(msgs: List[UiMessage], total: Long, offset: Long): Json =

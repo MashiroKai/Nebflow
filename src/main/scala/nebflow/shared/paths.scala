@@ -293,9 +293,9 @@ object PathUtil:
       case Some(p) => root / os.SubPath(normalized.drop(p.length).stripPrefix("/"))
       case None =>
         // 绝对 ref（POSIX 前导 / 或 Windows 盘符斜杠形态）按契约原样返回。
-        if normalized.startsWith("/") || normalized.matches("[A-Za-z]:/.*") then os.Path(normalized, os.pwd)
+        if normalized.startsWith("/") || normalized.matches("[A-Za-z]:/.*") then
+          os.Path(normalized, os.pwd)
         else root / os.SubPath(normalized)
-  end resolveRootRef
 
   /**
    * The legacy data-root directory name, HARDCODED — it is a historical

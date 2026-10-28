@@ -61,7 +61,9 @@ private[gateway] object ProjectsRoutes:
                       // 的 ProjectOrigin Codec）。老前端忽略未知键零破坏；存量项目（无
                       // origin 盘面）= 显式 null。
                       "origin" -> p.origin
-                        .fold(Json.Null)(o => Json.obj("device" -> o.device.asJson, "path" -> o.path.asJson)),
+                        .fold(Json.Null)(o =>
+                          Json.obj("device" -> o.device.asJson, "path" -> o.path.asJson)
+                        ),
                       // 台账 #913 ②（2026-10-26）：additive `device` —— workspace 所在
                       // 设备的**存储值**（"self" = 本机 / 对端 deviceId；判定单点 =
                       // ProjectStore.effectiveDevice）。显示名由前端按需解析（面板既有
@@ -378,8 +380,7 @@ private[gateway] object ProjectsRoutes:
                         exec.peerById(o.device).flatMap {
                           case None =>
                             IO(
-                              nebflow.shared.NebflowLogger
-                                .forName("nebflow.projects.routes")
+                              nebflow.shared.NebflowLogger.forName("nebflow.projects.routes")
                                 .warnSync(s"[device] agent.md push skipped: device '${o.device}' not online")
                             )
                           case Some(peer) =>
@@ -394,8 +395,7 @@ private[gateway] object ProjectsRoutes:
                                 case Right(_) => IO.unit
                                 case Left(err) =>
                                   IO(
-                                    nebflow.shared.NebflowLogger
-                                      .forName("nebflow.projects.routes")
+                                    nebflow.shared.NebflowLogger.forName("nebflow.projects.routes")
                                       .warnSync(
                                         s"[device] agent.md push to '${o.device}' failed: $err (local mirror is authoritative until next mount)"
                                       )

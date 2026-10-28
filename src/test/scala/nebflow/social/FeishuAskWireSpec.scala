@@ -98,8 +98,6 @@ class FeishuAskWireSpec extends CatsEffectSuite:
         .update(_ :+ card)
         .as(FeishuChannel.SendResult(ok = false, None, 230013, "card rejected by test seam", "t", "chat_id"))
 
-  end Seams
-
   /**
    * Recording rich adapter for the ask-attachment media leg: uploads succeed
    * (or fail, `ok = false`), every upload call and every degrade text is

@@ -77,7 +77,8 @@ object PidMeta:
   /** Decode a parsed JSON object; tolerates every missing optional field. */
   private[cli] def decode(json: Json): Option[Meta] =
     val c = json.hcursor
-    for startedBy <- c.get[String]("startedBy").toOption
+    for
+      startedBy <- c.get[String]("startedBy").toOption
     yield Meta(
       startedBy,
       c.get[String]("mode").toOption,
@@ -158,8 +159,6 @@ object PidMeta:
         )
       )
       os.write.over(metaFile, encode(m), createFolders = true)
-
-  end writeFreshAs
 
   /** Delete the meta file if present (paired with `ProcessManager.removePid`). */
   def remove(): Unit =

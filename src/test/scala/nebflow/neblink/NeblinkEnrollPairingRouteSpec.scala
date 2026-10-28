@@ -43,7 +43,6 @@ import scala.jdk.CollectionConverters.*
 class NeblinkEnrollPairingRouteSpec extends CatsEffectSuite:
 
   private val TestToken = "test-token-pairing"
-
   private val EnrollResponse =
     """{"deviceToken":"tok-pair-1","networkId":"n1","deviceId":"d-local","avatarUrl":null,"githubUsername":null}"""
 
@@ -141,12 +140,7 @@ class NeblinkEnrollPairingRouteSpec extends CatsEffectSuite:
       .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
       .withEntity(json)
 
-  private case class Stack(
-    ms: NeblinkService,
-    discovery: NeblinkDiscovery,
-    client: NeblinkClient,
-    routes: RestApiRoutes
-  )
+  private case class Stack(ms: NeblinkService, discovery: NeblinkDiscovery, client: NeblinkClient, routes: RestApiRoutes)
 
   private def mkStack(serverUrl: String, dispatcher: Dispatcher[IO]): IO[Stack] =
     for
@@ -164,46 +158,40 @@ class NeblinkEnrollPairingRouteSpec extends CatsEffectSuite:
 
   // ── tests ────────────────────────────────────────────────────────────────
 
-  test(
-    "pairing flow: {server, pairCode} → 200 Enrolled. Connected. + authoritative write + discovery hot-swap (no restart)"
-  ) {
+  test("pairing flow: {server, pairCode} → 200 Enrolled. Connected. + authoritative write + discovery hot-swap (no restart)") {
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url, enrolls) =>
-        mkStack(url, dispatcher)
-          .flatMap { st =>
-            for
-              resp <- st.routes
-                .routes(enrollRequest(server = Some(url), pairCode = "123456"))
-                .value
-                .map(_.getOrElse(fail("route fell through")))
-              body <- resp.as[Json]
-              liveCfg <- st.ms.neblinkConfig
-              clientAfter <- st.discovery.currentClient
-            yield
-              // ① 响应契约：免重启文案 + networkId
-              assertEquals(resp.status, Status.Ok)
-              assertEquals(body.hcursor.downField("ok").as[Boolean].toOption, Some(true))
-              assertEquals(body.hcursor.downField("message").as[String].toOption, Some("Enrolled. Connected."))
-              assertEquals(body.hcursor.downField("networkId").as[String].toOption, Some("n1"))
-              // ② server 收到的 enroll 体带身份四元组
-              val calls = enrolls.asScala.toList
-              assertEquals(calls.length, 1, s"exactly one enroll call expected, got $calls")
-              val sent = parse(calls.head.body).toOption.getOrElse(fail(s"non-JSON enroll body: ${calls.head.body}"))
-              assertEquals(sent.hcursor.downField("pairCode").as[String].toOption, Some("123456"))
-              assert(sent.hcursor.downField("deviceId").as[String].toOption.exists(_.nonEmpty), "deviceId must be sent")
-              // ③ 权威写面：config.json 落 deviceToken（旧实现也写，但只写盘）
-              val diskServer = configOnDisk.hcursor.downField("neblinkServer")
-              assertEquals(diskServer.downField("deviceToken").as[String].toOption, Some("tok-pair-1"))
-              assertEquals(diskServer.downField("url").as[String].toOption, Some(url))
-              assertEquals(configOnDisk.hcursor.downField("enabled").as[Boolean].toOption, Some(true))
-              // ④ 🔴 热换判据（旧实现的红差异）：live config ref 已更新（免重启可读）
-              assertEquals(liveCfg.enabled, true)
-              assertEquals(liveCfg.neblinkServer.flatMap(_.deviceToken), Some("tok-pair-1"))
-              // ⑤ discovery 客户端已换新实例（旧实现不换 ⇒ 需重启才生效的那一半）
-              assert(clientAfter.isDefined, "discovery client must be set after enroll")
-              assert(!(clientAfter.get eq st.client), "discovery client must be HOT-SWAPPED to a fresh instance")
-          }
-          .guarantee(IO.blocking(server.stop(0)))
+        mkStack(url, dispatcher).flatMap { st =>
+          for
+            resp <- st.routes.routes(enrollRequest(server = Some(url), pairCode = "123456")).value
+              .map(_.getOrElse(fail("route fell through")))
+            body <- resp.as[Json]
+            liveCfg <- st.ms.neblinkConfig
+            clientAfter <- st.discovery.currentClient
+          yield
+            // ① 响应契约：免重启文案 + networkId
+            assertEquals(resp.status, Status.Ok)
+            assertEquals(body.hcursor.downField("ok").as[Boolean].toOption, Some(true))
+            assertEquals(body.hcursor.downField("message").as[String].toOption, Some("Enrolled. Connected."))
+            assertEquals(body.hcursor.downField("networkId").as[String].toOption, Some("n1"))
+            // ② server 收到的 enroll 体带身份四元组
+            val calls = enrolls.asScala.toList
+            assertEquals(calls.length, 1, s"exactly one enroll call expected, got $calls")
+            val sent = parse(calls.head.body).toOption.getOrElse(fail(s"non-JSON enroll body: ${calls.head.body}"))
+            assertEquals(sent.hcursor.downField("pairCode").as[String].toOption, Some("123456"))
+            assert(sent.hcursor.downField("deviceId").as[String].toOption.exists(_.nonEmpty), "deviceId must be sent")
+            // ③ 权威写面：config.json 落 deviceToken（旧实现也写，但只写盘）
+            val diskServer = configOnDisk.hcursor.downField("neblinkServer")
+            assertEquals(diskServer.downField("deviceToken").as[String].toOption, Some("tok-pair-1"))
+            assertEquals(diskServer.downField("url").as[String].toOption, Some(url))
+            assertEquals(configOnDisk.hcursor.downField("enabled").as[Boolean].toOption, Some(true))
+            // ④ 🔴 热换判据（旧实现的红差异）：live config ref 已更新（免重启可读）
+            assertEquals(liveCfg.enabled, true)
+            assertEquals(liveCfg.neblinkServer.flatMap(_.deviceToken), Some("tok-pair-1"))
+            // ⑤ discovery 客户端已换新实例（旧实现不换 ⇒ 需重启才生效的那一半）
+            assert(clientAfter.isDefined, "discovery client must be set after enroll")
+            assert(!(clientAfter.get eq st.client), "discovery client must be HOT-SWAPPED to a fresh instance")
+        }.guarantee(IO.blocking(server.stop(0)))
       }
     }
   }
@@ -211,56 +199,43 @@ class NeblinkEnrollPairingRouteSpec extends CatsEffectSuite:
   test("server fallback leg: no server in body → the live config url is used") {
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url, enrolls) =>
-        mkStack(url, dispatcher)
-          .flatMap { st =>
-            for
-              // seed live config（模拟已配置 self-host server 的实例）
-              _ <- st.ms.updateConfig(
-                _.copy(neblinkServer = Some(NeblinkServerConfig(url = url, networkId = "seed-net", secret = "")))
-              )
-              resp <- st.routes
-                .routes(enrollRequest(server = None, pairCode = "654321"))
-                .value
-                .map(_.getOrElse(fail("route fell through")))
-              body <- resp.as[Json]
-            yield
-              assertEquals(resp.status, Status.Ok, s"config-fallback enroll must succeed: ${body}")
-              assertEquals(body.hcursor.downField("ok").as[Boolean].toOption, Some(true))
-              val calls = enrolls.asScala.toList
-              assertEquals(calls.length, 1, "exactly one enroll call expected")
-              assertEquals(
-                configOnDisk.hcursor.downField("neblinkServer").downField("url").as[String].toOption,
-                Some(url)
-              )
-          }
-          .guarantee(IO.blocking(server.stop(0)))
+        mkStack(url, dispatcher).flatMap { st =>
+          for
+            // seed live config（模拟已配置 self-host server 的实例）
+            _ <- st.ms.updateConfig(
+              _.copy(neblinkServer = Some(NeblinkServerConfig(url = url, networkId = "seed-net", secret = "")))
+            )
+            resp <- st.routes.routes(enrollRequest(server = None, pairCode = "654321")).value
+              .map(_.getOrElse(fail("route fell through")))
+            body <- resp.as[Json]
+          yield
+            assertEquals(resp.status, Status.Ok, s"config-fallback enroll must succeed: ${body}")
+            assertEquals(body.hcursor.downField("ok").as[Boolean].toOption, Some(true))
+            val calls = enrolls.asScala.toList
+            assertEquals(calls.length, 1, "exactly one enroll call expected")
+            assertEquals(configOnDisk.hcursor.downField("neblinkServer").downField("url").as[String].toOption, Some(url))
+        }.guarantee(IO.blocking(server.stop(0)))
       }
     }
   }
 
-  test(
-    "案 b① red line: isolated root + no explicit server + no config ⇒ 400 refusal (the prod default is NEVER silently inherited)"
-  ) {
+  test("案 b① red line: isolated root + no explicit server + no config ⇒ 400 refusal (the prod default is NEVER silently inherited)") {
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url, enrolls) =>
-        mkStack(url, dispatcher)
-          .flatMap { st =>
-            for
-              resp <- st.routes
-                .routes(enrollRequest(server = None, pairCode = "123456"))
-                .value
-                .map(_.getOrElse(fail("route fell through")))
-              body <- resp.as[Json]
-            yield
-              assertEquals(resp.status, Status.BadRequest)
-              assertEquals(
-                body.hcursor.downField("error").as[String].toOption,
-                Some(EnrollGuard.prodFallbackRefusalReason),
-                "the refusal must be the 案 b① single-point reason"
-              )
-              assertEquals(enrolls.asScala.toList, Nil, "no outbound enroll call may happen")
-          }
-          .guarantee(IO.blocking(server.stop(0)))
+        mkStack(url, dispatcher).flatMap { st =>
+          for
+            resp <- st.routes.routes(enrollRequest(server = None, pairCode = "123456")).value
+              .map(_.getOrElse(fail("route fell through")))
+            body <- resp.as[Json]
+          yield
+            assertEquals(resp.status, Status.BadRequest)
+            assertEquals(
+              body.hcursor.downField("error").as[String].toOption,
+              Some(EnrollGuard.prodFallbackRefusalReason),
+              "the refusal must be the 案 b① single-point reason"
+            )
+            assertEquals(enrolls.asScala.toList, Nil, "no outbound enroll call may happen")
+        }.guarantee(IO.blocking(server.stop(0)))
       }
     }
   }
@@ -268,19 +243,15 @@ class NeblinkEnrollPairingRouteSpec extends CatsEffectSuite:
   test("missing pairCode → 400 Missing pairCode") {
     Dispatcher.parallel[IO].use { dispatcher =>
       startMockServer.flatMap { (server, url, _) =>
-        mkStack(url, dispatcher)
-          .flatMap { st =>
-            for
-              resp <- st.routes
-                .routes(enrollRequest(server = Some(url), pairCode = ""))
-                .value
-                .map(_.getOrElse(fail("route fell through")))
-              body <- resp.as[Json]
-            yield
-              assertEquals(resp.status, Status.BadRequest)
-              assertEquals(body.hcursor.downField("error").as[String].toOption, Some("Missing pairCode"))
-          }
-          .guarantee(IO.blocking(server.stop(0)))
+        mkStack(url, dispatcher).flatMap { st =>
+          for
+            resp <- st.routes.routes(enrollRequest(server = Some(url), pairCode = "")).value
+              .map(_.getOrElse(fail("route fell through")))
+            body <- resp.as[Json]
+          yield
+            assertEquals(resp.status, Status.BadRequest)
+            assertEquals(body.hcursor.downField("error").as[String].toOption, Some("Missing pairCode"))
+        }.guarantee(IO.blocking(server.stop(0)))
       }
     }
   }

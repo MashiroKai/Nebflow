@@ -354,9 +354,7 @@ class PromptSectionsSpec extends munit.FunSuite:
 
   // ── 台账 #913 ②：设备标注行形（renderLinesWithDevice）──────────────
 
-  test(
-    "MountedProjectList.renderLinesWithDevice: cross-device rows carry (on device X); local rows keep the plain shape"
-  ):
+  test("MountedProjectList.renderLinesWithDevice: cross-device rows carry (on device X); local rows keep the plain shape"):
     val lines = MountedProjectList.renderLinesWithDevice(
       List(
         ("stand-kai", "KAI", Some("主仓")),

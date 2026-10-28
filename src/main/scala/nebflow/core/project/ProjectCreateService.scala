@@ -146,7 +146,6 @@ object ProjectCreateService:
             case None => emitAndMount(resolvedName, workspace, description, identity)
           }
         case Some(d) => createRemote(resolvedName, workspace, description, d, identity)
-    end if
   end create
 
   // ============================================================
@@ -206,13 +205,7 @@ object ProjectCreateService:
               val executorOpt = RemoteExecutor.current
               executorOpt match
                 case None =>
-                  IO.pure(
-                    Left(
-                      ToolError(
-                        "Remote executor is not initialized on this host — remote project creation unavailable. (DEVICE_ROUTE_UNAVAILABLE)"
-                      )
-                    )
-                  )
+                  IO.pure(Left(ToolError("Remote executor is not initialized on this host — remote project creation unavailable. (DEVICE_ROUTE_UNAVAILABLE)")))
                 case Some(executor) =>
                   // ② 目录校验（元数据列举——零字节；失败 = 显式失败，零本侧写入）。
                   executor.transferListScoped(peer, workspace).flatMap {
@@ -308,7 +301,6 @@ object ProjectCreateService:
                                 case Left(err) => IO.pure(Left(ToolError(err)))
                               }
                         }
-                      end if
                   }
               end match
         }
@@ -330,45 +322,30 @@ object ProjectCreateService:
     listing: Json
   ): IO[Either[String, ProjectStore.ScaffoldReport]] =
     val existing: Set[String] =
-      listing.hcursor
-        .downField("entries")
-        .as[List[Json]]
-        .toOption
-        .getOrElse(Nil)
-        .flatMap { e =>
-          e.hcursor.downField("name").as[String].toOption
-        }
-        .toSet
+      listing.hcursor.downField("entries").as[List[Json]].toOption.getOrElse(Nil).flatMap { e =>
+        e.hcursor.downField("name").as[String].toOption
+      }.toSet
     val wanted: List[(String, String)] = List(
       ("AGENTS.md", AgentMdTemplateFull),
       (".gitignore", ".nebflow/\n")
     )
     val missing = wanted.filterNot((name, _) => existing.contains(name))
     if missing.isEmpty then
-      IO.pure(
-        Right(
-          ProjectStore.ScaffoldReport(
-            wanted.map(n => ProjectStore.ScaffoldItem(n._1, created = false, detail = "already present"))
-          )
-        )
-      )
+      IO.pure(Right(ProjectStore.ScaffoldReport(wanted.map(n => ProjectStore.ScaffoldItem(n._1, created = false, detail = "already present")))))
     else
-      missing
-        .foldLeft(IO.pure(Right(Nil): Either[String, List[ProjectStore.ScaffoldItem]])) { (acc, item) =>
-          acc.flatMap {
-            case l @ Left(_) => IO.pure(l)
-            case Right(items) =>
-              writeRemoteFile(executor, peer, s"${stripTrailingSlashes(workspace)}/${item._1}", item._2).map {
-                case Right(_) => Right(items :+ ProjectStore.ScaffoldItem(item._1, created = true))
-                case Left(err) => Left(err)
-              }
-          }
+      missing.foldLeft(IO.pure(Right(Nil): Either[String, List[ProjectStore.ScaffoldItem]])) { (acc, item) =>
+        acc.flatMap {
+          case l @ Left(_) => IO.pure(l)
+          case Right(items) =>
+            writeRemoteFile(executor, peer, s"${stripTrailingSlashes(workspace)}/${item._1}", item._2).map {
+              case Right(_) => Right(items :+ ProjectStore.ScaffoldItem(item._1, created = true))
+              case Left(err) => Left(err)
+            }
         }
-        .map {
-          case Right(items) => Right(ProjectStore.ScaffoldReport(items))
-          case Left(err) => Left(err)
-        }
-    end if
+      }.map {
+        case Right(items) => Right(ProjectStore.ScaffoldReport(items))
+        case Left(err) => Left(err)
+      }
   end scaffoldRemote
 
   /** 对端单文件 Write（remote-exec Write 工具；projectRoot = 该项目 workspace）。 */
@@ -566,7 +543,8 @@ object ProjectCreateService:
                   //    （mount → DeviceProjectMount.prepare），本分支直挂。
                   // ② 本机项目：同样必须真实存在（create 时的目录后来被删 = 拒绝
                   //    重挂，零写入）才补缺脚手架。
-                  if ProjectStore.deviceOrigin(pd).isDefined then mountProject(pd, created = false)
+                  if ProjectStore.deviceOrigin(pd).isDefined then
+                    mountProject(pd, created = false)
                   else
                     IO.blocking(ProjectMountPreflight.checkLocalWorkspace(workspace, PathUtil.dataRoot)).flatMap {
                       case Some(refusal) => IO.pure(Left(ToolError(refusal)))

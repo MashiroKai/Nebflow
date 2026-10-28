@@ -118,15 +118,12 @@ class MailClientImapSpec extends FunSuite:
 
   // ════════ 会话全链路（本地 mock IMAP，loopback 明文）════════
 
-  /**
-   * Sequential scripted IMAP server: greeting, then one scripted reply per command line.
-   * Reply conventions: "" = 保持静默（客户端撞 SoTimeout）；null = 直接断连。
-   */
+  /** Sequential scripted IMAP server: greeting, then one scripted reply per command line.
+    * Reply conventions: "" = 保持静默（客户端撞 SoTimeout）；null = 直接断连。 */
   private final class ScriptedImap(greeting: String, replies: Seq[String => String]):
     private val server = ServerSocket(0, 4, InetAddress.getLoopbackAddress)
     val port: Int = server.getLocalPort
     private val stopped = AtomicBoolean(false)
-
     private val thread = new Thread(() =>
       try
         val conn = server.accept()
@@ -139,26 +136,18 @@ class MailClientImapSpec extends FunSuite:
           while alive do
             val line = reader.readLine()
             if line == null || !it.hasNext then alive = false
-            else
-              it.next()(line) match
-                case "" => () // 静默
-                case null => alive = false // 断连
-                case s => out.print(s); out.flush()
-        finally
-          try conn.close()
-          catch case _: Throwable => ()
-        end try
+            else it.next()(line) match
+              case ""   => () // 静默
+              case null => alive = false // 断连
+              case s    => out.print(s); out.flush()
+        finally try conn.close() catch case _: Throwable => ()
       catch case _: Throwable => ()
     )
     thread.setDaemon(true)
     thread.start()
-
     def stop(): Unit =
       stopped.set(true)
-      try server.close()
-      catch case _: Throwable => ()
-
-  end ScriptedImap
+      try server.close() catch case _: Throwable => ()
 
   private def withSession(server: ScriptedImap, soTimeoutMs: Int = 5000)(
     f: MailClient.ImapSession => Unit
@@ -168,7 +157,7 @@ class MailClientImapSpec extends FunSuite:
     val session = new MailClient.ImapSession(socket)
     try
       session.readGreeting() match
-        case Left(e) => fail(s"greeting rejected: $e")
+        case Left(e)  => fail(s"greeting rejected: $e")
         case Right(_) => ()
       f(session)
     finally session.close()
@@ -177,13 +166,10 @@ class MailClientImapSpec extends FunSuite:
   private val okLogin: String => String = _ => "a1 OK Authenticated\r\n"
 
   test("session: QQ 形状连接全链路——LOGIN → SELECT 成功 → 统计 4497/429") {
-    val server = ScriptedImap(
-      "* OK QQIMAP mock ready",
-      List(
-        okLogin,
-        _ => qqSelectOk
-      )
-    )
+    val server = ScriptedImap("* OK QQIMAP mock ready", List(
+      okLogin,
+      _ => qqSelectOk
+    ))
     withSession(server) { s =>
       assert(s.login("mock-user@qq.com", "mock-auth-code-not-real").isRight)
       val stats = s.selectInbox()
@@ -195,15 +181,12 @@ class MailClientImapSpec extends FunSuite:
 
   test("session: UID SEARCH + UID FETCH（带 {n} 字面量）在 untagged 序列后判 OK") {
     val body17 = "From: a@b.c\r\n\r\nhi" // 17 bytes
-    val server = ScriptedImap(
-      "* OK mock ready",
-      List(
-        okLogin,
-        _ => qqSelectOk,
-        _ => "* SEARCH 12\r\na3 OK SEARCH completed\r\n",
-        _ => s"* 1 FETCH (BODY[] {17}\r\n$body17\r\n)\r\na4 OK FETCH completed\r\n"
-      )
-    )
+    val server = ScriptedImap("* OK mock ready", List(
+      okLogin,
+      _ => qqSelectOk,
+      _ => "* SEARCH 12\r\na3 OK SEARCH completed\r\n",
+      _ => s"* 1 FETCH (BODY[] {17}\r\n$body17\r\n)\r\na4 OK FETCH completed\r\n"
+    ))
     withSession(server) { s =>
       assert(s.login("mock-user@qq.com", "mock-auth-code-not-real").isRight)
       assert(s.selectInbox().isRight)
@@ -213,8 +196,9 @@ class MailClientImapSpec extends FunSuite:
   }
 
   test("session: LOGIN tagged NO [AUTHENTICATIONFAILED] ⇒ Left 可读") {
-    val server =
-      ScriptedImap("* OK mock ready", List(_ => "a1 NO [AUTHENTICATIONFAILED] LOGIN Login error or password error\r\n"))
+    val server = ScriptedImap("* OK mock ready", List(
+      _ => "a1 NO [AUTHENTICATIONFAILED] LOGIN Login error or password error\r\n"
+    ))
     withSession(server) { s =>
       val r = s.login("mock-user@qq.com", "mock-auth-code-not-real")
       val err = r.left.toOption.get
@@ -224,13 +208,10 @@ class MailClientImapSpec extends FunSuite:
   }
 
   test("session: SELECT tagged NO ⇒ Left 可读、不倾倒 untagged raw") {
-    val server = ScriptedImap(
-      "* OK mock ready",
-      List(
-        okLogin,
-        _ => "* 4497 EXISTS\r\n* 0 RECENT\r\na2 NO SELECT failed, mailbox locked\r\n"
-      )
-    )
+    val server = ScriptedImap("* OK mock ready", List(
+      okLogin,
+      _ => "* 4497 EXISTS\r\n* 0 RECENT\r\na2 NO SELECT failed, mailbox locked\r\n"
+    ))
     withSession(server) { s =>
       assert(s.login("mock-user@qq.com", "mock-auth-code-not-real").isRight)
       val r = s.selectInbox()
@@ -241,13 +222,10 @@ class MailClientImapSpec extends FunSuite:
   }
 
   test("session: SELECT 后服务器静默 ⇒ 超时走错误路径（人类可读，非挂死）") {
-    val server = ScriptedImap(
-      "* OK mock ready",
-      List(
-        okLogin,
-        _ => "" // SELECT 静默
-      )
-    )
+    val server = ScriptedImap("* OK mock ready", List(
+      okLogin,
+      _ => "" // SELECT 静默
+    ))
     withSession(server, soTimeoutMs = 400) { s =>
       assert(s.login("mock-user@qq.com", "mock-auth-code-not-real").isRight)
       val r = s.selectInbox()
@@ -258,13 +236,10 @@ class MailClientImapSpec extends FunSuite:
   }
 
   test("session: 响应中途断连 ⇒ Left 可读连接中断") {
-    val server = ScriptedImap(
-      "* OK mock ready",
-      List(
-        okLogin,
-        _ => null // SELECT 时直接断
-      )
-    )
+    val server = ScriptedImap("* OK mock ready", List(
+      okLogin,
+      _ => null // SELECT 时直接断
+    ))
     withSession(server) { s =>
       assert(s.login("mock-user@qq.com", "mock-auth-code-not-real").isRight)
       val r = s.selectInbox()
@@ -286,23 +261,15 @@ class MailClientImapSpec extends FunSuite:
   }
 
   test("readable: 认证失败标记 ⇒ 授权码指引文案") {
-    val msg =
-      PerceptionService.readableConnectError("IMAP NO [AUTHENTICATIONFAILED] LOGIN Login error", "imap.qq.com", 993)
+    val msg = PerceptionService.readableConnectError(
+      "IMAP NO [AUTHENTICATIONFAILED] LOGIN Login error", "imap.qq.com", 993)
     assert(msg.contains("授权码"))
   }
 
   test("readable: 超时 / 域名解析失败 / 拒绝 各归各类") {
     assert(PerceptionService.readableConnectError("IMAP 响应超时 · 服务器长时间无响应", "imap.qq.com", 993).contains("超时"))
-    assert(
-      PerceptionService
-        .readableConnectError("IMAP connect SocketTimeoutException: connect timed out", "imap.qq.com", 993)
-        .contains("超时")
-    )
-    assert(
-      PerceptionService
-        .readableConnectError("IMAP connect UnknownHostException: imap.qq.com", "imap.qq.com", 993)
-        .contains("无法连接")
-    )
+    assert(PerceptionService.readableConnectError("IMAP connect SocketTimeoutException: connect timed out", "imap.qq.com", 993).contains("超时"))
+    assert(PerceptionService.readableConnectError("IMAP connect UnknownHostException: imap.qq.com", "imap.qq.com", 993).contains("无法连接"))
     assert(PerceptionService.readableConnectError("IMAP NO SELECT failed", "imap.qq.com", 993).contains("拒绝"))
   }
 
@@ -310,11 +277,7 @@ class MailClientImapSpec extends FunSuite:
     // 擦除先于分类：含 AUTH 字样的授权码值被抹去后不再触发「认证失败」分支，
     // 落入 BAD 拒绝臂；两条断言各钉一面（值不可见 + 分类诚实）。
     val msg = PerceptionService.readableConnectError(
-      "IMAP BAD echo MYSECRETAUTHCODE",
-      "imap.qq.com",
-      993,
-      authCode = "MYSECRETAUTHCODE"
-    )
+      "IMAP BAD echo MYSECRETAUTHCODE", "imap.qq.com", 993, authCode = "MYSECRETAUTHCODE")
     assert(!msg.contains("MYSECRETAUTHCODE"))
     assert(msg.contains("服务器拒绝"), msg)
   }
@@ -334,16 +297,14 @@ class MailClientImapSpec extends FunSuite:
     )
     core.bootInitialize.unsafeRunSync() // loadAccounts 缺文件 = Nil，零写盘
     try
-      val res = core
-        .connectAccount(
-          address = "mock-user@qq.com",
-          authCode = "mock-wrong-code",
-          imapHost = Some("127.0.0.1"),
-          imapPort = Some(1), // 本机必拒口 → 连接失败形状
-          smtpHost = Some("127.0.0.1"),
-          smtpPort = Some(2465)
-        )
-        .unsafeRunSync()
+      val res = core.connectAccount(
+        address = "mock-user@qq.com",
+        authCode = "mock-wrong-code",
+        imapHost = Some("127.0.0.1"),
+        imapPort = Some(1), // 本机必拒口 → 连接失败形状
+        smtpHost = Some("127.0.0.1"),
+        smtpPort = Some(2465)
+      ).unsafeRunSync()
       val err = res.left.toOption.get
       assert(err.contains("无法连接"), s"连接失败应映射可读文案: $err")
       assert(!err.contains("\r\n") && !err.contains("Exception"), s"错误面不得透传 raw/异常类名: $err")
@@ -352,7 +313,6 @@ class MailClientImapSpec extends FunSuite:
       val root = os.Path(tmp)
       assert(!os.exists(root / "accounts.json"), "失败路径不得写账户文件")
       assert(!os.exists(root / "state.json"), "失败路径不得写状态文件")
-    finally os.remove.all(os.Path(tmp))
-    end try
+    finally
+      os.remove.all(os.Path(tmp))
   }
-end MailClientImapSpec

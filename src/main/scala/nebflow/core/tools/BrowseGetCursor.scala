@@ -54,10 +54,8 @@ object BrowseGetCursor:
     contentB64: String
   )
 
-  /**
-   * 解析对端 `direction=get` 响应。判据 = `chunkSha256` 在场 ⇒ 分块形态；缺席 ⇒
-   * legacy 整件（`content`+`size`）。解析不出结构化字段 = 显式错误（禁静默）。
-   */
+  /** 解析对端 `direction=get` 响应。判据 = `chunkSha256` 在场 ⇒ 分块形态；缺席 ⇒
+    * legacy 整件（`content`+`size`）。解析不出结构化字段 = 显式错误（禁静默）。 */
   def parseReply(json: Json): Either[String, ChunkReply] =
     val hc = json.hcursor
     hc.downField("chunkSha256").as[String].toOption.filter(_.nonEmpty) match
@@ -92,13 +90,9 @@ object BrowseGetCursor:
           wholeSha256 = None,
           contentB64 = content
         )
-    end match
-  end parseReply
 
-  /**
-   * 取消哨兵（拉取循环被 `fileTransferCancel` 停止时的显式失败值；消费方据此出
-   * 「已取消」终态帧，而不是通用错误）。
-   */
+  /** 取消哨兵（拉取循环被 `fileTransferCancel` 停止时的显式失败值；消费方据此出
+    * 「已取消」终态帧，而不是通用错误）。 */
   val Cancelled: String = "browse fetch cancelled by user"
 
   /** 整件摘要不符的显式错误（落盘件已删——与分块 put 收端同纪律）。 */
@@ -174,16 +168,8 @@ final class BrowseGetCursor(
           bytes = offset + payload.length
           Right(bytes)
 
-      end if
-
-    end if
-
-  end applyChunk
-
-  /**
-   * 整件收口：本侧流式自算 vs 对端声明；不符 ⇒ 删落盘件 + 显式错误。对端没给摘要
-   * （极旧对端的 legacy 回应）＝无比对基准，如实返回本侧算值（不装验过）。
-   */
+  /** 整件收口：本侧流式自算 vs 对端声明；不符 ⇒ 删落盘件 + 显式错误。对端没给摘要
+    * （极旧对端的 legacy 回应）＝无比对基准，如实返回本侧算值（不装验过）。 */
   def verifyWhole(): Either[String, String] =
     val computed = ChunkedTransfer.hashFileStreaming(target)
     if declaredWhole.isEmpty then Right(computed)
@@ -208,7 +194,7 @@ object BrowseFetchRegistry:
     flags.put(key(deviceId, path), f)
     val unregister = IO {
       val cur = flags.get(key(deviceId, path))
-      if cur eq f then flags.remove(key(deviceId, path))
+      if (cur eq f) then flags.remove(key(deviceId, path))
     }
     (f, unregister)
 
@@ -216,8 +202,7 @@ object BrowseFetchRegistry:
   def cancel(deviceId: String, path: String): Boolean =
     val f = flags.get(key(deviceId, path))
     if f eq null then false
-    else
-      f.set(true); true
+    else { f.set(true); true }
 
   /** 读数面（spec/诊断）：该 (device, path) 是否有登记的在途取件。 */
   def isActive(deviceId: String, path: String): Boolean = flags.containsKey(key(deviceId, path))
@@ -269,16 +254,15 @@ object BrowseGetLoop:
           .flatMap {
             case Left(err) => IO.pure(Left(err))
             case Right((first, ms)) =>
-              if first.chunked && first.totalBytes <= 0 then IO.pure(Left("remote file is empty (0 bytes)"))
+              if first.chunked && first.totalBytes <= 0 then
+                IO.pure(Left("remote file is empty (0 bytes)"))
               else if first.totalBytes > RemoteExecutor.MaxScopedFetchBytes then
                 // 大小闸**不区分形态**（与改前 transferGetScoped 同判：legacy 回应照样把，
                 // 超限显式报错引导显式批量/dropbox 通道，零回归）。
-                IO.pure(
-                  Left(
-                    s"file too large for single fetch: ${first.totalBytes} bytes > ${RemoteExecutor.MaxScopedFetchBytes} " +
-                      "limit — use explicit batch transfer (dropbox) instead"
-                  )
-                )
+                IO.pure(Left(
+                  s"file too large for single fetch: ${first.totalBytes} bytes > ${RemoteExecutor.MaxScopedFetchBytes} " +
+                    "limit — use explicit batch transfer (dropbox) instead"
+                ))
               else
                 val cursor = new BrowseGetCursor(target, first.totalBytes, startChunkSize)
                 IO.blocking(cursor.restore()).flatMap { _ =>

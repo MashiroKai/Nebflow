@@ -58,12 +58,10 @@ object SleepPollGuard:
     thresholdSec: Long = Defaults.SleepPollThresholdSec.toLong,
     escalateAfter: Int = Defaults.SleepPollEscalateAfter
   )
-
   object Config:
     val Default: Config = Config()
 
   sealed trait Verdict extends Product with Serializable
-
   object Verdict:
 
     /** 无 sleep / 阈值下 / 开关关 ⇒ 零开销透传。 */

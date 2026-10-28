@@ -105,8 +105,6 @@ class RemoteUpdateActionStagedJarSpec extends CatsEffectSuite:
     )
     (conv, installCalls, convFrames)
 
-  end newConvergence
-
   private def decisionOf(conv: NeblinkUpdateConvergence): IO[Option[String]] =
     conv.stateJson.map(_.flatMap(_.hcursor.downField("decision").downField("outcome").as[String].toOption))
 
@@ -226,18 +224,18 @@ class RemoteUpdateActionStagedJarSpec extends CatsEffectSuite:
   test("sizeBytes 不符 ⇒ Left 拒装") {
     val manifestUrl = writeFile("m-badsize", manifestFor(size = Some(os.size(fakeJar) + 1)))
     withProps(manifestProp -> manifestUrl.toNIO.toUri.toString, installProp -> "true") {
-      RemoteUpdateAction
-        .runInstallScript(beta = false)
-        .map(result => assert(result.left.exists(_.contains("size mismatch")), result))
+      RemoteUpdateAction.runInstallScript(beta = false).map(result =>
+        assert(result.left.exists(_.contains("size mismatch")), result)
+      )
     }
   }
 
   test("jar 不可达 ⇒ Left 拒装（宣告了却取不到 = 不装）") {
     val manifestUrl = writeFile("m-unreachable", manifestFor(jarUrl = Some("file:///nonexistent/nope.jar")))
     withProps(manifestProp -> manifestUrl.toNIO.toUri.toString, installProp -> "true") {
-      RemoteUpdateAction
-        .runInstallScript(beta = false)
-        .map(result => assert(result.left.exists(_.contains("fetch failed")), result))
+      RemoteUpdateAction.runInstallScript(beta = false).map(result =>
+        assert(result.left.exists(_.contains("fetch failed")), result)
+      )
     }
   }
 
@@ -258,14 +256,12 @@ class RemoteUpdateActionStagedJarSpec extends CatsEffectSuite:
   test("minCompatibleEngine 低于当前 ⇒ 拒装 + 「需先手动跨版」可见解释") {
     val manifestUrl = writeFile("m-mincompat", manifestFor(minCompatible = Some("2099.1.1")))
     withProps(manifestProp -> manifestUrl.toNIO.toUri.toString, installProp -> "true") {
-      RemoteUpdateAction
-        .runInstallScript(beta = false)
-        .map(result =>
-          assert(
-            result.left.exists(l => l.contains("minCompatibleEngine") && l.contains("manual cross-version")),
-            result
-          )
+      RemoteUpdateAction.runInstallScript(beta = false).map(result =>
+        assert(
+          result.left.exists(l => l.contains("minCompatibleEngine") && l.contains("manual cross-version")),
+          result
         )
+      )
     }
   }
 

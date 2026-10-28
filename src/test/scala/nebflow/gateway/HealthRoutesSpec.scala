@@ -57,8 +57,7 @@ class HealthRoutesSpec extends FunSuite:
       fileLockManager = FileLockManager.create.unsafeRunSync(),
       sessionModelOverrides = cats.effect.Ref.unsafe[IO, Map[String, ModelCandidate]](Map.empty),
       providerRegistry = new nebflow.llm.ProviderRegistry(
-        cats.effect.Ref
-          .unsafe[IO, NebflowServiceConfig](NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))),
+        cats.effect.Ref.unsafe[IO, NebflowServiceConfig](NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))),
         NullBackend
       ),
       healthMonitor = nebflow.llm.ProviderHealthMonitor(null),
@@ -121,9 +120,7 @@ class HealthRoutesSpec extends FunSuite:
   // ── CORS 白名单（批 ② + ④ 降级语义）────────────────────────────────────
 
   private val PortalOrigin =
-    HealthRoutes
-      .canonicalOrigin(nebflow.shared.Branding.portalUrl)
-      .getOrElse(sys.error("brand portalUrl must carry an origin"))
+    HealthRoutes.canonicalOrigin(nebflow.shared.Branding.portalUrl).getOrElse(sys.error("brand portalUrl must carry an origin"))
 
   test("loopback + portal origin: CORS echo + PNA answer (the near-path probe is browser-readable)"):
     val resp = serve(req(origin = Some(PortalOrigin)))
@@ -164,10 +161,7 @@ class HealthRoutesSpec extends FunSuite:
     assertEquals(HealthRoutes.canonicalOrigin("about:blank"), None)
     assertEquals(HealthRoutes.canonicalOrigin("not a url"), None)
     // the whitelist itself must contain the brand portal origin
-    assert(
-      HealthRoutes.allowedProbeOrigins.contains(PortalOrigin),
-      s"whitelist must hold the portal origin: ${HealthRoutes.allowedProbeOrigins}"
-    )
+    assert(HealthRoutes.allowedProbeOrigins.contains(PortalOrigin), s"whitelist must hold the portal origin: ${HealthRoutes.allowedProbeOrigins}")
 
   // ── 本机近路短路批（2026-10-22 诊断修复批「本地点大文件触发重连」）──────────
   //
@@ -177,8 +171,7 @@ class HealthRoutesSpec extends FunSuite:
   //        （托管在中继 origin 下）的环回探测由此可读；其余 origin 照旧零头。
 
   private val RelayOrigin =
-    HealthRoutes
-      .canonicalOrigin(nebflow.shared.Branding.serverUrl)
+    HealthRoutes.canonicalOrigin(nebflow.shared.Branding.serverUrl)
       .getOrElse(sys.error("brand serverUrl must carry an origin"))
 
   test("loopback-info: bearer token answers the gateway port; no credential 403s"):
@@ -196,10 +189,7 @@ class HealthRoutesSpec extends FunSuite:
     assertEquals(anon.status, Status.Forbidden, "the port anchor is session-gated")
 
   test("CORS whitelist covers the relay origin (the console page probes loopback while served from the relay)"):
-    assert(
-      HealthRoutes.allowedProbeOrigins.contains(RelayOrigin),
-      s"whitelist must hold the relay origin: ${HealthRoutes.allowedProbeOrigins}"
-    )
+    assert(HealthRoutes.allowedProbeOrigins.contains(RelayOrigin), s"whitelist must hold the relay origin: ${HealthRoutes.allowedProbeOrigins}")
     val resp = serve(req(origin = Some(RelayOrigin)))
     assertEquals(resp.status, Status.Ok)
     assertEquals(header(resp, "Access-Control-Allow-Origin"), Some(RelayOrigin))
@@ -209,4 +199,3 @@ class HealthRoutesSpec extends FunSuite:
     val resp = serve(req(origin = Some(RelayOrigin), remote = Some(SpecRequests.Lan)))
     assertEquals(header(resp, "Access-Control-Allow-Origin"), None)
     assertEquals(header(resp, "Access-Control-Allow-Private-Network"), None)
-end HealthRoutesSpec

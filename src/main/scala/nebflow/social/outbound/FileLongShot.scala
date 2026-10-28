@@ -38,8 +38,7 @@ import scala.util.Try
  */
 object FileLongShot:
 
-  /**
-   * 可转换的文件类扩展名（小写、不带点）。html/htm 沿 [[WebPageShot.Extensions]]
+  /** 可转换的文件类扩展名（小写、不带点）。html/htm 沿 [[WebPageShot.Extensions]]
    * 的既有判定位（不复制第二份），md/markdown 是本批新增。不入 [[RichKind]]
    * （分类层的两张权威表不因降级能力而扩表——与 webshot batch 同一决定：本腿
    * 只在 Unknown 臂被读取）。
@@ -54,33 +53,26 @@ object FileLongShot:
   /** 一枪的墙钟预算（毫秒）。与 [[WebPageShot.DefaultTimeoutMs]] 同档。 */
   val DefaultTimeoutMs: Long = WebPageShot.DefaultTimeoutMs
 
-  /**
-   * 截图缝：`(原件, 输出 png) → Either[封闭原因, 实际产物]`。生产 =
-   * [[NodeShot]]；离线 spec 注入 fake；[[Unavailable]] 是「本机不可用」载体
-   * （直接落 Left，调用方退文本卡）。失败永不 raise——调用方要的是降级。
-   */
+  /** 截图缝：`(原件, 输出 png) → Either[封闭原因, 实际产物]`。生产 =
+    * [[NodeShot]]；离线 spec 注入 fake；[[Unavailable]] 是「本机不可用」载体
+    * （直接落 Left，调用方退文本卡）。失败永不 raise——调用方要的是降级。 */
   trait Renderer:
     def available: Boolean
     def shot(file: os.Path, outPng: os.Path): IO[Either[String, os.Path]]
 
-  /**
-   * 「本机没有转换能力」载体（HC-5 同款：响亮降级，不假装成功）。离线 spec
-   * 的默认注入面。
-   */
+  /** 「本机没有转换能力」载体（HC-5 同款：响亮降级，不假装成功）。离线 spec
+    * 的默认注入面。 */
   object Unavailable extends Renderer:
     def available: Boolean = false
-
     def shot(file: os.Path, outPng: os.Path): IO[Either[String, os.Path]] =
       IO.pure(Left(RichDegrade.Reason.EngineUnavailable))
 
-  /**
-   * 生产实现：按扩展名挑仓内 node playwright 脚本，进程缝整体复用
-   * [[WebPageShot.NodePlaywright]]（发现/预算/产物判定/排空/kill 全同款——
-   * 零第二份进程管理）。
-   */
+  /** 生产实现：按扩展名挑仓内 node playwright 脚本，进程缝整体复用
+    * [[WebPageShot.NodePlaywright]]（发现/预算/产物判定/排空/kill 全同款——
+    * 零第二份进程管理）。 */
   final class NodeShot(
-    nodeBin: String = "node",
-    timeoutMs: Long = DefaultTimeoutMs
+      nodeBin: String = "node",
+      timeoutMs: Long = DefaultTimeoutMs
   ) extends Renderer:
 
     private val htmlScript = WebPageShot.NodePlaywright.detectScriptNamed("social-html-shot.mjs")
@@ -93,11 +85,10 @@ object FileLongShot:
 
     def shot(file: os.Path, outPng: os.Path): IO[Either[String, os.Path]] =
       extensionOf(file.toString) match
-        case "html" | "htm" => htmlLeg.shot(file, outPng)
-        case "md" | "markdown" => mdLeg.shot(file, outPng)
+        case "html" | "htm"     => htmlLeg.shot(file, outPng)
+        case "md" | "markdown"  => mdLeg.shot(file, outPng)
         case other =>
           IO.pure(Left(s"not a convertible file class: ${if other.isEmpty then "<none>" else other}"))
-  end NodeShot
 
   // ───────────────────────── 去重台账（防轰炸） ─────────────────────────
 
@@ -135,9 +126,10 @@ object FileLongShot:
     def record(key: String): Unit = synchronized {
       ledger.remove(key)
       ledger.put(key, java.lang.Long.valueOf(System.currentTimeMillis()))
-      while ledger.size() > MaxEntries do
+      while ledger.size() > MaxEntries do {
         val eldest = ledger.keySet().iterator().next()
         ledger.remove(eldest)
+      }
     }
 
     /** spec 面：清空台账（进程级状态在套件间必须可重置）。 */
@@ -168,7 +160,8 @@ object FileLongShot:
       val text = new String(bytes, "UTF-8")
       val ext = extensionOf(p.toString)
       val raw =
-        if ext == "html" || ext == "htm" then titleOf(text).orElse(firstLineOf(stripTags(text)))
+        if ext == "html" || ext == "htm" then
+          titleOf(text).orElse(firstLineOf(stripTags(text)))
         else firstLineOf(text)
       raw.map(_.take(48).trim).filter(_.nonEmpty)
     }.toOption.flatten

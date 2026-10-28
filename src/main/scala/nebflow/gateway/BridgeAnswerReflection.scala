@@ -42,22 +42,18 @@ private[gateway] object BridgeAnswerReflection:
   def answersOf(payload: Json): Option[List[String]] =
     payload.hcursor.downField("answers").as[List[String]].toOption
 
-  /**
-   * 秘密槽明文泄漏判据（hub `secretValueInPlainAnswers` 的网关侧同构，只用于
-   * 行/帧脱敏方向）：任一秘密槽非空 ⇒ 整卡按拒收文案落盘/广播。合法回执占位
-   * （`(secret` 前缀，hub `complete` 出站形态）不算明文。
-   */
+  /** 秘密槽明文泄漏判据（hub `secretValueInPlainAnswers` 的网关侧同构，只用于
+    * 行/帧脱敏方向）：任一秘密槽非空 ⇒ 整卡按拒收文案落盘/广播。合法回执占位
+    * （`(secret` 前缀，hub `complete` 出站形态）不算明文。 */
   def plainLeakInSecretSlots(answers: List[String], secretIdxs: Set[Int]): Boolean =
     secretIdxs.exists(i => answers.lift(i).exists(a => a.nonEmpty && !a.startsWith("(secret")))
 
   /** 拒收文案（= web 腿 handleSecretAwareAnswer rowLines 的明文拒收行逐字同源）。 */
   val SecretLeakRefusedLine = "该题为安全输入题：明文作答未接收——请刷新页面后在桌面面板作答"
 
-  /**
-   * 行/帧共用的脱敏文本：秘密槽置空；无泄漏 ⇒ 其余槽 `'\n'` 连接（= web 腿
-   * handleAskUserAnswer :86 的 `answers.mkString("\n")` 同构）；有泄漏 ⇒ 拒收文案
-   * （值不落任何面）。
-   */
+  /** 行/帧共用的脱敏文本：秘密槽置空；无泄漏 ⇒ 其余槽 `'\n'` 连接（= web 腿
+    * handleAskUserAnswer :86 的 `answers.mkString("\n")` 同构）；有泄漏 ⇒ 拒收文案
+    * （值不落任何面）。 */
   def sanitizedText(answers: List[String], secretIdxs: Set[Int]): String =
     if plainLeakInSecretSlots(answers, secretIdxs) then SecretLeakRefusedLine
     else
@@ -65,20 +61,16 @@ private[gateway] object BridgeAnswerReflection:
         .map(i => if secretIdxs.contains(i) then "" else answers.lift(i).getOrElse(""))
         .mkString("\n")
 
-  /**
-   * ① 落库行：web 腿同款单一构造点。空白 requestId ⇒ answerOf 不标记（构造点既有
-   * 语义，AskUserAnswerPersistSpec ①）。非 askUser 形 ⇒ None。
-   */
+  /** ① 落库行：web 腿同款单一构造点。空白 requestId ⇒ answerOf 不标记（构造点既有
+    * 语义，AskUserAnswerPersistSpec ①）。非 askUser 形 ⇒ None。 */
   def rowFor(requestId: String, payload: Json, secretIdxs: Set[Int]): Option[UiMessage.User] =
     answersOf(payload).map { ans =>
       UiMessage.askUserAnswer(sanitizedText(ans, secretIdxs), requestId, System.currentTimeMillis())
     }
 
-  /**
-   * ② 翻面帧：前端 `onMessage('askUserAnsweredRemote')` → closeAskUserCard +
-   * removePendingAsk。`answerText` = 脱敏文本（活卡锁定行 = 刷新后历史卡作答行，
-   * 逐字一致；泄漏形态下同为拒收文案）。非 askUser 形 ⇒ None（不发帧）。
-   */
+  /** ② 翻面帧：前端 `onMessage('askUserAnsweredRemote')` → closeAskUserCard +
+    * removePendingAsk。`answerText` = 脱敏文本（活卡锁定行 = 刷新后历史卡作答行，
+    * 逐字一致；泄漏形态下同为拒收文案）。非 askUser 形 ⇒ None（不发帧）。 */
   def frame(sessionId: String, requestId: String, payload: Json, secretIdxs: Set[Int]): Option[Json] =
     answersOf(payload).map { ans =>
       Json.obj(

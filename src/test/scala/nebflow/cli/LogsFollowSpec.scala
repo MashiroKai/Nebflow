@@ -41,7 +41,7 @@ class LogsFollowSpec extends FunSuite:
     )
     LogsCommand.subcommands.head.run(ctx).unsafeRunSync() match
       case CliResult.Error(msg, _) => assert(msg.contains("follow"), msg)
-      case other => fail(s"expected Error, got $other")
+      case other                   => fail(s"expected Error, got $other")
   }
 
   // ── drainStep: incremental lines / partial hold-back / rotation ────────
@@ -69,7 +69,6 @@ class LogsFollowSpec extends FunSuite:
       assertEquals(l4, List("partial"))
       assertEquals(p4, f.length())
     finally os.remove.all(dir)
-    end try
   }
 
   test("drainStep: rotation (recreated smaller file) reopens from the head") {
@@ -115,7 +114,6 @@ class LogsFollowSpec extends FunSuite:
       assertEquals(printed.toList, List("PHASE2-FOLLOW-MARKER", "second line"))
       assert(!printed.contains("seed")) // start offset was at end-of-file
     finally os.remove.all(dir)
-    end try
   }
 
   test("followLoop: --grep filter keeps only matching lines") {
@@ -136,7 +134,6 @@ class LogsFollowSpec extends FunSuite:
         .unsafeRunSync()
       assertEquals(printed.toList, List("ERROR bad"))
     finally os.remove.all(dir)
-    end try
   }
 
   // ── existing pure helpers stay intact ──────────────────────────────────

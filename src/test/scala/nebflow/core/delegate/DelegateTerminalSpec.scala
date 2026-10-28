@@ -944,11 +944,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
           workOutcome == DelegateTerminal.Outcome.HoldForMerge,
           "a working seat with delivered commits flips too — the engine never runs merges itself (traffic-controller model)"
         )
-        assertEquals(
-          verdictLine("delegate-nebflow-wn"),
-          Some("ready-to-merge"),
-          "the working seat's verdict line flips as well"
-        )
+        assertEquals(verdictLine("delegate-nebflow-wn"), Some("ready-to-merge"), "the working seat's verdict line flips as well")
         assertEquals(queuedWn.map(_.branch), Some("delegate/delegate-nebflow-wn"), "the working seat is enqueued")
         assert(
           !GitWorktrees.isAncestor(workingRepo, "delegate/delegate-nebflow-wn", "main").contains(true),

@@ -59,16 +59,13 @@ class NeblinkRelayFrameSenderSendCycleSpec extends CatsEffectSuite:
 
   // ───────────────────── 假 socket（闸门式，完成时刻全控）─────────────────────
 
-  /**
-   * 可编程假 socket：`behavior` 逐发可换（正常完成 / 失败 future / 同步抛 /
-   * 手工完成的不完整 future），调用时刻逐发留 nanos 供顺序断言。
-   */
+  /** 可编程假 socket：`behavior` 逐发可换（正常完成 / 失败 future / 同步抛 /
+    * 手工完成的不完整 future），调用时刻逐发留 nanos 供顺序断言。 */
   private final class GateFakeWebSocket(outputClosed0: Boolean = false) extends WebSocket:
     val sent = new ConcurrentLinkedQueue[String]()
     val callNanos = new ConcurrentLinkedQueue[java.lang.Long]()
     @volatile var aborted: Boolean = false
     @volatile var outputClosed: Boolean = outputClosed0
-
     @volatile var behavior: () => CompletableFuture[WebSocket] =
       () => CompletableFuture.completedFuture(this)
 
@@ -78,25 +75,19 @@ class NeblinkRelayFrameSenderSendCycleSpec extends CatsEffectSuite:
       callNanos.add(System.nanoTime())
       sent.add(data.toString)
       behavior()
-
     override def sendBinary(data: java.nio.ByteBuffer, last: Boolean): CompletableFuture[WebSocket] =
       CompletableFuture.completedFuture(this)
-
     override def sendClose(code: Int, reason: String): CompletableFuture[WebSocket] =
       CompletableFuture.completedFuture(this)
     override def request(n: Long): Unit = ()
-
     override def sendPing(data: java.nio.ByteBuffer): CompletableFuture[WebSocket] =
       CompletableFuture.completedFuture(this)
-
     override def sendPong(data: java.nio.ByteBuffer): CompletableFuture[WebSocket] =
       CompletableFuture.completedFuture(this)
     override def getSubprotocol: String = ""
     override def isInputClosed: Boolean = false
     override def isOutputClosed: Boolean = outputClosed
     override def abort(): Unit = aborted = true
-
-  end GateFakeWebSocket
 
   private def failWith[A](e: Throwable, expect: String): IO[A] =
     IO.raiseError(new AssertionError(s"期望 $expect，实得：${e.getClass.getName}: ${Option(e.getMessage).getOrElse("")}", e))
@@ -105,8 +96,8 @@ class NeblinkRelayFrameSenderSendCycleSpec extends CatsEffectSuite:
   private def awaitFiber(fib: FiberIO[Unit]): IO[Unit] =
     fib.join.flatMap {
       case Outcome.Succeeded(_) => IO.unit
-      case Outcome.Errored(e) => IO.raiseError(e)
-      case Outcome.Canceled() => IO.canceled
+      case Outcome.Errored(e)   => IO.raiseError(e)
+      case Outcome.Canceled()   => IO.canceled
     }
 
   // T1 正常发送：一次入队、一次成功、零 abort。
@@ -126,7 +117,8 @@ class NeblinkRelayFrameSenderSendCycleSpec extends CatsEffectSuite:
     val sender = new RelayFrameSender(fake, sendTimeoutSec = 2, pendingRetryMillis = 5)
     val calls = new AtomicInteger(0)
     fake.behavior = () =>
-      if calls.incrementAndGet() == 1 then CompletableFuture.failedFuture(new IllegalStateException("Send pending"))
+      if calls.incrementAndGet() == 1 then
+        CompletableFuture.failedFuture(new IllegalStateException("Send pending"))
       else CompletableFuture.completedFuture(fake)
     sender.send("frame").map { _ =>
       assertEquals(fake.callCount, 2, "第一发被拒、重试一发成功")
@@ -161,7 +153,7 @@ class NeblinkRelayFrameSenderSendCycleSpec extends CatsEffectSuite:
           assertEquals(fake.aborted, false, "sender 自身无撕会话权限（abort 属隧道存活机制）")
         }
       case Left(other) => failWith(other, "IllegalStateException")
-      case Right(_) => IO.raiseError(new AssertionError("出向已关的拒接竟被吞掉——分流边界失守"))
+      case Right(_)    => IO.raiseError(new AssertionError("出向已关的拒接竟被吞掉——分流边界失守"))
     }
   }
 
@@ -178,7 +170,7 @@ class NeblinkRelayFrameSenderSendCycleSpec extends CatsEffectSuite:
           assertEquals(fake.aborted, false)
         }
       case Left(other) => failWith(other, "IOException")
-      case Right(_) => IO.raiseError(new AssertionError("真写失败竟被吞掉"))
+      case Right(_)    => IO.raiseError(new AssertionError("真写失败竟被吞掉"))
     }
   }
 
@@ -211,7 +203,6 @@ class NeblinkRelayFrameSenderSendCycleSpec extends CatsEffectSuite:
       _ <- IO(assertEquals(fake.callCount, 2, "B 在前驱完成后才入队（顺序由构造保证）"))
       _ <- IO(assertEquals(fake.aborted, false))
     yield ()
-    end for
   }
 
   // T7 排空超时＋记账保持：A 写停摆超时（×5 形态）→ B 排空超时给诚实错误 →
@@ -232,7 +223,7 @@ class NeblinkRelayFrameSenderSendCycleSpec extends CatsEffectSuite:
         case Left(e: TimeoutException) =>
           IO(assert(e.getMessage.contains("relay frame write did not complete within 1s"), s"A 消息须可读：${e.getMessage}"))
         case Left(other) => failWith(other, "TimeoutException（×5 形态）")
-        case Right(_) => IO.raiseError(new AssertionError("16 字节假写竟 1s 未完？夹具失效"))
+        case Right(_)    => IO.raiseError(new AssertionError("16 字节假写竟 1s 未完？夹具失效"))
       // B：前驱仍在飞 ⇒ 排空预算耗尽 ⇒ 诚实「前驱仍在飞」错误（不得用误导性
       // ISE 连坐）。
       b <- sender.send("B").attempt
@@ -240,7 +231,7 @@ class NeblinkRelayFrameSenderSendCycleSpec extends CatsEffectSuite:
         case Left(e: TimeoutException) =>
           IO(assert(e.getMessage.contains("previous relay frame still in flight"), s"B 消息须指认前驱：${e.getMessage}"))
         case Left(other) => failWith(other, "TimeoutException（排空超时）")
-        case Right(_) => IO.raiseError(new AssertionError("前驱在飞时 B 竟直接成功——排空语义失守"))
+        case Right(_)    => IO.raiseError(new AssertionError("前驱在飞时 B 竟直接成功——排空语义失守"))
       // 前驱恢复：A 的 wire 写完成。
       completedAt <- IO { val t = System.nanoTime(); f1.complete(fake); t }
       // C：必须先排空已恢复的前驱再入队——C 的 sendText 时刻 ≥ 前驱完成时刻
@@ -256,7 +247,6 @@ class NeblinkRelayFrameSenderSendCycleSpec extends CatsEffectSuite:
       _ <- IO(assertEquals(fake.callCount, 2, "A 一发 + C 一发；B 零 sendText（耗在排空上）"))
       _ <- IO(assertEquals(fake.aborted, false, "全链零撕会话"))
     yield ()
-    end for
   }
 
   // T8 拒接持续（占位不释放）⇒ 有界重试后给可读 positionTimeout，连接完好。
@@ -273,7 +263,7 @@ class NeblinkRelayFrameSenderSendCycleSpec extends CatsEffectSuite:
           assertEquals(fake.aborted, false, "预算耗尽也不撕会话")
         }
       case Left(other) => failWith(other, "TimeoutException")
-      case Right(_) => IO.raiseError(new AssertionError("持续拒接竟报成功"))
+      case Right(_)    => IO.raiseError(new AssertionError("持续拒接竟报成功"))
     }
   }
 
@@ -336,8 +326,6 @@ class NeblinkRelayFrameSenderSendCycleSpec extends CatsEffectSuite:
       t.start()
       t
 
-    end acceptor
-
     private def serve(s: Socket): Unit =
       try
         val request = readHeaders(s.getInputStream)
@@ -351,9 +339,7 @@ class NeblinkRelayFrameSenderSendCycleSpec extends CatsEffectSuite:
           val n = s.getInputStream.read(buf)
           if n < 0 then return
       catch case _: Throwable => ()
-      finally
-        try s.close()
-        catch case _: Throwable => ()
+      finally try s.close() catch case _: Throwable => ()
 
     private def readHeaders(in: java.io.InputStream): String =
       val sb = new StringBuilder
@@ -367,7 +353,7 @@ class NeblinkRelayFrameSenderSendCycleSpec extends CatsEffectSuite:
           case (1, '\n') => 2
           case (2, '\r') => 3
           case (3, '\n') => 4
-          case _ => 0
+          case _         => 0
         if state < 4 then b = in.read()
       sb.toString
 
@@ -390,10 +376,7 @@ class NeblinkRelayFrameSenderSendCycleSpec extends CatsEffectSuite:
       stopped = true
       try serverSocket.close()
       catch case _: Throwable => ()
-      clients.forEach(s =>
-        try s.close()
-        catch case _: Throwable => ()
-      )
+      clients.forEach(s => try s.close() catch case _: Throwable => ())
 
   end DelayedReadWsFixture
 
@@ -429,7 +412,7 @@ class NeblinkRelayFrameSenderSendCycleSpec extends CatsEffectSuite:
                 )
               )
             case Left(other) => failWith(other, "TimeoutException（×5 形态）")
-            case Right(_) => IO.raiseError(new AssertionError("16MiB 对 1.2s 沉默对端竟 1s 内写完——夹具失效"))
+            case Right(_)    => IO.raiseError(new AssertionError("16MiB 对 1.2s 沉默对端竟 1s 内写完——夹具失效"))
           _ <- IO(assert(!ws.isOutputClosed, "停摆超时不得撕会话（不撕会话钉，真 socket 面）"))
           second <- sender.send("""{"type":"pong"}""").attempt
           _ <- second match
@@ -438,10 +421,7 @@ class NeblinkRelayFrameSenderSendCycleSpec extends CatsEffectSuite:
               failWith(other, "成功（沉默期 1.2s 结束后前驱排空，小帧应存活）")
           _ <- IO(assert(!ws.isOutputClosed, "全链连接完好"))
         yield ()
-      program.guarantee(IO {
-        try ws.abort()
-        finally fix.close()
-      })
+      program.guarantee(IO { try ws.abort() finally fix.close() })
     }
   }
 
@@ -468,10 +448,7 @@ class NeblinkRelayFrameSenderSendCycleSpec extends CatsEffectSuite:
               failWith(other, "成功（拒接必须被重试吸收——修前此发即整周期失败 = W1 ×4 本体）")
           _ <- IO(assert(!ws.isOutputClosed, "撞位重试面零撕会话"))
         yield ()
-      program.guarantee(IO {
-        try ws.abort()
-        finally fix.close()
-      })
+      program.guarantee(IO { try ws.abort() finally fix.close() })
     }
   }
 

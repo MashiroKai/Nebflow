@@ -174,10 +174,8 @@ private[gateway] object ProviderProbe:
   // ProviderModelProbe reuses THIS module's error-face parsing (one parsing
   // truth for provider replies) through these two narrow, value-free helpers.
 
-  /**
-   * The provider's own error message when a 2xx body still carries an error
-   * envelope (zhipu 200-carrier precedent).
-   */
+  /** The provider's own error message when a 2xx body still carries an error
+    * envelope (zhipu 200-carrier precedent). */
   private[gateway] def errEnvelopeMessage(body: String): Option[String] =
     parser.parse(body).toOption.filter(isErrorEnvelope).flatMap(errorDetail)
 

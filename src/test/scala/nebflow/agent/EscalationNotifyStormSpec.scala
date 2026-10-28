@@ -40,11 +40,9 @@ class EscalationNotifyStormSpec extends CatsEffectSuite:
 
   /** 可控失败 mock：succeedRef=false 恒抛（provider down 场景），true 正常收尾。 */
   private class GatedFailLlm(counter: cats.effect.Ref[IO, Int], succeedRef: cats.effect.Ref[IO, Boolean])
-      extends LlmHandle[IO]:
-
+    extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
-
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -56,8 +54,6 @@ class EscalationNotifyStormSpec extends CatsEffectSuite:
         // 会把「冻结前两次调用」的节奏改成单调用冻结，不可用。
         case false => Stream.raiseError[IO](new RuntimeException("HTTP 429 rate limit exceeded"))
       }
-
-  end GatedFailLlm
 
   private def mkResources(
     system: ActorSystem,
@@ -337,7 +333,6 @@ class EscalationNotifyStormSpec extends CatsEffectSuite:
         other <- gate.admit("parent-y", t0)
         _ = assert(other.allow && other.suppressed == 0)
       yield ()
-      end for
     }
   }
 end EscalationNotifyStormSpec

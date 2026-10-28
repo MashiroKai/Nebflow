@@ -17,19 +17,10 @@ class ProviderModelProbeSpec extends munit.FunSuite:
   // ── 1. 纯函数面 ──────────────────────────────────────────────
 
   test("endpointFor: anthropic 拼 /v1/messages，openai 拼 /chat/completions，尾斜杠归一") {
-    assertEquals(
-      ProviderModelProbe.endpointFor(LlmProtocol.Anthropic, "https://api.commandcode.ai/provider/"),
-      "https://api.commandcode.ai/provider/v1/messages"
-    )
-    assertEquals(
-      ProviderModelProbe.endpointFor(LlmProtocol.OpenAI, "https://api.commandcode.ai/provider/v1/"),
-      "https://api.commandcode.ai/provider/v1/chat/completions"
-    )
+    assertEquals(ProviderModelProbe.endpointFor(LlmProtocol.Anthropic, "https://api.commandcode.ai/provider/"), "https://api.commandcode.ai/provider/v1/messages")
+    assertEquals(ProviderModelProbe.endpointFor(LlmProtocol.OpenAI, "https://api.commandcode.ai/provider/v1/"), "https://api.commandcode.ai/provider/v1/chat/completions")
     // 已带路径尾的 base 原样保留（适配器同款防双拼）。
-    assertEquals(
-      ProviderModelProbe.endpointFor(LlmProtocol.OpenAI, "https://x.ai/v1/chat/completions"),
-      "https://x.ai/v1/chat/completions"
-    )
+    assertEquals(ProviderModelProbe.endpointFor(LlmProtocol.OpenAI, "https://x.ai/v1/chat/completions"), "https://x.ai/v1/chat/completions")
   }
 
   test("requestBody: 1 token 最小调用，两协议同形，零凭据位") {
@@ -58,11 +49,7 @@ class ProviderModelProbeSpec extends munit.FunSuite:
 
   private def withStub[A](handler: com.sun.net.httpserver.HttpExchange => Unit)(f: String => A): A =
     val server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0)
-    server.createContext(
-      "/",
-      (exchange) =>
-        handler(exchange); exchange.close()
-    )
+    server.createContext("/", (exchange) => { handler(exchange); exchange.close() })
     server.start()
     try f(s"http://127.0.0.1:${server.getAddress.getPort}")
     finally server.stop(0)

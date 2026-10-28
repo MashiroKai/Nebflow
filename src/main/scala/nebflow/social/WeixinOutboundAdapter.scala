@@ -267,10 +267,10 @@ object WeixinOutboundAdapter:
    * [[buildSendJson]]).
    */
   def buildMediaGroupSendJson(
-    to: String,
-    images: List[String],
-    caption: Option[String] = None,
-    account: Option[String] = None
+      to: String,
+      images: List[String],
+      caption: Option[String] = None,
+      account: Option[String] = None
   ): Json =
     val base = List("to" -> to.asJson, "images" -> images.asJson) ++
       caption.map(c => "text" -> c.asJson).toList ++

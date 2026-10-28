@@ -31,13 +31,9 @@ class CanvasTabTombstoneSpec extends CatsEffectSuite:
 
   /** 从合并结果提取 tabs 的 id 序列。 */
   private def tabIds(merged: Json): Vector[String] =
-    merged.hcursor
-      .downField("tabs")
-      .as[Vector[Json]]
-      .getOrElse(Vector.empty)
-      .flatMap(
-        _.hcursor.downField("id").as[String].toOption
-      )
+    merged.hcursor.downField("tabs").as[Vector[Json]].getOrElse(Vector.empty).flatMap(
+      _.hcursor.downField("id").as[String].toOption
+    )
 
   private def tombRecs(merged: Json): Vector[Json] =
     merged.hcursor.downField("tombstones").as[Vector[Json]].getOrElse(Vector.empty)
@@ -46,14 +42,12 @@ class CanvasTabTombstoneSpec extends CatsEffectSuite:
     tombRecs(merged).find(_.hcursor.downField("id").as[String].toOption.contains(id))
 
   private def isActive(merged: Json, id: String): Boolean =
-    tombOf(merged, id)
-      .flatMap(t =>
-        for
-          c <- t.hcursor.downField("closedAt").as[Long].toOption
-          r = t.hcursor.downField("reopenedAt").as[Long].toOption
-        yield c > r.getOrElse(Long.MinValue)
-      )
-      .contains(true)
+    tombOf(merged, id).flatMap(t =>
+      for
+        c <- t.hcursor.downField("closedAt").as[Long].toOption
+        r = t.hcursor.downField("reopenedAt").as[Long].toOption
+      yield c > r.getOrElse(Long.MinValue)
+    ).contains(true)
 
   private val NOW: Long = 1792988000000L
 
@@ -68,10 +62,7 @@ class CanvasTabTombstoneSpec extends CatsEffectSuite:
   }
 
   test("merge validates v:2 payloads carrying tombstones/reopened (route contract)") {
-    val p = json(s"""{"v":2,"tabs":${tabsJs(
-        "a",
-        "b"
-      )},"tombstones":[{"id":"x","closedAt":1,"dev":"Win32"}],"reopened":[{"id":"x","reopenedAt":2}]}""")
+    val p = json(s"""{"v":2,"tabs":${tabsJs("a","b")},"tombstones":[{"id":"x","closedAt":1,"dev":"Win32"}],"reopened":[{"id":"x","reopenedAt":2}]}""")
     assertEquals(CanvasTabs.validate(p).isRight, true)
   }
 
@@ -157,9 +148,7 @@ class CanvasTabTombstoneSpec extends CatsEffectSuite:
   test("same-id close+reopen in one payload resolves by timestamps") {
     // 用户一次防抖窗内先关后开（同一 id）→ reopenedAt 更晚 → 保留。
     val put = json(
-      s"""{"v":2,"tabs":${tabsJs(
-          "a"
-        )},"tombstones":[{"id":"a","closedAt":${NOW - 500}}],"reopened":[{"id":"a","reopenedAt":$NOW}]}"""
+      s"""{"v":2,"tabs":${tabsJs("a")},"tombstones":[{"id":"a","closedAt":${NOW - 500}}],"reopened":[{"id":"a","reopenedAt":$NOW}]}"""
     )
     val merged = CanvasTabs.merge(None, put, NOW)
     assertEquals(tabIds(merged), Vector("a"))
@@ -203,16 +192,7 @@ class CanvasTabTombstoneSpec extends CatsEffectSuite:
     val merged = CanvasTabs.merge(None, put, NOW)
     assertEquals(tabIds(merged), Vector("a"))
     assertEquals(
-      merged.hcursor
-        .downField("tabs")
-        .as[Vector[Json]]
-        .toOption
-        .get
-        .head
-        .hcursor
-        .downField("title")
-        .as[String]
-        .toOption,
+      merged.hcursor.downField("tabs").as[Vector[Json]].toOption.get.head.hcursor.downField("title").as[String].toOption,
       Some("first")
     )
   }
@@ -221,11 +201,8 @@ class CanvasTabTombstoneSpec extends CatsEffectSuite:
     val prev = json(s"""{"v":2,"tabs":${tabsJs("b")},"tombstones":[{"id":"a","closedAt":$NOW}],"activeTabId":"a"}""")
     val put = json(s"""{"v":2,"tabs":${tabsJs("b")}}""")
     val merged = CanvasTabs.merge(Some(prev), put, NOW)
-    assertEquals(
-      merged.hcursor.downField("activeTabId").as[Option[String]].toOption,
-      Some(None),
-      "tombstoned activeTabId must be dropped"
-    )
+    assertEquals(merged.hcursor.downField("activeTabId").as[Option[String]].toOption, Some(None),
+      "tombstoned activeTabId must be dropped")
   }
 
   test("activeTabId from prev survives a put that omits it") {
@@ -239,15 +216,15 @@ class CanvasTabTombstoneSpec extends CatsEffectSuite:
 
   test("validate rejects malformed tombstones/reopened arrays") {
     val bad = List(
-      s"""{"v":2,"tabs":[],"tombstones":{"id":"x","closedAt":1}}""", // 非数组
-      s"""{"v":2,"tabs":[],"tombstones":[{"closedAt":1}]}""", // 缺 id
-      s"""{"v":2,"tabs":[],"tombstones":[{"id":"","closedAt":1}]}""", // 空 id
-      s"""{"v":2,"tabs":[],"tombstones":[{"id":"x"}]}""", // 缺 closedAt
-      s"""{"v":2,"tabs":[],"tombstones":[{"id":"x","closedAt":-5}]}""", // 负时间戳
-      s"""{"v":2,"tabs":[],"tombstones":[{"id":"x","closedAt":"now"}]}""", // 非数字
-      s"""{"v":2,"tabs":[],"tombstones":[{"id":"x","closedAt":1,"dev":7}]}""", // dev 非字符串
-      s"""{"v":2,"tabs":[],"reopened":[{"id":"x"}]}""", // reopened 缺 reopenedAt
-      s"""{"v":2,"tabs":[],"reopened":[{"id":"x","reopenedAt":null}]}""" // null 时间戳
+      s"""{"v":2,"tabs":[],"tombstones":{"id":"x","closedAt":1}}""",              // 非数组
+      s"""{"v":2,"tabs":[],"tombstones":[{"closedAt":1}]}""",                     // 缺 id
+      s"""{"v":2,"tabs":[],"tombstones":[{"id":"","closedAt":1}]}""",             // 空 id
+      s"""{"v":2,"tabs":[],"tombstones":[{"id":"x"}]}""",                         // 缺 closedAt
+      s"""{"v":2,"tabs":[],"tombstones":[{"id":"x","closedAt":-5}]}""",           // 负时间戳
+      s"""{"v":2,"tabs":[],"tombstones":[{"id":"x","closedAt":"now"}]}""",        // 非数字
+      s"""{"v":2,"tabs":[],"tombstones":[{"id":"x","closedAt":1,"dev":7}]}""",    // dev 非字符串
+      s"""{"v":2,"tabs":[],"reopened":[{"id":"x"}]}""",                           // reopened 缺 reopenedAt
+      s"""{"v":2,"tabs":[],"reopened":[{"id":"x","reopenedAt":null}]}""",         // null 时间戳
     )
     bad.foreach { s =>
       assert(CanvasTabs.validate(json(s)).isLeft, s"must reject: $s")
@@ -255,11 +232,9 @@ class CanvasTabTombstoneSpec extends CatsEffectSuite:
   }
 
   test("validate rejects over-limit tombstones/reopened arrays (anti-abuse)") {
-    val many =
-      (0 until CanvasTabs.MaxTombstoneInput + 1).map(i => s"""{"id":"x$i","closedAt":1}""").mkString("[", ",", "]")
+    val many = (0 until CanvasTabs.MaxTombstoneInput + 1).map(i => s"""{"id":"x$i","closedAt":1}""").mkString("[", ",", "]")
     assert(CanvasTabs.validate(json(s"""{"v":2,"tabs":[],"tombstones":$many}""")).isLeft)
-    val manyR =
-      (0 until CanvasTabs.MaxTombstoneInput + 1).map(i => s"""{"id":"x$i","reopenedAt":1}""").mkString("[", ",", "]")
+    val manyR = (0 until CanvasTabs.MaxTombstoneInput + 1).map(i => s"""{"id":"x$i","reopenedAt":1}""").mkString("[", ",", "]")
     assert(CanvasTabs.validate(json(s"""{"v":2,"tabs":[],"reopened":$manyR}""")).isLeft)
   }
 
@@ -339,4 +314,3 @@ class CanvasTabTombstoneSpec extends CatsEffectSuite:
       assertEquals(tabIds(merged), Vector("b"), "重启后陈旧全量 PUT（对端广播同页签）仍不可复活")
       assert(isActive(merged, "a"), "重启后墓碑仍生效")
   }
-end CanvasTabTombstoneSpec

@@ -71,11 +71,7 @@ class AgentLibraryFlowsSpec extends CatsEffectSuite:
     ) { lib =>
       lib.get("Nebula").map {
         case Some(defn) =>
-          assertEquals(
-            defn.flows,
-            Nil,
-            "converged names resolve from code: flows comes from BuiltinAgents (Nil), not the disk"
-          )
+          assertEquals(defn.flows, Nil, "converged names resolve from code: flows comes from BuiltinAgents (Nil), not the disk")
           assertEquals(
             defn.skills,
             List("*"),

@@ -42,8 +42,6 @@ class AgentSessionSyncSpec extends CatsEffectSuite:
     )
     os.write(dir / "devices.json", json.noSpaces)
 
-  end writePairing
-
   private def mkTask(
     taskId: String = "delegate-abc123",
     status: String = "running",
@@ -69,10 +67,7 @@ class AgentSessionSyncSpec extends CatsEffectSuite:
       statusAt = statusAt
     )
 
-  private def signed(
-    p: AgentSessionSync.SessionPayload,
-    key: String = "shared-key-1"
-  ): AgentSessionSync.SessionPayload =
+  private def signed(p: AgentSessionSync.SessionPayload, key: String = "shared-key-1"): AgentSessionSync.SessionPayload =
     p.copy(sig = nebflow.core.device.DeviceHmac.sign(key, AgentSessionSync.canonicalOf(p)))
 
   // ── 载荷：构建 → 编码 → 宽容解析 roundtrip ──────────────────────────────────
@@ -93,9 +88,7 @@ class AgentSessionSyncSpec extends CatsEffectSuite:
   test("encode/parse roundtrip preserves every field; wrong kind / missing sig parses to None"):
     val unsigned = AgentSessionSync.buildPayload(
       mkTask(status = "completed", completedAt = Some(2_000L), statusAt = Some(2_000L), retryCount = 2),
-      "kai",
-      "KAI",
-      1_800_000_000_000L
+      "kai", "KAI", 1_800_000_000_000L
     )
     val signedP = signed(unsigned)
     assertEquals(AgentSessionSync.parsePayload(AgentSessionSync.encodePayload(signedP)), Some(signedP))
@@ -133,9 +126,7 @@ class AgentSessionSyncSpec extends CatsEffectSuite:
   test("payload bytes stay under the 2KB summary gate even with a maxed title"):
     val maxed = AgentSessionSync.buildPayload(
       mkTask(description = "t" * 1000),
-      "device-with-a-long-name-0123456789abcdef",
-      "Device With A Long Name",
-      1_800_000_000_000L
+      "device-with-a-long-name-0123456789abcdef", "Device With A Long Name", 1_800_000_000_000L
     )
     assert(AgentSessionSync.payloadBytes(maxed) < 2048, s"bytes=${AgentSessionSync.payloadBytes(maxed)}")
 
@@ -199,33 +190,23 @@ class AgentSessionSyncSpec extends CatsEffectSuite:
 
   // ── UI 帧：终态揭示窗 + 墓碑过滤 + 在线角标 ─────────────────────────────────
 
-  test(
-    "remoteRowsFrame: in-flight always; terminal within reveal window; old terminal/tombstone excluded; online flag carried"
-  ):
+  test("remoteRowsFrame: in-flight always; terminal within reveal window; old terminal/tombstone excluded; online flag carried"):
     reset() *>
-      IO.delay(writePairing("kai" -> "k")) *> IO
-        .delay {
-          val now = System.currentTimeMillis()
-          val s = RemoteAgentSessions.at(None)
-          AgentSessionSync.store = s
-          AgentSessionSync.onlineFn = _ => IO.pure(false) // 断联语义：离线角标
-          val running = mkTask(taskId = "delegate-run", status = "running", statusAt = Some(now))
-          val freshDone =
-            mkTask(taskId = "delegate-done", status = "completed", statusAt = Some(now), completedAt = Some(now - 1000))
-          val oldDone = mkTask(
-            taskId = "delegate-old",
-            status = "completed",
-            statusAt = Some(now - 60_000),
-            completedAt = Some(now - 60_000)
-          )
-          val removed = mkTask(taskId = "delegate-gone", status = SubAgentTaskStore.StatusRemoved, statusAt = Some(now))
-          (now, List(running, freshDone, oldDone, removed))
-        }
+      IO.delay(writePairing("kai" -> "k")) *> IO.delay {
+        val now = System.currentTimeMillis()
+        val s = RemoteAgentSessions.at(None)
+        AgentSessionSync.store = s
+        AgentSessionSync.onlineFn = _ => IO.pure(false) // 断联语义：离线角标
+        val running = mkTask(taskId = "delegate-run", status = "running", statusAt = Some(now))
+        val freshDone = mkTask(taskId = "delegate-done", status = "completed", statusAt = Some(now), completedAt = Some(now - 1000))
+        val oldDone = mkTask(taskId = "delegate-old", status = "completed", statusAt = Some(now - 60_000), completedAt = Some(now - 60_000))
+        val removed = mkTask(taskId = "delegate-gone", status = SubAgentTaskStore.StatusRemoved, statusAt = Some(now))
+        (now, List(running, freshDone, oldDone, removed))
+      }
         .flatMap { case (now, rows) =>
           val s = RemoteAgentSessions.at(None)
           AgentSessionSync.store = s // 复验批注：接缝必须指向**本腿**播种的实例（第一腿 delay 里那个是空仓）
-          val seeded =
-            rows.foldLeft(IO.unit)((acc, t) => acc *> s.apply(AgentSessionSync.buildPayload(t, "kai", "KAI", now)).void)
+          val seeded = rows.foldLeft(IO.unit)((acc, t) => acc *> s.apply(AgentSessionSync.buildPayload(t, "kai", "KAI", now)).void)
           seeded *>
             AgentSessionSync.remoteRowsFrame(now).flatMap {
               case None => IO.raiseError(new AssertionError("expected a non-empty frame"))
@@ -234,8 +215,7 @@ class AgentSessionSyncSpec extends CatsEffectSuite:
                   val agents = frame.hcursor.downField("agents").as[List[Json]].toOption.get
                   val ids = agents.map(_.hcursor.downField("sessionId").as[String].toOption.get)
                   assertEquals(ids.sorted, List("delegate-done", "delegate-run")) // 旧终态 + 墓碑不进帧
-                  val runRow =
-                    agents.find(_.hcursor.downField("sessionId").as[String].toOption.get == "delegate-run").get
+                  val runRow = agents.find(_.hcursor.downField("sessionId").as[String].toOption.get == "delegate-run").get
                   assertEquals(runRow.hcursor.downField("deviceOnline").as[Boolean].toOption.get, false)
                   assertEquals(runRow.hcursor.downField("deviceName").as[String].toOption.get, "KAI")
                 }
@@ -260,26 +240,24 @@ class AgentSessionSyncSpec extends CatsEffectSuite:
         AgentSessionSync.deviceNameFn = IO.pure("SELF")
         AgentSessionSync.allTasksFn = IO.pure(List(mkTask(taskId = "delegate-1"), mkTask(taskId = "delegate-2")))
         sent
-      }.flatMap { sent =>
-        AgentSessionSync.pushTask(mkTask(taskId = "delegate-9")) *>
-          AgentSessionSync.pushAllSessions() *>
-          IO {
-            // push 2 帧（peerA/peerB）+ reconcile 4 帧（2 会话 × 2 目标）
-            assertEquals(sent.count(_._1 == "peerA"), 3)
-            assertEquals(sent.count(_._1 == "peerB"), 3)
-            val payloads = sent.map { case (t, j) => t -> AgentSessionSync.parsePayload(j).get }
-            // 每份都按「本机与该目标的配对 key」签署（逐对端签署的可观测差异）。
-            payloads.foreach { case (t, p) =>
-              val expectedKey = if t == "peerA" then "keyA" else "keyB"
-              assertEquals(p.sig, nebflow.core.device.DeviceHmac.sign(expectedKey, AgentSessionSync.canonicalOf(p)))
-              assertEquals(p.deviceName, "SELF")
-            }
-            assertEquals(
-              payloads.map(_._2.sessionId).distinct.sorted.toList,
-              List("delegate-1", "delegate-2", "delegate-9")
-            )
-          }
       }
+        .flatMap { sent =>
+          AgentSessionSync.pushTask(mkTask(taskId = "delegate-9")) *>
+            AgentSessionSync.pushAllSessions() *>
+            IO {
+              // push 2 帧（peerA/peerB）+ reconcile 4 帧（2 会话 × 2 目标）
+              assertEquals(sent.count(_._1 == "peerA"), 3)
+              assertEquals(sent.count(_._1 == "peerB"), 3)
+              val payloads = sent.map { case (t, j) => t -> AgentSessionSync.parsePayload(j).get }
+              // 每份都按「本机与该目标的配对 key」签署（逐对端签署的可观测差异）。
+              payloads.foreach { case (t, p) =>
+                val expectedKey = if t == "peerA" then "keyA" else "keyB"
+                assertEquals(p.sig, nebflow.core.device.DeviceHmac.sign(expectedKey, AgentSessionSync.canonicalOf(p)))
+                assertEquals(p.deviceName, "SELF")
+              }
+              assertEquals(payloads.map(_._2.sessionId).distinct.sorted.toList, List("delegate-1", "delegate-2", "delegate-9"))
+            }
+        }
 
   test("unwired sync is a no-op (single-machine form)"):
     IO.delay {
@@ -294,30 +272,26 @@ class AgentSessionSyncSpec extends CatsEffectSuite:
 
   test("handlePayload: verified frame applies + broadcasts; bad sig rejected silently; stale frame no broadcast"):
     reset() *>
-      IO.delay(writePairing("kai" -> "shared-key-1", "mac" -> "shared-key-1")) *> IO
-        .delay {
-          broadcasts.clear()
-          val s = RemoteAgentSessions.at(None)
-          AgentSessionSync.store = s
-          AgentSessionSync.panelBroadcastFn = j => IO { broadcasts.add(j); () }
-          AgentSessionSync.onlineFn = _ => IO.pure(true)
-          val nowMs = System.currentTimeMillis()
-          val good = AgentSessionSync.encodePayload(
-            AgentSessionSync.signedFor(AgentSessionSync.buildPayload(mkTask(), "kai", "KAI", nowMs), "mac")
-          )
-          // 伪帧：改 status 不改 sig
-          val forged = good.deepMerge(Json.obj("status" -> "failed".asJson))
-          // 旧帧：updatedAt 严格小于已收行
-          val staleUnsigned = AgentSessionSync
-            .buildPayload(mkTask(), "kai", "KAI", nowMs)
-            .copy(updatedAt = -1L)
-          val stale = AgentSessionSync.encodePayload(
-            staleUnsigned.copy(sig =
-              nebflow.core.device.DeviceHmac.sign("shared-key-1", AgentSessionSync.canonicalOf(staleUnsigned))
-            )
-          )
-          (good, forged, stale)
-        }
+      IO.delay(writePairing("kai" -> "shared-key-1", "mac" -> "shared-key-1")) *> IO.delay {
+        broadcasts.clear()
+        val s = RemoteAgentSessions.at(None)
+        AgentSessionSync.store = s
+        AgentSessionSync.panelBroadcastFn = j => IO { broadcasts.add(j); () }
+        AgentSessionSync.onlineFn = _ => IO.pure(true)
+        val nowMs = System.currentTimeMillis()
+        val good = AgentSessionSync.encodePayload(
+          AgentSessionSync.signedFor(AgentSessionSync.buildPayload(mkTask(), "kai", "KAI", nowMs), "mac")
+        )
+        // 伪帧：改 status 不改 sig
+        val forged = good.deepMerge(Json.obj("status" -> "failed".asJson))
+        // 旧帧：updatedAt 严格小于已收行
+        val staleUnsigned = AgentSessionSync.buildPayload(mkTask(), "kai", "KAI", nowMs)
+          .copy(updatedAt = -1L)
+        val stale = AgentSessionSync.encodePayload(
+          staleUnsigned.copy(sig = nebflow.core.device.DeviceHmac.sign("shared-key-1", AgentSessionSync.canonicalOf(staleUnsigned)))
+        )
+        (good, forged, stale)
+      }
         .flatMap { case (good, forged, stale) =>
           AgentSessionSync.handlePayload(good) *>
             IO {
@@ -349,41 +323,42 @@ class AgentSessionSyncSpec extends CatsEffectSuite:
         val store = new SubAgentTaskStore(tempRoot / "subagent-tasks")
         store.setWriteHook(t => IO { fired.add(t); () })
         store
-      }.flatMap { store =>
-        val t0 = mkTask(taskId = "delegate-x", spawnedAt = 5_000L, statusAt = None)
-        store.recordTask(t0) *>
-          IO.sleep(150.millis) *>
-          IO {
-            assertEquals(fired.size(), 1)
-            assertEquals(fired.get(0).taskId, "delegate-x")
-            assertEquals(fired.get(0).statusAt, Some(5_000L)) // recordTask 补缺省戳
-          } *>
-          store.updateStatus("root-1", "delegate-x", "completed", completedAt = Some(6_000L)) *>
-          IO.sleep(150.millis) *>
-          IO {
-            assertEquals(fired.size(), 2)
-            assertEquals(fired.get(1).status, "completed")
-            assertEquals(fired.get(1).completedAt, Some(6_000L))
-            assert(fired.get(1).statusAt.nonEmpty) // updateStatus 刷新 statusAt
-          } *>
-          store.removeTask("root-1", "delegate-x") *>
-          IO.sleep(150.millis) *>
-          IO {
-            assertEquals(fired.size(), 3)
-            assertEquals(fired.get(2).status, SubAgentTaskStore.StatusRemoved) // 墓碑
-          } *>
-          store.recordTask(mkTask(taskId = "delegate-y", spawnedAt = 7_000L, statusAt = Some(7_000L))) *>
-          store.cancelRunningForParent("root-1", "cascade") *>
-          IO.sleep(150.millis) *>
-          IO {
-            // 复验批注（batchA 2026-10-27）：recordTask(y) 本身也是一次记账写入 ⇒
-            // 钩照发（第 4 发）；cancelRunningForParent 级联取消 y 是第 5 发 ——
-            // 原稿漏数 recordTask 腿（期望 4 实得 5）。
-            assertEquals(fired.size(), 5)
-            assertEquals(fired.get(3).taskId, "delegate-y") // record 腿
-            assertEquals(fired.get(4).status, "cancelled") // 级联取消腿
-          }
       }
+        .flatMap { store =>
+          val t0 = mkTask(taskId = "delegate-x", spawnedAt = 5_000L, statusAt = None)
+          store.recordTask(t0) *>
+            IO.sleep(150.millis) *>
+            IO {
+              assertEquals(fired.size(), 1)
+              assertEquals(fired.get(0).taskId, "delegate-x")
+              assertEquals(fired.get(0).statusAt, Some(5_000L)) // recordTask 补缺省戳
+            } *>
+            store.updateStatus("root-1", "delegate-x", "completed", completedAt = Some(6_000L)) *>
+            IO.sleep(150.millis) *>
+            IO {
+              assertEquals(fired.size(), 2)
+              assertEquals(fired.get(1).status, "completed")
+              assertEquals(fired.get(1).completedAt, Some(6_000L))
+              assert(fired.get(1).statusAt.nonEmpty) // updateStatus 刷新 statusAt
+            } *>
+            store.removeTask("root-1", "delegate-x") *>
+            IO.sleep(150.millis) *>
+            IO {
+              assertEquals(fired.size(), 3)
+              assertEquals(fired.get(2).status, SubAgentTaskStore.StatusRemoved) // 墓碑
+            } *>
+            store.recordTask(mkTask(taskId = "delegate-y", spawnedAt = 7_000L, statusAt = Some(7_000L))) *>
+            store.cancelRunningForParent("root-1", "cascade") *>
+            IO.sleep(150.millis) *>
+            IO {
+              // 复验批注（batchA 2026-10-27）：recordTask(y) 本身也是一次记账写入 ⇒
+              // 钩照发（第 4 发）；cancelRunningForParent 级联取消 y 是第 5 发 ——
+              // 原稿漏数 recordTask 腿（期望 4 实得 5）。
+              assertEquals(fired.size(), 5)
+              assertEquals(fired.get(3).taskId, "delegate-y") // record 腿
+              assertEquals(fired.get(4).status, "cancelled") // 级联取消腿
+            }
+        }
 
   test("SubAgentTaskStore without hook stays no-op (existing single-machine behavior)"):
     reset() *>

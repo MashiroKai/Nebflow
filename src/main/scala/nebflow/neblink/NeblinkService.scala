@@ -486,16 +486,12 @@ class NeblinkService private (
   def addDataHandler(handler: Json => IO[Unit]): IO[Unit] =
     // P6 步2 判别读数（2026-10-14）：注册即报「注册后表规模 + 实例指纹」，与分发面
     // 「handlers=N svc=…」对照——判「表丢失」「注册进别实例」「同实例正常」三态。
-    dataHandlers
-      .modify { l =>
-        val n = l :+ handler
-        (n, n.size)
-      }
-      .flatMap { sizeAfter =>
-        IO.blocking(
-          logger.infoSync(s"P6 probe: addDataHandler size-after=$sizeAfter svc=${System.identityHashCode(this)}")
-        )
-      }
+    dataHandlers.modify { l =>
+      val n = l :+ handler
+      (n, n.size)
+    }.flatMap { sizeAfter =>
+      IO.blocking(logger.infoSync(s"P6 probe: addDataHandler size-after=$sizeAfter svc=${System.identityHashCode(this)}"))
+    }
 
   /** Forward an incoming WS data message to all registered handlers. */
   private[nebflow] def handleDataMessage(payload: Json): IO[Unit] =
@@ -507,12 +503,10 @@ class NeblinkService private (
       // 却无 DeviceDelegate 入口日志时，用 handler 表规模判别「表空」还是「表非空但
       // DeviceDelegate 缺席」）。分发语义零改动。
       // ⚠ 冲突面：本文件在作者 4 件 WIP 内，合并时将与其 WIP 冲突。
-      IO.blocking(
-        logger.debugSync(
-          s"Data frame received: channel=${payload.hcursor.downField("channel").as[String].getOrElse("?")} " +
-            s"bytes=${payload.noSpaces.length} handlers=${handlers.size} svc=${System.identityHashCode(this)}"
-        )
-      ) *>
+      IO.blocking(logger.debugSync(
+        s"Data frame received: channel=${payload.hcursor.downField("channel").as[String].getOrElse("?")} " +
+          s"bytes=${payload.noSpaces.length} handlers=${handlers.size} svc=${System.identityHashCode(this)}"
+      )) *>
         (if handlers.isEmpty then
            // A data frame with NO registered handler is an integration fault
            // (the sender believed the channel live) — never silently dropped.
@@ -523,9 +517,7 @@ class NeblinkService private (
          else
            // 注：此处的 logger.debug（IO 版）在 handleErrorWith 链内会真跑，勿改
            // Sync 变体（类型不符且不必要）——步2 复核留痕。
-           handlers.traverse_(
-             _.apply(payload).handleErrorWith(e => logger.debug(s"Data handler error: ${e.getMessage}"))
-           ))
+           handlers.traverse_(_.apply(payload).handleErrorWith(e => logger.debug(s"Data handler error: ${e.getMessage}"))))
     }
 
   /**
