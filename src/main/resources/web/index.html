@@ -491,6 +491,18 @@
         <button id="conflict-replace">Replace</button>
       </div>
     </div>
+    <!-- 控制台单实例接管模态（2026-10-27 批）：被移位面的强制二选一（退出/重新接管）
+         + 退出面（重入门）。语义与既有模态族不同——Escape/遮罩点击不关闭（互斥权的
+         裁决点不可误关）。渲染单点 = takeoverModal.js。 -->
+    <div id="takeover-box">
+      <div id="takeover-title">Console opened elsewhere</div>
+      <div id="takeover-msg"></div>
+      <div id="takeover-actions">
+        <button id="takeover-exit">Exit</button>
+        <button id="takeover-retake">Retake Control</button>
+        <button id="takeover-reenter" hidden>Re-enter</button>
+      </div>
+    </div>
   </div>
   <!-- Agent Editor Modal — retired 2026-09-06 (tool-face retirement batch):
        per-agent editing lives in the Canvas detail tab (agentManager.js). -->

@@ -72,6 +72,9 @@ import { initMicOrb } from './micOrb.js';
 // 挂 liveSource + boot 首刷 + WS 触发防刷/重连对账。渲染面（taskList/delegateChainView
 // 读取口调用）零改动；夹具在场 = stub 读取口恒夹具优先（harness 兼容缝）。
 import './delegateChainProvider.js';
+// 控制台单实例批（2026-10-27）：接管独占客户端腿——模块副作用 = 注册 takeover/
+// takeoverResult 帧消费 + 接管模态按钮接线（叶子模块，只依赖 ws.js/state/i18n）。
+import './takeoverModal.js';
 // delegate-ui 批（2026-10-08 · 定稿蓝本 §1.2）：面板两级化（C2/R6）经 stub 读取口
 // 取 G1 编排模式（rows）与 G3 星型子代理投影（children）——读 port 单缝，禁渲染面
 // 直连 WS/REST（数据权威恒在 provider 镜像）。

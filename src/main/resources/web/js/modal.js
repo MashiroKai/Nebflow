@@ -11,6 +11,15 @@ import { bindImeGuard, isImeComposing } from './imeGuard.js';
 import { statusIcon } from './utils.js';
 
 // ---------- Session Modals ----------
+// 控制台单实例批（2026-10-27）：接管模态（#takeover-box，takeoverModal.js 持渲染）
+// 在场时，全局关闭钩子（Escape / 遮罩点击 / hideModals）必须绕行——强制二选一是
+// 互斥权的裁决点，不可被全局钩子误收。DOM 在场判别 = 零模块耦合（modal.js ←
+// takeoverModal.js 反向 import 会成环）。
+function takeoverBlocking() {
+  const box = document.getElementById('takeover-box');
+  return !!box && box.style.display === 'block';
+}
+
 export function showNewSessionModal() {
   const { modalBox, deleteBox, modalInput, modalOverlay } = state.dom;
   deleteBox.style.display = 'none';
@@ -21,6 +30,7 @@ export function showNewSessionModal() {
 }
 
 export function hideModals() {
+  if (takeoverBlocking()) return; // 接管模态在场：不让全局关闭路径摘它的面
   state.dom.modalOverlay.classList.remove('on');
 }
 
@@ -323,6 +333,7 @@ export function initModals() {
   // overlay closes it as Cancel (must not strand a pending import).
   modalOverlay.onclick = (e) => {
     if (e.target !== modalOverlay) return;
+    if (takeoverBlocking()) return; // 接管模态：遮罩点击不关闭（强制二选一）
     if (conflictCallbacks) resolveConflict('cancel');
     else hideModals();
   };
@@ -330,6 +341,7 @@ export function initModals() {
   // Escape: conflict open → Cancel; otherwise close whichever modal is up.
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
+    if (takeoverBlocking()) return; // 接管模态：Escape 不关闭（强制二选一）
     if (conflictCallbacks) resolveConflict('cancel');
     else hideModals();
   });

@@ -175,6 +175,13 @@ function offlineQueuedCount() {
 function updateConnBanner() {
   const el = document.getElementById('conn-banner');
   if (!el) return;
+  // 控制台单实例批：退出面在场 ⇒ 本页已主动让位断开、不再重连——横幅不得谎报
+  // 「正在重连」（退出面自身即当前唯一事实面）。
+  if (state.takeoverExited) {
+    el.classList.remove('show');
+    el.classList.add('hidden');
+    return;
+  }
   if (state.connected) {
     el.classList.remove('show');
     el.classList.add('hidden');
@@ -297,6 +304,14 @@ const GLOBAL_MSG_TYPES = new Set([
   // 把用户正在看的视图抢走。消费点 = main.js（applyPendingAskSnapshot，零
   // view 依赖）。
   'pendingAsksSnapshot',
+  // 控制台单实例批（2026-10-27）：接管独占两帧——均无 sessionId 的**本连接**直回/
+  // 定向帧。🔴 必须入 GLOBAL（remoteAgents 同律）：否则会被下方视图路由当会话内
+  // 事件 ⇒ setActiveView(primary) 抢走正在看的视图。
+  //   takeover        服务端→被移位实例（ConsoleTakeover fresh-claim 翻位 / 旧主
+  //                   回连 superseded 通知）：弹「控制台已在其他位置打开」模态
+  //                   （消费点 = takeoverModal.js）。
+  //   takeoverResult  【重新接管】的回执（ok ⇒ 收模态回 active）。
+  'takeover', 'takeoverResult',
 ]);
 const TERMINAL_MSG_TYPES = new Set([
   'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',
@@ -1075,6 +1090,9 @@ export function connect() {
     syncSendButtonConnState();
     disconnectCallbacks.forEach(cb => { try { cb(); } catch (e) { console.error('[ws] disconnect callback error:', e); } });
     if (state.heartbeat) { clearInterval(state.heartbeat); state.heartbeat = null; }
+    // 控制台单实例批（takeoverModal.js 置旗标）：用户点了【退出】——本页主动让位，
+    // 不重连、不落 remint/重登链（被踢面退出到可一键重入门：退出面【重新进入】= reload）。
+    if (state.takeoverExited) return;
     if (!opened) {
       // Handshake rejected before the socket ever opened. First try the
       // silent host-session re-establishment (fresh ticket → redemption →
