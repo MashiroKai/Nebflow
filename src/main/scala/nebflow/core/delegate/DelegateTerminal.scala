@@ -621,9 +621,15 @@ object DelegateTerminal:
     // write-through 已持久——「会话终→引擎实例灭＋落盘状态存」）。幂等：外部执行器腿
     // / 未挂载 id = 零动作。ready-to-merge 停靠（HoldForMerge）不经本清理面 ⇒ 宿主照常
     // 存活等合并轮，合并轮终态仍走这里统一卸载。
+    // 双模式批（2026-10-28 · 设计 §6 第 4 步）：dispatcher 腿追加速度摘要先行——
+    // 宿主仍在册时 sweep 出库 + chain-archived 审计落定，随后才 unmount；unmount 之后
+    // fork 宽限删除 fiber（graceMs 后双闸校验：未重挂 ∧ 已归档 ⇒ 删作用域目录）。
+    // kernel/闸关 = 本段全部分叉失效（现状逐字节）。
+    val dispatcherLifecycle = DelegateFlowMapLifecycle.applies(record)
+    val summaryFlush = if dispatcherLifecycle then DelegateFlowMapLifecycle.flushBeforeUnmount(delegateId) else IO.unit
     val hostUnmount =
-      nebflow.core.project.DelegateFlowHosts
-        .unmount(delegateId)
+      (summaryFlush *> nebflow.core.project.DelegateFlowHosts
+        .unmount(delegateId))
         .handleErrorWith(e => IO(logger.warn(s"delegate flow-host unmount failed: ${e.getMessage}")))
     // jev-plugins 批 #1226：分配插件的 MCP 引用回收（pluginMcp.acquire/release 随
     // delegate 生命周期——release 是全终态汇合点；幂等 no-op：未分配/外部执行器腿
@@ -657,10 +663,16 @@ object DelegateTerminal:
       DelegateLedgerReconcile
         .ledgerSettlementNote(resources.subAgentTaskStore, record, delegateId, taskStatus)
         .handleErrorWith(e => IO(logger.warn(s"delegate settlement note failed: ${e.getMessage}")))
+    val graceRemoval: IO[Unit] =
+      if dispatcherLifecycle then
+        DelegateFlowMapLifecycle.scheduleScopeRemoval(delegateId).start.as(()).handleErrorWith(e =>
+          IO(logger.warn(s"[flowmap-lifecycle] grace removal fiber failed to start: ${e.getMessage}"))
+        )
+      else IO.unit
     verdictLine *> ledgerNote *> hostUnmount *> pluginRelease *> MergeQueue.onTerminalIO(
       delegateId,
       mergeOutcome
-    ) *> autoArchive
+    ) *> autoArchive *> graceRemoval
   end onTerminalCleanup
 
   // ── 内部 ──────────────────────────────────────────────────────────────

@@ -240,9 +240,18 @@ object JevAllocator:
    * Render the capability catalog into the scorer's block form
    * (`setscore_one.mjs:59-61`): `### <name>` on its own line, the description
    * under it, blocks joined by a blank line, order preserved.
+   * 双模式批（2026-10-28 · 设计 §7 三层规范）：description 增量键增量渲染——
+   * keywords 非空 / useWhen 在 ⇒ 各加一行（`keywords: …` / `use when: …`）；
+   * 缺席 = 块形与改前逐字相同（容忍读法，增量键永不改写既有块）。
    */
   private[decision] def catalogText(catalog: List[CatalogEntry]): String =
-    catalog.map(e => s"### ${e.name}\n${e.description}").mkString("\n\n")
+    catalog
+      .map { e =>
+        val kw = if e.keywords.isEmpty then "" else s"\nkeywords: ${e.keywords.mkString(", ")}"
+        val uw = e.useWhen.map(w => s"\nuse when: $w").getOrElse("")
+        s"### ${e.name}\n${e.description}$kw$uw"
+      }
+      .mkString("\n\n")
 
   def apply(provider: DecisionProvider[IO]): JevAllocator =
     new JevAllocator(provider)

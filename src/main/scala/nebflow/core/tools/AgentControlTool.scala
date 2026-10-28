@@ -869,12 +869,24 @@ When to use:
     val reasonSuffix = if reason.nonEmpty then s" — $reason" else ""
     rec.supervisorRef match
       case Some(sup) =>
-        // 正路：supervisor 处理 Cancelled → notifyParentAndStop("cancelled")
-        // （父 ExternalEvent source 保持 delegate/subtask → barrier 释放）。
-        // Project flow 会话（node-/dispatcher-）的 supervisor 是会话观察桥：
-        // Cancelled → 清 registry + 停 agent（node 另经 engine cancelNode 落
-        // status=cancelled，结果不投递）——无父通知/任务文件语义。
-        (sup ! AgentEvent.Cancelled(rec.sessionId, reason)).flatMap { _ =>
+        // R1 缝隙 A+C 修（2026-10-28 实施批 · 报告二 §1.3 硬验收）：
+        //  ① 取消意图**先行落墓碑**（DelegateRegistry.markCancelRequested——缝隙 C
+        //     件：意图先于信号持久在案，crash 窗口内「信号已发意图未落」不可能）；
+        //  ② Cancelled 投递后**带回执确认**（原 fire-and-forget tell 改造）：有界窗
+        //     内轮询任务行翻 cancelled（notifyParentAndStop 的 taskUpdate = 终态结算
+        //     的盘面证据）——监督者已死/消息被弃的场景不再回假成功文案；
+        //  ③ 超窗未确认 = **降级兜底直落**（taskUpdate cancelled + registry 活体
+        //     清除 + child Stop），回执如实申报「监督者路径未确认，已走兜底」。
+        // Project flow 会话（node-/dispatcher-）与 Ephemeral 无任务行语义（观察桥
+        // 清理形态，见下注）——确认腿不适用，保持旧投递语义（墓碑照写，查无记录
+        // = Left 只 WARN）。
+        val tombstoneWrite = IO.blocking(nebflow.core.delegate.DelegateRegistry.markCancelRequested(rec.sessionId, by)).attempt.flatMap {
+          case Right(_)  => IO.unit
+          case Left(err) => logger.warn(s"cancel tombstone write failed for '${rec.sessionId}': $err")
+        }
+        val rowReceiptApplies = rec.kind == AgentKind.Delegate || rec.kind == AgentKind.SubTask
+        val verifyBudget = nebflow.core.delegate.CancelReceipt.verifyBudgetMs
+        tombstoneWrite *> (sup ! AgentEvent.Cancelled(rec.sessionId, reason)).flatMap { _ =>
           val panelFrame =
             if rec.kind == AgentKind.Flow && rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix)
             then
@@ -884,29 +896,74 @@ When to use:
                   .handleErrorWith(_ => IO.unit)
               )
             else IO.unit
-          panelFrame *>
-            IO.pure(
-              Right(
-                if rec.kind == AgentKind.Flow then
-                  s"Cancel sent for Project session '${rec.sessionId}' — it will be unregistered and the agent stopped" +
-                    (if rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix) then
-                       "; the node settles to status=cancelled and its result is NOT delivered"
-                     else "") + "."
-                else
-                  s"Cancel sent to supervisor for '${rec.sessionId}'. The parent session will receive a cancelled " +
-                    s"notification and the task file will be marked cancelled. Terminal state settles " +
-                    s"asynchronously (if the agent completes at the same moment, whichever terminal event is " +
-                    s"processed first wins)."
-              )
-            )
+          val verifiedIo: IO[Boolean] =
+            if rowReceiptApplies then
+              nebflow.core.delegate.CancelReceipt.awaitTerminal(resources.subAgentTaskStore, rec.sessionId, verifyBudget)
+            else IO.pure(true) // 无任务行语义的形态：投递即成功（旧语义逐字）
+          verifiedIo.flatMap {
+            case true =>
+              panelFrame *>
+                IO.pure(
+                  Right(
+                    if rec.kind == AgentKind.Flow then
+                      s"Cancel sent for Project session '${rec.sessionId}' — it will be unregistered and the agent stopped" +
+                        (if rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix) then
+                           "; the node settles to status=cancelled and its result is NOT delivered"
+                         else "") + "."
+                    else
+                      s"Cancel sent to supervisor for '${rec.sessionId}' and CONFIRMED (task row settled to cancelled). " +
+                        "The parent session receives a cancelled notification. A cancel tombstone is on record — " +
+                        "this instance can never be revived across restarts."
+                  )
+                )
+            case false =>
+              // 监督者路径未确认（监督者已死/超窗未结算）——降级兜底直落终态。
+              // 兜底不重复父通知（正路若迟到，其通知仍会到——双发比假成功诚实）。
+              logger
+                .warn(
+                  s"[cancel-receipt] supervisor path for '${rec.sessionId}' unconfirmed within ${verifyBudget}ms — applying fallback terminal state"
+                )
+                .flatMap { _ =>
+                  val taskUpdate =
+                    if rowReceiptApplies && rec.parentSessionId.nonEmpty then
+                      resources.subAgentTaskStore
+                        .updateStatus(
+                          rec.parentSessionId,
+                          rec.sessionId,
+                          "cancelled",
+                          completedAt = Some(System.currentTimeMillis()),
+                          lastError = Some(s"cancelled by $by via AgentControl$reasonSuffix (supervisor unconfirmed — fallback terminal)")
+                        )
+                        .handleErrorWith(e => logger.warn(s"cancel fallback taskStore update failed: ${e.getMessage}"))
+                    else IO.unit
+                  taskUpdate *> resources.agentRegistry.update(_ - rec.sessionId) *>
+                    (rec.ref ! AgentCommand.Stop(s"agent-control-cancel-fallback$reasonSuffix")).as(
+                      Right(
+                        s"Cancel sent to supervisor for '${rec.sessionId}' but the terminal state was NOT confirmed " +
+                          s"within ${verifyBudget}ms — fallback terminal state written directly " +
+                          "(task row cancelled, registry entry removed, agent stopped). If the supervisor settles later, " +
+                          "its terminal event still wins (first-terminal-wins). Cancel tombstone is on record."
+                      )
+                    )
+                }
+          }
         }
       case None =>
         // 降级路径（spec §3.2 兜底）：Ephemeral（bridge death-watch 兜底回收）或
         // 无 supervisor 记录的旧记录——直接 Stop + 自补通知 + registry 移除。
+        // R1-C 修：取消意图同样先行落墓碑（幂等；查无 registry 记录 = Left 只
+        // WARN——墓碑只在真实 spawn 记录上生效）。
         val source = rec.kind match
           case AgentKind.SubTask => "subtask"
           case AgentKind.Delegate => "delegate"
           case _ => "background-task"
+        val tombstoneWrite = IO
+          .blocking(nebflow.core.delegate.DelegateRegistry.markCancelRequested(rec.sessionId, by))
+          .attempt
+          .flatMap {
+            case Right(_)  => IO.unit
+            case Left(err) => logger.warn(s"cancel tombstone write failed for '${rec.sessionId}': $err")
+          }
         val metadata = JsonObject(
           "failedSessionId" -> rec.sessionId.asJson,
           "retryable" -> false.asJson,
@@ -935,11 +992,11 @@ When to use:
               )
               .handleErrorWith(e => logger.warn(s"cancel taskStore update failed: ${e.getMessage}"))
           else IO.unit
-        notify *> taskUpdate *> resources.agentRegistry.update(_ - rec.sessionId) *>
+        tombstoneWrite *> notify *> taskUpdate *> resources.agentRegistry.update(_ - rec.sessionId) *>
           (rec.ref ! AgentCommand.Stop(s"agent-control-cancel$reasonSuffix")).as(
             Right(
               s"Terminated '${rec.sessionId}' directly (no supervisor on record — fallback path). " +
-                "Registry entry removed; parent notified if applicable."
+                "Registry entry removed (cancel tombstone retained); parent notified if applicable."
             )
           )
 

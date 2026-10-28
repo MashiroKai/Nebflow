@@ -169,24 +169,55 @@ class SubAgentTaskStore(baseDir: os.Path) extends SubAgentTaskStorePort:
   ): IO[Unit] =
     withLock {
       val now = System.currentTimeMillis()
-      val updated = readTasksSync(parentSessionId).map { t =>
-        if t.taskId == taskId then
-          t.copy(
-            status = status,
-            retryCount = retryCount.getOrElse(t.retryCount),
-            lastError = lastError.orElse(t.lastError),
-            completedAt = completedAt.orElse(t.completedAt),
-            statusAt = Some(now)
-          )
-        else t
+      val current = readTasksSync(parentSessionId)
+      // R1 缝隙 B 修（2026-10-28）：命中才写——行未命中 = 零落盘（不重写父文件、
+      // 父文件缺失也绝不凭空建文件/造空行，「调用方以为写了」改由 miss 留痕出声）。
+      val updated = current.find(_.taskId == taskId).map { _ =>
+        current.map { t =>
+          if t.taskId == taskId then
+            t.copy(
+              status = status,
+              retryCount = retryCount.getOrElse(t.retryCount),
+              lastError = lastError.orElse(t.lastError),
+              completedAt = completedAt.orElse(t.completedAt),
+              statusAt = Some(now)
+            )
+          else t
+        }
       }
-      writeTasksSync(parentSessionId, updated)
-      updated.find(_.taskId == taskId)
+      updated.foreach(rows => writeTasksSync(parentSessionId, rows))
+      updated.flatMap(_.find(_.taskId == taskId))
     }.flatMap {
       // 台账 #929：状态面有写 ⇒ 外推钩（行未命中 = 无此任务，零外推）。
       case Some(row) => fireWriteHook(row)
-      case None => IO.unit
+      case None =>
+        // R1 缝隙 B 修（2026-10-28 实施批 · 报告二 §1.3）：行未命中（父文件缺失
+        // ∨ 无此任务行）**不再静默 no-op**——WARN 告警 + 有界留痕（missTrace，
+        // `recentStatusMisses` 诊断/测试断言面）。状态机零改动：未命中仍是不写
+        // （绝不凭空造行）；改变的是「写了但什么都没发生」从不可见变为显式可见
+        // ——取消意图全押任务行的时代，「调用方以为写了」必须出声。
+        val note = s"parent=$parentSessionId taskId=$taskId status=$status (no row matched — write was a NO-OP)"
+        IO(logger.warnSync(s"[task-status-miss] updateStatus missed: $note")) *> recordMiss(note)
     }
+
+  /**
+   * 状态写未命中留痕（R1-B 修）：有界环形（最近 [[MissTraceCap]] 条，进程内诊断
+   * 面——台账文件是唯一真相，本留痕只为「谁在什么时候写丢了」可被问起）。
+   */
+  private val missTrace = new java.util.concurrent.ConcurrentLinkedDeque[String]
+  private val MissTraceCap = 64
+
+  private def recordMiss(note: String): IO[Unit] = IO.blocking {
+    missTrace.addLast(note)
+    while missTrace.size() > MissTraceCap do missTrace.pollFirst()
+  }
+
+  /** 最近的状态写未命中记录（诊断/测试断言面；新者在前）。 */
+  def recentStatusMisses: List[String] =
+    val it = missTrace.descendingIterator()
+    val buf = List.newBuilder[String]
+    while it.hasNext do buf += it.next()
+    buf.result()
 
   /**
    * 监督链自动恢复批（2026-10-22）：**boot 复活记账**（专面专名——updateStatus

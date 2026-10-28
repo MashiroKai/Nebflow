@@ -54,5 +54,14 @@ end JevAllocatorPort
  * Deliberately a small record rather than a plugin type:
  * `core.plugin.PluginRegistry` holds the authority for what is installed and
  * trusted, and this is only the rendering input.
+ *
+ * 双模式批（2026-10-28 · 设计 §7 插件三层规范）增量键：`keywords`（检索词簇）
+ * 与 `useWhen`（「何时该用」一句）随 description 同为模型读判据输入——**容忍
+ * 缺席**（缺省空/None = 旧行为逐字节；带键 = 分配问对面行增量渲染）。
  */
-final case class CatalogEntry(name: String, description: String)
+final case class CatalogEntry(
+  name: String,
+  description: String,
+  keywords: List[String] = Nil,
+  useWhen: Option[String] = None
+)

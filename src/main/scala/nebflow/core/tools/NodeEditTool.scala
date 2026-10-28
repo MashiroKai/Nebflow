@@ -690,6 +690,11 @@ object NodeEditTool extends Tool:
             // 建位**不自动 startNode**（落 pending——链齐才跑，放行走 ChainWrite/
             // AgentFlow 登记闸或引擎 settle 回扫）；per-project 分发器面照旧（建即跑）。
             val mayAutoStart = !nebflow.core.delegate.DelegateSessions.isDelegateSession(ctx.sessionId)
+            // 双模式批：分发器作用域判据（总闸开 ∧ 属主 delegate mode=dispatcher）——
+            // 新建节点的 plugins 键改拒、引擎代行分配（§5.3）。
+            val dispatcherScopeCreate =
+              nebflow.core.delegate.DelegateRegistry.modeFaceOf(ctx.sessionId)
+                .contains(nebflow.core.delegate.DualModeConfig.ModeDispatcher)
             NodeTools.resolveRuntime(project, ctx).flatMap {
               case Left(err) => IO.pure(Left(ToolError(err)))
               case Right(rt) =>
@@ -806,7 +811,20 @@ object NodeEditTool extends Tool:
                               // 教训在案）。`plugins=[]`
                               // = 显式「本节点无需能力面」，与「漏传」区分。只对「新建」生效
                               // （编辑路径 replace-on-provide 语义不动）。
-                              else if !pluginsProvided then
+                              // 双模式批（2026-10-28 · 设计 §5.2/§5.3）：分发器作用域反转——
+                              // plugins 键**改拒**（分配上移到 node 生成时，引擎按节点任务代行；
+                              // 分发器零参与），缺键合法（引擎代行腿）。
+                              else if dispatcherScopeCreate && pluginsProvided then
+                                IO.pure(
+                                  Left(
+                                    ToolError(
+                                      s"New node '$nodename' in dispatcher scope must NOT carry a plugins key — plugins are " +
+                                        "allocated automatically per-node from the node's task at generation (the dispatcher " +
+                                        "never names plugins). (NODE_PLUGINS_DISPATCHER_ALLOCATED)"
+                                    )
+                                  )
+                                )
+                              else if !pluginsProvided && !dispatcherScopeCreate then
                                 IO.pure(
                                   Left(
                                     ToolError(
@@ -815,6 +833,55 @@ object NodeEditTool extends Tool:
                                     )
                                   )
                                 )
+                              else if dispatcherScopeCreate then
+                                // 引擎代行分配（0 spawn 阶段——createNode 落库前）。分配失败 =
+                                // fail-open 空集照走（台账留痕）；解析/注入失败 = Left 显式拒。
+                                nebflow.core.project.PluginInjection
+                                  .allocatePreparation(subject = s"node:$nodename", taskText = task.getOrElse(nodename))
+                                  .flatMap {
+                                    case Left(err) =>
+                                      IO.pure(Left(ToolError(s"plugin allocation refused for node '$nodename' — $err")))
+                                    case Right((_, set)) =>
+                                      val row: IO[Unit] =
+                                        if !set.actionRan then IO.unit
+                                        else
+                                          nebflow.core.delegate.ChainStore
+                                            .append(
+                                              nebflow.core.delegate.ChainStore.keyFor(None, ctx.sessionId.getOrElse("")),
+                                              "step-plugins",
+                                              io.circe.Json.obj(
+                                                "nodeId" -> nodename.asJson,
+                                                "plugins" -> set.names.asJson,
+                                                "allocation" -> set.mode.asJson,
+                                                "phase" -> "node-create".asJson
+                                              )
+                                            ) match
+                                            case Right(_) => IO.unit
+                                            case Left(e) =>
+                                              IO(
+                                                nebflow.shared.NebflowLogger
+                                                  .forName("nebflow.core.tools.node-edit")
+                                                  .warnSync(s"step-plugins chain line failed ($nodename): ${e.getMessage}")
+                                              )
+                                      row *> dispatchFaceCheck(set.names).flatMap {
+                                        case Left(err) => IO.pure(Left(ToolError(err)))
+                                        case Right(_) =>
+                                          createNode(
+                                            rt,
+                                            nodename,
+                                            task,
+                                            description,
+                                            descriptionLong,
+                                            set.names,
+                                            inJson,
+                                            depsJson,
+                                            outJson,
+                                            verifierRoutePending,
+                                            pluginsProvided,
+                                            mayAutoStart
+                                          )
+                                      }
+                                  }
                               else
                                 dispatchFaceCheck(pluginsForCall).flatMap {
                                   case Left(err) => IO.pure(Left(ToolError(err)))

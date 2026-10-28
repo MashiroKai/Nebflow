@@ -499,6 +499,15 @@ case class SharedResources(
     )
   )
 
+  // 双模式批（2026-10-28）：delegate 模式选择器注册（JeV 问对→LLM fallback→
+  // fail-open kernel 三态——PluginAllocatorMachine 同族机制同缝同序；执行体在
+  // llm.decision.DelegateModeMachine，core 只见 core.delegate.DelegateModeAllocator
+  // 注册器，分层纪律同上）。总闸（delegate.dualMode.enabled，缺省 false）在调用侧
+  // 判——本注册面惰性在场，闸关 = 零调用。
+  nebflow.core.delegate.DelegateModeAllocator.install(
+    nebflow.llm.decision.DelegateModeMachine.face(providerRegistry)
+  )
+
   // D1（steward 批 2026-10-23）：后台任务通知「持久补投」面注册——BashTool 完成
   // 回调的改道/补投腿经 BgInboxPort 消费（core 不 import agent 的分层纪律，
   // DelegateJudgePort 同款 M2 形态）；实现 = 持久注入队 append（CompactionQueueStore，

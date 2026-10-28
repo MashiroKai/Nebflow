@@ -84,6 +84,13 @@ object DelegateRevival:
           parentExistsIo.map { parentExists =>
             if rec.executor != ExecutorRegistry.DefaultId then
               Some(s"external executor '${rec.executor}' (boot revival is internal-executor only; use the Mail continuation leg)")
+            else if rec.cancelRequestedAt.isDefined then
+              // R1 缝隙 C 修（七闸加一道）：取消墓碑在场 = 取消意图持久在案 ⇒
+              // 永不复活——「行仍 running」不再能覆盖用户取消（实证僵尸
+              // e25cd0c2/b5646a58 的机制封口；报告二 §1.3 硬验收）。
+              Some(
+                s"cancel tombstone present (cancelled by ${rec.cancelRequestedBy.getOrElse("?")} at ${rec.cancelRequestedAt.get}) — a cancelled delegate is never revived"
+              )
             else if rec.archivedAt.isDefined then Some("record archived")
             else if !seatExists(rec.cwd) then Some(s"seat directory missing: ${rec.cwd}")
             else if !parentExists then Some(s"parent session '${task.parentSessionId}' no longer exists")
