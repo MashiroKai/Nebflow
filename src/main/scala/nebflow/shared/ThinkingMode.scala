@@ -70,19 +70,30 @@ object EffortWire:
 object ThinkingEffortGate:
 
   /** deepseek 族 `output_config.effort`：官方 anthropic 面字段支持表明示
-    * Supported，但现配端点是 cmdcode（第三方聚合、无参数文档）→ 定性后置真。
+    * Supported，但（a）现配端点 cmdcode 经探测定性**没有可服务的 anthropic 面**
+    * （POST /provider/v1/messages → 400 「Model "deepseek/deepseek-v4.1-flash" is
+    * not supported on this endpoint. Use /provider/v1/chat/completions for OpenAI
+    * and OSS models.」，2026-10-29 探测）；（b）官方 anthropic 端点无凭据不可探测。
+    * 该族 wire（EffortAnthropic）现无活配置 ⇒ 门保持关；未来接 anthropic 协议
+    * deepseek 端点时凭官方文档 + 探测置真。
     */
   val deepseekEffort: Boolean = false
 
-  /** kimi K3 族顶层 `reasoning_effort`：platform.kimi.com 官方文档（原生面），
-    * 现配端点 api.kimi.com/coding/ 无文档 → 定性后置真。
+  /** kimi K3 族顶层 `reasoning_effort`：**已点亮**（探测定性 2026-10-29，
+    * api.kimi.com/coding/v1/messages：`reasoning_effort:"high"` → 200、
+    * `reasoning_effort:"medium"` → 200（零 400 参数报错；探测证据
+    * reports/20261029_thinking-config-probe-evidence.md）。platform.kimi.com
+    * 官方文档原生面语义 = low/high/max，medium 由 EffortWire.threeTier 客户端
+    * 映射 high（作者裁定取 high）。
     */
-  val kimiK31Effort: Boolean = false
+  val kimiK31Effort: Boolean = true
 
-  /** glm 族顶层 `reasoning_effort`：智谱标准面文档（仅收 max/high/low），
-    * anthropic 兼容面（open.bigmodel.cn/api/anthropic）无文档 → 定性后置真。
+  /** glm 族顶层 `reasoning_effort`：**已点亮**（探测定性 2026-10-29，
+    * open.bigmodel.cn/api/anthropic/v1/messages：`reasoning_effort:"high"` → 200、
+    * `"medium"` → 200（零 400 参数报错；同上证据文件）。智谱官方映射
+    * medium→high（Coding Plan 面文档），EffortWire.threeTier 客户端先行映射。
     */
-  val glmEffort: Boolean = false
+  val glmEffort: Boolean = true
 
   /**
    * kind × 模型 × 档位 → 本请求要 deepMerge 的 effort 片段（None = 不发）。

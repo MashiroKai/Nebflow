@@ -70,8 +70,13 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
    *  - GLM models: send `thinking: { type: "enabled" }` (GLM's native format)
    *  - OpenAI o-series: send `reasoning_effort` (OpenAI's format)
    *  - Others: send nothing (API will ignore unknown params)
+   *
+   * thinking-config 批（2026-10-28，设计 §4.2 openai 行「直发档位」）：候选解析出
+   * effort 档位（per-model/provider/全局三层）⇒ 直发该档位（三档面 medium→high
+   * 客户端映射单点 = EffortWire.threeTier）；未配档位 ⇒ 保留旧 budget 换算
+   * （budgetToEffort 边界不动，旧单旋钮值仍可换算）。
    */
-  private def thinkingBody(model: String, thinking: Option[io.circe.Json]): Json =
+  private def thinkingBody(model: String, thinking: Option[io.circe.Json], resolved: Option[ResolvedThinking]): Json =
     thinking match
       case Some(t) if t.hcursor.get[String]("type").toOption.contains("enabled") =>
         val m = model.toLowerCase
@@ -79,8 +84,11 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
           // GLM uses its own `thinking` parameter, not OpenAI's `reasoning_effort`
           Json.obj("thinking" -> Json.obj("type" -> "enabled".asJson))
         else
-          val budget = t.hcursor.get[Int]("budget_tokens").getOrElse(32000)
-          Json.obj("reasoning_effort" -> budgetToEffort(budget).asJson)
+          resolved.flatMap(_.effort) match
+            case Some(effort) => Json.obj("reasoning_effort" -> EffortWire.threeTier(effort).asJson)
+            case None =>
+              val budget = t.hcursor.get[Int]("budget_tokens").getOrElse(32000)
+              Json.obj("reasoning_effort" -> budgetToEffort(budget).asJson)
       case _ => Json.obj()
 
   /** Build system message from stable + dynamic parts for OpenAI's messages format. */
@@ -226,11 +234,12 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     body: Json,
     model: String,
     thinking: Option[io.circe.Json],
-    search: Option[ProviderSearchKind]
+    search: Option[ProviderSearchKind],
+    resolved: Option[ResolvedThinking] = None
   ): Json =
     if search.contains(ProviderSearchKind.KimiBuiltinWebSearch) then
       body.deepMerge(Json.obj("thinking" -> Json.obj("type" -> "disabled".asJson)))
-    else body.deepMerge(thinkingBody(model, thinking))
+    else body.deepMerge(thinkingBody(model, thinking, resolved))
 
   /** Non-tools request-level extras (qwen enable_search). */
   private[providers] def searchRequestExtras(
@@ -332,7 +341,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     // kimi search forces thinking disabled; qwen gets enable_search.
     val bodyWithTools = bodyWithSearchTools(body, params.tools, params.providerSearch)
     // Thinking parameters are model-specific: GLM uses `thinking`, OpenAI uses `reasoning_effort`
-    val bodyWithThinking = bodyWithSearchThinking(bodyWithTools, params.model, params.thinking, params.providerSearch)
+    val bodyWithThinking = bodyWithSearchThinking(bodyWithTools, params.model, params.thinking, params.providerSearch, params.thinkingResolved)
     val bodyWithSearchExtras = bodyWithThinking.deepMerge(searchRequestExtras(params.providerSearch))
     val bodyWithMetadata = (params.sessionId, params.agentId) match
       case (Some(sid), Some(aid)) =>
@@ -430,7 +439,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     // search must be armed here too.
     val bodyWithTools = bodyWithSearchTools(body, params.tools, params.providerSearch)
     // Thinking parameters are model-specific: GLM uses `thinking`, OpenAI uses `reasoning_effort`
-    val bodyWithThinking = bodyWithSearchThinking(bodyWithTools, params.model, params.thinking, params.providerSearch)
+    val bodyWithThinking = bodyWithSearchThinking(bodyWithTools, params.model, params.thinking, params.providerSearch, params.thinkingResolved)
     val bodyWithSearchExtras = bodyWithThinking.deepMerge(searchRequestExtras(params.providerSearch))
     val bodyWithMetadata = (params.sessionId, params.agentId) match
       case (Some(sid), Some(aid)) =>
