@@ -81,7 +81,7 @@ function wireUp(ws) {
     }
   });
   // 引导帧（保持应用安静 + 挂上被测会话）
-  ws.send(JSON.stringify({ type: 'configData', config: '{"features":{}}', configured: true, onboarding: 'done', models: [], defaults: {} }));
+  ws.send(JSON.stringify({ type: 'configData', config: '{"features":{},"console":{"inputMode":"queue"}}', configured: true, onboarding: 'done', models: [], defaults: {} }));
   ws.send(JSON.stringify({ type: 'sessionList', sessions: [{ id: SID, name: '队列回归补触发E2E' }], activeId: SID, folders: [] }));
 }
 

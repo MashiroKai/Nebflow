@@ -88,7 +88,7 @@ function wireUp(ws) {
     if (isUserContentFrame(m)) handleUserFrame(ws, m);
   });
   // 引导帧（保持应用安静 + 挂上被测会话）
-  ws.send(JSON.stringify({ type: 'configData', config: '{"features":{}}', configured: true, onboarding: 'done', models: [], defaults: {} }));
+  ws.send(JSON.stringify({ type: 'configData', config: '{"features":{},"console":{"inputMode":"queue"}}', configured: true, onboarding: 'done', models: [], defaults: {} }));
   ws.send(JSON.stringify({ type: 'sessionList', sessions: [{ id: SID, name: '重发去重E2E' }], activeId: SID, folders: [] }));
 }
 

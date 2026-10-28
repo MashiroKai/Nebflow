@@ -154,3 +154,24 @@ export function voiceOrbEnabled() {
 export function voiceOrbMountable() {
   return voiceOrbEnabled() && state.parsedConfig != null;
 }
+
+/**
+ * consoleInputMode — 控制台输入「忙时投递模式」（queuedirect 批，作者令
+ * 2026-10-28 11:1x「取消我们的这个输入排队功能（不删代码）……改为，直接输入给你」；
+ * 11:14 补充裁定「应该不会打断你的 llm 调用吧？效果就像是我们现在的立即发送一样」）。
+ *
+ * 取值（<home>/nebflow.json 的 `console.inputMode`，经既有 configData 通道到达）：
+ *   · 'direct'（缺席/非法值一律按它 = **新缺省**）：busy 会话里发送的消息**立即出线**
+ *     ——等价排队条上的「立即发送」：`immediateInput` 帧腿直投，引擎在当前回合的
+ *     最近安全边界（工具批次完成后 / 回合末续轮）把消息并入 agent 正在进行的回合；
+ *     **不取消、不打断**在飞 LLM 调用（#939 Mail 工具边界注入同源语义，作者 11:14 裁定）。
+ *   · 'queue'：旧行为逐字回归——消息只入本地队列（输入框上方排队条），等当前回合
+ *     done 终态后 drainMessageQueue 逐条补发。排队实现**一行不删**，本开关切回即旧行为。
+ *
+ * 读取形态 = 实时读 `state.parsedConfig`（send() 每次派发时求值；configData 重到即生效，
+ * 无 latch——与 friends/voice 的「首帧 latch」刻意不同：本开关不挂载资源，无需 latch）。
+ */
+export function consoleInputMode() {
+  const m = state.parsedConfig?.console?.inputMode;
+  return m === 'queue' ? 'queue' : 'direct'; // 缺席/非法值 = direct（新缺省，作者令）
+}
