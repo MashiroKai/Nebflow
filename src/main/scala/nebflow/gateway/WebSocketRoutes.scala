@@ -2290,14 +2290,15 @@ class WebSocketRoutes(
         // 轨/CLI 帧零 IO（行为逐字节不变）。
         val anchorIO: IO[Option[nebflow.bridge.OwnerAnchor]] =
           if sessionIdentity.isDefined then OwnerIdentity.localAnchor else IO.pure(None)
-        (deviceRosterEntries, anchorIO).mapN { case ((self, peers), anchor) =>
+        // flatMapN：判词日志必须绑进链——mapN 纯函数块里裸 logger.info 是孤儿
+        // IO（构造即丢弃，永不执行；与 ConsoleTicketRoutes 兑换日志同款坑）。
+        (deviceRosterEntries, anchorIO).flatMapN { case ((self, peers), anchor) =>
           val resolved =
             nebflow.bridge.DeviceProvenance.resolve(client, self, peers, sessionIdentity, anchor)
           logger.info(
             s"Device provenance: '${resolved.display}' (enrolled=${resolved.enrolled}, " +
               s"authenticated=${resolved.sessionAuthenticated}) clientId=${client.clientId.take(8)}…"
-          )
-          Some(resolved)
+          ).as(Some(resolved))
         }
 
   /**

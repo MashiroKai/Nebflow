@@ -92,11 +92,13 @@ object ConsoleTicketRoutes:
                       val secure =
                         req.uri.scheme.exists(_.value.equalsIgnoreCase("https")) ||
                           nebflow.shared.TunnelOriginMark.isMarked(req)
+                      // `*>` 绑进链：裸 logger.info 是孤儿 IO（构造即丢弃，永不执行
+                      // ——兑换已发生而日志零痕迹的存量缺陷，2026-10-29 随门户身份
+                      // 透传批 e2e 取证修正）。
                       logger.info(
                         s"console ticket redeemed: session established (accountSub=${t.accountSub}, " +
                           s"origin=${t.origin}, sid=${rec.sessionId.take(8)}…, networkId=${nid.take(24)})"
-                      )
-                      IO.pure(
+                      ) *> IO.pure(
                         Response[IO](Status.SeeOther)
                           .putHeaders(Location(Uri(path = Uri.Path.unsafeFromString("/"))))
                           .addCookie(GatewaySessionStore.newCookie(rec.sessionId, secure = secure))

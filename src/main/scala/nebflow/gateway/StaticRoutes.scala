@@ -300,7 +300,7 @@ object StaticRoutes:
     digest.take(8).map(b => f"${b & 0xff}%02x").mkString
 
   /** 指纹注入脚本（brand 注入同点；空指纹不注入——测试 harness 静态树无此全局）。 */
-  private def fingerprintScriptTag: String =
+  private[gateway] def fingerprintScriptTag: String =
     val fp = webFingerprint
     if fp.isEmpty then ""
     else s"""<script>window.__WEB_FINGERPRINT__="$fp";</script>"""
