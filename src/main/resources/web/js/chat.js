@@ -576,6 +576,27 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
   return { type: 'user', text, timestamp: ts, attachments: (attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) };
 }
 
+// ---------- 用户附件落盘路径回传（attachmentsSaved） ----------
+// 用户附件点击统一批（2026-10-08）：后端把附件落盘（uploads/<sid>/…，或命中本机
+// 原文件）并写 ui.json 后，向请求方连接回传 {type:'attachmentsSaved', sessionId,
+// attachments:[{name,type,path}]}。本订阅按会话把对应 live 行原位重渲——openPopArtifact
+// 单点开 Canvas（popArtifacts.patchUserMediaRow 的注释承载全部契约：顺序对齐 /
+// name 防错位 / path null 不补）。会话级帧：用户已切走的会话被 ws.js 会话闸过滤丢弃
+// ——该会话重入时由历史恢复腿（persistence.buildUserAttachmentRows，自带 path）接管。
+// 旧后端不发此帧 ⇒ 订阅永不触发 ⇒ 行为与改前一致（无回归面）。
+//
+// 📌 断线史（2026-10-28 报障「我自己发的图，还是点不开」根因）：本订阅在
+// 2026-10-10 USTC dev/main 合并的冲突解决中整体丢失（checkpoint a0f2edfc7 的
+// chat.js:490 原文可溯；`patchUserMediaRow`/`onMessage` 的 import 线都在、唯一
+// 消费块没了）⇒ live 发送腿的行永远停在 pathless 形态，点击开 Canvas（三修 ②
+// 裁定、与 Pop 同款）直到刷新才由恢复腿接管。user-attach-canvas-open spec A2
+// 之所以照绿：它直接调 patchUserMediaRow，从没钉过「帧 → 订阅 → 补丁」这一跳
+// ——本批随修补上（spec B 组走真 ws.js 派发路径）。若再有人合并 chat.js 冲突：
+// 删这段前先跑该 spec，红了就是又丢了。
+onMessage('attachmentsSaved', (msg) => {
+  if (msg && msg.sessionId) patchUserMediaRow(msg.sessionId, msg.attachments);
+});
+
 // ---------- rAF stream render scheduler ----------
 // Coalesces high-frequency streaming deltas into one DOM render per frame.
 // Slots are keyed per (view, key) so concurrent views (main window + an open
