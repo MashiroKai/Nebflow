@@ -138,7 +138,54 @@ object SubAgentStartupRecovery:
         nebflow.core.delegate.DelegateLedgerReconcile.reconcileInterruptedRecords(store).void
     inFlightTasks(store).flatMap {
       case Nil => settle().as(Report())
-      case orphans =>
+      case allOrphans =>
+        // ── 会话死亡台账结算（2026-10-28 · R1 同族监督持久性面）────────────────
+        // ready-to-merge 行的分诊（旧 sweep 视野只有 running/restarting——已停靠
+        // 合并轮的行死后永远无人终态化，实证四行僵尸面板挂 进行中/待合并 1-2d）：
+        //  ① 有开放合并队列成员 = 合并轮在管（MergeQueueBootSweep 稍后对账：
+        //     已并关账 / 无可并物关账 / owner-gone 关账+任务行 failed）——**零触碰**；
+        //  ② 无成员 =「ready 前被杀连账本条目都没有」的僵尸形态（报告二 R5 后半
+        //     的行面后果）→ 本 sweep 直接落终态（recoverOne：interrupted 指纹 +
+        //     F2 幂等父通知 + registry 重启打断旗——与墓碑同族持久性面）。
+        val (rtmRows, orphans) = allOrphans.partition(_.status == "ready-to-merge")
+        val rtmSettled: IO[List[String]] =
+          if rtmRows.isEmpty then IO.pure(Nil)
+          else
+            IO
+              .blocking(nebflow.core.delegate.MergeQueue.openSnapshot.map(_.delegateId).toSet)
+              .handleErrorWith(e =>
+                logger
+                  .warn(s"[startup-recovery] merge-queue snapshot read failed (treating as empty): ${e.getMessage}")
+                  .as(Set.empty[String])
+              )
+              .flatMap { queued =>
+                val (queuedRows, zombies) = rtmRows.partition(t => queued.contains(t.taskId))
+                val noteQueued =
+                  if queuedRows.isEmpty then IO.unit
+                  else
+                    logger
+                      .info(
+                        s"[startup-recovery] ${queuedRows.size} ready-to-merge row(s) left to the merge-queue boot reconcile: ${queuedRows.map(_.taskId).mkString(", ")}"
+                      )
+                val settled: IO[List[String]] =
+                  if zombies.isEmpty then IO.pure(Nil)
+                  else
+                    logger
+                      .warn(
+                        s"[startup-recovery] ${zombies.size} ready-to-merge row(s) with NO merge-queue membership survived a restart — settling to interrupted: ${zombies.map(_.taskId).mkString(", ")}"
+                      )
+                      .as(()) *> zombies
+                      .traverse { t =>
+                        val head =
+                          s"[task lost: crash] Delegate \"${t.description}\" (agent=${t.agentName}, session=${t.taskId}) " +
+                            "had reached ready-to-merge but NO merge-queue membership survived the restart — " +
+                            "the merge round can never run; the row is settled to interrupted (branch/worktree kept as-is)."
+                        recoverOne(store, sessionStore, t, head, "lostToCrash").handleErrorWith { e =>
+                          logger.warn(s"[startup-recovery] rtm settle failed for ${t.taskId}: ${e.getMessage}").as(t.taskId)
+                        }
+                      }
+                noteQueued *> settled
+              }
         def salvageAll(tasks: List[SubAgentTask]): IO[List[String]] =
           if tasks.isEmpty then IO.pure(Nil)
           else
@@ -154,16 +201,19 @@ object SubAgentStartupRecovery:
               )
         revival match
           case None =>
-            salvageAll(orphans).flatMap(ids => settle().as(Report(terminalized = ids)))
+            salvageAll(orphans).flatMap(ids => rtmSettled.flatMap(rtm => settle().as(Report(terminalized = rtm ++ ids))))
           case Some(deps) if !Defaults.DelegateRevivalEnabled =>
             logger
               .info("[delegate-revival] kill-switch off — all orphans fall through to the salvage chain")
               .as(())
               .flatMap(_ =>
-                salvageAll(orphans).flatMap(ids => settle().as(Report(terminalized = ids)))
+                salvageAll(orphans).flatMap(ids =>
+                  rtmSettled.flatMap(rtm => settle().as(Report(terminalized = rtm ++ ids)))
+                )
               )
           case Some(deps) =>
             for
+              rtm <- rtmSettled
               judged <- orphans.traverse { t =>
                 DelegateRevival.eligibility(sessionStore, t).map(reason => (t, reason))
               }
@@ -197,15 +247,18 @@ object SubAgentStartupRecovery:
               terminalized <- salvageAll(rest)
               _ <- settle()
               revivedNow <- revivedRef.get
-            yield Report(terminalized = terminalized, revived = revivedNow, revivalSkipped = skipped)
+            yield Report(terminalized = rtm ++ terminalized, revived = revivedNow, revivalSkipped = skipped)
     }
 
-  /** 在飞任务全量（running/restarting；单遍 findAllTasks 后过滤——boot 一次性）。
+  /** 在飞任务全量（running/restarting/ready-to-merge；单遍 findAllTasks 后过滤——boot 一次性）。
     * [合并融合] 标记腿与 #692 收宽同向：本 helper 服务 boot sweep（一次性全量），
-    * 运行期视野走 watchdogSweep 的 findRunningTasks（已加宽 running∨restarting）。 */
+    * 运行期视野走 watchdogSweep 的 findRunningTasks（已加宽 running∨restarting）。
+    * [会话死亡台账结算 2026-10-28] ready-to-merge 收入视野——旧视野只有
+    * running/restarting，停靠合并轮的行死后永远无人终态化（四行僵尸实证）；
+    * sweep 内按「有无开放合并队列成员」分诊（见 sweep 注）。 */
   private def inFlightTasks(store: SubAgentTaskStore): IO[List[SubAgentTask]] =
     store.findAllTasks()
-      .map(_.filter(t => InFlightStatuses.contains(t.status)))
+      .map(_.filter(t => InFlightStatuses.contains(t.status) || t.status == "ready-to-merge"))
       .handleErrorWith(e => logger.warn(s"[startup-recovery] in-flight scan failed: ${e.getMessage}").as(Nil))
 
   /**

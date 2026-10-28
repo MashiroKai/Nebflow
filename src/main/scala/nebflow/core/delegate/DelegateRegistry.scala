@@ -134,7 +134,26 @@ object DelegateRegistry:
      * 承载——真完成（报告交付/判词终态）照常覆盖显示态，旗不截断复活续聊的真完成。
      * 缺省 None：旧盘面照常解码（delegatedBy 同款纪律）。
      */
-    restartInterruptedAt: Option[Long] = None
+    restartInterruptedAt: Option[Long] = None,
+    /**
+     * 取消墓碑（R1 缝隙 C 修，2026-10-28 实施批 · 报告二 §1.3）：**取消意图的持久
+     * 痕迹**——cancel 入口（[[nebflow.core.tools.AgentControlTool]] doCancel 双路径）
+     * 先行单写（幂等零重写：已旗 = 原值返回）。消费点 = [[nebflow.agent.DelegateRevival]]
+     * `.eligibility` 复活资格闸（七闸加一道）：墓碑在场 ⇒ 永不复活——「已取消 ×
+     * 被复活」僵尸（实证 e25cd0c2 revival#1 / b5646a58 revival#2）的机制封口；
+     * 取消意图从此不再全押任务行一行。缺省 None：旧盘面照常解码（零迁移）。
+     */
+    cancelRequestedAt: Option[Long] = None,
+    /** 取消发起方（"the user panel" / 工具调用者标签；观测面，判据不用）。 */
+    cancelRequestedBy: Option[String] = None,
+    /**
+     * 双模式批（2026-10-28 · 设计 §3.2/§7.3）：本 delegate 的**执行形态**——
+     * `kernel`（极简内核执行器）| `dispatcher`（分发器模式）。spawn 时一次性判定
+     * （选择器/人工覆盖），**终身属性**（运行中不改模式——改模式 = 重派）。读面
+     * 缺省解码见 [[modeFaceOf]]：`None` = 未判定（总闸关时代的存量记录/外部腿），
+     * 消费方按 kernel 折叠（存量零迁移）。缺省 None：旧盘面照常解码。
+     */
+    mode: Option[String] = None
   )
 
   private def dir: os.Path = PathUtil.dataRoot / "delegates"
@@ -338,6 +357,29 @@ object DelegateRegistry:
       }
 
   /**
+   * 取消墓碑单写（R1 缝隙 C 修）：`cancelRequestedAt = now` + 发起方标签，**幂等**
+   * （已旗 = Right 零重写，markRestartInterrupted 同款）。查无记录 = `Left`
+   * （墓碑只对真实 spawn 生效）。调用纪律 = cancel 动作**先写墓碑再发取消信号**
+   * （crash 窗口内「信号已发而意图未落」不可能——意图先落盘）。
+   */
+  def markCancelRequested(id: String, by: String): Either[String, Long] =
+    if !validId(id) then Left(s"markCancelRequested: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"markCancelRequested: no registry record for '$id'")
+          case Some(rec) =>
+            rec.cancelRequestedAt match
+              case Some(ts) => Right(ts) // 幂等：已旗原样返回，零重写
+              case None =>
+                try
+                  val ts = System.currentTimeMillis()
+                  put(rec.copy(cancelRequestedAt = Some(ts), cancelRequestedBy = Some(by)))
+                  Right(ts)
+                catch case e: Throwable => Left(s"markCancelRequested: write failed: ${e.getMessage}")
+      }
+
+  /**
    * JSON 编解码（circe）：Encoder = generic 派生；Decoder = **手工容错形态**——
    * 新扩的 Option 字段缺键时按 None 读（存量记录零迁移）。deriveDecoder 缺键即
    * 失败会让 `find`/`list` 把旧记录静默吞掉（catch → None），禁。
@@ -369,6 +411,9 @@ object DelegateRegistry:
       archivedAt <- c.get[Option[Long]]("archivedAt")
       delegatedBy <- c.get[Option[String]]("delegatedBy")
       restartInterruptedAt <- c.get[Option[Long]]("restartInterruptedAt")
+      cancelRequestedAt <- c.get[Option[Long]]("cancelRequestedAt")
+      cancelRequestedBy <- c.get[Option[String]]("cancelRequestedBy")
+      mode <- c.get[Option[String]]("mode")
     yield Record(
       id,
       executor,
@@ -392,7 +437,24 @@ object DelegateRegistry:
       worktreeJudged,
       archivedAt,
       delegatedBy,
-      restartInterruptedAt
+      restartInterruptedAt,
+      cancelRequestedAt,
+      cancelRequestedBy,
+      mode
     )
+
+  /**
+   * 双模式批：delegate 会话的**生效执行形态**读数（工具面/挂载面分叉的单点判据）。
+   * `None` = 双模式总闸关（Inert 态——行为逐字节回退现状，读盘上的 mode 也绝不
+    * 分叉）∨ 非 delegate 会话 ∨ 记录缺席/未判定。消费方（buildAllowedToolSet 等）
+    * 对 None 恒走现状路径——「闸关 = 现行为逐字节」的读面保证。
+   */
+  def modeFaceOf(sessionId: Option[String]): Option[String] =
+    if !DualModeConfig.enabledNow then None
+    else
+      sessionId.filter(sid => DelegateSessions.isDelegateSession(Some(sid))) match
+        case None => None
+        case Some(sid) =>
+          find(sid).flatMap(_.mode).filter(DualModeConfig.isModeWord)
 
 end DelegateRegistry
