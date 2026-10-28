@@ -195,6 +195,7 @@ export function openPerceptionPanel() {
   }
   panelEl.style.display = 'block';
   panelOpen = true;
+  setBtnActive(true);
   positionPanel();
   renderPanel();
   positionPanel();                                   // renderPanel 后体量落定 → 重钳一次（翻转判定用真高）
@@ -240,8 +241,17 @@ function panelOutsideClose(e) {
   if (panelOpen && panelEl && !panelEl.contains(e.target) && e.target && !e.target.closest('#perception-btn')) closePanel();
 }
 
+/** 入口按钮激活面（顶栏幽灵族钉 2026-10-28）：面板开合 ⇄ #perception-btn.active。
+ *  激活态走同排 #daemon-btn.active 档（CSS：图标 sapphire 提亮）——亮底填充在顶栏
+ *  永不出现；按钮缺席（理论不可达）静默。 */
+function setBtnActive(on) {
+  const btn = document.getElementById('perception-btn');
+  if (btn) btn.classList.toggle('active', on);
+}
+
 function closePanel() {
   panelOpen = false;
+  setBtnActive(false);
   if (panelEl) panelEl.style.display = 'none';
   window.removeEventListener('resize', positionPanel);
   document.removeEventListener('click', panelOutsideClose);
