@@ -1,0 +1,27 @@
+#!/bin/bash
+# nebflow CLI launcher — thin entry (authoritative copy: stand repo ops/bin/nebflow)
+#
+# 部署位置: ~/.nebflow/bin/nebflow (cp + chmod +x), 与 stand-cli-lib.sh 同目录部署;
+# 另有 PATH 垫片 ~/.stand/bin/nebflow → 本文件 (~/.zshrc:18 只把 ~/.stand/bin 加进
+# PATH, 垫片是唯一无侵入通道 — 不动用户 rc)。
+#
+# 2026.9.19 自有根契约 (承 ~/.nebflow/bin/nebflow 旧 launcher, 2026-10-23 作者令):
+#   home : ~/.nebflow (NEBFLOW_HOME 钉住防漂移; 不读 STAND_HOME — 隔离契约)
+#   port : 缺省 8080 不钉死; NEBFLOW_GATEWAY_PORT 或 argv --port 覆盖; 不读 STAND_*
+#   jar  : ~/.nebflow/bin/nebflow-assembly-*.jar winsort 择新
+#   JDK  : 钉住 ~/.stand/jdk-21 (与 stand 同一 pinned JDK 资产); 缺失 WARN 后才回落
+#   保护 : 目标端口已被占用 → 拒绝启动(绝不静默换端口); start/stop 守卫与 stand 同源
+# 与 stand 的隔离契约/守卫/restart --detached 实现见 stand-cli-lib.sh 头注释。
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_LIB="$SCRIPT_DIR/stand-cli-lib.sh"
+if [ ! -r "$_LIB" ]; then
+    echo "ERROR: stand-cli-lib.sh missing next to this entry (looked at: $_LIB)" >&2
+    echo "       repair: cp <stand-repo>/ops/bin/{stand,nebflow,stand-cli-lib.sh} ~/.nebflow/bin/ && chmod +x ~/.nebflow/bin/{nebflow}" >&2
+    exit 66
+fi
+_STAND_CLI_BRAND=nebflow
+_STAND_CLI_ENTRY_DIR="$SCRIPT_DIR"
+_STAND_CLI_SELF="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
+# shellcheck source=stand-cli-lib.sh
+. "$_LIB"
+stand_cli_main "$@"

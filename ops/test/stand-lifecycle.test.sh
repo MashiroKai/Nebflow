@@ -1,12 +1,12 @@
 #!/bin/bash
-# stand CLI 生命周期守卫 — 纯 bash 断言测试 (无 bats 依赖)
-# 被测对象: <repo>/ops/bin/stand (LIFECYCLE-GUARD v1) + ops/bin/stand-jdk (体检面)
+# stand/nebflow CLI 生命周期守卫 — 纯 bash 断言测试 (无 bats 依赖)
+# 被测对象: <repo>/ops/bin/{stand,nebflow,stand-cli-lib.sh,nebflow-stand-shim}
+#           (stand + nebflow 两入口的共享实现库) + ops/bin/stand-jdk (体检面)
 #
-# 方法: 沙箱化 —— 每个用例把被测脚本拷进临时 bin/(伪造 jar + current-version),
-#   STAND_HOME 指沙箱 home, STAND_JAVA_BIN 指假 java (记录调用+可控版本输出),
-#   端口用 21000+ 随机空闲段; 真实监听用 python http.server, stand 身份用
-#   「可执行路径含 stand-assembly 标记」假冒 (macOS ps 对 .app 二进制不认假
-#   argv[0], 对脚本路径认原样 —— 守卫身份门匹配的正是 ps 串)。
+# 方法: 沙箱化 —— 每个用例把被测脚本(含同目录依赖库)拷进临时 bin/(伪造 jar +
+#   current-version), STAND_HOME/NEBFLOW_HOME 指沙箱 home, STAND_JAVA_BIN 指假
+#   java (记录调用+可控版本输出), 端口用 21000+ 随机空闲段; 真实监听用 C 迷你
+#   监听器 (marker: 路径含 stand-assembly 标记) 与 python http.server (foreign)。
 # 零真实 daemon: start 未命中路径的 exec 落在假 java 上, 不起 JVM。
 #
 # 用法: bash ops/test/stand-lifecycle.test.sh   (exit 0 = 全绿)
@@ -14,6 +14,9 @@ set -u
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SRC_STAND="$REPO_ROOT/ops/bin/stand"
+SRC_NEBFLOW="$REPO_ROOT/ops/bin/nebflow"
+SRC_LIB="$REPO_ROOT/ops/bin/stand-cli-lib.sh"
+SRC_SHIM="$REPO_ROOT/ops/bin/nebflow-stand-shim"
 SRC_JDK="$REPO_ROOT/ops/bin/stand-jdk"
 SRC_AUTOSTART="$REPO_ROOT/ops/nebflow-autostart.sh"
 SRC_RESTART="$REPO_ROOT/ops/nebflow-restart.sh"
@@ -39,25 +42,29 @@ assert_eq()      { # <desc> <want> <got>
     if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 — want '$2', got '$3'"; fi; }
 
 # ── 沙箱脚手架 ────────────────────────────────────────────
-fresh_sandbox() { # 每个 case 重建: bin/(stand+jars) + fake java + home
+fresh_sandbox() { # 每个 case 重建: bin/(stand+nebflow+库+jars) + fake java + home
     rm -rf "$SANDBOX"/*
     mkdir -p "$SANDBOX/bin/versions/2026.10.25" "$SANDBOX/fakebin" "$SANDBOX/home"
     : > "$SANDBOX/bin/versions/2026.10.25/stand-assembly-2026.10.25.jar"
     printf '2026.10.25\n' > "$SANDBOX/bin/current-version"
+    : > "$SANDBOX/bin/nebflow-assembly-2026.9.19.jar"   # nebflow 入口 winsort 面
     cat > "$SANDBOX/fakebin/java" <<'FAKEJAVA'
 #!/bin/bash
-# 假 java: -version 走 FAKE_JAVA_VERSION; 真调用记进 FAKE_LOG (args + 端口 env)
+# 假 java: -version 走 FAKE_JAVA_VERSION; 真调用记进 FAKE_LOG (args + 端口 env + home env)
 if [ "${FAKE_MODE:-run}" = "version" ] || [ "${1:-}" = "-version" ]; then
     echo "openjdk version \"${FAKE_JAVA_VERSION:-21.0.5}\" 2024-10-15"
     exit 0
 fi
 printf 'ARGS:%s\n' "$*" >> "$FAKE_LOG"
 printf 'PORTS:%s|%s\n' "${STAND_GATEWAY_PORT:-}" "${NEBFLOW_GATEWAY_PORT:-}" >> "$FAKE_LOG"
+printf 'HOMEVARS:%s|%s\n' "${STAND_HOME:-}" "${NEBFLOW_HOME:-}" >> "$FAKE_LOG"
 exit 0
 FAKEJAVA
     chmod +x "$SANDBOX/fakebin/java"
     cp "$SRC_STAND" "$SANDBOX/bin/stand"
-    chmod +x "$SANDBOX/bin/stand"
+    cp "$SRC_NEBFLOW" "$SANDBOX/bin/nebflow"
+    cp "$SRC_LIB" "$SANDBOX/bin/stand-cli-lib.sh"
+    chmod +x "$SANDBOX/bin/stand" "$SANDBOX/bin/nebflow"
     : > "$FAKE_LOG"
 }
 
@@ -78,6 +85,26 @@ run_stand_on() { # <port> $@: 同 run_stand, 以 STAND_GATEWAY_PORT 把端口告
         STAND_GATEWAY_PORT="$_port" \
         FAKE_LOG="$FAKE_LOG" \
         "$SANDBOX/bin/stand" "$@" 2>&1)"
+    return $?
+}
+
+run_nebflow() { # $@: nebflow 子命令 (品牌隔离面: 只认 NEBFLOW_* env)
+    RUN_OUT="$(cd "$SANDBOX" && \
+        NEBFLOW_HOME="$SANDBOX/home" \
+        NEBFLOW_JAVA_BIN="$SANDBOX/fakebin/java" \
+        FAKE_LOG="$FAKE_LOG" \
+        "$SANDBOX/bin/nebflow" "$@" 2>&1)"
+    return $?
+}
+
+run_nebflow_on() { # <port> $@: 同 run_nebflow, 以 NEBFLOW_GATEWAY_PORT 把端口告知被测脚本
+    local _port="$1"; shift
+    RUN_OUT="$(cd "$SANDBOX" && \
+        NEBFLOW_HOME="$SANDBOX/home" \
+        NEBFLOW_JAVA_BIN="$SANDBOX/fakebin/java" \
+        NEBFLOW_GATEWAY_PORT="$_port" \
+        FAKE_LOG="$FAKE_LOG" \
+        "$SANDBOX/bin/nebflow" "$@" 2>&1)"
     return $?
 }
 
@@ -133,13 +160,21 @@ FIXEOF
     return 0
 }
 
-start_fixture() { # <port> <marker|foreign> — 起假冒监听; echo pid
-    local _port="$1" _mode="$2" _pid
+start_fixture() { # <port> <marker|foreign> [name] — 起假冒监听; echo pid (监听器本体 pid)
+    local _port="$1" _mode="$2" _name="${3:-}" _pid _bin
     make_fixture "$_mode" || { echo "NO_FIXTURE"; return 1; }
+    # exec 必须: 子壳只包 cd —— 没有 exec 时 $! 是等待中的子壳而非监听器,
+    # pid 记账/身份门全部失配 (2026-10-27 定因: case4 假败 + fixture 孤儿泄漏的根)。
+    # _name 供品牌侧假冒 (如 nebflow 侧监听器路径须含 nebflow 标记才过 nebflow 身份门)。
     if [ "$_mode" = "marker" ]; then
-        ( cd / && "$SANDBOX/fakebin/stand-assembly-fixture" "$_port" ) >/dev/null 2>&1 &
+        _bin="$SANDBOX/fakebin/stand-assembly-fixture"
+        if [ -n "$_name" ]; then
+            cp "$_bin" "$SANDBOX/fakebin/$_name"
+            _bin="$SANDBOX/fakebin/$_name"
+        fi
+        ( cd / && exec "$_bin" "$_port" ) >/dev/null 2>&1 &
     else
-        ( cd / && "$SANDBOX/fakebin/plain-listener" "$_port" ) >/dev/null 2>&1 &
+        ( cd / && exec "$SANDBOX/fakebin/plain-listener" "$_port" ) >/dev/null 2>&1 &
     fi
     _pid=$!
     wait_listener "$_port" 30 || { kill "$_pid" 2>/dev/null; echo "LISTEN_TIMEOUT"; return 1; }
@@ -173,11 +208,11 @@ echo "   sandbox: $SANDBOX"
 
 # ── 0. 静态: 语法 ──
 t "case 0: bash -n on ops scripts"
-for _f in "$SRC_STAND" "$SRC_JDK" "$SRC_AUTOSTART" "$SRC_RESTART"; do
+for _f in "$SRC_STAND" "$SRC_NEBFLOW" "$SRC_LIB" "$SRC_SHIM" "$SRC_JDK" "$SRC_AUTOSTART" "$SRC_RESTART"; do
     if bash -n "$_f" 2>"$SANDBOX/syn.err"; then ok "syntax: $(basename "$_f")"; else bad "syntax: $(basename "$_f"): $(cat "$SANDBOX/syn.err")"; fi
 done
 if command -v shellcheck >/dev/null 2>&1; then
-    if shellcheck -S warning "$SRC_STAND" 2>/dev/null; then ok "shellcheck: stand"; else bad "shellcheck: stand"; fi
+    if shellcheck -S warning "$SRC_STAND" "$SRC_NEBFLOW" "$SRC_LIB" "$SRC_SHIM" 2>/dev/null; then ok "shellcheck: entries+lib+shim"; else bad "shellcheck: entries+lib+shim"; fi
 else
     echo "  (shellcheck not installed — skipped)"
 fi
@@ -192,7 +227,8 @@ if case "$FIX1" in ''|*[!0-9]*) false ;; *) true ;; esac; then
     assert_rc "start hit rc" 0 "$RC"
     assert_contains "start hit message" "already running" "$RUN_OUT"
     assert_eq "no java exec'd" "0" "$(FAKE_LOG_LINES)"
-    kill "$FIX1" 2>/dev/null; wait_gone "$P1" >/dev/null
+    kill "$FIX1" 2>/dev/null
+    if wait_gone "$P1"; then ok "fixture cleaned up (no orphan leak)"; else bad "fixture leaked on $P1"; fi
 else
     bad "case 1 skipped: fixture failed ($FIX1)"
 fi
@@ -208,7 +244,8 @@ if case "$FIX2" in ''|*[!0-9]*) false ;; *) true ;; esac; then
     assert_contains "foreign refuse message" "non-stand" "$RUN_OUT"
     assert_lacks   "foreign refuse is not 'already running'" "already running" "$RUN_OUT"
     assert_eq "no java exec'd" "0" "$(FAKE_LOG_LINES)"
-    kill "$FIX2" 2>/dev/null; wait_gone "$P2" >/dev/null
+    kill "$FIX2" 2>/dev/null
+    if wait_gone "$P2"; then ok "fixture cleaned up (no orphan leak)"; else bad "fixture leaked on $P2"; fi
 else
     bad "case 2 skipped: fixture failed ($FIX2)"
 fi
@@ -219,7 +256,7 @@ fresh_sandbox
 P3=$(pick_free_port)
 run_stand_on "$P3" start; RC=$?
 assert_rc "start miss rc" 0 "$RC"
-assert_eq "java exec'd (ARGS+PORTS)" "2" "$(FAKE_LOG_LINES)"
+assert_eq "java exec'd (ARGS+PORTS+HOMEVARS)" "3" "$(FAKE_LOG_LINES)"
 assert_contains "jar wired" "-jar" "$(cat "$FAKE_LOG")"
 assert_contains "start subcommand preserved" " start" "$(cat "$FAKE_LOG")"
 assert_contains "port env pinned to probe value" "PORTS:$P3|$P3" "$(cat "$FAKE_LOG")"
@@ -284,7 +321,8 @@ if case "$FIX7" in ''|*[!0-9]*) false ;; *) true ;; esac; then
     assert_rc "foreign refuse rc" 1 "$RC"
     assert_contains "refuse message" "non-stand" "$RUN_OUT"
     if kill -0 "$FIX7" 2>/dev/null; then ok "foreign process survived"; else bad "foreign process was killed"; fi
-    kill "$FIX7" 2>/dev/null; wait_gone "$P7" >/dev/null
+    kill "$FIX7" 2>/dev/null
+    if wait_gone "$P7"; then ok "fixture cleaned up (no orphan leak)"; else bad "fixture leaked on $P7"; fi
 else
     bad "case 7 skipped: fixture failed ($FIX7)"
 fi
@@ -327,7 +365,8 @@ if case "$FIX11" in ''|*[!0-9]*) false ;; *) true ;; esac; then
     run_stand start --port "$P11"; RC=$?
     assert_rc "--port hit rc" 0 "$RC"
     assert_contains "--port hit message" "already running" "$RUN_OUT"
-    kill "$FIX11" 2>/dev/null; wait_gone "$P11" >/dev/null
+    kill "$FIX11" 2>/dev/null
+    if wait_gone "$P11"; then ok "fixture cleaned up (no orphan leak)"; else bad "fixture leaked on $P11"; fi
 else
     bad "case 11 skipped: fixture failed ($FIX11)"
 fi
@@ -359,6 +398,7 @@ fresh_sandbox
 P14=$(pick_free_port)
 PTY_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
     STAND_GATEWAY_PORT="$P14" FAKE_LOG="$FAKE_LOG" STAND_BANNER_COLS=100 \
+    TERM=xterm-256color \
     script -q "$SANDBOX/pty-a.txt" "$SANDBOX/bin/stand" start 2>&1)"
 RC=$?
 assert_rc "pty wide start rc" 0 "$RC"
@@ -371,6 +411,7 @@ fresh_sandbox
 P15=$(pick_free_port)
 PTY_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
     STAND_GATEWAY_PORT="$P15" FAKE_LOG="$FAKE_LOG" NO_COLOR=1 STAND_BANNER_COLS=100 \
+    TERM=xterm-256color \
     script -q "$SANDBOX/pty-b.txt" "$SANDBOX/bin/stand" start 2>&1)"
 RC=$?
 assert_rc "NO_COLOR start rc" 0 "$RC"
@@ -383,6 +424,7 @@ fresh_sandbox
 P16=$(pick_free_port)
 PTY_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
     STAND_GATEWAY_PORT="$P16" FAKE_LOG="$FAKE_LOG" STAND_BANNER_COLS=40 \
+    TERM=xterm-256color \
     script -q "$SANDBOX/pty-c.txt" "$SANDBOX/bin/stand" start 2>&1)"
 RC=$?
 assert_rc "narrow start rc" 0 "$RC"
@@ -396,11 +438,181 @@ fresh_sandbox
 P17=$(pick_free_port)
 PTY_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
     STAND_GATEWAY_PORT="$P17" FAKE_LOG="$FAKE_LOG" STAND_BANNER=C STAND_BANNER_COLS=100 \
+    TERM=xterm-256color \
     script -q "$SANDBOX/pty-d.txt" "$SANDBOX/bin/stand" start 2>&1)"
 RC=$?
 assert_rc "banner C start rc" 0 "$RC"
 assert_contains "candidate C slogan" "One entry, Every agent." "$(cat "$SANDBOX/pty-d.txt")"
 assert_lacks "candidate C has no block art" "█" "$(cat "$SANDBOX/pty-d.txt")"
+
+# ── 18. nebflow 品牌面: start 未命中 → 透传 java, 只钉 NEBFLOW_* (零 STAND_* 写入) ──
+t "case 18: nebflow start miss -> passthrough with NEBFLOW_* pins only (no STAND_* writes)"
+fresh_sandbox
+P18=$(pick_free_port)
+run_nebflow_on "$P18" start; RC=$?
+assert_rc "nebflow start miss rc" 0 "$RC"
+assert_eq "java exec'd (ARGS+PORTS+HOMEVARS)" "3" "$(FAKE_LOG_LINES)"
+assert_contains "nebflow jar wired" "nebflow-assembly-2026.9.19.jar" "$(cat "$FAKE_LOG")"
+assert_contains "nebflow port pinned" "PORTS:|$P18" "$(cat "$FAKE_LOG")"
+assert_contains "nebflow home pinned" "HOMEVARS:|$SANDBOX/home" "$(cat "$FAKE_LOG")"
+assert_lacks "no STAND_GATEWAY_PORT write" "PORTS:$P18|" "$(cat "$FAKE_LOG")"
+
+# ── 19. 隔离: 端口解析各只认自家 env (行为证明: 对家变量指的口上有活监听也绝不探它) ──
+t "case 19: env isolation - each brand ignores the other brand's port var on stop"
+fresh_sandbox
+P19A=$(pick_free_port); P19B=$(pick_free_port)
+# 对家变量 NEBFLOW_GATEWAY_PORT=P19B 上放一个 stand 品牌监听器; stand 自家口 P19A 空着
+FIX19=$(start_fixture "$P19B" marker)
+if case "$FIX19" in ''|*[!0-9]*) false ;; *) true ;; esac; then
+    RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+        STAND_GATEWAY_PORT="$P19A" NEBFLOW_GATEWAY_PORT="$P19B" FAKE_LOG="$FAKE_LOG" \
+        "$SANDBOX/bin/stand" stop 2>&1)"; RC=$?
+    assert_rc "stand stop ignores NEBFLOW_* var rc" 0 "$RC"
+    assert_contains "stand stop probes own port only" "stand is not running" "$RUN_OUT"
+    if kill -0 "$FIX19" 2>/dev/null; then ok "stand stop did not touch NEBFLOW_* port listener"; else bad "stand stop killed the other brand's listener"; fi
+    # 镜像: 对家变量 STAND_GATEWAY_PORT=P19A 上放 nebflow 标记监听器; nebflow 自家口 P19B 现在也空了
+    kill "$FIX19" 2>/dev/null; wait_gone "$P19B" >/dev/null
+    FIX19B=$(start_fixture "$P19A" marker nebflow-fixture)
+    if case "$FIX19B" in ''|*[!0-9]*) false ;; *) true ;; esac; then
+        RUN_OUT="$(cd "$SANDBOX" && NEBFLOW_HOME="$SANDBOX/home" NEBFLOW_JAVA_BIN="$SANDBOX/fakebin/java" \
+            NEBFLOW_GATEWAY_PORT="$P19B" STAND_GATEWAY_PORT="$P19A" FAKE_LOG="$FAKE_LOG" \
+            "$SANDBOX/bin/nebflow" stop 2>&1)"; RC=$?
+        assert_rc "nebflow stop ignores STAND_* var rc" 0 "$RC"
+        assert_contains "nebflow stop probes own port only" "nebflow is not running" "$RUN_OUT"
+        if kill -0 "$FIX19B" 2>/dev/null; then ok "nebflow stop did not touch STAND_* port listener"; else bad "nebflow stop killed the other brand's listener"; fi
+        kill "$FIX19B" 2>/dev/null; wait_gone "$P19A" >/dev/null
+    else
+        bad "case 19b skipped: fixture failed ($FIX19B)"
+    fi
+else
+    bad "case 19 skipped: fixture failed ($FIX19)"
+fi
+
+# ── 20. 隔离: stop 互不波及 (双 home 双端口并存, 各停各家) ──
+t "case 20: stop does not cross-kill (two homes, two ports, side by side)"
+fresh_sandbox
+P20A=$(pick_free_port); P20B=$(pick_free_port)
+mkdir -p "$SANDBOX/homeB"
+FIX20A=$(start_fixture "$P20A" marker)                      # stand 品牌侧监听器
+FIX20B=$(start_fixture "$P20B" marker nebflow-fixture)      # nebflow 品牌侧监听器
+if case "$FIX20A" in ''|*[!0-9]*) false ;; *) true ;; esac && case "$FIX20B" in ''|*[!0-9]*) false ;; *) true ;; esac; then
+    echo "$FIX20A" > "$SANDBOX/home/.pid"
+    echo "$FIX20B" > "$SANDBOX/homeB/.pid"
+    RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+        STAND_GATEWAY_PORT="$P20A" FAKE_LOG="$FAKE_LOG" \
+        "$SANDBOX/bin/stand" stop 2>&1)"; RC=$?
+    assert_rc "stand stop rc" 0 "$RC"
+    if wait_gone "$P20A"; then ok "stand side stopped"; else bad "stand side still held"; fi
+    if kill -0 "$FIX20B" 2>/dev/null; then ok "nebflow side untouched by stand stop"; else bad "stand stop killed nebflow side"; fi
+    if [ "$(cat "$SANDBOX/homeB/.pid" 2>/dev/null)" = "$FIX20B" ]; then ok "nebflow home .pid untouched"; else bad "nebflow home .pid disturbed"; fi
+    RUN_OUT="$(cd "$SANDBOX" && NEBFLOW_HOME="$SANDBOX/homeB" NEBFLOW_JAVA_BIN="$SANDBOX/fakebin/java" \
+        NEBFLOW_GATEWAY_PORT="$P20B" FAKE_LOG="$FAKE_LOG" \
+        "$SANDBOX/bin/nebflow" stop 2>&1)"; RC=$?
+    assert_rc "nebflow stop rc" 0 "$RC"
+    if wait_gone "$P20B"; then ok "nebflow side stopped by its own face"; else bad "nebflow side still held"; fi
+else
+    bad "case 20 skipped: fixture failed ($FIX20A / $FIX20B)"
+fi
+
+# ── 21. 身份门按品牌收窄: nebflow 标记监听器对 stand 品牌是外姓 → 拒杀 ──
+t "case 21: brand-scoped identity gate - nebflow marker is foreign to stand stop"
+fresh_sandbox
+P21=$(pick_free_port)
+FIX21=$(start_fixture "$P21" marker nebflow-fixture)
+if case "$FIX21" in ''|*[!0-9]*) false ;; *) true ;; esac; then
+    RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+        STAND_GATEWAY_PORT="$P21" FAKE_LOG="$FAKE_LOG" \
+        "$SANDBOX/bin/stand" stop 2>&1)"; RC=$?
+    assert_rc "stand stop refuses nebflow marker rc" 1 "$RC"
+    assert_contains "refuse message says non-stand" "non-stand" "$RUN_OUT"
+    if kill -0 "$FIX21" 2>/dev/null; then ok "nebflow marker survived stand stop"; else bad "stand stop killed nebflow marker"; fi
+    kill "$FIX21" 2>/dev/null; wait_gone "$P21" >/dev/null
+else
+    bad "case 21 skipped: fixture failed ($FIX21)"
+fi
+
+# ── 22. bare restart 逐字透传 (#916 jar 面语义不变, 含 run --inline --force) ──
+t "case 22: bare restart passthrough (jar-side #916 face untouched)"
+fresh_sandbox
+run_stand restart; RC=$?
+assert_rc "bare restart passthrough rc" 0 "$RC"
+assert_contains "restart reached jar" " restart" "$(cat "$FAKE_LOG")"
+: > "$FAKE_LOG"
+run_stand restart run --inline --force; RC=$?
+assert_rc "restart run --inline --force passthrough rc" 0 "$RC"
+assert_contains "subcommand+flags reached jar" "restart run --inline --force" "$(cat "$FAKE_LOG")"
+
+# ── 23. restart --dry-run 假点火 (引擎活着): ppid=1 孤儿 + 树杀不可达 + 零停零启 ──
+t "case 23: restart --dry-run fake ignition (engine alive) -> orphan igniter, tree-kill unreachable, zero stop/start"
+fresh_sandbox
+P23=$(pick_free_port)
+FIX23=$(start_fixture "$P23" marker)
+if case "$FIX23" in ''|*[!0-9]*) false ;; *) true ;; esac; then
+    echo "$FIX23" > "$SANDBOX/home/.pid"
+    _L23_BEFORE=$(FAKE_LOG_LINES)
+    RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+        STAND_GATEWAY_PORT="$P23" FAKE_LOG="$FAKE_LOG" \
+        "$SANDBOX/bin/stand" restart --dry-run 2>&1)"; RC=$?
+    assert_rc "dry-run arm rc" 0 "$RC"
+    assert_contains "dry-run armed message" "DRY-RUN armed" "$RUN_OUT"
+    _L23=""
+    for _i in $(seq 1 80); do
+        _L23="$(cat "$SANDBOX/home"/logs/restart-detached-*.log 2>/dev/null || true)"
+        case "$_L23" in *"verdict:"*) break ;; esac
+        sleep 0.1
+    done
+    assert_contains "igniter ppid=1 (launchd adopted)" "[self-check] ppid=1 OK" "$_L23"
+    assert_contains "tree-kill unreachable verdict" "verdict: DRY-RUN OK" "$_L23"
+    assert_contains "ancestor chain clean" "engine pid in igniter ancestor chain: NO" "$_L23"
+    assert_contains "probe saw the live engine pid" "probe: pid $FIX23" "$_L23"
+    assert_contains "probe signal permission ok" "signal-permission=ok" "$_L23"
+    assert_contains "mode recorded dry-run" "mode: dry-run" "$_L23"
+    if kill -0 "$FIX23" 2>/dev/null; then ok "engine untouched by fake ignition"; else bad "fake ignition killed the engine"; fi
+    if wait_gone "$P23" >/dev/null 2>&1; then bad "port should still be held"; else ok "port still held (engine alive)"; fi
+    assert_eq "zero java exec'd by dry-run" "$_L23_BEFORE" "$(FAKE_LOG_LINES)"
+    if [ -e "$SANDBOX/home/.restart-detached.pid" ]; then bad "restart guard not cleaned"; else ok "restart guard cleaned"; fi
+    kill "$FIX23" 2>/dev/null; wait_gone "$P23" >/dev/null
+else
+    bad "case 23 skipped: fixture failed ($FIX23)"
+fi
+
+# ── 24. nebflow 品牌: bare restart 拒绝 (9.19 jar 无此命令) + --dry-run 同代码路径假点火 ──
+t "case 24: nebflow brand - bare restart refused, --dry-run arms nebflow igniter"
+fresh_sandbox
+run_nebflow restart; RC=$?
+assert_rc "nebflow bare restart refused rc" 2 "$RC"
+assert_contains "refusal hint names the detached face" "--detached" "$RUN_OUT"
+P24=$(pick_free_port)
+RUN_OUT="$(cd "$SANDBOX" && NEBFLOW_HOME="$SANDBOX/home" NEBFLOW_JAVA_BIN="$SANDBOX/fakebin/java" \
+    NEBFLOW_GATEWAY_PORT="$P24" FAKE_LOG="$FAKE_LOG" \
+    "$SANDBOX/bin/nebflow" restart --dry-run 2>&1)"; RC=$?
+assert_rc "nebflow dry-run arm rc" 0 "$RC"
+_L24=""
+for _i in $(seq 1 80); do
+    _L24="$(cat "$SANDBOX/home"/logs/restart-detached-*.log 2>/dev/null || true)"
+    case "$_L24" in *"verdict:"*) break ;; esac
+    sleep 0.1
+done
+assert_contains "nebflow brand recorded" "brand: nebflow" "$_L24"
+assert_contains "nebflow dry-run verdict OK" "verdict: DRY-RUN OK" "$_L24"
+
+# ── 25. 守卫记账: 活 pid 但非点火器 = 陈年记账 → WARN 覆写放行 ──
+t "case 25: stale restart guard (alive non-igniter pid) -> WARN + overwrite + proceed"
+fresh_sandbox
+P25=$(pick_free_port)
+echo "$$" > "$SANDBOX/home/.restart-detached.pid"   # 套件自身 bash: 活着但不是点火器
+RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+    STAND_GATEWAY_PORT="$P25" FAKE_LOG="$FAKE_LOG" \
+    "$SANDBOX/bin/stand" restart --dry-run 2>&1)"; RC=$?
+assert_rc "arm proceeds past stale guard rc" 0 "$RC"
+assert_contains "stale guard warning" "stale restart guard" "$RUN_OUT"
+assert_contains "arm completed anyway" "DRY-RUN armed" "$RUN_OUT"
+for _i in $(seq 1 80); do
+    _L25="$(cat "$SANDBOX/home"/logs/restart-detached-*.log 2>/dev/null || true)"
+    case "$_L25" in *"verdict:"*) break ;; esac
+    sleep 0.1
+done
+assert_contains "stale-guard dry-run verdict OK" "verdict: DRY-RUN OK" "$_L25"
 
 echo
 echo "== summary: PASS=$PASS FAIL=$FAIL =="
