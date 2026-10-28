@@ -50,6 +50,7 @@ private[gateway] object WsDispatch:
     WsFileOpsHandlers.handlers,
     WsDropboxHandlers.handlers,
     WsMemoryFoldersHandlers.handlers,
+    WsAskHandlers.handlers,
     WsSystemHandlers.handlers
   ).reduce(_ ++ _)
 

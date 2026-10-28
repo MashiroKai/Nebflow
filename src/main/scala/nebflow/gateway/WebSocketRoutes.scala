@@ -106,7 +106,15 @@ class WebSocketRoutes(
     metaOpt: Option[nebflow.shared.SessionMeta],
     sharedResources: SharedResources
   ): IO[AgentDef] =
-    metaOpt.flatMap(_.agentName) match
+    // Canvas ask mode（2026-10-28 实施批）：ask 会话身份优先——绑定面给文件，
+    // 提示词 = §6 分身章 + 组装上下文（缓存缺席现场组装一次，幂等）。
+    if nebflow.core.ask.AskSessions.isAskSession(sessionId) then
+      nebflow.core.ask.AskGatewayServices.instance match
+        case Some(svc) => svc.agentDefFor(sessionId)
+        case None =>
+          IO.raiseError(new RuntimeException(s"ask session $sessionId: ask services unavailable"))
+    else
+      metaOpt.flatMap(_.agentName) match
       case Some(agentName) =>
         sharedResources.agentLibrary.get(agentName).flatMap {
           case Some(defn) => IO.pure(defn)
@@ -988,6 +996,41 @@ class WebSocketRoutes(
   def handleBridgeAgentCommand(sessionId: String, command: AgentCommand): IO[Unit] =
     if sessionId.isEmpty then IO.unit
     else ensureAgent(sessionId)(ref => ref ! command)
+
+  /**
+   * Canvas ask mode（2026-10-28 实施批）：AskHandoffPort 注册面。唯一能装的面
+   * （ensureAgent 私有）——生产 boot 由 GatewayMain 在构造后显式调用；spec 构造
+   * 不装 ⇒ 端口保持未注册 fail-closed（转交显式报错，不静默）。
+   * 投递 = ensureAgent(绑定主会话) ! ExternalEvent(source="ask") ⇒ injected
+   * 气泡 + 来源行引擎呈现链（emitInjectedUserEvent），metadata 携 askSession/
+   * file/leg（回问芯片与反查消费）。
+   */
+  def installAskHandoffFace(): Unit =
+    nebflow.core.AskHandoffPort.install { req =>
+      val deliver = for
+        bindingOpt <- nebflow.core.ask.AskGatewayServices.instance match
+          case Some(svc) => svc.registry.byId(req.askSessionId)
+          case None => IO.pure(None)
+        result <- bindingOpt.flatMap(b => Option(b.mainSessionId).map(_.trim).filter(_.nonEmpty)) match
+          case None =>
+            IO.pure(Left(nebflow.core.tools.ToolError("转交目标主会话未就绪（ASK_HANDOFF_NO_TARGET）。")))
+          case Some(mainSid) =>
+            val rendered = s"来自文件问答 · ${req.fileName}\n\n${req.question}"
+            val metadata = io.circe.JsonObject(
+              "askSession" -> req.askSessionId.asJson,
+              "file" -> req.file.asJson,
+              "fileName" -> req.fileName.asJson,
+              "leg" -> req.leg.asJson,
+              "contextRefs" -> Json.fromValues(req.contextRefs).asJson
+            )
+            handleBridgeAgentCommand(
+              mainSid,
+              AgentCommand.ExternalEvent("ask", "inject", rendered, metadata, None)
+            ).map(_ => Right(s"delivered to $mainSid"))
+      yield result
+      deliver.handleErrorWith(e => IO.pure(Left(nebflow.core.tools.ToolError(s"转交失败: ${e.getMessage}"))))
+    }
+  end installAskHandoffFace
 
   def routes: HttpRoutes[IO] =
     StaticRoutes.uploadsRoutes(
