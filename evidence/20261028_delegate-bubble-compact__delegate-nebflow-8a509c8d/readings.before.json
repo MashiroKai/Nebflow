@@ -1,0 +1,143 @@
+{
+  "phase": "before",
+  "tiers": {
+    "desktop": {
+      "baselineH": 42.46875,
+      "bubbles": [
+        {
+          "headerText": "DELEGATE · NEBULA · NEBFLOW · COMPLETED",
+          "bubbleH": 53.390625,
+          "labelH": 15.5,
+          "labelMt": 0,
+          "labelMb": 0,
+          "chipH": 23.390625,
+          "chipW": 143.484375,
+          "headlineH": 23.390625,
+          "headlineMt": 2,
+          "headlineMb": 8,
+          "padT": 10,
+          "padB": 10
+        },
+        {
+          "headerText": "DELEGATE · NEBULA · CLAUDE-CODE · COMPLETED",
+          "bubbleH": 37.5,
+          "labelH": 15.5,
+          "labelMt": 0,
+          "labelMb": 2,
+          "chipH": 0,
+          "chipW": 0,
+          "headlineH": 15.5,
+          "headlineMt": 0,
+          "headlineMb": 0,
+          "padT": 10,
+          "padB": 10
+        },
+        {
+          "headerText": "DELEGATE · stand · diff-split · COMPLETED",
+          "bubbleH": 53.390625,
+          "labelH": 15.5,
+          "labelMt": 0,
+          "labelMb": 0,
+          "chipH": 23.390625,
+          "chipW": 143.484375,
+          "headlineH": 23.390625,
+          "headlineMt": 2,
+          "headlineMb": 8,
+          "padT": 10,
+          "padB": 10
+        }
+      ]
+    },
+    "desktopExpanded": {
+      "baselineH": 42.46875,
+      "bubbles": [
+        {
+          "headerText": "DELEGATE · NEBULA · NEBFLOW · COMPLETED",
+          "bubbleH": 75.859375,
+          "labelH": 15.5,
+          "labelMt": 0,
+          "labelMb": 0,
+          "chipH": 23.390625,
+          "chipW": 143.484375,
+          "headlineH": 23.390625,
+          "headlineMt": 2,
+          "headlineMb": 8,
+          "padT": 10,
+          "padB": 10
+        },
+        {
+          "headerText": "DELEGATE · NEBULA · CLAUDE-CODE · COMPLETED",
+          "bubbleH": 37.5,
+          "labelH": 15.5,
+          "labelMt": 0,
+          "labelMb": 2,
+          "chipH": 0,
+          "chipW": 0,
+          "headlineH": 15.5,
+          "headlineMt": 0,
+          "headlineMb": 0,
+          "padT": 10,
+          "padB": 10
+        },
+        {
+          "headerText": "DELEGATE · stand · diff-split · COMPLETED",
+          "bubbleH": 120.796875,
+          "labelH": 15.5,
+          "labelMt": 0,
+          "labelMb": 0,
+          "chipH": 23.390625,
+          "chipW": 143.484375,
+          "headlineH": 23.390625,
+          "headlineMt": 2,
+          "headlineMb": 8,
+          "padT": 10,
+          "padB": 10
+        }
+      ]
+    },
+    "narrow320": {
+      "headlineH": 23.390625,
+      "chipW": 143.484375,
+      "labelScroll": 251,
+      "labelClient": 141
+    },
+    "tablet768": {
+      "baselineH": 42.46875,
+      "bubbles": [
+        {
+          "headerText": "DELEGATE · NEBULA · NEBFLOW · COMPLETED",
+          "bubbleH": 53.390625,
+          "labelH": 15.5,
+          "labelMt": 0,
+          "labelMb": 0,
+          "chipH": 23.390625,
+          "chipW": 143.484375,
+          "headlineH": 23.390625,
+          "headlineMt": 2,
+          "headlineMb": 8,
+          "padT": 10,
+          "padB": 10
+        }
+      ]
+    },
+    "mobile390": {
+      "baselineH": 42.46875,
+      "bubbles": [
+        {
+          "headerText": "DELEGATE · NEBULA · NEBFLOW · COMPLETED",
+          "bubbleH": 53.390625,
+          "labelH": 15.5,
+          "labelMt": 0,
+          "labelMb": 0,
+          "chipH": 23.390625,
+          "chipW": 143.484375,
+          "headlineH": 23.390625,
+          "headlineMt": 2,
+          "headlineMb": 8,
+          "padT": 10,
+          "padB": 10
+        }
+      ]
+    }
+  }
+}

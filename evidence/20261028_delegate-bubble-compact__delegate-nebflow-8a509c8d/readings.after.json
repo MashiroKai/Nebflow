@@ -1,0 +1,171 @@
+{
+  "phase": "after",
+  "tiers": {
+    "desktop": {
+      "baselineH": 42.46875,
+      "bubbles": [
+        {
+          "headerText": "DELEGATE · INTERNAL · COMPLETED",
+          "bubbleH": 35.5,
+          "labelH": 15.5,
+          "labelMt": 0,
+          "labelMb": 0,
+          "chipH": 15,
+          "chipW": 136.484375,
+          "headlineH": 15.5,
+          "headlineMt": 0,
+          "headlineMb": 0,
+          "padT": 10,
+          "padB": 10
+        },
+        {
+          "headerText": "DELEGATE · CLAUDE-CODE · COMPLETED",
+          "bubbleH": 37.5,
+          "labelH": 15.5,
+          "labelMt": 0,
+          "labelMb": 2,
+          "chipH": 0,
+          "chipW": 0,
+          "headlineH": 15.5,
+          "headlineMt": 0,
+          "headlineMb": 0,
+          "padT": 10,
+          "padB": 10
+        },
+        {
+          "headerText": "DELEGATE · stand · diff-split · COMPLETED",
+          "bubbleH": 35.5,
+          "labelH": 15.5,
+          "labelMt": 0,
+          "labelMb": 0,
+          "chipH": 15,
+          "chipW": 136.484375,
+          "headlineH": 15.5,
+          "headlineMt": 0,
+          "headlineMb": 0,
+          "padT": 10,
+          "padB": 10
+        },
+        {
+          "headerText": "DELEGATE · NEBFLOW · EXPLORER · RESULT",
+          "bubbleH": 37.5,
+          "labelH": 15.5,
+          "labelMt": 0,
+          "labelMb": 2,
+          "chipH": 0,
+          "chipW": 0,
+          "headlineH": 15.5,
+          "headlineMt": 0,
+          "headlineMb": 0,
+          "padT": 10,
+          "padB": 10
+        }
+      ]
+    },
+    "desktopExpanded": {
+      "baselineH": 42.46875,
+      "bubbles": [
+        {
+          "headerText": "DELEGATE · INTERNAL · COMPLETED",
+          "bubbleH": 63.96875,
+          "labelH": 15.5,
+          "labelMt": 0,
+          "labelMb": 0,
+          "chipH": 15,
+          "chipW": 136.484375,
+          "headlineH": 15.5,
+          "headlineMt": 0,
+          "headlineMb": 0,
+          "padT": 10,
+          "padB": 10
+        },
+        {
+          "headerText": "DELEGATE · CLAUDE-CODE · COMPLETED",
+          "bubbleH": 37.5,
+          "labelH": 15.5,
+          "labelMt": 0,
+          "labelMb": 2,
+          "chipH": 0,
+          "chipW": 0,
+          "headlineH": 15.5,
+          "headlineMt": 0,
+          "headlineMb": 0,
+          "padT": 10,
+          "padB": 10
+        },
+        {
+          "headerText": "DELEGATE · stand · diff-split · COMPLETED",
+          "bubbleH": 108.90625,
+          "labelH": 15.5,
+          "labelMt": 0,
+          "labelMb": 0,
+          "chipH": 15,
+          "chipW": 136.484375,
+          "headlineH": 15.5,
+          "headlineMt": 0,
+          "headlineMb": 0,
+          "padT": 10,
+          "padB": 10
+        },
+        {
+          "headerText": "DELEGATE · NEBFLOW · EXPLORER · RESULT",
+          "bubbleH": 37.5,
+          "labelH": 15.5,
+          "labelMt": 0,
+          "labelMb": 2,
+          "chipH": 0,
+          "chipW": 0,
+          "headlineH": 15.5,
+          "headlineMt": 0,
+          "headlineMb": 0,
+          "padT": 10,
+          "padB": 10
+        }
+      ]
+    },
+    "narrow320": {
+      "headlineH": 15.5,
+      "chipW": 136.484375,
+      "labelScroll": 199,
+      "labelClient": 148
+    },
+    "tablet768": {
+      "baselineH": 42.46875,
+      "bubbles": [
+        {
+          "headerText": "DELEGATE · INTERNAL · COMPLETED",
+          "bubbleH": 35.5,
+          "labelH": 15.5,
+          "labelMt": 0,
+          "labelMb": 0,
+          "chipH": 15,
+          "chipW": 136.484375,
+          "headlineH": 15.5,
+          "headlineMt": 0,
+          "headlineMb": 0,
+          "padT": 10,
+          "padB": 10
+        }
+      ]
+    },
+    "mobile390": {
+      "baselineH": 42.46875,
+      "bubbles": [
+        {
+          "headerText": "DELEGATE · INTERNAL · COMPLETED",
+          "bubbleH": 35.5,
+          "labelH": 15.5,
+          "labelMt": 0,
+          "labelMb": 0,
+          "chipH": 15,
+          "chipW": 136.484375,
+          "headlineH": 15.5,
+          "headlineMt": 0,
+          "headlineMb": 0,
+          "padT": 10,
+          "padB": 10
+        }
+      ]
+    }
+  }
+}

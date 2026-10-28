@@ -87,6 +87,37 @@ function nodeStatusLabel(eventType) {
   return NODE_STATUS_LABELS[eventType] || String(eventType).toUpperCase();
 }
 
+/** Delegate 结果气泡信息提纯（作者令 2026-10-28 17:3x 报障批）：把已渲染的
+ *  delegate 头部（KIND · PROJECT · SUBJECT · STATE 或回落形态）重排为
+ *  `KIND · EXECUTOR · STATE` 三枚：
+ *   - 内置执行器（sender 携带的 executor id = `nebflow`，引擎
+ *     `ExecutorRegistry.DefaultId`）⇒ 一律显示 `INTERNAL`
+ *     （报障原文：「DELEGATE · NEBULA · NEBFLOW · COMPLETED」中 SUBJECT 段
+ *     NEBFLOW 无信息量）；
+ *   - 外部执行器（zcode / claude-code / codex / hermes）⇒ 显示各自 id
+ *     （全大写，同四段式全大写排版）；
+ *   - PROJECT 段不再进头部（会话/project 上下文已由气泡外 chrome 展示，
+ *     重复=零信息量）。
+ * 只改**显示文案的组装**——帧/落盘行上的 header、sender（executor id）、
+ * project 字段一律原样保留，不删数据。
+ * 边界：sender 是**已知 executor id**（引擎 `ExecutorRegistry.defs` 全集）才重排；
+ * 自定义 agent 委托（DelegateTool sender = agentDef.name，如 `Explorer`）的
+ * SUBJECT 段有信息量，**逐字不动**（PROJECT 段同保留）；sender 缺席（旧历史
+ * 行）⇒ 执行器不可判定 ⇒ 同样逐字不变。 */
+const DELEGATE_EXECUTOR_IDS = new Set(['nebflow', 'zcode', 'claude-code', 'codex', 'hermes']);
+
+function delegateResultLabel(headerText, sender, eventType) {
+  const exec = sender == null ? '' : String(sender).trim();
+  if (!exec) return headerText;
+  const lower = exec.toLowerCase();
+  if (!DELEGATE_EXECUTOR_IDS.has(lower)) return headerText;
+  const segs = String(headerText).split(' · ');
+  const kind = (segs[0] || 'DELEGATE').trim();
+  const executorLabel = lower === 'nebflow' ? 'INTERNAL' : exec.toUpperCase();
+  const state = eventType && segs.length > 1 ? segs[segs.length - 1] : null;
+  return [kind, executorLabel, state].filter(Boolean).join(' · ');
+}
+
 /** Build the source label text, optionally combining with sender and eventType.
  *  e.g. source='mail', sender='Manager', eventType='result' → 'Mail · Manager · Result'
  *  sender is optional (backward compatible): absent → 'SOURCE · EventType'.
@@ -215,6 +246,9 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   label.className = 'ask-label injected-source-label';
   const trimmed = (text || '').trim();
   const content = document.createElement('div');
+  // 类名供 diff 同线行 CSS 选择展开态间距（.nf-diff-headline + .injected-content）；
+  // 折叠态 content display:none ⇒ 零高度贡献（尺寸回归批 2026-10-28）。
+  content.className = 'injected-content';
   // 打回注入块收敛 (2026-08-27 user ruling): the backend [打回任务 #id: title]
   // injection collapses to the one-line `#<任务号> <任务标题>` form with a
   // one-line-truncated opinion. 描述/产出 never render. Both the live dispatch
@@ -244,8 +278,13 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   // 引擎单一来源优先（气泡四段式统一批 2026-09-15）：帧/落盘行带 `header` ⇒ 逐字
   // 渲染该串（**禁二次拼接**——引擎 `NotificationHeader` 是唯一格式化实现）；
   // 缺席 ⇒ 回落既有 `injectedSourceLabel`（旧历史行与词表外 source 逐字节不变）。
+  // delegate 腿例外重排：信息提纯批（2026-10-28 作者令）只改显示文案组装，
+  // KIND · EXECUTOR · STATE——内置执行器 → INTERNAL、外部执行器 → 各自 id、
+  // PROJECT 段不进头部；sender 缺席 ⇒ 逐字不变。
+  const renderedLabel =
+    (header && String(header).trim()) ? String(header) : injectedSourceLabel(source, eventType, sender, sourceTeam, intake);
   label.appendChild(document.createTextNode(
-    (header && String(header).trim()) ? String(header) : injectedSourceLabel(source, eventType, sender, sourceTeam, intake)
+    source === 'delegate' ? delegateResultLabel(renderedLabel, sender, eventType) : renderedLabel
   ));
   appendDeliveryBadge(label, delivery);
   // diff 拆面板批（2026-10-22 作者令「改为在最上面看，而且是一个小的摘要」）：

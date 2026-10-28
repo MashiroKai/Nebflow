@@ -194,7 +194,7 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
     // 同线（2026-10-22 回访令「计数与 COMPLETED 同行」）：header + chip 装进
     // 同一 .nf-diff-headline flex 行——chip 接在 COMPLETED 段之后、右缘贴行右缘
     // （右对齐批语义由 label 弹性占满自由空间天然成立，rightGap < 1px）；
-    // 常规宽必一行（label flex:1 + nowrap + ellipsis，行高 = chip 高）。
+    // 常规宽必一行（label flex:1 + nowrap + ellipsis，行高 = max(label,chip) 高）。
     await expect(bubble.locator('.nf-diff-headline')).toHaveCount(1);
     const geo = await c.evaluate((el) => {
       const row = el.closest('.nf-diff-headline');
@@ -207,7 +207,10 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
       const ls = getComputedStyle(label);
       return {
         sameLineCenterDelta: Math.abs((lr.top + lr.height / 2) - (cr.top + cr.height / 2)),
-        rowOneLine: Math.abs(rr.height - cr.height) < 1,
+        // 单行判据（紧凑化批 2026-10-28 重钉）：旧代理「行高=chip 高」在 chip
+        // 不再撑行后失效（行高由 label 决定）——改钉「行高=max(label,chip) 高」，
+        // 语义不变（仍单行、零换行）。
+        rowOneLine: Math.abs(rr.height - Math.max(lr.height, cr.height)) < 1,
         chipAfterLabel: cr.left > lr.left,
         rightGap: bubbleEl.getBoundingClientRect().right - parseFloat(bcs.paddingRight) - cr.right,
         labelTruncatable: ls.whiteSpace === 'nowrap' && ls.textOverflow === 'ellipsis',
