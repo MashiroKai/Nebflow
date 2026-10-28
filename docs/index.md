@@ -14,6 +14,7 @@ status: current
 - `design/` — 设计方案、设计稿与静态样张（样张见 [[glossary#^mockup-sample]]）；含 [[wiki-graph-redesign-design.zh-CN]]（图谱极简化设计稿，伴生样张 [[design/wiki-graph-redesign-sample.html]]）、[[design/wiki-graph-paragraph-ref-design.zh-CN]]（段落级引用设计稿）、[[plugin-md-required-file-spec.zh-CN]]（plugin.md 必要文件机制 spec）、[[design/visual-report-gate-plan.zh-CN]]（机械门禁方案）、[[design/device-provenance-spec.zh-CN]]（入站消息设备标记 spec）、[[design/subagent-row-display-name-spec.zh-CN]]（面板行显示名 spec）、[[design/turn-liveness-spec.zh-CN]]（对话层活性 spec）与 [[design/delegate-supervision-revival-design.zh-CN]]（delegate 监督链自动恢复设计）。
 - `templates/` — 文档批范本：按 wiki-docs 纪律改写的 Obsidian 格式报告模板，见 [[console-403-diagnosis]]（诊断报告范本）与 [[console-load-perf]]（性能验证报告范本）。
 - 根散件 — 运维检查单、并行会话资源规范等专项报告：[[production-ops-checklist.zh-CN]]（生产操作检查单）、[[parallel-session-resources.zh-CN]]（并行会话资源预分配规范）。
+- 审计报告 — [[20261028_171800_审计报告二五机制__delegate-nebflow-a13975e4]]（delegate／插件分配／AgentFlow／合并队列／门户数据面五机制审计·权威版，取代 reports/ 同名过程件）。
 
 ## 存目（v1.0.0 清仓移出，git 史可考）
 
