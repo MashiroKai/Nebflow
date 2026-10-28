@@ -417,6 +417,46 @@ function consumeTurnDuration(sid) {
   return Date.now() - startTime;
 }
 
+// ── thinkingtimer-fix（2026-10-28 · 报障「思考中的计时离得也太远了」）──────────
+// 「思考中」dots 计时锚（state.phaseStartAt）的生命周期。语义（作者视角裁定）：
+// 思考中计时显示**当前阶段的连续耗时**——从阶段开始累计，含内部重试等待（用户
+// 不关心内部重试切分）；阶段多次尝试不重置、连续累计；阶段切换才归零。
+//
+//   盖戳（新阶段起点，phaseStamp / phaseStampIfMissing）：
+//     · 派发腿（input.js send / dispatchOfflineItem / drain newTurn / 插件注入）
+//       —— 真人开 turn = 新阶段；
+//     · sessionBusy{busy:true} 空闲开轮 —— 引擎自主新 turn（pendingEvents 注入轮
+//       等非派发开轮）；
+//     · roundComplete —— 引擎宣告上一轮定稿、新轮起跑 = 阶段切换；
+//     · 流帧族（thinking/thinkingDelta/textDelta）phaseStampIfMissing —— 段未开时
+//       开段：引擎自主轮的首帧、深度会话（无 sessionBusy 帧）、以及工具边界收段
+//       后的重开兜底。
+//   清除（阶段真结束，phaseClear）：
+//     · clearBusyFor —— 终态帧族（done/error/interrupted/timeout/maxTokens/
+//       compactFailed）唯一必经点；
+//     · 工具边界（toolCallDetected / toolStart）—— 工具调用意味着上一 LLM 轮已
+//       完整产出（思考中等待段随工具接管该行而终结），下一段等下一轮首帧重开。
+//   刻意**不触碰**（内部重试/重连边界，锚必须存活——这是本修的主体）：
+//     · retryStatus —— 尝试失败遥测，turn 仍在跑；
+//     · textDone —— 时长徽章消费 turnStartTimes 的挂点，轮中段到达不构成阶段
+//       边界（同轮重试重流不重置）；
+//     · sessionBusy{busy:false} 单独帧 —— 终态对的第二帧（done 已清）或
+//       speculative 幻影清除（DeathWatcher 误报 / 崩溃恢复竞态），单独到达不权威；
+//     · input.js rearmBusyQueueDrains 重连腿 —— 那里重盖的是 turnStartTimes 对账
+//       基点（turn-start 确认网用），显示锚不在其职责面；
+//     · 重连历史初载重放 —— 整替会拆掉 dots 行，锚在 state 里存活，下一帧重建
+//       的 dots 从原段起点继续计数（单调，不闪跳）。
+// ⇒ 重试风暴/重连整替期间显示单调递增；只有真阶段切换才归零。
+function phaseStampIfMissing(sid) {
+  if (sid && !state.phaseStartAt[sid]) state.phaseStartAt[sid] = Date.now();
+}
+function phaseStamp(sid) {
+  if (sid) state.phaseStartAt[sid] = Date.now();
+}
+function phaseClear(sid) {
+  if (sid) delete state.phaseStartAt[sid];
+}
+
 // Helper: schedule the queued-message drain. SINGLE definition of the drain
 // wiring shared by every turn-terminal signal — the terminal-frame family
 // (clearBusyFor: done / error / interrupted / timeout / maxTokens /
@@ -738,6 +778,9 @@ function clearBusyFor(msg) {
   // ①-2 (2026-09-11): record this terminal frame — armBusyFromStream gates on it
   // until a new turn supersedes it.
   if (sid) state.lastTerminalAt[sid] = Date.now();
+  phaseClear(sid); // thinkingtimer-fix：终态 = 「思考中」段真结束（锚清；下一段由
+  //                  派发腿/空闲开轮/下一帧重盖。sessionBusy{false} 单独帧刻意不清
+  //                  ——它是终态对的第二帧或 speculative 幻影清除，见生命周期注）。
   if (state.sessionBusyTimeouts[sid]) {
     clearTimeout(state.sessionBusyTimeouts[sid]);
     delete state.sessionBusyTimeouts[sid];
@@ -949,6 +992,7 @@ onMessage('errorEscalated', (msg) => {
 onMessage('thinkingDelta', (msg, view) => {
   const sid = msg.sessionId;
   if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
+  phaseStampIfMissing(sid); // thinkingtimer-fix：段未开则开段（重试重流不重置既有段）
   // Accumulate thinking text for ALL sessions
   if (sid) state.sessionThinkingBuffers[sid] = (state.sessionThinkingBuffers[sid] || '') + msg.delta;
   resetStreamTimeout(sid);
@@ -977,6 +1021,7 @@ onMessage('thinkingDelta', (msg, view) => {
 onMessage('textDelta', (msg, view) => {
   const sid = msg.sessionId;
   if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
+  phaseStampIfMissing(sid); // thinkingtimer-fix：段未开则开段（重试重流不重置既有段）
   // Accumulate text for ALL sessions
   if (sid) state.sessionTexts[sid] = (state.sessionTexts[sid] || '') + msg.delta;
   resetStreamTimeout(sid);
@@ -1020,6 +1065,8 @@ onMessage('textDone', (msg, view) => {
 onMessage('thinking', (msg, view) => {
   const sid = msg.sessionId || state.activeSessionId;
   if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
+  phaseStampIfMissing(sid); // thinkingtimer-fix：段未开则开段——引擎自主轮首帧 / 深度
+  //                          会话 / 工具收段后的重开；既有段（重试重发帧）原样保留。
   resetStreamTimeout(sid);
   armBusyFromStream(sid); // ①-2: gated (see armBusyFromStream)
   if (view) {
@@ -1027,7 +1074,9 @@ onMessage('thinking', (msg, view) => {
     // dots item — no placeholder bubble row any more (the old guard checked
     // currentAiBubble + a .thinking-placeholder row; the line is idempotent
     // per kind, so re-issued `thinking` frames cannot double-show).
-    startWorklineDots(activeView, state.turnStartTimes[sid]);
+    // thinkingtimer-fix：锚 = 当前「思考中」段的 phaseStartAt（非 turnStartTimes
+    // ——后者会被时长徽章消费/重连腿重盖，正是报障的计时重置源）。
+    startWorklineDots(activeView, state.phaseStartAt[sid]);
   }
 });
 
@@ -1035,6 +1084,8 @@ onMessage('toolCallDetected', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
   if (msg.name === 'AskUserQuestion') return;
   const sid = msg.sessionId;
+  phaseClear(sid); // thinkingtimer-fix：工具调用 = 上一 LLM 轮已完整产出，「思考中」
+  //                  等待段随工具接管该行而终结；下一段等下一轮首帧重开（阶段切换归零）。
   if (sid && !state.sessionPendingTools[sid]) state.sessionPendingTools[sid] = { label: msg.name };
 
   // Flush accumulated text buffer for ALL sessions at tool call boundary.
@@ -1090,6 +1141,7 @@ onMessage('toolStart', (msg, view) => {
   // Skip pending card for AskUser — the askUser event handles rendering directly
   if (msg.label && msg.label.startsWith('AskUser')) return;
   const toolStartSid = msg.sessionId;
+  phaseClear(toolStartSid); // thinkingtimer-fix：同 toolCallDetected——工具边界收段
   if (toolStartSid) state.sessionPendingTools[toolStartSid] = { label: msg.label };
 
   // Flush accumulated text buffer for ALL sessions at tool boundary.
@@ -1376,6 +1428,9 @@ onMessage('roundComplete', (msg, view) => {
     // (stream-ux redesign: the dots live ON the line, not in a bubble).
     if (sid && state.busySessionIds.has(sid)) {
       if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
+      // thinkingtimer-fix：roundComplete = 上一轮定稿、新轮起跑 = 真阶段边界 ⇒
+      // 「思考中」段在新轮起点重新盖戳（阶段切换归零），随后按新锚重挂 dots。
+      phaseStamp(sid);
       // （c）面（作者 2026-10-08 裁定）：subagent 弹窗在飞过程行 = 9.19 裸行形态 —
       // 轮界点面恢复 9.19 的 .thinking-placeholder 气泡（9.19 main.js roundComplete
       // 同构；首个 thinking delta 到达时既有移除腿照常拆掉它），不建 turn-line
@@ -1394,7 +1449,8 @@ onMessage('roundComplete', (msg, view) => {
           smartScroll();
         }
       } else {
-        startWorklineDots(activeView, state.turnStartTimes[sid]);
+        // thinkingtimer-fix：锚 = 本轮新盖的段起点（phaseStartAt），非 turnStartTimes。
+        startWorklineDots(activeView, state.phaseStartAt[sid]);
       }
     }
     // UI-B: this IS the round boundary. Order matters — startWorklineDots above
@@ -2710,6 +2766,11 @@ onMessage('sessionBusy', (msg, view) => {
     // busy-stuck-fix：引擎权威开turn 信号到场 ⇒ turn-start 确认网撤网（本次置位
     // 不是幻影）。
     cancelTurnConfirm(sid);
+    // thinkingtimer-fix：空闲开轮 = 引擎自主新 turn（pendingEvents 注入轮等非派发
+    // 开轮）⇒ 新「思考中」段起点。已在 busy 中的重申不是阶段边界，不盖（保单调——
+    // 重试风暴期间引擎可能重发 busy{true}，重盖会把计时打回零）。
+    const busySid = msg.sessionId;
+    if (busySid && !state.busySessionIds.has(busySid)) phaseStamp(busySid);
     setBusy(msg.sessionId);
     // Server explicitly set busy — mark as expecting a turn (e.g. pendingEvents round)
     if (sid) state.turnExpecting[sid] = true;

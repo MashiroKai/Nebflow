@@ -358,7 +358,13 @@ function swap(wl, item, { key, kind, roll }) {
  *  (removeWorkline / settleWorklineAsHeader).
  *  UI-G: a static window (subagent / flow popup) gets NO live-seconds timer —
  *  the hint is written once and never re-armed, so the window adds zero
- *  periodic work. */
+ *  periodic work.
+ *  thinkingtimer-fix（2026-10-28 报障「思考中的计时离得也太远了」）：`startedAt`
+ *  = 调用方传入的**当前「思考中」段起点**（main.js 的 state.phaseStartAt[sid]，
+ *  生命周期见彼处 phaseStamp 族注）。语义裁定（作者视角）：计时显示当前阶段的
+ *  连续耗时——阶段内多次 LLM 尝试/重试/重连整替不重置（锚在 state 存活，本函数
+ *  被同段重建时从原起点继续计数，显示单调递增），阶段切换才归零。本模块是叶，
+ *  只消费锚不管理锚；`startedAt` 缺席时回落 now（防御腿，正常调用面前总有锚）。 */
 export function startWorklineDots(view, startedAt) {
   const wl = ensureRow(view);
   if (!wl) return;

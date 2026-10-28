@@ -569,6 +569,9 @@ export function send(resendId) {
   }
   // Start turn timer
   state.turnStartTimes[v.sessionId] = Date.now();
+  // thinkingtimer-fix：真人派发 = 新 turn = 新「思考中」段起点（与 turnStartTimes
+  // 同步盖戳；段生命周期见 main.js phaseStamp 族注）。
+  state.phaseStartAt[v.sessionId] = Date.now();
   // Release send lock after a short debounce to prevent double-click / rapid Enter
   setTimeout(() => { v.isSending = false; }, 300);
   // Clean up any orphaned thinking placeholders from previous incomplete streams
@@ -1069,6 +1072,7 @@ function dispatchOfflineItem(sid, item) {
   // 靠确认网/判重回执收幻影 busy）。
   state.armTurnConfirm?.(sid);
   state.turnStartTimes[sid] = Date.now();
+  state.phaseStartAt[sid] = Date.now(); // thinkingtimer-fix：补发派发 = 新段起点（同 send）
   armBusyWatchdogFor(sid);
   return true;
 }
@@ -1092,6 +1096,11 @@ function rearmBusyQueueDrains() {
     if (!Array.isArray(items) || items.length === 0) continue;
     if (!items.some(it => it && !it.failed && !it.offline)) continue; // 纯离线轨/全失败：不进本腿
     state.scheduleQueueDrain?.(sid);
+    // thinkingtimer-fix（2026-10-28）：这里重盖的只有 turnStartTimes 对账基点
+    // （turn-start 确认网用）。state.phaseStartAt（「思考中」dots 计时锚）**刻意
+    // 不动**——重连不构成阶段边界：仍在跑的轮次的等待段起点必须存活，重连历史
+    // 整替后重建的 dots 才能从原段起点继续单调计数（报障「思考中 1m58s」的重置
+    // 源之一就是本腿连带重置了计时锚）。
     state.turnStartTimes[sid] = Date.now();
     state.armTurnConfirm?.(sid);
   }
@@ -1437,6 +1446,9 @@ function dispatchQueuedItemNow(sessionId, item, opts = {}) {
     // 来自引擎 sessionBusy 在场，幻影形态不成立；在飞回合的流帧照常撤既有网。
     state.armTurnConfirm?.(sessionId);
     state.turnStartTimes[sessionId] = Date.now();
+    // thinkingtimer-fix：newTurn 派发 = 新「思考中」段起点；直通腿（newTurn:false）
+    // 同样不主张新段——在飞回合的等待段锚原样保留（与上一行的计时原样保留同律）。
+    state.phaseStartAt[sessionId] = Date.now();
   }
 
   // Safety timeout（freezetimeout B2：到点只呈现「仍在处理」，不发 interrupt）。
@@ -1524,6 +1536,9 @@ export function injectUserMessage(text, options = {}) {
   state.armTurnConfirm?.(sessionId);
   // Only set timer if not already running — don't reset during active turn
   if (!state.turnStartTimes[sessionId]) state.turnStartTimes[sessionId] = Date.now();
+  // thinkingtimer-fix：同口径——在飞回合的「思考中」段锚不被插件注入腿重置；
+  // 空闲注入则开新段。
+  if (sessionId && !state.phaseStartAt[sessionId]) state.phaseStartAt[sessionId] = Date.now();
 
   // Safety timeout (same as normal send) —— freezetimeout B2: 到点只呈现，不发 interrupt
   armBusyWatchdogFor(sessionId);
