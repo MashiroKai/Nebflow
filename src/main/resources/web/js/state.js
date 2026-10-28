@@ -194,6 +194,17 @@ export default {
   // Per-session turn start time: sessionId -> timestamp (ms)
   turnStartTimes: {},
 
+  // thinkingtimer-fix（2026-10-28 报障「思考中的计时离得也太远了」：turn 已跑很远，
+  // dots 只显示 1m58s）：sid -> 当前「思考中」工作段起点（epoch ms）。与
+  // turnStartTimes **分账**——turnStartTimes 服务时长徽章（textDone 经
+  // consumeTurnDuration 即消费删除）与 busy 对账（input.js rearmBusyQueueDrains
+  // 重连腿会重盖），两者都会在 turn 中途被推进/删除；直接拿来当 dots 计时锚，
+  // 计时就在每个 LLM 尝试/重试/重连边界被重置（显示「当前尝试」耗时而非「当前
+  // 阶段」累计耗时）。phaseStartAt 只在真阶段边界盖戳（真人派发 / 引擎空闲开轮 /
+  // roundComplete / 工具边界收段后的重开），内部重试（retryStatus、流重启、
+  // 重连历史整替）一律不触碰——生命周期与盖戳/清除点见 main.js phaseStamp 族注。
+  phaseStartAt: {},
+
   // resend-dedup 批（修复批 #569）：每会话最近一次**真人派发**的 clientMessageId。
   // 写点 = input.js 的真人派发点（send() 普通/ask/skill 三支 + drainMessageQueue）。
   // 读点 = chat.js resendLastInput（重试/重发腿）——同一条逻辑消息的任何重发都
