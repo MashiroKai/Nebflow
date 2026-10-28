@@ -1534,8 +1534,12 @@ object AgentActor extends AgentCore with AgentSession:
    * 父上下文（排队不唤醒，T_escalate 兜底）；父是用户（无 parentRef）→ WS
    * errorEscalated 事件 + UI 升级卡片。通知不消耗本 agent LLM token（D2）。
    * 幂等：由 enterFrozen 的 escalation.isEmpty 守卫保证每轮升级链只通知一次。
+   * v2 反推送风暴批（2026-10-28）：父投递腿统一走 [[sendEscalationToParent]]
+   * ——风暴闸按父会话限流（修复面④），超限静默 + 压制计数随下一条放行通知
+   * 摘要回流。
    */
   private[agent] def notifyEscalation(
+    resources: SharedResources,
     agentDef: AgentDef,
     depth: Int,
     state: AgentState,
@@ -1547,21 +1551,18 @@ object AgentActor extends AgentCore with AgentSession:
     val sid = state.sessionId.getOrElse("")
     parentRef match
       case Some(parent) =>
-        parent ! AgentCommand.ExternalEvent(
-          source = "team",
-          eventType = "error-escalated",
+        sendEscalationToParent(
+          resources,
+          parent,
+          agentDef,
+          depth,
+          state,
+          reason,
+          retryCount = count,
+          level = esc.level,
           payload = s""""${agentDef.name}" auto-recovery failed $count times (reason=${reasonStr(
               reason
-            )}); awaiting parent decision (restart/cancel/wait)""",
-          metadata = JsonObject(
-            "reason" -> reasonStr(reason).asJson,
-            "retryCount" -> count.asJson,
-            "level" -> esc.level.asJson,
-            "escalateAfterMs" -> nebflow.shared.Defaults.ErrorEscalateAfterMs.asJson,
-            "failedSessionId" -> sid.asJson,
-            "agentName" -> agentDef.name.asJson
-          ),
-          correlationId = Some(sid).filter(_.nonEmpty)
+            )}); awaiting parent decision (restart/cancel/wait)"""
         )
       case None =>
         // 无父（root/standalone）→ 用户级：WS errorEscalated 事件（前端升级卡片）
@@ -1581,6 +1582,103 @@ object AgentActor extends AgentCore with AgentSession:
     end match
 
   end notifyEscalation
+
+  /**
+   * v2 反推送风暴批（2026-10-28）：error-escalated → 父会话的**唯一投递口**。
+   * notifyEscalation（链进入 L1）与 frozen Escalate（L2+ 升级）共用——风暴闸
+   * （修复面④）在此单点生效：Defaults.EscalationNotifyWindowMs 滑窗内超过
+   * Defaults.EscalationNotifyCapPerHour 条 ⇒ 本条静默吞掉（升级链状态照常推进，
+   * 只是不再打扰父）；放行时若此前有压制 ⇒ 摘要行前置（「已压制 N 条」），
+   * 父侧可感知风暴规模。闸故障降级为直投（簿记面绝不阻断主路径，同
+   * syncHeldReceipts 纪律）。闸键 = 父会话 id（反查 registry）；查无 = 直投
+   * （父不是 registry 会话——罕见形态，限流无从挂靠，语义回退）。
+   */
+  private[agent] def sendEscalationToParent(
+    resources: SharedResources,
+    parent: ActorRef[AgentCommand],
+    agentDef: AgentDef,
+    depth: Int,
+    state: AgentState,
+    reason: FreezeReason,
+    retryCount: Int,
+    level: Int,
+    payload: String
+  ): IO[Unit] =
+    val sid = state.sessionId.getOrElse("")
+    val metadata = JsonObject(
+      "reason" -> reasonStr(reason).asJson,
+      "retryCount" -> retryCount.asJson,
+      "level" -> level.asJson,
+      "escalateAfterMs" -> nebflow.shared.Defaults.ErrorEscalateAfterMs.asJson,
+      "failedSessionId" -> sid.asJson,
+      "agentName" -> agentDef.name.asJson
+    )
+    def deliver(extraPayload: String): IO[Unit] =
+      (parent ! AgentCommand.ExternalEvent(
+        source = "team",
+        eventType = "error-escalated",
+        payload = extraPayload,
+        metadata = metadata,
+        correlationId = Some(sid).filter(_.nonEmpty)
+      )).void
+    def throttledLog(parentSid: String): IO[Unit] =
+      // 静默吞掉：升级链状态照常推进（registry/actor 侧不受影响），只是不再向父
+      // 投递。logger 留痕供事后审计（本次报障的考古入口）。
+      logger
+        .info(
+          s"[escalation-gate] notify throttled session=${sid.take(24)} parentSession=$parentSid " +
+            s"level=$level reason=${reasonStr(reason)}"
+        )
+        .void
+    sessionIdOfRef(resources, Some(parent)).flatMap {
+      case Some(parentSid) =>
+        resources.escalationNotifyGate
+          .admit(parentSid)
+          .flatMap { verdict =>
+            if !verdict.allow then throttledLog(parentSid)
+            else if verdict.suppressed > 0 then
+              deliver(
+                s"[escalation-notify throttled: ${verdict.suppressed} earlier escalation notice(s) suppressed in the last window] " + payload
+              )
+            else deliver(payload)
+          }
+          .handleErrorWith(e =>
+            logger.warn(s"escalation notify gate failed (delivering ungated): ${e.getMessage}") *> deliver(payload)
+          )
+      case None => deliver(payload)
+    }
+  end sendEscalationToParent
+
+  /**
+   * 同级事件去重键（v2 反推送风暴批 2026-10-28）：升级事件的可合并身份 =
+   * (source, eventType="error-escalated", failedSessionId)。同键未升级前只投一次
+   * ——投递层在 pendingEvents 队列里**原位替换**（③合并：同源连续升级合并为
+   * 单条携带最新 level 的通知），非升级事件逐字不动。
+   */
+  private[agent] def escalationEventKey(e: AgentCommand.ExternalEvent): Option[(String, String, String)] =
+    if e.eventType != "error-escalated" then None
+    else Some((e.source, e.eventType, e.metadata("failedSessionId").flatMap(_.asString).getOrElse("")))
+
+  /**
+   * ③合并（修复面）：把 incoming 并入 pending 队列——同键（[[escalationEventKey]]
+   * 相等）的既有升级事件**原位替换**为 incoming（最新 level/retryCount/payload
+   * 胜出，队列位置不变），非升级事件与异会话升级事件照常追加。父忙（processing/
+   * frozen）期间风暴波只能在队列里留一条/会话，turn 边界 reminder 天然携带最新
+   * level。纯函数（可单测）；AgentProcessing.ExternalEvent 与 frozen
+   * ExternalEvent 两处入队口共用。
+   */
+  private[agent] def coalesceEscalationEvents(
+    pending: List[AgentCommand.ExternalEvent],
+    incoming: AgentCommand.ExternalEvent
+  ): List[AgentCommand.ExternalEvent] =
+    escalationEventKey(incoming) match
+      case None => pending :+ incoming
+      case Some(key) =>
+        val idx = pending.indexWhere(e => escalationEventKey(e).contains(key))
+        if idx < 0 then pending :+ incoming
+        else pending.updated(idx, incoming)
+
+
 
   /**
    * 反查 ActorRef → registry 中对应 sessionId（升级链「父存活」判定）。
@@ -1821,25 +1919,29 @@ object AgentActor extends AgentCore with AgentSession:
     // ask-death-exit 批（2026-10-28）：Retry 也取消当前 turn —— 挂在 hub 的
     // 待答槽随 turn 作废（重派的是新 turn / 新工具执行，旧槽的等待方已死）。
     // 幂等：零命中 = no-op。reason 沿用中断语义（同一「turn 没了」面）。
+    // v2 反推送风暴批（2026-10-28，修复面①销账）：retry = 上级决策落地——升级链
+    // 随重派关闭（state.withEscalation(None) + registry 快照清 None）。provider
+    // 仍 down 时重派后按既有计数语义重新冻结、重新走 L1 进入判定（同 restart）。
     ctx.cancelCurrentTurn() *>
       closePendingInteractionsForInterruptedTurn(
         resources,
         state.sessionId.getOrElse(""),
         reason = "turn-interrupted"
       ) *>
-      (state.lastDispatch match
-      case Some(LastDispatch(false, _)) =>
-        // Re-dispatch LLM call with same messages. 6-arg call goes through
-        // the AgentActor shadow (freeze gate) — retry must not bypass the
-        // work schedule (spec §5.4: 冻结时段不重试，出冻结段后恢复即重试).
-        pipeLlmCall(agentDef, resources, depth, parentRef, state, None)
-      case Some(LastDispatch(true, Some(cr))) =>
-        // Re-dispatch tool execution with same LLM result
-        pipeToolExecutions(agentDef, resources, depth, parentRef, state, cr, None)
-      case _ =>
-        // No checkpoint — go to idle
-        markTeamIdle(agentDef, state.sessionId) *>
-          IO.pure(idle(agentDef, resources, depth, parentRef, state.resetForInterrupt)))
+      updateRegistryEscalation(resources, state.sessionId, None) *>
+      (state.withEscalation(None).lastDispatch match
+        case Some(LastDispatch(false, _)) =>
+          // Re-dispatch LLM call with same messages. 6-arg call goes through
+          // the AgentActor shadow (freeze gate) — retry must not bypass the
+          // work schedule (spec §5.4: 冻结时段不重试，出冻结段后恢复即重试).
+          pipeLlmCall(agentDef, resources, depth, parentRef, state.withEscalation(None), None)
+        case Some(LastDispatch(true, Some(cr))) =>
+          // Re-dispatch tool execution with same LLM result
+          pipeToolExecutions(agentDef, resources, depth, parentRef, state.withEscalation(None), cr, None)
+        case _ =>
+          // No checkpoint — go to idle
+          markTeamIdle(agentDef, state.sessionId) *>
+            IO.pure(idle(agentDef, resources, depth, parentRef, state.withEscalation(None).resetForInterrupt)))
   end retryFromCheckpoint
 
   /**

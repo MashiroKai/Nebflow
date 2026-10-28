@@ -731,7 +731,13 @@ object BackoffSupervisor:
                 ref = newChild,
                 supervisorRef = Some(ctx.self),
                 status = AgentStatus.Idle,
-                lastActivityMs = System.currentTimeMillis()
+                lastActivityMs = System.currentTimeMillis(),
+                // v2 反推送风暴批（2026-10-28，修复面①销账）：respawn = 旧代终结——
+                // 旧代 actor 的升级链随死亡消失（内存态），registry 快照同步清零，
+                // 防陈旧 escalateAt（已过期）让扫描器对新代第一次冻结即刻 Escalate
+                // （击穿 10min 升级窗）。新代失败走全新 L1 链（enterFrozen 正常判定）。
+                escalation = None,
+                frozenReason = None
               )
             // 缺口② ③（子代理等待三缺口批 2026-10-25）：落 Idle 必须同步清工具相位
             // ——「离开 Processing 一律清工具相位」不变式（AgentRegistryEmit

@@ -1330,8 +1330,13 @@ private[agent] object AgentProcessing:
         val updatedOutstanding =
           if TurnBoundaryDrains.isSubagentResult(event) then math.max(0, state.execution.outstandingSubagentResults - 1)
           else state.execution.outstandingSubagentResults
+        // v2 反推送风暴批（2026-10-28，修复面③合并）：升级事件同键（同 failed
+        // 会话）在 pendingEvents 里原位替换——父忙期间同源升级波只积一条/会话，
+        // turn 边界 drain 的 reminder 天然单条携带最新 level（此前逐条 21 轮打断
+        // 的构成面之一）。
+        val coalescedPending = AgentActor.coalesceEscalationEvents(state.execution.pendingEvents, event)
         val updatedExec = state.execution.copy(
-          pendingEvents = state.execution.pendingEvents :+ event,
+          pendingEvents = coalescedPending,
           outstandingSubagentResults = updatedOutstanding
         )
         // 任务 Q: emit the visible bubble at receive time (the combined

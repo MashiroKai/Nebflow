@@ -117,6 +117,13 @@ case class SharedResources(
    */
   freezeSkipUntilRef: Ref[IO, Option[Long]] = Ref.unsafe[IO, Option[Long]](None),
   /**
+   * 升级链通知风暴闸（v2 反推送风暴批 2026-10-28）：按父会话滑窗限流
+   * error-escalated 通知（[[EscalationNotifyGate]] 头注=根因实证）。默认实例 =
+   * 本实例独立 Ref（`Ref.unsafe` 先例）⇒ 既有测试构造零改动；每实例独立
+   * （spec 隔离防跨 suite 污染）。
+   */
+  escalationNotifyGate: EscalationNotifyGate = EscalationNotifyGate.unsafe,
+  /**
    * 工具结果 TTL 清理（#341）：request-only 清理配置。GatewayMain 启动时从
    * nebflow.json toolResultTtl 节 fail-safe 加载覆写；默认关（disabled）。
    * #341 WS 尾巴：Ref 化热更（镜像 freezeScheduleRef）——setToolResultTtl

@@ -983,6 +983,8 @@ When to use:
             _ <- rec.ref ! AgentCommand.Stop(
               s"parent-restart${if reason.nonEmpty then s": $reason" else ""}"
             )
+            // 父决策销账（v2 反推送风暴批）：restart 即关闭其未决升级事件。
+            _ <- clearRegistryEscalation(resources, rec.sessionId)
             dead <- waitDead
             refOpt <- if dead then MailTool.activateAgent(rec.sessionId, resources, system, ctx) else IO.pure(None)
           yield
@@ -1036,6 +1038,8 @@ When to use:
             _ <- rec.ref ! AgentCommand.Stop(
               s"agent-control-restart${if reason.nonEmpty then s": $reason" else ""}"
             )
+            // 父决策销账（v2 反推送风暴批）：restart 即关闭其未决升级事件。
+            _ <- clearRegistryEscalation(resources, rec.sessionId)
           yield Right(
             s"Restart sent for '${rec.sessionId}': the stuck turn is terminated now; the supervisor will " +
               s"respawn it after a short backoff (~5s) and resume from the last persisted checkpoint " +
@@ -1044,5 +1048,24 @@ When to use:
               s"Current task retryCount: ${task.retryCount}."
           )
       }
+
+  /**
+   * 父决策销账（v2 反推送风暴批 2026-10-28，修复面①）：父会话对目标会话执行
+   * restart（或显式裁定）即关闭其未决升级事件——registry 的 escalation 快照清
+   * None。既有实证（stand.log 2026-10-28 19:23-20:10）：升级链状态（actor 内存态
+   * + registry 快照）在父裁定后从不销账 ⇒ 「已 restart 且生效，事件仍逐级重投」。
+   * 本 helper 供 AgentControl.doRestart / WS parentRestart 裁定点调用；actor 层
+   * 权威态由 AgentFrozen 的销账腿（恢复/唤醒/重启路径 withEscalation(None)）清。
+   * registry 无该会话（cancel 路径整条移除）= no-op；best-effort，失败仅日志。
+   */
+  def clearRegistryEscalation(resources: AgentRuntimePort, sessionId: String): IO[Unit] =
+    if sessionId.trim.isEmpty then IO.unit
+    else
+      resources.agentRegistry
+        .update(m => m.get(sessionId) match
+          case Some(rec) if rec.escalation.isDefined => m.updated(sessionId, rec.copy(escalation = None))
+          case _ => m
+        )
+        .handleErrorWith(e => logger.warn(s"clearRegistryEscalation($sessionId) failed: ${e.getMessage}"))
 
 end AgentControlTool

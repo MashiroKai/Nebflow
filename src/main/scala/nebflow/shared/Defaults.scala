@@ -1561,6 +1561,16 @@ object Defaults:
    */
   val ErrorEscalateAfterMs: Long = 10 * 60 * 1000L
 
+  // ── 升级链通知风暴闸（v2 反推送风暴批，2026-10-28 作者报障「一直重复推送」）────
+  //
+  // 实证（stand.log 19:23-20:10）：同一 provider-down 波及 root + 7 个 delegate
+  // 子会话，各自独立 10min 升级梯且时间错开 ⇒ 每 10min 一波（L2→L5 共 4 波 ≈
+  // 28 条 error-escalated ExternalEvent）逐条打断父会话整回合。事件无销账点
+  // （恢复/父决策后升级链状态永不关闭）、同级无去重、同源无合并、总量无上限
+  // ——四面缺一即风暴。本组常量是「总量总闸」的窗口/上限取值。
+  val EscalationNotifyWindowMs: Long = 60 * 60 * 1000L
+  val EscalationNotifyCapPerHour: Int = 6
+
   // ── root 通道通知打包窗（notifybatch 批 2026-09-18，作者三决策）──────────────────
   //
   // 动因：同一族「节点终态事件」在**分发器通道**已有打包窗（`DispatchNotify` 的
