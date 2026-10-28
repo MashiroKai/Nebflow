@@ -59,9 +59,16 @@ class PerceptionRoutesAuthGateSpec extends CatsEffectSuite:
 
   private def bodyOf(resp: Response[IO]): IO[Json] = resp.as[Json]
 
+  // 路径形态 = Router 相对：生产挂载是 Router("/api" -> restApiRoutes.routes)
+  //（GatewayMain），域内 case 全部以 `/perception/...` 相对段匹配。本 spec 曾
+  // 直书 `/api/perception/...`——直调 routes 不经 Router 前缀剥离 ⇒ 永久
+  // fall-through（authchain 批 REPORT §3.2 注记「sbt 运行延至队列空窗」的
+  // 欠账，报障 2026-10-28 回归批补跑时实证）。修路径不改契约。
+  private def api(path: String): Uri = Uri.unsafeFromString(path.stripPrefix("/api"))
+
   test("POST /api/perception/mail/connect 无令牌 ⇒ 403「Unauthorized」+ reason 头（业务体零执行）") {
     mkRoutes().routes(
-      Request[IO](Method.POST, Uri.unsafeFromString("/api/perception/mail/connect"))
+      Request[IO](Method.POST, api("/api/perception/mail/connect"))
         .withEntity(Json.obj("address" -> "fake@qq.com".asJson, "authCode" -> "bad".asJson))
     ).value.map(_.getOrElse(fail("route fell through"))).flatMap { resp =>
       assertAuthRejected(resp) *> bodyOf(resp).map { body =>
@@ -73,7 +80,7 @@ class PerceptionRoutesAuthGateSpec extends CatsEffectSuite:
 
   test("GET /api/perception/entries 无令牌 ⇒ 同形 403（面板打开腿同门同体）") {
     mkRoutes().routes(
-      Request[IO](Method.GET, Uri.unsafeFromString("/api/perception/entries"))
+      Request[IO](Method.GET, api("/api/perception/entries"))
     ).value.map(_.getOrElse(fail("route fell through"))).flatMap { resp =>
       assertAuthRejected(resp) *> bodyOf(resp).map { body =>
         assertEquals(body.hcursor.downField("error").as[String].toOption, Some("Unauthorized"))

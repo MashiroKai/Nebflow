@@ -2518,6 +2518,8 @@ export default {
   'perception.cfgNeedBoth': '请填写邮箱地址与授权码',
   'perception.cfgTesting': '正在连接…',
   'perception.cfgConnected': '已连接',
+  'perception.cfgConnectedInbox': '已连接：收件箱 {n} 封',
+  'perception.cfgConnectedStats': '已连接：收件箱 {n} 封、{u} 封未读',
   'perception.cfgFailed': '连接失败，请检查地址与授权码',
   'perception.sessionExpired': '登录状态已过期，正在重新进入控制台…',
   'perception.to': '收件人',

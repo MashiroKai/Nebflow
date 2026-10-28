@@ -37,6 +37,27 @@ object PerceptionService:
   val BackoffBaseSec: Int = 2
   val BackoffMaxSec: Int = 300
 
+  /**
+   * 连接失败的人类可读面（纯函数，spec 直测；报障 2026-10-28：SELECT 成功
+   * 的 untagged 响应曾被当错误原样倾倒并 take(160) 半截截断上屏）。
+   * 纪律：raw 线上数据永不透传 UI；授权码强制擦除（防任何回显路径）；
+   * 输出恒为单行短句。
+   */
+  def readableConnectError(err: String, imapHost: String, imapPort: Int, authCode: String = ""): String =
+    val scrubbed = if authCode.nonEmpty && err.contains(authCode) then err.replace(authCode, "••••") else err
+    val e = scrubbed.toLowerCase
+    if scrubbed.contains("AUTHENTICATIONFAILED") || scrubbed.contains("LOGIN")
+      || e.contains("invalid") || scrubbed.contains("AUTH") then
+      "授权码无效 · 请确认已在邮箱设置开启 IMAP 服务并使用授权码（非登录密码）"
+    else if e.contains("超时") || e.contains("timeout") || e.contains("timed out") then
+      s"连接 $imapHost:$imapPort 响应超时 · 请检查网络后重试"
+    else if e.contains("unknownhost") || e.contains("unreachable") || e.contains("connect") then
+      s"无法连接 $imapHost:$imapPort · 请检查网络与服务器设置"
+    else if e.contains("imap no") || e.contains("imap bad") || e.contains("响应不完整") then
+      "邮箱服务器拒绝了该操作 · 请确认已开启 IMAP 服务后重试"
+    else
+      "连接失败 · 请检查邮箱地址、授权码与服务器设置"
+
   // ── singleton runtime ─────────────────────────────────────────────────
 
   private sealed trait Phase
@@ -480,6 +501,10 @@ class PerceptionCore(
   /**
    * Connect + test + save (one shot). authCode goes to the secrets store only;
    * the account row never carries the value.
+   *
+   * 成功 = Right((account, InboxStats))——统计供连接卡显示「已连接：收件箱
+   * N 封、M 封未读」（报障 2026-10-28）。失败路径持久化零写入（secret/账户/
+   * 状态均不动），重试幂等（同地址同 id 覆盖、secret overwrite）。
    */
   def connectAccount(
     address: String,
@@ -491,7 +516,7 @@ class PerceptionCore(
     smtpImplicitTls: Option[Boolean] = None,
     displayName: Option[String] = None,
     trustedSenders: List[String] = Nil
-  ): IO[Either[String, MailAccount]] =
+  ): IO[Either[String, (MailAccount, MailClient.InboxStats)]] =
     val addr = address.trim.toLowerCase
     if !DraftCodec.looksLikeAddress(addr) then IO.pure(Left("邮箱地址格式不正确"))
     else if authCode.isBlank then IO.pure(Left("请填写授权码"))
@@ -508,14 +533,14 @@ class PerceptionCore(
           MailClient.connectImap(imapH, imapP).flatMap { session =>
             val flow = for
               _ <- session.login(addr, authCode)
-              _ <- session.selectInbox()
-            yield session
+              stats <- session.selectInbox()
+            yield stats
             flow match
-              case Right(s) => Right(s)
+              case Right(stats) => Right((session, stats))
               case Left(err) => session.close(); Left(err)
           }
         }.flatMap {
-          case Right(session) =>
+          case Right((session, stats)) =>
             session.close()
             val secretName = MailAccount.secretNameFor(addr)
             val account = MailAccount(
@@ -544,16 +569,10 @@ class PerceptionCore(
                   _ <- audit("state", "connected", s"addr=$addr provider=${account.provider}")
                   _ <- broadcastState()
                   _ <- pollAccount(account).attempt.void // immediate first sync
-                yield Right(account)
+                yield Right((account, stats))
             }
           case Left(err) =>
-            val readable =
-              if err.contains("LOGIN") || err.toLowerCase.contains("invalid") || err.contains("AUTH") then
-                "授权码无效 · 请确认已开启 IMAP 并使用授权码（非登录密码）"
-              else if err.contains("connect") || err.contains("UnknownHost") then
-                s"无法连接 $imapH:$imapP · 请检查网络"
-              else err.take(160)
-            IO.pure(Left(readable))
+            IO.pure(Left(readableConnectError(err, imapH, imapP, authCode)))
         }
 
   private def accountIdFor(address: String): String =

@@ -2599,6 +2599,8 @@ export default {
   'perception.cfgNeedBoth': 'Please provide both the address and the app password',
   'perception.cfgTesting': 'Connecting…',
   'perception.cfgConnected': 'Connected',
+  'perception.cfgConnectedInbox': 'Connected · inbox {n} messages',
+  'perception.cfgConnectedStats': 'Connected · inbox {n} messages, {u} unread',
   'perception.cfgFailed': 'Connection failed — check the address and app password',
   'perception.sessionExpired': 'Session expired — re-entering the console…',
   'perception.to': 'To',
