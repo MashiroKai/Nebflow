@@ -186,6 +186,68 @@
     0 2px 8px var(--glass-control-shadow);
 }
 
+/* ── Canvas 控件玻璃 token（2026-10-28 canvas 三件 UI/UX 修 · 件三）─────────
+   唯一风格模板 = 聊天窗口控件现用毛玻璃（chat.css #header 玻璃面 + .memory-btn
+   hover-active 语言），逐值同源转录；canvas 里创建的一切控件（标题胶囊/环胶囊/
+   堆叠钮 #deck-fab/工具圆钮 source·ref·refresh·find·graph/文件内查找条
+   .nf-findbar/图片缩放条 .canvas-zoom-bar/独立-合并钮）只准引用本块变量，
+   禁自带材质/尺寸字面量（一个 token 单源，作者令「禁止各控件自带尺寸」）。
+   面阴影取 #header 现值（仅顶缘 inset 高光、外投影零 —— chat.css 底缘零边界
+   批同规；修前 --frost-shadow 的外投影两档随本令退役，canvas 控件与聊天控件
+   计算样式逐项相等）。 */
+:root {
+  /* 模糊配方（= chat #header：--glass-bg + blur 24 saturate 1.15） */
+  --cv-bg: var(--glass-bg);
+  --cv-blur: var(--glass-blur);
+  --cv-saturate: 1.15;
+  /* 边框（= chat #header） */
+  --cv-border: var(--glass-border);
+  /* 面阴影（= chat #header box-shadow 现值；暗档 0.04 见下方媒体块） */
+  --cv-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.25);
+  /* hover-active 语言（= 聊天玻璃控件：hover 抬亮 --glass-control 族 +
+     scale 手感；active 按压回缩） */
+  --cv-hover-bg: var(--glass-control-bg-hover);
+  --cv-hover-blur: var(--glass-control-blur);
+  --cv-hover-saturate: 1.2;
+  --cv-hover-border: var(--glass-control-border);
+  --cv-hover-highlight: var(--glass-control-highlight);
+  --cv-hover-underedge: var(--glass-control-underedge);
+  --cv-hover-scale: 1.05;
+  --cv-active-scale: 0.96;
+  /* 尺寸档（圆钮 40 / 条内小钮 26 / 图标 18·14 / 簇槽距 48 —— 四档全站通用） */
+  --cv-size-circle: 40px;
+  --cv-size-btn: 26px;
+  --cv-icon: 18px;
+  --cv-icon-btn: 14px;
+  --cv-row-pitch: 48px;
+  /* 圆角档（胶囊 999 / 查找条 12 / 缩放条 10 / 胶囊内小钮 8 / 条内小钮 7） */
+  --cv-radius-pill: 999px;
+  --cv-radius-bar: 12px;
+  --cv-radius-bar-sm: 10px;
+  --cv-radius-btn: 8px;
+  --cv-radius-btn-sm: 7px;
+  /* 条内几何（查找条内距/输入宽/计数字宽；缩放条内距） */
+  --cv-pad-bar: 6px 8px;
+  --cv-pad-bar-sm: 4px;
+  --cv-findbar-w: 200px;
+  --cv-findbar-count-w: 44px;
+  /* ── header 行几何（件二·排他布局）──
+     header 行 = 标题胶囊（top 10 / 高 36）+ 堆叠钮 + 「独立中」角标，固定占位；
+     行下缘 --cv-head-band = 46px，其余一切控件从 --cv-head-clear（+10 呼吸缝）
+     起算，任何状态不得与行相交（split.css 各控件锚点消费）。 */
+  --cv-head-top: 10px;
+  --cv-head-h: var(--capsule-h, 36px);
+  --cv-head-band: calc(var(--cv-head-top) + var(--cv-head-h));
+  --cv-head-clear: calc(var(--cv-head-band) + 10px);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* = chat #header 暗档 box-shadow（chat.css 逐字同源） */
+    --cv-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
+  }
+}
+
 /* ── Glass Control standard — applied to ALL interactive controls ────────
    This file loads last (see index.html), so these grouped rules win
    equal-specificity ties against feature CSS. Two patterns:

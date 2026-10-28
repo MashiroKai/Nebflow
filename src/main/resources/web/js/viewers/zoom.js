@@ -56,8 +56,11 @@ export function enableViewerZoom(pane, opts) {
   const bar = document.createElement('div');
   bar.className = 'canvas-zoom-bar';
   const mkBtn = (icon, label, fn) => {
+    // 件三统一批（2026-10-28）：.glass-control 实心 chip 面退役 —— 内钮与查找
+    // 条内钮同语言（静默 ghost + hover 抬亮），材质/尺寸由 split.css
+    // .canvas-zoom-btn 按 --cv-* token 档供给（sapphire.css 单源）。
     const b = document.createElement('button');
-    b.className = 'glass-control canvas-zoom-btn';
+    b.className = 'canvas-zoom-btn';
     b.innerHTML = `<i data-lucide="${icon}"></i>`;
     b.title = label;
     b.setAttribute('aria-label', label);

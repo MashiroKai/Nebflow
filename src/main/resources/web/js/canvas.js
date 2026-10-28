@@ -1915,6 +1915,7 @@ function syncCardHeaderPop() {
   if (cardWindowMode) return;                     // 卡窗有自己的「合并」钮
   const hdr = document.querySelector('#canvas-panel .canvas-header');
   if (!hdr) return;
+  syncIndependentChip();                          // 「独立中」角标壳层同步（件二）
   let btn = document.getElementById('canvas-pop-btn');
   if (!btn) {
     btn = document.createElement('button');
@@ -1936,6 +1937,21 @@ function syncCardHeaderPop() {
   const t = indep ? '合并回主窗' : '独立窗口打开';
   btn.title = t;
   btn.setAttribute('aria-label', t);
+}
+
+/** 「独立中」角标壳层同步（件二排他批 2026-10-28）：角标渲染点从 pane ::after
+ *  迁 #canvas-slide ::after（split.css §独立中）—— pane 可能自身是滚动容器
+ *  （docx/xlsx 族 .scrollable），absolute 角标随内容滚走漂出 header 行；slide
+ *  不滚，角标恒钉 header 行（堆叠钮左侧让位位）。数据源零新增 = 活动页签的
+ *  independent 状态（independentWins）；pane 的 data-independent 属性保留
+ *  （CW 链数据面仍消费）。调用点 = syncCardHeaderPop（活动切换/toggle 两路
+ *  都汇于此）。 */
+function syncIndependentChip() {
+  const slide = document.getElementById('canvas-slide');
+  if (!slide) return;
+  const on = !!(activeTabId && independentWins.has(activeTabId));
+  if (on) slide.setAttribute('data-independent', '1');
+  else slide.removeAttribute('data-independent');
 }
 
 /** 脏标记同源投射到环卡名称条（editor-dirty-change 的叠卡腿）。 */

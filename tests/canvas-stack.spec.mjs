@@ -284,7 +284,8 @@ const browser = await chromium.launch();
   ok('A1-5 浮钮钉区右上 top10/right12/40px（回退批 2026-10-22：移位批右下 → 迁回顶右原位）',
     approx(fab.y - pr.y, 10, 1.5) && approx(pr.right - (fab.x + fab.w), 12, 1.5) && fab.w === 40 && fab.h === 40,
     `dy=${(fab.y - pr.y).toFixed(1)} dr=${(pr.right - fab.x - fab.w).toFixed(1)} ${fab.w}x${fab.h}`);
-  ok('A1-6 浮钮 rest 0.6', fab.op === '0.6', `op=${fab.op}`);
+  ok('A1-6 浮钮 rest opacity 1（件三统一批 2026-10-28：材质归一聊天模板 token、减淡退役 —— 材质到位不靠减淡，同 S4-2 口径）',
+    fab.op === '1', `op=${fab.op}`);
   const noX = await page.evaluate(() => ({
     cvClose: document.querySelectorAll('.cv-close').length,
     tabBarCloseVisible: (() => {
