@@ -33,6 +33,7 @@
 #modal-box,
 #delete-box,
 #conflict-box,
+#takeover-box,
 #memory-modal,
 #rules-modal,
 #settings-modal,
@@ -57,6 +58,7 @@
   #modal-box,
   #delete-box,
   #conflict-box,
+  #takeover-box,
   #memory-modal,
   #rules-modal,
   #settings-modal,
@@ -75,6 +77,7 @@
 #modal-box::before,
 #delete-box::before,
 #conflict-box::before,
+#takeover-box::before,
 #memory-modal::before,
 #rules-modal::before,
 #settings-modal::before,
@@ -361,6 +364,46 @@
 #conflict-cancel,
 #conflict-keep-both,
 #conflict-replace {
+  padding: 8px 18px;
+  border-radius: 10px;
+  font-size: 14px;
+}
+
+/* ---------- Console Takeover Modal（控制台单实例批 2026-10-27）----------
+   与 #conflict-box 同族同尺寸字阶，零新 token。语义差异面：
+   · 强制二选一——本盒在场时 modal.js 的 Escape/遮罩点击收口路径必须绕行
+     （takeoverModal.js 持锁，见其 takeoverLock 借 #modal-overlay 的 'takeover'
+     数据态判别），不得被全局关闭钩子误收。
+   · 主动作 = 【重新接管】（sapphire 主按钮材质，同 #modal-confirm 族）；
+     【退出】走中性材质。退出面单按钮 = 【重新进入】。 */
+#takeover-box {
+  border-radius: 20px;
+  padding: 24px;
+  width: 340px;
+  display: none;
+  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+#takeover-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-frame-text-bright);
+  margin-bottom: 12px;
+}
+#takeover-msg {
+  font-size: 14px;
+  color: var(--color-frame-text-muted);
+  line-height: 1.5;
+  margin-bottom: 16px;
+  word-break: break-word;
+}
+#takeover-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+#takeover-exit,
+#takeover-retake,
+#takeover-reenter {
   padding: 8px 18px;
   border-radius: 10px;
   font-size: 14px;

@@ -59,6 +59,14 @@ export default {
   heartbeat: null,
   connected: false,
   pendingPong: false,
+  // 控制台单实例批（2026-10-27）：接管独占客户端旗标（唯一写点 = takeoverModal.js）。
+  //   consoleSuperseded — 本页已让出控制权（takeover 帧在场，模态阻塞操作）；
+  //                       canvas 标签页账本联动读点（设计稿 §8：唯一活跃实例 =
+  //                       账本唯一写入方，superseded 页面跳过 persistTabs）。
+  //   takeoverExited    — 用户点了【退出】：本页主动断开且不再自动重连（ws.js
+  //                       onclose/updateConnBanner 读——退出面在场时不谎报「正在重连」）。
+  consoleSuperseded: false,
+  takeoverExited: false,
 
   // Session
   activeSessionId: null,

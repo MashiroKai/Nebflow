@@ -1510,6 +1510,18 @@ object GatewayMain extends IOApp:
                                                   // 20260917_gateway-connection-hardening.md）。引用点：下方
                                                   // builder 钩子 / WS·REST 构造 / 快照循环 / requestTap。
                                                   val connGuardLogger = NebflowLogger.forName("nebflow.conn-guard")
+                                                  // 控制台单实例批（2026-10-27）：接管注册表——
+                                                  // 推送面 = wsHub.sendTo（同一条 WS 出站面），总闸
+                                                  // env CONSOLE_SINGLE_INSTANCE（off ⇒ 全 no-op 零漂移，
+                                                  // 缺省启用）。不重启引擎不生效，随下一波上线。
+                                                  val consoleTakeover = ConsoleTakeover(
+                                                    wsHub.sendTo,
+                                                    NebflowLogger.forName("nebflow.console-takeover")
+                                                  )
+                                                  logger.info(
+                                                    s"console-takeover: single-instance gate " +
+                                                      (if ConsoleTakeover.defaultEnabled then "on" else "OFF (zero-drift)")
+                                                  )
                                                   ConnGuard.create(connGuardLogger).flatMap { connGuard =>
                                                     EmberServerBuilder
                                                       .default[IO]
@@ -1579,7 +1591,8 @@ object GatewayMain extends IOApp:
                                                           sttService = sttService,
                                                           nfTicketStore = nfTicketStore,
                                                           nfPathPolicy = nfPathPolicy,
-                                                          connGuard = connGuard
+                                                          connGuard = connGuard,
+                                                          takeover = consoleTakeover
                                                         )
                                                         wsRoutesHolder = Some(wsRoutes)
 

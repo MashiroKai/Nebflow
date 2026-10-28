@@ -638,6 +638,14 @@ export default {
   // 对话层活性批（2026-10-22）：插话即时确认标 + 断连横幅文案。
   'ws.connBanner.reconnecting': '连接断开 · 正在重连',
   'ws.connBanner.pending': '连接断开 · 正在重连 · {n} 条消息待送达',
+  // 控制台单实例批（2026-10-27）：接管独占模态（takeoverModal.js）
+  'takeover.title': '控制台已在其他位置打开',
+  'takeover.msg': '您在其他地方登录了控制台，此窗口已让出控制权。可退出，或重新接管。',
+  'takeover.retake': '重新接管',
+  'takeover.exit': '退出',
+  'takeover.exitTitle': '已退出控制台',
+  'takeover.exitMsg': '控制台已在其他位置打开，本页已断开且不再自动重连。',
+  'takeover.reenter': '重新进入',
   // f1-send-queue（2026-10-19）：断线入队的待送达小标 tooltip + 队列溢出告警。
   'chat.pendingSend': '待送达 · 重连后自动补发',
   'input.queueOverflow': '消息队列已满（100 条）：最早的一条已丢弃',

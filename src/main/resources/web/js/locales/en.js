@@ -674,6 +674,14 @@ export default {
   // interjections + disconnect banner texts.
   'ws.connBanner.reconnecting': 'Connection lost · reconnecting…',
   'ws.connBanner.pending': 'Connection lost · reconnecting… {n} message(s) waiting to send',
+  // Console single-instance batch (2026-10-27): takeover modal (takeoverModal.js)
+  'takeover.title': 'Console opened elsewhere',
+  'takeover.msg': 'You signed in to the console somewhere else. This window has yielded control — exit, or retake it.',
+  'takeover.retake': 'Retake Control',
+  'takeover.exit': 'Exit',
+  'takeover.exitTitle': 'Signed out of the console',
+  'takeover.exitMsg': 'The console was opened elsewhere; this page is disconnected and will not auto-reconnect.',
+  'takeover.reenter': 'Re-enter',
   // f1-send-queue (2026-10-19): pending-mark tooltip for offline-queued bubbles + queue overflow toast.
   'chat.pendingSend': 'Pending - auto-resends on reconnect',
   'input.queueOverflow': 'Message queue full (100): oldest message dropped',

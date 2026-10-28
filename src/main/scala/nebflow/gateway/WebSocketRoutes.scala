@@ -69,7 +69,14 @@ class WebSocketRoutes(
    * R-1b conn-guard：per-IP WS 看护（升级面准入 + 计数）。缺省 = 全放行
    * 实例（既有测试构造点零改动）；生产由 GatewayMain 注入实配。
    */
-  connGuard: ConnGuard = ConnGuard.disabled
+  connGuard: ConnGuard = ConnGuard.disabled,
+  /**
+   * 控制台单实例接管注册表（2026-10-27 批，设计稿
+   * reports/20261027_231456_console-single-instance/DESIGN.md）。缺省 =
+   * [[ConsoleTakeover.disabled]]（全 no-op 缺省缝，connGuard 同款——既有测试
+   * 构造点零改动）；生产由 GatewayMain 注入（sendTo=wsHub.sendTo + 总闸读数）。
+   */
+  takeover: ConsoleTakeover = ConsoleTakeover.disabled
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
 
@@ -1011,7 +1018,13 @@ class WebSocketRoutes(
                 s"WebSocket auth failed from ${req.remoteAddr.getOrElse("unknown")}"
               ) *>
                 Forbidden("Invalid token")
-            case Some(_) =>
+            case Some(cred) =>
+              // 控制台单实例批（2026-10-27）：实例身份 = 门户会话。仅 session-rail
+              // 连接参与接管注册表；Bearer rail（CLI/脚本/headless）不注册、不被
+              // 通知、不参与竞选——非浏览器客户端没有「实例」语义，零触碰零漂移。
+              val takeoverSession: Option[String] = cred match
+                case Credential.ViaSession(record) => Some(record.sessionId)
+                case _ => None
               // R-1b conn-guard：升级受理即 per-IP 检查（拒 ⇒ 可见 429，不静默；
               // 环回恒放行）。入账延后到收流管起跑（下方 guardedReceive 会话
               // scope bracket——升级会话未起跑即未发生，零幽灵计数），回减同
@@ -1105,13 +1118,24 @@ class WebSocketRoutes(
                       connGuard.releaseWs
                     )(_.evalMap {
                       case WebSocketFrame.Text(text, _) =>
-                        handleMessage(text, perConnJsonSend, watchSession).handleErrorWith { e =>
+                        // 控制台单实例批：retake 帧前置拦截——连接身份（connId→session）
+                        // 只在本管上有（WsDispatchCtx 不携带），故不走 WsDispatch 注册表。
+                        // 总闸关闭时 isRetakeFrame 恒 false 侧不成立，故显式以
+                        // takeover.enabled 判：关闭 ⇒ 帧走既有未知类型回退（零漂移）。
+                        val handled =
+                          if takeover.enabled && ConsoleTakeover.isRetakeFrame(text) then
+                            takeover.handleRetake(hubConnId, perConnJsonSend)
+                          else handleMessage(text, perConnJsonSend, watchSession)
+                        handled.handleErrorWith { e =>
                           logger.error(s"WebSocket message handler error: ${e.getMessage}", e)
                           IO.unit
                         }
                       case _ => IO.unit
                     }.onFinalize(
-                      wsHub.unregister(hubConnId) *> watchSession.close()
+                      wsHub.unregister(hubConnId) *> watchSession.close() *>
+                        // 控制台单实例批：连接出账（只摘连接账——掉线 ≠ 让位，owner
+                        // 不动、零出帧；#960 判死回收经本 finalizer 同样不触发提示）。
+                        takeover.onDisconnect(hubConnId)
                     ))
 
                     // sendStream: read from outbound queue, send via WebSocket.
@@ -1206,6 +1230,13 @@ class WebSocketRoutes(
                       )
                     )
                     _ <- sessionService.sendSessionList(perConnJsonSend, agentName)
+                    // 控制台单实例批（2026-10-27）：接管注册表入账 + claim 裁决——
+                    // hubConnId 已注册（推往旧主的帧走 wsHub；推往本连接的 superseded
+                    // 通知经 outbound 队列缓冲，随 serverConfig 同批送达）。Bearer 连接
+                    // takeoverSession=None 直通。事件面只有 fresh-claim 翻位与旧主回连
+                    // superseded 通知；断线/判死回收路径（onFinalize ⇒ onDisconnect）
+                    // 零出帧——掉线 ≠ 让位（设计稿 §7 边界）。
+                    _ <- takeoverSession.traverse_(sid => takeover.onConnect(sid, hubConnId))
                     // R-960：入账/回减已移入收流管会话 scope（上方 guardedReceive）——
                     // build 前不再预占槽位；升级会话未起跑 ⇒ 计数未发生（幽灵洞封死）。
                     ws <- wsb.build(sendStream, receivePipe)
