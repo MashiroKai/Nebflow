@@ -169,16 +169,20 @@ const ALPHA = '/tmp/cw-fixture/alpha.md';
   const marks = await page.evaluate((p) => {
     const tab = document.querySelector(`.canvas-tab[data-tab-id="file:${p}"]`);
     const pane = document.querySelector(`.canvas-tab-pane[data-tab-id="file:${p}"]`);
+    // 件二排他批（2026-10-28）：角标渲染点 pane ::after → #canvas-slide ::after
+    // （pane 可能是滚动容器，角标随内容漂出 header 行；slide 不滚恒钉行内）。
+    const slide = document.getElementById('canvas-slide');
     return {
       tabIndep: !!(tab && tab.classList.contains('is-independent')),
       paneIndep: !!(pane && pane.hasAttribute('data-independent')),
-      chip: pane ? getComputedStyle(pane, '::after').content : '',
+      slideIndep: !!(slide && slide.hasAttribute('data-independent')),
+      chip: slide ? getComputedStyle(slide, '::after').content : '',
       hdrTitle: document.getElementById('canvas-pop-btn')?.title || '',
       hdrIndep: !!document.getElementById('canvas-pop-btn')?.classList.contains('is-independent'),
     };
   }, BRAVO);
-  ok('CW1-5 独立中轻态：页签 is-independent + 卡面「独立中」浮标 + 标题头换「合并」形',
-    marks.tabIndep && marks.paneIndep && marks.chip.includes('独立中') &&
+  ok('CW1-5 独立中轻态：页签 is-independent + 卡面「独立中」浮标（slide 壳层件二批）+ 标题头换「合并」形',
+    marks.tabIndep && marks.paneIndep && marks.slideIndep && marks.chip.includes('独立中') &&
     marks.hdrTitle === '合并回主窗' && marks.hdrIndep,
     JSON.stringify(marks));
   /* toggle 同位换形（两形态）：切激活到未独立的 alpha → 标题头回「独立」形 */

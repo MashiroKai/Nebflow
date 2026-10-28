@@ -640,9 +640,7 @@ body.canvas-open.canvas-overlay #canvas-panel {
    移位批（作者令 2026-10-22 ②）：胶囊从「顶部居中」改「顶部居左」——修前居中
    胶囊 + 图片 pane 顶右缩放条 + 顶右 fab 三件在顶行互相打架（作者截图）；缩放
    控件迁右下角后胶囊独占顶行，锚定左缘（14px），transform 不再携带
-   translateX(-50%)（手势变量语义不变：--head-dx/dy 仍是位移量）。右缘保留
-   170px 给 nf-findbar（顶右 14px，find 态才出现）让位；fab 回顶右（回退批）
-   仍在此让位带内，分居两端不冲突。
+   translateX(-50%)（手势变量语义不变：--head-dx/dy 仍是位移量）。
    居中批（作者令 2026-10-23「胶囊…相对与canvas居中显示」）：顶左退役，桌面
    主窗腿横轴回 canvas 平分中线（left 50% + translateX(-50%)，纵轴保持顶带
    —— v2①「居中标题头」原位；顶行右缘让位（findbar/fab）与居中并存）。环
@@ -653,10 +651,17 @@ body.canvas-open.canvas-overlay #canvas-panel {
    略微越出面板顶缘（越出段被面板 overflow:hidden 裁掉，量克制见 canvas.js
    RING_TOP_OUT）；常态/环开胶囊都不在画布中央挡内容命中（wiki 图谱/流程图
    中心区交互实证 —— 永久纵居中会拦截节点点击，顶带常驻即解）。
-   max-width 对称让位：右缘 184px（findbar 顶右让位带 + fab 52px）与左缝
-   同宽；窄面板 220px 下限兜底（t-name 自 ellipsis）。手机层（.mobile-layer
-   通栏变体）与卡窗（body.card-window 合并钮行）不受居中规则，保持原位；
-   deck 叠卡态（面板 = 前卡）顶中即 v2① 卡顶名称条位，无需另钉。 */
+   件二排他批（作者令 2026-10-28）：顶带升格「固定 header 行」= 胶囊 + 堆叠钮
+   #deck-fab + 「独立中」角标（#canvas-slide[data-independent]::after，堆叠钮
+   左侧让位位），行下缘 = --cv-head-band（10+36=46px，sapphire.css token）；
+   其余一切控件（工具圆钮/查找条/缩放条）只能出现在 --cv-head-clear 之下 ——
+   修前 nf-findbar 同顶带（right 14 / 让位批 right 66）与胶囊压字的叠印前提
+   （作者截图 4）随查找条改锚行下缘整体退役；排他是布局性的（行占位 + 下方
+   起算），非 z-index 遮掩。max-width 对称让位带（右缘 184px）随之只剩窄面板
+   极值护栏意义；独立态另有收窄护栏（§独立中 角标批）。手机层（.mobile-layer
+   通栏变体）不受桌面居中/排他规则（自有形态）；卡窗（body.card-window）随
+   件一批并入面板同款居中（下方 §卡窗 段）。deck 叠卡态（面板 = 前卡）顶中
+   即 v2① 卡顶名称条位，无需另钉。 */
 .canvas-header {
   position: absolute;
   top: 10px;
@@ -673,9 +678,14 @@ body.canvas-open.canvas-overlay #canvas-panel {
   border-radius: 999px;
   /* ── Frosted 标准（2026-10-22 作者令：全站一套毛玻璃，禁各画各的）──
      材质 token 对齐 chat header 现实现：--glass-bg 底 + --glass-blur
-     saturate(1.15) + --glass-border + --frost-shadow 阴影 + 顶缘折射线
-     （--sapphire-refraction），原 --glass-control-* 自绘材质退役。 */
+     saturate(1.15) + --glass-border + 顶缘折射线（--sapphire-refraction）。
+     件三统一批（2026-10-28 作者令「以聊天窗口控件现用的毛玻璃效果为唯一风格
+     模板」）：阴影对齐 #header 现值 —— var(--cv-shadow) 仅顶缘 inset 高光、
+     外投影零（chat.css 底缘零边界批同规；修前 --frost-shadow 外投影两档退役，
+     令胶囊与聊天控件计算样式逐项相等 = canvas-glass-unify.spec 钉）；底缘
+     border 同步透明化（同 #header，内容从胶囊底下穿过不再衬横线）。 */
   border: 1px solid var(--glass-border);
+  border-bottom-color: transparent;
   background:
     linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
     var(--glass-bg);
@@ -684,7 +694,7 @@ body.canvas-open.canvas-overlay #canvas-panel {
   color: var(--color-frame-text-bright);
   font-size: 14px;
   font-weight: 500;
-  box-shadow: var(--frost-shadow);
+  box-shadow: var(--cv-shadow);
   /* 手势跟手位移/按压形（JS 写变量；静止恒等）。--head-rot：滑删动画批
      （2026-10-23 六项⑥a）横划跟手微倾变量（deck 同斜率，静止 0deg）。 */
   --head-dx: 0px;
@@ -1368,11 +1378,12 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
      裁切为兜底（过渡中途/字体度量抖动等任何态，文字绝不越过胶囊圆角边界）。 */
   overflow: hidden;
   border: 1px solid var(--glass-border);
+  border-bottom-color: transparent;   /* 件三统一批：同 #header 底缘透明（内容穿底不衬线） */
   border-radius: 999px;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  box-shadow: var(--frost-shadow);
+  box-shadow: var(--cv-shadow);       /* 件三统一批：= chat #header 阴影现值（CR2-5 逐项相等） */
   color: var(--color-frame-text-bright, var(--color-text));
   font-size: 12px;
   font-weight: 500;
@@ -1467,39 +1478,40 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
    居底右、文件名胶囊居左，原「顶行三件打架」的叠印前提消失，顶右回移安全
    （顶右 fab 与居左胶囊分居面板顶行两端）。JS 同步式（canvas.js syncDeckBox：
    top = 面板顶 + 10），本 CSS 顶锚为 JS 前的缺省姿。
+   件二排他批（2026-10-28）：fab = header 固定行成员（行 = 胶囊+堆叠钮+独立中
+   角标），top 10 即 --cv-head-top 档；下方控件一律从 --cv-head-clear 起算。
+   件三统一批（同令）：材质归一聊天模板 token（修前 --glass-control-* 自绘 +
+   减淡 opacity .6 —— 与圆钮族两种玻璃并存退役，材质到位不靠减淡）；尺寸 =
+   --cv-size-circle 40 / 图标 --cv-icon 18；hover-active = --cv-hover-scale /
+   --cv-active-scale。
    不在面板子树（panel.contains(fab)===false），不随整区缩放/前景轮换移动；
    z-250 恒高于 deck-layer（auto/.over 60/245）与面板（docked auto / overlay
    240），低于模态族（300+）。 */
 #deck-fab {
   position: fixed;
-  top: 10px;
+  top: var(--cv-head-top, 10px);
   right: 12px;
   z-index: 250;
-  width: 40px;
-  height: 40px;
+  width: var(--cv-size-circle, 40px);
+  height: var(--cv-size-circle, 40px);
   border-radius: 50%;
   cursor: pointer;
   display: none;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--glass-control-border);
-  background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge),
-    0 1px 3px var(--glass-control-glow),
-    0 2px 8px var(--glass-control-shadow);
+  border: 1px solid var(--cv-border, var(--glass-border));
+  background: var(--cv-bg, var(--glass-bg));
+  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  box-shadow: var(--cv-shadow);
   color: var(--color-text);
-  opacity: 0.6;
   transition: background 0.18s ease, transform 0.18s ease, color 0.18s ease,
               opacity 0.18s ease, box-shadow 0.18s ease;
 }
 body.canvas-open:not(.mobile-layer) #deck-fab { display: flex; }
-#deck-fab:hover { opacity: 1; background: var(--glass-control-bg-hover); transform: scale(1.05); }
-#deck-fab:active { transform: scale(0.96); }
-#deck-fab svg { width: 18px; height: 18px; }
+#deck-fab:hover { background: var(--cv-hover-bg); transform: scale(var(--cv-hover-scale, 1.05)); }
+#deck-fab:active { transform: scale(var(--cv-active-scale, 0.96)); }
+#deck-fab svg { width: var(--cv-icon, 18px); height: var(--cv-icon, 18px); }
 #deck-fab[aria-pressed="true"] {
   opacity: 1;
   background: rgb(var(--sapphire) / 0.14);
@@ -1817,21 +1829,24 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
    16）——移位批的簇整体 +48（fab 迁底右占首槽）随 fab 回退批已失据，右缘
    64/112 空缝即作者指的「靠右没贴齐」；缩放条同步回 16（本文件下方）。
    材质 = frosted 标准 token（--glass-bg/--glass-blur saturate(1.15)/
-   --glass-border/--frost-shadow，sapphire.css 单源，与 chat 对话面板同源
-   ——六项④「毛玻璃加强到与聊天对话框一致」；原 --glass-control-* 自绘
-   （暗档 5% 白 + blur10）太透退役，减淡 opacity 同步撤（材质到位不靠减淡）。 */
+   --glass-border，sapphire.css 单源，与 chat 对话面板同源——六项④「毛玻璃
+   加强到与聊天对话框一致」）。
+   件三统一批（2026-10-28）：尺寸/阴影/hover-active 全部收进 --cv-* token 档
+   （sapphire.css 单源）——尺寸 = --cv-size-circle 40、阴影 = --cv-shadow
+   （= chat #header 现值，外投影退役）、hover = --cv-hover-bg + 
+   --cv-hover-scale、active = --cv-active-scale（聊天控件同款语言）。 */
 .canvas-source-toggle {
   position: absolute;
   bottom: 16px;
   right: 16px;
-  width: 40px;
-  height: 40px;
+  width: var(--cv-size-circle, 40px);
+  height: var(--cv-size-circle, 40px);
   border-radius: 50%;
-  border: 1px solid var(--glass-border);
-  background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  box-shadow: var(--frost-shadow);
+  border: 1px solid var(--cv-border, var(--glass-border));
+  background: var(--cv-bg, var(--glass-bg));
+  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  box-shadow: var(--cv-shadow);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1841,26 +1856,28 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   transition: all 0.2s ease;
 }
 .canvas-source-toggle:hover {
-  background: var(--glass-control-bg-hover);
-  transform: scale(1.05);
+  background: var(--cv-hover-bg);
+  transform: scale(var(--cv-hover-scale, 1.05));
 }
+.canvas-source-toggle:active { transform: scale(var(--cv-active-scale, 0.96)); }
 
 /* #303 B6: element-select toggle — same floating-glass style as the source
    toggle, seated 8px to its left.
    六项批（2026-10-23 六项③④）：右锚回原槽 64（= source 16 + 40 + 8 同排 sequel），
-   材质同 source toggle 换 frosted 标准单源。 */
+   材质同 source toggle 换 frosted 标准单源；件三统一批（2026-10-28）尺寸/阴影/
+   hover-active 收 --cv-* token 档。 */
 .canvas-ref-select {
   position: absolute;
   bottom: 16px;
   right: 64px;
-  width: 40px;
-  height: 40px;
+  width: var(--cv-size-circle, 40px);
+  height: var(--cv-size-circle, 40px);
   border-radius: 50%;
-  border: 1px solid var(--glass-border);
-  background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  box-shadow: var(--frost-shadow);
+  border: 1px solid var(--cv-border, var(--glass-border));
+  background: var(--cv-bg, var(--glass-bg));
+  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  box-shadow: var(--cv-shadow);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1870,13 +1887,12 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   transition: all 0.2s ease;
 }
 .canvas-ref-select:hover {
-  background: var(--glass-control-bg-hover);
-  opacity: 1;
-  transform: scale(1.05);
+  background: var(--cv-hover-bg);
+  transform: scale(var(--cv-hover-scale, 1.05));
 }
+.canvas-ref-select:active { transform: scale(var(--cv-active-scale, 0.96)); }
 /* Active (select mode engaged): sapphire-leaning accent tint */
 .canvas-ref-select.active {
-  opacity: 1;
   color: var(--color-primary);
   border-color: rgb(var(--sapphire) / 0.35);
   background: rgb(var(--sapphire) / 0.12);
@@ -1887,7 +1903,7 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
 }
 .canvas-ref-select:disabled:hover {
   transform: none;
-  background: var(--glass-control-bg);
+  background: var(--cv-bg, var(--glass-bg));
 }
 
 /* canvas 文件刷新批（作者令 2026-10-25）：文件页签右下「重新读盘」钮。
@@ -1907,14 +1923,14 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
    空间不与右下角交叠）互不相扰；deck 层/独立浮标各自独立空间位。 */
 .canvas-refresh-toggle {
   position: absolute;
-  width: 40px;
-  height: 40px;
+  width: var(--cv-size-circle, 40px);
+  height: var(--cv-size-circle, 40px);
   border-radius: 50%;
-  border: 1px solid var(--glass-border);
-  background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  box-shadow: var(--frost-shadow);
+  border: 1px solid var(--cv-border, var(--glass-border));
+  background: var(--cv-bg, var(--glass-bg));
+  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  box-shadow: var(--cv-shadow);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1924,9 +1940,10 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   transition: all 0.2s ease;
 }
 .canvas-refresh-toggle:hover {
-  background: var(--glass-control-bg-hover);
-  transform: scale(1.05);
+  background: var(--cv-hover-bg);
+  transform: scale(var(--cv-hover-scale, 1.05));
 }
+.canvas-refresh-toggle:active { transform: scale(var(--cv-active-scale, 0.96)); }
 .canvas-refresh-toggle.busy svg {
   animation: canvasRefreshSpin 1s linear infinite;
 }
@@ -2237,7 +2254,10 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
 /* 六项批（作者令 2026-10-23 六项③④）：右锚回 16 —— 贴齐面板右缘（移位批的
    +48 槽随簇回退一并失效，见 .canvas-source-toggle 注）；底边 18px 与圆钮簇
    （bottom:16，40px 高）视觉对中线不变（图片/PDF pane 同享）。
-   材质 = frosted 标准 token（与 source/ref 同批换装，chat 对话面板同源）。 */
+   件三统一批（2026-10-28）：材质/尺寸收 --cv-* token 档 —— 面阴影 = 
+   --cv-shadow（= chat #header 现值，修前 --frost-shadow 外投影退役）；内钮
+   26px 档（修前 glass-control 实心 chip 面退役 —— zoom.js 去 .glass-control
+   类，与查找条内钮同语言：静默 ghost + hover 抬亮，聊天控件同款）。 */
 .canvas-zoom-bar {
   position: absolute;
   top: auto;
@@ -2247,24 +2267,31 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 4px;
-  border-radius: 10px;
-  background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
-  box-shadow: var(--frost-shadow);
+  padding: var(--cv-pad-bar-sm, 4px);
+  border-radius: var(--cv-radius-bar-sm, 10px);
+  background: var(--cv-bg, var(--glass-bg));
+  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  border: 1px solid var(--cv-border, var(--glass-border));
+  box-shadow: var(--cv-shadow);
 }
 .canvas-zoom-btn {
-  width: 26px;
-  height: 26px;
+  width: var(--cv-size-btn, 26px);
+  height: var(--cv-size-btn, 26px);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  border-radius: 7px;
+  border: none;
+  border-radius: var(--cv-radius-btn-sm, 7px);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease, transform .15s ease;
 }
-.canvas-zoom-btn svg { width: 14px; height: 14px; }
+.canvas-zoom-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+.canvas-zoom-btn:active { transform: scale(var(--cv-active-scale, 0.96)); }
+.canvas-zoom-btn svg { width: var(--cv-icon-btn, 14px); height: var(--cv-icon-btn, 14px); }
 .canvas-zoom-pct {
   min-width: 40px;
   text-align: center;
@@ -2569,69 +2596,77 @@ body.col-resizing #canvas-panel { transition: none; }
    each stacked button keeps a 48px slot (移位批 2026-10-22 簇 +48：source 64 ·
    ref-select 112 · find 112/160 · graph 160 —— JS 写 right 的槽位同步 +48，
    见 markdown.js / html.js / shared.js 缺省；回退批同日 fab 迁回顶右原位，
-   簇 +48 槽位维持不动)。 */
+   簇 +48 槽位维持不动)。
+   件三统一批（2026-10-28 作者令「一切控件统一走聊天模板」）：修前本对面走
+   --glass-control-* 自绘（暗档 5% 白 + blur10 + 减淡 opacity .6）与 source/ref
+   圆钮两种玻璃并存 —— 现整族归一到聊天模板 token（--cv-bg/--cv-blur/
+   --cv-saturate/--cv-border/--cv-shadow），减淡 opacity 退役（材质到位不靠
+   减淡，S4-2 同规）；尺寸/hover-active 同 --cv-* 档。 */
 .canvas-find-toggle,
 .canvas-graph-toggle {
   position: absolute; bottom: 16px;
-  width: 40px; height: 40px; border-radius: 50%;
-  border: 1px solid var(--glass-control-border);
-  background: var(--glass-control-bg);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  box-shadow: inset 0 1px 0 var(--glass-control-highlight),
-              inset 0 -1px 0 var(--glass-control-underedge);
+  width: var(--cv-size-circle, 40px); height: var(--cv-size-circle, 40px); border-radius: 50%;
+  border: 1px solid var(--cv-border, var(--glass-border));
+  background: var(--cv-bg, var(--glass-bg));
+  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  box-shadow: var(--cv-shadow);
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; z-index: 10; color: var(--color-text);
-  transition: all .2s ease; opacity: .6;
+  transition: all .2s ease;
 }
 .canvas-find-toggle:hover,
 .canvas-graph-toggle:hover {
-  background: var(--glass-control-bg-hover); opacity: 1; transform: scale(1.05);
+  background: var(--cv-hover-bg); transform: scale(var(--cv-hover-scale, 1.05));
 }
+.canvas-find-toggle:active,
+.canvas-graph-toggle:active { transform: scale(var(--cv-active-scale, 0.96)); }
 
-/* ── Glass find bar (fileSearch.js) ─────────────────────────────── */
+/* ── Glass find bar (fileSearch.js) ───────────────────────────────
+   件三统一批（2026-10-28）：材质整族归一聊天模板 token（修前 --glass-control-*
+   自绘 + 自带外投影 0 4px 16px —— 与圆钮/胶囊两种玻璃并存，即作者截图 3/4 的
+   「多种玻璃效果尺寸大小不一」）；尺寸收 --cv-* 档（条圆角 12 / 内钮 26 /
+   内距 6×8）。
+   件二排他批（同令）：top 从 10px 改锚 --cv-head-clear（header 行下缘 46px
+   +10 呼吸缝 = 56px）—— header 行（胶囊+堆叠钮+独立中角标）固定占位，查找条
+   只能出现在行下方，开查找态与胶囊零相交（修前同顶带，长胶囊即压字，作者
+   截图 4）。#926 件2 的 right:66 让位带随之整体退役：堆叠钮已固定在 header
+   行内、查找条在行下方，两者空间正交，结构排他取代碰运气式让位。 */
 .nf-findbar {
-  position: absolute; top: 10px; right: 14px; z-index: 30;
+  position: absolute; top: var(--cv-head-clear, 56px); right: 14px; z-index: 30;
   display: flex; align-items: center; gap: 6px;
-  padding: 6px 8px;
-  border-radius: 12px;
-  border: 1px solid var(--glass-control-border);
-  background: var(--glass-control-bg);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  box-shadow: inset 0 1px 0 var(--glass-control-highlight),
-              inset 0 -1px 0 var(--glass-control-underedge),
-              0 4px 16px rgba(0, 0, 0, 0.10);
+  padding: var(--cv-pad-bar, 6px 8px);
+  border-radius: var(--cv-radius-bar, 12px);
+  border: 1px solid var(--cv-border, var(--glass-border));
+  background: var(--cv-bg, var(--glass-bg));
+  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  box-shadow: var(--cv-shadow);
   animation: nfFindbarIn .16s ease;
 }
 @keyframes nfFindbarIn {
   from { opacity: 0; transform: translateY(-6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-/* #926 件2（作者 2026-10-26 报障：搜索框右缘与堆叠视角按钮重叠互挡）：桌面
-   canvas 态 #deck-fab（40px 圆钮）钉面板顶右（right 12），findbar 同角落
-   （right 14）⇒ 右端 ~38px 被 fab（z-250）盖住 —— 关闭 × 点不到、fab 也被
-   搜索条压住。让位：findbar 右缝 66px = fab 40 + fab 右缝 12 + 14 让位缝，
-   两者同排并立、均可点（不重叠不互挡）。fab 隐藏面（mobile 层 / 卡窗，split.css
-   §卡窗 display:none !important）不适用 —— 回 14px 原缝。 */
-body.canvas-open:not(.mobile-layer):not(.card-window) .nf-findbar { right: 66px; }
 .nf-findbar-input {
-  width: 200px; border: none; outline: none; background: transparent;
+  width: var(--cv-findbar-w, 200px); border: none; outline: none; background: transparent;
   color: var(--color-text); font-size: 13px;
   font-family: inherit;
 }
 .nf-findbar-input::placeholder { color: var(--color-text-muted); opacity: .7; }
 .nf-findbar-count {
-  min-width: 44px; text-align: center;
+  min-width: var(--cv-findbar-count-w, 44px); text-align: center;
   font-size: 11px; color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
 }
 .nf-findbar-btn {
-  width: 24px; height: 24px; border-radius: 7px;
+  width: var(--cv-size-btn, 26px); height: var(--cv-size-btn, 26px); border-radius: var(--cv-radius-btn-sm, 7px);
   border: none; background: transparent; color: var(--color-text-muted);
   cursor: pointer; font-size: 13px; line-height: 1;
   display: flex; align-items: center; justify-content: center;
   transition: background .15s ease, color .15s ease;
 }
-.nf-findbar-btn:hover { background: var(--glass-control-bg-hover); color: var(--color-text); }
+.nf-findbar-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
 
 /* Find hit marks (both the app-document face and the iframe face). */
 mark.nf-find-hit { background: rgba(255, 213, 0, 0.45); color: inherit; border-radius: 2px; }
@@ -3009,22 +3044,24 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
    prefers-reduced-motion 直切。 */
 
 /* ── 主窗可见卡头 toggle：标题头（#canvas-pop-btn）+ 环卡卡头（.deck-card-pop）──
-   （桌面标签行/移动层标签条均已退役，卡头 = 居中标题 + 环卡名条 + 手机卡片头） */
+   （桌面标签行/移动层标签条均已退役，卡头 = 居中标题 + 环卡名条 + 手机卡片头）
+   件三统一批（2026-10-28）：尺寸/圆角/hover 收 --cv-* token 档（26px 小钮档），
+   ghost 静默 + hover 抬亮玻璃 = 聊天控件语言（卡窗 .canvas-merge-btn 同款）。 */
 .canvas-pop-btn {
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: var(--cv-size-btn, 26px);
+  height: var(--cv-size-btn, 26px);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--cv-radius-btn, 8px);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 }
-.canvas-pop-btn:hover { background: var(--glass-control-bg-hover); color: var(--color-text); }
+.canvas-pop-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
 /* 入口隐藏权威化（独立窗口内容物收口批 2026-10-22）：面板页签的独立钮 =
    入口隐藏（syncCardHeaderPop / navController syncCardChrome 置 hidden）。
    族内 display 规则会压过 UA 的 [hidden] 档（hidden 置了钮仍渲染）——两处
@@ -3064,14 +3101,25 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
 .deck-card .deck-card-pop.is-independent .pop-ic-pop { display: none; }
 .deck-card .deck-card-pop.is-independent .pop-ic-merge { display: block; }
 
-/* ── 主窗：卡面「独立中」浮标（属性驱动 ::after，零 DOM 插拔）── */
+/* ── 主窗：卡面「独立中」浮标（属性驱动 ::after，零 DOM 插拔）──
+   件二排他批（2026-10-28 作者令：胶囊+堆叠钮（含独立中角标）= 固定 header 行）：
+   角标从 pane ::after 迁 **#canvas-slide** ::after —— pane 可能自身是滚动容器
+   （docx/xlsx 族 .scrollable），absolute 角标随内容滚走漂出 header 行；slide
+   不滚，角标恒钉 header 行。属性由 canvas.js syncIndependentChip 按活动页签
+   independent 状态写在 slide 上（pane 的 data-independent 保留不动 —— CW 链
+   数据面仍消费）。位置 = 堆叠钮左侧让位位（right 58 = fab 40 + fab 右缝 12
+   + 6 缝）：修前 right 12 与堆叠钮同角叠印（作者截图 2），现同排并立零相交。
+   配套胶囊收窄护栏：独立态长胶囊（--capsule-w 180）在窄面板可能伸进角标带，
+   挂 data-independent 时 max-width 对称收窄（100% − 236px，= 角标左缘偏移
+   112×2 + 12 余量），护栏内 t-name ellipsis 兜底 —— header 行三件任意组合
+   零相交（排他是布局性的，非 z-index 遮掩）。 */
 #canvas-content .canvas-tab-pane { position: relative; }
-.canvas-tab-pane[data-independent]::after {
+#canvas-slide[data-independent]::after {
   content: '独立中';
   position: absolute;
-  top: 10px;
-  right: 12px;
-  z-index: 5;
+  top: var(--cv-head-top, 10px);
+  right: 58px;
+  z-index: 31;
   padding: 3px 9px;
   border-radius: 999px;
   font-size: 11px;
@@ -3082,6 +3130,9 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
   border: 1px solid rgb(var(--sapphire) / 0.22);
   pointer-events: none;
   animation: nf-chip-in 0.18s ease;
+}
+body:not(.mobile-layer):not(.card-window) #canvas-slide[data-independent] .canvas-header {
+  max-width: min(76%, calc(100% - 236px));
 }
 .deck-card[data-independent] .card-top::after {
   content: '独立中';
@@ -3176,28 +3227,42 @@ body.card-window #canvas-panel {
   animation: nf-card-win-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 body.card-window #canvas-panel.stacked { transform: none !important; }
+/* ── 件一（2026-10-28 作者令）：卡窗胶囊行对齐 canvas 面板同款 + 水平居中 ──
+   修前卡窗胶囊 kept 基态 left:14 靠左（截图 1）——居中批的桌面规则以
+   :not(.card-window) 排除了卡窗。现对齐面板同款：横轴 canvas 平分中线
+   （left 50% + translateX(-50%) 并入 translate3d 首参，与桌面居中批同式，
+   手势变量语义不变），胶囊几何/材质同面板（180×36 固定档 + 聊天模板玻璃，
+   上方 body:not(.mobile-layer) 规则已覆盖）。行内 = [标题][合并钮]（合并钮
+   下方改 ghost 小钮，与面板 .canvas-pop-btn 同语言）。 */
+body.card-window #canvas-panel .canvas-header {
+  left: 50%;
+  transform: translate3d(calc(-50% + var(--head-dx, 0px)), var(--head-dy, 0px), 0)
+    scale(var(--head-scale, 1)) rotateZ(var(--head-rot, 0deg));
+}
 /* 卡窗胶囊 padding 归一（尺寸一致批 2026-10-25）：旧 8px 顶 pad 是 40px 高
    形态（height:auto 时代）的配套；胶囊高度统一 36 后 8+4+26 合并钮=38 溢出
    2px，归一回统一档 4px（与主窗 .canvas-header 同一条 padding 链）。 */
 body.card-window #canvas-panel .canvas-header { padding-top: 4px; }
-/* 卡窗卡头「合并」钮 */
+/* 卡窗卡头「合并」钮 —— 件三统一批（2026-10-28）：与面板 .canvas-pop-btn
+   同语言 ghost 小钮（26px 档 / 8px 圆角 / 静默透明 + hover 抬亮玻璃），
+   修前 --glass-control 自绘 chip 面退役 —— 胶囊行视觉语言与面板完全同款。 */
 .canvas-merge-btn {
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 26px;
-  padding: 0 10px;
-  margin-left: 8px;
-  border: 1px solid var(--glass-control-border);
-  border-radius: 8px;
-  background: var(--glass-control-bg);
-  color: var(--color-text);
-  font-size: 12px;
+  justify-content: center;
+  width: var(--cv-size-btn, 26px);
+  height: var(--cv-size-btn, 26px);
+  padding: 0;
+  border: none;
+  border-radius: var(--cv-radius-btn, 8px);
+  background: transparent;
+  color: var(--color-text-muted);
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition: background 0.12s ease, color 0.12s ease;
 }
-.canvas-merge-btn:hover { background: var(--glass-control-bg-hover); border-color: rgb(var(--sapphire) / 0.4); }
+.canvas-merge-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+.canvas-merge-btn:active { transform: scale(var(--cv-active-scale, 0.96)); }
 /* 卡窗合并 out 动画（requestMergeSelf 挂类，180ms 后 close） */
 body.card-window #canvas-panel.card-win-merging { animation: nf-card-win-out 0.18s ease-in forwards; }
 
@@ -3207,7 +3272,7 @@ body.card-window #canvas-panel.card-win-merging { animation: nf-card-win-out 0.1
   .canvas-tab-pane.card-merge-anim,
   body.card-window #canvas-panel,
   body.card-window #canvas-panel.card-win-merging,
-  .canvas-tab-pane[data-independent]::after { animation: none !important; }
+  #canvas-slide[data-independent]::after { animation: none !important; }
 }
 
 /* 手机卡头独立/合并钮（navController 建；新标签页姿态直切） */
