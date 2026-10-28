@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// canvas-ask-dock.spec.mjs — Canvas 文件 ask mode（2026-10-28 实施批）实施验收。
+// canvas-ask-dock.spec.mjs — Canvas 文件 ask mode（2026-10-28 实施批；同日 22:42
+// v2.1 简化修订）实施验收。
 //
 // 机制稿 §8 验收条目 → 本 spec 断言映射（前端组件行为面；后端路由/绑定/流式
 // 的协议面用 routeWebSocket mock 驱动，形态 = canvas-stack.spec.mjs 孪生）：
@@ -12,15 +13,19 @@
 //       ask-<8hex>（每文件绑定）；user 气泡即时、typing 指示在场、textDelta
 //       增量回填同一 ai 气泡、done 定稿；fab has-sess 活性紫点点亮
 //   T4  每文件独立 session（§8-1 作者令⑦）：切卡即切——B 卡 askState 回放 B 的
-//       转录 + 徽标切 B 文件名/键；切回 A 复现 A 转录（收起保留，§2/§4）
+//       转录；切回 A 复现 A 转录（收起保留，§2/§4）；v2.1 徽标退场后以转录呈现
 //   T5  收起保留 + pulse（§8-1）：有消息收起 → .pulse + .has-sess；再开转录在
-//   T6  转交/回问（§7）：askHandoff 帧出站 → ack → sys 回执气泡「↗ 已发送到
-//       主会话」；注入 user 帧（主会话回问）→ sys 气泡带「主会话回问：」前缀
+//   T6  v2.1 减法·转交/回问（§7）：转交钮自 UI 撤除（两箭头减为一枚右侧发送钮）；
+//       askHandoffAck 回执收进不可见处（零 sys 气泡）；注入 user 帧（主会话回问）
+//       → user 族气泡带「主会话回问：」前缀（问答面两族制）；error 落助手气泡槽
 //   T7  主会话零交集（§8-2 视图排他）：ask 流式全程 #chat .bubble 计数不变
 //   T8  UI 纪律（§8-2）：dock max-h 316（E-2）、零遮罩（新增阻塞层计数零）、
 //       气泡列 touch-action pan-y（#988 列内纵滚原生）
 //   T9  移动档（§8-3）：44×44 命中盒、座位在切换条上方、列 max-h 250、
 //       气泡列表面横滑零切卡（.mobile-card-peek 不亮起，surface 归属制）
+//   T10 v2.1 减法纪律（作者令 2026-10-28 22:42「简约一点…」）：ghost 提示行/
+//       session 徽标/转交钮零残留；服务端转录中的 sys 帧渲染面永久过滤
+//       （收进不可见处——转录数据仍存、气泡面只出 user/ai 两族）
 //
 // 运行：node tests/canvas-ask-dock.spec.mjs
 // 可选 env：PORT（默认 8216，避开在跑 spec 的固定端口）、ASK_SHOTS_DIR（截图目录）。
@@ -346,22 +351,21 @@ try {
     !!askOpenB && !!askOpenB.file && sidOf(askOpenB.file.absPath) === sidOf(absB) && sidOf(absB) !== askedSid,
     `${askedSid} → ${askOpenB && askOpenB.file ? askOpenB.file.absPath : '(no askOpen)'}`);
   const badgeB = await page.evaluate(() => ({
-    fn: document.querySelector('.ask-sess .ask-sess-fn').textContent,
-    key: document.querySelector('.ask-sess .ask-sess-key').textContent,
+    retired: document.querySelectorAll('.ask-dock .ask-sess, .ask-ghost, .ask-handoff').length,
     firstUser: (document.querySelector('.ask-dock .ask-bub.user') || {}).textContent || '',
   }));
-  ok('T4b 徽标切 B（文件名 + ask:<hash> 键）', badgeB.fn.includes('wiki-graph') && /^ask:[0-9a-f]{4}$/.test(badgeB.key), JSON.stringify(badgeB));
+  ok('T4b v2.1 减法：ghost/徽标/转交钮零残留，切卡即切 B 转录',
+    badgeB.retired === 0 && badgeB.firstUser.includes('引用边是从哪来的'), JSON.stringify(badgeB));
   ok('T4c 气泡列切 B 转录', badgeB.firstUser.includes('引用边是从哪来的'), badgeB.firstUser.slice(0, 30));
   // 切回 A → A 转录复现（收起保留口径）
   await openFile(page, '记忆检索调优笔记.md');
   await sleep(400);
   const backA = await page.evaluate(() => ({
-    fn: document.querySelector('.ask-sess .ask-sess-fn').textContent,
     user: (document.querySelector('.ask-dock .ask-bub.user') || {}).textContent || '',
     ai: (document.querySelector('.ask-dock .ask-bub.ai') || {}).textContent || '',
   }));
-  ok('T4d 切回 A：会话/转录/徽标复现（收起保留口径）',
-    backA.fn.includes('记忆检索调优笔记') && backA.user.includes('τ 为什么取 30 天') && backA.ai.includes('近因加权'),
+  ok('T4d 切回 A：会话/转录复现（收起保留口径；v2.1 起仅以气泡面呈现）',
+    backA.user.includes('τ 为什么取 30 天') && backA.ai.includes('近因加权'),
     JSON.stringify(backA).slice(0, 120));
   await shot(page, 't4-session-switch');
 
@@ -381,27 +385,42 @@ try {
   }));
   ok('T5b 再开复现', t5b.open && t5b.user.includes('τ 为什么取 30 天'), JSON.stringify(t5b).slice(0, 80));
 
-  // T6 转交/回问（§7）
+  // T6 v2.1 减法·转交/回问（§7 机制不变，呈现面减法）
   inbound.length = 0;
-  await page.click('.ask-dock .ask-handoff');
-  await sleep(250);
-  const handoffFrame = inbound.find((m) => m.type === 'askHandoff');
-  ok('T6a 转交帧出站（最后一条用户问题自动携带）', !!handoffFrame && handoffFrame.sessionId === askedSid && !!handoffFrame.question, JSON.stringify(handoffFrame || {}));
-  wsSend({ type: 'askHandoffAck', sessionId: askedSid, ok: true, question: handoffFrame ? handoffFrame.question : '' });
-  await sleep(250);
-  const sysReceipt = await page.evaluate(() => {
-    const nodes = [...document.querySelectorAll('.ask-dock .ask-bub.sys')];
-    return nodes.length ? nodes[nodes.length - 1].textContent : '';
+  const t6a = await page.evaluate(() => {
+    const row = document.querySelector('.ask-dock .ask-input');
+    const btns = row ? [...row.querySelectorAll('button')] : [];
+    return { n: btns.length, cls: btns.map((b) => b.className), hasHandoff: !!document.querySelector('.ask-dock .ask-handoff') };
   });
-  ok('T6b 转交回执 sys 气泡（↗ 已发送到主会话）', sysReceipt.includes('已发送到主会话'), sysReceipt.slice(0, 50));
-  // 主会话回问（注入 user 帧进 ask 会话）
+  ok('T6a v2.1 单箭头：转交钮退场，输入条右侧唯一按钮 = .ask-send',
+    !t6a.hasHandoff && t6a.n === 1 && t6a.cls[0] === 'ask-send', JSON.stringify(t6a));
+  // 转交回执（服务端 ack 帧）收进不可见处：零 sys 气泡、气泡总数不变
+  const before6b = await page.evaluate(() => document.querySelectorAll('.ask-dock .ask-bub').length);
+  wsSend({ type: 'askHandoffAck', sessionId: askedSid, ok: true, question: 'τ 为什么取 30 天？' });
+  await sleep(300);
+  const t6b = await page.evaluate(() => ({
+    n: document.querySelectorAll('.ask-dock .ask-bub').length,
+    sys: document.querySelectorAll('.ask-dock .ask-bub.sys').length,
+  }));
+  ok('T6b v2.1 回执收进不可见处：ack 帧后零 sys 气泡、气泡面不生长',
+    t6b.sys === 0 && t6b.n === before6b, `bubbles=${before6b}→${t6b.n} sys=${t6b.sys}`);
+  // 主会话回问（注入 user 帧进 ask 会话）→ §7 契约：以用户消息形态呈现
   wsSend({ type: 'user', sessionId: askedSid, injected: true, text: '主会话回问：需要我帮你做什么？' });
-  await sleep(250);
-  const replyBub = await page.evaluate(() => {
-    const nodes = [...document.querySelectorAll('.ask-dock .ask-bub.sys')];
-    return nodes.length ? nodes[nodes.length - 1].textContent : '';
+  await sleep(300);
+  const t6c = await page.evaluate(() => {
+    const users = [...document.querySelectorAll('.ask-dock .ask-bub.user')];
+    return { last: users.length ? users[users.length - 1].textContent : '', sys: document.querySelectorAll('.ask-dock .ask-bub.sys').length };
   });
-  ok('T6c 主会话回问可达 ask 窗且带前缀', replyBub.includes('主会话回问：需要我帮你做什么'), replyBub.slice(0, 50));
+  ok('T6c 主会话回问以 user 族呈现且带前缀（问答面两族制）',
+    t6c.last.includes('主会话回问：需要我帮你做什么') && t6c.sys === 0, t6c.last.slice(0, 50));
+  // 错误呈现 v2.1：不起 sys 气泡——文本落助手气泡槽
+  wsSend({ type: 'error', sessionId: askedSid, message: 'mock 失败' });
+  await sleep(300);
+  const t6d = await page.evaluate(() => {
+    const ais = [...document.querySelectorAll('.ask-dock .ask-bub.ai')];
+    return { last: ais.length ? ais[ais.length - 1].textContent : '', sys: document.querySelectorAll('.ask-dock .ask-bub.sys').length };
+  });
+  ok('T6d 错误落助手气泡槽（零 sys 呈现）', t6d.last.includes('出错了：mock 失败') && t6d.sys === 0, t6d.last.slice(0, 40));
   await shot(page, 't6-handoff-reply');
 
   // T7 主会话零交集（视图排他）
@@ -419,6 +438,38 @@ try {
   ok('T8b 零遮罩零面板（无窗体形态）', maskCount === 0);
   const colTouch = await page.evaluate(() => getComputedStyle(document.querySelector('.ask-col')).touchAction);
   ok('T8c 气泡列 touch-action: pan-y（#988 列内纵滚原生）', colTouch === 'pan-y', colTouch);
+
+  // T10 v2.1 减法纪律（作者令 2026-10-28 22:42「简约一点。不需要两个箭头…」）
+  const t10a = await page.evaluate(() => ({
+    ghost: document.querySelectorAll('.ask-ghost').length,
+    sess: document.querySelectorAll('.ask-dock .ask-sess').length,
+    handoff: document.querySelectorAll('.ask-handoff').length,
+  }));
+  ok('T10a v2.1 退场件零残留（ghost 提示行 / session 徽标 / 转交钮）',
+    t10a.ghost === 0 && t10a.sess === 0 && t10a.handoff === 0, JSON.stringify(t10a));
+  // 服务端转录仍含 sys 帧（askState 重放）→ 渲染面永久过滤（收进不可见处）
+  wsSend({
+    type: 'askState', sessionId: askedSid, sessionKey: 'ask:' + askedSid.slice(4, 8),
+    file: '/tmp/canvas-ask-fixture/记忆检索调优笔记.md', fileName: '记忆检索调优笔记.md',
+    messages: [
+      { role: 'user', text: 'τ 为什么取 30 天？' },
+      { role: 'ai', text: '半衰期 ≈21 天。' },
+      { role: 'sys', text: '↗ 已发送到主会话 · τ 为什么取 30 天？' },
+      { role: 'sys', text: '状态噪声类示例' },
+    ],
+  });
+  await sleep(300);
+  const t10b = await page.evaluate(() => {
+    const col = document.querySelector('.ask-dock .ask-col');
+    return {
+      sys: col.querySelectorAll('.ask-bub.sys').length,
+      user: col.querySelectorAll('.ask-bub.user').length,
+      ai: col.querySelectorAll('.ask-bub.ai').length,
+      hasReceiptText: col.textContent.includes('已发送到主会话') || col.textContent.includes('状态噪声类'),
+    };
+  });
+  ok('T10b 服务端转录 sys 帧渲染面永久过滤（气泡面只出 user/ai 两族）',
+    t10b.sys === 0 && t10b.user === 1 && t10b.ai === 1 && !t10b.hasReceiptText, JSON.stringify(t10b));
 
   await page.close();
 
