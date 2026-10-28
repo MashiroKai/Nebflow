@@ -19,12 +19,16 @@ import cats.syntax.all.*
 object AskBudgets:
   /** 文件全文入上下文上限（chars）。超出截断 + 标注。 */
   val FileMaxChars: Int = 16000
+
   /** 图谱邻接段条数上限（1-2 跳去重后）。 */
   val NeighborMax: Int = 6
+
   /** 记忆检索命中上限（top-N）。 */
   val RecallMax: Int = 5
+
   /** 单邻段摘要上限（chars）。 */
   val NeighborSnippetMax: Int = 600
+
   /** 单条记忆命中摘录上限（chars）。 */
   val RecallExcerptMax: Int = 600
 end AskBudgets
@@ -75,7 +79,9 @@ object AskContextAssembler:
     val graphLeg = sources.graphNeighbors(absPath).attempt.map(_.toOption.getOrElse(Nil))
     val recallQuery = recallQueryFor(fileName)
     val recallLeg = sources.recallHits(recallQuery).attempt.map(_.toOption.getOrElse(Nil))
-    val fpLeg = (sources.recallDbMtime, sources.graphVersion).mapN { (r, g) => (r, g) }.attempt
+    val fpLeg = (sources.recallDbMtime, sources.graphVersion)
+      .mapN { (r, g) => (r, g) }
+      .attempt
       .map(_.toOption.getOrElse((0L, "")))
 
     for
@@ -83,7 +89,8 @@ object AskContextAssembler:
       neighbors <- graphLeg
       hits <- recallLeg
       (recallMtime, graphVer) <- fpLeg
-      fp = fileOpt.map(f => AskFingerprint(f._2, f._3, recallMtime, graphVer))
+      fp = fileOpt
+        .map(f => AskFingerprint(f._2, f._3, recallMtime, graphVer))
         .getOrElse(AskFingerprint(recallDbMtime = recallMtime, graphVersion = graphVer))
       block = renderBlock(fileName, fileOpt.map(_._1), neighbors, hits)
       sources2 = scala.collection.mutable.ListBuffer[String]()
@@ -115,8 +122,7 @@ object AskContextAssembler:
     fileText match
       case Some(text) =>
         val capped =
-          if text.length > AskBudgets.FileMaxChars then
-            text.take(AskBudgets.FileMaxChars) + "\n…（超预算截断）"
+          if text.length > AskBudgets.FileMaxChars then text.take(AskBudgets.FileMaxChars) + "\n…（超预算截断）"
           else text
         sb ++= "═══ 来源【文件】全文 ═══\n"
         sb ++= capped
@@ -135,8 +141,7 @@ object AskContextAssembler:
       sb ++= "═══ 来源【图谱】邻接文档（引用边 1-2 跳）═══\n"
       deduped.foreach { n =>
         val snippet =
-          if n.snippet.length > AskBudgets.NeighborSnippetMax then
-            n.snippet.take(AskBudgets.NeighborSnippetMax) + "…"
+          if n.snippet.length > AskBudgets.NeighborSnippetMax then n.snippet.take(AskBudgets.NeighborSnippetMax) + "…"
           else n.snippet
         sb ++= s"· 《${n.title}》（${n.rel}）：$snippet\n"
       }
@@ -148,8 +153,7 @@ object AskContextAssembler:
       sb ++= "═══ 来源【记忆】主会话检索命中 ═══\n"
       cappedHits.foreach { h =>
         val excerpt =
-          if h.excerpt.length > AskBudgets.RecallExcerptMax then
-            h.excerpt.take(AskBudgets.RecallExcerptMax) + "…"
+          if h.excerpt.length > AskBudgets.RecallExcerptMax then h.excerpt.take(AskBudgets.RecallExcerptMax) + "…"
           else h.excerpt
         sb ++= s"· [${h.session} · ${h.ts}] $excerpt\n"
       }

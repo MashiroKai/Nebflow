@@ -184,8 +184,15 @@ function syncToActiveTab() {
   el.fab.classList.toggle('has-sess', hasMsgs);
   if (!isOpen() && hasMsgs) el.fab.classList.add('pulse');
   if (isOpen()) {
-    if (currentFile) { render(); openState(); }
-    else close();
+    if (currentFile) {
+      render();
+      openState();
+      // 切卡即切 session（作者令⑦）：新文件的会话未回放过 → 即刻 askOpen
+      // （绑定 + 历史回放；服务端为权威，重复帧幂等）。
+      ensureActiveSession().then((loaded) => {
+        if (isOpen() && loaded && !loaded.stateSent && currentFile) askOpen(loaded);
+      }).catch(() => {});
+    } else close();
   }
   syncSeat();
 }
@@ -434,6 +441,13 @@ function consumeFrame(msg) {
     }
     case 'askHandoffAck': {
       if (msg.ok) pushSys(entry, msg.question || '', { receipt: true });
+      break;
+    }
+    case 'user': {
+      // 注入族（injected:true）：主会话回问腿（后端 WsAskHandlers.askReply 以
+      // ExternalEvent(source=main) 注入 ask 会话 → AgentActor 发 injected user
+      // 帧）。「主会话回问：」前缀由后端注入文本携带，气泡照 sys 族呈现（§7）。
+      if (msg.injected) pushSys(entry, msg.text || '', {});
       break;
     }
     default:

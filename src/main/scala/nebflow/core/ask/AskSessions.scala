@@ -88,8 +88,10 @@ final case class AskFingerprint(
   def sameAs(other: AskFingerprint): Boolean = this == other
 end AskFingerprint
 
-/** 重组调度状态（每文件一份，内存态；重启后按「未组装」重新起步——首次
- *  askOpen 必组装，冷却语义不受影响）。 */
+/**
+ * 重组调度状态（每文件一份，内存态；重启后按「未组装」重新起步——首次
+ *  askOpen 必组装，冷却语义不受影响）。
+ */
 final case class AskAssemblyState(
   lastAssembledAt: Long = 0L,
   fingerprint: AskFingerprint = AskFingerprint(),
@@ -100,11 +102,14 @@ final case class AskAssemblyState(
 object AskCooldown:
 
   sealed trait Plan
+
   object Plan:
     /** 冷却期内 / 无触发：保持现状（重组不发生）。 */
     case object Hold extends Plan
+
     /** 首次组装（尚无上下文）。 */
     case object Assemble extends Plan
+
     /** 冷却期满 + 待重组：重组（对话历史不动，§3.3）。 */
     case object Reassemble extends Plan
   end Plan
@@ -141,10 +146,9 @@ final class AskSessionRegistry(dataRoot: os.Path):
   private val file: os.Path = dataRoot / "ask" / "index.json"
 
   /** 内存权威；启动时懒加载（首个 bind/find 前读盘一次）。 */
-  private val bindingsRef = {
+  private val bindingsRef =
     val initial = loadFromDisk()
     new java.util.concurrent.atomic.AtomicReference[Map[String, AskBinding]](initial)
-  }
 
   private def loadFromDisk(): Map[String, AskBinding] =
     try
@@ -155,17 +159,21 @@ final class AskSessionRegistry(dataRoot: os.Path):
           case Right(json) =>
             json.hcursor.downField("bindings").as[List[Json]].toOption match
               case Some(items) =>
-                items.flatMap { item =>
-                  for
-                    id <- item.hcursor.downField("id").as[String].toOption
-                    f <- item.hcursor.downField("file").as[String].toOption
-                    n <- item.hcursor.downField("fileName").as[String].toOption
-                    c <- item.hcursor.downField("createdAt").as[Long].toOption
-                    m = item.hcursor.downField("mainSessionId").as[String].toOption.getOrElse("")
-                  yield AskBinding(id, f, n, c, m)
-                }.map(b => b.id -> b).toMap
+                items
+                  .flatMap { item =>
+                    for
+                      id <- item.hcursor.downField("id").as[String].toOption
+                      f <- item.hcursor.downField("file").as[String].toOption
+                      n <- item.hcursor.downField("fileName").as[String].toOption
+                      c <- item.hcursor.downField("createdAt").as[Long].toOption
+                      m = item.hcursor.downField("mainSessionId").as[String].toOption.getOrElse("")
+                    yield AskBinding(id, f, n, c, m)
+                  }
+                  .map(b => b.id -> b)
+                  .toMap
               case None => Map.empty
           case Left(_) => Map.empty
+        end match
     catch
       case NonFatal(e) =>
         logger.warn(s"ask index load failed (non-fatal, starting empty): ${e.getMessage}")
@@ -188,8 +196,7 @@ final class AskSessionRegistry(dataRoot: os.Path):
           .asJson
       )
       AtomicJson.writeSync(file, json.spaces2)
-    catch
-      case NonFatal(e) => logger.warn(s"ask index persist failed (non-fatal): ${e.getMessage}")
+    catch case NonFatal(e) => logger.warn(s"ask index persist failed (non-fatal): ${e.getMessage}")
 
   /** 幂等绑定：同文件恒同会话 id（askOpen/askQuestion 前置调用）。 */
   def bind(canonicalFile: String, fileName: String): IO[AskBinding] =
@@ -210,10 +217,12 @@ final class AskSessionRegistry(dataRoot: os.Path):
           persist(bindingsRef.get)
           fresh
     }
+  end bind
 
   def byId(id: String): IO[Option[AskBinding]] = IO(bindingsRef.get.get(id))
 
-  def all: IO[List[AskBinding]] = IO(bindingsRef.get.values.toList.sorted(using Ordering.by[AskBinding, String](_.file)))
+  def all: IO[List[AskBinding]] =
+    IO(bindingsRef.get.values.toList.sorted(using Ordering.by[AskBinding, String](_.file)))
 
   /** 转交目标主会话刷新（askOpen 随帧上报；§7 转交与回问的投递根）。 */
   def refreshMainSession(id: String, mainSessionId: String): IO[Unit] =

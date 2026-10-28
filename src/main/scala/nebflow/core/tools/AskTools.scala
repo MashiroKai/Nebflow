@@ -26,8 +26,10 @@ import scala.collection.concurrent.TrieMap
  * 非会话上下文（ctx.sessionId 空 / REST 直调）一律拒绝。
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/** §7 频控状态：每 ask 会话最近一次成功转交时刻（内存态，重启即清——频控是
- *  防刷屏软约束，不作持久语义）。 */
+/**
+ * §7 频控状态：每 ask 会话最近一次成功转交时刻（内存态，重启即清——频控是
+ *  防刷屏软约束，不作持久语义）。
+ */
 object AskHandoffRateLimit:
   val WindowMs: Long = 60L * 1000L
   private val lastAt = new TrieMap[String, Long]()
@@ -96,7 +98,9 @@ object SendMessageToMainChatTool extends Tool:
     else if question.isEmpty then
       IO.pure(Left(ToolError("send_message_to_main_chat: `question` must be a non-empty string.")))
     else if ctx.agentDef.isEmpty then
-      IO.pure(Left(ToolError("send_message_to_main_chat: no agent context — handoff unavailable. (ASK_HANDOFF_FORBIDDEN)")))
+      IO.pure(
+        Left(ToolError("send_message_to_main_chat: no agent context — handoff unavailable. (ASK_HANDOFF_FORBIDDEN)"))
+      )
     else
       // 绑定面回查：文件名 + 转交目标主会话（askOpen 时上报刷新；缺 = 未就绪）。
       val flow =
@@ -107,9 +111,21 @@ object SendMessageToMainChatTool extends Tool:
             case None => IO.pure(None)
           result <- bindingOpt match
             case None =>
-              IO.pure(Left(ToolError("send_message_to_main_chat: this ask session has no file binding — open the file card in canvas first. (ASK_HANDOFF_NO_BINDING)")))
+              IO.pure(
+                Left(
+                  ToolError(
+                    "send_message_to_main_chat: this ask session has no file binding — open the file card in canvas first. (ASK_HANDOFF_NO_BINDING)"
+                  )
+                )
+              )
             case Some(binding) if binding.mainSessionId.trim.isEmpty =>
-              IO.pure(Left(ToolError("send_message_to_main_chat: main session not connected yet — reopen the ask dock, then try again. (ASK_HANDOFF_NO_TARGET)")))
+              IO.pure(
+                Left(
+                  ToolError(
+                    "send_message_to_main_chat: main session not connected yet — reopen the ask dock, then try again. (ASK_HANDOFF_NO_TARGET)"
+                  )
+                )
+              )
             case Some(binding) =>
               val now = System.currentTimeMillis()
               if !AskHandoffRateLimit.tryAcquire(sid, now) then
@@ -127,8 +143,10 @@ object SendMessageToMainChatTool extends Tool:
                     )
                   )
                   .map(_.map(_ => s"已发送到主会话：${question.take(80)}（它可回问，你仍在本窗继续服务）"))
+              end if
         yield result
       flow.handleErrorWith(e => IO.pure(Left(ToolError(s"send_message_to_main_chat failed: ${e.getMessage}"))))
+    end if
   end call
 end SendMessageToMainChatTool
 
@@ -165,8 +183,12 @@ object MessageRecordSearchTool extends Tool:
         "enum" -> Json.arr("user".asJson, "assistant".asJson),
         "description" -> "Optional role filter.".asJson
       ),
-      "since" -> Json.obj("type" -> "string".asJson, "description" -> "Optional lower time bound \"YYYY-MM-DD[ HH:MM]\".".asJson),
-      "until" -> Json.obj("type" -> "string".asJson, "description" -> "Optional upper time bound \"YYYY-MM-DD[ HH:MM]\".".asJson)
+      "since" -> Json
+        .obj("type" -> "string".asJson, "description" -> "Optional lower time bound \"YYYY-MM-DD[ HH:MM]\".".asJson),
+      "until" -> Json.obj(
+        "type" -> "string".asJson,
+        "description" -> "Optional upper time bound \"YYYY-MM-DD[ HH:MM]\".".asJson
+      )
     ),
     "required" -> Json.arr("query".asJson)
   )
@@ -193,23 +215,37 @@ object MessageRecordSearchTool extends Tool:
       IO.blocking {
         resolveCli() match
           case None =>
-            Left(ToolError("message_record_search: stand-recall CLI not found (tools/stand-recall) — memory search unavailable."))
+            Left(
+              ToolError(
+                "message_record_search: stand-recall CLI not found (tools/stand-recall) — memory search unavailable."
+              )
+            )
           case Some(cli) =>
             val args = scala.collection.mutable.ListBuffer[String](
-              "python3", cli.toString, "--json", "-n", limit.toString, "--context", "1", query
+              "python3",
+              cli.toString,
+              "--json",
+              "-n",
+              limit.toString,
+              "--context",
+              "1",
+              query
             )
             role.foreach(r => args ++= List("--role", r))
             since.foreach(s => args ++= List("--since", s))
             until.foreach(u => args ++= List("--until", u))
-            val res = os.proc(args.toList).call(
-              cwd = os.pwd,
-              timeout = CliTimeoutSec * 1000,
-              check = false,
-              mergeErrIntoOut = true
-            )
+            val res = os
+              .proc(args.toList)
+              .call(
+                cwd = os.pwd,
+                timeout = CliTimeoutSec * 1000,
+                check = false,
+                mergeErrIntoOut = true
+              )
             val out = res.out.text().trim
             if res.exitCode == 0 && out.nonEmpty then Right(out)
             else Left(ToolError(s"message_record_search: CLI exit ${res.exitCode} — ${out.take(300)}"))
       }.handleErrorWith(e => IO.pure(Left(ToolError(s"message_record_search failed: ${e.getMessage}"))))
+    end if
   end call
 end MessageRecordSearchTool

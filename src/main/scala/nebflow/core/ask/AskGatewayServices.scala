@@ -31,6 +31,7 @@ final case class AskServices(
   sources: AskContextSources,
   prompts: AskPromptCache
 ):
+
   /**
    * spawn 面：ask 会话的运行时 AgentDef（name/category 仅为身份占位——工具面
    * 由 buildAllowedToolSet 的 askSession 早退集机制固定，不读声明）。
@@ -93,6 +94,7 @@ final case class AskServices(
               IO.pure(Some(ctx.sources))
           }
     yield res
+    end for
   end assembleIfDue
 end AskServices
 
@@ -128,7 +130,7 @@ object AskLiveSources:
           try
             val p = os.Path(absPath, os.pwd)
             if os.isFile(p) then Some((os.mtime(p), os.size(p))) else None
-          catch { case NonFatal(_) => None }
+          catch case NonFatal(_) => None
         }
 
       override def fileText(absPath: String): IO[Option[(String, Long, Long)]] =
@@ -136,22 +138,31 @@ object AskLiveSources:
           try
             val p = os.Path(absPath, os.pwd)
             if os.isFile(p) then Some((os.read(p), os.mtime(p), os.size(p))) else None
-          catch { case NonFatal(e) => logger.warn(s"ask file read failed: ${e.getMessage}"); None }
+          catch case NonFatal(e) => logger.warn(s"ask file read failed: ${e.getMessage}"); None
         }
 
       override def graphNeighbors(absPath: String): IO[List[AskNeighbor]] =
-        graphJson.flatMap(json => IO.blocking(extractNeighbors(json, absPath))).handleErrorWith(e =>
-          logger.warn(s"ask graph leg failed (skip): ${e.getMessage}") *> IO.pure(Nil)
-        )
+        graphJson
+          .flatMap(json => IO.blocking(extractNeighbors(json, absPath)))
+          .handleErrorWith(e => logger.warn(s"ask graph leg failed (skip): ${e.getMessage}") *> IO.pure(Nil))
 
       override def recallHits(query: String): IO[List[AskRecallHit]] =
         IO.blocking {
           nebflow.core.MemoryRecallDaemon.resolveToolPath(dataRoot) match
             case None => Nil
             case Some(cli) =>
-              val res = os.proc(
-                "python3", cli.toString, "--json", "-n", AskBudgets.RecallMax.toString, "--context", "1", query
-              ).call(cwd = os.pwd, timeout = 30L, check = false, mergeErrIntoOut = true)
+              val res = os
+                .proc(
+                  "python3",
+                  cli.toString,
+                  "--json",
+                  "-n",
+                  AskBudgets.RecallMax.toString,
+                  "--context",
+                  "1",
+                  query
+                )
+                .call(cwd = os.pwd, timeout = 30L, check = false, mergeErrIntoOut = true)
               if res.exitCode != 0 then Nil else parseRecall(res.out.text())
         }.handleErrorWith(e => logger.warn(s"ask recall leg failed (skip): ${e.getMessage}") *> IO.pure(Nil))
 
@@ -168,7 +179,9 @@ object AskLiveSources:
         try
           val nodes = graph.hcursor.downField("nodes").as[List[Json]].toOption.getOrElse(Nil)
           val edges = graph.hcursor.downField("edges").as[List[Json]].toOption.getOrElse(Nil)
-          val base = absPath.replace('\\', '/').takeRight(math.max(1, absPath.split('/').lastOption.map(_.length).getOrElse(1) + 48))
+          val base = absPath
+            .replace('\\', '/')
+            .takeRight(math.max(1, absPath.split('/').lastOption.map(_.length).getOrElse(1) + 48))
           case class N(id: String, title: String, rel: String, summary: String)
           val parsed = nodes.flatMap { n =>
             for
@@ -178,30 +191,33 @@ object AskLiveSources:
               summary = n.hcursor.downField("summary").as[String].toOption.getOrElse("")
             yield N(id, title, rel, summary)
           }
-          val me = parsed.find(n =>
-            absPath.replace('\\', '/').endsWith(n.rel) || n.rel.endsWith(base)
-          )
+          val me = parsed.find(n => absPath.replace('\\', '/').endsWith(n.rel) || n.rel.endsWith(base))
           me match
             case None => Nil
             case Some(self) =>
-              val direct = edges.flatMap { e =>
-                for
-                  from <- e.hcursor.downField("from").as[String].toOption
-                  to <- e.hcursor.downField("to").as[String].toOption
-                yield if from == self.id then to else if to == self.id then from else ""
-              }.filter(_.nonEmpty).distinct
-              val secondHop = edges.flatMap { e =>
-                for
-                  from <- e.hcursor.downField("from").as[String].toOption
-                  to <- e.hcursor.downField("to").as[String].toOption
-                  a <- direct.find(d => d == from || d == to)
-                  other = if from == a then to else from
-                yield if direct.contains(other) || other == self.id then "" else other
-              }.filter(_.nonEmpty)
+              val direct = edges
+                .flatMap { e =>
+                  for
+                    from <- e.hcursor.downField("from").as[String].toOption
+                    to <- e.hcursor.downField("to").as[String].toOption
+                  yield if from == self.id then to else if to == self.id then from else ""
+                }
+                .filter(_.nonEmpty)
+                .distinct
+              val secondHop = edges
+                .flatMap { e =>
+                  for
+                    from <- e.hcursor.downField("from").as[String].toOption
+                    to <- e.hcursor.downField("to").as[String].toOption
+                    a <- direct.find(d => d == from || d == to)
+                    other = if from == a then to else from
+                  yield if direct.contains(other) || other == self.id then "" else other
+                }
+                .filter(_.nonEmpty)
               val ids = (direct ++ secondHop).distinct.take(AskBudgets.NeighborMax)
               parsed.filter(n => ids.contains(n.id)).map(n => AskNeighbor(n.title, n.rel, n.summary))
-        catch
-          case NonFatal(_) => Nil
+          end match
+        catch case NonFatal(_) => Nil
       end extractNeighbors
 
       // stand-recall --json 输出解析（宽松：尽力取 session/ts/excerpt 字段）。
@@ -210,18 +226,28 @@ object AskLiveSources:
           io.circe.parser.parse(out).toOption match
             case None => Nil
             case Some(json) =>
-              val arr = json.hcursor.downField("hits").as[List[Json]].toOption
-                .orElse(json.as[List[Json]].toOption).getOrElse(Nil)
+              val arr = json.hcursor
+                .downField("hits")
+                .as[List[Json]]
+                .toOption
+                .orElse(json.as[List[Json]].toOption)
+                .getOrElse(Nil)
               arr.flatMap { h =>
                 for
-                  excerpt <- h.hcursor.downField("text").as[String].toOption
+                  excerpt <- h.hcursor
+                    .downField("text")
+                    .as[String]
+                    .toOption
                     .orElse(h.hcursor.downField("excerpt").as[String].toOption)
                   session = h.hcursor.downField("session").as[String].toOption.getOrElse("")
-                  ts = h.hcursor.downField("ts").as[String].toOption
-                    .orElse(h.hcursor.downField("time").as[String].toOption).getOrElse("")
+                  ts = h.hcursor
+                    .downField("ts")
+                    .as[String]
+                    .toOption
+                    .orElse(h.hcursor.downField("time").as[String].toOption)
+                    .getOrElse("")
                 yield AskRecallHit(session, ts, excerpt)
-            }
-        catch
-          case NonFatal(_) => Nil
+              }
+        catch case NonFatal(_) => Nil
   end make
 end AskLiveSources

@@ -45,15 +45,28 @@ private[gateway] object WsAskHandlers:
 
   // ── askOpen：绑定 + 冷却组装 + 历史回放 ──────────────────────────────────
 
-  private def handleAskOpen(ctx: WsDispatchCtx, text: String, wsSend: Json => IO[Unit], watch: ExplorerWatchSession): IO[Unit] =
+  private def handleAskOpen(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: Json => IO[Unit],
+    watch: ExplorerWatchSession
+  ): IO[Unit] =
     import ctx.*
     val raw = WsDispatch.parsedJson(text)
-    val absPath = raw.hcursor.downField("file").downField("absPath").as[String].getOrElse(
-      raw.hcursor.downField("absPath").as[String].getOrElse("")
-    )
-    val fileName = raw.hcursor.downField("file").downField("name").as[String].getOrElse(
-      raw.hcursor.downField("name").as[String].getOrElse("file")
-    )
+    val absPath = raw.hcursor
+      .downField("file")
+      .downField("absPath")
+      .as[String]
+      .getOrElse(
+        raw.hcursor.downField("absPath").as[String].getOrElse("")
+      )
+    val fileName = raw.hcursor
+      .downField("file")
+      .downField("name")
+      .as[String]
+      .getOrElse(
+        raw.hcursor.downField("name").as[String].getOrElse("file")
+      )
     val mainSessionId = raw.hcursor.downField("mainSessionId").as[String].getOrElse("")
 
     if absPath.trim.isEmpty then askError(wsSend, "", "askOpen: file.absPath is required")
@@ -67,9 +80,9 @@ private[gateway] object WsAskHandlers:
             sid = binding.id
             _ <- if mainSessionId.nonEmpty then svc.registry.refreshMainSession(sid, mainSessionId) else IO.unit
             freshBinding <- svc.registry.byId(sid).map(_.getOrElse(binding))
-            _ <- svc.assembleIfDue(sid, freshBinding).handleErrorWith(e =>
-              logger.warn(s"ask assemble failed (non-fatal,问答继续): ${e.getMessage}")
-            )
+            _ <- svc
+              .assembleIfDue(sid, freshBinding)
+              .handleErrorWith(e => logger.warn(s"ask assemble failed (non-fatal,问答继续): ${e.getMessage}"))
             msgs <- sessionStore.getUiMessages(sid, 0, 200).map(_._1)
             _ <- send(
               wsSend,
@@ -83,7 +96,9 @@ private[gateway] object WsAskHandlers:
               )
             )
           yield ()
+          end for
       end match
+    end if
   end handleAskOpen
 
   /** .ui.json 转录 → dock 气泡面（injected 族 = sys；回问行带前缀照常入 sys）。 */
@@ -99,7 +114,12 @@ private[gateway] object WsAskHandlers:
 
   // ── askQuestion：真实用户文本链路（与输入框同腿 dispatchUserText）────────
 
-  private def handleAskQuestion(ctx: WsDispatchCtx, text: String, wsSend: Json => IO[Unit], watch: ExplorerWatchSession): IO[Unit] =
+  private def handleAskQuestion(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: Json => IO[Unit],
+    watch: ExplorerWatchSession
+  ): IO[Unit] =
     import ctx.*
     val raw = WsDispatch.parsedJson(text)
     val sid = raw.hcursor.downField("sessionId").as[String].getOrElse("")
@@ -115,13 +135,14 @@ private[gateway] object WsAskHandlers:
             case None => askError(wsSend, sid, "askQuestion: no file binding for this session")
             case Some(binding) =>
               // 冷却组装腿（§3.3：冷却期满后的下一次交互——发问——前重组）。
-              svc.assembleIfDue(sid, binding).handleErrorWith(e =>
-                logger.warn(s"ask assemble failed (non-fatal): ${e.getMessage}")
-              ) *>
+              svc
+                .assembleIfDue(sid, binding)
+                .handleErrorWith(e => logger.warn(s"ask assemble failed (non-fatal): ${e.getMessage}")) *>
                 // 交互前刷新转交目标（主会话可能已切换）。
                 refreshMainIfReported(svc, sid, raw) *>
                 ctx.handleUserText(sid, content, "ask-dock", fromUser = true)
           }
+    end if
   end handleAskQuestion
 
   private def refreshMainIfReported(svc: nebflow.core.ask.AskServices, sid: String, raw: Json): IO[Unit] =
@@ -131,7 +152,12 @@ private[gateway] object WsAskHandlers:
 
   // ── askHandoff：dock 输入条转交腿（§7；与工具腿同限频同投递面）────────────
 
-  private def handleAskHandoff(ctx: WsDispatchCtx, text: String, wsSend: Json => IO[Unit], watch: ExplorerWatchSession): IO[Unit] =
+  private def handleAskHandoff(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: Json => IO[Unit],
+    watch: ExplorerWatchSession
+  ): IO[Unit] =
     val raw = WsDispatch.parsedJson(text)
     val sid = raw.hcursor.downField("sessionId").as[String].getOrElse("")
     val question = raw.hcursor.downField("question").as[String].getOrElse("")
@@ -169,11 +195,17 @@ private[gateway] object WsAskHandlers:
                   askError(wsSend, sid, err.message)
               }
           }
+    end if
   end handleAskHandoff
 
   // ── askReply：主会话回问腿（§7 反向；前缀由本层注入文本携带）──────────────
 
-  private def handleAskReply(ctx: WsDispatchCtx, text: String, wsSend: Json => IO[Unit], watch: ExplorerWatchSession): IO[Unit] =
+  private def handleAskReply(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: Json => IO[Unit],
+    watch: ExplorerWatchSession
+  ): IO[Unit] =
     import ctx.*
     val raw = WsDispatch.parsedJson(text)
     val sid = raw.hcursor.downField("sessionId").as[String].getOrElse("")
@@ -193,9 +225,8 @@ private[gateway] object WsAskHandlers:
                 "askSession" -> sid.asJson,
                 "leg" -> "main-reply".asJson
               )
-              ctx.ensureAgent(sid)(ref =>
-                ref ! AgentCommand.ExternalEvent("main", "inject", prefixed, metadata, None)
-              )
+              ctx.ensureAgent(sid)(ref => ref ! AgentCommand.ExternalEvent("main", "inject", prefixed, metadata, None))
           }
+    end if
   end handleAskReply
 end WsAskHandlers
