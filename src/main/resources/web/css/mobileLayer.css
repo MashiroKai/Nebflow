@@ -1258,13 +1258,15 @@ body.mobile-layer #mobile-pages .canvas-tab-pane {
   min-height: 0;
 }
 
-/* ── ③ 画板 = 文档卡片层 → bottom sheet（画板底卡批 · 作者令 2026-10-23 ⑦）
+/* ── ③ 画板 = 文档卡片层 → bottom sheet（画板底卡批 · 作者令 2026-10-23 ⑦ →
+   2026-10-27「手机端 Canvas 交互优化」令改写）
    手机画板改为**从下方弹出的卡片（bottom sheet）**：底缘锚定（safe-area 之上
    6px）、顶缘留聊天头一线，四角 20px 圆角玻璃卡；入场 = 自下滑入（mhSheetIn，
    样张 spring 同族），reduced-motion 压平。
-   手势（canvasGestures.js 同批）：卡头胶囊（顶缘）下滑=收起整叠（保留状态不
-   销毁）、上滑=换卡、左右=关卡、长按=引用钮；底缘带下滑跟手收起；左右缘带
-   内滑关卡；内容区零劫持（滚动/缩放原生优先）。 */
+   手势/操作（canvasGestures.js + navController.js 同批）：卡头胶囊（顶缘）下滑=
+   收起整叠（保留状态不销毁）、横滑=切上一/下一张、长按=引用钮；底缘带下滑跟手
+   收起（可见抓手）；底部快捷切换条（‹ 页点 ›｜收起）单手可达常驻；内容区横滑=
+   切卡（邻卡名边缘预览）、纵滚零劫持；关卡=卡头显性 X（44px 热区，钮群全 44+）。 */
 body.mobile-layer #canvas-panel {
   display: none;
 }
@@ -1339,14 +1341,18 @@ body.mobile-layer .mobile-card-count {
   border-radius: 999px;
   padding: 1px 9px;
 }
-body.mobile-layer .mobile-card-close {
+/* 卡头钮（关闭 X / 独立合并）：命中盒 44×44（作者令 2026-10-27「按钮热区
+   ≥44px」），视觉圆 30px 走 padding-box —— 热区与视觉解耦，卡头几何不破。 */
+body.mobile-layer .mobile-card-close,
+body.mobile-layer .mobile-card-pop {
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
+  width: 44px;
+  height: 44px;
   padding: 0;
   border-radius: 50%;
-  border: 1px solid var(--glass-border);
-  background: var(--glass-bg);
+  border: 7px solid transparent;
+  background-color: var(--glass-bg);
+  background-clip: padding-box;
   color: var(--color-frame-text, #e6e9ef);
   display: flex;
   align-items: center;
@@ -1357,7 +1363,8 @@ body.mobile-layer .mobile-card-close svg {
   width: 15px;
   height: 15px;
 }
-body.mobile-layer .mobile-card-close:active {
+body.mobile-layer .mobile-card-close:active,
+body.mobile-layer .mobile-card-pop:active {
   transform: scale(0.9);
 }
 /* ── UI 批⑨：手机卡头胶囊（通栏变体）+ 长按触感 + 浮出引用钮（作者令 2026-10-21）
@@ -1428,25 +1435,133 @@ body.mobile-layer #canvas-panel .mobile-canvas-edgezone {
 /* iOS home-indicator 同形抓手：下滑收起的可见线索。 */
 body.mobile-layer #canvas-panel .mobile-canvas-edgezone::after {
   content: '';
-  width: 36px;
-  height: 4px;
-  border-radius: 2px;
+  width: 40px;
+  height: 5px;
+  border-radius: 3px;
   background: var(--color-frame-text-muted, #98a2b3);
   opacity: 0.45;
 }
-/* 左右缘带（画板底卡批 ⑦）：内滑 = 关闭该文档卡。窄带（26px）贴边意图，
-   touch-action:none 收割手势，内容区横滚/缩放零劫持。 */
-body.mobile-layer #canvas-panel .mobile-canvas-edgezone-side {
+/* 左右缘带（⑦ 令「内滑关卡」）2026-10-27 交互优化令整腿退役：横滑语义统一 =
+   切上一/下一张（canvasGestures 内容区横滑 + 卡头横滑），破坏性关卡收敛到卡头
+   显性 X（44px 热区）。隐形 26px 贴边带是误触根因 —— 不再保留。 */
+/* 边缘预览 chip：横滑切卡时邻卡名从对应侧浮出（canvasGestures 写 .show）。 */
+body.mobile-layer #canvas-panel .mobile-card-peek {
   position: absolute;
-  top: 64px; /* 卡头胶囊以下（胶囊 touch-action:none 自带，带区不叠触点） */
-  bottom: 40px; /* 底缘带以上 */
-  width: 26px;
-  z-index: 30;
-  touch-action: none;
-  pointer-events: auto;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 33;
+  max-width: 34%;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-control-border, rgba(151, 176, 235, 0.22));
+  background: var(--glass-bg, rgba(22, 28, 40, 0.72));
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  backdrop-filter: blur(14px) saturate(1.15);
+  box-shadow: var(--frost-shadow, 0 8px 28px rgba(0, 0, 0, 0.35));
+  color: var(--color-frame-text, #e6e9ef);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
 }
-body.mobile-layer #canvas-panel .mobile-canvas-edgezone-side[data-side='left'] { left: 0; }
-body.mobile-layer #canvas-panel .mobile-canvas-edgezone-side[data-side='right'] { right: 0; }
+body.mobile-layer #canvas-panel .mobile-card-peek.show { opacity: 1; }
+body.mobile-layer #canvas-panel .mobile-card-peek[data-side='left'] { left: 10px; }
+body.mobile-layer #canvas-panel .mobile-card-peek[data-side='right'] { right: 10px; }
+/* 底部快捷切换条（2026-10-27 令）：单手可达区常驻
+   [‹ 上一张] [页点指示(tap 跳卡)/多卡计数] [下一张 ›] ｜ [收起画板]。
+   frosted 胶囊族（与卡头/桌面胶囊同材质 token）；坐落底缘带之上。 */
+body.mobile-layer #canvas-panel .mobile-card-switchbar {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(50px + env(safe-area-inset-bottom, 0px));
+  z-index: 34;
+  display: flex;
+  align-items: center;
+  height: 44px;
+  max-width: calc(100% - 20px);
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 18px)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur, 18px)) saturate(1.15);
+  box-shadow: var(--frost-shadow);
+  padding: 0 4px;
+}
+/* 切换条按钮：命中盒 44×44（图标 18px），视觉圆 30px 走 padding-box ——
+   热区与视觉解耦（作者令「按钮热区 ≥44px」）。 */
+body.mobile-layer #canvas-panel .mobile-card-switchbar .sw-btn {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 50%;
+  border: 7px solid transparent;
+  background-color: transparent;
+  background-clip: padding-box;
+  color: var(--color-frame-text, #e6e9ef);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+body.mobile-layer #canvas-panel .mobile-card-switchbar .sw-btn:disabled {
+  opacity: 0.3;
+}
+body.mobile-layer #canvas-panel .mobile-card-switchbar .sw-btn:active {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+/* 页点（页码指示）：当前卡拉长胶囊高亮；tap 跳卡（热区经 ::after 外扩）。 */
+body.mobile-layer #canvas-panel .mobile-card-switchbar .sw-dots {
+  flex: none;
+  min-width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 8px;
+}
+body.mobile-layer #canvas-panel .mobile-card-switchbar .sw-dot {
+  position: relative;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  transition: width 0.25s cubic-bezier(0.3, 1.36, 0.45, 1), background 0.25s ease;
+  cursor: pointer;
+}
+body.mobile-layer #canvas-panel .mobile-card-switchbar .sw-dot::after {
+  content: '';
+  position: absolute;
+  inset: -9px;
+}
+body.mobile-layer #canvas-panel .mobile-card-switchbar .sw-dot.on {
+  width: 20px;
+  background: var(--accent, #7c9cf5);
+}
+body.mobile-layer #canvas-panel .mobile-card-switchbar .sw-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-frame-text-muted, #98a2b3);
+}
+/* 收起｜切换分段线。 */
+body.mobile-layer #canvas-panel .mobile-card-switchbar .sw-sep {
+  flex: none;
+  width: 1px;
+  height: 22px;
+  margin: 0 2px;
+  background: var(--glass-border);
+}
+/* 桌面卡头遗留面手机层退场：.canvas-title 与手机卡头标题重复（实截双标题）、
+   #canvas-pop-btn 与 .mobile-card-pop 重复。 */
+body.mobile-layer #canvas-panel .canvas-header .canvas-title { display: none !important; }
+body.mobile-layer #canvas-panel .canvas-header #canvas-pop-btn { display: none !important; }
 /* 内容区：纵向滚动归浏览器，横向意图让给卡片切换手势。 */
 body.mobile-layer #canvas-content {
   touch-action: pan-y;

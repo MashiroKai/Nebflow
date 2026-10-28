@@ -106,6 +106,8 @@ const sections = new Map();
 const paneAnchors = [];
 /** @type {HTMLElement|null} 卡片头（插入 .canvas-header，拆层移除）。 */
 let cardHead = null;
+/** @type {HTMLElement|null} 底部快捷切换条（2026-10-27 令：‹ 页点 ›｜收起，拆层移除）。 */
+let switchbarEl = null;
 /** @type {MutationObserver|null} */
 let contentObserver = null;
 /** @type {MutationObserver[]} */
@@ -279,36 +281,40 @@ function watchCanvasContent() {
 
 // ── 文档卡片（③：画板层只承载 pop 出来的文档，以卡片呈现）───────────
 
-// ── UI 批⑨ → 画板底卡批（作者令 2026-10-23 ⑦）：卡头胶囊 = bottom sheet 顶缘──
+// ── UI 批⑨ → 画板底卡批（作者令 2026-10-23 ⑦ → 2026-10-27 交互优化令改写）：
+// 卡头胶囊 = bottom sheet 顶缘──
 // 胶囊（.canvas-header，split.css §⑨ / mobileLayer §⑨ 通栏变体）上手势（无按压
-// 前置，作者令 C；⑦ 令改写纵滑语义）：
+// 前置，作者令 C；2026-10-27 令改写纵横语义）：
 //   直滑**下滑** = 收起整叠 bottom sheet（closeCanvas —— 文档保留在页签数据模型，
-//     保留状态不销毁；⑦ 令「顶部边缘下滑 = 收起」，取代批⑨的纵滑换卡下半向）；
-//   直滑**上滑** = 换下一张文档卡（批⑨换卡语义保留上向；环 = docTabs() 卡片层序，
-//     释放 |dy|>48）；
-//   直滑左右 = 关卡（closeCard 既有邻卡落位，释放 |dx|>64；⑦ 令「左右滑 = 关闭
-//     该卡片」在卡头缘的同向落点）；
+//     保留状态不销毁；两条收起通路之一，另一条在底部抓手/收起钮）；
+//   直滑**左右** = 切上一/下一张文档卡（2026-10-27 令：横滑语义统一 = 切卡，
+//     取代批⑨/⑦令的「横滑关卡」—— 破坏性动作收敛到卡头显性 X；环 = docTabs()
+//     卡片层序，释放 |dx|>64；⑦令「上滑换卡」同批退役）；
 //   长按 450ms（未锁轴未抬起）= 触感（is-longpress → scale/亮度）+ 浮出
 //     .mobile-card-ref-btn 引用钮（视口坐标落点），点击走 quoteActiveCardRef
 //     （canvas.js 导出，与桌面右键「引用当前页」同一 appendRefToActiveView 通路）；
 //   任意外部按下/滚动/换卡即收引用钮。
 // 与滚动冲突消解（分区契约，⑦ 令「canvas 内部手势优先」）：.canvas-header 手机端
 //   touch-action:none（既有），手势只绑卡头元素；内容区滚动发生在 pane 内部滚动器
-//   （canvasGestures 侧边/底缘带外的区域零劫持）。轴锁 8px 与桌面胶囊/deck 同档；
+//   （canvasGestures 侧缘带外的区域零劫持）。轴锁 8px 与桌面胶囊/deck 同档；
 //   跟手位移走 --head-dx/--head-dy 变量链（CSS transform）。
 const CARDHEAD_AXIS_LOCK_PX = 8;
 const CARDHEAD_SWITCH_PX = 48;
-const CARDHEAD_CLOSE_PX = 64;
 const CARDHEAD_LONGPRESS_MS = 450;
 
-/** 文档卡邻位切换（环绕；单卡不换）。 */
-function switchDocCard(delta) {
+/** 文档卡邻位切换（环绕；单卡不换）。
+ *  @param {number} delta 方向（+1 下一张 / -1 上一张）
+ *  @param {boolean=} peekOnly true = 只探邻（返回 {id,label}|null），不切 ——
+ *    canvasGestures 横滑预览用。 */
+export function switchDocCard(delta, peekOnly = false) {
   const docs = docTabs();
   const id = activeDocId();
   const idx = docs.findIndex((d) => d.id === id);
-  if (docs.length < 2 || idx < 0) return;
+  if (docs.length < 2 || idx < 0) return peekOnly ? null : undefined;
   const nb = docs[(idx + delta + docs.length) % docs.length];
+  if (peekOnly) return nb && nb.id !== id ? nb : null;
   if (nb && nb.id !== id) setActiveTab(nb.id);
+  return undefined;
 }
 
 /** 卡头触屏手势装配（ensureCardHead 建购后一次）。 */
@@ -397,13 +403,16 @@ function initCardHeadTouch(head) {
     if (longpressed) return;            // 长按已交引用钮接管，不判滑
     const id = activeDocId();
     if (!id) return;
-    // ⑦ 令纵滑语义：顶部边缘（卡头胶囊）下滑 = 收起整叠（状态保留，可再开）；
-    //   上滑 = 换下一张（批⑨保留上向）。横滑 = 关卡（邻卡落位既有）。
+    // 2026-10-27 令纵横语义：顶部边缘（卡头胶囊）下滑 = 收起整叠（状态保留，
+    //   可再开）；横滑 = 切上一/下一张（环绕；关卡退役到卡头 X —— 横滑语义
+    //   统一为非破坏性切卡）。上滑换卡（批⑨/⑦令）随横滑全向接管退役。
     if (axis === 'y' && dy > CARDHEAD_SWITCH_PX) {
       logEvent('cards-collapse', { via: 'head-edge' });
       closeCanvas();
-    } else if (axis === 'y' && dy < -CARDHEAD_SWITCH_PX) switchDocCard(1);
-    else if (axis === 'x' && Math.abs(dx) > CARDHEAD_CLOSE_PX) closeCard();
+    } else if (axis === 'x' && Math.abs(dx) > CARDHEAD_SWITCH_PX) {
+      logEvent('card-switch', { via: 'head-swipe', dir: dx < 0 ? 1 : -1 });
+      switchDocCard(dx < 0 ? 1 : -1);
+    }
   };
   head.addEventListener('pointerup', finish);
   head.addEventListener('pointercancel', finish);
@@ -481,9 +490,107 @@ function ensureCardHead() {
   cardHead.append(title, count, pop, close);
   header.insertBefore(cardHead, header.firstChild);
   if (typeof lucide !== 'undefined') createIconsIn(cardHead);
-  // UI 批⑨：卡头胶囊手势（直滑换卡/关卡 + 长按引用钮）。
+  // UI 批⑨：卡头胶囊手势（直滑切卡/收起 + 长按引用钮；2026-10-27 令改写）。
   initCardHeadTouch(cardHead);
   return cardHead;
+}
+
+// ── 底部快捷切换条（作者令 2026-10-27「手机端 Canvas 交互优化」）──────────
+// 单手可达区（底部操作区）：[‹ 上一张] [页点指示(tap 跳卡)] [下一张 ›] ｜ [收起]。
+// frosted 胶囊族（与卡头/桌面胶囊同材质 token）；四钮命中盒 44×44（视觉圆 30px
+// 走 padding-box，不破卡头几何）。收起 = closeCanvas（文档保留可再开），与底缘
+// 抓手/卡头下滑同语义 —— 关掉整叠的第三条显性通路。‹ › 走 switchDocCard 既有环。
+function ensureSwitchbar() {
+  if (switchbarEl) return switchbarEl;
+  const root = document.getElementById('canvas-panel');
+  if (!root) return null;
+  switchbarEl = document.createElement('div');
+  switchbarEl.className = 'mobile-card-switchbar';
+  switchbarEl.setAttribute('role', 'toolbar');
+  switchbarEl.setAttribute('aria-label', tt('画板卡片操作条', 'Canvas card toolbar'));
+  const prev = document.createElement('button');
+  prev.type = 'button';
+  prev.className = 'sw-btn sw-prev';
+  prev.title = tt('上一张', 'Previous card');
+  prev.setAttribute('aria-label', tt('上一张', 'Previous card'));
+  prev.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>';
+  prev.addEventListener('click', () => {
+    if (!activeDocId()) return;
+    logEvent('card-switch', { via: 'bar', dir: -1 });
+    switchDocCard(-1);
+  });
+  const dots = document.createElement('div');
+  dots.className = 'sw-dots';
+  const next = document.createElement('button');
+  next.type = 'button';
+  next.className = 'sw-btn sw-next';
+  next.title = tt('下一张', 'Next card');
+  next.setAttribute('aria-label', tt('下一张', 'Next card'));
+  next.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>';
+  next.addEventListener('click', () => {
+    if (!activeDocId()) return;
+    logEvent('card-switch', { via: 'bar', dir: 1 });
+    switchDocCard(1);
+  });
+  const sep = document.createElement('div');
+  sep.className = 'sw-sep';
+  sep.setAttribute('aria-hidden', 'true');
+  const collapse = document.createElement('button');
+  collapse.type = 'button';
+  collapse.className = 'sw-btn sw-collapse';
+  collapse.title = tt('收起画板', 'Collapse canvas');
+  collapse.setAttribute('aria-label', tt('收起画板', 'Collapse canvas'));
+  collapse.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+  collapse.addEventListener('click', () => {
+    logEvent('cards-collapse', { via: 'switchbar' });
+    closeCanvas();
+    syncCardLayer();
+  });
+  switchbarEl.append(prev, dots, next, sep, collapse);
+  root.appendChild(switchbarEl);
+  return switchbarEl;
+}
+
+/** 切换条随卡同步：页点重建（≤7 卡）、计数退化（>7 卡）、‹ › 禁用态。 */
+function syncSwitchbar() {
+  const bar = ensureSwitchbar();
+  if (!bar) return;
+  const docs = docTabs();
+  const activeId = activeDocId();
+  const idx = docs.findIndex((d) => d.id === activeId);
+  const dots = /** @type {HTMLElement} */ (bar.querySelector('.sw-dots'));
+  // 卡数变化才重建页点（避免每次 sync 抖动 tap 目标）。
+  const sig = docs.length + ':' + (idx >= 0 ? docs[idx].id : '');
+  if (dots.dataset.sig !== sig) {
+    dots.dataset.sig = sig;
+    dots.innerHTML = '';
+    if (docs.length > 7) {
+      const cnt = document.createElement('span');
+      cnt.className = 'sw-count';
+      cnt.textContent = idx >= 0 ? `${idx + 1}/${docs.length}` : `${docs.length}`;
+      dots.appendChild(cnt);
+    } else {
+      for (const d of docs) {
+        const dot = document.createElement('i');
+        dot.className = 'sw-dot' + (d.id === activeId ? ' on' : '');
+        dot.dataset.tabId = d.id;
+        dot.title = d.label;
+        dot.addEventListener('click', () => {
+          logEvent('card-switch', { via: 'dot', tab: d.id });
+          setActiveTab(d.id);
+        });
+        dots.appendChild(dot);
+      }
+    }
+  }
+  const multi = docs.length > 1;
+  const prev = /** @type {HTMLButtonElement} */ (bar.querySelector('.sw-prev'));
+  const next = /** @type {HTMLButtonElement} */ (bar.querySelector('.sw-next'));
+  prev.disabled = !multi;
+  next.disabled = !multi;
+  dots.querySelectorAll('.sw-dot').forEach((el) => {
+    el.classList.toggle('on', (/** @type {HTMLElement} */ (el)).dataset.tabId === activeId);
+  });
 }
 
 function syncCardChrome() {
@@ -512,6 +619,8 @@ function syncCardChrome() {
       pop.setAttribute('aria-label', t);
     }
   }
+  // 2026-10-27 令：底部快捷切换条随卡同步（页点/禁用态）。
+  syncSwitchbar();
 }
 
 /** 卡片层可见性 = 画板开 ∧ 激活页签是文档（面板页签激活 ⇒ 层隐藏，页面接管）。 */
@@ -799,6 +908,7 @@ export function activateNav() {
     for (const id of [...overlayAnchors.keys()].reverse()) restoreOverlayFace(id);
     overlayAnchors.clear();
     if (cardHead) { cardHead.remove(); cardHead = null; }
+    if (switchbarEl) { switchbarEl.remove(); switchbarEl = null; }
     for (const b of injectedBacks.splice(0)) b.remove();
     document.body.classList.remove('mf-cards-live', 'mf-page-open');
     if (container) { container.remove(); container = null; }
