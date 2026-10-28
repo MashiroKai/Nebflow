@@ -287,28 +287,33 @@
    .nf-diff-headline flex 行内（builder 保证），作为行项 fit-content 收缩 +
    flex:0 0 auto 保本征宽（不收缩不拉伸）；右缘贴行右缘 = 右对齐批（同日回访令
    「把diff胶囊靠右对齐」）语义由 label 弹性占满自由空间天然成立，margin-left:auto
-   随行内布局退役。 */
+   随行内布局退役。
+   紧凑化批（2026-10-28 作者报障「整泡肥大」）：chip 总高压到 label 行高之下
+   （不撑行）——改前 padding 3px + line-height 1.4 + 1px 双边 ⇒ 23.39px，
+   把 15.50px 的 label 行撑到 23.39px；现 padding 1px 8px + line-height 1 +
+   svg 11px ⇒ 内容 11px + 2px padding + 2px border = 15px < label 15.50px，
+   行高由 label 决定，chip 不再撑行。 */
 .nf-diff-chip {
   display: flex;
   flex: 0 0 auto;
   width: fit-content;
   align-items: center;
   align-self: center;
-  gap: 6px;
+  gap: 5px;
   margin: 0;
-  padding: 3px 10px;
+  padding: 1px 8px;
   border-radius: 999px;
   font: inherit;
   font-size: 11px;
   font-weight: 500;
-  line-height: 1.4;
+  line-height: 1;
   color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
   cursor: pointer;
   text-align: left;
 }
 .nf-diff-chip svg {
-  width: 12px;
-  height: 12px;
+  width: 11px;
+  height: 11px;
   flex: 0 0 auto;
 }
 .nf-diff-chip[aria-pressed='true'] {
@@ -325,7 +330,14 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  margin: 2px 0 8px;
+  /* 紧凑化批（2026-10-28）：margin 2px 0 8px ⇒ 0。旧值在折叠态也占 10px
+     （margin 在 bubble padding 内不折叠）——单行泡被撑到 53.39px；
+     展开态与正文的间距改由下方 content margin-top 承担（display:none 时零贡献）。 */
+  margin: 0;
+}
+/* 展开态正文与同线行的间距：只在正文可见时计费（折叠 display:none ⇒ 零高度）。 */
+.nf-diff-headline + .injected-content {
+  margin-top: 6px;
 }
 .nf-diff-headline .injected-source-label {
   flex: 1 1 auto;

@@ -151,7 +151,10 @@ const readGeo = (page) => page.locator('.bubble.injected .nf-diff-chip').evaluat
   const bcs = getComputedStyle(bubble);
   return {
     sameLineCenterDelta: Math.abs((lr.top + lr.height / 2) - (cr.top + cr.height / 2)),
-    rowDelta: rr.height - cr.height,
+    // 单行判据（紧凑化批 2026-10-28 重钉）：旧代理「行高=chip 高」在 chip 不再
+    // 撑行后失效（行高由 label 决定）——改钉通用形态「行高 = max(label,chip) 高」，
+    // 语义不变（仍单行、零换行）。
+    rowOneLineDelta: rr.height - Math.max(lr.height, cr.height),
     after: cr.left - lr.right,
     rightGap: bubble.getBoundingClientRect().right - parseFloat(bcs.paddingRight) - cr.right,
     labelScroll: label.scrollWidth,
@@ -180,7 +183,7 @@ for (const scheme of ['dark', 'light']) {
   // ① 常规宽：同线 + 一行 + 接在其后。
   const w = await readGeo(page);
   ok(`[${scheme}] ① header 与 chip 同行（垂直中心差<3px）`, w.sameLineCenterDelta < 3, `delta=${w.sameLineCenterDelta.toFixed(2)}px`);
-  ok(`[${scheme}] ① 常规宽一行（行高=chip 高，零换行）`, Math.abs(w.rowDelta) < 1, `row−chip=${w.rowDelta.toFixed(2)}px`);
+  ok(`[${scheme}] ① 常规宽一行（行高=max(label,chip) 高，零换行）`, Math.abs(w.rowOneLineDelta) < 1, `row−max=${w.rowOneLineDelta.toFixed(2)}px`);
   ok(`[${scheme}] ① chip 接在 COMPLETED 段之后（chip.left≥label.right）`, w.after >= 0, `gap=${w.after.toFixed(2)}px`);
   ok(`[${scheme}] ① 品牌段 STAND（NEBFLOW→STAND）`, w.headerText.includes('stand'), `header="${w.headerText}"`);
   // ② 右对齐批语义保持：chip 右缘贴气泡内容右缘。
@@ -193,7 +196,7 @@ for (const scheme of ['dark', 'light']) {
   await page.locator('.bubble.injected').evaluate((el) => { el.style.maxWidth = '320px'; });
   await raf(page);
   const n = await readGeo(page);
-  ok(`[${scheme}] ③ 窄面板仍一行（行高=chip 高）`, Math.abs(n.rowDelta) < 1, `row−chip=${n.rowDelta.toFixed(2)}px`);
+  ok(`[${scheme}] ③ 窄面板仍一行（行高=max(label,chip) 高）`, Math.abs(n.rowOneLineDelta) < 1, `row−max=${n.rowOneLineDelta.toFixed(2)}px`);
   ok(`[${scheme}] ③ 窄面板 label 省略号截断生效`, n.labelScroll > n.labelClient, `scroll=${n.labelScroll.toFixed(0)}px client=${n.labelClient.toFixed(0)}px`);
   ok(`[${scheme}] ③ chip 本征宽零变形`, Math.abs(n.chipWidth - w.chipWidth) < 1, `wide=${w.chipWidth.toFixed(1)}px narrow=${n.chipWidth.toFixed(1)}px`);
   await page.locator('.bubble.injected').screenshot({ path: join(OUT, `3-narrow-${scheme}.png`) });
