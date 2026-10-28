@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>手机端 Canvas 交互优化 · 交互样张（2026-10-27）</title>
+<style>
+  /* ═══ 样张说明 ═══
+     手机端画板 bottom sheet 交互重构样张。对齐 stand 桌面端胶囊/卡片族设计语言：
+     frosted 玻璃 token（--glass-bg/--glass-border/--frost-shadow 同族）、
+     999px 胶囊、spring 曲线 cubic-bezier(.3,1.36,.45,1)。
+     可交互：下滑抓手收起（带阻尼）、内容横滑切卡（跟手+页点）、
+     底部快捷切换条（‹ 页点 ›｜收起）、卡头 X 关单卡（44px 热区）。 */
+  :root {
+    --bg: #0b0e14;
+    --sheet: #12161f;
+    --glass-bg: rgba(22, 28, 40, 0.72);
+    --glass-border: rgba(255, 255, 255, 0.09);
+    --glass-control-bg: rgba(127, 156, 245, 0.12);
+    --glass-control-border: rgba(151, 176, 235, 0.22);
+    --text: #e6e9ef;
+    --text-muted: #98a2b3;
+    --accent: #7c9cf5;
+    --spring: cubic-bezier(0.3, 1.36, 0.45, 1);
+    --frost-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    background: #05070b;
+    color: var(--text);
+    font-family: -apple-system, "PingFang SC", "Segoe UI", sans-serif;
+    display: flex; gap: 48px; align-items: flex-start; justify-content: center;
+    padding: 40px 24px; min-height: 100vh; flex-wrap: wrap;
+  }
+  h1 { width: 100%; text-align: center; font-size: 20px; margin-bottom: 4px; }
+  .sub { width: 100%; text-align: center; color: var(--text-muted); font-size: 13px; margin-bottom: 24px; }
+
+  /* ── 手机壳 ── */
+  .phone {
+    width: 375px; height: 812px; border-radius: 44px; position: relative; overflow: hidden;
+    background: var(--bg); border: 1px solid rgba(255,255,255,0.06);
+    box-shadow: 0 30px 80px rgba(0,0,0,0.6); flex: none;
+  }
+  .phone-label { text-align: center; font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
+  .phone-label small { display:block; color: var(--text-muted); font-weight: 400; font-size: 12px; margin-top: 2px; }
+
+  /* 背景聊天（示意） */
+  .chat-bg { position: absolute; inset: 0; padding: 90px 16px 16px; opacity: 0.5; }
+  .chat-bg .bubble { background: rgba(255,255,255,0.05); border-radius: 14px; padding: 10px 14px; font-size: 13px; color: var(--text-muted); margin-bottom: 10px; max-width: 78%; }
+  .chat-bg .bubble.me { margin-left: auto; background: rgba(124,156,245,0.16); }
+  .floatbtn { position: absolute; border-radius: 50%; background: var(--glass-bg); border: 1px solid var(--glass-border); display: flex; align-items: center; justify-content: center; }
+  .fb-avatar { width: 52px; height: 52px; top: 14px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #fff; font-size: 20px; font-weight: 700; }
+  .fb-l { width: 40px; height: 40px; top: 20px; left: 16px; color: var(--text-muted); font-size: 16px; }
+  .fb-r { width: 40px; height: 40px; top: 20px; right: 16px; color: var(--text-muted); font-size: 16px; }
+
+  /* ── Sheet 通用 ── */
+  .sheet {
+    position: absolute; left: 8px; right: 8px; top: 76px; bottom: 6px;
+    background: var(--sheet); border: 1px solid var(--glass-border); border-radius: 20px;
+    box-shadow: 0 18px 50px rgba(0,0,0,0.5), inset 0 1px 0 0 rgba(255,255,255,0.04);
+    overflow: hidden; display: flex; flex-direction: column;
+    transition: transform 0.34s var(--spring), opacity 0.3s ease;
+    will-change: transform;
+  }
+  .sheet.dragging { transition: none; }
+  .sheet.closed { transform: translateY(110%); opacity: 0; pointer-events: none; }
+
+  /* 卡头胶囊（通栏） */
+  .cardhead {
+    position: absolute; top: 8px; left: 10px; right: 10px; z-index: 20;
+    height: 42px; border-radius: 999px;
+    background: var(--glass-bg); border: 1px solid var(--glass-border);
+    -webkit-backdrop-filter: blur(18px) saturate(1.15); backdrop-filter: blur(18px) saturate(1.15);
+    box-shadow: var(--frost-shadow);
+    display: flex; align-items: center; gap: 8px; padding: 0 6px 0 14px;
+    touch-action: none; user-select: none;
+  }
+  .cardhead .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 600; }
+  .cardhead .count { flex: none; font-size: 12px; font-weight: 600; color: var(--text-muted); background: var(--glass-control-bg); border: 1px solid var(--glass-border); border-radius: 999px; padding: 1px 9px; }
+  /* 44px 热区：按钮本体裁 44×44，视觉圆 30px 走 padding-box */
+  .hbtn {
+    flex: none; width: 44px; height: 44px; border-radius: 50%;
+    border: 7px solid transparent; background: none; background-clip: padding-box;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text); cursor: pointer; position: relative;
+  }
+  .hbtn:active { background-color: rgba(255,255,255,0.10); background-clip: padding-box; }
+  .hbtn.round { background-color: rgba(255,255,255,0.06); }
+  .hbtn svg { width: 15px; height: 15px; pointer-events: none; }
+  .hbtn svg.big { width: 18px; height: 18px; }
+
+  /* 内容区 */
+  .content { flex: 1; margin: 0; padding: 62px 18px 150px; overflow-y: auto; touch-action: pan-y; user-select: none; }
+  .content h3 { font-size: 17px; margin: 6px 0 12px; }
+  .content p { font-size: 14px; line-height: 1.75; color: var(--text-muted); margin-bottom: 10px; }
+  .content .demo-card { background: rgba(255,255,255,0.04); border: 1px solid var(--glass-border); border-radius: 14px; padding: 14px; margin-bottom: 12px; font-size: 13px; color: var(--text-muted); }
+  .content .demo-card b { color: var(--text); display: block; margin-bottom: 6px; font-size: 14px; }
+  .cardpane { display: none; height: 100%; }
+  .cardpane.on { display: block; }
+  .icon-row { display: flex; gap: 10px; margin-top: 8px; }
+  .icon-row .demo-card { flex: 1; margin: 0; text-align: center; }
+
+  /* ═══ 新：底部快捷切换条（单手可达区） ═══ */
+  .switchbar {
+    position: absolute; left: 50%; transform: translateX(-50%); z-index: 24;
+    bottom: calc(52px + env(safe-area-inset-bottom, 0px));
+    height: 52px; max-width: calc(100% - 24px);
+    border-radius: 999px; display: flex; align-items: center; gap: 2px; padding: 0 6px;
+    background: var(--glass-bg); border: 1px solid var(--glass-border);
+    -webkit-backdrop-filter: blur(18px) saturate(1.15); backdrop-filter: blur(18px) saturate(1.15);
+    box-shadow: var(--frost-shadow);
+    transition: opacity 0.2s ease, transform 0.34s var(--spring);
+  }
+  .switchbar.hidden { opacity: 0; transform: translateX(-50%) translateY(16px); pointer-events: none; }
+  .switchbar .hbtn { width: 48px; }
+  .switchbar .hbtn:disabled { opacity: 0.3; }
+  /* 页点（页码指示）：tap 跳卡 */
+  .dots { display: flex; align-items: center; gap: 7px; padding: 0 8px; min-width: 44px; justify-content: center; }
+  .dots i {
+    width: 7px; height: 7px; border-radius: 999px; background: rgba(255,255,255,0.22);
+    transition: all 0.25s var(--spring); cursor: pointer; position: relative;
+  }
+  .dots i::after { content: ''; position: absolute; inset: -9px; } /* 页点热区 ≥24px */
+  .dots i.on { background: var(--accent); width: 20px; }
+  /* 抓手（下滑收起线索）：悬于切换条上方 */
+  .grabber {
+    position: absolute; bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    left: 50%; transform: translateX(-50%); z-index: 24;
+    width: 44px; height: 28px; display: flex; align-items: center; justify-content: center;
+  }
+  .grabber::before { content: ''; width: 40px; height: 5px; border-radius: 3px; background: rgba(255,255,255,0.28); }
+  .grabber::after { content: ''; position: absolute; inset: -6px -30px; }
+
+  /* 边缘预览 chip（横滑时的邻卡预告） */
+  .peek {
+    position: absolute; top: 50%; transform: translateY(-50%); z-index: 22;
+    max-width: 34%; border-radius: 999px; padding: 7px 14px; font-size: 12px; font-weight: 600;
+    background: var(--glass-bg); border: 1px solid var(--glass-border);
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    color: var(--text); opacity: 0; transition: opacity 0.15s ease;
+    pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .peek.l { left: 10px; }
+  .peek.r { right: 10px; }
+  .peek.show { opacity: 1; }
+
+  /* toast */
+  .toast {
+    position: absolute; left: 50%; transform: translateX(-50%) translateY(-8px);
+    top: 140px; z-index: 40; padding: 8px 18px; border-radius: 999px; font-size: 13px;
+    background: var(--glass-bg); border: 1px solid var(--glass-border);
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    opacity: 0; transition: all 0.25s var(--spring); pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* 注释（右侧要点） */
+  .notes { width: 330px; flex: none; font-size: 13px; line-height: 1.7; }
+  .notes h2 { font-size: 15px; margin: 18px 0 8px; color: var(--accent); }
+  .notes li { margin: 0 0 8px 18px; color: var(--text-muted); }
+  .notes b { color: var(--text); }
+  .kbd { background: rgba(255,255,255,0.07); border: 1px solid var(--glass-border); border-radius: 6px; padding: 1px 7px; font-size: 12px; }
+  @media (max-width: 1200px) { .notes { width: 375px; } }
+</style>
+</head>
+<body>
+<h1>手机端 Canvas 交互优化 · 交互样张</h1>
+<div class="sub">2026-10-27 · 新交互模型 —— <b style="color:var(--text)">横滑=切卡 · 下滑=收起 · X=关单卡 · 底部条=显性入口</b>（frosted 胶囊族，热区 ≥44px）</div>
+
+<div>
+  <div class="phone-label">新版样张<small>可交互：横滑 / 下滑 / 底部条 / X 全部可试（触摸或鼠标拖拽）</small></div>
+  <div class="phone" id="phone">
+    <div class="chat-bg">
+      <div class="bubble me">帮我把今天的会议纪要整理成文档</div>
+      <div class="bubble">已整理完成，打开了 3 份文档卡片，可在画板中切换查看。</div>
+    </div>
+    <div class="floatbtn fb-l">☰</div>
+    <div class="floatbtn fb-avatar">人</div>
+    <div class="floatbtn fb-r">▤</div>
+
+    <div class="sheet" id="sheet">
+      <div class="cardhead" id="cardhead">
+        <span class="title" id="hTitle">会议纪要.txt</span>
+        <span class="count" id="hCount">3/3</span>
+        <button class="hbtn" title="独立窗口打开" aria-label="独立窗口打开">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+        </button>
+        <button class="hbtn round" id="btnCloseCard" title="关闭此文档卡" aria-label="关闭此文档卡">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+
+      <div class="content" id="content">
+        <div class="cardpane on" data-i="0">
+          <h3>项目计划书.md</h3>
+          <div class="demo-card"><b>① 目标</b>本季度完成手机端全交互自查与重构，热区统一 44px。</div>
+          <div class="demo-card"><b>② 里程碑</b>设计稿 → 实现 → spec 钉 → 真机验收，四步走。</div>
+          <p>向下滚动内容不受横滑切卡影响（轴锁 10px 分区）。试试在正文上左右快滑 —— 会切换到相邻文档卡；上下滚依旧归原生滚动。</p>
+        </div>
+        <div class="cardpane" data-i="1">
+          <h3>架构图.svg</h3>
+          <div class="demo-card" style="height:180px;display:flex;align-items:center;justify-content:center"><div>
+            <div style="width:120px;height:60px;border:1px solid var(--glass-control-border);border-radius:10px;display:flex;align-items:center;justify-content:center;margin:0 auto">gateway</div>
+            <div style="text-align:center;color:var(--text-muted);margin:6px 0">↓</div>
+            <div style="width:120px;height:60px;border:1px solid var(--glass-control-border);border-radius:10px;display:flex;align-items:center;justify-content:center;margin:0 auto">engine</div>
+          </div></div>
+          <p>图形卡同样横滑切换。切换时邻卡名从边缘浮出预告（边缘预览）。</p>
+        </div>
+        <div class="cardpane" data-i="2">
+          <h3>会议纪要.txt</h3>
+          <p>10-27 例会：手机端 Canvas 关闭/切换/滑动交互重做。横滑语义统一为「切卡」，关闭单卡收敛到显性 X，整叠收起走抓手/底部收起钮。</p>
+          <div class="icon-row">
+            <div class="demo-card"><b>操作条</b>‹ › 页点 收起</div>
+            <div class="demo-card"><b>热区</b>全部 ≥44px</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="peek l" id="peekL"></div>
+      <div class="peek r" id="peekR"></div>
+
+      <div class="switchbar" id="switchbar">
+        <button class="hbtn" id="btnPrev" aria-label="上一张" title="上一张">
+          <svg class="big" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        </button>
+        <div class="dots" id="dots"></div>
+        <button class="hbtn" id="btnNext" aria-label="下一张" title="下一张">
+          <svg class="big" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+        </button>
+        <div style="width:1px;height:24px;background:var(--glass-border);margin:0 4px"></div>
+        <button class="hbtn" id="btnCollapse" aria-label="收起画板" title="收起画板">
+          <svg class="big" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+      </div>
+      <div class="grabber" id="grabber" title="下滑收起"></div>
+    </div>
+    <div class="toast" id="toast"></div>
+  </div>
+</div>
+
+<div class="notes">
+  <h2>别扭点 → 新交互</h2>
+  <ul>
+    <li><b>关闭入口不明</b> → 底部操作区常驻<b>「收起」钮</b>（⌄）+ 抓手下滑（阻尼跟手，≥120px/快甩收起）+ 卡头下滑，三条显性通路；X 只管关单卡，语义不再混淆。</li>
+    <li><b>切换要几步/方向怪</b> → <b>横滑任意处=切上一/下一张</b>（轴锁 10px、阈 56px 或快甩，跟手位移 + 邻卡名边缘预览）；旧「卡头上滑换卡」退役。</li>
+    <li><b>左右滑=关卡（破坏性误触）</b> → 横滑语义统一为<b>切卡</b>；26px 隐形侧缘删带退役，关卡只走显性 X。</li>
+    <li><b>页码不可见</b> → 底部条<b>页点指示</b>（当前点拉长胶囊高亮，tap 跳卡；卡多时退化为 n/N 计数）。</li>
+    <li><b>热区 &lt;44px</b> → 卡头 X 28px→44px（视觉圆 30px 不变，热区放大），切换条四钮全 48px。</li>
+    <li><b>双标题重复</b> → 手机层隐藏桌面 <span class="kbd">.canvas-title</span>，卡头只留一份标题。</li>
+    <li><b>单手可达</b> → 切换条坐落底部（拇指区），与桌面胶囊/卡片同一 frosted 玻璃族。</li>
+  </ul>
+  <h2>保留（已好，不动）</h2>
+  <ul>
+    <li>底部抓手下滑收起（跟手+回弹）、卡头下滑收起、长按卡头浮引用钮、独立/合并钮、入场 spring。</li>
+    <li>内容区纵向滚动零劫持；内部横向滚动器（代码块等）优先原生。</li>
+  </ul>
+  <h2>验收（spec 钉）</h2>
+  <ul>
+    <li>横滑左/右 = 下一/上一张，页点同步；单卡不切。</li>
+    <li>抓手/卡头下滑收起，状态保留可再开；底部「收起」钮同效。</li>
+    <li>X 关单卡落邻卡；末卡关后收层。横滑永不关卡。</li>
+    <li>X 与切换条按钮命中盒 ≥44px；桌面端胶囊行为零漂移。</li>
+  </ul>
+</div>
+
+<script>
+  // ── 样张交互引擎（与实现同参：轴锁10 / 阈56 / 速0.5 / 收起阈120+快甩）──
+  const docs = ['项目计划书.md', '架构图.svg', '会议纪要.txt'];
+  let cur = 2; // 与现状截图同起点（第 3 张激活）
+  const sheet = document.getElementById('sheet');
+  const panes = [...document.querySelectorAll('.cardpane')];
+  const dots = document.getElementById('dots');
+  const peekL = document.getElementById('peekL'), peekR = document.getElementById('peekR');
+  const hTitle = document.getElementById('hTitle'), hCount = document.getElementById('hCount');
+  const toast = document.getElementById('toast');
+  const AXIS = 10, TH = 56, VEL = 0.5;
+
+  function render() {
+    panes.forEach((p, i) => p.classList.toggle('on', i === cur));
+    hTitle.textContent = docs[cur];
+    hCount.textContent = `${cur + 1}/${docs.length}`;
+    dots.innerHTML = '';
+    docs.forEach((_, i) => {
+      const d = document.createElement('i');
+      if (i === cur) d.className = 'on';
+      d.addEventListener('click', () => { cur = i; render(); });
+      dots.appendChild(d);
+    });
+    document.getElementById('btnPrev').disabled = docs.length < 2;
+    document.getElementById('btnNext').disabled = docs.length < 2;
+  }
+  function showToast(msg) {
+    toast.textContent = msg; toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 1600);
+  }
+  function go(delta) {
+    if (docs.length < 2) return;
+    cur = (cur + delta + docs.length) % docs.length;
+    render();
+    sheet.animate(
+      [{ transform: `translateX(${delta * -18}px)` }, { transform: 'translateX(0)' }],
+      { duration: 260, easing: 'cubic-bezier(0.3, 1.36, 0.45, 1)' }
+    );
+  }
+  document.getElementById('btnPrev').addEventListener('click', () => go(-1));
+  document.getElementById('btnNext').addEventListener('click', () => go(1));
+  document.getElementById('btnCollapse').addEventListener('click', () => {
+    sheet.classList.add('closed');
+    setTimeout(() => { showToast('画板已收起（文档保留，点右上 ▤ 再开）'); }, 300);
+    setTimeout(() => { sheet.classList.remove('closed'); }, 2400);
+  });
+  document.getElementById('btnCloseCard').addEventListener('click', () => {
+    docs.splice(cur, 1);
+    if (!docs.length) { showToast('最后一张已关 —— 整叠收起'); cur = 0; docs.push('（空）'); }
+    cur = Math.min(cur, docs.length - 1);
+    render(); showToast('已关闭此卡，落至相邻卡');
+  });
+  // 抓手 / 卡头下滑收起（阻尼跟手）
+  for (const zone of [document.getElementById('grabber'), document.getElementById('cardhead')]) {
+    zone.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button')) return;
+      const y0 = e.clientY, t0 = Date.now();
+      let dy = 0;
+      zone.setPointerCapture(e.pointerId);
+      const mv = (ev) => {
+        dy = Math.max(0, ev.clientY - y0);
+        const damp = dy > 160 ? 160 + (dy - 160) * 0.35 : dy; // 阻尼
+        sheet.classList.add('dragging');
+        sheet.style.transform = `translateY(${damp}px)`;
+      };
+      const up = (ev) => {
+        zone.removeEventListener('pointermove', mv);
+        zone.removeEventListener('pointerup', up);
+        zone.removeEventListener('pointercancel', up);
+        sheet.classList.remove('dragging');
+        const vel = dy / Math.max(1, Date.now() - t0);
+        sheet.style.transform = '';
+        if (dy >= 120 || vel > 0.6) {
+          sheet.classList.add('closed');
+          setTimeout(() => { showToast('画板已收起（下滑手势 · 状态保留）'); sheet.classList.remove('closed'); }, 1800);
+        }
+      };
+      zone.addEventListener('pointermove', mv);
+      zone.addEventListener('pointerup', up);
+      zone.addEventListener('pointercancel', up);
+    });
+  }
+  // 内容横滑切卡（轴锁/阈/速度与实现同参）
+  const content = document.getElementById('content');
+  content.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('button, a, input, textarea, select')) return;
+    const x0 = e.clientX, y0 = e.clientY, t0 = Date.now();
+    let axis = null, dx = 0;
+    content.setPointerCapture(e.pointerId);
+    const mv = (ev) => {
+      dx = ev.clientX - x0; const dy = ev.clientY - y0;
+      if (!axis && (Math.abs(dx) > AXIS || Math.abs(dy) > AXIS)) axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      if (axis === 'x' && docs.length > 1) {
+        sheet.classList.add('dragging');
+        const follow = Math.max(-48, Math.min(48, dx * 0.35));
+        sheet.style.transform = `translateX(${follow}px)`;
+        const right = dx < 0; // 左滑 = 下一张（右缘预览）
+        const nb = docs[(cur + (right ? 1 : -1) + docs.length) % docs.length];
+        (right ? peekR : peekL).textContent = (right ? '下一张 · ' : '上一张 · ') + nb;
+        (right ? peekR : peekL).classList.toggle('show', Math.abs(dx) > 28);
+        (right ? peekL : peekR).classList.remove('show');
+      }
+    };
+    const up = (ev) => {
+      content.removeEventListener('pointermove', mv);
+      content.removeEventListener('pointerup', up);
+      content.removeEventListener('pointercancel', up);
+      sheet.classList.remove('dragging');
+      sheet.style.transform = '';
+      peekL.classList.remove('show'); peekR.classList.remove('show');
+      const dt = Math.max(1, Date.now() - t0);
+      const vel = Math.abs(dx) / dt;
+      if (axis === 'x' && docs.length > 1 && (Math.abs(dx) >= TH || vel > VEL)) {
+        const inward = dx < 0 ? 1 : -1; // 左滑下一张、右滑上一张（页点同步）
+        const nb = docs[(cur + inward + docs.length) % docs.length];
+        (inward === 1 ? peekR : peekL).textContent = (inward === 1 ? '下一张 · ' : '上一张 · ') + nb;
+        go(inward);
+      }
+    };
+    content.addEventListener('pointermove', mv);
+    content.addEventListener('pointerup', up);
+    content.addEventListener('pointercancel', up);
+  });
+  render();
+</script>
+</body>
+</html>
