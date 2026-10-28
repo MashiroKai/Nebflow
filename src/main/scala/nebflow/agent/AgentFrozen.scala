@@ -398,6 +398,10 @@ private[agent] object AgentFrozen:
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "interrupt", "reason=user-during-frozen")
         for
           _ <- ctx.cancelCurrentTurn()
+          // ask-death-exit 批（2026-10-28）：frozen 的 Interrupt 与 processing
+          // 「同语义」补全 —— processing 侧 #250② 起就收口待答槽，此处原缺
+          // （冻结中挂起的提问卡在中断后成为僵尸）。幂等。
+          _ <- closePendingInteractionsForInterruptedTurn(resources, state.sessionId.getOrElse(""))
 
           _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
 
@@ -429,6 +433,13 @@ private[agent] object AgentFrozen:
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "stop", "reason=user-during-frozen")
         for
           _ <- ctx.cancelCurrentTurn()
+          // ask-death-exit 批（2026-10-28）：frozen 态的 Stop 同为死亡出口 ——
+          // 待答槽随死收口（与 processing 态 Stop 同 reason）。幂等。
+          _ <- closePendingInteractionsForInterruptedTurn(
+            resources,
+            state.sessionId.getOrElse(""),
+            reason = "source-stopped"
+          )
 
           _ <- killSessionShellProcesses(state)
           _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
@@ -442,6 +453,12 @@ private[agent] object AgentFrozen:
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "restart", s"level=${level.toString}")
         for
           _ <- ctx.cancelCurrentTurn()
+          // ask-death-exit 批（2026-10-28）：同 processing —— 重启前收口待答槽。幂等。
+          _ <- closePendingInteractionsForInterruptedTurn(
+            resources,
+            state.sessionId.getOrElse(""),
+            reason = "agent-restarted"
+          )
           _ <- state.pendingCompaction
             .flatMap(_.replyDeferred)
             .traverse_(d => d.complete(Left("Restarted by supervisor")).void.handleErrorWith(_ => IO.unit))

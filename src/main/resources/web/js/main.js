@@ -2187,6 +2187,18 @@ function renderHeldReceiptsCapsule() {
   }
 }
 window.addEventListener('nebflow-session-change', renderHeldReceiptsCapsule);
+// ask-badge 批（2026-10-28「黄色问题胶囊无问题仍显示计数」排查面③）：held 计数
+// 的**权威重同步**入口 —— 服务端 `getHeldReceipts` 直回既有 `heldReceipts` 帧型
+// （幂等置位 + 重渲，零新消费点）。失步形态与 #1019 忙碌态同源：held/unread 只由
+// hold/drain/flush 实时帧驱动，断连丢帧 / 半开窗 / 跨会话切换后本地计数再无对账
+// 路，徽标对早已收口的积压常显。两路索取：WS 重连（帧流被切断的权威事件）+
+// 会话切换（胶囊按活跃会话渲染，切回即对账该会话的权威计数）。
+function fetchHeldReceiptsSnapshot() {
+  const sid = state.activeSessionId;
+  if (sid) sendWs({ type: 'getHeldReceipts', sessionId: sid });
+}
+onReconnect(fetchHeldReceiptsSnapshot);
+window.addEventListener('nebflow-session-change', fetchHeldReceiptsSnapshot);
 onMessage('heldReceipts', (msg) => {
   const sid = msg.sessionId || '';
   if (!sid) return;
