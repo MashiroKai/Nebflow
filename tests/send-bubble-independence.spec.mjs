@@ -75,7 +75,7 @@ function wireUp(ws) {
       }
     }
   });
-  ws.send(JSON.stringify({ type: 'configData', config: '{"features":{}}', configured: true, onboarding: 'done', models: [], defaults: {} }));
+  ws.send(JSON.stringify({ type: 'configData', config: '{"features":{},"console":{"inputMode":"queue"}}', configured: true, onboarding: 'done', models: [], defaults: {} }));
   ws.send(JSON.stringify({ type: 'sessionList', sessions: [{ id: SID, name: '并泡诊断E2E' }], activeId: SID, folders: [] }));
 }
 
@@ -194,7 +194,9 @@ try {
   ok('S6b queueMessage 钉入队时刻（ts）', src.includes('ts: Date.now()'));
   ok('S6c persistQueue 落盘 ts（跨刷新真值源）', src.includes('ts: it.ts || null'));
   ok('S6d drain 补渲用 item.ts（非 Date.now()）',
-    src.includes('renderUserBubble(item.text, item.attachments, item.ts)'));
+    // queuedirect 批（2026-10-28）：drain 补渲腿抽为 dispatchQueuedItemNow（与直通腿
+    // 共用），补渲调用带第四参 opts.msgId（直通腿寻址面）；item.ts 时间戳真值钉不变。
+    src.includes('renderUserBubble(item.text, item.attachments, item.ts, opts.msgId ? { msgId: opts.msgId } : undefined)'));
 }
 
 console.log(failures === 0 ? 'ALL PASS' : `${failures} FAILURES`);

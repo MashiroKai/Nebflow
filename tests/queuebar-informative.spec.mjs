@@ -91,7 +91,7 @@ function wireUp(ws) {
       }
     }
   });
-  ws.send(JSON.stringify({ type: 'configData', config: '{"features":{}}', configured: true, onboarding: 'done', models: [], defaults: {} }));
+  ws.send(JSON.stringify({ type: 'configData', config: '{"features":{},"console":{"inputMode":"queue"}}', configured: true, onboarding: 'done', models: [], defaults: {} }));
   ws.send(JSON.stringify({ type: 'sessionList', sessions: [{ id: SID, name: '排队回退E2E' }], activeId: SID, folders: [] }));
 }
 
@@ -301,7 +301,9 @@ await new Promise(r => server.close(r));
     !input.includes('runQueuedAction') && !input.includes('queuedItemByClientId'));
   ok('S4 数据层真值钉保留（queueMessage ts + persistQueue 落盘 + drain 补渲 item.ts）',
     input.includes('ts: Date.now()') && input.includes('ts: it.ts || null')
-    && input.includes('renderUserBubble(item.text, item.attachments, item.ts)'));
+    // queuedirect 批（2026-10-28）：drain 补渲腿抽为 dispatchQueuedItemNow（与直通腿
+    // 共用），补渲调用带第四参 opts.msgId（直通腿寻址面）；item.ts 时间戳真值钉不变。
+    && input.includes('renderUserBubble(item.text, item.attachments, item.ts, opts.msgId ? { msgId: opts.msgId } : undefined)'));
   const offlineLeg = input.match(/function enqueueOfflineMessage[\s\S]{0,2000}/) || '';
   ok('S5 离线腿乐观气泡 + pending:true 保留（待送达标，语义互斥）',
     String(offlineLeg).includes('rendered: true') && String(offlineLeg).includes('pending: true'));

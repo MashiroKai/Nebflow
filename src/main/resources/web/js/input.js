@@ -22,7 +22,7 @@ import { startDictation, stopDictation, isModelReady } from './voiceEngine.js';
 import { notifyVoiceState } from './micOrb.js';
 // voiceseal 批（批 #508）：语音封存 flag（features.voice，默认封存）——
 // 听写入口与全双工拖动入口在封存态一并闸死（见 onVoiceToggle/enterVoiceModeNow）。
-import { voiceEnabled, voiceOrbEnabled } from './featureFlags.js';
+import { voiceEnabled, voiceOrbEnabled, consoleInputMode } from './featureFlags.js';
 import { showToast } from './modal.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
@@ -218,6 +218,29 @@ export function send(resendId) {
     if (!text) return;
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
     if (isBusy) {
+      // queuedirect 批（2026-10-28 作者令）：direct 模式下 skill 激活同样立即出线
+      // （与排队条「立即发送」的 skill 腿同帧形：type:'skill'；引擎侧 busy 收到
+      // SkillActivate 入 pendingUserInputs，由 turn 边界 head-forward 消费）。
+      // queue 模式（或 WS 恰好已断）走旧排队腿，逐字不变。
+      const skillDirect = consoleInputMode() === 'direct'
+        && state.ws && state.ws.readyState === WebSocket.OPEN;
+      if (skillDirect) {
+        const item = {
+          id: ++queueCounter,
+          text,
+          attachments: [],
+          skillName,
+          mode: null,
+          clientMessageId: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+          ts: Date.now()
+        };
+        if (v.sessionId) state.lastUserSendId[v.sessionId] = item.clientMessageId;
+        dispatchQueuedItemNow(v.sessionId, item, { quiesce: false, newTurn: false });
+        input.value = '';
+        input.style.height = 'auto';
+        saveInputDraft(v.sessionId);
+        return;
+      }
       queueMessage(v, text, [], skillName);
       input.value = '';
       input.style.height = 'auto';
@@ -266,6 +289,10 @@ export function send(resendId) {
       return;
     }
     if (isBusy) {
+      // queuedirect 批（2026-10-28）：compact 模式**两种模式下都保持入队**——
+      // compact 的即时命令面（type:'command',command:'compact'）已随 2026-10-09
+      // 命令面退役成为网关静默 no-op，direct 直投 = 静默丢失；入队保持现状端到
+      // 端行为逐字节不变（作者令的直通面对象是普通输入文本，不含此遗留腿）。
       queueMessage(v, text, [], null, 'compact');
       input.value = '';
       input.style.height = 'auto';
@@ -329,23 +356,80 @@ export function send(resendId) {
   // 同 id 重发不入本地队（入队会在 drain 时另派一帧；重发的幂等性靠同 id + 服务端
   // 去重，不靠队列）。
   if (isBusy && !isResend && !state.frozenSessions.has(v.sessionId)) {
-    // 输入消息排队回退批（2026-10-23 作者令「我们的输入消息排队功能采用我们的
-    // 之前的。大概两天以前的设计」）：busy 排队腿回归 10-21 形态——消息只入队，
-    // 呈现面 = 输入框上方的排队条行（chatQueue.js 行级明细：文本/附件/立即发送/
-    // 撤回/移除/拖拽排序），会话流内**零乐观气泡**（10-22 并泡诊断批的「入队即
-    // 上屏气泡」随本批退役；当前回复完成后 drain 腿逐条补渲气泡）。离线腿
-    // （WS 未开）的「待送达」乐观气泡不受本批影响，照旧。
-    queueMessage(v, text, v.pendingAttachments);
+    // ── queuedirect 批（2026-10-28 作者令）───────────────────────────────
+    // 原令 11:1x「取消我们的这个输入排队功能（不删代码）……如果你在回复过程中
+    // 【收到输入】，改为，直接输入给你」；11:14 补充裁定「应该不会打断你的 llm
+    // 调用吧？效果就像是我们现在的立即发送一样」。
+    // direct（新缺省）= busy 发送的消息**立即出线**，走排队条「立即发送」的既有
+    // 帧腿（纯文本 = type:'immediateInput'；带附件/引用/任务 = 默认用户帧——
+    // handleUserText 文本腿不承载附件，sendImmediate 同律）。引擎侧 ImmediateInput
+    // 在 Processing 态入 pendingImmediateInputs，于**最近安全边界**并入当前回合
+    // （工具批次完成 → ToolsComplete 边界注入 / 已无内部边界 → 回合末续轮注入），
+    // 在飞 LLM 调用**不取消不打断**（#939 Mail 工具边界注入同源语义）。
+    // queue = 旧排队腿逐字保留（配置 console.inputMode='queue' 切回）。
+    // WS 恰好已断 ⇒ 落回旧队（busy 轨项由重连确认网收口补发，f1-send-queue 场景⑤）。
+    const wsOpen = state.ws && state.ws.readyState === WebSocket.OPEN;
+    if (consoleInputMode() !== 'direct' || !wsOpen) {
+      // 输入消息排队回退批（2026-10-23 作者令「我们的输入消息排队功能采用我们的
+      // 之前的。大概两天以前的设计」）：busy 排队腿回归 10-21 形态——消息只入队，
+      // 呈现面 = 输入框上方的排队条行（chatQueue.js 行级明细：文本/附件/立即发送/
+      // 撤回/移除/拖拽排序），会话流内**零乐观气泡**（10-22 并泡诊断批的「入队即
+      // 上屏气泡」随本批退役；当前回复完成后 drain 腿逐条补渲气泡）。离线腿
+      // （WS 未开）的「待送达」乐观气泡不受本批影响，照旧。
+      queueMessage(v, text, v.pendingAttachments);
+      input.value = '';
+      input.style.height = 'auto';
+      v.pendingAttachments = [];
+      // uifix 批 2026-10-22：发送族清空 = 渐隐退场动画（chat.js 清空动画单点；
+      // 旧 innerHTML='' 瞬时蒸发退役）。随后的 renderQuoteStrip（同空数组）在
+      // renderAttachmentPreview 内命中「清空动画在播 + 空数据」闸，不打断动画。
+      clearAttachmentStripAnimated({ attPreviewEl: v.dom.attPreview });
+      renderQuoteStrip({ attPreviewEl: v.dom.attPreview, attachments: v.pendingAttachments }); // quote-message 一期：排队后引用 chip 随 pending 清空
+      saveInputDraft(v.sessionId);
+      setTimeout(() => { v.isSending = false; }, 300);
+      return;
+    }
+    // —— direct 直通腿：立即派发（「立即发送」等价形）────────────────────
+    // 附件派发闸先行：载荷丢失的空心帧禁出线（与直发腿 :298 同律，可见剔除）。
+    {
+      const hollow = v.pendingAttachments.filter(a => a && a.type !== 'taskRef' && a.type !== 'ref'
+        && !(typeof a.data === 'string' && a.data.length > 0)
+        && (a.stripped === true || (a.type === 'image' && !a.hash)));
+      if (hollow.length > 0) {
+        v.pendingAttachments = v.pendingAttachments.filter(a => !hollow.includes(a));
+        renderAttachmentPreview({ attPreviewEl: v.dom.attPreview, attachments: v.pendingAttachments });
+        showAttError(t('messages.queueAttachUnrecoverable', { n: hollow.length }));
+        console.warn('[send] direct leg dropped ' + hollow.length + ' stripped attachment(s) with no recoverable payload');
+      }
+    }
+    const directItem = {
+      id: ++queueCounter,
+      text,
+      attachments: v.pendingAttachments.map(a => ({ ...a })),
+      skillName: null,
+      mode: null,
+      // 幂等键在派发点钉死（与 queueMessage 入队钉死同律）：这条逻辑消息此后任何
+      // 重复派发都被服务端按 id 去重。
+      clientMessageId: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      ts: Date.now()
+    };
+    if (v.sessionId) state.lastUserSendId[v.sessionId] = directItem.clientMessageId;
+    // quiesce:false —— 当前回合**还在流式进行中**，禁跑 drain 腿的孤儿占位清理/
+    // stream 复位（会掐断在飞气泡的增量跟踪）。
+    // newTurn:false —— 客户端不主张新 turn：busy 判定本身就来自引擎 sessionBusy
+    // 在场事实，幻影 busy（派发被判重丢弃 ⇒ 无 turn）形态在此不成立，故不重挂
+    // turn-start 确认网、不动 lastTerminalAt/turnStartTimes（在飞回合的既有
+    // 看门/计时照旧）。
+    // wire:'immediate' —— 纯文本走 immediateInput 帧（引擎最近边界注入的承载帧）。
+    dispatchQueuedItemNow(v.sessionId, directItem, { quiesce: false, newTurn: false, wire: 'immediate' });
     input.value = '';
     input.style.height = 'auto';
     v.pendingAttachments = [];
-    // uifix 批 2026-10-22：发送族清空 = 渐隐退场动画（chat.js 清空动画单点；
-    // 旧 innerHTML='' 瞬时蒸发退役）。随后的 renderQuoteStrip（同空数组）在
-    // renderAttachmentPreview 内命中「清空动画在播 + 空数据」闸，不打断动画。
+    // uifix 批 2026-10-22：清空动画（同排队腿）。
     clearAttachmentStripAnimated({ attPreviewEl: v.dom.attPreview });
-    renderQuoteStrip({ attPreviewEl: v.dom.attPreview, attachments: v.pendingAttachments }); // quote-message 一期：排队后引用 chip 随 pending 清空
+    renderQuoteStrip({ attPreviewEl: v.dom.attPreview, attachments: v.pendingAttachments });
     saveInputDraft(v.sessionId);
-    setTimeout(() => { v.isSending = false; }, 300);
+    // isSending 防双击debounce 由 dispatchQueuedItemNow 的 view 腿统一收口，此处不再重复。
     return;
   }
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
@@ -1236,7 +1320,6 @@ function drainMessageQueueNow(sessionId) {
     markQueueItemPayloadLost(sessionId, item);
     return false;
   }
-  const view = findViewBySessionId(sessionId);
 
   // Remove from queue
   const itemIdx = q.indexOf(item);
@@ -1244,6 +1327,23 @@ function drainMessageQueueNow(sessionId) {
   refreshQueue(sessionId);
   persistQueue();
   purgeVaultItem(sessionId, item); // qattachvault：载荷已随帧出线 ⇒ 载荷库清账
+
+  return dispatchQueuedItemNow(sessionId, item);
+}
+
+/** 单条已出队项的**真派发台**（queuedirect 批 2026-10-28 从 drainMessageQueueNow
+ *  抽出——drain 腿与 busy 直通腿共用同一帧形/呈现/落盘/记账序列）：
+ *   · drain 腿（默认 opts）= 旧行为逐字：done 终态后的孤儿占位清理 + 乐观新 turn
+ *     记账（busy 置位/确认网/计时戳/终止戳清账）。
+ *   · 直通腿（{quiesce:false, newTurn:false, msgId}）= busy 会话中「立即发送」
+ *     等价形：回合还在流式进行 —— 不清占位不复位 stream（quiesce:false），不主张
+ *     新 turn（newTurn:false：引擎侧只是把消息并入在飞回合的最近安全边界）；气泡
+ *     带 data-msg-id = 幂等键（msgId，与普通发送同键，供历史整替去重寻址）。
+ *  返回 true = 帧已出线。 */
+function dispatchQueuedItemNow(sessionId, item, opts = {}) {
+  const quiesce = opts.quiesce !== false;
+  const newTurn = opts.newTurn !== false;
+  const view = findViewBySessionId(sessionId);
 
   // Render in chat (only if this session is the active view)
   // f1-send-queue：rendered 项（离线入队的乐观气泡已在场）零新增呈现 —— 摘掉
@@ -1261,8 +1361,9 @@ function drainMessageQueueNow(sessionId) {
       renderSkillBubble(item.skillName, item.text);
     } else {
       // 排队项 drain 补渲：时间戳 = 入队时刻（item.ts），非 drain 渲染时刻
-      // （排队回退批保留该数据层真值钉）。
-      renderUserBubble(item.text, item.attachments, item.ts);
+      // （排队回退批保留该数据层真值钉）。直通腿带 msgId（opts.msgId）＝
+      // 气泡行 data-msg-id = 幂等键（普通发送同键）。
+      renderUserBubble(item.text, item.attachments, item.ts, opts.msgId ? { msgId: opts.msgId } : undefined);
     }
   }
 
@@ -1302,42 +1403,62 @@ function drainMessageQueueNow(sessionId) {
     // parses refs via circe cursor — tolerated for forward-compat).
     const taskRefs = (item.attachments || []).filter(a => a.type === 'taskRef');
     const refs = (item.attachments || []).filter(a => a.type === 'ref');
+    const fileAtts = (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref');
     notifyFriendRefsSent(refs);
-    dispatchUserMessageFrames({
-      sessionId,
-      content: item.text,
-      clientMessageId,
-      taskRefs: taskRefs.length > 0 ? taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sessionId })) : taskRefs,
-      refs: refs.length > 0 ? refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) })) : refs,
-      wireAtts: (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref').map(a => ({
-        mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
-      })),
-      chatWidth: view?.dom?.chat?.clientWidth || 0
-    });
+    // queuedirect 直通腿（wire:'immediate'）且**纯文本**（无附件/引用/任务引用）
+    // ⇒ immediateInput 帧（「立即发送」等价腿：引擎 busy 态入 pendingImmediateInputs
+    // = 回合内最近安全边界注入）。带附件 ⇒ 默认用户帧（handleUserText 文本腿不承载
+    // 附件，sendImmediate 同律——引擎侧落 UserInput，由 turn 末处理）。
+    // drain 腿（wire 缺省）一律默认用户帧（旧行为逐字）。
+    if (opts.wire === 'immediate' && taskRefs.length === 0 && refs.length === 0 && fileAtts.length === 0) {
+      sendWs({ type: 'immediateInput', content: item.text, device: deviceStamp(), clientMessageId, sessionId });
+    } else {
+      dispatchUserMessageFrames({
+        sessionId,
+        content: item.text,
+        clientMessageId,
+        taskRefs: taskRefs.length > 0 ? taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sessionId })) : taskRefs,
+        refs: refs.length > 0 ? refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) })) : refs,
+        wireAtts: fileAtts.map(a => ({
+          mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
+        })),
+        chatWidth: view?.dom?.chat?.clientWidth || 0
+      });
+    }
   }
 
   // ①-2: 本次 drain 派发 = 新 turn 起点 ⇒ 取代上一 turn 的终止戳（同 send()）。
-  if (sessionId) delete state.lastTerminalAt[sessionId];
-  setBusy(sessionId);
-  // busy-stuck-fix：drain 派发腿同款草签（服务端 busy 排队闸判重丢弃时，无 turn
-  // 无终态帧，靠确认网/判重回执收幻影 busy）。
-  state.armTurnConfirm?.(sessionId);
-  state.turnStartTimes[sessionId] = Date.now();
+  // 直通腿（newTurn:false）不主张新 turn：在飞回合的既有终止戳/计时原样保留。
+  if (newTurn && sessionId) delete state.lastTerminalAt[sessionId];
+  if (newTurn) setBusy(sessionId);
+  if (newTurn) {
+    // busy-stuck-fix：drain 派发腿同款草签（服务端 busy 排队闸判重丢弃时，无 turn
+    // 无终态帧，靠确认网/判重回执收幻影 busy）。直通腿不重挂——busy 事实本身就
+    // 来自引擎 sessionBusy 在场，幻影形态不成立；在飞回合的流帧照常撤既有网。
+    state.armTurnConfirm?.(sessionId);
+    state.turnStartTimes[sessionId] = Date.now();
+  }
 
-  // Safety timeout（freezetimeout B2：到点只呈现「仍在处理」，不发 interrupt）
-  armBusyWatchdogFor(sessionId);
+  // Safety timeout（freezetimeout B2：到点只呈现「仍在处理」，不发 interrupt）。
+  // 直通腿不重挂（quiesce/newTurn 皆 false 的场景 = 回合进行中，既有看门在管）。
+  if (newTurn) armBusyWatchdogFor(sessionId);
 
   // Clean up thinking placeholders (only for displayed sessions)
+  // 直通腿（quiesce:false）跳过：回合还在流式进行，占位清理/stream 复位会掐断
+  // 在飞气泡的增量跟踪（下一个流 delta 会另开新泡 = 撕裂）。isSending 防双击
+  // debounce 与 quiesce 无关——两条腿都必须归还发送锁。
   if (view) {
-    if (window.__stopThinkingTimer) window.__stopThinkingTimer();
-    view.dom.chat.querySelectorAll('.thinking-placeholder').forEach(el => {
-      const row = el.closest('.row');
-      if (row) row.remove();
-    });
-    view.stream.currentAiBubble = null;
-    view.stream.aiText = '';
-    view.stream.currentThinkingBubble = null;
-    view.stream.thinkingText = '';
+    if (quiesce) {
+      if (window.__stopThinkingTimer) window.__stopThinkingTimer();
+      view.dom.chat.querySelectorAll('.thinking-placeholder').forEach(el => {
+        const row = el.closest('.row');
+        if (row) row.remove();
+      });
+      view.stream.currentAiBubble = null;
+      view.stream.aiText = '';
+      view.stream.currentThinkingBubble = null;
+      view.stream.thinkingText = '';
+    }
     setTimeout(() => { view.isSending = false; }, 300);
   }
   return true;
