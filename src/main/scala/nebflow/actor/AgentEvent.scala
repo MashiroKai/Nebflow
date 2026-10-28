@@ -222,7 +222,11 @@ enum AgentStreamEvent:
   case CompactStart(mode: String, inputTokens: Option[Int], threshold: Option[Int])
   // 2026-09-15 作者令：压缩不再落 report ⇒ `reportPath` 字段随生成链删除
   // （此前由 AgentActor 从 archive.reportPath 填入，UI 据此显示「report: xxx.md」）。
-  case CompactComplete(before: Int, after: Int)
+  // 刀二（2026-10-28 无感压缩批·彻底零痕迹）：完成卡停渲染，唯一可见例外 =
+  // 0.95 硬守卫 emergencyClean 真清上下文（安全阀）——`emergency` 区分发射点
+  // （runEmergencyCompact = true，常规压缩轮 = false 缺省）；缺省 false ⇒ 既有
+  // 调用点/载荷零漂移。
+  case CompactComplete(before: Int, after: Int, emergency: Boolean = false)
   case CompactFailed(reason: String, attempt: Int, maxAttempts: Int)
   case BackgroundTaskUpdate(taskId: String, description: String, status: String)
   case ExternalEventReceived(source: String, eventType: String, correlationId: Option[String])
@@ -372,20 +376,22 @@ enum AgentStreamEvent:
             "inputTokens" -> inputTokens.asJson,
             "threshold" -> threshold.asJson
           )
-      case CompactComplete(before, after) =>
+      case CompactComplete(before, after, emergency) =>
         if isSubagent then
           Json.obj(
             "type" -> "agentCompactComplete".asJson,
             "agentId" -> agentId.asJson,
             "before" -> before.asJson,
-            "after" -> after.asJson
+            "after" -> after.asJson,
+            "emergency" -> emergency.asJson
           )
         else
           Json.obj(
             "type" -> "compactComplete".asJson,
             "sessionId" -> sessionId.asJson,
             "before" -> before.asJson,
-            "after" -> after.asJson
+            "after" -> after.asJson,
+            "emergency" -> emergency.asJson
           )
       case CompactFailed(reason, attempt, maxAttempts) =>
         if isSubagent then

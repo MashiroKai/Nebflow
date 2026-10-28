@@ -1944,21 +1944,25 @@ export function renderSystemBubble(text) {
 }
 
 // ---------- Compaction status card ----------
-// Completion/failure card ONLY. The in-progress "compacting" pill is a
-// dismantled item — 作者令 2026-10-09 10:23 ①:「『压缩中』可见指示列为拆除项」
-// (compaction-pill-remove 批 2026-10-19): compactStart renders NOTHING. The
-// compactStart WS frame itself is retained — main.js still consumes it for the
-// functional gates (input busy gate / queue-drain hold / sidebar bookkeeping)
-// and stamps view.compactStartTs so the done card keeps its elapsed suffix.
-// buildCompactCardRow remains the SINGLE source of the card DOM — the live
-// terminal events and the history-replay restore (persistence.js) both build
-// their cards through it, so a refreshed history shows the same card
-// component as the live view.
+// 作者令 2026-10-28 11:44（无感压缩「彻底零痕迹」批）：回落同步压缩的完成/失败
+// 可见面**全面停渲染**（live + 重放 + 分页/localStorage 各腿，零卡零横幅零尾注）；
+// 数据面零削减——WS 帧、ui.json 记录、引擎日志、压缩档案照常留账（审计可查）。
+// 唯一保留的可见例外 = 0.95 硬守卫 emergencyClean 真清上下文（数据有损）时的
+// emergency 卡（安全阀，帧带 emergency:true）：live 渲染走 renderCompactDoneCard
+// （main.js compactComplete 按 msg.emergency 分流），重放腿走 persistence.js
+// restoreCompactCardRow 的 params.emergency 分支。失败卡（compactFailed）同刀
+// 静默且无例外——引擎已有退避+熔断+应急兜底，UI 不重复报错。
+// （前史：compaction-pill-remove 批 2026-10-19 拆「压缩中」胶囊时保留了完成
+// 记录行；本批按当日新口径将保留面收窄至 emergency 安全阀。）
+// buildCompactCardRow remains the SINGLE source of the emergency card DOM —
+// the live terminal event and the history-replay restore (persistence.js) both
+// build their cards through it.
 const compactCheckSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 const compactFailSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 
 /** Build one compaction card row. kind: 'done' (check) | 'error' (cross).
- *  label is plain text and is escaped here. */
+ *  label is plain text and is escaped here. (error kind remains for component
+ *  parity; no current call site renders it after the zero-trace batch.) */
 export function buildCompactCardRow(kind, label) {
   const row = document.createElement('div');
   row.className = 'row notice';
@@ -1982,22 +1986,19 @@ function appendCompactCard(view, state, label) {
   return row.querySelector('.compact-card');
 }
 
+/** Emergency hard-guard (0.95) card ONLY — the regular fallback-compaction
+ *  done card is dismantled (zero-trace batch, 2026-10-28); main.js gates the
+ *  call on msg.emergency. */
 export function renderCompactDoneCard(view = activeView, { before, after, detail } = {}) {
-  // Elapsed rides on the view (stamped by main.js on compactStart — the pill
-  // that used to carry data-start-ts is dismantled, order ①). Absent when the
-  // view was switched/restored mid-compaction: card renders without the suffix.
+  // Elapsed used to ride on view.compactStartTs (stamped by main.js on
+  // compactStart); that stamp is dismantled with the done card — emergency
+  // has no compactStart frame, so the card renders without the suffix.
   const startTs = Number(view?.compactStartTs) || 0;
   delete view?.compactStartTs;
   const elapsed = startTs ? Math.max(1, Math.round((Date.now() - startTs) / 1000)) : 0;
   let label = t('chat.compacted', { before, after, detail: detail || '' });
   if (elapsed) label += t('chat.compactElapsed', { seconds: elapsed });
   appendCompactCard(view, 'done', label);
-  smartScroll();
-}
-
-export function renderCompactFailCard(view = activeView, text) {
-  delete view?.compactStartTs;
-  appendCompactCard(view, 'error', text);
   smartScroll();
 }
 

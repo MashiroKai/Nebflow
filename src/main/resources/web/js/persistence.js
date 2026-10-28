@@ -268,6 +268,14 @@ function sanitizeForCache(entry) {
 // .compact-card component (chat.js buildCompactCardRow) instead of the old
 // flat error-card. Returns null when the entry should be skipped.
 //
+// 作者令 2026-10-28 11:44（无感压缩「彻底零痕迹」批）：回落同步压缩的完成卡与
+// 失败卡**重放腿停渲染**（零卡零横幅零尾注；数据面零削减——ui.json 条目照常
+// 留账可审计）。唯一保留的可见例外 = 0.95 硬守卫 emergencyClean 真清上下文
+// （安全阀）：帧带 emergency:true ⇒ WebSocketRoutes 把 params.emergency 一并
+// 落盘 ⇒ 本函数对 emergency 条目照常重建同卡（数据有损事件在历史中保持可见，
+// 避免「上下文被硬裁后无从解释质量变化」）；其余 compacted/compactFailed 条目
+// 一律 null（与「compacting 起始条目」同格——跳过，不 relabel）。
+//
 // EVERY "compacting" START entry is skipped on replay — adjacency is no longer
 // consulted (2026-09-15, F1 fix). Two shapes feed this:
 //   (a) start directly followed by a terminal entry (the live card morphed in
@@ -288,9 +296,14 @@ function restoreCompactCardRow(m, next) {
   if (m.i18nKey === 'chat.compacting') return null;
   const p = (m.params && typeof m.params === 'object') ? m.params : {};
   if (m.i18nKey === 'chat.compacted') {
-    return buildCompactCardRow('done', t('chat.compacted', { before: p.before ?? 0, after: p.after ?? 0, detail: p.detail || '' }));
+    // zero-trace 批：仅 0.95 硬守卫 emergency 卡（安全阀）保留重放渲染
+    if (p.emergency) {
+      return buildCompactCardRow('done', t('chat.compacted', { before: p.before ?? 0, after: p.after ?? 0, detail: p.detail || '' }));
+    }
+    return null;
   }
-  return buildCompactCardRow('error', t('chat.compactFailed', { attempt: p.attempt ?? 0, maxAttempts: p.maxAttempts ?? 0 }));
+  // chat.compactFailed：同刀静默，无例外（引擎退避+熔断+应急兜底已覆盖）
+  return null;
 }
 
 // ---------- System-record replay (shared by both restore paths) ----------
@@ -945,7 +958,8 @@ export function restoreFromStorage(opts = {}) {
     } else if (m.type === 'system') {
       // Skill-activated system messages are rendered as skill bubbles by the user handler above
       if (m.i18nKey === 'slash.skillActivated') return;
-      // Compaction lifecycle → same .compact-card component as the live path
+      // Compaction lifecycle → zero-trace 批（2026-10-28）：常规完成/失败卡一律
+      // null（数据留账，界面零渲染）；仅 emergency 安全阀卡重建
       // (parity with restoreFromBackendHistory; see restoreCompactCardRow).
       if (m.i18nKey === 'chat.compacting' || m.i18nKey === 'chat.compacted' || m.i18nKey === 'chat.compactFailed') {
         const compactRow = restoreCompactCardRow(m, msgs[i + 1]);
@@ -1387,9 +1401,10 @@ function buildHistoryRow(m, i, ctx) {
       // Skill-activated system messages are rendered as skill bubbles by the user handler above;
       // skip them here as a safety net (e.g. if the preceding user message was missing).
       if (m.i18nKey === 'slash.skillActivated') return;
-      // Compaction lifecycle → same .compact-card component as the live path.
-      // restoreCompactCardRow returns null for EVERY "compacting" start entry
-      // (both the paired and the orphan shape — see its header comment).
+      // Compaction lifecycle → zero-trace 批（2026-10-28）：restoreCompactCardRow
+      // returns null for EVERY "compacting" start entry (both the paired and the
+      // orphan shape — see its header comment) AND for every regular compacted /
+      // compactFailed entry; only the 0.95 hard-guard emergency card re-renders.
       if (m.i18nKey === 'chat.compacting' || m.i18nKey === 'chat.compacted' || m.i18nKey === 'chat.compactFailed') {
         const compactRow = restoreCompactCardRow(m, msgs[i + 1]);
         if (compactRow) fragment.appendChild(compactRow);

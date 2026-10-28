@@ -20,12 +20,33 @@ import nebflow.actor.AgentCommand.*
 import nebflow.core.compact.*
 import nebflow.shared.*
 
+import scala.concurrent.duration.*
+
 private[agent] object AgentPingpong:
   import nebflow.agent.AgentActor.*
 
   // ============================================================
   // 触发门（§G1 / §A3）
   // ============================================================
+
+  /**
+   * 刀一②（2026-10-28 无感压缩批）：fork 内 send 级重试拍数（每拍内部已遍历整条
+   * 候选链——「跨供应商重试」由链本身承担，本拍级是链全灭后的重投）与拍间隔。
+   * 取 2 拍 × 5s：三败容忍窗等效 3→9 次调用级失败，且每 fork 的最坏追加时延
+   * (2×5s) 远小于轮边界间隔。
+   */
+  val ShadowSendRetryBeats: Int = 2
+  val ShadowSendRetryDelayMs: Long = 5000L
+
+  /**
+   * 刀一③：解析截断续写拍的指令（续写请求以独立 user 消息追加在 partial 之后）。
+   * 要求从断点接写、补 </summary> 收尾、不重复已写内容——拼接解析取**第一个**
+   * 完整 <summary> 对，接缝噪声被 regex 吞掉。
+   */
+  val ShadowContinuationInstruction: String =
+    "Your previous reply was cut off before the closing </summary> tag. Continue from exactly where " +
+      "you stopped: finish the remaining summary content and close with </summary>. Do not repeat " +
+      "content you have already written. TEXT ONLY — no tool calls."
 
   /**
    * 乒乓门 = 根会话谓词 × 配置开关（缺一不可）。纯函数便于 spec 静态验证：
@@ -38,6 +59,16 @@ private[agent] object AgentPingpong:
   /**
    * maybeAutoCompact 触发分支的乒乓入口（§A3 判定点之一）：门开 → fork 影子后
    * 主腿照常续跑本派发；门关 → 老同步路径**逐字**（startDirectCompaction）。
+   *
+   * 刀一④（2026-10-28 无感压缩批）：fork 判据提前到阈值 ×0.9 预置。门判定
+   * **上提**到调用点（maybeAutoCompact 单次热读后以 `gateOpen` 传入，本入口不再
+   * 读配置）——调用点因此能对「门关 + 仅 ×0.9 预置线越阈」直接返回 None（派发
+   * 原样续跑，§G1 非根会话逐字节不变），本入口只在「确有压缩动作」时被调。
+   *
+   * @param gateOpen      调用点已判定的门状态（谓词 × 开关，单点热读）
+   * @param triggerDetail 本次触发观测行（auto-compact-trigger 的 detail）
+   * @param prePosition   true = 触发来自 ×0.9 预置线（观测行追加标记）；
+   *                      false = 原阈值越阈（观测行逐字）
    */
   def forkOrLegacyAuto(
     agentDef: AgentDef,
@@ -46,7 +77,10 @@ private[agent] object AgentPingpong:
     parentRef: Option[ActorRef[AgentCommand]],
     state: AgentState,
     replyTo: Option[ActorRef[AgentEvent]],
-    processing: ProcessingFn
+    processing: ProcessingFn,
+    gateOpen: Boolean,
+    triggerDetail: String,
+    prePosition: Boolean
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     forkOrLegacy(
       agentDef,
@@ -55,13 +89,25 @@ private[agent] object AgentPingpong:
       state,
       legacy = startDirectCompaction(agentDef, resources, depth, parentRef, state, replyTo, processing, "full"),
       // fork 后主腿照常续跑本派发（pipeLlmCall 六参形态；processing fn 仅老路径需要）
-      onForked = st => pipeLlmCall(agentDef, resources, depth, parentRef, st, replyTo)
+      onForked = st => pipeLlmCall(agentDef, resources, depth, parentRef, st, replyTo),
+      gateOpen = gateOpen,
+      legacyTriggerLog = if gateOpen then None else Some(triggerDetail),
+      legacyWarranted = !gateOpen, // 本入口只在「确有压缩动作」时被调：门关 ⇒ legacy 必走
+      forkTriggerLog =
+        if gateOpen then
+          Some(
+            if prePosition then s"$triggerDetail (pp-fork pre-position ×0.9; swap-in unchanged at round boundary)"
+            else triggerDetail
+          )
+        else None
     )
 
   /**
    * UpdateContextWindow 模型切换顺手压缩点的乒乓入口（§A3 判定点之二）：门开 →
    * fork 后回 idle（主腿本就闲）；门关 → 老路径逐字（handleTriggerCompaction
-   * 原调用形态，resumeAfterCompact=false 保持）。
+   * 原调用形态，resumeAfterCompact=false 保持）。该点是一次性机会点（非周期观测
+   * 点），刀一④预置不适用——触发阈值仍在调用点原阈值逐字。门判定保持本入口内
+   * 热读（调用点 AgentIdle 无需感知门状态，一次性点无「窗口内拒绝」形态）。
    */
   def forkOrLegacyModelSwitch(
     agentDef: AgentDef,
@@ -70,27 +116,56 @@ private[agent] object AgentPingpong:
     parentRef: Option[ActorRef[AgentCommand]],
     state: AgentState
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    forkOrLegacy(
-      agentDef,
-      resources,
-      depth,
-      state,
-      legacy = handleTriggerCompaction(agentDef, resources, depth, parentRef, state, "full", None, resumeAfterCompact = false),
-      onForked = st => IO.pure(idle(agentDef, resources, depth, parentRef, st))
-    )
+    PingpongConfig.enabled.flatMap { switchOn =>
+      val open = gateOpen(agentDef, depth, switchOn)
+      forkOrLegacy(
+        agentDef,
+        resources,
+        depth,
+        state,
+        legacy =
+          handleTriggerCompaction(agentDef, resources, depth, parentRef, state, "full", None, resumeAfterCompact = false),
+        onForked = st => IO.pure(idle(agentDef, resources, depth, parentRef, st)),
+        gateOpen = open,
+        legacyTriggerLog = None, // model-switch-compact 观测行已由调用点落，不重复
+        legacyWarranted = true,
+        forkTriggerLog = None
+      )
+    }
 
+  /**
+   * 分流体（门状态由调用点传入；auto 入口零配置读，model-switch 入口自带一次）：
+   * 门开 ⇒ 先落 fork 触发观测行（model-switch 点 None 不加行）再 fork 影子；
+   * 门关 ⇒ `legacyTriggerLog` 有值 = 老同步路径（先补触发观测行，与旧「先 log 后
+   * legacy」序列逐字）；无值时 `legacyWarranted` 决定是否无条件 legacy（model-switch
+   * 点 = true）。防御分支（无日志且不 warranted ⇒ 原样续跑）仅兜底，现有调用点
+   * 均不可达。
+   */
   private def forkOrLegacy(
     agentDef: AgentDef,
     resources: SharedResources,
     depth: Int,
     state: AgentState,
     legacy: => IO[Behavior[AgentCommand]],
-    onForked: AgentState => IO[Behavior[AgentCommand]]
+    onForked: AgentState => IO[Behavior[AgentCommand]],
+    gateOpen: Boolean,
+    legacyTriggerLog: Option[String],
+    legacyWarranted: Boolean,
+    forkTriggerLog: Option[String]
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    PingpongConfig.enabled.flatMap { switchOn =>
-      if !gateOpen(agentDef, depth, switchOn) then legacy
-      else startShadow(agentDef, resources, depth, state).flatMap(onForked)
-    }
+    if !gateOpen then
+      legacyTriggerLog match
+        case Some(detail) =>
+          IO(
+            logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "auto-compact-trigger", detail)
+          ) *> legacy
+        case None => if legacyWarranted then legacy else onForked(state)
+    else
+      forkTriggerLog
+        .fold(IO.unit)(d =>
+          IO(logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "auto-compact-trigger", d))
+        ) *>
+        startShadow(agentDef, resources, depth, state).flatMap(onForked)
 
   /** §A4 排队位日志（两处触发点共用）。 */
   def logQueued(
@@ -112,8 +187,10 @@ private[agent] object AgentPingpong:
   // fork（§B：C₀ 快照 + 影子 fiber）
   // ============================================================
 
-  /** B1 影子腿的最小 system 框：一句角色声明。主腿的系统提示全文（工具定义、
-    * flows、记忆块）不进影子腿（§B1「不含」清单）。 */
+  /**
+   * B1 影子腿的最小 system 框：一句角色声明。主腿的系统提示全文（工具定义、
+   * flows、记忆块）不进影子腿（§B1「不含」清单）。
+   */
   private val ShadowSystemFrame =
     "You are a session summarizer. Follow the compaction instructions in the final user message exactly. TEXT ONLY — no tool calls."
 
@@ -154,30 +231,50 @@ private[agent] object AgentPingpong:
             .getOrElse(IO.pure(Nil))
           projectRoot <- resolveProjectRoot(resources, state)
           _ <- IO(
-                 logAgentEvent(
-                   agentDef,
-                   depth,
-                   state.sessionId,
-                   state.sessionName,
-                   "pp-fork",
-                   s"T=$forkMsgCount est=${TokenEstimator.estimate(state.messages)} " +
-                     s"threshold=${state.compactThresholdTokens} shadow=$shadowId queued=$queuedNote"
-                 )
-               )
+            logAgentEvent(
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "pp-fork",
+              s"T=$forkMsgCount est=${TokenEstimator.estimate(state.messages)} " +
+                s"threshold=${state.compactThresholdTokens} shadow=$shadowId queued=$queuedNote"
+            )
+          )
           // §F2：影子状态文件 phase=compacting（§E-7 重启恢复依据；崩溃于 fiber 起飞
           // 前后都落到「作废重触发」格，一致）
           _ <- PingpongStateFile.save(
-                 sid,
-                 PingpongStateFile
-                   .Record(PingpongStateFile.Compacting, shadowId, forkMsgCount, forkedAt, None, 0, state.pingpong.ppFailures)
-               )
+            sid,
+            PingpongStateFile
+              .Record(
+                PingpongStateFile.Compacting,
+                shadowId,
+                forkMsgCount,
+                forkedAt,
+                None,
+                0,
+                state.pingpong.ppFailures
+              )
+          )
           _ <- shadowFiber(agentDef, resources, depth, state, sid, job, c0Prime, readPaths, projectRoot).start
-          // forkQueued 随 fork 置位：fork 自身即一次越阈观测（§A2）；换入完成时的
-          // 第二拍复查按 estimated(S+Δ) > threshold 裁决，位本身不直接触发。
+        // forkQueued 随 fork 置位：fork 自身即一次越阈观测（§A2）；换入完成时的
+        // 第二拍复查按 estimated(S+Δ) > threshold 裁决，位本身不直接触发。
         yield state.withShadowPending(Some(job)).withForkQueued(true)
 
-  /** 影子 fiber：一次 provider LLM 调用（resources.llm —— 与现行压缩同一模型调用
-    * 资产/回退链，§B3 默认同主腿模型）+ pingpong 模式解析 + 命令回投。全程零写。 */
+        end for
+
+  /**
+   * 影子 fiber：一次 provider LLM 调用（resources.llm —— 刀一①前与现行压缩同一
+   * 模型调用资产/回退链，§B3 默认同主腿模型；刀一①后 `pingpong.shadowModel`
+   * 点名 ⇒ 钉死单模型链，缺省仍同主腿）+ pingpong 模式解析 + 命令回投。全程零写。
+   *
+   * 刀一②（2026-10-28 无感压缩批）：fork 内跨供应商重试——单次 `send` 失败（其
+   * 内部已遍历整条候选链）先短退避重投 [[ShadowSendRetryBeats]] 拍，全灭才判败
+   * 计 ppFailures（此前一次链失败即 1/3；circuitBreakerMax=3 与 30s×2ⁿ 退避不变，
+   * 等效把三败容忍窗从 3 次链失败放大到 3×(1+2)=9 次调用级失败）。
+   * 刀一③：`<summary>` 对缺失类解析截断（刀一③判据 FullCompact.isMissingSummaryPairError）
+   * 先自动续写一拍再判败——partial 以 assistant 名义回填 + 续写指令，拼接产出重解析。
+   */
   private def shadowFiber(
     agentDef: AgentDef,
     resources: SharedResources,
@@ -193,37 +290,74 @@ private[agent] object AgentPingpong:
     // 含 CompactPreamble 的 LANGUAGE RULE / TAIL FIDELITY RULE）；二期固化
     // PingpongSummaryReminder（§H2-1），段落兼容。
     val reminder = CompactService.buildCompactReminder(depth = 0, isLead = false, sessionId = Some(sid))
-    val request = LlmRequest(
-      messages = c0Prime :+ reminder,
-      sessionId = job.shadowId, // 逻辑 id（路由/日志关联），非会话面
-      agentId = agentDef.name,
-      tools = None, // §B1：影子腿无工具
-      thinking = None,
-      systemStable = Some(ShadowSystemFrame),
-      agentModel = agentDef.model, // §B3：默认与主腿同模型；pingpong.shadowModel 二期（§H2）
-      // 与现行压缩轮同款 opt-out：server 端搜索永不进摘要请求（WebSearch P0 语义）
-      searchAllowed = false
-    )
-    resources.llm
-      .send(request) // 一次性调用：输出流吸收为文本，不外发 WS（§B3，主腿零感知）
-      .attempt
-      .flatMap {
-        case Right(resp) =>
-          // §C：S 解析——pingpong 分支（标签必需 / 无尾部保留 / 硬帽校验）
-          FullCompact.parsePingpongResponse(resp.reply, c0Prime, projectRoot, readPaths, forkSeq = job.forkMsgCount) match
-            case Right(outcome) =>
-              val sMessages = outcome.messages // 恒 [sMessage]（pingpong 无尾部保留）
-              val est = TokenEstimator.estimate(sMessages)
-              (ctx.self ! PingpongSwapReady(job.shadowId, sMessages, job.forkMsgCount, job.forkedAt, est))
-                .handleErrorWith(_ => IO.unit)
-            case Left(err) =>
-              (ctx.self ! PingpongShadowFailed(job.shadowId, err)).handleErrorWith(_ => IO.unit)
-        case Left(err) =>
-          (ctx.self ! PingpongShadowFailed(job.shadowId, err.getMessage)).handleErrorWith(_ => IO.unit)
-      }
-      .handleErrorWith(e =>
-        (ctx.self ! PingpongShadowFailed(job.shadowId, e.getMessage)).handleErrorWith(_ => IO.unit)
+    // 刀一①：shadowModel 点名 ⇒ AgentModelConfig(preferred=点名, fallbacks=Nil) 钉死
+    // 单模型链；缺省 None ⇒ agentDef.model 链逐字（一期 §B3）。
+    PingpongConfig.shadowModel.flatMap { shadowModel =>
+      val request = LlmRequest(
+        messages = c0Prime :+ reminder,
+        sessionId = job.shadowId, // 逻辑 id（路由/日志关联），非会话面
+        agentId = agentDef.name,
+        tools = None, // §B1：影子腿无工具
+        thinking = None,
+        systemStable = Some(ShadowSystemFrame),
+        agentModel = shadowModel
+          .map(m => AgentModelConfig(preferred = Some(m), fallbacks = Nil))
+          .orElse(agentDef.model), // §B3：缺省与主腿同模型链；点名则钉死摘要模型
+        // 与现行压缩轮同款 opt-out：server 端搜索永不进摘要请求（WebSearch P0 语义）
+        searchAllowed = false
       )
+
+      def parse(text: String) =
+        FullCompact.parsePingpongResponse(text, c0Prime, projectRoot, readPaths, forkSeq = job.forkMsgCount)
+
+      def deliver(outcome: FullCompact.CompactOutcome): IO[Unit] =
+        val sMessages = outcome.messages // 恒 [sMessage]（pingpong 无尾部保留）
+        val est = TokenEstimator.estimate(sMessages)
+        (ctx.self ! PingpongSwapReady(job.shadowId, sMessages, job.forkMsgCount, job.forkedAt, est))
+          .handleErrorWith(_ => IO.unit)
+
+      def fail(err: String): IO[Unit] =
+        (ctx.self ! PingpongShadowFailed(job.shadowId, err)).handleErrorWith(_ => IO.unit)
+
+      /** 刀一②：一次 send（内含整条候选链遍历）+ 失败短退避重投 beatsLeft 拍。 */
+      def sendWithBeats(req: LlmRequest, beatsLeft: Int): IO[Either[Throwable, LlmResponse]] =
+        resources.llm.send(req).attempt.flatMap {
+          case r @ Right(_) => IO.pure(r)
+          case l @ Left(_) if beatsLeft > 0 =>
+            IO.sleep(ShadowSendRetryDelayMs.millis) *> sendWithBeats(req, beatsLeft - 1)
+          case l => IO.pure(l)
+        }
+
+      sendWithBeats(request, ShadowSendRetryBeats)
+        .flatMap {
+          case Right(resp) =>
+            parse(resp.reply) match
+              case Right(outcome) => deliver(outcome)
+              case Left(err) if FullCompact.isMissingSummaryPairError(err) =>
+                // 刀一③：解析截断先续写一拍——partial 原文以 assistant 名义回填，
+                // 续写指令要求从断点接写并补 </summary> 收尾；拼接产出重解析。
+                val contRequest = request.copy(
+                  messages = request.messages
+                    :+ Message(MessageRole.Assistant, Left(resp.reply))
+                    :+ Message(MessageRole.User, Left(ShadowContinuationInstruction))
+                )
+                resources.llm.send(contRequest).attempt.flatMap {
+                  case Right(resp2) =>
+                    parse(s"${resp.reply}\n${resp2.reply}") match
+                      case Right(outcome) => deliver(outcome)
+                      case Left(err2) => fail(err2) // 续写拍后仍不可解析 ⇒ 判败（§E 一拍续写，不重试）
+                  case Left(_) =>
+                    fail(err) // 续写拍传输失败：按原始解析失败判（截断是语义真因）
+                }
+              case Left(err) => fail(err) // 其余解析失败：不适用续写，径直判败
+          case Left(e) => fail(Option(e.getMessage).getOrElse(e.toString))
+        }
+        .handleErrorWith(e =>
+          (ctx.self ! PingpongShadowFailed(job.shadowId, e.getMessage)).handleErrorWith(_ => IO.unit)
+        )
+    }
+
+  end shadowFiber
 
   private def resolveProjectRoot(resources: SharedResources, state: AgentState): IO[String] =
     state.folderId match
@@ -251,9 +385,11 @@ private[agent] object AgentPingpong:
             .flatMap(st => executeSwap(agentDef, resources, depth, st, sid, ready).map(_.state))
         }
 
-  /** §D2-2：SwapReady 到达时主腿 processing/frozen → 只置 sReadyPending + 落
-    * state.json（s-ready，崩溃后 S 续用的依据），换入挂在本轮 finishTurn→idle
-    * 边界（本轮提交与换入之间不插入任何 LLM 调用）。 */
+  /**
+   * §D2-2：SwapReady 到达时主腿 processing/frozen → 只置 sReadyPending + 落
+   * state.json（s-ready，崩溃后 S 续用的依据），换入挂在本轮 finishTurn→idle
+   * 边界（本轮提交与换入之间不插入任何 LLM 调用）。
+   */
   def handleSwapReadyRecorded(
     agentDef: AgentDef,
     depth: Int,
@@ -265,8 +401,10 @@ private[agent] object AgentPingpong:
       case Some(ready) =>
         state.sessionId.fold(IO.pure(state))(sid => recordSReady(agentDef, depth, state, sid, ready))
 
-  /** 影子完成校验：shadowPending 与 shadowId 对得上才算数（reset / 重复投递 /
-    * 僵尸 fiber 的迟到件一律丢弃——§E-10 的收口机制）。 */
+  /**
+   * 影子完成校验：shadowPending 与 shadowId 对得上才算数（reset / 重复投递 /
+   * 僵尸 fiber 的迟到件一律丢弃——§E-10 的收口机制）。
+   */
   private def validateSwapReady(
     agentDef: AgentDef,
     depth: Int,
@@ -307,29 +445,41 @@ private[agent] object AgentPingpong:
     val deltaTurns = countRoundStarts(state.messages.drop(ready.forkMsgCount))
     for
       _ <- PingpongStateFile.save(
-             sid,
-             PingpongStateFile
-               .Record(PingpongStateFile.SReady, ready.shadowId, ready.forkMsgCount, ready.forkedAt, Some(sText), ready.sTokensEst, state.pingpong.ppFailures)
-           )
+        sid,
+        PingpongStateFile
+          .Record(
+            PingpongStateFile.SReady,
+            ready.shadowId,
+            ready.forkMsgCount,
+            ready.forkedAt,
+            Some(sText),
+            ready.sTokensEst,
+            state.pingpong.ppFailures
+          )
+      )
       _ <- IO(
-             logAgentEvent(
-               agentDef,
-               depth,
-               state.sessionId,
-               state.sessionName,
-               "pp-s-ready",
-               s"latency=${ready.latencyMs}ms sTokens=${ready.sTokensEst} deltaTurns=$deltaTurns sPath=-"
-             )
-           )
+        logAgentEvent(
+          agentDef,
+          depth,
+          state.sessionId,
+          state.sessionName,
+          "pp-s-ready",
+          s"latency=${ready.latencyMs}ms sTokens=${ready.sTokensEst} deltaTurns=$deltaTurns sPath=-"
+        )
+      )
     yield state.withSReadyPending(Some(ready))
+    end for
+  end recordSReady
 
   // ============================================================
   // 影子失败（§E-1/2/3）
   // ============================================================
 
-  /** 失败态：ppFailures+1、清全部乒乓位（退避后下个判定点自然重新 fork）；连续
-    * circuitBreakerMax(3) 次 → 下个触发回落老同步路径一拍（触发点的 ppFailures
-    * 检查）。僵尸失败件（shadowPending 不匹配）丢弃。 */
+  /**
+   * 失败态：ppFailures+1、清全部乒乓位（退避后下个判定点自然重新 fork）；连续
+   * circuitBreakerMax(3) 次 → 下个触发回落老同步路径一拍（触发点的 ppFailures
+   * 检查）。僵尸失败件（shadowPending 不匹配）丢弃。
+   */
   def handleShadowFailed(
     agentDef: AgentDef,
     depth: Int,
@@ -354,21 +504,22 @@ private[agent] object AgentPingpong:
       for
         _ <- state.sessionId.fold(IO.unit)(sid => PingpongStateFile.clear(sid))
         _ <- IO(
-               logAgentEvent(
-                 agentDef,
-                 depth,
-                 state.sessionId,
-                 state.sessionName,
-                 "pp-failed",
-                 s"err=${cmd.err.take(160)} failures=$failures/${cfg.circuitBreakerMax}" +
-                   s"${if willFallback then " → next trigger falls back to legacy sync" else ""}"
-               )
-             )
+          logAgentEvent(
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "pp-failed",
+            s"err=${cmd.err.take(160)} failures=$failures/${cfg.circuitBreakerMax}" +
+              s"${if willFallback then " → next trigger falls back to legacy sync" else ""}"
+          )
+        )
       yield state
         .withShadowPending(None)
         .withSReadyPending(None)
         .withForkQueued(false)
         .withPpFailures(failures, System.currentTimeMillis())
+      end for
 
   // ============================================================
   // 三步原子换入（§D3）
@@ -404,15 +555,15 @@ private[agent] object AgentPingpong:
       for
         _ <- PingpongStateFile.clear(sid)
         _ <- IO(
-               logAgentEvent(
-                 agentDef,
-                 depth,
-                 state.sessionId,
-                 state.sessionName,
-                 "pp-swap-invalid",
-                 s"forkMsgCount=${ready.forkMsgCount} size=${state.messages.size} shadow=${ready.shadowId}"
-               )
-             )
+          logAgentEvent(
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "pp-swap-invalid",
+            s"forkMsgCount=${ready.forkMsgCount} size=${state.messages.size} shadow=${ready.shadowId}"
+          )
+        )
       yield SwapOutcome(landed = false, state = state.withPingpongCleared)
     else
       val sMessage = ready.sMessages.head // parse 保证 ≥1（CompactOutcome 恒含摘要消息）
@@ -427,15 +578,15 @@ private[agent] object AgentPingpong:
             for
               _ <- PingpongStateFile.clear(sid)
               _ <- IO(
-                     logAgentEvent(
-                       agentDef,
-                       depth,
-                       state.sessionId,
-                       state.sessionName,
-                       "pp-swap-failed",
-                       s"err=${e.getMessage} shadow=${ready.shadowId} — swap abandoned, re-fork at next threshold crossing"
-                     )
-                   )
+                logAgentEvent(
+                  agentDef,
+                  depth,
+                  state.sessionId,
+                  state.sessionName,
+                  "pp-swap-failed",
+                  s"err=${e.getMessage} shadow=${ready.shadowId} — swap abandoned, re-fork at next threshold crossing"
+                )
+              )
             yield SwapOutcome(landed = false, state = state.withPingpongCleared)
           case Right(_) =>
             // ③ 指针切换（与现行 CompactionComplete 换入态清理同形）
@@ -453,8 +604,12 @@ private[agent] object AgentPingpong:
             yield SwapOutcome(landed = true, state = second)
       yield outcome
 
-  /** §F1/F2：pp-swap 日志 + 档案（HistoryArchiver 原样复用，before = 被替换的
-    * C₀+Δ 全列表，after = S+Δ）。forkTurn 异步：观测失败绝不阻断换入本身。 */
+      end for
+
+  /**
+   * §F1/F2：pp-swap 日志 + 档案（HistoryArchiver 原样复用，before = 被替换的
+   * C₀+Δ 全列表，after = S+Δ）。forkTurn 异步：观测失败绝不阻断换入本身。
+   */
   private def swapObservability(
     agentDef: AgentDef,
     resources: SharedResources,
@@ -494,6 +649,8 @@ private[agent] object AgentPingpong:
             s"forkSeq=${ready.forkMsgCount} estBefore=$estBefore estAfter=$estAfter"
         )
       )
+
+  end swapObservability
 
   /**
    * §A2 换入后立即复查 / §A4 排队位解锁：forkQueued 在位 ⇒ estimated(S+Δ) 仍过
@@ -540,15 +697,15 @@ private[agent] object AgentPingpong:
             for
               _ <- PingpongStateFile.clear(sid)
               _ <- IO(
-                     logAgentEvent(
-                       agentDef,
-                       depth,
-                       state.sessionId,
-                       state.sessionName,
-                       "pp-recover",
-                       s"phase=compacting shadow=${rec.shadowId} → discarded; re-fork at next threshold crossing (Δ intact)"
-                     )
-                   )
+                logAgentEvent(
+                  agentDef,
+                  depth,
+                  state.sessionId,
+                  state.sessionName,
+                  "pp-recover",
+                  s"phase=compacting shadow=${rec.shadowId} → discarded; re-fork at next threshold crossing (Δ intact)"
+                )
+              )
             yield state
           case Some(rec) if rec.phase == PingpongStateFile.SReady =>
             PingpongStateFile.sMessageOf(rec) match
@@ -556,15 +713,15 @@ private[agent] object AgentPingpong:
                 for
                   _ <- PingpongStateFile.clear(sid)
                   _ <- IO(
-                         logAgentEvent(
-                           agentDef,
-                           depth,
-                           state.sessionId,
-                           state.sessionName,
-                           "pp-recover",
-                           s"phase=s-ready shadow=${rec.shadowId} → sText empty, discarded"
-                         )
-                       )
+                    logAgentEvent(
+                      agentDef,
+                      depth,
+                      state.sessionId,
+                      state.sessionName,
+                      "pp-recover",
+                      s"phase=s-ready shadow=${rec.shadowId} → sText empty, discarded"
+                    )
+                  )
                 yield state
               case Some(sMsg) =>
                 val alreadySwapped =
@@ -573,45 +730,47 @@ private[agent] object AgentPingpong:
                   for
                     _ <- PingpongStateFile.clear(sid)
                     _ <- IO(
-                           logAgentEvent(
-                             agentDef,
-                             depth,
-                             state.sessionId,
-                             state.sessionName,
-                             "pp-recover",
-                             s"phase=s-ready forkSeq=${rec.forkMsgCount} → already swapped, sidecar cleared"
-                           )
-                         )
+                      logAgentEvent(
+                        agentDef,
+                        depth,
+                        state.sessionId,
+                        state.sessionName,
+                        "pp-recover",
+                        s"phase=s-ready forkSeq=${rec.forkMsgCount} → already swapped, sidecar cleared"
+                      )
+                    )
                   yield state
                 else if rec.forkMsgCount > state.messages.size then
                   for
                     _ <- PingpongStateFile.clear(sid)
                     _ <- IO(
-                           logAgentEvent(
-                             agentDef,
-                             depth,
-                             state.sessionId,
-                             state.sessionName,
-                             "pp-swap-invalid",
-                             s"recover forkMsgCount=${rec.forkMsgCount} size=${state.messages.size} — discarded"
-                           )
-                         )
+                      logAgentEvent(
+                        agentDef,
+                        depth,
+                        state.sessionId,
+                        state.sessionName,
+                        "pp-swap-invalid",
+                        s"recover forkMsgCount=${rec.forkMsgCount} size=${state.messages.size} — discarded"
+                      )
+                    )
                   yield state
                 else
-                  val ready = PingpongSReady(rec.shadowId, List(sMsg), rec.forkMsgCount, rec.forkedAt, rec.sTokensEst, 0L)
+                  val ready =
+                    PingpongSReady(rec.shadowId, List(sMsg), rec.forkMsgCount, rec.forkedAt, rec.sTokensEst, 0L)
                   for
                     _ <- IO(
-                           logAgentEvent(
-                             agentDef,
-                             depth,
-                             state.sessionId,
-                             state.sessionName,
-                             "pp-recover",
-                             s"phase=s-ready forkSeq=${rec.forkMsgCount} → reusing S (no re-compute), swap at this idle boundary"
-                           )
-                         )
+                      logAgentEvent(
+                        agentDef,
+                        depth,
+                        state.sessionId,
+                        state.sessionName,
+                        "pp-recover",
+                        s"phase=s-ready forkSeq=${rec.forkMsgCount} → reusing S (no re-compute), swap at this idle boundary"
+                      )
+                    )
                     outcome <- executeSwap(agentDef, resources, depth, state, sid, ready)
                   yield outcome.state
+                end if
           case Some(_) => IO.pure(state)
         }
       }
@@ -632,7 +791,7 @@ private[agent] object AgentPingpong:
           case Left(text) => text.trim.nonEmpty
           case Right(blocks) =>
             blocks.exists { case ContentBlock.Text(t) => t.trim.nonEmpty; case _ => false } &&
-              !blocks.exists(_.isInstanceOf[ContentBlock.ToolResult])
+            !blocks.exists(_.isInstanceOf[ContentBlock.ToolResult])
       }
     }
 
