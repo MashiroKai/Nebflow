@@ -1,12 +1,18 @@
-// askDock.js — Canvas 文件 ask mode（2026-10-28 实施批）。
+// askDock.js — Canvas 文件 ask mode（2026-10-28 实施批；同日 22:42 v2.1 简化修订）。
 //
-// 形态 = 样张 v2（作者八条令）：canvas 右下角最靠右入口钮 → 毛玻璃输入条 →
-// 气泡列从按钮位置长出（弹幕式升腾、按龄渐隐、顶部渐变模糊过渡）→ 零面板/
-// 零弹窗/零遮罩。机制（docs/design/20261028_canvas-ask-mode-design.zh-CN.md）：
-//   - 每文件独立 session（`ask-<hash(absPath)>`，切卡即切该文件的会话/徽标/
-//     上下文——作者令⑦）；收起保留、再开复现（§2 收起三通路 + §4 持久化）；
+// 形态 = 样张 v2.1（作者八条令 + v2.1 减法令「简约一点。不需要两个箭头，就右侧
+// 一个发送按钮就行，显示内容也尽量删掉不必要的消息」）：canvas 右下角最靠右
+// 入口钮 → 毛玻璃输入条（输入 + 右侧唯一发送钮，转交钮自 UI 撤除）→ 气泡列从
+// 按钮位置长出（弹幕式升腾、按龄渐隐、顶部渐变模糊过渡）→ 零面板/零弹窗/零遮罩。
+// v2.1 显示面减法：气泡面只出 user/ai 两族——ghost 提示行、session 徽标、转交
+// 回执等非问答呈现删掉或收进不可见处（转录数据仍存、服务端为权威，渲染面永久
+// 过滤 sys；错误文本落助手气泡槽；主会话回问照 §7 以用户消息形态呈现）。
+// 机制（docs/design/20261028_canvas-ask-mode-design.zh-CN.md）：
+//   - 每文件独立 session（`ask-<hash(absPath)>`，切卡即切该文件的会话/上下文
+//     ——作者令⑦）；收起保留、再开复现（§2 收起三通路 + §4 持久化）；
 //   - 后端 WS 域（WsAskHandlers）：askOpen（绑定+历史回放）/askQuestion
-//     （dispatchUserText 同腿流式）/askHandoff（§7 转交）/askReply（§7 回问）；
+//     （dispatchUserText 同腿流式）/askHandoff（§7 转交——v2.1 起 UI 无入口，
+//     由 ask agent 工具腿发起）/askReply（§7 回问）；
 //   - 流式帧（textDelta/done/error 等）经 ws.js ask 拦截面（sessionId 前缀
 //     `ask-`）路由进本模块，与主会话视图零交集（§2 z 序/视图排他同律）。
 // 移动（#988 同律）：气泡列 touch-action: pan-y 原生纵滚；canvasGestures 的
@@ -28,19 +34,14 @@ function tt(zh, en) {
 const ICONS = {
   chat: '<svg class="ask-fab-ic-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>',
   close: '<svg class="ask-fab-ic-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>',
-  handoff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M8 7h9v9"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
 };
 
 /** @type {Map<string, {sid: string, key: string, fileName: string, msgs: Array<{role: string, text: string, receipt?: boolean}>, stateSent: boolean}>} */
 const sessions = new Map(); // key: absPath
-let el = null; // { fab, dock, colwrap, col, veil, ghost, sess, sessFn, sessKey, input, send, handoff }
+let el = null; // { fab, dock, col, input, send }（v2.1：ghost/sess/handoff 件随减法退场）
 let currentFile = ''; // absPath of the active file entry ('' = 非文件卡)
 let inited = false;
-
-function esc(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
 
 // 会话 id = 后端 AskSessions 单点（sha256(absPath) 前 8 hex，前缀 ask-）——
 // 客户端同式派生（crypto.subtle），绑定面零额外往返。
@@ -105,15 +106,11 @@ function mount() {
 
   const dock = document.createElement('div');
   dock.className = 'ask-dock closed';
+  // v2.1 减法（作者令 2026-10-28 22:42）：输入条只留右侧一枚发送钮；ghost 提示
+  // 行 / session 徽标不渲染（显示面删掉不必要的消息）。
   dock.innerHTML =
     '<div class="ask-colwrap"><div class="ask-col"></div><div class="ask-veil" aria-hidden="true"></div></div>' +
-    '<div class="ask-ghost">' +
-    tt('上下文 = <b>该文件全文 + 记忆检索 + 文档图谱邻接</b> · 与主会话历史互相分割',
-       'Context = <b>this file + memory recall + doc-graph adjacency</b> · isolated from main chat') +
-    '</div>' +
-    '<div class="ask-sess"><span class="ask-sess-live" aria-hidden="true"></span><span class="ask-sess-fn"></span><span class="ask-sess-key"></span></div>' +
     '<div class="ask-input">' +
-    '<button type="button" class="ask-handoff" title="' + tt('转给主会话处理', 'Hand to main session') + '" aria-label="' + tt('转给主会话', 'Hand to main session') + '">' + ICONS.handoff + '</button>' +
     '<input type="text" placeholder="' + tt('针对这份文件提问…', 'Ask about this file…') + '" aria-label="' + tt('提问', 'Question') + '">' +
     '<button type="button" class="ask-send" aria-label="' + tt('发送', 'Send') + '">' + ICONS.send + '</button>' +
     '</div>';
@@ -125,12 +122,7 @@ function mount() {
     fab,
     dock,
     col: dock.querySelector('.ask-col'),
-    ghost: dock.querySelector('.ask-ghost'),
-    sess: dock.querySelector('.ask-sess'),
-    sessFn: dock.querySelector('.ask-sess-fn'),
-    sessKey: dock.querySelector('.ask-sess-key'),
     input: dock.querySelector('input'),
-    handoff: dock.querySelector('.ask-handoff'),
     send: dock.querySelector('.ask-send'),
   };
 
@@ -139,7 +131,6 @@ function mount() {
   dock.addEventListener('pointerdown', (e) => e.stopPropagation());
   el.send.addEventListener('click', () => submit());
   el.input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
-  el.handoff.addEventListener('click', () => handoff());
   el.input.addEventListener('focus', syncSeat);
 
   // 收起三通路之一：点击画布空白（#canvas-content 本体 = 无浮层处；卡片内
@@ -186,7 +177,6 @@ function syncToActiveTab() {
   if (isOpen()) {
     if (currentFile) {
       render();
-      openState();
       // 切卡即切 session（作者令⑦）：新文件的会话未回放过 → 即刻 askOpen
       // （绑定 + 历史回放；服务端为权威，重复帧幂等）。
       ensureActiveSession().then((loaded) => {
@@ -246,15 +236,6 @@ function syncSeat() {
 
 function isOpen() { return !!el && !el.dock.classList.contains('closed'); }
 
-function openState() {
-  const s = activeSession();
-  if (!s) return;
-  el.ghost.style.display = s.msgs.length ? 'none' : '';
-  el.sessFn.textContent = s.fileName;
-  el.sessFn.title = s.fileName;
-  el.sessKey.textContent = s.key || '';
-}
-
 async function open() {
   if (!currentFile) return; // 非文件卡无 ask 面（入口常驻，点了无效即静默）
   const s = await ensureActiveSession();
@@ -262,7 +243,6 @@ async function open() {
   el.dock.classList.remove('closed');
   el.fab.classList.add('open');
   el.fab.classList.remove('pulse');
-  openState();
   render();
   askOpen(s);
   syncSeat();
@@ -289,22 +269,19 @@ function render() {
   const s = activeSession();
   el.col.textContent = '';
   if (!s) return;
-  const msgs = s.msgs;
-  msgs.forEach((m, i) => {
+  // v2.1 显示面减法：只出 user/ai 两族——sys（回执/状态噪声类）转录仍存但永不
+  // 呈现（收进不可见处；主会话回问在 consumeFrame 已按 §7 落 user 族）。
+  const vis = s.msgs.filter((m) => m.role !== 'sys');
+  vis.forEach((m, i) => {
     const b = document.createElement('div');
-    b.className = 'ask-bub ' + (m.role === 'user' ? 'user' : m.role === 'sys' ? 'sys' : 'ai');
-    if (m.role === 'sys' && m.receipt) {
-      b.innerHTML = '<span class="ask-lbl">↗ ' + esc(tt('已发送到主会话', 'Sent to main session')) + '</span> · ' + esc(m.text);
-    } else {
-      b.textContent = m.text;
-    }
+    b.className = 'ask-bub ' + (m.role === 'user' ? 'user' : 'ai');
+    b.textContent = m.text;
     // 弹幕感：越靠上（越旧）越透明（样张按龄渐隐同律）。
-    const d = msgs.length - 1 - i;
+    const d = vis.length - 1 - i;
     b.style.setProperty('--ask-age-alpha', String(Math.max(0.3, 1 - d * 0.13)));
     b.setAttribute('data-age', String(d));
     el.col.appendChild(b);
   });
-  openState();
   requestAnimationFrame(() => { el.col.scrollTop = el.col.scrollHeight; });
 }
 
@@ -348,22 +325,6 @@ async function submit() {
   sendWs({ type: 'askQuestion', sessionId: s.sid, content: v, mainSessionId: state.activeSessionId || '' });
 }
 
-async function handoff() {
-  if (!el || !currentFile) return;
-  const s = await ensureActiveSession();
-  if (!s) return;
-  const fromInput = el.input.value.trim();
-  let q = fromInput;
-  if (!q) {
-    for (let i = s.msgs.length - 1; i >= 0; i--) {
-      if (s.msgs[i].role === 'user') { q = s.msgs[i].text; break; }
-    }
-  }
-  if (!q) return;
-  if (fromInput) el.input.value = '';
-  sendWs({ type: 'askHandoff', sessionId: s.sid, question: q });
-}
-
 let typingNode = null;
 function appendTyping() {
   if (!el) return;
@@ -378,11 +339,6 @@ function appendTyping() {
 function removeTyping() {
   if (typingNode && typingNode.isConnected) typingNode.remove();
   typingNode = null;
-}
-
-function pushSys(s, text, opts) {
-  s.msgs.push({ role: 'sys', text, receipt: !!(opts && opts.receipt) });
-  if (s === activeSession() && isOpen()) { removeTyping(); render(); }
 }
 
 /** ws.js ask 拦截面：sessionId 前缀 `ask-` 的帧全部进这里（主视图零交集）。 */
@@ -436,18 +392,28 @@ function consumeFrame(msg) {
       break;
     }
     case 'error': {
-      pushSys(entry, tt('出错了：', 'Error: ') + (msg.message || 'unknown'), {});
+      // v2.1：错误不再起 sys 气泡——文本落助手气泡槽（问答面只出两族）。
+      const last = entry.msgs[entry.msgs.length - 1];
+      const errText = tt('出错了：', 'Error: ') + (msg.message || 'unknown');
+      if (last && last.role === 'ai' && !last.text) last.text = errText;
+      else entry.msgs.push({ role: 'ai', text: errText });
+      if (entry === activeSession() && isOpen()) { removeTyping(); render(); }
       break;
     }
     case 'askHandoffAck': {
-      if (msg.ok) pushSys(entry, msg.question || '', { receipt: true });
+      // v2.1：转交回执收进不可见处——不呈现（§7 转交机制不变，ack 静默消费；
+      // 主会话侧 injected 气泡承担转交可见性）。
       break;
     }
     case 'user': {
       // 注入族（injected:true）：主会话回问腿（后端 WsAskHandlers.askReply 以
       // ExternalEvent(source=main) 注入 ask 会话 → AgentActor 发 injected user
-      // 帧）。「主会话回问：」前缀由后端注入文本携带，气泡照 sys 族呈现（§7）。
-      if (msg.injected) pushSys(entry, msg.text || '', {});
+      // 帧）。§7 契约即「以用户消息形态呈现」（前缀「主会话回问：」由后端注入
+      // 文本携带）——v2.1 起直接进 user 族气泡（问答面两族制，零 sys 呈现）。
+      if (msg.injected) {
+        entry.msgs.push({ role: 'user', text: msg.text || '' });
+        if (entry === activeSession() && isOpen()) { removeTyping(); render(); }
+      }
       break;
     }
     default:

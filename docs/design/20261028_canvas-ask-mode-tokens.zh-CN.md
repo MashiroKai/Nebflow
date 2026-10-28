@@ -5,7 +5,7 @@ status: draft
 
 # Canvas 文件 ask mode · 玻璃 token 规格页（设计资产）
 
-> 本页是 [[20261028_canvas-ask-mode-design.zh-CN]]（设计稿）与 [[20261028_canvas-ask-mode-mockup-v2.html]]（效果演示样张（[[glossary#^mockup-sample]]）v2，v1 样张 superseded 留档）的配套资产页：把演示里用到的全部样式整理成 **token 表 + 配方块**，作者确认样张后，实施批按本页直接消费——这是「之后工作能复用」的载体。状态：前端设计确认前草案。（2026-10-28 更新：样张 v2 已获作者验收，**E 表已随实施批落位** `web/css/ask.css`——见 §E 实施落位注记。）
+> 本页是 [[20261028_canvas-ask-mode-design.zh-CN]]（设计稿）与 [[20261028_canvas-ask-mode-mockup-v2.html]]（效果演示样张（[[glossary#^mockup-sample]]）v2，v1 样张 superseded 留档）的配套资产页：把演示里用到的全部样式整理成 **token 表 + 配方块**，作者确认样张后，实施批按本页直接消费——这是「之后工作能复用」的载体。状态：前端设计确认前草案。（2026-10-28 更新：样张 v2 已获作者验收，**E 表已随实施批落位** `web/css/ask.css`——见 §E 实施落位注记；同日 22:42 作者减法令落 **v2.1 简化修订**，见 §E v2.1 注记。）
 > **2026-10-28 17:5x 作者八条令增补**：形态改版（右下角最靠右入口钮 → 点击弹输入框 → 气泡列从按钮位置长出；无窗体背景、毛玻璃气泡、顶部渐变模糊过渡、小巧不弹窗；品牌色取 stand-website 色板；每文件独立 session；开合动画锚定按钮）——见 **E 表**；A/C 表继续有效，B 表几何档被 E-2 取代（留档）。
 
 ## 0. 单源原则
@@ -136,6 +136,13 @@ status: draft
 > - **实施假设档（回验点）**：亮档气泡/输入/徽标面色（E-3 配方的亮档衍射：user/sys 渐变、`--ask-bub-bg` 系）——样张仅给暗档基准，亮档按 E-1 文字/底列同式派生；作者过目亮档后如有异，只改 ask.css 亮档段一处。
 > - **D-2 回填**：E 表提案名即实际名，零回填差异；B 表留档未消费（v2 不适用）。
 
+> **v2.1 简化修订注记（2026-10-28 22:42 作者减法令，逐字：「简约一点。不需要两个箭头，就右侧一个发送按钮就行，显示内容也尽量删掉不必要的消息。」）**：
+> - **单箭头（输入条减法）**：输入条减为「输入 + 右侧唯一发送钮」——转交钮自 UI 撤除，§7 转交机制与 §5 工具面不动（ask agent 侧 `send_message_to_main_chat` 仍可发起；ack 回执收进不可见处）。E-2 几何值零改动（E-2 本就未列转交钮档）。
+> - **纯问答面（显示面减法）**：气泡面只出 **user / ai 两族**——ghost 提示行、session 徽标、转交回执等非问答呈现删掉或收进不可见处：转录数据仍存（服务端为权威），渲染面永久过滤 sys；主会话回问照 §7 以用户消息形态呈现（user 族）；错误文本落助手气泡槽。
+> - **E-1 消费收窄**：`--ask-accent`（紫·强调）消费面随减法收窄 = **入口钮 session 活性紫点**（`.ask-fab .ask-sess-dot`）——v2 的「session 徽标 / 转交钮 / 转交回执气泡」三项消费随件退场；表值不改。
+> - **ask.css 同批减重**：退场件的规则与 token 随消费方一并删除——`.ask-ghost` / `.ask-sess` / `.ask-handoff` / `.ask-bub.sys` 规则组，`--ask-sess-bg/-border`、`--ask-sys-bub-bg/-border` 四枚 token（亮暗双档同删）；**E-1/E-2 其余值逐字未改**，本页表体留档不删（B 表同款留档惯例），消费关系以本注记为准。
+> - **样张同步**：样张 v2 页内已标注「v2.1 简化修订」+ 改动点（紫色注记行，作者令逐字入页）；前后对比截图见 `evidence/ask-v2.1/`（before = v2.0 实施态，after = v2.1）。
+
 ### E-1 品牌色板（取自 stand-website 仓 `app/globals.css`，逐字）
 
 出处：亮档 = `@theme`（globals.css:4-21）；暗档 = `html[data-theme="dark"]` 覆盖（:115-127）；绿非交互注记 = globals.css:14-20。
@@ -144,7 +151,7 @@ status: draft
 |---|---|---|---|---|
 | `--ask-brand` | `#3b82f6` | `#60a5fa` | `--color-primary` | **功能/交互色**：入口钮、发送钮、用户气泡玻璃、focus 环 |
 | `--ask-brand-light` | `#60a5fa` | `#93c5fd` | `--color-primary-light` | 入口钮图标、渐变端 |
-| `--ask-accent` | `#8b5cf6` | `#a78bfa` | `--color-accent` | **强调**：session 徽标点、转交钮、转交回执气泡 |
+| `--ask-accent` | `#8b5cf6` | `#a78bfa` | `--color-accent` | **强调**：入口钮 session 活性紫点（v2.1 收窄至此——v2 的 session 徽标点/转交钮/转交回执气泡消费随减法退场，见 §E v2.1 注记） |
 | `--ask-pixel`（禁交互） | `#07c160` | `#07c25f` | `--color-pixel` | **不消费**——源码注记「deliberately NOT an interactive control color」，ask 面无绿钮（v1 的绿发送钮随 E 废） |
 | 文字/底 | `#0f172a` / `#ffffff` / `#f8fafc` / `#64748b` | `#e6edf3` / `#0d1117` / `#161b22` / `#98a0aa` | `--color-foreground/-background/-card/-muted` | 气泡文字、session 徽标副字 |
 | 链接（docs-scope） | `#2563eb` / `#1d4ed8` | `#7aa5f8` / `#9dbcfa` | `--color-link(-strong)` | cite 引用徽标 |
@@ -165,6 +172,8 @@ status: draft
 | `--z-ask-dock` | `24`（< 顶行 `30`） | 同 | **覆盖层与顶行排他 z 序**：ask 层永在顶行（主胶囊/堆叠钮/卡头/切换条）之下，顶带渐隐即视觉边界 |
 
 ### E-3 v2 核心配方（复制即用；值 = A 表 + E-1/E-2）
+
+> **v2.1 注记**：下方 `.ask-bub.sys` 配方随回执族退场留档（渲染面零消费，ask.css 已删；`.ask-bub.user`/`.ask-bub` 基底照常消费）；输入条配方 = 输入 + 右侧唯一发送钮（v2.1 单箭头）。
 
 ```css
 /* ④⑤ 毛玻璃气泡（无窗体——气泡自身就是全部容器，无面板背景） */
