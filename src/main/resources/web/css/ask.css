@@ -1,0 +1,309 @@
+/* ask.css — Canvas 文件 ask mode（2026-10-28 实施批）。
+ *
+ * 形态 = 样张 v2（docs/design/20261028_canvas-ask-mode-mockup-v2.html，作者八条令
+ * 2026-10-28 17:5x）：canvas 右下角最靠右 44×44 品牌蓝玻璃圆钮入口 → 点击毛玻璃
+ * 输入条从按钮位置向上长出（transform-origin 锚定按钮圆心）→ 气泡弹幕式升腾按龄
+ * 渐隐（全毛玻璃 blur16+sat1.4 无窗体背景）→ 列顶 64px 渐变模糊过渡带（mask 渐隐
+ * +backdrop 模糊幕，天然止于顶行之下）→ 小巧不占 canvas（列 max-h 316/移动 250）
+ * → 每文件独立 session（ask:<hash>，切卡即切）→ 开合同一条缓动曲线 → z 序 24 < 顶
+ * 行 30 永不入顶行。零面板/零弹窗/零遮罩。
+ *
+ * token 单源：玻璃基底引用 sapphire.css（--glass-* / --glass-control-* /
+ * --frost-shadow / --capsule-h）；品牌色 = stand-website 色板（token 页 E-1 表，
+ * 蓝=功能 / 紫=强调 / 绿=身份·非交互不消费）；几何/材质 = token 页 E-2 表；
+ * 动效 = base.css --panel-ease/--panel-duration。亮暗双档（E-1 双列，暗档为准）。
+ * 本文件只承载 ask 域 token 与组件规则——与样张冲突处以样张 v2 为准。
+ */
+
+/* ═══ E 表 token（token 规格页 20261028_canvas-ask-mode-tokens.zh-CN §E）═══ */
+:root {
+  /* E-1 品牌色板（stand-website@app/globals.css @theme 亮档，逐字） */
+  --ask-brand: #3b82f6;          /* --color-primary 蓝 = 功能/交互色 */
+  --ask-brand-light: #60a5fa;    /* --color-primary-light */
+  --ask-accent: #8b5cf6;         /* --color-accent 紫 = 强调 */
+  --ask-fg: #0f172a;             /* --color-foreground */
+  --ask-muted: #64748b;          /* --color-muted */
+  --ask-bub-bg: rgba(255, 255, 255, 0.62);
+  --ask-bub-border: rgba(15, 23, 42, 0.09);
+  --ask-input-bg: rgba(255, 255, 255, 0.68);
+  --ask-input-border: rgba(15, 23, 42, 0.10);
+  --ask-sess-bg: rgba(255, 255, 255, 0.66);
+  --ask-sess-border: rgba(15, 23, 42, 0.09);
+  --ask-dot-ring: rgba(255, 255, 255, 0.9);
+
+  /* E-2 几何/材质档 */
+  --ask-fab-size: 44px;          /* 入口钮（命中盒=视觉径） */
+  --ask-fab-gap: 14px;           /* 钮距画布右缘 */
+  --ask-fab-bottom: 14px;        /* 钮距画布下缘（JS 随角落圆钮簇实测让位） */
+  --ask-dock-w: 372px;           /* 覆盖层宽（= 输入框档宽） */
+  --ask-col-maxh: 316px;         /* 气泡列 max-height（小巧不占 canvas） */
+  --ask-fade-h: 64px;            /* 顶部渐变模糊过渡带高 */
+  --ask-bub-maxw: 306px;         /* 气泡 max-width */
+  --ask-bub-blur: 16px;          /* 气泡毛玻璃 blur（配方 blur() saturate(1.4)） */
+  --ask-veil-blur: 8px;          /* 顶部模糊幕 blur */
+  --z-ask-dock: 24;              /* < 顶行 30（排他 z 序：永不入顶行） */
+
+  /* 亮档气泡色（E-1 文字/底列派生；样张为暗档基准，亮档为实施假设档） */
+  --ask-user-bub-bg: linear-gradient(135deg, rgba(59, 130, 246, 0.22), rgba(37, 99, 235, 0.14));
+  --ask-user-bub-border: rgba(59, 130, 246, 0.38);
+  --ask-sys-bub-bg: linear-gradient(135deg, rgba(139, 92, 246, 0.16), rgba(124, 58, 237, 0.10));
+  --ask-sys-bub-border: rgba(139, 92, 246, 0.34);
+  --ask-link: #1d4ed8;           /* --color-link-strong 亮（cite 徽标） */
+}
+
+/* 暗档（E-1 html[data-theme=dark] 列，逐字；sapphire 同款 media + data-theme 双机制） */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ask-brand: #60a5fa;
+    --ask-brand-light: #93c5fd;
+    --ask-accent: #a78bfa;
+    --ask-fg: #e6edf3;
+    --ask-muted: #98a0aa;
+    --ask-bub-bg: rgb(22 27 34 / 0.52);
+    --ask-bub-border: rgb(240 246 252 / 0.10);
+    --ask-input-bg: rgb(22 27 34 / 0.60);
+    --ask-input-border: rgb(240 246 252 / 0.11);
+    --ask-sess-bg: rgb(22 27 34 / 0.55);
+    --ask-sess-border: rgb(240 246 252 / 0.09);
+    --ask-dot-ring: #0b0e14;
+    --ask-user-bub-bg: linear-gradient(135deg, rgb(59 130 246 / 0.30), rgb(37 99 235 / 0.20));
+    --ask-user-bub-border: rgb(96 165 250 / 0.40);
+    --ask-sys-bub-bg: linear-gradient(135deg, rgb(139 92 246 / 0.24), rgb(124 58 237 / 0.14));
+    --ask-sys-bub-border: rgb(167 139 250 / 0.38);
+    --ask-link: #9dbcfa;
+  }
+}
+html[data-theme='dark'] {
+  --ask-brand: #60a5fa;
+  --ask-brand-light: #93c5fd;
+  --ask-accent: #a78bfa;
+  --ask-fg: #e6edf3;
+  --ask-muted: #98a0aa;
+  --ask-bub-bg: rgb(22 27 34 / 0.52);
+  --ask-bub-border: rgb(240 246 252 / 0.10);
+  --ask-input-bg: rgb(22 27 34 / 0.60);
+  --ask-input-border: rgb(240 246 252 / 0.11);
+  --ask-sess-bg: rgb(22 27 34 / 0.55);
+  --ask-sess-border: rgb(240 246 252 / 0.09);
+  --ask-dot-ring: #0b0e14;
+  --ask-user-bub-bg: linear-gradient(135deg, rgb(59 130 246 / 0.30), rgb(37 99 235 / 0.20));
+  --ask-user-bub-border: rgb(96 165 250 / 0.40);
+  --ask-sys-bub-bg: linear-gradient(135deg, rgb(139 92 246 / 0.24), rgb(124 58 237 / 0.14));
+  --ask-sys-bub-border: rgb(167 139 250 / 0.38);
+  --ask-link: #9dbcfa;
+}
+html[data-theme='light'] {
+  /* 显式亮档（用户手选亮主题时不吃 media 暗值）——值 = :root 亮档 */
+  --ask-brand: #3b82f6;
+  --ask-brand-light: #60a5fa;
+  --ask-accent: #8b5cf6;
+  --ask-fg: #0f172a;
+  --ask-muted: #64748b;
+  --ask-bub-bg: rgba(255, 255, 255, 0.62);
+  --ask-bub-border: rgba(15, 23, 42, 0.09);
+  --ask-input-bg: rgba(255, 255, 255, 0.68);
+  --ask-input-border: rgba(15, 23, 42, 0.10);
+  --ask-sess-bg: rgba(255, 255, 255, 0.66);
+  --ask-sess-border: rgba(15, 23, 42, 0.09);
+  --ask-dot-ring: rgba(255, 255, 255, 0.9);
+  --ask-link: #1d4ed8;
+}
+
+/* ═══ ① 入口钮：右下角最靠右（作者令①，常驻可点不入顶行）═══ */
+.ask-fab {
+  position: absolute;
+  right: var(--ask-fab-gap);
+  bottom: var(--ask-fab-bottom);
+  z-index: calc(var(--z-ask-dock, 24) + 1); /* 钮本身需可点，仍 < 顶行 30 */
+  width: var(--ask-fab-size); height: var(--ask-fab-size); border-radius: 50%;
+  border: none; cursor: pointer; padding: 0;
+  background: linear-gradient(135deg, rgb(59 130 246 / 0.34), rgb(37 99 235 / 0.20));
+  -webkit-backdrop-filter: blur(var(--glass-control-blur, 10px)) saturate(1.3);
+  backdrop-filter: blur(var(--glass-control-blur, 10px)) saturate(1.3);
+  border: 1px solid rgb(96 165 250 / 0.45);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.16),
+    0 1px 3px rgb(0 0 0 / 0.25),
+    0 4px 14px rgb(59 130 246 / 0.28);
+  color: var(--ask-brand-light);
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ask-fab:hover {
+  transform: scale(1.06);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.18), 0 1px 3px rgb(0 0 0 / 0.25), 0 6px 20px rgb(59 130 246 / 0.4);
+}
+.ask-fab svg { width: 18px; height: 18px; pointer-events: none; }
+.ask-fab .ask-fab-ic-close { display: none; }
+.ask-fab.open .ask-fab-ic-chat { display: none; }
+.ask-fab.open .ask-fab-ic-close { display: block; }
+/* 会话活性指示：该文件 ask session 已有消息（右上角紫点，作者令①） */
+.ask-fab .ask-sess-dot {
+  position: absolute; top: -1px; right: -1px; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--ask-accent); border: 2px solid var(--ask-dot-ring);
+  opacity: 0; transform: scale(0.4); transition: all 0.2s cubic-bezier(0.3, 1.36, 0.45, 1);
+}
+.ask-fab.has-sess .ask-sess-dot { opacity: 1; transform: scale(1); }
+/* 收起态 pulse 提示可唤回（样张 fabPulse 同款） */
+.ask-fab.pulse { animation: askFabPulse 1.6s cubic-bezier(0.16, 1, 0.3, 1) infinite; }
+@keyframes askFabPulse {
+  0%, 100% { box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.16), 0 1px 3px rgb(0 0 0 / 0.25), 0 0 0 0 rgb(96 165 250 / 0.5); }
+  55% { box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.16), 0 1px 3px rgb(0 0 0 / 0.25), 0 0 0 9px rgb(96 165 250 / 0); }
+}
+
+/* ═══ 覆盖层（作者令④无窗体）：气泡列 + session 徽标 + 输入条，z < 顶行 ═══ */
+.ask-dock {
+  position: absolute;
+  right: var(--ask-fab-gap);
+  bottom: calc(var(--ask-fab-bottom) + var(--ask-fab-size) + 10px);
+  z-index: var(--z-ask-dock, 24);
+  width: var(--ask-dock-w);
+  display: flex; flex-direction: column; align-items: flex-end; gap: 7px;
+  transform-origin: 100% 100%; /* ⑧ 锚定 = 右下角按钮圆心方向，开合同一曲线 */
+  transition: transform var(--panel-duration, 0.32s) var(--panel-ease, cubic-bezier(0.32, 0.72, 0, 1)), opacity 0.24s ease;
+}
+.ask-dock.closed { opacity: 0; transform: translateY(16px) scale(0.6); pointer-events: none; }
+
+/* 气泡列：从按钮位置长出；顶部渐变模糊过渡（作者令③⑤） */
+.ask-colwrap {
+  position: relative; width: 100%;
+  max-height: var(--ask-col-maxh);
+  display: flex; flex-direction: column; justify-content: flex-end;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.55) 26px, #000 var(--ask-fade-h));
+  mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.55) 26px, #000 var(--ask-fade-h));
+}
+.ask-col {
+  width: 100%; max-height: var(--ask-col-maxh); overflow-y: auto;
+  display: flex; flex-direction: column; gap: 7px; align-items: flex-end;
+  padding: 6px 2px 2px;
+  scrollbar-width: none; touch-action: pan-y; /* #988：列内纵滚原生，手势零劫持 */
+}
+.ask-col::-webkit-scrollbar { display: none; }
+/* 顶部模糊幕：越升越高的旧气泡渐变模糊进画布（backdrop blur + 渐隐 mask） */
+.ask-colwrap .ask-veil {
+  position: absolute; top: 0; left: 0; right: 0; height: var(--ask-fade-h);
+  z-index: 2; pointer-events: none;
+  -webkit-backdrop-filter: blur(var(--ask-veil-blur));
+  backdrop-filter: blur(var(--ask-veil-blur));
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
+}
+
+/* 毛玻璃气泡（作者令⑤）：品牌蓝 = 用户侧，中性霜 = 应答侧，紫 = injected 族 */
+.ask-bub {
+  max-width: var(--ask-bub-maxw);
+  padding: 9px 13px; border-radius: 15px;
+  font-size: 13.5px; line-height: 1.6; word-break: break-word;
+  color: var(--ask-fg);
+  background: var(--ask-bub-bg);
+  border: 1px solid var(--ask-bub-border);
+  -webkit-backdrop-filter: blur(var(--ask-bub-blur)) saturate(1.4);
+  backdrop-filter: blur(var(--ask-bub-blur)) saturate(1.4);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.26), inset 0 1px 0 rgb(255 255 255 / 0.06);
+  animation: askBubIn 0.34s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes askBubIn { from { opacity: 0; transform: translateY(12px) scale(0.9); } }
+.ask-bub.user {
+  background: var(--ask-user-bub-bg);
+  border-color: var(--ask-user-bub-border);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.26), inset 0 1px 0 rgb(255 255 255 / 0.12);
+}
+.ask-bub.sys {
+  background: var(--ask-sys-bub-bg);
+  border-color: var(--ask-sys-bub-border);
+  font-size: 12px;
+}
+.ask-bub.sys .ask-lbl { color: var(--ask-accent); font-weight: 600; }
+.ask-bub .ask-cite {
+  display: inline-block; font-size: 10.5px; color: var(--ask-link);
+  background: rgb(96 165 250 / 0.13); border: 1px solid rgb(96 165 250 / 0.18);
+  border-radius: 5px; padding: 0 6px; margin: 3px 1px 0; line-height: 1.7;
+}
+.ask-bub.typing { display: flex; gap: 4px; align-items: center; padding: 12px 15px; }
+.ask-bub.typing i { width: 5px; height: 5px; border-radius: 999px; background: var(--ask-muted); animation: askTp 1.1s infinite; }
+.ask-bub.typing i:nth-child(2) { animation-delay: 0.15s; }
+.ask-bub.typing i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes askTp { 0%, 60%, 100% { opacity: 0.35; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
+
+/* 弹幕感：越靠上（越旧）越透明（样张按龄渐隐同律；JS 写 --ask-age-alpha） */
+.ask-bub[data-age] { opacity: var(--ask-age-alpha, 1); }
+
+/* 空态一行（首发即隐） */
+.ask-ghost {
+  align-self: flex-end; max-width: var(--ask-bub-maxw);
+  font-size: 11.5px; line-height: 1.7; color: var(--ask-muted); text-align: right;
+  padding: 2px 4px 4px 0;
+}
+.ask-ghost b { color: var(--ask-fg); opacity: 0.75; font-weight: 500; }
+
+/* session 徽标（作者令⑦：每文件独立 session 的可视化） */
+.ask-sess {
+  display: inline-flex; align-items: center; gap: 7px;
+  font: 500 10.5px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--ask-muted);
+  background: var(--ask-sess-bg);
+  border: 1px solid var(--ask-sess-border);
+  border-radius: 999px; padding: 4px 11px;
+  -webkit-backdrop-filter: blur(var(--ask-bub-blur)) saturate(1.3);
+  backdrop-filter: blur(var(--ask-bub-blur)) saturate(1.3);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.22);
+  max-width: 100%;
+}
+.ask-sess .ask-sess-live { width: 6px; height: 6px; border-radius: 999px; background: var(--ask-accent); flex: none; box-shadow: 0 0 6px rgb(167 139 250 / 0.8); }
+.ask-sess .ask-sess-fn { color: var(--ask-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 218px; font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', Roboto, sans-serif; }
+.ask-sess .ask-sess-key { color: var(--ask-link); }
+
+/* 输入框（作者令②：点击入口弹出的就是它） */
+.ask-input {
+  width: 100%; border-radius: 17px; position: relative;
+  display: flex; align-items: center; gap: 6px; padding: 7px 7px 7px 6px;
+  background: var(--ask-input-bg);
+  border: 1px solid var(--ask-input-border);
+  -webkit-backdrop-filter: blur(var(--ask-bub-blur)) saturate(1.4);
+  backdrop-filter: blur(var(--ask-bub-blur)) saturate(1.4);
+  box-shadow: 0 6px 22px rgb(0 0 0 / 0.30), inset 0 1px 0 rgb(255 255 255 / 0.07);
+}
+.ask-input:focus-within {
+  border-color: rgb(96 165 250 / 0.5);
+  box-shadow: 0 6px 22px rgb(0 0 0 / 0.30), 0 0 0 3px rgb(59 130 246 / 0.12);
+}
+.ask-input .ask-handoff {
+  flex: none; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; padding: 0;
+  background: rgb(139 92 246 / 0.16); border: 1px solid rgb(167 139 250 / 0.30);
+  color: var(--ask-accent);
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ask-input .ask-handoff:hover { background: rgb(139 92 246 / 0.28); }
+.ask-input .ask-handoff svg { width: 13px; height: 13px; pointer-events: none; }
+.ask-input input {
+  flex: 1; min-width: 0; border: none; outline: none; background: transparent;
+  font: 400 13.5px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', Roboto, sans-serif;
+  color: var(--ask-fg); caret-color: var(--ask-brand);
+}
+.ask-input input::placeholder { color: var(--ask-muted); }
+.ask-input .ask-send {
+  flex: none; width: 32px; height: 32px; border-radius: 50%; border: none; cursor: pointer; padding: 0;
+  background: var(--ask-brand); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.3), 0 3px 12px rgb(59 130 246 / 0.35);
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ask-input .ask-send:hover { transform: scale(1.07); background: var(--ask-brand-light); }
+.ask-input .ask-send svg { width: 14px; height: 14px; pointer-events: none; }
+
+/* ═══ 移动档（body.mobile-layer；E-2 移动列 + #988 命中盒纪律）═══ */
+body.mobile-layer .ask-fab {
+  --ask-fab-gap: 12px;
+  width: 44px; height: 44px;
+}
+body.mobile-layer .ask-dock {
+  --ask-dock-w: calc(100% - 24px);
+  --ask-col-maxh: 250px;
+  --ask-bub-maxw: 252px;
+  --ask-fade-h: 56px;
+  /* bottom 由 JS 依切换条实测（--ask-fab-bottom 随动） */
+}
+body.mobile-layer .ask-bub { font-size: 13px; padding: 8px 12px; }
+body.mobile-layer .ask-input input { font-size: 15px; } /* iOS 聚焦不缩放 */
+body.mobile-layer .ask-ghost { font-size: 11px; }

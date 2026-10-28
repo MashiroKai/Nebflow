@@ -177,7 +177,15 @@ object ToolRegistry:
       // 只读）——embedding 余弦 top-k + 词法降级 + 可选 Jev 重排。授权面 =
       // RootOrchestrationTools 单点 + RootExclusiveTools 防声明逃逸；插件白名单
       // 与 remoteableTools 均不含本件。
-      "TaskSearch" -> TaskSearchTool
+      "TaskSearch" -> TaskSearchTool,
+      // ── Canvas ask mode（2026-10-28 实施批，机制稿 §5）─────────────────
+      // ask 会话白名单封闭枚举两件：授能唯一来源 = buildAllowedToolSet 的
+      // askSession 早退集（引擎侧会话身份，机制固定零配置）；非 ask 身份在
+      // 同函数尾段反剥（声明 "*" 也不授能，TeamTaskTools 先例）；插件白名单
+      // 与 remoteableTools 均不含两件。工具内侧再用 ctx.sessionId 同判据
+      // 拒绝（AskTools 双保险，DelegateReportTool 先例）。
+      "message_record_search" -> MessageRecordSearchTool,
+      "send_message_to_main_chat" -> SendMessageToMainChatTool
     )
     // imagegen 双层批（2026-10-24，调试状态）：编译期 seal 门控——release 构建
     // （ImageGenSeal.CompiledIn=false，final val 常量折叠）本注册整段消失，

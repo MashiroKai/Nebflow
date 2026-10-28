@@ -98,6 +98,9 @@ function bindGestures() {
     if (target.closest('.mobile-canvas-edgezone')) return 'bottom';
     if (target.closest('.canvas-header')) return '';      // 卡头带归 navController
     if (target.closest('.mobile-card-switchbar')) return ''; // 切换条自管（钮群）
+    // ask dock 表面归属制（canvas ask mode 批 2026-10-28，#988 同律）：气泡列/
+    // 输入条/入口钮表面横滑零切卡、纵滚走列内 pan-y 原生滚动——手势零劫持。
+    if (target.closest('.ask-dock, .ask-fab')) return '';
     return 'content';
   };
 

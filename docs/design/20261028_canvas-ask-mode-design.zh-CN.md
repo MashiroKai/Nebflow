@@ -5,6 +5,8 @@ status: draft
 
 # Canvas 文件 ask mode · 设计稿（前端确认前草案）
 
+> **实施批回写（2026-10-28 实施批）**：样张 v2 已获作者验收（2026-10-28 17:5x 八条令），实施批按确认形态直接实施（canvas ask mode 后端一期 + 前端全套 + 验收 spec）——§8 验收标准逐条勾选实施状态，§9 开放项附收敛注记，实施产物见文末「附二」。本稿机制契约（§3-§7）未被实施批修改。
+
 > **v2 修订（2026-10-28 17:5x 作者八条令）**：UI 形态由「卡头角标钮 + 380×520 玻璃窗」改为「**canvas 右下角最靠右入口钮 → 点击弹输入框 → 气泡列从按钮位置长出**」——无窗体背景、毛玻璃气泡、顶部渐变模糊过渡、整体小巧不占 canvas 不弹窗；品牌配色取 stand-website 仓色板；每文件独立 session；展开收起动画锚定按钮位置。本稿 §2/§8 已随之修订，§3-§7 机制契约不变；v1 样张（[[glossary#^mockup-sample]]）superseded 留档（[[20261028_canvas-ask-mode-mockup.html]]），现行样张 = [[20261028_canvas-ask-mode-mockup-v2.html]]，token 增补见 token 页 E 表。
 
 > 批依据：作者令 2026-10-28 17:0x「行，落实成设计稿。特别是 UI 风格」→ 同日 17:10 修正「不是特写一个 ui 风格，而是给我一个效果演示，而且之后工作能复用的设计——先完成前端设计确认」。据此本批交付重心 = **效果演示样张**（[[20261028_canvas-ask-mode-mockup.html]]，样张（[[glossary#^mockup-sample]]）口径：零依赖、数据真实、交互可点）+ **token 规格资产页**（[[20261028_canvas-ask-mode-tokens.zh-CN]]）；本稿为机制与契约章，UI 章从简（以演示 + token 页为准）。**作者确认样张后排实施，本批零引擎/前端实现代码。**
@@ -153,12 +155,15 @@ Canvas 画布上的每个文件卡获得一个小控件，点击展开一个迷�
 
 ## 9. 开放项
 
+> **实施批收敛注记（2026-10-28 实施批）**：逐条状态如下。
+
 1. ~~**窗头上下文状态行**~~（「记忆 3 · 图谱 5 节 · 冷却 mm:ss」）——**随 v2 无窗体形态自然撤销**（2026-10-28 八条令：无窗头即无状态行）；冷却调度可视化改为不显示，重组仍按 §3.3 后台发生；
-2. **压缩摘要的可见性**：v2 形态下为「摘要气泡」（injected 族、可点展开）vs 纯提示气泡，透明纪律边界仍待作者裁；
+2. **压缩摘要的可见性**：v2 形态下为「摘要气泡」（injected 族、可点展开）vs 纯提示气泡，透明纪律边界仍待作者裁；**实施批未接压缩链路**（§8-5 ⏸），可见性随压缩批一并裁、一并落；
 3. ~~**桌面展开档（480×640）**~~——**随 v2 无窗体形态自然撤销**（无窗体即无二档）；
-4. **ask 历史入检索库**（§7 主会话可反查 ask 分区）会扩大 `stand-recall` 的收录口径（现行「只收主 agent 会话」），需要作者另令；
-5. token 变量名与在途「聊天控件毛玻璃提取为设计变量」批的命名对齐（本页已全部引用现有 `--glass-*` 名，预期零冲突；该批落地后实施批回验一次）；
-6. 提示词终稿评审（§6 为草案全文）。
+4. **ask 历史入检索库**（§7 主会话可反查 ask 分区）会扩大 `stand-recall` 的收录口径（现行「只收主 agent 会话」），需要作者另令；**实施批未动收录口径**（`message_record_search` 只查现行主会话库）；
+5. token 变量名与在途「聊天控件毛玻璃提取为设计变量」批的命名对齐（本页已全部引用现有 `--glass-*` 名，预期零冲突；该批落地后实施批回验一次）；**实施落位**：token 全部落 `web/css/ask.css`（`--ask-*` 域），E-2 值逐字未改——见 token 页 E 表落位注记；
+6. 提示词终稿评审（§6 为草案全文；实施批已将草案全文落 `AskContextAssembler.promptFor`，评审结论落地时只改该一处）；
+7. **主 agent 回问工具腿**（实施批新开）：主会话 agent 目前经控制台 `askReply` 帧回问 ask 窗（已实施，T6c 验收）；「主 agent 以工具调用发起回问」（`send_message_to_main_chat` 的反向腿）未做——需要时以 M2 端口（`AskHandoffPort`）对偶扩一枚 ask 侧投递端口即可，待作者令。
 
 ## 附：本批产物
 
@@ -169,3 +174,15 @@ Canvas 画布上的每个文件卡获得一个小控件，点击展开一个迷�
 | token 规格资产页（v2 增补 = E 表） | `docs/design/20261028_canvas-ask-mode-tokens.zh-CN.md` | 实施直接消费 |
 | 本设计稿（v2 修订 §2/§8） | `docs/design/20261028_canvas-ask-mode-design.zh-CN.md` | 机制与契约 |
 | 关键状态截图 ×4（v2 实拍） | `docs/attachments/canvas-ask-mode/20261028-canvas-ask-v2-*.png` | 样张实拍（v1 四张留档） |
+
+### 附二：实施批产物（2026-10-28 实施批）
+
+| 件 | 路径 | 说明 |
+|---|---|---|
+| 会话绑定/冷却/白名单 | `src/main/scala/nebflow/core/ask/AskSessions.scala` | `ask-<sha256前8hex>` 单点派生、`ask:<4hex>` 展示键、AllowedTools 封闭集、10 分钟冷却、`<dataRoot>/ask/index.json` 持久 |
+| 上下文组装 + §6 提示词 | `src/main/scala/nebflow/core/ask/AskContextAssembler.scala` | 三路管线（文件全文 16k → 图谱邻接 ≤6 → recall top5）+ 提示词全文 `promptFor` |
+| 服务定位 + 活体源 | `src/main/scala/nebflow/core/ask/AskGatewayServices.scala` | AskServices 冷却腿 + AskLiveSources（盘读/图谱 1-2 跳/stand-recall CLI） |
+| 白名单工具面 | `src/main/scala/nebflow/core/tools/AskTools.scala` | `send_message_to_main_chat`（双保险身份 + 1/min 频控）+ `message_record_search`（只读 CLI 封装） |
+| ask WS 域 | `src/main/scala/nebflow/gateway/WsAskHandlers.scala` | askOpen/askQuestion/askHandoff/askReply 四路由 + 转交 face 注入 |
+| 前端全套 | `web/css/ask.css` + `web/js/askDock.js` | 样张 v2 形态（E 表 token 全量落位）+ 挂载/流式消费/切卡切 session |
+| 验收 spec | `tests/canvas-ask-dock.spec.mjs` | §8 断言面 35 断言（T0-T9）+ 截图 ×4（`evidence/canvas-ask-dock/shots/`） |

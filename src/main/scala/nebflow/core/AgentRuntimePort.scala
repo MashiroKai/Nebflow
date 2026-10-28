@@ -259,6 +259,49 @@ object SendConfirmPort:
         )
 end SendConfirmPort
 
+// Canvas ask mode（2026-10-28 实施批）：主会话转交/回问注册器（M2 先例同款）。
+/**
+ * ask 会话 ↔ 主会话的单向信使（机制稿 §7）注册器：core 消费面 =
+ * `SendMessageToMainChatTool`（ask 工具腿）与 `WsAskHandlers`（dock 转交腿，
+ * 经注册器同一面——两条腿同限频、同呈现契约，禁出现第二条投递原语）。
+ * Face 实现 = agent 侧 `ensureAgent(主会话) ! ExternalEvent(source="ask")`
+ * （injected 气泡 + 来源行「来自文件问答 · <文件名>」的引擎呈现链），
+ * 注册点 = WebSocketRoutes 构造行（ensureAgent 私有，唯有该处可装）。
+ * 未注册兜底 = fail-closed Left（对齐 SendConfirmPort「禁静默直发」）。
+ */
+object AskHandoffPort:
+
+  /** 一次转交/回问投递请求（载荷形状 = 机制稿 §7 消息契约的引擎侧投影）。 */
+  final case class Request(
+    askSessionId: String,
+    file: String,
+    fileName: String,
+    question: String,
+    /** 来源腿："ask-tool"（分身工具）/ "ask-dock"（输入条转交钮）/ "main-reply"（主会话回问）。 */
+    leg: String,
+    /** 检索引用（§7 context_refs，形状引擎不解释、随注入帧透传）。 */
+    contextRefs: List[io.circe.Json] = Nil
+  )
+
+  /** Face：投递进主会话（injected 呈现 + 限频已在工具侧收敛）。 */
+  trait Face:
+    def deliver(req: Request): IO[Either[nebflow.core.tools.ToolError, String]]
+  end Face
+
+  private val face = new AtomicReference[Option[Face]](None)
+
+  def install(f: Face): Unit = face.set(Some(f))
+
+  def clear(): Unit = face.set(None)
+
+  /** 未注册 = fail-closed（转交不可用是显式错误，不是静默丢弃）。 */
+  def deliver(req: Request): IO[Either[nebflow.core.tools.ToolError, String]] =
+    face.get match
+      case Some(f) => f.deliver(req)
+      case None =>
+        IO.pure(Left(nebflow.core.tools.ToolError("主会话转交通道未就绪（AskHandoffPort 未注册）——请稍后再试")))
+end AskHandoffPort
+
 // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M2):注册器倒置,签名镜像现实现,行为保持。
 /**
  * `agent.AskUserAnswerBridge.ref` 的窄投影(严格DAG第⑥步第三批A):core 消费面 =

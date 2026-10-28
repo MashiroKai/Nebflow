@@ -125,6 +125,7 @@ import { initContacts } from './contacts.js';
 import { initMessages } from './messages.js';
 import { collapseTurn, failTurn } from './turnGroup.js';
 import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
+import { initAskDock } from './askDock.js';
 import { initLightbox } from './lightbox.js';
 // flowAnim.js side-effect import REMOVED (flowmaptab-retire, #1228 两裁② 停用清单
 // 面 3 · 上游 a60af705d 申报 S10/S11 零复用——链视图为静态卡列表，动效全由 CSS 承担).
@@ -4127,6 +4128,7 @@ initMemory();
 initBgMergedPanel(); // 后台合并批（2026-10-23 ⑥）：子智能体列表收编进 #bg-dropdown 单面板
 initExplorer();
 initCanvas();
+initAskDock(); // canvas ask mode 批（2026-10-28）：右下角入口 + 每文件独立会话气泡列
 initColResizers();
 // #27: Project 标签页按钮（取代 Team/Flow 主导位置）——打开发布 projects 标签页
 registerCanvasPanelButton('projects', 'projects-btn', () => openProjectsTab());

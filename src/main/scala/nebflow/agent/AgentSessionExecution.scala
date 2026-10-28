@@ -564,7 +564,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
               flowNodeSession = state.flowNodeId.isDefined,
               flowNodeRole = state.session.flowNodeRole,
               isDispatcher = state.isDispatcher,
-              delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(state.sessionId)
+              delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(state.sessionId),
+              askSession = nebflow.core.ask.AskSessions.isAskSession(state.sessionId)
             )
         val isSubagent = depth > 0
         val sessionIdOpt = state.sessionId
@@ -968,7 +969,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 flowNodeSession = stateForLlm.flowNodeId.isDefined,
                 flowNodeRole = stateForLlm.session.flowNodeRole,
                 isDispatcher = stateForLlm.isDispatcher,
-                delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(stateForLlm.sessionId)
+                delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(stateForLlm.sessionId),
+                askSession = nebflow.core.ask.AskSessions.isAskSession(stateForLlm.sessionId)
               )
           // 冷启动路由已删除（2026-08-19 用户裁决：「这是错误的，按 preset」）：
           // 它把闲置唤醒/重启后的第一发改道到 LowCost preset，偏离用户设置的
@@ -1241,7 +1243,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         projectBoardSession = state.isDispatcher || state.flowNodeId.isDefined,
         flowNodeSession = state.flowNodeId.isDefined,
         isDispatcher = state.isDispatcher,
-        delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(state.sessionId)
+        delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(state.sessionId),
+        askSession = nebflow.core.ask.AskSessions.isAskSession(state.sessionId)
       )
       (filteredCalls, droppedCalls) =
         // WebSearch P0: kimi's native $web_search tool call bypasses the
@@ -2272,8 +2275,17 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     projectBoardSession: Boolean = false,
     flowNodeSession: Boolean = false,
     isDispatcher: Boolean = false,
-    delegateSession: Boolean = false
+    delegateSession: Boolean = false,
+    askSession: Boolean = false
   ): Set[String] =
+    // Canvas ask mode（2026-10-28 实施批，机制稿 §5）：白名单**封闭枚举**早退——
+    // ask 会话工具面 = {message_record_search, send_message_to_main_chat}，
+    // 白名单外一律不下发（含 bash/edit/write 等一切编辑与编排工具，作者令点名
+    // 禁止）。早退在最前 ⇒ 声明面/fixed 面/plugin 面/尾段挂载全不触及；判据 =
+    // 引擎侧会话身份（AskSessions 单点，`ask-` 前缀），与 delegateSession 同款
+    // 透传链。工具内侧再用 ctx.sessionId 同判据拒绝（AskTools 双保险，先例
+    // DelegateReportTool）。
+    if askSession then return nebflow.core.ask.AskSessions.AllowedTools
     // 阶段 2c（§C.1/裁定 11）：收敛三定义（Nebula/project-dispatcher/general）
     // 的 agent.json tools 声明整体失效——工具面全部机制固定，零配置。存量
     // agent.json 里的文件工具声明（Nebula 六件 / dispatcher Write+Edit）由此
@@ -2468,7 +2480,11 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // 纪律不受扰——本授能只对 delegateSession 身份生效，Subagent/AgentFlow 步会话
     // 不经此腿。
     val withDelegateMail = if delegateSession then withDelegateFace + "Mail" else withDelegateFace
-    if flowNodeSession then withDelegateMail + nebflow.core.tools.NodeReportToolDef.Name else withDelegateMail
+    // ask 工具反剥（ask 早退的对偶防线）：这两件只对 ask 会话授能——其余身份
+    // 即便 agent.json 声明 "*" 也不得获得（the tool name IS the permission
+    // boundary，TeamTaskTools 剥离先例）。
+    val askStripped = withDelegateMail -- nebflow.core.ask.AskSessions.AllowedTools
+    if flowNodeSession then askStripped + nebflow.core.tools.NodeReportToolDef.Name else askStripped
 
   end buildAllowedToolSet
 
@@ -2484,7 +2500,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     flowNodeSession: Boolean = false,
     flowNodeRole: Option[String] = None,
     isDispatcher: Boolean = false,
-    delegateSession: Boolean = false
+    delegateSession: Boolean = false,
+    askSession: Boolean = false
   ): Option[List[ToolDefinition]] =
     val allowedSet = buildAllowedToolSet(
       agentDef,
@@ -2497,7 +2514,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
       projectBoardSession,
       flowNodeSession,
       isDispatcher,
-      delegateSession
+      delegateSession,
+      askSession
     )
     // 2026-09-06 工具面裁撤批：FlowReport 的 per-node contract describe 注入
     // 随工具退役一并移除（contract 数据本体仍在 AgentDef.flowContract，引擎

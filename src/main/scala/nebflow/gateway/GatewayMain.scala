@@ -1596,6 +1596,25 @@ object GatewayMain extends IOApp:
                                                         )
                                                         wsRoutesHolder = Some(wsRoutes)
 
+                                                        // Canvas ask mode（2026-10-28 实施批）：
+                                                        // ① 装配层服务（注册表 + 活体三路检索源），
+                                                        // ② AskHandoffPort 投递面（ensureAgent 私有，
+                                                        //    唯一装配点在 wsRoutes）。spec 构造面不装，
+                                                        //    端口保持 fail-closed。
+                                                        nebflow.core.ask.AskGatewayServices.install(
+                                                          nebflow.core.ask.AskServices(
+                                                            registry = new nebflow.core.ask.AskSessionRegistry(
+                                                              nebflow.shared.PathUtil.dataRoot
+                                                            ),
+                                                            sources = nebflow.core.ask.AskLiveSources.make(
+                                                              sharedResourcesWithDaemon.neblinkService,
+                                                              nebflow.shared.PathUtil.dataRoot
+                                                            ),
+                                                            prompts = new nebflow.core.ask.AskPromptCache()
+                                                          )
+                                                        )
+                                                        wsRoutes.installAskHandoffFace()
+
                                                         // REST API routes for CLI consumption
                                                         val restApiRoutes = new RestApiRoutes(
                                                           tokenRef = tokenRef,
