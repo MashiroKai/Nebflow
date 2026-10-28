@@ -37,7 +37,7 @@ import { bindImeGuard, isImeComposing } from './imeGuard.js';
 // voicefix 批 腿 B（作者 2026-09-21 14:0x ③）：好友/群聊会话窗的**简单麦克风**
 // 复用主窗同一语音管线 —— 识别流/双模（Web Speech / 云 STT）/态机全在
 // voiceEngine.js 单点，本模块只做「按钮 ⇄ 本窗输入框」的回调接线，零新造机制。
-import { startDictation, stopDictation } from './voiceEngine.js';
+import { startDictation, stopDictation, sttEnabled } from './voiceEngine.js';
 // 字段方言双兼容批：预览字段的**收面单点**（方言登记表判读 + `data:` 合成全仓唯一落点；
 // 该模块零 import ⇒ 无环）。
 import { readPreviewField, previewDataUrlOf } from './attachPreviewField.js';
@@ -1394,6 +1394,12 @@ function renderChatModal(conv) {
     };
     micBtn.addEventListener('click', () => {
       if (input.disabled) return; // 拉黑/断连等禁用态不挂假入口行为
+      // settings-panel 批 D 件（2026-10-28）：STT 停用态好友消息 mic 入口一并
+      // 收口（toast；引擎闸 voiceEngine.startDictation 是纵深第二层）。
+      if (!sttEnabled()) {
+        window.__showToast?.(t('stt.disabled'), 'error');
+        return;
+      }
       if (fmVoiceActive) { fmStopVoice(); return; }
       fmVoiceActive = true;
       fmVoiceAnchor = input.selectionStart ?? input.value.length;

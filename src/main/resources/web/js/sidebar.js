@@ -52,6 +52,10 @@ import { nfCacheStats, nfCacheReset } from './nfFileCache.js';
 // sidebar.js),公共导出面(批次前 41 符号)经下方 `export ... from` 显式转发,
 // 外部 import 方零改动。
 import { protocolFormLabel, escapeHtml, flushConfigToServer, showProviderModal, saveNewProvider, revealProviderApiKeys } from './sidebar/providersUi.js';
+// 生图设置节（settings-panel 批 ②③件）与每模型连接性测试钮（B 件）——渲染/
+// 绑定单点在各自子模块，本文件只挂壳 + 转发调用（子模块不回指本文件）。
+import { bindImagegenSection, debugBadge } from './sidebar/imagegenSection.js';
+import { modelTestButtonHTML, bindModelTestButtons } from './sidebar/modelTestButton.js';
 export { saveNewProvider, openProviderWizard, validateContextWindow, CTX_WINDOW_HARD_CEILING } from './sidebar/providersUi.js';
 import { openRulesEditor, openPathPicker, injectRenderSessionSidebar } from './sidebar/pathRules.js';
 export { handleRulesData, handleRulesSaved, handleRulesDeleted, initRulesModal, openPathPicker, openPathPickerCallback, handleBrowseResult, initPathPicker } from './sidebar/pathRules.js';
@@ -452,6 +456,10 @@ function buildSegmentRowHtml(s, i) {
  *  not persisted to storage on purpose). */
 let sttAdvanceExpanded = false;
 
+/** JeV 分配区开合态（settings-panel 批 C 件重排后沿用 STT 高级设置同款
+ *  session-memory 语义：同会话保持，新会话收起）。 */
+let jevAdvanceExpanded = false;
+
 /** Tool result TTL panel — same session-memory collapse semantics as STT
  *  advance (#341): collapsed by default, expanded state survives re-renders
  *  but not fresh sessions. */
@@ -639,11 +647,17 @@ onMessage('configUpdateFailed', (msg) => {
 function renderSttSection() {
   const stt = state.stt && typeof state.stt === 'object' ? state.stt : {};
   const configured = !!stt.sttConfigured;
+  // D 件（2026-10-28）：总开关——缺省开（缺席 = 现有行为逐字不变，存量用户
+  // 零感知）；关 = STT 整体停用（入口与快捷键全收 + 引擎腿拒绝，见
+  // voiceEngine.sttEnabled 门与 stt-disabled body 类）。
+  const enabled = stt.sttEnabled !== false;
   const endpoint = stt.endpoint || '';
   const model = stt.model || '';
-  const status = configured
-    ? t('settings.sttConfiguredStatus', { endpoint: escapeHtml(endpoint), model: escapeHtml(model) })
-    : t('settings.sttUnconfiguredStatus');
+  const status = !enabled
+    ? t('settings.sttDisabledStatus')
+    : configured
+      ? t('settings.sttConfiguredStatus', { endpoint: escapeHtml(endpoint), model: escapeHtml(model) })
+      : t('settings.sttUnconfiguredStatus');
   return `
     <div class="settings-row stt-advance-toggle-row">
       <button type="button" class="settings-collapse-toggle" id="stt-advance-toggle"
@@ -654,15 +668,20 @@ function renderSttSection() {
       <span class="cfg-hint stt-status" id="stt-status-hint">${status}</span>
     </div>
     <div class="settings-collapse-body" id="stt-advance-body" ${sttAdvanceExpanded ? '' : 'hidden'}>
+      <div class="settings-row">
+        <span class="settings-label">${t('settings.sttEnabled')}</span>
+        ${toggleHTML({ on: enabled, id: 'toggle-stt-enabled', label: t('settings.sttEnabled') })}
+      </div>
+      <div class="cfg-hint">${t('settings.sttEnabledHint')}</div>
       <div class="cfg-form-group">
         <label class="cfg-label" for="stt-endpoint">${t('settings.sttEndpoint')}</label>
-        <input class="cfg-input" id="stt-endpoint" type="text" value="${escapeHtml(endpoint)}" placeholder="https://api.example.com/v1/audio/transcriptions" autocomplete="off" spellcheck="false">
+        <input class="cfg-input" id="stt-endpoint" type="text" value="${escapeHtml(endpoint)}" placeholder="https://api.example.com/v1/audio/transcriptions" autocomplete="off" spellcheck="false" ${enabled ? '' : 'disabled'}>
         <label class="cfg-label" for="stt-model">${t('settings.sttModel')}</label>
-        <input class="cfg-input" id="stt-model" type="text" value="${escapeHtml(model)}" placeholder="${t('settings.sttModelPlaceholder')}" autocomplete="off" spellcheck="false">
+        <input class="cfg-input" id="stt-model" type="text" value="${escapeHtml(model)}" placeholder="${t('settings.sttModelPlaceholder')}" autocomplete="off" spellcheck="false" ${enabled ? '' : 'disabled'}>
         <label class="cfg-label" for="stt-apikey">${t('settings.sttApiKey')}
           ${configured ? `<span class="stt-key-configured">${t('settings.sttKeyConfigured')}</span>` : ''}
         </label>
-        <input class="cfg-input" id="stt-apikey" type="password" value="" placeholder="${t(configured ? 'settings.sttApiKeyConfiguredPlaceholder' : 'settings.sttApiKeyPlaceholder')}" autocomplete="off">
+        <input class="cfg-input" id="stt-apikey" type="password" value="" placeholder="${t(configured ? 'settings.sttApiKeyConfiguredPlaceholder' : 'settings.sttApiKeyPlaceholder')}" autocomplete="off" ${enabled ? '' : 'disabled'}>
         <div class="cfg-hint">${t('settings.sttHint')}</div>
         <div style="display:flex;gap:8px;margin-top:8px">
           <button class="cfg-btn cfg-btn-primary" id="btn-save-stt">${t('settings.sttSave')}</button>
@@ -776,6 +795,49 @@ function effortFromConfig() {
 // 前端无后端常量导入面，此处是唯一拼写点（渲染钉死 / 提供方切换 / 恢复钉死共用）。
 const JEV_PINNED_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
 
+// ── JeV key 值明文拉取（settings-panel 批①件单点，2026-10-28 作者令「把我们
+// 设置面板里的 jev 的 key，要能直接可见」）：keyRef 输入框当前值 → GET
+// /api/secrets/<name>/value（owner 鉴权，与设置写同门槛）→ 只读行明文回填。
+// 缺 keyRef = 占位；404 = 「待录入」占位（不造假值）；其余失败 = 通用占位。
+// 🔴 纪律：值只进 #cfg-jev-key-value 输入框（作者令「直接可见」的本命位），
+// 不写日志、不进 localStorage、不落任何卡面/属性；面板关闭即随 DOM 蒸发。
+function refreshJevKeyValue() {
+  const input = /** @type {HTMLInputElement|null} */ (document.getElementById('cfg-jev-key-value'));
+  if (!input) return;
+  const keyRefEl = /** @type {HTMLInputElement|null} */ (document.getElementById('cfg-jev-keyref'));
+  const keyRef = (keyRefEl?.value || '').trim();
+  if (!keyRef) {
+    input.value = '';
+    input.placeholder = t('settings.jevKeyValueNoRef');
+    return;
+  }
+  fetch(`/api/secrets/${encodeURIComponent(keyRef)}/value`, { headers: authHeaders() })
+    .then(async (r) => {
+      if (!input.isConnected) return null;
+      if (r.status === 404) {
+        input.value = '';
+        input.placeholder = t('settings.jevKeyValueMissing', { name: keyRef });
+        return null;
+      }
+      if (!r.ok) {
+        input.value = '';
+        input.placeholder = t('settings.jevKeyValueError', { code: String(r.status) });
+        return null;
+      }
+      const data = await r.json().catch(() => null);
+      const value = data && typeof data.value === 'string' ? data.value : '';
+      input.value = value;
+      input.placeholder = t('settings.jevKeyValuePlaceholder');
+      return value;
+    })
+    .catch(() => {
+      if (input.isConnected) {
+        input.value = '';
+        input.placeholder = t('settings.jevKeyValueError', { code: 'io' });
+      }
+    });
+}
+
 export function renderSettings() {
   const content = document.getElementById('settings-content');
   const cfg = state.parsedConfig || {};
@@ -846,67 +908,69 @@ export function renderSettings() {
     </div>
     <div class="cfg-hint" id="model-chain-hint">${t('settings.modelChainHint')}</div>
     <div class="settings-section">
-      <!-- Jev card (executor-registry batch, 2026-10-03; ui-train-threefix B,
-           2026-10-07 toggle-ized; secrets-ui-redesign 2026-10-08; 三改
-           2026-10-09 用户反馈①②③). 收起态 = 标题「Jev（插件分配）」+ 开关
-           （+chevron）一行：行体热区是真实 button (#jev-head, 含标题+chevron，
-           aria-expanded/aria-controls)，点击原位展开/收起细节——开关是行内
-           兄弟钮，不进热区（三改①，密钥面板行内化同语言：常态极简、点行
-           展开、collapse ≠ clear）。开关只作用法闸（usage gate），与展开态
-           解耦（旧「开=展开」耦合随三改①退役）。分配通道状态行随细节入
-           折叠体（展开才见，三改①原话「点击展开才显示细节」）。端点行按
-           提供方钉死：typesafe-jev → 预填 JEV_PINNED_ENDPOINT + disabled
-           禁用态（用户只填密钥引用，三改②）；laya 保持可编辑。keyRef 是
-           指针 NAME（.cfg-password-wrap + 眼睛，provider-modal 先例）；
-           明文直显批（作者令 2026-10-27「设置里配置的 apikey 直接显示」）：
-           默认态 = 明文（无内联 disc），眼睛保留为可选遮蔽（初始揭示面
-           eyeOffSvg/aria-pressed=true，点击才上掩码）。保存仍是显式
-           PUT /api/config/jev 白名单键。健康徽标读 legs 分腿载荷
-           （三改③，jev 不可用→已回退 llm 的如实显示见渲染块）。-->
-      <div class="cfg-card" id="jev-card">
-        <div class="cfg-card-head">
-          <button type="button" class="cfg-card-head-btn" id="jev-head" aria-expanded="false" aria-controls="jev-detail-body" title="${t('settings.jevToggleDetails')}">
-            <span class="cfg-card-title">${t('settings.jev')}</span>
-            <span class="cfg-head-chev" aria-hidden="true">${statusIcon('chevron-right', 14)}</span>
-          </button>
+      <!-- Jev allocation section — 风格统一重排（settings-panel 批 C 件，
+           2026-10-28 作者令：「JeV 插件分配那部分的风格，与『STT 高级设置』区的
+           风格保持一致——以 STT 高级设置的风格为基准（布局/间距/控件形态/分组
+           样式逐项对齐）」）。组件族与 STT 高级设置逐项同源：
+           · 头行   .settings-row.stt-advance-toggle-row + .settings-collapse-toggle
+                    （标题+chevron）+ 右侧状态位（分配通道健康，同 stt-status 位）；
+           · 折叠体 .settings-collapse-body（session-memory 开合态
+                    jevAdvanceExpanded，同 sttAdvanceExpanded 语义）；
+           · 开关行 .settings-row + .settings-label + toggleHTML（启用 JeV——
+                    旧卡头行内开关随重排迁入折叠体首行，STT enabled 行同款）；
+           · 字段组 .cfg-form-group 纵排 label+input（旧 cfg-row 横排退役）；
+           · 保存行 显式保存 + inline-state（#334 语义不变）。
+           功能零删减：提供方切换联动端点钉死（三改②）、分配通道健康 legs 分腿
+           徽标（三改③）、PUT /api/config/jev 白名单保存全保留。
+           key 明文直显（本批①件，作者令 2026-10-28 21:30「把我们设置面板里的
+           jev 的 key，要能直接可见」）：keyRef 指针行下新增「key 值」只读行，
+           打开即经 GET /api/secrets/<keyRef>/value（owner 鉴权）拉真值明文显示
+           （默认态=明文，eye 仅作可选遮蔽——点首击上掩码；值零落日志/本地存
+           储，面板关即烧）。缺 keyRef/读失败 ⇒ 占位说明，不造假数据。-->
+      <div class="settings-row stt-advance-toggle-row">
+        <button type="button" class="settings-collapse-toggle" id="jev-advance-toggle"
+                aria-expanded="${jevAdvanceExpanded}" aria-controls="jev-advance-body">
+          <span class="settings-label">${t('settings.jev')}</span>
+          <span class="settings-collapse-chevron" aria-hidden="true"></span>
+        </button>
+        <span class="cfg-hint stt-status" id="jev-status-hint"><span class="st-badge" data-tone="mut" id="settings-jev-health">…</span></span>
+      </div>
+      <div class="settings-collapse-body" id="jev-advance-body" ${jevAdvanceExpanded ? '' : 'hidden'}>
+        <div class="settings-row">
+          <span class="settings-label">${t('settings.jevEnabled')}</span>
           ${toggleHTML({ on: !!(cfg.jev && cfg.jev.enabled), id: 'toggle-jev', label: t('settings.jevEnabled') })}
         </div>
-        <div id="jev-detail-body" style="display:none;">
-          <div class="cfg-card-divider"></div>
-          <div class="cfg-row">
-            <span class="cfg-row-label">${t('settings.jevProvider')}</span>
-            <span class="cfg-row-main">
-              <select class="cfg-select" id="cfg-jev-provider">
-                ${['typesafe-jev', 'laya'].map(p => `<option value="${p}"${(cfg.jev && cfg.jev.provider) === p ? ' selected' : ''}>${p}</option>`).join('')}
-              </select>
-            </span>
-          </div>
-          <div class="cfg-row">
-            <span class="cfg-row-label">${t('settings.jevEndpoint')}</span>
-            <span class="cfg-row-main"><input class="cfg-input" id="cfg-jev-endpoint" placeholder="${(cfg.jev && cfg.jev.provider) === 'laya' ? 'http://127.0.0.1:8080/predict' : JEV_PINNED_ENDPOINT}" value="${escapeHtml((cfg.jev && cfg.jev.provider) === 'laya' ? ((cfg.jev && cfg.jev.endpoint) || '') : JEV_PINNED_ENDPOINT)}" ${(cfg.jev && cfg.jev.provider) === 'laya' ? '' : 'disabled'} title="${(cfg.jev && cfg.jev.provider) === 'laya' ? '' : t('settings.jevEndpointFixed')}" spellcheck="false"></span>
-          </div>
-          <div class="cfg-row">
-            <span class="cfg-row-label">${t('settings.jevKeyRef')}</span>
-            <span class="cfg-row-main">
-              <span class="cfg-password-wrap">
-                <input class="cfg-input" type="text" id="cfg-jev-keyref" placeholder="typesafe-api-key" value="${escapeHtml((cfg.jev && cfg.jev.keyRef) || '')}" autocomplete="off" spellcheck="false">
-                <button type="button" class="cfg-eye-btn" id="jev-keyref-eye" tabindex="-1" aria-label="${t('settings.jevKeyRefHide')}" aria-pressed="true" title="${t('settings.jevKeyRefHide')}">${eyeOffSvg}</button>
-              </span>
-            </span>
+        <div class="cfg-form-group">
+          <label class="cfg-label" for="cfg-jev-provider">${t('settings.jevProvider')}</label>
+          <select class="cfg-input" id="cfg-jev-provider">
+            ${['typesafe-jev', 'laya'].map(p => `<option value="${p}"${(cfg.jev && cfg.jev.provider) === p ? ' selected' : ''}>${p}</option>`).join('')}
+          </select>
+          <label class="cfg-label" for="cfg-jev-endpoint">${t('settings.jevEndpoint')}</label>
+          <input class="cfg-input" id="cfg-jev-endpoint" placeholder="${(cfg.jev && cfg.jev.provider) === 'laya' ? 'http://127.0.0.1:8080/predict' : JEV_PINNED_ENDPOINT}" value="${escapeHtml((cfg.jev && cfg.jev.provider) === 'laya' ? ((cfg.jev && cfg.jev.endpoint) || '') : JEV_PINNED_ENDPOINT)}" ${(cfg.jev && cfg.jev.provider) === 'laya' ? '' : 'disabled'} title="${(cfg.jev && cfg.jev.provider) === 'laya' ? '' : t('settings.jevEndpointFixed')}" spellcheck="false">
+          <label class="cfg-label" for="cfg-jev-keyref">${t('settings.jevKeyRef')}</label>
+          <input class="cfg-input" id="cfg-jev-keyref" placeholder="typesafe-api-key" value="${escapeHtml((cfg.jev && cfg.jev.keyRef) || '')}" autocomplete="off" spellcheck="false">
+          <label class="cfg-label" for="cfg-jev-key-value">${t('settings.jevKeyValue')}</label>
+          <div class="cfg-password-wrap">
+            <input class="cfg-input" type="text" id="cfg-jev-key-value" readonly placeholder="${t('settings.jevKeyValuePlaceholder')}" autocomplete="off" spellcheck="false">
+            <button type="button" class="cfg-eye-btn" id="jev-key-eye" tabindex="-1" aria-label="${t('settings.jevKeyRefHide')}" aria-pressed="false" title="${t('settings.jevKeyRefHide')}">${eyeOffSvg}</button>
           </div>
           <div class="cfg-hint">${t('settings.jevHint')}</div>
-          <div class="card-actions">
-            <span class="inline-state" id="jev-save-state" role="status" aria-live="polite"></span>
-            <span class="spacer"></span>
+          <div style="display:flex;gap:8px;margin-top:8px">
             <button class="cfg-btn cfg-btn-primary" id="btn-save-jev">${t('settings.save')}</button>
-          </div>
-          <div class="cfg-card-divider"></div>
-          <div class="cfg-row jev-health-row">
-            <span class="cfg-row-label">${t('settings.jevHealth')}</span>
-            <span class="cfg-row-main"><span class="st-badge" data-tone="mut" id="settings-jev-health">…</span></span>
+            <span class="inline-state" id="jev-save-state" role="status" aria-live="polite"></span>
           </div>
         </div>
       </div>
+    </div>
+    <div class="settings-section">
+      <!-- 生图（imagegen）设置节（settings-panel 批 ②③件，2026-10-28 作者令）。
+           两形态由 sidebar/imagegenSection.js 单点渲染：seal=OFF → 「未编入
+           （release 构建零痕迹）」提示位；seal=ON → 正常配置面（enabled 开关 /
+           provider/model 编辑 / key 状态与录入）。调试中徽标延续工具面/插件面
+           同一枚 .imagegen-badge。本处只落壳（标题 + 徽标 + wrap），数据与
+           绑定全在该模块（renderSettings 尾部 bindImagegenSection 拉取装配）。-->
+      <div class="settings-section-title">${t('settings.imagegenTitle')} ${debugBadge()}</div>
+      <div id="imagegen-section-wrap"><div class="cfg-hint">${t('settings.imagegenLoading')}</div></div>
     </div>
     <div class="settings-section">
       <!-- Secrets entry (secrets-frontend batch, 2026-09-27, author ruling
@@ -977,6 +1041,16 @@ export function renderSettings() {
   // Secrets entry count pill (secrets-ui-redesign, 2026-10-08): read/cached
   // module-side, repainted on every render and on `secrets-changed`.
   refreshSecretsEntryCount();
+  // 生图设置节（settings-panel 批 ②③件）：异步拉 GET /api/config/imagegen 后
+  // 原位绘制两形态之一（seal OFF 提示位 / ON 配置面）。失败 = 错误提示行，
+  // 不造假数据。
+  void bindImagegenSection();
+  // 每模型连接性测试钮（B 件）：对本次渲染的 provider 卡子树绑定（面板整体
+  // 重渲 → 这里重绑；dataset.testBound 防重复）。
+  bindModelTestButtons(content);
+  // JeV key 值明文直显（本批①件）：按当前 keyRef 拉 GET /api/secrets/<name>/
+  // value 填只读行（默认明文，eye 仅可选遮蔽）。失败/缺 keyRef = 占位说明。
+  refreshJevKeyValue();
   // 设置页 apikey 明文回读预取（作者令 2026-10-27「设置里配置的 apikey 直接
   // 显示」）：进页即拉已存 provider key 真值（owner 鉴权单点
   // GET /api/config/provider-keys；providersUi 模块内 60s 缓存 + 单飞），编辑
@@ -1057,9 +1131,12 @@ function renderProviderCard(name, p) {
   const modelCount = (p.models || []).length;
   const modelsHtml = (p.models || []).map(m => {
     const ref = `${name}/${m.id}`;
+    // B 件（2026-10-28）：每模型行尾连接性测试钮（modelTestButton 单点——
+    // 渲染/绑定/三态绘制都在该模块，本处只拼装）。
     return `<div class="cfg-model-row" data-model-ref="${escapeHtml(ref)}">
       <span class="cfg-model-name">${escapeHtml(m.id)}</span>
       <div class="cfg-model-vision">${renderVisionBadge(ref)}</div>
+      ${modelTestButtonHTML(name, m.id)}
     </div>`;
   }).join('');
 
@@ -1244,21 +1321,19 @@ function bindSettingsEvents(content, cfg) {
 
   // ── Jev section: explicit save (whitelist keys only; PUT /api/config/jev).
   // keyRef is a NAME under ~/.nebflow/secrets/ — a pointer, never a value.
-  // 三改①（2026-10-09 用户反馈①）：开关只作用法闸——不再联动展开/收起细节
-  // （旧「开=展开」耦合退役）。展开/收起唯一入口 = 卡头行体 #jev-head（真实
-  // button：点击 + Enter/Space 原位开合；开关是行内兄弟钮，点击永不冒泡进
-  // 热区）。折叠体常驻 DOM：collapse ≠ clear（输入值跨开合存活）。
+  // 三改①（2026-10-09 用户反馈①）：开关只作用法闸——不联动展开/收起。C 件
+  // 重排（2026-10-28）：开合唯一入口 = #jev-advance-toggle（STT 高级设置同款
+  // settings-collapse-toggle + hidden 属性折叠体，session-memory 态
+  // jevAdvanceExpanded）。
   document.getElementById('toggle-jev')?.addEventListener('click', function() {
     setToggleState(this, !this.classList.contains('on'));
   });
 
-  // 三改①：卡头行体点击 → 原位展开/收起（aria-expanded 与 chevron 旋转随态）。
-  document.getElementById('jev-head')?.addEventListener('click', function() {
-    const body = document.getElementById('jev-detail-body');
-    if (!body) return;
-    const open = body.style.display !== 'none';
-    body.style.display = open ? 'none' : 'block';
-    this.setAttribute('aria-expanded', String(!open));
+  document.getElementById('jev-advance-toggle')?.addEventListener('click', function() {
+    jevAdvanceExpanded = !jevAdvanceExpanded;
+    const body = document.getElementById('jev-advance-body');
+    if (body) body.hidden = !jevAdvanceExpanded;
+    this.setAttribute('aria-expanded', String(jevAdvanceExpanded));
   });
 
   // 三改②（2026-10-09 用户反馈②）：提供方切换联动端点钉死——typesafe-jev =
@@ -1281,28 +1356,22 @@ function bindSettingsEvents(content, cfg) {
     }
   });
 
-  // keyRef masking (secrets-ui-redesign, 2026-10-08): the field starts masked
-  // (-webkit-text-security:disc inline, provider-modal precedent at :1854) and
-  // the eye reveals it. Same inline-style flip as the precedent at :1893-1900;
-  // aria-label/aria-pressed track the state (secretsPanel applyMask reading:
-  // the label names the ACTION the click performs).
-  const jevEye = document.getElementById('jev-keyref-eye');
-  if (jevEye) {
-    jevEye.addEventListener('click', () => {
-      const input = /** @type {HTMLInputElement} */ (document.getElementById('cfg-jev-keyref'));
+  // JeV key 值行 eye（本批①件）：默认态 = 明文（作者令「要能直接可见」），
+  // 首击上掩码（-webkit-text-security:disc，providersUi showModal 同款判读）；
+  // 值只进该只读输入框——零 localStorage、零日志、面板重渲即重拉。
+  const jevKeyEye = document.getElementById('jev-key-eye');
+  if (jevKeyEye) {
+    jevKeyEye.addEventListener('click', () => {
+      const input = /** @type {HTMLInputElement|null} */ (document.getElementById('cfg-jev-key-value'));
       if (!input) return;
-      // -webkit-text-security 是非标属性：lib.dom 的 CSSStyleDeclaration 不带它，
-      // 经 any 视图读写（providers-modal 先例同型）。
-      // 明文直显批（作者令 2026-10-27）：默认态 = 明文（无内联样式），判掩码
-      // 只认内联 disc——首击即真实切换到遮蔽（providersUi showModal 同步调向）。
       const style = /** @type {any} */ (input.style);
       const isMasked = style.webkitTextSecurity === 'disc';
       style.webkitTextSecurity = isMasked ? 'none' : 'disc';
-      jevEye.innerHTML = isMasked ? eyeOffSvg : eyeSvg;
+      jevKeyEye.innerHTML = isMasked ? eyeOffSvg : eyeSvg;
       const label = t(isMasked ? 'settings.jevKeyRefHide' : 'settings.jevKeyRefShow');
-      jevEye.setAttribute('aria-label', label);
-      jevEye.title = label;
-      jevEye.setAttribute('aria-pressed', isMasked ? 'true' : 'false');
+      jevKeyEye.setAttribute('aria-label', label);
+      jevKeyEye.title = label;
+      jevKeyEye.setAttribute('aria-pressed', isMasked ? 'true' : 'false');
     });
   }
 
@@ -1334,6 +1403,8 @@ function bindSettingsEvents(content, cfg) {
         : statusIcon('circle-alert', 11, 'st-err') + escapeHtml(t('settings.saveFailed'));
       setTimeout(() => { if (stateEl.isConnected) stateEl.innerHTML = ''; }, 1500);
     }
+    // keyRef 指针可能刚被改写——保存成功后按新 keyRef 重拉 key 值明文。
+    if (ok) refreshJevKeyValue();
   });
 
   // ── Jev section: allocation-decision health (jev-plugins batch, 2026-10-07;
@@ -1451,16 +1522,32 @@ function bindSettingsEvents(content, cfg) {
     const endpoint = clear ? '' : (document.getElementById('stt-endpoint')?.value.trim() || '');
     const model = clear ? '' : (document.getElementById('stt-model')?.value.trim() || '');
     const apiKey = clear ? '' : (document.getElementById('stt-apikey')?.value.trim() || '');
+    // D 件（2026-10-28）：总开关随保存一起提交（显式布尔；后端三态合并——
+    // 省略路径仅旧前端负载会出现）。关 = STT 整体停用：清空三串 + enabled=false
+    // 时后端保留 {enabled:false} 文件（不再整体删档），停用态跨重启保持。
+    const enabled = document.getElementById('toggle-stt-enabled')?.classList.contains('on') !== false;
     const allEmpty = !endpoint && !model && !apiKey;
     // Clear = explicit all-empty (three keys, backend deletes the config file);
     // normal save omits an empty apiKey so the backend merge keeps the stored
     // key — never send an empty string on a partial update.
     const sttConfig = clear
-      ? { endpoint: '', apiKey: '', model: '' }
-      : { endpoint, model, ...(apiKey ? { apiKey } : {}) };
+      ? { endpoint: '', apiKey: '', model: '', enabled }
+      : { endpoint, model, enabled, ...(apiKey ? { apiKey } : {}) };
     sendWs({ type: 'setSttConfig', sttConfig });
-    window.__showToast?.(t(allEmpty ? 'settings.sttCleared' : 'settings.sttSaved'), 'success');
+    window.__showToast?.(t(allEmpty && enabled ? 'settings.sttCleared' : 'settings.sttSaved'), 'success');
   }
+  // D 件：启用开关只翻本地态（显式保存随 #334 既有 STT 语义——非 toggle 即存
+  // 族例外不新增），关=灰化三个输入框（TTL enabled 同款交互）。
+  document.getElementById('toggle-stt-enabled')?.addEventListener('click', function () {
+    const on = !this.classList.contains('on');
+    setToggleState(this, on);
+    ['stt-endpoint', 'stt-model', 'stt-apikey'].forEach((id) => {
+      const inp = /** @type {HTMLInputElement|null} */ (document.getElementById(id));
+      if (inp) inp.disabled = !on;
+    });
+    const hint = document.getElementById('stt-status-hint');
+    if (hint) hint.textContent = t(on ? 'settings.sttUnconfiguredStatus' : 'settings.sttDisabledStatus');
+  });
   document.getElementById('btn-save-stt')?.addEventListener('click', () => sendSttConfig(false));
   document.getElementById('btn-clear-stt')?.addEventListener('click', () => sendSttConfig(true));
   // A1: collapsed advanced panel — expand/collapse (session-memory state).

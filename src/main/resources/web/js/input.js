@@ -18,7 +18,7 @@ import { makeReference } from './reference.js';
 // quote-message 一期：引用条落面/清理（引用态数据面 = pendingAttachments 的
 // chat-message ref；发送/排队清空后同步引用条显隐）。
 import { renderQuoteStrip } from './msgQuote.js';
-import { startDictation, stopDictation, isModelReady } from './voiceEngine.js';
+import { startDictation, stopDictation, isModelReady, sttEnabled } from './voiceEngine.js';
 import { notifyVoiceState } from './micOrb.js';
 // voiceseal 批（批 #508）：语音封存 flag（features.voice，默认封存）——
 // 听写入口与全双工拖动入口在封存态一并闸死（见 onVoiceToggle/enterVoiceModeNow）。
@@ -2051,6 +2051,13 @@ export function initInput(view) {
     // 全双工封存不受影响（会话腿仍由 enterVoiceModeNow/voiceMode 闸死）。
     // 气泡显式隐藏（voiceOrb:false）时正常情形不可点，此闸兜住程序化调用。
     if (!voiceOrbEnabled()) return;
+    // settings-panel 批 D 件（2026-10-28）：STT 停用态入口全收——主窗听写
+    // 入口一并闸死（toast 提示 + body.stt-disabled 已藏气泡；此闸兜程序化
+    // 调用与 UI 刷新竞态窗口）。
+    if (!sttEnabled()) {
+      window.__showToast?.(t('stt.disabled'), 'error');
+      return;
+    }
     if (e) e.preventDefault();
     // A drag that just entered voice mode must not also toggle dictation
     // (the synthetic click fires after pointerup).
