@@ -76,7 +76,17 @@ private[gateway] object HealthRoutes:
       // 调用方带，此处载荷小、读数随配置）。
       case req @ GET -> Root / "health" / "loopback-info" =>
         withAuth(req) {
-          Ok(Json.obj("port" -> ctx.gatewayPort.asJson))
+          // 近路 miss 诊断面（门户身份透传批·方案 B 小刀②，2026-10-28）：本端点
+          // 只有「经 relay 加载的控制台页」的自升级链会调（直连腿 /api/portal/status
+          // 先 404 短路）——一次 INFO 行把「页面走到了近路判定链第 2 步」钉进引擎
+          // 侧日志；后续 miss（环回探测被 PNA 拒/deviceId 不等）发生在浏览器侧，
+          // 前端另有 sessionStorage miss 原因键（ws.js 近路腿）与nearpath 端点
+          // enrolled=false 日志（LAN 腿）同族可答「为什么没走 localhost」。
+          logger.info(
+            s"nearpath: loopback-info served (relay-leg page probing local port anchor, " +
+              s"host=${req.headers.get[org.http4s.headers.Host].map(_.host).getOrElse("unknown")})"
+          ) *>
+            Ok(Json.obj("port" -> ctx.gatewayPort.asJson))
         }
 
       // 连接面只读读数（R-1b conn-guard 批，设计件 §C④-4）：零凭据面（仅

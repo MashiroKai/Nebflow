@@ -103,3 +103,56 @@ class DeviceProvenanceInjectionGateSpec extends FunSuite:
     assert(dispatchCount >= 5, s"dispatchUserMessageFrames 定义+四腿调用钉 5 处，实测 $dispatchCount 处")
     assert(recoveryJs.contains(stamped), "errorRecovery 重发腿缺 device 声明")
   }
+
+  // ── 门户身份透传批（方案 A1，2026-10-28）：会话身份穿线契约 ──────────────
+  //
+  // 设计 §5 A1：SessionIdentity 在握手处提取（takeover 先例同点）随收流管闭包
+  // 进消息面；Bearer 轨恒 None。四个结构面缺一即红——回退（提取点消失/线程断/
+  // 消费点漏改回单参）都判「会话身份弃用复发」（断点表 B3 复辟）。
+
+  test("A1a the handshake extracts SessionIdentity at the SAME point as the takeover precedent (ViaSession projection)") {
+    assert(
+      wsRoutesCode.contains("val sessionIdentity: Option[nebflow.bridge.SessionIdentity] = cred match") &&
+        wsRoutesCode.contains("Some(nebflow.bridge.SessionIdentity(record.accountSub, record.origin, record.sessionId))"),
+      "握手处必须与会话轨同点提取 SessionIdentity 投影（accountSub/origin/sessionId）"
+    )
+  }
+
+  test("A1b the receive pipe threads the identity into handleMessage (per-connection closure, same scope as takeover)") {
+    assert(
+      wsRoutesCode.contains("handleMessage(text, perConnJsonSend, watchSession, sessionIdentity)"),
+      "收流管必须把本连接的 sessionIdentity 穿进消息分发"
+    )
+  }
+
+  test("A1c the typeless leg resolves with the session identity; the REST public face stays None (byte-identical)") {
+    assert(
+      wsRoutesCode.contains("deviceProvenanceOf(json, sessionIdentity).flatMap"),
+      "typeless 腿必须携会话身份解析"
+    )
+    // REST headless 轨无连接作用域：handleMessagePublic 的调用不带身份（默认 None）。
+    val publicLeg = wsRoutesCode.substring(wsRoutesCode.indexOf("def handleMessagePublic"))
+    val publicSlice = publicLeg.substring(0, math.min(publicLeg.length, 600))
+    assert(
+      publicSlice.contains("handleMessage(text, wsSend, new ExplorerWatchSession(wsSend, logger, live = false))"),
+      "REST 公共脸必须保持无身份形态（三参调用 = 默认 None）"
+    )
+  }
+
+  test("A1d the immediateInput seam closes over the connection identity in the dispatch context") {
+    assert(
+      dispatchCode.contains("deviceProvenanceImpl: io.circe.Json => IO[Option[nebflow.bridge.ResolvedDevice]]"),
+      "分发上下文必须携带 deviceProvenanceImpl 注入缝（既有契约不变）"
+    )
+    assert(
+      wsRoutesCode.contains("deviceProvenanceImpl = (json: io.circe.Json) => deviceProvenanceOf(json, sessionIdentity)"),
+      "分发上下文必须按本连接会话身份闭包（immediateInput 腿）"
+    )
+  }
+
+  test("A1e the owner-anchor read is session-gated (Bearer rail pays zero credential-file IO)") {
+    assert(
+      wsRoutesCode.contains("if sessionIdentity.isDefined then OwnerIdentity.localAnchor else IO.pure(None)"),
+      "owner 锚读取必须按会话身份门控（Bearer 轨零文件 IO，行为逐字节不变）"
+    )
+  }

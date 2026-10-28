@@ -163,6 +163,19 @@ private[gateway] object NeblinkRoutes:
               if bound.nonEmpty && bound == id.deviceId then Some(id.deviceId -> id.deviceName)
               else peersList.find(_.deviceId == bound).map(p => p.deviceId -> p.deviceName)
             enrolled = matched.nonEmpty
+            // 近路 miss 诊断面（门户身份透传批·方案 B 小刀②，2026-10-28）：LAN 腿
+            // 探测未命中 ⇒ 一行引擎侧日志答「为什么没走 localhost/近路」——bound
+            // 空 = 客户端没有花名册读数（隧道腿 roster 读被闸/无凭据，断点 B2 的
+            // 特征形态）；bound 非空不匹配 = 花名册真不在册。命中（enrolled）不打
+            // 日志（低频重连拍，INFO 面只留 miss）。低频：30s 防摆闸 + 每 onopen 一拍。
+            _ <-
+              if enrolled then IO.unit
+              else if bound.isEmpty then
+                logger.info("nearpath probe miss: enrolled=false bound=<none> (client has no roster readout — roster read unavailable on this leg)")
+              else
+                logger.info(
+                  s"nearpath probe miss: enrolled=false bound=${bound.take(8)}… (no roster match; self=${id.deviceId.take(8)}… peers=${peersList.size})"
+                )
           yield Ok(
             Json.obj(
               "enrolled" -> enrolled.asJson,

@@ -2588,6 +2588,14 @@ onMessage('serverConfig', (msg, view) => {
     state.freezeState = msg.freezeState;
     applyLocalFreeze();
   }
+  // 陈旧 SPA 指纹提示（门户身份透传批·方案 B 小刀③，2026-10-28 作者令④）：
+  // 引擎当前前端资源指纹（serverConfig 帧随行）与本页被 serve 时注入的
+  // window.__WEB_FINGERPRINT__ 比对——两者皆在场且不等 ⇒ 本标签页是旧版前端
+  // （B1：长命标签页跨引擎重启续命，device stamp/近路自升级/新版半边全不跑）
+  // ⇒ 顶栏提示刷新。任一缺席（旧引擎/无注入脸）⇒ 静默，绝不假阳。
+  if (msg.webFingerprint && window.__WEB_FINGERPRINT__ && msg.webFingerprint !== window.__WEB_FINGERPRINT__) {
+    import('./staleTabHint.js').then((m) => m.showStaleTabHint()).catch(() => {});
+  }
   if (msg.stt) {
     state.stt = msg.stt;
     // settings-panel 批 D 件（2026-10-28）：STT 总开关停用态 = body.stt-disabled

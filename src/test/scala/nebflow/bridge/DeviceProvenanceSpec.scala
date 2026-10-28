@@ -191,3 +191,126 @@ class DeviceProvenanceSpec extends FunSuite:
     assertEquals(out.length, 1)
     assert(out.head.isInstanceOf[ContentBlock.Text])
   }
+
+  // ─────────── 门户身份透传批（方案 A，2026-10-28）：三级优先级 ───────────
+  //
+  // 作者拍板（五条裁定）：三级标记优先级 = boundDeviceId 花名册命中（已登记）
+  // ＞ 会话 owner 等值（已认证，账号轨）＞ 默认名兜底逐字；状态词双轨（已登记/
+  // 已认证并存）。每级一绿（该级命中时的期望形态）一红（不得越级/冒认的反例）。
+
+  private val ownerAnchor = OwnerAnchor("sub-owner-1", "Mashiro")
+  private val ownerSession = SessionIdentity("sub-owner-1", "relay-mint", "sess-1")
+  private val otherSubSession = SessionIdentity("sub-someone-else", "relay-mint", "sess-2")
+
+  test("tier1 green: boundDeviceId roster hit wins even when the session is also the owner (registered name is richer)") {
+    val r = DeviceProvenance.resolve(
+      ClientDevice("c", Some("mac"), Some("Safari"), Some(self.deviceId)),
+      Some(self), peers, Some(ownerSession), Some(ownerAnchor)
+    )
+    assertEquals(r, ResolvedDevice("Mashiros-MacBook-Pro", enrolled = true), "第 1 级：登记名（隔离后缀已剥）")
+    assertEquals(DeviceProvenance.marker(r).linesIterator.toList(1), "以下消息来自网页控制台（渠道 console）· 设备：Mashiros-MacBook-Pro（已登记）")
+  }
+
+  test("tier1 red: a frame that does NOT hit the roster must never render 已登记 (owner session cannot fake enrollment)") {
+    val r = DeviceProvenance.resolve(
+      ClientDevice("c", Some("mac"), Some("Safari"), Some("gone-9")), // 绑定 id 已不在册
+      Some(self), peers, Some(ownerSession), Some(ownerAnchor)
+    )
+    assert(!r.enrolled, "花名册未命中不得冒认已登记")
+    assert(r.sessionAuthenticated, "落第 2 级（会话 owner 等值仍在）")
+  }
+
+  test("tier2 green: owner sub equality ⇒ 'label · browser（经官网）' display + 已认证 status word") {
+    val r = DeviceProvenance.resolve(
+      ClientDevice("c", Some("mac"), Some("Safari"), None), // roster 读数缺席（隧道腿常态）
+      Some(self), peers, Some(ownerSession), Some(ownerAnchor)
+    )
+    assertEquals(r, ResolvedDevice("Mashiro · Safari（经官网）", enrolled = false, sessionAuthenticated = true))
+    assert(
+      DeviceProvenance.marker(r).contains("设备：Mashiro · Safari（经官网）（已认证）"),
+      DeviceProvenance.marker(r)
+    )
+  }
+
+  test("tier2 red: non-owner sub (mismatch) must NOT be promoted to 已认证 — falls through to the default name") {
+    val r = DeviceProvenance.resolve(
+      ClientDevice("c", Some("mac"), Some("Safari"), None),
+      Some(self), peers, Some(otherSubSession), Some(ownerAnchor)
+    )
+    assertEquals(r, ResolvedDevice("未登记-Mac Safari", enrolled = false), "sub 不等 ⇒ 不升已认证（不冒认 owner）")
+  }
+
+  test("tier2 variants: browser absent folds to label-only; local-ticket origin tags 本机票; unknown origin no tag") {
+    val noBrowser = DeviceProvenance.resolve(
+      ClientDevice("c", None, None, None), None, Nil, Some(ownerSession), Some(ownerAnchor)
+    )
+    assertEquals(noBrowser.display, "Mashiro（经官网）")
+    val local = DeviceProvenance.resolve(
+      ClientDevice("c", Some("mac"), Some("Chrome"), None), None, Nil,
+      Some(SessionIdentity("sub-owner-1", "local-ticket", "s3")), Some(ownerAnchor)
+    )
+    assertEquals(local.display, "Mashiro · Chrome（本机票）", "本机票来源括注（不冒经官网）")
+    val unknownOrigin = DeviceProvenance.resolve(
+      ClientDevice("c", Some("mac"), Some("Chrome"), None), None, Nil,
+      Some(SessionIdentity("sub-owner-1", "future-origin", "s4")), Some(ownerAnchor)
+    )
+    assertEquals(unknownOrigin.display, "Mashiro · Chrome", "未知来源不带括注")
+  }
+
+  test("tier3 green: no session (Bearer rail / CLI) ⇒ byte-identical default name (fail-open 纪律)") {
+    val r = DeviceProvenance.resolve(
+      ClientDevice("c", Some("mac"), Some("Safari"), None), Some(self), peers
+    )
+    assertEquals(r, ResolvedDevice("未登记-Mac Safari", enrolled = false), "会话身份缺席 ⇒ 现状逐字节")
+  }
+
+  test("tier3 red: owner session but the anchor is missing (no local credential / sub absent) ⇒ NOT 已认证") {
+    val r = DeviceProvenance.resolve(
+      ClientDevice("c", Some("mac"), Some("Safari"), None),
+      Some(self), peers, Some(ownerSession), None
+    )
+    assertEquals(r, ResolvedDevice("未登记-Mac Safari", enrolled = false), "锚缺席 ⇒ 第 2 级整环缺席（不冒认）")
+  }
+
+  // ─────────── owner 等值判定三态（方案 A2；spec 独立于标记优先级钉死）───────
+
+  test("owner equality three states: sub match ⇒ authenticated; mismatch ⇒ not; anchor missing ⇒ not") {
+    val client = ClientDevice("c", Some("mac"), Some("Safari"), None)
+    val matchR = DeviceProvenance.resolve(client, None, Nil, Some(ownerSession), Some(ownerAnchor))
+    assertEquals(matchR.sessionAuthenticated, true, "sub 匹配 ⇒ 已认证")
+    val mismatchR = DeviceProvenance.resolve(client, None, Nil, Some(otherSubSession), Some(ownerAnchor))
+    assertEquals(mismatchR.sessionAuthenticated, false, "sub 不匹配 ⇒ 不升")
+    assertEquals(mismatchR.display, "未登记-Mac Safari")
+    val missingR = DeviceProvenance.resolve(client, None, Nil, Some(ownerSession), None)
+    assertEquals(missingR.sessionAuthenticated, false, "锚缺失 ⇒ 不升")
+    // local 票哨兵值 "local" 不可能等值真实 sub：local-ticket 会话永不冒认 owner。
+    val sentinel = DeviceProvenance.resolve(
+      client, None, Nil, Some(SessionIdentity("local", "local-ticket", "s5")), Some(ownerAnchor)
+    )
+    assertEquals(sentinel.sessionAuthenticated, false, "local 哨兵 ≠ owner sub")
+  }
+
+  // ─────────── 账号显示标签词表（方案 A4 P0）与隔离后缀剥离（A6）───────────
+
+  test("accountLabel: name claim wins, then email local-part, then the 门户账号 fallback (sub/email never in the marker)") {
+    assertEquals(DeviceProvenance.accountLabel(Map("name" -> "Mashiro", "email" -> "kaimashiro@qq.com", "sub" -> "sub-x")), "Mashiro")
+    assertEquals(DeviceProvenance.accountLabel(Map("email" -> "kaimashiro@qq.com")), "kaimashiro", "name 空 ⇒ email 本地段")
+    assertEquals(DeviceProvenance.accountLabel(Map("name" -> "  ", "email" -> "  ")), "门户账号", "全空 ⇒ 兜底词，恒可读")
+    assertEquals(DeviceProvenance.accountLabel(Map.empty), "门户账号")
+  }
+
+  test("stripIsoNameSuffix: display face strips -iso-<hex8>, identity-safe fallback keeps the original when stripping empties it") {
+    assertEquals(DeviceProvenance.stripIsoNameSuffix("Mashiros-MacBook-Pro-iso-a659864a"), "Mashiros-MacBook-Pro")
+    assertEquals(DeviceProvenance.stripIsoNameSuffix("Mashiros-MacBook-Pro"), "Mashiros-MacBook-Pro", "无后缀原样")
+    assertEquals(DeviceProvenance.stripIsoNameSuffix("-iso-a659864a"), "-iso-a659864a", "剥完为空 ⇒ 保原值（名字恒可读）")
+    // 花名册命中路径的显示名也剥后缀（A6：标记面读数；身份/配对面保原值）。
+    val isoSelf = DeviceRosterEntry("self-1", "Mashiros-MacBook-Pro-iso-a659864a")
+    val r = DeviceProvenance.resolve(ClientDevice("c", Some("mac"), None, Some("self-1")), Some(isoSelf), Nil)
+    assertEquals(r.display, "Mashiros-MacBook-Pro", "已登记显示名剥 -iso- 后缀")
+  }
+
+  test("origin constants stay verbatim-aligned with the session-store authority (single word-table across the trust chain)") {
+    // bridge 面刻意不 import gateway（依赖方向纪律）；词表对齐在此机械钉死。
+    assertEquals(DeviceProvenance.OriginRelayMint, nebflow.gateway.GatewaySessionStore.OriginRelayMint)
+    assertEquals(DeviceProvenance.OriginLocalTicket, nebflow.gateway.GatewaySessionStore.OriginLocalTicket)
+  }

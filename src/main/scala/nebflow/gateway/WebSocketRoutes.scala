@@ -1068,6 +1068,15 @@ class WebSocketRoutes(
               val takeoverSession: Option[String] = cred match
                 case Credential.ViaSession(record) => Some(record.sessionId)
                 case _ => None
+              // 门户身份透传批（方案 A1，2026-10-28）：会话身份快照——session 轨
+              // 连接把 SessionRecord 投影（accountSub/origin/sessionId）随接管入账
+              // 一起穿进收流管（下方 receivePipe 同一闭包作用域）；Bearer 轨连接恒
+              // None ⇒ 消息面行为逐字节不变（takeover 先例同点，同一信任锚：
+              // 会话记录 ← 票链 ← link-server AT 验证 + owner 核对）。
+              val sessionIdentity: Option[nebflow.bridge.SessionIdentity] = cred match
+                case Credential.ViaSession(record) =>
+                  Some(nebflow.bridge.SessionIdentity(record.accountSub, record.origin, record.sessionId))
+                case _ => None
               // R-1b conn-guard：升级受理即 per-IP 检查（拒 ⇒ 可见 429，不静默；
               // 环回恒放行）。入账延后到收流管起跑（下方 guardedReceive 会话
               // scope bracket——升级会话未起跑即未发生，零幽灵计数），回减同
@@ -1181,7 +1190,10 @@ class WebSocketRoutes(
                           val handled =
                             if takeover.enabled && ConsoleTakeover.isRetakeFrame(text) then
                               takeover.handleRetake(hubConnId, perConnJsonSend)
-                            else handleMessage(text, perConnJsonSend, watchSession)
+                            // 门户身份透传批（方案 A1）：本连接的会话身份随帧进消息
+                            // 分发（两处消费点：typeless 腿 + immediateInput 腿——
+                            // 后者经 wsDispatchContext 闭包）。Bearer 轨恒 None。
+                            else handleMessage(text, perConnJsonSend, watchSession, sessionIdentity)
                           handled.handleErrorWith { e =>
                             logger.error(s"WebSocket message handler error: ${e.getMessage}", e)
                             IO.unit
@@ -1249,6 +1261,13 @@ class WebSocketRoutes(
                             "type" -> "serverConfig".asJson,
                             "streamTimeoutMs" -> (Defaults.StreamTimeoutSec.toLong * 1000).asJson,
                             "version" -> nebflow.Version.string.asJson,
+                            // 陈旧 SPA 指纹提示批（方案 B 小刀③，2026-10-28）：前端
+                            // 资源指纹随连接初始态/广播帧下行；ws/main 面与本页被
+                            // serve 时注入的 window.__WEB_FINGERPRINT__ 比对，不等
+                            // ⇒ 顶栏提示刷新（治 B1 陈旧标签页续命——B3 双轨标记与
+                            // 页内自升级都依赖新版前端半边在跑）。空串 = 计算失败
+                            // （客户端真值守卫静默跳过）。
+                            "webFingerprint" -> StaticRoutes.webFingerprint.asJson,
                             "thinking" -> thinkingCfg.asJson,
                             "workSchedule" -> workScheduleCfg.asJson,
                             // 现象 2 契约（2026-08-30）：连接初始态即携带全局冻结状态——
@@ -1850,12 +1869,15 @@ class WebSocketRoutes(
     // Non-live watch session: explorer-rt subscriptions need a real WS
     // connection (lifecycle-tied); a REST-invoked handler answers fileOpError
     // for watch frames instead of silently leaking a WatchService.
+    // 会话身份：REST headless 轨无 WS 连接作用域 ⇒ None（门户身份透传批——
+    // REST 工作型路径行为逐字节不变）。
     handleMessage(text, wsSend, new ExplorerWatchSession(wsSend, logger, live = false))
 
   private def handleMessage(
     text: String,
     wsSend: io.circe.Json => IO[Unit],
-    watchSession: ExplorerWatchSession
+    watchSession: ExplorerWatchSession,
+    sessionIdentity: Option[nebflow.bridge.SessionIdentity] = None
   ): IO[Unit] =
     // attach-split 批（2026-10-24）：超限帧不再只留一行服务器 warn（现场事故 =
     // 22 图整帧静默丢、文字同丢、前端乐观气泡假成功、「引擎日志零痕迹」体感）。
@@ -1889,7 +1911,7 @@ class WebSocketRoutes(
         _ <- nebflow.core.UsageTracker.record("ws_message", sessionIdForTracking)
         _ <- WsDispatch.handlers.get(msgType) match
           case Some(handle) =>
-            handle(wsDispatchContext, text, wsSend, watchSession)
+            handle(wsDispatchContext(sessionIdentity), text, wsSend, watchSession)
 
           case None =>
             val json = parsedJson(text)
@@ -1925,7 +1947,9 @@ class WebSocketRoutes(
                     // Resolve projectRoot for local file search before processing attachments
                     // device-provenance 批：帧 `device` 键解析（缺席 ⇒ None ⇒ 下方
                     // 构块/派发逐字节不变；解析面 fail-open，绝不阻塞消息本身）。
-                    deviceProvenanceOf(json).flatMap { deviceResolved =>
+                    // 门户身份透传批（方案 A3）：会话身份同行（owner 等值 ⇒ 已认证
+                    // 级标记）；None（Bearer 轨/CLI/REST headless）⇒ 现状逐字节。
+                    deviceProvenanceOf(json, sessionIdentity).flatMap { deviceResolved =>
                       (for
                         metaOpt <- sessionStore.getSessionMeta(msgSessionId)
                         folderId = metaOpt.flatMap(_.folderId)
@@ -2155,7 +2179,9 @@ class WebSocketRoutes(
    * F 步分发上下文:按帧把迁出臂所需的本类私有依赖打包给各域 handler
    * (引用与 eta 展开,构建零副作用)。
    */
-  private def wsDispatchContext: WsDispatchCtx =
+  private def wsDispatchContext(
+    sessionIdentity: Option[nebflow.bridge.SessionIdentity] = None
+  ): WsDispatchCtx =
     WsDispatchCtx(
       logger = logger,
       sessionService = sessionService,
@@ -2199,7 +2225,9 @@ class WebSocketRoutes(
       resolveExplorerBaseRootImpl = resolveExplorerBaseRoot,
       admitWorkOrRefuseImpl = admitWorkOrRefuse,
       handleUserTextImpl = handleUserText,
-      deviceProvenanceImpl = deviceProvenanceOf,
+      // 门户身份透传批（方案 A1）：immediateInput 腿的解析缝按本连接的会话身份
+      // 闭包（None = Bearer 轨/REST headless ⇒ 解析面现状逐字节）。
+      deviceProvenanceImpl = (json: io.circe.Json) => deviceProvenanceOf(json, sessionIdentity),
       skipCurrentFreezeWindowImpl = () => skipCurrentFreezeWindow,
       executeAskImpl = executeAsk,
       executeSkillImpl = executeSkill,
@@ -2243,20 +2271,34 @@ class WebSocketRoutes(
         )
 
   /**
-   * 帧的来源设备解析：`device` 键缺席/无 clientId ⇒ None（不标注）；在场 ⇒ 对照
-   * 花名册出 [[ResolvedDevice]]。任何花名册异常都 fail-open 为空册（未登记），
-   * 绝不影响消息本身的派发。
+   * 帧的来源设备解析：`device` 键缺席/无 clientId ⇒ None（不标注——不声明不标注，
+   * 不猜）；在场 ⇒ 对照花名册 + 会话身份出 [[ResolvedDevice]]。任何花名册/凭据
+   * 异常都 fail-open（未登记/无锚），绝不影响消息本身的派发。
+   *
+   * 门户身份透传批（方案 A2/A3，2026-10-28）：`sessionIdentity` 在场时才读本机
+   * owner 锚（OwnerIdentity.localAnchor——Bearer 轨/CLI 帧零文件 IO），owner
+   * 等值命中 ⇒ 「已认证」级标记；缺席/不等 ⇒ 默认名兜底逐字。
    */
-  private def deviceProvenanceOf(json: io.circe.Json): IO[Option[nebflow.bridge.ResolvedDevice]] =
+  private def deviceProvenanceOf(
+    json: io.circe.Json,
+    sessionIdentity: Option[nebflow.bridge.SessionIdentity] = None
+  ): IO[Option[nebflow.bridge.ResolvedDevice]] =
     nebflow.bridge.ClientDevice.fromFrame(json) match
       case None => IO.pure(None)
       case Some(client) =>
-        deviceRosterEntries.map { (self, peers) =>
-          val resolved = nebflow.bridge.DeviceProvenance.resolve(client, self, peers)
+        // owner 锚按需读：仅会话轨连接付一次凭据文件读（token 键控缓存）；Bearer
+        // 轨/CLI 帧零 IO（行为逐字节不变）。
+        val anchorIO: IO[Option[nebflow.bridge.OwnerAnchor]] =
+          if sessionIdentity.isDefined then OwnerIdentity.localAnchor else IO.pure(None)
+        // flatMapN：判词日志必须绑进链——mapN 纯函数块里裸 logger.info 是孤儿
+        // IO（构造即丢弃，永不执行；与 ConsoleTicketRoutes 兑换日志同款坑）。
+        (deviceRosterEntries, anchorIO).flatMapN { case ((self, peers), anchor) =>
+          val resolved =
+            nebflow.bridge.DeviceProvenance.resolve(client, self, peers, sessionIdentity, anchor)
           logger.info(
-            s"Device provenance: '${resolved.display}' (enrolled=${resolved.enrolled}) clientId=${client.clientId.take(8)}…"
-          )
-          Some(resolved)
+            s"Device provenance: '${resolved.display}' (enrolled=${resolved.enrolled}, " +
+              s"authenticated=${resolved.sessionAuthenticated}) clientId=${client.clientId.take(8)}…"
+          ).as(Some(resolved))
         }
 
   /**
