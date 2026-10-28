@@ -49,7 +49,7 @@ private[gateway] object PerceptionRoutes:
                 displayName = optStr(body, "displayName"),
                 trustedSenders = optStrList(body, "trustedSenders")
               ).flatMap {
-                case Right(acc) =>
+                case Right((acc, stats)) =>
                   Ok(Json.obj(
                     "ok" -> true.asJson,
                     "account" -> Json.obj(
@@ -57,6 +57,12 @@ private[gateway] object PerceptionRoutes:
                       "address" -> acc.address.asJson,
                       "provider" -> acc.provider.asJson,
                       "enabled" -> acc.enabled.asJson
+                    ),
+                    // 连接成功态统计（报障 2026-10-28：连接卡显示「已连接：
+                    // 收件箱 N 封、M 封未读」；unseen 缺席 = null，前端降级文案）
+                    "mailbox" -> Json.obj(
+                      "exists" -> stats.exists.asJson,
+                      "unseen" -> stats.unseen.asJson
                     )
                   ))
                 case Left(err) => BadRequest(Json.obj("ok" -> false.asJson, "error" -> err.asJson))

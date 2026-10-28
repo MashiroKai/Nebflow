@@ -484,7 +484,15 @@ function openConfigCard(existing) {
     const r = await api('POST', '/api/perception/mail/connect', body);
     if (btn instanceof HTMLButtonElement) btn.disabled = false;
     if (r.ok) {
-      setResult(result, t('perception.cfgConnected'), true);
+      // 连接成功态带统计（报障 2026-10-28：连接卡只显示「已连接」级别的友好
+      // 文案；服务器 SELECT 统计缺席/旧引擎无 mailbox 字段时逐级降级）。
+      const mb = r.data && r.data.mailbox;
+      const n = mb && Number.isFinite(mb.exists) ? mb.exists : null;
+      const u = mb && Number.isFinite(mb.unseen) ? mb.unseen : null;
+      const okMsg = n == null ? t('perception.cfgConnected')
+        : u == null ? t('perception.cfgConnectedInbox', { n })
+        : t('perception.cfgConnectedStats', { n, u });
+      setResult(result, okMsg, true);
       setTimeout(closeConfigCard, 600);
       api('GET', '/api/perception/entries').then(rr => {
         if (rr.ok && rr.data && Array.isArray(rr.data.entries)) { entriesCache = rr.data.entries; renderPanel(); }

@@ -27,22 +27,46 @@ object MailClient:
 
   // ════════════════════════ IMAP ════════════════════════
 
-  final class ImapSession(socket: SSLSocket) extends AutoCloseable:
+  // socket 形参放宽为 Socket（生产腿仍由 connectImap 建隐式 TLS 的 SSLSocket；
+  // 放宽只为 spec 的本地明文 mock 服务器可直构会话）。
+  final class ImapSession(socket: Socket) extends AutoCloseable:
     @volatile private var in: BufferedInputStream = new BufferedInputStream(socket.getInputStream, 64 * 1024)
-    @volatile private var reader: BufferedReader =
-      new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))
     private var counter = 0
 
     private def nextTag: String =
       counter += 1
       s"a$counter"
 
+    /**
+     * Byte-level 行读取（单流所有者）。旧版 BufferedReader（字符流）与字面量
+     * 直读（`in.read`）混流：readLine 会把同一 TCP 分段里 tag 行之后的字节
+     * （含 `{n}` 字面量本体与后续行）预取进字符缓冲，字面量再按精确长度直读
+     * 时字节已不在流里 ⇒ FETCH 挂死（spec 实测撞 5s SoTimeout）或内容错位。
+     * 修后行按字节读到 `\n`、剥尾 `\r`、UTF-8 解码；字面量仍按长度直读——
+     * 同一条流顺序消费，零混流。
+     *
+     * @return null = 干净 EOF（对齐旧 BufferedReader.readLine 语义）
+     */
+    private def readLine(): String =
+      val first = in.read()
+      if first < 0 then null
+      else
+        val buf = new scala.collection.mutable.ArrayBuffer[Byte](160)
+        var b = first
+        var atEnd = b == '\n'
+        while !atEnd do
+          buf += b.toByte
+          b = in.read()
+          atEnd = b < 0 || b == '\n'
+        if buf.nonEmpty && buf.last == '\r' then buf.remove(buf.length - 1)
+        new String(buf.toArray, StandardCharsets.UTF_8)
+
     /** Read a full response for `tag`, inlining `{n}` literals as raw bytes. */
     def readUntilTag(tag: String): String =
       val sb = new StringBuilder
       var done = false
       while !done do
-        val line = reader.readLine()
+        val line = readLine()
         if line == null then throw new java.io.IOException("IMAP connection closed by peer")
         sb.append(line).append("\r\n")
         literalLen(line) match
@@ -61,19 +85,40 @@ object MailClient:
     private def literalLen(line: String): Option[Int] =
       LiteralPattern.findAllMatchIn(line).toList.lastOption.map(_.group(1).toInt)
 
-    /** Send a command and consume its full response. Right = tagged OK. */
+    /**
+     * Send a command and consume its full response.
+     *
+     * 判定锚点 = tagged 完成行（RFC 3501 §7）：SELECT/SEARCH/FETCH 的响应
+     * 以 untagged 数据行（`* …`）开头、tagged 完成行（`a2 OK/NO/BAD …`）
+     * 收尾。旧版锚在 `resp.startsWith(tag OK)`（首行）——SELECT 的 untagged
+     * 序列永不满足 ⇒ 成功响应整段被当错误倾倒（报障 2026-10-28：QQ 连接
+     * 「* 4497 EXISTS …」被判错显示并 take(160) 半截截断；LOGIN 单行响应
+     * 侥幸通过，故表现为「认证已通却报错」）。
+     *
+     * Right = 完整响应（untagged + tagged，供 EXISTS/SEARCH/FETCH 解析）；
+     * Left = 人类可读短句（raw 线上数据不进错误串，UI 不再倾倒）。
+     */
     def command(cmd: String): Either[String, String] =
       val tag = nextTag
-      val out = socket.getOutputStream
-      out.write(s"$tag $cmd\r\n".getBytes(StandardCharsets.UTF_8))
-      out.flush()
-      val resp = readUntilTag(tag)
-      if resp.startsWith(s"$tag OK") then Right(resp)
-      else Left(resp.trim.take(300))
+      val read =
+        try
+          val out = socket.getOutputStream
+          out.write(s"$tag $cmd\r\n".getBytes(StandardCharsets.UTF_8))
+          out.flush()
+          Right(readUntilTag(tag))
+        catch
+          // SocketTimeoutException ⊂ IOException，须先于 IOException 匹配。
+          case _: java.net.SocketTimeoutException =>
+            Left("IMAP 响应超时 · 服务器长时间无响应，请检查网络后重试")
+          case e: java.io.IOException =>
+            Left(s"IMAP 连接中断：${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}")
+          case e: Throwable =>
+            Left(s"IMAP 会话异常：${e.getClass.getSimpleName}")
+      read.flatMap(resp => MailClient.imapVerdict(tag, resp))
 
     /** Consume the greeting (`* OK` / `* PREAUTH`). */
     def readGreeting(): Either[String, Unit] =
-      val line = reader.readLine()
+      val line = readLine()
       if line == null then Left("IMAP: no greeting (connection closed)")
       else if line.startsWith("* OK") || line.startsWith("* PREAUTH") then Right(())
       else Left(s"IMAP greeting not OK: ${line.take(120)}")
@@ -83,11 +128,9 @@ object MailClient:
 
     private def escape(s: String): String = s.replace("\\", "\\\\").replace("\"", "\\\"")
 
-    /** SELECT INBOX → EXISTS count (informational). */
-    def selectInbox(): Either[String, Int] =
-      command("SELECT INBOX").map { resp =>
-        ExistsPattern.findFirstMatchIn(resp).map(_.group(1).toInt).getOrElse(0)
-      }
+    /** SELECT INBOX → 统计（EXISTS/UNSEEN/UIDVALIDITY，untagged 行解析）。 */
+    def selectInbox(): Either[String, InboxStats] =
+      command("SELECT INBOX").map(resp => InboxStats.fromSelectResponse(resp))
 
     /** UIDs strictly greater than `afterUid` (0 = all → caller takes max for first sync). */
     def searchUids(afterUid: Long): Either[String, List[Long]] =
@@ -123,6 +166,40 @@ object MailClient:
   private val LiteralPattern: Regex = """\{(\d+)\}\s*$""".r
   private val ExistsPattern: Regex = """\* (\d+) EXISTS""".r.unanchored
   private val SearchLine: Regex = """(?s)\* SEARCH(.*)""".r
+
+  /**
+   * SELECT 统计面（连接成功态的数据源；报障 2026-10-28 要求的「已连接：
+   * 收件箱 N 封、M 封未读」）。uidValidity 解析留存（UIDVALIDITY 变更时
+   * lastSeenUid 需重置的同步正确性位，本批只解析不上屏）。
+   */
+  final case class InboxStats(exists: Int, unseen: Option[Int], uidValidity: Option[Long])
+
+  object InboxStats:
+    private val UnseenPattern: Regex = """\* OK \[UNSEEN (\d+)\]""".r.unanchored
+    private val UidValidityPattern: Regex = """\* OK \[UIDVALIDITY (\d+)\]""".r.unanchored
+
+    /** 纯函数（spec 直测截图同形状）：untagged 序列 → 统计。缺项容忍。 */
+    def fromSelectResponse(resp: String): InboxStats =
+      InboxStats(
+        exists = ExistsPattern.findFirstMatchIn(resp).map(_.group(1).toInt).getOrElse(0),
+        unseen = UnseenPattern.findFirstMatchIn(resp).map(_.group(1).toInt),
+        uidValidity = UidValidityPattern.findFirstMatchIn(resp).map(_.group(1).toLong)
+      )
+
+  /**
+   * 判定 + 错误面（纯函数，spec 直测）。完成行 = 响应最后一条非空行
+   * （readUntilTag 恰在 tagged 行停笔）：`tag OK` ⇒ Right(完整响应)；
+   * `tag NO/BAD` ⇒ Left(完成行本身——服务器的人类可读结论，如
+   * 「NO [AUTHENTICATIONFAILED] …」，上限 200 字符防病态服务器)；
+   * 无完成行 ⇒ 流被截断，Left 防御句（不倾倒 raw）。
+   */
+  def imapVerdict(tag: String, resp: String): Either[String, String] =
+    val completion = resp.linesIterator.map(_.trim).filter(_.nonEmpty).toList.lastOption.getOrElse("")
+    def startsWithWord(w: String): Boolean = completion.startsWith(s"$tag $w")
+    if startsWithWord("OK") then Right(resp)
+    else if startsWithWord("NO") then Left(s"IMAP NO ${completion.drop(tag.length + 1).trim.take(200)}")
+    else if startsWithWord("BAD") then Left(s"IMAP BAD ${completion.drop(tag.length + 1).trim.take(200)}")
+    else Left("IMAP 响应不完整：未收到完成行 · 请重试")
 
   def connectImap(host: String, port: Int, timeoutMs: Int = 15000): Either[String, ImapSession] =
     try
