@@ -8,6 +8,44 @@
  * 动效 cubic-bezier(.16,1,.3,1) 200-250ms；控件过渡 .15s。
  */
 
+/* ═══════════════ ⓪ 顶栏入口按钮（#perception-btn）═══════════════ */
+/* 顶栏幽灵玻璃图标族（#search-btn / #reminder-btn / #daemon-btn 同档）：透明底 +
+   1px 透明边框 + 28×28 / radius 6 / 16px 图标，hover 才上玻璃。修前本按钮零规则
+   命中（className 复制自 #daemon-btn = 空串）⇒ 浏览器默认亮底填充钮，独一份跳色
+   （作者报障 2026-10-28 09:45）。变量逐字镜像同排档案（sapphire.css --glass-control-* /
+   base.css --color-frame-*；与 stand-tokens --st-control-* 数值同谱）——镜像是有意
+   的：spec 钉（perception-btn-ghost）按「同状态计算样式相等」判等，同源变量 = 恒等。 */
+#perception-btn {
+  background: none;
+  border: 1px solid transparent; /* reserves edge space for glass hover */
+  cursor: pointer;
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--color-frame-text-muted);
+  position: relative;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+#perception-btn:hover {
+  background: var(--glass-control-bg-hover);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border-color: var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  color: var(--color-frame-text);
+}
+#perception-btn svg { width: 16px; height: 16px; stroke-width: 2; opacity: 0.7; }
+/* 激活态（面板开）：不加底色——同排 #daemon-btn.active 档（图标 sapphire 提亮 +
+   满不透明），顶栏永远不出现亮底填充。 */
+#perception-btn.active svg { opacity: 1; color: rgb(var(--sapphire)); }
+
 /* ═══════════════ ① 感知面板（#perception-panel）═══════════════ */
 
 #perception-panel {
