@@ -5,7 +5,8 @@ status: draft
 
 # Canvas 文件 ask mode · 玻璃 token 规格页（设计资产）
 
-> 本页是 [[20261028_canvas-ask-mode-design.zh-CN]]（设计稿）与 [[20261028_canvas-ask-mode-mockup.html]]（效果演示样张（[[glossary#^mockup-sample]]））的配套资产页：把演示里用到的全部样式整理成 **token 表 + 配方块**，作者确认样张后，实施批按本页直接消费——这是「之后工作能复用」的载体。状态：前端设计确认前草案。
+> 本页是 [[20261028_canvas-ask-mode-design.zh-CN]]（设计稿）与 [[20261028_canvas-ask-mode-mockup-v2.html]]（效果演示样张（[[glossary#^mockup-sample]]）v2，v1 样张 superseded 留档）的配套资产页：把演示里用到的全部样式整理成 **token 表 + 配方块**，作者确认样张后，实施批按本页直接消费——这是「之后工作能复用」的载体。状态：前端设计确认前草案。
+> **2026-10-28 17:5x 作者八条令增补**：形态改版（右下角最靠右入口钮 → 点击弹输入框 → 气泡列从按钮位置长出；无窗体背景、毛玻璃气泡、顶部渐变模糊过渡、小巧不弹窗；品牌色取 stand-website 色板；每文件独立 session；开合动画锚定按钮）——见 **E 表**；A/C 表继续有效，B 表几何档被 E-2 取代（留档）。
 
 ## 0. 单源原则
 
@@ -66,6 +67,8 @@ status: draft
 
 ## B. 本设计新增（提案档，实施批落 `--ask-` 进同一 token 文件）
 
+> **v2 superseded 注记（2026-10-28 八条令）**：v1 形态是「卡头角标钮 + 380×520 玻璃窗」，本表几何档（`--ask-panel-*` / `--ask-entry-size` / `--ask-radius` / `--ask-dock-gap`）随形态作废，现行几何见 **E-2**；命名惯例 `--{域}-{对象}-{档位}` 不变。表体留档不删。
+
 | token（提案名） | 桌面档 | 移动档 | 适用控件 |
 |---|---|---|---|
 | `--ask-panel-w` × `--ask-panel-h` | `380px` × `520px` | sheet 内浮层自适应（left/right 12 · top 60 · bottom 108） | ask 窗默认档 |
@@ -118,6 +121,79 @@ status: draft
 
 ## D. 验收口径（token 面）
 
-1. 样张与实施全部玻璃值可追溯到 A 表（sapphire.css / chat.css / base.css / split.css / mobileLayer.css），实现代码内**禁止出现**本页值的字面量复本；
-2. B 表新增 token 随实施批落入同一 token 文件并回填实际名；
+1. 样张与实施全部玻璃值可追溯到 A 表（sapphire.css / chat.css / base.css / split.css / mobileLayer.css）与 E-1 表（stand-website 色板），实现代码内**禁止出现**本页值的字面量复本；
+2. B/E 两表新增 token 随实施批落入同一 token 文件并回填实际名（v2 消费 A + E，B 表留档）；
 3. 暗档为准（本设计首发桌面暗色），亮档值在亮主题下自动生效（`prefers-color-scheme` 同源切换）。
+
+## E. v2 形态增补（作者八条令 2026-10-28 17:5x）
+
+> v2 形态 = **canvas 右下角最靠右入口钮 → 点击弹输入框 → 气泡列从按钮位置长出**：无窗体背景（零面板/零弹窗/零遮罩、不占 canvas）、毛玻璃气泡、顶部渐变模糊过渡、每文件独立 session、开合动画锚定按钮位置。载体：[[20261028_canvas-ask-mode-mockup-v2.html]]。八条令 → 设计落点：①入口钮（E-2 `--ask-fab-*`）②输入框（E-3 `.ask-input`）③气泡列（E-3 `.ask-col`，弹幕式升腾+按龄渐隐）④无窗体（覆盖层无面板背景，只有浮件自身）⑤毛玻璃+顶部渐变模糊（E-3 双 mask）⑥品牌色板（E-1）⑦每文件独立 session（`ask:<hash(文件路径)>`，切卡即切、收起不销毁）⑧开合动画（E-3 `transform-origin` 锚定按钮圆心）。
+
+### E-1 品牌色板（取自 stand-website 仓 `app/globals.css`，逐字）
+
+出处：亮档 = `@theme`（globals.css:4-21）；暗档 = `html[data-theme="dark"]` 覆盖（:115-127）；绿非交互注记 = globals.css:14-20。
+
+| token（v2 提案名） | 亮档值 | 暗档值 | 源变量 | ask 面消费 |
+|---|---|---|---|---|
+| `--ask-brand` | `#3b82f6` | `#60a5fa` | `--color-primary` | **功能/交互色**：入口钮、发送钮、用户气泡玻璃、focus 环 |
+| `--ask-brand-light` | `#60a5fa` | `#93c5fd` | `--color-primary-light` | 入口钮图标、渐变端 |
+| `--ask-accent` | `#8b5cf6` | `#a78bfa` | `--color-accent` | **强调**：session 徽标点、转交钮、转交回执气泡 |
+| `--ask-pixel`（禁交互） | `#07c160` | `#07c25f` | `--color-pixel` | **不消费**——源码注记「deliberately NOT an interactive control color」，ask 面无绿钮（v1 的绿发送钮随 E 废） |
+| 文字/底 | `#0f172a` / `#ffffff` / `#f8fafc` / `#64748b` | `#e6edf3` / `#0d1117` / `#161b22` / `#98a0aa` | `--color-foreground/-background/-card/-muted` | 气泡文字、session 徽标副字 |
+| 链接（docs-scope） | `#2563eb` / `#1d4ed8` | `#7aa5f8` / `#9dbcfa` | `--color-link(-strong)` | cite 引用徽标 |
+
+与单源的关系（§0 不变）：玻璃基底/几何仍取 `sapphire.css`；品牌色是叠加层——实施批以 E-1 的 `--ask-*` 别名落 token，**不在产品 CSS 硬编码 hex**；官网若调色，改 stand-website 一处、`--ask-*` 回填一处。
+
+### E-2 v2 几何/材质/z 档（提案名，实施批落 `--ask-*`）
+
+| token（提案名） | 桌面档 | 移动档 | 消费方 |
+|---|---|---|---|
+| `--ask-fab-size` | `44px`（命中盒=视觉径） | `44px`（同） | 入口钮：右下角**最靠右**（作者令①） |
+| `--ask-fab-gap` | `14px` | `12px` | 钮距画布右/下缘 |
+| `--ask-dock-w` | `372px` | `calc(100% - 24px)` | 覆盖层宽（= 输入框档宽） |
+| `--ask-col-maxh` | `316px` | `250px` | 气泡列 max-height（超出内部滚动，小巧不占 canvas） |
+| `--ask-fade-h` | `64px` | `56px` | 顶部渐变模糊过渡带高（作者令⑥） |
+| `--ask-bub-maxw` | `306px` | `252px` | 气泡 max-width |
+| `--ask-bub-blur` / `--ask-veil-blur` | `16px` / `8px` | 同 | 气泡毛玻璃 blur / 顶部模糊幕 blur（配方 `blur() saturate(1.4)`） |
+| `--z-ask-dock` | `24`（< 顶行 `30`） | 同 | **覆盖层与顶行排他 z 序**：ask 层永在顶行（主胶囊/堆叠钮/卡头/切换条）之下，顶带渐隐即视觉边界 |
+
+### E-3 v2 核心配方（复制即用；值 = A 表 + E-1/E-2）
+
+```css
+/* ④⑤ 毛玻璃气泡（无窗体——气泡自身就是全部容器，无面板背景） */
+.ask-bub {
+  background: rgba(22, 27, 34, 0.52); border: 1px solid rgba(240, 246, 252, 0.10);
+  -webkit-backdrop-filter: blur(var(--ask-bub-blur)) saturate(1.4);
+  backdrop-filter: blur(var(--ask-bub-blur)) saturate(1.4);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  border-radius: 15px; padding: 9px 13px; font-size: 13.5px; line-height: 1.6;
+  max-width: var(--ask-bub-maxw);
+}
+.ask-bub.user { /* 用户侧 = 官网品牌蓝玻璃 */
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.30), rgba(37, 99, 235, 0.20));
+  border-color: rgba(96, 165, 250, 0.40);
+}
+.ask-bub.sys { /* 转交回执（injected 族）= 官网紫强调 */
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.24), rgba(124, 58, 237, 0.14));
+  border-color: rgba(167, 139, 250, 0.38);
+}
+
+/* ⑥ 顶部渐变模糊过渡：列 mask 渐隐 + 顶带模糊幕（双 mask 叠加，旧气泡化入画布） */
+.ask-col {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0,0,0,.55) 26px, #000 var(--ask-fade-h));
+  mask-image: linear-gradient(to bottom, transparent 0, rgba(0,0,0,.55) 26px, #000 var(--ask-fade-h));
+}
+.ask-veil {
+  height: var(--ask-fade-h); pointer-events: none;
+  -webkit-backdrop-filter: blur(var(--ask-veil-blur)); backdrop-filter: blur(var(--ask-veil-blur));
+  -webkit-mask-image: linear-gradient(to bottom, #000, transparent);
+  mask-image: linear-gradient(to bottom, #000, transparent);
+}
+
+/* ⑧ 开合动画锚定按钮位置：transform-origin = 右下角按钮圆心，开合同一曲线 */
+.ask-dock {
+  transform-origin: 100% 100%;
+  transition: transform var(--panel-duration) var(--panel-ease), opacity 0.24s ease;
+}
+.ask-dock.closed { transform: translateY(16px) scale(0.6); opacity: 0; pointer-events: none; }
+```
