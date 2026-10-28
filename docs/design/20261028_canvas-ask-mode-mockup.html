@@ -1,0 +1,1024 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Canvas 文件 ask mode · 效果演示（样张 · 2026-10-28）</title>
+<style>
+  /* ═══════════════════════════════════════════════════════════════════
+     Canvas 文件 ask mode · 交互样张（样张口径见 docs/glossary.md ^mockup-sample）
+     · 零依赖单文件；数据真实、交互可点。
+     · 所有玻璃样式值逐字取自产品单源 src/main/resources/web/css/sapphire.css
+       暗档（--glass-* / --frost-shadow / --glass-control-* / --capsule-h|w）、
+       base.css 暗色主题、chat.css 气泡族、split.css deck-card/canvas-header、
+       mobileLayer.css bottom-sheet/切换条。作者看到的效果 = 将来实施的效果。
+     · 状态：前端设计确认前草案（作者 2026-10-28 17:10 令：先完成前端设计确认）。
+     ═══════════════════════════════════════════════════════════════════ */
+  :root {
+    /* ── 产品暗色主题 token（base.css 91-131 暗档，逐字） ── */
+    --color-bg: #13161c;
+    --color-surface: #1c1f27;
+    --color-text: #e8eaed;
+    --color-text-muted: #7b7e88;
+    --color-text-dim: #9ba0aa;
+    --color-border: #2a2d35;
+    --color-bubble-user: #95ec69;
+    --color-bubble-ai: #1c1f27;
+    --color-primary: #07c160;
+
+    /* ── sapphire 玻璃体系（sapphire.css 暗档，逐字） ── */
+    --sapphire: 91 127 191;
+    --brand-green: 7 193 96;
+    --amber: 255 168 60;
+    --sapphire-edge: rgba(91, 127, 191, 0.06);
+    --sapphire-edge-strong: rgba(91, 127, 191, 0.18);
+    --glass-bg: rgba(24, 28, 38, 0.68);
+    --glass-blur: 24px;
+    --glass-border: rgba(255, 255, 255, 0.06);
+    --frost-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 8px 24px rgba(0, 0, 0, 0.35);
+    --glass-etched-bg: rgba(255, 255, 255, 0.04);
+    --glass-etched-border: rgba(91, 127, 191, 0.08);
+    --glass-etched-border-focus: rgba(91, 127, 191, 0.35);
+    --glass-control-bg: rgba(255, 255, 255, 0.05);
+    --glass-control-bg-hover: rgba(255, 255, 255, 0.10);
+    --glass-control-border: rgba(255, 255, 255, 0.08);
+    --glass-control-highlight: rgba(255, 255, 255, 0.08);
+    --glass-control-highlight-hover: rgba(255, 255, 255, 0.13);
+    --glass-control-underedge: rgba(0, 0, 0, 0.25);
+    --glass-control-glow: rgba(0, 0, 0, 0.20);
+    --glass-control-shadow: rgba(0, 0, 0, 0.15);
+    --glass-control-blur: 10px;
+    --capsule-h: 36px;
+    --capsule-w: 180px;
+    /* 折射线用 stand-tokens.css --st-glass-refraction 档（样张可见度取亮档值） */
+    --refraction: rgba(91, 127, 191, 0.45);
+
+    /* ── 本设计新增几何档（提案值，见 token 规格页） ── */
+    --ask-panel-w: 380px;
+    --ask-panel-h: 520px;
+    --ask-panel-w-wide: 480px;
+    --ask-panel-h-wide: 640px;
+    --ask-entry-size: 24px;
+    --ask-entry-size-mobile: 44px;
+
+    /* ── 动效 token（base.css 147-161 + mobileLayer spring，逐字） ── */
+    --panel-ease: cubic-bezier(0.32, 0.72, 0, 1);
+    --panel-duration: 0.32s;
+    --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+    --spring: cubic-bezier(0.3, 1.36, 0.45, 1);
+
+    --page-bg: #05070b;
+    --stage-bg: #0b0e14;
+    --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    background: var(--page-bg);
+    color: var(--color-text);
+    font-family: var(--font);
+    padding: 36px 28px 80px;
+    min-height: 100vh;
+  }
+
+  /* ── 页头 ── */
+  .page-head { max-width: 1240px; margin: 0 auto 18px; }
+  .page-head h1 { font-size: 21px; font-weight: 700; letter-spacing: 0.2px; }
+  .page-head h1 .tag {
+    display: inline-block; vertical-align: 2px; margin-left: 10px;
+    font-size: 11px; font-weight: 600; color: rgb(var(--amber) / 0.9);
+    border: 1px solid rgb(var(--amber) / 0.35); border-radius: 999px; padding: 2px 10px;
+  }
+  .page-head .sub { color: var(--color-text-muted); font-size: 12.5px; margin-top: 6px; line-height: 1.7; }
+  .page-head .sub code { font-family: var(--mono); font-size: 11px; color: var(--color-text-dim); }
+  .head-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+
+  /* 页签 */
+  .tabs { display: flex; gap: 6px; margin-top: 14px; }
+  .tab {
+    font: 600 12.5px var(--font); color: var(--color-text-muted);
+    background: var(--glass-control-bg); border: 1px solid var(--glass-control-border);
+    border-radius: 999px; padding: 8px 18px; cursor: pointer;
+    -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    box-shadow: inset 0 1px 0 var(--glass-control-highlight), inset 0 -1px 0 var(--glass-control-underedge);
+    transition: all 0.18s var(--ease-enter);
+  }
+  .tab:hover { background: var(--glass-control-bg-hover); color: var(--color-text); }
+  .tab.on {
+    color: var(--color-text);
+    background: rgb(var(--sapphire) / 0.14);
+    border-color: rgb(var(--sapphire) / 0.35);
+  }
+  .spec-toggle { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--color-text-muted); cursor: pointer; user-select: none; }
+  .spec-toggle input { accent-color: #7c9cf5; }
+
+  main { max-width: 1240px; margin: 0 auto; }
+  .canvas-page { display: none; }
+  .canvas-page.on { display: block; animation: pageIn 0.3s var(--ease-enter); }
+  @keyframes pageIn { from { opacity: 0; transform: translateY(6px); } }
+
+  .canvas-title { font-size: 13px; font-weight: 600; color: var(--color-text-dim); margin: 22px 2px 10px; letter-spacing: 0.4px; }
+  .canvas-title small { font-weight: 400; color: var(--color-text-muted); margin-left: 10px; }
+
+  /* ═══ 桌面舞台（canvas 工作区孪生） ═══ */
+  .stage {
+    position: relative; height: 660px; border-radius: 16px; overflow: hidden;
+    background: var(--stage-bg);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
+  }
+  .stage .grid {
+    position: absolute; inset: 0; opacity: 0.5;
+    background-image: radial-gradient(rgba(255,255,255,0.05) 1px, transparent 1px);
+    background-size: 26px 26px;
+  }
+  .blob { position: absolute; border-radius: 50%; filter: blur(46px); pointer-events: none; }
+  .blob.sapphire { width: 460px; height: 460px; left: 8%; top: 10%; background: radial-gradient(circle, rgb(var(--sapphire) / 0.28), transparent 65%); }
+  .blob.green { width: 380px; height: 380px; right: 14%; bottom: 6%; background: radial-gradient(circle, rgb(var(--brand-green) / 0.14), transparent 65%); }
+  .blob.amber { width: 300px; height: 300px; left: 46%; top: 52%; background: radial-gradient(circle, rgb(var(--amber) / 0.10), transparent 65%); }
+
+  /* canvas 顶行（排他区）：主胶囊居中 + 堆叠钮右上（split.css 同律） */
+  .canvas-header {
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    height: var(--capsule-h); width: var(--capsule-w);
+    border-radius: 999px; padding: 4px 7px 4px 12px; z-index: 10;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+    backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+    box-shadow: var(--frost-shadow);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .canvas-header::before {
+    content: ""; position: absolute; top: -1px; left: 10%; width: 80%; height: 1px;
+    background: linear-gradient(90deg, transparent 10%, var(--refraction) 50%, transparent 90%);
+  }
+  .canvas-header .doc-ic { width: 14px; height: 14px; color: var(--color-text-dim); flex: none; }
+  .canvas-header .t-name {
+    flex: 1; font-size: 12px; font-weight: 500; color: var(--color-text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .canvas-header .pg { display: flex; gap: 4px; flex: none; align-items: center; }
+  .canvas-header .pg i { width: 5px; height: 5px; border-radius: 999px; background: rgba(255,255,255,0.22); }
+  .canvas-header .pg i.cur { width: 14px; background: #7c9cf5; }
+
+  .deck-fab {
+    position: absolute; top: 10px; right: 12px; z-index: 10;
+    width: 40px; height: 40px; border-radius: 50%;
+    background: var(--glass-control-bg);
+    border: 1px solid var(--glass-control-border);
+    -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    box-shadow:
+      inset 0 1px 0 var(--glass-control-highlight),
+      inset 0 -1px 0 var(--glass-control-underedge),
+      0 1px 3px var(--glass-control-glow),
+      0 2px 8px var(--glass-control-shadow);
+    color: var(--color-text-dim); cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0.6; transition: all 0.18s var(--ease-enter);
+  }
+  .deck-fab:hover { opacity: 1; transform: scale(1.05); color: var(--color-text); }
+  .deck-fab svg { width: 17px; height: 17px; }
+
+  /* 叠卡卡面（split.css .deck-card 暗档孪生） */
+  .deck-card {
+    position: absolute; left: 90px; top: 96px; width: 612px; height: 391px;
+    border-radius: 14px; overflow: hidden;
+    background: rgba(30, 34, 45, 0.88);
+    -webkit-backdrop-filter: blur(14px) saturate(1.1);
+    backdrop-filter: blur(14px) saturate(1.1);
+    box-shadow:
+      0 0 0 1px rgba(16, 20, 30, 0.02),
+      0 2px 8px rgba(16, 20, 30, 0.05),
+      0 20px 48px rgba(16, 20, 30, 0.10),
+      0 52px 110px rgba(16, 20, 30, 0.12),
+      inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    z-index: 5;
+    transition: transform 0.28s cubic-bezier(0.32, 0, 0.18, 1), box-shadow 0.28s ease;
+  }
+  .deck-card:hover { transform: translateY(-2px); }
+  .card-top {
+    height: 38px; display: flex; align-items: center; gap: 8px;
+    padding: 0 10px 0 12px;
+    background: rgba(255, 255, 255, 0.07);
+    border-bottom: 1px solid var(--color-border);
+  }
+  .card-top .n-ic { width: 13px; height: 13px; color: var(--color-text-dim); flex: none; }
+  .card-top .n-text {
+    flex: 1; font-size: 12.5px; font-weight: 500; color: var(--color-text);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* ── ask 入口（推荐形态 A：卡头角标钮，X 邻位）── */
+  .ask-entry {
+    flex: none; width: var(--ask-entry-size); height: var(--ask-entry-size);
+    border-radius: 50%; border: none; cursor: pointer; position: relative;
+    background: var(--glass-control-bg);
+    -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+    box-shadow:
+      inset 0 1px 0 var(--glass-control-highlight),
+      inset 0 -1px 0 var(--glass-control-underedge),
+      0 1px 3px var(--glass-control-glow),
+      0 2px 8px var(--glass-control-shadow);
+    color: #7c9cf5;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; transform: scale(0.9);
+    transition: all 0.16s var(--ease-enter);
+  }
+  .deck-card:hover .ask-entry, .ask-entry.stay { opacity: 1; transform: scale(1); }
+  .ask-entry:hover { background: var(--glass-control-bg-hover); }
+  .ask-entry.pulse { animation: entryPulse 1.6s var(--ease-enter) infinite; opacity: 1; transform: scale(1); }
+  @keyframes entryPulse {
+    0%, 100% { box-shadow: inset 0 1px 0 var(--glass-control-highlight), 0 0 0 0 rgb(var(--sapphire) / 0.45); }
+    55% { box-shadow: inset 0 1px 0 var(--glass-control-highlight), 0 0 0 7px rgb(var(--sapphire) / 0); }
+  }
+  .ask-entry svg { width: 13px; height: 13px; pointer-events: none; }
+  .card-top .deck-x {
+    flex: none; width: 24px; height: 24px; border-radius: 50%; border: none;
+    background: none; color: var(--color-text-dim); opacity: 0.5; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; transition: all 0.15s ease;
+  }
+  .card-top .deck-x:hover { opacity: 1; background: rgba(255,255,255,0.08); }
+  .card-top .deck-x svg { width: 12px; height: 12px; }
+
+  /* 卡内容（数据真实：模拟一篇 markdown 渲染） */
+  .card-body { padding: 16px 20px; overflow: hidden; height: calc(100% - 38px); }
+  .card-body h4 { font-size: 15px; margin-bottom: 10px; color: var(--color-text); }
+  .card-body .ln { height: 8px; border-radius: 4px; background: rgba(255,255,255,0.07); margin-bottom: 9px; }
+  .card-body .ln.w60 { width: 60%; } .card-body .ln.w85 { width: 85%; }
+  .card-body .ln.w75 { width: 75%; } .card-body .ln.w50 { width: 50%; }
+  .card-body .real { font-size: 12.5px; line-height: 1.8; color: var(--color-text-dim); margin: 10px 0; }
+  .card-body .real b { color: var(--color-text); font-weight: 600; }
+  .card-body .real code {
+    font-family: var(--mono); font-size: 11px; color: #9db8f0;
+    background: rgba(255,255,255,0.06); border-radius: 4px; padding: 1px 5px;
+  }
+
+  /* 规格注记 chip */
+  .spec-note {
+    position: absolute; z-index: 40; pointer-events: none;
+    font: 500 10.5px var(--mono); color: rgb(var(--amber) / 0.95);
+    background: rgba(20, 16, 8, 0.72);
+    border: 1px solid rgb(var(--amber) / 0.30);
+    border-radius: 6px; padding: 3px 8px;
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    white-space: nowrap;
+  }
+  body.hide-spec .spec-note { display: none; }
+
+  .stage-hint {
+    position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+    font-size: 12px; color: var(--color-text-muted); z-index: 20;
+    background: rgba(10, 12, 18, 0.66); border: 1px solid var(--glass-border);
+    border-radius: 999px; padding: 6px 16px;
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    transition: opacity 0.3s ease;
+  }
+  .stage-hint.gone { opacity: 0; pointer-events: none; }
+
+  /* ═══ ask 迷你对话窗（核心件） ═══ */
+  .ask-win {
+    position: absolute; z-index: 30;
+    width: var(--ask-panel-w); height: var(--ask-panel-h);
+    right: 26px; top: 64px;
+    border-radius: 20px; overflow: hidden;
+    display: flex; flex-direction: column;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+    backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+    box-shadow: var(--frost-shadow), 0 24px 64px rgba(0, 0, 0, 0.42);
+    transition: transform var(--panel-duration) var(--panel-ease), opacity 0.26s ease;
+  }
+  .ask-win::before {
+    content: ""; position: absolute; top: 0; left: 10%; width: 80%; height: 1px;
+    background: linear-gradient(90deg, transparent 10%, var(--refraction) 50%, transparent 90%);
+    z-index: 5;
+  }
+  .ask-win.closed {
+    transform: translateY(10px) scale(0.96); opacity: 0; pointer-events: none;
+  }
+  .ask-win.wide { width: var(--ask-panel-w-wide); height: var(--ask-panel-h-wide); }
+
+  .ask-head {
+    flex: none; display: flex; align-items: center; gap: 9px;
+    padding: 12px 10px 10px 16px; position: relative;
+  }
+  .ask-head .spark {
+    flex: none; width: 28px; height: 28px; border-radius: 9px;
+    background: rgb(var(--sapphire) / 0.16); border: 1px solid rgb(var(--sapphire) / 0.30);
+    display: flex; align-items: center; justify-content: center; color: #9db8f0;
+  }
+  .ask-head .spark svg { width: 14px; height: 14px; }
+  .ask-head .tt { flex: 1; min-width: 0; }
+  .ask-head .tt .t1 { font-size: 13px; font-weight: 600; color: var(--color-text); }
+  .ask-head .tt .t2 {
+    font-size: 11px; color: var(--color-text-muted); margin-top: 1px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .ask-head .wbtn {
+    flex: none; width: 30px; height: 30px; border-radius: 50%; border: none; cursor: pointer;
+    background: var(--glass-control-bg); color: var(--color-text-muted);
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s var(--ease-enter);
+  }
+  .ask-head .wbtn:hover { background: var(--glass-control-bg-hover); color: var(--color-text); }
+  .ask-head .wbtn svg { width: 13px; height: 13px; pointer-events: none; }
+  /* 窗头状态行（透明纪律的边界：静态一行，非过程流 —— 开放项待作者裁） */
+  .ask-status {
+    flex: none; display: flex; align-items: center; gap: 8px;
+    margin: 0 16px 8px; padding: 5px 10px;
+    border-radius: 8px; font-size: 10.5px; color: var(--color-text-muted);
+    background: var(--glass-etched-bg); border: 1px solid var(--glass-etched-border);
+  }
+  .ask-status .dot { width: 5px; height: 5px; border-radius: 999px; background: rgb(var(--brand-green)); flex: none; }
+  .ask-status .cd { margin-left: auto; font-family: var(--mono); color: var(--color-text-dim); }
+  .ask-status.flash { border-color: rgb(var(--sapphire) / 0.5); color: var(--color-text-dim); }
+
+  .ask-msgs {
+    flex: 1; overflow-y: auto; padding: 10px 16px 12px;
+    display: flex; flex-direction: column; gap: 6px;
+    touch-action: pan-y;
+    scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.14) transparent;
+  }
+  .ask-msgs::-webkit-scrollbar { width: 5px; }
+  .ask-msgs::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 3px; }
+  .row { display: flex; animation: rowIn 0.2s ease; }
+  .row.user { justify-content: flex-end; }
+  @keyframes rowIn { from { opacity: 0; transform: translateY(4px); } }
+
+  /* 气泡族（chat.css .bubble 逐字：r16、象限 4px、10×14、80%、14.5/1.55） */
+  .bubble {
+    max-width: 80%; padding: 10px 14px; border-radius: 16px;
+    font-size: 14.5px; line-height: 1.55; word-break: break-word;
+  }
+  .bubble.user {
+    background: var(--color-bubble-user); color: #111;
+    border-bottom-right-radius: 4px;
+  }
+  .bubble.ai {
+    background: var(--color-bubble-ai); color: var(--color-text);
+    border: 1px solid rgba(0, 0, 0, 0.04);
+    border-bottom-left-radius: 4px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  }
+  .bubble.ai .cite {
+    display: inline-block; font-size: 11px; color: #9db8f0;
+    background: rgb(var(--sapphire) / 0.12); border-radius: 4px;
+    padding: 0 6px; margin: 2px 1px 0; line-height: 1.7;
+  }
+  .bubble.sys {
+    /* 发给主会话瞬间：injected 同族（rgb(--sapphire)/0.12），同 user 剪影 */
+    background: rgb(var(--sapphire) / 0.12); color: var(--color-text);
+    border-bottom-right-radius: 4px; font-size: 12.5px;
+  }
+  .bubble.sys .lbl { color: rgb(var(--sapphire) / 0.85); font-weight: 600; }
+  .bubble.typing { display: flex; gap: 4px; align-items: center; padding: 13px 16px; }
+  .bubble.typing i {
+    width: 6px; height: 6px; border-radius: 999px; background: var(--color-text-muted);
+    animation: tp 1.1s infinite;
+  }
+  .bubble.typing i:nth-child(2) { animation-delay: 0.15s; }
+  .bubble.typing i:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes tp { 0%, 60%, 100% { opacity: 0.35; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
+
+  /* 快捷 chip 行 */
+  .ask-chips { flex: none; display: flex; gap: 6px; flex-wrap: wrap; padding: 4px 16px 8px; }
+  .ask-chip {
+    font: 500 11.5px var(--font); color: var(--color-text-dim); cursor: pointer;
+    background: var(--glass-control-bg); border: 1px solid var(--glass-control-border);
+    border-radius: 999px; padding: 5px 12px; transition: all 0.15s var(--ease-enter);
+  }
+  .ask-chip:hover { background: var(--glass-control-bg-hover); color: var(--color-text); }
+  .ask-chip.handoff { color: #9db8f0; border-color: rgb(var(--sapphire) / 0.30); background: rgb(var(--sapphire) / 0.10); }
+  .ask-chip.handoff:hover { background: rgb(var(--sapphire) / 0.18); }
+
+  /* 输入区（#input-bar 族：etched + 玻璃容器 + 折射线 + 绿 send） */
+  .ask-input {
+    flex: none; margin: 0 12px 12px; border-radius: 16px; position: relative;
+    background: var(--glass-bg); border: 1px solid var(--glass-border);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+    backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+    box-shadow: var(--frost-shadow);
+    display: flex; align-items: center; gap: 6px; padding: 8px 8px 8px 14px;
+  }
+  .ask-input::before {
+    content: ""; position: absolute; top: -1px; left: 10%; width: 80%; height: 1px;
+    background: linear-gradient(90deg, transparent 10%, var(--refraction) 50%, transparent 90%);
+  }
+  .ask-input input {
+    flex: 1; min-width: 0; border: none; outline: none; background: transparent;
+    font: 400 14.5px var(--font); color: var(--color-text); caret-color: #7c9cf5;
+  }
+  .ask-input input::placeholder { color: var(--color-text-muted); }
+  .ask-input .send {
+    flex: none; width: 32px; height: 32px; border-radius: 50%; border: none; cursor: pointer;
+    background: rgb(var(--brand-green)); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+    transition: all 0.15s var(--ease-enter);
+  }
+  .ask-input .send:hover { transform: scale(1.06); }
+  .ask-input .send:disabled { opacity: 0.4; cursor: default; transform: none; }
+  .ask-input .send svg { width: 14px; height: 14px; }
+
+  /* 空态 */
+  .ask-empty {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; color: var(--color-text-muted); font-size: 12.5px; padding: 0 24px; text-align: center;
+  }
+  .ask-empty .big { width: 40px; height: 40px; border-radius: 13px; background: rgb(var(--sapphire) / 0.12);
+    border: 1px solid rgb(var(--sapphire) / 0.25); display: flex; align-items: center; justify-content: center; color: #9db8f0; }
+  .ask-empty .big svg { width: 19px; height: 19px; }
+
+  /* ═══ 主会话侧板（cv2 背景：通信故事的另一半） ═══ */
+  .main-pane {
+    position: absolute; left: 26px; top: 64px; bottom: 26px; width: 330px; z-index: 4;
+    border-radius: 20px; padding: 14px 16px; overflow: hidden;
+    background: var(--glass-bg); border: 1px solid var(--glass-border);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+    backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+    box-shadow: var(--frost-shadow);
+  }
+  .main-pane::before {
+    content: ""; position: absolute; top: 0; left: 10%; width: 80%; height: 1px;
+    background: linear-gradient(90deg, transparent 10%, var(--refraction) 50%, transparent 90%);
+  }
+  .main-pane .cap { font-size: 11px; font-weight: 600; color: var(--color-text-muted); letter-spacing: 0.6px; margin-bottom: 10px;
+    display: flex; align-items: center; gap: 7px; }
+  .main-pane .cap .live { width: 6px; height: 6px; border-radius: 999px; background: rgb(var(--brand-green)); box-shadow: 0 0 6px rgb(var(--brand-green) / 0.8); }
+  .main-pane .mrow { display: flex; margin-bottom: 8px; }
+  .main-pane .mrow.user { justify-content: flex-end; }
+  .main-pane .bubble { font-size: 12px; padding: 8px 12px; }
+  .main-pane .arrive { animation: arriveIn 0.5s var(--spring); }
+  @keyframes arriveIn { from { opacity: 0; transform: translateY(14px) scale(0.97); } }
+  .main-pane .who { font-size: 10px; color: rgb(var(--sapphire) / 0.85); margin: 2px 0 3px 2px; font-weight: 600; }
+
+  /* ═══ 入口形态对比条 ═══ */
+  .variants { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 14px; }
+  .variant {
+    border-radius: 14px; padding: 14px 16px;
+    background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.07);
+  }
+  .variant.rec { border-color: rgb(var(--brand-green) / 0.4); background: rgb(var(--brand-green) / 0.045); }
+  .variant .vh { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .variant .vh b { font-size: 13px; color: var(--color-text); }
+  .variant .badge {
+    font-size: 10px; font-weight: 700; border-radius: 999px; padding: 2px 9px; letter-spacing: 0.4px;
+  }
+  .variant.rec .badge { color: rgb(var(--brand-green)); border: 1px solid rgb(var(--brand-green) / 0.45); }
+  .variant.alt .badge { color: var(--color-text-muted); border: 1px solid rgba(255,255,255,0.14); }
+  .variant.no .badge { color: rgb(var(--amber) / 0.95); border: 1px solid rgb(var(--amber) / 0.35); }
+  .variant .demo-zone {
+    height: 84px; border-radius: 9px; background: var(--stage-bg);
+    border: 1px solid rgba(255,255,255,0.06); position: relative; margin: 10px 0;
+    overflow: hidden;
+  }
+  .variant p { font-size: 11.5px; line-height: 1.7; color: var(--color-text-muted); }
+  .variant p b { color: var(--color-text-dim); }
+  .mini-cardtop {
+    position: absolute; left: 10px; right: 10px; top: 18px; height: 26px;
+    background: rgba(255,255,255,0.07); border: 1px solid var(--color-border); border-radius: 7px;
+    display: flex; align-items: center; gap: 6px; padding: 0 6px 0 9px;
+  }
+  .mini-cardtop .t { flex: 1; font-size: 10px; color: var(--color-text-dim); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .mini-ask {
+    width: 18px; height: 18px; border-radius: 50%; flex: none;
+    background: var(--glass-control-bg); border: 1px solid var(--glass-control-border);
+    color: #7c9cf5; display: flex; align-items: center; justify-content: center;
+  }
+  .mini-ask svg { width: 9px; height: 9px; }
+  .mini-x { width: 16px; height: 16px; border-radius: 50%; flex: none; background: rgba(255,255,255,0.05);
+    color: var(--color-text-muted); display: flex; align-items: center; justify-content: center; font-size: 9px; }
+  .mini-float {
+    position: absolute; right: 12px; bottom: 10px; width: 30px; height: 30px; border-radius: 50%;
+    background: var(--glass-bg); border: 1px solid var(--glass-border); color: #7c9cf5;
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+  }
+  .mini-float svg { width: 13px; height: 13px; }
+  .mini-capsule {
+    position: absolute; left: 50%; top: 16px; transform: translateX(-50%);
+    height: 22px; width: 132px; border-radius: 999px;
+    background: var(--glass-bg); border: 1px solid var(--glass-border);
+    display: flex; align-items: center; gap: 5px; padding: 0 6px 0 10px;
+  }
+  .mini-capsule .t { flex: 1; font-size: 9px; color: var(--color-text-dim); }
+  .mini-capsule .mini-ask { width: 14px; height: 14px; }
+  .mini-capsule .mini-ask svg { width: 8px; height: 8px; }
+
+  /* ═══ 移动端（#988 手势体系） ═══ */
+  .phones { display: flex; gap: 44px; justify-content: center; flex-wrap: wrap; }
+  .phone-col { text-align: center; }
+  .phone-label { font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+  .phone-label small { display: block; color: var(--color-text-muted); font-weight: 400; font-size: 11.5px; margin-top: 3px; }
+  .phone {
+    width: 375px; height: 812px; border-radius: 44px; position: relative; overflow: hidden;
+    background: var(--stage-bg); border: 1px solid rgba(255,255,255,0.06);
+    box-shadow: 0 30px 80px rgba(0,0,0,0.6); flex: none;
+    background-image: radial-gradient(rgba(255,255,255,0.04) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+  /* bottom sheet（mobileLayer.css：left/right 8 · top 76 · bottom 6 · r20） */
+  .sheet {
+    position: absolute; left: 8px; right: 8px; top: 76px; bottom: 6px;
+    background: var(--color-bg); border: 1px solid var(--glass-border); border-radius: 20px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28), inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
+    overflow: hidden;
+  }
+  /* 卡头通栏胶囊（mobileLayer §⑨：left/right 10 top 8，44 命中盒钮） */
+  .cardhead {
+    position: absolute; top: 8px; left: 10px; right: 10px; z-index: 20;
+    height: 42px; border-radius: 999px;
+    background: var(--glass-bg); border: 1px solid var(--glass-border);
+    -webkit-backdrop-filter: blur(18px) saturate(1.15); backdrop-filter: blur(18px) saturate(1.15);
+    box-shadow: var(--frost-shadow);
+    display: flex; align-items: center; gap: 6px; padding: 0 5px 0 14px;
+  }
+  .cardhead .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 600; }
+  .cardhead .count {
+    flex: none; font-size: 12px; font-weight: 600; color: var(--color-text-muted);
+    background: rgba(255,255,255,0.05); border: 1px solid var(--glass-control-border);
+    border-radius: 999px; padding: 1px 9px;
+  }
+  /* 44×44 命中盒 / 视觉圆 30（7px 透明边 + padding-box，#988 同件） */
+  .hbtn {
+    flex: none; width: var(--ask-entry-size-mobile); height: var(--ask-entry-size-mobile);
+    border-radius: 50%; border: 7px solid transparent; background: none; background-clip: padding-box;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--color-text); cursor: pointer; position: relative; transition: background 0.15s ease;
+  }
+  .cardhead .hbtn.ask { color: #7c9cf5; }
+  .hbtn:active { background-color: rgba(255,255,255,0.10); background-clip: padding-box; }
+  .hbtn svg { width: 15px; height: 15px; pointer-events: none; }
+  /* 内容区：pan-y 零劫持 */
+  .sheet-body { position: absolute; inset: 0; padding: 62px 18px 120px; overflow-y: auto; touch-action: pan-y; }
+  .sheet-body h5 { font-size: 16px; margin: 4px 0 10px; }
+  .sheet-body p { font-size: 13px; line-height: 1.75; color: var(--color-text-muted); margin-bottom: 9px; }
+  .sheet-body .demo-card {
+    background: rgba(255,255,255,0.04); border: 1px solid var(--glass-border);
+    border-radius: 14px; padding: 13px 14px; margin-bottom: 11px; font-size: 12.5px;
+    color: var(--color-text-muted); line-height: 1.7;
+  }
+  .sheet-body .demo-card b { color: var(--color-text); display: block; margin-bottom: 5px; font-size: 13px; }
+  /* 底部切换条（mobileLayer：h44 · bottom 50+safe · frosted 胶囊） */
+  .switchbar {
+    position: absolute; left: 50%; transform: translateX(-50%); z-index: 24;
+    bottom: calc(50px + env(safe-area-inset-bottom, 0px));
+    height: 44px; border-radius: 999px; display: flex; align-items: center; gap: 2px; padding: 0 4px;
+    background: var(--glass-bg); border: 1px solid var(--glass-border);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15); backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+    box-shadow: var(--frost-shadow);
+  }
+  .switchbar .hbtn { width: 44px; color: var(--color-text); }
+  .switchbar .hbtn:disabled { opacity: 0.3; }
+  .switchbar .dots { display: flex; align-items: center; gap: 7px; padding: 0 8px; }
+  .switchbar .dots i { width: 7px; height: 7px; border-radius: 999px; background: rgba(255,255,255,0.22); transition: width 0.25s var(--spring); }
+  .switchbar .dots i.cur { width: 20px; background: #7c9cf5; }
+  .switchbar .sep { width: 1px; height: 22px; background: var(--glass-border); margin: 0 2px; }
+  /* 底缘抓手 */
+  .grabber { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+    width: 40px; height: 5px; border-radius: 3px; background: var(--color-text-muted); opacity: 0.45; z-index: 25; }
+  /* 移动端 ask 窗：sheet 内浮层（卡头下方、切换条上方） */
+  .ask-win.mobile {
+    left: 12px; right: 12px; top: 60px; bottom: 108px; width: auto; height: auto;
+    border-radius: 20px;
+  }
+  .ask-win.mobile.wide { width: auto; height: auto; }
+  .ask-win.mobile .bubble { font-size: 13px; padding: 8px 12px; }
+  .ask-win.mobile .ask-head { padding: 10px 6px 8px 14px; }
+  .ask-win.mobile .ask-head .wbtn { width: 34px; height: 34px; }
+  .ask-win.mobile .ask-input { margin: 0 10px 10px; }
+  .ask-win.mobile .ask-chips { padding: 2px 12px 6px; }
+
+  /* 手势注记 */
+  .gesture-notes { max-width: 820px; margin: 26px auto 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px 22px; }
+  .gnote { font-size: 12px; line-height: 1.7; color: var(--color-text-muted); padding-left: 14px; position: relative; }
+  .gnote::before { content: ""; position: absolute; left: 0; top: 8px; width: 6px; height: 6px; border-radius: 999px; background: #7c9cf5; opacity: 0.7; }
+  .gnote b { color: var(--color-text); }
+
+  /* 页脚 */
+  .foot { max-width: 1240px; margin: 34px auto 0; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.06);
+    font-size: 11.5px; line-height: 1.8; color: var(--color-text-muted); }
+  .foot code { font-family: var(--mono); font-size: 10.5px; color: var(--color-text-dim); }
+</style>
+</head>
+<body>
+
+<header class="page-head">
+  <div class="head-row">
+    <div>
+      <h1>Canvas 文件 ask mode · 效果演示<span class="tag">样张 · 前端确认前草案</span></h1>
+      <p class="sub">
+        作者令 2026-10-28 17:10：「给我一个效果演示，而且之后工作能复用的设计——先完成前端设计确认」。本样张零依赖、可交互；
+        玻璃样式值逐字取自产品单源 <code>src/main/resources/web/css/sapphire.css</code> 暗档（2026-10-22 作者令「全站一套毛玻璃」），
+        气泡/胶囊/卡面/切换条取自 <code>chat.css / split.css / mobileLayer.css</code> 在产值。配套：<b>token 规格页</b> 与 <b>设计稿</b>（docs/design/ 同批）。
+      </p>
+    </div>
+    <label class="spec-toggle"><input type="checkbox" id="specChk" checked> 规格注记</label>
+  </div>
+  <nav class="tabs">
+    <button class="tab on" data-pg="pg1">① 桌面 · 入口形态</button>
+    <button class="tab" data-pg="pg2">② 桌面 · 对话窗全效果</button>
+    <button class="tab" data-pg="pg3">③ 移动端 · #988 手势体系</button>
+  </nav>
+</header>
+
+<main>
+  <!-- ═══════════════ ① 桌面 · 入口形态 ═══════════════ -->
+  <section class="canvas-page on" id="pg1">
+    <div class="canvas-title">① Canvas 文件卡 + ask 入口控件 · 静态形态（桌面暗色）<small>hover 卡片显示入口 → 点击打开迷你对话窗 · Esc / 点击外部关闭</small></div>
+    <div class="stage" id="stage1">
+      <div class="grid"></div>
+      <div class="blob sapphire"></div><div class="blob green"></div><div class="blob amber"></div>
+
+      <div class="canvas-header">
+        <svg class="doc-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+        <span class="t-name">记忆检索调优笔记.md</span>
+        <span class="pg"><i class="cur"></i><i></i><i></i></span>
+      </div>
+      <button class="deck-fab" title="堆叠 / 展开卡叠" aria-label="堆叠">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
+      </button>
+      <div class="spec-note" style="top:14px; left:calc(50% + 100px);">--capsule-h 36 · --capsule-w 180 · r999 · glass 24px</div>
+      <div class="spec-note" style="top:52px; right:14px;">deck-fab 40×40 · glass-control</div>
+
+      <div class="deck-card" id="card1">
+        <div class="card-top">
+          <svg class="n-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+          <span class="n-text">记忆检索调优笔记.md</span>
+          <button class="ask-entry" id="entry1" title="问这份文件（ask mode）" aria-label="问这份文件">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+          </button>
+          <button class="deck-x" title="关闭卡片" aria-label="关闭卡片">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="card-body">
+          <h4>近因加权（recency boost）</h4>
+          <div class="real">
+            <b>score_final = rel × exp(−age_days/τ)</b>，τ 默认 <code>30 天</code>（半衰期 ≈ 21 天）：
+            一个月前半价、三个月前 ~1/8、半年 ~1/120。<br>
+            分词与排序复用 xerj 两件：CJK bigram 影子列 + BM25（<code>k1=1.2 / b=0.75</code>），
+            运行时走 SQLite FTS5 仿真——零依赖、禁驻守护进程。
+          </div>
+          <div class="ln w85"></div><div class="ln w75"></div><div class="ln w60"></div><div class="ln w50"></div>
+        </div>
+      </div>
+      <div class="spec-note" style="top:500px; left:96px;">入口 24×24 · glass-control blur 10 · hover 显现（与 deck-x 同律）</div>
+
+      <!-- ① 的迷你窗：点入口即开（空态 + 可问） -->
+      <div class="ask-win closed" id="win1">
+        <div class="ask-head">
+          <span class="spark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/><path d="M19 15l.9 2.4L22 18l-2.1.6L19 21l-.9-2.4L16 18l2.1-.6L19 15z"/></svg></span>
+          <div class="tt">
+            <div class="t1">问这份文件</div>
+            <div class="t2">记忆检索调优笔记.md · 上下文为该文件专属</div>
+          </div>
+          <button class="wbtn" data-act="collapse" title="收起（回入口态）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14"/></svg></button>
+          <button class="wbtn" data-act="expand" title="放大 / 还原"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg></button>
+          <button class="wbtn" data-act="close" title="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </div>
+        <div class="ask-status"><span class="dot"></span><span>上下文 · 记忆 3 条 · 文档图谱 5 节 · 全文 1 篇</span><span class="cd" data-cd>冷却 06:32</span></div>
+        <div class="ask-msgs">
+          <div class="ask-empty">
+            <span class="big"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span>
+            针对这份笔记提问。上下文由记忆检索 + 文档图谱组装，<br>与主会话对话历史互相分割。
+          </div>
+        </div>
+        <div class="ask-chips">
+          <button class="ask-chip">τ 为什么取 30 天？</button>
+          <button class="ask-chip">分词为什么不用向量检索？</button>
+          <button class="ask-chip">总结这篇笔记的裁定</button>
+        </div>
+        <div class="ask-input">
+          <input type="text" placeholder="针对这份文件提问…" aria-label="提问">
+          <button class="send" aria-label="发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+        </div>
+      </div>
+      <div class="stage-hint" id="hint1">hover 卡片 → 点 · 标入口打开 ask 窗（Esc / 点击窗外部关闭）</div>
+    </div>
+
+    <div class="canvas-title">入口控件形态 · 三案对比<small>推荐 A，理由见设计稿 §2</small></div>
+    <div class="variants">
+      <div class="variant rec">
+        <div class="vh"><b>A · 文件卡头角标钮</b><span class="badge">推荐</span></div>
+        <div class="demo-zone">
+          <div class="mini-cardtop"><span class="t">记忆检索调优笔记.md</span><span class="mini-ask"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span><span class="mini-x">✕</span></div>
+        </div>
+        <p><b>理由：</b>ask 语义是「该文件」的，入口必须随卡走；卡头已有单卡动作位（X）先例，模式一致；不进顶行排他区、不动 --capsule-h/w；hover 显现与 deck-x 同律，静置零打扰；移动端落卡头通栏胶囊，44px 命中盒直接复用 #988 件。</p>
+      </div>
+      <div class="variant alt">
+        <div class="vh"><b>B · 悬浮小钮</b><span class="badge">备选</span></div>
+        <div class="demo-zone">
+          <div class="mini-cardtop"><span class="t">记忆检索调优笔记.md</span><span class="mini-x">✕</span></div>
+          <div class="mini-float"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></div>
+        </div>
+        <p><b>保留意见：</b>常驻可点性好，但卡面浮件遮内容；与 deck-fab（整叠语义）在视觉语言上撞形；多卡时仍需先选中卡才有「该文件」语义，常驻价值打折。</p>
+      </div>
+      <div class="variant no">
+        <div class="vh"><b>C · 顶行胶囊内嵌图标</b><span class="badge">不推荐</span></div>
+        <div class="demo-zone">
+          <div class="mini-capsule"><span class="t">记忆检索调优笔记.md</span><span class="mini-ask"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span></div>
+        </div>
+        <p><b>反对理由：</b>顶行是整叠语义（页签切换 / 堆叠 / 收起），不是单文件语义；多卡时图标指向不明；--capsule-w 180px 固定几何档装不下第三钮（2026-10-25 胶囊固定尺寸批），要动全站胶囊 token。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ ② 桌面 · 对话窗全效果 ═══════════════ -->
+  <section class="canvas-page" id="pg2">
+    <div class="canvas-title">② 迷你对话窗完整效果（桌面暗色）<small>玻璃窗体 · 6 轮示例问答 · 「发给主会话」瞬间 · 输入框可真的发</small></div>
+    <div class="stage" id="stage2">
+      <div class="grid"></div>
+      <div class="blob sapphire" style="left:24%; top:6%;"></div><div class="blob green" style="right:4%; bottom:14%;"></div>
+
+      <!-- 背景：canvas 卡片（失焦态） -->
+      <div class="deck-card" style="left: 50%; transform: translateX(-50%) scale(0.96); top: 120px; opacity: 0.72; pointer-events: none;">
+        <div class="card-top">
+          <svg class="n-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+          <span class="n-text">记忆检索调优笔记.md</span>
+          <button class="ask-entry stay" tabindex="-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></button>
+          <button class="deck-x" tabindex="-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </div>
+        <div class="card-body">
+          <h4>渠道壳解包（盲区修复 2026-10-27）</h4>
+          <div class="real">作者自微信/飞书发言以 &lt;system-reminder&gt; 多层包裹传输，旧规则整条丢弃 → 10-21 后作者原话全军覆没。修法：剥壳标、去元数据行、保留正文。</div>
+          <div class="ln w85"></div><div class="ln w60"></div><div class="ln w75"></div>
+        </div>
+      </div>
+
+      <!-- 左侧：主会话侧板（通信故事的另一半，窗后可见） -->
+      <div class="main-pane" id="mainPane">
+        <div class="cap"><span class="live"></span>主会话 · Nebula</div>
+        <div class="mrow user"><span class="bubble user">把 10-22 近因加权的讨论整理一下</span></div>
+        <div class="mrow"><span class="bubble ai">已建库：sessions 3 · messages 18,402 · τ=30 半衰期 ≈21 天。增量重索引幂等，无守护进程。</span></div>
+        <div class="mrow user"><span class="bubble user">好，这篇笔记我放进 canvas 了</span></div>
+        <div id="mainArrive"></div>
+      </div>
+
+      <!-- ask 迷你窗（全效果） -->
+      <div class="ask-win" id="win2">
+        <div class="ask-head">
+          <span class="spark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/><path d="M19 15l.9 2.4L22 18l-2.1.6L19 21l-.9-2.4L16 18l2.1-.6L19 15z"/></svg></span>
+          <div class="tt">
+            <div class="t1">问这份文件</div>
+            <div class="t2">记忆检索调优笔记.md · 与主会话历史分割</div>
+          </div>
+          <button class="wbtn" data-act="collapse" title="收起（回入口态）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14"/></svg></button>
+          <button class="wbtn" data-act="expand" title="放大 / 还原"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg></button>
+          <button class="wbtn" data-act="close" title="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </div>
+        <div class="ask-status" id="status2"><span class="dot"></span><span>上下文 · 记忆 3 条 · 文档图谱 5 节 · 全文 1 篇</span><span class="cd" data-cd>冷却 06:32</span></div>
+        <div class="ask-msgs" id="msgs2">
+          <div class="row user"><span class="bubble user">这份笔记的近因加权，τ 为什么取 30 天？</span></div>
+          <div class="row"><span class="bubble ai">笔记「近因加权」节：τ 默认 30 天，半衰期 ≈21 天——一个月前半价、三个月前约 1/8。取值判据是「近因话题的当日命中要顶开 3 个月前的高密度旧词」，实测当日 vs 3 月龄 ≈24× 优势刚好够；再小会伤纯历史查询的相对序。<br><span class="cite">笔记 §近因加权</span><span class="cite">主会话 10-22 裁定</span></span></div>
+          <div class="row user"><span class="bubble user">分词为什么不用向量检索？</span></div>
+          <div class="row"><span class="bubble ai">头部「成果复用」节钉了三条约束：零依赖、禁驻守护进程、数据不出机。向量方案 ~90MB 模型 + 可能的 rerank 外判直接出局；落点是 SQLite FTS5 + bigram 影子列仿真（CJK bigram 与 BM25 k1=1.2/b=0.75 两个参数复用自 xerj）。<br><span class="cite">笔记 §成果复用</span></span></div>
+          <div class="row user"><span class="bubble user">10-27 的修复改了什么？会影响上面结论吗？</span></div>
+          <div class="row"><span class="bubble ai">两处盲区修复，都在收录口径：① 渠道壳解包——作者自微信/飞书的发言被 &lt;system-reminder&gt; 壳整条丢弃，修为剥壳保留正文；② sessions 表 upsert——覆盖区间曾假性止于 10-21。检索质量受影响，但 τ=30 与分词路线未动。<br><span class="cite">笔记头部注记</span><span class="cite">文档图谱 · 邻接 2 篇</span></span></div>
+        </div>
+        <div class="ask-chips" id="chips2">
+          <button class="ask-chip handoff" id="handoff2">↗ 把「τ 要不要重估」转给主会话</button>
+          <button class="ask-chip">这个结论写进设计稿了吗？</button>
+        </div>
+        <div class="ask-input">
+          <input type="text" placeholder="针对这份文件提问…" aria-label="提问">
+          <button class="send" aria-label="发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+        </div>
+      </div>
+      <div class="spec-note" style="top:44px; right:14px;">ask 窗 380×520 · r20 · glass-bg .68 · blur 24 · sat 1.15 · frost-shadow</div>
+      <div class="stage-hint gone" id="hint2">气泡式 UI · 无流程/工具过程 · Esc / 点击窗外关闭 · 右下 chip 演示「发给主会话」</div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ ③ 移动端 · #988 手势体系 ═══════════════ -->
+  <section class="canvas-page" id="pg3">
+    <div class="canvas-title">③ 移动端形态<small>左：入口（卡头通栏胶囊） · 右：ask 窗打开（sheet 内浮层）· 点右侧手机卡头 · 标开窗</small></div>
+    <div class="phones">
+      <div class="phone-col">
+        <div class="phone-label">入口态<small>卡头通栏胶囊 + ask 钮（44×44 命中盒 / 视觉圆 30）</small></div>
+        <div class="phone">
+          <div class="sheet">
+            <div class="cardhead">
+              <span class="title">记忆检索调优笔记.md</span>
+              <span class="count">3/3</span>
+              <button class="hbtn" aria-label="引用"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
+              <button class="hbtn" aria-label="关闭卡片"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+            </div>
+            <div class="sheet-body">
+              <h5>近因加权（recency boost）</h5>
+              <p><b style="color:var(--color-text)">score_final = rel × exp(−age_days/τ)</b>，τ 默认 30 天，半衰期 ≈21 天。</p>
+              <div class="demo-card"><b>成果复用（xerj）</b>CJK bigram 影子列 + BM25（k1=1.2/b=0.75）；SQLite FTS5 仿真，零依赖、禁驻守护进程。</div>
+              <div class="demo-card"><b>渠道壳解包（10-27）</b>剥 &lt;system-reminder&gt; 壳保留作者正文；sessions upsert 修覆盖区间假性冻结。</div>
+              <p>内容区纵滚 touch-action: pan-y——浏览器原生滚动，手势零劫持。</p>
+            </div>
+            <div class="switchbar">
+              <button class="hbtn" aria-label="上一张"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m15 18-6-6 6-6"/></svg></button>
+              <span class="dots"><i class="cur"></i><i></i><i></i></span>
+              <button class="hbtn" aria-label="下一张"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m9 18 6-6-6-6"/></svg></button>
+              <span class="sep"></span>
+              <button class="hbtn" aria-label="收起"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m18 15-6-6-6 6"/></svg></button>
+            </div>
+            <div class="grabber"></div>
+          </div>
+          <div class="spec-note" style="left:16px; top:30px;">卡头胶囊：left/right 10 · top 8 · blur 18</div>
+          <div class="spec-note" style="right:16px; bottom:120px;">switchbar h44 · bottom 50+safe</div>
+        </div>
+      </div>
+
+      <div class="phone-col">
+        <div class="phone-label">ask 窗打开<small>sheet 内浮层 · 点卡头 · 标开/关 · 手势语义不变</small></div>
+        <div class="phone">
+          <div class="sheet">
+            <div class="cardhead">
+              <span class="title">记忆检索调优笔记.md</span>
+              <span class="count">3/3</span>
+              <button class="hbtn" aria-label="引用"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
+              <button class="hbtn ask" id="mEntry" aria-label="问这份文件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></button>
+              <button class="hbtn" aria-label="关闭卡片"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+            </div>
+            <div class="sheet-body"><p style="opacity:.5">（卡内容在窗后：横滑切卡手势仍在卡头/内容区，窗体表面横滑只滚消息列。）</p></div>
+
+            <div class="ask-win mobile closed" id="winM">
+              <div class="ask-head">
+                <span class="spark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/></svg></span>
+                <div class="tt"><div class="t1">问这份文件</div><div class="t2">记忆检索调优笔记.md</div></div>
+                <button class="wbtn" data-act="close" title="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+              </div>
+              <div class="ask-status"><span class="dot"></span><span>上下文 · 记忆 3 · 图谱 5 节 · 全文 1 篇</span><span class="cd" data-cd>冷却 09:41</span></div>
+              <div class="ask-msgs">
+                <div class="row user"><span class="bubble user">τ 取值当时怎么定的？</span></div>
+                <div class="row"><span class="bubble ai">半衰期 ≈21 天：当日命中 vs 3 月龄实测 ≈24× 优势，刚好顶开旧词密度；τ 更小会伤纯历史查询的相对序。<span class="cite">笔记 §近因加权</span></span></div>
+                <div class="row user"><span class="bubble user">跟 10-27 那次修复冲突吗？</span></div>
+                <div class="row"><span class="bubble ai">不冲突——修的是收录口径（剥壳保正文），τ 与分词路线都没动。<span class="cite">主会话 10-27</span></span></div>
+              </div>
+              <div class="ask-chips"><button class="ask-chip handoff">↗ 转给主会话</button></div>
+              <div class="ask-input">
+                <input type="text" placeholder="针对这份文件提问…" aria-label="提问">
+                <button class="send" aria-label="发送"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+              </div>
+            </div>
+
+            <div class="switchbar">
+              <button class="hbtn" aria-label="上一张"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m15 18-6-6 6-6"/></svg></button>
+              <span class="dots"><i class="cur"></i><i></i><i></i></span>
+              <button class="hbtn" aria-label="下一张"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="m9 18 6-6-6-6"/></svg></button>
+              <span class="sep"></span>
+              <button class="hbtn" aria-label="收起"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m18 15-6-6-6 6"/></svg></button>
+            </div>
+            <div class="grabber"></div>
+          </div>
+          <div class="spec-note" style="right:16px; top:30px;">窗：sheet 内浮层 · 卡头下 60 · 切换条上 108</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="gesture-notes">
+      <div class="gnote"><b>横滑切卡不劫持：</b>手势面仍是卡头胶囊与卡内容区；ask 窗表面横滑只滚窗内消息列（surface 归属制），永不切卡。</div>
+      <div class="gnote"><b>下滑收起照旧：</b>底缘带 / 卡头胶囊下滑收层（≥120px 或快甩）语义不变；ask 窗随层收起，会话状态保留、再开复现。</div>
+      <div class="gnote"><b>pan-y 零劫持：</b>窗内消息列 touch-action: pan-y 归浏览器纵滚；代码块等真横滚器起步即让位原生横滚（#988 同律）。</div>
+      <div class="gnote"><b>关卡唯一 X：</b>卡头 X 关卡语义不变；ask 窗自带关闭钮，两者互不劫持；入口钮 44×44 命中盒 / 视觉圆 30（padding-box 解耦）复用 #988 件。</div>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  样张口径（docs/glossary.md ^mockup-sample）：只做设计演示、不进产品代码；数据真实、交互可点。
+  玻璃 token 单源 = <code>src/main/resources/web/css/sapphire.css</code>（2026-10-22 作者令「全站一套毛玻璃」：--glass-bg rgba(24,28,38,.68) · --glass-blur 24px · --glass-border rgba(255,255,255,.06) · --frost-shadow · --glass-control-* 暗档）；
+  气泡族 = chat.css .bubble（r16 / 象限 4px / 10×14 / max-width 80% / 14.5px·1.55；user #95ec69+字色#111 暗档、ai --color-bubble-ai、injected rgb(--sapphire)/0.12）；
+  卡面 = split.css .deck-card（r14 · blur 14 · 四档阴影）；bottom sheet = mobileLayer.css（top 76 / bottom 6 / r20 / 切换条 h44）。
+  状态：前端设计确认前草案——作者确认样张后排实施；本批零引擎/前端实现代码。配套阅读：token 规格页 · 设计稿（docs/design/ 同日批）。
+</footer>
+
+<script>
+/* ── 页签 ── */
+document.querySelectorAll('.tab').forEach(function (t) {
+  t.addEventListener('click', function () {
+    document.querySelectorAll('.tab').forEach(function (x) { x.classList.remove('on'); });
+    document.querySelectorAll('.canvas-page').forEach(function (x) { x.classList.remove('on'); });
+    t.classList.add('on');
+    document.getElementById(t.dataset.pg).classList.add('on');
+  });
+});
+/* ── 规格注记开关 ── */
+document.getElementById('specChk').addEventListener('change', function () {
+  document.body.classList.toggle('hide-spec', !this.checked);
+});
+
+/* ── 冷却倒计时（视觉糖：10 分钟重组冷却） ── */
+function startCooldown(el, secs) {
+  if (!el) return { reset: function () {} };
+  var s = secs;
+  function fmt(n) { return String(Math.floor(n / 60)).padStart(2, '0') + ':' + String(n % 60).padStart(2, '0'); }
+  setInterval(function () { s = s > 0 ? s - 1 : 600; el.textContent = '冷却 ' + fmt(s); }, 1000);
+  return { reset: function () { s = 600; el.textContent = '冷却 ' + fmt(s); } };
+}
+
+/* ── 应答池（示例数据，真实取自笔记内容） ── */
+var REPLY = {
+  'τ 为什么取 30 天？': '笔记「近因加权」节：τ=30 半衰期 ≈21 天，当日命中 vs 3 月龄实测 ≈24× 优势，刚好顶开旧词密度；再小会伤纯历史查询的相对序。',
+  '分词为什么不用向量检索？': '三条硬约束：零依赖、禁驻守护进程、数据不出机——~90MB 模型直接出局；落点 SQLite FTS5 + bigram 影子列。',
+  '总结这篇笔记的裁定': '三件套：① τ=30 近因加权（半衰期 ≈21 天）；② xerj 只复用 bigram 分词 + BM25 参数，运行时走 FTS5；③ 10-27 剥壳解包修收录口径。',
+  '这个结论写进设计稿了吗？': '还没有——ask mode 的设计稿是今天（10-28）另一批；本笔记只是它的示例演示文件。',
+  '_default': '（示例应答）演示窗接的是本文件内置应答池；实施后由「该文件专属上下文 + 受限工具面」的 ask 会话真实作答。'
+};
+
+/* ── ask 窗引擎：开/关/Esc/外点关闭、发消息、typing、chip ── */
+function makeAskWin(win, opts) {
+  opts = opts || {};
+  var stage = document.getElementById(opts.stageId);
+  var entry = document.getElementById(opts.entryId);
+  var hint = document.getElementById(opts.hintId);
+  var input = win.querySelector('.ask-input input');
+  var send = win.querySelector('.ask-input .send');
+  var msgs = win.querySelector('.ask-msgs');
+  var empty = win.querySelector('.ask-empty');
+  var cd = startCooldown(win.querySelector('[data-cd]'), opts.cdStart || 392);
+
+  function open() {
+    win.classList.remove('closed');
+    if (entry) entry.classList.remove('pulse');
+    if (hint) hint.classList.add('gone');
+    setTimeout(function () { input && input.focus(); }, 240);
+  }
+  function close(pulse) {
+    win.classList.add('closed');
+    win.classList.remove('wide');
+    if (entry && pulse) entry.classList.add('pulse');
+    if (hint) hint.classList.remove('gone');
+  }
+
+  if (entry) entry.addEventListener('click', function (e) { e.stopPropagation(); open(); });
+  win.addEventListener('click', function (e) { e.stopPropagation(); });
+  if (stage) stage.addEventListener('click', function () { if (!win.classList.contains('closed')) close(false); });
+  win.querySelectorAll('[data-act]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var a = b.dataset.act;
+      if (a === 'close') close(false);
+      else if (a === 'collapse') close(true);
+      else if (a === 'expand') win.classList.toggle('wide');
+    });
+  });
+
+  function bubble(cls, html) {
+    var r = document.createElement('div'); r.className = 'row ' + (cls === 'user' ? 'user' : '');
+    var b = document.createElement('span'); b.className = 'bubble ' + cls; b.innerHTML = html;
+    r.appendChild(b); msgs.appendChild(r);
+    msgs.scrollTop = msgs.scrollHeight;
+    return b;
+  }
+  function ask(text) {
+    if (empty) empty.style.display = 'none';
+    bubble('user', text);
+    var tp = bubble('ai typing', '<i></i><i></i><i></i>');
+    setTimeout(function () {
+      tp.parentElement.remove();
+      bubble('ai', (REPLY[text] || REPLY['_default']) + '<br><span class="cite">记忆 2 · 图谱 1 节</span>');
+    }, 750);
+  }
+  if (send) send.addEventListener('click', function () { var v = input.value.trim(); if (v) { input.value = ''; ask(v); } });
+  if (input) input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { var v = input.value.trim(); if (v) { input.value = ''; ask(v); } }
+    if (e.key === 'Escape') close(false);
+  });
+  win.querySelectorAll('.ask-chip:not(.handoff)').forEach(function (c) {
+    c.addEventListener('click', function () { ask(c.textContent.trim()); });
+  });
+  return { open: open, close: close, cd: cd, bubble: bubble };
+}
+
+/* ①：入口 → 窗 */
+makeAskWin(document.getElementById('win1'), { stageId: 'stage1', entryId: 'entry1', hintId: 'hint1' });
+
+/* ②：预置 6 轮 + 发给主会话瞬间 */
+var win2 = makeAskWin(document.getElementById('win2'), { stageId: 'stage2', hintId: 'hint2', cdStart: 392 });
+win2.open();
+document.getElementById('handoff2').addEventListener('click', function () {
+  var msgs = document.getElementById('msgs2');
+  var r = document.createElement('div'); r.className = 'row user';
+  r.innerHTML = '<span class="bubble sys"><span class="lbl">↗ 已发送到主会话</span> · 「语料翻倍后 τ=30 要不要重估？」——它可回问，你仍在本窗。</span>';
+  msgs.appendChild(r); msgs.scrollTop = msgs.scrollHeight;
+  win2.cd.reset();
+  var st = document.getElementById('status2'); st.classList.add('flash');
+  setTimeout(function () { st.classList.remove('flash'); }, 1400);
+  setTimeout(function () {
+    var pane = document.getElementById('mainArrive');
+    pane.innerHTML =
+      '<div class="mrow arrive"><div style="width:100%"><div class="who">来自文件问答 · 记忆检索调优笔记.md</div>' +
+      '<span class="bubble ai">ask mode 转来一问：「语料翻倍后 τ=30 要不要重估？」</span></div></div>' +
+      '<div class="mrow arrive"><span class="bubble user">需要我帮你做什么？</span></div>';
+  }, 850);
+});
+
+/* ③：移动端入口 → 窗 */
+makeAskWin(document.getElementById('winM'), { entryId: 'mEntry' });
+</script>
+</body>
+</html>
