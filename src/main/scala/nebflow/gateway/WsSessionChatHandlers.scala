@@ -55,6 +55,7 @@ private[gateway] object WsSessionChatHandlers:
     "batchDeleteSessions" -> handleBatchDeleteSessions,
     "renameSession" -> handleRenameSession,
     "getActiveAgents" -> handleGetActiveAgents,
+    "getSessionBusy" -> handleGetSessionBusy,
     "getHistory" -> handleGetHistory,
     "listAgents" -> handleListAgents,
     "listAgentSessions" -> handleListAgentSessions,
@@ -1120,6 +1121,39 @@ private[gateway] object WsSessionChatHandlers:
       }
     }
   end handleGetActiveAgents
+
+  /**
+   * 重连后的主会话 busy 权威快照（composer-resync，2026-10-28）。
+   *
+   * `done` / `sessionBusy(false)` 是瞬时事件，WS 断连窗内不会重放；activeAgents
+   * 又只列在飞子智能体，活跃主会话因此可能永远保留断线前的 busy 镜像。此查询按
+   * 客户端请求会话逐个回 AgentRegistry 当前相位，未知会话也显式回 false：
+   * 前端因此可以收敛（不是「查不到就继续猜忙」）。
+   *
+   * Processing 才是回复中/工具执行中的 composer busy。Idle（含后台任务等待期）与
+   * WaitingForUser 均不占用停止钮；在飞后台 job 的可见语义由现有任务/子代理面板承担。
+   */
+  private def handleGetSessionBusy(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val json = parsedJson(text)
+    val sessionIds = json.hcursor.downField("sessionIds").as[List[String]].getOrElse(Nil).distinct
+    if sessionIds.isEmpty then IO.unit
+    else
+      sharedResources.agentRegistry.get.flatMap { registry =>
+        val states = WebSocketRoutes.sessionBusyStates(registry, sessionIds)
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "sessionBusyStates".asJson,
+            "states" -> states.asJson
+          )
+        )
+      }
+  end handleGetSessionBusy
 
   private def handleGetHistory(
     ctx: WsDispatchCtx,

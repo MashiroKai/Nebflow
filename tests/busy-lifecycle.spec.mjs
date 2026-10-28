@@ -58,6 +58,10 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css
 let currentWs = null;
 let connSeq = 0;
 const conns = [];
+// 重连丢终态场景：true = 新连接立即掐断（黑暗窗）；终态帧排程在旧连接关闭后发送 = 丢失。
+let serverDown = false;
+// 重连 historyPage 夹具：黑暗窗内已完成的轮（terminal 行 ⇒ turn-header 呈 done）。
+let historyFixture = [];
 // 每场景注入的应答脚本：frame => [{frame, delay}]（一次性：出线帧只消费一枚）。
 let replyScript = null;
 
@@ -66,6 +70,10 @@ function isUserContentFrame(m) {
 }
 
 function wireUp(ws) {
+  if (serverDown) {
+    try { ws.close(); } catch { /* already closed */ }
+    return;
+  }
   currentWs = ws;
   const log = { seq: ++connSeq, inbound: [] };
   conns.push(log);
@@ -74,7 +82,14 @@ function wireUp(ws) {
     log.inbound.push(m);
     if (m.type === 'ping') { ws.send(JSON.stringify({ type: 'pong' })); return; }
     if (m.type === 'getHistory') {
-      ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0, total: 0 }));
+      ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: historyFixture, hasMore: false, offset: 0, total: historyFixture.length }));
+      return;
+    }
+    if (m.type === 'getSessionBusy') {
+      // 权威快照夹具：本轮所有 requested root sessions 均已 idle。旧前端不发此请求，
+      // 因而 G 场景在修复前保持幽灵 busy（红腿）。
+      const states = Object.fromEntries((m.sessionIds || []).map(sid => [sid, false]));
+      ws.send(JSON.stringify({ type: 'sessionBusyStates', states }));
       return;
     }
     if (isUserContentFrame(m) && replyScript) {
@@ -98,6 +113,17 @@ const serverSends = (frames) => {
 };
 
 const inboundUserFramesOf = (content) => conns.flatMap(c => c.inbound).filter(m => isUserContentFrame(m) && m.content === content);
+const sessionBusyQueries = () => conns.flatMap(c => c.inbound).filter(m => m.type === 'getSessionBusy');
+
+async function waitForNewConnection(prevSeq, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const latest = conns[conns.length - 1];
+    if (latest && latest.seq > prevSeq) return latest;
+    await sleep(50);
+  }
+  throw new Error('client did not reconnect in time');
+}
 
 // ── 静态服务器 + 浏览器 ────────────────────────────────────────────────
 const server = createServer(async (req, res) => {
@@ -288,6 +314,85 @@ try {
   ok('D2 慢 turn 终态照常收 busy', !(await sidBusy()));
   ok('D3 全程零 pageerror', pageErrors.length === 0, JSON.stringify(pageErrors));
 
+  // ══ F 多气泡轮：text/round 边界不是 turn 终态，只有 done 才收 composer ═══
+  await setConfirmMs(20000);
+  historyFixture = [];
+  replyScript = () => [
+    { frame: { type: 'sessionBusy', sessionId: SID, busy: true } },
+    { frame: { type: 'textDelta', sessionId: SID, delta: '多气泡第一段。' } },
+    { frame: { type: 'roundComplete', sessionId: SID }, delay: 80 },
+    { frame: { type: 'sessionBusy', sessionId: SID, busy: true }, delay: 90 },
+    { frame: { type: 'textDelta', sessionId: SID, delta: '多气泡第二段。' }, delay: 120 },
+    { frame: { type: 'sessionBusy', sessionId: SID, busy: false }, delay: 180 },
+    { frame: { type: 'done', sessionId: SID, model: 'mock-llm' }, delay: 190 },
+  ];
+  await sendText('multi bubble turn');
+  await sleep(650);
+  ok('F1 多气泡轮两段正文都落面', await page.evaluate(() =>
+    [...document.querySelectorAll('.bubble.ai')].some(b => (b.textContent || '').includes('多气泡第一段'))
+    && [...document.querySelectorAll('.bubble.ai')].some(b => (b.textContent || '').includes('多气泡第二段'))));
+  const uiF = await busyUi();
+  ok('F2 多气泡轮 done 后 composer 清零', !(await sidBusy()) && uiF.sendShown && !uiF.stopShown, JSON.stringify(uiF));
+
+  // ══ G 黑暗窗重连：done/busy(false) 丢失，历史已 done 但 composer 不得留旧 busy ══
+  historyFixture = [
+    { type: 'user', text: 'multi bubble turn', timestamp: 1761680000000 },
+    { type: 'tool', label: 'Bash', summary: 'isolated smoke', content: 'ok', isError: false, input: {} },
+    { type: 'ai', text: '黑暗窗内完成的答复。', durationMs: 100000, model: 'mock-llm', timestamp: 1761680100000, terminal: true },
+  ];
+  replyScript = () => [
+    { frame: { type: 'sessionBusy', sessionId: SID, busy: true } },
+    { frame: { type: 'textDelta', sessionId: SID, delta: '重连前的流式片段' }, delay: 30 },
+    { frame: { type: 'done', sessionId: SID, model: 'mock-llm' }, delay: 300 },
+    { frame: { type: 'sessionBusy', sessionId: SID, busy: false }, delay: 310 },
+  ];
+  await sendText('terminal lost during reconnect');
+  await sleep(120); // busy + 首个流帧已落，终态尚未到
+  const prevSeq = conns[conns.length - 1]?.seq || 0;
+  serverDown = true;
+  await currentWs.close();
+  await sleep(450); // 终态对在旧连接关闭后触发 = 黑暗窗内永久丢失
+  serverDown = false;
+  await page.evaluate(async () => { (await import('/js/ws.js')).forceReconnect(); });
+  await waitForNewConnection(prevSeq);
+  await sleep(900); // historyPage + getActiveAgents + sessionBusyStates 全链消化
+  const terminalHeaders = await page.locator('#chat .turn-header').count();
+  ok('G1 重放历史已形成 done 轮（报障同形前提）', terminalHeaders >= 1, `headers=${terminalHeaders}`);
+  ok('G2 重连发出主会话权威 busy 查询', sessionBusyQueries().some(m => (m.sessionIds || []).includes(SID)),
+    JSON.stringify(sessionBusyQueries().map(m => m.sessionIds)));
+  const uiG = await busyUi();
+  ok('G3 done 已落历史但 composer 不再幽忙', !(await sidBusy()) && uiG.sendShown && !uiG.stopShown, JSON.stringify(uiG));
+  // 场景卫生：旧实现 G3 红时遗留的 busy 在此显式清掉，后续用例互不污染。
+  serverSends([{ type: 'sessionBusy', sessionId: SID, busy: false }, { type: 'done', sessionId: SID }]);
+  await sleep(250);
+
+  // ══ H agentDone 同构终态：带 sessionId 时必须强制清 busy ═══════════════
+  historyFixture = [];
+  serverSends([
+    { type: 'sessionBusy', sessionId: SID, busy: true },
+    { type: 'textDelta', sessionId: SID, delta: 'agentDone 前的输出' },
+    { type: 'agentDone', sessionId: SID, agentId: 'root-agent-actor', model: 'mock-llm' },
+  ]);
+  await sleep(350);
+  const uiH = await busyUi();
+  ok('H1 agentDone(sessionId) 强制收 busy', !(await sidBusy()) && uiH.sendShown && !uiH.stopShown, JSON.stringify(uiH));
+  serverSends([{ type: 'sessionBusy', sessionId: SID, busy: false }, { type: 'done', sessionId: SID }]);
+  await sleep(250);
+
+  // ══ J 负例：done 后服务端又权威开启新轮，busy 必须保留（防「一律清死」）══
+  serverSends([
+    { type: 'sessionBusy', sessionId: SID, busy: true },
+    { type: 'done', sessionId: SID },
+    { type: 'sessionBusy', sessionId: SID, busy: true },
+    { type: 'textDelta', sessionId: SID, delta: '紧接着的新一轮仍在输出' },
+  ]);
+  await sleep(300);
+  const uiJ = await busyUi();
+  ok('J1 done 后新轮 busy(true) 仍可置位', (await sidBusy()) && uiJ.stopShown && !uiJ.sendShown, JSON.stringify(uiJ));
+  serverSends([{ type: 'sessionBusy', sessionId: SID, busy: false }, { type: 'done', sessionId: SID }]);
+  await sleep(250);
+  ok('J2 新轮自己的终态照常收 busy', !(await sidBusy()));
+
   // ══ E 静态钉：接缝在源面在场 ═══════════════════════════════════════
   const mainSrc = await readFile(join(WEB, 'js', 'main.js'), 'utf8');
   const inputSrc = await readFile(join(WEB, 'js', 'input.js'), 'utf8');
@@ -300,6 +405,8 @@ try {
     /sessionStreamActivity\[sid\][^>]*> dispatchAt/.test(mainSrc) && /sinceSidStream >= 15000/.test(mainSrc));
   ok('E5 per-session 流活动戳 + 确认网字段在 state.js', /sessionStreamActivity:\s*\{\}/.test(stateSrc) && /turnConfirmMs:\s*20000/.test(stateSrc));
   ok('E6 depth>0 前缀会话不武装确认网', /startsWith\('delegate-'\)/.test(mainSrc) && /startsWith\('node-'\)/.test(mainSrc));
+  ok('E7 重连主会话权威 busy 重同步接缝在场', /getSessionBusy/.test(mainSrc) && /onMessage\('sessionBusyStates'/.test(mainSrc));
+  ok('E8 agentDone(sessionId) 走统一终态清理', /onMessage\('agentDone'[\s\S]{0,900}clearBusyFor/.test(mainSrc));
 
   // ══ 收尾 ════════════════════════════════════════════════════════════
   console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURE(S)`);

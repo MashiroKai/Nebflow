@@ -3108,6 +3108,19 @@ end WebSocketRoutes
 object WebSocketRoutes:
 
   /**
+   * getSessionBusy 的纯映射：仅 Processing 是 composer「回复中/工具执行中」。
+   * Idle（含后台任务等待）/ WaitingForUser / 未知会话均为 false；未知项显式保留
+   * 在返回 Map 中，前端才能用权威 false 清掉断连前的幻影 busy，而非继续猜测。
+   */
+  def sessionBusyStates(
+    registry: Map[String, AgentRecord],
+    sessionIds: List[String]
+  ): Map[String, Boolean] =
+    sessionIds.distinct.map { sid =>
+      sid -> registry.get(sid).exists(_.status == AgentStatus.Processing)
+    }.toMap
+
+  /**
    * Which AgentRegistry entries getActiveAgents should report as running.
    *
    * Task-lifecycle kinds (Delegate/Ephemeral/Flow/SubTask) are reported
