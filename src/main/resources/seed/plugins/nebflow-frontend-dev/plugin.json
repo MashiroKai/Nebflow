@@ -3,5 +3,7 @@
   "name": "nebflow-frontend-dev",
   "version": "1.0.1",
   "description": "Nebflow 客户端前端开发域知识包——节点获得 web/ 无构建 vanilla JS 实现规范、用户视觉硬裁定执行与 UI/UX 范式案例库匹配能力。适用于改 web/ 前端页面与组件、写 JS/CSS/HTML、调弹窗与交互样式、落地毛玻璃视觉风格等任务。内含 skills：nebflow-frontend（web/ 结构/Sapphire Glass 设计系统/截图驱动验证流/响应式三档）、visual-style（用户裁定硬规则：毛玻璃/玻璃质感/中度字重，最高优先级）、design-system（功能类型→成熟范式→Nebflow 适配规则案例库）。自验方法论另配 nebflow-qa 插件。组件面：无 mcp.json、无工具扩展。",
+  "keywords": ["frontend", "vanilla-js", "css", "html", "ui", "ux", "视觉", "前端", "弹窗", "毛玻璃"],
+  "useWhen": "任务改 web/ 目录下的前端页面或组件（写/调 JS、CSS、HTML、弹窗与交互样式、视觉风格落地）时使用本包；后端/非 web 界面任务不适用。",
   "author": {"name": "Nebflow"}
 }

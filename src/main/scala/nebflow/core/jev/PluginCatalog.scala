@@ -22,7 +22,9 @@ object PluginCatalog:
     PluginRegistry.scan().map { all =>
       all.collect {
         case p if p.trust.trusted && PluginDispatchPolicy.effective(p.name, p.trust.trusted) =>
-          CatalogEntry(p.name, p.description)
+          // 双模式批（2026-10-28 · 设计 §7）：description 增量键随行（keywords/useWhen
+          // 容忍缺席——旧行为逐字节）。
+          CatalogEntry(p.name, p.description, p.keywords, p.useWhen)
       }
     }
 

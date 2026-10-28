@@ -141,6 +141,7 @@ object PluginRegistry:
     "repository",
     "license",
     "keywords",
+    "useWhen",
     "extensions"
   )
 
@@ -229,6 +230,13 @@ object PluginRegistry:
     repository: String = "",
     license: String = "",
     keywords: List[String] = Nil,
+    /**
+     * 双模式批（2026-10-28 · 设计 §7 插件三层规范）：description 增量键——
+     * 「何时该用本包」的一句陈述，分配问对面（CatalogEntry 行）随行渲染。
+     * **容忍读法**：缺键 = None（旧行逐字节）；值类型错 = 忽略（非 fatal，
+     * 装载不受扰——增量键永不变成拒载面）。
+     */
+    useWhen: Option[String] = None,
     skills: List[PluginSkill],
     mcpServers: Map[String, McpServerConfig],
     toolsExtension: List[String],
@@ -269,6 +277,7 @@ object PluginRegistry:
       "repository" -> p.repository.asJson,
       "license" -> p.license.asJson,
       "keywords" -> p.keywords.asJson,
+      "useWhen" -> p.useWhen.asJson,
       "digest" -> p.digest.asJson,
       "fileCount" -> p.fileCount.asJson,
       // 无审批批（2026-09-13）三字段（面板/CLI/复核共用契约）：
@@ -667,6 +676,9 @@ object PluginRegistry:
         .left
         .map(_ => name0 -> "manifest field 'keywords' must be an array of strings (§5.4)")
       keywords = keywordsOpt.getOrElse(Nil)
+      // 双模式批（2026-10-28 · 设计 §7）：description 增量键 useWhen——**容忍读法**
+      // （缺键 = None；值类型错 = 忽略不致命，增量键永不成为拒载面）。
+      useWhen = c.downField("useWhen").as[Option[String]].toOption.flatten.map(_.trim).filter(_.nonEmpty)
       // §5.4 author object：仅 name/email/url 三个 string 字段（其余字段或
       // 值类型 → manifest invalid → 拒载）；渲染为可读字符串供审批清单。
       author <- c.downField("author").as[Option[Json]] match
@@ -861,6 +873,7 @@ object PluginRegistry:
       repository = repository,
       license = license,
       keywords = keywords,
+      useWhen = useWhen,
       skills = skills,
       mcpServers = mcpServers,
       toolsExtension = toolsExtension,
@@ -1497,13 +1510,18 @@ object PluginRegistry:
    * 单插件目录行（渲染规则单点）。描述单源批（作者 2026-09-10 09:30 裁定）：
    * 内容源 = manifest `description`（缺省回落 name）；`capability` 键已 deprecated，
    * 渲染层忽略。尾缀保留 [skills | mcp | tools] 结构清单——工具面本身是能力信号。
+   * 双模式批（2026-10-28 · 设计 §7 三层规范）：description 增量键增量渲染——
+   * keywords 非空 → ` — keywords: a, b`；useWhen 在 → ` — use when: <句>`。
+   * **缺省逐字节**：两键缺席 = 行形与改前逐字相同（增量键永不改写既有行）。
    */
   def catalogLine(p: PluginDef): String =
     val desc = if p.description.isEmpty then p.name else p.description
+    val kw = if p.keywords.isEmpty then "" else p.keywords.mkString(" — keywords: ", ", ", "")
+    val uw = p.useWhen.map(w => s" — use when: $w").getOrElse("")
     val skills = if p.skills.isEmpty then "-" else p.skills.map(s => s.id.split('/')(1)).mkString(", ")
     val mcp = if p.mcpServers.isEmpty then "-" else p.mcpServers.keys.mkString(", ")
     val tools = if p.toolsExtension.isEmpty then "" else s" | tools: ${p.toolsExtension.mkString(", ")}"
-    s"- ${p.name}: $desc [skills: $skills | mcp: $mcp$tools]"
+    s"- ${p.name}: $desc$kw$uw [skills: $skills | mcp: $mcp$tools]"
 
   /**
    * Plugin Catalog 段（对齐 skillCatalog order 800 先例）。**被封禁**的包不出现

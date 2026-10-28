@@ -53,6 +53,8 @@
 #   C14 M14 补差（loopback-https / args / headers / `./` 围栏）   [FAIL]
 #   C15 符号链接/越围栏（plugin.json 越界升硬闸，余为跳过档）      [FAIL/WARN]
 #   C16 M15 语境豁免（教学/正则字面量→降人工复核提示，不计 FAIL）
+#   C17 description 长度软顶（>200 提示收敛；双模式批 2026-10-28）  [WARN]
+#   C18 Plugin.md 引用 SKILL.md 路径存在性（断链提示）              [WARN]
 #
 # M9 定稿：BOUNDARY_RE 零逻辑改动——自足边界句（说清本包不管什么
 # 即达标）照旧 PASS；「另配/请改用」留存标记集合，存量含分流的描述兼容；提名相邻
@@ -95,10 +97,11 @@ MAX_VIEWER_BYTES = 32 * 1024
 KNOWN_ROOT_ENTRIES = {"plugin.json", "mcp.json", "skills", "org.nebflow", "Plugin.md"}
 # org.nebflow 允许子条目（PluginRegistry.scala:587-591；漏扩=贡献静默失效）
 KNOWN_NS_ENTRIES = {"tools.json", "viewers.json"}
-# manifest 闭合 11 键（PluginRegistry.scala:133-145 KnownManifestKeys）
+# manifest 闭合 12 键（PluginRegistry.scala:133-146 KnownManifestKeys；useWhen =
+# 双模式批 2026-10-28 description 增量键，容忍读法）
 KNOWN_MANIFEST_KEYS = {
     "$schema", "name", "version", "description", "capability",
-    "author", "homepage", "repository", "license", "keywords", "extensions",
+    "author", "homepage", "repository", "license", "keywords", "useWhen", "extensions",
 }
 # mcp.json 顶层闭合键（PluginRegistry.scala:924-930）
 KNOWN_MCP_TOP_KEYS = {"$schema", "mcpServers"}
@@ -977,6 +980,50 @@ def check_c8(pkg, name):
         record("C08", "manifest name==目录名", True, f"manifest name 与目录名一致（{dirbase!r}）")
 
 
+def check_c17(manifest):
+    """C17 description 长度软检查（双模式批 2026-10-28 增量，[WARN]）。
+
+    description > 200 字符 = 提示性告警（非 FAIL）：五段式规范以 400 为硬顶
+    （M07/MAX_DESC_CHARS），200 内为「分配问对面」可读性最优段——超 200 只提示
+    收敛，不阻断交付（容忍读法：增量键纪律，软检查永不变成拒载面）。
+    """
+    desc = (manifest or {}).get("description") or ""
+    n = len(desc)
+    if n > 200:
+        record("C17", "description 长度（≤200 软顶）", False,
+               f"长度={n}/200——超软顶：分配问对面可读性收敛建议（硬顶 400 由 M07 计）；"
+               "可把 skill 明细交给「内含 skills：」句压缩主句", warn=True)
+    else:
+        record("C17", "description 长度（≤200 软顶）", True, f"长度={n}/200")
+
+
+def check_c18(pkg):
+    """C18 Plugin.md 引用 SKILL.md 路径存在性（双模式批 2026-10-28 增量，[WARN]）。
+
+    Plugin.md（包级能力页）里以 `skills/<id>/SKILL.md` 形态引用的路径必须真实
+    在包内——断链 = 面板/文档读数落空。仅 [WARN]：文档面引用，不触装载语义
+    （skills/ 装载自扫目录，不读 Plugin.md）。
+    """
+    pm = os.path.join(pkg, "Plugin.md")
+    if not os.path.isfile(pm):
+        record("C18", "Plugin.md 引用 SKILL.md 路径存在性", True, "无 Plugin.md——零引用零断链面")
+        return
+    try:
+        with open(pm, encoding="utf-8") as f:
+            text = f.read()
+    except Exception as e:
+        record("C18", "Plugin.md 引用 SKILL.md 路径存在性", False, f"Plugin.md 不可读：{e}", warn=True)
+        return
+    refs = sorted(set(re.findall(r"skills/[\w.\-]+/SKILL\.md", text)))
+    broken = [r for r in refs if not os.path.isfile(os.path.join(pkg, r))]
+    if broken:
+        record("C18", "Plugin.md 引用 SKILL.md 路径存在性", False,
+               f"断链 {len(broken)}/{len(refs)}：{'、'.join(broken)}——引用的 SKILL.md 不在包内", warn=True)
+    else:
+        record("C18", "Plugin.md 引用 SKILL.md 路径存在性", True,
+               f"{len(refs)} 处引用全部在包内" if refs else "零 SKILL.md 路径引用")
+
+
 def main():
     global _profile, _report_fh
     ap = argparse.ArgumentParser(description="Nebflow 插件包机械校验 M1-M15 + C 组镜像（三档 profile）")
@@ -1147,6 +1194,10 @@ def main():
     check_c13(pkg, manifest)
     check_c14(pkg, mcp_servers)
     check_c15(pkg)
+    # C17/C18（双模式批 2026-10-28 增量软检查：description 长度软顶 + Plugin.md
+    # 引用 SKILL.md 路径存在性——全部 [WARN]，永不阻断交付）
+    check_c17(manifest)
+    check_c18(pkg)
     # C16 记录（豁免分流结果已在 M15 行体现；命中清单转人工复核提示）
     if exempt_hits:
         for h in exempt_hits[:8]:
