@@ -33,6 +33,20 @@
   <script type="module">
     const WEB = '/src/main/resources/web/js';
 
+    // ── B 组（2026-10-28 断线修复批）先行装配：真 ws.js 入站派发腿 ──
+    // 2026-10-10 合并丢掉 chat.js 的 `onMessage('attachmentsSaved')` 订阅时本
+    // harness 照绿——A 组直接调 patchUserMediaRow，从没钉过「帧 → 订阅 → 补丁」
+    // 这一跳。B 组补上：在**任何**模块 import 之前换掉 window.WebSocket（ws.js
+    // 被 chat.js 静态传递 import，必须先桩），connect() 走真铸 probe → 真
+    // FakeWebSocket 实例 → onmessage 手动喂帧 = 真会话闸 + 真 handler 分发。
+    class FakeWebSocket {
+      constructor(url) { this.url = url; this.readyState = 1; FakeWebSocket.last = this; }
+      send() {} close() {}
+    }
+    FakeWebSocket.OPEN = 1;
+    FakeWebSocket.last = null;
+    window.WebSocket = FakeWebSocket;
+
     const { chatViews, ChatView, setActiveView } = await import(`${WEB}/chatView.js`);
     const state = (await import(`${WEB}/state.js`)).default;
 
@@ -48,6 +62,28 @@
     const chatMod = await import(`${WEB}/chat.js`);
     const popMod = await import(`${WEB}/popArtifacts.js`);
     const view = chatViews.primary;
+
+    // ── 真派发腿装配（B 组）：connect() 铸 probe（静态服 404 即 settle）→
+    // state.ws 换成 FakeWebSocket 实例；喂帧走真 onmessage。两腿失败也只降级
+    // 为「B 组不可用」（__wsReady=false，spec 跳过并显式报错），不拖垮 A 组。 ──
+    window.__wsReady = false;
+    try {
+      const { connect } = await import(`${WEB}/ws.js`);
+      connect();
+      for (let i = 0; i < 50 && !(state.ws instanceof FakeWebSocket); i++) {
+        await new Promise(r => setTimeout(r, 20));
+      }
+      window.__wsReady = state.ws instanceof FakeWebSocket;
+    } catch (e) {
+      console.warn('[harness] ws dispatch leg unavailable:', e);
+    }
+    /** 真入站派发：帧经 ws.js onmessage（会话闸 + handler 表）原样走一遍。 */
+    window.__dispatchWsFrame = (frame) => {
+      const sock = state.ws;
+      if (!(sock instanceof FakeWebSocket) || typeof sock.onmessage !== 'function') return false;
+      sock.onmessage({ data: JSON.stringify(frame) });
+      return true;
+    };
 
     const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 

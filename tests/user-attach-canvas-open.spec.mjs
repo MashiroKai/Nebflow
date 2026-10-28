@@ -26,6 +26,13 @@
 //   A6  path=null（后端保存失败）的项保持 pathless 降级，绝不派假 open
 //   A7  两图 stack：补丁后 front 卡点击也开 Canvas
 //
+// B 组（2026-10-28 断线修复批新增）：A 组从未钉「attachmentsSaved 帧 → chat.js
+// 订阅 → 补丁」这一跳——2026-10-10 合并丢掉订阅时全组照绿，live 行停在 pathless
+// （作者报障「我自己发的图，还是点不开」根因）。B 组走 harness 的真 ws.js 入站
+// 派发腿（FakeWebSocket + connect + 真 onmessage：真会话闸 + 真 handler 表）：
+//   B1  真帧派发 → 行补丁 → 媒体点击 = openPopArtifact 单点（订阅在场的证明）
+//   B2  他会话帧被会话闸丢弃 ⇒ 不补丁（重入由恢复腿接管的契约面）
+//
 // Run: node node_modules/@playwright/test/cli.js test tests/user-attach-canvas-open.spec.mjs
 
 import { test, expect } from '@playwright/test';
@@ -203,8 +210,71 @@ test.describe('A6 — path=null 的项不派假 open', () => {
   });
 });
 
-/* ═══════════ A7 — 两图 stack：补丁后 front 卡点击也开 Canvas ═══════════ */
+/* ═══════════ B 组 — 真 ws.js 派发腿：「帧 → chat.js 订阅 → 补丁 → 点击」全链 ═══════════
+ *
+ * 2026-10-28 作者报障「我自己发的图，还是点不开」的回归钉。根因 = 2026-10-10
+ * USTC dev/main 合并在 chat.js 丢了 `onMessage('attachmentsSaved', …)` 订阅
+ * （checkpoint a0f2edfc7 可溯），A 组照绿——它直调 patchUserMediaRow，「帧 →
+ * 订阅 → 补丁」这一跳从未被钉过。B 组走 harness 的真派发腿
+ * （真 ws.js 会话闸 + 真 handler 表 + 真 chat.js 模块级订阅），帧→行→点击
+ * 三跳一体；订阅再丢，这里必红。 */
+test.describe('B — 真 ws.js 派发：attachmentsSaved 帧驱动 live 行补丁（订阅在场的证明）', () => {
+  test('B1: 真帧派发 → 行补丁（角标出现）→ 媒体点击 = workspace-open-item 单点（非灯箱）', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    const wsReady = await page.evaluate(() => window.__wsReady);
+    expect(wsReady, 'harness 的真派发腿必须装配成功（FakeWebSocket + connect + onmessage）').toBe(true);
 
+    await page.evaluate(() => window.__userLiveNoPath());
+    expect((await page.evaluate(() => window.__rowShape())).cornerBtns, '改前形态基线：live 行 pathless 无角标').toBe(0);
+
+    // 真帧（与 WebSocketRoutes.scala attJson 同形）经真 onmessage 派发
+    const dispatched = await page.evaluate((saved) => window.__dispatchWsFrame({
+      type: 'attachmentsSaved',
+      sessionId: 'user-attach-harness',
+      attachments: saved,
+    }), savedFrame());
+    expect(dispatched, '喂帧必须走真 onmessage（装配失败应在上面的 __wsReady 断言爆）').toBe(true);
+    await page.waitForTimeout(60);
+
+    const shape = await page.evaluate(() => window.__rowShape());
+    expect(shape.rows, '原位替换，不另起新行').toBe(1);
+    expect(shape.cornerBtns, '帧经订阅到达 patchUserMediaRow ⇒ 角标出现（订阅丢失时此行恒 0 = 报障形态）').toBe(1);
+
+    // 点击 = openPopArtifact 单点（三修 ②：与 Pop 整面点击、与恢复腿三者同构）
+    const mediaOpen = await page.evaluate(() => window.__captureOpenEvents(() => window.__clickMediaFace()));
+    const openEvents = await mediaOpen;
+    expect(openEvents, '补丁后媒体点击派一次 open').toHaveLength(1);
+    expect(openEvents[0].absPath, 'absPath = 后端落盘路径').toBe(savedFrame()[0].path);
+
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('B2: 他会话的帧被 ws.js 会话闸丢弃 ⇒ 行不补丁（重入由恢复腿接管的契约面）', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.evaluate(() => window.__userLiveNoPath());
+
+    const dispatched = await page.evaluate((saved) => window.__dispatchWsFrame({
+      type: 'attachmentsSaved',
+      sessionId: 'another-session',
+      attachments: saved,
+    }), savedFrame());
+    expect(dispatched).toBe(true);
+    await page.waitForTimeout(60);
+
+    const shape = await page.evaluate(() => window.__rowShape());
+    expect(shape.cornerBtns, '他-session 帧不得跨会话补丁（ws.js:1174 会话闸丢弃）').toBe(0);
+    const mediaClick = await page.evaluate(() => window.__clickMediaFace());
+    expect(mediaClick.lightbox, 'pathless 现状保持：点击仍落灯箱').toBe(true);
+    await page.evaluate(() => window.__closeLightbox());
+
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+});
+
+
+/* ═══════════ A7 — 两图 stack：补丁后 front 卡点击也开 Canvas ═══════════ */
 test.describe('A7 — stack 形态的 live 行补丁后点击开 Canvas', () => {
   test('两图 stack 点击 front 卡派 workspace-open-item', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
