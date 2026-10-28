@@ -5,7 +5,7 @@ status: draft
 
 # Canvas 文件 ask mode · 玻璃 token 规格页（设计资产）
 
-> 本页是 [[20261028_canvas-ask-mode-design.zh-CN]]（设计稿）与 [[20261028_canvas-ask-mode-mockup-v2.html]]（效果演示样张（[[glossary#^mockup-sample]]）v2，v1 样张 superseded 留档）的配套资产页：把演示里用到的全部样式整理成 **token 表 + 配方块**，作者确认样张后，实施批按本页直接消费——这是「之后工作能复用」的载体。状态：前端设计确认前草案。
+> 本页是 [[20261028_canvas-ask-mode-design.zh-CN]]（设计稿）与 [[20261028_canvas-ask-mode-mockup-v2.html]]（效果演示样张（[[glossary#^mockup-sample]]）v2，v1 样张 superseded 留档）的配套资产页：把演示里用到的全部样式整理成 **token 表 + 配方块**，作者确认样张后，实施批按本页直接消费——这是「之后工作能复用」的载体。状态：前端设计确认前草案。（2026-10-28 更新：样张 v2 已获作者验收，**E 表已随实施批落位** `web/css/ask.css`——见 §E 实施落位注记。）
 > **2026-10-28 17:5x 作者八条令增补**：形态改版（右下角最靠右入口钮 → 点击弹输入框 → 气泡列从按钮位置长出；无窗体背景、毛玻璃气泡、顶部渐变模糊过渡、小巧不弹窗；品牌色取 stand-website 色板；每文件独立 session；开合动画锚定按钮）——见 **E 表**；A/C 表继续有效，B 表几何档被 E-2 取代（留档）。
 
 ## 0. 单源原则
@@ -128,6 +128,13 @@ status: draft
 ## E. v2 形态增补（作者八条令 2026-10-28 17:5x）
 
 > v2 形态 = **canvas 右下角最靠右入口钮 → 点击弹输入框 → 气泡列从按钮位置长出**：无窗体背景（零面板/零弹窗/零遮罩、不占 canvas）、毛玻璃气泡、顶部渐变模糊过渡、每文件独立 session、开合动画锚定按钮位置。载体：[[20261028_canvas-ask-mode-mockup-v2.html]]。八条令 → 设计落点：①入口钮（E-2 `--ask-fab-*`）②输入框（E-3 `.ask-input`）③气泡列（E-3 `.ask-col`，弹幕式升腾+按龄渐隐）④无窗体（覆盖层无面板背景，只有浮件自身）⑤毛玻璃+顶部渐变模糊（E-3 双 mask）⑥品牌色板（E-1）⑦每文件独立 session（`ask:<hash(文件路径)>`，切卡即切、收起不销毁）⑧开合动画（E-3 `transform-origin` 锚定按钮圆心）。
+
+> **实施落位注记（2026-10-28 实施批）**：E 表已随实施批消费——
+> - **落位**：全部 `--ask-*` token 落 `src/main/resources/web/css/ask.css`（ask 域单文件；玻璃基底照 §0 引 sapphire.css 单源，本文件零新增玻璃值字面量进产品 CSS）；`web/index.html` 在 `split.css` 后挂载。
+> - **E-2 值逐字未改**（44/14/372/316·250/64·56/306·252/16·8/z24 全对表；`--ask-fab-bottom` 基准 14px，角落圆钮簇在场时 JS 实测让位 = `syncSeat`，属表意内的动态座位非改值）。
+> - **E-1 落法**：亮暗双机制 = `@media (prefers-color-scheme: dark)` + `html[data-theme='dark']` 双写（sapphire 同款）+ `html[data-theme='light']` 显式亮档（防手选亮主题吃 media 暗值）；E-1 色值逐字，`--ask-pixel` 零消费照表。
+> - **实施假设档（回验点）**：亮档气泡/输入/徽标面色（E-3 配方的亮档衍射：user/sys 渐变、`--ask-bub-bg` 系）——样张仅给暗档基准，亮档按 E-1 文字/底列同式派生；作者过目亮档后如有异，只改 ask.css 亮档段一处。
+> - **D-2 回填**：E 表提案名即实际名，零回填差异；B 表留档未消费（v2 不适用）。
 
 ### E-1 品牌色板（取自 stand-website 仓 `app/globals.css`，逐字）
 
