@@ -564,7 +564,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
               flowNodeSession = state.flowNodeId.isDefined,
               flowNodeRole = state.session.flowNodeRole,
               isDispatcher = state.isDispatcher,
-              delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(state.sessionId)
+              delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(state.sessionId),
+              delegateMode = nebflow.core.delegate.DelegateRegistry.modeFaceOf(state.sessionId)
             )
         val isSubagent = depth > 0
         val sessionIdOpt = state.sessionId
@@ -629,7 +630,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             projectBoardSession = stateForLlm.isDispatcher || stateForLlm.flowNodeId.isDefined,
             flowNodeSession = stateForLlm.flowNodeId.isDefined,
             isDispatcher = stateForLlm.isDispatcher,
-            delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(stateForLlm.sessionId)
+            delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(stateForLlm.sessionId),
+            delegateMode = nebflow.core.delegate.DelegateRegistry.modeFaceOf(stateForLlm.sessionId)
           )
           // #16 observability: one log line per LLM call when MCP tools are
           // injected — names the servers explicitly so phantom-tool suspicion
@@ -968,7 +970,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 flowNodeSession = stateForLlm.flowNodeId.isDefined,
                 flowNodeRole = stateForLlm.session.flowNodeRole,
                 isDispatcher = stateForLlm.isDispatcher,
-                delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(stateForLlm.sessionId)
+                delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(stateForLlm.sessionId),
+                delegateMode = nebflow.core.delegate.DelegateRegistry.modeFaceOf(stateForLlm.sessionId)
               )
           // 冷启动路由已删除（2026-08-19 用户裁决：「这是错误的，按 preset」）：
           // 它把闲置唤醒/重启后的第一发改道到 LowCost preset，偏离用户设置的
@@ -1241,7 +1244,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         projectBoardSession = state.isDispatcher || state.flowNodeId.isDefined,
         flowNodeSession = state.flowNodeId.isDefined,
         isDispatcher = state.isDispatcher,
-        delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(state.sessionId)
+        delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(state.sessionId),
+        delegateMode = nebflow.core.delegate.DelegateRegistry.modeFaceOf(state.sessionId)
       )
       (filteredCalls, droppedCalls) =
         // WebSearch P0: kimi's native $web_search tool call bypasses the
@@ -2272,7 +2276,9 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     projectBoardSession: Boolean = false,
     flowNodeSession: Boolean = false,
     isDispatcher: Boolean = false,
-    delegateSession: Boolean = false
+    delegateSession: Boolean = false,
+    /** 双模式批：delegate 会话生效执行形态（None = 总闸关/未判定——本参数全部分叉即失效）。 */
+    delegateMode: Option[String] = None
   ): Set[String] =
     // 阶段 2c（§C.1/裁定 11）：收敛三定义（Nebula/project-dispatcher/general）
     // 的 agent.json tools 声明整体失效——工具面全部机制固定，零配置。存量
@@ -2449,6 +2455,20 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // selfReport 输入 + 判定机失败回落）与任务列表状态面。
     val withDelegateReport =
       if delegateSession then withDispatcherAsk + nebflow.core.tools.DelegateReportTool.Name else withDispatcherAsk
+    // ── 双模式批（2026-10-28 · 设计 §4.2/§5.1）：模式面单点分叉 ──────────────
+    // delegateMode = None（总闸关/未判定）⇒ 本段全部分叉失效，现状逐字节。
+    // kernel 腿（极简内核执行器）：编排面整体退场——node 四件（ChainWrite/
+    //   NodeEdit/NodeList/NodeCancel）在追加前截断 + 显式减去 Subagent/AgentFlow
+    //   （NebflowFixedTools 是执行 agent 全局机制面——摘除只在 delegateSession
+    //   判据内，root 等非 delegate 会话不受影响）。
+    // dispatcher 腿（分发器）：node 四件保留（编排本体）+ Subagent 摘除
+    //   （Q2 裁定：Subagent 是侦察子代理不是编排面，分发器不需要）。
+    val kernelFace = delegateSession && delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeKernel)
+    val dispatcherFace = delegateSession && delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeDispatcher)
+    val modeTruncated =
+      if kernelFace then withDelegateReport - "Subagent" - "AgentFlow"
+      else if dispatcherFace then withDelegateReport - "Subagent"
+      else withDelegateReport
     // N1 刀2（v3 §10.1 A4 授能）：delegate 会话的四件 Node 工具面挂载——
     // NodeEdit/NodeList/NodeCancel（分发器三件的作用域面）+ ChainWrite（整链登记）。
     // TaskBoard/node_report/delegate_report 同款「挂载面 + 工具内身份拒绝」双保险：
@@ -2457,9 +2477,10 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // over-grant 防线）；插件声明不授能（ChainWrite 在 RootExclusiveTools 防声明
     // 逃逸集）。作用域归属在工具内以 ctx 会话身份解析（NodeTools.resolveRuntime
     // 单点）——挂载面只放行名字，不看参数。
+    // [双模式批] kernel 腿在追加前截断（极简内核无编排诉求——Q2 延伸裁定）。
     val withDelegateFace =
-      if delegateSession then withDelegateReport ++ nebflow.core.tools.NodeTools.DelegateNodeToolsFace
-      else withDelegateReport
+      if delegateSession && !kernelFace then modeTruncated ++ nebflow.core.tools.NodeTools.DelegateNodeToolsFace
+      else modeTruncated
     // S6=C（N1 刀3 · v3 §7.2 ①授权面扩＝创建者 delegate＋root）：delegate 会话挂
     // Mail——地址面经 MailTool.layeredRoute 分层判据收窄为自己作用域的
     // `node:<id|name>` 腿（SenderRole.Delegate 单点；其余形态显式越界报错）。同段
@@ -2484,7 +2505,9 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     flowNodeSession: Boolean = false,
     flowNodeRole: Option[String] = None,
     isDispatcher: Boolean = false,
-    delegateSession: Boolean = false
+    delegateSession: Boolean = false,
+    /** 双模式批：delegate 会话生效执行形态（None = 总闸关/未判定）。 */
+    delegateMode: Option[String] = None
   ): Option[List[ToolDefinition]] =
     val allowedSet = buildAllowedToolSet(
       agentDef,
@@ -2497,7 +2520,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
       projectBoardSession,
       flowNodeSession,
       isDispatcher,
-      delegateSession
+      delegateSession,
+      delegateMode
     )
     // 2026-09-06 工具面裁撤批：FlowReport 的 per-node contract describe 注入
     // 随工具退役一并移除（contract 数据本体仍在 AgentDef.flowContract，引擎

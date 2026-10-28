@@ -46,7 +46,13 @@ case class SubAgentTask(
    */
   revivalCount: Option[Int] = None,
   /** 最近一次 boot 复活时刻（epoch millis；observability 读数面，判据不用）。 */
-  revivedAt: Option[Long] = None
+  revivedAt: Option[Long] = None,
+  /**
+   * 双模式批（2026-10-28 · 设计 §7.3）：spawn 时判定的执行形态（kernel|dispatcher）
+   * ——与 DelegateRegistry.Record.mode 同源同值（spawn 点双写）。`None` = 未判定
+   * （总闸关时代存量行）＝消费方按 kernel 折叠（缺省解码 kernel，存量零迁移）。
+   */
+  mode: Option[String] = None
 )
 
 object SubAgentTask:
@@ -74,6 +80,7 @@ object SubAgentTask:
       statusAt <- c.get[Option[Long]]("statusAt")
       revivalCount <- c.get[Option[Int]]("revivalCount")
       revivedAt <- c.get[Option[Long]]("revivedAt")
+      mode <- c.get[Option[String]]("mode")
     yield SubAgentTask(
       taskId,
       parentSessionId,
@@ -88,7 +95,8 @@ object SubAgentTask:
       source,
       statusAt,
       revivalCount,
-      revivedAt
+      revivedAt,
+      mode
     )
   }
 end SubAgentTask

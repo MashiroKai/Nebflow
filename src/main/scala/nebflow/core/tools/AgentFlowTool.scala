@@ -164,6 +164,18 @@ object AgentFlowTool extends Tool:
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     // 案 A guard 首站（判据 G1）——命中即错误文案，零执行零账行。
     if legacyGuardHit(input) then IO.pure(Left(legacyGuardError))
+    // 双模式批（2026-10-28 · 设计 §4.2 · 双保险第二险）：kernel 腿 delegate 无
+    // AgentFlow（编排面整体退场；dispatcher 腿保留本件）。挂载面已摘，本闸防逃逸。
+    else if ctx.sessionId.flatMap(sid => nebflow.core.delegate.DelegateRegistry.modeFaceOf(Some(sid)))
+      .contains(nebflow.core.delegate.DualModeConfig.ModeKernel)
+    then
+      IO.pure(
+        Left(
+          ToolError(
+            "AgentFlow is not available in kernel-mode delegate sessions (minimal executor — no orchestration face). (DUAL_MODE_FACE_REMOVED)"
+          )
+        )
+      )
     else
       parseSteps(input) match
         case Left(err) => IO.pure(Left(err))

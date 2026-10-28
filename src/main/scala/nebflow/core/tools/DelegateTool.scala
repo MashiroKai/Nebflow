@@ -6,7 +6,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.AgentRuntimePort
-import nebflow.core.delegate.{ChainStore, DelegateRegistry, DelegateWorkspace}
+import nebflow.core.delegate.{ChainStore, DelegateRegistry, DelegateWorkspace, DualModeConfig, ModeDecision}
 import nebflow.core.executor.ExecutorRegistry
 import nebflow.core.node.NodeRunner
 import nebflow.core.project.*
@@ -103,6 +103,11 @@ object DelegateTool extends Tool:
         "executor" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "description" -> "Optional executor id — you pick dynamically per task (see the \"Available executors\" section). Omit for the built-in default \"nebflow\". An unavailable id fails explicitly; there is no silent fallback.".asJson
+        ),
+        "mode" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "enum" -> io.circe.Json.arr("kernel".asJson, "dispatcher".asJson, "auto".asJson),
+          "description" -> "Optional execution form (dual-mode gate; enum kernel|dispatcher|auto, default auto): \"kernel\" = minimal single-session executor (no orchestration tools); \"dispatcher\" = chain-orchestrating dispatcher (composes a per-delegate flow map via ChainWrite/NodeEdit; itself gets zero plugins, no worktree). \"auto\" = the mode allocator decides (JeV -> LLM fallback -> fail-open kernel); an explicit value is authoritative with zero model calls. Mode is a spawn-time lifetime property — changing it means re-dispatch.".asJson
         )
       ),
       "required" -> io.circe.Json.arr("task".asJson)
@@ -128,7 +133,9 @@ object DelegateTool extends Tool:
     workspaceLine: String,
     bindingLine: Option[String],
     task: String,
-    injectedBlock: String
+    injectedBlock: String,
+    /** 双模式批：dispatcher 腿编排纪律段（None = brief 逐字节不变——spec 判红锚）。 */
+    dispatcherDiscipline: Option[String] = None
   ): String =
     s"""$workspaceLine${bindingLine.map(l => s"\n$l").getOrElse("")}
 ${ResetHazardLine}
@@ -137,9 +144,18 @@ ${BriefReportLine}
 
 ${Defaults.NoSleepPollRule}
 
-${Defaults.PluginDiscoveryLine}
+${Defaults.PluginDiscoveryLine}${dispatcherDiscipline.map(l => s"\n\n$l").getOrElse("")}
 
 $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
+
+  /**
+   * 双模式批（设计 §5.1/§5.7）：dispatcher 模式会话的编排纪律段（brief 装配单点
+   * 注入；模型可见文案——§16 待过目，最小成稿）。要点 = 插件分配已上移到 node 生成
+   * 时（分发器零插件、零点名）；无分支无 worktree ⇒ 写域可能相交的任务用 deps
+   * 串行化（三层防线的纪律层，主防线）；出口节点结果回投本会话。
+   */
+  val DispatcherDisciplineLine: String =
+    """Dispatcher mode: you orchestrate a chain, you do not execute it yourself. Node plugins are allocated automatically per-node from each node's task at chain registration — never name plugins and never pass a plugins key. The whole chain runs in THIS workspace with no branches and no worktrees: order tasks whose file writes may overlap through `deps` (serialize them); only write-disjoint tasks may run in parallel. ChainWrite validates the whole chain first — submit it complete. End-node results are delivered back to this session as completion notifications; fix the chain via Mail(node:<id>) / NodeEdit / NodeCancel, and read it with NodeList."""
 
   def summarize(input: JsonObject): String =
     s"Delegate(${labelOf(input("task").flatMap(_.asString).getOrElse(""))})"
@@ -368,9 +384,32 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
       ExecutorRegistry.resolveRequested(input("executor").flatMap(_.asString)) match
         case Left(err) => IO.pure(Left(ToolError(err)))
         case Right(ExecutorRegistry.ResolvedSelection.Internal) =>
-          internalSpawn(project, task, description, ctx, input("executor").flatMap(_.asString))
+          // 双模式批：mode 参数（enum kernel|dispatcher|auto，缺省 auto）——非 auto
+          // 即人工覆盖权威（跳过分配器零模型调用）；非法词显式拒（fail-closed）。
+          val modeParam = input("mode").flatMap(_.asString).map(_.trim.toLowerCase).filter(_.nonEmpty)
+          modeParam match
+            case m if m.forall(w => w == "auto" || nebflow.core.delegate.DualModeConfig.isModeWord(w)) =>
+              internalSpawn(project, task, description, ctx, input("executor").flatMap(_.asString), modeParam)
+            case bad =>
+              IO.pure(
+                Left(
+                  ToolError(
+                    s"Delegate: invalid mode '${bad.getOrElse("")}' — enum kernel|dispatcher|auto (default auto)."
+                  )
+                )
+              )
         case Right(ExecutorRegistry.ResolvedSelection.External(defn, binPath)) =>
-          externalSpawn(project, task, description, defn, binPath, ctx)
+          // 外部执行器腿不参与双模式（Q5 裁定：恒单会话执行形态 = kernel 语义）；
+          // mode 参数在场 = 显式拒（语义不存在的参数不静默吞）。
+          if input("mode").exists(_.asString.exists(_.trim.nonEmpty)) then
+            IO.pure(
+              Left(
+                ToolError(
+                  "Delegate: the mode parameter applies to the built-in executor only — external executors are always single-session (kernel semantics). Drop the parameter or omit executor."
+                )
+              )
+            )
+          else externalSpawn(project, task, description, defn, binPath, ctx)
     end if
   end call
 
@@ -409,7 +448,8 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
     task: String,
     description: String,
     ctx: ToolContext,
-    executorParam: Option[String] = None
+    executorParam: Option[String] = None,
+    modeParam: Option[String] = None
   ): IO[Either[ToolError, String]] =
     resolveWorkspace(project, ctx).flatMap {
       case Left(err) => IO.pure(Left(err))
@@ -437,6 +477,9 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
                 // 新鲜派发腿跑判定机（R6 worktree + S13 分支纪律）；Mail
                 // continue 复活腿（不经此处）保持旧形态。
                 judgeWorkspace = true,
+                // 双模式批：mode 参数透传（auto/None = 选择器判；kernel/dispatcher
+                // = 人工覆盖）。
+                requestedMode = modeParam,
                 // 跨设备批（2026-10-25）：设备项目的会话默认设备上下文透传——
                 // 六件工具默认路由设备 + brief 设备 workspace 行。
                 sessionDevice = sessionDevice,
@@ -608,6 +651,8 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
     safetyMode: String,
     rootSessionId: String,
     judgeWorkspace: Boolean = false,
+    /** 双模式批：mode 参数（kernel|dispatcher|auto；None/含 auto = 选择器判）。 */
+    requestedMode: Option[String] = None,
     /** 跨设备批：会话默认设备上下文（设备项目 delegate）。None = 本机（零变化）。 */
     sessionDevice: Option[String] = None,
     sessionDeviceWorkspace: Option[String] = None
@@ -634,6 +679,7 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
           safetyMode = safetyMode,
           rootSessionId = rootSessionId,
           judgeWorkspace = judgeWorkspace,
+          requestedMode = requestedMode,
           sessionDevice = sessionDevice,
           sessionDeviceWorkspace = sessionDeviceWorkspace
         ).map(_.map { case (subagentId, ack) => ack + DelegateRegistry.continuationLine(subagentId) })
@@ -677,24 +723,80 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
     delegatedBy: Option[String] = None,
     /** 跨设备批（2026-10-25）：会话默认设备上下文（设备项目 delegate）。None = 本机。 */
     sessionDevice: Option[String] = None,
-    sessionDeviceWorkspace: Option[String] = None
+    sessionDeviceWorkspace: Option[String] = None,
+    /** 双模式批：mode 参数（kernel|dispatcher|auto；None = auto）。 */
+    requestedMode: Option[String] = None
   ): IO[Either[ToolError, (String, String)]] =
     val childDepth = parentDepth + 1
     val agentName = agentDef.name
     val subagentId = s"delegate-$agentName-${java.util.UUID.randomUUID().toString.take(8)}"
     val childWsSend = routeWsSend(wsSend, parentSessionId, subagentId)
     val resolvedRoot = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId)
-    // ── jev-plugins 批 #1226（内置执行器腿分配链 · 原文链条逐字）──────────
-    // 启用插件 → CatalogEntry 目录 → JevGate? → JevAllocator.allocate（need_ 问题对）
-    // ；未配 Jev → LlmAllocator（单次 JSON 选插件）；失败 → JevFallback fail-open。
-    // 分配经 prepareNodePlugins 等价路径（PluginInjection）注入。三态语义：
-    // 分配失败 = fail-open 空集（派发绝不阻塞）；解析/注入失败（选中包被封禁等）=
-    // 显式拒 spawn（分配失败是节点级失败，不静默降级——节点路径同款口径）。
-    // Mail 续聊复活腿同点复用（同是 spawn 触发点，机制同一）。
-    PluginInjection.allocatePreparation(subject = subagentId, taskText = task).flatMap {
-      case Left(err) =>
-        IO.pure(Left(ToolError(s"Delegate: plugin allocation refused — $err (DELEGATE_PLUGINS_REFUSED)")))
-      case Right((preparation, allocated)) =>
+
+    /**
+     * 双模式批（2026-10-28 · 设计 §3.2/§4/§5）——模式判定单点。
+     * 总闸关 = Inert 态：decision=None（零选择零审计零字段——现行为逐字节）；
+     * 总闸开：人工 mode 参数非 auto 即权威（leg=manual），否则选择器
+     * （DelegateModeAllocator：JeV→LLM fallback→fail-open kernel）。
+     */
+    def decideMode: IO[Option[nebflow.core.delegate.ModeDecision]] =
+      DualModeConfig.enabled.flatMap {
+        case false => IO.pure(None)
+        case true =>
+          requestedMode.filter(_.nonEmpty).filterNot(_ == "auto") match
+            case Some(m) =>
+              IO.pure(
+                Some(
+                  nebflow.core.delegate.ModeDecision(
+                    m,
+                    "manual",
+                    s"explicit mode parameter (allocator skipped, zero model calls)"
+                  )
+                )
+              )
+            case None =>
+              nebflow.core.delegate.DelegateModeAllocator.decideMode(subject = subagentId, taskText = task).map(Some(_))
+      }
+
+    decideMode.flatMap { decision =>
+      val modeWord = decision.map(_.mode)
+      val isDispatcher = modeWord.contains(DualModeConfig.ModeDispatcher)
+      // mode-decision 审计行（设计 §3.2）：总闸开才写（Inert 零审计行）。
+      val modeAudit: IO[Unit] =
+        decision match
+          case None => IO.unit
+          case Some(d) =>
+            IO
+              .blocking(
+                ChainStore.appendSync(
+                  ChainStore.keyFor(taskId, subagentId),
+                  "mode-decision",
+                  io.circe.Json.obj(
+                    "delegateId" -> subagentId.asJson,
+                    "mode" -> d.mode.asJson,
+                    "leg" -> d.leg.asJson,
+                    "reason" -> d.reason.asJson
+                  )
+                )
+              )
+              .handleErrorWith(e => logger.warn(s"mode-decision chain line failed: ${e.getMessage}").void)
+
+      // ── 插件腿（双模式分叉 · 设计 §4.3/§5.1）────────────────────────────
+      // kernel/未判定：spawn 时对整 brief 一次分配（现状逐字）；
+      // dispatcher：本体零插件——跳过 allocatePreparation，审计行记
+      // allocation=dispatcher-off（Inert 族新词：模式性豁免，非故障）。
+      val pluginLeg: IO[Either[String, (NodeEngine.PluginPreparation, PluginInjection.AllocatedSet)]] =
+        if isDispatcher then
+          modeAudit.as(
+            Right(NodeEngine.PluginPreparation.empty -> PluginInjection.AllocatedSet(Nil, "dispatcher-off"))
+          )
+        else
+          modeAudit *> PluginInjection.allocatePreparation(subject = subagentId, taskText = task)
+
+      pluginLeg.flatMap {
+        case Left(err) =>
+          IO.pure(Left(ToolError(s"Delegate: plugin allocation refused — $err (DELEGATE_PLUGINS_REFUSED)")))
+        case Right((preparation, allocated)) =>
         val grantIo: IO[Either[String, nebflow.core.plugin.PluginMcpManager.Grant]] =
           if preparation.mcpPlugins.isEmpty then IO.pure(Right(nebflow.core.plugin.PluginMcpManager.Grant(Nil)))
           else resources.pluginMcp.acquire(subagentId, preparation.mcpPlugins)
@@ -721,16 +823,20 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
               parentSessionId,
               safetyMode,
               resolvedRoot,
-              judgeWorkspace,
+              // dispatcher 腿跳过 worktree 判定机（设计 §5.1：不建 delegate/<id>
+              // 分支、不建座位，Binding = in-place）——kernel/未判定照旧。
+              judgeWorkspace && !isDispatcher,
               subagentId,
               preparation,
               allocated,
               delegatedBy,
               sessionDevice,
-              sessionDeviceWorkspace
+              sessionDeviceWorkspace,
+              modeDecision = decision
             )
         }
     }
+  }
 
   end spawnBackground
 
@@ -761,9 +867,12 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
     delegatedBy: Option[String] = None,
     /** 跨设备批（2026-10-25）：会话默认设备上下文（设备项目 delegate）。None = 本机。 */
     sessionDevice: Option[String] = None,
-    sessionDeviceWorkspace: Option[String] = None
+    sessionDeviceWorkspace: Option[String] = None,
+    /** 双模式批：模式判定（None = 总闸关 Inert 态——零字段零分叉）。 */
+    modeDecision: Option[nebflow.core.delegate.ModeDecision] = None
   ): IO[Either[ToolError, (String, String)]] =
     val agentName = agentDef.name
+    val isDispatcher = modeDecision.exists(_.mode == DualModeConfig.ModeDispatcher)
     for
       // 判定机腿（R6/S13）：git 工作区才成腿——返回 None = 非 git（旧形态逐字）。
       binding <-
@@ -826,11 +935,14 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
                else "")
       // jev-plugins 批 #1226：分配集注入 = prepareNodePlugins 等价路径（注入块
       // 追加在 brief 尾部——NodeStarter 首条消息同款位形；空分配 = 旧 brief 逐字）。
+      // 双模式批：dispatcher 腿追加编排纪律段（写域相交任务用 deps 串行化等——
+      // 设计 §5.7 三层防线的纪律层；kernel/未判定 = None，brief 逐字节不变）。
       brief = assembleBrief(
         workspaceLine = deviceWorkspaceLine,
         bindingLine = binding.flatMap(_.briefLine),
         task = task,
-        injectedBlock = preparation.injectedBlock
+        injectedBlock = preparation.injectedBlock,
+        dispatcherDiscipline = if isDispatcher then Some(DispatcherDisciplineLine) else None
       )
       ack =
         s"""Delegate task started in the background${taskId.map(n => s" (task #$n)").getOrElse("")}.
@@ -898,7 +1010,10 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               // （delegate 内首调 Subagent/Subtask/AgentFlow 后由记账点惰性升级——
               // 写点见 DelegateRegistry.upgradeOrchestrationMode）。Mail 续聊复活腿
               // 同点复用（本函数是唯一 spawn 记录点）⇒ 新会话同样拿到初值。
-              orchestrationMode = Some(DelegateRegistry.ModeSingle)
+              orchestrationMode = Some(DelegateRegistry.ModeSingle),
+              // 双模式批（设计 §7.3）：执行形态落记录——总闸关 = None（存量形态
+              // 零迁移）；总闸开 = kernel|dispatcher（spawn 时终身属性）。
+              mode = modeDecision.map(_.mode)
             )
           )
         )
@@ -916,7 +1031,12 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               project,
               binding,
               plugins = if allocated.actionRan then Some(allocated.names) else None,
-              allocation = if allocated.actionRan then Some(allocated.mode) else None
+              // 双模式批：dispatcher 本体零插件 = 显式 dispatcher-off 审计词
+              // （Inert 族——「模式性豁免」非故障；kernel 未判定腿保持旧规则）。
+              allocation =
+                if allocated.actionRan then Some(allocated.mode)
+                else if isDispatcher then Some("dispatcher-off")
+                else None
             )
           )
         )
@@ -956,7 +1076,9 @@ You will be notified when it completes via a system message. Do NOT duplicate th
             spawnedAt = System.currentTimeMillis(),
             completedAt = None,
             lastError = None,
-            source = "delegate"
+            source = "delegate",
+            // 双模式批（设计 §7.3）：执行形态随行落任务行（None = 总闸关存量形态）。
+            mode = modeDecision.map(_.mode)
           )
         )
         .handleErrorWith(e => logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}"))

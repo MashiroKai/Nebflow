@@ -70,6 +70,8 @@ object ChainWriteTool extends Tool:
     val TaskRequired = "CHAIN_TASK_REQUIRED"
     val NotDelegate = "CHAINWRITE_SCOPE_FORBIDDEN"
     val ScopeUnavailable = "DELEGATE_SCOPE_UNAVAILABLE"
+    /** 双模式批（设计 §5.2 闸 1）：分发器链禁点名插件——分配上移到 node 生成时。 */
+    val PluginsDispatcherAllocated = "NODE_PLUGINS_DISPATCHER_ALLOCATED"
   end Codes
 
   val description =
@@ -119,7 +121,15 @@ object ChainWriteTool extends Tool:
     name: Option[String],
     task: String,
     deps: List[String],
-    description: Option[String]
+    description: Option[String],
+    /** 双模式批：nodes[].plugins 键在场（解析期捕获——分发器链显式拒）。 */
+    declaredPlugins: Boolean = false,
+    /** nodes[].worktree 键在场（分发器链 seal 拒——复用既有 seal 码）。 */
+    declaredWorktree: Boolean = false,
+    /** nodes[].merge 键在场（分发器链 seal 拒——复用既有 seal 码）。 */
+    declaredMerge: Boolean = false,
+    /** nodes[].writeScope（可选自由文本路径/目录声明——软闸 WARN 审计的输入）。 */
+    writeScope: Option[String] = None
   )
 
   def summarize(input: JsonObject): String =
@@ -154,7 +164,13 @@ object ChainWriteTool extends Tool:
             name = obj("name").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
             deps = obj("deps").flatMap(_.asArray).map(_.flatMap(_.asString).toList).getOrElse(Nil)
             desc = obj("description").flatMap(_.asString)
-          yield ns :+ ChainNode(id, name, task, deps.map(_.trim).filter(_.nonEmpty), desc)
+            // 双模式批：可选扩展键解析期捕获（键在场即记——语义裁决在分发器链闸，
+            // 普通链对这些键保持旧行为=静默忽略，闸关零变化）。
+            declaredPlugins = obj("plugins").isDefined
+            declaredWorktree = obj("worktree").isDefined
+            declaredMerge = obj("merge").isDefined
+            writeScope = obj("writeScope").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+          yield ns :+ ChainNode(id, name, task, deps.map(_.trim).filter(_.nonEmpty), desc, declaredPlugins, declaredWorktree, declaredMerge, writeScope)
         }
 
   /** id 字符集契约（与链号/作用域同族：成为载荷键与派生归档批文件名——路径安全第一）。 */
@@ -264,203 +280,352 @@ object ChainWriteTool extends Tool:
           nebflow.core.project.DelegateFlowHosts.get(ctx.sessionId.getOrElse("")).flatMap {
             case None =>
               IO.pure(Left(ToolError(NodeTools.scopeUnavailableError(ctx.sessionId.getOrElse("")))))
-            case Some(h) => registerChain(h.projectRuntime, nodes, chainName)
+            case Some(h) =>
+              // 双模式批：分发器链判定（总闸开 ∧ 宿主属主 delegate 的 mode=dispatcher）
+              // ——分叉：模式二专属闸 + 逐 node 插件分配（分配上移到 node 生成时）。
+              val dispatcherChain =
+                nebflow.core.delegate.DelegateRegistry.modeFaceOf(ctx.sessionId)
+                  .contains(nebflow.core.delegate.DualModeConfig.ModeDispatcher)
+              registerChain(
+                h.projectRuntime,
+                nodes,
+                chainName,
+                dispatcherChain,
+                scopeKey = ctx.sessionId.filter(sid => nebflow.core.delegate.DelegateSessions.isDelegateSession(Some(sid)))
+              )
           }
 
   /**
    * 登记核心（ChainWrite 与 AgentFlow 薄壳共用单点——两个粒度的入口，一个校验器，
    * 一个落库事务，一个放行点）。全部校验在任何写之前完成（all-or-nothing）。
+   *
+   * 双模式批（2026-10-28 · 设计 §5.2/§5.3）：`dispatcherChain = true`（总闸开 ∧
+   * 宿主属主 mode=dispatcher）时追加分发器链闸与**逐 node 插件分配**（分配上移到
+   * node 生成时——registerChain 落库前、仍处 0 spawn 阶段；分配结果物化进
+   * NodeDef.plugins，node spawn 走声明集权威路径零再分配）。普通链（含闸关时代）
+   * 零变化。
+   */
+  /**
+   * 登记核心（ChainWrite 与 AgentFlow 薄壳共用单点——两个粒度的入口，一个校验器，
+   * 一个落库事务，一个放行点）。全部校验在任何写之前完成（all-or-nothing）。
+   *
+   * 双模式批（2026-10-28 · 设计 §5.2/§5.3）：`dispatcherChain = true`（总闸开 ∧
+   * 宿主属主 mode=dispatcher）时追加分发器链闸与**逐 node 插件分配**（分配上移到
+   * node 生成时——落库前、仍处 0 spawn 阶段；分配结果物化进 NodeDef.plugins，node
+   * spawn 走声明集权威路径零再分配）。普通链（含闸关时代）零变化。
    */
   private[tools] def registerChain(
     rt: ProjectRuntime,
     nodes: List[ChainNode],
-    chainName: Option[String]
+    chainName: Option[String],
+    dispatcherChain: Boolean = false,
+    scopeKey: Option[String] = None
   ): IO[Either[ToolError, String]] =
     validateStructure(nodes) match
       case Left(err) => IO.pure(Left(err))
       case Right(_) =>
-        rt.store.snapshot.flatMap { s =>
-          rt.store.archiveSnapshot.flatMap { arch =>
-            val combined = s.nodes ++ arch.nodes
-            val activeChainIds = s.nodes.values.flatMap(FlowMapStore.declaredChainId).toSet
-            val chainView = FlowMapStore.chainIdView(s.nodes)
-
-            // ── 唯一域校验（R2/R4；全部过才写——collectFirst 拿第一个显式错）────
-            val chainNameCheck: Option[ToolError] = chainName.collect {
-              case n if !FlowMapStore.isDeclarableChainId(n) =>
+        // 双模式批：模式二专属闸（all-or-nothing——任一命中整链拒收零落盘零 spawn）。
+        val modeGateErr: Option[ToolError] =
+          if !dispatcherChain then None
+          else
+            nodes.collectFirst {
+              case n if n.declaredPlugins =>
                 ToolError(
-                  s"chainName '$n' is not a valid id token — non-empty, <=${FlowMapStore.ChainIdMaxLength} chars, first char " +
-                    "alphanumeric, then letters/digits/'.'/'-'/'_' only. " + s"(${Codes.IdInvalid})"
+                  s"node '${n.id}' carries a plugins key — in dispatcher mode plugins are allocated automatically " +
+                    "per-node from the node's task at chain registration; the dispatcher never names plugins. " +
+                    s"(${Codes.PluginsDispatcherAllocated})"
                 )
-              case n if activeChainIds.contains(n) =>
+              case n if n.declaredWorktree =>
                 ToolError(
-                  s"chainName '$n' is already used by an active chain in this scope — chain labels are addresses. " +
-                    s"(${Codes.NameConflict})"
+                  s"node '${n.id}' carries a worktree key — worktrees are forbidden chain-wide in delegate scope " +
+                    "(all nodes share the base workspace; serialize overlapping writes with deps). " +
+                    "(NODE_WORKTREE_UNSUPPORTED)"
+                )
+              case n if n.declaredMerge =>
+                ToolError(
+                  s"node '${n.id}' carries a merge key — merge nodes are sealed in delegate scope " +
+                    "(multi-in barrier semantics on a plain node instead). (NODE_MERGE_UNSUPPORTED)"
                 )
             }
-            // id 唯一域＝两区全集（归档不占名但占 id——id 是持久地址，永不复用）
-            val idConflicts = nodes.map(_.id).filter(combined.contains)
-            val idCheck: Option[ToolError] =
-              Option.when(idConflicts.nonEmpty) {
-                ToolError(
-                  s"Duplicate node id(s): ${idConflicts.mkString(", ")} — already used in this scope (ids are permanent " +
-                    s"addresses, archived included). (${Codes.DuplicateId})"
-                )
-              }
-            // R2：name 唯一域＝活动区（归档链不占名——可复用、可作解析候选）
-            val nameCheck: Option[ToolError] = nodes
-              .flatMap { n =>
-                n.name.toList.flatMap(nm => s.nodes.values.find(nd => nd.name == nm).map(nm -> _))
-              }
-              .collectFirst { case (nm, holder) =>
-                val holderChain = chainView.getOrElse(holder.id, "-")
-                ToolError(
-                  s"node name '$nm' is already used by $holderChain#${holder.id} in this scope's active map — names are " +
-                    "addresses and must be unique; pick another name. " + s"(${Codes.NameConflict})"
-                )
-              }
-            // R4：name ≠ 任何既有 id（两区全集）
-            val idCollisions = nodes.flatMap(n => n.name.toList.filter(combined.contains))
-            val r4Check: Option[ToolError] =
-              Option.when(idCollisions.nonEmpty) {
-                ToolError(
-                  s"'${idCollisions.head}' collides with an existing node id in this scope — a name must never equal an id " +
-                    "(the two address spaces stay disjoint). " + s"(${Codes.NameIdCollision})"
-                )
-              }
-            // deps 规范化（R6：批内 id／批内 name 皆收；链外仅 id——歧义显式列候选不猜）
-            val byId = nodes.map(n => n.id -> n).toMap
-            val byName = nodes.flatMap(n => n.name.toList.map(_ -> n.id)).toMap
-            def normRef(ref: String): Either[ToolError, String] =
-              if byId.contains(ref) then Right(ref)
-              else if byName.contains(ref) then Right(byName(ref))
-              else if combined.contains(ref) then Right(ref)
-              else if combined.values.count(_.name.contains(ref)) > 1 then
-                val cands =
-                  combined.values.filter(_.name.contains(ref)).map(v => s"${v.id}(${v.task.getOrElse("").take(30)})")
-                Left(
-                  ToolError(
-                    s"'$ref' matches ${cands.size} nodes by name — ${cands.mkString(", ")} — address by node id. " +
-                      s"(${Codes.AddrAmbiguous})"
-                  )
-                )
-              else
-                Left(
-                  ToolError(
-                    s"deps reference unknown node id(s): $ref — batch ids/names or existing scope node ids only. " +
-                      s"(${Codes.DepsUnknown})"
-                  )
-                )
-            val normCheck: Either[ToolError, Map[String, List[String]]] =
-              nodes.foldLeft[Either[ToolError, Map[String, List[String]]]](Right(Map.empty)) { (acc, n) =>
-                for
-                  m <- acc
-                  ds <- n.deps.foldLeft[Either[ToolError, List[String]]](Right(Nil)) { (a, ref) =>
-                    for done <- a; nid <- normRef(ref) yield done :+ nid
-                  }
-                yield m.updated(n.id, ds.distinct)
-              }
-            val normCheckOpt = normCheck.left.toOption
-            val firstErr = chainNameCheck.orElse(idCheck).orElse(nameCheck).orElse(r4Check).orElse(normCheckOpt)
+        modeGateErr match
+          case Some(err) => IO.pure(Left(err))
+          case None =>
+            rt.store.snapshot.flatMap { s =>
+              rt.store.archiveSnapshot.flatMap { arch =>
+                val combined = s.nodes ++ arch.nodes
+                val activeChainIds = s.nodes.values.flatMap(FlowMapStore.declaredChainId).toSet
+                val chainView = FlowMapStore.chainIdView(s.nodes)
 
-            firstErr match
-              case Some(err) => IO.pure(Left(err))
-              case None =>
-                val depsNorm = normCheck.getOrElse(Map.empty)
-                // ── 落库（单事务原子写＝「链齐」物证）＋ 放行 ────────────────
-                val cid = chainName.getOrElse(autoChainId(activeChainIds ++ nodes.map(_.id).toSet))
-                val now = System.currentTimeMillis()
-                // 综合接线：下游依赖（批内）→ 上游 out 追加缺省 pass 边；末端（批内无下游）→
-                // 显式门集根边（完成通知投 delegate 本人——自根作用域，刀1 H5 投递面）。
-                val dependents: Map[String, List[String]] = depsNorm.toList
-                  .foldLeft(Map.empty[String, List[String]]) { case (m, (down, ups)) =>
-                    ups.foldLeft(m)((mm, up) => mm.updated(up, mm.getOrElse(up, Nil) :+ down))
-                  }
-                def outEdgesOf(id: String): List[OutEdge] =
-                  val downs = dependents.getOrElse(id, Nil).filter(byId.contains)
-                  val edges = downs.map(d => OutEdge(d))
-                  // 末端（批内无下游者）显式门集根边 (pass)Nebula :result = 完成通知投
-                  // 创建者 delegate 本人（v3-⑨ 荐读法，非隐式 bare 形态）。
-                  if downs.isEmpty then List(OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Result)) else edges
-                val newNodes: Map[String, NodeDef] = nodes.map { n =>
-                  val deps = depsNorm.getOrElse(n.id, Nil)
-                  n.id ->
-                    NodeDef(
-                      id = n.id,
-                      name = n.name.getOrElse(n.id),
-                      agent = BuiltinAgents.ExecutorName,
-                      task = Some(n.task),
-                      description = Some(n.description.map(_.trim).filter(_.nonEmpty).getOrElse(n.task.trim.take(60))),
-                      in = deps,
-                      deps = deps,
-                      out = outEdgesOf(n.id),
-                      status = NodeLifecycle.Pending,
-                      createdAt = now,
-                      plugins = Nil,
-                      chainId = Some(cid)
+                // ── 唯一域校验（R2/R4；全部过才写——collectFirst 拿第一个显式错）────
+                val chainNameCheck: Option[ToolError] = chainName.collect {
+                  case n if !FlowMapStore.isDeclarableChainId(n) =>
+                    ToolError(
+                      s"chainName '$n' is not a valid id token — non-empty, <=${FlowMapStore.ChainIdMaxLength} chars, first char " +
+                        "alphanumeric, then letters/digits/'.'/'-'/'_' only. " + s"(${Codes.IdInvalid})"
                     )
-                }.toMap
-                // 批外上游（既有节点）out 追加指向新下游（appendEdgeTo 同语义：幂等、不覆盖既有门控）
-                val upstreamIds = depsNorm.values.flatten.filterNot(byId.contains).toSet
-                val mutateIO = rt.store.mutateWithResult { st =>
-                  var touched = List.empty[String]
-                  val withBatch = st.copy(nodes = st.nodes ++ newNodes)
-                  val withUpstreams = upstreamIds.foldLeft(withBatch) { (acc, up) =>
-                    acc.nodes.get(up) match
-                      case None => acc // 归档上游不回写活动区（findNode 兜底读；归档 out 面不复活）
-                      case Some(un) =>
-                        val targets = dependents.getOrElse(up, Nil).filter(byId.contains)
-                        val added = targets.filterNot(t => un.out.exists(_.to == t))
-                        if added.isEmpty then acc
-                        else
-                          touched = up :: touched
-                          acc.copy(nodes = acc.nodes.updated(up, un.copy(out = un.out ++ added.map(t => OutEdge(t)))))
-                  }
-                  (withUpstreams, touched.distinct)
+                  case n if activeChainIds.contains(n) =>
+                    ToolError(
+                      s"chainName '$n' is already used by an active chain in this scope — chain labels are addresses. " +
+                        s"(${Codes.NameConflict})"
+                    )
                 }
-                mutateIO.flatMap { (_, touchedUps) =>
-                  // 审计一行（链登记事件——type 值域加宽面，FlowMapEventLog 自由串形态）
-                  FlowMapEventLog
-                    .append(
-                      rt.project.workspace,
-                      rt.project.name,
-                      nodes.headOption.map(_.id).getOrElse(cid),
-                      "chain-registered",
-                      s"chain '$cid' registered via ChainWrite: ${nodes.size} node(s) [${nodes.map(_.id).mkString(",")}]" +
-                        chainName.map(n => s" declared-id=$n").getOrElse("")
+                // id 唯一域＝两区全集（归档不占名但占 id——id 是持久地址，永不复用）
+                val idConflicts = nodes.map(_.id).filter(combined.contains)
+                val idCheck: Option[ToolError] =
+                  Option.when(idConflicts.nonEmpty) {
+                    ToolError(
+                      s"Duplicate node id(s): ${idConflicts.mkString(", ")} — already used in this scope (ids are permanent " +
+                        "addresses, archived included). " + s"(${Codes.DuplicateId})"
                     )
-                    .handleErrorWith(_ => IO.unit)
-                    // 新节点 WS 面（S1/S10/S11 卡渲染数据源）＋ 既有上游 out 变更事件
-                    .flatMap(_ => newNodes.values.toList.traverse_(n => rt.engine.emitCreated(n)))
-                    .flatMap(_ =>
-                      touchedUps.traverse_(up =>
-                        rt.store.getNode(up).flatMap {
-                          case Some(n) => rt.engine.emitUpdated(n)
-                          case None => IO.unit
-                        }
+                  }
+                // R2：name 唯一域＝活动区（归档链不占名——可复用、可作解析候选）
+                val nameCheck: Option[ToolError] = nodes
+                  .flatMap { n =>
+                    n.name.toList.flatMap(nm => s.nodes.values.find(nd => nd.name == nm).map(nm -> _))
+                  }
+                  .collectFirst { case (nm, holder) =>
+                    val holderChain = chainView.getOrElse(holder.id, "-")
+                    ToolError(
+                      s"node name '$nm' is already used by $holderChain#${holder.id} in this scope's active map — names are " +
+                        "addresses and must be unique; pick another name. " + s"(${Codes.NameConflict})"
+                    )
+                  }
+                // R4：name ≠ 任何既有 id（两区全集）
+                val idCollisions = nodes.flatMap(n => n.name.toList.filter(combined.contains))
+                val r4Check: Option[ToolError] =
+                  Option.when(idCollisions.nonEmpty) {
+                    ToolError(
+                      s"'${idCollisions.head}' collides with an existing node id in this scope — a name must never equal an id " +
+                        "(the two address spaces stay disjoint). " + s"(${Codes.NameIdCollision})"
+                    )
+                  }
+                // deps 规范化（R6：批内 id／批内 name 皆收；链外仅 id——歧义显式列候选不猜）
+                val byId = nodes.map(n => n.id -> n).toMap
+                val byName = nodes.flatMap(n => n.name.toList.map(_ -> n.id)).toMap
+                def normRef(ref: String): Either[ToolError, String] =
+                  if byId.contains(ref) then Right(ref)
+                  else if byName.contains(ref) then Right(byName(ref))
+                  else if combined.contains(ref) then Right(ref)
+                  else if combined.values.count(_.name.contains(ref)) > 1 then
+                    val cands =
+                      combined.values.filter(_.name.contains(ref)).map(v => s"${v.id}(${v.task.getOrElse("").take(30)})")
+                    Left(
+                      ToolError(
+                        s"'$ref' matches ${cands.size} nodes by name — ${cands.mkString(", ")} — address by node id. " +
+                          s"(${Codes.AddrAmbiguous})"
                       )
                     )
-                    // ChainLedger 链号出生（reconcile 单点＝TtlTick 台账腿同一函数；声明分量即出生）
-                    .flatMap(_ => rt.store.reconcileChainLedger(now).handleErrorWith(_ => IO.unit))
-                    // ── 放行点（S4）：入口节点（deps 空）startNode——后台 fork，工具即时返回
-                    .flatMap { _ =>
-                      val entries = nodes.map(_.id).filter(id => depsNorm.getOrElse(id, Nil).isEmpty)
-                      entries
-                        .traverse_(id => NodeTools.runDetached(rt, s"chain release -> $id")(rt.engine.startNode(id)))
-                        .as(
-                          Right(
-                            s"Chain '$cid' registered with ${nodes.size} node(s) [${nodes.map(_.id).mkString(", ")}] — " +
-                              (if entries.nonEmpty then s"released: entry node(s) ${entries.mkString(", ")} starting; "
-                               else "") +
-                              "end-node results arrive here as completion notifications. Non-blocking: do NOT wait idle " +
-                              "and do NOT re-dispatch the same work."
-                          )
-                        )
+                  else
+                    Left(
+                      ToolError(
+                        s"deps reference unknown node id(s): $ref — batch ids/names or existing scope node ids only. " +
+                          s"(${Codes.DepsUnknown})"
+                      )
+                    )
+                val normCheck: Either[ToolError, Map[String, List[String]]] =
+                  nodes.foldLeft[Either[ToolError, Map[String, List[String]]]](Right(Map.empty)) { (acc, n) =>
+                    for
+                      m <- acc
+                      ds <- n.deps.foldLeft[Either[ToolError, List[String]]](Right(Nil)) { (a, ref) =>
+                        for done <- a; nid <- normRef(ref) yield done :+ nid
+                      }
+                    yield m.updated(n.id, ds.distinct)
+                  }
+                val normCheckOpt = normCheck.left.toOption
+                val firstErr = chainNameCheck.orElse(idCheck).orElse(nameCheck).orElse(r4Check).orElse(normCheckOpt)
+
+                firstErr match
+                  case Some(err) => IO.pure(Left(err))
+                  case None =>
+                    val depsNorm = normCheck.getOrElse(Map.empty)
+                    // ── 双模式批：逐 node 插件分配（分配上移 · §5.3）─────────────
+                    // 落库前、0 spawn 阶段；失败语义分层：分配失败 = fail-open 空集照走
+                    // （台账留痕）；解析/注入失败 = Left 整链显式拒（0 spawn 原则不破）。
+                    allocateForChain(nodes, dispatcherChain, scopeKey).flatMap {
+                      case Left(err) => IO.pure(Left(err))
+                      case Right(allocationMap) =>
+                        // ── 落库（单事务原子写＝「链齐」物证）＋ 放行 ────────────────
+                        val cid = chainName.getOrElse(autoChainId(activeChainIds ++ nodes.map(_.id).toSet))
+                        val now = System.currentTimeMillis()
+                        // 综合接线：下游依赖（批内）→ 上游 out 追加缺省 pass 边；末端（批内无下游）→
+                        // 显式门集根边（完成通知投 delegate 本人——自根作用域，刀1 H5 投递面）。
+                        val dependents: Map[String, List[String]] = depsNorm.toList
+                          .foldLeft(Map.empty[String, List[String]]) { case (m, (down, ups)) =>
+                            ups.foldLeft(m)((mm, up) => mm.updated(up, mm.getOrElse(up, Nil) :+ down))
+                          }
+                        def outEdgesOf(id: String): List[OutEdge] =
+                          val downs = dependents.getOrElse(id, Nil).filter(byId.contains)
+                          val edges = downs.map(d => OutEdge(d))
+                          // 末端（批内无下游者）显式门集根边 (pass)Nebula :result = 完成通知投
+                          // 创建者 delegate 本人（v3-⑨ 荐读法，非隐式 bare 形态）。
+                          if downs.isEmpty then List(OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Result)) else edges
+                        val newNodes: Map[String, NodeDef] = nodes.map { n =>
+                          val deps = depsNorm.getOrElse(n.id, Nil)
+                          n.id ->
+                            NodeDef(
+                              id = n.id,
+                              name = n.name.getOrElse(n.id),
+                              agent = BuiltinAgents.ExecutorName,
+                              task = Some(n.task),
+                              description = Some(n.description.map(_.trim).filter(_.nonEmpty).getOrElse(n.task.trim.take(60))),
+                              in = deps,
+                              deps = deps,
+                              out = outEdgesOf(n.id),
+                              status = NodeLifecycle.Pending,
+                              createdAt = now,
+                              // 双模式批（§5.3）：分配结果物化（与声明集同字段、同注入面）——
+                              // node spawn 走声明集权威路径零再分配；普通链 = Nil（现状）。
+                              plugins = allocationMap.getOrElse(n.id, Nil),
+                              chainId = Some(cid)
+                            )
+                        }.toMap
+                        // 批外上游（既有节点）out 追加指向新下游（appendEdgeTo 同语义：幂等、不覆盖既有门控）
+                        val upstreamIds = depsNorm.values.flatten.filterNot(byId.contains).toSet
+                        val mutateIO = rt.store.mutateWithResult { st =>
+                          var touched = List.empty[String]
+                          val withBatch = st.copy(nodes = st.nodes ++ newNodes)
+                          val withUpstreams = upstreamIds.foldLeft(withBatch) { (acc, up) =>
+                            acc.nodes.get(up) match
+                              case None => acc // 归档上游不回写活动区（findNode 兜底读；归档 out 面不复活）
+                              case Some(un) =>
+                                val targets = dependents.getOrElse(up, Nil).filter(byId.contains)
+                                val added = targets.filterNot(t => un.out.exists(_.to == t))
+                                if added.isEmpty then acc
+                                else
+                                  touched = up :: touched
+                                  acc.copy(nodes = acc.nodes.updated(up, un.copy(out = un.out ++ added.map(t => OutEdge(t)))))
+                          }
+                          (withUpstreams, touched.distinct)
+                        }
+                        // 双模式批（§5.7 声明层软闸）：writeScope 声明的批内节点对，
+                        // 无拓扑序（互相不可达）= 可能同时活跃 ⇒ 静态相交启发 WARN。
+                        // 纯审计——不拒绝不阻塞（误报零代价、漏报靠纪律层兜底）。
+                        val writeScopeWarn: IO[Unit] =
+                          if !dispatcherChain then IO.unit
+                          else
+                            WriteScopeAdvisory.collisions(nodes).traverse_ { (a, b) =>
+                              FlowMapEventLog
+                                .append(
+                                  rt.project.workspace,
+                                  rt.project.name,
+                                  a,
+                                  "write-scope-collision",
+                                  s"nodes '$a' and '$b' declare overlapping/adjacent writeScope and have no deps ordering between them — they may run concurrently in the same workspace (advisory only; serialize them with deps if the writes conflict)"
+                                )
+                                .handleErrorWith(_ => IO.unit)
+                            }
+                        mutateIO.flatMap { (_, touchedUps) =>
+                          // 审计一行（链登记事件——type 值域加宽面，FlowMapEventLog 自由串形态）
+                          FlowMapEventLog
+                            .append(
+                              rt.project.workspace,
+                              rt.project.name,
+                              nodes.headOption.map(_.id).getOrElse(cid),
+                              "chain-registered",
+                              s"chain '$cid' registered via ChainWrite: ${nodes.size} node(s) [${nodes.map(_.id).mkString(",")}]" +
+                                chainName.map(n => s" declared-id=$n").getOrElse("")
+                            )
+                            .handleErrorWith(_ => IO.unit)
+                            // 新节点 WS 面（S1/S10/S11 卡渲染数据源）＋ 既有上游 out 变更事件
+                            .flatMap(_ => newNodes.values.toList.traverse_(n => rt.engine.emitCreated(n)))
+                            .flatMap(_ =>
+                              touchedUps.traverse_(up =>
+                                rt.store.getNode(up).flatMap {
+                                  case Some(n) => rt.engine.emitUpdated(n)
+                                  case None => IO.unit
+                                }
+                              )
+                            )
+                            // ChainLedger 链号出生（reconcile 单点＝TtlTick 台账腿同一函数；声明分量即出生）
+                            .flatMap(_ => rt.store.reconcileChainLedger(now).handleErrorWith(_ => IO.unit))
+                            // 双模式批：writeScope 软闸 WARN（§5.7 声明层；审计-only）
+                            .flatMap(_ => writeScopeWarn)
+                            // ── 放行点（S4）：入口节点（deps 空）startNode——后台 fork，工具即时返回
+                            .flatMap { _ =>
+                              val entries = nodes.map(_.id).filter(id => depsNorm.getOrElse(id, Nil).isEmpty)
+                              // 双模式批（§5.3 回执增强）：逐 node 分配摘要行（ACK 可查）。
+                              val allocationLines: String =
+                                if allocationMap.isEmpty then ""
+                                else
+                                  "\nPer-node plugin allocation: " + nodes
+                                    .map(n =>
+                                      s"${n.id}=[${allocationMap.getOrElse(n.id, Nil).mkString(",")}]"
+                                    )
+                                    .mkString(" ")
+                              entries
+                                .traverse_(id => NodeTools.runDetached(rt, s"chain release -> $id")(rt.engine.startNode(id)))
+                                .as(
+                                  Right(
+                                    s"Chain '$cid' registered with ${nodes.size} node(s) [${nodes.map(_.id).mkString(", ")}] — " +
+                                      (if entries.nonEmpty then s"released: entry node(s) ${entries.mkString(", ")} starting; "
+                                       else "") +
+                                      "end-node results arrive here as completion notifications. Non-blocking: do NOT wait idle " +
+                                      "and do NOT re-dispatch the same work." +
+                                      (if dispatcherChain then
+                                         " Reminder (dispatcher mode, no worktrees): tasks whose file writes may overlap must be ordered with deps — only write-disjoint tasks run in parallel."
+                                       else "") + allocationLines
+                                  )
+                                )
+                            }
+                        }
                     }
-                }
-            end match
+                end match
+              }
+            }
+    end match
+  end registerChain
+
+  /**
+   * 双模式批（§5.3）：分发器链的逐 node 分配（落库前、0 spawn 阶段）。非分发器链 =
+   * Right(空 Map)（现状零变化）。step-plugins 台账行：分配动作真实发生才写
+   * （Inert 族 disabled/off/auto-off 无行可查——与步级分配同款口径）；落盘失败只
+   * WARN 不阻断（审计面绝不拖垮登记）。
+   */
+  private[tools] def allocateForChain(
+    nodes: List[ChainNode],
+    dispatcherChain: Boolean,
+    scopeKey: Option[String]
+  ): IO[Either[ToolError, Map[String, List[String]]]] =
+    if !dispatcherChain then IO.pure(Right(Map.empty))
+    else
+      nodes
+        .foldLeft[IO[Either[ToolError, Map[String, List[String]]]]](IO.pure(Right(Map.empty))) { (acc, n) =>
+          acc.flatMap {
+            case Left(err) => IO.pure(Left(err))
+            case Right(m) =>
+              PluginInjection.allocatePreparation(subject = s"node:${n.id}", taskText = n.task).flatMap {
+                case Left(err) =>
+                  IO.pure(
+                    Left(
+                      ToolError(
+                        s"plugin allocation refused for node '${n.id}' — $err (0-spawn principle: the whole chain is rejected, nothing registered)"
+                      )
+                    )
+                  )
+                case Right((_, set)) =>
+                  val row: IO[Unit] =
+                    if !set.actionRan then IO.unit
+                    else
+                      nebflow.core.delegate.ChainStore
+                        .append(
+                          nebflow.core.delegate.ChainStore.keyFor(None, scopeKey.getOrElse("")),
+                          "step-plugins",
+                          io.circe.Json.obj(
+                            "nodeId" -> n.id.asJson,
+                            "plugins" -> set.names.asJson,
+                            "allocation" -> set.mode.asJson,
+                            "phase" -> "chain-registration".asJson
+                          )
+                        ) match
+                        case Right(_) => IO.unit
+                        case Left(e) =>
+                          IO(ChainWriteLog.warnSync(s"step-plugins chain line failed (${n.id}): ${e.getMessage}"))
+                  row.as(Right(m.updated(n.id, set.names)))
+              }
           }
         }
+        .map(_.map(m => m.filter((_, names) => names.nonEmpty)))
+
 
   /** 自动链号（flow-<8hex>；与在飞声明链号/批内 id 不撞——碰撞重摇，上限防御）。 */
   private def autoChainId(taken: Set[String]): String =
@@ -469,4 +634,61 @@ object ChainWriteTool extends Tool:
       .find(!taken.contains(_))
       .getOrElse(s"flow-${System.currentTimeMillis().toString.takeRight(12)}")
 
+  /** 本件日志面（双模式批 step-plugins 行落盘失败告警用）。 */
+  private val ChainWriteLog = nebflow.shared.NebflowLogger.forName("nebflow.core.tools.chain-write")
 end ChainWriteTool
+
+/**
+ * WriteScopeAdvisory —— **writeScope 软闸的纯判定面**（双模式批 2026-10-28 · 设计
+ * §5.7 三层防线之声明层）：分发器链 nodes[] 的可选 `writeScope` 键（自由文本路径/
+ * 目录声明）做静态相交启发——批内两节点**无 deps 排序**（互相不可达 ⇒ 可能同时
+ * 活跃）∧ 写域相交（相等 ∨ 目录包含——以 `/` 为边界的前缀判定，`design` 与
+ * `design-v2` 不算相交）⇒ 交对返回（调用方落 `write-scope-collision` WARN 审计
+ * 事件）。**软闸**：纯函数、只 WARN 不拒绝不阻塞——误报零代价、漏报靠纪律层
+ * （分发器提示词的 deps 串行化纪律）兜底。
+ *
+ * 纯函数 spec 直驱：相交判据、排序豁免、未声明侧零参与，全部在此单点。
+ */
+object WriteScopeAdvisory:
+
+  /** 批内无排序（互相经 deps 不可达）∧ 写域相交的节点对（id 对，稳定序）。 */
+  def collisions(nodes: List[ChainWriteTool.ChainNode]): List[(String, String)] =
+    val scoped = nodes.filter(n => n.writeScope.exists(_.trim.nonEmpty))
+    if scoped.size < 2 then Nil
+    else
+      val byId = nodes.map(n => n.id -> n).toMap
+      val byName = nodes.flatMap(n => n.name.toList.map(_ -> n.id)).toMap
+      // deps 归一化到 id（批内 name 引用视同其 id；批外引用不参与可达性）。
+      val depsOf: Map[String, List[String]] = nodes.map { n =>
+        n.id -> n.deps.flatMap(ref => byId.get(ref).map(_ => ref).orElse(byName.get(ref))).distinct
+      }.toMap
+      val reach: Map[String, Set[String]] =
+        nodes.map { n =>
+          @scala.annotation.tailrec
+          def go(frontier: List[String], acc: Set[String]): Set[String] =
+            frontier match
+              case Nil => acc
+              case h :: t =>
+                val next = depsOf.getOrElse(h, Nil).filterNot(acc.contains)
+                go(t ++ next, acc ++ next)
+          n.id -> go(depsOf.getOrElse(n.id, Nil), Set.empty[String])
+        }.toMap
+      (for
+        i <- scoped.indices
+        j <- scoped.indices
+        if i < j
+        a = scoped(i)
+        b = scoped(j)
+        ordered = reach.getOrElse(a.id, Set.empty).contains(b.id) || reach.getOrElse(b.id, Set.empty).contains(a.id)
+        if !ordered && intersects(a.writeScope.getOrElse(""), b.writeScope.getOrElse(""))
+      yield (a.id, b.id)).toList
+
+  /**
+   * 相交启发：相等 ∨ 目录包含（以 `/` 为边界——`a/b` 包含 `a/b/c`，不包含
+   * `a/bc`）。空白归一后比较。
+   */
+  def intersects(x: String, y: String): Boolean =
+    val a = x.trim.stripSuffix("/")
+    val b = y.trim.stripSuffix("/")
+    a.nonEmpty && b.nonEmpty && (a == b || a.startsWith(b + "/") || b.startsWith(a + "/"))
+end WriteScopeAdvisory

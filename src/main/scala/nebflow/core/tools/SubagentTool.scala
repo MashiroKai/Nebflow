@@ -49,9 +49,23 @@ object SubagentTool extends Tool:
     if result.length > 200 then result.take(197) + "..." else result
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val prompt = input("prompt").flatMap(_.asString).getOrElse("")
-    val description = input("description").flatMap(_.asString).map(_.trim).filter(_.nonEmpty).getOrElse("recon")
-    if prompt.trim.isEmpty then
-      IO.pure(Left(ToolError("Missing required parameter: prompt — give the sub-agent a self-contained question.")))
-    else BlockingSubagent.run(prompt, description, ctx)
+    // 双模式批（2026-10-28 · 设计 §4.2/§5.1 · 双保险第二险）：kernel 腿与
+    // dispatcher 腿的 delegate 会话都无 Subagent（挂载面已摘——buildAllowedToolSet
+    // 尾段分叉）。本闸防逃逸：挂载面防线被绕过（schema 注入/显式调用）的形态 =
+    // 显式错误，绝不静默执行。总闸关（modeFaceOf=None）恒放行（现状逐字节）。
+    ctx.sessionId.flatMap(sid => nebflow.core.delegate.DelegateRegistry.modeFaceOf(Some(sid))) match
+      case Some(m) if m == nebflow.core.delegate.DualModeConfig.ModeKernel || m == nebflow.core.delegate.DualModeConfig.ModeDispatcher =>
+        IO.pure(
+          Left(
+            ToolError(
+              s"Subagent is not available in '$m'-mode delegate sessions (kernel strips the orchestration face; dispatcher orchestrates via ChainWrite/NodeEdit). (DUAL_MODE_FACE_REMOVED)"
+            )
+          )
+        )
+      case _ =>
+        val prompt = input("prompt").flatMap(_.asString).getOrElse("")
+        val description = input("description").flatMap(_.asString).map(_.trim).filter(_.nonEmpty).getOrElse("recon")
+        if prompt.trim.isEmpty then
+          IO.pure(Left(ToolError("Missing required parameter: prompt — give the sub-agent a self-contained question.")))
+        else BlockingSubagent.run(prompt, description, ctx)
 end SubagentTool
