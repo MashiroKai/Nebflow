@@ -14,7 +14,7 @@ nebflow-plugin-creator 是插件封装器包：节点获得把能力需求封装
 ## 2. 安装与启用
 
 - **安装**：本包属 Nebflow seed 官方分发（官方保留 namespace `nebflow-`，装载器按分发内置允许列表对目录 digest 现算验身份），随实例 seed mirror 自动下发，无需手工安装。
-- **启用/选配**：分发器按 description 触发词选配（把已有 skill 或能力封装成插件、做一个能 Y 的新插件、写 plugin.json 与 SKILL.md、插件描述质量体检、跑包校验脚本）；派发时两份 SKILL.md 全文注入节点。
+- **启用/选配**：分发器按 description 触发词选配（把已有 skill 或能力封装成插件、做一个能 Y 的新插件、写 plugin.json 与 SKILL.md、插件描述质量体检、跑包校验脚本）；分配时注入本文件（Plugin.md），两份 SKILL.md 为按需查阅件（面板胶囊深链打开，不再随分配整文注入）。
 - **停用**：面板「更多 → 封禁该插件」/ `POST /api/plugins/nebflow-plugin-creator/revoke` / `nebflow plugin revoke nebflow-plugin-creator`。
 - **内容变更**：包内任何字节改动都会漂移 digest，面板把该包标为「内容已变更」（可见性提示，不拦截装载；新内容对新派发即刻生效）。
 
@@ -25,20 +25,20 @@ nebflow-plugin-creator/  （包根）
   plugin.json
   Plugin.md              ← 本文件（包根使用指导件：速览 / 安装启用 / 流程导览 / 资产登记）
   skills/
-    plugin-packaging/    ← 封装主流程手册（注入面）
+    plugin-packaging/    ← 封装主流程手册（按需查阅件）
       SKILL.md
       assets/
         manifest.template.json   ← manifest 起步模板（description 已含五段式骨架句）
         skill-template/          ← skill 目录骨架（SKILL.md + references/ + assets/）
       scripts/
         validate_plugin.py       ← 机械校验脚本（M1-M15 + C 组检测，三档 profile）
-    description-quality/ ← 描述规范手册（注入面）
+    description-quality/ ← 描述规范手册（按需查阅件）
       SKILL.md
 ```
 
 ## 4. 封装流程导览（怎么用本包造一个合规插件包）
 
-> 全量口径以注入的 `skills/plugin-packaging/SKILL.md` 为准（含六分叉处置表与交付报告模板）；本节是跨 skill 的管线速查。
+> 全量口径以 `skills/plugin-packaging/SKILL.md` 为准（按需查阅件，含六分叉处置表与交付报告模板）；本节是跨 skill 的管线速查。
 
 **四步管线**：
 
@@ -71,7 +71,7 @@ python3 skills/plugin-packaging/scripts/validate_plugin.py --profile creator <�
 
 - 长度 ≤400 字符（M7）；写不完的细节进 skill 正文或包根 Plugin.md，不进描述。
 - 触发词按**核心词表圈定法**逐词落字（分发器做字面匹配，近义词不互相兜底）。
-- M1-M15 判定口径速查表、好坏范例四例：全量见 `skills/description-quality/SKILL.md`（注入面权威，spawn 已注入；需要复查时按需 Read 原件）。
+- M1-M15 判定口径速查表、好坏范例四例：全量见 `skills/description-quality/SKILL.md`（按需查阅件；需要时 Read 原件）。
 
 ## 5. 各技能总目录
 
@@ -102,9 +102,9 @@ python3 skills/plugin-packaging/scripts/validate_plugin.py --profile creator <�
 |---|---|---|
 | mcp.json 形态生产首例 | 实验性（装载校验规则完备，生产样本尚待首例） | 首例产出建议在隔离实例验证 MCP 启动链后再交付 |
 | 包级行数预算（C7） | 暂缓 | 待有观测数据后定阈值 |
-| 包根 Plugin.md 起步模板（assets/pluginmd.template.md） | 规划中 | 与包根第五件（Plugin.md）协议配套 |
+| 包根 Plugin.md 起步模板（assets/pluginmd.template.md） | 已在位（`skills/plugin-packaging/assets/pluginmd.template.md`） | 与包根第五件（Plugin.md）协议配套；生成 Plugin.md 时从模板起步 |
 
 ## 9. 维护约定
 
 - **模板与手册同步**：改 `assets/` 模板须同步 plugin-packaging SKILL.md 的引用描述；M15 全包扫描覆盖脚本自身。
-- **本文件定位**：Plugin.md 是按需 Read 面——SKILL.md 是注入面权威；两者不一致时以 SKILL.md 为准并回改本文；跨 skill 共用的包级内容才进本文，单 skill 专属细节留在该 skill。
+- **本文件定位**：Plugin.md 是分配注入体（插件分配时整文进节点提示词）——SKILL.md 是按需查阅件（内容权威）；两者不一致时以 SKILL.md 为准并回改本文；跨 skill 共用的包级内容才进本文，单 skill 专属细节留在该 skill。

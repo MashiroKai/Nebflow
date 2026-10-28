@@ -1,8 +1,15 @@
+---
+type: design-note
+status: done
+---
+
 # CLI 品牌隔离 + `restart --detached` 官方面（2026-10-27 基础设施批设计件）
 
 日期：2026-10-27 · 作者令 21:0x（两条）
 状态：已实现（`ops/bin/{stand,nebflow,stand-cli-lib.sh,nebflow-stand-shim}` +
 `ops/test/stand-lifecycle.test.sh` 111 断言全绿）；实现批报告见 `reports/`。
+
+相关件：[[20261026_detached-apply-restart-update-spec.zh-CN]]（#916 地基，本文承其出 `restart --detached` 官方面）、[[20261027_hot-reload-foundation-spec.zh-CN]]（同族热更新线）
 
 ## 一、nebflow 与 stand 命令彻底隔离
 

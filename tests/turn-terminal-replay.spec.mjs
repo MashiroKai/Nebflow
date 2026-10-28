@@ -108,6 +108,20 @@ const TERMINAL_PURE_TEXT = [
   user('纯文本轮'),
   { type: 'ai', text: '只有一句话。', timestamp: T + 1200, terminal: true },
 ];
+// ── 卫生批（2026-10-28，回放残余①根治）：退化全工具轮的等价终态面 ──
+// 段内零 ai 行（无任何 text/thinking 载体）——回放批 C 相位唯一残余 1 段 1 卡的
+// 同款形态（user 行 + 单张 Mail 委托卡）。终态盖到段内最后一行 Tool 行。
+const DEGENERATE_TOOL_TERMINAL = [
+  user('把结论发给 delegate 续跑'),
+  { type: 'tool', label: 'Mail', summary: '→ delegate-nebflow-…（结论交接）', content: 'ok', isError: false, input: {}, terminal: true },
+];
+const DEGENERATE_TOOL_LEGACY = DEGENERATE_TOOL_TERMINAL.map(({ terminal, ...m }) => m); // 旧转录：无 terminal 键
+const TOOL_TAIL_BUSY_TERMINAL = [
+  user('前一轮（已闭合）'),
+  { type: 'ai', text: '上一轮完成。', durationMs: 5000, timestamp: T + 5000, terminal: true },
+  user('全工具收尾轮（断线时已 done）'),
+  { type: 'tool', label: 'Bash', summary: 'systemctl status', content: 'ok', isError: false, input: {}, terminal: true },
+];
 
 let port;
 let srv;
@@ -244,4 +258,50 @@ test('X 形态红线：点 header 展开 → 工具卡原位可见；再点收�
   c = await page.evaluate(() => window.__counts());
   pinGuard(c.toolsTucked === 2, '再点收起：工具卡重新 tucked');
   pinGuard(c.headers === 1, 'header 仍常驻');
+});
+
+// ── 卫生批（2026-10-28）工具行等价终态面（回放残余①：段内零 ai 行的退化全工具轮）──
+
+test('TO1 退化全工具轮·terminal 工具行：末张裸卡归零（header + 工具 tucked）', async ({ page }) => {
+  const c = await replay(page, DEGENERATE_TOOL_TERMINAL);
+  pinNewFace(c.toolTerminalStamped === 1, `terminal 工具行标在场（got ${c.toolTerminalStamped}）`);
+  pinNewFace(c.headers === 1, `等价终态判据 → 该轮折叠（got headers=${c.headers}）`);
+  pinNewFace(c.tools === 1 && c.toolsTucked === 1, '最后一张裸工具卡被 tucked（归零）');
+  pinGuard(c.aiRows === 0, '段内零 ai 行（退化形态本身——两树同形的形状事实）');
+  pinGuard(
+    c.headers === 0 || (c.headerTexts[0] || '').includes('1'),
+    'header 摘要带工具计数段（工具 1 次 / 1 tool call；红腿无 header 时本读数空转）'
+  );
+});
+
+test('TO2 退化全工具轮·legacy（无 terminal 键）：维持平铺（E6 守卫不回归）', async ({ page }) => {
+  const c = await replay(page, DEGENERATE_TOOL_LEGACY);
+  pinGuard(c.headers === 0, `旧转录无判据 ⇒ 无 header（got ${c.headers}）`);
+  pinGuard(c.toolTerminalStamped === 0, '旧行无 terminal 标');
+  pinGuard(c.tools === 1 && c.toolsTucked === 0, '裸工具卡保持可见（平铺，启发式时代现状）');
+});
+
+test('TO3 busyTail + terminal 工具尾段：数据面完成判据闭合（exchangeComplete 同读一戳）', async ({ page }) => {
+  const c = await replay(page, TOOL_TAIL_BUSY_TERMINAL, { busyTail: true });
+  pinNewFace(c.headers === 1, `terminal 工具尾段在 busyTail 下闭合（got headers=${c.headers}）`);
+  pinNewFace(c.toolTerminalStamped === 1, '工具尾段行标在场');
+  pinNewFace(c.tools === 1 && c.toolsTucked === 1, '尾段工具卡 tucked');
+});
+
+test('TO4 形态红线：TO1 的 header 点开可展（与 live 同形）', async ({ page }) => {
+  await replay(page, DEGENERATE_TOOL_TERMINAL);
+  if (RED) {
+    // 红腿：折叠未发生 ⇒ 无 header 可点——「header 缺席」本身就是缺陷在场的证据，
+    // 点击腿无从跑起（本面 presuppose TO1 的折叠）。
+    pinNewFace(await page.locator('#chat > .turn-header').count() === 1, 'TO1 折叠在场才有 header 可点');
+    return;
+  }
+  pinGuard(await page.locator('#chat > .row.tool').count() === 1, '工具卡在场');
+  await page.click('#chat > .turn-header');
+  let c = await page.evaluate(() => window.__counts());
+  pinGuard(c.toolsTucked === 0, '展开后工具卡可见（原位）');
+  await page.click('#chat > .turn-header');
+  c = await page.evaluate(() => window.__counts());
+  pinGuard(c.toolsTucked === 1, '再点收起：复原');
+  pinGuard(c.headers === 1, 'header 常驻');
 });

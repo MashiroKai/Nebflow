@@ -1,6 +1,13 @@
+---
+type: design-note
+status: open
+---
+
 # 热更新地基 — 方案段与地基层（台账 #919，承 #916 / 作者令 2026-10-26 12:37）
 
 批次：hot-reload-foundation（方案段 + 地基层 + 验证钩子；**本批不承诺全量热更**）
+
+相关件：[[20261026_detached-apply-restart-update-spec.zh-CN]]（#916 自重启/自更新地基，本文直接承之）、[[20261027_cli-isolation-and-detached-restart-spec.zh-CN]]（同族 detached 重启官方面）
 
 ## 0. 目标与口径
 

@@ -93,8 +93,8 @@ graphviz/plotly）——分发器能据「任务涉及出图」精确匹配；sk
 流程图、出图）与谓词即完型。
 
 **坏例① design-spec（死引用，反面教材之首）**：描述指引用户「配合 user 层 skill
-nebflow/visual-style 使用」——user 层 skill 对分配节点不存在（节点侧已被插件
-全文注入取代），按此描述找资源的节点必然落空；且混入「按协议裁定允许仅含
+nebflow/visual-style 使用」——user 层 skill 对分配节点不存在（节点侧的插件注入面
+= 包根 Plugin.md，不含 user 层 skill），按此描述找资源的节点必然落空；且混入「按协议裁定允许仅含
 skills」类实现性自述，白占版面。改法：配合指引改指 Catalog（「见 Plugin Catalog 的 design-cards
 插件」）、删自述、补触发句与谓词。
 

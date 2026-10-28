@@ -112,6 +112,22 @@ class PluginRegistrySpec extends CatsEffectSuite:
   os.makeDir.all(messy / "org.nebflow")
   os.write.over(messy / "org.nebflow" / "extra.json", "{}")
 
+  // Plugin.md 已知面（卫生批 2026-10-28，六-1 欠账清偿）：包根第五件 = 装载器
+  // known-set 正字，装载零告警；小写变体维持 unknown-entry 告警（正字纪律——
+  // 注入面 PluginInjection 回退同认 ≠ 装载面放行，与 validator C11b 改名提示同向）。
+  private val withPluginMd = pluginDir("with-plugin-md")
+  writeManifest(withPluginMd, "with-plugin-md")
+  writeSkill(withPluginMd, "s1", "body")
+  os.write.over(withPluginMd / "Plugin.md", "# with-plugin-md\n\nPlugin.md required file (canonical name).\n")
+
+  private val lowerPluginMd = pluginDir("lower-plugin-md")
+  writeManifest(lowerPluginMd, "lower-plugin-md")
+  writeSkill(lowerPluginMd, "s1", "body")
+  os.write.over(
+    lowerPluginMd / "plugin.md",
+    "# lower-plugin-md\n\nlowercase variant — the injection face tolerates it, the loader keeps the canonical-name discipline.\n"
+  )
+
   // 隔离 nebflow.json（审计记录 / 封禁表读写落临时根）
   os.write.over(tempRoot / "nebflow.json", "{}")
 
@@ -127,8 +143,9 @@ class PluginRegistrySpec extends CatsEffectSuite:
   }
 
   /**
-   * 本 suite 盘上 6 包的缺席注记（口径：本 spec 固定 fixtures——empty/bad-tools 载入
-   * 校验拒载；其余 4 包**在位即信任**⇒ 恒在目录里，不再构成缺席）。只列非零分类。
+   * 本 suite 盘上 8 包的缺席注记（口径：本 spec 固定 fixtures——empty/bad-tools 载入
+   * 校验拒载；其余 6 包**在位即信任**⇒ 恒在目录里，不再构成缺席。卫生批 2026-10-28
+   * +with-plugin-md / +lower-plugin-md 两包，均装载成功）。只列非零分类。
    */
   private val absenceNote2 = "另有 2 个插件未载入（装载失败 2）"
 
@@ -181,6 +198,30 @@ class PluginRegistrySpec extends CatsEffectSuite:
         assert(w.contains("agents"), s"unknown component dir must warn, got: $w")
         assert(w.contains("extra.json"), s"unknown org.nebflow entry must warn, got: $w")
       case None => fail("'messy' plugin must load (forward-compat: skip + warn, never crash)")
+    }
+  }
+
+  test("§B.8-5 Plugin.md 已知面: 包根第五件（正字）装载零 unknown-entry 告警（六-1 清偿，消 21 包常驻告警）") {
+    scan.map(_.find(_.name == "with-plugin-md")).map {
+      case Some(p) =>
+        val w = p.warnings.mkString("; ")
+        assert(
+          !w.toLowerCase.contains("plugin.md"),
+          s"canonical Plugin.md is a known root entry — no forward-compat warning may fire, got: $w"
+        )
+      case None => fail("'with-plugin-md' plugin must load")
+    }
+  }
+
+  test("§B.8-5 Plugin.md 正字纪律: 小写 plugin.md 仍告警（注入面回退同认 ≠ 装载面放行）") {
+    scan.map(_.find(_.name == "lower-plugin-md")).map {
+      case Some(p) =>
+        val w = p.warnings.mkString("; ")
+        assert(
+          w.contains("'plugin.md'"),
+          s"lowercase plugin.md stays an unknown-entry warning (canonical-name discipline), got: $w"
+        )
+      case None => fail("'lower-plugin-md' plugin must load (warn-only face)")
     }
   }
 
@@ -361,9 +402,11 @@ class PluginRegistrySpec extends CatsEffectSuite:
     yield
       val text = health.getOrElse(fail("anomalous registry must produce a health summary"))
       val lines = text.linesIterator.toList
+      // 卫生批（2026-10-28）：fixtures 增至 8 包（+with-plugin-md / +lower-plugin-md，
+      // G1 断言面）——两包均装载成功：8 on disk / 6 loaded / 5 visible（blocked 1）。
       assert(
         lines.head.startsWith(
-          "6 package(s) on disk, 4 loaded, 3 catalog-visible, 3 absent (load-failed 2 / blocked 1), "
+          "8 package(s) on disk, 6 loaded, 5 catalog-visible, 3 absent (load-failed 2 / blocked 1), "
         ),
         s"head counts must be complete: ${lines.head}"
       )

@@ -75,6 +75,8 @@
         // 纯徽章行（无气泡、行上直接挂 duration-badge）—— bug 修的产物面
         bareBadgeRows: aiRows.filter(r => !r.querySelector('.bubble.ai') && r.querySelector('.duration-badge')).length,
         terminalStamped: aiRows.filter(r => r.dataset && r.dataset.nfTurnTerminal === '1').length,
+        // 卫生批（2026-10-28）工具行等价终态面：terminal 盖戳的工具行读数。
+        toolTerminalStamped: toolRows.filter(r => r.dataset && r.dataset.nfTurnTerminal === '1').length,
         phraseBadges: chat.querySelectorAll(':scope > * .duration-badge[data-nf-phrase], :scope > .row.ai > .duration-badge[data-nf-phrase]').length,
         userRows: chat.querySelectorAll(':scope > .row.user').length,
       };

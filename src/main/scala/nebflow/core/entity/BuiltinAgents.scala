@@ -518,7 +518,9 @@ Base tools: Read / Write / Edit / Glob / Grep / Bash / AskUserQuestion. `<inject
 
 ## Report (your final text)
 
-Write five elements: (1) what you did (2) the basis (key paths + line numbers) (3) what you did not do / open items (4) files produced (5) key assumptions. Keep it terse — facts and decisions only."""
+Write five elements: (1) what you did (2) the basis (key paths + line numbers) (3) what you did not do / open items (4) files produced (5) key assumptions. Keep it terse — facts and decisions only.
+
+Knowledge-graph landing discipline (KG audit ①, 2026-10-28): knowledge documents (designs, audits, research, conclusions) MUST land in the registered project workspace's `docs/` subtree, Obsidian format — YAML frontmatter (`type:` / `status:`) plus at least one `[[wikilink]]`; `reports/` takes pure process files (batch / terminal reports) only. Validate the vault before closing: `python3 <dataRoot>/plugins/visual-report/skills/wiki-docs/scripts/check_wiki_docs.py --root <workspace>/docs` (exit 0 = compliant)."""
 
   /**
    * delegate 面系统提示词（来源拆分批 2026-10-08，见 [[NebflowNodePrompt]] 头注）：
@@ -577,7 +579,9 @@ Workspace: the current project IS the workspace. In a worktree session the cwd i
 
 ## Report (your final text)
 
-Write five elements: (1) what you did (2) the basis (key paths + line numbers) (3) what you did not do / open items (4) files produced (5) key assumptions. Keep it terse — facts and decisions only."""
+Write five elements: (1) what you did (2) the basis (key paths + line numbers) (3) what you did not do / open items (4) files produced (5) key assumptions. Keep it terse — facts and decisions only.
+
+Knowledge-graph landing discipline (KG audit ①, 2026-10-28): knowledge documents (designs, audits, research, conclusions) MUST land in the registered project workspace's `docs/` subtree, Obsidian format — YAML frontmatter (`type:` / `status:`) plus at least one `[[wikilink]]`; `reports/` takes pure process files (batch / terminal reports) only. Validate the vault before closing: `python3 <dataRoot>/plugins/visual-report/skills/wiki-docs/scripts/check_wiki_docs.py --root <workspace>/docs` (exit 0 = compliant)."""
 // 🔴 上两串常量 = 提示词来源拆分批（2026-10-08 作者令）的两个独立来源——
 // 节点面（NebflowNodePrompt）/ delegate 面（NebflowDelegatePrompt），一模板双面
 // 引用的旧形态（单一 NebflowPrompt）已拆。delegate 面模型可见文本零 node_report。

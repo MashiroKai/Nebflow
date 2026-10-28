@@ -1,8 +1,15 @@
+---
+type: design-note
+status: done
+---
+
 # 跨平台 detached apply：自重启/自更新地基（台账 #916 设计件）
 
 日期：2026-10-26 · 作者令 12:37（「更新和迁移不影响工作、不失败、绝不起不来」）
 状态：已实现（`nebflow.cli.DetachedApply` / `UpdateStage` / RestartCommand detached 面 /
 UpdateCommand `--from` 两阶段 / InstallPointer 品牌修正 + promote）
+
+相关件：[[20261027_cli-isolation-and-detached-restart-spec.zh-CN]]（10-27 基础设施批承本地基出官方面）、[[20261027_hot-reload-foundation-spec.zh-CN]]（同承 #916 的热更新族）
 
 ## 0. 今天事故为镜（实证根因链，2026-10-26 12:06 Mac）
 

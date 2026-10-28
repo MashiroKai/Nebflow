@@ -7,9 +7,9 @@ description: 一句话说清本 skill 做什么（what）与何时用（when）�
 
 （正文写作要点——生成时替换为本 skill 的真实内容，本模板即骨架：）
 
-1. 节点在 spawn 时一次性收到本文全文注入（非按需读取）——正文保持精炼，
-   深内容下沉 references/（节点按需读），可执行脚本放 scripts/，输出模板资源
-   放 assets/。
+1. 本文是按需查阅件（面板胶囊深链打开，不随分配整文注入——包根 Plugin.md 才是
+   分配注入体）——正文保持精炼，深内容下沉 references/（节点按需读），可执行
+   脚本放 scripts/，输出模板资源放 assets/。
 2. 正文写步骤与判据，不写散文；每一步给出可判定的完成标准。
 3. 需要引用本 skill 目录内资源时用 ${SKILL_DIR} 变量（装载时替换为目录绝对路径），
    例如：`python3 ${SKILL_DIR}/scripts/your_check.py`。

@@ -19,7 +19,8 @@
 #   - 字段类型 fatal 面        PluginRegistry.scala:649-676（stringField :871-878）
 #   - 包根已知条目五件         PluginRegistry.scala:583（org.nebflow 子条目 :587-591；
 #                               第五件＝Plugin.md 恰一（六-3 逐字白名单）；装载器侧
-#                               扩面随下个引擎批同批落地（六-1），本脚本先行放行）
+#                               扩面已于卫生批 2026-10-28 同步落地（六-1）——
+#                               KNOWN_ROOT_ENTRIES 与装载器 known-set 逐字镜像）
 #   - mcp.json 顶层闭合键      PluginRegistry.scala:924-930（entry 未知字段 :980-983）
 #   - server entry 校验        PluginRegistry.scala:987-1077（args/headers 类型、stdio `./` 围栏 :996-1001、cwd 围栏 :1013-1028）
 #   - mcp url loopback-https   PluginRegistry.scala:1083-1094 (validMcpUrl)
@@ -90,7 +91,7 @@ TOOL_WHITELIST = {"WebSearch", "WebFetch", "Curl"}
 # viewers 内联声明上限（PluginRegistry.scala:124 MaxViewerDeclarationBytes）
 MAX_VIEWER_BYTES = 32 * 1024
 # 包根已知条目五件（PluginRegistry.scala:583；第五件＝Plugin.md 恰一——装载器侧
-# 扩面随下个引擎批（六-1），脚本先行；逐字大小写敏感，目录化/变体照 C11 告警）
+# 扩面已于卫生批 2026-10-28 落地（六-1）；逐字大小写敏感，目录化/变体照 C11 告警）
 KNOWN_ROOT_ENTRIES = {"plugin.json", "mcp.json", "skills", "org.nebflow", "Plugin.md"}
 # org.nebflow 允许子条目（PluginRegistry.scala:587-591；漏扩=贡献静默失效）
 KNOWN_NS_ENTRIES = {"tools.json", "viewers.json"}
