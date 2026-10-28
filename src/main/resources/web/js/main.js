@@ -1270,7 +1270,10 @@ onMessage('done', (msg, view) => {
       if (state.sessionTexts[msg.sessionId] || thinkingText) {
         const text = state.sessionTexts[msg.sessionId] || '';
         // Save final round's text/thinking as the main message
-        saveMsg({type: 'ai', text, thinking: thinkingText || undefined, durationMs, model: msg.model}, msg.sessionId);
+        // replay-terminal 批（2026-10-28，案一「A 根治」）：done 落盘条目盖
+        // terminal:true —— localStorage 恢复腿与后端历史腿同判据（缓存条目
+        // 形状与后端 UiMessage.Ai.terminal 对齐）。
+        saveMsg({type: 'ai', text, thinking: thinkingText || undefined, durationMs, model: msg.model, terminal: true}, msg.sessionId);
         // pendingRestore only contains the LAST round's data (not concatenated across rounds),
         // so dedup against backend history (last Ai message) works correctly.
         state.pendingRestore[msg.sessionId] = { text, thinking: thinkingText || undefined, durationMs, model: msg.model };
@@ -1307,6 +1310,9 @@ onMessage('done', (msg, view) => {
     const data = finishAi(durationMs, msg.model);
     if (data) {
       data.thinking = thinkingText || undefined;
+      // replay-terminal 批：done 终态条目盖 terminal:true（与后端 UiMessage.Ai
+      // 落盘同批语义；刷新后 localStorage 恢复腿据此折叠该轮）。
+      data.terminal = true;
       saveMsg(data, msg.sessionId);
     } else if (thinkingText) {
       // Thinking-only response (no text): keep thinking bubble expanded
@@ -1318,7 +1324,8 @@ onMessage('done', (msg, view) => {
         if (label) label.classList.add('expanded');
       }
       // Save without text field so restoreFromStorage doesn't render an empty bubble
-      saveMsg({ type: 'ai', thinking: thinkingText, durationMs, model: msg.model }, msg.sessionId);
+      // replay-terminal 批：纯思考轮的 done 同为轮终态 —— terminal:true 随条目。
+      saveMsg({ type: 'ai', thinking: thinkingText, durationMs, model: msg.model, terminal: true }, msg.sessionId);
     }
     Object.keys(activeView.stream.agentBubbles).forEach(id => finishAgent(id));
     activeView.stream.agentBubbles = {};

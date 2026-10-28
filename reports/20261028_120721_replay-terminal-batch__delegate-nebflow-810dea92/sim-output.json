@@ -1,0 +1,98 @@
+{
+  "file": "/Users/kaiyu/.stand/sessions/d7c3cb54-dd90-4f3f-bbf6-e7898c425cff.ui.json",
+  "totalRows": 800,
+  "A": {
+    "segments": 158,
+    "bareSegments": 6,
+    "bareToolCards": 21,
+    "e6Bare": 0,
+    "tailBare": 0,
+    "bareDetail": [
+      {
+        "tools": 2,
+        "e6": false,
+        "tail": false
+      },
+      {
+        "tools": 7,
+        "e6": false,
+        "tail": false
+      },
+      {
+        "tools": 2,
+        "e6": false,
+        "tail": false
+      },
+      {
+        "tools": 2,
+        "e6": false,
+        "tail": false
+      },
+      {
+        "tools": 5,
+        "e6": false,
+        "tail": false
+      },
+      {
+        "tools": 3,
+        "e6": false,
+        "tail": false
+      }
+    ]
+  },
+  "B": {
+    "segments": 159,
+    "bareSegments": 6,
+    "bareToolCards": 19,
+    "e6Bare": 0,
+    "tailBare": 0,
+    "bareDetail": [
+      {
+        "tools": 2,
+        "e6": false,
+        "tail": false
+      },
+      {
+        "tools": 7,
+        "e6": false,
+        "tail": false
+      },
+      {
+        "tools": 2,
+        "e6": false,
+        "tail": false
+      },
+      {
+        "tools": 2,
+        "e6": false,
+        "tail": false
+      },
+      {
+        "tools": 5,
+        "e6": false,
+        "tail": false
+      },
+      {
+        "tools": 1,
+        "e6": false,
+        "tail": false
+      }
+    ]
+  },
+  "C": {
+    "writerStamps": 149,
+    "segments": 159,
+    "bareSegments": 1,
+    "bareToolCards": 1,
+    "bareExclTail": 1,
+    "bareExclTailToolCards": 1,
+    "bareExclTailDetail": [
+      {
+        "tools": 1,
+        "e6": false,
+        "face": "F0(段内零ai行)",
+        "len": 2
+      }
+    ]
+  }
+}

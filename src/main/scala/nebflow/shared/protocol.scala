@@ -356,7 +356,25 @@ object UiMessage:
     durationMs: Option[Long] = None,
     model: Option[String] = None,
     thinking: Option[String] = None,
-    timestamp: Long = 0L
+    timestamp: Long = 0L,
+    /**
+     * **轮终态显式标记**（replay-terminal 批 2026-10-28，案一「A 根治」实施，
+     * 依据 `reports/20261028_113024_console-replay-compaction-audit` 案一）：本行
+     * 是该轮（上一 user 行 → 下一 user 行）的**终态 ai 行**——`WebSocketRoutes`
+     * 的 `done`/`agentDone` 轮终态落盘点随 durationMs 同批写入（append 直写或
+     * `SessionStore.updateLastAiMeta(markTerminal=true)` 回填）。回放折叠的
+     * done 判据由渲染期徽章启发式（E4：「段内存在带 `data-nf-phrase` 的时长
+     * 徽章」，推导不出即整段平铺 → 裸工具卡）升级为**数据驱动**：前端
+     * `turnGroup.js summarizeSegment` 改读「段内存在 terminal 行」优先；旧转录
+     * 无本键 ⇒ 回落现启发式（渐进兼容，不一次性改写历史）。失败轮（error 帧
+     * 不走 done 落盘点）与进行中轮（busyTail）不写本标记 ⇒ 回放维持平铺/展开
+     * （09-05 排障裁定 + 瞬态语义不变）。
+     *
+     * 缺席即不落键（intake/header/answerOf/quote/fileChanges/answerAttachments
+     * 先例同款条件编码 ⇒ 旧 `.ui.json` 行字节形态与旧读法逐字不变；解码宽松
+     * 回落 None，新增可选键绝不改变任何既有行的可解析性）。
+     */
+    terminal: Option[Boolean] = None
   ) extends UiMessage:
     val typeName = "ai"
 
@@ -499,7 +517,10 @@ object UiMessage:
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
       val withModel = m.model.fold(withDur)(mod => withDur.deepMerge(Json.obj("model" -> mod.asJson)))
       val withThinking = m.thinking.fold(withModel)(th => withModel.deepMerge(Json.obj("thinking" -> th.asJson)))
-      if m.timestamp > 0 then withThinking.deepMerge(Json.obj("timestamp" -> m.timestamp.asJson)) else withThinking
+      val withTs = if m.timestamp > 0 then withThinking.deepMerge(Json.obj("timestamp" -> m.timestamp.asJson)) else withThinking
+      // replay-terminal 批（2026-10-28）：轮终态标记——只在 Some(true) 落键
+      // （缺席即不落键 ⇒ 无标记行与旧字节形态逐字相同）。
+      if m.terminal.contains(true) then withTs.deepMerge(Json.obj("terminal" -> true.asJson)) else withTs
     case m: Tool =>
       Json.obj(
         "type" -> "tool".asJson,
@@ -588,7 +609,10 @@ object UiMessage:
           model <- cursor.downField("model").as[Option[String]]
           thinking <- cursor.downField("thinking").as[Option[String]]
           timestamp <- cursor.downField("timestamp").as[Option[Long]]
-        yield Ai(text, durationMs, model, thinking, timestamp.getOrElse(0L))
+          // replay-terminal 批：轮终态标记（旧行无本键 ⇒ None；形态不合同样回落
+          // None —— 宽松透传，新增可选键绝不改变任何既有行的可解析性）
+          terminal <- cursor.downField("terminal").as[Option[Boolean]]
+        yield Ai(text, durationMs, model, thinking, timestamp.getOrElse(0L), terminal)
       case "tool" =>
         for
           label <- cursor.downField("label").as[String]

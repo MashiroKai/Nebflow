@@ -696,15 +696,31 @@ export function restoreFromStorage(opts = {}) {
         chat.appendChild(tRow);
         bindCollapsibleToggle(tLabel, () => tContent);
       }
-      // Only render AI bubble if there's actual text content
-      if (m.text) {
+      // replay-terminal 批（2026-10-28，案一「A 根治」实施）两处渲染面变化：
+      //  ① 徽章渲染从 if (m.text) 提出 —— 「有 durationMs 但 text 为空」的纯工具
+      //     轮终态行此前连徽章带 phrase 一起消失（审计裸面①：徽章整个不渲染 ⇒
+      //     启发式判不出 done ⇒ 整段平铺），凡 durationMs>0 一律渲染**无气泡纯
+      //     徽章行**（旧转录无 terminal 键同享此修 —— 独立 bug 修）；
+      //  ② terminal 行无条件渲染（live done 帧写 UiMessage.Ai.terminal=true 的
+      //     落盘行）：行盖 data-nf-turn-terminal（turnGroup 回放 done 判据的单一
+      //     数据面）+ data-nf-model（header 模型回落）。
+      // 兼容：旧行（无 terminal、无 dur、有 text）走原路径逐字节同形。
+      const isTurnTerminal = m.terminal === true;
+      const hasDuration = m.durationMs != null && m.durationMs > 0;
+      if (m.text || isTurnTerminal || hasDuration) {
         const row = document.createElement('div');
         row.className = 'row ai';
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble ai';
-        bubble.innerHTML = renderMarkdownWithMath(m.text || '');
-        row.appendChild(bubble);
-        if (m.durationMs != null && m.durationMs > 0) {
+        if (m.text) {
+          const bubble = document.createElement('div');
+          bubble.className = 'bubble ai';
+          bubble.innerHTML = renderMarkdownWithMath(m.text || '');
+          row.appendChild(bubble);
+        }
+        if (isTurnTerminal) {
+          row.dataset.nfTurnTerminal = '1';
+          if (m.model) row.dataset.nfModel = m.model;
+        }
+        if (hasDuration) {
           const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.text);
           row.appendChild(badge);
         } else {
@@ -1100,21 +1116,33 @@ function buildHistoryRow(m, i, ctx) {
         fragment.appendChild(tRow);
         bindCollapsibleToggle(tLabel, () => tContent);
       }
-      // Only render AI bubble if there's actual text content
-      if (m.text) {
+      // replay-terminal 批（2026-10-28，案一「A 根治」实施）——与 restoreFromStorage
+      // ai 分支同款两处渲染面变化（①徽章出 if (m.text)：凡 durationMs>0 一律渲染，
+      // 旧转录同享；②terminal 行无条件渲染 + data-nf-turn-terminal / data-nf-model
+      // 行标）：四条回放腿同一渲染器，单源不改第二处。旧行（无 terminal、无 dur、
+      // 有 text）逐字节同形。
+      const isTurnTerminal = m.terminal === true;
+      const hasDuration = m.durationMs != null && m.durationMs > 0;
+      if (m.text || isTurnTerminal || hasDuration) {
         const row = document.createElement('div');
         row.className = 'row ai';
-        // quote-message 一期：助手文本行挂 id + 右键（复制 + 引用）。
-        row.dataset.msgId = historyMsgId(i);
-        attachQuoteMenu(row, {
-          kind: 'text', text: m.text || '',
-          senderRole: 'ai', senderName: ownAgentName() || rootDisplayName(), ts: m.timestamp || Date.now(),
-        });
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble ai';
-        deferMd(bubble, m.text || '');
-        row.appendChild(bubble);
-        if (m.durationMs != null && m.durationMs > 0) {
+        if (m.text) {
+          // quote-message 一期：助手文本行挂 id + 右键（复制 + 引用）。
+          row.dataset.msgId = historyMsgId(i);
+          attachQuoteMenu(row, {
+            kind: 'text', text: m.text || '',
+            senderRole: 'ai', senderName: ownAgentName() || rootDisplayName(), ts: m.timestamp || Date.now(),
+          });
+          const bubble = document.createElement('div');
+          bubble.className = 'bubble ai';
+          deferMd(bubble, m.text || '');
+          row.appendChild(bubble);
+        }
+        if (isTurnTerminal) {
+          row.dataset.nfTurnTerminal = '1';
+          if (m.model) row.dataset.nfModel = m.model;
+        }
+        if (hasDuration) {
           const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.text);
           row.appendChild(badge);
         } else {

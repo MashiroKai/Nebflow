@@ -62,8 +62,13 @@
 // (2026-09-05 ruling — the #345 streaming-collapse regression is reverted in
 // chat.js); the terminal tuck folds it with the rest of the process.
 //
-// Zero protocol/backend changes (spec D1). History reload re-derives headers
-// heuristically (E4 P0: duration badge on the final Ai row = success).
+// Data-driven history rebuild (replay-terminal 批 2026-10-28, 案一「A 根治」):
+// the turn-terminal fact rides the persisted data (UiMessage.Ai.terminal=true
+// stamped at the backend done/agentDone write points, surfaced here as
+// data-nf-turn-terminal) — the old render-time heuristic (E4 P0: a duration
+// badge with data-nf-phrase on some Ai row = success) stays only as the
+// legacy-transcript fallback. Failed turns (no terminal, no badge) stay flat
+// (09-05 排障裁定); the busyTail tail stays open (transient).
 
 import { t } from './i18n.js';
 import { formatDuration, chevronSvg } from './chat.js';
@@ -504,6 +509,9 @@ function exchangeComplete(tail) {
   let stampIdx = -1;
   tail.forEach((r, i) => {
     if (r.hasAttribute('data-nf-ask-answer')) stampIdx = i;
+    // replay-terminal 批：writer 盖戳的 terminal 行与 nf-phrase 徽章同为完成
+    // 判据（数据面优先；旧行无戳 ⇒ 徽章腿原样）。
+    if (r.dataset && r.dataset.nfTurnTerminal) { badgeIdx = i; return; }
     for (const b of r.querySelectorAll('.duration-badge')) {
       if (b.dataset.nfPhrase) { badgeIdx = i; break; }
     }
@@ -523,8 +531,12 @@ export function buildTurnSummariesForHistory(chat, opts = {}) {
   rows.forEach((r, i) => {
     if (isNonInjectedUserRow(r)) { flush(i); segStart = i + 1; return; }
     // #403 history side: an injected row arriving AFTER the segment already
-    // carries a done badge opens its own turn — split here.
-    if (isInjectedRow(r) && findDoneBadge(rows.slice(segStart, i))) { flush(i); segStart = i; }
+    // carries a done badge opens its own turn — split here. replay-terminal
+    // 批：terminal 盖戳行与徽章同为「段已闭合」判据（同 summarizeSegment 口径）。
+    if (isInjectedRow(r) &&
+        (findDoneBadge(rows.slice(segStart, i)) || findTerminalRow(rows.slice(segStart, i)))) {
+      flush(i); segStart = i;
+    }
   });
   const tail = rows.slice(segStart);
   if (!busyTail || exchangeComplete(tail)) {
@@ -542,15 +554,21 @@ function summarizeSegment(chat, seg) {
   const tuckable = seg.filter(isTuckableRow);
   if (tuckable.length === 0) return []; // E5: nothing to tuck — no header
   if (!seg.some(r => !isTuckableRow(r))) return []; // E6: nothing would remain visible
-  // E4 P0: success = some Ai row in the segment carries a done-badge
-  // (data-nf-phrase rides the badge and is restored into the header as the
-  // leading ✻ 字句 — the v1-designed copy, 2026-09-06).
+  // E4 P0 done criterion — replay-terminal 批（2026-10-28，案一「A 根治」）改为
+  // 数据驱动优先：「段内存在 writer 盖戳的 terminal 行」（后端 done/agentDone
+  // 落盘 UiMessage.Ai.terminal=true，回放渲染器转成 data-nf-turn-terminal）。
+  // 旧转录无该字段 ⇒ 回落现徽章启发式（badge 携 nf-phrase），渐进兼容——存量
+  // 历史不一次性改写。两判据任一在场即折；都不在场 = 失败/进行中段 ⇒ 平铺
+  // （09-05 排障裁定）/尾段 open（busyTail 瞬态）。徽章继续只做展示元数据载体
+  // （phrase/model 进 header）；terminal 行无徽章时 header 缺 phrase 段照样成立。
+  const termRow = findTerminalRow(seg);
   const badge = findDoneBadge(seg);
-  if (!badge) return []; // failed/unfinished segment: flat, no header
+  if (!termRow && !badge) return []; // failed/unfinished segment: flat, no header
+  const metaBadge = badge || (termRow ? termRow.querySelector('.duration-badge') : null);
   const meta = {
-    model: badge.dataset.nfModel || '',
-    phrase: badge.dataset.nfPhrase || '',
-    title: historyBadgeTitle(seg, badge),
+    model: (badge && badge.dataset.nfModel) || (termRow && termRow.dataset.nfModel) || '',
+    phrase: (badge && badge.dataset.nfPhrase) || '',
+    title: historyBadgeTitle(seg, metaBadge),
   };
   const stats = computeTurnStats(seg);
   const header = buildHeader(chat, seg, meta, stats);
@@ -559,6 +577,17 @@ function summarizeSegment(chat, seg) {
   bindHeaderToggle(header);
   tuckRows(tuckable); // history rebuild: static tuck
   return [header];
+}
+
+/** Writer-stamped turn-terminal row (replay-terminal 批 2026-10-28): the replay
+ *  renderer stamps `data-nf-turn-terminal` on the Ai row the backend persisted
+ *  at the done/agentDone frame (UiMessage.Ai.terminal=true, 「缺席即不落键」 —
+ *  legacy transcripts carry no stamp and fall back to the badge heuristic). */
+function findTerminalRow(seg) {
+  for (let i = seg.length - 1; i >= 0; i--) {
+    if (seg[i].dataset && seg[i].dataset.nfTurnTerminal) return seg[i];
+  }
+  return null;
 }
 
 /** The turn's implicit done-marker: an AI footer badge carrying a duration
