@@ -549,7 +549,11 @@ object ConfigService:
               case Left(err) =>
                 Left(s"nebflow.json unparseable — refusing to rewrite for imagegen update: ${err.message}")
               case Right(parsed) =>
-                val updated = parsed.mapObject(_.add(IMAGEGEN_SECTION, section))
+                // 空对象 = 整节清空（删顶层节，回到未配置态——graceful
+                // degrade 方向与删节同义）；非空 = 整节替换。
+                val updated = section.asObject.filter(_.isEmpty) match
+                  case Some(_) => parsed.mapObject(_.remove(IMAGEGEN_SECTION))
+                  case None    => parsed.mapObject(_.add(IMAGEGEN_SECTION, section))
                 AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
                 Right(())
           }

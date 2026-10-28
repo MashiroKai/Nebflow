@@ -131,13 +131,25 @@ object SttService:
         case None => oldField(name).map(v => name -> v.asJson) // omitted — keep
         case Some(None) => None // explicit clear
         case Some(Some(v)) => Some(name -> v.asJson)
-    val fields = List(
-      apply("endpoint", patch.endpoint),
-      apply("apiKey", patch.apiKey),
-      apply("model", patch.model)
-    ).flatten ++ patch.enabled.map(v => "enabled" -> v.asJson)
-    if fields.isEmpty then None
-    else Some(Json.fromJsonObject(JsonObject.fromIterable(fields)))
+    // D 件（2026-10-28）：清空三串且**没有**显式关停 ⇒ None（整体删档，回退
+    // 浏览器腿——既有语义逐字保留）。唯一例外 = 显式 enabled=false：文件保留
+    // {enabled:false}，停用态跨重启存活（否则一次清空即把总开关静默翻回开）。
+    val clearsToOff = patch.clearsEverything && patch.enabled != Some(false)
+    if clearsToOff then None
+    else
+      val fields = List(
+        apply("endpoint", patch.endpoint),
+        apply("apiKey", patch.apiKey),
+        apply("model", patch.model)
+      ).flatten ++ (patch.enabled match
+        // 显式 = 覆写；省略 = 保留旧文件值（enabled 是总开关，A2「省略=保留」
+        // 语义对它一体适用——否则一次普通保存就把停用态静默翻回开）。
+        case Some(v) => List("enabled" -> v.asJson)
+        case None =>
+          old.flatMap(_.hcursor.downField("enabled").as[Boolean].toOption)
+            .map(v => List("enabled" -> v.asJson)).getOrElse(List.empty)
+      )
+      Some(Json.fromJsonObject(JsonObject.fromIterable(fields)))
 
   end mergeConfig
 

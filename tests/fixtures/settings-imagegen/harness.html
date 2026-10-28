@@ -1,0 +1,44 @@
+<!doctype html>
+<!-- settings-imagegen-harness — test page for
+     tests/settings-imagegen-two-forms.spec.mjs (settings-panel batch 2026-10-28).
+
+     Drives the REAL production module /js/sidebar/imagegenSection.js (the
+     settings「生图」section two-face renderer) over a throwaway static server.
+     All network faces (GET /api/config/imagegen, POST/PUT /api/secrets/*,
+     PUT /api/config/imagegen) are intercepted by the spec via playwright
+     route — the page itself never leaves 127.0.0.1.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>imagegen settings harness</title>
+<link rel="stylesheet" href="/css/base.css">
+<link rel="stylesheet" href="/css/sidebar.css">
+<link rel="stylesheet" href="/css/chat.css">
+<style>
+  body { margin: 0; padding: 24px; max-width: 560px;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+  .settings-section-title { font-weight: 650; font-size: 14px; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+  <div class="settings-section-title" id="imagegen-title">生图 <span id="badge-slot"></span></div>
+  <div id="imagegen-section-wrap"></div>
+  <div id="toast-slot" role="status"></div>
+  <script type="module">
+    // window.__showToast shim (the module toasts on save outcomes).
+    window.__showToast = (msg, kind) => {
+      const slot = document.getElementById('toast-slot');
+      slot.dataset.kind = kind || '';
+      slot.textContent = String(msg);
+      window.__toasts = window.__toasts || [];
+      window.__toasts.push(String(msg));
+    };
+    const mod = await import('/js/sidebar/imagegenSection.js');
+    document.getElementById('badge-slot').innerHTML = mod.debugBadge();
+    window.__imagegen = mod;
+    await mod.bindImagegenSection();
+    document.body.dataset.ready = '1';
+  </script>
+</body>
+</html>

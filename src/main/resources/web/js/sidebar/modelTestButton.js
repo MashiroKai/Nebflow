@@ -111,7 +111,13 @@ export function bindModelTestButtons(root) {
   root.querySelectorAll('.cfg-model-test').forEach((el) => {
     if (!(el instanceof HTMLButtonElement) || el.dataset.testBound === '1') return;
     el.dataset.testBound = '1';
-    el.addEventListener('click', async () => {
+    el.addEventListener('click', async (e) => {
+      // 🔴 停冒泡：provider 卡是整卡点击=编辑弹窗（sidebar.js card click →
+      // showProviderModal）。测试钮嵌在模型行内，事件冒泡到卡即把编辑弹窗
+      // 盖上来——测试请求被遮、后续交互全被 overlay 拦截。按钮语义必须止于
+      // 本钮（2026-10-28 真浏览器 e2e 实证：不拦截则面板被 cfg-modal 锁死）。
+      e.stopPropagation();
+      e.preventDefault();
       if (el.disabled) return; // 测试中不重入
       const provider = el.dataset.testProvider || '';
       const model = el.dataset.testModel || '';

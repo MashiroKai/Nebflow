@@ -1,0 +1,51 @@
+<!doctype html>
+<!-- model-test-button-harness — test page for
+     tests/provider-model-test-button.spec.mjs (settings-panel batch B, 2026-10-28).
+
+     Drives the REAL production module /js/sidebar/modelTestButton.js (the
+     per-model connectivity test button tri-state) over a throwaway static
+     server; POST /api/provider/test is intercepted by the spec.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>model test button harness</title>
+<link rel="stylesheet" href="/css/base.css">
+<link rel="stylesheet" href="/css/sidebar.css">
+<style>
+  body { margin: 0; padding: 24px; max-width: 520px;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+  .cfg-card { margin-bottom: 14px; }
+  .cfg-model-row { align-items: center; }
+  #toast-slot { margin-top: 16px; font-size: 12px; color: #c33; min-height: 16px; }
+</style>
+</head>
+<body>
+  <div id="rows"></div>
+  <div id="toast-slot" role="status"></div>
+  <script type="module">
+    window.__showToast = (msg) => {
+      const slot = document.getElementById('toast-slot');
+      slot.textContent = String(msg);
+    };
+    const mod = await import('/js/sidebar/modelTestButton.js');
+    const rows = document.getElementById('rows');
+    // Two provider cards × two model rows each (matching the settings panel's
+    // renderProviderCard model-row shape).
+    const providers = [
+      { name: 'cmdcode', models: ['deepseek/deepseek-v4.1-flash', 'claude-x'] },
+      { name: 'zhipu', models: ['glm-5.3-flash'] },
+    ];
+    for (const p of providers) {
+      const card = document.createElement('div');
+      card.className = 'cfg-card';
+      card.innerHTML = `<div class="cfg-card-header"><span class="cfg-card-title">${p.name}</span></div>
+        <div class="cfg-model-list">${p.models.map((m) =>
+          `<div class="cfg-model-row"><span class="cfg-model-name">${m}</span><div class="cfg-model-vision"></div>${mod.modelTestButtonHTML(p.name, m)}</div>`).join('')}</div>`;
+      rows.appendChild(card);
+    }
+    mod.bindModelTestButtons(rows);
+    document.body.dataset.ready = '1';
+  </script>
+</body>
+</html>
