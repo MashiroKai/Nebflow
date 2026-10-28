@@ -105,6 +105,7 @@ status: draft
 3. kimi-k2.6：`thinking.type` enabled（默认）/disabled + `thinking.keep` null（默认）/all——可关的代表。
 4. **Anthropic 兼容面**（官方 Claude Code 接入页）：base `https://api.moonshot.cn/anthropic`；k2.7-code 未开思考被拒样例原文：**`400 invalid thinking: only type=enabled is allowed for this model`**；强度经客户端 env `CLAUDE_CODE_EFFORT_LEVEL`（建议 max）表达——即该面的「effort」目前是客户端约定，非请求参数。
 5. **我们配置的 `api.kimi.com/coding/`（Kimi For Coding 端点）**：platform.kimi.com 全站 sitemap（261 页，已核对）**无该主机/端点的文档页** ⇒ 该端点的请求参数面**未能核实**；模型行为按同家族推断（kimi-for-coding≈k2.7-code 系强制思考、k3.1-pro-highspeed≈k3.1-pro 系 effort 制）。列入 §6。
+   【实施批回填 2026-10-29：已探测定性——k3.1 旧 budget 形态在该端点 **40s 零字节超时×3**（旧形态挂死），无 thinking 键与 `reasoning_effort`(high/medium) 均 200 秒回；kimi-for-coding `{type:enabled}` 无 budget 200、`{type:disabled}` 亦 200（比官方 k2.7 文档宽松）。详见本文 §8 与 `reports/20261029_thinking-config-probe-evidence.md`。】
 
 ### 2.4 DeepSeek（v4.1-flash 族）
 
@@ -121,7 +122,7 @@ status: draft
    - 默认：**thinking 默认开启、默认 effort=high**；档位映射 minimal/low→low、medium/high/xhigh→high、max/ultra→max。
    - thinking 模式忽略 temperature/presence/frequency（收下不报错不生效）。
 3. **Anthropic 面字段支持表（与我们协议直接相关）**：`thinking`——**Supported（budget_tokens is ignored）**，即官方 anthropic 兼容面**显式忽略 budget_tokens**；`output_config`——**仅 effort 支持**；消息 `type:"thinking"` 块 Supported、`redacted_thinking` Not Supported；端点 `https://api.deepseek.com/anthropic`。
-4. **cmdcode（`api.commandcode.ai/provider/`）是第三方聚合端点**：无公开参数文档 ⇒ 其真实面**未能核实**；上列官方语义是模型族的最强参照（官方明示 budget_tokens 被忽略 ⇒ 我们现在每天发的 32000 大概率在 cmdcode 链上同样无效）。
+4. **cmdcode（`api.commandcode.ai/provider/`）是第三方聚合端点**：无公开参数文档 ⇒ 其真实面**未能核实**（**勘误 2026-10-29**：live 配置 `cmdcode.protocol = "openai"`、baseUrl `/provider/v1/`——本条 anthropic 面语义对 cmdcode 现配不适用：思考参数今日走 OpenAiAdapter → 顶层 `reasoning_effort`（budgetToEffort(32000)="high"），budget_tokens 从未在 cmdcode 链上发出；`/v1/messages` 探测 400「Model not supported」⇒ 无可服务 anthropic 面，详见 §8）；上列官方语义是模型族的最强参照（官方明示 budget_tokens 被忽略 ⇒ 我们现在每天发的 32000 大概率在 cmdcode 链上同样无效）。
 
 ### 2.5 typesafe / JeV
 
@@ -254,3 +255,55 @@ status: draft
 - **（基准）Anthropic 原生**：budget 型已 deprecated（4.6）/4.7+ 400，行业新基准=adaptive + `output_config.effort` 五档。
 
 （外调原始页面存档：`/tmp/thinking-research/*.txt`，抓取 2026-10-28 21:45–22:05；报告路径 `docs/design/20261028_215449_thinking-config-research__delegate-nebflow-ca5f09f4.zh-CN.md`。）
+
+## 8. 实施批探测定性回填（2026-10-29，thinking-config 实施批）
+
+探测方法与逐请求转录：`reports/20261029_thinking-config-probe-evidence.md`（4xx 原文脱敏入库；
+空/极小请求，每请求 ≤16 可见 token）。对本文各开放问题的回答：
+
+### 8.1 §6-1（兼容面 effort 接受度）——已核定
+
+| 端点 | `reasoning_effort`（顶层） | `output_config.effort` | 判定 |
+|---|---|---|---|
+| zhipu anthropic 面（glm-5.3-flash） | high 200 / medium 200 | 200（容忍） | **接受** ⇒ glmEffort 门置真 |
+| api.kimi.com/coding（k3.1-pro-highspeed） | high 200 / medium 200 | 未采用 | **接受** ⇒ kimiK31Effort 门置真 |
+| cmdcode openai 面（deepseek-v4.1-flash） | high 200 + reasoning_content | 不适用（openai 面无此参数） | openai 面 effort=已有产线语义（budgetToEffort 直发档位） |
+| cmdcode anthropic 面 /v1/messages | — | **400**「Model not supported…Use /provider/v1/chat/completions」 | **无可服务 anthropic 面** ⇒ deepseekEffort 门保持关（无送达面；官方 anthropic 端点无凭据不可探测） |
+
+第二段点亮结果：kimiK31Effort=true、glmEffort=true、deepseekEffort=false（`ThinkingEffortGate`，
+探测定性后按证据置位）。200-接受 ≠ 行为有效性已按档位实测（16-token 极小请求无法测量思考深度），
+但官方原生面语义 + 兼容面接受 = 点亮的充分条件；档位实测留给后续按需。
+
+### 8.2 §6-2（glm budget 32000 是否计入 max_tokens）——已定性
+
+Z1 探针 budget==max_tokens(1024/1024) **不被拒** ⇒ zhipu 兼容面不执行 Anthropic budget 不变式
+（「解析即强校验」形态排除）；生产面（10-15 日 1020 个 glm turn 的 outputTokens）p50=626 /
+p90=3607 / max=20760 < 32000，与「预算吃满、可见 ≤768」的饥饿形态不符。**结论：无饥饿证据
+（倾向忽略/宽容）**；且第一段起 glm wire 不再发 budget_tokens，疑点在新线上形态下不可达。
+族帽 32768 按令未动。
+
+### 8.3 §6-4（cmdcode requireThinkingPassback）——结构性解除 + 双保险落地
+
+- 勘误：live cmdcode 是 **openai 协议**（本文件 §1.4/§1.5「三家现配全走 anthropic 协议」对
+  cmdcode 不成立）——OpenAI 协议 adapter 的 history 序列化本就不回传 thinking 块、DeepSeek
+  openai 面也不要求回传 ⇒ passback 400 风暴在该链路**结构性不可达**；registry 的
+  requireThinkingPassback 只对 anthropic 协议 adapter 生效。
+- 双保险仍按令落地：①代码面——缺省判据从 `providerId=="deepseek"` 改「providerId 或任一模型
+  id 命中 DeepSeek 族」（`ThinkingFamily.requiresPassback`，spec 钉 I5/I5b）；②live 面——
+  nebflow.json cmdcode 节已显式补 `"requireThinkingPassback" : true`（2026-10-29，+42 字节单行
+  定点插入，改前备份 `/tmp/nebflow.json.backup-thinking-20261029_000405`；openai 协议下该键
+  惰性，若未来切 anthropic 协议即预装保护）。
+
+### 8.4 K3 旧形态挂死（新发现，第一段变更的强佐证）
+
+api.kimi.com/coding 对 k3.1-pro-highspeed 的旧 wire 形态 `thinking:{type:enabled,budget_tokens:32000}`
+**40 秒零字节超时×3**（连接建立但不吐首字节）；去掉 thinking 键或改顶层 reasoning_effort 均秒回。
+第一段「k3.1 系不发 thinking 配置」自该端点行为获得直接证据（引擎未重启，重启后生效）。
+
+### 8.5 §6-3（thinking:null）——已修
+
+off 路径统一省略键（`wireThinkingFragment` → offWire：Budget/EffortTopLevel 空 fragment；
+EffortAnthropic 发 `{type:disabled}`；Toggle 兜底 enabled）。回归钉 = wire spec W2/W4/W6b +
+E2E E3。kimi-for-coding 的 disabled 200（K2）进一步说明旧 null 形态在该端点大概率也只是容忍
+而非 400——修复属「形态收敛」而非「救火」。
+
