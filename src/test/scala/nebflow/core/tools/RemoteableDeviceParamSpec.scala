@@ -94,12 +94,12 @@ class RemoteableDeviceParamSpec extends FunSuite:
     // （`37a5b37d8`，2026-10-06）给 Delegate 的 LLM 面新增 `executor` 选择参数
     // （schema:90；call 面 :288 `ExecutorRegistry.resolveRequested`）——执行器
     // 选择是已合并的意图行为，「恰两参数」钉过时。期望集随更 = task/project/
-    // executor；并把 executor 一并纳入「禁 device 注入面」负控对照。
+    // executor/mode；并把 executor 一并纳入「禁 device 注入面」负控对照。
     val schema = funnelSchema("Delegate")
     assertEquals(
       props(schema),
-      Set("task", "project", "executor"),
-      "external-executors 后 Delegate 的 LLM 面 schema 恰三参数（required 同）"
+      Set("task", "project", "executor", "mode"),
+      "external-executors + 双模式批后 Delegate 的 LLM 面 schema 恰四参数（required 同）"
     )
     assert(deviceProp(schema).isEmpty, "Delegate must have NO device property in the LLM-facing schema")
     // （executor 增参的注入面负控由上一用例承载：remoteableTools 不含 Delegate ∧

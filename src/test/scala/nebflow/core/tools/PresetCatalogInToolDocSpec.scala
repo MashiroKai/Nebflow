@@ -76,7 +76,8 @@ class PresetCatalogInToolDocSpec extends FunSuite:
     val props = schema("properties").flatMap(_.asObject).map(_.keys.toSet).getOrElse(Set.empty)
     assert(!props.contains("preset"), s"preset must be gone from Delegate schema, got: $props")
     // external-executors 批 #1225：键集 += `executor`（主 agent 动态选择面）。
-    assertEquals(props, Set("task", "project", "executor"))
+    // 双模式批 2026-10-28：键集 += `mode`（执行形态显式声明面）。
+    assertEquals(props, Set("task", "project", "executor", "mode"))
 
   test("SubTask inputSchema embeds live catalog from the store"):
     val doc = presetParamDoc(SubTaskTool.inputSchema)
