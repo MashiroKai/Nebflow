@@ -1,0 +1,15 @@
+#!/bin/bash
+# nebflow PATH 垫片 — 部署位 ~/.stand/bin/nebflow (权威副本: stand 仓 ops/bin/nebflow-stand-shim)
+#
+# 病根 (作者令 2026-10-27 隔离批): 本位原是「弃用→转发 stand」垫片 (2026-10-22),
+# 而 ~/.zshrc:18 只把 ~/.stand/bin 加进 PATH ⇒ 命令行 `nebflow` 实际起的是
+# stand 6138 实例 —— 跨品牌拉起的总根。修法: 垫片改转投 nebflow 自有根真入口
+# (~/.nebflow/bin/nebflow + 同目录 stand-cli-lib.sh), rc 零改动 (不动用户 shell rc)。
+# 隔离契约: `nebflow` 只动 ~/.nebflow (8080 缺省), `stand` 只动 ~/.stand (6138)。
+REAL="$HOME/.nebflow/bin/nebflow"
+if [ ! -x "$REAL" ]; then
+    echo "ERROR: nebflow real entry missing at $REAL" >&2
+    echo "       repair: cp <stand-repo>/ops/bin/{nebflow,stand-cli-lib.sh} ~/.nebflow/bin/ && chmod +x ~/.nebflow/bin/nebflow" >&2
+    exit 66
+fi
+exec "$REAL" "$@"
