@@ -1,0 +1,169 @@
+diff --git a/src/portal_ingress.rs b/src/portal_ingress.rs
+index 489d774..c3d8e6f 100644
+--- a/src/portal_ingress.rs
++++ b/src/portal_ingress.rs
+@@ -67,6 +67,52 @@ pub const DEFAULT_MINT_RATE_PER_MIN: u32 = 10;
+ pub const HOST_OFFLINE_CLOSE_CODE: u16 = 1011;
+ pub const HOST_OFFLINE_CLOSE_REASON: &str = "host relay link gone";
+ 
++// ── console-reconnect-stability (2026-10-28): edge heartbeat pong ──────────
++//
++// 病灶：浏览器控制台 30s 应用层 ping 的 pong 此前必须完整走
++// 「host 引擎出站 FIFO → relay 上行队列 → relay socket → 本进程下行队列 →
++// 浏览器」全链。任一环被大帧阵发（historyPage / 大 toolResult / 文件字节）
++// 压住，pong 就迟到；前端连续 3 次 miss 即自我逐出，顶栏「连接断开 · 正在
++// 重连」。host 侧 2026-10-28 生产读数：relay 上行 inbox full 当日 3,967 回合
++// （16 点档 2,190），全程 console 出站 overflowDrops/overflowCloses=0 ——
++// 即饥饿不在容量溢出，而在 FIFO 排队。
++//
++// 修法 = ping 在入口**就地应答** pong，同时**照常转发** host：
++//   · host 的 console 僵尸判死（90s 无入站帧回收）依赖的入站活跃钟不变
++//     （ping 仍到 host），host 产生的那份 pong 稍后到达只是冗余帧，
++//     前端按 type=="pong" 清 pendingPong，重复 pong 零副作用；
++//   · 不掩盖真断链：host relay 断开仍走既有 HOST_OFFLINE_CLOSE_CODE 1011
++//     传播 + ws_idle 90s 看门狗；本件只消除「活着但排队」的假死。
++// 止损开关：`PORTAL_EDGE_PONG=0|false|off` 即回到修前逐字行为（只转发）。
++
++/// 控制台心跳 ping 判定：小帧 + JSON type=="ping"（ws.js `sendWs({type:'ping'})`
++/// 产物）。>64B 一律不算（用户输入/大帧绝不误判，也避免为识别而解析大帧）。
++pub fn is_console_heartbeat_ping(text: &str) -> bool {
++    if text.len() > 64 {
++        return false;
++    }
++    serde_json::from_str::<serde_json::Value>(text)
++        .ok()
++        .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(|s| s == "ping"))
++        .unwrap_or(false)
++}
++
++/// 边缘应答开关（默认开）。每次浏览器 WS 升级读一次，运行期改 env 不影响
++/// 已建立的会话。
++pub fn edge_pong_enabled() -> bool {
++    std::env::var("PORTAL_EDGE_PONG")
++        .map(|v| {
++            let v = v.trim().to_ascii_lowercase();
++            !(v == "0" || v == "false" || v == "off")
++        })
++        .unwrap_or(true)
++}
++
++/// 边缘就地应答的 pong 计数（只增读数；A/B 对照：开启后该计数 >0 且
++/// T2_WS_IDLE_TIMEOUTS_TOTAL 不升、前端重连频次下降即为生效证据）。
++pub static T2_EDGE_PONGS_TOTAL: AtomicU64 = AtomicU64::new(0);
++
++
+ // ────────────────────────── T-1/T-2 counters ──────────────────────────
+ 
+ /// T-1: body_frame chunks carried (both directions).
+@@ -122,7 +168,7 @@ pub fn portal_metrics_summary() -> String {
+         "t1_body_frames={} t1_body_bytes={} t1_bp_drops={} t1_http_cycles={} t1_ws_cycles={} \
+          t2_upgrades={} t2_offline_notices={} t2_browser_closes={} t2_hdr_timeouts={} \
+          t2_body_timeouts={} t2_ws_timeouts={} t2_seq_drops={} migration_dropped={} \
+-         runtime_rejects={} wrong_direction={} ws_data_dropped={}",
++         runtime_rejects={} wrong_direction={} ws_data_dropped={} edge_pongs={}",
+         T1_BODY_FRAMES_TOTAL.load(Ordering::Relaxed),
+         T1_BODY_BYTES_TOTAL.load(Ordering::Relaxed),
+         T1_BACKPRESSURE_DROPS_TOTAL.load(Ordering::Relaxed),
+@@ -139,6 +185,7 @@ pub fn portal_metrics_summary() -> String {
+         RUNTIME_REJECTS_TOTAL.load(Ordering::Relaxed),
+         WRONG_DIRECTION_DROPS_TOTAL.load(Ordering::Relaxed),
+         WS_DATA_FRAME_DROPPED_TOTAL.load(Ordering::Relaxed),
++        T2_EDGE_PONGS_TOTAL.load(Ordering::Relaxed),
+     )
+ }
+ 
+diff --git a/src/portal_ingress_test.rs b/src/portal_ingress_test.rs
+index 015e7b6..b232b11 100644
+--- a/src/portal_ingress_test.rs
++++ b/src/portal_ingress_test.rs
+@@ -2386,17 +2386,23 @@ async fn favicon_uploads_agents_families_rides_the_tunnel_ingress() {
+     }
+ }
+ 
+-/// The §7.0 observability line shape: ONE line, exactly the 16 counters as
++/// The §7.0 observability line shape: ONE line, exactly the 17 counters as
+ /// stable `key=value` fields — the shape the T-1/T-2 measurement batch
+ /// parses. (The 60 s ticker in main.rs is a pure-log face over these same
+ /// atomics — no behavior reads it, so only the line shape carries a pin.)
+-/// v1.3 adds `ws_data_dropped` (the stateless contract-2.15 drop face).
++/// v1.3 adds `ws_data_dropped` (the stateless contract-2.15 drop face);
++/// console-reconnect-stability (2026-10-28) adds `edge_pongs` (the edge
++/// heartbeat-pong counter).
+ #[test]
+-fn portal_metrics_summary_is_one_line_of_sixteen_counters() {
++fn portal_metrics_summary_is_one_line_of_seventeen_counters() {
+     let line = portal_metrics_summary();
+     assert!(!line.contains('\n'), "single line: {line}");
+     let fields: Vec<&str> = line.split_whitespace().collect();
+-    assert_eq!(fields.len(), 16, "16 counters expected, got: {line}");
++    assert_eq!(fields.len(), 17, "17 counters expected, got: {line}");
++    assert!(
++        fields.iter().any(|f| f.starts_with("edge_pongs=")),
++        "edge_pongs counter must be present: {line}"
++    );
+     for field in fields {
+         let (k, v) = field
+             .split_once('=')
+@@ -2802,3 +2808,28 @@ fn q5_transport_defaults_are_64mib_message_16mib_frame() {
+     assert_eq!(cfg.max_message_size, Some(64 << 20), "64 MiB message cap");
+     assert_eq!(cfg.max_frame_size, Some(16 << 20), "16 MiB frame cap");
+ }
++
++// ── console-reconnect-stability (2026-10-28): edge heartbeat pong ──────────
++
++/// 边缘 pong 判定钉：只认「小帧 + JSON type=="ping"」。
++/// - 精确 ping 帧 = true；
++/// - 同长度其他 type / 用户输入 / 大帧 = false（不解析大帧、不误判语义）。
++#[test]
++fn edge_pong_ping_detector_is_exact_and_cheap() {
++    assert!(crate::portal_ingress::is_console_heartbeat_ping(r#"{"type":"ping"}"#));
++    assert!(!crate::portal_ingress::is_console_heartbeat_ping(
++        r#"{"type":"pong"}"#
++    ));
++    assert!(!crate::portal_ingress::is_console_heartbeat_ping(
++        r#"{"type":"textDelta","delta":"x"}"#
++    ));
++    // 用户输入里含 "ping"/"type" 字样但 type 非 ping。
++    assert!(!crate::portal_ingress::is_console_heartbeat_ping(
++        r#"{"content":"{\"type\":\"ping\"}"}"#
++    ));
++    // 大帧（>64B）一律不判定为心跳（避免为识别而解析大帧）。
++    let big = format!(r#"{{"type":"ping","pad":"{}"}}"#, "x".repeat(64));
++    assert!(!crate::portal_ingress::is_console_heartbeat_ping(&big));
++    // 非法 JSON = false。
++    assert!(!crate::portal_ingress::is_console_heartbeat_ping("ping"));
++}
+diff --git a/src/routes.rs b/src/routes.rs
+index e1a7b05..a2578eb 100644
+--- a/src/routes.rs
++++ b/src/routes.rs
+@@ -3694,6 +3694,9 @@ async fn console_ws_pump(
+     let ws_idle = state.relay.ingress.timeouts.ws_idle;
+     let mut idle_deadline = tokio::time::Instant::now() + ws_idle;
+     let mut closed_to_host = false;
++    // console-reconnect-stability（2026-10-28）：边缘心跳应答开关（默认开，
++    // PORTAL_EDGE_PONG 可关）——升级时读一次，运行期改 env 不影响已建会话。
++    let edge_pong = crate::portal_ingress::edge_pong_enabled();
+     loop {
+         tokio::select! {
+             msg = to_browser_rx.recv() => {
+@@ -3725,6 +3728,19 @@ async fn console_ws_pump(
+             msg = socket.recv() => {
+                 match msg {
+                     Some(Ok(Message::Text(t))) => {
++                        // Edge heartbeat pong（console-reconnect-stability，2026-10-28）：
++                        // 控制台心跳 ping 就地应答 + 照常转发 host。pong 不再等
++                        // 「host 出站 FIFO → relay 上行 → 本下行」全链排队（大帧阵发
++                        // 时前端 3-miss 自我逐出即「连接断开 · 正在重连」的直接机制）；
++                        // host 侧僵尸判死依赖的入站活跃钟不变（ping 仍转发）。真断链
++                        // 仍由 HOST_OFFLINE 1011 传播与 ws_idle 看门狗收口，本件只消除
++                        // 「活着但排队」的假死。计数 = T2_EDGE_PONGS_TOTAL。
++                        if edge_pong && crate::portal_ingress::is_console_heartbeat_ping(t.as_str()) {
++                            if socket.send(Message::Text(r#"{"type":"pong"}"#.into())).await.is_ok() {
++                                crate::portal_ingress::T2_EDGE_PONGS_TOTAL
++                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++                            }
++                        }
+                         if !push_ws_frame(&state, &key, &request_id, false, t.as_bytes(), true) {
+                             let _ = socket
+                                 .send(Message::Close(Some(CloseFrame {
