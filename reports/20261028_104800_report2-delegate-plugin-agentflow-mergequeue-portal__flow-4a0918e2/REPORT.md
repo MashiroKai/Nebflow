@@ -10,7 +10,7 @@
 | merge-queue | node-652cb43b | ✅ 完成 10:36 | `/Users/kaiyu/Claude code/Stand/20261028_103036_nebflow-merge-queue-recon__flow-4a0918e2.md` |
 | portal-sync | node-443a91ef | ✅ 完成 10:35 | `/Users/kaiyu/Claude code/Stand/design/20261028_103008_recon-entry-dataplane__flow-4a0918e2.md` |
 | delegate-mech | node-989b65a5 | ✅ 文档已落 10:38 | `/Users/kaiyu/Claude code/Stand/reports/20261028_103847_delegate-mech-recon__flow-4a0918e2.md` |
-| agentflow-map | node-9de8bbbd | ⚠️ 会话仍在写、截至 10:48 无产物 → 本报告 §3 为内联补查结果(直接读代码+台账取证) | (无;以 §3 为准) |
+| agentflow-map | node-9de8bbbd | ✅ 完成 10:49(本报告收口时仍在写,已等到位) | `/Users/kaiyu/Claude code/Stand/.nebflow/docs/20261028_104104_agentflow-flowmap-recon__flow-4a0918e2.md`(§3 与其互为印证;机制表述以其为准) |
 
 插曲(合并队列机制的现场实证):10:41:57 另一 delegate(delegate-nebflow-fec22d25,分支 delegate/delegate-nebflow-fec22d25)过合并闸,MergeArtifactCare 把本链三条腿落在主工作区根/design 的未跟踪产物判性后移入 `/Users/kaiyu/.stand/merge-quarantine/Stand/20261028_104157/`(PROVENANCE.json 旁挂,零删除);已按其 restoreHint 于 10:45 全部移回原路径。
 
@@ -42,20 +42,22 @@
 
 ---
 
-## 3. agentflow / flow map(腿:agentflow-map 会话未产出 → 内联补查)
+## 3. agentflow / flow map(腿:agentflow-map,其文档 10:49 落盘;本节与其互为印证)
 
-**两条机制线**(`src/main/scala/nebflow/core/flow/`,全件 13 文件 2241 行):
+**版图:三线一底座**(腿文档核心修正:**现役一次性 AgentFlow 不走 core/flow 的 legacy 引擎**):
 
-- **持久 Flow Map(Flow Map 节点图)**:`FlowTreeActor.scala:275`(852 行,树命令/mount 生命周期)+ FlowTreeRegistry(134 行)+ FlowTreeTypes(56 行)。节点经 NodeEngine 路由:Mail `node:<id>` 寻址 → `NodeDelivery.sendNodeMessage`(`core/project/NodeDelivery.scala:229`)——running 节点下一 turn 边界注入(带 `[NODE-MESSAGE]` 头,:157/:273/:339)、wiring/pending 节点 append 进 task、terminal 节点拒收。验证器 verdict 走 `(fail)<worker>:loop` 回环;loop 节点 maxRounds;合并窗口 mutex(mergeQueuePos/mergeQueue 投影)。
-- **一次性 AgentFlow(ephemeral DAG)**:`core/tools/AgentFlowTool.scala` → `FlowDagRunner.scala:15-24`:one-shot actor,同步逐节点执行,结果经 ImmediateInput 回投调用方后自停;#406 inline DAG 用 `inline-` 前缀实例 id。EphemeralAgentRunner.scala:14-21 是给 MailTool 寄给未挂载 standalone agent 的临时会话(spawn→UserInput→event 驱动等结果→删会话自停)。
+- **持久 Flow Map(项目级 DAG 节点图)= 现役线**,在 `core/project/`(47 文件):flow-map.json 活动区 + flow-map-archive/<batchId> 归档区,result/task 全文拆 `results/<id>.md`/`tasks/<id>.md`(JSON 只留 ≤500 字符摘要,`core/project/FlowMapStore.scala:22-24`);启动收口 NodeStarter.startNode(deps 闸→in-barrier 归零→链控→verdict→互斥三闸链,`NodeStarter.scala:80-183`);整链归档 sweepCompletedChainsDetailed(blocked 永不自动归档,`FlowMapStore.scala:1559-1566`);验证器四态判定表(无 `VERDICT: PASS` 锚定→降级 Pass 直通,`VerdictReader.scala:15-30`);loop 双会话 + LoopBudget 双维熔断(rounds/maxWallMs);merge=true 节点互斥 SEM-1/2/5(同键单飞行、FIFO rank=(readyAt,createdAt,id)、键=realpath git common dir,`MergeMutexPolicy.scala:22-92`)并经同一 MergeQueue 排队闸(`NodeGating.scala:262-304`)。
+- **一次性 AgentFlow(steps)= 同一 NodeEngine 底座**:`AgentFlowTool` 校验(steps 非空/上限/id 唯一/Kahn 判环,有环整单拒收零执行,`core/tools/AgentFlowTool.scala:94-148`)→ `ChainWrite.registerChain` 单事务落图 + deps 反推 out 边(`core/tools/ChainWriteTool.scala:274-364`)→ 入口节点 runDetached 后台 fork 并发,下游 in-barrier 归零后启动(`:445-459`)→ 每步全新一次性子会话 node-<8hex>(leaf 无记忆,`NodeStarter.scala:354`)→ 上游结果按 `=== Node <name> ===` 头注入(`NodeStarter.scala:308-318`)→ 末端沿根边 ImmediateInput 回投创建者(每末端一条,`NodeEngine.scala:29-32`);merge 禁令明文(分支/合并归 delegate 层仲裁,`AgentFlowTool.scala:51`)。
+- **legacy 两线留存未拆**:core/flow/(13 文件 2,241 行)——FlowDagRunner/FlowDagExecutor(旧式 flow.json 引擎,FlowTrigger/FlowExecute 工具面 2026-09-06 裁撤后无活跃 spawn 点,`core/tools/registry.scala:82-86`)与 FlowTree(会话级 Team 挂载编排,`FlowTreeActor.scala:14-26`);EphemeralAgentRunner 只服务 MailTool 寄给未挂载 standalone agent 的临时会话(`EphemeralAgentRunner.scala:14-21`)。属可清理 dead weight。
+- **消息路由与 ask 审计**:单点 `NodeDelivery.sendNodeMessage`(`core/project/NodeDelivery.scala:229-269`;终态拒收 NODE_TERMINAL_NO_MESSAGE);三态路由:running→sessionRef→ImmediateInput(`[NODE-MESSAGE]` 头)、全 miss→"注入未达"追加进 task、wiring/pending→持久 append 进节点 task;每条(成功/未达/追加)必写 `node-message` 事件(:172-174,:326-332)。**ask 审计:仅项目节点会话写 `node-ask` 事件**(best-effort,`agent/AgentProcessing.scala:1389-1408`)——实测 55 天仅 **32 条**,ask 通道几乎未被使用(注:事件类型名是 `node-ask`,grep `"type":"ask"` 为 0 是模式错误,不是零事件)。
 
-**链账本**:`core/delegate/ChainStore.scala:53-64` appendSync journal → 本项目 `.nebflow/chain-ledger.json`(20,151,535 B):**1,664 条链 entries + 54,309 条 rounds 归档记录**,归档侧 `chain-ledger-archive/` 54,309 个 round-*.json(~44.6KB/个);aliases 17。delegate 作用域子图另落 `<ws>/.nebflow/flow-maps/<delegateId>/`(本链 = delegate-nebflow-d99a238a,链已归档、图空)。
+**链账本**:chain-ledger.json 热态 {entries, aliases, rounds, pausedChains…}(`core/project/ChainLedger.scala:251-273`);压缩轮转:热账超 MaxHotRows/MaxHotBytes → 载荷下沉 chain-ledger-archive/round-<n>.json(只归档不删除,checkpoint+journal 崩溃安全,`ChainLedgerStore.scala:18-33`)。实测:20,151,535 B,entries 1,664(archived 1,660 / **active 4**)、aliases 17、rounds 54,309 = archive 目录恰 54,309 个 round-*.json(各 ~44.6KB)。
 
-**使用现状量化**(主项目 `.nebflow/flow-map-events.jsonl`,49,175 行,2026-09-03 → 2026-10-28):
-- 事件类型 Top:dead-session-reaped 10,375 + node-session-dead-reminder 10,357(两族合计 42%,全是僵尸会话回收噪声)、interrupted 4,482、mount-stalled 4,108、node-destroy-scheduled 3,501、**node-message 3,222**、node-destroyed 3,177、dispatch-notify 1,980、chain-archived 1,631、chain-membership-changed 1,196、reactivated 707、settle-sweep 536;`"type":"ask"` **0 条**(面板 ask 追踪未在此日志落事件)。月度:9 月 19,515 / 10 月 29,658;**峰值日 10-15/16/17/18 = 6,863/11,954/5,258/1,994 条,最近 7 天每天仅 2~34 条**——持久 Flow Map 重度使用期已过,日常主承载已转到 delegate 主线 + 一次性 AgentFlow 链(本链即后者形态:ChainWrite 5 节点、终态即归档)。
-- `flow-map-archive/` 1,838 项;主项目 flow-map.json 当前 **0 活跃节点**;`/Users/kaiyu/.stand/flows/` 预置挂载 flow 8 个(code-review、entity-creator、git-merge、nebflow-review-merge、presentation-prep.archived、release-stable、research、weekly-summary)。
+**使用现状量化**(主项目 flow-map-events.jsonl,49,175 行,2026-09-03→10-28):9 月 19,515 / 10 月 29,658;峰值日 10-15/16/17/18 = 6,863/**11,954**/5,258/1,994;**最近 3 个日历日仅 9 条**(10-26:2 / 10-27:5 / 10-28:6,近心跳)。类型构成偏运维面:dead-session-reaped 10,375 + node-session-dead-reminder 10,357(合计 42%)+ interrupted 4,482 + mount-stalled 4,108;编排语义事件小:node-message 3,222、chain-archived 1,631、merge-queue 318、loop-round 145。flow-map.json 当前 **0 活跃节点**(64B);flow-maps/ 284 个 delegate 作用域内嵌目录;flow-map-archive/ 1,838 批;`/Users/kaiyu/.stand/flows/` 预置挂载 flow 8 个。10-28 当天唯一 chain-registered = 本链 flow-4a0918e2。
 
-**分工结论**:delegate(单任务+worktree+合并队列)= 真实改码工作主线;Flow Map 持久 DAG = 需要跨 turn 存活的多节点编排/验证器回环/合并窗口(现偶发);AgentFlow ephemeral = 分发器会话内一次性并行侦查(高频,不留盘面)。
+**腿文档指出的三个遗留风险**(评估采纳):①`TurnStateStore.save` 在 main 已无生产调用点(全仓仅测试直写),FlowTree 崩溃恢复链实际靠文件残留触发;②ledger 4 条 active 与 flow-map.json 0 节点不一致(疑似取消链未走归档清扫);③压缩轮转极高频(28 天 54,309 轮 ≈ 日均 1,900 轮 × 44KB manifest,归档 GB 量级),轮转触发条件值得复查。
+
+**分工结论**:delegate = 单任务粒度全生命周期(分支+worktree+属主自并+MergeQueue 交通引导);Flow Map = 多节点排布/依赖/并发/验证/失败重入,合并收口为显式 merge 节点并共用同一排队闸;监督分层 L1 agentflow 节点(NodeEngine watchdog)→ L3 delegate(BackoffSupervisor)。两者在 MergeQueue 与 verdict 闸交汇,职责不重叠。持久 Flow Map 重度使用期(10-14~10-18)已过,当前近休眠、通道仍活。
 
 ---
 
@@ -97,6 +99,6 @@
 
 ## 附:本报告证据文件
 
-- 四腿原文(绝对路径见 §0 表);本报告 §3 为内联补查(agentflow-map 腿会话截至 10:48 无产物)。
+- 五腿原文全部落盘(绝对路径见 §0 表)。本报告 §3 初稿为内联补查,后与 10:49 落盘的腿文档互证,机制表述已按腿文档修正(AgentFlow 底座归属、node-ask 事件名)。
 - 插件分配活证:`~/.stand/chains/delegate-nebflow-c93d27ad.json`(5 条 step-plugins 行:4×fail-open 空集、1×llm-fallback explorer-toolkit)。
 - 隔离区事件:`~/.stand/merge-quarantine/Stand/20261028_104157/PROVENANCE.json`(delegate-nebflow-fec22d25,3 文件,已复原)。
