@@ -256,7 +256,12 @@ object StaticRoutes:
 
   /** Shared index response build: brand injection + raw-bytes no-cache response. */
   private def brandInjectedResponse(html: String): IO[Response[IO]] =
-    val served = injectBeforeHeadClose(html, brandScriptTag).getOrElse(html)
+    // 陈旧 SPA 指纹提示批（方案 B 小刀③，2026-10-28）：brand 脚本同点追加指纹
+    // 注入——本页被 serve 时拿到引擎当前的前端资源指纹（webFingerprint 惰性单值，
+    // 与此处注入值恒同源），serverConfig 帧下行新值后 ws/main 面比对不等 ⇒ 顶栏
+    // 提示刷新。指纹源 = 当前 static tree 的规范 index 源字节（**非本请求的 html**：
+    // 隧道内联打包脸的字节与之不同，按请求算指纹会让同引擎各脸互判陈旧——假阳）。
+    val served = injectBeforeHeadClose(html, brandScriptTag + fingerprintScriptTag).getOrElse(html)
     val bytes = served.getBytes(java.nio.charset.StandardCharsets.UTF_8)
     IO.pure(
       Response[IO](Status.Ok)
@@ -268,6 +273,37 @@ object StaticRoutes:
         )
     )
   end brandInjectedResponse
+
+  /**
+   * 陈旧 SPA 指纹提示批（方案 B 小刀③，2026-10-28 作者令④）：前端资源指纹 =
+   * 当前 static tree 规范 index（BundledDist ⇒ classpath web-dist/index.html；
+   * DiskDist ⇒ build/web-dist/index.html；DevTree ⇒ classpath web/index.html——
+   * 与各 serve 脸同源取数）源字节的 SHA-256 前 16 hex。惰性单值：JVM 生命周期内
+   * 恒定（staticSource 同款惰性纪律），同引擎所有 serve 脸/所有帧携带同一值——
+   * 陈旧标签页（跨引擎重启续命）持有的旧注入值与新帧值不等 ⇒ 客户端提示刷新。
+   * 读失败 ⇒ 空串（客户端真值守卫静默跳过，绝不假阳）。
+   */
+  lazy val webFingerprint: String =
+    try
+      val html = staticSource match
+        case StaticSource.BundledDist => readClasspathResourceUtf8("web-dist/index.html")
+        case StaticSource.DiskDist(root) =>
+          Some(new String(os.read.bytes(root / "index.html"), java.nio.charset.StandardCharsets.UTF_8))
+        case StaticSource.DevTree => readClasspathResourceUtf8("web/index.html")
+      html.map(fingerprintOf).getOrElse("")
+    catch case _: Throwable => ""
+
+  /** SHA-256 源字节摘要前 16 hex（128 bit，对「页面新鲜度」判别绰绰有余）。 */
+  private[gateway] def fingerprintOf(html: String): String =
+    val md = java.security.MessageDigest.getInstance("SHA-256")
+    val digest = md.digest(html.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+    digest.take(8).map(b => f"${b & 0xff}%02x").mkString
+
+  /** 指纹注入脚本（brand 注入同点；空指纹不注入——测试 harness 静态树无此全局）。 */
+  private def fingerprintScriptTag: String =
+    val fp = webFingerprint
+    if fp.isEmpty then ""
+    else s"""<script>window.__WEB_FINGERPRINT__="$fp";</script>"""
 
   /**
    * W1: the "/" entry point dispatching on [[staticSource]] — bundled

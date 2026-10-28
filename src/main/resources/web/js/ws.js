@@ -722,7 +722,29 @@ export function attemptSilentReseat() {
 //   4. 经 relay 铸一次性 console ticket（复用 remint 的端点），把票挪到
 //      环回兑换面跳过去（#522 已保证 http 腿 cookie 不挂 Secure）。
 // 防摆闸：module 一次 + sessionStorage 30s（与 remint 同纪律）。
+//
+// 近路 miss 诊断面（门户身份透传批·方案 B 小刀②，2026-10-28 作者令「为什么没走
+// localhost 要可答」）：判定链每一环失败都把** miss 原因**写进 sessionStorage
+// `stand_ws_nearpath_loopback_miss`（{at, reason}）+ console.info 一行——排查面从
+// 猜测变成可答（Safari PNA 拒答 / deviceId 不等 / 铸票失败各自可辨）。命中不打。
+// Safari 探测加固（方案 B 小刀①，同批）：环回探测 host **双试** `127.0.0.1` 与
+// `localhost`——Safari 对二者的 PNA/混合内容处理不一致是近路 miss 的头号嫌疑
+// （设计 §6.1），首腿失败自动换 host 重试，预算仍各 4s；命中判据不变（deviceId
+// 等值），双败才记 miss 停留现状。
 let loopbackSwitchAttempted = false;
+
+const LOOPBACK_PROBE_HOSTS = ['127.0.0.1', 'localhost'];
+
+/** 近路 miss 原因曝光（sessionStorage 诊断键 + console 一行；命中不写）。 */
+function noteLoopbackMiss(reason) {
+  try {
+    sessionStorage.setItem(
+      key('ws_nearpath_loopback_miss'),
+      JSON.stringify({ at: Date.now(), reason })
+    );
+  } catch (_) { /* 内存态即可 */ }
+  console.info(`[nearpath] loopback probe miss: ${reason}`);
+}
 
 async function attemptLoopbackNearPath() {
   if (loopbackSwitchAttempted) return false;
@@ -736,26 +758,37 @@ async function attemptLoopbackNearPath() {
     const status = await fetch('/api/portal/status', {
       credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(5000),
     });
-    if (!status.ok) return false;
+    if (!status.ok) { noteLoopbackMiss(`portal_status_http_${status.status}`); return false; }
     const deviceId = (await status.json())?.boundHost?.deviceId;
-    if (typeof deviceId !== 'string' || deviceId === '') return false;
+    if (typeof deviceId !== 'string' || deviceId === '') { noteLoopbackMiss('no_bound_host'); return false; }
     const info = await fetch('/api/health/loopback-info', {
       credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(5000),
     });
-    if (!info.ok) return false;
+    if (!info.ok) { noteLoopbackMiss(`loopback_info_http_${info.status}`); return false; }
     const port = (await info.json())?.port;
-    if (!Number.isInteger(port) || port <= 0 || port > 65535) return false;
-    let probe;
-    try {
-      probe = await fetch(`http://127.0.0.1:${port}/api/health`, {
-        signal: AbortSignal.timeout(4000), cache: 'no-store',
-      });
-    } catch (_) {
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) { noteLoopbackMiss('no_loopback_port'); return false; }
+    // 双 host 探测（小刀①）：127.0.0.1 先行（现状腿），失败换 localhost——首个
+    // 应答 ok 且 deviceId 相等的 host 赢；双败记 miss（PNA 拒答 = fetch throw，
+    // HTTP 非 200 = 别机网关占位，两类原因分开记）。
+    let probe = null;
+    let probeHost = '';
+    let lastProbeStatus = 0;
+    for (const host of LOOPBACK_PROBE_HOSTS) {
+      try {
+        const candidate = await fetch(`http://${host}:${port}/api/health`, {
+          signal: AbortSignal.timeout(4000), cache: 'no-store',
+        });
+        probeHost = host;
+        if (candidate.ok) { probe = candidate; break; }
+        lastProbeStatus = candidate.status;
+      } catch (_) { /* 换下一 host */ }
+    }
+    if (!probe) {
+      noteLoopbackMiss(lastProbeStatus ? `probe_http_${lastProbeStatus}` : 'probe_unreachable');
       return false; // 本机无网关 / CORS(PNA) 拒答 —— 停留 relay 现状
     }
-    if (!probe.ok) return false;
     const probeId = (await probe.json())?.deviceId;
-    if (probeId !== deviceId) return false;
+    if (probeId !== deviceId) { noteLoopbackMiss(`device_mismatch (${probeHost})`); return false; }
     const mint = await fetch('/api/portal/console-ticket', {
       method: 'POST',
       credentials: 'same-origin',
@@ -763,12 +796,14 @@ async function attemptLoopbackNearPath() {
       body: JSON.stringify({ deviceId }),
       signal: AbortSignal.timeout(8000),
     });
-    if (!mint.ok) return false;
+    if (!mint.ok) { noteLoopbackMiss(`mint_http_${mint.status}`); return false; }
     const consoleUrl = (await mint.json())?.consoleUrl;
-    if (typeof consoleUrl !== 'string' || consoleUrl === '') return false;
+    if (typeof consoleUrl !== 'string' || consoleUrl === '') { noteLoopbackMiss('mint_no_url'); return false; }
     const ticket = new URL(consoleUrl, location.href).searchParams.get('ticket');
-    if (!ticket) return false;
-    window.location.href = `http://127.0.0.1:${port}/?ticket=${encodeURIComponent(ticket)}`;
+    if (!ticket) { noteLoopbackMiss('mint_no_ticket'); return false; }
+    // 命中 host 即跳转 host（双 host 腿：赢在 localhost 就跳 localhost——跳转目标
+    // 与探测命中面一致，绝不回退硬编码 127.0.0.1 制造死链）。
+    window.location.href = `http://${probeHost}:${port}/?ticket=${encodeURIComponent(ticket)}`;
     return true;
   } catch (_) {
     return false;
