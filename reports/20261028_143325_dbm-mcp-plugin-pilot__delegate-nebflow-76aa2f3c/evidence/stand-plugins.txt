@@ -1,0 +1,14 @@
+   mcp: - · tools: -
+— 22 plugins (22 dispatchable, 0 blocked, 0 dispatch-off)
+
+dbm-memory 0.1.0 [dispatchable]
+   dbm-memory 包——节点获得把治理化文档记忆落库与检索的能力。适用于需要长期记忆、知识库、文档沉淀、治理树、检索与只读 SQL 查询的任务：结论入库、文档增删改查、记忆搜索、结构盘点。内含 skills：dbm-usage（dbm 记忆引擎作业流程：身份、治理包安装、文档构造、检索、校验）。不适用于会话过程回放与临时草稿记忆。组件面：有 mcp.json（stdio 型 dbm 记忆服务，无凭据要求），无工具扩展。
+   skills: dbm-memory/dbm-usage
+   mcp: dbm · tools: -
+   matched: name:dbm-memory
+— 1 hit(s) for dbm
+
+   skills: dbm-memory/dbm-usage
+   mcp: dbm · tools: -
+   matched: keyword:记忆
+— 1 hit(s) for 记忆

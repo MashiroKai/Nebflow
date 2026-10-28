@@ -1,0 +1,59 @@
+
+> nebflow-dbm@0.1.0 test
+> node --test test/cli.test.js test/embedding.test.js test/governance.test.js test/identity.test.js test/mcp.test.js test/package.test.js test/search.test.js test/sql.test.js test/tokenize.test.js
+
+✔ CLI initializes an identity with an external package and runs all main flows (795.59925ms)
+✔ CLI demo runs four retrieval modes (85.659458ms)
+✔ OpenAI-compatible provider indexes and searches with a remote model (99.740917ms)
+✔ dimension mismatch is rejected before any write (28.797917ms)
+✔ API failure is fail-closed and writes nothing (15.545084ms)
+✔ fallback=hash degrades the provider and keeps the engine usable (31.272583ms)
+✔ Ollama native /api/embeddings is supported (31.167458ms)
+✔ embedding configuration validates provider and fallback (0.483709ms)
+✔ installs an external governance package and validates the closure (66.101042ms)
+✔ constructs a document through its governor and reports the recursive chain (43.780666ms)
+✔ block CRUD is fail-closed and removing the last block rolls back (41.58975ms)
+✔ rejects a second root (24.719291ms)
+✔ rejects a class that its governor does not declare (16.149583ms)
+✔ detects a governor cycle (16.858208ms)
+✔ detects missing inherited CRUD headings (13.8975ms)
+✔ refuses to delete a governor that still has children (14.121625ms)
+✔ reinstalling a package preserves user documents (21.407375ms)
+✔ identities are separate databases with no shared rows (98.172959ms)
+✔ identity strings are normalized and path traversal is rejected (14.646833ms)
+✔ dropping an identity removes its database file (18.126ms)
+✔ MCP server exposes governance, document, search, SQL and identity tools (159.919833ms)
+✔ loads a governance package from its manifest (3.241875ms)
+✔ the database remains self-contained after the package directory disappears (58.179333ms)
+✔ verifyPackage detects source drift (43.052959ms)
+✔ a second governance root is rejected unless forced (24.1875ms)
+✔ scaffoldPackage discovers the root and emits a manifest skeleton (5.038875ms)
+✔ inverted search ranks Chinese bigram matches with BM25 (60.583458ms)
+✔ inverted search handles English words (43.037417ms)
+✔ block-level inverted search returns block hits (43.673875ms)
+✔ fuzzy search recovers an OOV English typo (26.863375ms)
+✔ fuzzy search recovers a CJK bigram typo (33.553709ms)
+✔ fuzzy search returns nothing for an unrelated token with maxDistance=0 (18.520375ms)
+✔ vector search ranks lexical neighbours (18.522292ms)
+✔ hybrid search fuses inverted, fuzzy and vector signals (31.263333ms)
+✔ field and metadata filters restrict candidates (84.085667ms)
+✔ unknown search mode is rejected (32.13925ms)
+✔ read-only SQL can query scoped views (44.701167ms)
+✔ SQL supports CTEs, comments and quoted semicolons (39.43525ms)
+✔ SQL rejects writes, pragmas and multiple statements (32.383542ms)
+✔ SQL output is bounded by the outer LIMIT (27.216292ms)
+✔ schema listing exposes views and columns (21.872833ms)
+✔ search content is queryable through SQL (21.294333ms)
+✔ index tokenizer emits CJK unigrams and bigrams plus ASCII words (1.83225ms)
+✔ query tokenizer uses bigrams for multi-character CJK runs (0.434459ms)
+✔ query tokenizer keeps a lone CJK character (0.064292ms)
+✔ mixed query keeps English words and CJK bigrams (0.136334ms)
+✔ character trigrams cover CJK runs (0.099708ms)
+ℹ tests 47
+ℹ suites 0
+ℹ pass 47
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 977.577041

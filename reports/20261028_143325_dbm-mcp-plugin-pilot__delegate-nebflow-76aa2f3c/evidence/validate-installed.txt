@@ -1,0 +1,36 @@
+[INFO] profile=creator（creator 交付闸：M1-M15 全量+fatal 镜像，退出码 0 为交付闸；惯例面警告（C1-C3/C6）须处置或说明）
+[INFO] C07 缓（D8）：包级行数预算候观测，本版未实现
+[PASS] M01 manifest 可解析且顶层 object — OK
+[PASS] M02 $schema canonical — https://agent-plugins.org/schemas/1.0.0/plugin.schema.json
+[PASS] M03 name 合法（§5.5） — name='dbm-memory'
+[PASS] M04 保留前缀拦截 — 未命中保留前缀（白名单源：built-in baseline）
+[PASS] M05 version 存在且 semver — version='0.1.0'
+[PASS] M06 定位句（—— + 谓词） — 首句='dbm-memory 包——节点获得把治理化文档记忆落库与检索的能力'
+[PASS] M07 明细句（≤400 字符 + 内含 skills：） — 长度=213/400，内含 skills：=有
+[PASS] M08 触发场景句存在 — 命中：'适用于'
+[PASS] M09 边界句（自足自scope） — 命中：'不适用于'（自足边界句即达标；提名相邻插件为可选增强，非要求）
+[PASS] M10 空泛词黑名单 — 零命中
+[PASS] M11 skills 明细一致性 — 声明=['dbm-usage'] 实际=['dbm-usage']
+[PASS] M13 frontmatter 下限 dbm-usage/SKILL.md — name+description 非空
+[PASS] M14 mcp.json 镜像校验 — 1 个 server entry 全部通过镜像规则
+[PASS] M15 占位残留 — 全包零残留
+[PASS] C01 skills/ 非 skill 目录 — skills/ 一级目录全部为 skill 目录（含 SKILL.md）
+[PASS] C02 skills/ 顶层纯文件 — skills/ 顶层无纯文件
+[PASS] C03 裸相对引用/断链/跨包 — SKILL.md 注入面零裸相对引用、零断链、零跨包引用；非注入面零命中
+[WARN] C04 机器绑定绝对路径 — 8 处（vendor/dbm/GUIDE.md×5、vendor/dbm/node_modules/bindings/bindings.js×2、vendor/dbm/node_modules/file-uri-to-path/index.js×1）；样例：vendor/dbm/GUIDE.md:21:D:\workspace@zcode\nebflow\dbm；vendor/dbm/GUIDE.md:25:D:\path\to\governance-package；vendor/dbm/GUIDE.md:52:D:/workspace@zcode/nebflow/dbm/src/mcp.js——改实例事实表述或按 data root/PATH 探测
+[WARN] C05 二进制资产/text-mode — 1 处命中（警告（用户装包模式））：vendor/dbm/node_modules/better-sqlite3/build/Release/better_sqlite3.node（非 strict UTF-8）
+[PASS] C06 frontmatter name==目录名 — 全部 skill 的 frontmatter name 与目录名一致（有 frontmatter 者）
+[PASS] C08 manifest name==目录名 — manifest name 与目录名一致（'dbm-memory'）
+[PASS] C09 官方身份闸镜像 — name='dbm-memory' 非 nebflow- 保留前缀，不经本闸
+[PASS] C10 manifest 字段类型 fatal 面 — version/description/homepage/repository/license/keywords/author 类型全合规（present 者）
+[WARN] C11 未知条目告警面 — 包根未知条目 'vendor'（宽容跳过+告警）
+[PASS] C11b 包根必要文件 Plugin.md — 包根 Plugin.md 在位（恰一文件，分配注入面）
+[PASS] C12 capability 残留 — 无 capability 残留
+[PASS] C13 org.nebflow 镜像 — tools 扩展（有则白名单内）与 viewers 扩展（有则合规）全部通过镜像规则
+[PASS] C14 M14 补差（https/args/headers/围栏） — url loopback-https／args／headers／`./` 围栏镜像全部通过
+[PASS] C15 符号链接/越围栏 — 全树无符号链接
+[PASS] C16 M15 语境豁免 — 无豁免对象（M15 零命中，或命中均属真占位计入 FAIL）
+
+[INFO] digest   sha256:264bf1ce75ae0485d4787f6b4d197d7cc32cb372f83c979bb7fc1e0097c882db  files=51
+
+== RESULT(profile=creator): PASS — 30 checks, 30 PASS, 0 FAIL, 0 human-review hint(s) ==
