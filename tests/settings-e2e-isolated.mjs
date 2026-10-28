@@ -1,5 +1,5 @@
 // settings-e2e-isolated.mjs — settings-panel-jev-imagegen 批真浏览器验证
-// （隔离引擎 :8687，seal=ON 构建；在产引擎 8080/pid 70481 零接触）。
+// （隔离引擎 :8687，seal=ON 构建；在产引擎 pid 70481/网关 6138 零接触）。
 //
 // 会话引导：POST /api/auth/console-ticket（Bearer file token，BearerFileOnly 轨）
 // → GET /?ticket=（303 + HttpOnly stand_session cookie）→ WS/REST 全轨可用。
