@@ -277,3 +277,214 @@ ChainWrite(chainName?, nodes=[{id, name?, task, deps?, description?}])
 **与 MergeQueue 的关系**：无分支无 worktree ⇒ 链产物直接落基工作区，**无物可并**——模式二 delegate 终态走 Release 直收，不进 MergeQueue（merge-ledger 零新形态）；分发器**本人**也不建分支（§5.1）。模式一不受影响（判定机照旧）。
 
 **残余风险显式化**：两 node 绕过纪律硬写同一文件＝后写覆盖先写（无引擎互斥）；缓解＝§7 状态机里分发器的修链职责＋审计可追责。若作者要求强保证，Q4 裁定升级路径（FileLockManager 强制化或 node 级 sandbox checkout）。
+
+## 6. 插件三层机制 spec（跨两模式）
+
+作者令原文拆解：「插件分 **description 层**：①插件面板展示、告知人这个插件是干嘛的；②给分配器（Jev/LLM）作为输入，根据任务选插件。分配器选好插件后，**给 agent 注入的是 Plugin.md**……。**skill 层 skill.md**：agent 根据 Plugin.md 里的指导自己去读，不再由分配面注入。」
+
+**现状基线（重要）**：这条三层链的主体**已在 main 落地**——Plugin.md 注入机制＝2026-10-21「plugin.md = 插件必要文件机制」批（spec 见 [[design/plugin-md-required-file-spec.zh-CN]]；实现 `PluginInjection.scala:203-221`，注入的提示词＝包根 Plugin.md 全文，SKILL.md 整文注入同批退役）；Plugin.md 已进 PluginRegistry known-set（`PluginRegistry.scala:591`，known＝plugin.json/mcp.json/skills/org.nebflow/Plugin.md）；存量 21 包已随批全部补齐 Plugin.md。本节把**尚未成文的规范面**补齐：description 层双消费面契约、Plugin.md 结构规范、注入链时序、向后兼容清单。
+
+### 6.1 description 层：格式与双消费面
+
+**格式（plugin.json 内，非新文件）**：
+
+| 键 | 必填 | 约束 | 消费面 |
+|---|---|---|---|
+| `description` | 是（schema 既有） | ≤200 字符一句话能力陈述；写「能干什么、什么时候用」，不写实现细节 | 面板＋分配器（下） |
+| `keywords` | 否（增量键） | 检索词数组 | 分配器检索／stand-plugins search／面板标签 |
+| `useWhen` | 否（增量键，镜像 AgentEntry.useWhen 先例 `EntityTypes.scala`） | 一句话适用条件 | 分配器（判据文字）／面板 |
+
+**双消费面契约**：
+
+1. **面板面（给人看）**：插件面板卡现读 plugin.json `description`（REST 投影）；本设计要求面板展示补 `keywords` 标签与 `useWhen` 行（有则显示）。文案受众＝人：口语化、说清「装了我能得到什么」。
+2. **分配器面（给模型看）**：`PluginCatalog.CatalogEntry(name, description)`（`PluginCatalog.scala:25`）进 `renderCatalog` 目录行（`catalogLine`，`PluginRegistry.scala:1503-1508`：`- <name>: <description> [skills: … | mcp: … | tools: …]`）→ JeV 状态模板的 `### <name>\n<description>` 块。**方法论红线**（`JevAllocator.scala:21-23` 原文精神）：description 是模型对包能力的唯一陈述，「只给名字不给描述会让模型按名字猜包」——故 description 必须自足、与 Plugin.md 不矛盾（description 是摘要，Plugin.md 是全文，两者失真即分配质量病灶）。
+3. **双面同源**：两消费面读同一字段，**不允许第二 description 源**（防止面板与分配器各说各话）；差异只在呈现（面板可带 skills/mcp 徽标，分配器目录行带技能/MCP 清单尾注——现状已如此）。
+
+### 6.2 Plugin.md 结构规范
+
+Plugin.md＝分配注入的提示词本体（单源，2026-10-21 批定性「该插件的功能描述单源」）。结构规范（章节模板，对齐 `pluginmd.template.md` 与 seed 包现状）：
+
+```
+# <插件名>
+<身份句：一句话这是什么>
+## 能力总述        ← 解决什么问题、核心能力 2-4 条
+## 适用 / 不适用    ← 什么时候该用我、什么时候不该（分配误判的第一道纠偏）
+## Skills          ← 每个 skill 一小节：名字＋一句话＋何时读＋路径
+                     路径形如 {{data_root}}/plugins/<name>/skills/<skill>/SKILL.md
+                     （{{data_root}} 占位符由 PathUtil.substituteDataRoot 渲染，
+                      PluginInjection.scala:212 既有）
+## MCP 工具        ← mcpServers 清单＋每个 server 的用途与典型调用（无则省略）
+## 内建工具授予    ← org.nebflow/tools.json 授了哪些工具、用法提示（无则省略）
+## 约束与红线      ← 使用限制、副作用警告、与其它插件的区别
+```
+
+硬性要求：①**skill 指导读取必须落到路径级**——agent 是按 Plugin.md 给的路径自己 Read 的，路径错＝skill 层静默失效（这是三层机制里唯一的新增脆弱点，validate_plugin.py 校验器建议补「SKILL.md 路径存在性」检查项，实施批裁定）；②体量克制（模板既有「体量克制」条款）——Plugin.md 全文每次注入都占上下文，建议 ≤2KB；③小写 `plugin.md` 同认（回退一查，`PluginInjection.scala:206` 既有）。
+
+### 6.3 注入链时序（文字时序图）
+
+```
+[模式一 · spawn 时]                                [模式二 · 链登记时]
+父会话 Delegate(task)                              分发器 ChainWrite(nodes[])
+  │                                                  │ registerChain 前（0 spawn）
+  ▼                                                  ▼
+PluginInjection.allocatePreparation ←──同件──  逐 node allocatePreparation(node.task)
+  │ PluginsConfig 总闸                                  │（同左全链）
+  ▼ PluginCatalog.entries（description 层）             │
+  │ renderCatalog 目录行                                │
+  ▼ PluginAllocator 三态                                │
+  │   JeV 门→JeV 问对(need_<p>/fit_<p>)                 │
+  │   →LLM 兜底→fail-open；Inert 短路                   │
+  ▼ 命中集 names                                        ▼
+resolvePreparation(names) ──物化进 NodeDef.plugins──→ node spawn（声明集权威）
+  │ 逐包 PluginRegistry.resolve（封禁=拒）              │
+  ▼ injectedPluginBlock：读包根 Plugin.md 全文          │
+  │   缺失/不可读 = Left 显式拒（不静默降级）            │
+  ▼ <injected-plugins> 块 + pluginMcp.acquire           │
+  │   （引用计数；失败回滚整批 failNode/拒 spawn）       │
+  ▼ 会话首条消息注入                                     ▼
+agent 读 Plugin.md ──按其中路径指导──► 自己 Read SKILL.md（skill 层，按需）
+```
+
+要点：分配（三态、可失败、留痕）与注入（解析、不可读即拒）失败语义分层（`PluginInjection.scala:44-46`）；两模式共用同一注入链，差异只在**触发时机与分配输入粒度**（spawn 时×整 brief vs 链登记时×node task）。
+
+### 6.4 与现有 mount/known-set/skill 指导读取的衔接
+
+| 现有机制 | 三层机制下的位置 | 衔接结论 |
+|---|---|---|
+| **mount 权威在派发侧**（NodeEdit plugins 键/分配器；delegate 无自挂权，`tools/stand-plugins` 头注「挂载权仍在派发侧——绝不提供挂载/改配置通道」） | 不变 | 模式一＝分配器代行；模式二＝分配器在 node 生成时代行。delegate/节点始终无热挂载权 |
+| **known-set**（PluginRegistry KNOWN_ROOT_ENTRIES：plugin.json/mcp.json/skills/org.nebflow/Plugin.md，`PluginRegistry.scala:583-591`） | Plugin.md 是包根合法必要文件 | 三层机制零新增根条目；description 增量键进 plugin.json 内部，不动根集 |
+| **skill 指导读取**（SKILL.md＝按需查阅件，面板胶囊深链打开；不再随分配整文注入） | skill 层的本体 | Plugin.md 给路径与时机（§6.2 硬性要求①）；面板深链与 agent Read 两通道并存，互不替代 |
+| **deny-list 五点阻断**（revoked 独立命名空间：不进目录/resolve Left/新分配拒/revalidate 停飞/viewer fail-closed） | 分配与注入的守门面 | 不变；模式二 node 生成时分配同样过目录三级过滤（在目录里＝未被 deny） |
+| **stand-plugins CLI**（只读查询：list/search/mounts） | 主动获取面（分配之外的补救） | 各级 agent 仍可自主查询（作者 2026-10-23 令）；分发器是否挂载列 Q7 |
+
+### 6.5 向后兼容（存量插件怎么补 description 层）
+
+- **存量 21 包**：`description` 全数已在（plugin.json schema 必填，缺者拒载 `PluginRegistry.scala:815-818` 口径）；Plugin.md 已全量补齐（10-21 批）。**需要补的只有可选增量键** `keywords`/`useWhen`——缺省语义＝分配器目录行退化为 name+description（现状行），零破坏。
+- **seed 包先行**：三包 seed（nebflow-frontend-dev/nebflow-plugin-creator/nebflow-qa）随实施批补增量键作范本；其余包按需补（不强制批量迁移）。
+- **无 schema 版本升级**：增量键走「未知键容忍」读法（AgentEntry 解码器同款 Option 键风格）。
+- **校验器**：`validate_plugin.py`（plugin-packaging skill 内）增两条软检查（warning 级不拒载）：description>200 字符、Plugin.md 引用的 SKILL.md 路径不存在（§6.2 硬性要求①的机器面）。
+- **旧引擎兼容**：三层机制不改任何注入协议（`<injected-plugins>` 块形态、mcp 前缀、builtin 白名单过滤全不动，`AgentSessionExecution.scala:2272-2334` 既有）——滚动升级零窗口。
+
+## 7. 数据流与状态机
+
+### 7.1 模式一（极简内核执行器）生命周期
+
+```
+[spawn] Delegate(task, mode=auto) ──选择器──► mode=kernel（mode-decision 审计行）
+   │ PluginInjection.allocatePreparation（保留）
+   │ DelegateWorkspace.prepare 判定机 → 建 delegate/<id> 分支+座位（照旧）
+   ▼
+[runtime] 单会话执行（Subagent/AgentFlow/node 工具面摘除；插件 Plugin.md 注入）
+   │ 监督三线：BackoffSupervisor respawn（滑动窗熔断 5min≤2 次）
+   │           DelegateRevival 跨进程复活（七闸）；watchdog ≥10min 判 failed
+   ▼
+[terminal] 判定机（漂移闸→预检→judge→自申报）→ 终态唯一写点 notifyParentAndStop
+   ├─ Release（就地放行）→ 台账结算/registry 归档 → 父通知
+   └─ HoldForMerge（等待所有权）→ MergeQueue 排队 → 轮到提醒属主自并
+      → MergeAcceptance 机械验收关账（零 LLM）→ PostMergeCleanup
+```
+
+与现状唯一差异＝能力面摘除（§4.2）＋mode 字段落记录；生命周期机器零改动。
+
+### 7.2 模式二（分发器）生命周期
+
+```
+[spawn] Delegate(task, mode=auto) ──选择器──► mode=dispatcher
+   │ 分发器本体零插件（allocation=dispatcher-off 审计行）
+   │ 跳过 worktree 判定机（不建分支不建座位，in-place）
+   │ DelegateFlowHosts.mount → .nebflow/flow-maps/<id>/ 生成
+   ▼
+[compose] 分发器 NodeList 盘点 → ChainWrite 整链一次编写
+   │   校验 all-or-nothing（+模式二新闸：plugins 键拒/worktree seal/merge seal）
+   │   逐 node allocatePreparation(node.task) → 物化 NodeDef.plugins
+   │   ACK 携逐 node 分配摘要
+   ▼
+[execute] 入口节点启动（NodeStarter 后台 fork）→ 下游 in-barrier 归零启动
+   │   node 会话 node-<8hex>；上游结果 === Node <name> === 头注入
+   │   loop（worker/verify+maxRounds+LoopBudget）/verifier 回边/retry/blocked
+   │   并发写安全：拓扑串行化纪律 + writeScope 软闸 WARN（§5.7）
+   │   分发器修链：Mail node:<id> 三态路由 / NodeEdit 精修 / NodeCancel
+   ▼
+[exit] 末端 out=Nebula → 投分发器自己（CreatorDelegate 重映射；Park+补投兜底）
+   │
+[terminal] 分发器申报终态 → 终态唯一写点
+   │   ├─ 链摘要降级登记（chain-archived 事件+台账行）
+   │   ├─ DelegateFlowHosts.unmount → 宽限窗（10min 只读补拉）→ 作用域目录删除
+   │   ├─ 台账结算 note / 插件回收 / registry 归档 / 父通知
+   │   └─ 无合并轮（无分支无 worktree，不进 MergeQueue）
+   ▼
+[crash 恢复] 分发器崩 → BackoffSupervisor respawn（checkpoint 续跑）
+             引擎重启 → DelegateRevival 七闸 → 复活+宿主重挂+redeliver 补投
+             → 「分发器自己负责重启」：引擎保活+给现场，处置决策归分发器
+```
+
+### 7.3 记录面状态字段
+
+- `SubAgentTask` 行＋DelegateRegistry Record 增 `mode` 字段（`kernel|dispatcher`，缺省解码 `kernel`＝存量行零迁移）；mode-decision 审计行（§3.2）为选择过程留痕。
+- flow-map 审计：flow-map-events.jsonl 事件族照写（node-message/chain-archived/…＋新增 write-scope-collision WARN）；`step-plugins` 台账行照写（模式二逐 node）。
+
+## 8. 迁移路径
+
+### 8.1 默认行为变化表
+
+| 面 | 现状 | 双模式落地后（开关 on） |
+|---|---|---|
+| Delegate 内置腿工具面 | Subagent+AgentFlow+node 四件全量 | 按 mode 分叉：kernel 摘编排面；dispatcher 摘 Subagent 留编排面 |
+| Delegate 插件分配 | spawn 时对整 brief 一次分配 | kernel 不变；dispatcher 本体零分配、链登记时逐 node 分配 |
+| delegate worktree | 判是/判否一律建分支+座位 | kernel 不变；dispatcher 整链禁（含本体） |
+| flowmap | 任何 delegate 可建链（node 四件在面） | 仅 dispatcher 模式有 flowmap；kernel 无编排面 |
+| 外部执行器腿 | 单会话零注入 | 零变化（不参与双模式，Q5） |
+| 派发/结果回传面 | 后台任务+完成通知+delegate:\<id\> | 零变化 |
+
+### 8.2 灰度开关
+
+- **总闸**：`nebflow.json` 增 `delegate.dualMode.enabled`（缺省 **false＝现行为逐字节**——任何 delegate 都持全量工具面，即现状）；sys prop `nebflow.delegate.dualMode.enabled` 热读（`PluginsConfig` 热读先例）。总闸关＝§3.2 Inert 态（零选择零审计）。
+- **缺省方向旋钮**：`delegate.dualMode.failopenMode`（缺省 `kernel`）——分配器全败时的缺省模式（§3.2 误判表）。
+- **灰度节奏建议**：①闸 off 合入（纯新增死代码面）→②作者自用实例开闸观察 mode-decision 台账行分布→③判据文字调优（选择器提示词单点）→④默认翻 on（另批）。
+- **回滚**＝关闸（一次性回到现状；已产生的 mode 字段/审计行惰性留存无害）。
+
+### 8.3 与 merge-queue / flow-map 审计的兼容
+
+- **MergeQueue**：模式一零接触；模式二不进队（无物可并）——merge-ledger 无新形态、MergeAcceptance/BootSweep 零改动。P5（重启丢队）独立批不受影响。
+- **flow-map 审计**：flow-map-events.jsonl 照写（新增 write-scope-collision 一种 WARN 类型）；chain-ledger/归档 sweep 照走——模式二的 flowmap 消失（§5.6）复用既有 chain-archived 事件，不新增第二归档面。
+- **面板/REST**：`ChainsReadFace` 行投影照读（mode 无需上面板；若要展示属后续 UI 批）；delegate 面板行显示名契约（[[design/subagent-row-display-name-spec.zh-CN]]）不受影响。
+- **存量清理建议（独立卫生批，非本设计范围）**：现存 284 个 delegate 作用域目录按 §5.6 语义清算（有终态且结果已交付→删；其余保留人工裁定）。
+
+## 9. 风险表与开放问题（待作者裁定清单）
+
+### 9.1 风险表
+
+| # | 风险 | 根因 | 缓解 |
+|---|---|---|---|
+| R-1 | 模式误判（复杂任务→kernel 质量降级 / 简单任务→dispatcher 白付开销） | LLM 判定的固有模糊性 | fail-open 缺省 kernel（便宜侧）；mode-decision 审计行可回归调判据；人工 `mode` 参数覆盖（§3.2） |
+| R-2 | **分发器模式放大 R1**：被误复活的已取消分发器拖整链重来 | 报告二 P1 cancel 三缝隙未修 | **R1 三修列为实施批前置依赖**（墓碑+复活资格查取消指纹）；前置未修前不建议开 dispatcher 灰度 |
+| R-3 | 无 worktree 并行写冲突丢数据 | 整链共享工作区＋无引擎互斥 | 三层防线（§5.7）：拓扑串行化纪律为主，writeScope 软闸 WARN 审计；强保证需求走 Q4 |
+| R-4 | node 级分配开销：≤12 node × 分配调用，链建立延迟上升 | 分配上移到链登记时（同步段） | 缺省逐 node 分配语义最简；JeV 问对批化（1 次调用 N×2 问）为实施批选项；fail-open 保证分配永不阻塞 |
+| R-5 | 分发器单点：链级无独立 wall-clock 预算，分发器长滞留＝整链滞留 | 预算体系锚在 delegate 级（3600s）+节点级（LoopBudget），链级空缺 | 复活链+watchdog 保底；**建议**（实施批裁定）：链级 maxWallMs 预算（LoopBudget 同型），超时→分发器收到系统提醒自主收链 |
+| R-6 | flowmap 删除语义误删未取结果 | 终态通知与取件竞态 | 宽限窗 10min 只读补拉＋摘要先行降级（§5.6）；复活窗内不删 |
+| R-7 | ChainWrite MaxNodes=12 上限对大链不够 | 9.19 逐 node 建无总量闸，整链登记引入上限 | 上限可配（sys prop）；超限拆多链（现文案已指路）；Q6 裁定口径 |
+| R-8 | 选择器判据提示词漂移（改文案＝改行为，无回归锚） | 判据是自然语言单点 | mode-decision 台账行积累回归集；判据文字进 spec 附常数断言（NodeSchemaSlimSpec 同款思路） |
+| R-9 | 分发器会话上下文膨胀（长链多节点通知灌入） | 出口全投分发器自己 | root 通知打包窗机制同构复用（9.19 notifybatch 批，§2.3 #16）；Mail 摘要化既有 |
+
+### 9.2 开放问题（作者原话歧义处，待裁定）
+
+| # | 问题 | 本设计临时立场（可整体推翻） |
+|---|---|---|
+| Q1 | **「不用 achieve 逻辑」精确所指**：考古全史零命中（§2.1）——是指旧 zcode 时代的「目标自宣告循环」（agent 自评已达成即收）？还是某未入库机制？ | 解释为「目标自宣告式循环」，立场＝不引入，一切循环判定式（verify 判词驱动）。若作者所指不同，请给出出处或描述 |
+| Q2 | **极简内核是否连同 ChainWrite/NodeEdit/NodeList/NodeCancel 一并移除**：作者逐字只点名「移除 subagent 和 agentflow」 | 本设计延伸裁定＝一并移除（编排面整体退场，极简才彻底）。若作者要 kernel 保留建链能力，则 kernel/dispatcher 差异缩小为「Subagent 有无＋插件分配时机」，§4.2 表回改 |
+| Q3 | **flowmap「可编辑」的编辑界面归谁**：分发器会话工具面已可编辑；人的编辑写面（面板直接改图）要不要开 | 本设计＝写面单点在分发器会话，人走只读+Mail 建议通道（防双头写冲突）。若要面板写面，需增 REST 写路由+人/机写冲突仲裁（独立小批） |
+| Q4 | **无 worktree 下多 node 并行写同一文件的强制保证**：纯纪律+审计 WARN 够吗？还是要引擎级互斥（FileLockManager 强制化 / node 级 sandbox checkout） | 本设计＝纪律+软闸（§5.7），不加引擎互斥（误锁风险与成本）。若作者要强保证，裁升级路径 |
+| Q5 | **外部执行器（zcode/claude-code/codex）与双模式的关系**：外部腿会有 dispatcher 形态吗（CLI 无平台工具，机制上不可行）？ | 本设计＝外部腿恒为单会话执行形态（=kernel 语义），双模式只作用于内置腿；「外部仍走目前的 delegate 模式」按「派发/回传面不变」解读 |
+| Q6 | **「能力与 9.19 一致」的口径与链规模上限**：MaxNodes=12 是否抬？9.19 逐 node 建无总量闸，整链一次编写天然需要上限 | 本设计＝上限保留 12、可配可抬（拆多链文案已有）。若作者期望大链（>12 节点）一次成链，实施批抬闸并补链级预算（联动 R-5） |
+| Q7 | **分发器模式零插件 vs stand-plugins CLI**：CLI 是仓内工具非插件——分发器要不要挂只读查询 CLI（自主查目录的补救面） | 本设计＝挂（CLI 只读零副作用，与「不给分发器分配插件」不冲突——它不是插件；分配权仍在分配器）。若作者要分发器完全无查询面，摘除即可 |
+| Q8 | **TaskBoard 在模式二的存在**：9.19 分发器有 TaskBoard 管任务单；delegate 分发器无项目上下文，TaskBoard 挂载判据（projectBoardSession）不命中 | 本设计＝模式二无 TaskBoard（裁掉/降级，§2.3 #12），任务单职能由 ChainStore 审计行+台账承担。若作者要模式二带轻量任务单，需定义 per-delegate board 形态（新面，建议不做） |
+| Q9 | **mode 参数进 Delegate 工具 schema 的形态**：enum `kernel|dispatcher|auto`（缺省 auto）是否符合作者预期；要不要同时暴露在 AgentControl/续聊面（运行中改模式＝不支持，模式是 spawn 时终身属性） | 本设计＝仅 spawn 时三值 enum；运行中不改模式（改模式=重派）。若要运行期切换（kernel 会话中途升 dispatcher），是新机制（能力面热变更），建议不做 |
+| Q10 | **flowmap「消失」的精确语义**：删目录（本设计）vs 归档保留 N 天 vs 立即删 | 本设计＝摘要先行+unmount+10min 宽限后删（§5.6）。作者可改裁为归档保留（现状行为），代价＝活动区持续堆积（报告二 §3.3 读数） |
+
+## 相关文档
+
+- [[20261028_171800_审计报告二五机制__delegate-nebflow-a13975e4]] — 报告二权威版：§1 问题映射表的全部证据锚出处。
+- [[design/delegate-supervision-revival-design.zh-CN]] — 监督链分层（L0-L4）与复活腿设计：模式二「分发器自己负责重启」的引擎侧承接面。
+- [[design/plugin-md-required-file-spec.zh-CN]] — Plugin.md 必要文件机制 spec：三层机制注入面的既有 spec 底座。
+- [[design/subagent-row-display-name-spec.zh-CN]] — delegate 面板行显示名契约：迁移后面板兼容性参照。
+- [[glossary]] — 词表；[[index]] — 文档库入口。
