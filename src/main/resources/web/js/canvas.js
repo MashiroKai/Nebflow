@@ -1123,6 +1123,21 @@ export function activeCanvasPane() {
   return entry ? entry.paneEl : null;
 }
 
+/** Tab entry accessor (canvas ask mode 批 2026-10-28：ask dock 以 absPath 建
+ *  每文件独立 session 的只读面；外部模块禁直读 tabs Map）。
+ *  @param {string} id
+ *  @returns {{id: string, title: string, absPath: string|null, filePath: string|null}|null} */
+export function canvasTabEntry(id) {
+  const e = tabs.get(id);
+  if (!e) return null;
+  return { id: e.id, title: e.title, absPath: e.absPath || null, filePath: e.filePath || null };
+}
+
+/** Active tab entry accessor（同上，切卡即切该文件会话的读数单点）。 */
+export function activeCanvasEntry() {
+  return activeTabId ? canvasTabEntry(activeTabId) : null;
+}
+
 // ── File viewers ───────────────────────────────────────────
 
 /** Render a web URL into a tab pane: slim toolbar (hostname + "open in new

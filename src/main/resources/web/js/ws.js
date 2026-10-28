@@ -69,6 +69,14 @@ export function setBgAgentStepInterceptor(fn) { bgAgentStepInterceptor = fn; }
 let teamMetaApplier = null;
 export function setTeamMetaApplier(fn) { teamMetaApplier = fn; }
 
+// ── Ask-dock frame interceptor (registered by askDock.js) ────────────────
+// Canvas ask mode（2026-10-28 实施批）：sessionId = "ask-<hash>" 的帧（后端
+// WsAskHandlers 域 + ask 会话 AgentStream 流）路由进气泡列，与主会话视图
+// 零交集。分支在 session 过滤之前（ask 会话不是 activeSession，不过滤会被
+// 既有 sessionId 闸整批丢弃）；consume 后恢复 activeView（BUG 6 同律）。
+let askFrameSink = null;
+export function setAskFrameSink(fn) { askFrameSink = fn; }
+
 // ── Hidden-view render gating ─────────────────────────────────────────────
 // Popup ChatViews (flow / bg-agent / team) have visible === false while their
 // popup is closed. Streaming events for hidden views are dispatched with
@@ -1157,6 +1165,16 @@ export function connect() {
       // event-loop tick. Snapshot here and restore after each interceptor
       // branch so popup rendering never disturbs the user's current view.
       const savedView = activeView;
+
+      // ── Ask dock: per-file ask sessions route to the dock ──────────────
+      // (ask-* sessionIds are never the active main session; handled BEFORE
+      // the session filter so the dock lane never touches the main view.)
+      if (msg.sessionId && typeof msg.sessionId === 'string' && msg.sessionId.startsWith('ask-')
+          && askFrameSink) {
+        try { askFrameSink(msg); } catch (e) { console.error('[ws] ask handler error for', msg.type, ':', e.message); }
+        setActiveView(savedView);
+        return;
+      }
 
       // ── Message filtering ────────────────────────────────────────────
       // GLOBAL/TERMINAL/STREAM sets are module-level (see top of file) for O(1)
