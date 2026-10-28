@@ -20,35 +20,40 @@ import io.circe.{Decoder, HCursor, Json}
  * `ModelConfig.thinkingKind` / `ProviderConfig.thinkingKind` 显式给出时逐字采用。
  */
 
-/** 产品档位（对齐 Anthropic 五档与各家交集）。`off` 不入本枚举：off 的唯一
-  * 表示是 `enabled=false`（设计 §4.1 的 off 档在实现里收敛到开关位，避免同一
-  * 语义出现两个可互相矛盾的表示）。
-  */
+/**
+ * 产品档位（对齐 Anthropic 五档与各家交集）。`off` 不入本枚举：off 的唯一
+ * 表示是 `enabled=false`（设计 §4.1 的 off 档在实现里收敛到开关位，避免同一
+ * 语义出现两个可互相矛盾的表示）。
+ */
 enum ThinkingEffort:
   case Low, Medium, High, Max
 
   /** wire 名（reasoning_effort / output_config.effort 的档位拼写）。 */
   def wireName: String = this match
-    case Low    => "low"
+    case Low => "low"
     case Medium => "medium"
-    case High   => "high"
-    case Max    => "max"
+    case High => "high"
+    case Max => "max"
 
-  /** 三档面（GLM / DeepSeek / Kimi K3 官方仅收 low/high/max）的映射：
-    * medium→high（DeepSeek 官方映射表；GLM Coding Plan 同型；Kimi 三档面
-    * medium→high 为作者已裁定的推荐取）。low/high/max 直通。
-    */
+  /**
+   * 三档面（GLM / DeepSeek / Kimi K3 官方仅收 low/high/max）的映射：
+   * medium→high（DeepSeek 官方映射表；GLM Coding Plan 同型；Kimi 三档面
+   * medium→high 为作者已裁定的推荐取）。low/high/max 直通。
+   */
   def toThreeTier: ThinkingEffort = this match
     case Medium => High
-    case other  => other
+    case other => other
+
+end ThinkingEffort
 
 object ThinkingEffort:
+
   given Decoder[ThinkingEffort] = Decoder.decodeString.emap {
-    case "low"    => Right(Low)
+    case "low" => Right(Low)
     case "medium" => Right(Medium)
-    case "high"   => Right(High)
-    case "max"    => Right(Max)
-    case other    => Left(s"Unknown thinking effort: $other (low|medium|high|max)")
+    case "high" => Right(High)
+    case "max" => Right(Max)
+    case other => Left(s"Unknown thinking effort: $other (low|medium|high|max)")
   }
 
   given Encoder[ThinkingEffort] = Encoder.encodeString.contramap(_.wireName)
@@ -69,30 +74,33 @@ object EffortWire:
  */
 object ThinkingEffortGate:
 
-  /** deepseek 族 `output_config.effort`：官方 anthropic 面字段支持表明示
-    * Supported，但（a）现配端点 cmdcode 经探测定性**没有可服务的 anthropic 面**
-    * （POST /provider/v1/messages → 400 「Model "deepseek/deepseek-v4.1-flash" is
-    * not supported on this endpoint. Use /provider/v1/chat/completions for OpenAI
-    * and OSS models.」，2026-10-29 探测）；（b）官方 anthropic 端点无凭据不可探测。
-    * 该族 wire（EffortAnthropic）现无活配置 ⇒ 门保持关；未来接 anthropic 协议
-    * deepseek 端点时凭官方文档 + 探测置真。
-    */
+  /**
+   * deepseek 族 `output_config.effort`：官方 anthropic 面字段支持表明示
+   * Supported，但（a）现配端点 cmdcode 经探测定性**没有可服务的 anthropic 面**
+   * （POST /provider/v1/messages → 400 「Model "deepseek/deepseek-v4.1-flash" is
+   * not supported on this endpoint. Use /provider/v1/chat/completions for OpenAI
+   * and OSS models.」，2026-10-29 探测）；（b）官方 anthropic 端点无凭据不可探测。
+   * 该族 wire（EffortAnthropic）现无活配置 ⇒ 门保持关；未来接 anthropic 协议
+   * deepseek 端点时凭官方文档 + 探测置真。
+   */
   val deepseekEffort: Boolean = false
 
-  /** kimi K3 族顶层 `reasoning_effort`：**已点亮**（探测定性 2026-10-29，
-    * api.kimi.com/coding/v1/messages：`reasoning_effort:"high"` → 200、
-    * `reasoning_effort:"medium"` → 200（零 400 参数报错；探测证据
-    * reports/20261029_thinking-config-probe-evidence.md）。platform.kimi.com
-    * 官方文档原生面语义 = low/high/max，medium 由 EffortWire.threeTier 客户端
-    * 映射 high（作者裁定取 high）。
-    */
+  /**
+   * kimi K3 族顶层 `reasoning_effort`：**已点亮**（探测定性 2026-10-29，
+   * api.kimi.com/coding/v1/messages：`reasoning_effort:"high"` → 200、
+   * `reasoning_effort:"medium"` → 200（零 400 参数报错；探测证据
+   * reports/20261029_thinking-config-probe-evidence.md）。platform.kimi.com
+   * 官方文档原生面语义 = low/high/max，medium 由 EffortWire.threeTier 客户端
+   * 映射 high（作者裁定取 high）。
+   */
   val kimiK31Effort: Boolean = true
 
-  /** glm 族顶层 `reasoning_effort`：**已点亮**（探测定性 2026-10-29，
-    * open.bigmodel.cn/api/anthropic/v1/messages：`reasoning_effort:"high"` → 200、
-    * `"medium"` → 200（零 400 参数报错；同上证据文件）。智谱官方映射
-    * medium→high（Coding Plan 面文档），EffortWire.threeTier 客户端先行映射。
-    */
+  /**
+   * glm 族顶层 `reasoning_effort`：**已点亮**（探测定性 2026-10-29，
+   * open.bigmodel.cn/api/anthropic/v1/messages：`reasoning_effort:"high"` → 200、
+   * `"medium"` → 200（零 400 参数报错；同上证据文件）。智谱官方映射
+   * medium→high（Coding Plan 面文档），EffortWire.threeTier 客户端先行映射。
+   */
   val glmEffort: Boolean = true
 
   /**
@@ -112,34 +120,42 @@ object ThinkingEffortGate:
       case _ => None
 end ThinkingEffortGate
 
-/**
- * 模型思考面的能力类（设计 §4.2 wire 翻译表的行；AnthropicAdapter 单点翻译）。
- */
+/** 模型思考面的能力类（设计 §4.2 wire 翻译表的行；AnthropicAdapter 单点翻译）。 */
 enum ThinkingKind:
-  /** Anthropic ≤4.5 语义：`thinking:{type:enabled, budget_tokens:N}`；off → 省略键
-    * （修掉旧 `"thinking": null` 线上形态）。
-    */
+  /**
+   * Anthropic ≤4.5 语义：`thinking:{type:enabled, budget_tokens:N}`；off → 省略键
+   * （修掉旧 `"thinking": null` 线上形态）。
+   */
   case Budget
-  /** DeepSeek 族 anthropic 面：`thinking:{type:enabled}`——**不发 budget_tokens**
-    * （官方字段支持表白纸黑字 "budget_tokens is ignored"）；off → `thinking:{type:disabled}`
-    * （官方支持关）。effort 档位走 `output_config.effort`（核定后点亮）。
-    */
+
+  /**
+   * DeepSeek 族 anthropic 面：`thinking:{type:enabled}`——**不发 budget_tokens**
+   * （官方字段支持表白纸黑字 "budget_tokens is ignored"）；off → `thinking:{type:disabled}`
+   * （官方支持关）。effort 档位走 `output_config.effort`（核定后点亮）。
+   */
   case EffortAnthropic
-  /** 强制思考开关型（GLM-5.3 系、kimi-for-coding/k2.x 系）：`thinking:{type:enabled}`，
-    * **不发 budget_tokens**；off 是错误路径（disabled→400）→ 引擎兜底按 enabled 发。
-    */
+
+  /**
+   * 强制思考开关型（GLM-5.3 系、kimi-for-coding/k2.x 系）：`thinking:{type:enabled}`，
+   * **不发 budget_tokens**；off 是错误路径（disabled→400）→ 引擎兜底按 enabled 发。
+   */
   case Toggle
-  /** Kimi K3 系：**完全不发 thinking 配置**（官方迁移指引明示 K3 应移除）；
-    * 深度 = 顶层 `reasoning_effort`（核定后点亮）。
-    */
+
+  /**
+   * Kimi K3 系：**完全不发 thinking 配置**（官方迁移指引明示 K3 应移除）；
+   * 深度 = 顶层 `reasoning_effort`（核定后点亮）。
+   */
   case EffortTopLevel
 
+end ThinkingKind
+
 object ThinkingKind:
+
   given Decoder[ThinkingKind] = Decoder.decodeString.emap {
-    case "budget"          => Right(Budget)
+    case "budget" => Right(Budget)
     case "effortAnthropic" => Right(EffortAnthropic)
-    case "toggle"          => Right(Toggle)
-    case "effortTopLevel"  => Right(EffortTopLevel)
+    case "toggle" => Right(Toggle)
+    case "effortTopLevel" => Right(EffortTopLevel)
     case other =>
       Left(s"Unknown thinkingKind: $other (budget|effortAnthropic|toggle|effortTopLevel)")
   }
@@ -165,16 +181,31 @@ object ThinkingFamily:
     else if m.contains("kimi") then ThinkingKind.Toggle
     else ThinkingKind.Budget
 
-  /** DeepSeek 模型族判定（requireThinkingPassback 的代码面判据——旁支修复：
-    * 旧启发式只认 providerId=="deepseek"，现配 providerId 是 cmdcode（服务
-    * deepseek 模型族）⇒ 缺省 false ⇒ 跨 provider 历史回退存在 400 隐患）。
-    */
+  /**
+   * DeepSeek 模型族判定（requireThinkingPassback 的代码面判据——旁支修复：
+   * 旧启发式只认 providerId=="deepseek"，现配 providerId 是 cmdcode（服务
+   * deepseek 模型族）⇒ 缺省 false ⇒ 跨 provider 历史回退存在 400 隐患）。
+   */
   def isDeepSeekFamily(model: String): Boolean = model.toLowerCase.contains("deepseek")
 
-/** provider/model 级 `thinking` 层节点：全字段 Option——「未设的字段逐项上溯，
-  * 不整块覆盖」（设计 §4.1 按字段就近继承）的精确表示。decoder 派生 ⇒ 旧配置
-  * 解析行为逐字节不变。
-  */
+  /**
+   * requireThinkingPassback 的缺省判定（registry 单点消费；spec 钉）：
+   * 显式配置永远赢；缺省 = providerId 或任一模型 id 命中 DeepSeek 模型族。
+   * （探测定性 2026-10-29：现配 cmdcode 无可服务 anthropic 面 ⇒ 该族判定当下
+   * 无活配置命中，纯前瞻根治——未来接 anthropic 协议 deepseek 端点即受保护。）
+   */
+  def requiresPassback(providerId: String, provider: ProviderConfig): Boolean =
+    provider.requireThinkingPassback.getOrElse {
+      providerId.toLowerCase.contains("deepseek") ||
+      provider.models.exists(m => isDeepSeekFamily(m.id))
+    }
+end ThinkingFamily
+
+/**
+ * provider/model 级 `thinking` 层节点：全字段 Option——「未设的字段逐项上溯，
+ * 不整块覆盖」（设计 §4.1 按字段就近继承）的精确表示。decoder 派生 ⇒ 旧配置
+ * 解析行为逐字节不变。
+ */
 case class ThinkingLayerConfig(
   enabled: Option[Boolean] = None,
   budgetTokens: Option[Int] = None,
@@ -218,6 +249,7 @@ object ThinkingMode:
   )
 
   object ThinkingLayerPatch:
+
     given Decoder[ThinkingLayerPatch] = Decoder.instance { c =>
       for
         enabled <- optPatchField[Boolean](c, "enabled")
@@ -227,26 +259,30 @@ object ThinkingMode:
 
     private def optPatchField[A: Decoder](c: HCursor, key: String): Decoder.Result[Option[Option[A]]] =
       c.downField(key).focus match
-        case None            => Right(None) // 键缺席 = 不动
+        case None => Right(None) // 键缺席 = 不动
         case Some(Json.Null) => Right(Some(None)) // 显式 null = 清除（回继承）
-        case Some(node)      => node.as[A].map(a => Some(Some(a)))
+        case Some(node) => node.as[A].map(a => Some(Some(a)))
 
-  /** patch 应用到单个 model 节点：只动 thinking 键内被 patch 的键；patch 后节点
-    * 为空 ⇒ 整个 thinking 键摘除（= 完全继承）。
-    */
+  /**
+   * patch 应用到单个 model 节点：只动 thinking 键内被 patch 的键；**空 patch
+   * = 整层清除**（WS thinking 键缺席 = 完全继承）；patch 后节点为空 ⇒ 整个
+   * thinking 键摘除（= 完全继承）。
+   */
   private[shared] def applyLayerPatch(modelNode: Json, patch: ThinkingLayerPatch): Json =
-    val existing = modelNode.hcursor.downField("thinking").focus.getOrElse(Json.obj())
-    var obj = existing.asObject.getOrElse(io.circe.JsonObject.empty)
-    patch.enabled.foreach {
-      case Some(b) => obj = obj.add("enabled", b.asJson)
-      case None    => obj = obj.remove("enabled")
-    }
-    patch.effort.foreach {
-      case Some(e) => obj = obj.add("effort", e.asJson)
-      case None    => obj = obj.remove("effort")
-    }
-    if obj.isEmpty then modelNode.mapObject(_.remove("thinking"))
-    else modelNode.mapObject(_.add("thinking", Json.fromJsonObject(obj)))
+    if patch.enabled.isEmpty && patch.effort.isEmpty then modelNode.mapObject(_.remove("thinking"))
+    else
+      val existing = modelNode.hcursor.downField("thinking").focus.getOrElse(Json.obj())
+      var obj = existing.asObject.getOrElse(io.circe.JsonObject.empty)
+      patch.enabled.foreach {
+        case Some(b) => obj = obj.add("enabled", b.asJson)
+        case None => obj = obj.remove("enabled")
+      }
+      patch.effort.foreach {
+        case Some(e) => obj = obj.add("effort", e.asJson)
+        case None => obj = obj.remove("effort")
+      }
+      if obj.isEmpty then modelNode.mapObject(_.remove("thinking"))
+      else modelNode.mapObject(_.add("thinking", Json.fromJsonObject(obj)))
 
   /**
    * 把模型层 patch 落进整份 nebflow.json（纯函数）：定点改
@@ -260,9 +296,16 @@ object ThinkingMode:
     patch: ThinkingLayerPatch
   ): Either[String, Json] =
     for
-      providerNode <- config.hcursor.downField("llm").downField("providers").downField(providerId).focus
+      providerNode <- config.hcursor
+        .downField("llm")
+        .downField("providers")
+        .downField(providerId)
+        .focus
         .toRight(s"unknown provider: $providerId")
-      models <- providerNode.hcursor.downField("models").as[List[Json]].left
+      models <- providerNode.hcursor
+        .downField("models")
+        .as[List[Json]]
+        .left
         .map(_ => s"provider $providerId has no models array")
       hit = models.exists(_.hcursor.downField("id").as[String].toOption.contains(modelId))
       _ <- Either.cond(hit, (), s"unknown model: $modelId")
@@ -270,12 +313,11 @@ object ThinkingMode:
         if m.hcursor.downField("id").as[String].toOption.contains(modelId) then applyLayerPatch(m, patch) else m
       }
       patchedProvider = providerNode.mapObject(_.add("models", Json.fromValues(patchedModels)))
-    yield
-      config.mapObject { top =>
-        val llm = top("llm").getOrElse(Json.obj()).mapObject { llmObj =>
-          val providers = llmObj("providers").getOrElse(Json.obj()).mapObject(_.add(providerId, patchedProvider))
-          llmObj.add("providers", providers)
-        }
-        top.add("llm", llm)
+    yield config.mapObject { top =>
+      val llm = top("llm").getOrElse(Json.obj()).mapObject { llmObj =>
+        val providers = llmObj("providers").getOrElse(Json.obj()).mapObject(_.add(providerId, patchedProvider))
+        llmObj.add("providers", providers)
       }
+      top.add("llm", llm)
+    }
 end ThinkingMode

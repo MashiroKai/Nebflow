@@ -321,7 +321,12 @@ class AnthropicAdapter(
         params.thinkingResolved.flatMap(_.clearThinking).foreach { c =>
           thinkingObj += ("clear_thinking" -> c.asJson)
         }
-        Json.obj("thinking" -> Json.obj(thinkingObj.toList*))
+        val base = Json.obj("thinking" -> Json.obj(thinkingObj.toList*))
+        // glm 族 effort 腿（门开时）：顶层 reasoning_effort（body 级，非 thinking 键内）。
+        ThinkingEffortGate
+          .effortFragment(kind, params.model, params.thinkingResolved.flatMap(_.effort)) match
+          case Some(extra) => base.deepMerge(extra)
+          case None => base
       case ThinkingKind.EffortTopLevel =>
         // K3：不发 thinking 配置（官方明示移除）；effort 核定后走顶层
         // reasoning_effort（第二段点亮腿）。

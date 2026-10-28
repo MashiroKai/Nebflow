@@ -57,13 +57,9 @@ class ProviderRegistry(
           // Anthropic is the opposite. Explicit config overrides the default.
           // thinking-config 批（2026-10-28）旁支修复：缺省判据从
           // providerId=="deepseek" 扩为「providerId 或任一模型 id 命中 DeepSeek
-          // 模型族」——现配 providerId 是 cmdcode（服务 deepseek-v4.1-flash 族）
-          // ⇒ 旧判据缺省 false ⇒ 跨 provider 历史回退存在同型 400 隐患
-          // （调研 §1.8/§6-4）。代码面根治 + live 配置显式补键 = 双保险。
-          requireThinkingPassback = provider.requireThinkingPassback.getOrElse {
-            val id = providerId.toLowerCase
-            id.contains("deepseek") || provider.models.exists(m => ThinkingFamily.isDeepSeekFamily(m.id))
-          }
+          // 模型族」（判定单点 = ThinkingFamily.requiresPassback，spec 钉）——
+          // 代码面根治 + live 配置显式补键 = 双保险。
+          requireThinkingPassback = ThinkingFamily.requiresPassback(providerId, provider)
         )
 
   def getAdapter(providerId: String): IO[ProviderAdapter[IO]] =

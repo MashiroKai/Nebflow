@@ -341,7 +341,13 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     // kimi search forces thinking disabled; qwen gets enable_search.
     val bodyWithTools = bodyWithSearchTools(body, params.tools, params.providerSearch)
     // Thinking parameters are model-specific: GLM uses `thinking`, OpenAI uses `reasoning_effort`
-    val bodyWithThinking = bodyWithSearchThinking(bodyWithTools, params.model, params.thinking, params.providerSearch, params.thinkingResolved)
+    val bodyWithThinking = bodyWithSearchThinking(
+      bodyWithTools,
+      params.model,
+      params.thinking,
+      params.providerSearch,
+      params.thinkingResolved
+    )
     val bodyWithSearchExtras = bodyWithThinking.deepMerge(searchRequestExtras(params.providerSearch))
     val bodyWithMetadata = (params.sessionId, params.agentId) match
       case (Some(sid), Some(aid)) =>
@@ -439,7 +445,13 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     // search must be armed here too.
     val bodyWithTools = bodyWithSearchTools(body, params.tools, params.providerSearch)
     // Thinking parameters are model-specific: GLM uses `thinking`, OpenAI uses `reasoning_effort`
-    val bodyWithThinking = bodyWithSearchThinking(bodyWithTools, params.model, params.thinking, params.providerSearch, params.thinkingResolved)
+    val bodyWithThinking = bodyWithSearchThinking(
+      bodyWithTools,
+      params.model,
+      params.thinking,
+      params.providerSearch,
+      params.thinkingResolved
+    )
     val bodyWithSearchExtras = bodyWithThinking.deepMerge(searchRequestExtras(params.providerSearch))
     val bodyWithMetadata = (params.sessionId, params.agentId) match
       case (Some(sid), Some(aid)) =>
