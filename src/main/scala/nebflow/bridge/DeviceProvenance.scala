@@ -31,6 +31,13 @@ import nebflow.shared.ContentBlock
  * 模板与 [[BridgeOrigin]] 的渠道头同构（「以下消息来自 X（渠道 Y）· 标注段」同一句
  * 骨架），渲染常量复用 [[BridgeOrigin.MarkerOpen]]/[[BridgeOrigin.MarkerClose]]——
  * 扩展不重造。纯数据 + 纯函数面：零 IO、零副作用；花名册取数在网关侧完成。
+ *
+ * 门户身份透传批（方案 A，2026-10-28 作者拍板）：判据升级为三级优先级——①
+ * boundDeviceId 花名册命中（已登记，现状零回归）＞ ② 会话 owner 等值
+ * （[[SessionIdentity]] × [[OwnerAnchor]] 的 sub 等值，已认证，账号轨——断点表
+ * B3「门户认证态零消费」的修法）＞ ③ 默认名兜底逐字。状态词双轨（已登记/已认证
+ * 并存，作者裁定②）。owner 锚取数（引擎本机 id_token 解码）在网关侧
+ * （gateway.OwnerIdentity），本面保持零 IO。
  */
 
 /** 客户端声明的设备身份（帧 `device` 键的解码形态）。 */
@@ -100,8 +107,41 @@ end ClientDevice
 /** 花名册行（网关侧由 self 身份 / peers 列表映射而来；纯结构，零 IO）。 */
 final case class DeviceRosterEntry(deviceId: String, deviceName: String)
 
-/** 解析读数：`display` = 标记里出现的设备名；`enrolled` = 是否在设备列表里。 */
-final case class ResolvedDevice(display: String, enrolled: Boolean)
+/**
+ * 已认证会话的身份快照（门户身份透传批，方案 A1，2026-10-28）：引擎会话记录
+ * （`GatewaySessionRecord` 的 accountSub/origin/sessionId 三元投影）在 WS 握手处
+ * 取出的**不可变快照**，随收流管进消息面。纯数据——投影与等值判定都不需要 IO；
+ * Bearer 轨连接（CLI/脚本）恒缺席（`None`），行为与既有逐字节相同。
+ */
+final case class SessionIdentity(
+  /** 门户账号 sub（票链验真后落进会话记录的 Logto user id）。 */
+  accountSub: String,
+  /** 票来源（relay-mint / local-ticket），逐字承自兑换面。 */
+  origin: String,
+  /** 会话 id（审计对账用；不进标记词）。 */
+  sessionId: String
+)
+
+/**
+ * 引擎本机 owner 锚（方案 A2/A4，2026-10-28）：引擎本机凭据链的 id_token 解码
+ * 读数——`sub` 是 owner 等值判据的锚值，`label` 是标记词的账号显示标签
+ * （`name` claim → email 本地段 → 「门户账号」兜底；sub/完整 email 永不进标记，
+ * 最小披露）。纯数据；取数与缓存在网关侧（OwnerIdentity）。
+ */
+final case class OwnerAnchor(sub: String, label: String)
+
+/**
+ * 解析读数：`display` = 标记里出现的设备名；`enrolled` = 是否在设备列表里（设备
+ * 轨）；`sessionAuthenticated` = 是否命中会话 owner 等值（账号轨）——**双轨状态词**
+ * （作者裁定 2026-10-28②）：已登记/已认证两级并存，账号认证 ≠ 设备登记，模型面
+ * 读者可分辨「哪台设备」与「谁在用」。
+ */
+final case class ResolvedDevice(
+  display: String,
+  enrolled: Boolean,
+  /** 会话 owner 等值命中（方案 A 三级优先级的第 2 级）；与 enrolled 互斥可读。 */
+  sessionAuthenticated: Boolean = false
+)
 
 object DeviceProvenance:
 
@@ -114,37 +154,111 @@ object DeviceProvenance:
   /** 渠道显示名（渠道头的 `${channelDisplay}（渠道 ${channelId}）` 同位）。 */
   val ChannelDisplay = "网页控制台"
 
+  /** 票来源词（与 GatewaySessionStore.Origin* 逐字对齐；对齐断言在 spec 钉死）。 */
+  val OriginRelayMint: String = "relay-mint"
+  val OriginLocalTicket: String = "local-ticket"
+
+  // 隔离实例名后缀（NeblinkModel.mintedDeviceName/scopeFingerprint：8 位十六进制
+  // 指纹）——与前端 deviceRoster.js `ISO_NAME_SUFFIX_RE` 同一词表（A6 显示面剥离）。
+  private val IsoNameSuffixRe = "-iso-[0-9a-f]{8}$".r
+
+  /**
+   * 剥离隔离实例名后缀（`-iso-<hex8>`，**仅显示面**；身份/配对/日志面保原值——
+   * 前端 stripIsoNameSuffix 同款语义：剥完为空串时保原值，绝不出现空槽）。
+   */
+  def stripIsoNameSuffix(name: String): String =
+    val stripped = IsoNameSuffixRe.replaceAllIn(name.trim, "")
+    if stripped.isEmpty then name else stripped
+
+  /**
+   * 账号显示标签（方案 A4 P0，就地取材）：引擎本机 id_token claims 的 `name`
+   * （作者裁定 2026-10-28①：显示词随门户显示名，现值 "Mashiro"）→ 空则 email
+   * 本地段 → 再空则「门户账号」。sub/完整 email **不进标记**（最小披露）。
+   */
+  def accountLabel(claims: Map[String, String]): String =
+    val name = claims.get("name").map(_.trim).filter(_.nonEmpty)
+    val emailLocal = claims
+      .get("email")
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .flatMap(_.split('@').headOption)
+      .map(_.trim)
+      .filter(_.nonEmpty)
+    name.orElse(emailLocal).getOrElse("门户账号")
+
   /**
    * 设备解析（自动标注三分支的网关侧半面）：**绑定键 = 花名册设备 id**（id 是
    * 配对真源；设备名可重名可伪造，不作匹配键——跨会话稳定优先）。绑定读数由
    * 客户端自动判定供给（登录会话/环回配对读得 roster self ⇒ boundDeviceId =
    * self.id）：命中（self 或 peers——peers 分支保留：花名册对照词表与近路面
    * 共用，老客户端残留 peer 绑定值仍按登记判定，不冒认不漏认）⇒ 已登记，显示
-   * 名 = 花名册登记名（登记权威）；未命中/缺席 ⇒ 未登记，显示名 =
-   * [[ClientDevice.defaultName]] 可读默认名（手动命名分支已随设置区退役——
-   * 未登记显示名恒为默认名，不存在第二真源）。花名册不可得（neblink 未装配）
-   * ⇒ self/peers 恒空 ⇒ 一律未登记（保守：读不到名册永不冒认已登记）。
+   * 名 = 花名册登记名（登记权威，隔离 `-iso-` 后缀仅显示面剥离）。
+   *
+   * 未命中/缺席时的**会话认证轨**（门户身份透传批，方案 A3，2026-10-28）：会话
+   * 身份与引擎本机 owner 锚的 sub **等值** ⇒ 第 2 级「已认证」——显示名 =
+   * `<账号标签> · <浏览器>`（浏览器缺席省略尾段）+ 来源括注（relay-mint ⇒
+   * （经官网）；local-ticket ⇒（本机票））；sub 不等/锚缺席（本机凭据缺失或
+   * local 票哨兵值）⇒ 不升已认证（不冒认 owner），落第 3 级现状默认名。
+   * `session = None`（Bearer 轨/CLI/REST headless）或 `owner = None`（本机无
+   * 凭据）⇒ 第 2 级整环缺席，行为与既有逐字节相同（fail-open 纪律）。
+   *
+   * 三级优先级（作者裁定 2026-10-28，断点表 B3 的修法）：① boundDeviceId 花名册
+   * 命中（已登记，本机/配对设备路径零回归——帧自报与花名册旁证的信息量更大）＞
+   * ② 会话 owner 等值（已认证，账号轨）＞ ③ 默认名兜底逐字。花名册不可得
+   * （neblink 未装配）不影响 ②（会话轨原料是服务端信任链，不依赖花名册）。
    */
   def resolve(
     client: ClientDevice,
     self: Option[DeviceRosterEntry],
-    peers: List[DeviceRosterEntry]
+    peers: List[DeviceRosterEntry],
+    session: Option[SessionIdentity] = None,
+    owner: Option[OwnerAnchor] = None
   ): ResolvedDevice =
     val bound = client.boundDeviceId.map(_.trim).filter(_.nonEmpty)
     val hit = bound.flatMap { id =>
       self.filter(_.deviceId == id).orElse(peers.find(_.deviceId == id))
     }
     hit match
-      case Some(entry) => ResolvedDevice(display = entry.deviceName, enrolled = true)
-      case None        => ResolvedDevice(display = ClientDevice.defaultName(client), enrolled = false)
+      case Some(entry) =>
+        ResolvedDevice(display = stripIsoNameSuffix(entry.deviceName), enrolled = true)
+      case None =>
+        val ownerHit = for
+          ses <- session
+          anchor <- owner
+          if anchor.sub == ses.accountSub
+        yield (ses, anchor.label)
+        ownerHit match
+          case Some((ses, label)) =>
+            ResolvedDevice(
+              display = authenticatedDisplay(client, ses, label),
+              enrolled = false,
+              sessionAuthenticated = true
+            )
+          case None =>
+            ResolvedDevice(display = ClientDevice.defaultName(client), enrolled = false)
+
+  /** 「已认证」级显示名：`<账号标签> · <浏览器>（经官网|本机票）`（括注按票来源）。 */
+  private def authenticatedDisplay(client: ClientDevice, session: SessionIdentity, label: String): String =
+    val browser = client.browser.map(_.trim).filter(_.nonEmpty)
+    val originTag = session.origin match
+      case OriginRelayMint   => "（经官网）"
+      case OriginLocalTicket => "（本机票）"
+      case _                 => ""
+    browser match
+      case Some(b) => s"$label · $b$originTag"
+      case None    => s"$label$originTag"
 
   /**
    * 渲染来源设备标记块。骨架与社交渠道头同构（「以下消息来自 X（渠道 Y）· 标注段」）；
-   * 登记状态恒显式（已登记/未登记）——「是否为设备列表里的设备」在标记里自答，
-   * 不依赖模型对默认名的猜测。
+   * 状态词**双轨**（作者裁定 2026-10-28②）：已登记（设备轨，花名册命中）/已认证
+   * （账号轨，会话 owner 等值）/未登记（两轨皆未命中）——「是否为设备列表里的
+   * 设备」与「是否账号本人在用」在标记里各自自答，不依赖模型对默认名的猜测。
    */
   def marker(resolved: ResolvedDevice): String =
-    val status = if resolved.enrolled then "已登记" else "未登记"
+    val status =
+      if resolved.enrolled then "已登记"
+      else if resolved.sessionAuthenticated then "已认证"
+      else "未登记"
     // 行尾显式 "\n" 拼接（勿改回三引号字面量）：CRLF checkout 会把源行尾编进
     // 字面量（marker 变 \r\n）⇒ 消费方按 \n 契约前缀匹配全红。同 BridgePlugin.marker。
     s"$MarkerOpen\n以下消息来自$ChannelDisplay（渠道 $ChannelId）· 设备：${resolved.display}（$status）\n$MarkerClose"
