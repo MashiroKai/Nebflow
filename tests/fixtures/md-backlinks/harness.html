@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<!-- md-backlinks harness.html — KG 审计②「viewer backlinks」批（2026-10-28）静态试验台。
+     导入**真实** viewers/markdown.js（无 stub、无打包）；唯一替身 = window.fetch 对
+     /api/wiki/graph 的应答（合成载荷，形状与 WikiIndex.nodeJson/edgeJson 逐字段同构）。
+
+       window.__openDoc(content, absPath, fileName) → 全新 #pane + viewMarkdown
+                                   → 折叠现场读数；
+       window.__setGraph(payload)   → 换图谱载荷（下一腿生效）；
+       window.__counts()            → backlinks 区块读数。
+
+     被测树 = 伺服根（本树；NB_UX_ROOT 红腿同 turn-terminal-replay 约定可指基线树）。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>md-backlinks harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/split.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #pane { position: absolute; inset: 0; }
+  </style>
+</head>
+<body>
+  <div id="pane"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    // ── 唯一替身：/api/wiki/graph 应答（可失败注入）────────────────
+    let graphPayload = null;
+    let graphStatus = 200;
+    const realFetch = window.fetch.bind(window);
+    window.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.startsWith('/api/wiki/graph')) {
+        if (graphStatus !== 200) return new Response('{"error":"denied"}', { status: graphStatus });
+        return new Response(JSON.stringify(graphPayload), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return realFetch(url, opts);
+    };
+    window.__setGraph = (payload, status = 200) => { graphPayload = payload; graphStatus = status; };
+
+    const { default: viewer } = await import(`${WEB}/viewers/markdown.js`);
+
+    window.__openDoc = async (content, absPath, fileName) => {
+      const pane = document.getElementById('pane');
+      pane.innerHTML = '';
+      /** @type {any} */ (pane)._renderedMdContent = undefined;
+      await viewer.render(pane, { content, absPath, fileName, readOnly: true });
+      await new Promise((r) => setTimeout(r, 40));
+      return window.__counts();
+    };
+
+    window.__counts = () => {
+      const pane = document.getElementById('pane');
+      const block = pane.querySelector('.canvas-md-viewer .nf-backlinks');
+      const links = block ? [...block.querySelectorAll('a.nf-backlink')] : [];
+      return {
+        viewerMounted: !!pane.querySelector('.canvas-md-viewer'),
+        blockPresent: !!block,
+        collapsed: !!block && !block.hasAttribute('open'),
+        summary: block ? (block.querySelector('summary') || {}).textContent || '' : '',
+        entries: links.map((a) => ({
+          title: a.textContent,
+          cls: a.className,
+          resolved: a.dataset.wikiResolved ? JSON.parse(a.dataset.wikiResolved) : null,
+          anchor: a.dataset.wikiAnchor || '',
+        })),
+        anchorChips: block ? [...block.querySelectorAll('.nf-backlink-anchor')].map((s) => s.textContent) : [],
+        projectTags: block ? [...block.querySelectorAll('.nf-backlink-project')].map((s) => s.textContent) : [],
+      };
+    };
+
+    window.__ready = true;
+  </script>
+</body>
+</html>

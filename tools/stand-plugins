@@ -274,10 +274,24 @@ def render_plugin(p, matched=None):
 
 # ── 检索（AND 语义：每个词都须命中该插件某个字段）──────────────────────────────
 
+# 组件面声明句标记（五段式 description 的固定收尾「组件面：…」）。它是**反句载体**：
+# 「无 mcp.json、无工具扩展」这类否定声明把字面 "mcp" 带进检索字段 ⇒
+# `search mcp` 全部包命中（插件审计 G3，2026-10-28）。检索面只看正句——
+# 展示面（render_plugin 的整段 description）原样保留，仅检索前剥离。
+COMPONENT_FACE_MARK = "组件面："
+
+
+def search_description(desc):
+    """检索用的 description 正句：剥离「组件面：…」固定收尾句（反句不进检索）。"""
+    return (desc or "").split(COMPONENT_FACE_MARK, 1)[0]
+
 
 def searchable_fields(p):
-    """→ [(field, text)]；field ∈ name/keyword/description/skill/mcp/tool。"""
-    fields = [("name", p["name"]), ("description", p["description"])]
+    """→ [(field, text)]；field ∈ name/keyword/description/skill/mcp/tool。
+
+    description 走 search_description（组件面反句剥离）；真正带 MCP 的包由
+    mcp_servers 字段（server 名）自然命中——`search mcp` 的正例面。"""
+    fields = [("name", p["name"]), ("description", search_description(p["description"]))]
     fields += [("keyword", k) for k in p["keywords"]]
     for s in p["skills"]:
         fields.append(("skill", s["id"]))

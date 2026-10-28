@@ -1589,6 +1589,58 @@ class SessionStore(
     }
 
   /**
+   * 轮终态落点·段感知版（卫生批 2026-10-28，回放批 §5 残余①根治）：在「done/agentDone
+   * 时 text/thinking 缓冲皆空」的回填分支取代全局 `updateLastAiMeta` ——
+   *
+   *  ① **段内有 ai 行**（中间 text 已被 roundComplete/toolStart flush）→ 回填
+   *     durationMs/model/timestamp + terminal=true（与旧全局版同语义，但只认
+   *     「最后一条 user 行之后」的行——不再碰上一轮的行）；
+   *  ② **段内零 ai 行**（退化全工具轮，如 Mail 单卡委托轮）→ 把 terminal=true 盖到
+   *     段内最后一行 **Tool** 行（等价终态面——回放折叠判据读同一
+   *     data-nf-turn-terminal；durationMs/model 无载体，徽章段缺省照样成立）；
+   *  ③ 段内既无 ai 行也无 tool 行（空轮）→ 不动任何行。旧全局版此处会把新时值
+   *     盖到**上一轮**末条 Ai 行（越段改写——正是要消灭的行为）。
+   *
+   * 段边界 = 最后一条 `UiMessage.User` 行之后（与前端 turnGroup 的分段口径一致）；
+   * 无任何 user 行时整份历史视为一段（首个会话轮）。terminal 只加不减（二次回填
+   * 不清除既有标记，`updateLastAiMeta` 同纪律）。调用面 = `WebSocketRoutes` 的
+   * `done`/`agentDone` 空缓冲分支（唯二）。
+   */
+  def markRoundTerminal(sessionId: String, durationMs: Option[Long], model: Option[String], timestamp: Long): IO[Unit] =
+    getAppendSemaphore(sessionId).flatMap { sem =>
+      sem.permit.use { _ =>
+        loadUiMessages(sessionId).flatMap { existing =>
+          val segStart = existing.lastIndexWhere {
+            case _: UiMessage.User => true
+            case _ => false
+          } + 1
+          val seg = existing.drop(segStart)
+          val aiIdx = seg.lastIndexWhere {
+            case _: UiMessage.Ai => true
+            case _ => false
+          }
+          val toolIdx = seg.lastIndexWhere {
+            case _: UiMessage.Tool => true
+            case _ => false
+          }
+          val targetIdx = if aiIdx >= 0 then aiIdx else toolIdx
+          if targetIdx < 0 then IO.unit
+          else
+            val absIdx = segStart + targetIdx
+            val updated = existing.updated(
+              absIdx,
+              existing(absIdx) match
+                case ai: UiMessage.Ai =>
+                  ai.copy(durationMs = durationMs, model = model, timestamp = timestamp, terminal = Some(true))
+                case t: UiMessage.Tool => t.copy(terminal = Some(true))
+                case other => other
+            )
+            updateUiCache(sessionId, updated, dirty = true) *> scheduleFlush
+        }
+      }
+    }
+
+  /**
    * Keep only the newest `MaxStoredUiMessages`. The LLM's full history is
    * unaffected (it lives in `<id>.json`); this only bounds the UI replay file.
    * Returning the same list when under the cap avoids an allocation.

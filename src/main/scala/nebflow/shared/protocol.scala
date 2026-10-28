@@ -383,7 +383,20 @@ object UiMessage:
     summary: String,
     content: String = "",
     isError: Boolean = false,
-    input: String = ""
+    input: String = "",
+    /**
+     * **轮终态显式标记·工具行等价面**（卫生批 2026-10-28，回放批 §5 残余①根治）：
+     * 退化全工具轮（段内零 ai 行——如 Mail 单卡委托轮）在 `done`/`agentDone` 时无
+     * Ai 载体可盖 `terminal`，回填落到上一轮末条 Ai 行 ⇒ 本段无标记、回放维持平
+     * 铺（裸工具卡）。本标记由 `SessionStore.markRoundTerminal` 在「段内无 Ai 行」
+     * 分支盖到**段内最后一行工具行**上——折叠判据与 `Ai.terminal` 等价（前端
+     * `findTerminalRow`/`exchangeComplete` 同读 data-nf-turn-terminal）。
+     *
+     * 失败轮（error 帧不走 done 落盘点）与进行中轮（busyTail）不写本标记 ⇒ 两
+     * 形态红线不回归。缺席即不落键（Ai.terminal 先例同款条件编码 ⇒ 旧 `.ui.json`
+     * 行字节形态与旧读法逐字不变；解码宽松回落 None）。
+     */
+    terminal: Option[Boolean] = None
   ) extends UiMessage:
     val typeName = "tool"
 
@@ -522,7 +535,7 @@ object UiMessage:
       // （缺席即不落键 ⇒ 无标记行与旧字节形态逐字相同）。
       if m.terminal.contains(true) then withTs.deepMerge(Json.obj("terminal" -> true.asJson)) else withTs
     case m: Tool =>
-      Json.obj(
+      val base = Json.obj(
         "type" -> "tool".asJson,
         "label" -> m.label.asJson,
         "summary" -> m.summary.asJson,
@@ -530,6 +543,9 @@ object UiMessage:
         "isError" -> m.isError.asJson,
         "input" -> m.input.asJson
       )
+      // 卫生批（2026-10-28）：工具行等价终态标记——只在 Some(true) 落键
+      // （缺席即不落键 ⇒ 无标记行与旧字节形态逐字相同）。
+      if m.terminal.contains(true) then base.deepMerge(Json.obj("terminal" -> true.asJson)) else base
     case m: Agent =>
       val base = Json.obj("type" -> "agent".asJson, "agentId" -> m.agentId.asJson, "text" -> m.text.asJson)
       // R1：timestamp 缺席即不落键（与 User/Ai 同款条件编码 ⇒ 旧 .ui.json 行不变）。
@@ -620,12 +636,16 @@ object UiMessage:
           content <- cursor.downField("content").as[Option[String]]
           isError <- cursor.downField("isError").as[Option[Boolean]]
           input <- cursor.downField("input").as[Option[String]]
+          // 卫生批：工具行等价终态标记（旧行无本键 ⇒ None；形态不合同样回落
+          // None —— 宽松透传，新增可选键绝不改变任何既有行的可解析性）
+          terminal <- cursor.downField("terminal").as[Option[Boolean]]
         yield Tool(
           label,
           summary,
           content.getOrElse(""),
           isError.getOrElse(false),
-          input.getOrElse("")
+          input.getOrElse(""),
+          terminal
         )
       case "agent" =>
         for

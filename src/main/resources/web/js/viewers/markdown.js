@@ -339,6 +339,115 @@ async function renderWikilinks(mdViewer, baseDir) {
   });
 }
 
+// ── Backlinks (KG audit ②, 2026-10-28) ────────────────────────────────
+// 文档阅读页底部的折叠小节：谁引用了本文（入边）。数据 = /api/wiki/graph 载荷
+// （edges.from/to + nodes，30s TTL 共享缓存）——纯前端可算，零新端点。
+// 克制形态：<details> 默认收起；文档不在任何 vault 或零入链 ⇒ 整节不渲染
+// （repo reports/ 等图外文件保持零噪音）。条目复用 a.nf-wikilink 的委派点击
+// 路径（data-wiki-resolved 直填解析结果 ⇒ openLocalFileTab / remote-doc 腿
+// 全部免费复用；边锚 '^blk'/'#Heading' 归一成点击腿认识的形态 ⇒ 点开即跳到
+// 引用落点段落）。
+
+/** Normalize a Windows/POSIX path for prefix comparison. */
+function normVaultPath(p) {
+  return String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+/** The graph node for this absPath (null when the doc is outside every vault). */
+function graphNodeFor(absPath, data) {
+  if (!absPath || !data) return null;
+  const norm = normVaultPath(absPath);
+  const projects = data.projects || [];
+  for (const p of projects) {
+    const vault = normVaultPath(p.vault);
+    if (!vault || !norm.startsWith(vault + '/')) continue;
+    const rel = norm.slice(vault.length + 1);
+    const hit = (data.nodes || []).find((n) => !n.stub && n.project === p.name && String(n.rel || '').toLowerCase() === rel);
+    if (hit) return { node: hit, project: p };
+  }
+  return null;
+}
+
+/** Mirror resolveWikiTarget's tail: a graph node → the click-leg resolved shape. */
+function resolvedForNode(node, project) {
+  if (!node || !project) return null;
+  if (node.device === 'self') {
+    const sep = project.vault.includes('\\') ? '\\' : '/';
+    return { absPath: project.vault.replace(/[\\/]+$/, '') + sep + String(node.rel).split('/').join(sep) };
+  }
+  return { remote: { device: node.device, vault: project.vault, rel: node.rel, project: project.name } };
+}
+
+/** Click-leg anchor form: '^blk' stays, '#Heading' drops the '#', 'L42' has no
+ *  click mapping (omitted). */
+function clickAnchorForm(edgeAnchor) {
+  const a = String(edgeAnchor || '');
+  if (!a) return '';
+  if (a.startsWith('^')) return a;
+  if (a.startsWith('#') && a.length > 1) return a.slice(1);
+  return '';
+}
+
+/** Append the collapsible backlinks section (incoming graph edges) at the foot
+ *  of the rendered document. Best-effort background face: any failure = no
+ *  section, never an error surface (the #762 render-leg discipline). */
+async function renderBacklinks(mdViewer, absPath) {
+  let data = null;
+  try { data = await wikiGraph(); } catch (e) { return; }
+  const found = graphNodeFor(absPath, data);
+  if (!found) return;
+  const { node, project } = found;
+  const incoming = (data.edges || [])
+    .filter((e) => e.to === node.id)
+    .map((e) => ({ edge: e, from: (data.nodes || []).find((n) => n.id === e.from) }))
+    .filter((x) => x.from && !x.from.stub);
+  if (!incoming.length) return;
+  const byProject = new Map([[project.name, project]]);
+  for (const x of incoming) {
+    if (!byProject.has(x.from.project)) {
+      byProject.set(x.from.project, (data.projects || []).find((p) => p.name === x.from.project) || null);
+    }
+  }
+  const details = document.createElement('details');
+  details.className = 'nf-backlinks';
+  const summary = document.createElement('summary');
+  summary.textContent = `${t('wiki.backlinks')} · ${incoming.length}`;
+  details.appendChild(summary);
+  const ul = document.createElement('ul');
+  for (const { edge, from } of incoming) {
+    const li = document.createElement('li');
+    const a = document.createElement('a');
+    a.className = 'nf-wikilink nf-backlink';
+    a.href = '#';
+    a.textContent = from.title || String(from.rel || '').split('/').pop();
+    const resolved = resolvedForNode(from, byProject.get(from.project));
+    if (resolved) {
+      a.dataset.wikiResolved = JSON.stringify(resolved);
+      const anchor = clickAnchorForm(edge.anchor);
+      if (anchor) a.dataset.wikiAnchor = anchor;
+    } else {
+      // Cross-project node whose project manifest is absent — no click target.
+      a.classList.add('nf-wikilink-unresolved');
+    }
+    li.appendChild(a);
+    if (edge.anchor) {
+      const chip = document.createElement('span');
+      chip.className = 'nf-backlink-anchor';
+      chip.textContent = edge.anchor;
+      li.appendChild(chip);
+    }
+    if (from.project !== project.name && from.project) {
+      const tag = document.createElement('span');
+      tag.className = 'nf-backlink-project';
+      tag.textContent = from.project;
+      li.appendChild(tag);
+    }
+    ul.appendChild(li);
+  }
+  details.appendChild(ul);
+  mdViewer.appendChild(details);
+}
+
 /** Handle a click on a rendered wikilink. */
 async function onWikilinkClick(a, mdViewer) {
   const anchorRaw = a.dataset.wikiAnchor || '';
@@ -665,8 +774,9 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
       else if (route.kind === 'local' && route.path) openLocalFileTab(route.path);
     });
 
-    // Wiki face: wikilinks (async, post-render) + jump anchor.
-    if (absPath) renderWikilinks(mdViewer, baseDir);
+    // Wiki face: wikilinks (async, post-render) + jump anchor + backlinks foot
+    // (KG audit ② — incoming edges only, collapsed; absent outside vaults).
+    if (absPath) { renderWikilinks(mdViewer, baseDir); renderBacklinks(mdViewer, absPath); }
     if (jumpAnchor) applyJumpAnchor(mdViewer, jumpAnchor, analysis.blockIds);
     // Mermaid face: hydrate ```mermaid placeholders (lazy viewport render —
     // js/mermaidRenderer.js). Idempotent; no-op when the doc has no fences.

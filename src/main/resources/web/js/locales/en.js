@@ -2041,6 +2041,7 @@ export default {
   'wiki.graphUnavailable': 'Wiki graph unavailable',
   'wiki.kindAttachment': 'attachment',
   'wiki.unresolved': 'Unresolved reference — no document with this name in any project vault',
+  'wiki.backlinks': 'Backlinks',
   // Side control face (search/chips/detail card/broken list/stats line)
   'wiki.chipAll': 'All',
   'wiki.chipRoot': 'Root',

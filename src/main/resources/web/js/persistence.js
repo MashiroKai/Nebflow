@@ -745,6 +745,11 @@ export function restoreFromStorage(opts = {}) {
       // Inline render to avoid triggering saveMsg again
       const row = document.createElement('div');
       row.className = 'row tool';
+      // 卫生批（2026-10-28，回放残余①根治）：退化全工具轮的等价终态面——后端
+      // markRoundTerminal 在「段内零 ai 行」时把 terminal=true 盖到段内最后一行
+      // 工具行；此处转成 data-nf-turn-terminal（turnGroup 回放 done 判据与
+      // Ai.terminal 同读一戳）。旧行无键 ⇒ 不落标（逐字节同形）。
+      if (m.terminal === true) row.dataset.nfTurnTerminal = '1';
       // #346 v2 stats: tool input rides the row for the turn header's
       // 读写 <K> 文件 count (same contract as chat.js renderTool).
       if (m.input) { try { row.dataset.nfInput = typeof m.input === 'string' ? m.input : JSON.stringify(m.input); } catch {} }
@@ -1167,6 +1172,9 @@ function buildHistoryRow(m, i, ctx) {
     } else if (m.type === 'tool') {
       const row = document.createElement('div');
       row.className = 'row tool';
+      // 卫生批（2026-10-28，回放残余①根治）：与 restoreFromStorage tool 分支同款
+      // ——退化全工具轮的 terminal 工具行盖 data-nf-turn-terminal（旧行无键不落标）。
+      if (m.terminal === true) row.dataset.nfTurnTerminal = '1';
       // quote-message 一期：工具卡行挂 id + 右键「引用」（摘要 = [工具] label ·
       // summary≤40 —— UiMessage.Tool 自带一行摘要）。
       row.dataset.msgId = historyMsgId(i);

@@ -580,7 +580,15 @@ object PluginRegistry:
     // 未知顶层条目 → 宽容跳过 + 告警（§B.8-5；LICENSE/CHANGELOG 等杂项文件同样走此规则）。
     // canvas-media 批（2026-10-05，OD-3=K-1）：org.nebflow/ 允许子条目扩为
     // tools.json + viewers.json——漏扩会让贡献**静默失效**（告警假绿，蓝图 §6.4 硬前置）。
-    val known = Set("plugin.json", "mcp.json", "skills", "org.nebflow")
+    // Plugin.md 补扩（卫生批 2026-10-28，六-1 欠账清偿）：作者令 2026-10-21
+    // 「plugin.md = 插件必要文件机制」后，包根第五件已是协议正字（注入面
+    // PluginInjection 读包根 Plugin.md、validator KNOWN_ROOT_ENTRIES 同批收录）
+    // ——装载器 known-set 此前未扩，21 个在装包每包常驻一条
+    // `ignored unknown entry 'Plugin.md'` forward-compat 告警。此处收进正字
+    // `Plugin.md`（恰一文件、逐字命名，与 validator 镜像逐字一致）；小写
+    // `plugin.md` 不收——注入面回退同认，但装载面维持「正字」纪律，与
+    // validator C11b 的改名提示同向。
+    val known = Set("plugin.json", "mcp.json", "skills", "org.nebflow", "Plugin.md")
     os.list(dir).foreach { e =>
       val n = e.last
       if !known.contains(n) then warnings += s"ignored unknown entry '$n' (forward-compat: skipped)"

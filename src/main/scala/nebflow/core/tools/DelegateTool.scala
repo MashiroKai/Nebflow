@@ -84,6 +84,7 @@ object DelegateTool extends Tool:
 **Rules:**
 - Do NOT duplicate the delegate's work — work on something else and let the result arrive as a system message.
 - The ack is not the result.
+- Landing discipline (KG audit ①): when the task produces knowledge documents (designs, audits, research, conclusions), state in the brief that they land in the registered project workspace's `docs/` subtree (Obsidian format: frontmatter + ≥1 wikilink); `reports/` is for pure process files (batch run reports) only. Validation command for the closing report: `python3 <dataRoot>/plugins/visual-report/skills/wiki-docs/scripts/check_wiki_docs.py --root <workspace>/docs`.
 - **Limits:** No hard concurrency limit — in-flight delegates run concurrently.
 - **Safety**: NEVER send signals to or kill any sbt/java/nebflow process — you run inside a Nebflow instance; killing it kills you and the user's session. Process inspection with `ps` (read-only) is fine."""
 

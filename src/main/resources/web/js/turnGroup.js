@@ -69,6 +69,10 @@
 // badge with data-nf-phrase on some Ai row = success) stays only as the
 // legacy-transcript fallback. Failed turns (no terminal, no badge) stay flat
 // (09-05 排障裁定); the busyTail tail stays open (transient).
+// 卫生批（2026-10-28）工具行等价面: a degenerate all-tool round (zero ai lines)
+// gets its terminal stamped on the round's last Tool row
+// (UiMessage.Tool.terminal=true via markRoundTerminal) — same
+// data-nf-turn-terminal read here, so the last bare tool card folds too.
 
 import { t } from './i18n.js';
 import { formatDuration, chevronSvg } from './chat.js';
@@ -553,10 +557,11 @@ export function buildTurnSummariesForHistory(chat, opts = {}) {
 function summarizeSegment(chat, seg) {
   const tuckable = seg.filter(isTuckableRow);
   if (tuckable.length === 0) return []; // E5: nothing to tuck — no header
-  if (!seg.some(r => !isTuckableRow(r))) return []; // E6: nothing would remain visible
   // E4 P0 done criterion — replay-terminal 批（2026-10-28，案一「A 根治」）改为
   // 数据驱动优先：「段内存在 writer 盖戳的 terminal 行」（后端 done/agentDone
-  // 落盘 UiMessage.Ai.terminal=true，回放渲染器转成 data-nf-turn-terminal）。
+  // 落盘 UiMessage.Ai.terminal=true；卫生批补工具行等价面——段内零 ai 行的退化
+  // 全工具轮由 markRoundTerminal 把 terminal 盖到段内最后一行 Tool 行；
+  // 回放渲染器统一转成 data-nf-turn-terminal）。
   // 旧转录无该字段 ⇒ 回落现徽章启发式（badge 携 nf-phrase），渐进兼容——存量
   // 历史不一次性改写。两判据任一在场即折；都不在场 = 失败/进行中段 ⇒ 平铺
   // （09-05 排障裁定）/尾段 open（busyTail 瞬态）。徽章继续只做展示元数据载体
@@ -564,6 +569,13 @@ function summarizeSegment(chat, seg) {
   const termRow = findTerminalRow(seg);
   const badge = findDoneBadge(seg);
   if (!termRow && !badge) return []; // failed/unfinished segment: flat, no header
+  // E6: nothing would remain visible — kept for the heuristic-only face (a badge
+  // on an all-tuckable segment = uncertain legacy read, stay flat). A
+  // WRITER-STAMPED terminal row is the round-close FACT (data face, not a
+  // guess): the degenerate all-tool round (user row + N tool cards, zero ai
+  // lines) closes exactly like the live path — the header IS the round's
+  // visible face (live collapseTurn has no E6 exception).
+  if (!seg.some(r => !isTuckableRow(r)) && !termRow) return [];
   const metaBadge = badge || (termRow ? termRow.querySelector('.duration-badge') : null);
   const meta = {
     model: (badge && badge.dataset.nfModel) || (termRow && termRow.dataset.nfModel) || '',
@@ -579,10 +591,13 @@ function summarizeSegment(chat, seg) {
   return [header];
 }
 
-/** Writer-stamped turn-terminal row (replay-terminal 批 2026-10-28): the replay
- *  renderer stamps `data-nf-turn-terminal` on the Ai row the backend persisted
- *  at the done/agentDone frame (UiMessage.Ai.terminal=true, 「缺席即不落键」 —
- *  legacy transcripts carry no stamp and fall back to the badge heuristic). */
+/** Writer-stamped turn-terminal row (replay-terminal 批 2026-10-28 + 卫生批工具行
+ *  等价面): the replay renderer stamps `data-nf-turn-terminal` on the row the
+ *  backend persisted at the done/agentDone frame — the terminal Ai row
+ *  (UiMessage.Ai.terminal=true), or, for a degenerate all-tool round (zero ai
+ *  lines), the round's last Tool row (UiMessage.Tool.terminal=true).
+ *  「缺席即不落键」 — legacy transcripts carry no stamp and fall back to the
+ *  badge heuristic. */
 function findTerminalRow(seg) {
   for (let i = seg.length - 1; i >= 0; i--) {
     if (seg[i].dataset && seg[i].dataset.nfTurnTerminal) return seg[i];

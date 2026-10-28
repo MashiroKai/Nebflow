@@ -2739,15 +2739,17 @@ class WebSocketRoutes(
                       )
                     else if durationMs.isDefined then
                       // No text to flush (already flushed at roundComplete/toolStart),
-                      // but we have a duration — backfill onto the last saved Ai message.
-                      // replay-terminal 批：同一回填批盖 terminal=true（markTerminal
-                      // 显式传位——本方法仅轮终态调用面会传真）。
-                      sharedResources.sessionStore.updateLastAiMeta(
+                      // but we have a duration — backfill onto the round's last carrier.
+                      // replay-terminal 批：回填批盖 terminal=true（markTerminal 显式传位）。
+                      // 卫生批（2026-10-28，残余①根治）：改走**段感知**的
+                      // markRoundTerminal——段内有 ai 行照旧回填；段内零 ai 行的退化
+                      // 全工具轮把 terminal 盖到段内最后一行 Tool 行（等价终态面），
+                      // 不再把新时值越段盖到上一轮的行上。
+                      sharedResources.sessionStore.markRoundTerminal(
                         sessionId,
                         durationMs,
                         model,
-                        System.currentTimeMillis(),
-                        markTerminal = true
+                        System.currentTimeMillis()
                       )
                     else IO.unit
                     end if
@@ -2879,7 +2881,7 @@ class WebSocketRoutes(
                           )
                         else
                           // No text (flushed earlier by agentToolEnd) — backfill
-                          // model + timestamp onto the last saved AI message. We no
+                          // model + timestamp onto the round's last carrier. We no
                           // longer gate on durationMs.isDefined: when sessionTurnStarts
                           // was never set (startTime=0 → durationMs=None), team agent
                           // AI messages still need model and timestamp so the popup
@@ -2887,14 +2889,14 @@ class WebSocketRoutes(
                           // None when unknown; the frontend falls back to a simpler
                           // badge (model + timestamp, no thinking phrase).
                           // replay-terminal 批：agentDone 亦为轮终态——回填批一律
-                          // 盖 terminal=true（不受 durationMs 门限：轮已终态是事实，
-                          // 时长缺失只影响徽章形态，不影响折叠判据）。
-                          sharedResources.sessionStore.updateLastAiMeta(
+                          // 盖 terminal=true。卫生批（2026-10-28，残余①根治）：改走
+                          // 段感知 markRoundTerminal——段内零 ai 行的退化全工具轮盖
+                          // 末行 Tool（等价终态面），不再越段改写上一轮的行。
+                          sharedResources.sessionStore.markRoundTerminal(
                             nsid,
                             durationMs,
                             model,
-                            System.currentTimeMillis(),
-                            markTerminal = true
+                            System.currentTimeMillis()
                           )
                         end if
                       }
