@@ -41,6 +41,13 @@ object FreezeScheduler:
    * 单轮扫描：向所有 Frozen 态 agent 发 CheckFreezeGate；v2 升级链（§5.2）——
    * escalation.escalateAt 已超时的发 AgentCommand.Escalate（frozen behavior 内
    * level+1 / 通知上一级 / 用户终态）。独立成函数便于复用与测试。
+   *
+   * v2 反推送风暴批（2026-10-28，修复面②重投节流）：发出 Escalate 后**立即把
+   * registry 快照的 escalateAt 前推一个窗口**——否则 actor 忙（processing 长轮 /
+   * 邮箱积压）未及消费期间，快照持续过期 ⇒ 本扫描器每 30s 重发一条 Escalate，
+   * 在邮箱里堆出 N 条陈旧升级指令，冻结后逐条消费 = level 连跳 + 通知连发
+   * （frozen Escalate 侧已加陈旧丢弃闸，本腿把重发源头一并掐掉）。actor 侧
+   * Escalate 处理完毕会以同样的 +窗口 值覆写快照，两写幂等。
    */
   def scan(resources: AgentRuntimePort): IO[Unit] =
     resources.agentRegistry.get.flatMap { registry =>
@@ -57,6 +64,19 @@ object FreezeScheduler:
               (rec.ref ! AgentCommand.Escalate)
                 .handleErrorWith(e =>
                   logger.warn(s"FreezeScheduler: Escalate to ${rec.sessionId} failed: ${e.getMessage}")
+                ) *>
+                // 重投节流：下一发至少隔一个完整升级窗（actor 消费后的正规
+                // escalateAt 覆写优先——同一值，写序无关）。
+                resources.agentRegistry.update(m =>
+                  m.get(rec.sessionId) match
+                    case Some(cur) =>
+                      m.updated(
+                        rec.sessionId,
+                        cur.copy(escalation =
+                          Some(esc.copy(escalateAt = now + nebflow.shared.Defaults.ErrorEscalateAfterMs))
+                        )
+                      )
+                    case None => m
                 )
             case _ => IO.unit
           gate *> escalate

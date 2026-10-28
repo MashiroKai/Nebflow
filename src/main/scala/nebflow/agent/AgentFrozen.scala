@@ -4,7 +4,7 @@ package nebflow.agent
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
-import io.circe.{Json, JsonObject}
+import io.circe.Json
 import nebflow.actor.*
 import nebflow.core.*
 import nebflow.core.ask.AskService
@@ -105,7 +105,7 @@ private[agent] object AgentFrozen:
           escalateAt = now + nebflow.shared.Defaults.ErrorEscalateAfterMs,
           awaitedParentSessionId = ""
         )
-        (Some(esc), notifyEscalation(agentDef, depth, state, parentRef, reason, count, esc))
+        (Some(esc), notifyEscalation(resources, agentDef, depth, state, parentRef, reason, count, esc))
       else (state.escalation, IO.unit)
     escalateNotify *>
       emitStream(
@@ -208,6 +208,11 @@ private[agent] object AgentFrozen:
             // （resumeAt = 进入时计算的退避时刻）→ 续跑——重新过 gate（pipeLlmCall），
             // 条件未消除再入冻结，天然闭环；ProviderDown 的候选 health 检查 P0 用
             // 退避到期 + 续跑重试兜底（R1 轮询），P1 接 HealthMonitor markUp 事件。
+            // v2 反推送风暴批（2026-10-28，修复面①销账）：恢复即销账——升级链
+            // 状态（actor state.escalation + registry 快照）随恢复关闭。否则链永不
+            // 落幕：flap（恢复→再冻结）原样续旧链（旧 escalateAt 已过期 ⇒ 扫描器
+            // 30s 内即刻 Escalate，10min 窗被击穿）；恢复成功后数小时再失败也续
+            // 旧 level。销账后新失败走全新 L1 链（计数语义不变）。
             val shouldResume = resumeAt.forall(now >= _)
             if shouldResume then
               logAgentEvent(
@@ -225,7 +230,8 @@ private[agent] object AgentFrozen:
                   isSubagent = depth > 0,
                   state.sessionId
                 ) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
-                  pipeLlmCall(agentDef, resources, depth, parentRef, state, replyTo)
+                  updateRegistryEscalation(resources, state.sessionId, None) *>
+                  pipeLlmCall(agentDef, resources, depth, parentRef, state.withEscalation(None), replyTo)
               }
             else
               IO.pure(
@@ -275,6 +281,9 @@ private[agent] object AgentFrozen:
               .withEmptyResponseRetries(0)
               .withMailUsedThisTurn(false)
               .withNextLoopTurn // Block 3：冻结唤醒 = 新 turn
+              // v2 反推送风暴批（2026-10-28，修复面①销账）：用户唤醒 = 决策出口
+              // 之一——升级链随唤醒关闭（同 CheckFreezeGate 恢复腿的理由）。
+              .withEscalation(None)
               // R1（2026-09-10 冻结族最小修法）：用户唤醒 = 新 turn 纪元 **且**
               // 重新开始 LoopGuard 跨 turn 观察窗——不重置则唤醒前累积的同 fp
               // 失败记录把唤醒后的第 1 次失败直接推过 crossTurnFailureTurns
@@ -289,6 +298,7 @@ private[agent] object AgentFrozen:
                 isSubagent = depth > 0,
                 state.sessionId
               ) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
+                updateRegistryEscalation(resources, state.sessionId, None) *>
                 pipeLlmCall(agentDef, resources, depth, parentRef, wakeState, replyTo2, DispatchCause.UserWake)
             }
           end if
@@ -336,6 +346,9 @@ private[agent] object AgentFrozen:
           .withAskMode(Some(question))
           .withStatus(AgentStatus.Processing)
           .withNextLoopTurn // Block 3：冻结唤醒 = 新 turn
+          // v2 反推送风暴批（2026-10-28，修复面①销账）：ask 唤醒同为决策出口，
+          // 升级链随唤醒关闭。
+          .withEscalation(None)
           // A 轨（2026-09-10 冻结族最小修法，形态照 R1）：/ask 唤醒同样是新 turn
           // 纪元 **且** 重新开始 LoopGuard 跨 turn 观察窗——不重置则唤醒前累积的
           // 同 fp 失败记录把唤醒后的第 1 次失败直接推过 crossTurnFailureTurns
@@ -350,6 +363,7 @@ private[agent] object AgentFrozen:
             isSubagent = depth > 0,
             state.sessionId
           ) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
+            updateRegistryEscalation(resources, state.sessionId, None) *>
             pipeLlmCall(agentDef, resources, depth, parentRef, askState, None, DispatchCause.UserWake)
         }
 
@@ -363,6 +377,9 @@ private[agent] object AgentFrozen:
           )
           .withStatus(AgentStatus.Processing)
           .withNextLoopTurn // Block 3：冻结唤醒 = 新 turn
+          // v2 反推送风暴批（2026-10-28，修复面①销账）：skill 唤醒同为决策出口，
+          // 升级链随唤醒关闭。
+          .withEscalation(None)
           // A 轨（2026-09-10 冻结族最小修法，形态照 R1）：skill 激活唤醒同样是新
           // turn 纪元 **且** 重新开始 LoopGuard 跨 turn 观察窗——不重置则唤醒前
           // 累积的同 fp 失败记录把唤醒后的第 1 次失败直接推过
@@ -377,7 +394,8 @@ private[agent] object AgentFrozen:
               AgentStreamEvent.Resumed(nextChange),
               isSubagent = depth > 0,
               state.sessionId
-            ) *> updateRegistryFrozenReason(resources, state.sessionId, None)
+            ) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
+              updateRegistryEscalation(resources, state.sessionId, None)
           }
           _ <- emitInjectedUserEvent(
             resources,
@@ -415,6 +433,10 @@ private[agent] object AgentFrozen:
           // 一个已回 idle 的 agent（无害但浪费，且面板显示错误）。
           _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Idle)
           _ <- updateRegistryFrozenReason(resources, state.sessionId, None)
+          // v2 反推送风暴批（2026-10-28，修复面①销账）：中断 = 决策出口（父/
+          // 用户放弃续跑），升级链随之中止——registry 快照与 state（resetForInterrupt
+          // 经 ExecutionContext.idle 重建）双清，防复活后旧链带过期 escalateAt 复燃。
+          _ <- updateRegistryEscalation(resources, state.sessionId, None)
         yield
           // Hard-recovery P3: same stale-turnId bump as the processing-state
           // Interrupt — fire-and-forget cancel admits late turn results.
@@ -439,6 +461,10 @@ private[agent] object AgentFrozen:
       case AgentCommand.RestartAgent(level) =>
         // 镜像 processing 的 RestartAgent；末尾 dispatch 是系统动作（Gated）——
         // 冻结时段再次进入 frozen（正确语义：supervisor 重启不唤醒）。
+        // v2 反推送风暴批（2026-10-28，修复面①销账）：restart = 父决策落地——
+        // 升级链随重启关闭（registry 快照清 None；state 面经 restartStateFor 的
+        // resetForInterrupt→ExecutionContext.idle 重建已天然清零）。否则「重启生效
+        // 但事件继续重投」：provider 仍 down 时重启后旧链旧 level 续推。
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "restart", s"level=${level.toString}")
         for
           _ <- ctx.cancelCurrentTurn()
@@ -446,6 +472,7 @@ private[agent] object AgentFrozen:
             .flatMap(_.replyDeferred)
             .traverse_(d => d.complete(Left("Restarted by supervisor")).void.handleErrorWith(_ => IO.unit))
           _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
+          _ <- updateRegistryEscalation(resources, state.sessionId, None)
           restartState <- restartStateFor(level, state, resources)
           _ <- state
             .wsSend(
@@ -470,88 +497,109 @@ private[agent] object AgentFrozen:
         // v2 升级链到期（§5.2）：FreezeScheduler.scan 发现 escalation.escalateAt
         // 超时 → level+1，通知上一级；父缺失 → 跳级（P0=到达用户终态）；无父 →
         // 用户终态（WS errorEscalated，不设超时——用户是最终仲裁）。
-        val current = escalation.getOrElse(EscalationInfo(level = 1, escalateAt = 0L, awaitedParentSessionId = ""))
-        val nextLevel = current.level + 1
-        val now = System.currentTimeMillis()
-        for
-          parentSid <- sessionIdOfRef(resources, parentRef)
-          target = Escalation.nextTarget(nextLevel, parentRef.isDefined, parentSid.isDefined)
-          newEsc =
-            if target == Escalation.Target.User then current.copy(level = nextLevel, escalateAt = 0L)
-            else current.copy(level = nextLevel, escalateAt = now + nebflow.shared.Defaults.ErrorEscalateAfterMs)
-          _ <- IO {
+        // v2 反推送风暴批（2026-10-28，修复面②同级去重）：陈旧/排队重复的
+        // Escalate 到达时窗口未到期 ⇒ 原地丢弃（零通知零升级）。既有放大器：
+        // actor 忙（processing 长轮/frozen 入队）期间扫描器每 30s 重发 Escalate，
+        // 积压消息在冻结后逐条消费——每条 level+1 + 通知连发。escalateAt=0
+        // （用户终态）同样丢弃（终态无再升级对象）。
+        val current0 = escalation.getOrElse(EscalationInfo(level = 1, escalateAt = 0L, awaitedParentSessionId = ""))
+        val now0 = System.currentTimeMillis()
+        if current0.escalateAt <= 0 || now0 < current0.escalateAt then
+          IO {
             logAgentEvent(
               agentDef,
               depth,
               state.sessionId,
               state.sessionName,
-              "error-escalate",
-              s"level=$nextLevel target=$target retryCount=$retryCount"
+              "escalate-stale-dropped",
+              s"level=${current0.level} escalateAt=${current0.escalateAt} now=$now0"
             )
-          }
-          _ <- target match
-            case Escalation.Target.Parent =>
-              parentRef.traverse_ { p =>
-                p ! AgentCommand.ExternalEvent(
-                  source = "team",
-                  eventType = "error-escalated",
-                  payload =
-                    s""""${agentDef.name}" auto-recovery escalation level $nextLevel (reason=${reasonStr(reason)})""",
-                  metadata = JsonObject(
-                    "reason" -> reasonStr(reason).asJson,
-                    "retryCount" -> retryCount.asJson,
-                    "level" -> nextLevel.asJson,
-                    "escalateAfterMs" -> nebflow.shared.Defaults.ErrorEscalateAfterMs.asJson,
-                    "failedSessionId" -> state.sessionId.getOrElse("").asJson,
-                    "agentName" -> agentDef.name.asJson
-                  ),
-                  correlationId = state.sessionId.filter(_.nonEmpty)
-                )
-              }
-            case Escalation.Target.Grandparent =>
-              // 父缺失跳级（P0）：视同到达用户终态（无再上级信息），WS 通知 + 不设超时
-              state
-                .wsSend(
-                  Json.obj(
-                    "type" -> "errorEscalated".asJson,
-                    "sessionId" -> state.sessionId.getOrElse("").asJson,
-                    "reason" -> reasonStr(reason).asJson,
-                    "retryCount" -> retryCount.asJson,
-                    "level" -> nextLevel.asJson,
-                    "escalateAt" -> 0L.asJson,
-                    "detail" -> "parent-unavailable-skipped".asJson
-                  )
-                )
-                .handleErrorWith(_ => IO.unit)
-            case Escalation.Target.User =>
-              state
-                .wsSend(
-                  Json.obj(
-                    "type" -> "errorEscalated".asJson,
-                    "sessionId" -> state.sessionId.getOrElse("").asJson,
-                    "reason" -> reasonStr(reason).asJson,
-                    "retryCount" -> retryCount.asJson,
-                    "level" -> nextLevel.asJson,
-                    "escalateAt" -> 0L.asJson
-                  )
-                )
-                .handleErrorWith(_ => IO.unit)
-          _ <- updateRegistryEscalation(resources, state.sessionId, Some(newEsc))
-        yield
-          val escalatedState = state.withEscalation(Some(newEsc))
-          frozen(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            escalatedState,
-            replyTo,
-            resumeAt,
-            reason,
-            retryCount,
-            Some(newEsc)
+          }.as(
+            frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation)
           )
-        end for
+        else
+          val nextLevel = current0.level + 1
+          val now = System.currentTimeMillis()
+          for
+            parentSid <- sessionIdOfRef(resources, parentRef)
+            target = Escalation.nextTarget(nextLevel, parentRef.isDefined, parentSid.isDefined)
+            newEsc =
+              if target == Escalation.Target.User then current0.copy(level = nextLevel, escalateAt = 0L)
+              else current0.copy(level = nextLevel, escalateAt = now + nebflow.shared.Defaults.ErrorEscalateAfterMs)
+            _ <- IO {
+              logAgentEvent(
+                agentDef,
+                depth,
+                state.sessionId,
+                state.sessionName,
+                "error-escalate",
+                s"level=$nextLevel target=$target retryCount=$retryCount"
+              )
+            }
+            _ <- target match
+              case Escalation.Target.Parent =>
+                // v2 反推送风暴批（2026-10-28）：统一投递口 sendEscalationToParent
+                // ——风暴闸单点生效（修复面④），消息面与 L1 进入腿（notifyEscalation）
+                // 同构（同 source/metadata 键 ⇒ 队列合并键成立）。
+                parentRef.traverse_ { p =>
+                  sendEscalationToParent(
+                    resources,
+                    p,
+                    agentDef,
+                    depth,
+                    state,
+                    reason,
+                    retryCount,
+                    nextLevel,
+                    payload =
+                      s""""${agentDef.name}" auto-recovery escalation level $nextLevel (reason=${reasonStr(reason)})"""
+                  )
+                }
+              case Escalation.Target.Grandparent =>
+                // 父缺失跳级（P0）：视同到达用户终态（无再上级信息），WS 通知 + 不设超时
+                state
+                  .wsSend(
+                    Json.obj(
+                      "type" -> "errorEscalated".asJson,
+                      "sessionId" -> state.sessionId.getOrElse("").asJson,
+                      "reason" -> reasonStr(reason).asJson,
+                      "retryCount" -> retryCount.asJson,
+                      "level" -> nextLevel.asJson,
+                      "escalateAt" -> 0L.asJson,
+                      "detail" -> "parent-unavailable-skipped".asJson
+                    )
+                  )
+                  .handleErrorWith(_ => IO.unit)
+              case Escalation.Target.User =>
+                state
+                  .wsSend(
+                    Json.obj(
+                      "type" -> "errorEscalated".asJson,
+                      "sessionId" -> state.sessionId.getOrElse("").asJson,
+                      "reason" -> reasonStr(reason).asJson,
+                      "retryCount" -> retryCount.asJson,
+                      "level" -> nextLevel.asJson,
+                      "escalateAt" -> 0L.asJson
+                    )
+                  )
+                  .handleErrorWith(_ => IO.unit)
+            _ <- updateRegistryEscalation(resources, state.sessionId, Some(newEsc))
+          yield
+            val escalatedState = state.withEscalation(Some(newEsc))
+            frozen(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              escalatedState,
+              replyTo,
+              resumeAt,
+              reason,
+              retryCount,
+              Some(newEsc)
+            )
+          end for
+        end if
 
       case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId, _) =>
         // 排队 pendingEvents（不唤醒）：出冻结段/唤醒后的下一个 turn 边界
@@ -570,10 +618,14 @@ private[agent] object AgentFrozen:
         val isSubagentResult = TurnBoundaryDrains.isSubagentResult(event)
         val outstanding = state.execution.outstandingSubagentResults
         val newOutstanding = if isSubagentResult then math.max(0, outstanding - 1) else outstanding
+        // v2 反推送风暴批（2026-10-28，修复面③合并）：升级事件同键（同 failed
+        // 会话）在 pendingEvents 里原位替换——本会话冻结期间父侧风暴波只积一条，
+        // 恢复后 turn 边界 reminder 携带最新 level。
+        val coalescedPending = AgentActor.coalesceEscalationEvents(state.execution.pendingEvents, event)
         val queued = state.copy(execution =
           state.execution.copy(
             outstandingSubagentResults = newOutstanding,
-            pendingEvents = state.execution.pendingEvents :+ event
+            pendingEvents = coalescedPending
           )
         )
         IO.pure(

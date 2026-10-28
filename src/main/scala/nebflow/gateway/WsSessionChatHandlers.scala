@@ -733,7 +733,10 @@ private[gateway] object WsSessionChatHandlers:
             case Some(rec) if rec.kind == nebflow.actor.AgentKind.Root =>
               // Root agent：现有 restartAgent soft 语义（冻结中 RestartAgent
               // 镜像 processing——cancelCurrentTurn + restartStateFor + 续跑）
+              // v2 反推送风暴批（2026-10-28，修复面①销账）：父裁定 restart 即关闭
+              // 其未决升级事件（registry escalation 快照清 None）——裁定后不再重投。
               (rec.ref ! nebflow.actor.AgentCommand.RestartAgent(nebflow.actor.RestartLevel.Soft)) *>
+                nebflow.core.tools.AgentControlTool.clearRegistryEscalation(sharedResources, rec.sessionId) *>
                 prReply(
                   ok = true,
                   "message" -> "Root restart (soft) sent; frozen turn will resume from checkpoint".asJson
@@ -749,7 +752,9 @@ private[gateway] object WsSessionChatHandlers:
               )
             case Some(rec) if rec.supervisorRef.isDefined =>
               // Delegate/SubTask：Stop → BackoffSupervisor respawn（断点续跑）
+              // v2 反推送风暴批（2026-10-28，修复面①销账）：裁定即销账（同上）。
               (rec.ref ! nebflow.actor.AgentCommand.Stop(s"parent-restart")) *>
+                nebflow.core.tools.AgentControlTool.clearRegistryEscalation(sharedResources, rec.sessionId) *>
                 prReply(
                   ok = true,
                   "message" ->
