@@ -87,24 +87,102 @@ private[gateway] object WsConfigHandlers:
     val json = parsedJson(text)
     val hc = json.hcursor
     val thinkingOpt = hc.downField("thinking").as[Option[io.circe.Json]].toOption.flatten
-    // null/absent means toggled off; {enabled: false} also means off; otherwise default true
-    val enabled = thinkingOpt match
-      case None | Some(io.circe.Json.Null) => false
-      case Some(v) => v.hcursor.downField("enabled").as[Boolean].getOrElse(true)
-    val budgetTokens = thinkingOpt match
-      case None | Some(io.circe.Json.Null) => 32000
-      case Some(v) => v.hcursor.downField("budgetTokens").as[Int].getOrElse(32000)
-    val tc = ThinkingConfig(enabled, budgetTokens)
-    logger.info(s"Thinking mode set to: enabled=$enabled budgetTokens=$budgetTokens") *>
-      // 冻结修复（2026-08-27）：同族排序——persist 成功才热更，失败回执。
-      nebflow.service.ConfigService.writeLocked(persistThinkingConfig(tc)).attempt.flatMap {
-        case Left(e) =>
-          logger.warn(s"Failed to persist thinking config: ${e.getMessage}") *>
-            wsSend(ApiJson.configUpdateFailed(s"思考模式保存失败: ${e.getMessage}"))
-        case Right(_) =>
-          sharedResources.thinkingConfigRef.set(tc) *> broadcastServerConfig
-      }
+    // thinking-config 批（2026-10-28，设计 §5）：payload 带 provider+model 键 =
+    // 按模型层写路（缺省 = 全局，老前端零感知）。
+    val providerOpt = hc.downField("provider").as[Option[String]].toOption.flatten
+    val modelOpt = hc.downField("model").as[Option[String]].toOption.flatten
+
+    (providerOpt, modelOpt) match
+      case (Some(pid), Some(mid)) => setModelThinkingLayer(ctx, pid, mid, thinkingOpt, wsSend)
+      case _ =>
+        // null/absent means toggled off; {enabled: false} also means off; otherwise default true
+        val enabled = thinkingOpt match
+          case None | Some(io.circe.Json.Null) => false
+          case Some(v) => v.hcursor.downField("enabled").as[Boolean].getOrElse(true)
+        val budgetTokens = thinkingOpt match
+          case None | Some(io.circe.Json.Null) => 32000
+          case Some(v) => v.hcursor.downField("budgetTokens").as[Int].getOrElse(32000)
+        // 新字段（可选）：effort 档位 + GLM 保留式思考位——旧前端不发 ⇒ None。
+        val effort = thinkingOpt.flatMap(_.hcursor.downField("effort").as[Option[ThinkingEffort]].toOption.flatten)
+        val clearThinking =
+          thinkingOpt.flatMap(_.hcursor.downField("clearThinking").as[Option[Boolean]].toOption.flatten)
+        val tc = ThinkingConfig(enabled, budgetTokens, effort, clearThinking)
+        logger.info(
+          s"Thinking mode set to: enabled=$enabled budgetTokens=$budgetTokens effort=${effort.map(_.wireName)}"
+        ) *>
+          // 冻结修复（2026-08-27）：同族排序——persist 成功才热更，失败回执。
+          nebflow.service.ConfigService.writeLocked(persistThinkingConfig(tc)).attempt.flatMap {
+            case Left(e) =>
+              logger.warn(s"Failed to persist thinking config: ${e.getMessage}") *>
+                wsSend(ApiJson.configUpdateFailed(s"思考模式保存失败: ${e.getMessage}"))
+            case Right(_) =>
+              sharedResources.thinkingConfigRef.set(tc) *> broadcastServerConfig
+          }
+    end match
   end handleSetThinking
+
+  /**
+   * 按模型 thinking 层写路（thinking-config 批，设计 §5）：payload
+   * `{thinking:{effort:"high"|null, enabled:true|false|null}, provider, model}`。
+   * thinking 缺席 = 整层清除（= 完全继承）。定点写盘 + 内存 configRef 同步 patch
+   * （热生效，不用重启/重载）+ 广播回声；失败回执 configUpdateFailed。
+   */
+  private def setModelThinkingLayer(
+    ctx: WsDispatchCtx,
+    providerId: String,
+    modelId: String,
+    thinkingOpt: Option[io.circe.Json],
+    wsSend: io.circe.Json => IO[Unit]
+  ): IO[Unit] =
+    import ctx.*
+    val patch: Either[String, ThinkingMode.ThinkingLayerPatch] = thinkingOpt match
+      case None => Right(ThinkingMode.ThinkingLayerPatch()) // 空 patch = 摘除整个 thinking 节点
+      case Some(v) => v.as[ThinkingMode.ThinkingLayerPatch].left.map(_.message)
+    patch match
+      case Left(err) =>
+        logger.warn(s"setThinking(model) rejected: $err") *>
+          wsSend(ApiJson.configUpdateFailed(s"思考档位保存失败: $err"))
+      case Right(p) =>
+        val persist = IO.blocking {
+          val existing =
+            if os.exists(nebflow.shared.Config.DefaultConfigPath) then os.read(nebflow.shared.Config.DefaultConfigPath)
+            else "{}"
+          val path = PathUtil.configJsonWritePath(PathUtil.dataRoot)
+          parse(existing) match
+            case Left(e) => Left(s"配置解析失败: ${e.message}")
+            case Right(cfgJson) =>
+              ThinkingMode.patchLayerIntoConfig(cfgJson, providerId, modelId, p) match
+                case Left(err) => Left(err)
+                case Right(updated) =>
+                  // Restricted form (keyaudit-quickfix ①)：0600 落盘（同族先例）。
+                  nebflow.core.AtomicJson.writeSyncRestricted(path, updated.spaces2)
+                  Right(())
+        }
+        ConfigService.writeLocked(persist).attempt.flatMap {
+          case Left(e) =>
+            logger.warn(s"Failed to persist thinking layer: ${e.getMessage}") *>
+              wsSend(ApiJson.configUpdateFailed(s"思考档位保存失败: ${e.getMessage}"))
+          case Right(Left(err)) =>
+            logger.warn(s"Failed to persist thinking layer: $err") *>
+              wsSend(ApiJson.configUpdateFailed(s"思考档位保存失败: $err"))
+          case Right(Right(())) =>
+            // 内存 configRef 从盘上重读（每请求解析读它 ⇒ 热生效，不用重启/重载；
+            // NebflowServiceConfig 无 Encoder，走 loadServiceConfig 而非内存 patch）。
+            IO.blocking(nebflow.shared.Config.loadServiceConfig()).attempt.flatMap {
+              case Right(fresh) => configRef.set(fresh)
+              case Left(_) => IO.unit // 重读失败不回滚已落盘值（下次 reload 收敛）
+            } *>
+              broadcastServerConfig *>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "thinkingLayerSaved".asJson,
+                  "provider" -> providerId.asJson,
+                  "model" -> modelId.asJson
+                )
+              )
+        }
+    end match
+  end setModelThinkingLayer
 
   private def handleSetWorkSchedule(
     ctx: WsDispatchCtx,

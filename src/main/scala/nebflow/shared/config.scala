@@ -55,7 +55,18 @@ case class ModelConfig(
   contextWindow: Int = Defaults.ContextWindow,
   description: Option[String] = None,
   capabilities: Option[List[String]] = None,
-  modelMaxContext: Option[Int] = None
+  modelMaxContext: Option[Int] = None,
+  /**
+   * thinking-config 批（2026-10-28，设计 §4.1）：model 级 thinking 层（三层继承
+   * 的最优先层，逐字段就近）。全字段 Option ⇒ 派生 decoder 容忍缺字段，旧配置
+   * 解析行为逐字节不变。解析单点 = [[ThinkingMode.resolveEffective]]。
+   */
+  thinking: Option[ThinkingLayerConfig] = None,
+  /**
+   * 思考面能力类显式覆盖（设计 §4.2：启发式只影响缺省，显式配置永远赢）。
+   * 缺省 = `ThinkingFamily.forModel(id)` 家族启发（AnthropicAdapter 单点取）。
+   */
+  thinkingKind: Option[ThinkingKind] = None
 )
 
 object ModelConfig:
@@ -70,8 +81,15 @@ case class ProviderConfig(
   // history back to the API. DeepSeek's Anthropic-compatible endpoint REQUIRES
   // thinking blocks to be passed back in thinking mode (even without a
   // signature), while real Anthropic REJECTS them without one. Defaults per
-  // providerId in ProviderRegistry; explicit config wins.
-  requireThinkingPassback: Option[Boolean] = None
+  // providerId in ProviderRegistry; explicit config wins. thinking-config 批
+  // （2026-10-28）：缺省判据从 providerId=="deepseek" 扩为「providerId 或任一
+  // 模型 id 命中 DeepSeek 族」（[[ThinkingFamily.isDeepSeekFamily]]）——现配
+  // cmdcode（服务 deepseek 模型族）由此根治 false 缺省的 400 隐患。
+  requireThinkingPassback: Option[Boolean] = None,
+  /** provider 级 thinking 层（三层继承中段；见 [[ModelConfig.thinking]]）。 */
+  thinking: Option[ThinkingLayerConfig] = None,
+  /** provider 级能力类覆盖（对该 provider 全部模型生效；model 级更优先）。 */
+  thinkingKind: Option[ThinkingKind] = None
 )
 
 object ProviderConfig:
@@ -377,22 +395,70 @@ case class ServiceLlmConfig(
 object ServiceLlmConfig:
   given Decoder[ServiceLlmConfig] = deriveDecoder[ServiceLlmConfig]
 
+/**
+ * 全局思考配置（`nebflow.json` 顶层 `thinkingConfig` 节）。
+ *
+ * thinking-config 批（2026-10-28，设计 §4.1/§4.3）：旧键名、字段、缺省全部
+ * 不动——本节语义降格为三层继承的「全局缺省层」（继承基座）。新增两个可选
+ * 字段：`effort`（产品档位，effort 型 wire 的档位来源）与 `clearThinking`
+ * （仅 GLM 保留式思考消费）。decoder 手写容忍缺字段；encoder 手写省略 None
+ * 字段 ⇒ 未配新字段时广播/落盘 JSON 与旧形态逐字节一致。
+ *
+ * @param enabled
+ *   off 的唯一表示（产品档位里的 off 收敛到开关位，避免同一语义两处表示）。
+ *   注意：强制思考模型（ThinkingKind.Toggle）的 off 在 wire 上兜底按 enabled 发。
+ * @param budgetTokens
+ *   旧字段语义不变：budget 型 wire（Anthropic ≤4.5 兜底）的数值来源 +
+ *   max_tokens 推导输入；对 effort 型面仅作继承基座输入，不再是唯一旋钮。
+ * @param effort
+ *   产品档位 low|medium|high|max（三层继承逐字段就近）。三档面映射
+ *   medium→high 单点 = EffortWire.threeTier。
+ * @param clearThinking
+ *   GLM 保留式思考（`thinking.clear_thinking:false`）——仅显式配置时上线。
+ */
 case class ThinkingConfig(
   enabled: Boolean = true,
-  budgetTokens: Int = 32000
+  budgetTokens: Int = 32000,
+  effort: Option[ThinkingEffort] = None,
+  clearThinking: Option[Boolean] = None
 )
 
 object ThinkingConfig:
-  given io.circe.Encoder[ThinkingConfig] = io.circe.generic.semiauto.deriveEncoder
+
+  /**
+   * 手写 encoder：省略 None 字段——旧值（未配 effort/clearThinking）落盘与
+   * 广播 JSON 与 deriveEncoder 旧形态逐字节一致（零破坏硬约束）。
+   */
+  given io.circe.Encoder[ThinkingConfig] = io.circe.Encoder.instance { tc =>
+    val base: List[(String, Json)] = List(
+      "enabled" -> tc.enabled.asJson,
+      "budgetTokens" -> tc.budgetTokens.asJson
+    )
+    val extra: List[(String, Json)] = List(
+      tc.effort.map(e => "effort" -> e.asJson),
+      tc.clearThinking.map(c => "clearThinking" -> c.asJson)
+    ).flatten
+    io.circe.Json.obj((base ++ extra)*)
+  }
 
   given io.circe.Decoder[ThinkingConfig] = io.circe.Decoder.instance { c =>
     for
       enabled <- c.downField("enabled").as[Option[Boolean]].map(_.getOrElse(true))
       budgetTokens <- c.downField("budgetTokens").as[Option[Int]].map(_.getOrElse(32000))
-    yield ThinkingConfig(enabled, budgetTokens)
+      effort <- c.downField("effort").as[Option[ThinkingEffort]]
+      clearThinking <- c.downField("clearThinking").as[Option[Boolean]]
+    yield ThinkingConfig(enabled, budgetTokens, effort, clearThinking)
   }
 
-  /** Convert to the raw JSON shape expected by LLM adapters (e.g. Anthropic extended thinking). */
+  /**
+   * Convert to the raw JSON shape expected by LLM adapters (e.g. Anthropic extended thinking).
+   *
+   * 语义形态（thinking-config 批起）：enabled → budget 语义载体
+   * `{"type":"enabled","budget_tokens":N}`；disabled → `Json.Null`（= 语义 off）。
+   * **线上形态由 adapter 按能力类翻译**（AnthropicAdapter.wireThinkingFragment
+   * 单点）：off 在 Budget/Toggle/EffortTopLevel 类上省略键（不再发
+   * `"thinking": null`），EffortAnthropic 类发 `{"type":"disabled"}`。
+   */
   def toLlmJson(tc: ThinkingConfig): io.circe.Json =
     if tc.enabled then
       io.circe.Json.obj(

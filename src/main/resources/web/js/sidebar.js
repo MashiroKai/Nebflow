@@ -56,6 +56,7 @@ import { protocolFormLabel, escapeHtml, flushConfigToServer, showProviderModal, 
 // 绑定单点在各自子模块，本文件只挂壳 + 转发调用（子模块不回指本文件）。
 import { bindImagegenSection, debugBadge } from './sidebar/imagegenSection.js';
 import { modelTestButtonHTML, bindModelTestButtons } from './sidebar/modelTestButton.js';
+import { modelThinkingSelectHTML, bindModelThinkingSelects, bindThinkingLayerEcho } from './sidebar/modelThinkingSelect.js';
 export { saveNewProvider, openProviderWizard, validateContextWindow, CTX_WINDOW_HARD_CEILING } from './sidebar/providersUi.js';
 import { openRulesEditor, openPathPicker, injectRenderSessionSidebar } from './sidebar/pathRules.js';
 export { handleRulesData, handleRulesSaved, handleRulesDeleted, initRulesModal, openPathPicker, openPathPickerCallback, handleBrowseResult, initPathPicker } from './sidebar/pathRules.js';
@@ -1048,6 +1049,10 @@ export function renderSettings() {
   // 每模型连接性测试钮（B 件）：对本次渲染的 provider 卡子树绑定（面板整体
   // 重渲 → 这里重绑；dataset.testBound 防重复）。
   bindModelTestButtons(content);
+  // 每模型思考档位下拉（thinking-config Phase 2）：同族按渲染子树绑定 +
+  // thinkingLayerSaved 回执订阅（重拉 configData 刷新下拉读数；订阅全局一次）。
+  bindModelThinkingSelects(content);
+  bindThinkingLayerEcho();
   // JeV key 值明文直显（本批①件）：按当前 keyRef 拉 GET /api/secrets/<name>/
   // value 填只读行（默认明文，eye 仅可选遮蔽）。失败/缺 keyRef = 占位说明。
   refreshJevKeyValue();
@@ -1133,8 +1138,11 @@ function renderProviderCard(name, p) {
     const ref = `${name}/${m.id}`;
     // B 件（2026-10-28）：每模型行尾连接性测试钮（modelTestButton 单点——
     // 渲染/绑定/三态绘制都在该模块，本处只拼装）。
+    // thinking-config Phase 2（2026-10-29）：模型行内思考档位下拉（设计 §5
+    // 最小面——继承链所见即所得 + 强制模型 off 置灰徽标；渲染/绑定在该子模块）。
     return `<div class="cfg-model-row" data-model-ref="${escapeHtml(ref)}">
       <span class="cfg-model-name">${escapeHtml(m.id)}</span>
+      ${modelThinkingSelectHTML(name, m, p)}
       <div class="cfg-model-vision">${renderVisionBadge(ref)}</div>
       ${modelTestButtonHTML(name, m.id)}
     </div>`;

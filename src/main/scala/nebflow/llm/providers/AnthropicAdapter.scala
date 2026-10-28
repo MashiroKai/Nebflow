@@ -254,6 +254,89 @@ class AnthropicAdapter(
       case _ => false
     }
 
+  // ── wire 翻译表（thinking-config 批 2026-10-28，设计 §4.2）────────────────
+  //
+  // 唯一翻译点：语义载体（params.thinking：enabled → budget JSON，off → Null）
+  // × 能力类（显式 ResolvedThinking.kind，缺省模型族启发）→ 本请求要 deepMerge
+  // 进 body 的 JSON 片段（可能为空 = 不发任何思考键）。两家发送面共用。
+  //
+  // | 能力类            | enabled 线上形态                                   | off 线上形态            |
+  // |-------------------|---------------------------------------------------|------------------------|
+  // | Budget            | thinking:{type:enabled, budget_tokens:N}          | 省略键（修掉 null）     |
+  // | EffortAnthropic   | thinking:{type:enabled}（不发 budget_tokens）      | thinking:{type:disabled}|
+  // | Toggle（强制开）  | thinking:{type:enabled}(+clear_thinking 配置时)    | 兜底 enabled（禁 off）  |
+  // | EffortTopLevel    | 省略 thinking 键（K3 官方明示移除）                 | 省略                   |
+  //
+  // effort 档位（output_config.effort / reasoning_effort）是第二段点亮腿——
+  // [[ThinkingEffortGate]] 逐族核定门控。
+
+  /** 本请求的能力类：显式配置永远赢，缺省模型族启发（设计 §4.2 铁律）。 */
+  private[providers] def kindOf(params: SendMessageParams): ThinkingKind =
+    params.thinkingResolved
+      .map(_.kind)
+      .getOrElse(ThinkingFamily.forModel(params.model))
+
+  /**
+   * 是否进 thinking 模式：语义载体开着 且 没有 layer 显式关。全局 master off
+   * （语义载体 = Null）不可被 layer 复活——保守方向（强制思考模型的 off 错误
+   * 路径风险只降不升）。
+   */
+  private[providers] def wireThinkingOn(params: SendMessageParams): Boolean =
+    params.thinking.exists(!_.isNull) && !params.thinkingResolved.exists(t => !t.enabled)
+
+  /**
+   * 本请求的思考 wire 片段（deepMerge 进 body；空对象 = 不发任何思考键）。
+   * passback 剥离（effectiveThinking = None）→ 空片段 = 静默离开 thinking 模式
+   * （20260903 语义不变）。
+   */
+  private[providers] def wireThinkingFragment(params: SendMessageParams): Json =
+    effectiveThinking(params) match
+      case None => Json.obj()
+      case Some(_) if !wireThinkingOn(params) => offWire(kindOf(params))
+      case Some(t) => onWire(params, kindOf(params), t)
+
+  private def offWire(kind: ThinkingKind): Json = kind match
+    case ThinkingKind.Budget => Json.obj() // off → 省略键（旧形态 "thinking": null 由此消灭）
+    case ThinkingKind.EffortAnthropic => Json.obj("thinking" -> Json.obj("type" -> "disabled".asJson))
+    case ThinkingKind.Toggle =>
+      Json.obj("thinking" -> Json.obj("type" -> "enabled".asJson)) // 强制思考：off 兜底 enabled
+    case ThinkingKind.EffortTopLevel => Json.obj() // K3 恒推理，无「关」可表达
+
+  private def onWire(params: SendMessageParams, kind: ThinkingKind, semantic: Json): Json =
+    kind match
+      case ThinkingKind.Budget => Json.obj("thinking" -> semantic) // 既有 budget 形态逐字保留
+      case ThinkingKind.EffortAnthropic =>
+        // 官方 anthropic 面：thinking 支持（budget_tokens 被忽略）→ 只发开关位。
+        val base = Json.obj("thinking" -> Json.obj("type" -> "enabled".asJson))
+        ThinkingEffortGate
+          .effortFragment(kind, params.model, params.thinkingResolved.flatMap(_.effort)) match
+          case Some(extra) => base.deepMerge(extra)
+          case None => base
+      case ThinkingKind.Toggle =>
+        // 开关型：只发 enabled（budget_tokens 不再上线——kimi-for-coding 家族
+        // 对非 enabled 形态 400，glm 的 budget 处置未核实，少发永远更安全）。
+        val thinkingObj = scala.collection.mutable.ListBuffer.empty[(String, Json)]
+        thinkingObj += ("type" -> "enabled".asJson)
+        // GLM 保留式思考位：仅显式配置时上线（clear_thinking:false = 开启保留）。
+        params.thinkingResolved.flatMap(_.clearThinking).foreach { c =>
+          thinkingObj += ("clear_thinking" -> c.asJson)
+        }
+        val base = Json.obj("thinking" -> Json.obj(thinkingObj.toList*))
+        // glm 族 effort 腿（门开时）：顶层 reasoning_effort（body 级，非 thinking 键内）。
+        ThinkingEffortGate
+          .effortFragment(kind, params.model, params.thinkingResolved.flatMap(_.effort)) match
+          case Some(extra) => base.deepMerge(extra)
+          case None => base
+      case ThinkingKind.EffortTopLevel =>
+        // K3：不发 thinking 配置（官方明示移除）；effort 核定后走顶层
+        // reasoning_effort（第二段点亮腿）。
+        ThinkingEffortGate
+          .effortFragment(kind, params.model, params.thinkingResolved.flatMap(_.effort)) match
+          case Some(extra) => extra
+          case None => Json.obj()
+
+  end onWire
+
   /**
    * `max_tokens` for this face (maxcfg batch 2026-09-16; clamp batch
    * 2026-10-21, author ruling 「总输出上限改为128000」).
@@ -368,9 +451,9 @@ class AnthropicAdapter(
     val bodyWithTools = params.tools.filter(_.nonEmpty) match
       case Some(tools) => bodyWithSystem.deepMerge(Json.obj("tools" -> toAnthropicTools(tools)))
       case None => bodyWithSystem
-    val bodyWithThinking = effectiveThinking(params) match
-      case Some(t) => bodyWithTools.deepMerge(Json.obj("thinking" -> t))
-      case None => bodyWithTools
+    // thinking-config 批（2026-10-28）：wire 翻译单点——按能力类发参数/
+    // 省略键（off 不再是 "thinking": null；budget_tokens 只对 Budget 类上线）。
+    val bodyWithThinking = bodyWithTools.deepMerge(wireThinkingFragment(params))
     val bodyWithMetadata = (params.sessionId, params.agentId) match
       case (Some(sid), Some(aid)) =>
         bodyWithThinking.deepMerge(
@@ -464,9 +547,9 @@ class AnthropicAdapter(
     val bodyWithTools = params.tools.filter(_.nonEmpty) match
       case Some(tools) => bodyWithSystem.deepMerge(Json.obj("tools" -> toAnthropicTools(tools)))
       case None => bodyWithSystem
-    val bodyWithThinking = effectiveThinking(params) match
-      case Some(t) => bodyWithTools.deepMerge(Json.obj("thinking" -> t))
-      case None => bodyWithTools
+    // 同 sendMessage：wire 翻译单点（两发送面同形态，AnthropicThinkingReplaySpec
+    // 只钉重放剥离腿 + wire spec 钉逐族形态）。
+    val bodyWithThinking = bodyWithTools.deepMerge(wireThinkingFragment(params))
     val bodyWithMetadata = (params.sessionId, params.agentId) match
       case (Some(sid), Some(aid)) =>
         bodyWithThinking.deepMerge(

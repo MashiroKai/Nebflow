@@ -483,6 +483,43 @@ object LlmInterface extends LlmRuntime:
               candidate.provider.baseUrl
             )
 
+          /**
+           * thinking-config 批（2026-10-28，设计 §4.1/§4.2）：按候选把思考语义
+           * 解析成 [[ResolvedThinking]]（adapter wire 翻译表的单点输入）。
+           *
+           *  - 三层继承：model 层 > provider 层 > 全局（`ThinkingMode
+           *    .resolveEffective` 逐字段就近）；全局基座从 req.thinking 语义
+           *    载体恢复（worker 帽 / MaxThinkingBudget 钳已在其上游应用，此处
+           *    不重复钳）。
+           *  - 能力类：model `thinkingKind` > provider `thinkingKind` > 模型族
+           *    启发——显式配置永远赢。
+           *  - 层级 `enabled=false` 只能降不能升：全局 master off 不可被 layer
+           *    复活（AnthropicAdapter.wireThinkingOn 的保守语义），这里解析出的
+           *    enabled 只用于「layer 显式关」这条腿。
+           *
+           * req.thinking 缺省（辅助面不走此处；LlmRequest 面恒 Some）→ None =
+           * adapter 族启发兜底。
+           */
+          def resolveThinkingFor(req: LlmRequest, candidate: ModelCandidate): Option[ResolvedThinking] =
+            req.thinking.map { t =>
+              val global = nebflow.shared.ThinkingConfig(
+                enabled = t.hcursor.get[String]("type").toOption.contains("enabled"),
+                budgetTokens = t.hcursor
+                  .get[Int]("budget_tokens")
+                  .toOption
+                  .getOrElse(Defaults.SubagentThinkingBudgetCap)
+              )
+              val resolved = nebflow.shared.ThinkingMode.resolveEffective(
+                candidate.thinking,
+                candidate.provider.thinking,
+                global
+              )
+              val kind = candidate.thinkingKind
+                .orElse(candidate.provider.thinkingKind)
+                .getOrElse(nebflow.shared.ThinkingFamily.forModel(candidate.model))
+              ResolvedThinking(kind, resolved.enabled, resolved.effort, resolved.clearThinking)
+            }
+
           val handle = new LlmHandle[IO]:
             def send(req: LlmRequest): IO[LlmResponse] =
               val start = System.currentTimeMillis()
@@ -538,7 +575,11 @@ object LlmInterface extends LlmRuntime:
                           searchInjectionFor(req, candidate),
                           // 输出上限钳制批（2026-10-21）：候选生效窗口随行，适配器
                           // 据此给 max_tokens 留输入余量（128000 不再原样上线路）。
-                          contextWindow = Some(candidate.contextWindow)
+                          contextWindow = Some(candidate.contextWindow),
+                          // thinking-config 批（2026-10-28）：按候选解析思考语义
+                          // （model > provider > 全局逐字段就近 + 能力类显式优先），
+                          // adapter 据此走 wire 翻译表。
+                          thinkingResolved = resolveThinkingFor(req, candidate)
                         )
                       )
                     yield resp
@@ -815,6 +856,9 @@ object LlmInterface extends LlmRuntime:
                                               // 输出上限钳制批（2026-10-21）：同非流面——
                                               // 窗口随行，适配器钳 max_tokens 留输入余量。
                                               contextWindow = Some(candidate.contextWindow),
+                                              // thinking-config 批（2026-10-28）：同非流面——
+                                              // 按候选解析思考语义（wire 翻译表单点消费）。
+                                              thinkingResolved = resolveThinkingFor(req, candidate),
                                               attemptBackend = transportOpt.map(_.backend)
                                             )
                                           )

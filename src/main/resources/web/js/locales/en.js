@@ -851,6 +851,13 @@ export default {
   'settings.thinkingEffort.low': 'Low',
   'settings.thinkingEffort.medium': 'Medium',
   'settings.thinkingEffort.high': 'High',
+  'settings.thinkingEffort.max': 'Max',
+  // thinking-config Phase 2 (2026-10-29): per-model thinking effort select.
+  'settings.thinkingPerModel': 'Thinking effort',
+  'settings.thinkingInherit': 'Inherit',
+  'settings.thinkingEffective': 'now {v}',
+  'settings.thinkingForcedBadge': 'Model forces thinking on',
+  'settings.thinkingMediumMap': 'med→high',
   // === Settings-page permission-mode control (2026-09-12 batch) was deleted by
   // permshield F1 (2026-09-13): all 7 `settings.safetyMode*` keys went with it
   // (author re-ruling candidate B ① "delete the settings page"). The guidance now
