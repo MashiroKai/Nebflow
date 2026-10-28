@@ -1289,17 +1289,33 @@ object AgentActor extends AgentCore with AgentSession:
    * 无静默路径核证：hub 未装配（早期 boot / 测试）时**无槽可清**——请求在
    * `AskUser` 分支（本文件）与权限分支（`AgentCore.sendPermissionRequest`）就已
    * WARN 丢弃；此处仍打一行 info 供归因，绝不静默吞掉一次中断清理意图。
+   *
+   * ask-death-exit 批（2026-10-28，作者报障「黄色问题胶囊无问题仍显示计数」排查
+   * 面①）：本助手升格为**全部死亡出口的单一收口点** —— `reason` 参数化（原
+   * 字面量 "turn-interrupted" 为缺省值，Interrupt 调用点零改动）。原批按
+   * 「禁扩面」只登记不修的三个邻接 Exit —— `Stop` / `Retry` / `ResetSession`
+   * （+ `RestartAgent`）—— 现各态 case 统一接入本助手：turn 的等待方已死，
+   * hub 槽位与前端卡片/待答徽标必须随死亡收口（幂等：hub 侧按 sourceSession
+   * 过滤，零命中 = 无操作）。reason 语义（前端 main.js 映射）：
+   *   - "turn-interrupted" → 中断文案（Interrupt / Retry 同款：turn 没了）；
+   *   - "source-stopped"   → 来源已关闭（Stop / deferred-stop 兑现点）；
+   *   - "session-reset"    → 来源已关闭（ResetSession /clear）；
+   *   - "agent-restarted"  → 来源已关闭（RestartAgent supervisor 重启）。
+   * 未知 reason 在前端回落「已取消」文案，兼容矩阵不破。
    */
   private[agent] def closePendingInteractionsForInterruptedTurn(
     resources: SharedResources,
-    sessionId: String
+    sessionId: String,
+    reason: String = "turn-interrupted"
   ): IO[Unit] =
     if sessionId.isEmpty then IO.unit
     else
       resources.interactionHubRef.get.flatMap {
         case Some(hub) =>
-          logger.info(s"Interrupt: closing pending interaction slots for session=$sessionId")
-          (hub ! InteractionHubCommand.CleanupForSession(sessionId, reason = "turn-interrupted")).void
+          logger.info(
+            s"Interrupt: closing pending interaction slots for session=$sessionId reason=$reason"
+          )
+          (hub ! InteractionHubCommand.CleanupForSession(sessionId, reason = reason)).void
         case None =>
           logger.info(
             s"Interrupt: no InteractionHub spawned — nothing to clean for session=$sessionId " +
@@ -1802,7 +1818,16 @@ object AgentActor extends AgentCore with AgentSession:
     reason: String
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "retry", s"reason=$reason")
-    ctx.cancelCurrentTurn() *> (state.lastDispatch match
+    // ask-death-exit 批（2026-10-28）：Retry 也取消当前 turn —— 挂在 hub 的
+    // 待答槽随 turn 作废（重派的是新 turn / 新工具执行，旧槽的等待方已死）。
+    // 幂等：零命中 = no-op。reason 沿用中断语义（同一「turn 没了」面）。
+    ctx.cancelCurrentTurn() *>
+      closePendingInteractionsForInterruptedTurn(
+        resources,
+        state.sessionId.getOrElse(""),
+        reason = "turn-interrupted"
+      ) *>
+      (state.lastDispatch match
       case Some(LastDispatch(false, _)) =>
         // Re-dispatch LLM call with same messages. 6-arg call goes through
         // the AgentActor shadow (freeze gate) — retry must not bypass the
@@ -1831,7 +1856,14 @@ object AgentActor extends AgentCore with AgentSession:
     state: AgentState
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     for
-
+      // ask-death-exit 批（2026-10-28）：/clear 丢弃整段会话上下文 —— 挂在 hub
+      // 的待答槽（AskUser/权限卡）随之收口；否则卡片对着一个已被清空、永不推进
+      // 的会话挂着（待答徽标「有数无问」）。幂等：零命中 = no-op。
+      _ <- closePendingInteractionsForInterruptedTurn(
+        resources,
+        state.sessionId.getOrElse(""),
+        reason = "session-reset"
+      )
       _ <- state.readTracker.fold(IO.unit)(t => t.clear())
       _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
       // R2 closure (wait-timeout-fix): ResetSession discards a turn that

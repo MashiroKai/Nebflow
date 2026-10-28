@@ -262,11 +262,23 @@ private[agent] object AgentIdle:
         yield result
 
       case AgentCommand.Interrupt() =>
-        IO.pure(idle(agentDef, resources, depth, parentRef, state))
+        // ask-death-exit 批（2026-10-28）：idle 态 Interrupt 无 turn 可取消，但
+        // 泄漏待答槽（既有缺陷形态）在此兜住——与 processing/frozen Interrupt
+        // 同一收口语义。幂等（零命中 no-op）。
+        closePendingInteractionsForInterruptedTurn(resources, state.sessionId.getOrElse("")) *>
+          IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       case AgentCommand.Stop(_) =>
         for
           _ <- ctx.cancelCurrentTurn()
+          // ask-death-exit 批（2026-10-28）：idle 态 Stop（会话删除/父重启/收殓）
+          // 也收口残留待答槽——正常 idle 无槽（零命中 no-op），泄漏槽（既有缺陷
+          // 形态：turn 死而槽未清）在此兜住。幂等。
+          _ <- closePendingInteractionsForInterruptedTurn(
+            resources,
+            state.sessionId.getOrElse(""),
+            reason = "source-stopped"
+          )
 
           _ <- killSessionShellProcesses(state)
           _ <- fireLifecycleStopHooks(resources, state)
@@ -278,6 +290,13 @@ private[agent] object AgentIdle:
       case AgentCommand.ResetSession =>
         for
           _ <- ctx.cancelCurrentTurn()
+          // ask-death-exit 批（2026-10-28）：/clear 同 processing/frozen —— 收口
+          // 待答槽（幂等；泄漏槽同此兜住）。
+          _ <- closePendingInteractionsForInterruptedTurn(
+            resources,
+            state.sessionId.getOrElse(""),
+            reason = "session-reset"
+          )
 
           _ <- state.readTracker.fold(IO.unit)(t => t.clear())
           // §E-10：/clear 作废影子——清 state.json + 清全部乒乓位（消息已 Nil，C₀
@@ -1015,6 +1034,12 @@ private[agent] object AgentIdle:
       case AgentCommand.RestartAgent(level) =>
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "restart-idle", s"level=${level.toString}")
         for
+          // ask-death-exit 批（2026-10-28）：idle 重启同样收口残留待答槽（幂等）。
+          _ <- closePendingInteractionsForInterruptedTurn(
+            resources,
+            state.sessionId.getOrElse(""),
+            reason = "agent-restarted"
+          )
           restartState <- restartStateFor(level, state, resources)
           _ <- state
             .wsSend(

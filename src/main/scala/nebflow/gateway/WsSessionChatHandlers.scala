@@ -56,6 +56,7 @@ private[gateway] object WsSessionChatHandlers:
     "renameSession" -> handleRenameSession,
     "getActiveAgents" -> handleGetActiveAgents,
     "getSessionBusy" -> handleGetSessionBusy,
+    "getHeldReceipts" -> handleGetHeldReceipts,
     "getHistory" -> handleGetHistory,
     "listAgents" -> handleListAgents,
     "listAgentSessions" -> handleListAgentSessions,
@@ -1154,6 +1155,54 @@ private[gateway] object WsSessionChatHandlers:
         )
       }
   end handleGetSessionBusy
+
+  /**
+   * ask-badge 批（2026-10-28「黄色问题胶囊无问题仍显示计数」排查面③）：单会话
+   * 待投递回执法 —— `getHeldReceipts {sessionId}` → 本连接直回
+   * `heldReceipts {sessionId, held, unread, snapshot:true}`（**复用**既有实时帧型
+   * ——前端消费点零改动，幂等置位 + 重渲胶囊；`snapshot:true` 供测试/日志分辨）。
+   *
+   * WHY：`held-receipts-indicator` 与 `pending-asks-indicator` 同用琥珀 `.pa-*`
+   * 材质、视觉上不可分辨，held 计数又**只**由 hold/drain/flush 实时帧驱动——
+   * 帧丢失（WS 半开/断连）或跨会话切换后，前端 `state.sessionHeldReceipts` 的
+   * 计数与引擎失步且**无任何权威对账路**（#1019 忙碌态失步的同源形态）：徽标
+   * 对着一个早已收口的积压常显「1」。本帧 = 计数的权威重同步入口（前端在重连
+   * / 会话切换时索取）。
+   *
+   * 权威链（两级）：registry 在册 → 记录行计数（pendingEventCount/unreadReceipt
+   * Count，actor 每次变动随行刷新）；不在册（idle root / 已死会话）→
+   * HeldReceiptStore 台账文件（hold/drain/flush 单点对账的持久投影，跨重启存续
+   * ——死会话的残留行数如实上报：数字「还挂着」是真实的，收口归 held 批的
+   * Stop 清理腿，本帧不撒谎也不越权清）。
+   */
+  private def handleGetHeldReceipts(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    val sid = parsedJson(text).hcursor.downField("sessionId").as[String].getOrElse("")
+    if sid.isEmpty then IO.unit
+    else
+      ctx.sharedResources.agentRegistry.get.flatMap { registry =>
+        registry.get(sid) match
+          case Some(rec) =>
+            IO.pure((rec.pendingEventCount, rec.unreadReceiptCount))
+          case None =>
+            nebflow.core.processor.HeldReceiptStore.load(sid).map(entries =>
+              (entries.size, entries.count(_.exhausted))
+            )
+      }.flatMap { (held, unread) =>
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "heldReceipts".asJson,
+            "sessionId" -> sid.asJson,
+            "held" -> held.asJson,
+            "unread" -> unread.asJson,
+            "snapshot" -> true.asJson
+          )
+        )
+      }
 
   private def handleGetHistory(
     ctx: WsDispatchCtx,

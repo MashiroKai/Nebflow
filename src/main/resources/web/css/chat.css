@@ -2981,18 +2981,27 @@
 #pending-asks-indicator.hidden { display: none; }
 /* held-receipt 投递可靠性批（2026-10-21 fix 3）：「N 条回执待投递」头部胶囊——
    同 pending-asks 胶囊族（共用 .pa-dot/.pa-count 材质），选择器并列零新面。 */
+/* ask-badge 批（2026-10-28「黄色问题胶囊无问题仍显示计数」排查面④）：换出琥珀
+   同色——两枚同色胶囊并排（回执 vs 待答）在顶栏不可分辨，作者把回执积压的「1」
+   认成问题计数报障。回执积压是**信息性**信号（非用户必须作答的阻塞），降为中
+   性灰 + 方形收件点：色相/点形双重可分辨，问题胶囊独占琥珀语义。 */
 #held-receipts-indicator {
   display: flex;
   align-items: center;
   gap: 5px;
-  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  background: color-mix(in srgb, var(--color-text-muted) 15%, transparent);
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-text-muted) 40%, transparent);
   padding: 2px 9px;
   font-size: 12px;
-  color: var(--color-warning);
+  color: var(--color-text-dim);
   cursor: pointer;
   transition: background 0.2s;
+}
+#held-receipts-indicator .pa-dot {
+  background: var(--color-text-muted);
+  border-radius: 2px; /* 方点：与问题胶囊的脉冲圆点形差 */
+  animation: none;
 }
 #held-receipts-indicator.hidden { display: none; }
 .pa-dot {

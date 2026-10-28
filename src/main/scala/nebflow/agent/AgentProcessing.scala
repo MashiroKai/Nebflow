@@ -609,6 +609,13 @@ private[agent] object AgentProcessing:
               NebflowLogger.forName("nebflow.agent").warn(s"Persist session failed: ${e.getMessage}")
             )
           _ <- persistQueues(state.sessionId, stoppedState.execution)
+          // ask-death-exit 批（2026-10-28）：deferred stop 在批边界兑现 = 同一死亡
+          // 出口 —— 待答槽随死收口（与即时 Stop 同 reason）。幂等。
+          _ <- closePendingInteractionsForInterruptedTurn(
+            resources,
+            stoppedState.sessionId.getOrElse(""),
+            reason = "source-stopped"
+          )
           _ <- killSessionShellProcesses(stoppedState)
           _ <- fireLifecycleStopHooks(resources, stoppedState)
         yield Behaviors.stopped
@@ -996,6 +1003,13 @@ private[agent] object AgentProcessing:
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "restart", s"level=${level.toString}")
         for
           _ <- ctx.cancelCurrentTurn()
+          // ask-death-exit 批（2026-10-28）：supervisor 重启 = 本 turn 的等待方
+          // 随取消作废 —— 待答槽随死收口（重启后重派的是新 turn）。幂等。
+          _ <- closePendingInteractionsForInterruptedTurn(
+            resources,
+            state.sessionId.getOrElse(""),
+            reason = "agent-restarted"
+          )
           _ <- state.pendingCompaction
             .flatMap(_.replyDeferred)
             .traverse_(d => d.complete(Left("Restarted by supervisor")).void.handleErrorWith(_ => IO.unit))
@@ -1058,6 +1072,14 @@ private[agent] object AgentProcessing:
           logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "stop", "reason=user")
           for
             _ <- ctx.cancelCurrentTurn()
+            // ask-death-exit 批（2026-10-28）：Stop（链取消 / 会话删除 / 父重启 /
+            // 卡死收殓等全部 Stop 位）= 会话/turn 死亡 —— 挂在 hub 的待答槽随死
+            // 收口（原批「禁扩面」登记面的第 ① 个 Exit，本批接线）。幂等。
+            _ <- closePendingInteractionsForInterruptedTurn(
+              resources,
+              state.sessionId.getOrElse(""),
+              reason = "source-stopped"
+            )
 
             _ <- killSessionShellProcesses(state)
             _ <- fireLifecycleStopHooks(resources, state)
