@@ -1068,6 +1068,10 @@ class WebSocketRoutes(
                     // The class is computed once per event inside WsHub (see there).
                     outbound <- Queue.bounded[IO, WebSocketFrame](OutboundQueueCapacity)
                     outboundOverflowClosed <- Deferred[IO, Unit]
+                    // console-reconnect-stability（2026-10-28）：pong 旁路队列——
+                    // 大帧阵发时心跳应答不再排在本连接 bulk FIFO 之后（机制见
+                    // [[ConsolePongLane]]）。有界 16；道满回落既有 FIFO。
+                    pongLane <- Queue.bounded[IO, WebSocketFrame](ConsolePongLane.Capacity)
 
                     perConnWsSend = (text: String, isStream: Boolean) =>
                       outbound
@@ -1100,7 +1104,15 @@ class WebSocketRoutes(
                     // watch table) still reason in Json, so they get an adapter that
                     // serializes on the way in — the point of A1 is that the *fan-out*
                     // no longer re-serializes per connection, not that Json is banned.
-                    perConnJsonSend = (json: io.circe.Json) => perConnWsSend(json.noSpaces, WsHub.isStreamFrame(json))
+                    perConnJsonSend = (json: io.circe.Json) =>
+                      // pong 走旁路（[[ConsolePongLane]]）：道满才回落既有 FIFO
+                      // （overflow 政策同其余控制帧），其余帧路径逐字不变。
+                      if ConsolePongLane.isPong(json) then
+                        pongLane.tryOffer(WebSocketFrame.Text(json.noSpaces)).flatMap {
+                          case true => IO.unit
+                          case false => perConnWsSend(json.noSpaces, false)
+                        }
+                      else perConnWsSend(json.noSpaces, WsHub.isStreamFrame(json))
 
                     // explorer-rt (chain-n-1981ce87): one watch-subscription table per
                     // connection. Chained into the finalizer below — a dropped
@@ -1155,11 +1167,14 @@ class WebSocketRoutes(
                     // 叠判死中断（send 侧直达 ⇒ ember 写 close 帧）并把 10s 判死腿挂
                     // 同一会话作用域（连接在则拍在，连接亡则拍亡）。
                     sendStream = zombie.guardedSend(
-                      Stream
-                        .fromQueueUnterminated(outbound)
-                        .handleErrorWith { e =>
-                          Stream.eval(logger.debug(s"WebSocket send stream closed: ${e.getMessage}")).drain
-                        },
+                      ConsolePongLane.prioritized(
+                        data = Stream
+                          .fromQueueUnterminated(outbound)
+                          .handleErrorWith { e =>
+                            Stream.eval(logger.debug(s"WebSocket send stream closed: ${e.getMessage}")).drain
+                          },
+                        control = Stream.fromQueueUnterminated(pongLane)
+                      ),
                       outboundOverflowClosed
                     )(onDead =
                       silentMs =>

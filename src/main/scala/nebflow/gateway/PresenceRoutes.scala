@@ -93,10 +93,18 @@ private[gateway] object PresenceRoutes:
   def PresenceWsLiveness(tick: FiniteDuration = 10.seconds, deadAfter: FiniteDuration = 30.seconds): WsZombieGuard.Liveness =
     WsZombieGuard.Liveness(tick, deadAfter)
 
-  /** presence WS 会话的收发流（[[presenceWsStreams]] 产物，路由侧交 `wsb.build`）。 */
+  /**
+   * presence WS 会话的收发流（[[presenceWsStreams]] 产物，路由侧交 `wsb.build`）。
+   *
+   * `close`（per-device 顶替批 2026-10-28）：外部关闭会话的动作——内部直接完成
+   * 该会话的 `deadSig`，双侧收口（send/receive 同 ember scope 终结）与判死回收
+   * 同路径。幂等；被顶替的旧会话经 [[PresenceSessionRegistry]] 的 `finish`
+   * 代际判定后跳过 removePeer。
+   */
   final case class PresenceWsStreams(
     send: Stream[IO, WebSocketFrame],
-    receive: Pipe[IO, WebSocketFrame, Unit]
+    receive: Pipe[IO, WebSocketFrame, Unit],
+    close: IO[Unit] = IO.unit
   )
 
   /**
@@ -180,7 +188,11 @@ private[gateway] object PresenceRoutes:
             .onFinalize(removePeer(deviceId))
         }
 
-        PresenceWsStreams(send, receive)
+        PresenceWsStreams(
+          send,
+          receive,
+          close = zombie.deadSig.complete(()).void
+        )
       }
     }
   end presenceWsStreams
@@ -423,6 +435,11 @@ private[gateway] object PresenceRoutes:
         "mailboxDepth" -> o.mailboxDepth.asJson
       )
 
+    // per-device 单会话顶替注册表（2026-10-28）：只服务下方 /neblink/presence
+    // 接受面；生命周期 = 本 routes 值（与 feishuScanBind 同款「一次挂载一册」）。
+    // 构造零外部依赖（不会像 sharedResources 惰性件那样 NPE 其它路由臂的 spec）。
+    val presenceSessions = new PresenceSessionRegistry
+
     HttpRoutes.of[IO] {
       case req @ GET -> Root / "neblink" / "presence" =>
         neblinkService match
@@ -481,18 +498,40 @@ private[gateway] object PresenceRoutes:
                         // 作用域内 acquire/release 结构配对（R-1b 注记的三洞一并封死：
                         // response 已产出而 upgrade 会话未起跑的幽灵计数）。回减与
                         // removePeer 同缝必达（close / 异常断开 / 判死回收三途同归）。
-                        PresenceRoutes.presenceWsStreams(
-                          connGuard = connGuard,
-                          ip = wsIpNorm,
-                          deviceId = peerDeviceId,
-                          removePeer = id => ms.removePeer(id).handleErrorWith(_ => IO.unit),
-                          handleData = ms.handleDataMessage,
-                          onZombieRecycle = silentMs =>
-                            logger.warn(
-                              s"conn-guard: presence zombie recycled ip=$wsIpNorm device=$peerDeviceId " +
-                                s"silentMs=$silentMs — slot released (heartbeat dead-detection)"
-                            )
-                        ).flatMap(streams => wsb.build(streams.send, streams.receive))
+                        //
+                        // per-device 顶替（console-reconnect-stability 批 2026-10-28）：
+                        // 同 device 新会话受理即关闭旧会话（并存连接恒 ≤1，64/64 槽位
+                        // 被同设备灌满 → per-ip-cap 拨号风暴的接受面根因）；旧会话
+                        // finalizer 凭代际判定跳过 removePeer，不再拍掉新注册。
+                        for
+                          gen <- presenceSessions.nextGen
+                          streams <- PresenceRoutes.presenceWsStreams(
+                            connGuard = connGuard,
+                            ip = wsIpNorm,
+                            deviceId = peerDeviceId,
+                            removePeer = id =>
+                              presenceSessions.finish(id, gen).flatMap {
+                                case true => ms.removePeer(id).handleErrorWith(_ => IO.unit)
+                                case false => IO.unit // 被顶替的旧会话不得摘除新注册
+                              },
+                            handleData = ms.handleDataMessage,
+                            onZombieRecycle = silentMs =>
+                              logger.warn(
+                                s"conn-guard: presence zombie recycled ip=$wsIpNorm device=$peerDeviceId " +
+                                  s"silentMs=$silentMs — slot released (heartbeat dead-detection)"
+                              )
+                          )
+                          previous <- presenceSessions.register(peerDeviceId, gen, streams.close)
+                          _ <- previous.fold(IO.unit) { closePrevious =>
+                            logger.info(
+                              s"conn-guard: presence session superseded device=$peerDeviceId ip=$wsIpNorm — " +
+                                "previous session closed (per-device single-session)"
+                            ) *> closePrevious
+                          }
+                          resp <- wsb
+                            .build(streams.send, streams.receive)
+                            .onError(_ => presenceSessions.finish(peerDeviceId, gen).void)
+                        yield resp
                       }
                     // end conn-guard case None
                   } // end conn-guard checkWs flatMap
