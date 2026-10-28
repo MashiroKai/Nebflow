@@ -2279,6 +2279,7 @@ export default {
   'explorer.newFolder': 'New Folder',
   // === ui-device-faces batch (2026-10-10): face B — remote directories in the file browser ===
   'explorer.loadingRemote': 'Loading directories on {device}…',
+  'explorer.listTimeout': 'Directory listing timed out (network congestion or reconnect) — retry to reload',
   'explorer.retry': 'Retry',
   'explorer.pickupLoading': 'Fetching…',
   'explorer.pickupFailed': 'Fetch failed',

@@ -121,14 +121,32 @@ export async function fetchProjects() {
 /** 某项目 Flow Map 快照。GET /api/projects/<name>/flow-map（需 auth）→ NodeList 载荷。
  *  未挂载（404）返回带 notMounted 标记的空 NodeList——调用方据此区分「项目没在跑」
  *  与「项目在跑但没有节点」（两者旧版都渲染成"暂无节点"，无法诊断）；
- *  其余错误上抛由调用方展示 loadFail。 */
-export async function fetchFlowMap(projectName) {
-  const r = await fetch(API.flowMap(projectName), { headers: authHeaders() });
-  if (r.status === 404) {
-    return { nodes: [], worktrees: [], meta: { project: projectName, updatedAt: Date.now() }, notMounted: true };
+ *  其余错误上抛由调用方展示 loadFail。
+ *
+ *  有界等待（project-slow-folders 批 2026-10-28）：现场「DOSTEL 项目卡摘要
+ *  加载中…久久不出」的中继链形态 = 流量拥塞下 fetch 既不成功也**不失败**（挂死
+ *  到浏览器级超时，分钟级）——卡片摘要槽的骨架脉冲全程无终态。取值理由同
+ *  NODE_RESULT_TIMEOUT_MS：网关本地内存读正常为毫秒级；12s 覆盖中继抖动。
+ *  超时 abort 上抛 ⇒ loadCardSummary 既有 catch 落 `unknown` 态（idle 文案 +
+ *  title 保持可点），不再永挂骨架。AbortError 与网络失败同归 catch，零新增
+ *  状态面；timeoutMs 可被 window.__nfFlowMapTimeoutMs 覆盖（仅 e2e seam）。 */
+export const FLOW_MAP_TIMEOUT_MS = Number(globalThis.__nfFlowMapTimeoutMs) > 0
+  ? Number(globalThis.__nfFlowMapTimeoutMs)
+  : 12000;
+
+export async function fetchFlowMap(projectName, timeoutMs = FLOW_MAP_TIMEOUT_MS) {
+  const ctrl = typeof AbortController === 'function' && timeoutMs > 0 ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : 0;
+  try {
+    const r = await fetch(API.flowMap(projectName), { headers: authHeaders(), signal: ctrl?.signal });
+    if (r.status === 404) {
+      return { nodes: [], worktrees: [], meta: { project: projectName, updatedAt: Date.now() }, notMounted: true };
+    }
+    if (!r.ok) throw new Error(`flow-map ${r.status}`);
+    return await r.json();
+  } finally {
+    if (timer) clearTimeout(timer);
   }
-  if (!r.ok) throw new Error(`flow-map ${r.status}`);
-  return await r.json();
 }
 
 /** 节点结果全文取用超时（ms，2026-09-11 fmresult 批）。取值理由：结果端点是网关

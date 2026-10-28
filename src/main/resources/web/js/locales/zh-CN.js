@@ -2205,6 +2205,7 @@ export default {
   // === ui-device-faces 批（2026-10-10）：面B 文件浏览器远端目录 ===
   // 远端根的加载行/取件三态/只读闸；文案对齐设计稿 §2。
   'explorer.loadingRemote': '正在加载 {device} 的目录…',
+  'explorer.listTimeout': '目录列表超时（网络拥塞或连接中断），点击重试',
   'explorer.retry': '重试',
   'explorer.pickupLoading': '取件中…',
   'explorer.pickupFailed': '取件失败',

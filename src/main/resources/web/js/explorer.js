@@ -729,9 +729,93 @@ function toggleDir(path, chevronEl, childrenEl, depth) {
   syncWatch();
 }
 
-function loadDir(path, container, depth) {
+// ── listDir 有界等待（project-slow-folders 批 2026-10-28）─────────────────
+// 现场事故（作者报障 2026-10-28 15:5x）：dirListing 帧迟到/丢失（中继拥塞 /
+// 连接重建 / 出站帧丢弃）后 pendingLoads 与 loadingDirs 永不清理 ⇒ 加载行
+// 「加载中…」永挂，且三条自愈腿（fsChanged→reloadVisibleDir、focus→
+// refreshExpandedDirs、慢对账 reconcileTick）全被各自的 `!loadingDirs.has()`
+// 闸挡住——没有任何路径能把树救回来，直到用户重开浏览器面板。
+// 修复 = 每次发帧挂一只定时器：①超时先**静默重发**一次（对端恢复后丢帧自愈，
+// 不闪错误）；②再超时落既有错误行 + 重试钮（远端腿 B3 同款 UI），并释放
+// pendingLoads / loadingDirs，让三条自愈腿恢复工作。dirListing 到达即摘表。
+// 零帧形变化；LOAD_TIMEOUT_MS 可被 window.__nfExplorerLoadTimeoutMs 覆盖
+// （仅 e2e seam 用短时限，生产恒默认）。
+const LOAD_TIMEOUT_MS = Number(globalThis.__nfExplorerLoadTimeoutMs) > 0
+  ? Number(globalThis.__nfExplorerLoadTimeoutMs)
+  : 10000;
+/** 1 次原始发送 + 1 次静默重发；两次都无应答才落错误终态。 */
+const LOAD_MAX_ATTEMPTS = 2;
+// reqId → { timer, attempt }
+const loadTimers = new Map();
+
+function armListDirTimeout(reqId, attempt) {
+  disarmListDirTimeout(reqId);
+  const timer = setTimeout(() => onListDirTimeout(reqId, attempt), LOAD_TIMEOUT_MS);
+  loadTimers.set(reqId, { timer });
+}
+
+function disarmListDirTimeout(reqId) {
+  const rec = loadTimers.get(reqId);
+  if (rec) {
+    clearTimeout(rec.timer);
+    loadTimers.delete(reqId);
+  }
+}
+
+/** 全量摘表（openExplorerAt / refreshExplorer 的清场腿，同 pendingLoads 生命周期）。 */
+function disarmAllListDirTimeouts() {
+  for (const { timer } of loadTimers.values()) clearTimeout(timer);
+  loadTimers.clear();
+}
+
+function onListDirTimeout(reqId, attempt) {
+  loadTimers.delete(reqId);
+  const pending = pendingLoads.get(reqId);
+  if (!pending) return; // 应答已到（摘表竞态窗口）—— 零操作
+  if (attempt < LOAD_MAX_ATTEMPTS) {
+    // 静默重发：释放闸后走同一条 loadDir 管线（重新登记 pendingLoads + 挂新定时器）。
+    loadingDirs.delete(pending.path);
+    loadDir(pending.path, pending.container, pending.depth, attempt + 1);
+    return;
+  }
+  // 终态：错误行 + 重试钮（远端腿 B3 同款收尾），并释放两闸让自愈腿恢复。
+  pendingLoads.delete(reqId);
+  loadingDirs.delete(pending.path);
+  renderListDirTimeout(pending);
+}
+
+/** 超时终态错误行（与远端腿失败同材质：图标 + 文案 + [重试]）。 */
+function renderListDirTimeout(pending) {
+  const { container, path, depth } = pending;
+  if (!container.isConnected) return;
+  container.querySelector('.explorer-loading')?.remove();
+  if (container.querySelector('.explorer-error')) return; // error 帧已先落 —— 不叠加
+  const errRow = document.createElement('div');
+  errRow.className = 'explorer-error';
+  errRow.innerHTML =
+    '<svg class="st-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>';
+  const txt = document.createElement('span');
+  txt.textContent = t('explorer.listTimeout');
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.className = 'retry';
+  retry.textContent = t('explorer.retry');
+  retry.addEventListener('click', (e) => {
+    e.stopPropagation();
+    errRow.remove();
+    loadingDirs.delete(path || '');
+    loadDir(path, container, depth);
+  });
+  txt.appendChild(retry);
+  errRow.appendChild(txt);
+  container.prepend(errRow);
+}
+
+function loadDir(path, container, depth, attempt = 1) {
   if (loadingDirs.has(path)) return;
   loadingDirs.add(path);
+  // 静默重发腿：摘掉上一轮残留的加载行（不叠两层 loading）。
+  if (attempt > 1) container.querySelector('.explorer-loading')?.remove();
 
   // Loading indicator. 远端根（面B B2）：「正在从 <设备> 读取…」+ sapphire spinner
   // （既有 loading 行语言；spinner 在减动效下停转——见 split.css 降级块）。
@@ -763,6 +847,8 @@ function loadDir(path, container, depth) {
   // Store container reference for the WS response handler
   const reqId = path || '__root__';
   pendingLoads.set(reqId, { container, depth, path });
+  // 有界等待（project-slow-folders 批）：应答丢失/迟到不再永挂「加载中…」。
+  armListDirTimeout(reqId, attempt);
 
   // 🔴 self 守卫（设计稿 §2.1）：本机根**不发** device 键（后端对解析为本机的
   // device 回显错误帧）；只有 remote 根的 listDir 才携带。
@@ -1066,6 +1152,7 @@ onMessage('dirListing', (msg) => {
   const pending = pendingLoads.get(reqId);
   pendingLoads.delete(reqId);
   loadingDirs.delete(msg.path);
+  disarmListDirTimeout(reqId); // 有界等待摘表（project-slow-folders 批）
 
   if (!pending) return;
 
@@ -1730,6 +1817,7 @@ export function openExplorerAt(path, device) {
   expandedDirs.clear();
   loadingDirs.clear();
   pendingLoads.clear();
+  disarmAllListDirTimeouts();
   pendingPickups.clear();
   hidePickupFailureBar();
   clearSelection();
@@ -1741,6 +1829,7 @@ export function refreshExplorer(sessionId) {
   expandedDirs.clear();
   loadingDirs.clear();
   pendingLoads.clear();
+  disarmAllListDirTimeouts();
   clearSelection();
   if (sessionId) {
     renderTree();
