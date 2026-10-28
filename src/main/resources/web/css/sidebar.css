@@ -2576,3 +2576,74 @@
   from { opacity: 0; transform: translateY(-4px); }
   to   { opacity: 1; transform: none; }
 }
+
+/* ── settings-panel-jev-imagegen 批（2026-10-28）───────────────────────────
+   ① 每模型连接性测试钮（B 件）：行尾小 ghost 图标钮 + 三态结果位。
+      零新色值：绿/红取 base.css 状态 token（.st-ok/.st-err 同源），中性
+      墨色走 --color-frame-text-muted。 */
+.cfg-model-test {
+  appearance: none;
+  border: 1px solid var(--color-frame-border-light);
+  background: transparent;
+  color: var(--color-frame-text-muted);
+  border-radius: 6px;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s, border-color 0.15s;
+}
+.cfg-model-test:hover { color: var(--color-frame-text); border-color: rgba(91, 127, 191, 0.4); }
+.cfg-model-test:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.3); outline-offset: 1px; }
+.cfg-model-test:disabled { cursor: default; opacity: 0.7; }
+.cfg-model-test .st-ic { width: 12px; height: 12px; }
+.cfg-model-test-spinner {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-frame-border-light);
+  border-top-color: var(--color-frame-text-muted);
+  animation: cfg-model-test-spin 0.8s linear infinite;
+}
+@keyframes cfg-model-test-spin { to { transform: rotate(360deg); } }
+.cfg-model-test-result {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font: 400 10px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text-muted);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 1;
+  min-width: 0;
+}
+.cfg-model-test-result .st-ic { width: 11px; height: 11px; flex-shrink: 0; }
+
+/* ② STT 停用态（D 件）：入口全收——主窗 mic 气泡与好友消息 mic 藏匿
+   （voiceEngine.sttEnabled 引擎闸是纵深第二层）。 */
+body.stt-disabled #mic-orb-wrap { display: none !important; }
+body.stt-disabled .fm-mic-btn { display: none !important; }
+
+/* ③ 生图设置节（②③件）：两形态共用面。提示位 = 低调灰行（未编入态）；
+   key 行 = 指针输入 + 状态徽标同排（st-badge 已有 ok/warn 档）。 */
+.imagegen-notcompiled {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--color-frame-text-muted);
+  padding: 2px 0;
+}
+.cfg-imagegen-keyrow { display: flex; align-items: center; gap: 8px; }
+.cfg-imagegen-keyrow .cfg-input { flex: 1 1 auto; min-width: 0; }
+
+/* ④ JeV 分配区重排（C 件）：组件族已并入 STT 高级设置同款
+   （settings-collapse-toggle / settings-collapse-body / cfg-form-group，
+   零新形态）；仅清掉旧卡头形态在折叠体内的残留间距依赖。 */
+#jev-advance-body .cfg-form-group { margin-top: 4px; }

@@ -6,7 +6,7 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.AtomicJson
-import nebflow.shared.{Config, PathUtil}
+import nebflow.shared.{Config, ImageGenConfig, PathUtil}
 
 object ConfigService:
 
@@ -482,6 +482,127 @@ object ConfigService:
     List("default", "disabled")
 
   def executorWritableKeys: List[String] = EXECUTOR_WRITABLE_KEYS
+
+  // ── 生图（imagegen）设置面（settings-panel-jev-imagegen 批 2026-10-28）──────
+  //
+  // 面板两形态（作者令：「seal=OFF 构建下面板显示『未编入（release 构建零痕迹）』
+  // 提示位；seal=ON 构建显示正常配置面」）的数据源。🔴 边界申报：本对象是
+  // **设置/状态面**，不是生图能力面——seal=OFF 的 release 构建里它照常在
+  // （面板的「未编入」提示位正需要它），ImageGenSpec 的零痕迹锚（工具注册段 /
+  // Nebula 交付面 / ImageGenRoutes / 前端 imagegen.js DCE）不经过这里。
+
+  /** 顶层节名（写侧单点）。 */
+  private val IMAGEGEN_SECTION = "imagegen"
+
+  /**
+   * `imagegen` 节可写键白名单（整体节替换语义的机械表达：面板每次提交**整节**
+   * 的目标形态，缺键=删键）。🔴 `keyRef` 是 secrets 目录下的**名**（指针），
+   * 在册；**值型凭据键一律不在册**——key 值走既有 POST/PUT /api/secrets 面
+   * （0600 落盘），永不进 nebflow.json。
+   */
+  private val IMAGEGEN_WRITABLE_KEYS: List[String] =
+    List("enabled", "defaultProvider", "providers")
+
+  def imagegenWritableKeys: List[String] = IMAGEGEN_WRITABLE_KEYS
+
+  /**
+   * 整节校验（纯函数）：白名单越界键拒绝；providers 各项必须可解码为
+   * [[nebflow.shared.ImageGenProviderConfig]] 且 `type` 在适配器注册表内
+   * （typos fail-loud，不静默落盘成永不解析的死节）。返回 Left = 拒绝理由。
+   */
+  def validateImagegenSection(json: Json): Either[String, Unit] =
+    json.asObject match
+      case None => Left("imagegen section must be a JSON object")
+      case Some(o) =>
+        val unknown = o.keys.toSet.diff(IMAGEGEN_WRITABLE_KEYS.toSet)
+        if unknown.nonEmpty then
+          Left(s"imagegen section write refused — unknown key(s): ${unknown.mkString(", ")}")
+        else
+          json.as[ImageGenConfig] match
+            case Left(err) => Left(s"imagegen section undecodable: ${err.getMessage}")
+            case Right(cfg) =>
+              val bad = cfg.providers.getOrElse(Map.empty).collect {
+                case (name, pc) if nebflow.llm.imagegen.ImageGenAdapters.byType(pc.`type`).isEmpty =>
+                  s"$name (type '${pc.`type`}')"
+              }
+              if bad.nonEmpty then
+                Left(
+                  s"imagegen provider type has no adapter — valid: ${nebflow.llm.imagegen.ImageGenAdapters.All.map(_.`type`).mkString(", ")}; offending: ${bad.mkString(", ")}"
+                )
+              else Right(())
+
+  /**
+   * 定向写顶层 `imagegen` 节（**整节替换**——面板是本节唯一写者，每次提交
+   * 全量目标形态；缺键=从节里消失，无「省略=保留」歧义）。形态照
+   * [[setJevSection]]：整体包在 `writeLocked` 内串行；写盘走
+   * [[nebflow.core.AtomicJson]] 限权形态（0600）；失败上浮（fail-loud）。
+   * 调用方必须先过 [[validateImagegenSection]]（本函数重复校验，双保险）。
+   */
+  def setImagegenSection(section: Json): IO[Either[String, Unit]] =
+    validateImagegenSection(section) match
+      case Left(err) => IO.pure(Left(err))
+      case Right(_) =>
+        writeLocked {
+          IO.blocking {
+            val existing = if os.exists(configPath) then os.read(configPath) else "{}"
+            parse(existing) match
+              case Left(err) =>
+                Left(s"nebflow.json unparseable — refusing to rewrite for imagegen update: ${err.message}")
+              case Right(parsed) =>
+                // 空对象 = 整节清空（删顶层节，回到未配置态——graceful
+                // degrade 方向与删节同义）；非空 = 整节替换。
+                val updated = section.asObject.filter(_.isEmpty) match
+                  case Some(_) => parsed.mapObject(_.remove(IMAGEGEN_SECTION))
+                  case None    => parsed.mapObject(_.add(IMAGEGEN_SECTION, section))
+                AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
+                Right(())
+          }
+        }
+
+  /**
+   * 生图设置面状态投影（GET /api/config/imagegen 的载荷；面板两形态的唯一
+   * 数据源）。`compiledIn` = 编译期 seal 常量（release 构建恒 false——面板据此
+   * 显示「未编入（release 构建零痕迹）」提示位）；配置段热读现取（JevSettings
+   * 同款口径）；`keyConfigured` 只读 secrets **在位性**（存在且非空——
+   * ImageGenService.readSecret 同判据），**永不回传 key 值**。🔴 日志零 key：
+   * 本投影不打日志，值的唯一可能位置是 secrets 文件本身（本函数不读值，只
+   * stat 在位性）。
+   */
+  def imagegenStatus: IO[Json] = IO.blocking {
+    val raw = if os.exists(configPath) then os.read(configPath) else "{}"
+    val cfg = parse(raw).toOption
+      .flatMap(_.hcursor.downField(IMAGEGEN_SECTION).as[ImageGenConfig].toOption)
+    val providers = cfg.flatMap(_.providers).getOrElse(Map.empty)
+    val providerJson = Json.fromFields(providers.map { case (name, pc) =>
+      name ->
+        Json.obj(
+          "type" -> pc.`type`.asJson,
+          "model" -> pc.model.asJson,
+          "baseUrl" -> pc.baseUrl.asJson,
+          "keyRef" -> pc.keyRef.asJson,
+          "keyConfigured" -> imagegenKeyConfigured(pc.keyRef).asJson
+        )
+    })
+    Json.obj(
+      "compiledIn" -> nebflow.core.ImageGenSeal.CompiledIn.asJson,
+      "debugLabel" -> nebflow.core.ImageGenSeal.DebugLabel.asJson,
+      "configured" -> cfg.isDefined.asJson,
+      "enabled" -> cfg.exists(_.isEnabled).asJson,
+      "defaultProvider" -> cfg.flatMap(_.defaultProvider).asJson,
+      "providers" -> providerJson
+    )
+  }
+
+  /** keyRef 指针的**在位性**判定（存在且非空即已配——与
+   * [[nebflow.llm.imagegen.ImageGenService.readSecret]] 的腿关判据逐字同源，
+   * 面板显示与引擎判定永不漂移）。只 stat/读空判，不回传值。 */
+  private def imagegenKeyConfigured(keyRef: Option[String]): Boolean =
+    keyRef.filter(_.trim.nonEmpty).exists { name =>
+      try
+        val p = PathUtil.dataRoot / "secrets" / name.trim
+        os.exists(p) && os.read(p).trim.nonEmpty
+      catch case _: Exception => false
+    }
 
   /**
    * Deep-merge incoming config into existing file.

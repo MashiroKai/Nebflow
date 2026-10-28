@@ -2590,6 +2590,10 @@ onMessage('serverConfig', (msg, view) => {
   }
   if (msg.stt) {
     state.stt = msg.stt;
+    // settings-panel 批 D 件（2026-10-28）：STT 总开关停用态 = body.stt-disabled
+    // ——输入栏 mic 气泡入口与好友消息 mic 的 CSS 藏匿单点（voiceEngine.sttEnabled
+    // 门是纵深第二层）。缺省开（sttEnabled 缺席/true = 不挂类，存量零感知）。
+    document.body.classList.toggle('stt-disabled', state.stt?.sttEnabled === false);
     // STT config echo — re-render the settings panel so the status indicator
     // (configured / free-browser-path) stays authoritative (#295).
     const settingsOverlay = document.getElementById('settings-overlay');

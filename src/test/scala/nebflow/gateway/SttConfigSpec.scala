@@ -122,7 +122,7 @@ class SttConfigSpec extends FunSuite:
 
   test("serverConfigNode: configured service exposes endpoint+model, NEVER apiKey") {
     val svc = new SttService("sk-super-secret-999", "mock-asr", "https://stt.example.com/t")
-    val node = SttService.serverConfigNode(Some(svc))
+    val node = SttService.serverConfigNode(Some(svc)).unsafeRunSync()
     val rendered = node.noSpaces
     assert(rendered.contains(""""sttConfigured":true"""), rendered)
     assert(rendered.contains(""""endpoint":"https://stt.example.com/t""""), rendered)
@@ -136,7 +136,7 @@ class SttConfigSpec extends FunSuite:
   }
 
   test("serverConfigNode: None service = sttConfigured:false only") {
-    val node = SttService.serverConfigNode(None)
+    val node = SttService.serverConfigNode(None).unsafeRunSync()
     assertEquals(node.hcursor.downField("sttConfigured").as[Boolean], Right(false))
     assertEquals(node.hcursor.downField("endpoint").as[Option[String]], Right(None))
     assertEquals(node.hcursor.downField("model").as[Option[String]], Right(None))

@@ -54,6 +54,11 @@ private[gateway] object PresenceRoutes:
     nebflow.social.WeixinIlinkBridgePlugin.Name
   )
 
+  // 每模型连接性测试（settings-panel 批 B 件）的单飞闸：同一时刻引擎侧只放行
+  // 一个诊断调用（双击/多面板重复点击 → 409，前端钮在测试中本就禁用——这是
+  // 服务侧的第二道闸，不是唯一闸）。
+  private val modelTestGate = new ProviderModelProbe.Gate
+
   // ── 远端尾拉单飞缓存（输出查看补全批 2026-10-25）────────────────────────
   //
   // remote-output 轮询的防叠加面：同 jobId 1.5s 内的重复拉取（多面板 / 双开卡）
@@ -1969,6 +1974,60 @@ private[gateway] object PresenceRoutes:
                           case Left(err) => BadGateway(Json.obj("error" -> err.asJson))
                         }
                   }
+            end if
+          }
+        }
+
+      // POST /provider/test — per-model connectivity test (settings-panel batch
+      // 2026-10-28, author order B: 「在 provider 每一个模型旁边，加一个小按钮，
+      // 用于连接性测试」). Body: {name, model} — the STORED provider id + one of
+      // its model ids. The engine issues ONE minimal real call (1 max_tokens,
+      // "ping") against the stored baseUrl/apiKey/protocol with a BOUNDED 20s
+      // wait (operator-facing diagnosis — explicitly bounded, unlike the
+      // zero-timeout business-call discipline). Verdict shape:
+      //   {ok:true, latencyMs, reply?} | {ok:false, error}
+      // The error text is sanitized server-side (any occurrence of the stored
+      // apiKey replaced with "***"; the header material never enters it).
+      // In-flight per provider is one-flight (double-click ⇒ 409), and the
+      // stored provider is the ONLY source of credentials — the route accepts
+      // no key material from the body (owner-auth face, withAuth).
+      case req @ POST -> Root / "provider" / "test" =>
+        withAuth(req) {
+          req.as[Json].flatMap { body =>
+            val name = body.hcursor.downField("name").as[String].toOption.map(_.trim).getOrElse("")
+            val model = body.hcursor.downField("model").as[String].toOption.map(_.trim).getOrElse("")
+            if name.isEmpty || model.isEmpty then
+              BadRequest(Json.obj("error" -> "Missing required fields: name, model".asJson))
+            else
+              configRef.get.flatMap { cfg =>
+                cfg.llm.providers.get(name) match
+                  case None =>
+                    NotFound(Json.obj("error" -> s"unknown provider '$name'".asJson))
+                  case Some(p) =>
+                    if !p.models.exists(_.id == model) then
+                      NotFound(Json.obj("error" -> s"provider '$name' has no model '$model'".asJson))
+                    else if !modelTestGate.tryAcquire() then
+                      Conflict(Json.obj("error" -> "a test for this provider is already in flight".asJson))
+                    else
+                      val verdict = IO.blocking(
+                        ProviderModelProbe.call(p.protocol, p.baseUrl, p.apiKey, model)
+                      )
+                      verdict.flatMap {
+                        case ProviderModelProbe.Verdict.Ok(latency, reply) =>
+                          Ok(
+                            Json.obj(
+                              "ok" -> true.asJson,
+                              "latencyMs" -> latency.asJson,
+                              "reply" -> reply.asJson
+                            )
+                          )
+                        case ProviderModelProbe.Verdict.Failed(detail) =>
+                          // 502 carries the sanitized provider-side reason — the
+                          // diagnosable error display the panel paints (red ✗ +
+                          // summary).
+                          Ok(Json.obj("ok" -> false.asJson, "error" -> detail.asJson))
+                      }.guarantee(IO.blocking(modelTestGate.release()))
+              }
             end if
           }
         }

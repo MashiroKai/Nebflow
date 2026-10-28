@@ -138,6 +138,17 @@ function useCloud() {
   return !!(state.stt && state.stt.sttConfigured);
 }
 
+/**
+ * STT 总开关读数（settings-panel 批 D 件 2026-10-28）。**缺席 = true**（存量
+ * 行为逐字不变）；false = STT 整体停用——这是所有听写入口的单点闸（主窗 mic
+ * 钮 / 好友消息 mic / 全双工 conversation 模式全经 startDictation），关 =
+ * 一律拒绝并 toast（设置页 STT 高级设置里的开关是唯一启停口）。
+ * @returns {boolean}
+ */
+export function sttEnabled() {
+  return !(state.stt && state.stt.sttEnabled === false);
+}
+
 export function isModelReady() {
   return true;
 }
@@ -501,6 +512,15 @@ export async function startDictation(callbacks = {}, opts = {}) {
   Object.assign(cb, callbacks);
   conversation = !!opts.conversation;
   resetUtteranceState();
+
+  // STT 总开关（D 件）：停用态一律拒绝——云端腿与浏览器 Web Speech 腿同关
+  // （「STT 整体停用，入口与快捷键全收」）。入口 UI 隐藏是第一层（input.js
+  // messages.js 门 + stt-disabled body 类），本闸是纵深第二层。
+  if (!sttEnabled()) {
+    cb.onState?.('error', 'stt-disabled');
+    window.__showToast?.(t('stt.disabled'), 'error');
+    return;
+  }
 
   // Cloud STT configured → record + proxy path.
   if (useCloud()) {
