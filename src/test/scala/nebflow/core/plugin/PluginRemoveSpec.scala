@@ -77,7 +77,7 @@ class PluginRemoveSpec extends FunSuite:
     val (plugins, rejected) = PluginRegistry.listWithRejected().unsafeRunSync()
     (plugins.map(_.name).sorted, rejected.map(_._1).sorted)
 
-  override def beforeEach(): Unit =
+  override def beforeEach(context: munit.BeforeEach): Unit =
     os.remove.all(home / "plugins")
     os.remove.all(home / "logs")
     if os.exists(PathUtil.configJsonWritePath(home)) then os.remove(PathUtil.configJsonWritePath(home))
@@ -95,7 +95,7 @@ class PluginRemoveSpec extends FunSuite:
     assert(!os.exists(pluginDir("gx-a")), "① 目录已删除")
     assert(removedTable.contains("gx-a"), "① plugins.removed.<name> 在位")
     assert(removedTable("gx-a").hcursor.downField("deleteDir").as[Boolean].toOption.contains(true), "① 记录 deleteDir 腿")
-    assert(auditLines.exists(_.contains("\"removed\"") && _.contains("gx-a")), "① 审计行落 plugin-remove.jsonl")
+    assert(auditLines.exists(line => line.contains("\"removed\"") && line.contains("gx-a")), "① 审计行落 plugin-remove.jsonl")
 
     val (plugins, rejected) = registryFace
     assert(!plugins.contains("gx-a"), "① 出册：不在 plugins")
@@ -150,11 +150,12 @@ class PluginRemoveSpec extends FunSuite:
     assert(res.isRight, s"⑤ 卸载成功：$res")
     SeedService.markUserRemoved(target).unsafeRunSync()
 
-    val ledger = io.circe.parser
-      .parse(os.read(SeedService.pluginLedgerPath(home)))
-      .toOption.get
+    // 台账路径 = private[seed]（pluginLedgerPath）⇒ 本包外用文件名常量直读（同形）。
+    val ledgerPath = home / ".plugin-presence.json"
+    assert(os.exists(ledgerPath), "⑤ 台账文件在位")
+    val ledger = io.circe.parser.parse(os.read(ledgerPath)).toOption.get
     assert(
-      ledger.hcursor.downField("userRemoved").downField(target).isSucceeded,
+      ledger.hcursor.downField("userRemoved").downField(target).succeeded,
       "⑤ 台账墓碑在位（markUserRemoved 落盘）"
     )
 
