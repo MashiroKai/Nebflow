@@ -852,12 +852,11 @@ export default {
   'settings.thinkingEffort.medium': 'Medium',
   'settings.thinkingEffort.high': 'High',
   'settings.thinkingEffort.max': 'Max',
-  // thinking-config Phase 2 (2026-10-29): per-model thinking effort select.
-  'settings.thinkingPerModel': 'Thinking effort',
-  'settings.thinkingInherit': 'Inherit',
-  'settings.thinkingEffective': 'now {v}',
-  'settings.thinkingForcedBadge': 'Model forces thinking on',
-  'settings.thinkingMediumMap': 'med→high',
+  // thinking-config Phase 2 (2026-10-29) keys retired with the settings-panel-
+  // fourfix batch ① (author: per-model thinking config must not exist) —
+  // thinkingPerModel/Inherit/Effective/ForcedBadge/MediumMap removed with the
+  // per-model control; the global settings.thinkingMode select is the single
+  // configuration point.
   // === Settings-page permission-mode control (2026-09-12 batch) was deleted by
   // permshield F1 (2026-09-13): all 7 `settings.safetyMode*` keys went with it
   // (author re-ruling candidate B ① "delete the settings page"). The guidance now

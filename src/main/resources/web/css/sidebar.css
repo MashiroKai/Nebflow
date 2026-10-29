@@ -2624,25 +2624,11 @@
   min-width: 0;
 }
 
-/* ── thinking-config Phase 2（2026-10-29）──────────────────────────────────
-   每模型思考档位下拉 + 强制思考徽标：行内紧凑面（select 复用 .cfg-select 基座，
-   宽度收到行内可容；徽标零新色值——muted 墨 + 圆角细框，同测试钮家族）。 */
-.cfg-model-row .cfg-model-thinking {
-  width: auto;
-  max-width: 150px;
-  font-size: 11px;
-  padding: 2px 4px;
-  flex-shrink: 0;
-}
-.cfg-thinking-forced-badge {
-  font: 400 9px/1 ui-monospace, SFMono-Regular, monospace;
-  color: var(--color-frame-text-muted);
-  border: 1px solid var(--color-frame-border-light);
-  border-radius: 4px;
-  padding: 2px 4px;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
+/* ── thinking-config Phase 2（2026-10-29）→ 收归全局（settings-panel-fourfix
+   批 ①件，作者令 2026-10-29「不要每个模型都能配置思考模式」）────────────────
+   per-model 思考下拉（.cfg-model-thinking）与强制思考徽标
+   （.cfg-thinking-forced-badge）整块退役：思考档位唯一配置点 =
+   设置页「思考模式」全局下拉。 */
 .cfg-model-test-result .st-ic { width: 11px; height: 11px; flex-shrink: 0; }
 
 /* ② STT 停用态（D 件）：入口全收——主窗 mic 气泡与好友消息 mic 藏匿

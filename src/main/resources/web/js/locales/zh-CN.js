@@ -809,12 +809,10 @@ export default {
   'settings.thinkingEffort.medium': '中',
   'settings.thinkingEffort.high': '高',
   'settings.thinkingEffort.max': '最高',
-  // thinking-config Phase 2（2026-10-29）：每模型思考档位下拉（设计 §5 最小面）。
-  'settings.thinkingPerModel': '思考档位',
-  'settings.thinkingInherit': '继承',
-  'settings.thinkingEffective': '当前 {v}',
-  'settings.thinkingForcedBadge': '模型强制开启思考',
-  'settings.thinkingMediumMap': '中→高',
+  // thinking-config Phase 2（2026-10-29）已随 settings-panel-fourfix 批 ①件退役
+  // （作者令「不要每个模型都能配置思考模式」）：thinkingPerModel/Inherit/
+  // Effective/ForcedBadge/MediumMap 五键随 per-model 控件一并移除——思考档位
+  // 唯一配置点 = 上方 settings.thinkingMode 全局下拉。
   // === 权限模式设置页控件（2026-09-12 批）已于 permshield F1（2026-09-13）删除 ===
   // 7 个 `settings.safetyMode*` 键随控件一并移除（作者重裁候选 B ①「删设置页」）。
   // 档位指引改由盾牌承载：`bypass.title.*`（三档 tooltip）+ `bypass.modeSetGlobal`
