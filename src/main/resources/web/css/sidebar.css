@@ -2624,6 +2624,43 @@
   min-width: 0;
 }
 
+/* ── settings-panel-fourfix 批 ②件（2026-10-29）────────────────────────────
+   provider 编辑弹窗级测试结果块：每模型一行，全量文本换行显示——「保证测试
+   通知能看得到……醒目不截断」（作者令）。零新色值：绿/红取 base.css 状态
+   token（.st-ok/.st-err 同源），中性墨走 --color-frame-text-muted。 */
+.cfg-test-results {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-frame-border-light);
+  border-radius: 8px;
+  background: var(--color-frame-bg, transparent);
+}
+.cfg-test-results:empty { display: none; }
+.cfg-test-result-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font: 400 11px/1.5 ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text);
+  min-width: 0;
+}
+.cfg-test-result-line .st-ic { width: 12px; height: 12px; flex-shrink: 0; margin-top: 2px; }
+.cfg-test-line-head { flex-shrink: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cfg-test-line-text {
+  flex: 1;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  color: var(--color-frame-text-muted);
+}
+.cfg-test-result-line.ok .cfg-test-line-text { color: var(--status-word); }
+.cfg-test-result-line.err .cfg-test-line-text { color: var(--status-error-icon); font-weight: 500; }
+.cfg-test-result-line.testing .cfg-test-line-text { color: var(--color-frame-text); }
+
 /* ── thinking-config Phase 2（2026-10-29）→ 收归全局（settings-panel-fourfix
    批 ①件，作者令 2026-10-29「不要每个模型都能配置思考模式」）────────────────
    per-model 思考下拉（.cfg-model-thinking）与强制思考徽标

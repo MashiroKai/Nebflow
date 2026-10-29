@@ -1067,6 +1067,7 @@ export default {
   'settings.imagegenNoProvider': '尚无 provider——先在 nebflow.json imagegen.providers 配置',
   // settings-panel 批 B 件（2026-10-28）：每模型连接性测试钮。
   'provider.testModelTitle': '连接性测试：向该模型发一次最小真实调用',
+  'provider.testRunning': '测试中…',
   'provider.testModelOk': '可用（{ms}ms）',
   'provider.testModelFailedHttp': '测试失败（HTTP {code}）',
   'provider.testModelFailedIo': '网络错误——无法到达引擎',

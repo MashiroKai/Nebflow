@@ -1103,6 +1103,7 @@ export default {
   'settings.imagegenNoProvider': 'No provider yet — configure nebflow.json imagegen.providers first',
   // settings-panel batch B (2026-10-28): per-model connectivity test.
   'provider.testModelTitle': 'Connectivity test: one minimal real call to this model',
+  'provider.testRunning': 'Testing…',
   'provider.testModelOk': 'OK ({ms}ms)',
   'provider.testModelFailedHttp': 'Test failed (HTTP {code})',
   'provider.testModelFailedIo': 'Network error — engine unreachable',
