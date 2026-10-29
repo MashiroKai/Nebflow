@@ -563,6 +563,17 @@ class PopToolSpec extends FunSuite:
     assert(d.contains("Image / video / audio"), "the in-chat media face must name all three kinds")
     assert(d.contains("mp3 wav oga flac aac m4a"), "the audio extension family must be declared")
     assert(d.contains("every audio file"), "the ticket-leg paragraph must cover audio")
+    // 文件直出批（2026-10-29 作者令「要求文件你直接pop给用户，而不是告诉用户
+    // 在哪让用户自己找。直接pop」）：交付纪律句钉进 description
+    assert(d.contains("Pop the file itself"), "the deliver-the-file-itself rule must be stated")
+    assert(
+      d.contains("a path alone is not delivery"),
+      "path-only reporting must be named as NOT delivery"
+    )
+    assert(
+      d.contains("never instead of it"),
+      "a path may only accompany the Pop call, never replace it"
+    )
 
   override def afterEach(context: munit.AfterEach): Unit =
     // test artifacts under target/ are cleaned by sbt; nothing else to do
