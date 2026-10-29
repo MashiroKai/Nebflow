@@ -26,7 +26,7 @@ import scala.jdk.StreamConverters.*
  *    零触碰 + 幂等）；
  *  - 握手（有界轮询：200 即 dock + 解绑超时 WARN-only）；
  *  - **真实进程起停**（DaemonService 拉起 PerceptionDaemonMain 真 JVM：
- *    /health 200 健康面 + token 门 401 对照 + 干净 stop + 进程收尸）。
+ *    /health 200 健康面 + token 门 403 对照 + 干净 stop + 进程收尸）。
  * 崩溃自动重启（restartOnExit 退避）由 DaemonService 既有 DaemonLifecycleSpec
  * 家族覆盖，本 spec 不重复。
  */
@@ -180,7 +180,7 @@ class PerceptionDaemonLifecycleSpec extends FunSuite:
       cl = cl.getParent
     urls.mkString(java.io.File.pathSeparator)
 
-  test("PerceptionDaemonMain 真实起停：/health 200 + token 门 401 + stop 收尸") {
+  test("PerceptionDaemonMain 真实起停：/health 200 + token 门 403 + stop 收尸") {
     withDispatcher { disp =>
       val home = tmpHome("spawn")
       val svc = new DaemonService(disp, home / "daemon-pids.json")

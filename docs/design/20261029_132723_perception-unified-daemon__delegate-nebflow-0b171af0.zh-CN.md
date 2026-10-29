@@ -103,6 +103,6 @@ related: "[[perception]]"
   daemon 生命周期新 spec（条目 upsert/命令面/token/端口/真实 spawn+健康面+干净退出
   + 握手有界路径）；AuthGate 2/2；playwright 16/16（前端零触碰自证）。
 - LIVE 冒烟 `scripts/perception-daemon-smoke.sh`（boot-smoke 家族同款隔离纪律）：
-  隔离实例 → 引擎 boot → daemon 子进程起 → /health 200（token 门 401 对照）→
+  隔离实例 → 引擎 boot → daemon 子进程起 → /health 200（token 门 403 对照）→
   五循环 live 日志 → 心跳腿 live（/api/daemons 托管行 Running+portOpen）→
   干净退出零孤儿。
