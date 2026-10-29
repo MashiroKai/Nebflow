@@ -639,7 +639,7 @@ object SeedService:
     val md = MessageDigest.getInstance("SHA-256")
     md.digest(bytes).map("%02x".format(_)).mkString
 
-  // ── 公共入口（产品卸载流 —— 2026-10-29 批）──
+  // ── 公共入口（产品卸载流 / 手动 approve 闸 / 漂移可见面 —— 2026-10-29 批）──
 
   /**
    * 卸载流的台账落点（产品卸载批 2026-10-29）：把 `name` 记为用户主动删除
@@ -662,6 +662,87 @@ object SeedService:
     catch case e: Exception =>
       logger.warnSync(s"Seed: user-removed marker write failed for '$name': ${e.getMessage} (uninstall itself is unaffected)")
   }
+
+  /** 默认集插件名集合（manifest `plugins:` 项；读取失败 ⇒ 空集 = 集合语义安全侧）。 */
+  def defaultPluginNames(): Set[String] =
+    try loadManifest().items.collect { case id if id.startsWith(PluginsPrefix) => id.stripPrefix(PluginsPrefix) }.toSet
+    catch
+      case e: Exception =>
+        logger.warnSync(s"Seed: default plugin set read failed: ${e.getMessage}")
+        Set.empty
+
+  /**
+   * 种子树内该包的现算 digest（与装载层 `PluginRegistry.computeDigest` 同算法；
+   * 无种子资源 ⇒ None）。手动 approve 闸（安全批 2026-10-29 ④b）用：默认集包的
+   * approve 只有在「runtime == seed」时才不洗白仲裁基准。
+   */
+  def seedPluginDigest(name: String): Option[String] = seedResources(name).map(treeDigest)
+
+  /**
+   * 手动 approve 闸判据（安全批 2026-10-29 ④b）：默认集包 ∧ runtime ≠ seed ⇒
+   * approve 会把脏基准洗白——下一次 boot 的 reconcile 判「runtime == trusted（自
+   * approve 后零漂移）」⇒ 走出厂镜像覆盖，用户的修改被翻掉（有 pre-sync 备份，但
+   * 意图被静默否决）。true = 应拒绝该 approve 并提示先显式接受种子版。非默认集包
+   * 恒 false（不在种子 reconcile 面，approve 只是审计记录，无此翻转）。
+   */
+  def approveWouldRewriteDefaultBaseline(name: String, runtimeDigest: String): Boolean =
+    defaultPluginNames().contains(name) &&
+      seedPluginDigest(name).exists(_ != runtimeDigest)
+
+  /**
+   * 默认集包的种子↔实例漂移行（漂移可见面 2026-10-29 ④c）：种子 ≠ 实例 ⇒ 一行
+   * 点名。这是 boot 健康摘要的缺位象限——非拦截漂移此前只在 reconcile 日志散点
+   * 出现，健康摘要把「无基准漂移」从不可见变可决策。reserved 前缀包的漂移会在本
+   * boot 被出厂字节赢（reconcile 刷新），摘要时点通常已收敛——仍列出（若在，说明
+   * 刷新失败，更该可见）。已卸载（墓碑在位）不出行——那是决策过的状态，不是漂移。
+   * 每行形如 `[seed-drift] <name>: seed <12>… vs runtime <12>… (无信任记录 |
+   * 实例漂移出信任记录 | 刷新已排程)`。
+   */
+  def defaultSetDriftLines(): List[String] =
+    val root = PathUtil.dataRoot
+    val ledger = pluginLedgerFor(root)
+    defaultPluginNames().toList.sorted.flatMap { name =>
+      val dir = root / "plugins" / name
+      if !os.isDir(dir) || ledger.userRemoved.contains(name) then None
+      else
+        seedPluginDigest(name).flatMap { seedDigest =>
+          PluginRegistry.computeDigest(dir).toOption.flatMap { (runtimeDigest, _) =>
+            if runtimeDigest == seedDigest then None
+            else
+              val why = PluginRegistry.trustRecordDigest(name) match
+                case None => "no trust record — seed keeps the runtime version"
+                case Some(td) if td == runtimeDigest => "seed refresh armed for next boot (runtime matches record)"
+                case Some(_) => "runtime drifted from its trust record — seed keeps the runtime version"
+              Some(
+                s"[seed-drift] $name: seed ${seedDigest.take(12)}… vs runtime ${runtimeDigest.take(12)}… ($why)"
+              )
+          }
+        }
+    }
+
+  /** 漂移摘要输出记账（与 `PluginRegistry.healthLogState` 同款：同状态只出一次）。 */
+  private val driftLogState =
+    new java.util.concurrent.atomic.AtomicReference[Option[List[String]]](None)
+
+  /**
+   * 输出默认集漂移摘要（有漂移才出，WARN 级；best-effort）。挂接点与
+   * `PluginRegistry.logHealthSummary` 相同：GatewayMain 启动（"startup"）与
+   * NodeStarter 重扫 tick（"rescan"）。
+   */
+  def logDefaultSetDriftSummary(trigger: String): IO[Unit] =
+    IO.blocking(defaultSetDriftLines()).flatMap {
+      case Nil =>
+        IO.delay { val last = driftLogState.get(); if last.isDefined then driftLogState.set(None) }
+      case lines =>
+        IO.delay {
+          if driftLogState.get() != Some(lines) then
+            driftLogState.set(Some(lines))
+            logger.warnSync(
+              s"seed drift[$trigger]: default-set packages whose on-disk copy differs from the shipped seed " +
+                s"(${lines.size} package(s), low-noise one line each — not intercepted, decision input only):\n${lines.mkString("\n")}"
+            )
+        }
+    }
 
   // ── helpers ──────────────────────────────────────────────
   private def writeIfAbsent(path: os.Path, content: Option[String]): Boolean =

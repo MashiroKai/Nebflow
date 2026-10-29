@@ -1494,12 +1494,36 @@ private[gateway] object PresenceRoutes:
       // 写一条审批审计记录（digest + 逐文件快照）到 `plugins.trust`。⚠️ 该记录**不再决定
       // 装载**（在位即信任），但它是 seed 覆盖的**仲裁基准**（`trustRecordDigest`）⇒ 手动
       // approve 一个用户改过的默认集包会让下次 boot 的种子镜像覆盖视为「干净」。
+      // **堵口（安全批 2026-10-29 ④b）**：默认集包 ∧ runtime digest ≠ 种子 digest ⇒
+      // **拒绝**（400 + 指引）—— approve 的基准前移会让下一次 boot 的 reconcile 判
+      // 「runtime == trusted」⇒ 出厂镜像覆盖用户版（有备份，但用户意图被静默否决）。
+      // 显式接受种子版的两条路：删目录让种子自愈装回（自动 approve 出厂 digest），或
+      // 手动恢复种子内容后再 approve。非默认集包不受此闸（approve 只是审计记录）。
       // 名字段白名单校验（拒绝路径穿越形态）。
       case req @ POST -> Root / "plugins" / name / "approve" =>
         withAuth(req) {
           if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
           else
-            nebflow.core.plugin.PluginRegistry.approve(name).flatMap {
+            (for
+              defs <- nebflow.core.plugin.PluginRegistry.scan()
+              guard <- IO.blocking {
+                defs.find(_.name == name) match
+                  case None => Right(()) // 不在注册表 ⇒ 交给 approve 本身报 not found
+                  case Some(p) =>
+                    if SeedService.approveWouldRewriteDefaultBaseline(name, p.digest) then
+                      Left(
+                        s"Refused: '$name' is a default-set plugin and its on-disk content differs from the shipped seed " +
+                          "(digest mismatch). Approving now would rewrite the reconcile baseline and let the next boot's " +
+                          "seed mirror overwrite your copy (a pre-sync backup is kept, but your changes are rolled). " +
+                          "Accept the seed version explicitly first: delete " + PathUtil.dataRoot / "plugins" / name +
+                          " and let the seed reinstall it (auto-approved factory digest), then re-run approve if needed."
+                      )
+                    else Right(())
+              }
+              res <- guard match
+                case Left(err) => IO.pure(Left(err): Either[String, String])
+                case Right(()) => nebflow.core.plugin.PluginRegistry.approve(name)
+            yield res).flatMap {
               case Right(msg) => Ok(ApiJson.okMessage(msg))
               case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
             }

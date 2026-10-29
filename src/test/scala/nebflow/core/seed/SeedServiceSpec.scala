@@ -369,4 +369,65 @@ class SeedServiceSpec extends FunSuite:
       .map("%02x".format(_))
       .mkString
 
+  // ── 安全批 2026-10-29 ④b/④c：approve 闸判据 + 漂移可见面 ──
+
+  /** 修改一个已就位默认集包的内容（制造 runtime ≠ seed 漂移）。 */
+  private def driftTarget(name: String): Unit =
+    val f = home / "plugins" / name / "SKILL-DRIFT-MARKER.txt"
+    os.write.over(f, "user modified")
+    PluginRegistry.invalidateCache()
+
+  test("approve guard: default-set package with runtime≠seed must trip the gate; seed-identical and non-default must not"):
+    ensure() // 默认集七包就位（digest 与种子一致）
+    // ① 默认集 + runtime == seed ⇒ 闸不开（approve 是干净的基准记录）
+    val target = "visual-report"
+    val seedDigest = SeedService.seedPluginDigest(target).getOrElse(fail("seed digest must resolve for default-set plugin"))
+    val runtimeDigest = PluginRegistry.computeDigest(home / "plugins" / target).toOption.map(_._1).getOrElse(fail("runtime digest"))
+    assertEquals(runtimeDigest, seedDigest, "前置：刚播种的默认集包与种子逐字一致")
+    assert(
+      !SeedService.approveWouldRewriteDefaultBaseline(target, runtimeDigest),
+      "① runtime == seed ⇒ approve 不洗白基准（闸不开）"
+    )
+    // ② 默认集 + runtime ≠ seed ⇒ 闸开（拒绝手动 approve 脏基准）
+    driftTarget(target)
+    val drifted = PluginRegistry.computeDigest(home / "plugins" / target).toOption.map(_._1).getOrElse(fail("drift digest"))
+    assert(drifted != seedDigest, "前置：漂移后 digest 变化")
+    assert(
+      SeedService.approveWouldRewriteDefaultBaseline(target, drifted),
+      "② 默认集 + runtime ≠ seed ⇒ approve 会洗白基准（闸开，REST 层拒）"
+    )
+    // ③ 非默认集包（种子树在但不预装）⇒ 恒不开（approve 只是审计记录）
+    assert(
+      !SeedService.approveWouldRewriteDefaultBaseline("explorer-toolkit", "f" * 64),
+      "③ 非默认集包不受闸（不在 reconcile 面）"
+    )
+
+  test("drift lines: drifted default-set package is named one-line-each; clean or uninstalled packages are silent"):
+    // 前置清理：上一用例对 visual-report 制造过漂移（同 spec 串行共享 home）——
+    // 撤掉漂移标记，恢复「种子 == 实例」基线后才开始本用例断言。
+    os.remove.all(home / "plugins" / "visual-report" / "SKILL-DRIFT-MARKER.txt")
+    PluginRegistry.invalidateCache()
+    // 干净 home：播种后零漂移 ⇒ 空行
+    ensure()
+    assertEquals(SeedService.defaultSetDriftLines(), Nil, "干净 home 零漂移行")
+    // 制造漂移（无信任记录形态：先清除该包 approve 记录不可能经公共面——直接用
+    // 「runtime 漂移出 trust 记录」腿：刚播种即有 approve 记录，drift 后 = 漂移腿）
+    driftTarget("slideblocks")
+    val lines = SeedService.defaultSetDriftLines()
+    assert(lines.exists(l => l.startsWith("[seed-drift] slideblocks:") && l.contains("seed ") && l.contains("vs runtime ")),
+      s"漂移包被点名一行：$lines")
+    // 其余六包不在行内（低噪声：一行一名）
+    assertEquals(lines.size, 1, "只点名漂移的那一个包")
+    // 卸载（墓碑在位）⇒ 不出行（决策过的状态不是漂移）
+    val ledger = SeedService.pluginLedgerPath(home)
+    val json = io.circe.parser.parse(os.read(ledger)).toOption.get
+    val withTomb = io.circe.Json.fromJsonObject(
+      json.asObject.get.add(
+        "userRemoved",
+        io.circe.Json.obj("slideblocks" -> io.circe.Json.obj("at" -> io.circe.Json.fromLong(1L)))
+      )
+    )
+    os.write.over(ledger, withTomb.noSpaces)
+    assertEquals(SeedService.defaultSetDriftLines(), Nil, "墓碑在位的包不出漂移行（已卸载 ≠ 漂移）")
+
 end SeedServiceSpec
