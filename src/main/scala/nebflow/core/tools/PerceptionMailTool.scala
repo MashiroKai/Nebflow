@@ -20,9 +20,10 @@ import nebflow.shared.*
  * `perceptionDraft:<draftId>` 标记供前端换肤为邮件快照面）→ 非阻塞 ack
  * （答复稍后作为消息到达本会话）。
  *
- * 附件（r3+ 加强项 1 的边界）：本批为**只读展示层**——路径进草稿与卡片
- * 展示；发送附件未开放，`sendDraft` 侧明确拒绝（不静默丢弃）。多收件人/
- * 多附件校验为宽进（卡片/画布阶段再拦）。
+ * 附件（r3 裁决 4 / r2 §7.2）：路径进草稿与 chip 行（画布可 ×移除），发送时
+ * 逐路径读盘组装 MIME multipart——任一路径不存在 ⇒ MissingAttachment 逐路径
+ * 报告拒发（不静默丢弃）。「添加附件」的画布入口无路径拾取机制 → 开放问题。
+ * 多收件人/多附件校验为宽进（卡片/画布阶段再拦）。
  */
 object PerceptionMailTool extends Tool:
 
@@ -40,7 +41,7 @@ Parameters:
 - subject (string, required).
 - body (string, required): plain text body; converted to a clean HTML mail body (line breaks become paragraphs). Use bodyHtml only when you need rich formatting.
 - cc / bcc (string or array of string, optional).
-- attachments (array of string, optional): absolute local paths — DISPLAY ONLY this phase (the mail face shows them; actual attachment upload is not open yet, and a draft carrying attachments is refused at send time).
+- attachments (array of string, optional): absolute local paths — shown as attachment chips in the canvas editor and SENT as real MIME attachments. Every path must exist at send time; a missing path is reported per-path and the send is refused until the user removes the chip in Canvas.
 - quoteFrom / quoteText (string, optional): when replying to a received mail, pass the original sender and an excerpt — rendered as the read-only quote block below the compose area (real-mail-client reply semantics).
 - inReplyTo (string, optional): Message-ID of the mail being replied to (sets the In-Reply-To header).
 

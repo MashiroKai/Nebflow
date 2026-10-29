@@ -92,3 +92,16 @@ object OtpExtractor:
   def mask(code: String): String =
     if code.length <= 3 then "***"
     else code.take(3) + "***"
+
+  /**
+   * ask 问句是否「验证码意图」（r1 §6.1 / r2 §6.2：T0 = ask 弹出且问句含验证码
+   * 意图，或 agent 显式 otpWindow:true——引擎侧开窗判据；与前端
+   * perception.js 的 OTP_INTENT_RE 同语义族，此处为引擎权威面）。
+   */
+  def questionLooksLikeOtp(question: String): Boolean =
+    val q = Option(question).getOrElse("")
+    OtpIntentRe.findFirstMatchIn(q).isDefined
+
+  /** 与前端 OTP_INTENT_RE 同语义（中英意图词；词表与 [[intentWords]] 对齐；大小写不敏感——2FA/OTP/Passcode 大写形常见）。 */
+  private val OtpIntentRe: scala.util.matching.Regex =
+    "(?i)(验证码|校验码|确认码|动态码|安全码|登录码|verification\\s*code|verify\\s*code|security\\s*code|one[-\\s]?time|otp\\b|passcode|login\\s*code|2fa)".r.unanchored
