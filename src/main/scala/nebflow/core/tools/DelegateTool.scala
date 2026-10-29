@@ -107,7 +107,7 @@ object DelegateTool extends Tool:
         "mode" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "enum" -> io.circe.Json.arr("kernel".asJson, "dispatcher".asJson, "auto".asJson),
-          "description" -> "Optional execution form (dual-mode gate; enum kernel|dispatcher|auto, default auto): \"kernel\" = minimal single-session executor (no orchestration tools); \"dispatcher\" = chain-orchestrating dispatcher (composes a per-delegate flow map via ChainWrite/NodeEdit; itself gets zero plugins, no worktree). \"auto\" = the mode allocator decides (JeV -> LLM fallback -> fail-open kernel); an explicit value is authoritative with zero model calls. Mode is a spawn-time lifetime property — changing it means re-dispatch.".asJson
+          "description" -> "Optional execution form (dual-mode gate; enum kernel|dispatcher|auto, default auto): \"kernel\" = minimal single-session executor (no orchestration tools); \"dispatcher\" = chain-orchestrating dispatcher (composes a per-delegate flow map via ChainWrite/NodeEdit; itself gets zero plugins, and goes through the same worktree judge as kernel — its chain nodes then work inside the dispatcher's seat and never create their own worktrees). \"auto\" = the mode allocator decides (JeV -> LLM fallback -> fail-open kernel); an explicit value is authoritative with zero model calls. Mode is a spawn-time lifetime property — changing it means re-dispatch.".asJson
         )
       ),
       "required" -> io.circe.Json.arr("task".asJson)
@@ -150,12 +150,22 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
 
   /**
    * 双模式批（设计 §5.1/§5.7）：dispatcher 模式会话的编排纪律段（brief 装配单点
-   * 注入；模型可见文案——§16 待过目，最小成稿）。要点 = 插件分配已上移到 node 生成
-   * 时（分发器零插件、零点名）；无分支无 worktree ⇒ 写域可能相交的任务用 deps
-   * 串行化（三层防线的纪律层，主防线）；出口节点结果回投本会话。
+   * 注入；模型可见文案——§16 待过目，最小成稿）。三段（2026-10-29 作者补令逐字
+   * 落地）：
+   *  ① subagent-via-nodes 用法指导（作者逐字「分发器的Subagent虽然摘除了，但是
+   *     agentflow是完全可以实现Subagent的能力的。可能需要一些提示词告诉它如何
+   *     使用」）——侦察/子任务=单节点链或入链节点；task 自足（节点看不到分发器
+   *     上下文）；结果经 out 边/完成通知回流；要判定用 verifier+loop 回边。
+   *  ② 整链一次编写纪律（作者逐字「整链一次编写应该不是单node的编写吧？而是
+   *     整体多重复杂node可以一次性写好」）——ChainWrite 一次给全链（多节点复杂
+   *     链也是一次）；NodeEdit 只精修不拼链。
+   *  ③ worktree 精确化（作者裁定 2026-10-29 18:12）——分发器本体照走 worktree
+   *     判定机（本行 brief 随绑定行如实申报座位）；链节点共享分发器的工作座位
+   *     （有 worktree = 落其 worktree 内——不是嵌套），节点自身永不建分支/
+   *     worktree；写域可能相交的任务用 deps 串行（§5.7 纪律层）。
    */
   val DispatcherDisciplineLine: String =
-    """Dispatcher mode: you orchestrate a chain, you do not execute it yourself. Node plugins are allocated automatically per-node from each node's task at chain registration — never name plugins and never pass a plugins key. The whole chain runs in THIS workspace with no branches and no worktrees: order tasks whose file writes may overlap through `deps` (serialize them); only write-disjoint tasks may run in parallel. ChainWrite validates the whole chain first — submit it complete. End-node results are delivered back to this session as completion notifications; fix the chain via Mail(node:<id>) / NodeEdit / NodeCancel, and read it with NodeList."""
+    """Dispatcher mode: you orchestrate a chain, you do not execute it yourself. Node plugins are allocated automatically per-node from each node's task at chain registration — never name plugins and never pass a plugins key. Your Subagent tool is gone by design: get recon/subtask capacity through the chain instead — a single lookup or subtask is a one-node chain (or a node in the chain you are composing); write every node's task SELF-CONTAINED (a node sees only its own task text, none of your context); results flow back to you along out edges as completion notifications; when a step needs judgment, add a verifier node with a (fail)<worker>:loop back edge instead of re-running blind. Compose the ENTIRE chain in ONE ChainWrite call — multi-node complex chains included; never assemble a chain node-by-node through repeated NodeEdit calls (NodeEdit is for refining an existing chain's edges and parameters, not for building it). The chain's nodes all run in THIS session's workspace (inside this session's worktree seat when one was created for it — that is sharing, not nesting); the nodes themselves never create branches or worktrees: order tasks whose file writes may overlap through `deps` (serialize them); only write-disjoint tasks may run in parallel. End-node results are delivered back to this session as completion notifications; fix the chain via Mail(node:<id>) / NodeEdit / NodeCancel, and read it with NodeList."""
 
   def summarize(input: JsonObject): String =
     s"Delegate(${labelOf(input("task").flatMap(_.asString).getOrElse(""))})"
@@ -832,9 +842,16 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
               parentSessionId,
               safetyMode,
               resolvedRoot,
-              // dispatcher 腿跳过 worktree 判定机（设计 §5.1：不建 delegate/<id>
-              // 分支、不建座位，Binding = in-place）——kernel/未判定照旧。
-              judgeWorkspace && !isDispatcher,
+              // worktree 判定机照走（作者裁定 2026-10-29 18:12 逐字「delegate本身
+              // 还是支持有worktree的，只是它调用agentflow干活时，就不再支持
+              // worktree了。不然就worktree嵌套了」——推翻原设计稿 §5.1/§8.1 的
+              // 「dispatcher 本体跳过判定机」）：dispatcher 与 kernel 同判——判是
+              // 建 delegate/<id> 分支+座位（节点层 seal 不动：节点永不建 worktree，
+              // 而是落分发器的座位里干活，不是嵌套）；判否/无绑定照旧回落。
+              // 终态面零新增代码：HoldForMerge/MergeQueue 全程由绑定驱动
+              // （DelegateTerminal.holdForMerge 读 rec.branch/baseBranch/worktree），
+              // 有分支即照走合并判定机/队列。
+              judgeWorkspace,
               subagentId,
               preparation,
               allocated,

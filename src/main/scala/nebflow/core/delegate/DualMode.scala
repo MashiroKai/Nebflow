@@ -84,7 +84,14 @@ end DualModeConfig
 /**
  * 模式判定结果（[[DelegateModeAllocator]] 端口产出）：mode + 产出腿 + 原因。
  * 腿值域（mode-decision 审计行 `leg` 字段）：manual | jev | llm-fallback |
- * fail-open | inert。
+ * fail-open | llm-error | parse-fail | inert。
+ *
+ * 归因精确化（fail-open 根因修复批 2026-10-29）：`fail-open` 只指「无可尝试之
+ * 物」的结构态（无候选/face 未装配/端口内部异常）；LLM 兜底腿的**可恢复**失败
+ * 各归各词——`llm-error`（调用层失败：候选链耗尽/传输异常，真因见缝内逐候选
+ * WARN 线）、`parse-fail`（回文不可用：非 JSON/缺键/值域外）。二者 mode 同取
+ * [[DualModeConfig.failopenMode]] 方向，leg 记真因——作者追问「主 agent 正常用
+ * llm 怎么会 fail-open」的可审计答案即在此分野。
  */
 final case class ModeDecision(mode: String, leg: String, reason: String)
 

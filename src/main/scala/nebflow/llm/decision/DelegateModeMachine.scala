@@ -124,6 +124,12 @@ final class DelegateModeMachine(
       )
 
   // ── LLM fallback 腿（LlmAllocator 同件形态：单次 JSON）────────────────────
+  //
+  // 🔴 归因精确化（fail-open 根因修复批 2026-10-29）：leg 值域细化——调用层失败
+  // （候选链全败/缝异常）= llm-error；回文不可用（非 JSON/缺键/值域外）= parse-fail；
+  // fail-open 只指「无可尝试之物」（无候选/face 未装配）的结构态。mode 都取
+  // failopen 旋钮方向，但台账 leg 各归各——作者追问「主 agent 正常用 llm 怎么会
+  // fail-open」的可审计答案就落在这三个词的分野上。
 
   private def fallbackLeg(subject: String, taskText: String): IO[ModeDecision] =
     failopen.flatMap { failopenMode =>
@@ -149,16 +155,26 @@ final class DelegateModeMachine(
                     .as(ModeDecision(mode, "llm-fallback", reason))
                 case Left(reason) =>
                   JevFallback
-                    .record(JevFallbackKind.Failure, subject, s"llm mode allocator: $reason")
-                    .as(ModeDecision(failopenMode, "fail-open", s"llm reply unparsable: $reason"))
+                    .record(JevFallbackKind.ParseFail, subject, s"llm mode allocator: $reason")
+                    .as(ModeDecision(failopenMode, "parse-fail", s"llm reply unparsable: $reason"))
             case Right(None) =>
               JevFallback
-                .record(JevFallbackKind.Failure, subject, "llm mode allocator: call failed (no reply)")
-                .as(ModeDecision(failopenMode, "fail-open", "llm call produced no reply"))
+                .record(
+                  JevFallbackKind.LlmError,
+                  subject,
+                  "llm mode allocator: call failed (candidate chain exhausted — see per-candidate WARN lines)"
+                )
+                .as(
+                  ModeDecision(
+                    failopenMode,
+                    "llm-error",
+                    "llm call failed (candidate chain exhausted — see per-candidate WARN lines)"
+                  )
+                )
             case Left(e) =>
               JevFallback
-                .record(JevFallbackKind.Failure, subject, s"llm mode allocator: ${e.getClass.getSimpleName}")
-                .as(ModeDecision(failopenMode, "fail-open", s"llm call errored: ${e.getClass.getSimpleName}"))
+                .record(JevFallbackKind.LlmError, subject, s"llm mode allocator: ${e.getClass.getSimpleName}")
+                .as(ModeDecision(failopenMode, "llm-error", s"llm call errored: ${e.getClass.getSimpleName}"))
           }
       }
     }
@@ -205,22 +221,17 @@ object DelegateModeMachine:
 
   /**
    * 生产装配（注册点 = `agent.SharedResources` 构造行，PluginAllocatorMachine.face
-   * 同缝同序）：JeV 腿 = JevSettings 热读构建；LLM 兜底腿 = 候选解析（判定机
-   * utilityCandidate 同口径）；门 = JevConfigReader 热读；fail-open 方向 =
-   * DualModeConfig 旋钮热读。
+   * 同缝同序）：JeV 腿 = JevSettings 热读构建；LLM 兜底腿 = **整链遍历**（候选解析
+   * `LlmAllocator.candidatesFrom` ＋遍历缝 `LlmAllocator.chainCall`——fail-open
+   * 根因修复批 2026-10-29，与插件分配腿同病同修）；门 = JevConfigReader 热读；
+   * fail-open 方向 = DualModeConfig 旋钮热读。
    */
   def face(registry: ProviderRegistry): DelegateModeAllocator.Face =
     new DelegateModeMachine(
       jevLeg = jevLeg,
-      llmLeg = LlmAllocator.candidateFrom(registry).map {
-        case None => None
-        case Some(cand) =>
-          val call = (params: SendMessageParams) =>
-            registry.getAdapter(cand.providerId).flatMap(_.sendMessage(params)).attempt.map {
-              case Right(resp) => Some(resp.reply)
-              case Left(_)     => None
-            }
-          Some((cand, call))
+      llmLeg = LlmAllocator.candidatesFrom(registry).map {
+        case Nil   => None
+        case cands => Some((cands.head, LlmAllocator.chainCall(registry, cands)))
       },
       failopen = IO.blocking(DualModeConfig.failopenMode)
     )

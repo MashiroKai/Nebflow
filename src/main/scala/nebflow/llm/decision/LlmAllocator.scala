@@ -14,7 +14,8 @@ import nebflow.shared.{Defaults, Message, MessageRole, NebflowLogger}
  * == 与判定机同族（裁定⑦背书）==
  * 分配族 = **Jev 优先＋LLM 兜底**，与 #1224 判定机（SmallJudge）机制同一：
  * Jev 未配置**或 Jev 调用失败** ⇒ 单次 LLM 调用（HealthMonitor.SendMessageParams
- * 模式；模型 = 全局候选链首选；JSON 输出）。执行次序由
+ * 模式；模型 = 候选链整链遍历——2026-10-29 fail-open 根因修复，见 companion
+ * `candidatesFrom`/`chainCall`；JSON 输出）。执行次序由
  * [[PluginAllocatorMachine]] 编排；本件只做「task + 目录 → 集合」的一条腿。
  *
  * == 「同语义」的落法 ==
@@ -78,14 +79,23 @@ final class LlmAllocator(
                       .recordSuccess(subject, names, Some(PluginAllocatorMachine.LlmFallbackWire))
                       .as(JevAllocation.Allocated(names))
                   case Left(reason) =>
-                    JevFallback.record(JevFallbackKind.Failure, subject, s"llm allocator: $reason")
+                    // 归因精确化批（2026-10-29）：回文不可用 = ParseFail——可恢复
+                    // 错误各归各词，不再与结构性全败混记 fail-open。
+                    JevFallback.record(JevFallbackKind.ParseFail, subject, s"llm allocator: $reason")
               case Right(None) =>
-                JevFallback.record(JevFallbackKind.Failure, subject, "llm allocator: call failed (no reply)")
+                // 调用缝 None = 候选链全败（链遍历缝，2026-10-29 根因修复——见
+                // companion chainCall）＝调用层失败 LlmError，绝不复述成「无回复」
+                // 了事：缝内逐候选 WARN 已留真因。
+                JevFallback.record(
+                  JevFallbackKind.LlmError,
+                  subject,
+                  "llm allocator: call failed (candidate chain exhausted — see per-candidate WARN lines)"
+                )
               case Left(e) =>
                 // 🔴 零超时（2026-10-19 作者拍板）：本腿不再挂分配调用定时器
                 // （原 15s `.timeout()` 已拆）——左值只能来自调用缝自身的网络/
-                // 传输异常，统一记 Failure（Timeout 分类无进路，不再造）。
-                JevFallback.record(JevFallbackKind.Failure, subject, s"llm allocator: ${e.getClass.getSimpleName}")
+                // 传输异常，统一记 LlmError（可恢复调用层失败，各归各词）。
+                JevFallback.record(JevFallbackKind.LlmError, subject, s"llm allocator: ${e.getClass.getSimpleName}")
             }
       }
 
@@ -136,51 +146,117 @@ end LlmAllocator
 object LlmAllocator:
 
   /**
-   * 生产装配：模型候选解析（`judge.utilityModel` ref → 候选；缺省 = 全局候选链首选
-   * ——判定机 utilityCandidate 同口径；判定机件不动，此处为分配族自己的同形装配）。
-   * None = 无可用候选（腿不可用）。
+   * 生产装配：模型候选解析（`judge.utilityModel` ref → 候选；缺省 = 全局候选链——
+   * 判定机 utilityCandidate 同口径）＋ **整链遍历调用缝**（fail-open 根因修复批
+   * 2026-10-29）。None = 无可用候选（腿不可用）。
    *
    * 🔴 零超时（2026-10-19 作者拍板，「stand 设计不要有任何超时控制——通过监测的
    * 手段」）：本腿**不带分配调用预算**（原 `timeoutMs` 参数与 15s `.timeout()`
    * 定时器杀已拆，不留配置位）；调用完成与否由探活面与分配审计表达。
    */
   def fromRegistry(registry: ProviderRegistry): IO[Option[LlmAllocator]] =
-    candidateFrom(registry).map {
-      case None => None
-      case Some(cand) =>
-        val call = (params: SendMessageParams) =>
-          registry.getAdapter(cand.providerId).flatMap(_.sendMessage(params)).attempt.map {
-            case Right(resp) => Some(resp.reply)
-            case Left(_) => None
-          }
-        Some(new LlmAllocator(call, IO.pure(Some(cand))))
+    candidatesFrom(registry).map { cands =>
+      if cands.isEmpty then None
+      else Some(new LlmAllocator(chainCall(registry, cands), IO.pure(cands.headOption)))
     }
 
-  /** 候选解析（判定机 utilityCandidate 同口径：ref 优先，缺省 = 候选链首选）。 */
-  private[decision] def candidateFrom(registry: ProviderRegistry): IO[Option[ModelCandidate]] =
+  /**
+   * 候选解析（fail-open 根因修复批 2026-10-29）：返回**整条候选链**而非链头一个。
+   *
+   * 根因（jev-allocation.jsonl 实证，2026-10-29）：旧 `candidateFrom` 只取
+   * `getCandidates().headOption` ——单候选、单发、败即弃；主 agent 的请求路径走的是
+   * 整链遍历（preferred→fallbacks→储备层，`getCandidatesForAgent`），于是链头候选
+   * 恰好坏掉时「主 agent 正常用 LLM、兜底腿仍 fail-open」。新读法：
+   *  - `judge.utilityModel` ref 已配且处于**不可用时段** → WARN + 落全局链
+   *    （model-schedule-unavailable 批时段闸，与本批合并融合：闸语义 = 受限 ref
+   *    不进兜底链；回落形状随本批从「链头一个」升为「整条链」——`getCandidates()`
+   *    构建出口已 filterNot 受限模型，回落链不含受限候选）；
+   *  - ref 已配且可解 → 该候选**钉首位**，其后接全局链去重
+   *    （钉住的模型挂掉时链上后备照答——同一句「主 agent 能用 ⇒ 兜底能用」）；
+   *  - ref 已配不可解 → 全链（WARN 留痕，原回落语义保留）；
+   *  - ref 未配 → 全链（原语义，从「头一个」升为「整条」）。
+   */
+  private[decision] def candidatesFrom(registry: ProviderRegistry): IO[List[ModelCandidate]] =
     IO.blocking(nebflow.shared.Config.loadServiceConfig().judge.flatMap(_.utilityModel)).flatMap {
       case Some(ref) =>
         // 时段闸（model-schedule-unavailable 批）：utility ref 当前处于不可用
-        // 时段 ⇒ WARN + 落到全局链首选（链出口已滤，不会选到受限模型）。
+        // 时段 ⇒ WARN + 落到全局链（链出口已滤，不会选到受限模型）。
         registry.scheduleRestrictionFor(ref).flatMap {
           case Some(w) =>
             NebflowLogger
               .forName("nebflow.llm.plugin-alloc")
               .warnSync(
-                s"plugin-alloc: judge.utilityModel '$ref' schedule-restricted ($w) — falling back to root-chain head"
+                s"plugin-alloc: judge.utilityModel '$ref' schedule-restricted ($w) — falling back to the full candidate chain"
               )
-            registry.getCandidates().map(_.headOption)
+            registry.getCandidates()
           case None =>
             registry.getCandidateForRef(ref).flatMap {
-              case Some(c) => IO.pure(Some(c))
+              case Some(c) =>
+                registry.getCandidates().map { chain =>
+                  val rest = chain.filterNot(r => r.providerId == c.providerId && r.model == c.model)
+                  c :: rest
+                }
               case None =>
                 NebflowLogger
                   .forName("nebflow.llm.plugin-alloc")
-                  .warnSync(s"plugin-alloc: judge.utilityModel '$ref' unresolved — falling back to root-chain head")
-                registry.getCandidates().map(_.headOption)
+                  .warnSync(s"plugin-alloc: judge.utilityModel '$ref' unresolved — falling back to the full candidate chain")
+                registry.getCandidates()
             }
         }
-      case None => registry.getCandidates().map(_.headOption)
+      case None => registry.getCandidates()
     }
+
+  /**
+   * 整链遍历调用缝（fail-open 根因修复批 2026-10-29）：逐候选 `sendMessage`——
+   * 某候选传输/适配层失败 ⇒ WARN 落真因＋试下一候选；**全链败才 None**（None 的
+   * 语义自此 = 「候选链耗尽」，不再是「链头一个挂了」）。与主 agent 请求路径同一
+   * 遍历哲学：「主 agent 都在正常使用 llm ⇒ 兜底腿必有候选能答」（作者 2026-10-29
+   * 追问的机制面回答）。
+   *
+   * 🔴 每候选失败必留 WARN（providerId/model/异常类）——审计可归因，真错不再被
+   * `case Left(_) => None` 吞成「no reply」。
+   */
+  private[decision] def chainCall(
+    registry: ProviderRegistry,
+    candidates: List[ModelCandidate]
+  ): SendMessageParams => IO[Option[String]] =
+    val log = NebflowLogger.forName("nebflow.llm.plugin-alloc")
+    (params: SendMessageParams) =>
+      candidates.foldLeft[IO[Option[String]]](IO.pure(None)) { (acc, cand) =>
+        acc.flatMap {
+          case Some(reply) => IO.pure(Some(reply))
+          case None =>
+            registry.getAdapter(cand.providerId).attempt.flatMap {
+              case Left(e) =>
+                IO(
+                  log.warnSync(
+                    s"llm allocator: candidate ${cand.providerId}/${cand.model} adapter unavailable (${e.getClass.getSimpleName}) — trying next candidate"
+                  )
+                ).as(None)
+              case Right(adapter) =>
+                adapter
+                  .sendMessage(params.copy(model = cand.model))
+                  .attempt
+                  .flatMap {
+                    // 空回文（HTTP 200 但 body 空）= provider 侧故障，与传输错同侧
+                    // 处理：试下一候选，不落 parse-fail（parse-fail 只收「有回文但
+                    // 不可用」的模型行为面）。
+                    case Right(resp) if resp.reply.trim.isEmpty =>
+                      IO(
+                        log.warnSync(
+                          s"llm allocator: candidate ${cand.providerId}/${cand.model} replied empty — trying next candidate"
+                        )
+                      ).as(None)
+                    case Right(resp) => IO.pure(Some(resp.reply))
+                    case Left(e) =>
+                      IO(
+                        log.warnSync(
+                          s"llm allocator: candidate ${cand.providerId}/${cand.model} errored (${e.getClass.getSimpleName}) — trying next candidate"
+                        )
+                      ).as(None)
+                  }
+            }
+        }
+      }
 
 end LlmAllocator

@@ -27,7 +27,7 @@ status: draft
 
 ## 0. 执行摘要
 
-**一句话**：delegate（后台子会话执行器）重构为**双模式**——由 JeV（LLM fallback 兜底）在派发瞬间按任务内容二选一：简单任务走**极简内核执行器**（现 delegate 减去 Subagent／AgentFlow 编排面的样子），复杂/链式任务走**分发器模式**（9.19 任务分发器的 flow 用法 + 现 delegate 生命周期的合体：整链一次编写、插件分配上移到 node 生成时、无 worktree、无合并节点、出口与出错重启都归分发器自己）；外部派发/结果回传面两模式完全不变。
+**一句话**：delegate（后台子会话执行器）重构为**双模式**——由 JeV（LLM fallback 兜底）在派发瞬间按任务内容二选一：简单任务走**极简内核执行器**（现 delegate 减去 Subagent／AgentFlow 编排面的样子），复杂/链式任务走**分发器模式**（9.19 任务分发器的 flow 用法 + 现 delegate 生命周期的合体：整链一次编写、插件分配上移到 node 生成时、~~无 worktree~~【2026-10-29 裁定修正：节点层无 worktree；分发器本体照走判定机，见 §5.1】、无合并节点、出口与出错重启都归分发器自己）；外部派发/结果回传面两模式完全不变。
 
 三个设计支柱：
 
@@ -47,7 +47,7 @@ status: draft
 | P2 | **R2 delegate 腿能力静默缺失**：外部执行器零注入（`ExternalSessionRunner.scala:198`）；内置腿 brief 自动分配 fail-open 空集（本链实证 5 腿 4 空集） | §2.2 / §6-R2 | **部分解决** | 三层机制（§6）把分配结果做成显式回执链（`step-plugins` 台账行＋三态 mode 词＋duty INFO 行，`PluginInjection.scala:126-148`）——空集必留痕不静默；description 层双消费面提高分配命中率。**外部腿维持零注入但明示**：spawn 回执原文已声明「no platform tools or plugins are injected」（`ExternalSessionRunner.scala:193-201`）＝报告二建议的两个选项中落定「明示不支持」。残余：外部腿真注入不做（CLI 进程无注入通道，机制上不可行） |
 | P3 | **R3 账实不一致＋归档膨胀**：chain-ledger 4 条 active vs flow-map 0 节点（取消链未走归档清扫）；28 天 54,309 轮 × 44KB manifest 压缩轮转 GB 级 | §3.4-②③ / §6-R3 | **部分解决** | flowmap 随 delegate 完成消失（§5.6）：终态即 unmount＋延迟删除＋**摘要先行降级登记**（chain-archived 事件＋台账行）——活动区不再堆积死图，账实不一致窗口被生命周期收口压缩。压缩轮转触发条件复查不属本设计（独立批次建议，报告二原建议照抄有效） |
 | P4 | **R4 legacy 死代码带崩溃恢复假链路**：`TurnStateStore.save` 无生产调用点，FlowTree 恢复靠文件残留；core/flow 13 文件 2,241 行 dead weight | §3.4-① / §6-R4 | **不解决＋边界声明** | 本设计零实施代码；且明确**不依赖 legacy**：分发器模式复用现役 NodeEngine 底座（报告二 §3.1 已证 legacy 引擎不承现役流量）。core/flow 清理列为独立卫生批（与本设计无冲突、可并行） |
-| P5 | **R5 合并队列重启丢队**：投递通道进程内不落盘（`MergeQueue.scala:123-133`），每次引擎重启把未关账成员打成 owner-gone 人工处置；ready 前被杀连账本条目都没有 | §4.3 / §6-R5 | **不解决＋兼容声明** | 双模式**不碰 MergeQueue 机制**：模式一照走现状判定机＋合并轮；模式二因无分支无 worktree，终态**无物可并、不进队**（§5.7），merge-ledger 零新形态。通道 write-ahead（报告二建议，DeviceResultOutbox 同型可搬）仍是正解，列独立批次 |
+| P5 | **R5 合并队列重启丢队**：投递通道进程内不落盘（`MergeQueue.scala:123-133`），每次引擎重启把未关账成员打成 owner-gone 人工处置；ready 前被杀连账本条目都没有 | §4.3 / §6-R5 | **不解决＋兼容声明** | 双模式**不碰 MergeQueue 机制**：模式一照走现状判定机＋合并轮；~~模式二因无分支无 worktree，终态**无物可并、不进队**（§5.7）~~【2026-10-29 裁定修正：dispatcher 本体照走判定机，判是有分支时终态照进队——机制面零新增，见 §5.7】，merge-ledger 零新形态。通道 write-ahead（报告二建议，DeviceResultOutbox 同型可搬）仍是正解，列独立批次 |
 | P6 | **R6 门户数据面浪费**：头像内联 ~267KB/帧、vendor 首开、canvas-tabs 全量重写、v1.3 分片+gzip 结构性未部署 | §5 / §6-R6 | **不解决** | 与 delegate 模式面零交集，正交 |
 | P7 | **插件利用率低**：21 装 7 trusted；revoked/dispatch 两表零使用；项目级按项目挂载零实例；MCP 型插件零个 | §2.3 | **部分解决** | description 层双消费面＋node 级分配（§5.3/§6.1）提高「装了真被分到」的比率；分配面集合语义（trusted→dispatchable 过滤链，`PluginRegistry.scala:1513-1539`）不变。MCP 型零个是**生态空缺**非机制空缺，不解决（机制面 mcp.json 支持完整在位） |
 | P8 | **Delegate 工具无 plugins 键**：派发方无法点名插件，模型无热挂载权 | §2.2 | **不改变（维持）＋上移替代** | 派发方点名不新增（挂载权归派发侧的权威不变，`tools/stand-plugins` 头注「绝不提供挂载/改配置通道」）；但模式二把分配**上移到 node 生成时**（§5.3）——分配面从「spawn 时对整个 brief 一次性猜」细化为「对每个 node 的 task 逐点配」，同一权威、更细粒度 |
@@ -89,12 +89,12 @@ status: draft
 |---|---|---|---|
 | 1 | NodeList 全态盘点先行 | **保留**（模式二标准流程步） | 分发器首动作 |
 | 2 | NodeEdit 建/编节点（task/in/deps/out/门集/abandon/reactivate/restoreChain/notify） | **保留**（能力与 9.19 一致） | 用法不变，作用域换成 per-delegate |
-| 3 | 整链一次编写 | **9.19 无此能力**（一 node 一次 NodeEdit）→ 新令要求 → **ChainWrite 承接** | ChainWrite 已落 main（`e8d5f98f3`，2026-10-07：一次调用整链登记、全过或整拒、单事务落盘）；AgentFlowTool 是其薄壳（`AgentFlowTool.scala:35` MaxSteps 同源）。「允许一次完成整个链的编写」＝现成能力收编进模式二 |
+| 3 | 整链一次编写 | ~~**9.19 无此能力**（一 node 一次 NodeEdit）→ 新令要求 → **ChainWrite 承接**~~（表述修正 2026-10-29：ChainWrite 已收编进现役工具面，本行原「9.19 无此能力」读法过时）→ **ChainWrite 承接** | ChainWrite 已落 main（`e8d5f98f3`，2026-10-07：一次调用整链登记、全过或整拒、单事务落盘）；AgentFlowTool 是其薄壳（`AgentFlowTool.scala:35` MaxSteps 同源）。「允许一次完成整个链的编写」＝现成能力收编进模式二。分发器提示词纪律同步钉死：**一次 ChainWrite 给全链（多节点复杂链也是一次），禁止逐 node NodeEdit 拼链（NodeEdit 只精修）**——作者 2026-10-29 逐字「整链一次编写应该不是单node的编写吧？而是整体多重复杂node可以一次性写好」；`DispatcherDisciplineLine` 单点承载 |
 | 4 | loop detect＋loop 节点 worker/verify＋LoopBudget | **保留**（「9.19 的 loop 等功能都要有」） | 判定式循环原样 |
 | 5 | verdict 路由（verifier＋(fail)worker:loop 回边） | **保留** | loop 的判定半边 |
 | 6 | retry（下游持有的失败自动重试 {upstream,max}） | **保留** | 同上族 |
 | 7 | **合并节点**（merge=true 全族闸） | **裁掉**（「合并节点不需要」） | delegate 作用域已 seal（`NODE_MERGE_UNSUPPORTED`，`e8d5f98f3` D1/D2 seal）；per-project 图不波及 |
-| 8 | **worktree 分配**（node worktree=true） | **裁掉**（「不需要分配 worktree，不允许再创建 worktree（整链禁止）」） | delegate 作用域已 seal（`NODE_WORKTREE_UNSUPPORTED`，同上）；模式二 delegate 本体腿另需跳过建分支/座位（§5.7） |
+| 8 | **worktree 分配**（node worktree=true） | **裁掉**（「不需要分配 worktree，不允许再创建 worktree（整链禁止）」） | delegate 作用域已 seal（`NODE_WORKTREE_UNSUPPORTED`，同上）；~~模式二 delegate 本体腿另需跳过建分支/座位（§5.7）~~ **【2026-10-29 作者裁定推翻：dispatcher 本体照走判定机，仅 node 层 seal——见 §5.1/§5.7】** |
 | 9 | plugins per-node 声明（分发器点名） | **改造**（「插件分配上移到 node 生成时；分发器不参与插件分配」） | 分发器的 plugins 键改拒（§5.3）；分配器（JeV/LLM）在 node 生成时按 task 定 |
 | 10 | 出口＝顶层 agent（out=Nebula root notify） | **改造**（「flow 出口＝分发器自己（9.19 是顶层 agent）」） | per-delegate 作用域的 Nebula 边已重映射投创建者 delegate（NotifyTargetKind.CreatorDelegate，`88368a259` S19①，`DelegateFlowHosts.scala:179`）＝现成机制收编 |
 | 11 | Mail node:\<id\> 三态路由 | **保留** | 分发器修链主通道 |
@@ -132,6 +132,8 @@ status: draft
  零平台工具零注入（ExecutorRegistry.scala:79-102；回执明示
  ExternalSessionRunner.scala:193-201）
 ```
+
+> **图注裁定修正（作者 2026-10-29 18:12）**：右列「整链禁 worktree」自裁定起读作「**节点层**整链禁 worktree（seal 不动）」——分发器**本体**照走 worktree 判定机（左列同款「worktree 判定机照旧」），判是有分支+座位，节点落其座位内干活（§5.1/§5.7）。
 
 两条不变的公共面：**派发/结果回传面不变**（父会话看到的一律是「后台任务＋完成系统消息＋delegate:\<id\> 续聊地址」）；**Mail 续聊复活腿不变**（同点复用 spawn，`DelegateTool.scala:655` 头注）。
 
@@ -176,7 +178,7 @@ spawn（`spawnBackground`）→ 三处登记（DelegateRegistry 持久地址簿�
 | AgentFlow（一次性步骤图薄壳） | 同上（`AgentFlowTool.scala:53` 家族位） | **移除** |
 | ChainWrite＋NodeEdit/NodeList/NodeCancel（node 工具面 `DelegateNodeToolsFace`） | delegateSession 腿追加（`AgentSessionExecution.scala:2461`） | **随 agentflow 一并移除**（本设计延伸裁定，作者逐字只点名两件——延伸理由：该四件是链编排机器，极简内核无编排诉求；待作者确认，Q2） |
 | Mail | delegateSession 腿追加（`AgentSessionExecution.scala:2470`） | 保留（续聊是外部派发面的一部分） |
-| TaskBoard/node_report/delegate_report/AskUser | 既有挂载 | 保留（报告/交互面非编排面） |
+| TaskBoard/node_report/delegate_report/AskUser | 既有挂载 | 保留（报告/交互面非编排面）。**node_report 修正（作者裁定 2026-10-29 逐字「node_report工具对极简内核应该不需要吧，那不是agentflow的节点使用的工具吗？」）**：kernel 腿显式摘除（挂载面＋工具内身份拒绝双保险同款——现状事实源：node_report 经 RootExclusiveTools 防声明逃逸剥离＋flowNodeSession 尾段专属挂载，本就不达 delegate 面；kernel 腿再加显式减法作保险销）；dispatcher 腿不动 |
 | 基础工具（Read/Write/Edit/Bash/Glob/Grep…） | 既有 | 保留（执行内核本体） |
 
 **落点（设计）**：`buildAllowedToolSet` 尾段 delegateSession 腿（`AgentSessionExecution.scala:2444-2470`）按 record.mode 分叉——kernel 腿在追加 `DelegateNodeToolsFace` 之前截断，并从有效集显式减去 `Subagent`/`AgentFlow`（NebflowFixedTools 是执行 agent 全局机制面，root 等非 delegate 会话不受影响——摘除只在 delegateSession 判据内，双保险形态与 TaskBoard/node_report 同款：挂载面＋工具内身份拒绝）。
@@ -200,7 +202,7 @@ spawn（`spawnBackground`）→ 三处登记（DelegateRegistry 持久地址簿�
 
 - **工具面**：−{Subagent} ＋{ChainWrite, NodeEdit, NodeList, NodeCancel}＋Mail＋report 族。与现状 delegate 的差异只有两点：Subagent 摘除；node 工具面保留（kernel 才摘）。
 - **分发器本体零插件**（作者逐字）：spawn 腿跳过 `allocatePreparation`，审计行记 `allocation=dispatcher-off`（Inert 族新词，语义＝「模式性豁免」非故障）；pluginMcp 零 acquire。分发器的编排能力全部来自平台工具（非插件），查询需求走 `tools/stand-plugins` 只读 CLI（非插件、无挂载面——是否给分发器挂此 CLI 见 Q7）。
-- **座位与分支**：跳过 worktree 判定机（`DelegateWorkspace.prepare` 不调用）——不建 `delegate/<id>` 分支、不建座位，Binding＝in-place（registry 记录 cwd＝基工作区、无分支）。这是对现状「判是/判否一律建分支」的**显式偏离**，仅限 dispatcher 腿；kernel 腿照旧。
+- **座位与分支**：~~跳过 worktree 判定机（`DelegateWorkspace.prepare` 不调用）——不建 `delegate/<id>` 分支、不建座位，Binding＝in-place（registry 记录 cwd＝基工作区、无分支）。这是对现状「判是/判否一律建分支」的**显式偏离**，仅限 dispatcher 腿；kernel 腿照旧。~~ **【本段被作者裁定推翻 · 2026-10-29 18:12 逐字「delegate本身还是支持有worktree的，只是它调用agentflow干活时，就不再支持worktree了。不然就worktree嵌套了」】** dispatcher 本体**照走 worktree 判定机**（与 kernel 同：判是/判否一律建 `delegate/<id>` 分支＋座位，`DelegateWorkspace.prepare` 照调用）；仅 node 层维持 seal（`NODE_WORKTREE_UNSUPPORTED` 不动）。连带修正两条：①**分发器与其节点共享同一绑定**——分发器判是（有 worktree 座位）则节点落其 worktree 内干活（`DelegateFlowHosts.mount` 的 `engineCwd`＝分发器座位，NodeEngine workspace 随座位，节点 projectRoot 解析自然落 worktree 内——共享不是嵌套），节点自身永不建 worktree；②分发器终态照走合并判定机/队列（绑定驱动零新增代码，见 §5.7）。实施落点：`DelegateTool.spawnBackground` 的 `judgeWorkspace && !isDispatcher` 恢复为 `judgeWorkspace`。
 - **flowmap 宿主**：spawn 成功即 `DelegateFlowHosts.mount`（N1 刀1 既有腿，fail-soft）——per-delegate 作用域图（`.nebflow/flow-maps/<delegateId>/`）。
 
 ### 5.2 整链一次编写：输入格式与校验
@@ -266,7 +268,7 @@ ChainWrite(chainName?, nodes=[{id, name?, task, deps?, description?}])
 
 ### 5.7 无 worktree 下的并发文件安全策略
 
-**威胁模型**：模式二整链禁 worktree ⇒ 全部 node 会话＋分发器共享同一基工作区；N 个并行 node 可能同时写同一文件/目录。
+**威胁模型**：模式二整链禁 node worktree ⇒ 全部 node 会话＋分发器共享**同一工作座位**（作者裁定 2026-10-29 18:12 后：分发器本体照走 worktree 判定机——判是则该座位即分发器的 worktree；节点层 seal 不变，节点永不自建）；N 个并行 node 可能同时写同一文件/目录。
 
 **三层防线（设计）**：
 
@@ -274,7 +276,7 @@ ChainWrite(chainName?, nodes=[{id, name?, task, deps?, description?}])
 2. **声明层（软闸＋审计）**：nodes[] 增**可选键 `writeScope`**（自由文本路径/目录声明，可选不强制）：引擎对**同时活跃**（running）的节点对做静态相交启发（字符串前缀/目录包含比较，纯函数）——相交即写一行 `write-scope-collision` WARN 审计事件（flow-map-events.jsonl），**不拒绝不阻塞**（声明是软闸：误报零代价、漏报靠纪律层兜底）。
 3. **工具层（现状即有）**：会话内文件工具已有读后写追踪/编辑守卫面（Edit 工具 exact-match 天然防并发覆盖写——stale 编辑直接报错重读）；**不新增引擎级强制文件互斥**（FileLockManager 现状服务面有限，强制化成本与误锁风险高——是否升级为强制互斥列 Q4）。
 
-**与 MergeQueue 的关系**：无分支无 worktree ⇒ 链产物直接落基工作区，**无物可并**——模式二 delegate 终态走 Release 直收，不进 MergeQueue（merge-ledger 零新形态）；分发器**本人**也不建分支（§5.1）。模式一不受影响（判定机照旧）。
+**与 MergeQueue 的关系**：~~无分支无 worktree ⇒ 链产物直接落基工作区，**无物可并**——模式二 delegate 终态走 Release 直收，不进 MergeQueue（merge-ledger 零新形态）；分发器**本人**也不建分支（§5.1）。~~ **【本段随 §5.1 裁定一并修正 · 作者 2026-10-29 18:12】** dispatcher 本体照走 worktree 判定机 ⇒ **有 worktree（判是）时终态照走合并判定机/队列，与 kernel 同**——ready-to-merge 判词 → HoldForMerge → MergeQueue 排队，merge-ledger 照记（零新形态：机制面全由既有绑定驱动，`DelegateTerminal.holdForMerge` 分支锚缺位时才降级 Release）；判否/无绑定（非 git 等）仍 Release 直收。模式一不受影响（判定机照旧）。
 
 **残余风险显式化**：两 node 绕过纪律硬写同一文件＝后写覆盖先写（无引擎互斥）；缓解＝§7 状态机里分发器的修链职责＋审计可追责。若作者要求强保证，Q4 裁定升级路径（FileLockManager 强制化或 node 级 sandbox checkout）。
 
@@ -431,7 +433,7 @@ agent 读 Plugin.md ──按其中路径指导──► 自己 Read SKILL.md（
 |---|---|---|
 | Delegate 内置腿工具面 | Subagent+AgentFlow+node 四件全量 | 按 mode 分叉：kernel 摘编排面；dispatcher 摘 Subagent 留编排面 |
 | Delegate 插件分配 | spawn 时对整 brief 一次分配 | kernel 不变；dispatcher 本体零分配、链登记时逐 node 分配 |
-| delegate worktree | 判是/判否一律建分支+座位 | kernel 不变；dispatcher 整链禁（含本体） |
+| delegate worktree | 判是/判否一律建分支+座位 | kernel 不变；~~dispatcher 整链禁（含本体）~~ **dispatcher 本体照走判定机（作者裁定 2026-10-29 18:12——判是建分支+座位与 kernel 同）；仅节点层整链禁建（seal 不动），节点落分发器座位内干活** |
 | flowmap | 任何 delegate 可建链（node 四件在面） | 仅 dispatcher 模式有 flowmap；kernel 无编排面 |
 | 外部执行器腿 | 单会话零注入 | 零变化（不参与双模式，Q5） |
 | 派发/结果回传面 | 后台任务+完成通知+delegate:\<id\> | 零变化 |
@@ -445,7 +447,7 @@ agent 读 Plugin.md ──按其中路径指导──► 自己 Read SKILL.md（
 
 ### 8.3 与 merge-queue / flow-map 审计的兼容
 
-- **MergeQueue**：模式一零接触；模式二不进队（无物可并）——merge-ledger 无新形态、MergeAcceptance/BootSweep 零改动。P5（重启丢队）独立批不受影响。
+- **MergeQueue**：模式一零接触；~~模式二不进队（无物可并）~~ **模式二有 worktree（判是）时照走合并判定机/队列（作者裁定 2026-10-29 18:12，见 §5.7）**——merge-ledger 无新形态、MergeAcceptance/BootSweep 零改动（绑定驱动既有路径）。P5（重启丢队）独立批不受影响。
 - **flow-map 审计**：flow-map-events.jsonl 照写（新增 write-scope-collision 一种 WARN 类型）；chain-ledger/归档 sweep 照走——模式二的 flowmap 消失（§5.6）复用既有 chain-archived 事件，不新增第二归档面。
 - **面板/REST**：`ChainsReadFace` 行投影照读（mode 无需上面板；若要展示属后续 UI 批）；delegate 面板行显示名契约（[[design/subagent-row-display-name-spec.zh-CN]]）不受影响。
 - **存量清理建议（独立卫生批，非本设计范围）**：现存 284 个 delegate 作用域目录按 §5.6 语义清算（有终态且结果已交付→删；其余保留人工裁定）。

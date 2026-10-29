@@ -562,7 +562,7 @@ object ChainWriteTool extends Tool:
                                       "end-node results arrive here as completion notifications. Non-blocking: do NOT wait idle " +
                                       "and do NOT re-dispatch the same work." +
                                       (if dispatcherChain then
-                                         " Reminder (dispatcher mode, no worktrees): tasks whose file writes may overlap must be ordered with deps — only write-disjoint tasks run in parallel."
+                                         " Reminder (dispatcher chain — nodes share one workspace, node worktrees sealed): tasks whose file writes may overlap must be ordered with deps — only write-disjoint tasks run in parallel."
                                        else "") + allocationLines
                                   )
                                 )

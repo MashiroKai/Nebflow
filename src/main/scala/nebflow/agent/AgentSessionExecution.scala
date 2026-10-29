@@ -2478,12 +2478,19 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     //   NodeEdit/NodeList/NodeCancel）在追加前截断 + 显式减去 Subagent/AgentFlow
     //   （NebflowFixedTools 是执行 agent 全局机制面——摘除只在 delegateSession
     //   判据内，root 等非 delegate 会话不受影响）。
+    //   node_report 摘除（作者裁定 2026-10-29 逐字「node_report工具对极简内核应该
+    //   不需要吧，那不是agentflow的节点使用的工具吗？」）：显式减法钉语义——现状
+    //   事实源 node_report 本就不达 delegate 面（RootExclusiveTools 防声明逃逸剥
+    //   离 + 真实授能只在 flowNodeSession 尾段挂载、工具内 flowNodeId 空即拒——
+    //   挂载面+身份拒绝双保险既有），本减法是未来挂载面变动下的保险销。
     // dispatcher 腿（分发器）：node 四件保留（编排本体）+ Subagent 摘除
-    //   （Q2 裁定：Subagent 是侦察子代理不是编排面，分发器不需要）。
+    //   （Q2 裁定：Subagent 是侦察子代理不是编排面，分发器不需要）；node_report
+    //   腿不动（同上现状事实源——flow 节点会话专属，本就零泄漏）。
     val kernelFace = delegateSession && delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeKernel)
     val dispatcherFace = delegateSession && delegateMode.contains(nebflow.core.delegate.DualModeConfig.ModeDispatcher)
     val modeTruncated =
-      if kernelFace then withDelegateReport - "Subagent" - "AgentFlow"
+      if kernelFace then
+        withDelegateReport - "Subagent" - "AgentFlow" - nebflow.core.tools.NodeReportToolDef.Name
       else if dispatcherFace then withDelegateReport - "Subagent"
       else withDelegateReport
     // N1 刀2（v3 §10.1 A4 授能）：delegate 会话的四件 Node 工具面挂载——
