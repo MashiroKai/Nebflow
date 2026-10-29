@@ -396,12 +396,13 @@ Behavior:
             // 修前窗由前端渲染腿开（console 关闭/刷新间隙窗不开，窗内码全数漏收）；
             // 修后引擎在发射点开窗（幂等 by requestId，前端腿复用同一窗）。失败不
             // 阻塞 ask 本体（感知未启动=无邮箱连接，窗无意义）。
+            // 统一 daemon 批 2026-10-29：窗持有方 = 统一 daemon 管理进程——开窗经
+            // PerceptionClient 工具腿（5s 有界；未 docked/停机窗 = 静默跳过 +
+            // 客户端腿 WARN，验证码走 L1/白名单/spool 既有兜底路径，watchdog
+            // 秒级拉回）。
             val otpWindow: IO[Unit] =
               if perceptionOtpAsk(input, items) then
-                nebflow.perception.PerceptionService.coreNow.flatMap {
-                  case Some(core) => core.openOtpWindow(requestId).attempt.void
-                  case None       => IO.unit
-                }
+                nebflow.perception.PerceptionClient.openOtpWindow(requestId).attempt.void
               else IO.unit
             (otpWindow *> emit).as(Right(nonBlockingAck(items, requestId, attachments)))
     end match

@@ -280,8 +280,9 @@ class PerceptionCoreSpec extends FunSuite:
     val events = new scala.collection.mutable.ArrayBuffer[io.circe.Json]
     val core = new PerceptionCore(
       store = store,
-      resources = null, // 注入面不触达（本 suite 不跑投递腿）
-      broadcast = j => IO { events += j; () }
+      broadcast = j => IO { events += j; () },
+      // 投递出域 seam 桩：本 suite 不跑投递腿（false=不可达 → 落 spool，零外呼）
+      deliverEnvelope = (_, _) => IO.pure(false)
     )
     (core, os.Path(tmp))
 
@@ -452,9 +453,9 @@ class PerceptionCoreSpec extends FunSuite:
     val events = new scala.collection.mutable.ArrayBuffer[io.circe.Json]
     val core = new PerceptionCore(
       store = store,
-      resources = null,
       broadcast = j => IO { events += j; () },
-      judge = Some(mail => IO { calls.incrementAndGet(); verdict })
+      judge = Some(mail => IO { calls.incrementAndGet(); verdict }),
+      deliverEnvelope = (_, _) => IO.pure(false)
     )
     (core, os.Path(tmp))
 

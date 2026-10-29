@@ -4,98 +4,47 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.perception.{PerceptionCore, PerceptionModel, PerceptionService}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
 
 /**
- * 感知域 REST 面（r2 §13 / r3 修订：面板条目 / 两问配置 / OTP 消费 / 草稿 /
- * 发送）。挂载于 `/api/perception` 前缀，全部走 withAuth 会话门。
+ * 感知域 REST 面（统一 daemon 批 2026-10-29 起 = **代理腿**）。
  *
- * 服务自举：首访防御性 ensureBoot（GatewayMain 启动链已有正式 boot，此处
- * 幂等 no-op），spec/未启场景安全。
+ * 面板 API 的权威实现自本批起整体迁入统一 daemon 管理进程
+ * （`nebflow.perception.PerceptionPanelRoutes` + `PerceptionDaemonRoutes`），
+ * 引擎侧本文件只做逐字转发：method/path/query/body 原样 → daemon
+ * （`127.0.0.1:<daemonPort>`，X-Nf-Perception-Token 门），status/body 原样
+ * 回relay——**单源实现，零第二形状可漂移**。会话门（withAuth ⇒ 403
+ * X-Nf-Reason: credential-required）与既有路径面逐字保持（前端零触碰）。
+ *
+ * 例外：`GET /perception/mail/preset` 保持引擎本地（纯函数、无 daemon 依赖
+ * ——daemon 停机窗内两问配置向导仍可用）。
+ *
+ * daemon 停机窗 ⇒ 503 `daemon-unavailable`（[[PerceptionClient.call]] None
+ * 路径；autoStart/restartOnExit 家族语义秒级拉回）。
  */
 private[gateway] object PerceptionRoutes:
+
+  /** 代理覆盖的面板路径（相对 /perception 前缀；与 daemon 权威表一一对应）。
+    * 草稿族（GET/PUT /mail/drafts/:id、POST /mail/drafts/:id/abandon）带 id
+    * 段，在 [[isProxied]] 内单独判。 */
+  private val ProxiedSubpaths: List[(Method, List[String])] =
+    List(
+      (GET, List("entries")),
+      (POST, List("mail", "connect")),
+      (POST, List("mail", "toggle")),
+      (POST, List("mail", "remove")),
+      (POST, List("otp", "window", "open")),
+      (GET, List("otp", "consume")),
+      (POST, List("mail", "send"))
+    )
 
   def routes(ctx: RestApiCtx): HttpRoutes[IO] =
     import ctx.*
     HttpRoutes.of[IO] {
 
-      case req @ GET -> Root / "perception" / "entries" =>
-        withAuth(req) {
-          core(ctx).flatMap { c =>
-            c.entriesPayload.flatMap(p =>
-              Ok(Json.obj("entries" -> p.entries.asJson, "serverTime" -> p.serverTime.asJson))
-            )
-          }
-        }
-
-      // ── 两问配置：连接 = 测试 + 保存一体 ──────────────────────────────
-      case req @ POST -> Root / "perception" / "mail" / "connect" =>
-        withAuth(req) {
-          core(ctx).flatMap { c =>
-            req.as[Json].flatMap { body =>
-              val address = str(body, "address")
-              val authCode = str(body, "authCode")
-              c.connectAccount(
-                address = address,
-                authCode = authCode,
-                imapHost = optStr(body, "imapHost"),
-                imapPort = optInt(body, "imapPort"),
-                smtpHost = optStr(body, "smtpHost"),
-                smtpPort = optInt(body, "smtpPort"),
-                smtpImplicitTls = optBool(body, "smtpImplicitTls"),
-                displayName = optStr(body, "displayName"),
-                trustedSenders = optStrList(body, "trustedSenders")
-              ).flatMap {
-                case Right((acc, stats)) =>
-                  Ok(Json.obj(
-                    "ok" -> true.asJson,
-                    "account" -> Json.obj(
-                      "id" -> acc.id.asJson,
-                      "address" -> acc.address.asJson,
-                      "provider" -> acc.provider.asJson,
-                      "enabled" -> acc.enabled.asJson
-                    ),
-                    // 连接成功态统计（报障 2026-10-28：连接卡显示「已连接：
-                    // 收件箱 N 封、M 封未读」；unseen 缺席 = null，前端降级文案）
-                    "mailbox" -> Json.obj(
-                      "exists" -> stats.exists.asJson,
-                      "unseen" -> stats.unseen.asJson
-                    )
-                  ))
-                case Left(err) => BadRequest(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
-              }
-            }
-          }
-        }
-
-      case req @ POST -> Root / "perception" / "mail" / "toggle" =>
-        withAuth(req) {
-          core(ctx).flatMap { c =>
-            req.as[Json].flatMap { body =>
-              c.toggleAccount(str(body, "id"), bool(body, "enabled")).flatMap {
-                case Right(_)  => Ok(Json.obj("ok" -> true.asJson))
-                case Left(err) => BadRequest(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
-              }
-            }
-          }
-        }
-
-      case req @ POST -> Root / "perception" / "mail" / "remove" =>
-        withAuth(req) {
-          core(ctx).flatMap { c =>
-            req.as[Json].flatMap { body =>
-              c.removeAccount(str(body, "id")).flatMap {
-                case Right(_)  => Ok(Json.obj("ok" -> true.asJson))
-                case Left(err) => BadRequest(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
-              }
-            }
-          }
-        }
-
-      // 域 → 服务商自动识别（配置卡一句说明的数据源）
+      // 域 → 服务商自动识别（保持引擎本地：纯函数，daemon 停机时向导仍可用）
       case req @ GET -> Root / "perception" / "mail" / "preset" =>
         withAuth(req) {
           val address = req.params.getOrElse("address", "")
@@ -107,160 +56,52 @@ private[gateway] object PerceptionRoutes:
           ))
         }
 
-      // ── OTP 窗口（引擎在 ask 发射点开窗为主腿；前端渲染腿同 requestId 复用
-      // 同一窗——幂等。响应带槽内命中元数据（无码值）：渲染晚于命中的卡面
-      // （console 重开/刷新）也能立即补渲染码片）──
-      case req @ POST -> Root / "perception" / "otp" / "window" / "open" =>
-        withAuth(req) {
-          core(ctx).flatMap { c =>
-            req.as[Json].flatMap { body =>
-              val requestId = str(body, "requestId")
-              val windowSec = optInt(body, "windowSec").getOrElse(PerceptionService.OtpWindowSec)
-              if requestId.isBlank then BadRequest(Json.obj("error" -> "requestId required".asJson))
-              else c.openOtpWindow(requestId, math.max(30, math.min(windowSec, 3600))).flatMap { w =>
-                c.windowHitMeta(w.windowId).flatMap { hit =>
-                  val fields: Vector[(String, Json)] = Vector(
-                    "windowId" -> w.windowId.asJson,
-                    "expiresAt" -> w.expiresAt.asJson,
-                    "hasHit" -> hit.isDefined.asJson
-                  ) ++ hit.map(h => Vector(
-                    "from" -> h.from.asJson,
-                    "fromDomain" -> h.fromDomain.asJson,
-                    "receivedAt" -> h.receivedAt.asJson
-                  )).getOrElse(Vector.empty)
-                  Ok(Json.fromJsonObject(io.circe.JsonObject.fromIterable(fields)))
-                }
-              }
-            }
-          }
-        }
-
-      // 单码一次性消费（点击码片 → 取值 → 槽清空）
-      case req @ GET -> Root / "perception" / "otp" / "consume" =>
-        withAuth(req) {
-          core(ctx).flatMap { c =>
-            val windowId = req.params.getOrElse("windowId", "")
-            c.consumeOtp(windowId).flatMap {
-              case Some(hit) =>
-                Ok(Json.obj(
-                  "code" -> hit.code.asJson,
-                  "from" -> hit.from.asJson,
-                  "fromDomain" -> hit.fromDomain.asJson,
-                  "receivedAt" -> hit.receivedAt.asJson
-                ))
-              case None => NotFound(Json.obj("error" -> "no code".asJson))
-            }
-          }
-        }
-
-      // ── 草稿（画布编辑器数据面）──────────────────────────────────────
-      case req @ GET -> Root / "perception" / "mail" / "drafts" / draftId =>
-        withAuth(req) {
-          core(ctx).flatMap { c =>
-            c.draftView(draftId).flatMap {
-              case None => NotFound(Json.obj("error" -> "draft not found".asJson))
-              case Some(v) =>
-                Ok(Json.obj(
-                  "draftId" -> v.record.draftId.asJson,
-                  "state" -> v.record.state.asJson,
-                  "content" -> v.content.asJson,
-                  "mtimeMs" -> v.mtimeMs.asJson,
-                  "snapshotAt" -> v.record.snapshotAt.asJson,
-                  "stale" -> v.stale.asJson,
-                  "doc" -> (v.doc.toOption match
-                    case Some(d) => Json.obj(
-                        "to" -> d.to.asJson,
-                        "cc" -> d.cc.asJson,
-                        "bcc" -> d.bcc.asJson,
-                        "subject" -> d.subject.asJson,
-                        "bodyHtml" -> d.bodyHtml.asJson,
-                        "quoteHtml" -> d.quoteHtml.getOrElse("").asJson,
-                        "attachments" -> d.attachments.asJson
-                      )
-                    case None => Json.Null
-                  ),
-                  // 附件在位性 + 大小（快照卡/画布 chip 的标红与禁发判据，r2 §7.3；
-                  // 旧引擎/降级形态缺字段 = 前端按未知大小降级展示）。
-                  "attachmentStats" -> v.attachmentStats.asJson
-                ))
-            }
-          }
-        }
-
-      case req @ PUT -> Root / "perception" / "mail" / "drafts" / draftId =>
-        withAuth(req) {
-          core(ctx).flatMap { c =>
-            req.as[Json].flatMap { body =>
-              c.saveDraft(draftId, str(body, "content")).flatMap {
-                case Right(mtime) => Ok(Json.obj("ok" -> true.asJson, "mtimeMs" -> mtime.asJson))
-                case Left(err)    => Conflict(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
-              }
-            }
-          }
-        }
-
-      case req @ POST -> Root / "perception" / "mail" / "drafts" / draftId / "abandon" =>
-        withAuth(req) {
-          core(ctx).flatMap { c =>
-            c.abandonDraft(draftId).flatMap {
-              case Right(_)  => Ok(Json.obj("ok" -> true.asJson))
-              case Left(err) => Conflict(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
-            }
-          }
-        }
-
-      // ── 发送（画布「发送」与快照卡「照此发送」同一端点）──────────────
-      case req @ POST -> Root / "perception" / "mail" / "send" =>
-        withAuth(req) {
-          core(ctx).flatMap { c =>
-            req.as[Json].flatMap { body =>
-              val draftId = str(body, "draftId")
-              val snapshot = bool(body, "snapshot")
-              c.sendDraft(draftId, snapshot).flatMap {
-                case Right(rec) =>
-                  Ok(Json.obj(
-                    "ok" -> true.asJson,
-                    "messageId" -> rec.messageId.asJson,
-                    "sentAt" -> rec.sentAt.asJson,
-                    "to" -> rec.toSummary.asJson,
-                    "subject" -> rec.subject.asJson,
-                    "attachments" -> rec.attachmentCount.asJson
-                  ))
-                case Left(f) =>
-                  val (status, code) = f match
-                    case PerceptionModel.SendFailure.Stale     => (Status.Conflict, "stale_snapshot")
-                    case PerceptionModel.SendFailure.AuthFailed => (Status.Conflict, "auth_failed")
-                    case _: PerceptionModel.SendFailure.Invalid => (Status.BadRequest, "invalid")
-                    case _ => (Status.BadGateway, "send_failed")
-                  Response[IO](status).withEntity(Json.obj(
-                    "ok" -> false.asJson,
-                    "code" -> code.asJson,
-                    "error" -> PerceptionModel.SendFailure.readable(f).asJson
-                  )).pure[IO]
-              }
-            }
-          }
-        }
-
+      // ── 代理腿：/perception 下全部其余端点逐字转发统一 daemon ──────────
+      case req if isProxied(req) =>
+        withAuth(req) { proxy(req) }
     }
 
-  private def core(ctx: RestApiCtx): IO[PerceptionCore] =
-    PerceptionService.ensureBoot(json => ctx.wsHub.broadcast(json), ctx.sharedResources)
+  /** 代理判据（面板路径族；preset 除外——见类注）。 */
+  private[gateway] def isProxied(req: Request[IO]): Boolean = {
+    // renderString 分段（版本无感的取段法；感知域段均为 URL 安全字符面）。
+    val segs = req.pathInfo.renderString.split("/").filter(_.nonEmpty).toList
+    // pathInfo 已剥离挂载前缀（/api）——首段应为 perception。
+    segs match
+      case "perception" :: rest =>
+        rest match
+          case List("mail", "preset") => false
+          case List("mail", "drafts", _*) =>
+            req.method == Method.GET || req.method == Method.PUT ||
+              (req.method == Method.POST && (segs.last == "abandon"))
+          case _ => ProxiedSubpaths.exists((m, p) => m == req.method && p == rest)
+      case _ => false
+  }
 
-  private def str(j: Json, k: String): String =
-    j.hcursor.downField(k).as[String].getOrElse("")
+  /** 逐字转发：method/path/query/body 原样；status/body 原样回 relay。
+    * daemon 面板面挂 `/api/perception/…`  全路径（本侧 pathInfo 已剥离 /api
+    * 挂载前缀——转发时补回）。 */
+  private def proxy(req: Request[IO]): IO[Response[IO]] =
+    val query = req.uri.query.renderString
+    val path = s"/api${req.pathInfo.renderString}" + (if query.isEmpty then "" else s"?$query")
+    req.bodyText.compile.string.flatMap { bodyText =>
+      val body = if bodyText.isEmpty then None else Some(bodyText)
+      nebflow.perception.PerceptionClient.call(req.method.renderString, path, body, timeoutSec = None).flatMap {
+        case Some((status, respBody)) =>
+          val ct = io.circe.parser.parse(respBody) match
+            case Right(_) => headers.`Content-Type`(org.http4s.MediaType.application.json)
+            case Left(_)  => headers.`Content-Type`(org.http4s.MediaType.text.plain)
+          Response[IO](org.http4s.Status.fromInt(status).getOrElse(Status.InternalServerError))
+            .withEntity(respBody)
+            .putHeaders(ct)
+            .pure[IO]
+        case None => daemonUnavailable
+      }
+    }
 
-  private def optStr(j: Json, k: String): Option[String] =
-    j.hcursor.downField(k).as[String].toOption.map(_.trim).filter(_.nonEmpty)
+  private def daemonUnavailable: IO[Response[IO]] =
+    ServiceUnavailable(Json.obj(
+      "ok" -> false.asJson,
+      "error" -> "感知守护进程未运行 · 稍候自动恢复（daemon-unavailable）".asJson
+    ))
 
-  private def optInt(j: Json, k: String): Option[Int] =
-    j.hcursor.downField(k).as[Int].toOption
-
-  private def optBool(j: Json, k: String): Option[Boolean] =
-    j.hcursor.downField(k).as[Boolean].toOption
-
-  private def optStrList(j: Json, k: String): List[String] =
-    j.hcursor.downField(k).as[List[String]].toOption.getOrElse(Nil)
-
-  private def bool(j: Json, k: String): Boolean =
-    j.hcursor.downField(k).as[Boolean].getOrElse(false)
+end PerceptionRoutes

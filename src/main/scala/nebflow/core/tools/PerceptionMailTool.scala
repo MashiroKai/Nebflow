@@ -6,7 +6,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.core.*
-import nebflow.perception.{DraftCodec, PerceptionCore, PerceptionModel, PerceptionService}
+import nebflow.perception.{DraftCodec, PerceptionClient, PerceptionModel}
 import nebflow.shared.*
 
 /**
@@ -109,26 +109,28 @@ The mailbox must already be connected in the perception panel (未连接时本�
         replyToMessageId = Option(inReplyTo).filter(_.nonEmpty),
         quoteHtml = quote
       )
-      PerceptionService.coreNow.flatMap {
+      // 统一 daemon 批 2026-10-29：草稿落盘/账户面在统一 daemon 管理进程
+      // （PerceptionDaemonMain）——引擎侧经 PerceptionClient 工具腿（5s 有界，
+      // 未 docked/停机窗 = 既有「感知守护进程未启动」错误面）。
+      PerceptionClient.hasAccount.flatMap {
         case None =>
           IO.pure(Left(ToolError("感知守护进程未启动 · 无法创建邮件草稿（perception daemon not booted)")))
-        case Some(core) =>
-          core.hasAccount.flatMap:
-            case false =>
-              IO.pure(Left(ToolError(
-                "尚未连接邮箱 · 请先在感知面板点击「连接邮箱」完成两步配置（邮箱地址 + 授权码），再发送邮件。"
-              )))
-            case true =>
-              core.createDraft(doc.copy(draftId = "")).flatMap {
-                case Left(err) => IO.pure(Left(ToolError(s"草稿落盘失败: $err")))
-                case Right(rec) =>
-                  emitSnapshotAsk(core, rec, doc, ctx)
-              }
+        case Some(false) =>
+          IO.pure(Left(ToolError(
+            "尚未连接邮箱 · 请先在感知面板点击「连接邮箱」完成两步配置（邮箱地址 + 授权码），再发送邮件。"
+          )))
+        case Some(true) =>
+          PerceptionClient.createDraft(doc.copy(draftId = "")).flatMap {
+            case None =>
+              IO.pure(Left(ToolError("感知守护进程未启动 · 无法创建邮件草稿（perception daemon not booted)")))
+            case Some(Left(err)) => IO.pure(Left(ToolError(s"草稿落盘失败: $err")))
+            case Some(Right(rec)) =>
+              emitSnapshotAsk(rec, doc, ctx)
+          }
       }
 
   /** AskUser snapshot card (id marks it as a perception draft for the web face). */
   private def emitSnapshotAsk(
-    core: PerceptionCore,
     rec: PerceptionModel.DraftRecord,
     doc: DraftCodec.DraftDoc,
     ctx: ToolContext
@@ -151,7 +153,8 @@ The mailbox must already be connected in the perception panel (未连接时本�
           )
         )
         for
-          _ <- core.attachRequest(rec.draftId, requestId)
+          // 草稿↔ask 绑定走 daemon 工具腿（快照/画布回执路由判据在 daemon 侧）。
+          _ <- PerceptionClient.attachRequest(rec.draftId, requestId)
           bridge = AskUserAnswerPort.ref(agentRef, items, requestId, ctx)
           _ = agentRef ! nebflow.actor.AgentCommand.AskUser(requestId, items, Some(bridge), Nil)
         yield Right(ack(rec, requestId))

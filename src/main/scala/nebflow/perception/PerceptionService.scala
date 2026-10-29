@@ -5,7 +5,6 @@ import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.agent.SharedResources
 import nebflow.shared.{NebflowLogger, PathUtil}
 import os.Path
 
@@ -15,16 +14,22 @@ import java.time.LocalTime
 import scala.concurrent.duration.*
 
 /**
- * 感知守护进程（裁决 4：独立生命周期——不挂在任何会话/流之下，随网关进程
- * 启停；引擎会话消亡不影响收信，信件入 spool 回放）。
+ * 感知守护进程（统一 daemon 管理进程批 2026-10-29：作者裁定「独立daemon吧
+ * 正好和我们心跳进程合并 那就是管daemon的」——感知五循环自引擎进程抽出，
+ * 成独立 JVM 进程（[[nebflow.perception.PerceptionDaemonMain]]），经引擎
+ * DaemonService 声明托管（autoStart/崩溃重启/端口健康探针/pid marker/stopAll
+ * ——现行心跳语义逐字）；引擎会话消亡不影响收信，信件入 spool 回放）。
  *
  * 职责：IMAP 自适应轮询（OTP 窗开 15s / 常态 60s）→ L0 管线（黑名单略/
- * 白名单直投/OTP 单码槽/账单缓冲）→ 投递（root 会话 ImmediateInput，不可达
- * 入 spool）→ 账单日结（HH:mm 攒批注入，零 UI）→ 草稿/发送面 → 审计。
+ * 白名单直投/OTP 单码槽/账单缓冲）→ 投递（经引擎 ingest 腿入 root 会话
+ * ImmediateInput，引擎不可达入本地 spool 回放）→ 账单日结（HH:mm 攒批注入，
+ * 零 UI）→ 草稿/发送面 → 审计。
  *
- * 全部状态在 Ref；单例 object（网关进程一份），spec 经 `new PerceptionCore`
- * 走纯逻辑面。WS 广播经窄端口注入（`broadcast: Json => IO[Unit]`，GatewayMain
- * 接线先例同款）。
+ * 全部状态在 Ref；单例 object（daemon 进程一份），spec 经 `new PerceptionCore`
+ * 走纯逻辑面。进程边界全部走窄端口注入：WS 广播 `broadcast: Json => IO[Unit]`、
+ * 投递出域 `deliverEnvelope: (DeliveryEnvelope, String) => IO[Boolean]`
+ * （true=引擎已注入；false=不可达 ⇒ 本地 spool）、L1 判定 seam（judge）——
+ * 本类对引擎零编译期依赖（SharedResources 已随进程拆分移除）。
  */
 object PerceptionService:
 
@@ -88,27 +93,40 @@ object PerceptionService:
 
   private val phase: Ref[IO, Phase] = Ref.unsafe[IO, Phase](Cold)
 
-  /** Boot once (idempotent). Called from GatewayMain's startup chain. */
-  def boot(broadcast: Json => IO[Unit], resources: SharedResources): IO[Unit] =
+  /**
+   * Boot once (idempotent). Called from PerceptionDaemonMain (the unified
+   * daemon process); the engine process no longer boots perception in-process
+   * (统一 daemon 批 2026-10-29).
+   */
+  def boot(
+    broadcast: Json => IO[Unit],
+    deliverEnvelope: (DeliveryEnvelope, String) => IO[Boolean],
+    judge: MailIncomingJudge = None
+  ): IO[Unit] =
     phase.get.flatMap:
       case Hot(_, _) => IO.unit
-      case Cold      => doBoot(broadcast, resources).void
+      case Cold      => doBoot(broadcast, deliverEnvelope, judge).void
 
   /** Routes-side defensive idempotent boot; returns the live core. */
-  def ensureBoot(broadcast: Json => IO[Unit], resources: SharedResources): IO[PerceptionCore] =
+  def ensureBoot(
+    broadcast: Json => IO[Unit],
+    deliverEnvelope: (DeliveryEnvelope, String) => IO[Boolean],
+    judge: MailIncomingJudge = None
+  ): IO[PerceptionCore] =
     phase.get.flatMap:
       case Hot(core, _) => IO.pure(core)
-      case Cold         => doBoot(broadcast, resources)
+      case Cold         => doBoot(broadcast, deliverEnvelope, judge)
 
-  private def doBoot(broadcast: Json => IO[Unit], resources: SharedResources): IO[PerceptionCore] =
-    val judge: MailIncomingJudge =
-      if LlmJudgeEnabled then Some(MailImportanceJudge.judgeViaLlm(req => resources.llm.send(req).map(r => new MailImportanceJudge.LlmRespLike { def reply = r.reply })))
-      else None
+  private def doBoot(
+    broadcast: Json => IO[Unit],
+    deliverEnvelope: (DeliveryEnvelope, String) => IO[Boolean],
+    judge: MailIncomingJudge
+  ): IO[PerceptionCore] =
     val core = new PerceptionCore(
       store = new PerceptionStore(PerceptionStore.defaultRoot),
-      resources = resources,
       broadcast = broadcast,
-      judge = judge
+      judge = judge,
+      deliverEnvelope = deliverEnvelope
     )
     for
       _ <- core.bootInitialize
@@ -131,16 +149,25 @@ end PerceptionService
 
 /**
  * The perception core: all state + flows. Constructed once by
- * [[PerceptionService.boot]]; tests construct directly with a temp root.
+ * [[PerceptionService.boot]] (in the unified daemon process); tests construct
+ * directly with a temp root.
  */
 class PerceptionCore(
   val store: PerceptionStore,
-  resources: SharedResources,
   broadcast: Json => IO[Unit],
   /** L1 判定 seam（None = LLM 判定关——行为等同 LLM 持续不可用，搁置 spool）。 */
   judge: MailIncomingJudge = None,
   /** IMAP 连接 seam（spec 注本地明文 mock；生产 = MailClient.connectImap）。 */
-  imapConnect: (String, Int) => Either[String, MailClient.ImapSession] = ((h: String, p: Int) => MailClient.connectImap(h, p))
+  imapConnect: (String, Int) => Either[String, MailClient.ImapSession] = ((h: String, p: Int) => MailClient.connectImap(h, p)),
+  /**
+   * 投递出域 seam（统一 daemon 批 2026-10-29）：信封出本进程的唯一出口——
+   * daemon 进程 = 引擎 ingest HTTP 腿（引擎侧 resolveRoots + ImmediateInput，
+   * 引擎不可达返回 false）；spec = 可注入桩。返回 true = 已注入（不落 spool）；
+   * false = 不可达（[[injectEnvelope]] 落本地 spool，回放腿补投）。
+   * 原 `resources: SharedResources` 参数（引擎耦合，恒未触达）与
+   * `MailTool.resolveRoots` 进程内直调随本批移除——本类对引擎零编译期依赖。
+   */
+  deliverEnvelope: (DeliveryEnvelope, String) => IO[Boolean]
 ):
   import PerceptionService.*
 
@@ -661,18 +688,11 @@ $clipped"""
       )
     yield ()
 
-  /** Inject an envelope into the live root session; spool when unreachable. */
+  /** Inject an envelope into the live root session (via the engine ingest leg); spool when unreachable. */
   def injectEnvelope(env: DeliveryEnvelope, dedupKey: String): IO[Boolean] =
-    nebflow.core.tools.MailTool.resolveRoots(resources, senderSessionId = "", preferredRootSid = None).flatMap {
-      case List((sid, ref)) =>
-        (ref ! nebflow.actor.AgentCommand.ImmediateInput(
-          text = env.text,
-          source = Some("perception"),
-          eventType = Some(s"perception.${env.priority}"),
-          sender = Some("感知"),
-          fromUser = false
-        )).as(true)
-      case _ =>
+    deliverEnvelope(env, dedupKey).flatMap {
+      case true => IO.pure(true)
+      case false =>
         IO.blocking(store.spoolWrite(env)).flatMap {
           case Right(id) => audit("deliver", "spooled", s"key=$dedupKey spoolId=$id").as(false)
           case Left(err) => audit("deliver", "spool-failed", s"key=$dedupKey err=$err").as(false)

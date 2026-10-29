@@ -72,7 +72,7 @@ lightbox 与 toast。**归类例外**：`socialPanel.js` 的入口按钮在活�
 | Nebula | Nebula | 内置根智能体名（`a.name === 'Nebula'`）；展示与终审权归它——专属工具由根身份闸放行。 | `js/agentManager.js`；`src/main/scala/nebflow/agent/AgentCore.scala`（`POP_NEBULA_ONLY`） |
 | 子代理 | sub-agent | 根会话派生的执行体，聚合显示在顶栏 Sub-Agents 面板/下拉里。 | `js/main.js`（Sub-Agents 行清理）；`js/locales/zh-CN.js` |
 | 后台代理 | background agent / bg | 脱离当前轮的活体任务（心跳、后台任务输出），顶栏两个指示器分别对应后台任务与子代理。 | `js/main/bgAgents.js`；`index.html` 的 `#bg-indicator`、`#bgagent-indicator` |
-| 感知 | perception | 邮件感知域：IMAP 收信轮询/推送、OTP 单码窗、账单缓冲、草稿发送的引擎侧守护链。**独立于心跳进程**（2026-10-26 作者裁定分离；顶栏 `#daemon-btn` 仍是心跳，感知入口是 `#perception-btn`）。 | `src/main/scala/nebflow/perception/`；`js/perception.js`；`index.html` 的 `#perception-btn` |
+| 感知 | perception | 邮件感知域：IMAP 收信轮询/推送、OTP 单码窗、账单缓冲、草稿发送的守护链。**统一 daemon 管理进程**（2026-10-29 作者裁定逐字「独立daemon吧 正好和我们心跳进程合并 那就是管daemon的」——感知五循环为独立 JVM（`PerceptionDaemonMain`），经心跳（daemon 管理）家族声明托管：一起起停、一起被 watchdog 管、一起写健康面；2026-10-26 分离裁定已被本裁定推翻）。顶栏 `#daemon-btn` 仍是心跳（daemon 家族面板，感知守护进程为其一行），感知入口是 `#perception-btn`。 | `src/main/scala/nebflow/perception/PerceptionDaemonMain.scala`；`src/main/scala/nebflow/gateway/PerceptionDaemonDock.scala`；`js/perception.js`；`index.html` 的 `#perception-btn` |
 | 会话种类 | `Kind` | 会话的类别枚举：`Root` / `Team` / `Flow` / `Delegate` / `Ephemeral` / `Plan` / `SubTask`。 | `src/main/scala/nebflow/actor/AgentState.scala` |
 | 项目 | project | 工作区级任务容器，挂载后常驻。 | `src/main/scala/nebflow/core/project/ProjectActor.scala` |
 | 节点 | node | 流程地图里的一个执行单元（普通节点持主会话三字段；loop 节点另带 verify 会话）。 | `src/main/scala/nebflow/core/project/NodeEngineContract.scala` |
