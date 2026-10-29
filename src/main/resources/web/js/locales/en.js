@@ -835,6 +835,12 @@ export default {
   'subagents.status.error': 'Failed',
   'subagents.status.frozen': 'Frozen',
   'subagents.status.done': 'Done',
+  // Panel-tree batch (2026-10-29 ①): orphan-row origin chips (parent invisible,
+  // row promoted top-level — "from …" attribution).
+  'subagents.fromDelegate': 'from a finished delegate',
+  'subagents.fromFlowNode': 'from an AgentFlow node',
+  'subagents.fromSubagent': 'from a parent sub-agent',
+  'subagents.orphanTip': 'Parent session no longer visible · {sid}',
   // Task attribution badge (2026-09-27 taskbadge batch): hover tooltip of the
   // per-row `#id · title` badge
   'subagents.taskBadge': 'Task: {text}',

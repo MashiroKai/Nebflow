@@ -307,13 +307,21 @@
    error=red solid, frozen=sapphire, done=neutral muted. Color is ALWAYS
    paired with a text label (Carbon status-indicator / spec §7). */
 /* 后台合并批（2026-10-23 ⑥）：#bg-dropdown = 后台任务 + 子智能体 单面板。
-   面板纵排两节（任务列表 → 「智能体」分组签 → 子智能体列表，后者由
-   bgMergedPanel.js re-parent 进场），容器限高 60vh，两列表各自滚动、
-   按内容收缩（内容少时面板不被拉满 —— 与手机端紧凑化同语义）。 */
+   面板分区批（2026-10-29 ③ · 作者报障「两面板混在一起」）：面板纵排改为两个
+   **独立分区**（.bg-section = 任务节 / 智能体节）——各节自带标题签与独立滚动
+   （两列表各自 overflow-y、flex 收缩按内容让位），节间由「智能体」签顶界线
+   分隔；内容少时按内容收缩（与手机端紧凑化同语义）。 */
 #bg-dropdown {
   display: flex;
   flex-direction: column;
   max-height: 60vh;
+}
+/* 分区容器（面板分区批 ③）：纵排弹性盒，列表收缩在各自分区内（独立滚动）。
+   手机端两节升格为两张内嵌卡（mobileLayer.css 覆写）。 */
+#bg-dropdown .bg-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 .bg-dropdown-list {
   flex: 0 1 auto;
@@ -349,11 +357,31 @@
 }
 /* delegate-ui 批（2026-10-08 · C2 两级层级）：一级行 = delegate 组头（bg-task-row-head，
    细顶界线分组）；二级行 = 缩进一格的子行（bg-task-row-child）。纯布局，零新色令牌
-   （沿用既有 muted/hover 变量）。 */
+   （沿用既有 muted/hover 变量）。
+   面板树批（2026-10-29 ①）：子行加**左侧引导竖线**（2px frame-border；缩进相应
+   -2px 防布局移位）——派生关系一眼可辨（作者报障「让人一眼能看出是派生的子智能体」）。 */
 .bg-task-row-head { border-top: 1px solid var(--glass-control-border); }
 .bg-dropdown-list .bg-task-row-head:first-child { border-top: none; }
-.bg-task-row-child { padding-left: 18px; }
+/* 双类锚（0,2,0）压过 .bg-task-row 的 padding 简写（源序在后——单类锚必输）。 */
+.bg-task-row.bg-task-row-child {
+  padding-left: 16px;
+  border-left: 2px solid var(--color-frame-border);
+}
 .bg-task-row-child .bg-task-name { font-size: 12px; }
+/* 任务摘要次行（面板行说明批 2026-10-29 ②）：实名行的任务摘要上屏位——单行
+   截断 + tooltip 全文；muted 小字，状态词/摘要同族语言。 */
+.bg-task-subline { margin-top: 1px; }
+.bg-task-sub {
+  font-size: 11px;
+  color: var(--color-frame-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* 孤儿来源角标（面板树批 2026-10-29 ①）：父不可见行的「来自 …」标注——复用
+   .bg-task-origin chip 族（中性 muted），零新色令牌。 */
+.bg-task-orphan { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bg-task-line {
   display: flex;
   /* Unified panel spec §2.2: text slots (state/name/uptime) share the L3

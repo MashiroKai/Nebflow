@@ -221,7 +221,13 @@ A task with 2+ independent parts — different file domains, or different nature
         json =>
           json.asObject match
             case Some(obj) =>
-              val builder = obj.add("rootSessionId", sid.asJson).add("sessionId", sid.asJson)
+              // 面板树批（2026-10-29 ①）：agentStart 注入 parentSessionId（前端
+              // 派生树认领键；仅入口帧注入——载荷纪律同 DelegateTool.routeWsSend）。
+              val isStart = obj("type").exists(_.asString.contains("agentStart"))
+              val withParent =
+                if !isStart || obj.contains("parentSessionId") then obj
+                else obj.add("parentSessionId", sid.asJson)
+              val builder = withParent.add("rootSessionId", sid.asJson).add("sessionId", sid.asJson)
               // Preserve an existing nodeSessionId (nested sub-agents); otherwise
               // stamp the worker's own nodeSessionId for popup routing.
               val finalObj =

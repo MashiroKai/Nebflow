@@ -793,6 +793,12 @@ export default {
   'subagents.status.error': '失败',
   'subagents.status.frozen': '已冻结',
   'subagents.status.done': '已完成',
+  // 面板树批（2026-10-29 ①）：孤儿行来源角标（父不可见提升顶层的「来自 …」标注）。
+  'subagents.fromDelegate': '来自已结束的委托',
+  'subagents.fromFlowNode': '来自 AgentFlow 节点',
+  'subagents.fromSubagent': '来自上层子代理',
+  'subagents.orphanTip': '父会话已不可见 · {sid}',
+  // 面板行说明批（2026-10-29 ②）：任务摘要次行无文案键（原文上屏）。
   // 任务归属徽标（2026-09-27 taskbadge 批）：行内 `#号 · 标题` 徽标的悬停提示
   'subagents.taskBadge': '所属任务：{text}',
   'manage.uptime': '运行 {time}',

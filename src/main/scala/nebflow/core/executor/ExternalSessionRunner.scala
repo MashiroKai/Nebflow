@@ -839,9 +839,16 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               if rootSessionId.nonEmpty && !obj.contains("rootSessionId") then
                 obj.add("rootSessionId", rootSessionId.asJson)
               else obj
+            // 面板树批（2026-10-29 ①）：agentStart 入口帧注入 parentSessionId
+            // （外部 delegate 行同样可被前端派生树认领；仅入口帧——载荷纪律同
+            // DelegateTool.routeWsSend）。
+            val isStart = obj("type").exists(_.asString.contains("agentStart"))
+            val withParent =
+              if !isStart || parentSessionId.isEmpty || obj.contains("parentSessionId") then withRoot
+              else withRoot.add("parentSessionId", parentSessionId.asJson)
             val withSession =
-              if withRoot.contains("sessionId") then withRoot
-              else withRoot.add("sessionId", parentSessionId.asJson)
+              if withParent.contains("sessionId") then withParent
+              else withParent.add("sessionId", parentSessionId.asJson)
             val withNode =
               if withSession.contains("nodeSessionId") then withSession
               else withSession.add("nodeSessionId", sessionId.asJson)

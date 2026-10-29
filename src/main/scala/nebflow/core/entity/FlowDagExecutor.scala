@@ -412,7 +412,10 @@ object FlowDagExecutor:
                             sessionId = sid,
                             initialMessages = recoveredMsgs,
                             keepSessionOnFailure = restartAllowed,
-                            userFacing = node.userFacing
+                            userFacing = node.userFacing,
+                            // 面板树批（2026-10-29 ①）：触发本 flow 的宿主会话随行——
+                            // dag- 行的 parentSessionId 供源（前端派生树认领键）。
+                            callerSessionId = callerSessionId
                           )
                         }
                       }
@@ -1149,7 +1152,11 @@ object FlowDagExecutor:
     keepSessionOnFailure: Boolean = false,
     // 轨道二 #5: node-level userFacing whitelist declaration — passed raw into
     // SessionContext; the dedicatedAgents flag gates at consumption points.
-    userFacing: Boolean = false
+    userFacing: Boolean = false,
+    // 面板树批（2026-10-29 ①）：触发本 flow 的宿主会话 id（execute 的
+    // callerSessionId 透传）——dag- 会话的 parentSessionId 供源（registry 记录
+    // + agentStart 入口帧注入；前端派生树把 dag- 行缩进挂到宿主 delegate 下）。
+    callerSessionId: String = ""
   ): IO[NodeResult] =
     val rawWsSend = wsSend.getOrElse((_: Json) => IO.unit)
     // Failure outcome carried through the deferred: message + retryable flag
@@ -1164,11 +1171,19 @@ object FlowDagExecutor:
     // an unconditional merge would clobber the nodeSessionId of a Delegate
     // sub-agent spawned inside this flow agent (which must keep its
     // "delegate-*" prefix so the frontend routes it to the delegate popup).
+    // 面板树批（2026-10-29 ①）：agentStart 入口帧再注入 parentSessionId =
+    // callerSessionId（宿主会话）——前端按它把本 dag- 行认领到宿主 delegate
+    // 组头下；仅入口帧注入，流事件族零载荷膨胀。
     val routedWsSend: Json => IO[Unit] = (json: Json) =>
       val withNode =
         if json.hcursor.downField("nodeSessionId").as[String].isRight then json
         else json.deepMerge(Json.obj("nodeSessionId" -> sessionId.asJson))
-      rawWsSend(withNode)
+      val isStart = json.hcursor.downField("type").as[String].toOption.exists(_.contains("agentStart"))
+      val withParent =
+        if !isStart || callerSessionId.isEmpty ||
+          json.hcursor.downField("parentSessionId").as[String].isRight then withNode
+        else withNode.deepMerge(Json.obj("parentSessionId" -> callerSessionId.asJson))
+      rawWsSend(withParent)
     for
       resultDeferred <- Deferred[IO, Either[FailOutcome, List[Message]]]
       // Bridge actor: receives AgentEvent, completes the Deferred, self-stops.
@@ -1225,13 +1240,16 @@ object FlowDagExecutor:
       // P1: register flow node agents in the unified AgentRegistry — this was
       // previously missing entirely, so permission answers routed to a ghost
       // root agent and were silently dropped (D2 for dag-* sessions).
+      // 面板树批（2026-10-29 ①）：parentSessionId = 触发宿主会话——activeAgents
+      // 快照 face 的派生树认领键（agentStart 入口帧同值注入）。
       _ <- NodeRunner.registerAgent(
         resources,
         id = sessionId,
         ref = ref,
         kind = AgentKind.Flow,
         rootSessionId = effectiveRootSessionId,
-        parentRef = parentAgentRef
+        parentRef = parentAgentRef,
+        parentSessionId = callerSessionId
       )
       // Send input with the bridge actor as replyTo
       _ <- (ref ! AgentCommand.UserInput(
