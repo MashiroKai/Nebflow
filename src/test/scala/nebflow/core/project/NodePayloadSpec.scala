@@ -20,13 +20,13 @@ class NodePayloadSpec extends FunSuite:
       name = "带插件",
       agent = "general",
       preset = Some("dev"),
-      plugins = List("nebflow-frontend-dev", "nebflow-backend-dev"),
+      plugins = List("frontend-dev", "nebflow-backend-dev"),
       createdAt = 1000L
     )
     val j = NodePayload.buildNodeJson(node, now = 2000L)
     assertEquals(
       j.hcursor.get[List[String]]("plugins").toOption,
-      Some(List("nebflow-frontend-dev", "nebflow-backend-dev")),
+      Some(List("frontend-dev", "nebflow-backend-dev")),
       "payload must carry the plugins name array for plugin-assigned nodes"
     )
   }

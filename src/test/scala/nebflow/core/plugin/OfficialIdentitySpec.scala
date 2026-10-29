@@ -40,11 +40,18 @@ class OfficialIdentitySpec extends FunSuite:
   private val FixtureRoot = "official-fixtures"
 
   /**
-   * 真内置官方包样本（seed 资源树里带保留前缀的三件；`nebflow-plugin-creator` 同时在
+   * 真内置官方包样本（seed 资源树里带保留前缀的包；`nebflow-plugin-creator` 同时在
    * seed manifest 默认预装集内）。
+   * 🔴 迁移批（2026-10-29 作者令「两个插件拒载修复」）：`nebflow-qa` /
+   * `nebflow-frontend-dev` 二包**移出官方保留 namespace**（重命名为 `qa` /
+   * `frontend-dev`——它们是独立上游仓同步来的开发/验证工具知识包，从来不在 seed
+   * manifest 默认集、也不在 validate_plugin.py OFFICIAL_FACE 官方面 9 包名单内；
+   * 实例侧内容被改后触发 OfficialPackages 硬闸 OFFICIAL_IMPERSONATION 拒载，修法 =
+   * 去保留前缀而非把种子追认为官方）。种子树保留前缀包自此只剩
+   * `nebflow-plugin-creator` 一件。
    */
   private val BuiltinOfficialSamples =
-    List("nebflow-plugin-creator", "nebflow-qa", "nebflow-frontend-dev")
+    List("nebflow-plugin-creator")
 
   override def beforeAll(): Unit =
     prevRoot = PathUtil.dataRoot
@@ -334,7 +341,7 @@ class OfficialIdentitySpec extends FunSuite:
   }
 
   test("jar form: byte-identical built-in official packages load as Trusted against the jar-resolved allowlist") {
-    val pkgs = List("nebflow-plugin-creator", "nebflow-qa")
+    val pkgs = List("nebflow-plugin-creator")
     withFixtureJar(pkgs) { (_, jarLoader) =>
       OfficialPackages.withClassLoaderForTest(jarLoader) {
         freshHome()

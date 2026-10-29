@@ -542,7 +542,11 @@ private[project] trait NodeStarter:
           .void *>
           PluginRegistry
             .logHealthSummary("rescan")
-            .handleErrorWith(e => logger.warn(s"plugin health summary failed: ${e.getMessage}"))
+            .handleErrorWith(e => logger.warn(s"plugin health summary failed: ${e.getMessage}")) *>
+          // 默认集种子↔实例漂移摘要（2026-10-29 安全批 ④c）：与 health summary 同拍。
+          nebflow.core.seed.SeedService
+            .logDefaultSetDriftSummary("rescan")
+            .handleErrorWith(e => logger.warn(s"seed drift summary failed: ${e.getMessage}"))
     }
 
   private def runWithAgent(

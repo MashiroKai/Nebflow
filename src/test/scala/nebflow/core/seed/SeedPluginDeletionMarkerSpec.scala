@@ -243,7 +243,7 @@ class SeedPluginDeletionMarkerSpec extends FunSuite:
     ensure()
 
     assertEquals(seen, manifestPluginNames.toSet, "⑦ seen == manifest plugins:* 全集（逐包判定面）")
-    for name <- List("nebflow-qa", "nebflow-frontend-dev", "engineering-methods", "explorer-toolkit", "design-spec")
+    for name <- List("qa", "frontend-dev", "engineering-methods", "explorer-toolkit", "design-spec")
     do assert(!seen.contains(name), s"⑦ 非默认集种子包 '$name' 不入台账（面积不扩张）")
 
   // ── ⑧ 容器规则（存储级重置）──────────────────────────────

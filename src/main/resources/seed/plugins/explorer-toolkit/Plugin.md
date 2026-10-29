@@ -46,7 +46,7 @@ explorer-toolkit/                    （包根）
 | ⑦ 落盘 | 活文档规范 | 头部带状态字段；事实偏差回写原档，不另起矛盾新版本；方案确认后再动工，文档与实现保持同步 | solution-planning §4 |
 
 - **单链路纪律**：探索与后续规划通常在**单次调用**内完成，不拆成多轮等指令；探索产出的锚点直接进方案的「现状」节——两 skill 是上下游关系，不是二选一。
-- **与其他包的分工**：需求拆解与 trade-off 调研另配 `engineering-methods`；方案出图另配 `visual-report`；执行验证另配 `nebflow-qa`。
+- **与其他包的分工**：需求拆解与 trade-off 调研另配 `engineering-methods`；方案出图另配 `visual-report`；执行验证另配 `qa`。
 
 ## 5. 各技能总目录
 
@@ -62,7 +62,7 @@ explorer-toolkit/                    （包根）
 - 两者常连用：一次探索任务＝exploration-method 出可复核结论 ＋ solution-planning 出可验收方案，单次调用内完成。
 - 需求拆解、技术选型、多视角调研 → 不进本包：另配 `engineering-methods`。
 - 方案需要出图（架构图/流程图/图表）→ 另配 `visual-report`。
-- 执行验证与交付把关 → 不进本包：另配 `nebflow-qa`。
+- 执行验证与交付把关 → 不进本包：另配 `qa`。
 
 ## 7. 共享件专节
 

@@ -81,7 +81,7 @@ document-production/                （包根）
 4. 目标是 **.xlsx/.csv 表格**（新建、编辑、分析出表、格式互转）→ `xlsx`（先过意图门确认形态）。
 5. 交付件已成型、要**逐页过目验收** → `visual-acceptance`（只判不改稿、不重渲染、不修代码）。
 6. 要**单图/图表可视化汇报** → 不在本包：另配 `visual-report`；要**插件封装** → 另配 `nebflow-plugin-creator`。
-7. 代码与契约层审查 → 不在本包：归 `nebflow-qa` 插件（visual-acceptance 边界原文）。
+7. 代码与契约层审查 → 不在本包：归 `qa` 插件（visual-acceptance 边界原文）。
 8. 常连用：一次文档交付＝产线 skill 成稿 → visual-acceptance 页级过目 → fail 页回产线修→重渲染→再判。
 
 ## 7. 共享件专节（脚本与资产）
@@ -113,5 +113,5 @@ document-production/                （包根）
 - **外来源 skill 上游同步**：docx/pdf/pptx/xlsx 为带 LICENSE 的外来源 skill——上游同步时许可件随包保留，**包内增补节不得被冲掉**（docx 与 xlsx 的「交付与引用（Nebflow 口径）」节为 Nebflow 增补，同步后核对在位）。
 - **路由与配套件同步**：SKILL 路由表新增/改名配套件时，同步本文件 §3/§5/§7 的件数与清单；配套件增删以各 SKILL 路由表为权威。
 - **验收口径**：visual-acceptance 的判据分类（`Spec/Content/Visual/Design/Unverified`）与 JSON 输出格式变更时，本文件 §4/§6 同步。
-- **跨包口径**：与 `slideblocks`（Slidev）、`visual-report`（单图可视化）、`nebflow-qa`（代码契约审查）的分工边界若调整，两侧同步。
+- **跨包口径**：与 `slideblocks`（Slidev）、`visual-report`（单图可视化）、`qa`（代码契约审查）的分工边界若调整，两侧同步。
 - **本文件定位**：Plugin.md 是按需 Read 面——装载器不注入；SKILL.md 是注入面权威，两者不一致时以 SKILL.md 为准并回改本文。

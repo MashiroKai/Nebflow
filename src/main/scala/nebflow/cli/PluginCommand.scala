@@ -25,13 +25,14 @@ import io.circe.syntax.*
 object PluginCommand extends CliCommand:
   def name = "plugin"
   def description = "Manage plugins (installed = trusted; block/unblock a package)"
-  def subcommands = List(PluginList, PluginAdd, PluginApprove, PluginRevoke, PluginUnblock, PluginEnable, PluginDisable)
+  def subcommands = List(PluginList, PluginAdd, PluginApprove, PluginRevoke, PluginUnblock, PluginRemove, PluginEnable, PluginDisable)
 
   def examples = List(
     "stand plugin list",
     "stand plugin add /path/to/my-plugin",
     "stand plugin revoke web-research",
     "stand plugin unblock web-research",
+    "stand plugin remove web-research",
     "stand plugin disable web-research",
     "stand plugin enable web-research"
   )
@@ -153,6 +154,41 @@ object PluginCommand extends CliCommand:
       postPluginAction(ctx, "/api/plugins/" + ctx.positionalArgs.headOption.getOrElse("") + "/unblock")
 
   end PluginUnblock
+
+  private object PluginRemove extends CliSubcommand:
+    def name = "remove"
+
+    def description =
+      "Uninstall a plugin: out of the registry (plugins.removed) + delete its directory by default; " +
+        "--keep-dir keeps the directory (disable-only leg). The seed will not reinstall it"
+    def params = List(
+      CliParam("name", None, "Plugin name", required = true),
+      CliParam("keep-dir", None, "Keep the plugin directory (remove from the registry only)", isFlag = true)
+    )
+
+    def run(ctx: CliContext): IO[CliResult] =
+      val name = ctx.positionalArgs.headOption.getOrElse("")
+      if name.isEmpty then IO.pure(CliResult.Error("Plugin name required"))
+      else
+        ctx.client match
+          case None => IO.pure(CliResult.Error("Gateway not running"))
+          case Some(client) =>
+            val keepDir = ctx.args.get("keep-dir").exists(_.equalsIgnoreCase("true"))
+            val body = Json.obj("deleteDir" -> (!keepDir).asJson)
+            client.post("/api/plugins/" + name + "/remove", body).map { resp =>
+              val msg = resp.hcursor
+                .downField("message")
+                .as[String]
+                .toOption
+                .orElse(resp.hcursor.downField("error").as[String].toOption)
+                .getOrElse(resp.noSpaces)
+              if resp.hcursor.downField("ok").as[Boolean].toOption.contains(true) then CliResult.text(msg)
+              else CliResult.Error(msg)
+            }
+      end if
+    end run
+
+  end PluginRemove
 
   /** revoke/unblock 的 REST 调用单点（两端点同形：{ok, message|error}）。 */
   private def postPluginAction(ctx: CliContext, path: String): IO[CliResult] =

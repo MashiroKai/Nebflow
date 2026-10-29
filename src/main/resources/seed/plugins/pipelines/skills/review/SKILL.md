@@ -194,7 +194,7 @@ qa-frontend 使用本 skill 时，三维框架与评分锚定不变，工具链�
 **Phase 0 替换**（sbt 四连不适用）：
 - Playwright 冒烟：加载改动页面，断言**实际内容**（textContent / 截图），不只是 DOM 存在性
 - 语法检查：`node --check` 逐文件过改动的 `.js`
-- 视觉铁律核对：对照 `nebflow-frontend-dev` 插件的 `visual-style`（弹窗毛玻璃无 overlay 遮罩 / 控件玻璃质感 / 字重 / 阴影激活态）
+- 视觉铁律核对：对照 `frontend-dev` 插件的 `visual-style`（弹窗毛玻璃无 overlay 遮罩 / 控件玻璃质感 / 字重 / 阴影激活态）
 
 **维度 A 替换锚点**：渲染层 / 状态管理 / WS-REST 通信层的边界是否清晰；JS 不重复实现后端已给出的契约逻辑
 

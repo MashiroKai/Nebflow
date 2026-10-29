@@ -1,28 +1,28 @@
-# nebflow-frontend-dev — 插件使用指导（Plugin.md）
+# frontend-dev — 插件使用指导（Plugin.md）
 
-> 本文件是 nebflow-frontend-dev 插件的**包根使用指导件**（Plugin.md）：**插件分配时注入给 agent 的提示词 = 本文件内容**（作者令 2026-10-21「plugin.md = 插件必要文件机制」批；SKILL.md 回归按需查阅件——面板胶囊点击打开，不再随分配整文注入）。选配判定仍看 plugin.json 的 description；逐 skill 作业指令见各 `skills/<skill>/SKILL.md`（按需查阅）。**本文件是导览不是手册：与 SKILL.md 不一致时以 SKILL.md 为准并回改本文。** 文内路径均为**自包根的文件相对形式**（不使用 `${SKILL_DIR}`）。
+> 本文件是 frontend-dev 插件的**包根使用指导件**（Plugin.md）：**插件分配时注入给 agent 的提示词 = 本文件内容**（作者令 2026-10-21「plugin.md = 插件必要文件机制」批；SKILL.md 回归按需查阅件——面板胶囊点击打开，不再随分配整文注入）。选配判定仍看 plugin.json 的 description；逐 skill 作业指令见各 `skills/<skill>/SKILL.md`（按需查阅）。**本文件是导览不是手册：与 SKILL.md 不一致时以 SKILL.md 为准并回改本文。** 文内路径均为**自包根的文件相对形式**（不使用 `${SKILL_DIR}`）。
 
 ## 1. 速览
 
-nebflow-frontend-dev 是客户端前端开发域知识包：节点获得三层分明的域知识——实现规范（结构与标准）、视觉裁定（用户成文硬规则，最高优先级）、软参考案例库（成熟范式适配与踩坑沉淀）。内含 3 个 skill：
+frontend-dev 是客户端前端开发域知识包：节点获得三层分明的域知识——实现规范（结构与标准）、视觉裁定（用户成文硬规则，最高优先级）、软参考案例库（成熟范式适配与踩坑沉淀）。内含 3 个 skill：
 
 - `skills/nebflow-frontend/`——前端实现规范：web/ 无构建 vanilla JS 技术标准（无 bundler、CSS 变量、语义标签、XSS 防护）、Sapphire Glass 设计系统（玻璃组件/双主题/`--sapphire` 强调色）、设计原则六条（层级/深度/间距/排版/一致性/打磨）、硬约束（无 emoji/无 accent bars/先复用后新建）、截图驱动验证流与响应式三档。
 - `skills/visual-style/`——用户视觉裁定：弹窗禁 overlay 遮罩但面板必须毛玻璃、可交互控件统一玻璃质感（主发送按钮微信绿实色族）、字重方案 B（中度）、消息气泡与侧边栏激活态语义、总基调（低调克制专业感）。**最高优先级**——与本包其他内容冲突时以它为准。
 - `skills/design-system/`——UI/UX 软参考案例库：功能类型 → 成熟范式（微信/Spotlight/HIG 等）→ Nebflow 适配规则 → 可断言点 → 踩坑记录；案例模板六件套与 [DESIGN-LESSON] 沉淀载体。
 
-**包纪律一句话**：三层不混装——visual-style 管视觉裁定（冲突终裁）、nebflow-frontend 管结构与实现规范、design-system 只做软参考（冲突时以 visual-style 与用户裁定为准）；自验方法论不在本包（另配 `nebflow-qa` 插件的 frontend-verification）。
+**包纪律一句话**：三层不混装——visual-style 管视觉裁定（冲突终裁）、nebflow-frontend 管结构与实现规范、design-system 只做软参考（冲突时以 visual-style 与用户裁定为准）；自验方法论不在本包（另配 `qa` 插件的 frontend-verification）。
 
 ## 2. 安装与启用
 
 - **安装**：本包属 Nebflow seed 官方分发，随实例 seed mirror 自动下发，无需手工安装。
 - **启用/选配**：装载为「在位即生效」；分发器按 description 触发词选配（改 web/ 前端页面与组件、写 JS/CSS/HTML、调弹窗与交互样式、落地毛玻璃视觉风格、设计/评审新 UI 交互等），派发时三份 SKILL.md 全文注入节点。
-- **停用**：面板「更多 → 封禁该插件」/ `POST /api/plugins/nebflow-frontend-dev/revoke` / `nebflow plugin revoke nebflow-frontend-dev`。
+- **停用**：面板「更多 → 封禁该插件」/ `POST /api/plugins/frontend-dev/revoke` / `nebflow plugin revoke frontend-dev`。
 - **内容变更**：包内任何字节改动都会漂移 digest，面板把该包标为「内容已变更」（可见性提示，不拦截装载；新内容对新派发即刻生效）。
 
 ## 3. 目录结构
 
 ```
-nebflow-frontend-dev/                （包根）
+frontend-dev/                （包根）
   plugin.json
   Plugin.md                          ← 本文件（包根使用指导件：速览 / 安装启用 / 分层导览 / 总目录 / 决策树）
   skills/
@@ -49,7 +49,7 @@ nebflow-frontend-dev/                （包根）
 
 **案例库用法（design-system）**：产出设计规格书前必读——先检索同功能类型案例，复用范式与适配规则，规避已记录的坑；视觉评审可查可断言点先例；UI 被打回归因后按案例模板追加新案例（Evidence 引用必须真实可溯源，终审会抽查）。
 
-- **与其他包的分工**：只设计不实现（规格书/视觉评审）另配 `design-spec`；功能自验方法论（Playwright harness/契约断言）另配 `nebflow-qa`；HTML 卡片与社交图另配 `design-cards`。
+- **与其他包的分工**：只设计不实现（规格书/视觉评审）另配 `design-spec`；功能自验方法论（Playwright harness/契约断言）另配 `qa`；HTML 卡片与社交图另配 `design-cards`。
 
 ## 5. 各技能总目录
 
@@ -65,7 +65,7 @@ nebflow-frontend-dev/                （包根）
 - **设计或评审新 UI/交互**（弹窗、搜索、列表、面板、动效——产出规格书前）→ `design-system`（检索同功能类型案例）。
 - **UI 被用户打回**（归因后）→ `design-system`（按模板追加案例，Evidence 可溯源）。
 - 只设计不实现（出规格书/做视觉评审）→ 不进本包：另配 `design-spec`。
-- 深度自验（Playwright harness/wire 探针/契约断言）→ 不进本包：另配 `nebflow-qa` 的 frontend-verification。
+- 深度自验（Playwright harness/wire 探针/契约断言）→ 不进本包：另配 `qa` 的 frontend-verification。
 - 产出 HTML 卡片/社交图 → 不进本包：另配 `design-cards`。
 - 三 skill 常连用：一次前端改动＝visual-style 定裁定 ＋ nebflow-frontend 管实现 ＋ design-system 供范式与坑。
 

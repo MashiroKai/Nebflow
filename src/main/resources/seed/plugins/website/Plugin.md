@@ -10,7 +10,7 @@ website 是官网（mystand.space）开发与发布包：节点获得 Next.js/Ta
 - `skills/website-design/`——官网视觉设计域知识：设计 tokens 复用纪律（永不裸写 hex）、层级/间距节奏/排版/动效规范、硬约束（无 emoji、克制高级感、wordmark 全小写）、Pop 目检与三端响应式验证流。
 - `skills/deploy-website/`——官网发布纪律：push 生产分支即触发 Vercel 自动生产部署、手动兜底通道、发布验收（部署 API 状态或线上内容指纹）与缓存误判防线。
 
-**包纪律一句话**：本包只服务 mystand.space 官域——结构与 API 归 frontend、视觉归 design、发布归 deploy；Nebflow 主仓前端不在本包（另配 `nebflow-frontend-dev`），其他网站不适用本包。
+**包纪律一句话**：本包只服务 mystand.space 官域——结构与 API 归 frontend、视觉归 design、发布归 deploy；Nebflow 主仓前端不在本包（另配 `frontend-dev`），其他网站不适用本包。
 
 ## 2. 安装与启用
 
@@ -60,7 +60,7 @@ website/                       （包根）
 - 改官网**页面结构/新页面/API 路由/TypeScript 逻辑** → `website-frontend`。
 - 改官网**视觉**（配色、间距、动效、排版、响应式）→ `website-design`（结构性与 API 逻辑归 website-frontend）。
 - 要**发布上线**（部署、发布验收）→ `deploy-website`（前端/设计改动先按各自验证流自验过再走发布）。
-- 任务是 **Nebflow 主仓 web/ 前端** → 不在本包：另配 `nebflow-frontend-dev`。
+- 任务是 **Nebflow 主仓 web/ 前端** → 不在本包：另配 `frontend-dev`。
 - 目标**不是 mystand.space**（其他网站）→ 不适用本包。
 - 三者常连用：一次官网迭代 ＝ frontend 改结构 ＋ design 对视觉 ＋ deploy 发布，各走各的验证流。
 

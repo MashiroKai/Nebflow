@@ -1,7 +1,7 @@
 ---
 name: nebflow-backend
 description: Nebflow Scala 后端开发域知识——Scala 3/自研 actor/http4s/cats-effect 技术栈、Actor 与 IO 分层铁律、最小改动/向后兼容编码规范、sbt 编译测试实践（-batch/锁冲突/注释坑）、worktree 纪律。Use when 在 Nebflow 主仓或其 worktree 实现/修复/重构 Scala 后端代码，或排查 sbt 构建问题。
-when_to_use: Nebflow 主仓 Scala 后端任务（src/main/scala/ 下功能实现、bug 修复、重构、测试编写、构建配置）；与 nebflow-qa 插件的 verification-rigor（验证方法论）互补——本 skill 管"怎么写"，那边管"怎么验证"。
+when_to_use: Nebflow 主仓 Scala 后端任务（src/main/scala/ 下功能实现、bug 修复、重构、测试编写、构建配置）；与 qa 插件的 verification-rigor（验证方法论）互补——本 skill 管"怎么写"，那边管"怎么验证"。
 language: zh
 status: active
 last_verified: 2026-09-03

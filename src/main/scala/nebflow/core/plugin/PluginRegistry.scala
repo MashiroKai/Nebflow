@@ -347,15 +347,21 @@ object PluginRegistry:
    * §B.3 审批清单红标项：无 author / 无 version（元信息行）；env 凭据类键名、
    * command 指向 shell|curl 类（mcp 行）。skills 提示词启发式扫描为设计文档
    * 「后续可加」项——非 1.0.0 必需，不实现（对照表申报）。
+   * 安全批（2026-10-29 ④a）：凭据类键名的红标启发对 **`${secret:…}` 指针形态**
+   * 不触发——值是 secrets 库的引用不是明文凭据（红标降为兜底：非指针明文值照旧
+   * 红标）；malformed 半截指针已在装载层拒（不达此处）。
    */
   private def approvalFlags(p: PluginDef): List[String] =
     val fs = mutable.ListBuffer[String]()
     if p.version.isEmpty then fs += "manifest has no version field"
     if p.author.isEmpty then fs += "manifest has no author field"
     p.mcpServers.foreach { case (n, c) =>
-      c.env.getOrElse(Map.empty).keySet.toList.sorted.foreach { k =>
-        if CredentialKeyPattern.findFirstIn(k).isDefined then
+      c.env.getOrElse(Map.empty).toList.sortBy(_._1).foreach { (k, v) =>
+        val isSecretPointer = SecretEnvPointer.matches(v)
+        if CredentialKeyPattern.findFirstIn(k).isDefined && !isSecretPointer then
           fs += s"mcp server '$n': env key '$k' looks like a credential — review carefully"
+        if isSecretPointer then
+          fs += s"mcp server '$n': env key '$k' resolves from the secrets store at start (name-only here)"
       }
       c.command.foreach { cmd =>
         val base = cmd.split('/').last
@@ -497,7 +503,7 @@ object PluginRegistry:
    * 快照。文件内容修改只变文件自身 mtime（父目录 mtime 不动）→ 签名必须含文件，
    * 否则「改动即重审」（§B.8-3）会在缓存命中路径上漏检。键 = 绝对路径。
    */
-  private case class Cache(sig: List[(String, Long)], snapshot: Snapshot)
+  private case class Cache(sig: List[(String, Long)], removed: Set[String], snapshot: Snapshot)
   private val cache = new java.util.concurrent.atomic.AtomicReference[Option[Cache]](None)
 
   /**
@@ -515,15 +521,23 @@ object PluginRegistry:
       (dir :: all).map(p => p.toString -> os.mtime(p)).sortBy(_._1)
     catch case _: Exception => Nil
 
-  /** 全量扫描唯一实现（缓存：目录树 mtime 签名未变则复用上次产出）。 */
+  /** 全量扫描唯一实现（缓存：目录树 mtime 签名未变则复用上次产出）。
+   *
+   * 卸载出册过滤（2026-10-29 卸载批）：`plugins.removed` 命中者**整体消失**——
+   * 不在 plugins 也不在 rejected（卸载 = 移除出册，不是拒载也不是封禁；面板/CLI/
+   * 目录/resolve 全部视同未安装）。`nebflow.json` 的变化不在目录树 mtime 签名内
+   * ⇒ 写面（[[PluginRemovePolicy]]）负责失效缓存，读面每次扫描现读表（廉价）。
+   * 过滤在拒载 WARN 打点之前 ⇒ 已卸载包不再刷「rejected」日志（出册 = 零声音）。
+   */
   private def snapshot(): IO[Snapshot] =
     IO.blocking {
       if !os.isDir(pluginsDir) then Snapshot(Nil, Nil)
       else
-        val subDirs = os.list(pluginsDir).filter(os.isDir).toList.sortBy(_.last)
+        val removed = PluginRemovePolicy.removedNames()
+        val subDirs = os.list(pluginsDir).filter(os.isDir).toList.sortBy(_.last).filterNot(d => removed(d.last))
         val full = treeSig(pluginsDir)
         cache.get match
-          case Some(c) if c.sig == full => c.snapshot
+          case Some(c) if c.sig == full && c.removed == removed => c.snapshot
           case _ =>
             val loaded = subDirs.map(d => loadPlugin(d))
             val snap = Snapshot(
@@ -531,7 +545,7 @@ object PluginRegistry:
               rejected = loaded.collect { case Left((n, r)) => n -> r }
             )
             snap.rejected.foreach { case (n, r) => logger.warnSync(s"Plugin '$n' rejected: $r") }
-            cache.set(Some(Cache(full, snap)))
+            cache.set(Some(Cache(full, removed, snap)))
             snap
     }
 
@@ -1030,6 +1044,21 @@ object PluginRegistry:
                 warnings += s"mcp server '$name' invalid — skipped: env must not declare '${k}' (§9.1) (§7.2.2)"
             })
             _ <- if env.exists(_.keySet.exists(PluginPlaceholderEnvKeys.contains)) then None else Some(())
+            // 安全批（2026-10-29 ④a）：env 值支持 `${secret:<name>}` 指针形态——值只在
+            // 运行期（acquire）从 secrets 库解析，mcp.json / 审批面 / 日志永不含值
+            // （SecretsStore 纪律同族）。装载层只做**语法**校验（名字段合法、指针完整）：
+            // 合法指针 → 放行（缺失的 secret 到运行期才失败——secret 可后补）；含
+            // `${secret:` 但非完整指针形态 → entry 拒（fail-closed：指向虚无的半截
+            // 指针必然是笔误，放行 = 把垃圾值静默交给子进程）。
+            _ = env.foreach { vs =>
+              vs.foreach { (k, v) =>
+                if v.contains(SecretEnvPointer.Marker) && !SecretEnvPointer.matches(v) then
+                  warnings += s"mcp server '$name' invalid — skipped: env '$k' carries a malformed " +
+                    "${secret:…} pointer (expected exactly '${secret:<name>}' with a valid secret name, §7.2.2)"
+              }
+            }
+            _ <- if env.exists(_.values.exists(v => v.contains("${secret:") && !SecretEnvPointer.matches(v)))
+              then None else Some(())
             // cwd：须为 ./ 前缀（插件相对）或 ${PLUGIN_ROOT}/${PLUGIN_DATA} 占位
             // （官方 schema pattern）；归一为占位形式，运行期（acquire）展开为绝对路径。
             cwdRaw <- c.downField("cwd").as[Option[String]] match
@@ -1072,9 +1101,11 @@ object PluginRegistry:
             _ <-
               if tpe.get == "sse" then
                 // legacy HTTP+SSE wire protocol 本客户端未实现（OPTIONAL，§7.2.2-4）：
-                // MUST skip + report——显式跳过并留告警，非静默。
-                warnings += s"mcp server '$name' uses transport 'sse' — not supported by this client " +
-                  "(supports stdio, streamable-http); entry skipped (§7.2.2-4)"
+                // MUST skip + report——显式跳过并留告警，非静默。措辞（安全批 2026-10-29
+                // ④d 对齐）= 「声明合法但当前不可用」：schema 层 sse 是合法 transport
+                // 声明，不可用是**本客户端的能力边界**（引导换 streamable-http）。
+                warnings += s"mcp server '$name' uses transport 'sse' — declared-valid but not available " +
+                  "in this client (supports stdio, streamable-http); entry skipped (§7.2.2-4)"
                 None
               else Some(())
             headers <- c.downField("headers").as[Option[Map[String, String]]] match
@@ -1277,6 +1308,10 @@ object PluginRegistry:
                   else
                     os.makeDir.all(pluginsDir)
                     os.copy(staged, target, createFolders = true, mergeFolders = true, replaceExisting = true)
+                    // 卸载批（2026-10-29）：显式重装 = 显式复职——清 `plugins.removed`
+                    // 标记，否则出册过滤会把刚装好的包继续藏住（重装却看不见 = 静默
+                    // 无效）。从未卸载过的包此调用为 no-op。
+                    PluginRemovePolicy.reinstate(pname)
                     cache.set(None)
                     logger.infoSync(
                       s"Plugin '$pname' installed from '$source' — active on next scan (presence = trust)"

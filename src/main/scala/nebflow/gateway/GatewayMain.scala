@@ -1748,6 +1748,15 @@ object GatewayMain extends IOApp:
                                                               logger
                                                                 .warn(s"plugin health summary failed: ${e.getMessage}")
                                                             )
+                                                          // ── 默认集种子↔实例漂移摘要（漂移可见面，2026-10-29 安全批 ④c）──
+                                                          // 「种子 ≠ 实例且无信任记录/有漂移」的默认集包一行一名——
+                                                          // 无基准漂移从不可见变可决策。挂接点与上一条相同；干净
+                                                          // 场景零输出；同状态去重（SeedService.logDefaultSetDriftSummary）。
+                                                          _ <- nebflow.core.seed.SeedService
+                                                            .logDefaultSetDriftSummary("startup")
+                                                            .handleErrorWith(e =>
+                                                              logger.warn(s"seed drift summary failed: ${e.getMessage}")
+                                                            )
                                                           // ── 热重启握手终态（[s7]，hot-restart 批设计 §3.3）──
                                                           // successor.json（握手完成锚点）+ intent 归档
                                                           // last-restart.json + 冷却窗锚点置位（R7）+
