@@ -33,7 +33,10 @@
 //    报告「未证项」）——🔴 禁把本 fixture 读数冒充生产实测。
 //
 // 运行：node node_modules/@playwright/test/cli.js test tests/mergequeue-pos.spec.mjs
-// 改动前对照（验红）：NEBFLOW_WEB_ROOT=<改动前 web 树绝对路径> 同一命令 ⇒ 本 spec 必红。
+// NEBFLOW_WEB_ROOT 开关保留（渲染面契约回归用：渲染面回归时旧树对照必红）。
+//   🔴 视面退役（bbbd6aeb8）的「改前红」判据不由本开关承担——该退役在渲染件层无
+//   diff（queueBadgeHtml/nodeHtml 两树逐字同），本批归因 A/B（spec@old × 双 web 树
+//   = before 6 passed / at 6 failed）见 2026-10-31 归因批报告与 git 历史。
 
 import { test, expect } from '@playwright/test';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
