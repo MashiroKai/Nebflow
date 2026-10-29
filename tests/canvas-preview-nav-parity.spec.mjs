@@ -146,7 +146,18 @@ const BINARY = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'pdf'
 const MAX_READ = 100 * 1024 * 1024;   // = WebSocketRoutes.MaxPopReadFileBytes（打开闸 100MB）
 
 async function boot(browser, live = false) {
-  const ctx = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+  // serviceWorkers:'block'（存量红清欠批 2026-10-29）——修② 五连红的归因锚：
+  // console-load-perf 批（97fd9e274，2026-10-21）上线的 /sw.js 其 fetch 处理器
+  // 的 navigate 腿（req.mode==='navigate'）先于「/api 零接触」名单生效，同源
+  // 帧导航 /api/nf-file?… 会被 navigateResponse 接管；而 SW 自身发起的 fetch
+  // 对本 harness 的 page.route 不可见 ⇒ 静态服务器 404 ⇒ 命中离线索引兜底副本
+  // ⇒ app shell 进帧 ⇒ html.js 的 embedded-shell 护栏（正确地）停渲染。实测
+  // 探针（本批）：SW 活 = {bar:false,hasIframe:false,stopped:true} + 页面层零
+  // /api/nf-file 请求；SW 阻断 = {bar:true,hasIframe:true}。被测契约是前端
+  // viewer 面（html.js load 分流 + 返回条），SW 是传输层缓存面，与本契约正交；
+  // 真实例（活引擎）下 SW fetch 得 200 原样透传，返回条语义不受影响——故修
+  // harness 不修源：阻断 SW 恢复「mock 传输层」这一 harness 自设前提。
+  const ctx = await browser.newContext({ viewport: { width: 1600, height: 1000 }, serviceWorkers: 'block' });
   let token = 't';
   if (live) {
     // 真实例的 <home>/auth.json 是**裸 token 字符串**（不是 {token: …} 对象；实测 45 字节，
@@ -519,7 +530,11 @@ const PROBE_ID = 'file:' + F.probe;
   await ctx.close();
 }
 
-/* ════════════ 同批必修 · 代理 URL 导航：不再销毁 pane + 可见返回条 + 引擎回收 ════════════ */
+/* ════════════ 同批必修 · 代理 URL 导航：不再销毁 pane + 可见返回条 + 引擎回收 ════════════
+   存量红清欠批（2026-10-29）归因注：本节五断言自 10-21 SW 上线后全红（词条二批
+   基线 54/5 存量）——根因 = sw.js navigate 腿接管同源 /api 帧导航 + page.route
+   对 SW fetch 不可见 ⇒ 离线索引兜底把 app shell 塞进帧 ⇒ 停渲染护栏误触发；
+   前端契约本身未漂移（boot() 侧阻断 SW 后本节全绿，见 boot() 注）。 */
 {
   const { ctx, page } = await boot(browser);
   await openHtmlDoc(page, F.probe, readFileSync(F.probe, 'utf8'), 'probe.html', true);
