@@ -85,7 +85,38 @@ own chain（仅 SettableAgents：Nebula / project-dispatcher / 内置执行 agen
 
 读数：`Test/compile` 成功；`sbt test` 全量绿（见本批报告）。
 
-## 4. 未做项
+## 4. 实况佐证：2026-10-29 18:40–18:49 zhipu 限流风暴（修复前代码的在产实例）
+
+`~/.stand/logs/stand.log` 实录，作者问「链上下一跳为什么没接住」，答案分三层：
+
+**配置面（根因，= 本批修的缺口）**：在产 `model-presets.json` 的 `defaultPreset=general`
+= **`zhipu/glm-5.3-flash` 单腿、fallbacks 空**；`/model` sidecar（Nebula）却是三腿
+（zhipu → kimi/kimi-for-coding → cmdcode/deepseek-v4.1-flash）。修复前运行时锚走 preset
+派生 ⇒ 真实候选链 = `[zhipu（preset 首选）] ++ reserveTier（配置内其余 provider/model，
+providerId→model 字典序：cmdcode/deepseek-v4.1-flash → kimi/k3.1-pro-highspeed →
+kimi/kimi-for-coding → kimi/kimi-for-coding-highspeed）`。**/model 钦定的 kimi-for-coding
+被字典序压到第 4 位，风暴中从未被够到**——这就是「/model 设置的链没生效」的实况形态。
+
+**触发面（机制在动，非死面）**：zhipu 429 不带 1308 配额码 ⇒ `FailoverReason.RateLimit`
+（`llm/fallback.scala:252`；只有 1308 进 300s 软回避集 `QuotaUpstreamCodes`，`:106`）→
+**同 provider 重试 1 次**（`Transient`，`interface.scala:1140` 的 `Stream retry … (1 left,
+60000ms)`；重试仍败才 `retries exhausted` 跳下一根，`:1150-1153`）。窗口内
+`Stream retry zhipu ×22`；zhipu 是**间歇性**限流（564 次成功吐字，health `marked DOWN →
+recovered` 最短 16–46ms 即被并发成功请求翻回），绝大多数请求的重试落回活着的 zhipu，故
+表面只见「zhipu 自身重试」。真正耗尽重试的 4 次确实发生了下一跳：先 cmdcode（字典序 #2，
+连接异常/死 key，`retries exhausted` ×2 后 markDown——**毒腿**，白耗一轮重试）再
+kimi/k3.1-pro-highspeed（`Stream retry kimi/k3.1-pro-highspeed: RateLimit` ×1，且它自身
+也在限流）。已吐内容后的缝合守卫照常生效（会话内不中途换 provider）。
+
+**三问直答**：①会话锚定不漂移？否——链按 turn/请求现读，粘滞是 RateLimit 重试类 +
+间歇恢复的表象；②kimi 不在链里？在，但走的是储备层追加的 k3.1-pro-highspeed（字典序），
+**不是 /model 钦定的 kimi-for-coding**——运行时锚无视 /model 的缺口实锤；③failover 只在
+boot 期？否——全窗口内逐请求都在 failover（retry/exhausted/下一跳日志为证）。
+
+修复后预期形态：运行时锚 = /model 三腿 ⇒ zhipu 限流重试耗尽 → **kimi-for-coding 第一顺位
+接住** → cmdcode 殿后；cmdcode 死 key 建议作者裁决摘除或换 key（本批不动触发面与配置面）。
+
+## 5. 未做项
 
 - 触发条件面零改动（作者令「修复范围克制」）；
 - preset → model 启动迁移腿未接（理由见上表，需作者裁决是否整面退役 preset）；
