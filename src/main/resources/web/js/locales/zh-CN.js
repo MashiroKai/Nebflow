@@ -2040,6 +2040,10 @@ export default {
   'wiki.kindAttachment': '附件',
   'wiki.unresolved': '未解析的引用——所有项目文档库中都没有这个名字的文档',
   'wiki.backlinks': '反向链接',
+  // 词条引用批 batch 2（hover 气泡 + 返回原文档钮）
+  'wiki.termSource': '来源：',
+  'wiki.termJumpHint': '点击跳转',
+  'wiki.backToSource': '返回原文档',
   // 左栏控制面（搜索/chips/详情卡/断链清单/统计行）
   'wiki.chipAll': '全部',
   'wiki.chipRoot': '根目录',

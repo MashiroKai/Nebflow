@@ -69,6 +69,13 @@ const previewKeyOf = (type, absPath) => absPath ? 'file' : (type || 'generic');
 // ref click opens with empty content (readFile round trip) and the response
 // item carries no anchor — stash it here and consume at render time.
 const pendingRefAnchors = new Map();
+// 词条引用批 batch 2 (F5 返回原文档): reference-jump source tab ids, same
+// lifecycle as pendingRefAnchors — the jump intent dies at the first
+// workspace-open-item dispatch (the readFile response re-dispatch from
+// explorer.js carries no refSourceTab), so the source is stashed by absPath
+// and consumed when the entry materializes. Single-layer (v1, 裁定 §9-10):
+// every jump overwrites; no history stack.
+const pendingRefSources = new Map();
 
 // ── #303 global-reference: build a Reference from a tab's current state ──
 // Best-effort anchor extraction per viewer type (PDF page range, Monaco text
@@ -770,6 +777,9 @@ function teardownTab(id, opts = {}) {
   for (const [k, v] of previewTabs) { if (v === id) previewTabs.delete(k); }
   persistTabs();
   deckNotifyRemoved(id);
+  // F5 返回原文档：来源页签被关时，仍停在原地的目标页签上的返回钮即时隐去
+  // （无页签切换发生 ⇒ renderCanvasHeader 不会被调，此处兜住）。
+  syncRefBackButton();
   return entry;
 }
 
@@ -1030,8 +1040,12 @@ export function setActiveTab(id) {
   tabs.forEach(t => {
     t.paneEl.classList.toggle('active', t.id === id);
     t.tabEl.classList.toggle('active', t.id === id);
-    // Notify editor in the activated pane
-    if (t.id === id && t.paneEl._editorHandle) {
+    // Notify editor in the activated pane — and markdown viewers: the
+    // term-citation batch (F5 返回原文档) records each md pane's reading
+    // position (_mdScrollPos, viewers/markdown.js) and restores it here,
+    // because Chromium does NOT preserve the scroll box across a display
+    // flip (measured 178 → 0 in the harness).
+    if (t.id === id && (t.paneEl._editorHandle || t.paneEl._mdScrollPos !== undefined)) {
       t.paneEl.dispatchEvent(new CustomEvent('canvas-tab-activated'));
     }
   });
@@ -1284,7 +1298,7 @@ export async function openWorkspaceItem(item) {
   // id is let (not const): the absPath dedupe below may rewrite it to the
   // existing tab's id for the same file.
   let { id } = item;
-  const { itemType, title, content, absPath, size, pinned, anchor, warnings, stream, mtimeMs, readOnly, manual } = item;
+  const { itemType, title, content, absPath, size, pinned, anchor, warnings, stream, mtimeMs, readOnly, manual, refSourceTab } = item;
   if (!id) return;
 
   // #910 追补（2026-10-27）：readFile 恢复管线（sendFileRestoreRequests）的
@@ -1388,6 +1402,17 @@ export async function openWorkspaceItem(item) {
     // a jump into a source-mode tab does not fire later as a stale jump.
     const stash = absPath ? pendingRefAnchors.get(absPath) : undefined;
     if (absPath) pendingRefAnchors.delete(absPath);
+    // F5 返回原文档：引用跳转落入既有页签时同样记账/消费来源（单层，覆写）。
+    // 后台刷新不带 refSourceTab 且永不记账（不偷来源）。来源顺带升格 pinned
+    // （vs code preview 语义：file 组预览页签会被下一次打开顶替——来源被顶替
+    // = 返回钮永远无从谈起；引用跳转是明确的导航意图，来源必须保活）。
+    const stashSrc = absPath ? pendingRefSources.get(absPath) : undefined;
+    if (absPath) pendingRefSources.delete(absPath);
+    const srcWanted = refSourceTab || stashSrc;
+    if (srcWanted && srcWanted !== id && !item.background) {
+      entry._refSource = srcWanted;
+      if (tabs.has(srcWanted)) pinTab(srcWanted);
+    }
     // Jump into a tab that is ALREADY open: this branch switched to it without
     // any re-render, so the anchor must be applied to the LIVE viewer here —
     // the markdown viewer keeps its analysis on the pane (nf-jump-anchor).
@@ -1442,6 +1467,9 @@ export async function openWorkspaceItem(item) {
     if (anchor && (Number.isFinite(pgStash) || anchor.kind)) {
       pendingRefAnchors.set(absPath, anchor);
     }
+    // F5 返回原文档：来源页签 id 与锚同法熬过 readFile 往返（fileContent 应答
+    // 再派发的 item 不带 refSourceTab——explorer.js 载荷里没有这个字段）。
+    if (refSourceTab && refSourceTab !== id) pendingRefSources.set(absPath, refSourceTab);
     Promise.all([
       import('./ws.js'),
       import('./state.js')
@@ -1468,6 +1496,13 @@ export async function openWorkspaceItem(item) {
   // Use instant removal (no exit animation) so the new tab appears in the right
   // position immediately — animating the old tab's removal would leave the new
   // tab in the wrong position until the animation finishes.
+  // F5 返回原文档：来源升格 pinned 必须发生在下方两处预览顶替逻辑之前（此块 +
+  // openTab 内）——来源若还是 preview 形态，会在这一步被顶替掉（返回钮永远
+  // 无从谈起）。引用跳转是明确的导航意图，来源必须保活。
+  const newStashSrc = absPath ? pendingRefSources.get(absPath) : undefined;
+  if (absPath) pendingRefSources.delete(absPath);
+  const newSrcWanted = refSourceTab || newStashSrc;
+  if (newSrcWanted && newSrcWanted !== id && tabs.has(newSrcWanted)) pinTab(newSrcWanted);
   const itemPreviewKey = previewKeyOf(itemType, absPath);
   const oldPreviewId = previewTabs.get(itemPreviewKey);
   if (!pinned && oldPreviewId && oldPreviewId !== id) {
@@ -1490,6 +1525,13 @@ export async function openWorkspaceItem(item) {
     noRevive: viaRestore, // #910 追补：readFile 恢复管线应答不是重开意图
   });
   if (!entry) return;
+  // F5 返回原文档（词条引用批 batch 2）：仅「经引用跳转打开」的页签记账来源；
+  // 手动打开的页签无来源 ⇒ 按钮不出现（§5.5 触发条件）。openTab 内部的
+  // setActiveTab 跑在本记账之前，这里补一次 sync 让首开即见钮。
+  if (newSrcWanted && newSrcWanted !== id) {
+    entry._refSource = newSrcWanted;
+    syncRefBackButton();
+  }
   const pane = entry.paneEl;
 
   // Listen for dirty state changes from Monaco editor
@@ -1928,6 +1970,7 @@ function renderCanvasHeader() {
   deckTitleEl.classList.toggle('is-dirty', !!(entry && isTabDirty(entry)));
   if (deckFab) deckFab.disabled = tabs.size === 0;
   syncCardHeaderPop();
+  syncRefBackButton();   // F5 返回原文档：随激活页签重sync可见性/座位
 }
 
 /* ── UI 批⑧：居中标题头独立/合并 toggle（桌面可见卡头；活动文件卡才显示）── */
@@ -1985,6 +2028,50 @@ function deckRefreshDirty(id) {
   if (!el) return;
   const entry = tabs.get(id);
   el.classList.toggle('is-dirty', !!(entry && isTabDirty(entry)));
+}
+
+// ── 返回原文档按钮（词条引用批 batch 2, F5；作者令 2026-10-29 11:49「返回
+//    按钮放左上角」，调研稿 §9-2 改判记录）───────────────────────────
+// 触发条件 = 页签经引用跳转打开（entry._refSource 由 openWorkspaceItem 从
+// workspace-open-item 的 refSourceTab 记账；手动打开无来源 ⇒ 不渲染）。
+// 落点 = #canvas-slide 左上角（与居中标题头同排的玻璃胶囊）。
+// 行为 = 单击 setActiveTab(来源页签)——pane 切换不销毁 DOM，来源页的阅读位
+// （scrollTop）原样保留，「回原页面原位置」零额外状态（§5.5 v1 口径）。
+// 来源页签已关 ⇒ 按钮隐藏（teardownTab 钩子 + 每次激活重sync 双保险）。
+// v1 单层来源（_refSource 每次跳转覆写），多级栈 = §9-10 不做。
+function syncRefBackButton() {
+  const slide = document.getElementById('canvas-slide');
+  if (!slide) return;
+  const entry = activeTabId ? tabs.get(activeTabId) : null;
+  const srcId = entry && entry._refSource && entry._refSource !== entry.id && tabs.has(entry._refSource)
+    ? entry._refSource : null;
+  let btn = document.getElementById('canvas-refback-btn');
+  if (!srcId) {
+    if (btn) btn.remove();
+    return;
+  }
+  const btnEl = /** @type {HTMLButtonElement} */ (btn);
+  if (!btnEl) {
+    const fresh = document.createElement('button');
+    fresh.id = 'canvas-refback-btn';
+    fresh.className = 'canvas-refback-btn';
+    fresh.type = 'button';
+    fresh.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const cur = activeTabId ? tabs.get(activeTabId) : null;
+      const src = cur && cur._refSource ? cur._refSource : null;
+      if (src && tabs.has(src)) setActiveTab(src);
+    });
+    slide.appendChild(fresh);
+  }
+  const live = /** @type {HTMLButtonElement} */ (document.getElementById('canvas-refback-btn'));
+  if (!live) return;
+  const srcEntry = tabs.get(srcId);
+  const label = t('wiki.backToSource');
+  live.textContent = '← ' + label;
+  live.title = label + (srcEntry ? ' · ' + (srcEntry.title || srcEntry.id) : '');
+  live.setAttribute('aria-label', live.title);
+  live.dataset.refSourceTab = srcId;
 }
 
 // ── 几何 ──
@@ -4118,11 +4205,14 @@ function acceptCardPeerMessage(e) {
   }
 }
 
+// PM 桥安装旗标（checkJs 批从函数属性 ensureCardChannel._pmInstalled 收编为
+// 模块级 let —— 行为逐字等价，tsc 可推类型；词条引用批 batch 2 顺带清偿）。
+let cardPmInstalled = false;
 function ensureCardChannel() {
   // PM 桥收信腿先行安装（不依赖 BroadcastChannel 在场 —— 直连卡窗的通道生命线
   // 是 postMessage；BC 缺席的老浏览器至少保住跨源直连形态的通道）。
-  if (!ensureCardChannel._pmInstalled) {
-    ensureCardChannel._pmInstalled = true;
+  if (!cardPmInstalled) {
+    cardPmInstalled = true;
     window.addEventListener('message', acceptCardPeerMessage);
   }
   if (cardBC || typeof BroadcastChannel === 'undefined') return;
