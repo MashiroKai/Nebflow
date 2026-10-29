@@ -147,8 +147,40 @@ object ChainLedger:
    * 使文件远超 1 MB），若以它触发折叠就会**每拍都整写 13.4 MB**（= 回到现状甚至更糟）。
    * 两个量度是不同的东西 —— `MaxHotBytes` 量「热态该不该压缩（轴的 (c) 语义）」，本阈值量
    * 「journal 该不该折叠（写放大语义）」，故各自成常数（禁合并成一个）。
+   *
+   * R3 续批（2026-10-30）注：`MaxHotBytes` 的量测面改为 [[checkpointView]]（checkpoint
+   * 实写视角 = rounds 只带尾部窗口）后，本注释的「恒真」病灶随之消失 —— 热行字节重新
+   * 成为有效量度；阈值维持 1 MB 不动（行小而多的台账，字节闸先于条数闸生效，符合双阈值
+   * 设计意图）。
    */
   val JournalRotateBytes: Long = 1024L * 1024L
+
+  // ── R3 续批：manifest 外置 + 离场轮批化（2026-10-30）──────────────────
+
+  /**
+   * checkpoint 里 `rounds` manifest 的**尾部窗口**（manifest 外置，checkpoint 减重）：
+   * 完整 manifest 史的权威面 = 冷档旁卷 `chain-ledger-rounds.jsonl`（append-only，每轮
+   * 一行，写轮同刻落）；checkpoint 只携带最近 [[CheckpointRoundsWindow]] 条（载入时与
+   * 旁卷按轮号合并，[[mergeRounds]] 去重）。54k 条 × ~371 B 的 manifest 不再随每次折叠
+   * 整写 —— 20 MB 级 checkpoint 回落 KB 级。
+   */
+  val CheckpointRoundsWindow: Int = 500
+
+  /** manifest 旁卷文件名（位于冷档目录内；append-only JSONL，一行一条 [[RoundManifest]]）。 */
+  val RoundsSideVolumeFile: String = "chain-ledger-rounds.jsonl"
+
+  /**
+   * 离场轮批化的**行数触发**（攒批 flush；事件驱动不挂定时器 —— 判据只在既有 30s 拍点
+   * 与轮写点求值）。待落批达到该行数 ⇒ 立即整批落一轮；与 [[OfflineFlushAgeMs]] 互为
+   * 「量与龄」双闸（任一命中即落）。整批落盘（不按行截断）⇒ 单轮文件有界且可复算。
+   */
+  val OfflineFlushRows: Int = 512
+
+  /**
+   * 离场轮批化的**龄期触发**：待落批里最老一行在热态滞留超过该龄期 ⇒ 下一拍整批落轮。
+   * 这是「轻载零星离场」的下界保证 —— 每行至多滞留一个龄期，禁无限期挂账。
+   */
+  val OfflineFlushAgeMs: Long = 10L * 60L * 1000L
 
   /** 阈值在册形态（随每轮冷档落盘 ⇒「这一轮按哪组阈值触发」事后可查、可复算）。 */
   final case class Thresholds(maxHotRows: Int, maxHotBytes: Int, batchRows: Int)
@@ -300,12 +332,75 @@ object ChainLedger:
      * entries are dropped only on read/write). Persisting it without a TTL
      * would produce a permanent, never-cleared "cancelling" table.
      */
-    cancellingChains: Map[String, Long] = Map.empty
+    cancellingChains: Map[String, Long] = Map.empty,
+    /**
+     * R3 续批（manifest 外置）：**checkpoint/记录写入时刻的全量 manifest 总数**。manifest
+     * 外置后 checkpoint 只携带尾部窗口（[[CheckpointRoundsWindow]]），「journal 增量段的
+     * 下界」不能再由 `checkpoint.rounds.size` 给出 —— 由本字段承载（写入时 = `rounds.size`；
+     * 载入旧格式文件缺字段 ⇒ 缺省 0，调用方回落 `rounds.size`，旧文件携带全量故同值）。
+     */
+    roundsTotal: Int = 0,
+    /**
+     * R3 续批（离场轮批化）：**dissolve 腿的待落批**（本拍离场行先入批、攒够再整批落轮）。
+     * 批本体持久在台账热态里（随 checkpoint/journal 落盘）⇒「先冷档后热账」不断链：
+     * 行在批内 = 载荷仍可由台账恢复；崩在落轮前 ⇒ 重启后批随台账回来、下一拍继续攒/落。
+     * `since` = 批内最老一行的入批时刻（龄期闸的量度；批空时为 0）。
+     */
+    pendingDissolve: PendingOffline = PendingOffline(),
+    /**
+     * R3 续批（离场轮批化）：**retire 腿的待落批**（语义同 [[State.pendingDissolve]]）。
+     * 两条腿分批是因为**一轮一 kind**（[[RoundManifest.kind]] 参与守恒与轮守卫的口径），
+     * 混批会糊掉「轴(a)×(b) 退役」与「轴(a) 离场」的审计标签。
+     */
+    pendingRetire: PendingOffline = PendingOffline()
   )
 
   object State:
     given Configuration = Configuration.default.withDefaults
     given Codec[State] = ConfiguredCodec.derived
+
+  /**
+   * **离场轮的待落批**（R3 续批）：一批同 kind 的整行（条目 + 别名行）+ 入批时刻。
+   * 批在台账热态内持久（落盘面）⇒ 崩溃安全同热账；判据 [[isFlushDue]] 决定何时整批落轮。
+   */
+  final case class PendingOffline(
+    entries: List[Entry] = Nil,
+    aliases: List[AliasRow] = Nil,
+    since: Long = 0L
+  ):
+    def isEmpty: Boolean = entries.isEmpty && aliases.isEmpty
+    def rowCount: Int = entries.size + aliases.size
+
+    /** 序列化字节量级（批化字节闸的量度面；量级正确即可，禁逐字节承诺）。 */
+    def approxBytes: Long =
+      entries.map(_.members.size * 24 + 96).sum.toLong + aliases.size * 64L
+
+    /**
+     * **批化 flush 判据**（事件驱动、零定时器 —— 只在既有拍点/写点求值）：
+     * 批非空 ∧（行数达 [[OfflineFlushRows]] ∨ 龄期达 [[OfflineFlushAgeMs]]）⇒ 整批落一轮。
+     * 「整批」= 不按行截断：批是守恒与复算的原子单位，截断会把一轮拆成对不上账的半轮。
+     */
+    def isFlushDue(now: Long): Boolean =
+      !isEmpty && (rowCount >= OfflineFlushRows || (since > 0L && now - since >= OfflineFlushAgeMs))
+
+    /** 入批（批空时落 `since` = 龄期闸的起点；已有时保留最早值）。 */
+    def absorb(es: List[Entry], as: List[AliasRow], at: Long): PendingOffline =
+      if es.isEmpty && as.isEmpty then this
+      else copy(entries = entries ++ es, aliases = aliases ++ as, since = if since == 0L then at else since)
+
+  object PendingOffline:
+    given Configuration = Configuration.default.withDefaults
+    given Codec[PendingOffline] = ConfiguredCodec.derived
+
+  /**
+   * **checkpoint 实写视角**（manifest 外置；纯函数）：checkpoint（折叠/首写）与
+   * `hotBytes` 量测都用本视角 —— `rounds` 只带尾部 [[CheckpointRoundsWindow]] 条，
+   * `roundsTotal` 带全量计数（journal 增量下界的水位）。完整 manifest 史的权威面在
+   * 冷档旁卷（`ChainLedgerStore` 载入时按轮号合并还原），checkpoint 的窗口段只是
+   * 冗余读验面。
+   */
+  def checkpointView(st: State): State =
+    st.copy(rounds = st.rounds.takeRight(CheckpointRoundsWindow), roundsTotal = st.rounds.size)
 
   /**
    * **增量写记录**（perf-481 A3；落点 = `<workspace>/.nebflow/chain-ledger.json.journal` 的一行）。
@@ -318,9 +413,11 @@ object ChainLedger:
    * 以来新增的 manifest**（通常 0–3 条，每条 ~344 B）⇒ 单次写入从 13.4 MB 降到 ~2 KB。
    *
    * == 语义（禁静默弱化）==
-   *   · `base` = 本记录相对的 checkpoint 里已有的 manifest 条数（= `state.rounds.drop(base)`
+   *   · `base` = 本记录相对的 checkpoint **折叠时刻的全量 manifest 水位**（= `state.rounds.drop(base)`
    *     就是「新增段」）。`base` 只在 **rotation**（checkpoint 折叠 + journal 截断）时前进。
-   *   · `state.rounds` **只**存新增段（不是全量）—— 全量恒可由「checkpoint.rounds ++ 新增段」
+   *     R3 续批注：manifest 外置后 checkpoint 只携带尾部窗口（`rounds.size` ≠ 水位），水位
+   *     由 [[State.roundsTotal]] 承载 —— 旧格式 checkpoint（无窗口、携带全量）两值恒相等。
+   *   · `state.rounds` **只**存新增段（不是全量）—— 全量恒可由「checkpoint.rounds ++ 新增段 ++ 冷档旁卷」
    *     **合并（[[mergeRounds]]，按轮号去重）**还原 ⇒ 载入后内存态与旧写法**逐字节同值**。
    *   · 记录是一份**完整可读的状态快照**（非 delta-diff）⇒ 重放幂等：同一条记录重放两次
    *     结果不变（轮号去重），崩在「checkpoint 已写、journal 未截断」之间也只是重放旧记录。
@@ -700,7 +797,17 @@ object ChainLedger:
   def observe(st: State, chains: List[ChainInfo], now: Long, activeIds: Option[Set[String]] = None): Observation =
     val comps = chains.sortBy(_.id)
     val live = st.entries.values.toList
-    // ① 命中：分量 ↔ 既有条目（载荷在热面比成员集；载荷已压缩比锚点）
+    // ⓪ **活性别闸（R3 续批：anchor 重估规则）**：分量对「条目存续」的提名权只来自它的
+    //    **活动区成员** —— 归档区（终态）成员不再构成钉活理由。闸前的病灶：锚点躺在归档
+    //    区的行，其分量由 `topologicalChains(活动∪归档)` 从归档区成员恒常派生 ⇒ 承继臂
+    //    每拍命中 ⇒ 永不落「离场」臂 ⇒「图没了账还赖着」（审计 §3.4-② 的项目面形态，
+    //    Stand 实测 4 条 active 僵尸 + 1,660 条归档钉活行）。闸后：活动区空 ⇒ 一切分量
+    //    非活 ⇒ 全部条目走离场（整行下沉冷档，「旧号永久可达」由冷档二级兜底）；分量
+    //    「完全回归活动区」时会重新相交并**重新出生**（fresh 同号，见出生臂注释）。
+    //    `activeIds = None` ⇒ 闸关（旧路径/纯函数测试逐字旧行为）。
+    def isLive(c: ChainInfo): Boolean = activeIds.forall(ids => c.memberIds.exists(ids.contains))
+    val liveComps = comps.filter(isLive)
+    // ① 命中：分量 ↔ 既有条目（载荷在热面比成员集；载荷已压缩比锚点）；**仅活分量参与**
     //    成员集每分量**只建一次**，命中面走**倒排索引**（`节点/锚点 → 条目`）——
     //    逐「分量 × 条目」笛卡尔遍历会放大成 O(分量 × 条目 × 成员) 次比较/分配，
     //    而本函数每 30s 一拍，大图上不可接受（等价性：条目成员集两两不交，见
@@ -708,10 +815,10 @@ object ChainLedger:
     val compMembers: Map[String, Set[String]] = comps.map(c => c.id -> c.memberIds.toSet).toMap
     val byPayload: Map[String, Entry] = live.flatMap(e => hitKeys(e).map(_ -> e)).toMap
     val compMatches: Map[String, List[Entry]] =
-      comps.map(c => c.id -> compMembers.getOrElse(c.id, Set.empty).flatMap(byPayload.get).toList.distinct).toMap
+      liveComps.map(c => c.id -> compMembers.getOrElse(c.id, Set.empty).flatMap(byPayload.get).toList.distinct).toMap
     // ② 逐分量裁决（两档序保证确定性，且「锚点持有者先得号」——拆分时原链号随锚点走）：
-    //    档 0 = 该分量含某命中条目的锚点；档 1 = 其余。档内按常量 id 排序。
-    val ordered = comps.sortBy { c =>
+    //    档 0 = 该分量含某命中条目的锚点；档 1 = 其余。档内按常量 id 排序。仅活分量入裁决。
+    val ordered = liveComps.sortBy { c =>
       val hs = compMatches.getOrElse(c.id, Nil)
       (if hs.exists(e => c.memberIds.contains(e.anchor)) then 0 else 1, c.id)
     }
@@ -737,7 +844,7 @@ object ChainLedger:
     // ③ 承继 / 出生
     val nextEntries = scala.collection.mutable.LinkedHashMap.empty[String, Entry]
     val born = scala.collection.mutable.ListBuffer.empty[String]
-    comps.foreach { c =>
+    liveComps.foreach { c =>
       val cid = assigned(c.id)
       st.entries.get(cid) match
         case Some(prev) if prev.compacted =>
@@ -786,7 +893,14 @@ object ChainLedger:
     val absorbedTargets: Map[String, String] = superseded.flatMap { old =>
       val e = st.entries(old)
       val touch = hitKeys(e).toSet
-      val cands = comps.filter(c => c.memberIds.exists(touch.contains)).map(c => assigned(c.id)).distinct.sorted
+      // R3 续批：吸收目标必须是**存活分量**（活 ∧ 本拍留热）——闸前的病灶：归档区分量
+      // 也会进候选（其 assigned 号永不落热）⇒ 别名指向一个不存在的链号。候选集限制在
+      // keptEntries 后，无存活命中 ⇒ 无吸收 ⇒ 旧号走孤儿别名下沉冷档（可达性不丢）。
+      val cands =
+        comps.filter(c => isLive(c) && c.memberIds.exists(touch.contains))
+          .map(c => assigned(c.id))
+          .filter(keptEntries.contains)
+          .distinct.sorted
       if cands.isEmpty then None else Some(old -> cands.head)
     }.toMap
     // 既有别名行：canonical 尚在 ⇒ 保行（吸收则重指向）；canonical 已离场且无吸收目标
@@ -938,16 +1052,26 @@ object ChainLedger:
 
   // ── 轴(c)：硬上限压缩 ────────────────────────────────
 
-  /** 热读数（轴 c 触发面 = 行数两条 + 字节一条，字节由调用方量现读落盘长度）。 */
+  /**
+   * 热读数（轴 c 触发面 = 行数两条 + 字节一条，字节由调用方量现读落盘长度）。
+   * R3 续批注：**待落批计入读数**（批行仍持久在台账热态里，落轮前的守恒坐标以含批口径
+   * 计算 —— 入批读数中性、整批落轮一次性减去，轮守恒因此逐项成立，见 [[roundConservation]]）。
+   */
   def totals(st: State): Totals =
     Totals(
-      entries = st.entries.size,
-      aliases = st.aliases.size,
-      members = st.entries.values.map(_.memberCount).sum,
-      refCount = st.entries.values.map(_.refCount.toLong).sum + st.aliases.values.map(_.refCount.toLong).sum
+      entries = st.entries.size + st.pendingDissolve.entries.size + st.pendingRetire.entries.size,
+      aliases = st.aliases.size + st.pendingDissolve.aliases.size + st.pendingRetire.aliases.size,
+      members =
+        st.entries.values.map(_.memberCount).sum +
+          st.pendingDissolve.entries.map(_.memberCount).sum + st.pendingRetire.entries.map(_.memberCount).sum,
+      refCount =
+        st.entries.values.map(_.refCount.toLong).sum + st.aliases.values.map(_.refCount.toLong).sum +
+          st.pendingDissolve.entries.map(_.refCount.toLong).sum + st.pendingDissolve.aliases.map(_.refCount.toLong).sum +
+          st.pendingRetire.entries.map(_.refCount.toLong).sum + st.pendingRetire.aliases.map(_.refCount.toLong).sum
     )
 
-  def hotRows(st: State): Int = st.entries.size + st.aliases.size
+  def hotRows(st: State): Int =
+    st.entries.size + st.aliases.size + st.pendingDissolve.rowCount + st.pendingRetire.rowCount
 
   /**
    * **双阈值触发判据**（条数 ∨ 字节；阈值在册见 [[MaxHotRows]] / [[MaxHotBytes]]）。

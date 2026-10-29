@@ -124,7 +124,8 @@ class ProviderRegistry(
       configRef.get.map(config => dropScheduleRestricted(candidates, config))
     }
 
-  /** 未过滤全局链（seed 链 + 首 provider 兜底）——请求路径专用。 */
+  /** 未过滤全局链（/model 主链为锚，缺省降级 seed 链 + 首 provider 兜底——见
+    * model-chain anchor 批）——请求路径专用（LlmInterface 时段闸输入）。 */
   def getCandidatesUnfiltered(): IO[List[ModelCandidate]] =
     configRef.get.map { config =>
       // Global chain source = the /model primary chain: Nebula's own stored

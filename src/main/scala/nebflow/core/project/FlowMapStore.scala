@@ -248,7 +248,12 @@ class FlowMapStore private (
       bt <- batches.get
       // 声明面（批次一 ① 的 `NodeDef.chainId`）：链号 → 声明该链号的节点 id 集。
       // 全部成员面**现读**（禁第二判据；spec §6.2 双端派生禁令）。
-      declarations = combined.toList
+      // 🔴 R3 续批（账实修复 2026-10-30）：声明面只数**活动区**节点 —— 归档区（终态）
+      //    节点的声明不再计入引用计数。病灶：活动区空图下，归档区节点的声明把行钉活
+      //    （refCount 永不归零 ⇒「Archived ∧ refCount≤0」的退役窗永不打开）；与出生闸
+      //    /活性别闸同一条「活动区 = 存在性判据」的口径（成员已归档不构成钉活理由）。
+      //    归档区节点不写图事实（分量派生不含它们的声明路径），计数面随之同源收窄。
+      declarations = s.nodes.toList
         .flatMap { case (id, n) => FlowMapStore.declaredChainId(n).map(_ -> id) }
         .groupBy(_._1)
         .view
