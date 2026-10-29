@@ -82,7 +82,11 @@ object NotificationHeader:
     "flow" -> "FLOW",
     "tool" -> "TOOL",
     "background" -> "BACKGROUND",
-    "chain" -> "CHAIN"
+    "chain" -> "CHAIN",
+    // schedcard 批（2026-10-29）：定时任务触发腿（ScheduledTaskService.triggerTask
+    // 落盘/广播 source="schedule"）。集合等值硬门（NotificationHeaderSpec）要求
+    // BackendNamedSources 新增源必须在本表登记——键集恒等即逐字一致。
+    "schedule" -> "SCHEDULE"
   )
 
   /**

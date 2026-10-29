@@ -1894,6 +1894,9 @@ export default {
   'task.repeatHourly': 'Hourly',
   'task.repeatDaily': 'Daily',
   'task.repeatWeekly': 'Weekly',
+  // schedcard batch (2026-10-29): dedicated schedule card (chat stream) copy
+  'task.cardChip': 'Scheduled Task',
+  'task.cardScheduledAt': 'Scheduled {time}',
 
   // NebLink
   'neblink.thisDevice': 'This device',

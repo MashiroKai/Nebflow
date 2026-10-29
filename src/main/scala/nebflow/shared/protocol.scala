@@ -345,7 +345,20 @@ object UiMessage:
      * 文件**双渲染**（气泡媒体行 + 卡片 chips）。缺席即不落键（既有行字节形态与
      * 旧读法逐字不变；intake/header/answerOf/quote/fileChanges 先例同款条件编码）。
      */
-    answerAttachments: Option[Json] = None
+    answerAttachments: Option[Json] = None,
+    /**
+     * **定时任务触发行的专属卡片载荷**（schedcard 批 2026-10-29，作者令「定时任务
+     * 卡片防退化 + stand 配色」）：仅 schedule 触发注入行（`injected=true` +
+     * `source="schedule"`，唯一写点 = `ScheduledTaskService.triggerTask`）携带。
+     * Json 形状（引擎不解释内部字段，原样落盘原样下发）：
+     *   { "id": String, "name": String?, "triggerAt": Long, "repeat": String?,
+     *     "referencePath": String? }
+     * 前端据它把该行渲染为**定时任务专属卡片**（「定时任务」chip + 任务名 + 预定
+     * 时间 + 重复小标），而不是通用绿气泡/通用注入泡。缺席即不落键 ⇒ 旧 `.ui.json`
+     * 行字节形态与旧读法逐字不变（intake/header/answerOf/quote/fileChanges/
+     * answerAttachments 先例同款条件编码）；旧历史行（无标记）按现状渲染不追溯。
+     */
+    schedule: Option[Json] = None
   ) extends UiMessage:
     val typeName = "user"
 
@@ -378,6 +391,8 @@ object UiMessage:
   ) extends UiMessage:
     val typeName = "ai"
 
+  end Ai
+
   case class Tool(
     label: String,
     summary: String,
@@ -399,6 +414,8 @@ object UiMessage:
     terminal: Option[Boolean] = None
   ) extends UiMessage:
     val typeName = "tool"
+
+  end Tool
 
   case class Agent(
     agentId: String,
@@ -524,13 +541,18 @@ object UiMessage:
       val withFileChanges = m.fileChanges.fold(withQuote)(fc => withQuote.deepMerge(Json.obj("fileChanges" -> fc)))
       // askuser-dragdrop 实施批（2026-10-19，批 #551）：随卡回传的答复附件清单——
       // 缺席即不落键（既有行字节形态逐字不变）。
-      m.answerAttachments.fold(withFileChanges)(a => withFileChanges.deepMerge(Json.obj("answerAttachments" -> a)))
+      val withAnswerAtts =
+        m.answerAttachments.fold(withFileChanges)(a => withFileChanges.deepMerge(Json.obj("answerAttachments" -> a)))
+      // schedcard 批（2026-10-29）：定时任务卡片载荷——缺席即不落键
+      // ⇒ 非 schedule 行与旧字节形态逐字相同。
+      m.schedule.fold(withAnswerAtts)(s => withAnswerAtts.deepMerge(Json.obj("schedule" -> s)))
     case m: Ai =>
       val base = Json.obj("type" -> "ai".asJson, "text" -> m.text.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
       val withModel = m.model.fold(withDur)(mod => withDur.deepMerge(Json.obj("model" -> mod.asJson)))
       val withThinking = m.thinking.fold(withModel)(th => withModel.deepMerge(Json.obj("thinking" -> th.asJson)))
-      val withTs = if m.timestamp > 0 then withThinking.deepMerge(Json.obj("timestamp" -> m.timestamp.asJson)) else withThinking
+      val withTs =
+        if m.timestamp > 0 then withThinking.deepMerge(Json.obj("timestamp" -> m.timestamp.asJson)) else withThinking
       // replay-terminal 批（2026-10-28）：轮终态标记——只在 Some(true) 落键
       // （缺席即不落键 ⇒ 无标记行与旧字节形态逐字相同）。
       if m.terminal.contains(true) then withTs.deepMerge(Json.obj("terminal" -> true.asJson)) else withTs
@@ -601,6 +623,9 @@ object UiMessage:
           // askuser-dragdrop 实施批（2026-10-19，批 #551）：随卡回传的答复附件清单
           // （旧行无本键 ⇒ None，同上兼容纪律）
           answerAttachments <- cursor.downField("answerAttachments").as[Option[Json]]
+          // schedcard 批（2026-10-29）：定时任务卡片载荷（旧行无本键 ⇒ None，
+          // 同上兼容纪律——宽松透传，新增可选键绝不改变任何既有行的可解析性）
+          schedule <- cursor.downField("schedule").as[Option[Json]]
         yield User(
           text,
           atts.getOrElse(Nil),
@@ -616,7 +641,8 @@ object UiMessage:
           answerOf.filter(_.nonEmpty),
           quote,
           fileChanges,
-          answerAttachments
+          answerAttachments,
+          schedule
         )
       case "ai" =>
         for

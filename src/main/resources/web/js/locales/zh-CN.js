@@ -1824,6 +1824,9 @@ export default {
   'task.repeatHourly': '每小时',
   'task.repeatDaily': '每天',
   'task.repeatWeekly': '每周',
+  // schedcard 批（2026-10-29）：定时任务专属卡（chat 流）文案
+  'task.cardChip': '定时任务',
+  'task.cardScheduledAt': '预定 {time}',
 
   // NebLink
   'neblink.thisDevice': '本机',
