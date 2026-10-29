@@ -554,16 +554,16 @@ object NodeEditTool extends Tool:
         )
       )
     // preset 退役硬闸（节点无自有模型方案设置）——
-    // 节点模型 = 项目分发器当前方案（派发时解析，SchemePolicy 单点）；存量节点保留
-    // 其存储 preset 值仅作显示/审计（引擎已不再读取）。schema 层已删属性，此处运行时
-    // 兜底给可行动错误。
+    // 节点 fallback 锚 = 内置执行 agent 的 /model 链（派发时经 core.SchemePolicy 现读）；
+    // 存量节点保留其存储 preset 值仅作显示/审计（引擎已不再读取）。schema 层已删属性，
+    // 此处运行时兜底给可行动错误。
     else if input.contains("preset") then
       IO.pure(
         Left(
           ToolError(
             "'preset' is not a node parameter — nodes have no " +
-              "model-scheme setting of their own: a node runs on the project dispatcher's current model scheme (set it on the " +
-              "project-dispatcher agent in Settings; nodes pick it up at dispatch time). Stored preset values on existing nodes " +
+              "model-scheme setting of their own: a node runs on the executor agent's /model chain (set it from the /model panel; " +
+              "nodes pick it up at spawn time). Stored preset values on existing nodes " +
               "are display-only. (NODE_PRESET_UNSUPPORTED)"
           )
         )

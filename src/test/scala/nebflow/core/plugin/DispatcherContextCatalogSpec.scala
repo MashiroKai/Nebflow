@@ -14,8 +14,9 @@ import scala.concurrent.duration.*
  * `capability` 键 deprecated（装载不报错、渲染层忽略）。
  *
  * panelscheme 批（2026-09-21）改口径：**Model Preset 场景目录整体退役**——节点
- * 无自有模型方案（节点模型 = 分发器当前方案，派发时 SchemePolicy 解析），NodeEdit
- * `preset` 参数已退役（NODE_PRESET_RETIRED），目录失去唯一消费者。
+ * 无自有模型方案（model-chain anchor 批 2026-10-29：节点 fallback 锚 = 内置执行
+ * agent 的 /model 链，派发时经 core.SchemePolicy 现读），NodeEdit
+ * `preset` 参数已退役（NODE_PRESET_UNSUPPORTED），目录失去唯一消费者。
  *
  * 覆盖：
  * - description 单源渲染（capability 键存在时目录只出 description、键不报错）

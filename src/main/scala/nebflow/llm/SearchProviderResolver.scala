@@ -205,17 +205,22 @@ object SearchProviderResolver:
         None
 
   /**
-   * Full model-ref chain for a WebSearch decision: agent's preferred ++
-   * fallbacks, else the Nebula primary chain with seed-chain fallback
-   * (mirrors ProviderRegistry.getCandidates' fallback semantics).
+   * Full model-ref chain for a WebSearch decision: the request's own chain
+   * (the /model chain carried on `LlmRequest.agentModel`), else the /model
+   * primary chain with seed-chain fallback.
+   *
+   * model-chain anchor batch (2026-10-29): the fallback leg must hand Nebula's
+   * OWN stored chain to the resolver — `resolveModel(Nebula, None)` short-circuits
+   * to the seed chain ("Nebula has no one to follow"), which made the search
+   * routing (and the Tier 2/3 decision built on it) ignore the /model setting.
    */
   private def modelChainRefs(agentModel: Option[AgentModelConfig]): List[String] =
     agentModel.toList.flatMap(m => m.preferred.toList ++ m.fallbacks) match
       case nonEmpty @ _ :: _ => nonEmpty
       case Nil =>
         try
-          val (am, _) =
-            nebflow.core.SchemePolicy.resolveModel(nebflow.core.SchemePolicy.NebulaName, None)
+          val policy = nebflow.core.SchemePolicy
+          val (am, _) = policy.resolveModel(policy.NebulaName, policy.nebulaChain())
           am.preferred.toList ++ am.fallbacks
         catch case _: Exception => Nil
 
