@@ -6,6 +6,8 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.actor.ActorSystem
 import nebflow.core.AgentRuntimePort
+import nebflow.core.delegate.DelegateFlowMapLifecycle
+import nebflow.core.delegate.DelegateRegistry
 import nebflow.shared.{NebflowLogger, PathUtil}
 
 import scala.concurrent.duration.*
@@ -339,16 +341,51 @@ object DelegateFlowHosts:
    * **且**图内无非终态节点（pending/wiring/running/blocked——barrier 等待与反馈重入
    * 都还需要引擎）⇒ 宿主实例灭。会话在 ⇒ 宿主在（A3「会话在→宿主在」）；有活图 ⇒
    * 宿主在（引擎要驱动它走完）。收割只灭实例，盘面零动作（write-through）。
+   *
+   * R3 批（2026-10-29 · 设计 §5.6「孤儿收割接续删除」）：实例灭之后，作用域目录的
+   * 退场**接续**终态收口同一条路径——宿主仍在册的窗口内先跑摘要先行
+   * （[[nebflow.core.delegate.DelegateFlowMapLifecycle.flushBeforeUnmount]]：出库 +
+   * 在飞链收口 + 台账收敛），再 unmount，再 fork 宽限删除 fiber（孤儿腿 = 盘面静默
+   * 复核闸）。**触发判据照旧单点**（`applies` = 闸开 × mode=dispatcher——闸关 =
+   * 现行为逐字节：只灭实例，目录永存）。kernel 腿 / blocked 在场的孤儿照旧只灭
+   * 实例（blocked 永不自动处置——人工裁定域）。
    */
   private[project] def reapOrphans: IO[Int] =
     all
       .flatMap(_.traverse { h =>
-        for
-          live <- h.engine.resources.agentRegistry.get.map(_.contains(h.delegateId))
-          snap <- h.store.snapshot
-          active = snap.nodes.values.exists(n => !NodeLifecycle.Terminal.contains(n.status))
-          _ <- if !live && !active then unmount(h.delegateId) else IO.unit
-        yield if !live && !active then 1 else 0
+        h.engine.resources.agentRegistry.get.map(_.contains(h.delegateId)).flatMap { live =>
+          h.store.snapshot.flatMap { snap =>
+            val active = snap.nodes.values.exists(n => !NodeLifecycle.Terminal.contains(n.status))
+            val blocked = snap.nodes.values.exists(_.status == NodeLifecycle.Blocked)
+            // R3 批：删除接续腿的资格 = 会话灭 ∧ 图静默 ∧ 无 blocked（人工裁定域不接续）
+            // ∧ 生命周期判据（闸开 × mode=dispatcher——查无 registry 记录 = false，保守：
+            // 无主目录不进机制删除面，归存量清理工具）。四者全真才走「flush→unmount→宽限删」。
+            val retire =
+              !live && !active && !blocked && DelegateFlowMapLifecycle.applies(DelegateRegistry.find(h.delegateId))
+            val flushLeg = DelegateFlowMapLifecycle.flushBeforeUnmount(h.delegateId)
+            val removalLeg = DelegateFlowMapLifecycle.scheduleScopeRemoval(h.delegateId, orphanLeg = true).start.void
+            val retireLeg: IO[Unit] =
+              if retire then
+                flushLeg
+                  .handleErrorWith(e =>
+                    IO(logger.warn(s"[delegate-flow-host] orphan flush failed for '${h.delegateId}': ${e.getMessage}"))
+                  )
+                  .flatMap { _ =>
+                    removalLeg.handleErrorWith(e =>
+                      IO(
+                        logger.warn(
+                          s"[delegate-flow-host] orphan grace fiber failed to start for '${h.delegateId}': ${e.getMessage}"
+                        )
+                      )
+                    )
+                  }
+              else IO.unit
+            // 卸载单腿仍按原判据门控：只收割「会话灭 ∧ 图静默」的宿主（活会话/活图宿主在——A3）。
+            val reapLeg: IO[Unit] =
+              if !live && !active then retireLeg.flatMap(_ => unmount(h.delegateId)) else IO.unit
+            reapLeg.as(if !live && !active then 1 else 0)
+          }
+        }
       })
       .map(_.sum)
 

@@ -51,6 +51,7 @@ object DelegateTerminal:
   sealed trait Outcome
 
   object Outcome:
+
     /**
      * 判词完成（payload 后缀携带判词行——🔴 模型/用户可见文案，§16 待过目）。
      * `mergeOutcome`（台账 #896 交通引导员制 2026-10-26）：合并轮终态结论——
@@ -58,7 +59,8 @@ object DelegateTerminal:
      * 被拒（关账 failed，无重试无 park）；None = 非合并轮完成（队列成员若在账则
      * 走账实核对回落）。默认 None。
      */
-    final case class Release(verdictSuffix: String, mergeOutcome: Option[MergeQueue.RoundOutcome] = None) extends Outcome
+    final case class Release(verdictSuffix: String, mergeOutcome: Option[MergeQueue.RoundOutcome] = None)
+        extends Outcome
 
     /** ready-to-merge：保活等合并轮（预算重挂由监督者执行）。 */
     case object HoldForMerge extends Outcome
@@ -622,9 +624,13 @@ object DelegateTerminal:
     // / 未挂载 id = 零动作。ready-to-merge 停靠（HoldForMerge）不经本清理面 ⇒ 宿主照常
     // 存活等合并轮，合并轮终态仍走这里统一卸载。
     // 双模式批（2026-10-28 · 设计 §6 第 4 步）：dispatcher 腿追加速度摘要先行——
-    // 宿主仍在册时 sweep 出库 + chain-archived 审计落定，随后才 unmount；unmount 之后
-    // fork 宽限删除 fiber（graceMs 后双闸校验：未重挂 ∧ 已归档 ⇒ 删作用域目录）。
-    // kernel/闸关 = 本段全部分叉失效（现状逐字节）。
+    // 宿主仍在册时收口三段（sweep 出库 + chain-archived 审计落定；R3 批增：在飞链
+    // 台账 cancelled 处置 + chain-cancelled 审计——取消链走同一收口；台账收敛拍），
+    // 随后才 unmount；unmount 之后 fork 宽限删除 fiber（graceMs 后双闸校验：未重挂 ∧
+    // 已归档 ⇒ 删作用域目录）。kernel/闸关 = 本段全部分叉失效（现状逐字节）。
+    // R3 批（2026-10-29 · 审计二 P3/P10）：终态屏障单点不变——completed/failed/
+    // cancelled 三种终态都经本序列，取消链（NodeCancel 链级腿 / 会话终止遗留在飞链）
+    // 与自然完成链收敛到同一条「摘要→台账→unmount→宽限删」路径。
     val dispatcherLifecycle = DelegateFlowMapLifecycle.applies(record)
     val summaryFlush = if dispatcherLifecycle then DelegateFlowMapLifecycle.flushBeforeUnmount(delegateId) else IO.unit
     val hostUnmount =
@@ -665,9 +671,13 @@ object DelegateTerminal:
         .handleErrorWith(e => IO(logger.warn(s"delegate settlement note failed: ${e.getMessage}")))
     val graceRemoval: IO[Unit] =
       if dispatcherLifecycle then
-        DelegateFlowMapLifecycle.scheduleScopeRemoval(delegateId).start.as(()).handleErrorWith(e =>
-          IO(logger.warn(s"[flowmap-lifecycle] grace removal fiber failed to start: ${e.getMessage}"))
-        )
+        DelegateFlowMapLifecycle
+          .scheduleScopeRemoval(delegateId)
+          .start
+          .as(())
+          .handleErrorWith(e =>
+            IO(logger.warn(s"[flowmap-lifecycle] grace removal fiber failed to start: ${e.getMessage}"))
+          )
       else IO.unit
     verdictLine *> ledgerNote *> hostUnmount *> pluginRelease *> MergeQueue.onTerminalIO(
       delegateId,
@@ -796,9 +806,11 @@ object DelegateTerminal:
             .flatMap {
               case Right(Right(())) => IO.unit
               case other =>
-                IO(logger.warn(
-                  s"work-result preservation skipped for $delegateId: ${other.fold(_.getMessage, _.toString).take(200)}"
-                ))
+                IO(
+                  logger.warn(
+                    s"work-result preservation skipped for $delegateId: ${other.fold(_.getMessage, _.toString).take(200)}"
+                  )
+                )
             }
           _ <- resources.subAgentTaskStore
             .updateStatus(parentSessionId, delegateId, ReadyToMergeStatus, completedAt = Some(now))
@@ -808,6 +820,7 @@ object DelegateTerminal:
             s"delegate $delegateId held for merge (project=$projectKey, branch=${entry.branch}, readyAt=$now) — parent notified after the merge round"
           )
         yield Outcome.HoldForMerge
+        end for
     end match
   end holdForMerge
 
