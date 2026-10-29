@@ -16,6 +16,7 @@ import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.core.hotrestart.HealthPayload
 import nebflow.core.project.*
 import nebflow.core.schedule.FreezeSchedule.given
+import nebflow.core.seed.SeedService
 import nebflow.core.skill.SkillService
 import nebflow.core.task.{FileTaskStore, TaskStore}
 import nebflow.core.tools.NodeTools
