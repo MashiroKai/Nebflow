@@ -1,7 +1,8 @@
 // settings-imagegen-two-forms.spec.mjs — 设置面板「生图」节两形态钉
-// （settings-panel-jev-imagegen 批 2026-10-28，作者令「seal=OFF 构建下面板显示
-// 『未编入（release 构建零痕迹）』提示位；seal=ON 构建显示正常配置面——两形态
-// 都要有 spec」）。
+// （settings-panel-jev-imagegen 批 2026-10-28 初版两形态；settings-panel-fourfix
+// 批 ③件 2026-10-29 作者令重做：「就是普通配置过程——填 API Key 值、保存，完事」
+// 「前端永远不出现引用/keyRef/secrets 指针这类字眼与解释文案」「不要过拟合智谱
+// ——新用户看到的必须是全空」「整体精简」）。
 //
 // Drives the REAL module (js/sidebar/imagegenSection.js) over a fixture page
 // served from the source tree (🔴 绝非 8080 宿主)；全部网络面经 playwright
@@ -10,18 +11,19 @@
 // 返回 keyConfigured=true（在位性投影，scala 侧 ImageGenSettingsSpec 同钉）。
 //
 // 语义钉：
-//   A1 seal OFF 形态：compiledIn=false → 「未编入（release 构建零痕迹）」提示位
-//      渲染、配置面控件不存在（enabled 开关/模型输入/key 录入全无）
+//   A1 seal OFF 形态：「未编入（release 构建零痕迹）」提示位、配置面控件全无
 //   A2 seal OFF 形态同样携带「调试中」徽标（设计六验收⑥的面板腿）
-//   B1 seal ON 形态：enabled 开关 + provider/model/keyRef 编辑面在位，
-//      配置值与投影载荷一致（cogview / cogview-3-flash / zhipu-api-key）
-//   B2 缺 key 态：「待录入」徽标 + 缺 key 提示行 + key 输入框默认掩码
-//   B3 key 录入：输入 → POST /api/secrets/<keyRef> 一次成形（值只进请求体）
-//      → 重拉状态 → 「已配置」态 + 输入框清空（值不回显不滞留）
-//   B4 重录：已存在 → POST 409 → PUT 覆写 → 已配置态保持
-//   B5 配置保存：整节替换 PUT——payload 携带全部 provider（其余原样保留）
-//      + enabled + defaultProvider；keyConfigured 投影字段不回写
-//   B6 两形态共享同一枚 .imagegen-badge（工具面/插件面单源续用）
+//   B1 seal ON 既有 provider：配置值与投影载荷一致；「待录入」徽标；掩码默认态
+//   B2 凭据面无感化：整节渲染文本零 keyRef/密钥引用/指针字眼（fourfix ③铁钉）；
+//      单一「保存」钮（无「保存密钥」第二钮）
+//   B3 新用户空白：providers 空 → 全空新增面（提供方=＋新增、名称空、协议适配
+//      占位、模型/端点/key 空，零 zhipu/cogview 特化值——fourfix ③代码层铁钉）
+//   B4 保存形状（新 provider）：secrets POST 名 = 派生名 imagegen-<name>-key
+//      （值只进请求体）+ 整节 PUT {enabled, providers, defaultProvider}
+//   B5 既有 provider 保存：409→PUT 覆写重录；已配置态 + 输入清空
+//   B6 整节替换 PUT：全部 provider 原样保留、投影字段不回写
+//   B7 删除提供方：两段式确认 → PUT 少该项（defaultProvider 让位）
+//   B8 两形态共享同一枚 .imagegen-badge
 //
 // Run: npx playwright test tests/settings-imagegen-two-forms.spec.mjs
 
@@ -39,7 +41,7 @@ const WEB_ROOT = path.join(REPO_ROOT, 'src', 'main', 'resources', 'web');
 // 零入库）。
 const HARNESS = '/__harness-settings-imagegen.html';
 const SHOT_DIR = process.env.NB_IMAGEGEN_SHOT_DIR ||
-  path.join(REPO_ROOT, '.nebflow', 'evidence', '20261028_settings-panel-jev-imagegen', 'imagegen-two-forms');
+  path.join(REPO_ROOT, '.nebflow', 'evidence', '20261029_settings-panel-fourfix', 'imagegen-two-forms');
 
 let port;
 const servers = [];
@@ -102,6 +104,7 @@ const statusWithKey = {
   ...statusMissingKey,
   providers: { zhipu: { ...zhipuMissing, keyConfigured: true } },
 };
+const statusEmpty = { compiledIn: true, debugLabel: '调试中', configured: false, enabled: false, defaultProvider: null, providers: {} };
 
 /**
  * Route interception with a call ledger. The GET replies with the CURRENT
@@ -151,6 +154,20 @@ async function openHarness(page) {
   await page.waitForFunction(() => document.body.dataset.ready === '1');
 }
 
+/** B2 seam: the whole rendered section carries zero pointer wording. */
+async function expectNoPointerWording(page) {
+  const text = await page.locator('#imagegen-section-wrap').innerText();
+  expect(text).not.toContain('keyRef');
+  expect(text).not.toContain('密钥引用');
+  expect(text).not.toContain('指针');
+  // 用户可见 locale 面（源级补钉）：两份 locale 的 imagegen 键无 keyRef 字眼。
+  for (const f of ['js/locales/zh-CN.js', 'js/locales/en.js']) {
+    const src = fs.readFileSync(path.join(WEB_ROOT, f), 'utf8');
+    const imagegenKeys = src.split('\n').filter((l) => l.includes("'settings.imagegen"));
+    expect(imagegenKeys.some((l) => /keyRef|密钥引用|指针/.test(l))).toBe(false);
+  }
+}
+
 test('A. seal=OFF 形态：未编入提示位 + 调试中徽标 + 配置面控件全无', async ({ page }) => {
   const state = { status: statusOff, existingSecrets: new Set() };
   const { install } = wireRoutes(page, state);
@@ -164,13 +181,13 @@ test('A. seal=OFF 形态：未编入提示位 + 调试中徽标 + 配置面控�
   await expect(page.locator('#toggle-imagegen')).toHaveCount(0);
   await expect(page.locator('#cfg-imagegen-model')).toHaveCount(0);
   await expect(page.locator('#cfg-imagegen-key')).toHaveCount(0);
-  // 徽标（A2/B6）：调试中，同一枚单源。
+  // 徽标（A2/B8）：调试中，同一枚单源。
   const badge = page.locator('#badge-slot .imagegen-badge');
   await expect(badge).toHaveText('调试中');
   await page.screenshot({ path: path.join(SHOT_DIR, 'A-seal-off-not-compiled.png'), fullPage: true });
 });
 
-test('B1+B2. seal=ON 缺 key 形态：配置面在位 + 「待录入」+ 缺 key 提示 + 掩码默认态', async ({ page }) => {
+test('B1+B2. seal=ON 既有 provider：投影值在位 + 待录入 + 掩码 + 零 keyRef 字眼 + 单一保存钮', async ({ page }) => {
   const state = { status: statusMissingKey, existingSecrets: new Set() };
   const { install } = wireRoutes(page, state);
   await install();
@@ -178,62 +195,101 @@ test('B1+B2. seal=ON 缺 key 形态：配置面在位 + 「待录入」+ 缺 key
 
   const face = page.locator('#imagegen-section-wrap .imagegen-face[data-form="compiled"]');
   await expect(face).toBeVisible();
-  // 配置值与投影一致（B1）。
+  // 配置值与投影一致（B1——作者机器已存值照实显示，不是预填）。
   await expect(page.locator('#toggle-imagegen')).toBeVisible();
   await expect(page.locator('#toggle-imagegen')).toHaveClass(/on/);
   await expect(page.locator('#cfg-imagegen-provider')).toHaveValue('zhipu');
   await expect(page.locator('#cfg-imagegen-type')).toHaveValue('cogview');
   await expect(page.locator('#cfg-imagegen-model')).toHaveValue('cogview-3-flash');
-  await expect(page.locator('#cfg-imagegen-keyref')).toHaveValue('zhipu-api-key');
-  // 缺 key 态（B2）：待录入徽标 + 缺 key 提示行；key 输入框默认掩码。
+  // 缺 key 态（B1）：待录入徽标 + key 输入框默认掩码。
   await expect(page.locator('.st-badge', { hasText: '待录入' })).toBeVisible();
-  await expect(face).toContainText('缺 key');
   const keyInput = page.locator('#cfg-imagegen-key');
   await expect(keyInput).toHaveValue('');
   const sec = await keyInput.evaluate((el) => /** @type {any} */ (getComputedStyle(el)).webkitTextSecurity);
   expect(String(sec)).toContain('disc');
-  // 徽标仍单源在场（B6）。
-  await expect(page.locator('#badge-slot .imagegen-badge')).toHaveText('调试中');
+  // 凭据面无感化（B2）：零 keyRef 字眼 + 单一保存钮（无「保存密钥」第二钮）。
+  await expectNoPointerWording(page);
+  await expect(page.locator('#btn-save-imagegen')).toHaveCount(1);
+  await expect(page.locator('#btn-save-imagegen-key')).toHaveCount(0);
+  // 删除钮在位（既有 provider 编辑面）。
+  await expect(page.locator('#btn-delete-imagegen')).toBeVisible();
   await page.screenshot({ path: path.join(SHOT_DIR, 'B1-seal-on-missing-key.png'), fullPage: true });
 });
 
-test('B3. key 录入：POST secrets 一次成形 → 重拉 → 已配置 + 输入清空（值不回显）', async ({ page }) => {
-  const state = { status: statusMissingKey, afterSecret: statusWithKey, existingSecrets: new Set() };
+test('B3. 新用户空白：providers 空 → 全空新增面（零 zhipu/cogview 特化值）', async ({ page }) => {
+  const state = { status: statusEmpty, existingSecrets: new Set() };
+  const { install } = wireRoutes(page, state);
+  await install();
+  await openHarness(page);
+
+  const face = page.locator('#imagegen-section-wrap .imagegen-face[data-form="compiled"]');
+  await expect(face).toBeVisible();
+  // 提供方下拉只有「＋ 新增」且已选中；名称输入可见且空。
+  const sel = page.locator('#cfg-imagegen-provider');
+  await expect(sel).toHaveValue('__add__');
+  await expect(sel.locator('option')).toHaveCount(1);
+  await expect(page.locator('#cfg-imagegen-newprovider')).toBeVisible();
+  await expect(page.locator('#cfg-imagegen-newprovider')).toHaveValue('');
+  // 协议适配 = 占位（value 空）；模型/端点/key 全空。
+  await expect(page.locator('#cfg-imagegen-type')).toHaveValue('');
+  await expect(page.locator('#cfg-imagegen-model')).toHaveValue('');
+  await expect(page.locator('#cfg-imagegen-baseurl')).toHaveValue('');
+  await expect(page.locator('#cfg-imagegen-key')).toHaveValue('');
+  // 🔴 新用户空白铁钉（fourfix ③）：整节 DOM 零智谱特化值。
+  const html = await page.locator('#imagegen-section-wrap').innerHTML();
+  for (const banned of ['zhipu', 'cogview-3-flash', 'zhipu-api-key', 'bigmodel']) {
+    expect(html).not.toContain(banned);
+  }
+  await expectNoPointerWording(page);
+  await page.screenshot({ path: path.join(SHOT_DIR, 'B3-new-user-blank.png'), fullPage: true });
+});
+
+test('B4. 保存形状（新 provider）：派生密钥名 + 整节 PUT + defaultProvider', async ({ page }) => {
+  const state = { status: statusEmpty, existingSecrets: new Set() };
   const { calls, install } = wireRoutes(page, state);
   await install();
   await openHarness(page);
 
+  await page.fill('#cfg-imagegen-newprovider', 'myprov');
+  await page.selectOption('#cfg-imagegen-type', 'openai-images');
+  await page.fill('#cfg-imagegen-model', 'gpt-image-1');
   await page.fill('#cfg-imagegen-key', 'sk-test-value-12345');
-  await page.click('#btn-save-imagegen-key');
+  await page.click('#toggle-imagegen'); // 启用
+  await page.click('#btn-save-imagegen');
 
-  // 值只进请求体一次；密钥名 = keyRef 指针名。
+  // 密钥写入：名字 = 派生名（对用户不可见），值只进请求体一次。
   await expect.poll(() => calls.secrets.length).toBe(1);
-  expect(calls.secrets[0]).toMatchObject({ method: 'POST', name: 'zhipu-api-key', value: 'sk-test-value-12345' });
-  // 重拉后面 = 已配置 + 输入框清空（值不回显不滞留）。
-  await expect(page.locator('.st-badge', { hasText: '已配置' })).toBeVisible();
+  expect(calls.secrets[0]).toMatchObject({ method: 'POST', name: 'imagegen-myprov-key', value: 'sk-test-value-12345' });
+  // 配置整节 PUT：新 provider 带 keyRef（指针机制后端延续，前端无感）。
+  await expect.poll(() => calls.sectionPuts.length).toBe(1);
+  const put = calls.sectionPuts[0];
+  expect(put.enabled).toBe(true);
+  expect(put.defaultProvider).toBe('myprov');
+  expect(put.providers.myprov).toEqual({ type: 'openai-images', model: 'gpt-image-1', keyRef: 'imagegen-myprov-key' });
+  expect(JSON.stringify(put)).not.toContain('keyConfigured');
+  // 保存后输入框清空（值不回显不滞留）。
   await expect(page.locator('#cfg-imagegen-key')).toHaveValue('');
-  await expect(page.locator('#toast-slot')).toContainText('密钥已保存');
-  await page.screenshot({ path: path.join(SHOT_DIR, 'B3-key-configured.png'), fullPage: true });
+  await page.screenshot({ path: path.join(SHOT_DIR, 'B4-new-provider-saved.png'), fullPage: true });
 });
 
-test('B4. 重录：已存在 → POST 409 → PUT 覆写 → 已配置态保持', async ({ page }) => {
+test('B5. 既有 provider 重录：单保存钮 → 409 → PUT 覆写 → 已配置态 + 输入清空', async ({ page }) => {
   const state = { status: statusWithKey, afterSecret: statusWithKey, existingSecrets: new Set(['zhipu-api-key']) };
   const { calls, install } = wireRoutes(page, state);
   await install();
   await openHarness(page);
 
   await page.fill('#cfg-imagegen-key', 'sk-rotated-value');
-  await page.click('#btn-save-imagegen-key');
+  await page.click('#btn-save-imagegen');
   await expect(page.locator('.st-badge', { hasText: '已配置' })).toBeVisible();
   await expect(page.locator('#cfg-imagegen-key')).toHaveValue('');
   // 形状钉：409 冲突后必须有一次同名 PUT（重录语义），值随请求体一次。
   await expect.poll(() => calls.secrets.length).toBe(2);
   expect(calls.secrets[0]).toMatchObject({ method: 'POST', name: 'zhipu-api-key' });
   expect(calls.secrets[1]).toMatchObject({ method: 'PUT', name: 'zhipu-api-key', value: 'sk-rotated-value' });
-  await page.screenshot({ path: path.join(SHOT_DIR, 'B4-key-reentry.png'), fullPage: true });
+  await page.screenshot({ path: path.join(SHOT_DIR, 'B5-key-reentry.png'), fullPage: true });
 });
 
-test('B5. 配置保存：整节替换 PUT——全 provider 保留 + defaultProvider + 投影字段不回写', async ({ page }) => {
+test('B6. 配置保存：整节替换 PUT——全 provider 保留 + 投影字段不回写', async ({ page }) => {
   const state = {
     status: {
       ...statusWithKey,
@@ -248,20 +304,55 @@ test('B5. 配置保存：整节替换 PUT——全 provider 保留 + defaultProv
   await install();
   await openHarness(page);
 
-  // 编辑 zhipu 的模型 → 保存。
+  // 编辑 zhipu 的模型 → 保存（key 留空 = 只存配置，凭据不动）。
   await page.fill('#cfg-imagegen-model', 'cogview-4');
   await page.click('#btn-save-imagegen');
   await expect(page.locator('#imagegen-save-state')).toContainText('已保存');
 
   // 整节替换形状：全部 provider 在 payload（bean 原样保留）、编辑项覆写、
-  // enabled/defaultProvider 在位、keyConfigured 投影字段绝不回写。
+  // keyConfigured 投影字段绝不回写；key 留空 → 零 secrets 调用。
   await expect.poll(() => calls.sectionPuts.length).toBe(1);
+  expect(calls.secrets.length).toBe(0);
   const put = calls.sectionPuts[0];
-  expect(put.enabled).toBe(true);
-  expect(put.defaultProvider).toBe('zhipu');
   expect(Object.keys(put.providers).sort()).toEqual(['bean', 'zhipu']);
   expect(put.providers.zhipu).toEqual({ type: 'cogview', model: 'cogview-4', keyRef: 'zhipu-api-key' });
   expect(put.providers.bean).toEqual({ type: 'openai-images', model: 'gpt-image-1', baseUrl: 'https://ark.example/v1', keyRef: 'ark-key' });
   expect(JSON.stringify(put)).not.toContain('keyConfigured');
-  await page.screenshot({ path: path.join(SHOT_DIR, 'B5-section-saved.png'), fullPage: true });
+  await page.screenshot({ path: path.join(SHOT_DIR, 'B6-section-saved.png'), fullPage: true });
+});
+
+test('B7. 删除提供方：两段式确认 → PUT 少该项', async ({ page }) => {
+  const state = {
+    status: {
+      ...statusWithKey,
+      providers: {
+        zhipu: statusWithKey.providers.zhipu,
+        bean: { type: 'openai-images', model: 'gpt-image-1', baseUrl: 'https://ark.example/v1', keyRef: 'ark-key', keyConfigured: true },
+      },
+    },
+    existingSecrets: new Set(['zhipu-api-key', 'ark-key']),
+  };
+  const { calls, install } = wireRoutes(page, state);
+  await install();
+  await openHarness(page);
+
+  const del = page.locator('#btn-delete-imagegen');
+  await del.click();
+  // 第一击 = 挂确认位（文案翻转为再点确认），零网络。
+  await expect(del).toContainText('再点一次');
+  expect(calls.sectionPuts.length).toBe(0);
+  await del.click();
+  await expect.poll(() => calls.sectionPuts.length).toBe(1);
+  const put = calls.sectionPuts[0];
+  expect(Object.keys(put.providers)).toEqual(['bean']);
+  expect(put.defaultProvider).toBe('bean'); // 删除项的 defaultProvider 让位
+  await page.screenshot({ path: path.join(SHOT_DIR, 'B7-provider-deleted.png'), fullPage: true });
+});
+
+test('B8. 调试中徽标单源在场（seal ON 配置面同枚）', async ({ page }) => {
+  const state = { status: statusMissingKey, existingSecrets: new Set() };
+  const { install } = wireRoutes(page, state);
+  await install();
+  await openHarness(page);
+  await expect(page.locator('#badge-slot .imagegen-badge')).toHaveText('调试中');
 });
