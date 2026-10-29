@@ -26,6 +26,10 @@
 //   T10 v2.1 减法纪律（作者令 2026-10-28 22:42「简约一点…」）：ghost 提示行/
 //       session 徽标/转交钮零残留；服务端转录中的 sys 帧渲染面永久过滤
 //       （收进不可见处——转录数据仍存、气泡面只出 user/ai 两族）
+//   T11 可见性闸（作者缺陷报 2026-10-29「Askmode怎么在插件面板里也有？」）：
+//       入口钮只在文件型标签页（有真实文件 backing 的 canvas tab）挂载显示；
+//       插件面板等非文件型 surface 零残留（display:none 出命中盒），切卡离开
+//       文件 tab 即隐、开着切走即一并收起，切回文件 tab 复现
 //
 // 运行：node tests/canvas-ask-dock.spec.mjs
 // 可选 env：PORT（默认 8216，避开在跑 spec 的固定端口）、ASK_SHOTS_DIR（截图目录）。
@@ -470,6 +474,34 @@ try {
   });
   ok('T10b 服务端转录 sys 帧渲染面永久过滤（气泡面只出 user/ai 两族）',
     t10b.sys === 0 && t10b.user === 1 && t10b.ai === 1 && !t10b.hasReceiptText, JSON.stringify(t10b));
+
+  // T11 可见性闸（作者缺陷报 2026-10-29「Askmode怎么在插件面板里也有？」）：
+  // 入口钮只在文件型标签页挂载显示；插件面板/非文件型 surface 零残留
+  // （display:none = 出布局出命中盒），切卡离开文件 tab 即隐即收、切回复现。
+  const fabGate = () => page.evaluate(() => {
+    const f = document.querySelector('.ask-fab');
+    const d = document.querySelector('.ask-dock');
+    return {
+      fabPresent: !!f, fabHidden: !!f && getComputedStyle(f).display === 'none',
+      dockClosed: d ? d.classList.contains('closed') : null,
+    };
+  });
+  // 此刻 active = 文件卡 A（T10 留下的 dock 开着）——文件态入口在场。
+  let t11 = await fabGate();
+  ok('T11a 文件态 tab 入口在场（可见性闸放行）', t11.fabPresent && !t11.fabHidden, JSON.stringify(t11));
+  // 切到插件面板 tab（真实面板页签腿：canvas.openTab type=plugins，无 absPath）
+  // ——作者缺陷报现场（plugin-viewer/工具面板同族非文件型 surface）。
+  await page.evaluate(() => import('./js/canvas.js').then((m) => m.openTab('plugins', '插件', { type: 'plugins', closable: true })));
+  await sleep(500);
+  t11 = await fabGate();
+  ok('T11b 插件面板 tab 入口零残留（display:none 出命中盒）', t11.fabPresent && t11.fabHidden, JSON.stringify(t11));
+  ok('T11c 切卡离开文件 tab：开着切走即一并收起（dock .closed）', t11.dockClosed === true, JSON.stringify(t11));
+  await shot(page, 't11-plugin-panel-no-fab');
+  // 切回文件卡 → 入口复现（可见性闸放行）。
+  await openFile(page, '记忆检索调优笔记.md');
+  await sleep(400);
+  t11 = await fabGate();
+  ok('T11d 切回文件 tab 入口复现（闸随切卡落位）', t11.fabPresent && !t11.fabHidden, JSON.stringify(t11));
 
   await page.close();
 
