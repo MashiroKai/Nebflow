@@ -188,20 +188,18 @@ async function cardDump(page) {
         backgroundFill: cs.backgroundColor,
         borderColor: cs.borderTopColor,
       } : null,
-      // 几何（卡片右上）：开关是状态区**唯一子元素**（空框不占位）
+      // 几何：单 toggle 定版（2026-10-29）——唯一开关在展开详情区 actions 行；
+      // 条目行状态区只剩 chevron 单子元素（行尾开关随批退场）
       geom: (() => {
         const head = card?.querySelector('.plugins-card-head');
         const state = card?.querySelector('.plugins-card-state');
         if (!card || !head || !state || !dsw) return null;
-        const r = (el) => el.getBoundingClientRect();
-        const dr = r(dsw), hr = r(head);
         return {
           inHead: head.contains(dsw),
           inState: state.contains(dsw),
           pillAbsent: !pill,
-          // 状态区唯一子元素 = 承载 toggle 的 `.plugins-card-dispatch` 包裹（无占位元素）
-          stateOnlyChild: state.children.length === 1 && !!state.firstElementChild?.querySelector('[data-plugin-dispatch]'),
-          rightAlignedInHead: (hr.right - dr.right) <= 4,
+          // 状态区唯一子元素 = chevron（行尾开关已退场；开关本体在详情区）
+          stateChevronOnly: state.children.length === 1 && !!state.firstElementChild?.classList.contains('plugins-item-chevron'),
         };
       })(),
     };
@@ -239,11 +237,10 @@ test('件1: 插件面板两处可见小字整体删除；toggle 本体/状态样
     expect(s.toggleRole, `[${locale}] toggle role=switch`).toBe('switch');
     expect(s.toggleDisabled, `[${locale}] 未封禁 ⇒ toggle 可点（非 disabled）`).toBe(false);
     expect(s.toggleOn, `[${locale}] 默认态 toggle = on`).toBe(true);
-    expect(s.geom?.inState, `[${locale}] toggle 仍在卡片状态区（右上）`).toBe(true);
-    expect(s.geom?.inHead, `[${locale}] toggle 仍在卡片头行`).toBe(true);
+    expect(s.geom?.inState, `[${locale}] toggle 不在卡片状态区（单 toggle 定版：唯一位 = 详情区）`).toBe(false);
+    expect(s.geom?.inHead, `[${locale}] toggle 不在卡片头行（条目行零控件）`).toBe(false);
     expect(s.geom?.pillAbsent, `[${locale}] 状态区内无药丸元素（空框不占位）`).toBe(true);
-    expect(s.geom?.stateOnlyChild, `[${locale}] 状态区只剩 toggle 一个子元素（零占位残留）`).toBe(true);
-    expect(s.geom?.rightAlignedInHead, `[${locale}] toggle 行盒右对齐`).toBe(true);
+    expect(s.geom?.stateChevronOnly, `[${locale}] 状态区只剩 chevron 一个子元素（行尾开关退场，零占位残留）`).toBe(true);
 
     // ── 保留面：可访问性（aria-label 仍 = locale plugins.dispatchLabel，非空）──
     expect(s.toggleAria, `[${locale}] toggle aria-label 保留 = ${REMOVED_LABEL_TEXT[locale]}`).toBe(REMOVED_LABEL_TEXT[locale]);
@@ -254,11 +251,16 @@ test('件1: 插件面板两处可见小字整体删除；toggle 本体/状态样
     // 状态**样式**的载体随之只在有文字态出现 ⇒ 视觉读数在下面的封禁态里逐条钉（非本处）。
     expect(s.pillVisual, `[${locale}] 空态无药丸 ⇒ 无计算样式可读`).toBe(null);
 
-    // ── 可点性 + 状态样式翻转（写 dispatch.authorEnabled，wire 只出现 disable/enable）──
+    // ── 可点性 + 状态样式翻转（写 dispatch.authorEnabled，wire 只出现 disable/enable）
+    // 单 toggle 定版（2026-10-29）：开关在展开详情区 ⇒ 先展开条目行再点击。
     const posts = [];
     page.on('request', (req) => {
       if (req.method() === 'POST' && new URL(req.url()).pathname.startsWith('/api/plugins/')) posts.push(new URL(req.url()).pathname);
     });
+    await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]');
+    await page.waitForFunction(() =>
+      !document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-item-detail')?.hidden,
+      { timeout: 8000 });
     await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]');
     await page.waitForFunction(() =>
       !document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]')?.classList.contains('on'),

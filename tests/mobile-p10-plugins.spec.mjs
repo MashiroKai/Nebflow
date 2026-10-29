@@ -5,12 +5,14 @@
 //   页范式 …… 右列键推入 .mobile-page（壳既有）；内容面 = 收编桌面 plugins
 //        pane（GET /api/plugins 冻结契约 C6，桌面零改动）。
 //   §2-P10 插件卡 …… 桌面条目式形态同构：名+版本·作者 meta → 状态药丸 →
-//        行尾分发开关（nb-toggle）+ chevron 展开详情（描述/组成 chips/
-//        Plugin.md/actions）。
+//        chevron 展开详情（描述/组成 chips/Plugin.md/actions；唯一分发开关在
+//        详情区 actions 行——单 toggle 定版 2026-10-29）。
 //   已封禁整卡降透明 …… 桌面红边保留 + 手机层 opacity .55 叠加（纯漆面）。
 //   开放点① 三态 pill/「任务分发中」灰 pill …… 桌面态机原样（本夹具只布
 //        blocked/on 两态；transition 态桌面既有）。
-//   开放点② 分发开关行内常驻 …… 桌面收起态行尾开关既有（data-plugin-dispatch-row）。
+//   开放点② 分发开关行内常驻 …… 🔴 单 toggle 定版（2026-10-29 作者令）后口径
+//        更新：行尾第二视图退场，开关唯一位 = 展开详情区（桌面同构，开放点②的
+//        「行内常驻」形态随之退役——面板单一开关原则优先）。
 //   开放点③④ 拒载列表/无安装入口 …… 桌面既有（rejected 渲染 / 无安装钮），
 //        夹具 rejected 空册。
 //   样张「组成 chips 在卡面」…… 桌面 chips 在展开详情（accordion 既有信息
@@ -140,7 +142,7 @@ test('T1 plugins page: adopted pane, two cards stacked full-width', async ({ pag
   expect(errors).toEqual([]);
 });
 
-test('T2 card form: name + meta, dispatch toggle row-end, expand shows composition chips', async ({ page }) => {
+test('T2 card form: name + meta, single dispatch toggle in the detail area, composition chips', async ({ page }) => {
   const errors = watchErrors(page);
   await pushPage(page, 'plugins');
 
@@ -149,14 +151,17 @@ test('T2 card form: name + meta, dispatch toggle row-end, expand shows compositi
   // meta = 版本 · 作者（样张 chips 族的版本·作者两粒在收起行）。
   await expect(c1.locator('.plugins-card-meta')).toContainText('v1.4.0');
   await expect(c1.locator('.plugins-card-meta')).toContainText('nebflow');
-  // 行尾分发开关（开放点②：收起态行内常驻，data-plugin-dispatch-row）。
-  const toggle = c1.locator('[data-plugin-dispatch-row="web-search"]');
+  // 单 toggle 定版（2026-10-29）：条目行零开关；每卡恰一枚（-dispatch 钩子）且在
+  // 详情区内——展开后可见可点。
+  await expect(c1.locator('[data-plugin-dispatch-row]')).toHaveCount(0);
+  await expect(c1.locator('[data-plugin-dispatch]')).toHaveCount(1);
+  await c1.locator('.plugins-card-head').click();
+  const toggle = c1.locator('.plugins-item-actions [data-plugin-dispatch="web-search"]');
   await expect(toggle).toBeVisible();
   expect(await toggle.getAttribute('aria-checked')).toBe('true');
   expect(await toggle.evaluate((el) => el.classList.contains('nb-toggle'))).toBe(true);
 
   // 展开详情：组成 chips（技能/MCP 计数）—— 桌面 accordion 既有层级。
-  await c1.locator('.plugins-card-head').click();
   const detail = c1.locator('.plugins-item-detail');
   await expect(detail).toBeVisible();
   await expect(detail.locator('.plugins-card-composition')).toContainText('技能');
@@ -172,9 +177,11 @@ test('T3 blocked card: dimmed, banned pill, dispatch disabled; back contract', a
   // 整卡降透明（样张 P10；桌面红边保留 + 手机层 opacity 叠加）。
   const opacity = await c2.evaluate((el) => getComputedStyle(el).opacity);
   expect(parseFloat(opacity)).toBeLessThan(1);
-  // 已封禁药丸 + 分发开关禁用。
+  // 已封禁药丸 + 分发开关禁用（单 toggle 定版：唯一开关在详情区，展开后可见）。
   await expect(c2.locator('.plugins-state-pill')).toContainText('已封禁');
-  expect(await c2.locator('[data-plugin-dispatch-row]').getAttribute('disabled')).not.toBeNull();
+  await expect(c2.locator('[data-plugin-dispatch-row]')).toHaveCount(0);
+  await expect(c2.locator('[data-plugin-dispatch]')).toHaveCount(1);
+  expect(await c2.locator('[data-plugin-dispatch]').getAttribute('disabled')).not.toBeNull();
 
   // 返回契约。
   await page.locator('.mobile-page[data-page="plugins"] .mobile-back-btn').click();

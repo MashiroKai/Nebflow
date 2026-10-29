@@ -2265,21 +2265,16 @@
   color: var(--color-frame-text-dim);
   white-space: nowrap;
 }
-/* 右上状态区（补充令④：badge/chevron 自裁右上，不与文字争位）。 */
+/* 右上状态区（补充令④：badge/chevron 自裁右上，不与文字争位）。
+   🔴 单 toggle 定版（2026-10-29 作者令）：本区原「收起态行尾派发开关」
+   （`.plugins-card-state .nb-toggle`，2026-10-07 14:13 令①）随单 toggle 批整组
+   退场——每卡唯一开关回归详情区 `.plugins-item-actions`（js/plugins.js 单点）。 */
 .plugins-card-state {
   grid-column: 2;
   grid-row: 1;
   display: flex;
   align-items: center;
   gap: 6px;
-}
-/* 收起态行尾派发开关（2026-10-07 14:13 作者令①）：在 `.plugins-card-state`
-   内、药丸之后 chevron 之前（chevron 保持行末展开 affordance，与 badge/chevron
-   协调的行尾位）。开关本体 = 共享 nb-toggle（组件节样式，34×18 原尺寸）；
-   点击/Enter/Space 的 stopPropagation 在 js/bindCardEvents 统一绑定——收起态
-   点击只动开关，不触发整行 accordion。两视图（行尾 + 详情区）一处状态源。 */
-.plugins-card-state .nb-toggle {
-  flex: none;
 }
 /* 行 2 = 一行摘要（补充令③：独立行，最多两行，超出省略）。 */
 .plugins-item-summary {

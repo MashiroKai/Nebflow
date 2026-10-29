@@ -274,7 +274,8 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
         rowRole: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]')?.getAttribute('role'),
         rowAriaExpanded: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]')?.getAttribute('aria-expanded'),
         detailHiddenBefore: q('.plugins-card[data-plugin="e2e-hello"] .plugins-item-detail')?.hidden,
-        // 既有钩子仍钉详情区；行尾开关（14:13 令①）= -row 钩子上条目行
+        // 单 toggle 定版（2026-10-29）：条目行零控件；唯一开关 = 详情区 -dispatch 钩子；
+        // -row 钩子退场（页面级零残留）
         rowHasDispatch: !!q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item] [data-plugin-dispatch]'),
         rowHasDispatchRow: !!q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item] [data-plugin-dispatch-row]'),
         cardDesc: txt(q('.plugins-card[data-plugin="e2e-hello"] .plugins-card-desc')),
@@ -288,7 +289,7 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
         moreCount: qa('#plugins-content [data-plugin-more]').length,
         menuCount: qa('#plugins-content [data-plugin-menu]').length,
         blockCount: qa('#plugins-content [data-plugin-block]').length,
-        // 既有钩子 = 展开详情区内（2026-10-07 条目式批）；行尾第二视图 = -row 钩子
+        // 单 toggle 定版（2026-10-29）：唯一钩子 = -dispatch（详情区）；-row 零残留
         dispatchCount: qa('#plugins-content [data-plugin-dispatch]').length,
         rowDispatchCount: qa('#plugins-content [data-plugin-dispatch-row]').length,
         dispatchRole: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]')?.getAttribute('role'),
@@ -304,16 +305,17 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
           const dsw = card?.querySelector('[data-plugin-dispatch]');
           if (!card || !head || !detail || !dsw) return null;
           return {
-            // 2026-10-07 条目式批：既有钩子开关在详情区 actions 行内；
-            // 14:13 令①：行尾开关（-row 钩子）在条目行上——head 恰一控件
+            // 2026-10-07 条目式批：唯一开关在详情区 actions 行内（单 toggle 定版
+            // 2026-10-29 后仍是唯一位置）；条目行零控件
             inDetail: detail.contains(dsw), inHead: head.contains(dsw),
             inActions: !!dsw.closest('.plugins-item-actions'),
             rowControls: head.querySelectorAll('button, [role="switch"]').length,
-            // 2026-09-15「删掉空框」：默认态药丸元素缺席；14:13 令①后状态区 =
-            // 行尾开关 + chevron（药丸缺席时这俩就是全部子元素）
+            // 2026-09-15「删掉空框」：默认态药丸元素缺席；单 toggle 定版后状态区 =
+            // chevron 单子元素（行尾开关随批退场）
             pillAbsent: !pill,
-            stateToggleAndChevron: !!state && state.children.length === 2
-              && !!state.querySelector('[data-plugin-dispatch-row]')
+            stateChildren: state ? state.children.length : null,
+            stateChevronOnly: !!state && state.children.length === 1
+              && !state.querySelector('[data-plugin-dispatch], [data-plugin-dispatch-row]')
               && !!state.querySelector('.plugins-item-chevron'),
           };
         })(),
@@ -347,8 +349,8 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
     expect(dump.rowRole, `[${locale}] item row carries role=button`).toBe('button');
     expect(dump.rowAriaExpanded, `[${locale}] item row starts collapsed (aria-expanded=false)`).toBe('false');
     expect(dump.detailHiddenBefore, `[${locale}] detail area collapsed initially`).toBe(true);
-    expect(dump.rowHasDispatch, `[${locale}] 既有钩子不在条目行上（行上是 -row 钩子第二视图）`).toBe(false);
-    expect(dump.rowHasDispatchRow, `[${locale}] 收起态行尾开关在场（14:13 令① data-plugin-dispatch-row）`).toBe(true);
+    expect(dump.rowHasDispatch, `[${locale}] 既有钩子不在条目行上（唯一开关在详情区）`).toBe(false);
+    expect(dump.rowHasDispatchRow, `[${locale}] 行尾开关零元素（单 toggle 定版 -row 钩子退场）`).toBe(false);
     expect(dump.card, `[${locale}] unified plugin card rendered`).toBe(true);
     expect(dump.cardName, `[${locale}] card shows plugin name`).toBe('e2e-hello');
     expect(dump.cardMeta, `[${locale}] card meta = version + author`).toBe(locale === 'zh-CN' ? 'v1.0.0 · 作者 spec' : 'v1.0.0 · by spec');
@@ -378,14 +380,15 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
     expect(dump.dispatchVisibleLabel, `[${locale}] 开关旁无可见 label 小字（「任务分发器可见性」已删）`).toBe(null);
     expect(dump.dispatchAriaLabel, `[${locale}] 开关 aria-label 仍 = locale plugins.dispatchLabel（可访问性面保留）`)
       .toBe(locale === 'zh-CN' ? '任务分发器可见性' : 'Dispatcher visibility');
-    // 2026-10-07 条目式批几何钉：开关收进展开详情区（actions 行内）；条目行零控件
+    // 2026-10-07 条目式批几何钉（单 toggle 定版 2026-10-29 收口）：唯一开关收进展开
+    // 详情区（actions 行内）；条目行零控件；-row 钩子页面级零残留
     expect(dump.dispatchGeom?.inDetail, `[${locale}] 开关落在展开详情区`).toBe(true);
     expect(dump.dispatchGeom?.inActions, `[${locale}] 开关在详情区 actions 行`).toBe(true);
-    expect(dump.dispatchGeom?.inHead, `[${locale}] 既有钩子开关不在条目行上（在详情区）`).toBe(false);
-    expect(dump.dispatchGeom?.rowControls, `[${locale}] 条目行恰一行尾开关控件（14:13 令①）`).toBe(1);
+    expect(dump.dispatchGeom?.inHead, `[${locale}] 唯一开关不在条目行上（在详情区）`).toBe(false);
+    expect(dump.dispatchGeom?.rowControls, `[${locale}] 条目行零控件（单 toggle 定版）`).toBe(0);
     expect(dump.dispatchGeom?.pillAbsent, `[${locale}] 条目行状态区无药丸元素（空框不占位）`).toBe(true);
-    expect(dump.dispatchGeom?.stateToggleAndChevron, `[${locale}] 状态区 = 行尾开关 + chevron（14:13 令①）`).toBe(true);
-    expect(dump.rowDispatchCount, `[${locale}] 行尾开关每卡恰一（-row 钩子）`).toBe(1);
+    expect(dump.dispatchGeom?.stateChevronOnly, `[${locale}] 状态区 = chevron 单子元素（行尾开关退场）`).toBe(true);
+    expect(dump.rowDispatchCount, `[${locale}] -row 钩子页面级零残留（单 toggle 定版）`).toBe(0);
     expect(dump.detailHiddenBefore, `[${locale}] 详情区默认收起`).toBe(true);
     expect(dump.rejectedPill, `[${locale}] rejected card carries the pill`).toBe(locale === 'zh-CN' ? '拒载' : 'Rejected');
     expect(dump.rejectedNoControls, `[${locale}] rejected card carries no control at all`).toBe(true);
