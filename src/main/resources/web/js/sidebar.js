@@ -17,6 +17,10 @@ import { clearMemoryCache } from './memory.js';
 // eyeSvg/eyeOffSvg（provider 密码域可见性切换图标）单源 = sidebar/providersUi.js（FE 拆分后
 // 迁入；JEV 密钥引用行本地批 2026-10-09 的新调用点自模块引入，禁第二份字面量）。
 import { eyeSvg, eyeOffSvg } from './sidebar/providersUi.js';
+// JeV「测试可用性」钮（settings-panel-jev-imagegen 批 2026-10-29 作者令「然后
+// Jev/生图，也要像我们LLM这样，有个按钮来测试可用性」）：钮 + 结果块 + 绑定面
+// 全在 sidebar/jevTestButton.js（与 LLM 测试钮同组件同口径）。
+import { jevTestButtonHTML, jevTestResultsHTML, bindJevTestButton } from './sidebar/jevTestButton.js';
 import { chatViews, setActiveView, activeView } from './chatView.js';
 import { cleanupCardIframes, resetCardAccumulator } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
@@ -960,9 +964,11 @@ export function renderSettings() {
           <div class="cfg-hint">${t('settings.jevHint')}</div>
           <div style="display:flex;gap:8px;margin-top:8px">
             <button class="cfg-btn cfg-btn-primary" id="btn-save-jev">${t('settings.save')}</button>
+            ${jevTestButtonHTML()}
             <span class="inline-state" id="jev-save-state" role="status" aria-live="polite"></span>
           </div>
         </div>
+        ${jevTestResultsHTML()}
       </div>
     </div>
     <div class="settings-section">
@@ -1405,6 +1411,16 @@ function bindSettingsEvents(content, cfg) {
     }
     // keyRef 指针可能刚被改写——保存成功后按新 keyRef 重拉 key 值明文。
     if (ok) refreshJevKeyValue();
+  });
+
+  // JeV「测试可用性」钮（settings-panel-jev-imagegen 批 2026-10-29）：表单
+  // 当前值即被测对象（点击时现读——未保存的 endpoint/keyRef 改动照样测）。
+  bindJevTestButton(content, {
+    getForm: () => ({
+      provider: document.getElementById('cfg-jev-provider')?.value || '',
+      endpoint: document.getElementById('cfg-jev-endpoint')?.value.trim() || '',
+      keyRef: document.getElementById('cfg-jev-keyref')?.value.trim() || '',
+    }),
   });
 
   // ── Jev section: allocation-decision health (jev-plugins batch, 2026-10-07;

@@ -2690,6 +2690,19 @@
 .cfg-test-result-line.err .cfg-test-line-text { color: var(--status-error-icon); font-weight: 500; }
 .cfg-test-result-line.testing .cfg-test-line-text { color: var(--color-frame-text); }
 
+/* settings-panel-jev-imagegen 批 ③件（2026-10-29 作者令「Jev/生图也要有测试
+   可用性按钮」）：生图「实跑一次最小生成」的产物缩略预览——挂结果行文本位内，
+   玻璃基座零新色值（边框走 frame token，随亮暗双主题）。 */
+.cfg-test-thumb {
+  display: block;
+  margin-top: 6px;
+  max-width: 132px;
+  max-height: 132px;
+  border-radius: 8px;
+  border: 1px solid var(--color-frame-border-light);
+  background: var(--color-frame-bg, transparent);
+}
+
 /* ── thinking-config Phase 2（2026-10-29）→ 收归全局（settings-panel-fourfix
    批 ①件，作者令 2026-10-29「不要每个模型都能配置思考模式」）────────────────
    per-model 思考下拉（.cfg-model-thinking）与强制思考徽标

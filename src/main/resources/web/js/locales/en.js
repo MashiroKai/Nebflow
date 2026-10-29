@@ -1111,6 +1111,17 @@ export default {
   'settings.imagegenDelete': 'Delete this provider',
   'settings.imagegenDeleteConfirm': 'Click again to confirm',
   'settings.imagegenDeleted': 'Provider deleted',
+  // settings-panel-jev-imagegen batch (2026-10-29, author order: give JeV and
+  // imagegen the same test-availability button the LLM face has). JeV = one
+  // button; imagegen = two levels (light probe + one minimal real generation).
+  'settings.jevTestBtn': 'Test availability',
+  'settings.jevTestTitle': 'Connectivity test: one minimal real call to the allocation channel (tests the current form values — unsaved edits included)',
+  'settings.imagegenTestBtn': 'Test availability',
+  'settings.imagegenTestTitle': 'Light probe: key resolution + upstream reachability (models endpoint)',
+  'settings.imagegenGenBtn': 'Run one minimal generation',
+  'settings.imagegenGenTitle': 'Hits the upstream for real: one generation at the smallest size / lowest quality (artifact goes to the temp dir)',
+  'settings.imagegenGenRunning': 'Generating… (seconds to tens of seconds)',
+  'settings.imagegenProbeModelsAbsent': 'Upstream reachable (models face absent, HTTP {code}) — auth unverified; run the minimal generation for the authoritative verdict',
   // settings-panel batch B (2026-10-28): per-model connectivity test.
   'provider.testModelTitle': 'Connectivity test: one minimal real call to this model',
   'provider.testRunning': 'Testing…',
