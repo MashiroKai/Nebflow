@@ -95,6 +95,7 @@
 | `nebflow.core.delegate.*` 全部 + `ChainViewWsEntrySpec` | **159/159** |
 | 九套扫尾（NodeReport/TaskBoard/MailTool 等） | **63/63** |
 | `NodeMessageSpec` S2-RUNNING | 单跑 13/13 绿（合跑时一次超时为既有并发噪声，与本批无涉） |
+| **提交态复跑**（本分支 d8bf012b4 上：台账两套 + 邻接九套 + `nebflow.core.delegate.*` 全量 + `ChainViewWsEntrySpec`） | **237/237** |
 
 ## 4. 边界与不做的事
 
