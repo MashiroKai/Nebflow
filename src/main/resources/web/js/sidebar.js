@@ -10,7 +10,7 @@ function showBatchDeleteModalLazy() {
   import('./modal.js').then(({ showBatchDeleteModal }) => showBatchDeleteModal());
 }
 import { renderMarkdownWithMath, smartScroll, stopSpinner, createIconsIn, statusIcon } from './utils.js';
-import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF } from './chat.js';
+import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF, bindCollapsibleToggle } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { clearMemoryCache } from './memory.js';
@@ -55,8 +55,10 @@ import { protocolFormLabel, escapeHtml, flushConfigToServer, showProviderModal, 
 // 生图设置节（settings-panel 批 ②③件）与每模型连接性测试钮（B 件）——渲染/
 // 绑定单点在各自子模块，本文件只挂壳 + 转发调用（子模块不回指本文件）。
 import { bindImagegenSection, debugBadge } from './sidebar/imagegenSection.js';
-import { modelTestButtonHTML, bindModelTestButtons } from './sidebar/modelTestButton.js';
-import { modelThinkingSelectHTML, bindModelThinkingSelects, bindThinkingLayerEcho } from './sidebar/modelThinkingSelect.js';
+// 连接性测试钮已随 settings-panel-fourfix 批 ②件（2026-10-29 作者令「连接性
+// 测试按钮应放到 LLM provider 配置页面里」）迁入 provider 编辑弹窗——设置页
+// provider 卡模型行不再携带测试钮；模块 = sidebar/modelTestButton.js（弹窗面
+// 自行 import）。
 export { saveNewProvider, openProviderWizard, validateContextWindow, CTX_WINDOW_HARD_CEILING } from './sidebar/providersUi.js';
 import { openRulesEditor, openPathPicker, injectRenderSessionSidebar } from './sidebar/pathRules.js';
 export { handleRulesData, handleRulesSaved, handleRulesDeleted, initRulesModal, openPathPicker, openPathPickerCallback, handleBrowseResult, initPathPicker } from './sidebar/pathRules.js';
@@ -1046,13 +1048,6 @@ export function renderSettings() {
   // 原位绘制两形态之一（seal OFF 提示位 / ON 配置面）。失败 = 错误提示行，
   // 不造假数据。
   void bindImagegenSection();
-  // 每模型连接性测试钮（B 件）：对本次渲染的 provider 卡子树绑定（面板整体
-  // 重渲 → 这里重绑；dataset.testBound 防重复）。
-  bindModelTestButtons(content);
-  // 每模型思考档位下拉（thinking-config Phase 2）：同族按渲染子树绑定 +
-  // thinkingLayerSaved 回执订阅（重拉 configData 刷新下拉读数；订阅全局一次）。
-  bindModelThinkingSelects(content);
-  bindThinkingLayerEcho();
   // JeV key 值明文直显（本批①件）：按当前 keyRef 拉 GET /api/secrets/<name>/
   // value 填只读行（默认明文，eye 仅可选遮蔽）。失败/缺 keyRef = 占位说明。
   refreshJevKeyValue();
@@ -1136,15 +1131,12 @@ function renderProviderCard(name, p) {
   const modelCount = (p.models || []).length;
   const modelsHtml = (p.models || []).map(m => {
     const ref = `${name}/${m.id}`;
-    // B 件（2026-10-28）：每模型行尾连接性测试钮（modelTestButton 单点——
-    // 渲染/绑定/三态绘制都在该模块，本处只拼装）。
-    // thinking-config Phase 2（2026-10-29）：模型行内思考档位下拉（设计 §5
-    // 最小面——继承链所见即所得 + 强制模型 off 置灰徽标；渲染/绑定在该子模块）。
+    // 模型行面（fourfix 批 ②件后）：名称 + vision 徽标。连接性测试钮已迁入
+    // provider 编辑弹窗（作者令 2026-10-29「连接性测试按钮应放到 LLM provider
+    // 配置页面里」）；思考配置已收归全局（本批①件）——模型行零配置控件。
     return `<div class="cfg-model-row" data-model-ref="${escapeHtml(ref)}">
       <span class="cfg-model-name">${escapeHtml(m.id)}</span>
-      ${modelThinkingSelectHTML(name, m, p)}
       <div class="cfg-model-vision">${renderVisionBadge(ref)}</div>
-      ${modelTestButtonHTML(name, m.id)}
     </div>`;
   }).join('');
 
@@ -2345,8 +2337,16 @@ export function resetChatForActiveSession() {
           content.style.display = visible ? 'none' : '';
           label.classList.toggle('expanded', !visible);
         };
+      } else {
+        // 重连折叠持久批（2026-10-20）口径对齐（残片清理批 2026-10-29）：busy
+        // 重建面恒折叠 —— 会话切换重放腿与 historyReplay 同一契约，不得把缓冲
+        // 的思考全文摊开；用户可点 label 手动展开。
+        content.style.display = 'none';
+        bindCollapsibleToggle(label, () => content);
       }
-      content.innerHTML = renderMarkdownWithMath(pv.stream.thinkingText, true, { cache: done }) + (!done ? '<span class="cursor"></span>' : '');
+      // 残片清理批：重放补发的 thinking 段按历史渲染，不带流式游标（与
+      // historyReplay 同批语义；真仍在飞的轮次由 live 增量帧的 rAF 自带游标）。
+      content.innerHTML = renderMarkdownWithMath(pv.stream.thinkingText, true, { cache: done });
       bubble.appendChild(label);
       bubble.appendChild(content);
       row.appendChild(bubble);

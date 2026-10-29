@@ -31,6 +31,13 @@ import org.http4s.dsl.io.*
  *                                        paragraph index → best-effort stand-recall →
  *                                        doc-level fallback (the xerj integration seam;
  *                                        the graph itself never depends on memory-db).
+ * `GET /api/wiki/term`                 — term registry lookup (`name` required,
+ *                                        `project` optional; 词条引用批): glossary/
+ *                                        doc-intro term entry + definition + location
+ *                                        anchor. Unique hit → `{found, resolved, term}`;
+ *                                        multiple same-tier hits → `{resolved:false,
+ *                                        ambiguous, candidates}`; unregistered → 404.
+ *                                        Serves from the graph TTL cache (30s).
  * `GET /api/wiki/remote-doc`           — single-file fetch from a peer device
  *                                        (`device` + `path` query params) for opening
  *                                        remote docs read-only.
@@ -68,6 +75,18 @@ private[gateway] object WikiRoutes:
             BadRequest(Json.obj("error" -> "project, rel and anchor are required".asJson))
           else
             service.paragraph(project, rel, anchor).flatMap {
+              case Left(err) => NotFound(Json.obj("error" -> err.asJson))
+              case Right(json) => Ok(json)
+            }
+        }
+
+      case req @ GET -> Root / "wiki" / "term" =>
+        withAuth(req) {
+          val name = req.params.getOrElse("name", "")
+          val project = req.params.get("project").map(_.trim).filter(_.nonEmpty)
+          if name.isBlank then BadRequest(Json.obj("error" -> "name is required".asJson))
+          else
+            service.term(name, project).flatMap {
               case Left(err) => NotFound(Json.obj("error" -> err.asJson))
               case Right(json) => Ok(json)
             }

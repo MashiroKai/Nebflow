@@ -638,14 +638,15 @@ export default {
   // 对话层活性批（2026-10-22）：插话即时确认标 + 断连横幅文案。
   'ws.connBanner.reconnecting': '连接断开 · 正在重连',
   'ws.connBanner.pending': '连接断开 · 正在重连 · {n} 条消息待送达',
-  // 控制台单实例批（2026-10-27）：接管独占模态（takeoverModal.js）
+  // 控制台单实例批（2026-10-27）：接管独占模态（takeoverModal.js）；
+  // 四修批（2026-10-29 作者令）：退出面/重入门作废（退出直达官网个人主页），
+  // 新增接管 loading 态 + 失败提示。
   'takeover.title': '控制台已在其他位置打开',
   'takeover.msg': '您在其他地方登录了控制台，此窗口已让出控制权。可退出，或重新接管。',
   'takeover.retake': '重新接管',
   'takeover.exit': '退出',
-  'takeover.exitTitle': '已退出控制台',
-  'takeover.exitMsg': '控制台已在其他位置打开，本页已断开且不再自动重连。',
-  'takeover.reenter': '重新进入',
+  'takeover.retaking': '接管中…',
+  'takeover.retakeFailed': '接管失败，请重试',
   // f1-send-queue（2026-10-19）：断线入队的待送达小标 tooltip + 队列溢出告警。
   'chat.pendingSend': '待送达 · 重连后自动补发',
   'input.queueOverflow': '消息队列已满（100 条）：最早的一条已丢弃',
@@ -809,12 +810,10 @@ export default {
   'settings.thinkingEffort.medium': '中',
   'settings.thinkingEffort.high': '高',
   'settings.thinkingEffort.max': '最高',
-  // thinking-config Phase 2（2026-10-29）：每模型思考档位下拉（设计 §5 最小面）。
-  'settings.thinkingPerModel': '思考档位',
-  'settings.thinkingInherit': '继承',
-  'settings.thinkingEffective': '当前 {v}',
-  'settings.thinkingForcedBadge': '模型强制开启思考',
-  'settings.thinkingMediumMap': '中→高',
+  // thinking-config Phase 2（2026-10-29）已随 settings-panel-fourfix 批 ①件退役
+  // （作者令「不要每个模型都能配置思考模式」）：thinkingPerModel/Inherit/
+  // Effective/ForcedBadge/MediumMap 五键随 per-model 控件一并移除——思考档位
+  // 唯一配置点 = 上方 settings.thinkingMode 全局下拉。
   // === 权限模式设置页控件（2026-09-12 批）已于 permshield F1（2026-09-13）删除 ===
   // 7 个 `settings.safetyMode*` 键随控件一并移除（作者重裁候选 B ①「删设置页」）。
   // 档位指引改由盾牌承载：`bypass.title.*`（三档 tooltip）+ `bypass.modeSetGlobal`
@@ -1044,14 +1043,20 @@ export default {
   'settings.imagegenNotCompiled': '未编入（release 构建零痕迹）',
   'settings.imagegenNotCompiledHint': '本构建未开启 STAND_IMAGEGEN，生图能力面整体未编入，此处仅显示状态位；开发构建以 STAND_IMAGEGEN=1 启用。',
   'settings.imagegenEnabled': '启用生图',
-  'settings.imagegenEnabledHint': '缺 key 或此处关闭时生图腿整体停用（Disabled）——引擎侧 graceful degrade，无半可用态。',
+  // fourfix 批 ③件（2026-10-29 作者令「整体精简」「前端永远不出现引用/keyRef/
+  // secrets 指针这类字眼与解释文案」）：engine 内部措辞长文案（EnabledHint/
+  // KeyHint/MissingKeyHint）与 keyRef 键（KeyRef/KeyRefRequired/KeySave）整链
+  // 移除——面板只认「填 API Key 值、保存」；指针名对用户不可见。
+  'settings.imagegenShortHint': '填入 API Key 并保存即可；未配 key 时生图停用。',
   'settings.imagegenProvider': '提供方',
+  'settings.imagegenAddProvider': '＋ 新增提供方…',
+  'settings.imagegenProviderNamePlaceholder': '新提供方名称（字母/数字/._-）',
   'settings.imagegenType': '协议适配',
+  'settings.imagegenTypePlaceholder': '选择协议适配',
   'settings.imagegenModel': '模型',
+  'settings.imagegenModelPlaceholder': '模型 ID',
   'settings.imagegenBaseUrl': '自定义端点（可选）',
   'settings.imagegenBaseUrlPlaceholder': '留空 = 适配器缺省端点',
-  'settings.imagegenKeyRef': '密钥引用（keyRef）',
-  'settings.imagegenKeyHint': 'keyRef 是 secrets/ 下的密钥名（指针），值永不进配置文件。',
   'settings.imagegenKeyConfigured': '已配置',
   'settings.imagegenKeyMissing': '待录入',
   'settings.imagegenKeyEntry': 'API Key',
@@ -1059,16 +1064,19 @@ export default {
   'settings.imagegenKeyReentryPlaceholder': '已配置——重新输入即覆盖',
   'settings.imagegenKeyShow': '显示 key 值',
   'settings.imagegenKeyHide': '隐藏 key 值',
-  'settings.imagegenKeySave': '保存密钥',
   'settings.imagegenKeySaved': '密钥已保存',
   'settings.imagegenKeySaveFailed': '保存失败（{code}）',
-  'settings.imagegenKeyRefRequired': '先填写 keyRef 再保存密钥',
   'settings.imagegenKeyEmpty': 'key 值为空',
-  'settings.imagegenMissingKeyHint': '缺 key = 生图腿停用（Disabled）；录入密钥后即恢复。',
   'settings.imagegenModelRequired': '模型不能为空',
-  'settings.imagegenNoProvider': '尚无 provider——先在 nebflow.json imagegen.providers 配置',
+  'settings.imagegenTypeRequired': '先选择协议适配',
+  'settings.imagegenNameRequired': '先填写提供方名称',
+  'settings.imagegenNameInvalid': '提供方名称只允许字母/数字/._-',
+  'settings.imagegenDelete': '删除此提供方',
+  'settings.imagegenDeleteConfirm': '再点一次确认删除',
+  'settings.imagegenDeleted': '提供方已删除',
   // settings-panel 批 B 件（2026-10-28）：每模型连接性测试钮。
   'provider.testModelTitle': '连接性测试：向该模型发一次最小真实调用',
+  'provider.testRunning': '测试中…',
   'provider.testModelOk': '可用（{ms}ms）',
   'provider.testModelFailedHttp': '测试失败（HTTP {code}）',
   'provider.testModelFailedIo': '网络错误——无法到达引擎',
@@ -1377,6 +1385,8 @@ export default {
   'askUser.attachmentDownload': '下载 {name}（该类型没有应用内查看器）',
     'askUser.pendingTitle': '待回答问题',
   // held-receipt 投递可靠性批（2026-10-21 fix 3）：「N 条回执待投递」徽标词条。
+  // 补投静默批（2026-10-29）：词条去机制名——「被子代理屏障扣留」（引擎内部
+  // 机制词）改人话「待补投」；作者可见面不出现屏障/force-drain 字样。
   'heldReceipts.title': '回执待投递',
   // 'heldReceipts.held'（屏障扣留过程态）retired 2026-10-29（作者令：过程性自愈
   // 状态零用户面，胶囊只渲染终态 unread）— seal: UserFaceProcessStateSealSpec.
@@ -1815,6 +1825,9 @@ export default {
   'task.repeatHourly': '每小时',
   'task.repeatDaily': '每天',
   'task.repeatWeekly': '每周',
+  // schedcard 批（2026-10-29）：定时任务专属卡（chat 流）文案
+  'task.cardChip': '定时任务',
+  'task.cardScheduledAt': '预定 {time}',
 
   // NebLink
   'neblink.thisDevice': '本机',
@@ -2614,6 +2627,7 @@ export default {
   'perception.tbLink': '链接',
   'perception.linkPrompt': '链接地址',
   'perception.removeAtt': '移除',
+  'perception.attMissingNote': '有附件文件不存在，发送已停用；可在画布点 × 移除后重试。',
   'perception.removeAddr': '移除',
   'perception.toPh': '收件人地址，回车添加',
   'perception.addrPh': '输入地址，回车添加',

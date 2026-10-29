@@ -798,14 +798,36 @@ class WebSocketRoutes(
               logger.warn(s"Failed to route message to agent $sessionId: ${e.getMessage}")
             }
           case None =>
-            sessionStore.getSessionMeta(sessionId).flatMap {
-              case Some(_) =>
-                ensureRootAgent(sessionId).flatMap(f).handleErrorWith { e =>
-                  logger.warn(s"Failed to route message to agent for session $sessionId: ${e.getMessage}")
-                }
-              case None =>
-                logger.warn(s"Dropping message to unknown session $sessionId (not a real session)") *> IO.unit
-            }
+            // Canvas ask mode（ask 三修 2026-10-29，作者报障「ask 等不到回复」）：
+            // ask 会话身份归 ask 绑定表（<dataRoot>/ask/index.json），**不进**
+            // session _index ⇒ 下面的 getSessionMeta fallback 对 ask id 恒 None
+            // ——首问即被 "Dropping message to unknown session" 拒掉（2026-10-29
+            // 10:27:40 实测日志），ask agent 永不 spawn、LLM 调用永不发出。修法：
+            // ask id 在查 meta 之前先问绑定表——有绑定 = 真会话，走
+            // ensureRootAgent（其 resolveAgentDef 已有 ask 分支：组装提示词 +
+            // ask 工具早退集）；无绑定才拒（fail-closed 口径不变）。
+            if nebflow.core.ask.AskSessions.isAskSession(sessionId) then
+              nebflow.core.ask.AskGatewayServices.instance match
+                case Some(svc) =>
+                  svc.registry.byId(sessionId).flatMap {
+                    case Some(_) =>
+                      ensureRootAgent(sessionId).flatMap(f).handleErrorWith { e =>
+                        logger.warn(s"Failed to route message to agent for ask session $sessionId: ${e.getMessage}")
+                      }
+                    case None =>
+                      logger.warn(s"Dropping message to unbound ask session $sessionId (no file binding)") *> IO.unit
+                  }
+                case None =>
+                  logger.warn(s"Dropping message to ask session $sessionId (ask services unavailable)") *> IO.unit
+            else
+              sessionStore.getSessionMeta(sessionId).flatMap {
+                case Some(_) =>
+                  ensureRootAgent(sessionId).flatMap(f).handleErrorWith { e =>
+                    logger.warn(s"Failed to route message to agent for session $sessionId: ${e.getMessage}")
+                  }
+                case None =>
+                  logger.warn(s"Dropping message to unknown session $sessionId (not a real session)") *> IO.unit
+              }
       }
     else logger.warn("Dropping message: no sessionId provided") *> IO.unit
 
@@ -1149,7 +1171,20 @@ class WebSocketRoutes(
                               ) *>
                               outboundOverflowClosed.complete(()).void
                         }
-                    hubConnId <- wsHub.register(perConnWsSend)
+                    // 单实例四修批（2026-10-29 作者令 · 隐私面）：被顶出连接的
+                    // 内容帧闸——ConsoleTakeover.gateFrame 按会话裁决（owner 非本会话
+                    // ⇒ 只放行 takeover/takeoverResult 接管协议帧，对话内容帧断喂）。
+                    // Bearer 轨（takeoverSession=None）与总闸关闭 ⇒ 恒放行（零漂移）。
+                    // 心跳面不受影响：pong 走 perConnJsonSend 旁路，不经本闸。
+                    gatedWsSend = (text: String, isStream: Boolean) =>
+                      takeoverSession match
+                        case None => perConnWsSend(text, isStream)
+                        case Some(sid) =>
+                          takeover.gateFrame(sid, text).flatMap {
+                            case true  => perConnWsSend(text, isStream)
+                            case false => IO.unit
+                          }
+                    hubConnId <- wsHub.register(gatedWsSend)
 
                     // A1: the hub now hands connections pre-serialized text. The
                     // handlers below (message dispatch, session list, the explorer

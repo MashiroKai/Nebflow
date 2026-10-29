@@ -59,6 +59,39 @@ private[gateway] object PresenceRoutes:
   // 服务侧的第二道闸，不是唯一闸）。
   private val modelTestGate = new ProviderModelProbe.Gate
 
+  /** Shared probe shell for POST /provider/test（fourfix 批 ②件起为存储配置腿
+    * 与表单覆写腿两条共用）：单飞闸 → 一次最小真实调用 → 脱敏判决。
+    * `sanitizePool` 覆盖一切可能被厂家错误回显的 key 材料（覆写腿的表单 key +
+    * stored key；探测本体已对其入参 key 先做一轮）。 */
+  private def runProviderTest(
+    protocol: LlmProtocol,
+    baseUrl: String,
+    apiKey: String,
+    model: String,
+    sanitizePool: List[String]
+  ): IO[Response[IO]] =
+    if !modelTestGate.tryAcquire() then
+      Conflict(Json.obj("error" -> "a test for this provider is already in flight".asJson))
+    else
+      val verdict = IO.blocking(
+        ProviderModelProbe.call(protocol, baseUrl, apiKey, model)
+      )
+      verdict.flatMap {
+        case ProviderModelProbe.Verdict.Ok(latency, reply) =>
+          val reply2 = sanitizePool.foldLeft(reply)((acc, k) => ProviderModelProbe.sanitize(acc, k))
+          Ok(
+            Json.obj(
+              "ok" -> true.asJson,
+              "latencyMs" -> latency.asJson,
+              "reply" -> reply2.asJson
+            )
+          )
+        case ProviderModelProbe.Verdict.Failed(detail) =>
+          // 可诊断错误文本（服务侧脱敏后）——面板红 ✗ + 详情位的显示面。
+          val detail2 = sanitizePool.foldLeft(detail)((acc, k) => ProviderModelProbe.sanitize(acc, k))
+          Ok(Json.obj("ok" -> false.asJson, "error" -> detail2.asJson))
+      }.guarantee(IO.blocking(modelTestGate.release()))
+
   // ── 远端尾拉单飞缓存（输出查看补全批 2026-10-25）────────────────────────
   //
   // remote-output 轮询的防叠加面：同 jobId 1.5s 内的重复拉取（多面板 / 双开卡）
@@ -1980,53 +2013,55 @@ private[gateway] object PresenceRoutes:
 
       // POST /provider/test — per-model connectivity test (settings-panel batch
       // 2026-10-28, author order B: 「在 provider 每一个模型旁边，加一个小按钮，
-      // 用于连接性测试」). Body: {name, model} — the STORED provider id + one of
-      // its model ids. The engine issues ONE minimal real call (1 max_tokens,
-      // "ping") against the stored baseUrl/apiKey/protocol with a BOUNDED 20s
-      // wait (operator-facing diagnosis — explicitly bounded, unlike the
+      // 用于连接性测试」; fourfix 批 ②件 2026-10-29 作者令「连接性测试按钮应放到
+      // LLM provider 配置页面里」——测试钮迁入 provider 编辑弹窗后，被测对象是
+      // **表单当前值**（可能未保存、provider 甚至尚未入库），故 body 增可选覆写
+      // 键 baseUrl/apiKey/protocol：给出 baseUrl 即走覆写腿（stored provider 不
+      // 必存在、stored model 校验跳过）；不给 = 存储配置腿（旧请求形状逐字兼容）。
+      // Body: {name, model, baseUrl?, apiKey?, protocol?}. The engine issues ONE
+      // minimal real call (1 max_tokens, "ping") with a BOUNDED 20s wait
+      // (operator-facing diagnosis — explicitly bounded, unlike the
       // zero-timeout business-call discipline). Verdict shape:
       //   {ok:true, latencyMs, reply?} | {ok:false, error}
-      // The error text is sanitized server-side (any occurrence of the stored
-      // apiKey replaced with "***"; the header material never enters it).
-      // In-flight per provider is one-flight (double-click ⇒ 409), and the
-      // stored provider is the ONLY source of credentials — the route accepts
-      // no key material from the body (owner-auth face, withAuth).
+      // The error text is sanitized server-side (any occurrence of key material
+      // — override AND stored — replaced with "***"; the header material never
+      // enters it).
+      // In-flight per provider is one-flight (double-click ⇒ 409). Overrides are
+      // probe-local: this route persists nothing — persistence stays with the
+      // config write faces alone.
       case req @ POST -> Root / "provider" / "test" =>
         withAuth(req) {
           req.as[Json].flatMap { body =>
             val name = body.hcursor.downField("name").as[String].toOption.map(_.trim).getOrElse("")
             val model = body.hcursor.downField("model").as[String].toOption.map(_.trim).getOrElse("")
+            val baseUrlOv = body.hcursor.downField("baseUrl").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+            val apiKeyOv = body.hcursor.downField("apiKey").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+            val protocolOv = body.hcursor.downField("protocol").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+            val protocolDecoded: Either[String, Option[LlmProtocol]] = protocolOv match
+              case None => Right(None)
+              case Some(raw) =>
+                parser.decode[LlmProtocol](s"\"$raw\"").left.map(_ => s"unknown protocol '$raw'").map(Some(_))
             if name.isEmpty || model.isEmpty then
               BadRequest(Json.obj("error" -> "Missing required fields: name, model".asJson))
+            else if protocolDecoded.isLeft then
+              BadRequest(Json.obj("error" -> protocolDecoded.swap.toOption.get.asJson))
             else
               configRef.get.flatMap { cfg =>
-                cfg.llm.providers.get(name) match
-                  case None =>
+                val stored = cfg.llm.providers.get(name)
+                (baseUrlOv, stored) match
+                  case (None, None) =>
                     NotFound(Json.obj("error" -> s"unknown provider '$name'".asJson))
-                  case Some(p) =>
+                  case (None, Some(p)) =>
                     if !p.models.exists(_.id == model) then
                       NotFound(Json.obj("error" -> s"provider '$name' has no model '$model'".asJson))
-                    else if !modelTestGate.tryAcquire() then
-                      Conflict(Json.obj("error" -> "a test for this provider is already in flight".asJson))
                     else
-                      val verdict = IO.blocking(
-                        ProviderModelProbe.call(p.protocol, p.baseUrl, p.apiKey, model)
-                      )
-                      verdict.flatMap {
-                        case ProviderModelProbe.Verdict.Ok(latency, reply) =>
-                          Ok(
-                            Json.obj(
-                              "ok" -> true.asJson,
-                              "latencyMs" -> latency.asJson,
-                              "reply" -> reply.asJson
-                            )
-                          )
-                        case ProviderModelProbe.Verdict.Failed(detail) =>
-                          // 502 carries the sanitized provider-side reason — the
-                          // diagnosable error display the panel paints (red ✗ +
-                          // summary).
-                          Ok(Json.obj("ok" -> false.asJson, "error" -> detail.asJson))
-                      }.guarantee(IO.blocking(modelTestGate.release()))
+                      runProviderTest(p.protocol, p.baseUrl, p.apiKey, model, List(p.apiKey))
+                  case (Some(base), _) =>
+                    // 覆写腿（provider 配置页测试未保存表单值）：协议缺省 openai
+                    //（编辑弹窗协议下拉的通用兜底同源）；stored key 并入脱敏池。
+                    val proto = protocolDecoded.toOption.flatten.getOrElse(LlmProtocol.OpenAI)
+                    val key = apiKeyOv.getOrElse(stored.map(_.apiKey).getOrElse(""))
+                    runProviderTest(proto, base, key, model, List(key) ++ stored.map(_.apiKey).toList)
               }
             end if
           }

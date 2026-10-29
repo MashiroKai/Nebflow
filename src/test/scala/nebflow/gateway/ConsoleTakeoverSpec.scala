@@ -213,4 +213,73 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
       assertEquals(a2Frames.map(_.hcursor.downField("type").as[String].getOrElse("?")), List("takeover"),
         "同会话全部活跃连接都收接管帧（模态在两个标签都弹）")
 
+  // ── B1 内容帧闸（2026-10-29 作者令四修 · 隐私面）：superseded 会话断喂内容帧 ──
+
+  test("B1 content gate: superseded session stops receiving data frames; takeover protocol still passes"):
+    for (reg, _) <- fixture()
+      _ <- reg.onConnect(sidA, "conn-a1")
+      _ <- reg.onConnect(sidB, "conn-b1") // B 接管，A 落 superseded
+      msgOk   <- reg.gateFrame(sidA, """{"type":"message","text":"hi"}""")
+      deltaOk <- reg.gateFrame(sidA, """{"type":"textDelta","text":"hi"}""")
+      listOk  <- reg.gateFrame(sidA, """{"type":"sessionList","sessions":[]}""")
+      takeOk  <- reg.gateFrame(sidA, """{"type":"takeover","at":1}""")
+      resOk   <- reg.gateFrame(sidA, """{"type":"takeoverResult","ok":true}""")
+      badOk   <- reg.gateFrame(sidA, "not-json")
+    yield
+      assert(!msgOk && !deltaOk && !listOk, "superseded：消息/流式/数据面帧一律断喂（隐私面）")
+      assert(takeOk && resOk, "接管协议帧放行（重弹 superseded / retake 裁决回执）")
+      assert(!badOk, "不可解析帧 fail-closed（隐私面宁断不放）")
+
+  test("B2 content gate: owner session passes every frame"):
+    for (reg, _) <- fixture()
+      _ <- reg.onConnect(sidA, "conn-a1")
+      _ <- reg.onConnect(sidB, "conn-b1") // B 接管，但 A 仍问 B 自己的帧
+      bMsg <- reg.gateFrame(sidB, """{"type":"textDelta","text":"hi"}""")
+    yield assert(bMsg, "owner 会话全放行（热路径零解析）")
+
+  test("B3 content gate: master switch off is identity (zero drift)"):
+    for (reg, _) <- fixture(enabled = false)
+      gated <- reg.gateFrame(sidA, """{"type":"textDelta","text":"hi"}""")
+    yield assert(gated, "总闸关闭 ⇒ 恒放行（未连接/未注册亦同）")
+
+  test("B4 content gate: owner-unset connect window passes bootstrap frames"):
+    for (reg, _) <- fixture()
+      gated <- reg.gateFrame(sidA, """{"type":"serverConfig","version":"x"}""")
+    yield assert(gated, "owner 未定（claim 前引导窗）⇒ 放行——首实例就位前不饿引导帧")
+
+  // ── B5 真实 WsHub 装配语义（WebSocketRoutes 注册同款：广播面逐连接套 gateFrame）──
+
+  test("B5 real WsHub wiring: broadcast stops feeding superseded conns; retake reopens the gate"):
+    for
+      (reg, _) <- fixture()
+      hub = new WsHub()
+      aInbox <- Ref.of[IO, List[String]](Nil)
+      bInbox <- Ref.of[IO, List[String]](Nil)
+      // = WebSocketRoutes 的 gatedWsSend：session 轨连接逐连接套 gateFrame。
+      gated = (sid: String, inbox: Ref[IO, List[String]]) =>
+        (text: String, isStream: Boolean) =>
+          reg.gateFrame(sid, text).flatMap {
+            case true  => inbox.update(_ :+ text)
+            case false => IO.unit
+          }
+      _ <- reg.onConnect(sidA, "conn-a1")
+      _ <- reg.onConnect(sidB, "conn-b1") // B fresh claim ⇒ A superseded
+      connA <- hub.register(gated(sidA, aInbox))
+      connB <- hub.register(gated(sidB, bInbox))
+      _ <- hub.broadcast(Json.obj("type" -> "textDelta".asJson, "text" -> "secret-1".asJson))
+      _ <- hub.sendTo(connA, ConsoleTakeover.takeoverFrame(1L)) // 反向踢/重弹必须可达
+      a1 <- aInbox.get
+      b1 <- bInbox.get
+      // A 重新接管 ⇒ owner 翻回 A：A 的闸放开，B 落 superseded。
+      _ <- reg.handleRetake("conn-a1", _ => IO.unit)
+      _ <- hub.broadcast(Json.obj("type" -> "textDelta".asJson, "text" -> "secret-2".asJson))
+      a2 <- aInbox.get
+      b2 <- bInbox.get
+    yield
+      assertEquals(a1.map(io.circe.parser.parse(_).flatMap(_.hcursor.downField("type").as[String]).getOrElse("?")),
+        List("takeover"), "superseded：内容帧断喂，唯 takeover 帧可达")
+      assertEquals(b1.length, 1, "owner（B）照常收到内容帧")
+      assert(a2.exists(_.contains("secret-2")), "retake 后 owner 闸自动放开（A 收到新内容帧）")
+      assert(b2.length == 1, "B 被反向踢后断喂（第二帧未达 B）")
+
 end ConsoleTakeoverSpec

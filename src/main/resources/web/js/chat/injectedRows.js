@@ -15,6 +15,9 @@ import { toggleDiffBatch } from '../diffPanel.js';
 // quote-message 一期（spec §7）：主聊天区右键引用 —— 挂点收口在本 builder
 // （chat.js 只 re-export，不复制逻辑）。
 import { attachQuoteMenu, nextChatMsgId } from '../msgQuote.js';
+// schedcard 批（2026-10-29）：卡片「预定时间」读全局时钟偏好面（12h/24h + 日分层
+// ——今天纯时钟、昨天/星期/日期分层），与消息 footer 同一实现（timeFormat 单源）。
+import { formatFooterTime } from '../timeFormat.js';
 
 // ---------- Injected bubble (task P+Q: tool-injected prompts & result notifications) ----------
 // Mail/Delegate/SubTask/Skill/Flow/ExternalEvent injections arrive as WS
@@ -59,6 +62,11 @@ const INJECTED_SOURCE_LABELS = {
   // 链级聚合信息的**现役承载面** = 链级列表/明细面（Flow Map 归档面板
   // `flowMapArchive.js`：链条目 → 成员行 → 详情窗按需取结果全文），不再经本表。
   chain: 'Chain',
+  // schedcard 批（2026-10-29）：定时任务触发腿（ScheduledTaskService.triggerTask）。
+  // 呈现面走 `buildInjectedRow` 的**专属卡分支**（见下），本表项是契约门 ② 的显式
+  // 登记 + 兜底标签（凡走通用注入泡渲染的边角——如引用菜单 senderName——不落
+  // 「首字母大写兜底」）。
+  schedule: 'Schedule',
 };
 
 /** Map backend eventType → display suffix for the source label.
@@ -203,6 +211,113 @@ function appendDeliveryBadge(label, delivery) {
   label.appendChild(badge);
 }
 
+/** 循环任务重复标签（与 scheduled-task.js#repeatLabel 同一 i18n 键面；本地副本
+ *  理由：scheduled-task.js 是运行时面板模块（带面板状态），卡 builder 不反向依赖
+ *  运行时面板——键名即契约，漂移由 ScheduleCardContractSpec 键面读数钉住）。 */
+function scheduleRepeatLabel(r) {
+  if (r === 'hourly') return t('task.repeatHourly');
+  if (r === 'daily') return t('task.repeatDaily');
+  if (r === 'weekly') return t('task.repeatWeekly');
+  return '';
+}
+
+/** 卡正文：剥掉 payload 尾行的引擎面注记「（实际触发 …，预定 …）」——它写给 LLM
+ *  看的触发对账注记，卡片有自己的结构化时间行，双显即重复。仅剥**恰好位于尾部**
+ *  且形态匹配的一行；任何变体（用户正文里真的含这串字样的非尾行）不动。 */
+function scheduleCardBodyText(text) {
+  return String(text || '').replace(/\n?（实际触发[^）]*，预定[^）]*）\s*$/, '');
+}
+
+/** Build the dedicated schedule-card row content into `row` (pure builder — the
+ *  caller owns row class/append). schedcard 批 2026-10-29。Structure:
+ *  .bubble.injected.schedule-card[data-nf-schedule]
+ *    .schedule-card-head  (bell-ring icon + chip + name? + repeat?)
+ *    .schedule-card-body  (markdown body, trailing engine note stripped)
+ *    .schedule-card-ref?  (referencePath file line)
+ *    .schedule-card-time  (clock icon + scheduled time)
+ *  + unified footer pill + quote menu (same as the generic injected family).
+ *  meta 缺席（旧载荷/降级）⇒ 卡照渲染（无 name/无重复标，时间回落行 timestamp）。 */
+function buildScheduleCardRow(row, text, timestamp, deferFn, schedule) {
+  const meta = (schedule && typeof schedule === 'object' && !Array.isArray(schedule)) ? schedule : {};
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble injected schedule-card';
+  bubble.dataset.nfSchedule = '1';
+
+  const head = document.createElement('div');
+  head.className = 'schedule-card-head';
+  const icon = document.createElement('i');
+  icon.setAttribute('data-lucide', 'bell-ring');
+  head.appendChild(icon);
+  const chip = document.createElement('span');
+  chip.className = 'schedule-card-chip';
+  chip.textContent = t('task.cardChip');
+  head.appendChild(chip);
+  const name = typeof meta.name === 'string' ? meta.name.trim() : '';
+  if (name) {
+    const nameEl = document.createElement('span');
+    nameEl.className = 'schedule-card-name';
+    nameEl.textContent = name;
+    head.appendChild(nameEl);
+  }
+  const repeat = scheduleRepeatLabel(meta.repeat);
+  if (repeat) {
+    const repEl = document.createElement('span');
+    repEl.className = 'schedule-card-repeat';
+    repEl.textContent = repeat;
+    head.appendChild(repEl);
+  }
+  bubble.appendChild(head);
+
+  const displayText = scheduleCardBodyText(text);
+  const body = document.createElement('div');
+  body.className = 'schedule-card-body';
+  if (deferFn) deferFn(body, displayText);
+  else body.innerHTML = renderMarkdownWithMath(displayText, false);
+  bubble.appendChild(body);
+
+  const refPath = typeof meta.referencePath === 'string' ? meta.referencePath.trim() : '';
+  if (refPath) {
+    const ref = document.createElement('div');
+    ref.className = 'schedule-card-ref';
+    const refIcon = document.createElement('i');
+    refIcon.setAttribute('data-lucide', 'file-text');
+    const refText = document.createElement('span');
+    refText.textContent = refPath;
+    ref.append(refIcon, refText);
+    bubble.appendChild(ref);
+  }
+
+  const triggerAt = Number(meta.triggerAt) > 0 ? Number(meta.triggerAt) : (timestamp > 0 ? timestamp : 0);
+  if (triggerAt > 0) {
+    const timeRow = document.createElement('div');
+    timeRow.className = 'schedule-card-time';
+    const clock = document.createElement('i');
+    clock.setAttribute('data-lucide', 'clock');
+    const timeText = document.createElement('span');
+    timeText.textContent = t('task.cardScheduledAt', { time: formatFooterTime(triggerAt) });
+    timeRow.append(clock, timeText);
+    bubble.appendChild(timeRow);
+  }
+
+  row.appendChild(bubble);
+  createIconsIn(bubble);
+
+  // Unified footer pill + quote menu — same contract as the generic injected
+  // branch below (timestamp/copy affordance, right-click 引用).
+  const trimmed = (text || '').trim();
+  if ((timestamp && timestamp > 0) || trimmed) {
+    row.appendChild(createMsgFooterBadge(timestamp, trimmed));
+  }
+  row.dataset.msgId = nextChatMsgId();
+  attachQuoteMenu(row, {
+    kind: 'text', text: trimmed,
+    messageId: row.dataset.msgId,
+    senderRole: 'agent', senderName: t('task.cardChip'),
+    ts: timestamp || Date.now(),
+  });
+  return row;
+}
+
 /** Build a row element for an injected message (pure builder — no DOM append,
  *  no scroll). Shared by live render (renderInjectedBubble) and history
  *  restore (persistence.js) so both paths render identically.
@@ -235,10 +350,33 @@ function appendDeliveryBadge(label, delivery) {
  *  (#panel-filechanges) and the focused file's diff in the Canvas reader
  *  (diffPanel.js / diffCanvas.js); re-clicking an open batch collapses the
  *  Side Bar (existing panel toggle semantics). The bubble body keeps zero
- *  diff rows. Absent (non-delegate rows / old history) ⇒ render unchanged. */
-export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn, delivery, intake, header, fileChanges) {
+ *  diff rows. Absent (non-delegate rows / old history) ⇒ render unchanged.
+ *  schedule (optional, schedcard 批 2026-10-29): 定时任务触发行的卡片载荷
+ *  （引擎 `UiMessage.User.schedule` 同源：{id, name?, triggerAt, repeat?,
+ *  referencePath?}）。`source==='schedule'` ⇒ 走**专属卡分支**（见下），载荷
+ *  缺席（旧历史行）也能渲染卡（降级：无 name/无重复标/时间回落行 timestamp）。 */
+export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn, delivery, intake, header, fileChanges, schedule) {
   const row = document.createElement('div');
   row.className = 'row user';
+
+  // ── Schedule 专属卡分支（schedcard 批 2026-10-29，作者令「定时任务卡片防退化 +
+  // stand 配色」）────────────────────────────────────────────────────────
+  // 防退化钉面：带 schedule 标记的注入行（引擎 ScheduledTaskService.triggerTask
+  // 落盘/广播 `injected:true, source:"schedule"`）**永不走**通用用户气泡（绿泡）
+  // 渲染——本分支在通用注入泡组装之前接管，渲染专属卡：
+  //   头行  铃铛图标 + 「定时任务」chip + 任务名（有 name 才显示）+ 重复小标（循环任务）
+  //   正文  任务内容（markdown；尾行「（实际触发 …，预定 …）」为 LLM 面注记，
+  //         卡片有自己的结构化时间行 ⇒ 显示层剥掉，剥不动（旧 payload 变体）⇒ 原样）
+  //   引用  referencePath 在场 ⇒ 文件引用行（同旧 toast 的 ref 行）
+  //   时间  预定触发时间（schedule.triggerAt 缺席回落行 timestamp；formatFooterTime
+  //         同源时钟偏好面）
+  // 卡仍保留 `.bubble.injected` 基类 ⇒ 注入行族消费者（turnGroup.isInjectedRow /
+  // workline 行线锚点 / chatSearch / bgAgentPopup）零改动照常识别；`.schedule-card`
+  // 修饰类接管视觉（stand 配色，见 reminder.css）。历史行兼容：无标记旧行不进本
+  // 分支，按现状渲染（绿泡），不追溯。
+  if (source === 'schedule') {
+    return buildScheduleCardRow(row, text, timestamp, deferFn, schedule);
+  }
 
   const bubble = document.createElement('div');
   bubble.className = 'bubble injected';
@@ -360,9 +498,9 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
  *  arrives while the user is scrolled up stays put and raises the ↓ N pill.
  *  fileChanges (optional): delegate 终态 diff 载荷透传（bug #58 修）——live 帧
  *  与历史恢复（persistence.js）走同一 builder，渲染逐字同构。 */
-export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam, delivery, intake, header, fileChanges) {
+export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam, delivery, intake, header, fileChanges, schedule) {
   const chat = activeView.dom.chat;
-  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam, undefined, delivery, intake, header, fileChanges);
+  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam, undefined, delivery, intake, header, fileChanges, schedule);
   // A 侧 #491 单点落序（chat.js appendChatRow = `chat.append(row)`）随簇同位落此：
   // 纯 doc-order 追加，等价语义、同为唯一追加语义（禁反向 import chat.js 成环）。
   chat.append(row);

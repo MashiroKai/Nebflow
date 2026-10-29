@@ -11,10 +11,12 @@
 //       + fab.open + 输入聚焦；输入条在按钮上方（transform-origin 100% 100% 锚定）
 //   T3  提问 → 气泡流式回答（§8-1）：askOpen 帧先于 askQuestion 帧、sessionId =
 //       ask-<8hex>（每文件绑定）；user 气泡即时、typing 指示在场、textDelta
-//       增量回填同一 ai 气泡、done 定稿；fab has-sess 活性紫点点亮
+//       增量回填同一 ai 气泡、done 定稿；在看流（dock 开）⇒ 无未读 ⇒ 通知点不亮
 //   T4  每文件独立 session（§8-1 作者令⑦）：切卡即切——B 卡 askState 回放 B 的
 //       转录；切回 A 复现 A 转录（收起保留，§2/§4）；v2.1 徽标退场后以转录呈现
-//   T5  收起保留 + pulse（§8-1）：有消息收起 → .pulse + .has-sess；再开转录在
+//   T5  未读通知点（三修② 作者令 2026-10-29「小点应为绿色通知点，只在有（未读）
+//       消息时显示」）：已读收起 → pulse/点零亮；闭窗推流 → 绿点（--color-primary
+//       #07c160）+ pulse；再开即读 → 点熄
 //   T6  v2.1 减法·转交/回问（§7）：转交钮自 UI 撤除（两箭头减为一枚右侧发送钮）；
 //       askHandoffAck 回执收进不可见处（零 sys 气泡）；注入 user 帧（主会话回问）
 //       → user 族气泡带「主会话回问：」前缀（问答面两族制）；error 落助手气泡槽
@@ -30,6 +32,10 @@
 //       入口钮只在文件型标签页（有真实文件 backing 的 canvas tab）挂载显示；
 //       插件面板等非文件型 surface 零残留（display:none 出命中盒），切卡离开
 //       文件 tab 即隐、开着切走即一并收起，切回文件 tab 复现
+//   T12 风格统一（三修③ 作者令 2026-10-29「ask 输入条/气泡对齐 canvas 统一风格，
+//       不新造风格」）：入口钮/输入条/气泡三面计算材质（backgroundColor /
+//       borderTopColor / backdropFilter）与聊天 #header 玻璃模板（--cv-* 单源）
+//       逐项相等；发送钮 = 全站发送键绿家族 #07C160；通知点底色 = --color-primary
 //
 // 运行：node tests/canvas-ask-dock.spec.mjs
 // 可选 env：PORT（默认 8216，避开在跑 spec 的固定端口）、ASK_SHOTS_DIR（截图目录）。
@@ -332,9 +338,12 @@ try {
   ok('T3g done 定稿（文本保持 + typing 撤除）', aiFinal.includes('τ=30 半衰期 ≈21 天') && !(await page.$('.ask-dock .ask-bub.typing')), aiFinal.slice(-30));
   const fabState = await page.evaluate(() => {
     const f = document.querySelector('.ask-fab');
-    return { hasSess: f.classList.contains('has-sess'), dot: getComputedStyle(f.querySelector('.ask-sess-dot')).opacity };
+    const dot = getComputedStyle(f.querySelector('.ask-sess-dot'));
+    return { hasUnread: f.classList.contains('has-unread'), dotBg: dot.backgroundColor, dotOpacity: dot.opacity };
   });
-  ok('T3h fab 活性紫点点亮（has-sess）', fabState.hasSess && parseFloat(fabState.dot) > 0.9, JSON.stringify(fabState));
+  // 三修②（作者令 2026-10-29）：点=未读通知。全程在看着流（dock 开）⇒ 无未读
+  // ⇒ 点不亮（旧「has-sess 有过消息即亮紫点」退役——此处正是旧口径会误亮的现场）。
+  ok('T3h 在看流（dock 开）无未读：通知点不亮', !fabState.hasUnread && parseFloat(fabState.dotOpacity) < 0.1, JSON.stringify(fabState));
   await shot(page, 't3-conversation');
   // mock 服务端持久化面：A 的转录入库（T5 再开 askOpen 重放需复现——服务端为权威）。
   expectTranscript(askedSid, [
@@ -373,21 +382,37 @@ try {
     JSON.stringify(backA).slice(0, 120));
   await shot(page, 't4-session-switch');
 
-  // T5 收起保留 + pulse
-  await page.click('.ask-fab'); // 收起（有消息）
+  // T5 未读通知点（三修② 作者令 2026-10-29：绿点只在有未读时显示，无未读不显示）
+  await page.click('.ask-fab'); // 收起（刚读完：无未读）
   await sleep(400);
   const t5 = await page.evaluate(() => {
     const f = document.querySelector('.ask-fab');
-    return { closed: document.querySelector('.ask-dock').classList.contains('closed'), pulse: f.classList.contains('pulse'), hasSess: f.classList.contains('has-sess') };
+    const dot = getComputedStyle(f.querySelector('.ask-sess-dot'));
+    return { closed: document.querySelector('.ask-dock').classList.contains('closed'), pulse: f.classList.contains('pulse'), hasUnread: f.classList.contains('has-unread'), dotOpacity: dot.opacity };
   });
-  ok('T5 收起后 pulse 提示可唤回 + 会话保留', t5.closed && t5.pulse && t5.hasSess, JSON.stringify(t5));
-  await page.click('.ask-fab');
+  ok('T5a 已读收起：pulse 不亮 + 通知点不亮（无未读不显示）',
+    t5.closed && !t5.pulse && !t5.hasUnread && parseFloat(t5.dotOpacity) < 0.1, JSON.stringify(t5));
+  // 闭窗推流（dock 收着，回复到达）→ 绿点（--color-primary #07c160）点亮 + pulse 唤回
+  wsSend({ type: 'textDelta', sessionId: askedSid, delta: '闭窗补一行。' });
+  wsSend({ type: 'done', sessionId: askedSid });
+  await sleep(300);
+  const t5u = await page.evaluate(() => {
+    const f = document.querySelector('.ask-fab');
+    const dot = getComputedStyle(f.querySelector('.ask-sess-dot'));
+    return { pulse: f.classList.contains('pulse'), hasUnread: f.classList.contains('has-unread'), dotBg: dot.backgroundColor, dotOpacity: dot.opacity };
+  });
+  ok('T5b 闭窗推流=未读：绿点（--color-primary）点亮 + pulse 提示',
+    t5u.hasUnread && t5u.pulse && parseFloat(t5u.dotOpacity) > 0.9 && t5u.dotBg === 'rgb(7, 193, 96)', JSON.stringify(t5u));
+  await shot(page, 't5-unread-dot');
+  await page.click('.ask-fab'); // 再开即读
   await sleep(350);
   const t5b = await page.evaluate(() => ({
     open: !document.querySelector('.ask-dock').classList.contains('closed'),
+    hasUnread: document.querySelector('.ask-fab').classList.contains('has-unread'),
     user: (document.querySelector('.ask-dock .ask-bub.user') || {}).textContent || '',
   }));
-  ok('T5b 再开复现', t5b.open && t5b.user.includes('τ 为什么取 30 天'), JSON.stringify(t5b).slice(0, 80));
+  ok('T5c 再开即读：通知点熄灭 + 转录复现（含闭窗增量）',
+    t5b.open && !t5b.hasUnread && t5b.user.includes('τ 为什么取 30 天'), JSON.stringify(t5b).slice(0, 100));
 
   // T6 v2.1 减法·转交/回问（§7 机制不变，呈现面减法）
   inbound.length = 0;
@@ -474,6 +499,40 @@ try {
   });
   ok('T10b 服务端转录 sys 帧渲染面永久过滤（气泡面只出 user/ai 两族）',
     t10b.sys === 0 && t10b.user === 1 && t10b.ai === 1 && !t10b.hasReceiptText, JSON.stringify(t10b));
+
+  // T12 风格统一（三修③ 作者令 2026-10-29「对齐 canvas 统一风格，不新造风格」）：
+  // 三面（fab/输入条/气泡）计算材质与聊天 #header 玻璃模板逐项相等——GU2-7
+  // 「材质字面量零自带」同律的 ask 域落点；发送钮/通知点归全站绿家族。
+  // 量测前先清测试态：指针挪开（fab :hover 抬亮 --cv-hover-bg 会污染 bg 读数）
+  // + blur（输入条 focus-within 活性蓝描边会污染 border 读数），再等材质过渡走完。
+  await page.mouse.move(8, 8);
+  await page.evaluate(() => { try { document.activeElement && document.activeElement.blur(); } catch { /* detached */ } });
+  await sleep(350);
+  const mat = await page.evaluate(() => {
+    const pick = (el) => {
+      if (!el) return null;
+      const cs = getComputedStyle(el);
+      return { bg: cs.backgroundColor, border: cs.borderTopColor, blur: cs.backdropFilter };
+    };
+    const ref = document.getElementById('header') || document.getElementById('deck-fab');
+    return {
+      fab: pick(document.querySelector('.ask-fab')),
+      input: pick(document.querySelector('.ask-input')),
+      bub: pick(document.querySelector('.ask-bub.ai')),
+      ref: pick(ref),
+    };
+  });
+  const matSame = (a, b) => !!a && !!b && a.bg === b.bg && a.border === b.border && a.blur === b.blur;
+  ok('T12a 入口钮材质 = #header 玻璃模板（--cv-* 单源逐项相等）', matSame(mat.fab, mat.ref), JSON.stringify({ fab: mat.fab, ref: mat.ref }));
+  ok('T12b 输入条材质 = #header 玻璃模板', matSame(mat.input, mat.ref), JSON.stringify({ input: mat.input, ref: mat.ref }));
+  ok('T12c 气泡材质 = #header 玻璃模板', matSame(mat.bub, mat.ref), JSON.stringify({ bub: mat.bub, ref: mat.ref }));
+  const greenFaces = await page.evaluate(() => ({
+    send: getComputedStyle(document.querySelector('.ask-input .ask-send')).backgroundColor,
+    dot: getComputedStyle(document.querySelector('.ask-fab .ask-sess-dot')).backgroundColor,
+  }));
+  ok('T12d 发送钮 = 全站发送键绿家族（#send-btn 基准 #07C160）', greenFaces.send === 'rgb(7, 193, 96)', greenFaces.send);
+  ok('T12e 通知点底色 = --color-primary 品牌绿（#07c160）', greenFaces.dot === 'rgb(7, 193, 96)', greenFaces.dot);
+  await shot(page, 't12-unified-style');
 
   // T11 可见性闸（作者缺陷报 2026-10-29「Askmode怎么在插件面板里也有？」）：
   // 入口钮只在文件型标签页挂载显示；插件面板/非文件型 surface 零残留

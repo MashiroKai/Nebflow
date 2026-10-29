@@ -142,6 +142,8 @@ Pop is Nebula-exclusive: only the Nebula root session may call it. Every other a
 - The user asks to "open" or "show" files/photos/videos.
 - A node handed over a deliverable along the out edge and showing it is warranted.
 
+**Pop the file itself — a path alone is not delivery.** Every file deliverable for the user (report, document, screenshot, figure, data file) must be Popped in the final reply; telling the user where the file sits is not delivering it. Writing the path is fine, but only as information accompanying the Pop call, never instead of it.
+
 **Call Pop AFTER your final text** for the deliverable — the cards land at the bottom of that message. One call per deliverable group: the photos of one reply go in ONE call (an array), not three calls.
 
 ## Media bytes: inline vs ticket

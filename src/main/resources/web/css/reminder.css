@@ -555,41 +555,176 @@
   letter-spacing: -0.01em;
 }
 
-/* ===== Triggered Toast in Chat ===== */
-.reminder-trigger-bubble {
-  background: rgba(91, 127, 191, 0.04);
-  border: 1px solid rgba(91, 127, 191, 0.10);
-  border-radius: 12px;
-  padding: 10px 14px;
-  margin: 6px 0;
+/* ===== Schedule Card in Chat（schedcard 批 2026-10-29，作者令「定时任务卡片
+   防退化 + stand 配色」）=====
+   定时任务触发行的**专属卡**（builder = chat/injectedRows.js buildInjectedRow 的
+   `source==='schedule'` 分支；防退化钉面：带标记注入行永不走通用绿气泡分支）。
+   基类 `.bubble.injected` 保留（注入行族语义——turnGroup/workline/chatSearch——
+   零改动），本块只接管视觉。配色纪律：全部消费 console 统一 tokens（sapphire.css
+   `--sapphire` 族 / 玻璃族 `--glass-*` / etched 族）+ stand 单源档（stand-tokens.css
+   `--st-*`），零新色值、零自带材质（同 canvas --cv-* 单源做法）。 */
+.bubble.schedule-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: fit-content;
+  max-width: min(440px, 82%);
+  padding: 11px 14px 10px;
+  border-radius: 14px;
+  border-bottom-right-radius: 4px; /* 气泡族尾角（与 .bubble.user/.injected 同语言） */
+  background:
+    linear-gradient(rgb(var(--sapphire) / 0.055), rgb(var(--sapphire) / 0.055)),
+    var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid rgb(var(--sapphire) / 0.18);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 4px 16px rgba(91, 127, 191, 0.07);
 }
-.reminder-trigger-header {
+.bubble.schedule-card p { margin: 0; } /* 卡体自管节奏，markdown 首尾段不额外撑高 */
+
+/* ── 头行：铃铛 + 「定时任务」chip + 任务名 + 重复小标 ─────────────────── */
+.schedule-card-head {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+}
+.schedule-card-head > i[data-lucide="bell-ring"],
+.schedule-card-head > svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  color: rgb(var(--sapphire));
+  opacity: 0.75;
+}
+.schedule-card-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 17px;
+  padding: 0 7px;
+  border-radius: 5px;
+  color: rgb(var(--sapphire));
+  background: rgb(var(--sapphire) / 0.10);
+  border: 1px solid rgb(var(--sapphire) / 0.22);
+}
+.schedule-card-name {
   font-size: 12px;
   font-weight: 600;
-  color: rgb(91, 127, 191);
-  margin-bottom: 4px;
-  letter-spacing: -0.02em;
-}
-.reminder-trigger-header svg {
-  width: 14px;
-  height: 14px;
-  opacity: 0.7;
-}
-.reminder-trigger-content {
-  font-size: 13px;
   color: var(--color-text);
-  margin-bottom: 3px;
-  line-height: 1.4;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* 重复小标（循环任务才渲染）：与面板行 .reminder-repeat-badge 同 tokens 同形制 */
+.schedule-card-repeat {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 500;
+  color: rgb(var(--sapphire));
+  background: rgb(var(--sapphire) / 0.1);
+  border: 1px solid rgb(var(--sapphire) / 0.22);
+  border-radius: 4px;
+  padding: 0 5px;
+  line-height: 15px;
   letter-spacing: -0.01em;
 }
-.reminder-trigger-time {
+
+/* ── 正文（任务内容，markdown 面）──────────────────────────────────────── */
+.schedule-card-body {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--color-text);
+  letter-spacing: -0.01em;
+  word-break: break-word;
+}
+.schedule-card-body p { margin: 4px 0; }
+.schedule-card-body p:first-child { margin-top: 0; }
+.schedule-card-body p:last-child { margin-bottom: 0; }
+.schedule-card-body ul, .schedule-card-body ol { margin: 4px 0 4px 18px; padding: 0; }
+.schedule-card-body pre {
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+  padding: 8px 12px 10px;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 12px;
+}
+
+/* ── 参考文档行（referencePath 在场才渲染）──────────────────────────────── */
+.schedule-card-ref {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   font-size: 11px;
   color: var(--color-text);
-  opacity: 0.3;
+  opacity: 0.55;
   letter-spacing: -0.01em;
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+  min-width: 0;
+}
+.schedule-card-ref i[data-lucide],
+.schedule-card-ref svg {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+.schedule-card-ref span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* ── 时间行：预定触发时间（结构化 schedule.triggerAt；同源时钟偏好面）────── */
+.schedule-card-time {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: rgb(var(--sapphire));
+  opacity: 0.7;
+  letter-spacing: -0.01em;
+}
+.schedule-card-time i[data-lucide],
+.schedule-card-time svg {
+  width: 11px;
+  height: 11px;
+  opacity: 0.6;
+}
+
+/* ── Dark theme（sapphire rung 抬档，chat.css .bubble.injected 暗档同思路）─ */
+@media (prefers-color-scheme: dark) {
+  .bubble.schedule-card {
+    background:
+      linear-gradient(rgb(var(--sapphire) / 0.10), rgb(var(--sapphire) / 0.10)),
+      var(--glass-bg);
+    border-color: rgb(var(--sapphire) / 0.28);
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0 1px 2px rgba(0, 0, 0, 0.2),
+      0 4px 16px rgba(0, 0, 0, 0.18);
+  }
+  .schedule-card-chip {
+    background: rgb(var(--sapphire) / 0.16);
+    border-color: rgb(var(--sapphire) / 0.30);
+  }
+  .schedule-card-repeat {
+    background: rgb(var(--sapphire) / 0.14);
+    border-color: rgb(var(--sapphire) / 0.3);
+  }
 }
 
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
@@ -650,11 +785,6 @@
 
   .reminder-panel-body::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.10);
-  }
-
-  .reminder-trigger-bubble {
-    background: rgba(91, 127, 191, 0.04);
-    border-color: rgba(91, 127, 191, 0.10);
   }
 
   .reminder-create-btn {

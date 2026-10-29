@@ -128,7 +128,17 @@ onConnect(S, conn):
 
 1. **WS 掉线 ≠ 让位**：owner 按会话持久，断线不摘 owner（`onDisconnect` 只摘连接账）；同会话重连=静默续位。宽限**不新增计时器**——结构性「无限宽限」（掉线永不转移所有权），连接级宽限沿用 #960 的 90s 判死窗；网络抖动误踢在结构上不可表达（抖动期 owner 从未离开）。
 2. **僵尸回收零提示**：判死回收只走 `onFinalize` ⇒ `onDisconnect`，注册表不出帧；takeover 帧的唯一发射点是 fresh-claim 翻位与显式 retake。
-3. **多设备透明（#929）不受影响**：takeover 帧只发给「被移位的那个会话」的连接，不广播；`remoteAgents`/数据面帧照发全部连接（含 superseded 面）——本特性只独占**主动控制权**，不做只读观察者角色（作者未要求；若日后要「旁观者模式」，在 superseded 面加显式降级按钮即可，服务端零改动）。
+3. **多设备透明（#929）**：~~takeover 帧只发给「被移位的那个会话」的连接，不广播；`remoteAgents`/数据面帧照发全部连接（含 superseded 面）——本特性只独占**主动控制权**，不做只读观察者角色~~
+   **【2026-10-29 作者令四修修订】**原「数据可见性照旧」口径作废：被顶出（superseded）
+   会话的连接**断喂对话内容帧**——`ConsoleTakeover.gateFrame` 只放行接管协议帧
+   （takeover/takeoverResult；pong 走 perConnJsonSend 旁路不经闸），前端 ws.js
+   onmessage 入口按 `state.consoleSuperseded` 兜底不渲染（隐私面：被顶出的标签页
+   不得继续看到最新对话）。retake 翻位后闸自动放开，前端拿到 takeoverResult ok
+   后 reload 全量重同步重新进入。作者同时令：弹窗加整页毛玻璃背景（overlay
+   `.takeover-blur`，--cv-* 玻璃族同源材质）；卡片极简化为一行标题+一行说明+
+   操作 chip；【退出】直达官网个人主页（brand 契约 profileUrl）——原「退出面/
+   重入门」作废。验收增补：ConsoleTakeoverSpec B1–B5 + tests/console-takeover.spec.mjs
+   F1（扩）/F2（reload 重进入）/F2b（失败面）/F3（改官网个人主页）/F5（内容闸）。
 4. **控制权独占的执行面 = 被踢模态**（overlay 阻塞本页操作）。服务端按连接拒写命令是后续加固项（触及全部 WS 命令分派，爆炸半径大），本批不做，报告开放项申报。
 5. **Bearer / 隧道桥 / headless**：不注册不被通知；`takeoverRetake` 来自未注册连接 ⇒ `ok:false`。
 6. 老前端收 `takeover` 帧：类型不在其处理集 ⇒ 静默 no-op（ws.js 未知类型零订阅即无操作），无兼容风险。

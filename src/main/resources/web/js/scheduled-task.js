@@ -5,8 +5,9 @@ import { sendWs, onMessage, onReconnect } from './ws.js';
 import { t } from './i18n.js';
 import { statusIcon } from './utils.js'; // escapeHtml = 本文件既有本地实现（107 行）
 import { addNotification } from './notificationBanner.js';
-import { createIconsIn, shouldFollowBottom } from './utils.js';
-import { chatViews } from './chatView.js';
+import { createIconsIn } from './utils.js';
+// chatViews/shouldFollowBottom 随 schedcard 批（2026-10-29）摘除：瞬态 toast 注入
+// 腿退役后本文件零聊天流 DOM 注入（卡片唯一呈现 = 注入 user 帧专属卡分支）。
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 
@@ -592,32 +593,11 @@ onMessage('scheduledTaskTriggered', (msg) => {
     renderList();
     updateBadge();
 
-    if (msg.task) {
-      const ref = msg.task.referencePath
-        ? `<div class="reminder-row-ref" style="margin-top:4px"><i data-lucide="file-text" style="width:12px;height:12px"></i>${escapeHtml(msg.task.referencePath)}</div>`
-        : '';
-      const bubble = document.createElement('div');
-      bubble.className = 'reminder-trigger-bubble';
-      bubble.innerHTML = `
-        <div class="reminder-trigger-header"><i data-lucide="bell-ring"></i> ${t('task.triggerTitle')}</div>
-        <div class="reminder-trigger-content">${escapeHtml(msg.task.content)}</div>
-        <div class="reminder-trigger-time">${t('task.scheduledAt', { time: msg.task.formattedTime || formatTriggerTime(msg.task.triggerAt) })}</div>
-        ${ref}`;
-      const chat = document.getElementById('chat');
-      if (chat) {
-        const row = document.createElement('div');
-        row.className = 'row system';
-        row.appendChild(bubble);
-        chat.appendChild(row);
-        if (typeof lucide !== 'undefined') createIconsIn(bubble);
-        // A-branch (2026-09-11): conditional — a fired schedule used to yank the
-        // viewport to the bottom even when the user was reading history. Now it
-        // follows only when the user is already at/near the bottom; otherwise the
-        // row lands and the ↓ N pill counts it.
-        if (shouldFollowBottom(chatViews.primary, chat)) chat.scrollTop = chat.scrollHeight;
-      }
-    }
-
+    // schedcard 批（2026-10-29）：本帧原先还往聊天流手拼一张瞬态 toast
+    // （reminder.css 已退役的 triggered-toast 样式，刷新即丢）——与引擎落盘/广播
+    // 的注入 user 帧双显。现在聊天的卡片呈现**唯一**由注入帧管
+    // （main.js onMessage('user') → buildInjectedRow 的 source==='schedule'
+    // 专属卡分支，持久 + 刷新存活），这里只剩列表/徽章/通知职责，零 DOM 注入。
   } else {
     // Non-active session: still update local task state so badge is correct
     tasks = tasks.map(t =>

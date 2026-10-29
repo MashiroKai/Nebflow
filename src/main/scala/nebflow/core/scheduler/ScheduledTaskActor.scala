@@ -5,6 +5,7 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
+import io.circe.JsonObject
 import nebflow.actor.AgentCommand
 import nebflow.core.SessionStorePort
 import nebflow.shared.{NebflowLogger, UiMessage}
@@ -87,6 +88,15 @@ class ScheduledTaskService(
       correlationId = Some(task.id)
     )
 
+    // schedcard 批（2026-10-29，作者令「定时任务卡片防退化 + stand 配色」）：卡片
+    // 载荷（id/name/triggerAt/repeat/referencePath）随行进 `schedule` 键（缺席即
+    // 不落键，quote/fileChanges 先例同款条件编码）。
+    val scheduleMeta =
+      val base = JsonObject("id" -> task.id.asJson, "triggerAt" -> task.triggerAt.asJson)
+      val withName = task.name.fold(base)(n => base.add("name", n.asJson))
+      val withRepeat = task.repeat.fold(withName)(r => withName.add("repeat", r.asJson))
+      task.referencePath.fold(withRepeat)(p => withRepeat.add("referencePath", p.asJson))
+
     for
       _ <- logger.info(
         s"Triggering scheduled task ${task.id} for session ${task.sessionId}: ${task.content.take(60)}"
@@ -105,17 +115,39 @@ class ScheduledTaskService(
       }
       // Persist the trigger as a user message in session history so it survives
       // page refresh and behaves like a normal user message (shows bubble + busy state).
+      // schedcard 批（2026-10-29）：触发行落盘时**必须带注入标记**（`injected=true` +
+      // `source="schedule"`）——无标记行会被前端历史恢复渲染成通用绿色用户气泡
+      // （= 作者报障的退化态）。渲染分支由前端 `buildInjectedRow` 的
+      // `source === 'schedule'` 专属卡接住（live 与两史恢复路径同 builder 同构）。
       _ <- sessionStore.appendUiMessages(
         resolvedSessionId,
-        List(UiMessage.User(payload, timestamp = System.currentTimeMillis()))
+        List(
+          UiMessage.User(
+            payload,
+            injected = true,
+            timestamp = System.currentTimeMillis(),
+            source = Some("schedule"),
+            eventType = Some("trigger"),
+            schedule = Some(scheduleMeta.asJson)
+          )
+        )
       )
-      // Broadcast the user message so the frontend shows it in real-time
+      // Broadcast the user message so the frontend shows it in real-time.
+      // schedcard 批（2026-10-29）：帧形从裸 `userMessage`（前端零消费者——死帧，
+      // 卡片只有刷新后才出现）换成**注入 user 帧标准形**（`injected:true` +
+      // `source:"schedule"` + `schedule` 载荷）——与 main.js `onMessage('user')`
+      // 既有消费管道路径逐字段同形 ⇒ 触发即渲染专属卡，无需刷新。帧键集 =
+      // UiMessage.User 编码面 + sessionId（display 路由键），零新协议面。
       _ <- broadcast(
         io.circe.Json.obj(
-          "type" -> "userMessage".asJson,
+          "type" -> "user".asJson,
           "sessionId" -> resolvedSessionId.asJson,
-          "content" -> payload.asJson,
-          "timestamp" -> System.currentTimeMillis().asJson
+          "text" -> payload.asJson,
+          "injected" -> true.asJson,
+          "source" -> "schedule".asJson,
+          "eventType" -> "trigger".asJson,
+          "timestamp" -> System.currentTimeMillis().asJson,
+          "schedule" -> scheduleMeta.asJson
         )
       )
       // Route to agent — ExternalEvent so it queues properly if agent is busy

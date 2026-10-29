@@ -10,6 +10,10 @@ wiki-docs SKILL.md 强制条款的机器面（条款与检查一一对应，见 
   R3 概念首现必释或必引用 → 词表术语在文档首次出现处，既无就地解释（破折号/冒号/
                             括注定义式）又未 [[引用]] 词表 ⇒ 报清单；
                             同一术语在多篇非词表文档各自定义 ⇒ 重复定义清单
+  R4 词条注册表面         → 词条声明块结构合法（词表锚段落 / ^term-* 块必须能按
+                            「名 — 定义」分隔约定抽出词条名）；同一文档内词条名
+                            不得重复。`[[名]]` 短形引用在文档与词条注册表均未
+                            命中 ⇒ R2 断链（引用词条已注册由 R2 断链检查承担）
 
 段落锚（引用语法，与 R2 校验同源）：`[[doc#^块锚]]` 精确到单个段落（名词解释
 场景主形态，词表条目即块锚段落），`[[doc#标题]]` 精确到整节。--graph 导出
@@ -34,7 +38,10 @@ edge.anchor 直查目标段落，点击经 markdown 查看器锚点通道跳转�
 退出码：0 = 无违规；1 = 有违规；2 = 用法/环境错误。仅依赖 Python 3 标准库。
 
 链接解析语义（与 nebflow.core.wiki.WikiIndex 一致）：先精确 vault 相对路径，再大小写
-不敏感精确匹配，再全库唯一 basename 匹配；都未命中 = 未解析（断链）。
+不敏感精确匹配，再全库唯一 basename 匹配，最后（词条引用批）词条注册表第三优先级
+回退——带锚引用不回退；注册表唯一命中（词表命中优先于 ^term-* 声明块命中）= 消解
+到「所在文档 + 位置锚」；同级多命中不猜（未解析）。frontmatter `terms:` 声明面
+被设计裁定否决（双真源漂移，design 20261029_111029 §4.2-B）——词条真源只有正文块锚。
 """
 
 import argparse
@@ -61,8 +68,9 @@ DEFINITION_PAREN_RE = re.compile(r"^\s*[（(]\s*\S")
 
 RULES = (
     ("R1", "obsidian-format", "所有文档一律 Obsidian 格式产出：front-matter（type/status）+ [[wiki-link]] 引用 + vault 目录约定（docs/ 根、attachments/ 附件）"),
-    ("R2", "citation-graph", "文档之间建立论文式引用关系：断链（目标/标题锚/块锚不存在）即缺陷；零出链且零入链的孤儿文档即缺陷（index/glossary 豁免）"),
+    ("R2", "citation-graph", "文档之间建立论文式引用关系：断链（目标/标题锚/块锚不存在，含引用词条未注册）即缺陷；零出链且零入链的孤儿文档即缺陷（index/glossary 豁免）"),
     ("R3", "concept-first-use", "名词概念第一次出现必须就地解释，或 [[引用]] 已解释它的文档；多篇文档不得各自发明同一概念的定义（词表 = 唯一定义源）"),
+    ("R4", "term-registry", "词条注册表面：词表锚段落与 ^term-* 声明块必须按「名 — 定义」分隔约定抽出词条名（词条块结构合法）；同一文档内词条名不得重复；`[[名]]` 短形引用经词条注册表消解（词表命中优先，未注册 = R2 断链）"),
 )
 
 
@@ -300,6 +308,114 @@ def build_paragraphs(doc):
     return paras[:PARAGRAPH_MAX_PER_DOC]
 
 
+def doc_paragraphs(doc):
+    """build_paragraphs 的按文档缓存版（图谱导出 / 词条注册表 / R4 共用一次解析）。"""
+    if not hasattr(doc, "_paras_cache"):
+        doc._paras_cache = build_paragraphs(doc)
+    return doc._paras_cache
+
+
+# ── 词条注册表（词条引用批；与 WikiIndex.termsOf 同构） ───────────────
+# 词条 = 显式声明 + 惯例抽取的块锚段落，两路来源：
+#   (a) glossary — 词表文档（rel basename 去尾扩展名含 "glossary"，同 R3 探测）
+#       的每个块锚段落；
+#   (b) doc — 普通文档中块 id 带 `term-` 前缀的块段落（`^term-<slug>`；SKILL 的
+#       「## 词条」开头词条块惯例即用此锚记名）。
+# 普通 `^锚` 段落一律不是词条（噪音控制）。无 `—`/`：` 分隔符的合格块抽不出
+# 词条名 ⇒ 不注册（R4 term-format 负责报缺陷）。frontmatter `terms:` 已被
+# 设计裁定否决（§4.2-B 双真源漂移），声明面只有正文块锚。
+
+TERM_ANCHOR_PREFIX = "#^term-"
+TERM_NAME_SEP_RE = re.compile(r"\s*[—–]\s*|\s*[:：]\s*")
+
+
+def is_glossary_rel(rel):
+    return "glossary" in Path(rel).stem.lower()
+
+
+def term_alias_keys(name):
+    """尾括号组派生查找键：`DCL（DOMContentLoaded 事件）` → ["DCL", "DOMContentLoaded 事件"]。
+    显式 `|` 别名不用于声明（竖线是引用侧别名分隔符，声明面零新语法）。"""
+    t = name.strip()
+    for close, open_ch in (("）", "（"), (")", "(")):
+        if t.endswith(close) and t.rfind(open_ch) > 0:
+            start = t.rfind(open_ch)
+            keys = [t[:start].strip(), t[start + 1:-1].strip()]
+            return [k for k in keys if k and k != t]
+    return []
+
+
+def terms_of(rel, doc):
+    glossary = is_glossary_rel(rel)
+    out = []
+    for p in doc_paragraphs(doc):
+        if p["kind"] != "block" or not p["anchor"].startswith("#^"):
+            continue
+        if not (glossary or p["anchor"].startswith(TERM_ANCHOR_PREFIX)):
+            continue
+        m = TERM_NAME_SEP_RE.search(p["text"])
+        if not m:
+            continue
+        name = p["text"][:m.start()].strip()
+        if not name:
+            continue
+        out.append({
+            "name": name,
+            "aliases": term_alias_keys(name),
+            "source": "glossary" if glossary else "doc",
+            "rel": rel,
+            "anchor": p["anchor"],
+            "line": p["line"], "endLine": p["endLine"],
+            "definition": p["text"],
+        })
+    return out
+
+
+def term_keys(t):
+    keys = [t["name"], *t["aliases"]]
+    return [k.strip().lower() for k in keys]
+
+
+def select_term(name, terms):
+    """消解裁定（与 WikiIndex.selectTerm 同构）：词表唯一命中优先；否则唯一命中
+    消解；同级多命中 = ambiguous（不猜）；零命中 = notfound。"""
+    key = name.strip().lower()
+    if not key:
+        return ("notfound", [])
+    hits = [t for t in terms if key in term_keys(t)]
+    gloss = [t for t in hits if t["source"] == "glossary"]
+    if len(gloss) == 1:
+        return ("resolved", gloss)
+    if len(gloss) > 1:
+        return ("ambiguous", gloss)
+    if len(hits) == 1:
+        return ("resolved", hits)
+    if len(hits) > 1:
+        return ("ambiguous", hits)
+    return ("notfound", [])
+
+
+def term_target_key(normalized_target):
+    """消解目标 → 注册表查找键（去尾文档扩展名：[[GCR]] → GCR.md → gcr）。"""
+    low = normalized_target.lower()
+    if low.endswith(".markdown"):
+        return normalized_target[:-9]
+    if low.endswith(".md"):
+        return normalized_target[:-3]
+    return normalized_target
+
+
+def make_term_resolver(terms):
+    def resolve_term(target):
+        """第三优先级回退：文档腿全未命中的无锚目标 → 注册表唯一命中 =
+        (所在文档 rel, 位置锚)；多命中/未命中 = None（引擎同样不猜）。"""
+        verdict, hits = select_term(term_target_key(normalize_target(target)), terms)
+        if verdict == "resolved":
+            return (hits[0]["rel"], hits[0]["anchor"])
+        return None
+    return resolve_term
+
+
 # ── 链接解析 ─────────────────────────────────────────────────────────
 
 def normalize_target(target):
@@ -373,11 +489,14 @@ def first_occurrence(doc, regex):
     return None
 
 
-def check(root, docs, resolve, glossary_rel, exclude_glossary_check):
+def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_rel=None, resolve_term=None):
     violations = []
 
     def add(rule, file, line, detail):
         violations.append({"rule": rule, "file": file, "line": line, "detail": detail})
+
+    if terms_by_rel is None:
+        terms_by_rel = {}
 
     # R1 — front-matter 在位
     for rel, doc in sorted(docs.items()):
@@ -388,12 +507,18 @@ def check(root, docs, resolve, glossary_rel, exclude_glossary_check):
         elif "type" not in doc.frontmatter and "status" not in doc.frontmatter:
             add("obsidian-format", rel, 1, "front-matter 缺 type/status 字段")
 
-    # R2 — 断链（目标 / 标题锚 / 块锚）
+    # R2 — 断链（目标 / 标题锚 / 块锚；词条引用批：文档腿全未命中的无锚目标
+    # 先过词条注册表第三优先级回退，唯一命中 = 非断链）
     for rel, doc in sorted(docs.items()):
         for target, anchor, kind, line_no in doc.links:
             resolved = resolve(target, from_rel=rel)
             if resolved is None:
-                add("broken-link", rel, line_no, f"引用目标不存在：[[{target}]]")
+                thit = resolve_term(target) if (anchor is None and resolve_term) else None
+                if thit:
+                    continue  # 词条命中：边 = (词条所在文档, 词条锚)，与引擎同构
+                bare = anchor is None and "/" not in target
+                hint = "（既非文档也非已注册词条——补词条声明块或改引文档）" if bare else ""
+                add("broken-link", rel, line_no, f"引用目标不存在：[[{target}]]{hint}")
                 continue
             if anchor:
                 if anchor.startswith("^"):
@@ -405,13 +530,18 @@ def check(root, docs, resolve, glossary_rel, exclude_glossary_check):
                     if wanted not in heads:
                         add("broken-anchor", rel, line_no, f"标题锚不存在：[[{target}#{anchor}]]")
 
-    # R2 — 孤儿文档（零出链且零入链；index/glossary 豁免）
+    # R2 — 孤儿文档（零出链且零入链；index/glossary 豁免；词条命中计入入链面——
+    # 与引擎图谱边一致，纯词条引用也算接入图谱）
     linked = set()
     for rel, doc in docs.items():
         for target, _anchor, _kind, _line in doc.links:
             resolved = resolve(target)
             if resolved:
                 linked.add(resolved)
+            elif resolve_term:
+                thit = resolve_term(target)
+                if thit:
+                    linked.add(thit[0])
     for rel, doc in sorted(docs.items()):
         stem = Path(rel).stem.lower()
         if stem in ("index", "glossary", "readme"):
@@ -437,6 +567,9 @@ def check(root, docs, resolve, glossary_rel, exclude_glossary_check):
             links_by_line = {}
             for target, _anchor, _kind, line_no in doc.links:
                 resolved = resolve(target)
+                if resolved is None and resolve_term:
+                    thit = resolve_term(target)
+                    resolved = thit[0] if thit else None  # [[词条]] 短形引用也算词表引用面
                 if resolved == glossary_rel:
                     links_by_line.setdefault(line_no, True)
             for term, block_id, _gline in terms:
@@ -459,6 +592,29 @@ def check(root, docs, resolve, glossary_rel, exclude_glossary_check):
             if len(where) > 1:
                 add("duplicate-definition", glossary_rel, 1,
                     f"概念「{term}」在多篇文档各自定义（{', '.join(where)}）——定义唯一化：词表定义，其余引用")
+
+    # R4 — 词条注册表面：词条块结构合法（合格块必须抽得出词条名）+ 同档词条名唯一
+    for rel, doc in sorted(docs.items()):
+        seen = {}
+        for t in terms_by_rel.get(rel, []):
+            k = t["name"].strip().lower()
+            if k in seen:
+                add("term-duplicate", rel, t["line"],
+                    f"词条「{t['name']}」在本档重复声明（{seen[k]} 与本条）——同一文档内词条名唯一")
+            else:
+                seen[k] = t["anchor"]
+        if rel.lower().endswith(".html"):
+            continue  # html 无 markdown 段落索引，词条定义面 v1 仅 md（设计 §4.4）
+        glossary = is_glossary_rel(rel)
+        for p in doc_paragraphs(doc):
+            if p["kind"] != "block" or not p["anchor"].startswith("#^"):
+                continue
+            if not (glossary or p["anchor"].startswith(TERM_ANCHOR_PREFIX)):
+                continue
+            m = TERM_NAME_SEP_RE.search(p["text"])
+            if not m or not p["text"][:m.start()].strip():
+                add("term-format", rel, p["line"],
+                    f"词条块结构非法：{p['anchor']} 抽不出词条名（缺「名 — 定义」分隔）——声明形态「名 — 定义 ^锚」，`^term-*` 或词表锚段落")
     return violations
 
 
@@ -475,20 +631,27 @@ def extract_summary(doc):
     return ""
 
 
-def build_graph(docs, resolve, project):
+def build_graph(docs, resolve, project, terms_by_rel=None, resolve_term=None):
     nodes = []
     edges = []
     unresolved = []
     degree = {}
     doc_rels = set(docs)
+    if terms_by_rel is None:
+        terms_by_rel = {}
     for rel, doc in sorted(docs.items()):
         for target, anchor, kind, line_no in doc.links:
             resolved = resolve(target, from_rel=rel)
+            edge_anchor = ("#" + anchor) if anchor else None
+            if resolved is None and anchor is None and resolve_term:
+                thit = resolve_term(target)
+                if thit:
+                    resolved, edge_anchor = thit  # 词条命中：边 = (词条所在文档, 词条锚)，与引擎同构
             if resolved is None:
                 unresolved.append({"from": rel, "target": target, "line": line_no})
                 continue
             edges.append({"from": rel, "to": resolved, "kind": kind,
-                          "anchor": ("#" + anchor) if anchor else None, "line": line_no})
+                          "anchor": edge_anchor, "line": line_no})
             degree[rel] = degree.get(rel, 0) + 1
             degree[resolved] = degree.get(resolved, 0) + 1
             # 附件/媒体目标不在 doc 集合（如 ![[x.png]] 指向 attachments/）→ 补附件节点
@@ -511,7 +674,8 @@ def build_graph(docs, resolve, project):
             "degree": degree.get(rel, 0),
             "summary": extract_summary(doc) if rel.endswith((".md", ".markdown")) else "",
             "headings": [h for h, _ in doc.headings][:8] if rel.endswith((".md", ".markdown")) else [],
-            "paragraphs": build_paragraphs(doc),
+            "paragraphs": doc_paragraphs(doc),
+            "terms": terms_by_rel.get(rel, []),
         })
     for rel in attachment_targets:
         top = rel.split("/", 1)[0] if "/" in rel else "."
@@ -646,36 +810,39 @@ def main():
         if not vgloss:
             candidates = [rel for rel in vdocs if "glossary" in Path(rel).stem.lower()]
             vgloss = candidates[0] if candidates else ""
-        return vdocs, vatts, vgloss, make_resolver(list(vdocs.keys()) + vatts)
+        vterms = {rel: terms_of(rel, d) for rel, d in vdocs.items()}
+        vterm_resolver = make_term_resolver([t for ts in vterms.values() for t in ts])
+        return vdocs, vatts, vgloss, make_resolver(list(vdocs.keys()) + vatts), vterms, vterm_resolver
 
-    docs, attachments, glossary_rel, resolve = prepare(root)
+    docs, attachments, glossary_rel, resolve, terms_by_rel, resolve_term = prepare(root)
     if not docs:
         print(f"ERROR: {root} 下未发现任何文档", file=sys.stderr)
         return 2
 
     if args.graph:
-        data = build_graph(docs, resolve, args.project)
+        data = build_graph(docs, resolve, args.project, terms_by_rel, resolve_term)
         Path(args.graph).write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
         print(f"graph → {args.graph}（nodes={len(data['nodes'])} edges={len(data['edges'])} unresolved={len(data['unresolved'])}）")
 
     # 逐 vault 独立校验（#744-B）：根 vault 恒跑；--include-subvaults 时每个
     # <sub>/docs 子 vault 用自己的 docs/词表/解析器独立跑一遍。
     subvaults = discover_subvaults(root) if args.include_subvaults else []
-    vault_results = [("docs", root, docs, glossary_rel, resolve, attachments)]
+    vault_results = [("docs", root, docs, glossary_rel, resolve, attachments, terms_by_rel, resolve_term)]
     for name, rel, vpath in subvaults:
-        vdocs, vatts, vgloss, vresolve = prepare(vpath)
+        vdocs, vatts, vgloss, vresolve, vterms, vterm_res = prepare(vpath)
         if vdocs:
-            vault_results.append((rel, vpath, vdocs, vgloss, vresolve, vatts))
+            vault_results.append((rel, vpath, vdocs, vgloss, vresolve, vatts, vterms, vterm_res))
 
     per_vault = []
     cross_links = []
-    for rel, vpath, vdocs, vgloss, vresolve, vatts in vault_results:
-        violations = check(vpath, vdocs, vresolve, vgloss, exclude_glossary_check=args.skip_concepts)
+    for rel, vpath, vdocs, vgloss, vresolve, vatts, vterms, vterm_res in vault_results:
+        violations = check(vpath, vdocs, vresolve, vgloss, exclude_glossary_check=args.skip_concepts,
+                           terms_by_rel=vterms, resolve_term=vterm_res)
         per_vault.append({"vault": rel, "docs": len(vdocs), "violations": violations,
                           "counts": summarise(violations)})
         # 跨 vault 引用（info）：本 vault 未解析、但能在其它 vault 解析的链接。
         if len(vault_results) > 1:
-            others = {orel: ores for orel, _op, _od, _og, ores, _oa in vault_results if orel != rel}
+            others = {orel: ores for orel, _op, _od, _og, ores, _oa, _t, _tr in vault_results if orel != rel}
             for vrel, doc in vdocs.items():
                 for target, _anchor, _kind, line_no in doc.links:
                     if vresolve(target, from_rel=vrel):

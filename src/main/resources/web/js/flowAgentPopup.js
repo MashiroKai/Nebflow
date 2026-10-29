@@ -161,15 +161,15 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 .flow-agent-footer.failed .fa-status-dot {
   background: var(--color-error, #f44336); opacity: 1;
 }
-/* Frozen (work-schedule park, freeze-spec §3.2): sapphire dot + tint ring,
+/* Frozen (work-schedule park, freeze-spec §3.2): sapphire dot + tint,
    sapphire task text — distinct from running (pulse green) / done (green) */
 /* 2026-08-24 frozen-input spec §5.3: the footer container itself takes the
-   ice-blue material (weaker frost glow than the main input bar — hierarchy).
-   Zero new tokens: sapphire/sapphire-glow alpha variants only. */
+   ice-blue material. 极简批（2026-10-29 作者令「错误态/冻结态要极简」）：
+   12px 外发光与状态点 3px 光环退役——色相（底/描边/点/字）即状态，不再叠
+   光晕。Zero new tokens: sapphire/amber alpha variants only. */
 .flow-agent-footer.frozen {
   background: rgb(var(--sapphire) / 0.08);
   border-top-color: rgb(var(--sapphire) / 0.30);
-  box-shadow: 0 0 12px rgb(var(--sapphire-glow) / 0.18);
 }
 /* Error-recovery frozen tile (frozen-error-recovery plan UI-7): amber tint +
    amber dot — distinct from the sapphire schedule park. Applied as a modifier
@@ -177,18 +177,15 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 .flow-agent-footer.frozen.error {
   background: rgb(var(--amber) / 0.09);
   border-top-color: rgb(var(--amber) / 0.34);
-  box-shadow: 0 0 12px rgb(var(--amber-glow) / 0.18);
 }
 @media (prefers-color-scheme: dark) {
   .flow-agent-footer.frozen {
     background: rgb(var(--sapphire) / 0.12);
     border-top-color: rgb(var(--sapphire) / 0.35);
-    box-shadow: 0 0 12px rgb(var(--sapphire-glow) / 0.24);
   }
   .flow-agent-footer.frozen.error {
     background: rgb(var(--amber) / 0.14);
     border-top-color: rgb(var(--amber) / 0.40);
-    box-shadow: 0 0 12px rgb(var(--amber-glow) / 0.24);
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -196,7 +193,6 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 }
 .flow-agent-footer.frozen .fa-status-dot {
   background: rgb(var(--sapphire)); opacity: 1;
-  box-shadow: 0 0 0 3px rgb(var(--sapphire) / 0.15);
   animation: none;
 }
 .flow-agent-footer.frozen .fa-task {
@@ -204,7 +200,6 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 }
 .flow-agent-footer.frozen.error .fa-status-dot {
   background: rgb(var(--amber)); opacity: 1;
-  box-shadow: 0 0 0 3px rgb(var(--amber) / 0.18);
 }
 .flow-agent-footer.frozen.error .fa-task {
   color: rgb(var(--amber));
@@ -215,7 +210,6 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   color: rgb(var(--amber));
   vertical-align: -2px;
   margin-right: 4px;
-  animation: error-pulse 1.6s ease-in-out infinite;
   flex-shrink: 0;
 }
 .flow-agent-footer .fa-task .fa-task-text {

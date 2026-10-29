@@ -98,11 +98,20 @@ object ConsoleTicketRoutes:
                       logger.info(
                         s"console ticket redeemed: session established (accountSub=${t.accountSub}, " +
                           s"origin=${t.origin}, sid=${rec.sessionId.take(8)}…, networkId=${nid.take(24)})"
-                      ) *> IO.pure(
+                      ) *> IO.pure({
+                        // 独立窗口本机加速批（2026-10-29）：兑换 303 保留 ticket 之外的
+                        // 全部 query（card-window=1&path=…&title=…&cwpo=…）—— 直连卡窗
+                        // 深链 `http://<本机>:<port>/?card-window=1&path=…&ticket=…`
+                        // 兑换落地后必须还是**同一张卡窗页**；恒定 `Location: /` 会把
+                        // 弹窗重定向成全功能控制台（独立窗承载全壳 = 内容物收口批
+                        // 明令禁止形态）。无其余参数 ⇒ 载荷逐字节 = 既有 "/"（spec 钉）。
+                        // ticket 永不回传（一次性凭据不进重定向 URL，语义不变）。
+                        val carried = Query(req.uri.query.toList.filterNot(_._1 == "ticket")*)
+                        val loc = Uri(path = Uri.Path.unsafeFromString("/"), query = carried)
                         Response[IO](Status.SeeOther)
-                          .putHeaders(Location(Uri(path = Uri.Path.unsafeFromString("/"))))
+                          .putHeaders(Location(loc))
                           .addCookie(GatewaySessionStore.newCookie(rec.sessionId, secure = secure))
-                      )
+                      })
                     }
                   }
               }

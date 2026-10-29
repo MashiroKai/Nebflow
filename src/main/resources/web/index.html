@@ -495,16 +495,15 @@
         <button id="conflict-replace">Replace</button>
       </div>
     </div>
-    <!-- 控制台单实例接管模态（2026-10-27 批）：被移位面的强制二选一（退出/重新接管）
-         + 退出面（重入门）。语义与既有模态族不同——Escape/遮罩点击不关闭（互斥权的
-         裁决点不可误关）。渲染单点 = takeoverModal.js。 -->
+    <!-- 控制台单实例接管模态（2026-10-27 批；四修批 2026-10-29：极简卡 + 毛玻璃背景
+         + 退出直达官网个人主页）。语义与既有模态族不同——Escape/遮罩点击不关闭
+         （互斥权的裁决点不可误关）。渲染单点 = takeoverModal.js。 -->
     <div id="takeover-box">
       <div id="takeover-title">Console opened elsewhere</div>
       <div id="takeover-msg"></div>
       <div id="takeover-actions">
         <button id="takeover-exit">Exit</button>
         <button id="takeover-retake">Retake Control</button>
-        <button id="takeover-reenter" hidden>Re-enter</button>
       </div>
     </div>
   </div>
@@ -676,6 +675,60 @@
   <script defer src="vendor/katex.min.js"></script>
   <script defer src="vendor/highlight.min.js"></script>
   <script type="module" src="js/main.js"></script>
+  <!-- 卡窗静态引导看门狗（独立窗口本机加速批 2026-10-29）。诊断失地：模块图
+       （main.js 及其 import 图）挂起/失败时 —— 拥塞隧道上模块 fetch 停摆、SW
+       陈旧索引引用已不存在的历史版本资产（404）—— canvas.js 的引导态面自身
+       也在模块图里 ⇒ 谁都不会报错，独立窗只剩 index 静态壳的空标题胶囊
+       （作者 11:06 截证形态）。本看门狗是**零模块依赖**的最后观察者：经典脚本
+       只认 DOM 事实 —— html.card-window-boot 在场而 body.card-window 迟迟不
+       现（initCardWindowMode 未跑）且无引导态面 ⇒ 判「引导未启动」，注入可见
+       失败卡 + [重试]；重试带 ?nfsw=0 绕过 SW（陈旧索引形态的自愈出口）。
+       引导成功（body.card-window 现身）即永久哑火，零运行时面。 -->
+  <script>
+  (function () {
+    try {
+      if (!document.documentElement.classList.contains('card-window-boot')) return;
+      var CARDWIN_BOOT_WATCHDOG_MS = 15000;
+      setTimeout(function () {
+        try {
+          if (document.body.classList.contains('card-window')) return;   // 引导已启动
+          if (document.getElementById('nf-cardwin-boot')) return;        // canvas.js 引导态面在场
+          var pane = document.querySelector('#canvas-content .canvas-tab-pane');
+          if (pane && pane.childElementCount > 0) return;                // 真容已挂
+          var card = document.createElement('div');
+          card.id = 'nf-cardwin-static-watchdog';
+          card.setAttribute('data-state', 'failed');
+          card.style.cssText =
+            'position:fixed;left:50%;top:42%;transform:translate(-50%,-50%);z-index:60;' +
+            'display:flex;flex-direction:column;align-items:center;gap:12px;padding:26px 34px;' +
+            'border:1px solid #e0e1e4;border-radius:14px;background:#fff;color:#1b1e26;' +
+            "font:13px/1.7 -apple-system,'Segoe UI',sans-serif;text-align:center;max-width:78vw;" +
+            'box-shadow:0 2px 14px rgba(0,0,0,.08)';
+          var head = document.createElement('div');
+          head.style.cssText = 'font-weight:600;font-size:14px';
+          head.textContent = '独立窗口加载失败';
+          var hint = document.createElement('div');
+          hint.style.cssText = 'color:#6a737d;font-size:12px;max-width:340px;word-break:break-word';
+          hint.textContent = '页面资源未能完成加载（网络拥塞或缓存版本过期）。点击重试将绕过缓存重新载入。';
+          var retry = document.createElement('button');
+          retry.style.cssText =
+            'margin-top:2px;padding:6px 18px;border-radius:8px;cursor:pointer;' +
+            'border:1px solid #d8d9dd;background:transparent;color:inherit;font-size:12px';
+          retry.textContent = '重试';
+          retry.addEventListener('click', function () {
+            try {
+              var q = new URLSearchParams(location.search);
+              q.set('nfsw', '0');   // sw.js 逃生门：绕过 SW（陈旧索引形态自愈）
+              location.replace(location.pathname + '?' + q.toString());
+            } catch (_) { location.reload(); }
+          });
+          card.append(head, hint, retry);
+          document.body.appendChild(card);
+        } catch (_) { /* 看门狗自身永不抛 */ }
+      }, CARDWIN_BOOT_WATCHDOG_MS);
+    } catch (_) { /* 无 DOM 形态（测试壳）静默 */ }
+  })();
+  </script>
   <!-- 手机交互层注册钩子：桌面视口只做一次 media-query 判定即返回（不 import
        控制器、不建 DOM）；手机视口动态加载 js/mobile/ 四控制器（nav/layout/
        gestures/floats，r2 规格①②③⑤）。 -->

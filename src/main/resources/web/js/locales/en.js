@@ -674,14 +674,15 @@ export default {
   // interjections + disconnect banner texts.
   'ws.connBanner.reconnecting': 'Connection lost · reconnecting…',
   'ws.connBanner.pending': 'Connection lost · reconnecting… {n} message(s) waiting to send',
-  // Console single-instance batch (2026-10-27): takeover modal (takeoverModal.js)
+  // Console single-instance batch (2026-10-27): takeover modal (takeoverModal.js);
+  // four-fix batch (2026-10-29 author ruling): exit-face/re-enter retired (exit now
+  // navigates to the website profile); retake loading + failure hint added.
   'takeover.title': 'Console opened elsewhere',
   'takeover.msg': 'You signed in to the console somewhere else. This window has yielded control — exit, or retake it.',
   'takeover.retake': 'Retake Control',
   'takeover.exit': 'Exit',
-  'takeover.exitTitle': 'Signed out of the console',
-  'takeover.exitMsg': 'The console was opened elsewhere; this page is disconnected and will not auto-reconnect.',
-  'takeover.reenter': 'Re-enter',
+  'takeover.retaking': 'Retaking…',
+  'takeover.retakeFailed': 'Retake failed — please try again',
   // f1-send-queue (2026-10-19): pending-mark tooltip for offline-queued bubbles + queue overflow toast.
   'chat.pendingSend': 'Pending - auto-resends on reconnect',
   'input.queueOverflow': 'Message queue full (100): oldest message dropped',
@@ -852,12 +853,11 @@ export default {
   'settings.thinkingEffort.medium': 'Medium',
   'settings.thinkingEffort.high': 'High',
   'settings.thinkingEffort.max': 'Max',
-  // thinking-config Phase 2 (2026-10-29): per-model thinking effort select.
-  'settings.thinkingPerModel': 'Thinking effort',
-  'settings.thinkingInherit': 'Inherit',
-  'settings.thinkingEffective': 'now {v}',
-  'settings.thinkingForcedBadge': 'Model forces thinking on',
-  'settings.thinkingMediumMap': 'med→high',
+  // thinking-config Phase 2 (2026-10-29) keys retired with the settings-panel-
+  // fourfix batch ① (author: per-model thinking config must not exist) —
+  // thinkingPerModel/Inherit/Effective/ForcedBadge/MediumMap removed with the
+  // per-model control; the global settings.thinkingMode select is the single
+  // configuration point.
   // === Settings-page permission-mode control (2026-09-12 batch) was deleted by
   // permshield F1 (2026-09-13): all 7 `settings.safetyMode*` keys went with it
   // (author re-ruling candidate B ① "delete the settings page"). The guidance now
@@ -1079,14 +1079,21 @@ export default {
   'settings.imagegenNotCompiled': 'Not compiled in (zero-trace release build)',
   'settings.imagegenNotCompiledHint': 'This build was made without STAND_IMAGEGEN, so the image generation face is entirely absent; this slot is status-only. Start a dev build with STAND_IMAGEGEN=1 to enable it.',
   'settings.imagegenEnabled': 'Enable image generation',
-  'settings.imagegenEnabledHint': 'A missing key or this switch off disables the generation leg entirely (engine-side graceful degrade — no half-available state).',
+  // settings-panel-fourfix batch ③ (2026-10-29 author orders: "keep it lean";
+  // "the frontend must never show 引用/keyRef/secrets-pointer wording"): the
+  // engine-internal long hints (EnabledHint/KeyHint/MissingKeyHint) and the
+  // keyRef keys (KeyRef/KeyRefRequired/KeySave) are removed wholesale — the
+  // face is a plain "type API key, save" flow; the pointer name is invisible.
+  'settings.imagegenShortHint': 'Enter the API key and save; without a key, image generation stays off.',
   'settings.imagegenProvider': 'Provider',
+  'settings.imagegenAddProvider': '＋ Add provider…',
+  'settings.imagegenProviderNamePlaceholder': 'New provider name (letters/digits/._-)',
   'settings.imagegenType': 'Adapter type',
+  'settings.imagegenTypePlaceholder': 'Choose an adapter type',
   'settings.imagegenModel': 'Model',
+  'settings.imagegenModelPlaceholder': 'Model ID',
   'settings.imagegenBaseUrl': 'Custom endpoint (optional)',
   'settings.imagegenBaseUrlPlaceholder': 'Empty = adapter default endpoint',
-  'settings.imagegenKeyRef': 'Key reference (keyRef)',
-  'settings.imagegenKeyHint': 'keyRef is a secret NAME under secrets/ (a pointer) — the value never enters the config file.',
   'settings.imagegenKeyConfigured': 'Configured',
   'settings.imagegenKeyMissing': 'Pending entry',
   'settings.imagegenKeyEntry': 'API Key',
@@ -1094,16 +1101,19 @@ export default {
   'settings.imagegenKeyReentryPlaceholder': 'Configured — typing overwrites',
   'settings.imagegenKeyShow': 'Show key value',
   'settings.imagegenKeyHide': 'Hide key value',
-  'settings.imagegenKeySave': 'Save key',
   'settings.imagegenKeySaved': 'Key saved',
   'settings.imagegenKeySaveFailed': 'Save failed ({code})',
-  'settings.imagegenKeyRefRequired': 'Enter a keyRef before saving the key',
   'settings.imagegenKeyEmpty': 'Key value is empty',
-  'settings.imagegenMissingKeyHint': 'Missing key = the generation leg is disabled; entering the key restores it.',
   'settings.imagegenModelRequired': 'Model is required',
-  'settings.imagegenNoProvider': 'No provider yet — configure nebflow.json imagegen.providers first',
+  'settings.imagegenTypeRequired': 'Choose an adapter type first',
+  'settings.imagegenNameRequired': 'Enter a provider name first',
+  'settings.imagegenNameInvalid': 'Provider name allows letters/digits/._- only',
+  'settings.imagegenDelete': 'Delete this provider',
+  'settings.imagegenDeleteConfirm': 'Click again to confirm',
+  'settings.imagegenDeleted': 'Provider deleted',
   // settings-panel batch B (2026-10-28): per-model connectivity test.
   'provider.testModelTitle': 'Connectivity test: one minimal real call to this model',
+  'provider.testRunning': 'Testing…',
   'provider.testModelOk': 'OK ({ms}ms)',
   'provider.testModelFailedHttp': 'Test failed (HTTP {code})',
   'provider.testModelFailedIo': 'Network error — engine unreachable',
@@ -1426,6 +1436,8 @@ export default {
   'askUser.attachmentDownload': 'Download {name} (no in-app viewer for this type)',
     'askUser.pendingTitle': 'Pending questions',
   // held-receipt 投递可靠性批（2026-10-21 fix 3）：「N 条回执待投递」徽标词条。
+  // 补投静默批（2026-10-29）：词条去机制名——"held by the sub-agent barrier"
+  // （引擎内部机制词）改平实表述；作者可见面不出现 barrier/force-drain 字样。
   'heldReceipts.title': 'Delivery receipts pending injection',
   // 'heldReceipts.held' (barrier-hold process state) retired 2026-10-29 (author
   // ruling: process self-heal states render nothing; the capsule surfaces the
@@ -1883,6 +1895,9 @@ export default {
   'task.repeatHourly': 'Hourly',
   'task.repeatDaily': 'Daily',
   'task.repeatWeekly': 'Weekly',
+  // schedcard batch (2026-10-29): dedicated schedule card (chat stream) copy
+  'task.cardChip': 'Scheduled Task',
+  'task.cardScheduledAt': 'Scheduled {time}',
 
   // NebLink
   'neblink.thisDevice': 'This device',
@@ -2696,6 +2711,7 @@ export default {
   'perception.tbLink': 'Link',
   'perception.linkPrompt': 'Link URL',
   'perception.removeAtt': 'Remove',
+  'perception.attMissingNote': 'One or more attachment files are missing — sending is disabled. Remove the chip (×) in Canvas and retry.',
   'perception.removeAddr': 'Remove',
   'perception.toPh': 'Recipient address, Enter to add',
   'perception.addrPh': 'Type an address, Enter to add',

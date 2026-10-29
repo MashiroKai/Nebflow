@@ -292,8 +292,9 @@ class MailClientImapSpec extends FunSuite:
     val tmp = java.nio.file.Files.createTempDirectory("perception-connect-fail-spec")
     val core = new PerceptionCore(
       store = new PerceptionStore(os.Path(tmp)),
-      resources = null,
-      broadcast = _ => IO.unit
+      broadcast = _ => IO.unit,
+      // 投递出域 seam 桩（false=不可达 → spool；本 spec 不跑投递腿）
+      deliverEnvelope = (_, _) => IO.pure(false)
     )
     core.bootInitialize.unsafeRunSync() // loadAccounts 缺文件 = Nil，零写盘
     try

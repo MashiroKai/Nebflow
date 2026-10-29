@@ -3516,22 +3516,25 @@
    deleted with that path in permshield F1 (2026-09-13) — no producer remains. */
 
 /* ── Error-recovery escalation card (frozen-error-recovery plan §5.3.2) ──
-   Amber decision card rendered at the top of a session view when auto-recovery
-   has been exhausted and a parent/user decision is needed. Uses the same
-   glass+frost language as the frozen family but the amber hue ("error family"),
-   no overlay dimming (per the standing no-overlay ruling). */
+   Decision card rendered at the top of a session view when auto-recovery
+   has been exhausted and a parent/user decision is needed.
+   极简批（2026-10-29 作者令「错误态对话框要极简」）：材质从「琥珀大底 + 琥珀
+   描边 + 内高光 + 外发光」收敛为 ui-status-redesign 既有极简范式（bgTask 输
+   出弹窗 .bgt-error 同款）：中性玻璃底（etched 族）+ 琥珀只留左缘 2px 描边一
+   处点缀 + 行首静态图标。信息层级 = 一行标题 + 一行原因 + 一行等待倒计时；
+   三出口保留（重启并续跑 / 取消任务 / 继续等待——三个真实退出路径），但收敛
+   为文本 chip：主操作「重启并续跑」amber 字，其余中性字，hover 才起淡底。
+   No overlay dimming (per the standing no-overlay ruling). */
 .error-escalation-card {
   margin: 10px 14px 4px 14px;
-  padding: 12px 14px;
-  border-radius: 12px;
-  background: rgb(var(--amber) / 0.07);
-  border: 1px solid rgb(var(--amber) / 0.32);
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.20),
-    0 0 16px rgb(var(--amber-glow) / 0.10);
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+  border-left: 2px solid rgb(var(--amber) / 0.55);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   color: var(--color-text);
 }
 .error-escalation-card .error-icon {
@@ -3539,7 +3542,6 @@
   height: 18px;
   flex-shrink: 0;
   color: rgb(var(--amber));
-  animation: error-pulse 1.6s ease-in-out infinite;
 }
 .error-escalation-header {
   display: flex;
@@ -3560,8 +3562,8 @@
   color: var(--color-text-muted);
   line-height: 1.45;
 }
-/* 「继续等待」提示行（盘点 #32 字收敛）：12px 提示句转中性字——红/琥珀只在
-   图标（.error-icon，既有）与按钮（交互红，铁律三豁免）上。 */
+/* 「继续等待」提示行（盘点 #32 字收敛）：12px 提示句转中性字——琥珀只在图标
+   （.error-icon）与左缘描边（图案载体）上。 */
 .error-escalation-wait {
   font-size: 12px;
   color: var(--status-word);
@@ -3573,58 +3575,48 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  margin-top: 2px;
 }
 .error-escalation-actions button {
   pointer-events: auto;
   font: 500 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   border-radius: 8px;
-  padding: 5px 12px;
+  padding: 4px 10px;
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1),
     border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
     color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  /* 静音文本 chip（skip-freeze-btn 同族）：无底无框，hover 才起淡底。 */
+  background: transparent;
+  border: none;
 }
-/* 重启并续跑 → parentRestart */
+/* 重启并续跑 → parentRestart（主操作 = 唯一 amber 字 chip） */
 .error-restart-btn {
-  background: rgb(var(--amber) / 0.18);
-  border: 1px solid rgb(var(--amber) / 0.50);
   color: rgb(var(--amber));
 }
 .error-restart-btn:hover {
-  background: rgb(var(--amber) / 0.28);
+  background: rgb(var(--amber) / 0.12);
 }
-/* 取消任务 → cancelAgent */
-.error-abandon-btn {
-  background: transparent;
-  border: 1px solid rgb(var(--color-error, 244 67 54) / 0.40);
-  color: var(--color-error, #f44336);
+/* 取消任务 → cancelAgent（次级出口 = 中性字） */
+.error-escalation-actions .error-abandon-btn {
+  color: var(--color-text-muted);
 }
-.error-abandon-btn:hover {
-  background: rgb(var(--color-error, 244 67 54) / 0.10);
+.error-escalation-actions .error-abandon-btn:hover {
+  background: var(--color-frame-hover, rgba(128, 128, 128, 0.12));
+  color: var(--color-text);
 }
-/* 继续等待 → close card */
+/* 继续等待 → close card（次级出口 = 中性字） */
 .error-wait-btn {
-  background: transparent;
-  border: 1px solid var(--glass-etched-border);
   color: var(--color-text-muted);
 }
 .error-wait-btn:hover {
-  background: var(--glass-etched-bg);
-}
-@media (prefers-color-scheme: dark) {
-  .error-escalation-card {
-    background: rgb(var(--amber) / 0.10);
-    border-color: rgb(var(--amber) / 0.38);
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-      0 0 16px rgb(var(--amber-glow) / 0.14);
-  }
+  background: var(--color-frame-hover, rgba(128, 128, 128, 0.12));
+  color: var(--color-text);
 }
 @media (prefers-reduced-motion: reduce) {
-  .error-escalation-card .error-icon,
-  .error-recovery-strip .error-icon {
-    animation: none;
+  .error-escalation-actions button {
+    transition: none;
   }
 }
 

@@ -4251,3 +4251,71 @@ export function finishThinking() {
   return '';
 }
 
+/**
+ * 终态兜底（残片清理批 · 2026-10-29 报障「回复已完成 但下面还是有一个思考过程
+ * 流式卡在那」）：把一个视图里**一切在场流式面**强制 final 化 —— thinking / 正文 /
+ * 工具卡一视同仁。终态后任何流式残片 = 渲染器 bug 形态（晚到帧开了新块又等不到
+ * 它的结束帧 / 重放腿从陈旧缓冲重建的流式面），这里就地收口，绝不挂流式态。
+ *
+ * 调用点（main.js）：终态帧族（done/error/interrupted/timeout/maxTokens/compactFailed）
+ * 的常规收口之后；权威 idle 重同步（applyAuthoritativeSessionBusy{busy:false}）；
+ * 晚到帧闸（thinking/thinkingDelta/toolCallDetected/toolStart 的 turn 不在场丢弃腿）。
+ *
+ * 幂等：指针腿（finishThinking/finishAi）在常规终态已收口时是 no-op；DOM 扫描腿
+ * 只动仍处流式态的面。
+ * @param {{sessionId?: string, dom: {chat: HTMLElement}, stream: Object<string, any>}} [view]
+ *   缺省 = activeView。外来视图临时换座跑指针腿
+ *   （与 done 处理器背景腿同款模式），DOM 腿始终显式按本视图扫描。
+ */
+export function finalizeStreamingFaces(view) {
+  const v = view || activeView;
+  if (!v || !v.dom || !v.dom.chat) return;
+  const chat = v.dom.chat;
+  // ① 指针腿：标准终态原语（activeView 绑定；外来视图临时换座）。
+  if (v !== activeView) {
+    const saved = activeView;
+    try {
+      setActiveView(v);
+      finishThinking();
+      finishAi();
+    } finally {
+      setActiveView(saved);
+    }
+  } else {
+    finishThinking();
+    finishAi();
+  }
+  // ② DOM 兜底腿：指针不在场的流式思考块（重放腿重建面 / 晚到帧开出的第二块等）
+  //    就地终态化 —— 与 finishThinking 同一 DOM 契约（thinking-done + 标签去流式态
+  //    + 内容收拢 + 可折叠），但不持有 thinkingText（内容已随块在场）。
+  chat.querySelectorAll('.thinking-bubble:not(.thinking-done)').forEach((bubble) => {
+    bubble.classList.add('thinking-done');
+    if (bubble.dataset) bubble.dataset.nfEnd = String(Date.now());
+    const label = bubble.querySelector('.thinking-label');
+    const content = bubble.querySelector('.thinking-content');
+    if (label) {
+      label.classList.remove('thinking-streaming');
+      label.classList.add('collapsible');
+      label.classList.remove('expanded');
+      label.setAttribute('aria-expanded', 'false');
+      label.querySelectorAll('.thinking-dot').forEach((d) => d.remove());
+      const labelText = label.querySelector('.thinking-label-text');
+      if (labelText) labelText.textContent = t('chat.thinkingLabel');
+      if (content) bindCollapsibleToggle(label, () => content);
+    }
+    if (content) {
+      content.style.display = 'none';
+      content.querySelectorAll('.cursor').forEach((el) => el.remove());
+    }
+  });
+  // ③ 游标扫尾：终态后任何 .cursor 都是残片（正文 / 思考 / 工具参数流一视同仁）。
+  chat.querySelectorAll('.cursor').forEach((el) => el.remove());
+  // ④ 在飞渲染槽：工具参数流 rAF 与正文/ask 的 rAF 槽一并撤（终态后无消费者）。
+  cancelToolStreamRAF();
+  cancelStreamRender(v, 'ai');
+  cancelStreamRender(v, 'ask');
+  // ⑤ 工作线：终态后仍在场的线拆除（collapseTurn 正常消费线；此腿兜漏网——
+  //    晚到帧开出的线、指针腿没有对应消费路径的线）。
+  removeWorkline(v);
+}
+

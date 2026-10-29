@@ -810,10 +810,12 @@ private[gateway] object WsSessionChatHandlers:
     // Before this case existed the payload fell through to the silent
     // `case _ => IO.unit` below — the CLI received "status: ok" while
     // nothing was dispatched (the headless one-shot chain was broken).
-    // NOTE: ScheduledTaskActor also emits a "userMessage" broadcast, but
-    // that is a server-to-client display event (task routing goes
-    // through routeToAgent directly) — it never enters handleMessage
-    // and is unaffected by this case.
+    // NOTE: ScheduledTaskActor used to also emit a "userMessage" broadcast —
+    // a server-to-client display event with zero frontend consumers (dead
+    // frame). Since the schedcard batch (2026-10-29) that broadcast is a
+    // `user` injected frame (source="schedule", rendered as the dedicated
+    // schedule card) — it never enters handleMessage and is unaffected by
+    // this case (the two legs share only the historical name).
     val umJson = parsedJson(text)
     val umSessionId = umJson.hcursor.downField("sessionId").as[String].getOrElse("")
     val umContent = umJson.hcursor.downField("content").as[String].getOrElse("")

@@ -322,6 +322,11 @@ object ContextRefresher:
    * （你是谁）渲染为**两个可区分的块**（`## Soul` / `## User`），而非合并成一块
    * ——两块标题即语义边界，模型能分辨「关于我」与「关于你」。
    *
+   * 头部固定携带一段检索指引（2026-10-29 作者令批）：改制后记忆主库 = 对话
+   * 检索库（`~/.stand/memory-db/`），CLI = `tools/stand-recall`（仓根执行，
+   * cwd 漂移须回仓根/绝对路径）——指引是固定文案，只随非空 base 渲染（主体
+   * 缺省 ⇒ 整块不渲染的既有语义不变）。
+   *
    * 记忆队列 pending 行参数已随队列族退役（memory-family-retirement 批
    * 2026-09-29）：队列机制整体停用 ⇒ 无 pending 可报，该段恒空 ⇒ 参数、职责与
    * 该段一并删除（不留死参）。
@@ -347,7 +352,15 @@ object ContextRefresher:
       else
         s"""# Memory
            |
-           |Your memory is below. Entries with →id have detail files at `~/.nebflow/memory/{id}.md` — read them when the scenario matches.
+           |Your memory is below. Entries with →id have detail files at `~/.nebflow/memory/{id}.md` — read them when the scenario matches. Detail files are snapshots and red-lines only; historical events and rulings live in the conversation archive.
+           |
+           |## Recall archive — `tools/stand-recall`
+           |
+           |Your full conversation history with the user is auto-indexed into a searchable archive at `~/.stand/memory-db/`. When context is missing, a past ruling is uncertain, or compaction ate a detail you need — search FIRST, then act:
+           |
+           |    ./tools/stand-recall "<natural language query>"
+           |
+           |Run it from the repo root; after any `cd`, go back to the repo root or use an absolute path (a drifted cwd makes the relative path fail). Output: relevance-ranked conversation snippets — timestamp, role, session anchor, `←`/`→` neighbor lines. Exhaust self-retrieval before asking the user: try multiple keyword rounds, switching to synonyms / English / commit hashes when words miss.
            |
            |${sections.mkString("\n\n")}""".stripMargin
 

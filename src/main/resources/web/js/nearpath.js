@@ -47,14 +47,20 @@ function writeStored(rec) {
 }
 
 /**
- * 本会话已验证的近路（nfTicket/nfFileCache 大文件 LAN 直传腿的消费面）。
- * @returns {{ base: string, kind: 'loopback'|'lan' } | null}
+ * 本会话已验证的近路（nfTicket/nfFileCache 大文件 LAN 直传腿 + 卡窗直连腿的
+ * 消费面）。selfId = 近路面回的网关自证设备 id（服务端下发），卡窗直连腿拿它
+ * 做第二锚（环回 /api/health 的 deviceId 与之等值才算「我们的网关」）。
+ * @returns {{ base: string, kind: 'loopback'|'lan', selfId?: string } | null}
  */
 export function getNearPath() {
-  if (active && Date.now() - active.at < REFRACTORY_MS * 4) return active;
+  if (active && Date.now() - active.at < REFRACTORY_MS * 4) {
+    return active.selfId ? active : { base: active.base, kind: active.kind };
+  }
   const stored = readStored();
   if (stored && stored.verified && typeof stored.verified.base === 'string') {
-    return { base: stored.verified.base, kind: stored.verified.kind === 'lan' ? 'lan' : 'loopback' };
+    const out = { base: stored.verified.base, kind: stored.verified.kind === 'lan' ? 'lan' : 'loopback' };
+    if (typeof stored.selfId === 'string' && stored.selfId) out.selfId = stored.selfId;
+    return out;
   }
   return null;
 }
@@ -137,6 +143,8 @@ export async function probeNearPath() {
     writeStored({
       at: Date.now(),
       verified: hit ? { base: hit.base, kind: hit.kind } : null,
+      // 网关自证设备 id（服务端下发；卡窗直连腿的第二锚消费，独立窗口本机加速批）
+      selfId: typeof data.selfId === 'string' ? data.selfId : '',
       enrolled: data.enrolled === true,
       reason: hit ? 'ok' : 'unreachable',
     });

@@ -1,0 +1,17 @@
+# 统一 daemon 批 LIVE 冒烟证据（2026-10-29 14:2x）
+# 命令：bash scripts/perception-daemon-smoke.sh target/scala-3.5.2/stand-assembly-2026.10.26-beta.2.jar
+# assembly：stand-assembly-2026.10.26-beta.2.jar（jar hash 193eb39696ab3220f501d48b52162f09656419b9）
+# 隔离：mktemp 数据根 + 沙箱 8091 端口（在产 6138/宿主 8080 拒绝；never-kill 台账在册）
+
+[smoke] jar=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-0b171af0/target/scala-3.5.2/stand-assembly-2026.10.26-beta.2.jar (101M)
+[smoke] port=8091 timeout=120s java=/Users/kaiyu/.stand/jdk-21/bin/java
+[smoke] home=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T//stand-perception-daemon-smoke.x1lum5 (isolated data root)
+[smoke] P1 ready: GET /api/health -> 200 after 4s
+[smoke] P2 dock: engine log carries the handshake line
+[smoke] P3 family: perception-daemon registered in marker (pid 77333 alive)
+[smoke] P4 health: daemon /health 200 (token) / 403 (no token) on 127.0.0.1:65231
+[smoke] P5 loops: boot line (poll/sweep/digest/spool/idle) + serving line live in daemon log
+[smoke] P6 heartbeat leg: /api/daemons -> perception-daemon running + portOpen=true (统一健康面)
+[smoke] P7 proxy: GET /api/perception/entries -> 200 via engine→daemon channel
+[smoke] P8 exit: engine stopped -> perception-daemon died with it (zero orphans, port 65231 free)
+PERCEPTION-DAEMON-SMOKE: PASS jar=stand-assembly-2026.10.26-beta.2.jar port=8091 boot_ready=4s checks=11111111

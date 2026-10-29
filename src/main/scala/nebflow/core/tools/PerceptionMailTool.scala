@@ -6,7 +6,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.core.*
-import nebflow.perception.{DraftCodec, PerceptionCore, PerceptionModel, PerceptionService}
+import nebflow.perception.{DraftCodec, PerceptionClient, PerceptionModel}
 import nebflow.shared.*
 
 /**
@@ -20,9 +20,10 @@ import nebflow.shared.*
  * `perceptionDraft:<draftId>` 标记供前端换肤为邮件快照面）→ 非阻塞 ack
  * （答复稍后作为消息到达本会话）。
  *
- * 附件（r3+ 加强项 1 的边界）：本批为**只读展示层**——路径进草稿与卡片
- * 展示；发送附件未开放，`sendDraft` 侧明确拒绝（不静默丢弃）。多收件人/
- * 多附件校验为宽进（卡片/画布阶段再拦）。
+ * 附件（r3 裁决 4 / r2 §7.2）：路径进草稿与 chip 行（画布可 ×移除），发送时
+ * 逐路径读盘组装 MIME multipart——任一路径不存在 ⇒ MissingAttachment 逐路径
+ * 报告拒发（不静默丢弃）。「添加附件」的画布入口无路径拾取机制 → 开放问题。
+ * 多收件人/多附件校验为宽进（卡片/画布阶段再拦）。
  */
 object PerceptionMailTool extends Tool:
 
@@ -40,7 +41,7 @@ Parameters:
 - subject (string, required).
 - body (string, required): plain text body; converted to a clean HTML mail body (line breaks become paragraphs). Use bodyHtml only when you need rich formatting.
 - cc / bcc (string or array of string, optional).
-- attachments (array of string, optional): absolute local paths — DISPLAY ONLY this phase (the mail face shows them; actual attachment upload is not open yet, and a draft carrying attachments is refused at send time).
+- attachments (array of string, optional): absolute local paths — shown as attachment chips in the canvas editor and SENT as real MIME attachments. Every path must exist at send time; a missing path is reported per-path and the send is refused until the user removes the chip in Canvas.
 - quoteFrom / quoteText (string, optional): when replying to a received mail, pass the original sender and an excerpt — rendered as the read-only quote block below the compose area (real-mail-client reply semantics).
 - inReplyTo (string, optional): Message-ID of the mail being replied to (sets the In-Reply-To header).
 
@@ -108,26 +109,28 @@ The mailbox must already be connected in the perception panel (未连接时本�
         replyToMessageId = Option(inReplyTo).filter(_.nonEmpty),
         quoteHtml = quote
       )
-      PerceptionService.coreNow.flatMap {
+      // 统一 daemon 批 2026-10-29：草稿落盘/账户面在统一 daemon 管理进程
+      // （PerceptionDaemonMain）——引擎侧经 PerceptionClient 工具腿（5s 有界，
+      // 未 docked/停机窗 = 既有「感知守护进程未启动」错误面）。
+      PerceptionClient.hasAccount.flatMap {
         case None =>
           IO.pure(Left(ToolError("感知守护进程未启动 · 无法创建邮件草稿（perception daemon not booted)")))
-        case Some(core) =>
-          core.hasAccount.flatMap:
-            case false =>
-              IO.pure(Left(ToolError(
-                "尚未连接邮箱 · 请先在感知面板点击「连接邮箱」完成两步配置（邮箱地址 + 授权码），再发送邮件。"
-              )))
-            case true =>
-              core.createDraft(doc.copy(draftId = "")).flatMap {
-                case Left(err) => IO.pure(Left(ToolError(s"草稿落盘失败: $err")))
-                case Right(rec) =>
-                  emitSnapshotAsk(core, rec, doc, ctx)
-              }
+        case Some(false) =>
+          IO.pure(Left(ToolError(
+            "尚未连接邮箱 · 请先在感知面板点击「连接邮箱」完成两步配置（邮箱地址 + 授权码），再发送邮件。"
+          )))
+        case Some(true) =>
+          PerceptionClient.createDraft(doc.copy(draftId = "")).flatMap {
+            case None =>
+              IO.pure(Left(ToolError("感知守护进程未启动 · 无法创建邮件草稿（perception daemon not booted)")))
+            case Some(Left(err)) => IO.pure(Left(ToolError(s"草稿落盘失败: $err")))
+            case Some(Right(rec)) =>
+              emitSnapshotAsk(rec, doc, ctx)
+          }
       }
 
   /** AskUser snapshot card (id marks it as a perception draft for the web face). */
   private def emitSnapshotAsk(
-    core: PerceptionCore,
     rec: PerceptionModel.DraftRecord,
     doc: DraftCodec.DraftDoc,
     ctx: ToolContext
@@ -150,7 +153,8 @@ The mailbox must already be connected in the perception panel (未连接时本�
           )
         )
         for
-          _ <- core.attachRequest(rec.draftId, requestId)
+          // 草稿↔ask 绑定走 daemon 工具腿（快照/画布回执路由判据在 daemon 侧）。
+          _ <- PerceptionClient.attachRequest(rec.draftId, requestId)
           bridge = AskUserAnswerPort.ref(agentRef, items, requestId, ctx)
           _ = agentRef ! nebflow.actor.AgentCommand.AskUser(requestId, items, Some(bridge), Nil)
         yield Right(ack(rec, requestId))
