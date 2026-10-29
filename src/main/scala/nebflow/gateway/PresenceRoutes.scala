@@ -1498,6 +1498,39 @@ private[gateway] object PresenceRoutes:
           }
         }
 
+      // GET /plugins/sources — 逐包安装来源（P2 源引用批：P1 provenance 账本的投影读面，
+      // 远程发布源设计稿 §4.4 最小集）。**零网络**：只读本机账本（<dataRoot>/plugin-sources/），
+      // 永不外呼（R4 零超时纪律——远端「有新版」检查面属 P3，且只挂用户驱动事件）。
+      // official = via ∈ {official, seed}（官方身份的两条来路：官方源安装 / 随引擎分发）。
+      case req @ GET -> Root / "plugins" / "sources" =>
+        withAuth(req) {
+          nebflow.core.plugin.PluginRegistry.scan().flatMap { plugins =>
+            IO.blocking {
+              val known = List.newBuilder[io.circe.Json]
+              val unknown = List.newBuilder[io.circe.Json]
+              plugins.sortBy(_.name).foreach { p =>
+                import nebflow.core.plugin.PluginSourceLedger.*
+                query(p.name) match
+                  case Known(e) =>
+                    val base = JsonObject.empty
+                      .add("name", e.name.asJson)
+                      .add("version", e.version.asJson)
+                      .add("digest", e.digest.asJson)
+                      .add("via", e.via.label.asJson)
+                      .add("kind", e.kind.label.asJson)
+                      .add("installedAt", e.installedAt.asJson)
+                      .add("official", ((e.via == Via.Seed || e.via == Via.Official)).asJson)
+                    val withUrl = e.url.fold(base)(u => base.add("url", u.asJson))
+                    val withPin = e.pin.fold(withUrl)(pin => withUrl.add("pin", pin.toJson))
+                    known += Json.fromJsonObject(withPin)
+                  case UnknownSource(reason) =>
+                    unknown += Json.obj("name" -> p.name.asJson, "reason" -> reason.asJson)
+              }
+              Json.obj("sources" -> known.result().asJson, "unknownSources" -> unknown.result().asJson)
+            }.flatMap(Ok(_))
+          }
+        }
+
       // POST /plugins/:name/approve — **兼容保留**（无审批批 2026-09-13 起 UI 主线不再调用）：
       // 写一条审批审计记录（digest + 逐文件快照）到 `plugins.trust`。⚠️ 该记录**不再决定
       // 装载**（在位即信任），但它是 seed 覆盖的**仲裁基准**（`trustRecordDigest`）⇒ 手动

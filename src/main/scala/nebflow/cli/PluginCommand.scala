@@ -25,11 +25,16 @@ import io.circe.syntax.*
 object PluginCommand extends CliCommand:
   def name = "plugin"
   def description = "Manage plugins (installed = trusted; block/unblock a package)"
-  def subcommands = List(PluginList, PluginAdd, PluginApprove, PluginRevoke, PluginUnblock, PluginRemove, PluginEnable, PluginDisable)
+  def subcommands = List(PluginList, PluginAdd, PluginSources, PluginApprove, PluginRevoke, PluginUnblock, PluginRemove, PluginEnable, PluginDisable)
 
   def examples = List(
     "stand plugin list",
     "stand plugin add /path/to/my-plugin",
+    "stand plugin add visual-report",
+    "stand plugin add visual-report@1.6.0",
+    "stand plugin add https://github.com/o/r.git#v1.2.0",
+    "stand plugin add --from /path/to/source-spec.json",
+    "stand plugin sources",
     "stand plugin revoke web-research",
     "stand plugin unblock web-research",
     "stand plugin remove web-research",
@@ -90,19 +95,74 @@ object PluginCommand extends CliCommand:
 
   private object PluginAdd extends CliSubcommand:
     def name = "add"
-    def description = "Install a plugin from a git URL or local path (active on the next scan — no approval step)"
-    def params = List(CliParam("source", None, "Git URL or local plugin directory", required = true))
+    def description =
+      "Install a plugin: official id (name[@version]) | git URL (#tag required — floating HEAD is forbidden) | " +
+        "local path | --from <spec.json>. Active on the next scan — no approval step."
+    def params = List(
+      CliParam("source", None, "Official plugin id (name[@version]) | git URL (#tag) | local plugin directory"),
+      CliParam("from", None, "Path to a JSON source spec file ({kind: official | git | https, ...})")
+    )
 
     def run(ctx: CliContext): IO[CliResult] =
       val source = ctx.positionalArgs.headOption.getOrElse("")
-      if source.isEmpty then IO.pure(CliResult.Error("Plugin source (git URL or local path) required"))
-      else
-        nebflow.core.plugin.PluginRegistry.installFrom(source).map {
-          case Right(msg) => CliResult.text(msg)
-          case Left(err) => CliResult.Error(err)
-        }
+      val from = ctx.args.get("from").map(_.trim).filter(_.nonEmpty).filterNot(_ == "true")
+      (from, source.isEmpty) match
+        case (Some(specPath), _) =>
+          IO.blocking(os.read(os.Path(specPath, os.pwd))).attempt.flatMap {
+            case Left(err) =>
+              IO.pure(CliResult.Error(s"cannot read source spec file '$specPath' (${err.getClass.getSimpleName}: ${err.getMessage})"))
+            case Right(raw) =>
+              nebflow.core.plugin.PluginRegistry.installFromSpecJson(raw).map {
+                case Right(msg) => CliResult.text(msg)
+                case Left(err)  => CliResult.Error(err)
+              }
+          }
+        case (None, false) =>
+          nebflow.core.plugin.PluginRegistry.installFrom(source).map {
+            case Right(msg) => CliResult.text(msg)
+            case Left(err)  => CliResult.Error(err)
+          }
+        case (None, true) =>
+          IO.pure(CliResult.Error(
+            "Plugin source required — official id (name[@version]), git URL ('<url>#<tag>'), local plugin directory, " +
+              "or --from <spec.json>"
+          ))
+      end match
+    end run
 
   end PluginAdd
+
+  private object PluginSources extends CliSubcommand:
+    def name = "sources"
+    def description = "Show per-plugin install provenance (source ledger: via / kind / digest — where each plugin came from)"
+    def params = Nil
+
+    def run(ctx: CliContext): IO[CliResult] =
+      ctx.client match
+        case None => IO.pure(CliResult.Error("Gateway not running"))
+        case Some(client) =>
+          client.get("/api/plugins/sources").map { resp =>
+            if ctx.json then CliResult.Json(resp)
+            else
+              val sources = resp.hcursor.downField("sources").as[List[Json]].getOrElse(Nil)
+              val unknown = resp.hcursor.downField("unknownSources").as[List[Json]].getOrElse(Nil)
+              val lines = sources.map { s =>
+                val name = s.hcursor.downField("name").as[String].getOrElse("?")
+                val version = s.hcursor.downField("version").as[String].getOrElse("-")
+                val via = s.hcursor.downField("via").as[String].getOrElse("?")
+                val kind = s.hcursor.downField("kind").as[String].getOrElse("?")
+                val digest = s.hcursor.downField("digest").as[String].map(_.take(12) + "…").getOrElse("-")
+                val url = s.hcursor.downField("url").as[String].toOption
+                s"  $name  (v$version, via=$via kind=$kind, digest $digest)${url.fold("")(u => s"  ← $u")}"
+              } ++ unknown.map { u =>
+                val name = u.hcursor.downField("name").as[String].getOrElse("?")
+                s"  $name  (unknown-source: provenance not recorded or unreadable)"
+              }
+              if lines.isEmpty then CliResult.text("No plugins installed (~/.nebflow/plugins/ is empty)")
+              else CliResult.Text("Plugin sources:" :: lines)
+          }
+
+  end PluginSources
 
   private object PluginApprove extends CliSubcommand:
     def name = "approve"

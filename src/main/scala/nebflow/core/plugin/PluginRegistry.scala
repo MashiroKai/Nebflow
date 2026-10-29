@@ -1291,49 +1291,47 @@ object PluginRegistry:
   def invalidateCache(): Unit = cache.set(None)
 
   /**
-   * §B.3 外部导入（协议符合度批补齐；无审批批 2026-09-13 口径更新）：
-   * `stand plugin add <git-url|本地路径>` → clone/copy 进 `~/.nebflow/plugins/<manifest name>/`
-   * → **落盘即生效**（在位即信任：下个扫描周期即可派发，无需审批动作）。
-   * 同名已存在 → 拒绝（不覆盖）。
-   * git 来源（http(s) 开头、git@ 开头或以 .git 结尾）走 `git clone --depth 1`；
-   * 其余按本地目录 copy。
+   * §B.3 外部导入入口（P2 源化后 = 三态分派单点）：参数按 §4.1 歧义消解分派——
+   * git 源 / 官方 id（`name[@version]`）/ 本地路径，见 [[PluginSourceInstall.installFromArg]]。
+   * 本地目录腿逐字保留（[[installFromSync]]）；行为变化仅一处：git 源浮动 HEAD 退役
+   * （设计 §4.1 裁定 + §2.2B「禁浮动 HEAD」——无 pin ⇒ 拒绝并给写法指引，GIT_PIN_REQUIRED）。
+   * 同名已存在即拒（1274-1281 口径保持）；落盘即生效（在位即信任零变化）。
    */
   def installFrom(source: String): IO[Either[String, String]] =
+    PluginSourceInstall.installFromArg(source)
+
+  /** 本地目录安装腿（P1 前既有实现；由 PluginSourceInstall 的 §4.1 分类器调用）。 */
+  def installFromLocalPath(source: String): IO[Either[String, String]] =
     IO.blocking(installFromSync(source))
+
+  /** `--from <spec.json>`：三态 source spec 直读（P2；解析/安装单点在 PluginSourceInstall）。 */
+  def installFromSpecJson(specJson: String): IO[Either[String, String]] =
+    PluginSourceInstall.installFromSpecJson(specJson)
 
   private def installFromSync(source: String): Either[String, String] =
     val tmp = os.temp.dir(prefix = "nb-plugin-install")
     try
-      val isGit = source.startsWith("https://") || source.startsWith("http://") ||
-        source.startsWith("git@") || source.endsWith(".git")
       val staged = tmp / "repo"
-      // 无 return 的早退（DisableSyntax.noReturns，2026-09-25）：取源守卫（克隆失败/
-      // 非目录/点路径）折为 Either，后续步骤 flatMap；finally 清理语义不变。
+      // 本地目录腿（git 腿已升级为 pin clone 流：PluginSourceInstall.installGitPinned；
+      // 无 return 的早退（DisableSyntax.noReturns，2026-09-25）：取源守卫（非目录/点路径）
+      // 折为 Either，后续步骤 flatMap；finally 清理语义不变。
       val sourced: Either[String, Unit] =
-        if isGit then
-          val res = os.proc("git", "clone", "--depth", "1", source, staged).call(check = false)
-          if res.exitCode != 0 then
-            val errTail =
-              scala.util.Try(res.err.text()).toOption.getOrElse("").linesIterator.toList.takeRight(3).mkString("; ")
-            Left(s"git clone failed (exit ${res.exitCode}): $errTail")
-          else Right(())
+        val src = os.Path(source, os.pwd)
+        if !os.isDir(src) then Left(s"source is not a directory: $source")
         else
-          val src = os.Path(source, os.pwd)
-          if !os.isDir(src) then Left(s"source is not a directory: $source")
+          // ── 点路径 / 祖先路径守卫（2026-09-13 批，#344 点路径）────────────────
+          // 规范化后源 == cwd 自身（`.`、`./`、cwd 的绝对形式）或为 cwd 的祖先 ⇒ os.copy
+          // 会把**整个工作目录**递归拷进临时目录（磁盘/耗时放大；非破坏性且 finally 清理，
+          // 但退化）。字符串空判（CLI 侧 isEmpty）盖不住点路径 ⇒ 判据 = canonical 路径比对。
+          if isCwdOrAncestor(src) then
+            Left(
+              s"refusing to install from '$source': it resolves to the current working directory (${os.pwd}) or one of its " +
+                s"parents — installing it would recursively copy the whole workspace into a temp dir. Pass the plugin package " +
+                "itself: a subdirectory (e.g. 'stand plugin add ./my-plugin') or an absolute path (e.g. '/path/to/my-plugin')."
+            )
           else
-            // ── 点路径 / 祖先路径守卫（2026-09-13 批，#344 点路径）────────────────
-            // 规范化后源 == cwd 自身（`.`、`./`、cwd 的绝对形式）或为 cwd 的祖先 ⇒ os.copy
-            // 会把**整个工作目录**递归拷进临时目录（磁盘/耗时放大；非破坏性且 finally 清理，
-            // 但退化）。字符串空判（CLI 侧 isEmpty）盖不住点路径 ⇒ 判据 = canonical 路径比对。
-            if isCwdOrAncestor(src) then
-              Left(
-                s"refusing to install from '$source': it resolves to the current working directory (${os.pwd}) or one of its " +
-                  s"parents — installing it would recursively copy the whole workspace into a temp dir. Pass the plugin package " +
-                  "itself: a subdirectory (e.g. 'stand plugin add ./my-plugin') or an absolute path (e.g. '/path/to/my-plugin')."
-              )
-            else
-              os.copy(src, staged, createFolders = true, mergeFolders = true, replaceExisting = true)
-              Right(())
+            os.copy(src, staged, createFolders = true, mergeFolders = true, replaceExisting = true)
+            Right(())
           end if
 
       sourced.flatMap { _ =>
@@ -1363,7 +1361,7 @@ object PluginRegistry:
                     // 账本在包目录**外**（<dataRoot>/plugin-sources/<name>.json）⇒ 硬不变量「记账不改
                     // 包 digest」（先装→记账→重算前后相等，spec 钉死）。best-effort：落账失败不回滚
                     // 安装（在位即信任零变化），该包查询面降级 unknown-source 并 WARN 留痕。
-                    recordProvenance(pname, staged, target, json, source, isGit)
+                    recordProvenance(pname, target, json, source)
                     cache.set(None)
                     logger.infoSync(
                       s"Plugin '$pname' installed from '$source' — active on next scan (presence = trust)"
@@ -1384,24 +1382,19 @@ object PluginRegistry:
   end installFromSync
 
   /**
-   * provenance 账本落账（P1 源引用批；唯一写点见 [[PluginSourceLedger.recordInstall]]）。
+   * provenance 账本落账——本地目录腿（P1 源引用批；唯一写点见
+   * [[PluginSourceLedger.recordInstall]]）。git/official/https 三腿的落账在
+   * [[PluginSourceInstall.commitStaged]]（P2 起安装走三态管线）。
    *
-   * via 判定（本批两腿；official/https 腿 P2 接）：
-   *  - git 来源（既有 isGit 判据）⇒ `via=git` + pin 记 **clone 后 HEAD 实测 commit**——诚实
-   *    provenance：今天的 clone 语义是默认分支 HEAD（浮动；其退役按设计 §2.2B 在 P2 落），
-   *    账本先如实记录「这次实际装到的是哪个 commit」，行为零变化；
-   *  - 本地目录 ⇒ `via=local` + url 记解析后的**绝对**源路径（开发态来源可回指）。
-   *
-   * 失败面：digest 现算失败 / 账本写失败都只 WARN——安装已成功（在位即信任），账本缺席
-   * 的代价是该包查询面 unknown-source（诚实降级），绝不因 provenance 拒绝安装。
+   * 本腿语义：`via=local` + url 记解析后的**绝对**源路径（开发态来源可回指）。
+   * 失败面：digest 现算失败 / 账本写失败都只 WARN——安装已成功（在位即信任），
+   * 账本缺席的代价是该包查询面 unknown-source（诚实降级），绝不因 provenance 拒绝安装。
    */
   private def recordProvenance(
       pname: String,
-      staged: os.Path,
       target: os.Path,
       manifest: Json,
-      source: String,
-      isGit: Boolean
+      source: String
   ): Unit =
     computeDigest(target) match
       case Left(err) =>
@@ -1411,44 +1404,23 @@ object PluginRegistry:
         )
       case Right((digest, _)) =>
         val version = manifest.hcursor.downField("version").as[String].toOption.map(_.trim).getOrElse("")
-        val recorded =
-          if isGit then
-            PluginSourceLedger.recordInstall(
-              name = pname,
-              kind = PluginSourceLedger.Kind.Git,
-              url = Some(source),
-              pin = gitHeadCommit(staged).map(c => PluginSourceLedger.Pin.Commit(tag = None, commit = c)),
-              version = version,
-              digest = digest,
-              via = PluginSourceLedger.Via.Git
-            )
-          else
-            val url =
-              try Some(os.Path(source, os.pwd).toString)
-              catch case _: Exception => Some(source)
-            PluginSourceLedger.recordInstall(
-              name = pname,
-              kind = PluginSourceLedger.Kind.Local,
-              url = url,
-              pin = None,
-              version = version,
-              digest = digest,
-              via = PluginSourceLedger.Via.Local
-            )
-        recorded.left.foreach { err =>
+        val url =
+          try Some(os.Path(source, os.pwd).toString)
+          catch case _: Exception => Some(source)
+        PluginSourceLedger.recordInstall(
+          name = pname,
+          kind = PluginSourceLedger.Kind.Local,
+          url = url,
+          pin = None,
+          version = version,
+          digest = digest,
+          via = PluginSourceLedger.Via.Local
+        ).left.foreach { err =>
           logger.warnSync(
             s"plugin provenance recording failed for '$pname' ($err) — the package stays installed " +
               "(presence = trust); its source query degrades to unknown-source"
           )
         }
-
-  /** clone 后 HEAD 实测 commit（40-hex 才采纳为 pin；本地仓库读取，零网络）。 */
-  private def gitHeadCommit(repo: os.Path): Option[String] =
-    try
-      val res = os.proc("git", "-C", repo, "rev-parse", "HEAD").call(check = false)
-      val out = if res.exitCode == 0 then res.out.text().trim else ""
-      if out.matches("[0-9a-fA-F]{40}") then Some(out.toLowerCase) else None
-    catch case _: Exception => None
 
   /**
    * canonical 化后 `src` == cwd 自身或为 cwd 的**祖先** ⇒ true（该源一旦拷贝就是整个 cwd 树）。

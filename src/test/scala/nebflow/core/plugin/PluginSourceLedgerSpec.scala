@@ -128,7 +128,7 @@ class PluginSourceLedgerSpec extends FunSuite:
     val raw = os.read(ledgerFile(name))
     assert(raw.contains("\"schema\":1"), s"账本应携带 schema 版本位, got: $raw")
 
-  test("安装腿(git): 本地 clone 落账，pin = HEAD 实测 commit（零网络）"):
+  test("安装腿(git): pin clone 落账，pin = Commit(tag, 解引用 commit)（零网络；P2 起浮动 HEAD 退役，#tag 必填）"):
     PluginRegistry.invalidateCache()
     val name = "git-ledger-fixture"
     val repo = mkPlugin(fixtureRoot / "repos" / name, name)
@@ -141,10 +141,12 @@ class PluginSourceLedgerSpec extends FunSuite:
     git("config", "user.name", "spec")
     git("add", "-A")
     git("commit", "-q", "-m", "fixture")
+    git("tag", "v1")
     val head = git("rev-parse", "HEAD")
     assertEquals(head.length, 40, "fixture repo HEAD must be a 40-hex commit")
 
-    val source = s"$repo/.git" // 以 .git 结尾 ⇒ 走 installFromSync 既有 git 判据；本地路径 clone，零网络
+    // P2 起 git 源 pin 必填（设计 §4.1「去掉浮动 HEAD语义」+ §2.2B）：<url>.git#<tag> 形态
+    val source = s"$repo/.git#v1" // 以 .git 结尾 ⇒ git 源；本地路径 clone，零网络
     val res = PluginRegistry.installFrom(source).unsafeRunSync()
     assert(res.isRight, s"local git clone install must succeed, got: $res")
 
@@ -152,8 +154,8 @@ class PluginSourceLedgerSpec extends FunSuite:
       case PluginSourceLedger.Known(e) =>
         assertEquals(e.kind, PluginSourceLedger.Kind.Git)
         assertEquals(e.via, PluginSourceLedger.Via.Git)
-        assertEquals(e.url, Some(source))
-        assertEquals(e.pin, Some(PluginSourceLedger.Pin.Commit(None, head)), "pin 必须记录 clone 后 HEAD 实测 commit")
+        assertEquals(e.url, Some(s"$repo/.git"), "url 记仓库地址（tag 在 pin 字段承载——来源可回指且不可变锚分离）")
+        assertEquals(e.pin, Some(PluginSourceLedger.Pin.Commit(Some("v1"), head)), "pin 必须记录 tag + 安装时刻解引用 commit")
         assertEquals(e.digest, PluginRegistry.computeDigest(home / "plugins" / name).toOption.get._1)
       case PluginSourceLedger.UnknownSource(reason) => fail(s"expected Known, got unknown-source: $reason")
 
