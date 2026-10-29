@@ -198,7 +198,12 @@ export function replayHistoryPageInitialLoad(msg, view) {
         content.style.display = 'none';
         bindCollapsibleToggle(label, () => content);
       }
-      content.innerHTML = renderMarkdownWithMath(activeView.stream.thinkingText, true, { cache: done }) + (!done ? '<span class="cursor"></span>' : '');
+      // 残片清理批（2026-10-29）：重放补发的 thinking 段**按历史渲染**，不进
+      // 流式管线 —— 重建面一律不带流式游标（游标 = 流式态的可见标记；陈旧
+      // busy 判出的「在飞」面正是报障「回复完成后思考块卡在流式态」的重放腿）。
+      // 真仍在飞的轮次，后续 live 增量帧经 appendThinkingDelta 的 rAF 照常渲染
+      // 进这个 content（rAF 自带游标），静态面与活流衔接语义不变。
+      content.innerHTML = renderMarkdownWithMath(activeView.stream.thinkingText, true, { cache: done });
       bubble.appendChild(label);
       bubble.appendChild(content);
       row.appendChild(bubble);
