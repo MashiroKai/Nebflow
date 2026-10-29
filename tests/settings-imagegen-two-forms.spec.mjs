@@ -41,7 +41,7 @@ const WEB_ROOT = path.join(REPO_ROOT, 'src', 'main', 'resources', 'web');
 // 零入库）。
 const HARNESS = '/__harness-settings-imagegen.html';
 const SHOT_DIR = process.env.NB_IMAGEGEN_SHOT_DIR ||
-  path.join(REPO_ROOT, '.nebflow', 'evidence', '20261029_settings-panel-fourfix', 'imagegen-two-forms');
+  path.join(REPO_ROOT, 'evidence/20261029_121500_settings-panel-fourfix__delegate-nebflow-73f5fdd8', 'imagegen-two-forms');
 
 let port;
 const servers = [];
