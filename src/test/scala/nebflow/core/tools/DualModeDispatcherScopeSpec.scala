@@ -264,7 +264,10 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(ack.contains("registered with 2 node(s)"), ack)
-      assert(ack.contains("dispatcher mode, no worktrees"), s"the ACK carries the dispatcher serialization reminder: $ack")
+      assert(
+        ack.contains("nodes share one workspace, node worktrees sealed"),
+        s"the ACK carries the dispatcher serialization reminder (worktree-precise wording, 2026-10-29 ruling): $ack"
+      )
       // 逐 node 分配物化（空目录短路口 = Nil——与声明集同字段）。
       assertEquals(entry.plugins, Nil, s"empty catalog short-circuit allocates an empty set: ${entry.plugins}")
       assert(

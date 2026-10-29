@@ -177,13 +177,35 @@ class DelegateModeMachineSpec extends CatsEffectSuite:
     }
   }
 
-  test("gate off + llm 腿回垃圾 ⇒ fail-open（leg=fail-open，审计 Failure）") {
+  test("gate off + llm 腿回垃圾 ⇒ parse-fail（归因精确化批：回文不可用各归各词，mode 仍取 failopen 方向）") {
     withTempDataRoot { _ =>
       val m = machine(None, Some(candidate -> (_ => IO.pure(Some("garbage, no json")))))
       m.decideMode("delegate-x", "task").map { d =>
         assertEquals(d.mode, DualModeConfig.ModeKernel)
-        assertEquals(d.leg, "fail-open")
+        assertEquals(d.leg, "parse-fail", "unparsable reply = parse-fail (recoverable — never recorded as fail-open)")
         assert(d.reason.contains("unparsable"), s"the refusal reason is carried: ${d.reason}")
+      }
+    }
+  }
+
+  test("gate off + llm 腿调用缝全链耗尽（None）⇒ llm-error（归因精确化批：调用层失败不再记 fail-open）") {
+    withTempDataRoot { _ =>
+      val m = machine(None, Some(candidate -> (_ => IO.pure(None))))
+      m.decideMode("delegate-x", "task").map { d =>
+        assertEquals(d.mode, DualModeConfig.ModeKernel)
+        assertEquals(d.leg, "llm-error", "chain-exhausted call = llm-error (recoverable — never recorded as fail-open)")
+        assert(d.reason.contains("candidate chain exhausted"), s"the exhaustion is carried: ${d.reason}")
+      }
+    }
+  }
+
+  test("gate off + llm 腿缝异常 ⇒ llm-error（异常类入 reason）") {
+    withTempDataRoot { _ =>
+      val m = machine(None, Some(candidate -> (_ => IO.raiseError(new RuntimeException("transport down")))))
+      m.decideMode("delegate-x", "task").map { d =>
+        assertEquals(d.mode, DualModeConfig.ModeKernel)
+        assertEquals(d.leg, "llm-error")
+        assert(d.reason.contains("RuntimeException"), s"the cause class is carried: ${d.reason}")
       }
     }
   }

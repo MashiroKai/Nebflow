@@ -116,6 +116,10 @@ final class JevShadowEvaluator(
                 case JevAllocation.FellBack(JevFallbackKind.Off, _) => false
                 case JevAllocation.FellBack(JevFallbackKind.Timeout, _) => true
                 case JevAllocation.FellBack(JevFallbackKind.Failure, _) => true
+                // fail-open 归因精确化批（2026-10-29）：llm-error/parse-fail 同为
+                // 「尝试已发生」的失败——与 Timeout/Failure 同侧（duty 语义不变）。
+                case JevAllocation.FellBack(JevFallbackKind.LlmError, _) => true
+                case JevAllocation.FellBack(JevFallbackKind.ParseFail, _) => true
               val duty = JevDeclarationDuty.evaluate(allocatedRan, jevSet, fallback)
               val rec = JevShadowRecord(
                 nodeName = nodeName,

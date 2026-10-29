@@ -35,11 +35,21 @@ enum JevFallbackKind:
   case Off
   case Timeout
   case Failure
+  // fail-open 归因精确化批（2026-10-29 作者追问「有 LLM 兜底怎么会 fail-open」——
+  // 根因 = 兜底腿单候选＋真错被吞同记 fail-open）：LLM 兜底腿的两类**可恢复**失败
+  // 各归各词，不再与「结构性全败」混用 fail-open 一词。llm-error = 调用层失败
+  // （传输/超时/候选链全败——换模型或重试即可恢复）；parse-fail = 回文不可用
+  // （非 JSON/缺键/值域外——模型行为面）。fail-open 自此只指「无可尝试之物」
+  // （无候选/无 face）的结构态。
+  case LlmError
+  case ParseFail
 
   def wire: String = this match
-    case Off => "off"
-    case Timeout => "timeout"
-    case Failure => "failure"
+    case Off       => "off"
+    case Timeout   => "timeout"
+    case Failure   => "failure"
+    case LlmError  => "llm-error"
+    case ParseFail => "parse-fail"
 
 /**
  * Fail-open fallback mechanics (Face C / P2).
@@ -86,7 +96,8 @@ object JevFallback:
             s"jev allocation not applied for '$subject' ($reason) — dispatcher default mount used"
           )
         ).as(JevAllocation.FellBack(kind, reason))
-      case JevFallbackKind.Timeout | JevFallbackKind.Failure =>
+      case JevFallbackKind.Timeout | JevFallbackKind.Failure | JevFallbackKind.LlmError |
+          JevFallbackKind.ParseFail =>
         val warn =
           IO(
             logger.warnSync(

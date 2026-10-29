@@ -34,12 +34,15 @@ import nebflow.shared.{NebflowLogger, PathUtil}
  *     （**旧行为逐字节不变**——分配触发点只有 delegate spawn ＋ flow/链每步 spawn，
  *     分发器项目轨不在其列）。
  *
- * == 三态模式词（审计/结构帧 `allocation` 字段值域）==
- * `jev` / `llm-fallback`（两态 = 分配成功，集合可能为空）／`fail-open`（两臂全败，
- * 空集注入派发照走）／`disabled`（PluginsConfig 总闸关）／`empty-catalog`（无可分配
- * 包——合法「无能力面」态，零模型调用）／`off`（分配端口未注册——未装配环境）／
- * `auto-off`（#523 补齐批：`plugins.autoAllocate=false`——声明集照常注入，空声明
- * 不再问模型；惰性态，与 disabled/off 同族）。
+ * == 分配模式词（审计/结构帧 `allocation` 字段值域）==
+ * `jev` / `llm-fallback`（两态 = 分配成功，集合可能为空）／`llm-error`（LLM 兜底腿
+ * 调用层失败——候选链耗尽/传输异常，**可恢复**：2026-10-29 归因精确化批拆出）／
+ * `parse-fail`（兜底腿回文不可用——非 JSON/缺键/值域外，**可恢复**：同批拆出）／
+ * `fail-open`（无可尝试之物的结构态——旧值域里本词曾兼指上述两类可恢复失败与
+ * 真结构态，2026-10-29 起各归各）／`disabled`（PluginsConfig 总闸关）／
+ * `empty-catalog`（无可分配包——合法「无能力面」态，零模型调用）／`off`（分配端口
+ * 未注册——未装配环境）／`auto-off`（#523 补齐批：`plugins.autoAllocate=false`——
+ * 声明集照常注入，空声明不再问模型；惰性态，与 disabled/off 同族）。
  *
  * 失败语义分层（与节点路径同款，2026-09-13 无审批批口径）：**分配**失败 = fail-open
  * （空集，派发绝不阻塞）；**解析/注入**失败（选中包被封禁/技能文件不可读）= `Left`
@@ -89,11 +92,17 @@ object PluginInjection:
                   )
               else
                 PluginAllocator.allocatePlugins(subject, taskText, catalog).flatMap { result =>
+                  // 归因精确化批（2026-10-29 作者追问）：LLM 兜底腿的两类可恢复
+                  // 失败各归各词（llm-error=调用层/候选链耗尽；parse-fail=回文不可
+                  // 用），fail-open 只留「无可尝试之物」的结构态——四态此前混记
+                  // fail-open 一词，台账无法区分可恢复与真故障。
                   val (mode, names) = result.allocation match
                     case JevAllocation.Allocated(ns) =>
                       result.via.map(_.wire).getOrElse("jev") -> ns
-                    case JevAllocation.FellBack(JevFallbackKind.Off, _) => ("off", Nil)
-                    case JevAllocation.FellBack(_, _) => ("fail-open", Nil)
+                    case JevAllocation.FellBack(JevFallbackKind.Off, _)       => ("off", Nil)
+                    case JevAllocation.FellBack(JevFallbackKind.LlmError, _)  => ("llm-error", Nil)
+                    case JevAllocation.FellBack(JevFallbackKind.ParseFail, _) => ("parse-fail", Nil)
+                    case JevAllocation.FellBack(_, _)                         => ("fail-open", Nil)
                   logDuty(subject, result)
                   if InertModes.contains(mode) then
                     IO.pure(Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, mode)))

@@ -13,7 +13,7 @@ import nebflow.core.jev.{
   JevGateSnapshot,
   PluginAllocator
 }
-import nebflow.llm.ModelCandidate
+import nebflow.llm.{ModelCandidate, SendMessageParams}
 import nebflow.shared.{LlmProtocol, PathUtil, ProviderConfig}
 
 import scala.collection.concurrent.TrieMap
@@ -183,16 +183,20 @@ class LlmAllocatorSpec extends CatsEffectSuite:
     }
   }
 
-  test("three states ③ fail-open: both legs fail → typed fallback, never a throw") {
+  test("three states ③ llm leg exhausted → typed LlmError fallback (归因精确化批), never a throw") {
     withTempDataRoot { _ =>
       machine(Some(jevFailing(DecisionError.Transport("down"))), Some(llm(None)), gateOn)
         .allocatePlugins("delegate-x", "task", catalog)
         .map { r =>
           assertEquals(r.via, None)
           r.allocation match
-            case JevAllocation.FellBack(JevFallbackKind.Failure, reason) =>
+            case JevAllocation.FellBack(JevFallbackKind.LlmError, reason) =>
               assert(reason.toLowerCase.contains("llm"), s"the diagnostic names the failing leg: $reason")
-            case other => fail(s"expected fail-open fallback, got: $other")
+              assert(
+                reason.contains("candidate chain exhausted"),
+                s"the seam-level classification is carried (call-layer failure, not fail-open): $reason"
+              )
+            case other => fail(s"expected llm-error fallback, got: $other")
         }
     }
   }
@@ -238,6 +242,91 @@ class LlmAllocatorSpec extends CatsEffectSuite:
         assert(prompt.contains("### visual-report"), "catalog entries rendered")
         assert(prompt.contains("""{"plugins": ["<package-name>", ...]}"""), "the JSON answer shape is stated")
       }
+    }
+  }
+
+  // ── chainCall：整链遍历调用缝（fail-open 根因修复批 2026-10-29）─────────────
+  //
+  // 根因钉子：旧缝 = 链头单候选、传输错即弃（`case Left(_) => None`）——链头候选
+  // 恰好挂掉时「主 agent 正常用 llm、兜底腿仍 fail-open」（jev-allocation.jsonl
+  // 实证 27 例）。新缝语义：逐候选试，坏候选 WARN 留真因，**全链败才 None**。
+
+  private def cand(pid: String, model: String): ModelCandidate =
+    ModelCandidate(providerId = pid, provider = ProviderConfig("https://x", "k", LlmProtocol.OpenAI), model = model)
+
+  /** 按 providerId 记账的脚本化 adapter：模型名命中 failOn 即抛，否则按脚本回文。 */
+  private class ScriptedAdapter(failOn: Set[String], answer: String, attempts: TrieMap[String, String])
+      extends nebflow.llm.ProviderAdapter[IO]:
+    def sendMessage(params: SendMessageParams): IO[nebflow.llm.AdapterResponse] =
+      IO {
+        attempts.update(params.model, "hit")
+        if failOn.contains(params.model) then throw new RuntimeException(s"transport down for ${params.model}")
+        nebflow.llm.AdapterResponse(reply = answer, toolCalls = Nil)
+      }
+    def sendMessageStream(params: SendMessageParams): fs2.Stream[IO, nebflow.shared.StreamChunk] =
+      fs2.Stream.raiseError[IO](new RuntimeException("stream face not expected in this spec"))
+
+  private class PerProviderRegistry(adapters: Map[String, nebflow.llm.ProviderAdapter[IO]])
+      extends nebflow.llm.ProviderRegistry(null, null):
+    override def getAdapter(providerId: String): IO[nebflow.llm.ProviderAdapter[IO]] =
+      adapters.get(providerId) match
+        case Some(a) => IO.pure(a)
+        case None    => IO.raiseError(new RuntimeException(s"unknown provider: $providerId"))
+
+  private val paramsFor: SendMessageParams =
+    SendMessageParams(
+      messages = List(nebflow.shared.Message(nebflow.shared.MessageRole.User, Left("allocate"))),
+      model = "m-head" // 占位：chainCall 逐候选 copy(model) 覆写，本值不参与断言
+    )
+
+  test("chainCall: 头候选传输错 ⇒ WARN 试下一候选，第二候选答出（主 agent 能用 ⇒ 兜底能用）") {
+    val attempts = TrieMap.empty[String, String]
+    val registry = new PerProviderRegistry(Map(
+      "bad" -> ScriptedAdapter(Set("m-bad"), "", attempts),
+      "good" -> ScriptedAdapter(Set.empty, """{"plugins":["backend-dev"]}""", attempts)
+    ))
+    val call = LlmAllocator.chainCall(registry, List(cand("bad", "m-bad"), cand("good", "m-good")))
+    call(paramsFor).map { reply =>
+      assertEquals(reply, Some("""{"plugins":["backend-dev"]}"""), "the chain answered via the second candidate")
+      assertEquals(attempts.keySet, Set("m-bad", "m-good"), "both candidates were attempted in order")
+    }
+  }
+
+  test("chainCall: 全链败 ⇒ None（链耗尽语义），每个失败候选都留有尝试痕迹") {
+    val attempts = TrieMap.empty[String, String]
+    val registry = new PerProviderRegistry(Map(
+      "a" -> ScriptedAdapter(Set("m-a"), "", attempts),
+      "b" -> ScriptedAdapter(Set("m-b"), "", attempts)
+    ))
+    val call = LlmAllocator.chainCall(registry, List(cand("a", "m-a"), cand("b", "m-b")))
+    call(paramsFor).map { reply =>
+      assertEquals(reply, None, "exhausted chain = None (the caller classifies it as llm-error)")
+      assertEquals(attempts.keySet, Set("m-a", "m-b"), "every candidate got its attempt (per-candidate WARNs)")
+    }
+  }
+
+  test("chainCall: 未知 provider 的候选被跳过（adapter 解析失败不炸整缝）") {
+    val attempts = TrieMap.empty[String, String]
+    val registry = new PerProviderRegistry(Map(
+      "good" -> ScriptedAdapter(Set.empty, """{"plugins":[]}""", attempts)
+    ))
+    val call = LlmAllocator.chainCall(registry, List(cand("ghost", "m-ghost"), cand("good", "m-good")))
+    call(paramsFor).map { reply =>
+      assertEquals(reply, Some("""{"plugins":[]}"""), "the resolvable candidate still answers")
+      assertEquals(attempts.keySet, Set("m-good"), "the ghost candidate was skipped, not fatal")
+    }
+  }
+
+  test("chainCall: 空回文候选不截链（provider 侧故障同侧处理，下一候选照答）") {
+    val attempts = TrieMap.empty[String, String]
+    val registry = new PerProviderRegistry(Map(
+      "mute" -> ScriptedAdapter(Set.empty, "   ", attempts),
+      "good" -> ScriptedAdapter(Set.empty, """{"plugins":["backend-dev"]}""", attempts)
+    ))
+    val call = LlmAllocator.chainCall(registry, List(cand("mute", "m-mute"), cand("good", "m-good")))
+    call(paramsFor).map { reply =>
+      assertEquals(reply, Some("""{"plugins":["backend-dev"]}"""), "the empty reply did not become the final answer")
+      assertEquals(attempts.keySet, Set("m-mute", "m-good"), "the traversal continued past the mute candidate")
     }
   }
 

@@ -69,23 +69,36 @@ class DualModeToolFaceSpec extends FunSuite:
 
   // ── 挂载面 ──────────────────────────────────────────────────────────────────
 
-  test("F1 kernel 腿：编排面整体退场（Subagent/AgentFlow/node 四件全摘），Mail/delegate_report 保留") {
+  test("F1 kernel 腿：编排面整体退场（Subagent/AgentFlow/node 四件全摘 + node_report 摘除），Mail/delegate_report 保留") {
     val set = CoreProbe.allowedWithDelegateMode(probeDef, delegateSession = true, delegateMode = Some(DualModeConfig.ModeKernel))
     KernelStripped.foreach { t =>
       assert(!set.contains(t), s"kernel face must strip the orchestration face: $t (got: ${set.toList.sorted})")
     }
+    // node_report 摘除（作者裁定 2026-10-29：「那不是agentflow的节点使用的工具吗」）
+    // ——现状事实源：RootExclusiveTools 防声明逃逸剥离 + flowNodeSession 尾段专属
+    // 挂载，本就不达 delegate 面；kernel 腿的显式减法是未来挂载面变动下的保险销。
+    assert(
+      !set.contains(nebflow.core.tools.NodeReportToolDef.Name),
+      "kernel face must not carry node_report (flow-node-only tool — dual insurance: mount face + in-tool identity rejection)"
+    )
     assert(set.contains("Mail"), "kernel delegate keeps Mail (node:<id> continuation leg)")
     assert(set.contains(nebflow.core.tools.DelegateReportTool.Name), "kernel delegate keeps delegate_report")
     assert(set.contains("Read") && set.contains("Bash"), "kernel delegate keeps the executor base face")
   }
 
-  test("F2 dispatcher 腿：Subagent 摘除，AgentFlow + node 四件保留（编排本体）") {
+  test("F2 dispatcher 腿：Subagent 摘除，AgentFlow + node 四件保留（编排本体）；node_report 现状事实源不达（flow 节点专属）") {
     val set = CoreProbe.allowedWithDelegateMode(probeDef, delegateSession = true, delegateMode = Some(DualModeConfig.ModeDispatcher))
     assert(!set.contains("Subagent"), "dispatcher face strips Subagent (Q2: recon subagent is not an orchestration face)")
     assert(set.contains("AgentFlow"), "dispatcher keeps AgentFlow (inline DAG convenience face)")
     NodeFace.foreach { t =>
       assert(set.contains(t), s"dispatcher keeps the node face: $t (got: ${set.toList.sorted})")
     }
+    // 事实钉（2026-10-29 裁定②「dispatcher 保留」= 本腿不做 node_report 摘除动作；
+    // 现状该工具本就 flow 节点会话专属——本断言钉的是「本批不引入变化」）。
+    assert(
+      !set.contains(nebflow.core.tools.NodeReportToolDef.Name),
+      "node_report stays flow-node-only (unchanged by this batch; the dispatcher leg does no node_report work)"
+    )
   }
 
   test("F3 闸关（mode=None）⇒ 全量面逐字节：Subagent/AgentFlow/node 四件俱在") {
@@ -153,7 +166,35 @@ class DualModeToolFaceSpec extends FunSuite:
     val enumVals: List[String] =
       modeJ.flatMap(_.asObject).flatMap(_("enum")).flatMap(_.asArray).map(_.toList.flatMap(_.asString)).getOrElse(Nil)
     assertEquals(enumVals, List("kernel", "dispatcher", "auto"), s"mode enum must be kernel|dispatcher|auto; mode=$modeJ")
+    // worktree 裁定回写（作者 2026-10-29 18:12）：schema 文案不得再宣称 dispatcher
+    // 本体「no worktree」——判定机照走，节点层 seal。
+    val desc = modeJ.flatMap(_.asObject).flatMap(_("description")).flatMap(_.asString).getOrElse("")
+    assert(!desc.contains("zero plugins, no worktree"), s"the retracted no-worktree claim must be gone: $desc")
+    assert(desc.contains("worktree judge"), s"the schema states the dispatcher goes through the worktree judge: $desc")
   }
+
+  // ── 分发器提示词两段（2026-10-29 作者补令 · DispatcherDisciplineLine 单点）──
+
+  test("F9 分发器纪律段：subagent-via-nodes 用法指导逐点在案（自足 task / out 边回流 / verifier+loop 判定）") {
+    val line = nebflow.core.tools.DelegateTool.DispatcherDisciplineLine
+    assert(line.contains("Subagent tool is gone by design"), "the removal is explained, not silent")
+    assert(line.contains("SELF-CONTAINED"), "node tasks must be self-contained (nodes see none of the dispatcher's context)")
+    assert(line.contains("completion notifications"), "results flow back via out edges / completion notifications")
+    assert(line.contains("verifier node with a (fail)<worker>:loop back edge"), "judgment steps route through verifier+loop")
+  }
+
+  test("F10 分发器纪律段：整链一次编写纪律（一次 ChainWrite 给全链；NodeEdit 只精修不拼链）+ 座位共享精确化") {
+    val line = nebflow.core.tools.DelegateTool.DispatcherDisciplineLine
+    assert(line.contains("ONE ChainWrite call"), "the whole chain — multi-node complex chains included — rides one call")
+    assert(line.contains("never assemble a chain node-by-node"), "piecemeal NodeEdit chain-building is forbidden")
+    assert(line.contains("not for building it"), "NodeEdit is refinement-only")
+    // worktree 裁定（2026-10-29 18:12）：座位共享而非「无 worktree」——旧表述必须消失。
+    assert(!line.contains("no branches and no worktrees"), s"the retracted claim must be gone: $line")
+    assert(line.contains("inside this session's worktree seat"), "the shared-seat semantics are stated (sharing, not nesting)")
+    assert(line.contains("never create branches or worktrees"), "the node-layer seal is stated")
+    assert(line.contains("`deps`"), "the write-scope serialization discipline stays")
+  }
+
 
   test("F8 SubAgentTask mode 字段：缺键容忍（旧盘面照读解码 None）；在键透传") {
     val legacy = """{"taskId":"delegate-nebflow-f8","parentSessionId":"p","agentName":"nebflow","prompt":"p",
