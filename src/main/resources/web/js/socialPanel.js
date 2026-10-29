@@ -750,16 +750,17 @@ function cardHint(ch, status) {
   }
   // bind-transactional 批 (2026-10-20): precedence under configInvalid —
   //   ① the last-bind error verbatim (the engine recorded the exact failed
-  //     steps; the pill is failed, the hint names where it died);
-  //   ② the runtime health face (reply-loss strikes, `channels[].health`) —
-  //     a DEGRADED channel is a warning line, never a flipped pill: the
-  //     redelivery leg is recovering the lost replies in the background.
+  //     steps; the pill is failed, the hint names where it died).
+  //   ② the runtime health face is GONE from this hint (author ruling
+  //     2026-10-29 11:11「这个警告我不是让隐藏吗？」):
+  //     reply-loss strikes (bridge-dead family) are PROCESS self-heal states —
+  //     auto-redelivery is armed and the user has no lever — so they render
+  //     NOTHING here. The engine faces stay untouched (plugin ERROR/WARN logs
+  //     + the `channels[].health` JSON, both still queryable); a dead bridge
+  //     still reaches the author where action lives, via the in-chat rebind
+  //     guide (bridgeDeadNotice). Process-state seal: UserFaceProcessStateSealSpec.
   const cfg = configByChannel[ch.id] || {};
   if (cfg.bindError) return String(cfg.bindError);
-  if (cfg.health && Array.isArray(cfg.health.strikes) && cfg.health.strikes.length) {
-    const s = cfg.health.strikes[0];
-    return t('social.hint.health', { reason: String(s.reason || ''), count: Number(s.count || 0) });
-  }
   return credentialLine(probeByChannel[ch.id]);
 }
 

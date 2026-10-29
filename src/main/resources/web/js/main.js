@@ -2258,31 +2258,29 @@ onMessage('taskStuck', (msg) => {
   }
 });
 
-// ── Held-receipt 投递可靠性批（2026-10-21 · fix 3 可见化）────────────────────
+// ── Held-receipt 投递可靠性批（2026-10-21 · fix 3 可见化；2026-10-29 过程态摘除）──
 // WS `heldReceipts` 帧（发射面：actor 的 hold/drain/flush 点 + HeldDeliveryWatchdog
 // unread 广播）：{sessionId(持有积压的父会话), held, unread}。前端两件事：
 //   ① state.sessionHeldReceipts[sessionId] 记账（held=被屏障扣留的已产出回执数，
 //      unread=催注穷尽的未读终态数；两零 = 清除条目）；
-//   ② 头部胶囊 #held-receipts-indicator 按**当前活跃会话**的积压渲染（N>0 显示
-//      「待投递」计数，归零即隐）——作者与父会话操作者都看得见积压。
+//   ② 头部胶囊 #held-receipts-indicator 按**当前活跃会话**的**终态**渲染 —
+//      2026-10-29 作者令（「这个警告我不是让隐藏吗？」同判扩散，过程态零用户面）：
+//      held 是过程态（屏障在回合边界自动 drain，用户无杠杆）⇒ **零显示**（引擎
+//      日志/帧面可查即可）；只有 unread（催注穷尽 = 补投也丢了）作为终态失败
+//      提示保留。归零即隐。seal: UserFaceProcessStateSealSpec。
 // 会话切换不重发帧：监听 nebflow-session-change（sidebar.js 派发）重渲胶囊。
 function renderHeldReceiptsCapsule() {
   const el = document.getElementById('held-receipts-indicator');
   if (!el) return;
   const sid = state.activeSessionId;
   const rec = (sid && state.sessionHeldReceipts && state.sessionHeldReceipts[sid]) || null;
-  const total = rec ? (rec.held || 0) + (rec.unread || 0) : 0;
+  const total = rec ? (rec.unread || 0) : 0;
   el.classList.toggle('hidden', total === 0);
   const count = el.querySelector('.pa-count');
   if (count) count.textContent = total > 9 ? '9+' : String(total);
-  if (rec) {
-    const parts = [];
-    if (rec.held > 0) parts.push(t('heldReceipts.held', { n: rec.held }));
-    if (rec.unread > 0) parts.push(t('heldReceipts.unread', { n: rec.unread }));
-    el.title = parts.join(' · ') || t('heldReceipts.title');
-  } else {
-    el.title = t('heldReceipts.title');
-  }
+  el.title = total > 0
+    ? t('heldReceipts.unread', { n: total })
+    : t('heldReceipts.title');
 }
 window.addEventListener('nebflow-session-change', renderHeldReceiptsCapsule);
 // ask-badge 批（2026-10-28「黄色问题胶囊无问题仍显示计数」排查面③）：held 计数
